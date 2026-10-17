@@ -12,7 +12,7 @@ import { examCacheRoot } from "./llm-cassette";
 import { atomicWriteJson, atomicWriteText } from "./exam-shared-file";
 import { BRAIN_ENTRIES, DRAFT_ENTRIES, TOOL_ENTRIES, reach, workingFiles } from "./exam-scope";
 import { fillProblemsFromShared } from "./exam-problems-store";
-import type { DbPart, RowLite } from "./exam-brain";
+import { CONV_CTX_FIELDS, jstDayStart, type ConvCtx, type DbPart, type RowLite, type SmallRecord } from "./exam-brain";
 import { NO_LINE_TEST_CONVERSATIONS, YUMA_CONVERSATION_ID } from "../../app/lib/test-conversations";
 
 export const EXAM_BRAIN_DIR = join(examCacheRoot(), "exam-brain");
@@ -196,6 +196,57 @@ export function weakSpotProblems(links: Record<string, Array<{ kbId: string; kin
     }
   }
   return out;
+}
+
+// ─── 10/17 ① 小さな確かめの記録（同じ版の小さな確かめが通ったら次は仕上げ） ───────────────
+export const PHASE_LOG_FILE = join(EXAM_BRAIN_DIR, "phase-log.jsonl");
+export function readPhaseLog(file = PHASE_LOG_FILE): SmallRecord[] {
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8").split("\n").filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as SmallRecord]; } catch { return []; } });
+}
+export function appendPhaseLog(r: SmallRecord, file = PHASE_LOG_FILE): void { mkdirSync(EXAM_BRAIN_DIR, { recursive: true }); appendFileSync(file, JSON.stringify(r) + "\n"); }
+
+// ─── 10/17 ② 今日（JST）の試験の費用（試験 env＝env != production の DeepSeek＋Claude・読むだけ） ─────────
+export async function readDailySpend(sb: SupabaseClient, now = new Date()): Promise<{ usd: number; rows: number; since: string }> {
+  const { altUsageUsd, claudeUsageUsd } = await import("../../app/lib/llm-price");
+  const since = jstDayStart(now).toISOString();
+  let usd = 0, rows = 0;
+  for (let from = 0; from < 200_000; from += 1000) {
+    const { data, error } = await sb.from("llm_usage_logs").select("model,env,input_uncached,cache_read,cache_write,cache_write_5m,cache_write_1h,output_tokens,created_at").gte("created_at", since).neq("env", "production").order("created_at", { ascending: true }).range(from, from + 999);
+    if (error) throw new Error(`llm_usage_logs が読めない: ${error.message}`);
+    for (const r of (data ?? []) as Array<Record<string, unknown>>) {
+      const m = String(r.model ?? "");
+      if (/claude/.test(m)) { usd += claudeUsageUsd(r as never); rows++; } else if (/deepseek/.test(m)) { usd += altUsageUsd(r as never); rows++; }
+    }
+    if (!data || data.length < 1000) break;
+  }
+  return { usd, rows, since };
+}
+
+// ─── 10/17 ③ 試験の会話の効く所（会話の違いが答えに効くか・読むだけ） ─────────────────────
+async function readOneConvCtx(sb: SupabaseClient, name: string, id: string, pcId: string | null): Promise<ConvCtx> {
+  try {
+    const { data: conv, error: e1 } = await sb.from("conversations").select(["property_customer_id", ...CONV_CTX_FIELDS.conversations].join(",")).eq("id", id).maybeSingle();
+    if (e1 || !conv) return { name, ok: false, conv: null, pc: null, gaps: {}, why: e1?.message ?? "会話の行が無い" };
+    const pid = pcId || ((conv as unknown as Record<string, unknown>).property_customer_id as string | null);
+    let pc: Record<string, unknown> | null = null;
+    if (pid) { const r = await sb.from("property_customers").select(CONV_CTX_FIELDS.property_customers.join(",")).eq("id", pid).maybeSingle(); if (r.error) return { name, ok: false, conv: null, pc: null, gaps: {}, why: r.error.message }; pc = (r.data ?? null) as Record<string, unknown> | null; }
+    const gaps: Record<string, number> = {};
+    for (const t of CONV_CTX_FIELDS.gapTables) { const r = await sb.from(t).select("id", { count: "exact", head: true }).eq("conversation_id", id); if (r.error || r.count === null) return { name, ok: false, conv: null, pc: null, gaps: {}, why: `${t}: ${r.error?.message ?? "件数が読めない"}` }; gaps[t] = r.count; }
+    const c = { ...(conv as unknown as Record<string, unknown>) }; delete c.property_customer_id;
+    return { name, ok: true, conv: c, pc, gaps };
+  } catch (e) { return { name, ok: false, conv: null, pc: null, gaps: {}, why: String(e instanceof Error ? e.message : e).slice(0, 120) }; }
+}
+/** 今の会話（--conv・無ければ YUMA）と試験の会話 YUMA2〜5 の効く所 */
+export async function readConvContexts(sb: SupabaseClient, convName: string): Promise<{ cur: ConvCtx; all: ConvCtx[] }> {
+  const all = await Promise.all(NO_LINE_TEST_CONVERSATIONS.map((c) => readOneConvCtx(sb, c.name, c.id, c.propertyCustomerId)));
+  const n = (convName || "YUMA").trim().toUpperCase();
+  const hit = all.find((c) => c.name === n);
+  if (hit) return { cur: hit, all };
+  const r = resolveExamConversation(n === "AUTO" ? "YUMA2" : n, { allowYuma: true });
+  // --conv=auto は空いている会話を brain-exam が選ぶ＝どれになるか分からない → YUMA2〜5 が全部同じ時だけ "-"（convKeyOf で全部と比べる）
+  const cur = r ? (all.find((c) => c.name === r.name) ?? await readOneConvCtx(sb, r.name, r.id, r.propertyCustomerId || null)) : { name: n, ok: false, conv: null, pc: null, gaps: {}, why: "試験の会話でない" };
+  return { cur, all };
 }
 
 // ─── 4. 予約 ─────────────────────────────────────────────────────────

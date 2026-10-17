@@ -3,6 +3,7 @@
 import {
   mergePicks, firstReps, confirmTargets, draftEligible, draftTargets, compareProblem, brainChangedOf, stopDecision, isCheapWindow, nextCheapStart, decideWhen,
   reuseKey, kbKeyOf, canReuse, modelOf, estimateUsd, needJudge, contractShape, dbKeyOf, type PlanProblem, type RowLite, type DbPart,
+  pickSmall, smallRank, decidePhase, SMALL_MAX_REPS, dailyCapUsd, jstDayStart, nextNightRun, capSplit, isProtected, peakAdvice, convKeyOf, convCtxHash,
 } from "../exam-brain";
 import { readDbFingerprint, dbTablesOf, DB_FINGERPRINT_TABLES, type DbTableSpec } from "../exam-brain-io";
 
@@ -178,5 +179,66 @@ ok("依頼も禁止も無い時は呼ばない", !needJudge({ asks: 0, ng: 0, ne
 ok("lazy: 道が外れ・本質も決まりなら呼ばない", !needJudge({ asks: 2, ng: 1, needRawPath: false, pathOk: false, lazy: true }));
 ok("lazy: 本質の道が要れば呼ぶ", needJudge({ asks: 2, ng: 0, needRawPath: true, pathOk: false, lazy: true }));
 ok("lazy: 道が合えば呼ぶ", needJudge({ asks: 2, ng: 0, needRawPath: false, pathOk: true, lazy: true }));
+
+// ─── 10/17 ① 2段（小さな確かめ／仕上げ） ───────────────────────────────
+{
+  const pk = (id: string, why: string[]) => ({ id, why, must: false });
+  const picks = [
+    pk("a", ["差分の言葉に近い（0.410・上位 3）"]), pk("b", ["竹内さんのお手本（必ず）"]), pk("c", ["前に落ちた"]), pk("d", ["差分の言葉に近い（0.520・上位 1）"]),
+    pk("e", ["名指し"]), pk("f", ["毎日拾った弱い所の知見 abc に紐付く"]), pk("g", ["新しい問題（まだ回していない）"]), pk("h", ["竹内さんの番（必ず）"]),
+    pk("i", ["知見 abcd1234 を変えた（近い知見）"]), pk("j", ["差分・言葉で名指し"]), pk("k", ["差分の言葉に近い（0.300・上位 5）"]),
+  ];
+  const s = pickSmall(picks, { max: 6 });
+  ok("小さな確かめ: 名指し→前に落ちた→近い順→お手本（6問）", s.map((x) => x.id).sort().join() === ["e", "j", "c", "d", "a", "k"].sort().join(), s.map((x) => x.id).join());
+  ok("小さな確かめ: 既定は8問まで", pickSmall(picks).length === 8);
+  ok("小さな確かめ: 名指しは上限を超えても全部", pickSmall([pk("x", ["名指し"]), pk("y", ["名指し"]), pk("z", ["前に落ちた"])], { max: 1 }).map((x) => x.id).join() === "x,y");
+  ok("近さの順: 知見を変えた（近さ無し）は近い問題と同じ段", smallRank(["知見 abcd1234 を変えた（近い知見）"]).tier === 2 && smallRank(["差分の言葉に近い（0.5"]).sim === 0.5);
+  const hist = [{ at: "2026-10-17T01:00:00Z", label: "s1", phase: "small" as const, keys: "K1", clean: true, ids: ["a"] }, { at: "2026-10-17T00:00:00Z", label: "s0", phase: "small" as const, keys: "K2", clean: false, ids: ["a"] }];
+  ok("形: 同じ版の小さな確かめが通った → 仕上げ", decidePhase({ pickCount: 20, keys: "K1", history: hist }).phase === "final");
+  ok("形: 同じ版の小さな確かめに悪化 → 小さな確かめ", decidePhase({ pickCount: 20, keys: "K2", history: hist }).phase === "small");
+  ok("形: この版が初めて → 小さな確かめ", decidePhase({ pickCount: 20, keys: "K3", history: hist }).phase === "small");
+  ok("形: 8問以下は仕上げ", decidePhase({ pickCount: 8, keys: "K3", history: [] }).phase === "final");
+  ok("形: 関所は仕上げ", decidePhase({ gate: true, pickCount: 150, keys: "K3", history: [] }).phase === "final");
+  ok("形: --phase 明示・off＝旧", decidePhase({ explicit: "small", gate: true, pickCount: 3, keys: "K1", history: hist }).phase === "small" && decidePhase({ explicit: "off", pickCount: 20, keys: "K1", history: hist }).phase === "off" && decidePhase({ explicit: "final", pickCount: 20, keys: "K3", history: [] }).phase === "final");
+  ok("小さな確かめの繰り返しは2回まで", SMALL_MAX_REPS === 2);
+}
+// ─── 10/17 ② 1日の上限 ─────────────────────────────────────────────
+{
+  ok("上限: 既定 10・off で無し・本番は無し", dailyCapUsd({}) === 10 && dailyCapUsd({ EXAM_DAILY_CAP_USD: "off" }) === null && dailyCapUsd({ EXAM_DAILY_CAP_USD: "4.5" }) === 4.5 && dailyCapUsd({ VERCEL_ENV: "production" }) === null);
+  const at = (jst: string) => new Date(Date.parse(`${jst}+09:00`));
+  ok("JST の日の始まり", jstDayStart(at("2026-10-17T00:30:00")).toISOString() === "2026-10-16T15:00:00.000Z" && jstDayStart(at("2026-10-17T23:59:00")).toISOString() === "2026-10-16T15:00:00.000Z");
+  ok("夜中の予約: 昼なら翌日 1:40", nextNightRun(at("2026-10-17T14:00:00")).toISOString() === at("2026-10-18T01:40:00").toISOString());
+  ok("夜中の予約: 0:30 ならその日の 1:40・2:00 なら翌日", nextNightRun(at("2026-10-17T00:30:00")).toISOString() === at("2026-10-17T01:40:00").toISOString() && nextNightRun(at("2026-10-17T02:00:00")).toISOString() === at("2026-10-18T01:40:00").toISOString());
+  const why: Record<string, string[]> = { a: ["前に落ちた"], b: ["差分の言葉に近い（0.4"], c: ["竹内さんのお手本（必ず）"], d: ["名指し"], e: ["新しい問題"] };
+  const base = { ids: ["a", "b", "c", "d", "e"], whyOf: (id: string) => why[id], estOf: (ids: string[]) => ids.length * 1 };
+  ok("上限: 収まれば全部今", capSplit({ ...base, usedUsd: 4, cap: 10 }).mode === "ok");
+  const s = capSplit({ ...base, usedUsd: 6, cap: 10 });
+  ok("上限: 超えたら守る線（前に落ちた・お手本・名指し）を今・残りを夜中", s.mode === "split" && s.now.join() === "a,c,d" && s.later.join() === "b,e" && s.estLater === 2, JSON.stringify(s));
+  const n = capSplit({ ...base, usedUsd: 8, cap: 10 });
+  ok("上限: 守る線だけでも超えるなら全部夜中（止めない）", n.mode === "night" && n.now.length === 0 && n.later.length === 5);
+  ok("上限: --over-cap は全部今", capSplit({ ...base, usedUsd: 9, cap: 10, force: true }).mode === "force");
+  ok("上限: off は全部今", capSplit({ ...base, usedUsd: 99, cap: null }).mode === "off");
+  ok("守る線の札", isProtected(["差分・言葉で名指し"]) && isProtected(["竹内さんの番（必ず）"]) && !isProtected(["差分の言葉に近い（0.5"]));
+  // 2倍の時間（2026-10-19 は月曜）
+  const pk = peakAdvice({ now: at("2026-10-19T11:00:00"), phase: "final", when: "auto" });
+  ok("2倍の時間: 仕上げは夜中・警告", pk.peak && pk.defer && !!pk.warn);
+  const ps = peakAdvice({ now: at("2026-10-19T11:00:00"), phase: "small", when: "auto" });
+  ok("2倍の時間: 小さな確かめは警告だけ（今流す）", ps.peak && !ps.defer && !!ps.warn);
+  ok("2倍の時間の外（13:30・土曜）は警告なし", !peakAdvice({ now: at("2026-10-19T13:30:00"), phase: "final", when: "auto" }).peak && !peakAdvice({ now: at("2026-10-17T11:00:00"), phase: "final", when: "auto" }).peak);
+  ok("2倍の時間: --when=now・関所は夜中に回さない（関所は今まで通り）", !peakAdvice({ now: at("2026-10-19T11:00:00"), phase: "final", when: "now" }).defer && !peakAdvice({ now: at("2026-10-19T11:00:00"), phase: "final", gate: true, when: "auto" }).defer);
+}
+// ─── 10/17 ③ 会話の鍵 ─────────────────────────────────────────────
+{
+  const C = (name: string, conv: Record<string, unknown> = { account: "sumora" }, gaps: Record<string, number> = {}) => ({ name, ok: true, conv, pc: { status: "x" }, gaps });
+  const all = [C("YUMA2"), C("YUMA3"), C("YUMA4"), C("YUMA5")];
+  const k = convKeyOf(all[2], all);
+  ok("会話の鍵: 全部同じ → '-'（会話を鍵に足さない）", k.key === "-", k.why);
+  ok("会話の鍵: 名前・id は効く所に入らない", convCtxHash({ ...C("YUMA4"), conv: { account: "sumora", customer_name: "YUMA4", id: "x" } }) === convCtxHash({ ...C("YUMA5"), conv: { account: "sumora", customer_name: "YUMA5", id: "y" } }));
+  const k2 = convKeyOf(C("YUMA", { account: "sumora" }, { deal_outcomes: 3 }), all);
+  ok("会話の鍵: 線で隠せない行がある会話 → 会話の指紋を鍵に", !!k2.key && k2.key !== "-", k2.why);
+  ok("会話の鍵: 読めない → null（使い回さない）", convKeyOf({ name: "YUMA4", ok: false, conv: null, pc: null, gaps: {}, why: "x" }, all).key === null);
+  const b = { problemHash: "h", stage: "brain" as const, scopeKey: "s", toolKey: "t", cfgHash: "c", model: "m", kbKey: "k", dbKey: "d" };
+  ok("鍵: 会話が効かない（'-'）時は旧の鍵と同じ＝今までの置き場を使える", reuseKey({ ...b, convKey: "-" }) === reuseKey(b) && reuseKey({ ...b, convKey: "abc" }) !== reuseKey(b));
+}
 
 // 終わりの数え（上の非同期の指紋のテストの後で出す）

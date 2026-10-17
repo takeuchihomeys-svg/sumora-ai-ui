@@ -169,8 +169,41 @@ export function decideWhen(o: { when: When; estUsd: number; gate?: boolean; now:
 
 // ─── 6. 前の結果の使い回し ─────────────────────────────────────────────
 /** 問題の結果の鍵＝この問題が使う物（問題の hash・段・効くファイルの中身の鍵・試験の道具の鍵・構成・モデル・紐付く知見の版・その段が読む DB の表の指紋） */
-export function reuseKey(o: { problemHash: string; stage: "brain" | "draft"; scopeKey: string; toolKey: string; cfgHash: string; model: string; kbKey: string; dbKey: string }): string {
-  return createHash("sha256").update(JSON.stringify([o.problemHash, o.stage, o.scopeKey, o.toolKey, o.cfgHash, o.model, o.kbKey, o.dbKey])).digest("hex").slice(0, 16);
+export function reuseKey(o: { problemHash: string; stage: "brain" | "draft"; scopeKey: string; toolKey: string; cfgHash: string; model: string; kbKey: string; dbKey: string; convKey?: string }): string {
+  // 2026-10-17 ③: 会話の鍵は「会話の違いが答えに効く」時だけ足す（効かない＝"-"・付けない時は旧の鍵と同じ＝今までの置き場をそのまま使える）
+  const base = [o.problemHash, o.stage, o.scopeKey, o.toolKey, o.cfgHash, o.model, o.kbKey, o.dbKey];
+  return createHash("sha256").update(JSON.stringify(o.convKey && o.convKey !== "-" ? [...base, `conv:${o.convKey}`] : base)).digest("hex").slice(0, 16);
+}
+
+// ─── 10/17 ③ 会話の違いが答えに効くか（作る人と確かめる人で結果を分け合う） ─────────────
+/**
+ * 試験の会話（YUMA2〜5・YUMA）の「答えに効く所」の指紋。試験が問題ごとに書き直す所（条件の行の PC_FIELDS・通・台帳の写し）と、
+ *   名前・id・時刻（名前は maskPII で伏せてから LLM に渡す・id は録音の鍵でも伏せる）は入れない。残り＝会話の行・条件の行の効く欄と、
+ *   線（REPLAY_FLOOR）で隠せない会話ごとの表の件数（deal_outcomes・outcome_events・conversation_stage_history）。
+ *   2026-10-17 確かめた: YUMA2〜5 の会話の行・条件の行で違うのは id・名前・line_user_id・時刻だけ・残りの表は全部0
+ */
+export const CONV_CTX_FIELDS = {
+  conversations: ["account", "is_post_apply", "is_hot", "is_flagged", "auto_send_enabled", "conversation_direction", "acquisition_source", "line_source_type", "send_blocked_reason", "brain_strategy", "line_status", "screening_last_status"],
+  property_customers: ["status", "priority", "assignee", "area", "max_rent", "layout", "property_memo", "account", "additional_conditions", "raw_format_text", "exclusion_areas", "town_names", "adjacent_ok", "area_normalized", "structure_types", "condition_summary", "requirement_strength", "profile_label", "parent_customer_id", "itandi_update_days", "rp_update_days", "format_received"],
+  gapTables: ["deal_outcomes", "outcome_events", "conversation_stage_history"],
+} as const;
+export type ConvCtx = { name: string; ok: boolean; conv: Record<string, unknown> | null; pc: Record<string, unknown> | null; gaps: Record<string, number>; why?: string };
+export function convCtxHash(c: ConvCtx): string | null {
+  if (!c.ok) return null;
+  const pick = (r: Record<string, unknown> | null, ks: readonly string[]) => ks.map((k) => [k, r?.[k] ?? null]);
+  return createHash("sha256").update(JSON.stringify([pick(c.conv, CONV_CTX_FIELDS.conversations), pick(c.pc, CONV_CTX_FIELDS.property_customers), CONV_CTX_FIELDS.gapTables.map((t) => [t, c.gaps[t] ?? 0])])).digest("hex").slice(0, 10);
+}
+/**
+ * 会話の鍵: 今の会話の指紋が試験の会話（YUMA2〜5）全部と同じ＝会話の違いは答えに効かない → "-"（鍵に足さない・どの会話の結果も使い回す）／
+ *   違う（線で隠せない行がある・効く欄が違う）→ 今の会話の指紋（同じ指紋の会話の結果だけ使い回す）／読めない → null（使い回さない）
+ */
+export function convKeyOf(cur: ConvCtx, all: ConvCtx[]): { key: string | null; why: string } {
+  const h = convCtxHash(cur);
+  if (!h) return { key: null, why: `会話 ${cur.name} の効く所が読めない（${cur.why ?? ""}）→ 使い回さない` };
+  const hs = all.map((c) => ({ name: c.name, h: convCtxHash(c) }));
+  const diff = hs.filter((x) => x.h !== h);
+  if (!diff.length) return { key: "-", why: `会話の違いは答えに効かない（${hs.map((x) => x.name).join("・")} の会話の行・条件の行の効く欄・線で隠せない表が同じ）＝別の会話・別の作業ツリーの結果も使う` };
+  return { key: h, why: `会話 ${cur.name} は ${diff.map((x) => x.name).join("・")} と効く所が違う → 会話も鍵に（同じ指紋の会話の結果だけ使う）` };
 }
 // 2026-10-17 穴③（確かめる人）: 使い回しの鍵に DB の中身が入っていなかった（ブレインが毎回読む ai_reply_knowledge・ai_prompt_rules 等を変えても前の結果を使っていた）。
 //   表ごとの指紋（件数・最終の時刻・小さい表は中身の hash）を試験の始めに1回読み（exam-brain-io.ts の readDbFingerprint・読むだけ）、段の鍵に足す
@@ -222,6 +255,102 @@ export function estimateUsd(items: PlanItem[], o: { peak?: boolean; baselineRuns
   const baseline = (o.baselineRuns ?? 0) * UNIT_USD.brain;
   const k = o.peak ? UNIT_USD.peakRatio : 1;
   return { now: now * k, baseline: baseline * k, total: (now + baseline) * k };
+}
+
+// ─── 10/17 ① 2段（直している途中は小さく・最後に1回だけ仕上げ） ─────────────────────
+/**
+ * 竹内さん 10/17「1 2 3 順に改善」: 試験の費用の8割はブレイン本体で、作る人が直しの途中で何度も試験を回す（1日 28〜63回）のが大きい。
+ *   直しの途中の確かめ＝小さな確かめ（関係する5〜8問だけ・繰り返し最小）、直しが止まって小さな確かめが通ったら1回だけ仕上げ（選んだ問題全部＝今の --plan の選び）。
+ *   off＝旧（毎回選んだ問題全部）
+ */
+export type Phase = "small" | "final" | "off";
+export const SMALL_N = { min: 5, max: 8 };
+/** 小さな確かめの繰り返しの上限（1回目が前と違った問題だけ2回目＝同じ向きか割れたかは分かる） */
+export const SMALL_MAX_REPS = 2;
+/** 小さな確かめの順（小さいほど先）: 名指し → 前に落ちた → 直した所に近い（近さの大きい順）→ お手本・竹内さんの番 → 残り */
+export function smallRank(why: string[]): { tier: number; sim: number } {
+  const has = (re: RegExp) => why.some((w) => re.test(w));
+  const sims = why.flatMap((w) => [...w.matchAll(/[（(]([01]\.\d+)/g)].map((m) => Number(m[1]))).filter((x) => Number.isFinite(x));
+  const sim = sims.length ? Math.max(...sims) : 0;
+  if (has(/名指し/)) return { tier: 0, sim };
+  if (has(/前に落ちた/)) return { tier: 1, sim };
+  if (has(/差分の言葉に近い|知見 .{0,12}を(入れた|変えた|退役した)|差分で当たった知見|知見 .{0,12}に近い/)) return { tier: 2, sim };
+  if (has(/お手本|竹内さんの番/)) return { tier: 3, sim };
+  return { tier: 4, sim };
+}
+/** 小さな確かめの問題: 名指しは全部・残りは順に max まで（同じ段の中は近さの大きい順・元の順） */
+export function pickSmall(picks: Pick[], o: { max?: number } = {}): Pick[] {
+  const max = o.max ?? SMALL_N.max;
+  const r = picks.map((p, i) => ({ p, i, ...smallRank(p.why) })).sort((a, b) => a.tier - b.tier || b.sim - a.sim || a.i - b.i);
+  const named = r.filter((x) => x.tier === 0);
+  const rest = r.filter((x) => x.tier !== 0).slice(0, Math.max(0, max - named.length));
+  const keep = new Set([...named, ...rest].map((x) => x.p.id));
+  return picks.filter((p) => keep.has(p.id));
+}
+export type SmallRecord = { at: string; label: string; phase: Phase; keys: string; clean: boolean; ids: string[] };
+/**
+ * 小さな確かめか仕上げか: 明示（--phase）＞ 最後の関所（gate）＝仕上げ ＞ 選んだ問題が max 問以下＝仕上げ（小さな確かめと同じ）＞
+ *   同じ版（効くファイル・道具・構成・DB の鍵が同じ）の小さな確かめが前と比べて悪化なしで通っている＝直しが止まった → 仕上げ ＞ それ以外＝小さな確かめ
+ */
+export function decidePhase(o: { explicit?: string; gate?: boolean; pickCount: number; keys: string; history: SmallRecord[]; max?: number }): { phase: Phase; why: string } {
+  const e = (o.explicit ?? "").trim().toLowerCase();
+  if (e === "off" || e === "old") return { phase: "off", why: "旧のやり方（--phase=off／EXAM_PHASE=off＝毎回選んだ問題全部）" };
+  if (e === "small") return { phase: "small", why: "--phase=small" };
+  if (e === "final") return { phase: "final", why: "--phase=final" };
+  if (o.gate) return { phase: "final", why: "最後の関所＝仕上げ" };
+  if (o.pickCount <= (o.max ?? SMALL_N.max)) return { phase: "final", why: `選んだ問題が ${o.pickCount}問（${o.max ?? SMALL_N.max}問以下）＝小さな確かめと同じ＝仕上げ` };
+  const same = o.history.filter((h) => h.phase === "small" && h.keys === o.keys).sort((a, b) => b.at.localeCompare(a.at))[0];
+  if (same?.clean) return { phase: "final", why: `同じ版の小さな確かめ（${same.label}・${same.ids.length}問）が悪化なしで通った＝直しが止まった → 仕上げ` };
+  if (same) return { phase: "small", why: `同じ版の小さな確かめ（${same.label}）に悪化があった → まだ直しの途中＝小さな確かめ` };
+  return { phase: "small", why: "直しの途中（この版の小さな確かめがまだ無い）＝小さな確かめ。通ったら同じ命令でもう一度＝仕上げ" };
+}
+
+// ─── 10/17 ② 1日の上限（試験 env の DeepSeek＋Claude・JST の日） ─────────────────────
+export const DAILY_CAP_DEFAULT_USD = 10;
+/** EXAM_DAILY_CAP_USD（既定 10・off/0 で無し）。本番（VERCEL_ENV=production）には付けない＝null */
+export function dailyCapUsd(env: Record<string, string | undefined>): number | null {
+  if (env.VERCEL_ENV === "production") return null;
+  const raw = String(env.EXAM_DAILY_CAP_USD ?? "").trim().toLowerCase();
+  if (raw === "off" || raw === "0" || raw === "none") return null;
+  const n = Number(raw);
+  return raw && Number.isFinite(n) && n > 0 ? n : DAILY_CAP_DEFAULT_USD;
+}
+/** JST の日の始まり（UTC の Date）。夜中の予約の実行は実行した日の JST に数える */
+export function jstDayStart(d: Date): Date { const j = new Date(d.getTime() + 9 * 3600_000); return new Date(Date.UTC(j.getUTCFullYear(), j.getUTCMonth(), j.getUTCDate()) - 9 * 3600_000); }
+/** 夜中の予約の時刻（タスクスケジューラ SumoraExamNight が --run-queue を流す JST 1:40）。今より後の一番近い 1:40 */
+export const NIGHT_RUN_JST_MIN = 100;
+export function nextNightRun(d: Date): Date {
+  const t = new Date(jstDayStart(d).getTime() + NIGHT_RUN_JST_MIN * 60_000);
+  return t.getTime() > d.getTime() ? t : new Date(t.getTime() + 86_400_000);
+}
+/** 守る線（上限を超えても今流す）: 名指し・前に落ちた・竹内さんのお手本（竹内さんの番も同じ削らない札） */
+export function isProtected(why: string[]): boolean { return why.some((w) => /名指し|前に落ちた|お手本|竹内さんの番/.test(w)); }
+/**
+ * 上限の分け方: 今日の使用額＋この実行の見込み ≤ 上限 → 全部今／超える → 守る線を先に今（守る線だけでも超えるなら、今は流さず全部夜中）・残りを夜中の予約に回す（止めて終わりにしない）。
+ *   estOf は問題の組の見込み（$）
+ */
+export function capSplit(o: { ids: string[]; whyOf: (id: string) => string[]; estOf: (ids: string[]) => number; usedUsd: number; cap: number | null; force?: boolean }): {
+  mode: "off" | "ok" | "split" | "night" | "force"; now: string[]; later: string[]; estNow: number; estLater: number; why: string;
+} {
+  const all = o.estOf(o.ids);
+  if (o.cap === null) return { mode: "off", now: o.ids, later: [], estNow: all, estLater: 0, why: "1日の上限なし（EXAM_DAILY_CAP_USD=off）" };
+  const left = o.cap - o.usedUsd;
+  if (o.usedUsd + all <= o.cap) return { mode: "ok", now: o.ids, later: [], estNow: all, estLater: 0, why: `収まる（今日 $${o.usedUsd.toFixed(2)}＋見込み $${all.toFixed(2)} ≤ 上限 $${o.cap}）` };
+  if (o.force) return { mode: "force", now: o.ids, later: [], estNow: all, estLater: 0, why: `上限を超えるが --over-cap で全部今（今日 $${o.usedUsd.toFixed(2)}＋見込み $${all.toFixed(2)} ＞ 上限 $${o.cap}）` };
+  const prot = o.ids.filter((id) => isProtected(o.whyOf(id)));
+  const rest = o.ids.filter((id) => !prot.includes(id));
+  const ep = o.estOf(prot);
+  if (prot.length && ep <= left) return { mode: "split", now: prot, later: rest, estNow: ep, estLater: o.estOf(rest), why: `上限を超える（今日 $${o.usedUsd.toFixed(2)}＋見込み $${all.toFixed(2)} ＞ $${o.cap}）→ 守る線 ${prot.length}問（$${ep.toFixed(2)}）を今・残り ${rest.length}問を夜中に` };
+  return { mode: "night", now: [], later: o.ids, estNow: 0, estLater: all, why: `上限を超える（今日 $${o.usedUsd.toFixed(2)}・残り $${Math.max(0, left).toFixed(2)}${prot.length ? `・守る線だけでも $${ep.toFixed(2)}` : "・守る線の問題が無い"}）→ 全部を夜中に（今すぐなら --over-cap）` };
+}
+
+// ─── 10/17 2倍の時間（DeepSeek は平日 JST 10〜13・15〜19 が2倍） ───────────────────────
+/** 2倍の時間の警告と、急がない物（仕上げ）を夜中に回すか。小さな確かめは急ぐ（直しの途中）＝警告だけ */
+export function peakAdvice(o: { now: Date; phase: Phase; gate?: boolean; when: When }): { peak: boolean; defer: boolean; warn: string | null } {
+  const peak = isDeepseekPeakAt(o.now);
+  if (!peak) return { peak, defer: false, warn: null };
+  const defer = o.when === "auto" && !o.gate && o.phase === "final";
+  return { peak, defer, warn: `⚠ 今は DeepSeek の2倍の時間（平日 JST 10〜13・15〜19）。${defer ? "仕上げは急がない＝夜中に回す（今なら --when=now）" : o.phase === "small" ? "小さな確かめは今流す（急がない物は 13:00〜15:00 か夜中に）" : "急がない物は 13:00〜15:00 か夜中に"}` };
 }
 
 // ─── 7. 採点（決まりで決まる所は AI を呼ばない） ─────────────────────────

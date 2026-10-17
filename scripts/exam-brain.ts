@@ -19,6 +19,10 @@
 //   --max-reps=3・--no-early-stop・--stop-worse=3・--no-reuse・--judge=lazy|full（既定 lazy）・--judge-prefix=as-is|rubric（既定 as-is）
 //   --model=pro|flash|auto（既定 pro・auto は model-check で道が同じだった型だけ flash）・--replay=strict・--select-n=12・--only=（範囲を絞る）
 //   -- の後ろは brain-exam.ts にそのまま渡す
+// 10/17 竹内さん「1 2 3 順に改善」「1日に上限は10ドル」:
+//   --phase=auto|small|final|off（既定 auto・EXAM_PHASE）: 直しの途中は小さな確かめ（5〜8問・繰り返し2回まで）→ 同じ版で通ったら仕上げ（選んだ問題全部）。off＝旧
+//   EXAM_DAILY_CAP_USD=10（off で無し）: 今日（JST）の試験 env の費用＋見込みが超えたら守る線を今・残りを夜中（--over-cap で全部今）
+//   2倍の時間（平日 JST 10〜13・15〜19）は警告・仕上げは夜中に。EXAM_REUSE_CONV=off＝会話を見ずに使い回す（旧）
 import { createClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync } from "node:fs";
@@ -27,14 +31,17 @@ import { execSync } from "node:child_process";
 import {
   mergePicks, firstReps, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse, dbKeyOf,
   modelOf, estimateUsd, DEFAULT_STOP, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
+  decidePhase, pickSmall, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
   planCleanup, runCleanup, readDbFingerprint, dbTablesOf, EXAM_BRAIN_DIR, MODEL_CHECK_FILE, RESULTS_DIR, type AnyProblem, type LedgerLine,
+  readPhaseLog, appendPhaseLog, readDailySpend, readConvContexts,
 } from "./lib/exam-brain-io";
 import { decideStageFromDiff } from "./lib/exam-scope";
 import { problemHash, examConfig, configHash } from "./lib/brain-exam-baseline";
 import { flakeVerdict, readObs, FLAKE_DIR } from "./lib/exam-flake";
+import { isDeepseekPeakAt } from "../app/lib/llm-price";
 
 const argv = process.argv.slice(2);
 const dd = argv.indexOf("--");
@@ -47,6 +54,8 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", (process.env
 const CONV = arg("conv");
 const MAX_REPS = Math.max(1, Number(arg("max-reps", "3")) || 3);
 const GATE = flag("gate");
+// 10/17 ① 小さな確かめ／仕上げ（auto＝試験のブレインが決める・off＝旧＝毎回選んだ問題全部）。既定は EXAM_PHASE で変えられる
+const PHASE_ARG = arg("phase") || process.env.EXAM_PHASE || "auto";
 const JUDGE = arg("judge", "lazy") === "full" ? "full" : "lazy";
 // 2026-10-17 確かめ: rubric の並べ替えは判定の答えを変える（q113 の下書き 2/3→0/3）＝既定は旧の並び（as-is）。rubric は別に比べてから
 const JUDGE_PREFIX = arg("judge-prefix", "as-is") === "rubric" ? "rubric" : "as-is";
@@ -106,6 +115,10 @@ type Plan = {
   keys: { brain: string; draft: string; tool: string }; cfgHash: string; ragNote: string;
   /** DB の表の指紋（段ごと）。null＝読めない表がある＝その段は使い回さない・使い回しの置き場にも書かない */
   db: { parts: DbPart[] | null; brain: string | null; draft: string | null };
+  /** 10/17 ① 小さな確かめ／仕上げ／旧。allPicks＝仕上げで流す問題（今の選び全部）・versionKey＝同じ版か（効くファイル・道具・構成・DB の鍵） */
+  phase: Phase; phaseWhy: string; allPicks: Pick[]; repsCap: number; versionKey: string;
+  /** 10/17 ③ 会話の鍵（"-"＝会話の違いは答えに効かない・null＝読めない＝使い回さない） */
+  conv: { key: string | null; why: string };
 };
 async function makePlan(label: string): Promise<Plan> {
   const { spec, full } = loadExamProblems();
@@ -132,13 +145,29 @@ async function makePlan(label: string): Promise<Plan> {
   let kbNow: Record<string, string> | null = null;
   try { const st = await import("./lib/exam-rag-store"); links = await st.loadLinks(sb) as never; const { kbHashMap } = await import("./lib/exam-rag-run"); kbNow = kbHashMap(await st.loadKbRows(sb)); } catch (e) { log(`（知見の紐付けが読めない: ${String(e).slice(0, 100)}）`); }
   const weak = GATE ? {} : weakSpotProblems(links);
-  const picks = mergePicks(scope as PlanProblem[], rag, { gate: GATE, named: list("name"), weakSpotProblems: weak });
+  const allPicks = mergePicks(scope as PlanProblem[], rag, { gate: GATE, named: list("name"), weakSpotProblems: weak });
   // 2. 何回・6. 使い回し・8. モデル
   const keys = workingScopeKeys(".");
   // 6. 使い回しの鍵に DB の中身（穴③）: ブレインと下書きが読む表の指紋を1回だけ読む（読むだけ）。--no-reuse の時は読まない
   const dbParts = flag("no-reuse") ? null : await readDbFingerprint(sb).catch((e) => { log(`（DB の指紋が読めない → 使い回さない: ${String(e).slice(0, 100)}）`); return null; });
   const db = { parts: dbParts, brain: dbKeyOf(dbParts, dbTablesOf("brain")), draft: dbKeyOf(dbParts, dbTablesOf("draft")) };
   const cfgHash = configHash(examConfig(process.env, { judge: JUDGE, judgePrefix: JUDGE_PREFIX, layer: "prod", ledger: true, repeat: MAX_REPS, exhaustedRule: EXHAUSTED_RULE }));
+  // 10/17 ① 小さな確かめか仕上げか（同じ版＝効くファイル・道具・構成・DB の鍵が同じ）
+  const versionKey = [keys.brain, keys.draft, keys.tool, cfgHash, db.brain ?? "-", db.draft ?? "-"].join("/");
+  const ph = decidePhase({ explicit: PHASE_ARG, gate: GATE, pickCount: allPicks.length, keys: versionKey, history: readPhaseLog() });
+  const picks = ph.phase === "small" ? pickSmall(allPicks) : allPicks;
+  const repsCap = ph.phase === "small" && !arg("max-reps") ? Math.min(MAX_REPS, SMALL_MAX_REPS) : MAX_REPS;
+  // 10/17 ③ 会話の違いが答えに効くか（効かない＝別の会話・別の作業ツリーの結果も使う・効く＝会話も鍵に）。EXAM_REUSE_CONV=off＝旧（会話を見ない）
+  let conv: Plan["conv"] = { key: "-", why: "会話を見ない（EXAM_REUSE_CONV=off＝旧）" };
+  if (process.env.EXAM_REUSE_CONV !== "off" && !flag("no-reuse")) {
+    try {
+      const c = await readConvContexts(sb, CONV);
+      conv = convKeyOf(c.cur, c.all);
+      // --conv=auto はどの会話になるか分からない＝全部が同じ時だけ使い回す
+      if (CONV.toLowerCase() === "auto" && conv.key !== "-") conv = { key: null, why: `--conv=auto で試験の会話の効く所が揃っていない → 使い回さない（${conv.why}）` };
+    }
+    catch (e) { conv = { key: null, why: `会話の効く所が読めない → 使い回さない（${String(e).slice(0, 100)}）` }; }
+  }
   const mc = readModelCheck();
   const modelMode = (arg("model", "pro") as "pro" | "flash" | "auto");
   const items: Plan["items"] = new Map();
@@ -147,12 +176,13 @@ async function makePlan(label: string): Promise<Plan> {
     const model = modelOf(p as PlanProblem, { mode: modelMode, flashOkTypes: mc.okTypes, gate: GATE });
     const modelLabel = model === "flash" ? `deepseek-all:${FLASH_MODEL}` : "deepseek-all";
     const fv = flakeVerdict(readObs(p.id), { problemHash: problemHash(p), model: modelLabel });
-    const reps = firstReps(fv.verdict, MAX_REPS, { gate: GATE });
+    const reps = firstReps(fv.verdict, repsCap, { gate: GATE });
     const hash = problemHash(p);
     const kbKey = kbKeyOf(links[p.id], kbNow);
-    const key = reuseKey({ problemHash: hash, stage: "brain", scopeKey: keys.brain, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: db.brain ?? "-" });
-    const draftKey = reuseKey({ problemHash: hash, stage: "draft", scopeKey: keys.draft, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: db.draft ?? "-" });
-    const reuse = !flag("no-reuse") && !!db.brain && canReuse(readReuse(p.id, key), key, reps);
+    const convKey = conv.key ?? "-";
+    const key = reuseKey({ problemHash: hash, stage: "brain", scopeKey: keys.brain, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: db.brain ?? "-", convKey });
+    const draftKey = reuseKey({ problemHash: hash, stage: "draft", scopeKey: keys.draft, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: db.draft ?? "-", convKey });
+    const reuse = !flag("no-reuse") && !!db.brain && conv.key !== null && canReuse(readReuse(p.id, key), key, reps);
     items.set(p.id, { id: p.id, reps, draft: false, reuse, model, why: pk.why, stage1: "brain", draftWhy: "", flake: fv.verdict, flakeWhy: fv.why, key, draftKey, hash });
   }
   // 3. どこまで（下書きの見込み）
@@ -161,14 +191,41 @@ async function makePlan(label: string): Promise<Plan> {
   const draftMode: "all" | "if-changed" | "none" = GATE || cls === "draft" || cls === "both" ? "all" : dAll.ids.length ? "if-changed" : "none";
   const draftPlan = { ids: draftMode === "all" ? dAll.ids : [], why: draftMode === "all" ? dAll.why : "ブレインの判断が前（main）と変わった問題だけ（1段目の後に決める）", mode: draftMode };
   for (const id of draftPlan.ids) { const it = items.get(id); if (it) { it.draft = true; it.draftWhy = draftPlan.why; } }
-  return { label, cls, clsNote, picks, items, probs, draftPlan, keys, cfgHash, ragNote, db };
+  return { label, cls, clsNote, picks, items, probs, draftPlan, keys, cfgHash, ragNote, db, phase: ph.phase, phaseWhy: ph.why, allPicks, repsCap, versionKey, conv };
 }
-function printPlan(pl: Plan, now: Date) {
+/** 見込みの値段: 旧は「安い時間（JST 1:30〜9:30）の外は混雑の値段」で数えていた。小さな確かめ・仕上げは本当の値段（2倍の時間だけ高い・llm-price の isDeepseekPeakAt） */
+const pricePeak = (pl: Plan, d: Date) => pl.phase === "off" ? !isCheapWindow(d) : isDeepseekPeakAt(d);
+/** この実行の見込み（今の側＋判断が変わった問題の下書き 最大）。ids を渡すとその問題だけ */
+function planEst(pl: Plan, peak: boolean, ids?: string[]): number {
+  const its = [...pl.items.values()].filter((x) => !ids || ids.includes(x.id));
+  const ifChanged = pl.draftPlan.mode === "if-changed" ? its.filter((x) => !x.draft && !x.reuse && draftEligibleOf(pl, x.id)).length : 0;
+  return estimateUsd(its, { peak }).now + ifChanged * UNIT_USD.draftExtra * (peak ? UNIT_USD.peakRatio : 1);
+}
+type Budget = { used: { usd: number; rows: number } | null; usedErr?: string; cap: number | null; split: ReturnType<typeof capSplit> | null };
+async function budgetOf(pl: Plan, peak: boolean, now: Date): Promise<Budget> {
+  const cap = dailyCapUsd(process.env);
+  if (cap === null) return { used: null, cap, split: capSplit({ ids: [...pl.items.keys()], whyOf: () => [], estOf: (ids) => planEst(pl, peak, ids), usedUsd: 0, cap: null }) };
+  const used = await readDailySpend(sb, now).catch((e) => { return { err: String(e instanceof Error ? e.message : e).slice(0, 120) }; });
+  // 読めない時は安全側＝上限ちょうどまで使った物として数える（守る線だけ今・残りは夜中）
+  const usedUsd = "err" in used ? cap : used.usd;
+  const split = capSplit({ ids: [...pl.items.keys()], whyOf: (id) => pl.items.get(id)?.why ?? [], estOf: (ids) => planEst(pl, peak, ids), usedUsd, cap, force: flag("over-cap") });
+  return "err" in used ? { used: null, usedErr: used.err, cap, split } : { used, cap, split };
+}
+function printPlan(pl: Plan, now: Date, x: { budget?: Budget; peakWarn?: string | null; when?: string } = {}) {
   const its = [...pl.items.values()];
-  const peak = !isCheapWindow(now);
+  const peak = pricePeak(pl, now);
   const est = estimateUsd(its, { peak });
   const ifChangedMax = pl.draftPlan.mode === "if-changed" ? its.filter((x) => !x.draft && draftEligibleOf(pl, x.id)).length : 0;
   log(`\n=== 試験のブレインの計画（${pl.label}・${jst(now)} JST）===`);
+  if (x.peakWarn) log(x.peakWarn);
+  log(`形: ${pl.phase === "small" ? `小さな確かめ（${pl.picks.length}/${pl.allPicks.length}問・繰り返し ${pl.repsCap}回まで）` : pl.phase === "final" ? `仕上げ（選んだ問題全部 ${pl.allPicks.length}問）` : `旧（選んだ問題全部 ${pl.allPicks.length}問）`} — ${pl.phaseWhy}${pl.phase === "small" ? `／仕上げの時に足す ${pl.allPicks.length - pl.picks.length}問` : ""}`);
+  log(`使い回し（作る人と確かめる人で分け合う・置き場 ${EXAM_BRAIN_DIR}）: ${pl.conv.why}`);
+  if (x.budget) {
+    const b = x.budget, s = b.split;
+    log(`1日の上限: ${b.cap === null ? "なし（EXAM_DAILY_CAP_USD=off）" : `今日の使用額 ${b.used ? `$${b.used.usd.toFixed(2)}（JST ${jst(now).slice(5, 10)}・試験 env の DeepSeek＋Claude ${b.used.rows}行）` : `読めない（${b.usedErr ?? ""}）＝上限まで使った物として数える`}・上限 $${b.cap}・この実行の見込み $${((s?.estNow ?? 0) + (s?.estLater ?? 0)).toFixed(2)}`}${s ? ` → ${s.why}` : ""}`);
+    if (s && s.later.length) log(`  夜中に回す ${s.later.length}問（JST ${jst(nextNightRun(now)).slice(5)} の --run-queue）: ${s.later.join(",")}`);
+  }
+  if (x.when) log(`いつ: ${x.when}`);
   log(`変わった所: ${pl.cls === "both" ? "ブレインと下書きの両方" : pl.cls === "brain" ? "ブレインだけ" : pl.cls === "draft" ? "下書きだけ" : "試験に効く変更なし"}${pl.clsNote ? `（${pl.clsNote}）` : ""}${pl.ragNote ? `・選び: ${pl.ragNote}` : ""}`);
   log(`効く所の鍵: ブレイン ${pl.keys.brain}・下書き ${pl.keys.draft}・試験の道具 ${pl.keys.tool}・構成 ${pl.cfgHash}・判定 ${JUDGE}/${JUDGE_PREFIX}`);
   const bad = (pl.db.parts ?? []).filter((x) => !x.ok);
@@ -176,8 +233,8 @@ function printPlan(pl: Plan, now: Date) {
   log(`問題 ${its.length}問（使い回し ${its.filter((x) => x.reuse).length}・揺れる ${its.filter((x) => x.flake === "flaky").length}・flash ${its.filter((x) => x.model === "flash").length}）`);
   for (const it of its) log(`  ${it.reuse ? "♻" : "▶"} ${it.id} [${pl.probs.get(it.id)?.type}] 回 ${it.reps}${it.flake === "flaky" ? "（揺れる）" : ""}・段 ブレイン${it.draft ? "→下書き" : pl.draftPlan.mode === "if-changed" && draftEligibleOf(pl, it.id) ? "（判断が変われば下書き）" : ""}${it.model === "flash" ? "・flash" : ""}${it.reuse ? "・前の結果を使う（使う物が同じ）" : ""} ← ${it.why.slice(0, 3).join("／")}`);
   log(`段: 1段目＝全部をブレインの判断まで（stage=brain）／2段目＝${pl.draftPlan.mode === "all" ? `下書きまで ${pl.draftPlan.ids.length}問（${pl.draftPlan.why}）` : pl.draftPlan.mode === "if-changed" ? `判断が前と変わった問題だけ下書きまで（最大 ${ifChangedMax}問）` : "下書きなし"}`);
-  log(`途中で止める: ${flag("no-early-stop") ? "しない" : `最初の ${DEFAULT_STOP.minSeen}問以上で前より悪い問題が ${Number(arg("stop-worse", String(DEFAULT_STOP.worseN)))}問（揺れる問題は数えない）`}・前と違った問題は確かめに ${MAX_REPS}回まで足す（はっきり良い時は良くなった・悪くなった問題だけ）`);
-  log(`見込みの費用（今の側・${peak ? "混雑時の値段込み" : "安い時間"}）: 約 $${est.now.toFixed(2)}＋判断が変わった問題の下書き 最大 $${(ifChangedMax * 0.015 * (peak ? 1.6 : 1)).toFixed(2)}／前（main）の取り置きが無い問題は main でも回す（1問 約 $0.03・夜中の --warm-main で作っておけば0）`);
+  log(`途中で止める: ${flag("no-early-stop") ? "しない" : `最初の ${DEFAULT_STOP.minSeen}問以上で前より悪い問題が ${Number(arg("stop-worse", String(DEFAULT_STOP.worseN)))}問（揺れる問題は数えない）`}・前と違った問題は確かめに ${pl.repsCap}回まで足す（はっきり良い時は良くなった・悪くなった問題だけ）`);
+  log(`見込みの費用（今の側・${peak ? "混雑時の値段込み" : "通常の値段"}）: 約 $${est.now.toFixed(2)}＋判断が変わった問題の下書き 最大 $${(ifChangedMax * 0.015 * (peak ? 1.6 : 1)).toFixed(2)}／前（main）の取り置きが無い問題は main でも回す（1問 約 $0.03・夜中の --warm-main で作っておけば0）`);
 }
 function draftEligibleOf(pl: Plan, id: string): boolean { const p = pl.probs.get(id); return !!p && [...(p.accept ?? []), ...(((p.acceptWhen as { searchExhausted?: string[] } | undefined)?.searchExhausted) ?? [])].some((a) => !a.startsWith("AIX")); }
 function readModelCheck(): { okTypes: Set<string>; byType: Record<string, { n: number; samePath: number; proOk: number; flashOk: number }> } {
@@ -197,7 +254,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   for (const id of ids) {
     const it = pl.items.get(id)!;
     const key = stage === "brain" ? it.key : it.draftKey;
-    const e = flag("no-reuse") || !(stage === "brain" ? pl.db.brain : pl.db.draft) ? null : readReuse(id, key);
+    const e = flag("no-reuse") || pl.conv.key === null || !(stage === "brain" ? pl.db.brain : pl.db.draft) ? null : readReuse(id, key);
     if (!canReuse(e, key, it.reps)) continue;
     const rows = e!.rows.filter((r) => !have.has(`${r.id}#${r.rep}`)).map((r) => ({ ...r, label, reusedFrom: e!.label }));
     if (rows.length) { mkdirSync(RESULTS_DIR, { recursive: true }); appendFileSync(join(RESULTS_DIR, `${label}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n"); }
@@ -235,10 +292,10 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   if (res.stopped) return res;
   // 2. 確かめの回: 1回目が前と違った問題（揺れか本当の変化か）を max 回まで。はっきり良い時は良くなった・悪くなった問題だけ
   const d = stopDecision(res.cmps, flaky);
-  const conf = confirmTargets(res.cmps, new Set(ids.filter((id) => pl.items.get(id)!.reps >= MAX_REPS)), { clearlyGood: d.action === "fewer" });
+  const conf = pl.repsCap <= 1 ? [] : confirmTargets(res.cmps, new Set(ids.filter((id) => pl.items.get(id)!.reps >= pl.repsCap)), { clearlyGood: d.action === "fewer" });
   if (conf.length) {
-    log(`\n🔁 確かめの回（前と違った ${conf.length}問 を ${MAX_REPS}回まで${d.action === "fewer" ? "・はっきり良いので判断だけ変わった問題は省く" : ""}）: ${conf.join(",")}`);
-    for (const id of conf) pl.items.get(id)!.reps = MAX_REPS;
+    log(`\n🔁 確かめの回（前と違った ${conf.length}問 を ${pl.repsCap}回まで${pl.phase === "small" ? "・小さな確かめ＝繰り返し最小" : ""}${d.action === "fewer" ? "・はっきり良いので判断だけ変わった問題は省く" : ""}）: ${conf.join(",")}`);
+    for (const id of conf) pl.items.get(id)!.reps = pl.repsCap;
     writeReps(Object.fromEntries(ids.map((id) => [id, pl.items.get(id)!.reps])));
     const o2 = await runBrainExam(baseArgs(conf), env);
     res.baseLabels = [...new Set([...res.baseLabels, ...o2.baseLabels])]; res.mainLabels = [...new Set([...res.mainLabels, ...o2.mainLabels])];
@@ -269,7 +326,7 @@ function finishPhase(pl: Plan, ph: PhaseResult, stage: "brain" | "draft", model:
     const c = ph.cmps.find((x) => x.id === id) ?? { cmp: "nocur" as Cmp, why: "" };
     const ok = rs.filter((r) => !r.error);
     const reused = rs.some((r) => (r as Record<string, unknown>).reusedFrom);
-    if (ok.length && ok.length === rs.length && !reused && !ph.stopped && (stage === "brain" ? pl.db.brain : pl.db.draft)) writeReuse({ id, key: stage === "brain" ? it.key : it.draftKey, savedAt: new Date().toISOString(), label: ph.label, stage, model, rows: ok });
+    if (ok.length && ok.length === rs.length && !reused && !ph.stopped && pl.conv.key !== null && (stage === "brain" ? pl.db.brain : pl.db.draft)) writeReuse({ id, key: stage === "brain" ? it.key : it.draftKey, savedAt: new Date().toISOString(), label: ph.label, stage, model, rows: ok });
     if (!ok.length) continue;
     const maj = (f: (r: RowLite) => boolean) => ok.filter(f).length * 2 > ok.length;
     out.push({ at: new Date().toISOString(), label: ph.label, id, type: String(pl.probs.get(id)?.type ?? ""), stage, model: model === "flash" ? FLASH_MODEL : PRO_MODEL, head, scopeKey: stage === "brain" ? pl.keys.brain : pl.keys.draft, base: ph.baseLabels.join(",") || null,
@@ -293,19 +350,36 @@ async function runMain() {
   const label = arg("label") || `eb-${jst(now).slice(5, 10).replace("-", "")}-${Math.random().toString(36).slice(2, 6)}`;
   if (!/^[\w.-]+$/.test(label)) throw new Error(`--label は英数字・-・_ だけ: ${label}`);
   const pl = await makePlan(label);
-  printPlan(pl, now);
+  // 4. いつ（10/17: 2倍の時間は警告・急がない仕上げは夜中に）・② 1日の上限
+  const est = estimateUsd([...pl.items.values()], { peak: pricePeak(pl, now) });
+  const whenArg = (arg("when", "auto") as When);
+  const pa = peakAdvice({ now, phase: pl.phase, gate: GATE, when: whenArg });
+  let w = decideWhen({ when: whenArg, estUsd: est.now, gate: GATE, now });
+  // 小さな確かめ・仕上げ（旧でない・関所でない）: DeepSeek は2倍の時間だけ高い＝2倍の時間の外なら今（13:00〜15:00 も可）・2倍の時間の仕上げは夜中
+  if (pl.phase !== "off" && !GATE && whenArg === "auto") w = pa.defer ? { runNow: false, at: nextNightRun(now), why: "仕上げ＋2倍の時間＝夜中に予約" } : { runNow: true, at: now, why: pa.peak ? "小さな確かめ＝急ぐので今（2倍の時間）" : "2倍の時間の外＝今" };
+  const budget = w.runNow ? await budgetOf(pl, pricePeak(pl, now), now) : undefined;
+  printPlan(pl, now, { budget, peakWarn: pa.warn, when: `${w.why}${w.runNow ? "" : `（${jst(w.at)} JST から）`}` });
+  if (!budget) log("1日の上限: 予約した時（実行する日の JST）に数える");
   if (flag("plan")) { log("\n（--plan: 流さない）"); return; }
-  // 4. いつ
-  const est = estimateUsd([...pl.items.values()], { peak: !isCheapWindow(now) });
-  const w = decideWhen({ when: (arg("when", "auto") as When), estUsd: est.now, gate: GATE, now });
-  log(`いつ: ${w.why}${w.runNow ? "" : `（${jst(w.at)} JST から）`}`);
   if (!w.runNow) {
     if (flag("wait")) { log(`安い時間まで待つ（--wait）…`); while (Date.now() < w.at.getTime()) await sleep(Math.min(10 * 60_000, w.at.getTime() - Date.now() + 1000)); }
     else {
-      const f = enqueue({ label, argv: [...args.filter((a) => !/^--when=/.test(a)), "--when=now", ...(PASS.length ? ["--", ...PASS] : [])], cwd: process.cwd(), at: w.at.toISOString(), createdAt: now.toISOString(), estUsd: est.now });
-      log(`予約した: ${f}\n  安い時間に流す: npx tsx --env-file=.env.local scripts/exam-brain.ts --run-queue（タスクスケジューラ等で JST 1:40 に。今すぐなら --when=now）`);
+      const f = enqueue({ label, argv: [...args.filter((a) => !/^--(when|phase)=/.test(a)), "--when=now", ...(pl.phase !== "off" ? [`--phase=${pl.phase}`] : []), ...(PASS.length ? ["--", ...PASS] : [])], cwd: process.cwd(), at: w.at.toISOString(), createdAt: now.toISOString(), estUsd: est.now });
+      log(`予約した: ${f}\n  安い時間に流す: npx tsx --env-file=.env.local scripts/exam-brain.ts --run-queue（タスクスケジューラ SumoraExamNight が JST 1:40 に。今すぐなら --when=now）`);
       return;
     }
+  }
+  // ② 上限を超える分は夜中の予約に回す（止めて終わりにしない）。--wait で待った時はここで数える
+  const split = (budget ?? await budgetOf(pl, pricePeak(pl, new Date()), new Date())).split;
+  if (!budget && split) log(`1日の上限: ${split.why}`);
+  if (split && split.later.length) {
+    const keep = (a: string) => !/^--(when|only|name|select-q|select-n|select|types|phase|label|plan)(=|$)/.test(a);
+    const f = enqueue({ label: `${label}-n`, argv: [...args.filter(keep), `--only=${split.later.join(",")}`, "--phase=final", "--when=now", `--label=${label}-n`, ...(PASS.length ? ["--", ...PASS] : [])], cwd: process.cwd(), at: nextNightRun(now).toISOString(), createdAt: now.toISOString(), estUsd: split.estLater });
+    log(`上限: 夜中に回した ${split.later.length}問（${jst(nextNightRun(now))} JST・見込み $${split.estLater.toFixed(2)}・翌日の分として数える）: ${f}`);
+    for (const id of split.later) pl.items.delete(id);
+    pl.picks = pl.picks.filter((p) => pl.items.has(p.id));
+    pl.draftPlan.ids = pl.draftPlan.ids.filter((id) => pl.items.has(id));
+    if (!pl.items.size) { log("今流す問題は無い（全部夜中）"); return; }
   }
   let head = ""; try { head = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* */ }
   const startedAt = new Date().toISOString();
@@ -337,6 +411,12 @@ async function runMain() {
   for (const l of by("better")) log(`  ○ 良くなった ${l.id}[${l.stage}] ${l.cmpWhy}・${l.verdict ?? ""}`);
   const real = by("worse").filter((l) => l.verdict !== "flake");
   log(real.length ? "⚠ 本当の悪化か確かめていない悪化がある＝このまま入れない" : "前より悪くなった問題は無い（揺れを除く）");
+  // 10/17 ① 小さな確かめの記録（同じ版で悪化なし＝次は仕上げ）
+  if (pl.phase !== "off") {
+    const clean = !real.length && !phases.some((p) => p.stopped);
+    appendPhaseLog({ at: new Date().toISOString(), label, phase: pl.phase, keys: pl.versionKey, clean, ids: [...pl.items.keys()] });
+    if (pl.phase === "small") log(clean ? `小さな確かめが通った → 直しが終わったら同じ命令でもう一度＝仕上げ（${pl.allPicks.length}問・使う物が同じ問題は今の結果を使う）` : "小さな確かめに悪化 → 直してもう一度（小さな確かめのまま）");
+  }
   const labels = [...phases.map((p) => p.label), ...phases.flatMap((p) => p.mainLabels)];
   const sp = await spendOf(labels, startedAt).catch(() => ({ n: 0, usd: 0 }));
   const judge = phases.reduce((s, p) => { const c = readCost(p.label); return { usd: s.usd + (c?.judgeUsd ?? 0), n: s.n + (c?.judgeCalls ?? 0) }; }, { usd: 0, n: 0 });
@@ -369,6 +449,18 @@ async function warmMain() {
   const types = list("types");
   const ids = spec.filter((p) => !types.length || types.includes(p.type)).map((p) => p.id);
   const reps = Object.fromEntries(ids.map((id) => { const p = effective((full.get(id) ?? spec.find((s) => s.id === id)!) as AnyProblem); return [id, firstReps(flakeVerdict(readObs(id), { problemHash: problemHash(p), model: "deepseek-all" }).verdict, MAX_REPS, { gate: true })]; }));
+  // 10/17 ② 1日の上限: 取り置きも数える（守る線は無い＝超えるなら次の夜中に回す）
+  const cap = dailyCapUsd(process.env);
+  if (cap !== null && !flag("over-cap")) {
+    const estW = Object.values(reps).reduce((s, n) => s + n * UNIT_USD.brain, 0) * (isDeepseekPeakAt(new Date()) ? UNIT_USD.peakRatio : 1);
+    const used = await readDailySpend(sb).then((x) => x.usd).catch(() => cap);
+    if (used + estW > cap) {
+      const at = nextNightRun(new Date());
+      const f = enqueue({ label: `warm-${jst(at).slice(5, 10)}`, argv: [...args.filter((a) => !/^--when=/.test(a)), "--when=now"], cwd: process.cwd(), at: at.toISOString(), createdAt: new Date().toISOString(), estUsd: estW });
+      log(`取り置き: 今日 $${used.toFixed(2)}＋見込み $${estW.toFixed(2)} ＞ 上限 $${cap} → 次の夜中（${jst(at)} JST）に回した: ${f}`);
+      return;
+    }
+  }
   mkdirSync(join(EXAM_BRAIN_DIR, "run"), { recursive: true });
   const repsFile = resolve(join(EXAM_BRAIN_DIR, "run", `warm-${Date.now().toString(36)}.reps.json`));
   writeFileSync(repsFile, JSON.stringify(reps));
