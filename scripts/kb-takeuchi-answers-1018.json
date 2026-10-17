@@ -1,0 +1,62 @@
+[
+  {
+    "title": "【決定】支払いは一括のお振込だけ — カード払い・分割・3.24% の事実／出口の検査／手数料の一文／手本の除外を1つの関数（paymentLumpTransferOnly）で切り替える",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "竹内さん 10/16「支払いは一括の振込だけ」。9/30〜10/02 の決定（カード払いなら分割可・カード手数料3.24%）は会社の事実（credit_card）・出口の検査（company-fact-guard の3規則＋手数料が無い V16b）・AIX の出口で手数料の一文を足す（ensureCardFeeLine）・手本の除外（example-hygiene が findCompanyFactContradictionsUngated を使う）・静的な規則（line-reply-prompts の即答の事実「カード払い」・reply-context の card_pay）の6か所に広がっていた。1か所だけ直すと出口が「一括のみ」を block し続け、手本からも一括のみの実送信が外れたまま、AIX は 3.24% を足し続ける。→ paymentLumpTransferOnly()（既定 on）を全部が見る。規則に policy: card|lump を持たせ、lump では「カード払いに対応／分割可能」の断定を止め、一括のみは止めない。試験 q162（10/01 c024b7b9「一括ですよね！？」）で当時のブレインは『クレジットカード払いなら分割も可能（3.24%）』と方向を書いていた。",
+    "rationale": "会社の事実が変わった時は『事実の文』だけでなく、その事実を根拠にした出口の検査・自動で足す文・手本の除外まで同じ1つの関数で切り替える（四者同名）。そうしないと新しい正解を古い検査が止め、古い正解を手本が勧める。",
+    "context": "2026-10-18 竹内さん 10/16 の答え（知識の抜けの一覧 knowledge_gaps_20261015 の #12）。実送信 9/14 f193d13d・10/01 c024b7b9 は一括のお振込のみ。本番の ai_reply_knowledge に旧のカード払いの行が8件（2ebff076・4fffb228・01ee25c9・302fa0e3・dacdea49・2b47e26c・2b079e27・6f4317e5・1caa25eb・65d379d7・f208a13c）残る＝退役は親（DB 書き込み）。",
+    "applied_to": "app/lib/company-facts.ts（paymentLumpTransferOnly・CREDIT_CARD_FACT_LUMP）・app/lib/company-fact-guard.ts（policy・lump の2規則・findMissingCardFee）・app/lib/line-reply-prompts.ts（PAYMENT_INSTANT_FACT）・app/lib/reply-context.ts（card_pay）・app/lib/__tests__/company-facts-1016.test.ts。戻す COMPANY_FACT_PAYMENT_LUMP=off",
+    "tags": ["竹内さんの決定", "company-facts", "出口の決定論", "費用", "支払い", "四者同名", "場面:費用"]
+  },
+  {
+    "title": "【決定】会社の事実 10/16: 鍵は入居日に弊社の事務所／ライフラインは管理ツールで案内（返信では案内しない）／更新料は物件によって異なる（2年毎に1ヶ月・保証会社 年1万・火災保険 2年毎）／相場的にも好条件は同じ地域・同じ間取りで安い時だけ",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "知識の抜けの一覧（10/15）の H・L・N・O を竹内さんが答えた。会社の事実（聞かれた時だけ渡す）に key_handover・utilities_procedure・renewal_fee・rent_market_wording を足し、同時に静的な規則の食い違い（line-reply-prompts「鍵の受け取り方法 → 管理会社からの案内に従う」「ライフライン開通の手順 → 電気とガスは事前に連絡…」）を同じ線に直した。店舗の事実（ご来社での相談は受けていない）は鍵の話で当たらないよう not に鍵を入れた（事務所へ鍵を取りに行く話＝相談の来社ではない）。網の線は実物（365日のお客様の発言）で引いた: 『鍵交換』『ガス代込み』『都市ガス』『更新料なしの物件で』は当てない。",
+    "rationale": "新しい事実を足す時は、聞かれた時に渡す事実と、常に入っている静的な規則の両方を読み、食い違う古い文を同じ日に直す（片方だけ足すと古い規則が勝つ）。答えの言い方は竹内さんの実送信のまま（9/19「鍵のお渡しは弊社事務所にて行わせていただきます」・9/02「2年事に更新料としまして家賃1ヶ月分」）。",
+    "context": "2026-10-18 竹内さん 10/16 の答え。scripts/brain-exam は鍵の受け取りが申込以降で出せない（DeepSeek の線）ので単体のテスト（company-facts-1016.test.ts）で実物の文を当てた。",
+    "applied_to": "app/lib/company-facts.ts・app/lib/line-reply-prompts.ts（KEY_HANDOVER_RULE・LIFELINE_RULE）・app/lib/recommend-second-wish-gap.ts。戻す COMPANY_FACT_1016=off",
+    "tags": ["竹内さんの決定", "company-facts", "line-reply", "鍵", "ライフライン", "更新料", "家賃相場", "場面:質問"]
+  },
+  {
+    "title": "【決定】代理契約・二人入居は物件ごとに違う — まず『管理会社に確認／交渉させて頂きます』と約束し、答えは AIX【管理会社に確認した→代理契約について／二人入居について】",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "竹内さん 10/16。代理契約のピッカー（mgmt_proxy）は 9/16 からあったので、二人入居（mgmt_two_person）を同じ形（物件名＋可能／不可・会話を合わせる・挨拶なしの2行）で足した。足す所は1つの check_pattern でも10か所（page の管理会社に確認した の一覧・型・BRAIN_CP_OK／AixModal の型・isMgmtCheck・本文の組み立て・canGenerate・見出し・UI／aix/action の分岐と文の型／aix-pickers・aix-catalog・aix-jev・action-ledger（約束の台帳の要件名『二人入居』）・aix-taxonomy・brain-check-pattern・aix-scene-evidence）。約束の言い方は会社の事実（proxy_two_person_check）で渡す（代理契約は『交渉』・実送信 9/10「代理契約可能か貸主側へ交渉させて頂きます」）。試験 q163（10/01「ふたり入居可ですか？」・当時は即答）を新しい決まりの正解で足した。",
+    "rationale": "既にある AIX のピッカーと同じ中身の新しいピッカーは、既存の物（代理契約）の通る道を全部たどって同じ所に足す（足し漏れると画面は出るがブレインが選べない・約束が閉じない）。",
+    "context": "2026-10-18 竹内さん 10/16 の答え。探す条件（二人入居可の物件で探して）・広さの相談（1LDKで2人は厳しい？）は当てない（実物で線を引いた）。",
+    "applied_to": "app/page.tsx・app/components/AixModal.tsx・app/api/aix/action/route.ts・app/lib/aix-pickers.ts・aix-catalog.ts・aix-jev.ts・action-ledger.ts・aix-taxonomy.ts・brain-check-pattern.ts・scene-patterns.ts・aix-scene-evidence.ts・company-facts.ts。戻す AIX_MGMT_TWO_PERSON=off（場面の網）",
+    "tags": ["竹内さんの決定", "AIX", "確認した", "代理契約", "二人入居", "ピッカー", "場面:確認"]
+  },
+  {
+    "title": "【決定】判断の線 10/16: 空室でも遠方・内覧まで期間がある時は申込で抑える／家族と相談は目安を足さずいつもの締め／保留の全力サポートは決め打ちしない／申込の帯は申込フォームが届いてから／11:00 の内覧は 10:00 に挨拶・内覧前で開く",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "①返信の訴求（appeal-timing）と保留の1文（hold-soft-next）は既に『すぐ来られない→申込』を持っていたが、AIX【物件オススメ】の締め（recommend-cta.resolveRecommendCta）は退去予定だけを申込にしていた → customer-circumstances.holdFirstReason（遠方・7日以上先・予定が詰まって／出張中）を画面の直近のやり取りから読んで渡す（holdReasonFromRecent）。②家族と相談は consideringDirectionFor と hesitationMoveOf が同じ FAMILY_CONSULT_SIMPLE_NOTE を見る。③10/15 の『刺さっていない保留は新着＋全力でサポートで締める』を『全力サポートで締めるかは状況で決める』に。④申込の帯（OutcomeConfirmBar の申込にする）は 10/15 に受けの宣言だけ直していたが、審査の言い方だけでも出ていた → フォームの受領・本人確認の画像が無い間は出さない。⑤内覧挨拶のセット時刻は『10:00 か2時間前の早い方』で 11:00 → 9:00 だった → 11:00 以降は 10:00。",
+    "rationale": "決まりを足す時は、同じ判断をしている別の道（返信／AIX の締め／ブレインの材料）を全部探し、1つの関数・1つの文を見せる。決め打ちの文（必ず全力サポート）は『状況で決める』に下げてブレインに任せる（P0 9eb6aa9c）。",
+    "context": "2026-10-18 竹内さん 10/16 の答え。試験のブレイン（YUMA2・小さな確かめ）で前より悪くならない事を確かめた。",
+    "applied_to": "app/lib/recommend-cta.ts（holdReason・VACANT_HOLD_APPLY）・customer-circumstances.ts・takeuchi-reply-form-r13.ts（FAMILY_CONSULT_SIMPLE）・customer-mindset.ts・hold-soft-next.ts（HOLD_ZENRYOKU_FREE）・apply-stage-nudge.ts（APPLY_STAGE_NUDGE_FORM_ONLY）・viewing-day-greeting.ts（VIEWING_GREETING_11AM）・app/page.tsx（NEXT_PUBLIC_GREETING_BEFORE_PRESELECT）",
+    "tags": ["竹内さんの決定", "ブレイン", "訴求", "保留", "申込の帯", "内覧挨拶", "場面:検討", "場面:内覧", "場面:申込"]
+  },
+  {
+    "title": "【決定】AIX 10/16: 古い資料（7日以上）の見積依頼は先に最新の募集状況の確認を伝える／募集終了の後のお礼に見つかるまでサポートの姿勢／予算オーバーの別物件はピックアップ（オススメ・ピックアップ・全力サポートの3択）／居住中で退去日なしは退去予定と書いてよい",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "①見積の約束（two-stage estimate）に資料の古さ（customer-state の部屋の出来事＝送った・お客様が送った・募集状況を確かめた の一番新しい時）を渡し、7日以上なら『一度最新の募集状況を確認させて頂き、…御見積書を作成しお送り』の約束（source two_stage_promise(estimate_stale)・同じ日の2通目と約束を下げる網にも足した）。②unavailable-ack の見本と方向に姿勢の1文。③turn-contract の軸の決まりに予算オーバーの別物件＝AIX【物件ピックアップした】・alt_actions に物件オススメと全力サポート。④退去予定の一文（VACATING_NO_DATE_LINE）は 10/15 から居住中にも出していたが、下書きの事実の裏付け（draft-fact-grounding の vacate）が『退去予定』の字しか根拠にしていなかった → 居住中・入居中も根拠に。",
+    "rationale": "決まりの文を足しても、それを止める側（事実の裏付け・約束を下げる網）が古い線のままだと届かない。足す時は止める側の線も同じ日に直す。",
+    "context": "2026-10-18 竹内さん 10/16 の答え。",
+    "applied_to": "app/lib/two-stage.ts・override-demote.ts・brain-core.ts・unavailable-ack.ts・turn-contract.ts・draft-fact-grounding.ts。戻す ESTIMATE_STALE_RECHECK=off・UNAVAILABLE_ACK_SUPPORT=off・BUDGET_OVER_PICKUP_CHOICE=off・VACATE_GROUND_OCCUPIED=off",
+    "tags": ["竹内さんの決定", "AIX", "見積書", "募集終了", "予算オーバー", "退去予定", "2段", "場面:見積", "場面:物件"]
+  },
+  {
+    "title": "売上サポから来た物件オススメは、行に保存した資料の文字（文字層の1ページ目・条件の行）で台帳を作る — AI で読み直さない（費用0）・2ページ目は足さない（管理費の二重足し）",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "10/17 の台帳（image-read-ledger）は物件オススメの度に DeepSeek で書き写し1回＋文字2回を回していた。売上サポの行（property_pickups）には文字層 pdf_text と条件の行 image_lines が保存してある。文字層は『共益費・管理費 14,000円』『専有面積 31.01㎡』『所在地⏎大阪府…』とコロンの無い見出しなので、見出しと値をつないで同じ parseLedgerFacts にかける（savedLedgerFromPickup）。リアプロの文字層は2ページ（元付の控え）＝全部読むと管理費を2回足す → 2回目の『出力日:』『物件種目』の手前で切る。30日の売上サポ 1,000行で台帳が作れた 969・駅 963・管理費 850・面積 849・所在地 850・管理費の二重足し 0（家賃より管理費が大きく見えた3件は 105万の部屋の10万＝正しい）。作れない時だけ今まで通り読む。",
+    "rationale": "同じ物件の事実を2回読まない（設計知見『1回だけ読む』）。保存済みの事実がある所は読みに行かず、つなぐ。保存の形が台帳と違う時は読みの関数を変えず、入力の形（見出し: 値）をそろえる。",
+    "context": "2026-10-18 竹内さん 10/16「1通目の前に資料を AI で読み直すのはやめ、売上サポの保存済みの事実（台帳・sheet-facts）とつなぐ（費用0）」。洗面台（間取り図の洗面）は文字層に無い＝null（独立洗面台の確かめは影の運用のまま）。",
+    "applied_to": "app/lib/image-read-ledger.ts（savedLedgerFromPickup）・app/api/aix/action/route.ts（物件オススメの台帳の入口）。戻す REC_LEDGER_FROM_PICKUP=off",
+    "tags": ["API費用", "台帳", "売上サポ", "物件オススメ", "1回だけ読む", "DeepSeek", "場面:物件"]
+  }
+]
