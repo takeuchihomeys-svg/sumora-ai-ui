@@ -75,6 +75,18 @@ t("審査中（screening）も関門に入る", !gate([c("ありがとうござ�
   t("遅れ: 今の番に物件の URL（最後ここだけ募集してるか）→ 回す", lag([s("x"), c("最後ここだけ募集してるか確認してもらうことはできますか？ https://suumo.jp/chintai/x")]).reason === "turn_url");
   t("遅れ: 否決を伝えた後は回す", lag([s("審査否決となってしまいました"), c("ありがとうございます")]).reason === "after_staff_fail");
   t("遅れ: BRAIN_POST_APPLY_GATE=off は回す", lag([s("x"), c("お願いします")], [], { BRAIN_POST_APPLY_GATE: "off" }).run);
+  // 2026-10-18 確かめる人: 網の漏れ（本番 4f1df513・fb8ab8d5・f895b126）
+  t("遅れ: 今の番に物件の資料の読み取り（部屋の切り替え）→ 回す",
+    lag([s("x"), c("[画像] 【物件の資料】 物件名：アプリーレ松屋町 号室名：1405"), c("今月末に入居予定なので こちらに変更できますか？")]).reason.startsWith("turn_pre_apply"));
+  t("遅れ: 今の番に「内覧」→ 回す", lag([s("x"), c("内覧などはできるんでしょうか？")]).reason === "turn_pre_apply:内覧");
+  {
+    const stale = (custAt: string, idDocumentAt: string | null = null) => decidePostApplyBrainGate({ status: "proposing", lagging: true,
+      msgs: [{ sender: "staff", text: "フォーマットです", created_at: PUSH }, { sender: "customer", text: "また今から申し込みするのってできますか？", created_at: custAt }],
+      applicationPushAt: PUSH, idDocumentAt, env: {} });
+    t("遅れ: 申込へ押下だけで72時間より後に戻ってきた → 回す", stale("2026-10-04T00:00:01Z").reason === "push_stale");
+    t("遅れ: 申込へ押下から72時間以内は止める", !stale("2026-10-02T00:00:00Z").run);
+    t("遅れ: 押下の後に書類が届いていれば72時間を過ぎても止める", !stale("2026-10-10T00:00:00Z", "2026-10-02T00:00:00Z").run);
+  }
   t("lagging でない提案中は今まで通り回す", decidePostApplyBrainGate({ status: "proposing", msgs: [c("お願いします")], env: {} }).reason === "not_post_apply");
   t("起点＝申込へ押下と書類の新しい方", postApplyAnchorAt("2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z") === "2026-10-02T00:00:00Z"
     && postApplyAnchorAt(null, null) === null && postApplyAnchorAt("2026-10-03T00:00:00Z", "bad") === "2026-10-03T00:00:00Z");

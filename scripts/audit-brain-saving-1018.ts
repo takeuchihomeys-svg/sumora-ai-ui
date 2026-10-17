@@ -70,7 +70,7 @@ const short = (r: string | null) => (r ?? "").replace("/api/", "").replace("cron
     if (!isSweep) {
       const inG = POST_APPLY_GATE_STATUSES.has((status ?? "").trim());
       const anc = inG ? pushAt : postApplyAnchorAt(pushAt, docAt);
-      const g2 = decidePostApplyBrainGate({ status: inG ? status : "proposing", lagging: !inG, presses: (pBy.get(cid) ?? []).filter((p) => t(p.created_at) <= s), msgs: ms_.filter((m) => !anc || t(m.created_at) >= t(anc)).slice(-300), applicationPushAt: anc, env: {} });
+      const g2 = decidePostApplyBrainGate({ status: inG ? status : "proposing", lagging: !inG, presses: (pBy.get(cid) ?? []).filter((p) => t(p.created_at) <= s), msgs: ms_.filter((m) => !anc || t(m.created_at) >= t(anc)).slice(-300), applicationPushAt: anc, idDocumentAt: docAt, env: {} });
       if (!g2.run) { const k = short(r.route) + " " + r.action; otherStop[k] = otherStop[k] ?? { n: 0, usd: 0, inGate: 0 }; otherStop[k].n++; otherStop[k].usd += usd(r); if (inG) otherStop[k].inGate++; }
       continue;
     }
@@ -81,7 +81,7 @@ const short = (r: string | null) => (r ?? "").replace("/api/", "").replace("cron
     const anchor = inGate ? pushAt : postApplyAnchorAt(pushAt, docAt);
     const gm: GateMsg[] = ms_.filter((m) => !anchor || t(m.created_at) >= t(anchor)).slice(-300).map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at }));
     const presses = (pBy.get(cid) ?? []).filter((p) => t(p.created_at) <= s);
-    const g = decidePostApplyBrainGate({ status: inGate ? status : "proposing", lagging: !inGate, presses, msgs: gm, applicationPushAt: anchor, env: {} });
+    const g = decidePostApplyBrainGate({ status: inGate ? status : "proposing", lagging: !inGate, presses, msgs: gm, applicationPushAt: anchor, idDocumentAt: docAt, env: {} });
     if (inGate) { tally.inGate++; if (!g.run) { tally.inGateStop++; tally.inGateStopUsd += usd(r); } }
     const key = g.run ? g.reason.replace(/:.*/, "") : "stop";
     tally.byReason[key] = (tally.byReason[key] ?? 0) + 1;

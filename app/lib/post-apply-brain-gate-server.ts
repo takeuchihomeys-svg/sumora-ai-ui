@@ -22,6 +22,7 @@ export async function loadPostApplyBrainGate(conversationId: string, status: str
   if (off(env.BRAIN_POST_APPLY_GATE)) return null;
   const inGate = POST_APPLY_GATE_STATUSES.has((status ?? "").trim());
   let anchorAt: string | null = null;
+  let idDocumentAt: string | null = null;
   if (inGate) {
     const { data: pushRow, error } = await supabase.from("aix_usage_logs").select("created_at")
       .eq("conversation_id", conversationId).eq("aix_type", "application_push")
@@ -33,6 +34,7 @@ export async function loadPostApplyBrainGate(conversationId: string, status: str
     const facts = await loadPostApplyFacts(supabase, conversationId);
     if (!resolvePostApply(facts).postApply) return null;
     anchorAt = postApplyAnchorAt(facts.applicationPushAt, facts.idDocumentAt);
+    idDocumentAt = facts.idDocumentAt ?? null;
   }
   let q = supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId);
   if (anchorAt) q = q.gte("created_at", anchorAt);
@@ -52,6 +54,7 @@ export async function loadPostApplyBrainGate(conversationId: string, status: str
     msgs: ((gm ?? []) as GateMsg[]).slice().reverse(),
     presses: (presses.data ?? []) as Array<{ aix_type: string | null; created_at: string }>,
     applicationPushAt: anchorAt,
+    idDocumentAt,
     env,
   });
   return { run: g.run, reason: g.reason, lagging: !inGate, anchorAt };

@@ -70,8 +70,19 @@ export type PostApplyBrainGateInput = {
   lagging?: boolean;
   /** 起点の後にスタッフが押した AIX（lagging の時だけ見る） */
   presses?: ReadonlyArray<{ aix_type: string | null; created_at: string }>;
+  /** 本人確認書類・収入証明書の最後の受信（lagging の時だけ見る。申込へ押下の後に届いていなければ「押しただけで申込は来ていない」） */
+  idDocumentAt?: string | null;
   env?: Record<string, string | undefined>;
 };
+
+/**
+ * 2026-10-18 確かめる人（本番14日の止まる32回を読んだ）: lagging で③の語・申込前の AIX・URL の網から漏れた、申込前の動きの番。
+ *   ・今の番に物件の資料・画面の読み取り（4f1df513 10/09「[画像]【物件の資料】アプリーレ松屋町… こちらに変更できますか？」＝部屋の切り替え。URL と同じ扱い）
+ *   ・今の番に内覧・内見・見学（fb8ab8d5 10/10「内覧などはできるんでしょうか？」→ スタッフは内覧調整を押した）
+ */
+const LAGGING_TURN_PRE_APPLY_RE = /【物件の(?:資料|画面)|内覧|内見|見学/;
+/** 申込へを押しただけで書類が来ないまま、この時間より後にお客様が戻ってきた番は申込前とみなす（f895b126: 9/26 押下→10/09「また今から申し込みするのってできますか？」→ 2番手の確認） */
+export const LAGGING_PUSH_STALE_HOURS = 72;
 
 /** 申込前の仕事の AIX（申込が流れた後に押す物。application_push・電話・費用の説明は申込中にも押すので入れない） */
 export const PRE_APPLY_AIX_TYPES: ReadonlySet<string> = new Set([
@@ -130,6 +141,13 @@ export function decidePostApplyBrainGate(i: PostApplyBrainGateInput): PostApplyB
     const press = (i.presses ?? []).find((p) => PRE_APPLY_AIX_TYPES.has(p.aix_type ?? "") && (!Number.isFinite(fromMs) || Date.parse(p.created_at) > fromMs));
     if (press) return { run: true, reason: `after_pre_apply_aix:${press.aix_type}` };
     if (URL_RE.test(withoutImageReadouts(turn))) return { run: true, reason: "turn_url" };
+    const pre = turn.match(LAGGING_TURN_PRE_APPLY_RE);
+    if (pre) return { run: true, reason: `turn_pre_apply:${pre[0]}` };
+    // 起点が申込へ押下（その後に書類が届いていない）で、押下から72時間より後のお客様の番＝押しただけで申込は来ていない
+    const docMs = i.idDocumentAt ? Date.parse(i.idDocumentAt) : NaN;
+    const lastCustMs = Math.max(-Infinity, ...i.msgs.filter((m) => m.sender === "customer").map((m) => Date.parse(m.created_at)).filter((x) => Number.isFinite(x)));
+    if (Number.isFinite(fromMs) && !(Number.isFinite(docMs) && docMs >= fromMs) && Number.isFinite(lastCustMs)
+      && lastCustMs - fromMs > LAGGING_PUSH_STALE_HOURS * 3_600_000) return { run: true, reason: "push_stale" };
   }
   return { run: false, reason: "post_apply_routine" };
 }
