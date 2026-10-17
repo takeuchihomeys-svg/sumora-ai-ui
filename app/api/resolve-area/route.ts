@@ -697,6 +697,20 @@ interface ResolveAreaResponse {
   normalized_area?: string | null;         // DeepSeekが正規化した表記（ひらがな・略称→正式名）
 }
 
+// 2026-10-17 ⑧: Haiku の抽出（stations/lines/areas/commute_constraints の JSON）を希望エリアの字で覚える（24時間・500件）
+const RESOLVE_AREA_CACHE_TTL_MS = 24 * 3_600_000;
+const resolveAreaCache = new Map<string, { at: number; text: string }>();
+function resolveAreaCacheGet(key: string): string | null {
+  const e = resolveAreaCache.get(key);
+  if (!e) return null;
+  if (Date.now() - e.at > RESOLVE_AREA_CACHE_TTL_MS) { resolveAreaCache.delete(key); return null; }
+  return e.text;
+}
+function resolveAreaCachePut(key: string, text: string): void {
+  resolveAreaCache.set(key, { at: Date.now(), text });
+  if (resolveAreaCache.size > 500) resolveAreaCache.delete(resolveAreaCache.keys().next().value as string);
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -955,7 +969,13 @@ commute_constraints: 通勤・通学・乗り換え制約
 出力: {"stations":["難波"],"lines":[],"areas":[],"commute_constraints":[{"base_station":"難波","max_minutes":15,"transport_mode":"bicycle"}]}`;
 
       try {
-        const msg = await anthropic.messages.create({
+        // 2026-10-17 ⑧: 同じ希望エリアの字の抽出は使い回す（温度0・入力は desired_area だけ＝同じ字なら同じ答えの物を毎回呼んでいた）。
+        //   処理の中の覚え（24時間・500件）。戻す RESOLVE_AREA_CACHE=off
+        const cacheKey = desired_area.normalize("NFKC").trim();
+        const useCache = (process.env.RESOLVE_AREA_CACHE ?? "on").trim().toLowerCase() !== "off";
+        const cachedText = useCache ? resolveAreaCacheGet(cacheKey) : null;
+        if (cachedText !== null) console.log(JSON.stringify({ tag: "resolve-area:cache-hit", len: cacheKey.length }));
+        const msg = cachedText !== null ? { content: [{ type: "text" as const, text: cachedText }] } : await anthropic.messages.create({
           model: "claude-haiku-4-5-20251001",
           max_tokens: 512,
           temperature: 0,
@@ -968,6 +988,7 @@ commute_constraints: 通勤・通学・乗り換え制約
         });
 
         const text = msg.content[0].type === "text" ? msg.content[0].text : "";
+        if (useCache && cachedText === null && /\{[\s\S]*\}/.test(text)) resolveAreaCachePut(cacheKey, text);
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const ai = JSON.parse(jsonMatch[0]) as {
