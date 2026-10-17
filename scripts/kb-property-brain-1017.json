@@ -1,0 +1,30 @@
+[
+  {
+    "category": "ai_design",
+    "title": "物件の資料の画像は1回だけ読んで台帳に残し、1通目の出口・送った後の記録・2通目・ブレインが同じ読みを使う — 読みごとに事実が食い違う元を断つ",
+    "insight": "AIX【物件オススメ】の1回で同じ画像を4〜5回別々に読んでいた（1通目の vision・物件名の読み property_image_read・書き写し＋文字の読み・生成ログの OpenAI gpt-5.4-nano）。KAORI さん（10/12 グランノーブルⅡ）は 1通目「河内山本・管理費7,700（＝駐車場の欄）」／物件名の読み「四条畷・管理費4,100」／nano「管理費0」で、資料は「近鉄奈良線 瓢箪山駅 徒歩18分・共益費4,100円」。app/lib/image-read-ledger.ts: 生成と並べて書き写し（vision 1回・推論なし・交通の欄の小さい字／金額の見出しの組／繰り返し禁止／間取り図の洗面の1行）→ 写した文字から物件の一覧と条件の行（text 2回）。生成ログ aix_generate_log.property_details.ledger に残し（専用の表は設計 scripts/image-read-ledger-migration.sql のみ）、送った後の sharedPropertyImageRead が URL か指紋で引く・image_details にも写す。nano の外部送信と壊れた property_image_detail（14日 22回中 19回が時間切れ）は止めた（PROPERTY_IMAGE_DETAIL=on で戻す）。写した文字に物件名が無い資料（30枚中7枚）は1通目の見出し「🌟建物 号室」か売上サポの行の名前を名前にする。",
+    "rationale": "竹内さん 10/17「順に改善おねがい」（物件検索ブレインの調べ）。YUMA2 で 5番×前後: 台帳の読み 8〜14秒・生成と重なり出口の待ちは 10回中9回 0ms・1回 2.2秒。台帳の駅は KAORI さんで 瓢箪山（旧の読みは四条畷）・管理費 4,100（旧の1通目は 7,700）。設計知見 671821e3（URL は再アップロードで変わる＝指紋）。",
+    "tags": ["物件オススメ", "AIX", "画像", "台帳", "API費用", "静かに壊れる", "DeepSeek", "場面:物件オススメ"]
+  },
+  {
+    "category": "ai_design",
+    "title": "物件オススメの1通目の事実は台帳と駅の表で決まった手順で確かめる — 台帳と違う駅・管理費は出口で直す／確かめられない駅は落とす／間取り図の読みは当てにならないので独立洗面台は影の運用",
+    "insight": "app/lib/recommend-fact-guard.ts（純関数）＋ -server（station_map・osaka-geo）。③出口（AIX_FACT_EXIT=on）: 台帳の交通に別の駅だけがある駅は落とす・管理費は台帳の「管理費／共益費」の見出しの金額に直し合計も直す・同じ駅で徒歩の分が違えば直す。①（AIX_FACT_GUARD_STATION=on）: 台帳の交通が読めない・駅の表だけの食い違い（市区が所在地と違う・路線に無い）の駅は落とす。独立洗面台（AIX_FACT_GUARD_WASHBASIN=shadow）と㎡・帖はログだけ（間取り図の「洋室 25.25㎡」と専有面積 25.28㎡ が両方ある資料がある）。読み違えの直し: 「駅まで」・会社の前置き（JR東淀川）・同じ駅の2路線（環状線/中央線「弁天町」）・備考の「共益費9,000円増額」を足さない。数は aix:fact-guard のログと aix_generate_log.conditions_snapshot.fact_guard に残る。",
+    "rationale": "影の運用の物差し（scripts/audit-recommend-fact-guard.ts・竹内さん・スタッフの実送信 70件）: ③ 3件（河内山本＝スタッフも消した／苅田＝資料は弥刀・スタッフは残した／管理費7,700→4,100＝資料は共益費4,100・スタッフは残した）＝資料に対する誤り 0。① 駅 2件＝スタッフも2件とも消した。独立洗面台の食い違い 4件＝スタッフは4件とも残した（未桜さんの資料も間取り図の読みは「独立」）→ 影のまま。設計知見 015f2950（駅は確かめた出どころだけ）。",
+    "tags": ["物件オススメ", "AIX", "出口の決定論", "駅", "管理費", "影の運用", "場面:物件オススメ"]
+  },
+  {
+    "category": "ai_design",
+    "title": "物件ピックアップ（新着）の文に実際に探した条件を渡すのは行 ID の束だけでは足りない — 会話の24時間以内の売上サポの束の search_conditions を使う",
+    "insight": "AIX【物件ピックアップした】の検索の条件（search_conditions）は送る画像と行 ID の数が合う時だけ読んでいた。直近10日の送付 39回のうち売上サポの行がある会話は 15・search_conditions のある束は 8。行 ID が来ない送付（画像を足した・手で入れた）でも、その会話の24時間以内の売上サポの行の一番新しい束（同じ検索の時刻 at）の条件を使う（PICKUP_SEARCH_FACTS_CONV=off）。aix_generate_log.conditions_snapshot に send_mode と searched_conditions（出所 batch/conv_batch/audits）を残し、届いた割合を測れるようにした。",
+    "rationale": "竹内さん 10/17（調べの書き直し11番: スタッフはエリア・家賃帯を広げて探したのに下書きは最初の希望条件と件数）。",
+    "tags": ["物件ピックアップ", "新着", "AIX", "検索の条件", "材料", "場面:物件を送る"]
+  },
+  {
+    "category": "ai_design",
+    "title": "物件オススメの条件のスクショは LLM を呼ばずに指紋でお客様の画像と照らし、個人の画像なら DeepSeek に出さない",
+    "insight": "app/lib/condition-image-guard.ts: 条件のスクショ（condition_image_url）の中身の指紋を、その会話のお客様の画像（直近8枚）の指紋と比べ、同じ画像の保存済みの見出し（本人確認書類 等の種類だけの形・振込の控え・個人情報の載った画像・人物の写真・image_type=id_document 等）なら1通目の生成を Claude に倒す。検索条件の画面・物件の画像・当たらない画像は今まで通り。費用0（LLM なし）・CONDITION_IMAGE_GUARD=off。",
+    "rationale": "竹内さん 10/17 ⑤（費用0の保険・既定 on でよい）。設計知見 84cfec33（画像は伏せられない）。",
+    "tags": ["個人情報", "画像", "DeepSeek", "AIX", "物件オススメ"]
+  }
+]
