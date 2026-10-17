@@ -1,7 +1,7 @@
 // 2026-10-08 把握「お客様の事情」（customer-circumstances.ts）
 // 実行: npx tsx app/lib/__tests__/customer-circumstances.test.ts
 // お客様の発言は実物（scripts/audit-customer-circumstances.ts で読んだ物・名前と物件名は伏せた）
-import { extractCircumstances, validCircumstances, circumstanceDelaysViewing, buildCircumstancesNote, resolveDateExpr, holdFirstReason, onlineViewingReason, ONLINE_VIEWING_LINE } from "../customer-circumstances";
+import { extractCircumstances, validCircumstances, circumstanceDelaysViewing, buildCircumstancesNote, resolveDateExpr, holdFirstReason, onlineViewingReason, ONLINE_VIEWING_LINE, holdReasonFromRecent, canComeSoonStatement } from "../customer-circumstances";
 import { buildAppealInput, resolveAppealTiming } from "../appeal-timing";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -218,6 +218,15 @@ it("訴求: 内覧の希望＋前の発言の「〇日以降」が5日先 → �
     { sender: "customer", text: "内覧したいです！", createdAt: new Date(jst("2026-10-08T12:30:00")).toISOString() },
   ];
   eq(buildAppealInput({ msgs, aixLogs: [], customerKind: "positive" }).viewingDelayed, false);
+});
+
+it("holdReasonFromRecent: 遠方・〇日以降の後に「明日なら行けます」と言い直したら抑える理由にしない（確かめる人 10/18）", () => {
+  const now = Date.parse("2026-10-18T03:00:00Z");
+  eq(holdReasonFromRecent([{ sender: "customer", text: "11月1日以降なら内覧行けます", createdAt: "2026-10-10T02:00:00Z" }], now) != null, true, "〇日以降は抑える");
+  eq(holdReasonFromRecent([{ sender: "customer", text: "11月1日以降なら内覧行けます", createdAt: "2026-10-10T02:00:00Z" }, { sender: "customer", text: "やっぱり明日行けるようになりました", createdAt: "2026-10-18T02:00:00Z" }], now), null, "言い直し");
+  eq(holdReasonFromRecent([{ sender: "customer", text: "東京在住なので内覧は難しいです", createdAt: "2026-10-18T02:00:00Z" }], now), "遠方のお客様", "遠方");
+  eq(canComeSoonStatement("今週は行けません"), false, "否定");
+  eq(canComeSoonStatement("明日内覧できますか？"), false, "問い");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -85,5 +85,14 @@ it("支払い: COMPANY_FACT_PAYMENT_LUMP=off で旧のカード払い", () => {
   } finally { delete process.env.COMPANY_FACT_PAYMENT_LUMP; }
 });
 
+it("一括のみ: 毎月の家賃のカード払い・管理会社の回答・交通系 IC は止めない（確かめる人 10/18）", () => {
+  const cust = ["家賃ってカードで払えますか？"];
+  eq(findCompanyFactContradiction("毎月の家賃はカード払いにも対応しております！！", cust), null, "家賃");
+  eq(findCompanyFactContradiction("管理会社より初期費用のクレジットカード払いが可能とのご回答を頂きました！！", cust), null, "管理会社の回答");
+  eq(findCompanyFactContradiction("交通系ICカードで支払いが可能です", cust), null, "IC");
+  eq(findCompanyFactContradiction("フリーレント分を分割で相殺可能です", ["分割できますか？"]), null, "相殺");
+  eq(findCompanyFactContradiction("初期費用はクレジットカード払いにも対応しております！！", cust)?.factId, "credit_card", "初期費用のカード払い可は止める");
+});
+
 console.log(`\n${passed} passed / ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

@@ -4807,7 +4807,7 @@ async function handleGenerateReply(req: NextRequest) {
     })();
     const effectiveReplyDirection: string | null = (() => {
       if (checkAnsweredFollowUp) return aixDone?.checkAllUnavailable
-        ? `確認結果（募集に出ていない）は直前の AIX で送り済み（この返信は続きの1通）。確認の約束・結果の繰り返しを書かず、受け＋何卒で閉じる（例:「${UNAVAILABLE_ACK_WEDO}」）。内覧・申込に誘わない。20〜60字`
+        ? `確認結果（募集に出ていない）は直前の AIX で送り済み（この返信は続きの1通）。確認の約束・結果の繰り返しを書かず、受け＋何卒で閉じる（例:「${UNAVAILABLE_ACK_WEDO}」）。内覧・申込に誘わない。20〜80字`
         : `確認結果は直前の AIX で送り済み（この返信は続きの1通）。確認の約束・結果（募集中・募集終了）の繰り返しを書かず、次の一手を1文だけ添える（例:「${AIX_ACTION_REPLY_DIRECTION.property_check_result.weDo}」）。20〜80字`;
       if (isConditionPresented) return conditionDirection;
       if (isViewingCancel) return "内覧キャンセルの受け止め（50〜100字）。開口語は「かしこまりました！！」（単独行）。謝罪・残念語禁止。「またご都合の良い日がございましたらいつでもお申し付けください」の1文で別日を軽く開放するのみ。物件追加提案・申込誘導禁止";

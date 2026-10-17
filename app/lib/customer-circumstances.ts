@@ -241,7 +241,20 @@ export function holdReasonFromRecent(
     cust.push({ text: m.text ?? "", createdAt: at });
   }
   if (!cust.length) return null;
-  return holdFirstReason(validCircumstances(extractCircumstances(cust, nowMs), nowMs), nowMs);
+  // 2026-10-18 確かめる人: 遠方・〇日以降の後に「明日（今週・来週）なら行けます」と言い直したお客様に申込で抑えるを押しつけない
+  //   （時刻の順に並べ、最後の「すぐ来られる」発言より前の事情は読まない）
+  cust.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  let lastNear = -1;
+  cust.forEach((m, i) => { if (canComeSoonStatement(m.text)) lastNear = i; });
+  const use = lastNear >= 0 ? cust.slice(lastNear + 1) : cust;
+  if (!use.length) return null;
+  return holdFirstReason(validCircumstances(extractCircumstances(use, nowMs), nowMs), nowMs);
+}
+/** 「明日・今週・来週（の土日）なら内覧に行けます」のような近いうちに来られる発言（否定・問いは除く） */
+export function canComeSoonStatement(text: string | null | undefined): boolean {
+  const t = String(text ?? "").normalize("NFKC");
+  return t.split(/[。\n!?！？]/).some((s) => /(?:今日|本日|明日|明後日|今週|来週|今度の(?:土|日)|週末|土日|土曜|日曜)[^。\n]{0,20}(?:内覧|内見|見学|行け|伺え|見に|行きます|伺います|見れ|見られ|大丈夫|空いて)/.test(s)
+    && !/ません|無理|難し|できない|出来ない|行けない|厳し|ですか|ますか|でしょうか|[?？]/.test(s));
 }
 
 /** 内覧にすぐ来られない事情（appeal-timing の viewingDelayed に足す）＝ holdFirstReason がある時だけ */
