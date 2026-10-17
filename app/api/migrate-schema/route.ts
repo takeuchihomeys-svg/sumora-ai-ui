@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { splitSql } from "@/app/lib/sql-split";
+import { runStatementsBatched, sqlFingerprint, shouldSkipUnchanged } from "@/app/lib/migrate-runner";
 
 const SQL = `
 -- conversations テーブル（LINEトーク一覧）
@@ -440,7 +441,12 @@ CREATE TABLE IF NOT EXISTS line_tasks (
 );
 ALTER TABLE line_tasks DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_line_tasks_conversation_status ON line_tasks(conversation_id, status);
-ALTER PUBLICATION supabase_realtime ADD TABLE line_tasks;
+-- 2026-10-18: 既に入っていると毎晩 ERROR（already member）→ まとめて流す時にまとまりごと流し直しになるので、無い時だけ足す
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'line_tasks') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE line_tasks;
+  END IF;
+END $$;
 ALTER TABLE line_tasks DROP CONSTRAINT IF EXISTS line_tasks_status_check;
 ALTER TABLE line_tasks ADD CONSTRAINT line_tasks_status_check CHECK (status IN ('pending', 'completed', 'cancelled'));
 
@@ -2586,7 +2592,8 @@ CREATE TABLE IF NOT EXISTS system_design_thinking (
 );
 CREATE INDEX IF NOT EXISTS idx_system_design_thinking_category ON system_design_thinking(category);
 CREATE INDEX IF NOT EXISTS idx_system_design_thinking_current ON system_design_thinking(is_current) WHERE is_current = true;
-CREATE INDEX IF NOT EXISTS idx_system_design_thinking_embedding ON system_design_thinking USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- 2026-10-18: ivfflat の索引 idx_system_design_thinking_embedding はここで作らない（後ろで DROP する＝全件比較の match_design_thinking_exact へ移った）。
+--   毎晩ここで作り直して 8秒の statement timeout で失敗し（10/17 の夜の postgres ログ）、後ろで DROP していた
 ALTER TABLE system_design_thinking DISABLE ROW LEVEL SECURITY;
 
 CREATE OR REPLACE FUNCTION match_design_thinking(
@@ -3466,7 +3473,9 @@ ALTER TABLE llm_usage_logs ADD COLUMN IF NOT EXISTS conversation_id TEXT;
 ALTER TABLE llm_usage_logs ADD COLUMN IF NOT EXISTS sys_key_full TEXT;
 CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_action ON llm_usage_logs(action, created_at DESC);
 -- 2026-09-24 brain-warm（brain-sweep の温め）: 「最後のブレイン呼び出し」を sys_key_full 一致で読む（5分毎）。全行スキャンにしないための索引
-CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_sys_key_full_created ON llm_usage_logs(sys_key_full, created_at DESC);
+-- 2026-10-18: 本番には作れていない（sys_key_full が最大約9万バイト＞btree の上限 8191 → 毎晩「index row requires 89696 bytes」で失敗・
+--   その度に llm_usage_logs 全体を読んでいた）。毎晩の文から外す。要るなら長さの制限が無い hash 索引を手で（CONCURRENTLY は exec_sql では流せない）:
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_llm_usage_logs_sys_key_full_hash ON llm_usage_logs USING hash (sys_key_full);
 
 -- 日次の集計（JST の日付）。input_equiv = 入力単価に換算したトークン（読み0.1・5分書き1.25・1時間書き2・出力5）
 -- est_usd は目安: 入力単価（1M トークンあたり）Haiku $1・Sonnet 5/5.5 $2・Opus 5 $5・Opus 5.5 $4 で計算（2026-09-29 公式に直した・下の注記）
@@ -4826,61 +4835,76 @@ SELECT pg_notify('pgrst', 'reload schema');
 
 export const maxDuration = 300;
 
-// GET: Vercel CronはGETリクエストを送るため、GETでもマイグレーションを実行する
-// （POSTと同じ CRON_SECRET 認証必須）
-export async function GET(req: Request) {
+// 2026-10-18 弱い所A-1: 文をまとめて流す（app/lib/migrate-runner.ts）・結果を cron_run_logs（migrate-schema）に残す・
+//   SQL の指紋が前回の最後まで流した夜と同じなら流さない（MIGRATE_FULL_EVERY_DAYS 日ごとには必ず流す）。
+//   旧に戻す: MIGRATE_BATCH=off（1文ずつ）／MIGRATE_SKIP_UNCHANGED=off（毎晩流す）。?force=1 と POST はいつも流す。
+const DEADLINE_MS = 270_000; // maxDuration 300秒の手前で新しい呼び出しをやめる（どこで止まったかを残す）
+
+async function runMigration(req: Request, force: boolean) {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   if (!secret || auth !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  // Vercel Cron は GET しか送れないため、GETでもPOSTと同じマイグレーションを実行する
+  const t0 = Date.now();
   const { supabase } = await import("@/app/lib/supabase");
-  const statements = splitSql(SQL);
-  const errors: string[] = [];
-  for (const stmt of statements) {
+  const { startCronLog, finishCronLog } = await import("@/app/lib/cron-logger");
+  const fingerprint = sqlFingerprint(SQL);
+  const batchOn = (process.env.MIGRATE_BATCH ?? "").toLowerCase() !== "off";
+  const skipOn = (process.env.MIGRATE_SKIP_UNCHANGED ?? "").toLowerCase() !== "off";
+  const fullEveryDays = Math.max(1, Number(process.env.MIGRATE_FULL_EVERY_DAYS) || 3);
+
+  if (!force && skipOn) {
     try {
-      const { error } = await supabase.rpc("exec_sql", { sql: stmt.endsWith(";") ? stmt : stmt + ";" });
-      if (error) errors.push(error.message);
-    } catch (e) {
-      errors.push(e instanceof Error ? e.message : String(e));
-    }
+      const { data } = await supabase.from("cron_run_logs")
+        .select("started_at, result_json")
+        .eq("cron_name", "migrate-schema").eq("ok", true)
+        .order("started_at", { ascending: false }).limit(1).maybeSingle();
+      const rj = (data?.result_json ?? null) as { fingerprint?: unknown; completed?: unknown } | null;
+      if (shouldSkipUnchanged(rj ? { ...rj, started_at: data?.started_at ?? null } : null, fingerprint, Date.now(), fullEveryDays)) {
+        return NextResponse.json({ ok: true, skipped: "unchanged", fingerprint, lastFullAt: data?.started_at ?? null });
+      }
+    } catch { /* 読めなければ流す（安全側） */ }
   }
+
+  const runId = await startCronLog("migrate-schema");
+  const statements = splitSql(SQL);
+  const r = await runStatementsBatched(
+    statements,
+    async (sql) => {
+      const { error } = await supabase.rpc("exec_sql", { sql });
+      return { error: error ? error.message : null };
+    },
+    { batchSize: batchOn ? 50 : 1, deadlineAt: t0 + DEADLINE_MS },
+  );
+  // PostgREST スキーマキャッシュ再読込（新カラム追加後に必須・途中で止まった時の保険で必ず1回）
   try {
     await supabase.rpc("exec_sql", { sql: "SELECT pg_notify('pgrst', 'reload schema');" });
   } catch (e) {
     console.warn("[migrate-schema] pgrst reload notify failed:", e instanceof Error ? e.message : String(e));
   }
-  return NextResponse.json({ ok: errors.length === 0, errors, appliedAt: new Date().toISOString() });
+  const summary = {
+    fingerprint, completed: r.completed, mode: batchOn ? "batch50" : "single", force,
+    total: r.total, calls: r.calls, batches: r.batches, batchFailures: r.batchFailures,
+    errorCount: r.errors.length, errors: r.errors.slice(0, 30), stoppedAt: r.stoppedAt, ms: r.ms,
+  };
+  // ok＝最後まで流した（毎晩決まって失敗する文があっても ok。中身は errors に残す）
+  await finishCronLog(runId, r.completed, summary,
+    r.completed ? (r.errors.length ? `errors ${r.errors.length}: ${r.errors.map((e) => `#${e.index} ${e.message}`).join(" / ").slice(0, 450)}` : undefined)
+      : `stopped at #${r.stoppedAt} (deadline ${DEADLINE_MS}ms)`);
+  return NextResponse.json({ ok: r.completed && r.errors.length === 0, ...summary, errors: r.errors.map((e) => `#${e.index} ${e.head}: ${e.message}`), appliedAt: new Date().toISOString() });
+}
+
+// GET: Vercel Cron は GET しか送れないため、GET でも POST と同じマイグレーションを実行する（CRON_SECRET 認証必須）
+export async function GET(req: Request) {
+  const force = new URL(req.url).searchParams.get("force") === "1";
+  return runMigration(req, force);
 }
 
 // SQL をステートメント単位に分割する（ドル引用符内のセミコロンでは分けない・@atomic-begin〜end は1回の呼び出し）→ app/lib/sql-split.ts
+// まとめて流す・失敗したまとまりだけ1文ずつ → app/lib/migrate-runner.ts
 
-// POST: 実際にマイグレーションを実行（デプロイ後に一度叩く）
+// POST: 手で叩く（デプロイ後に一度）。指紋が同じでもいつも流す
 export async function POST(req: Request) {
-  const secret = process.env.CRON_SECRET;
-  const auth = (req.headers as Headers).get("authorization");
-  if (!secret || auth !== `Bearer ${secret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const { supabase } = await import("@/app/lib/supabase");
-  const statements = splitSql(SQL);
-  const errors: string[] = [];
-  for (const stmt of statements) {
-    try {
-      const { error } = await supabase.rpc("exec_sql", { sql: stmt.endsWith(";") ? stmt : stmt + ";" });
-      if (error) errors.push(error.message);
-    } catch (e) {
-      errors.push(e instanceof Error ? e.message : String(e));
-    }
-  }
-  // PostgREST スキーマキャッシュ再読込（新カラム追加後に必須）。
-  // SQL末尾の pg_notify に加えてここでも明示実行する（途中の statement 分割不具合等で
-  // 末尾まで到達しなかった場合の保険。失敗しても migration 自体は成功として扱う）
-  try {
-    await supabase.rpc("exec_sql", { sql: "SELECT pg_notify('pgrst', 'reload schema');" });
-  } catch (e) {
-    console.warn("[migrate-schema] pgrst reload notify failed:", e instanceof Error ? e.message : String(e));
-  }
-  return NextResponse.json({ ok: errors.length === 0, errors });
+  return runMigration(req, true);
 }
