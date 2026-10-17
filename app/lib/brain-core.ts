@@ -1182,13 +1182,18 @@ export async function loadBrainSystemInputs(): Promise<BrainSystemInputs> {
       .order("priority", { ascending: false })
       .order("id", { ascending: true })
       .limit(40 + rulesExtra),
-    supabase
-      .from("trigger_action_rules")
-      .select("keyword, action_type, rule_text")
-      .like("keyword", "BOUNDARY%")
-      .gte("confidence", 0.5)
-      .order("keyword", { ascending: true })
-      .limit(10),
+    // 2026-10-18 弱い所A-2: trigger_action_rules に rule_text の列は無い（8/14 から毎回 42703「column trigger_action_rules.rule_text does not exist」
+    //   ＝ブレインの呼び出しごと・1日 約1,200回の postgres の ERROR）。結果は握りつぶされ常に空・BOUNDARY% の行も0件（線引きは ai_prompt_rules の BOUNDARY-% 26件が担う）。
+    //   引かない＝渡す中身は今と同じ（空）。旧に戻す: BRAIN_BOUNDARY_TRIGGER_RULES=on
+    (process.env.BRAIN_BOUNDARY_TRIGGER_RULES ?? "").toLowerCase() === "on"
+      ? supabase
+          .from("trigger_action_rules")
+          .select("keyword, action_type, rule_text")
+          .like("keyword", "BOUNDARY%")
+          .gte("confidence", 0.5)
+          .order("keyword", { ascending: true })
+          .limit(10)
+      : Promise.resolve({ data: [] as BrainSystemInputs["boundaryTriggerRules"] }),
   ]);
 
   // aix_action_attribution: 各アクションの成約勝率（action_type別・usage_count加重平均）
