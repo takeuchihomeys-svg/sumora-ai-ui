@@ -153,7 +153,10 @@ async function makePlan(label: string): Promise<Plan> {
   const db = { parts: dbParts, brain: dbKeyOf(dbParts, dbTablesOf("brain")), draft: dbKeyOf(dbParts, dbTablesOf("draft")) };
   const cfgHash = configHash(examConfig(process.env, { judge: JUDGE, judgePrefix: JUDGE_PREFIX, layer: "prod", ledger: true, repeat: MAX_REPS, exhaustedRule: EXHAUSTED_RULE }));
   // 10/17 ① 小さな確かめか仕上げか（同じ版＝効くファイル・道具・構成・DB の鍵が同じ）
-  const versionKey = [keys.brain, keys.draft, keys.tool, cfgHash, db.brain ?? "-", db.draft ?? "-"].join("/");
+  // 2026-10-17 確かめる人: DB の指紋は本番の書き込み（ai_reply_knowledge・ai_reply_examples・trigger_action_rules・phrase_dictionary 等＝1日 数百行）で数分ごとに変わる＝
+  //   版に入れると次の実行は必ず「この版の小さな確かめがまだ無い」になり、仕上げに進まず小さな確かめだけが続く。版＝作る人が直す物（ファイル・道具・構成）だけ
+  //   （DB の違いは使い回しの鍵が見る＝仕上げは今の DB で回る）
+  const versionKey = [keys.brain, keys.draft, keys.tool, cfgHash].join("/");
   const ph = decidePhase({ explicit: PHASE_ARG, gate: GATE, pickCount: allPicks.length, keys: versionKey, history: readPhaseLog() });
   const picks = ph.phase === "small" ? pickSmall(allPicks) : allPicks;
   const repsCap = ph.phase === "small" && !arg("max-reps") ? Math.min(MAX_REPS, SMALL_MAX_REPS) : MAX_REPS;
@@ -208,7 +211,7 @@ async function budgetOf(pl: Plan, peak: boolean, now: Date): Promise<Budget> {
   const used = await readDailySpend(sb, now).catch((e) => { return { err: String(e instanceof Error ? e.message : e).slice(0, 120) }; });
   // 読めない時は安全側＝上限ちょうどまで使った物として数える（守る線だけ今・残りは夜中）
   const usedUsd = "err" in used ? cap : used.usd;
-  const split = capSplit({ ids: [...pl.items.keys()], whyOf: (id) => pl.items.get(id)?.why ?? [], estOf: (ids) => planEst(pl, peak, ids), usedUsd, cap, force: flag("over-cap") });
+  const split = capSplit({ ids: [...pl.items.keys()], whyOf: (id) => pl.items.get(id)?.why ?? [], estOf: (ids) => planEst(pl, peak, ids), usedUsd, cap, force: flag("over-cap"), fill: process.env.EXAM_FROM_QUEUE === "1" });
   return "err" in used ? { used: null, usedErr: used.err, cap, split } : { used, cap, split };
 }
 function printPlan(pl: Plan, now: Date, x: { budget?: Budget; peakWarn?: string | null; when?: string } = {}) {
@@ -415,7 +418,7 @@ async function runMain() {
   if (pl.phase !== "off") {
     const clean = !real.length && !phases.some((p) => p.stopped);
     appendPhaseLog({ at: new Date().toISOString(), label, phase: pl.phase, keys: pl.versionKey, clean, ids: [...pl.items.keys()] });
-    if (pl.phase === "small") log(clean ? `小さな確かめが通った → 直しが終わったら同じ命令でもう一度＝仕上げ（${pl.allPicks.length}問・使う物が同じ問題は今の結果を使う）` : "小さな確かめに悪化 → 直してもう一度（小さな確かめのまま）");
+    if (pl.phase === "small") log(clean ? `小さな確かめが通った（まだ main に入れない＝仕上げが要る）→直しが終わったら同じ命令でもう一度＝仕上げ（${pl.allPicks.length}問・使う物が同じ問題は今の結果を使う）` : "小さな確かめに悪化 → 直してもう一度（小さな確かめのまま）");
   }
   const labels = [...phases.map((p) => p.label), ...phases.flatMap((p) => p.mainLabels)];
   const sp = await spendOf(labels, startedAt).catch(() => ({ n: 0, usd: 0 }));
@@ -432,8 +435,11 @@ async function runQueue() {
   if (!isCheapWindow(now) && !flag("force")) { log(`今は安い時間ではない（JST 1:30〜9:30）→ 流さない（--force で流す）`); return; }
   for (const x of due) {
     log(`予約を流す: ${x.label}（${x.createdAt} に予約・見込み $${x.estUsd.toFixed(2)}）`);
+    // 2026-10-17 確かめる人: 予約した作業ツリーが消えていると spawn が error で落ち、後ろの予約も流れない＝飛ばす
+    if (!existsSync(x.cwd)) { log(`  予約した作業ツリーが無い（${x.cwd}）→ 飛ばす`); dequeue(x.file); continue; }
     dequeue(x.file);
-    await new Promise<void>((res) => { const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", ["tsx", "--env-file=.env.local", "scripts/exam-brain.ts", ...x.argv].map(q), { cwd: x.cwd, stdio: "inherit", shell: process.platform === "win32" }); ch.on("close", () => res()); });
+    // EXAM_FROM_QUEUE: 夜中の予約の実行＝上限を超える時も収まる分だけ流す（capSplit の fill）
+    await new Promise<void>((res) => { const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", ["tsx", "--env-file=.env.local", "scripts/exam-brain.ts", ...x.argv].map(q), { cwd: x.cwd, stdio: "inherit", shell: process.platform === "win32", env: { ...process.env, EXAM_FROM_QUEUE: "1" } }); ch.on("error", (e) => { log(`  流せない: ${String(e).slice(0, 120)}`); res(); }); ch.on("close", () => res()); });
   }
 }
 

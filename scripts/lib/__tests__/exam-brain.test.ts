@@ -216,6 +216,11 @@ ok("lazy: 道が合えば呼ぶ", needJudge({ asks: 2, ng: 0, needRawPath: false
   ok("上限: 超えたら守る線（前に落ちた・お手本・名指し）を今・残りを夜中", s.mode === "split" && s.now.join() === "a,c,d" && s.later.join() === "b,e" && s.estLater === 2, JSON.stringify(s));
   const n = capSplit({ ...base, usedUsd: 8, cap: 10 });
   ok("上限: 守る線だけでも超えるなら全部夜中（止めない）", n.mode === "night" && n.now.length === 0 && n.later.length === 5);
+  const nf = capSplit({ ...base, usedUsd: 8, cap: 10, fill: true });
+  ok("上限: 夜中の予約（fill）は収まる分だけ今（守る線から）・残りは次の夜中＝毎晩進む", nf.mode === "split" && nf.now.join() === "a,c" && nf.later.join() === "b,d,e", JSON.stringify(nf));
+  const nf2 = capSplit({ ...base, usedUsd: 6, cap: 10, fill: true });
+  ok("上限: 夜中の予約は守る線の後も収まる分を足す", nf2.now.join() === "a,c,d,b" && nf2.later.join() === "e", JSON.stringify(nf2));
+  ok("上限: 夜中の予約でも残り0なら全部次の夜中", capSplit({ ...base, usedUsd: 10, cap: 10, fill: true }).mode === "night");
   ok("上限: --over-cap は全部今", capSplit({ ...base, usedUsd: 9, cap: 10, force: true }).mode === "force");
   ok("上限: off は全部今", capSplit({ ...base, usedUsd: 99, cap: null }).mode === "off");
   ok("守る線の札", isProtected(["差分・言葉で名指し"]) && isProtected(["竹内さんの番（必ず）"]) && !isProtected(["差分の言葉に近い（0.5"]));

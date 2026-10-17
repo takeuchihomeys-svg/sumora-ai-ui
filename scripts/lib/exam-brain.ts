@@ -329,7 +329,7 @@ export function isProtected(why: string[]): boolean { return why.some((w) => /�
  * 上限の分け方: 今日の使用額＋この実行の見込み ≤ 上限 → 全部今／超える → 守る線を先に今（守る線だけでも超えるなら、今は流さず全部夜中）・残りを夜中の予約に回す（止めて終わりにしない）。
  *   estOf は問題の組の見込み（$）
  */
-export function capSplit(o: { ids: string[]; whyOf: (id: string) => string[]; estOf: (ids: string[]) => number; usedUsd: number; cap: number | null; force?: boolean }): {
+export function capSplit(o: { ids: string[]; whyOf: (id: string) => string[]; estOf: (ids: string[]) => number; usedUsd: number; cap: number | null; force?: boolean; fill?: boolean }): {
   mode: "off" | "ok" | "split" | "night" | "force"; now: string[]; later: string[]; estNow: number; estLater: number; why: string;
 } {
   const all = o.estOf(o.ids);
@@ -340,6 +340,13 @@ export function capSplit(o: { ids: string[]; whyOf: (id: string) => string[]; es
   const prot = o.ids.filter((id) => isProtected(o.whyOf(id)));
   const rest = o.ids.filter((id) => !prot.includes(id));
   const ep = o.estOf(prot);
+  // 2026-10-17 確かめる人: 夜中の予約の実行（fill）で「守る線だけでも超える→全部次の夜中」にすると、1つの予約が残りの額より大きい時に毎晩全部が先送りされ流れない。
+  //   夜中は残りの額に収まる分だけ（守る線を先に・元の順）今流し、残りを次の夜中に回す＝毎晩少しずつ消化する
+  if (o.fill && left > 0) {
+    const now: string[] = [];
+    for (const id of [...prot, ...rest]) if (o.estOf([...now, id]) <= left) now.push(id);
+    if (now.length) { const later = o.ids.filter((id) => !now.includes(id)); return { mode: "split", now, later, estNow: o.estOf(now), estLater: o.estOf(later), why: `上限を超える（今日 $${o.usedUsd.toFixed(2)}・残り $${left.toFixed(2)}）→ 夜中の予約なので収まる ${now.length}問を今・残り ${later.length}問を次の夜中に` }; }
+  }
   if (prot.length && ep <= left) return { mode: "split", now: prot, later: rest, estNow: ep, estLater: o.estOf(rest), why: `上限を超える（今日 $${o.usedUsd.toFixed(2)}＋見込み $${all.toFixed(2)} ＞ $${o.cap}）→ 守る線 ${prot.length}問（$${ep.toFixed(2)}）を今・残り ${rest.length}問を夜中に` };
   return { mode: "night", now: [], later: o.ids, estNow: 0, estLater: all, why: `上限を超える（今日 $${o.usedUsd.toFixed(2)}・残り $${Math.max(0, left).toFixed(2)}${prot.length ? `・守る線だけでも $${ep.toFixed(2)}` : "・守る線の問題が無い"}）→ 全部を夜中に（今すぐなら --over-cap）` };
 }
