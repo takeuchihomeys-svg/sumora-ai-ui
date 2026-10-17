@@ -292,5 +292,24 @@ describe("2026-10-14 決められない時の締め（AIX の後の2通目・竹
   it("undecided=cta でも採点が外れ寄りならご査収（採点が先）", () => { expect(resolveRecommendCta({ pickup: { verdict: "pass", reason_codes: ["FIT_ALL", "RENT_SLIGHTLY_OVER"] }, reaction: null, notViewable: false, undecided: "cta" }).kind).toBe("receipt"); });
 });
 
+describe("2026-10-18 竹内さん 10/16: 空室でも遠方・期間がある時は申込で抑える", () => {
+  it("刺さる＋空室＋遠方 → apply（退去予定とは書かない）", () => {
+    const d = resolveRecommendCta({ pickup: PASS_ALL, reaction: null, notViewable: false, holdReason: "遠方のお客様" });
+    expect(d.kind).toBe("apply");
+    expect(d.holdReason).toBe("遠方のお客様");
+    const n1 = buildFirstMessageCtaNote(d);
+    expect(n1.includes("退去予定とは書かない")).toBe(true);
+    expect(n1.includes(APPLY_CLOSING_LINE)).toBe(true);
+    expect(buildSecondMessageCtaNote(d).includes("退去予定とは書かない")).toBe(true);
+  });
+  it("理由が無ければ今まで通り内覧", () => { expect(resolveRecommendCta({ pickup: PASS_ALL, reaction: null, notViewable: false, holdReason: null }).kind).toBe("viewing"); });
+  it("刺さらない時はご査収のまま", () => { expect(resolveRecommendCta({ pickup: { verdict: "pass", reason_codes: ["FIT_ALL", "WALK_SLIGHTLY_OVER"] }, reaction: null, notViewable: false, holdReason: "遠方のお客様" }).kind).toBe("receipt"); });
+  it("VACANT_HOLD_APPLY=off で旧（内覧）", () => {
+    process.env.VACANT_HOLD_APPLY = "off";
+    try { expect(resolveRecommendCta({ pickup: PASS_ALL, reaction: null, notViewable: false, holdReason: "遠方のお客様" }).kind).toBe("viewing"); }
+    finally { delete process.env.VACANT_HOLD_APPLY; }
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

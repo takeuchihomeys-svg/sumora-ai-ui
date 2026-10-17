@@ -95,6 +95,9 @@ export function viewingGreetingSetMinute(appointmentTime: string | null | undefi
   if ((env.VIEWING_GREETING_SET_TIME ?? "").toLowerCase() === "off") return LEGACY_SET_MIN;
   const appt = appointmentMinutes(appointmentTime);
   if (appt == null) return VIEWING_GREETING_SET_MIN;
+  // 2026-10-18 竹内さん 10/16「11:00 の内覧の日は 10:00」: 11:00 以降の内覧は 10:00（旧は「10:00 か2時間前の早い方」で 11:00 → 9:00 になった）。
+  //   11:00 より前の内覧だけ2時間前（10:00 では間に合わない）。戻す VIEWING_GREETING_11AM=off（10:00 か2時間前の早い方）
+  if ((env.VIEWING_GREETING_11AM ?? "").toLowerCase() !== "off" && appt >= 11 * 60) return VIEWING_GREETING_SET_MIN;
   return Math.max(0, Math.min(VIEWING_GREETING_SET_MIN, appt - VIEWING_GREETING_EARLY_LEAD_MIN));
 }
 /** 分 → 「10:00」 */

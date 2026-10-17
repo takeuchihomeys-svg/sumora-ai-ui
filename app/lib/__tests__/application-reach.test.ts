@@ -184,7 +184,12 @@ it("物件の説明・他の申込者・誘い・流れの説明・仮定は形�
 });
 it("促す: 申込より前の段階・21日以内・戻した後・その後に否決が無い", () => {
   const msgs = [S("確認しましたところ現在まだ審査中となります！！")];
-  eq(resolveApplyStageNudge({ status: "proposing", messages: msgs, nowMs: NOW })?.kind, "screening_text");
+  // 2026-10-18 竹内さん 10/16「申込の帯は申込フォームが届いてから出す」: フォームの受領が無い間は審査の言い方だけでは出さない
+  eq(resolveApplyStageNudge({ status: "proposing", messages: msgs, nowMs: NOW }), null, "フォーム受領なし");
+  eq(resolveApplyStageNudge({ status: "proposing", messages: msgs, nowMs: NOW, applyingImageReceived: true })?.kind, "screening_text");
+  process.env.APPLY_STAGE_NUDGE_FORM_ONLY = "off";
+  try { eq(resolveApplyStageNudge({ status: "proposing", messages: msgs, nowMs: NOW })?.kind, "screening_text", "off で 10/15 の形"); }
+  finally { delete process.env.APPLY_STAGE_NUDGE_FORM_ONLY; }
   eq(resolveApplyStageNudge({ status: "applying", messages: msgs, nowMs: NOW }), null, "申込以降");
   eq(resolveApplyStageNudge({ status: "closed_won", messages: msgs, nowMs: NOW }), null);
   eq(resolveApplyStageNudge({ status: "proposing", messages: [{ ...msgs[0], createdAt: iso(NOW - 30 * DAY) }], nowMs: NOW }), null, "古い");

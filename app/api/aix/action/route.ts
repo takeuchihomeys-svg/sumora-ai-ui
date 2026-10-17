@@ -71,6 +71,7 @@ import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentR
 import { stripWaited, dailyGreetingRequired } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
+import { holdReasonFromRecent } from "@/app/lib/customer-circumstances";
 import { resolveRecommendCta, readCustomerReaction, removeRecommendClosing, buildFirstMessageNoClosingNote, buildFirstMessageCtaNote, setRecommendClosing, type RecommendCtaDecision } from "@/app/lib/recommend-cta";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、2通目（aix-template-generate）と同じ関数・同じ材料（売上サポの行の資料の現況）で決める
 import { resolveRecommendViewable, buildVacatingLineNote, ensureVacatingLine, tidyVacatingAndClosing, type RecommendViewable, type ViewableMaterialRow } from "@/app/lib/recommend-viewable";
@@ -2906,6 +2907,8 @@ ${SMORA_COMMON_RULES}`;
         pickup: pickupRowsForFacts.length === 1 ? pickupRowsForFacts[0] : null,
         reaction: readCustomerReaction(Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []),
         notViewable: recView.notViewable,
+        // 2026-10-18 竹内さん 10/16: 空室でも遠方・内覧まで期間がある時は申込で抑える（VACANT_HOLD_APPLY=off で旧）
+        holdReason: holdReasonFromRecent(Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null; rawCreatedAt?: string | null; createdAt?: string | null }> : [], Date.now()),
       });
       console.log(JSON.stringify({ tag: "aix:recommend-cta", conversationId, kind: recCtaDecision.kind, appeal: recCtaDecision.appeal, notViewable: recCtaDecision.notViewable, reason: recCtaDecision.reason, closingInFirst: recClosingInFirst }));
       conditionsSnapshot.closing_in_first = recClosingInFirst;

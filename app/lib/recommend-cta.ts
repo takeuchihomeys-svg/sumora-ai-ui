@@ -113,7 +113,14 @@ export type RecommendCtaDecision = {
   notViewable: boolean;
   /** 判断の根拠（ログ・監査用） */
   reason: string;
+  /** 2026-10-18 竹内さん 10/16: 空室でもお客様がすぐ来られない（遠方・内覧まで期間がある）ので申込で抑える時の理由（customer-circumstances.holdFirstReason）。それ以外は無し */
+  holdReason?: string | null;
 };
+
+/** 2026-10-18 竹内さん 10/16「空室でも、状況によって（内覧できるまで期間がある・遠方等）申込で抑えるを勧めてよい」。戻す VACANT_HOLD_APPLY=off */
+export function vacantHoldApplyEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.VACANT_HOLD_APPLY ?? "").trim().toLowerCase() !== "off";
+}
 
 /**
  * 締めの種類を決める（1通目・2通目が同じ関数を見る）。
@@ -131,6 +138,11 @@ export function resolveRecommendCta(input: {
    *   押さない線（懸念・条件の変更・断り）は上の HOLD_BACK、ブレインの wait は呼び出し側で守る
    */
   undecided?: "receipt" | "cta";
+  /**
+   * 2026-10-18 竹内さん 10/16: お客様がすぐ内覧に来られない事情の理由（遠方・今日から7日以上先・予定が詰まって／出張中＝customer-circumstances.holdFirstReason）。
+   *   刺さる ∧ 空室 でも、これがある時は申込で抑える（抑えた状態でご内覧）。無ければ今まで通り内覧の誘導
+   */
+  holdReason?: string | null;
 }): RecommendCtaDecision {
   const p = appealFromPickup(input.pickup);
   const r = input.reaction ?? null;
@@ -150,8 +162,10 @@ export function resolveRecommendCta(input: {
   } else {
     reason = `採点なし・お客様の反応=${r?.kind ?? "-"}（決められない→ご査収）`;
   }
-  const kind: RecommendCtaKind = appeal === "weak" ? "receipt" : input.notViewable ? "apply" : "viewing";
-  return { kind, appeal, notViewable: input.notViewable, reason };
+  const hold = !input.notViewable && input.holdReason && vacantHoldApplyEnabled() ? input.holdReason : null;
+  const kind: RecommendCtaKind = appeal === "weak" ? "receipt" : input.notViewable || hold ? "apply" : "viewing";
+  if (kind === "apply" && hold) reason += `・空室だが${hold}（申込で抑える）`;
+  return { kind, appeal, notViewable: input.notViewable, reason, holdReason: kind === "apply" ? hold : null };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -339,6 +353,9 @@ export function buildFirstMessageCtaNote(d: RecommendCtaDecision, o: { viewableF
   const L: string[] = ["【この通の締め（刺さり具合で決まる・この形で締める）】"];
   if (d.kind === "viewing") {
     L.push(`・このお部屋はお客様に刺さる物件（${d.reason}）で、今ご内覧頂ける → 締めは内覧の誘導「${VIEWING_CLOSING_LINE}」`);
+  } else if (d.kind === "apply" && d.holdReason && !d.notViewable) {
+    L.push(`・このお部屋はお客様に刺さる物件で空室だが、お客様が${d.holdReason}のため、すぐにはご内覧頂けない（${d.reason}）`
+      + ` → 締めは申込の誘導「${APPLY_CLOSING_LINE}」（お申込みでお部屋を抑えた状態でご内覧頂ける）。退去予定とは書かない（空室の事実のまま）・内覧の誘導は書かない`);
   } else if (d.kind === "apply") {
     L.push(`・このお部屋はお客様に刺さりそうだが退去予定でまだご内覧頂けない${o.viewableFrom ? `（${o.viewableFrom}以降にご内覧可能）` : ""}（${d.reason}）`
       + ` → 退去予定であることを伝える一文の後に、申込の誘導「${APPLY_CLOSING_LINE}」で締める（内覧の誘導は書かない）`);
@@ -366,6 +383,8 @@ export function buildSecondMessageCtaNote(
   const L: string[] = ["【この2通目の締め（1件を特にオススメする通・刺さり具合で決まる。上の CTA の指示より優先）】"];
   if (d.kind === "viewing") {
     L.push(`・お客様に刺さる物件（${d.reason}）で、今ご内覧頂ける → 締めは内覧の誘導 1文。実送信の形「${VIEWING_CLOSING_LINE}」のまま`);
+  } else if (d.kind === "apply" && d.holdReason && !d.notViewable) {
+    L.push(`・お客様に刺さる物件で空室だが、お客様が${d.holdReason}のため、すぐにはご内覧頂けない（${d.reason}） → 申込の誘導 1文。実送信の形「${APPLY_CLOSING_LINE}」のまま（退去予定とは書かない・内覧の誘導は書かない）`);
   } else if (d.kind === "apply") {
     L.push(`・刺さりそうだが退去予定でまだご内覧頂けない${o.viewableFrom ? `（${o.viewableFrom}以降にご内覧可能）` : ""}（${d.reason}） → 退去予定と伝えて、申込の誘導 1文。実送信の形「${APPLY_CLOSING_LINE}」のまま（内覧の誘導は書かない）`);
   } else {

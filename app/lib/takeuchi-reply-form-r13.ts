@@ -104,7 +104,20 @@ export const LIFE_EVENT_NOTE = "ご事情（人生の出来事）を話してく
  * 10/09 竹内さん「検討しますの申込の一言: 確認の結果や見積書を送った後は添える・初回で詳細を送った直後は内覧の案内だけ」
  *   それ以外（どちらでもない）は誘わず閉じる（CONSIDERING_CLOSE_DIRECTION）。竹内さんの手打ちの扉の1文そのまま。
  */
-export function consideringDirectionFor(o: { afterEstimateOrCheck: boolean; afterPropertyDetails: boolean }): string {
+export function consideringDirectionFor(o: { afterEstimateOrCheck: boolean; afterPropertyDetails: boolean; familyConsult?: boolean }): string {
+  const base = consideringDirectionBase(o);
+  return o.familyConsult && familyConsultSimpleEnabled() ? base + FAMILY_CONSULT_SIMPLE_NOTE : base;
+}
+
+/**
+ * 2026-10-18 竹内さん 10/16「家族と相談すると言われた時は目安（入居時期など）を足さず、いつもの『気になる点等出てきましたら〜』で簡単に締める」。
+ *   返信の方向（consideringDirectionFor）とブレインの材料（customer-mindset.hesitationMoveOf の家族・同居人に相談）が同じ文を見る。戻す FAMILY_CONSULT_SIMPLE=off
+ */
+export function familyConsultSimpleEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.FAMILY_CONSULT_SIMPLE ?? "").trim().toLowerCase() !== "off";
+}
+export const FAMILY_CONSULT_SIMPLE_NOTE = "【ご家族・ご友人と相談する番（竹内さん 10/16）】入居時期・申込の時期・期限・審査の期間などの目安は足さない。締めはいつもの「〇〇さん気になる点等出てきましたらいつでもお気軽にご連絡ください😌！！」で簡単に（説明・新しい提案を足さない）。";
+function consideringDirectionBase(o: { afterEstimateOrCheck: boolean; afterPropertyDetails: boolean }): string {
   if (o.afterEstimateOrCheck) return "検討中を受ける（確認の結果・御見積書を送った後）。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」②申込の一言「お気に召されましたらお申込みしお部屋抑えさせて頂きます！！」③「気になる点出てきましたらいつでもお気軽にご連絡ください😌！！」。催促・日時の打診・希少性の煽り・物件の追加は書かない。60〜130字";
   if (o.afterPropertyDetails) return "検討中を受ける（お部屋の詳細を送った直後）。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」②内覧の案内だけ「お部屋お気に召されましたら、実際にお部屋ご案内させて頂きますのでいつでもお気軽にご連絡ください😌！！」。申込の一言・日時の打診・催促は書かない。60〜120字";
   return CONSIDERING_CLOSE_DIRECTION;

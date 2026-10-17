@@ -224,6 +224,26 @@ export function onlineViewingReason(valid: ReadonlyArray<Circumstance>, env: Rec
   if (valid.some((c) => c.kind === "remote")) return "remote";
   return null;
 }
+/**
+ * 2026-10-18 竹内さん 10/16「空室でも、状況によって（内覧できるまで期間がある・遠方等）申込で抑えるを勧めてよい」:
+ *   AIX の物件オススメの締め（recommend-cta.resolveRecommendCta の holdReason）に渡す、画面の直近のやり取りからの理由（無ければ null）。
+ *   時刻の無い発言は読まない（鮮度が分からない）。お客様の発言だけ
+ */
+export function holdReasonFromRecent(
+  msgs: ReadonlyArray<{ sender?: string | null; text?: string | null; createdAt?: string | null; rawCreatedAt?: string | null; created_at?: string | null }> | null | undefined,
+  nowMs: number,
+): string | null {
+  const cust: CustMsg[] = [];
+  for (const m of msgs ?? []) {
+    if (m?.sender !== "customer") continue;
+    const at = [m.rawCreatedAt, m.created_at, m.createdAt].find((x) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}/.test(x)) ?? null;
+    if (!at || !Number.isFinite(Date.parse(at))) continue;
+    cust.push({ text: m.text ?? "", createdAt: at });
+  }
+  if (!cust.length) return null;
+  return holdFirstReason(validCircumstances(extractCircumstances(cust, nowMs), nowMs), nowMs);
+}
+
 /** 内覧にすぐ来られない事情（appeal-timing の viewingDelayed に足す）＝ holdFirstReason がある時だけ */
 export function circumstanceDelaysViewing(valid: ReadonlyArray<Circumstance>, nowMs: number): boolean {
   if ((process.env.APPEAL_CIRCUMSTANCES ?? "").toLowerCase() === "off") return false;

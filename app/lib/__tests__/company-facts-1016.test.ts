@@ -41,6 +41,12 @@ it("更新料（物件によって異なる・2年毎に1ヶ月・保証会社 �
   const f = COMPANY_FACTS.find((x) => x.id === "renewal_fee")!;
   for (const w of ["物件によって異なる", "2年毎に賃料の1ヶ月分", "保証会社の更新料", "年間1万円", "火災保険の更新は基本2年毎"]) if (!f.fact.includes(w)) throw new Error(`無い: ${w}`);
 });
+it("家賃相場の言い方（同じ地域・同じ間取りで安い時だけ「相場的にも好条件」）", () => {
+  has("この家賃って相場的にどうですか？", "rent_market_wording");
+  has("北区の1LDKの相場っていくらくらいですか", "rent_market_wording");
+  const f = COMPANY_FACTS.find((x) => x.id === "rent_market_wording")!;
+  if (!f.fact.includes("同じ地域・同じ間取りで相場より安い時だけ")) throw new Error("線が無い");
+});
 it("支払いは一括の振込だけ（既定）", () => {
   const f = COMPANY_FACTS.find((x) => x.id === "credit_card")!;
   if (!/一括のお振込のみ/.test(f.fact)) throw new Error("一括のお振込のみが無い");

@@ -82,7 +82,8 @@ t("通知の2行目", morningGreetingNoticeLine({ time: "16:00", place: "クリ�
 // ─── 2026-10-15 竹内さん「内覧日の10時には内覧挨拶がセットされるようにする」───
 const at = (hhmm: string) => Date.parse(`2026-10-09T${hhmm}:00+09:00`);
 t("セットの時刻: 13:00 の内覧 → 10:00", minuteLabel(viewingGreetingSetMinute("13:00", {})) === "10:00");
-t("セットの時刻: 11:00 の内覧 → 9:00（2時間前）", minuteLabel(viewingGreetingSetMinute("11:00", {})) === "9:00");
+t("セットの時刻: 11:00 の内覧 → 10:00（竹内さん 10/16）", minuteLabel(viewingGreetingSetMinute("11:00", {})) === "10:00");
+t("VIEWING_GREETING_11AM=off: 11:00 の内覧 → 9:00（旧の2時間前）", minuteLabel(viewingGreetingSetMinute("11:00", { VIEWING_GREETING_11AM: "off" })) === "9:00");
 t("セットの時刻: 10:30 の内覧 → 8:30", minuteLabel(viewingGreetingSetMinute("10:30", {})) === "8:30");
 t("セットの時刻: 12:00 の内覧 → 10:00", minuteLabel(viewingGreetingSetMinute("12:00", {})) === "10:00");
 t("セットの時刻: 時刻なし → 10:00", minuteLabel(viewingGreetingSetMinute(null, {})) === "10:00");

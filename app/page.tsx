@@ -93,6 +93,8 @@ import { VIEWING_MOOD_OPTIONS, VIEWING_LIKE_OPTIONS, VIEWING_CONCERN_OPTIONS, VI
  * ブレインの判断（suggested_aix_meta・AIX要対応）で決める。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off（ビルド時に埋まる）
  */
 const BRAIN_ATTENTION_UI = flagOn(process.env.NEXT_PUBLIC_BRAIN_ATTENTION);
+/** 2026-10-18 竹内さん 10/16: 内覧挨拶のボタン（内覧当日の朝の行）は「内覧前」を最初から選んで開く。戻す NEXT_PUBLIC_GREETING_BEFORE_PRESELECT=off */
+const GREETING_BEFORE_PRESELECT = (process.env.NEXT_PUBLIC_GREETING_BEFORE_PRESELECT ?? "").trim().toLowerCase() !== "off";
 // 表示済みの下書きの控えと戻し（既定 on・戻す: NEXT_PUBLIC_SHOWN_DRAFT_RESTORE=off）
 const SHOWN_DRAFT_RESTORE = shownDraftRestoreEnabled(process.env.NEXT_PUBLIC_SHOWN_DRAFT_RESTORE);
 // 2026-10-08 竹内さん（り 8f705d16「こんばんは。この時間に送るのおかしい」）: 前に作った下書きを入力欄に出す時、送る今（JST の日）で挨拶を直す
@@ -9610,10 +9612,13 @@ export default function Home() {
                   } else if (brainMeta.action === "greeting_viewing") {
                     // 挨拶は AixModal 非対応（専用ピッカーで完結）。ブレインのカードからもピッカーを開く（YUYA 事例 2026-09-16）
                     setActiveAixFlow(brainAction);
-                    setGreetingViewingMode(null);
+                    // 2026-10-18 竹内さん 10/16「内覧挨拶のボタンを押した時はテンプレートの『内覧前』を最初から選んでおく」: 内覧当日の朝の行（check_pattern=before）は内覧前で開く
+                    const gvBefore = GREETING_BEFORE_PRESELECT && (brainMeta as { check_pattern?: string | null }).check_pattern === "before";
+                    setGreetingViewingMode(gvBefore ? "before" : null);
                     setGreetingViewingDate(""); setGreetingViewingTime("");
                     setGreetingViewingReport(""); setGreetingViewingTaps({}); setGreetingViewingReportSaved(null);
                     setShowGreetingViewingPicker(true);
+                    if (gvBefore) void autoFillGreetingDateTime();
                   } else if (Object.keys(AIX_ACTION_META).includes(brainAction)) {
                     setActiveAixFlow(brainAction);
                     // 2026-09-12 段1: ブレインが決めた check_pattern（mgmt_move_in 等）をそのままモーダルに渡す（判定し直さない）
@@ -9808,10 +9813,13 @@ export default function Home() {
                               if (alt === "property_recommendation") openPropertyRecommendationPicker("withImage");
                               else if (alt === "greeting_viewing") {
                                 // 2026-10-15 内覧当日の内覧挨拶（2つ目のボタン）: 挨拶は AixModal 非対応＝メニューと同じ専用ピッカー
-                                setGreetingViewingMode(null);
+                                // 2026-10-18 竹内さん 10/16: 内覧当日の朝の行がある時の2つ目のボタンは内覧前で開く（NEXT_PUBLIC_GREETING_BEFORE_PRESELECT=off で旧）
+                                const gvBeforeAlt = GREETING_BEFORE_PRESELECT && !!(selectedConversation?.id && morningGreetItems[selectedConversation.id]);
+                                setGreetingViewingMode(gvBeforeAlt ? "before" : null);
                                 setGreetingViewingDate(""); setGreetingViewingTime("");
                                 setGreetingViewingReport(""); setGreetingViewingTaps({}); setGreetingViewingReportSaved(null);
                                 setShowGreetingViewingPicker(true);
+                                if (gvBeforeAlt) void autoFillGreetingDateTime();
                               }
                               else openAixDirect(alt as AixActionType);
                             }}

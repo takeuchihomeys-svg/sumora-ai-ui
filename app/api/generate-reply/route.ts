@@ -305,6 +305,7 @@ import { draftFactGroundingCheck } from "@/app/lib/draft-fact-grounding-server";
 import { stripWaited } from "@/app/lib/greeting";
 /** 2026-10-08 RAG の調査: 手本の「お待たせ致しました」を注入の直前に外す（DB は書き換えない・RAG_REPLY_CLEAN=off） */
 const stripWaitedForExample = (t: string) => (ragReplyCleanEnabled() ? stripWaited(t).text : t);
+import { hesitationKindOf } from "@/app/lib/customer-mindset";
 import { consideringCloseEnabled, CONSIDERING_CLOSE_DIRECTION, CONSIDERING_CLOSE_AVOID, consideringDirectionFor, normalizeItsudemo, fixSanTachi, isAckOnlyAgree, ACK_ONLY_NOTE, nanisotsuNote } from "@/app/lib/takeuchi-reply-form-r13";
 import { writerFromText } from "@/app/lib/staff-writer";
 import { applyPromptR11, promptR11Enabled } from "@/app/lib/prompt-r11";
@@ -4829,6 +4830,8 @@ async function handleGenerateReply(req: NextRequest) {
       if (isThinkingMsg) return consideringCloseOn ? consideringDirectionFor({
         afterEstimateOrCheck: consideringAfterEstimateOrCheck,
         afterPropertyDetails: consideringAfterDetails,
+        // 2026-10-18 竹内さん 10/16: 家族と相談の番は目安を足さずいつもの締めで簡単に（FAMILY_CONSULT_SIMPLE=off で旧）
+        familyConsult: hesitationKindOf(intentMessage)?.kind === "家族・同居人に相談",
       }) : consideringDoorOn
         // 2026-10-07 3巡目: 検討中の決まりを1か所に（reply-scene.ts CONSIDERING_*）。扉の1文は許可・必須ではない・禁止は催促だけ
         ? `検討中の待ちフェーズ。70〜130字の短返し。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」（命令形「ごゆっくりご検討ください」は不可）②直前に物件・御見積書を送っている時は扉の1文を置いてよい（今ご内覧頂ける部屋＝「${CONSIDERING_DOOR_LINES.viewing}」／まだ内覧できない・御見積書の後・他の申込あり＝「${CONSIDERING_DOOR_LINES.apply}」。【訴求のタイミング】の材料があればその種類）③気になる点出てきましたらいつでもお気軽にご連絡ください。扉の1文は申込誘導に当たらない。禁止は「かしこまりました！！」単独終了・申込の催促（お申込いかがでしょうか・お早めに）・希少性煽り（人気のため早めに）・物件追加提案・「ご検討の程よろしく」の再掲`

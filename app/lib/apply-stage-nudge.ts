@@ -107,6 +107,9 @@ export function resolveApplyStageNudge(i: {
   const msgs = [...i.messages].filter((m) => Date.parse(m.createdAt) > from).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   let found: ApplyStageNudge | null = null;
   const formReceived = !!i.applyingTextReceived || !!i.applyingImageReceived || msgs.some((m) => m.sender === "customer" && isApplicationFormMessage(String(m.text ?? "")).detected);
+  // 2026-10-18 竹内さん 10/16「申込の帯は申込フォームが届いてから出す」: 審査の言い方（こちら・お客様）があっても、申込フォームの受領・本人確認の画像が無い間は出さない。
+  //   10/15 の軸の直しは受けの宣言だけだった（下の screeningEvidenceOf）。戻す APPLY_STAGE_NUDGE_FORM_ONLY=off（審査の言い方だけでも出す＝10/15 の形）
+  if (!formReceived && (process.env.APPLY_STAGE_NUDGE_FORM_ONLY ?? "").trim().toLowerCase() !== "off") return null;
   for (const m of msgs) {
     if (sentences(String(m.text ?? "")).some((s) => REJECT_OR_CANCEL_RE.test(s) && !/場合|たら|ますか|ですか|\?|？/.test(s))) { found = null; continue; }
     const kind = screeningEvidenceOf(m, { formReceived });
