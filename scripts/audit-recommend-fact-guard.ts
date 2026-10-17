@@ -66,7 +66,7 @@ type Row = { created_at: string; conversation_id: string; generated_text: string
       const sameKind = sentClaims.some((c) => c.kind === d.kind);
       const outcome = kept ? "スタッフはそのまま送った" : staffFixedTo ? "スタッフも同じに直した" : sameKind ? "スタッフは別の形で書いた" : "スタッフは消した";
       add(`${d.kind}:${d.verdict}`, outcome);
-      if (d.verdict !== "ok" && examples.length < 40) examples.push(`${l.created_at.slice(0, 10)} ${l.conversation_id.slice(0, 8)} ${d.kind}:${d.verdict} 「${d.claim}」→${d.to ?? "落とす"}｜${d.why}｜${outcome}`);
+      if (d.verdict !== "ok" && d.kind !== "jo" && examples.length < 60) examples.push(`${l.created_at.slice(0, 10)} ${l.conversation_id.slice(0, 8)} ${d.kind}:${d.verdict} 「${d.claim}」→${d.to ?? "落とす"}｜${d.why}｜${outcome}`);
     }
     const onText = applyFactDecisions(l.generated_text, ds, { exit: true, mode: "on" }).text;
     add("全体", onText === l.generated_text ? "変更なし" : "変更あり");

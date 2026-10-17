@@ -3189,14 +3189,15 @@ ${SMORA_COMMON_RULES}`;
       }
       // ── 2026-10-17 竹内さん「順に改善おねがい」①③: 1通目の駅・管理費・㎡・帖・独立洗面台を台帳と駅の表で確かめる（app/lib/recommend-fact-guard.ts）──
       //   ③ 台帳と違う駅（別の駅・市区が所在地と違う・路線に無い）は落とし、管理費・㎡・徒歩の分は台帳の値に直す（AIX_FACT_EXIT=off で止める）
-      //   ① 確かめる出どころの無い駅・間取り図と合わない独立洗面台は影の運用（AIX_FACT_GUARD=shadow 既定・on で落とす・数はログと生成ログに）
+      //   ① 確かめる出どころの無い駅は落とす（AIX_FACT_GUARD_STATION=on 既定・実送信 70件で誤り0）・間取り図と合わない独立洗面台は影の運用（AIX_FACT_GUARD_WASHBASIN=shadow 既定）
       //   台帳が間に合わない時（生成より読みが遅い）は待ちを 12秒までにして確かめを飛ばす（読みは後ろで続き、生成ログ・送った後の記録に残る）
       if (recLedgerPromise && !body.simple_mode) {
         try {
           const g = await import("@/app/lib/recommend-fact-guard");
-          const mode = g.factGuardMode();
+          const modes = g.factGuardModes();
+          const mode = modes.station;
           const exit = g.factExitEnabled();
-          if (mode !== "off" || exit) {
+          if (mode !== "off" || modes.washbasin !== "off" || exit) {
             const tWait = Date.now();
             const led = await Promise.race([recLedgerPromise, new Promise<null>((r) => setTimeout(() => r(null), 12_000))]);
             const waitMs = Date.now() - tWait;
@@ -3208,11 +3209,11 @@ ${SMORA_COMMON_RULES}`;
               const material = pickupRowsForFacts.map((r) => `${r.property_name ?? ""}\n${r.pdf_text ?? ""}`).join("\n");
               const geo = await loadStationGeo(supabase, message_text);
               const decisions = g.checkFirstMessageFacts({ message: message_text, ledger: led.facts, materialText: material || null, geo, addressWard: addressWardOf(led.facts, material) });
-              const res = g.applyFactDecisions(message_text, decisions, { exit, mode });
-              const shadow = mode === "shadow" ? g.applyFactDecisions(message_text, decisions, { exit, mode: "on" }).applied.filter((d) => !res.applied.includes(d)) : [];
+              const res = g.applyFactDecisions(message_text, decisions, { exit, mode, washbasinMode: modes.washbasin });
+              const shadow = g.applyFactDecisions(message_text, decisions, { exit, mode: "on", washbasinMode: "on" }).applied.filter((d) => !res.applied.includes(d));
               const summary = decisions.filter((d) => d.verdict !== "ok").map((d) => ({ kind: d.kind, verdict: d.verdict, claim: d.claim.slice(0, 40), why: d.why.slice(0, 60), ...(d.to ? { to: d.to.slice(0, 40) } : {}) }));
-              console.log(JSON.stringify({ tag: "aix:fact-guard", conversationId, mode, exit, waitMs, applied: res.applied.map((d) => `${d.kind}:${d.verdict}`), shadowWouldDrop: shadow.map((d) => `${d.kind}:${d.claim.slice(0, 30)}`), decisions: summary }));
-              conditionsSnapshot.fact_guard = { mode, exit, wait_ms: waitMs, applied: res.applied.map((d) => `${d.kind}:${d.verdict}`), shadow_would_drop: shadow.map((d) => d.kind), decisions: summary };
+              console.log(JSON.stringify({ tag: "aix:fact-guard", conversationId, mode, washbasinMode: modes.washbasin, exit, waitMs, applied: res.applied.map((d) => `${d.kind}:${d.verdict}`), shadowWouldDrop: shadow.map((d) => `${d.kind}:${d.claim.slice(0, 30)}`), decisions: summary }));
+              conditionsSnapshot.fact_guard = { mode, washbasin_mode: modes.washbasin, exit, wait_ms: waitMs, applied: res.applied.map((d) => `${d.kind}:${d.verdict}`), shadow_would_drop: shadow.map((d) => d.kind), decisions: summary };
               if (res.applied.length > 0) message_text = res.text;
             }
           }

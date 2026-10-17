@@ -80,5 +80,11 @@ eq("『』の駅・行の中の共益費・より", [f2.stations.map((s) => s.st
 eq("！！の後の駅", claimsInFirstMessage("円となります！！住吉東駅から徒歩4分").map((c) => (c as { station?: string }).station), ["住吉東"]);
 eq("全角の帖", claimsInFirstMessage("洋室８．４帖").map((c) => (c as { value?: number }).value), [8.4]);
 
+// 監査 70件で見つけた誤った食い違い
+const f3 = parseLedgerFacts("【物件の資料】\n交通: 環状線「弁天町」徒歩9分 / 中央線「弁天町」徒歩8分\n阪急宝塚本線 神崎川駅まで 徒歩14分\nJ R東海道・山陽本線 東淀川駅 徒歩4分\n共益費・管理費: 8,500円\n備考: ペット飼育時 共益費9,000円増額");
+eq("同じ駅の2路線・まで・管理費は見出しの行だけ", [f3.stations.map((s) => `${s.station}${s.walk}`), f3.adminFee], [["弁天町9", "弁天町8", "神崎川", "東淀川4"].map((x) => x === "神崎川" ? "神崎川14" : x), 8500]);
+eq("中央線「弁天町」8分・神崎川・JR東淀川・天王寺駅まで は ok", checkFirstMessageFacts({ message: "・中央線「弁天町」徒歩8分\n・阪急宝塚本線「神崎川」徒歩14分\n・JR東淀川駅徒歩4分", ledger: f3 }).map((d) => d.verdict), ["ok", "ok", "ok"]);
+eq("駅の表だけの食い違いは unverified（③では落とさない）", checkFirstMessageFacts({ message: "・近鉄大阪線「河内山本」駅徒歩15分", ledger: noSt, geo: { 河内山本: { ward: "八尾市", lines: ["近鉄大阪線"] } }, addressWard: "東大阪市" }).map((d) => d.verdict), ["unverified"]);
+
 if (fail) { console.log(`\n${fail} 件 FAIL`); process.exit(1); }
 console.log("\nALL PASS");

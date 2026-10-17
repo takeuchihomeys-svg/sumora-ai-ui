@@ -40,9 +40,11 @@ const yen = (s: string): number | null => {
 
 /** 駅の名前を比べる形に（「駅」・「」・路線の前置き・旧字を外す） */
 export function stationKey(raw: string): string {
-  let s = nk(raw).replace(/[「」『』"'\s]/g, "").replace(/駅$/, "");
+  // 「日本橋駅まで」「天王寺駅まで」の「まで」・「JR東淀川」の会社の前置きも外す（監査 70件の誤った食い違い）
+  let s = nk(raw).replace(/[「」『』"'\s]/g, "").replace(/(?:駅)?まで$/, "").replace(/駅$/, "");
   const i = s.lastIndexOf("線");
   if (i >= 1 && i < s.length - 1) s = s.slice(i + 1);
+  s = s.replace(/^(?:JR|ＪＲ|阪急|阪神|南海|近鉄|京阪|大阪メトロ|OsakaMetro|地下鉄|市営)(?=.{2,})/, "");
   return s.replace(/國/g, "国").replace(/[ヶケヵ]/g, "ケ").replace(/之/g, "ノ").replace(/の(?=[^\s]*$)/, "ノ");
 }
 
@@ -56,7 +58,8 @@ export function stationsInText(text: string): LedgerStation[] {
     const st = stationKey(m[2] ?? "");
     if (!st || /^(最寄り?|駅|バス停?|停|分|より|から)$/.test(st) || /バス|停$/.test(m[2] ?? "")) continue;
     if (!m[1] && /バス停?\s*$|停留所\s*$/.test(src.slice(Math.max(0, (m.index ?? 0) - 6), m.index ?? 0))) continue;
-    if (out.some((x) => x.station === st)) continue;
+    // 同じ駅が別の路線で2回（環状線「弁天町」9分／中央線「弁天町」8分）は両方残す
+    if (out.some((x) => x.station === st && x.walk === (m[3] ? Number(m[3]) : null))) continue;
     out.push({ line: m[1] ? nk(m[1]) : null, station: st, walk: m[3] ? Number(m[3]) : null });
   }
   return out;
@@ -73,12 +76,18 @@ export function parseLedgerFacts(transcript: string): LedgerFacts {
   // 管理費・共益費（両方あれば合計）。見出しと値の組の行だけ（「駐車場」の金額は入れない）
   let admin: number | null = null;
   for (const l of lines) {
-    const m = l.match(/^(?:管理費|共益費|管理費[・/／]共益費|共益費[・/／]管理費|管理費等)\s*[:：]\s*([^\s/／]+)/)
-      ?? l.match(/(?:^|[\s　])(?:管理費|共益費)\s*([\d,，]{3,7}円)/);
+    const m = l.match(/^(?:管理費|共益費|管理費[・/／]共益費|共益費[・/／]管理費|管理費等)\s*[:：]\s*([^\s/／]+)/);
     if (!m) continue;
     const v = /^(?:なし|無し|無|0円?|ー|-|—|一)$/.test(m[1]) ? 0 : yen(m[1]);
     if (v === null) continue;
     admin = (admin ?? 0) + v;
+  }
+  // 見出しの行が無い時だけ、行の中の「共益費6,000円」を読む（最初の1つ。備考の「共益費9,000円増額」と足さない）
+  if (admin === null) {
+    for (const l of lines) {
+      const m = l.match(/(?:^|[\s　])(?:管理費|共益費)\s*([\d,，]{3,7}円)(?!\s*(?:増|減|加算|追加))/);
+      if (m) { admin = yen(m[1]); break; }
+    }
   }
   const parkingRaw = valueOf(/^駐車場(?:料)?\s*[:：]\s*([\d,，.]+万?円)/);
   const areaRaw = valueOf(/(?:専有面積|面積)\s*[:：]\s*([\d.]+)\s*(?:㎡|m2|m²|平米)/);
@@ -166,29 +175,26 @@ export function checkFirstMessageFacts(input: GuardInput): Decision[] {
   const ledgerStations = L?.stations ?? [];
   for (const c of claims) {
     if (c.kind === "station") {
-      const inLedger = ledgerStations.find((s) => s.station === c.station);
+      const same = ledgerStations.filter((s) => s.station === c.station);
       const inMaterial = material && new RegExp(`${c.station.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(material.replace(/\s/g, ""));
-      if (inLedger || inMaterial) {
-        if (inLedger && inLedger.walk != null && c.walk != null && inLedger.walk !== c.walk) {
-          out.push({ kind: "station", claim: c.text, verdict: "fix", why: `徒歩の分が資料（${inLedger.walk}分）と違う`, to: c.text.replace(new RegExp(`${c.walk}(\\s*分)$`), `${inLedger.walk}$1`) });
-        } else out.push({ kind: "station", claim: c.text, verdict: "ok", why: inLedger ? "台帳の交通にある" : "売上サポの資料にある" });
+      if (same.length > 0 || inMaterial) {
+        const walks = same.map((s) => s.walk).filter((w): w is number => w != null);
+        if (walks.length > 0 && c.walk != null && !walks.includes(c.walk) && !inMaterial) {
+          out.push({ kind: "station", claim: c.text, verdict: "fix", why: `徒歩の分が資料（${walks[0]}分）と違う`, to: c.text.replace(new RegExp(`${c.walk}(\\s*分)$`), `${walks[0]}$1`) });
+        } else out.push({ kind: "station", claim: c.text, verdict: "ok", why: same.length ? "台帳の交通にある" : "売上サポの資料にある" });
         continue;
       }
       const g = input.geo?.[c.station];
       const aw = wardKey(input.addressWard);
-      if (g?.ward && aw && wardKey(g.ward) && wardKey(g.ward) !== aw) {
-        out.push({ kind: "station", claim: c.text, verdict: "conflict", why: `駅の市区（${g.ward}）が所在地（${input.addressWard}）と違う` });
-        continue;
-      }
-      if (c.line && g && g.lines.length > 0 && !lineMatches(c.line, g.lines)) {
-        out.push({ kind: "station", claim: c.text, verdict: "conflict", why: `${c.line}に${c.station}が無い（駅の表: ${g.lines.slice(0, 3).join("・")}）` });
-        continue;
-      }
+      const wardWhy = g?.ward && aw && wardKey(g.ward) && wardKey(g.ward) !== aw ? `駅の市区（${g.ward}）が所在地（${input.addressWard}）と違う` : "";
+      const lineWhy = c.line && g && g.lines.length > 0 && !lineMatches(c.line, g.lines) ? `${c.line}に${c.station}が無い（駅の表: ${g.lines.slice(0, 3).join("・")}）` : "";
+      // ③ 台帳の交通に別の駅だけがある＝資料と違う（出口で落とす）
       if (ledgerStations.length > 0) {
-        out.push({ kind: "station", claim: c.text, verdict: "conflict", why: `台帳の交通は ${ledgerStations.map((s) => s.station).join("・")}` });
+        out.push({ kind: "station", claim: c.text, verdict: "conflict", why: [`台帳の交通は ${[...new Set(ledgerStations.map((s) => s.station))].join("・")}`, wardWhy].filter(Boolean).join("／") });
         continue;
       }
-      out.push({ kind: "station", claim: c.text, verdict: "unverified", why: "確かめる出どころが無い（台帳の交通が読めていない）" });
+      // ① 駅の表だけで分かる食い違い（市区・路線）は確かめる出どころが無い扱い（境の駅・路線の呼び名の違いがある＝影の運用で数える）
+      out.push({ kind: "station", claim: c.text, verdict: "unverified", why: wardWhy || lineWhy || "確かめる出どころが無い（台帳の交通が読めていない）" });
     } else if (c.kind === "admin_fee") {
       if (L?.adminFee == null) { out.push({ kind: "admin_fee", claim: c.text, verdict: "unverified", why: "台帳に管理費・共益費の見出しが無い" }); continue; }
       if (L.adminFee === c.value) { out.push({ kind: "admin_fee", claim: c.text, verdict: "ok", why: "台帳と同じ" }); continue; }
@@ -216,9 +222,20 @@ export function checkFirstMessageFacts(input: GuardInput): Decision[] {
 }
 
 export type GuardMode = "off" | "shadow" | "on";
+const modeOf = (v: string | undefined, d: GuardMode): GuardMode => { const s = (v ?? d).trim().toLowerCase(); return s === "on" ? "on" : s === "off" ? "off" : s === "shadow" ? "shadow" : d; };
+/**
+ * ①の既定（2026-10-17 影の運用の物差し＝竹内さん・スタッフの実送信 70件）:
+ *   確かめられない駅（台帳の交通が読めない・駅の表だけの食い違い）2件 → スタッフも2件とも消した（誤り 0）→ 既定 on（AIX_FACT_GUARD_STATION）
+ *   間取り図と合わない独立洗面台 4件 → スタッフは4件ともそのまま送った（未桜さんの資料も間取り図の読みは「独立」＝読めていない）→ 影の運用のまま（AIX_FACT_GUARD_WASHBASIN）
+ *   AIX_FACT_GUARD=on/off/shadow は両方をまとめて上書きする
+ */
 export function factGuardMode(env: Record<string, string | undefined> = process.env): GuardMode {
-  const v = (env.AIX_FACT_GUARD ?? "shadow").trim().toLowerCase();
-  return v === "on" ? "on" : v === "off" ? "off" : "shadow";
+  const m = factGuardModes(env);
+  return m.station === "on" || m.washbasin === "on" ? "on" : m.station === "off" && m.washbasin === "off" ? "off" : "shadow";
+}
+export function factGuardModes(env: Record<string, string | undefined> = process.env): { station: GuardMode; washbasin: GuardMode } {
+  if (env.AIX_FACT_GUARD) { const all = modeOf(env.AIX_FACT_GUARD, "shadow"); return { station: all, washbasin: all }; }
+  return { station: modeOf(env.AIX_FACT_GUARD_STATION, "on"), washbasin: modeOf(env.AIX_FACT_GUARD_WASHBASIN, "shadow") };
 }
 export function factExitEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.AIX_FACT_EXIT ?? "on").trim().toLowerCase() !== "off";
@@ -248,13 +265,14 @@ export function dropPhrase(text: string, phrase: string): string {
  * 出口: conflict・fix を直す（③）／unverified は mode=on の時だけ落とす（①）。
  * 管理費を直した時は同じ行の「合計 N円」を家賃＋管理費に直す（家賃が同じ行に書いてある時だけ）
  */
-export function applyFactDecisions(message: string, decisions: Decision[], opts: { exit: boolean; mode: GuardMode }): { text: string; applied: Decision[] } {
+export function applyFactDecisions(message: string, decisions: Decision[], opts: { exit: boolean; mode: GuardMode; washbasinMode?: GuardMode }): { text: string; applied: Decision[] } {
   let text = message;
   const applied: Decision[] = [];
   for (const d of decisions) {
     // ③ 出口（台帳と違う駅・管理費・㎡）／① 確かめられない駅・間取り図と合わない独立洗面台（影の運用で数を測ってから）
     const doExit = opts.exit && d.kind !== "washbasin" && (d.verdict === "fix" || d.verdict === "conflict");
-    const doGuard = opts.mode === "on" && ((d.verdict === "unverified" && d.kind === "station") || (d.kind === "washbasin" && d.verdict === "conflict"));
+    const washMode = opts.washbasinMode ?? opts.mode;
+    const doGuard = (opts.mode === "on" && d.verdict === "unverified" && d.kind === "station") || (washMode === "on" && d.kind === "washbasin" && d.verdict === "conflict");
     if (!doExit && !doGuard) continue;
     if (d.verdict === "fix" && d.to) {
       if (!text.includes(d.claim)) continue;
