@@ -1170,7 +1170,7 @@ async function callClaudeHaiku(system: SystemSpec, user: string, action: string,
 //   （buildSystemBlocks の閾値 AIX_CACHE_MIN_CHARS）。長い物件オススメ等の system は従来どおり共通 prefix 1h＋固有文 5m
 // ※ 画像つきの呼び出しは llm-alt-provider が対象外にする（flattenContent が null を返す）ので必ず Claude へ行く。
 //   読み替えを掛けても外に出ないうえ、画像の中身は読み替えられないので、ここは素通しにしている。
-async function callClaudeVision(system: SystemSpec, content: unknown[], action: string, dynamicSystemSuffix?: string, opts: { ttl?: SystemTtl } = {}): Promise<string> {
+async function callClaudeVision(system: SystemSpec, content: unknown[], action: string, dynamicSystemSuffix?: string, opts: { ttl?: SystemTtl; forceClaude?: boolean } = {}): Promise<string> {
   const systemBlocks = buildSystemBlocks(system, { defaultTtl: opts.ttl ?? "5m", dynamicSuffix: dynamicSystemSuffix });
 
   // ── 2026-09-20 竹内「物件オススメ置き換える」────────────────────────────────
@@ -1186,7 +1186,7 @@ async function callClaudeVision(system: SystemSpec, content: unknown[], action: 
   //     判定は setupAltProviderGuards が同じ純関数（post-apply.ts）で決めた ctx.postApply を読む（四者同名）。
   // 2026-09-26 時刻の線: この経路は fetch の出口を通らない（callVisionAlt が直接 DeepSeek を呼ぶ）ので、ここで印を見る（blocked・印なしは Claude）
   const visionCutMark = aixRequestCtx.getStore()?.cutMark;
-  if (shouldRouteVisionAlt(action) && !aixRequestCtx.getStore()?.postApply && !!visionCutMark && visionCutMark.kind !== "blocked") {
+  if (!opts.forceClaude && shouldRouteVisionAlt(action) && !aixRequestCtx.getStore()?.postApply && !!visionCutMark && visionCutMark.kind !== "blocked") {
     const altT0 = Date.now();
     const alt = await callVisionAlt(systemBlocks, content);
     if (alt) {
@@ -3045,13 +3045,23 @@ ${SMORA_COMMON_RULES}`;
         ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + recStarNote
         : "") + firstSceneNote;
 
+      // 2026-10-17 ⑤: 条件のスクショがお客様の個人の画像（本人確認書類・振込の控え・人物 等）と同じ画像なら DeepSeek に出さず Claude に倒す（app/lib/condition-image-guard.ts・LLM なし）
+      let recCondPersonal = false;
+      if (condition_image_url) {
+        const cg = await import("@/app/lib/condition-image-guard").then((m) => m.checkConditionImage(supabase, conversationId ? String(conversationId) : null, String(condition_image_url))).catch(() => null);
+        if (cg) {
+          recCondPersonal = cg.personal;
+          console.log(JSON.stringify({ tag: "aix:condition-image-guard", conversationId, matched: cg.matched, personal: cg.personal, label: cg.label, checked: cg.checked }));
+          conditionsSnapshot.condition_image_guard = { matched: cg.matched, personal: cg.personal, label: cg.label };
+        }
+      }
       const content = [
         { type: "text", text: recUserTextFinal },
         ...(condition_image_url ? [{ type: "image", source: { type: "url", url: condition_image_url } }] : []),
         { type: "image", source: { type: "url", url: image_url } },
       ];
 
-      message_text = await callClaudeVision(recSystemSpec, content, currentAction, recSystemDynamic || undefined);
+      message_text = await callClaudeVision(recSystemSpec, content, currentAction, recSystemDynamic || undefined, { forceClaude: recCondPersonal });
       // ── 2026-10-01 竹内「1通目の言い回しが AI くさい」: 出口（作り直し1回・本文は書き換えない）──
       //   スタッフの文全体 4,427通で0通の言い回し（使いやすい設備・暮らしやすい作り・〜作りとなっております・〜へもすぐ／出やすい立地・安心の作り・
       //   新生活のスタート・強み・ならでは・これ以上ない）と、手本の物件名の持ち込みを検査し、当たれば1回だけ作り直す。
@@ -3066,7 +3076,7 @@ ${SMORA_COMMON_RULES}`;
           const retryNote = `\n\n【🚨 作り直し（前回の出力はスタッフが書かない言い回しだった）】\n前回の出力の ${hits.join("・")} は、スタッフの1通目には1通も無い書き方です。`
             + `言い換えるのではなく、【この1通目の書き方】の実物と同じ形で最初から書き直す（本文は資料の事実を1〜2文・事実で結ぶ・文の終わりは「！！」）。出力は本文のみ。`;
           try {
-            const retry = await callClaudeVision(recSystemSpec, content, currentAction, (recSystemDynamic || "") + retryNote);
+            const retry = await callClaudeVision(recSystemSpec, content, currentAction, (recSystemDynamic || "") + retryNote, { forceClaude: recCondPersonal });
             const still = firstHits(retry);
             if (retry.trim() && still.length < hits.length && !isNotACustomerReply(retry)) message_text = retry;
             if (still.length > 0) console.warn(JSON.stringify({ tag: "aix:first-style-left", conversationId, hits: still }));
