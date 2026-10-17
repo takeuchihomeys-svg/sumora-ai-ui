@@ -17,7 +17,7 @@ import { customerRequestsPhoneCall } from "./phone-call";
 import { isRoomPhotoRequest, stripPhotoWordsForViewing, PROPERTY_NAME_LIKE_RE } from "./room-photo-request";
 import { isProcedureReplyText } from "./procedure-question";
 import {
-  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, MGMT_COMPANY_Q_RE, PROXY_CHECK_REQUEST_RE, PROXY_SEARCH_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
+  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, MGMT_COMPANY_Q_RE, PROXY_CHECK_REQUEST_RE, PROXY_SEARCH_RE, TWO_PERSON_CHECK_REQUEST_RE, TWO_PERSON_SEARCH_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
   VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE, OTHER_ROOM_LAYOUT_Q_RE, OTHER_ROOM_SEARCH_RE,
 } from "./scene-patterns";
 import { customerImageGroup } from "./image-label";
@@ -276,6 +276,11 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   //   物件が特定できなくても、こちらが送った物件があればその物件の代理契約の質問（実データ: カイナ・タクミ・yasuki とも直前の送付物件について）
   if (PROXY_CHECK_REQUEST_RE.test(msg) && !PROXY_SEARCH_RE.test(msg) && (specified || (o.sentPropertyCount ?? 0) > 0)) {
     return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_proxy", timing: "after_confirm", chained: null, reasonCode: "proxy_contract_question", propertySpecifiedBy: specBy ?? "context" });
+  }
+  // 2026-10-18 竹内さん 10/16「二人入居を聞かれたら、まず物件ごとに違うので管理会社に確認と約束→答えは AIX【管理会社に確認した】の新しいピッカーから返信」（代理契約と同じ形）。
+  //   戻す AIX_MGMT_TWO_PERSON=off
+  if ((process.env.AIX_MGMT_TWO_PERSON ?? "").trim().toLowerCase() !== "off" && TWO_PERSON_CHECK_REQUEST_RE.test(msg) && !TWO_PERSON_SEARCH_RE.test(msg) && !isConditionFormMessage(msg) && (specified || (o.sentPropertyCount ?? 0) > 0)) {
+    return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_two_person", timing: "after_confirm", chained: null, reasonCode: "two_person_question", propertySpecifiedBy: specBy ?? "context" });
   }
   // 2026-09-30 竹内（みこと 15:14「それと審査の件ですがこの物件の管理会社はどこですか？？」）
   //   「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて。物件確認したと確認したがごっちゃになっている」:

@@ -2201,7 +2201,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
       }
       const addGreetingHere = aixDailyRequired
         || ((currentAction === "property_send" || currentAction === "property_recommendation" || currentAction === "property_check_result")
-          && check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_company");
+          && check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_company");
       // 必ず付ける形（aixDailyRequired）では今日の会話文で決め、挨拶は「お世話になっております」（初回は「ご連絡頂きありがとうございます」・夜にこちらから届ける連絡は夜分の文＝buildGreeting のまま）
       const dailyPhrase = aixDailyRequired && !aixTalkedToday ? (greetingPhrase || "お世話になっております！！") : greetingPhrase;
       const daily =applyDailyGreeting(sendCleaned, { staffSentToday: aixTalkedToday, greetingPhrase: addGreetingHere ? dailyPhrase : "", name: familyName ? name : "", joinNameLine: aixTakeuchiFormOn() });
@@ -5301,7 +5301,7 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
     // ── 🏢 管理会社に確認した（退去予定日・入居可能日・初期費用・駐車場・ペット飼育・設備・募集状況）＋ 近隣月極駐車場確認 ──────────
     } else if (
       action === "property_check_result" &&
-      (check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_company" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
+      (check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_company" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
     ) {
       let mgmtInfo = extra_input ? String(extra_input).trim() : "";
       // 2026-09-16 竹内（カイナ事例）: 代理契約の可否。入れるのは物件名と可能／不可だけで、あとは会話に合わせる
@@ -5309,6 +5309,12 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
       if (check_pattern === "mgmt_proxy") {
         if (proxyResult !== "可能" && proxyResult !== "不可") throw new Error("代理契約が可能か不可かが必要です");
         mgmtInfo = [`代理契約：${proxyResult}`, property_name ? `物件名：${property_name}` : "物件名：入力なし（物件名に触れない）"].join("\n");
+      }
+      // 2026-10-18 竹内さん 10/16: 二人入居の可否（代理契約と同じ形・入れるのは物件名と可能／不可だけ）
+      const twoPersonResult = body.two_person_result as string | undefined;
+      if (check_pattern === "mgmt_two_person") {
+        if (twoPersonResult !== "可能" && twoPersonResult !== "不可") throw new Error("二人入居が可能か不可かが必要です");
+        mgmtInfo = [`二人入居：${twoPersonResult}`, property_name ? `物件名：${property_name}` : "物件名：入力なし（物件名に触れない）"].join("\n");
       }
       // 駐車場・ペット飼育: 構造化入力（ピッカー選択+テキスト）からスタッフ入力情報を組み立てる
       if (check_pattern === "mgmt_parking") {
@@ -5368,7 +5374,7 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
         const label = m.sender === "staff" && m.imageUrl ? staffImageLabels.get(m.imageUrl) : undefined;
         return { sender: m.sender, text: label ? `[画像: ${label}の資料・御見積書]` : m.text };
       });
-      const mgmtTarget = check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_move_in" && !(typeof property_name === "string" && property_name.trim())
+      const mgmtTarget = check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_move_in" && !(typeof property_name === "string" && property_name.trim())
         ? resolveConfirmTargetProperty(mgmtTargetRows, { topic: confirmTopicForCheckPattern(String(check_pattern)) })
         : null;
       if (mgmtTarget) {
@@ -5426,6 +5432,21 @@ ${guidanceRule}`,
 ・3行目（次の一手）を足してよいのは、**この会話で内覧のご案内も申込のご案内も一度もしていない時だけ**。会話に「ご案内させて頂きます」「ご内覧」「お申込み」が既にあれば足さない（同じ案内の繰り返しになる）:
   - 足す場合（可能）: 内覧の話が出ていなければ「よろしければ一度お部屋ご内覧如何でしょうか😊！！」
   - 不可の時は足さない（代わりの提案はスタッフが別の AIX で送る）
+・「審査に通る」「大丈夫です」など確認していない断定はしない`,
+        },
+        // 2026-10-18 竹内さん 10/16「二人入居を聞かれたら、まず物件ごとに違うので管理会社に確認と約束→答えは AIX【管理会社に確認した】の新しいピッカーから返信」
+        //   型は代理契約（mgmt_proxy）と同じ2行。不可の言い方は実送信「1人入居専用となっております」（7/21 b87d85db）と代理契約の不可の形に合わせる
+        mgmt_two_person: {
+          label: "二人入居の可否",
+          format: twoPersonResult === "不可"
+            ? `[物件名]に二人入居可能か管理会社に確認させて頂きましたところ
+1人入居専用のお部屋となり、二人入居が出来ないお部屋となります。`
+            : `[物件名]に二人入居可能か管理会社に確認させて頂きましたところ
+二人入居可能となります😊！！`,
+          rules: `・**この2行だけで終えるのが基本**。挨拶（お世話になっております等）・時候の挨拶は書かない＝1行目から始める
+・スタッフが入れたのは「二人入居：可能／不可」と「物件名」の2つだけ。これ以外の事実は絶対に書かない（同居人の続柄・審査・家賃・広さの評価・他の物件の可否）
+・[物件名]はスタッフ入力の物件名をそのまま使う（複数は「〇〇・〇〇ともに」）。物件名が「入力なし」なら1行目は「二人入居可能か管理会社に確認させて頂きましたところ」から始める
+・3行目（次の一手）を足してよいのは、**この会話で内覧のご案内も申込のご案内も一度もしていない時だけ**（可能の時「よろしければ一度お部屋ご内覧如何でしょうか😊！！」）。不可の時は足さない（代わりの提案はスタッフが別の AIX で送る）
 ・「審査に通る」「大丈夫です」など確認していない断定はしない`,
         },
         // 2026-09-30 竹内（みこと事例）「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて」
@@ -5630,7 +5651,7 @@ ${mgmtTarget ? `②の文頭に「${mgmtTarget.name}につきまして」と付�
 ${mgmtDef.format}
 
 【置き換えルール】
-${check_pattern === "mgmt_proxy" ? "" : mgmtTarget ? `・[物件名]は【確認した物件】の名前をそのまま使う（${mgmtTarget.name}）。会話に出てくる他の物件の名前は書かない
+${check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" ? "" : mgmtTarget ? `・[物件名]は【確認した物件】の名前をそのまま使う（${mgmtTarget.name}）。会話に出てくる他の物件の名前は書かない
 ` : `・[物件名]は会話履歴からお客様が確認依頼した物件を特定する（号室があれば「マンション名 806号室」形式・号室は資料や会話の表記のまま: 0806 は 0806）。特定できない場合は「ご確認頂きましたお部屋」とする
 `}${mgmtDef.rules}
 
@@ -5667,10 +5688,10 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
         currentAction,
         // 代理契約はお客様の依頼への返答＝挨拶を付けない（実送信の形。カイナ 9/16 11:48）
         // 管理会社名の返答も同じ（実送信 9/11・9/30 は挨拶なしの1〜2行）
-        check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_company" && greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined
+        check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_company" && greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined
       );
       // 挨拶フレーズを渡さなくても LLM が「〇〇さんお世話になっております！！」を書くので出口で落とす（本番4回とも付いた）
-      if (check_pattern === "mgmt_proxy" || check_pattern === "mgmt_company") {
+      if (check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_company") {
         const sg = stripHeadGreeting(message_text);
         if (sg.count) {
           message_text = sg.text;

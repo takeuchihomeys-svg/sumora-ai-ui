@@ -47,6 +47,17 @@ it("家賃相場の言い方（同じ地域・同じ間取りで安い時だけ�
   const f = COMPANY_FACTS.find((x) => x.id === "rent_market_wording")!;
   if (!f.fact.includes("同じ地域・同じ間取りで相場より安い時だけ")) throw new Error("線が無い");
 });
+it("代理契約・二人入居は物件ごとに違う→確認／交渉の約束", () => {
+  has("ふたり入居可ですか？", "proxy_two_person_check");
+  has("こちらの物件は代理契約可能でしょうか？", "proxy_two_person_check");
+  has("1度この2つで代理契約可能か確認していただけますでしょうか？", "proxy_two_person_check");
+  has("代理契約でお願いします！", "proxy_two_person_check", false);
+  has("代理契約できる物件ありますでしょうか？", "proxy_two_person_check", false);
+  has("1LDKにしたら2人入居は厳しいでしょうか？", "proxy_two_person_check", false);
+  has("追加で2人入居可能で、築年数10年以内で一度探してもらえると助かります！", "proxy_two_person_check", false);
+  const f = COMPANY_FACTS.find((x) => x.id === "proxy_two_person_check")!;
+  if (!f.fact.includes("交渉させて頂きます") || !f.fact.includes("物件ごとに異なる")) throw new Error("約束の形が無い");
+});
 it("支払いは一括の振込だけ（既定）", () => {
   const f = COMPANY_FACTS.find((x) => x.id === "credit_card")!;
   if (!/一括のお振込のみ/.test(f.fact)) throw new Error("一括のお振込のみが無い");

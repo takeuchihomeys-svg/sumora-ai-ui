@@ -198,6 +198,7 @@ const PICKER_KNOW: Record<string, Partial<Know>> = {
   "property_check_result/mgmt_move_in": { staffOnly: "管理会社に聞いた入居可能日・希望日で入れるか", lines: "入居日のピッカーは2つ: 物件確認した→入居日確認した（退去日から計算・資料）／確認した→入居日について（管理会社の回答）" },
   "property_check_result/mgmt_initial_cost": { staffOnly: "管理会社・代表・オーナーとの初期費用の交渉の結果（礼金・消臭代を外せるか 等）", lines: "費用を知りたいだけの依頼は見積書送る" },
   "property_check_result/mgmt_proxy": { staffOnly: "代理契約の可否（管理会社の回答）" },
+  "property_check_result/mgmt_two_person": { staffOnly: "二人入居の可否（管理会社の回答・2026-10-18）" },
   "property_check_result/mgmt_guarantor": { staffOnly: "管理会社に聞いた保証会社・保証人・審査の条件", lines: "資料に保証会社が書いてある時は返信（8巡目）" },
   "property_check_result/mgmt_company": { staffOnly: "資料・管理会社で確かめた管理会社の名前・連絡先", lines: "資料の弊社帯の次の元付が分かる時は返信（8巡目）" },
   "property_check_result/mgmt_parking": { staffOnly: "管理会社に聞いた駐車場の有無・料金・空き", lines: "資料に駐車場の空き・料金がある時は返信（8巡目）" },

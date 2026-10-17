@@ -216,6 +216,8 @@ const CONFIRM_TOPIC_RULES: ReadonlyArray<{ re: RegExp; label: string }> = [
   { re: /番手/, label: '番手' },
   { re: /保証会社|保証人|信用保証/, label: '保証会社' },
   { re: /代理契約/, label: '代理契約' },
+  // 2026-10-18 竹内さん 10/16: 二人入居の確認の約束（AIX【管理会社に確認した→二人入居について】で閉じる）。入居時期より先に見る
+  { re: /(?:二人|2人|２人|ふたり)(?:での)?(?:入居|暮らし)/, label: '二人入居' },
   { re: /入居(?:可能)?(?:時期|日)|ご?入居が可能|入居可否|(?:上旬|中旬|下旬|[0-9０-９]{1,2}日)(?:での|から|の|まで)?ご?入居/, label: '入居時期' },
   { re: /退去時費用|クリーニング代|クリーニング費/, label: '退去時費用' },
   { re: /初期費用|割引|礼金|敷金|フリーレント/, label: '初期費用' },
@@ -245,6 +247,7 @@ export function confirmTopicForCheckPattern(checkPattern: string | null | undefi
     case 'mgmt_parking': case 'nearby_parking': return '駐車場';
     case 'mgmt_equipment': return '設備';
     case 'mgmt_proxy': return '代理契約';
+    case 'mgmt_two_person': return '二人入居';
     case 'available': case 'unavailable': case 'alternative': case 'mgmt_availability': return '募集状況';
     default: return null;
   }
@@ -321,6 +324,7 @@ export function checkPatternForConfirmTopic(topic: string | null | undefined): s
     case '駐車場': return 'mgmt_parking';
     case '設備': return 'mgmt_equipment';
     case '代理契約': return 'mgmt_proxy';
+    case '二人入居': return 'mgmt_two_person';
     default: return null;
   }
 }

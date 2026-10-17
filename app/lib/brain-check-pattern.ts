@@ -18,7 +18,7 @@ export function brainCheckPatternEnabled(env: Env = typeof process !== "undefine
 /** ブレインが出せる値（availability＝物件確認した（募集状況）・他は aix-taxonomy の細目） */
 export const BRAIN_CHECK_PATTERN_VALUES = [
   "availability", "interior_photo", "mgmt_move_in", "vacate_date", "mgmt_company", "mgmt_guarantor", "mgmt_pet",
-  "mgmt_parking", "nearby_parking", "mgmt_equipment", "mgmt_initial_cost", "mgmt_proxy",
+  "mgmt_parking", "nearby_parking", "mgmt_equipment", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person",
 ] as const;
 export type BrainCheckPattern = typeof BRAIN_CHECK_PATTERN_VALUES[number];
 
@@ -32,7 +32,7 @@ export function normalizeBrainCheckPattern(v: unknown): BrainCheckPattern | null
 /** ブレインの出力の1項目（aix が property_check_result の時だけ値を入れる） */
 export function brainCheckPatternSchemaField(env?: Env): string {
   if (!brainCheckPatternEnabled(env)) return "";
-  return `"check_pattern": "aix が property_check_result の時だけ、押すボタンの細目を1つ（他の aix の時は null）。availability＝AIX【物件確認した（募集状況）】（物件そのものの空き・募集状況を確かめて結果で報告。お客様が持ち込んだ物件・まだ募集状況を確かめていない物件への質問は、条件を聞かれていても先にこれ＝スタッフは30日の同じ場面で6/6番が募集状況を先に確かめた）／interior_photo＝室内の写真・動画・別の部屋・間取り／確認した（条件・交渉）の細目: mgmt_move_in（入居可能日）・vacate_date（退去予定日）・mgmt_company（管理会社の名前・連絡先）・mgmt_guarantor（保証会社・保証人）・mgmt_pet（ペット）・mgmt_parking（駐車場）・nearby_parking（近隣の月極）・mgmt_equipment（設備）・mgmt_initial_cost（初期費用・礼金等の交渉）・mgmt_proxy（代理契約）。募集状況がもう分かっている物件（こちらが送って募集中と伝えた・物件確認した済み）への条件の質問だけ条件の細目", `;
+  return `"check_pattern": "aix が property_check_result の時だけ、押すボタンの細目を1つ（他の aix の時は null）。availability＝AIX【物件確認した（募集状況）】（物件そのものの空き・募集状況を確かめて結果で報告。お客様が持ち込んだ物件・まだ募集状況を確かめていない物件への質問は、条件を聞かれていても先にこれ＝スタッフは30日の同じ場面で6/6番が募集状況を先に確かめた）／interior_photo＝室内の写真・動画・別の部屋・間取り／確認した（条件・交渉）の細目: mgmt_move_in（入居可能日）・vacate_date（退去予定日）・mgmt_company（管理会社の名前・連絡先）・mgmt_guarantor（保証会社・保証人）・mgmt_pet（ペット）・mgmt_parking（駐車場）・nearby_parking（近隣の月極）・mgmt_equipment（設備）・mgmt_initial_cost（初期費用・礼金等の交渉）・mgmt_proxy（代理契約）・mgmt_two_person（二人入居）。募集状況がもう分かっている物件（こちらが送って募集中と伝えた・物件確認した済み）への条件の質問だけ条件の細目", `;
 }
 
 /**
