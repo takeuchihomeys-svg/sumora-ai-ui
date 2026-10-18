@@ -41,6 +41,8 @@
 //   旧の線 status_manual_back_at は前に進めると null に戻る（page.tsx の状態変更）ので線には使えなかった（20会話で消えていた）。
 
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
+import { examplePiiReason } from "./example-pii-guard";
+import { altPiiSignal } from "./alt-pii-gate";
 
 export type PostApplyFacts = {
   status: string | null | undefined;
@@ -54,7 +56,31 @@ export type PostApplyFacts = {
   statusManualBackAt?: string | null;
   /** 申込以降→申込前に切り替えた時刻（conversations.deepseek_cutoff_at・消えない列）。無ければ null */
   deepseekCutoffAt?: string | null;
+  /**
+   * お客様から記入済みの申込フォームが最後に届いた時刻（ISO）。無ければ null。2026-10-18 弱い所A-3③
+   *   **DeepSeek の線（deepseekSafeCutoff）だけ**の起点。resolvePostApply（下書きを止める判定）には入れない＝フォームが届いても下書きは今まで通り。
+   */
+  applicationFormAt?: string | null;
+  /** フォームの記録が読めなかった（DeepSeek の線は渡さない側へ倒す・下書きの判定には効かない） */
+  applicationFormUnreadable?: boolean;
 };
+
+/**
+ * 記入済みの申込フォームか（お客様の発言1通）。2026-10-18 弱い所A-3③（設計知見 804934e7: 申込の線は『申込へ押下』だけでは足りない）
+ *   10/16 の調べ: 「申込へ」を押す前に届いた記入済みフォームが DeepSeek に出得た（時刻の線が引かれない）。
+ *   判定は例文の網（examplePiiReason）と出口の門（altPiiSignal）の「記入済みの申込フォーム」のどちらか＝空の記入欄（値が無い）は当てない。
+ */
+export function isFilledApplicationForm(text: string | null | undefined): boolean {
+  const t = String(text ?? "");
+  if (!t.trim()) return false;
+  return examplePiiReason(t)?.reason === "記入済みの申込フォーム" || altPiiSignal(t) === "記入済みの申込フォーム";
+}
+/** DB で先に絞る語（フォームは必ずどれかを含む・本番の直近 8000通で取りこぼし 0 を確かめた 10/18） */
+export const APPLICATION_FORM_PREFILTER = "text.ilike.%記入欄%,text.ilike.%生年月日%,text.ilike.%申込%,text.ilike.%緊急連絡先%,text.ilike.%連帯保証人%,text.ilike.%勤務先%";
+/** 戻す: DEEPSEEK_CUTOFF_APPLICATION_FORM=off */
+export function applicationFormLineEnabled(): boolean {
+  return typeof process === "undefined" || (process.env?.DEEPSEEK_CUTOFF_APPLICATION_FORM ?? "").toLowerCase() !== "off";
+}
 
 export type PostApplyReason = "status" | "badge" | "application_push" | "id_document" | null;
 
@@ -93,11 +119,20 @@ type Res = { data: unknown; error: { message: string } | null };
  * 3クエリだが全部 index のある列（conversation_id）で軽い。
  */
 export async function loadPostApplyFacts(sb: Sb, conversationId: string): Promise<PostApplyFacts> {
-  const [conv, push, idDoc] = (await Promise.all([
+  const formOn = applicationFormLineEnabled();
+  const [conv, push, idDoc, form] = (await Promise.all([
     sb.from("conversations").select("status, is_post_apply, status_manual_back_at, deepseek_cutoff_at").eq("id", conversationId).maybeSingle(),
     sb.from("aix_usage_logs").select("created_at").eq("conversation_id", conversationId).eq("aix_type", "application_push").order("created_at", { ascending: false }).limit(1),
     sb.from("messages").select("created_at").eq("conversation_id", conversationId).eq("sender", "customer").in("image_type", ["id_document", "income_document"]).order("created_at", { ascending: false }).limit(1),
-  ])) as [Res, Res, Res];
+    // 記入済みの申込フォーム（DeepSeek の線だけの起点）: 語で絞った新しい方から20通を読んで判定。読めなくても例外にしない（下書きの判定を止めない）
+    (async (): Promise<Res> => {
+      if (!formOn) return { data: [], error: null };
+      try {
+        return (await sb.from("messages").select("created_at, text").eq("conversation_id", conversationId).eq("sender", "customer")
+          .or(APPLICATION_FORM_PREFILTER).order("created_at", { ascending: false }).limit(20)) as Res;
+      } catch (e) { return { data: null, error: { message: e instanceof Error ? e.message : String(e) } }; }
+    })(),
+  ])) as [Res, Res, Res, Res];
   if (conv.error) throw new Error(`post-apply: conversations: ${conv.error.message}`);
   if (push.error) throw new Error(`post-apply: aix_usage_logs: ${push.error.message}`);
   if (idDoc.error) throw new Error(`post-apply: messages: ${idDoc.error.message}`);
@@ -110,6 +145,8 @@ export async function loadPostApplyFacts(sb: Sb, conversationId: string): Promis
     idDocumentAt: first(idDoc),
     statusManualBackAt: row?.status_manual_back_at ?? null,
     deepseekCutoffAt: row?.deepseek_cutoff_at ?? null,
+    applicationFormAt: form.error ? null : (((form.data ?? []) as Array<{ created_at?: string | null; text?: string | null }>).find((m) => isFilledApplicationForm(m.text))?.created_at ?? null),
+    applicationFormUnreadable: !!form.error,
   };
 }
 // ═══ 時刻の線（DeepSeek に渡してよいのはこの時刻より後だけ）═══════════════════════════════════════
@@ -130,9 +167,12 @@ export function deepseekSafeCutoff(f: PostApplyFacts): DeepseekCutoff {
   try {
     if (resolvePostApply(f).postApply) return null;
     // 書いてあるのに読めない時刻がある＝判定が読めない → 渡さない
-    for (const v of [f.applicationPushAt, f.idDocumentAt, f.statusManualBackAt, f.deepseekCutoffAt]) if (v && ms(v) === null) return null;
-    const pushAt = ms(f.applicationPushAt), docAt = ms(f.idDocumentAt);
-    const latest = Math.max(pushAt ?? -Infinity, docAt ?? -Infinity);
+    for (const v of [f.applicationPushAt, f.idDocumentAt, f.statusManualBackAt, f.deepseekCutoffAt, f.applicationFormAt]) if (v && ms(v) === null) return null;
+    // 2026-10-18 弱い所A-3③: 記入済みの申込フォームも申込の記録と同じに数える（フォームの後に戻していなければ渡さない・戻した後は戻した時刻より後だけ）
+    const formOn = applicationFormLineEnabled();
+    if (formOn && f.applicationFormUnreadable) return null;
+    const pushAt = ms(f.applicationPushAt), docAt = ms(f.idDocumentAt), formAt = formOn ? ms(f.applicationFormAt) : null;
+    const latest = Math.max(pushAt ?? -Infinity, docAt ?? -Infinity, formAt ?? -Infinity);
     const cut = ms(f.deepseekCutoffAt), back = ms(f.statusManualBackAt);
     if (!Number.isFinite(latest)) {
       // 申込へ押下・書類の記録は無いが、status が申込以降だった所から戻した（審査管理の同期で申込・審査中になっていた等）

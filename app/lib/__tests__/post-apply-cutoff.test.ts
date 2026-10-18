@@ -3,7 +3,7 @@
 // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、申込落ちてステータスを切り替えたら、切り替えたところ以降渡せば個人情報防げる」
 import {
   deepseekSafeCutoff, resolvePostApply, NO_CUTOFF, cutoffMs, isAfterCutoff, filterAfterCutoff,
-  cutoffMarkOf, formatCutoffMark, parseCutoffMark, preCutoffChunks, countCutoffLeaks, loadDeepseekCutoff,
+  cutoffMarkOf, formatCutoffMark, parseCutoffMark, preCutoffChunks, countCutoffLeaks, loadDeepseekCutoff, isFilledApplicationForm,
 } from "../post-apply";
 import { DRAFT_SKIP_STATUSES } from "../conversation-status";
 
@@ -120,7 +120,7 @@ async function main() {
       from: (table: string) => {
         const res = (payload: unknown) => (fail ? { data: null, error: { message: "boom" } } : { data: payload, error: null });
         const chain: Record<string, unknown> = {};
-        chain.select = () => chain; chain.eq = () => chain; chain.in = () => chain; chain.order = () => chain; chain.lte = () => chain;
+        chain.select = () => chain; chain.eq = () => chain; chain.in = () => chain; chain.order = () => chain; chain.lte = () => chain; chain.or = () => chain;
         chain.maybeSingle = async () => res(conv);
         chain.limit = async () => res(table === "aix_usage_logs" ? [{ created_at: "2026-09-11T03:00:00.000Z" }] : []);
         return chain;
@@ -130,6 +130,43 @@ async function main() {
     await it("読めなければ null（渡さない）", async () => eq(await loadDeepseekCutoff(fake(null, true), "c1"), null));
     await it("切り替えた時刻の列を読む", async () =>
       eq(await loadDeepseekCutoff(fake({ status: "viewing", is_post_apply: false, status_manual_back_at: null, deepseek_cutoff_at: "2026-09-16T00:00:00.000Z" }), "c1"), "2026-09-16T00:00:00.000Z"));
+  });
+
+  // 2026-10-18 弱い所A-3③: 記入済みの申込フォームも DeepSeek の線の起点（下書きの判定 resolvePostApply には入れない）
+  await describe("記入済みの申込フォーム（applicationFormAt）", async () => {
+    const FORM = "【申込者様記入欄】\n・氏名 山田花子\n・生年月日 1995年3月12日\n・携帯番号 080-1234-5678";
+    await it("フォームの判定: 記入済みは当たる・空の記入欄（値なし）は当たらない", () => {
+      eq(isFilledApplicationForm(FORM), true);
+      eq(isFilledApplicationForm("【申込者様記入欄】\n・氏名\n・生年月日\n・携帯番号"), false);
+      eq(isFilledApplicationForm("内覧いつ行けますか？"), false);
+    });
+    await it("申込へ・書類が無くフォームだけ届いた会話は null（渡さない）・下書きの判定は申込前のまま", () => {
+      const f = { status: "proposing", applicationFormAt: T("2026-10-10T03:00:00Z") };
+      eq(deepseekSafeCutoff(f), null);
+      eq(resolvePostApply(f).postApply, false);
+    });
+    await it("フォームの後に戻した会話は戻した時刻より後だけ", () =>
+      eq(deepseekSafeCutoff({ status: "proposing", applicationFormAt: T("2026-10-10T03:00:00Z"), deepseekCutoffAt: T("2026-10-12T00:00:00Z") }), T("2026-10-12T00:00:00Z")));
+    await it("戻した後にまたフォームが届いたら null", () =>
+      eq(deepseekSafeCutoff({ status: "proposing", applicationFormAt: T("2026-10-13T03:00:00Z"), deepseekCutoffAt: T("2026-10-12T00:00:00Z") }), null));
+    await it("フォームの記録が読めなければ null（fail-closed）", () => eq(deepseekSafeCutoff({ status: "proposing", applicationFormUnreadable: true }), null));
+    await it("DEEPSEEK_CUTOFF_APPLICATION_FORM=off で旧（フォームを数えない）", () => {
+      const prev = process.env.DEEPSEEK_CUTOFF_APPLICATION_FORM; process.env.DEEPSEEK_CUTOFF_APPLICATION_FORM = "off";
+      try { eq(deepseekSafeCutoff({ status: "proposing", applicationFormAt: T("2026-10-10T03:00:00Z"), applicationFormUnreadable: true }) === NO_CUTOFF, true); }
+      finally { if (prev === undefined) delete process.env.DEEPSEEK_CUTOFF_APPLICATION_FORM; else process.env.DEEPSEEK_CUTOFF_APPLICATION_FORM = prev; }
+    });
+    await it("記録から引く: 新しい方から読んで最初に当たったフォームの時刻・空の記入欄は飛ばす", async () => {
+      const sb = { from: (table: string) => {
+        const chain: Record<string, unknown> = {};
+        let isForm = false;
+        chain.select = (cols: string) => { isForm = table === "messages" && cols.includes("text"); return chain; };
+        chain.eq = () => chain; chain.in = () => chain; chain.order = () => chain; chain.or = () => chain;
+        chain.maybeSingle = async () => ({ data: { status: "proposing", is_post_apply: false, status_manual_back_at: null, deepseek_cutoff_at: null }, error: null });
+        chain.limit = async () => ({ data: isForm ? [{ created_at: "2026-10-11T00:00:00.000Z", text: "【申込者様記入欄】\n・氏名\n・生年月日" }, { created_at: "2026-10-10T00:00:00.000Z", text: FORM }] : [], error: null });
+        return chain;
+      } };
+      eq(await loadDeepseekCutoff(sb, "c1"), null);
+    });
   });
 
   console.log(`\n${passed} passed, ${failed} failed`);
