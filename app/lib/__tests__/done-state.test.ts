@@ -5,7 +5,7 @@
 import {
   latestStaffBlock, findWaitFormPromises, withoutWaitFormPromises, isWholeShortAck, resolveViewingScheduled,
   buildViewingScheduledNote, buildFollowUpDoneNote, customerAnsweredByAix, viewingHoursOf, viewingAckLine, slotStartLabel,
-  VIEWING_SCHEDULED_HEADING,
+  VIEWING_SCHEDULED_HEADING, viewingWaitAckAllowed,
 } from "../done-state";
 import { buildActionLedger, classifyStaffTextFacts, findConfirmReportSentence, buildLedgerLinesForBrain, reportDetailOf, buildLedgerNote, reportObjectOf, REPORT_OBJECT_UNKNOWN } from "../action-ledger";
 import { planPromiseCompletion } from "../promise-calendar";
@@ -255,6 +255,15 @@ it("新しい語彙の報告は要件を持ち、要件の違う【必ず】を�
   expect(reportObjectOf("管理会社より1番手お申込みの方が審査通過し契約も確実とのご連絡がございました。", "YUMAさん\n管理会社より1番手お申込みの方が審査通過し契約も確実とのご連絡がございました。", true) ?? "").toBe("番手");
   // 要件の読めない新しい語彙の報告は「確認結果」（相手・不明の約束だけに当たる）
   expect(reportObjectOf("確認させて頂きましたところ、10月中旬まで工事中となり工事中はご内覧出来ないとの事です！！", "確認させて頂きましたところ、10月中旬まで工事中となり工事中はご内覧出来ないとの事です！！", true) ?? "").toBe(REPORT_OBJECT_UNKNOWN);
+});
+
+it("弱い所B-1: 「現地にてお待ち」は内覧が決まっている時だけ", () => {
+  expect(viewingWaitAckAllowed({ flowConfirmed: false, flowStage: "proposing", scheduled: false, env: {} })).toBe(false);
+  expect(viewingWaitAckAllowed({ flowConfirmed: false, flowStage: "none", scheduled: false, env: {} })).toBe(false);
+  expect(viewingWaitAckAllowed({ flowConfirmed: true, flowStage: "proposing", scheduled: false, env: {} })).toBe(true);
+  expect(viewingWaitAckAllowed({ flowConfirmed: false, flowStage: "date_agreed", scheduled: false, env: {} })).toBe(true);
+  expect(viewingWaitAckAllowed({ flowConfirmed: false, flowStage: null, scheduled: true, env: {} })).toBe(true);
+  expect(viewingWaitAckAllowed({ flowConfirmed: false, flowStage: "none", scheduled: false, env: { VIEWING_ACK_CONFIRMED_ONLY: "off" } })).toBe(true);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

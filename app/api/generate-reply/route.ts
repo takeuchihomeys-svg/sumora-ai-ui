@@ -245,7 +245,7 @@ import { customerSharedProperty } from "@/app/lib/shared-property-ref";
 import { buildActionLedger, buildLedgerNote, buildLastStaffAnnotation, applyLedgerAutoFix, type ActionLedger, type LedgerAixRow, type LedgerTask, type RecordedFact } from "@/app/lib/action-ledger";
 // 2026-09-26 竹内「ここの部分改善する根本的に」: 済んだ事・もう言った約束・決まった内覧を入口で1回だけ決める（純関数・done-state.ts の冒頭を見る）
 import { annotateUnconfirmedViewing, isViewingFixTopic } from "@/app/lib/viewing-premature";
-import { latestStaffBlock, withoutWaitFormPromises, findWaitFormPromises, WAIT_FORM_ACK_HINT, resolveViewingScheduled, buildViewingScheduledNote, isWholeShortAck, buildFollowUpDoneNote, customerAnsweredByAix, viewingHoursOf, viewingAckLine, type ViewingScheduled } from "@/app/lib/done-state";
+import { latestStaffBlock, withoutWaitFormPromises, findWaitFormPromises, WAIT_FORM_ACK_HINT, resolveViewingScheduled, buildViewingScheduledNote, isWholeShortAck, buildFollowUpDoneNote, customerAnsweredByAix, viewingHoursOf, viewingAckLine, viewingWaitAckAllowed, type ViewingScheduled } from "@/app/lib/done-state";
 import { resolveViewingThread } from "@/app/lib/viewing-thread";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
 import { viewingReportNoteForReply, type ViewingReport } from "@/app/lib/viewing-report";
@@ -4776,10 +4776,16 @@ async function handleGenerateReply(req: NextRequest) {
       // 2026-09-16 竹内（YUYA 事例）: 内覧当日の送り出し（「お気をつけてお越し下さい」）の後のお礼に
       //   「明日以降も気になる点等…」と書いていた。送り出しの後は日付に触れず現地で待つ形で受ける
       //   （この場面はブレインが AIX【挨拶（内覧後）】をセットして自動の下書きを止める。手動生成の時の保険）
-      if (/お気をつけて|お越し(?:ください|下さい)/.test(s))
+      // 2026-10-18 弱い所B-1: 「現地にてお待ち」は内覧が決まっている時だけ（語があるだけでは出さない＝作り話の元・done-state.viewingWaitAckAllowed）
+      const viewingFixedForAck = viewingWaitAckAllowed({
+        flowConfirmed: viewingConfirmedForGen, flowStage: ledger.facts.viewingFlow?.stage ?? null, scheduled: viewingScheduled.scheduled,
+      });
+      if (viewingFixedForAck && /お気をつけて|お越し(?:ください|下さい)/.test(s))
         return "「当日は現地にてお待ちしております！！」（日付の語は書かない。内覧は本日）";
-      if (/内覧|内見|ご案内|待ち合わせ/.test(s))
+      if (viewingFixedForAck && /内覧|内見|ご案内|待ち合わせ/.test(s))
         return "「当日は現地にてお待ちしております！！」（日時または場所を1つだけ復唱）";
+      if (!viewingFixedForAck && /内覧|内見|ご案内|待ち合わせ/.test(s))
+        console.info("[viewing-ack-unconfirmed]", JSON.stringify({ conversationId, stage: ledger.facts.viewingFlow?.stage ?? null }));
       if (waitForm.removed.length) return WAIT_FORM_ACK_HINT;
       return "「気になる点等出てきましたらいつでもお気軽にご連絡ください！！」";
     })();

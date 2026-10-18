@@ -293,3 +293,21 @@ export function customerAnsweredByAix(
   // 2026-09-26 反証レビュー: 予約送信の AIX は sent_at が未来（まだ送っていない）。送っていない AIX で「答え終えた」にしない
   return aixRows.some((r) => { const t = Date.parse(r.sent_at ?? r.created_at ?? ""); return Number.isFinite(t) && t > c && t <= nowMs; });
 }
+
+/**
+ * 2026-10-18 弱い所B-1: 感謝・了承の番の「当日は現地にてお待ちしております」は、内覧が決まっている時だけ。
+ *   旧: 直前のこちらの文に「内覧・ご案内・待ち合わせ」の語があるだけで出していた（定型「お気に召されましたらご都合よろしいお日にちにご案内」
+ *   への「ありがとうございます」にも＝作り話）。竹内さんの手打ちの3通はどれも待ち合わせの案内・日にちの合意の後だった。
+ *   確かめられる出どころ: 台帳の待ち合わせの案内／確定の宣言（viewingFlow.confirmed）・日にちの合意（date_agreed）・決まった内覧（resolveViewingScheduled）。
+ *   戻す VIEWING_ACK_CONFIRMED_ONLY=off
+ */
+export function viewingWaitAckAllowed(input: {
+  flowConfirmed: boolean;
+  flowStage: string | null | undefined;
+  scheduled: boolean;
+  env?: Record<string, string | undefined>;
+}): boolean {
+  const env = input.env ?? process.env;
+  if (env.VIEWING_ACK_CONFIRMED_ONLY === "off") return true;
+  return input.flowConfirmed || input.scheduled || input.flowStage === "date_agreed" || input.flowStage === "confirmed";
+}
