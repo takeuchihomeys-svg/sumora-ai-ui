@@ -68,6 +68,7 @@ export const CONDITION_CHECK_OPTIONS: PickerOption[] = [
   { value: "mgmt_move_in", label: "入居日について", when: "募集中と分かっているお部屋の入居可能日・希望日で入れるか" },
   { value: "mgmt_initial_cost", label: "初期費用について", when: "管理会社に初期費用の**交渉**（礼金・消臭代を外せるか等）をした結果。費用を知りたいだけの依頼は見積書送る" },
   { value: "mgmt_proxy", label: "代理契約について", when: "代理契約の可否（可能／不可）" },
+  { value: "mgmt_lifeline", label: "ライフラインについて", when: "ライフライン（電気・ガス・水道）の指定の有無と連絡先を管理会社に確認した結果。お客様に聞かれたら先に「ライフラインのお手続きにつきましては別途ご案内させて頂きます」と約束→答えをここから（2026-10-18 竹内さん 10/18）" },
   { value: "mgmt_two_person", label: "二人入居について", when: "二人入居の可否（可能／不可）。お客様に聞かれたら先に「物件ごとに違うので管理会社に確認させて頂きます」と約束→答えをここから（2026-10-18 竹内さん 10/16）" },
   { value: "mgmt_guarantor", label: "保証会社について（審査面）", when: "募集中と分かっているお部屋の保証会社・保証人・審査の条件" },
   { value: "mgmt_company", label: "管理会社について", when: "管理会社そのもの（名前・どこ・連絡先）を聞かれた。資料・管理会社で確かめた名前を送る（2026-09-30 竹内「管理会社の名前は『確認した』から送る」）" },
@@ -108,6 +109,9 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
       ] },
       { key: "two_person_result", label: "二人入居 可能／不可", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_two_person"] }, options: [
         { value: "可能", label: "可能", when: "" }, { value: "不可", label: "不可", when: "" },
+      ] },
+      { key: "lifeline_designation", label: "ライフライン 指定なし／指定あり", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_lifeline"] }, options: [
+        { value: "指定なし", label: "指定なし", when: "" }, { value: "指定あり", label: "指定あり", when: "" },
       ] },
       { key: "parking", label: "駐車場 あり／なし", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_parking"] }, options: [
         { value: "あり", label: "あり", when: "" }, { value: "なし", label: "なし", when: "" },

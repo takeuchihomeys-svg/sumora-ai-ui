@@ -10,6 +10,7 @@
 // 「物件確認した（募集状況）」と「確認した（条件・交渉）」の両方を包含するタイプとして説明すること。
 // 各ラベルマップの説明文は下の PROPERTY_CHECK_RESULT_LABEL / PROPERTY_CHECK_RESULT_DESCRIPTION に統一する。
 import { PROXY_CONTRACT_RE, MGMT_COMPANY_Q_RE, TWO_PERSON_CHECK_REQUEST_RE } from "./scene-patterns";
+import { LIFELINE_Q_RE } from "./aix-lifeline";
 
 export const AIX_BUTTON_TAXONOMY = {
   property_check_result: {
@@ -19,6 +20,7 @@ export const AIX_BUTTON_TAXONOMY = {
       "確認した（条件・交渉）": [
         "mgmt_proxy",        // 管理会社: 代理契約の可否（2026-09-16 竹内・カイナ事例）
         "mgmt_two_person",   // 管理会社: 二人入居の可否（2026-10-18 竹内さん 10/16）
+        "mgmt_lifeline",     // 管理会社: ライフラインの指定・連絡先（2026-10-18 竹内さん 10/18）
         "mgmt_company",      // 管理会社そのもの: 名前・連絡先（2026-09-30 竹内・みこと事例「管理会社の名前は『確認した』から送る」）
         "mgmt_guarantor",    // 管理会社: 保証会社・保証人
         "mgmt_initial_cost", // 管理会社: 初期費用交渉
@@ -161,6 +163,8 @@ const CHECK_PATTERN_DETECTORS: Array<{ pattern: string; topic: string; re: RegEx
   { pattern: "mgmt_proxy",        topic: "代理契約の可否",         re: PROXY_CONTRACT_RE },
   // 2026-10-18 竹内さん 10/16: 二人入居の可否（管理会社に確認した→二人入居について）
   { pattern: "mgmt_two_person",   topic: "二人入居の可否",         re: TWO_PERSON_CHECK_REQUEST_RE },
+  // 2026-10-18 竹内さん 10/18: ライフライン（管理会社に確認した→ライフラインについて）
+  { pattern: "mgmt_lifeline",     topic: "ライフライン（指定・連絡先）", re: LIFELINE_Q_RE },
   // 2026-09-30 竹内（みこと事例）「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて」:
   //   管理会社そのもの（名前・どこ・連絡先）。保証会社より先に見る（「それぞれの管理会社と保証会社お教えいただけますでしょうか」06-15 e68fd1e2）
   { pattern: "mgmt_company",      topic: "管理会社（名前・連絡先）", re: MGMT_COMPANY_Q_RE },
@@ -324,6 +328,7 @@ const CHECK_PATTERN_TOPICS: Record<string, string> = {
   nearby_parking:    "近隣月極駐車場",
   mgmt_proxy:        "代理契約の可否",
   mgmt_two_person:   "二人入居の可否",
+  mgmt_lifeline:     "ライフライン（指定・連絡先）",
   mgmt_company:      "管理会社（名前・連絡先）",
   mgmt_initial_cost: "初期費用・礼金等の交渉",
   mgmt_guarantor:    "保証会社・保証人",

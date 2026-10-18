@@ -21,6 +21,7 @@ import {
   VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE, OTHER_ROOM_LAYOUT_Q_RE, OTHER_ROOM_SEARCH_RE,
 } from "./scene-patterns";
 import { customerImageGroup } from "./image-label";
+import { aixMgmtLifelineEnabled, isLifelineQuestion } from "./aix-lifeline";
 import { savedPersonalDocumentLabel } from "./personal-document-guard";
 
 /**
@@ -264,6 +265,11 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   //   物件の語が無くても直前のスタッフ発言が1つの物件の見積書・確認結果ならその物件の質問（lastStaffTurnFocus。入居時期を伝え済みなら本文で答える）
   //   context は退去予定の物件の時だけ（入居日が退去日とクリーニング次第で、管理会社に確認しないと分からない）。
   //   実データ（120日）: 即入居・クリーニング中の物件の入居日の質問はスタッフが本文で答えた（context で拾える4件すべて本文／確認します）
+  // 2026-10-18 竹内さん 10/18「ライフラインを聞かれた時の返信は『別途ご案内させて頂きます』の約束→答えは AIX【確認した（条件・交渉）→ライフラインについて】」。
+  //   入居日の質問（「水道の開栓は入居日と同時に…」）より先に見る。物件の特定は要らない（申込・契約の後の手続きの話）。戻す AIX_MGMT_LIFELINE=off
+  if (aixMgmtLifelineEnabled() && isLifelineQuestion(msg)) {
+    return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_lifeline", timing: "after_confirm", chained: null, reasonCode: "lifeline_question", propertySpecifiedBy: specBy ?? "context" });
+  }
   if (MOVEIN_Q_RE.test(msg)) {
     const focus = specified || o.propertyStatus !== "move_out_scheduled" || !moveInAsked(msg) ? null : lastStaffTurnFocus(o.recentMessages);
     const by = specBy ?? (focus?.focus && !focus.moveInTold ? "context" : null);
