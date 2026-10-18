@@ -131,6 +131,7 @@ void (async () => {
   // 純関数
   ok("語のルール: 段ごとに上位200・意味の無い語を外す", JSON.stringify(reduceKeywordRules([{ action_type: "x", keyword: "ます", confidence: 1, occurrence_count: 20, conversation_status: null }])) === JSON.stringify({ "*": { set: [], human: [] } }));
   ok("決まり: 並びは一覧の順で入る", JSON.stringify(reducePromptRules([{ rule_key: "a", priority: 5 }, { rule_key: "b", priority: 5 }])) !== JSON.stringify(reducePromptRules([{ rule_key: "b", priority: 5 }, { rule_key: "a", priority: 5 }])));
+  ok("決まり: アクション別の恒久は priority 3 以下でも入る（prompt-rules の恒久の枠は priority で絞らない）", JSON.stringify(reducePromptRules([{ rule_key: "p", priority: 2, is_permanent: true, action_type: "generate_reply", rule_text: "x" }])) !== JSON.stringify(reducePromptRules([{ rule_key: "p", priority: 2, is_permanent: true, action_type: "generate_reply", rule_text: "y" }])));
   console.log(`exam-db-fp: ${pass} PASS / ${fail} FAIL`);
   process.exit(fail ? 1 : 0);
 })();

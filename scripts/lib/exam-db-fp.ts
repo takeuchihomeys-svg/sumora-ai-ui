@@ -184,9 +184,9 @@ export function reduceFallbackExamples(r: Record<string, Row[]>): unknown {
     return [s.join("|"), same.slice(0, 6), all.filter((x) => !same.some((y) => y.sent_reply === x.sent_reply)).slice(0, 4)];
   });
 }
-/** 決まり（ai_prompt_rules）・下書き: 渡り得る行（priority 4 以上・線引き・全体の恒久）を、並び（priority・updated_at・rule_key）の順の一覧で（上限の手前は上位集合）。時刻は並びとしてだけ入る */
+/** 決まり（ai_prompt_rules）・下書き: 渡り得る行（priority 4 以上・線引き・恒久＝全体もアクション別も。prompt-rules の恒久の枠は priority で絞らない＝generate_reply の恒久 priority 3 以下も届く・確かめる人 10/18）を、並び（priority・updated_at・rule_key）の順の一覧で（上限の手前は上位集合）。時刻は並びとしてだけ入る */
 export function reducePromptRules(rows: Row[]): unknown {
-  return rows.filter((r) => Number(r.priority ?? 0) >= 4 || String(r.rule_key ?? "").startsWith("BOUNDARY-") || (r.is_permanent === true && (r.action_type === null || r.action_type === undefined)))
+  return rows.filter((r) => Number(r.priority ?? 0) >= 4 || String(r.rule_key ?? "").startsWith("BOUNDARY-") || r.is_permanent === true)
     .map((r) => [r.rule_key, r.action_type, r.rule_text, r.condition_key, r.condition_value, r.priority, r.is_permanent]);
 }
 /**
