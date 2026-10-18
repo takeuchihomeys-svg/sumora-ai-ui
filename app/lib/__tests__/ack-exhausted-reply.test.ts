@@ -1,6 +1,6 @@
 // 竹内さんの決定 10/14（約束の直後のお礼・了承＝返信／出し切りの後の条件の足し＝返信で締める）の純関数のテスト
 // 実行: npx tsx app/lib/__tests__/ack-exhausted-reply.test.ts
-import { exhaustedConditionAddTurn, ackAfterPromiseDirection, ackAfterPromiseReplyEnabled, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, ackAfterPromiseBrainEnabled, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled } from "../ack-exhausted-reply";
+import { exhaustedConditionAddTurn, ackAfterPromiseDirection, ackAfterPromiseReplyEnabled, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, ackAfterPromiseBrainEnabled, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise } from "../ack-exhausted-reply";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -71,6 +71,14 @@ it("出し切りの後の条件の足しのブレイン基準（既定 on・off 
   eq(exhaustedConditionAxisEnabled({}), true);
   eq(/ゆるめた/.test(exhaustedConditionTurnLine({})) && /予算オーバー/.test(exhaustedConditionMaterial({})), true);
   eq(/ゆるめた/.test(exhaustedConditionTurnLine({ EXHAUSTED_CONDITION_AXIS: "off" })), false);
+});
+it("2026-10-18 q170: 送付だけの印でブレインが足した条件で探す約束を選んだ番は返信に書き換えない", () => {
+  const k = exhaustedWeakKeepBrainPromise;
+  const asks = [{ route: "promise", about: "search_condition" }];
+  eq(k({ strength: "weak", asks, env: {} }), true, "weak");
+  eq(k({ strength: "strong", asks, env: {} }), false, "strong は決定 10/14 のまま");
+  eq(k({ strength: "weak", asks: [{ route: "reply", about: "search_condition" }], env: {} }), false, "返信を選んだ");
+  eq(k({ strength: "weak", asks, env: { EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE: "off" } }), false, "off");
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

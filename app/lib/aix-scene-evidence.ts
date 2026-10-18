@@ -16,6 +16,7 @@ import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, staffOffersViewing } from ".
 import { customerRequestsPhoneCall } from "./phone-call";
 import { isRoomPhotoRequest, stripPhotoWordsForViewing, PROPERTY_NAME_LIKE_RE } from "./room-photo-request";
 import { isProcedureReplyText } from "./procedure-question";
+import { isOtherAgentViewingApplyQuestion } from "./other-agent-viewing";
 import {
   allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, MGMT_COMPANY_Q_RE, PROXY_CHECK_REQUEST_RE, PROXY_SEARCH_RE, TWO_PERSON_CHECK_REQUEST_RE, TWO_PERSON_SEARCH_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
   VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE, OTHER_ROOM_LAYOUT_Q_RE, OTHER_ROOM_SEARCH_RE,
@@ -360,7 +361,8 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   }
 
   // S4 内覧希望（退去予定/入居中は現地内覧不可のため対象外。ただし退去予定の話の後にスタッフが内覧を案内していれば内覧の場面＝2026-09-15 隼斗事例）
-  if ((VIEWING_INTENT_RE.test(msg) || slotQuestion) && ((o.propertyStatus !== "move_out_scheduled" && o.propertyStatus !== "occupied") || o.viewingReleased)) {
+  // 2026-10-18 弱い所B（q166）: 他社で内覧する物件を弊社で申込めるかの質問は内覧の希望ではない（会社の事実 other_company_viewing で答える番）＝内覧の材料にしない。戻す OTHER_AGENT_VIEWING=off
+  if ((VIEWING_INTENT_RE.test(msg) || slotQuestion) && !isOtherAgentViewingApplyQuestion(msg) && ((o.propertyStatus !== "move_out_scheduled" && o.propertyStatus !== "occupied") || o.viewingReleased)) {
     return ev({ scene: "S4_viewing", candidateAction: "viewing_invite", checkPattern: null, timing: "now", chained: null, reasonCode: slotQuestion ? "viewing_slot_question" : "viewing_intent" });
   }
   return null;

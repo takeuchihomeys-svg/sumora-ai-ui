@@ -134,3 +134,15 @@ export function ackAfterPickupTurnLine(env: Env = envOf()): string {
 export function ackAfterPromiseRuleApplies(o: { brainMode: boolean; llmAixPresent: boolean }): boolean {
   return !o.brainMode || !o.llmAixPresent;
 }
+
+/**
+ * 2026-10-18 弱い所B（q170）: 送付だけの印（weak）の出し切りで、ブレイン自身が足した条件で探す約束を選んだ番は規則で返信に書き換えない（純関数）。
+ *   送付だけの印は「1回送っただけ・出し切りとは限らない」と材料で渡している＝決めるのはブレイン（設計知見 9eb6aa9c P0）。
+ *   約束＝turn_contract の依頼のうち route=promise・about=search_condition（ゆるめた・外したは exhaustedConditionAddTurn で既に外）。
+ *   明示の印（strong）は竹内さんの決定 10/14 のまま返信で締める。戻す EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE=off
+ */
+export function exhaustedWeakKeepBrainPromise(o: { strength: "strong" | "weak" | null; asks: ReadonlyArray<{ route?: string | null; about?: string | null }>; env?: Env }): boolean {
+  if (((o.env ?? envOf()).EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE ?? "").trim().toLowerCase() === "off") return false;
+  if (o.strength !== "weak") return false;
+  return o.asks.some((a) => a?.route === "promise" && a?.about === "search_condition");
+}

@@ -14,6 +14,12 @@ it("① 他社で内覧した物件・弊社でも内覧", () => {
   has("別の不動産で内覧予定です。", "other_company_viewing");
   has("もうオンライン内見さっき違う不動産会社にしてもらいました😂", "other_company_viewing");
   has("内覧したいです", "other_company_viewing", false);
+  // 2026-10-18 弱い所B（q166 a3cc571e 10/11・改行で割れた1通）
+  has("明日もともとスーモに乗せていた\n不動産屋さんに依頼して\n内覧予定になってるんですが\n気に入ればそのまま\nこちらでお願いとかもできますか？", "other_company_viewing");
+  has("仲介業者さんで内見したお部屋、そちらで申し込みできますか？", "other_company_viewing");
+  // 弊社への内覧の希望（ポータルで見つけた物件）は当てない
+  has("スーモで見つけたこの物件内覧したいです、こちらでお願いできますか？", "other_company_viewing", false);
+  has("明日内覧予定ですが、気に入ればそのまま申込できますか？", "other_company_viewing", false);
 });
 it("② 学生名義の審査", () => {
   has("学生で審査通すにはどうしたらいいですかね😭", "student_contract");
