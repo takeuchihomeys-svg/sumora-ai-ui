@@ -113,6 +113,14 @@ const LIFE_RE = /(?:\d{1,2}月の?)?更新(?:月|を|まで|せず|しない|の
 const COMPANION_RE = /(彼氏|彼女|主人|旦那|夫|妻|嫁|両親|親|母|父|家族|パートナー|相方|同居人|友人|友達)(?:さん)?(?:が|と|に|も|の方が)(?:[^。\n]{0,6})(?:行|見|内覧|内見|相談|確認|決め|住|一緒|来|立ち会)/;
 const HEALTH_RE = /熱が|発熱|体調(?:が|を)?(?:悪|崩|優れ)|入院|風邪(?:を|引)/;
 
+// 遠方なのが本人でなく家族・実家（「実家が遠方」「親は九州に住んでいて」「両親が県外在住」）
+const REMOTE_OTHER_RE = /(?:実家|親|両親|母|父|祖父|祖母|家族|兄|姉|弟|妹|彼氏|彼女|友人|友達|保証人)(?:さん)?(?:の家)?(?:が|は|も)?\s*$/;
+/** 遠方の言葉の直前（同じ文の中・12字まで） */
+function remotePrefix(text: string, idx: number): string {
+  const s = Math.max(text.lastIndexOf("\n", idx - 1), text.lastIndexOf("。", idx - 1), text.lastIndexOf("！", idx - 1), text.lastIndexOf("？", idx - 1)) + 1;
+  return text.slice(Math.max(s, idx - 12), idx);
+}
+
 function sentenceOf(text: string, idx: number): string {
   const s = Math.max(text.lastIndexOf("\n", idx), text.lastIndexOf("。", idx), text.lastIndexOf("！", idx), text.lastIndexOf("？", idx)) + 1;
   const ends = [text.indexOf("\n", idx), text.indexOf("。", idx), text.indexOf("！", idx), text.indexOf("？", idx)].filter((x) => x >= 0);
@@ -148,7 +156,8 @@ export function extractCircumstances(custMsgs: ReadonlyArray<CustMsg>, turnStart
       hit = true; break;
     }
     if (!hit) { const mm = t.match(SOON_RE); if (mm && mm.index != null && !/(?:です|ます|感じ|でしょう)か|[?？]/.test(sentenceOf(t, mm.index))) push({ kind: "cannot_come_soon", quote: sentenceOf(t, mm.index) }); }
-    { const mm = t.match(REMOTE_RE); if (mm && mm.index != null && !/大阪/.test(mm[0])) push({ kind: "remote", quote: sentenceOf(t, mm.index) }); }
+    // 2026-10-18 確かめる人: 「実家が遠方なので親は来れない」は親・実家が遠方（お客様本人は遠方でない）。遠方の言葉の前に家族・実家が主語で来る時は外す
+    { const mm = t.match(REMOTE_RE); if (mm && mm.index != null && !/大阪/.test(mm[0]) && !REMOTE_OTHER_RE.test(remotePrefix(t, mm.index))) push({ kind: "remote", quote: sentenceOf(t, mm.index) }); }
     { const mm = t.match(LIFE_RE); if (mm && mm.index != null && !/選択|の方は|ですか[?？]*$/.test(sentenceOf(t, mm.index))) push({ kind: "life_timing", quote: sentenceOf(t, mm.index) }); }
     // 保証・審査・申込の書類の話の家族（親に連絡が行く・同居人の滞納）・鍵の受け取りは、同行・一緒に決める人ではない
     { const mm = t.match(COMPANION_RE); if (mm && mm.index != null && !/保証|審査|滞納|連絡(?:が)?(?:行|い)く|本人確認|書類|受け取り|取りに|カード決済|鍵/.test(sentenceOf(t, mm.index))) push({ kind: "companion", quote: sentenceOf(t, mm.index) }); }

@@ -196,6 +196,11 @@ it("促す: 申込より前の段階・21日以内・戻した後・その後に
   eq(resolveApplyStageNudge({ status: "proposing", messages: msgs, nowMs: NOW, lastBackAt: iso(NOW - DAY / 2) }), null, "戻した後に無い");
   const rejected = [...msgs, { sender: "staff", text: "管理会社より保証会社審査が否決となり、審査継続不可能とのご連絡がございました。", createdAt: iso(NOW - DAY / 2) }];
   eq(resolveApplyStageNudge({ status: "proposing", messages: rejected, nowMs: NOW }), null, "否決の後は切り替えの番");
+  // 2026-10-18 確かめる人: 本人確認の画像だけ（フォーム・審査の言い方なし）でも帯を出す
+  const imgOnly = [{ sender: "customer", text: "[画像]", createdAt: iso(NOW - DAY) }];
+  eq(resolveApplyStageNudge({ status: "proposing", messages: imgOnly, nowMs: NOW, applyingImageReceived: true })?.kind, "id_image", "本人確認の画像だけ");
+  eq(resolveApplyStageNudge({ status: "proposing", messages: imgOnly, nowMs: NOW }), null, "画像の記録が無ければ出さない");
+  eq(resolveApplyStageNudge({ status: "proposing", messages: [...imgOnly, rejected[1]], nowMs: NOW, applyingImageReceived: true }), null, "画像の後に否決なら出さない");
   eq(isPreApplyForNudge("hearing"), true); eq(isPreApplyForNudge(""), false);
   // ryou さん（f895b126）: 9/26 の受けの宣言だけ・申込の情報は来ていない → 10/10 の「1番手の方審査否決…2番手お申込み可能」の後も帯を出さない
   const ryou = [

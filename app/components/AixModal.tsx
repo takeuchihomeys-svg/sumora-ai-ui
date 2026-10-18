@@ -755,6 +755,8 @@ export default function AixModal({
   const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_proxy" || checkPattern === "mgmt_two_person" || checkPattern === "mgmt_guarantor" || checkPattern === "mgmt_company" || checkPattern === "mgmt_parking" || checkPattern === "mgmt_pet" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_availability" || checkPattern === "nearby_parking" || checkPattern === "owner_other";
   // 代理契約の確認結果（2026-09-16 竹内・カイナ事例）: 入れるのは可能／不可だけ。物件名は下の共通の入力（mgmtGuarantorPropertyName）を使う
   const [proxyResult, setProxyResult] = useState<"可能" | "不可" | null>(null);
+  // 2026-10-18 確かめる人: 二人入居と代理契約は同じ state を使うので、ピッカーを切り替えたら前の選択を消す（代理契約で「可能」→二人入居に替えると「可能」が残り、選ばずに送れた）
+  useEffect(() => { setProxyResult(null); }, [checkPattern]);
   // 募集状況確認専用: 募集している / 募集終了した
   const [mgmtAvailabilityStatus, setMgmtAvailabilityStatus] = useState<"available" | "ended" | null>(null);
   // 初期費用確認: サブパターン選択

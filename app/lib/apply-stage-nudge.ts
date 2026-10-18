@@ -57,7 +57,7 @@ const REJECT_OR_CANCEL_RE = /否決(?:とのご連絡|となって|となりま�
 const sentences = (t: string) => t.normalize("NFKC").split(/\n|(?<=[。！!])/);
 
 export type NudgeMessage = { sender: string; text: string | null; createdAt: string };
-export type ApplyStageNudge = { kind: "screening_text" | "application_form"; at: string; by: "staff" | "customer" };
+export type ApplyStageNudge = { kind: "screening_text" | "application_form" | "id_image"; at: string; by: "staff" | "customer" };
 
 /** こちらの受けの宣言（申込させて頂きます）の文があるか（誘い・問い・他の申込者の文は外す） */
 export function isStaffApplyDeclaration(m: NudgeMessage): boolean {
@@ -106,19 +106,27 @@ export function resolveApplyStageNudge(i: {
   const from = Math.max(i.nowMs - NUDGE_LOOKBACK_DAYS * 86_400_000, i.lastBackAt ? Date.parse(i.lastBackAt) || -Infinity : -Infinity);
   const msgs = [...i.messages].filter((m) => Date.parse(m.createdAt) > from).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   let found: ApplyStageNudge | null = null;
+  let lastRejectMs = -Infinity;
   const formReceived = !!i.applyingTextReceived || !!i.applyingImageReceived || msgs.some((m) => m.sender === "customer" && isApplicationFormMessage(String(m.text ?? "")).detected);
   // 2026-10-18 竹内さん 10/16「申込の帯は申込フォームが届いてから出す」: 審査の言い方（こちら・お客様）があっても、申込フォームの受領・本人確認の画像が無い間は出さない。
   //   10/15 の軸の直しは受けの宣言だけだった（下の screeningEvidenceOf）。戻す APPLY_STAGE_NUDGE_FORM_ONLY=off（審査の言い方だけでも出す＝10/15 の形）
   if (!formReceived && (process.env.APPLY_STAGE_NUDGE_FORM_ONLY ?? "").trim().toLowerCase() !== "off") return null;
   for (const m of msgs) {
-    if (sentences(String(m.text ?? "")).some((s) => REJECT_OR_CANCEL_RE.test(s) && !/場合|たら|ますか|ですか|\?|？/.test(s))) { found = null; continue; }
+    if (sentences(String(m.text ?? "")).some((s) => REJECT_OR_CANCEL_RE.test(s) && !/場合|たら|ますか|ですか|\?|？/.test(s))) { found = null; lastRejectMs = Date.parse(m.createdAt); continue; }
     const kind = screeningEvidenceOf(m, { formReceived });
     if (kind) found = { kind, at: m.createdAt, by: m.sender === "customer" ? "customer" : "staff" };
+  }
+  // 2026-10-18 確かめる人: 本人確認の画像だけ（フォームの文・審査の言い方が無い）の時に帯が出なかった（formReceived は真なのに形跡の通が無い）。
+  //   画像の記録（applying_image_received＝申込書の案内の後72時間以内のお客様の画像）があり、窓の中にお客様の画像の通があれば、その通を形跡にする。
+  //   戻す APPLY_STAGE_NUDGE_ID_IMAGE=off
+  if (!found && i.applyingImageReceived && (process.env.APPLY_STAGE_NUDGE_ID_IMAGE ?? "").trim().toLowerCase() !== "off") {
+    const img = [...msgs].reverse().find((m) => m.sender === "customer" && Date.parse(m.createdAt) > lastRejectMs && /^\s*\[(?:画像|ファイル)/.test(String(m.text ?? "")));
+    if (img) found = { kind: "id_image", at: img.createdAt, by: "customer" };
   }
   return found;
 }
 
 export function applyStageNudgeText(n: ApplyStageNudge): string {
-  const what = n.kind === "application_form" ? "申込フォームが届いています" : n.by === "customer" ? "お客様から審査の結果のお話があります" : "審査に出している連絡があります";
+  const what = n.kind === "application_form" ? "申込フォームが届いています" : n.kind === "id_image" ? "本人確認の画像が届いています" : n.by === "customer" ? "お客様から審査の結果のお話があります" : "審査に出している連絡があります";
   return `${what}が、段階が「申込」になっていません。審査に出していれば「申込」にしてください`;
 }
