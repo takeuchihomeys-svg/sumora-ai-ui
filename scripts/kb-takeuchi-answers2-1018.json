@@ -1,0 +1,62 @@
+[
+  {
+    "title": "【決定】鍵はご入居日にお渡し（入居日より前は渡さない）— 前倒しを頼まれても入居日にお渡しする旨を丁寧に（確認・交渉の約束にしない）",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "竹内さん 10/18 夜「鍵は入居日に渡す（入居日より前は渡さない）」。10/16 の会社の事実 key_handover は「基本はご入居日に弊社の事務所」で、前倒し（「19日中に鍵もらうこと可能でしょうか」）に AI が確認・交渉の約束を書く余地があった。→ 事実の文から「基本は」を外し、前倒しの依頼にも『鍵のお渡しはご入居日となりますので、ご入居日に弊社事務所にてお渡しさせて頂きます！！』の形で伝える。静的な規則（line-reply-prompts KEY_HANDOVER_RULE）も同じ線。",
+    "rationale": "会社として答えが1つの事は『基本は』を付けると例外の交渉の余地として読まれる。言い切れる事は言い切り、例外を頼まれた時の言い方まで事実に持たせる。",
+    "context": "2026-10-18 竹内さん 10/18 夜の答え 1。実送信で前倒しを断った手打ちは見つからない（DB 読み）＝言い方は竹内さんの言葉から。",
+    "applied_to": "app/lib/company-facts.ts（KEY_HANDOVER_FACT_1018）・app/lib/line-reply-prompts.ts（KEY_HANDOVER_RULE）・app/lib/__tests__/takeuchi-answers-1018.test.ts。戻す KEY_HANDOVER_MOVE_IN_DAY=off",
+    "tags": ["竹内さんの決定", "company-facts", "鍵", "契約後", "場面:手続き"]
+  },
+  {
+    "title": "【決定】二人入居は資料に「二人入居可／不可・単身者限定」があれば即答・無い時だけ確認の約束（代理契約は資料に関係なく『交渉』の約束）",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "竹内さん 10/18 夜「二人入居は資料に記載があり判断できれば即答」。10/16 の proxy_two_person_check は物件ごとに違うので常に確認の約束だった。→ 契約条件の材料（contract-terms-question）に two_person を足し、売上サポの行の文字層・送った資料の読み取りの行から読む（可＝二人入居可/可能/OK・不可＝二人入居不可/NG・単身者限定/専用・1人専用。『相談』・可と不可の両方は確認＝言い切れない。『ルームシェア不可』は見ない）。資料にあればブレインの contract_terms_in_material で返信に倒す（S3 の場面の網が mgmt_two_person を出しても）。会社の事実の文も『資料にあれば即答・無い時だけ約束』に。",
+    "rationale": "『物件ごとに違う』事実でも、その物件の資料に書いてあれば答えは決まっている。確認の約束は資料で判断できない時だけ（資料に書いてある事は本文で答えてよい＝8巡目 10/08 の線と同じ）。",
+    "context": "2026-10-18 竹内さん 10/18 夜の答え 2。実物の問い「ふたり入居可ですか？」(10/01・q163)。listing-equipment の two_person の式は ok に『二人入居』（可なし）も当たるので答えには使わず専用の式にした。",
+    "applied_to": "app/lib/contract-terms-question.ts（readTwoPersonMaterial・two_person の話題と答え方）・app/lib/company-facts.ts（PROXY_TWO_PERSON_FACT_1018）。戻す TWO_PERSON_MATERIAL_ANSWER=off",
+    "tags": ["竹内さんの決定", "資料で答える", "contract-terms", "二人入居", "場面:審査"]
+  },
+  {
+    "title": "【決定】AIX【確認した（条件・交渉）→ライフラインについて】— 聞かれた番は『別途ご案内させて頂きます』の約束、答えはこのピッカー（指定なし／あり＋連絡先はスタッフの文字のまま）",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "竹内さん 10/18 夜。二人入居のピッカーと同じ形で、画面・生成・場面の網（ライフラインの問い→約束の後に mgmt_lifeline・入居日の問いより先）・ブレインの check_pattern・Jev・カタログ・約束の台帳（『ライフライン…別途ご案内させて頂きます』を確認の約束にし mgmt_lifeline で閉じる）まで通した。答えの型は実送信 9/28 469a614a（従業員）『ライフライン特に指定なしとのことです。【ライフラインご連絡先】関西電力 0800-… 大阪ガス … 堺市水道局 …』。電話番号は LLM に写させず、生成は1行の結果だけ・連絡先の欄は出口でスタッフの入力をそのまま付ける（composeLifelineMessage）。",
+    "rationale": "番号・社名のように1字違えば害になる値は LLM に書かせず、スタッフの入力を出口で決定論で付ける（管理会社の名前の出口 mgmt-company-name-fallback と同じ線）。",
+    "context": "2026-10-18 竹内さん 10/18 夜の答え 3。竹内さんの手打ちにライフラインの答えの送信は無く（DB 読み・365日）、従業員の1通だけ＝型はそれに倣った。",
+    "applied_to": "app/lib/aix-lifeline.ts・app/api/aix/action/route.ts（mgmt_lifeline）・app/components/AixModal.tsx・app/page.tsx・app/lib/aix-scene-evidence.ts・app/lib/action-ledger.ts・aix-taxonomy/pickers/catalog/jev・brain-check-pattern。戻す AIX_MGMT_LIFELINE=off",
+    "tags": ["竹内さんの決定", "AIX", "ピッカー", "ライフライン", "出口の決定論", "約束の台帳"]
+  },
+  {
+    "title": "【決定】家族・友人と相談の番は簡単に締め＋サポートの姿勢の1文を必ず（内覧・申込で抑える等の新しい提案は足さない＝10/15 の柔らかい1文はこの番では置かない）",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "竹内さん 10/18 夜「家族と相談は簡単に締め＋『気になる点あれば何時でもお気軽にご連絡ください』のサポートの姿勢の一文を必ず」。10/15 の保留の柔らかい1文（家族・友人の相談でも添える）と 10/16 の『目安を足さずいつもの締め』が食い違っていた。→ 家族と相談の番は専用の方向（FAMILY_CONSULT_SUPPORT_DIRECTION・申込の一言／内覧の案内を置かない）・ブレインの材料（hesitationMoveOf）から 10/15 の一手を外す・出口でサポートの1文が無ければ締めに足す（ensureFamilyConsultSupport・検討中の番で家族と相談の時だけ）。",
+    "rationale": "同じ場面に2つの決まりが別々の日に入った時は、新しい決定でどちらを残すかを1か所で決め、材料・方向・出口の3つをそろえる（片方だけ直すと下書きが揺れる）。",
+    "context": "2026-10-18 竹内さん 10/18 夜の答え 4。",
+    "applied_to": "app/lib/takeuchi-reply-form-r13.ts（familyConsultSupportEnabled・ensureFamilyConsultSupport）・app/lib/customer-mindset.ts・app/api/generate-reply/route.ts（出口）。戻す FAMILY_CONSULT_SUPPORT=off",
+    "tags": ["竹内さんの決定", "検討中", "保留", "締め", "出口の決定論", "場面:検討中"]
+  },
+  {
+    "title": "【決定】毎晩の自己点検を朝の報告に — 本番の cron は手元のファイルを読めないので self-review が表に書き、朝の報告が表を読む（同じ日は日ごとの数で上書き＝二重に数えない）",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "竹内さん 10/18 OK。brain_self_review_runs（1日1行: 朝の1行・案の数・竹内さんに聞く事）を足し、_proposals に day_counts（n はその和）。self-review は writeReport の後に upsert（表が無い間は書かずに進む）。毎晩の口は exam-brain.ts --run-queue（SumoraExamNight JST 1:40）の後に self-review --nightly（今日済めば流さない・1回 $1・1日の上限の内）。朝の報告は直近2日の1行と open の聞く事3つまで（RLS あり方針なし＝service role で読む）。申込以降の会話は対象外のまま。",
+    "rationale": "手元の道具の結果を本番に見せる時は、ファイルではなく表を橋にし、何回流しても同じ（冪等）形にする。表が無い間も道具が止まらないようにする。",
+    "context": "2026-10-18 竹内さん 10/18 夜の答え 5。表の作成の SQL は scripts/brain-self-review-migration.sql（親が流す）。",
+    "applied_to": "scripts/lib/brain-self-review-db.ts・scripts/brain-self-review.ts・scripts/exam-brain.ts（runQueue）・app/lib/self-review-morning.ts・app/api/cron/morning-report/route.ts。止める BRAIN_SELF_REVIEW_DB=off・BRAIN_SELF_REVIEW_NIGHTLY=off・MORNING_SELF_REVIEW=off",
+    "tags": ["竹内さんの決定", "自己点検", "朝の報告", "冪等", "ブレイン"]
+  },
+  {
+    "title": "halfvec の写しで順位が変わらない事を確かめる時は、旧の側を「+ 0」で索引から外す — ivfflat（probes=1）の近似と比べると 3〜51/100 と出て誤る",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "10/18 ai_reply_knowledge の halfvec(1536) の写し（STORAGE MAIN・トリガー・COALESCE(halfvec, float)）を入れる前に本番で読むだけ確かめた。素の ORDER BY embedding <=> q LIMIT 100 は ivfflat の索引を使い（関数の外は probes=1）近似になる＝halfvec との重なりが 3・32・51/100。ORDER BY (embedding <=> q) + 0 で厳密にすると 3問とも 100/100。関数は COALESCE の式で並べる＝索引を使わない全件比較のまま（厳密 99e242e4 のまま）。",
+    "rationale": "精度を比べる時は両方が同じ『厳密さ』で動いているかを先に確かめる（索引・設定の違いで片方が近似になる）。",
+    "context": "2026-10-18 竹内さん OK の halfvec の切り替え（弱い所A の案・c60a5e07）。pgvector 0.8.0。",
+    "applied_to": "app/api/migrate-schema/route.ts（match_reply_knowledge の正本・列・トリガー・1晩500行）・scripts/halfvec-migration.sql（親が流す・④の確かめ）・app/lib/schema-objects-check.ts（trg_ai_reply_knowledge_embedding_h）",
+    "tags": ["汎用", "pgvector", "RAG", "postgres", "確かめ方", "タイムアウト"]
+  }
+]
