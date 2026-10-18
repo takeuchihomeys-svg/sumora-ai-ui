@@ -1,6 +1,8 @@
 // 2026-10-14 竹内さん承認の会社の事実4つ（app/lib/company-facts.ts）のテスト。文は実物（お客様の発言 90日・scratchpad answer）
 // 実行: npx tsx app/lib/__tests__/company-facts-1014.test.ts
 import { matchCompanyFacts } from "../company-facts";
+import { isOtherAgentViewingApplyQuestion } from "../other-agent-viewing";
+const expect = (v: boolean) => ({ toBe: (w: boolean) => { if (v !== w) throw new Error(`期待 ${w} 実際 ${v}`); } });
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -20,6 +22,10 @@ it("① 他社で内覧した物件・弊社でも内覧", () => {
   // 弊社への内覧の希望（ポータルで見つけた物件）は当てない
   has("スーモで見つけたこの物件内覧したいです、こちらでお願いできますか？", "other_company_viewing", false);
   has("明日内覧予定ですが、気に入ればそのまま申込できますか？", "other_company_viewing", false);
+  // 10/18 確かめる人: 他社で見た物件を弊社で内覧したい（本当の内覧の希望）は「他社の申込の問い」と読まない＝内覧の希望の材料から外さない
+  expect(isOtherAgentViewingApplyQuestion("他社で内覧した物件ですが、こちらでも内覧お願いできますか？")).toBe(false);
+  expect(isOtherAgentViewingApplyQuestion("不動産屋さんに紹介された物件、こちらで案内お願いできますか？")).toBe(false);
+  expect(isOtherAgentViewingApplyQuestion("他社で内覧しましたが、こちらで申込できますか？")).toBe(true);
 });
 it("② 学生名義の審査", () => {
   has("学生で審査通すにはどうしたらいいですかね😭", "student_contract");

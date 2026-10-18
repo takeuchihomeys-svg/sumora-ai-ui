@@ -163,5 +163,8 @@ export function exhaustedWeakKeepBrainPromise(o: { strength: "strong" | "weak" |
   if (o.asks.some((a) => a?.route === "promise" && a?.about === "search_condition")) return true;
   if (o.asks.length) return false;
   const t = String(o.brainText ?? "");
-  return /再?ピックアップ(?:する|し|させ)|お調べ|探(?:し|す|させ)/.test(t) && !/新着[^。]{0,24}(?:出次第|出ましたら|出た際)/.test(t);
+  // 10/18 確かめる人: 旧の「お調べ|探し」だけの網は「お客様がお探しの条件」「探しているエリア」「新着が出たら探して」まで約束と読んだ（自由文の揺れ）＝
+  //   こちらが探す約束の形（再ピックアップ・改めて／その条件で〜探す・探してお送り）だけにし、新着の話があれば約束と読まない
+  return /再?ピックアップ(?:する|し|させ)|(?:改めて|再度|その条件で|条件で)[^。]{0,8}(?:お調べ|探し|探す)|(?:お調べ|(?<!お)探し)(?:て|し)?[^。]{0,4}(?:お送り|ご提案|ご紹介)/.test(t)
+    && !/新着|出次第|出ましたら|出たら|出た際/.test(t);
 }

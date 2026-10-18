@@ -82,6 +82,10 @@ it("2026-10-18 q170: 送付だけの印でブレインが足した条件で探�
   // turn_contract を出さなかった番は方向で（10/18 試験 q170 の1回）
   eq(k({ strength: "weak", asks: [], brainText: "浴槽の広い物件を条件に加えて再ピックアップする旨を伝える", env: {} }), true, "方向で");
   eq(k({ strength: "weak", asks: [], brainText: "浴槽広めも含め新着を随時確認し、新着が出次第お送りする", env: {} }), false, "新着待ちの方向");
+  // 10/18 確かめる人: 自由文の揺れ（お客様の「お探しの条件」・新着の後に探す）は約束と読まない
+  eq(k({ strength: "weak", asks: [], brainText: "お客様がお探しの条件にお風呂の広さを追加したことを受け止める", env: {} }), false, "お探しの条件は約束ではない");
+  eq(k({ strength: "weak", asks: [], brainText: "新着物件が出たら探してお送りすると伝え締める", env: {} }), false, "新着の後に探すは約束ではない");
+  eq(k({ strength: "weak", asks: [], brainText: "お風呂の広い物件を改めてお調べしてお送りする", env: {} }), true, "改めてお調べ");
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }
