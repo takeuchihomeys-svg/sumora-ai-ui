@@ -97,9 +97,8 @@ export function excerptOf(part: ExcerptPart, keywords: ReadonlyArray<string>): E
  *   2026-10-18 確かめる人: ブレインの action・送付済み物件の行に号室なしの部屋番号が残り、DeepSeek と report に出ていた。
  *   誤りを減らすため: 直前が漢字・カタカナ（または英字2字）・3〜4桁・直後が終わりか区切りの記号の時だけ（「1500 トークン」「365日」「131回」は触らない）
  */
-export function maskBareRoomNo(s: string): string {
-  return String(s ?? "").replace(/(?<=[一-龯々ァ-ヴー]|[A-Za-z]{2})(\s?)[0-9０-９]{3,4}(?=$|[のをがにはでとやもへ（()）・、。'"」』:：\]】/／]|[,，](?![0-9０-９]))/gm, "$1◯");
-}
+// 2026-10-18 弱い所A-3②: 本体は app/lib/pii-mask.ts（maskForEmbedding でも使う・金額の語の後ろは触らない）
+export { maskBareRoomNo } from "../../app/lib/pii-mask";
 
 // ─── 1つにまとめた材料（行番号つき） ─────────────────────────────────────
 export type PacketSection = { name: string; lines: string[] };

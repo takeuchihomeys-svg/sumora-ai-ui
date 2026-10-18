@@ -38,8 +38,12 @@ async function main() {
     ok(altPiiSignal("・携帯番号\n080 1234 5678") === "携帯電話の番号", "space（maskPII が伏せない形）");
     ok(altPiiSignal("07012345678") === "携帯電話の番号", "plain");
   });
-  await it("★ maskPII は空白区切りの携帯番号を伏せない（実データ 10/01〜15 で2通）→ 門が拾う", () => {
-    ok(altPiiSignal(maskPII("080 1234 5678", [])) === "携帯電話の番号", "masked");
+  await it("★ 空白区切りの携帯番号（実データ 10/01〜15 で2通）: 2026-10-18 から maskPII も伏せる・門は生の文で拾う（二重）", () => {
+    ok(maskPII("080 1234 5678", []) === "[電話番号非表示]", "maskPII masks");
+    ok(altPiiSignal("080 1234 5678") === "携帯電話の番号", "gate raw");
+    const prev = process.env.PII_MASK_PHONE_SPACE;
+    process.env.PII_MASK_PHONE_SPACE = "off";
+    try { ok(altPiiSignal(maskPII("080 1234 5678", [])) === "携帯電話の番号", "off=旧（伏せない→門が拾う）"); } finally { if (prev === undefined) delete process.env.PII_MASK_PHONE_SPACE; else process.env.PII_MASK_PHONE_SPACE = prev; }
   });
   await it("メール・記入済みの申込フォーム・生年月日の欄と値・個人番号・口座番号", () => {
     ok(altPiiSignal("a.b@example.co.jp") === "メールアドレス", "mail");

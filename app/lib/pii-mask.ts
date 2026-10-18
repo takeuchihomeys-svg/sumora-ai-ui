@@ -81,6 +81,21 @@ const PHONE_HYPHEN_REGEX = /0\d{1,4}[-‐−ー]\d{1,4}[-‐−ー]\d{3,4}(?!\d)
 /** 電話番号（ハイフンなし10〜11桁） */
 const PHONE_PLAIN_REGEX = /(?<!\d)0\d{9,10}(?!\d)/g;
 
+/**
+ * 電話番号（空白区切り・空白と記号の混ざり: 080 1234 5678 / 06　1234　5678 / 090-1234 5678）。2026-10-18 弱い所A-3①
+ *   ハイフンの網・ハイフンなしの網に当たらず素通りしていた。数字の合計が10〜11桁・3つの塊・少なくとも1つの空白の時だけ（金額「1 500」等は当たらない）。
+ *   戻す PII_MASK_PHONE_SPACE=off
+ */
+const PHONE_SPACE_REGEX = /(?<![\d０-９])0\d{1,4}[-‐−ー 　]\d{1,4}[-‐−ー 　]\d{3,4}(?![\d０-９])/g;
+function maskSpacedPhones(text: string): string {
+  if (typeof process !== 'undefined' && (process.env?.PII_MASK_PHONE_SPACE ?? '').toLowerCase() === 'off') return text;
+  return text.replace(PHONE_SPACE_REGEX, (m) => {
+    if (!/[ 　]/.test(m)) return m;
+    const digits = m.replace(/\D/g, '').length;
+    return digits === 10 || digits === 11 ? '[電話番号非表示]' : m;
+  });
+}
+
 /** 郵便番号（〒123-4567 / 123-4567） */
 const POSTAL_REGEX = /〒\s*\d{3}[-‐−ー]?\d{4}(?!\d)|(?<![\d-‐−ー])\d{3}[-‐−ー]\d{4}(?![\d-‐−ー])/g;
 
@@ -190,6 +205,7 @@ export function maskPII(text: string, knownNames?: (string | null | undefined)[]
   // --- 4. 電話番号（郵便番号より先に処理：03-1234-5678 の誤検知防止） ---
   result = result.replace(PHONE_HYPHEN_REGEX, '[電話番号非表示]');
   result = result.replace(PHONE_PLAIN_REGEX, '[電話番号非表示]');
+  result = maskSpacedPhones(result);
 
   // --- 5. 郵便番号 ---
   result = result.replace(POSTAL_REGEX, '[郵便番号非表示]');
@@ -219,5 +235,23 @@ const LONG_ID_RE = /(?<!\d)\d{4}[\s-]?\d{4}[\s-]?\d{4}(?!\d)/g; // マイナン�
 export function maskForEmbedding(text: string): string {
   if (!text) return text;
   // 生年月日は maskPII の「月日を月に丸める」より先に伏せる（丸めると「2006年10月中」のように年と月が残る）
-  return maskPII(text.replace(BIRTHDATE_RE, "[日付非表示]").replace(LONG_ID_RE, "[番号非表示]"));
+  const masked = maskPII(text.replace(BIRTHDATE_RE, "[日付非表示]").replace(LONG_ID_RE, "[番号非表示]"));
+  // 2026-10-18 弱い所A-3②: 物件名に付いた素の部屋番号も（建物＋部屋＝住所になる）。maskPII（ブレイン・返信の生成に渡す文）は部屋を見分けるのに要るので触らない
+  return bareRoomMaskEnabled() ? maskBareRoomNo(masked) : masked;
+}
+
+/**
+ * 物件名に付いた素の部屋番号（「Mv.fm大阪大正405」「レジデンス 303（」「大正405の」）を ◯ に（「号室」の付く形は maskRoomNo）。
+ *   2026-10-18 確かめる人（brain-self-review）と同じ線: 直前が漢字・カタカナ（または英字2字）・3〜4桁・直後が終わりか区切りの記号の時だけ
+ *   （「1500 トークン」「365日」「131回」「築2005年」「家賃119,000円」は触らない）。
+ *   弱い所A-3②: 直前が金額の語（費・料・金・賃・額・代・込・税・価・計）の時も触らない（「管理費8000の」「敷金1000、」）。
+ *   戻す PII_MASK_BARE_ROOM=off（maskForEmbedding で使わない）
+ */
+const MONEY_WORD_BEFORE = /[費料金賃額代込税価計]$/;
+export function maskBareRoomNo(s: string): string {
+  return String(s ?? "").replace(/(?<=[一-龯々ァ-ヴー]|[A-Za-z]{2})(\s?)[0-9０-９]{3,4}(?=$|[のをがにはでとやもへ（()）・、。'"」』:：\]】/／]|[,，](?![0-9０-９]))/gm,
+    (m, sp: string, offset: number, full: string) => (MONEY_WORD_BEFORE.test(full.slice(Math.max(0, offset - 1), offset)) ? m : `${sp}◯`));
+}
+function bareRoomMaskEnabled(): boolean {
+  return typeof process === 'undefined' || (process.env?.PII_MASK_BARE_ROOM ?? '').toLowerCase() !== 'off';
 }
