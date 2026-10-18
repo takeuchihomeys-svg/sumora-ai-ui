@@ -438,7 +438,7 @@ async function runQueue() {
   const now = new Date();
   const due = readQueue().filter((x) => Date.parse(x.at) <= now.getTime());
   if (!due.length) { log("予約: 流す物が無い"); return; }
-  if (!isCheapWindow(now) && !flag("force")) { log(`今は安い時間ではない（JST 1:30〜9:30）→ 流さない（--force で流す）`); return; }
+  if (!isCheapWindow(now) && !flag("force")) { log(`今は DeepSeek の混雑の時間（平日 JST 10-13・15-19）→ 流さない（--force で流す）`); return; }
   for (const x of due) {
     log(`予約を流す: ${x.label}（${x.createdAt} に予約・見込み $${x.estUsd.toFixed(2)}）`);
     // 2026-10-17 確かめる人: 予約した作業ツリーが消えていると spawn が error で落ち、後ろの予約も流れない＝飛ばす

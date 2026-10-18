@@ -140,19 +140,21 @@ export function stopDecision(cmps: Array<{ id: string; cmp: Cmp }>, flaky: Set<s
 
 // ─── 4. いつ ────────────────────────────────────────────────────────────
 /**
- * DeepSeek の安い時間: 竹内さん 10/16「JST 1:30〜9:30」かつ app/lib/llm-price.ts の混雑時間（平日 JST 10-13・15-19 は2倍）でない時。
- *   2026-10-17 確かめた: llm-price は混雑の時間だけを持つ（1:30〜9:30 は混雑の外＝倍にならない）。両方を満たす所＝1:30〜9:30 を安い時間とする。
+ * DeepSeek の安い時間: 2026-10-18 竹内さん「テストは深夜に限らず2倍じゃない時間にすれば問題ない」＝ app/lib/llm-price.ts の混雑時間（平日 JST 10-13・15-19 は2倍）でない時はいつでも。
+ *   旧（10/16〜10/18）は JST 1:30〜9:30 だけ。CHEAP_WINDOW_JST は旧の窓を使う時のために残す（isCheapWindow の第2引数に渡した時だけ）。
  */
 export const CHEAP_WINDOW_JST = { startMin: 90, endMin: 570 };
 const jstMin = (d: Date) => { const j = new Date(d.getTime() + 9 * 3600_000); return j.getUTCHours() * 60 + j.getUTCMinutes(); };
-export function isCheapWindow(d: Date, w = CHEAP_WINDOW_JST): boolean { const m = jstMin(d); return m >= w.startMin && m < w.endMin && !isDeepseekPeakAt(d); }
-/** 次の安い時間の始まり（今が安い時間ならそのまま） */
-export function nextCheapStart(d: Date, w = CHEAP_WINDOW_JST): Date {
+export function isCheapWindow(d: Date, w?: { startMin: number; endMin: number }): boolean {
+  if (isDeepseekPeakAt(d)) return false;
+  if (!w) return true;
+  const m = jstMin(d); return m >= w.startMin && m < w.endMin;
+}
+/** 次の安い時間の始まり（今が安い時間ならそのまま）。15分の区切りで進めて混雑の外を探す */
+export function nextCheapStart(d: Date, w?: { startMin: number; endMin: number }): Date {
   if (isCheapWindow(d, w)) return d;
-  const m = jstMin(d);
-  const addMin = m < w.startMin ? w.startMin - m : 24 * 60 - m + w.startMin;
-  const t = new Date(d.getTime() + addMin * 60_000);
-  t.setUTCSeconds(0, 0);
+  let t = new Date(d.getTime()); t.setUTCSeconds(0, 0);
+  for (let i = 0; i < 24 * 4 * 3; i++) { t = new Date(Math.ceil((t.getTime() + 1) / 900_000) * 900_000); if (isCheapWindow(t, w)) return t; }
   return t;
 }
 export type When = "now" | "night" | "auto";
@@ -164,7 +166,7 @@ export function decideWhen(o: { when: When; estUsd: number; gate?: boolean; now:
   if (o.when === "auto" && !big) return { runNow: true, at: o.now, why: `小さい試験（見込み $${o.estUsd.toFixed(2)}）＝今すぐ` };
   if (cheap) return { runNow: true, at: o.now, why: "安い時間の中＝今すぐ" };
   const at = nextCheapStart(o.now);
-  return { runNow: false, at, why: `${o.gate ? "最後の関所" : `大きい試験（見込み $${o.estUsd.toFixed(2)}）`}＝DeepSeek の安い時間（JST 1:30〜9:30）に予約` };
+  return { runNow: false, at, why: `${o.gate ? "最後の関所" : `大きい試験（見込み $${o.estUsd.toFixed(2)}）`}＝DeepSeek の混雑の外（平日 JST 10-13・15-19 以外）に予約` };
 }
 
 // ─── 6. 前の結果の使い回し ─────────────────────────────────────────────
