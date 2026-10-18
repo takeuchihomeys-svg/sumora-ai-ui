@@ -1,0 +1,58 @@
+[
+  {
+    "category": "ai_design",
+    "title": "「当日は現地にてお待ちしております」は内覧が決まっている時だけ — 直前の文の「内覧・ご案内・待ち合わせ」の語だけでは出さない（作り話の元）",
+    "insight": "generate-reply の感謝返しの手がかり（gratitudeActionHint）は、直前のこちらの文に「内覧|内見|ご案内|待ち合わせ」があるだけで「当日は現地にてお待ちしております！！」を渡していた。定型「お気に召されましたらご都合よろしいお日にちにご案内」への「ありがとうございます」にも出た（10/17 確かめる人の調べ・main の古い結果 q113 にも同じ文）。竹内さんの手打ちの3通はどれも待ち合わせの案内・日にちの合意の後。→ done-state.viewingWaitAckAllowed（台帳の viewingFlow.confirmed／stage=date_agreed・confirmed／resolveViewingScheduled の scheduled のどれか）が真の時だけ出す。偽の時は待ちの形・既定の締めに落ち、[viewing-ack-unconfirmed] をログ。",
+    "rationale": "10/18 弱い所B-1。内覧の確定の線は内覧の流れの1関数（viewing-flow の confirmed）と同じ値を見る（9/30 みことさん事例の annotateUnconfirmedViewing と同じ向き）。戻す VIEWING_ACK_CONFIRMED_ONLY=off。",
+    "tags": ["作り話", "内覧", "感謝返し", "出口の手前", "場面:お礼", "場面:内覧"],
+    "priority": 1
+  },
+  {
+    "category": "ai_design",
+    "title": "1つの発言に複数の依頼（内見＋初期費用）の AIX は帯で順番に続けて出す — ブレインの本質の依頼ごとの AIX を先に・無ければお客様の番の言葉で（確認の形→内覧日調整）",
+    "insight": "竹内さん 10/15 の決定（a71c2481）が画面に入っていなかった。post-aix-turn.nextAixInRequestOrder: 送った AIX の段（物件確認・見積書＝確認の形 0〜1／内覧日調整 2／待ち合わせ 3／申込へ 4）より後の段の AIX を、①ブレインの turn_contract.asks（route=aix・今のお客様の番を見た判断だけ＝freshContractAsks）から、②無ければ AIX の前のお客様の連投（customerTurnBeforeAix・24時間以内）に内見と初期費用の両方がある時に、物件確認（空き）→見積書→内覧日調整 と出す。募集に出ていない確認の後は使わない（10/16 の (b) のまま）。帯「次は AIX【…】」（10/16）の中で先に見る＝新しい帯は作らない。",
+    "rationale": "本番 aix_usage_logs 120日（読むだけ）: 内見と費用を両方言った番 85 の最初の AIX は 物件確認 28・見積書 13・内覧日調整 12（確認の形が先 41/53）。見積書の後にお客様が内見に触れると次は内覧日調整 18/26。今は同じ番で続けて押す事は少ない（1/8）＝竹内さんが『連続して推せるように』と決めた所。下書きを出すと suggested_aix_meta が消えるので画面は見えた時の本質を会話ごとに控える。戻す NEXT_PUBLIC_POST_AIX_ORDER=off。",
+    "tags": ["AIX", "順番", "連続", "post-aix-turn", "竹内さんの決定", "場面:内覧", "場面:初期費用"],
+    "priority": 1
+  },
+  {
+    "category": "ai_design",
+    "title": "お手本の少ない場面の試験の問題は、毎日の拾い出し（edited-turn-miner）の候補を人が読み、正解の道を直してから足す — 候補の道はそのまま使わない",
+    "insight": "10/18: 試験の札（exam_problem_index 152）の場面で、検討中 6・申込 7・お礼（内覧の段取り・物件を送った後）各2〜4・お手本の札は 8 だけ。拾い出しの exam-batch.json 49問から、正解が決まる 13問を会話の前後まで読んで選び、11問を足した（q164〜q174・2問は申込の書類の値が場面に入るので道具が外した）。候補の道は AIX の種類が実送信の中身と合わない物（予約した次の AIX の本文が入る・別の番の文が混ざる）が多く、約束の返信を『返信』にしている物もあった＝道（accept）は人が直す。",
+    "rationale": "竹内さんの番の実送信が物差し。2重に伏せる（maskExamText→maskForEmbedding→部屋番号）・申込以降・申込の書類の値は入れない。足した後は brain-exam-add が共有の置き場に置く。",
+    "tags": ["試験", "お手本", "edited-turn-miner", "問題の作り方"],
+    "priority": 2
+  },
+  {
+    "category": "ai_design",
+    "title": "申込の帯は本人確認の画像だけ（フォームの文・審査の言い方なし）でも出す — 画像の記録があり窓の中にお客様の画像の通があればその通を形跡に",
+    "insight": "10/18 の線（申込の帯は申込フォームが届いてから）で formReceived は applying_image_received でも真になるのに、形跡の通（審査の言い方・フォームの文）が無いと帯が出なかった。apply-stage-nudge.resolveApplyStageNudge の最後に、applyingImageReceived かつ21日の窓・否決の後のお客様の [画像]/[ファイル] の通を kind=id_image として返す（文言『本人確認の画像が届いています』）。",
+    "rationale": "確かめる人 10/18 の残り。applying_image_received は申込書の案内の後72時間以内のお客様の画像で立つ（line-webhook）。戻す APPLY_STAGE_NUDGE_ID_IMAGE=off。",
+    "tags": ["申込", "帯", "apply-stage-nudge", "確かめる人"],
+    "priority": 2
+  },
+  {
+    "category": "ai_design",
+    "title": "お客様の事情の「遠方」は本人だけ — 「実家が遠方なので親は来れない」「親は九州に住んでいて」は家族・実家が遠方（遠方の言葉の直前の主語を見る）",
+    "insight": "customer-circumstances.extractCircumstances の REMOTE_RE は「遠方なので」に当たり、本人が遠方と読んで抑える提案（申込でお部屋を抑えてから内覧）の理由にしていた。遠方の言葉の直前（同じ文の12字）が 実家・親・両親・家族・彼氏・保証人 等＋が/は/も の時は外す（REMOTE_OTHER_RE）。",
+    "rationale": "確かめる人 10/18 の残り。推測しない＝決まった言い方だけ（ファイル冒頭の方針）。",
+    "tags": ["お客様の事情", "遠方", "確かめる人", "場面:内覧"],
+    "priority": 3
+  },
+  {
+    "category": "ai_design",
+    "title": "同じ state を2つのピッカーで使う時は、ピッカーを切り替えたら前の選択を消す（二人入居と代理契約の proxyResult）",
+    "insight": "AixModal の proxyResult（可能／不可）は代理契約と二人入居（10/16 追加）の両方で使い、代理契約で『可能』→二人入居に替えると『可能』が残り、選ばずに送れた。checkPattern が変わったら setProxyResult(null)。",
+    "rationale": "確かめる人 10/18 の残り。新しいピッカーを既存の state で作る時の決まり。",
+    "tags": ["AixModal", "ピッカー", "静かに壊れる", "確かめる人"],
+    "priority": 3
+  },
+  {
+    "category": "ai_design",
+    "title": "設計知見の決定の一覧（design-knowledge-curation DECISIONS）は竹内さんの決定が変わったら新旧を逆にする — card_fee_324 → lump_transfer_only（10/16 支払いは一括の振込だけ）",
+    "insight": "旧 card_fee_324 は『カード払いなら分割可・手数料3.24%を必ず添える』を新しい決まりとし、『一括振込のみ』と書いた行を古い行として要確認に出していた＝10/16 の決定（KB 585f3b97）と逆。newRe=/支払いは一括の(お)?振込だけ/・since 2026-10-16・oldRe はカード分割可・手数料3.24%を添える・分割の手数料。",
+    "rationale": "10/18 弱い所B-4。決定が覆った時は、出口の検査（company-fact-guard）だけでなく知見の整理の決定の一覧も同じ日に直す（直さないと毎晩の整理が新しい決まりの行を古い扱いにする）。",
+    "tags": ["設計知見", "整理", "支払い", "竹内さんの決定"],
+    "priority": 2
+  }
+]
