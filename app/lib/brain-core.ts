@@ -154,7 +154,7 @@ import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
-import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise } from "@/app/lib/ack-exhausted-reply";
+import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
 import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
@@ -2731,7 +2731,9 @@ ${catalogBlockForBrain(brainScene)}
       if (searchSplitServerEnabled()) splitExhaustLine = line ? `${line}${exhaustedConditionMaterial()}` : line;
       // 2026-10-14 出し切りの後の条件の足しをブレイン基準に（EXHAUSTED_CONDITION_BRAIN）: 今の番の行で材料を渡す（後の規則と同じ印の強さだけ）
       if (exhaustedConditionBrainEnabled() && exNow.exhausted && !(exNow.strength === "weak" && weakExhaustDemoted())) {
-        const tl = exhaustedConditionTurnLine();
+        // 2026-10-18 弱い所B（q170）: 送付だけの印（weak）の番に「出し切った印がある＝返信で締める」と言い切る行を渡すと、材料の1行（出し切りとは限らない）と食い違い、
+        //   最初の送付への最初の懸念（お風呂が狭い）までブレイン自身が「新着が出次第」で締めた。weak は弱い形の行（足した条件でまだ探していない・会話から決める）。戻す EXHAUSTED_WEAK_TURN_LINE=off
+        const tl = exNow.strength === "weak" ? exhaustedConditionWeakTurnLine() : exhaustedConditionTurnLine();
         if (tl) customerStateBlockText += `\n\n${tl}`;
       }
     } catch (e) { console.warn("[brain-core] exhausted material skipped:", e instanceof Error ? e.message : String(e)); }

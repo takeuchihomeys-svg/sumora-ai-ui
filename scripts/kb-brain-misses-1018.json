@@ -1,0 +1,42 @@
+[
+  {
+    "title": "他社で内覧する（した）物件を弊社で申込めるかは会社の事実で即答 — 「内覧」の語だけで内覧の希望（AIX 内覧調整）の材料にしない",
+    "category": "ai_design",
+    "insight": "q166（本番 a3cc571e 10/11）お客様「明日もともとスーモに乗せていた / 不動産屋さんに依頼して / 内覧予定になってるんですが / 気に入ればそのまま / こちらでお願いとかもできますか？」→ 竹内さんは返信で「はい😊！！そのまま弊社でのお手続きで大丈夫です・弊社でもご内覧可能です」。ブレイン（LLM 自身・decision_source=llm）は AIX 内覧日調整。なぜ: ①会社の事実 other_company_viewing の網が「他社・別の不動産」の語だけで、1通の中の改行で窓（[^。\\n]）が切れて当たらなかった ②場面の材料（aix-scene-evidence S4 viewing_intent）・内覧の流れ（viewing-flow customerWishes）・訴求のタイミング（appeal-timing viewing_wish）・道の型（brain-route-type viewing_wish）が全部「内覧」の語だけで内覧の希望と読み、ブレインに4か所から「内覧の希望」が渡った（設計知見 c91fa3f9 の線）。",
+    "rationale": "判断はブレイン（9eb6aa9c P0）。上書きの規則を足すのではなく、ブレインに渡す材料を正す: 他社の話（不動産屋さんに・仲介業者で・他社）＋内覧＋こちら/そちら/御社で申込・お願いできるかの問いを1か所（other-agent-viewing.isOtherAgentViewingApplyQuestion）で読み、会社の事実を渡し、4か所の内覧の希望の材料から外す。弊社への内覧の希望（「スーモで見つけた物件を内覧したい」）は他社の話の印が無いので今まで通り。",
+    "context": "app/lib/other-agent-viewing.ts（新）・company-facts other_company_viewing の ask に足し事実の文に「他社で内覧する予定の話は弊社への内覧の希望ではない」・aix-scene-evidence S4・viewing-flow customerWishes・appeal-timing・brain-route-type。戻す OTHER_AGENT_VIEWING=off。",
+    "applied_to": "app/lib/other-agent-viewing.ts, app/lib/company-facts.ts, app/lib/aix-scene-evidence.ts, app/lib/viewing-flow.ts, app/lib/appeal-timing.ts, app/lib/brain-route-type.ts",
+    "tags": ["ブレイン診断", "会社の事実", "内覧", "材料", "場面:申込", "場面:内覧"],
+    "priority": 2
+  },
+  {
+    "title": "送付だけの印（weak）の出し切りで、ブレインが足した条件で探す約束を選んだ番は「新着が出次第」の返信に書き換えない（明示の印 strong は決定 10/14 のまま）",
+    "category": "ai_design",
+    "insight": "q170（本番 43ec03ae 9/08）最初の物件の送付（4件）の直後に「お風呂が狭いと赤ちゃんのお風呂入れるのが難しい」→ 竹内さんはお風呂広めでお調べする約束（2段:pickup）。ブレインの本質も 2段:pickup（turn_contract route=promise・about=search_condition・polarity=add）だったのに、rule:two_stage_promise(pickup_unless_ack)+exhausted_condition_reply が返信（新着が出次第お送り）に書き換えた。なぜ: 出し切りの印は送付だけ（AIX の物件の送付＋「ピックアップさせて頂きました」＝weak）で、weak を材料に下げる BRAIN_DEMOTE_SEARCH_EXHAUSTED は既定 off。出し切りの条件の足しの規則は『LLM が物件の AIX を選んだ時』だけブレインを残し、約束を選んだ時は上書きしていた。",
+    "rationale": "weak の材料は『1回送っただけ・出し切りとは限らない・会話から読んで決める』とブレインに渡している＝決めるのはブレイン。ブレインが約束を選んだ番は記録だけ（demoted_overrides）。strong（全てピックアップ・新着待ちの約束・全力サポート）は竹内さんの決定 10/14 のまま返信で締める（q003 q004 は strong）。q006（weak・2回目の送付の後・ガスコンロ）は 10/14 の試験で材料だけで本質も返信だった＝ブレインが返信を選ぶ限り変わらない。",
+    "context": "app/lib/ack-exhausted-reply.ts exhaustedWeakKeepBrainPromise・brain-core の rule:exhausted_condition_reply の前。戻す EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE=off。",
+    "applied_to": "app/lib/ack-exhausted-reply.ts, app/lib/brain-core.ts",
+    "tags": ["ブレイン診断", "出し切り", "2段", "上書きの規則", "場面:懸念", "場面:条件"],
+    "priority": 2
+  },
+  {
+    "title": "内覧誤提案ガード（退去予定）の守る線は『見られない部屋の内覧の誘いを出さない』だけ — ブレインが同じ番で他の候補を探す約束を選んでいれば申込へに差し替えず約束（ピックアップ）に",
+    "category": "ai_design",
+    "insight": "q174（本番 c068a6a3 10/16・Luxe難波WEST 10月末退去予定・先押さえの案内の後）お客様「広くて綺麗ですね！✨一旦見てみたいです！場所が少し遠い気もしてて、もし他にも候補ありましたらお願いしたいです」→ 竹内さんは他の候補を新たにピックアップする約束。ブレインの本質は内覧調整＋他の候補を探す約束（2つ目の ask が route=promise・about=search_condition）、最後は guard:viewing（moveOutBlocksViewing）が AIX 申込へに差し替えた。なぜ: ガードは内覧調整を一律に申込の熱と読み、ブレインの他の依頼（懸念＋他の候補）を見ていなかった。",
+    "rationale": "決まりがブレインを上書きするのは安全の線だけ（9eb6aa9c P0・竹内さん 10/14）。内覧の誘いを消すのは安全の線、申込へを足すのは判断。ブレインが同じ番で他の候補を探す約束を選んでいる時は申込の熱ではない＝差し替え先をブレインの約束（property_send→2段の pickup_unless_ack）に。探す約束が無い番（隼斗型の日程の返事など）は今まで通り申込へ。LLM が『一旦見てみたい』を内覧の希望に読んだ本質の外れは残る（内覧の流れは『一旦』で希望にしていない）。",
+    "context": "app/lib/brain-route-keep.ts guardViewingKeepSearchPromise・brain-core の内覧誤提案ガード。decision_source=guard:viewing(search_promise)。戻す GUARD_VIEWING_KEEP_SEARCH_PROMISE=off。",
+    "applied_to": "app/lib/brain-route-keep.ts, app/lib/brain-core.ts",
+    "tags": ["ブレイン診断", "内覧", "退去予定", "上書きの規則", "場面:検討中", "場面:内覧"],
+    "priority": 2
+  },
+  {
+    "title": "閉じる番（close_only）の answer は受け＋竹内さんの真ん中の1文 — 確定した日時の確かめ／気になる点はいつでも／待ちの形（旧『受けの一言だけ・日付を言い直さない』は決定 3696fe20 に反していた）",
+    "category": "ai_design",
+    "insight": "q113（待ち合わせの AIX の後の「承知しました」）竹内さん「それでは〇/〇 〇:〇〇より何卒よろしくお願い致します」／q172（物件1件の後の「ありがとうございます💦」）竹内さん「気になる点等出てきましたら何時でもお気軽にご連絡ください！！…募集に出次第お送りさせて頂きます！！」。ブレインは道は合う（返信）が中身が受けの一言・内部の作業（「内覧確定を記録」）だけで依頼の抜け。なぜ: 本質の決まり（turn-contract BRAIN_TURN_CONTRACT_RULES）の『close_only=true の番の answer は受けの一言だけ（前にした約束・予定・日付を言い直さない）』が、竹内さんの決定 3696fe20『了承だけは「はい😊！！」＋（約束 or お気軽に）＋何卒』と実送信の確定日時の確かめを禁じていた。",
+    "rationale": "決まりがブレインの本質を細らせていた所を竹内さんの決定に合わせる。新しい約束・提案・物件を足さない線と、同じ約束・日付を2回目以降に言い直さない線は残す（生成側の ACK_FORM_TAKEUCHI は試しで悪くなったので触らない＝ブレインの answer だけ）。",
+    "context": "app/lib/turn-contract.ts closeOnlyAnswerRule。戻す CLOSE_ONLY_MIDDLE_LINE=off（旧の1行）。",
+    "applied_to": "app/lib/turn-contract.ts",
+    "tags": ["ブレイン診断", "閉じる", "了承", "お礼", "本質", "場面:短いお礼", "場面:内覧"],
+    "priority": 2
+  }
+]

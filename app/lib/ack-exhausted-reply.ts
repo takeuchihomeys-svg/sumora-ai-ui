@@ -92,6 +92,20 @@ export function exhaustedConditionTurnLine(env: Env = envOf()): string {
     + (exhaustedBroughtFirstEnabled(env) ? "同じ連投でお客様が物件（URL・画像）を送ってきた・特定の物件の見積や空きを頼んだ番は、その物件の約束（募集状況の確認・御見積書）が先（出し切りの締めにしない）。" : "");
 }
 
+/**
+ * 2026-10-18 弱い所B（q170）: 送付だけの印（weak）の番の今の番の行。旧は weak でも exhaustedConditionTurnLine（「出し切った印がある」と言い切る）を渡し、
+ *   材料の1行（exhaustedMaterialLine の「1回送っただけ・出し切りとは限らない」）と食い違っていた。最初の送付への最初の懸念・条件の足し
+ *   （q170「お風呂が狭いと赤ちゃんのお風呂が難しい」）で竹内さんはその条件でお調べする約束（2段:pickup）。
+ *   決めるのはブレイン: 会話で今の条件を出し切ったと言っている時（全て・ご条件から離れますが・新着待ち）だけ返信で締める。戻す EXHAUSTED_WEAK_TURN_LINE=off（旧の言い切りの行）
+ */
+export function exhaustedConditionWeakTurnLine(env: Env = envOf()): string {
+  if ((env.EXHAUSTED_WEAK_TURN_LINE ?? "").trim().toLowerCase() === "off") return exhaustedConditionTurnLine(env);
+  if (!exhaustedConditionReplyEnabled(env)) return "";
+  return "【今の番（材料）】こちらは物件を送った（送付の報告）が、今の条件を出し切ったとは言っていない（「全てピックアップ」・新着待ちの約束・全力サポートは無い）。"
+    + "お客様の今の発言が送った物件への懸念・条件の足し（設備・広さ・家賃・間取り・エリア）なら、その条件ではまだ探していない＝竹内さんはその条件で改めてお調べ（ピックアップ）してお送りする約束にする（route=promise・about=search_condition）。"
+    + "会話でこちらが今の条件の物件はもう無いと伝えている（「ご条件から離れますが」等・何度も送った後）時だけ、足した条件を受け止め新着が出次第お送りする返信で締める。決めるのは会話を読んだあなた。";
+}
+
 /** LLM の前の材料（約束が残っている番の行に足す） */
 export function ackAfterPromiseMaterial(env: Env = envOf()): string {
   return ackAfterPromiseReplyEnabled(env)
