@@ -1,0 +1,52 @@
+[
+  {
+    "title": "migrate-schema は文をまとめて流す — 1文ずつの往復と毎晩失敗する重い文で 300秒に届き後ろが流れていなかった。失敗したまとまりだけ1文ずつ・結果は cron_run_logs に・指紋が同じ夜は流さない",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "毎晩の migrate-schema（約995文）は exec_sql を1文ずつ呼び、往復（約180ms）に加えて毎晩失敗する重い文（ivfflat 索引の作り直しが 8秒の statement timeout・btree に入らない約9万バイトの値の索引で llm_usage_logs を全部読む）があり、10/17 の夜は postgres のログで 720番目で打ち切り＝後ろ約270文が流れていなかった（10/16 は約900番まで・毎晩違う）。結果は cron_run_logs に0行で誰も気づけなかった。直し: 文を50ずつつないで1回の exec_sql（EXECUTE＝複数文・1回＝1トランザクション）。まとまりが失敗したらそのまとまりだけ1文ずつ流し直す＝旧と同じ結果。@atomic の塊は分けない・順は変えない（関数の SET probes を付け直す DO ブロック 94cc340a は match_* の定義より後ろのまま）。まとまりの先頭で SET LOCAL lock_timeout=3s（多くの表の鍵を持ったまま待たない）。270秒で新しい呼び出しをやめ、止めた所を残す。結果（指紋・まとまり・流し直し・失敗した文・止めた所）を cron_run_logs（migrate-schema）に。SQL の指紋が前回の最後まで流した夜と同じで3日以内なら流さない。毎晩失敗していた文（ivfflat の作り直し・作れない btree・既に入っている publication）は外すか無い時だけにした。",
+    "rationale": "本番の読みだけで確かめた: postgres のログの ERROR の並び（JST 0:10〜0:15）で打ち切りの位置が分かる。後ろの文の中身は手で流してあり今本番に無いのは列のコメント1つ（scoring_learning_runs.hook_learning）だけ。exec_sql に SET LOCAL・複数文・DO を1回で渡せる事を確かめた。authenticator の statement_timeout は 8秒＝まとまり1回も 8秒以内（重い文のまとまりは流し直しに落ちる）。",
+    "context": "2026-10-18 弱い所A-1（作る人・ブランチ weak-a-1018）。LLM なし。",
+    "applied_to": "app/lib/migrate-runner.ts・app/api/migrate-schema/route.ts・app/lib/__tests__/migrate-runner.test.ts（旧に戻す MIGRATE_BATCH=off／MIGRATE_SKIP_UNCHANGED=off・?force=1 と POST はいつも流す）",
+    "tags": ["汎用", "静かに壊れる", "migrate-schema", "Supabase", "postgres", "見張り", "点検表"]
+  },
+  {
+    "title": "結果を握りつぶす並列の取得は無い列を引いても気づけない — trigger_action_rules.rule_text を8/14から毎回引いて 1日 約1,200回の 42703。select の列を migrate-schema の列と照らす試験を置く",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "brain-core loadBrainSystemInputs が Promise.all で trigger_action_rules の keyword, action_type, rule_text を引いていたが rule_text の列は無い（線引きの規則は ai_prompt_rules の BOUNDARY-% 26件が担い、trigger_action_rules に BOUNDARY% の行は0件）。結果の error を見ず data ?? [] にしていたので、ブレインの呼び出しごとに postgres の ERROR を出しながら常に空を渡していた。引くのをやめた（渡す中身は同じ・旧に戻す BRAIN_BOUNDARY_TRIGGER_RULES=on）。試験: app の trigger_action_rules の .select の列が migrate-schema の CREATE TABLE＋ADD COLUMN に在るかを見る。",
+    "rationale": "postgres のログ（Supabase の query_logs）で 24時間 1,188回の「column trigger_action_rules.rule_text does not exist」。Vercel のログが見られなくても DB 側のログで毎日のエラーの出どころは引ける。",
+    "context": "2026-10-18 弱い所A-2①",
+    "applied_to": "app/lib/brain-core.ts・app/lib/__tests__/trigger-action-rules-columns.test.ts",
+    "tags": ["汎用", "静かに壊れる", "Supabase", "postgres", "ブレイン"]
+  },
+  {
+    "title": "match_reply_knowledge の時間切れは冷えた TOAST の読み — 温まっていれば 0.17秒・冷えると 9.8秒（6KB の埋め込みを約4,000ページ乱読み）。厳密な全件比較は halfvec の列を行の中に持てば順位を保ったまま読みを減らせる",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "1日 約190回の statement timeout（8秒）の大半は match_reply_knowledge（他に match_reply_examples・match_aix_reply_examples）。表は1.4万行・257MB（1536次元の float 埋め込み 6KB が TOAST に出る）。全件比較（probes=100・状態の加点で ORDER BY が式）は重要度7以上の約7,700行の埋め込みを TOAST の索引経由で乱読みし、温まっていれば 169ms・冷えると 9,840ms（共有バッファ 256MB に対し埋め込みの表が embedding_cache 477MB・knowledge 257MB・examples 166MB・winning 105MB で追い出される）。案: halfvec(1536) の列を足し STORAGE MAIN で行の中に置き（3KB）、関数は halfvec で比べる（未埋めの行は float にフォールバック）。本番の5問で上位100件の重なりは 100/100＝順位は変わらない。乱読み約9万バッファ→順読み約7千ページ。HNSW は近似なので厳密の決定（99e242e4）と合わない＝竹内さんの判断が要る。",
+    "rationale": "EXPLAIN (ANALYZE, BUFFERS) の1回目（冷え）と2回目（温まり）の比べ。postgres のログの parsed.context で時間切れの関数を数えた。",
+    "context": "2026-10-18 弱い所A-2②（設計と SQL を親へ・本番には未反映）",
+    "applied_to": "報告のみ（ai_reply_knowledge・match_reply_knowledge）",
+    "tags": ["汎用", "pgvector", "RAG", "Supabase", "postgres", "タイムアウト"]
+  },
+  {
+    "title": "個人情報の伏せ方の穴を2つ塞ぐ — 空白区切りの電話番号は maskPII で、物件名に付いた素の部屋番号は埋め込み側（maskForEmbedding）だけで伏せる。生成に渡す文の部屋番号は残す",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "①「080 1234 5678」「06　1234　5678」「090-1234 5678」はハイフンの網にもハイフンなしの網にも当たらず素通りしていた（門 altPiiSignal だけが拾っていた）→ 数字の合計 10〜11桁・3つの塊・空白を含む時だけ伏せる（PII_MASK_PHONE_SPACE=off）。②「Mv.fm大阪大正405」のような号室なしの部屋番号は建物と合わせると住所になる→ brain-self-review の maskBareRoomNo を app/lib/pii-mask.ts に移し maskForEmbedding（OpenAI の埋め込み・embedding_cache・試験の札・自己点検・申込期間のまとめ）で使う。金額の語（費・料・金・賃・額 等）の直後は触らない（「管理費8000の」）。maskPII（ブレイン・返信の生成に渡す文）は部屋を見分けるのに要るので触らない（PII_MASK_BARE_ROOM=off）。試験の札は exam-rag.ts --index で作り直す（埋め直し 8問・$0.00007）。",
+    "rationale": "伏せる網は『どこへ出す文か』で分ける: 外の埋め込み・保存には強く、生成に渡す文は判断に要る値を残す。",
+    "context": "2026-10-18 弱い所A-3①②",
+    "applied_to": "app/lib/pii-mask.ts・scripts/lib/brain-self-review.ts・app/lib/__tests__/embedding-mask.test.ts・app/lib/__tests__/alt-pii-gate.test.ts",
+    "tags": ["汎用", "個人情報", "DeepSeek", "RAG", "試験"]
+  },
+  {
+    "title": "DeepSeek の線の起点に記入済みの申込フォームを足す — 下書きを止める判定には入れない（向きの違う2つの判定を分ける）",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "申込の線（deepseekSafeCutoff）は申込へ押下・本人確認／収入の書類・申込以降の status だけが起点で、申込へ を押す前に届いた記入済みフォームは線を引かず、会話ごと DeepSeek に出得た（804934e7 は試験の道具側だけ止めていた）。loadPostApplyFacts でお客様の発言を語で絞って新しい方から20通読み、isFilledApplicationForm（examplePiiReason と altPiiSignal の『記入済みの申込フォーム』・空の記入欄は当てない）で最後のフォームの時刻を applicationFormAt に。deepseekSafeCutoff は申込の記録と同じに数える（フォームの後に戻していなければ渡さない・戻した後は戻した時刻より後だけ）。resolvePostApply（下書きを止める）には入れない。フォームの記録が読めない時は DeepSeek に渡さない側・下書きの判定は止めない。本番の読みだけの確かめ: フォームのある 72会話のうち 7会話が「全部渡す」→「渡さない」に変わり、他は同じ。語の絞り込みは直近 8000通で取りこぼし 0。",
+    "rationale": "外に出さない判定は fail-closed、下書きを止める判定は読めた時だけ止める（post-apply.ts の決まり）。同じ facts から向きの違う2つを引くので、新しい起点はどちらに効くかを決めて片方だけに入れる。DB のトリガー stamp_deepseek_cutoff はフォームを見ない（戻した時は status_manual_back_at が線になり、それも消えたら渡さない側＝安全側）。",
+    "context": "2026-10-18 弱い所A-3③",
+    "applied_to": "app/lib/post-apply.ts・app/lib/__tests__/post-apply-cutoff.test.ts・app/lib/__tests__/post-apply.test.ts（旧に戻す DEEPSEEK_CUTOFF_APPLICATION_FORM=off）",
+    "tags": ["汎用", "個人情報", "DeepSeek", "申込", "場面:申込"]
+  }
+]
