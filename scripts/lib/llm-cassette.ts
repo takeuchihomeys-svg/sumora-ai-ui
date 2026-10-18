@@ -79,6 +79,29 @@ export function cassetteKey(o: { host: string; path: string; action: string | nu
   return createHash("sha256").update(`${o.host}${o.path}\n${o.action ?? ""}\n${o.normBody}`).digest("hex");
 }
 
+/**
+ * 鍵に足す印。2026-10-17: DEEPSEEK_MODEL を既定（deepseek-v4-pro）から替えた回は鍵にモデルを足す（既定の鍵は今まで通り）。
+ * 2026-10-18: 最後の Claude の確かめ（LLM_TEST_FINAL_CLAUDE）も pro の回と同じ鍵だった → 「Sonnet の回」が pro の回の答えを再生し、
+ *   比べが同じに見えた（mc1018-sonnet は brain_fresh を1回も呼んでいない）。Claude の回は印を足して別の鍵にする。DeepSeek へ直に送る要求には足さない。
+ */
+export function cassetteSalt(env: Record<string, string | undefined>, host: string): string {
+  if (/deepseek/.test(host)) return "";
+  if (String(env.LLM_TEST_FINAL_CLAUDE ?? "").trim()) return "\n#provider=claude";
+  const dsm = String(env.DEEPSEEK_MODEL ?? "").trim();
+  return dsm && dsm !== "deepseek-v4-pro" ? `\n#model=${dsm}` : "";
+}
+/**
+ * 録った答えがこの回の宛先に合うか（2026-10-18）。前の鍵（印なし）には Claude の回の答えと pro の回の答えが混ざっている
+ *   → DeepSeek の試験（LLM_TEST_MODE・Claude の確かめでない）では Claude の答え（usage.model が claude）を返さない。
+ *   Claude の確かめでは Claude の答えだけ返す。モデルが分からない物（旧の録音）は返す。
+ */
+export function cassetteResponseFits(env: Record<string, string | undefined>, model: string | null): boolean {
+  if (!model) return true;
+  if (String(env.LLM_TEST_FINAL_CLAUDE ?? "").trim()) return /claude/i.test(model);
+  if (String(env.LLM_TEST_MODE ?? "").trim()) return !/claude/i.test(model);
+  return true;
+}
+
 // ─── 費用（録った答えの usage から） ─────────────────────────────────────
 export type CassetteUsage = { model: string | null; input_uncached: number; cache_read: number; cache_write: number; cache_write_5m: number; cache_write_1h: number; output_tokens: number };
 const n0 = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -248,13 +271,12 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
     const normBody = normalizeBody(body ?? "", env);
     // 2026-10-17: 要求は別クラウドへ振り替える前（Anthropic の形）で録る＝DEEPSEEK_MODEL を既定（deepseek-v4-pro）から替えた回も同じ鍵になり、
     //   pro の答えを flash の回に返していた（モデルの比べが全部「同じ」に見えた）。既定と違う時だけ鍵にモデルを足す（既定の鍵は今まで通り）
-    //   DeepSeek へ直に送る要求（判定など）は本文にモデル名がある＝足さない
-    const dsm = String(env.DEEPSEEK_MODEL ?? "").trim();
-    const salt = dsm && dsm !== "deepseek-v4-pro" && !/deepseek/.test(u!.host) ? `\n#model=${dsm}` : "";
-    const key = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + salt });
+    //   DeepSeek へ直に送る要求（判定など）は本文にモデル名がある＝足さない。2026-10-18: Claude の確かめの回も別の鍵（cassetteSalt）
+    const key = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host) });
     const nth = seen.get(key) ?? 0; seen.set(key, nth + 1);
     const entry = readEntry(o.dir, key);
-    const hit = o.mode !== "record" ? entry?.responses[nth] ?? null : null;
+    // 2026-10-18: 録った答えのうち、この回の宛先（Claude／DeepSeek）に合う物だけを n 番目として返す（cassetteResponseFits）
+    const hit = o.mode !== "record" ? (entry?.responses.filter((r) => cassetteResponseFits(env, r.usage?.model ?? null))[nth] ?? null) : null;
     if (hit) {
       bump(action, (t) => { t.replayed++; t.replayUsd += hit.usd; });
       return new Response(hit.body, { status: hit.status, headers: { "content-type": hit.contentType, [CASSETTE_HEADER]: "replay" } });
