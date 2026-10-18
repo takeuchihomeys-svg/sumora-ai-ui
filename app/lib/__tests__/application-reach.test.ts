@@ -201,6 +201,8 @@ it("促す: 申込より前の段階・21日以内・戻した後・その後に
   eq(resolveApplyStageNudge({ status: "proposing", messages: imgOnly, nowMs: NOW, applyingImageReceived: true })?.kind, "id_image", "本人確認の画像だけ");
   eq(resolveApplyStageNudge({ status: "proposing", messages: imgOnly, nowMs: NOW }), null, "画像の記録が無ければ出さない");
   eq(resolveApplyStageNudge({ status: "proposing", messages: [...imgOnly, rejected[1]], nowMs: NOW, applyingImageReceived: true }), null, "画像の後に否決なら出さない");
+  eq(resolveApplyStageNudge({ status: "proposing", messages: [{ sender: "customer", text: "[画像] 【物件の資料】\nViVi EBISU 202", createdAt: iso(NOW - DAY) }], nowMs: NOW, applyingImageReceived: true }), null, "物件のスクショだけでは出さない（確かめる人 10/18）");
+  eq(resolveApplyStageNudge({ status: "proposing", messages: [{ sender: "customer", text: "[画像] 本人確認書類", createdAt: iso(NOW - DAY) }], nowMs: NOW, applyingImageReceived: true })?.kind, "id_image", "本人確認書類の見出し");
   eq(isPreApplyForNudge("hearing"), true); eq(isPreApplyForNudge(""), false);
   // ryou さん（f895b126）: 9/26 の受けの宣言だけ・申込の情報は来ていない → 10/10 の「1番手の方審査否決…2番手お申込み可能」の後も帯を出さない
   const ryou = [

@@ -137,8 +137,11 @@ const AIX_ORDER_RANK: Record<string, number> = {
   viewing_invite: 2, meeting_place: 3, application_push: 4,
 };
 const ORDER_NEXT_OK = new Set(["estimate_sheet", "viewing_invite", "application_push"]);
-const VIEW_WISH_RE = /内見|内覧|見学|見に行|見たい|案内して/;
+const VIEW_WISH_RE = /内見|内覧|見学|見に行|(?<!写真|動画|画像|図面|間取り|間取り図)(?:も|を|が)?見たい|案内して/;
 const COST_ASK_RE = /初期費用|見積|総額|費用(?:は|が|を|って|も)/;
+// 確かめる人 10/18: 内覧が決まった・済んだ／見積書は要らない、の言葉があれば続けて出さない（言葉だけで決める時の外し）
+const VIEW_DONE_RE = /(?:内見|内覧|見学)(?:は|の日(?:程|にち)?は|日は)?[^。\n]{0,14}(?:決ま(?:り|っ)|確定|済み|済ませ|行きました|行ってきました|してきました|しました)|見てきました/;
+const COST_NO_RE = /(?:見積|初期費用|費用)[^。\n]{0,8}(?:要らない|いらない|不要|大丈夫です|結構です|分かってい|わかってい)/;
 /**
  * 送った AIX の次に、同じ番の依頼で残っている AIX（順番どおり）。無ければ null。
  *   contractAsks: ブレインの turn_contract.asks（今のお客様の番を見た物だけ渡す）
@@ -167,11 +170,14 @@ export function nextAixInRequestOrder(i: {
     const k = fromContract[0] as NextAixAfterAix["action"];
     return { action: k, why: `同じ番のもう1つの依頼（ブレイン）＝確認の形が先・${k === "viewing_invite" ? "内覧日の調整" : k === "estimate_sheet" ? "初期費用の見積書" : "申込"}が次` };
   }
+  // 確かめる人 10/18: ブレインが今の番を見て依頼を決めている（asks がある）のに次の段の AIX が無い＝ブレインの判断（内覧日は決まっている・見積は要らない 等）。言葉で上書きしない
+  if ((i.contractAsks ?? []).length) return null;
   // ② お客様の今の番の言葉（内見＋初期費用）
   const t = (i.customerTurnText ?? "").normalize("NFKC");
   if (!t.trim()) return null;
   const wantsView = VIEW_WISH_RE.test(t), wantsCost = COST_ASK_RE.test(t);
   if (!wantsView || !wantsCost) return null;
+  if (VIEW_DONE_RE.test(t) || COST_NO_RE.test(t)) return null;
   if (sent === "property_check_result" && /^(?:available)$/.test(String(i.checkPattern ?? ""))) {
     return { action: "estimate_sheet", why: "内見と初期費用の2つのご依頼＝空きの確認の次は初期費用の見積書（その後に内覧日の調整）" };
   }

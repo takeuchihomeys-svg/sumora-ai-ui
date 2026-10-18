@@ -34,5 +34,10 @@ t("古い番（24時間より前）は読まない", customerTurnBeforeAix(msgs,
 t("ブレインの判断が今の番を見ていれば依頼を使う", (freshContractAsks({ turn_contract: { asks: [{ route: "aix", aix: "viewing_invite" }] }, analyzed_msg_ts: "2026-10-11T01:00:30Z" }, msgs) ?? []).length === 1);
 t("古い判断は使わない", freshContractAsks({ turn_contract: { asks: [] }, analyzed_msg_ts: "2026-10-10T00:00:00Z" }, msgs) === null);
 t("NEXT_PUBLIC_POST_AIX_ORDER=off で旧", nextAixAfterAix({ aixType: "estimate_sheet", hasConditions: true, order: { customerTurnText: turn, env: "off" } }) === null);
+// 確かめる人 10/18
+t("ブレインが今の番で見積だけ（内覧は決まっている）→ 言葉で内覧日調整を足さない", nextAixAfterAix({ aixType: "estimate_sheet", hasConditions: true, order: { customerTurnText: turn, contractAsks: [{ route: "aix", aix: "estimate_sheet" }, { route: "reply", aix: null }] } }) === null);
+t("内覧日が決まった言葉 → 続けて出さない", nextAixAfterAix({ aixType: "estimate_sheet", hasConditions: true, order: { customerTurnText: "内見は20日で決まりましたが、初期費用も教えて下さい" } }) === null);
+t("見積は要らない言葉 → 出さない", nextAixAfterAix({ aixType: "property_check_result", checkPattern: "available", hasConditions: true, order: { customerTurnText: "内見したいです。見積はいらないです" } }) === null);
+t("写真見たい は内見でない", nextAixAfterAix({ aixType: "estimate_sheet", hasConditions: true, order: { customerTurnText: "写真見たいです。初期費用もお願いします" } }) === null);
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

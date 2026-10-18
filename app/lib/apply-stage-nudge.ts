@@ -120,7 +120,9 @@ export function resolveApplyStageNudge(i: {
   //   画像の記録（applying_image_received＝申込書の案内の後72時間以内のお客様の画像）があり、窓の中にお客様の画像の通があれば、その通を形跡にする。
   //   戻す APPLY_STAGE_NUDGE_ID_IMAGE=off
   if (!found && i.applyingImageReceived && (process.env.APPLY_STAGE_NUDGE_ID_IMAGE ?? "").trim().toLowerCase() !== "off") {
-    const img = [...msgs].reverse().find((m) => m.sender === "customer" && Date.parse(m.createdAt) > lastRejectMs && /^\s*\[(?:画像|ファイル)/.test(String(m.text ?? "")));
+    const img = [...msgs].reverse().find((m) => m.sender === "customer" && Date.parse(m.createdAt) > lastRejectMs && /^\s*\[(?:画像|ファイル)/.test(String(m.text ?? ""))
+      // 確かめる人 10/18: 見出し付きの画像（"[画像] 【物件の資料】" "【物件以外：…】" "【種類不明】"＝本人確認・収入の書類でない）は形跡にしない（image-label.ts）
+      && !/^\s*\[画像\]\s*【/.test(String(m.text ?? "")));
     if (img) found = { kind: "id_image", at: img.createdAt, by: "customer" };
   }
   return found;
