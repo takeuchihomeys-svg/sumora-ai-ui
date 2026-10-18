@@ -437,7 +437,7 @@ async function runMain() {
 async function runQueue() {
   const now = new Date();
   const due = readQueue().filter((x) => Date.parse(x.at) <= now.getTime());
-  if (!isCheapWindow(now) && !flag("force")) { log(`今は安い時間ではない（JST 1:30〜9:30）→ 流さない（--force で流す）`); return; }
+  if (!isCheapWindow(now) && !flag("force")) { log(`今は DeepSeek の混雑の時間（平日 JST 10-13・15-19）→ 流さない（--force で流す）`); return; }
   if (!due.length) log("予約: 流す物が無い");
   await runQueueItems(due);
   // 2026-10-18 竹内さん 10/18 OK「毎晩の自己点検を朝の報告に載せる」: 予約の後にブレインの自己点検を1回（1日の上限 $10 の内・1回 $1 まで・
