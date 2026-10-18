@@ -9,7 +9,8 @@ import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { createGenerationModel } from "@/app/lib/reply-generation-model";
 // 2026-09-19 竹内: 自動返信オンの会話の下書きは Claude のまま（印を付けて llm-alt-provider が守る）
 import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER, LLM_ACTION_HEADER } from "@/app/lib/llm-usage-recorder";
-import { willRouteAlt, ALT_STREAM_CUT_STOP } from "@/app/lib/llm-alt-provider";
+import { willRouteAlt, ALT_STREAM_CUT_STOP, altDeepseekModelFor } from "@/app/lib/llm-alt-provider";
+import { flashWriterAdaptOn, flashWriterRecheckOn, isFlashModel, flashWriterParts, buildFlashChecklist, renderFlashChecklistNote, renderFlashExamplesNote, missingFlashItems, buildFlashRewriteFeedback, buildFlashPlanRequest, buildFlashWriteRequest, contractForbidsInvite, INVITE_RE, type FlashChecklistItem } from "@/app/lib/flash-writer";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
 import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, loadDeepseekCutoff, cutoffMs, isAfterCutoff, filterAfterCutoff, cutoffMarkOf, formatCutoffMark, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
 // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 線で派生データを切る・出口の印を置く箱
@@ -51,6 +52,21 @@ function maskUncachedBlocks<T>(messages: T[], masker: Masker): T[] {
     });
     if (!changed) return m;
     // LangChain のメッセージは content を差し替えた同型の物を作る（型は呼び出し側のまま）
+    const clone = Object.create(Object.getPrototypeOf(msg)) as typeof msg & { content: unknown };
+    Object.assign(clone, msg);
+    clone.content = next;
+    if (clone.lc_kwargs) clone.lc_kwargs = { ...clone.lc_kwargs, content: next };
+    return clone as unknown as T;
+  });
+}
+/** 2026-10-18 flash-writer: 返信生成の HumanMessage の最後（キャッシュの印の無い動的ブロックの後ろ）に1ブロック足す。前置きは変えない＝キャッシュはそのまま */
+function appendHumanText<T>(messages: T[], text: string): T[] {
+  if (!text) return messages;
+  return messages.map((m, i) => {
+    if (i !== messages.length - 1) return m;
+    const msg = m as unknown as { content?: unknown; lc_kwargs?: Record<string, unknown> };
+    if (!Array.isArray(msg.content)) return m;
+    const next = [...(msg.content as Array<Record<string, unknown>>), { type: "text", text: `\n\n${text}` }];
     const clone = Object.create(Object.getPrototypeOf(msg)) as typeof msg & { content: unknown };
     Object.assign(clone, msg);
     clone.content = next;
@@ -6013,6 +6029,23 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       { scene: replyScene, on: sceneMaterialsOn, brainContract: turnContract?.source === "brain", ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off" }, // 2026-10-07 場面の整理（3巡目: 短い了承の判定も場面に寄せる）
     );
 
+    // 2026-10-18 竹内さん「flash の特徴に合わせる」: 書く役が DeepSeek の flash の時だけ、最後（キャッシュの前置きの後ろ）に答える項目の一覧・手本を足す
+    //   （app/lib/flash-writer.ts・pro／Claude の時は何も足さない＝指示は1文字も変えない・FLASH_WRITER_ADAPT=off で旧・FLASH_WRITER_PARTS で手当てを選ぶ）
+    const flashWriterModel = !isTemplateOptimize && !isFollowUp && flashWriterAdaptOn()
+      ? altDeepseekModelFor("reply_generate", { postApply: postApplyConversation || deepseekBlocked, autoSend: autoSendConversation })
+      : null;
+    const flashParts = isFlashModel(flashWriterModel) ? flashWriterParts() : new Set<string>();
+    const flashItems: FlashChecklistItem[] = flashParts.size
+      ? buildFlashChecklist({ contract: turnContract, ledgerItems: requestLedgerEnabled() ? splitRequests(customerMsgUnits, new Date().toISOString()) : [], customerUnits: customerMsgUnits })
+      : [];
+    const flashNoInvite = flashParts.size > 0 && contractForbidsInvite(turnContract);
+    const flashTail = [
+      flashParts.has("examples") ? renderFlashExamplesNote(examples) : "",
+      flashParts.has("list") && !flashParts.has("plan") ? renderFlashChecklistNote(flashItems, { closeOnly: !!turnContract?.closeOnly, noInvite: flashNoInvite }) : "",
+    ].filter(Boolean).join("\n\n");
+    const writerMessages = flashTail ? appendHumanText(messages, flashTail) : messages;
+    if (flashParts.size) console.log(JSON.stringify({ tag: "gen:flash-writer", conversationId, model: flashWriterModel, parts: [...flashParts], items: flashItems.length, tailChars: flashTail.length }));
+
     // ─── reply_modeゲート チェックポイントB（本命）───
     // チェックポイントB: 必ずDBを新鮮フェッチする（キャッシュ再利用禁止）。
     // 理由: bg-asyncでブレインが30sタイムアウト→brainGateDirect=null の場合、
@@ -6096,7 +6129,21 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         partyAliases: await loadPartyAliases(conversationId),
       })
       : null;
-    const genMessages = replyMasker ? maskUncachedBlocks(messages, replyMasker) : messages;
+    const genMessagesBase = replyMasker ? maskUncachedBlocks(writerMessages, replyMasker) : writerMessages;
+    // 2026-10-18 ⑤ 2段に分ける（flash の時だけ・FLASH_WRITER_PARTS に plan）: まず何に・どの形で答えるかを短く決め、その決めた物だけを見て文を書く。
+    //   前置き（system・静的・動的）は1段目と2段目で同じ＝DeepSeek のキャッシュが効く。決めるのに失敗したら今まで通り1回で書く
+    const genMessages = await (async () => {
+      if (!flashParts.has("plan")) return genMessagesBase;
+      try {
+        const planReq = buildFlashPlanRequest(flashItems);
+        const step1 = [...genMessagesBase, new HumanMessage(replyMasker ? replyMasker.maskBlock(planReq) : planReq)];
+        const r = await createGenerationModel({ defaultHeaders: autoSendHeaders, maxTokens: 400 }).invoke(step1);
+        const plan = typeof r.content === "string" ? r.content : Array.isArray(r.content) ? r.content.map((b) => (typeof b === "object" && b && "text" in b ? String((b as { text?: unknown }).text ?? "") : "")).join("") : "";
+        if (!plan.trim()) return genMessagesBase;
+        console.log(JSON.stringify({ tag: "gen:flash-plan", conversationId, chars: plan.length }));
+        return [...step1, new AIMessage(plan.trim()), new HumanMessage(buildFlashWriteRequest())];
+      } catch (e) { console.warn("[flash-writer] 1段目の決めに失敗（1回で書く）:", e instanceof Error ? e.message : String(e)); return genMessagesBase; }
+    })();
     if (replyMasker) console.log(JSON.stringify({ tag: "gen:masked", conversationId, entries: replyMasker.table().length }));
 
     // テンプレート最適化モードは maxTokens 広めの専用モデル（通常生成は createGenerationModel）
@@ -6521,10 +6568,32 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             if (String(gen1.stopReason ?? "") === ALT_STREAM_CUT_STOP && !isTemplateOptimize) {
               console.warn(JSON.stringify({ tag: "gen:alt-stream-cut", conversationId, partialChars: gen1.body.length, head: gen1.body.slice(0, 30) }));
               rawGenerations.length = 0;
-              gen1 = await consumeGeneration(createGenerationModel({ defaultHeaders: { ...autoSendHeaders, [LLM_ACTION_HEADER]: "reply_generate_claude" } }).stream(messages));
+              gen1 = await consumeGeneration(createGenerationModel({ defaultHeaders: { ...autoSendHeaders, [LLM_ACTION_HEADER]: "reply_generate_claude" } }).stream(writerMessages));
             }
             draftBody = gen1.body;
             genStopReason = gen1.stopReason;
+            // 2026-10-18 ③ flash の時だけ: 答える項目の一覧の全部に触れたかを語の重なりで確かめ、抜けていたら1回だけ書き直す（この後は今まで通りの最終チェック）
+            //   前置きは1回目と同じ（genMessages の後ろに下書きと依頼を足すだけ）＝キャッシュが効く
+            if (flashParts.has("recheck") && flashWriterRecheckOn() && (flashItems.length || flashNoInvite) && draftBody.trim()) {
+              const missing = missingFlashItems(flashItems, draftBody);
+              const invite = flashNoInvite ? (draftBody.normalize("NFKC").match(INVITE_RE)?.[0] ?? null) : null;
+              if (missing.length || invite) {
+                try {
+                  const fb = buildFlashRewriteFeedback(missing, { invite });
+                  const genR = await consumeGeneration(createGenerationModel({ defaultHeaders: autoSendHeaders }).stream([
+                    ...genMessages,
+                    new AIMessage(replyMasker ? replyMasker.maskBlock(draftBody) : draftBody),
+                    new HumanMessage(replyMasker ? replyMasker.maskBlock(fb) : fb),
+                  ]));
+                  const still = genR.body.trim() ? missingFlashItems(flashItems, genR.body) : missing;
+                  const inviteAfter = !!invite && INVITE_RE.test(genR.body.normalize("NFKC"));
+                  // 抜けが減った（増えていない）か、誘いが消えた時だけ書き直しを使う
+                  const use = !!genR.body.trim() && still.length <= missing.length && (still.length < missing.length || (!!invite && !inviteAfter));
+                  console.log(JSON.stringify({ tag: "gen:flash-recheck", conversationId, missing: missing.map((m) => m.label.slice(0, 20)), after: still.length, invite, inviteAfter, used: use }));
+                  if (use) { draftBody = genR.body; genStopReason = genR.stopReason ?? genStopReason; }
+                } catch (e) { console.warn("[flash-writer] 書き直しに失敗（1回目のまま）:", e instanceof Error ? e.message : String(e)); }
+              }
+            }
             // 2026-09-09 Fable5 行動台帳: 生成直後の決定論自動修正（Sonnet 不使用）。台帳に実績が無い「再度／改めて／お送りした〇〇／完了形」を
             //   語の削除・未来形置換で正す（final-check 修正ループと同じ applyLedgerAutoFix）。テンプレ最適化・follow-up は対象外
             //   2026-09-11 統合設計: gen1・gen2 共通の applyLedgerFixToDraft（名前不明時に「〇〇さん」を書き込まない）

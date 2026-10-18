@@ -19,6 +19,20 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import { resolveRouteName, testDeepseekModelOverride } from "../../app/lib/llm-alt-provider";
+
+/** 2026-10-18: LLM_TEST_DS_MODEL_BY_ACTION で替えた名札のモデル（無ければ null）。名札の無い返信生成は system の先頭で見分ける（llm-alt と同じ） */
+function actionModelOverride(env: Record<string, string | undefined>, action: string | null, body: string | null): string | null {
+  if (!(env.LLM_TEST_DS_MODEL_BY_ACTION ?? "").trim()) return null;
+  let head = "";
+  if (!action && body) {
+    try {
+      const sys = (JSON.parse(body) as { system?: unknown }).system;
+      head = typeof sys === "string" ? sys : Array.isArray(sys) ? sys.map((b) => (b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" ? (b as { text: string }).text : "")).join("") : "";
+    } catch { head = ""; }
+  }
+  return testDeepseekModelOverride(env, resolveRouteName(action, head.slice(0, 200)));
+}
 
 export type CassetteMode = "off" | "record" | "replay" | "strict";
 export const CASSETTE_HEADER = "x-llm-cassette";
@@ -250,7 +264,10 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
     //   pro の答えを flash の回に返していた（モデルの比べが全部「同じ」に見えた）。既定と違う時だけ鍵にモデルを足す（既定の鍵は今まで通り）
     //   DeepSeek へ直に送る要求（判定など）は本文にモデル名がある＝足さない
     const dsm = String(env.DEEPSEEK_MODEL ?? "").trim();
-    const salt = dsm && dsm !== "deepseek-v4-pro" && !/deepseek/.test(u!.host) ? `\n#model=${dsm}` : "";
+    // 2026-10-18: 名札ごとにモデルを替えた回（LLM_TEST_DS_MODEL_BY_ACTION＝書く役だけ flash）は、その名札の要求だけ鍵にモデルを足す
+    //   （ブレインは既定のモデルの鍵のまま＝pro の答えの再生で判断を固定できる）
+    const effModel = (!/deepseek/.test(u!.host) ? actionModelOverride(env, action, body) : null) ?? dsm;
+    const salt = effModel && effModel !== "deepseek-v4-pro" && !/deepseek/.test(u!.host) ? `\n#model=${effModel}` : "";
     const key = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + salt });
     const nth = seen.get(key) ?? 0; seen.set(key, nth + 1);
     const entry = readEntry(o.dir, key);
