@@ -31,8 +31,9 @@ export const CONTRACT_TERM_LABEL: Record<ContractTermTopic, string> = {
 export function twoPersonMaterialAnswerEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.TWO_PERSON_MATERIAL_ANSWER ?? "").trim().toLowerCase() !== "off";
 }
-/** 資料の「二人入居可」（可・可能・OK だけ。「相談」は言い切れない＝確認） */
-const TWO_PERSON_OK_RE = /(?:二|2)人入居(?:可能?|OK)(?!不)/i;
+/** 資料の「二人入居可」（可・可能・OK だけ。「相談」は言い切れない＝確認）
+ *   2026-10-18 確かめる人: 「二人入居可否：要確認」「二人入居可（要相談）」「二人入居可能か」を可と読んでいた → 可否・か・（要）相談・要確認が続く時は読まない */
+const TWO_PERSON_OK_RE = /(?:二|2)人入居(?:可能|可(?!能)|OK)(?![不否か]|\(?(?:要|応)?相談|\(?要確認)/i;
 /** 資料の「二人入居不可」「単身者限定」等（「ルームシェア不可」は二人入居の不可ではない＝見ない） */
 const TWO_PERSON_NG_RE = /単身(?:者)?(?:限定|専用|のみ)|(?:二|2)人入居(?:不可|NG)|(?:1|一)人(?:入居)?(?:専用|限定)/i;
 /** 資料の文字から二人入居の可否（可と不可が両方ある・どちらも無い時は null＝管理会社に確認） */

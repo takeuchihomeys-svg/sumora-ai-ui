@@ -49,6 +49,13 @@ it("資料の読み: 可・不可・単身限定・相談・両方", () => {
   ok(readTwoPersonMaterial(["条件: 二人入居相談"], null) === null, "相談は言い切れない");
   ok(readTwoPersonMaterial(["ルームシェア不可"], null) === null, "ルームシェア不可は見ない");
   ok(readTwoPersonMaterial(["二人入居可", "単身者限定"], null) === null, "食い違いは確認");
+  // 確かめる人: 可否・要相談・「可能か」は言い切れない（確認）
+  ok(readTwoPersonMaterial(["二人入居可否：要確認"], null) === null, "可否は読まない");
+  ok(readTwoPersonMaterial(["二人入居可（要相談）"], null) === null, "可（要相談）は確認");
+  ok(readTwoPersonMaterial([], "二人入居可能（要相談）") === null, "可能（要相談）は確認");
+  ok(readTwoPersonMaterial(["二人入居可能か要確認"], null) === null, "可能か は確認");
+  ok(readTwoPersonMaterial(["二人入居不可（ペア不可）"], null)?.verdict === "不可", "不可（ペア不可）");
+  ok(readTwoPersonMaterial(["二人入居OK"], null)?.verdict === "可", "OK");
 });
 it("道: 資料に記載→本文で即答／無い→確認", () => {
   const a = routeContractTerm("two_person", { lines: ["条件: 二人入居可"] });
