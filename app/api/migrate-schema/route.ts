@@ -4861,7 +4861,11 @@ async function runMigration(req: Request, force: boolean) {
         .eq("cron_name", "migrate-schema").eq("ok", true)
         .order("started_at", { ascending: false }).limit(1).maybeSingle();
       const rj = (data?.result_json ?? null) as { fingerprint?: unknown; completed?: unknown } | null;
-      if (shouldSkipUnchanged(rj ? { ...rj, started_at: data?.started_at ?? null } : null, fingerprint, Date.now(), fullEveryDays)) {
+      // 毎朝の見張り（schema-objects-check・morning-report）が「要る関数・トリガーが無い」と言った後は、指紋が同じでも流す（直すのを3日待たない）
+      const { data: chk } = await supabase.from("cron_run_logs")
+        .select("ok").eq("cron_name", "schema-objects-check")
+        .order("started_at", { ascending: false }).limit(1).maybeSingle();
+      if (chk?.ok !== false && shouldSkipUnchanged(rj ? { ...rj, started_at: data?.started_at ?? null } : null, fingerprint, Date.now(), fullEveryDays)) {
         return NextResponse.json({ ok: true, skipped: "unchanged", fingerprint, lastFullAt: data?.started_at ?? null });
       }
     } catch { /* 読めなければ流す（安全側） */ }
