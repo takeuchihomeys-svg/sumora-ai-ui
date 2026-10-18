@@ -10,6 +10,7 @@ import { legacyActionWinRatesEnabled, outcomeApplyBasisEnabled, attributionLineO
 import { pickConfirmCandidate, outcomeConfirmEnabled } from "@/app/lib/outcome-confirm";
 import { checkRagProbes, ragProbesWarningLine } from "@/app/lib/rag-probes-check";
 import { checkSchemaObjects, schemaObjectsWarningLine } from "@/app/lib/schema-objects-check";
+import { loadSelfReviewSection } from "@/app/lib/self-review-morning";
 
 export const maxDuration = 60;
 
@@ -660,6 +661,15 @@ export async function GET(req: NextRequest) {
     statsLines.push(`🧠 学習ヘルス\n■ 直近24h学習Cron:\n${healthLines.join("\n")}\n${feedbackLine}${boundaryLine ? `\n${boundaryLine}` : ""}\n${alignLine}${loopWarningBlock}`);
   } catch (e) {
     console.error("[morning-report] learning health section:", e);
+  }
+
+  // 2026-10-18 竹内さん 10/18 OK「毎晩の自己点検を朝の報告に載せる」: 夜中の scripts/brain-self-review.ts --nightly が書いた表を読む
+  //   （表が無い・直近2日に無い時は出さない・読むだけ・self-review-morning.ts）。戻す MORNING_SELF_REVIEW=off
+  try {
+    const sr = await loadSelfReviewSection(supabase);
+    if (sr) statsLines.push(sr);
+  } catch (e) {
+    console.error("[morning-report] self-review section:", e);
   }
 
   const statsBlock = statsLines.length > 0

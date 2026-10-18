@@ -437,8 +437,17 @@ async function runMain() {
 async function runQueue() {
   const now = new Date();
   const due = readQueue().filter((x) => Date.parse(x.at) <= now.getTime());
-  if (!due.length) { log("予約: 流す物が無い"); return; }
   if (!isCheapWindow(now) && !flag("force")) { log(`今は安い時間ではない（JST 1:30〜9:30）→ 流さない（--force で流す）`); return; }
+  if (!due.length) log("予約: 流す物が無い");
+  await runQueueItems(due);
+  // 2026-10-18 竹内さん 10/18 OK「毎晩の自己点検を朝の報告に載せる」: 予約の後にブレインの自己点検を1回（1日の上限 $10 の内・1回 $1 まで・
+  //   今日済んでいれば流さない・結果は表 brain_self_review_runs へ＝朝の報告が読む）。申込以降の会話は対象外のまま。止める BRAIN_SELF_REVIEW_NIGHTLY=off
+  if ((process.env.BRAIN_SELF_REVIEW_NIGHTLY ?? "").trim().toLowerCase() !== "off" && existsSync(join(process.cwd(), "scripts", "brain-self-review.ts"))) {
+    log("毎晩の自己点検を流す（scripts/brain-self-review.ts --nightly）");
+    await new Promise<void>((res) => { const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", ["tsx", "--env-file=.env.local", "scripts/brain-self-review.ts", "--nightly", "--from=both", "--max=10", "--usd-max=1"].map(q), { cwd: process.cwd(), stdio: "inherit", shell: process.platform === "win32" }); ch.on("error", (e) => { log(`  自己点検を流せない: ${String(e).slice(0, 120)}`); res(); }); ch.on("close", () => res()); });
+  }
+}
+async function runQueueItems(due: ReturnType<typeof readQueue>) {
   for (const x of due) {
     log(`予約を流す: ${x.label}（${x.createdAt} に予約・見込み $${x.estUsd.toFixed(2)}）`);
     // 2026-10-17 確かめる人: 予約した作業ツリーが消えていると spawn が error で落ち、後ろの予約も流れない＝飛ばす
