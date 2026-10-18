@@ -106,7 +106,9 @@ export const LIFE_EVENT_NOTE = "ご事情（人生の出来事）を話してく
  */
 export function consideringDirectionFor(o: { afterEstimateOrCheck: boolean; afterPropertyDetails: boolean; familyConsult?: boolean }): string {
   const base = consideringDirectionBase(o);
-  return o.familyConsult && familyConsultSimpleEnabled() ? base + FAMILY_CONSULT_SIMPLE_NOTE : base;
+  // 2026-10-18 竹内さん 10/18: 家族と相談の番は base の申込の一言・内覧の案内（新しい提案）も置かない＝専用の方向（FAMILY_CONSULT_SUPPORT=off で base＋10/16 の注）
+  if (o.familyConsult && familyConsultSupportEnabled()) return FAMILY_CONSULT_SUPPORT_DIRECTION;
+  return o.familyConsult && familyConsultSimpleEnabled() ? base + familyConsultSimpleNote() : base;
 }
 
 /**
@@ -116,7 +118,37 @@ export function consideringDirectionFor(o: { afterEstimateOrCheck: boolean; afte
 export function familyConsultSimpleEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.FAMILY_CONSULT_SIMPLE ?? "").trim().toLowerCase() !== "off";
 }
-export const FAMILY_CONSULT_SIMPLE_NOTE = "【ご家族・ご友人と相談する番（竹内さん 10/16）】入居時期・申込の時期・期限・審査の期間などの目安は足さない。締めはいつもの「〇〇さん気になる点等出てきましたらいつでもお気軽にご連絡ください😌！！」で簡単に（説明・新しい提案を足さない）。";
+const FAMILY_CONSULT_SIMPLE_NOTE_1016 = "【ご家族・ご友人と相談する番（竹内さん 10/16）】入居時期・申込の時期・期限・審査の期間などの目安は足さない。締めはいつもの「〇〇さん気になる点等出てきましたらいつでもお気軽にご連絡ください😌！！」で簡単に（説明・新しい提案を足さない）。";
+/**
+ * 2026-10-18 竹内さん 10/18「家族と相談は簡単に締め＋サポートの姿勢: 『気になる点あれば何時でもお気軽にご連絡ください』を必ず入れる」。
+ *   10/15 の保留の柔らかい1文（内覧のご案内・お申込みで抑える）とは食い違っていた → 家族と相談の番は新しい提案（内覧・申込で抑える）を足さず、サポートの姿勢の1文だけ。
+ *   戻す FAMILY_CONSULT_SUPPORT=off（10/16 の文・10/15 の柔らかい1文も添える）
+ */
+export function familyConsultSupportEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return familyConsultSimpleEnabled(env) && (env.FAMILY_CONSULT_SUPPORT ?? "").trim().toLowerCase() !== "off";
+}
+const FAMILY_CONSULT_SUPPORT_NOTE = "【ご家族・ご友人と相談する番（竹内さん 10/16・10/18）】入居時期・申込の時期・期限・審査の期間などの目安は足さない。内覧のご案内・お申込みで抑える等の**新しい提案も足さない**（10/15 の保留の柔らかい1文はこの番では置かない）。簡単に受けて、締めに**サポートの姿勢の1文を必ず入れる**「〇〇さん気になる点等出てきましたらいつでもお気軽にご連絡ください😌！！」（説明を足さない）。";
+/** 環境で選ぶ（返信の方向・ブレインの材料が同じ文を見る） */
+export function familyConsultSimpleNote(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  return familyConsultSupportEnabled(env) ? FAMILY_CONSULT_SUPPORT_NOTE : FAMILY_CONSULT_SIMPLE_NOTE_1016;
+}
+/** 家族と相談の番の返信の方向（10/18） */
+export const FAMILY_CONSULT_SUPPORT_DIRECTION = "検討中（ご家族・ご友人と相談する）を受ける。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」②締めにサポートの姿勢の1文を必ず「〇〇さん気になる点等出てきましたらいつでもお気軽にご連絡ください😌！！」。入居時期・期限・審査期間などの目安・申込の一言（お部屋抑え）・内覧の案内・催促・物件の追加は書かない（竹内さん 10/16・10/18）。40〜100字";
+/** 互換（旧の名前・10/16 の文）。新しい所は familyConsultSimpleNote() を使う */
+export const FAMILY_CONSULT_SIMPLE_NOTE = FAMILY_CONSULT_SIMPLE_NOTE_1016;
+/** サポートの姿勢の1文（下書きに無い時に締めとして足す） */
+export const FAMILY_CONSULT_SUPPORT_LINE = "気になる点等出てきましたらいつでもお気軽にご連絡ください😌！！";
+const SUPPORT_STANCE_RE = /お気軽に(?:ご連絡|ご相談|お問い合わせ|お申し付け)|(?:いつでも|何時でも)[^。\n！!]{0,10}ご連絡(?:ください|下さい)/;
+/**
+ * 家族と相談の番の下書きにサポートの姿勢の1文が無ければ最後に足す（決定論の出口・竹内さん 10/18「必ず入れる」）。
+ *   名前があれば「〇〇さん」を頭に付ける（いつもの締めの形）。戻す FAMILY_CONSULT_SUPPORT=off
+ */
+export function ensureFamilyConsultSupport(draft: string, o: { familyConsult: boolean; name?: string | null }, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): { text: string; added: boolean } {
+  if (!o.familyConsult || !draft || !familyConsultSupportEnabled(env) || SUPPORT_STANCE_RE.test(draft)) return { text: draft, added: false };
+  const nm = (o.name ?? "").trim();
+  const line = nm && !draft.includes(`${nm}さん気になる`) ? `${nm}さん${FAMILY_CONSULT_SUPPORT_LINE}` : FAMILY_CONSULT_SUPPORT_LINE;
+  return { text: `${draft.replace(/\s+$/, "")}\n${line}`, added: true };
+}
 function consideringDirectionBase(o: { afterEstimateOrCheck: boolean; afterPropertyDetails: boolean }): string {
   if (o.afterEstimateOrCheck) return "検討中を受ける（確認の結果・御見積書を送った後）。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」②申込の一言「お気に召されましたらお申込みしお部屋抑えさせて頂きます！！」③「気になる点出てきましたらいつでもお気軽にご連絡ください😌！！」。催促・日時の打診・希少性の煽り・物件の追加は書かない。60〜130字";
   if (o.afterPropertyDetails) return "検討中を受ける（お部屋の詳細を送った直後）。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」②内覧の案内だけ「お部屋お気に召されましたら、実際にお部屋ご案内させて頂きますのでいつでもお気軽にご連絡ください😌！！」。申込の一言・日時の打診・催促は書かない。60〜120字";

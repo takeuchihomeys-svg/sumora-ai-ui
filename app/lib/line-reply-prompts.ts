@@ -8,7 +8,10 @@ import { paymentLumpTransferOnly } from "./company-facts";
 // ── 2026-10-18 竹内さん 10/16 の答え（静的な規則の食い違いを直す・会社の事実 key_handover／utilities_procedure／credit_card と同じ線）。戻す COMPANY_FACT_1016=off・COMPANY_FACT_PAYMENT_LUMP=off ──
 const ANSWERS_1016 = process.env.COMPANY_FACT_1016 !== "off";
 /** 鍵の受け取り: 旧「管理会社からの案内に従う」→ 入居日に弊社の事務所（実送信 9/19 5752c0d1） */
-const KEY_HANDOVER_RULE = ANSWERS_1016
+// 2026-10-18 竹内さん 10/18「鍵は入居日に渡す（入居日より前は渡さない）」（会社の事実 key_handover と同じ線・戻す KEY_HANDOVER_MOVE_IN_DAY=off）
+const KEY_HANDOVER_RULE = ANSWERS_1016 && process.env.KEY_HANDOVER_MOVE_IN_DAY !== "off"
+  ? "・鍵の受け取り方法 → 鍵はご入居日に弊社の事務所でお渡し（ご入居日より前にはお渡ししない）。前倒しを頼まれた時も「鍵のお渡しはご入居日となりますので、ご入居日に弊社事務所にてお渡しさせて頂きます！！」の形で丁寧に伝える（前倒しできるか確認・交渉するとは書かない）。来社の時間は「ご来社可能なお時間分かりましたらご連絡ください」で伺う"
+  : ANSWERS_1016
   ? "・鍵の受け取り方法 → 基本はご入居日に弊社の事務所でお渡し（「鍵のお渡しは弊社事務所にて行わせていただきます！！」・来社の時間は「ご来社可能なお時間分かりましたらご連絡ください」で伺う）"
   : "・鍵の受け取り方法 → 管理会社からの案内に従う旨を伝え、「詳細が確認でき次第ご連絡させて頂きます！！」";
 /** ライフライン: 旧「電気とガスは事前に連絡が必要です…」→ 管理ツールの方で別途ご案内している＝返信では案内しない */

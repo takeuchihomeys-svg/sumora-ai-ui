@@ -306,7 +306,7 @@ import { stripWaited } from "@/app/lib/greeting";
 /** 2026-10-08 RAG の調査: 手本の「お待たせ致しました」を注入の直前に外す（DB は書き換えない・RAG_REPLY_CLEAN=off） */
 const stripWaitedForExample = (t: string) => (ragReplyCleanEnabled() ? stripWaited(t).text : t);
 import { hesitationKindOf } from "@/app/lib/customer-mindset";
-import { consideringCloseEnabled, CONSIDERING_CLOSE_DIRECTION, CONSIDERING_CLOSE_AVOID, consideringDirectionFor, normalizeItsudemo, fixSanTachi, isAckOnlyAgree, ACK_ONLY_NOTE, nanisotsuNote } from "@/app/lib/takeuchi-reply-form-r13";
+import { consideringCloseEnabled, CONSIDERING_CLOSE_DIRECTION, CONSIDERING_CLOSE_AVOID, consideringDirectionFor, normalizeItsudemo, fixSanTachi, ensureFamilyConsultSupport, isAckOnlyAgree, ACK_ONLY_NOTE, nanisotsuNote } from "@/app/lib/takeuchi-reply-form-r13";
 import { writerFromText } from "@/app/lib/staff-writer";
 import { applyPromptR11, promptR11Enabled } from "@/app/lib/prompt-r11";
 import { fixTakeuchiWording, fixProxyNegotiate } from "@/app/lib/takeuchi-wording-r11";
@@ -7059,6 +7059,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (it.changed) { w.push(`何時でも/いつでも ${it.changed}`); draftBody = it.text; }
                 const st = fixSanTachi(draftBody, [...recentMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? ""), message ?? "", customerConditions ?? ""]);
                 if (st.changed) { w.push(`さん達→さん ${st.changed}`); draftBody = st.text; }
+                // 2026-10-18 竹内さん 10/18: 家族と相談の番はサポートの姿勢の1文を必ず（無ければ締めに足す・FAMILY_CONSULT_SUPPORT=off）
+                const fc = ensureFamilyConsultSupport(draftBody, { familyConsult: isThinkingMsg && hesitationKindOf(intentMessage)?.kind === "家族・同居人に相談", name: addressName?.name || customerName || null });
+                if (fc.added) { w.push("家族と相談: サポートの姿勢の1文を足す"); draftBody = fc.text; }
               }
               if (!noEmoji) {
                 // 2026-10-02 竹内「スタッフのを基に構成する」: 場面ごとのスタッフの割合（2通目＝直前10分以内にこちらが送った後の通も場面に）

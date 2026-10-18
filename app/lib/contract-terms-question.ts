@@ -13,14 +13,38 @@ import { GUARANTOR_TYPE_SHORT, guarantorTypeForText } from "./guarantor-companie
 import type { StaffFreeRentFact } from "./staff-free-rent";
 import { readSheetVacancy, sheetVacancyFieldsEnabled, vacateMonthDay } from "./sheet-vacancy";
 import { moveInEstimateFromVacate, MOVE_IN_ESTIMATE_HOW } from "./vacate-move-in-estimate";
+import { TWO_PERSON_CHECK_REQUEST_RE, TWO_PERSON_SEARCH_RE } from "./scene-patterns";
 
 export type ContractTermTopic =
-  | "key_money" | "deposit" | "free_rent" | "guarantor_company" | "guarantor_person" | "move_in" | "parking" | "management_company";
+  | "key_money" | "deposit" | "free_rent" | "guarantor_company" | "guarantor_person" | "move_in" | "parking" | "management_company" | "two_person";
 
 export const CONTRACT_TERM_LABEL: Record<ContractTermTopic, string> = {
   key_money: "礼金", deposit: "敷金", free_rent: "フリーレント", guarantor_company: "保証会社", guarantor_person: "保証人",
-  move_in: "入居時期・退去予定", parking: "駐車場", management_company: "管理会社",
+  move_in: "入居時期・退去予定", parking: "駐車場", management_company: "管理会社", two_person: "二人入居",
 };
+
+/**
+ * 2026-10-18 竹内さん 10/18「二人入居は資料に記載があり判断できれば即答」（10/16 の確認の約束 proxy_two_person_check は書いていない時だけ）。
+ *   資料（売上サポの行の文字層・送った資料の読み取りの行）に「二人入居可／不可」がある時は本文で答える。代理契約は「交渉」のまま（ここでは扱わない）。
+ *   戻す TWO_PERSON_MATERIAL_ANSWER=off（質問を拾わない＝10/16 の確認の約束だけ）
+ */
+export function twoPersonMaterialAnswerEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_PERSON_MATERIAL_ANSWER ?? "").trim().toLowerCase() !== "off";
+}
+/** 資料の「二人入居可」（可・可能・OK だけ。「相談」は言い切れない＝確認） */
+const TWO_PERSON_OK_RE = /(?:二|2)人入居(?:可能?|OK)(?!不)/i;
+/** 資料の「二人入居不可」「単身者限定」等（「ルームシェア不可」は二人入居の不可ではない＝見ない） */
+const TWO_PERSON_NG_RE = /単身(?:者)?(?:限定|専用|のみ)|(?:二|2)人入居(?:不可|NG)|(?:1|一)人(?:入居)?(?:専用|限定)/i;
+/** 資料の文字から二人入居の可否（可と不可が両方ある・どちらも無い時は null＝管理会社に確認） */
+export function readTwoPersonMaterial(lines: ReadonlyArray<string | null | undefined> | null | undefined, pdfText: string | null | undefined): { verdict: "可" | "不可"; evidence: string } | null {
+  const text = [...(lines ?? []).map((l) => String(l ?? "")), String(pdfText ?? "")].join("\n").normalize("NFKC").replace(/[ \t]+/g, "");
+  const ng = TWO_PERSON_NG_RE.exec(text);
+  const ok = TWO_PERSON_OK_RE.exec(text);
+  if (ng && ok) return null;
+  if (ng) return { verdict: "不可", evidence: ng[0] };
+  if (ok) return { verdict: "可", evidence: ok[0] };
+  return null;
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. 質問の検出（1文ずつ・質問の形がある文だけ）
@@ -39,6 +63,8 @@ const TOPIC_RES: Array<[ContractTermTopic, RegExp]> = [
   ["move_in", /退去予定日?[^。\n]{0,8}(?:いつ|何日|何月)|(?:いつ|何日|何月)[^。\n]{0,8}(?:から)?[^。\n]{0,6}(?:入居|住め|入れ|空く|空き|退去|引っ?越せ)|入居(?:可能)?(?:日|時期)[^。\n]{0,6}(?:いつ|何日|何月|ですか|でしょうか|分かり|わかり|決まって)|内覧(?:可能|でき)[^。\n]{0,4}(?:日|時期)[^。\n]{0,6}(?:いつ|ですか|でしょうか)/],
   ["parking", /(?:駐車場|駐輪場|バイク置き?場)[^。\n]{0,10}(?:あり|有り|ある|付い|つい|空き|空いて|いくら|料金|何台|ござい|でしょうか|ですか)|(?:車|バイク)[^。\n]{0,6}(?:停め|止め|置け)[^。\n]{0,6}(?:ますか|れますか|る\?|ますでしょうか)/],
   ["management_company", /管理会社[^。\n]{0,8}(?:どこ|どちら|何|なに|どの|名前)|(?:どこ|どちら)[^。\n]{0,6}管理会社|元付[^。\n]{0,6}(?:どこ|どちら)/],
+  // 2026-10-18 竹内さん 10/18: 二人入居の可否の問い（探す条件・広さの相談は TWO_PERSON_SEARCH_RE で外す＝detectContractTermTopics）
+  ["two_person", TWO_PERSON_CHECK_REQUEST_RE],
 ];
 /** 交渉（下げる・付けられるか）・探す条件・一般の意味の文は「資料の値の質問」ではない（交渉の結果はスタッフだけが知る＝AIX） */
 const NOT_MATERIAL_RE = /物件(?:で|を|は|が)?(?:何か)?(?:あり|探|ない|無い)|(?:マンション|アパート)(?:は|って|で)?(?:あり|ござい)|お部屋(?:で|を)?(?:あり|探)|希望|条件|であれば|なら|がいい|が良い|下げ|下が|安く|交渉|減額|値引|値下|調整|どうにも|どうにか|つけれ|つけられ|付けれ|付けられ|なくせ|無くせ|免除|物件(?:は|って|が)?(?:少な|多)|件数|探して|探し|お部屋(?:は|って)?少な|というのは|とは\?|って何|ってなん|危な|近く|近隣|周辺|変更|早め|遅ら/;
@@ -55,7 +81,8 @@ export function detectContractTermTopics(text: string | null | undefined): Contr
     .filter((s) => QUESTION_FORM_RE.test(s) && !/https?:\/\//.test(s) && !FORM_OR_OCR_LINE_RE.test(s) && !NOT_MATERIAL_RE.test(s));
   const out: ContractTermTopic[] = [];
   for (const [topic, re] of TOPIC_RES) {
-    if (sentences.some((s) => re.test(s))) out.push(topic);
+    if (topic === "two_person" && !twoPersonMaterialAnswerEnabled()) continue;
+    if (sentences.some((s) => re.test(s) && !(topic === "two_person" && TWO_PERSON_SEARCH_RE.test(s)))) out.push(topic);
   }
   return out;
 }
@@ -256,6 +283,11 @@ export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial,
     if (facts.length) return { topic, route: "material", facts, why: "資料に駐車場の記載" };
     return { topic, route: "confirm", facts: [], why: "資料に駐車場の記載なし" };
   }
+  if (topic === "two_person") {
+    const tp = readTwoPersonMaterial(lines, m.pdfText);
+    if (tp) return { topic, route: "material", facts: [tp.verdict === "可" ? `二人入居可（資料「${tp.evidence}」）` : `二人入居不可（資料「${tp.evidence}」）`], why: tp.verdict === "可" ? "資料に二人入居可の記載" : "資料に二人入居不可・単身限定の記載" };
+    return { topic, route: "confirm", facts: [], why: "資料に二人入居の可否の記載なし（物件ごとに異なる）" };
+  }
   // management_company
   const hit = linesOf(lines, /^(?:管理会社|元付|取扱会社|貸主)\s*[:：]/);
   if (hit.length) return { topic, route: "material", facts: hit, why: "資料に管理会社の記載" };
@@ -310,6 +342,7 @@ const HOW: Record<ContractTermTopic, string> = {
   move_in: "「〇〇は〇月〇日退去予定のお部屋となります！！」「即入居可能なお部屋となります！！」の形（資料の文字のまま。早めない・足さない）",
   parking: "有る時「駐車場、月額〇円で空きございます！！」（資料に空き・料金がある時だけその値）／無い時「こちらの物件は駐車場がございませんので、近隣の月極駐車場をお探し頂く形となります！！」。資料に料金だけで空きの記載が無ければ、空きは確認すると添える",
   management_company: "「お部屋管理会社は〇〇という会社となります！！」の形（資料の会社名のまま）",
+  two_person: "可の時「〇〇は二人入居可能なお部屋となります😊！！」／不可の時「〇〇は1人入居専用のお部屋となり、二人入居が出来ないお部屋となります。」の形（資料に書いてあるとおり即答・確認の約束はしない＝竹内さん 10/18）",
 };
 
 export function buildContractTermsNote(target: ContractTarget | null, routes: readonly ContractRoute[]): string {
