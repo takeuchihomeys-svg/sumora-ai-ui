@@ -117,12 +117,75 @@ export function postAixDirectTemplateOn(actionType: string | null | undefined, v
 export function postAixNextEnabled(v: string | null | undefined): boolean {
   return (v ?? "").trim().toLowerCase() !== "off";
 }
-export type NextAixAfterAix = { action: "property_recommendation" | "condition_hearing" | "property_send"; why: string };
+export type NextAixAfterAix = { action: "property_recommendation" | "condition_hearing" | "property_send" | "estimate_sheet" | "viewing_invite" | "application_push"; why: string };
+
+// ─── 2026-10-18 弱い所B-2: 1つの発言に複数の依頼がある時の AIX の順番（竹内さん 10/15 の決定 a71c2481）───────────────
+//   「内見＋初期費用」→ まず見積書（確認の形）→ 送信完了で AIX【内覧日調整】（次の段階の形）。順番: 確認の形（物件確認・見積書）が先、内覧・申込が次。
+//   本番（aix_usage_logs 120日・読むだけ・scripts で数えた）:
+//     ・内見と費用を両方言った番（85番）の最初の AIX: 物件確認（空き）28・見積書 13・内覧日調整 12・待ち合わせ 9 ＝確認の形が先（41/53）
+//     ・見積書の後にお客様が内見に触れた → 次の AIX は 内覧日調整 18/26（69%）
+//     ・今は同じ番で続けて押す事は少ない（内見＋費用で見積書の後にお客様の発言なしで内覧日調整 1/8）＝竹内さんが 10/15 に「連続して推せるようにする」と決めた所
+//   ブレインの本質（turn_contract の依頼ごとの AIX）があればその AIX を順番に並べ、無ければお客様の今の番の言葉（内見・初期費用）で決める。
+//   戻す NEXT_PUBLIC_POST_AIX_ORDER=off
+export function postAixOrderEnabled(v: string | null | undefined): boolean {
+  return (v ?? "").trim().toLowerCase() !== "off";
+}
+/** 確認の形（こちらが調べて結果を返す）＝先。小さいほど先 */
+const AIX_ORDER_RANK: Record<string, number> = {
+  property_check_result: 0, acknowledge_check: 0, guarantor_info: 0,
+  estimate_sheet: 1, cost_explain: 1, cost_breakdown: 1,
+  viewing_invite: 2, meeting_place: 3, application_push: 4,
+};
+const ORDER_NEXT_OK = new Set(["estimate_sheet", "viewing_invite", "application_push"]);
+const VIEW_WISH_RE = /内見|内覧|見学|見に行|見たい|案内して/;
+const COST_ASK_RE = /初期費用|見積|総額|費用(?:は|が|を|って|も)/;
+/**
+ * 送った AIX の次に、同じ番の依頼で残っている AIX（順番どおり）。無ければ null。
+ *   contractAsks: ブレインの turn_contract.asks（今のお客様の番を見た物だけ渡す）
+ *   customerTurnText: 最後の AIX の前のお客様の連投（ブレインの本質が無い時に使う）
+ */
+export function nextAixInRequestOrder(i: {
+  aixType: string | null | undefined;
+  checkPattern?: string | null;
+  contractAsks?: ReadonlyArray<{ route?: unknown; aix?: unknown }> | null;
+  customerTurnText?: string | null;
+  env?: string | null;
+}): NextAixAfterAix | null {
+  if (!postAixOrderEnabled(i.env)) return null;
+  const sent = String(i.aixType ?? "");
+  const sentRank = AIX_ORDER_RANK[sent];
+  if (sentRank == null) return null;
+  // 物件確認で募集に出ていない・他の確認（管理会社の確認 等）の後は、内覧・見積に進めない（今まで通りの帯・nextAixAfterAix の (b)）
+  if (sent === "property_check_result" && i.checkPattern && i.checkPattern !== "available") return null;
+  // ① ブレインの本質: 依頼ごとの AIX を順番に並べ、送った物より後の段の物
+  const fromContract = (i.contractAsks ?? [])
+    .filter((a) => a?.route === "aix")
+    .map((a) => String(a.aix ?? "").split("/")[0])
+    .filter((k) => k && k !== sent && AIX_ORDER_RANK[k] != null && AIX_ORDER_RANK[k] > sentRank && ORDER_NEXT_OK.has(k))
+    .sort((a, b) => AIX_ORDER_RANK[a] - AIX_ORDER_RANK[b]);
+  if (fromContract.length) {
+    const k = fromContract[0] as NextAixAfterAix["action"];
+    return { action: k, why: `同じ番のもう1つの依頼（ブレイン）＝確認の形が先・${k === "viewing_invite" ? "内覧日の調整" : k === "estimate_sheet" ? "初期費用の見積書" : "申込"}が次` };
+  }
+  // ② お客様の今の番の言葉（内見＋初期費用）
+  const t = (i.customerTurnText ?? "").normalize("NFKC");
+  if (!t.trim()) return null;
+  const wantsView = VIEW_WISH_RE.test(t), wantsCost = COST_ASK_RE.test(t);
+  if (!wantsView || !wantsCost) return null;
+  if (sent === "property_check_result" && /^(?:available)$/.test(String(i.checkPattern ?? ""))) {
+    return { action: "estimate_sheet", why: "内見と初期費用の2つのご依頼＝空きの確認の次は初期費用の見積書（その後に内覧日の調整）" };
+  }
+  if (sent === "estimate_sheet") return { action: "viewing_invite", why: "内見と初期費用の2つのご依頼＝見積書（確認の形）の次は内覧日の調整" };
+  return null;
+}
+
 /**
  * 直前に送った AIX の後の「次の AIX」（同じテンプレの2通目でない時だけ）。無ければ null（今まで通りの帯）。
  * hasConditions: 希望の条件（エリアと家賃）がそろっているか
+ * order: 1つの発言に複数の依頼がある時の順番（nextAixInRequestOrder の入力）。先に見る
  */
-export function nextAixAfterAix(i: { aixType: string | null | undefined; checkPattern?: string | null; hasConditions: boolean }): NextAixAfterAix | null {
+export function nextAixAfterAix(i: { aixType: string | null | undefined; checkPattern?: string | null; hasConditions: boolean; order?: Omit<Parameters<typeof nextAixInRequestOrder>[0], "aixType" | "checkPattern"> | null }): NextAixAfterAix | null {
+  if (i.order) { const o = nextAixInRequestOrder({ ...i.order, aixType: i.aixType, checkPattern: i.checkPattern }); if (o) return o; }
   if (i.aixType === "property_send") return { action: "property_recommendation", why: "物件ピックアップした の続き＝その中から1件オススメ" };
   if (i.aixType === "property_check_result" && /^(?:unavailable|all_unavailable|none_available)$/.test(String(i.checkPattern ?? ""))) {
     return i.hasConditions
@@ -130,6 +193,35 @@ export function nextAixAfterAix(i: { aixType: string | null | undefined; checkPa
       : { action: "condition_hearing", why: "送って頂いた物件が募集に出ていない・ご条件がまだ＝条件を聞く" };
   }
   return null;
+}
+/**
+ * 最後の AIX の前のお客様の連投（最大6通・AIX の24時間前まで）。
+ *   AIX の直前のこちらの通（AIX・「かしこまりました」等の手打ち）は飛ばし、お客様の通を集めた後にこちらの通に当たったら止める
+ */
+export function customerTurnBeforeAix(msgs: ReadonlyArray<PostAixTurnMsg>, aixAtIso: string | null | undefined): string {
+  const at = Date.parse(String(aixAtIso ?? ""));
+  if (!Number.isFinite(at)) return "";
+  const out: string[] = [];
+  for (let k = msgs.length - 1; k >= 0 && out.length < 6; k--) {
+    const m = msgs[k];
+    const t = Date.parse(String(m.rawCreatedAt ?? ""));
+    if (!Number.isFinite(t) || t >= at) continue;
+    if (at - t > 86_400_000) break;
+    if (m.sender === "customer") { out.unshift(String(m.text ?? "")); continue; }
+    if (out.length) break;
+  }
+  return out.join("\n");
+}
+/** ブレインの本質の依頼（今のお客様の番を見た判断だけ・analyzed_msg_ts が最後のお客様の発言より前なら使わない） */
+export function freshContractAsks(meta: unknown, msgs: ReadonlyArray<PostAixTurnMsg>): Array<{ route?: unknown; aix?: unknown }> | null {
+  const m = meta as { turn_contract?: { asks?: unknown }; analyzed_msg_ts?: string | null } | null | undefined;
+  const asks = m?.turn_contract?.asks;
+  if (!Array.isArray(asks)) return null;
+  const analyzed = Date.parse(String(m?.analyzed_msg_ts ?? ""));
+  if (!Number.isFinite(analyzed)) return null;
+  let lastCust = -Infinity;
+  for (const x of msgs) if (x.sender === "customer") { const t = Date.parse(String(x.rawCreatedAt ?? "")); if (Number.isFinite(t) && t > lastCust) lastCust = t; }
+  return analyzed >= lastCust - 5000 ? asks as Array<{ route?: unknown; aix?: unknown }> : null;
 }
 /** 条件の行（property_customers）から「エリアと家賃がそろっている」 */
 export function hasSearchConditions(row: { desired_area?: string | null; rent_max?: number | null } | null | undefined): boolean {

@@ -32,7 +32,7 @@ import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
 import { sentByStaffToday } from "./lib/daily-greeting";
-import { resolvePostAixTurn, postAixTurnFromLogEnabled, postAixTurnState, buildAixTemplateRequestBody, postAixDirectTemplateOn, postAixNextEnabled, nextAixAfterAix, hasSearchConditions } from "./lib/post-aix-turn";
+import { resolvePostAixTurn, postAixTurnFromLogEnabled, postAixTurnState, buildAixTemplateRequestBody, postAixDirectTemplateOn, postAixNextEnabled, nextAixAfterAix, hasSearchConditions, customerTurnBeforeAix, freshContractAsks } from "./lib/post-aix-turn";
 import { resolveTemplateSentMessage } from "./lib/aix-template-source";
 import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
@@ -1106,6 +1106,8 @@ export default function Home() {
   // actionType / sentMessage は「AIおすすめテンプレ」（recommend-templates API）のコンテキストとして使用
   const [postAixTemplateMap, setPostAixTemplateMap] = useState<Record<string, { category: string; color: string; actionType?: string; sentMessage?: string }>>({});
   const [dismissedPostAixTemplateIds, setDismissedPostAixTemplateIds] = useState<Set<string>>(new Set());
+  // 2026-10-18 弱い所B-2: ブレインの本質（turn_contract）の控え。下書きを出すと suggested_aix_meta が消えるので、見えた時の物を会話ごとに覚える（鮮度は freshContractAsks が見る）
+  const brainContractSeenRef = useRef<Record<string, unknown>>({});
   // 2026-09-14 竹内「申込の AIX 押したあとは AIX テンプレートも申込へのところにする」:
   //   会話ごとの最後に送った AIX（DB の aix_usage_logs・72時間以内）。postAixTemplateMap は画面の一時的な状態で、
   //   開き直し・別の端末からの送信では消えるため、テンプレート一覧の初期カテゴリの拠り所をこちらにも持つ
@@ -9952,7 +9954,20 @@ export default function Home() {
               // 2026-10-16 竹内悠馬（10/16 の事例 a・b）: 続きが「同じテンプレの2通目」でない AIX（物件ピックアップした→物件オススメ／募集に出ていない→ヒアリング・新しくピックアップ）は
               //   次の AIX を出して押すと開く（post-aix-turn.nextAixAfterAix・戻す NEXT_PUBLIC_POST_AIX_NEXT=off）
               const postAixNextAix = postAixTmpl && postAixNextEnabled(process.env.NEXT_PUBLIC_POST_AIX_NEXT)
-                ? nextAixAfterAix({ aixType: postAixTmpl.actionType ?? latestAixByConv[id]?.aixType, checkPattern: latestAixByConv[id]?.checkPattern ?? null, hasConditions: hasSearchConditions(linkedCustomerMap[id]?.rawData ?? null) })
+                ? (() => {
+                    // 2026-10-18 弱い所B-2（竹内さん 10/15 a71c2481）: 1つの発言に複数の依頼（内見＋初期費用）→ 確認の形が先・内覧日調整が次を続けて出す（NEXT_PUBLIC_POST_AIX_ORDER=off で旧）
+                    const curMeta = selectedConversation.suggestedAixMeta as { turn_contract?: unknown } | null | undefined;
+                    if (curMeta?.turn_contract) brainContractSeenRef.current[id] = curMeta;
+                    const pmsgs = msgs.map((m: Message) => ({ sender: m.sender, text: m.text, isAix: m.isAix, rawCreatedAt: m.rawCreatedAt ?? null }));
+                    return nextAixAfterAix({
+                      aixType: postAixTmpl.actionType ?? latestAixByConv[id]?.aixType, checkPattern: latestAixByConv[id]?.checkPattern ?? null, hasConditions: hasSearchConditions(linkedCustomerMap[id]?.rawData ?? null),
+                      order: {
+                        contractAsks: freshContractAsks(brainContractSeenRef.current[id], pmsgs),
+                        customerTurnText: customerTurnBeforeAix(pmsgs, latestAixByConv[id]?.at ?? null),
+                        env: process.env.NEXT_PUBLIC_POST_AIX_ORDER ?? null,
+                      },
+                    });
+                  })()
                 : null;
               if (postAixTmpl && postAixNextAix && !postAixClosed && !dismissedPostAixTemplateIds.has(id) && bannerOk(null)) {
                 const nm = AIX_ACTION_META[postAixNextAix.action];
