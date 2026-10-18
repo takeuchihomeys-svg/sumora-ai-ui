@@ -79,6 +79,9 @@ it("2026-10-18 q170: 送付だけの印でブレインが足した条件で探�
   eq(k({ strength: "strong", asks, env: {} }), false, "strong は決定 10/14 のまま");
   eq(k({ strength: "weak", asks: [{ route: "reply", about: "search_condition" }], env: {} }), false, "返信を選んだ");
   eq(k({ strength: "weak", asks, env: { EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE: "off" } }), false, "off");
+  // turn_contract を出さなかった番は方向で（10/18 試験 q170 の1回）
+  eq(k({ strength: "weak", asks: [], brainText: "浴槽の広い物件を条件に加えて再ピックアップする旨を伝える", env: {} }), true, "方向で");
+  eq(k({ strength: "weak", asks: [], brainText: "浴槽広めも含め新着を随時確認し、新着が出次第お送りする", env: {} }), false, "新着待ちの方向");
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

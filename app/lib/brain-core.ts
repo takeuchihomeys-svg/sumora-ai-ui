@@ -4870,6 +4870,7 @@ ${history}`;
       const brainPromiseKept = exhCondTurn && exhaustedConditionBrainEnabled() && exhaustedWeakKeepBrainPromise({
         strength: exh.strength ?? null,
         asks: (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: string | null; about?: string | null; polarity?: string | null }>,
+        brainText: [String((parsed as { reply_direction?: unknown }).reply_direction ?? ""), ...(((parsed as { key_topics?: unknown }).key_topics as unknown[] | undefined) ?? []).map(String)].join(" "),
       });
       if (brainPromiseKept) {
         addDemoted(demotedOverrides, { family: "search_exhausted", src: "rule:exhausted_condition_reply(weak)", would: null, brain: twoStagePickupNow ? "two_stage:pickup" : "promise" });

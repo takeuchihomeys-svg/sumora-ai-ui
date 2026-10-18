@@ -155,8 +155,13 @@ export function ackAfterPromiseRuleApplies(o: { brainMode: boolean; llmAixPresen
  *   約束＝turn_contract の依頼のうち route=promise・about=search_condition（ゆるめた・外したは exhaustedConditionAddTurn で既に外）。
  *   明示の印（strong）は竹内さんの決定 10/14 のまま返信で締める。戻す EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE=off
  */
-export function exhaustedWeakKeepBrainPromise(o: { strength: "strong" | "weak" | null; asks: ReadonlyArray<{ route?: string | null; about?: string | null }>; env?: Env }): boolean {
+export function exhaustedWeakKeepBrainPromise(o: { strength: "strong" | "weak" | null; asks: ReadonlyArray<{ route?: string | null; about?: string | null }>;
+  /** ブレインの方向（reply_direction＋key_topics）。turn_contract を出さなかった番（10/18 試験 q170 で1回）の予備 */
+  brainText?: string | null; env?: Env }): boolean {
   if (((o.env ?? envOf()).EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE ?? "").trim().toLowerCase() === "off") return false;
   if (o.strength !== "weak") return false;
-  return o.asks.some((a) => a?.route === "promise" && a?.about === "search_condition");
+  if (o.asks.some((a) => a?.route === "promise" && a?.about === "search_condition")) return true;
+  if (o.asks.length) return false;
+  const t = String(o.brainText ?? "");
+  return /再?ピックアップ(?:する|し|させ)|お調べ|探(?:し|す|させ)/.test(t) && !/新着[^。]{0,24}(?:出次第|出ましたら|出た際)/.test(t);
 }
