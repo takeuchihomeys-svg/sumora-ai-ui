@@ -3,7 +3,9 @@
 import {
   maskGoldText, receiveKindsOf, partReceive, splitParts, takeuchiReceives, quoteOverlap, deriveGold, goldToContract,
   scoreRow, habitTable, habitTableText, topHabitsByModel, majorityRow, parseRuns, columnOf, buildCoreInput, matchBrainAsk,
-  type ResultRow, type GoldParts,
+  brainFunctionOf, aixKeyOfBrain, pickerVerdict, propertyNamed, referentMiss, pathKind, applyGoldExtra, functionTable, functionTableText,
+  signMatches, principleChoice, principleTable, applyRubric, bestFinalSim,
+  type ResultRow, type GoldParts, type PrincipleConflict,
 } from "../parts-eval";
 
 let fail = 0, pass = 0;
@@ -95,6 +97,57 @@ eq("案の並び", parseRuns("A=mc1018-sonnet,Cmaj=mc1018-flash:maj3,D=mc-d"), [
 eq("列の名前", [columnOf("A", "mc1018-sonnet", 1), columnOf("C", "mc1018-flash", "maj")], ["A:sonnet#1", "C:flash#maj"]);
 const core = buildCoreInput(g.asks.map((a) => ({ id: a.id, quote: a.quote, kind: a.kind, receive: a.receive, properties: a.properties, route: a.route, facts: a.facts, say: a.say })), prob.customer);
 ok("案D の核の材料にお客様の文そのもの", core.includes(prob.customer) && core.includes("受け止め:お礼"));
+
+// ─── 20問で足した物（2026-10-18） ───
+eq("伏せる: 代表の名前", maskGoldText("代表取締役 竹内悠馬\nTEL"), "代表取締役（名前）\nTEL");
+eq("伏せる: 金額の桁区切りは伏せない", maskGoldText("初期費用170,480円には"), "初期費用170,480円には");
+eq("働きの型", [brainFunctionOf("reader", "受け止めの抜け"), brainFunctionOf("link", "ピッカーの選び違い"), brainFunctionOf("link", "主語・指す物の取り違え"), brainFunctionOf("priority", "決まりが本質を上書き"), brainFunctionOf("writer", "質問の答えの抜け"), brainFunctionOf("link", "自信が低いのに言い切った")], ["気持ち", "決める", "注意", "慣れ／じっくり", "体で覚える", "自信の気づき"]);
+eq("AIX の鍵（物件確認した は細目まで）", [aixKeyOfBrain("property_check_result", "mgmt_equipment"), aixKeyOfBrain("cost_breakdown", null), aixKeyOfBrain("property_check_result", null)], ["property_check_result/条件:mgmt_equipment", "cost_breakdown", "property_check_result/募集状況"]);
+eq("ピッカー: 合う／細目違い／ボタン違い／ボタンだけの正解", [pickerVerdict(["property_check_result/条件:mgmt_equipment"], "property_check_result/条件:mgmt_equipment"), pickerVerdict(["property_check_result/条件:mgmt_equipment"], "property_check_result/条件:mgmt_pet"), pickerVerdict(["cost_breakdown"], "viewing_invite"), pickerVerdict(["property_check_result"], "property_check_result/条件:mgmt_pet")], ["ok", "picker", "button", "ok"]);
+ok("物件の名前（号室の揺れは同じ）", propertyNamed("栄美グランドハイツ", "栄美グランドハイツ 413号室・浅香山住宅5号棟 503号室"));
+const ref2 = { mode: "all" as const, targets: ["栄美グランドハイツ", "浅香山住宅5号棟"] };
+eq("指す物: 2件とも名指し＝合う", referentMiss(ref2, "栄美グランドハイツ 413号室・浅香山住宅5号棟 503号室"), null);
+ok("指す物: 1件だけ＝外れ", (referentMiss(ref2, "栄美グランドハイツ 413号室") ?? "").includes("だけ"));
+eq("指す物: 名指しが無い＝分からない", referentMiss(ref2, "お送りしたお2部屋"), null);
+const gp = (accept: string[], sure: "low" | null = null) => ({ accept, asks: [{ ...g.asks[0], sure, route: "promise" as const }] });
+eq("道の種類: 言い切り／AIX の判断（AIX にした・しなかった）／ピッカー／種類", [pathKind(gp(["2段:check"], "low"), "返信"), pathKind(gp(["2段:pickup"]), "AIX:viewing_invite"), pathKind(gp(["AIX:estimate_sheet"]), "返信"), pathKind(gp(["AIX:property_check_result/条件:mgmt_equipment"]), "AIX:property_check_result/条件:mgmt_pet"), pathKind(gp(["AIX:cost_breakdown"]), "AIX:viewing_invite")], ["自信が低いのに言い切った", "AIXの判断の外れ", "AIXの判断の外れ", "ピッカーの選び違い", "AIXの種類の取り違え"]);
+// 採点: ピッカー・指す物・自信
+const g20 = applyGoldExtra(JSON.parse(JSON.stringify(g)) as GoldParts, { asks: { "spec:0": { route: "aix", routes: ["aix", "promise"], pickers: ["property_check_result/条件:mgmt_equipment"], referent: ref2, sure: "low" } } });
+const base20 = { path: { code: "AIX:property_check_result", ok: true }, essence: { code: "AIX:property_check_result", ok: true }, asks: [{ q: "", covered: true, route: true }] };
+eq("ピッカーの選び違い（つなぎの段）", scoreRow(g20, row({ ...base20, brain: { action: "property_check_result", check_pattern: "mgmt_pet", turn_contract: { asks: [{ quote: "場所が少し遠いので他にも候補", route: "aix", aix: "property_check_result", property: "栄美グランドハイツ・浅香山住宅5号棟" }], lead_with: 0 } } })).misses.map((m) => `${m.stage}:${m.kind}`), ["link:ピッカーの選び違い"]);
+eq("主語・指す物の取り違え（1件に決め打ち）", scoreRow(g20, row({ ...base20, brain: { action: "property_check_result", check_pattern: "mgmt_equipment", turn_contract: { asks: [{ quote: "場所が少し遠いので他にも候補", route: "aix", aix: "property_check_result", property: "浅香山住宅5号棟 503号室" }], lead_with: 0 } } })).misses.map((m) => `${m.stage}:${m.kind}`), ["link:主語・指す物の取り違え"]);
+eq("自信が低いのに返信で言い切った", scoreRow(g20, row({ ...base20, asks: [{ q: "", covered: false, route: false }], brain: { turn_contract: { asks: [{ quote: "場所が少し遠いので他にも候補", route: "reply" }], lead_with: 0 } } })).misses.map((m) => `${m.stage}:${m.kind}`)[0], "link:自信が低いのに言い切った");
+eq("言ってはいけない事が「言い切る」なら自信の外れ", scoreRow(g20, row({ ...base20, brain: { action: "property_check_result", check_pattern: "mgmt_equipment", turn_contract: { asks: [{ quote: "場所が少し遠いので他にも候補", route: "aix", aix: "property_check_result" }], lead_with: 0 } }, ng: [{ text: "ペット可と言い切る", violated: true }] })).misses.map((m) => m.kind), ["自信が低いのに言い切った"]);
+const wd = scoreRow(g20, row({ ...base20, brain: { action: "property_check_result", check_pattern: "mgmt_equipment", turn_contract: { asks: [{ quote: "場所が少し遠いので他にも候補", route: "aix", aix: "property_check_result" }], lead_with: 0 } }, draft: { text: "栄美グランドハイツの御見積書です", code: "AIX:property_check_result", ok: true, asks: [true], ng: [] } }));
+eq("下書きが1件だけ名指し＝書く役の指す物の外れ", wd.misses.map((m) => `${m.stage}:${m.kind}`), ["writer:主語・指す物の取り違え"]);
+const ft = functionTable([{ ...wd, column: "A#1" }]);
+ok("働きの型の表", functionTableText(ft).includes("| 注意 | 1 | 1 |"));
+// 正解に足す
+const gx = applyGoldExtra(JSON.parse(JSON.stringify(g)) as GoldParts, { addAsks: [{ quote: "内見を前向きに検討しています", route: "reply", say: "最後に内覧に誘う" }], asks: { "q:内見を前向き": { priority: 9 } }, leadWith: "a1", confirm: [{ id: "c1", q: "よいか", yes: "はい", no: "いいえ" }] });
+ok("無い行を足す", gx.asks.some((a) => a.quote === "内見を前向きに検討しています" && a.status === "machine"));
+eq("言葉で当てて順を決める", gx.asks.find((a) => a.quote.startsWith("内見"))!.priority, 9);
+ok("確認の問いが確認待ちに入る", gx.pending.some((p) => p.startsWith("c1:")) && !gx.pending.some((p) => p.startsWith("先に答える項目")));
+const gx2 = applyGoldExtra(JSON.parse(JSON.stringify(g)) as GoldParts, { addAsks: [{ quote: "場所が少し遠いので他にも候補ありましたらお願いしたいです", route: "reply" }] });
+eq("似た行があれば足さない", gx2.asks.length, g.asks.length);
+// 原則のぶつかり
+const pc: PrincipleConflict = { id: "p1", pair: [5, 9], winner: 5, why: "物件ごと", signs: { "5": ["2段", "AIX:property_check_result"], "9": ["返信"] } };
+eq("原則の印", [signMatches("2段", "2段:check"), signMatches("AIX:物件", "AIX:property_send（左だけ）"), signMatches("AIX:property_check_result", "AIX:property_check_result/availability"), signMatches("2段", "返信")], [true, true, true, false]);
+eq("どちらの原則を優先したか", [principleChoice(pc, "2段:check"), principleChoice(pc, "返信"), principleChoice(pc, "AIX:viewing_invite")], [5, 9, null]);
+const gpc = applyGoldExtra(JSON.parse(JSON.stringify(g)) as GoldParts, { principles: [pc] });
+ok("原則の確認待ち", gpc.pending.some((p) => p.startsWith("p1: 原則 5.")));
+const sp = scoreRow(gpc, row({ path: { code: "返信", ok: false }, essence: { code: "2段:check", ok: true } }), { includeMachine: true });
+eq("原則: 本質と最終を分けて読む", sp.principles, [{ id: "p1", pair: [5, 9], gold: 5, brain: 5, final: 9 }]);
+eq("原則: spec だけの時は機械の下書きの原則を数えない", scoreRow(gpc, row({ path: { code: "返信", ok: false } })).principles, []);
+const ptab = principleTable([{ ...sp, column: "A#1" }]);
+ok("原則の組×勝ちの表", ptab.includes("5.物件ごとに違う事は確認の約束 × 9.資料・会社の事実は即答") && ptab.includes("1/1") && ptab.includes("正解（竹内さん）"));
+// 物差し（旧／幅あり）
+const gw = { ...g, goodAnswers: [{ id: "w1", code: "返信", text: "かしこまりました！！他の候補も探します", by: "竹内さん" as const }], judgeReviews: [{ item: "ask:0", verdict: true, by: "竹内さん" as const }] };
+const rw = row({ path: { code: "返信", ok: false }, asks: [{ q: "", covered: false, route: false }] });
+eq("旧の物差しは何も変えない", applyRubric(gw, rw, "old").r.path!.ok, false);
+const aw = applyRubric(gw, rw, "wide");
+eq("幅あり: 良い答えの道で合格・判定の見直しで依頼が合格", [aw.r.path!.ok, aw.r.asks![0].covered, aw.g.accept.includes("返信")], [true, true, true]);
+eq("元の行は変えない", rw.path!.ok, false);
+ok("幅あり: ④は良い答えの文とも比べる", bestFinalSim(gw, "かしこまりました！！他の候補も探します") > 0.9);
 
 const _g: GoldParts = g; void _g;
 console.log(`parts-eval: ${pass} PASS / ${fail} FAIL`);
