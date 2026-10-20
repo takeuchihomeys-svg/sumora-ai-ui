@@ -35,6 +35,8 @@ it("✕ もう見た＋別の予定語（明日申込・来週契約予定・予
   for (const t of ["他社で内覧しました。明日申込したいです", "他社で内見してきました。こちらで予約できますか？", "他社で内覧済みです、来週契約予定です", "他社の内見予定がなくなりました"]) eq(isOtherAgentViewingPlan(t), false, t);
 });
 it("他社で明日内見してきます（これから）→ 予定", () => eq(isOtherAgentViewingPlan("他社で明日内見してきます"), true));
+it("10/20 別の不動産屋でオンライン内見してここにきめようかな → 予定", () => eq(isOtherAgentViewingPlan("もし空いてたら別の不動産屋でオンライン内見してここにきめようかなと"), true));
+it("✕ 別の不動産屋で内見してここに決めました（過去）", () => eq(isOtherAgentViewingPlan("別の不動産屋で内見してここに決めました"), false));
 it("✕ 他社の話が無い「明日内覧予定です」", () => eq(isOtherAgentViewingPlan("明日内覧予定です"), false));
 it("戻す OTHER_VIEWING_INVITE=off で当たらない", () => eq(isOtherAgentViewingPlan(AIMI, { OTHER_VIEWING_INVITE: "off" }), false));
 
