@@ -382,9 +382,16 @@ async function afterDecision(c: AfterCtx): Promise<void> {
       if (nm) names.push(nm);
     } catch { /* 引けなくても下の「〇〇さん」の伏せで落とす */ }
   }
+  // 2026-10-20 決定 209b9a92: 登録名だけでなく、結んだ会話の表示名・呼び名（当事者）と他のお客様の呼び名も伏せる（DeepSeek・Jev に出す材料）。
+  //   短い名前は敬称つきの時だけ（検索サイトの画面の駅名・物件名を壊さない＝maskWatchText の aliases・otherNames）
+  const { loadPartyAliasesByCustomer, loadKnownCallNames } = await import("@/app/lib/pii-known-names");
+  const [aliases, otherNames] = await Promise.all([
+    pcid ? loadPartyAliasesByCustomer(pcid).catch(() => [] as string[]) : Promise.resolve([] as string[]),
+    loadKnownCallNames().catch(() => [] as string[]),
+  ]);
   const dom = material.dom ?? {};
   const band = dom.band_text ?? c.snapBand ?? null;
-  const mk = (s: unknown) => maskWatchText(String(s ?? ""), { bandText: band, names, seed: pcid ?? "screen-watch" });
+  const mk = (s: unknown) => maskWatchText(String(s ?? ""), { bandText: band, names, seed: pcid ?? "screen-watch", aliases, otherNames });
   const masked = { count: mk(dom.count_text), page: mk(dom.page_text), alert: mk(dom.alert_text), modal: mk(dom.modal_text), title: mk(dom.title), head: mk(dom.text_head) };
   // 拡張の失敗の文・待っていた物は「〇〇さん・リアプロ」の形で名前を持つ（名前が引けない時も「…さん」の前を伏せる）
   const mkWho = (s: string | null | undefined) => (s ? mk(s).replace(/[^\s:：・、,，（(「]{1,16}さん(?=[・、,，\s)）」]|$)/g, "〇〇さん") : s ?? null);
@@ -480,7 +487,7 @@ async function afterDecision(c: AfterCtx): Promise<void> {
   if (c.decision && c.decision.severity !== "ok" && gate.allow.arbiter && sb && pcid) {
     bumpInflight("arbiter", 1);
     try {
-      const words = await customerWords(sb, pcid, names);
+      const words = await customerWords(sb, pcid, names, { aliases, otherNames });
       const user = [
         `サイト: ${site}・${c.intent?.is_wide ? "広げて" : "ピンポイント"}・${c.intent?.source ?? "-"}`,
         `お客様の元の言葉（申込前・直近3件）: ${words.length ? words.map((w) => `「${w}」`).join(" ") : "無し"}`,
@@ -558,7 +565,7 @@ async function afterDecision(c: AfterCtx): Promise<void> {
 }
 
 /** お客様の元の言葉（条件の履歴の source_message_id から直近3件・申込前だけ・仮名化） */
-async function customerWords(sb: SupabaseClient, pcid: string, names: string[]): Promise<string[]> {
+async function customerWords(sb: SupabaseClient, pcid: string, names: string[], alt: { aliases?: string[]; otherNames?: string[] } = {}): Promise<string[]> {
   const h = await sb.from("property_condition_history").select("source_message_id, created_at").eq("property_customer_id", pcid).not("source_message_id", "is", null).order("created_at", { ascending: false }).limit(3);
   const ids = ((h.data ?? []) as Array<{ source_message_id: string }>).map((x) => x.source_message_id).filter(Boolean);
   if (!ids.length) return [];
@@ -569,7 +576,7 @@ async function customerWords(sb: SupabaseClient, pcid: string, names: string[]):
   for (const r of (m.data ?? []) as Array<{ text: string | null; conversation_id: string | null; created_at: string }>) {
     const cut = await loadDeepseekCutoff(sb as never, r.conversation_id);
     if (!isAfterCutoff(r.created_at, cut)) continue; // 申込以降・線が引けない会話は渡さない
-    out.push(maskWatchText(String(r.text ?? "").slice(0, 200), { names, seed: r.conversation_id ?? pcid }));
+    out.push(maskWatchText(String(r.text ?? "").slice(0, 200), { names, seed: r.conversation_id ?? pcid, ...alt }));
   }
   return out;
 }

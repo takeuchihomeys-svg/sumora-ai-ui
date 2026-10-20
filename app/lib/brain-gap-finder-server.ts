@@ -13,7 +13,8 @@ import {
 import { buildRequestLedger, splitRequests, TOPIC_JA, type LedgerMsg } from "@/app/lib/request-ledger";
 import { matchCompanyFacts } from "@/app/lib/company-facts";
 import { isTestConversation } from "@/app/lib/test-conversations";
-import { maskPII } from "@/app/lib/pii-mask";
+import { buildAltNameMask, maskPIIForAlt } from "@/app/lib/pii-mask";
+import { loadPartyAliasesMany, loadKnownCallNames } from "@/app/lib/pii-known-names";
 import { isConditionFormMessage } from "@/app/lib/reply-context";
 import { isPostApplyStatus } from "@/app/lib/llm-alt-provider";
 
@@ -105,6 +106,11 @@ async function collect(sb: SupabaseClient, sinceMs: number, untilMs: number, err
     for (const x of (c.data ?? []) as Conv[]) convs.set(x.id, x);
   }
 
+  // 2026-10-20 決定 209b9a92: 代表の番の文（cron_run_logs に残る・見張りの報告）も、表示名だけでなく当事者の呼び名・登録名と他のお客様の呼び名を伏せる
+  const altParty = await loadPartyAliasesMany(convIds).catch(() => new Map<string, string[]>());
+  const altOthers = await loadKnownCallNames().catch(() => [] as string[]);
+  const maskOf = (cid: string, name: string | null | undefined) => { const m = buildAltNameMask([name], altParty.get(cid) ?? [], altOthers); return (s: string) => maskPIIForAlt(s, m); };
+
   const findings: GapFinding[] = [];
   let axisTurns = 0, skippedPostApply = 0;
   const brought = { turns: 0, withDraft: 0, missing: 0, staffHad: 0 };
@@ -159,7 +165,7 @@ async function collect(sb: SupabaseClient, sinceMs: number, untilMs: number, err
       demotedOverrides: latest && Array.isArray(conv?.demoted) ? conv!.demoted!.length : 0,
       exitEdits: latest && Array.isArray(conv?.exit_edits) ? conv!.exit_edits!.length : 0,
     };
-    const mask = (s: string) => maskPII(s, [conv?.customer_name]);
+    const mask = maskOf(r.conversation_id, conv?.customer_name);
     if (firstBrought) {
       brought.turns++;
       if (r.draft_last) { brought.withDraft++; if (!/最大限[^\n。]{0,24}割引[^\n。]{0,40}見積|見積[^\n。]{0,16}最大限/.test(r.draft_last)) { brought.missing++; if (/最大限[^\n。]{0,24}割引/.test(staffTexts.join("\n"))) brought.staffHad++; } }
@@ -172,7 +178,7 @@ async function collect(sb: SupabaseClient, sinceMs: number, untilMs: number, err
   const topicOf = (text: string) => splitRequests([text], new Date(0).toISOString()).map((x) => x.topic);
   for (const [cid, list] of msgs) {
     const conv = convs.get(cid);
-    const mask = (s: string) => maskPII(s, [conv?.customer_name]);
+    const mask = maskOf(cid, conv?.customer_name);
     const lm: LedgerMsg[] = list.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at, isAix: m.is_aix_generated }));
     const items = buildRequestLedger(lm, untilMs, { windowDays: 14 }).filter((x) => Date.parse(x.saidAt) >= sinceMs && Date.parse(x.saidAt) < untilMs);
     const staffAfter = (at: string) => list.some((m) => m.sender !== "customer" && Date.parse(m.created_at) > Date.parse(at));

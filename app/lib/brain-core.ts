@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
-import { maskPII, maskHonorificNames } from "@/app/lib/pii-mask";
+import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { buildSentProps, buildSentPropsText } from "@/app/lib/sent-props-text";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
@@ -45,7 +45,7 @@ import { buildSendReplyTimingNote } from "@/app/lib/send-reply-timing";
 import { buildAixSceneNote } from "@/app/lib/aix-scene-stats";
 import { buildCompanyFactsNote, brandCostOverrideNote, matchCompanyFacts } from "@/app/lib/company-facts";
 import { isApplicationPayload, APPLICATION_FORM_PLACEHOLDER, APPLICATION_FORMAT_SENT_PLACEHOLDER } from "@/app/lib/pii-pseudonym";
-import { loadKnownCustomerNames, loadKnownCallNames, loadPartyAliases } from "@/app/lib/pii-known-names";
+import { loadKnownCustomerNames, loadKnownCallNames, loadPartyAliases, loadAltNameMask } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
@@ -5258,6 +5258,13 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
 
     // 3) Haiku（モジュール共有 client: timeout 60s（共有client） / maxRetries 0 — fire-and-forget なので失敗放置でOK）
     const userContent = buildCheckpointUserContent(last?.summary ?? null, historyText, total, msgs.length, startOffset);
+    // 2026-10-20 決定 209b9a92: DeepSeek に回る時だけ（スイッチ BRAIN_DS_CHECKPOINT が on・線の印が blocked でない）、
+    //   当事者の別名（呼び名・登録名）と他のお客様の呼び名も伏せる。Claude に回る時は今までと1文字も変わらない
+    const cpCutoffHeader = await checkpointCutoffHeader(conversationId);
+    const cpRoutesAlt = willRouteAlt("brain_checkpoint") && cpCutoffHeader[LLM_CUTOFF_HEADER] !== "blocked";
+    const cpUserText = cpRoutesAlt
+      ? maskPIIForAlt(userContent, await loadAltNameMask(conversationId, [customerName]))
+      : maskPII(userContent, [customerName]);
     // 2026-09-13: max_tokens 1500 では長い会話の出力が途中で切れ、JSON.parse 失敗で保存されずセーブデータが止まっていた
     //   （エラー位置は毎回 1,500〜1,800 字目）。上限を広げ、長さはプロンプトの上限（summary 1,200字・key_facts 10件）で抑える。
     //   途中で切れた出力（stop_reason=max_tokens）は保存しない（半端な事実を正解データにしない）
@@ -5266,12 +5273,12 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
       max_tokens: 4000,
       thinking: { type: "disabled" },
       system: [{ type: "text", text: CHECKPOINT_STATIC_SYSTEM, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }],
-      messages: [{ role: "user", content: maskPII(userContent, [customerName]) }],
+      messages: [{ role: "user", content: cpUserText }],
     }, {
       // 2026-09-27: 戦略の層と同じく名札と会話 ID を付ける（llm_usage_logs の action・conversation_id が空だった）。
       //   名札なしの時は system の先頭で "classify" 扱いだった（本番は Claude のまま＝LLM_ALT_ACTIONS に classify も brain も無い）。
       //   brain_ で始めるのでテスト用の切り替えでもブレインとして外れる（今までは system の先頭の語で外していた）
-      headers: { [LLM_ACTION_HEADER]: "brain_checkpoint", [LLM_CONVERSATION_HEADER]: conversationId, ...(await checkpointCutoffHeader(conversationId)) },
+      headers: { [LLM_ACTION_HEADER]: "brain_checkpoint", [LLM_CONVERSATION_HEADER]: conversationId, ...cpCutoffHeader },
     });
     logLlmUsage("checkpoint", response.usage, { conversationId, stop: response.stop_reason });
     // analyzeConversation と同じ content.find() で thinking ブロック対策
@@ -5552,10 +5559,15 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
     `\n【${newMsgs.length >= 6 ? "前回の戦略以降のメッセージ" : "直近のメッセージ"}】\n${msgText}`,
   ].filter(Boolean).join("\n");
 
+  // 2026-10-20 決定 209b9a92: DeepSeek に回る時だけ当事者の別名（呼び名・登録名）と他のお客様の呼び名も伏せる（Claude は今のまま）
+  const strategyRoutesAlt = willRouteAlt("brain_strategy", { postApply: isPostApplyStatus(conv.status as string | null) });
+  const strategyUserText = strategyRoutesAlt
+    ? maskPIIForAlt(userText, await loadAltNameMask(conversationId, [customerName]))
+    : maskPII(userText, [customerName]);
   const res = await client.messages.create({
     model: BRAIN_MODEL, max_tokens: 2500, thinking: { type: "disabled" },
     system: [{ type: "text" as const, text: STRATEGY_SYSTEM, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }],
-    messages: [{ role: "user", content: maskPII(userText, [customerName]) }],
+    messages: [{ role: "user", content: strategyUserText }],
   }, {
     // 2026-09-27: 名札と会話 ID を付ける（llm_usage_logs の action・conversation_id が空で、会話ごとの費用＝お客様役の費用表示から漏れていた・1回 約$0.03）。
     //   名札は brain_ で始める＝振り分け（LLM_ALT_ACTIONS の "brain"・テスト用の切り替えのブレイン外し）は名札なしの時（system の先頭で "brain"）と同じ扱い

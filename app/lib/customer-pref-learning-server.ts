@@ -17,7 +17,8 @@ import { buildContext, customerAt, isCustomerSend, type ConditionHistoryRow, typ
 import { isTestConversation, YUMA_CONVERSATION_ID } from "./test-conversations";
 import { customerStrength, type CustomerStrength, type StrengthLevel } from "./recommend-score-drift";
 import { isApplicationPayload } from "./pii-pseudonym";
-import { maskPII } from "./pii-mask";
+import { buildAltNameMask, maskPIIForAlt } from "./pii-mask";
+import { loadPartyAliasesMany, loadKnownCallNames } from "./pii-known-names";
 import { imageTextForDeepSeekRead } from "./customer-sent-property";
 import { loadDeepseekCutoff, isAfterCutoff } from "./post-apply";
 import {
@@ -526,13 +527,22 @@ export async function runPrefLearning(sb: SupabaseClient, opts: {
   const canRead = () => { if (!llmEnabled) return false; if (!budgetAllows(llm.usd, budgetUsd)) { llm.stoppedBy ??= `費用の上限 $${budgetUsd}`; return false; } if (Date.now() - llmStart > timeBudgetMs) { llm.stoppedBy ??= `時間の上限 ${Math.round(timeBudgetMs / 1000)}秒`; return false; } return true; };
   const conc = PREF_LEARNING_CONFIG.concurrency, tmo = PREF_LEARNING_CONFIG.readTimeoutMs;
 
+  // 2026-10-20 決定 209b9a92: ここは必ず DeepSeek（deepseekRead）。表示名（登録名）だけでなく、当事者の呼び名・会話の表示名・他のお客様の呼び名も伏せる。
+  //   会話ごとに読むと数が多いので、まとめて1回（loadPartyAliasesMany）。伏せが増えた材料は鍵（input_hash）が変わるので1回だけ読み直しになる
+  const altParty = await loadPartyAliasesMany([...[...load.customers.values()].map((c) => c.cv), ...eps.map((e) => e.conversationId)]);
+  const altOthers = await loadKnownCallNames().catch(() => [] as string[]);
+  const altMaskFor = (name: string | null | undefined, ...cvs: Array<string | null | undefined>) => {
+    const m = buildAltNameMask([name], [...new Set(cvs.flatMap((cv) => (cv ? altParty.get(cv) ?? [] : [])))], altOthers);
+    return (s: string) => maskPIIForAlt(s, m);
+  };
+
   // 3-1 お客様のこだわりの強さ
   const llmStrength = new Map<string, Record<string, LlmStrengthLevel>>();
   const custList = [...load.customers.values()].sort((a, b) => (a.latestAt < b.latestAt ? 1 : -1));
   const custTodo: Array<{ c: PrefCustomerInfo; user: string; hash: string }> = [];
   for (const c of custList) {
     if (!c.conditions && !c.messages.length) { skip("材料なし"); continue; }
-    const mask = (s: string) => maskPII(s, [c.customerName]);
+    const mask = altMaskFor(c.customerName, c.cv);
     // 申込以降は渡さない: 線（deepseekSafeCutoff）より後の発言だけ。線が引けない（null）会話は読まない
     let msgs = c.messages;
     if (c.cv) {
@@ -560,7 +570,7 @@ export async function runPrefLearning(sb: SupabaseClient, opts: {
   for (const e of [...eps].sort((a, b) => (a.at < b.at ? 1 : -1))) {
     if (!e.appealTexts.length) continue;
     const c = load.customers.get(e.customerKey);
-    const user = buildAppealUser(e.appealTexts, (s) => maskPII(s, [c?.customerName]));
+    const user = buildAppealUser(e.appealTexts, altMaskFor(c?.customerName, c?.cv, e.conversationId));
     const hash = inputHash(user);
     const hit = existing.get(`appeal|ep:${e.id}`);
     if (hit && hit.input_hash === hash && hit.ok) { llm.reused.appeal++; const v = parseAppealReply(JSON.stringify(hit.result)); if (v) appealOf.set(e.id, v); continue; }
@@ -580,7 +590,7 @@ export async function runPrefLearning(sb: SupabaseClient, opts: {
   for (const e of [...eps].sort((a, b) => (a.at < b.at ? 1 : -1))) {
     if (!e.hyp || (!e.hyp.crownText && !e.hyp.chosenText)) continue;
     const c = load.customers.get(e.customerKey);
-    const mask = (s: string) => maskPII(s, [c?.customerName]);
+    const mask = altMaskFor(c?.customerName, c?.cv, e.conversationId);
     const codesOf = (key: string) => (e.cands.find((x) => x.key === key)?.codes ?? []).filter((k) => !/_UNKNOWN$|_UNLISTED$|^FIT_|^SEARCH_/.test(k)).map(reasonJa);
     const strength: Record<string, StrengthLevel> = {};
     for (const [f, v] of Object.entries(e.strength ?? {})) strength[f] = v.level;
