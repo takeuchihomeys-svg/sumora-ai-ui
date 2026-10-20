@@ -116,9 +116,9 @@ export function concernRepickupAnswer(object: unknown): string {
 }
 
 // ⑤b 確認の結果を返した直後の追いの質問（q177・P0「AIX と返信の分け方」）: 管理会社に確かめる事の答えはスタッフにしか分からない＝約束の返信でなく AIX【物件確認した】。
-//   こちらの最後の文が確認の結果（「確認させて頂きました」「確認しましたところ」「〜とのことです」）で、その後 RESULT_FOLLOWUP_HOURS 時間以内の番だけ（スタッフが確認の窓口を開いている）
+//   こちらの最後の文が確認の結果（「確認させて頂きました」「確認しましたところ」・「〜とのことでした」だけはお客様の話の引用もあるので数えない）で、その後 RESULT_FOLLOWUP_HOURS 時間以内の番だけ（スタッフが確認の窓口を開いている）
 export const RESULT_FOLLOWUP_HOURS = 6;
-const RESULT_REPORTED_RE = /確認(?:致し|いたし|させて(?:頂|いただ)き)?ましたところ|確認(?:が)?取れました|(?:確認|交渉|確認・交渉)させて(?:頂|いただ)きました|とのこと(?:です|でした)|(?:募集中|空室|募集終了|募集が終了)(?:です|でした|となって)/;
+const RESULT_REPORTED_RE = /確認(?:致し|いたし|させて(?:頂|いただ)き)?ましたところ|確認(?:が)?取れました|(?:確認|交渉|確認・交渉)させて(?:頂|いただ)きました|(?:募集中|空室|募集終了|募集が終了)(?:です|でした|となって)/;
 export function lastStaffReportedResult(lastStaff: { text: string | null; at: string | null } | null, turnAt: string | null): boolean {
   if (!lastStaff?.text || !lastStaff.at || !turnAt) return false;
   const gap = Date.parse(turnAt) - Date.parse(lastStaff.at);
