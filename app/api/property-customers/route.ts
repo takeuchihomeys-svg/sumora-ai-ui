@@ -110,13 +110,30 @@ async function loadFocusRows(ids: string[] | null): Promise<FocusRow[]> {
 function toFocusMap(rows: FocusRow[]) {
   return new Map(rows.map((f) => [f.property_customer_id, { at: f.requested_at, by: f.requested_by ?? null, device: f.device ?? null }]));
 }
-function toListRow(c: PcRow, convMap: Map<string, ConvRow>, focusMap: ReturnType<typeof toFocusMap>): Record<string, unknown> {
+// 2026-10-20 竹内さんの決定 B（209b9a92）: 拡張でお客様カードを選ぶ所にアカウント（スモラ・イエヤス・ギガ賃貸）を出す。
+//   カードの account 列は空や会話と違う物が多い（実測 2026-10-20: 結んだ 257枚のうち 221枚が会話のアカウントと違う）ので、結んだ会話のアカウントを全部返す。
+//   1枚のカードに別のアカウントの会話が2つ以上結ばれている事がある（14枚）＝ convMap（1会話だけ）では片方が消えるので、全部を並べる
+function toAccountsMap(rows: ReadonlyArray<ConvRow>): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const r of rows) {
+    if (!r.property_customer_id || !r.account) continue;
+    const a = m.get(r.property_customer_id) ?? [];
+    if (!a.includes(r.account)) a.push(r.account);
+    m.set(r.property_customer_id, a);
+  }
+  return m;
+}
+function linkedAccountsOf(c: PcRow, acctMap: Map<string, string[]>): string[] {
+  return acctMap.get(c.id) ?? (c.parent_customer_id ? acctMap.get(c.parent_customer_id) ?? [] : []);
+}
+function toListRow(c: PcRow, convMap: Map<string, ConvRow>, focusMap: ReturnType<typeof toFocusMap>, acctMap: Map<string, string[]> = new Map()): Record<string, unknown> {
   const o: Record<string, unknown> = { ...c };
   for (const k of LIST_DROP) delete o[k];
   const conv = convMap.get(c.id) ?? (c.parent_customer_id ? convMap.get(c.parent_customer_id) ?? null : null);
   o.rent_min_search = searchRentMinOf(c as unknown as CustomerLike)?.yen ?? null;
   o.is_linked = convMap.has(c.id) || (!!c.parent_customer_id && convMap.has(c.parent_customer_id));
   o.linked_conversation = conv ? { id: conv.id, property_customer_id: conv.property_customer_id, last_sender: conv.last_sender, updated_at: conv.updated_at, account: conv.account, status: conv.status, is_hot: conv.is_hot, is_flagged: conv.is_flagged } : null;
+  o.linked_accounts = linkedAccountsOf(c, acctMap);
   o.search_focus = focusMap.get(c.id) ?? null;
   o.list_view = true; // 一覧の軽い形の印（拡張はお客様を開く時に ?id= で全部を取り直す）
   return o;
@@ -144,8 +161,9 @@ async function listHead(n: number) {
     ? await supabase.from("conversations").select(LIST_CONV_COLS).in("property_customer_id", convIds)
     : { data: [] as unknown[] };
   const convMap = new Map(((convData ?? []) as unknown as ConvRow[]).map((c) => [c.property_customer_id, c]));
+  const acctMap = toAccountsMap((convData ?? []) as unknown as ConvRow[]);
   const focusMap = toFocusMap(focusRows);
-  const out = rows.map((c) => ({ ...toListRow(c, convMap, focusMap), list_head: true }));
+  const out = rows.map((c) => ({ ...toListRow(c, convMap, focusMap, acctMap), list_head: true }));
   return NextResponse.json(out, { headers: { "Cache-Control": "no-store, must-revalidate" } });
 }
 
@@ -172,8 +190,9 @@ export async function GET(req: NextRequest) {
 
   const data = (rawData ?? []) as unknown as PcRow[];
   const convMap = new Map(((convData ?? []) as unknown as ConvRow[]).map((c) => [c.property_customer_id, c]));
+  const acctMap = toAccountsMap((convData ?? []) as unknown as ConvRow[]);
   if (listView) {
-    const rows = data.map((c) => toListRow(c, convMap, focusMap));
+    const rows = data.map((c) => toListRow(c, convMap, focusMap, acctMap));
     return NextResponse.json(rows, { headers: { "Cache-Control": "no-store, must-revalidate" } });
   }
   const result = data.map((c) => ({
@@ -186,6 +205,7 @@ export async function GET(req: NextRequest) {
     // 2026-10-06 ⑫（ゆいと）: 2つ目の探し物の行（子・「ゆいと（物置）」）は会話の紐付けが親にある → 親の会話を出す（拡張・一覧で送る先・LINE が分かる）
     is_linked: convMap.has(c.id) || (!!c.parent_customer_id && convMap.has(c.parent_customer_id)),
     linked_conversation: convMap.get(c.id) ?? (c.parent_customer_id ? convMap.get(c.parent_customer_id) ?? null : null),
+    linked_accounts: linkedAccountsOf(c, acctMap),
     search_focus: focusMap.get(c.id) ?? null,
   }));
   return NextResponse.json(result, {
