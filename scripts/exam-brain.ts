@@ -34,7 +34,7 @@ import {
   mergePicks, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse, dbKeyOf,
   modelOf, estimateUsd, DEFAULT_STOP, draftEligible, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
   decidePhase, pickSmall, smallRank, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
-  warmDecision, warmLimit, flashSpotCheck, flashProof, isFixTarget, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3,
+  warmDecision, warmLimit, flashSpotCheck, flashProof, FLASH_TYPE_MIN_N, isFixTarget, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3,
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
@@ -105,10 +105,12 @@ function mainHead(): { commit: string; vk: string } | null {
 }
 /**
  * 今の main の版の答えが取り置かれていなければ、安い時間（夜中の --run-queue・JST 1:40）に --warm-main を予約する（同じ版は1回だけ）。
- *   止める: EXAM_AUTO_WARM=off。会話は EXAM_WARM_CONV（無ければ今の --conv が YUMA2〜5 ならそれ・それ以外は YUMA5）
+ *   既定は入れない（夜中に自動でお金を使う＝竹内さんの OK が出るまで）: 入れる EXAM_AUTO_WARM=on。会話は EXAM_WARM_CONV（無ければ今の --conv が YUMA2〜5 ならそれ・それ以外は YUMA5）
+ *   cont＝人が流した --warm-main の続き（上限で途中まで）＝旧の「次の夜中に回す」と同じ扱い（EXAM_AUTO_WARM=off の時だけ止める）
  */
-function ensureMainWarm(o: { force?: boolean; runNow?: boolean; quiet?: boolean } = {}): void {
-  if ((process.env.EXAM_AUTO_WARM ?? "").trim().toLowerCase() === "off") return;
+function ensureMainWarm(o: { force?: boolean; runNow?: boolean; quiet?: boolean; cont?: boolean } = {}): void {
+  const aw = (process.env.EXAM_AUTO_WARM ?? "").trim().toLowerCase();
+  if (aw === "off" || (!o.cont && aw !== "on")) { if (!o.quiet && aw !== "off") log("main の取り置きの自動予約: 入れていない（EXAM_AUTO_WARM=on で入る・人が流すなら --warm-main）"); return; }
   const h = mainHead();
   const d = warmDecision({ vk: h?.vk ?? null, log: readWarmLog(), queued: readQueue().map((x) => x.label), force: o.force });
   if (!d.enqueue || !h) { if (!o.quiet) log(`main の取り置き: ${d.why}`); return; }
@@ -229,7 +231,8 @@ async function makePlan(label: string): Promise<Plan> {
   for (const pk of picks) {
     const p = probs.get(pk.id)!;
     const fo = CONDUCTED?.plan.focus.find((f) => f.id === p.id);
-    const model = fo ? fo.model : modelOf(p as PlanProblem, { mode: modelMode, flashOkTypes: mc.okTypes, flashOkIds: mc.okIds, flashBadIds: mc.badIds, gate: GATE, protect: isFixTarget(pk.why) });
+    // 見直し: 司令塔が flash を選んでも、比べで道が違った問題・直しの的（fix）は pro に戻す
+    const model = fo ? (fo.model === "flash" && (mc.badIds.has(p.id) || fo.role === "fix") ? "pro" : fo.model) : modelOf(p as PlanProblem, { mode: modelMode, flashOkTypes: mc.okTypes, flashOkIds: mc.okIds, flashBadIds: mc.badIds, gate: GATE, protect: isFixTarget(pk.why) });
     const modelLabel = model === "flash" ? `deepseek-all:${FLASH_MODEL}` : "deepseek-all";
     const fv = flakeVerdict(readObs(p.id), { problemHash: problemHash(p), model: modelLabel });
     const reps = fo ? fo.reps : firstRepsOf(REPS_MODE, fv.verdict, repsCap, { gate: GATE });
@@ -501,7 +504,9 @@ async function runMain() {
         const sc = flashSpotCheck(pairs);
         if (sc.length) {
           const prev = existsSync(MODEL_CHECK_FILE) ? JSON.parse(readFileSync(MODEL_CHECK_FILE, "utf8")) as { byType: Record<string, ModelCheckStat>; byId?: Record<string, ModelCheckStat>; spot?: unknown[] } : { byType: {}, byId: {} };
-          for (const s of sc) { const e = (prev.byId ??= {})[s.id] ?? { n: 0, samePath: 0, proOk: 0, flashOk: 0 }; e.n++; if (s.samePath) e.samePath++; if (s.proOk) e.proOk++; if (s.flashOk) e.flashOk++; prev.byId[s.id] = e; }
+          for (const s of sc) { const e = (prev.byId ??= {})[s.id] ?? { n: 0, samePath: 0, proOk: 0, flashOk: 0 }; e.n++; if (s.samePath) e.samePath++; if (s.proOk) e.proOk++; if (s.flashOk) e.flashOk++; prev.byId[s.id] = e;
+            // 見直し: 道が違った時は型にも「違った1回」を足す（型の 9割を下げる向きだけ・同じだった時は型に足さない＝同じ問題の見張りで型の回数を水増ししない）
+            const t = String(pl.probs.get(s.id)?.type ?? ""); if (!s.samePath && t) { const et = (prev.byType ??= {})[t] ?? { n: 0, samePath: 0, proOk: 0, flashOk: 0 }; et.n++; if (s.proOk) et.proOk++; if (s.flashOk) et.flashOk++; prev.byType[t] = et; } }
           (prev.spot ??= []).push({ at: new Date().toISOString(), label, items: sc });
           writeFileSync(MODEL_CHECK_FILE, JSON.stringify(prev, null, 1));
           log(`flash の見張り（pro の main の答えと照らす・0円）: ${sc.map((s) => `${s.samePath ? "＝" : "≠"}${s.id} pro=${s.proCode}${s.proOk ? "○" : "✕"} flash=${s.flashCode}${s.flashOk ? "○" : "✕"}`).join("・")}${sc.some((s) => !s.samePath) ? " → 道が違った問題は次から pro" : ""}`);
@@ -521,7 +526,7 @@ async function runMain() {
   // 10/20 COST①: 前（main）の答えの数（版ごとの取り置きを使えたか）
   const bs = phases.reduce((s, p) => ({ reused: s.reused + p.base.reused, carried: s.carried + p.base.carried, ran: s.ran + p.base.ran, deferred: [...new Set([...s.deferred, ...p.base.deferred])] }), { reused: 0, carried: 0, ran: 0, deferred: [] as string[] });
   log(`前（main）の答え: 使い回した ${bs.reused}・前の main から持ち越した ${bs.carried}・今 main で解いた ${bs.ran}${bs.deferred.length ? `・今は解かず夜中に回した ${bs.deferred.length}（${bs.deferred.join(",")}＝前との比べに入らない）` : ""}`);
-  if (bs.deferred.length) ensureMainWarm({ force: true });
+  if (bs.deferred.length) ensureMainWarm({ force: true, cont: true }); // --main-missing=night は人が選んだ＝夜に回すのは続き扱い
   const real = by("worse").filter((l) => l.verdict !== "flake");
   log(real.length ? "⚠ 本当の悪化か確かめていない悪化がある＝このまま入れない" : "前より悪くなった問題は無い（揺れを除く）");
   // 10/17 ① 小さな確かめの記録（同じ版で悪化なし＝次は仕上げ）
@@ -681,7 +686,7 @@ async function warmMain() {
   // 10/20 COST①: 版ごとの取り置きの記録（全部取れたら同じ版は二度と予約しない・途中なら次の夜中に続き）
   if (h?.vk) {
     writeWarmLog(h.vk, { at: new Date().toISOString(), commit, done: !failed && left === 0, left, label: `warm-${jst(new Date())}` });
-    if (failed || left) ensureMainWarm();
+    if (failed || left) ensureMainWarm({ cont: true });
   }
 }
 
@@ -723,7 +728,7 @@ async function modelCheck() {
   const sp = await spendOf([`${label}-pro`, `${label}-flash`], since).catch(() => ({ n: 0, usd: 0 }));
   const sa = await spendOf([`${label}-pro`], since).catch(() => ({ n: 0, usd: 0 })), sbb = await spendOf([`${label}-flash`], since).catch(() => ({ n: 0, usd: 0 }));
   log(`型ごと（累計）: ${Object.entries(prev.byType).map(([k, v]) => `${k} 道が同じ ${v.samePath}/${v.n}・合う pro ${v.proOk}/flash ${v.flashOk}`).join("／")}`);
-  { const m = readModelCheck(); log(`flash にしてよい型（3問以上・道が同じ 9割以上・合う数が pro 以上）: ${[...m.okTypes].join("・") || "まだ無い"}／問題（2回以上いつも同じ）: ${[...m.okIds].join(",") || "まだ無い"}／flash にしない問題（道が違った）: ${[...m.badIds].join(",") || "なし"}`); }
+  { const m = readModelCheck(); log(`flash にしてよい型（${FLASH_TYPE_MIN_N}回以上・道が同じ 9割以上・合う数が pro 以上）: ${[...m.okTypes].join("・") || "まだ無い"}／問題（2回以上いつも同じ）: ${[...m.okIds].join(",") || "まだ無い"}／flash にしない問題（道が違った）: ${[...m.badIds].join(",") || "なし"}`); }
   log(`費用: pro ${sa.n}回 $${sa.usd.toFixed(4)}・flash ${sbb.n}回 $${sbb.usd.toFixed(4)}（合計 ${sp.n}回 $${sp.usd.toFixed(4)}・判定は別）`);
 }
 

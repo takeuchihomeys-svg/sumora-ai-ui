@@ -248,11 +248,12 @@ export function modelOf(p: PlanProblem, o: { mode: "pro" | "flash" | "auto"; fla
 /** model-check の記録の形（型ごと・問題ごと） */
 export type ModelCheckStat = { n: number; samePath: number; proOk: number; flashOk: number };
 /**
- * 10/20 COST③ flash にしてよい所: 型＝3問以上・道が同じ 9割以上・合う数が pro 以上（今まで通り）／問題＝その問題だけで2回以上比べて道がいつも同じ・合う数が pro 以上／
+ * 10/20 COST③ flash にしてよい所: 型＝5回以上比べて・道が同じ 9割以上・合う数が pro 以上（見直しで 3→5: q035 で「通った型」の flash が外れた）／問題＝その問題だけで2回以上比べて道がいつも同じ・合う数が pro 以上／
  *   flash にしない問題＝その問題の比べで道が1回でも違った（型が通っていても外す）
  */
+export const FLASH_TYPE_MIN_N = 5;
 export function flashProof(mc: { byType?: Record<string, ModelCheckStat>; byId?: Record<string, ModelCheckStat> }): { okTypes: Set<string>; okIds: Set<string>; badIds: Set<string> } {
-  const okTypes = new Set(Object.entries(mc.byType ?? {}).filter(([, v]) => v.n >= 3 && v.samePath / v.n >= 0.9 && v.flashOk >= v.proOk).map(([k]) => k));
+  const okTypes = new Set(Object.entries(mc.byType ?? {}).filter(([, v]) => v.n >= FLASH_TYPE_MIN_N && v.samePath / v.n >= 0.9 && v.flashOk >= v.proOk).map(([k]) => k));
   const okIds = new Set(Object.entries(mc.byId ?? {}).filter(([, v]) => v.n >= 2 && v.samePath === v.n && v.flashOk >= v.proOk).map(([k]) => k));
   const badIds = new Set(Object.entries(mc.byId ?? {}).filter(([, v]) => v.samePath < v.n).map(([k]) => k));
   return { okTypes, okIds, badIds };

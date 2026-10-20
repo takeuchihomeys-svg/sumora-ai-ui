@@ -98,10 +98,11 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
 // ─── COST③ flash の選び ─────────────────────────────────────────────
 {
   const mc = flashProof({
-    byType: { A: { n: 3, samePath: 3, proOk: 3, flashOk: 3 }, B: { n: 3, samePath: 2, proOk: 3, flashOk: 3 }, C: { n: 2, samePath: 2, proOk: 2, flashOk: 2 }, D: { n: 3, samePath: 3, proOk: 3, flashOk: 2 } },
+    byType: { A: { n: 5, samePath: 5, proOk: 5, flashOk: 5 }, B: { n: 10, samePath: 8, proOk: 3, flashOk: 3 }, C: { n: 4, samePath: 4, proOk: 4, flashOk: 4 }, D: { n: 5, samePath: 5, proOk: 5, flashOk: 4 } },
     byId: { q1: { n: 2, samePath: 2, proOk: 1, flashOk: 1 }, q2: { n: 1, samePath: 1, proOk: 1, flashOk: 1 }, q3: { n: 2, samePath: 1, proOk: 1, flashOk: 1 } },
   });
-  ok("型: 3問以上・道が同じ 9割以上・合う数が pro 以上だけ", [...mc.okTypes].join() === "A");
+  ok("型: 5回以上・道が同じ 9割以上・合う数が pro 以上だけ（4回は足りない）", [...mc.okTypes].join() === "A");
+  ok("型: 前の決まりの 3回だけ（q035 で外れた形）→ まだ flash にしない", flashProof({ byType: { A: { n: 3, samePath: 3, proOk: 3, flashOk: 3 } } }).okTypes.size === 0);
   ok("問題: 2回以上いつも同じ → flash・1回だけ → まだ・1回でも違った → flash にしない", [...mc.okIds].join() === "q1" && [...mc.badIds].join() === "q3");
   const P = (id: string, type: string): PlanProblem => ({ id, type });
   const o = { mode: "auto" as const, flashOkTypes: mc.okTypes, flashOkIds: mc.okIds, flashBadIds: mc.badIds };
