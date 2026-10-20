@@ -44,11 +44,11 @@ import { problemHash, examConfig, configHash } from "./lib/brain-exam-baseline";
 import { flakeVerdict, readObs, FLAKE_DIR } from "./lib/exam-flake";
 import { isDeepseekPeakAt } from "../app/lib/llm-price";
 import {
-  buildMissMap, compareMissMaps, nextFocus, buildCoverage, linksOf, mapStageOf, normalizePlan, fallbackRaw, looseJson, buildConductorUser, parseDiffReading, parseTriage,
+  buildMissMap, compareMissMaps, nextFocus, buildCoverage, linksOf, mapStageOf, normalizePlan, fallbackRaw, looseJson, buildConductorUser, parseDiffReading, parseTriage, freshProblemIds,
   CONDUCTOR_SYSTEM, DIFF_READER_SYSTEM, TRIAGE_SYSTEM, LINKS, LINK_IDS, MAP_STAGES, MAP_STAGE_JA, MAP_STAGE_SHORT,
   type MissMap, type ProblemLike, type RowLike, type GoldLite, type Candidate, type ConductorInput, type DiffReading, type TriageItem,
 } from "./lib/exam-conductor";
-import { diffMaterial, callConductorLlm, newTally, setLocalSpendRecording, savePlan, loadPlan, saveResult, loadLatestResult, mainRowsOf, latestRowsOf, refreshPath, saveMissMap, safeLines, CONDUCTOR_DIR, PRO_MODEL as C_PRO, FLASH_MODEL as C_FLASH, type SavedPlan } from "./lib/exam-conductor-io";
+import { diffMaterial, verifyRange, mainAnsweredIds, callConductorLlm, newTally, setLocalSpendRecording, savePlan, loadPlan, saveResult, loadLatestResult, mainRowsOf, latestRowsOf, refreshPath, saveMissMap, safeLines, CONDUCTOR_DIR, PRO_MODEL as C_PRO, FLASH_MODEL as C_FLASH, type SavedPlan } from "./lib/exam-conductor-io";
 
 const argv = process.argv.slice(2);
 const dd = argv.indexOf("--");
@@ -66,6 +66,8 @@ let PHASE_ARG = arg("phase") || process.env.EXAM_PHASE || "auto";
 // 10/20 司令塔（--conduct／--run-plan）: 計画どおり流す時の上書き（問題ごとの回数・モデル・段・判定の段）と、読み手が作った探す言葉
 let CONDUCTED: SavedPlan | null = null;
 let EXTRA_Q = "";
+// 10/20 RAG の選びが見る範囲（--range か、--conduct が main の作業ツリーで自動で決めた起点..HEAD）。空＝作業ツリーの差
+let RANGE = arg("range");
 const JUDGE = arg("judge", "lazy") === "full" ? "full" : "lazy";
 // 2026-10-17 確かめ: rubric の並べ替えは判定の答えを変える（q113 の下書き 2/3→0/3）＝既定は旧の並び（as-is）。rubric は別に比べてから
 const JUDGE_PREFIX = arg("judge-prefix", "as-is") === "rubric" ? "rubric" : "as-is";
@@ -147,7 +149,7 @@ async function makePlan(label: string): Promise<Plan> {
   } else {
     try {
       const { ragSelect } = await import("./lib/exam-rag-run");
-      const r = await ragSelect(sb, scope as never, { stageOf: stageOfAuto as never, topN: Math.max(1, Number(arg("select-n", "12")) || 12), extraQuery: [arg("select-q"), EXTRA_Q].filter(Boolean).join(String.fromCharCode(10)) || undefined, range: arg("range") || undefined });
+      const r = await ragSelect(sb, scope as never, { stageOf: stageOfAuto as never, topN: Math.max(1, Number(arg("select-n", "12")) || 12), extraQuery: [arg("select-q"), EXTRA_Q].filter(Boolean).join(String.fromCharCode(10)) || undefined, range: RANGE || undefined });
       rag = r; cls = r.decision.cls; clsNote = r.decision.note; ragNote = `${r.mode === "all" ? "全部" : `RAG ${r.picked.length}/${scope.length}問`}${r.note ? `・${r.note}` : ""}・変わったファイル ${r.decision.files.length}・知見の変化 ${r.kbChanged}`;
     } catch (e) { ragNote = `RAG の選びが失敗 → 安全側で全部（${String(e instanceof Error ? e.message : e).slice(0, 120)}）`; rag = null; const d = decideStageFromDiff("."); cls = d.cls; clsNote = d.note; }
   }
@@ -668,6 +670,9 @@ async function conductInner() {
   if (isDeepseekPeakAt(now)) log("⚠ 今は DeepSeek の2倍の時間（平日 JST 10〜13・15〜19）。司令塔と読み手の分（1回 約 $0.01）も2倍で数える");
   // ① 直した中身（伏せ字・個人の値がある行は捨てる）
   const mat = await diffMaterial(sb, ".", { range: arg("range") || undefined });
+  // 2026-10-20 範囲（--range か main の作業ツリーで自動で決めた起点）を RAG の選びにも渡す（作業ツリーの差＝main そのものだと 0 になっていた）
+  if (mat.range) RANGE = mat.range;
+  if (mat.rangeWhy) log(`見た範囲: ${mat.rangeWhy}（${mat.range}）`);
   log(`\n直した中身: ${mat.cls}・ファイル ${mat.files.length}・コミット ${mat.commits.length}・設計知見 ${mat.kbIds.join(",") || "なし"}${mat.dropped ? `・個人の値の網で捨てた行 ${mat.dropped}` : ""}${mat.note ? `（${mat.note}）` : ""}`);
   // ② 読み手（flash）: 差分が効く所・外れの型・線・段・探す言葉
   let reading: DiffReading | null = null;
@@ -730,10 +735,15 @@ async function conductInner() {
   const smallIds = new Set(pickSmall(pl.allPicks).map((p) => p.id));
   const fbCands = candidates.filter((c) => smallIds.has(c.id));
   const fb = () => fallbackRaw(fbCands.length ? fbCands : candidates, fbCands.length || 8);
-  const nopt = { draftChange: mat.cls === "draft" || mat.cls === "both", allowTier: flag("judge-tier") || process.env.EXAM_JUDGE_TIER === "on" };
+  // 2026-10-20 新しい問題（main の答案が1つも無い）は司令塔の答えに関わらず決まった計算で入れる（1回・一番安くて足りるモデル・1日の上限の残りまで）
+  const answered = mainAnsweredIds();
+  const freshIds = freshProblemIds(ps, (p) => answered.has(p.id));
+  const fresh = { items: freshIds.map((id) => ({ id, type: byId.get(id)!.type })), dailyLeftUsd: cap === null ? null : cap - (used?.usd ?? cap) };
+  const nopt = { draftChange: mat.cls === "draft" || mat.cls === "both", allowTier: flag("judge-tier") || process.env.EXAM_JUDGE_TIER === "on", fresh };
   let plan = normalizePlan(raw ?? fb(), input, nopt);
+  const nonFresh = (pp: typeof plan) => pp.focus.filter((x) => !(pp.fresh ?? []).includes(x.id)).length;
   if (!raw) plan.source = "fallback";
-  else if (!plan.focus.length && candidates.length) { const d = plan.dropped; plan = normalizePlan(fb(), input, nopt); plan.source = "fallback"; plan.dropped = [...d, ...plan.dropped]; plan.note = "司令塔の答えが空→小さな確かめの順"; }
+  else if (!nonFresh(plan) && candidates.length) { const d = plan.dropped; plan = normalizePlan(fb(), input, nopt); plan.source = "fallback"; plan.dropped = [...d, ...plan.dropped]; plan.note = "司令塔の答えが空→小さな確かめの順"; }
   let head = ""; try { head = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* */ }
   const f = savePlan({ label, at: now.toISOString(), head, conv: CONV, plan, candidates: candidates.length, material: { cls: mat.cls, files: mat.files.length, kbIds: mat.kbIds, reading }, llm: tally, ragNote: pl.ragNote });
   // 表示
@@ -741,7 +751,15 @@ async function conductInner() {
   const old = oldWayEst(pl, false);
   log(`\n=== 司令塔の計画（${label}・${plan.source === "pro" ? "司令塔 pro" : "司令塔なし＝決まった順"}・候補 ${candidates.length}問）===`);
   log(`材料: 選び ${pl.ragNote || "-"}・外れの型 ${input.missTop.slice(0, 4).map((x) => `${x.kind} ${x.n}`).join("・") || "-"}・前の次の重点 ${prev?.next.length ?? 0}`);
-  for (const it of plan.focus) log(`  ${it.role === "fix" ? "◎重点" : "○見張り"} ${it.id} [${byId.get(it.id)?.type}] 段 ${it.stage === "draft" ? "ブレイン→下書き" : "ブレイン"}・回 ${it.reps}・${it.model}${cands.get(it.id)?.reuse ? "・前の結果を使える" : ""} ← ${it.why}`);
+  const freshSet = new Set(plan.fresh ?? []);
+  const line = (it: (typeof plan.focus)[number], mark: string) => log(`  ${mark} ${it.id} [${byId.get(it.id)?.type}] 段 ${it.stage === "draft" ? "ブレイン→下書き" : "ブレイン"}・回 ${it.reps}・${it.model}${cands.get(it.id)?.reuse ? "・前の結果を使える" : ""} ← ${it.why}`);
+  for (const it of plan.focus) if (!freshSet.has(it.id)) line(it, it.role === "fix" ? "◎重点" : "○見張り");
+  const freshDropped = plan.dropped.filter((d) => freshIds.includes(d.id));
+  if (freshIds.length) {
+    log(`新しい問題（答案なし）: ${freshSet.size}/${freshIds.length}問を入れた（main の答案が1つも無い＝司令塔の前に決まった計算で・1回・一番安くて足りるモデル・1日の上限の残りまで）`);
+    for (const it of plan.focus) if (freshSet.has(it.id)) line(it, "☆新しい");
+    if (freshDropped.length) log(`  1日の上限で今は入れない: ${freshDropped.map((d) => d.id).join(",")}`);
+  }
   if (plan.dropped.length) log(`  削った: ${plan.dropped.map((d) => `${d.id}（${d.why}）`).join("・")}`);
   log(`判定の段: ${plan.judge === "tier" ? "機械の照らし → flash 2回 → 割れた項目だけ pro（EXAM_JUDGE_TIER=on）" : `pro（今まで通り）${plan.judgeAdvice === "tier" ? "・司令塔の勧めは段の判定（--judge-tier で使う＝前（main）の取り置きも段の判定で作り直す）" : ""}`}`);
   log(`最後の Claude の確かめ: ${plan.claudeFinal ? `要る（${plan.claudeWhy}）＝本番に入れる前に LLM_TEST_FINAL_CLAUDE=1 で重点だけ` : `要らない${plan.claudeWhy ? `（${plan.claudeWhy}）` : ""}`}`);
@@ -824,5 +842,8 @@ function readCostTier(label: string): { any: boolean; machine: number; flash: nu
   } catch { return { any: false, machine: 0, flash: 0, pro: 0, proCalls: 0, flashCalls: 0 }; }
 }
 
-const main = flag("conduct") ? conduct : args.some((x) => /^--run-plan(=|$)/.test(x)) ? runPlan : flag("miss-map") ? showMissMap : flag("coverage") ? showCoverage : flag("ledger") ? async () => showLedger() : flag("cleanup") ? cleanup : flag("run-queue") ? runQueue : flag("warm-main") ? warmMain : flag("model-check") ? modelCheck : runMain;
+// 2026-10-20 --range の版がこの倉庫に無い（別の倉庫の commit 等）時は、お金を使う前に分かる言葉で止める（前は RAG の選びが落ちて「安全側で全部」になっていた）
+const checkRange = () => { if (arg("range")) verifyRange(arg("range"), "."); };
+const main0 = flag("conduct") ? conduct : args.some((x) => /^--run-plan(=|$)/.test(x)) ? runPlan : flag("miss-map") ? showMissMap : flag("coverage") ? showCoverage : flag("ledger") ? async () => showLedger() : flag("cleanup") ? cleanup : flag("run-queue") ? runQueue : flag("warm-main") ? warmMain : flag("model-check") ? modelCheck : runMain;
+const main = async () => { checkRange(); await main0(); };
 main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; }).finally(() => setTimeout(() => process.exit(process.exitCode ?? 0), 300));
