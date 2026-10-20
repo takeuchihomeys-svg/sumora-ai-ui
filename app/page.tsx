@@ -30,6 +30,7 @@ import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraft
 import { decideShownDraftRestore, shownDraftUpdate, shownDraftRestoreEnabled } from "./lib/shown-draft-restore";
 import { latestCustomerAtOf, newerCustomerMessageSince, nextComposerBase, staleGuardEnabled, ackExemptEnabled, STALE_REPLY_ERROR_CODE } from "./lib/stale-reply";
 import { isCustomerEcho, draftEchoGuardEnabled } from "./lib/draft-echo";
+import { decideForeignSendDraft, foreignSendClearEnabled } from "./lib/foreign-send-draft";
 import { refreshDraftGreetingForNow, draftGreetingRefreshEnabled } from "./lib/time-greeting";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
@@ -106,6 +107,8 @@ const STALE_REPLY_GUARD = staleGuardEnabled(process.env.NEXT_PUBLIC_STALE_REPLY_
 const STALE_ACK_EXEMPT = ackExemptEnabled(process.env.NEXT_PUBLIC_STALE_ACK_EXEMPT);
 // 2026-10-20 竹内さん（設計知見 P1 d3fe3a9f）: お客様の文と同じ（ほぼ同じ）下書きは入力欄に入れない（draft-echo.ts）。戻す NEXT_PUBLIC_DRAFT_ECHO_GUARD=off
 const DRAFT_ECHO_GUARD = draftEchoGuardEnabled(process.env.NEXT_PUBLIC_DRAFT_ECHO_GUARD);
+// 2026-10-20 竹内さん（12:42「文を送ったのにまだ下書きに同じのが出ている」）: 別の画面がこの会話に送ったら、この画面の入力欄の古い下書きを空にする（foreign-send-draft.ts）。戻す NEXT_PUBLIC_FOREIGN_SEND_CLEAR=off
+const FOREIGN_SEND_CLEAR = foreignSendClearEnabled(process.env.NEXT_PUBLIC_FOREIGN_SEND_CLEAR);
 /** 下書きと比べるお客様の文: 最後のスタッフの発言より後の通（未返信）＋一番新しいお客様の通 */
 function customerTextsForEcho(msgs: ReadonlyArray<{ sender: string; text?: string | null }>): string[] {
   const lastStaff = msgs.map((m, i) => (m.sender === "staff" ? i : -1)).filter((i) => i >= 0).at(-1);
@@ -1233,6 +1236,11 @@ export default function Home() {
   const genBaseAtRef = useRef<string | null>(null);
   /** スタッフが「このまま送る」を選んだ（新しい発言を見た上で送る）＝次の送信1回だけ知らせない */
   const allowStaleRef = useRef(false);
+  /** 2026-10-20 別の画面の送信（foreign-send-draft.ts）: この画面が最後にスタッフの通を DB に入れた時刻（自分の通を見分ける） */
+  const ownStaffInsertAtRef = useRef<number | null>(null);
+  const markOwnStaffInsert = () => { ownStaffInsertAtRef.current = Date.now(); };
+  /** Realtime の購読（最初の1回だけ張る）から最新の state で呼ぶため ref に入れる（中身は描画のたびに入れ替える） */
+  const handleForeignStaffSendRef = useRef<(text: string, at: string | null) => void>(() => {});
   const [staleSend, setStaleSend] = useState<{ newerText: string; newerAt: string; mode: "send" | "schedule" } | null>(null);
   const [partialCopyMessageId, setPartialCopyMessageId] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
@@ -2183,6 +2191,12 @@ export default function Home() {
             conversationsRef.current = next;
             return next;
           });
+
+          // 2026-10-20 竹内さん「文を送ったのにまだ下書きに同じのが出ている」: 別の画面（別のタブ・端末・スタッフ・自動送信）がこの会話に送った →
+          //   この画面の入力欄の下書きが「直していない AI の下書き」か「送った文とほぼ同じ」なら空にする（foreign-send-draft.ts）。戻す NEXT_PUBLIC_FOREIGN_SEND_CLEAR=off
+          if (FOREIGN_SEND_CLEAR && newMsg.sender === "staff" && String(newMsg.conversation_id) === selectedIdRef.current) {
+            handleForeignStaffSendRef.current(newMsg.text ?? "", newMsg.created_at);
+          }
 
           // 選択中の会話にお客様メッセージが届いた → 即ドラフト生成
           // （Effect1はid変更時のみ起動するためここで補完する）
@@ -3435,6 +3449,29 @@ export default function Home() {
   // 2026-10-08 表示済みの下書きの戻し（shown-draft-restore）: 読み込みの間に入力が始まっていたら上書きしない／✕ で消した会話は戻さない
   const replyDraftLiveRef = useRef("");
   replyDraftLiveRef.current = replyDraft;
+  // 2026-10-20 竹内さん（12:42）: 別の画面（同じ PC の別のタブ・別の端末・自動送信）がこの会話に送った時、この画面の入力欄の古い下書きを空にする。
+  //   本番: 同じ会話を2つのタブで開き、片方で直して送った後、もう片方に直す前の下書きが「⚡ AI下書き」のまま残った（判定は foreign-send-draft.ts）
+  handleForeignStaffSendRef.current = (text: string, at: string | null) => {
+    const decision = decideForeignSendDraft({
+      replyDraft: replyDraftLiveRef.current, draftIsAi, staffText: text, staffAt: at,
+      ownInsertAtMs: ownStaffInsertAtRef.current, sending, nowMs: Date.now(),
+    });
+    if (decision === "keep") return;
+    const cid = selectedIdRef.current;
+    console.log(JSON.stringify({ tag: "draft:foreign-send", conversationId: cid, decision }));
+    if (decision === "clear") {
+      setReplyDraft("");
+      aiDraftRef.current = "";
+      setDisplaySource(null);
+      setCheckResult(null);
+      setCheckModalIssues(null);
+      setExtraDraftMessages([]);
+      delete shownDraftCacheRef.current[cid];
+      setError("別の画面からこの会話に送信されたため、入力欄の下書きを消しました。");
+    } else {
+      setError("別の画面からこの会話に送信されました。入力欄の文がまだ必要か確かめてください。");
+    }
+  };
   // 2026-10-20 すれ違い（P1 54ec8c71）: 入力欄が空→文になった時点のお客様の最新の発言を「土台」に控える（空に戻ったら外す）。
   //   送る前にこれより新しいお客様の発言があれば知らせる（executeSend）。生成を始めた時点の値があればそれを使う（生成の途中に届いた発言を拾う）
   const latestCustAtForComposer = latestCustomerAtOf(selectedConversation.messages);
@@ -5359,6 +5396,7 @@ export default function Home() {
       // 画像は複数でも1メッセージ行にまとめて保存（JSON配列）
       if (anyImageSent) {
         const imageUrlData = sentImageUrls.length === 1 ? sentImageUrls[0] : JSON.stringify(sentImageUrls);
+        markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
         const { data: imgRow, error: imgInsertError } = await supabase
           .from("messages")
           .insert({
@@ -5385,6 +5423,7 @@ export default function Home() {
       // テキストメッセージを保存（画像の1秒後のタイムスタンプで後ろに表示）
       if (textSent && textToSend) {
         const textNow = anyImageSent ? new Date(now.getTime() + 1000) : now;
+        markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
         const { data: textRow, error: textInsertError } = await supabase
           .from("messages")
           .insert({
@@ -6052,6 +6091,7 @@ export default function Home() {
     if (!res.ok || !json.ok) throw new Error(json.error || `電話ボタンを送れませんでした（HTTP ${res.status}）`);
     const at = new Date();
     const lineMsgId = json.sentMessageIds?.[0] ?? null;
+    markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
     const { data: row } = await supabase.from("messages").insert({
       conversation_id: cid, sender: "staff", text: CALL_BUTTON_MESSAGE_TEXT, created_at: at.toISOString(), is_aix_generated: true,
       ...(lineMsgId ? { line_message_id: lineMsgId } : {}),
@@ -6088,6 +6128,7 @@ export default function Home() {
     const newMessages: Message[] = [];
     for (let i = 0; i < delivered.length; i++) {
       const at = new Date(Date.now() + i).toISOString();   // 送った順に並ぶよう1msずつずらす
+      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
       const { data: row } = await supabase.from("messages").insert({
         conversation_id: cid, sender: "staff", text: "[画像]", image_url: delivered[i], created_at: at,
         is_aix_generated: isAix, ...(ids[i] ? { line_message_id: ids[i] } : {}),
@@ -6209,6 +6250,7 @@ export default function Home() {
     // 画像が先、テキストが後の順で保存（LINE送信成功分のみ）
     if (imageSent && imageUrl) {
       const imgNow = new Date();
+      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
       const { data: imgRow, error: imgError } = await supabase
         .from("messages")
         .insert({
@@ -6236,6 +6278,7 @@ export default function Home() {
     }
 
     if (textSent && text.trim()) {
+      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
       const { data: insertedRows, error: insertError } = await supabase
         .from("messages")
         .insert({
