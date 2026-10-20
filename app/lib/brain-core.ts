@@ -110,6 +110,8 @@ import { viewingReportBlockForBrain } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
 import { buildActionLedger, buildLedgerLinesForBrain, buildViewingFlowForBrain, type LedgerInput } from "@/app/lib/action-ledger";
+// 2026-10-20 竹内さん（5b0b8e82・67f54c24）: 何の日か・確認の相手の決まった読み（DAY_SUBJECT_READER=on の時だけ材料に入る）
+import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 import { cancelViewingCalendarOnCustomerCancel } from "@/app/lib/viewing-cancel-calendar-server";
 import { isViewingFixTopic } from "@/app/lib/viewing-premature";
 // 2026-09-23 竹内（あっぴ事例）: 未履行のピックアップ宣言が残っている間は「反応待ち」にしない（AIX【物件ピックアップした】を立てる）
@@ -2389,7 +2391,7 @@ ${catalogBlockForBrain(brainScene)}
   const ownPropertyText = ownProperty && ownProperty.ours > 0
     ? `\n・お客様が今回送ってきた物件${ownProperty.items}件のうち${ownProperty.ours}件は、こちらが前に送った物件（記録で照合済み）。${ownPropertyReturnedAll ? "新しく見つけた物件ではないので、募集状況の確認（property_check_result）の理由にしない。お客様の言葉（気に入った・もっと見たい・内覧したい 等）で判断する。" : "残りはこちらの記録に無い物件。"}`
     : "";
-  const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}${buildLedgerLinesForBrain(brainLedger)}${ownPropertyText}${buildViewingFlowForBrain(brainLedger)}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
+  const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}${buildLedgerLinesForBrain(brainLedger)}${ownPropertyText}${buildViewingFlowForBrain(brainLedger)}${daySubjectNoteIfEnabled(brainLedgerInput.messages, brainLedger.facts.viewingFlow?.stage ?? null)}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
 
   // ─── 申込が近い合図（2026-09-20 竹内「ここなら申込になりそうなお客さんだと分析して、そこから申込の流れにいく形」）───
   // 実データ（申込到達21件 vs 30日以上動いていない未到達105件）で線を引いた決定論の合図。

@@ -260,6 +260,7 @@ import { customerSharedProperty } from "@/app/lib/shared-property-ref";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
 //   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
 import { buildActionLedger, buildLedgerNote, buildLastStaffAnnotation, applyLedgerAutoFix, type ActionLedger, type LedgerAixRow, type LedgerTask, type RecordedFact } from "@/app/lib/action-ledger";
+import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 // 2026-09-26 竹内「ここの部分改善する根本的に」: 済んだ事・もう言った約束・決まった内覧を入口で1回だけ決める（純関数・done-state.ts の冒頭を見る）
 import { annotateUnconfirmedViewing, isViewingFixTopic } from "@/app/lib/viewing-premature";
 import { latestStaffBlock, withoutWaitFormPromises, findWaitFormPromises, WAIT_FORM_ACK_HINT, resolveViewingScheduled, buildViewingScheduledNote, isWholeShortAck, buildFollowUpDoneNote, customerAnsweredByAix, viewingHoursOf, viewingAckLine, viewingWaitAckAllowed, type ViewingScheduled } from "@/app/lib/done-state";
@@ -5430,7 +5431,15 @@ async function handleGenerateReply(req: NextRequest) {
     if (viewingReportNote) console.info("[viewing-report]", JSON.stringify({ conversationId, reports: viewingReports.length, chars: viewingReportNote.length }));
     // 2026-09-26（穴2）: 連投の途中（isFollowUp）でも「済んだ事」の確定行だけは渡す（旧は台帳の注記が全部空になり、
     //   報告の2分後に「募集状況を確認します」・物件を送っている最中に「ピックアップ出来次第お送り」が出た）
-    const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote;
+    // 2026-10-20 竹内さん（5b0b8e82・67f54c24・d9533aad）: 何の日か・確認の相手の決まった読み（ブレインと同じ関数・同じ文。DAY_SUBJECT_READER=on の時だけ）
+    const daySubjectNote = !ledgerActive || isFollowUp || isTemplateOptimize ? "" : (() => {
+      const ms = recentMessages.map((m) => ({ sender: m.sender, text: m.text ?? "" }));
+      // 今のお客様の文（message）が履歴の最後に無ければ足す（読むのは「最後のこちらの文より後のお客様の連投」）
+      const last = ms[ms.length - 1];
+      if (message && !(last && last.sender === "customer" && last.text.includes(message.trim()))) ms.push({ sender: "customer", text: message });
+      return daySubjectNoteIfEnabled(ms, ledger.facts.viewingFlow?.stage ?? null);
+    })();
+    const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote + daySubjectNote;
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
     const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm, turnContract?.openSearch ?? null) : turnNeedsSupport(turnContract) ? SUPPORT_CLOSER_LINE : null });
