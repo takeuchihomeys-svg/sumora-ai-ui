@@ -92,6 +92,23 @@ export function exhaustedConditionTurnLine(env: Env = envOf()): string {
     + (exhaustedBroughtFirstEnabled(env) ? "同じ連投でお客様が物件（URL・画像）を送ってきた・特定の物件の見積や空きを頼んだ番は、その物件の約束（募集状況の確認・御見積書）が先（出し切りの締めにしない）。" : "");
 }
 
+/**
+ * 2026-10-18 弱い所B（q170）: 送付だけの印（weak）の番の今の番の行。旧は weak でも exhaustedConditionTurnLine（「出し切った印がある」と言い切る）を渡し、
+ *   材料の1行（exhaustedMaterialLine の「1回送っただけ・出し切りとは限らない」）と食い違っていた。最初の送付への最初の懸念・条件の足し
+ *   （q170「お風呂が狭いと赤ちゃんのお風呂が難しい」）で竹内さんはその条件でお調べする約束（2段:pickup）。
+ *   決めるのはブレイン: 会話で今の条件を出し切ったと言っている時（全て・ご条件から離れますが・新着待ち）だけ返信で締める。戻す EXHAUSTED_WEAK_TURN_LINE=off（旧の言い切りの行）
+ */
+export function exhaustedConditionWeakTurnLine(env: Env = envOf()): string {
+  // 2026-10-20 確かめる人: 既定 off（入れる EXHAUSTED_WEAK_TURN_LINE=on）。試験 wb1018-fix2-final-n と rv1020-b（同じ12問を main と3回ずつ）で
+  //   q006（「港区から離れますが」の後のガスコンロ）・q007（「募集に出ておらず、エリア広げ」の後のエリアの言い直し）が道 3→0・2→1 に悪くなった
+  //   （どちらも送付だけの印＝weak と数えられるが、会話では出し切ったと言っている）。weak/strong の見分けを直すまで止める
+  if ((env.EXHAUSTED_WEAK_TURN_LINE ?? "").trim().toLowerCase() !== "on") return exhaustedConditionTurnLine(env);
+  if (!exhaustedConditionReplyEnabled(env)) return "";
+  return "【今の番（材料）】こちらは物件を送った（送付の報告）が、今の条件を出し切ったとは言っていない（「全てピックアップ」・新着待ちの約束・全力サポートは無い）。"
+    + "お客様の今の発言が送った物件への懸念・条件の足し（設備・広さ・家賃・間取り・エリア）なら、その条件ではまだ探していない＝竹内さんはその条件で改めてお調べ（ピックアップ）してお送りする約束にする（route=promise・about=search_condition）。"
+    + "会話でこちらが今の条件の物件はもう無いと伝えている（「ご条件から離れますが」等・何度も送った後）時だけ、足した条件を受け止め新着が出次第お送りする返信で締める。決めるのは会話を読んだあなた。";
+}
+
 /** LLM の前の材料（約束が残っている番の行に足す） */
 export function ackAfterPromiseMaterial(env: Env = envOf()): string {
   return ackAfterPromiseReplyEnabled(env)
@@ -133,4 +150,25 @@ export function ackAfterPickupTurnLine(env: Env = envOf()): string {
 /** 決定 C の番で、ブレインが決められなかった時（aix の欄が無い）だけ規則で返信にする（網） */
 export function ackAfterPromiseRuleApplies(o: { brainMode: boolean; llmAixPresent: boolean }): boolean {
   return !o.brainMode || !o.llmAixPresent;
+}
+
+/**
+ * 2026-10-18 弱い所B（q170）: 送付だけの印（weak）の出し切りで、ブレイン自身が足した条件で探す約束を選んだ番は規則で返信に書き換えない（純関数）。
+ *   送付だけの印は「1回送っただけ・出し切りとは限らない」と材料で渡している＝決めるのはブレイン（設計知見 9eb6aa9c P0）。
+ *   約束＝turn_contract の依頼のうち route=promise・about=search_condition（ゆるめた・外したは exhaustedConditionAddTurn で既に外）。
+ *   明示の印（strong）は竹内さんの決定 10/14 のまま返信で締める。戻す EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE=off
+ */
+export function exhaustedWeakKeepBrainPromise(o: { strength: "strong" | "weak" | null; asks: ReadonlyArray<{ route?: string | null; about?: string | null }>;
+  /** ブレインの方向（reply_direction＋key_topics）。turn_contract を出さなかった番（10/18 試験 q170 で1回）の予備 */
+  brainText?: string | null; env?: Env }): boolean {
+  // 2026-10-20 確かめる人: 既定 off（入れる EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE=on）。q006・q007 の悪化（上の EXHAUSTED_WEAK_TURN_LINE と同じ理由）
+  if (((o.env ?? envOf()).EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE ?? "").trim().toLowerCase() !== "on") return false;
+  if (o.strength !== "weak") return false;
+  if (o.asks.some((a) => a?.route === "promise" && a?.about === "search_condition")) return true;
+  if (o.asks.length) return false;
+  const t = String(o.brainText ?? "");
+  // 10/18 確かめる人: 旧の「お調べ|探し」だけの網は「お客様がお探しの条件」「探しているエリア」「新着が出たら探して」まで約束と読んだ（自由文の揺れ）＝
+  //   こちらが探す約束の形（再ピックアップ・改めて／その条件で〜探す・探してお送り）だけにし、新着の話があれば約束と読まない
+  return /再?ピックアップ(?:する|し|させ)|(?:改めて|再度|その条件で|条件で)[^。]{0,8}(?:お調べ|探し|探す)|(?:お調べ|(?<!お)探し)(?:て|し)?[^。]{0,4}(?:お送り|ご提案|ご紹介)/.test(t)
+    && !/新着|出次第|出ましたら|出たら|出た際/.test(t);
 }

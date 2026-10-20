@@ -1,6 +1,6 @@
 // app/lib/__tests__/brain-route-keep.test.ts — 2026-10-16 方向が空の取り直しで最初の答えの道を残す
 //   実行: npx tsx app/lib/__tests__/brain-route-keep.test.ts
-import { mergeEmptyDirectionRetry, emptyDirectionKeepRouteEnabled } from "../brain-route-keep";
+import { mergeEmptyDirectionRetry, emptyDirectionKeepRouteEnabled, guardViewingKeepSearchPromise } from "../brain-route-keep";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 
@@ -30,6 +30,15 @@ t("既定 on・off で戻す", emptyDirectionKeepRouteEnabled({}) && !emptyDirec
   t("約束が確認（答えの文）→ property_check_result", promiseAixFromContract({ asks: [{ route: "promise", answer: "お子様の入居可否を管理会社に確認" }] }) === "property_check_result");
   t("確認と見積の両方 → 確認が先", promiseAixFromContract({ asks: [{ route: "promise", aix: "estimate_sheet" }, { route: "promise", aix: "property_check_result" }] }) === "property_check_result");
   t("ピックアップの約束・返信だけ・閉じる番は null", promiseAixFromContract({ asks: [{ route: "promise", answer: "ご条件でピックアップしお送り" }] }) === null && promiseAixFromContract({ asks: [{ route: "reply" }] }) === null && promiseAixFromContract({ close_only: true, asks: [{ route: "promise", aix: "estimate_sheet" }] }) === null);
+}
+{
+  // 2026-10-18 弱い所B（q174）: 内覧誤提案ガードの差し替え先
+  const g = guardViewingKeepSearchPromise;
+  const q174 = { asks: [{ route: "reply", aix: "viewing_invite", about: "viewing_day" }, { route: "promise", about: "search_condition", polarity: "add", answer: "駅近の候補を探してお送り" }] };
+  t("q174: 他の候補を探す約束がある → 申込へにしない", g(q174, {}) === true);
+  t("約束の中身が「ピックアップ」（about なし）も", g({ asks: [{ route: "promise", answer: "他の候補をピックアップしお送り" }] }, {}) === true);
+  t("内覧の希望だけ・確認の約束だけ → 今まで通り申込へ", g({ asks: [{ route: "aix", aix: "viewing_invite" }] }, {}) === false && g({ asks: [{ route: "promise", answer: "募集状況を確認" }] }, {}) === false);
+  t("止めれば旧", g(q174, { GUARD_VIEWING_KEEP_SEARCH_PROMISE: "off" }) === false);
 }
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

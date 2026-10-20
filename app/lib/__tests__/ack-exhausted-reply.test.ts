@@ -1,6 +1,6 @@
 // 竹内さんの決定 10/14（約束の直後のお礼・了承＝返信／出し切りの後の条件の足し＝返信で締める）の純関数のテスト
 // 実行: npx tsx app/lib/__tests__/ack-exhausted-reply.test.ts
-import { exhaustedConditionAddTurn, ackAfterPromiseDirection, ackAfterPromiseReplyEnabled, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, ackAfterPromiseBrainEnabled, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled } from "../ack-exhausted-reply";
+import { exhaustedConditionAddTurn, ackAfterPromiseDirection, ackAfterPromiseReplyEnabled, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, ackAfterPromiseBrainEnabled, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise } from "../ack-exhausted-reply";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -71,6 +71,24 @@ it("出し切りの後の条件の足しのブレイン基準（既定 on・off 
   eq(exhaustedConditionAxisEnabled({}), true);
   eq(/ゆるめた/.test(exhaustedConditionTurnLine({})) && /予算オーバー/.test(exhaustedConditionMaterial({})), true);
   eq(/ゆるめた/.test(exhaustedConditionTurnLine({ EXHAUSTED_CONDITION_AXIS: "off" })), false);
+});
+it("2026-10-18 q170: 送付だけの印でブレインが足した条件で探す約束を選んだ番は返信に書き換えない", () => {
+  const ON = { EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE: "on" };
+  const k = (o: Parameters<typeof exhaustedWeakKeepBrainPromise>[0]) => exhaustedWeakKeepBrainPromise({ ...o, env: o.env && Object.keys(o.env).length ? o.env : ON });
+  // 2026-10-20 確かめる人: 既定は off（q006・q007 の悪化）
+  eq(exhaustedWeakKeepBrainPromise({ strength: "weak", asks: [{ route: "promise", about: "search_condition" }], env: {} }), false, "既定 off");
+  const asks = [{ route: "promise", about: "search_condition" }];
+  eq(k({ strength: "weak", asks, env: {} }), true, "weak");
+  eq(k({ strength: "strong", asks, env: {} }), false, "strong は決定 10/14 のまま");
+  eq(k({ strength: "weak", asks: [{ route: "reply", about: "search_condition" }], env: {} }), false, "返信を選んだ");
+  eq(k({ strength: "weak", asks, env: { EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE: "off" } }), false, "off");
+  // turn_contract を出さなかった番は方向で（10/18 試験 q170 の1回）
+  eq(k({ strength: "weak", asks: [], brainText: "浴槽の広い物件を条件に加えて再ピックアップする旨を伝える", env: {} }), true, "方向で");
+  eq(k({ strength: "weak", asks: [], brainText: "浴槽広めも含め新着を随時確認し、新着が出次第お送りする", env: {} }), false, "新着待ちの方向");
+  // 10/18 確かめる人: 自由文の揺れ（お客様の「お探しの条件」・新着の後に探す）は約束と読まない
+  eq(k({ strength: "weak", asks: [], brainText: "お客様がお探しの条件にお風呂の広さを追加したことを受け止める", env: {} }), false, "お探しの条件は約束ではない");
+  eq(k({ strength: "weak", asks: [], brainText: "新着物件が出たら探してお送りすると伝え締める", env: {} }), false, "新着の後に探すは約束ではない");
+  eq(k({ strength: "weak", asks: [], brainText: "お風呂の広い物件を改めてお調べしてお送りする", env: {} }), true, "改めてお調べ");
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

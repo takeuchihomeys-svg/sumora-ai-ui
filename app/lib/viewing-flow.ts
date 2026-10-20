@@ -33,6 +33,7 @@ import { parseCandidateSlots } from "./viewing-hold";
 import { jstParts } from "./jst-date";
 import { findStaffViewingDeclaration } from "./viewing-premature";
 import { CUSTOMER_VIEWING_WISH_RE, STAFF_VIEWING_DONE_RE, STAFF_VIEWING_PROPOSAL_RE, MEDIA_RE } from "./viewing-thread";
+import { isOtherAgentViewingApplyQuestion } from "./other-agent-viewing";
 
 export type ViewingFlowStage = "none" | "wished" | "proposing" | "date_agreed" | "confirmed" | "done";
 /** 候補日を出した後（または内覧の希望と一緒）のお客様の日にちの返事の形 */
@@ -113,6 +114,8 @@ const WISH_NEGATE_RE = /まだ|考えてない|考えていません|後で|い�
 export function customerWishes(text: string): boolean {
   const hit = nfkc(text).split(/\n|(?<=[。！!？?])/).some((x) => (CUSTOMER_VIEWING_WISH_RE.test(x) || WISH_FORM_RE.test(x)) && !WISH_NEGATE_RE.test(x) && !CANCEL_RE.test(x));
   if (!hit) return false;
+  // 2026-10-18 弱い所B（q166）: 他社で内覧する物件を弊社で申込めるかの問いは弊社への内覧の希望ではない。戻す OTHER_AGENT_VIEWING=off
+  if (isOtherAgentViewingApplyQuestion(text)) return false;
   // 6巡目（10/07）: 条件付き・仮定の内覧（「もしその間に埋まらなければ\n内見させて頂きたいです」「管理人さん次第でまた内覧いきたい」
   //   「もし内見したい場合はLINEでお伝えして大丈夫ですか？」「空きましたら内覧お願い致します」）は今の希望ではない。
   //   YUMA の再生（r6-vnow）でブレインが段階 wished を読んで AIX【内覧調整】を出し、スタッフは受けるだけ・質問に答えるだけだった（4番中4番）。

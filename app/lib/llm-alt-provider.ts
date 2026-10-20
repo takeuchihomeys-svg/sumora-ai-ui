@@ -283,7 +283,42 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
 
 /** この名前の呼び出しを実際に受ける相手（名前ごとの振り分けがあればそれ・無ければ主） */
 export function targetConfigFor(cfg: AltProviderConfig, routeName: string | null): AltProviderConfig {
-  return (routeName && cfg.routes?.get(routeName)) || cfg;
+  const base = (routeName && cfg.routes?.get(routeName)) || cfg;
+  // 2026-10-18 試験だけ（flash の書く役の調べ）: 名札ごとの DeepSeek のモデル。テスト用の切り替え（testMode）の時だけ効く＝本番は今まで通り
+  const ov = cfg.testMode && base.provider === "deepseek" ? testDeepseekModelOverride(process.env, routeName) : null;
+  return ov && ov !== base.model ? { ...base, model: ov } : base;
+}
+
+/**
+ * 2026-10-18 竹内さん「flash の特徴に合わせていないのが原因では」を確かめる道具（試験だけ）:
+ *   LLM_TEST_DS_MODEL_BY_ACTION="reply_generate=deepseek-flash,final_check_*=deepseek-flash" … 書いた名札だけ DeepSeek のモデルを替える（末尾 * は前方一致）。
+ *   ブレインは既定（pro）のまま＝録音の再生で同じ判断に固定し、下書きを書く役だけを flash と pro で比べる。
+ *   テスト用の切り替え（LLM_TEST_MODE＝本番では必ず無い）の時だけ読む。本番の既定は変えない。
+ */
+export function testDeepseekModelOverride(env: EnvLike, routeName: string | null): string | null {
+  const raw = (env.LLM_TEST_DS_MODEL_BY_ACTION ?? "").trim();
+  if (!raw || !routeName || !readTestMode(env)) return null;
+  for (const part of raw.split(",")) {
+    const [k, v] = part.split("=").map((x) => (x ?? "").trim());
+    if (!k || !v) continue;
+    if (k.endsWith("*") ? routeName.startsWith(k.slice(0, -1)) : routeName === k) return v;
+  }
+  return null;
+}
+
+/**
+ * この名札が DeepSeek に回る時のモデル名（回らない・DeepSeek 以外なら null）。
+ * 2026-10-18 書く役を flash に合わせる直し（generate-reply の flash-writer）が「今の書く役は flash か」を見るのに使う。
+ */
+export function altDeepseekModelFor(action: string, opts: { postApply?: boolean; autoSend?: boolean } = {}, env: EnvLike = process.env): string | null {
+  if (opts.postApply) return null;
+  const cfg = readAltConfig(env);
+  if (!cfg) return null;
+  if (opts.autoSend && !cfg.allowAutoSend) return null;
+  const route = resolveRouteName(action, null);
+  if (!shouldRouteAlt(cfg, route)) return null;
+  const t = targetConfigFor(cfg, route);
+  return t.provider === "deepseek" ? t.model : null;
 }
 
 /**

@@ -154,7 +154,7 @@ import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
-import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled } from "@/app/lib/ack-exhausted-reply";
+import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
 import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
@@ -2742,7 +2742,9 @@ ${catalogBlockForBrain(brainScene)}
       if (searchSplitServerEnabled()) splitExhaustLine = line ? `${line}${exhaustedConditionMaterial()}` : line;
       // 2026-10-14 出し切りの後の条件の足しをブレイン基準に（EXHAUSTED_CONDITION_BRAIN）: 今の番の行で材料を渡す（後の規則と同じ印の強さだけ）
       if (exhaustedConditionBrainEnabled() && exNow.exhausted && !(exNow.strength === "weak" && weakExhaustDemoted())) {
-        const tl = exhaustedConditionTurnLine();
+        // 2026-10-18 弱い所B（q170）: 送付だけの印（weak）の番に「出し切った印がある＝返信で締める」と言い切る行を渡すと、材料の1行（出し切りとは限らない）と食い違い、
+        //   最初の送付への最初の懸念（お風呂が狭い）までブレイン自身が「新着が出次第」で締めた。weak は弱い形の行（足した条件でまだ探していない・会話から決める）。戻す EXHAUSTED_WEAK_TURN_LINE=off
+        const tl = exNow.strength === "weak" ? exhaustedConditionWeakTurnLine() : exhaustedConditionTurnLine();
         if (tl) customerStateBlockText += `\n\n${tl}`;
       }
     } catch (e) { console.warn("[brain-core] exhausted material skipped:", e instanceof Error ? e.message : String(e)); }
@@ -3417,8 +3419,14 @@ ${history}`;
         // 2026-09-15 竹内（隼斗事例）: 退去予定の話の後にスタッフが内覧を案内した（「本日ご内覧如何でしょうか 17:30〜18:30」）後の
         //   お客様の日程の返事（「18日はどうでしょうか？」）まで申込へに差し替えていた。実データ（120日）では スタッフが 申込へ を押したのは
         //   その前にスタッフが先押さえを勧めた・退去前は内覧できないと伝えた回だけ → その時だけ差し替える（move-out-context moveOutBlocksViewing）
-        finalAix = "application_push";
-        decisionSource = "guard:viewing";
+        // 2026-10-18 弱い所B（q174「広くて綺麗！一旦見てみたい・場所が少し遠い・他にも候補を」・10月末退去予定）: 守る線は「見られない部屋の内覧の誘いを出さない」だけ。
+        //   申込へに差し替えるのは判断（申込の熱）で、ブレイン自身が同じ番で他の候補を探す約束（route=promise・about=search_condition）を選んでいる時は
+        //   申込の熱ではない（懸念＋他の候補の依頼）＝ブレインの約束（物件のピックアップ）の道に戻す（設計知見 9eb6aa9c P0）。戻す GUARD_VIEWING_KEEP_SEARCH_PROMISE=off
+        const { guardViewingKeepSearchPromise } = await import("@/app/lib/brain-route-keep");
+        const searchPromise = guardViewingKeepSearchPromise((parsed as { turn_contract?: unknown }).turn_contract);
+        if (searchPromise) console.log(JSON.stringify({ tag: "brain:guard-viewing-search-promise", conversationId }));
+        finalAix = searchPromise ? "property_send" : "application_push";
+        decisionSource = searchPromise ? "guard:viewing(search_promise)" : "guard:viewing";
       }
     }
     // Quality gate: suppress AIX suggestions with < 30% acceptance rate over 10+ samples.
@@ -4868,7 +4876,20 @@ ${history}`;
         addDemoted(demotedOverrides, { family: "search_exhausted", src: "rule:exhausted_condition_reply", would: null, brain: normalizeAixActionKey(parsed.aix) ?? null });
         console.log(JSON.stringify({ tag: "brain:exhausted-condition-brain-aix", conversationId, llm: normalizeAixActionKey(parsed.aix) ?? null, cct: conditionChangeType }));
       }
-      if (exhCondTurn && !(exhaustedConditionBrainEnabled() && llmRawPropertyAix)) {
+      // 2026-10-18 弱い所B（q170「お風呂が狭いと赤ちゃんのお風呂が難しい」・最初の物件の送付への最初の反応）: 送付だけの印（weak）は材料で
+      //   「出し切りとは限らない・会話から読んで決める」と渡している。ブレイン自身が足した条件で探す約束（turn_contract の route=promise・about=search_condition）を
+      //   選んだ番は、規則で「新着が出次第」の返信に書き換えない（設計知見 9eb6aa9c P0「判断はすべてブレイン基準」・食い違いは記録）。
+      //   明示の印（strong＝「全てピックアップ」・新着待ちの約束・全力サポート）は今まで通り。戻す EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE=off
+      const brainPromiseKept = exhCondTurn && exhaustedConditionBrainEnabled() && exhaustedWeakKeepBrainPromise({
+        strength: exh.strength ?? null,
+        asks: (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: string | null; about?: string | null; polarity?: string | null }>,
+        brainText: [String((parsed as { reply_direction?: unknown }).reply_direction ?? ""), ...(((parsed as { key_topics?: unknown }).key_topics as unknown[] | undefined) ?? []).map(String)].join(" "),
+      });
+      if (brainPromiseKept) {
+        addDemoted(demotedOverrides, { family: "search_exhausted", src: "rule:exhausted_condition_reply(weak)", would: null, brain: twoStagePickupNow ? "two_stage:pickup" : "promise" });
+        console.log(JSON.stringify({ tag: "brain:exhausted-condition-brain-promise", conversationId, cct: conditionChangeType, markerAt: exh.markerAt }));
+      }
+      if (exhCondTurn && !brainPromiseKept && !(exhaustedConditionBrainEnabled() && llmRawPropertyAix)) {
         console.log(JSON.stringify({ tag: "brain:exhausted-condition-reply", conversationId, from: finalAix ?? (twoStagePickupNow ? "two_stage:pickup" : null), cct: conditionChangeType, markerAt: exh.markerAt }));
         exhaustedConditionReply = true;
         finalAix = null; twoStage = null; replyMode = "auto_reply"; sceneSignalCheckPattern = null;

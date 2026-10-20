@@ -40,6 +40,7 @@ import { extractCircumstances, validCircumstances, circumstanceDelaysViewing, on
 import { propertyAppealFitEnabled, readAppealReaction, resolvePropertyAppealFit, type AppealFit } from "./property-appeal-fit";
 import { decideGapEnabled, decideSignalOf, readDecideGapsInTurn } from "./customer-mindset";
 import { headOfFirstMessage, type PickupAppealRow } from "./recommend-cta";
+import { isOtherAgentViewingApplyQuestion } from "./other-agent-viewing";
 
 /* ───────────── 検出（実送信の文から訴求を読む・監査とテストが同じ関数を使う） ───────────── */
 
@@ -494,7 +495,8 @@ export function buildAppealInput(o: {
   else if (ck === "decline") customer = "decline";
   else if (ck === "concern") customer = "concern";
   else if (ck === "condition_change") customer = "condition_change";
-  else if (CUSTOMER_VIEWING_WISH_RE.test(turnText) && !VIEWING_CANCEL_RE.test(turnText) && (ck === "positive" || ck === "question" || ck === "other" || ck === "answer")) customer = "viewing_wish";
+  // 2026-10-18 弱い所B（q166）: 他社で内覧する物件を弊社で申込めるかの問いは内覧の希望ではない。戻す OTHER_AGENT_VIEWING=off
+  else if (CUSTOMER_VIEWING_WISH_RE.test(turnText) && !VIEWING_CANCEL_RE.test(turnText) && !isOtherAgentViewingApplyQuestion(turnText) && (ck === "positive" || ck === "question" || ck === "other" || ck === "answer")) customer = "viewing_wish";
   else if (ck === "positive" || (CUSTOMER_APPRAISAL_RE.test(turnText) && (ck === "ack_only" || ck === "other" || ck === "answer"))) customer = "positive";
   else if (ck === "thinking") customer = "thinking";
   else if (ck === "ack_only") customer = "ack";

@@ -37,6 +37,19 @@ export function tcLeadAix(topAix: string | null | undefined, tc: unknown, normal
  *   2段（約束の返信＋後で AIX）の印が立たず、ただの返信の番になっていた（約束の後の AIX【物件確認した】【見積書送る】が出ない）。
  *   最後の aix が null で、約束の依頼が確認・見積の時だけ、2段の判定（resolveTwoStage）に渡す AIX をその約束から作る（finalAix は変えない）。戻す BRAIN_TC_PROMISE_TWO_STAGE=off
  */
+/**
+ * 2026-10-18 弱い所B（q174）: 内覧誤提案ガード（退去予定・先押さえの話の後）が内覧調整を申込へに差し替える前に、
+ *   ブレイン自身が同じ番で「他の候補を探してお送りする」約束（route=promise・about=search_condition、または約束の中身が探す・ピックアップ・他の候補）を選んでいるかを見る（純関数）。
+ *   選んでいれば申込の熱ではない（懸念＋他の候補の依頼）＝差し替え先はブレインの約束（物件のピックアップ→2段の約束）。戻す GUARD_VIEWING_KEEP_SEARCH_PROMISE=off
+ */
+export function guardViewingKeepSearchPromise(tc: unknown, env: Record<string, string | undefined> = process.env): boolean {
+  if ((env.GUARD_VIEWING_KEEP_SEARCH_PROMISE ?? "").trim().toLowerCase() === "off") return false;
+  if (!tc || typeof tc !== "object") return false;
+  const asks = (tc as { asks?: Array<{ route?: unknown; about?: unknown; answer?: unknown; polarity?: unknown }> }).asks;
+  return (Array.isArray(asks) ? asks : []).some((a) => a?.route === "promise"
+    && (a?.about === "search_condition" || /他(?:の|に)?(?:候補|物件|お部屋)|新たに|ピックアップ|探し|探す|お探し/.test(String(a?.answer ?? ""))));
+}
+
 export function tcPromiseTwoStageEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.BRAIN_TC_PROMISE_TWO_STAGE ?? "").trim().toLowerCase() !== "off";
 }

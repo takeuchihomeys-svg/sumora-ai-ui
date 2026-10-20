@@ -11,6 +11,7 @@
 //   置き場所: ブレインの材料の「毎回変わる並び」（judgeExamplesText の隣・キャッシュの印の無い所）＝system と会話専用ブロックのキャッシュは変えない。
 // 既定 off（試験で下がる側・routeTypeMaterialEnabled の注記）。入れる: BRAIN_ROUTE_TYPE_MATERIAL=on／手本だけ外す BRAIN_ROUTE_TYPE_EXAMPLES=off
 import { contentSim, textFingerprint, textSim } from "./brain-judge-examples";
+import { isOtherAgentViewingApplyQuestion } from "./other-agent-viewing";
 
 export type RouteType =
   | "arrived" | "late" | "postpone_cancel" | "phone_arrange" | "time_change" | "considering" | "decided_elsewhere"
@@ -77,6 +78,8 @@ export function routeTypeOf(i: { customerText: string | null | undefined; prevSt
   if (/申込(?:み)?(?:たい|します|お願い|進め|させて)|申し込(?:みたい|みます|んで(?:も|ください|ほし)|みをお願い|みさせて)|審査(?:を)?(?:出して|かけて|お願い)|(?:抑え|押さえ)(?:たい|てほし|て欲し|てください)|ここにします|で決めよう|で決めます/.test(c)
     && !/いつ(?:頃|ごろ|まで|から)?|何日前|までに|どのくらい/.test(c)) return "apply_intent";
   if (/交渉|値下|下げ(?:て|られ|る)|安く(?:なり|でき|して)|フリーレント/.test(c)) return "negotiation";
+  // 2026-10-18 弱い所B（q166）: 他社で内覧する物件を弊社で申込めるかは会社の事実で答える問い（内覧の希望ではない）。戻す OTHER_AGENT_VIEWING=off
+  if (isOtherAgentViewingApplyQuestion(c)) return "other_question";
   if (Q.test(c) && /募集(?:して|中)|空いて|空き|まだ(?:あり|ある|残)|埋ま|内[覧見](?:でき|出来|可能|は)/.test(c)) return "vacancy_question";
   if (Q.test(c) && /保証会社|保証人|審査|通り(?:ます|そう)|年収|勤続|学生|未成年|ブラック|夜職|滞納/.test(c)) return "screening_question";
   if (Q.test(c) && /円|費用|初期|家賃|管理費|共益費|敷金|礼金|保証料|仲介|手数料|駐車場/.test(c)) return "cost_question";

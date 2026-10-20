@@ -23,6 +23,7 @@ import { isRoomPhotoRequest } from "./room-photo-request";
 import { detectProcedureQuestion, isProcedureReplyQuestion, PROCEDURE_FACTS } from "./procedure-question";
 import { isRentIncludedQuestion, RENT_INCLUDED_FACT } from "./rent-included-question";
 import { customerAsksStaffCallTime } from "./phone-call";
+import { isOtherAgentViewingApplyQuestion } from "./other-agent-viewing";
 
 export type CompanyFact = {
   id: string;
@@ -475,9 +476,12 @@ export const COMPANY_FACTS: CompanyFact[] = [
   {
     id: "other_company_viewing",
     // 51e312c7（10/0x）: 他社で内覧した物件を聞かれ、人は「弊社でお申込みしてお部屋を抑えられる・弊社でも内覧できる」を足した（下書きは確認の約束）
-    ask: (t) => process.env.COMPANY_FACT_1014 !== "off" && /(?:他(?:社|の(?:不動産|会社|業者))|別の(?:不動産|会社)|違う(?:不動産|会社))[^。\n]{0,24}(?:内覧|内見|見学|見た|見に|案内|申込|申し込)|(?:内覧|内見|見学)[^。\n]{0,16}(?:他(?:社|の不動産)|別の不動産|違う不動産)/.test(t),
-    n: 1,
-    fact: "**他社で内覧した物件でも、弊社でお申込みしてお部屋を抑えられる**（可能・確認の約束にしない）。**弊社でもご内覧できる**（ご希望なら弊社でご案内）。",
+    // 2026-10-18 弱い所B（q166 a3cc571e「スーモに乗せていた / 不動産屋さんに依頼して / 内覧予定… / こちらでお願いとかもできますか？」）:
+    //   旧の網は「他社・別の不動産」の語だけで改行で窓が切れ当たらなかった → other-agent-viewing の読み（他社の話＋内覧＋こちらで申込めるかの問い）も足す。戻す OTHER_AGENT_VIEWING=off
+    ask: (t) => process.env.COMPANY_FACT_1014 !== "off" && (/(?:他(?:社|の(?:不動産|会社|業者))|別の(?:不動産|会社)|違う(?:不動産|会社))[^。\n]{0,24}(?:内覧|内見|見学|見た|見に|案内|申込|申し込)|(?:内覧|内見|見学)[^。\n]{0,16}(?:他(?:社|の不動産)|別の不動産|違う不動産)/.test(t) || isOtherAgentViewingApplyQuestion(t)),
+    n: 2,
+    // 2026-10-18: 他社で内覧する話は弊社への内覧の希望ではない（ブレインが内覧日の調整に倒れた・q166）＝その線も事実に足す
+    fact: "**他社で内覧した（する）物件でも、弊社でお申込みしてお部屋を抑えられる**（可能・確認の約束にしない・その場で答える）。**弊社でもご内覧できる**（ご希望なら弊社でご案内）。他社で内覧する予定の話は弊社への内覧の希望ではない（内覧の日程を決める話ではない）。ただしお客様が弊社での内覧を頼んでいる時（「こちらでも内覧お願いできますか」）は内覧の希望。",
   },
   {
     id: "student_contract",
