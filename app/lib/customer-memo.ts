@@ -274,7 +274,8 @@ export function buildMemoLlmUser(i: { memo: StoredMemo; nowMs: number; msgs: Rea
 }
 
 /** DeepSeek に渡す通を作る（純関数）: 書類・個人の値の通は落とし、名前と番号は伏せる。画像の書き起こし・URL は短く */
-export function memoLlmMessages(msgs: ReadonlyArray<MemoMsg>, names: ReadonlyArray<string | null | undefined>): MemoMsg[] {
+/** 2026-10-20 決定 209b9a92: mask を渡すと名前の伏せはそれで行う（DeepSeek の経路で当事者の呼び名・登録名・他のお客様の呼び名も伏せる・maskPIIForAlt）。無ければ今まで通り maskPII(names) */
+export function memoLlmMessages(msgs: ReadonlyArray<MemoMsg>, names: ReadonlyArray<string | null | undefined>, mask?: (s: string) => string): MemoMsg[] {
   const out: MemoMsg[] = [];
   for (const m of msgs) {
     const t = String(m.text ?? "");
@@ -287,7 +288,7 @@ export function memoLlmMessages(msgs: ReadonlyArray<MemoMsg>, names: ReadonlyArr
     if (m.sender !== "customer" && /🌟/.test(s)) s = s.split("\n").filter((l) => /🌟/.test(l)).join(" ").slice(0, 120) + "（物件オススメの資料）";
     // 2026-10-08 dry-run: maskPII の敬称の型が「スモラさん」を「お客様」に替え、「今回はスモラさんで契約を進める」を「お客様で契約＝見送り」と読み違えた → 会社名は先に（弊社）へ
     s = s.replace(/(スモラ|イエヤス|ギガ賃貸)\s*(?:さん|様|さま)/g, "$1（弊社）");
-    out.push({ ...m, text: maskPII(s, names as string[]) });
+    out.push({ ...m, text: mask ? mask(s) : maskPII(s, names as string[]) });
   }
   return out;
 }

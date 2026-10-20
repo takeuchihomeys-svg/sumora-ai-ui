@@ -13,6 +13,8 @@ import { supabase } from "@/app/lib/supabase";
 import { isPostApplyStatus } from "@/app/lib/llm-alt-provider";
 import { loadDeepseekCutoff, filterAfterCutoff } from "@/app/lib/post-apply";
 import { applicationMaterialReason } from "@/app/lib/test-pii-guard";
+import { maskPIIForAlt } from "@/app/lib/pii-mask";
+import { loadAltNameMask } from "@/app/lib/pii-known-names";
 import {
   EMPTY_MEMO, CUSTOMER_MEMO_VERSION, MEMO_LLM_SYSTEM, applyMemoOps, buildCustomerMemoNote, buildMemoLlmUser, customerMemoEnabled, memoViewRows,
   memoLlmMessages, mdOf, parseMemoLlmOutput, resolveOpSources, summarizeTold, toldRuleId, type MemoKind, type MemoMsg, type MemoOp, type MemoViewRow, type StoredMemo,
@@ -265,7 +267,9 @@ export async function refreshCustomerMemoLlm(conversationId: string): Promise<{ 
     if (!msgs.some((m) => m.sender === "customer")) return { called: false, applied: 0, reason: "no_new_customer_msg" };
     msgs = msgs.slice(-MEMO_LLM_MAX_MSGS);
     const lastAt = msgs[msgs.length - 1].createdAt;
-    const sendMsgs = memoLlmMessages(msgs, [c.customer_name]);
+    // 2026-10-20 決定 209b9a92: ここは必ず DeepSeek。表示名だけでなく、当事者の呼び名・登録名・他のお客様の呼び名も伏せる
+    const altMask = await loadAltNameMask(conversationId, [c.customer_name]);
+    const sendMsgs = memoLlmMessages(msgs, [c.customer_name], (s) => maskPIIForAlt(s, altMask));
     if (!sendMsgs.some((m) => m.sender === "customer")) {
       await saveCustomerMemo(conversationId, { ...memo, llmWatermark: lastAt });
       return { called: false, applied: 0, reason: "only_documents" };

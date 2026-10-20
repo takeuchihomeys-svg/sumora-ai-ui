@@ -1,7 +1,8 @@
 // app/lib/brain-researcher-server.ts（サーバー専用・DB は読むだけ・DeepSeek 1回）— 調べる係（brain-researcher.ts の決まりで呼ぶ）
 //   DeepSeek に渡すのはお客様の今の連投の文（maskPII・個人の値があれば渡さない）だけ。記録の読み取りはコード。材料は記録の行そのまま。
 import { supabase } from "@/app/lib/supabase";
-import { maskPII } from "@/app/lib/pii-mask";
+import { maskPIIForAlt } from "@/app/lib/pii-mask";
+import { loadAltNameMask } from "@/app/lib/pii-known-names";
 import { altPiiSignal } from "@/app/lib/alt-pii-gate";
 import { loadDeepseekCutoff } from "@/app/lib/post-apply";
 import { customerSharedPropertyNames } from "@/app/lib/customer-property-names";
@@ -58,7 +59,8 @@ export async function researchVagueReference(o: { conversationId: string; custom
   // 申込以降・申込中（線が null）は DeepSeek に出さない
   const cutoff = await loadDeepseekCutoff(supabase as never, o.conversationId);
   if (cutoff === null) return skip("post_apply");
-  const masked = maskPII(o.customerText, [o.customerName ?? null]);
+  // 2026-10-20 決定 209b9a92: 表示名だけでなく、当事者の呼び名・登録名・他のお客様の呼び名も伏せる（ここは必ず DeepSeek）
+  const masked = maskPIIForAlt(o.customerText, await loadAltNameMask(o.conversationId, [o.customerName ?? null]));
   if (altPiiSignal(masked)) return skip("pii");
   const budget = o.budgetMs ?? 8_000;
   try {

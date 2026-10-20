@@ -5,6 +5,7 @@
 //   見積書の画面にも監視する部分配置」
 //   返す物: ①見積書のお部屋（出所つき）と資料・家賃・AD ②割引の目安 ③見張りの板（お客様・今の段階・最近の発言・送った物・ブレインの判断・警告）
 import { supabase } from "@/app/lib/supabase";
+import { hasNameLetter } from "@/app/lib/call-name-pick";
 import { getCustomerState, loadCustomerStateInput } from "@/app/lib/customer-state-server";
 import { resolveCustomerState, type CustomerState } from "@/app/lib/customer-state";
 import { customerSharedPropertyNames } from "@/app/lib/customer-property-names";
@@ -66,10 +67,10 @@ async function customerStateAsOf(conversationId: string, asOf: string): Promise<
 export async function loadEstimateHandoff(conversationId: string, opts: { asOf?: string; pickupId?: number | null } = {}): Promise<EstimateHandoff | null> {
   const asOf = opts.asOf ?? null;
   const { data: conv } = await supabase.from("conversations")
-    .select("id, customer_name, account, property_customer_id, suggested_aix_meta")
+    .select("id, customer_name, call_name, account, property_customer_id, suggested_aix_meta")
     .eq("id", conversationId).maybeSingle();
   if (!conv) return null;
-  const c = conv as { id: string; customer_name: string | null; account: string | null; property_customer_id: string | null; suggested_aix_meta: Record<string, unknown> | null };
+  const c = conv as { id: string; customer_name: string | null; call_name?: string | null; account: string | null; property_customer_id: string | null; suggested_aix_meta: Record<string, unknown> | null };
   const pcId = c.property_customer_id;
   const since = new Date((asOf ? new Date(asOf).getTime() : Date.now()) - DAYS * 86400e3).toISOString();
 
@@ -152,7 +153,9 @@ export async function loadEstimateHandoff(conversationId: string, opts: { asOf?:
 
   return {
     conversationId,
-    customerName: (c.customer_name ?? cust?.customer_name ?? "").trim(),
+    // 2026-10-20 竹内さん（P1 979a4c55・ayaka→🎀）: 見積書の名前に絵文字・記号だけの LINE の表示名（🎀様）を入れない。
+    //   固定の呼び名 → 表示名（名前の字がある時）→ 顧客管理の名前（名前の字がある時）→ ""（スタッフが入れる）
+    customerName: [c.call_name, c.customer_name, cust?.customer_name].map((x) => (x ?? "").trim()).find((x) => hasNameLetter(x)) ?? "",
     account,
     choice,
     discount,

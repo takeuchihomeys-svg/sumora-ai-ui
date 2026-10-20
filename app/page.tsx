@@ -23,12 +23,14 @@ import TemplateModal, { type Template as CachedTemplate } from "./components/Tem
 import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage, PRE_APPLY_STATUSES } from "./lib/application-form-detect";
 import { detectPlaceholders, canonOf } from "./lib/validate-reply";
+import { pickCallName, sanOf } from "./lib/call-name-pick";
 // 2026-09-18: 下書き→送る文の整形は画面と自動返信で同じ関数を使う（app/lib/draft-text.ts）
 import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraftSentinel } from "./lib/draft-text";
 // 2026-10-08 竹内（未桜）「AI返信案がセットされていない事も多い」: 表示済みにした下書きの本文を DB に控え、別の端末・読み込み直しでも戻す
 import { decideShownDraftRestore, shownDraftUpdate, shownDraftRestoreEnabled } from "./lib/shown-draft-restore";
 import { latestCustomerAtOf, newerCustomerMessageSince, nextComposerBase, staleGuardEnabled, ackExemptEnabled, STALE_REPLY_ERROR_CODE } from "./lib/stale-reply";
 import { isCustomerEcho, draftEchoGuardEnabled } from "./lib/draft-echo";
+import { decideForeignSendDraft, foreignSendClearEnabled } from "./lib/foreign-send-draft";
 import { refreshDraftGreetingForNow, draftGreetingRefreshEnabled } from "./lib/time-greeting";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
@@ -39,7 +41,7 @@ import { resolveTemplateSentMessage } from "./lib/aix-template-source";
 import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
-import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
+import { sendBlockedMessage, isMultiPersonTarget, isGroupConversationName } from "./lib/line-target";
 import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
 import { morningGreetingCardDue, morningGreetingCardNote } from "./lib/viewing-day-greeting";
 import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA, ABOUT_JA as REQUEST_ABOUT_JA } from "./lib/request-ledger";
@@ -77,7 +79,7 @@ import { jstYmd } from "./lib/jst-date";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 import { effectiveRpUpdateDays } from "./lib/rp-update-days";
-import { parsePickupAixHandoff, planPickupMarkSent, type PickupAixType } from "./lib/pickup-aix-handoff";
+import { parsePickupAixHandoff, planPickupMarkSent, handoffAccountMismatch, type PickupAixType } from "./lib/pickup-aix-handoff";
 // 2026-10-01 竹内「見積書きかれたら LINE のところに見積書のがでて押したら見積書のツールのところに連携」
 import { buildEstimateHref, parseEstimateReturn, wantsLowInitialCostText } from "./lib/estimate-handoff";
 import { imageUrlsInRankOrder } from "./lib/sent-image-order";
@@ -105,6 +107,8 @@ const STALE_REPLY_GUARD = staleGuardEnabled(process.env.NEXT_PUBLIC_STALE_REPLY_
 const STALE_ACK_EXEMPT = ackExemptEnabled(process.env.NEXT_PUBLIC_STALE_ACK_EXEMPT);
 // 2026-10-20 竹内さん（設計知見 P1 d3fe3a9f）: お客様の文と同じ（ほぼ同じ）下書きは入力欄に入れない（draft-echo.ts）。戻す NEXT_PUBLIC_DRAFT_ECHO_GUARD=off
 const DRAFT_ECHO_GUARD = draftEchoGuardEnabled(process.env.NEXT_PUBLIC_DRAFT_ECHO_GUARD);
+// 2026-10-20 竹内さん（12:42「文を送ったのにまだ下書きに同じのが出ている」）: 別の画面がこの会話に送ったら、この画面の入力欄の古い下書きを空にする（foreign-send-draft.ts）。戻す NEXT_PUBLIC_FOREIGN_SEND_CLEAR=off
+const FOREIGN_SEND_CLEAR = foreignSendClearEnabled(process.env.NEXT_PUBLIC_FOREIGN_SEND_CLEAR);
 /** 下書きと比べるお客様の文: 最後のスタッフの発言より後の通（未返信）＋一番新しいお客様の通 */
 function customerTextsForEcho(msgs: ReadonlyArray<{ sender: string; text?: string | null }>): string[] {
   const lastStaff = msgs.map((m, i) => (m.sender === "staff" ? i : -1)).filter((i) => i >= 0).at(-1);
@@ -122,11 +126,12 @@ const DRAFT_GREETING_REQUIRED = draftGreetingRefreshEnabled(process.env.NEXT_PUB
 //   「今日まだ送っていない」と決めて「〇〇さんお世話になっております！！」を足していた。足す向きは DB の今日のこちらの送信（手打ち・AIX・予約・グループ経由）で決める。
 //   戻す: NEXT_PUBLIC_DRAFT_GREETING_DB=off（旧＝手元の一覧だけで足す）
 const DRAFT_GREETING_DB = draftGreetingRefreshEnabled(process.env.NEXT_PUBLIC_DRAFT_GREETING_DB);
-function refreshDraftGreeting(text: string, conv: { messages?: Message[]; customerName?: string }): string {
+function refreshDraftGreeting(text: string, conv: { messages?: Message[]; customerName?: string; callName?: string | null }): string {
   if (!DRAFT_GREETING_REFRESH || !text) return text;
   const msgs = conv.messages || [];
   // 呼び名は生成の挨拶（resolveGreeting の canonOf）と同じ線で決める（「り」など1字は呼ばない）
-  const name = canonOf(extractPreferredName(msgs, conv.customerName || ""));
+  // 2026-10-20（P1 979a4c55）固定の呼び名を先に・絵文字だけの表示名は呼ばない（conversationCallName）
+  const name = canonOf(conversationCallName(conv));
   const r = refreshDraftGreetingForNow(text, { messages: msgs.map((m) => ({ sender: m.sender, text: m.text, rawCreatedAt: m.rawCreatedAt ?? null })), name: name ? `${name}さん` : "", ensureDaily: DRAFT_GREETING_REQUIRED, allowAdd: !DRAFT_GREETING_DB });
   if (r.fixes.length) console.log(JSON.stringify({ tag: "draft:greeting-refresh", fixes: r.fixes }));
   return r.text;
@@ -135,7 +140,7 @@ function refreshDraftGreeting(text: string, conv: { messages?: Message[]; custom
  * DB の今日（JST）のこちらの送信で、入力欄に出した下書きの挨拶を決め直す（足す・外す）。変わらない・読めない時は null（足さない＝安全側）。
  * 判定は refreshDraftGreetingForNow（staffTalkedToday＝会話文か挨拶の入った通）と同じ関数。
  */
-async function refreshDraftGreetingFromDb(text: string, convId: string, conv: { messages?: Message[]; customerName?: string }): Promise<string | null> {
+async function refreshDraftGreetingFromDb(text: string, convId: string, conv: { messages?: Message[]; customerName?: string; callName?: string | null }): Promise<string | null> {
   if (!DRAFT_GREETING_REFRESH || !DRAFT_GREETING_REQUIRED || !DRAFT_GREETING_DB || !text || !convId) return null;
   try {
     const now = Date.now();
@@ -144,7 +149,7 @@ async function refreshDraftGreetingFromDb(text: string, convId: string, conv: { 
     const { data, error } = await supabase.from("messages").select("sender,text,created_at").eq("conversation_id", convId)
       .eq("sender", "staff").gte("created_at", dayStartUtc).order("created_at", { ascending: false }).limit(200);
     if (error) return null;
-    const name = canonOf(extractPreferredName(conv.messages || [], conv.customerName || ""));
+    const name = canonOf(conversationCallName(conv));
     const r = refreshDraftGreetingForNow(text, {
       messages: ((data ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).map((m) => ({ sender: m.sender, text: m.text, rawCreatedAt: m.created_at })),
       name: name ? `${name}さん` : "", ensureDaily: true, allowAdd: true, now,
@@ -182,6 +187,8 @@ type Message = {
 type Conversation = {
   id: string;
   customerName: string;
+  /** 2026-10-20（P1 979a4c55）会話に固定した呼び名（conversations.call_name）。LINE の表示名が変わっても変わらない */
+  callName?: string | null;
   lastMessage: string;
   lastSender?: string;
   status: string;
@@ -207,6 +214,7 @@ type Conversation = {
 type SupabaseConversationRow = {
   id: string;
   customer_name: string | null;
+  call_name?: string | null;
   status: string | null;
   line_user_id: string;
   last_message?: string | null;
@@ -233,7 +241,7 @@ type SupabaseConversationRow = {
  *   （ブレインの内部の記録・画面では使わない）。
  * ⚠ 一覧で新しい列を使う時は**ここに足す**（足さないと undefined になる）。
  */
-const CONVERSATION_LIST_COLUMNS = "id,customer_name,status,line_user_id,last_message,last_sender,profile_image_url,updated_at,created_at,account,property_customer_id,is_post_apply,is_hot,is_flagged,ai_draft,draft_pending_at,has_viewed,auto_send_enabled,auto_sent_at,auto_sent_draft,success_pattern_at,loss_analyzed_at,draft_attempted_at,line_status,suggested_next_aix,draft_fail_count,draft_last_error,reply_mode_decision,suggested_aix_meta,brain_analyzed_at,learned_at,brain_full_analyzed_at,brain_full_msg_count,brain_deep_analyzed_at,brain_deep_msg_count,acquisition_source,applying_text_received,applying_image_received,screening_last_status,status_manual_back_at,auto_send_enabled_at,line_source_type,send_blocked_reason,call_tapped_at";
+const CONVERSATION_LIST_COLUMNS = "id,customer_name,status,line_user_id,last_message,last_sender,profile_image_url,updated_at,created_at,account,property_customer_id,is_post_apply,is_hot,is_flagged,ai_draft,draft_pending_at,has_viewed,auto_send_enabled,auto_sent_at,auto_sent_draft,success_pattern_at,loss_analyzed_at,draft_attempted_at,line_status,suggested_next_aix,draft_fail_count,draft_last_error,reply_mode_decision,suggested_aix_meta,brain_analyzed_at,learned_at,brain_full_analyzed_at,brain_full_msg_count,brain_deep_analyzed_at,brain_deep_msg_count,acquisition_source,applying_text_received,applying_image_received,screening_last_status,status_manual_back_at,auto_send_enabled_at,line_source_type,send_blocked_reason,call_tapped_at,call_name";
 
 // AI下書きから内部メタタグ（<<<STOP_REASON:...>>> / <<<SUGGESTED_AIX:{...}>>>）を除去する。
 // 2026-09-18: 実体は app/lib/draft-text.ts に移した（自動返信も同じ関数を使う＝画面に出ている文と送る文を必ず一致させる）
@@ -267,6 +275,18 @@ type SupabaseMessageRow = {
 // JST基準で今日の日付を YYYY-MM-DD で返す
 function getTodayJST(): string {
   return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * 2026-10-20 竹内さん（P1 979a4c55）「お客さんが LINE のアカウント名を🎀に変えてから呼び方も🎀さんに変わってしまった…最初呼んでいた名前で連絡する」:
+ *   画面の呼び名の唯一の入口。固定の呼び名（conversations.call_name）→ 会話でスタッフが呼んだ名前 → 表示名（絵文字の表示名も「🎀さん」＝2026-10-20 竹内さんの答え）→ ""。
+ *   数字だけ・空の表示名・グループの会話名は呼ばない
+ *   ピッカー（内覧誘導・物件成約した）・文の手直し・下書きの挨拶・AIX・テンプレートに渡す名前はここから取る（LINE の表示名をそのまま「〇〇さん」にしない）
+ */
+function conversationCallName(conv: { messages?: Array<{ sender: string; text?: string | null }>; customerName?: string | null; callName?: string | null }): string {
+  const isGroup = isGroupConversationName(conv.customerName);
+  const disp = isGroup ? "" : (conv.customerName || "");
+  return pickCallName({ stored: conv.callName ?? null, conversational: extractPreferredName(conv.messages || [], disp), display: disp });
 }
 
 // 会話履歴からスタッフが実際に使っていた呼び名を抽出（LINE表示名より優先）
@@ -770,6 +790,7 @@ function conversationRowToItem(conversation: SupabaseConversationRow, relatedMes
     status: conversation.status || "hearing",
     lineUserId: conversation.line_user_id,
     sendBlockedReason: conversation.send_blocked_reason ?? null,
+    callName: conversation.call_name ?? null,
     callTappedAt: conversation.call_tapped_at ?? null,
     profileImageUrl: conversation.profile_image_url || undefined,
     updatedAt: effectiveUpdatedAt,
@@ -1215,6 +1236,11 @@ export default function Home() {
   const genBaseAtRef = useRef<string | null>(null);
   /** スタッフが「このまま送る」を選んだ（新しい発言を見た上で送る）＝次の送信1回だけ知らせない */
   const allowStaleRef = useRef(false);
+  /** 2026-10-20 別の画面の送信（foreign-send-draft.ts）: この画面が最後にスタッフの通を DB に入れた時刻（自分の通を見分ける） */
+  const ownStaffInsertAtRef = useRef<number | null>(null);
+  const markOwnStaffInsert = () => { ownStaffInsertAtRef.current = Date.now(); };
+  /** Realtime の購読（最初の1回だけ張る）から最新の state で呼ぶため ref に入れる（中身は描画のたびに入れ替える） */
+  const handleForeignStaffSendRef = useRef<(text: string, at: string | null) => void>(() => {});
   const [staleSend, setStaleSend] = useState<{ newerText: string; newerAt: string; mode: "send" | "schedule" } | null>(null);
   const [partialCopyMessageId, setPartialCopyMessageId] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
@@ -2165,6 +2191,12 @@ export default function Home() {
             conversationsRef.current = next;
             return next;
           });
+
+          // 2026-10-20 竹内さん「文を送ったのにまだ下書きに同じのが出ている」: 別の画面（別のタブ・端末・スタッフ・自動送信）がこの会話に送った →
+          //   この画面の入力欄の下書きが「直していない AI の下書き」か「送った文とほぼ同じ」なら空にする（foreign-send-draft.ts）。戻す NEXT_PUBLIC_FOREIGN_SEND_CLEAR=off
+          if (FOREIGN_SEND_CLEAR && newMsg.sender === "staff" && String(newMsg.conversation_id) === selectedIdRef.current) {
+            handleForeignStaffSendRef.current(newMsg.text ?? "", newMsg.created_at);
+          }
 
           // 選択中の会話にお客様メッセージが届いた → 即ドラフト生成
           // （Effect1はid変更時のみ起動するためここで補完する）
@@ -3417,6 +3449,29 @@ export default function Home() {
   // 2026-10-08 表示済みの下書きの戻し（shown-draft-restore）: 読み込みの間に入力が始まっていたら上書きしない／✕ で消した会話は戻さない
   const replyDraftLiveRef = useRef("");
   replyDraftLiveRef.current = replyDraft;
+  // 2026-10-20 竹内さん（12:42）: 別の画面（同じ PC の別のタブ・別の端末・自動送信）がこの会話に送った時、この画面の入力欄の古い下書きを空にする。
+  //   本番: 同じ会話を2つのタブで開き、片方で直して送った後、もう片方に直す前の下書きが「⚡ AI下書き」のまま残った（判定は foreign-send-draft.ts）
+  handleForeignStaffSendRef.current = (text: string, at: string | null) => {
+    const decision = decideForeignSendDraft({
+      replyDraft: replyDraftLiveRef.current, draftIsAi, aiDraft: aiDraftRef.current, staffText: text, staffAt: at,
+      ownInsertAtMs: ownStaffInsertAtRef.current, sending, nowMs: Date.now(),
+    });
+    if (decision === "keep") return;
+    const cid = selectedIdRef.current;
+    console.log(JSON.stringify({ tag: "draft:foreign-send", conversationId: cid, decision }));
+    if (decision === "clear") {
+      setReplyDraft("");
+      aiDraftRef.current = "";
+      setDisplaySource(null);
+      setCheckResult(null);
+      setCheckModalIssues(null);
+      setExtraDraftMessages([]);
+      delete shownDraftCacheRef.current[cid];
+      setError("別の画面からこの会話に送信されたため、入力欄の下書きを消しました。");
+    } else {
+      setError("別の画面からこの会話に送信されました。入力欄の文がまだ必要か確かめてください。");
+    }
+  };
   // 2026-10-20 すれ違い（P1 54ec8c71）: 入力欄が空→文になった時点のお客様の最新の発言を「土台」に控える（空に戻ったら外す）。
   //   送る前にこれより新しいお客様の発言があれば知らせる（executeSend）。生成を始めた時点の値があればそれを使う（生成の途中に届いた発言を拾う）
   const latestCustAtForComposer = latestCustomerAtOf(selectedConversation.messages);
@@ -3696,10 +3751,11 @@ export default function Home() {
   }, [selectedConversation]);
 
   // スタッフが会話内で使っていた呼び名を優先（generate-reply-patterns / enhance-reply に渡す）
+  // 2026-10-20（P1 979a4c55）固定の呼び名（call_name）を先に・絵文字だけの表示名は呼ばない（conversationCallName）
   const preferredCustomerName = useMemo(
-    () => extractPreferredName(selectedConversation.messages || [], selectedConversation.customerName || ""),
+    () => conversationCallName(selectedConversation),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedConversation.id, selectedConversation.messages?.length]
+    [selectedConversation.id, selectedConversation.messages?.length, selectedConversation.callName, selectedConversation.customerName]
   );
 
   // ===== AIX の続き（2通目）の番（2026-10-15 竹内悠馬・KAORI さん）=====
@@ -3765,7 +3821,7 @@ export default function Home() {
       isAixTemplateDraftRef.current = true;
       templateSelectionMetaRef.current = null;
       pendingSecondMsgRef.current = null;
-      setReplyDraft(normalizePetWording(data.text.replace(/アカウント名/g, preferredCustomerName), { PET_WORDING: process.env.NEXT_PUBLIC_PET_WORDING }).text);
+      setReplyDraft(normalizePetWording(data.text.replace(/アカウント名((?:さん|様)?)/g, (_m: string, h: string) => (preferredCustomerName ? `${preferredCustomerName}${h}` : "")), { PET_WORDING: process.env.NEXT_PUBLIC_PET_WORDING }).text);
       setPostAixGen((p) => ({ ...p, [cid]: { status: "done", ...prev } }));
     } catch (e) {
       setPostAixGen((prev) => ({ ...prev, [cid]: { status: "error", error: e instanceof Error ? e.message : "生成に失敗しました" } }));
@@ -5340,6 +5396,7 @@ export default function Home() {
       // 画像は複数でも1メッセージ行にまとめて保存（JSON配列）
       if (anyImageSent) {
         const imageUrlData = sentImageUrls.length === 1 ? sentImageUrls[0] : JSON.stringify(sentImageUrls);
+        markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
         const { data: imgRow, error: imgInsertError } = await supabase
           .from("messages")
           .insert({
@@ -5366,6 +5423,7 @@ export default function Home() {
       // テキストメッセージを保存（画像の1秒後のタイムスタンプで後ろに表示）
       if (textSent && textToSend) {
         const textNow = anyImageSent ? new Date(now.getTime() + 1000) : now;
+        markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
         const { data: textRow, error: textInsertError } = await supabase
           .from("messages")
           .insert({
@@ -5512,8 +5570,9 @@ export default function Home() {
       if (textSent && secondMsgCapture) {
         const customerName = preferredCustomerName;
         const secondText = secondMsgCapture.type === "内覧誘導"
-          ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
-          : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+          // 2026-10-20 確かめる人: 名前が無い時に「さんお気に召されましたら」と崩れていた → sanOf（呼べる名前が無ければ名前なしで書く・絵文字は「🎀さん」）
+          ? `${sanOf(customerName)}ご都合よろしいお日にちにご案内させて頂きます😊！！`
+          : `${sanOf(customerName)}お気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
         // G-08: 2通目学習用にこの時点の顧客メッセージ・状態をキャプチャ（timer発火時にはrefがクリア済みのため）
         const secondLearnMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage || "";
         const secondLearnState = (newStatus ?? selectedConversation.status);
@@ -6032,6 +6091,7 @@ export default function Home() {
     if (!res.ok || !json.ok) throw new Error(json.error || `電話ボタンを送れませんでした（HTTP ${res.status}）`);
     const at = new Date();
     const lineMsgId = json.sentMessageIds?.[0] ?? null;
+    markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
     const { data: row } = await supabase.from("messages").insert({
       conversation_id: cid, sender: "staff", text: CALL_BUTTON_MESSAGE_TEXT, created_at: at.toISOString(), is_aix_generated: true,
       ...(lineMsgId ? { line_message_id: lineMsgId } : {}),
@@ -6068,6 +6128,7 @@ export default function Home() {
     const newMessages: Message[] = [];
     for (let i = 0; i < delivered.length; i++) {
       const at = new Date(Date.now() + i).toISOString();   // 送った順に並ぶよう1msずつずらす
+      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
       const { data: row } = await supabase.from("messages").insert({
         conversation_id: cid, sender: "staff", text: "[画像]", image_url: delivered[i], created_at: at,
         is_aix_generated: isAix, ...(ids[i] ? { line_message_id: ids[i] } : {}),
@@ -6189,6 +6250,7 @@ export default function Home() {
     // 画像が先、テキストが後の順で保存（LINE送信成功分のみ）
     if (imageSent && imageUrl) {
       const imgNow = new Date();
+      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
       const { data: imgRow, error: imgError } = await supabase
         .from("messages")
         .insert({
@@ -6216,6 +6278,7 @@ export default function Home() {
     }
 
     if (textSent && text.trim()) {
+      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
       const { data: insertedRows, error: insertError } = await supabase
         .from("messages")
         .insert({
@@ -6715,7 +6778,7 @@ export default function Home() {
   //   aix=property_recommendation（1件）も受ける。物件オススメは資料1枚を「② 物件資料」にセットして開く（pickup-aix-handoff.ts）
   // handoffIds: handoffFiles と同じ並びの行 ID（画像を取れた行だけ）。sentFiles: 送る直前の File の並び（AixModal の onPropertySendFiles）
   //   → 送った印は planPickupMarkSent（pickup-aix-handoff.ts）が「セットした画像が送る直前に残っていた行」だけに付ける（2026-09-25 E2E の反証）
-  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; aix: PickupAixType; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; handoffIds?: number[]; handoffNames?: string[]; handoffRanks?: number[]; sentFiles?: File[] | null } | null>(null);
+  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; aix: PickupAixType; acct?: string | null; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; handoffIds?: number[]; handoffNames?: string[]; handoffRanks?: number[]; sentFiles?: File[] | null } | null>(null);
   useEffect(() => {
     try {
       const h = parsePickupAixHandoff(window.location.search);
@@ -6728,6 +6791,17 @@ export default function Home() {
     if (h && h.done && selectedConversation?.id !== h.conv) { pickupHandoffRef.current = null; return; }
     if (!h || h.done || selectedConversation?.id !== h.conv) return;
     h.done = true;
+    // 2026-10-20 竹内さん（P1 f9d261d4・アカウントの取り違え）: AIX ツールが決めた会話のアカウントと開いた会話のアカウントが違えば、AIX をセットしない
+    {
+      const mismatch = handoffAccountMismatch(h.acct, selectedConversation?.account);
+      if (mismatch) {
+        console.warn(JSON.stringify({ tag: "pickup-aix:account-mismatch", conv: h.conv, acct: h.acct, opened: selectedConversation?.account ?? null }));
+        pickupHandoffRef.current = null;
+        try { window.history.replaceState(null, "", `/?conv=${encodeURIComponent(h.conv)}`); } catch { /* 無視 */ }
+        window.alert(mismatch);
+        return;
+      }
+    }
     void (async () => {
       try {
         const res = await fetch(`/api/property-pickups?ids=${encodeURIComponent(h.ids)}`, { cache: "no-store" });
@@ -9268,7 +9342,7 @@ export default function Home() {
                           const res = await fetch("/api/polish-draft", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ draft: replyDraft, customer_name: selectedConversation.customerName, recent_messages: recentMsgs, conversation_status: selectedConversation.status }),
+                            body: JSON.stringify({ draft: replyDraft, customer_name: preferredCustomerName, recent_messages: recentMsgs, conversation_status: selectedConversation.status }),
                           });
                           const data = await res.json() as { ok: boolean; polished?: string };
                           if (data.ok && data.polished) { setReplyDraft(data.polished); aiDraftRef.current = data.polished; setDisplaySource("optimized"); }
@@ -11560,7 +11634,7 @@ export default function Home() {
             isAixTemplateDraftRef.current = !!(category?.includes("AIX"));
             // テンプレート内「アカウント名」→ preferredCustomerName に置換
             // 2026-10-09 竹内さん「ペットの部分だけペット飼育可能に統一」: テンプレートの「ペットの飼育も相談可能」「ペット（〇〇）飼育可」も入力欄に入れる時に揃える（pet-wording.ts・戻す NEXT_PUBLIC_PET_WORDING=off）
-            const resolvedText = normalizePetWording(text.replace(/アカウント名/g, preferredCustomerName), { PET_WORDING: process.env.NEXT_PUBLIC_PET_WORDING }).text;
+            const resolvedText = normalizePetWording(text.replace(/アカウント名((?:さん|様)?)/g, (_m: string, h: string) => (preferredCustomerName ? `${preferredCustomerName}${h}` : "")), { PET_WORDING: process.env.NEXT_PUBLIC_PET_WORDING }).text;
             setReplyDraft(resolvedText);
             // テンプレート選択ログ（phase=select）を記録。送信時に修正有無を追記
             // CRIT-01修正: 先に PENDING 状態をセットして race condition を防ぐ
@@ -11858,8 +11932,9 @@ export default function Home() {
               if (!meta?.scheduled) {
                 const customerName = preferredCustomerName;
                 const secondText = config.type === "内覧誘導"
-                  ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
-                  : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+                  // 2026-10-20 確かめる人: 名前が無い時の崩れ（「さんお気に召されましたら」）を防ぐ（sanOf）
+                  ? `${sanOf(customerName)}ご都合よろしいお日にちにご案内させて頂きます😊！！`
+                  : `${sanOf(customerName)}お気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
                 // G-08: 2通目学習用にこの時点の顧客メッセージ・状態をキャプチャ
                 const secondLearnMsg = [...selectedConversation.messages]
                   .reverse()
@@ -13415,7 +13490,8 @@ export default function Home() {
       {/* 内覧誘導ピッカー */}
       {showViewingGuidePicker && (() => {
         const conv = selectedConversation;
-        const custName = conv?.customerName ?? "お客様";
+        // 2026-10-20（P1 979a4c55）内覧誘導の名前は会話の呼び名（LINE の表示名をそのまま「〇〇さん」にしない・無ければ名前なし）
+        const custName = preferredCustomerName || "";
         const recentMsgs = (conv?.messages ?? []).slice(-10).map(m => ({ sender: m.sender, text: m.text ?? "" }));
 
         const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -14847,7 +14923,8 @@ export default function Home() {
       {/* 物件成約した 入力フォーム（管理会社確認ピッカーのサブ項目） */}
       {showContractedForm && (() => {
         const conv = selectedConversation;
-        const custName = conv?.customerName ?? "お客様";
+        // 2026-10-20（P1 979a4c55）会話の呼び名（ayaka→🎀 の時に「🎀さん」にしない・無ければ名前なしで書く）
+        const custSan = sanOf(preferredCustomerName);
 
         const handleContractedImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
           const file = e.target.files?.[0];
@@ -14881,7 +14958,7 @@ export default function Home() {
         const handleContractedSubmit = () => {
           const name = contractedPropertyName.trim();
           const room = contractedRoomNumber.trim();
-          const tmpl = `${custName}さんお世話になっております！！\n${name}${room}\nですが1番手の方で契約がご成約となったとのことです。\n${custName}さんにオススメできるお部屋ピックアップしお送りさせて頂きます！！\n何卒よろしくお願い致します！！`;
+          const tmpl = `${custSan}お世話になっております！！\n${name}${room}\nですが1番手の方で契約がご成約となったとのことです。\n${custSan ? `${custSan}に` : ""}オススメできるお部屋ピックアップしお送りさせて頂きます！！\n何卒よろしくお願い致します！！`;
           // テンプレートをAIXの初期入力テキストとして渡してAIXで生成
           setAixInitInputText(tmpl);
           setShowContractedForm(false);

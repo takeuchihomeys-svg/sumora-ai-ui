@@ -452,16 +452,23 @@ const BAND_NAME_RE = /[^\s:：|｜/／]{1,16}(?=\s*[:：]\s*家賃)/g;
  * DeepSeek・Jev に渡す前の文字。帯の文（band_text・帯の形の行）を抜き、お客様の名前の揺れを仮名に、長い数字（電話）を伏せる。
  *   帯の文そのものはスタッフの診断用に band_text（文字）で残るので、ここで抜いても困らない
  */
-export function maskWatchText(text: string | null | undefined, o: { bandText?: string | null; names?: ReadonlyArray<string | null | undefined>; seed?: string }): string {
+/**
+ * 2026-10-20 決定 209b9a92: aliases（当事者の呼び名・会話の表示名・登録名）と otherNames（他のお客様の呼び名）も伏せる。
+ *   どちらも createMasker の線（短い物は敬称つきの時だけ・3字以上は裸）だけで当てる。下の「念のため」の裸の置換（2字以上）には入れない
+ *   ＝検索サイトの画面の駅名・物件名（日野・石川町 等）を壊さない
+ */
+export function maskWatchText(text: string | null | undefined, o: { bandText?: string | null; names?: ReadonlyArray<string | null | undefined>; seed?: string; aliases?: ReadonlyArray<string | null | undefined>; otherNames?: ReadonlyArray<string | null | undefined> }): string {
   let s = String(text ?? "");
   if (!s) return "";
   const band = String(o.bandText ?? "").trim();
   if (band) s = s.split(band).join(" ");
   s = s.replace(BAND_NAME_RE, "〇〇");
   const names = (o.names ?? []).map((x) => String(x ?? "").trim()).filter((x) => x.length >= 1);
-  if (names.length) {
+  const aliases = (o.aliases ?? []).map((x) => String(x ?? "").trim()).filter((x) => x.length >= 1);
+  const others = (o.otherNames ?? []).map((x) => String(x ?? "").trim()).filter((x) => x.length >= 1);
+  if (names.length || aliases.length) {
     try {
-      const mk = createMasker({ conversationId: o.seed || "screen-watch", customerName: names[0], knownNames: names.slice(1) });
+      const mk = createMasker({ conversationId: o.seed || "screen-watch", customerName: names[0] ?? aliases[0], knownNames: [...names.slice(1), ...others], partyAliases: aliases });
       s = mk.mask(s);
     } catch { /* 伏せられない時は名前ごと落とす */ for (const n of names) s = s.split(n).join("〇〇"); }
     for (const n of names) if (n.length >= 2) s = s.split(n).join("〇〇"); // 念のため（揺れの無い形）

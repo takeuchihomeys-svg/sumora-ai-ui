@@ -8,6 +8,7 @@ import { mergeHistoryForAddress, type AddressWindowMsg, type AddressDbMsg } from
 import { isGroupConversationName } from "@/app/lib/line-target";
 import { staffCalledName } from "@/app/lib/aix-staff-called-name";
 import { lockedCallName } from "@/app/lib/call-name-guard";
+import { hasNameLetter, lockableCallNameSource } from "@/app/lib/call-name-pick";
 
 const HISTORY_LIMIT = 150;
 
@@ -74,13 +75,40 @@ export async function resolveAddressNameForConversation(
   //   固定の呼び名（call_name）→ スタッフ（人）が冒頭で2回以上呼んだ名前（形を問わない）→ 今までの結果 の順に決める（call-name-guard.lockedCallName）。
   //   スタッフが2回以上呼んだ名前が決まって、まだ固定が無ければ固定する（以後は形・揺れに関わらずこの名前）
   const staffCalled = staffCalledName(messages.filter((m) => m.sender === "staff" && !(m.isAix ?? m.is_aix_generated)).map((m) => ({ sender: "staff", text: m.text ?? "" })));
-  const locked = lockedCallName({ stored: names.callName, staffCalled, resolved: verdict.name });
-  if (locked.source === "staff_called" && !names.callName) {
-    void supabase.from("conversations").update({ call_name: locked.name }).eq("id", conversationId).is("call_name", null)
+  // 2026-10-20 竹内さん（P1 979a4c55・ayaka→🎀）「最初呼んでいた名前で連絡する」: 絵文字・記号・数字だけの名前は呼び名にしない（固定もしない）。
+  //   固定はスタッフが2回以上呼んだ名前に加えて、会話で確定した名前（行頭の呼びかけ・元の名前・お客様の名乗り＝call-name-pick.lockableCallNameSource）でも行う。
+  //   表示名・登録名からの名前は固定しない（表示名が変わったら変わる物を固定しない）。戻す: CALL_NAME_LOCK_FROM_CONVERSATION=off
+  const storedOk = hasNameLetter(names.callName) ? names.callName : "";
+  const staffCalledOk = hasNameLetter(staffCalled) ? staffCalled : "";
+  const locked = lockedCallName({ stored: storedOk, staffCalled: staffCalledOk, resolved: verdict.name });
+  const lockFromConv = (process.env.CALL_NAME_LOCK_FROM_CONVERSATION ?? "").trim().toLowerCase() !== "off";
+  //   2026-10-20 確かめる人: グループの会話は1回の呼びかけでは固定しない（スタッフが参加者ごとに呼ぶ・本番の5会話すべてが1回の呼びかけで固定される所だった）
+  const toLock = !names.callName && locked.name && (locked.source === "staff_called" || (lockFromConv && !isGroup && locked.source === "resolved" && lockableCallNameSource(verdict.source, locked.name)))
+    ? locked.name : "";
+  if (toLock) {
+    void supabase.from("conversations").update({ call_name: toLock }).eq("id", conversationId).is("call_name", null)
       .then(({ error }) => { if (error && !/call_name/.test(error.message)) console.warn("[address-name] 呼び名の固定に失敗:", error.message); });
   }
   const finalVerdict: AddressNameVerdict = locked.name && locked.name !== verdict.name
     ? { ...verdict, name: locked.name, source: verdict.source, evidence: `${locked.source}:${locked.name}`, aliases: [...new Set([...verdict.aliases, locked.name])] }
     : verdict;
   return { ...finalVerdict, pcName: names.pcName, convName: names.convName };
+}
+
+/**
+ * 2026-10-20 竹内さん（P1 979a4c55）: AIX・テンプレートの名前の差し込みも返信の下書きと同じ呼び名にする（固定の呼び名 → 会話で確定した名前 → 表示名 → 名前なし）。
+ *   本当の名前が分からない時は表示名（絵文字でも「🎀さん」＝2026-10-20 竹内さんの答え）。数字だけ・空・グループの会話名は呼ばない（""）。
+ *   表示名の変更（ayaka→🎀）で、固定した名前・会話で確定した名前は変わらない
+ */
+export async function callNameForConversation(conversationId: string | null | undefined, fallbackName?: string | null): Promise<string> {
+  const { pickCallName } = await import("@/app/lib/call-name-pick");
+  const fb = isGroupConversationName(fallbackName) ? "" : (fallbackName ?? "");
+  if (!conversationId) return pickCallName({ conversational: fb });
+  try {
+    const r = await resolveAddressNameForConversation(conversationId, [], null);
+    const disp = isGroupConversationName(r.convName) || isGroupConversationName(fallbackName) ? "" : (r.convName || fb);
+    return pickCallName({ conversational: r.name, display: disp }) || "";
+  } catch {
+    return pickCallName({ conversational: fb });
+  }
 }

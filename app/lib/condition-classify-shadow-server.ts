@@ -9,7 +9,7 @@ import { supabase } from "@/app/lib/supabase";
 import { isJevEnabled } from "@/app/lib/jev-client";
 import { isPostApplyStatus } from "@/app/lib/llm-alt-provider";
 import { createMasker } from "@/app/lib/pii-pseudonym";
-import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
+import { loadKnownCustomerNames, loadKnownCallNames, loadPartyAliases } from "@/app/lib/pii-known-names";
 import { evaluateConditionClassifyWithJev, toConditionClassifyShadowRow, type CurrentConditionJudgement } from "@/app/lib/condition-classify-jev";
 import { waitUntil } from "@vercel/functions";
 
@@ -22,13 +22,16 @@ export function shadowConditionClassify(
   if (!isJevEnabled() || !conversationId || !customerText.trim()) return;
   const job = (async () => {
     try {
-      const [{ data: conv }, names] = await Promise.all([
+      // 2026-10-20 決定 209b9a92: 他社（Jev）に出す所。表示名だけでなく、当事者の呼び名・登録名（partyAliases・可逆）と他のお客様の呼び名も伏せる
+      const [{ data: conv }, names, callNames, partyAliases] = await Promise.all([
         supabase.from("conversations").select("status, customer_name").eq("id", conversationId).maybeSingle(),
         loadKnownCustomerNames().catch(() => [] as string[]),
+        loadKnownCallNames().catch(() => [] as string[]),
+        loadPartyAliases(conversationId).catch(() => [] as string[]),
       ]);
       const status = (conv?.status as string | null) ?? null;
       if (isPostApplyStatus(status)) return;   // 申込以降は渡さない
-      const masker = createMasker({ conversationId, customerName: (conv?.customer_name as string | null) ?? null, knownNames: names });
+      const masker = createMasker({ conversationId, customerName: (conv?.customer_name as string | null) ?? null, knownNames: [...names, ...callNames], partyAliases });
       const ev = await evaluateConditionClassifyWithJev({
         customerText: masker.mask(customerText),
         recentContext: recentContext.map((m) => ({ sender: m.sender, text: masker.mask(m.text) })),

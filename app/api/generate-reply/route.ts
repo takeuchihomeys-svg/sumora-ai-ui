@@ -26,7 +26,7 @@ import { VIEWING_SCENE_SUMMARY } from "@/app/lib/post-viewing-estimate";
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { isRoomPhotoRequest } from "@/app/lib/room-photo-request";
 import { buildTemplateEchoNote } from "@/app/lib/template-echo-note";
-import { loadKnownCustomerNames, loadPartyAliases } from "@/app/lib/pii-known-names";
+import { loadKnownCustomerNames, loadKnownCallNames, loadPartyAliases } from "@/app/lib/pii-known-names";
 
 /**
  * キャッシュの印（cache_control）が付いていないブロックだけを読み替える。
@@ -6143,7 +6143,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       ? createMasker({
         conversationId: conversationId ?? "reply",
         customerName: typeof customerName === "string" ? customerName : null,
-        knownNames: await loadKnownCustomerNames(),
+        // 2026-10-20: 他のお客様の固定の呼び名（call_name）も伏せる（表示名が絵文字の会話の本当の名前・loadKnownCallNames）
+        knownNames: [...await loadKnownCustomerNames(), ...await loadKnownCallNames()],
         // 2026-09-23: 希望条件の「顧客名: 登録名」（property_customers）は表示名と違うので当事者の別名として可逆に伏せる
         partyAliases: await loadPartyAliases(conversationId),
       })

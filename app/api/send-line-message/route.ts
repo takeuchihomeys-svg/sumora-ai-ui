@@ -133,17 +133,27 @@ export async function POST(req: NextRequest) {
   //   ・グループの会話から個人へ／個人の会話からグループへ → 送らない
   //   ・グループの発言から誤って個人の会話として作られた会話（send_blocked_reason）→ 送らない
   //   実例: 9/21 黒明様お部屋探し。グループへの返信のつもりが黒明さん個人の会話から送られていた。
+  // 2026-10-20 竹内さん（P1 f9d261d4・アカウントの取り違え）: 会話の id がある時は、その会話のアカウント（conversations.account）も読む。
+  //   送ろうとしているアカウントと違えば送らない・アカウントは会話の物を使う（send-account.checkSendAccount・戻す SEND_ACCOUNT_GATE=off）
+  let convAccount: string | null = null;
   {
     const { checkSendTarget } = await import("@/app/lib/line-target");
     const { data: convRows } = conversation_id
-      ? await supabase.from("conversations").select("line_user_id, send_blocked_reason").eq("id", conversation_id).limit(1)
+      ? await supabase.from("conversations").select("line_user_id, send_blocked_reason, account").eq("id", conversation_id).limit(1)
       : await supabase.from("conversations").select("line_user_id, send_blocked_reason").eq("line_user_id", line_user_id).limit(1);
-    const convForCheck = ((convRows ?? [])[0] as { line_user_id: string | null; send_blocked_reason: string | null } | undefined) ?? null;
+    const convForCheck = ((convRows ?? [])[0] as { line_user_id: string | null; send_blocked_reason: string | null; account?: string | null } | undefined) ?? null;
     const check = checkSendTarget(line_user_id, convForCheck);
     if (!check.ok) {
       console.warn(JSON.stringify({ tag: "send-line-message:blocked", reason: check.reason, conversationId: conversation_id ?? null, to: line_user_id.slice(0, 5) }));
       return NextResponse.json({ ok: false, errorCode: check.reason, error: check.message }, { status: 409 });
     }
+    if (conversation_id) convAccount = convForCheck?.account ?? null;
+  }
+  const { checkSendAccount, sendAccountGateEnabled } = await import("@/app/lib/send-account");
+  const acctCheck = sendAccountGateEnabled(process.env) ? checkSendAccount(account, convAccount) : null;
+  if (acctCheck && !acctCheck.ok) {
+    console.warn(JSON.stringify({ tag: "send-line-message:account-mismatch", conversationId: conversation_id ?? null, requested: acctCheck.requested, conversation: acctCheck.conversation, origin: origin ?? null, aixType: aix_type ?? null }));
+    return NextResponse.json({ ok: false, errorCode: acctCheck.reason, error: acctCheck.message }, { status: 409 });
   }
 
   // 2026-10-20 竹内さん（設計知見 P1 54ec8c71「返信を送る前にお客様から新しい LINE が来たら、その新しい発言に返信する」）:
@@ -158,8 +168,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // conversations.account が null/wrong でも line_contacts から正しいアカウントを解決
-  const accountKey = await resolveAccountKey(line_user_id, account);
+  // conversations.account が null/wrong でも line_contacts から正しいアカウントを解決（会話のアカウントが分かる時はそれを使う）
+  const accountKey = acctCheck?.ok && acctCheck.source === "conversation" && acctCheck.key ? acctCheck.key : await resolveAccountKey(line_user_id, account);
   const token = getToken(accountKey);
   // 2026-09-27 お客様役の DeepSeek の段（手元の開発サーバー）: 手元には LINE の鍵が無いので、YUMA だけ LINE には送らず記録だけ進める。
   //   鍵3つ（手元＝isTestModeAllowed・LOCAL_SIM_SKIP_LINE_PUSH=1・テスト用の会話）。本番（Vercel）では isTestModeAllowed が false なので通らない

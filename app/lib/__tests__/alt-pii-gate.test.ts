@@ -104,7 +104,8 @@ async function main() {
   });
   await it("★ セーブデータは時刻の線の印を付ける（スイッチ on の時・全部渡してよい会話だけ all・他は blocked）", () => {
     const src = readFileSync("app/lib/brain-core.ts", "utf8");
-    ok(/\[LLM_ACTION_HEADER\]: "brain_checkpoint", \[LLM_CONVERSATION_HEADER\]: conversationId, \.\.\.\(await checkpointCutoffHeader\(conversationId\)\)/.test(src), "header");
+    // 2026-10-20 決定 209b9a92: 印は先に読み（DeepSeek に回るかで伏せ方を分けるため）、同じ物を付ける
+    ok(/const cpCutoffHeader = await checkpointCutoffHeader\(conversationId\)/.test(src) && /\[LLM_ACTION_HEADER\]: "brain_checkpoint", \[LLM_CONVERSATION_HEADER\]: conversationId, \.\.\.cpCutoffHeader \}/.test(src), "header");
     ok(/mark\.kind === "all" \? formatCutoffMark\(mark\) : "blocked"/.test(src), "all only");
     ok(/maskPII\(userContent, \[customerName\]\)/.test(src), "名前は伏せたまま");
   });

@@ -94,16 +94,26 @@ export async function GET(req: NextRequest) {
 
       // 2026-09-21 竹内「LINEのグループにおくるはずが個人のLINEにおくらないように」:
       //   予約送信も即時送信と同じ関門を通す（会話の宛先と違う・送信停止の会話 → 送らずに失敗にする）
+      // 2026-10-20 竹内さん（P1 f9d261d4・アカウントの取り違え）: 予約の行のアカウントと会話のアカウントが違えば送らない・会話のアカウントで送る
+      //   （send-account.checkSendAccount・戻す SEND_ACCOUNT_GATE=off）
+      let convAccount: string | null = null;
       let autoSendConv = false;
       {
         const { checkSendTarget } = await import("@/app/lib/line-target");
         const { data: convRows } = msg.conversation_id
-          ? await supabase.from("conversations").select("line_user_id, send_blocked_reason, auto_send_enabled").eq("id", msg.conversation_id as string).limit(1)
+          ? await supabase.from("conversations").select("line_user_id, send_blocked_reason, auto_send_enabled, account").eq("id", msg.conversation_id as string).limit(1)
           : { data: [] as unknown[] };
-        const conv = ((convRows ?? [])[0] as { line_user_id: string | null; send_blocked_reason: string | null; auto_send_enabled?: boolean | null } | undefined) ?? null;
+        const conv = ((convRows ?? [])[0] as { line_user_id: string | null; send_blocked_reason: string | null; auto_send_enabled?: boolean | null; account?: string | null } | undefined) ?? null;
         autoSendConv = conv?.auto_send_enabled === true;
         const check = checkSendTarget(msg.line_user_id as string, conv);
         if (!check.ok) throw new Error(`送信を止めました: ${check.message}`);
+        convAccount = conv?.account ?? null;
+      }
+      const { checkSendAccount, sendAccountGateEnabled } = await import("@/app/lib/send-account");
+      const acctCheck = sendAccountGateEnabled(process.env) ? checkSendAccount(msg.account as string | undefined, convAccount) : null;
+      if (acctCheck && !acctCheck.ok) {
+        console.warn(JSON.stringify({ tag: "send-scheduled:account-mismatch", id: msg.id, requested: acctCheck.requested, conversation: acctCheck.conversation }));
+        throw new Error(`送信を止めました: ${acctCheck.message}`);
       }
 
       // 2026-10-20 竹内さん（設計知見 P1 54ec8c71「返信を送る前にお客様から新しい LINE が来たら、その新しい発言に返信する」）:
@@ -136,7 +146,7 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      const accountKey = resolveAccountKey(msg.account as string | undefined);
+      const accountKey = acctCheck?.ok && acctCheck.source === "conversation" && acctCheck.key ? acctCheck.key : resolveAccountKey(msg.account as string | undefined);
       const token = getToken(accountKey);
       if (!token) throw new Error(`LINE token not configured: ${accountKey}`);
 
