@@ -20,7 +20,7 @@ export async function loadStaffTodoInput(sb: SupabaseClient, atMs: number = Date
   const [aix, promises, viewings, messages] = await Promise.all([
     sb.from("aix_action_items")
       .select("id, conversation_id, customer_name, action, check_pattern, status, created_at, updated_at, done_at, done_aix_type, done_by, resolution_note")
-      .lte("created_at", atIso).gte("created_at", since30).order("created_at", { ascending: true }).limit(2000),
+      .lte("created_at", atIso).gte("created_at", since30).order("created_at", { ascending: false }).limit(2000), // 上限で切れる時は古い方を落とす
     sb.from("calendar_events")
       .select("id, conversation_id, customer_name, event_type, start_at, created_at, notes, is_done")
       .like("notes", `${PROMISE_MUST_MARK}%`).lte("created_at", atIso).gte("created_at", since60).limit(2000),
@@ -29,7 +29,7 @@ export async function loadStaffTodoInput(sb: SupabaseClient, atMs: number = Date
       .eq("scheduled_date", todayYmd).limit(200),
     sb.from("messages")
       .select("conversation_id, sender, text, created_at")
-      .gte("created_at", msgSince).lte("created_at", atIso).order("created_at", { ascending: true }).limit(10000),
+      .gte("created_at", msgSince).lte("created_at", atIso).order("created_at", { ascending: false }).limit(10000), // 新しい順（上限で切れても最新のこちらの返信を落とさない＝誤って「未返信」にしない・並べ直しは組み立て側）
   ]);
   for (const r of [aix, promises, viewings, messages]) if (r.error) throw new Error(r.error.message);
 

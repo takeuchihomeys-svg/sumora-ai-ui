@@ -32,7 +32,9 @@ export async function GET(req: NextRequest) {
   if (last?.value && Date.now() - new Date(last.value as string).getTime() < 90 * 60 * 1000) {
     return NextResponse.json({ ok: true, skipped: true, reason: "cooldown (90min)" });
   }
-  const sent = await pushToHanbancyoGroup(text);
+  // LINE の text は 5000字まで（超えると送信が 400 で落ちる）。並びは優先度順なので後ろ（優先度の低い方）を切る
+  const safeText = text.length > 4900 ? `${text.slice(0, 4900)}\n…（以下省略）` : text;
+  const sent = await pushToHanbancyoGroup(safeText);
   if (sent) await supabase.from("hanbancyo_settings").upsert({ key: "staff_todo_last_sent_at", value: new Date().toISOString() }, { onConflict: "key" });
   return NextResponse.json({ ok: sent, open: list.openCount, done: list.doneCount });
 }
