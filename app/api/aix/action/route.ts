@@ -1,6 +1,6 @@
 import { composeLifelineMessage } from "@/app/lib/aix-lifeline";
 // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・契約の条件・家賃の交渉・バイク置き場・物件について→募集号室について）
-import { applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
+import { applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, stripUncheckedScreeningClaims, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
 import { NextRequest, NextResponse, after } from "next/server";
 import { buildMustSendNote, mustMoveInLabel, normalizeRequirementStrengths } from "@/app/lib/requirement-strength";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -5379,7 +5379,8 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
         mgmtInfo = [
           `ほかの方の申込：${has}`,
           ...(has === "あり" ? [
-            `先に入っている申込：${pos - 1}件（お客様は${pos}番手）`,
+            // 2番手を受け付けない部屋は「お客様は2番手」と渡さない（型の文は受け付けていない＝番手を書かない）
+            appStatusIn.noSecond ? `先に入っている申込：${pos - 1}件` : `先に入っている申込：${pos - 1}件（お客様は${pos}番手）`,
             `1番手の方の審査の状況：${appStatusIn.firstStatus ?? "入力なし"}`,
             appStatusIn.noSecond ? "2番手の受付：受け付けていない（1番手の方がキャンセル・審査否決になった時に申込可能）" : "2番手の受付：受け付けている",
           ] : []),
@@ -5387,8 +5388,11 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
           ...(mgmtInfo ? [`補足：${mgmtInfo}`] : []),
         ].join("\n");
       }
+      // 審査の相談で確認した結果も見込みも入れていない＝管理会社に確認していない（出口で「確認しました」の行を落とす）
+      let screeningNoInput = false;
       if (check_pattern === "mgmt_screening") {
         const outlook = typeof body.screening_outlook === "string" ? body.screening_outlook : "";
+        screeningNoInput = !mgmtInfo && !outlook;
         mgmtInfo = [
           mgmtInfo ? `確認した結果・必要書類：${mgmtInfo}` : "確認した結果：入力なし（管理会社の回答・書類に触れず、基本の考え方だけで返す）",
           outlook ? `審査の見込み：${outlook}` : "",
@@ -5883,6 +5887,8 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
       }
       // 2026-10-20 審査について（ご相談）: 締めの「無事に審査通過するまで全力でサポート」を必ず1回（竹内さんの言い方のまま）
       if (check_pattern === "mgmt_screening") {
+        // 入力なし（確認していない）の時に LLM が書いた「管理会社・保証会社に確認した」行は落とす（スタッフだけが知る事実を作らない）
+        if (screeningNoInput) message_text = stripUncheckedScreeningClaims(message_text);
         message_text = ensureScreeningSupportLine(message_text);
       }
       // 2026-10-20 申込状況について: 番手の数字・繰り上がり・申込の誘導を外れた文は、入力で組んだ決まった型（お手本 d08bc127）に差し替える

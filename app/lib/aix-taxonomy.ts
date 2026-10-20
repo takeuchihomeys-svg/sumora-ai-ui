@@ -204,12 +204,14 @@ export function detectPropertyCheckPattern(recentText: string): PropertyCheckKin
   for (const d of CHECK_PATTERN_DETECTORS) {
     if (!on && (NEW_CHECK_PATTERNS_1020 as readonly string[]).includes(d.pattern)) continue;
     const re = !on && d.pattern === "mgmt_parking" ? /駐車場|バイク置|駐輪/ : d.re;
+    // off は今まで通りの言葉（ブレイン・帯に渡る文を変えない）
+    const topic = !on && d.pattern === "mgmt_parking" ? "駐車場" : d.topic;
     if (re.test(recentText)) {
       return {
         check_pattern: d.pattern,
         ui_button: "確認した（条件・交渉）",
-        topic: d.topic,
-        note: `AIX【確認した（条件・交渉）】を押してください: ${d.topic}の確認結果を顧客への報告文に変換する場面です（サブパターン: ${d.pattern}。結果報告の手打ちはNG）`,
+        topic,
+        note: `AIX【確認した（条件・交渉）】を押してください: ${topic}の確認結果を顧客への報告文に変換する場面です（サブパターン: ${d.pattern}。結果報告の手打ちはNG）`,
       };
     }
   }
@@ -293,11 +295,13 @@ export function propertyCheckKindFor(pattern: string | null | undefined): Proper
   }
   const d = CHECK_PATTERN_DETECTORS.find((x) => x.pattern === pattern);
   if (!d) return null;
+  // 2026-10-20: 切替 off の時は 駐車場 の言葉を今まで通りに
+  const topic = d.pattern === "mgmt_parking" && !aixNewPickers1020Enabled() ? "駐車場" : d.topic;
   return {
     check_pattern: d.pattern,
     ui_button: "確認した（条件・交渉）",
-    topic: d.topic,
-    note: `AIX【確認した（条件・交渉）】を押してください: ${d.topic}の確認結果を顧客への報告文に変換する場面です（サブパターン: ${d.pattern}。結果報告の手打ちはNG）`,
+    topic,
+    note: `AIX【確認した（条件・交渉）】を押してください: ${topic}の確認結果を顧客への報告文に変換する場面です（サブパターン: ${d.pattern}。結果報告の手打ちはNG）`,
   };
 }
 

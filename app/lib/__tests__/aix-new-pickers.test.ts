@@ -4,6 +4,7 @@
 import {
   aixNewPickers1020Enabled, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText,
   ensureScreeningSupportLine, isApplicationStatusQuestion, isRoomVacanciesQuestion, parseVacancyRows, SCREENING_SUPPORT_LINE,
+  stripUncheckedScreeningClaims,
 } from "../aix-new-pickers";
 import { checkPatternForConfirmTopic, confirmObjectOf, confirmTopicsForCheckPattern } from "../action-ledger";
 import { promisesInStaffText } from "../promise-queue";
@@ -43,6 +44,15 @@ it("申込状況: 決まった型の文（お手本 d08bc127 の順）と型の�
   ok(/1番手/.test(none) && !/2番手/.test(none) && applicationStatusTextOk(none, { hasApplication: "なし" }), none);
   const noSecond = composeApplicationStatusText({ hasApplication: "あり", ahead: 1, noSecond: true });
   ok(/受け付けていない/.test(noSecond), noSecond);
+  ok(applicationStatusTextOk(noSecond, { hasApplication: "あり", ahead: 1, noSecond: true }), "2番手なしの型が通らない");
+  ok(!applicationStatusTextOk("2番手は受け付けていないのですが、2番手でのお申込となり繰り上がりを待ちます", { hasApplication: "あり", ahead: 1, noSecond: true }), "2番手なしで申込める様に書いた文を見逃す");
+});
+
+it("審査について（ご相談）: 入力なしの時は「管理会社に確認した」行を落とす", () => {
+  const s = stripUncheckedScreeningClaims("田中さん\nお世話になっております！！\nハイツAの審査につきまして管理会社に確認させて頂きました！！\n保証会社のみで審査可能とのことでした！！\n無事に審査通過するまで全力でサポートさせて頂きます😊！！");
+  ok(!/管理会社|保証会社|とのこと/.test(s) && s.includes("審査はかけてみることが出来ます") && s.includes("全力でサポート") && s.startsWith("田中さん"), s);
+  const k = stripUncheckedScreeningClaims("夜職の方でもお気に召されたお部屋でしたら審査はかけてみることが出来ます😊！！");
+  ok(k === "夜職の方でもお気に召されたお部屋でしたら審査はかけてみることが出来ます😊！！", k);
 });
 
 it("審査について（ご相談）: 締めの一文は必ず1回", () => {

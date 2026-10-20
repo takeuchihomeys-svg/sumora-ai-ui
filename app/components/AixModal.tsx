@@ -2766,11 +2766,12 @@ export default function AixModal({
         if ((interiorPhotoUrl.trim() || interiorPhotoFile) && isPlaceholderPropertyName(interiorPropertyName)) throw new Error(missingPropertyNameMessage([0], 1));
         // 室内写真確認: AIなしでプレビュー直接生成
         // 2026-10-18 竹内さんの答え②: 現地で撮影した写真・動画（手元の写真ではなく撮りに行った物）は言い方を替える
+        //   URL の時も先頭の「（室内イメージ）」は残す（挨拶の付け方・資料の判定・手元の室内イメージの判定がこの印を読む）
         const onsiteWord = interiorOnsite === "動画" ? "室内動画" : interiorOnsite === "両方" ? "室内の写真と動画" : "室内写真";
         if (interiorPhotoUrl.trim()) {
           // 2026-09-17 竹内（Hina 事例）「物件名をいれれるようにする。そうしたら物件名と（室内イメージ）が送られるようにする」:
           //   URL だけだとどの物件の室内写真か分からない（会話に複数の物件が並ぶ）。入れた時だけ先頭に足す
-          const msg = `${interiorPropertyName.trim() ? `${interiorPropertyName.trim()}\n` : ""}${interiorOnsite ? `（現地で撮影した${onsiteWord}）` : "（室内イメージ）"}\n${interiorPhotoUrl.trim()}`;
+          const msg = `${interiorPropertyName.trim() ? `${interiorPropertyName.trim()}\n` : ""}（室内イメージ）${interiorOnsite ? `（現地で撮影した${onsiteWord}）` : ""}\n${interiorPhotoUrl.trim()}`;
           // 物件名を入れた時は「この物件の室内写真を送った」を送信時の記録に残す（ブレインが読む確定事実。既存の available と同じ ref）
           if (interiorPropertyName.trim()) {
             lastCheckPropNamesRef.current = [interiorPropertyName.trim()];

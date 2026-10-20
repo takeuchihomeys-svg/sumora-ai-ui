@@ -441,7 +441,9 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
     for (const e of es) {
       if (t === "property_check_result" && RESULT_PICKERS.has(e.picker!.value)) continue;
       const own = PICKER_KNOW[e.key]?.lines;
-      lines.push(`    ・${e.picker!.label}（${e.picker!.value}）: ${e.when}${own ? `｜${own}` : ""}`);
+      // 2026-10-20: 切替 off の時は 駐車場について の説明を今まで通りに（バイク置き場の言葉をブレインに出さない）
+      const when = newOff && e.picker!.value === "mgmt_parking" ? e.when.replace("駐車場・バイク置き場の有無・料金・空き（中で駐車場／バイク置き場を選ぶ）", "駐車場の有無・料金・空き") : e.when;
+      lines.push(`    ・${e.picker!.label}（${e.picker!.value}）: ${when}${own ? `｜${own}` : ""}`);
     }
   }
   if (outside.length) lines.push(`- 今の場面の外のボタン（場面の読みが外れていることもある＝会話の事実で選んでよい・ピッカーは画面でスタッフが選ぶ）: ${outside.join(" ／ ")}`);

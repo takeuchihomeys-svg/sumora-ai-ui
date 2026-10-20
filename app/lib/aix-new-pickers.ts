@@ -82,6 +82,20 @@ export function ensureScreeningSupportLine(text: string): string {
   return t ? `${t}\n${SCREENING_SUPPORT_LINE}` : SCREENING_SUPPORT_LINE;
 }
 
+/**
+ * 審査の相談で確認した結果・見込みが入力に無い時（＝管理会社・保証会社に確認していない）、
+ * LLM が書いた「管理会社（保証会社）に確認させて頂きました」「〜とのことでした」の行を落とす（P0: スタッフだけが知る事実を作らない）。
+ * 全部落ちたら基本の考え方の一文にする。
+ */
+const UNCHECKED_SCREENING_CLAIM_RE = /管理会社|保証会社|オーナー|確認させて頂|確認させていただ|確認いたしました|確認しました|とのことでした|との事でした/;
+export function stripUncheckedScreeningClaims(text: string): string {
+  const kept = String(text ?? "").replace(/\r\n/g, "\n").split("\n").filter((l) => !UNCHECKED_SCREENING_CLAIM_RE.test(l));
+  const isGreeting = (l: string) => /お世話になっております/.test(l) || /^\s*\S{1,15}(?:さん|様)\s*$/.test(l);
+  const hasBody = kept.some((l) => l.trim() && !SUPPORT_SENT_RE.test(l) && !isGreeting(l));
+  const lines = hasBody ? kept : [...kept.filter(isGreeting), SCREENING_BASIC_STANCE, ...kept.filter((l) => SUPPORT_SENT_RE.test(l))];
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 /** 申込状況の入力（画面の選択） */
 export type ApplicationStatusInput = {
   /** 申込あり／申込なし */
@@ -129,7 +143,8 @@ export function applicationStatusTextOk(text: string, i: ApplicationStatusInput)
   const t = String(text ?? "").normalize("NFKC");
   if (i.hasApplication === "なし") return /1番手|一番手/.test(t) && /お?申込|お?申し込/.test(t) && !/2番手|二番手/.test(t);
   const pos = applicationStatusPosition(i);
-  if (i.noSecond) return /受け付けていない|受付(?:て)?いない|出来ない|できない/.test(t);
+  // 2番手を受け付けない部屋で「N番手でのお申込となり／を行い」と申込める様に書いた文は外れ
+  if (i.noSecond) return /受け付けていない|受付(?:て)?いない|出来ない|できない/.test(t) && !/番手でのお?申込(?:と|を行)/.test(t);
   const posRe = new RegExp(`${pos}番手`);
   const wrongPos = [2, 3, 4, 5, 6, 7, 8, 9, 10].filter((n) => n !== pos).some((n) => new RegExp(`(?<![0-9])${n}番手でのお?申込`).test(t));
   return posRe.test(t) && /繰り上が/.test(t) && /(?:お?申込|お?申し込)[^\n]{0,60}(?:如何|いかが|抑え|ご案内)/.test(t) && !wrongPos;
