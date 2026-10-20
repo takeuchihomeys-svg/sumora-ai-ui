@@ -652,7 +652,8 @@ async function llmGate(name: string): Promise<{ finish: () => Promise<unknown> }
   if (!process.env.LLM_TEST_MODE && !process.env.LLM_TEST_FINAL_CLAUDE) return null;
   const { setupLlmTest } = await import("./lib/llm-test-harness");
   const h = await setupLlmTest(name);
-  setLocalSpendRecording(false);
+  // 2026-10-20 確かめ: 入口を通しても DeepSeek への直の呼び出し（callDeepSeek）は llm_usage_logs に残らない（0行）＝手元の記録（local-llm-spend）は止めない
+  setLocalSpendRecording(true);
   return { finish: () => h.finish() };
 }
 async function conduct() {
@@ -773,13 +774,14 @@ async function runPlan() {
   PHASE_ARG = "final";
   const ps = conductorProblems();
   const sub = ps.filter((p) => ids.includes(p.id));
-  const before = buildMissMap(sub, (id) => mainRowsOf(sub.find((x) => x.id === id)!));
   log(`\n=== 司令塔の計画で流す（${sp.label}・${ids.length}問・判定 ${sp.plan.judge}）===`);
   await runMain();
   // 結果（今回の答案）を外れの型で返す（下書きまで流した問題は下書きの答案＝ブレインの欄も入っている）
   const labels = [label, `${label}-fl`, `${label}-d`, `${label}-fl-d`];
   const rowsBy = (id: string) => { const d = [...readRows(`${label}-d`), ...readRows(`${label}-fl-d`)].filter((r) => r.id === id); return d.length ? d : [...readRows(label), ...readRows(`${label}-fl`)].filter((r) => r.id === id); };
   if (!ids.some((id) => rowsBy(id).length)) { log("（今回の答案が無い＝夜中に予約したか止まった。流れた後にもう一度 --run-plan で結果を出す＝使い回しで費用0）"); return; }
+  // 前＝main の答案は流した後に読む（この実行で今の main の版の答えを作った時はそれを使う＝台帳の比べと同じ前）
+  const before = buildMissMap(sub, (id) => mainRowsOf(sub.find((x) => x.id === id)!));
   const after = buildMissMap(sub, (id) => { const rs = rowsBy(id); return rs.length ? { rows: refreshPath(sub.find((x) => x.id === id)!, rs as RowLike[]), source: "今回" } : null; });
   const cmp = compareMissMaps(before, after);
   const tally = newTally();
