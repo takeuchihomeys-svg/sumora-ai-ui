@@ -32,7 +32,7 @@ import {
   mergePicks, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse, dbKeyOf,
   modelOf, estimateUsd, DEFAULT_STOP, draftEligible, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
   decidePhase, pickSmall, smallRank, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
-  warmDecision, warmLimit, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3,
+  warmDecision, warmLimit, flashProof, isFixTarget, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3,
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
@@ -219,12 +219,13 @@ async function makePlan(label: string): Promise<Plan> {
     catch (e) { conv = { key: null, why: `会話の効く所が読めない → 使い回さない（${String(e).slice(0, 100)}）` }; }
   }
   const mc = readModelCheck();
-  const modelMode = (arg("model", "pro") as "pro" | "flash" | "auto");
+  // 10/20 COST③: 既定は auto（model-check で flash の道が pro と同じだった型・問題だけ flash・直しの的は pro）。旧は --model=pro
+  const modelMode = (arg("model", "auto") as "pro" | "flash" | "auto");
   const items: Plan["items"] = new Map();
   for (const pk of picks) {
     const p = probs.get(pk.id)!;
     const fo = CONDUCTED?.plan.focus.find((f) => f.id === p.id);
-    const model = fo ? fo.model : modelOf(p as PlanProblem, { mode: modelMode, flashOkTypes: mc.okTypes, gate: GATE });
+    const model = fo ? fo.model : modelOf(p as PlanProblem, { mode: modelMode, flashOkTypes: mc.okTypes, flashOkIds: mc.okIds, flashBadIds: mc.badIds, gate: GATE, protect: isFixTarget(pk.why) });
     const modelLabel = model === "flash" ? `deepseek-all:${FLASH_MODEL}` : "deepseek-all";
     const fv = flakeVerdict(readObs(p.id), { problemHash: problemHash(p), model: modelLabel });
     const reps = fo ? fo.reps : firstRepsOf(REPS_MODE, fv.verdict, repsCap, { gate: GATE });
@@ -292,9 +293,9 @@ function printPlan(pl: Plan, now: Date, x: { budget?: Budget; peakWarn?: string 
   log(`見込みの費用（今の側・${peak ? "混雑時の値段込み" : "通常の値段"}）: 約 $${est.now.toFixed(2)}＋判断が変わった問題の下書き 最大 $${(ifChangedMax * 0.015 * (peak ? 1.6 : 1)).toFixed(2)}／前（main）の取り置きが無い問題は main でも回す（1問 約 $0.03・夜中の --warm-main で作っておけば0）`);
 }
 function draftEligibleOf(pl: Plan, id: string): boolean { const p = pl.probs.get(id); return !!p && [...(p.accept ?? []), ...(((p.acceptWhen as { searchExhausted?: string[] } | undefined)?.searchExhausted) ?? [])].some((a) => !a.startsWith("AIX")); }
-function readModelCheck(): { okTypes: Set<string>; byType: Record<string, { n: number; samePath: number; proOk: number; flashOk: number }> } {
-  try { const j = JSON.parse(readFileSync(MODEL_CHECK_FILE, "utf8")) as { byType: Record<string, { n: number; samePath: number; proOk: number; flashOk: number }> }; return { byType: j.byType, okTypes: new Set(Object.entries(j.byType).filter(([, v]) => v.n >= 3 && v.samePath / v.n >= 0.9 && v.flashOk >= v.proOk).map(([k]) => k)) }; }
-  catch { return { okTypes: new Set(), byType: {} }; }
+function readModelCheck(): { okTypes: Set<string>; okIds: Set<string>; badIds: Set<string>; byType: Record<string, ModelCheckStat> } {
+  try { const j = JSON.parse(readFileSync(MODEL_CHECK_FILE, "utf8")) as { byType: Record<string, ModelCheckStat>; byId?: Record<string, ModelCheckStat> }; return { byType: j.byType, ...flashProof(j) }; }
+  catch { return { okTypes: new Set(), okIds: new Set(), badIds: new Set(), byType: {} }; }
 }
 
 // ─── 1つの段を流す（使い回し → 子 → 途中で止める → 確かめの回） ─────────────────────────
@@ -582,6 +583,21 @@ async function warmMain() {
     if (s) { left += s.deferred.length; if (limit !== null) limit = Math.max(0, limit - s.run.length); log(`取り置き（${stage}）: 使い回し ${s.reused}・持ち越し ${s.carried.length}・今回した ${s.run.length}・残り ${s.deferred.length}`); }
     try { commit = commit || (JSON.parse(readFileSync(join(RESULTS_DIR, `${label}.baseline.json`), "utf8")) as { commit?: string }).commit || ""; } catch { /* */ }
   }
+  // 10/20 COST③: flash にした型・問題の「前」は flash の main で比べる（構成が違う置き場）→ 同じ夜に flash でも取り置く（1問 約 1/4 の値段）。--model=pro の時はしない
+  if (arg("model", "auto") === "auto" && (arg("stage") ? list("stage") : ["brain"]).includes("brain")) {
+    const mc = readModelCheck();
+    const fids = ids.filter((id) => { const t = String(spec.find((s) => s.id === id)?.type ?? ""); return !mc.badIds.has(id) && (mc.okTypes.has(t) || mc.okIds.has(id)); });
+    if (fids.length && (limit === null || limit > 0)) {
+      const label = `warm-${Date.now().toString(36)}-brain-fl`;
+      const o = await runBrainExam([`--label=${label}`, `--only=${fids.join(",")}`, "--stage=brain", "--baseline=main", "--baseline-only", REPLAY, `--repeat=${MAX_REPS}`, `--reps-file=${repsFile}`,
+        ...(limit !== null ? [`--baseline-limit=${Math.floor(limit / UNIT_USD.flashRatio)}`] : []),
+        ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX === "rubric" ? ["--judge-prefix=rubric"] : []), ...(CONV ? [`--conv=${CONV}`] : []), ...PASS],
+        { ...(CONV ? {} : { REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${label}.json` }), DEEPSEEK_MODEL: FLASH_MODEL, EXAM_JUDGE_MODEL: PRO_MODEL });
+      const s = readBaselineSummary(label);
+      if (o.code !== 0 || !s) failed = true;
+      if (s) { left += s.deferred.length; log(`取り置き（brain・flash ${fids.length}問）: 使い回し ${s.reused}・持ち越し ${s.carried.length}・今回した ${s.run.length}・残り ${s.deferred.length}`); }
+    }
+  }
   // 10/20 COST①: 版ごとの取り置きの記録（全部取れたら同じ版は二度と予約しない・途中なら次の夜中に続き）
   if (h?.vk) {
     writeWarmLog(h.vk, { at: new Date().toISOString(), commit, done: !failed && left === 0, left, label: `warm-${jst(new Date())}` });
@@ -605,7 +621,7 @@ async function modelCheck() {
   await runBrainExam(common(`${label}-pro`), fl(`${label}-pro`));
   await runBrainExam(common(`${label}-flash`), { ...fl(`${label}-flash`), DEEPSEEK_MODEL: FLASH_MODEL, EXAM_JUDGE_MODEL: PRO_MODEL });
   const a = readRows(`${label}-pro`), b = readRows(`${label}-flash`);
-  const prev = existsSync(MODEL_CHECK_FILE) ? JSON.parse(readFileSync(MODEL_CHECK_FILE, "utf8")) as { byType: Record<string, { n: number; samePath: number; proOk: number; flashOk: number }>; runs?: unknown[] } : { byType: {}, runs: [] };
+  const prev = existsSync(MODEL_CHECK_FILE) ? JSON.parse(readFileSync(MODEL_CHECK_FILE, "utf8")) as { byType: Record<string, ModelCheckStat>; byId?: Record<string, ModelCheckStat>; runs?: unknown[] } : { byType: {}, byId: {}, runs: [] };
   const lines: string[] = [];
   for (const id of ids) {
     const x = a.find((r) => r.id === id && !r.error), y = b.find((r) => r.id === id && !r.error);
@@ -614,6 +630,10 @@ async function modelCheck() {
     const e = prev.byType[t] ?? { n: 0, samePath: 0, proOk: 0, flashOk: 0 };
     e.n++; if (x.path?.code === y.path?.code) e.samePath++; if (x.path?.ok) e.proOk++; if (y.path?.ok) e.flashOk++;
     prev.byType[t] = e;
+    // 10/20 COST③: 問題ごとにも残す（型が通っていなくても、その問題で何度も同じなら flash・違ったら型が通っていても pro）
+    const ei = (prev.byId ??= {})[id] ?? { n: 0, samePath: 0, proOk: 0, flashOk: 0 };
+    ei.n++; if (x.path?.code === y.path?.code) ei.samePath++; if (x.path?.ok) ei.proOk++; if (y.path?.ok) ei.flashOk++;
+    prev.byId[id] = ei;
     lines.push(`  ${x.path?.code === y.path?.code ? "＝" : "≠"} ${id}[${t}] pro=${x.path?.code}${x.path?.ok ? "○" : "✕"} flash=${y.path?.code}${y.path?.ok ? "○" : "✕"}`);
   }
   (prev.runs ??= []).push({ at: since, label, ids });
@@ -623,7 +643,7 @@ async function modelCheck() {
   const sp = await spendOf([`${label}-pro`, `${label}-flash`], since).catch(() => ({ n: 0, usd: 0 }));
   const sa = await spendOf([`${label}-pro`], since).catch(() => ({ n: 0, usd: 0 })), sbb = await spendOf([`${label}-flash`], since).catch(() => ({ n: 0, usd: 0 }));
   log(`型ごと（累計）: ${Object.entries(prev.byType).map(([k, v]) => `${k} 道が同じ ${v.samePath}/${v.n}・合う pro ${v.proOk}/flash ${v.flashOk}`).join("／")}`);
-  log(`flash にしてよい型（3問以上・道が同じ 9割以上・合う数が pro 以上）: ${[...readModelCheck().okTypes].join("・") || "まだ無い"}`);
+  { const m = readModelCheck(); log(`flash にしてよい型（3問以上・道が同じ 9割以上・合う数が pro 以上）: ${[...m.okTypes].join("・") || "まだ無い"}／問題（2回以上いつも同じ）: ${[...m.okIds].join(",") || "まだ無い"}／flash にしない問題（道が違った）: ${[...m.badIds].join(",") || "なし"}`); }
   log(`費用: pro ${sa.n}回 $${sa.usd.toFixed(4)}・flash ${sbb.n}回 $${sbb.usd.toFixed(4)}（合計 ${sp.n}回 $${sp.usd.toFixed(4)}・判定は別）`);
 }
 
@@ -810,7 +830,7 @@ async function conductInner() {
     change: { cls: mat.cls, files: mat.files.map((f) => ({ file: f.file, cls: f.cls })), kbIds: mat.kbIds, commits: mat.commits, reading },
     missTop: Object.entries(map.byKind).sort((a, b) => b[1] - a[1]).map(([kind, n]) => ({ kind, n })),
     linkMiss: LINK_IDS.map((l) => ({ link: l, label: LINKS[l].label, n: map.byLink[l].n, miss: map.byLink[l].miss })),
-    candidates, capUsd, unit: UNIT_USD, flashOkTypes: [...mc.okTypes], prevFocus: prev?.next ?? [],
+    candidates, capUsd, unit: UNIT_USD, flashOkTypes: [...mc.okTypes, ...[...mc.okIds].filter((id) => !mc.badIds.has(id))], prevFocus: prev?.next ?? [],
   };
   // ⑤ 司令塔（pro・短い JSON）。答えない時は決まった順の代わり
   const rawText = flag("no-conductor") ? null : await callConductorLlm("conductor", C_PRO, CONDUCTOR_SYSTEM, buildConductorUser(input), tally, { maxTokens: 900 });

@@ -237,11 +237,28 @@ export function canReuse(e: { key: string; savedAt: string; rows: RowLite[] } | 
  * 問題のモデル: 既定は今まで通り（DEEPSEEK_MODEL・deepseek-v4-pro）。flash にするのは、比べの記録（model-check）で
  *   その型の道が pro と同じだった型だけ（質が落ちないか比べてから）。gate（最後の関所）は常に既定。
  */
-export function modelOf(p: PlanProblem, o: { mode: "pro" | "flash" | "auto"; flashOkTypes: Set<string>; gate?: boolean }): "pro" | "flash" {
+export function modelOf(p: PlanProblem, o: { mode: "pro" | "flash" | "auto"; flashOkTypes: Set<string>; gate?: boolean; flashOkIds?: Set<string>; flashBadIds?: Set<string>; protect?: boolean }): "pro" | "flash" {
   if (o.gate || o.mode === "pro") return "pro";
   if (o.mode === "flash") return "flash";
-  return o.flashOkTypes.has(p.type) ? "flash" : "pro";
+  // 10/20 COST③: 直しの的（名指し・前に落ちた）は pro（本番と同じモデルで確かめる）・その問題だけの比べで道が違った問題は pro・その問題だけで確かめた問題は flash
+  if (o.protect) return "pro";
+  if (o.flashBadIds?.has(p.id)) return "pro";
+  return o.flashOkTypes.has(p.type) || !!o.flashOkIds?.has(p.id) ? "flash" : "pro";
 }
+/** model-check の記録の形（型ごと・問題ごと） */
+export type ModelCheckStat = { n: number; samePath: number; proOk: number; flashOk: number };
+/**
+ * 10/20 COST③ flash にしてよい所: 型＝3問以上・道が同じ 9割以上・合う数が pro 以上（今まで通り）／問題＝その問題だけで2回以上比べて道がいつも同じ・合う数が pro 以上／
+ *   flash にしない問題＝その問題の比べで道が1回でも違った（型が通っていても外す）
+ */
+export function flashProof(mc: { byType?: Record<string, ModelCheckStat>; byId?: Record<string, ModelCheckStat> }): { okTypes: Set<string>; okIds: Set<string>; badIds: Set<string> } {
+  const okTypes = new Set(Object.entries(mc.byType ?? {}).filter(([, v]) => v.n >= 3 && v.samePath / v.n >= 0.9 && v.flashOk >= v.proOk).map(([k]) => k));
+  const okIds = new Set(Object.entries(mc.byId ?? {}).filter(([, v]) => v.n >= 2 && v.samePath === v.n && v.flashOk >= v.proOk).map(([k]) => k));
+  const badIds = new Set(Object.entries(mc.byId ?? {}).filter(([, v]) => v.samePath < v.n).map(([k]) => k));
+  return { okTypes, okIds, badIds };
+}
+/** 直しの的（flash にしない）: 名指し・前に落ちた */
+export const isFixTarget = (why: string[]) => why.some((w) => /名指し|前に落ちた/.test(w));
 
 // ─── 見込みの費用 ───────────────────────────────────────────────────────
 /** 1問1回の費用（2026-10-17 実測: 作業ツリーの results/*.cost.json 49回 630問回＝ブレインまで $0.030・下書き 15回 306問回＝$0.031〜＋下書きの分）。flash は約 1/4 */

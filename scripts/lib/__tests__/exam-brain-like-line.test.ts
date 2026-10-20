@@ -3,6 +3,7 @@
 // 実行: npx tsx scripts/lib/__tests__/exam-brain-like-line.test.ts（全 PASS で exit 0）
 import { examStageKeysOf, type FileMap } from "../exam-scope";
 import { findCarryOver, relevantStageOf, siblingDirs, type BaselineFile } from "../brain-exam-baseline";
+import { modelOf, flashProof, isFixTarget, type PlanProblem } from "../exam-brain";
 import { warmDecision, warmLimit, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3, repSig, type Cmp, type RowLite } from "../exam-brain";
 
 let fail = 0, pass = 0;
@@ -79,6 +80,22 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   ok("3回目: 1回目と2回目が割れた問題だけ（道か合格が違う）・揃った・1回だけ・失敗の回は止める", confidenceRound3((id) => rows[id] ?? [], ["s", "t", "u", "v", "w"], 3).join() === "t,u");
   ok("3回目: 上限2回（小さな確かめ）なら無し", confidenceRound3((id) => rows[id] ?? [], ["t"], 2).length === 0);
   ok("回の印: 下書きの合否も見る", repSig({ id: "a", rep: 1, path: { code: "返信", ok: true }, score: { pass: true }, draft: { pass: true } }) !== repSig({ id: "a", rep: 1, path: { code: "返信", ok: true }, score: { pass: true }, draft: { pass: false } }));
+}
+
+// ─── COST③ flash の選び ─────────────────────────────────────────────
+{
+  const mc = flashProof({
+    byType: { A: { n: 3, samePath: 3, proOk: 3, flashOk: 3 }, B: { n: 3, samePath: 2, proOk: 3, flashOk: 3 }, C: { n: 2, samePath: 2, proOk: 2, flashOk: 2 }, D: { n: 3, samePath: 3, proOk: 3, flashOk: 2 } },
+    byId: { q1: { n: 2, samePath: 2, proOk: 1, flashOk: 1 }, q2: { n: 1, samePath: 1, proOk: 1, flashOk: 1 }, q3: { n: 2, samePath: 1, proOk: 1, flashOk: 1 } },
+  });
+  ok("型: 3問以上・道が同じ 9割以上・合う数が pro 以上だけ", [...mc.okTypes].join() === "A");
+  ok("問題: 2回以上いつも同じ → flash・1回だけ → まだ・1回でも違った → flash にしない", [...mc.okIds].join() === "q1" && [...mc.badIds].join() === "q3");
+  const P = (id: string, type: string): PlanProblem => ({ id, type });
+  const o = { mode: "auto" as const, flashOkTypes: mc.okTypes, flashOkIds: mc.okIds, flashBadIds: mc.badIds };
+  ok("auto: 確かめた型 → flash・確かめた問題 → flash・他 → pro", modelOf(P("x", "A"), o) === "flash" && modelOf(P("q1", "Z"), o) === "flash" && modelOf(P("y", "B"), o) === "pro");
+  ok("auto: 型が通っていてもその問題で道が違った → pro", modelOf(P("q3", "A"), o) === "pro");
+  ok("auto: 直しの的（名指し・前に落ちた）→ pro・関所 → pro・--model=pro → pro", modelOf(P("x", "A"), { ...o, protect: isFixTarget(["名指し"]) }) === "pro" && modelOf(P("x", "A"), { ...o, protect: isFixTarget(["前に落ちた（直前2回は道が合った）"]) }) === "pro" && modelOf(P("x", "A"), { ...o, gate: true }) === "flash".replace("flash", "pro") && modelOf(P("x", "A"), { ...o, mode: "pro" }) === "pro");
+  ok("直しの的でない理由（RAG・お手本）→ flash のまま", !isFixTarget(["差分の言葉に近い（0.52）", "竹内さんのお手本（必ず）"]));
 }
 
 console.log(`exam-brain-like-line: ${pass} PASS / ${fail} FAIL`);

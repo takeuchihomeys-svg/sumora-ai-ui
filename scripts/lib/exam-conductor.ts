@@ -334,7 +334,7 @@ export function freshFocus(items: FreshInput["items"], o: { flashOkTypes: string
   for (const it of items) {
     if (seen.has(it.id)) continue; seen.add(it.id);
     const c = o.chosen?.get(it.id);
-    f.push(c ? { ...c, reps: Math.max(1, c.reps), why: `新しい問題（答案なし）${c.why ? `・${c.why}` : ""}`.slice(0, 60) } : { id: it.id, role: "guard", stage: "brain", reps: 1, model: okFlash.has(it.type) ? "flash" : "pro", why: "新しい問題（答案なし）" });
+    f.push(c ? { ...c, reps: Math.max(1, c.reps), why: `新しい問題（答案なし）${c.why ? `・${c.why}` : ""}`.slice(0, 60) } : { id: it.id, role: "guard", stage: "brain", reps: 1, model: okFlash.has(it.type) || okFlash.has(it.id) ? "flash" : "pro", why: "新しい問題（答案なし）" });
   }
   const est = () => f.reduce((s, x) => s + unitCost(x, unit), 0);
   const dropped: Array<{ id: string; why: string }> = [];
@@ -362,7 +362,8 @@ export function normalizePlan(raw: Record<string, unknown> | null, i: Pick<Condu
     let stage: FocusItem["stage"] = f.stage === "draft" ? "draft" : "brain";
     if (stage === "draft" && !c.draftEligible) stage = "brain";
     let model: FocusItem["model"] = f.model === "flash" ? "flash" : "pro";
-    if (model === "flash" && !okFlash.has(c.type)) model = "pro";
+    // 10/20 COST③: flashOkTypes には確かめた型と確かめた問題 id の両方が入る
+    if (model === "flash" && !okFlash.has(c.type) && !okFlash.has(c.id)) model = "pro";
     focus.push({ id, role: f.role === "guard" ? "guard" : "fix", stage, reps, model, why: String(f.why ?? "").slice(0, 60) || c.why[0] || "" });
   }
   for (const c of i.candidates) if (c.protectedPick && !seen.has(c.id)) { focus.push({ id: c.id, role: "fix", stage: o.draftChange && c.draftEligible ? "draft" : "brain", reps: 1, model: "pro", why: `守る線（${c.why.find((w) => /名指し|前に落ちた|お手本|竹内さん/.test(w)) ?? "必ず"}）` }); seen.add(c.id); }
