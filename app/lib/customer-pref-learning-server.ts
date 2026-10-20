@@ -21,6 +21,7 @@ import { buildAltNameMask, maskPIIForAlt } from "./pii-mask";
 import { loadPartyAliasesMany, loadKnownCallNames } from "./pii-known-names";
 import { imageTextForDeepSeekRead } from "./customer-sent-property";
 import { loadDeepseekCutoff, isAfterCutoff } from "./post-apply";
+import { screeningSensitiveSignal, screeningPiiAixEnabled, dropScreeningSensitiveLines } from "./screening-sensitive";
 import {
   bundleSends, episodeFromBundle, sentFamilyFit, prefStrength, conditionsReadableAt, materialSummary,
   type PrefEpisode, type SendRow, type PrefStrength,
@@ -422,6 +423,11 @@ async function deepseekRead<T>(action: string, system: string, user: string, max
     console.warn("[pref-learning] 本文に個人の値 → DeepSeek に出さない", JSON.stringify({ action, conversationId }));
     return { value: null, usd: 0, ok: false, model: VISION_ALT_MODEL_DEFAULT, input: 0, cacheHit: 0, output: 0 };
   }
+  // 2026-10-20 最後の歯止め: 本文（system は除く＝指示文の語で止めない）に審査の事情が残っていれば送らない（読めなかった扱い）
+  if (screeningPiiAixEnabled() && screeningSensitiveSignal(user)) {
+    console.warn("[pref-learning] 本文に審査の事情 → DeepSeek に出さない", JSON.stringify({ action, conversationId }));
+    return { value: null, usd: 0, ok: false, model: VISION_ALT_MODEL_DEFAULT, input: 0, cacheHit: 0, output: 0 };
+  }
   const out = await callDeepSeekRead(system, user, { maxTokens, timeoutMs }, parseFn);
   let usd = 0, input = 0, cacheHit = 0, output = 0;
   const now = new Date().toISOString();
@@ -550,7 +556,13 @@ export async function runPrefLearning(sb: SupabaseClient, opts: {
       if (cut === null) { skip("申込以降の線が引けない"); continue; }
       msgs = msgs.filter((m) => isAfterCutoff(m.at, cut));
     }
-    const user = buildStrengthUser({ conditions: c.conditions, messages: msgs.map((m) => m.text), mask });
+    // 2026-10-20 竹内「個人情報が絡む部分はかならずクロードにする」: ここは必ず DeepSeek（Claude の道が無い）なので、
+    //   審査の事情（screening-sensitive.ts）がある発言・条件の行は渡さない（こだわりの強さはそれ以外の発言で読む）。戻す SCREENING_PII_CLAUDE_AIX=off
+    const sens = screeningPiiAixEnabled();
+    if (sens) msgs = msgs.filter((m) => !screeningSensitiveSignal(m.text));
+    const user = buildStrengthUser({ conditions: sens && c.conditions
+      ? Object.fromEntries(Object.entries(c.conditions).map(([k, v]) => [k, typeof v === "string" ? dropScreeningSensitiveLines(v) : v]))
+      : c.conditions, messages: msgs.map((m) => m.text), mask });
     const hash = inputHash(user);
     const hit = existing.get(`customer|cust:${c.customerKey}`);
     if (hit && hit.input_hash === hash && hit.ok) { llm.reused.customer++; const v = parseStrengthReply(JSON.stringify(hit.result)); if (v) llmStrength.set(c.customerKey, v); continue; }

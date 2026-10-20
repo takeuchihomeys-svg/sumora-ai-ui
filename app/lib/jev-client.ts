@@ -70,12 +70,29 @@ export async function jevSystemOne(input: {
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   fetchImpl?: typeof fetch;
+  /** 審査の事情の判定（テスト用に差し替え・既定は screening-sensitive-server） */
+  screeningCheck?: (conversationId: string) => Promise<{ category: string } | null>;
 }): Promise<JevResult | null> {
   const cfg = readJevConfig(input.env ?? process.env);
   if (!cfg) return null;
   // 2026-10-01 テストの間は YUMA 以外の会話で呼ばない（10/01 に和樹さんの会話の再生で3回呼んでいた）。本番は readTestRun が null＝何もしない
   const refusal = testConversationRefusal(process.env, input.conversationId ?? null, "Jev の呼び出し");
   if (refusal) { noteTestBlocked(refusal); return null; }
+  // 2026-10-20 竹内「個人情報が絡む部分はかならずクロードにする」: Jev は別の会社（TypeSafe）で、state に会話の文が入る。
+  //   審査の事情（screening-sensitive.ts）が出た会話は呼ばない（Jev の答え無し＝今までどおり進む・影の判定は記録されないだけ）。
+  //   読めなければ呼ばない側。戻す SCREENING_PII_CLAUDE_AIX=off
+  //   fetchImpl を渡す呼び出し（テストの作り物の通信・外に出ない）は screeningCheck を渡した時だけ見る（本番の呼び出しは fetchImpl を渡さない）
+  if (input.conversationId && (!input.fetchImpl || input.screeningCheck)) {
+    const { screeningPiiAixEnabled } = await import("./screening-sensitive");
+    if (screeningPiiAixEnabled(input.env ?? process.env)) {
+      const check = input.screeningCheck ?? (await import("./screening-sensitive-server")).screeningSensitiveForConversation;
+      const hit = await check(input.conversationId);
+      if (hit) {
+        console.log(JSON.stringify({ tag: "screening-sensitive:skip-jev", action: input.action ?? null, conversationId: input.conversationId, category: hit.category }));
+        return null;
+      }
+    }
+  }
   const started = Date.now();
   const doFetch = input.fetchImpl ?? fetch;
   try {

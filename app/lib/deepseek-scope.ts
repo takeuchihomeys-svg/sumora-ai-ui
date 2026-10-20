@@ -10,6 +10,7 @@
 //   （モジュールごとに new すると、ルートが置いた箱を出口が見られず「印なし」で全部 Claude に戻る＝静かに壊れる）。
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { CutoffMark } from "./post-apply";
+import type { ScreeningSensitiveHit } from "./screening-sensitive";
 
 export type DeepseekScope = {
   conversationId: string | null;
@@ -17,6 +18,11 @@ export type DeepseekScope = {
   mark: CutoffMark | null;
   /** 出口の網の材料（線より前のお客様の発言の断片）。mark が cut の時だけ使う。1リクエストで1回だけ読む */
   netChunks?: () => Promise<string[]>;
+  /**
+   * 2026-10-20 この会話に審査の事情（screening-sensitive.ts）が出たか。入口（generate-reply・aix/action）が1回だけ読んだ物を置く
+   *   （中の呼び出し・Jev が同じ会話で DB を読み直さない）。screening-sensitive-server.screeningSensitiveForConversation が見る
+   */
+  screeningSensitive?: () => Promise<ScreeningSensitiveHit | null>;
 };
 
 const KEY = "__sumoraDeepseekScope";

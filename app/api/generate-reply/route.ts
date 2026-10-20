@@ -3483,6 +3483,8 @@ async function handleGenerateReply(req: NextRequest) {
   setDeepseekScope({
     conversationId: conversationId ?? null,
     mark: replyCutMark,
+    // 2026-10-20 中の呼び出し・Jev が同じ会話の審査の事情を DB から読み直さない（screening-sensitive-server）
+    ...(screeningSensitivePromise ? { screeningSensitive: () => screeningSensitivePromise } : {}),
     ...(deepseekCutActive && conversationId && typeof deepseekCutoff === "string"
       ? { netChunks: onceAsync(() => loadPreCutoffCustomerChunks(supabase, conversationId, deepseekCutoff as string)) }
       : {}),
