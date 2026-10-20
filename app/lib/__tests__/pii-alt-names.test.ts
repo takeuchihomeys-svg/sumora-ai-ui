@@ -38,6 +38,23 @@ console.log("── maskPIIForAlt");
   t("空の文は空のまま", maskPIIForAlt("", m) === "");
 }
 
+console.log("── 足した名前は境目つき（物件名の中に当てない・確かめる人 2026-10-20）");
+{
+  const m = buildAltNameMask(["🎀"], ["Lisa", "みどり", "日野 太郎"], ["Bay", "ひかり"]);
+  const props = "Lisaです。パークヒルズ天保山Bay・La CLisa駒川中野・プレジオみどり夙川・ひかり荘・日野駅 徒歩5分";
+  const out = maskPIIForAlt(props, m);
+  t("文の頭の英字の呼び名は伏せる", out.startsWith("お客様です"), out);
+  t("英字の名前が物件名の英字・漢字に続く所は伏せない", out.includes("天保山Bay") && out.includes("CLisa駒川"), out);
+  t("かなの名前がカタカナ・漢字に挟まる所は伏せない", out.includes("プレジオみどり夙川") && out.includes("ひかり荘"), out);
+  t("登録名の姓（2字）を駅名に当てない", out.includes("日野駅"), out);
+  const named = maskPIIForAlt("日野です。太郎より。Bayさん・ひかりさんにも", m);
+  t("登録名の姓・名は境目があれば伏せる", !named.includes("日野") && !named.includes("太郎"), named);
+  const joined = maskPIIForAlt("氏名\n日野太郎\nヒノタロウ", m);
+  t("登録名を続けて書いた形も伏せる", !joined.includes("日野") && !joined.includes("太郎"), joined);
+  t("他のお客様の呼び名は敬称つきなら伏せる", !named.includes("Bay") && !named.includes("ひかり"), named);
+  t("base（表示名）は今まで通り maskPII", maskPIIForAlt("田中花子さん", buildAltNameMask(["田中花子"], [], [])) === maskPII("田中花子さん", ["田中花子"]));
+}
+
 console.log("── maskWatchText の aliases（画面の見張り）");
 {
   const out = maskWatchText("待ち: さやかさん・リアプロ 日野駅 検索結果 12件", { names: ["山田花子"], aliases: ["さやか", "日野"], otherNames: ["たかはし"] });
