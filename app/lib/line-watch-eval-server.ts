@@ -165,6 +165,14 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
       j = { verdict: "na", detail: { ...j.detail, reason: "duplicate_turn", duplicate_of: realId } };
       patch.verdict = j.verdict; patch.verdict_detail = j.detail;
     }
+    // 2026-10-20 review: 自動返信化の関所（cron/auto-reply-readiness・watch-aix-match）は今までの数え方のまま。
+    //   ①（番の時点の申込以降）・④（重複行の寄せ）で aix_verdict が今までと変わる番は、今までの値を guard_aix_verdict に残す
+    //   （無い時は "none"）。関所はこちらを先に読む＝見張りの数え方の直しで関所が緩まない（実データで application_push 等が緩む向きだった）
+    if (timelines || mg || realId != null) {
+      const legacy = evalWatchTurn(t0, { msgs: mBy.get(t0.conversation_id) ?? [], presses: pBy.get(t0.conversation_id) ?? [], decisions: dBy.get(t0.conversation_id) ?? [], nowMs, hasVersionCol }).judgement.detail.aix_verdict ?? null;
+      const fd = patch.verdict_detail as VerdictDetail;
+      if (legacy !== (fd.aix_verdict ?? null)) { fd.guard_aix_verdict = legacy ?? "none"; j = { ...j, detail: fd }; }
+    }
     const pick = pickJudgeDraft({ ...t, customer_last_at: w.customerLastAt });
     updates.push({ id: t.id, patch });
     if (j.verdict) { res.judged++; res.verdicts[j.verdict] = (res.verdicts[j.verdict] ?? 0) + 1; } else res.pending++;

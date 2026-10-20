@@ -7,6 +7,7 @@ import {
 import { sceneKeyOf } from "../line-watch-turn";
 import { evalWatchTurn, type WatchTurnInput } from "../line-watch-turn-eval";
 import { sceneStats, type StatTurn } from "../line-watch-daily";
+import { watchAixMatchRates } from "../watch-aix-match";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -110,6 +111,16 @@ it("人が読む1行（止まりが無ければ空）", () => {
   eq(captureStallLine([]), "");
   const l = captureStallLine([{ from: D(10, 30), to: D(17), minutes: 390, decisions: 4 }]);
   if (!l.includes("10/13 10:30〜17:00") || !l.includes("判断4件")) throw new Error(l);
+});
+
+console.log("自動返信化の関所は今までの数え方（guard_aix_verdict を先に読む）");
+it("guard があればそれで数える・none は数えない・無ければ aix_verdict", () => {
+  const r = watchAixMatchRates([
+    { brain_action: "application_push", aix_verdict: null, guard_aix_verdict: "not_pressed" }, // ①で対象外になった番 → 今まで通り分母に入る
+    { brain_action: "application_push", aix_verdict: "same", guard_aix_verdict: "none" },       // ④で新しく数えられる番 → 今まで通り数えない
+    { brain_action: "application_push", aix_verdict: "same" },
+  ]);
+  eq(r.application_push, { same: 1, n: 2, rate: 0.5 });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

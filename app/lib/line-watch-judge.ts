@@ -245,6 +245,8 @@ export type VerdictDetail = {
   duplicate_of?: number | null;
   /** 2026-10-20: 重複行の控えで埋めた欄（本物の行の判定の材料） */
   merged_from?: { id: number; cols: string[] } | null;
+  /** 2026-10-20: 自動返信化の関所用の今までの aix_verdict（①④で aix_verdict が変わった番だけ・無い時 "none"）。watch-aix-match が先に読む */
+  guard_aix_verdict?: string | null;
 };
 export type Judgement = { verdict: Verdict | null; detail: VerdictDetail };
 

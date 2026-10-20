@@ -6,13 +6,15 @@ export const WATCH_MATCH_MIN = 0.5;
 export const WATCH_MATCH_MIN_N = 5;
 
 //   2026-10-08: 過去の番の埋め戻し（verdict_detail.backfill・line-watch-backfill.ts）は関所に入れない（今の控えだけで見る）。backfill を読んだ行だけ外す
-export type WatchAixRow = { brain_action: string | null; aix_verdict: string | null; backfill?: string | null };
+//   2026-10-20: 見張りの数え方の直し（番の時点の申込以降・重複行の寄せ）で aix_verdict が変わった番は guard_aix_verdict に今までの値が残る（無い時 "none"）。
+//     関所はそちらを先に読む（見張りの数え方を直しても関所の数字は今までと同じ＝自動返信の解禁は緩まない）
+export type WatchAixRow = { brain_action: string | null; aix_verdict: string | null; backfill?: string | null; guard_aix_verdict?: string | null };
 export function watchAixMatchRates(rows: ReadonlyArray<WatchAixRow>): Record<string, { same: number; n: number; rate: number }> {
   const out: Record<string, { same: number; n: number; rate: number }> = {};
   for (const r of rows) {
     if (r.backfill) continue;
     const a = (r.brain_action ?? "").trim();
-    const v = (r.aix_verdict ?? "").trim();
+    const v = (r.guard_aix_verdict ?? r.aix_verdict ?? "").trim();
     if (!a || !["same", "other", "not_pressed"].includes(v)) continue;
     const x = (out[a] ??= { same: 0, n: 0, rate: 0 });
     x.n++; if (v === "same") x.same++;

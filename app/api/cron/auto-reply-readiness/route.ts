@@ -91,11 +91,11 @@ export async function POST(req: NextRequest) {
       ? { data: [] as Array<{ brain_action: string | null; aix_verdict: string | null; backfill: string | null }> }
       : await supabase
         .from("line_watch_turns")
-        .select("brain_action, aix_verdict:verdict_detail->>aix_verdict, backfill:verdict_detail->>backfill") // 埋め戻した過去の番は watchAixMatchRates が外す
+        .select("brain_action, aix_verdict:verdict_detail->>aix_verdict, guard_aix_verdict:verdict_detail->>guard_aix_verdict, backfill:verdict_detail->>backfill") // 埋め戻した過去の番は watchAixMatchRates が外す
         .gte("created_at", since30d)
         .not("brain_action", "is", null)
         .limit(5000);
-    const watchRates = watchAixMatchRates((watchRows ?? []) as Array<{ brain_action: string | null; aix_verdict: string | null; backfill: string | null }>);
+    const watchRates = watchAixMatchRates((watchRows ?? []) as Array<{ brain_action: string | null; aix_verdict: string | null; guard_aix_verdict?: string | null; backfill: string | null }>);
 
     const winRateAgg: Record<string, { sum: number; n: number }> = {};
     for (const row of (attrRows ?? []) as Array<{ action_type: string; win_rate: number | null }>) {
