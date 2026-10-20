@@ -254,6 +254,17 @@ const FRESH_LAYER_OUTPUT_RULES = `【今回の発言の分析モード（2層ブ
  *   「こんにちは！」に hes=callback。返信の場面（reply-scene-brain）はこれを使わない歯止めを入れたが、ブレイン自身の読み方も正す。
  *   まだ応えていない前の質問は消さない（58ae93f3: お礼の番でスタッフは前の名義の質問に答えた）＝key_topics・reply_direction で扱う。戻す: BRAIN_THIS_TURN_ONLY=off
  */
+/**
+ * 2026-10-20 竹内さん（設計知見 P1 54ec8c71「返信を送る前にお客様から新しい LINE が来たら、その新しい発言に返信する」）:
+ *   お客様「すぐ埋まっちゃう感じですかね？…埋まるようだったら別の所探して」→ スタッフの画像 →「すみません他お願いします」で、
+ *   返信が前の質問への答えのまま送られた（すれ違い）。新しい発言が前の依頼を変える・取り消す時は、新しい依頼を主に判断する。
+ *   何が「変える・取り消す」かは文を読んで決める（P0 9eb6aa9c）。戻す BRAIN_LATEST_SUPERSEDES=off
+ */
+function latestSupersedesRule(): string {
+  if ((process.env.BRAIN_LATEST_SUPERSEDES ?? "").toLowerCase() === "off") return "";
+  return "\n- 一番新しいお客様の発言が、前のお客様の発言の依頼・質問を変える・取り消す・前提の答えを出した時（例: 前に「すぐ埋まるようなら別の所を探してほしい」と言い、後で「他お願いします」＝別の物件を探して／「他はないですか？」＝別の物件の依頼）は、新しい依頼を主に判断する（aix・action・reply_direction・key_topics・customer_questions）。取り消された・答えの要らなくなった前の質問に答える方向にしない（前の質問を書き写さない）。前の発言とスタッフの送信が入れ違った時も、まだ応えていない一番新しい発言に応える。";
+}
+
 function thisTurnOnlyRule(): string {
   if ((process.env.BRAIN_THIS_TURN_ONLY ?? "").toLowerCase() === "off") return "";
   return "\n- 今回の発言がお礼・了承・あいさつだけ（「お願いします」「承知致しました」「ありがとうございます」「こんにちは」等・質問も依頼も条件も無い）の時: customer_questions は []・hesitancy_pattern は null（前の発言の質問・迷いを書き写さない）。condition_change_type は、直前のスタッフの提案（「〇〇の条件でお探ししましょうか」等）にお客様が了承した時だけ付け、前の発言の条件変更を書き写さない。前のお客様の質問にスタッフがまだ応えていない時は、その質問を key_topics・reply_direction で扱う。";
@@ -2956,7 +2967,7 @@ ${catalogBlockForBrain(brainScene)}
   //   印は system 2つ＋A＋B の4つ（上限4）。文字の集まりは旧と同じ（A＋B は旧の freshStableText を並べ替えた物）
   const freshStableA = isFreshLayer && opts?.strategy ? `${profileText}${aiSummaryNote}` : "";
   const freshStableB = isFreshLayer && opts?.strategy
-    ? `${buildFreshStrategyBlock(opts.strategy)}${checkpointText}\n\n${FRESH_LAYER_OUTPUT_RULES}${thisTurnOnlyRule()}`
+    ? `${buildFreshStrategyBlock(opts.strategy)}${checkpointText}\n\n${FRESH_LAYER_OUTPUT_RULES}${thisTurnOnlyRule()}${latestSupersedesRule()}`
     : "";
   const freshStableText = `${freshStableA}${freshStableB}`;
   const stableKnowledgeText = freshStableText;
@@ -2967,7 +2978,9 @@ ${catalogBlockForBrain(brainScene)}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${aixCatalogText}${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${routeTypeText}${ragKnowledgeText}
+    : `${aixCatalogText}${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${routeTypeText}${ragKnowledgeText}${latestSupersedesRule() ? `
+
+【今回の発言の読み方】${latestSupersedesRule()}` : ""}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;

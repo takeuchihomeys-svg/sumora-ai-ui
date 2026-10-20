@@ -28,6 +28,8 @@ import { pickCallName, sanOf } from "./lib/call-name-pick";
 import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraftSentinel } from "./lib/draft-text";
 // 2026-10-08 竹内（未桜）「AI返信案がセットされていない事も多い」: 表示済みにした下書きの本文を DB に控え、別の端末・読み込み直しでも戻す
 import { decideShownDraftRestore, shownDraftUpdate, shownDraftRestoreEnabled } from "./lib/shown-draft-restore";
+import { latestCustomerAtOf, newerCustomerMessageSince, nextComposerBase, staleGuardEnabled, ackExemptEnabled, STALE_REPLY_ERROR_CODE } from "./lib/stale-reply";
+import { isCustomerEcho, draftEchoGuardEnabled } from "./lib/draft-echo";
 import { refreshDraftGreetingForNow, draftGreetingRefreshEnabled } from "./lib/time-greeting";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
@@ -98,6 +100,19 @@ const BRAIN_ATTENTION_UI = flagOn(process.env.NEXT_PUBLIC_BRAIN_ATTENTION);
 const GREETING_BEFORE_PRESELECT = (process.env.NEXT_PUBLIC_GREETING_BEFORE_PRESELECT ?? "").trim().toLowerCase() !== "off";
 // 表示済みの下書きの控えと戻し（既定 on・戻す: NEXT_PUBLIC_SHOWN_DRAFT_RESTORE=off）
 const SHOWN_DRAFT_RESTORE = shownDraftRestoreEnabled(process.env.NEXT_PUBLIC_SHOWN_DRAFT_RESTORE);
+// 2026-10-20 竹内さん（設計知見 P1 54ec8c71・すれ違い）: 入力欄の文を作った後にお客様の新しい LINE が届いたら、送る前に知らせる（stale-reply.ts）。戻す NEXT_PUBLIC_STALE_REPLY_GUARD=off
+const STALE_REPLY_GUARD = staleGuardEnabled(process.env.NEXT_PUBLIC_STALE_REPLY_GUARD);
+// 2026-10-20 竹内さん（おすすめで決定）: 書き始めた後の新しい発言が短いお礼・了承だけ（決まった語・スタンプだけ）の時は確かめを出さない（stale-reply.ts isTrivialAckText）。戻す NEXT_PUBLIC_STALE_ACK_EXEMPT=off
+const STALE_ACK_EXEMPT = ackExemptEnabled(process.env.NEXT_PUBLIC_STALE_ACK_EXEMPT);
+// 2026-10-20 竹内さん（設計知見 P1 d3fe3a9f）: お客様の文と同じ（ほぼ同じ）下書きは入力欄に入れない（draft-echo.ts）。戻す NEXT_PUBLIC_DRAFT_ECHO_GUARD=off
+const DRAFT_ECHO_GUARD = draftEchoGuardEnabled(process.env.NEXT_PUBLIC_DRAFT_ECHO_GUARD);
+/** 下書きと比べるお客様の文: 最後のスタッフの発言より後の通（未返信）＋一番新しいお客様の通 */
+function customerTextsForEcho(msgs: ReadonlyArray<{ sender: string; text?: string | null }>): string[] {
+  const lastStaff = msgs.map((m, i) => (m.sender === "staff" ? i : -1)).filter((i) => i >= 0).at(-1);
+  const after = (lastStaff !== undefined ? msgs.slice(lastStaff + 1) : msgs).filter((m) => m.sender === "customer").map((m) => m.text ?? "");
+  const latest = [...msgs].reverse().find((m) => m.sender === "customer")?.text ?? "";
+  return [...after, latest];
+}
 // 2026-10-08 竹内さん（り 8f705d16「こんばんは。この時間に送るのおかしい」）: 前に作った下書きを入力欄に出す時、送る今（JST の日）で挨拶を直す
 //   （時刻の挨拶→今日まだ送っていなければお世話になっております・送っていれば外す。お世話になっておりますは足しも外しもしない）。戻す: NEXT_PUBLIC_DRAFT_GREETING_REFRESH=off
 const DRAFT_GREETING_REFRESH = draftGreetingRefreshEnabled(process.env.NEXT_PUBLIC_DRAFT_GREETING_REFRESH);
@@ -1212,6 +1227,13 @@ export default function Home() {
   const [showAnnouncementList, setShowAnnouncementList] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number; text: string; sender: string } | null>(null);
   const [targetOverrideMessage, setTargetOverrideMessage] = useState<{ id: string; text: string } | null>(null);
+  // 2026-10-20 すれ違い（P1 54ec8c71）: 入力欄の文の「土台」＝作り始めた時点のお客様の最新の発言の時刻（stale-reply.ts nextComposerBase）
+  const composerBaseAtRef = useRef<string | null>(null);
+  /** 生成を始めた時点のお客様の最新の発言の時刻（生成の途中に届いた発言を「土台より新しい」と分かるように・入力欄が空→文の時に使う） */
+  const genBaseAtRef = useRef<string | null>(null);
+  /** スタッフが「このまま送る」を選んだ（新しい発言を見た上で送る）＝次の送信1回だけ知らせない */
+  const allowStaleRef = useRef(false);
+  const [staleSend, setStaleSend] = useState<{ newerText: string; newerAt: string; mode: "send" | "schedule" } | null>(null);
   const [partialCopyMessageId, setPartialCopyMessageId] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const lightboxSwipeX = useRef(0);
@@ -3413,6 +3435,14 @@ export default function Home() {
   // 2026-10-08 表示済みの下書きの戻し（shown-draft-restore）: 読み込みの間に入力が始まっていたら上書きしない／✕ で消した会話は戻さない
   const replyDraftLiveRef = useRef("");
   replyDraftLiveRef.current = replyDraft;
+  // 2026-10-20 すれ違い（P1 54ec8c71）: 入力欄が空→文になった時点のお客様の最新の発言を「土台」に控える（空に戻ったら外す）。
+  //   送る前にこれより新しいお客様の発言があれば知らせる（executeSend）。生成を始めた時点の値があればそれを使う（生成の途中に届いた発言を拾う）
+  const latestCustAtForComposer = latestCustomerAtOf(selectedConversation.messages);
+  useEffect(() => {
+    const wasEmpty = !composerBaseAtRef.current;
+    composerBaseAtRef.current = nextComposerBase(composerBaseAtRef.current, replyDraft, genBaseAtRef.current ?? latestCustAtForComposer);
+    if (replyDraft.trim() && wasEmpty) genBaseAtRef.current = null;
+  }, [replyDraft, latestCustAtForComposer]);
 
   useEffect(() => {
     // 会話切替の直前状態を退避: 前の会話の未送信ドラフトをキャッシュ（__SHOWN__化でDBから消えても切替復帰で復元できるように）
@@ -3443,6 +3473,10 @@ export default function Home() {
     selectedPatternAngleRef.current = null;
     selectedTemplateIdRef.current = "";
     templateSelectionMetaRef.current = null;
+    composerBaseAtRef.current = null; // 2026-10-20 すれ違い: 土台は会話ごと
+    genBaseAtRef.current = null;
+    allowStaleRef.current = false;
+    setStaleSend(null);
     // 会話切替時に前の generateReply ストリームを中断（別会話への下書き流入を防止）
     generateAbortRef.current?.abort();
     generateAbortRef.current = null;
@@ -3462,7 +3496,9 @@ export default function Home() {
     finalCheckSkipRef.current = false;
 
     // 返信待ち + ai_draft あり → テキストエリアに自動セット（「使う」クリック不要）
-    if (selectedConversation.aiDraft && selectedConversation.lastSender === "customer") {
+    // 2026-10-20 竹内さん（設計知見 P1 d3fe3a9f）: お客様の文と同じ下書きは入力欄に入れない（draft-echo.ts）
+    if (selectedConversation.aiDraft && selectedConversation.lastSender === "customer"
+      && !(DRAFT_ECHO_GUARD && isCustomerEcho(selectedConversation.aiDraft, customerTextsForEcho(selectedConversation.messages)))) {
       suppressAiDraftAutoLoad.current = true; // Effect2の二重処理を防ぐ
       setDraftPreparing(false);
       const loadedDraft = refreshDraftGreeting(selectedConversation.aiDraft, selectedConversation);
@@ -3588,6 +3624,7 @@ export default function Home() {
   useEffect(() => {
     if (!selectedConversation.aiDraft) return;
     if (selectedConversation.lastSender !== "customer") return;
+    if (DRAFT_ECHO_GUARD && isCustomerEcho(selectedConversation.aiDraft, customerTextsForEcho(selectedConversation.messages))) return; // 2026-10-20 P1 d3fe3a9f
     if (suppressAiDraftAutoLoad.current) {
       suppressAiDraftAutoLoad.current = false;
       return;
@@ -4085,6 +4122,7 @@ export default function Home() {
     try {
       setGenerating(true);
       setError("");
+      genBaseAtRef.current = latestCustomerAtOf(msgs); // 2026-10-20 すれ違い: この生成が見たお客様の最新の発言
       setReplyDraft("");
       setReplyQuality(null);
       setSuggestedAix(null);
@@ -4259,6 +4297,14 @@ export default function Home() {
 
       // 内部タグ（STOP_REASON / SUGGESTED_AIX / FINAL_CHECK）は順序・有無を問わず全て除去してからテキストボックスへ
       const finalDraft = stripInternalTags(fullText);
+      // 2026-10-20 竹内さん（設計知見 P1 d3fe3a9f）: お客様の文と同じ下書きは入力欄に残さない（サーバーの出口でも止める・draft-echo.ts）
+      if (DRAFT_ECHO_GUARD && isCustomerEcho(finalDraft, customerTextsForEcho(msgs))) {
+        aiDraftRef.current = "";
+        setReplyDraft("");
+        setCheckResult(null);
+        setError("AI の下書きがお客様の文と同じになったため出しませんでした。もう一度作り直してください。");
+        return;
+      }
       aiDraftRef.current = finalDraft;
       replyTargetCustomerMsgRef.current = targetMessage;
       setDisplaySource("ai_draft");
@@ -4526,6 +4572,7 @@ export default function Home() {
         if (json?.skipped) return;
       }
 
+      genBaseAtRef.current = latestCustomerAtOf(msgs); // 2026-10-20 すれ違い: この生成が見たお客様の最新の発言
       setReplyDraft("");
       setReplyQuality(null);
       setSuggestedAix(null);
@@ -4573,6 +4620,14 @@ export default function Home() {
 
       // 内部タグ（STOP_REASON / SUGGESTED_AIX / FINAL_CHECK）は順序・有無を問わず全て除去してからテキストボックスへ
       const finalDraft = stripInternalTags(fullText);
+      // 2026-10-20 竹内さん（設計知見 P1 d3fe3a9f）: お客様の文と同じ下書きは入力欄に残さない（draft-echo.ts）
+      if (DRAFT_ECHO_GUARD && isCustomerEcho(finalDraft, customerTextsForEcho(msgs))) {
+        aiDraftRef.current = "";
+        setReplyDraft("");
+        setCheckResult(null);
+        setError("AI の下書きがお客様の文と同じになったため出しませんでした。もう一度作り直してください。");
+        return;
+      }
       aiDraftRef.current = finalDraft;
       if (draftNoEmoji) {
         setDraftOrigText(finalDraft);
@@ -4981,6 +5036,16 @@ export default function Home() {
       setError("この文はお客様への返信ではありません（生成失敗の表示・社内向けの文）。書き直してから予約してください。");
       return;
     }
+    // 2026-10-20 すれ違い（P1 54ec8c71）: 予約も、文を作った後にお客様の新しい発言が届いていたら先に知らせる
+    if (STALE_REPLY_GUARD && replyDraft.trim() && !allowStaleRef.current) {
+      const newer = newerCustomerMessageSince(selectedConversation.messages, composerBaseAtRef.current, { skipTrivialAck: STALE_ACK_EXEMPT });
+      if (newer) {
+        setShowScheduleModal(false);
+        setStaleSend({ newerText: newer.text, newerAt: newer.at, mode: "schedule" });
+        return;
+      }
+    }
+    allowStaleRef.current = false;
     setScheduleSaving(true);
     try {
       const textToSend = replyDraft.trim();
@@ -5103,6 +5168,16 @@ export default function Home() {
         return;
       }
     }
+    // 2026-10-20 竹内さん（設計知見 P1 54ec8c71「返信を送る前にお客様から新しい LINE が来たら、その新しい発言に返信する」）:
+    //   入力欄の文を作り始めた後にお客様の新しい発言が届いていたら、送る前に知らせる（作り直す／このまま送る／やめる）。
+    //   判定は時刻だけ（stale-reply.ts）。何に答えるかの作り直しはブレイン＋下書き（generateReply）
+    if (STALE_REPLY_GUARD && replyDraft.trim() && !allowStaleRef.current) {
+      const newer = newerCustomerMessageSince(selectedConversation.messages, composerBaseAtRef.current, { skipTrivialAck: STALE_ACK_EXEMPT });
+      if (newer) {
+        setStaleSend({ newerText: newer.text, newerAt: newer.at, mode: "send" });
+        return;
+      }
+    }
     // ── 最終チェック（前頭前野モデル・3重チェック）──
     // チェックはAIが文を作った時（生成時）だけ行う（ハルシネーション防止）。
     // スタッフが編集・手入力した文はスタッフの判断が正解なので、送信時に再チェックしない。
@@ -5165,6 +5240,12 @@ export default function Home() {
       let textLineMsgId: string | null = null;
       let lineErrorMsg = "";
       let lineErrorCode: string | null = null; // "monthly_limit" | "invalid_token" | "unknown"
+      // 2026-10-20 すれ違い（P1 54ec8c71）: 文がある送信は「文の土台」を渡し、サーバーが DB で新しいお客様の発言を見る（画面の一覧が遅れていても止まる）
+      const staleFields = textToSend && STALE_REPLY_GUARD
+        ? { reply_based_on_customer_at: composerBaseAtRef.current, allow_stale: allowStaleRef.current }
+        : {};
+      allowStaleRef.current = false; // 「このまま送る」は1回だけ
+      let staleBlockedAt: string | null = null;
       try {
         // 画像→テキストの順（LINEの表示順に合わせる）
         for (let i = 0; i < imageUrls.length; i++) {
@@ -5175,12 +5256,13 @@ export default function Home() {
             //   conversation_id を渡さないとサーバ側の物件読み取り・記録が動かない（会話が分からないため）
             body: JSON.stringify({
               line_user_id: selectedConversation.lineUserId, image_url: imageUrls[i],
-              account: selectedConversation.account, conversation_id: convId, origin: "manual",
+              account: selectedConversation.account, conversation_id: convId, origin: "manual", ...staleFields,
             }),
             signal: AbortSignal.timeout(30_000),
           });
           if (!lineRes.ok) {
-            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string; errorCode?: string };
+            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string; errorCode?: string; newerAt?: string };
+            if (lineErr.errorCode === STALE_REPLY_ERROR_CODE) { staleBlockedAt = lineErr.newerAt ?? ""; break; }
             lineErrorMsg = `⚠️ LINE画像送信失敗: ${lineErr.error || lineRes.statusText}`;
             if (lineErr.errorCode) lineErrorCode = lineErr.errorCode;
           } else {
@@ -5192,18 +5274,21 @@ export default function Home() {
             }
           }
         }
-        if (textToSend) {
+        if (textToSend && staleBlockedAt === null) {
           const lineRes = await fetch("/api/send-line-message", {
             method: "POST",
             headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
             // 送信時の記録（sent_facts・2026-09-14）: 何を送った・約束したかを送った時に1回だけ記録する
-            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account, conversation_id: convId, origin: "manual" }),
+            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account, conversation_id: convId, origin: "manual", ...staleFields }),
             signal: AbortSignal.timeout(30_000),
           });
           if (!lineRes.ok) {
-            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string; errorCode?: string };
-            lineErrorMsg = `⚠️ LINE送信失敗: ${lineErr.error || lineRes.statusText}`;
-            if (lineErr.errorCode) lineErrorCode = lineErr.errorCode;
+            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string; errorCode?: string; newerAt?: string };
+            if (lineErr.errorCode === STALE_REPLY_ERROR_CODE) staleBlockedAt = lineErr.newerAt ?? "";
+            else {
+              lineErrorMsg = `⚠️ LINE送信失敗: ${lineErr.error || lineRes.statusText}`;
+              if (lineErr.errorCode) lineErrorCode = lineErr.errorCode;
+            }
           } else {
             textSent = true;
             const txtJson = await lineRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
@@ -5214,6 +5299,14 @@ export default function Home() {
         console.error("LINE send error:", lineEx);
         lineErrorMsg = `⚠️ LINE送信エラー: ${lineEx instanceof Error ? lineEx.message : "通信エラー"}`;
       }
+      // 2026-10-20 すれ違い: サーバーが「文を作った後にお客様の新しい発言」を見て止めた → 何も送っていなければ確かめの画面を出す（入力欄・画像はそのまま）
+      if (staleBlockedAt !== null && !textSent && !imageSentFlags.some(Boolean)) {
+        const newer = newerCustomerMessageSince(selectedConversation.messages, composerBaseAtRef.current, { skipTrivialAck: STALE_ACK_EXEMPT });
+        setStaleSend({ newerText: newer?.text ?? "", newerAt: newer?.at ?? staleBlockedAt, mode: "send" });
+        pendingSecondMsgRef.current = secondMsgCapture;
+        return;
+      }
+      if (staleBlockedAt !== null && !lineErrorMsg) lineErrorMsg = "⚠️ お客様から新しい LINE が届いたため、文は送っていません（画像だけ送りました）";
 
       const sentImageUrls = imageUrls.filter((_, i) => imageSentFlags[i]);
       const anyImageSent = sentImageUrls.length > 0;
@@ -8751,6 +8844,33 @@ export default function Home() {
                 )}
               </div>
             ) : null}
+
+            {/* 2026-10-20 すれ違い（設計知見 P1 54ec8c71）: 文を作った後にお客様の新しい LINE が届いた時の確かめ */}
+            {staleSend && (
+              <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/40 px-4 pb-6 sm:items-center" onClick={() => setStaleSend(null)}>
+                <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                  <p className="text-[14px] font-bold text-[#c2410c]">お客様から新しい LINE が届いています</p>
+                  <p className="mt-1 text-[12px] text-[#555]">入力欄の文は、この発言より前に作った物です。新しい発言に答えているか確かめてください。</p>
+                  {staleSend.newerText ? (
+                    <p className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap rounded-xl bg-[#f0f2f5] px-3 py-2 text-[13px] text-[#111b21]">{staleSend.newerText}</p>
+                  ) : null}
+                  <div className="mt-3 flex flex-col gap-2">
+                    <button
+                      className="rounded-xl bg-[#1565C0] py-2.5 text-[13px] font-bold text-white active:opacity-80"
+                      onClick={() => { setStaleSend(null); composerBaseAtRef.current = null; void generateReply(); }}
+                    >新しい発言を含めて作り直す</button>
+                    <button
+                      className="rounded-xl border border-[#d0d7de] py-2.5 text-[13px] font-semibold text-[#111b21] active:bg-[#f0f2f5]"
+                      onClick={() => { const mode = staleSend.mode; setStaleSend(null); allowStaleRef.current = true; if (mode === "schedule") void executeScheduleSend(); else void executeSend(); }}
+                    >確認したのでこのまま送る</button>
+                    <button
+                      className="py-2 text-[12px] text-[#667781] active:opacity-60"
+                      onClick={() => { composerBaseAtRef.current = staleSend.newerAt || composerBaseAtRef.current; setStaleSend(null); }}
+                    >やめて書き直す</button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* 返信対象メッセージ指定インジケーター */}
             {targetOverrideMessage && (

@@ -22,6 +22,7 @@ import { runBrainAndNotify } from "@/app/lib/brain-core";
 // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数・入口で止める）
 import { decideNightDeferNow } from "@/app/lib/brain-night-defer";
 import { BG_ASYNC_SKIP_STATUSES } from "@/app/lib/conversation-status";
+import { staleDraftGuardOn } from "@/app/lib/draft-supersede";
 import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
 // 2026-09-30 竹内（黒明様の事例）「お客さんの条件か、ただ物件 SUUMO 等のサイト送ってきているだけか」: 入口の見分け（純関数）。
 //   条件の欄に書く全経路（正式フォーマットのカジュアル更新・P4・経路C）で、発言のうち条件として読んでよい部分だけを使う
@@ -590,10 +591,21 @@ export async function handleTextMessage(
         // ロック中（draft_attempted_at が5分以内）は既存下書きを保護する
         // ただし [AIX誘導中] はセンチネル値なので顧客メッセージ到着時に必ずクリアする
         // （suggested_aix_meta が null にリセットされた後も [AIX誘導中] が固着するバグを防ぐ）
-        await db.from("conversations")
-          .update({ ai_draft: null })
-          .eq("id", convId)
-          .or(`draft_attempted_at.is.null,draft_attempted_at.lt.${fiveMinAgoStr},ai_draft.eq."[AIX誘導中]"`);
+        // 2026-10-20 竹内さん（設計知見 P1 54ec8c71「返信を送る前にお客様から新しい LINE が来たら、その新しい発言に返信する」）:
+        //   旧は「生成中（draft_attempted_at が5分以内）」の時に前の発言向けの下書きを残した。生成中の下書きは保存の直前と直後に
+        //   新しい発言を見て保存しない（draft-supersede）ので、残っている下書きは必ず前の発言向け＝古い。新しい発言が来たら必ず空にする
+        //   （画面の入力欄に出ている文は消さない＝送る前に画面が知らせる・stale-reply.ts）。戻す: STALE_DRAFT_GUARD=off
+        if (staleDraftGuardOn()) {
+          await db.from("conversations")
+            .update({ ai_draft: null })
+            .eq("id", convId)
+            .not("ai_draft", "is", null);
+        } else {
+          await db.from("conversations")
+            .update({ ai_draft: null })
+            .eq("id", convId)
+            .or(`draft_attempted_at.is.null,draft_attempted_at.lt.${fiveMinAgoStr},ai_draft.eq."[AIX誘導中]"`);
+        }
 
         // 直接トリガー: 60s debounce待ちを排除して即座にbg-asyncを起動
         // - bg-asyncは即200を返す（実処理は自身のafter()で行う）→ 3秒でほぼ確実に完了
