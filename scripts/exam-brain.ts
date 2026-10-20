@@ -46,7 +46,7 @@ import { problemHash, examConfig, configHash } from "./lib/brain-exam-baseline";
 import { flakeVerdict, readObs, FLAKE_DIR } from "./lib/exam-flake";
 import { isDeepseekPeakAt } from "../app/lib/llm-price";
 import {
-  buildMissMap, compareMissMaps, nextFocus, buildCoverage, linksOf, mapStageOf, normalizePlan, fallbackRaw, looseJson, buildConductorUser, parseDiffReading, parseTriage, freshProblemIds,
+  buildMissMap, compareMissMaps, nextFocus, buildCoverage, linksOf, mapStageOf, watchNeighbors, normalizePlan, fallbackRaw, looseJson, buildConductorUser, parseDiffReading, parseTriage, freshProblemIds,
   CONDUCTOR_SYSTEM, DIFF_READER_SYSTEM, TRIAGE_SYSTEM, LINKS, LINK_IDS, MAP_STAGES, MAP_STAGE_JA, MAP_STAGE_SHORT,
   type MissMap, type ProblemLike, type RowLike, type GoldLite, type Candidate, type ConductorInput, type DiffReading, type TriageItem,
 } from "./lib/exam-conductor";
@@ -879,7 +879,14 @@ async function conductInner() {
     }
   }
   for (const x of ranked) { if (cands.size >= 40) break; addCand(x.p.id, ""); }
-  const candidates = [...cands.values()].slice(0, 40);
+  let candidates = [...cands.values()].slice(0, 40);
+  // 10/20 QUALITY⑧ 見張りの釣り合い: 直す的（名指し・前に落ちた・直した所に近い・読み手の型・前の外れの理由・前の結果）ごとに、
+  //   周りの今合っている問題（同じ型 → 同じ段・同じ線 → 同じ段）を見張りの候補に足す（最大8）。司令塔が重点に見張りを付けなければ normalizePlan が1つ足す
+  const seeds = candidates.filter((c) => c.protectedPick || c.why.some((w) => /差分の言葉に近い|知見|読み手の|前の外れの理由|前の結果/.test(w))).slice(0, 8);
+  const pool = ps.flatMap((p) => { const e = ent.get(p.id); if (!e?.ok) return []; return [{ id: p.id, type: p.type, stage: mapStageOf(p), links: linksOf(p), lastOk: true as const, flaky: flakeVerdict(readObs(p.id), { problemHash: problemHash((pl.probs.get(p.id) ?? p) as never), model: "deepseek-all" }).verdict === "flaky", reuse: !!pl.items.get(p.id)?.reuse }]; });
+  const watch = watchNeighbors(seeds.map((c) => ({ id: c.id, type: c.type, stage: c.stage, links: c.links })), pool, { perFix: 2, max: 8 });
+  for (const [seed, ws] of Object.entries(watch)) for (const w of ws) addCand(w.id, w.why.replace("見張り（", `見張り（${seed} の周り・`).replace(`直す的 ${seed} の周り: `, ""));
+  candidates = [...new Map([...candidates, ...[...cands.values()].filter((c) => Object.values(watch).some((ws) => ws.some((w) => w.id === c.id)))].map((c) => [c.id, c])).values()];
   // ④ 上限（この実行の上限と、1日の上限の残りの小さい方）
   const cap = dailyCapUsd(process.env);
   const used = cap === null ? null : await readDailySpend(sb, now).catch(() => null);
@@ -904,7 +911,7 @@ async function conductInner() {
   const answered = mainAnsweredIds();
   const freshIds = freshProblemIds(ps, (p) => answered.has(p.id));
   const fresh = { items: freshIds.map((id) => ({ id, type: byId.get(id)!.type })), dailyLeftUsd: cap === null ? null : cap - (used?.usd ?? cap) };
-  const nopt = { draftChange: mat.cls === "draft" || mat.cls === "both", allowTier: flag("judge-tier") || process.env.EXAM_JUDGE_TIER === "on", fresh };
+  const nopt = { draftChange: mat.cls === "draft" || mat.cls === "both", allowTier: flag("judge-tier") || process.env.EXAM_JUDGE_TIER === "on", fresh, watch };
   let plan = normalizePlan(raw ?? fb(), input, nopt);
   const nonFresh = (pp: typeof plan) => pp.focus.filter((x) => !(pp.fresh ?? []).includes(x.id)).length;
   if (!raw) plan.source = "fallback";
@@ -926,6 +933,8 @@ async function conductInner() {
     if (freshDropped.length) log(`  1日の上限で今は入れない: ${freshDropped.map((d) => d.id).join(",")}`);
   }
   if (plan.dropped.length) log(`  削った: ${plan.dropped.map((d) => `${d.id}（${d.why}）`).join("・")}`);
+  { const fixN = plan.focus.filter((x) => x.role === "fix").length, guardN = plan.focus.filter((x) => x.role === "guard" && !freshSet.has(x.id)).length, seedN = Object.keys(watch).length;
+    log(`見張りの釣り合い: 重点 ${fixN}・見張り ${guardN}（直す的 ${seedN}の周りの候補 ${Object.values(watch).flat().length}問・同じ型 → 同じ段・同じ線 → 同じ段・今合っている問題から）`); }
   log(`判定の段: ${plan.judge === "tier" ? "機械の照らし → flash 2回 → 割れた項目だけ pro（EXAM_JUDGE_TIER=on）" : `pro（今まで通り）${plan.judgeAdvice === "tier" ? "・司令塔の勧めは段の判定（--judge-tier で使う＝前（main）の取り置きも段の判定で作り直す）" : ""}`}`);
   log(`最後の Claude の確かめ: ${plan.claudeFinal ? `要る（${plan.claudeWhy}）＝本番に入れる前に LLM_TEST_FINAL_CLAUDE=1 で重点だけ` : `要らない${plan.claudeWhy ? `（${plan.claudeWhy}）` : ""}`}`);
   log(`見込み: 司令塔の計画 約 $${plan.estUsd.toFixed(3)}（${plan.focus.length}問・上限 $${capUsd.toFixed(2)}${cap !== null ? `・今日 $${(used?.usd ?? 0).toFixed(2)}/上限 $${cap}` : ""}）＋判定／今までのやり方: 小さな確かめ 約 $${old.small.toFixed(3)}（${old.smallN}問）・選んだ問題全部 約 $${old.off.toFixed(3)}（${old.offN}問）（どれも通常の値段・1回${peak ? "・今は2倍の時間＝流すのは 13〜15 時か夜中" : ""}）`);

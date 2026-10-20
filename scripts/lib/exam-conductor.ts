@@ -353,7 +353,32 @@ export function freshFocus(items: FreshInput["items"], o: { flashOkTypes: string
 export function freshProblemIds(ps: ProblemLike[], hasMainAnswers: (p: ProblemLike) => boolean): string[] {
   return ps.filter((p) => !hasMainAnswers(p)).map((p) => p.id);
 }
-export function normalizePlan(raw: Record<string, unknown> | null, i: Pick<ConductorInput, "candidates" | "capUsd" | "flashOkTypes" | "unit">, o: { draftChange: boolean; allowTier?: boolean; fresh?: FreshInput }): ConductorPlan {
+// ─── 10/20 QUALITY⑧ 見張りの釣り合い（直した所の周りの退行を必ず見る） ─────────────────────────
+export type WatchPoolItem = { id: string; type: string; stage: MapStage; links: LinkId[]; lastOk: boolean | null; flaky: boolean; reuse?: boolean };
+/**
+ * 直す的（seed）ごとの見張りの候補: 今合っている（前の答案が合格）問題のうち、同じ型 → 同じ地図の段で同じ線 → 同じ地図の段 の順。
+ *   揺れる問題は後ろ（退行と揺れが見分けにくい）・前の結果を使える問題を先（安い）。1つの seed に perFix 件まで・全部で max 件まで（同じ問題は1回）
+ */
+export function watchNeighbors(seeds: Array<{ id: string; type: string; stage: MapStage; links: LinkId[] }>, pool: WatchPoolItem[], o: { perFix?: number; max?: number; exclude?: Set<string> } = {}): Record<string, Array<{ id: string; why: string }>> {
+  const per = o.perFix ?? 2, max = o.max ?? 8;
+  const used = new Set<string>(o.exclude ?? []);
+  for (const s of seeds) used.add(s.id);
+  const out: Record<string, Array<{ id: string; why: string }>> = {};
+  let n = 0;
+  for (const s of seeds) {
+    if (n >= max) break;
+    const tier = (p: WatchPoolItem) => p.type === s.type ? 0 : p.stage === s.stage && p.links.some((l) => s.links.includes(l)) ? 1 : p.stage === s.stage ? 2 : 9;
+    const xs = pool.filter((p) => !used.has(p.id) && p.lastOk === true && tier(p) < 9)
+      .sort((a, b) => tier(a) - tier(b) || Number(a.flaky) - Number(b.flaky) || Number(!!b.reuse) - Number(!!a.reuse) || a.id.localeCompare(b.id))
+      .slice(0, Math.min(per, max - n));
+    if (!xs.length) continue;
+    out[s.id] = xs.map((p) => ({ id: p.id, why: `見張り（直す的 ${s.id} の周り: ${tier(p) === 0 ? "同じ型" : tier(p) === 1 ? "同じ段・同じ線" : "同じ段"}・今は合っている）` }));
+    for (const p of xs) used.add(p.id);
+    n += xs.length;
+  }
+  return out;
+}
+export function normalizePlan(raw: Record<string, unknown> | null, i: Pick<ConductorInput, "candidates" | "capUsd" | "flashOkTypes" | "unit">, o: { draftChange: boolean; allowTier?: boolean; fresh?: FreshInput; watch?: Record<string, Array<{ id: string; why: string }>> }): ConductorPlan {
   const byId = new Map(i.candidates.map((c) => [c.id, c]));
   const okFlash = new Set(i.flashOkTypes);
   const dropped: ConductorPlan["dropped"] = [];
@@ -373,6 +398,16 @@ export function normalizePlan(raw: Record<string, unknown> | null, i: Pick<Condu
     focus.push({ id, role: f.role === "guard" ? "guard" : "fix", stage, reps, model, why: String(f.why ?? "").slice(0, 60) || c.why[0] || "" });
   }
   for (const c of i.candidates) if (c.protectedPick && !seen.has(c.id)) { focus.push({ id: c.id, role: "fix", stage: o.draftChange && c.draftEligible ? "draft" : "brain", reps: 1, model: "pro", why: `守る線（${c.why.find((w) => /名指し|前に落ちた|お手本|竹内さん/.test(w)) ?? "必ず"}）` }); seen.add(c.id); }
+  // 10/20 QUALITY⑧: 重点（fix）ごとに、その周りの見張り（guard）が1つも無ければ1つ足す（前に落ちた問題だけを見る偏りを止める・上限に入らなければ下の fitToCap が見張りから削る）
+  if (o.watch) for (const f of focus.filter((x) => x.role === "fix")) {
+    const ns = (o.watch[f.id] ?? []).filter((w) => byId.has(w.id));
+    if (!ns.length || ns.some((w) => seen.has(w.id) && focus.find((x) => x.id === w.id)?.role === "guard")) continue;
+    const w = ns.find((x) => !seen.has(x.id));
+    if (!w) continue;
+    const c = byId.get(w.id)!;
+    focus.push({ id: w.id, role: "guard", stage: "brain", reps: 1, model: okFlash.has(c.type) || okFlash.has(c.id) ? "flash" : "pro", why: w.why.slice(0, 60) });
+    seen.add(w.id);
+  }
   // 新しい問題（答案なし）は司令塔の答えから外して別に入れる（1日の上限の残りに収める）
   const freshIds = new Set((o.fresh?.items ?? []).map((x) => x.id));
   const chosen = new Map(focus.filter((x) => freshIds.has(x.id)).map((x) => [x.id, x]));

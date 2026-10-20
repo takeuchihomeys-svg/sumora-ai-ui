@@ -4,7 +4,7 @@
 import { examStageKeysOf, type FileMap } from "../exam-scope";
 import { findCarryOver, relevantStageOf, siblingDirs, type BaselineFile } from "../brain-exam-baseline";
 import { modelOf, flashProof, isFixTarget, UNIT_USD, type PlanProblem } from "../exam-brain";
-import { buildConductorUser } from "../exam-conductor";
+import { buildConductorUser, watchNeighbors, normalizePlan, type Candidate } from "../exam-conductor";
 import { custKindOf, staffKindOf, sceneSim, crossCheck, findConflicts, groupConflicts, kbHitsFor, conflictPeers, bigramSim, type GoldProblem } from "../exam-gold-check";
 import { piiGate, dedupeCandidates, rankCandidates, toAddBatch, type QCand } from "../exam-question-candidates";
 import { failedOf, machineHint, machineReason, parseReason, aggregateReasons, buildReaderUser, READER_SYSTEM, REASON_KINDS, type ReaderRow } from "../exam-failure-reader";
@@ -159,6 +159,25 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   ok("並べ方: 竹内さんの番・正解の道が決まっている物が先・少ない型は多い型より先", r[0].conv === "a" && r[1].conv === "b" && r[0].rankWhy.includes("竹内さんの番"));
   const b = toAddBatch(C({ tags: ["見張り", "も:直された番"], accept: ["AIX:x"], needs: [] }));
   ok("足せる形: 『も:』の札は外す・入れたのは誰か（人が確かめて足す）", JSON.stringify(b.tags) === JSON.stringify(["見張り"]) && String(b.addedBy).includes("人が確かめて"));
+}
+
+// ─── QUALITY⑧ 見張りの釣り合い ─────────────────────────────────────────────
+{
+  const W = (id: string, type: string, stage: "proposing" | "closing" | "cost", links: Array<"L1" | "L2">, lastOk: boolean | null, flaky = false, reuse = false) => ({ id, type, stage, links, lastOk, flaky, reuse });
+  const pool = [W("a1", "T", "closing", [], true), W("a2", "T", "closing", [], true, true), W("a3", "T", "closing", [], false), W("b1", "U", "proposing", ["L1"], true), W("b2", "U", "proposing", [], true, false, true), W("c1", "V", "cost", [], true)];
+  const w = watchNeighbors([{ id: "s1", type: "T", stage: "proposing", links: ["L1"] }], pool, { perFix: 3 });
+  ok("見張り: 同じ型 → 同じ段・同じ線 → 同じ段の順・今合っている問題だけ・揺れる問題は後ろ", w.s1?.map((x) => x.id).join() === "a1,a2,b1", JSON.stringify(w));
+  const w2 = watchNeighbors([{ id: "s1", type: "T", stage: "proposing", links: [] }, { id: "s2", type: "T", stage: "closing", links: [] }], pool, { perFix: 1, max: 2 });
+  ok("見張り: 同じ問題は2回使わない・全部で max まで", w2.s1?.[0]?.id === "a1" && w2.s2?.[0]?.id === "a2" && Object.values(w2).flat().length === 2);
+  ok("見張り: 周りに今合っている問題が無ければ無し", Object.keys(watchNeighbors([{ id: "s9", type: "Z", stage: "proposing", links: [] }], [W("x", "Y", "cost", [], true)])).length === 0);
+  const C = (id: string, o: Partial<Candidate> = {}): Candidate => ({ id, type: "T", stage: "closing", links: [], why: [], flaky: false, reuse: false, draftEligible: true, lastOk: true, lastKinds: [], protectedPick: false, ...o });
+  const cands = [C("f1", { lastOk: false }), C("g1"), C("g2")];
+  const p1 = normalizePlan({ focus: [{ id: "f1", role: "fix", reps: 1, model: "pro", stage: "brain" }] }, { candidates: cands, capUsd: 1, flashOkTypes: ["T"], unit: UNIT_USD }, { draftChange: false, watch: { f1: [{ id: "g1", why: "見張り（同じ型）" }, { id: "g2", why: "見張り" }] } });
+  ok("釣り合い: 司令塔が見張りを付けない重点に、周りの見張りを1つ足す（flash にしてよい型は flash）", p1.focus.some((x) => x.id === "g1" && x.role === "guard" && x.model === "flash") && !p1.focus.some((x) => x.id === "g2"));
+  const p2 = normalizePlan({ focus: [{ id: "f1", role: "fix" }, { id: "g2", role: "guard" }] }, { candidates: cands, capUsd: 1, flashOkTypes: [], unit: UNIT_USD }, { draftChange: false, watch: { f1: [{ id: "g1", why: "x" }, { id: "g2", why: "y" }] } });
+  ok("釣り合い: もう周りの見張りがあれば足さない", p2.focus.filter((x) => x.role === "guard").map((x) => x.id).join() === "g2");
+  const p3 = normalizePlan({ focus: [{ id: "f1", role: "fix" }] }, { candidates: cands, capUsd: 0.031, flashOkTypes: [], unit: UNIT_USD }, { draftChange: false, watch: { f1: [{ id: "g1", why: "x" }] } });
+  ok("釣り合い: 上限に入らなければ見張りから削る（重点は残る）", p3.focus.map((x) => x.id).join() === "f1" && p3.dropped.some((d) => d.id === "g1"));
 }
 
 console.log(`exam-brain-like-line: ${pass} PASS / ${fail} FAIL`);
