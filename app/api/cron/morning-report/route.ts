@@ -661,7 +661,7 @@ export async function GET(req: NextRequest) {
     }
     // 2026-10-20 見張りの控えの止まり（line-watch-scope.findCaptureStalls・読むだけ）: 昨日の営業時間（JST 10〜20）にブレインは動いているのに
     //   line_watch_turns の下書き・判断の欄が2時間以上埋まらなかった区間（10/12〜10/15 の約60時間の止まりは誰も気づかなかった）。
-    //   LINE（このグループ）に出すのは LINE_WATCH_STALL_ALERT=on の時だけ（既定 off）。毎晩の line-watch-daily は常に記録する（cron_run_logs・画面）
+    //   LINE（このグループ）に出す（既定 on・竹内さん 10/21 OK・止める LINE_WATCH_STALL_ALERT=off）。毎晩の line-watch-daily は常に記録する（cron_run_logs・画面）
     if (watchStallAlertEnabled()) {
       try {
         const st = await checkCaptureStalls(supabase, { fromMs: Date.now() - 24 * 3600_000, toMs: Date.now() });

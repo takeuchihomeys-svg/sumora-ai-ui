@@ -192,9 +192,9 @@ export function findCaptureStalls(o: { captures: ReadonlyArray<string>; decision
 export function watchStallCheckEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.LINE_WATCH_STALL_CHECK ?? "").trim().toLowerCase() !== "off";
 }
-/** LINE（売上番長グループの朝の報告）に出す: LINE_WATCH_STALL_ALERT=on（外に送るので既定 off） */
+/** LINE（売上番長グループの朝の報告）に出す: 既定 on（竹内さん 10/21 OK）・止める LINE_WATCH_STALL_ALERT=off */
 export function watchStallAlertEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.LINE_WATCH_STALL_ALERT ?? "").trim().toLowerCase() === "on";
+  return (env.LINE_WATCH_STALL_ALERT ?? "").trim().toLowerCase() !== "off";
 }
 const hm = (iso: string) => { const d = new Date(Date.parse(iso) + JST); return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
 /** 人が読む1行（無ければ空） */

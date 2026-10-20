@@ -108,12 +108,12 @@ function mainHead(): { commit: string; vk: string } | null {
 }
 /**
  * 今の main の版の答えが取り置かれていなければ、安い時間（夜中の --run-queue・JST 1:40）に --warm-main を予約する（同じ版は1回だけ）。
- *   既定は入れない（夜中に自動でお金を使う＝竹内さんの OK が出るまで）: 入れる EXAM_AUTO_WARM=on。会話は EXAM_WARM_CONV（無ければ今の --conv が YUMA2〜5 ならそれ・それ以外は YUMA5）
+ *   既定は入れる（竹内さん 10/21 OK・1日の上限の内）: 止める EXAM_AUTO_WARM=off。会話は EXAM_WARM_CONV（無ければ今の --conv が YUMA2〜5 ならそれ・それ以外は YUMA5）
  *   cont＝人が流した --warm-main の続き（上限で途中まで）＝旧の「次の夜中に回す」と同じ扱い（EXAM_AUTO_WARM=off の時だけ止める）
  */
 function ensureMainWarm(o: { force?: boolean; runNow?: boolean; quiet?: boolean; cont?: boolean } = {}): void {
   const aw = (process.env.EXAM_AUTO_WARM ?? "").trim().toLowerCase();
-  if (aw === "off" || (!o.cont && aw !== "on")) { if (!o.quiet && aw !== "off") log("main の取り置きの自動予約: 入れていない（EXAM_AUTO_WARM=on で入る・人が流すなら --warm-main）"); return; }
+  if (aw === "off") { if (!o.quiet) log("main の取り置きの自動予約: 止めている（EXAM_AUTO_WARM=off）"); return; }
   const h = mainHead();
   const d = warmDecision({ vk: h?.vk ?? null, log: readWarmLog(), queued: readQueue().map((x) => x.label), force: o.force });
   if (!d.enqueue || !h) { if (!o.quiet) log(`main の取り置き: ${d.why}`); return; }
