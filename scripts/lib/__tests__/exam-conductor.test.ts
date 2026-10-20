@@ -3,6 +3,7 @@
 import {
   classifyRow, problemMisses, buildMissMap, compareMissMaps, nextFocus, buildCoverage, linksOf, mapStageOf, normalizePlan, fitToCap, fallbackRaw,
   looseJson, buildConductorUser, parseDiffReading, parseTriage, machineJudge, mergeFlash, tierFinal, needPro, unitCost, deepseekUsd,
+  freshFocus, freshProblemIds, pickAutoBase, parseRange,
   type ProblemLike, type RowLike, type Candidate, type FocusItem, type JudgeVec,
 } from "../exam-conductor";
 import { UNIT_USD } from "../exam-brain";
@@ -158,6 +159,57 @@ const cand = (id: string, o: Partial<Candidate> = {}): Candidate => ({ id, type:
 }
 
 // ─── 8. 費用 ───
+// ─── 6. 新しい問題（答案なし）は司令塔の前に決まった計算で入れる（2026-10-20） ───
+{
+  const ps: ProblemLike[] = [pCheck, pPromise, { ...pReply, id: "q175" }, { ...pView, id: "q176" }];
+  const answered = new Set(["q1", "q2"]);
+  const ids = freshProblemIds(ps, (p) => answered.has(p.id));
+  ok("新しい問題＝main の答案が1つも無い問題（spec の順）", JSON.stringify(ids) === JSON.stringify(["q175", "q176"]), JSON.stringify(ids));
+  const items = [{ id: "q175", type: "一般的な事を保留しない" }, { id: "q176", type: "返信かAIXか" }];
+  const fr = freshFocus(items, { flashOkTypes: ["返信かAIXか"], budgetUsd: 10 });
+  ok("新しい問題: 1回・ブレインだけ", fr.focus.length === 2 && fr.focus.every((x) => x.reps === 1 && x.stage === "brain"));
+  ok("新しい問題: flash にしてよい型は flash・他は pro", fr.focus.find((x) => x.id === "q176")?.model === "flash" && fr.focus.find((x) => x.id === "q175")?.model === "pro");
+  ok("新しい問題: 見込み", Math.abs(fr.est - (unitCost({ stage: "brain", reps: 1, model: "pro" }) + unitCost({ stage: "brain", reps: 1, model: "flash" }))) < 1e-9);
+  const one = unitCost({ stage: "brain", reps: 1, model: "pro" });
+  const tight = freshFocus(items, { flashOkTypes: [], budgetUsd: one * 1.5 });
+  ok("1日の上限: 収まる分だけ・後ろから削る", tight.focus.length === 1 && tight.focus[0].id === "q175" && tight.dropped[0]?.id === "q176" && /1日の上限/.test(tight.dropped[0].why), JSON.stringify(tight));
+  ok("1日の上限の残り 0 なら入れない", freshFocus(items, { flashOkTypes: [], budgetUsd: 0 }).focus.length === 0);
+  const chosen = new Map<string, FocusItem>([["q175", { id: "q175", role: "fix", stage: "draft", reps: 2, model: "pro", why: "直した所" }]]);
+  const ch = freshFocus(items, { flashOkTypes: [], budgetUsd: 10, chosen });
+  ok("司令塔が選んだ新しい問題はその回数・段を使う", ch.focus[0].reps === 2 && ch.focus[0].stage === "draft" && ch.focus[0].why.startsWith("新しい問題"));
+  const chTight = freshFocus(items.slice(0, 1), { flashOkTypes: [], budgetUsd: one, chosen });
+  ok("上限が足りない時は回を1・ブレインに落として残す", chTight.focus.length === 1 && chTight.focus[0].reps === 1 && chTight.focus[0].stage === "brain");
+  // normalizePlan: 司令塔の答えに無くても入る・この実行の上限（capUsd）ではなく 1日の上限の残りに収める
+  const cands = [cand("q1"), cand("q175", { type: "一般的な事を保留しない" })];
+  const raw = { focus: [{ id: "q1", role: "fix", stage: "brain", reps: 1, model: "pro" }, { id: "q175", role: "guard", stage: "brain", reps: 3, model: "pro" }] };
+  const pl = normalizePlan(raw, { candidates: cands, capUsd: one, flashOkTypes: ["返信かAIXか"], unit: UNIT_USD }, { draftChange: false, fresh: { items, dailyLeftUsd: 10 } });
+  ok("normalizePlan: 新しい問題を別に入れる（fresh）", JSON.stringify(pl.fresh) === JSON.stringify(["q175", "q176"]) && pl.focus.some((x) => x.id === "q176") && pl.focus.some((x) => x.id === "q1"), JSON.stringify(pl));
+  ok("normalizePlan: 新しい問題は実行の上限で削らない（1日の上限の残りまで）", pl.estUsd > one && !pl.dropped.some((d) => d.id === "q176"));
+  ok("normalizePlan: 司令塔が選んだ新しい問題の回数を使う", pl.focus.find((x) => x.id === "q175")?.reps === 3);
+  const pl2 = normalizePlan(null, { candidates: cands, capUsd: 1, flashOkTypes: [], unit: UNIT_USD }, { draftChange: false, fresh: { items, dailyLeftUsd: one } });
+  ok("normalizePlan: 1日の上限の残りが少ない → 他の重点の見込みを引いた残りで入れる", pl2.focus.filter((x) => (pl2.fresh ?? []).includes(x.id)).length <= 1 && pl2.dropped.some((d) => /新しい問題/.test(d.why)), JSON.stringify(pl2));
+  const pl3 = normalizePlan(null, { candidates: cands, capUsd: 1, flashOkTypes: [], unit: UNIT_USD }, { draftChange: false, fresh: { items, dailyLeftUsd: null } });
+  ok("normalizePlan: 1日の上限なし → 全部入る", (pl3.fresh ?? []).length === 2);
+  ok("normalizePlan: fresh を渡さない時は今まで通り（fresh の欄なし）", normalizePlan(raw, { candidates: cands, capUsd: 1, flashOkTypes: [], unit: UNIT_USD }, { draftChange: false }).fresh === undefined);
+}
+// ─── 7. 直した中身の起点・--range の形（2026-10-20） ───
+{
+  const anc = new Set(["aaa", "ccc"]);
+  const b = pickAutoBase([
+    { commit: "ccc", at: "2026-10-19T00:00:00Z", why: "c", group: "conductor" },
+    { commit: "bbb", at: "2026-10-20T00:00:00Z", why: "b", group: "warm-main" },
+    { commit: "aaa", at: "2026-10-18T00:00:00Z", why: "a", group: "warm-main" },
+  ], (c) => anc.has(c));
+  ok("起点: warm-main の中で HEAD の祖先の一番新しい物（HEAD 自身・別の枝は飛ばす）", b?.commit === "aaa", JSON.stringify(b));
+  const b2 = pickAutoBase([{ commit: "bbb", at: "2026-10-20T00:00:00Z", why: "b", group: "warm-main" }, { commit: "ccc", at: "2026-10-19T00:00:00Z", why: "c", group: "conductor" }], (c) => anc.has(c));
+  ok("起点: warm-main が無ければ前の司令塔の結果", b2?.commit === "ccc");
+  ok("起点: どれも無ければ null（今まで通り作業ツリーの差）", pickAutoBase([], () => true) === null);
+  const r = parseRange("e5f3c182..origin/main");
+  ok("--range の形", r.from === "e5f3c182" && r.to === "origin/main");
+  let threw = ""; try { parseRange("e5f3c182"); } catch (e) { threw = String(e); }
+  ok("--range の形が違う → 分かる言葉で止める", /<a>..<b>/.test(threw));
+}
+
 ok("DeepSeek の値段（pro・2倍）", Math.abs(deepseekUsd("deepseek-v4-pro", { cacheHit: 0, cacheMiss: 1_000_000, output: 0 }, true) - 1.32) < 1e-9);
 ok("DeepSeek の値段（flash）", Math.abs(deepseekUsd("deepseek-flash", { cacheHit: 1_000_000, cacheMiss: 0, output: 1_000_000 }, false) - 0.603) < 1e-9);
 
