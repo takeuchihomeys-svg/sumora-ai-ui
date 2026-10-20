@@ -25,6 +25,7 @@ import { parseContactPromise, ymdStr as contactYmd } from './contact-promise';
 // 2026-09-21 竹内（まりあさん事例）: 「内覧が終わった」の判定は viewing-thread と同じ1か所
 import { STAFF_VIEWING_DONE_RE } from './viewing-thread';
 import { aixMgmtLifelineEnabled, LIFELINE_PROMISE_RE } from './aix-lifeline';
+import { staffOnlyAix1020, findMgmtPendingSentence, stripPendingClause } from './staff-only-aix-1020';
 // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・バイク置き場・契約の条件・家賃の交渉）の約束の要件の網
 import { aixNewPickers1020Enabled, APPLICATION_STATUS_Q_RE, CONTRACT_TERMS_RE, RENT_NEGOTIATION_RE, SURROUNDINGS_RE } from './aix-new-pickers';
 import { findPrematureViewing, customerMentionsFixedViewing, findStaffViewingDeclaration } from './viewing-premature';
@@ -97,6 +98,8 @@ export interface LedgerEntry {
     parallel?: boolean;
     /** confirmation_reported（AIX 物件確認した）: 物件ごとの結果（propertyNames と同じ順） */
     propStatuses?: string[];
+    /** confirmation_promised: 管理会社の返事待ちを伝えた文から読んだ約束（STAFF_ONLY_AIX_1020 mgmt_pending・staff-only-aix-1020.ts） */
+    mgmtPending?: boolean;
   };
   /** done 直後（次のスタッフ発言より前）の顧客返答（往復文脈の一般化） */
   customerReactionAfter?: ReactionKind;
@@ -457,7 +460,9 @@ export function findConfirmReportSentence(text: string | null | undefined): stri
     const x = s.trim();
     if (!x) continue;
     if (REPORT_HEDGE_RE.test(x) || REPORT_ECHO_RE.test(x)) { prev = x; continue; }
-    if (STAFF_CONFIRM_REPORT_RE.test(x) || LEDGER_CONFIRM_REPORT_RE.test(x)) {
+    // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 「担当者よりご返答あり次第ご連絡」の待ちの句は報告の語（よりご返答あり）に当てない
+    const xr = stripPendingClause(x);
+    if (STAFF_CONFIRM_REPORT_RE.test(xr) || LEDGER_CONFIRM_REPORT_RE.test(xr)) {
       // 2026-10-06 R 事例: 「…備わっております。とのご返答でした！！」の「とのご返答でした」だけの文は中身（要件）が前の文にある → 前の文と合わせて返す
       return /^との/.test(x) && prev ? `${prev}${x}` : x;
     }
@@ -756,6 +761,11 @@ export function classifyStaffTextForLedger(text: string, at: string | null): Led
     if (ls) return base('confirmation_promised', 'promised', ls.match(LIFELINE_PROMISE_RE)![0], { object: 'ライフライン', sentence: promiseSentenceText(ls) });
   }
   if (bare) return base('confirmation_promised', 'promised', bare.evidence, { object: confirmObjectOf(bare.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([bare.sentence, ...sentences], bare.sentence), ...confirmPropertyDetail(t) });
+  // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 管理会社の返事待ち（「確認いただいております」「確認中」「ご返答あり次第ご連絡」）も確認の約束
+  if (staffOnlyAix1020('mgmt_pending')) {
+    const mp = findMgmtPendingSentence(sentences);
+    if (mp) return base('confirmation_promised', 'promised', mp.evidence, { object: confirmObjectOf(mp.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([mp.sentence, ...sentences], mp.sentence), mgmtPending: true, ...confirmPropertyDetail(t) });
+  }
   if (STAFF_QUESTION_RE.test(lastLine)) return base('question_asked', 'done', lastLine.slice(-30));
   return null;
 }
@@ -806,6 +816,11 @@ export function classifyStaffTextFacts(text: string, at: string | null): LedgerE
   if (!has('confirmation_promised')) {
     const c = findConfirmPromiseSentence(sentences);
     if (c) add('confirmation_promised', 'promised', c.evidence, { object: confirmObjectOf(c.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([c.sentence, ...sentences], c.sentence), ...confirmPropertyDetail(t) });
+    // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 同じ通に済みの行い（御見積書の送付 等）があっても、管理会社の返事待ちの文は確認の約束として残す（本番 2996）
+    else if (staffOnlyAix1020('mgmt_pending')) {
+      const mp = findMgmtPendingSentence(sentences);
+      if (mp) add('confirmation_promised', 'promised', mp.evidence, { object: confirmObjectOf(mp.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([mp.sentence, ...sentences], mp.sentence), mgmtPending: true, ...confirmPropertyDetail(t) });
+    }
   }
   return out;
 }
@@ -921,6 +936,12 @@ export function buildViewingFlowForBrain(ledger: ActionLedger): string {
 function pickLastStaffEntry(merged: LedgerEntry[], lastStaffAt: number): LedgerEntry | null {
   const win = merged.filter((e) => near(ms(e.at), lastStaffAt, AIX_ATTACH_WINDOW_MS));
   if (win.length === 0) return null;
+  // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 最後の発言に管理会社の返事待ち（まだ果たしていない確認の約束）があれば、それを最後の行いにする
+  //   （同じ通の御見積書の送付・確認の報告より先。お礼・了承の番に約束を果たす AIX を立てる resolveStaffPromiseAix が読む）
+  if (staffOnlyAix1020('mgmt_pending')) {
+    const pending = win.find((e) => e.kind === 'confirmation_promised' && e.status === 'promised' && e.detail.mgmtPending && e.fulfilledBy == null);
+    if (pending) return pending;
+  }
   const rank = (e: LedgerEntry): number[] => [
     LEDGER_OUTBOUND_SOURCES.has(e.source) ? 1 : 0,
     e.confidence,
