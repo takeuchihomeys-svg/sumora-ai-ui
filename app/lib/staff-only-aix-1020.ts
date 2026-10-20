@@ -70,3 +70,15 @@ export function stripPendingClause(sentence: string, env?: Env): string {
   if (!staffOnlyAix1020("mgmt_pending", env)) return sentence;
   return sentence.replace(/(?:より)?(?:ご)?(?:返事|返答|回答|連絡)(?:が)?(?:あり|有り|入り|届き|頂け|いただけ|頂き|いただき)?次第[^\n。！!？?]*/g, "");
 }
+
+/**
+ * 返事待ちの約束の直後の、問い・頼みの無い反応だけの番（本番 2996「めちゃくちゃ安いですね！ありがとうございます！」＝御見積書への喜び＋お礼）。
+ *   お礼・了承だけ（isAckOnly）と同じく、約束を果たす AIX（確認した→管理会社に確認した）の番として扱う。問い・頼み・物件の持ち込みがあれば当てない
+ */
+export function reactionOnlyAfterMgmtPending(i: { lastStaffMgmtPending: boolean; customerText: string | null | undefined; hasImage: boolean; env?: Env }): boolean {
+  if (!staffOnlyAix1020("mgmt_pending", i.env) || !i.lastStaffMgmtPending || i.hasImage) return false;
+  const t = String(i.customerText ?? "").normalize("NFKC").trim();
+  if (!t || t.length > 60) return false;
+  if (/https?:\/\/|\[(?:画像|動画|ファイル)\]/.test(t)) return false;
+  return !/[?？]|ですか|ますか|でしょうか|ませんか|かな|ください|下さい|お願いでき|頂け(?:ます|ません)|いただけ(?:ます|ません)|可能|教えて|知りたい|ほしい|欲しい/.test(t);
+}

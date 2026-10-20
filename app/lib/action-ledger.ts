@@ -862,7 +862,9 @@ export function aixTextPromises(aixType: string | null | undefined, text: string
     && (e.kind === 'pickup_declared' || e.kind === 'estimate_declared' || e.kind === 'confirmation_promised')
     && !(e.kind === 'pickup_declared' && self === 'properties_sent')
     && !(e.kind === 'estimate_declared' && (self === 'estimate_sent' || opts.estimateEnclosed === true))
-    && !(e.kind === 'confirmation_promised' && (self === 'confirmation_reported' || self === 'confirmation_promised')));
+    && !(e.kind === 'confirmation_promised' && (self === 'confirmation_reported' || self === 'confirmation_promised')
+      // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 【物件確認した】の本文の「管理会社に〜確認いただいております」（別の要件の返事待ち）は残す
+      && !(self === 'confirmation_reported' && e.detail.mgmtPending && staffOnlyAix1020('mgmt_pending'))));
 }
 
 /**
@@ -1011,6 +1013,13 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
       if (x.f.kind === map.kind && x.f.detail) e.detail = { ...e.detail, ...x.f.detail };
     }
     entries.push(e);
+    // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: AIX の本文に書き足した管理会社の返事待ち（本番 2996: 【物件確認した】の本文に
+    //   「管理会社担当さんに子供のご入居が可能か確認いただいております」）は、送信時の記録に無くても（記録前・旧の分け方）この AIX の本文から読む
+    if (staffOnlyAix1020('mgmt_pending') && !recorded.some((x) => x.f.origin === 'aix' && x.f.kind === 'confirmation_promised' && near(ms(x.f.sent_at), ms(at), AIX_ATTACH_WINDOW_MS))) {
+      for (const p of aixTextPromises(r.aix_type, r.generated_text, at, { estimateEnclosed: r.estimate_sent === true })) {
+        if (p.kind === 'confirmation_promised' && p.detail.mgmtPending) entries.push({ ...p, source: 'aix_log' });
+      }
+    }
     // estimate_sent=true の別 aix_type（property_check_result 等に見積添付）→ estimate_sent も立てる
     if (map.kind !== 'estimate_sent' && r.estimate_sent === true) {
       entries.push({ kind: 'estimate_sent', status: 'done', at, source: 'aix_log', confidence: 3, evidence: `estimate_sent@${r.aix_type}`, detail: { estimateFor: names } });

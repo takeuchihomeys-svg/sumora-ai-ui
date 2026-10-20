@@ -1,6 +1,6 @@
 // app/lib/__tests__/staff-only-aix-1020.test.ts — 2026-10-20 P0「AIX と返信の分け方」: 管理会社の返事待ちを確認の約束に読む（STAFF_ONLY_AIX_1020 mgmt_pending）
 //   実行: npx tsx app/lib/__tests__/staff-only-aix-1020.test.ts（LLM なし・DB なし）
-import { staffOnlyAix1020, findMgmtPendingSentence, stripPendingClause } from "../staff-only-aix-1020";
+import { staffOnlyAix1020, findMgmtPendingSentence, stripPendingClause, reactionOnlyAfterMgmtPending } from "../staff-only-aix-1020";
 import { buildActionLedger, classifyStaffTextFacts } from "../action-ledger";
 import { resolveStaffPromiseAix } from "../aix-task-link";
 import { negotiationPromisePending } from "../further-discount";
@@ -81,6 +81,39 @@ const REP = "管理会社に確認させていただきましたところ、小�
 t("確認の報告の後のお礼は on でも同じ（AIX なし）", route("on", REP, "わかりました！").r === null && route(undefined, REP, "わかりました！").r === null);
 const CHK = "かしこまりました！！\nお部屋の募集状況確認させていただきます！！\n確認出来次第ご連絡させて頂きます！！";
 t("ふつうの確認の約束は on でも同じ", JSON.stringify(route("on", CHK, "お願いします")) === JSON.stringify(route(undefined, CHK, "お願いします")));
+
+// 返事待ちの約束の直後の反応だけの番（本番 2996）
+const ON = { STAFF_ONLY_AIX_1020: "on" };
+const rx = (text: string, pending = true, env: Record<string, string> = ON, img = false) => reactionOnlyAfterMgmtPending({ lastStaffMgmtPending: pending, customerText: text, hasImage: img, env });
+t("反応だけ（on・返事待ちの後）", rx("めちゃくちゃ安いですね！\nありがとうございます！"));
+t("off は当てない", !rx("めちゃくちゃ安いですね！ありがとうございます！", true, {}));
+t("返事待ちでない約束の後は当てない", !rx("めちゃくちゃ安いですね！ありがとうございます！", false));
+t("問いがあれば当てない", !rx("ありがとうございます！他にもありますか？"));
+t("頼みがあれば当てない", !rx("ありがとうございます！内覧お願いできますか"));
+t("画像があれば当てない", !rx("こちらも", true, ON, true));
+t("長い文は当てない", !rx("ありがとうございます".repeat(8)));
+// 反応だけの番を了承と同じに渡すと、2996 は約束を果たす AIX
+const reac = withEnv("on", () => {
+  const m = conv(S2996, "めちゃくちゃ安いですね！ありがとうございます！");
+  const led = buildActionLedger({ recentAixRows: [], messages: m, lineTasks: [], lastAixHistory: null, lastCustomerAt: m[2].createdAt });
+  const ack = rx(m[2].text, !!led.facts.lastStaffEntry?.detail?.mgmtPending);
+  const r = resolveStaffPromiseAix(led.facts, m, { customerAckAfter: ack, propertyInPlay: true });
+  return { ack, r: r ? `${r.action}/${r.kind}/${r.checkPattern ?? ""}` : null };
+});
+t("2996 on: 反応だけ → 約束を果たす AIX", reac.ack && !!reac.r?.startsWith("property_check_result/check"), reac);
+
+// 本番の 2996 は【物件確認した】の AIX で送られていた（本文に返事待ち・送信時の記録は旧の分け方）→ AIX の行の本文から読む
+const viaAix = (v: string | undefined) => withEnv(v, () => {
+  const m = conv(S2996, "めちゃくちゃ安いですね！ありがとうございます！").map((x, i) => (i === 1 ? { ...x, isAix: true, lineMessageId: "L1" } : x));
+  const row = { aix_type: "property_check_result", check_pattern: "available", created_at: "2026-10-08T10:22:51Z", sent_at: "2026-10-08T10:22:00Z", line_message_id: "L1", generated_text: S2996, property_names: null, estimate_sent: null, template_name: null };
+  const led = buildActionLedger({ recentAixRows: [row] as never, messages: m, lineTasks: [], lastAixHistory: null, lastCustomerAt: m[2].createdAt });
+  const ack = rx(m[2].text, !!led.facts.lastStaffEntry?.detail?.mgmtPending, v ? ON : {});
+  const r = resolveStaffPromiseAix(led.facts, m, { customerAckAfter: ack, propertyInPlay: true });
+  return { ack, last: led.facts.lastStaffEntry?.kind ?? null, r: r ? `${r.action}/${r.kind}/${r.checkPattern ?? ""}` : null };
+});
+const aOff = viaAix(undefined), aOn = viaAix("on");
+t("2996（AIX で送った）off: 確認の報告だけ・AIX なし", aOff.last === "confirmation_reported" && aOff.r === null, aOff);
+t("2996（AIX で送った）on: 返事待ちの約束 → 約束を果たす AIX", aOn.last === "confirmation_promised" && !!aOn.r?.startsWith("property_check_result/check"), aOn);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

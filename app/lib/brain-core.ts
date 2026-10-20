@@ -51,6 +51,7 @@ import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } fr
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
 import { vacateMoveInEstimateEnabled } from "@/app/lib/vacate-move-in-estimate";
 import { brainCheckPatternEnabled, brainCheckPatternSchemaField, resolveCheckKindWithBrain } from "@/app/lib/brain-check-pattern";
+import { reactionOnlyAfterMgmtPending } from "@/app/lib/staff-only-aix-1020";
 import { routeFix1020, broughtTypedText, contractAixWhenTopEmpty, contractPromiseIsCheck, viewingCheckAlsoVacancy, concernRepickupTarget, concernRepickupAnswer, lastStaffReportedResult, checkAfterResultTurnOk } from "@/app/lib/brain-route-fix-1020";
 import { viewingCheckFirst, VIEWING_CHECK_PROMISE_RE, viewingRoomVacating, threadRoomCheckForTurn, otherRoomSentAfterMoveOut, vacancyDateFromMaterial, vacatingViewingAnswer, type ThreadRoomCheck } from "@/app/lib/viewing-check-first";
 import { propertyThreadEnabled } from "@/app/lib/property-thread";
@@ -3516,13 +3517,17 @@ ${history}`;
     // 見積る物件があるか（こちらの送付・見積の送付・お客様の URL/画像/「ここの」/見積の語）。見積書送るの約束・補正の共通の前提（ゆうこ事例）
     const estimatePropertyInPlay = brainLedger.facts.propertiesSentCount > 0 || brainLedger.facts.estimateSent || unrepliedTurn.hasImage
       || messagesOldestFirst.some((m) => m.sender === "customer" && customerPointsAtProperty(m.text ?? ""));
+    // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 管理会社の返事待ちの約束の直後の、問い・頼みの無い反応だけの番もお礼・了承と同じ（約束を果たす AIX の番・本番 2996）
+    const ackAfterForPromise = customerAckAfter || (lastIsCustomer && reactionOnlyAfterMgmtPending({
+      lastStaffMgmtPending: !!brainLedger.facts.lastStaffEntry?.detail?.mgmtPending, customerText: unrepliedTurn.text, hasImage: unrepliedTurn.hasImage,
+    }));
     let promiseAix = resolveStaffPromiseAix(brainLedger.facts, messagesOldestFirst, {
       customerRequestedCheck: customerRequestedPropertyCheck({
         recentMessages: promiseBasis.map((m) => ({ sender: m.sender, text: m.text })),
         sentPropertyCount: brainLedger.facts.propertiesSentCount,
       }),
       customerWillSend: customerWillSendFirst,
-      customerAckAfter,
+      customerAckAfter: ackAfterForPromise,
       propertyInPlay: estimatePropertyInPlay,
     });
     // 2026-09-17 竹内（慶次事例）: 探し続ける約束（オススメできるお部屋を随時確認→出次第お送り）は
@@ -3534,7 +3539,7 @@ ${history}`;
     //   10/14 試験（route1014-final-b・sp-on）: 約束の直後のお礼・了承だけの番（q094「ありがとうございます！よろしくお願いいたします」）を返信にした＝
     //   この番は約束を果たす AIX（竹内さんは黙って後で AIX 80%・3巡目の線）。下げるのはお客様が中身を書いた番だけ
     //   10/14 確かめる人: 約束の催促（「まだですか」「どうなりましたか」）も約束を果たす番＝下げない（isPromiseNudge）
-    if (promiseAix && !customerAckAfter && !isPromiseNudge(unrepliedTurn.text ?? "") && !samePromiseFamily(promiseAix.action, finalAix ?? null)
+    if (promiseAix && !ackAfterForPromise && !isPromiseNudge(unrepliedTurn.text ?? "") && !samePromiseFamily(promiseAix.action, finalAix ?? null)
       && !applyOverride(demotedOverrides, "staff_promise", `promise:${promiseAix.kind}`, promiseAix.action, finalAix ?? null)) {
       console.log(JSON.stringify({ tag: "brain:staff-promise-demoted", conversationId, kind: promiseAix.kind, would: promiseAix.action, brain: finalAix ?? null }));
       promiseAix = null;
