@@ -196,3 +196,18 @@ npx tsx --env-file=.env.local scripts/exam-brain.ts --coverage [--json]
 - 判定の段（`EXAM_JUDGE_TIER=on`・既定 off）: 機械の照らし（AIX だけの依頼で答案に AIX が無い＝✕ 等）→ flash を並びを変えて2回 → 揃った項目は確定・割れた項目がある時だけ pro。構成の鍵に入る（前（main）の取り置きも段の判定で作り直し）ので、司令塔は勧めるだけ・使うのは `--judge-tier` の時。
 - 個人情報: DeepSeek に送る本文は1行ずつ伏せ字（maskExamText）にし、個人の値（携帯・生年月日・メール・申込フォーム）が残る行は捨て、送る前に test-pii-guard の網（piiValueSignal・testPiiRefusal）。費用は local-llm-spend.jsonl に足す（1日の上限に数える）。
 - 置き場: `<倉庫の根>/.claude/exam-cache/exam-brain/conductor/`（`<label>.plan.json`・`<label>.result.json`・`missmap-*.json`・`coverage-*.json`）。
+
+## LINE のブレインの組み方に寄せた8つ（2026-10-20・設計知見 0ed6c13d「試験のブレインを最優先で改善する」）
+
+読み手（flash）＋司令塔（pro）＋自信で深さを決める＋キャッシュの並び＋外れの理由を読む。決まった所は純関数（単体テスト `scripts/lib/__tests__/exam-brain-like-line.test.ts`）。
+
+| # | 何を | 付け方（止め方） |
+|---|---|---|
+| COST① | main の答えは版ごとに1回。今の置き場に無い問題は、同じ構成の前の main の置き場から「その問題の段（ブレインだけ／下書きまで）に効くファイルの鍵」が今の main と同じ答えを持ち越す。今の main の版の取り置きが無ければ夜中の `--run-queue` に `--warm-main` を自動で予約（同じ版は1回・`exam-brain/warm-log.json`）。夜中は残りの額で回せる数だけ（`--baseline-limit`）回して続きは次の夜。結果に「使い回した・持ち越した・今 main で解いた・夜に回した」を出す | 既定で入る（`EXAM_BASELINE_CARRY=off`・`EXAM_AUTO_WARM=off`）。昼に答えの無い問題を解かず夜に回す: `--main-missing=night`（`EXAM_MAIN_MISSING=night`） |
+| COST② | 自信の気づき: 全部1回 → 2回目は自信が低い問題だけ（前（main）と違った／前が無くて外れた・揺れる）→ 3回目は1回目と2回目が割れた問題だけ（揃えば止める）。1回目が前と同じ答え＝前と2つ揃った＝自信が高いので、外れ・揺れる問題でも回さない。main の取り置きは揺れる問題だけ2回 | 既定（`--reps=wide`＝外れ・揺れる問題は前と同じでも2回目・4日の台帳で確かめの回が旧の約1.6倍になるので既定にしない／旧は `--reps=old`） |
+| COST③ | `--model` の既定を auto に: model-check で道が pro と同じだった型（3問以上・9割以上・合う数が pro 以上）と、その問題だけで2回以上いつも同じだった問題は flash。その問題で道が違った問題・直しの的（名指し・前に落ちた）・最後の関所は pro。flash の「前」は flash の main で取り置く | 既定（旧は `--model=pro`）。model-check は問題ごと（byId）にも残す |
+| COST④ | キャッシュの並び: 司令塔の材料は変わりにくい物（外れの型・線・単価・flash の型・前の外れの理由）を先・実行ごとに変わる物（直した中身・上限・候補）を後ろ。外れの理由の読み手は system 固定・user は「問題と正解 → 前の答案 → 今の答案」。判定に `--judge-prefix=stable`（場面 → 採点の決まり → 答案）。判定の入力のキャッシュの当たり・外れを cost.json と結果に出し、判定の費用を local-llm-spend.jsonl に足す（旧は1日の上限に入っていなかった） | 判定の並びの既定は旧のまま（as-is）。stable は測ってから |
+| QUALITY⑤ | 外れの理由の読み手（flash・短い JSON）: 落ちた問題ごとに 道の取り違え／依頼の抜け／注記・材料に引っ張られた／言ってはいけない事／正解が揺れている／判定の誤り と1行の根拠。決まりで決まる物は呼ばない。結果に型ごとの数・保存 `conductor/<label>.reasons.json`・`reasons-latest.json` → 次の `--conduct` の材料（型の数・候補の理由） | 既定（`--no-reasons`／`EXAM_REASONS=off`・上限 `--reasons-max=10`） |
+| QUALITY⑥ | 正解の食い違い: `npx tsx --env-file=.env.local scripts/exam-gold-check.ts`。場面の印（お客様の発言の種類×直前のこちらの送信の種類）・札・発言の近さで似た問題を集め、どちらの正解の道で答えても相手で外れる組を出す（相手の言ってはいけない道に当たる＝強い）。関係しそうな設計知見を並べて「竹内さんへの確認」の一覧に。外れの理由の読み手が「似た場面の正解」を手がかりに使う | 置き場 `exam-brain/gold-check/`（latest.json・<日付>.md）。正解は直さない |
+| QUALITY⑦ | 本番の外れから問題の候補: `npx tsx --env-file=.env.local scripts/exam-question-candidates.ts [--days=2] [--max=20]`。見張りの道の外れ・edited-turn-miner の直された番（draft-diff-types は main に入ったら）を、個人情報の網・もう入っている番・重なりを外して並べる。spec.json には足さない | 置き場 `exam-brain/question-candidates/`（.md・.json・.add-batch.json＝読んで brain-exam-add.ts --add-batch） |
+| QUALITY⑧ | 見張りの釣り合い: 直す的ごとに今合っている周りの問題（同じ型 → 同じ段・同じ線 → 同じ段）を見張りの候補に足し、司令塔が付けなければ1つ足す（上限に入らなければ見張りから削る） | `--conduct` で既定 |
