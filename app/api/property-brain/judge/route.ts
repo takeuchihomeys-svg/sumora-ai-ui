@@ -136,7 +136,10 @@ export async function POST(req: NextRequest) {
     // 2026-10-13 このお客様に広げて提案してよい範囲（ブレインの判断から・売上サポと同じ値・PROPOSAL_RANGE=off で止める）
     const { loadProposalRange } = await import("@/app/lib/proposal-range-server");
     const proposalRange = (await loadProposalRange(supabase, { propertyCustomerId: customerId, conversationId: body.conversation_id ?? null }, { closing })).range;
-    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target } : null, proposalRange }));
+    // 2026-10-20 送った物件へのお客様の反応・メモ（売上サポと同じ値・AIX_REACTIONS_LINK=on の時だけ・既定 off＝null）
+    const { loadReactionState } = await import("@/app/lib/reaction-negatives-server");
+    const reactionNegatives = (await loadReactionState(supabase, customerId))?.negatives ?? null;
+    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target } : null, proposalRange, reactionNegatives }));
 
     // ── 画像でしか分からない有無（要る時だけ・5枚まで・時間で切る） ──
     let imageRead = 0, imageOk = 0, imageFailed = 0;

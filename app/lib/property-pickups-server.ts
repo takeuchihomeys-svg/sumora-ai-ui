@@ -228,6 +228,9 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     // 2026-10-06 重みの版（scoring_weights の active）を判定に入れる（版が無い間は定数のまま・SCORING_WEIGHTS_MODE=off で止める・scoring-learning-server）
     const { applyScoringWeightsForJudge } = await import("@/app/lib/scoring-learning-server");
     await applyScoringWeightsForJudge(supabase);
+    // 2026-10-20 竹内（P1 1a57c6db）送った物件へのお客様の反応・メモ（上過ぎる・狭い・駅から遠い・高い・古い）を弱い減点で判定へ（AIX_REACTIONS_LINK=on の時だけ・既定 off＝null）
+    const { loadReactionState } = await import("@/app/lib/reaction-negatives-server");
+    const reactionNegatives = (await loadReactionState(supabase, input.propertyCustomerId))?.negatives ?? null;
     const sentIdx = new Set<number>();
     if (profile && profile.history.sentCount > 0) input.summaries.forEach((s, i) => { try { if (isSentRoom(parsePropertyFacts(s), profile)) sentIdx.add(i); } catch { /* 読めない物は送付済みにしない */ } });
     const dd = dedupeSameBuilding(input.summaries, { isSent: (i) => sentIdx.has(i) });
@@ -361,7 +364,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       const lc = locOf.get(i);
       it.location = lc?.saved ?? null;
       if (profile && facts) {
-        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null, terms: tm?.t ?? null, locationCodes: lc?.codes ?? null, searchMode, prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target, equipmentText: it.pdfText ?? null } : null, proposalRange }); } catch { it.judgment = null; }
+        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null, terms: tm?.t ?? null, locationCodes: lc?.codes ?? null, searchMode, prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target, equipmentText: it.pdfText ?? null } : null, proposalRange, reactionNegatives }); } catch { it.judgment = null; }
       }
       if (tm && tm.t.hasText) {
         try { it.terms = buildPickupTerms(tm.t, profile, { equipment: e?.match ?? null, filled: tm.filled }); } catch { it.terms = null; }
@@ -394,7 +397,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         if (facts.areaSqm == null && text) { const a = parseListingText(text).areaSqm; if (a != null) facts.areaSqm = a; }
         const dl = locateItem(input.summaries[d.index], text, loaded?.location ?? null);
         let judgment: Judgment | null = null;
-        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null, terms: dt, locationCodes: dl.codes, searchMode, prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target, equipmentText: text } : null, proposalRange }); } catch { judgment = null; }
+        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null, terms: dt, locationCodes: dl.codes, searchMode, prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target, equipmentText: text } : null, proposalRange, reactionNegatives }); } catch { judgment = null; }
         droppedAd.push({ pdfUrl, judgment });
       }
     }

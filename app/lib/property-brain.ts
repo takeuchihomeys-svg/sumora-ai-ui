@@ -34,13 +34,14 @@
 
 import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
 import { isGenericBuildingName } from "./generic-building-name";
-import { EQUIP_LABELS, conditionalFloorOf, parseEquipmentWants, BATH_TOILET_WANT_RE, BATH_TOILET_NOT_REQUIRED_RE, type EquipmentMatch, type EquipKey } from "./listing-equipment";
+import { EQUIP_LABELS, conditionalFloorOf, floorFromRoom, parseEquipmentWants, BATH_TOILET_WANT_RE, BATH_TOILET_NOT_REQUIRED_RE, type EquipmentMatch, type EquipKey } from "./listing-equipment";
 import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
 import { parseMoveInWant, type MoveInWant } from "./move-in-want";
 import { strengthCodes, readRequirementStrengths, normalizeRequirementStrengths, type RequirementStrengths } from "./requirement-strength";
 // 2026-10-07 決め手の条件（気に入った部屋＋あと一つの不満から作る次の物件の像・closing-target.ts）
 import { closingTargetCodes, CLOSING_POINTS, CLOSING_JA, type ClosingTargetJudgeInput } from "./closing-target";
 import { proposalRangeCodes, wideSqmMargin, proposalSizeWideEnabled, FEWER_ROOM_LDK_MIN_SQM, PROPOSAL_POINTS, PROPOSAL_JA, PROPOSAL_HOLD_CODES, PROPOSAL_POSITIVE_CODES, type ProposalRange } from "./proposal-range-codes";
+import { reactionCodesFor, REACTION_POINTS, REACTION_JA, REACTION_HOLD_CODES, type ReactionNegative } from "./reaction-negatives";
 import { hookLeanCodesOf, HOOK_LEAN_CODES, HOOK_FEATURE_JA, HOOK_FEATURE_KEYS, HOOK_BONUS, hookLeanCode, type HookLeanJudgeInput } from "./hook-lean-core";
 
 /** お客様の行の要望の強さ（保存の値＝LINE から webhook が書いた物を正に、条件の欄の文から読めた物で埋める） */
@@ -660,6 +661,8 @@ export const REASON_JA: Record<string, string> = {
   ...CLOSING_JA,
   // 2026-10-13 このお客様に広げて提案してよい範囲（proposal-range-codes.ts）
   ...PROPOSAL_JA,
+  // 2026-10-20 送った物件へのお客様の反応・メモ（reaction-negatives.ts・AIX_REACTIONS_LINK=on の時だけ付く）
+  ...REACTION_JA,
 };
 
 /**
@@ -933,6 +936,8 @@ export const REASON_POINTS: Record<string, number> = {
   ...CLOSING_POINTS,
   // 2026-10-13 このお客様に広げて提案してよい範囲（proposal-range-codes.PROPOSAL_POINTS）・部屋数が1つ少ない広い LDK（FLOOR_PLAN_LARGER と同じ +5）
   ...PROPOSAL_POINTS,
+  // 2026-10-20 送った物件へのお客様の反応・メモ（弱い減点 −8・NG と言った物は −15 で保留・解消は +4・reaction-negatives.ts）
+  ...REACTION_POINTS,
   FLOOR_PLAN_FEWER_ROOM_WIDE: 5,
 };
 
@@ -2014,6 +2019,12 @@ export type JudgeOptions = {
    *   広さ・間取りの帯（sizeWide）もこれで決める。渡さなければ場所・家賃・築年は今まで通り・広さと間取りは既定の帯（PROPOSAL_SIZE_WIDE=off で旧）
    */
   proposalRange?: ProposalRange | null;
+  /**
+   * 2026-10-20 竹内（P1 1a57c6db）「お客さんの反応に反応して判断も変える」: 送った物件への反応・メモの不満（reaction-negatives-server.loadReactionState）。
+   *   渡すと前に送った物件と同じか悪い向き（上過ぎる・狭い・駅から遠い・高い・古い）に REACTION_*_NG（−8）・NG と言った物は *_HARD（−15・保留）・
+   *   解消した物に *_OK（+4・保留・外す候補には付けない）。渡さなければ今まで通り（AIX_REACTIONS_LINK=off は呼ぶ側が null）
+   */
+  reactionNegatives?: ReadonlyArray<ReactionNegative> | null;
 };
 
 /** 「送ってきた家賃帯より高め」を見るのに要る送付の件数（1〜2件の中央値は1件の家賃そのもの） */
@@ -2255,6 +2266,21 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     add(code, reasonPoints(code), PROPOSAL_HOLD_CODES.has(code) ? "hold" : undefined);
   }
 
+  // 2026-10-20 送った物件へのお客様の反応・メモ（reaction-negatives）: 減点・NG と言った物は保留。解消の加点は保留・外す候補に付けない（下で）
+  const reactionOk: string[] = [];
+  if (opts.reactionNegatives && opts.reactionNegatives.length) {
+    const split = splitBuildingRoom(facts.name);
+    const rc = reactionCodesFor({
+      floor: floorFromRoom(facts.roomNo || split.room || null),
+      rentTotal: facts.rentYen != null ? facts.rentYen + (facts.adminFeeYen ?? 0) : null,
+      areaSqm: facts.areaSqm ?? null, walk: facts.walkMinutes, age: facts.buildingAge,
+    }, opts.reactionNegatives);
+    for (const code of rc) {
+      if (codes.includes(code)) continue;
+      if (code.endsWith("_OK")) { reactionOk.push(code); continue; }
+      add(code, reasonPoints(code), REACTION_HOLD_CODES.has(code) ? "hold" : undefined);
+    }
+  }
   // 上限は SCORE_MAX（200・旧 130・その前は 100）。条件が全部合う物件は AD なしで 150 台に届き、130 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
   //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
   // 条件の外れ（保留・外す候補の札）がある物件は AD の段を点に入れない（settleHeldAd・札は _HELD で残す）
@@ -2268,6 +2294,7 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   if (opts.closingTarget && !holds.length && !drops.length) {
     for (const c of closingTargetCodes(facts, opts.closingTarget)) if (!codes.includes(c)) codes.push(c);
   }
+  if (reactionOk.length && !holds.length && !drops.length) for (const c of reactionOk) if (!codes.includes(c)) codes.push(c);
   if (holds.length || drops.length) {
     const settled = settleHeldAd(codes, true);
     for (let k = 0; k < codes.length; k++) codes[k] = settled[k];
@@ -2361,6 +2388,8 @@ function isNewPositive(c: string): boolean {
     || c === "RENT_BAND_UPPER" || c === "RENT_TARGET_NEAR"
     // 2026-10-06 刺さった新着から学んだ特徴
     || c.startsWith("HOOK_LEAN_")
+    // 2026-10-20 送った物件への反応を解消（reaction-negatives）
+    || /^REACTION_.+_OK$/.test(c)
     // 2026-10-07 決め手の条件に合う
     || c === "CLOSING_FIT" || c === "CLOSING_MAIN_OK" || c === "CLOSING_NEAR_FAVORITE"
     // 2026-10-13 広げて提案してよい範囲の中（このお客様）・部屋数が1つ少ない広い LDK
@@ -2371,7 +2400,9 @@ function isNewPositive(c: string): boolean {
 }
 /** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
 function isNewInfo(c: string): boolean {
-  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_UNDER_MIN_SOFT|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_ANCHOR_FAR|AREA_ANCHOR_TAXI_OVER|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AD_ASSUMED_BUILDING|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR|CLOSING_MAIN_MISS|PROPOSAL_AREA_EDGE|PROPOSAL_AGE_OUT)$/.test(c);
+  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_UNDER_MIN_SOFT|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_ANCHOR_FAR|AREA_ANCHOR_TAXI_OVER|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AD_ASSUMED_BUILDING|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR|CLOSING_MAIN_MISS|PROPOSAL_AREA_EDGE|PROPOSAL_AGE_OUT)$/.test(c)
+    // 2026-10-20 送った物件への反応に当たる（弱い減点・reaction-negatives）
+    || /^REACTION_.+_NG$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
@@ -2398,6 +2429,8 @@ export const HOLD_REASON_CODES = new Set([
   "MOVE_IN_UNKNOWN_MUST", "AREA_MUST_NG",
   // 2026-10-13 このお客様に広げて提案する範囲の外（場所をはっきり言っている人の隣の区・遠い物件／家賃が決め手の人の上限超え）
   ...PROPOSAL_HOLD_CODES,
+  // 2026-10-20 お客様が NG と言った反応（「上の階は無理」等・reaction-negatives）
+  ...REACTION_HOLD_CODES,
 ]);
 const isHoldCode = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP|CONDITION)_.*_NG$/.test(c);
 

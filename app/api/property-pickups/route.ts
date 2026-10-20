@@ -8,6 +8,9 @@ import { supabase } from "@/app/lib/supabase";
 import { toPickupHandoffItem } from "@/app/lib/property-pickups";
 import { orderByRequestedIds } from "@/app/lib/sent-image-order";
 import { waitUntil } from "@vercel/functions";
+import { reactionsLinkEnabled, reactionRowAdjust } from "@/app/lib/reaction-negatives";
+import { propKeyOf } from "@/app/lib/reaction-negatives-server";
+import { floorFromRoom } from "@/app/lib/listing-equipment";
 import { pickCustomerBest, bestBasisFor, bestRuleTag, customerImageNeed, type BestCandidateRow } from "@/app/lib/pickup-best";
 import { starRankMode, type StarSituation } from "@/app/lib/recommend-star-rank";
 import { starSituationFromConditions, STAR_SITUATION_COLUMNS } from "@/app/lib/star-rank-pickup";
@@ -22,7 +25,7 @@ import { listingAdStamp, listingRoomText, nameWithRoom } from "@/app/lib/pickup-
 // 2026-09-28 竹内「審査中と出ているのは物件ピックアップのチェックに入れない」「新規のお客さんは AD の高い物件を優先」（純関数）
 import { pickupDealStatus } from "@/app/lib/listing-deal-status";
 import { firstProposalSentAt, lastProposalSentAt, type SentLite as ProposalSentLite } from "@/app/lib/pickup-ad-priority";
-import { dropDiscountFromRow, isDiscountCompareCode } from "@/app/lib/property-brain";
+import { dropDiscountFromRow, isDiscountCompareCode, parsePropertyFacts } from "@/app/lib/property-brain";
 import { widenChainNotes, type ChainCommandLite, type PickupLite } from "@/app/lib/search-widen-chain";
 import { WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
 import { summarizeNewArrivals, newArrivalLine, NEW_ARRIVAL_WINDOW_HOURS, type NewArrivalRow, type NewArrivalSummary, type SentBuilding } from "@/app/lib/new-arrivals";
@@ -531,6 +534,28 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   const starMode = starRankMode(process.env.STAR_RANK_MODE);
   // 2026-10-06b お客様の状況（条件欄の敷礼0・2階以上）で🌟の並べ方に足し点。まとめ（pickup-complete-server）・一覧と同じ関数・同じ列。画面へも値で渡す
   const situation = starSituationFromConditions((condRes.data ?? null) as Parameters<typeof starSituationFromConditions>[0]);
+  // 2026-10-20 竹内（P1 1a57c6db・6a5413e5）: 送った後に来たお客様の反応・メモ（上過ぎる・狭い・高い／この物件が良い・見送り）を 👑 の並びに入れる。
+  //   保存した点は送る前の判定なので、ここで付け直す（reaction-negatives.reactionRowAdjust・画面に返す行は変えない）。
+  //   候補が全部「一回送った物件」だけの時は、送った物件の中から 👑 を選ぶ（from_sent・反応の良い物件が上・見送った物件は保留）。AIX_REACTIONS_LINK=on の時だけ
+  const rx = reactionsLinkEnabled() && custId ? await (await import("@/app/lib/reaction-negatives-server")).loadReactionState(supabase, custId) : null;
+  const rxRows = <T extends BestCandidateRow>(xs: T[]): T[] => {
+    if (!rx) return xs;
+    return xs.map((r) => {
+      const f = parsePropertyFacts(r.summary_text ?? "");
+      const k = propKeyOf(r.property_name, r.room_no ?? null);
+      const a = reactionRowAdjust(r, { floor: floorFromRoom(k.room || f.roomNo || null), rentTotal: f.rentYen != null ? f.rentYen + (f.adminFeeYen ?? 0) : null, areaSqm: f.areaSqm ?? null, walk: f.walkMinutes, age: f.buildingAge }, k.key, rx);
+      return { ...r, score: a.score, verdict: a.verdict, reason_codes: a.reason_codes };
+    });
+  };
+  let fromSent = false;
+  const bestPool = <T extends BestCandidateRow>(xs: T[]): T[] => {
+    const open = notSentBefore(xs);
+    if (!rx || open.some((r) => r.status === "pending")) return rxRows(open);
+    // 未送信の候補が無い: 送った物件（この回で送った status=sent・別の回で届けた同じ部屋）を候補に戻す（pickCustomerBest は pending だけを見る）
+    const sentPool = xs.filter((r) => r.status === "pending" || r.status === "sent").map((r) => ({ ...r, status: "pending" }));
+    fromSent = sentPool.length > 0;
+    return rxRows(sentPool);
+  };
   const latestGid = rows[0] ? roundOf.get(rows[0].batch_id) ?? null : null;
   let bestFrom: "complete" | "window" = "window";
   let bestRaw = null as ReturnType<typeof pickCustomerBest>;
@@ -547,14 +572,14 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     });
     // 2026-09-27 決まりの名前に版を付けた（bestRuleTag・判定の点 → 画像の点の1本の並び）。前の版のまとめは best_id を使わず並べ直す
     const preferId = cp?.status === "done" && cp.best_id != null && !reanalyzed && cp.result?.basis_rule === bestRuleTag(basis, starMode) ? Number(cp.best_id) : null;
-    bestRaw = pickCustomerBest(notSentBefore(groupRows), { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis, preferId, starMode, situation });
+    bestRaw = pickCustomerBest(bestPool(groupRows), { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis, preferId: rx ? null : preferId, starMode, situation });
     bestFrom = "complete";
   } else {
-    bestRaw = pickCustomerBest(notSentBefore(rows), { basis, starMode, situation });
+    bestRaw = pickCustomerBest(bestPool(rows), { basis, starMode, situation });
   }
   // 2026-09-24 竹内「全体で一番条件に合うのところも画像表示する」: 一番の物件の画像（お客様に送る1ページ目だけ・元付は返さない）
   const bestRow = bestRaw ? rows.find((r) => r.id === bestRaw.id) ?? null : null;
-  const best = bestRaw ? { ...bestRaw, from: bestFrom, image_url: bestRow ? pickSaveImageUrl(bestRow) : null, status: bestRow?.status ?? null,
+  const best = bestRaw ? { ...bestRaw, from: bestFrom, ...(fromSent ? { from_sent: true } : {}), image_url: bestRow ? pickSaveImageUrl(bestRow) : null, status: bestRow?.status ?? null,
     room_text: listingOf.get(bestRaw.id)?.room_text ?? null, ad_text: listingOf.get(bestRaw.id)?.ad_text ?? null } : null;
   return {
     ok: true,
