@@ -152,7 +152,8 @@ export function isEstimateCorrectionContext(msgs: ReadonlyArray<Msg>, explicit?:
   for (let i = lastEst + 1; i < arr.length; i++) {
     const t = String(arr[i].text ?? "").normalize("NFKC");
     if (!isCustomer(arr[i]) && STAFF_CORRECTION_PROMISE_RE.test(t)) return true;
-    if (isCustomer(arr[i]) && MISSING_RE.test(t) && /見積|費用|代|料|金額|円/.test(t)) return true;
+    // 画像の読み取り（物件資料の「記載なし」等）は見ない（180日の実データで、物件資料の画像だけで次の御見積書が『訂正』になった外れ）
+    if (isCustomer(arr[i]) && !/^\[画像\]/.test(t.trim()) && MISSING_RE.test(t) && /見積|費用|代|料|金額|円/.test(t)) return true;
   }
   return false;
 }

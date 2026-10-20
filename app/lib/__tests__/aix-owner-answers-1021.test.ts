@@ -100,6 +100,7 @@ it("C5: 訂正した御見積書（お客様の抜けの指摘・スタッフの
   ok(isEstimateCorrectionContext([est, { sender: "customer", text: "清掃代は？" }, { sender: "staff", text: "訂正しました御見積書作成しお送りさせて頂きます！！" }], null, {}), "約束で当たらない");
   ok(!isEstimateCorrectionContext([{ sender: "customer", text: "清掃代が抜けてると言われました" }], null, {}), "見積書を送る前に当たった");
   ok(!isEstimateCorrectionContext([est, { sender: "customer", text: "ありがとうございます" }], null, {}), "お礼で当たった");
+  ok(!isEstimateCorrectionContext([est, { sender: "customer", text: "[画像] 【物件名】A 【敷金】記載なし 【礼金】1ヶ月 【賃料】70,000円" }], null, {}), "物件資料の画像の読み取りで当たった");
   ok(!isEstimateCorrectionContext([est, { sender: "customer", text: "清掃代が抜けてると言われました" }], false, {}), "画面の選択が正でない");
   ok(!isEstimateCorrectionContext([est, { sender: "customer", text: "清掃代が抜けてると言われました" }], null, { ESTIMATE_CORRECTION_WORDING: "off" }), "off が効かない");
   // 2通目の生成: 今送ったばかりの御見積書が末尾にある
