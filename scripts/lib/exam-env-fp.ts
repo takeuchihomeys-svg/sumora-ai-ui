@@ -45,7 +45,8 @@ export function parseDotenv(src: string): Record<string, string> {
  */
 export function collectReaders(sources: string[]): Map<string, EnvReader> {
   const seen = new Map<string, Array<EnvReader>>();
-  const ref = /\benv(?:\.([A-Z][A-Z0-9_]{2,})|\[\s*["']([A-Z][A-Z0-9_]{2,})["']\s*\])/g;
+  // 2026-10-21 確かめる人: process.env?.X（?. の読み方）が拾えず PII_MASK_KEEP_OWNER・STAFF_RESULT_GATE・RENT_BAND_SCORING 等が指紋から漏れていた → ?. も拾う
+  const ref = /\benv(?:\??\.([A-Z][A-Z0-9_]{2,})|(?:\?\.)?\[\s*["'`]([A-Z][A-Z0-9_]{2,})["'`]\s*\])/g;
   const shape = /^\s*(?:\?\?\s*(["'])([^"'\n]*)\1\s*\))?((?:\s*\.\s*(?:trim|toLowerCase|toUpperCase)\(\))*)\s*\)?((?:\s*\.\s*(?:trim|toLowerCase|toUpperCase)\(\))*)\s*(===|!==)\s*(["'])([^"'\n]*)\6/;
   for (const src of sources) {
     let m: RegExpExecArray | null;
@@ -53,9 +54,21 @@ export function collectReaders(sources: string[]): Map<string, EnvReader> {
     while ((m = ref.exec(src))) {
       const name = m[1] ?? m[2];
       const s = shape.exec(src.slice(m.index + m[0].length, m.index + m[0].length + 120));
-      const r: EnvReader = s ? { kind: "bool", lit: /toLowerCase/.test(`${s[3]}${s[4]}`) ? s[7].toLowerCase() : s[7], dflt: s[2] ?? "", lower: /toLowerCase/.test(`${s[3]}${s[4]}`) } : { kind: "raw" };
+      // toUpperCase で比べる読み方は効く値の比べ（小文字に揃える）と合わない → raw（安全側）
+      const r: EnvReader = s && !/toUpperCase/.test(`${s[3]}${s[4]}`) ? { kind: "bool", lit: /toLowerCase/.test(`${s[3]}${s[4]}`) ? s[7].toLowerCase() : s[7], dflt: s[2] ?? "", lower: /toLowerCase/.test(`${s[3]}${s[4]}`) } : { kind: "raw" };
       const a = seen.get(name) ?? []; a.push(r); seen.set(name, a);
     }
+  }
+  // 2026-10-21 確かめる人: 名前を文字で渡して中で env[name] を読む手伝いの関数（flag("ITSUDEMO_R13", env)・meetingDayWordOn(env, "MEETING_DAY_WORD")）と、
+  //   「戻す X=off」の書き置きだけで読み方が見えない名前も拾う（読み方が分からない＝raw＝安全側）。手伝い経由の名前は bool の読み方があっても raw にする
+  const viaHelper = /\b[A-Za-z_$][\w$]*\(\s*(?:["'`]([A-Z][A-Z0-9_]{3,})["'`]\s*,\s*[\w$.?]*\benv\b|[\w$.?]*\benv\s*,\s*["'`]([A-Z][A-Z0-9_]{3,})["'`])/g;
+  const docSwitch = /\b([A-Z][A-Z0-9_]{3,})\s*=\s*(?:on|off)\b/g;
+  for (const src of sources) {
+    let m: RegExpExecArray | null;
+    viaHelper.lastIndex = 0;
+    while ((m = viaHelper.exec(src))) { const name = m[1] ?? m[2]; const a = seen.get(name) ?? []; a.push({ kind: "raw" }); seen.set(name, a); }
+    docSwitch.lastIndex = 0;
+    while ((m = docSwitch.exec(src))) { if (!seen.has(m[1])) seen.set(m[1], [{ kind: "raw" }]); }
   }
   const out = new Map<string, EnvReader>();
   for (const [name, rs] of seen) {

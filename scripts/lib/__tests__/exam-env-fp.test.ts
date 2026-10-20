@@ -3,7 +3,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectReaders, envFingerprintOf, defaultEnvOf, parseDotenv, envFpMismatchNote, canonValue } from "../exam-env-fp";
+import { collectReaders, envFingerprintOf, defaultEnvOf, parseDotenv, envFpMismatchNote, canonValue, appReaders, isFpName, FP_EXCLUDE_RE } from "../exam-env-fp";
+import { readdirSync, statSync, readFileSync } from "node:fs";
 import { reuseKey } from "../exam-brain";
 import { planBaseline, findCarryOver, type BaselineFile } from "../brain-exam-baseline";
 import { makeCassetteFetch, cassetteRunSalt, setCassetteTag, flushCassette, type CassetteStats, type CassetteMode } from "../llm-cassette";
@@ -42,6 +43,36 @@ ok("コードに無くてもスイッチの形は入る", fp({ ...base, LINE_WAT
 const dEnv = defaultEnvOf({ ...base, DAY_SUBJECT_READER: "on", ACK_TOPIC_SCOPE: "on" }, fp({ ...base, DAY_SUBJECT_READER: "on", ACK_TOPIC_SCOPE: "on" }), dot);
 ok("既定の環境: .env.local に無い名前は消す・ある名前は .env.local の値", !("DAY_SUBJECT_READER" in dEnv) && dEnv.ACK_TOPIC_SCOPE === "off" && fp(dEnv).hash === "");
 ok("比べの注意: 同じなら null・違えば出す", envFpMismatchNote(on, on) === null && !!envFpMismatchNote(on, null)?.includes("DAY_SUBJECT_READER=on") && envFpMismatchNote(null, { hash: "" }) === null);
+
+// ②b 2026-10-21 確かめる人: ?. の読み方・名前を文字で渡す手伝い・書き置きだけの名前も拾う
+{
+  const r2 = collectReaders([
+    `if ((process.env?.PII_MASK_KEEP_OWNER ?? "").toLowerCase() !== "off") a();`,
+    `const flag = (name: string, env: E) => (env[name] ?? "").toLowerCase() !== "off"; if (flag("ITSUDEMO_R13", env)) b(); meetingDayWordOn(process.env, "MEETING_DAY_WORD");`,
+    `// 戻す OLD_AGE_MODE=off\nconst m = modeOf(process.env?.OLD_AGE_MODE);`,
+    `if ((env.UP_SWITCH ?? "").toUpperCase() === "ON") c();`,
+  ]);
+  ok("読み方: process.env?.X も拾う（bool）", r2.get("PII_MASK_KEEP_OWNER")?.kind === "bool");
+  ok("読み方: 手伝いの関数に文字で渡す名前を拾う（raw）", r2.get("ITSUDEMO_R13")?.kind === "raw" && r2.get("MEETING_DAY_WORD")?.kind === "raw");
+  ok("読み方: ?. の生の読み方（raw）", r2.get("OLD_AGE_MODE")?.kind === "raw");
+  ok("読み方: toUpperCase の比べは raw（安全側）", r2.get("UP_SWITCH")?.kind === "raw");
+}
+// ②c 本番のコード（app/）で env から読む名前は全部、指紋の対象か外す名前（漏れ＝on/off の比べが混ざる・main の取り置きにも混ざる）
+{
+  const files: string[] = [];
+  const walk = (d: string) => { for (const n of readdirSync(d)) { if (n === "node_modules" || n === "__tests__" || n.startsWith(".")) continue; const p = join(d, n); if (statSync(p).isDirectory()) walk(p); else if (/\.(?:ts|tsx|mts|js|mjs)$/.test(n) && !/\.test\./.test(n)) files.push(p); } };
+  walk("app");
+  const ar = appReaders(".");
+  const pats = [
+    /\b\w*[eE]nv\w*\??\.([A-Z][A-Z0-9_]{2,})\b/g,
+    /\b\w*[eE]nv\w*(?:\?\.)?\[\s*["'`]([A-Z][A-Z0-9_]{2,})["'`]\s*\]/g,
+    /\b\w*\(\s*["'`]([A-Z][A-Z0-9_]{3,})["'`]\s*,\s*[\w.?]*\benv\b/g,
+    /\b\w*\(\s*[\w.?]*\benv\s*,\s*["'`]([A-Z][A-Z0-9_]{3,})["'`]/g,
+  ];
+  const miss = new Set<string>();
+  for (const f of files) { const s = readFileSync(f, "utf8"); for (const p of pats) { p.lastIndex = 0; let m: RegExpExecArray | null; while ((m = p.exec(s))) if (!isFpName(m[1], ar) && !FP_EXCLUDE_RE.test(m[1])) miss.add(`${m[1]}（${f}）`); } }
+  ok("本番のコードの env の名前は全部指紋の対象", files.length > 50 && miss.size === 0, [...miss].slice(0, 20).join(" / "));
+}
 
 // ③ 使い回しの鍵
 const rk = { problemHash: "p", stage: "brain" as const, scopeKey: "s", toolKey: "t", cfgHash: "c", model: "m", kbKey: "-", dbKey: "d", convKey: "-" };
@@ -90,7 +121,9 @@ ok("録音の印: LLM_CASSETTE_REP=off で rep の印を止める", cassetteRunS
   const rep2 = await run("", "2");
   ok("録音: 別の実行の2回目は1回目を再生しない（独立な確かめ）", !rep2.replay && rep2.t !== offR.t);
   const rep2Strict = await run("", "2", "strict");
-  ok("録音: strict の2回目は旧の鍵（1回目の録音）を返す", rep2Strict.replay && rep2Strict.t === offR.t);
+  ok("録音: strict の2回目は回を足して録った答えを返す（無ければ旧の鍵）", rep2Strict.replay && rep2Strict.t === rep2.t, JSON.stringify({ rep2Strict, rep2 }));
+  const rep3Strict = await run("", "3", "strict");
+  ok("録音: strict で回の録音が無い時は旧の鍵（1回目の録音）を返す", rep3Strict.replay && rep3Strict.t === offR.t, JSON.stringify(rep3Strict));
   rmSync(dir, { recursive: true, force: true });
   console.log(`exam-env-fp: ${pass} PASS / ${fail} FAIL`);
   if (fail) process.exitCode = 1;

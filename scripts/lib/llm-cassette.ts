@@ -314,7 +314,11 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
     //   2026-10-18: 名札ごとにモデルを替えた回（LLM_TEST_DS_MODEL_BY_ACTION＝書く役だけ flash）は、その名札の要求だけ鍵にモデルを足す
     //   （ブレインは既定のモデルの鍵のまま＝pro の答えの再生で判断を固定できる）
     const actionModel = !/deepseek/.test(u!.host) ? actionModelOverride(env, action, body) : null;
-    const key = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host, actionModel) + cassetteRunSalt({ envFp: o.envFp, host: u!.host, action, rep: currentTag.rep, mode: o.mode, env }) });
+    const keyFor = (mode: CassetteMode) => cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host, actionModel) + cassetteRunSalt({ envFp: o.envFp, host: u!.host, action, rep: currentTag.rep, mode, env }) });
+    // 2026-10-21 確かめる人: strict は旧の鍵（回なし）だが、回を足して録った2回目以降（record/replay で録った物）があればそちらを再生する
+    //   （無いと --repeat=2 で録った回を strict で流すと2回目が「録った答えは1個」で止まる）
+    let key = keyFor(o.mode);
+    if (o.mode === "strict") { const k2 = keyFor("replay"); if (k2 !== key && readEntry(o.dir, k2)) key = k2; }
     const nth = seen.get(key) ?? 0; seen.set(key, nth + 1);
     const entry = readEntry(o.dir, key);
     // 2026-10-18: 録った答えのうち、この回の宛先（Claude／DeepSeek）に合う物だけを n 番目として返す（cassetteResponseFits）
