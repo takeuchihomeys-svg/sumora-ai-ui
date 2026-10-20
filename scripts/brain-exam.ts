@@ -98,7 +98,10 @@ function loadProblems(): ExamProblem[] {
 }
 const arg = (k: string, d = "") => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const flag = (k: string) => args.includes(`--${k}`);
-const LABEL = arg("label", arg("report"));
+// 2026-10-21 確かめる人: 「--report」（= なし）は読まれず、結果を並べるつもりが既定の会話 YUMA で試験を流していた → --report だけなら --label の結果を並べる（label も無ければ止める）
+const REPORT = arg("report") || (flag("report") ? arg("label") : "");
+if (flag("report") && !REPORT) throw new Error("--report は --report=<label>（または --label=<label> と一緒に）で使う（試験は流さない）");
+const LABEL = arg("label", REPORT);
 const ONLY = arg("only").split(",").filter(Boolean);
 const TYPES = (arg("types") || arg("only-type")).split(",").filter(Boolean);
 // 2026-10-09: テスト用の会話（既定 YUMA・--conv=auto|YUMA2〜YUMA5）。main で鍵を取ってから決まる
@@ -927,7 +930,7 @@ async function prepareMainBaseline(): Promise<boolean> {
 async function main() {
   if (!LABEL) throw new Error("--label=<名前> が要る（結果のファイル名・続きからの印）");
   mkdirSync(RESULTS_DIR, { recursive: true });
-  if (arg("report")) { await loadKbLinksForReport(); const s = summarize(LABEL, BASELINE || null); console.log(s); writeFileSync(`${RESULTS_DIR}/${LABEL}.summary.txt`, s); return; }
+  if (REPORT) { await loadKbLinksForReport(); const s = summarize(LABEL, BASELINE || null); console.log(s); writeFileSync(`${RESULTS_DIR}/${LABEL}.summary.txt`, s); return; }
   // 2026-10-15 ① 前（main の版）: 取り置きを使い、無い問題だけ main の作業ツリーで回す（自分の鍵・線を取る前に＝同時1本）
   if (STAGE_DECISION) {
     const d = STAGE_DECISION, cnt = (c: string) => d.files.filter((f) => f.cls === c).length;

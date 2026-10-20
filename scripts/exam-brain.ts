@@ -138,6 +138,12 @@ function runBrainExam(a: string[], env: Record<string, string>, watch?: (out: Ch
     // 試験は既定で DeepSeek（最後の Claude は LLM_TEST_FINAL_CLAUDE=1 を自分で付ける）
     const base = process.env.LLM_TEST_MODE || process.env.LLM_TEST_FINAL_CLAUDE ? {} : { LLM_TEST_MODE: "deepseek-all" };
     const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", cmd.map(q), { env: { ...process.env, ...base, ...env }, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"] });
+    // 2026-10-21 確かめる人: Windows は親（この実行）を止めても npx の下の node が残り、試験が LLM を呼び続け・会話に書き続けた
+    //   → 親が止まる時（Ctrl+C・kill・終わり）は子の木ごと止める（taskkill /T）
+    const killTree = () => { if (ch.exitCode !== null || !ch.pid) return; try { if (process.platform === "win32") execFileSync("taskkill", ["/pid", String(ch.pid), "/T", "/F"], { stdio: "ignore" }); else ch.kill("SIGTERM"); } catch { /* 既に止まっている */ } };
+    const onSig = (sig: NodeJS.Signals) => { killTree(); process.exit(sig === "SIGINT" ? 130 : 143); };
+    process.on("exit", killTree); process.once("SIGINT", onSig); process.once("SIGTERM", onSig); process.once("SIGHUP", onSig);
+    ch.on("close", () => { process.off("exit", killTree); process.off("SIGINT", onSig); process.off("SIGTERM", onSig); process.off("SIGHUP", onSig); });
     let buf = "";
     const onData = (d: Buffer, err: boolean) => {
       const t = d.toString(); (err ? process.stderr : process.stdout).write(t);
