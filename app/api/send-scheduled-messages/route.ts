@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { newerCustomerMessageAfter, staleDraftGuardOn } from "@/app/lib/draft-supersede";
+import { newerCustomerMessageAfter, newerSubstantiveCustomerMessageAfter, staleDraftGuardOn } from "@/app/lib/draft-supersede";
 
 // Vercel Functions のタイムアウト上限（秒）— 最大100件のLINE push送信に余裕を持たせる
 export const maxDuration = 300;
@@ -109,7 +109,7 @@ export async function GET(req: NextRequest) {
       // 2026-10-20 竹内さん（設計知見 P1 54ec8c71「返信を送る前にお客様から新しい LINE が来たら、その新しい発言に返信する」）:
       //   自動返信（auto-reply-dispatch が下書きを積む・待ち時間の後に送る）は、積んだ後にお客様の新しい発言が届いていたら送らない（古い下書き）。
       //   取り消し（cancelled）にするだけ＝新しい発言で作り直した下書きを dispatch が次に積む。本番 60日で自動の会話の予約 7件中 2件が新しい発言の後に送られていた。
-      //   自動の会話（auto_send_enabled）の AIX 以外の予約だけ。手で予約した文の扱いは別（竹内さんの判断待ち）。戻す STALE_DRAFT_GUARD=off
+      //   自動の会話（auto_send_enabled）の AIX 以外の予約だけ。手で予約した文は下（止めて知らせる）。戻す STALE_DRAFT_GUARD=off
       if (staleDraftGuardOn() && autoSendConv && !(msg.is_aix as boolean | null) && msg.conversation_id) {
         const newerAt = await newerCustomerMessageAfter(msg.conversation_id as string, msg.created_at as string);
         if (newerAt) {
@@ -117,6 +117,21 @@ export async function GET(req: NextRequest) {
             .update({ status: "cancelled", error: "superseded: 予約の後にお客様から新しい LINE（古い下書きは送らない）" })
             .eq("id", msg.id as string).eq("status", "sending");
           console.log(JSON.stringify({ tag: "auto-reply:stale-cancelled", conversationId: msg.conversation_id, scheduledId: msg.id, createdAt: msg.created_at, newerAt }));
+          continue;
+        }
+      }
+      // 2026-10-20 竹内さん（作る人の質問への答え・おすすめ）: 手で予約した文も、予約の後にお客様の新しい発言が届いていたら送らずに止め、スタッフに知らせる。
+      //   status=failed（画面の30秒ごとの見回りが「⚠️ 予約送信が失敗しました: …」で知らせる・朝の報告の失敗数にも出る）＋分かる理由の文。
+      //   自動の会話（上）以外・AIX 以外・文のある予約だけ（画像だけの予約は止めない＝画面の送信と同じ）。短いお礼・了承だけの発言では止めない（isTrivialAckText）。
+      //   戻す STALE_MANUAL_SCHEDULE_GUARD=off（STALE_DRAFT_GUARD=off でも止まる）
+      if (staleDraftGuardOn() && (process.env.STALE_MANUAL_SCHEDULE_GUARD ?? "").trim().toLowerCase() !== "off"
+        && !autoSendConv && !(msg.is_aix as boolean | null) && msg.conversation_id && String(msg.text ?? "").trim()) {
+        const newer = await newerSubstantiveCustomerMessageAfter(msg.conversation_id as string, msg.created_at as string);
+        if (newer) {
+          await supabase.from("scheduled_messages")
+            .update({ status: "failed", error: "予約の後にお客様から新しい LINE が届いたため送っていません。新しい発言を確かめて、送り直すか予約し直してください" })
+            .eq("id", msg.id as string).eq("status", "sending");
+          console.log(JSON.stringify({ tag: "scheduled:manual-stale-stopped", conversationId: msg.conversation_id, scheduledId: msg.id, createdAt: msg.created_at, newerAt: newer.at }));
           continue;
         }
       }

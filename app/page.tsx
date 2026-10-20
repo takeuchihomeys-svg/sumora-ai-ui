@@ -27,7 +27,7 @@ import { detectPlaceholders, canonOf } from "./lib/validate-reply";
 import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraftSentinel } from "./lib/draft-text";
 // 2026-10-08 竹内（未桜）「AI返信案がセットされていない事も多い」: 表示済みにした下書きの本文を DB に控え、別の端末・読み込み直しでも戻す
 import { decideShownDraftRestore, shownDraftUpdate, shownDraftRestoreEnabled } from "./lib/shown-draft-restore";
-import { latestCustomerAtOf, newerCustomerMessageSince, nextComposerBase, staleGuardEnabled, STALE_REPLY_ERROR_CODE } from "./lib/stale-reply";
+import { latestCustomerAtOf, newerCustomerMessageSince, nextComposerBase, staleGuardEnabled, ackExemptEnabled, STALE_REPLY_ERROR_CODE } from "./lib/stale-reply";
 import { isCustomerEcho, draftEchoGuardEnabled } from "./lib/draft-echo";
 import { refreshDraftGreetingForNow, draftGreetingRefreshEnabled } from "./lib/time-greeting";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
@@ -101,6 +101,8 @@ const GREETING_BEFORE_PRESELECT = (process.env.NEXT_PUBLIC_GREETING_BEFORE_PRESE
 const SHOWN_DRAFT_RESTORE = shownDraftRestoreEnabled(process.env.NEXT_PUBLIC_SHOWN_DRAFT_RESTORE);
 // 2026-10-20 竹内さん（設計知見 P1 54ec8c71・すれ違い）: 入力欄の文を作った後にお客様の新しい LINE が届いたら、送る前に知らせる（stale-reply.ts）。戻す NEXT_PUBLIC_STALE_REPLY_GUARD=off
 const STALE_REPLY_GUARD = staleGuardEnabled(process.env.NEXT_PUBLIC_STALE_REPLY_GUARD);
+// 2026-10-20 竹内さん（おすすめで決定）: 書き始めた後の新しい発言が短いお礼・了承だけ（決まった語・スタンプだけ）の時は確かめを出さない（stale-reply.ts isTrivialAckText）。戻す NEXT_PUBLIC_STALE_ACK_EXEMPT=off
+const STALE_ACK_EXEMPT = ackExemptEnabled(process.env.NEXT_PUBLIC_STALE_ACK_EXEMPT);
 // 2026-10-20 竹内さん（設計知見 P1 d3fe3a9f）: お客様の文と同じ（ほぼ同じ）下書きは入力欄に入れない（draft-echo.ts）。戻す NEXT_PUBLIC_DRAFT_ECHO_GUARD=off
 const DRAFT_ECHO_GUARD = draftEchoGuardEnabled(process.env.NEXT_PUBLIC_DRAFT_ECHO_GUARD);
 /** 下書きと比べるお客様の文: 最後のスタッフの発言より後の通（未返信）＋一番新しいお客様の通 */
@@ -5017,7 +5019,7 @@ export default function Home() {
     }
     // 2026-10-20 すれ違い（P1 54ec8c71）: 予約も、文を作った後にお客様の新しい発言が届いていたら先に知らせる
     if (STALE_REPLY_GUARD && replyDraft.trim() && !allowStaleRef.current) {
-      const newer = newerCustomerMessageSince(selectedConversation.messages, composerBaseAtRef.current);
+      const newer = newerCustomerMessageSince(selectedConversation.messages, composerBaseAtRef.current, { skipTrivialAck: STALE_ACK_EXEMPT });
       if (newer) {
         setShowScheduleModal(false);
         setStaleSend({ newerText: newer.text, newerAt: newer.at, mode: "schedule" });
@@ -5151,7 +5153,7 @@ export default function Home() {
     //   入力欄の文を作り始めた後にお客様の新しい発言が届いていたら、送る前に知らせる（作り直す／このまま送る／やめる）。
     //   判定は時刻だけ（stale-reply.ts）。何に答えるかの作り直しはブレイン＋下書き（generateReply）
     if (STALE_REPLY_GUARD && replyDraft.trim() && !allowStaleRef.current) {
-      const newer = newerCustomerMessageSince(selectedConversation.messages, composerBaseAtRef.current);
+      const newer = newerCustomerMessageSince(selectedConversation.messages, composerBaseAtRef.current, { skipTrivialAck: STALE_ACK_EXEMPT });
       if (newer) {
         setStaleSend({ newerText: newer.text, newerAt: newer.at, mode: "send" });
         return;
@@ -5280,7 +5282,7 @@ export default function Home() {
       }
       // 2026-10-20 すれ違い: サーバーが「文を作った後にお客様の新しい発言」を見て止めた → 何も送っていなければ確かめの画面を出す（入力欄・画像はそのまま）
       if (staleBlockedAt !== null && !textSent && !imageSentFlags.some(Boolean)) {
-        const newer = newerCustomerMessageSince(selectedConversation.messages, composerBaseAtRef.current);
+        const newer = newerCustomerMessageSince(selectedConversation.messages, composerBaseAtRef.current, { skipTrivialAck: STALE_ACK_EXEMPT });
         setStaleSend({ newerText: newer?.text ?? "", newerAt: newer?.at ?? staleBlockedAt, mode: "send" });
         pendingSecondMsgRef.current = secondMsgCapture;
         return;

@@ -46,7 +46,9 @@ export function latestCustomerAtOf(msgs: readonly StaleMsg[]): string | null {
  * baseAt（文の土台にしたお客様の最新の発言の時刻）より後に届いたお客様の発言（いちばん新しい物）。
  * baseAt が無い・読めない時は null（判定できない＝止めない）。
  */
-export function newerCustomerMessageSince(msgs: readonly StaleMsg[], baseAt: string | null | undefined): { at: string; text: string } | null {
+export function newerCustomerMessageSince(
+  msgs: readonly StaleMsg[], baseAt: string | null | undefined, opts?: { skipTrivialAck?: boolean },
+): { at: string; text: string } | null {
   const baseMs = baseAt ? Date.parse(baseAt) : NaN;
   if (!Number.isFinite(baseMs)) return null;
   let hit: StaleMsg | null = null;
@@ -55,6 +57,8 @@ export function newerCustomerMessageSince(msgs: readonly StaleMsg[], baseAt: str
     if (m.sender !== "customer") continue;
     const ms = atOf(m);
     if (!Number.isFinite(ms) || ms <= baseMs + STALE_REPLY_TOLERANCE_MS) continue;
+    // 短いお礼・了承だけの発言は「新しい依頼」として数えない（isTrivialAckText・opts.skipTrivialAck の時だけ）
+    if (opts?.skipTrivialAck && isTrivialAckText(m.text)) continue;
     if (!hit || ms > hitMs) { hit = m; hitMs = ms; }
   }
   return hit ? { at: (hit.rawCreatedAt ?? hit.createdAt) as string, text: (hit.text ?? "").trim() } : null;
@@ -82,3 +86,53 @@ export function nextComposerBase(prevBase: string | null, draft: string, latestC
 
 /** 送信 API の 409 の印（画面がこの印で「このまま送る／作り直す」を出す） */
 export const STALE_REPLY_ERROR_CODE = "stale_reply";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-20 竹内さん（作る人の質問への答え・おすすめ）: 書き始めた後の新しい発言が短いお礼・了承だけ
+//   （『はい』『ありがとうございます』『了解です』『よろしくお願いします』やスタンプだけ等）の時は確かめの画面を出さない。
+//   機械の安全の線として「短い決まった語だけ」を見る（P0 9eb6aa9c）。決まった語の組み合わせ以外（『お願いします』単独・『大丈夫です』・
+//   画像・質問・条件など）は迷う物＝出す側に倒す。戻す: サーバー STALE_ACK_EXEMPT=off／画面 NEXT_PUBLIC_STALE_ACK_EXEMPT=off
+// ─────────────────────────────────────────────────────────────────────────────
+/** 決まった語（そろえた後の形・長い順に照合）。ここに無い語は「お礼・了承だけ」と見なさない */
+const TRIVIAL_ACK_WORDS: readonly string[] = [
+  "ありがとうございました", "ありがとうございます", "有難うございました", "有難うございます", "ありがとう",
+  "よろしくお願いいたします", "よろしくお願い致します", "よろしくお願いします", "宜しくお願いいたします", "宜しくお願い致します", "宜しくお願いします",
+  "承知いたしました", "承知致しました", "承知しました", "かしこまりました",
+  "了解いたしました", "了解致しました", "了解しました", "了解です", "了解", "りょうかいです", "りょうかい",
+  "わかりました", "分かりました",
+  "はい", "ok", "okです",
+].map((w) => w.normalize("NFKC").toLowerCase()).sort((a, b) => b.length - a.length);
+
+/** 上限（そろえた後の字数）。これより長い発言は決まった語の組み合わせでも出す側 */
+const TRIVIAL_ACK_MAX_CHARS = 30;
+
+function normalizeForAck(s: string): string {
+  return s
+    .normalize("NFKC")
+    .replace(/[\s　]+/g, "")
+    .replace(/[。、，,．.！!？?・…‥〜~ーｰ－\-―]/g, "")
+    .replace(/[wｗ笑]+$/u, "")
+    .replace(/\p{Extended_Pictographic}|\p{Emoji_Modifier}|️|‍/gu, "")
+    .toLowerCase();
+}
+
+/** 短いお礼・了承だけ（決まった語の組み合わせ・スタンプだけ・絵文字だけ）なら true。迷う物は false（＝確かめの画面を出す） */
+export function isTrivialAckText(text: string | null | undefined): boolean {
+  const raw = (text ?? "").trim();
+  if (!raw) return false;
+  if (raw === "[スタンプ]") return true;
+  if (raw.startsWith("[")) return false; // [画像]・[動画]・[ファイル] 等は中身が分からない＝出す
+  let rest = normalizeForAck(raw);
+  if (rest.length > TRIVIAL_ACK_MAX_CHARS) return false;
+  if (!rest) return true; // 絵文字・記号だけ
+  for (let guard = 0; rest && guard < 6; guard++) {
+    const w = TRIVIAL_ACK_WORDS.find((x) => rest.startsWith(x));
+    if (!w) return false;
+    rest = rest.slice(w.length);
+  }
+  return rest.length === 0;
+}
+
+export function ackExemptEnabled(flag: string | undefined | null): boolean {
+  return (flag ?? "on").trim().toLowerCase() !== "off";
+}

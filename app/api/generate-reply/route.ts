@@ -5725,8 +5725,11 @@ async function handleGenerateReply(req: NextRequest) {
         const head = autoHints.filter((h) => h.at === "head").map((h) => h.text);
         const tail = autoHints.filter((h) => h.at === "tail").map((h) => h.text);
         // #7: 呼ぶ側の自動の手がかりは、旧と同じ並び（自動の head → 呼ぶ側の手がかり → tail）に戻す
-        replyHint = [...head, ...(replyHintAutoOrig ? [replyHintAutoOrig] : []), ...(replyHint ? [replyHint] : []), ...tail].join("\n");
-        replyHintAutoOrig = "";
+        // 2026-10-20 確かめる人: REPLY_HINT_AUTO_MATERIAL が on の時は、呼ぶ側の自動の手がかりをここで上書きに混ぜず、下の材料の注記に回す
+        //   （自動の注記がある T3 の番で、お客様の文の手がかりだけが上書きに残る抜けを塞ぐ）
+        const autoOrigToMaterial = (process.env.REPLY_HINT_AUTO_MATERIAL ?? "").toLowerCase() !== "off";
+        replyHint = [...head, ...(replyHintAutoOrig && !autoOrigToMaterial ? [replyHintAutoOrig] : []), ...(replyHint ? [replyHint] : []), ...tail].join("\n");
+        if (!autoOrigToMaterial) replyHintAutoOrig = "";
       }
       console.log(JSON.stringify({ tag: "turn-contract:autohint", conversationId, toMaterial, n: autoHints.length }));
     }

@@ -10,7 +10,7 @@ import { buildCallRequestFlex, callUrlSettingKey, isValidLineCallUrl } from "@/a
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
-import { newerCustomerMessageAfter, staleDraftGuardOn } from "@/app/lib/draft-supersede";
+import { newerSubstantiveCustomerMessageAfter, staleDraftGuardOn } from "@/app/lib/draft-supersede";
 import { STALE_REPLY_ERROR_CODE } from "@/app/lib/stale-reply";
 
 // 宣言直後のブレイン再分析（after 内で最大 ~20秒待ち＋分析）に余裕を持たせる
@@ -150,7 +150,8 @@ export async function POST(req: NextRequest) {
   //   入力欄の文を作り始めた後にお客様の新しい発言が届いていたら、送る前に止めて画面に知らせる（時刻だけの安全の線・何に答えるかはブレインと作り直しの下書き）。
   //   画面の手元の一覧が遅れていても DB で見る（10/19 21:08 は新しい発言の19秒後に前の質問への答えが送られた）。戻す STALE_DRAFT_GUARD=off
   if (conversation_id && reply_based_on_customer_at && !allow_stale && staleDraftGuardOn()) {
-    const newerAt = await newerCustomerMessageAfter(conversation_id, reply_based_on_customer_at);
+    // 短いお礼・了承だけの新しい発言では止めない（画面の確かめと同じ線・stale-reply.ts isTrivialAckText・戻す STALE_ACK_EXEMPT=off）
+    const newerAt = (await newerSubstantiveCustomerMessageAfter(conversation_id, reply_based_on_customer_at))?.at ?? null;
     if (newerAt) {
       console.warn(JSON.stringify({ tag: "send-line-message:stale-reply", conversationId: conversation_id, basedOn: reply_based_on_customer_at, newerAt, origin: origin ?? null }));
       return NextResponse.json({ ok: false, errorCode: STALE_REPLY_ERROR_CODE, newerAt, error: "この文を作った後にお客様から新しい LINE が届いています。新しい発言を確かめてから送ってください" }, { status: 409 });

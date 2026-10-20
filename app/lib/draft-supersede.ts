@@ -9,6 +9,7 @@
 //   ブレイン（brain_analyzed_at < updated_at）→ 2通目まで含めた下書きを作り直す。
 //   保存する3か所（generate-reply・bg-async・cron）が同じ判定を使う（どこか1か所でも保存すると2通目の下書きが作られない）。
 import { supabase } from "@/app/lib/supabase";
+import { isTrivialAckText, ackExemptEnabled } from "@/app/lib/stale-reply";
 
 /** 同じ秒の書き込みの丸め（答えた発言そのものを「新しい」と誤判定しない） */
 const SUPERSEDE_TOLERANCE_MS = 1_000;
@@ -62,4 +63,28 @@ export async function revertDraftIfSupersededAfterSave(
   }
   console.log(JSON.stringify({ tag: "draft:superseded-after-save", conversationId, answeredAt: answeredAt ?? null, newerAt: newer, caller }));
   return newer;
+}
+
+/**
+ * 2026-10-20 竹内さん（おすすめで決定）: answeredAt より新しいお客様の発言のうち「短いお礼・了承だけ」でない物（いちばん新しい物）。
+ * 送信 API の 409・手で予約した文の取り消しが使う（画面の確かめと同じ線 = stale-reply.ts isTrivialAckText）。
+ * STALE_ACK_EXEMPT=off の時はお礼・了承も数える（newerCustomerMessageAfter と同じ）。判定できない時は null（止めない）。
+ */
+export async function newerSubstantiveCustomerMessageAfter(conversationId: string, answeredAt: string | null | undefined): Promise<{ at: string; text: string } | null> {
+  const answeredMs = answeredAt ? Date.parse(answeredAt) : NaN;
+  if (!Number.isFinite(answeredMs)) return null;
+  const exempt = ackExemptEnabled(process.env.STALE_ACK_EXEMPT);
+  try {
+    const { data } = await supabase.from("messages").select("created_at, text")
+      .eq("conversation_id", conversationId).eq("sender", "customer")
+      .gt("created_at", new Date(answeredMs + SUPERSEDE_TOLERANCE_MS).toISOString())
+      .order("created_at", { ascending: false }).limit(30);
+    for (const r of (data ?? []) as Array<{ created_at: string; text: string | null }>) {
+      if (exempt && isTrivialAckText(r.text)) continue;
+      return { at: r.created_at, text: (r.text ?? "").trim() };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

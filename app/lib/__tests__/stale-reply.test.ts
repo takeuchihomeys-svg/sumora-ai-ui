@@ -1,6 +1,6 @@
 // 2026-10-20 竹内さん（設計知見 P1 54ec8c71・すれ違い／P1 d3fe3a9f・お客様の文のオウム返し）
 // 実行: npx tsx app/lib/__tests__/stale-reply.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { latestCustomerAtOf, newerCustomerMessageSince, nextComposerBase, isNewerThanBase, staleGuardEnabled } from "../stale-reply";
+import { latestCustomerAtOf, newerCustomerMessageSince, nextComposerBase, isNewerThanBase, staleGuardEnabled, isTrivialAckText, ackExemptEnabled } from "../stale-reply";
 import { isCustomerEcho, normalizeForEcho, draftEchoGuardEnabled } from "../draft-echo";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -35,6 +35,24 @@ it("入力欄: 文のまま新しい発言が来ても土台は動かない", ()
 it("入力欄: 空に戻ったら外す", () => eq(nextComposerBase(Q_AT, "  ", NEW_AT), null));
 it("時刻2つの判定", () => { eq(isNewerThanBase(NEW_AT, Q_AT), true); eq(isNewerThanBase(Q_AT, NEW_AT), false); eq(isNewerThanBase(null, Q_AT), false); });
 it("旗: 既定 on・off で止める", () => { eq(staleGuardEnabled(undefined), true); eq(staleGuardEnabled("OFF"), false); eq(staleGuardEnabled("on"), true); });
+
+console.log("stale-reply（短いお礼・了承だけは確かめを出さない）");
+for (const t of ["はい", "はーい！", "ありがとうございます😊", "了解です！", "よろしくお願いします。", "承知しました", "[スタンプ]", "🙇‍♂️", "はい、ありがとうございます！", "ありがとうございます、よろしくお願いします", "OKです", "了解ですw"]) {
+  it(`お礼・了承だけ: ${t}`, () => eq(isTrivialAckText(t), true));
+}
+for (const t of ["すみません他お願いします。", "お願いします", "大丈夫です", "はい、内見できますか？", "ありがとうございます！他にもありますか？", "[画像]", "", "はいはいはいはいはいはいはいはい", "ありがとうございます。キャンセルでお願いします", "了解です。やっぱり別のエリアで"]) {
+  it(`迷う物は出す側: ${JSON.stringify(t)}`, () => eq(isTrivialAckText(t), false));
+}
+it("お礼だけの新しい発言は数えない（skipTrivialAck）", () => {
+  const m2 = [...msgs, { sender: "customer", text: "ありがとうございます！", rawCreatedAt: "2026-10-19T12:09:00.000Z" }];
+  eq(newerCustomerMessageSince(m2, NEW_AT, { skipTrivialAck: true }), null);
+  eq(newerCustomerMessageSince(m2, NEW_AT)?.at, "2026-10-19T12:09:00.000Z");
+});
+it("お礼の前に本当の依頼があればそれを返す", () => {
+  const m2 = [...msgs, { sender: "customer", text: "はい", rawCreatedAt: "2026-10-19T12:09:00.000Z" }];
+  eq(newerCustomerMessageSince(m2, Q_AT, { skipTrivialAck: true })?.at, NEW_AT);
+});
+it("旗: お礼の除外は既定 on", () => { eq(ackExemptEnabled(undefined), true); eq(ackExemptEnabled("off"), false); });
 
 console.log("draft-echo（お客様の文と同じ下書き）");
 it("実例: 『他はないですか？』の下書きは止める", () => eq(isCustomerEcho("他はないですか？", ["他はないですか？"]), true));
