@@ -14,9 +14,10 @@ import { atomicWriteJson } from "./exam-shared-file";
 export const BASELINE_DIR = join(examCacheRoot(), "brain-exam-baseline");
 
 /** 試験の結果に効く環境変数（名前の形）。鍵・秘密は入れない */
-export const EXAM_ENV_RE = /^(?:BRAIN_|TWO_STAGE_|SEARCH_|TURN_|NEXT_PUBLIC_SEARCH_|AIX_|CONFIRM_|REPEAT_|FINAL_CHECK_|PICKUP_|VIEWING_|EXHAUSTED_|ROOM_PHOTO_|CONTRACT_|LLM_TEST_|DEEPSEEK_MODEL$|CLAUDE_\w*MODEL|CLAUDE_SONNET55_ACTIONS$|LLM_ALT_|REPLY_)/;
+export const EXAM_ENV_RE = /^(?:BRAIN_|TWO_STAGE_|SEARCH_|TURN_|NEXT_PUBLIC_SEARCH_|AIX_|CONFIRM_|REPEAT_|FINAL_CHECK_|PICKUP_|VIEWING_|EXHAUSTED_|ROOM_PHOTO_|CONTRACT_|LLM_TEST_|DEEPSEEK_MODEL$|CLAUDE_\w*MODEL|CLAUDE_SONNET55_ACTIONS$|LLM_ALT_|REPLY_|EXAM_JUDGE_TIER$|EXAM_JUDGE_FLASH_MODEL$)/;
 const SECRET_RE = /KEY|SECRET|TOKEN|PASSWORD/;
 /** 構成から外す物（試験の道具の置き場・線のファイル等＝答えに効かない） */
+// 2026-10-20 判定の段（EXAM_JUDGE_TIER）は答案の合否を変え得る＝構成に入れる（付けない時は今までと同じ hash）
 const IGNORE_ENV = new Set(["BRAIN_EXAM_BASELINE_CHILD", "BRAIN_JUDGE_EXAMPLES_EXCLUDE_CONV", "LLM_ALT_DEEPSEEK_KEY"]);
 
 export type ExamConfig = { args: Record<string, string | boolean | number | null>; env: Record<string, string> };
