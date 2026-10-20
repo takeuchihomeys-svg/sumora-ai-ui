@@ -9,10 +9,10 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlin
 import { join } from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./llm-cassette";
-import { atomicWriteJson, atomicWriteText } from "./exam-shared-file";
+import { atomicWriteJson, atomicWriteText, updateJsonFile } from "./exam-shared-file";
 import { BRAIN_ENTRIES, DRAFT_ENTRIES, TOOL_ENTRIES, reach, workingFiles } from "./exam-scope";
 import { fillProblemsFromShared } from "./exam-problems-store";
-import { CONV_CTX_FIELDS, jstDayStart, type ConvCtx, type DbPart, type RowLite, type SmallRecord } from "./exam-brain";
+import { CONV_CTX_FIELDS, jstDayStart, type ConvCtx, type DbPart, type RowLite, type SmallRecord, type WarmLog } from "./exam-brain";
 import { NO_LINE_TEST_CONVERSATIONS, YUMA_CONVERSATION_ID } from "../../app/lib/test-conversations";
 import { contentPartsOf, dbContentReads, dbFpMode, readDbContentFingerprint, type DbFpMode } from "./exam-db-fp";
 
@@ -380,4 +380,12 @@ export async function runCleanup(sb: SupabaseClient, pl: CleanupPlan, apply: boo
   // ④ 線のファイル・鍵（空にする＝次の実行が読まない）
   if (pl.floor && apply) { atomicWriteText(pl.floor.file, "{}"); if (pl.floor.lock) atomicWriteText(pl.floor.lock, ""); }
   return out;
+}
+
+// ─── 10/20 COST① main の取り置きの記録 ─────────────────────────────────────────
+export const WARM_LOG_FILE = join(EXAM_BRAIN_DIR, "warm-log.json");
+export function readWarmLog(file = WARM_LOG_FILE): WarmLog { try { return JSON.parse(readFileSync(file, "utf8")) as WarmLog; } catch { return {}; } }
+export function writeWarmLog(vk: string, e: WarmLog[string], file = WARM_LOG_FILE): void {
+  mkdirSync(EXAM_BRAIN_DIR, { recursive: true });
+  updateJsonFile<WarmLog>(file, () => ({}), (cur) => ({ ...cur, [vk]: e }));
 }

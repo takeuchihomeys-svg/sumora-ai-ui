@@ -46,7 +46,7 @@ import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, mkdirSync, copyFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { execSync, execFileSync, spawnSync } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { setupLlmTest, YUMA, type LlmTestHarness } from "./lib/llm-test-harness";
 import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lease";
 import { shiftExamText } from "./lib/brain-exam-dates";
@@ -54,7 +54,7 @@ import { brainPathCode, judgePath, problemScore, rateByType, aixFamily, judgeCur
 import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
 import type { ExamProblem, LedgerRow } from "./brain-exam-add";
-import { decideStageFromDiff, examVersionKey } from "./lib/exam-scope";
+import { decideStageFromDiff, examVersionKey, examStageKeys } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
 import { cassetteStats as cassetteStatsNow } from "./lib/llm-cassette";
@@ -113,7 +113,7 @@ const JUDGE_REPEAT = Math.max(1, Number(arg("judge-repeat", MAJORITY ? "3" : "1"
 const NO_JUDGE = flag("no-judge");
 // 比べる「前」の label。--baseline=main の時は main の版の取り置きから組み立てた label に置き換える（prepareMainBaseline）
 let BASELINE = arg("baseline");
-let baselineReuse: { reused: number; ran: number; reusedUsd: number; commit: string; dir: string } | null = null;
+let baselineReuse: { reused: number; ran: number; reusedUsd: number; commit: string; dir: string; carried?: number; deferred?: number } | null = null;
 let flakeSkip: { n: number; byVerdict: Record<string, number> } | null = null; // 2026-10-15 ④ --repeat-flaky で省いた回
 const GAP_MS = Number(arg("gap-ms", "2000"));
 const LAYER = arg("layer", "prod") === "combined" ? "combined" : "prod";
@@ -839,8 +839,36 @@ async function prepareMainBaseline(): Promise<boolean> {
   // 2026-10-16 期限: 取り置きの savedAt が N 日（既定 7）より古ければ流し直す（DB の中身・モデル側の変化は鍵に入らない）
   const maxAgeMs = B.baselineMaxAgeMs(arg("baseline-max-age"));
   const plan = B.planBaseline(picked.map((p) => ({ id: p.id, hash: hashOf.get(p.id)!, alt: altOf.get(p.id) })), cached, REPEAT, { acceptComplete: REPEAT_FLAKY || !!REPS_OF, maxAgeMs });
+  // 2026-10-20 竹内さん「main の答えは版ごとに1回作って使い回す・main が問題に関係ないファイルだけ変わったなら前の main の答えを使う」:
+  //   今の置き場に無い問題は、同じ構成の前の main の置き場から「その問題の段（ブレインだけ／下書きまで）に効くファイルの鍵が今の main と同じ」答えを持ち越す。
+  //   止める: EXAM_BASELINE_CARRY=off
+  const stageMemo = join(B.BASELINE_DIR, "stage-keys.json");
+  const sk = examStageKeys(commit, stageMemo);
+  const rel = B.relevantStageOf(cfg);
+  const carried: string[] = [];
+  if (sk && plan.run.length && !flag("baseline-refresh") && process.env.EXAM_BASELINE_CARRY !== "off") {
+    const names = (() => { try { return readdirSync(B.BASELINE_DIR); } catch { return [] as string[]; } })();
+    const sibs = B.siblingDirs(names, ch, basename(dir)).filter((n) => !legacyDirs.some((d) => basename(d) === n));
+    const keyOf = (b: { stageKeys?: { brain: string; draft: string } | null; commit?: string }) => (b.stageKeys ?? (b.commit ? examStageKeys(b.commit, stageMemo) : null))?.[rel] ?? null;
+    for (const id of [...plan.run]) {
+      const cands = sibs.flatMap((n) => { const f = join(B.BASELINE_DIR, n, `${id}.json`); if (!existsSync(f)) return []; try { return [{ ...(JSON.parse(readFileSync(f, "utf8")) as import("./lib/brain-exam-baseline").BaselineFile<ResultRow>), dir: n }]; } catch { return []; } });
+      const hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: sk[rel], keyOf }, REPEAT, { acceptComplete: REPEAT_FLAKY || !!REPS_OF, maxAgeMs });
+      if (!hit) continue;
+      const { dir: from, ...rest } = hit;
+      B.saveBaseline<ResultRow>(dir, { ...rest, ...(vk ? { versionKey: vk } : {}), stageKeys: rest.stageKeys ?? (rest.commit ? examStageKeys(rest.commit, stageMemo) : null), carriedFrom: from });
+      carried.push(id);
+    }
+    plan.run = plan.run.filter((id) => !carried.includes(id));
+    plan.reuse.push(...carried);
+  }
+  // 2026-10-20 回す数の上限（--baseline-limit=N・夜中の取り置きを1日の上限の残りに収める）と、今は回さず夜中に回す（--baseline-defer・答案が無い問題は前との比べに入らない）
+  let deferred: string[] = [];
+  const limitArg = arg("baseline-limit");
+  if (flag("baseline-defer")) { deferred = [...plan.run]; plan.run = []; }
+  else if (limitArg !== "" && plan.run.length > Math.max(0, Number(limitArg) || 0)) { const n = Math.max(0, Number(limitArg) || 0); deferred = plan.run.slice(n); plan.run = plan.run.slice(0, n); }
   const baseLabel = `main-${commit.slice(0, 7)}-${ch}`;
-  console.log(`=== 前＝main（${ref}・${commit.slice(0, 7)}${vk ? `・版 ${vk}` : ""}・構成 ${ch}・置き場 ${dir}）: 使い回す ${plan.reuse.length}問・回す ${plan.run.length}問${plan.stale.length ? `（問題が直った ${plan.stale.join(",")}）` : ""}${plan.expired.length ? `（${maxAgeMs! / 86_400_000}日より古い ${plan.expired.join(",")}・--baseline-max-age=off で使い回す）` : ""} ===`);
+  console.log(`=== 前＝main（${ref}・${commit.slice(0, 7)}${vk ? `・版 ${vk}` : ""}・構成 ${ch}・置き場 ${dir}）: 使い回す ${plan.reuse.length - carried.length}問・前の main から持ち越す ${carried.length}問（main の変更は${rel === "brain" ? "ブレイン" : "下書きまで"}の段に効かない）・回す ${plan.run.length}問${deferred.length ? `・今は回さない ${deferred.length}問（${flag("baseline-defer") ? "--baseline-defer＝夜中の取り置きに回す" : `--baseline-limit=${limitArg}`}）` : ""}${plan.stale.length ? `（問題が直った ${plan.stale.join(",")}）` : ""}${plan.expired.length ? `（${maxAgeMs! / 86_400_000}日より古い ${plan.expired.join(",")}・--baseline-max-age=off で使い回す）` : ""} ===`);
+  try { writeFileSync(`${RESULTS_DIR}/${LABEL}.baseline.json`, JSON.stringify({ at: new Date().toISOString(), commit, versionKey: vk, stageKeys: sk, cfg: ch, reused: plan.reuse.length - carried.length, carried, run: plan.run, deferred }, null, 1)); } catch { /* */ }
   if (plan.run.length) {
     const runLabel = `${baseLabel}-r${Date.now().toString(36)}`;
     const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${runLabel}`, `--only=${plan.run.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage })];
@@ -859,7 +887,7 @@ async function prepareMainBaseline(): Promise<boolean> {
       if (!rs.length || rs.some((x) => x.error)) continue; // 失敗した問題は取り置かない（次にまた回す）
       const c = cost.byTag?.[id];
       B.saveBaseline<ResultRow>(dir, { id, problemHash: hashOf.get(id)!, commit, config: cfg, savedAt: new Date().toISOString(), fromLabel: runLabel, rows: rs, cost: c ? { real: c.real, realUsd: c.realUsd, replayed: c.replayed, replayUsd: c.replayUsd } : null,
-        ...(vk ? { versionKey: vk } : {}), ...((REPEAT_FLAKY || REPS_OF) && REPEAT > 1 ? { complete: true } : {}) });
+        ...(vk ? { versionKey: vk } : {}), ...((REPEAT_FLAKY || REPS_OF) && REPEAT > 1 ? { complete: true } : {}), stageKeys: sk });
     }
   } else if (flag("baseline-dry")) { console.log("（--baseline-dry: 全部使い回せる）"); return false; }
   // 比べる「前」の結果ファイルを組み立てる（今回の問題だけ）
@@ -868,7 +896,7 @@ async function prepareMainBaseline(): Promise<boolean> {
   writeFileSync(`${RESULTS_DIR}/${baseLabel}.jsonl`, lines.map((l) => JSON.stringify(l)).join("\n") + (lines.length ? "\n" : ""));
   BASELINE = baseLabel;
   const reusedUsd = plan.reuse.reduce((s, id) => { const c = now.get(id)?.cost; return s + (c ? c.realUsd + c.replayUsd : 0); }, 0);
-  baselineReuse = { reused: plan.reuse.length, ran: plan.run.length, reusedUsd, commit, dir };
+  baselineReuse = { reused: plan.reuse.length, ran: plan.run.length, reusedUsd, commit, dir, carried: carried.length, deferred: deferred.length };
   const missing = picked.filter((p) => !now.has(p.id)).length;
   console.log(`  前の結果: ${baseLabel}（使い回した ${plan.reuse.length}問・新しく回した ${Math.max(0, plan.run.length - missing)}問・取り置きの無い問題 ${missing}）`);
   if (missing) console.warn(`  ⚠ 前（main）の答案が ${missing}問 無い（上の「前」の実行の失敗を見る）。その問題は前との比べに入らない`);
@@ -1202,7 +1230,7 @@ main().catch((e) => { console.error(e instanceof Error ? e.message : e); process
     // 2026-10-15 ④ 1回の試験の数え（新しく呼んだ・再生・使い回した）。問題ごとの数えは <label>.cost.json（前の取り置きの「呼んでいたら」に使う）
     const cas = await import("./lib/llm-cassette");
     const cst = cas.cassetteStats();
-    if (baselineReuse) console.log(`前（main ${baselineReuse.commit.slice(0, 7)}）: 使い回した ${baselineReuse.reused}問${baselineReuse.reusedUsd ? `（回していたら約 $${baselineReuse.reusedUsd.toFixed(4)}）` : ""}・新しく回した ${baselineReuse.ran}問（費用は上の「前」の実行の終わりに出ている）`);
+    if (baselineReuse) console.log(`前（main ${baselineReuse.commit.slice(0, 7)}）: 使い回した ${baselineReuse.reused}問（うち前の main から持ち越し ${baselineReuse.carried ?? 0}）${baselineReuse.reusedUsd ? `（回していたら約 $${baselineReuse.reusedUsd.toFixed(4)}）` : ""}・新しく回した ${baselineReuse.ran}問${baselineReuse.deferred ? `・今は回さない ${baselineReuse.deferred}問` : ""}（費用は上の「前」の実行の終わりに出ている）`);
     if (cst && LABEL) {
       try { writeFileSync(`${RESULTS_DIR}/${LABEL}.cost.json`, JSON.stringify({ mode: cst.mode, total: cst.total, byTag: cas.tallyByTagJson(cst), byAction: Object.fromEntries(cst.byAction), misses: cst.misses, judge: judgeCost, baseline: baselineReuse, flakeSkip, stage: STAGE_DECISION ? { mode: "diff", stage: STAGE_DECISION.stage, cls: STAGE_DECISION.cls, files: STAGE_DECISION.files.length } : STAGE }, null, 1)); } catch { /* */ }
       if (cst.mode === "strict" && cst.total.missed) console.log(`⚠ --replay=strict で録音の無い・変わった要求が ${cst.total.missed}回（呼んでいない）。その問題の答案は失敗になっている。変わった所が直した所なら --replay（変わった所だけ呼ぶ）で回す`);

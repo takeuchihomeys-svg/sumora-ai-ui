@@ -373,3 +373,25 @@ export function needJudge(o: { asks: number; ng: number; needRawPath: boolean; p
   if (o.lazy && !o.pathOk && !o.needRawPath) return false;
   return true;
 }
+
+// ─── 10/20 COST① main の答えは版ごとに1回（merge の後の安い時間に自動で取り置く） ─────────────────────
+/** 取り置きの記録（main の版の鍵 → いつ・どの commit・全部取れたか） */
+export type WarmLog = Record<string, { at: string; commit: string; done: boolean; left?: number; label?: string }>;
+export const warmLabelOf = (vk: string) => `warm-auto-${vk}`;
+/**
+ * 今の main の版の取り置きを予約するか: 版が分からない → しない／その版が全部取れている → しない（force＝昼の実行で答えの無い問題を夜に回した時は予約する）／
+ *   もう予約がある → しない／それ以外 → 予約する（安い時間＝夜中の --run-queue）
+ */
+export function warmDecision(o: { vk: string | null; log: WarmLog; queued: string[]; force?: boolean }): { enqueue: boolean; label: string; why: string } {
+  if (!o.vk) return { enqueue: false, label: "", why: "main の版の鍵が分からない" };
+  const label = warmLabelOf(o.vk);
+  if (o.queued.includes(label)) return { enqueue: false, label, why: `予約済み（${label}）` };
+  const e = o.log[o.vk];
+  if (e?.done && !o.force) return { enqueue: false, label, why: `この版（${o.vk}）の main の答えは取り置き済み（${e.at.slice(0, 16)}）` };
+  return { enqueue: true, label, why: o.force ? "昼の実行で答えの無い問題を夜に回した → 取り置きを予約" : e ? `この版の取り置きが途中（残り ${e.left ?? "?"}問）→ 続きを予約` : `main の版が変わった（${o.vk}）→ 安い時間に取り置きを予約` };
+}
+/** 取り置きで今回す数: 1日の上限の残り ÷ 1問の値段（下限0）。上限なし＝null（全部） */
+export function warmLimit(o: { cap: number | null; usedUsd: number; unitUsd: number }): number | null {
+  if (o.cap === null) return null;
+  return Math.max(0, Math.floor((o.cap - o.usedUsd) / Math.max(1e-9, o.unitUsd)));
+}

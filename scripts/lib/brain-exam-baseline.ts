@@ -57,7 +57,32 @@ export type BaselineFile<R> = {
   id: string; problemHash: string; commit: string; config: ExamConfig; savedAt: string; fromLabel: string; rows: R[]; cost?: { real: number; realUsd: number; replayed: number; replayUsd: number } | null;
   /** 2026-10-15 ②: 版の鍵（v- の置き場の時） */ versionKey?: string;
   /** 2026-10-15 ④: 揺れる問題だけ繰り返した（--repeat-flaky）＝回が repeat より少なくても揃っている */ complete?: boolean;
+  /** 2026-10-20: 答えを出した main の段ごとの鍵（exam-scope.examStageKeys）。main が進んでもこの段の鍵が同じなら持ち越す */ stageKeys?: { brain: string; draft: string } | null;
+  /** 2026-10-20: 前の main の置き場から持ち越した（元の置き場の名前） */ carriedFrom?: string;
 };
+
+// ─── 2026-10-20 前の main の答えの持ち越し（main の変更がその問題の段に効かない時） ─────────────
+/** 置き場の構成の段 → 見る鍵。ブレインだけ（stage=brain）はブレインの鍵、それ以外（draft・auto・diff）は下書きまで入った鍵（安全側） */
+export function relevantStageOf(cfg: ExamConfig | null | undefined): "brain" | "draft" { return cfg?.args?.stage === "brain" ? "brain" : "draft"; }
+/**
+ * 今の置き場に無い問題の答えを、同じ構成の別の置き場（前の main）から探す: 同じ問題（hash）・期限の内・失敗の回が無い・回が揃う・
+ *   その段の鍵（keyOf）が今の main と同じ。いくつもあれば一番新しい物。keyOf が null（鍵が分からない）物は使わない（安全側）
+ */
+export function findCarryOver<R extends { rep: number; error?: string }>(cands: Array<BaselineFile<R> & { dir?: string }>, p: { hash: string; alt?: string[] }, want: { key: string; keyOf: (b: BaselineFile<R>) => string | null }, repeat: number, o: { acceptComplete?: boolean; maxAgeMs?: number | null; now?: number } = {}): (BaselineFile<R> & { dir?: string }) | null {
+  const now = o.now ?? Date.now();
+  const ok = cands.filter((b) => {
+    if (!sameProblem(b, p)) return false;
+    const t = Date.parse(String(b.savedAt ?? ""));
+    if (o.maxAgeMs && o.maxAgeMs > 0 && (!Number.isFinite(t) || now - t > o.maxAgeMs)) return false;
+    if (b.rows.some((r) => r.error)) return false;
+    const reps = new Set(b.rows.map((r) => r.rep));
+    if (!(o.acceptComplete && b.complete && reps.has(1)) && !Array.from({ length: repeat }, (_, i) => i + 1).every((k) => reps.has(k))) return false;
+    return want.keyOf(b) === want.key;
+  });
+  return ok.sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)))[0] ?? null;
+}
+/** 同じ構成（-<構成の hash>）の他の置き場の名前（今の置き場は除く） */
+export function siblingDirs(names: string[], cfgHash: string, cur: string): string[] { return names.filter((n) => n.endsWith(`-${cfgHash}`) && n !== cur); }
 
 export function loadBaseline<R>(dir: string): Map<string, BaselineFile<R>> {
   const m = new Map<string, BaselineFile<R>>();
@@ -117,6 +142,6 @@ export function mergeBaselines<R>(primary: Map<string, BaselineFile<R>>, ...lega
  * 2026-10-15 ①: --stage=diff は子（main の作業ツリー）で決めると main との差が無い＝いつも brain になる → 親で決めた段（resolvedStage）に置き換える
  */
 export function childArgs(args: string[], o: { resolvedStage?: string } = {}): string[] {
-  return args.filter((a) => !/^--(?:label|only|types|only-type|per-type|baseline|baseline-ref|baseline-refresh|baseline-dry|baseline-key|baseline-max-age|select|select-n|select-q|link-kb|report)(?:=|$)/.test(a))
+  return args.filter((a) => !/^--(?:label|only|types|only-type|per-type|baseline|baseline-ref|baseline-refresh|baseline-dry|baseline-key|baseline-max-age|baseline-defer|baseline-limit|select|select-n|select-q|link-kb|report)(?:=|$)/.test(a))
     .map((a) => (a === "--stage=diff" && o.resolvedStage ? `--stage=${o.resolvedStage}` : a));
 }
