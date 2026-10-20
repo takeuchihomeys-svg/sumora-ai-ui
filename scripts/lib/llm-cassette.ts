@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { resolveRouteName, testDeepseekModelOverride } from "../../app/lib/llm-alt-provider";
+import { examEnvFingerprint } from "./exam-env-fp";
 
 /** 2026-10-18: LLM_TEST_DS_MODEL_BY_ACTION で替えた名札のモデル（無ければ null）。名札の無い返信生成は system の先頭で見分ける（llm-alt と同じ） */
 function actionModelOverride(env: Record<string, string | undefined>, action: string | null, body: string | null): string | null {
@@ -104,6 +105,29 @@ export function cassetteSalt(env: Record<string, string | undefined>, host: stri
   // 2026-10-18 flash-writer: 名札ごとに替えたモデル（LLM_TEST_DS_MODEL_BY_ACTION＝書く役だけ flash）があればそれ・無ければ DEEPSEEK_MODEL
   const dsm = String(actionModel ?? env.DEEPSEEK_MODEL ?? "").trim();
   return dsm && dsm !== "deepseek-v4-pro" ? `\n#model=${dsm}` : "";
+}
+/**
+ * 2026-10-21 試験のブレインの穴: 鍵にスイッチ（DAY_SUBJECT_READER 等）と回（--repeat の何回目か）が入っていなかった。
+ *   ① スイッチの指紋（exam-env-fp.ts・既定＝.env.local と違うスイッチだけ）を足す＝on の回と off の回が互いの答えを再生しない。
+ *      既定（指紋が空）の回は今までの鍵のまま。判定（DeepSeek へ直に送る・名札なし）には足さない（判定の要求はブレインの答えを含む＝答えが同じなら同じ判定でよい）。
+ *   ② 2回目以降の回（札の rep が 2 以上）は回を足す＝別の実行で足した確かめの回が 1回目の答えを再生しない（独立な確かめ）。
+ *      --replay=strict（呼ばない確かめ）の時は足さない（旧の鍵＝録った n 番目の答え）。止める: LLM_CASSETTE_REP=off
+ */
+export function cassetteRunSalt(o: { envFp?: string | null; host: string; action: string | null; rep?: string | null; mode: CassetteMode; env?: Record<string, string | undefined> }): string {
+  const env = o.env ?? process.env;
+  const judge = /deepseek/.test(o.host) && !o.action;
+  const envPart = o.envFp && !judge ? `
+#env=${o.envFp}` : "";
+  const r = Number(o.rep ?? "");
+  const repPart = o.mode !== "strict" && Number.isFinite(r) && r >= 2 && String(env.LLM_CASSETTE_REP ?? "").trim().toLowerCase() !== "off" ? `
+#rep=${r}` : "";
+  return envPart + repPart;
+}
+/** この回のスイッチの指紋（LLM_CASSETTE_ENV_FP があればそれ・"-"＝なし。無ければ今の作業ツリーで出す） */
+export function cassetteEnvFp(env: Record<string, string | undefined>): string {
+  const v = String(env.LLM_CASSETTE_ENV_FP ?? "").trim();
+  if (v) return v === "-" ? "" : v;
+  try { return examEnvFingerprint(env).hash; } catch { return ""; }
 }
 /**
  * 録った答えがこの回の宛先に合うか（2026-10-18）。前の鍵（印なし）には Claude の回の答えと pro の回の答えが混ざっている
@@ -264,7 +288,7 @@ export type CassetteRpcTally = { replayed: number; recorded: number; failed: num
  * 包みを作る（純粋に inner を包む・テストで使う）。stats に数える。
  * 返り値の Response には x-llm-cassette: replay|record|miss を付ける（判定の費用を二重に数えないため）
  */
-export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir: string; stats: CassetteStats; env?: Record<string, string | undefined>; log?: (s: string) => void }): FetchLike {
+export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir: string; stats: CassetteStats; env?: Record<string, string | undefined>; log?: (s: string) => void; envFp?: string }): FetchLike {
   const env = o.env ?? process.env;
   const log = o.log ?? ((s: string) => console.warn(s));
   const seen = new Map<string, number>(); // この回で同じ鍵を何回呼んだか
@@ -290,7 +314,7 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
     //   2026-10-18: 名札ごとにモデルを替えた回（LLM_TEST_DS_MODEL_BY_ACTION＝書く役だけ flash）は、その名札の要求だけ鍵にモデルを足す
     //   （ブレインは既定のモデルの鍵のまま＝pro の答えの再生で判断を固定できる）
     const actionModel = !/deepseek/.test(u!.host) ? actionModelOverride(env, action, body) : null;
-    const key = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host, actionModel) });
+    const key = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host, actionModel) + cassetteRunSalt({ envFp: o.envFp, host: u!.host, action, rep: currentTag.rep, mode: o.mode, env }) });
     const nth = seen.get(key) ?? 0; seen.set(key, nth + 1);
     const entry = readEntry(o.dir, key);
     // 2026-10-18: 録った答えのうち、この回の宛先（Claude／DeepSeek）に合う物だけを n 番目として返す（cassetteResponseFits）
@@ -375,8 +399,9 @@ export function installLlmCassette(env: Record<string, string | undefined> = pro
   mkdirSync(dir, { recursive: true });
   const stats: CassetteStats = { mode, dir, total: emptyTally(), byAction: new Map(), byTag: new Map(), misses: [] };
   (globalThis as unknown as Record<symbol, unknown>)[STATS_KEY] = stats;
-  wrapGlobalFetch((prev) => makeCassetteFetch(prev, { mode, dir, stats, env }));
-  console.log(`[llm-cassette] ${mode === "record" ? "録る（全部呼ぶ）" : mode === "replay" ? "再生（同じ要求は呼ばない・変わった所だけ呼ぶ）" : "再生だけ（変わった所も呼ばずに止める）"}・置き場 ${dir}`);
+  const envFp = cassetteEnvFp(env);
+  wrapGlobalFetch((prev) => makeCassetteFetch(prev, { mode, dir, stats, env, envFp }));
+  console.log(`[llm-cassette] ${envFp ? `スイッチの指紋 ${envFp}（既定の回の録音は使わない）・` : ""}${mode === "record" ? "録る（全部呼ぶ）" : mode === "replay" ? "再生（同じ要求は呼ばない・変わった所だけ呼ぶ）" : "再生だけ（変わった所も呼ばずに止める）"}・置き場 ${dir}`);
   return stats;
 }
 

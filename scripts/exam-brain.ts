@@ -43,6 +43,9 @@ import {
 } from "./lib/exam-brain-io";
 import { decideStageFromDiff, examVersionKey } from "./lib/exam-scope";
 import { BASELINE_DIR } from "./lib/brain-exam-baseline";
+import { examEnvFingerprint, formatEnvFp } from "./lib/exam-env-fp";
+// 2026-10-21 スイッチの指紋（既定＝.env.local と違うスイッチ・exam-env-fp.ts）。使い回しの鍵に入れる・見出しと台帳に残す
+const ENV_FP = examEnvFingerprint(process.env);
 import { dbFpMode, problemReadsRent, type DbFpMode } from "./lib/exam-db-fp";
 import { problemHash, examConfig, configHash } from "./lib/brain-exam-baseline";
 import { flakeVerdict, readObs, FLAKE_DIR } from "./lib/exam-flake";
@@ -170,6 +173,8 @@ type Plan = {
   phase: Phase; phaseWhy: string; allPicks: Pick[]; repsCap: number; versionKey: string;
   /** 10/17 ③ 会話の鍵（"-"＝会話の違いは答えに効かない・null＝読めない＝使い回さない） */
   conv: { key: string | null; why: string };
+  /** 2026-10-21 スイッチの指紋（"" ＝既定） */
+  envFp: string;
 };
 async function makePlan(label: string): Promise<Plan> {
   const { spec, full } = loadExamProblems();
@@ -242,8 +247,8 @@ async function makePlan(label: string): Promise<Plan> {
     // 2026-10-18: 相場の材料（rent_observations）は相場を聞く番の問題だけ鍵に入れる（中身の形だけ・旧は全部同じ）。読めない表がある時は db.brain/draft が null＝使い回さない（下の判定）
     const rent = problemReadsRent(p as never);
     const dbB = db.brain && dbKeyOf(dbParts, dbPartsOf("brain", fpMode, { rent })), dbD = db.draft && dbKeyOf(dbParts, dbPartsOf("draft", fpMode, { rent }));
-    const key = reuseKey({ problemHash: hash, stage: "brain", scopeKey: keys.brain, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: dbB ?? "-", convKey });
-    const draftKey = reuseKey({ problemHash: hash, stage: "draft", scopeKey: keys.draft, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: dbD ?? "-", convKey });
+    const key = reuseKey({ problemHash: hash, stage: "brain", scopeKey: keys.brain, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: dbB ?? "-", convKey, envFp: ENV_FP.hash });
+    const draftKey = reuseKey({ problemHash: hash, stage: "draft", scopeKey: keys.draft, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: dbD ?? "-", convKey, envFp: ENV_FP.hash });
     const reuse = !flag("no-reuse") && !!db.brain && conv.key !== null && canReuse(readReuse(p.id, key), key, reps);
     items.set(p.id, { id: p.id, reps, draft: false, reuse, model, why: pk.why, stage1: "brain", draftWhy: "", flake: fv.verdict, flakeWhy: fv.why, key, draftKey, hash });
   }
@@ -254,7 +259,7 @@ async function makePlan(label: string): Promise<Plan> {
   const draftPlan = { ids: draftMode === "all" ? dAll.ids : [], why: draftMode === "all" ? dAll.why : "ブレインの判断が前（main）と変わった問題だけ（1段目の後に決める）", mode: draftMode };
   if (CONDUCTED) { const ds = CONDUCTED.plan.focus.filter((f) => f.stage === "draft" && items.has(f.id) && draftEligible(probs.get(f.id) as PlanProblem)).map((f) => f.id); draftPlan.ids = ds; draftPlan.mode = ds.length ? "all" : "if-changed"; draftPlan.why = ds.length ? "司令塔が下書きまでと決めた問題" : "司令塔は下書きを選ばなかった（判断が前と変わった問題だけ）"; }
   for (const id of draftPlan.ids) { const it = items.get(id); if (it) { it.draft = true; it.draftWhy = draftPlan.why; } }
-  return { label, cls, clsNote, picks, items, probs, draftPlan, keys, cfgHash, ragNote, db, phase: ph.phase, phaseWhy: ph.why, allPicks, repsCap, versionKey, conv };
+  return { label, cls, clsNote, picks, items, probs, draftPlan, keys, cfgHash, ragNote, db, phase: ph.phase, phaseWhy: ph.why, allPicks, repsCap, versionKey, conv, envFp: ENV_FP.hash };
 }
 /** 見込みの値段: 旧は「安い時間（JST 1:30〜9:30）の外は混雑の値段」で数えていた。小さな確かめ・仕上げは本当の値段（2倍の時間だけ高い・llm-price の isDeepseekPeakAt） */
 const pricePeak = (pl: Plan, d: Date) => pl.phase === "off" ? !isCheapWindow(d) : isDeepseekPeakAt(d);
@@ -283,6 +288,7 @@ function printPlan(pl: Plan, now: Date, x: { budget?: Budget; peakWarn?: string 
   if (x.peakWarn) log(x.peakWarn);
   log(`形: ${pl.phase === "small" ? `小さな確かめ（${pl.picks.length}/${pl.allPicks.length}問・繰り返し ${pl.repsCap}回まで）` : pl.phase === "final" ? `仕上げ（選んだ問題全部 ${pl.allPicks.length}問）` : `旧（選んだ問題全部 ${pl.allPicks.length}問）`} — ${pl.phaseWhy}${pl.phase === "small" ? `／仕上げの時に足す ${pl.allPicks.length - pl.picks.length}問` : ""}`);
   log(`使い回し（作る人と確かめる人で分け合う・置き場 ${EXAM_BRAIN_DIR}）: ${pl.conv.why}`);
+  log(`スイッチの指紋（使い回し・録音の鍵に入る・前＝main は既定のスイッチで回す）: ${formatEnvFp(ENV_FP)}`);
   if (x.budget) {
     const b = x.budget, s = b.split;
     log(`1日の上限: ${b.cap === null ? "なし（EXAM_DAILY_CAP_USD=off）" : `今日の使用額 ${b.used ? `$${b.used.usd.toFixed(2)}（JST ${jst(now).slice(5, 10)}・試験 env の DeepSeek＋Claude ${b.used.rows}行）` : `読めない（${b.usedErr ?? ""}）＝上限まで使った物として数える`}・上限 $${b.cap}・この実行の見込み $${((s?.estNow ?? 0) + (s?.estLater ?? 0)).toFixed(2)}`}${s ? ` → ${s.why}` : ""}`);
@@ -419,7 +425,7 @@ function finishPhase(pl: Plan, ph: PhaseResult, stage: "brain" | "draft", model:
     if (!ok.length) continue;
     const maj = (f: (r: RowLite) => boolean) => ok.filter(f).length * 2 > ok.length;
     out.push({ at: new Date().toISOString(), label: ph.label, id, type: String(pl.probs.get(id)?.type ?? ""), stage, model: model === "flash" ? FLASH_MODEL : PRO_MODEL, head, scopeKey: stage === "brain" ? pl.keys.brain : pl.keys.draft, base: ph.baseLabels.join(",") || null,
-      reps: ok.length, codes: [...new Set(ok.map((r) => String(r.path?.code ?? "")))], pathOk: maj((r) => !!r.path?.ok), pass: maj((r) => !!r.score?.pass), cmp: c.cmp, cmpWhy: c.why, flake: it.flake, reused, verdict: verdictOf(id, c.cmp, ok, it.flake === "flaky") });
+      reps: ok.length, codes: [...new Set(ok.map((r) => String(r.path?.code ?? "")))], pathOk: maj((r) => !!r.path?.ok), pass: maj((r) => !!r.score?.pass), cmp: c.cmp, cmpWhy: c.why, flake: it.flake, reused, verdict: verdictOf(id, c.cmp, ok, it.flake === "flaky"), ...(ENV_FP.hash ? { envFp: ENV_FP.text } : {}) });
   }
   return out;
 }

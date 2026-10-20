@@ -171,10 +171,12 @@ export function decideWhen(o: { when: When; estUsd: number; gate?: boolean; now:
 
 // ─── 6. 前の結果の使い回し ─────────────────────────────────────────────
 /** 問題の結果の鍵＝この問題が使う物（問題の hash・段・効くファイルの中身の鍵・試験の道具の鍵・構成・モデル・紐付く知見の版・その段が読む DB の表の指紋） */
-export function reuseKey(o: { problemHash: string; stage: "brain" | "draft"; scopeKey: string; toolKey: string; cfgHash: string; model: string; kbKey: string; dbKey: string; convKey?: string }): string {
+export function reuseKey(o: { problemHash: string; stage: "brain" | "draft"; scopeKey: string; toolKey: string; cfgHash: string; model: string; kbKey: string; dbKey: string; convKey?: string; envFp?: string }): string {
   // 2026-10-17 ③: 会話の鍵は「会話の違いが答えに効く」時だけ足す（効かない＝"-"・付けない時は旧の鍵と同じ＝今までの置き場をそのまま使える）
   const base = [o.problemHash, o.stage, o.scopeKey, o.toolKey, o.cfgHash, o.model, o.kbKey, o.dbKey];
-  return createHash("sha256").update(JSON.stringify(o.convKey && o.convKey !== "-" ? [...base, `conv:${o.convKey}`] : base)).digest("hex").slice(0, 16);
+  const withConv = o.convKey && o.convKey !== "-" ? [...base, `conv:${o.convKey}`] : base;
+  // 2026-10-21: スイッチの指紋（exam-env-fp.ts）も既定と違う時だけ足す（DAY_SUBJECT_READER=on の答えを off の回が使い回していた）。既定＝旧の鍵と同じ
+  return createHash("sha256").update(JSON.stringify(o.envFp ? [...withConv, `env:${o.envFp}`] : withConv)).digest("hex").slice(0, 16);
 }
 
 // ─── 10/17 ③ 会話の違いが答えに効くか（作る人と確かめる人で結果を分け合う） ─────────────

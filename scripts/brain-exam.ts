@@ -58,6 +58,7 @@ import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION }
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
 import { cassetteStats as cassetteStatsNow } from "./lib/llm-cassette";
+import { examEnvFingerprint, defaultEnvOf, readDotenvLocal, formatEnvFp, envFpMismatchNote } from "./lib/exam-env-fp";
 /** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
 function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return 0; return st.total.real - (st.byAction.get("(名札なし)")?.real ?? 0); }
 import { formatLinks, orderForCache, topLinks, type KbLink } from "./lib/exam-rag";
@@ -161,6 +162,9 @@ function stageOf(p: { type: string; tags?: string[] } & { stage?: string }): "br
 // 2026-10-15 ② LLM の録音と再生（scripts/lib/llm-cassette.ts）。LLM_CASSETTE を自分で付けていればそちらを使う
 const REPLAY_ARG = args.find((a) => a === "--replay" || a.startsWith("--replay="));
 const CASSETTE_MODE = process.env.LLM_CASSETTE?.trim() ? process.env.LLM_CASSETTE.trim() : REPLAY_ARG ? (REPLAY_ARG === "--replay=strict" ? "strict" : "replay") : flag("no-record") ? "off" : "record";
+// 2026-10-21 スイッチの指紋（scripts/lib/exam-env-fp.ts・既定＝.env.local と違うスイッチだけ）。録音の鍵・結果（meta.json）に入れる。
+//   前（main）の答えは既定のスイッチで回す（指紋の名前を .env.local の値に戻して子に渡す）＝on の回と本番の構成を比べる。止める: EXAM_ENV_FP=off
+const ENV_FP = examEnvFingerprint(process.env);
 // 2026-10-15 ① 前（main の版）の使い回し
 const BASELINE_MAIN = /^main(?:@|$)/.test(arg("baseline"));
 // 10/08 竹内さん: 出し切りの正解は search-exhausted（出し切ったら AIX 全力サポート）が入るまで「新着待ちの返信 or 全力サポート」の両方、入ったら全力サポートだけ。
@@ -689,6 +693,11 @@ function summarize(label: string, baseline: string | null): string {
     const bp = new Map(perProblem(bRows).map((p) => [p.id, p]));
     const bModel = [...new Set(bRows.map((r) => r.model))].join(",");
     const crossModel = bModel !== model;
+    // 2026-10-21 スイッチの指紋が違う比べは見出しに出す（前の meta が無い＝main の取り置き等は既定とみる）
+    const fpOf = (lb: string): { hash?: string; text?: string } | null => { try { return (JSON.parse(readFileSync(`${RESULTS_DIR}/${lb}.meta.json`, "utf8")) as { envFp?: { hash?: string; text?: string } }).envFp ?? null; } catch { return null; } };
+    const fpNote = envFpMismatchNote(fpOf(label), fpOf(baseline), `前（${baseline}）`);
+    if (fpNote) L.push(`
+${fpNote}`);
     const worse = pp.filter((p) => bp.get(p.id)?.pass && !p.pass), better = pp.filter((p) => bp.has(p.id) && !bp.get(p.id)!.pass && p.pass);
     const both = pp.filter((p) => bp.has(p.id));
     const bPath = both.reduce((s, p) => s + bp.get(p.id)!.pathN, 0), bRun = both.reduce((s, p) => s + bp.get(p.id)!.n, 0);
@@ -813,7 +822,10 @@ async function prepareMainBaseline(): Promise<boolean> {
   const ref = bArg.includes("@") ? bArg.slice(bArg.indexOf("@") + 1) : arg("baseline-ref", "main");
   if (!/^[\w./-]+$/.test(ref)) throw new Error(`--baseline=main@<ref> の ref が読めない: ${ref}`);
   const commit = execFileSync("git", ["rev-parse", "--verify", `${resolveMainRef(ref)}^{commit}`]).toString().trim();
-  const cfg = B.examConfig(process.env, {
+  // 2026-10-21 main＝本番の構成: 既定と違うスイッチ（ENV_FP）を .env.local の値に戻した環境で構成を出し・子を回す
+  const mainEnv = defaultEnvOf(process.env, ENV_FP, readDotenvLocal());
+  if (ENV_FP.hash) console.log(`  前（main）は既定のスイッチで回す（今の回だけ: ${ENV_FP.text}）`);
+  const cfg = B.examConfig(mainEnv, {
     layer: LAYER, ledger: USE_LEDGER, stage: STAGE, stageByType: existsSync(STAGE_BY_TYPE_FILE) ? B.sha(readFileSync(STAGE_BY_TYPE_FILE, "utf8")).slice(0, 10) : null,
     repeat: REPEAT, judgeRepeat: JUDGE_REPEAT, noJudge: NO_JUDGE, autoHint: flag("auto-hint"), draftFirstOnly: flag("draft-first-only"), exhaustedRule: arg("exhausted-rule") || null,
     // 2026-10-15 ④ 新しいスイッチは「入れた時だけ」構成に足す（入れない時の構成の hash＝今までの取り置きを変えない）
@@ -847,7 +859,7 @@ async function prepareMainBaseline(): Promise<boolean> {
   const cached = flag("baseline-refresh") ? new Map() : loadAll();
   // 2026-10-16 期限: 取り置きの savedAt が N 日（既定 7）より古ければ流し直す（DB の中身・モデル側の変化は鍵に入らない）
   const maxAgeMs = B.baselineMaxAgeMs(arg("baseline-max-age"));
-  const plan = B.planBaseline(picked.map((p) => ({ id: p.id, hash: hashOf.get(p.id)!, alt: altOf.get(p.id) })), cached, REPEAT, { acceptComplete: REPEAT_FLAKY || !!REPS_OF, maxAgeMs });
+  const plan = B.planBaseline(picked.map((p) => ({ id: p.id, hash: hashOf.get(p.id)!, alt: altOf.get(p.id) })), cached, REPEAT, { acceptComplete: REPEAT_FLAKY || !!REPS_OF, maxAgeMs, envFp: "" });
   // 2026-10-20 竹内さん「main の答えは版ごとに1回作って使い回す・main が問題に関係ないファイルだけ変わったなら前の main の答えを使う」:
   //   今の置き場に無い問題は、同じ構成の前の main の置き場から「その問題の段（ブレインだけ／下書きまで）に効くファイルの鍵が今の main と同じ」答えを持ち越す。
   //   止める: EXAM_BASELINE_CARRY=off
@@ -861,7 +873,7 @@ async function prepareMainBaseline(): Promise<boolean> {
     const keyOf = (b: { stageKeys?: { brain: string; draft: string } | null; commit?: string }) => (b.stageKeys ?? (b.commit ? examStageKeys(b.commit, stageMemo) : null))?.[rel] ?? null;
     for (const id of [...plan.run]) {
       const cands = sibs.flatMap((n) => { const f = join(B.BASELINE_DIR, n, `${id}.json`); if (!existsSync(f)) return []; try { return [{ ...(JSON.parse(readFileSync(f, "utf8")) as import("./lib/brain-exam-baseline").BaselineFile<ResultRow>), dir: n }]; } catch { return []; } });
-      const hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: sk[rel], keyOf }, REPEAT, { acceptComplete: REPEAT_FLAKY || !!REPS_OF, maxAgeMs });
+      const hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: sk[rel], keyOf, envFp: "" }, REPEAT, { acceptComplete: REPEAT_FLAKY || !!REPS_OF, maxAgeMs });
       if (!hit) continue;
       const { dir: from, ...rest } = hit;
       B.saveBaseline<ResultRow>(dir, { ...rest, ...(vk ? { versionKey: vk } : {}), stageKeys: rest.stageKeys ?? (rest.commit ? examStageKeys(rest.commit, stageMemo) : null), carriedFrom: from });
@@ -882,7 +894,7 @@ async function prepareMainBaseline(): Promise<boolean> {
     const runLabel = `${baseLabel}-r${Date.now().toString(36)}`;
     const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${runLabel}`, `--only=${plan.run.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage })];
     const cassetteDir = resolve(String(process.env.LLM_CASSETTE_DIR ?? "").trim() || DEFAULT_CASSETTE_DIR);
-    const childEnv = { ...process.env, REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1" };
+    const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1" };
     if (flag("baseline-dry")) { console.log(`（--baseline-dry: 回さない）main の作業ツリーで: npx ${cmd.join(" ")}\n  録音の置き場（共有）: ${cassetteDir}`); return false; }
     const wt = prepareMainWorktree(commit);
     console.log(`  main の作業ツリー ${wt} で「前」を回す: npx ${cmd.join(" ")}`);
@@ -896,7 +908,7 @@ async function prepareMainBaseline(): Promise<boolean> {
       if (!rs.length || rs.some((x) => x.error)) continue; // 失敗した問題は取り置かない（次にまた回す）
       const c = cost.byTag?.[id];
       B.saveBaseline<ResultRow>(dir, { id, problemHash: hashOf.get(id)!, commit, config: cfg, savedAt: new Date().toISOString(), fromLabel: runLabel, rows: rs, cost: c ? { real: c.real, realUsd: c.realUsd, replayed: c.replayed, replayUsd: c.replayUsd } : null,
-        ...(vk ? { versionKey: vk } : {}), ...((REPEAT_FLAKY || REPS_OF) && REPEAT > 1 ? { complete: true } : {}), stageKeys: sk });
+        ...(vk ? { versionKey: vk } : {}), ...((REPEAT_FLAKY || REPS_OF) && REPEAT > 1 ? { complete: true } : {}), stageKeys: sk, envFp: "" });
     }
   } else if (flag("baseline-dry")) { console.log("（--baseline-dry: 全部使い回せる）"); return false; }
   // 比べる「前」の結果ファイルを組み立てる（今回の問題だけ）
@@ -943,6 +955,8 @@ async function main() {
   // 10/09: 同じ時間に他の担当も試験を回す → 記録の route と線のファイルを label ごとに分ける（同じ線のファイルを2つの実行で使うと、片方の片付けが線を消して YUMA の過去が混ざる）
   lockFloor();
   if (CASSETTE_MODE !== "off") process.env.LLM_CASSETTE = CASSETTE_MODE; // 共通の入口が一番外に録音・再生の包みを入れる
+  // 2026-10-21 録音の鍵に入れるスイッチの指紋は始めに出した物（途中で試験が足す環境変数を混ぜない）。前（main）の子は "-"＝既定
+  if (!process.env.LLM_CASSETTE_ENV_FP?.trim()) process.env.LLM_CASSETTE_ENV_FP = ENV_FP.hash || "-";
   h = await setupLlmTest(`brain-exam-${LABEL}`.slice(0, 60));
   await installRawBrainCapture(); // ← brain-core を読む前に（SDK は読んだ時の fetch を握る）
   const { setCassetteTag } = await import("./lib/llm-cassette");
@@ -961,7 +975,15 @@ async function main() {
   const gaps = await floorGaps();
   if (Object.keys(gaps).length) console.warn(`⚠ 線の表に無い表に YUMA の行がある（ブレインが読むと混ざる）: ${JSON.stringify(gaps)}`);
   let head = ""; try { head = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* */ }
-  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ conv: lease?.name ?? "YUMA", layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, stage: STAGE, cassette: CASSETTE_MODE, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, think: THINK || null,
+  // 2026-10-21 同じ label の続きを違うスイッチで回さない（on の回の答えに off の回を足して混ぜていた）
+  {
+    const mf = `${RESULTS_DIR}/${LABEL}.meta.json`;
+    let prevFp: { hash?: string; text?: string } | null = null;
+    try { prevFp = (JSON.parse(readFileSync(mf, "utf8")) as { envFp?: { hash?: string; text?: string } }).envFp ?? { hash: "" }; } catch { prevFp = null; }
+    if (prevFp && readResults(LABEL).length && (prevFp.hash ?? "") !== ENV_FP.hash) throw new Error(`label ${LABEL} は別のスイッチの指紋で回した結果がある（前 ${prevFp.hash || "既定"}${prevFp.text ? `＝${prevFp.text}` : ""} ／ 今 ${formatEnvFp(ENV_FP)}）。別の --label で回す`);
+  }
+  console.log(`スイッチの指紋: ${formatEnvFp(ENV_FP)}`);
+  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ envFp: { hash: ENV_FP.hash, text: ENV_FP.text, pairs: Object.fromEntries(ENV_FP.pairs) }, conv: lease?.name ?? "YUMA", layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, stage: STAGE, cassette: CASSETTE_MODE, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, think: THINK || null,
     // 10/14 構成のスイッチ（試験の頃の環境変数・BRAIN_*/TWO_STAGE_*/SEARCH_*/TURN_* 等）。答案の比べで「どの構成か」を残す
     switches: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:BRAIN_|TWO_STAGE_|SEARCH_|TURN_|NEXT_PUBLIC_SEARCH_|AIX_|CONFIRM_|REPEAT_|FINAL_CHECK_|PICKUP_|VIEWING_|EXHAUSTED_|ROOM_PHOTO_|CONTRACT_)/.test(k) && !/KEY|SECRET|TOKEN/.test(k)).sort()) }, null, 1));
   console.log(`問題 ${problems.length}・回 ${REPEAT}・${model}・層 ${LAYER}・台帳 ${USE_LEDGER ? "写す" : "写さない"}・下書き ${DRAFT ? `あり（--stage=${STAGE}・${problems.filter((p) => stageOf(p) === "draft").length}問）` : `なし（--stage=${STAGE}）`}・録音 ${CASSETTE_MODE}・判定 ${NO_JUDGE ? "なし" : "DeepSeek"}`);

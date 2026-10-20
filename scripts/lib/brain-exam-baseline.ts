@@ -59,7 +59,14 @@ export type BaselineFile<R> = {
   /** 2026-10-15 ④: 揺れる問題だけ繰り返した（--repeat-flaky）＝回が repeat より少なくても揃っている */ complete?: boolean;
   /** 2026-10-20: 答えを出した main の段ごとの鍵（exam-scope.examStageKeys）。main が進んでもこの段の鍵が同じなら持ち越す */ stageKeys?: { brain: string; draft: string } | null;
   /** 2026-10-20: 前の main の置き場から持ち越した（元の置き場の名前） */ carriedFrom?: string;
+  /**
+   * 2026-10-21: 答えを出した時のスイッチの指紋（exam-env-fp.ts の hash・"" ＝既定＝.env.local のまま）。
+   *   main の答えは既定のスイッチで回す（brain-exam の prepareMainBaseline）。無い（古い取り置き）＝既定とみる＝既定の回にだけ使う
+   */
+  envFp?: string;
 };
+/** 取り置きの指紋が欲しい指紋と同じか（無い古い物は既定 "" とみる） */
+export function sameEnvFp(b: { envFp?: string | null }, want: string | null | undefined): boolean { return (b.envFp ?? "") === (want ?? ""); }
 
 // ─── 2026-10-20 前の main の答えの持ち越し（main の変更がその問題の段に効かない時） ─────────────
 /** 置き場の構成の段 → 見る鍵。ブレインだけ（stage=brain）はブレインの鍵、それ以外（draft・auto・diff）は下書きまで入った鍵（安全側） */
@@ -68,10 +75,11 @@ export function relevantStageOf(cfg: ExamConfig | null | undefined): "brain" | "
  * 今の置き場に無い問題の答えを、同じ構成の別の置き場（前の main）から探す: 同じ問題（hash）・期限の内・失敗の回が無い・回が揃う・
  *   その段の鍵（keyOf）が今の main と同じ。いくつもあれば一番新しい物。keyOf が null（鍵が分からない）物は使わない（安全側）
  */
-export function findCarryOver<R extends { rep: number; error?: string }>(cands: Array<BaselineFile<R> & { dir?: string }>, p: { hash: string; alt?: string[] }, want: { key: string; keyOf: (b: BaselineFile<R>) => string | null }, repeat: number, o: { acceptComplete?: boolean; maxAgeMs?: number | null; now?: number } = {}): (BaselineFile<R> & { dir?: string }) | null {
+export function findCarryOver<R extends { rep: number; error?: string }>(cands: Array<BaselineFile<R> & { dir?: string }>, p: { hash: string; alt?: string[] }, want: { key: string; keyOf: (b: BaselineFile<R>) => string | null; envFp?: string }, repeat: number, o: { acceptComplete?: boolean; maxAgeMs?: number | null; now?: number } = {}): (BaselineFile<R> & { dir?: string }) | null {
   const now = o.now ?? Date.now();
   const ok = cands.filter((b) => {
     if (!sameProblem(b, p)) return false;
+    if (!sameEnvFp(b, want.envFp)) return false; // 2026-10-21 スイッチの違う答えは持ち越さない
     const t = Date.parse(String(b.savedAt ?? ""));
     if (o.maxAgeMs && o.maxAgeMs > 0 && (!Number.isFinite(t) || now - t > o.maxAgeMs)) return false;
     if (b.rows.some((r) => r.error)) return false;
@@ -105,13 +113,14 @@ export function sameProblem(b: { problemHash: string }, p: { hash: string; alt?:
  * 使い回せる問題と回す問題を分ける（同じ問題 hash・回の数が足りる・失敗の回が無い）。
  * 2026-10-15 ④ acceptComplete: 揺れる問題だけ繰り返した取り置き（complete の印・1回目あり）は回が repeat より少なくても揃っている
  */
-export function planBaseline<R extends { rep: number; error?: string }>(problems: Array<{ id: string; hash: string; alt?: string[] }>, cached: Map<string, BaselineFile<R>>, repeat: number, o: { acceptComplete?: boolean; maxAgeMs?: number | null; now?: number } = {}): { reuse: string[]; run: string[]; stale: string[]; expired: string[] } {
+export function planBaseline<R extends { rep: number; error?: string }>(problems: Array<{ id: string; hash: string; alt?: string[] }>, cached: Map<string, BaselineFile<R>>, repeat: number, o: { acceptComplete?: boolean; maxAgeMs?: number | null; now?: number; envFp?: string } = {}): { reuse: string[]; run: string[]; stale: string[]; expired: string[] } {
   const reuse: string[] = [], run: string[] = [], stale: string[] = [], expired: string[] = [];
   const now = o.now ?? Date.now();
   for (const p of problems) {
     const b = cached.get(p.id);
     if (!b) { run.push(p.id); continue; }
     if (!sameProblem(b, p)) { run.push(p.id); stale.push(p.id); continue; }
+    if (!sameEnvFp(b, o.envFp)) { run.push(p.id); stale.push(p.id); continue; } // 2026-10-21 スイッチの違う答え（既定でない）は使わない
     // 2026-10-16 比べる相手の答えに期限: DB の中身・モデル側の変化は鍵に入らない → savedAt が古ければ流し直す（savedAt が読めない物も古いとみる）
     if (o.maxAgeMs && o.maxAgeMs > 0) { const t = Date.parse(String(b.savedAt ?? "")); if (!Number.isFinite(t) || now - t > o.maxAgeMs) { run.push(p.id); expired.push(p.id); continue; } }
     const ok = new Set(b.rows.filter((r) => !r.error).map((r) => r.rep));
