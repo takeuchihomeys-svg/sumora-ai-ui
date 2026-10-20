@@ -107,10 +107,12 @@ export const ROUTE_BRANCHES: Record<RouteBranchId, RouteBranch> = {
     next: { label: "スモラで申込できると即答し、弊社でもご内覧できる旨を伝える", aix: [] },
     wayBack: { to: "viewing_arrange", how: "弊社での内覧の調整、または気に入ればそのまま弊社で申込（申込準備へ）" } },
   competing_estimate: { id: "competing_estimate", name: "相見積もり", meaning: "他社の見積と比べている", aim: ["比べて選んでもらう"],
-    next: { label: "最大限割引の御見積書で比べて頂く", aix: ["estimate_sheet"] },
+    // 10/20 竹内さんの決定（87ff68e1）: 物件確認した ではなく、他社より抑えた見積の約束と申込への背中押し
+    next: { label: "他社より抑えた見積の約束と申込への背中押し（見積ができたら御見積書）", aix: ["estimate_sheet"] },
     wayBack: { to: "estimate", how: "抑えた見積で決めて頂き、内覧へ" } },
   screening_concern: { id: "screening_concern", name: "審査の相談", meaning: "審査・保証会社・保証人の不安や問い", aim: ["不安を解く"],
-    next: { label: "保証会社の説明と、通るまでサポートする旨（切り替えの道もある）", aix: [] },
+    // 10/20 竹内さんの決定（a0c5ecf0・84519320）: 物件の審査の見込み→AIX【保証会社について】／名義・職業・保証人等の相談→確認の約束の後 AIX【管理会社に確認した→審査について（ご相談）】
+    next: { label: "保証会社の説明と、通るまでサポートする旨（物件の審査の見込み→保証会社について／名義・職業などの相談→確認の後 審査について（ご相談））", aix: ["guarantor_info", "property_check_result"] },
     wayBack: { to: "apply_prep", how: "気に入ったお部屋ならまず審査をかけてみる（申込へ）" } },
   condition_change: { id: "condition_change", name: "条件変更", meaning: "条件の言い直し・物件への感想・別の物件の依頼", aim: ["条件を聞き出す"],
     next: { label: "新しい条件でピックアップしてお送りする（約束の返信→物件ピックアップした）", aix: ["property_send"] },
@@ -188,6 +190,9 @@ export type ApplyRouteSignals = {
   recentStaffTexts?: ReadonlyArray<string>;
   /** customer-circumstances.holdFirstReason（すぐ来られない事情の文・無ければ null） */
   holdReason?: string | null;
+  /** contact-promise.farMoveInTurn の結果（brain-core の farMoveInEarly が在るか）。渡された時はこちらを使い、語の網（moveInLaterOf）は使わない
+   *  ＝「入居時期が先」は決まった線（連絡の日＝1ヶ月半前が7日以上先・竹内さんの決定 22c7e985/900059a6）と同じ所で開く。未指定（監査・試験）だけ語の網 */
+  farMoveIn?: boolean | null;
   /** 最後の発言がこちら（スタッフ・AIX）の時、その時刻（お客様が最後なら null） */
   lastStaffAtIfStaffLast?: string | null;
   nowMs?: number;
@@ -244,7 +249,8 @@ export function resolveRouteBranch(s: ApplyRouteSignals): { branch: RouteBranchI
   //   場面の S7（「〜でも大丈夫」等の語）は時刻の相談にも当たるので使わず、発言の型だけで見る
   if (!post && sentBefore && (rt === "condition_feedback" || rt === "other_property")) return { branch: "condition_change", why: `型:${rt}` };
   if (!post && s.holdReason) return { branch: "cannot_come_soon", why: s.holdReason };
-  if (!post && turn && moveInLaterOf(turn, s.nowMs ?? Date.now())) return { branch: "move_in_later", why: "入居時期の語" };
+  const fmi = typeof s.farMoveIn === "boolean";
+  if (!post && (fmi ? s.farMoveIn : !!turn && moveInLaterOf(turn, s.nowMs ?? Date.now()))) return { branch: "move_in_later", why: fmi ? "入居時期が先（farMoveInTurn）" : "入居時期の語" };
   if (rt === "considering") return { branch: "considering", why: "型:considering" };
   if (!post && s.searching?.reason === "watch_promised") return { branch: "new_arrival_wait", why: "新着が出次第の約束" };
   if (!post && s.lastStaffAtIfStaffLast) {

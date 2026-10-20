@@ -82,6 +82,12 @@ it("見送り（段階 dropped）・延期（型 postpone_cancel）・検討（c
 });
 it("見送りは他の合図より先（他で決まった＋持ち込みの語）", () => eq(locateApplyRoute(base({ routeType: "decided_elsewhere", customerTurnText: "他社の見積で決まりました" })).branch, "declined"));
 
+it("farMoveIn を渡した時は決まった線（farMoveInTurn）だけで入居時期が先を開く（語の網は使わない）", () => {
+  eq(locateApplyRoute(base({ customerTurnText: "入居は来年の3月頃を考えています", farMoveIn: false })).branch, null);
+  eq(locateApplyRoute(base({ customerTurnText: "よろしくお願いします", farMoveIn: true })).branch, "move_in_later");
+});
+it("審査の相談の候補は 保証会社について／物件確認した（10/20 の決定）", () => eq(locateApplyRoute(base({ routeType: "screening_question" })).next?.aix, ["guarantor_info", "property_check_result"]));
+
 console.log("材料の文とスイッチ");
 it("文は600字以内・今どこに［］・分かれ道と戻り方を含む", () => {
   for (const b of Object.keys(ROUTE_BRANCHES)) {

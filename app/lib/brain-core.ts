@@ -2930,6 +2930,7 @@ ${catalogBlockForBrain(brainScene)}
         customerTurnText: unrepliedTurn.text ?? "",
         recentStaffTexts: psInAR.recentStaffTexts,
         holdReason: holdReasonAR,
+        farMoveIn: !!farMoveInEarly,
         lastStaffAtIfStaffLast: lastMsgAR && lastMsgAR.sender !== "customer" ? lastMsgAR.created_at : null,
       });
       applyRouteText = ar.text;
