@@ -25,6 +25,8 @@ import { parseContactPromise, ymdStr as contactYmd } from './contact-promise';
 // 2026-09-21 竹内（まりあさん事例）: 「内覧が終わった」の判定は viewing-thread と同じ1か所
 import { STAFF_VIEWING_DONE_RE } from './viewing-thread';
 import { aixMgmtLifelineEnabled, LIFELINE_PROMISE_RE } from './aix-lifeline';
+// 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・バイク置き場・契約の条件・家賃の交渉）の約束の要件の網
+import { aixNewPickers1020Enabled, APPLICATION_STATUS_Q_RE, CONTRACT_TERMS_RE, RENT_NEGOTIATION_RE, SURROUNDINGS_RE } from './aix-new-pickers';
 import { findPrematureViewing, customerMentionsFixedViewing, findStaffViewingDeclaration } from './viewing-premature';
 import { resolveViewingFlow, buildViewingFlowLedgerLine, buildViewingFlowBrainText, type ViewingFlow } from './viewing-flow';
 // 2026-09-15 竹内（YUYA 事例）: 保証会社の種類の日本語は guarantor-companies の1表から（依存ゼロの純関数モジュールなので循環しない）
@@ -211,7 +213,11 @@ const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*
 //   何を確認するのかがカレンダーで読めなかった。旧 CONFIRM_OBJECT_RE は「誰に（管理会社・オーナー）」と「何を（募集状況・入居時期…）」が
 //   1本の正規表現に混ざり、本文で先に出た語が勝っていた（実データ: object=管理会社 21件中 20件は本文に中身が書いてある）。
 //   → 「何を」を先に探し、無ければ「誰に」。言い回しの揺れは1つの要件名に揃える（「ご入居が可能か」「11月中旬でのご入居」→ 入居時期）
-const CONFIRM_TOPIC_RULES: ReadonlyArray<{ re: RegExp; label: string }> = [
+// 2026-10-20: nw＝新しいピッカーの要件（AIX_NEW_PICKERS_1020=on の時だけ）／old＝その切替が off の時だけ使う今まで通りの行
+const CONFIRM_TOPIC_RULES_ALL: ReadonlyArray<{ re: RegExp; label: string; nw?: true; old?: true }> = [
+  // 2026-10-20 竹内さん（P1 ec545624）: ほかの方の申込の有無・何人待ち・何番手・1番手の方の審査の状況（AIX【管理会社に確認した→申込状況について】で閉じる）。
+  //   募集状況より先に見る（「13階は何人待ちですか？」→「確認させて頂きます」）。ご本人の申込の進捗（「無事1番手でお申込完了しているか」「申込み番手」）は語が当たらない
+  { re: APPLICATION_STATUS_Q_RE, label: '申込状況', nw: true },
   { re: /募集状況/, label: '募集状況' },
   { re: /空室|空き/, label: '空室' },
   { re: /番手/, label: '番手' },
@@ -222,18 +228,39 @@ const CONFIRM_TOPIC_RULES: ReadonlyArray<{ re: RegExp; label: string }> = [
   // 2026-10-18 竹内さん 10/18: ライフラインの約束（「別途ご案内させて頂きます」→ AIX【確認した→ライフラインについて】で閉じる）。入居時期・設備より先に見る
   { re: /ライフライン|電気・?ガス・?水道/, label: 'ライフライン' },
   { re: /入居(?:可能)?(?:時期|日)|ご?入居が可能|入居可否|(?:上旬|中旬|下旬|[0-9０-９]{1,2}日)(?:での|から|の|まで)?ご?入居/, label: '入居時期' },
+  // 2026-10-18 竹内さん 10/18 夜の答え③（P1 c2f49d5c）: 短期解約の違約金・解約予告（AIX【管理会社に確認した→契約の条件について】）。退去時費用・初期費用（フリーレント）より先
+  { re: CONTRACT_TERMS_RE, label: '契約の条件', nw: true },
   { re: /退去時費用|クリーニング代|クリーニング費/, label: '退去時費用' },
+  // 2026-10-18 竹内さん 10/18 夜の答え⑤: 家賃の値下げの交渉の結果（AIX【管理会社に確認した→家賃の交渉について】）。初期費用（割引）より先
+  { re: RENT_NEGOTIATION_RE, label: '家賃の交渉', nw: true },
   { re: /初期費用|割引|礼金|敷金|フリーレント/, label: '初期費用' },
   { re: /退去/, label: '退去' },
   { re: /審査/, label: '審査' },
   { re: /ペット|飼育可能/, label: 'ペット' },
-  { re: /駐車場|駐輪|バイク置/, label: '駐車場' },
+  { re: /駐車場|駐輪|バイク置/, label: '駐車場', old: true },
+  { re: /駐車場/, label: '駐車場', nw: true },
+  // 2026-10-20 竹内さん（P1 95d3831d）: バイク置き場（AIX【管理会社に確認した→駐車場について】の中のバイク置き場で閉じる）。駐車場の語がある時は駐車場（同じピッカー）
+  { re: /駐輪|バイク|原付/, label: 'バイク置き場', nw: true },
   { re: /内覧可能|内覧可否|ご案内可能か/, label: '内覧可否' },
+  // 2026-10-18 竹内さんの答え④: 周辺の様子（日当たり・音・騒音）（AIX【確認した→周辺の様子について】で閉じる）。設備より先
+  { re: SURROUNDINGS_RE, label: '周辺の様子', nw: true },
   { re: /エアコン|宅配ボックス|コンロ|ウォシュレット|洗濯機置|インターネット|ネット無料|設備/, label: '設備' },
 ];
 /** 確認の相手（何をか分からない時だけ要件にする）。閉じる時の照合ではワイルドカード扱い（promise-calendar） */
 export const CONFIRM_PARTY_RE = /管理会社|オーナー|交渉/;
-const CONFIRM_OBJECT_RE = new RegExp(`${CONFIRM_TOPIC_RULES.map((r) => r.re.source).join('|')}|${CONFIRM_PARTY_RE.source}`);
+// on の時は 駐車場・バイク置き場 を 募集状況・空室 より先に見る（「駐車場の空き状況確認させて頂きます」は駐車場について＝2026-10-20 竹内さん「駐車場の約束は駐車場のピッカーへ」）
+const PARKING_LABELS = new Set(['駐車場', 'バイク置き場']);
+const CONFIRM_TOPIC_RULES_ON = [
+  ...CONFIRM_TOPIC_RULES_ALL.filter((r) => !r.old && r.label === '申込状況'),
+  ...CONFIRM_TOPIC_RULES_ALL.filter((r) => !r.old && PARKING_LABELS.has(r.label)),
+  ...CONFIRM_TOPIC_RULES_ALL.filter((r) => !r.old && r.label !== '申込状況' && !PARKING_LABELS.has(r.label)),
+];
+const CONFIRM_TOPIC_RULES_OFF = CONFIRM_TOPIC_RULES_ALL.filter((r) => !r.nw);
+/** 確認の要件の語彙（AIX_NEW_PICKERS_1020=on の時だけ 申込状況・契約の条件・家賃の交渉・バイク置き場 を足す） */
+function confirmTopicRules(): ReadonlyArray<{ re: RegExp; label: string }> {
+  return aixNewPickers1020Enabled() ? CONFIRM_TOPIC_RULES_ON : CONFIRM_TOPIC_RULES_OFF;
+}
+const CONFIRM_OBJECT_RE = new RegExp(`${CONFIRM_TOPIC_RULES_OFF.map((r) => r.re.source).join('|')}|${CONFIRM_PARTY_RE.source}`);
 /** 確認の要件が「相手」だけで中身が無い（管理会社・オーナー・確認事項…） */
 export function isConfirmPartyObject(object: string | null | undefined): boolean {
   const o = (object ?? '').trim();
@@ -252,6 +279,12 @@ export function confirmTopicForCheckPattern(checkPattern: string | null | undefi
     case 'mgmt_proxy': return '代理契約';
     case 'mgmt_two_person': return '二人入居';
     case 'mgmt_lifeline': return 'ライフライン';
+    // 2026-10-20 新しいピッカー
+    case 'mgmt_screening': return '審査';
+    case 'mgmt_application_status': return '申込状況';
+    case 'mgmt_contract_terms': return '契約の条件';
+    case 'mgmt_rent_negotiation': return '家賃の交渉';
+    case 'mgmt_surroundings': return '周辺の様子';
     case 'available': case 'unavailable': case 'alternative': case 'mgmt_availability': return '募集状況';
     default: return null;
   }
@@ -281,10 +314,10 @@ export function confirmObjectFromCustomerTurn(text: string | null | undefined): 
   // お客様の文は「駐車場って空きありますか」のように空き・募集の語が要件の語と一緒に出る → 要件（駐車場・ペット・設備…）を先に、募集状況・空室・番手は最後
   const VACANCY_LABELS = new Set(['募集状況', '空室', '番手']);
   const topicOf = (x: string): string | null => {
-    for (const r of CONFIRM_TOPIC_RULES) if (!VACANCY_LABELS.has(r.label) && r.re.test(x)) return r.label;
+    for (const r of confirmTopicRules()) if (!VACANCY_LABELS.has(r.label) && r.re.test(x)) return r.label;
     if (/猫|犬|小動物|飼え|飼う|飼って/.test(x)) return 'ペット';
     if (CUSTOMER_EQUIP_RE.test(x)) return '設備';
-    for (const r of CONFIRM_TOPIC_RULES) if (VACANCY_LABELS.has(r.label) && r.re.test(x)) return r.label;
+    for (const r of confirmTopicRules()) if (VACANCY_LABELS.has(r.label) && r.re.test(x)) return r.label;
     return null;
   };
   // 質問の形の文を先に、無ければ要件の語のある文
@@ -314,12 +347,34 @@ export function customerAskedConfirmTopic(msgs: ReadonlyArray<{ sender: string; 
   for (let i = staffIdx + 1; i < msgs.length; i++) if (msgs[i].sender === 'customer') after.push(String(msgs[i].text ?? ''));
   const a = after.join('\n').normalize('NFKC');
   if (!a.trim()) return false;
-  const rule = CONFIRM_TOPIC_RULES.find((r) => r.label === want);
+  const rule = confirmTopicRules().find((r) => r.label === want);
   return !!rule?.re.test(a) || (want === '設備' && CUSTOMER_EQUIP_RE.test(a));
 }
 /** 確認の要件名 → AIX【確認した（条件・交渉）】のピッカー（check_pattern）。募集状況・空室・番手は 物件確認した 側＝null */
+/**
+ * AIX の check_pattern が閉じる確認の要件（1つのピッカーが2つ以上の要件を閉じる時: 駐車場について→駐車場・バイク置き場／契約の条件について→契約の条件・退去時費用）。
+ *   約束カレンダーの閉じ方（planPromiseCompletion）が使う。先頭は confirmTopicForCheckPattern と同じ
+ */
+export function confirmTopicsForCheckPattern(checkPattern: string | null | undefined): string[] {
+  const head = confirmTopicForCheckPattern(checkPattern);
+  if (!head) return [];
+  if (checkPattern === 'mgmt_parking') return [head, 'バイク置き場'];
+  if (checkPattern === 'mgmt_contract_terms' && aixNewPickers1020Enabled()) return [head, '退去時費用'];
+  return [head];
+}
 export function checkPatternForConfirmTopic(topic: string | null | undefined): string | null {
-  switch ((topic ?? '').trim()) {
+  const t = (topic ?? '').trim();
+  if (aixNewPickers1020Enabled()) {
+    switch (t) {
+      case '審査': return 'mgmt_screening';
+      case '申込状況': return 'mgmt_application_status';
+      case '契約の条件': case '退去時費用': return 'mgmt_contract_terms';
+      case '家賃の交渉': return 'mgmt_rent_negotiation';
+      case '周辺の様子': return 'mgmt_surroundings';
+    }
+  }
+  if (t === 'バイク置き場') return 'mgmt_parking';
+  switch (t) {
     case '入居時期': return 'mgmt_move_in';
     case '初期費用': return 'mgmt_initial_cost';
     case '保証会社': return 'mgmt_guarantor';
@@ -364,7 +419,7 @@ export function fillConfirmObjectFromCustomer(e: LedgerEntry, msgs: ReadonlyArra
 /** 本文の確認の要件（何を: 入居時期・保証会社・募集状況…を先に、無ければ誰に: 管理会社）。AIX の本文からも同じ語彙で取る */
 export function confirmObjectOf(text: string | null | undefined): string | null {
   const t = text ?? '';
-  for (const r of CONFIRM_TOPIC_RULES) if (r.re.test(t)) return r.label;
+  for (const r of confirmTopicRules()) if (r.re.test(t)) return r.label;
   return t.match(CONFIRM_PARTY_RE)?.[0] ?? null;
 }
 /**
@@ -484,7 +539,7 @@ function confirmPropertyDetail(text: string): { propertyName?: string } {
 }
 /** 1通の中で「何を確認するか」が書かれた文（要件の語がある文）。無ければ約束の型に当たった文 */
 function confirmTopicSentence(sentences: string[], fallback: string | null | undefined): string | null {
-  const s = sentences.find((x) => CONFIRM_TOPIC_RULES.some((r) => r.re.test(x))) ?? sentences.find((x) => CONFIRM_PARTY_RE.test(x)) ?? fallback;
+  const s = sentences.find((x) => confirmTopicRules().some((r) => r.re.test(x))) ?? sentences.find((x) => CONFIRM_PARTY_RE.test(x)) ?? fallback;
   return promiseSentenceText(s);
 }
 // 2026-09-17 竹内（慶次事例）「なんでこれ物件確認したがセットされているのか。物件募集見つかったら送る形なので、

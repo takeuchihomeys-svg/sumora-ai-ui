@@ -71,12 +71,26 @@ export const CONDITION_CHECK_OPTIONS: PickerOption[] = [
   { value: "mgmt_lifeline", label: "ライフラインについて", when: "ライフライン（電気・ガス・水道）の指定の有無と連絡先を管理会社に確認した結果。お客様に聞かれたら先に「ライフラインのお手続きにつきましては別途ご案内させて頂きます」と約束→答えをここから（2026-10-18 竹内さん 10/18）" },
   { value: "mgmt_two_person", label: "二人入居について", when: "二人入居の可否（可能／不可）。お客様に聞かれたら先に「物件ごとに違うので管理会社に確認させて頂きます」と約束→答えをここから（2026-10-18 竹内さん 10/16）" },
   { value: "mgmt_guarantor", label: "保証会社について（審査面）", when: "募集中と分かっているお部屋の保証会社・保証人・審査の条件" },
+  // 2026-10-20 竹内さん（P1 84519320・夜職で保証人なし・パートナーの名義・外国籍で就活中・内定予定の相談）「新しいピッカーを作成する」。保証会社について（審査面）の隣
+  { value: "mgmt_screening", label: "審査について（ご相談）", when: "名義・保証人・職業・国籍・時期など審査の相談を管理会社・保証会社に確認した結果（確認の約束の後）。締めは「無事に審査通過するまで全力でサポート」" },
+  // 2026-10-20 竹内さん（P1 ec545624・お手本 d08bc127）「管理会社に確認したところに申込状況についてのピッカーを作り…申込誘導を入れる」。10/18 の①申込の番手はここに置き場所を替えた
+  { value: "mgmt_application_status", label: "申込状況について", when: "「何人待ち」「申込入ってますか」を管理会社に確認した結果（何番手・繰り上がり・申込への誘導）" },
   { value: "mgmt_company", label: "管理会社について", when: "管理会社そのもの（名前・どこ・連絡先）を聞かれた。資料・管理会社で確かめた名前を送る（2026-09-30 竹内「管理会社の名前は『確認した』から送る」）" },
-  { value: "mgmt_parking", label: "駐車場について", when: "物件の駐車場の有無・料金・空き" },
+  { value: "mgmt_parking", label: "駐車場について", when: "物件の駐車場・バイク置き場の有無・料金・空き（中で駐車場／バイク置き場を選ぶ）" },
   { value: "mgmt_pet", label: "ペット飼育について", when: "ペット可否・条件" },
   { value: "mgmt_equipment", label: "設備について", when: "設備の有無（エアコン・洗濯機置場 等）" },
+  // 2026-10-18 竹内さん 10/18 夜の答え（P1 c2f49d5c）の新しいピッカー③⑤（置き場所は 確認した（条件・交渉））
+  { value: "mgmt_contract_terms", label: "契約の条件について", when: "短期解約の違約金・クリーニング代・フリーレントを管理会社に確認した結果（物件ごと）" },
+  { value: "mgmt_rent_negotiation", label: "家賃の交渉について", when: "頼まれて家賃の値下げを交渉した結果（下がった／下がらなかった）" },
+  // 2026-10-18 竹内さんの答え④（置き場所は 確認した（条件・交渉））
+  { value: "mgmt_surroundings", label: "周辺の様子について", when: "日当たり・音・周辺の様子を現地で見た／管理会社に聞いた結果" },
   { value: "nearby_parking", label: "近隣の月極駐車場を確認した", when: "近くの月極駐車場（名前・距離・料金・空き）" },
   { value: "owner_other", label: "オーナーに確認した→その他", when: "オーナーに確認した内容と結果" },
+];
+
+/** 2026-10-20 竹内さん（P1 398b9781）新しいボタン AIX【物件について】の中のピッカー（check_pattern に入る） */
+export const PROPERTY_INFO_OPTIONS: PickerOption[] = [
+  { value: "room_vacancies", label: "募集号室について", when: "建物の募集中の号室・部屋数・間取り・家賃を一覧で返す（お客様『ここ何部屋空いてますか？』『どの部屋が空いてますか』）。号室・間取り・家賃はスタッフが募集一覧で見た文字のまま" },
 ];
 
 export const AIX_PICKERS: Record<string, AixPickerSpec> = {
@@ -85,7 +99,7 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
     button: "物件確認した（募集状況）／確認した（条件・交渉）",
     textType: "aix/action の property_check_result 分岐。物件あった・物件なかったは固定テンプレ中心（会話を合わせる時は LLM）・室内写真は画面の固定文・管理会社系は LLM",
     pickers: [
-      { key: "check_pattern", label: "確認結果を選択／何を確認したか", kind: "choice", column: "check_pattern", options: [...AVAILABILITY_RESULT_OPTIONS, ...CONDITION_CHECK_OPTIONS] },
+      { key: "check_pattern", label: "確認結果を選択／何を確認したか", kind: "choice", column: "check_pattern", options: [...AVAILABILITY_RESULT_OPTIONS, ...CONDITION_CHECK_OPTIONS, ...PROPERTY_INFO_OPTIONS] },
       { key: "check_who", label: "誰に確認したか（確認した（条件・交渉））", kind: "choice", options: [
         { value: "mgmt", label: "管理会社に確認した", when: "管理会社の回答" },
         { value: "daihyo", label: "代表に確認した", when: "代表からの特別割引など（初期費用／その他）" },
@@ -116,6 +130,9 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
       { key: "parking", label: "駐車場 あり／なし", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_parking"] }, options: [
         { value: "あり", label: "あり", when: "" }, { value: "なし", label: "なし", when: "" },
       ] },
+      { key: "parking_kind", label: "駐車場／バイク置き場", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_parking"] }, options: [
+        { value: "car", label: "駐車場", when: "" }, { value: "bike", label: "バイク置き場", when: "" },
+      ] },
       { key: "parking_vacancy", label: "駐車場の空き", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_parking", "nearby_parking"] }, options: [
         { value: "空きあり", label: "空きあり", when: "" }, { value: "空きなし", label: "空きなし", when: "" }, { value: "要確認", label: "要確認", when: "" },
       ] },
@@ -125,6 +142,54 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
       { key: "guarantor_type", label: "保証会社の種類", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_guarantor"] }, options: [
         { value: "独立系", label: "独立系", when: "" }, { value: "信販系", label: "信販系", when: "" }, { value: "信用系", label: "信用系", when: "" }, { value: "不明", label: "不明", when: "" },
       ] },
+      // 2026-10-20 審査について（ご相談）
+      { key: "screening_holder", label: "契約者の名義", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_screening"] }, options: [
+        { value: "本人", label: "ご本人", when: "" }, { value: "家族・パートナー", label: "ご家族・パートナー", when: "" },
+      ] },
+      { key: "screening_guarantor", label: "保証人", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_screening"] }, options: [
+        { value: "あり", label: "保証人あり", when: "" }, { value: "なし", label: "保証人なし（保証会社のみ）", when: "" },
+      ] },
+      { key: "screening_job", label: "職業と収入の状況", kind: "multi", onlyWhen: { key: "check_pattern", values: ["mgmt_screening"] } },
+      { key: "screening_nationality", label: "国籍", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_screening"] }, options: [
+        { value: "日本国籍", label: "日本国籍", when: "" }, { value: "外国籍", label: "外国籍", when: "" },
+      ] },
+      { key: "screening_outlook", label: "審査の見込み", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_screening"] }, options: [
+        { value: "前向き", label: "審査に出せる（前向き）", when: "" }, { value: "条件つき", label: "条件つきで出せる", when: "" },
+        { value: "別の手", label: "別の保証会社・名義で進める", when: "" }, { value: "厳しい", label: "厳しい", when: "" },
+      ] },
+      { key: "screening_timing", label: "時期", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_screening"] }, options: [
+        { value: "先に審査", label: "先に審査にかける", when: "" }, { value: "内定後", label: "内定後に申込む", when: "" }, { value: "未定", label: "未定", when: "" },
+      ] },
+      // 2026-10-20 申込状況について
+      { key: "app_status_has", label: "申込 あり／なし", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_application_status"] }, options: [
+        { value: "あり", label: "申込あり", when: "" }, { value: "なし", label: "申込なし", when: "" },
+      ] },
+      { key: "app_status_ahead", label: "先に入っている申込の数", kind: "number", onlyWhen: { key: "check_pattern", values: ["mgmt_application_status"] } },
+      { key: "app_status_first", label: "1番手の方の審査の状況", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_application_status"] }, options: [
+        { value: "審査中", label: "審査中", when: "" }, { value: "審査待ち", label: "審査待ち", when: "" }, { value: "不明", label: "不明", when: "" },
+      ] },
+      { key: "app_status_no_second", label: "2番手の受付なし", kind: "bool", onlyWhen: { key: "check_pattern", values: ["mgmt_application_status"] } },
+      // 2026-10-18 契約の条件について／家賃の交渉について
+      { key: "contract_terms_items", label: "契約の条件の項目", kind: "multi", onlyWhen: { key: "check_pattern", values: ["mgmt_contract_terms"] }, options: [
+        { value: "短期解約の違約金", label: "短期解約の違約金", when: "" }, { value: "退去時のクリーニング代", label: "退去時のクリーニング代", when: "" }, { value: "フリーレント", label: "フリーレント", when: "" },
+      ] },
+      { key: "rent_negotiation_result", label: "家賃の交渉の結果", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_rent_negotiation"] }, options: [
+        { value: "下がった", label: "下がった", when: "" }, { value: "下がらなかった", label: "下がらなかった", when: "" },
+      ] },
+      { key: "rent_after", label: "交渉後の家賃", kind: "text", onlyWhen: { key: "check_pattern", values: ["mgmt_rent_negotiation"] } },
+      // 2026-10-18 周辺の様子について
+      { key: "surroundings_items", label: "確認した項目", kind: "multi", onlyWhen: { key: "check_pattern", values: ["mgmt_surroundings"] }, options: [
+        { value: "日当たり", label: "日当たり", when: "" }, { value: "音・騒音", label: "音・騒音", when: "" }, { value: "周辺の様子", label: "周辺の様子", when: "" },
+      ] },
+      { key: "surroundings_source", label: "どこで確かめたか", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_surroundings"] }, options: [
+        { value: "現地", label: "現地で見た", when: "" }, { value: "管理会社", label: "管理会社に聞いた", when: "" },
+      ] },
+      // 2026-10-18 室内写真を確認した の中の「現地で撮影した」（撮りに行った写真・動画）
+      { key: "interior_onsite", label: "現地で撮影した", kind: "choice", onlyWhen: { key: "check_pattern", values: ["interior_photo"] }, options: [
+        { value: "写真", label: "写真", when: "" }, { value: "動画", label: "動画", when: "" }, { value: "両方", label: "両方", when: "" },
+      ] },
+      // 2026-10-20 物件について→募集号室について
+      { key: "vacancy_room_count", label: "募集中の部屋の数", kind: "number", onlyWhen: { key: "check_pattern", values: ["room_vacancies"] } },
       { key: "guidance", label: "誘導（申込／内覧）", kind: "choice", options: [
         { value: "申込", label: "申込", when: "" }, { value: "内覧", label: "内覧", when: "" }, { value: "apply", label: "申込", when: "" }, { value: "viewing", label: "内覧", when: "" },
       ] },
@@ -379,6 +444,8 @@ export function checkPatternTopic(cp: string | null | undefined): "availability"
   if (!cp || cp === "available" || cp === "alternative" || cp === "unavailable" || cp === "exclusive" || cp === "mgmt_availability") return "availability";
   if (cp === "interior_photo" || cp === "other_room_check") return "interior_photo";
   if (cp === "move_in_date") return "move_in";
+  // 2026-10-20 物件について→募集号室について は建物の募集の話（物件確認した側に寄せる）
+  if (cp === "room_vacancies") return "availability";
   return "condition";
 }
 

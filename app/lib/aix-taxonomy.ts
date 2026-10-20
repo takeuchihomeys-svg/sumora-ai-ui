@@ -11,6 +11,7 @@
 // 各ラベルマップの説明文は下の PROPERTY_CHECK_RESULT_LABEL / PROPERTY_CHECK_RESULT_DESCRIPTION に統一する。
 import { PROXY_CONTRACT_RE, MGMT_COMPANY_Q_RE, TWO_PERSON_CHECK_REQUEST_RE } from "./scene-patterns";
 import { LIFELINE_Q_RE } from "./aix-lifeline";
+import { aixNewPickers1020Enabled, NEW_CHECK_PATTERNS_1020, APPLICATION_STATUS_Q_RE, CONTRACT_TERMS_RE, RENT_NEGOTIATION_RE, ROOM_VACANCIES_Q_RE, SCREENING_CONSULT_RE, SURROUNDINGS_RE, BIKE_PARKING_RE, PROPERTY_INFO_BUTTON, PROPERTY_INFO_PICKER_LABELS } from "./aix-new-pickers";
 
 export const AIX_BUTTON_TAXONOMY = {
   property_check_result: {
@@ -21,6 +22,11 @@ export const AIX_BUTTON_TAXONOMY = {
         "mgmt_proxy",        // 管理会社: 代理契約の可否（2026-09-16 竹内・カイナ事例）
         "mgmt_two_person",   // 管理会社: 二人入居の可否（2026-10-18 竹内さん 10/16）
         "mgmt_lifeline",     // 管理会社: ライフラインの指定・連絡先（2026-10-18 竹内さん 10/18）
+        "mgmt_screening",          // 管理会社: 審査について（ご相談）（2026-10-20 竹内さん）
+        "mgmt_application_status", // 管理会社: 申込状況について（何番手・何人待ち）（2026-10-20 竹内さん）
+        "mgmt_contract_terms",     // 管理会社: 契約の条件（短期解約の違約金・クリーニング代・フリーレント）（2026-10-18）
+        "mgmt_rent_negotiation",   // 管理会社: 家賃の交渉の結果（2026-10-18）
+        "mgmt_surroundings",       // 現地／管理会社: 日当たり・音・騒音・周辺の様子（2026-10-18 竹内さんの答え④）
         "mgmt_company",      // 管理会社そのもの: 名前・連絡先（2026-09-30 竹内・みこと事例「管理会社の名前は『確認した』から送る」）
         "mgmt_guarantor",    // 管理会社: 保証会社・保証人
         "mgmt_initial_cost", // 管理会社: 初期費用交渉
@@ -30,6 +36,10 @@ export const AIX_BUTTON_TAXONOMY = {
         "vacate_date",       // 退去予定日
         "mgmt_move_in",      // 入居可能日
         "nearby_parking",    // 近隣月極駐車場
+      ],
+      // 2026-10-20 竹内さん（P1 398b9781）新しいボタン「物件について」→ property_check_result + check_pattern
+      "物件について": [
+        "room_vacancies",    // 募集号室について（建物の募集中の号室・部屋数・間取り・家賃）
       ],
     },
   },
@@ -165,6 +175,14 @@ const CHECK_PATTERN_DETECTORS: Array<{ pattern: string; topic: string; re: RegEx
   { pattern: "mgmt_two_person",   topic: "二人入居の可否",         re: TWO_PERSON_CHECK_REQUEST_RE },
   // 2026-10-18 竹内さん 10/18: ライフライン（管理会社に確認した→ライフラインについて）
   { pattern: "mgmt_lifeline",     topic: "ライフライン（指定・連絡先）", re: LIFELINE_Q_RE },
+  // 2026-10-20 竹内さん（P1 ec545624）: 申込状況（何人待ち・何番手）。募集状況・保証会社より先
+  { pattern: "mgmt_application_status", topic: "申込状況（何番手・何人待ち）", re: APPLICATION_STATUS_Q_RE },
+  // 2026-10-20 竹内さん（P1 84519320）: 審査の相談（名義・保証人なし・職業・国籍）。保証会社より先（「保証人がいない」は審査の相談）
+  { pattern: "mgmt_screening",    topic: "審査の相談（名義・保証人・職業・国籍）", re: SCREENING_CONSULT_RE },
+  // 2026-10-18 竹内さん 10/18 夜の答え③⑤: 契約の条件・家賃の交渉（初期費用の交渉より先）
+  { pattern: "mgmt_contract_terms",   topic: "契約の条件（短期解約の違約金・クリーニング代・フリーレント）", re: CONTRACT_TERMS_RE },
+  { pattern: "mgmt_rent_negotiation", topic: "家賃の値下げの交渉", re: RENT_NEGOTIATION_RE },
+  { pattern: "mgmt_surroundings",     topic: "周辺の様子（日当たり・音・騒音）", re: SURROUNDINGS_RE },
   // 2026-09-30 竹内（みこと事例）「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて」:
   //   管理会社そのもの（名前・どこ・連絡先）。保証会社より先に見る（「それぞれの管理会社と保証会社お教えいただけますでしょうか」06-15 e68fd1e2）
   { pattern: "mgmt_company",      topic: "管理会社（名前・連絡先）", re: MGMT_COMPANY_Q_RE },
@@ -173,7 +191,7 @@ const CHECK_PATTERN_DETECTORS: Array<{ pattern: string; topic: string; re: RegEx
   { pattern: "mgmt_pet",          topic: "ペット可否",             re: /ペット|猫[^\n]{0,6}(飼|可|OK)|犬[^\n]{0,6}(飼|可|OK)/ },
   { pattern: "vacate_date",       topic: "退去予定日",             re: /退去(予定)?日|いつ[^\n]{0,4}退去/ },
   { pattern: "mgmt_move_in",      topic: "入居可能日",             re: /入居可能日|入居日|いつから[^\n]{0,4}(入居|住め)/ },
-  { pattern: "mgmt_parking",      topic: "駐車場",                 re: /駐車場|バイク置|駐輪/ },
+  { pattern: "mgmt_parking",      topic: "駐車場・バイク置き場",   re: new RegExp(`駐車場|バイク置|${BIKE_PARKING_RE.source}`) },
   // 2026-10-01（YUMA の場面テスト・ae3ffecb 実物「リビングにクーラー取り付けられるか分かりますでしょうか？」）: クーラー＝エアコンの言い換えが漏れて
   //   check_pattern が決まらなかった（365日でお客様の「クーラー」は1通だけ・エアコンと同じ設備の確認）
   { pattern: "mgmt_equipment",    topic: "設備",                   re: /エアコン|クーラー|コンロ|ウォシュレット|洗濯機置|インターネット無料|ネット無料|設備/ },
@@ -181,13 +199,19 @@ const CHECK_PATTERN_DETECTORS: Array<{ pattern: string; topic: string; re: RegEx
 
 export function detectPropertyCheckPattern(recentText: string): PropertyCheckKind | null {
   if (!recentText) return null;
+  // 2026-10-20: 新しいピッカーの網（申込状況・審査の相談・契約の条件・家賃の交渉・バイクの言い方）は AIX_NEW_PICKERS_1020=on の時だけ
+  const on = aixNewPickers1020Enabled();
   for (const d of CHECK_PATTERN_DETECTORS) {
-    if (d.re.test(recentText)) {
+    if (!on && (NEW_CHECK_PATTERNS_1020 as readonly string[]).includes(d.pattern)) continue;
+    const re = !on && d.pattern === "mgmt_parking" ? /駐車場|バイク置|駐輪/ : d.re;
+    // off は今まで通りの言葉（ブレイン・帯に渡る文を変えない）
+    const topic = !on && d.pattern === "mgmt_parking" ? "駐車場" : d.topic;
+    if (re.test(recentText)) {
       return {
         check_pattern: d.pattern,
         ui_button: "確認した（条件・交渉）",
-        topic: d.topic,
-        note: `AIX【確認した（条件・交渉）】を押してください: ${d.topic}の確認結果を顧客への報告文に変換する場面です（サブパターン: ${d.pattern}。結果報告の手打ちはNG）`,
+        topic,
+        note: `AIX【確認した（条件・交渉）】を押してください: ${topic}の確認結果を顧客への報告文に変換する場面です（サブパターン: ${d.pattern}。結果報告の手打ちはNG）`,
       };
     }
   }
@@ -201,6 +225,16 @@ export function detectPropertyCheckPattern(recentText: string): PropertyCheckKin
 //   9/17 18:17「この物件のいちばん広い部屋ありますか？」→ 実送信は [間取り図]＋「1番広いお部屋（65.02）の間取りとなります！！」
 // 2026-09-23 竹内「室内の写真が欲しいといわれたら AIX の物件確認したの室内写真確認したのピッカーから送る形」: 「別の部屋」限定から
 //   室内の写真・動画・URL の依頼まで一般化（実データ365日・検出28通: スタッフは室内イメージURL／画像 13・撮影 2・理由付き 2）
+/**
+ * 2026-10-20 竹内さん（P1 398b9781）新しいボタン「物件について」のピッカー（物件そのものの情報＝スタッフが募集一覧・物件ページで見た結果）。
+ *   ui_button は「物件について」（確認した（条件・交渉）・物件確認した（募集状況）とは別のボタン）
+ */
+const PROPERTY_INFO_KINDS: Record<string, { topic: string; note: string }> = {
+  room_vacancies: {
+    topic: "建物の募集中の号室・部屋数",
+    note: "AIX【物件について】→「募集号室について」を押してください: お客様が建物の空いている部屋の数・どの号室が募集中かを聞いています。募集一覧・物件ページで見た号室・間取り・家賃を入れて一覧で返す場面です（号室・家賃はスタッフの入力のまま。聞かれた1室の空き・募集状況だけなら物件確認した（募集状況））",
+  },
+};
 const AVAILABILITY_CHECK_KINDS: Record<string, { topic: string; note: string }> = {
   interior_photo: {
     topic: "室内の写真・動画・URL／別の部屋・間取り",
@@ -253,17 +287,21 @@ export function availabilityKind(): PropertyCheckKind {
 }
 
 export function propertyCheckKindFor(pattern: string | null | undefined): PropertyCheckKind | null {
+  const info = pattern ? PROPERTY_INFO_KINDS[pattern] : undefined;
+  if (info) return { check_pattern: pattern as string, ui_button: PROPERTY_INFO_BUTTON, topic: info.topic, note: info.note };
   const avail = pattern ? AVAILABILITY_CHECK_KINDS[pattern] : undefined;
   if (avail) {
     return { check_pattern: pattern as string, ui_button: "物件確認した（募集状況）", topic: avail.topic, note: avail.note };
   }
   const d = CHECK_PATTERN_DETECTORS.find((x) => x.pattern === pattern);
   if (!d) return null;
+  // 2026-10-20: 切替 off の時は 駐車場 の言葉を今まで通りに
+  const topic = d.pattern === "mgmt_parking" && !aixNewPickers1020Enabled() ? "駐車場" : d.topic;
   return {
     check_pattern: d.pattern,
     ui_button: "確認した（条件・交渉）",
-    topic: d.topic,
-    note: `AIX【確認した（条件・交渉）】を押してください: ${d.topic}の確認結果を顧客への報告文に変換する場面です（サブパターン: ${d.pattern}。結果報告の手打ちはNG）`,
+    topic,
+    note: `AIX【確認した（条件・交渉）】を押してください: ${topic}の確認結果を顧客への報告文に変換する場面です（サブパターン: ${d.pattern}。結果報告の手打ちはNG）`,
   };
 }
 
@@ -329,6 +367,11 @@ const CHECK_PATTERN_TOPICS: Record<string, string> = {
   mgmt_proxy:        "代理契約の可否",
   mgmt_two_person:   "二人入居の可否",
   mgmt_lifeline:     "ライフライン（指定・連絡先）",
+  mgmt_screening:    "審査の相談（名義・保証人・職業・国籍）",
+  mgmt_application_status: "申込状況（何番手・何人待ち）",
+  mgmt_contract_terms: "契約の条件（短期解約の違約金・クリーニング代・フリーレント）",
+  mgmt_rent_negotiation: "家賃の値下げの交渉",
+  mgmt_surroundings: "周辺の様子（日当たり・音・騒音）",
   mgmt_company:      "管理会社（名前・連絡先）",
   mgmt_initial_cost: "初期費用・礼金等の交渉",
   mgmt_guarantor:    "保証会社・保証人",
@@ -344,6 +387,9 @@ export function buildAixLineNote(action: string, checkPattern?: string | null): 
   // 2026-09-23: 室内写真は「確認した（条件・交渉）」ではなく「物件確認した→室内写真を確認した」（誤表記で売上番長グループに出ていた）
   if (action === "property_check_result" && availabilityCheckButtonLabel(checkPattern)) {
     return `手元の写真・室内イメージURL を AIX【${availabilityCheckButtonLabel(checkPattern)}】で送る`;
+  }
+  if (action === "property_check_result" && checkPattern && PROPERTY_INFO_PICKER_LABELS[checkPattern]) {
+    return `募集一覧の号室・間取り・家賃を AIX【${PROPERTY_INFO_BUTTON}→${PROPERTY_INFO_PICKER_LABELS[checkPattern]}】で送る`;
   }
   if (action === "property_check_result" && checkPattern) {
     const topic = CHECK_PATTERN_TOPICS[checkPattern] ?? checkPattern;

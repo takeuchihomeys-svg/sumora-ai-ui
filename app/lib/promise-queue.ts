@@ -17,6 +17,7 @@
 // テスト: app/lib/__tests__/promise-queue.test.ts（実物の約束の文）
 
 import { classifyStaffTextFacts, checkPatternForConfirmTopic } from "./action-ledger";
+import { OWN_APPLICATION_PROGRESS_RE } from "./aix-new-pickers";
 import { VIEWING_CHECK_PROMISE_RE } from "./viewing-check-first";
 import { AIX_BUTTON_LABELS } from "./aix-taxonomy";
 import { splitRequests } from "./request-ledger";
@@ -96,7 +97,9 @@ export function promisesInStaffText(text: string | null | undefined, at: string)
     } else if (e.kind === "confirmation_promised") {
       const d = (e.detail ?? {}) as { object?: string | null; sentence?: string | null };
       const sentence = d.sentence ?? sentences.find((s) => (e.evidence ?? "") && s.includes(String(e.evidence).slice(0, 6))) ?? t;
-      if (APPLY_PROGRESS_RE.test(`${d.object ?? ""} ${sentence}`)) continue;
+      // 2026-10-20: ほかの方の申込状況（申込状況について）は約束の続きにピッカーを置く（ご本人の申込の進捗は今まで通り外す）
+      const queueStatus = d.object === "申込状況" && checkPatternForConfirmTopic(d.object) === "mgmt_application_status" && !OWN_APPLICATION_PROGRESS_RE.test(sentence);
+      if (!queueStatus && APPLY_PROGRESS_RE.test(`${d.object ?? ""} ${sentence}`)) continue;
       // 「初期費用の確認」で同じ通が御見積書を約束していれば見積の約束（estimate）に任せる
       if (d.object === "初期費用" && /見積/.test(t)) continue;
       const k = confirmStep(d.object ?? null, sentence);

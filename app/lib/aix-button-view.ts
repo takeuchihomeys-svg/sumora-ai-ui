@@ -64,6 +64,8 @@ export const BRAIN_AIX_LABELS: Record<string, string> = {
 export function brainAixButtonLabel(action: string | null | undefined, checkPattern?: string | null): string | undefined {
   if (!action) return undefined;
   if (action === "property_check_result" && propertyCheckKindFor(checkPattern)?.ui_button === "確認した（条件・交渉）") return "AIX 確認した（条件・交渉）";
+  // 2026-10-20 竹内さん（P1 398b9781）新しいボタン「物件について」（募集号室について）
+  if (action === "property_check_result" && propertyCheckKindFor(checkPattern)?.ui_button === "物件について") return "AIX 物件について";
   return BRAIN_AIX_LABELS[action];
 }
 

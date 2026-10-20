@@ -121,7 +121,7 @@ interface AixModalProps {
   initialInputText?: string;
   autoConvMatch?: boolean;
   // 2026-09-17 竹内（a🤫 事例）: interior_photo（室内写真を確認した）もブレインから初期値で渡る
-  initialCheckPattern?: "available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other";
+  initialCheckPattern?: "available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "room_vacancies";
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
@@ -750,9 +750,28 @@ export default function AixModal({
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用（vacate_date / mgmt_move_in / mgmt_initial_cost は「管理会社に確認した」ピッカー経由の専用パターン）
-  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "exclusive" | "move_in_date" | "interior_photo" | "other_room_check" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(initialCheckPattern ?? null);
+  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "exclusive" | "move_in_date" | "interior_photo" | "other_room_check" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "room_vacancies" | null>(initialCheckPattern ?? null);
   // 管理会社確認パターンかどうか（テキスト入力のみで生成できる簡易フロー）
-  const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_proxy" || checkPattern === "mgmt_two_person" || checkPattern === "mgmt_lifeline" || checkPattern === "mgmt_guarantor" || checkPattern === "mgmt_company" || checkPattern === "mgmt_parking" || checkPattern === "mgmt_pet" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_availability" || checkPattern === "nearby_parking" || checkPattern === "owner_other";
+  const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_proxy" || checkPattern === "mgmt_two_person" || checkPattern === "mgmt_lifeline" || checkPattern === "mgmt_guarantor" || checkPattern === "mgmt_company" || checkPattern === "mgmt_parking" || checkPattern === "mgmt_pet" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_availability" || checkPattern === "nearby_parking" || checkPattern === "owner_other"
+    // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・契約の条件・家賃の交渉・物件について→募集号室について）
+    || checkPattern === "mgmt_screening" || checkPattern === "mgmt_application_status" || checkPattern === "mgmt_contract_terms" || checkPattern === "mgmt_rent_negotiation" || checkPattern === "mgmt_surroundings" || checkPattern === "room_vacancies";
+  // 2026-10-20 新しいピッカーの入力（事実はスタッフの選択・入力のまま）
+  const [appStatusHas, setAppStatusHas] = useState<"あり" | "なし" | null>(null);
+  const [appStatusAhead, setAppStatusAhead] = useState<number>(1);
+  const [appStatusFirst, setAppStatusFirst] = useState<"審査中" | "審査待ち" | "不明" | null>(null);
+  const [appStatusNoSecond, setAppStatusNoSecond] = useState(false);
+  const [screeningOutlook, setScreeningOutlook] = useState<"前向き" | "条件つき" | "別の手" | "厳しい" | null>(null);
+  const [contractTermsItems, setContractTermsItems] = useState<string[]>([]);
+  const [rentNegotiationResult, setRentNegotiationResult] = useState<"下がった" | "下がらなかった" | null>(null);
+  const [rentAfter, setRentAfter] = useState("");
+  const [parkingKind, setParkingKind] = useState<"car" | "bike">("car");
+  const [vacancyRows, setVacancyRows] = useState("");
+  // 2026-10-18 竹内さんの答え④ 周辺の様子（日当たり・音・騒音・周辺の様子）／どこで確かめたか
+  const [surroundingsItems, setSurroundingsItems] = useState<string[]>([]);
+  const [surroundingsSource, setSurroundingsSource] = useState<"現地" | "管理会社">("現地");
+  // 2026-10-18 竹内さんの答え② 室内写真を確認した の中の「現地で撮影した」（写真／動画／両方）
+  const [interiorOnsite, setInteriorOnsite] = useState<"写真" | "動画" | "両方" | null>(null);
+  useEffect(() => { setAppStatusHas(null); setAppStatusAhead(1); setAppStatusFirst(null); setAppStatusNoSecond(false); setScreeningOutlook(null); setContractTermsItems([]); setRentNegotiationResult(null); setParkingKind("car"); setSurroundingsItems([]); setSurroundingsSource("現地"); setInteriorOnsite(null); }, [checkPattern]);
   // 代理契約の確認結果（2026-09-16 竹内・カイナ事例）: 入れるのは可能／不可だけ。物件名は下の共通の入力（mgmtGuarantorPropertyName）を使う
   const [proxyResult, setProxyResult] = useState<"可能" | "不可" | null>(null);
   // 2026-10-18 確かめる人: 二人入居と代理契約は同じ state を使うので、ピッカーを切り替えたら前の選択を消す（代理契約で「可能」→二人入居に替えると「可能」が残り、選ばずに送れた）
@@ -1439,7 +1458,7 @@ export default function AixModal({
       else if (checkPattern === "exclusive") applyPrefill("exclusivePropName", n, exclusivePropName, setExclusivePropName);
       else if (checkPattern === "other_room_check") applyPrefill("otherRoomPropertyName", n, otherRoomPropertyName, setOtherRoomPropertyName);
       else if (checkPattern === "mgmt_move_in") applyPrefill("moveInPropName", n, moveInPropName, setMoveInPropName);
-      else if ((checkPattern === "mgmt_proxy" || checkPattern === "mgmt_two_person" || checkPattern === "mgmt_lifeline") || checkPattern === "mgmt_guarantor") {
+      else if ((checkPattern === "mgmt_proxy" || checkPattern === "mgmt_two_person" || checkPattern === "mgmt_lifeline" || checkPattern === "mgmt_application_status" || checkPattern === "room_vacancies") || checkPattern === "mgmt_guarantor") {
         applyPrefill("mgmtGuarantorPropertyName", n, mgmtGuarantorPropertyName, setMgmtGuarantorPropertyName);
         // 保証会社名は会話に出ている時だけ（スタッフが管理会社に確かめた名前と違えば直す）
         if (checkPattern === "mgmt_guarantor" && guarantorHint) {
@@ -1574,6 +1593,13 @@ export default function AixModal({
         return {
           floor_plan: checkFloorPlan, other_room: otherRoomStatus, mgmt_availability_status: mgmtAvailabilityStatus,
           mgmt_cost_type: mgmtCostType, proxy_result: checkPattern === "mgmt_two_person" ? null : proxyResult, two_person_result: checkPattern === "mgmt_two_person" ? proxyResult : null, lifeline_designation: checkPattern === "mgmt_lifeline" ? lifelineDesignation : null, parking: mgmtParkingAvailability,
+          parking_kind: checkPattern === "mgmt_parking" ? parkingKind : null,
+          screening_outlook: checkPattern === "mgmt_screening" ? screeningOutlook : null,
+          app_status_has: checkPattern === "mgmt_application_status" ? appStatusHas : null, app_status_ahead: checkPattern === "mgmt_application_status" && appStatusHas === "あり" ? appStatusAhead : null,
+          app_status_first: checkPattern === "mgmt_application_status" ? appStatusFirst : null, app_status_no_second: checkPattern === "mgmt_application_status" ? appStatusNoSecond : null,
+          surroundings_items: checkPattern === "mgmt_surroundings" ? surroundingsItems : null, surroundings_source: checkPattern === "mgmt_surroundings" ? surroundingsSource : null,
+          interior_onsite: checkPattern === "interior_photo" ? interiorOnsite : null,
+          contract_terms_items: checkPattern === "mgmt_contract_terms" ? contractTermsItems : null, rent_negotiation_result: checkPattern === "mgmt_rent_negotiation" ? rentNegotiationResult : null,
           parking_vacancy: mgmtParkingVacancy ?? nearbyParkingVacancy, pet_policy: mgmtPetPolicy, guarantor_type: mgmtGuarantorType,
           guidance: mgmtGuidanceType ?? mgmtGuarantorPushType, move_in_period: moveInPeriod, move_in_month: moveInMonth, vacate_date: moveInVacateDate,
           sent_property_count: sentPropertyCount, check_property_count: checkPropertyCount, viewing_continue: checkViewingContinue,
@@ -2739,10 +2765,13 @@ export default function AixModal({
         // 2026-10-07 5巡目（竹内さん「物件名にする」）: どの物件の室内写真かを必ず残す（物件ごとの台帳・ブレインの「手元の室内イメージ」の判定が読む）
         if ((interiorPhotoUrl.trim() || interiorPhotoFile) && isPlaceholderPropertyName(interiorPropertyName)) throw new Error(missingPropertyNameMessage([0], 1));
         // 室内写真確認: AIなしでプレビュー直接生成
+        // 2026-10-18 竹内さんの答え②: 現地で撮影した写真・動画（手元の写真ではなく撮りに行った物）は言い方を替える
+        //   URL の時も先頭の「（室内イメージ）」は残す（挨拶の付け方・資料の判定・手元の室内イメージの判定がこの印を読む）
+        const onsiteWord = interiorOnsite === "動画" ? "室内動画" : interiorOnsite === "両方" ? "室内の写真と動画" : "室内写真";
         if (interiorPhotoUrl.trim()) {
           // 2026-09-17 竹内（Hina 事例）「物件名をいれれるようにする。そうしたら物件名と（室内イメージ）が送られるようにする」:
           //   URL だけだとどの物件の室内写真か分からない（会話に複数の物件が並ぶ）。入れた時だけ先頭に足す
-          const msg = `${interiorPropertyName.trim() ? `${interiorPropertyName.trim()}\n` : ""}（室内イメージ）\n${interiorPhotoUrl.trim()}`;
+          const msg = `${interiorPropertyName.trim() ? `${interiorPropertyName.trim()}\n` : ""}（室内イメージ）${interiorOnsite ? `（現地で撮影した${onsiteWord}）` : ""}\n${interiorPhotoUrl.trim()}`;
           // 物件名を入れた時は「この物件の室内写真を送った」を送信時の記録に残す（ブレインが読む確定事実。既存の available と同じ ref）
           if (interiorPropertyName.trim()) {
             lastCheckPropNamesRef.current = [interiorPropertyName.trim()];
@@ -2755,7 +2784,9 @@ export default function AixModal({
         }
         if (interiorPhotoFile) {
           const name = interiorPropertyName.trim();
-          const msg = name
+          const msg = interiorOnsite
+            ? `こちら${name ? `${name}の` : ""}現地で撮影させて頂きました${onsiteWord}となります😌！！`
+            : name
             ? `こちら${name}の室内写真となります😌！！`
             : "こちら室内写真となります😌！！";
           if (name) {
@@ -2784,7 +2815,7 @@ export default function AixModal({
           body.pet_policy = mgmtPetPolicy;
           if (mgmtPetCondition.trim()) body.pet_condition = mgmtPetCondition.trim();
         }
-        if (isMgmtCheck && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy" && checkPattern !== "mgmt_two_person" && checkPattern !== "mgmt_lifeline" && mgmtGuidanceType) {
+        if (isMgmtCheck && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy" && checkPattern !== "mgmt_two_person" && checkPattern !== "mgmt_lifeline" && checkPattern !== "mgmt_application_status" && mgmtGuidanceType) {
           body.guidance_type = mgmtGuidanceType;
         }
         if (checkPattern === "mgmt_availability") {
@@ -2831,6 +2862,34 @@ export default function AixModal({
           if (lifelineContacts.trim()) body.lifeline_contacts = lifelineContacts.trim();
           if (mgmtGuarantorPropertyName.trim()) body.property_name = mgmtGuarantorPropertyName.trim();
         }
+        // 2026-10-20 竹内さんの新しいピッカー
+        if (checkPattern === "mgmt_parking" && parkingKind === "bike") body.parking_kind = "bike";
+        if (checkPattern === "mgmt_screening" && screeningOutlook) body.screening_outlook = screeningOutlook;
+        if (checkPattern === "mgmt_application_status") {
+          if (!appStatusHas) throw new Error("ほかの方の申込あり／なしを選択してください");
+          body.app_status_has = appStatusHas;
+          if (appStatusHas === "あり") {
+            body.app_status_ahead = appStatusAhead;
+            if (appStatusFirst) body.app_status_first = appStatusFirst;
+            body.app_status_no_second = appStatusNoSecond;
+          }
+          if (mgmtGuarantorPropertyName.trim()) body.property_name = mgmtGuarantorPropertyName.trim();
+        }
+        if (checkPattern === "mgmt_contract_terms" && contractTermsItems.length) body.contract_terms_items = contractTermsItems;
+        if (checkPattern === "mgmt_surroundings") {
+          if (surroundingsItems.length) body.surroundings_items = surroundingsItems;
+          body.surroundings_source = surroundingsSource;
+        }
+        if (checkPattern === "mgmt_rent_negotiation") {
+          if (!rentNegotiationResult) throw new Error("家賃の交渉の結果（下がった／下がらなかった）を選択してください");
+          body.rent_negotiation_result = rentNegotiationResult;
+          if (rentAfter.trim()) body.rent_after = rentAfter.trim();
+        }
+        if (checkPattern === "room_vacancies") {
+          if (!vacancyRows.trim()) throw new Error("募集中のお部屋（1行に1部屋）を入力してください");
+          body.vacancy_rows = vacancyRows.trim();
+          if (mgmtGuarantorPropertyName.trim()) body.property_name = mgmtGuarantorPropertyName.trim();
+        }
         if (checkPattern === "mgmt_proxy") {
           if (!proxyResult) throw new Error("代理契約が可能か不可かを選択してください");
           body.proxy_result = proxyResult;
@@ -2838,7 +2897,7 @@ export default function AixModal({
           // 生成は必ず会話を合わせる（お客様の依頼の言い方に合わせた1通）
           body.conversation_match = true;
         }
-        if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "mgmt_availability" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy" && checkPattern !== "mgmt_two_person" && checkPattern !== "mgmt_lifeline" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
+        if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "mgmt_availability" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy" && checkPattern !== "mgmt_two_person" && checkPattern !== "mgmt_lifeline" && checkPattern !== "mgmt_screening" && checkPattern !== "mgmt_application_status" && checkPattern !== "mgmt_rent_negotiation" && checkPattern !== "room_vacancies" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
         if (checkPattern === "move_in_date") {
           if (!moveInImageFile) throw new Error("物件資料を選択してください");
           body.image_url = await uploadImageCached(moveInImageFile);
@@ -4028,6 +4087,14 @@ export default function AixModal({
             ? !!nearbyParkingVacancy
             : checkPattern === "mgmt_availability"
             ? !!mgmtAvailabilityStatus
+            : checkPattern === "mgmt_screening"
+            ? true
+            : checkPattern === "mgmt_application_status"
+            ? !!appStatusHas
+            : checkPattern === "mgmt_rent_negotiation"
+            ? !!rentNegotiationResult
+            : checkPattern === "room_vacancies"
+            ? !!vacancyRows.trim()
             : !!inputText.trim()
         )
       : !!checkPattern)
@@ -4926,7 +4993,7 @@ export default function AixModal({
                 </span>
                 <div>
                   <div className="text-[13px] font-bold text-[#111b21]">
-                    {checkPattern === "nearby_parking" ? "近隣の月極駐車場を確認した" : checkPattern === "owner_other" ? "オーナーに確認した（その他）" : <>管理会社に確認した：{checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : checkPattern === "mgmt_proxy" ? "代理契約" : checkPattern === "mgmt_two_person" ? "二人入居" : checkPattern === "mgmt_lifeline" ? "ライフライン" : checkPattern === "mgmt_guarantor" ? "保証会社（審査面）" : checkPattern === "mgmt_company" ? "管理会社について" : checkPattern === "mgmt_parking" ? "駐車場" : checkPattern === "mgmt_pet" ? "ペット飼育" : checkPattern === "mgmt_equipment" ? "設備" : checkPattern === "mgmt_availability" ? "募集状況" : "初期費用"}</>}
+                    {checkPattern === "nearby_parking" ? "近隣の月極駐車場を確認した" : checkPattern === "owner_other" ? "オーナーに確認した（その他）" : checkPattern === "room_vacancies" ? "物件について：募集号室について" : <>管理会社に確認した：{checkPattern === "mgmt_screening" ? "審査について（ご相談）" : checkPattern === "mgmt_application_status" ? "申込状況について" : checkPattern === "mgmt_contract_terms" ? "契約の条件について" : checkPattern === "mgmt_rent_negotiation" ? "家賃の交渉について" : checkPattern === "mgmt_surroundings" ? "周辺の様子について" : checkPattern === "mgmt_parking" && parkingKind === "bike" ? "バイク置き場" : checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : checkPattern === "mgmt_proxy" ? "代理契約" : checkPattern === "mgmt_two_person" ? "二人入居" : checkPattern === "mgmt_lifeline" ? "ライフライン" : checkPattern === "mgmt_guarantor" ? "保証会社（審査面）" : checkPattern === "mgmt_company" ? "管理会社について" : checkPattern === "mgmt_parking" ? "駐車場" : checkPattern === "mgmt_pet" ? "ペット飼育" : checkPattern === "mgmt_equipment" ? "設備" : checkPattern === "mgmt_availability" ? "募集状況" : "初期費用"}</>}
                   </div>
                   <div className="text-[10px] text-[#8696a0]">確認内容を入力するだけでAIが報告文を作成します</div>
                 </div>
@@ -5139,8 +5206,17 @@ export default function AixModal({
               {/* 駐車場確認専用: 有無・料金・空き状況 */}
               {checkPattern === "mgmt_parking" && (
                 <div className="flex flex-col gap-3">
+                  {/* 2026-10-20 竹内さん（P1 95d3831d）: 駐車場／バイク置き場（同じピッカーの中で選ぶ） */}
+                  <div className="flex gap-2">
+                    {([["car", "🚗 駐車場"], ["bike", "🛵 バイク置き場"]] as const).map(([key, label]) => (
+                      <button key={key} onClick={() => { setParkingKind(key); setPreview(""); }}
+                        className="flex-1 rounded-xl border py-2 text-xs font-bold transition"
+                        style={parkingKind === key ? { border: "2px solid #546E7A", background: "#546E7A14", color: "#546E7A" } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                      >{label}</button>
+                    ))}
+                  </div>
                   <div>
-                    <p className="mb-2 text-xs font-bold text-[#54656f]">駐車場の有無 <span className="text-red-400">*</span></p>
+                    <p className="mb-2 text-xs font-bold text-[#54656f]">{parkingKind === "bike" ? "バイク置き場" : "駐車場"}の有無 <span className="text-red-400">*</span></p>
                     <div className="flex gap-2">
                       {(["あり", "なし"] as const).map((v) => (
                         <button
@@ -5152,7 +5228,7 @@ export default function AixModal({
                               : "border-[#e9edef] bg-[#f8f9fa] text-[#9CA3AF]"
                           }`}
                         >
-                          {v === "あり" ? "🚗 駐車場あり" : "駐車場なし"}
+                          {parkingKind === "bike" ? (v === "あり" ? "🛵 バイク置き場あり" : "バイク置き場なし") : v === "あり" ? "🚗 駐車場あり" : "駐車場なし"}
                         </button>
                       ))}
                     </div>
@@ -5348,11 +5424,11 @@ export default function AixModal({
               )}
 
               {/* テキスト入力（初期費用は見積書以外で表示、保証会社確認・駐車場・ペット・入居可能日・他パターンは条件付き表示） */}
-              {((checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "mgmt_availability" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy" && checkPattern !== "mgmt_two_person" && checkPattern !== "mgmt_lifeline") || mgmtCostType === "negotiation") && (
+              {((checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "mgmt_availability" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy" && checkPattern !== "mgmt_two_person" && checkPattern !== "mgmt_lifeline" && checkPattern !== "room_vacancies") || mgmtCostType === "negotiation") && (
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
-                    {checkPattern === "vacate_date" ? "または直接入力・補足" : checkPattern === "mgmt_equipment" ? "確認した設備状況" : checkPattern === "mgmt_company" ? "管理会社の名前（連絡先を伝える時は連絡先も）" : "確認した内容"}
-                    {(checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_company") && <span className="text-red-400 ml-1">*</span>}
+                    {checkPattern === "vacate_date" ? "または直接入力・補足" : checkPattern === "mgmt_equipment" ? "確認した設備状況" : checkPattern === "mgmt_company" ? "管理会社の名前（連絡先を伝える時は連絡先も）" : checkPattern === "mgmt_screening" ? "管理会社・保証会社に確認した結果・必要書類（空欄なら「気に入ったお部屋なら審査はかけてみることが出来ます」の基本の考え方で返します）" : checkPattern === "mgmt_contract_terms" ? "確認した契約の条件（金額・期間は聞いた文字のまま）" : checkPattern === "mgmt_surroundings" ? "確認した様子（見た・聞いたまま）" : (checkPattern === "mgmt_application_status" || checkPattern === "mgmt_rent_negotiation") ? "補足（任意）" : "確認した内容"}
+                    {(checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_company" || checkPattern === "mgmt_contract_terms" || checkPattern === "mgmt_surroundings") && <span className="text-red-400 ml-1">*</span>}
                   </p>
                   <textarea
                     value={inputText}
@@ -5361,6 +5437,11 @@ export default function AixModal({
                       checkPattern === "vacate_date" ? "例：退去予定日：7月31日退去確定"
                       : checkPattern === "mgmt_equipment" ? "例：エアコン・給湯器新品、追い焚き付き、独立洗面台あり 等"
                       : checkPattern === "mgmt_company" ? "例：株式会社〇〇（資料の元付業者・管理会社の欄のとおりに）"
+                      : checkPattern === "mgmt_screening" ? "例：保証人なしでも保証会社のみで審査可能。必要書類は身分証・収入証明"
+                      : checkPattern === "mgmt_contract_terms" ? "例：1年未満の解約は賃料1ヶ月分の違約金、クリーニング代 33,000円"
+                      : checkPattern === "mgmt_rent_negotiation" ? "例：来月入居ならという条件付き"
+                      : checkPattern === "mgmt_surroundings" ? "例：南向きで午後まで日が入る。前の道は車通りが少なく夜も静か"
+                      : checkPattern === "mgmt_application_status" ? "例：1番手の方は今週中に審査結果が出る予定"
                       : "例：礼金なし交渉成功、または礼金交渉できなかった等"
                     }
                     rows={2}
@@ -5373,8 +5454,169 @@ export default function AixModal({
                       ? "確認した設備状況を入力してください（エアコン・給湯器・バス・トイレ等）"
                       : checkPattern === "mgmt_company"
                       ? "資料・管理会社で確かめた名前をそのまま入力してください（AI は名前を作りません・入力した文字のまま送ります）"
+                      : checkPattern === "mgmt_screening"
+                      ? "最後に「無事に審査通過するまで全力でサポートさせて頂きます😊！！」が必ず付きます"
+                      : checkPattern === "mgmt_contract_terms"
+                      ? "短期解約の違約金・退去時のクリーニング代・フリーレントなど、物件ごとに確かめた答えを入力してください"
+                      : (checkPattern === "mgmt_application_status" || checkPattern === "mgmt_rent_negotiation")
+                      ? "あれば入力してください（入れた事だけが文に入ります）"
                       : "交渉の結果を入力してください（例：礼金1→0に交渉成功）"}
                   </p>
+                </div>
+              )}
+
+              {/* 2026-10-20 竹内さんの新しいピッカーの入力 */}
+              {checkPattern === "mgmt_screening" && (
+                <div>
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">審査の見込み <span className="font-normal text-[#90a4ae]">（任意）</span></p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([["前向き", "審査に出せる（前向き）"], ["条件つき", "条件つきで出せる"], ["別の手", "別の保証会社・名義で進める"], ["厳しい", "厳しい"]] as const).map(([key, label]) => (
+                      <button key={key} onClick={() => { setScreeningOutlook((p) => p === key ? null : key); setPreview(""); }}
+                        className="rounded-xl border py-2.5 text-xs font-semibold transition"
+                        style={screeningOutlook === key ? { border: "2px solid #546E7A", background: "#546E7A14", color: "#546E7A" } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                      >{label}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {checkPattern === "mgmt_application_status" && (
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">物件名・号室 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
+                    {prefillTag("mgmtGuarantorPropertyName", mgmtGuarantorPropertyName)}
+                    <input type="text" value={mgmtGuarantorPropertyName} onChange={(e) => { setMgmtGuarantorPropertyName(e.target.value); setPreview(""); }}
+                      placeholder="例：〇〇マンション 1302号室"
+                      className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]" />
+                  </div>
+                  <div>
+                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">ほかの方の申込 <span className="text-red-400">*</span></p>
+                    <div className="flex gap-2">
+                      {(["あり", "なし"] as const).map((key) => (
+                        <button key={key} onClick={() => { setAppStatusHas(key); setPreview(""); }}
+                          className="flex-1 rounded-xl border py-3 text-sm font-bold transition"
+                          style={appStatusHas === key ? { border: "2px solid #546E7A", background: "#546E7A14", color: "#546E7A" } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                        >{key === "あり" ? "申込あり" : "申込なし（1番手で申込める）"}</button>
+                      ))}
+                    </div>
+                  </div>
+                  {appStatusHas === "あり" && (
+                    <>
+                      <div>
+                        <p className="mb-1.5 text-xs font-bold text-[#54656f]">先に入っている申込の数（お客様は {appStatusAhead + 1} 番手）</p>
+                        <div className="flex gap-2">
+                          {[1, 2, 3, 4].map((n) => (
+                            <button key={n} onClick={() => { setAppStatusAhead(n); setPreview(""); }}
+                              className="flex-1 rounded-xl border py-2.5 text-xs font-bold transition"
+                              style={appStatusAhead === n ? { border: "2px solid #546E7A", background: "#546E7A14", color: "#546E7A" } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                            >{n}件</button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="mb-1.5 text-xs font-bold text-[#54656f]">1番手の方の審査の状況</p>
+                        <div className="flex gap-2">
+                          {(["審査中", "審査待ち", "不明"] as const).map((key) => (
+                            <button key={key} onClick={() => { setAppStatusFirst((p) => p === key ? null : key); setPreview(""); }}
+                              className="flex-1 rounded-xl border py-2.5 text-xs font-semibold transition"
+                              style={appStatusFirst === key ? { border: "2px solid #546E7A", background: "#546E7A14", color: "#546E7A" } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                            >{key}</button>
+                          ))}
+                        </div>
+                      </div>
+                      <label className="flex items-center gap-2 text-xs text-[#54656f]">
+                        <input type="checkbox" checked={appStatusNoSecond} onChange={(e) => { setAppStatusNoSecond(e.target.checked); setPreview(""); }} />
+                        2番手のお申込を受け付けていないお部屋
+                      </label>
+                    </>
+                  )}
+                  <p className="text-[10px] text-[#8696a0]">結果 → 何番手か → 繰り上がりの仕組み → 申込への誘導（並行して探す提案）の順で作ります</p>
+                </div>
+              )}
+              {checkPattern === "mgmt_surroundings" && (
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">確認した項目 <span className="font-normal text-[#90a4ae]">（任意・複数可）</span></p>
+                    <div className="flex flex-wrap gap-2">
+                      {["日当たり", "音・騒音", "周辺の様子"].map((key) => {
+                        const on = surroundingsItems.includes(key);
+                        return (
+                          <button key={key} onClick={() => { setSurroundingsItems((p) => on ? p.filter((x) => x !== key) : [...p, key]); setPreview(""); }}
+                            className="rounded-xl border px-3 py-2 text-xs font-semibold transition"
+                            style={on ? { border: "2px solid #546E7A", background: "#546E7A14", color: "#546E7A" } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                          >{key}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">どこで確かめたか</p>
+                    <div className="flex gap-2">
+                      {([["現地", "現地で見た"], ["管理会社", "管理会社に聞いた"]] as const).map(([key, label]) => (
+                        <button key={key} onClick={() => { setSurroundingsSource(key); setPreview(""); }}
+                          className="flex-1 rounded-xl border py-2.5 text-xs font-semibold transition"
+                          style={surroundingsSource === key ? { border: "2px solid #546E7A", background: "#546E7A14", color: "#546E7A" } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                        >{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {checkPattern === "mgmt_contract_terms" && (
+                <div>
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">確認した項目 <span className="font-normal text-[#90a4ae]">（任意・複数可）</span></p>
+                  <div className="flex flex-wrap gap-2">
+                    {["短期解約の違約金", "退去時のクリーニング代", "フリーレント"].map((key) => {
+                      const on = contractTermsItems.includes(key);
+                      return (
+                        <button key={key} onClick={() => { setContractTermsItems((p) => on ? p.filter((x) => x !== key) : [...p, key]); setPreview(""); }}
+                          className="rounded-xl border px-3 py-2 text-xs font-semibold transition"
+                          style={on ? { border: "2px solid #546E7A", background: "#546E7A14", color: "#546E7A" } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                        >{key}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {checkPattern === "mgmt_rent_negotiation" && (
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">家賃の交渉の結果 <span className="text-red-400">*</span></p>
+                    <div className="flex gap-2">
+                      {([["下がった", "#2E7D32"], ["下がらなかった", "#C62828"]] as const).map(([key, color]) => (
+                        <button key={key} onClick={() => { setRentNegotiationResult(key); setPreview(""); }}
+                          className="flex-1 rounded-xl border py-3 text-sm font-bold transition"
+                          style={rentNegotiationResult === key ? { border: "2px solid " + color, background: color + "14", color } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                        >{key}</button>
+                      ))}
+                    </div>
+                  </div>
+                  {rentNegotiationResult === "下がった" && (
+                    <div>
+                      <p className="mb-1 text-xs font-bold text-[#54656f]">交渉後の家賃 <span className="font-normal text-[#90a4ae]">（任意・聞いた文字のまま）</span></p>
+                      <input type="text" value={rentAfter} onChange={(e) => { setRentAfter(e.target.value); setPreview(""); }}
+                        placeholder="例：68,000円"
+                        className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]" />
+                    </div>
+                  )}
+                </div>
+              )}
+              {checkPattern === "room_vacancies" && (
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">物件名 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
+                    {prefillTag("mgmtGuarantorPropertyName", mgmtGuarantorPropertyName)}
+                    <input type="text" value={mgmtGuarantorPropertyName} onChange={(e) => { setMgmtGuarantorPropertyName(e.target.value); setPreview(""); }}
+                      placeholder="例：〇〇マンション"
+                      className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]" />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">募集中のお部屋（1行に1部屋）<span className="text-red-400 ml-1">*</span></p>
+                    <textarea value={vacancyRows} onChange={(e) => { setVacancyRows(e.target.value); setPreview(""); }}
+                      placeholder={"例：\n302号室 1K 68,000円\n505号室 1LDK 92,000円"}
+                      rows={5}
+                      className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]" />
+                    <p className="mt-1 text-[10px] text-[#8696a0]">募集一覧・物件ページで見たとおりに入力してください（号室・間取り・家賃は入力した文字のまま送ります・AI は使いません）</p>
+                  </div>
                 </div>
               )}
 
@@ -5458,7 +5700,7 @@ export default function AixModal({
               )}
 
               {/* mgmt共通: 申込誘導 / 内覧誘導ボタン（保証会社確認・入居可能日・代理契約は専用UIがあるため除外） */}
-              {isMgmtCheck && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy" && checkPattern !== "mgmt_two_person" && checkPattern !== "mgmt_lifeline" && (
+              {isMgmtCheck && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy" && checkPattern !== "mgmt_two_person" && checkPattern !== "mgmt_lifeline" && checkPattern !== "mgmt_application_status" && (
                 <div>
                   <p className="mb-1.5 text-xs font-bold text-[#54656f]">誘導（任意）</p>
                   <div className="flex gap-2">
@@ -6025,6 +6267,18 @@ export default function AixModal({
               {/* 室内写真を確認した: URLまたは写真 */}
               {checkPattern === "interior_photo" && (
                 <div className="flex flex-col gap-3">
+                  {/* 2026-10-18 竹内さんの答え②: 現地で撮影した（手元の写真ではなく撮りに行った写真・動画） */}
+                  <div>
+                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">現地で撮影した <span className="font-normal text-[#90a4ae]">（撮りに行った時だけ）</span></p>
+                    <div className="flex gap-2">
+                      {(["写真", "動画", "両方"] as const).map((key) => (
+                        <button key={key} type="button" onClick={() => { setInteriorOnsite((p) => p === key ? null : key); setPreview(""); }}
+                          className="flex-1 rounded-xl border py-2 text-xs font-semibold transition"
+                          style={interiorOnsite === key ? { border: "2px solid #EC4899", background: "#EC489914", color: "#BE185D" } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                        >{key}</button>
+                      ))}
+                    </div>
+                  </div>
                   {/* 物件名（2026-09-17 竹内・Hina 事例）: URL でも写真でも入れられる。
                       会話でスタッフが送った物件名（🌟〇〇 305号室）があれば候補で出す＝打たせる前に会話にある事実から選ばせる */}
                   <div>
@@ -6117,7 +6371,7 @@ export default function AixModal({
                       {/* 2026-09-17 竹内（Hina 事例）: 物件名の欄は上（URL でも写真でも共通）に移した。ここは送信文の確認だけ */}
                       {interiorPhotoFile && (
                         <p className="text-[11px] text-[#8696a0]">
-                          送信文: 「こちら{interiorPropertyName.trim() || "●●"}の室内写真となります😌！！」
+                          送信文: 「{interiorOnsite ? `こちら${interiorPropertyName.trim() ? `${interiorPropertyName.trim()}の` : ""}現地で撮影させて頂きました${interiorOnsite === "動画" ? "室内動画" : interiorOnsite === "両方" ? "室内の写真と動画" : "室内写真"}となります😌！！` : <>こちら{interiorPropertyName.trim() || "●●"}の室内写真となります😌！！</>}」
                         </p>
                       )}
                     </>

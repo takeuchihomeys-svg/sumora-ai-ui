@@ -1,4 +1,6 @@
 import { composeLifelineMessage } from "@/app/lib/aix-lifeline";
+// 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・契約の条件・家賃の交渉・バイク置き場・物件について→募集号室について）
+import { aixRequestMustUseClaude, applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, stripUncheckedScreeningClaims, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
 import { NextRequest, NextResponse, after } from "next/server";
 import { buildMustSendNote, mustMoveInLabel, normalizeRequirementStrengths } from "@/app/lib/requirement-strength";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -1013,12 +1015,19 @@ function llmMetaHeaders(action: string): Record<string, string> {
  * ・回る時だけ masker を作る（Claude へ行く時は null ＝ 送る文は1バイトも変わらない）
  * ・判定に失敗したら「回さない」側へ倒す（fail-closed）
  */
-async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | null, customerName: string | null, action: string): Promise<void> {
+async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | null, customerName: string | null, action: string, forceClaude = false): Promise<void> {
   ctx.postApply = false;
   ctx.masker = null;
   ctx.cutoff = conversationId ? null : NO_CUTOFF;
   ctx.cutActive = false;
   ctx.cutMark = { kind: "blocked" };
+  // 2026-10-20 竹内さん「個人情報が絡む部分はかならずクロードにする」: 審査について（ご相談）等は申込以降と同じ扱い（回さない・印を付けて Anthropic）
+  if (forceClaude) {
+    ctx.postApply = true;
+    setDeepseekScope({ conversationId, mark: ctx.cutMark });
+    console.log(JSON.stringify({ tag: "aix:claude-only-pattern", conversationId, action }));
+    return;
+  }
   try {
     if (conversationId) {
       // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: status は27.4%の会話で遅れていて、
@@ -1652,7 +1661,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
     }
     if (reqCtx) {
       reqCtx.conversationId = convId;
-      await setupAltProviderGuards(reqCtx, convId, typeof body.customer_name === "string" ? body.customer_name : null, String(body.action ?? ""));
+      await setupAltProviderGuards(reqCtx, convId, typeof body.customer_name === "string" ? body.customer_name : null, String(body.action ?? ""), aixRequestMustUseClaude(body));
       if (reqCtx.cutActive && Array.isArray(body.recent_messages)) {
         const before = (body.recent_messages as unknown[]).length;
         body.recent_messages = filterAfterCutoff(body.recent_messages as Array<{ rawCreatedAt?: string | null; createdAt?: string | null }>, (m) => m?.rawCreatedAt ?? m?.createdAt ?? null, reqCtx.cutoff ?? null);
@@ -5316,10 +5325,22 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
         return finalizeResponse(message_text, { doc_image_url: String(image_url) });
       }
 
+    // ── 🏠 物件について→募集号室について（2026-10-20 竹内さん P1 398b9781「ここ何部屋空いてますか？」）──────────
+    //   スタッフが募集一覧・物件ページで見た号室・間取り・家賃の行をそのまま一覧で返す（LLM なし＝号室・家賃の写し間違いを出さない）
+    } else if (action === "property_check_result" && check_pattern === "room_vacancies") {
+      const vacancyRows = parseVacancyRows(typeof body.vacancy_rows === "string" ? body.vacancy_rows : "");
+      if (!vacancyRows.length) throw new Error("募集中のお部屋（1行に1部屋・号室／間取り／家賃）が必要です");
+      message_text = composeRoomVacanciesText({
+        propertyName: typeof property_name === "string" ? property_name : null,
+        rows: vacancyRows,
+        guidance: typeof body.guidance_type === "string" ? body.guidance_type : null,
+      });
+
     // ── 🏢 管理会社に確認した（退去予定日・入居可能日・初期費用・駐車場・ペット飼育・設備・募集状況）＋ 近隣月極駐車場確認 ──────────
     } else if (
       action === "property_check_result" &&
-      (check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_lifeline" || check_pattern === "mgmt_company" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
+      (check_pattern === "mgmt_screening" || check_pattern === "mgmt_application_status" || check_pattern === "mgmt_contract_terms" || check_pattern === "mgmt_rent_negotiation" || check_pattern === "mgmt_surroundings" ||
+       check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_lifeline" || check_pattern === "mgmt_company" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
     ) {
       let mgmtInfo = extra_input ? String(extra_input).trim() : "";
       // 2026-09-16 竹内（カイナ事例）: 代理契約の可否。入れるのは物件名と可能／不可だけで、あとは会話に合わせる
@@ -5349,13 +5370,68 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
           ...(mgmtInfo ? [`補足：${mgmtInfo}`] : []),
         ].join("\n");
       }
+      // 2026-10-20 竹内さんの新しいピッカー: 入れた選択（事実）＋スタッフの補足だけを渡す。事実はスタッフの入力のまま
+      let appStatusIn: ApplicationStatusInput | null = null;
+      if (check_pattern === "mgmt_application_status") {
+        const has = body.app_status_has;
+        if (has !== "あり" && has !== "なし") throw new Error("ほかの方の申込あり／なしが必要です");
+        const first = body.app_status_first;
+        appStatusIn = {
+          hasApplication: has,
+          ahead: has === "あり" ? Number(body.app_status_ahead) || 1 : null,
+          firstStatus: first === "審査中" || first === "審査待ち" || first === "不明" ? first : null,
+          noSecond: body.app_status_no_second === true,
+        };
+        const pos = applicationStatusPosition(appStatusIn);
+        mgmtInfo = [
+          `ほかの方の申込：${has}`,
+          ...(has === "あり" ? [
+            // 2番手を受け付けない部屋は「お客様は2番手」と渡さない（型の文は受け付けていない＝番手を書かない）
+            appStatusIn.noSecond ? `先に入っている申込：${pos - 1}件` : `先に入っている申込：${pos - 1}件（お客様は${pos}番手）`,
+            `1番手の方の審査の状況：${appStatusIn.firstStatus ?? "入力なし"}`,
+            appStatusIn.noSecond ? "2番手の受付：受け付けていない（1番手の方がキャンセル・審査否決になった時に申込可能）" : "2番手の受付：受け付けている",
+          ] : []),
+          property_name ? `物件名：${property_name}` : "物件名：入力なし（物件名に触れない）",
+          ...(mgmtInfo ? [`補足：${mgmtInfo}`] : []),
+        ].join("\n");
+      }
+      // 審査の相談で確認した結果も見込みも入れていない＝管理会社に確認していない（出口で「確認しました」の行を落とす）
+      let screeningNoInput = false;
+      if (check_pattern === "mgmt_screening") {
+        const outlook = typeof body.screening_outlook === "string" ? body.screening_outlook : "";
+        screeningNoInput = !mgmtInfo && !outlook;
+        mgmtInfo = [
+          mgmtInfo ? `確認した結果・必要書類：${mgmtInfo}` : "確認した結果：入力なし（管理会社の回答・書類に触れず、基本の考え方だけで返す）",
+          outlook ? `審査の見込み：${outlook}` : "",
+        ].filter(Boolean).join("\n");
+      }
+      if (check_pattern === "mgmt_contract_terms") {
+        const items = Array.isArray(body.contract_terms_items) ? (body.contract_terms_items as unknown[]).filter((x): x is string => typeof x === "string") : [];
+        if (!mgmtInfo) throw new Error("管理会社に確認した契約の条件（金額・期間）を入力してください");
+        mgmtInfo = [items.length ? `確認した項目：${items.join("・")}` : "", `確認した内容：${mgmtInfo}`].filter(Boolean).join("\n");
+      }
+      if (check_pattern === "mgmt_rent_negotiation") {
+        const result = body.rent_negotiation_result;
+        if (result !== "下がった" && result !== "下がらなかった") throw new Error("家賃の交渉の結果（下がった／下がらなかった）が必要です");
+        const rentAfter = typeof body.rent_after === "string" ? body.rent_after.trim() : "";
+        mgmtInfo = [`家賃の交渉の結果：${result}`, rentAfter ? `交渉後の家賃：${rentAfter}` : "", mgmtInfo ? `補足：${mgmtInfo}` : ""].filter(Boolean).join("\n");
+      }
+      // 2026-10-18 竹内さんの答え④ 周辺の様子（日当たり・音・騒音・周辺の様子）。どこで確かめたか（現地で見た／管理会社に聞いた）で言い方を替える
+      const surroundingsSource = body.surroundings_source === "管理会社" ? "管理会社" : "現地";
+      if (check_pattern === "mgmt_surroundings") {
+        const items = Array.isArray(body.surroundings_items) ? (body.surroundings_items as unknown[]).filter((x): x is string => typeof x === "string") : [];
+        if (!mgmtInfo) throw new Error("確認した様子（見た・聞いたまま）を入力してください");
+        mgmtInfo = [items.length ? `確認した項目：${items.join("・")}` : "", `確かめた所：${surroundingsSource === "現地" ? "スタッフが現地で見た" : "管理会社に聞いた"}`, `確認した様子：${mgmtInfo}`].filter(Boolean).join("\n");
+      }
+      // 2026-10-20 竹内さん（P1 95d3831d）: 駐車場について の中のバイク置き場（check_pattern は駐車場のまま・parking_kind=bike）
+      const parkingKindJa = check_pattern === "mgmt_parking" && body.parking_kind === "bike" ? "バイク置き場" : "駐車場";
       // 駐車場・ペット飼育: 構造化入力（ピッカー選択+テキスト）からスタッフ入力情報を組み立てる
       if (check_pattern === "mgmt_parking") {
         const parkingAvailability = body.parking_availability as string | undefined;
         const parkingFee = body.parking_fee as string | undefined;
         const parkingVacancy = body.parking_vacancy as string | undefined;
-        if (!parkingAvailability) throw new Error("駐車場の有無が必要です");
-        const lines = [`駐車場の有無：${parkingAvailability}`];
+        if (!parkingAvailability) throw new Error(`${parkingKindJa}の有無が必要です`);
+        const lines = [`${parkingKindJa}の有無：${parkingAvailability}`];
         if (parkingFee) lines.push(`料金：${parkingFee}`);
         if (parkingVacancy) lines.push(`空き状況：${parkingVacancy}`);
         if (mgmtInfo) lines.push(`補足：${mgmtInfo}`);
@@ -5563,6 +5639,63 @@ ${guidanceRule}`,
 ・駐車場なしの場合:「確認させて頂いたところ[物件名]には駐車場のご用意がないとのことでした！！」と正直に伝えつつ（謝罪表現は使用禁止）、「近隣の月極駐車場もお探し出来ますのでお気軽にお申し付けください😌！！」のように前向きに締める
 ${guidanceRule}`,
         },
+        // 2026-10-20 竹内さん（P1 84519320）「審査について（ご相談）」: 名義・保証人なし・職業・国籍・時期などの審査の相談に、確認した結果で返す。
+        //   基本の考え方（竹内さん 10/18 の答え）: 気に入ったお部屋なら審査はかけてみることができる。締めは「無事に審査通過するまで全力でサポート」（出口で必ず1回）
+        mgmt_screening: {
+          label: "審査のご相談",
+          format: `[物件名]の審査につきまして管理会社に確認させて頂きました！！
+[確認結果]
+[審査の考え方・必要書類]
+無事に審査通過するまで全力でサポートさせて頂きます😊！！`,
+          rules: `・[確認結果]はスタッフ入力の「確認した結果・必要書類」「審査の見込み」だけから作る（1〜2行）。入力に無い管理会社の回答・保証会社名・書類は絶対に書かない
+・スタッフ入力が「入力なし」の時は1行目を書かず、[確認結果]を「${SCREENING_BASIC_STANCE}」にする（管理会社に確認したとは書かない）
+・[審査の考え方・必要書類]はスタッフ入力に必要書類・進め方（別の保証会社・名義を変える・内定後）がある時だけ1〜2行。無ければこの行は書かない
+・お気に召されたお部屋なら審査はかけてみることが出来る、が基本の考え方。「必ず通ります」「大丈夫です」など確かめていない断定はしない。「厳しい」の時も謝罪表現は使わず、別の手（別の保証会社・名義）があれば前向きに添える
+・お客様の職業・収入・国籍・ご家族のことを文に繰り返し書かない（相談の中身はお客様が分かっている）
+・最終行は必ず「無事に審査通過するまで全力でサポートさせて頂きます😊！！」
+${guidanceRule}`,
+        },
+        // 2026-10-20 竹内さん（P1 ec545624・お手本 d08bc127）「申込状況についてのピッカーを作り…申込誘導を入れる」
+        mgmt_application_status: {
+          label: "お申込状況",
+          format: appStatusIn ? composeApplicationStatusText({ ...appStatusIn, roomLabel: "[物件名]" }) : "",
+          rules: `・スタッフ入力の「ほかの方の申込」「先に入っている申込」「1番手の方の審査の状況」「2番手の受付」だけを使う。番手の数字は入力のまま（何番手かを変えない・足し引きしない）
+・[物件名]が「入力なし」の時は「こちらのお部屋」とする
+・結果 → 何番手か → 繰り上がりの仕組み → 申込への誘導（並行して探す提案）の順を崩さない。誘導の行は必ず残す
+・ほかの方の名前・審査の中身・審査に通る見込みは書かない`,
+        },
+        // 2026-10-18 竹内さん 10/18 夜の答え③「契約の条件について」: 短期解約の違約金・退去時のクリーニング代・フリーレント（物件ごとの答え）
+        mgmt_contract_terms: {
+          label: "契約の条件",
+          format: `[物件名]の契約の条件につきまして管理会社に確認させて頂きました！！
+[確認結果]${guidanceClose ? `
+${guidanceClose}` : ""}`,
+          rules: `・[確認結果]はスタッフ入力の「確認した内容」から作る（1〜3行・項目ごとに1行）。金額・期間・〇ヶ月は入力の文字のまま（計算・言い換え禁止）
+・入力に無い項目（他の違約金・更新料・保険など）は書かない。一般的な目安や相場も書かない
+${guidanceRule}`,
+        },
+        // 2026-10-18 竹内さん 10/18 夜の答え⑤「家賃の交渉について」: お客様に頼まれて交渉した結果（こちらから交渉を宣言しない）
+        mgmt_rent_negotiation: {
+          label: "家賃の交渉",
+          format: `[物件名]の家賃につきまして管理会社へ交渉させて頂きました！！
+[交渉結果]${guidanceClose ? `
+${guidanceClose}` : ""}`,
+          rules: `・[交渉結果]はスタッフ入力の「家賃の交渉の結果」「交渉後の家賃」「補足」から作る（1〜2行）。家賃の金額は入力の文字のまま（計算・言い換え禁止）。入力に無い金額は書かない
+・下がった場合:「交渉の結果家賃[交渉後の家賃]でご入居頂けることとなりました😊！！」の形（交渉後の家賃が無ければ金額に触れず「家賃お下げ頂けることとなりました」）
+${negotiationFailCloseRule("・下がらなかった場合:")}
+${guidanceRule}`,
+        },
+        // 2026-10-18 竹内さんの答え④「周辺の様子について」: 内覧前に気にされている日当たり・音・周辺の様子を確かめた後
+        mgmt_surroundings: {
+          label: "周辺の様子",
+          format: `[物件名]の[項目]につきまして${surroundingsSource === "現地" ? "現地で" : "管理会社に"}確認させて頂きました！！
+[確認結果]${guidanceClose ? `\n${guidanceClose}` : ""}`,
+          rules: `・[項目]はスタッフ入力の「確認した項目」をつなげる（無ければ「周辺の様子」）
+・[確認結果]はスタッフ入力の「確認した様子」だけから作る（1〜3行）。入力に無い治安・騒音・日当たりの評価や、地域の一般的な評判は絶対に書かない
+・良くない点も正直に書く（謝罪表現は使わない）。「静かです」「安全です」と入力に無い断定はしない
+${surroundingsSource === "現地" ? "・これは現地で見た結果。「管理会社に確認」という表現は使用禁止" : ""}
+${guidanceRule}`,
+        },
         mgmt_pet: {
           label: "ペット飼育",
           format: `${mgmtGreeting}
@@ -5616,6 +5749,22 @@ ${guidanceClose ?? `ご不明な点がございましたらお気軽にご連絡
 ${guidanceRule}`,
         },
       };
+      // 2026-10-20 竹内さん（P1 95d3831d）: バイク置き場（駐車場について の中）。駐車場と同じ形で言葉だけ替える
+      if (parkingKindJa === "バイク置き場") {
+        MGMT_PATTERNS.mgmt_parking = {
+          label: "バイク置き場",
+          format: `${mgmtGreeting}
+[物件名]のバイク置き場について管理会社へ確認させて頂きました！！
+[確認結果]${guidanceClose ? `
+${guidanceClose}` : ""}`,
+          rules: `・[確認結果]はスタッフ入力情報（バイク置き場の有無・料金・空き状況・補足）から作成する（1〜3行）
+・ありの場合:「バイク置き場のご用意御座います！！」から始め、料金があれば「料金は[料金]となっております！！」、空き状況があれば「空きについても確認済みで[空き状況]となっております！！」を続ける
+・料金・空き状況はスタッフ入力の値をそのまま記載する（計算・変更禁止）。原付・中型などの大きさの条件は入力にある時だけ書く
+・空き状況が「要確認」の場合は「空き状況につきましては確認取れ次第すぐにご連絡させて頂きます！！」とする
+・なしの場合:「確認させて頂いたところ[物件名]にはバイク置き場のご用意がないとのことでした！！」と正直に伝える（謝罪表現は使用禁止）。近隣の駐輪場は入力にある時だけ書く
+${guidanceRule}`,
+        };
+      }
       const mgmtDef = MGMT_PATTERNS[String(check_pattern)];
 
       const mgmtCostType = body.mgmt_cost_type as string | undefined;
@@ -5662,7 +5811,7 @@ ${negotiationFailCloseRule("・交渉が難しかった場合:")}
 ・絵文字は 😊 😌 のみ・1〜2個まで
 ・完成したLINEメッセージのみ出力（候補複数・前置きは禁止）`
         : `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
-${check_pattern === "nearby_parking" ? `物件近隣の月極駐車場を調べた結果` : `管理会社に${mgmtDef.label}を確認した結果`}をお客様に報告するLINEメッセージを1つだけ作成してください。
+${check_pattern === "nearby_parking" ? `物件近隣の月極駐車場を調べた結果` : check_pattern === "mgmt_surroundings" && surroundingsSource === "現地" ? `物件の周辺の様子を現地で確かめた結果` : `管理会社に${mgmtDef.label}を確認した結果`}をお客様に報告するLINEメッセージを1つだけ作成してください。
 
 ${SMORA_COMMON_RULES}
 
@@ -5728,7 +5877,7 @@ ${check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check
 ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : "")
           : `${name}への${mgmtDef.label}確認報告メッセージを作成してください。
 
-【スタッフが${check_pattern === "nearby_parking" ? "近隣の月極駐車場を調べた" : "管理会社に確認した"}内容（この情報を必ず使うこと）】
+【スタッフが${check_pattern === "nearby_parking" ? "近隣の月極駐車場を調べた" : check_pattern === "mgmt_surroundings" && surroundingsSource === "現地" ? "現地で確かめた" : "管理会社に確認した"}内容（この情報を必ず使うこと）】
 ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         currentAction,
         // 代理契約はお客様の依頼への返答＝挨拶を付けない（実送信の形。カイナ 9/16 11:48）
@@ -5742,6 +5891,21 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
           message_text = sg.text;
           console.log(JSON.stringify({ tag: check_pattern === "mgmt_proxy" ? "aix:proxy-head-greeting-stripped" : "aix:mgmt-company-head-greeting-stripped", conversationId }));
         }
+      }
+      // 2026-10-20 審査について（ご相談）: 締めの「無事に審査通過するまで全力でサポート」を必ず1回（竹内さんの言い方のまま）
+      if (check_pattern === "mgmt_screening") {
+        // 入力なし（確認していない）の時に LLM が書いた「管理会社・保証会社に確認した」行は落とす（スタッフだけが知る事実を作らない）
+        if (screeningNoInput) message_text = stripUncheckedScreeningClaims(message_text);
+        message_text = ensureScreeningSupportLine(message_text);
+      }
+      // 2026-10-20 申込状況について: 番手の数字・繰り上がり・申込の誘導を外れた文は、入力で組んだ決まった型（お手本 d08bc127）に差し替える
+      if (check_pattern === "mgmt_application_status" && appStatusIn && !applicationStatusTextOk(message_text, appStatusIn)) {
+        console.warn(JSON.stringify({ tag: "aix:application-status-fallback", conversationId }));
+        message_text = composeApplicationStatusText({
+          ...appStatusIn,
+          roomLabel: (typeof property_name === "string" && property_name.trim()) || mgmtTarget?.name || null,
+          callName: familyName ? name : null,
+        });
       }
       // 2026-10-18 ライフライン: LLM が書いた連絡先・見出しは落とし、スタッフの入力をそのまま【ライフラインご連絡先】の欄で付ける（電話番号の写し間違いを出さない）
       if (check_pattern === "mgmt_lifeline") {
