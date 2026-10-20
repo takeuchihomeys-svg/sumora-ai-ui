@@ -54,7 +54,7 @@ import { brainPathCode, judgePath, problemScore, rateByType, aixFamily, judgeCur
 import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
 import type { ExamProblem, LedgerRow } from "./brain-exam-add";
-import { decideStageFromDiff, examVersionKey, examStageKeys } from "./lib/exam-scope";
+import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
 import { cassetteStats as cassetteStatsNow } from "./lib/llm-cassette";
@@ -851,7 +851,7 @@ async function prepareMainBaseline(): Promise<boolean> {
   // 2026-10-20 竹内さん「main の答えは版ごとに1回作って使い回す・main が問題に関係ないファイルだけ変わったなら前の main の答えを使う」:
   //   今の置き場に無い問題は、同じ構成の前の main の置き場から「その問題の段（ブレインだけ／下書きまで）に効くファイルの鍵が今の main と同じ」答えを持ち越す。
   //   止める: EXAM_BASELINE_CARRY=off
-  const stageMemo = join(B.BASELINE_DIR, "stage-keys.json");
+  const stageMemo = join(B.BASELINE_DIR, `stage-keys-${STAGE_KEY_VERSION}.json`); // 鍵の作り方の版ごとの控え（古い版の控えは読まない）
   const sk = examStageKeys(commit, stageMemo);
   const rel = B.relevantStageOf(cfg);
   const carried: string[] = [];

@@ -204,7 +204,9 @@ export function examVersionKey(commit: string, cacheFile?: string, cwd?: string)
 }
 
 // ─── 2026-10-20 段ごとの main の版の鍵（main が進んでも、その問題の段に効く所が同じなら前の main の答えを持ち越す） ─────────────
-const stageKeyOf = (paths: Set<string>, blobs: Map<string, string>) => createHash("sha256").update([...paths].sort().map((p) => `${p} ${blobs.get(p) ?? "-"}`).join("\n")).digest("hex").slice(0, 12);
+/** 鍵の作り方の版（集める範囲を変えたら上げる＝古い鍵（範囲が狭い）とは決して一致しない＝持ち越さない） */
+export const STAGE_KEY_VERSION = "sk2";
+const stageKeyOf = (paths: Set<string>, blobs: Map<string, string>) => createHash("sha256").update(`${STAGE_KEY_VERSION}\n`).update([...paths].sort().map((p) => `${p} ${blobs.get(p) ?? "-"}`).join("\n")).digest("hex").slice(0, 12);
 /**
  * commit の段ごとの鍵: brain＝ブレインの入口から辿れる app・設定／draft＝それに下書きの入口から辿れる物（exam-brain-io.workingScopeKeys と同じ集め方・同じ blob の hash）。
  *   竹内さん 10/20「main が変わっても、問題に関係ないファイルだけなら前の main の答えを使う」: ブレインだけの問題（stage=brain）は下書きだけの変更では答えが変わらない。
@@ -214,6 +216,14 @@ export function examStageKeysOf(files: FileMap, blobs: Map<string, string>): { b
   const isApp = (f: string) => f.startsWith("app/") || f.startsWith("lib/");
   const brain = new Set([...reach(BRAIN_ENTRIES, files)].filter(isApp));
   const draft = new Set([...brain, ...[...reach(DRAFT_ENTRIES, files)].filter(isApp)]);
+  // 10/20 見直し: 試験の道具（brain-exam.ts 等）が main の子で直接読む app（採点の似た名前・知見の網・値段 等）も答えに効く＝鍵に入れる（examVersionKeyOf と同じ広さ）。
+  //   ブレインの鍵には下書きの段だけの物（下書きの入口とその先）は入れない＝下書きだけの変更ではブレインの答えを持ち越せるまま
+  const draftOnly = new Set([...draft].filter((f) => !brain.has(f)));
+  for (const f of reach(TOOL_ENTRIES, files, new Set([...BRAIN_ENTRIES, ...DRAFT_ENTRIES]))) {
+    if (!isApp(f)) continue;
+    draft.add(f);
+    if (!draftOnly.has(f) && !DRAFT_ENTRIES.includes(f)) brain.add(f);
+  }
   for (const p of blobs.keys()) if (CONFIG_RE.test(p) && !p.startsWith(".env")) { brain.add(p); draft.add(p); }
   return { brain: stageKeyOf(brain, blobs), draft: stageKeyOf(draft, blobs) };
 }

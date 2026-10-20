@@ -32,6 +32,11 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   ok("段の鍵: 両方が読むファイル → 両方違う", ks.brain !== k0.brain && ks.draft !== k0.draft);
   ok("段の鍵: 読まれないファイル・文書 → どちらも同じ", ku.brain === k0.brain && ku.draft === k0.draft);
   ok("段の鍵: 設定（package.json）→ 両方違う", examStageKeysOf(files, blobs({ "package.json": "z" })).brain !== k0.brain);
+  // 10/20 見直し: 試験の道具が直接読む app（採点の似た名前 等）が変われば両方違う（持ち越さない）・道具が下書きの入口を読んでもブレインの鍵には入れない
+  const tf: FileMap = new Map([...files, ["scripts/brain-exam.ts", `import "../app/lib/score-help"; import "../app/lib/reply-hint-auto"; import "../app/lib/brain-core";`], ["app/lib/score-help.ts", ``]]);
+  const t0 = examStageKeysOf(tf, blobs()), tt = examStageKeysOf(tf, blobs({ "app/lib/score-help.ts": "changed" })), th = examStageKeysOf(tf, blobs({ "app/lib/reply-hint-auto.ts": "changed" }));
+  ok("段の鍵: 試験の道具が読む app が変わる → 両方違う", tt.brain !== t0.brain && tt.draft !== t0.draft);
+  ok("段の鍵: 道具が読む下書きの入口（reply-hint-auto）だけ変わる → ブレインの鍵は同じ・下書きは違う", th.brain === t0.brain && th.draft !== t0.draft);
 }
 
 // ─── COST① 前の main の答えの持ち越し ─────────────────────────────────────
