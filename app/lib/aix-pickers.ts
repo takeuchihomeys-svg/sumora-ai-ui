@@ -142,6 +142,11 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
       { key: "guarantor_type", label: "保証会社の種類", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_guarantor"] }, options: [
         { value: "独立系", label: "独立系", when: "" }, { value: "信販系", label: "信販系", when: "" }, { value: "信用系", label: "信用系", when: "" }, { value: "不明", label: "不明", when: "" },
       ] },
+      // 2026-10-21 竹内さん C9: 新しいボタン【審査について】で選んだ審査内容（値は aix-owner-answers-1021 の SCREENING_TOPIC_OPTIONS と同じ）
+      { key: "screening_topic", label: "審査内容（AIX【審査について】）", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_screening"] }, options: [
+        { value: "job", label: "職業・収入について", when: "" }, { value: "holder", label: "名義について", when: "" }, { value: "guarantor_person", label: "保証人について", when: "" },
+        { value: "nationality", label: "外国籍について", when: "" }, { value: "timing", label: "時期について", when: "" }, { value: "other", label: "その他", when: "" },
+      ] },
       // 2026-10-20 審査について（ご相談）
       { key: "screening_holder", label: "契約者の名義", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_screening"] }, options: [
         { value: "本人", label: "ご本人", when: "" }, { value: "家族・パートナー", label: "ご家族・パートナー", when: "" },

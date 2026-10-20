@@ -21,8 +21,13 @@ export function aixNewPickers1020Enabled(env: Record<string, string | undefined>
  * aix/action の歯止め（setupAltProviderGuards）がこれを見て「申込以降」と同じ扱い（回さない・印を付けて Anthropic）にする。
  */
 export const CLAUDE_ONLY_CHECK_PATTERNS: readonly string[] = ["mgmt_screening"];
-export function aixRequestMustUseClaude(body: { action?: unknown; check_pattern?: unknown } | null | undefined): boolean {
-  return !!body && body.action === "property_check_result" && typeof body.check_pattern === "string" && CLAUDE_ONLY_CHECK_PATTERNS.includes(body.check_pattern);
+/** 2026-10-21 竹内さん C9: 新しいボタン【審査について】の中の物は全部 Claude（保証会社について guarantor_info も審査の話・話題つきの審査の相談も） */
+export const CLAUDE_ONLY_ACTIONS: readonly string[] = ["guarantor_info"];
+export function aixRequestMustUseClaude(body: { action?: unknown; check_pattern?: unknown; screening_topic?: unknown } | null | undefined): boolean {
+  if (!body) return false;
+  if (typeof body.action === "string" && CLAUDE_ONLY_ACTIONS.includes(body.action)) return true;
+  if (typeof body.screening_topic === "string" && body.screening_topic.trim()) return true;
+  return body.action === "property_check_result" && typeof body.check_pattern === "string" && CLAUDE_ONLY_CHECK_PATTERNS.includes(body.check_pattern);
 }
 
 /** 新しい check_pattern（画面・記録・ブレインで同じ値） */

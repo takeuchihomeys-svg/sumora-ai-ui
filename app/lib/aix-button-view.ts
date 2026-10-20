@@ -33,6 +33,7 @@
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./brain-meta-restore";
 import { propertyCheckKindFor } from "./aix-taxonomy";
 import { isSearchSplitTurn } from "./search-result-split";
+import { screeningCardLabel } from "./aix-owner-answers-1021";
 
 /** ブレインの action → 画面の AIX ボタンの名前（page.tsx の BRAIN_AIX_LABELS をここに移した。表記は aix-taxonomy と揃える） */
 export const BRAIN_AIX_LABELS: Record<string, string> = {
@@ -63,6 +64,9 @@ export const BRAIN_AIX_LABELS: Record<string, string> = {
  */
 export function brainAixButtonLabel(action: string | null | undefined, checkPattern?: string | null): string | undefined {
   if (!action) return undefined;
+  // 2026-10-21 竹内さん C9: 新しいボタン【審査について】（保証会社について・審査について（ご相談））。値は今まで通り・名前だけ読み替え（AIX_SCREENING_BUTTON=off で今まで通り）
+  const scr = screeningCardLabel(action, checkPattern);
+  if (scr) return scr;
   if (action === "property_check_result" && propertyCheckKindFor(checkPattern)?.ui_button === "確認した（条件・交渉）") return "AIX 確認した（条件・交渉）";
   // 2026-10-20 竹内さん（P1 398b9781）新しいボタン「物件について」（募集号室について）
   if (action === "property_check_result" && propertyCheckKindFor(checkPattern)?.ui_button === "物件について") return "AIX 物件について";
