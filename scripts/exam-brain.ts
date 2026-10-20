@@ -17,7 +17,9 @@
 // 決める事の引数（既定は試験のブレインが決める）:
 //   --when=auto|now|night（auto: 最後の関所・見込み $1 以上は安い時間 JST 1:30〜9:30 に予約）・--wait（予約の代わりにその時間まで待って流す）
 //   --max-reps=3・--no-early-stop・--stop-worse=3・--no-reuse・--judge=lazy|full（既定 lazy）・--judge-prefix=as-is|rubric（既定 as-is）
-//   --model=pro|flash|auto（既定 pro・auto は model-check で道が同じだった型だけ flash）・--replay=strict・--select-n=12・--only=（範囲を絞る）
+//   --model=pro|flash|auto（10/20 から既定 auto＝model-check で道が同じだった型・問題だけ flash・直しの的と関所は pro）・--replay=strict・--select-n=12・--only=（範囲を絞る）
+//   10/20 LINE のブレインの組み方: --reps=old（旧の回数・既定は自信で1回ずつ足す）・--main-missing=night（前の答えが無い問題を夜に）・--no-reasons（外れの理由の読み手を止める）
+//   正解の食い違い: scripts/exam-gold-check.ts／本番の外れから問題の候補: scripts/exam-question-candidates.ts（手順書 README「LINE のブレインの組み方に寄せた8つ」）
 //   -- の後ろは brain-exam.ts にそのまま渡す
 // 10/17 竹内さん「1 2 3 順に改善」「1日に上限は10ドル」:
 //   --phase=auto|small|final|off（既定 auto・EXAM_PHASE）: 直しの途中は小さな確かめ（5〜8問・繰り返し2回まで）→ 同じ版で通ったら仕上げ（選んだ問題全部）。off＝旧
@@ -379,7 +381,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   // 10/20 COST② 自信の気づき: 2回目は前と違った・外れた・揺れる問題だけ → 3回目は1回目と2回目が割れた問題だけ（揃えば止める）
   const rowsOf = (id: string) => readRows(label).filter((r) => r.id === id);
   const failedOf = (id: string) => { const rs = rowsOf(id).filter((r) => !r.error); return rs.length > 0 && !(rs.filter((r) => !!r.path?.ok && !!r.score?.pass).length * 2 > rs.length); };
-  const r2 = confidenceRound2(ids.map((id) => ({ id, cmp: res.cmps.find((c) => c.id === id)?.cmp ?? "nocur", failed: failedOf(id), flake: pl.items.get(id)!.flake, have: rowsOf(id).filter((r) => !r.error).length })), { clearlyGood: d.action === "fewer", cap: pl.repsCap });
+  const r2 = confidenceRound2(ids.map((id) => ({ id, cmp: res.cmps.find((c) => c.id === id)?.cmp ?? "nocur", failed: failedOf(id), flake: pl.items.get(id)!.flake, have: rowsOf(id).filter((r) => !r.error).length })), { clearlyGood: d.action === "fewer", cap: pl.repsCap, wide: REPS_MODE === "wide" });
   if (r2.length) {
     log(`\n🔁 2回目（自信が低い ${r2.length}問だけ・${d.action === "fewer" ? "はっきり良いので判断だけ変わった問題は省く・" : ""}揃えばここで止める）: ${r2.map((x) => `${x.id}（${x.why}）`).join(",")}`);
     await confirmRun(r2.map((x) => x.id), 2);

@@ -70,8 +70,12 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   ok("1回目: confidence は全部1回（最後の関所の揺れる問題も）・旧は関所の揺れる問題 3回", firstRepsOf("confidence", "flaky", 3, { gate: true }) === 1 && firstRepsOf("old", "flaky", 3, { gate: true }) === 3 && firstRepsOf("old", "stable", 3, { gate: true }) === 1);
   ok("取り置きの回: confidence は揺れる問題だけ2回・旧は3回", warmRepsOf("confidence", "flaky", 3) === 2 && warmRepsOf("confidence", "stable", 3) === 1 && warmRepsOf("confidence", "unknown", 3) === 1 && warmRepsOf("old", "flaky", 3) === 3);
   const x = (id: string, cmp: Cmp, failed = false, flake: "flaky" | "stable" | "unknown" = "unknown", have = 1) => ({ id, cmp, failed, flake, have });
-  const r2 = confidenceRound2([x("a", "worse"), x("b", "better"), x("c", "changed"), x("d", "same"), x("e", "same", true), x("f", "same", true, "stable"), x("g", "same", false, "flaky"), x("h", "nobase", true), x("i", "nobase"), x("j", "worse", false, "unknown", 2), x("k", "nocur", true), x("l", "shape")], { cap: 3 }).map((r) => r.id);
-  ok("2回目: 前と違った（悪化・改善・判断）・外れた・揺れる問題だけ。いつもの外れ（安定×前と同じ）・同じ・形だけ・答案なし・もう2回ある問題は省く", r2.join() === "a,b,c,e,g,h", r2.join());
+  const xs = [x("a", "worse"), x("b", "better"), x("c", "changed"), x("d", "same"), x("e", "same", true), x("f", "same", true, "stable"), x("g", "same", false, "flaky"), x("h", "nobase", true), x("i", "nobase"), x("m", "nobase", false, "flaky"), x("j", "worse", false, "unknown", 2), x("k", "nocur", true), x("l", "shape")];
+  const r2 = confidenceRound2(xs, { cap: 3 }).map((r) => r.id);
+  ok("2回目（既定）: 前と違った・前が無くて外れた／揺れる問題だけ。前と同じ答え（外れ・揺れる問題でも）・形だけ・答案なし・もう2回ある問題は省く", r2.join() === "a,b,c,h,m", r2.join());
+  const r2w = confidenceRound2(xs, { cap: 3, wide: true }).map((r) => r.id);
+  ok("2回目（wide）: 前と同じでも外れ（いつもの外れ＝安定×前と同じは除く）・揺れる問題も回す", r2w.join() === "a,b,c,e,g,h,m", r2w.join());
+  ok("回数の決め方: --reps=wide", repsModeOf("wide", {}) === "wide");
   ok("2回目: はっきり良い時は判断だけの変化を省く", confidenceRound2([x("c", "changed"), x("a", "worse")], { cap: 3, clearlyGood: true }).map((r) => r.id).join() === "a");
   ok("2回目: 上限1回（cap<2）なら無し", confidenceRound2([x("a", "worse")], { cap: 1 }).length === 0);
   const rows: Record<string, RowLite[]> = {

@@ -415,30 +415,36 @@ export function warmLimit(o: { cap: number | null; usedUsd: number; unitUsd: num
 
 // ─── 10/20 COST② 自信の気づき（LINE のブレインの「迷った時だけ深く」）: 回数を1回ずつ足す ─────────────────────
 /**
- * 回数の決め方: confidence（既定）＝全部1回 → 2回目は「前（main）と違った・外れた・揺れる問題」だけ → 3回目は「1回目と2回目が割れた問題」だけ（揃えば止める）。
+ * 回数の決め方: confidence（既定）＝全部1回 → 2回目は自信が低い問題だけ（前（main）と違った／前が無くて外れた・揺れる）→ 3回目は「1回目と2回目が割れた問題」だけ（揃えば止める）。
+ *   1回目が前（main）と同じ答え＝前の答えと2つ揃った＝自信が高い → 外れでも揺れる問題でも2回目を回さない（いつもの外れ・いつもの揺れに費用をかけない）。
+ *   wide＝外れ・揺れる問題は前と同じでも2回目（10/20 の測り: 4日の台帳 319問回で確かめの回が 旧 164 → wide 約 263 に増える＝既定にしない）。--reps=wide
  *   old＝旧（前と違った問題を一度に max 回まで・最後の関所の揺れる問題は最初から max 回）。--reps=old か EXAM_REPS=old
  */
-export type RepsMode = "confidence" | "old";
+export type RepsMode = "confidence" | "wide" | "old";
 export function repsModeOf(argVal: string | undefined, env: Record<string, string | undefined> = {}): RepsMode {
-  return String(argVal || env.EXAM_REPS || "").trim().toLowerCase() === "old" ? "old" : "confidence";
+  const v = String(argVal || env.EXAM_REPS || "").trim().toLowerCase();
+  return v === "old" ? "old" : v === "wide" ? "wide" : "confidence";
 }
 /** 1回目の回数（confidence は全部1回・旧は firstReps） */
 export function firstRepsOf(mode: RepsMode, v: FlakeKind, max = 3, o: { gate?: boolean } = {}): number { return mode === "old" ? firstReps(v, max, o) : 1; }
 /** 取り置き（main の答え）の回数: 比べる相手なので揺れる問題だけ2回（割れたら過半数が決まらない＝揺れる問題は止める判断に数えない）。旧は関所と同じ */
 export function warmRepsOf(mode: RepsMode, v: FlakeKind, max = 3): number { return mode === "old" ? firstReps(v, max, { gate: true }) : v === "flaky" ? Math.min(2, Math.max(1, max)) : 1; }
 /**
- * 2回目を回す問題: 回が1回だけで、①前（main）と違った（悪化・改善・判断の変化。はっきり良い時は判断だけの変化は省く）②外れた（ただし揺れの記録で安定かつ前と同じ外れ＝いつもの外れは省く）③揺れる問題。
- *   前が無い問題（nobase）は②③だけ
+ * 2回目を回す問題（回が1回だけの問題）: ①前（main）と違った（悪化・改善・判断の変化。はっきり良い時は判断だけの変化は省く）
+ *   ②前が無い（nobase）で、外れた・揺れる問題（前の答えで確かめられない）。
+ *   1回目が前と同じ（same・形だけの変化 shape）は回さない（wide の時だけ: 外れ（揺れの記録で安定は除く）・揺れる問題も回す）
  */
-export function confidenceRound2(xs: Array<{ id: string; cmp: Cmp; failed: boolean; flake: FlakeKind; have: number }>, o: { clearlyGood?: boolean; cap: number }): Array<{ id: string; why: string }> {
+export function confidenceRound2(xs: Array<{ id: string; cmp: Cmp; failed: boolean; flake: FlakeKind; have: number }>, o: { clearlyGood?: boolean; cap: number; wide?: boolean }): Array<{ id: string; why: string }> {
   if (o.cap < 2) return [];
   const out: Array<{ id: string; why: string }> = [];
   for (const x of xs) {
     if (x.have !== 1 || x.cmp === "nocur") continue;
     const differs = x.cmp === "worse" || x.cmp === "better" || (x.cmp === "changed" && !o.clearlyGood);
+    const corroborated = !(x.cmp === "nobase") && !differs;
     if (differs) out.push({ id: x.id, why: `前と違った（${x.cmp}）` });
-    else if (x.flake === "flaky") out.push({ id: x.id, why: "揺れる問題" });
-    else if (x.failed && !(x.flake === "stable" && x.cmp === "same")) out.push({ id: x.id, why: "外れた" });
+    else if (corroborated && !o.wide) continue;
+    else if (x.flake === "flaky") out.push({ id: x.id, why: x.cmp === "nobase" ? "前が無い・揺れる問題" : "揺れる問題" });
+    else if (x.failed && !(x.flake === "stable" && x.cmp === "same")) out.push({ id: x.id, why: x.cmp === "nobase" ? "前が無い・外れた" : "外れた" });
   }
   return out;
 }
