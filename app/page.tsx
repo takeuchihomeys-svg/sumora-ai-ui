@@ -23,6 +23,7 @@ import TemplateModal, { type Template as CachedTemplate } from "./components/Tem
 import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage, PRE_APPLY_STATUSES } from "./lib/application-form-detect";
 import { detectPlaceholders, canonOf } from "./lib/validate-reply";
+import { pickCallName, sanOf } from "./lib/call-name-pick";
 // 2026-09-18: 下書き→送る文の整形は画面と自動返信で同じ関数を使う（app/lib/draft-text.ts）
 import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraftSentinel } from "./lib/draft-text";
 // 2026-10-08 竹内（未桜）「AI返信案がセットされていない事も多い」: 表示済みにした下書きの本文を DB に控え、別の端末・読み込み直しでも戻す
@@ -75,7 +76,7 @@ import { jstYmd } from "./lib/jst-date";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 import { effectiveRpUpdateDays } from "./lib/rp-update-days";
-import { parsePickupAixHandoff, planPickupMarkSent, type PickupAixType } from "./lib/pickup-aix-handoff";
+import { parsePickupAixHandoff, planPickupMarkSent, handoffAccountMismatch, type PickupAixType } from "./lib/pickup-aix-handoff";
 // 2026-10-01 竹内「見積書きかれたら LINE のところに見積書のがでて押したら見積書のツールのところに連携」
 import { buildEstimateHref, parseEstimateReturn, wantsLowInitialCostText } from "./lib/estimate-handoff";
 import { imageUrlsInRankOrder } from "./lib/sent-image-order";
@@ -107,11 +108,12 @@ const DRAFT_GREETING_REQUIRED = draftGreetingRefreshEnabled(process.env.NEXT_PUB
 //   「今日まだ送っていない」と決めて「〇〇さんお世話になっております！！」を足していた。足す向きは DB の今日のこちらの送信（手打ち・AIX・予約・グループ経由）で決める。
 //   戻す: NEXT_PUBLIC_DRAFT_GREETING_DB=off（旧＝手元の一覧だけで足す）
 const DRAFT_GREETING_DB = draftGreetingRefreshEnabled(process.env.NEXT_PUBLIC_DRAFT_GREETING_DB);
-function refreshDraftGreeting(text: string, conv: { messages?: Message[]; customerName?: string }): string {
+function refreshDraftGreeting(text: string, conv: { messages?: Message[]; customerName?: string; callName?: string | null }): string {
   if (!DRAFT_GREETING_REFRESH || !text) return text;
   const msgs = conv.messages || [];
   // 呼び名は生成の挨拶（resolveGreeting の canonOf）と同じ線で決める（「り」など1字は呼ばない）
-  const name = canonOf(extractPreferredName(msgs, conv.customerName || ""));
+  // 2026-10-20（P1 979a4c55）固定の呼び名を先に・絵文字だけの表示名は呼ばない（conversationCallName）
+  const name = canonOf(conversationCallName(conv));
   const r = refreshDraftGreetingForNow(text, { messages: msgs.map((m) => ({ sender: m.sender, text: m.text, rawCreatedAt: m.rawCreatedAt ?? null })), name: name ? `${name}さん` : "", ensureDaily: DRAFT_GREETING_REQUIRED, allowAdd: !DRAFT_GREETING_DB });
   if (r.fixes.length) console.log(JSON.stringify({ tag: "draft:greeting-refresh", fixes: r.fixes }));
   return r.text;
@@ -120,7 +122,7 @@ function refreshDraftGreeting(text: string, conv: { messages?: Message[]; custom
  * DB の今日（JST）のこちらの送信で、入力欄に出した下書きの挨拶を決め直す（足す・外す）。変わらない・読めない時は null（足さない＝安全側）。
  * 判定は refreshDraftGreetingForNow（staffTalkedToday＝会話文か挨拶の入った通）と同じ関数。
  */
-async function refreshDraftGreetingFromDb(text: string, convId: string, conv: { messages?: Message[]; customerName?: string }): Promise<string | null> {
+async function refreshDraftGreetingFromDb(text: string, convId: string, conv: { messages?: Message[]; customerName?: string; callName?: string | null }): Promise<string | null> {
   if (!DRAFT_GREETING_REFRESH || !DRAFT_GREETING_REQUIRED || !DRAFT_GREETING_DB || !text || !convId) return null;
   try {
     const now = Date.now();
@@ -129,7 +131,7 @@ async function refreshDraftGreetingFromDb(text: string, convId: string, conv: { 
     const { data, error } = await supabase.from("messages").select("sender,text,created_at").eq("conversation_id", convId)
       .eq("sender", "staff").gte("created_at", dayStartUtc).order("created_at", { ascending: false }).limit(200);
     if (error) return null;
-    const name = canonOf(extractPreferredName(conv.messages || [], conv.customerName || ""));
+    const name = canonOf(conversationCallName(conv));
     const r = refreshDraftGreetingForNow(text, {
       messages: ((data ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).map((m) => ({ sender: m.sender, text: m.text, rawCreatedAt: m.created_at })),
       name: name ? `${name}さん` : "", ensureDaily: true, allowAdd: true, now,
@@ -167,6 +169,8 @@ type Message = {
 type Conversation = {
   id: string;
   customerName: string;
+  /** 2026-10-20（P1 979a4c55）会話に固定した呼び名（conversations.call_name）。LINE の表示名が変わっても変わらない */
+  callName?: string | null;
   lastMessage: string;
   lastSender?: string;
   status: string;
@@ -192,6 +196,7 @@ type Conversation = {
 type SupabaseConversationRow = {
   id: string;
   customer_name: string | null;
+  call_name?: string | null;
   status: string | null;
   line_user_id: string;
   last_message?: string | null;
@@ -218,7 +223,7 @@ type SupabaseConversationRow = {
  *   （ブレインの内部の記録・画面では使わない）。
  * ⚠ 一覧で新しい列を使う時は**ここに足す**（足さないと undefined になる）。
  */
-const CONVERSATION_LIST_COLUMNS = "id,customer_name,status,line_user_id,last_message,last_sender,profile_image_url,updated_at,created_at,account,property_customer_id,is_post_apply,is_hot,is_flagged,ai_draft,draft_pending_at,has_viewed,auto_send_enabled,auto_sent_at,auto_sent_draft,success_pattern_at,loss_analyzed_at,draft_attempted_at,line_status,suggested_next_aix,draft_fail_count,draft_last_error,reply_mode_decision,suggested_aix_meta,brain_analyzed_at,learned_at,brain_full_analyzed_at,brain_full_msg_count,brain_deep_analyzed_at,brain_deep_msg_count,acquisition_source,applying_text_received,applying_image_received,screening_last_status,status_manual_back_at,auto_send_enabled_at,line_source_type,send_blocked_reason,call_tapped_at";
+const CONVERSATION_LIST_COLUMNS = "id,customer_name,status,line_user_id,last_message,last_sender,profile_image_url,updated_at,created_at,account,property_customer_id,is_post_apply,is_hot,is_flagged,ai_draft,draft_pending_at,has_viewed,auto_send_enabled,auto_sent_at,auto_sent_draft,success_pattern_at,loss_analyzed_at,draft_attempted_at,line_status,suggested_next_aix,draft_fail_count,draft_last_error,reply_mode_decision,suggested_aix_meta,brain_analyzed_at,learned_at,brain_full_analyzed_at,brain_full_msg_count,brain_deep_analyzed_at,brain_deep_msg_count,acquisition_source,applying_text_received,applying_image_received,screening_last_status,status_manual_back_at,auto_send_enabled_at,line_source_type,send_blocked_reason,call_tapped_at,call_name";
 
 // AI下書きから内部メタタグ（<<<STOP_REASON:...>>> / <<<SUGGESTED_AIX:{...}>>>）を除去する。
 // 2026-09-18: 実体は app/lib/draft-text.ts に移した（自動返信も同じ関数を使う＝画面に出ている文と送る文を必ず一致させる）
@@ -252,6 +257,15 @@ type SupabaseMessageRow = {
 // JST基準で今日の日付を YYYY-MM-DD で返す
 function getTodayJST(): string {
   return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * 2026-10-20 竹内さん（P1 979a4c55）「お客さんが LINE のアカウント名を🎀に変えてから呼び方も🎀さんに変わってしまった…最初呼んでいた名前で連絡する」:
+ *   画面の呼び名の唯一の入口。固定の呼び名（conversations.call_name）→ 会話でスタッフが呼んだ名前 → 表示名（名前の字がある時だけ）→ ""。
+ *   ピッカー（内覧誘導・物件成約した）・文の手直し・下書きの挨拶・AIX・テンプレートに渡す名前はここから取る（LINE の表示名をそのまま「〇〇さん」にしない）
+ */
+function conversationCallName(conv: { messages?: Array<{ sender: string; text?: string | null }>; customerName?: string | null; callName?: string | null }): string {
+  return pickCallName({ stored: conv.callName ?? null, conversational: extractPreferredName(conv.messages || [], conv.customerName || "") });
 }
 
 // 会話履歴からスタッフが実際に使っていた呼び名を抽出（LINE表示名より優先）
@@ -755,6 +769,7 @@ function conversationRowToItem(conversation: SupabaseConversationRow, relatedMes
     status: conversation.status || "hearing",
     lineUserId: conversation.line_user_id,
     sendBlockedReason: conversation.send_blocked_reason ?? null,
+    callName: conversation.call_name ?? null,
     callTappedAt: conversation.call_tapped_at ?? null,
     profileImageUrl: conversation.profile_image_url || undefined,
     updatedAt: effectiveUpdatedAt,
@@ -3659,10 +3674,11 @@ export default function Home() {
   }, [selectedConversation]);
 
   // スタッフが会話内で使っていた呼び名を優先（generate-reply-patterns / enhance-reply に渡す）
+  // 2026-10-20（P1 979a4c55）固定の呼び名（call_name）を先に・絵文字だけの表示名は呼ばない（conversationCallName）
   const preferredCustomerName = useMemo(
-    () => extractPreferredName(selectedConversation.messages || [], selectedConversation.customerName || ""),
+    () => conversationCallName(selectedConversation),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedConversation.id, selectedConversation.messages?.length]
+    [selectedConversation.id, selectedConversation.messages?.length, selectedConversation.callName, selectedConversation.customerName]
   );
 
   // ===== AIX の続き（2通目）の番（2026-10-15 竹内悠馬・KAORI さん）=====
@@ -6622,7 +6638,7 @@ export default function Home() {
   //   aix=property_recommendation（1件）も受ける。物件オススメは資料1枚を「② 物件資料」にセットして開く（pickup-aix-handoff.ts）
   // handoffIds: handoffFiles と同じ並びの行 ID（画像を取れた行だけ）。sentFiles: 送る直前の File の並び（AixModal の onPropertySendFiles）
   //   → 送った印は planPickupMarkSent（pickup-aix-handoff.ts）が「セットした画像が送る直前に残っていた行」だけに付ける（2026-09-25 E2E の反証）
-  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; aix: PickupAixType; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; handoffIds?: number[]; handoffNames?: string[]; handoffRanks?: number[]; sentFiles?: File[] | null } | null>(null);
+  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; aix: PickupAixType; acct?: string | null; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; handoffIds?: number[]; handoffNames?: string[]; handoffRanks?: number[]; sentFiles?: File[] | null } | null>(null);
   useEffect(() => {
     try {
       const h = parsePickupAixHandoff(window.location.search);
@@ -6635,6 +6651,17 @@ export default function Home() {
     if (h && h.done && selectedConversation?.id !== h.conv) { pickupHandoffRef.current = null; return; }
     if (!h || h.done || selectedConversation?.id !== h.conv) return;
     h.done = true;
+    // 2026-10-20 竹内さん（P1 f9d261d4・アカウントの取り違え）: AIX ツールが決めた会話のアカウントと開いた会話のアカウントが違えば、AIX をセットしない
+    {
+      const mismatch = handoffAccountMismatch(h.acct, selectedConversation?.account);
+      if (mismatch) {
+        console.warn(JSON.stringify({ tag: "pickup-aix:account-mismatch", conv: h.conv, acct: h.acct, opened: selectedConversation?.account ?? null }));
+        pickupHandoffRef.current = null;
+        try { window.history.replaceState(null, "", `/?conv=${encodeURIComponent(h.conv)}`); } catch { /* 無視 */ }
+        window.alert(mismatch);
+        return;
+      }
+    }
     void (async () => {
       try {
         const res = await fetch(`/api/property-pickups?ids=${encodeURIComponent(h.ids)}`, { cache: "no-store" });
@@ -9148,7 +9175,7 @@ export default function Home() {
                           const res = await fetch("/api/polish-draft", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ draft: replyDraft, customer_name: selectedConversation.customerName, recent_messages: recentMsgs, conversation_status: selectedConversation.status }),
+                            body: JSON.stringify({ draft: replyDraft, customer_name: preferredCustomerName, recent_messages: recentMsgs, conversation_status: selectedConversation.status }),
                           });
                           const data = await res.json() as { ok: boolean; polished?: string };
                           if (data.ok && data.polished) { setReplyDraft(data.polished); aiDraftRef.current = data.polished; setDisplaySource("optimized"); }
@@ -13295,7 +13322,8 @@ export default function Home() {
       {/* 内覧誘導ピッカー */}
       {showViewingGuidePicker && (() => {
         const conv = selectedConversation;
-        const custName = conv?.customerName ?? "お客様";
+        // 2026-10-20（P1 979a4c55）内覧誘導の名前は会話の呼び名（LINE の表示名をそのまま「〇〇さん」にしない・無ければ名前なし）
+        const custName = preferredCustomerName || "";
         const recentMsgs = (conv?.messages ?? []).slice(-10).map(m => ({ sender: m.sender, text: m.text ?? "" }));
 
         const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -14727,7 +14755,8 @@ export default function Home() {
       {/* 物件成約した 入力フォーム（管理会社確認ピッカーのサブ項目） */}
       {showContractedForm && (() => {
         const conv = selectedConversation;
-        const custName = conv?.customerName ?? "お客様";
+        // 2026-10-20（P1 979a4c55）会話の呼び名（ayaka→🎀 の時に「🎀さん」にしない・無ければ名前なしで書く）
+        const custSan = sanOf(preferredCustomerName);
 
         const handleContractedImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
           const file = e.target.files?.[0];
@@ -14761,7 +14790,7 @@ export default function Home() {
         const handleContractedSubmit = () => {
           const name = contractedPropertyName.trim();
           const room = contractedRoomNumber.trim();
-          const tmpl = `${custName}さんお世話になっております！！\n${name}${room}\nですが1番手の方で契約がご成約となったとのことです。\n${custName}さんにオススメできるお部屋ピックアップしお送りさせて頂きます！！\n何卒よろしくお願い致します！！`;
+          const tmpl = `${custSan}お世話になっております！！\n${name}${room}\nですが1番手の方で契約がご成約となったとのことです。\n${custSan ? `${custSan}に` : ""}オススメできるお部屋ピックアップしお送りさせて頂きます！！\n何卒よろしくお願い致します！！`;
           // テンプレートをAIXの初期入力テキストとして渡してAIXで生成
           setAixInitInputText(tmpl);
           setShowContractedForm(false);

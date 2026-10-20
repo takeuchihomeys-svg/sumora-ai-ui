@@ -4,6 +4,7 @@ import { supabase } from "@/app/lib/supabase";
 import { GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
 import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
+import { sanOf } from "@/app/lib/call-name-pick";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
 
@@ -27,9 +28,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "draft required" }, { status: 400 });
   }
 
-  const name = customer_name
-    ? `${customer_name.split(/[ 　]/)[0]}さん`
-    : "お客様";
+  // 2026-10-20 竹内さん（P1 979a4c55・ayaka→🎀）: 絵文字・記号・数字だけの名前（LINE の表示名）は「〇〇さん」にしない（画面は会話の呼び名を渡す）
+  const firstToken = (customer_name ?? "").split(/[ 　]/)[0];
+  const name = sanOf(firstToken) || "お客様";
 
   // 全プロンプト・実例を並列取得
   const [

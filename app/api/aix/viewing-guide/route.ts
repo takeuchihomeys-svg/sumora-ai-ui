@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { sanOf } from "@/app/lib/call-name-pick";
 
 export const maxDuration = 30;
 
@@ -99,15 +100,17 @@ export async function POST(request: NextRequest) {
       );
       const propStr = propLabels.join("と");
 
+      // 2026-10-20 竹内さん（P1 979a4c55・ayaka→🎀）: 絵文字・記号・数字だけの名前（LINE の表示名）・「お客様」は「〇〇さん」にしない（名前なしで書く）
+      const nameSan = /^お客様$/.test(String(customerName ?? "").trim()) ? "" : sanOf(customerName);
       let text = "";
       if (status === "available") {
         if (propStr) {
-          text = `${propStr}現在ご内覧可能ですので\n${customerName}さんご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！`;
+          text = `${propStr}現在ご内覧可能ですので\n${nameSan}ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！`;
         } else {
-          text = `${customerName}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
+          text = `${nameSan}ご都合よろしいお日にちにご案内させて頂きます😊！！`;
         }
       } else {
-        text = `${propStr ? propStr + "についてですが、" : ""}${vacateDate}退去予定のお部屋となっております！！\n${vacateDate}以降にご案内可能ですので${customerName}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
+        text = `${propStr ? propStr + "についてですが、" : ""}${vacateDate}退去予定のお部屋となっております！！\n${vacateDate}以降にご案内可能ですので${nameSan}ご都合よろしいお日にちにご案内させて頂きます😊！！`;
       }
 
       return NextResponse.json({ ok: true, status, vacateDate, text });

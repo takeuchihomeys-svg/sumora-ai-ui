@@ -29,6 +29,7 @@ export async function parentConversationFor(sb: SupabaseClient, customerId: stri
   const { data: row } = await sb.from("property_customers").select("parent_customer_id").eq("id", customerId).maybeSingle();
   const parent = (row as { parent_customer_id?: string | null } | null)?.parent_customer_id ?? null;
   if (!parent) return null;
-  const { data: conv } = await sb.from("conversations").select("id").eq("property_customer_id", parent).order("updated_at", { ascending: false }).limit(1).maybeSingle();
-  return ((conv as { id?: string } | null)?.id) ?? null;
+  // 2026-10-20（P1 f9d261d4）: 親が2つ以上のアカウントにいる時は、お客様が最後に話した会話（updated_at ではなく）
+  const { primaryConversationForCustomer } = await import("./customer-conversation-server");
+  return (await primaryConversationForCustomer(sb, parent)).id;
 }

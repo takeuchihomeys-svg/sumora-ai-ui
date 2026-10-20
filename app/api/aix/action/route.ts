@@ -134,6 +134,7 @@ import { buildEstimateSecondNote, resolveEstimateClosing, ensureEstimateClosing,
 import { loadEstimateAppeal } from "@/app/lib/estimate-appeal-server"; // 2026-10-08 11巡目 竹内さんの送信の形
 // 2026-10-06 ⑰: スタッフが冒頭で2回以上呼んだ名前は形を問わず使う（名前の欄の「お客様」をなくす）
 import { staffCalledName } from "@/app/lib/aix-staff-called-name";
+import { hasNameLetter } from "@/app/lib/call-name-pick";
 // 2026-10-06 ⑫: 呼び名の固定（会話に出ない別の名前で呼ばない）
 import { enforceCallName } from "@/app/lib/call-name-guard";
 // 2026-10-06 ⑫: 御見積書の費用の事情の1行（報酬が出ない・スモ割なし・仲介手数料の額）
@@ -2046,10 +2047,20 @@ async function handleAction(request: NextRequest): Promise<Response> {
     //   スタッフが実際に呼んだ名前（下の extractPreferredName）だけで決める
     const rawName = customer_name && !isGroupConversationName(String(customer_name)) ? String(customer_name).trim() : "";
     // スタッフが会話内で実際に使っていた呼び名を優先（LINE表示名より正確）
-    const preferredRawName = extractPreferredName(
+    // 2026-10-20 竹内さん（P1 979a4c55・ayaka→🎀）: 会話がある時は返信の下書きと同じ呼び名（固定の呼び名 → 会話で確定した名前）を先に使う。
+    //   画面から来る customer_name は LINE の表示名で、お客様が表示名を変えると変わる（窓の中にスタッフの呼びかけが無い時に表示名に倒れていた）。
+    //   戻す: AIX_CALL_NAME_FROM_CONVERSATION=off（旧＝窓の中の呼びかけ → 表示名）
+    const convCallName = conversationId && (process.env.AIX_CALL_NAME_FROM_CONVERSATION ?? "").trim().toLowerCase() !== "off" && !isGroupConversationName(String(customer_name ?? ""))
+      ? await Promise.race([
+          import("@/app/lib/address-name-server").then(({ callNameForConversation }) => callNameForConversation(String(conversationId), rawName)).catch(() => ""),
+          new Promise<string>((r) => setTimeout(() => r(""), 3_000)),
+        ])
+      : "";
+    const windowName = extractPreferredName(
       Array.isArray(recent_messages) ? (recent_messages as Array<{ sender: string; text?: string | null }>) : [],
       rawName
     );
+    const preferredRawName = convCallName || (hasNameLetter(windowName) ? windowName : "");
     const familyName = preferredRawName.includes(" ") || preferredRawName.includes("　")
       ? preferredRawName.split(/[ 　]/)[0]
       // スペースなし漢字フルネーム（4文字以上）は先頭2文字を姓とみなす（例: 他谷遥香→他谷）

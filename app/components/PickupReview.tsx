@@ -27,7 +27,8 @@ import { summarizeWebBrainProgress, webBrainBlockReason, type WebBrainSite, type
 // 2026-09-25 検索の点検: 回の見出しに「この回の検索: 駅 3/4・東三国が入っていない」（純関数だけ・サーバーの物は import しない）
 import { pickAuditForRound } from "@/app/lib/search-audit-check";
 // 2026-09-25 竹内「複数選択なら AIX 物件ピックアップ・1件なら AIX 物件オススメ（一番オススメだから）」
-import { buildPickupAixHref, PICKUP_AIX_MAX, chunkTrimImages, TRIM_POST_BUDGET_CHARS, planPickupAixSelection, pickupAixSelectionLabel, isPickupCheckable } from "@/app/lib/pickup-aix-handoff";
+import { multiAccountConfirmMessage } from "@/app/lib/send-account";
+import { pickupTargetConversation, buildPickupAixHref, PICKUP_AIX_MAX, chunkTrimImages, TRIM_POST_BUDGET_CHARS, planPickupAixSelection, pickupAixSelectionLabel, isPickupCheckable } from "@/app/lib/pickup-aix-handoff";
 // 2026-09-27 竹内「ピックアップや物件オススメで送った物件は、送ったのが分かるバッジ」（純関数・サーバーの物は import しない）
 import { sentBadgesFor } from "@/app/lib/pickup-sent-badge";
 // 2026-09-27 竹内「メモ欄に条件を送ったら、それに連動して検索」: メモの検索の指示 → 一時調整の要約 → 確かめて［実行］（軽い物だけ import）
@@ -113,7 +114,9 @@ type Customer = { key: string; property_customer_id: string | null; conversation
   /** 2026-09-28 一番最初に物件をお送りした時刻（null＝まだ＝新規のお客様・項目なし＝分からない→今まで通りの選び方） */
   first_proposal_sent_at?: string | null;
   /** 2026-09-30 お客様へ届けた一番最近のご提案の送付（項目なし＝分からない→AD1未満は「他に無い時だけ」）。AD1未満の穴埋めの「しばらく新着を送れていない」 */
-  last_proposal_sent_at?: string | null };
+  last_proposal_sent_at?: string | null;
+  /** 2026-10-20（P1 f9d261d4）会話 id → アカウント（回の会話・このお客様に結んだ会話）。送る回の会話のアカウントで送り、2つ以上のアカウントなら確かめる */
+  line_accounts?: Record<string, string | null> };
 /** 一覧の行（軽い要約だけ。画像・本文は開いた時に読む） */
 type ListCustomer = {
   key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null;
@@ -1082,8 +1085,13 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     // 2026-09-25 反証: AIX に渡せるのは1回10件まで（GET ?ids が10件で切る）。回をまとめてチェックが増えると、
     //   届かない11件目以降にも送り終えた印（mark_sent は渡した id 全部）が付いてしまう → 10件を超えたら止める
     if (targets.length > PICKUP_AIX_MAX) { setMsg(`AIX で一度に送れるのは${PICKUP_AIX_MAX}件までです（今 ${targets.length}件にチェック。${PICKUP_AIX_MAX}件以下にしてください）`); return; }
-    const convId = c.conversation_id ?? b.conversation_id;
+    // 2026-10-20 竹内さん（P1 f9d261d4）「ギガ賃貸のアカウントの AIX ツールから送る場合はギガ賃貸に飛ぶようにする」:
+    //   送り先は回（この物件を拾った回）の会話。旧は一覧の会話（一番新しい行の会話）を先に使い、同じ人の別のアカウントに送ることがあった
+    const target = pickupTargetConversation({ batchConversationIds: (b.parts ?? [b]).map((x) => x.conversation_id), customerConversationId: c.conversation_id });
+    if (target.mixed) { setMsg("この回の物件は2つの会話（アカウント）にまたがっています。別のアカウントに送らないよう止めました（回ごとに送ってください）"); return; }
+    const convId = target.conv;
     if (!convId) { setMsg("このお客様は LINE の会話に紐付いていません（お客さん画面で紐付けてから）"); return; }
+    const convAccount = c.line_accounts?.[convId] ?? (convId === c.conversation_id ? c.line?.account ?? null : null);
     // 2026-09-28 竹内「審査中と出ているのは物件ピックアップのチェックのところに入れない」: 既定・質の高い10件では選ばない。
     //   手で選んだ時（👑 の1件送りも）は渡せる（番手の申込で良いと確かめた等）が、AIX に渡す前に確かめる
     //   2026-09-29 反証: 前は「💾 画像保存」の方に付いていて、AIX に渡すボタンでは確かめていなかった
@@ -1105,7 +1113,10 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     //   旧は ids を DB の並びで渡し、トーク側の GET が rank（拡張の検索順）に並べ直していた＝1枚目が 👑 でない回があった（sent-image-order.ts）
     const atOf = new Map((b.parts ?? [b]).map((x) => [x.batch_id, x.created_at] as const));
     const rb = roundBestId(b.items.map((x) => ({ ...x, batch_id: x.batch_id ?? b.batch_id, created_at: atOf.get(x.batch_id ?? "") ?? b.created_at })), bestBasisFor(c.image_need), c.best?.id ?? null, c.star_rank_mode ?? undefined, c.star_situation ?? null);
-    const href = buildPickupAixHref({ conversationId: convId, pickupIds: sortForReview(targets, rb).map((it) => it.id), batchId: b.batch_id });
+    // 2026-10-20（P1 f9d261d4）同じお客様が2つ以上のアカウントにいる時は、どのアカウントに送るかを確かめる（OK で送る）
+    const multiMsg = multiAccountConfirmMessage(convAccount, Object.values(c.line_accounts ?? {}));
+    if (multiMsg && typeof window !== "undefined" && !window.confirm(multiMsg)) return;
+    const href = buildPickupAixHref({ conversationId: convId, pickupIds: sortForReview(targets, rb).map((it) => it.id), batchId: b.batch_id, account: convAccount });
     if (!href) { setMsg("AIX に渡せませんでした（チェックと会話の紐付けを確かめてください）"); return; }
     leaveTo(href);
   };
@@ -1341,7 +1352,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
             {hl ? hl.text : "理由の記録なし"}
           </div>
           {/* 2026-10-06 竹内「AIXツール 物件ごとに見積書作成のボタン」: この行のお部屋で見積書作成を開く（PickupEstimateButton） */}
-          <PickupEstimateButton conversationId={open?.conversation_id ?? b.conversation_id} pickupId={it.id} onGo={leaveTo} />
+          <PickupEstimateButton conversationId={b.conversation_id ?? open?.conversation_id ?? null} pickupId={it.id} onGo={leaveTo} />
           <button type="button" onClick={(e) => { stop(e); setOpenCard((p) => ({ ...p, [it.id]: !p[it.id] })); }} aria-expanded={opened}
             className="shrink-0 rounded-full px-2.5 py-1 font-bold leading-none" style={{ background: "#efebe9", color: "#5d4037", fontSize: 11 /* globals.css の button { font: inherit } が text-[11px] に勝つため */ }}>{opened ? "詳細 ▴" : "詳細 ▾"}</button>
         </div>

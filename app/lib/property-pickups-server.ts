@@ -94,12 +94,16 @@ export type RecordPickupInput = {
   groupNotice?: "deferred" | null;
 };
 
-/** お客様の会話（LINE の宛先）を物件顧客から引く（最新1件） */
+/**
+ * お客様の会話（LINE の宛先）を物件顧客から引く。
+ * 2026-10-20 竹内さん（P1 f9d261d4・アカウントの取り違え）: 旧は updated_at が一番新しい会話（同じ人がスモラ・イエヤスにいると話していない方に結ばれた）。
+ *   → お客様が最後に話した会話（customer-conversation-server.primaryConversationForCustomer・戻す PICKUP_CONV_BY_CUSTOMER_MSG=off）
+ */
 async function resolveConversationId(propertyCustomerId: string | null, conversationId: string | null): Promise<string | null> {
   if (conversationId) return conversationId;
   if (!propertyCustomerId) return null;
-  const { data } = await supabase.from("conversations").select("id").eq("property_customer_id", propertyCustomerId).order("updated_at", { ascending: false }).limit(1);
-  return ((data ?? [])[0] as { id?: string } | undefined)?.id ?? null;
+  const { primaryConversationForCustomer } = await import("@/app/lib/customer-conversation-server");
+  return (await primaryConversationForCustomer(supabase, propertyCustomerId)).id;
 }
 
 /** 判定のプロフィール（judge API と同じ材料）と、設備の希望を読む条件欄（customer） */

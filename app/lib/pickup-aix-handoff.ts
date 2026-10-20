@@ -8,6 +8,8 @@
  *     （/?conv=…&aix=…&pickup=ids&batch=…）で、aix に property_recommendation も受ける。
  */
 
+import { accountLabelOf, toAccountKey } from "./send-account";
+
 export type PickupAixType = "property_send" | "property_recommendation";
 
 /** AIX に一度に渡せる件数（GET /api/property-pickups?ids が10件で切る・AIX【物件ピックアップした】の画像も10枚まで） */
@@ -31,15 +33,27 @@ export function pickupAixButtonLabel(n: number): string {
   return t === "property_recommendation" ? `🏠 AIX物件オススメ（1${WJ}件）` : `📤 AIX物件ピックアップ（${n}${WJ}件）`;
 }
 
-/** 売上サポ → トークへ移る URL */
-export function buildPickupAixHref(p: { conversationId: string; pickupIds: number[]; batchId?: string | null }): string | null {
+/**
+ * 2026-10-20 竹内さん（P1 f9d261d4・アカウントの取り違え）: 送る回の会話を決める。
+ *   回（拡張の1回分）の行に付いた会話を先に使う（旧はお客様の一覧の会話＝一番新しい行の会話を先に使っていた＝同じ人の別のアカウントの回でも
+ *   一覧の会話に送った）。回の中で会話が2つ以上に分かれていたら送らない（mixed）。回に会話が無い時だけお客様の会話。
+ */
+export function pickupTargetConversation(p: { batchConversationIds: ReadonlyArray<string | null | undefined>; customerConversationId?: string | null }): { conv: string | null; mixed: boolean } {
+  const ids = [...new Set(p.batchConversationIds.filter((v): v is string => !!v))];
+  if (ids.length > 1) return { conv: null, mixed: true };
+  return { conv: ids[0] ?? p.customerConversationId ?? null, mixed: false };
+}
+
+/** 売上サポ → トークへ移る URL。account: 送る会話のアカウント（トーク側で開いた会話のアカウントと照らす・2026-10-20） */
+export function buildPickupAixHref(p: { conversationId: string; pickupIds: number[]; batchId?: string | null; account?: string | null }): string | null {
   const ids = p.pickupIds.filter((v) => Number.isInteger(v) && v > 0);
   const aix = aixTypeForPickupCount(ids.length);
   if (!aix || !p.conversationId || ids.length > PICKUP_AIX_MAX) return null;
-  return `/?conv=${encodeURIComponent(p.conversationId)}&aix=${aix}&pickup=${encodeURIComponent(ids.join(","))}&batch=${encodeURIComponent(p.batchId ?? "")}`;
+  const acct = (p.account ?? "").trim();
+  return `/?conv=${encodeURIComponent(p.conversationId)}&aix=${aix}&pickup=${encodeURIComponent(ids.join(","))}&batch=${encodeURIComponent(p.batchId ?? "")}${acct ? `&acct=${encodeURIComponent(acct)}` : ""}`;
 }
 
-export type PickupAixHandoff = { conv: string; ids: string; batch: string; aix: PickupAixType };
+export type PickupAixHandoff = { conv: string; ids: string; batch: string; aix: PickupAixType; acct?: string | null };
 
 /**
  * トーク側で URL を読む。物件オススメは1件だけ（2件以上の ids で property_recommendation が来たら、送り間違いを避けて物件ピックアップに直す）。
@@ -51,7 +65,20 @@ export function parsePickupAixHandoff(search: string): PickupAixHandoff | null {
   if (!conv || !ids || (aix !== "property_send" && aix !== "property_recommendation")) return null;
   const n = ids.split(",").filter((s) => /^\d+$/.test(s.trim())).length;
   if (n === 0) return null;
-  return { conv, ids, batch: sp.get("batch") ?? "", aix: aix === "property_recommendation" && n !== 1 ? "property_send" : aix };
+  const acct = (sp.get("acct") ?? "").trim() || null;
+  return { conv, ids, batch: sp.get("batch") ?? "", aix: aix === "property_recommendation" && n !== 1 ? "property_send" : aix, ...(acct ? { acct } : {}) };
+}
+
+/**
+ * 2026-10-20（P1 f9d261d4）トーク側の確かめ: AIX ツールが送ると決めた会話のアカウント（acct）と、開いた会話のアカウントが違えば AIX をセットしない。
+ *   acct が無い（旧の URL）・開いた会話のアカウントが分からない時は今まで通り（null）
+ */
+export function handoffAccountMismatch(acct: string | null | undefined, openedAccount: string | null | undefined): string | null {
+  const a = (acct ?? "").trim(), o = (openedAccount ?? "").trim();
+  if (!a || !o || a === o) return null;
+  const ka = toAccountKey(a), ko = toAccountKey(o);
+  if (ka && ko && ka === ko) return null;
+  return `AIX ツールでは ${accountLabelOf(a)} の会話に送る物件でしたが、開いた会話は ${accountLabelOf(o)} です。別のアカウントに送らないよう AIX をセットしませんでした（AIX ツールから開き直してください）`;
 }
 
 /**

@@ -499,10 +499,20 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     return Promise.resolve(q.order("sent_at", { ascending: false }).limit(1000))
       .then((r) => (r.error ? null : ((r.data ?? []) as SentHistLite[])), () => null);
   })();
-  const [{ data: cv }, firstSent, roomHist] = await Promise.all([
+  // 2026-10-20 竹内さん（P1 f9d261d4・アカウントの取り違え）: 回ごとの会話のアカウントと、このお客様に結んだ会話（アカウントの一覧）。
+  //   画面（AIX ツール）は回の会話のアカウントで送り、2つ以上のアカウントにまたがる時は送る前に確かめる（send-account.multiAccountConfirmMessage）
+  const rowConvIds = [...new Set(rows.map((r) => r.conversation_id).filter((v): v is string => !!v && /^[0-9a-f-]{36}$/i.test(v)))];
+  const lineConvsQ: Promise<Array<{ id: string; account: string | null }>> = (() => {
+    if (!rowConvIds.length && !custId) return Promise.resolve([]);
+    let q = supabase.from("conversations").select("id, account");
+    q = rowConvIds.length && custId ? q.or(`id.in.(${rowConvIds.join(",")}),property_customer_id.eq.${custId}`) : rowConvIds.length ? q.in("id", rowConvIds) : q.eq("property_customer_id", custId as string);
+    return Promise.resolve(q.limit(20)).then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ id: string; account: string | null }>)), () => []);
+  })();
+  const [{ data: cv }, firstSent, roomHist, lineConvs] = await Promise.all([
     convId ? supabase.from("conversations").select("customer_name, profile_image_url, updated_at, account, status, last_sender").eq("id", convId).maybeSingle() : Promise.resolve({ data: null }),
     firstSentQ,
     roomHistQ,
+    lineConvsQ,
   ]);
   // 👑 に送付済みの部屋（別の回で届けた同じ部屋・完全一致）を選ばない（既定のチェックと同じ線・sent-room-match）
   const sentBeforeSet = sentBeforeIds(rows.map((r) => ({ id: r.id, status: r.status, property_name: r.property_name, room_no: r.room_no, room_text: listingOf.get(r.id)?.room_text ?? null })), roomHist ?? []);
@@ -558,6 +568,8 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       pending: windowPick ? windowPick.pending : rows.filter((r) => r.status === "pending").length,
       last_at: rows[0]?.created_at ?? "",
       line: c ? { profile_image_url: c.profile_image_url, updated_at: c.updated_at, account: c.account, status: c.status, last_sender: c.last_sender } : null,
+      // 2026-10-20（P1 f9d261d4）会話 id → アカウント（回の会話・このお客様に結んだ会話）
+      line_accounts: Object.fromEntries(lineConvs.map((x) => [String(x.id), x.account ?? null])) as Record<string, string | null>,
       // 表示用の送った履歴（直近40件）＝照合用の読み（会話 or お客様）の頭40行
       sent_history: ((roomHist ?? []) as unknown[]).slice(0, 40) as Array<{ id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null }>,
       // 2026-09-30 送付済みの部屋の照合用（建物名・号室・届け先だけ・最大1000行）。画面の確かめ・既定のチェックは sent_history（40行）より先にこちらを使う

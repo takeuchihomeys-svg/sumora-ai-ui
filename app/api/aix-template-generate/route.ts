@@ -536,6 +536,13 @@ export async function POST(req: NextRequest) {
 
   // 2026-10-08 竹内さん「名前1文字でも『さん』を付ける」: 1文字の表示名（「あ」「R」）も呼ぶ（記号・絵文字だけは呼ばない＝oneCharCallName）
   if (!resolvedCustomerName && !isGroupConversationName(customerName)) resolvedCustomerName = oneCharCallName(customerName);
+  // 2026-10-20 竹内さん（P1 979a4c55・ayaka→🎀）: 会話がある時は返信の下書きと同じ呼び名（固定の呼び名 → 会話で確定した名前）を先に使う。
+  //   画面から来る名前は窓の中の呼びかけ → LINE の表示名で、表示名を変えたお客様で呼び名が変わっていた。戻す: AIX_CALL_NAME_FROM_CONVERSATION=off
+  if (conversationId && !isGroupConversationName(customerName) && (process.env.AIX_CALL_NAME_FROM_CONVERSATION ?? "").trim().toLowerCase() !== "off") {
+    const { callNameForConversation } = await import("@/app/lib/address-name-server");
+    const conv = await Promise.race([callNameForConversation(conversationId, resolvedCustomerName).catch(() => ""), new Promise<string>((r) => setTimeout(() => r(""), 3_000))]);
+    if (conv) resolvedCustomerName = conv;
+  }
 
   // ── customerConditions ground-truth フォールバック ─────────────────────────
   // body.customerConditions が空のとき、conversations → property_customers を辿って
