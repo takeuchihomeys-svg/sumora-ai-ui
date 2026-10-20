@@ -5,7 +5,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { supabase } from "@/app/lib/supabase";
 // 2026-09-29 API 費用の調査: 名札を付ける（llm-alt-provider は system の先頭の語で既に "aix_template" と見なしている＝同じ名前なので回し方は変わらない）
-import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
+import { sumoraLlmMarks, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
@@ -1578,13 +1578,14 @@ export async function POST(req: NextRequest) {
   if (secondMsgMaterialsOn() && (sentMessage ?? "").trim()) {
     try {
       const { loadSecondMaterials } = await import("@/app/lib/second-message-materials-server");
-      secondMaterials = await loadSecondMaterials({
+      // 読みが詰まっても生成は止めない（8秒で材料なし＝今までの形）
+      secondMaterials = await Promise.race([loadSecondMaterials({
         conversationId: conversationId ?? null, actionType: actionType ?? null,
         recent: Array.isArray(recentMessages) ? recentMessages : [], sentMessage,
         brainRequestStatus: (brainMeta as { request_status?: unknown } | null)?.request_status ?? null,
         ngPointsFromBrain: brainMeta?.property_search_params?.ng_points ?? null,
         names: [resolvedCustomerName, customerName],
-      });
+      }), new Promise<null>((r) => setTimeout(() => r(null), 8_000))]);
     } catch (e) { console.warn("[aix-template-generate] second-materials failed:", e instanceof Error ? e.message : e); }
   }
   // 見積書を2回の AIX で送った時は、この番の見積書全部（材料が読めた時だけ・off なら1通目の見出しのまま）
@@ -1810,6 +1811,14 @@ export async function POST(req: NextRequest) {
     //   （Claude には区切りの文字を後ろのブロックの先頭に付けた形で、同じ文字が同じ順に届く）。DeepSeek の試験の再生・使い回しの鍵も変えない
     let altRoutedAix = false;
     try { altRoutedAix = (await import("@/app/lib/llm-alt-provider")).willRouteAlt("aix_template"); } catch { /* 判定できない時は分ける（本番の Claude の形） */ }
+    // 2026-10-20 レビュー: 材料のスイッチが off でも、DeepSeek に回る設定の時だけ個人情報の線を引く（申込以降・審査の事情・申込の線は Claude に固定）。
+    //   本番は aix_template を回していない＝ここは呼ばれず、ヘッダも本文も今までと同じ
+    let piiHeaders: Record<string, string> = secondMaterials?.headers ?? {};
+    if (!secondMaterials && altRoutedAix) {
+      try {
+        piiHeaders = await (await import("@/app/lib/second-message-materials-server")).aixTemplatePiiHeaders(conversationId ?? null, Array.isArray(recentMessages) ? recentMessages : []);
+      } catch { piiHeaders = { ...sumoraLlmMarks("aix_template"), [LLM_POST_APPLY_HEADER]: "1" }; }
+    }
     const dbParts = altRoutedAix
       ? (dbKnowledgeBlock ? [{ kind: "all" as const, text: dbKnowledgeBlock }] : [])
       : aixTemplateDbKnowledgeParts(topPrinciples, lossPatterns, dbRulesGeneric, dbRulesAction);
@@ -1836,8 +1845,9 @@ export async function POST(req: NextRequest) {
           "anthropic-version": "2023-06-01",
           "anthropic-beta": "prompt-caching-2024-07-31",
           ...sumoraLlmMarks("aix_template"),
-          // 2026-10-20 2通目の材料を渡す時だけ: 申込以降・審査の事情・申込の線は Claude に固定（x-sumora-llm-post-apply）／DeepSeek に回る時は印 all（材料は伏せ済み）
-          ...(secondMaterials?.headers ?? {}),
+          // 2026-10-20 申込以降・審査の事情・申込の線は Claude に固定（x-sumora-llm-post-apply）／DeepSeek に回る時は印 all（材料は伏せ済み）。
+          //   材料を渡す時と、off でも DeepSeek に回る設定の時だけ（本番の Claude の呼び出しは空＝今までと同じ）
+          ...piiHeaders,
         },
         body: JSON.stringify({
           model: "claude-sonnet-5",
@@ -2310,10 +2320,11 @@ ${text}
     }
     // 2026-10-20 2通目の出口の確かめ（材料を渡した時だけ）: ご査収は送った時だけ・送った物の種類の言い方・見積書 N件→N件の名前。触れていない質問・費用の種類は当たりだけ返す
     if (secondMaterials) {
-      const fc = applySecondFinalChecks(text, { sent: secondMaterials.sent, asks: secondMaterials.asks, firstMessage: sentMessage, costKind: secondMaterials.costKind });
-      if (fc.applied.length || fc.warnings.length) console.log(JSON.stringify({ tag: "aix-template-generate:second-final-checks", actionType, applied: fc.applied, warnings: fc.warnings }));
-      text = fc.text;
-      return NextResponse.json({ ok: true, text, materialWarnings: fc.warnings });
+      try {
+        const fc = applySecondFinalChecks(text, { sent: secondMaterials.sent, asks: secondMaterials.asks, firstMessage: sentMessage, costKind: secondMaterials.costKind });
+        if (fc.applied.length || fc.warnings.length) console.log(JSON.stringify({ tag: "aix-template-generate:second-final-checks", actionType, applied: fc.applied, warnings: fc.warnings }));
+        return NextResponse.json({ ok: true, text: fc.text, materialWarnings: fc.warnings });
+      } catch (e) { console.warn("[aix-template-generate] second-final-checks failed:", e instanceof Error ? e.message : e); }
     }
     return NextResponse.json({ ok: true, text });
   } catch (err) {

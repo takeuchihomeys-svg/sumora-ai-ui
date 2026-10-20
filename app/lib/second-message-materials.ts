@@ -233,13 +233,20 @@ export function fixReceiptWhenNotSent(text: string, sent: Pick<SentThisTurn, "an
 
 const DOC_WORD_RE = /物件資料(?:[・や]間取り図)?|お部屋の資料|物件の資料/g;
 const ESTIMATE_WORD_RE = /御見積書|お見積書|御見積り|お見積り/;
+/** お客様が送った資料の言い方（前: お送り頂いた・頂きました／後: 確認・拝見・ありがとう） */
+const CUSTOMER_DOC_BEFORE_RE = /(?:お送り|送って|ご共有|共有)(?:頂|いただ)(?:き|いた)(?:まし)?た?$|(?:頂|いただ)(?:きました|いた)$/;
+const CUSTOMER_DOC_AFTER_RE = /^(?:を|の)?(?:確認|拝見|ありがとう|頂|いただ)/;
 
 /** 送った物の種類の言い方の取り違え。kind=estimate なのに「物件資料」と書いた → 御見積書に直す／property_images なのに「御見積書」→ 直さず当たりだけ返す */
 export function fixImageTypeWording(text: string, sent: Pick<SentThisTurn, "kind" | "images">): { text: string; applied: string[]; flagged: string[] } {
   const t = String(text ?? "");
   if (sent.kind === "estimate") {
     const applied: string[] = [];
-    let out = t.replace(DOC_WORD_RE, (m) => { applied.push(m); return "御見積書"; });
+    // お客様が送った資料（「お送り頂きました物件資料確認させて頂きました」）は送った物の話ではないので触らない（レビュー 10/20）
+    let out = t.replace(DOC_WORD_RE, (m: string, off: number) => {
+      if (CUSTOMER_DOC_BEFORE_RE.test(t.slice(Math.max(0, off - 12), off)) || CUSTOMER_DOC_AFTER_RE.test(t.slice(off + m.length, off + m.length + 12))) return m;
+      applied.push(m); return "御見積書";
+    });
     out = out.replace(/御見積書[・や]御見積書/g, "御見積書");
     const flagged = /間取り図/.test(out) ? ["間取り図"] : [];
     return { text: applied.length ? out : t, applied, flagged };
@@ -270,7 +277,7 @@ export function fixEstimateNames(text: string, estimates: ReadonlyArray<string>)
   const mentioned = estimates.filter((e) => { const b = squash(buildingOf(e)); return b.length >= 2 && n.includes(b); });
   if (mentioned.length >= 2 || COUNT_WORD_RE.test(t.normalize("NFKC"))) return { text: t, applied: [], flagged: [] };
   const all = estimates.length <= 2 ? estimates.join("・") : `${estimates.length}部屋の`;
-  const tidy = (x: string) => x.replace(/のの/g, "の");
+  const tidy = (x: string) => x.replace(/部屋のの/g, "部屋の");
   if (mentioned.length === 1) {
     const b = buildingOf(mentioned[0]);
     const re = nameRe(b);

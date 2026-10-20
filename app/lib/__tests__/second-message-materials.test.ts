@@ -122,6 +122,18 @@ it("送った物の種類: 見積書なのに物件資料 → 御見積書／物
   eq(f.flagged.length, 1);
 });
 
+it("レビュー 10/20: お客様が送った物件資料の話は御見積書に直さない・直しは1回きり（2回目は何もしない）", () => {
+  const t = "お送り頂きました物件資料確認させて頂きました！！\nこちら御見積書となります！！";
+  eq(fixImageTypeWording(t, { kind: "estimate", images: 0 }).text, t);
+  eq(fixImageTypeWording("物件資料拝見させて頂きました！！", { kind: "estimate", images: 0 }).applied.length, 0);
+  eq(fixImageTypeWording("物件資料をお送りさせて頂きました！！", { kind: "estimate", images: 0 }).text, "御見積書をお送りさせて頂きました！！");
+  const sent = sentThisTurn({ actionType: "estimate_sheet", turnStaff: [CARD_A, CARD_B] });
+  const once = applySecondFinalChecks("メゾンシュシュ 101号室最大限割引しました物件資料となります！！", { sent, asks: [] });
+  eq(applySecondFinalChecks(once.text, { sent, asks: [] }).applied.length, 0);
+  // 「部屋のの」だけ詰める（他の「のの」は触らない）
+  eq(fixEstimateNames("ののちゃんB荘 202の最大限割引しました", ["A荘 101", "B荘 202", "C荘 303"]).text, "ののちゃん3部屋の最大限割引しました");
+});
+
 it("見積書2件 → 1件の名前だけなら2件の名前に（12adf1bd の実物）", () => {
   const t = "RyoichiさんBelle Court大美野 201号室最大限割引しました初期費用の御見積書となります！！";
   const r = fixEstimateNames(t, ["メゾンシュシュ 101号室", "Belle Court大美野 201号室"]);

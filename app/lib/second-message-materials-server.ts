@@ -95,3 +95,30 @@ export async function loadSecondMaterials(o: {
   console.log(JSON.stringify({ tag: "aix-template-generate:second-materials", route, sent: { kind: sent.kind, est: sent.estimates.length, img: sent.images, any: sent.anySent }, asks: asks.length, promises: promises.length, answers: answers.length, memo: memoNote.length, cost: costKind }));
   return { note, sent, asks, costKind, headers, route };
 }
+
+/**
+ * 2026-10-20 レビュー: 材料のスイッチが off の時も、AIX テンプレ（aix_template）が DeepSeek に回る設定の時だけ、個人情報の線を同じ決まりで引く。
+ *   旧は会話の印もヘッダも無く、出口の時刻の線の歯止め（cutoffGateDecision）が「印なし＝回す」と読んで、申込以降・審査の事情の会話も DeepSeek に出ていた。
+ *   本番は aix_template を回していない（LLM_ALT_ACTIONS=reply_generate）ので、呼ぶ側は willRouteAlt が true の時だけ呼ぶ＝本番の Claude の呼び出しは1バイトも変わらない。
+ *   戻り: Claude に固定（申込以降・審査の事情・申込の線・読めない）／全部渡してよい会話は印 all（今までどおり回る）
+ */
+export async function aixTemplatePiiHeaders(conversationId: string | null | undefined, recent: ReadonlyArray<SmMsg>): Promise<Record<string, string>> {
+  const cid = (conversationId ?? "").trim() || null;
+  const pin = { ...sumoraLlmMarks("aix_template", cid), [LLM_POST_APPLY_HEADER]: "1" };
+  if (!cid) return pin;
+  try {
+    const [facts, sens] = await Promise.all([
+      loadPostApplyFacts(supabase, cid),
+      screeningPiiClaudeEnabled()
+        ? (screeningSensitiveInMessages(recent.map((m) => ({ sender: m.sender ?? null, text: m.text ?? null }))) ?? loadScreeningSensitive(supabase, cid))
+        : Promise.resolve(null),
+    ]);
+    const postApply = resolvePostApply(facts).postApply;
+    const cutoffAll = cutoffMs(deepseekSafeCutoff(facts)) === NO_CUTOFF;
+    return secondMaterialsRoute({ postApply, cutoffAll, sensitive: !!sens, goesAlt: true }) === "alt"
+      ? { ...sumoraLlmMarks("aix_template", cid), [LLM_CUTOFF_HEADER]: "all" }
+      : pin;
+  } catch {
+    return pin;
+  }
+}
