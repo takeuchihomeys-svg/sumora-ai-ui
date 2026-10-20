@@ -12,6 +12,7 @@ import { buildAltNameMask, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { loadPartyAliasesByCustomer, loadKnownCallNames } from "@/app/lib/pii-known-names";
 import { altPiiSignal, altPiiGateEnabled } from "@/app/lib/alt-pii-gate";
 import { callDeepSeekRead } from "@/app/lib/vision-alt-provider";
+import { screeningSensitiveSignal, screeningPiiAixEnabled } from "@/app/lib/screening-sensitive";
 import {
   buildConditionSummary, conditionFreeText, buildSummaryUserText, parseSummaryResponse, maskClause, formatSummaryLine, uncheckableLabels, dropAiCoveredByRule,
   SUMMARY_SYSTEM_PROMPT, CONDITION_SUMMARY_VERSION, type ConditionSummary, type SummaryCustomer, type SummaryItem,
@@ -97,7 +98,9 @@ export async function loadConditionSummary(propertyCustomerId: string | null, op
     ? buildAltNameMask(names, await loadPartyAliasesByCustomer(propertyCustomerId, [opts.conversationId]).catch(() => [] as string[]), await loadKnownCallNames().catch(() => [] as string[]))
     : null;
   const masked = willRead && altMask
-    ? clauses.map((x) => maskClause(maskPIIForAlt(x, altMask))).filter((x) => !gateOn || !altPiiSignal(x))
+    // 2026-10-20 竹内「個人情報が絡む部分はかならずクロードにする」: ここは Claude の道が無い（必ず DeepSeek）ので、
+    //   審査の事情（夜の仕事・外国籍・保証人の事情・他人の名義・滞納 等・screening-sensitive.ts）がある節は渡さない（その節は決定論の要約だけ）。戻す SCREENING_PII_CLAUDE_AIX=off
+    ? clauses.map((x) => maskClause(maskPIIForAlt(x, altMask))).filter((x) => (!gateOn || !altPiiSignal(x)) && (!screeningPiiAixEnabled() || !screeningSensitiveSignal(x)))
     : [];
   if (!saved && opts.allowLlm && hasKey && masked.length > 0 && propertyCustomerId) {
     // 2026-09-25 竹内「抜けの内容にプロンプトキャッシュを効かせる」「クロードに切り替えない」: 固定の前置き（SUMMARY_SYSTEM_PROMPT）が system・読めない節は後ろ。

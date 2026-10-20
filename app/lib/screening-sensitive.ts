@@ -119,3 +119,46 @@ export async function loadScreeningSensitive(sb: Sb, conversationId: string): Pr
       .map((r) => ({ sender: "staff", text: r.generated_text ?? null, checkPattern: r.check_pattern ?? null })),
   ]);
 }
+
+// ─── 2026-10-20 AIX・物件の経路（竹内「個人情報が絡む部分はかならずクロードにする」の残りの穴）─────────────
+//   返信の下書き（generate-reply）の後も、審査の事情が当たった会話で aix/action の本文（property_send・estimate_sheet・viewing_invite…
+//   いずれも recentHistory＝会話の履歴をプロンプトに入れる）・物件オススメ（画像＋履歴）が DeepSeek に出ていた（実データ 30日・
+//   scripts/audit-screening-sensitive-aix.ts）。履歴を持つ名札だけ Claude に固定し、物件の文・画像だけを読む名札は DeepSeek のまま。
+//   戻す: SCREENING_PII_CLAUDE_AIX=off（AIX・物件の経路だけ）／SCREENING_PII_CLAUDE=off（全部）
+
+/** AIX・物件の経路でも使うか（既定 on。SCREENING_PII_CLAUDE=off か SCREENING_PII_CLAUDE_AIX=off で旧の動き） */
+export function screeningPiiAixEnabled(env: Record<string, string | undefined> = typeof process === "undefined" ? {} : process.env): boolean {
+  return screeningPiiClaudeEnabled(env) && (env.SCREENING_PII_CLAUDE_AIX ?? "on").trim().toLowerCase() !== "off";
+}
+
+/**
+ * 物件の文・画像だけを読む名札（お客様の発言・会話の履歴を入れない）。審査の事情が当たった会話でも DeepSeek のまま。
+ *   どれも vision-alt-provider.callDeepSeekRead の直の口で、入れるのは物件資料の文字・画像・設備の名前だけ
+ *   （property_text_detail は 30日 2,177回・当たった会話で 608回）。
+ */
+export const SCREENING_PII_PROPERTY_ONLY_ACTIONS: ReadonlySet<string> = new Set([
+  "property_text_detail", "property_image_detail", "property_image_read", "property_image_transcribe", "property_image_recheck",
+  "property_brain_image", "property_rank", "pickup_image_analysis", "pickup_image_analysis_auto",
+  "property_ledger_read", "property_ledger_items", "interior_tone", "material_plan_read", "equipment_sheet_text",
+  "search_audit", "screen_watch_text", "screen_watch_arbiter", "screen_watch_weekly",
+]);
+
+/**
+ * この名札を、審査の事情が当たった会話で Claude に固定するか。
+ *   物件だけを読む名札（上）以外は固定する（AIX の本文はどれも会話の履歴を入れる・知らない新しい名札も固定＝締める側）。
+ */
+export function screeningPiiPinsAction(action: string | null | undefined): boolean {
+  const a = (action ?? "").trim();
+  if (!a) return true;
+  return !SCREENING_PII_PROPERTY_ONLY_ACTIONS.has(a);
+}
+
+/** 行ごとに見て、審査の事情がある行を落とす（DeepSeek にしか出さない読み取り＝Claude の道が無い所で使う） */
+export function dropScreeningSensitiveLines(text: string | null | undefined): string {
+  return String(text ?? "").split("\n").filter((l) => !screeningSensitiveSignal(l)).join("\n");
+}
+
+/** この名札の呼び出しを Claude に固定するか（AIX・物件の経路の判定・純関数）。当たり（hit）が無ければ固定しない */
+export function screeningPiiForcesClaude(action: string | null | undefined, hit: ScreeningSensitiveHit | null | undefined, env: Record<string, string | undefined> = typeof process === "undefined" ? {} : process.env): boolean {
+  return !!hit && screeningPiiAixEnabled(env) && screeningPiiPinsAction(action);
+}
