@@ -4,8 +4,10 @@
 import {
   aixNewPickers1020Enabled, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText,
   ensureScreeningSupportLine, isApplicationStatusQuestion, isRoomVacanciesQuestion, parseVacancyRows, SCREENING_SUPPORT_LINE,
-  stripUncheckedScreeningClaims,
+  stripUncheckedScreeningClaims, aixRequestMustUseClaude,
 } from "../aix-new-pickers";
+import { willRouteAlt } from "../llm-alt-provider";
+import { readFileSync } from "node:fs";
 import { checkPatternForConfirmTopic, confirmObjectOf, confirmTopicsForCheckPattern } from "../action-ledger";
 import { promisesInStaffText } from "../promise-queue";
 import { normalizeBrainCheckPattern } from "../brain-check-pattern";
@@ -59,6 +61,22 @@ it("審査について（ご相談）: 締めの一文は必ず1回", () => {
   const a = ensureScreeningSupportLine("保証会社のみで審査可能とのことでした！！");
   ok(a.endsWith(SCREENING_SUPPORT_LINE), a);
   ok(ensureScreeningSupportLine(a) === a, "2回付く");
+});
+
+it("審査について（ご相談）は必ず Claude（DeepSeek に回さない・スイッチに関係なく）", () => {
+  // property_check_result を DeepSeek に回す設定でも、審査の相談だけは「申込以降」と同じ扱い＝回らない
+  const env = { LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "property_check_result" };
+  ok(willRouteAlt("property_check_result", {}, env), "前提: property_check_result が回る設定になっていない");
+  const must = aixRequestMustUseClaude({ action: "property_check_result", check_pattern: "mgmt_screening" });
+  ok(must, "審査の相談が Claude 固定になっていない");
+  ok(!willRouteAlt("property_check_result", { postApply: must }, env), "審査の相談が DeepSeek に回る");
+  withSwitch(undefined, () => ok(aixRequestMustUseClaude({ action: "property_check_result", check_pattern: "mgmt_screening" }), "off で外れる"));
+  ok(!aixRequestMustUseClaude({ action: "property_check_result", check_pattern: "mgmt_parking" }), "ほかのピッカーまで固定");
+  ok(!aixRequestMustUseClaude({ action: "property_recommendation", check_pattern: "mgmt_screening" }), "別の action まで固定");
+  // aix/action の歯止めが実際にこれを渡している（読むだけの確かめ）
+  const route = readFileSync("app/api/aix/action/route.ts", "utf8");
+  ok(/setupAltProviderGuards\([^\n]*aixRequestMustUseClaude\(body\)\)/.test(route), "aix/action が aixRequestMustUseClaude を歯止めに渡していない");
+  ok(/if \(forceClaude\) \{\s*ctx\.postApply = true;/.test(route), "forceClaude で postApply を立てていない");
 });
 
 it("物件について→募集号室について: 入力の行のまま一覧（AI なし）", () => {

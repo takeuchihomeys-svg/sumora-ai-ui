@@ -15,6 +15,16 @@ export function aixNewPickers1020Enabled(env: Record<string, string | undefined>
   return (env.AIX_NEW_PICKERS_1020 ?? "").trim().toLowerCase() === "on";
 }
 
+/**
+ * 2026-10-20 竹内さん「個人情報が絡む部分はかならずクロードにする」: 審査について（ご相談）は職業（夜職）・国籍・保証人・
+ * ご家族の勤め先などのお客様の事情を入れるので、スイッチに関係なく必ず Claude（DeepSeek に回さない）。
+ * aix/action の歯止め（setupAltProviderGuards）がこれを見て「申込以降」と同じ扱い（回さない・印を付けて Anthropic）にする。
+ */
+export const CLAUDE_ONLY_CHECK_PATTERNS: readonly string[] = ["mgmt_screening"];
+export function aixRequestMustUseClaude(body: { action?: unknown; check_pattern?: unknown } | null | undefined): boolean {
+  return !!body && body.action === "property_check_result" && typeof body.check_pattern === "string" && CLAUDE_ONLY_CHECK_PATTERNS.includes(body.check_pattern);
+}
+
 /** 新しい check_pattern（画面・記録・ブレインで同じ値） */
 export const NEW_CHECK_PATTERNS_1020 = ["mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
 export type NewCheckPattern1020 = typeof NEW_CHECK_PATTERNS_1020[number];

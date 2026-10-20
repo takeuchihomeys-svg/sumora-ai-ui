@@ -1,6 +1,6 @@
 import { composeLifelineMessage } from "@/app/lib/aix-lifeline";
 // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・契約の条件・家賃の交渉・バイク置き場・物件について→募集号室について）
-import { applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, stripUncheckedScreeningClaims, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
+import { aixRequestMustUseClaude, applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, stripUncheckedScreeningClaims, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
 import { NextRequest, NextResponse, after } from "next/server";
 import { buildMustSendNote, mustMoveInLabel, normalizeRequirementStrengths } from "@/app/lib/requirement-strength";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -1015,12 +1015,19 @@ function llmMetaHeaders(action: string): Record<string, string> {
  * ・回る時だけ masker を作る（Claude へ行く時は null ＝ 送る文は1バイトも変わらない）
  * ・判定に失敗したら「回さない」側へ倒す（fail-closed）
  */
-async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | null, customerName: string | null, action: string): Promise<void> {
+async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | null, customerName: string | null, action: string, forceClaude = false): Promise<void> {
   ctx.postApply = false;
   ctx.masker = null;
   ctx.cutoff = conversationId ? null : NO_CUTOFF;
   ctx.cutActive = false;
   ctx.cutMark = { kind: "blocked" };
+  // 2026-10-20 竹内さん「個人情報が絡む部分はかならずクロードにする」: 審査について（ご相談）等は申込以降と同じ扱い（回さない・印を付けて Anthropic）
+  if (forceClaude) {
+    ctx.postApply = true;
+    setDeepseekScope({ conversationId, mark: ctx.cutMark });
+    console.log(JSON.stringify({ tag: "aix:claude-only-pattern", conversationId, action }));
+    return;
+  }
   try {
     if (conversationId) {
       // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: status は27.4%の会話で遅れていて、
@@ -1654,7 +1661,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
     }
     if (reqCtx) {
       reqCtx.conversationId = convId;
-      await setupAltProviderGuards(reqCtx, convId, typeof body.customer_name === "string" ? body.customer_name : null, String(body.action ?? ""));
+      await setupAltProviderGuards(reqCtx, convId, typeof body.customer_name === "string" ? body.customer_name : null, String(body.action ?? ""), aixRequestMustUseClaude(body));
       if (reqCtx.cutActive && Array.isArray(body.recent_messages)) {
         const before = (body.recent_messages as unknown[]).length;
         body.recent_messages = filterAfterCutoff(body.recent_messages as Array<{ rawCreatedAt?: string | null; createdAt?: string | null }>, (m) => m?.rawCreatedAt ?? m?.createdAt ?? null, reqCtx.cutoff ?? null);
