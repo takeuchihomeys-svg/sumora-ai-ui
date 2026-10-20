@@ -19,6 +19,20 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import { resolveRouteName, testDeepseekModelOverride } from "../../app/lib/llm-alt-provider";
+
+/** 2026-10-18: LLM_TEST_DS_MODEL_BY_ACTION で替えた名札のモデル（無ければ null）。名札の無い返信生成は system の先頭で見分ける（llm-alt と同じ） */
+function actionModelOverride(env: Record<string, string | undefined>, action: string | null, body: string | null): string | null {
+  if (!(env.LLM_TEST_DS_MODEL_BY_ACTION ?? "").trim()) return null;
+  let head = "";
+  if (!action && body) {
+    try {
+      const sys = (JSON.parse(body) as { system?: unknown }).system;
+      head = typeof sys === "string" ? sys : Array.isArray(sys) ? sys.map((b) => (b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" ? (b as { text: string }).text : "")).join("") : "";
+    } catch { head = ""; }
+  }
+  return testDeepseekModelOverride(env, resolveRouteName(action, head.slice(0, 200)));
+}
 
 export type CassetteMode = "off" | "record" | "replay" | "strict";
 export const CASSETTE_HEADER = "x-llm-cassette";
@@ -84,10 +98,11 @@ export function cassetteKey(o: { host: string; path: string; action: string | nu
  * 2026-10-18: 最後の Claude の確かめ（LLM_TEST_FINAL_CLAUDE）も pro の回と同じ鍵だった → 「Sonnet の回」が pro の回の答えを再生し、
  *   比べが同じに見えた（mc1018-sonnet は brain_fresh を1回も呼んでいない）。Claude の回は印を足して別の鍵にする。DeepSeek へ直に送る要求には足さない。
  */
-export function cassetteSalt(env: Record<string, string | undefined>, host: string): string {
+export function cassetteSalt(env: Record<string, string | undefined>, host: string, actionModel: string | null = null): string {
   if (/deepseek/.test(host)) return "";
   if (String(env.LLM_TEST_FINAL_CLAUDE ?? "").trim()) return "\n#provider=claude";
-  const dsm = String(env.DEEPSEEK_MODEL ?? "").trim();
+  // 2026-10-18 flash-writer: 名札ごとに替えたモデル（LLM_TEST_DS_MODEL_BY_ACTION＝書く役だけ flash）があればそれ・無ければ DEEPSEEK_MODEL
+  const dsm = String(actionModel ?? env.DEEPSEEK_MODEL ?? "").trim();
   return dsm && dsm !== "deepseek-v4-pro" ? `\n#model=${dsm}` : "";
 }
 /**
@@ -272,7 +287,10 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
     // 2026-10-17: 要求は別クラウドへ振り替える前（Anthropic の形）で録る＝DEEPSEEK_MODEL を既定（deepseek-v4-pro）から替えた回も同じ鍵になり、
     //   pro の答えを flash の回に返していた（モデルの比べが全部「同じ」に見えた）。既定と違う時だけ鍵にモデルを足す（既定の鍵は今まで通り）
     //   DeepSeek へ直に送る要求（判定など）は本文にモデル名がある＝足さない。2026-10-18: Claude の確かめの回も別の鍵（cassetteSalt）
-    const key = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host) });
+    //   2026-10-18: 名札ごとにモデルを替えた回（LLM_TEST_DS_MODEL_BY_ACTION＝書く役だけ flash）は、その名札の要求だけ鍵にモデルを足す
+    //   （ブレインは既定のモデルの鍵のまま＝pro の答えの再生で判断を固定できる）
+    const actionModel = !/deepseek/.test(u!.host) ? actionModelOverride(env, action, body) : null;
+    const key = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host, actionModel) });
     const nth = seen.get(key) ?? 0; seen.set(key, nth + 1);
     const entry = readEntry(o.dir, key);
     // 2026-10-18: 録った答えのうち、この回の宛先（Claude／DeepSeek）に合う物だけを n 番目として返す（cassetteResponseFits）

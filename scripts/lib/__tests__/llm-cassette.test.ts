@@ -143,6 +143,8 @@ const quiet = () => {};
     ok("鍵の印: flash は model の印", cassetteSalt({ LLM_TEST_MODE: "deepseek-all", DEEPSEEK_MODEL: "deepseek-flash" }, A) === "\n#model=deepseek-flash");
     ok("鍵の印: Claude の確かめは provider の印", cassetteSalt({ LLM_TEST_FINAL_CLAUDE: "1" }, A) === "\n#provider=claude");
     ok("鍵の印: DeepSeek 直の要求は印なし", cassetteSalt({ LLM_TEST_FINAL_CLAUDE: "1" }, "api.deepseek.com") === "");
+    ok("鍵の印: 名札ごとに flash へ替えた要求は model の印（flash-writer）", cassetteSalt({ LLM_TEST_MODE: "deepseek-all" }, A, "deepseek-flash") === "\n#model=deepseek-flash");
+    ok("鍵の印: 名札ごとの替えが pro なら印なし", cassetteSalt({ LLM_TEST_MODE: "deepseek-all", DEEPSEEK_MODEL: "deepseek-flash" }, A, "deepseek-v4-pro") === "");
     ok("合う答え: DeepSeek の試験は Claude の答えを返さない", !cassetteResponseFits({ LLM_TEST_MODE: "deepseek-all" }, "claude-sonnet-5") && cassetteResponseFits({ LLM_TEST_MODE: "deepseek-all" }, "deepseek-v4-pro"));
     ok("合う答え: Claude の確かめは Claude の答えだけ", cassetteResponseFits({ LLM_TEST_FINAL_CLAUDE: "1" }, "claude-sonnet-5") && !cassetteResponseFits({ LLM_TEST_FINAL_CLAUDE: "1" }, "deepseek-v4-pro"));
     ok("合う答え: モデルが分からない旧の録音は返す", cassetteResponseFits({ LLM_TEST_MODE: "deepseek-all" }, null));
