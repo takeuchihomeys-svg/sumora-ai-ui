@@ -6075,13 +6075,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       { lastStaffBlockOverride: staffBlock.dropped > 0 ? staffBlock.text : undefined, viewingScheduled, viewingAppointment: ledger.facts.viewingAppointment, checkAnsweredFollowUp }, // 2026-09-26 済んだ事（done-state）
       { scene: replyScene, on: sceneMaterialsOn, brainContract: turnContract?.source === "brain", ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off",
         // 2026-10-20 文の設計図（竹内さん f5a4b51a「文生成にも軸」）: 既定 off＝"" を渡す（指示は変わらない）。分かれ道は今は他社で内覧の1つだけ（申込までの地図が入ったら地図の分かれ道に替える）
-        blueprintNote: !isTemplateOptimize && writingBlueprintEnabled() ? buildWritingBlueprintNote({
+        // on の時に万一投げても返信は止めない（"" に落とす）
+        blueprintNote: !isTemplateOptimize && writingBlueprintEnabled() ? (() => { try { return buildWritingBlueprintNote({
           scene: replyScene,
           routeBranch: isOtherAgentViewingPlan(message ?? "") || isOtherAgentViewingApplyQuestion(message ?? "") ? "other_agent_viewing" : null,
           questions: replySceneResolved?.questions?.length ? replySceneResolved.questions : questionsOf(message ?? ""),
           sentThisTurn: replyAixPre?.timing === "now",
           promiseOutstanding: ledgerActive ? !!ledger.facts.pickupPromisedUnfulfilled : false,
-        }) : "" }, // 2026-10-07 場面の整理（3巡目: 短い了承の判定も場面に寄せる）
+        }); } catch (e) { console.warn("[writing-blueprint] note failed:", e); return ""; } })() : "" }, // 2026-10-07 場面の整理（3巡目: 短い了承の判定も場面に寄せる）
     );
 
     // 2026-10-18 竹内さん「flash の特徴に合わせる」: 書く役が DeepSeek の flash の時だけ、最後（キャッシュの前置きの後ろ）に答える項目の一覧・手本を足す

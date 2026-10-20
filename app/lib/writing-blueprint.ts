@@ -162,7 +162,7 @@ export const WRITING_BLUEPRINTS: Record<ReplyScene, WritingBlueprint> = {
 
 /** 地図の分かれ道で形が決まる物（apply-route-map の RouteBranchId と同じ名前。地図が無い時は使わない） */
 export const BRANCH_BLUEPRINTS: Record<string, Partial<WritingBlueprint> & { must?: string[] }> = {
-  // 2026-10-20 竹内さんの決定 937c480f/d6b6edc1（愛実）「大丈夫です😊！！ / 弊社にてご内見可能です！！ / ご挨拶も兼ねまして一度ご内見頂ければ…」
+  // 2026-10-20 竹内さんの決定 937c480f/d6b6edc1「大丈夫です😊！！ / 弊社にてご内見可能です！！ / ご挨拶も兼ねまして一度ご内見頂ければ…」
   other_agent_viewing: { name: "他社で内覧", aim: "信用を頂く", order: ["name", "greeting", "ack", "thanks", "answer", "invite", "promise", "support", "closing"], required: ["ack", "invite"], forbidden: [],
     must: ["①大丈夫です（否定しない）", "②弊社でもご内見可能です", "③ご挨拶も兼ねて一度ご内見頂ければ安心してお任せ頂ける"] },
   // a10bd246: 断り・キャンセル・否決の直後は営業を乗せず受け止めだけ（原則14）
