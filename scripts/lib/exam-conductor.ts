@@ -270,7 +270,9 @@ export type ConductorInput = {
   candidates: Candidate[]; capUsd: number; unit: typeof UNIT_USD; flashOkTypes: string[]; prevFocus: Array<{ id: string; why: string }>;
 };
 export type FocusItem = { id: string; role: "fix" | "guard"; stage: "brain" | "draft"; reps: number; model: "pro" | "flash"; why: string };
-export type ConductorPlan = { focus: FocusItem[]; judge: "tier" | "pro"; judgeAdvice: "tier" | "pro"; claudeFinal: boolean; claudeWhy: string; note: string; source: "pro" | "fallback"; estUsd: number; dropped: Array<{ id: string; why: string }> };
+export type ConductorPlan = { focus: FocusItem[]; judge: "tier" | "pro"; judgeAdvice: "tier" | "pro"; claudeFinal: boolean; claudeWhy: string; note: string; source: "pro" | "fallback"; estUsd: number; dropped: Array<{ id: string; why: string }>;
+  /** 2026-10-20 新しい問題（main の答案が1つも無い）＝司令塔の前に決まった計算で入れた問題（focus の中の id）。古い計画には無い */
+  fresh?: string[] };
 
 export const CONDUCTOR_SYSTEM = [
   "あなたは賃貸仲介の LINE 接客 AI の『試験の司令塔』です。直した中身と今までの外れの型を見て、少ない費用で直した所と周りの退行を確かめる問題を選びます。",
@@ -317,7 +319,35 @@ export function unitCost(it: Pick<FocusItem, "stage" | "reps" | "model">, unit =
  * 司令塔の答えを決まった計算で整える: 候補に無い id は捨てる・reps は 1〜3・draft は下書き可の問題だけ・flash は確かめた型だけ（質を落とさない）・
  *   守る問題（protected）が抜けていたら足す・上限に収める（まず見張りの reps を1に → 重点の reps を1に → 見張りを削る → 重点の守らない物を削る）。
  */
-export function normalizePlan(raw: Record<string, unknown> | null, i: Pick<ConductorInput, "candidates" | "capUsd" | "flashOkTypes" | "unit">, o: { draftChange: boolean; allowTier?: boolean }): ConductorPlan {
+/** 新しい問題を入れる時の材料: 問題（id・型）と、1日の上限の残り（null＝上限なし） */
+export type FreshInput = { items: Array<{ id: string; type: string }>; dailyLeftUsd: number | null };
+/**
+ * 2026-10-20 新しい問題（main の答案が1つも無い）: 司令塔（LLM）の前に決まった計算で入れる。
+ *   1回・ブレインだけ・flash にしてよい型（モデルの確かめで通った型）は flash＝一番安くて足りるモデル。司令塔が同じ問題を選んでいればその回数・段・モデルを使う。
+ *   この実行の上限（capUsd）ではなく 1日の上限の残り（budgetUsd＝残り − 他の重点の見込み）に収める。収まらない分は回を1に → 後ろから削る（削った物に残す）
+ */
+export function freshFocus(items: FreshInput["items"], o: { flashOkTypes: string[]; budgetUsd: number; unit?: typeof UNIT_USD; chosen?: Map<string, FocusItem> }): { focus: FocusItem[]; est: number; dropped: Array<{ id: string; why: string }> } {
+  const unit = o.unit ?? UNIT_USD;
+  const okFlash = new Set(o.flashOkTypes);
+  const seen = new Set<string>();
+  const f: FocusItem[] = [];
+  for (const it of items) {
+    if (seen.has(it.id)) continue; seen.add(it.id);
+    const c = o.chosen?.get(it.id);
+    f.push(c ? { ...c, reps: Math.max(1, c.reps), why: `新しい問題（答案なし）${c.why ? `・${c.why}` : ""}`.slice(0, 60) } : { id: it.id, role: "guard", stage: "brain", reps: 1, model: okFlash.has(it.type) ? "flash" : "pro", why: "新しい問題（答案なし）" });
+  }
+  const est = () => f.reduce((s, x) => s + unitCost(x, unit), 0);
+  const dropped: Array<{ id: string; why: string }> = [];
+  const budget = Math.max(0, o.budgetUsd);
+  if (est() > budget) for (const x of f) { x.reps = 1; if (x.stage === "draft") x.stage = "brain"; }
+  for (let k = f.length - 1; k >= 0 && est() > budget + 1e-12; k--) { dropped.push({ id: f[k].id, why: "1日の上限: 新しい問題（答案なし）を今は流せない" }); f.splice(k, 1); }
+  return { focus: f, est: est(), dropped };
+}
+/** 新しい問題（答案なし）の id: main の答案（warm-main・取り置き）が1つも無い問題（spec の順） */
+export function freshProblemIds(ps: ProblemLike[], hasMainAnswers: (p: ProblemLike) => boolean): string[] {
+  return ps.filter((p) => !hasMainAnswers(p)).map((p) => p.id);
+}
+export function normalizePlan(raw: Record<string, unknown> | null, i: Pick<ConductorInput, "candidates" | "capUsd" | "flashOkTypes" | "unit">, o: { draftChange: boolean; allowTier?: boolean; fresh?: FreshInput }): ConductorPlan {
   const byId = new Map(i.candidates.map((c) => [c.id, c]));
   const okFlash = new Set(i.flashOkTypes);
   const dropped: ConductorPlan["dropped"] = [];
@@ -336,13 +366,23 @@ export function normalizePlan(raw: Record<string, unknown> | null, i: Pick<Condu
     focus.push({ id, role: f.role === "guard" ? "guard" : "fix", stage, reps, model, why: String(f.why ?? "").slice(0, 60) || c.why[0] || "" });
   }
   for (const c of i.candidates) if (c.protectedPick && !seen.has(c.id)) { focus.push({ id: c.id, role: "fix", stage: o.draftChange && c.draftEligible ? "draft" : "brain", reps: 1, model: "pro", why: `守る線（${c.why.find((w) => /名指し|前に落ちた|お手本|竹内さん/.test(w)) ?? "必ず"}）` }); seen.add(c.id); }
-  const fitted = fitToCap(focus, i.capUsd, i.unit, byId);
+  // 新しい問題（答案なし）は司令塔の答えから外して別に入れる（1日の上限の残りに収める）
+  const freshIds = new Set((o.fresh?.items ?? []).map((x) => x.id));
+  const chosen = new Map(focus.filter((x) => freshIds.has(x.id)).map((x) => [x.id, x]));
+  const fitted = fitToCap(focus.filter((x) => !freshIds.has(x.id)), i.capUsd, i.unit, byId);
   dropped.push(...fitted.dropped);
+  let freshOut: string[] | undefined;
+  if (o.fresh) {
+    const left = o.fresh.dailyLeftUsd === null ? Infinity : o.fresh.dailyLeftUsd - fitted.est;
+    const fr = freshFocus(o.fresh.items, { flashOkTypes: i.flashOkTypes, budgetUsd: left, unit: i.unit, chosen });
+    fitted.focus.push(...fr.focus); fitted.est += fr.est; dropped.push(...fr.dropped);
+    freshOut = fr.focus.map((x) => x.id);
+  }
   // 判定の段（tier）は構成の鍵を変える＝前（main）の取り置きも段の判定で作り直しになる。使うのは allowTier（--judge-tier か EXAM_JUDGE_TIER=on）の時だけ・司令塔の勧めは judgeAdvice に残す
   const judgeAdvice = raw?.judge === "pro" ? "pro" : "tier";
   const judge = o.allowTier && judgeAdvice === "tier" ? "tier" : "pro";
   const claudeFinal = raw?.claude_final === true || raw?.claude_final === "true";
-  return { focus: fitted.focus, judge, judgeAdvice, claudeFinal, claudeWhy: String(raw?.claude_why ?? "").slice(0, 60), note: String(raw?.note ?? "").slice(0, 80), source: raw ? "pro" : "fallback", estUsd: fitted.est, dropped };
+  return { focus: fitted.focus, judge, judgeAdvice, claudeFinal, claudeWhy: String(raw?.claude_why ?? "").slice(0, 60), note: String(raw?.note ?? "").slice(0, 80), source: raw ? "pro" : "fallback", estUsd: fitted.est, dropped, ...(freshOut ? { fresh: freshOut } : {}) };
 }
 export function fitToCap(focus: FocusItem[], cap: number, unit = UNIT_USD, byId?: Map<string, Candidate>): { focus: FocusItem[]; est: number; dropped: Array<{ id: string; why: string }> } {
   const f = focus.map((x) => ({ ...x }));
@@ -440,4 +480,24 @@ export function needPro(machine: ReturnType<typeof machineJudge>, f: ReturnType<
 export function deepseekUsd(model: string, u: { cacheHit: number; cacheMiss: number; output: number }, peak: boolean): number {
   const p = altPriceOf(model) ?? { in: 0.66, read: 0.022, out: 1.98, peakDouble: true };
   return ((u.cacheMiss * p.in + u.cacheHit * p.read + u.output * p.out) / 1e6) * (peak && p.peakDouble ? 2 : 1);
+}
+
+// ─── 7. 直した中身の起点（main の作業ツリー）・--range の形（純関数） ─────────────────────────────
+export type BaseCand = { commit: string; at: string; why: string; group: "warm-main" | "conductor" };
+/**
+ * 2026-10-20 main そのもの（作業ツリー＝main・差が0）で --conduct した時の起点: 保存した main の答案（warm-main）の後に入った変更 →
+ *   無ければ前の司令塔の結果の後。HEAD より前（HEAD の祖先・HEAD そのものではない）の commit だけ。組の中は新しい順
+ */
+export function pickAutoBase(cands: BaseCand[], isStrictAncestor: (commit: string) => boolean): BaseCand | null {
+  for (const g of ["warm-main", "conductor"] as const) {
+    const xs = cands.filter((c) => c.group === g && c.commit).sort((a, b) => b.at.localeCompare(a.at));
+    for (const c of xs) if (isStrictAncestor(c.commit)) return c;
+  }
+  return null;
+}
+/** --range の形（<a>..<b>）。形が違う時は分かる言葉で止める（その commit がこの倉庫にあるかは exam-conductor-io の verifyRange） */
+export function parseRange(range: string): { from: string; to: string } {
+  const m = String(range ?? "").trim().match(/^([\w./~^-]+)\.\.([\w./~^-]+)$/);
+  if (!m) throw new Error(`--range は <a>..<b>（例 e5f3c182..origin/main）: ${range}`);
+  return { from: m[1], to: m[2] };
 }
