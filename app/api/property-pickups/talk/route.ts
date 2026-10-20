@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { buildNewArrivalCards, type NacAudit, type NacPickupRow } from "@/app/lib/new-arrival-card";
 import { summarizeNewArrivals, NEW_ARRIVAL_WINDOW_HOURS, type NewArrivalRow, type SentBuilding } from "@/app/lib/new-arrivals";
+import { primaryConversationsForCustomers } from "@/app/lib/customer-conversation-server";
 
 export const dynamic = "force-dynamic";
 
@@ -60,11 +61,11 @@ async function buildCounts() {
   const rows = (data ?? []) as Array<NewArrivalRow & { property_customer_id: string | null; conversation_id: string | null }>;
   // 会話の無い行はお客様 → 会話（conversations.property_customer_id）で結ぶ
   const pcids = [...new Set(rows.filter((r) => !r.conversation_id && r.property_customer_id).map((r) => r.property_customer_id as string))];
+  // 2026-10-20 決定 e06c795a ⑤: 旧は「最初に見つかった会話」に印を付け、同じ人が別のアカウントにもいると話していない方の会話に印が付いた
+  //   → お客様が最後に話した会話（AIX ツールの送り先と同じ決まり・customer-conversation-server）。戻す: PICKUP_CONV_BY_CUSTOMER_MSG=off
   const convOfPc = new Map<string, string>();
-  for (let i = 0; i < pcids.length; i += 200) {
-    const { data: cv } = await supabase.from("conversations").select("id, property_customer_id").in("property_customer_id", pcids.slice(i, i + 200));
-    for (const c of (cv ?? []) as Array<{ id: string; property_customer_id: string }>) if (!convOfPc.has(c.property_customer_id)) convOfPc.set(c.property_customer_id, c.id);
-  }
+  const picks = await primaryConversationsForCustomers(supabase, pcids);
+  for (const [pc, pick] of picks) if (pick.id) convOfPc.set(pc, pick.id);
   const byConv = new Map<string, NewArrivalRow[]>();
   for (const r of rows) {
     const cid = r.conversation_id ?? (r.property_customer_id ? convOfPc.get(r.property_customer_id) : undefined);

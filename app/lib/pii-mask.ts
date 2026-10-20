@@ -246,6 +246,57 @@ export function maskHonorificNames(text: string, names: ReadonlyArray<string | n
   return normalizeMaskedHonorifics(result);
 }
 
+/**
+ * 2026-10-20 DeepSeek に回る経路の名前の束（決定 209b9a92「質に影響しない限り、個人情報に近い物もできる限り渡さない」）。
+ *   brain-core の今回の層（3b4efe99）と同じ線:
+ *   - base（今まで渡していた表示名など）… maskPII の既知の名前のまま（2字以上を裸で置換・今までと同じ）
+ *   - others（他のお客様の固定の呼び名）… 3字以上で名前の字がある物だけ裸で置換（短い物は駅名・物件名を壊すので使わない）
+ *   - party（当事者の別名＝固定の呼び名 call_name・顧客管理の登録名・会話の表示名）… 3字以上は裸で、短い物は敬称が続く時だけ（maskHonorificNames）
+ *   Claude に回る経路では使わない（呼ぶ側が「DeepSeek に回る時だけ」で切り替える）
+ */
+export type AltNameMask = { names: string[]; shortNames: string[]; base?: string[] };
+export function buildAltNameMask(
+  base: ReadonlyArray<string | null | undefined>,
+  party: ReadonlyArray<string | null | undefined>,
+  others: ReadonlyArray<string | null | undefined> = [],
+): AltNameMask {
+  const clean = (xs: ReadonlyArray<string | null | undefined>) => xs.map((s) => String(s ?? '').trim()).filter(Boolean);
+  const b = clean(base), p = clean(party);
+  const o = clean(others).filter((s) => s.length >= 3 && /[一-龯ぁ-んァ-ヶA-Za-z]/.test(s));
+  // 2026-10-20 確かめる人: 登録名「山田 太郎」の姓・名（2字）も当事者の別名（境目つきで当てる＝maskPIIForAlt）
+  const pLong = p.filter((s) => s.length >= 3);
+  //   姓名を続けて書いた形（「中谷智也」）も足す（境目つきでは姓・名の片方ずつが隣の字に続いて当たらないため）
+  const pParts = pLong.flatMap((s) => [...s.split(/[\s　]+/), s.replace(/[\s　]+/g, '')]).filter((s) => s.length >= 2);
+  return {
+    names: [...new Set([...b, ...o, ...pLong, ...pParts])],
+    shortNames: [...new Set([...b, ...p])],
+    base: [...new Set(b)],
+  };
+}
+/**
+ * 2026-10-20 確かめる人（本番の DB で抜き取り）: 足した名前（当事者の別名・他のお客様の呼び名）を maskPII で裸に置換すると、
+ *   英字・かなの登録名や呼び名が物件名の中に当たっていた（送った物件名 6,739件のうち 7種・最大14件: 「C〇〇 CALMA」「プレジオ〇〇夙川」「〇〇荘」等）。
+ *   → 足した名前は前後がカタカナ・漢字・英数字に続いていない時だけ（境目つき）裸で伏せる。敬称つきは前のとおり全部伏せる。
+ *   base（今まで渡していた表示名）は今までどおり maskPII の裸の置換（変えない）
+ */
+const ALT_NAME_EDGE = '[ァ-ヶー一-龯々A-Za-z0-9Ａ-Ｚａ-ｚ０-９]';
+function maskBoundedNames(text: string, names: ReadonlyArray<string>): string {
+  let result = text;
+  for (const n of [...names].sort((a, b) => b.length - a.length)) {
+    const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(new RegExp(`(?<!${ALT_NAME_EDGE})${esc}(?!${ALT_NAME_EDGE})`, 'g'), 'お客様');
+  }
+  return normalizeMaskedHonorifics(result);
+}
+/** buildAltNameMask の束で伏せる（敬称つきは全部・足した名前は境目つきで裸・base は maskPII のまま） */
+export function maskPIIForAlt(text: string, m: AltNameMask): string {
+  if (!text) return text;
+  const bare = m.base ?? m.names;
+  const bounded = m.names.filter((n) => !bare.includes(n));
+  const honored = maskHonorificNames(text, [...m.shortNames, ...bounded]);
+  return maskPII(maskBoundedNames(honored, bounded), bare);
+}
+
 // 2026-09-13 RAG 監査: 検索の問い（直近の顧客発言を含む）が平文のまま OpenAI に送られ、同じ平文が embedding_cache に期限なしで残っていた
 //   （電話番号・郵便番号・生年月日・個人番号らしい行が251行。マイナンバーカード画像の文字起こし・申込フォームの記入内容も入っていた）。
 //   埋め込み（knowledge-utils generateEmbedding）の共通入口で使う: maskPII＋生年月日（西暦年つき）・12桁の番号。検索の意味（場面・物件・金額）は残る

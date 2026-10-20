@@ -8,7 +8,8 @@
 //   - 失敗しても投げない（決定論の要約だけ返す）
 import { createHash } from "node:crypto";
 import { supabase } from "@/app/lib/supabase";
-import { maskPII } from "@/app/lib/pii-mask";
+import { buildAltNameMask, maskPIIForAlt } from "@/app/lib/pii-mask";
+import { loadPartyAliasesByCustomer, loadKnownCallNames } from "@/app/lib/pii-known-names";
 import { altPiiSignal, altPiiGateEnabled } from "@/app/lib/alt-pii-gate";
 import { callDeepSeekRead } from "@/app/lib/vision-alt-provider";
 import {
@@ -90,8 +91,13 @@ export async function loadConditionSummary(propertyCustomerId: string | null, op
   //   DeepSeek に渡さない（この読み取りは llm-alt-provider の包みを通らない直の出口）。LLM_ALT_PII_GATE=off で今まで通り
   const gateOn = altPiiGateEnabled(process.env);
   const names = [cust.customer_name].filter(Boolean) as string[];
-  const masked = !saved && opts.allowLlm && hasKey && clauses.length > 0
-    ? clauses.map((x) => maskClause(maskPII(x, names))).filter((x) => !gateOn || !altPiiSignal(x))
+  const willRead = !saved && opts.allowLlm && hasKey && clauses.length > 0;
+  // 2026-10-20 決定 209b9a92: ここは必ず DeepSeek。登録名だけでなく、結んだ会話の表示名・呼び名と他のお客様の呼び名も伏せる（読む時だけ DB を読む）
+  const altMask = willRead
+    ? buildAltNameMask(names, await loadPartyAliasesByCustomer(propertyCustomerId, [opts.conversationId]).catch(() => [] as string[]), await loadKnownCallNames().catch(() => [] as string[]))
+    : null;
+  const masked = willRead && altMask
+    ? clauses.map((x) => maskClause(maskPIIForAlt(x, altMask))).filter((x) => !gateOn || !altPiiSignal(x))
     : [];
   if (!saved && opts.allowLlm && hasKey && masked.length > 0 && propertyCustomerId) {
     // 2026-09-25 竹内「抜けの内容にプロンプトキャッシュを効かせる」「クロードに切り替えない」: 固定の前置き（SUMMARY_SYSTEM_PROMPT）が system・読めない節は後ろ。
