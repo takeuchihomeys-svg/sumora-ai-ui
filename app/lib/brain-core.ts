@@ -43,7 +43,7 @@ import { isPostApplyStatus, willRouteAlt, brainDsPartsOn } from "@/app/lib/llm-a
 import { loadDeepseekCutoff, cutoffMarkOf, formatCutoffMark } from "@/app/lib/post-apply";
 import { buildSendReplyTimingNote } from "@/app/lib/send-reply-timing";
 import { buildAixSceneNote } from "@/app/lib/aix-scene-stats";
-import { buildCompanyFactsNote, brandCostOverrideNote, matchCompanyFacts } from "@/app/lib/company-facts";
+import { buildCompanyFactsNote, brandCostOverrideNote, matchCompanyFacts, customerTextsForCompanyFacts } from "@/app/lib/company-facts";
 import { isApplicationPayload, APPLICATION_FORM_PLACEHOLDER, APPLICATION_FORMAT_SENT_PLACEHOLDER } from "@/app/lib/pii-pseudonym";
 import { loadKnownCustomerNames, loadKnownCallNames, loadPartyAliases, loadAltNameMask } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
@@ -1980,8 +1980,9 @@ export async function analyzeConversation(
     try { const { data } = await supabase.from("conversations").select("account").eq("id", conversationId).maybeSingle(); return ((data as { account?: string | null } | null)?.account ?? null); }
     catch { return null; }
   })();
+  // 2026-10-20 竹内さん（13:07 の画面）: 窓はこちらの最後の送信より後のお客様の発言だけ（既に答えた前の話題の事実を「今聞いている」と渡さない）。戻す COMPANY_FACT_TURN_SCOPE=off
   const companyFactsText = buildCompanyFactsNote(
-    typedMessages.filter((m) => m.sender === "customer").slice(0, 3).map((m) => m.text ?? ""),
+    customerTextsForCompanyFacts([...typedMessages].reverse()),
     { account: convAccount },
   ) + brandCostOverrideNote(convAccount);
   const sendReplyTimingText = buildSendReplyTimingNote({
