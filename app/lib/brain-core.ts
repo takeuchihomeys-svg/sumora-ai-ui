@@ -51,7 +51,7 @@ import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } fr
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
 import { vacateMoveInEstimateEnabled } from "@/app/lib/vacate-move-in-estimate";
 import { brainCheckPatternEnabled, brainCheckPatternSchemaField, resolveCheckKindWithBrain } from "@/app/lib/brain-check-pattern";
-import { routeFix1020, broughtTypedText, contractAixWhenTopEmpty, contractPromiseIsCheck, viewingCheckAlsoVacancy, concernRepickupTarget, concernRepickupAnswer, lastStaffReportedResult } from "@/app/lib/brain-route-fix-1020";
+import { routeFix1020, broughtTypedText, contractAixWhenTopEmpty, contractPromiseIsCheck, viewingCheckAlsoVacancy, concernRepickupTarget, concernRepickupAnswer, lastStaffReportedResult, checkAfterResultTurnOk } from "@/app/lib/brain-route-fix-1020";
 import { viewingCheckFirst, VIEWING_CHECK_PROMISE_RE, viewingRoomVacating, threadRoomCheckForTurn, otherRoomSentAfterMoveOut, vacancyDateFromMaterial, vacatingViewingAnswer, type ThreadRoomCheck } from "@/app/lib/viewing-check-first";
 import { propertyThreadEnabled } from "@/app/lib/property-thread";
 import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
@@ -4124,7 +4124,8 @@ ${history}`;
     //   ブレインが確認の約束（route=promise）にした番は、答えがスタッフにしか分からない＝AIX【物件確認した】を直接（約束の返信にしない）
     let checkAfterResult = false;
     if (!finalAix && decisionSource === null && !promiseAix && routeFix1020("check_after_result") && !isPostApplyStatus(convStatus)
-      && contractPromiseIsCheck((parsed as { turn_contract?: unknown }).turn_contract)) {
+      && contractPromiseIsCheck((parsed as { turn_contract?: unknown }).turn_contract)
+      && checkAfterResultTurnOk(unrepliedTurn.text ?? "", !!unrepliedTurn.hasImage)) {
       const lastStaff = [...messagesOldestFirst].reverse().find((m) => m.sender !== "customer" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(m.text ?? ""));
       const turnAt = [...typedMessages].reverse().filter((m) => m.sender === "customer").slice(-1)[0]?.created_at ?? null;
       if (lastStaffReportedResult(lastStaff ? { text: lastStaff.text ?? null, at: lastStaff.created_at ?? null } : null, turnAt)) {

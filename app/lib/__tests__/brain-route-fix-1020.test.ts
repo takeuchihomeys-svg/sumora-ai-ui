@@ -1,6 +1,6 @@
 // app/lib/__tests__/brain-route-fix-1020.test.ts — 2026-10-20 試験の道の外れ（見積・約束の後・不満→次の探し）の直し
 //   実行: npx tsx app/lib/__tests__/brain-route-fix-1020.test.ts
-import { routeFix1020, broughtTypedText, contractAixWhenTopEmpty, contractPromiseIsCheck, viewingCheckAlsoVacancy, concernRepickupTarget, concernRepickupAnswer, lastStaffReportedResult } from "../brain-route-fix-1020";
+import { routeFix1020, broughtTypedText, contractAixWhenTopEmpty, contractPromiseIsCheck, viewingCheckAlsoVacancy, concernRepickupTarget, concernRepickupAnswer, lastStaffReportedResult, checkAfterResultTurnOk } from "../brain-route-fix-1020";
 import { broughtPropertyAsk, resolveTwoStage } from "../two-stage";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -50,6 +50,12 @@ t("返信だけは確認にしない", !contractPromiseIsCheck({ asks: [{ route:
 t("q177 結果の17分後", lastStaffReportedResult({ text: "駐車場と礼金について管理会社へ確認・交渉させて頂きました！！駐車場空き1台のみ…とのことです😊！！", at: "2026-08-24T01:54:00Z" }, "2026-08-24T02:11:48Z"));
 t("約束だけは結果でない", !lastStaffReportedResult({ text: "管理会社に確認させて頂きます！！確認出来次第ご連絡させて頂きます！！", at: "2026-08-24T01:54:00Z" }, "2026-08-24T02:11:48Z"));
 t("7時間後は外す", !lastStaffReportedResult({ text: "確認させて頂きました", at: "2026-08-24T01:00:00Z" }, "2026-08-24T08:00:00Z"));
+
+t("⑤b 結果の後の追いの質問は通す", checkAfterResultTurnOk("駐車場は2台目も借りれますか？", false));
+t("⑤b q177 駐車場の空きの追いの質問は通す", checkAfterResultTurnOk("諸々ご確認ありがとうございます🙏🏻\n\n駐車場の空きは「軽」専用とかでは特にないですかね？？\nまた、礼金の件もありがとうございます！", false));
+t("⑤b 持ち込み（URL）は外す", !checkAfterResultTurnOk("上野芝 2LDK https://suumo.jp/x こちらどうでしょう", false));
+t("⑤b 画像の番は外す", !checkAfterResultTurnOk("ここはどうでしょうか？", true));
+t("⑤b 別のお部屋の空きの問いは外す", !checkAfterResultTurnOk("12階は空いてますか？", false));
 
 // ⑥ 内覧可否＋募集状況（q179）
 t("q179 内覧可否と募集状況", viewingCheckAlsoVacancy("JS House・メイウール木川中里413のご内覧可否と募集状況を管理会社に確認させて頂きます！！"));

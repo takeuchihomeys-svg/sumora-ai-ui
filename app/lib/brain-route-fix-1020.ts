@@ -125,3 +125,12 @@ export function lastStaffReportedResult(lastStaff: { text: string | null; at: st
   if (!Number.isFinite(gap) || gap < 0 || gap > RESULT_FOLLOWUP_HOURS * 3600_000) return false;
   return RESULT_REPORTED_RE.test(lastStaff.text.normalize("NFKC"));
 }
+// ⑤b の除外（10/20 査読・本番 30日の当たり候補の目視）: 新しい物件の持ち込み（URL・画像）・別のお部屋の空き／募集の問いは、
+//   スタッフも「確認させて頂きます」の約束の返信→後で AIX にしていた（96c140e4・fecda03f・1191b1eb・f9ec0b0d）＝結果の追いの質問ではない
+export function checkAfterResultTurnOk(turnText: string, hasImage: boolean): boolean {
+  if (hasImage) return false;
+  const t = String(turnText ?? "").normalize("NFKC");
+  if (/https?:\/\//.test(t) || /^\s*\[(?:画像|ファイル)\]/m.test(t)) return false;
+  // お部屋の空きだけ外す（q177「駐車場の空きは軽専用…」は結果の追いの質問のまま）
+  return !/空室|募集|退去予定|(?:部屋|号室|階|物件|ここ|こちら)[^。\n？?]{0,8}(?:空いて|空き)/.test(t);
+}
