@@ -3,7 +3,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeCassetteFetch, normalizeBody, usageOfResponse, wrapGlobalFetch, setCassetteTag, flushCassette, formatCassetteStats, type CassetteStats, type CassetteMode } from "../llm-cassette";
+import { makeCassetteFetch, normalizeBody, cassetteSalt, cassetteResponseFits, usageOfResponse, wrapGlobalFetch, setCassetteTag, flushCassette, formatCassetteStats, type CassetteStats, type CassetteMode } from "../llm-cassette";
 import { planBaseline, childArgs, examConfig, configHash, problemHash } from "../brain-exam-baseline";
 
 let fail = 0, pass = 0;
@@ -134,6 +134,18 @@ const quiet = () => {};
     await f4("https://abc.supabase.co/rest/v1/rpc/increment_knowledge_used_count", rq("x"));
     await f4("https://abc.supabase.co/rest/v1/rpc/increment_knowledge_used_count", rq("x"));
     ok("RPC: match_* 以外（書く RPC）は録らない", dbCalls === before + 4);
+  }
+
+  // 2026-10-18: Claude の確かめの回は別の鍵・DeepSeek の試験は Claude の答えを再生しない
+  {
+    const A = "api.anthropic.com";
+    ok("鍵の印: 既定の pro は印なし", cassetteSalt({ LLM_TEST_MODE: "deepseek-all" }, A) === "");
+    ok("鍵の印: flash は model の印", cassetteSalt({ LLM_TEST_MODE: "deepseek-all", DEEPSEEK_MODEL: "deepseek-flash" }, A) === "\n#model=deepseek-flash");
+    ok("鍵の印: Claude の確かめは provider の印", cassetteSalt({ LLM_TEST_FINAL_CLAUDE: "1" }, A) === "\n#provider=claude");
+    ok("鍵の印: DeepSeek 直の要求は印なし", cassetteSalt({ LLM_TEST_FINAL_CLAUDE: "1" }, "api.deepseek.com") === "");
+    ok("合う答え: DeepSeek の試験は Claude の答えを返さない", !cassetteResponseFits({ LLM_TEST_MODE: "deepseek-all" }, "claude-sonnet-5") && cassetteResponseFits({ LLM_TEST_MODE: "deepseek-all" }, "deepseek-v4-pro"));
+    ok("合う答え: Claude の確かめは Claude の答えだけ", cassetteResponseFits({ LLM_TEST_FINAL_CLAUDE: "1" }, "claude-sonnet-5") && !cassetteResponseFits({ LLM_TEST_FINAL_CLAUDE: "1" }, "deepseek-v4-pro"));
+    ok("合う答え: モデルが分からない旧の録音は返す", cassetteResponseFits({ LLM_TEST_MODE: "deepseek-all" }, null));
   }
 
   rmSync(dir, { recursive: true, force: true });

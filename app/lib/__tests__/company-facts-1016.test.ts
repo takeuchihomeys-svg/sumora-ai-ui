@@ -58,7 +58,9 @@ it("代理契約・二人入居は物件ごとに違う→確認／交渉の約�
   const f = COMPANY_FACTS.find((x) => x.id === "proxy_two_person_check")!;
   if (!f.fact.includes("交渉させて頂きます") || !f.fact.includes("物件ごとに異なる")) throw new Error("約束の形が無い");
 });
-it("支払いは一括の振込だけ（既定）", () => {
+it("支払いは一括の振込だけ（COMPANY_FACT_PAYMENT_LUMP=on の時だけ・10/18 夜に既定は off へ）", () => {
+  const prevLump = process.env.COMPANY_FACT_PAYMENT_LUMP; process.env.COMPANY_FACT_PAYMENT_LUMP = "on";
+  try {
   const f = COMPANY_FACTS.find((x) => x.id === "credit_card")!;
   if (!/一括のお振込のみ/.test(f.fact)) throw new Error("一括のお振込のみが無い");
   if (/3\.24%が別途必要\*\*/.test(f.fact)) throw new Error("旧のカード手数料が残っている");
@@ -72,6 +74,14 @@ it("支払いは一括の振込だけ（既定）", () => {
   eq(findCompanyFactContradiction("クレジットカード払い・分割でのお支払いはご対応しておりません", cust), null, "否定");
   eq(findMissingCardFee("初期費用はクレジットカード払いですと分割可能です！！", cust), null, "手数料の一文");
   eq(ensureCardFeeLine("初期費用はクレジットカード払いですと分割可能です！！", cust).added, false, "足さない");
+  } finally { if (prevLump === undefined) delete process.env.COMPANY_FACT_PAYMENT_LUMP; else process.env.COMPANY_FACT_PAYMENT_LUMP = prevLump; }
+});
+it("既定（10/18 夜 竹内さん）: カード払いなら分割可・手数料3.24%・分割はご自身のカード会社で設定", () => {
+  delete process.env.COMPANY_FACT_PAYMENT_LUMP;
+  const f = COMPANY_FACTS.find((x) => x.id === "credit_card")!;
+  if (!/3\.24%/.test(f.fact)) throw new Error("カード手数料3.24%が無い");
+  if (!/カード会社の方で分割の設定/.test(f.fact)) throw new Error("分割はご自身のカード会社で設定が無い");
+  if (/一括のお振込のみ/.test(f.fact)) throw new Error("一括のみが残っている");
 });
 it("支払い: COMPANY_FACT_PAYMENT_LUMP=off で旧のカード払い", () => {
   process.env.COMPANY_FACT_PAYMENT_LUMP = "off";
@@ -86,12 +96,15 @@ it("支払い: COMPANY_FACT_PAYMENT_LUMP=off で旧のカード払い", () => {
 });
 
 it("一括のみ: 毎月の家賃のカード払い・管理会社の回答・交通系 IC は止めない（確かめる人 10/18）", () => {
+  const prevLump = process.env.COMPANY_FACT_PAYMENT_LUMP; process.env.COMPANY_FACT_PAYMENT_LUMP = "on";
+  try {
   const cust = ["家賃ってカードで払えますか？"];
   eq(findCompanyFactContradiction("毎月の家賃はカード払いにも対応しております！！", cust), null, "家賃");
   eq(findCompanyFactContradiction("管理会社より初期費用のクレジットカード払いが可能とのご回答を頂きました！！", cust), null, "管理会社の回答");
   eq(findCompanyFactContradiction("交通系ICカードで支払いが可能です", cust), null, "IC");
   eq(findCompanyFactContradiction("フリーレント分を分割で相殺可能です", ["分割できますか？"]), null, "相殺");
   eq(findCompanyFactContradiction("初期費用はクレジットカード払いにも対応しております！！", cust)?.factId, "credit_card", "初期費用のカード払い可は止める");
+  } finally { if (prevLump === undefined) delete process.env.COMPANY_FACT_PAYMENT_LUMP; else process.env.COMPANY_FACT_PAYMENT_LUMP = prevLump; }
 });
 
 console.log(`\n${passed} passed / ${failed} failed`);

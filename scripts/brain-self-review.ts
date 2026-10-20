@@ -16,7 +16,11 @@
 // 費用: DeepSeek（試験の判定と同じ: DEEPSEEK_MODEL か deepseek-v4-pro・温度0・推論なし・json・固定の前置き）1件 約 $0.02（数円）。
 //   1日の上限は試験のブレインと同じ EXAM_DAILY_CAP_USD（既定 $10）＝ llm_usage_logs の試験 env ＋ local-llm-spend.jsonl（ここで書く）。
 // 個人情報: DeepSeek に出す物は maskExamText → maskForEmbedding → 部屋番号 の2重。申込以降の会話（deepseek の線）は出さない・申込の書類の印の行は落とす・
-//   伏せた後も個人の値が残る（alt-pii-gate）時は出さない。DB は読むだけ（書かない）。止める: BRAIN_SELF_REVIEW=off
+//   伏せた後も個人の値が残る（alt-pii-gate）時は出さない。止める: BRAIN_SELF_REVIEW=off
+// 2026-10-18 竹内さん 10/18 OK「毎晩の自己点検を朝の報告に載せる」: 結果（朝の1行・案の数・竹内さんに聞く事）を表 brain_self_review_runs／_proposals に書く
+//   （scripts/lib/brain-self-review-db.ts・表は scripts/brain-self-review-migration.sql＝親が流す。表が無い間は書かずに進む）。書く物は原因・案・問題の id だけ。
+//   --no-db で書かない・BRAIN_SELF_REVIEW_DB=off で止める。
+//   --nightly … 毎晩の口（exam-brain.ts --run-queue の最後から）。今日の毎晩の分（nightly-done.txt）が済んでいれば流さない（--force で流す）
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -29,6 +33,7 @@ import {
   appendLocalSpend, readLocalSpendToday, jstDate, SELF_REVIEW_DIR, type Row, type Spot,
 } from "./lib/brain-self-review-io";
 import { loadExamProblems, readLedger, readDailySpend, type AnyProblem } from "./lib/exam-brain-io";
+import { writeSelfReviewToDb } from "./lib/brain-self-review-db";
 import { dailyCapUsd } from "./lib/exam-brain";
 import { loadCards, loadLinks, loadKbRows } from "./lib/exam-rag-store";
 import { maskExamText, addressNamesOf } from "./lib/brain-exam-mask";
@@ -236,13 +241,27 @@ function writeReport(day: string) {
   writeFileSync(join(SELF_REVIEW_DIR, "latest.md"), md);
   const line = morningLine(day, results, bundles);
   writeFileSync(join(dir, "morning-line.txt"), line + "\n");
-  return { results, bundles, line, file: join(dir, "report.md") };
+  return { results, bundles, line, usd, file: join(dir, "report.md") };
 }
+/** 朝の報告が読む表に書く（--no-db・表が無い・止めている時は書かない） */
+async function saveToDb(sb: SupabaseClient | null, day: string, rep: ReturnType<typeof writeReport>): Promise<void> {
+  if (flag("no-db")) { log("  表には書かない（--no-db）"); return; }
+  if (!sb) return;
+  const r: { ok: boolean; reason?: string; proposals?: number } = await writeSelfReviewToDb(sb, { day, line: rep.line, results: rep.results, bundles: rep.bundles, usd: rep.usd })
+    .catch((e) => ({ ok: false, reason: e instanceof Error ? e.message : String(e) }));
+  log(r.ok ? `  朝の報告の表に書いた（案 ${r.proposals ?? 0}束）` : `  朝の報告の表に書けない: ${r.reason}`);
+}
+/** 表に書く時だけ service role（無ければ書かない） */
+const dbClient = (): SupabaseClient | null => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL, skey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  return url && skey ? createClient(url, skey) : null;
+};
 
 (async () => {
   if (String(process.env.BRAIN_SELF_REVIEW ?? "").toLowerCase() === "off") { log("BRAIN_SELF_REVIEW=off（止めている）"); return; }
   const day = jstDate();
-  if (flag("report")) { const r = writeReport(day); log(`一覧: ${r.file}\n${r.line}`); return; }
+  if (flag("report")) { const r = writeReport(day); log(`一覧: ${r.file}\n${r.line}`); await saveToDb(dbClient(), day, r); return; }
+  if (flag("nightly") && !flag("force") && existsSync(join(dayDir(day), "nightly-done.txt"))) { log(`今日（${day}）の毎晩の自己点検は済んでいる（--force で流し直す）`); return; }
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL, skey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !skey) { console.error("NEXT_PUBLIC_SUPABASE_URL / key が未設定（--env-file=.env.local）"); process.exit(2); }
   const sb = createClient(url, skey);
@@ -343,5 +362,7 @@ function writeReport(day: string) {
   }
   const rep = writeReport(day);
   log(`\n● 費用 $${spent.toFixed(4)}・一覧 ${rep.file}\n${rep.line}`);
+  await saveToDb(dbClient(), day, rep);
+  if (flag("nightly")) writeFileSync(join(dayDir(day), "nightly-done.txt"), `${new Date().toISOString()}\n`);
   for (const bd of rep.bundles.slice(0, 8)) log(`  [${bd.needsTakeuchi ? "聞く" : bd.kind}] ${bd.causeKeys.join("／")}（${bd.n}件・${bd.ids.join(",")}）`);
 })().catch((e) => { console.error(e instanceof Error ? e.stack ?? e.message : e); process.exitCode = 1; });

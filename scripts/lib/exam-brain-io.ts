@@ -14,6 +14,7 @@ import { BRAIN_ENTRIES, DRAFT_ENTRIES, TOOL_ENTRIES, reach, workingFiles } from 
 import { fillProblemsFromShared } from "./exam-problems-store";
 import { CONV_CTX_FIELDS, jstDayStart, type ConvCtx, type DbPart, type RowLite, type SmallRecord } from "./exam-brain";
 import { NO_LINE_TEST_CONVERSATIONS, YUMA_CONVERSATION_ID } from "../../app/lib/test-conversations";
+import { contentPartsOf, dbContentReads, dbFpMode, readDbContentFingerprint, type DbFpMode } from "./exam-db-fp";
 
 export const EXAM_BRAIN_DIR = join(examCacheRoot(), "exam-brain");
 export const REUSE_DIR = join(EXAM_BRAIN_DIR, "results");
@@ -128,6 +129,18 @@ export async function readDbFingerprint(sb: SupabaseClient, specs = DB_FINGERPRI
       return { table: s.table, ok: true, sig: parts.join(";") };
     } catch (e) { return { table: s.table, ok: false, sig: "", why: String(e instanceof Error ? e.message : e).slice(0, 120) }; }
   }));
+}
+
+/**
+ * 2026-10-18: 既定は中身の指紋（scripts/lib/exam-db-fp.ts・試験が実際に読む行の中身だけ・時刻は入れない）。EXAM_DB_FP=fine＝上の旧の指紋。
+ *   段が見る部分の名前は形で違う（中身＝「表#b／表#d」・旧＝表の名前）＝形を替えると鍵も替わる（混ざらない）
+ */
+export async function readDbFingerprintFor(sb: SupabaseClient, mode: DbFpMode = dbFpMode()): Promise<DbPart[]> {
+  return mode === "fine" ? readDbFingerprint(sb) : readDbContentFingerprint(sb);
+}
+/** o.rent=false＝相場の材料を読まない問題（中身の形だけ・exam-db-fp.ts problemReadsRent） */
+export function dbPartsOf(stage: "brain" | "draft", mode: DbFpMode = dbFpMode(), o: { rent?: boolean } = {}): string[] {
+  return mode === "fine" ? dbTablesOf(stage) : contentPartsOf(stage, dbContentReads(), o);
 }
 
 // ─── 6. 使い回しの置き場 ───────────────────────────────────────────────

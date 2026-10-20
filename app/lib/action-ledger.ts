@@ -24,6 +24,7 @@ import { jstMDHm, jstParts, jstDayStartMs } from './jst-date';
 import { parseContactPromise, ymdStr as contactYmd } from './contact-promise';
 // 2026-09-21 竹内（まりあさん事例）: 「内覧が終わった」の判定は viewing-thread と同じ1か所
 import { STAFF_VIEWING_DONE_RE } from './viewing-thread';
+import { aixMgmtLifelineEnabled, LIFELINE_PROMISE_RE } from './aix-lifeline';
 import { findPrematureViewing, customerMentionsFixedViewing, findStaffViewingDeclaration } from './viewing-premature';
 import { resolveViewingFlow, buildViewingFlowLedgerLine, buildViewingFlowBrainText, type ViewingFlow } from './viewing-flow';
 // 2026-09-15 竹内（YUYA 事例）: 保証会社の種類の日本語は guarantor-companies の1表から（依存ゼロの純関数モジュールなので循環しない）
@@ -218,6 +219,8 @@ const CONFIRM_TOPIC_RULES: ReadonlyArray<{ re: RegExp; label: string }> = [
   { re: /代理契約/, label: '代理契約' },
   // 2026-10-18 竹内さん 10/16: 二人入居の確認の約束（AIX【管理会社に確認した→二人入居について】で閉じる）。入居時期より先に見る
   { re: /(?:二人|2人|２人|ふたり)(?:での)?(?:入居|暮らし)/, label: '二人入居' },
+  // 2026-10-18 竹内さん 10/18: ライフラインの約束（「別途ご案内させて頂きます」→ AIX【確認した→ライフラインについて】で閉じる）。入居時期・設備より先に見る
+  { re: /ライフライン|電気・?ガス・?水道/, label: 'ライフライン' },
   { re: /入居(?:可能)?(?:時期|日)|ご?入居が可能|入居可否|(?:上旬|中旬|下旬|[0-9０-９]{1,2}日)(?:での|から|の|まで)?ご?入居/, label: '入居時期' },
   { re: /退去時費用|クリーニング代|クリーニング費/, label: '退去時費用' },
   { re: /初期費用|割引|礼金|敷金|フリーレント/, label: '初期費用' },
@@ -248,6 +251,7 @@ export function confirmTopicForCheckPattern(checkPattern: string | null | undefi
     case 'mgmt_equipment': return '設備';
     case 'mgmt_proxy': return '代理契約';
     case 'mgmt_two_person': return '二人入居';
+    case 'mgmt_lifeline': return 'ライフライン';
     case 'available': case 'unavailable': case 'alternative': case 'mgmt_availability': return '募集状況';
     default: return null;
   }
@@ -325,6 +329,7 @@ export function checkPatternForConfirmTopic(topic: string | null | undefined): s
     case '設備': return 'mgmt_equipment';
     case '代理契約': return 'mgmt_proxy';
     case '二人入居': return 'mgmt_two_person';
+    case 'ライフライン': return 'mgmt_lifeline';
     default: return null;
   }
 }
@@ -690,6 +695,11 @@ export function classifyStaffTextForLedger(text: string, at: string | null): Led
   }
   // 「Nicher'a 加美の募集状況確認させていただきます！！」だけの通（ご連絡・出来次第が無い）も確認の約束（慶次事例 2026-09-16）
   const bare = findConfirmPromiseSentence(sentences);
+  // 2026-10-18 竹内さん 10/18: 「ライフラインのお手続きにつきましては別途ご案内させて頂きます」も約束（答えは AIX【確認した→ライフラインについて】）。戻す AIX_MGMT_LIFELINE=off
+  if (!bare && aixMgmtLifelineEnabled()) {
+    const ls = sentences.find((x) => LIFELINE_PROMISE_RE.test(x));
+    if (ls) return base('confirmation_promised', 'promised', ls.match(LIFELINE_PROMISE_RE)![0], { object: 'ライフライン', sentence: promiseSentenceText(ls) });
+  }
   if (bare) return base('confirmation_promised', 'promised', bare.evidence, { object: confirmObjectOf(bare.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([bare.sentence, ...sentences], bare.sentence), ...confirmPropertyDetail(t) });
   if (STAFF_QUESTION_RE.test(lastLine)) return base('question_asked', 'done', lastLine.slice(-30));
   return null;

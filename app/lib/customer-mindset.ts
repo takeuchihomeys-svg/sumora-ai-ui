@@ -27,7 +27,7 @@
 // テスト: app/lib/__tests__/customer-mindset.test.ts（実物の発言・伏せ字）
 import { withLatinHead } from "./latin-name-head";
 import { holdSoftNextEnabled, holdSoft1015Enabled } from "./hold-soft-next";
-import { familyConsultSimpleEnabled, FAMILY_CONSULT_SIMPLE_NOTE } from "./takeuchi-reply-form-r13";
+import { familyConsultSimpleEnabled, familyConsultSimpleNote, familyConsultSupportEnabled } from "./takeuchi-reply-form-r13";
 
 const envOf = (env?: Record<string, string | undefined>) => env ?? (typeof process !== "undefined" ? process.env : {});
 const off = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "off";
@@ -110,7 +110,9 @@ export function hesitationMoveOf(kind: HesitationKind, env?: Record<string, stri
   if (!WAIT_KINDS.has(kind) || !holdSoftNextEnabled(e)) return HESITATION_MOVE[kind];
   // 10/15 竹内さんの決定④: 空室なら内覧のご案内・退去予定やすぐ来られない時はお申込みで抑える（家族・友人の相談でも添える）。戻す HOLD_SOFT_1015=off
   // 2026-10-18 竹内さん 10/16: 家族と相談の番は目安（入居時期など）を足さず、いつもの「気になる点等出てきましたら〜」で簡単に締める（FAMILY_CONSULT_SIMPLE=off で旧）
-  const fam = kind === "家族・同居人に相談" && familyConsultSimpleEnabled(e) ? "。" + FAMILY_CONSULT_SIMPLE_NOTE : "";
+  const fam = kind === "家族・同居人に相談" && familyConsultSimpleEnabled(e) ? "。" + familyConsultSimpleNote(e) : "";
+  // 2026-10-18 竹内さん 10/18: 家族と相談の番は 10/15 の柔らかい次の一手（内覧・お申込みで抑える）を添えない＝サポートの姿勢の1文だけ（FAMILY_CONSULT_SUPPORT=off で旧）
+  if (kind === "家族・同居人に相談" && familyConsultSupportEnabled(e)) return HESITATION_MOVE[kind] + fam;
   return HESITATION_MOVE[kind] + (holdSoft1015Enabled(e) ? HOLD_SOFT_NEXT_SUFFIX_1015 : HOLD_SOFT_NEXT_SUFFIX) + fam;
 }
 

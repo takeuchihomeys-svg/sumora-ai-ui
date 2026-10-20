@@ -35,10 +35,11 @@ import {
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
-  planCleanup, runCleanup, readDbFingerprint, dbTablesOf, EXAM_BRAIN_DIR, MODEL_CHECK_FILE, RESULTS_DIR, type AnyProblem, type LedgerLine,
+  planCleanup, runCleanup, readDbFingerprintFor, dbPartsOf, EXAM_BRAIN_DIR, MODEL_CHECK_FILE, RESULTS_DIR, type AnyProblem, type LedgerLine,
   readPhaseLog, appendPhaseLog, readDailySpend, readConvContexts,
 } from "./lib/exam-brain-io";
 import { decideStageFromDiff } from "./lib/exam-scope";
+import { dbFpMode, problemReadsRent, type DbFpMode } from "./lib/exam-db-fp";
 import { problemHash, examConfig, configHash } from "./lib/brain-exam-baseline";
 import { flakeVerdict, readObs, FLAKE_DIR } from "./lib/exam-flake";
 import { isDeepseekPeakAt } from "../app/lib/llm-price";
@@ -114,7 +115,7 @@ type Plan = {
   probs: Map<string, AnyProblem>; draftPlan: { ids: string[]; why: string; mode: "all" | "if-changed" | "none" };
   keys: { brain: string; draft: string; tool: string }; cfgHash: string; ragNote: string;
   /** DB の表の指紋（段ごと）。null＝読めない表がある＝その段は使い回さない・使い回しの置き場にも書かない */
-  db: { parts: DbPart[] | null; brain: string | null; draft: string | null };
+  db: { parts: DbPart[] | null; mode: DbFpMode; brain: string | null; draft: string | null };
   /** 10/17 ① 小さな確かめ／仕上げ／旧。allPicks＝仕上げで流す問題（今の選び全部）・versionKey＝同じ版か（効くファイル・道具・構成・DB の鍵） */
   phase: Phase; phaseWhy: string; allPicks: Pick[]; repsCap: number; versionKey: string;
   /** 10/17 ③ 会話の鍵（"-"＝会話の違いは答えに効かない・null＝読めない＝使い回さない） */
@@ -149,8 +150,10 @@ async function makePlan(label: string): Promise<Plan> {
   // 2. 何回・6. 使い回し・8. モデル
   const keys = workingScopeKeys(".");
   // 6. 使い回しの鍵に DB の中身（穴③）: ブレインと下書きが読む表の指紋を1回だけ読む（読むだけ）。--no-reuse の時は読まない
-  const dbParts = flag("no-reuse") ? null : await readDbFingerprint(sb).catch((e) => { log(`（DB の指紋が読めない → 使い回さない: ${String(e).slice(0, 100)}）`); return null; });
-  const db = { parts: dbParts, brain: dbKeyOf(dbParts, dbTablesOf("brain")), draft: dbKeyOf(dbParts, dbTablesOf("draft")) };
+  // 2026-10-18: 既定は中身の指紋（試験が読む行の中身だけ・時刻を入れない＝本番の書き込みで数分ごとに変わらない）。EXAM_DB_FP=fine＝旧（件数・最後の時刻）
+  const fpMode = dbFpMode();
+  const dbParts = flag("no-reuse") ? null : await readDbFingerprintFor(sb, fpMode).catch((e) => { log(`（DB の指紋が読めない → 使い回さない: ${String(e).slice(0, 100)}）`); return null; });
+  const db = { parts: dbParts, mode: fpMode, brain: dbKeyOf(dbParts, dbPartsOf("brain", fpMode)), draft: dbKeyOf(dbParts, dbPartsOf("draft", fpMode)) };
   const cfgHash = configHash(examConfig(process.env, { judge: JUDGE, judgePrefix: JUDGE_PREFIX, layer: "prod", ledger: true, repeat: MAX_REPS, exhaustedRule: EXHAUSTED_RULE }));
   // 10/17 ① 小さな確かめか仕上げか（同じ版＝効くファイル・道具・構成・DB の鍵が同じ）
   // 2026-10-17 確かめる人: DB の指紋は本番の書き込み（ai_reply_knowledge・ai_reply_examples・trigger_action_rules・phrase_dictionary 等＝1日 数百行）で数分ごとに変わる＝
@@ -183,8 +186,11 @@ async function makePlan(label: string): Promise<Plan> {
     const hash = problemHash(p);
     const kbKey = kbKeyOf(links[p.id], kbNow);
     const convKey = conv.key ?? "-";
-    const key = reuseKey({ problemHash: hash, stage: "brain", scopeKey: keys.brain, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: db.brain ?? "-", convKey });
-    const draftKey = reuseKey({ problemHash: hash, stage: "draft", scopeKey: keys.draft, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: db.draft ?? "-", convKey });
+    // 2026-10-18: 相場の材料（rent_observations）は相場を聞く番の問題だけ鍵に入れる（中身の形だけ・旧は全部同じ）。読めない表がある時は db.brain/draft が null＝使い回さない（下の判定）
+    const rent = problemReadsRent(p as never);
+    const dbB = db.brain && dbKeyOf(dbParts, dbPartsOf("brain", fpMode, { rent })), dbD = db.draft && dbKeyOf(dbParts, dbPartsOf("draft", fpMode, { rent }));
+    const key = reuseKey({ problemHash: hash, stage: "brain", scopeKey: keys.brain, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: dbB ?? "-", convKey });
+    const draftKey = reuseKey({ problemHash: hash, stage: "draft", scopeKey: keys.draft, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: dbD ?? "-", convKey });
     const reuse = !flag("no-reuse") && !!db.brain && conv.key !== null && canReuse(readReuse(p.id, key), key, reps);
     items.set(p.id, { id: p.id, reps, draft: false, reuse, model, why: pk.why, stage1: "brain", draftWhy: "", flake: fv.verdict, flakeWhy: fv.why, key, draftKey, hash });
   }
@@ -232,7 +238,7 @@ function printPlan(pl: Plan, now: Date, x: { budget?: Budget; peakWarn?: string 
   log(`変わった所: ${pl.cls === "both" ? "ブレインと下書きの両方" : pl.cls === "brain" ? "ブレインだけ" : pl.cls === "draft" ? "下書きだけ" : "試験に効く変更なし"}${pl.clsNote ? `（${pl.clsNote}）` : ""}${pl.ragNote ? `・選び: ${pl.ragNote}` : ""}`);
   log(`効く所の鍵: ブレイン ${pl.keys.brain}・下書き ${pl.keys.draft}・試験の道具 ${pl.keys.tool}・構成 ${pl.cfgHash}・判定 ${JUDGE}/${JUDGE_PREFIX}`);
   const bad = (pl.db.parts ?? []).filter((x) => !x.ok);
-  log(`DB の指紋（使い回しの鍵）: ${pl.db.parts ? `${pl.db.parts.length}表・ブレイン ${pl.db.brain ?? "読めない表あり"}・下書き ${pl.db.draft ?? "読めない表あり"}${bad.length ? `（読めない: ${bad.map((x) => `${x.table}＝${x.why ?? ""}`).join("／")} → その段は使い回さない）` : ""}` : "読まない（--no-reuse か読めない）＝使い回さない"}`);
+  log(`DB の指紋（使い回しの鍵・${pl.db.mode === "fine" ? "旧＝件数・最後の時刻（EXAM_DB_FP=fine）" : "中身＝試験が読む行だけ"}）: ${pl.db.parts ? `${pl.db.parts.length}部分・ブレイン ${pl.db.brain ?? "読めない表あり"}・下書き ${pl.db.draft ?? "読めない表あり"}${bad.length ? `（読めない: ${bad.map((x) => `${x.table}＝${x.why ?? ""}`).join("／")} → その段は使い回さない）` : ""}` : "読まない（--no-reuse か読めない）＝使い回さない"}`);
   log(`問題 ${its.length}問（使い回し ${its.filter((x) => x.reuse).length}・揺れる ${its.filter((x) => x.flake === "flaky").length}・flash ${its.filter((x) => x.model === "flash").length}）`);
   for (const it of its) log(`  ${it.reuse ? "♻" : "▶"} ${it.id} [${pl.probs.get(it.id)?.type}] 回 ${it.reps}${it.flake === "flaky" ? "（揺れる）" : ""}・段 ブレイン${it.draft ? "→下書き" : pl.draftPlan.mode === "if-changed" && draftEligibleOf(pl, it.id) ? "（判断が変われば下書き）" : ""}${it.model === "flash" ? "・flash" : ""}${it.reuse ? "・前の結果を使う（使う物が同じ）" : ""} ← ${it.why.slice(0, 3).join("／")}`);
   log(`段: 1段目＝全部をブレインの判断まで（stage=brain）／2段目＝${pl.draftPlan.mode === "all" ? `下書きまで ${pl.draftPlan.ids.length}問（${pl.draftPlan.why}）` : pl.draftPlan.mode === "if-changed" ? `判断が前と変わった問題だけ下書きまで（最大 ${ifChangedMax}問）` : "下書きなし"}`);
@@ -431,8 +437,17 @@ async function runMain() {
 async function runQueue() {
   const now = new Date();
   const due = readQueue().filter((x) => Date.parse(x.at) <= now.getTime());
-  if (!due.length) { log("予約: 流す物が無い"); return; }
-  if (!isCheapWindow(now) && !flag("force")) { log(`今は安い時間ではない（JST 1:30〜9:30）→ 流さない（--force で流す）`); return; }
+  if (!isCheapWindow(now) && !flag("force")) { log(`今は DeepSeek の混雑の時間（平日 JST 10-13・15-19）→ 流さない（--force で流す）`); return; }
+  if (!due.length) log("予約: 流す物が無い");
+  await runQueueItems(due);
+  // 2026-10-18 竹内さん 10/18 OK「毎晩の自己点検を朝の報告に載せる」: 予約の後にブレインの自己点検を1回（1日の上限 $10 の内・1回 $1 まで・
+  //   今日済んでいれば流さない・結果は表 brain_self_review_runs へ＝朝の報告が読む）。申込以降の会話は対象外のまま。止める BRAIN_SELF_REVIEW_NIGHTLY=off
+  if ((process.env.BRAIN_SELF_REVIEW_NIGHTLY ?? "").trim().toLowerCase() !== "off" && existsSync(join(process.cwd(), "scripts", "brain-self-review.ts"))) {
+    log("毎晩の自己点検を流す（scripts/brain-self-review.ts --nightly）");
+    await new Promise<void>((res) => { const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", ["tsx", "--env-file=.env.local", "scripts/brain-self-review.ts", "--nightly", "--from=both", "--max=10", "--usd-max=1"].map(q), { cwd: process.cwd(), stdio: "inherit", shell: process.platform === "win32" }); ch.on("error", (e) => { log(`  自己点検を流せない: ${String(e).slice(0, 120)}`); res(); }); ch.on("close", () => res()); });
+  }
+}
+async function runQueueItems(due: ReturnType<typeof readQueue>) {
   for (const x of due) {
     log(`予約を流す: ${x.label}（${x.createdAt} に予約・見込み $${x.estUsd.toFixed(2)}）`);
     // 2026-10-17 確かめる人: 予約した作業ツリーが消えていると spawn が error で落ち、後ろの予約も流れない＝飛ばす

@@ -85,10 +85,12 @@ ok("判断が変わった集合", [...brainChangedOf([{ id: "a", cmp: "same" }, 
 {
   const at = (jst: string) => new Date(Date.parse(`${jst}+09:00`));
   ok("JST 3:00 は安い", isCheapWindow(at("2026-10-19T03:00:00")));
-  ok("JST 9:30 は安くない", !isCheapWindow(at("2026-10-19T09:30:00")));
+  ok("JST 9:30（月・混雑の外）は安い", isCheapWindow(at("2026-10-19T09:30:00")));
   ok("JST 11:00（混雑）は安くない", !isCheapWindow(at("2026-10-19T11:00:00")));
-  ok("JST 23:00 → 翌 1:30", nextCheapStart(at("2026-10-19T23:00:00")).toISOString() === at("2026-10-20T01:30:00").toISOString(), nextCheapStart(at("2026-10-19T23:00:00")).toISOString());
-  ok("JST 0:10 → 当日 1:30", nextCheapStart(at("2026-10-19T00:10:00")).toISOString() === at("2026-10-19T01:30:00").toISOString());
+  ok("JST 23:00 は安い（そのまま）", nextCheapStart(at("2026-10-19T23:00:00")).toISOString() === at("2026-10-19T23:00:00").toISOString());
+  ok("JST 11:00（月・混雑）→ 13:00", nextCheapStart(at("2026-10-19T11:00:00")).toISOString() === at("2026-10-19T13:00:00").toISOString(), nextCheapStart(at("2026-10-19T11:00:00")).toISOString());
+  ok("JST 16:20（月・混雑）→ 19:00", nextCheapStart(at("2026-10-19T16:20:00")).toISOString() === at("2026-10-19T19:00:00").toISOString());
+  ok("旧の窓を渡すと JST 0:10 → 当日 1:30", nextCheapStart(at("2026-10-19T00:10:00"), { startMin: 90, endMin: 570 }).toISOString() === at("2026-10-19T01:30:00").toISOString());
   ok("小さい試験は今", decideWhen({ when: "auto", estUsd: 0.3, now: at("2026-10-19T11:00:00") }).runNow);
   ok("関所は昼なら予約", !decideWhen({ when: "auto", estUsd: 0.3, gate: true, now: at("2026-10-19T11:00:00") }).runNow);
   ok("関所でも安い時間なら今", decideWhen({ when: "auto", estUsd: 5, gate: true, now: at("2026-10-19T03:00:00") }).runNow);

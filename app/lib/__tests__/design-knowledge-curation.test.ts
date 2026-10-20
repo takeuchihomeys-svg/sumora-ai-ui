@@ -46,12 +46,12 @@ console.log("── ② 竹内さんの決定");
   const autoOnly = findDecisionConflicts([row({ title: "AIX【確認します】をブレインの候補から外す", created_at: "2026-10-02T09:00:00Z" }), row({ title: "URL → AIX【確認します】を出す", created_at: "2026-09-01T00:00:00Z" })]);
   t("auto でない決定は退役せず要確認へ", autoOnly.retire.length === 0 && autoOnly.review.length === 1);
   t("決定の行が無い決定は missing に出す", findDecisionConflicts([]).missing.length === DECISIONS.length);
-  // 2026-10-18 弱い所B-4: 支払いは一括のお振込だけ（10/16）。カード払いなら分割可・手数料3.24%を添える行は古い
-  const lumpNew = row({ title: "【決定】支払いは一括のお振込だけ — カード払い・分割・3.24% の事実", insight: "カード手数料3.24%を必ず添える決まりはやめた", created_at: "2026-10-17T00:00:00Z" });
-  const cardOld = row({ title: "会社の事実の一文（分割の手数料）は道ごとに届き方を確かめる", insight: "カード払いなら分割可・手数料3.24%を必ず添える", created_at: "2026-10-01T00:00:00Z" });
-  const lumpOk = row({ title: "一括のお振込の案内", insight: "一括でのお振込のみと答える", created_at: "2026-10-01T00:00:00Z" });
-  const lump = findDecisionConflicts([lumpNew, cardOld, lumpOk]);
-  t("一括振込の決定: カード分割の行は要確認・一括のみの行は古くない", lump.review.some((x) => x.ids[0] === cardOld.id) && !lump.review.some((x) => x.ids[0] === lumpOk.id) && !lump.missing.includes("lump_transfer_only"));
+  // 2026-10-18 夜 竹内さん: カード払いなら分割可・手数料3.24% が正しい（10/16 の一括のみを取り消し）。一括のみと答える行が古い
+  const cardNew = row({ title: "【決定】初期費用はカード払いなら分割可・分割の手数料3.24%（分割はご自身のカード会社で設定）", created_at: "2026-10-18T12:00:00Z" });
+  const lumpOld = row({ title: "一括のお振込の案内", insight: "一括でのお振込のみと答える", created_at: "2026-10-17T00:00:00Z" });
+  const cardDetail = row({ title: "カード払いの案内", insight: "カード手数料3.24%を添える", created_at: "2026-10-01T00:00:00Z" });
+  const card = findDecisionConflicts([cardNew, lumpOld, cardDetail]);
+  t("カード分割の決定: 一括のみの行は要確認・カードの行は古くない", card.review.some((x) => x.ids[0] === lumpOld.id) && !card.review.some((x) => x.ids[0] === cardDetail.id) && !card.missing.includes("card_fee_324"));
 }
 
 console.log("── ③ 似ている組・DeepSeek の答え");

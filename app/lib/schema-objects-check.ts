@@ -30,6 +30,8 @@ export const REQUIRED_TRIGGERS: ReadonlyArray<{ name: string; table: string }> =
   { name: "rent_observe_sent_trg", table: "sent_properties" },
   { name: "rent_observe_pickup_trg", table: "property_pickups" },
   { name: "trg_fill_message_staff_writer", table: "messages" },
+  // 2026-10-18 知識の検索の halfvec の写しを埋める（無いと新しい知識が float に戻るだけ＝静かに遅くなる）
+  { name: "trg_ai_reply_knowledge_embedding_h", table: "ai_reply_knowledge" },
 ];
 
 export const SCHEMA_MISSING_TAG = "SCHEMA_OBJECTS_MISSING:";

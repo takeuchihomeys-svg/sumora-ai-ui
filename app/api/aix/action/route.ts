@@ -1,3 +1,4 @@
+import { composeLifelineMessage } from "@/app/lib/aix-lifeline";
 import { NextRequest, NextResponse, after } from "next/server";
 import { buildMustSendNote, mustMoveInLabel, normalizeRequirementStrengths } from "@/app/lib/requirement-strength";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -5306,7 +5307,7 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
     // ── 🏢 管理会社に確認した（退去予定日・入居可能日・初期費用・駐車場・ペット飼育・設備・募集状況）＋ 近隣月極駐車場確認 ──────────
     } else if (
       action === "property_check_result" &&
-      (check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_company" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
+      (check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_lifeline" || check_pattern === "mgmt_company" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
     ) {
       let mgmtInfo = extra_input ? String(extra_input).trim() : "";
       // 2026-09-16 竹内（カイナ事例）: 代理契約の可否。入れるのは物件名と可能／不可だけで、あとは会話に合わせる
@@ -5320,6 +5321,21 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
       if (check_pattern === "mgmt_two_person") {
         if (twoPersonResult !== "可能" && twoPersonResult !== "不可") throw new Error("二人入居が可能か不可かが必要です");
         mgmtInfo = [`二人入居：${twoPersonResult}`, property_name ? `物件名：${property_name}` : "物件名：入力なし（物件名に触れない）"].join("\n");
+      }
+      // 2026-10-18 竹内さん 10/18: ライフライン（管理会社に確認した→ライフラインについて）。二人入居のピッカーに倣い、入れるのは
+      //   指定の有無（指定なし／指定あり）・連絡先（電気・ガス・水道の会社と電話番号・スタッフが写した文字のまま）・物件名。
+      //   実送信の答えの型（9/28 469a614a）「ライフライン特に指定なしとのことです。／【ライフラインご連絡先】／関西電力／0800-…／大阪ガス／0120-…／堺市水道局／0570-…」
+      const lifelineDesignation = body.lifeline_designation as string | undefined;
+      const lifelineContacts = typeof body.lifeline_contacts === "string" ? String(body.lifeline_contacts).replace(/\r\n/g, "\n").trim() : "";
+      if (check_pattern === "mgmt_lifeline") {
+        if (lifelineDesignation !== "指定なし" && lifelineDesignation !== "指定あり") throw new Error("ライフラインの指定の有無（指定なし／指定あり）が必要です");
+        if (lifelineDesignation === "指定あり" && !lifelineContacts) throw new Error("指定ありの時は連絡先（会社名・電話番号）が必要です");
+        mgmtInfo = [
+          `ライフラインの指定：${lifelineDesignation}`,
+          lifelineContacts ? `連絡先（このまま本文の後ろに付く・本文には書かない）：あり` : "連絡先：入力なし（会社名・電話番号に触れない）",
+          property_name ? `物件名：${property_name}` : "物件名：入力なし（物件名に触れない）",
+          ...(mgmtInfo ? [`補足：${mgmtInfo}`] : []),
+        ].join("\n");
       }
       // 駐車場・ペット飼育: 構造化入力（ピッカー選択+テキスト）からスタッフ入力情報を組み立てる
       if (check_pattern === "mgmt_parking") {
@@ -5379,7 +5395,7 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
         const label = m.sender === "staff" && m.imageUrl ? staffImageLabels.get(m.imageUrl) : undefined;
         return { sender: m.sender, text: label ? `[画像: ${label}の資料・御見積書]` : m.text };
       });
-      const mgmtTarget = check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_move_in" && !(typeof property_name === "string" && property_name.trim())
+      const mgmtTarget = check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_lifeline" && check_pattern !== "mgmt_move_in" && !(typeof property_name === "string" && property_name.trim())
         ? resolveConfirmTargetProperty(mgmtTargetRows, { topic: confirmTopicForCheckPattern(String(check_pattern)) })
         : null;
       if (mgmtTarget) {
@@ -5453,6 +5469,18 @@ ${guidanceRule}`,
 ・[物件名]はスタッフ入力の物件名をそのまま使う（複数は「〇〇・〇〇ともに」）。物件名が「入力なし」なら1行目は「二人入居可能か管理会社に確認させて頂きましたところ」から始める
 ・3行目（次の一手）を足してよいのは、**この会話で内覧のご案内も申込のご案内も一度もしていない時だけ**（可能の時「よろしければ一度お部屋ご内覧如何でしょうか😊！！」）。不可の時は足さない（代わりの提案はスタッフが別の AIX で送る）
 ・「審査に通る」「大丈夫です」など確認していない断定はしない`,
+        },
+        // 2026-10-18 竹内さん 10/18「ライフラインを聞かれた時の返信は『別途ご案内させて頂きます』の約束→答えはこのピッカーから」。
+        //   1行の結果＋（連絡先があれば）【ライフラインご連絡先】の欄。連絡先の欄は出口でスタッフの入力をそのまま付ける（LLM に写させない）
+        mgmt_lifeline: {
+          label: "ライフライン",
+          format: lifelineDesignation === "指定あり"
+            ? `[物件名]のライフラインにつきまして管理会社に確認させて頂きましたところ、下記のご連絡先にてお手続き頂く形となります！！`
+            : `[物件名]のライフラインにつきまして管理会社に確認させて頂きましたところ、特に指定はございませんでした😊！！`,
+          rules: `・**この1行だけを書く**。連絡先（会社名・電話番号）は本文に書かない（スタッフの入力をそのまま後ろに付ける）。【ライフラインご連絡先】の見出しも書かない
+・スタッフが入れたのは「ライフラインの指定：指定なし／指定あり」と「物件名」だけ。これ以外の事実は絶対に書かない（料金・開栓の立ち会い・手続きの期限・電力会社のおすすめ・インターネット）
+・[物件名]はスタッフ入力の物件名をそのまま使う。物件名が「入力なし」なら「ライフラインにつきまして管理会社に確認させて頂きましたところ」から始める
+・内覧・申込・見積書の案内は足さない（申込以降のお手続きの連絡）`,
         },
         // 2026-09-30 竹内（みこと事例）「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて」
         //   実送信の型（手打ち・挨拶なしの2行）:
@@ -5656,7 +5684,7 @@ ${mgmtTarget ? `②の文頭に「${mgmtTarget.name}につきまして」と付�
 ${mgmtDef.format}
 
 【置き換えルール】
-${check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" ? "" : mgmtTarget ? `・[物件名]は【確認した物件】の名前をそのまま使う（${mgmtTarget.name}）。会話に出てくる他の物件の名前は書かない
+${check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_lifeline" ? "" : mgmtTarget ? `・[物件名]は【確認した物件】の名前をそのまま使う（${mgmtTarget.name}）。会話に出てくる他の物件の名前は書かない
 ` : `・[物件名]は会話履歴からお客様が確認依頼した物件を特定する（号室があれば「マンション名 806号室」形式・号室は資料や会話の表記のまま: 0806 は 0806）。特定できない場合は「ご確認頂きましたお部屋」とする
 `}${mgmtDef.rules}
 
@@ -5702,6 +5730,10 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
           message_text = sg.text;
           console.log(JSON.stringify({ tag: check_pattern === "mgmt_proxy" ? "aix:proxy-head-greeting-stripped" : "aix:mgmt-company-head-greeting-stripped", conversationId }));
         }
+      }
+      // 2026-10-18 ライフライン: LLM が書いた連絡先・見出しは落とし、スタッフの入力をそのまま【ライフラインご連絡先】の欄で付ける（電話番号の写し間違いを出さない）
+      if (check_pattern === "mgmt_lifeline") {
+        message_text = composeLifelineMessage(message_text, lifelineContacts);
       }
       // 2026-09-30 竹内「管理会社の名前は『確認した』から送る」: 名前はスタッフが入れた文字のまま（1文字でも違えば固定の文に差し替える＝出口の決定論）
       if (check_pattern === "mgmt_company") {

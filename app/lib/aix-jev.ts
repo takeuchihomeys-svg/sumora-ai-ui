@@ -77,6 +77,7 @@ export const JEV_CHECK_TOPIC_OPTIONS: Record<string, string> = {
   equipment:      "設備（エアコン・ネット・ガス・洗濯機置き場など）",
   proxy:          "代理契約・名義（本人以外が契約できるか）",
   two_person:     "二人入居ができるか（2026-10-18 竹内さん 10/16）",
+  lifeline:       "ライフライン（電気・ガス・水道）の指定・連絡先（2026-10-18 竹内さん 10/18）",
 };
 
 /** aix_usage_logs.check_pattern → Jev の topic（答え合わせ用）。結果のピッカー（available 等）は availability に寄せる */
@@ -93,6 +94,7 @@ export const CHECK_PATTERN_TO_TOPIC: Record<string, string> = {
   mgmt_equipment: "equipment",
   mgmt_proxy: "proxy",
   mgmt_two_person: "two_person",
+  mgmt_lifeline: "lifeline",
 };
 
 /** Jev の topic → ブレインが suggested_aix_meta.check_pattern に入れる値（結果のピッカーは null＝スタッフが選ぶ） */
@@ -109,6 +111,7 @@ export const TOPIC_TO_CHECK_PATTERN: Record<string, string | null> = {
   equipment: "mgmt_equipment",
   proxy: "mgmt_proxy",
   two_person: "mgmt_two_person",
+  lifeline: "mgmt_lifeline",
 };
 
 /** 「何を確認したか」のピッカー（会話から当てられる）。結果のピッカーは含めない */

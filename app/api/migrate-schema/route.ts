@@ -3371,21 +3371,39 @@ BEGIN
   LIMIT match_count;
 END;
 $$;
+-- 2026-10-18 竹内さん OK（知識の検索の時間切れ・設計知見 c60a5e07）: 1536次元の float 埋め込み（6KB）は TOAST に出て、冷えると全件比較が
+--   約4,000ページの乱読みで 9.8秒（8秒で時間切れ）。halfvec(1536)（3KB）の写しを STORAGE MAIN で行の中に持ち、関数は写しで比べる
+--   （未埋めの行は float に戻る＝COALESCE）。本番の5問で上位100件の重なり 100/100＝順位は変わらない。厳密な全件比較のまま（HNSW にはしない）。
+--   列・トリガーは関数より前（LANGUAGE sql は作る時に列を確かめる）。埋め戻しは1晩500行まで（全部は scripts/halfvec-migration.sql を親が流す）。
+--   戻す: scripts/halfvec-migration.sql の「戻す」節（関数を float だけに戻す・列は残してよい）
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS embedding_h halfvec(1536);
+ALTER TABLE ai_reply_knowledge ALTER COLUMN embedding_h SET STORAGE MAIN;
+CREATE OR REPLACE FUNCTION ai_reply_knowledge_fill_embedding_h() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.embedding_h := CASE WHEN NEW.embedding IS NULL THEN NULL ELSE NEW.embedding::halfvec(1536) END;
+  RETURN NEW;
+END;
+$$;
+CREATE OR REPLACE TRIGGER trg_ai_reply_knowledge_embedding_h BEFORE INSERT OR UPDATE OF embedding ON ai_reply_knowledge
+  FOR EACH ROW EXECUTE FUNCTION ai_reply_knowledge_fill_embedding_h();
+UPDATE ai_reply_knowledge SET embedding_h = embedding::halfvec(1536)
+  WHERE id IN (SELECT id FROM ai_reply_knowledge WHERE embedding_h IS NULL AND embedding IS NOT NULL LIMIT 500);
 -- match_reply_knowledge 正本（2026-09-13 改善5）: boost_state 一致を「必ず先頭」から距離への 0.03 の加点へ
 --   （本番の問い24件で類似度上位30件との重なり 平均約9 → 約27）。source を返す（成約分析 closed_won_analysis の仮説上限の免除に使う）
 --   2026-10-17: 本番の戻り値はこの形のまま → CREATE OR REPLACE だけ（DROP を外した・間に止まっても消えない。SET は下の DO ブロックが付け直す）
 CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7, boost_state text DEFAULT NULL)
 RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity double precision, hypothesis_status text, created_at timestamptz, source text)
 LANGUAGE sql STABLE AS $$
+  -- 2026-10-18: 距離は halfvec の写し（行の中）で測る・写しが無い行だけ float（TOAST）に戻る。距離の式は似た度と並びで同じ1つ
   SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
-    (1 - (ak.embedding <=> query_embedding))::float AS similarity,
+    (1 - COALESCE(ak.embedding_h <=> query_embedding::halfvec(1536), ak.embedding <=> query_embedding))::float AS similarity,
     ak.hypothesis_status,
     ak.created_at,
     ak.source
   FROM ai_reply_knowledge ak
-  WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
+  WHERE (ak.embedding_h IS NOT NULL OR ak.embedding IS NOT NULL) AND ak.importance >= min_importance
     AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
-  ORDER BY (ak.embedding <=> query_embedding)
+  ORDER BY COALESCE(ak.embedding_h <=> query_embedding::halfvec(1536), ak.embedding <=> query_embedding)
     - CASE WHEN boost_state IS NOT NULL AND ak.conversation_state = boost_state THEN 0.03 ELSE 0 END
   LIMIT match_count
 $$;
