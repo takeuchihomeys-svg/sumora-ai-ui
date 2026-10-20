@@ -30,3 +30,36 @@ export async function newerCustomerMessageAfter(conversationId: string, answered
 
 /** 下書きの保存を見送る時の更新（生成中の印を外す。draft_pending_at は触らない＝webhook が2通目で立てた印を残す） */
 export const SUPERSEDED_DRAFT_UPDATE = { draft_attempted_at: null } as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-20 竹内さん（設計知見 P1 54ec8c71「返信を送る前にお客様から新しい LINE が来たら、その新しい発言に返信する」）
+//   上の判定は「保存の直前」に1回だけ見ていた。判定と保存の間（数十ms〜）にお客様の発言が届くと、webhook は ai_draft を空にした後で
+//   この保存が前の発言向けの下書きを書き、draft_pending_at も消すため、次の作り直しが起きず古い下書きが入力欄・自動返信に残った。
+//   保存の後にもう一度見て、新しい発言があれば「その下書きのままなら」消して作り直しの印（draft_pending_at）を戻す。
+//   戻す: STALE_DRAFT_GUARD=off
+// ─────────────────────────────────────────────────────────────────────────────
+export function staleDraftGuardOn(): boolean {
+  return (process.env.STALE_DRAFT_GUARD ?? "on").trim().toLowerCase() !== "off";
+}
+
+/**
+ * 下書きを保存した直後に呼ぶ。answeredAt より新しいお客様の発言があれば、保存した下書きのまま（スタッフが表示・編集していない）の時だけ
+ * ai_draft を空に戻し、draft_pending_at を新しい発言の時刻にする（cron が新しい発言まで含めて作り直す）。戻り値は新しい発言の時刻 or null。
+ */
+export async function revertDraftIfSupersededAfterSave(
+  conversationId: string, answeredAt: string | null | undefined, savedDraft: string, caller: string,
+): Promise<string | null> {
+  if (!staleDraftGuardOn() || !savedDraft.trim()) return null;
+  const newer = await newerCustomerMessageAfter(conversationId, answeredAt);
+  if (!newer) return null;
+  try {
+    const { error } = await supabase.from("conversations")
+      .update({ ai_draft: null, draft_pending_at: newer, draft_attempted_at: null })
+      .eq("id", conversationId).eq("ai_draft", savedDraft);
+    if (error) console.warn("[draft-supersede] revert after save failed:", conversationId, error.message);
+  } catch (e) {
+    console.warn("[draft-supersede] revert after save failed:", conversationId, e instanceof Error ? e.message : String(e));
+  }
+  console.log(JSON.stringify({ tag: "draft:superseded-after-save", conversationId, answeredAt: answeredAt ?? null, newerAt: newer, caller }));
+  return newer;
+}

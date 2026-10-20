@@ -28,7 +28,11 @@ async function copyToYuma(source: string, last: number): Promise<number> {
   const { data: conv } = await sb.from("conversations").select("status, customer_name").eq("id", source).maybeSingle();
   if (!conv) throw new Error(`会話 ${source} が見つかりません`);
   if (DRAFT_SKIP_STATUSES.has(String(conv.status ?? ""))) throw new Error(`会話 ${source} は申込以降（${conv.status}）なので写しません（個人情報が集中・テストの対象外）`);
-  const { data: msgs } = await sb.from("messages").select("sender, text, is_aix_generated, created_at").eq("conversation_id", source).order("created_at", { ascending: false }).limit(last);
+  // 2026-10-20 --until=<ISO>: その時刻までの通だけ写す（すれ違いの前後でブレインの判断を比べる）
+  const until = arg("until");
+  let q = sb.from("messages").select("sender, text, is_aix_generated, created_at").eq("conversation_id", source);
+  if (until) q = q.lte("created_at", until);
+  const { data: msgs } = await q.order("created_at", { ascending: false }).limit(last);
   const ordered = ((msgs ?? []) as Array<{ sender: string; text: string | null; is_aix_generated: boolean | null }>).reverse();
   // 申込の書類・本人確認書類・収入の書類・個人の値の手前で切る（書類より後の流れは使わない）
   const cut = h!.cutBeforeApplicationMaterial(ordered);
@@ -88,7 +92,7 @@ async function main() {
       });
     });
     const m = (meta ?? {}) as Record<string, unknown>;
-    console.log(JSON.stringify({ run: i + 1, action: m.action ?? null, decision_source: m.decision_source ?? null, check_pattern: m.check_pattern ?? null, reply_mode: m.reply_mode ?? null, scene: (m.scene_evidence as Record<string, unknown> | undefined)?.scene ?? null, direction: String(m.reply_direction ?? "").slice(0, 120) }));
+    console.log(JSON.stringify({ run: i + 1, action: m.action ?? null, aix: m.aix ?? null, zenryoku_candidate: m.zenryoku_candidate ?? null, customer_questions: m.customer_questions ?? null, decision_source: m.decision_source ?? null, check_pattern: m.check_pattern ?? null, reply_mode: m.reply_mode ?? null, scene: (m.scene_evidence as Record<string, unknown> | undefined)?.scene ?? null, direction: String(m.reply_direction ?? "").slice(0, 120) }));
   }
 }
 

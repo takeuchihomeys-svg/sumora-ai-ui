@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { newerCustomerMessageAfter, staleDraftGuardOn } from "@/app/lib/draft-supersede";
 
 // Vercel Functions のタイムアウト上限（秒）— 最大100件のLINE push送信に余裕を持たせる
 export const maxDuration = 300;
@@ -93,14 +94,31 @@ export async function GET(req: NextRequest) {
 
       // 2026-09-21 竹内「LINEのグループにおくるはずが個人のLINEにおくらないように」:
       //   予約送信も即時送信と同じ関門を通す（会話の宛先と違う・送信停止の会話 → 送らずに失敗にする）
+      let autoSendConv = false;
       {
         const { checkSendTarget } = await import("@/app/lib/line-target");
         const { data: convRows } = msg.conversation_id
-          ? await supabase.from("conversations").select("line_user_id, send_blocked_reason").eq("id", msg.conversation_id as string).limit(1)
+          ? await supabase.from("conversations").select("line_user_id, send_blocked_reason, auto_send_enabled").eq("id", msg.conversation_id as string).limit(1)
           : { data: [] as unknown[] };
-        const conv = ((convRows ?? [])[0] as { line_user_id: string | null; send_blocked_reason: string | null } | undefined) ?? null;
+        const conv = ((convRows ?? [])[0] as { line_user_id: string | null; send_blocked_reason: string | null; auto_send_enabled?: boolean | null } | undefined) ?? null;
+        autoSendConv = conv?.auto_send_enabled === true;
         const check = checkSendTarget(msg.line_user_id as string, conv);
         if (!check.ok) throw new Error(`送信を止めました: ${check.message}`);
+      }
+
+      // 2026-10-20 竹内さん（設計知見 P1 54ec8c71「返信を送る前にお客様から新しい LINE が来たら、その新しい発言に返信する」）:
+      //   自動返信（auto-reply-dispatch が下書きを積む・待ち時間の後に送る）は、積んだ後にお客様の新しい発言が届いていたら送らない（古い下書き）。
+      //   取り消し（cancelled）にするだけ＝新しい発言で作り直した下書きを dispatch が次に積む。本番 60日で自動の会話の予約 7件中 2件が新しい発言の後に送られていた。
+      //   自動の会話（auto_send_enabled）の AIX 以外の予約だけ。手で予約した文の扱いは別（竹内さんの判断待ち）。戻す STALE_DRAFT_GUARD=off
+      if (staleDraftGuardOn() && autoSendConv && !(msg.is_aix as boolean | null) && msg.conversation_id) {
+        const newerAt = await newerCustomerMessageAfter(msg.conversation_id as string, msg.created_at as string);
+        if (newerAt) {
+          await supabase.from("scheduled_messages")
+            .update({ status: "cancelled", error: "superseded: 予約の後にお客様から新しい LINE（古い下書きは送らない）" })
+            .eq("id", msg.id as string).eq("status", "sending");
+          console.log(JSON.stringify({ tag: "auto-reply:stale-cancelled", conversationId: msg.conversation_id, scheduledId: msg.id, createdAt: msg.created_at, newerAt }));
+          continue;
+        }
       }
 
       const accountKey = resolveAccountKey(msg.account as string | undefined);

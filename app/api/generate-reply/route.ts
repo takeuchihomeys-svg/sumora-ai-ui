@@ -195,7 +195,7 @@ import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMe
 import { buildParallelSearchReplyNote } from "@/app/lib/parallel-search";
 import { getCustomerState } from "@/app/lib/customer-state-server";
 import { customerStateHasViewing } from "@/app/lib/customer-state";
-import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
+import { newerCustomerMessageAfter, revertDraftIfSupersededAfterSave, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { aixMetaKnowledgeBonus, extractMetaKeywords, type AixMetaRerankSignals } from "@/app/lib/knowledge-aixmeta-rerank";
 // AIXボタン種別アナウンス統一（2026-08）: スタッフ向けボタン誘導メモは aix-taxonomy.ts の
 // AIX_STAFF_NOTES を単一ソースとして brain-core の AIX_BRAIN_NOTES と共有する（文言乖離の構造的防止）
@@ -325,6 +325,7 @@ import { splitRequests, buildRequestLedgerNote, requestLedgerEnabled } from "@/a
 import { replyHintBrainEnabled } from "@/app/lib/reply-hint-auto";
 import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/app/lib/opener-rates";
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
+import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -4859,6 +4860,16 @@ async function handleGenerateReply(req: NextRequest) {
       //   conversation-scope な reply_direction は「会話全体の方針」として使える（1メッセージ古くても壊れない）。
       //   brain-sweep が「5分以内に補填する」というコメントは実測 899/900 失敗で虚偽だった。
       if (brainStrategySource === "last_brain_meta" && brainStrategy?.reply_direction) {
+        // 2026-10-20 竹内さん（設計知見 P1 54ec8c71・すれ違い）: 残っている判断が今のお客様の発言より前の発言を見た物なら、
+        //   その方針は前の発言（前の依頼・質問）に向けた物＝最新の発言が依頼を変えた・取り消した時は最新を主にする旨を添える
+        //   （10/19 21:11 の作り直しは「すみません他お願いします」に、前の発言の判断「募集状況を確認する約束」が方針として渡っていた）。
+        //   戻す BRAIN_LATEST_SUPERSEDES=off
+        const lastAnalyzedTs = typeof brainGate?.lastMeta?.analyzed_msg_ts === "string" ? (brainGate.lastMeta.analyzed_msg_ts as string) : null;
+        const lastMetaOlder = (process.env.BRAIN_LATEST_SUPERSEDES ?? "").toLowerCase() !== "off" && !!lastAnalyzedTs && !!lastCustomerMsgAt
+          && Date.parse(lastAnalyzedTs) < Date.parse(lastCustomerMsgAt) - 1000;
+        if (lastMetaOlder) {
+          return `${brainDirForGen(brainStrategy.reply_direction)}（※この方針は前のお客様の発言を分析した時の物。今回のお客様の最新の発言が前の依頼・質問を変える・取り消す・別の物を頼む時は、最新の発言の依頼を主に返し、前の質問への答えを書かない）`;
+        }
         return `${brainDirForGen(brainStrategy.reply_direction)}（※直近の分析結果に基づく会話全体の方針。今回のメッセージの中身は本文から読み取ること）`;
       }
       // A-4: state 別フォールバック（固定文「WE DO宣言を1文添える」の廃止）
@@ -5721,9 +5732,14 @@ async function handleGenerateReply(req: NextRequest) {
     }
     // 2026-10-15 #7: 呼ぶ側の自動の手がかり（お客様の文の語だけで作った物）。本質がブレインの番は材料の注記（AIX の注記・本文の安全・返信側の AIX の判断を残す）
     if (replyHintAutoOrig) {
-      const toMaterialAuto = turnContract?.source === "brain";
+      // 2026-10-20 竹内さん（設計知見 P1 d3fe3a9f・「他はないですか？」がそのまま下書きに出た）: 本質がブレインでない番（T3・ブレインの判断が捨てられた番）でも、
+      //   お客様の文の語で作った手がかりを「指定生成モード（通常の生成ルールをすべて上書き）…指定内容: 〈お客様の文〉」にしない
+      //   （指定内容＝お客様の文を本文に書いた）。材料の注記に下げる。戻す REPLY_HINT_AUTO_MATERIAL=off（本質がブレインの番だけ材料＝旧）
+      const toMaterialAuto = turnContract?.source === "brain" || (process.env.REPLY_HINT_AUTO_MATERIAL ?? "").toLowerCase() !== "off";
       if (toMaterialAuto) {
-        autoHintMaterialNote += `\n【📎 お客様の文から拾った手がかり（材料・中身と長さは【🧭 この番の本質】に従う）】\n- ${replyHintAutoOrig}\n`;
+        autoHintMaterialNote += turnContract?.source === "brain"
+          ? `\n【📎 お客様の文から拾った手がかり（材料・中身と長さは【🧭 この番の本質】に従う）】\n- ${replyHintAutoOrig}\n`
+          : `\n【📎 お客様の文から拾った手がかり（材料・返信の中身はお客様の発言と会話の流れから決める。ここに引いたお客様の文を本文に写さない）】\n- ${replyHintAutoOrig}\n`;
       } else {
         replyHint = [replyHintAutoOrig, ...(replyHint ? [replyHint] : [])].join("\n");
       }
@@ -7314,6 +7330,15 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 finalDraftText = g.text;
               }
             }
+            // 2026-10-20 竹内さん（設計知見 P1 d3fe3a9f）: お客様の文と同じ（ほぼ同じ）下書きは出さない（出口の安全の線・draft-echo.ts）。
+            //   出さない時は本文を空にする（保存もしない＝画面は作り直しを出す・自動返信にも乗らない）。戻す DRAFT_ECHO_GUARD=off
+            if (finalDraftText && !isTemplateOptimize && draftEchoGuardEnabled(process.env.DRAFT_ECHO_GUARD)) {
+              const echoSources = [message, ...customerMsgUnits, [...recentMessages].reverse().find((m) => m.sender === "customer")?.text ?? ""];
+              if (isCustomerEcho(finalDraftText, echoSources)) {
+                console.log(JSON.stringify({ tag: "draft:customer-echo-dropped", conversationId, caller: generationCaller, chars: finalDraftText.length, hintOverride: !!replyHint, brainFresh: !!brainFreshForMessage }));
+                finalDraftText = "";
+              }
+            }
             if (finalDraftText) controller.enqueue(encoder.encode(finalDraftText));
             // FINAL_CHECK トレーラー（メタ行1行目は出力済みのためトレーラーが唯一の伝達手段。
             // クライアントは SUGGESTED_AIX と同様に内部タグとして除去・解析する。STOP_REASON は必ず最後）
@@ -7457,6 +7482,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 )
                 .eq("id", conversationId);
               if (saveErr) console.error("[generate-reply] ai_draft save error:", conversationId, saveErr.message);
+              // 2026-10-20 すれ違い（P1 54ec8c71）: 判定と保存の間に届いたお客様の発言を保存の後にもう一度見る（draft-supersede）
+              else if (!isTruncated && !notAReply && finalDraftText.trim()) {
+                await revertDraftIfSupersededAfterSave(conversationId, lastCustomerMsgAt, finalDraftText.trim(), generationCaller);
+              }
               } // ← aixBoundaryRequired else 終端
               // ai_draft_check は別UPDATEで保存（fail-open: カラム未追加環境でも ai_draft 保存を巻き込まない。
               // 監査ログ兼、事前生成ドラフト選択時のクライアント側ハッシュ照合用。

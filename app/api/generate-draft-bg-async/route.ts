@@ -6,7 +6,7 @@ import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
 // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数・入口で止める）
 import { decideNightDeferNow } from "@/app/lib/brain-night-defer";
-import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
+import { newerCustomerMessageAfter, revertDraftIfSupersededAfterSave, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
 // 2026-09-23 竹内「申込中は…ここ文生成しなくて大丈夫」: 申込以降の判定は status だけでなく記録（申込へ押下・本人確認書類・戻し）で
@@ -1087,6 +1087,8 @@ export async function POST(req: NextRequest) {
           console.error("[bg-async] save error:", saveErr.message, "convId:", convId);
         } else {
           console.log("[bg-async] draft saved OK, length:", finalDraft.length, "convId:", convId);
+          // 2026-10-20 すれ違い（P1 54ec8c71）: 判定と保存の間に届いたお客様の発言を保存の後にもう一度見る（draft-supersede）
+          await revertDraftIfSupersededAfterSave(convId, answeredCustomerAt, finalDraft, "bg-async");
         }
       } else {
         // 空ドラフト（ストリーム正常終了だが出力なし）も失敗として扱う。

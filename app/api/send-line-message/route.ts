@@ -10,6 +10,8 @@ import { buildCallRequestFlex, callUrlSettingKey, isValidLineCallUrl } from "@/a
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
+import { newerCustomerMessageAfter, staleDraftGuardOn } from "@/app/lib/draft-supersede";
+import { STALE_REPLY_ERROR_CODE } from "@/app/lib/stale-reply";
 
 // 宣言直後のブレイン再分析（after 内で最大 ~20秒待ち＋分析）に余裕を持たせる
 export const maxDuration = 120;
@@ -65,7 +67,7 @@ export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
 
-  const { line_user_id, message, image_url, image_urls, account, conversation_id, origin, call_button, aix_type } = await req.json() as {
+  const { line_user_id, message, image_url, image_urls, account, conversation_id, origin, call_button, aix_type, reply_based_on_customer_at, allow_stale } = await req.json() as {
     line_user_id?: string;
     message?: string;
     image_url?: string;
@@ -88,6 +90,13 @@ export async function POST(req: NextRequest) {
      * 画像から読み取った物件を sent_image_properties に source="aix:<種類>" で記録するのに使う。
      */
     aix_type?: string;
+    /**
+     * 2026-10-20 竹内さん（設計知見 P1 54ec8c71・すれ違い）: 画面の入力欄の文を作り始めた時点のお客様の最新の発言の時刻（stale-reply.ts nextComposerBase）。
+     * これより後にお客様の発言が届いていたら送らずに 409 stale_reply を返す（画面が「このまま送る／作り直す」を出す）。無い呼び出しは見ない。
+     */
+    reply_based_on_customer_at?: string | null;
+    /** スタッフが画面で「このまま送る」を選んだ（新しい発言を見た上で送る） */
+    allow_stale?: boolean;
   };
 
   const batchImages = Array.isArray(image_urls) ? image_urls.filter((u) => typeof u === "string" && u.trim()) : [];
@@ -134,6 +143,17 @@ export async function POST(req: NextRequest) {
     if (!check.ok) {
       console.warn(JSON.stringify({ tag: "send-line-message:blocked", reason: check.reason, conversationId: conversation_id ?? null, to: line_user_id.slice(0, 5) }));
       return NextResponse.json({ ok: false, errorCode: check.reason, error: check.message }, { status: 409 });
+    }
+  }
+
+  // 2026-10-20 竹内さん（設計知見 P1 54ec8c71「返信を送る前にお客様から新しい LINE が来たら、その新しい発言に返信する」）:
+  //   入力欄の文を作り始めた後にお客様の新しい発言が届いていたら、送る前に止めて画面に知らせる（時刻だけの安全の線・何に答えるかはブレインと作り直しの下書き）。
+  //   画面の手元の一覧が遅れていても DB で見る（10/19 21:08 は新しい発言の19秒後に前の質問への答えが送られた）。戻す STALE_DRAFT_GUARD=off
+  if (conversation_id && reply_based_on_customer_at && !allow_stale && staleDraftGuardOn()) {
+    const newerAt = await newerCustomerMessageAfter(conversation_id, reply_based_on_customer_at);
+    if (newerAt) {
+      console.warn(JSON.stringify({ tag: "send-line-message:stale-reply", conversationId: conversation_id, basedOn: reply_based_on_customer_at, newerAt, origin: origin ?? null }));
+      return NextResponse.json({ ok: false, errorCode: STALE_REPLY_ERROR_CODE, newerAt, error: "この文を作った後にお客様から新しい LINE が届いています。新しい発言を確かめてから送ってください" }, { status: 409 });
     }
   }
 

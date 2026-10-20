@@ -7,7 +7,7 @@ import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
 // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数・入口で止める）
 import { decideNightDeferNow } from "@/app/lib/brain-night-defer";
-import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
+import { newerCustomerMessageAfter, revertDraftIfSupersededAfterSave, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "@/app/lib/brain-meta-restore";
 import { DRAFT_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
 import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
@@ -535,6 +535,8 @@ async function run() {
         const convAiDraftForSave = (conv as Record<string, unknown>).ai_draft as string | null | undefined;
         const saveGuard = convAiDraftForSave === "[AIX誘導中]" ? `ai_draft.is.null,ai_draft.eq."[AIX誘導中]"` : "ai_draft.is.null";
         await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null, draft_fail_count: 0 }).eq("id", convId).or(saveGuard);
+        // 2026-10-20 すれ違い（P1 54ec8c71）: 判定と保存の間に届いたお客様の発言を保存の後にもう一度見る（draft-supersede）
+        await revertDraftIfSupersededAfterSave(convId, answeredCustomerAt, finalDraft, "cron");
         processed++;
       } else {
         // タグ除去後に本文が空 → 生成失敗として記録（attempted_at は残し10分バックオフで再試行させる）
