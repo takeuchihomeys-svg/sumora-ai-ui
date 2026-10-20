@@ -31,7 +31,7 @@ import { execSync } from "node:child_process";
 import {
   mergePicks, firstReps, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse, dbKeyOf,
   modelOf, estimateUsd, DEFAULT_STOP, draftEligible, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
-  decidePhase, pickSmall, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
+  decidePhase, pickSmall, smallRank, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
@@ -697,7 +697,10 @@ async function conductInner() {
       draftEligible: draftEligible(p as PlanProblem), lastOk: e ? e.ok : null, lastKinds: e?.kinds ?? [], protectedPick: whys.some((w) => /名指し|前に落ちた/.test(w)) });
     // 司令塔の守る線は名指し・前に落ちた問題だけ（竹内さんのお手本・竹内さんの番は強い候補として渡し、仕上げ（--phase=final・--gate）で今まで通り全部流す＝小さな確かめと同じ扱い）
   };
-  for (const pk of pl.allPicks) addCand(pk.id, "");
+  // 2026-10-20 確かめる人: 選びが「全部」（道具の変更等）の時に q001〜q040 の並びだけが候補になり、前の結果・読み手の型の候補が入らなかった＝
+  //   小さな確かめの順（名指し→前に落ちた→直した所に近い→お手本）で 24 まで → 前の結果 → 読み手の型・線 → 残りの順で 40 まで
+  const ranked = pl.allPicks.map((p, i) => ({ p, i, ...smallRank(p.why) })).sort((a, b) => a.tier - b.tier || b.sim - a.sim || a.i - b.i);
+  for (const x of ranked) if (x.tier <= 1 || cands.size < 24) addCand(x.p.id, "");
   for (const f of prev?.next ?? []) addCand(f.id, `前の結果: ${f.why}`);
   if (reading) {
     for (const e of map.entries) {
@@ -706,6 +709,7 @@ async function conductInner() {
       if (hitK || hitL) addCand(e.id, hitK ? `読み手の型「${hitK}」で今外れ` : `読み手の線 ${hitL}（${LINKS[hitL!].label}）`);
     }
   }
+  for (const x of ranked) { if (cands.size >= 40) break; addCand(x.p.id, ""); }
   const candidates = [...cands.values()].slice(0, 40);
   // ④ 上限（この実行の上限と、1日の上限の残りの小さい方）
   const cap = dailyCapUsd(process.env);
@@ -722,8 +726,14 @@ async function conductInner() {
   // ⑤ 司令塔（pro・短い JSON）。答えない時は決まった順の代わり
   const rawText = flag("no-conductor") ? null : await callConductorLlm("conductor", C_PRO, CONDUCTOR_SYSTEM, buildConductorUser(input), tally, { maxTokens: 900 });
   const raw = rawText ? looseJson(rawText) : null;
-  const plan = normalizePlan(raw ?? fallbackRaw(candidates), input, { draftChange: mat.cls === "draft" || mat.cls === "both", allowTier: flag("judge-tier") || process.env.EXAM_JUDGE_TIER === "on" });
+  // 2026-10-20 確かめる人: 司令塔が答えない・答えが空（候補に無い id だけ等）の時は今までの小さな確かめの選び（pickSmall）の順に戻す
+  const smallIds = new Set(pickSmall(pl.allPicks).map((p) => p.id));
+  const fbCands = candidates.filter((c) => smallIds.has(c.id));
+  const fb = () => fallbackRaw(fbCands.length ? fbCands : candidates, fbCands.length || 8);
+  const nopt = { draftChange: mat.cls === "draft" || mat.cls === "both", allowTier: flag("judge-tier") || process.env.EXAM_JUDGE_TIER === "on" };
+  let plan = normalizePlan(raw ?? fb(), input, nopt);
   if (!raw) plan.source = "fallback";
+  else if (!plan.focus.length && candidates.length) { const d = plan.dropped; plan = normalizePlan(fb(), input, nopt); plan.source = "fallback"; plan.dropped = [...d, ...plan.dropped]; plan.note = "司令塔の答えが空→小さな確かめの順"; }
   let head = ""; try { head = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* */ }
   const f = savePlan({ label, at: now.toISOString(), head, conv: CONV, plan, candidates: candidates.length, material: { cls: mat.cls, files: mat.files.length, kbIds: mat.kbIds, reading }, llm: tally, ragNote: pl.ragNote });
   // 表示
@@ -765,7 +775,9 @@ async function runPlan() {
   const sp = loadPlan(v || undefined);
   if (!sp) throw new Error(`司令塔の計画が無い（--conduct で作る・--run-plan=<label か plan.json>）: ${v}`);
   CONDUCTED = sp;
-  const ids = sp.plan.focus.map((f) => f.id);
+  // 2026-10-20 確かめる人: 上限で夜中に回した分（--only＝計画の一部）を流す時は、その分だけ（計画の全部に戻さない）
+  const onlyArg = arg("only").split(",").map((s) => s.trim()).filter(Boolean);
+  const ids = sp.plan.focus.map((f) => f.id).filter((id) => !onlyArg.length || onlyArg.includes(id));
   if (!ids.length) { log("計画の問題が0"); return; }
   const label = arg("label") || `${sp.label}-r`;
   // 計画の問題だけ・仕上げの形（司令塔がもう絞った）・夜中の予約に回る時もこの計画で流れるようにファイル名を固定

@@ -513,6 +513,8 @@ async function judgeTiered(p: ExamProblem, meta: Record<string, unknown> | null,
   // flash が答えなかった時は pro 1回（今まで通り）
   if (!a || !b) { const pr = await judgeOnce(p, meta, raw, needRawPath); t.proCalls++; if (pr) t.pro += pr.asks.length + pr.ng.length; return pr ?? a ?? b; }
   const fm = mergeFlash(a, b);
+  // 2026-10-20 確かめる人: 本質の道が要らない問題（LLM の最初の答え＝なし）は raw_path の割れで pro を呼ばない（中身の無い所の割れ＝費用だけ増える）
+  if (!needRawPath) fm.splitRaw = false;
   const pro = needPro(mj, fm) ? await judgeOnce(p, meta, raw, needRawPath) : null;
   if (pro) t.proCalls++;
   const fin = tierFinal(mj, fm, pro);
