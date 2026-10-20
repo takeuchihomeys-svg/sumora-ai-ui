@@ -46,7 +46,9 @@ import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
 // 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキング」「申込以降は渡さなくて大丈夫」
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { loadKnownCustomerNames, loadKnownCallNames, loadPartyAliases } from "@/app/lib/pii-known-names";
-import { willRouteAlt } from "@/app/lib/llm-alt-provider";
+import { willRouteAlt, readAltConfig } from "@/app/lib/llm-alt-provider";
+import { screeningPiiAixEnabled, screeningPiiPinsAction, screeningPiiForcesClaude } from "@/app/lib/screening-sensitive";
+import { screeningSensitiveForConversation } from "@/app/lib/screening-sensitive-server";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
 import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, cutoffMs, cutoffMarkOf, formatCutoffMark, filterAfterCutoff, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
 import { keepBrainMeta } from "@/app/lib/deepseek-cut";
@@ -1028,6 +1030,13 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
     console.log(JSON.stringify({ tag: "aix:claude-only-pattern", conversationId, action }));
     return;
   }
+  // 2026-10-20 竹内「個人情報が絡む部分はかならずクロードにする」: 審査の事情（夜の仕事・外国籍・保証人の事情・他人の名義・滞納 等・
+  //   screening-sensitive.ts）が会話に一度でも出ていれば、会話の履歴を入れる名札（物件だけを読む名札以外＝AIX の本文はどれも recentHistory を入れる）は
+  //   申込以降と同じ扱い（回さない・印を付けて Anthropic・画像の物件オススメも Claude）。読めなければ当たった側。戻す SCREENING_PII_CLAUDE_AIX=off
+  const sensitiveP = conversationId && screeningPiiAixEnabled() && screeningPiiPinsAction(action)
+    && (readAltConfig() !== null || shouldRouteVisionAlt(action))
+    ? screeningSensitiveForConversation(conversationId)
+    : null;
   try {
     if (conversationId) {
       // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: status は27.4%の会話で遅れていて、
@@ -1042,6 +1051,13 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
       if (ctx.cutoff === null) ctx.postApply = true; // 線が引けない＝渡さない（fail-closed）
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "aix:post-apply", conversationId, reason: r.reason, action }));
     }
+    if (sensitiveP && !ctx.postApply) {
+      const hit = await sensitiveP;
+      if (screeningPiiForcesClaude(action, hit)) {
+        ctx.postApply = true;
+        console.log(JSON.stringify({ tag: "screening-sensitive:claude", route: "aix/action", conversationId, action, category: hit?.category ?? null }));
+      }
+    }
     const line = cutoffMs(ctx.cutoff ?? null);
     const goesAlt = willRouteAlt(action, { postApply: ctx.postApply }) || (shouldRouteVisionAlt(action) && !ctx.postApply);
     ctx.cutActive = goesAlt && line !== null && line !== NO_CUTOFF;
@@ -1051,6 +1067,7 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
     setDeepseekScope({
       conversationId,
       mark: ctx.cutMark,
+      ...(sensitiveP ? { screeningSensitive: () => sensitiveP } : {}),
       ...(cutIso && conversationId ? { netChunks: onceAsync(() => loadPreCutoffCustomerChunks(supabase, conversationId, cutIso)) } : {}),
     });
     if (ctx.cutActive) console.log(JSON.stringify({ tag: "deepseek-cutoff:cut", route: "aix/action", action, conversationId, line: ctx.cutoff }));
