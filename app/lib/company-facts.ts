@@ -597,6 +597,38 @@ export const COMPANY_FACTS: CompanyFact[] = [
   },
 ];
 
+/**
+ * 会社の事実を当てるお客様の発言の窓＝今回の番（こちらの最後の送信より後のお客様の発言）だけ（純関数）。
+ *
+ * 2026-10-20 竹内さん（本番 10/20 13:07・スモラ）: お客様 12:53「他社さんで内見の予定…一度そっちで内見だけしてこようかなと…大丈夫でしょうか」→
+ *   スタッフ 12:55 が答え・弊社での内覧に進み日程の調整中（13:01「25の夕方／28以降」・13:02 審査の相談）。
+ *   旧: ブレイン（直近のお客様3通）と最終チェック（最新＋直近のお客様3通）の窓が「こちらが既に答えた 12:53」を拾い、
+ *       会社の事実 other_company_viewing に「お客様は今これを聞いている」と渡した → 最終チェックの書き直しが
+ *       「全然大丈夫です！！他社さんでご内覧頂いた後でも、弊社でお申込みして…」と前の話題を主に書いた（最新の審査の相談・内覧の日程に答えない）。
+ *   直し: こちらの送信を挟んだ前の発言には当てない（会社の事実は「聞かれた時だけ」＝今回の番の問いだけ）。連投（こちらの送信を挟まない複数通）はそのまま全部拾う。
+ *   戻す COMPANY_FACT_TURN_SCOPE=off（旧の窓＝お客様の直近 fallbackN 通）
+ * messages は古い→新しいの順で渡す。sender が "customer" 以外はこちらの送信とみなす。
+ */
+export function companyFactTurnScopeEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.COMPANY_FACT_TURN_SCOPE ?? "").trim().toLowerCase() !== "off";
+}
+export function customerTextsForCompanyFacts(
+  messagesOldToNew: ReadonlyArray<{ sender?: string | null; text?: string | null }>,
+  opts: { fallbackN?: number; env?: Record<string, string | undefined> } = {},
+): string[] {
+  const n = opts.fallbackN ?? 3;
+  if (!companyFactTurnScopeEnabled(opts.env ?? process.env)) {
+    return messagesOldToNew.filter((m) => m.sender === "customer").slice(-n).map((m) => m.text ?? "");
+  }
+  const out: string[] = [];
+  for (let i = messagesOldToNew.length - 1; i >= 0; i--) {
+    const m = messagesOldToNew[i];
+    if (m.sender !== "customer") break;
+    out.unshift(m.text ?? "");
+  }
+  return out.slice(-10);
+}
+
 /** 通の区切り（reply-context.MSG_SEP と同じ。依存ゼロを保つためここで持つ） */
 const UNIT_SEP_RE = /\n⁣\n/;
 /**

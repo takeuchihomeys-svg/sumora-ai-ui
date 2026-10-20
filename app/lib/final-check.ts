@@ -89,6 +89,7 @@ import { isRentNegotiationPromise, isMgmtDiscountNegotiationPromise, customerAsk
 //   調べたら最終チェックは会社の事実（company-facts）を**一度も受け取っていなかった**（生成プロンプトとブレインにしか渡っていない）。
 //   決定論の段（V16 COMPANY_FACT_CONTRADICTION・実送信365日 7,997通で当たり0＝block）と anomaly_scan の [COMPANY_FACTS] の2か所に繋ぐ
 import { findCompanyFactContradiction, buildCompanyFactsForCheck, findMissingCardFee } from "./company-fact-guard";
+import { customerTextsForCompanyFacts } from "./company-facts";
 // 2026-10-02 お客様自身の言葉の復唱を捏造と読まない（fabricated-customer-words.ts・scripts/audit-fabricated-customer-words.ts）
 import { isCustomerEchoFabrication } from "./fabricated-customer-words";
 import { isStaffSelfIntroNameFlag, STAFF_SELF_NAME } from "./final-check-staff-name";
@@ -831,8 +832,13 @@ function customerTextsForFabrication(ctx: FinalCheckContext): string[] {
 }
 
 /** 会社の事実のブロック（anomaly_scan・verify の動的部）。お客様が聞いていなければ空文字（関係ない会話には出さない） */
+/** 会社の事実を当てる直近のお客様の発言（今回の番だけ・旧は直近のお客様3通）。export はテスト用 */
+export function companyFactCustomerTexts(ctx: Pick<FinalCheckContext, "recentMessages">): string[] {
+  return customerTextsForCompanyFacts((ctx.recentMessages ?? []).map((m) => ({ sender: m.sender === "staff" ? "staff" : "customer", text: m.text })));
+}
 function companyFactsForCheck(ctx: FinalCheckContext): string {
-  const custRecent = (ctx.recentMessages ?? []).filter((m) => m.sender !== "staff").slice(-3).map((m) => m.text ?? "");
+  // 2026-10-20: 窓は今回の番（こちらの最後の送信より後のお客様の発言）だけ（company-facts.customerTextsForCompanyFacts・戻す COMPANY_FACT_TURN_SCOPE=off）
+  const custRecent = companyFactCustomerTexts(ctx);
   const lines = buildCompanyFactsForCheck([ctx.lastCustomerMessage ?? "", ...custRecent]);
   // 2026-10-08 8巡目 竹内「資料に書いてある事は返信の本文で答えて良い」: 対象の物件の資料の値（契約条件・入居時期）を判定役にも渡す
   //   （YUMA で「保証人不要」を答えた下書きが FABRICATED_AVAILABILITY で再生成され「管理会社に確認」に戻った）。戻す MATERIAL_FACTS_TO_CHECK=off
@@ -2803,7 +2809,7 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
   //     申込テンプレ「ご来店頂けますと」は純関数側の除外で残る。AI 下書き 6,971件では1件（クレカ不可・スタッフが「対応しております」に直していた）。
   //   → 誤削除0が取れたので **block**（修正ループで書き直させる。本文は決定論で削らない）。お客様がその事実を聞いている時だけ（matchCompanyFacts＝生成と同じ関数）。
   {
-    const custRecent = (ctx.recentMessages ?? []).filter((m) => m.sender !== "staff").slice(-3).map((m) => m.text ?? "");
+    const custRecent = companyFactCustomerTexts(ctx);   // 2026-10-20 今回の番だけ（戻す COMPANY_FACT_TURN_SCOPE=off）
     const hit = findCompanyFactContradiction(text, [cust, ...custRecent]);
     if (hit) {
       issues.push({ pass: "anomaly_scan", severity: "block", code: "COMPANY_FACT_CONTRADICTION",
