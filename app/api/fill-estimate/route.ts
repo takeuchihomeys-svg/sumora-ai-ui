@@ -67,6 +67,17 @@ const SAVINGS_PLACEHOLDER: Record<Account, string> = {
 type JSZipType = import("jszip");
 
 /**
+ * 2026-10-20 竹内さん「ここのフォントはみ出してしまう為フォントのサイズ22にする」:
+ *   スモラの見積書の「スモラなら初期費用」の行（drawing2.xml の図形・24pt）が枠からはみ出す → 22pt にする。
+ *   金額の行（28pt）とイエヤス・ギガ賃貸（20pt）は変えない。テンプレート（xlsx）は書き換えず、出力の時に直す。
+ */
+function shrinkSavingsLabelFont(drawingXml: string): string {
+  return drawingXml.split("<xdr:twoCellAnchor").map((part) =>
+    /なら初期費用/.test(part) ? part.replace(/sz="2400"/g, 'sz="2200"') : part,
+  ).join("<xdr:twoCellAnchor");
+}
+
+/**
  * ExcelJS出力バッファに元テンプレートのテキスト図形(drawing2.xml)を移植し、
  * 節約金額プレースホルダーを実際の計算値に書き換える。
  *
@@ -95,6 +106,7 @@ async function patchSavingsInDrawing(
   if (drawingXml.includes(">" + placeholder + "<")) {
     drawingXml = drawingXml.split(">" + placeholder + "<").join(">" + formatted + "<");
   }
+  drawingXml = shrinkSavingsLabelFont(drawingXml);
   outputZip.file("xl/drawings/drawing2.xml", drawingXml);
 
   // 2. drawing2.xml.rels をテンプレートからコピー（キャラクター画像参照を保持）
