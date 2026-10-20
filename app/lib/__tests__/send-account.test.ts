@@ -69,7 +69,7 @@ const slm = src("app/api/send-line-message/route.ts");
 t("send-line-message: 会話のアカウントを読み checkSendAccount で止める", /select\("line_user_id, send_blocked_reason, account"\)/.test(slm) && /checkSendAccount\(account, convAccount\)/.test(slm) && /account_mismatch|acctCheck\.reason/.test(slm));
 t("send-line-message: 会話のアカウントがある時はそれで送る", /acctCheck\.source === "conversation" && acctCheck\.key \? acctCheck\.key : await resolveAccountKey/.test(slm));
 const ssm = src("app/api/send-scheduled-messages/route.ts");
-t("予約の送信: 行のアカウントと会話のアカウントを照らす", /checkSendAccount\(msg\.account/.test(ssm) && /select\("line_user_id, send_blocked_reason, account"\)/.test(ssm));
+t("予約の送信: 行のアカウントと会話のアカウントを照らす", /checkSendAccount\(msg\.account/.test(ssm) && /select\("line_user_id, send_blocked_reason, (?:auto_send_enabled, )?account"\)/.test(ssm));
 const pps = src("app/lib/property-pickups-server.ts");
 t("売上サポの記録: お客様 → 会話を updated_at で引かない", /primaryConversationForCustomer\(supabase, propertyCustomerId\)/.test(pps) && !/eq\("property_customer_id", propertyCustomerId\)\.order\("updated_at", \{ ascending: false \}\)\.limit\(1\)/.test(pps));
 t("子の行の親の会話も同じ選び方", /primaryConversationForCustomer\(sb, parent\)/.test(src("app/lib/customer-family.ts")));
