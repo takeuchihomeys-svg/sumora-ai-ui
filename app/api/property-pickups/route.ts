@@ -541,10 +541,12 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   const rxRows = <T extends BestCandidateRow>(xs: T[]): T[] => {
     if (!rx) return xs;
     return xs.map((r) => {
-      const f = parsePropertyFacts(r.summary_text ?? "");
-      const k = propKeyOf(r.property_name, r.room_no ?? null);
-      const a = reactionRowAdjust(r, { floor: floorFromRoom(k.room || f.roomNo || null), rentTotal: f.rentYen != null ? f.rentYen + (f.adminFeeYen ?? 0) : null, areaSqm: f.areaSqm ?? null, walk: f.walkMinutes, age: f.buildingAge }, k.key, rx);
-      return { ...r, score: a.score, verdict: a.verdict, reason_codes: a.reason_codes };
+      try {
+        const f = parsePropertyFacts(r.summary_text ?? "");
+        const k = propKeyOf(r.property_name, r.room_no ?? null);
+        const a = reactionRowAdjust(r, { floor: floorFromRoom(k.room || f.roomNo || null), rentTotal: f.rentYen != null ? f.rentYen + (f.adminFeeYen ?? 0) : null, areaSqm: f.areaSqm ?? null, walk: f.walkMinutes, age: f.buildingAge }, k.key, rx);
+        return { ...r, score: a.score, verdict: a.verdict, reason_codes: a.reason_codes };
+      } catch { return r; } // 読めない行は保存した点のまま（👑・画面を止めない）
     });
   };
   let fromSent = false;
