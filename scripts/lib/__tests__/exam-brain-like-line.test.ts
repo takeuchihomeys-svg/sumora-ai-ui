@@ -6,6 +6,7 @@ import { findCarryOver, relevantStageOf, siblingDirs, type BaselineFile } from "
 import { modelOf, flashProof, isFixTarget, UNIT_USD, type PlanProblem } from "../exam-brain";
 import { buildConductorUser } from "../exam-conductor";
 import { custKindOf, staffKindOf, sceneSim, crossCheck, findConflicts, groupConflicts, kbHitsFor, conflictPeers, bigramSim, type GoldProblem } from "../exam-gold-check";
+import { piiGate, dedupeCandidates, rankCandidates, toAddBatch, type QCand } from "../exam-question-candidates";
 import { failedOf, machineHint, machineReason, parseReason, aggregateReasons, buildReaderUser, READER_SYSTEM, REASON_KINDS, type ReaderRow } from "../exam-failure-reader";
 import { warmDecision, warmLimit, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3, repSig, type Cmp, type RowLite } from "../exam-brain";
 
@@ -145,6 +146,19 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   ok("食い違う相手: 両方向に引ける", conflictPeers(cs).q091?.[0]?.id === "q143" && conflictPeers(cs).q143?.length === 2);
   ok("設計知見を場面の言葉で引く（題・札は2点・本文は1点・0点は出さない）", kbHitsFor(["約束の後", "よろしく"], [{ id: "k1", title: "確認の約束の後のよろしく", insight: "" }, { id: "k2", title: "別の話", insight: "約束の後" }, { id: "k3", title: "x", insight: "y" }]).map((x) => x.id).join() === "k1,k2");
   ok("2字組の重なり: 同じ文 1・空 0", bigramSim("駐車場ありますか", "駐車場ありますか") === 1 && bigramSim("", "abc") === 0);
+}
+
+// ─── QUALITY⑦ 本番の外れから問題の候補 ─────────────────────────────────────
+{
+  const checks = { piiValueSignal: (t: string) => (/090-[0-9]{4}-[0-9]{4}/.test(t) ? "携帯" : null), applicationMaterialReason: (t: string) => (/本人確認書類/.test(t) ? "書類" : null) };
+  ok("個人情報の網: 携帯・申込の書類が残る文は止める・無ければ通る", piiGate(["連絡は090-1234-5678"], checks)?.startsWith("個人の値") === true && piiGate(["本人確認書類を送ります"], checks)?.startsWith("申込の書類") === true && piiGate(["よろしくお願いします", ""], checks) === null);
+  const C = (o: Partial<QCand>): QCand => ({ source: "見張り", conv: "c1", at: "2026-10-20T00:00:00Z", type: "返信かAIXか", tags: [], accept: [], mustNot: [], customer: "", staff: "", writer: "unknown", why: "", needs: ["正解の道"], ...o });
+  const d = dedupeCandidates([C({}), C({ source: "直された番", at: "2026-10-20T01:00:00Z", accept: ["返信"], needs: [] }), C({ conv: "c2" }), C({ conv: "c3", at: "2026-10-19T00:00:00Z" })], [{ conv: "c3", at: "2026-10-19T02:00:00Z" }]);
+  ok("重なり: もう試験に入っている番を外す・同じ番は新しい方を残して『も:』の札", d.keep.length === 2 && d.keep[0].source === "直された番" && d.keep[0].tags.includes("も:見張り") && d.dropped.some((x) => x.why === "もう試験に入っている"));
+  const r = rankCandidates([C({ conv: "a", writer: "takeuchi", accept: ["返信"], needs: [], type: "多い型" }), C({ conv: "b", type: "少ない型" }), C({ conv: "c", type: "多い型" })], { typeCount: { 多い型: 40 }, now: Date.parse("2026-10-20T00:00:00Z") });
+  ok("並べ方: 竹内さんの番・正解の道が決まっている物が先・少ない型は多い型より先", r[0].conv === "a" && r[1].conv === "b" && r[0].rankWhy.includes("竹内さんの番"));
+  const b = toAddBatch(C({ tags: ["見張り", "も:直された番"], accept: ["AIX:x"], needs: [] }));
+  ok("足せる形: 『も:』の札は外す・入れたのは誰か（人が確かめて足す）", JSON.stringify(b.tags) === JSON.stringify(["見張り"]) && String(b.addedBy).includes("人が確かめて"));
 }
 
 console.log(`exam-brain-like-line: ${pass} PASS / ${fail} FAIL`);
