@@ -5495,7 +5495,8 @@
   "accept": [
    "AIX:estimate_sheet",
    "AIX:property_check_result",
-   "2段:check"
+   "2段:check",
+   "2段:estimate"
   ],
   "mustNot": [
    "返信"
@@ -5617,7 +5618,8 @@
   "at": "2026-08-27T10:18:45.86+00:00",
   "stage": "brain",
   "accept": [
-   "AIX:estimate_sheet"
+   "AIX:estimate_sheet",
+   "2段:estimate"
   ],
   "mustNot": [
    "返信",
@@ -5627,7 +5629,11 @@
    {
     "q": "（物件オススメの後の）初期費用119.000円ですか？",
     "route": "aix",
-    "point": "最大限割引の御見積書を AIX【見積書送る】で送り、2通目の書き出しで『初期費用176,180円となります』と問いに直に答える（119,000円は家賃管理費込の月額）"
+    "point": "最大限割引の御見積書を AIX【見積書送る】で送り、2通目の書き出しで『初期費用176,180円となります』と問いに直に答える（119,000円は家賃管理費込の月額）",
+    "routes": [
+     "aix",
+     "promise"
+    ]
    }
   ],
   "ng": [
