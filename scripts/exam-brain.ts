@@ -30,8 +30,8 @@ import { join, resolve } from "node:path";
 import { execSync } from "node:child_process";
 import {
   mergePicks, firstReps, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse, dbKeyOf,
-  modelOf, estimateUsd, DEFAULT_STOP, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
-  decidePhase, pickSmall, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
+  modelOf, estimateUsd, DEFAULT_STOP, draftEligible, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
+  decidePhase, pickSmall, smallRank, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
@@ -43,6 +43,12 @@ import { dbFpMode, problemReadsRent, type DbFpMode } from "./lib/exam-db-fp";
 import { problemHash, examConfig, configHash } from "./lib/brain-exam-baseline";
 import { flakeVerdict, readObs, FLAKE_DIR } from "./lib/exam-flake";
 import { isDeepseekPeakAt } from "../app/lib/llm-price";
+import {
+  buildMissMap, compareMissMaps, nextFocus, buildCoverage, linksOf, mapStageOf, normalizePlan, fallbackRaw, looseJson, buildConductorUser, parseDiffReading, parseTriage,
+  CONDUCTOR_SYSTEM, DIFF_READER_SYSTEM, TRIAGE_SYSTEM, LINKS, LINK_IDS, MAP_STAGES, MAP_STAGE_JA, MAP_STAGE_SHORT,
+  type MissMap, type ProblemLike, type RowLike, type GoldLite, type Candidate, type ConductorInput, type DiffReading, type TriageItem,
+} from "./lib/exam-conductor";
+import { diffMaterial, callConductorLlm, newTally, setLocalSpendRecording, savePlan, loadPlan, saveResult, loadLatestResult, mainRowsOf, latestRowsOf, refreshPath, saveMissMap, safeLines, CONDUCTOR_DIR, PRO_MODEL as C_PRO, FLASH_MODEL as C_FLASH, type SavedPlan } from "./lib/exam-conductor-io";
 
 const argv = process.argv.slice(2);
 const dd = argv.indexOf("--");
@@ -56,7 +62,10 @@ const CONV = arg("conv");
 const MAX_REPS = Math.max(1, Number(arg("max-reps", "3")) || 3);
 const GATE = flag("gate");
 // 10/17 ① 小さな確かめ／仕上げ（auto＝試験のブレインが決める・off＝旧＝毎回選んだ問題全部）。既定は EXAM_PHASE で変えられる
-const PHASE_ARG = arg("phase") || process.env.EXAM_PHASE || "auto";
+let PHASE_ARG = arg("phase") || process.env.EXAM_PHASE || "auto";
+// 10/20 司令塔（--conduct／--run-plan）: 計画どおり流す時の上書き（問題ごとの回数・モデル・段・判定の段）と、読み手が作った探す言葉
+let CONDUCTED: SavedPlan | null = null;
+let EXTRA_Q = "";
 const JUDGE = arg("judge", "lazy") === "full" ? "full" : "lazy";
 // 2026-10-17 確かめ: rubric の並べ替えは判定の答えを変える（q113 の下書き 2/3→0/3）＝既定は旧の並び（as-is）。rubric は別に比べてから
 const JUDGE_PREFIX = arg("judge-prefix", "as-is") === "rubric" ? "rubric" : "as-is";
@@ -138,7 +147,7 @@ async function makePlan(label: string): Promise<Plan> {
   } else {
     try {
       const { ragSelect } = await import("./lib/exam-rag-run");
-      const r = await ragSelect(sb, scope as never, { stageOf: stageOfAuto as never, topN: Math.max(1, Number(arg("select-n", "12")) || 12), extraQuery: arg("select-q") || undefined });
+      const r = await ragSelect(sb, scope as never, { stageOf: stageOfAuto as never, topN: Math.max(1, Number(arg("select-n", "12")) || 12), extraQuery: [arg("select-q"), EXTRA_Q].filter(Boolean).join(String.fromCharCode(10)) || undefined, range: arg("range") || undefined });
       rag = r; cls = r.decision.cls; clsNote = r.decision.note; ragNote = `${r.mode === "all" ? "全部" : `RAG ${r.picked.length}/${scope.length}問`}${r.note ? `・${r.note}` : ""}・変わったファイル ${r.decision.files.length}・知見の変化 ${r.kbChanged}`;
     } catch (e) { ragNote = `RAG の選びが失敗 → 安全側で全部（${String(e instanceof Error ? e.message : e).slice(0, 120)}）`; rag = null; const d = decideStageFromDiff("."); cls = d.cls; clsNote = d.note; }
   }
@@ -154,7 +163,7 @@ async function makePlan(label: string): Promise<Plan> {
   const fpMode = dbFpMode();
   const dbParts = flag("no-reuse") ? null : await readDbFingerprintFor(sb, fpMode).catch((e) => { log(`（DB の指紋が読めない → 使い回さない: ${String(e).slice(0, 100)}）`); return null; });
   const db = { parts: dbParts, mode: fpMode, brain: dbKeyOf(dbParts, dbPartsOf("brain", fpMode)), draft: dbKeyOf(dbParts, dbPartsOf("draft", fpMode)) };
-  const cfgHash = configHash(examConfig(process.env, { judge: JUDGE, judgePrefix: JUDGE_PREFIX, layer: "prod", ledger: true, repeat: MAX_REPS, exhaustedRule: EXHAUSTED_RULE }));
+  const cfgHash = configHash(examConfig({ ...process.env, ...(CONDUCTED?.plan.judge === "tier" && !process.env.EXAM_JUDGE_TIER ? { EXAM_JUDGE_TIER: "on" } : {}) }, { judge: JUDGE, judgePrefix: JUDGE_PREFIX, layer: "prod", ledger: true, repeat: MAX_REPS, exhaustedRule: EXHAUSTED_RULE }));
   // 10/17 ① 小さな確かめか仕上げか（同じ版＝効くファイル・道具・構成・DB の鍵が同じ）
   // 2026-10-17 確かめる人: DB の指紋は本番の書き込み（ai_reply_knowledge・ai_reply_examples・trigger_action_rules・phrase_dictionary 等＝1日 数百行）で数分ごとに変わる＝
   //   版に入れると次の実行は必ず「この版の小さな確かめがまだ無い」になり、仕上げに進まず小さな確かめだけが続く。版＝作る人が直す物（ファイル・道具・構成）だけ
@@ -179,10 +188,11 @@ async function makePlan(label: string): Promise<Plan> {
   const items: Plan["items"] = new Map();
   for (const pk of picks) {
     const p = probs.get(pk.id)!;
-    const model = modelOf(p as PlanProblem, { mode: modelMode, flashOkTypes: mc.okTypes, gate: GATE });
+    const fo = CONDUCTED?.plan.focus.find((f) => f.id === p.id);
+    const model = fo ? fo.model : modelOf(p as PlanProblem, { mode: modelMode, flashOkTypes: mc.okTypes, gate: GATE });
     const modelLabel = model === "flash" ? `deepseek-all:${FLASH_MODEL}` : "deepseek-all";
     const fv = flakeVerdict(readObs(p.id), { problemHash: problemHash(p), model: modelLabel });
-    const reps = firstReps(fv.verdict, repsCap, { gate: GATE });
+    const reps = fo ? fo.reps : firstReps(fv.verdict, repsCap, { gate: GATE });
     const hash = problemHash(p);
     const kbKey = kbKeyOf(links[p.id], kbNow);
     const convKey = conv.key ?? "-";
@@ -199,6 +209,7 @@ async function makePlan(label: string): Promise<Plan> {
   const dAll = draftTargets(cls, pl, new Set(pl.map((p) => p.id)), { gate: GATE });
   const draftMode: "all" | "if-changed" | "none" = GATE || cls === "draft" || cls === "both" ? "all" : dAll.ids.length ? "if-changed" : "none";
   const draftPlan = { ids: draftMode === "all" ? dAll.ids : [], why: draftMode === "all" ? dAll.why : "ブレインの判断が前（main）と変わった問題だけ（1段目の後に決める）", mode: draftMode };
+  if (CONDUCTED) { const ds = CONDUCTED.plan.focus.filter((f) => f.stage === "draft" && items.has(f.id) && draftEligible(probs.get(f.id) as PlanProblem)).map((f) => f.id); draftPlan.ids = ds; draftPlan.mode = ds.length ? "all" : "if-changed"; draftPlan.why = ds.length ? "司令塔が下書きまでと決めた問題" : "司令塔は下書きを選ばなかった（判断が前と変わった問題だけ）"; }
   for (const id of draftPlan.ids) { const it = items.get(id); if (it) { it.draft = true; it.draftWhy = draftPlan.why; } }
   return { label, cls, clsNote, picks, items, probs, draftPlan, keys, cfgHash, ragNote, db, phase: ph.phase, phaseWhy: ph.why, allPicks, repsCap, versionKey, conv };
 }
@@ -281,7 +292,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
     `--label=${label}`, `--only=${only.join(",")}`, `--stage=${stage}`, "--baseline=main", REPLAY, `--repeat=${MAX_REPS}`, `--reps-file=${repsFile}`,
     ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX === "rubric" ? ["--judge-prefix=rubric"] : []), ...(CONV ? [`--conv=${CONV}`] : []), ...PASS,
   ];
-  const env: Record<string, string> = { EXAM_STOP_FILE: stopFile, ...(model === "flash" ? { DEEPSEEK_MODEL: FLASH_MODEL, EXAM_JUDGE_MODEL: PRO_MODEL } : {}) };
+  const env: Record<string, string> = { EXAM_STOP_FILE: stopFile, ...(model === "flash" ? { DEEPSEEK_MODEL: FLASH_MODEL, EXAM_JUDGE_MODEL: PRO_MODEL } : {}), ...(CONDUCTED?.plan.judge === "tier" && !process.env.EXAM_JUDGE_TIER ? { EXAM_JUDGE_TIER: "on" } : {}) };
   if (!CONV && !process.env.REPLAY_FLOOR_FILE) env.REPLAY_FLOOR_FILE = `scripts/.replay-out/brain-exam-floor-${label}.json`;
   // 5. 途中で止める（1段目の最初の数問）
   const stopWorse = Number(arg("stop-worse", String(DEFAULT_STOP.worseN)));
@@ -403,7 +414,9 @@ async function runMain() {
     if (a.stopped) { log(`\n⏹ 1段目で止めた（${a.stopWhy}）→ 下書きは流さない`); break; }
     // 2段目: 下書きに効くファイルを直した問題・判断が前と変わった問題だけ
     const changed = brainChangedOf(a.cmps);
-    const dt = draftTargets(pl.cls, g.ids.map((id) => pl.probs.get(id)!) as PlanProblem[], changed, { gate: GATE });
+    const dt0 = draftTargets(pl.cls, g.ids.map((id) => pl.probs.get(id)!) as PlanProblem[], changed, { gate: GATE });
+    // 司令塔の計画: 司令塔が下書きまでと決めた問題＋判断が前と変わった問題（下書き可の物だけ）
+    const dt = CONDUCTED ? (() => { const want = new Set(pl.draftPlan.ids); const ids = g.ids.filter((id) => draftEligibleOf(pl, id) && (want.has(id) || changed.has(id))); return { ids, why: "司令塔が下書きまでと決めた問題＋判断が前と変わった問題" }; })() : dt0;
     log(`\n2段目（下書きまで）: ${dt.ids.length}問 — ${dt.why}${dt.ids.length ? `（${dt.ids.join(",")}）` : ""}`);
     const b = await runPhase(pl, "draft", dt.ids, `${lb}-d`, g.model);
     phases.push(b); ledger.push(...finishPhase(pl, b, "draft", g.model, head));
@@ -565,5 +578,251 @@ async function cleanup() {
   log(flag("apply") ? `片付けた: 通 ${r.messages}・台帳 ${JSON.stringify(r.ledger)}・条件の行 ${r.pc ? "戻した" : "なし"}` : "（数えただけ。--apply で片付ける）");
 }
 
-const main = flag("ledger") ? async () => showLedger() : flag("cleanup") ? cleanup : flag("run-queue") ? runQueue : flag("warm-main") ? warmMain : flag("model-check") ? modelCheck : runMain;
+
+// ─── 10/20 司令塔（pro）と読み手（flash）— 設計知見 ea215526・487b8921・98bca000・5be49dda（P0）・c0884407（P0） ─────────────
+//   --conduct          直した中身を読み手（flash）が読み → RAG の選び＋外れの型の地図＋つなぎの線の候補 → 司令塔（pro・短い JSON）が重点・段・回数・モデル・判定の段を決める（流さない）
+//   --run-plan[=<label か file>] 司令塔の計画どおり流す（2倍の時間の仕上げは今まで通り夜中に予約）→ 結果を外れの型で返し・前と並べ・次の重点の候補を出す
+//   --miss-map [--source=latest]  外れの型の地図（既定は本番に入れた版 main の答案）
+//   --coverage [--json] 試験の地図（申込までの地図×外れの型×ピッカー×つなぎの線の覆いと空き）
+const pct0 = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "-");
+function conductorProblems(): ProblemLike[] { return loadExamProblems().spec.map((p) => effective(p) as unknown as ProblemLike); }
+function buildMap(source: "main" | "latest", ps = conductorProblems()): MissMap {
+  return buildMissMap(ps, (id) => { const p = ps.find((x) => x.id === id)!; return source === "main" ? mainRowsOf(p) : latestRowsOf(p); });
+}
+function printMissMap(m: MissMap, title: string) {
+  log(`\n=== 外れの型の地図（${title}・${m.n}問・合格 ${m.ok}（${pct0(m.ok, m.n)}）・答案が無い ${m.noData.length}問）===`);
+  log(`外れの型（多い順・過半数の回に出た型）: ${Object.entries(m.byKind).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("・") || "なし"}`);
+  if (m.byPart) log(`  段ごと: ブレイン ${Object.entries(m.byPart.brain).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("・") || "なし"}／下書き ${Object.entries(m.byPart.draft).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("・") || "なし"}`);
+  log(`脳の働きの型: ${Object.entries(m.byFn).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("・") || "なし"}`);
+  log(`つなぎの線（外れ/問題）: ${LINK_IDS.map((l) => `${l} ${LINKS[l].label} ${m.byLink[l].miss}/${m.byLink[l].n}`).join("・")}`);
+  log(`申込までの地図（外れ/問題）: ${MAP_STAGES.map((s) => `${MAP_STAGE_JA[s]} ${m.byStage[s].miss}/${m.byStage[s].n}`).join("・")}`);
+  const src = new Map<string, number>();
+  for (const e of m.entries) { const k = String(e.source ?? "").replace(/ v-\S*$/, "").replace(/ [\w.-]+（.*$/, ""); src.set(k, (src.get(k) ?? 0) + 1); }
+  log(`答案の出どころ: ${[...src].map(([k, n]) => `${k} ${n}`).join("・")}`);
+}
+async function showMissMap() {
+  const source = arg("source", "main") === "latest" ? "latest" : "main";
+  const m = buildMap(source);
+  printMissMap(m, source === "main" ? "本番に入れた版 main の答案" : "作業の結果も含めた一番新しい答案");
+  for (const e of m.entries.filter((x) => !x.ok).slice(0, Number(arg("n", "40")) || 40)) log(`  ✕ ${e.id} [${e.type}] ${MAP_STAGE_JA[e.stage]}・${e.links.join(",") || "-"}・${e.kinds.join("／") || "-"}${e.flakyKinds.length ? `（揺れ: ${e.flakyKinds.join("／")}）` : ""}`);
+  log(`保存: ${saveMissMap(m, `${source}-${jst(new Date()).slice(0, 10)}`)}`);
+}
+function readGolds(): GoldLite[] {
+  try {
+    const g = (JSON.parse(readFileSync("scripts/parts-eval/gold-20.json", "utf8")) as { golds: Array<GoldLite & { asks?: Array<{ id?: string }> }> }).golds;
+    let x: Record<string, { asks?: Record<string, { pickers?: string[]; referent?: unknown; sure?: string }> }> = {};
+    try { x = JSON.parse(readFileSync("scripts/parts-eval/gold-20.extra.json", "utf8")); } catch { /* */ }
+    return g.map((gg) => ({ id: gg.id, asks: (gg.asks ?? []).map((a) => ({ ...a, ...(((x[gg.id]?.asks ?? {}) as Record<string, object>)[(a as { id?: string }).id ?? ""] ?? {}) })) }));
+  } catch { return []; }
+}
+async function showCoverage() {
+  const ps = conductorProblems();
+  const golds = readGolds();
+  const c = buildCoverage(ps, golds);
+  log(`\n=== 試験の地図（覆いの地図・${ps.length}問＋パーツの正解 ${golds.length}問）===`);
+  log(`申込までの地図: ${c.stage.map((s) => `${MAP_STAGE_JA[s.stage]} ${s.n}`).join("・")}`);
+  log(`つなぎの線: ${c.link.map((l) => `${l.link} ${LINKS[l.link].label} ${l.n}問`).join("・")}`);
+  log("外れの型（測れる問題の数）:");
+  for (const k of c.kind) log(`  ${k.measurable < 3 ? "□" : "■"} ${k.kind} ${k.measurable}（${k.how}）`);
+  log(`ピッカー（正解にピッカーまで書いた問題）: ${c.picker.map((p) => `${p.label}${p.planned ? "※" : ""} ${p.n}`).join("・")}`);
+  log("段×線（問題の数・0 は空き）:");
+  log(`  ${"".padEnd(3, "　")}${LINK_IDS.map((l) => l.padStart(4)).join("")}`);
+  for (const s of MAP_STAGES) log(`  ${MAP_STAGE_SHORT[s].padEnd(3, "　")}${LINK_IDS.map((l) => String(c.stageXlink.find((x) => x.stage === s && x.link === l)?.n ?? 0).padStart(4)).join("")}`);
+  log(`  （段: ${MAP_STAGES.map((s) => `${MAP_STAGE_SHORT[s]}＝${MAP_STAGE_JA[s]}`).join("・")}）`);
+  log("試験が測っている道具:");
+  for (const x of c.tools) log(`  ${x.n ? "■" : "□"} ${x.tool} ${x.n}問（${x.how}）`);
+  log("\n空いている所と足し方の案:");
+  for (const h of c.holes) log(`  ・${h.where}（${h.why}）\n     → ${h.add}`);
+  if (flag("json")) { mkdirSync(CONDUCTOR_DIR, { recursive: true }); const f = join(CONDUCTOR_DIR, `coverage-${jst(new Date()).slice(0, 10)}.json`); writeFileSync(f, JSON.stringify(c, null, 1)); log(`保存: ${f}`); }
+}
+/** 今までのやり方の見込み（比べる用）: 旧＝選んだ問題全部・小さな確かめ＝今の既定（どちらも1回・使い回しは数えない） */
+function oldWayEst(pl: Plan, peak: boolean): { off: number; small: number; offN: number; smallN: number } {
+  const unit = (draft: boolean) => (UNIT_USD.brain + (draft ? UNIT_USD.draftExtra : 0)) * (peak ? UNIT_USD.peakRatio : 1);
+  const draftAll = pl.cls === "draft" || pl.cls === "both";
+  const off = pl.allPicks.reduce((s, p) => s + unit(draftAll && draftEligibleOf(pl, p.id)), 0);
+  const sm = pickSmall(pl.allPicks);
+  const small = sm.reduce((s, p) => s + unit(draftAll && draftEligibleOf(pl, p.id)), 0);
+  return { off, small, offN: pl.allPicks.length, smallN: sm.length };
+}
+/**
+ * 試験の印（LLM_TEST_MODE／LLM_TEST_FINAL_CLAUDE）を付けて呼ばれた時は、試験の入口（setupLlmTest）を通してから LLM を呼ぶ（記録・録音・Claude の鍵の歯止め）。
+ *   印が無い時（今の exam-brain の普段の使い方＝子にだけ印を付ける）は今まで通り直に呼ぶ。子（brain-exam）を回す前には入れない（Claude の鍵を偽の値にするため）
+ */
+async function llmGate(name: string): Promise<{ finish: () => Promise<unknown> } | null> {
+  if (!process.env.LLM_TEST_MODE && !process.env.LLM_TEST_FINAL_CLAUDE) return null;
+  const { setupLlmTest } = await import("./lib/llm-test-harness");
+  const h = await setupLlmTest(name);
+  // 2026-10-20 確かめ: 入口を通しても DeepSeek への直の呼び出し（callDeepSeek）は llm_usage_logs に残らない（0行）＝手元の記録（local-llm-spend）は止めない
+  setLocalSpendRecording(true);
+  return { finish: () => h.finish() };
+}
+async function conduct() {
+  const gate = await llmGate("exam-conductor");
+  try { await conductInner(); } finally { await gate?.finish(); }
+}
+async function conductInner() {
+  const now = new Date();
+  const label = arg("label") || `cd-${jst(now).slice(5, 10).replace("-", "")}-${Math.random().toString(36).slice(2, 6)}`;
+  if (!/^[\w.-]+$/.test(label)) throw new Error(`--label は英数字・-・_ だけ: ${label}`);
+  const tally = newTally();
+  if (isDeepseekPeakAt(now)) log("⚠ 今は DeepSeek の2倍の時間（平日 JST 10〜13・15〜19）。司令塔と読み手の分（1回 約 $0.01）も2倍で数える");
+  // ① 直した中身（伏せ字・個人の値がある行は捨てる）
+  const mat = await diffMaterial(sb, ".", { range: arg("range") || undefined });
+  log(`\n直した中身: ${mat.cls}・ファイル ${mat.files.length}・コミット ${mat.commits.length}・設計知見 ${mat.kbIds.join(",") || "なし"}${mat.dropped ? `・個人の値の網で捨てた行 ${mat.dropped}` : ""}${mat.note ? `（${mat.note}）` : ""}`);
+  // ② 読み手（flash）: 差分が効く所・外れの型・線・段・探す言葉
+  let reading: DiffReading | null = null;
+  if (mat.files.length && !flag("no-reader")) {
+    const user = [`【変えたファイル】\n${mat.files.slice(0, 30).map((f) => `${f.file}（${f.cls}・${f.why}）`).join("\n")}`, `【コミットの文】\n${mat.commits.slice(0, 8).join("\n―\n").slice(0, 1500) || "なし"}`, `【差分（足した・消した行・伏せ字）】\n${mat.diffText}`].join("\n\n");
+    reading = parseDiffReading((await callConductorLlm("diff-reader", C_FLASH, DIFF_READER_SYSTEM, user, tally, { maxTokens: 600 })) ?? "");
+    log(`読み手（flash）: ${reading ? `効く所 ${reading.effects.map((e) => e.what).join("・") || "-"}／型 ${reading.kinds.join("・") || "-"}／線 ${reading.links.join("・") || "-"}／段 ${reading.stages.map((s) => MAP_STAGE_JA[s]).join("・") || "-"}／探す言葉「${reading.query}」` : "読めなかった（司令塔は差分の名前だけで決める）"}`);
+    if (reading) EXTRA_Q = [reading.query, ...reading.effects.map((e) => e.what)].filter(Boolean).join(" ");
+  }
+  // ③ 今の試験のブレインの選び（RAG＋必ず流す物）を候補の土台に（RAG の言葉に読み手の探す言葉を足す）
+  PHASE_ARG = "final";
+  const pl = await makePlan(label);
+  const ps = conductorProblems();
+  const byId = new Map(ps.map((p) => [p.id, p]));
+  const map = buildMap("main", ps);
+  const ent = new Map(map.entries.map((e) => [e.id, e]));
+  const prev = loadLatestResult();
+  const cands = new Map<string, Candidate>();
+  const addCand = (id: string, why: string) => {
+    const p = byId.get(id); if (!p) return;
+    const c = cands.get(id);
+    if (c) { if (why && !c.why.includes(why)) c.why.push(why); return; }
+    const e = ent.get(id), it = pl.items.get(id);
+    const fv = flakeVerdict(readObs(id), { problemHash: problemHash((pl.probs.get(id) ?? p) as never), model: "deepseek-all" });
+    const whys = pl.allPicks.find((x) => x.id === id)?.why ?? [];
+    cands.set(id, { id, type: p.type, stage: mapStageOf(p), links: linksOf(p), why: [...whys, ...(why && !whys.includes(why) ? [why] : [])], flaky: fv.verdict === "flaky", reuse: !!it?.reuse,
+      draftEligible: draftEligible(p as PlanProblem), lastOk: e ? e.ok : null, lastKinds: e?.kinds ?? [], protectedPick: whys.some((w) => /名指し|前に落ちた/.test(w)) });
+    // 司令塔の守る線は名指し・前に落ちた問題だけ（竹内さんのお手本・竹内さんの番は強い候補として渡し、仕上げ（--phase=final・--gate）で今まで通り全部流す＝小さな確かめと同じ扱い）
+  };
+  // 2026-10-20 確かめる人: 選びが「全部」（道具の変更等）の時に q001〜q040 の並びだけが候補になり、前の結果・読み手の型の候補が入らなかった＝
+  //   小さな確かめの順（名指し→前に落ちた→直した所に近い→お手本）で 24 まで → 前の結果 → 読み手の型・線 → 残りの順で 40 まで
+  const ranked = pl.allPicks.map((p, i) => ({ p, i, ...smallRank(p.why) })).sort((a, b) => a.tier - b.tier || b.sim - a.sim || a.i - b.i);
+  for (const x of ranked) if (x.tier <= 1 || cands.size < 24) addCand(x.p.id, "");
+  for (const f of prev?.next ?? []) addCand(f.id, `前の結果: ${f.why}`);
+  if (reading) {
+    for (const e of map.entries) {
+      if (cands.size >= 40) break;
+      const hitK = e.kinds.find((k) => reading!.kinds.includes(k)), hitL = e.links.find((l) => reading!.links.includes(l));
+      if (hitK || hitL) addCand(e.id, hitK ? `読み手の型「${hitK}」で今外れ` : `読み手の線 ${hitL}（${LINKS[hitL!].label}）`);
+    }
+  }
+  for (const x of ranked) { if (cands.size >= 40) break; addCand(x.p.id, ""); }
+  const candidates = [...cands.values()].slice(0, 40);
+  // ④ 上限（この実行の上限と、1日の上限の残りの小さい方）
+  const cap = dailyCapUsd(process.env);
+  const used = cap === null ? null : await readDailySpend(sb, now).catch(() => null);
+  const runCap = Number(arg("cap-usd", process.env.EXAM_CONDUCT_CAP_USD ?? "0.5")) || 0.5;
+  const capUsd = Math.max(0, Math.min(runCap, cap === null ? Infinity : cap - (used?.usd ?? cap)));
+  const mc = readModelCheck();
+  const input: ConductorInput = {
+    change: { cls: mat.cls, files: mat.files.map((f) => ({ file: f.file, cls: f.cls })), kbIds: mat.kbIds, commits: mat.commits, reading },
+    missTop: Object.entries(map.byKind).sort((a, b) => b[1] - a[1]).map(([kind, n]) => ({ kind, n })),
+    linkMiss: LINK_IDS.map((l) => ({ link: l, label: LINKS[l].label, n: map.byLink[l].n, miss: map.byLink[l].miss })),
+    candidates, capUsd, unit: UNIT_USD, flashOkTypes: [...mc.okTypes], prevFocus: prev?.next ?? [],
+  };
+  // ⑤ 司令塔（pro・短い JSON）。答えない時は決まった順の代わり
+  const rawText = flag("no-conductor") ? null : await callConductorLlm("conductor", C_PRO, CONDUCTOR_SYSTEM, buildConductorUser(input), tally, { maxTokens: 900 });
+  const raw = rawText ? looseJson(rawText) : null;
+  // 2026-10-20 確かめる人: 司令塔が答えない・答えが空（候補に無い id だけ等）の時は今までの小さな確かめの選び（pickSmall）の順に戻す
+  const smallIds = new Set(pickSmall(pl.allPicks).map((p) => p.id));
+  const fbCands = candidates.filter((c) => smallIds.has(c.id));
+  const fb = () => fallbackRaw(fbCands.length ? fbCands : candidates, fbCands.length || 8);
+  const nopt = { draftChange: mat.cls === "draft" || mat.cls === "both", allowTier: flag("judge-tier") || process.env.EXAM_JUDGE_TIER === "on" };
+  let plan = normalizePlan(raw ?? fb(), input, nopt);
+  if (!raw) plan.source = "fallback";
+  else if (!plan.focus.length && candidates.length) { const d = plan.dropped; plan = normalizePlan(fb(), input, nopt); plan.source = "fallback"; plan.dropped = [...d, ...plan.dropped]; plan.note = "司令塔の答えが空→小さな確かめの順"; }
+  let head = ""; try { head = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* */ }
+  const f = savePlan({ label, at: now.toISOString(), head, conv: CONV, plan, candidates: candidates.length, material: { cls: mat.cls, files: mat.files.length, kbIds: mat.kbIds, reading }, llm: tally, ragNote: pl.ragNote });
+  // 表示
+  const peak = isDeepseekPeakAt(now);
+  const old = oldWayEst(pl, false);
+  log(`\n=== 司令塔の計画（${label}・${plan.source === "pro" ? "司令塔 pro" : "司令塔なし＝決まった順"}・候補 ${candidates.length}問）===`);
+  log(`材料: 選び ${pl.ragNote || "-"}・外れの型 ${input.missTop.slice(0, 4).map((x) => `${x.kind} ${x.n}`).join("・") || "-"}・前の次の重点 ${prev?.next.length ?? 0}`);
+  for (const it of plan.focus) log(`  ${it.role === "fix" ? "◎重点" : "○見張り"} ${it.id} [${byId.get(it.id)?.type}] 段 ${it.stage === "draft" ? "ブレイン→下書き" : "ブレイン"}・回 ${it.reps}・${it.model}${cands.get(it.id)?.reuse ? "・前の結果を使える" : ""} ← ${it.why}`);
+  if (plan.dropped.length) log(`  削った: ${plan.dropped.map((d) => `${d.id}（${d.why}）`).join("・")}`);
+  log(`判定の段: ${plan.judge === "tier" ? "機械の照らし → flash 2回 → 割れた項目だけ pro（EXAM_JUDGE_TIER=on）" : `pro（今まで通り）${plan.judgeAdvice === "tier" ? "・司令塔の勧めは段の判定（--judge-tier で使う＝前（main）の取り置きも段の判定で作り直す）" : ""}`}`);
+  log(`最後の Claude の確かめ: ${plan.claudeFinal ? `要る（${plan.claudeWhy}）＝本番に入れる前に LLM_TEST_FINAL_CLAUDE=1 で重点だけ` : `要らない${plan.claudeWhy ? `（${plan.claudeWhy}）` : ""}`}`);
+  log(`見込み: 司令塔の計画 約 $${plan.estUsd.toFixed(3)}（${plan.focus.length}問・上限 $${capUsd.toFixed(2)}${cap !== null ? `・今日 $${(used?.usd ?? 0).toFixed(2)}/上限 $${cap}` : ""}）＋判定／今までのやり方: 小さな確かめ 約 $${old.small.toFixed(3)}（${old.smallN}問）・選んだ問題全部 約 $${old.off.toFixed(3)}（${old.offN}問）（どれも通常の値段・1回${peak ? "・今は2倍の時間＝流すのは 13〜15 時か夜中" : ""}）`);
+  log(`司令塔と読み手の費用: ${tally.calls}回 $${tally.usd.toFixed(4)}（${Object.entries(tally.byRole).map(([k, v]) => `${k} ${v.calls}回 $${v.usd.toFixed(4)}`).join("・")}）${tally.refused ? `・個人の値で送らなかった ${tally.refused}` : ""}${tally.failed ? `・失敗 ${tally.failed}` : ""}`);
+  if (plan.note) log(`司令塔のひと言: ${plan.note}`);
+  log("※ これは直しの途中の確かめ（小さな確かめの代わり）。本番に入れる前の仕上げは今まで通り --phase=final（お手本・竹内さんの番を含む選んだ問題全部）か --gate");
+  log(`計画: ${f}\n  流す: npx tsx --env-file=.env.local scripts/exam-brain.ts --run-plan=${label}${CONV ? ` --conv=${CONV}` : ""}`);
+}
+/** 結果の振り分け（flash）: 機械で中身が分からない外れだけ。材料は伏せ字の札・正解の要点・答案の要約（1行ずつ伏せて、個人の値の行は捨てる） */
+async function triageUnknown(ids: string[], rowsOf: (id: string) => RowLite[], tally: ReturnType<typeof newTally>): Promise<TriageItem[]> {
+  if (!ids.length) return [];
+  const { loadCards } = await import("./lib/exam-rag-store");
+  const cards = (await loadCards(sb).catch(() => ({}))) as Record<string, { words?: string }>;
+  const { spec } = loadExamProblems();
+  const lines: string[] = [];
+  for (const id of ids.slice(0, 8)) {
+    const p = spec.find((x) => x.id === id) as unknown as ProblemLike | undefined; if (!p) continue;
+    const r = rowsOf(id).find((x) => !x.error) as (RowLite & { brain?: Record<string, unknown> }) | undefined;
+    const b = (r?.brain ?? {}) as Record<string, unknown>;
+    const tc = b.turn_contract as { asks?: Array<{ quote?: string; route?: string; answer?: string }> } | undefined;
+    lines.push([`■ ${id}（${p.type}）`, `お客様: ${String(cards[id]?.words ?? "").slice(0, 300)}`, `正解の道: ${(p.accept ?? []).join("|")}`,
+      `正解の要点: ${(p.asks ?? []).map((a, i) => `${i + 1}.${a.route}:${a.point ?? ""}`).join(" ／ ").slice(0, 400)}`,
+      `答案: 道=${r?.path?.code ?? "?"}・action=${String(b.action ?? "")}・方向=${String(b.reply_direction ?? "").slice(0, 160)}・依頼=${(tc?.asks ?? []).map((a) => `${a.route}:${String(a.answer ?? a.quote ?? "").slice(0, 40)}`).join(" ／ ").slice(0, 300)}`].join("\n"));
+  }
+  const user = safeLines(lines.join("\n\n")).text;
+  return parseTriage((await callConductorLlm("triage", C_FLASH, TRIAGE_SYSTEM, user, tally, { maxTokens: 800 })) ?? "", ids);
+}
+async function runPlan() {
+  const v = args.find((x) => /^--run-plan(=|$)/.test(x))?.split("=").slice(1).join("=") ?? "";
+  const sp = loadPlan(v || undefined);
+  if (!sp) throw new Error(`司令塔の計画が無い（--conduct で作る・--run-plan=<label か plan.json>）: ${v}`);
+  CONDUCTED = sp;
+  // 2026-10-20 確かめる人: 上限で夜中に回した分（--only＝計画の一部）を流す時は、その分だけ（計画の全部に戻さない）
+  const onlyArg = arg("only").split(",").map((s) => s.trim()).filter(Boolean);
+  const ids = sp.plan.focus.map((f) => f.id).filter((id) => !onlyArg.length || onlyArg.includes(id));
+  if (!ids.length) { log("計画の問題が0"); return; }
+  const label = arg("label") || `${sp.label}-r`;
+  // 計画の問題だけ・仕上げの形（司令塔がもう絞った）・夜中の予約に回る時もこの計画で流れるようにファイル名を固定
+  for (let i = args.length - 1; i >= 0; i--) if (/^--(run-plan|only|label|phase|select|select-q|name)(=|$)/.test(args[i])) args.splice(i, 1);
+  args.push(`--run-plan=${join(CONDUCTOR_DIR, `${sp.label}.plan.json`)}`, `--only=${ids.join(",")}`, `--label=${label}`);
+  PHASE_ARG = "final";
+  const ps = conductorProblems();
+  const sub = ps.filter((p) => ids.includes(p.id));
+  log(`\n=== 司令塔の計画で流す（${sp.label}・${ids.length}問・判定 ${sp.plan.judge}）===`);
+  await runMain();
+  // 結果（今回の答案）を外れの型で返す（下書きまで流した問題は下書きの答案＝ブレインの欄も入っている）
+  const labels = [label, `${label}-fl`, `${label}-d`, `${label}-fl-d`];
+  const rowsBy = (id: string) => { const d = [...readRows(`${label}-d`), ...readRows(`${label}-fl-d`)].filter((r) => r.id === id); return d.length ? d : [...readRows(label), ...readRows(`${label}-fl`)].filter((r) => r.id === id); };
+  if (!ids.some((id) => rowsBy(id).length)) { log("（今回の答案が無い＝夜中に予約したか止まった。流れた後にもう一度 --run-plan で結果を出す＝使い回しで費用0）"); return; }
+  // 前＝main の答案は流した後に読む（この実行で今の main の版の答えを作った時はそれを使う＝台帳の比べと同じ前）
+  const before = buildMissMap(sub, (id) => mainRowsOf(sub.find((x) => x.id === id)!));
+  const after = buildMissMap(sub, (id) => { const rs = rowsBy(id); return rs.length ? { rows: refreshPath(sub.find((x) => x.id === id)!, rs as RowLike[]), source: "今回" } : null; });
+  const cmp = compareMissMaps(before, after);
+  const tally = newTally();
+  const unknown = after.entries.filter((e) => e.kinds.includes("合否の外れ（中身は不明）")).map((e) => e.id);
+  let tri: TriageItem[] = [];
+  if (!flag("no-triage") && unknown.length) {
+    const gate = await llmGate("exam-conductor-triage");
+    try { tri = await triageUnknown(unknown, (id) => rowsBy(id) as RowLite[], tally); } finally { await gate?.finish(); }
+  }
+  for (const t of tri) { const e = after.entries.find((x) => x.id === t.id); if (e) { e.kinds = e.kinds.map((k) => k === "合否の外れ（中身は不明）" ? t.kind : k); if (t.link && !e.links.includes(t.link)) e.links.push(t.link); } }
+  if (tri.length) { after.byKind = {}; for (const e of after.entries) for (const k of e.kinds) after.byKind[k] = (after.byKind[k] ?? 0) + 1; }
+  const next = nextFocus(after, cmp);
+  printMissMap(after, `今回 ${label}`);
+  log(`前（main の答案）と並べる（型: 前→今）: ${cmp.kinds.map((k) => `${k.kind} ${k.before}→${k.after}`).join("・") || "外れなし"}`);
+  log(`直った ${cmp.fixed.length}（${cmp.fixed.join(",") || "-"}）・壊れた ${cmp.broke.length}（${cmp.broke.join(",") || "-"}）・同じ ${cmp.same}`);
+  for (const t of tri) log(`  読み手の振り分け ${t.id}: ${t.kind}${t.link ? `・${t.link}` : ""}${t.missing.length ? `・抜け: ${t.missing.join("／")}` : ""}`);
+  log(`次の重点の候補（次の --conduct の材料）: ${next.map((n) => `${n.id}（${n.why}）`).join("・") || "なし"}`);
+  if (tally.calls) log(`読み手（振り分け）の費用: ${tally.calls}回 $${tally.usd.toFixed(4)}`);
+  const js = labels.map(readCostTier).reduce((s, c) => ({ any: s.any || c.any, machine: s.machine + c.machine, flash: s.flash + c.flash, pro: s.pro + c.pro, proCalls: s.proCalls + c.proCalls, flashCalls: s.flashCalls + c.flashCalls }), { any: false, machine: 0, flash: 0, pro: 0, proCalls: 0, flashCalls: 0 });
+  if (js.any) log(`判定の段: 機械で決めた ${js.machine}項目・flash で揃った ${js.flash}項目・割れて pro ${js.pro}項目（flash ${js.flashCalls}回・pro ${js.proCalls}回）`);
+  log(`保存: ${saveResult({ label, at: new Date().toISOString(), planLabel: sp.label, compare: cmp, next, triage: tri, llm: tally })}`);
+}
+function readCostTier(label: string): { any: boolean; machine: number; flash: number; pro: number; proCalls: number; flashCalls: number } {
+  try {
+    const j = JSON.parse(readFileSync(join(RESULTS_DIR, `${label}.cost.json`), "utf8")) as { judge?: { tier?: { machine?: number; flash?: number; pro?: number; proCalls?: number; flashCalls?: number } } };
+    const t = j.judge?.tier;
+    return t ? { any: true, machine: t.machine ?? 0, flash: t.flash ?? 0, pro: t.pro ?? 0, proCalls: t.proCalls ?? 0, flashCalls: t.flashCalls ?? 0 } : { any: false, machine: 0, flash: 0, pro: 0, proCalls: 0, flashCalls: 0 };
+  } catch { return { any: false, machine: 0, flash: 0, pro: 0, proCalls: 0, flashCalls: 0 }; }
+}
+
+const main = flag("conduct") ? conduct : args.some((x) => /^--run-plan(=|$)/.test(x)) ? runPlan : flag("miss-map") ? showMissMap : flag("coverage") ? showCoverage : flag("ledger") ? async () => showLedger() : flag("cleanup") ? cleanup : flag("run-queue") ? runQueue : flag("warm-main") ? warmMain : flag("model-check") ? modelCheck : runMain;
 main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; }).finally(() => setTimeout(() => process.exit(process.exitCode ?? 0), 300));

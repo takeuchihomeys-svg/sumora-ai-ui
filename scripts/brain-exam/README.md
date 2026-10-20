@@ -174,3 +174,25 @@ npx tsx --env-file=.env.local scripts/exam-brain.ts --cleanup --conv=YUMA2 --lab
 | 置き場 | `.claude/exam-cache/self-review/<日付>/`（explanations.jsonl・proposals.json・report.md・morning-line.txt）・`self-review/latest.md`。表の設計は `scripts/brain-self-review-migration.sql`（まだ流さない） |
 | 費用 | DeepSeek（試験の判定と同じ: v4-pro・温度0・推論なし・json）1件 約 $0.013〜0.024。1日の上限は試験のブレインと同じ（`EXAM_DAILY_CAP_USD`・既定 $10）＝ `readDailySpend` が `local-llm-spend.jsonl`（DB に書かない LLM の費用）も足す。平日 JST 10〜13・15〜19 は流さない（`--allow-peak`） |
 | 個人情報 | maskExamText → maskForEmbedding → 部屋番号 の2重・申込の書類の印の行と alt-pii-gate の行は落とす・申込以降の会話（`loadDeepseekCutoff` の線の外＝今申込以降の会話）は出さない。止める: `BRAIN_SELF_REVIEW=off` |
+
+## 試験のブレインの司令塔と読み手（2026-10-20・設計知見 ea215526・487b8921・98bca000・5be49dda・c0884407）
+
+LINE のブレインと同じ組み方: 読み手（flash・短い仕事）→ 決まった形の表（外れの型・つなぎの線 L1〜L6・申込までの地図）→ 司令塔（pro・短い JSON）→ 決まった計算で上限に収める。
+今の試験のブレイン（RAG の選び・使い回し・1日の上限・2倍の時間）はそのまま使い、司令塔はその上で「重点」を決める。決め方は `scripts/lib/exam-conductor.ts`（単体テスト `scripts/lib/__tests__/exam-conductor.test.ts`）、読み書き・LLM は `scripts/lib/exam-conductor-io.ts`。
+
+```bash
+# 司令塔の計画だけ（LLM は読み手 flash 1回＋司令塔 pro 1回＝約 $0.01。試験は流さない）
+npx tsx --env-file=.env.local scripts/exam-brain.ts --conduct --conv=YUMA4 [--cap-usd=0.5] [--range=<a>..<b>] [--judge-tier]
+# 計画どおり流す → 結果を外れの型で返す・前（main）と並べる・次の重点の候補（次の --conduct の材料）
+npx tsx --env-file=.env.local scripts/exam-brain.ts --run-plan=<計画の label> --conv=YUMA4
+# 外れの型の地図（既定は本番に入れた版 main の答案。--source=latest で作業の結果も）・試験の地図（覆いと空き）— どちらも LLM なし
+npx tsx --env-file=.env.local scripts/exam-brain.ts --miss-map
+npx tsx --env-file=.env.local scripts/exam-brain.ts --coverage [--json]
+```
+
+- 司令塔の材料: 直した中身（変えたファイルと段・コミットの文・設計知見の id・伏せ字の差分）／読み手の読み（効く所・外れの型・線・段・探す言葉＝RAG の言葉に足す）／外れの型の地図／前の結果の次の重点／候補（RAG の選び＋読み手の型・線に当たる今の外れ・最大40問）。
+- 決まった計算で守る事: 候補に無い id は捨てる・回は1〜3・下書きは下書き可の問題だけ・flash は model-check で確かめた型だけ・名指しと前に落ちた問題は必ず入れる・上限（--cap-usd と1日の上限の残りの小さい方）に収める（見張りの回→重点の回→見張りを削る→守らない重点を削る）。
+- お手本・竹内さんの番は強い候補として渡すが必ずは入れない（直しの途中の確かめ＝小さな確かめの代わり）。本番に入れる前の仕上げは今まで通り `--phase=final` か `--gate`。
+- 判定の段（`EXAM_JUDGE_TIER=on`・既定 off）: 機械の照らし（AIX だけの依頼で答案に AIX が無い＝✕ 等）→ flash を並びを変えて2回 → 揃った項目は確定・割れた項目がある時だけ pro。構成の鍵に入る（前（main）の取り置きも段の判定で作り直し）ので、司令塔は勧めるだけ・使うのは `--judge-tier` の時。
+- 個人情報: DeepSeek に送る本文は1行ずつ伏せ字（maskExamText）にし、個人の値（携帯・生年月日・メール・申込フォーム）が残る行は捨て、送る前に test-pii-guard の網（piiValueSignal・testPiiRefusal）。費用は local-llm-spend.jsonl に足す（1日の上限に数える）。
+- 置き場: `<倉庫の根>/.claude/exam-cache/exam-brain/conductor/`（`<label>.plan.json`・`<label>.result.json`・`missmap-*.json`・`coverage-*.json`）。

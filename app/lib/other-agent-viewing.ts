@@ -33,3 +33,36 @@ export function isOtherAgentViewingApplyQuestion(text: string | null | undefined
   if (!s.trim()) return false;
   return OTHER_AGENT_RE.test(s) && VIEWING_RE.test(s) && APPLY_HERE_RE.test(s) && ASK_RE.test(s);
 }
+
+// ── 2026-10-20 竹内さんの決定（設計知見 d6b6edc1・愛実 c16e9f4a 10/20）: 他社で内覧する予定を伝えられた時は否定せず、弊社でも内覧できる・弊社で内覧する利点で誘う ──
+//   お客様「他社さんで〇〇の内見の予定あって、一度そっちでサクッと内見だけしてこようかなと思ってるんですが大丈夫でしょうか？？」
+//   竹内さん「大丈夫です😊！！ / 〇〇さんよろしければ弊社にてご内見可能です！！ / ご挨拶も兼ねまして一度ご内見頂ければ〇〇さんもご安心してお任せ頂けると思います！！」
+//   本番の下書きは「全然大丈夫です・他社で内覧した後でも弊社で申込できます」だけで②③が抜けた。
+//   ⚠ 「他社で内覧しました・こちらで申込できますか」（もう見た＝過去）は今まで通り（申込できる＋弊社でも内覧できる）。予定（これから見る）の時だけ。
+//   戻す OTHER_VIEWING_INVITE=off（会社の事実の追加をやめる）
+export function otherViewingInviteEnabled(env: Env = envOf()): boolean {
+  return (env.OTHER_VIEWING_INVITE ?? "").trim().toLowerCase() !== "off";
+}
+/** これから見る（予定・予約・してこよう・依頼して・明日 等）。「見てきました」「内覧しました」（過去）は当てない */
+const PLAN_RE = /予定|予約|(?:し|見|行っ)てこよ|見に行(?:く|こう|き(?:ます|たい))|行(?:く|こう)(?:と|か)|(?:し|見|行っ)てきます|依頼して|これから|明日|明後日|あさって|今度|今週|来週|週末|(?:する|見る|行く)(?:つもり|かも|ので|んです|のです)/;
+/** 弊社で内覧したい（本当の内覧の希望）は誘いではなく内覧の調整＝外す */
+const VIEW_HERE_RE = /(?:こちら|そちら|御社|貴社|弊社|スモラ|イエヤス|ギガ)(?:さん|様)?(?:で|に)(?:も)?[^。、]{0,6}(?:内覧|内見|見学|案内)/;
+/** 他社での内覧の取り消し・やめた（「他社の内見はキャンセルしました」）も外す */
+const OTHER_CANCEL_RE = /キャンセル|取り消|断(?:り|っ|る)|やめ(?:ます|まし|た)|なしで|なくな/;
+/** 10/20 確かめる人: もう見た（過去）なのに「明日申込」「来週契約予定」「予約できますか」等の別の語で予定と読んでいた＝内覧が過去の形なら外す（今まで通り other_company_viewing だけ） */
+const VIEWED_PAST_RE = /(?:内覧|内見|見学)(?:を|は)?(?:し(?:ました|た(?![いくら])|てきました|てきた|てみました|てもらいました|てもらった)|済)|見てきました/;
+
+/**
+ * 1通（連投の1つ）が「他社（別の不動産屋）でこれから内覧する予定」を伝えている（大丈夫かの問いを含む）か。
+ * 例: 「他社さんで内見の予定あって、一度そっちでサクッと内見だけしてこようかなと思ってるんですが大丈夫でしょうか？？」
+ *     「明日スーモに乗せていた不動産屋さんに依頼して内覧予定… こちらでお願いとかもできますか？」（予定＋申込の問い＝両方当たる）
+ * ✕ 「他社で内覧しましたが、こちらで申込できますか」（過去）／「他社で見た物件、こちらでも内覧お願いできますか」（弊社での内覧の希望）
+ */
+export function isOtherAgentViewingPlan(text: string | null | undefined, env: Env = envOf()): boolean {
+  if (!otherAgentViewingEnabled(env) || !otherViewingInviteEnabled(env)) return false;
+  const s = String(text ?? "").normalize("NFKC").replace(/\s+/g, " ");
+  if (!s.trim()) return false;
+  if (!OTHER_AGENT_RE.test(s) || !VIEWING_RE.test(s) || !PLAN_RE.test(s)) return false;
+  if (VIEW_HERE_RE.test(s) || OTHER_CANCEL_RE.test(s) || VIEWED_PAST_RE.test(s)) return false;
+  return true;
+}
