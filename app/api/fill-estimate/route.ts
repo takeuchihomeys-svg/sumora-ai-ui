@@ -78,6 +78,16 @@ function shrinkSavingsLabelFont(drawingXml: string): string {
 }
 
 /**
+ * 2026-10-20 竹内さん「担当の名前を鈴木 祥平に変更する。見積書全部のアカウント。フォントは今と同じ種類で同じ大きさ」:
+ *   3つのテンプレートの drawing2.xml の「〈 担当：竹内 悠馬 〉」の名前の部分だけ（同じ <a:t> の中身）を置き換える＝書式（字体・大きさ）は元の run のまま。
+ */
+const ESTIMATE_STAFF_NAME_FROM = "竹内 悠馬";
+const ESTIMATE_STAFF_NAME_TO = "鈴木 祥平";
+function replaceEstimateStaffName(drawingXml: string): string {
+  return drawingXml.split(`<a:t>${ESTIMATE_STAFF_NAME_FROM}</a:t>`).join(`<a:t>${ESTIMATE_STAFF_NAME_TO}</a:t>`);
+}
+
+/**
  * ExcelJS出力バッファに元テンプレートのテキスト図形(drawing2.xml)を移植し、
  * 節約金額プレースホルダーを実際の計算値に書き換える。
  *
@@ -106,7 +116,7 @@ async function patchSavingsInDrawing(
   if (drawingXml.includes(">" + placeholder + "<")) {
     drawingXml = drawingXml.split(">" + placeholder + "<").join(">" + formatted + "<");
   }
-  drawingXml = shrinkSavingsLabelFont(drawingXml);
+  drawingXml = replaceEstimateStaffName(shrinkSavingsLabelFont(drawingXml));
   outputZip.file("xl/drawings/drawing2.xml", drawingXml);
 
   // 2. drawing2.xml.rels をテンプレートからコピー（キャラクター画像参照を保持）
