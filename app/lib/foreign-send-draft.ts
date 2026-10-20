@@ -18,6 +18,8 @@ export type ForeignSendInput = {
   replyDraft: string | null | undefined;
   /** 入力欄が AI の下書きのまま（直していない）か（page.tsx の displaySource !== null） */
   draftIsAi: boolean;
+  /** この画面に最後に入った AI の下書きの本文（page.tsx の aiDraftRef・印が外れても中身が同じかを見る） */
+  aiDraft?: string | null;
   /** 届いたスタッフの通の本文（画像は "[画像]"） */
   staffText: string | null | undefined;
   /** 届いたスタッフの通の時刻 */
@@ -62,9 +64,14 @@ export function decideForeignSendDraft(i: ForeignSendInput): ForeignSendDecision
   const at = i.staffAt ? Date.parse(i.staffAt) : NaN;
   if (Number.isFinite(at) && i.nowMs - at > STALE_EVENT_MS) return "keep";
   // 画像・動画だけの送信は、入力欄の文と一緒に送るつもりの事がある（物件の画像の後に文）→ 消さずに知らせる
-  if (/^\s*\[(?:画像|動画|ファイル)\]\s*$/.test(i.staffText ?? "")) return "notice";
+  //   グループでスタッフが個人の LINE から送ったスタンプ（line-webhook の "[スタンプ]"）も返事ではない
+  if (/^\s*\[(?:画像|動画|ファイル|スタンプ)\]\s*$/.test(i.staffText ?? "")) return "notice";
   if (i.draftIsAi) return "clear";
-  if (isSameDraftFamily(draft, i.staffText)) return "clear";
+  if (!isSameDraftFamily(draft, i.staffText)) return "notice";
+  // 印が外れた（手で触った）文は、手で書き足した分を消さない（確かめる人 10/20）:
+  //   送った文に全部含まれる（消しただけ）か、中身が AI の下書きのまま（触って戻した）なら消す。送った文より長い＝書き足しがある → 知らせるだけ
+  if (norm(draft).length <= norm(i.staffText).length) return "clear";
+  if (i.aiDraft && norm(i.aiDraft) === norm(draft)) return "clear";
   return "notice";
 }
 

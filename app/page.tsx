@@ -3453,7 +3453,7 @@ export default function Home() {
   //   本番: 同じ会話を2つのタブで開き、片方で直して送った後、もう片方に直す前の下書きが「⚡ AI下書き」のまま残った（判定は foreign-send-draft.ts）
   handleForeignStaffSendRef.current = (text: string, at: string | null) => {
     const decision = decideForeignSendDraft({
-      replyDraft: replyDraftLiveRef.current, draftIsAi, staffText: text, staffAt: at,
+      replyDraft: replyDraftLiveRef.current, draftIsAi, aiDraft: aiDraftRef.current, staffText: text, staffAt: at,
       ownInsertAtMs: ownStaffInsertAtRef.current, sending, nowMs: Date.now(),
     });
     if (decision === "keep") return;

@@ -18,7 +18,10 @@ const base = { replyDraft: DRAFT, draftIsAi: true, staffText: SENT, staffAt: AT,
 
 console.log("decideForeignSendDraft");
 it("本番の形: 別のタブが直して送った → 直していない AI の下書きは消す", () => eq(decideForeignSendDraft(base), "clear"));
-it("AI の印が外れていても（手で触った）送った文とほぼ同じなら消す", () => eq(decideForeignSendDraft({ ...base, draftIsAi: false }), "clear"));
+it("AI の印が外れていても中身が AI の下書きのまま（触って戻した）なら消す", () => eq(decideForeignSendDraft({ ...base, draftIsAi: false, aiDraft: DRAFT }), "clear"));
+it("印が外れて手で書き足した文（送った文より長い）は消さずに知らせる", () => eq(decideForeignSendDraft({ ...base, draftIsAi: false, aiDraft: SENT, replyDraft: DRAFT }), "notice"));
+it("印が外れて1行消しただけ（送った文に全部含まれる）なら消す", () => eq(decideForeignSendDraft({ ...base, draftIsAi: false, replyDraft: SENT, staffText: DRAFT }), "clear"));
+it("スタンプだけの送信は消さずに知らせる", () => eq(decideForeignSendDraft({ ...base, staffText: "[スタンプ]" }), "notice"));
 it("手で書いた別の文は消さずに知らせる", () => eq(decideForeignSendDraft({ ...base, draftIsAi: false, replyDraft: "明日の内覧のお時間は何時頃がよろしいでしょうか？" }), "notice"));
 it("入力欄が空なら何もしない", () => eq(decideForeignSendDraft({ ...base, replyDraft: "  " }), "keep"));
 it("この画面が送っている途中は触らない", () => eq(decideForeignSendDraft({ ...base, sending: true }), "keep"));
