@@ -7,18 +7,18 @@
 //   ④ 計画・結果・外れの地図をファイルに残す（<倉庫の根>/.claude/exam-cache/exam-brain/conductor/）
 // DB は読むだけ（設計知見の id の照合）。
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { EXAM_BRAIN_DIR } from "./exam-brain-io";
 import { FLAKE_DIR, type FlakeObs } from "./exam-flake";
-import { pathFailedSig } from "./exam-rag-run";
-import { decideStageFromDiff } from "./exam-scope";
+import { pathFailedSig, decisionOfRange } from "./exam-rag-run";
+import { decideStageFromDiff, changedFiles, type StageDecision } from "./exam-scope";
 import { maskExamText } from "./brain-exam-mask";
 import { appendLocalSpend } from "./brain-self-review-io";
 import { piiValueSignal, testPiiRefusal } from "../../app/lib/test-pii-guard";
 import { isDeepseekPeakAt } from "../../app/lib/llm-price";
-import { deepseekUsd, type MissMap, type ProblemLike, type RowLike, type ConductorPlan } from "./exam-conductor";
+import { deepseekUsd, pickAutoBase, parseRange, type BaseCand, type MissMap, type ProblemLike, type RowLike, type ConductorPlan } from "./exam-conductor";
 
 export const CONDUCTOR_DIR = join(EXAM_BRAIN_DIR, "conductor");
 export const PRO_MODEL = "deepseek-v4-pro", FLASH_MODEL = "deepseek-flash";
@@ -72,6 +72,24 @@ export function mainRowsOf(p: ProblemLike, baseDir = join(EXAM_BRAIN_DIR, "..", 
   }
   return best ? { rows: refreshPath(p, best.rows), at: best.at, source: best.source } : latestRowsOf(p);
 }
+/**
+ * 2026-10-20 main の答案（warm-main・brain-exam-baseline の取り置き＝どの版でも）がある問題の id。新しい問題（答案なし）を見分ける（作業の結果は数えない）
+ */
+export function mainAnsweredIds(baseDir = join(EXAM_BRAIN_DIR, "..", "brain-exam-baseline")): Set<string> {
+  const out = new Set<string>();
+  if (!existsSync(baseDir)) return out;
+  for (const d of readdirSync(baseDir)) {
+    if (!d.startsWith("v-")) continue;
+    let fs: string[] = [];
+    try { fs = readdirSync(join(baseDir, d)); } catch { continue; }
+    for (const f of fs) {
+      const m = f.match(/^(q\d+)\.json$/);
+      if (!m || out.has(m[1])) continue;
+      try { const j = JSON.parse(readFileSync(join(baseDir, d, f), "utf8")) as { rows?: unknown[] }; if (j.rows?.length) out.add(m[1]); } catch { /* 壊れた物は数えない */ }
+    }
+  }
+  return out;
+}
 export function saveMissMap(m: MissMap, name: string): string {
   mkdirSync(CONDUCTOR_DIR, { recursive: true });
   const f = join(CONDUCTOR_DIR, `missmap-${name}.json`);
@@ -81,7 +99,7 @@ export function saveMissMap(m: MissMap, name: string): string {
 export function readMissMap(name: string): MissMap | null { try { return JSON.parse(readFileSync(join(CONDUCTOR_DIR, `missmap-${name}.json`), "utf8")) as MissMap; } catch { return null; } }
 
 // ─── ② 直した中身 ─────────────────────────────────────────────────────
-export type DiffMaterial = { base: string | null; cls: string; note: string; files: Array<{ file: string; cls: string; why: string }>; commits: string[]; kbIds: string[]; diffText: string; dropped: number };
+export type DiffMaterial = { base: string | null; /** 2026-10-20 実際に見た範囲（--range か、main の作業ツリーで自動で決めた起点..HEAD）。作業ツリーの差の時は null */ range: string | null; rangeWhy: string; cls: string; note: string; files: Array<{ file: string; cls: string; why: string }>; commits: string[]; kbIds: string[]; diffText: string; dropped: number };
 const git = (a: string[], cwd: string) => { try { return execFileSync("git", a, { cwd, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }).toString(); } catch { return ""; } };
 /** 1行ずつ伏せて、個人の値が残る行は捨てる（DeepSeek に渡す前の網） */
 export function safeLines(text: string): { text: string; dropped: number } {
@@ -90,13 +108,66 @@ export function safeLines(text: string): { text: string; dropped: number } {
   for (const l of String(text ?? "").split("\n")) { const m = maskExamText(l, null); if (piiValueSignal(m)) { dropped++; continue; } out.push(m); }
   return { text: out.join("\n"), dropped };
 }
-export async function diffMaterial(sb: SupabaseClient | null, cwd = ".", o: { maxChars?: number; range?: string } = {}): Promise<DiffMaterial> {
-  const d = decideStageFromDiff(cwd);
-  const base = o.range ? o.range.split("..")[0] : d.base;
+/** 1つの版の名前（commit・枝・tag・HEAD~3 等）がこの倉庫で commit に解けるか。解ければ完全な sha・解けなければ null */
+export function resolveRev(rev: string, cwd = "."): string | null {
+  try { return execFileSync("git", ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`], { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || null; } catch { return null; }
+}
+/**
+ * 2026-10-20 --range=<a>..<b> を何かにお金を使う前に確かめる。形が違う・どちらかの版がこの倉庫に無い（別の倉庫の commit 等）時は分かる言葉で止める
+ *   （前は RAG の選びの中で git が落ちて「安全側で全部」に化けていた）
+ */
+export function verifyRange(range: string, cwd = "."): { from: string; to: string; fromSha: string; toSha: string } {
+  const { from, to } = parseRange(range);
+  const fromSha = resolveRev(from, cwd), toSha = resolveRev(to, cwd);
+  const bad = [!fromSha ? from : null, !toSha ? to : null].filter(Boolean);
+  if (bad.length) throw new Error(`--range=${range}: この倉庫に無い版 ${bad.join("・")}（別の倉庫の commit か打ち間違い。git fetch してから・git log で確かめる）`);
+  return { from, to, fromSha: fromSha!, toSha: toSha! };
+}
+/** a が HEAD の祖先で HEAD そのものではない */
+function isStrictAncestorOfHead(commit: string, cwd: string): boolean {
+  const sha = resolveRev(commit, cwd), head = resolveRev("HEAD", cwd);
+  if (!sha || !head || sha === head) return false;
+  try { execFileSync("git", ["merge-base", "--is-ancestor", sha, head], { cwd, stdio: "ignore" }); return true; } catch { return false; }
+}
+/** main の作業ツリーの起点の候補: 保存した main の答案（brain-exam-baseline の版ごとの置き場の commit・main-head.json）と、前の司令塔の結果の計画の HEAD */
+export function autoBaseCandidates(baseDir = join(EXAM_BRAIN_DIR, "..", "brain-exam-baseline")): BaseCand[] {
+  const out: BaseCand[] = [];
+  try { const j = JSON.parse(readFileSync(join(baseDir, "main-head.json"), "utf8")) as { commit?: string; at?: string }; if (j.commit) out.push({ commit: j.commit, at: j.at ?? "", why: "保存した main の答案（main-head）", group: "warm-main" }); } catch { /* */ }
+  if (existsSync(baseDir)) for (const d of readdirSync(baseDir)) {
+    if (!d.startsWith("v-")) continue;
+    try {
+      const c = JSON.parse(readFileSync(join(baseDir, d, "config.json"), "utf8")) as { commit?: string };
+      if (!c.commit) continue;
+      let at = 0;
+      for (const f of readdirSync(join(baseDir, d))) if (/^q\d+\.json$/.test(f)) at = Math.max(at, statSync(join(baseDir, d, f)).mtimeMs);
+      if (at) out.push({ commit: c.commit, at: new Date(at).toISOString(), why: `保存した main の答案（${d}）`, group: "warm-main" });
+    } catch { /* */ }
+  }
+  const r = loadLatestResult();
+  const pl = r ? loadPlan(r.planLabel) : null;
+  if (r && pl?.head) out.push({ commit: pl.head, at: r.at, why: `前の司令塔の結果（${r.label}）`, group: "conductor" });
+  return out;
+}
+export async function diffMaterial(sb: SupabaseClient | null, cwd = ".", o: { maxChars?: number; range?: string; baseDir?: string } = {}): Promise<DiffMaterial> {
+  let range = o.range ?? null, rangeWhy = "";
+  let d: StageDecision;
+  if (range) { verifyRange(range, cwd); d = decisionOfRange(range, cwd); rangeWhy = `--range=${range}`; }
+  else {
+    d = decideStageFromDiff(cwd);
+    // 2026-10-20 作業ツリーが main そのもの（main との分かれ目＝HEAD・変わったファイル 0）の時は、保存した main の答案の後に入った変更（無ければ前の司令塔の結果の後）を見る
+    const head = resolveRev("HEAD", cwd);
+    const clean = (() => { try { return !changedFiles(d.base ?? "HEAD", cwd).length; } catch { return false; } })();
+    if (d.base && head && d.base === head && clean) {
+      const b = pickAutoBase(autoBaseCandidates(o.baseDir), (c) => isStrictAncestorOfHead(c, cwd));
+      if (b) { range = `${b.commit}..${head}`; d = decisionOfRange(range, cwd); rangeWhy = `main の作業ツリー → ${b.why}（${b.commit.slice(0, 8)}）の後に入った変更`; }
+    }
+  }
+  if (range && !d.files.length) d = { ...d, note: `${range} に変わったファイルが無い` };
+  const base = range ? range.split("..")[0] : d.base;
   const files = d.files.map((f) => ({ file: f.file, cls: f.cls, why: f.why }));
-  const commits = base ? git(["log", "--format=%s%n%b%x1e", `${base}..${o.range?.split("..")[1] ?? "HEAD"}`], cwd).split("\x1e").map((s) => s.trim()).filter(Boolean) : [];
+  const commits = base ? git(["log", "--format=%s%n%b%x1e", `${base}..${range?.split("..")[1] ?? "HEAD"}`], cwd).split("\x1e").map((s) => s.trim()).filter(Boolean) : [];
   const codeFiles = files.map((f) => f.file).filter((f) => /\.(ts|tsx|js|mjs|json|sql)$/.test(f) && !/package-lock|\.cassette|results\//.test(f));
-  const raw = base && codeFiles.length ? git(["diff", "-U0", o.range ?? base, "--", ...codeFiles], cwd) : "";
+  const raw = base && codeFiles.length ? git(["diff", "-U0", range ?? base, "--", ...codeFiles], cwd) : "";
   // 足した・消した行と、ファイルの見出しだけ（＋の行を先に）
   const lines = raw.split("\n").filter((l) => /^(\+\+\+|[+-](?![+-]))/.test(l)).map((l) => l.slice(0, 220));
   const s = safeLines(lines.join("\n"));
@@ -113,7 +184,7 @@ export async function diffMaterial(sb: SupabaseClient | null, cwd = ".", o: { ma
     } catch { kbIds = []; }
   }
   const cm = safeLines(commits.join("\n\x1f\n"));
-  return { base, cls: d.cls, note: d.note, files, commits: cm.text.split("\n\x1f\n").map((x) => x.trim()).filter(Boolean), kbIds, diffText, dropped: s.dropped + cm.dropped };
+  return { base, range, rangeWhy, cls: d.cls, note: d.note, files, commits: cm.text.split("\n\x1f\n").map((x) => x.trim()).filter(Boolean), kbIds, diffText, dropped: s.dropped + cm.dropped };
 }
 
 // ─── ③ DeepSeek を呼ぶ（個人の値の網つき） ────────────────────────────────
