@@ -12,8 +12,10 @@
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 
+// 2026-10-21 竹内さん A2「AIXでおくる」・A3「物件確認した」（設計知見・決定 C『短く返信』を改める）: 約束の直後のお客様のお礼・了承だけの番は返信せず、
+//   約束を果たす AIX（ピックアップ→物件ピックアップした／物件オススメ・確認・交渉→物件確認した・見積→見積書送る）。決定 C は既定 off（戻す ACK_AFTER_PROMISE_REPLY=on）
 export function ackAfterPromiseReplyEnabled(env: Env = envOf()): boolean {
-  return (env.ACK_AFTER_PROMISE_REPLY ?? "").trim().toLowerCase() !== "off";
+  return (env.ACK_AFTER_PROMISE_REPLY ?? "").trim().toLowerCase() === "on";
 }
 export function exhaustedConditionReplyEnabled(env: Env = envOf()): boolean {
   return (env.EXHAUSTED_CONDITION_REPLY ?? "").trim().toLowerCase() !== "off";
@@ -113,8 +115,10 @@ export function exhaustedConditionWeakTurnLine(env: Env = envOf()): string {
 export function ackAfterPromiseMaterial(env: Env = envOf()): string {
   return ackAfterPromiseReplyEnabled(env)
     ? "（竹内さんの決定 10/14 C: ピックアップの約束の直後にお客様がお礼・了承だけを言った番は、お礼に短く返信する＝aix は null・受けだけか待ちの形の1文は ack_form・物件の AIX はその後で出す。確認・見積の約束の直後のお礼は約束を果たす AIX のまま。約束の催促は約束を果たす AIX）"
-    : "";
+    : ACK_AFTER_PROMISE_AIX_MATERIAL;
 }
+/** 10/21 A2・A3 の材料（決定 C を改めた形） */
+export const ACK_AFTER_PROMISE_AIX_MATERIAL = "（竹内さんの決定 10/21 A2・A3: 約束の直後にお客様がお礼・了承だけを言った番は返信せず、約束を果たす AIX にする＝ピックアップの約束の後は物件ピックアップした（property_send）／物件オススメ（property_recommendation）・確認・交渉の約束の後は物件確認した（property_check_result）・見積の約束の後は見積書送る（estimate_sheet）。約束の催促も約束を果たす AIX）";
 
 // ─── 2026-10-14 決定 C をブレイン基準に（P0 9eb6aa9c ②・見直し役の指摘）────────────────────────
 // 旧: 規則（rule:ack_after_promise_reply）が LLM の物件の AIX を finalAix=null にして返信に変えていた＝ブレインの判断の上書き。
@@ -140,7 +144,13 @@ export function ackAfterPickupTurn(o: {
 
 /** LLM の前の今の番の材料の行（決定 C の番の時だけ） */
 export function ackAfterPickupTurnLine(env: Env = envOf()): string {
-  if (!ackAfterPromiseReplyEnabled(env) || !ackAfterPromiseBrainEnabled(env)) return "";
+  if (!ackAfterPromiseBrainEnabled(env)) return "";
+  // 10/21 A2: 決定 C を改めた形（既定）＝約束を果たす物件の AIX
+  if (!ackAfterPromiseReplyEnabled(env)) {
+    return "【今の番（材料・竹内さんの決定 10/21 A2）】お客様の今の発言はお礼・了承だけで、直前のこちらの約束は「ピックアップしてお送りする」（まだ物件を送っていない・確認や見積の約束は残っていない）。"
+      + "竹内さんはこの番は返信せず、約束を果たす物件の AIX（物件ピックアップした＝property_send（複数）／物件オススメ＝property_recommendation（1件））で送る。"
+      + "だからこの番の aix は物件の AIX・返信の下書きは作らない（close_only の受けの返信にしない）。";
+  }
   return "【今の番（材料・竹内さんの決定 10/14 C）】お客様の今の発言はお礼・了承だけで、直前のこちらの約束は「ピックアップしてお送りする」（まだ物件を送っていない・確認や見積の約束は残っていない）。"
     + "竹内さんはこの番は物件の AIX をまだ出さず、お礼に短く返信して締める（受けだけか「〜出来次第お送りさせて頂きます！！」の待ちの形の1文かは turn_contract.ack_form）。"
     + "約束を果たす物件の AIX（物件ピックアップした／物件オススメ）は、スタッフが物件を探した後の別の番。"

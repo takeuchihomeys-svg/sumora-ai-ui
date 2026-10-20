@@ -40,7 +40,12 @@ t("説明口調の受け止め", types("お悩みのご状況しっかり受け�
 t("送っていない番のご査収", types("御見積書を作成しお送りさせて頂きます！！お手隙の際にご査収ください😌！！", { scene: "cost", sentThisTurn: false }).includes("kasa_not_sent"));
 t("送った番のご査収は外れではない", !types("御見積書となります！！お手隙の際にご査収ください😌！！", { scene: "cost", sentThisTurn: true }).includes("kasa_not_sent"));
 t("資料に記載が無い旨", types("資料に記載がございませんでした！！確認させて頂きます！！", { scene: "question" }).includes("material_missing"));
-t("質問の番に答えが無い", types("かしこまりました！！確認させて頂きます！！", { scene: "question" }).includes("missing_required"));
+// 10/21 竹内さん A4: 約束だけの返信は「答え」を満たす（BLUEPRINT_PROMISE_AS_ANSWER=off で旧）
+t("A4: 約束だけの番は答えが無いに数えない", !types("かしこまりました！！確認させて頂きます！！", { scene: "question" }).includes("missing_required"));
+{ const prev = process.env.BLUEPRINT_PROMISE_AS_ANSWER; process.env.BLUEPRINT_PROMISE_AS_ANSWER = "off";
+  t("質問の番に答えが無い（off で旧）", types("かしこまりました！！確認させて頂きます！！", { scene: "question" }).includes("missing_required"));
+  if (prev === undefined) delete process.env.BLUEPRINT_PROMISE_AS_ANSWER; else process.env.BLUEPRINT_PROMISE_AS_ANSWER = prev; }
+t("約束も答えも無い番は答えが無い", types("かしこまりました！！", { scene: "question" }).includes("missing_required"));
 t("質問の番に答えがあれば要る段はそろう", !types("駐車場ございます！！", { scene: "question" }).includes("missing_required"));
 t("条件の番の誘いは書かない段", types("かしこまりました！！ピックアップしてお送りさせて頂きます！！ご内覧可能です！！", { scene: "conditions" }).includes("forbidden_part"));
 t("短い了承の長すぎ", types("はい！！ありがとうございます！！駐車場あります！！確認します！！お気軽に！！何卒よろしくお願い致します！！", { scene: "ack" }).includes("too_long"));

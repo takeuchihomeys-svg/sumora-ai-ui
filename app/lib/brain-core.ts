@@ -2695,7 +2695,15 @@ ${catalogBlockForBrain(brainScene)}
   let ackAfterPickupNow = false;
   /** 2026-10-16（事例 f）: 了承だけの番の、まだ果たしていない探す約束の文（turn_contract.open_search に入れて下書きの待ちの形まで届ける） */
   let openSearchQuote: string | null = null;
-  if (ackAfterPromiseReplyEnabled() && ackAfterPromiseBrainEnabled() && !isPostApplyStatus(convStatus)) {
+  // 2026-10-21 竹内さんの答え B8・C8（other-agent-viewing.ts）: 判断の原則を今の番の材料で渡す（決まった文ではない・決めるのはブレイン）
+  if (!isPostApplyStatus(convStatus)) {
+    const { isLikeThenHereQuestion, supportStanceNoteEnabled, SUPPORT_STANCE_LINE, isLookElsewhereForConditions, LOOK_ELSEWHERE_LINE } = await import("@/app/lib/other-agent-viewing");
+    const tNow = unrepliedTurn.text ?? "";
+    if (supportStanceNoteEnabled() && isLikeThenHereQuestion(tNow)) customerStateBlockText += `\n\n${SUPPORT_STANCE_LINE}`;
+    if (isLookElsewhereForConditions(tNow)) customerStateBlockText += `\n\n${LOOK_ELSEWHERE_LINE}`;
+  }
+  // 2026-10-21 A2: 決定 C を既定 off にしても、今の番が「ピックアップの約束の直後のお礼」かは材料で渡す（行の中身は ackAfterPickupTurnLine が A2 の形にする）
+  if (ackAfterPromiseBrainEnabled() && !isPostApplyStatus(convStatus)) {
     const lastIsCust = typedMessages[0]?.sender === "customer";
     const f = brainLedger.facts;
     ackAfterPickupNow = ackAfterPickupTurn({
@@ -4231,7 +4239,7 @@ ${history}`;
           } catch (e) { console.warn("[brain-core] 退去予定日の読み取りに失敗（確認の約束）:", e instanceof Error ? e.message : String(e)); }
         }
       }
-      twoStage = resolveTwoStage({
+      const twoStageRes = resolveTwoStageOrDirect({
         finalAix: finalAix ?? tcPromiseAix, decisionSource: decisionSource ?? (tcPromiseAix ? "llm" : null), pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
         // 5巡目（10/07）: 内覧の希望（日時の指定なし・内覧できるかまだ伝えていない）はまず内覧できるかの確認の約束（viewing-check-first）
         viewingCheckFirst: finalAix === "viewing_invite" && !viewingDateAnswer && !!brainLedger.facts.viewingFlow && viewingCheckFirst({
@@ -4269,12 +4277,27 @@ ${history}`;
           return n > 0 ? { ask: broughtPropertyAsk(routeFix1020("brought_text") ? broughtTypedText(turnMsgs) : (unrepliedTurn.text ?? "")), count: n, titleOnly: broughtTitleOnly(props) } : null; // 10/13 titleOnly: SNS・TikTok の題だけ（two-stage）
         })(),
       });
+      twoStage = twoStageRes.verdict;
+      // 2026-10-21 竹内さん A1「すぐAIXでかえす」（two-stage answerableDirectAix・TWO_STAGE_ANSWERABLE_DIRECT=off で2段の約束に戻す）:
+      //   管理会社に確かめれば分かる問い（空き状況・見積・設備）は約束を挟まず AIX【物件確認した／見積書送る】を直接
+      let answerableDirectFrom: string | null = null;
+      if (twoStageRes.direct) {
+        answerableDirectFrom = twoStageRes.coreSource;
+        if (finalAix !== twoStageRes.direct) {
+          console.log(JSON.stringify({ tag: "brain:answerable-direct", conversationId, from: finalAix, to: twoStageRes.direct, core: twoStageRes.coreSource }));
+          decisionSource = finalAix
+            ? `${decisionSource ?? "llm"}+answerable_direct`
+            : `rule:answerable_direct(${(twoStageRes.coreSource ?? "").replace(/^rule:two_stage_promise\(|\)$/g, "")})`;
+          finalAix = twoStageRes.direct;
+          sceneSignalCheckPattern = null;
+        }
+      }
       if (checkAfterResult) twoStage = null; // ⑤b: 結果は AIX で直接（約束の返信にしない）
       // 8巡目: 退去予定日が分かる内覧の希望は AIX にせず返信で「〇月〇日以降にご内覧可能です」（候補日はまだ出さない・内覧開始日の後に AIX【内覧調整】）
       // 8巡目: 聞かれた契約条件が全部資料にある番は、質問の2段（check_question＝答えが無ければ確認の約束）にせず資料で答える方向にする
       //   （YUMA「この物件は駐車場あります？」で check_question の方向から DeepSeek が「空き状況確認させて頂きます」と書いた回があった）
-      if (twoStage && /check_question/.test(twoStage.source) && contractTerms?.allInMaterial && process.env.CONTRACT_TERMS_REPLY !== "off") {
-        console.log(JSON.stringify({ tag: "brain:contract-terms-over-two-stage", conversationId, from: twoStage.source }));
+      if (((twoStage && /check_question/.test(twoStage.source)) || /check_question/.test(answerableDirectFrom ?? "")) && contractTerms?.allInMaterial && process.env.CONTRACT_TERMS_REPLY !== "off") {
+        console.log(JSON.stringify({ tag: "brain:contract-terms-over-two-stage", conversationId, from: twoStage?.source ?? answerableDirectFrom }));
         twoStage = null;
         finalAix = null;
         sceneSignalCheckPattern = null;

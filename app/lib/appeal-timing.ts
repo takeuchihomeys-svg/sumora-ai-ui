@@ -163,7 +163,7 @@ export type AppealTimingInput = {
   hoursSinceLastAppeal?: number | null;
   /** 前回の訴求の種類 */
   lastAppealKind?: "apply" | "viewing" | null;
-  /** 2026-10-20 竹内さんの決定（d6b6edc1）: お客様が他社でこれから内覧する予定を伝えた（other-agent-viewing.isOtherAgentViewingPlan）。OTHER_VIEWING_INVITE_APPEAL=on の時だけ入れる */
+  /** 2026-10-20 竹内さんの決定（d6b6edc1）: お客様が他社でこれから内覧する予定を伝えた（other-agent-viewing.isOtherAgentViewingPlan）。10/21 竹内さん B7「誘ってよい」で既定 on（止める OTHER_VIEWING_INVITE_APPEAL=off） */
   otherAgentViewingPlan?: boolean;
 };
 
@@ -293,7 +293,7 @@ export function resolveAppealTiming(i: AppealTimingInput): AppealTimingVerdict {
 
   // 2026-10-20 竹内さんの決定（d6b6edc1・c16e9f4a）: 他社でこれから内覧する予定を伝えられた → 否定せず、弊社でも内覧できる・弊社で内覧する利点で誘う
   //   （申込の意思「契約はスモラでしたい」が同じ通にあっても誘う＝② より先）。日時はこの返信に書かない（受けた次の通で調整）。
-  //   既定は切（訴求の判定を変えるため・会社の事実 other_company_viewing_plan は既定で入る）。入れる OTHER_VIEWING_INVITE_APPEAL=on
+  //   10/21 竹内さん B7「誘ってよい」・C1「状況を把握しながら誘う」で既定 on。止める OTHER_VIEWING_INVITE_APPEAL=off
   if (i.otherAgentViewingPlan) {
     return {
       kind: "viewing", level: "suggest", line: APPEAL_LINES.viewing_other_agent, staffRate: null,
@@ -574,7 +574,7 @@ export function buildAppealInput(o: {
       resolveAckTopicScope(msgs.map((m) => ({ sender: m.sender, text: m.text, created_at: m.createdAt })))),
     hoursSinceLastAppeal: lastAt !== null ? Math.round((turnStart - lastAt) / 3600_000) : null,
     lastAppealKind: lastKind,
-    otherAgentViewingPlan: (process.env.OTHER_VIEWING_INVITE_APPEAL ?? "").trim().toLowerCase() === "on" && isOtherAgentViewingPlan(turnText),
+    otherAgentViewingPlan: (process.env.OTHER_VIEWING_INVITE_APPEAL ?? "").trim().toLowerCase() !== "off" && isOtherAgentViewingPlan(turnText),
   };
 }
 

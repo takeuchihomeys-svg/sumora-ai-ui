@@ -23,11 +23,12 @@ it("約束の直後のお礼の方向は短い返信＋後で AIX", () => {
   const d = ackAfterPromiseDirection("pickup", "property_send");
   eq(/お礼に短く返信/.test(d) && /ピックアップしてお送りする/.test(d) && /【property_send】はその後/.test(d), true, d);
 });
-it("止めれば材料の文も出ない", () => {
-  eq(ackAfterPromiseReplyEnabled({ ACK_AFTER_PROMISE_REPLY: "off" }), false);
+it("止めれば材料の文も出ない（10/21 A2: 決定 C は既定 off・材料は A2 の形）", () => {
+  eq(ackAfterPromiseReplyEnabled({}), false, "既定 off");
+  eq(ackAfterPromiseReplyEnabled({ ACK_AFTER_PROMISE_REPLY: "on" }), true);
   eq(exhaustedConditionMaterial({ EXHAUSTED_CONDITION_REPLY: "off" }), "");
-  eq(ackAfterPromiseMaterial({ ACK_AFTER_PROMISE_REPLY: "off" }), "");
-  eq(ackAfterPromiseMaterial({}).length > 0, true);
+  eq(/A2・A3/.test(ackAfterPromiseMaterial({})) && /property_send/.test(ackAfterPromiseMaterial({})), true, "既定は約束を果たす AIX");
+  eq(/お礼に短く返信/.test(ackAfterPromiseMaterial({ ACK_AFTER_PROMISE_REPLY: "on" })), true, "on で決定 C");
 });
 
 // 2026-10-14 決定 C をブレイン基準に
@@ -47,9 +48,9 @@ it("規則はブレインが決められなかった時（aix の欄が無い）
   eq(ackAfterPromiseRuleApplies({ brainMode: false, llmAixPresent: true }), true);
   eq(ackAfterPromiseBrainEnabled({}), true);
   eq(ackAfterPromiseBrainEnabled({ ACK_AFTER_PROMISE_BRAIN: "off" }), false);
-  eq(/aix は null/.test(ackAfterPickupTurnLine({})), true);
+  eq(/物件の AIX/.test(ackAfterPickupTurnLine({})) && !/aix は null/.test(ackAfterPickupTurnLine({})), true, "既定（A2）は物件の AIX");
+  eq(/aix は null/.test(ackAfterPickupTurnLine({ ACK_AFTER_PROMISE_REPLY: "on" })), true, "on で決定 C の行");
   eq(ackAfterPickupTurnLine({ ACK_AFTER_PROMISE_BRAIN: "off" }), "");
-  eq(ackAfterPickupTurnLine({ ACK_AFTER_PROMISE_REPLY: "off" }), "");
 });
 it("出し切りの後の条件の足しのブレイン基準（既定 on・off で旧の上書き）", () => {
   eq(exhaustedConditionBrainEnabled({}), true);

@@ -109,6 +109,32 @@ export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
   };
 }
 
+// ─── 2026-10-21 竹内さん A1「すぐAIXでかえす」（設計知見 5aa28356・10/02「いつも約束を先に」を改める）────────────────
+//   管理会社に確かめれば分かる問い（空き状況・見積・設備・条件）は約束の返信（2段 check・estimate）を挟まず、AIX【物件確認した／見積書送る】を直接出す。
+//   実送信: 空きの問いに約束を挟んだのは2回・すぐ AIX が16回（スタッフだけが知る番 91 のうち 36 がこの型）。
+//   対象の2段: 持ち込み（brought_both→物件確認した・brought_estimate→見積書送る）・募集状況の確認（check）・聞かれた事の確認（check_question）・見積（estimate）。
+//   対象外（約束のまま）: 初回の挨拶の番（guard:first_contact）・古い資料の見積（estimate_stale＝10/16 竹内さんの決定「最新の募集状況を確認する旨を伝えてから AIX」）・
+//     室内写真の撮影・内覧できるかの確認（退去予定）・お仕事面のサポート・ピックアップ。
+//   戻す: TWO_STAGE_ANSWERABLE_DIRECT=off（2段の約束の返信に戻す）
+export function answerableDirectEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_STAGE_ANSWERABLE_DIRECT ?? "").trim().toLowerCase() !== "off";
+}
+const ANSWERABLE_DIRECT_SOURCES = /^rule:two_stage_promise\((?:brought_both|brought_estimate|check|check_question|estimate)\)$/;
+/** 2段の判定（core）が確認・見積の約束を出した番を、AIX 直接にする時の AIX のキー（しない時 null） */
+export function answerableDirectAix(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "decisionSource">, env?: Record<string, string | undefined>): string | null {
+  if (!v || !answerableDirectEnabled(env)) return null;
+  if (/^guard:first_contact/.test(i.decisionSource ?? "")) return null;
+  if (!ANSWERABLE_DIRECT_SOURCES.test(v.source)) return null;
+  return v.kind === "estimate" ? "estimate_sheet" : "property_check_result";
+}
+/** brain-core が使う形: 2段の約束の返信（verdict）か、AIX 直接（direct＝AIX のキー・coreSource＝元の2段の出所）か */
+export function resolveTwoStageOrDirect(i: TwoStageInput): { verdict: TwoStageVerdict | null; direct: string | null; coreSource: string | null } {
+  const core = resolveTwoStageCore(i);
+  const direct = answerableDirectAix(core, i);
+  if (direct) return { verdict: null, direct, coreSource: core?.source ?? null };
+  return { verdict: resolveTwoStage(i), direct: null, coreSource: null };
+}
+
 /**
  * 2026-10-13 竹内さん（いしのまさや: 初回に TikTok の物件の画像2件＋「初期費用を安く・敷金礼金なし…良い物件ありますでしょうか？」→ 下書きが
  *   「…ご連絡させて頂きます！！ご質問ありがとうございます！！良い物件ありますでしょうか？とのことですが、北浜以外にも…ピックアップ」と約束を全部詰めた）:
@@ -274,6 +300,9 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   //   10/03〜の道の違い（scripts/audit-path-gap-by-scene.ts）の短いお礼の外れ（AI=返信→人=AIX）の形。設計知見 a92ec31b「約束の後のお礼・了承だけの番は約束の AIX のまま」と同じ向き
   //   （⑫22巡の pickupPromiseNotReady は了承以外の発言も混ぜた 120番で引いた線＝了承だけの番はこちらが多数）。戻す: TWO_STAGE_ACK_WAIT=off
   if (pickupPromiseNotReady && i.ackRightAfterPromise && (typeof process === "undefined" || (process.env?.TWO_STAGE_ACK_WAIT ?? "").toLowerCase() !== "off")) return null;
+  // 2026-10-21 竹内さん A2「AIXでおくる」: ピックアップの約束の後のお礼・了承だけの番は、台帳の最後が約束でなくても（約束の後に別の話を挟んだ 等）約束の言い直しの返信にせず物件の AIX。
+  //   戻す ACK_AFTER_PROMISE_REPLY=on（決定 C）
+  if (pickupPromiseNotReady && i.ackOnly === true && (typeof process === "undefined" || (process.env?.ACK_AFTER_PROMISE_REPLY ?? "").trim().toLowerCase() !== "on")) return null;
   // 2026-10-09 試験の (d) 型（q095 q100 q105）: こちらが約束した直後のお客様の「よろしく」等の番で、LLM が約束を果たす AIX（見積書送る・物件確認した）を
   //   選んだのに、下の2段が約束の返信に戻していた（もう約束は済んでいる＝言い直しになる・竹内さんは黙って AIX で果たす）。この番は AIX のまま。戻す TWO_STAGE_ACK_FULFIL=off
   if (i.ackRightAfterPromise && (a === "estimate_sheet" || a === "property_check_result" || a === "acknowledge_check")

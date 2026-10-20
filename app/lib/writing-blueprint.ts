@@ -202,7 +202,7 @@ export function buildWritingBlueprintNote(f: BlueprintTurnFacts): string {
   const bp = resolveBlueprint(f);
   const lines: string[] = [];
   lines.push(`【🧩 文の設計図（${bp.name}・狙い:${bp.aim}）】この順で段を組む（無い段は飛ばす）: ${bp.order.map((p) => PART_JA[p]).join("→")}`);
-  if (bp.required.length) lines.push(`- 要る段: ${bp.required.map((p) => PART_JA[p]).join("・")}`);
+  if (bp.required.length) lines.push(`- 要る段: ${bp.required.map((p) => requiredLabel(p)).join("・")}`);
   if (bp.forbidden.length) lines.push(`- 書かない段: ${bp.forbidden.map((p) => PART_JA[p]).join("・")}`);
   for (const m of bp.must) lines.push(`- 必ず: ${m}`);
   const qs = (f.questions ?? []).filter((q) => q.trim());
@@ -215,6 +215,19 @@ export function buildWritingBlueprintNote(f: BlueprintTurnFacts): string {
   let text = `\n\n${lines.join("\n")}`;
   if (text.length > BLUEPRINT_NOTE_MAX) text = text.slice(0, BLUEPRINT_NOTE_MAX - 1) + "…";
   return text;
+}
+
+/**
+ * 2026-10-21 竹内さん A4「ただしい」（設計知見 fca0a40e）: 物件・費用の番で「確認させて頂きます」の約束だけで返す（答えは後で AIX）は正しい形。
+ *   要る段「答え」は約束の段でも満たせる（指示と見張りの両方）。見張りの「答えが無い」85件のうち65件が約束だけの番だった。
+ *   戻す BLUEPRINT_PROMISE_AS_ANSWER=off（答えの段だけで数える）
+ */
+export function promiseSatisfiesAnswer(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BLUEPRINT_PROMISE_AS_ANSWER ?? "").trim().toLowerCase() !== "off";
+}
+/** 要る段の表記（答えは約束でも満たせる時「答え（または約束）」） */
+function requiredLabel(p: BlueprintPart, env?: Record<string, string | undefined>): string {
+  return p === "answer" && promiseSatisfiesAnswer(env) ? `${PART_JA.answer}（まだ結果が無い事は約束の段で足りる）` : PART_JA[p];
 }
 
 /** 環境の切り替えつき（off の時は必ず ""） */
@@ -297,7 +310,8 @@ export function checkDraftAgainstBlueprint(draft: string, f: BlueprintTurnFacts)
   const inv = orderInversions(seq.parts, bp.order);
   if (inv.length) breaks.push({ type: "order", detail: inv.map(([a, b]) => `${PART_JA[a]}→${PART_JA[b]}`).join(",") });
   const has = new Set(seq.parts);
-  for (const p of bp.required) if (!has.has(p)) breaks.push({ type: "missing_required", detail: PART_JA[p] });
+  // 10/21 A4: 要る段「答え」は約束の段でも満たせる（promiseSatisfiesAnswer）
+  for (const p of bp.required) if (!has.has(p) && !(p === "answer" && has.has("promise") && promiseSatisfiesAnswer())) breaks.push({ type: "missing_required", detail: PART_JA[p] });
   for (const p of bp.forbidden) if (has.has(p)) breaks.push({ type: "forbidden_part", detail: PART_JA[p] });
   const closings = seq.sentences.filter((x) => x.part === "closing" && /よろしくお願い/.test(x.text)).length;
   if (closings >= 2) breaks.push({ type: "dup_closing", detail: `${closings}回` });
