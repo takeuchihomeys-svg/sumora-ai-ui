@@ -73,7 +73,10 @@ it("出し切りの後の条件の足しのブレイン基準（既定 on・off 
   eq(/ゆるめた/.test(exhaustedConditionTurnLine({ EXHAUSTED_CONDITION_AXIS: "off" })), false);
 });
 it("2026-10-18 q170: 送付だけの印でブレインが足した条件で探す約束を選んだ番は返信に書き換えない", () => {
-  const k = exhaustedWeakKeepBrainPromise;
+  const ON = { EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE: "on" };
+  const k = (o: Parameters<typeof exhaustedWeakKeepBrainPromise>[0]) => exhaustedWeakKeepBrainPromise({ ...o, env: o.env && Object.keys(o.env).length ? o.env : ON });
+  // 2026-10-20 確かめる人: 既定は off（q006・q007 の悪化）
+  eq(exhaustedWeakKeepBrainPromise({ strength: "weak", asks: [{ route: "promise", about: "search_condition" }], env: {} }), false, "既定 off");
   const asks = [{ route: "promise", about: "search_condition" }];
   eq(k({ strength: "weak", asks, env: {} }), true, "weak");
   eq(k({ strength: "strong", asks, env: {} }), false, "strong は決定 10/14 のまま");

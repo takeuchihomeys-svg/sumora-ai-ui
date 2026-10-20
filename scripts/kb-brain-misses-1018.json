@@ -17,11 +17,11 @@
     "priority": 2
   },
   {
-    "title": "送付だけの印（weak）の出し切りで、ブレインが足した条件で探す約束を選んだ番は「新着が出次第」の返信に書き換えない（明示の印 strong は決定 10/14 のまま）",
+    "title": "【既定 off】送付だけの印（weak）の出し切りで、ブレインが足した条件で探す約束を選んだ番を「新着が出次第」の返信に書き換えない案 — q170 は良くなるが q006・q007 が悪くなる（weak/strong の見分けを先に直す）",
     "category": "ai_design",
-    "insight": "q170（本番 43ec03ae 9/08）最初の物件の送付（4件）の直後に「お風呂が狭いと赤ちゃんのお風呂入れるのが難しい」→ 竹内さんはお風呂広めでお調べする約束（2段:pickup）。ブレインの本質も 2段:pickup（turn_contract route=promise・about=search_condition・polarity=add）だったのに、rule:two_stage_promise(pickup_unless_ack)+exhausted_condition_reply が返信（新着が出次第お送り）に書き換えた。なぜ: 出し切りの印は送付だけ（AIX の物件の送付＋「ピックアップさせて頂きました」＝weak）で、weak を材料に下げる BRAIN_DEMOTE_SEARCH_EXHAUSTED は既定 off。出し切りの条件の足しの規則は『LLM が物件の AIX を選んだ時』だけブレインを残し、約束を選んだ時は上書きしていた。 小さな確かめ（wb1018-fix1）で分かった2つ目の穴: 材料の今の番の行（exhaustedConditionTurnLine）は weak でも「出し切った印がある＝返信で締める」と言い切って渡しており、材料の1行（出し切りとは限らない）と食い違い、ブレイン自身も新着待ちで締めた回があった。また turn_contract を出さず方向だけで再ピックアップを言った回もあった。",
-    "rationale": "weak の材料は『1回送っただけ・出し切りとは限らない・会話から読んで決める』とブレインに渡している＝決めるのはブレイン。ブレインが約束を選んだ番は記録だけ（demoted_overrides）。strong（全てピックアップ・新着待ちの約束・全力サポート）は竹内さんの決定 10/14 のまま返信で締める（q003 q004 は strong）。q006（weak・2回目の送付の後・ガスコンロ）は 10/14 の試験で材料だけで本質も返信だった＝ブレインが返信を選ぶ限り変わらない。",
-    "context": "app/lib/ack-exhausted-reply.ts exhaustedWeakKeepBrainPromise・brain-core の rule:exhausted_condition_reply の前。戻す EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE=off。 weak の番の今の番の行は exhaustedConditionWeakTurnLine（足した条件でまだ探していない・会話でもう無いと伝えた時だけ返信で締める・戻す EXHAUSTED_WEAK_TURN_LINE=off）。turn_contract が無い番はブレインの方向（reply_direction・key_topics）の再ピックアップ／お調べで読む。",
+    "insight": "q170（本番 43ec03ae 9/08）最初の物件の送付（4件）の直後に「お風呂が狭いと赤ちゃんのお風呂入れるのが難しい」→ 竹内さんはお風呂広めでお調べする約束（2段:pickup）。ブレインの本質も 2段:pickup（turn_contract route=promise・about=search_condition・polarity=add）だったのに、rule:two_stage_promise(pickup_unless_ack)+exhausted_condition_reply が返信（新着が出次第お送り）に書き換えた。なぜ: 出し切りの印は送付だけ（AIX の物件の送付＋「ピックアップさせて頂きました」＝weak）で、weak を材料に下げる BRAIN_DEMOTE_SEARCH_EXHAUSTED は既定 off。出し切りの条件の足しの規則は『LLM が物件の AIX を選んだ時』だけブレインを残し、約束を選んだ時は上書きしていた。 小さな確かめ（wb1018-fix1）で分かった2つ目の穴: 材料の今の番の行（exhaustedConditionTurnLine）は weak でも「出し切った印がある＝返信で締める」と言い切って渡しており、材料の1行（出し切りとは限らない）と食い違い、ブレイン自身も新着待ちで締めた回があった。また turn_contract を出さず方向だけで再ピックアップを言った回もあった。 10/20 確かめる人: 同じ12問を main と3回ずつ（rv1020-b）と夜の全体（wb1018-fix2-final-n）の2回とも、q006（直前に「港区から離れますが」とエリア外まで送った後のガスコンロ）が道 3/3→0/3、q007（「募集に出ておらず、エリア広げ」の後のエリアの言い直し）が道 2/3→1/3 に悪くなった。どちらも印は送付だけ（weak）と数えられるが、会話では出し切ったと言っている＝弱い形の行（足した条件でまだ探していない）がブレインを約束に寄せ、約束を残す直しがそれを通した。",
+    "rationale": "weak の材料は『出し切りとは限らない・会話から決める』＝決めるのはブレイン（9eb6aa9c P0）の向きは正しい。ただし今の weak には「ご条件から離れますが」「エリア広げ」「募集に出ておらず」のように出し切ったと言っている送付も入っている（search-exhausted.markerStrength）。その見分けを直す（それらを strong に数える）までは EXHAUSTED_WEAK_TURN_LINE・EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE を既定 off（=on で入れる）。strong は竹内さんの決定 10/14（ac8d4b88）のまま返信で締める。",
+    "context": "app/lib/ack-exhausted-reply.ts exhaustedWeakKeepBrainPromise・brain-core の rule:exhausted_condition_reply の前。既定 off・入れる EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE=on。 weak の番の今の番の行は exhaustedConditionWeakTurnLine（足した条件でまだ探していない・会話でもう無いと伝えた時だけ返信で締める・既定 off・入れる EXHAUSTED_WEAK_TURN_LINE=on）。turn_contract が無い番はブレインの方向（reply_direction・key_topics）の再ピックアップ／お調べで読む。",
     "applied_to": "app/lib/ack-exhausted-reply.ts, app/lib/brain-core.ts",
     "tags": [
       "ブレイン診断",
@@ -53,7 +53,7 @@
   {
     "title": "閉じる番（close_only）の answer は受け＋竹内さんの真ん中の1文 — 確定した日時の確かめ／気になる点はいつでも／待ちの形（旧『受けの一言だけ・日付を言い直さない』は決定 3696fe20 に反していた）",
     "category": "ai_design",
-    "insight": "q113（待ち合わせの AIX の後の「承知しました」）竹内さん「それでは〇/〇 〇:〇〇より何卒よろしくお願い致します」／q172（物件1件の後の「ありがとうございます💦」）竹内さん「気になる点等出てきましたら何時でもお気軽にご連絡ください！！…募集に出次第お送りさせて頂きます！！」。ブレインは道は合う（返信）が中身が受けの一言・内部の作業（「内覧確定を記録」）だけで依頼の抜け。なぜ: 本質の決まり（turn-contract BRAIN_TURN_CONTRACT_RULES）の『close_only=true の番の answer は受けの一言だけ（前にした約束・予定・日付を言い直さない）』が、竹内さんの決定 3696fe20『了承だけは「はい😊！！」＋（約束 or お気軽に）＋何卒』と実送信の確定日時の確かめを禁じていた。 小さな確かめで q172 が1/3回「物件直後のお礼だけ」を内覧の希望と読み AIX 内覧調整にした＝本質の決まりに決定 a7a7ae4c の線（物件に触れないお礼だけは close_only・内覧調整にしない）も足した。",
+    "insight": "q113（待ち合わせの AIX の後の「承知しました」）竹内さん「それでは〇/〇 〇:〇〇より何卒よろしくお願い致します」／q172（物件1件の後の「ありがとうございます💦」）竹内さん「気になる点等出てきましたら何時でもお気軽にご連絡ください！！…募集に出次第お送りさせて頂きます！！」。ブレインは道は合う（返信）が中身が受けの一言・内部の作業（「内覧確定を記録」）だけで依頼の抜け。なぜ: 本質の決まり（turn-contract BRAIN_TURN_CONTRACT_RULES）の『close_only=true の番の answer は受けの一言だけ（前にした約束・予定・日付を言い直さない）』が、竹内さんの決定 3696fe20『了承だけは「はい😊！！」＋（約束 or お気軽に）＋何卒』と実送信の確定日時の確かめを禁じていた。 小さな確かめで q172 が1/3回「物件直後のお礼だけ」を内覧の希望と読み AIX 内覧調整にした＝本質の決まりに決定 a7a7ae4c の線（物件に触れないお礼だけは close_only・内覧調整にしない）も足した。 10/18 確かめる人の直し（214df038）: 物件・資料を送った直後（その後こちらがまだ会話文を送っていない）のお礼は「お手隙の際にご査収ください」・送った物をもう話した後は「気になる点等…お気軽に」・ack_form=receive_only を選んだ番は受けの一言だけ。",
     "rationale": "決まりがブレインの本質を細らせていた所を竹内さんの決定に合わせる。新しい約束・提案・物件を足さない線と、同じ約束・日付を2回目以降に言い直さない線は残す（生成側の ACK_FORM_TAKEUCHI は試しで悪くなったので触らない＝ブレインの answer だけ）。",
     "context": "app/lib/turn-contract.ts closeOnlyAnswerRule。戻す CLOSE_ONLY_MIDDLE_LINE=off（旧の1行）。",
     "applied_to": "app/lib/turn-contract.ts",

@@ -99,7 +99,10 @@ export function exhaustedConditionTurnLine(env: Env = envOf()): string {
  *   決めるのはブレイン: 会話で今の条件を出し切ったと言っている時（全て・ご条件から離れますが・新着待ち）だけ返信で締める。戻す EXHAUSTED_WEAK_TURN_LINE=off（旧の言い切りの行）
  */
 export function exhaustedConditionWeakTurnLine(env: Env = envOf()): string {
-  if ((env.EXHAUSTED_WEAK_TURN_LINE ?? "").trim().toLowerCase() === "off") return exhaustedConditionTurnLine(env);
+  // 2026-10-20 確かめる人: 既定 off（入れる EXHAUSTED_WEAK_TURN_LINE=on）。試験 wb1018-fix2-final-n と rv1020-b（同じ12問を main と3回ずつ）で
+  //   q006（「港区から離れますが」の後のガスコンロ）・q007（「募集に出ておらず、エリア広げ」の後のエリアの言い直し）が道 3→0・2→1 に悪くなった
+  //   （どちらも送付だけの印＝weak と数えられるが、会話では出し切ったと言っている）。weak/strong の見分けを直すまで止める
+  if ((env.EXHAUSTED_WEAK_TURN_LINE ?? "").trim().toLowerCase() !== "on") return exhaustedConditionTurnLine(env);
   if (!exhaustedConditionReplyEnabled(env)) return "";
   return "【今の番（材料）】こちらは物件を送った（送付の報告）が、今の条件を出し切ったとは言っていない（「全てピックアップ」・新着待ちの約束・全力サポートは無い）。"
     + "お客様の今の発言が送った物件への懸念・条件の足し（設備・広さ・家賃・間取り・エリア）なら、その条件ではまだ探していない＝竹内さんはその条件で改めてお調べ（ピックアップ）してお送りする約束にする（route=promise・about=search_condition）。"
@@ -158,7 +161,8 @@ export function ackAfterPromiseRuleApplies(o: { brainMode: boolean; llmAixPresen
 export function exhaustedWeakKeepBrainPromise(o: { strength: "strong" | "weak" | null; asks: ReadonlyArray<{ route?: string | null; about?: string | null }>;
   /** ブレインの方向（reply_direction＋key_topics）。turn_contract を出さなかった番（10/18 試験 q170 で1回）の予備 */
   brainText?: string | null; env?: Env }): boolean {
-  if (((o.env ?? envOf()).EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE ?? "").trim().toLowerCase() === "off") return false;
+  // 2026-10-20 確かめる人: 既定 off（入れる EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE=on）。q006・q007 の悪化（上の EXHAUSTED_WEAK_TURN_LINE と同じ理由）
+  if (((o.env ?? envOf()).EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE ?? "").trim().toLowerCase() !== "on") return false;
   if (o.strength !== "weak") return false;
   if (o.asks.some((a) => a?.route === "promise" && a?.about === "search_condition")) return true;
   if (o.asks.length) return false;
