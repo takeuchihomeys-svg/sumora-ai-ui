@@ -5,6 +5,7 @@ import { examStageKeysOf, type FileMap } from "../exam-scope";
 import { findCarryOver, relevantStageOf, siblingDirs, type BaselineFile } from "../brain-exam-baseline";
 import { modelOf, flashProof, isFixTarget, UNIT_USD, type PlanProblem } from "../exam-brain";
 import { buildConductorUser } from "../exam-conductor";
+import { custKindOf, staffKindOf, sceneSim, crossCheck, findConflicts, groupConflicts, kbHitsFor, conflictPeers, bigramSim, type GoldProblem } from "../exam-gold-check";
 import { failedOf, machineHint, machineReason, parseReason, aggregateReasons, buildReaderUser, READER_SYSTEM, REASON_KINDS, type ReaderRow } from "../exam-failure-reader";
 import { warmDecision, warmLimit, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3, repSig, type Cmp, type RowLite } from "../exam-brain";
 
@@ -126,6 +127,24 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   let k = 0; while (k < u1.length && u1[k] === u2[k]) k++;
   ok("キャッシュの並び: 問題と正解・前の答案が先（今の答案が変わっても前置きが揃う）", k >= u1.indexOf("【今の答案"), String(k));
   ok("型の定義は6つ全部 system に入る", REASON_KINDS.every((x) => READER_SYSTEM.includes(`- ${x}`)));
+}
+
+// ─── QUALITY⑥ 正解の食い違い ─────────────────────────────────────────────
+{
+  ok("発言の種類: お礼・了承だけ／質問／他", custKindOf("ありがとうございます🙇🏻‍♂️ よろしくお願い致します🙏") === "お礼・了承だけ" && custKindOf("よろしくお願います！") === "お礼・了承だけ" && custKindOf("駐車場ありますか？") === "質問" && custKindOf("いつもありがとうございます、来週引っ越します") === "他" && custKindOf("") === "他");
+  ok("直前の送信の種類: 確認・交渉の約束／探す・送る約束／AIX／他／なし", staffKindOf("募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます") === "確認・交渉の約束" && staffKindOf("管理会社に礼金の交渉させていただきます") === "確認・交渉の約束" && staffKindOf("条件に合うお部屋をピックアップしてお送りさせて頂きます") === "探す・送る約束" && staffKindOf("x", true) === "AIX" && staffKindOf("いい物件ですね") === "他" && staffKindOf("") === "なし");
+  const g = (id: string, accept: string[], mustNot: string[], customer = "よろしくお願いします！", lastStaff = "確認させて頂きます！！確認出来次第ご連絡させて頂きます", tags: string[] = []): GoldProblem => ({ id, type: "t", accept, mustNot, customer, lastStaff, tags });
+  const q091 = g("q091", ["AIX:property_check_result"], ["2段:check", "返信"]), q143 = g("q143", ["返信", "2段:check"], ["AIX:zenryoku_support"], "よろしくお願います！", "管理会社に礼金の交渉をさせていただきます！！");
+  const q176 = g("q176", ["AIX:property_check_result"], ["2段:check"]), qQ = g("qQ", ["AIX:viewing_invite"], [], "内見できますか？", "いい物件です");
+  ok("場面の近さ: 同じ場面（お礼×確認の約束）は高い・質問で言葉が違えば0", sceneSim(q091, q143) >= 0.6 && sceneSim(qQ, g("qR", ["返信"], [], "初期費用はいくらですか？", "いい物件です")) === 0);
+  ok("照らし: AIX の正解は返信の問題で通らず、返信の正解は AIX の問題の言ってはいけない道に当たる", !crossCheck(q091, q143).passes && crossCheck(q143, q091).hitsMustNot.length > 0);
+  const cs = findConflicts([q091, q143, q176, qQ]);
+  ok("食い違い: q091×q143・q143×q176 は強い・同じ正解同士（q091×q176）・別の場面（qQ）は出さない", cs.length === 2 && cs.every((c) => c.strength === "強い") && cs.every((c) => [c.a, c.b].includes("q143")), JSON.stringify(cs.map((c) => [c.a, c.b, c.strength])));
+  const gr = groupConflicts(cs);
+  ok("束: つながる組を1つに", gr.length === 1 && gr[0].ids.join() === "q091,q143,q176" && gr[0].strong);
+  ok("食い違う相手: 両方向に引ける", conflictPeers(cs).q091?.[0]?.id === "q143" && conflictPeers(cs).q143?.length === 2);
+  ok("設計知見を場面の言葉で引く（題・札は2点・本文は1点・0点は出さない）", kbHitsFor(["約束の後", "よろしく"], [{ id: "k1", title: "確認の約束の後のよろしく", insight: "" }, { id: "k2", title: "別の話", insight: "約束の後" }, { id: "k3", title: "x", insight: "y" }]).map((x) => x.id).join() === "k1,k2");
+  ok("2字組の重なり: 同じ文 1・空 0", bigramSim("駐車場ありますか", "駐車場ありますか") === 1 && bigramSim("", "abc") === 0);
 }
 
 console.log(`exam-brain-like-line: ${pass} PASS / ${fail} FAIL`);

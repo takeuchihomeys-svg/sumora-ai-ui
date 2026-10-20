@@ -51,6 +51,7 @@ import {
   type MissMap, type ProblemLike, type RowLike, type GoldLite, type Candidate, type ConductorInput, type DiffReading, type TriageItem,
 } from "./lib/exam-conductor";
 import { READER_SYSTEM, REASON_KINDS, buildReaderUser, parseReason, machineReason, aggregateReasons, failedOf, type Reason, type ReaderProblem, type ReaderRow } from "./lib/exam-failure-reader";
+import { conflictPeers, type GoldConflict } from "./lib/exam-gold-check";
 import { diffMaterial, verifyRange, mainAnsweredIds, callConductorLlm, newTally, setLocalSpendRecording, savePlan, loadPlan, saveResult, loadLatestResult, mainRowsOf, latestRowsOf, refreshPath, saveMissMap, safeLines, CONDUCTOR_DIR, PRO_MODEL as C_PRO, FLASH_MODEL as C_FLASH, type SavedPlan } from "./lib/exam-conductor-io";
 
 const argv = process.argv.slice(2);
@@ -542,11 +543,14 @@ async function readFailureReasons(label: string, phases: PhaseResult[], pl: Plan
   if (!failed.length) { log("外れの理由: 落ちた問題なし"); return; }
   const tally = newTally();
   const out: Reason[] = [];
+  const goldPeers = (() => { try { const j = JSON.parse(readFileSync(join(EXAM_BRAIN_DIR, "gold-check", "latest.json"), "utf8")) as { conflicts?: GoldConflict[] }; return conflictPeers(j.conflicts ?? []); } catch { return {} as ReturnType<typeof conflictPeers>; } })();
   for (const id of failed.slice(0, max)) {
     const cur = curOf.get(id) ?? [], main = mainOf.get(id) ?? [];
     const m = machineReason(id, cur);
     if (m) { out.push(m); continue; }
-    const user = safeLines(buildReaderUser(readerProblemOf(pl.probs.get(id), id), cur, main)).text;
+    // 10/20 QUALITY⑥: 正解の食い違いの一覧（scripts/exam-gold-check.ts）にある問題は「似た場面の正解」を手がかりに足す（正解が揺れているかを読む材料）
+    const peerHint = (goldPeers[id] ?? []).slice(0, 3).map((x) => `似た場面の ${x.id} の正解は ${x.accept.join("|")}（食い違い・${x.strength}）`);
+    const user = safeLines(buildReaderUser(readerProblemOf(pl.probs.get(id), id), cur, main, peerHint)).text;
     const r = parseReason(id, (await callConductorLlm("failure-reader", C_FLASH, READER_SYSTEM, user, tally, { maxTokens: 200 })) ?? "");
     if (r) out.push(r);
   }
