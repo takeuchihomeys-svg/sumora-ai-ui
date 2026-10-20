@@ -237,11 +237,29 @@ export function canReuse(e: { key: string; savedAt: string; rows: RowLite[] } | 
  * 問題のモデル: 既定は今まで通り（DEEPSEEK_MODEL・deepseek-v4-pro）。flash にするのは、比べの記録（model-check）で
  *   その型の道が pro と同じだった型だけ（質が落ちないか比べてから）。gate（最後の関所）は常に既定。
  */
-export function modelOf(p: PlanProblem, o: { mode: "pro" | "flash" | "auto"; flashOkTypes: Set<string>; gate?: boolean }): "pro" | "flash" {
+export function modelOf(p: PlanProblem, o: { mode: "pro" | "flash" | "auto"; flashOkTypes: Set<string>; gate?: boolean; flashOkIds?: Set<string>; flashBadIds?: Set<string>; protect?: boolean }): "pro" | "flash" {
   if (o.gate || o.mode === "pro") return "pro";
   if (o.mode === "flash") return "flash";
-  return o.flashOkTypes.has(p.type) ? "flash" : "pro";
+  // 10/20 COST③: 直しの的（名指し・前に落ちた）は pro（本番と同じモデルで確かめる）・その問題だけの比べで道が違った問題は pro・その問題だけで確かめた問題は flash
+  if (o.protect) return "pro";
+  if (o.flashBadIds?.has(p.id)) return "pro";
+  return o.flashOkTypes.has(p.type) || !!o.flashOkIds?.has(p.id) ? "flash" : "pro";
 }
+/** model-check の記録の形（型ごと・問題ごと） */
+export type ModelCheckStat = { n: number; samePath: number; proOk: number; flashOk: number };
+/**
+ * 10/20 COST③ flash にしてよい所: 型＝5回以上比べて・道が同じ 9割以上・合う数が pro 以上（見直しで 3→5: q035 で「通った型」の flash が外れた）／問題＝その問題だけで2回以上比べて道がいつも同じ・合う数が pro 以上／
+ *   flash にしない問題＝その問題の比べで道が1回でも違った（型が通っていても外す）
+ */
+export const FLASH_TYPE_MIN_N = 5;
+export function flashProof(mc: { byType?: Record<string, ModelCheckStat>; byId?: Record<string, ModelCheckStat> }): { okTypes: Set<string>; okIds: Set<string>; badIds: Set<string> } {
+  const okTypes = new Set(Object.entries(mc.byType ?? {}).filter(([, v]) => v.n >= FLASH_TYPE_MIN_N && v.samePath / v.n >= 0.9 && v.flashOk >= v.proOk).map(([k]) => k));
+  const okIds = new Set(Object.entries(mc.byId ?? {}).filter(([, v]) => v.n >= 2 && v.samePath === v.n && v.flashOk >= v.proOk).map(([k]) => k));
+  const badIds = new Set(Object.entries(mc.byId ?? {}).filter(([, v]) => v.samePath < v.n).map(([k]) => k));
+  return { okTypes, okIds, badIds };
+}
+/** 直しの的（flash にしない）: 名指し・前に落ちた */
+export const isFixTarget = (why: string[]) => why.some((w) => /名指し|前に落ちた/.test(w));
 
 // ─── 見込みの費用 ───────────────────────────────────────────────────────
 /** 1問1回の費用（2026-10-17 実測: 作業ツリーの results/*.cost.json 49回 630問回＝ブレインまで $0.030・下書き 15回 306問回＝$0.031〜＋下書きの分）。flash は約 1/4 */
@@ -372,4 +390,83 @@ export function needJudge(o: { asks: number; ng: number; needRawPath: boolean; p
   if (!o.asks && !o.ng && !o.needRawPath) return false;
   if (o.lazy && !o.pathOk && !o.needRawPath) return false;
   return true;
+}
+
+// ─── 10/20 COST① main の答えは版ごとに1回（merge の後の安い時間に自動で取り置く） ─────────────────────
+/** 取り置きの記録（main の版の鍵 → いつ・どの commit・全部取れたか） */
+export type WarmLog = Record<string, { at: string; commit: string; done: boolean; left?: number; label?: string }>;
+export const warmLabelOf = (vk: string) => `warm-auto-${vk}`;
+/**
+ * 今の main の版の取り置きを予約するか: 版が分からない → しない／その版が全部取れている → しない（force＝昼の実行で答えの無い問題を夜に回した時は予約する）／
+ *   もう予約がある → しない／それ以外 → 予約する（安い時間＝夜中の --run-queue）
+ */
+export function warmDecision(o: { vk: string | null; log: WarmLog; queued: string[]; force?: boolean }): { enqueue: boolean; label: string; why: string } {
+  if (!o.vk) return { enqueue: false, label: "", why: "main の版の鍵が分からない" };
+  const label = warmLabelOf(o.vk);
+  if (o.queued.includes(label)) return { enqueue: false, label, why: `予約済み（${label}）` };
+  const e = o.log[o.vk];
+  if (e?.done && !o.force) return { enqueue: false, label, why: `この版（${o.vk}）の main の答えは取り置き済み（${e.at.slice(0, 16)}）` };
+  return { enqueue: true, label, why: o.force ? "昼の実行で答えの無い問題を夜に回した → 取り置きを予約" : e ? `この版の取り置きが途中（残り ${e.left ?? "?"}問）→ 続きを予約` : `main の版が変わった（${o.vk}）→ 安い時間に取り置きを予約` };
+}
+/** 取り置きで今回す数: 1日の上限の残り ÷ 1問の値段（下限0）。上限なし＝null（全部） */
+export function warmLimit(o: { cap: number | null; usedUsd: number; unitUsd: number }): number | null {
+  if (o.cap === null) return null;
+  return Math.max(0, Math.floor((o.cap - o.usedUsd) / Math.max(1e-9, o.unitUsd)));
+}
+
+// ─── 10/20 COST② 自信の気づき（LINE のブレインの「迷った時だけ深く」）: 回数を1回ずつ足す ─────────────────────
+/**
+ * 回数の決め方: confidence（既定）＝全部1回 → 2回目は自信が低い問題だけ（前（main）と違った／前が無くて外れた・揺れる）→ 3回目は「1回目と2回目が割れた問題」だけ（揃えば止める）。
+ *   1回目が前（main）と同じ答え＝前の答えと2つ揃った＝自信が高い → 外れでも揺れる問題でも2回目を回さない（いつもの外れ・いつもの揺れに費用をかけない）。
+ *   wide＝外れ・揺れる問題は前と同じでも2回目（10/20 の測り: 4日の台帳 319問回で確かめの回が 旧 164 → wide 約 263 に増える＝既定にしない）。--reps=wide
+ *   old＝旧（前と違った問題を一度に max 回まで・最後の関所の揺れる問題は最初から max 回）。--reps=old か EXAM_REPS=old
+ */
+export type RepsMode = "confidence" | "wide" | "old";
+export function repsModeOf(argVal: string | undefined, env: Record<string, string | undefined> = {}): RepsMode {
+  const v = String(argVal || env.EXAM_REPS || "").trim().toLowerCase();
+  return v === "old" ? "old" : v === "wide" ? "wide" : "confidence";
+}
+/** 1回目の回数（confidence は全部1回・旧は firstReps） */
+export function firstRepsOf(mode: RepsMode, v: FlakeKind, max = 3, o: { gate?: boolean } = {}): number { return mode === "old" ? firstReps(v, max, o) : 1; }
+/** 取り置き（main の答え）の回数: 比べる相手なので揺れる問題だけ2回（割れたら過半数が決まらない＝揺れる問題は止める判断に数えない）。旧は関所と同じ */
+export function warmRepsOf(mode: RepsMode, v: FlakeKind, max = 3): number { return mode === "old" ? firstReps(v, max, { gate: true }) : v === "flaky" ? Math.min(2, Math.max(1, max)) : 1; }
+/**
+ * 2回目を回す問題（回が1回だけの問題）: ①前（main）と違った（悪化・改善・判断の変化。はっきり良い時は判断だけの変化は省く）
+ *   ②前が無い（nobase）で、外れた・揺れる問題（前の答えで確かめられない）。
+ *   1回目が前と同じ（same・形だけの変化 shape）は回さない（wide の時だけ: 外れ（揺れの記録で安定は除く）・揺れる問題も回す）
+ */
+export function confidenceRound2(xs: Array<{ id: string; cmp: Cmp; failed: boolean; flake: FlakeKind; have: number }>, o: { clearlyGood?: boolean; cap: number; wide?: boolean }): Array<{ id: string; why: string }> {
+  if (o.cap < 2) return [];
+  const out: Array<{ id: string; why: string }> = [];
+  for (const x of xs) {
+    if (x.have !== 1 || x.cmp === "nocur") continue;
+    const differs = x.cmp === "worse" || x.cmp === "better" || (x.cmp === "changed" && !o.clearlyGood);
+    const corroborated = !(x.cmp === "nobase") && !differs;
+    if (differs) out.push({ id: x.id, why: `前と違った（${x.cmp}）` });
+    else if (corroborated && !o.wide) continue;
+    else if (x.flake === "flaky") out.push({ id: x.id, why: x.cmp === "nobase" ? "前が無い・揺れる問題" : "揺れる問題" });
+    else if (x.failed && !(x.flake === "stable" && x.cmp === "same")) out.push({ id: x.id, why: x.cmp === "nobase" ? "前が無い・外れた" : "外れた" });
+  }
+  return out;
+}
+/** 回の答えの印（道の符号・道の合否・合格・下書きの合否）。2回が同じ印なら揃った＝止める */
+export function repSig(r: RowLite): string { return `${String(r.path?.code ?? "")}|${r.path?.ok ? 1 : 0}|${r.score?.pass ? 1 : 0}|${r.draft ? (r.draft.pass ? 1 : 0) : "-"}`; }
+/** 3回目を回す問題: 2回あって印が割れた問題だけ（揃った問題はそこで止める） */
+export function confidenceRound3(rowsOf: (id: string) => RowLite[], ids: string[], cap: number): string[] {
+  if (cap < 3) return [];
+  return ids.filter((id) => { const rs = rowsOf(id).filter((r) => !r.error); return rs.length === 2 && new Set(rs.map(repSig)).size > 1; });
+}
+
+// ─── 10/20 COST③ の見張り: flash で流した問題を、同じ版の pro の main の答えと照らして model-check に足す（0円） ─────────
+/**
+ * flash の答え（今）と pro の main の答え（同じ main の版・取り置き済みの物だけ）を問題ごとに照らす。道の符号の多数が同じか・合格が同じか。
+ *   道が違った問題は model-check の byId で samePath<n になり、次から pro（flashProof の badIds）
+ */
+export function flashSpotCheck(pairs: Array<{ id: string; flash: RowLite[]; pro: RowLite[] }>): Array<{ id: string; samePath: boolean; proOk: boolean; flashOk: boolean; proCode: string; flashCode: string }> {
+  const mode = (rs: RowLite[]) => { const c = new Map<string, number>(); for (const r of rs.filter((x) => !x.error)) { const k = String(r.path?.code ?? ""); c.set(k, (c.get(k) ?? 0) + 1); } return [...c].sort((a, b) => b[1] - a[1])[0]?.[0] ?? ""; };
+  const maj = (rs: RowLite[]) => { const ok = rs.filter((x) => !x.error); return ok.filter((r) => !!r.path?.ok).length * 2 > ok.length; };
+  return pairs.filter((p) => p.flash.some((r) => !r.error) && p.pro.some((r) => !r.error)).map((p) => {
+    const fc = mode(p.flash), pc = mode(p.pro);
+    return { id: p.id, samePath: fc === pc, proOk: maj(p.pro), flashOk: maj(p.flash), proCode: pc, flashCode: fc };
+  });
 }

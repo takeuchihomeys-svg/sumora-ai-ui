@@ -202,3 +202,38 @@ export function examVersionKey(commit: string, cacheFile?: string, cwd?: string)
   if (cacheFile) { try { updateJsonFile<Record<string, string>>(cacheFile, () => ({}), (cur) => ({ ...cur, [commit]: k })); } catch { /* 控えられなくても鍵は返す */ } }
   return k;
 }
+
+// ─── 2026-10-20 段ごとの main の版の鍵（main が進んでも、その問題の段に効く所が同じなら前の main の答えを持ち越す） ─────────────
+/** 鍵の作り方の版（集める範囲を変えたら上げる＝古い鍵（範囲が狭い）とは決して一致しない＝持ち越さない） */
+export const STAGE_KEY_VERSION = "sk2";
+const stageKeyOf = (paths: Set<string>, blobs: Map<string, string>) => createHash("sha256").update(`${STAGE_KEY_VERSION}\n`).update([...paths].sort().map((p) => `${p} ${blobs.get(p) ?? "-"}`).join("\n")).digest("hex").slice(0, 12);
+/**
+ * commit の段ごとの鍵: brain＝ブレインの入口から辿れる app・設定／draft＝それに下書きの入口から辿れる物（exam-brain-io.workingScopeKeys と同じ集め方・同じ blob の hash）。
+ *   竹内さん 10/20「main が変わっても、問題に関係ないファイルだけなら前の main の答えを使う」: ブレインだけの問題（stage=brain）は下書きだけの変更では答えが変わらない。
+ *   試験の道具（scripts/brain-exam*・scripts/lib）は main の子に今の作業ツリーから写す（prepareMainWorktree）ので、ここでは見ない（examVersionKeyOf と同じ）
+ */
+export function examStageKeysOf(files: FileMap, blobs: Map<string, string>): { brain: string; draft: string } {
+  const isApp = (f: string) => f.startsWith("app/") || f.startsWith("lib/");
+  const brain = new Set([...reach(BRAIN_ENTRIES, files)].filter(isApp));
+  const draft = new Set([...brain, ...[...reach(DRAFT_ENTRIES, files)].filter(isApp)]);
+  // 10/20 見直し: 試験の道具（brain-exam.ts 等）が main の子で直接読む app（採点の似た名前・知見の網・値段 等）も答えに効く＝鍵に入れる（examVersionKeyOf と同じ広さ）。
+  //   ブレインの鍵には下書きの段だけの物（下書きの入口とその先）は入れない＝下書きだけの変更ではブレインの答えを持ち越せるまま
+  const draftOnly = new Set([...draft].filter((f) => !brain.has(f)));
+  for (const f of reach(TOOL_ENTRIES, files, new Set([...BRAIN_ENTRIES, ...DRAFT_ENTRIES]))) {
+    if (!isApp(f)) continue;
+    draft.add(f);
+    if (!draftOnly.has(f) && !DRAFT_ENTRIES.includes(f)) brain.add(f);
+  }
+  for (const p of blobs.keys()) if (CONFIG_RE.test(p) && !p.startsWith(".env")) { brain.add(p); draft.add(p); }
+  return { brain: stageKeyOf(brain, blobs), draft: stageKeyOf(draft, blobs) };
+}
+/** commit → 段ごとの鍵（置き場に控える＝同じ commit は2回目から git を読まない）。読めない commit（手元に無い）は null */
+export function examStageKeys(commit: string, cacheFile?: string, cwd?: string): { brain: string; draft: string } | null {
+  let memo: Record<string, { brain: string; draft: string }> = {};
+  if (cacheFile && existsSync(cacheFile)) { try { memo = JSON.parse(readFileSync(cacheFile, "utf8")) as typeof memo; } catch { memo = {}; } }
+  if (memo[commit]) return memo[commit];
+  let k: { brain: string; draft: string };
+  try { const { files, blobs } = filesAtCommit(commit, cwd); k = examStageKeysOf(files, blobs); } catch { return null; }
+  if (cacheFile) { try { updateJsonFile<Record<string, { brain: string; draft: string }>>(cacheFile, () => ({}), (cur) => ({ ...cur, [commit]: k })); } catch { /* 控えられなくても鍵は返す */ } }
+  return k;
+}

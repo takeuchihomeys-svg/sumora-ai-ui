@@ -268,6 +268,8 @@ export type ConductorInput = {
   change: { cls: string; files: Array<{ file: string; cls: string }>; kbIds: string[]; commits: string[]; reading: DiffReading | null };
   missTop: Array<{ kind: string; n: number }>; linkMiss: Array<{ link: LinkId; label: string; n: number; miss: number }>;
   candidates: Candidate[]; capUsd: number; unit: typeof UNIT_USD; flashOkTypes: string[]; prevFocus: Array<{ id: string; why: string }>;
+  /** 10/20 QUALITY⑤ 前の実行の外れの理由（読み手 flash が付けた型の数・多い順）。古い呼び方には無い */
+  reasons?: Array<{ kind: string; n: number }>;
 };
 export type FocusItem = { id: string; role: "fix" | "guard"; stage: "brain" | "draft"; reps: number; model: "pro" | "flash"; why: string };
 export type ConductorPlan = { focus: FocusItem[]; judge: "tier" | "pro"; judgeAdvice: "tier" | "pro"; claudeFinal: boolean; claudeWhy: string; note: string; source: "pro" | "fallback"; estUsd: number; dropped: Array<{ id: string; why: string }>;
@@ -290,15 +292,19 @@ export const CONDUCTOR_SYSTEM = [
 ].join("\n");
 export function buildConductorUser(i: ConductorInput): string {
   const c = i.change;
+  // 2026-10-20 COST④ キャッシュの並び: 変わりにくい物（外れの型の地図・線・単価・flash の型・前の外れの理由）を先に、実行ごとに変わる物（直した中身・上限・候補）を後ろに
+  //   （DeepSeek の自動キャッシュは頭からの一致だけ＝司令塔の system の後ろも同じ日の他の --conduct と揃う）
   const lines = [
+    `【今までの外れの型（多い順）】${i.missTop.slice(0, 8).map((x) => `${x.kind} ${x.n}`).join("・") || "なし"}`,
+    `【つなぎの線の外れ】${i.linkMiss.map((x) => `${x.link}(${x.label}) ${x.miss}/${x.n}`).join("・")}`,
+    `【単価】unit=${JSON.stringify({ brain: i.unit.brain, draftExtra: i.unit.draftExtra, flashRatio: i.unit.flashRatio })}・flashOkTypes=${i.flashOkTypes.join("・") || "なし"}`,
+    i.reasons?.length ? `【前の実行の外れの理由（読み手）】${i.reasons.slice(0, 8).map((x) => `${x.kind} ${x.n}`).join("・")}` : "",
+    i.prevFocus.length ? `【前の結果からの次の重点の候補】${i.prevFocus.slice(0, 10).map((x) => `${x.id}:${x.why}`).join("・")}` : "",
     `【直した中身】段の分類=${c.cls}／ファイル ${c.files.length}: ${c.files.slice(0, 15).map((f) => `${f.file}(${f.cls})`).join("・")}`,
     c.kbIds.length ? `設計知見 id: ${c.kbIds.slice(0, 10).join("・")}` : "",
     c.commits.length ? `コミットの文: ${c.commits.slice(0, 5).map((s) => s.slice(0, 120)).join(" ／ ")}` : "",
     c.reading ? `読み手の読み: 効く所=${c.reading.effects.slice(0, 5).map((e) => e.what).join("・")}／外れの型=${c.reading.kinds.join("・") || "なし"}／線=${c.reading.links.join("・") || "なし"}／段=${c.reading.stages.join("・") || "なし"}` : "読み手の読み: なし",
-    `【今までの外れの型（多い順）】${i.missTop.slice(0, 8).map((x) => `${x.kind} ${x.n}`).join("・") || "なし"}`,
-    `【つなぎの線の外れ】${i.linkMiss.map((x) => `${x.link}(${x.label}) ${x.miss}/${x.n}`).join("・")}`,
-    i.prevFocus.length ? `【前の結果からの次の重点の候補】${i.prevFocus.slice(0, 10).map((x) => `${x.id}:${x.why}`).join("・")}` : "",
-    `【上限】capUsd=${i.capUsd.toFixed(2)}・unit=${JSON.stringify({ brain: i.unit.brain, draftExtra: i.unit.draftExtra, flashRatio: i.unit.flashRatio })}・flashOkTypes=${i.flashOkTypes.join("・") || "なし"}`,
+    `【上限】capUsd=${i.capUsd.toFixed(2)}`,
     "【候補】（id|型|地図の段|線|前の結果|前の外れの型|揺れ|下書き可|守る|選ばれた理由）",
     ...i.candidates.map((x) => `${x.id}|${x.type}|${MAP_STAGE_JA[x.stage]}|${x.links.join(",") || "-"}|${x.lastOk === null ? "?" : x.lastOk ? "○" : "✕"}|${x.lastKinds.join(",") || "-"}|${x.flaky ? "揺" : "-"}|${x.draftEligible ? "可" : "-"}|${x.protectedPick ? "守" : "-"}|${x.why.slice(0, 2).join("／").slice(0, 80)}`),
   ];
@@ -334,7 +340,7 @@ export function freshFocus(items: FreshInput["items"], o: { flashOkTypes: string
   for (const it of items) {
     if (seen.has(it.id)) continue; seen.add(it.id);
     const c = o.chosen?.get(it.id);
-    f.push(c ? { ...c, reps: Math.max(1, c.reps), why: `新しい問題（答案なし）${c.why ? `・${c.why}` : ""}`.slice(0, 60) } : { id: it.id, role: "guard", stage: "brain", reps: 1, model: okFlash.has(it.type) ? "flash" : "pro", why: "新しい問題（答案なし）" });
+    f.push(c ? { ...c, reps: Math.max(1, c.reps), why: `新しい問題（答案なし）${c.why ? `・${c.why}` : ""}`.slice(0, 60) } : { id: it.id, role: "guard", stage: "brain", reps: 1, model: okFlash.has(it.type) || okFlash.has(it.id) ? "flash" : "pro", why: "新しい問題（答案なし）" });
   }
   const est = () => f.reduce((s, x) => s + unitCost(x, unit), 0);
   const dropped: Array<{ id: string; why: string }> = [];
@@ -347,7 +353,32 @@ export function freshFocus(items: FreshInput["items"], o: { flashOkTypes: string
 export function freshProblemIds(ps: ProblemLike[], hasMainAnswers: (p: ProblemLike) => boolean): string[] {
   return ps.filter((p) => !hasMainAnswers(p)).map((p) => p.id);
 }
-export function normalizePlan(raw: Record<string, unknown> | null, i: Pick<ConductorInput, "candidates" | "capUsd" | "flashOkTypes" | "unit">, o: { draftChange: boolean; allowTier?: boolean; fresh?: FreshInput }): ConductorPlan {
+// ─── 10/20 QUALITY⑧ 見張りの釣り合い（直した所の周りの退行を必ず見る） ─────────────────────────
+export type WatchPoolItem = { id: string; type: string; stage: MapStage; links: LinkId[]; lastOk: boolean | null; flaky: boolean; reuse?: boolean };
+/**
+ * 直す的（seed）ごとの見張りの候補: 今合っている（前の答案が合格）問題のうち、同じ型 → 同じ地図の段で同じ線 → 同じ地図の段 の順。
+ *   揺れる問題は後ろ（退行と揺れが見分けにくい）・前の結果を使える問題を先（安い）。1つの seed に perFix 件まで・全部で max 件まで（同じ問題は1回）
+ */
+export function watchNeighbors(seeds: Array<{ id: string; type: string; stage: MapStage; links: LinkId[] }>, pool: WatchPoolItem[], o: { perFix?: number; max?: number; exclude?: Set<string> } = {}): Record<string, Array<{ id: string; why: string }>> {
+  const per = o.perFix ?? 2, max = o.max ?? 8;
+  const used = new Set<string>(o.exclude ?? []);
+  for (const s of seeds) used.add(s.id);
+  const out: Record<string, Array<{ id: string; why: string }>> = {};
+  let n = 0;
+  for (const s of seeds) {
+    if (n >= max) break;
+    const tier = (p: WatchPoolItem) => p.type === s.type ? 0 : p.stage === s.stage && p.links.some((l) => s.links.includes(l)) ? 1 : p.stage === s.stage ? 2 : 9;
+    const xs = pool.filter((p) => !used.has(p.id) && p.lastOk === true && tier(p) < 9)
+      .sort((a, b) => tier(a) - tier(b) || Number(a.flaky) - Number(b.flaky) || Number(!!b.reuse) - Number(!!a.reuse) || a.id.localeCompare(b.id))
+      .slice(0, Math.min(per, max - n));
+    if (!xs.length) continue;
+    out[s.id] = xs.map((p) => ({ id: p.id, why: `見張り（直す的 ${s.id} の周り: ${tier(p) === 0 ? "同じ型" : tier(p) === 1 ? "同じ段・同じ線" : "同じ段"}・今は合っている）` }));
+    for (const p of xs) used.add(p.id);
+    n += xs.length;
+  }
+  return out;
+}
+export function normalizePlan(raw: Record<string, unknown> | null, i: Pick<ConductorInput, "candidates" | "capUsd" | "flashOkTypes" | "unit">, o: { draftChange: boolean; allowTier?: boolean; fresh?: FreshInput; watch?: Record<string, Array<{ id: string; why: string }>> }): ConductorPlan {
   const byId = new Map(i.candidates.map((c) => [c.id, c]));
   const okFlash = new Set(i.flashOkTypes);
   const dropped: ConductorPlan["dropped"] = [];
@@ -362,10 +393,21 @@ export function normalizePlan(raw: Record<string, unknown> | null, i: Pick<Condu
     let stage: FocusItem["stage"] = f.stage === "draft" ? "draft" : "brain";
     if (stage === "draft" && !c.draftEligible) stage = "brain";
     let model: FocusItem["model"] = f.model === "flash" ? "flash" : "pro";
-    if (model === "flash" && !okFlash.has(c.type)) model = "pro";
+    // 10/20 COST③: flashOkTypes には確かめた型と確かめた問題 id の両方が入る
+    if (model === "flash" && !okFlash.has(c.type) && !okFlash.has(c.id)) model = "pro";
     focus.push({ id, role: f.role === "guard" ? "guard" : "fix", stage, reps, model, why: String(f.why ?? "").slice(0, 60) || c.why[0] || "" });
   }
   for (const c of i.candidates) if (c.protectedPick && !seen.has(c.id)) { focus.push({ id: c.id, role: "fix", stage: o.draftChange && c.draftEligible ? "draft" : "brain", reps: 1, model: "pro", why: `守る線（${c.why.find((w) => /名指し|前に落ちた|お手本|竹内さん/.test(w)) ?? "必ず"}）` }); seen.add(c.id); }
+  // 10/20 QUALITY⑧: 重点（fix）ごとに、その周りの見張り（guard）が1つも無ければ1つ足す（前に落ちた問題だけを見る偏りを止める・上限に入らなければ下の fitToCap が見張りから削る）
+  if (o.watch) for (const f of focus.filter((x) => x.role === "fix")) {
+    const ns = (o.watch[f.id] ?? []).filter((w) => byId.has(w.id));
+    if (!ns.length || ns.some((w) => seen.has(w.id) && focus.find((x) => x.id === w.id)?.role === "guard")) continue;
+    const w = ns.find((x) => !seen.has(x.id));
+    if (!w) continue;
+    const c = byId.get(w.id)!;
+    focus.push({ id: w.id, role: "guard", stage: "brain", reps: 1, model: okFlash.has(c.type) || okFlash.has(c.id) ? "flash" : "pro", why: w.why.slice(0, 60) });
+    seen.add(w.id);
+  }
   // 新しい問題（答案なし）は司令塔の答えから外して別に入れる（1日の上限の残りに収める）
   const freshIds = new Set((o.fresh?.items ?? []).map((x) => x.id));
   const chosen = new Map(focus.filter((x) => freshIds.has(x.id)).map((x) => [x.id, x]));
