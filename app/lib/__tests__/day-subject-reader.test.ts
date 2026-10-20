@@ -17,7 +17,7 @@ console.log("── 何の日か ──");
   const r = readDateKinds({ customerText: "できれば月末か来月頭あたりが希望です。", staffBefore: [ASK_MOVE, SLOTS], viewingStage: "proposing" });
   t("調整中の『月末か来月頭が希望』は内覧の日", r.length === 1 && r[0].kind === "viewing" && r[0].source === "flow" && r[0].staffAskedMoveIn, JSON.stringify(r));
   const note = buildDaySubjectNote({ dates: r, parties: [] });
-  t("注記: 入居の時期の答えとして受けない", /入居の時期の答えとして受けない/.test(note));
+  t("注記: 入居の時期ではない・1行", /調整への答え（入居の時期ではない）/.test(note) && note.trim().split("\n").length === 1, note);
 }
 {
   const r = readDateKinds({ customerText: "10月中に入居したいです", staffBefore: [SLOTS], viewingStage: "proposing" });
@@ -26,6 +26,7 @@ console.log("── 何の日か ──");
 {
   const r = readDateKinds({ customerText: "10月中でいけたら！", staffBefore: ["何日でのご入居ご希望でしょうか！！"], viewingStage: "none" });
   t("調整中でなく直前に入居を聞いた → 入居", r[0]?.kind === "move_in" && r[0].source === "staff_question");
+  t("直前の問いだけで読む入居は注記を出さない（自信が無い所は足さない）", buildDaySubjectNote({ dates: r, parties: [] }) === "");
 }
 {
   const r = readDateKinds({ customerText: "朝方は空いてないでしょうか？", staffBefore: ["土曜 14:00〜16:00 ご案内可能です！！"], viewingStage: "proposing" });
@@ -35,7 +36,7 @@ console.log("── 何の日か ──");
   const r = readDateKinds({ customerText: "全部見て今日中にまた連絡します！", staffBefore: ["お気に召されましたらご案内させて頂きます！！"], viewingStage: "none" });
   t("『今日中にまた連絡します』は お客様からの連絡の期日", r[0]?.kind === "contact");
   const note = buildDaySubjectNote({ dates: r, parties: [] });
-  t("注記: 期日を繰り返さない", /繰り返さない/.test(note));
+  t("注記: 受けの中身（ごゆっくり・何時でもご連絡）＋期日を繰り返さない", /ごゆっくり/.test(note) && /何時でもご連絡/.test(note) && /繰り返さない/.test(note), note);
 }
 {
   const r = readDateKinds({ customerText: "本日内覧に行ってきたのですが、初期費用いくらになりますか？", staffBefore: [], viewingStage: "none" });
@@ -75,12 +76,29 @@ t("下書きが日付を入居として書いた", draftKindNearDate("月末か�
 t("期日の繰り返し（本日のご連絡お待ちしております）", draftEchoesCustomerDeadline("全部見て今日中にまた連絡します！", "はい！！\nごゆっくりご確認頂けますと幸いです！！\n本日のご連絡お待ちしております！！"));
 t("期日を繰り返さない良い形は当たらない", !draftEchoesCustomerDeadline("全部見て今日中にまた連絡します！", "はい！！\nごゆっくりご確認頂けますと幸いです！！\n気になる点出てきましたら何時でもお気軽にご連絡ください！！"));
 
+{
+  // YUMA3 q140 の型: 設備の費用の問いは管理会社の確認にしない・注記も出さない
+  const p = readConfirmParties({ customerText: "531,730にこれに駐車場もつけたら11000円プラスって感じですか？？", staffBefore: ["御見積書お送りさせて頂きます！！"], viewingStage: "none" });
+  t("駐車場の費用の問いは設備（管理会社）の話題にしない", !p.some((x) => x.topic === "facility"), JSON.stringify(p));
+  t("駐車場の有無の問いは設備のまま", readConfirmParties({ customerText: "駐車場ありますか？", staffBefore: [], viewingStage: "none" }).some((x) => x.topic === "facility"));
+  const note = (ms: Array<{ sender: string; text: string }>, st: "none" | "proposing" = "none") => buildDaySubjectNote(readDaySubject(ms, st));
+  const cost = note([{ sender: "staff", text: "御見積書お送りさせて頂きます！！" }, { sender: "customer", text: "531,730にこれに駐車場もつけたら11000円プラスって感じですか？？" }]);
+  t("費用の問いの番は注記を出さない", cost === "", cost);
+  const pet = note([{ sender: "staff", text: "お送りさせて頂きます！！" }, { sender: "customer", text: "このお部屋まだ空いてますか？ペットは大丈夫ですか？" }]);
+  t("管理会社に聞く普通の確認は注記を出さない", pet === "", pet);
+  const mv = note([{ sender: "staff", text: "お送りさせて頂きます！！" }, { sender: "customer", text: "10月中に入居したいです" }]);
+  t("文に入居とある日付は注記を出さない（取り違えが起きない）", mv === "", mv);
+  // YUMA3 q049 の型: 文に内覧の語がある決まった事の番に『AIX で送る』を足さない
+  const decided = note([{ sender: "staff", text: "18日 13:00 南船場にて内覧確定です！！" }, { sender: "customer", text: "18日の南船場の内覧のあとに行けますか？" }]);
+  t("文に内覧の語がある日付・話題の網だけの内覧の日時は注記を出さない", decided === "", decided);
+}
+
 console.log("── 切り替え ──");
 {
   const msgs = [{ sender: "staff", text: SLOTS }, { sender: "customer", text: "朝方は空いてないでしょうか？" }];
   t("既定 off: 注記は空", daySubjectNoteIfEnabled(msgs, "proposing", {}) === "");
   const on = daySubjectNoteIfEnabled(msgs, "proposing", { DAY_SUBJECT_READER: "on" });
-  t("on: 注記が出る（内覧の日時・スタッフ）", /何の日か・確認の相手/.test(on) && /内覧の日時/.test(on) && /確認の約束にしない/.test(on), on);
+  t("on: 注記が出る（内覧の日時・1行・見出しの塊にしない）", /内覧の日時/.test(on) && /確認の約束にせず/.test(on) && on.trim().split("\n").length === 1 && !/【/.test(on), on);
   t("読み: お客様が最後でない時は空", readDaySubject([{ sender: "customer", text: "明日" }, { sender: "staff", text: "はい" }]).dates.length === 0);
 }
 

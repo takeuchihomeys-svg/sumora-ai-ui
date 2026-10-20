@@ -171,9 +171,11 @@ export function confirmTopicsOf(text: string | null | undefined): ConfirmTopic[]
   const t = N(text);
   const out: ConfirmTopic[] = [];
   for (const [k, re] of TOPIC_RES) if (re.test(t) && !out.includes(k)) out.push(k);
+  // 設備の費用の問い（「駐車場代は＋11,000円ですか」）は送った見積・資料で答える事＝管理会社に聞く設備の有無にしない（YUMA3 q140）
+  const res = out.filter((k) => !(k === "facility" && /代|料金|円|費用|プラス|込み|含ま|足さ|加算/.test(t)));
   // 内覧の日時の網は「入居可能日」と重なる（「いつから内覧」）＝入居可能日があれば内覧の日時は外す
-  if (out.includes("move_in_available")) return out.filter((k) => k !== "viewing_datetime");
-  return out;
+  if (res.includes("move_in_available")) return res.filter((k) => k !== "viewing_datetime");
+  return res;
 }
 
 export type ConfirmPartyReading = { topic: ConfirmTopic; party: ConfirmParty };
@@ -243,28 +245,39 @@ export function readDaySubject(msgsOldestFirst: ReadonlyArray<ReaderMsg>, viewin
   };
 }
 
-/** ブレイン・書く役に渡す短い注記（読めた物だけ・無ければ ""） */
+/**
+ * ブレイン・書く役に渡す短い注記（取り違えが起きる所だけ・無ければ ""）。
+ * 2026-10-21 改（YUMA3 の on で依頼の抜け・道の外れ）: 旧は読めた物を全部「【何の日か・確認の相手】」の別の塊で最大6行出し、
+ *   ①q140「駐車場代は＋11,000円ですか」を『資料に無い設備＝管理会社に聞く事（分からなければ確認の約束）』と書いてブレインが答えずに確認へ寄った
+ *   ②q049「18日の内覧のあとに行けるか」（決まった事＝返信）に『内覧の日時は AIX で中身を入れて送る』を出して AIX【内覧へ】に寄った
+ *   ③q177 も話題の網（設備・ピックアップ）の行だけで依頼が抜けた
+ *   → 文の語だけで決まる物（入居・振込・申込・内覧の語がある日付）と、話題の網だけの確認の相手（管理会社・スタッフ）は何も足さない
+ *     （ブレインが元から読める・足すと注意が依頼から逸れる）。直前の問いだけで読む入居の時期も足さない
+ *     （流れの段が無い時に内覧の日を入居と書く向きの外れになる）。出すのは
+ *     ・内覧の日程の調整中で語の無い日付・時間帯（主の流れで読む＝q190・q191 の型）
+ *     ・お客様が自分で決めた連絡の期日（受けの中身も一緒に・d9533aad）
+ *     ・お客様ご自身が確かめる事
+ *     の最大2行で、お客様の言葉に結ぶ（別の見出しの塊にしない）。
+ */
 export function buildDaySubjectNote(r: DaySubjectReading): string {
   const lines: string[] = [];
+  let flowSaid = false;
   for (const d of r.dates) {
-    if (d.kind === "unknown") continue;
     const what = `${d.dateText ?? ""}${d.timeOfDay ? `${d.dateText ? "・" : ""}${TIME_OF_DAY_JA[d.timeOfDay]}` : ""}`;
-    let line = `・お客様の「${what}」は${DATE_KIND_JA[d.kind]}の話（${d.reason}）`;
-    if (d.kind === "viewing" && d.staffAskedMoveIn) line += "。入居の時期の答えとして受けない";
-    if (d.kind === "viewing") line += "。内覧の日時はスモラのカレンダーで決める事＝管理会社への確認の約束にしない（日時は内覧の流れの AIX で返す）";
-    if (d.kind === "contact") line += "。お客様が自分で決めた期日なので、こちらから期日（本日・今日中）を繰り返さない（圧になる）";
-    lines.push(line);
+    if (!what) continue;
+    if (d.kind === "viewing" && d.source === "flow") {
+      if (flowSaid) continue;
+      flowSaid = true;
+      lines.push(`・お客様の「${what}」は内覧の日程の調整への答え${d.staffAskedMoveIn ? "（入居の時期ではない）" : ""}＝内覧の日時はスモラのカレンダーで決める事（確認の約束にせず内覧の流れの AIX で返す）`);
+    } else if (d.kind === "contact") {
+      lines.push(`・お客様の「${what}…連絡します」は、ごゆっくり・気になる点があれば何時でもご連絡を、で受ける（期日「本日・今日中」はこちらから繰り返さない）`);
+    }
   }
-  const seen = new Set<string>();
   for (const p of r.parties) {
-    if (seen.has(p.topic)) continue;
-    seen.add(p.topic);
-    if (p.party === "staff") lines.push(`・${CONFIRM_TOPIC_JA[p.topic]}は${CONFIRM_PARTY_JA.staff}事＝「確認させて頂きます・確認出来次第ご連絡」の約束にしない（AIX で中身を入れて送る）`);
-    else if (p.party === "management") lines.push(`・${CONFIRM_TOPIC_JA[p.topic]}は${CONFIRM_PARTY_JA.management}事（分からなければ確認の約束）`);
-    else lines.push(`・${CONFIRM_TOPIC_JA[p.topic]}は${CONFIRM_PARTY_JA.customer}が確かめる事（こちらが確認する約束にしない）`);
+    if (p.party === "customer") lines.push(`・${CONFIRM_TOPIC_JA[p.topic]}はお客様ご自身が確かめる事（こちらが確認する約束にしない）`);
   }
   if (!lines.length) return "";
-  return `\n【何の日か・確認の相手（決まった処理の読み）】\n${lines.slice(0, 6).join("\n")}`;
+  return `\n${[...new Set(lines)].slice(0, 2).join("\n")}`;
 }
 
 /** 切り替えつき（off の時は必ず ""） */
