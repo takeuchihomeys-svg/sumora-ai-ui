@@ -1079,7 +1079,7 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "room_vacancies" | null>(null);
   // オーナーに確認した（その他）: 中間フォーム用state
   const [showOwnerOtherForm, setShowOwnerOtherForm] = useState(false);
   const [ownerOtherWhat, setOwnerOtherWhat] = useState("");
@@ -6734,7 +6734,7 @@ export default function Home() {
   // 次アクション提案バナー経由でAIXを開く（paramsからaixInit系stateを初期化してから開く）
   const openAixWithParams = (type: AixActionType, params?: NextActionParams) => {
     // 2026-10-06 ⑫: 設備・管理会社について・代理契約・募集状況（管理会社）も選んだ状態で開く（旧は8種類だけで、設備の確認の約束が素の画面で開いた）
-    const CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
+    const CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
     if (params?.check_pattern && (CP_OK as readonly string[]).includes(params.check_pattern)) {
       setAixInitCheckPattern(params.check_pattern as (typeof CP_OK)[number]);
     }
@@ -9317,7 +9317,7 @@ export default function Home() {
                   onClick={() => {
                     setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result");
                     // 条件側はブレインのピッカーを開く（代表・オーナー・その他の時は AIX メニューの「確認した（条件・交渉）」から）
-                    const CP_OK = ["vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
+                    const CP_OK = ["vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
                     if (guideCheckPattern && (CP_OK as readonly string[]).includes(guideCheckPattern)) setAixInitCheckPattern(guideCheckPattern as (typeof CP_OK)[number]);
                     openAixDirect("property_check_result");
                   }}
@@ -9819,7 +9819,7 @@ export default function Home() {
                     setActiveAixFlow(brainAction);
                     // 2026-09-12 段1: ブレインが決めた check_pattern（mgmt_move_in 等）をそのままモーダルに渡す（判定し直さない）
                     const brainCp = (brainMeta as { check_pattern?: string | null }).check_pattern ?? null;
-                    const BRAIN_CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
+                    const BRAIN_CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
                     if (brainAction === "property_check_result" && brainCp && (BRAIN_CP_OK as readonly string[]).includes(brainCp)) {
                       setAixInitCheckPattern(brainCp as (typeof BRAIN_CP_OK)[number]);
                     }
@@ -14811,6 +14811,28 @@ export default function Home() {
                   </>
                 },
                 {
+                  // 2026-10-20 竹内さん（P1 84519320）: 審査の相談（名義・保証人なし・職業・国籍）への答え。基本は「気に入ったお部屋なら審査はかけてみることが出来ます」
+                  key: "mgmt_screening",
+                  label: "審査について（ご相談）",
+                  desc: "名義・保証人・職業・国籍など審査の相談を管理会社・保証会社に確認した結果",
+                  hint: "",
+                  icon: <>
+                    <path d="M36 20L50 28V36C50 44.8 43.6 52.4 36 55C28.4 52.4 22 44.8 22 36V28L36 20Z" stroke="#546E7A" strokeWidth="1.8" strokeLinejoin="round"/>
+                    <path d="M33 33a3 3 0 116 0c0 2-3 2.5-3 5M36 42v.5" stroke="#546E7A" strokeWidth="1.8" strokeLinecap="round"/>
+                  </>
+                },
+                {
+                  // 2026-10-20 竹内さん（P1 ec545624）「申込状況についてのピッカーを作り…申込誘導を入れる」
+                  key: "mgmt_application_status",
+                  label: "申込状況について",
+                  desc: "ほかの方の申込の有無・何番手かを管理会社に確認した結果＋申込への誘導",
+                  hint: "",
+                  icon: <>
+                    <rect x="24" y="20" width="24" height="32" rx="3" stroke="#546E7A" strokeWidth="1.8"/>
+                    <path d="M30 29h12M30 36h12M30 43h7" stroke="#546E7A" strokeWidth="1.6" strokeLinecap="round"/>
+                  </>
+                },
+                {
                   // 2026-09-30 竹内（みこと事例）「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて」
                   key: "mgmt_company",
                   label: "管理会社について",
@@ -14857,6 +14879,39 @@ export default function Home() {
                   </>
                 },
                 {
+                  // 2026-10-18 竹内さん 10/18 夜の答え③: 短期解約の違約金・クリーニング代・フリーレント
+                  key: "mgmt_contract_terms",
+                  label: "契約の条件について",
+                  desc: "短期解約の違約金・退去時のクリーニング代・フリーレントを管理会社に確認した結果",
+                  hint: "",
+                  icon: <>
+                    <rect x="24" y="20" width="24" height="32" rx="3" stroke="#546E7A" strokeWidth="1.8"/>
+                    <path d="M30 28h12M30 34h12M30 40h6M40 44l3 3 5-6" stroke="#546E7A" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                  </>
+                },
+                {
+                  // 2026-10-18 竹内さん 10/18 夜の答え⑤: お客様に頼まれて家賃を交渉した結果（こちらから交渉を言い出さない）
+                  key: "mgmt_rent_negotiation",
+                  label: "家賃の交渉について",
+                  desc: "家賃の値下げを管理会社・オーナーに交渉した結果",
+                  hint: "",
+                  icon: <>
+                    <circle cx="36" cy="36" r="14" stroke="#546E7A" strokeWidth="1.8"/>
+                    <path d="M36 28v16M31 39l5 5 5-5" stroke="#546E7A" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                  </>
+                },
+                {
+                  // 2026-10-18 竹内さん 10/18 の答え④: 周辺・室内の様子（日当たり・音・騒音・周辺の様子）
+                  key: "mgmt_surroundings",
+                  label: "周辺の様子について",
+                  desc: "日当たり・音・騒音・周辺の様子を現地で見た／管理会社に聞いた結果",
+                  hint: "",
+                  icon: <>
+                    <circle cx="44" cy="28" r="5" stroke="#546E7A" strokeWidth="1.6"/>
+                    <path d="M22 50l9-12 6 7 5-5 8 10z" stroke="#546E7A" strokeWidth="1.6" strokeLinejoin="round"/>
+                  </>
+                },
+                {
                   key: "property_contracted",
                   label: "物件成約した",
                   desc: "1番手の方で成約となったことを報告し、別物件のピックアップを案内",
@@ -14866,7 +14921,7 @@ export default function Home() {
                     <path d="M30 39l4 4 9-9.5" stroke="#2E7D32" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
                   </>
                 },
-              ] as Array<{ key: "mgmt_availability" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
+              ] as Array<{ key: "mgmt_availability" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
                 const isSuggested = suggestedPropertyCheckMode === key;
                 return (
                 <button
@@ -15737,6 +15792,8 @@ export default function Home() {
                   { color: "#00897B", label: "物件ピックアップした", actionType: "property_send", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); } },
                   { color: "#2196F3", label: "1件特にオススメする", actionType: "property_recommendation", sub: "おすすめ物件をAIが提案", action: () => { openPropertyRecommendationPicker("withImage"); } },
                   { color: "#4CAF50", label: "物件確認した（募集状況）", actionType: "property_check_result", sub: "確認結果を6パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
+                  // 2026-10-20 竹内さん（P1 398b9781）新しいボタン「物件について」→ 募集号室について（建物の募集中の号室・間取り・家賃を一覧で返す・AI なし）
+                  { color: "#6D4C41", label: "物件について", actionType: "property_info", sub: "募集号室について: 募集一覧で見た号室・間取り・家賃をそのまま一覧で送る", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); setAixInitCheckPattern("room_vacancies"); openAixDirect("property_check_result"); } },
                   { color: "#FF9800", label: "見積書送る", actionType: "estimate_sheet", sub: "費用の見積書を作成", action: () => { openEstimateFlow(); } },
                   { color: "#2E7D32", label: "初期費用を説明", actionType: "cost_explain", sub: "安さを不審に思われた時に仕組み＋貸主からの報酬・還元額を1通で説明", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("cost_explain"); openAixDirect("cost_explain"); } },
                   { color: "#558B2F", label: "初期費用について", actionType: "cost_breakdown", sub: "御見積書の画像を貼り付け→会話を合わせるで初期費用の中身（含まれる項目・家賃だけで入居できるか）を説明", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("cost_breakdown"); openAixDirect("cost_breakdown"); } },

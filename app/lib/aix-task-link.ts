@@ -1,4 +1,5 @@
 import { checkPatternForConfirmTopic, customerAskedConfirmTopic } from "./action-ledger";
+import { OWN_APPLICATION_PROGRESS_RE } from "./aix-new-pickers";
 // app/lib/aix-task-link.ts
 // AIX の送信と「やること（line_tasks）」・物件出しの完了（✅）の対応表（2026-09-12 竹内方針）。
 //   「AIX 物件オススメ・物件ピックアップで送ったときに物件出し完了となる。ここちゃんとリンクさせる」
@@ -140,7 +141,10 @@ export function resolveStaffPromiseAix(
     // 2026-10-06 竹内（R 事例）: お客様がその要件を頼んだ（約束の前の質問・約束の後の「エアコンの件よろしくお願いします」）も依頼に数える
     const asked = e.detail?.objectFrom === "customer" || !!opts.customerRequestedCheck || !!opts.customerAckAfter
       || customerAskedConfirmTopic(messages, messages.lastIndexOf(last), e.detail?.object);
-    if (cp && asked && !estimateFlow && !APPLY_PROGRESS_CHECK_RE.test(last.text ?? "")) return { action: "property_check_result", kind: "check", checkPattern: cp };
+    // 2026-10-20 竹内さん（P1 ec545624）: ほかの方の申込状況（何人待ち・1番手の方の審査の状況）の約束は 管理会社に確認した→申込状況について。
+    //   ご本人の申込の進捗（完了・受理・お部屋止め・申込み番手）は今まで通り AIX なし
+    const queueStatus = cp === "mgmt_application_status" && !OWN_APPLICATION_PROGRESS_RE.test(last.text ?? "");
+    if (cp && asked && !estimateFlow && (queueStatus || !APPLY_PROGRESS_CHECK_RE.test(last.text ?? ""))) return { action: "property_check_result", kind: "check", checkPattern: cp };
   }
   if (e.kind === "confirmation_promised" && facts.confirmationPromisedUnfulfilled && opts.customerRequestedCheck
     && !/割引|交渉/.test(e.detail?.object ?? "")

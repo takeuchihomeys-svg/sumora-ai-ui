@@ -17,6 +17,7 @@
 // 使う所: ①正解の表と一致率（scripts/audit-r10-path-truth.ts の catalogKeyOfPress）②ブレイン（brain-core が場面に関係するボタン・ピッカーだけを渡す＝catalogBlockForBrain）
 import { AIX_PICKERS, type PickerOption } from "./aix-pickers";
 import { AIX_BUTTON_LABELS } from "./aix-taxonomy";
+import { aixNewPickers1020Enabled, isPropertyInfoCheckPattern, NEW_CHECK_PATTERNS_1020, PROPERTY_INFO_BUTTON } from "./aix-new-pickers";
 import type { ReplyScene } from "./reply-scene";
 
 export type CatalogEntry = {
@@ -200,6 +201,13 @@ const PICKER_KNOW: Record<string, Partial<Know>> = {
   "property_check_result/mgmt_proxy": { staffOnly: "代理契約の可否（管理会社の回答）" },
   "property_check_result/mgmt_two_person": { staffOnly: "二人入居の可否（管理会社の回答・2026-10-18）" },
   "property_check_result/mgmt_lifeline": { staffOnly: "ライフラインの指定・連絡先（管理会社の回答）" },
+  // 2026-10-20 竹内さんの新しいピッカー（ブレインが約束の続きに選ぶ・P1 408cf7bb「各ピッカーの役割を分かっていれば…」）
+  "property_check_result/mgmt_screening": { scenes: S("apply", "question", "considering"), staffOnly: "管理会社・保証会社に確認した審査の見込みと必要書類", when: "事情（名義・保証人なし・職業・国籍）の審査の相談に確認を約束した後", lines: "保証会社の名前・種類・中身の無い不安は guarantor_info" },
+  "property_check_result/mgmt_application_status": { scenes: S("apply", "question", "considering"), staffOnly: "管理会社に確認したほかの方の申込の有無・何番手・1番手の審査の状況", lines: "募集中かは 物件確認した（募集状況）" },
+  "property_check_result/mgmt_contract_terms": { scenes: S("question", "cost"), staffOnly: "管理会社に確認した短期解約の違約金・クリーニング代・フリーレント（物件ごと）", lines: "一般的な目安は返信で答えてよい" },
+  "property_check_result/mgmt_rent_negotiation": { scenes: S("cost", "question"), staffOnly: "家賃の値下げを交渉した結果", lines: "礼金・初期費用の交渉は mgmt_initial_cost。こちらから交渉を言い出さない" },
+  "property_check_result/mgmt_surroundings": { scenes: S("question", "viewing"), staffOnly: "現地で見た・管理会社に聞いた日当たり・音・周辺の様子", lines: "資料の説明文だけで答えられる時は返信" },
+  "property_check_result/room_vacancies": { scenes: S("question", "property_share"), staffOnly: "募集一覧で見た建物の募集中の号室・間取り・家賃", when: "建物の何部屋・どの号室が空いているかを聞かれた", lines: "1室の空きは 物件確認した（募集状況）・別の部屋の間取りは 室内写真を確認した" },
   "property_check_result/mgmt_guarantor": { staffOnly: "管理会社に聞いた保証会社・保証人・審査の条件", lines: "資料に保証会社が書いてある時は返信（8巡目）" },
   "property_check_result/mgmt_company": { staffOnly: "資料・管理会社で確かめた管理会社の名前・連絡先", lines: "資料の弊社帯の次の元付が分かる時は返信（8巡目）" },
   "property_check_result/mgmt_parking": { staffOnly: "管理会社に聞いた駐車場の有無・料金・空き", lines: "資料に駐車場の空き・料金がある時は返信（8巡目）" },
@@ -265,7 +273,7 @@ export function buildAixCatalog(): CatalogEntry[] {
     for (const o of opts) {
       const k = `${t}/${o.value}`;
       const over = PICKER_KNOW[k] ?? {};
-      const btn = t === "property_check_result" ? (isConditionCheckPattern(o.value) ? "確認した（条件・交渉）" : "物件確認した（募集状況）") : base.button;
+      const btn = t === "property_check_result" ? (isPropertyInfoCheckPattern(o.value) ? PROPERTY_INFO_BUTTON : isConditionCheckPattern(o.value) ? "確認した（条件・交渉）" : "物件確認した（募集状況）") : base.button;
       out.push({ key: k, aixType: t, button: btn, picker: { field: field ?? "", value: o.value, label: o.label }, ...know, when: over.when ?? (o.when || know.when), ...over });
     }
   }
@@ -353,7 +361,7 @@ export function topicKey(k: string): string {
   const [b, v] = k.split("/");
   if (b !== "property_check_result") return b === "acknowledge_check" ? "acknowledge_check" : k;
   if (!v || /^(?:available|unavailable|alternative|exclusive|mgmt_availability)$/.test(v)) return "property_check_result/募集状況";
-  if (v === "interior_photo" || v === "other_room_check") return `property_check_result/${v}`;
+  if (v === "interior_photo" || v === "other_room_check" || v === "room_vacancies") return `property_check_result/${v}`;
   if (v === "move_in_date" || v === "mgmt_move_in" || v === "vacate_date") return "property_check_result/入居日";
   return `property_check_result/条件:${v}`;
 }
@@ -400,7 +408,9 @@ export function catalogAllButtonsEnabled(env: Record<string, string | undefined>
 export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { includeAll?: boolean; env?: Record<string, string | undefined> } = {}): string {
   const inScene = (e: CatalogEntry) => o.includeAll || !scene || !e.scenes.length || e.scenes.includes(scene);
   const allButtons = catalogAllButtonsEnabled(o.env);
-  const rows = AIX_CATALOG.filter((e) => e.brainSelectable && (allButtons || inScene(e)));
+  // 2026-10-20 新しいピッカー: AIX_NEW_PICKERS_1020=on でない時はブレインに見せない
+  const newOff = !aixNewPickers1020Enabled(o.env ?? (typeof process !== "undefined" ? process.env : {}));
+  const rows = AIX_CATALOG.filter((e) => e.brainSelectable && (allButtons || inScene(e)) && !(newOff && e.picker && (NEW_CHECK_PATTERNS_1020 as readonly string[]).includes(e.picker.value)));
   const byBtn = new Map<string, CatalogEntry[]>();
   for (const e of rows) { const k = `${e.aixType}|${e.button}`; if (!byBtn.has(k)) byBtn.set(k, []); byBtn.get(k)!.push(e); }
   const lines: string[] = [AIX_DECISION_ORDER, `【AIX のボタン×ピッカー（${scene ? `場面「${scene}」に関係する物` : "全部"}）＝aix の値はボタンのキー・check_pattern はピッカーの値】`];
@@ -409,9 +419,13 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
     const [t, btn] = k.split("|");
     const bk = BUTTON_KNOW[t];
     // 場面の外のボタンは1行にまとめる（ボタン名と送る情報の頭だけ・ピッカーの細目は省く）
+    // 2026-10-20 物件について（募集号室）は場面の外の1行に出さない（質問・物件の共有の場面だけ＝場面ごとの長さの上限）
+    if (allButtons && !es0.some(inScene) && btn === PROPERTY_INFO_BUTTON) continue;
     if (allButtons && !es0.some(inScene)) { outside.push(`${t}【${btn}】${bk?.staffOnly ? `＝${Array.from(bk.staffOnly).slice(0, 24).join("")}` : ""}`); continue; }
     const es = allButtons ? es0.filter(inScene) : es0;
-    lines.push(`- ${t}【${btn}】 送る情報: ${bk?.staffOnly || "（定型の文・フォーム。スタッフだけが知る情報なし）"}${bk?.lines && !es[0].picker ? `｜線: ${bk.lines}` : ""}${!es[0].picker ? `｜使う時: ${es[0].when}` : ""}`);
+    // 2026-10-20 新しいボタン「物件について」は送る情報が別（募集一覧で見た号室・間取り・家賃）
+    const btnInfo = btn === PROPERTY_INFO_BUTTON ? "募集一覧で見た建物の募集中の号室・間取り・家賃（AI なしで一覧）" : bk?.staffOnly;
+    lines.push(`- ${t}【${btn}】 送る情報: ${btnInfo || "（定型の文・フォーム。スタッフだけが知る情報なし）"}${bk?.lines && !es[0].picker ? `｜線: ${bk.lines}` : ""}${!es[0].picker ? `｜使う時: ${es[0].when}` : ""}`);
     const low = lowPressNote(t);
     if (low) lines.push(`    ・${low}`);
     if (!es[0].picker) continue;
@@ -427,7 +441,9 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
     for (const e of es) {
       if (t === "property_check_result" && RESULT_PICKERS.has(e.picker!.value)) continue;
       const own = PICKER_KNOW[e.key]?.lines;
-      lines.push(`    ・${e.picker!.label}（${e.picker!.value}）: ${e.when}${own ? `｜${own}` : ""}`);
+      // 2026-10-20: 切替 off の時は 駐車場について の説明を今まで通りに（バイク置き場の言葉をブレインに出さない）
+      const when = newOff && e.picker!.value === "mgmt_parking" ? e.when.replace("駐車場・バイク置き場の有無・料金・空き（中で駐車場／バイク置き場を選ぶ）", "駐車場の有無・料金・空き") : e.when;
+      lines.push(`    ・${e.picker!.label}（${e.picker!.value}）: ${when}${own ? `｜${own}` : ""}`);
     }
   }
   if (outside.length) lines.push(`- 今の場面の外のボタン（場面の読みが外れていることもある＝会話の事実で選んでよい・ピッカーは画面でスタッフが選ぶ）: ${outside.join(" ／ ")}`);

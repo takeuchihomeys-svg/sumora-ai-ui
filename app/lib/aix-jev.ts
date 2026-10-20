@@ -78,6 +78,13 @@ export const JEV_CHECK_TOPIC_OPTIONS: Record<string, string> = {
   proxy:          "代理契約・名義（本人以外が契約できるか）",
   two_person:     "二人入居ができるか（2026-10-18 竹内さん 10/16）",
   lifeline:       "ライフライン（電気・ガス・水道）の指定・連絡先（2026-10-18 竹内さん 10/18）",
+  // 2026-10-20 竹内さんの新しいピッカー
+  screening:          "お客様ごとの審査の相談（名義・保証人なし・職業・国籍・審査が通るか）（2026-10-20）",
+  application_status: "ほかの方の申込の有無・何番手・何人待ち・1番手の方の審査の状況（2026-10-20）",
+  contract_terms:     "短期解約の違約金・退去時のクリーニング代・フリーレント（物件ごとの契約の条件）（2026-10-18）",
+  rent_negotiation:   "家賃の値下げの交渉の結果（2026-10-18）",
+  room_vacancies:     "建物の募集中の号室・何部屋空いているか（物件について→募集号室について・2026-10-20）",
+  surroundings:       "日当たり・音・騒音・周辺の様子（現地で見た・管理会社に聞いた）（2026-10-18）",
 };
 
 /** aix_usage_logs.check_pattern → Jev の topic（答え合わせ用）。結果のピッカー（available 等）は availability に寄せる */
@@ -95,6 +102,12 @@ export const CHECK_PATTERN_TO_TOPIC: Record<string, string> = {
   mgmt_proxy: "proxy",
   mgmt_two_person: "two_person",
   mgmt_lifeline: "lifeline",
+  mgmt_screening: "screening",
+  mgmt_application_status: "application_status",
+  mgmt_contract_terms: "contract_terms",
+  mgmt_rent_negotiation: "rent_negotiation",
+  room_vacancies: "room_vacancies",
+  mgmt_surroundings: "surroundings",
 };
 
 /** Jev の topic → ブレインが suggested_aix_meta.check_pattern に入れる値（結果のピッカーは null＝スタッフが選ぶ） */
@@ -112,6 +125,12 @@ export const TOPIC_TO_CHECK_PATTERN: Record<string, string | null> = {
   proxy: "mgmt_proxy",
   two_person: "mgmt_two_person",
   lifeline: "mgmt_lifeline",
+  screening: "mgmt_screening",
+  application_status: "mgmt_application_status",
+  contract_terms: "mgmt_contract_terms",
+  rent_negotiation: "mgmt_rent_negotiation",
+  room_vacancies: "room_vacancies",
+  surroundings: "mgmt_surroundings",
 };
 
 /** 「何を確認したか」のピッカー（会話から当てられる）。結果のピッカーは含めない */
