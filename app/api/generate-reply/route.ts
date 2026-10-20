@@ -6568,7 +6568,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             if (String(gen1.stopReason ?? "") === ALT_STREAM_CUT_STOP && !isTemplateOptimize) {
               console.warn(JSON.stringify({ tag: "gen:alt-stream-cut", conversationId, partialChars: gen1.body.length, head: gen1.body.slice(0, 30) }));
               rawGenerations.length = 0;
-              gen1 = await consumeGeneration(createGenerationModel({ defaultHeaders: { ...autoSendHeaders, [LLM_ACTION_HEADER]: "reply_generate_claude" } }).stream(writerMessages));
+              gen1 = await consumeGeneration(createGenerationModel({ defaultHeaders: { ...autoSendHeaders, [LLM_ACTION_HEADER]: "reply_generate_claude" } }).stream(messages)); // Claude には flash の一覧を足さない（指示は1文字も変えない）
             }
             draftBody = gen1.body;
             genStopReason = gen1.stopReason;
@@ -6580,7 +6580,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               if (missing.length || invite) {
                 try {
                   const fb = buildFlashRewriteFeedback(missing, { invite });
-                  const genR = await consumeGeneration(createGenerationModel({ defaultHeaders: autoSendHeaders }).stream([
+                  const genR = await consumeGeneration(createGenerationModel({ defaultHeaders: autoSendHeaders, maxRetries: 0 }).stream([
                     ...genMessages,
                     new AIMessage(replyMasker ? replyMasker.maskBlock(draftBody) : draftBody),
                     new HumanMessage(replyMasker ? replyMasker.maskBlock(fb) : fb),
@@ -6588,7 +6588,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   const still = genR.body.trim() ? missingFlashItems(flashItems, genR.body) : missing;
                   const inviteAfter = !!invite && INVITE_RE.test(genR.body.normalize("NFKC"));
                   // 抜けが減った（増えていない）か、誘いが消えた時だけ書き直しを使う
-                  const use = !!genR.body.trim() && still.length <= missing.length && (still.length < missing.length || (!!invite && !inviteAfter));
+                  const use = !!genR.body.trim() && String(genR.stopReason ?? "") !== ALT_STREAM_CUT_STOP && still.length <= missing.length && (still.length < missing.length || (!!invite && !inviteAfter));
                   console.log(JSON.stringify({ tag: "gen:flash-recheck", conversationId, missing: missing.map((m) => m.label.slice(0, 20)), after: still.length, invite, inviteAfter, used: use }));
                   if (use) { draftBody = genR.body; genStopReason = genR.stopReason ?? genStopReason; }
                 } catch (e) { console.warn("[flash-writer] 書き直しに失敗（1回目のまま）:", e instanceof Error ? e.message : String(e)); }
