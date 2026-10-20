@@ -10,7 +10,8 @@
 //   → 一次証拠（送信時の記録）から決定論で作る。印は手入力の型（【時間確保】と同じ notes 先頭）に合わせる。
 //   【必ず】の行は日付が過ぎても自動で完了にせず、それを履行する送信（物件送付・御見積書送付・確認結果の報告）で完了にする。
 import { jstParts } from "./jst-date";
-import { isConfirmPartyObject, confirmTopicForCheckPattern, checkPatternForConfirmTopic, type LedgerEntry, type LedgerKind } from "./action-ledger";
+import { aixNewPickers1020Enabled } from "./aix-new-pickers";
+import { isConfirmPartyObject, confirmTopicsForCheckPattern, checkPatternForConfirmTopic, type LedgerEntry, type LedgerKind } from "./action-ledger";
 // 2026-10-01 竹内（和樹事例）「『引き続き新着で…お送り』は『新着が出たら送る』約束として扱う」: ピックアップの約束がいつやる約束か（promise-timing.ts）
 import { classifyPickupPromiseTiming, isWaitPromiseNotes, PICKUP_TIMING_LABEL, WAIT_TIMINGS, type PickupPromiseTiming } from "./promise-timing";
 // 2026-10-08 竹内さん「連絡する期間を約束したらカレンダーに入れる」: 「7月1日に…ピックアップしお送り」の様に日付つきの約束は連絡の日の行（contact-promise.ts）が持つ
@@ -34,10 +35,13 @@ export const TODAY_MARK = "【今日中】";
  * 2026-09-16 竹内（𝒮❦ 事例）: 入居時期の交渉の約束に「物件確認した（募集状況）」を案内していた（実データ: 入居時期の約束の後に
  * 募集状況の AIX が押された例は無い）。募集状況・空室・番手は従来どおり【物件確認した】
  */
-const CONDITION_TOPIC_RE = /入居時期|初期費用|退去時費用|保証会社|代理契約|ペット|駐車場|設備|退去|審査|内覧可否/;
+// 2026-10-20 竹内さんの新しいピッカー（申込状況・バイク置き場・契約の条件・家賃の交渉・二人入居・ライフライン）も 確認した（条件・交渉）→〈要件〉
+//   切替 AIX_NEW_PICKERS_1020=on の時だけ（off は今まで通りの語）
+const CONDITION_TOPIC_RE_OFF = /入居時期|初期費用|退去時費用|保証会社|代理契約|ペット|駐車場|設備|退去|審査|内覧可否/;
+const CONDITION_TOPIC_RE_ON = /入居時期|初期費用|退去時費用|保証会社|代理契約|二人入居|ライフライン|ペット|駐車場|バイク置き場|設備|退去|審査|申込状況|契約の条件|家賃の交渉|周辺の様子|内覧可否/;
 function confirmAixLabel(object: string | null | undefined): string {
   const o = (object ?? "").trim();
-  return o && CONDITION_TOPIC_RE.test(o) ? `確認した（条件・交渉）→${o}` : "物件確認した（確認結果を送る）";
+  return o && (aixNewPickers1020Enabled() ? CONDITION_TOPIC_RE_ON : CONDITION_TOPIC_RE_OFF).test(o) ? `確認した（条件・交渉）→${o}` : "物件確認した（確認結果を送る）";
 }
 type PromiseDetail = { object?: string | null; estimateFor?: string[]; timing?: PickupPromiseTiming; propertyName?: string | null };
 const PROMISE_SPEC: Record<PromiseKind, { eventType: string; label: (o: PromiseDetail) => string; aix: (o: { object?: string | null }) => string; fulfilledBy: LedgerKind }> = {
@@ -294,15 +298,16 @@ export function planPromiseCompletion(
   const open = existingOpen.filter((r) => !r.is_done && isPromiseMustNotes(r.notes) && !!r.event_type && !isContactPromiseNotes(r.notes));
   for (const d of done) {
     const k = FULFILLS_PROMISE[d.kind];
-    const patternTopic = confirmTopicForCheckPattern(d.checkPattern);
+    // 2026-10-20: 1つのピッカーが閉じる要件は2つ以上のことがある（駐車場について→駐車場・バイク置き場）
+    const patternTopics = confirmTopicsForCheckPattern(d.checkPattern);
     for (const r of open) {
       const isConfirm = r.event_type === PROMISE_SPEC.confirmation_promised.eventType;
       const obj = isConfirm ? confirmObjectOfNotes(r.notes) : null;
       if (k && r.event_type === PROMISE_SPEC[k].eventType) {
         if (k === "confirmation_promised") {
           // AIX の check_pattern があればそれが報告の要件（本文の先頭語より確か）。無ければ報告の要件で照合
-          const doneObj = patternTopic ?? d.object ?? null;
-          if (!confirmObjectMatches(obj, doneObj)) continue;
+          const doneObjs: Array<string | null> = patternTopics.length ? patternTopics : [d.object ?? null];
+          if (!doneObjs.some((o) => confirmObjectMatches(obj, o))) continue;
         }
         ids.add(r.id);
         continue;

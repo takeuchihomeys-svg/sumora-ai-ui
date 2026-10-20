@@ -23,6 +23,7 @@ import {
 } from "./scene-patterns";
 import { customerImageGroup } from "./image-label";
 import { aixMgmtLifelineEnabled, isLifelineQuestion } from "./aix-lifeline";
+import { aixNewPickers1020Enabled, isApplicationStatusQuestion, isRoomVacanciesQuestion } from "./aix-new-pickers";
 import { savedPersonalDocumentLabel } from "./personal-document-guard";
 
 /**
@@ -220,6 +221,13 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   //   「内見の動画欲しい」は内覧希望ではなく写真の依頼（内見・内覧＋動画・写真 の語を外してから内覧希望を見る）。
   //   新しい物件の URL・画像が一緒に来た時は従来どおり S1（募集状況の確認が先）。入居日の質問が一緒なら S2 を優先（管理会社への確認が要る）。
   //   こちらが物件を送っている会話、またはお客様が物件を特定している時だけ（持込物件「〇〇の部屋の写真ありますか」は specified で通る）
+  // 2026-10-20 竹内さん（P1 398b9781・ゆいとさん「ここ何部屋空いてますか？」）: 建物の募集中の号室・部屋数の問い →
+  //   AIX【物件について→募集号室について】（募集一覧・物件ページで見た号室・間取り・家賃を返す＝候補の網・判断はブレイン）。
+  //   こちらが物件を送っている会話か、お客様が物件を指した時だけ（新しい物件の URL・画像が一緒の時は下の S1＝募集状況の確認が先）。切替 AIX_NEW_PICKERS_1020=on の時だけ
+  if (aixNewPickers1020Enabled() && isRoomVacanciesQuestion(msg) && !o.hasCustomerImage && !AVAILABILITY_URL_RE.test(msg)
+    && ((o.sentPropertyCount ?? 0) > 0 || specified)) {
+    return ev({ scene: "S11_other_room", candidateAction: "property_check_result", checkPattern: "room_vacancies", timing: "now", chained: null, reasonCode: "room_vacancies_question", propertySpecifiedBy: specBy ?? "context" });
+  }
   if (isRoomPhotoRequest(msg) && !o.hasCustomerImage && !AVAILABILITY_URL_RE.test(msg)
     && !VIEWING_INTENT_RE.test(stripPhotoWordsForViewing(msg)) && !(MOVEIN_Q_RE.test(msg) && moveInAsked(msg))
     && ((o.sentPropertyCount ?? 0) > 0 || specified || PROPERTY_NAME_LIKE_RE.test(msg))) {
@@ -288,6 +296,13 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   //   戻す AIX_MGMT_TWO_PERSON=off
   if ((process.env.AIX_MGMT_TWO_PERSON ?? "").trim().toLowerCase() !== "off" && TWO_PERSON_CHECK_REQUEST_RE.test(msg) && !TWO_PERSON_SEARCH_RE.test(msg) && !isConditionFormMessage(msg) && (specified || (o.sentPropertyCount ?? 0) > 0)) {
     return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_two_person", timing: "after_confirm", chained: null, reasonCode: "two_person_question", propertySpecifiedBy: specBy ?? "context" });
+  }
+  // 2026-10-20 竹内さん（P1 ec545624・「13階は何人待ちですか？」）「管理会社に確認したところに申込状況についてのピッカーを作り、そこから返信する」:
+  //   ほかの方の申込の有無・何番手・何人待ちの問い → 確認の約束の後に AIX【管理会社に確認した→申込状況について】（候補の網・判断はブレイン）。
+  //   こちらが物件を送っている会話か、お客様が物件を指した時だけ。切替 AIX_NEW_PICKERS_1020=on の時だけ
+  if (aixNewPickers1020Enabled() && isApplicationStatusQuestion(msg) && !o.hasCustomerImage && !AVAILABILITY_URL_RE.test(msg)
+    && ((o.sentPropertyCount ?? 0) > 0 || specified)) {
+    return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_application_status", timing: "after_confirm", chained: null, reasonCode: "application_status_question", propertySpecifiedBy: specBy ?? "context" });
   }
   // 2026-09-30 竹内（みこと 15:14「それと審査の件ですがこの物件の管理会社はどこですか？？」）
   //   「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて。物件確認したと確認したがごっちゃになっている」:
