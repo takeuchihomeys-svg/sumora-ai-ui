@@ -99,6 +99,7 @@ import { brainDecisionLedgerCols, brainDecisionDigestExtra } from "@/app/lib/bra
 import { legacyActionWinRatesEnabled, applicationReachEnabled, winningOutcomeTag, orderWinningPatterns } from "@/app/lib/application-reach";
 // 2026-09-27 竹内「この問題直して大丈夫」: ブレインの段階を customer-state の事実で補正（viewing に上げる）・会話の方向の段階を段階から決める（穴:G1）
 import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from "@/app/lib/brain-stage";
+import { applyRouteMapEnabled, applyRouteBrainTextIfEnabled } from "@/app/lib/apply-route-map";
 import { resolveParallelSearchScene, parallelSearchInputsFromMessages, buildParallelSearchBrainNote, resolveParallelSearchOutput, type ParallelSearchOutput } from "@/app/lib/parallel-search";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）は1つの型・1つの関数に集約（AIX / テンプレート / 返信生成が同じ物を読む）
 import { resolveBrainPropertyState } from "@/app/lib/property-send-state";
@@ -2906,6 +2907,35 @@ ${catalogBlockForBrain(brainScene)}
     ...parallelSearchInputsFromMessages(typedMessages.map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at }))),
   });
   const parallelSearchBrainText = buildParallelSearchBrainNote(parallelSearchCtx);
+  // 2026-10-20 竹内さん（55bf37b6「申込までの地図」）: 本線＋分かれ道の上の今の位置・申込へ向けた次の一手・本線への戻り方（app/lib/apply-route-map.ts・決定論・LLM なし）。
+  //   合図は作り直さない（customer-state・行動台帳・発言の型・場面の証拠・お客様の事情）。毎回変わる並び＝キャッシュの印の外。
+  //   既定 off（APPLY_ROUTE_MAP=on で入れる）。off の時は空文字＝プロンプトは1バイトも変わらない
+  let applyRouteText = "";
+  if (applyRouteMapEnabled()) {
+    try {
+      const oldestAR = [...typedMessages].reverse();
+      let tsAR = oldestAR.length; while (tsAR > 0 && oldestAR[tsAR - 1].sender === "customer") tsAR--;
+      const turnStartAR = tsAR < oldestAR.length ? Date.parse(oldestAR[tsAR].created_at) : Date.now();
+      const { extractCircumstances, validCircumstances, holdFirstReason } = await import("@/app/lib/customer-circumstances");
+      const holdReasonAR = isPostApplyStatus(convStatus) ? null
+        : holdFirstReason(validCircumstances(extractCircumstances(oldestAR.filter((m) => m.sender === "customer").map((m) => ({ text: m.text, createdAt: m.created_at })), turnStartAR), Date.now()), Date.now());
+      const psInAR = parallelSearchInputsFromMessages(typedMessages.map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at })));
+      const lastMsgAR = typedMessages[0];
+      const ar = applyRouteBrainTextIfEnabled({
+        stage: customerState?.stage ?? null,
+        searching: customerState?.searching ?? null,
+        ledger: brainLedger.facts,
+        routeType: routeTypeNow ?? routeTypeOf({ customerText: unrepliedTurn.text ?? "", prevStaffText: typedMessages.find((m) => m.sender !== "customer")?.text ?? "", ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "") }),
+        sceneId: sceneEvidence?.scene ?? null,
+        customerTurnText: unrepliedTurn.text ?? "",
+        recentStaffTexts: psInAR.recentStaffTexts,
+        holdReason: holdReasonAR,
+        lastStaffAtIfStaffLast: lastMsgAR && lastMsgAR.sender !== "customer" ? lastMsgAR.created_at : null,
+      });
+      applyRouteText = ar.text;
+      if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
+    } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   viewingsText += viewingReportText;
 
   // H6(Fable5): ホット顧客・スタッフ要対応フラグ
@@ -2975,11 +3005,11 @@ ${catalogBlockForBrain(brainScene)}
   const customerSpecificText = isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${aixCatalogText}${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${routeTypeText}${ragKnowledgeText}
+    ? `${aixCatalogText}${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${routeTypeText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${aixCatalogText}${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${routeTypeText}${ragKnowledgeText}${latestSupersedesRule() ? `
+    : `${aixCatalogText}${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${routeTypeText}${ragKnowledgeText}${latestSupersedesRule() ? `
 
 【今回の発言の読み方】${latestSupersedesRule()}` : ""}
 
