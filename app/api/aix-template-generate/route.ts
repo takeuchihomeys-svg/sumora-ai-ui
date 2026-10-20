@@ -5,7 +5,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { supabase } from "@/app/lib/supabase";
 // 2026-09-29 API 費用の調査: 名札を付ける（llm-alt-provider は system の先頭の語で既に "aix_template" と見なしている＝同じ名前なので回し方は変わらない）
-import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
+import { sumoraLlmMarks, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
@@ -103,6 +103,9 @@ import { knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 const AIX_TEMPLATE_KNOWLEDGE_ANCHOR = "AIX の入力（構造化データ＝AIX が正）"; // 10/13 レビュー（軽微2）: ✨ を押した時はブレインの判断がほぼ無いので AIX の入力だけを指す
 
 import { buildAixContractNote, type AixContractMeta } from "@/app/lib/aix-brain-contract";
+// 2026-10-20 竹内さん（P1 ef272b2d）「2通目の文を作る所が弱すぎる。返信・ブレインと同じ材料・同じ確かめで」: 材料と出口の確かめ（SECOND_MSG_MATERIALS=on の時だけ・既定 off）
+import { secondMsgMaterialsOn, applySecondFinalChecks } from "@/app/lib/second-message-materials";
+import type { SecondMaterials } from "@/app/lib/second-message-materials-server";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
 export const maxDuration = 60;
@@ -1569,6 +1572,28 @@ export async function POST(req: NextRequest) {
   //   「本当に良いお部屋ですよね」のような評する一文（長さの注記「スタッフが書いているのは自分の見立て」）だった。
   //   この場面では長さの注記・この種別の書き方・CTA 強度の上書き・段落構成・フレーズ集・⭐実例（AI の下書きのまま送った申込の締め）・一般の CTA 率を渡さない
   const isEstimateSecond = actionType === "estimate_sheet" && isEstimateCard(sentMessage);
+  // 2026-10-20 2通目の材料（既定 off＝読まない・プロンプトも出力も今までと同じ）。返信と同じ関数で、この番に送った物・まだ答えていない依頼・約束・確認の結果・
+  //   お客様のメモ・NG 条件・会社の事実を読み、個人情報の線（申込以降・審査の事情・申込の線は Claude に固定・DeepSeek なら材料を伏せる）も決める
+  let secondMaterials: SecondMaterials | null = null;
+  if (secondMsgMaterialsOn() && (sentMessage ?? "").trim()) {
+    try {
+      const { loadSecondMaterials } = await import("@/app/lib/second-message-materials-server");
+      // 読みが詰まっても生成は止めない（8秒で材料なし＝今までの形）
+      secondMaterials = await Promise.race([loadSecondMaterials({
+        conversationId: conversationId ?? null, actionType: actionType ?? null,
+        recent: Array.isArray(recentMessages) ? recentMessages : [], sentMessage,
+        brainRequestStatus: (brainMeta as { request_status?: unknown } | null)?.request_status ?? null,
+        ngPointsFromBrain: brainMeta?.property_search_params?.ng_points ?? null,
+        names: [resolvedCustomerName, customerName],
+      }), new Promise<null>((r) => setTimeout(() => r(null), 8_000))]);
+    } catch (e) { console.warn("[aix-template-generate] second-materials failed:", e instanceof Error ? e.message : e); }
+  }
+  // 見積書を2回の AIX で送った時は、この番の見積書全部（材料が読めた時だけ・off なら1通目の見出しのまま）
+  const estimateProps = (() => {
+    const base = estimatePropertiesOf(sentMessage);
+    const all = secondMaterials?.sent.estimates ?? [];
+    return all.length > base.length ? all : base;
+  })();
   let estimateClosing: EstimateClosing = "receipt";
   let estimateSecondNote = "";
   if (isEstimateSecond) {
@@ -1577,7 +1602,7 @@ export async function POST(req: NextRequest) {
       if (conversationId) {
         // 内覧の段階: 見積書のお部屋（建物名）で AIX【待ち合わせ場所】（内覧の確定）か内覧前後の挨拶を送っていれば「内覧の後」（feedback_viewing_flow_stages）。
         //   会話全体で見ると別のお部屋の内覧（YUMA: レオパレス天満）で「内覧の後」になってしまう（10/01 のローカル生成で 8/8 が内覧の後だった）→ 建物名で結ぶ
-        const buildings = estimatePropertiesOf(sentMessage).map((p) => p.replace(/[s　]*[0-9０-９A-Za-z-]{1,6}(?:号室)?$/, "").trim()).filter((b) => b.length >= 2);
+        const buildings = estimateProps.map((p) => p.replace(/[s　]*[0-9０-９A-Za-z-]{1,6}(?:号室)?$/, "").trim()).filter((b) => b.length >= 2);
         const { data } = await supabase.from("aix_usage_logs").select("generated_text, property_names").eq("conversation_id", conversationId)
           .in("aix_type", ["meeting_place", "greeting_viewing"]).not("sent_at", "is", null).order("created_at", { ascending: false }).limit(20);
         viewed = buildings.length > 0 && ((data ?? []) as Array<{ generated_text: string | null; property_names: string[] | null }>)
@@ -1588,21 +1613,21 @@ export async function POST(req: NextRequest) {
     // 2026-10-08 竹内「刺さる条件なら内覧または申込誘導・空室なら内覧誘導」: 見積書のお部屋の採点（estimate-appeal-server）
     let ap: { appeal: "strong" | "weak" | null; notViewable: boolean; found: number } = { appeal: null, notViewable: false, found: 0 };
     if (estimateClosingByAppealOn()) {
-      try { ap = await loadEstimateAppeal(supabase, conversationId, estimatePropertiesOf(sentMessage), { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom }); } catch { /* 読めない時は採点なし */ }
+      try { ap = await loadEstimateAppeal(supabase, conversationId, estimateProps, { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom }); } catch { /* 読めない時は採点なし */ }
     }
     // 2026-10-09 竹内さん: お客様が頼んだ見積は興味の印＝内覧の前・空室なら内覧訴求（既定 on・ESTIMATE_ASKED_APPEAL=off で戻す）
     const customerAsked = customerAskedEstimate(Array.isArray(recentMessages) ? recentMessages as Array<{ sender?: string | null; text?: string | null; created_at?: string | null }> : []);
     const dec = resolveEstimateClosing({ ctaPreference, viewed, reactionKind: reaction?.kind ?? null, appeal: ap.appeal, notViewable: ap.notViewable, customerAsked });
     console.log(JSON.stringify({ tag: "aix-template-generate:estimate-appeal", appeal: ap.appeal, notViewable: ap.notViewable, found: ap.found }));
     estimateClosing = dec.closing;
-    estimateSecondNote = buildEstimateSecondNote({ name: resolvedCustomerName, properties: estimatePropertiesOf(sentMessage), closing: dec.closing, staffSentToday: greetSentToday });
+    estimateSecondNote = buildEstimateSecondNote({ name: resolvedCustomerName, properties: estimateProps, closing: dec.closing, staffSentToday: greetSentToday });
     // 2026-10-06 ⑫ 竹内（R の見積書の2通目）「実際にスタッフが送っているような正確で具体的なちゃんとした返信を」:
     //   1通目の札に「報酬が出ない…仲介手数料〇円」等の行があれば、2通目に事情の文（スタッフの実送信の言い方・数字は札の字だけ）を入れる（estimate-explain）
     {
       const lines = secondLinesFromCard(sentMessage, null);
       if (lines.length) estimateSecondNote += `\n【このお部屋の費用の事情（1通目の御見積書の行から・数字を変えない・他の金額を足さない）】次の文をそのまま本文に入れる:\n${lines.map((l) => `「${l}」`).join("\n")}`;
     }
-    console.log(JSON.stringify({ tag: "aix-template-generate:estimate-second", closing: dec.closing, reason: dec.reason, viewed, reaction: reaction?.kind ?? null, props: estimatePropertiesOf(sentMessage).length }));
+    console.log(JSON.stringify({ tag: "aix-template-generate:estimate-second", closing: dec.closing, reason: dec.reason, viewed, reaction: reaction?.kind ?? null, props: estimateProps.length }));
   }
   // 形を最後に1か所から渡す2通目（物件オススメ・見積書）。この時は1通目用・全種類の平均の指示を渡さない
   const fixedSecond = isRecSecond || isEstimateSecond;
@@ -1736,6 +1761,8 @@ export async function POST(req: NextRequest) {
     //   「CTA強度の上書き」「【必ず守る2点】①段落構成に従う」と、**1通目用の骨格が何重にも入っている**。
     //   YUMA で測ると申込の誘導が 100%（実送信8.8%）になり、前に置いた上書きは効かなかった。
     //   設計知見「同じ事実について書くなと書けを別の場所から渡さない」→ 最後に1回だけ明示して上書きする。
+    // 2026-10-20 2通目の材料（返信と同じ材料・既定 off＝空＝並びは今までと同じ）
+    secondMaterials?.note ?? "",
     aixChainNote,
     // 物件オススメの直後の2通目: 資料の事実 → 場面の形（実送信の実物）→ 締め の順で最後に置く
     secondMaterialNote,
@@ -1784,6 +1811,14 @@ export async function POST(req: NextRequest) {
     //   （Claude には区切りの文字を後ろのブロックの先頭に付けた形で、同じ文字が同じ順に届く）。DeepSeek の試験の再生・使い回しの鍵も変えない
     let altRoutedAix = false;
     try { altRoutedAix = (await import("@/app/lib/llm-alt-provider")).willRouteAlt("aix_template"); } catch { /* 判定できない時は分ける（本番の Claude の形） */ }
+    // 2026-10-20 レビュー: 材料のスイッチが off でも、DeepSeek に回る設定の時だけ個人情報の線を引く（申込以降・審査の事情・申込の線は Claude に固定）。
+    //   本番は aix_template を回していない＝ここは呼ばれず、ヘッダも本文も今までと同じ
+    let piiHeaders: Record<string, string> = secondMaterials?.headers ?? {};
+    if (!secondMaterials && altRoutedAix) {
+      try {
+        piiHeaders = await (await import("@/app/lib/second-message-materials-server")).aixTemplatePiiHeaders(conversationId ?? null, Array.isArray(recentMessages) ? recentMessages : []);
+      } catch { piiHeaders = { ...sumoraLlmMarks("aix_template"), [LLM_POST_APPLY_HEADER]: "1" }; }
+    }
     const dbParts = altRoutedAix
       ? (dbKnowledgeBlock ? [{ kind: "all" as const, text: dbKnowledgeBlock }] : [])
       : aixTemplateDbKnowledgeParts(topPrinciples, lossPatterns, dbRulesGeneric, dbRulesAction);
@@ -1810,6 +1845,9 @@ export async function POST(req: NextRequest) {
           "anthropic-version": "2023-06-01",
           "anthropic-beta": "prompt-caching-2024-07-31",
           ...sumoraLlmMarks("aix_template"),
+          // 2026-10-20 申込以降・審査の事情・申込の線は Claude に固定（x-sumora-llm-post-apply）／DeepSeek に回る時は印 all（材料は伏せ済み）。
+          //   材料を渡す時と、off でも DeepSeek に回る設定の時だけ（本番の Claude の呼び出しは空＝今までと同じ）
+          ...piiHeaders,
         },
         body: JSON.stringify({
           model: "claude-sonnet-5",
@@ -2279,6 +2317,14 @@ ${text}
     {
       const feeFix = ensureCardFeeLine(text, (recentMessages ?? []).filter((m) => m.sender === "customer").slice(-3).map((m) => m.text ?? ""));
       if (feeFix.added) { text = feeFix.text; console.log(JSON.stringify({ tag: "aix-template-generate:card-fee-added", actionType })); }
+    }
+    // 2026-10-20 2通目の出口の確かめ（材料を渡した時だけ）: ご査収は送った時だけ・送った物の種類の言い方・見積書 N件→N件の名前。触れていない質問・費用の種類は当たりだけ返す
+    if (secondMaterials) {
+      try {
+        const fc = applySecondFinalChecks(text, { sent: secondMaterials.sent, asks: secondMaterials.asks, firstMessage: sentMessage, costKind: secondMaterials.costKind });
+        if (fc.applied.length || fc.warnings.length) console.log(JSON.stringify({ tag: "aix-template-generate:second-final-checks", actionType, applied: fc.applied, warnings: fc.warnings }));
+        return NextResponse.json({ ok: true, text: fc.text, materialWarnings: fc.warnings });
+      } catch (e) { console.warn("[aix-template-generate] second-final-checks failed:", e instanceof Error ? e.message : e); }
     }
     return NextResponse.json({ ok: true, text });
   } catch (err) {
