@@ -1,0 +1,334 @@
+// app/lib/second-message-materials.ts
+// AIX の2通目（AIX で物件の画像・見積書を送った直後の文・aix-template-generate の ✨）に、返信の書く役と同じ材料と同じ確かめを渡す（純関数・DB 依存なし）。
+//
+// 2026-10-20 竹内さん（P1 ef272b2d）「この2通目の文を作成する部分の所も弱すぎる。返信の部分も参考に、ブレインの部分も参考に強化する」／
+//   （P1 12adf1bd）「見積書2枚送っている場合、2枚分の見積書について送る形とする」。
+//   試験 q182〜q189: 約束の答え（空き状況＝305号室のみ）が無い・何も送っていないのにご査収・送った物の種類の取り違え（物件資料⇔見積書）・
+//   見積書2件を1件として書く・聞かれた事（角部屋は空いているか）に答えない・初期費用と月額の取り違え。
+//
+// 材料は作り直さない（返信と同じ関数を使う）:
+//   ・お客様のまだ答えていない依頼・質問 … request-ledger.buildRequestLedger（会話画面の帯・返信と同じ）
+//   ・まだ果たしていない約束 … promise-tracker.trackPromises（ブレインと同じ）
+//   ・確認の結果（約束の答え） … action-ledger.findConfirmReportSentence（AIX の確認の結果の文）
+//   ・送った見積書の件数・物件名 … estimate-second-message.isEstimateCard / estimatePropertiesOf
+//   ・会社として決まっている事実 … company-facts.buildCompanyFactsNote（呼ぶ側）
+// 切替: SECOND_MSG_MATERIALS=on の時だけ（既定 off＝プロンプトも出力も今までと1文字も同じ）。
+import { buildRequestLedger, applyBrainRequestStatus, uncoveredRequests, TOPIC_JA, type LedgerItem, type RequestItem } from "./request-ledger";
+import { trackPromises, type OpenPromise } from "./promise-tracker";
+import { findConfirmReportSentence } from "./action-ledger";
+import { isEstimateCard, estimatePropertiesOf } from "./estimate-second-message";
+
+export function secondMsgMaterialsOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.SECOND_MSG_MATERIALS ?? "").trim().toLowerCase() === "on";
+}
+
+export type SmMsg = { sender?: string | null; text?: string | null; isAix?: boolean | null; rawCreatedAt?: string | null };
+
+/** この番の送信のまとまり（最後の送信から3時間） */
+export const TURN_WINDOW_MS = 3 * 3600_000;
+
+const IMAGE_ONLY_RE = /^\s*\[(?:画像|動画|ファイル)\]\s*$/;
+
+/**
+ * この番（最後のお客様の発言より後のこちらの送信）と、それより前を分ける。
+ * 画面が渡した1通目（sentMessage）が履歴にまだ無ければ、この番の最後に足す。
+ */
+export function splitTurn(msgs: ReadonlyArray<SmMsg>, sentMessage?: string | null): { before: SmMsg[]; turnStaff: string[] } {
+  const list = Array.isArray(msgs) ? msgs : [];
+  let last = -1;
+  for (let i = list.length - 1; i >= 0; i--) if (list[i]?.sender === "customer") { last = i; break; }
+  // この番の送信は直近のまとまりだけ（最後の送信から3時間より前の物は前の番＝お客様が返事をしないまま続けた別の件）
+  const staffMsgs = list.slice(last + 1).filter((m) => m?.sender !== "customer" && String(m?.text ?? "").trim());
+  const times = staffMsgs.map((m) => (m?.rawCreatedAt ? Date.parse(m.rawCreatedAt) : NaN));
+  const newest = Math.max(...times.filter((t) => Number.isFinite(t)), -Infinity);
+  const turnStaff = staffMsgs.filter((_, k) => !Number.isFinite(newest) || !Number.isFinite(times[k]) || newest - times[k] <= TURN_WINDOW_MS).map((m) => String(m?.text ?? ""));
+  const sm = String(sentMessage ?? "").trim();
+  if (sm && !turnStaff.some((t) => t.trim() === sm)) turnStaff.push(sm);
+  return { before: list.slice(0, last + 1), turnStaff };
+}
+
+export type SentKind = "estimate" | "property_images" | "check_result" | "images" | "none";
+export type SentThisTurn = {
+  /** この番で送った見積書の物件（【】の見出し・重なりなし・送った順） */
+  estimates: string[];
+  estimateCards: number;
+  images: number;
+  kind: SentKind;
+  /** 何かを送った（資料・画像・見積書）＝「ご査収」を書いてよい */
+  anySent: boolean;
+};
+
+/** 物件の資料（画像）を送る AIX */
+const PROPERTY_IMAGE_ACTIONS: ReadonlySet<string> = new Set(["property_send", "property_recommendation"]);
+
+/** この番で実際に送った物（件数と種類）。種類は AIX の種類と1通目の本文（見積書の本体か）で決める */
+export function sentThisTurn(i: { actionType?: string | null; turnStaff: ReadonlyArray<string> }): SentThisTurn {
+  const a = String(i.actionType ?? "").trim();
+  const cards = i.turnStaff.filter((t) => isEstimateCard(t));
+  const estimates: string[] = [];
+  for (const c of cards) for (const p of estimatePropertiesOf(c)) if (!estimates.includes(p)) estimates.push(p);
+  // ↑ 1枚の見積書に同じ物件の見出しが2回ある・同じ見積書を送り直した時は1件（重なりなし）
+  const images = i.turnStaff.filter((t) => IMAGE_ONLY_RE.test(t)).length;
+  // 種類は AIX の種類が先（物件オススメの番に前の見積書が残っていても見積書の番にしない）。種類の無い・他の AIX は送った物で見る
+  const kind: SentKind = a === "estimate_sheet" ? "estimate"
+    : PROPERTY_IMAGE_ACTIONS.has(a) ? "property_images"
+    : a === "property_check_result" ? (cards.length > 0 ? "estimate" : "check_result")
+    : cards.length > 0 ? "estimate"
+    : images > 0 ? "images" : "none";
+  if (kind !== "estimate") estimates.length = 0;
+  const anySent = cards.length > 0 || images > 0 || ((kind === "estimate" || kind === "property_images") && i.turnStaff.length > 0);
+  return { estimates, estimateCards: cards.length, images, kind, anySent };
+}
+
+const msOf = (iso: string | null | undefined, fallback: number) => {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) ? t : fallback;
+};
+
+/** 時刻を付けた古い順の発言（時刻の無い通は前の通の直後とみなす・1通目は今） */
+function timed(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyArray<string>, nowMs: number): Array<{ sender: string; text: string; createdAt: string; isAix: boolean }> {
+  const out: Array<{ sender: string; text: string; createdAt: string; isAix: boolean }> = [];
+  let prev = nowMs - 86_400_000;
+  for (const m of msgs) {
+    const t = msOf(m?.rawCreatedAt ?? null, prev + 1000);
+    prev = t;
+    out.push({ sender: m?.sender === "customer" ? "customer" : "staff", text: String(m?.text ?? ""), createdAt: new Date(t).toISOString(), isAix: !!m?.isAix });
+  }
+  const seen = new Set(msgs.map((m) => String(m?.text ?? "").trim()));
+  for (const t of turnStaff) {
+    if (seen.has(t.trim())) continue;
+    prev = Math.max(prev + 1000, nowMs - 1000);
+    out.push({ sender: "staff", text: t, createdAt: new Date(prev).toISOString(), isAix: true });
+  }
+  return out;
+}
+
+/**
+ * お客様のまだ答えていない依頼・質問。
+ *   ① この番より前（こちらが今回送る前）の発言から buildRequestLedger（会話画面の帯と同じ網）で「済み」でない物を拾い、
+ *     ブレインの判断（suggested_aix_meta.request_status）があれば帯と同じ applyBrainRequestStatus で上書きする（判断はブレイン基準）。
+ *   ② この番の送信（1通目）が言葉で触れた物を外す（uncoveredRequests）。
+ *     ⚠ 網は「御見積書を送った＝空き・費用に答えた」と見る（帯の数え方）が、2通目では「角部屋は空いていますか」に言葉で答える必要があるので、ここは言葉で見る。
+ *   種類の無い物（その他）・先の時期の相談は入れない。
+ */
+export function outstandingAsks(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyArray<string>, nowMs: number, brainRequestStatus?: unknown): LedgerItem[] {
+  const { before } = splitTurn(msgs, null);
+  const tm = timed(before, [], nowMs);
+  const net = buildRequestLedger(tm, nowMs);
+  const ledger = brainRequestStatus ? applyBrainRequestStatus(net, brainRequestStatus, tm, { ui: false }) : net;
+  const open = ledger.filter((x) => x.status !== "done" && x.topic !== "other" && !x.deferred);
+  const left = new Set(uncoveredRequests(open, turnStaff.join("\n")));
+  return open.filter((x) => left.has(x)).slice(-6);
+}
+
+/** まだ果たしていない約束（この番の1通目までで果たしていない物） */
+export function openPromises(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyArray<string>, nowMs: number): OpenPromise[] {
+  return trackPromises(timed(msgs, turnStaff, nowMs), nowMs).open.filter((p) => !/記録なし/.test(p.status));
+}
+
+/** 確認の結果（AIX【物件確認した】等の記録）から、約束の答えの文を取り出す（新しい順・同じ文は1つ） */
+export function confirmAnswersOf(rows: ReadonlyArray<{ generated_text?: string | null; created_at?: string | null }>, o: { nowMs: number; maxAgeH?: number }): string[] {
+  const maxMs = (o.maxAgeH ?? 72) * 3600_000;
+  const out: string[] = [];
+  for (const r of rows) {
+    if (o.nowMs - msOf(r.created_at ?? null, 0) > maxMs) continue;
+    const s = findConfirmReportSentence(r.generated_text ?? "");
+    if (s && !out.includes(s)) out.push(s.slice(0, 120));
+  }
+  return out.slice(0, 4);
+}
+
+/** お客様が聞いた費用の種類（初期費用＝入居時／月額＝毎月）。両方・どちらでもない時は null */
+export function askedCostKind(customerTexts: ReadonlyArray<string>): "initial" | "monthly" | null {
+  const t = customerTexts.join("\n").normalize("NFKC");
+  const initial = /初期費用|初期|入居時|契約時|敷金|礼金|見積/.test(t);
+  const monthly = /月額|月々|毎月|月の(?:支払|家賃)|家賃(?:は|って)?いくら|管理費(?:込み?)?(?:で|は)?いくら/.test(t);
+  if (initial && !monthly) return "initial";
+  if (monthly && !initial) return "monthly";
+  return null;
+}
+
+/** この番より前、こちらの最後の送信の後のお客様の発言（今答える番の発言） */
+export function lastCustomerBundle(before: ReadonlyArray<SmMsg>): string[] {
+  const out: string[] = [];
+  for (let i = before.length - 1; i >= 0; i--) {
+    const m = before[i];
+    if (m?.sender !== "customer") break;
+    out.unshift(String(m?.text ?? ""));
+  }
+  return out;
+}
+
+const SENT_KIND_LINE: Record<SentKind, string> = {
+  estimate: "",
+  property_images: "送ったのは物件の資料（画像）。「御見積書」とは書かない（見積書はまだ送っていない）。",
+  check_result: "送ったのは確認の結果の文。資料・見積書を送ったとは書かない。",
+  images: "",
+  none: "この番ではまだ資料・画像・見積書を送っていない（約束の文だけ）。「ご査収ください」は書かない。",
+};
+
+export type SecondMaterialsInput = {
+  sent: SentThisTurn;
+  asks: ReadonlyArray<LedgerItem>;
+  promises: ReadonlyArray<OpenPromise>;
+  answers: ReadonlyArray<string>;
+  ngPoints?: string | null;
+  companyFactsNote?: string;
+  memoNote?: string;
+  costKind?: "initial" | "monthly" | null;
+  reactionKind?: string | null;
+};
+
+/** 2通目に渡す材料の1ブロック（何も無ければ空文字） */
+export function buildSecondMaterialsNote(i: SecondMaterialsInput): string {
+  const L: string[] = [];
+  const s = i.sent;
+  if (s.kind === "estimate") {
+    if (s.estimates.length >= 2) {
+      L.push(`・この番で送った物: 御見積書 ${s.estimates.length}件（${s.estimates.join("・")}）。2通目は${s.estimates.length}件分の御見積書について書く（全部の物件名を並べるか「${s.estimates.length}部屋の」「それぞれ」）。1件の名前だけで書かない。`);
+    } else {
+      L.push(`・この番で送った物: 御見積書${s.estimates.length === 1 ? `（${s.estimates[0]}）` : ""}。「物件資料」「間取り図」を送ったとは書かない。`);
+    }
+  } else if (SENT_KIND_LINE[s.kind]) {
+    L.push(`・この番で送った物: ${SENT_KIND_LINE[s.kind]}`);
+  }
+  if (!s.anySent) L.push("・何も送っていない番なので「お手隙の際にご査収ください」は書かない。");
+  if (i.costKind === "initial") L.push("・お客様が聞いたのは初期費用（入居の時に払う額）。月額（家賃・管理費）の話と取り違えない。");
+  else if (i.costKind === "monthly") L.push("・お客様が聞いたのは毎月の額（家賃・管理費）。初期費用の話と取り違えない。");
+  if (i.asks.length) {
+    L.push("・お客様がまだ答えをもらっていない依頼・質問（会話の帯と同じ読み）:");
+    for (const x of i.asks) L.push(`  - ${TOPIC_JA[x.topic]}「${x.quote}」（${x.status === "promised" ? "約束済み・結果待ち" : "まだ触れていない"}）`);
+    L.push("  → 答えの事実が1通目・下の確認の結果・会話にあれば、2通目で先に答える（例: 「角部屋につきまして201号室現在も募集中となります！！」）。事実が無ければ作らず「確認させて頂きます」の一文で受ける（落とさない）。");
+  }
+  if (i.promises.length) {
+    L.push("・こちらがした約束でまだ果たしていない物:");
+    for (const p of i.promises) L.push(`  - ${p.kind}の約束「${p.sentence}」`);
+    L.push("  → 答え（確認の結果）が下にあれば、2通目に入れて約束を閉じる（例: 「〇〇は現在305号室のみ募集に出ております！！」）。無ければ約束を言い直さない。");
+  }
+  if (i.answers.length) {
+    L.push("・確認の結果（AIX の記録・事実の出どころ。書く時はこの言葉どおり・足さない）:");
+    for (const a of i.answers) L.push(`  - 「${a}」`);
+  }
+  if (i.ngPoints?.trim()) L.push(`・お客様の NG 条件（物件の良い所・合う所として書かない）: ${i.ngPoints.trim().slice(0, 160)}`);
+  const body = L.join("\n");
+  const extra = [i.companyFactsNote?.trim() ?? "", i.memoNote?.trim() ? `【お客様のメモ（返信と同じ材料・2通目では関係する所だけ使う）】\n${i.memoNote.trim().slice(0, 700)}` : ""].filter(Boolean).join("\n\n");
+  if (!body && !extra) return "";
+  return [`【2通目の材料（返信の書く役と同じ材料・事実だけ。形と締めは下の【この2通目の形】が正）】`, body, extra].filter(Boolean).join("\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 出口の確かめ（決定論）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 「お手隙の際にご査収ください」の行（「ご査収頂きありがとうございます」は見てくれた事へのお礼なので当てない） */
+const RECEIPT_LINE_RE = /^[^\n]*ご査収(?:ください|下さい|願います|の程)[^\n]*$/gm;
+
+/** 何も送っていないのにご査収を書いた → その行を外す */
+export function fixReceiptWhenNotSent(text: string, sent: Pick<SentThisTurn, "anySent">): { text: string; applied: string[] } {
+  if (sent.anySent) return { text, applied: [] };
+  const applied: string[] = [];
+  const out = String(text ?? "").replace(RECEIPT_LINE_RE, (m) => { applied.push(m.trim()); return ""; }).replace(/\n{3,}/g, "\n\n").trim();
+  return applied.length ? { text: out, applied } : { text, applied: [] };
+}
+
+const DOC_WORD_RE = /物件資料(?:[・や]間取り図)?|お部屋の資料|物件の資料/g;
+const ESTIMATE_WORD_RE = /御見積書|お見積書|御見積り|お見積り/;
+
+/** 送った物の種類の言い方の取り違え。kind=estimate なのに「物件資料」と書いた → 御見積書に直す／property_images なのに「御見積書」→ 直さず当たりだけ返す */
+export function fixImageTypeWording(text: string, sent: Pick<SentThisTurn, "kind" | "images">): { text: string; applied: string[]; flagged: string[] } {
+  const t = String(text ?? "");
+  if (sent.kind === "estimate") {
+    const applied: string[] = [];
+    let out = t.replace(DOC_WORD_RE, (m) => { applied.push(m); return "御見積書"; });
+    out = out.replace(/御見積書[・や]御見積書/g, "御見積書");
+    const flagged = /間取り図/.test(out) ? ["間取り図"] : [];
+    return { text: applied.length ? out : t, applied, flagged };
+  }
+  if (sent.kind === "property_images" && ESTIMATE_WORD_RE.test(t) && /(?:となります|お送り|同封|ご査収)/.test(t)) {
+    return { text: t, applied: [], flagged: [t.match(ESTIMATE_WORD_RE)![0]] };
+  }
+  return { text: t, applied: [], flagged: [] };
+}
+
+const buildingOf = (label: string) => label.normalize("NFKC").replace(/[\s　]*[0-9A-Za-z-]{1,6}(?:号室)?$/, "").trim();
+const COUNT_WORD_RE = /それぞれ|[2-9２-９二三四五]部屋|[2-9２-９二三四五]件|お[2-9２-９二三]部屋|両方|どちらも/;
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** 空白を外した比べ（「メゾン シュシュ」と「メゾンシュシュ」を同じに見る） */
+const squash = (x: string) => x.normalize("NFKC").replace(/[\s　]/g, "");
+/** 建物名を空白の有無を問わず当てる正規表現（号室が続けばそれも） */
+const nameRe = (b: string) => new RegExp(`${[...squash(b)].map(escapeRe).join("[\\s　]*")}[\\s　]*(?:[0-9０-９A-Za-z-]{1,6}(?:号室)?)?`);
+
+/**
+ * 見積書を2件以上送ったのに1件の名前だけで書いた → 書いた名前を全部の名前に置き換える（どれも書いていなければ「最大限割引」の前に足す）。
+ * 2件は名前を並べる（12adf1bd「メゾンシュシュ・Belle Court大美野 の最大限割引しました」）・3件以上は「N部屋の」（実送信「2部屋の最大限割引させていただきました」の形）
+ */
+export function fixEstimateNames(text: string, estimates: ReadonlyArray<string>): { text: string; applied: string[]; flagged: string[] } {
+  const t = String(text ?? "");
+  if (estimates.length < 2) return { text: t, applied: [], flagged: [] };
+  const n = squash(t);
+  const mentioned = estimates.filter((e) => { const b = squash(buildingOf(e)); return b.length >= 2 && n.includes(b); });
+  if (mentioned.length >= 2 || COUNT_WORD_RE.test(t.normalize("NFKC"))) return { text: t, applied: [], flagged: [] };
+  const all = estimates.length <= 2 ? estimates.join("・") : `${estimates.length}部屋の`;
+  const tidy = (x: string) => x.replace(/のの/g, "の");
+  if (mentioned.length === 1) {
+    const b = buildingOf(mentioned[0]);
+    const re = nameRe(b);
+    if (re.test(t)) return { text: tidy(t.replace(re, () => all)), applied: [`${b}→${all}`], flagged: [] };
+    return { text: t, applied: [], flagged: [`見積書${estimates.length}件・名前1件`] };
+  }
+  if (/最大限割引/.test(t)) return { text: tidy(t.replace(/(?:の)?最大限割引/, () => `${all.endsWith("の") ? all : `${all}の`}最大限割引`)), applied: [`+${all}`], flagged: [] };
+  return { text: t, applied: [], flagged: [`見積書${estimates.length}件・名前なし`] };
+}
+
+/** 2通目（と1通目）で触れていない依頼・質問（直さず当たりだけ返す） */
+export function unansweredAsks(asks: ReadonlyArray<LedgerItem | RequestItem>, firstAndSecond: string): RequestItem[] {
+  return uncoveredRequests(asks as RequestItem[], firstAndSecond);
+}
+
+/** 費用の種類の取り違え（お客様は初期費用を聞いたのに2通目は月額だけ・その逆） */
+export function costKindMismatch(text: string, kind: "initial" | "monthly" | null): string | null {
+  const t = String(text ?? "").normalize("NFKC");
+  if (kind === "initial" && /月額|月々|毎月/.test(t) && !/初期費用|御?見積|お見積/.test(t)) return "初期費用を聞かれたのに月額";
+  if (kind === "monthly" && /初期費用/.test(t) && !/月額|月々|毎月|家賃|管理費/.test(t)) return "月額を聞かれたのに初期費用";
+  return null;
+}
+
+/** 内覧・申込の訴求の一文があるか（測る用） */
+export function hasViewingOrApplyPush(text: string): { viewing: boolean; apply: boolean } {
+  const t = String(text ?? "");
+  return {
+    viewing: /(?:ご内覧|ご案内|内覧|内見)(?:させて|頂|いただ|出来|でき|可能)|お部屋ご案内/.test(t),
+    apply: /お申込み?し(?:て)?お部屋[をも]?(?:抑え|押さえ)|お申し?込み(?:も)?させて|お部屋(?:を)?(?:抑え|押さえ)させて/.test(t),
+  };
+}
+
+export type SecondFinalResult = { text: string; applied: string[]; warnings: string[] };
+
+/** 出口の確かめを順に（ご査収 → 種類の言い方 → 見積書の件数 → 触れていない質問・費用の種類は当たりだけ） */
+export function applySecondFinalChecks(text: string, i: { sent: SentThisTurn; asks: ReadonlyArray<LedgerItem>; firstMessage?: string | null; costKind?: "initial" | "monthly" | null }): SecondFinalResult {
+  const applied: string[] = [];
+  const warnings: string[] = [];
+  let t = String(text ?? "");
+  const r1 = fixReceiptWhenNotSent(t, i.sent);
+  if (r1.applied.length) { t = r1.text; applied.push(...r1.applied.map((x) => `ご査収を外した「${x.slice(0, 30)}」`)); }
+  const r2 = fixImageTypeWording(t, i.sent);
+  if (r2.applied.length) { t = r2.text; applied.push(...r2.applied.map((x) => `${x}→御見積書`)); }
+  warnings.push(...r2.flagged.map((x) => `送った物の種類と違う言い方「${x}」`));
+  const r3 = fixEstimateNames(t, i.sent.estimates);
+  if (r3.applied.length) { t = r3.text; applied.push(...r3.applied.map((x) => `見積書の名前 ${x}`)); }
+  warnings.push(...r3.flagged);
+  for (const x of unansweredAsks(i.asks, `${i.firstMessage ?? ""}\n${t}`)) warnings.push(`まだ答えていない: ${TOPIC_JA[x.topic]}「${x.quote}」`);
+  const ck = costKindMismatch(t, i.costKind ?? null);
+  if (ck) warnings.push(ck);
+  return { text: t, applied, warnings };
+}
+
+/**
+ * 個人情報の線（返信生成・AIX 本体と同じ決まり）: 申込以降・審査の事情（screening-sensitive）・申込の線がある会話（全部渡してよい以外）・読めない時は Claude に固定。
+ * 戻り: pin＝Claude に固定（x-sumora-llm-post-apply: 1）／alt＝DeepSeek に回る（材料を伏せる・印 all）／claude＝もともと Claude
+ */
+export function secondMaterialsRoute(i: { postApply: boolean; cutoffAll: boolean; sensitive: boolean; readFailed?: boolean; goesAlt: boolean }): "pin" | "alt" | "claude" {
+  if (i.readFailed || i.postApply || i.sensitive || !i.cutoffAll) return "pin";
+  return i.goesAlt ? "alt" : "claude";
+}
