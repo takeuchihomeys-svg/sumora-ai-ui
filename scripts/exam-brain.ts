@@ -306,7 +306,8 @@ function readModelCheck(): { okTypes: Set<string>; okIds: Set<string>; badIds: S
 type PhaseResult = { label: string; ids: string[]; cmps: Array<{ id: string; cmp: Cmp; why: string }>; baseLabels: string[]; mainLabels: string[]; stopped: boolean; stopWhy: string; confirm: string[];
   /** 10/20 COST① 前（main）の答え: 使い回した・前の main から持ち越した・今 main で解いた・今は解かなかった（夜中に回す） */
   base: { reused: number; carried: number; ran: number; deferred: string[] } };
-const addBase = (res: PhaseResult, s: ReturnType<typeof readBaselineSummary>) => { if (!s) return; res.base.reused += s.reused; res.base.carried += s.carried.length; res.base.ran += s.run.length; res.base.deferred = [...new Set([...res.base.deferred, ...s.deferred])]; };
+// 確かめの回（confirm）は同じ問題をもう一度「前」に照らす＝使い回し・持ち越しは数えない（二重に数えない）・新しく解いた分だけ足す
+const addBase = (res: PhaseResult, s: ReturnType<typeof readBaselineSummary>, o: { confirm?: boolean } = {}) => { if (!s) return; if (!o.confirm) { res.base.reused += s.reused; res.base.carried += s.carried.length; } res.base.ran += s.run.length; res.base.deferred = [...new Set([...res.base.deferred, ...s.deferred])]; };
 async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label: string, model: "pro" | "flash"): Promise<PhaseResult> {
   const res: PhaseResult = { label, ids, cmps: [], baseLabels: [], mainLabels: [], stopped: false, stopWhy: "", confirm: [], base: { reused: 0, carried: 0, ran: 0, deferred: [] } };
   if (!ids.length) return res;
@@ -362,7 +363,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
     for (const id of conf) pl.items.get(id)!.reps = Math.max(pl.items.get(id)!.reps, reps);
     writeReps(Object.fromEntries(ids.map((id) => [id, pl.items.get(id)!.reps])));
     const o2 = await runBrainExam(baseArgs(conf), env);
-    addBase(res, readBaselineSummary(label));
+    addBase(res, readBaselineSummary(label), { confirm: true });
     res.baseLabels = [...new Set([...res.baseLabels, ...o2.baseLabels])]; res.mainLabels = [...new Set([...res.mainLabels, ...o2.mainLabels])];
     const b2 = o2.baseLabels.flatMap((b) => readRows(b)).filter((r) => conf.includes(r.id));
     const got = new Set(b2.map((r) => r.id));
