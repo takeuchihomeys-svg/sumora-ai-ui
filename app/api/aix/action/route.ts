@@ -1035,7 +1035,7 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
   //   申込以降と同じ扱い（回さない・印を付けて Anthropic・画像の物件オススメも Claude）。読めなければ当たった側。戻す SCREENING_PII_CLAUDE_AIX=off
   const sensitiveP = conversationId && screeningPiiAixEnabled() && screeningPiiPinsAction(action)
     && (readAltConfig() !== null || shouldRouteVisionAlt(action))
-    ? screeningSensitiveForConversation(conversationId)
+    ? screeningSensitiveForConversation(conversationId, { fresh: true })
     : null;
   try {
     if (conversationId) {

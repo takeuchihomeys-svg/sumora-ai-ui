@@ -34,16 +34,17 @@ export function clearScreeningSensitiveCache(): void { cache().clear(); inflight
  * 会話に審査の事情が出たか。① リクエストの箱に同じ会話の物があればそれ ② 覚えた物 ③ DB（loadScreeningSensitive）。
  * 読めなければ SCREENING_SENSITIVE_UNREADABLE（当たった側）。
  */
-export async function screeningSensitiveForConversation(conversationId: string, opts: { sb?: Sb; now?: number; load?: (sb: Sb, id: string) => Promise<ScreeningSensitiveHit | null> } = {}): Promise<ScreeningSensitiveHit | null> {
+export async function screeningSensitiveForConversation(conversationId: string, opts: { sb?: Sb; now?: number; load?: (sb: Sb, id: string) => Promise<ScreeningSensitiveHit | null>; fresh?: boolean } = {}): Promise<ScreeningSensitiveHit | null> {
   const scope = currentDeepseekScope();
-  if (scope?.screeningSensitive && scope.conversationId === conversationId) {
+  if (!opts.fresh && scope?.screeningSensitive && scope.conversationId === conversationId) {
     try { return await scope.screeningSensitive(); } catch { return SCREENING_SENSITIVE_UNREADABLE; }
   }
   const now = opts.now ?? Date.now();
   const c = cache();
   const e = c.get(conversationId);
-  if (e && (e.hit || now - e.at < SCREENING_SENSITIVE_MISS_TTL_MS)) return e.hit;
-  const running = inflight.get(conversationId);
+  // fresh（入口＝aix/action）: 当たらなかった覚えは使わない（2分の間に打ち明けられた会話を見落とさない・画像の物件オススメには出口の網が無い）
+  if (e && (e.hit || (!opts.fresh && now - e.at < SCREENING_SENSITIVE_MISS_TTL_MS))) return e.hit;
+  const running = opts.fresh ? undefined : inflight.get(conversationId);
   if (running) return running;
   const p = (async () => {
     try {
@@ -59,6 +60,6 @@ export async function screeningSensitiveForConversation(conversationId: string, 
       inflight.delete(conversationId);
     }
   })();
-  inflight.set(conversationId, p);
+  if (!opts.fresh) inflight.set(conversationId, p);
   return p;
 }

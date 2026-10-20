@@ -79,6 +79,15 @@ it("当たった会話は覚え続ける・当たらない会話は短い間だ�
   await screeningSensitiveForConversation("c-miss", { sb: {} as never, load: loadMiss, now: SCREENING_SENSITIVE_MISS_TTL_MS + 1 });
   ok(missLoads === 2, `時間が過ぎても読み直さない ${missLoads}`);
 });
+it("入口（fresh）は当たらなかった覚えを使わない・当たりの覚えは使う", async () => {
+  clearScreeningSensitiveCache();
+  let n = 0;
+  await screeningSensitiveForConversation("c-fresh", { sb: {} as never, load: async () => { n++; return null; }, now: 0 });
+  const r = await screeningSensitiveForConversation("c-fresh", { sb: {} as never, load: async () => { n++; return HIT; }, now: 1000, fresh: true });
+  ok(r === HIT && n === 2, `2分の間に打ち明けられた会話を見落とした ${n}`);
+  const r2 = await screeningSensitiveForConversation("c-fresh", { sb: {} as never, load: async () => { n++; return null; }, now: 2000, fresh: true });
+  ok(r2 === HIT && n === 2, `当たりの覚えを使わない ${n}`);
+});
 it("読めなければ当たった側（覚えない）", async () => {
   clearScreeningSensitiveCache();
   const r = await screeningSensitiveForConversation("c-err", { sb: {} as never, load: async () => { throw new Error("db down"); } });
