@@ -5,6 +5,7 @@ import { examStageKeysOf, type FileMap } from "../exam-scope";
 import { findCarryOver, relevantStageOf, siblingDirs, type BaselineFile } from "../brain-exam-baseline";
 import { modelOf, flashProof, isFixTarget, UNIT_USD, type PlanProblem } from "../exam-brain";
 import { buildConductorUser } from "../exam-conductor";
+import { failedOf, machineHint, machineReason, parseReason, aggregateReasons, buildReaderUser, READER_SYSTEM, REASON_KINDS, type ReaderRow } from "../exam-failure-reader";
 import { warmDecision, warmLimit, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3, repSig, type Cmp, type RowLite } from "../exam-brain";
 
 let fail = 0, pass = 0;
@@ -105,6 +106,26 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   const a = mk("brain", 0.5), b = mk("draft", 0.3);
   let k = 0; while (k < a.length && a[k] === b[k]) k++;
   ok("並び: 外れの型・線・単価・外れの理由が先頭で同じ＝直した中身・上限が変わっても前置きが揃う", a.indexOf("【今までの外れの型") === 0 && k >= a.indexOf("【直した中身】") && a.indexOf("【直した中身】") < a.indexOf("【上限】") && a.includes("前の実行の外れの理由"), String(k));
+}
+
+// ─── QUALITY⑤ 外れの理由の読み手（決まった所） ─────────────────────────────────
+{
+  const R = (o: Partial<ReaderRow>): ReaderRow => ({ id: "q1", rep: 1, path: { code: "返信", ok: true }, score: { pass: true }, ...o });
+  ok("外れ: 過半数が合格でない・答案なしは外れにしない", failedOf([R({ score: { pass: false } }), R({ rep: 2, score: { pass: false } }), R({ rep: 3 })]) && !failedOf([R({}), R({ rep: 2, score: { pass: false } }), R({ rep: 3 })]) && !failedOf([]));
+  const ng = R({ score: { pass: false }, ng: [{ violated: true }], asks: [{ covered: true }] });
+  ok("決まりで決まる: 道・依頼は合っていて言ってはいけない事に当たった → 言ってはいけない事（読み手を呼ばない）", machineReason("q1", [ng])?.kind === "言ってはいけない事");
+  ok("決まりで決まらない: 道の外れ → 読み手へ", machineReason("q1", [R({ path: { code: "AIX:x", ok: false }, score: { pass: false } })]) === null);
+  const hint = machineHint([R({ path: { code: "AIX:x", ok: false }, score: { pass: false } }), R({ rep: 2 })], [R({})]);
+  ok("機械の手がかり: 道の外れ・回の割れ・前と違う・退行", hint.some((h) => h.includes("道が外れた")) && hint.some((h) => h.includes("割れた")) && hint.some((h) => h.includes("前（main）は道")) && !hint.some((h) => h.includes("退行")), hint.join("／"));
+  ok("読み手の答え: 型が一覧に無い物は捨てる・根拠は60字まで・自信の既定は mid", parseReason("q1", '{"kind":"道の取り違え","evidence":"「確認します」と約束すべき所を返信で答えた"}')?.confidence === "mid" && parseReason("q1", '{"kind":"嘘の型"}') === null && parseReason("q1", "xx") === null);
+  ok("読み手の答え: 前後の文・```・末尾のカンマも読む", parseReason("q1", 'はい\n```json\n{"kind":"判定の誤り","evidence":"x","confidence":"high",}\n```')?.kind === "判定の誤り");
+  const agg = aggregateReasons([{ id: "a", kind: "依頼の抜け", evidence: "", confidence: "mid", by: "flash" }, { id: "b", kind: "道の取り違え", evidence: "", confidence: "mid", by: "flash" }, { id: "c", kind: "依頼の抜け", evidence: "", confidence: "mid", by: "flash" }]);
+  ok("数え: 多い順・同じ数は型の順", agg.map((a) => `${a.kind}${a.n}`).join() === "依頼の抜け2,道の取り違え1" && agg[0].ids.join() === "a,c");
+  const u1 = buildReaderUser({ id: "q1", type: "t", customer: "駐車場ありますか", accept: ["2段:check"], asks: [{ q: "駐車場", route: "promise", point: "確認" }] }, [R({ path: { code: "返信", ok: false }, score: { pass: false } })], [R({})]);
+  const u2 = buildReaderUser({ id: "q1", type: "t", customer: "駐車場ありますか", accept: ["2段:check"], asks: [{ q: "駐車場", route: "promise", point: "確認" }] }, [R({ path: { code: "AIX:y", ok: false }, score: { pass: false } })], [R({})]);
+  let k = 0; while (k < u1.length && u1[k] === u2[k]) k++;
+  ok("キャッシュの並び: 問題と正解・前の答案が先（今の答案が変わっても前置きが揃う）", k >= u1.indexOf("【今の答案"), String(k));
+  ok("型の定義は6つ全部 system に入る", REASON_KINDS.every((x) => READER_SYSTEM.includes(`- ${x}`)));
 }
 
 console.log(`exam-brain-like-line: ${pass} PASS / ${fail} FAIL`);

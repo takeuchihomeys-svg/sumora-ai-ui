@@ -193,7 +193,7 @@ export const newTally = (): LlmTally => ({ calls: 0, usd: 0, refused: 0, failed:
 /** 試験の入口（setupLlmTest）を通した時は使用量が llm_usage_logs に入る＝手元の記録（local-llm-spend.jsonl）には足さない（1日の上限で二重に数えない） */
 let LOCAL_SPEND = true;
 export function setLocalSpendRecording(on: boolean): void { LOCAL_SPEND = on; }
-export async function callConductorLlm(role: "conductor" | "diff-reader" | "triage", model: string, system: string, user: string, tally: LlmTally, o: { maxTokens?: number } = {}): Promise<string | null> {
+export async function callConductorLlm(role: "conductor" | "diff-reader" | "triage" | "failure-reader", model: string, system: string, user: string, tally: LlmTally, o: { maxTokens?: number } = {}): Promise<string | null> {
   const body = `${system}\n${user}`;
   const sig = piiValueSignal(body);
   const refuse = testPiiRefusal(process.env, body, `試験の${role}`);

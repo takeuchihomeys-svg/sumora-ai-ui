@@ -50,6 +50,7 @@ import {
   CONDUCTOR_SYSTEM, DIFF_READER_SYSTEM, TRIAGE_SYSTEM, LINKS, LINK_IDS, MAP_STAGES, MAP_STAGE_JA, MAP_STAGE_SHORT,
   type MissMap, type ProblemLike, type RowLike, type GoldLite, type Candidate, type ConductorInput, type DiffReading, type TriageItem,
 } from "./lib/exam-conductor";
+import { READER_SYSTEM, REASON_KINDS, buildReaderUser, parseReason, machineReason, aggregateReasons, failedOf, type Reason, type ReaderProblem, type ReaderRow } from "./lib/exam-failure-reader";
 import { diffMaterial, verifyRange, mainAnsweredIds, callConductorLlm, newTally, setLocalSpendRecording, savePlan, loadPlan, saveResult, loadLatestResult, mainRowsOf, latestRowsOf, refreshPath, saveMissMap, safeLines, CONDUCTOR_DIR, PRO_MODEL as C_PRO, FLASH_MODEL as C_FLASH, type SavedPlan } from "./lib/exam-conductor-io";
 
 const argv = process.argv.slice(2);
@@ -509,7 +510,59 @@ async function runMain() {
   const sp = await spendOf(labels, startedAt).catch(() => ({ n: 0, usd: 0 }));
   const judge = phases.reduce((s, p) => { const c = readCost(p.label); return { usd: s.usd + (c?.judgeUsd ?? 0), n: s.n + (c?.judgeCalls ?? 0) }; }, { usd: 0, n: 0 });
   log(`費用（この実行・llm_usage_logs の ${labels.length}つの route）: ${sp.n}回 $${sp.usd.toFixed(3)}＋判定 ${judge.n}回 $${judge.usd.toFixed(3)}`);
+  // 10/20 QUALITY⑤ 外れの理由を読む（flash・短い JSON）→ 型ごとに数えて保存（次の --conduct の材料）
+  if (!flag("no-reasons") && (process.env.EXAM_REASONS ?? "").trim().toLowerCase() !== "off") {
+    try { await readFailureReasons(label, phases, pl); } catch (e) { log(`（外れの理由が読めない: ${String(e instanceof Error ? e.message : e).slice(0, 160)}）`); }
+  }
   log(`台帳: ${ledger.length}行（npx tsx scripts/exam-brain.ts --ledger --id=<問題>）`);
+}
+
+// ─── 10/20 QUALITY⑤ 外れの理由の読み手（flash） ─────────────────────────────────
+/** 問題の材料（伏せた会話の写し: お客様の発言と直前のこちらの送信。竹内さんの実送信 staffText は出さない） */
+function readerProblemOf(p: AnyProblem | undefined, id: string): ReaderProblem {
+  const q = (p ?? { id, type: "" }) as AnyProblem & { customer?: string; context?: Array<{ s?: string; t?: string; aix?: boolean }>; mustNot?: string[]; asks?: ReaderProblem["asks"]; ng?: string[] };
+  const lastStaff = [...(q.context ?? [])].reverse().filter((m) => m.s === "staff").slice(0, 1).map((m) => `${m.aix ? "【AIX】" : ""}${m.t ?? ""}`).join("");
+  return { id, type: String(q.type ?? ""), customer: String(q.customer ?? ""), lastStaff, accept: q.accept, mustNot: q.mustNot, asks: q.asks, ng: q.ng };
+}
+async function readFailureReasons(label: string, phases: PhaseResult[], pl: Plan) {
+  const max = Math.max(0, Number(arg("reasons-max", "10")) || 10);
+  // 今の答案: 下書きまで流した問題は下書きの段の答案（ブレインの欄も入っている）・それ以外はブレインの段
+  const curOf = new Map<string, ReaderRow[]>(), mainOf = new Map<string, ReaderRow[]>();
+  for (const ph of phases) {
+    const rows = readRows(ph.label) as ReaderRow[];
+    const base = ph.baseLabels.flatMap((b) => readRows(b)) as ReaderRow[];
+    for (const id of ph.ids) {
+      const rs = rows.filter((r) => r.id === id);
+      if (rs.length && (ph.label.endsWith("-d") || !curOf.has(id))) curOf.set(id, rs);
+      const bs = base.filter((r) => r.id === id);
+      if (bs.length && (ph.label.endsWith("-d") || !mainOf.has(id))) mainOf.set(id, bs);
+    }
+  }
+  const failed = [...curOf].filter(([, rs]) => failedOf(rs)).map(([id]) => id);
+  if (!failed.length) { log("外れの理由: 落ちた問題なし"); return; }
+  const tally = newTally();
+  const out: Reason[] = [];
+  for (const id of failed.slice(0, max)) {
+    const cur = curOf.get(id) ?? [], main = mainOf.get(id) ?? [];
+    const m = machineReason(id, cur);
+    if (m) { out.push(m); continue; }
+    const user = safeLines(buildReaderUser(readerProblemOf(pl.probs.get(id), id), cur, main)).text;
+    const r = parseReason(id, (await callConductorLlm("failure-reader", C_FLASH, READER_SYSTEM, user, tally, { maxTokens: 200 })) ?? "");
+    if (r) out.push(r);
+  }
+  const agg = aggregateReasons(out);
+  log(`\n外れの理由（読み手 flash・${out.length}/${failed.length}問${failed.length > max ? `・上限 ${max}問` : ""}）: ${agg.map((a) => `${a.kind} ${a.n}`).join("・") || "読めなかった"}`);
+  for (const r of out) log(`  ${r.id}: ${r.kind}（${r.confidence}${r.by === "machine" ? "・決まり" : ""}）— ${r.evidence}`);
+  if (tally.calls || tally.refused || tally.failed) log(`  読み手の費用: ${tally.calls}回 $${tally.usd.toFixed(4)}${tally.refused ? `・個人の値で送らなかった ${tally.refused}` : ""}${tally.failed ? `・失敗 ${tally.failed}` : ""}`);
+  mkdirSync(CONDUCTOR_DIR, { recursive: true });
+  const rec = { label, at: new Date().toISOString(), failed, reasons: out, aggregate: agg.map((a) => ({ kind: a.kind, n: a.n, ids: a.ids })), kinds: REASON_KINDS, llm: tally };
+  writeFileSync(join(CONDUCTOR_DIR, `${label}.reasons.json`), JSON.stringify(rec, null, 1));
+  writeFileSync(join(CONDUCTOR_DIR, "reasons-latest.json"), JSON.stringify(rec, null, 1));
+  log(`  保存: ${join(CONDUCTOR_DIR, `${label}.reasons.json`)}（次の --conduct の材料）`);
+}
+/** 前の実行の外れの理由（次の --conduct の材料）。無ければ null */
+function loadLatestReasons(): { label: string; at: string; reasons: Reason[]; aggregate: Array<{ kind: string; n: number; ids: string[] }> } | null {
+  try { return JSON.parse(readFileSync(join(CONDUCTOR_DIR, "reasons-latest.json"), "utf8")) as ReturnType<typeof loadLatestReasons>; } catch { return null; }
 }
 
 // ─── 予約を流す ─────────────────────────────────────────────────────────
@@ -811,6 +864,9 @@ async function conductInner() {
   const ranked = pl.allPicks.map((p, i) => ({ p, i, ...smallRank(p.why) })).sort((a, b) => a.tier - b.tier || b.sim - a.sim || a.i - b.i);
   for (const x of ranked) if (x.tier <= 1 || cands.size < 24) addCand(x.p.id, "");
   for (const f of prev?.next ?? []) addCand(f.id, `前の結果: ${f.why}`);
+  // 10/20 QUALITY⑤: 前の実行で読み手が付けた外れの理由（「正解が揺れている」「判定の誤り」は直す的でない＝候補の理由に書くだけ）
+  const lastReasons = loadLatestReasons();
+  for (const r of lastReasons?.reasons ?? []) addCand(r.id, `前の外れの理由「${r.kind}」${r.evidence ? `: ${r.evidence.slice(0, 30)}` : ""}`);
   if (reading) {
     for (const e of map.entries) {
       if (cands.size >= 40) break;
@@ -830,6 +886,7 @@ async function conductInner() {
     change: { cls: mat.cls, files: mat.files.map((f) => ({ file: f.file, cls: f.cls })), kbIds: mat.kbIds, commits: mat.commits, reading },
     missTop: Object.entries(map.byKind).sort((a, b) => b[1] - a[1]).map(([kind, n]) => ({ kind, n })),
     linkMiss: LINK_IDS.map((l) => ({ link: l, label: LINKS[l].label, n: map.byLink[l].n, miss: map.byLink[l].miss })),
+    reasons: (lastReasons?.aggregate ?? []).map((a) => ({ kind: a.kind, n: a.n })),
     candidates, capUsd, unit: UNIT_USD, flashOkTypes: [...mc.okTypes, ...[...mc.okIds].filter((id) => !mc.badIds.has(id))], prevFocus: prev?.next ?? [],
   };
   // ⑤ 司令塔（pro・短い JSON）。答えない時は決まった順の代わり
