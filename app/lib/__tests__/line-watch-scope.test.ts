@@ -31,7 +31,7 @@ it("sceneKeyOf: postApply=true は対象外・未指定は今まで通り", () =
 });
 it("スイッチ: 既定 on・off で止まる／止まり の LINE は既定 off・記録は既定 on", () => {
   eq([watchPostApplyScopeEnabled({}), watchPostApplyScopeEnabled({ LINE_WATCH_POSTAPPLY_SCOPE: "off" })], [true, false]);
-  eq([watchStallAlertEnabled({}), watchStallAlertEnabled({ LINE_WATCH_STALL_ALERT: "on" })], [false, true]);
+  eq([watchStallAlertEnabled({}), watchStallAlertEnabled({ LINE_WATCH_STALL_ALERT: "on" }), watchStallAlertEnabled({ LINE_WATCH_STALL_ALERT: "off" })], [true, true, false]);
   eq([watchStallCheckEnabled({}), watchStallCheckEnabled({ LINE_WATCH_STALL_CHECK: "off" })], [true, false]);
 });
 
