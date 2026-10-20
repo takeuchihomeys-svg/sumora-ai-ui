@@ -1,0 +1,2037 @@
+{
+ "builtAt": "2026-10-18T08:17:51.276Z",
+ "note": "パーツごとの試験の正解（4段）。status=machine と pending は竹内さんの確認待ち。contract は TurnContract の形（足す欄は extra）",
+ "golds": [
+  {
+   "id": "q008",
+   "type": "約束の返信を先に",
+   "accept": [
+    "2段:pickup"
+   ],
+   "mustNotPath": [
+    "AIX:物件"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "神崎川はすんでましたが 不便だったので汗",
+     "label": "神崎川は住んでいたが不便だった",
+     "kind": "request",
+     "receive": null,
+     "properties": [],
+     "route": "promise",
+     "routes": [
+      "promise"
+     ],
+     "answer": "神崎川エリアを除いて新たにピックアップしてお送りする",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "神崎川に住んでいた経験",
+      "不便だったという不満",
+      "エリア除外の再提案"
+     ],
+     "priority": 1,
+     "say": "神崎川エリアを除いて新たにピックアップしてお送りする",
+     "why": null,
+     "specIndex": 0
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [],
+   "closeOnly": false,
+   "finalText": "かしこまりました！！\n神崎川エリアを除いた地域から、YUMAさん達にオススメできる家賃9万円以内・ペット可・お2人でご入居可能なお部屋を新たにピックアップしてお送りさせて頂きます！！\n引き続き何卒よろしくお願い致します！！",
+   "pending": [],
+   "notes": [],
+   "contract": {
+    "asks": [
+     {
+      "quote": "神崎川はすんでましたが 不便だったので汗",
+      "topic": "other",
+      "kind": "request",
+      "route": "promise",
+      "answer": "神崎川エリアを除いて新たにピックアップしてお送りする",
+      "basis": "conversation",
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": false
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "神崎川に住んでいた経験",
+       "不便だったという不満",
+       "エリア除外の再提案"
+      ],
+      "priority": 1,
+      "say": "神崎川エリアを除いて新たにピックアップしてお送りする",
+      "why": null,
+      "receive": null,
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q018",
+   "type": "初回",
+   "accept": [
+    "2段:pickup"
+   ],
+   "mustNotPath": [],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "】 （ご希望のお部屋探しご条件） ①【ご入居の時期】⇒まだ未定 ②【ご希望の家賃（7万円〜10万円）】⇒ ③【希望の広さ・間取り】⇒1LDKか2LDK ④【希望築年数】特になし ⑤【ご希望のエリア・駅名】⇒都島駅、桜ノ宮駅 ⑥【ご希望の駅徒歩分数】⇒近いなら良いが妥協はできます。",
+     "label": "条件フォーム（都島・桜ノ宮・1LDK/2LDK・7〜10万）",
+     "kind": "request",
+     "receive": null,
+     "properties": [],
+     "route": "promise",
+     "routes": [
+      "promise"
+     ],
+     "answer": "条件を復唱してピックアップしてお送りする",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "希望エリアは都島駅・桜ノ宮駅",
+      "家賃7〜10万円の希望",
+      "1LDKか2LDKの希望",
+      "条件を復唱し物件を送る約束"
+     ],
+     "priority": 1,
+     "say": "条件を復唱してピックアップしてお送りする",
+     "why": null,
+     "specIndex": 0
+    },
+    {
+     "id": "a2",
+     "quote": "騒音に悩んでいる",
+     "label": null,
+     "kind": "request",
+     "receive": null,
+     "properties": [],
+     "route": "promise",
+     "routes": [
+      "promise"
+     ],
+     "answer": "防音性の高い RC 造で探す",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "木造の騒音に悩んでいるとの申告",
+      "RC造希望との申告",
+      "防音性の高いRC中心に探す約束",
+      "初期費用の割引を約束"
+     ],
+     "priority": 3,
+     "say": "防音性の高い RC 造で探す",
+     "why": null,
+     "specIndex": 1
+    },
+    {
+     "id": "a3",
+     "quote": "騒音のクレームで疲れている",
+     "kind": "request",
+     "receive": null,
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "騒音のお悩みに寄り添い、防音性の高いRC造を中心にご提案します",
+     "basis": null,
+     "aixKey": null,
+     "status": "machine",
+     "facts": [],
+     "priority": 2,
+     "say": "騒音のお悩みに寄り添い、防音性の高いRC造を中心にご提案します",
+     "why": "flash が足した",
+     "specIndex": null
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [],
+   "closeOnly": false,
+   "finalText": "YUMAさん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！\n\n都島駅・桜ノ宮駅周辺全域から家賃7万円〜10万円以内・1LDKまたは2LDKのRC造でYUMAさんにオススメできるお部屋をピックアップしてお送りさせて頂きます！！\n\n騒音にお悩みとのことですので、防音性の高いRC造のお部屋を中心に、初期費用も最大限割引させて頂きYUMAさんのお引越しにかかる費用を出来る限り抑えさせて頂きます😌！！\n\nYUMAさんがご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます！！何卒よろしくお願い致します！！",
+   "pending": [
+    "先に答える項目（a1）は竹内さんの文の順から機械で決めた",
+    "a3: flash が足した「騒音のクレームで疲れている」（依頼・道=reply）"
+   ],
+   "notes": [
+    "flash の指摘: 下書きに無い初期費用の割引約束を追加している",
+    "flash の指摘: 入居時期・築年数・駅徒歩の条件復唱が抜けている"
+   ],
+   "contract": {
+    "asks": [
+     {
+      "quote": "】 （ご希望のお部屋探しご条件） ①【ご入居の時期】⇒まだ未定 ②【ご希望の家賃（7万円〜10万円）】⇒ ③【希望の広さ・間取り】⇒1LDKか2LDK ④【希望築年数】特になし ⑤【ご希望のエリア・駅名】⇒都島駅、桜ノ宮駅 ⑥【ご希望の駅徒歩分数】⇒近いなら良いが妥協はできます。",
+      "topic": "other",
+      "kind": "request",
+      "route": "promise",
+      "answer": "条件を復唱してピックアップしてお送りする",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "騒音に悩んでいる",
+      "topic": "other",
+      "kind": "request",
+      "route": "promise",
+      "answer": "防音性の高い RC 造で探す",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "騒音のクレームで疲れている",
+      "topic": "other",
+      "kind": "request",
+      "route": "reply",
+      "answer": "騒音のお悩みに寄り添い、防音性の高いRC造を中心にご提案します",
+      "basis": null,
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": false
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "希望エリアは都島駅・桜ノ宮駅",
+       "家賃7〜10万円の希望",
+       "1LDKか2LDKの希望",
+       "条件を復唱し物件を送る約束"
+      ],
+      "priority": 1,
+      "say": "条件を復唱してピックアップしてお送りする",
+      "why": null,
+      "receive": null,
+      "properties": []
+     },
+     {
+      "id": "a2",
+      "status": "spec",
+      "facts": [
+       "木造の騒音に悩んでいるとの申告",
+       "RC造希望との申告",
+       "防音性の高いRC中心に探す約束",
+       "初期費用の割引を約束"
+      ],
+      "priority": 3,
+      "say": "防音性の高い RC 造で探す",
+      "why": null,
+      "receive": null,
+      "properties": []
+     },
+     {
+      "id": "a3",
+      "status": "machine",
+      "facts": [],
+      "priority": 2,
+      "say": "騒音のお悩みに寄り添い、防音性の高いRC造を中心にご提案します",
+      "why": "flash が足した",
+      "receive": null,
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q032",
+   "type": "謝罪を受ける",
+   "accept": [
+    "2段:pickup"
+   ],
+   "mustNotPath": [
+    "AIX:物件"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "何回も送ってきてもらってるのにすみません🥲",
+     "label": null,
+     "kind": "feeling",
+     "receive": "apology",
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "全然大丈夫・満足できるのが第一なので要望はいつでも",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "お客様が謝罪している",
+      "何度も送っている事実"
+     ],
+     "priority": 3,
+     "say": "全然大丈夫・満足できるのが第一なので要望はいつでも",
+     "why": null,
+     "specIndex": 0
+    },
+    {
+     "id": "a2",
+     "quote": "大国町エリアで1Kでできたら7畳以上の部屋で探してます🙇🏻‍♀️🙇🏻‍♀️",
+     "label": "大国町エリアで1K・7畳以上",
+     "kind": "request",
+     "receive": null,
+     "properties": [],
+     "route": "promise",
+     "routes": [
+      "promise"
+     ],
+     "answer": "その条件で新たにピックアップしてお送りする",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "大国町エリア希望",
+      "1K希望",
+      "7畳以上希望"
+     ],
+     "priority": 1,
+     "say": "その条件で新たにピックアップしてお送りする",
+     "why": null,
+     "specIndex": 1
+    },
+    {
+     "id": "a3",
+     "quote": "よろしくお願いします",
+     "kind": "request",
+     "receive": null,
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "こちらこそよろしくお願いします",
+     "basis": null,
+     "aixKey": null,
+     "status": "machine",
+     "facts": [],
+     "priority": 2,
+     "say": "こちらこそよろしくお願いします",
+     "why": "flash が足した",
+     "specIndex": null
+    }
+   ],
+   "leadWith": "a2",
+   "mustNot": [],
+   "closeOnly": false,
+   "finalText": "YUMAさんお世話になっております！！\n全然大丈夫です😊！！\nYUMAさんがご満足頂くお部屋が見つかるのが第一ですのでご要望出てきましたらいつでもお気軽にご連絡ください😌！！\n\n大国町エリアで1K・7畳以上のお部屋を新たにピックアップしてお送りさせて頂きます！！\nピックアップ出来次第ご連絡させて頂きます！！",
+   "pending": [
+    "a3: flash が足した「よろしくお願いします」（依頼・道=reply）",
+    "先に答える項目: 機械=a2・flash=a1（どちらか決めてもらう）"
+   ],
+   "notes": [],
+   "contract": {
+    "asks": [
+     {
+      "quote": "何回も送ってきてもらってるのにすみません🥲",
+      "topic": "other",
+      "kind": "feeling",
+      "route": "reply",
+      "answer": "全然大丈夫・満足できるのが第一なので要望はいつでも",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "大国町エリアで1Kでできたら7畳以上の部屋で探してます🙇🏻‍♀️🙇🏻‍♀️",
+      "topic": "other",
+      "kind": "request",
+      "route": "promise",
+      "answer": "その条件で新たにピックアップしてお送りする",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "よろしくお願いします",
+      "topic": "other",
+      "kind": "request",
+      "route": "reply",
+      "answer": "こちらこそよろしくお願いします",
+      "basis": null,
+      "aixKey": null
+     }
+    ],
+    "leadWith": 1,
+    "closeOnly": false,
+    "mustNot": [],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": "apologetic",
+     "acknowledge": true
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "お客様が謝罪している",
+       "何度も送っている事実"
+      ],
+      "priority": 3,
+      "say": "全然大丈夫・満足できるのが第一なので要望はいつでも",
+      "why": null,
+      "receive": "apology",
+      "properties": []
+     },
+     {
+      "id": "a2",
+      "status": "spec",
+      "facts": [
+       "大国町エリア希望",
+       "1K希望",
+       "7畳以上希望"
+      ],
+      "priority": 1,
+      "say": "その条件で新たにピックアップしてお送りする",
+      "why": null,
+      "receive": null,
+      "properties": []
+     },
+     {
+      "id": "a3",
+      "status": "machine",
+      "facts": [],
+      "priority": 2,
+      "say": "こちらこそよろしくお願いします",
+      "why": "flash が足した",
+      "receive": null,
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q053",
+   "type": "返信かAIXか",
+   "accept": [
+    "AIX:viewing_invite",
+    "AIX:property_check_result"
+   ],
+   "mustNotPath": [],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "どっちも気になります",
+     "label": "（見積を送った2件）どっちも気になる",
+     "kind": "request",
+     "receive": null,
+     "properties": [],
+     "route": "aix",
+     "routes": [
+      "aix"
+     ],
+     "answer": "AIX で内覧のご案内（空室の方はいつでも・退去予定の方は退去予定日の後＝スタッフが確かめた中身）",
+     "basis": "conversation",
+     "aixKey": "viewing_invite",
+     "status": "spec",
+     "facts": [
+      "2件とも内覧希望と解釈",
+      "空室は都合の良い日に対応",
+      "退去予定は10月1日以降可能"
+     ],
+     "priority": 1,
+     "say": "AIX で内覧のご案内（空室の方はいつでも・退去予定の方は退去予定日の後＝スタッフが確かめた中身）",
+     "why": null,
+     "specIndex": 0
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [],
+   "closeOnly": false,
+   "finalText": "よろしければ一度ご内覧如何でしょうか😊！！\n\nThe Peak Osaka Bay ◯号室は空室ですので、YUMAさんご都合よろしいお日にちにお部屋ご案内させて頂きます！！\n\nエスリード弁天町パークプレイスにつきましては退去予定のお部屋となりますので10月1日以降ご内覧可能です😌！！",
+   "pending": [],
+   "notes": [
+    "flash の指摘: 下書きはAIXでの案内だが、竹内さんは直接日程調整の内覧案内を返している"
+   ],
+   "contract": {
+    "asks": [
+     {
+      "quote": "どっちも気になります",
+      "topic": "other",
+      "kind": "request",
+      "route": "aix",
+      "answer": "AIX で内覧のご案内（空室の方はいつでも・退去予定の方は退去予定日の後＝スタッフが確かめた中身）",
+      "basis": "conversation",
+      "aixKey": "viewing_invite"
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": false
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "2件とも内覧希望と解釈",
+       "空室は都合の良い日に対応",
+       "退去予定は10月1日以降可能"
+      ],
+      "priority": 1,
+      "say": "AIX で内覧のご案内（空室の方はいつでも・退去予定の方は退去予定日の後＝スタッフが確かめた中身）",
+      "why": null,
+      "receive": null,
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q056",
+   "type": "お客様の事情",
+   "accept": [
+    "返信"
+   ],
+   "mustNotPath": [
+    "AIX:viewing_invite"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "あと子どもが1人産まれる予定なので 住む人数が大人2 子ども1 小型犬1 猫1になる予定です",
+     "label": null,
+     "kind": "report",
+     "receive": null,
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "受けて、気に入った部屋は内覧できると伝える",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "お客様の家族構成の予定",
+      "ペット飼育条件の案内済み"
+     ],
+     "priority": 1,
+     "say": "受けて、気に入った部屋は内覧できると伝える",
+     "why": null,
+     "specIndex": 0
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [],
+   "closeOnly": false,
+   "finalText": "お気に召されましたお部屋ご内覧可能です😊！！\nYUMAさんご都合よろしいお日にちにご案内させて頂きます！！",
+   "pending": [],
+   "notes": [
+    "flash の指摘: 人数・ペットの条件への言及がなく、内覧案内のみ返している"
+   ],
+   "contract": {
+    "asks": [
+     {
+      "quote": "あと子どもが1人産まれる予定なので 住む人数が大人2 子ども1 小型犬1 猫1になる予定です",
+      "topic": "other",
+      "kind": "report",
+      "route": "reply",
+      "answer": "受けて、気に入った部屋は内覧できると伝える",
+      "basis": "conversation",
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": false
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "お客様の家族構成の予定",
+       "ペット飼育条件の案内済み"
+      ],
+      "priority": 1,
+      "say": "受けて、気に入った部屋は内覧できると伝える",
+      "why": null,
+      "receive": null,
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q057",
+   "type": "一般的な事を保留しない",
+   "accept": [
+    "返信"
+   ],
+   "mustNotPath": [
+    "AIX:viewing_invite",
+    "2段:check",
+    "AIX:property_check_result"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "（退去予定の部屋は）内見できないということか",
+     "label": null,
+     "kind": "question",
+     "receive": null,
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "退去前は室内は見られないが外観・共用部・周辺は見られる・申込で先に押さえて退去後に内覧もできる",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "退去前は室内内覧不可",
+      "外観・共用部・周辺は現地確認可",
+      "退去後案内可",
+      "申込後に内覧可"
+     ],
+     "priority": 1,
+     "say": "退去前は室内は見られないが外観・共用部・周辺は見られる・申込で先に押さえて退去後に内覧もできる",
+     "why": null,
+     "specIndex": 0
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [],
+   "closeOnly": false,
+   "finalText": "はい！！\n退去前のため室内の内覧はできないのですが、建物の外観や共用部・周辺環境は現地でご確認いただけます！！\n室内は退去後にご案内可能となりますので、お気に召されましたらお申込みでお部屋を先に押さえてからご内覧頂くことも可能です！！",
+   "pending": [],
+   "notes": [],
+   "contract": {
+    "asks": [
+     {
+      "quote": "（退去予定の部屋は）内見できないということか",
+      "topic": "other",
+      "kind": "question",
+      "route": "reply",
+      "answer": "退去前は室内は見られないが外観・共用部・周辺は見られる・申込で先に押さえて退去後に内覧もできる",
+      "basis": "conversation",
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": false
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "退去前は室内内覧不可",
+       "外観・共用部・周辺は現地確認可",
+       "退去後案内可",
+       "申込後に内覧可"
+      ],
+      "priority": 1,
+      "say": "退去前は室内は見られないが外観・共用部・周辺は見られる・申込で先に押さえて退去後に内覧もできる",
+      "why": null,
+      "receive": null,
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q069",
+   "type": "広告の理解",
+   "accept": [
+    "返信"
+   ],
+   "mustNotPath": [
+    "AIX:property_check_result",
+    "2段:check"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "他のとこは掲載してるけど募集無しですか？",
+     "label": "他の物件は掲載しているが募集無しなのか",
+     "kind": "question",
+     "receive": null,
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "その3件だけがまだ募集中・SUUMO は2週間ごとの更新で掲載が残る／おとり物件の場合もある・気になる部屋を送れば確認と",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "送付済みSUUMO掲載の3件のみ募集中",
+      "SUUMOは2週間毎更新で掲載残存",
+      "募集終了でもオトリ掲載の場合あり",
+      "気になる部屋送付で確認と見積対応"
+     ],
+     "priority": 1,
+     "say": "その3件だけがまだ募集中・SUUMO は2週間ごとの更新で掲載が残る／おとり物件の場合もある・気になる部屋を送れば確認と見積",
+     "why": null,
+     "specIndex": 0
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [],
+   "closeOnly": false,
+   "finalText": "YUMAさんお世話になっております！！\nはい！！\nお送り頂きましたSUUMO掲載のお部屋こちら3件のみまだ募集されているお部屋となります！！\n\nSUUMOは原則不動産仲介業者による2週間毎に更新となりますので、まだ更新せずに掲載が残っている形や、実際はお部屋の募集終了しているにもかかわらずご来店いただく為のオトリ物件として掲載している場合が御座います！！\nYUMAさん気になられたお部屋お送り頂きますと最新の募集状況の確認と最大限割引しました初期費用御見積しお送りさせて頂きます😌！！\n気になるお部屋御座いましたら、いつでもお気軽にお送りください😊！！",
+   "pending": [],
+   "notes": [],
+   "contract": {
+    "asks": [
+     {
+      "quote": "他のとこは掲載してるけど募集無しですか？",
+      "topic": "other",
+      "kind": "question",
+      "route": "reply",
+      "answer": "その3件だけがまだ募集中・SUUMO は2週間ごとの更新で掲載が残る／おとり物件の場合もある・気になる部屋を送れば確認と",
+      "basis": "conversation",
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": false
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "送付済みSUUMO掲載の3件のみ募集中",
+       "SUUMOは2週間毎更新で掲載残存",
+       "募集終了でもオトリ掲載の場合あり",
+       "気になる部屋送付で確認と見積対応"
+      ],
+      "priority": 1,
+      "say": "その3件だけがまだ募集中・SUUMO は2週間ごとの更新で掲載が残る／おとり物件の場合もある・気になる部屋を送れば確認と見積",
+      "why": null,
+      "receive": null,
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q070",
+   "type": "広告の理解",
+   "accept": [
+    "2段:pickup",
+    "返信"
+   ],
+   "mustNotPath": [
+    "AIX:物件"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "初期費用やく3000円と家賃払えば入居できると思いました💦",
+     "label": "初期費用は約3000円と家賃を払えば入居できると思った",
+     "kind": "report",
+     "receive": null,
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply",
+      "promise"
+     ],
+     "answer": "初期費用を最大割引して翌月家賃＋2,980円（広告の意味を説明）",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "広告は初期費用最大割引で翌月家賃＋2,980円"
+     ],
+     "priority": 1,
+     "say": "初期費用を最大割引して翌月家賃＋2,980円（広告の意味を説明）",
+     "why": null,
+     "specIndex": 0
+    },
+    {
+     "id": "a2",
+     "quote": "（限度額が分からない）",
+     "label": null,
+     "kind": "report",
+     "receive": null,
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply",
+      "promise"
+     ],
+     "answer": "初期費用の限度額を聞き、その範囲で探す",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "初期費用の限度額を確認し範囲内で探す"
+     ],
+     "priority": 2,
+     "say": "初期費用の限度額を聞き、その範囲で探す",
+     "why": null,
+     "specIndex": 1
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [],
+   "closeOnly": false,
+   "finalText": "初期費用最大割引させて頂き\n翌月家賃＋2,980円となります！！\nYUMAさん初期費用限度額御座いますでしょうか！\n限度額の範囲内でご条件に合ったお部屋ピックアップさせていただきます！！",
+   "pending": [
+    "先に答える項目（a1）は竹内さんの文の順から機械で決めた"
+   ],
+   "notes": [],
+   "contract": {
+    "asks": [
+     {
+      "quote": "初期費用やく3000円と家賃払えば入居できると思いました💦",
+      "topic": "other",
+      "kind": "report",
+      "route": "reply",
+      "answer": "初期費用を最大割引して翌月家賃＋2,980円（広告の意味を説明）",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "（限度額が分からない）",
+      "topic": "other",
+      "kind": "report",
+      "route": "reply",
+      "answer": "初期費用の限度額を聞き、その範囲で探す",
+      "basis": "conversation",
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": false
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "広告は初期費用最大割引で翌月家賃＋2,980円"
+      ],
+      "priority": 1,
+      "say": "初期費用を最大割引して翌月家賃＋2,980円（広告の意味を説明）",
+      "why": null,
+      "receive": null,
+      "properties": []
+     },
+     {
+      "id": "a2",
+      "status": "spec",
+      "facts": [
+       "初期費用の限度額を確認し範囲内で探す"
+      ],
+      "priority": 2,
+      "say": "初期費用の限度額を聞き、その範囲で探す",
+      "why": null,
+      "receive": null,
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q156",
+   "type": "返信かAIXか",
+   "accept": [
+    "AIX:viewing_invite"
+   ],
+   "mustNotPath": [
+    "2段:check",
+    "2段:estimate",
+    "2段"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "こちらの物件気になります",
+     "label": null,
+     "kind": "request",
+     "receive": null,
+     "properties": [],
+     "route": "aix",
+     "routes": [
+      "aix"
+     ],
+     "answer": "引用した物件（さっきこちらが送った2件のうちの1件）の内覧をご案内する。初期費用は送った時に伝え済み",
+     "basis": "conversation",
+     "aixKey": "viewing_invite",
+     "status": "spec",
+     "facts": [
+      "お客様が物件に興味を示した",
+      "直前送信で2件と初期費用を案内済み",
+      "内覧の日程候補を提示"
+     ],
+     "priority": 1,
+     "say": "引用した物件（さっきこちらが送った2件のうちの1件）の内覧をご案内する。初期費用は送った時に伝え済み",
+     "why": null,
+     "specIndex": 0
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [
+    "募集状況を確認する約束にする",
+    "御見積書を作成してお送りする約束にする",
+    "引用していない別の物件もまとめて案内する"
+   ],
+   "closeOnly": false,
+   "finalText": "【AIX】かしこまりました😊！！\nグランパシフィック桜川南よろしければYUMAさんご都合よろしいお日にちにお部屋ご案内させて頂きます！！\n\n直近ですと\n10/16(金) 13:00〜15:00\n10/17(土) 16:00〜17:30にてご案内可能です！！\n\nYUMAさんご都合よろしいお日にち御座いますでしょうか😌！！",
+   "pending": [],
+   "notes": [
+    "flash の指摘: 下書きは物件名を明示しないが、竹内さんは物件名を出して内覧を案内している",
+    "flash の指摘: 竹内さんは具体的な日程候補を複数提示している"
+   ],
+   "contract": {
+    "asks": [
+     {
+      "quote": "こちらの物件気になります",
+      "topic": "other",
+      "kind": "request",
+      "route": "aix",
+      "answer": "引用した物件（さっきこちらが送った2件のうちの1件）の内覧をご案内する。初期費用は送った時に伝え済み",
+      "basis": "conversation",
+      "aixKey": "viewing_invite"
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [
+     "募集状況を確認する約束にする",
+     "御見積書を作成してお送りする約束にする",
+     "引用していない別の物件もまとめて案内する"
+    ],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": false
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "お客様が物件に興味を示した",
+       "直前送信で2件と初期費用を案内済み",
+       "内覧の日程候補を提示"
+      ],
+      "priority": 1,
+      "say": "引用した物件（さっきこちらが送った2件のうちの1件）の内覧をご案内する。初期費用は送った時に伝え済み",
+      "why": null,
+      "receive": null,
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q157",
+   "type": "返信かAIXか",
+   "accept": [
+    "2段:check",
+    "2段"
+   ],
+   "mustNotPath": [
+    "返信"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "クリエオーレ一津屋Ⅱのところは代理契約は難しいでしょうか？",
+     "label": null,
+     "kind": "request",
+     "receive": null,
+     "properties": [
+      "クリエオーレ一津屋Ⅱ"
+     ],
+     "route": "promise",
+     "routes": [
+      "promise"
+     ],
+     "answer": "代理契約が可能かどうかを管理会社に交渉させて頂く（確認ではなく交渉）",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "代理契約可否を管理会社に交渉",
+      "確認ではなく交渉を約束"
+     ],
+     "priority": 1,
+     "say": "代理契約が可能かどうかを管理会社に交渉させて頂く（確認ではなく交渉）",
+     "why": null,
+     "specIndex": 0
+    },
+    {
+     "id": "a2",
+     "quote": "プレジオ永和ＡＳＩＡＮ 6階 （URL） by SUUMO 河内永和 1LDK 5階 （URL） by SUUMO",
+     "label": "プレジオ永和ASIAN 6階・河内永和1LDK 5階（お客様が送った物件）",
+     "kind": "request",
+     "receive": null,
+     "properties": [
+      "プレジオ永和ASIAN"
+     ],
+     "route": "promise",
+     "routes": [
+      "promise"
+     ],
+     "answer": "お送り頂きました2件の募集状況を確認させて頂く・営業時間が終わっているので明日一番で確認して連絡する",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "2件の募集状況を確認",
+      "営業時間終了で明日一番連絡"
+     ],
+     "priority": 2,
+     "say": "お送り頂きました2件の募集状況を確認させて頂く・営業時間が終わっているので明日一番で確認して連絡する",
+     "why": null,
+     "specIndex": 1
+    },
+    {
+     "id": "a3",
+     "quote": "わかりました😭",
+     "kind": "feeling",
+     "receive": "anxiety",
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "不安を一言で受ける",
+     "basis": "judgement",
+     "aixKey": null,
+     "status": "machine",
+     "facts": [
+      "不安に寄り添う言葉"
+     ],
+     "priority": 3,
+     "say": "不安を受ける",
+     "why": "発言から足した・竹内さんの文が受けている",
+     "specIndex": null
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [
+    "代理契約が出来ると言い切る",
+    "審査の結果を推測で書く"
+   ],
+   "closeOnly": false,
+   "finalText": "クリエオーレ一津屋Ⅱの代理契約が可能かどうかを管理会社に交渉させて頂きます！！\n\nお送り頂きましたプレジオ永和ＡＳＩＡＮ6階と河内永和1LDK5階も、募集状況確認させて頂きます！！\n本日は管理会社の営業時間が終了しておりますので、明日一番で確認しご連絡させて頂きます！！\n無事ご入居間に合いますように最善を尽くさせて頂きます！！\n何卒よろしくお願い致します！！",
+   "pending": [
+    "a3: 受け止め（不安）を発言から足した",
+    "先に答える項目（a1）は竹内さんの文の順から機械で決めた"
+   ],
+   "notes": [
+    "flash の指摘: a3は下書きで不安受け止めのみだが、竹内さんは最善を尽くす旨も添えている"
+   ],
+   "contract": {
+    "asks": [
+     {
+      "quote": "クリエオーレ一津屋Ⅱのところは代理契約は難しいでしょうか？",
+      "topic": "other",
+      "kind": "request",
+      "route": "promise",
+      "answer": "代理契約が可能かどうかを管理会社に交渉させて頂く（確認ではなく交渉）",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "プレジオ永和ＡＳＩＡＮ 6階 （URL） by SUUMO 河内永和 1LDK 5階 （URL） by SUUMO",
+      "topic": "other",
+      "kind": "request",
+      "route": "promise",
+      "answer": "お送り頂きました2件の募集状況を確認させて頂く・営業時間が終わっているので明日一番で確認して連絡する",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "わかりました😭",
+      "topic": "other",
+      "kind": "feeling",
+      "route": "reply",
+      "answer": "不安を一言で受ける",
+      "basis": "judgement",
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [
+     "代理契約が出来ると言い切る",
+     "審査の結果を推測で書く"
+    ],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": "anxious",
+     "acknowledge": true
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "代理契約可否を管理会社に交渉",
+       "確認ではなく交渉を約束"
+      ],
+      "priority": 1,
+      "say": "代理契約が可能かどうかを管理会社に交渉させて頂く（確認ではなく交渉）",
+      "why": null,
+      "receive": null,
+      "properties": [
+       "クリエオーレ一津屋Ⅱ"
+      ]
+     },
+     {
+      "id": "a2",
+      "status": "spec",
+      "facts": [
+       "2件の募集状況を確認",
+       "営業時間終了で明日一番連絡"
+      ],
+      "priority": 2,
+      "say": "お送り頂きました2件の募集状況を確認させて頂く・営業時間が終わっているので明日一番で確認して連絡する",
+      "why": null,
+      "receive": null,
+      "properties": [
+       "プレジオ永和ASIAN"
+      ]
+     },
+     {
+      "id": "a3",
+      "status": "machine",
+      "facts": [
+       "不安に寄り添う言葉"
+      ],
+      "priority": 3,
+      "say": "不安を受ける",
+      "why": "発言から足した・竹内さんの文が受けている",
+      "receive": "anxiety",
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q158",
+   "type": "待って・閉じる",
+   "accept": [
+    "返信",
+    "AIX:物件"
+   ],
+   "mustNotPath": [
+    "2段:check"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "分かりました！",
+     "label": null,
+     "kind": "feeling",
+     "receive": "agree",
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "気になる点等出てきましたらいつでもお気軽にご連絡くださいと締め、新着でご条件（独立洗面台・トイレ別）に合った物件が出たら",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "お客様の了承の返信",
+      "募集中は1室のみと案内済み",
+      "類似条件の別物件を提示",
+      "初期費用の見積書を送付"
+     ],
+     "priority": 1,
+     "say": "気になる点等出てきましたらいつでもお気軽にご連絡くださいと締め、新着でご条件（独立洗面台・トイレ別）に合った物件が出たらお送りすると約束する",
+     "why": null,
+     "specIndex": 0
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [
+    "この番に何も送っていないのに『ご査収ください』と書く"
+   ],
+   "closeOnly": true,
+   "finalText": "【AIX】[画像]\n―\n【AIX】[画像]\n―\n【AIX】🌟H-maison大正Ⅶ ◯号室\n\n（オススメポイント）\n・家賃74,500円・管理費5,000円（合計79,500円）\n・間取り：1LDK（リビング8.1帖、洋室3.5帖）\n・環状線「大正」徒歩14分\n・敷金礼金なしのため初期費用をかなり抑えてご入居頂けます！！\n・2026年8月築\n・独立洗面台・浴室乾燥機・オートロック\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！\n―\nYUMAさんこちらのお部屋如何でしょうか！！\nMv.fm大阪大正と類似の条件のお部屋となり、敷金礼金なしで初期費用をかなり抑える事が出来ます！！\nYUMAさんお気に召されましたらこちらのお部屋併せてお部屋ご案内させて頂きます！！\nお手隙の際にご査収ください😌！！",
+   "pending": [],
+   "notes": [
+    "flash の指摘: 新着条件に合う物件が出たら送るとの約束が無い",
+    "flash の指摘: 気になる点があれば連絡くださいの締めが無い",
+    "flash の指摘: 了承への受け止めより別物件の提案が先"
+   ],
+   "contract": {
+    "asks": [
+     {
+      "quote": "分かりました！",
+      "topic": "other",
+      "kind": "feeling",
+      "route": "reply",
+      "answer": "気になる点等出てきましたらいつでもお気軽にご連絡くださいと締め、新着でご条件（独立洗面台・トイレ別）に合った物件が出たら",
+      "basis": "conversation",
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": true,
+    "mustNot": [
+     "この番に何も送っていないのに『ご査収ください』と書く"
+    ],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": true
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "お客様の了承の返信",
+       "募集中は1室のみと案内済み",
+       "類似条件の別物件を提示",
+       "初期費用の見積書を送付"
+      ],
+      "priority": 1,
+      "say": "気になる点等出てきましたらいつでもお気軽にご連絡くださいと締め、新着でご条件（独立洗面台・トイレ別）に合った物件が出たらお送りすると約束する",
+      "why": null,
+      "receive": "agree",
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q164",
+   "type": "待って・閉じる",
+   "accept": [
+    "返信"
+   ],
+   "mustNotPath": [
+    "2段"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "確認させていただきます🙇",
+     "label": null,
+     "kind": "report",
+     "receive": null,
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "はい！！ 気になる点出てきましたら何時でもお気軽にご連絡ください！！ 何卒よろしくお願い致します😌！！",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "お客様が確認すると発言",
+      "気になる点があれば連絡を促す"
+     ],
+     "priority": 1,
+     "say": "はい！！ 気になる点出てきましたら何時でもお気軽にご連絡ください！！ 何卒よろしくお願い致します😌！！",
+     "why": null,
+     "specIndex": 0
+    },
+    {
+     "id": "a2",
+     "quote": "ありがとうございます！",
+     "kind": "feeling",
+     "receive": "thanks",
+     "properties": [],
+     "route": "none",
+     "routes": [
+      "none"
+     ],
+     "answer": null,
+     "basis": null,
+     "aixKey": null,
+     "status": "machine",
+     "facts": [],
+     "priority": null,
+     "say": null,
+     "why": "spec の依頼から受け止めを分けた・竹内さんの文は受けていない＝触れない",
+     "specIndex": null
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [
+    "答えられる事を確認の約束にする",
+    "伴走・安心の余計な一文を足す",
+    "頼まれていない内覧・申込の誘いを足す"
+   ],
+   "closeOnly": true,
+   "finalText": "はい！！\n気になる点出てきましたら何時でもお気軽にご連絡ください！！\n何卒よろしくお願い致します😌！！",
+   "pending": [
+    "a2: 受け止め（お礼）を spec の依頼から分けた"
+   ],
+   "notes": [],
+   "contract": {
+    "asks": [
+     {
+      "quote": "確認させていただきます🙇",
+      "topic": "other",
+      "kind": "report",
+      "route": "reply",
+      "answer": "はい！！ 気になる点出てきましたら何時でもお気軽にご連絡ください！！ 何卒よろしくお願い致します😌！！",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "ありがとうございます！",
+      "topic": "other",
+      "kind": "feeling",
+      "route": "none",
+      "answer": null,
+      "basis": null,
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": true,
+    "mustNot": [
+     "答えられる事を確認の約束にする",
+     "伴走・安心の余計な一文を足す",
+     "頼まれていない内覧・申込の誘いを足す"
+    ],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": false
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "お客様が確認すると発言",
+       "気になる点があれば連絡を促す"
+      ],
+      "priority": 1,
+      "say": "はい！！ 気になる点出てきましたら何時でもお気軽にご連絡ください！！ 何卒よろしくお願い致します😌！！",
+      "why": null,
+      "receive": null,
+      "properties": []
+     },
+     {
+      "id": "a2",
+      "status": "machine",
+      "facts": [],
+      "priority": null,
+      "say": null,
+      "why": "spec の依頼から受け止めを分けた・竹内さんの文は受けていない＝触れない",
+      "receive": "thanks",
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q166",
+   "type": "一般的な事を保留しない",
+   "accept": [
+    "返信"
+   ],
+   "mustNotPath": [
+    "2段"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "明日もともとスーモに乗せていた 不動産屋さんに依頼して 内覧予定になってるんですが 気に入ればそのまま こちらでお願いとかもできますか？",
+     "label": null,
+     "kind": "question",
+     "receive": null,
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "はい😊！！ 明日の内覧で気に入って頂けたら、そのまま弊社でのお手続きで大丈夫です！！ 明日お部屋ご内覧頂きお部屋問題な",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "お客様の内覧予定を把握",
+      "気に入れば弊社で手続き可と回答",
+      "申込で部屋を抑えると説明",
+      "弊社内覧も可能と案内"
+     ],
+     "priority": 1,
+     "say": "はい😊！！ 明日の内覧で気に入って頂けたら、そのまま弊社でのお手続きで大丈夫です！！ 明日お部屋ご内覧頂きお部屋問題なければこちらでお申込のお手続きを行いお部屋抑えさせて頂きます！！ 弊社でもお部屋ご内覧可能ですので、YUMAさんよろしければ、弊社にてお部屋ご内覧頂く事も可能となります！！ YUMAさんご内覧ご希望の場合もお気軽にお申し付けください😌！！",
+     "why": null,
+     "specIndex": 0
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [],
+   "closeOnly": false,
+   "finalText": "はい😊！！\n明日の内覧で気に入って頂けたら、そのまま弊社でのお手続きで大丈夫です！！\n明日お部屋ご内覧頂きお部屋問題なければこちらでお申込のお手続きを行いお部屋抑えさせて頂きます！！\n\n弊社でもお部屋ご内覧可能ですので、YUMAさんよろしければ、弊社にてお部屋ご内覧頂く事も可能となります！！\nYUMAさんご内覧ご希望の場合もお気軽にお申し付けください😌！！",
+   "pending": [],
+   "notes": [],
+   "contract": {
+    "asks": [
+     {
+      "quote": "明日もともとスーモに乗せていた 不動産屋さんに依頼して 内覧予定になってるんですが 気に入ればそのまま こちらでお願いとかもできますか？",
+      "topic": "other",
+      "kind": "question",
+      "route": "reply",
+      "answer": "はい😊！！ 明日の内覧で気に入って頂けたら、そのまま弊社でのお手続きで大丈夫です！！ 明日お部屋ご内覧頂きお部屋問題な",
+      "basis": "conversation",
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": false
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "お客様の内覧予定を把握",
+       "気に入れば弊社で手続き可と回答",
+       "申込で部屋を抑えると説明",
+       "弊社内覧も可能と案内"
+      ],
+      "priority": 1,
+      "say": "はい😊！！ 明日の内覧で気に入って頂けたら、そのまま弊社でのお手続きで大丈夫です！！ 明日お部屋ご内覧頂きお部屋問題なければこちらでお申込のお手続きを行いお部屋抑えさせて頂きます！！ 弊社でもお部屋ご内覧可能ですので、YUMAさんよろしければ、弊社にてお部屋ご内覧頂く事も可能となります！！ YUMAさんご内覧ご希望の場合もお気軽にお申し付けください😌！！",
+      "why": null,
+      "receive": null,
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q170",
+   "type": "不安→次の手",
+   "accept": [
+    "2段:pickup",
+    "AIX:物件"
+   ],
+   "mustNotPath": [
+    "返信"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "お風呂が狭いと赤ちゃんのお風呂入れるのが難しいなって思っちゃって…💦",
+     "label": null,
+     "kind": "request",
+     "receive": null,
+     "properties": [],
+     "route": "promise",
+     "routes": [
+      "promise"
+     ],
+     "answer": "YUMAさんお世話になっております！！ ご要望お聞かせ頂きありがとうございます😊！！ お風呂広めのお部屋を中心にYUM",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "お風呂が狭いとの不安",
+      "広めの風呂を中心に再検索",
+      "条件に合う部屋を調べる約束"
+     ],
+     "priority": 1,
+     "say": "YUMAさんお世話になっております！！ ご要望お聞かせ頂きありがとうございます😊！！ お風呂広めのお部屋を中心にYUMAさんのご条件に合ったお部屋お調べさせて頂きます！！ YUMAさんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
+     "why": null,
+     "specIndex": 0
+    },
+    {
+     "id": "a2",
+     "quote": "ありがとうございますm(_ _)m",
+     "kind": "feeling",
+     "receive": "thanks",
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "お礼を一言で受ける",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "machine",
+     "facts": [],
+     "priority": 2,
+     "say": "お礼を受ける",
+     "why": "spec の依頼から受け止めを分けた・竹内さんの文が受けている",
+     "specIndex": null
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [],
+   "closeOnly": false,
+   "finalText": "YUMAさんお世話になっております！！\nご要望お聞かせ頂きありがとうございます😊！！\nお風呂広めのお部屋を中心にYUMAさんのご条件に合ったお部屋お調べさせて頂きます！！\nYUMAさんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
+   "pending": [
+    "a2: 受け止め（お礼）を spec の依頼から分けた"
+   ],
+   "notes": [],
+   "contract": {
+    "asks": [
+     {
+      "quote": "お風呂が狭いと赤ちゃんのお風呂入れるのが難しいなって思っちゃって…💦",
+      "topic": "other",
+      "kind": "request",
+      "route": "promise",
+      "answer": "YUMAさんお世話になっております！！ ご要望お聞かせ頂きありがとうございます😊！！ お風呂広めのお部屋を中心にYUM",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "ありがとうございますm(_ _)m",
+      "topic": "other",
+      "kind": "feeling",
+      "route": "reply",
+      "answer": "お礼を一言で受ける",
+      "basis": "conversation",
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": true
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "お風呂が狭いとの不安",
+       "広めの風呂を中心に再検索",
+       "条件に合う部屋を調べる約束"
+      ],
+      "priority": 1,
+      "say": "YUMAさんお世話になっております！！ ご要望お聞かせ頂きありがとうございます😊！！ お風呂広めのお部屋を中心にYUMAさんのご条件に合ったお部屋お調べさせて頂きます！！ YUMAさんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
+      "why": null,
+      "receive": null,
+      "properties": []
+     },
+     {
+      "id": "a2",
+      "status": "machine",
+      "facts": [],
+      "priority": 2,
+      "say": "お礼を受ける",
+      "why": "spec の依頼から受け止めを分けた・竹内さんの文が受けている",
+      "receive": "thanks",
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q172",
+   "type": "待って・閉じる",
+   "accept": [
+    "返信"
+   ],
+   "mustNotPath": [
+    "2段:check"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "ありがとうございます💦",
+     "label": null,
+     "kind": "feeling",
+     "receive": "thanks",
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "はい😊！！ YUMAさん気になる点等出てきましたら何時でもお気軽にご連絡ください！！ YUMAさんにオススメ出来るお部",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "お客様がお礼を述べた",
+      "気になる点があれば連絡してほしい",
+      "募集が出たら送ると約束"
+     ],
+     "priority": 1,
+     "say": "はい😊！！ YUMAさん気になる点等出てきましたら何時でもお気軽にご連絡ください！！ YUMAさんにオススメ出来るお部屋募集に出次第お送りさせて頂きます！！",
+     "why": null,
+     "specIndex": 0
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [],
+   "closeOnly": true,
+   "finalText": "はい😊！！\nYUMAさん気になる点等出てきましたら何時でもお気軽にご連絡ください！！\nYUMAさんにオススメ出来るお部屋募集に出次第お送りさせて頂きます！！",
+   "pending": [],
+   "notes": [],
+   "contract": {
+    "asks": [
+     {
+      "quote": "ありがとうございます💦",
+      "topic": "other",
+      "kind": "feeling",
+      "route": "reply",
+      "answer": "はい😊！！ YUMAさん気になる点等出てきましたら何時でもお気軽にご連絡ください！！ YUMAさんにオススメ出来るお部",
+      "basis": "conversation",
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": true,
+    "mustNot": [],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": true
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "お客様がお礼を述べた",
+       "気になる点があれば連絡してほしい",
+       "募集が出たら送ると約束"
+      ],
+      "priority": 1,
+      "say": "はい😊！！ YUMAさん気になる点等出てきましたら何時でもお気軽にご連絡ください！！ YUMAさんにオススメ出来るお部屋募集に出次第お送りさせて頂きます！！",
+      "why": null,
+      "receive": "thanks",
+      "properties": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "q174",
+   "type": "待って・閉じる",
+   "accept": [
+    "2段:pickup",
+    "AIX:物件"
+   ],
+   "mustNotPath": [
+    "AIX:viewing_invite"
+   ],
+   "asks": [
+    {
+     "id": "a1",
+     "quote": "場所が少し遠い気もしてて、もし他にも候補ありましたらお願いしたいです(ぺこり)",
+     "label": null,
+     "kind": "request",
+     "receive": null,
+     "properties": [],
+     "route": "promise",
+     "routes": [
+      "promise"
+     ],
+     "answer": "ご査収頂きありがとうございます😊！！ かしこまりました！！ YUMAさんにオススメできるお部屋を新たにピックアップして",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "spec",
+     "facts": [
+      "他候補の依頼を承知",
+      "新規物件を選定し送付",
+      "確認後に連絡する"
+     ],
+     "priority": 1,
+     "say": "ご査収頂きありがとうございます😊！！ かしこまりました！！ YUMAさんにオススメできるお部屋を新たにピックアップしてお送りさせて頂きます！！ 確認出来次第ご連絡させて頂きます！！",
+     "why": null,
+     "specIndex": 0
+    },
+    {
+     "id": "a2",
+     "quote": "そうなんですね、、(うるうる)",
+     "kind": "feeling",
+     "receive": "care",
+     "properties": [],
+     "route": "none",
+     "routes": [
+      "none"
+     ],
+     "answer": null,
+     "basis": "judgement",
+     "aixKey": null,
+     "status": "machine",
+     "facts": [
+      "特になし"
+     ],
+     "priority": null,
+     "say": null,
+     "why": "spec の依頼から受け止めを分けた・竹内さんの文は受けていない＝触れない",
+     "specIndex": null
+    },
+    {
+     "id": "a3",
+     "quote": "承知しました！",
+     "kind": "feeling",
+     "receive": "agree",
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "了承を一言で受ける",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "machine",
+     "facts": [
+      "承知しましたを受ける"
+     ],
+     "priority": 2,
+     "say": "了承を受ける",
+     "why": "spec の依頼から受け止めを分けた・竹内さんの文が受けている",
+     "specIndex": null
+    },
+    {
+     "id": "a4",
+     "quote": "ありがとうございます！",
+     "kind": "feeling",
+     "receive": "thanks",
+     "properties": [],
+     "route": "reply",
+     "routes": [
+      "reply"
+     ],
+     "answer": "お礼を一言で受ける",
+     "basis": "conversation",
+     "aixKey": null,
+     "status": "machine",
+     "facts": [
+      "ご査収へのお礼を受ける"
+     ],
+     "priority": 3,
+     "say": "お礼を受ける",
+     "why": "spec の依頼から受け止めを分けた・竹内さんの文が受けている",
+     "specIndex": null
+    },
+    {
+     "id": "a5",
+     "quote": "広くて綺麗ですね！✨",
+     "kind": "report",
+     "receive": null,
+     "properties": [],
+     "route": "none",
+     "routes": [
+      "none"
+     ],
+     "answer": null,
+     "basis": "judgement",
+     "aixKey": null,
+     "status": "machine",
+     "facts": [
+      "特になし"
+     ],
+     "priority": null,
+     "say": null,
+     "why": "spec の依頼の中の別の部分（竹内さんの文は答えていない＝触れない？）",
+     "specIndex": null
+    },
+    {
+     "id": "a6",
+     "quote": "一旦見てみたいです！",
+     "kind": "report",
+     "receive": null,
+     "properties": [],
+     "route": "none",
+     "routes": [
+      "none"
+     ],
+     "answer": null,
+     "basis": "judgement",
+     "aixKey": null,
+     "status": "machine",
+     "facts": [
+      "特になし"
+     ],
+     "priority": null,
+     "say": null,
+     "why": "spec の依頼の中の別の部分（竹内さんの文は答えていない＝触れない？）",
+     "specIndex": null
+    }
+   ],
+   "leadWith": "a1",
+   "mustNot": [
+    "頼まれていない内覧・申込の誘いを足す"
+   ],
+   "closeOnly": false,
+   "finalText": "ご査収頂きありがとうございます😊！！\nかしこまりました！！\nYUMAさんにオススメできるお部屋を新たにピックアップしてお送りさせて頂きます！！\n確認出来次第ご連絡させて頂きます！！",
+   "pending": [
+    "a2: 受け止め（気遣い・共感）を spec の依頼から分けた",
+    "a3: 受け止め（了承）を spec の依頼から分けた",
+    "a4: 受け止め（お礼）を spec の依頼から分けた",
+    "a5: 「広くて綺麗ですね！✨」は触れないで良いか",
+    "a6: 「一旦見てみたいです！」は触れないで良いか"
+   ],
+   "notes": [
+    "flash の指摘: a3・a4の了承とお礼への受け止めが無い",
+    "flash の指摘: a6の内見希望への受け止めが無い"
+   ],
+   "contract": {
+    "asks": [
+     {
+      "quote": "場所が少し遠い気もしてて、もし他にも候補ありましたらお願いしたいです(ぺこり)",
+      "topic": "other",
+      "kind": "request",
+      "route": "promise",
+      "answer": "ご査収頂きありがとうございます😊！！ かしこまりました！！ YUMAさんにオススメできるお部屋を新たにピックアップして",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "そうなんですね、、(うるうる)",
+      "topic": "other",
+      "kind": "feeling",
+      "route": "none",
+      "answer": null,
+      "basis": "judgement",
+      "aixKey": null
+     },
+     {
+      "quote": "承知しました！",
+      "topic": "other",
+      "kind": "feeling",
+      "route": "reply",
+      "answer": "了承を一言で受ける",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "ありがとうございます！",
+      "topic": "other",
+      "kind": "feeling",
+      "route": "reply",
+      "answer": "お礼を一言で受ける",
+      "basis": "conversation",
+      "aixKey": null
+     },
+     {
+      "quote": "広くて綺麗ですね！✨",
+      "topic": "other",
+      "kind": "report",
+      "route": "none",
+      "answer": null,
+      "basis": "judgement",
+      "aixKey": null
+     },
+     {
+      "quote": "一旦見てみたいです！",
+      "topic": "other",
+      "kind": "report",
+      "route": "none",
+      "answer": null,
+      "basis": "judgement",
+      "aixKey": null
+     }
+    ],
+    "leadWith": 0,
+    "closeOnly": false,
+    "mustNot": [
+     "頼まれていない内覧・申込の誘いを足す"
+    ],
+    "proposals": [],
+    "alreadySaid": [],
+    "settled": [],
+    "feeling": {
+     "kind": null,
+     "acknowledge": true
+    },
+    "humanChecks": [],
+    "source": "brain",
+    "extra": [
+     {
+      "id": "a1",
+      "status": "spec",
+      "facts": [
+       "他候補の依頼を承知",
+       "新規物件を選定し送付",
+       "確認後に連絡する"
+      ],
+      "priority": 1,
+      "say": "ご査収頂きありがとうございます😊！！ かしこまりました！！ YUMAさんにオススメできるお部屋を新たにピックアップしてお送りさせて頂きます！！ 確認出来次第ご連絡させて頂きます！！",
+      "why": null,
+      "receive": null,
+      "properties": []
+     },
+     {
+      "id": "a2",
+      "status": "machine",
+      "facts": [
+       "特になし"
+      ],
+      "priority": null,
+      "say": null,
+      "why": "spec の依頼から受け止めを分けた・竹内さんの文は受けていない＝触れない",
+      "receive": "care",
+      "properties": []
+     },
+     {
+      "id": "a3",
+      "status": "machine",
+      "facts": [
+       "承知しましたを受ける"
+      ],
+      "priority": 2,
+      "say": "了承を受ける",
+      "why": "spec の依頼から受け止めを分けた・竹内さんの文が受けている",
+      "receive": "agree",
+      "properties": []
+     },
+     {
+      "id": "a4",
+      "status": "machine",
+      "facts": [
+       "ご査収へのお礼を受ける"
+      ],
+      "priority": 3,
+      "say": "お礼を受ける",
+      "why": "spec の依頼から受け止めを分けた・竹内さんの文が受けている",
+      "receive": "thanks",
+      "properties": []
+     },
+     {
+      "id": "a5",
+      "status": "machine",
+      "facts": [
+       "特になし"
+      ],
+      "priority": null,
+      "say": null,
+      "why": "spec の依頼の中の別の部分（竹内さんの文は答えていない＝触れない？）",
+      "receive": null,
+      "properties": []
+     },
+     {
+      "id": "a6",
+      "status": "machine",
+      "facts": [
+       "特になし"
+      ],
+      "priority": null,
+      "say": null,
+      "why": "spec の依頼の中の別の部分（竹内さんの文は答えていない＝触れない？）",
+      "receive": null,
+      "properties": []
+     }
+    ]
+   }
+  }
+ ]
+}
