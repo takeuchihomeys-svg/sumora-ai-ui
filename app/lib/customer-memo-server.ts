@@ -13,6 +13,7 @@ import { supabase } from "@/app/lib/supabase";
 import { isPostApplyStatus } from "@/app/lib/llm-alt-provider";
 import { loadDeepseekCutoff, filterAfterCutoff } from "@/app/lib/post-apply";
 import { applicationMaterialReason } from "@/app/lib/test-pii-guard";
+import { loadScreeningSensitive, screeningSensitiveInMessages, screeningPiiClaudeEnabled, type ScreeningSensitiveHit } from "@/app/lib/screening-sensitive";
 import { maskPIIForAlt } from "@/app/lib/pii-mask";
 import { loadAltNameMask } from "@/app/lib/pii-known-names";
 import {
@@ -266,6 +267,17 @@ export async function refreshCustomerMemoLlm(conversationId: string): Promise<{ 
     msgs = filterAfterCutoff(msgs, (m) => m.createdAt, cutoff);
     if (!msgs.some((m) => m.sender === "customer")) return { called: false, applied: 0, reason: "no_new_customer_msg" };
     msgs = msgs.slice(-MEMO_LLM_MAX_MSGS);
+    // 2026-10-20 竹内「個人情報が絡む部分はかならずクロードにする」: ここは必ず DeepSeek（Claude の読み取りの道は無い）なので、
+    //   審査の事情（夜の仕事・外国籍・保証人の事情・他人の名義・滞納 等・screening-sensitive.ts）が送る通か会話に出ていれば LLM で読まない。
+    //   水位は進めない（決まった計算の行・スタッフの手の行は今まで通り）。読めなければ読まない側。戻す SCREENING_PII_CLAUDE=off
+    if (screeningPiiClaudeEnabled()) {
+      let hit: ScreeningSensitiveHit | null = screeningSensitiveInMessages(msgs.map((m) => ({ sender: m.sender, text: m.text ?? null })));
+      if (!hit) { try { hit = await loadScreeningSensitive(supabase as never, conversationId); } catch { hit = { category: "職業（夜の仕事・無職 等）", word: "(読めない)" }; } }
+      if (hit) {
+        console.log(JSON.stringify({ tag: "customer-memo:skip-screening-sensitive", conversationId, category: hit.category }));
+        return { called: false, applied: 0, reason: "screening_sensitive" };
+      }
+    }
     const lastAt = msgs[msgs.length - 1].createdAt;
     // 2026-10-20 決定 209b9a92: ここは必ず DeepSeek。表示名だけでなく、当事者の呼び名・登録名・他のお客様の呼び名も伏せる
     const altMask = await loadAltNameMask(conversationId, [c.customer_name]);

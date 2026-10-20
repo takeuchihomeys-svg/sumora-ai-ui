@@ -13,6 +13,7 @@ import { willRouteAlt, ALT_STREAM_CUT_STOP, altDeepseekModelFor } from "@/app/li
 import { flashWriterAdaptOn, flashWriterRecheckOn, isFlashModel, flashWriterParts, buildFlashChecklist, renderFlashChecklistNote, renderFlashExamplesNote, missingFlashItems, buildFlashRewriteFeedback, buildFlashPlanRequest, buildFlashWriteRequest, contractForbidsInvite, INVITE_RE, type FlashChecklistItem } from "@/app/lib/flash-writer";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
 import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, loadDeepseekCutoff, cutoffMs, isAfterCutoff, filterAfterCutoff, cutoffMarkOf, formatCutoffMark, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
+import { loadScreeningSensitive, screeningSensitiveInMessages, screeningPiiClaudeEnabled, type ScreeningSensitiveHit } from "@/app/lib/screening-sensitive";
 // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 線で派生データを切る・出口の印を置く箱
 import { cutBrainGate, keepIfMadeAfter } from "@/app/lib/deepseek-cut";
 import { runInDeepseekScope, setDeepseekScope, onceAsync } from "@/app/lib/deepseek-scope";
@@ -3396,6 +3397,14 @@ async function handleGenerateReply(req: NextRequest) {
   let postApplyResolved: ReturnType<typeof resolvePostApply> | null = null;
   // DeepSeek に渡してよい線（null＝申込中・読めない／ISO＝この時刻より後だけ／-Infinity＝全部）。会話が無ければ申込の記録も無い
   let deepseekCutoff: DeepseekCutoff = conversationId ? null : NO_CUTOFF;
+  // 2026-10-20 審査の事情（夜の仕事・外国籍・保証人の事情・他人の名義・滞納 等）が会話に出たか（screening-sensitive.ts・LLM なし）。
+  //   先に読み始めて下の「時刻の線」で待つ（読めなければ当たった側＝Claude に倒す）
+  const screeningSensitivePromise: Promise<ScreeningSensitiveHit | null> | null = conversationId && screeningPiiClaudeEnabled()
+    ? loadScreeningSensitive(supabase, conversationId).catch((e) => {
+      console.warn("[generate-reply] screening-sensitive 読めない → Claude に倒す", e instanceof Error ? e.message : String(e));
+      return { category: "職業（夜の仕事・無職 等）", word: "(読めない)" } as ScreeningSensitiveHit;
+    })
+    : null;
   if (conversationId && !isTemplateOptimize) {
     try {
       // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: status は27.4%の会話で遅れていて、
@@ -3449,6 +3458,21 @@ async function handleGenerateReply(req: NextRequest) {
   if (replyGoesAlt && replyCutLine !== NO_CUTOFF) {
     if (isAfterCutoff(latestCustomerAtForCut, deepseekCutoff) || (isTemplateOptimize && !latestCustomerAtForCut)) deepseekCutActive = true;
     else deepseekBlocked = true;
+  }
+  // 2026-10-20 竹内「個人情報が絡む部分はかならずクロードにする」: 審査の事情が送る窓（今の発言・履歴のお客様の通）か、
+  //   この会話のお客様の通・AIX の審査の返事に一度でも出ていれば、申込以降と同じ blocked にする（返信も中の呼び出しも Claude のまま）。
+  //   会話単位で残す（メモ・要約・セーブデータに事情が残るので、窓から外れても DeepSeek に出さない）。戻す SCREENING_PII_CLAUDE=off
+  if (!deepseekBlocked && screeningPiiClaudeEnabled()) {
+    const windowHit = screeningSensitiveInMessages([
+      ...recentMessages.map((m) => ({ sender: m.sender, text: m.text })),
+      ...(message ? [{ sender: "customer", text: message }] : []),
+    ]);
+    const hit = windowHit ?? (screeningSensitivePromise ? await screeningSensitivePromise : null);
+    if (hit) {
+      deepseekBlocked = true;
+      deepseekCutActive = false;
+      console.log(JSON.stringify({ tag: "screening-sensitive:claude", conversationId, category: hit.category, in: windowHit ? "window" : "conversation" }));
+    }
   }
   // Claude に行く会話で線がある時も、名札の無い中の呼び出しが DeepSeek に回らないよう blocked にしておく
   const replyCutMark: CutoffMark = deepseekBlocked || (replyCutLine !== NO_CUTOFF && !deepseekCutActive) ? { kind: "blocked" } : cutoffMarkOf(deepseekCutoff);

@@ -28,6 +28,7 @@ import { AIX_PICKERS } from "./aix-pickers";
 import { isTestOnlyConversation } from "./test-conversations";
 import { testPiiRefusal } from "./test-pii-guard";
 import { altPiiSignal, altPiiGateEnabled } from "./alt-pii-gate";
+import { screeningSensitiveSignal, screeningPiiClaudeEnabled } from "./screening-sensitive";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 
@@ -1110,6 +1111,16 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       console.warn("[llm-alt] 本文に個人の値 → DeepSeek に出さない", JSON.stringify({ route: routeName, signal: piiGate, conversationId: convForGate }));
       if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw new Error(`${routeName}: 本文に個人の値（${piiGate}）があるので DeepSeek に送らない（Claude には倒さない）`);
       return toClaude(`本文に個人の値（${piiGate}）`);
+    }
+    // 2026-10-20 竹内「個人情報が絡む部分はかならずクロードにする」: 学びの経路（learn_*）は会話をまとめて読む（会話の呼び出しの印が無い）ので、
+    //   今は全部 Claude だが（LLM_ALT_ACTIONS に無い・実数 30日 1,210回すべて Claude）、将来 DeepSeek に回した時に審査の事情
+    //   （screening-sensitive.ts）が messages（system は除く＝指示文の語で止めない）に入っていれば Claude に戻す。戻す SCREENING_PII_CLAUDE=off
+    if (routeName?.startsWith("learn_") && screeningPiiClaudeEnabled()) {
+      const sens = screeningSensitiveSignal((body.messages ?? []).map((m) => flattenContent(m.content) ?? "").join("\n"));
+      if (sens) {
+        console.warn("[llm-alt] 学びの本文に審査の事情 → Claude のまま", JSON.stringify({ route: routeName, category: sens.category }));
+        return toClaude(`学びの本文に審査の事情（${sens.category}）`);
+      }
     }
     // 開発環境だけ: DeepSeek に送る本文を書き出す（線より前の中身が入っていないかを目で確かめる用・本番では VERCEL_ENV が付くので動かない）
     if (process.env.DEBUG_PROMPT_DIR && !process.env.VERCEL_ENV) {
