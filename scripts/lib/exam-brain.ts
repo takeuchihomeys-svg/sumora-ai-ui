@@ -455,3 +455,17 @@ export function confidenceRound3(rowsOf: (id: string) => RowLite[], ids: string[
   if (cap < 3) return [];
   return ids.filter((id) => { const rs = rowsOf(id).filter((r) => !r.error); return rs.length === 2 && new Set(rs.map(repSig)).size > 1; });
 }
+
+// ─── 10/20 COST③ の見張り: flash で流した問題を、同じ版の pro の main の答えと照らして model-check に足す（0円） ─────────
+/**
+ * flash の答え（今）と pro の main の答え（同じ main の版・取り置き済みの物だけ）を問題ごとに照らす。道の符号の多数が同じか・合格が同じか。
+ *   道が違った問題は model-check の byId で samePath<n になり、次から pro（flashProof の badIds）
+ */
+export function flashSpotCheck(pairs: Array<{ id: string; flash: RowLite[]; pro: RowLite[] }>): Array<{ id: string; samePath: boolean; proOk: boolean; flashOk: boolean; proCode: string; flashCode: string }> {
+  const mode = (rs: RowLite[]) => { const c = new Map<string, number>(); for (const r of rs.filter((x) => !x.error)) { const k = String(r.path?.code ?? ""); c.set(k, (c.get(k) ?? 0) + 1); } return [...c].sort((a, b) => b[1] - a[1])[0]?.[0] ?? ""; };
+  const maj = (rs: RowLite[]) => { const ok = rs.filter((x) => !x.error); return ok.filter((r) => !!r.path?.ok).length * 2 > ok.length; };
+  return pairs.filter((p) => p.flash.some((r) => !r.error) && p.pro.some((r) => !r.error)).map((p) => {
+    const fc = mode(p.flash), pc = mode(p.pro);
+    return { id: p.id, samePath: fc === pc, proOk: maj(p.pro), flashOk: maj(p.flash), proCode: pc, flashCode: fc };
+  });
+}

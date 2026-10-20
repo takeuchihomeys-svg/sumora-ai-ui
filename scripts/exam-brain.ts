@@ -34,7 +34,7 @@ import {
   mergePicks, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse, dbKeyOf,
   modelOf, estimateUsd, DEFAULT_STOP, draftEligible, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
   decidePhase, pickSmall, smallRank, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
-  warmDecision, warmLimit, flashProof, isFixTarget, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3,
+  warmDecision, warmLimit, flashSpotCheck, flashProof, isFixTarget, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3,
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
@@ -489,6 +489,26 @@ async function runMain() {
     phases.push(b); ledger.push(...finishPhase(pl, b, "draft", g.model, head));
   }
   appendLedger(ledger);
+  // 10/20 COST③ の見張り: flash で流した問題を、同じ main の版の pro の答え（取り置き済みの物だけ）と照らして model-check に足す（0円・道が違えば次から pro）
+  if (groups.some((g) => g.model === "flash") && groups.some((g) => g.model === "pro")) {
+    try {
+      const proBase = JSON.parse(readFileSync(join(RESULTS_DIR, `${label}.baseline.json`), "utf8")) as { versionKey?: string; cfg?: string };
+      const fl = phases.find((p) => p.label === `${label}-fl`);
+      if (proBase.versionKey && proBase.cfg && fl) {
+        const dir = join(BASELINE_DIR, `v-${proBase.versionKey}-${proBase.cfg}`);
+        const flRows = readRows(fl.label);
+        const pairs = fl.ids.map((id) => { let pro: RowLite[] = []; try { pro = (JSON.parse(readFileSync(join(dir, `${id}.json`), "utf8")) as { rows: RowLite[] }).rows; } catch { /* pro の答えが無い */ } return { id, flash: flRows.filter((r) => r.id === id), pro }; });
+        const sc = flashSpotCheck(pairs);
+        if (sc.length) {
+          const prev = existsSync(MODEL_CHECK_FILE) ? JSON.parse(readFileSync(MODEL_CHECK_FILE, "utf8")) as { byType: Record<string, ModelCheckStat>; byId?: Record<string, ModelCheckStat>; spot?: unknown[] } : { byType: {}, byId: {} };
+          for (const s of sc) { const e = (prev.byId ??= {})[s.id] ?? { n: 0, samePath: 0, proOk: 0, flashOk: 0 }; e.n++; if (s.samePath) e.samePath++; if (s.proOk) e.proOk++; if (s.flashOk) e.flashOk++; prev.byId[s.id] = e; }
+          (prev.spot ??= []).push({ at: new Date().toISOString(), label, items: sc });
+          writeFileSync(MODEL_CHECK_FILE, JSON.stringify(prev, null, 1));
+          log(`flash の見張り（pro の main の答えと照らす・0円）: ${sc.map((s) => `${s.samePath ? "＝" : "≠"}${s.id} pro=${s.proCode}${s.proOk ? "○" : "✕"} flash=${s.flashCode}${s.flashOk ? "○" : "✕"}`).join("・")}${sc.some((s) => !s.samePath) ? " → 道が違った問題は次から pro" : ""}`);
+        }
+      }
+    } catch { /* pro の取り置きが読めない時は照らさない */ }
+  }
   // 報告
   const by = (c: Cmp) => ledger.filter((l) => l.cmp === c);
   log(`\n=== 試験のブレインの結果（${label}）===`);

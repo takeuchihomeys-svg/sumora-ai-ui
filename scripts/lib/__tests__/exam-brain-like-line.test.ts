@@ -3,7 +3,7 @@
 // 実行: npx tsx scripts/lib/__tests__/exam-brain-like-line.test.ts（全 PASS で exit 0）
 import { examStageKeysOf, type FileMap } from "../exam-scope";
 import { findCarryOver, relevantStageOf, siblingDirs, type BaselineFile } from "../brain-exam-baseline";
-import { modelOf, flashProof, isFixTarget, UNIT_USD, type PlanProblem } from "../exam-brain";
+import { modelOf, flashProof, isFixTarget, UNIT_USD, flashSpotCheck, type PlanProblem } from "../exam-brain";
 import { buildConductorUser, watchNeighbors, normalizePlan, type Candidate } from "../exam-conductor";
 import { custKindOf, staffKindOf, sceneSim, crossCheck, findConflicts, groupConflicts, kbHitsFor, conflictPeers, bigramSim, type GoldProblem } from "../exam-gold-check";
 import { piiGate, dedupeCandidates, rankCandidates, toAddBatch, type QCand } from "../exam-question-candidates";
@@ -182,6 +182,13 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   ok("釣り合い: もう周りの見張りがあれば足さない", p2.focus.filter((x) => x.role === "guard").map((x) => x.id).join() === "g2");
   const p3 = normalizePlan({ focus: [{ id: "f1", role: "fix" }] }, { candidates: cands, capUsd: 0.031, flashOkTypes: [], unit: UNIT_USD }, { draftChange: false, watch: { f1: [{ id: "g1", why: "x" }] } });
   ok("釣り合い: 上限に入らなければ見張りから削る（重点は残る）", p3.focus.map((x) => x.id).join() === "f1" && p3.dropped.some((d) => d.id === "g1"));
+}
+
+{
+  const r = (id: string, code: string, ok: boolean, rep = 1) => ({ id, rep, path: { code, ok }, score: { pass: ok } });
+  const sc = flashSpotCheck([{ id: "q035", flash: [r("q035", "返信", false), r("q035", "返信", false, 2)], pro: [r("q035", "2段:pickup", true)] }, { id: "q023", flash: [r("q023", "返信", true)], pro: [r("q023", "返信", true)] }, { id: "q9", flash: [r("q9", "返信", true)], pro: [] }]);
+  ok("flash の見張り: pro の main と道が違えば samePath=false（次から pro）・同じなら true・pro の答えが無い問題は照らさない", sc.length === 2 && sc[0].samePath === false && !sc[0].flashOk && sc[0].proOk && sc[1].samePath === true);
+  ok("flash の見張り → model-check の問題ごと: 1回でも違えば flash にしない", flashProof({ byId: { q035: { n: 1, samePath: 0, proOk: 1, flashOk: 0 } } }).badIds.has("q035"));
 }
 
 console.log(`exam-brain-like-line: ${pass} PASS / ${fail} FAIL`);
