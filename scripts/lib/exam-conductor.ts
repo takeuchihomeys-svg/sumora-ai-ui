@@ -268,6 +268,8 @@ export type ConductorInput = {
   change: { cls: string; files: Array<{ file: string; cls: string }>; kbIds: string[]; commits: string[]; reading: DiffReading | null };
   missTop: Array<{ kind: string; n: number }>; linkMiss: Array<{ link: LinkId; label: string; n: number; miss: number }>;
   candidates: Candidate[]; capUsd: number; unit: typeof UNIT_USD; flashOkTypes: string[]; prevFocus: Array<{ id: string; why: string }>;
+  /** 10/20 QUALITY⑤ 前の実行の外れの理由（読み手 flash が付けた型の数・多い順）。古い呼び方には無い */
+  reasons?: Array<{ kind: string; n: number }>;
 };
 export type FocusItem = { id: string; role: "fix" | "guard"; stage: "brain" | "draft"; reps: number; model: "pro" | "flash"; why: string };
 export type ConductorPlan = { focus: FocusItem[]; judge: "tier" | "pro"; judgeAdvice: "tier" | "pro"; claudeFinal: boolean; claudeWhy: string; note: string; source: "pro" | "fallback"; estUsd: number; dropped: Array<{ id: string; why: string }>;
@@ -290,15 +292,19 @@ export const CONDUCTOR_SYSTEM = [
 ].join("\n");
 export function buildConductorUser(i: ConductorInput): string {
   const c = i.change;
+  // 2026-10-20 COST④ キャッシュの並び: 変わりにくい物（外れの型の地図・線・単価・flash の型・前の外れの理由）を先に、実行ごとに変わる物（直した中身・上限・候補）を後ろに
+  //   （DeepSeek の自動キャッシュは頭からの一致だけ＝司令塔の system の後ろも同じ日の他の --conduct と揃う）
   const lines = [
+    `【今までの外れの型（多い順）】${i.missTop.slice(0, 8).map((x) => `${x.kind} ${x.n}`).join("・") || "なし"}`,
+    `【つなぎの線の外れ】${i.linkMiss.map((x) => `${x.link}(${x.label}) ${x.miss}/${x.n}`).join("・")}`,
+    `【単価】unit=${JSON.stringify({ brain: i.unit.brain, draftExtra: i.unit.draftExtra, flashRatio: i.unit.flashRatio })}・flashOkTypes=${i.flashOkTypes.join("・") || "なし"}`,
+    i.reasons?.length ? `【前の実行の外れの理由（読み手）】${i.reasons.slice(0, 8).map((x) => `${x.kind} ${x.n}`).join("・")}` : "",
+    i.prevFocus.length ? `【前の結果からの次の重点の候補】${i.prevFocus.slice(0, 10).map((x) => `${x.id}:${x.why}`).join("・")}` : "",
     `【直した中身】段の分類=${c.cls}／ファイル ${c.files.length}: ${c.files.slice(0, 15).map((f) => `${f.file}(${f.cls})`).join("・")}`,
     c.kbIds.length ? `設計知見 id: ${c.kbIds.slice(0, 10).join("・")}` : "",
     c.commits.length ? `コミットの文: ${c.commits.slice(0, 5).map((s) => s.slice(0, 120)).join(" ／ ")}` : "",
     c.reading ? `読み手の読み: 効く所=${c.reading.effects.slice(0, 5).map((e) => e.what).join("・")}／外れの型=${c.reading.kinds.join("・") || "なし"}／線=${c.reading.links.join("・") || "なし"}／段=${c.reading.stages.join("・") || "なし"}` : "読み手の読み: なし",
-    `【今までの外れの型（多い順）】${i.missTop.slice(0, 8).map((x) => `${x.kind} ${x.n}`).join("・") || "なし"}`,
-    `【つなぎの線の外れ】${i.linkMiss.map((x) => `${x.link}(${x.label}) ${x.miss}/${x.n}`).join("・")}`,
-    i.prevFocus.length ? `【前の結果からの次の重点の候補】${i.prevFocus.slice(0, 10).map((x) => `${x.id}:${x.why}`).join("・")}` : "",
-    `【上限】capUsd=${i.capUsd.toFixed(2)}・unit=${JSON.stringify({ brain: i.unit.brain, draftExtra: i.unit.draftExtra, flashRatio: i.unit.flashRatio })}・flashOkTypes=${i.flashOkTypes.join("・") || "なし"}`,
+    `【上限】capUsd=${i.capUsd.toFixed(2)}`,
     "【候補】（id|型|地図の段|線|前の結果|前の外れの型|揺れ|下書き可|守る|選ばれた理由）",
     ...i.candidates.map((x) => `${x.id}|${x.type}|${MAP_STAGE_JA[x.stage]}|${x.links.join(",") || "-"}|${x.lastOk === null ? "?" : x.lastOk ? "○" : "✕"}|${x.lastKinds.join(",") || "-"}|${x.flaky ? "揺" : "-"}|${x.draftEligible ? "可" : "-"}|${x.protectedPick ? "守" : "-"}|${x.why.slice(0, 2).join("／").slice(0, 80)}`),
   ];

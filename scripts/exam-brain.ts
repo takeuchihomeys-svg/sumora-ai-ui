@@ -72,7 +72,7 @@ let EXTRA_Q = "";
 let RANGE = arg("range");
 const JUDGE = arg("judge", "lazy") === "full" ? "full" : "lazy";
 // 2026-10-17 確かめ: rubric の並べ替えは判定の答えを変える（q113 の下書き 2/3→0/3）＝既定は旧の並び（as-is）。rubric は別に比べてから
-const JUDGE_PREFIX = arg("judge-prefix", "as-is") === "rubric" ? "rubric" : "as-is";
+const JUDGE_PREFIX: "as-is" | "rubric" | "stable" = (() => { const v = arg("judge-prefix", "as-is"); return v === "rubric" || v === "stable" ? v : "as-is"; })();
 const REPLAY = arg("replay") === "strict" ? "--replay=strict" : "--replay";
 // 10/20 COST② 回数の決め方（confidence＝既定・自信が低い問題だけ1回ずつ足す／old＝旧）
 const REPS_MODE = repsModeOf(arg("reps"), process.env);
@@ -329,7 +329,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   const flaky = new Set(ids.filter((id) => pl.items.get(id)!.flake === "flaky"));
   const baseArgs = (only: string[]) => [
     `--label=${label}`, `--only=${only.join(",")}`, `--stage=${stage}`, "--baseline=main", REPLAY, `--repeat=${MAX_REPS}`, `--reps-file=${repsFile}`,
-    ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX === "rubric" ? ["--judge-prefix=rubric"] : []), ...(CONV ? [`--conv=${CONV}`] : []),
+    ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX !== "as-is" ? [`--judge-prefix=${JUDGE_PREFIX}`] : []), ...(CONV ? [`--conv=${CONV}`] : []),
     ...(MAIN_MISSING === "night" && !GATE ? ["--baseline-defer"] : []), ...PASS,
   ];
   const env: Record<string, string> = { EXAM_STOP_FILE: stopFile, ...(model === "flash" ? { DEEPSEEK_MODEL: FLASH_MODEL, EXAM_JUDGE_MODEL: PRO_MODEL } : {}), ...(CONDUCTED?.plan.judge === "tier" && !process.env.EXAM_JUDGE_TIER ? { EXAM_JUDGE_TIER: "on" } : {}) };
@@ -577,7 +577,7 @@ async function warmMain() {
     const label = `warm-${Date.now().toString(36)}-${stage}`;
     const o = await runBrainExam([`--label=${label}`, `--only=${ids.join(",")}`, `--stage=${stage}`, "--baseline=main", "--baseline-only", REPLAY, `--repeat=${MAX_REPS}`, `--reps-file=${repsFile}`,
       ...(limit !== null ? [`--baseline-limit=${limit}`] : []),
-      ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX === "rubric" ? ["--judge-prefix=rubric"] : []), ...(CONV ? [`--conv=${CONV}`] : []), ...PASS], CONV ? {} : { REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${label}.json` });
+      ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX !== "as-is" ? [`--judge-prefix=${JUDGE_PREFIX}`] : []), ...(CONV ? [`--conv=${CONV}`] : []), ...PASS], CONV ? {} : { REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${label}.json` });
     const s = readBaselineSummary(label);
     if (o.code !== 0 || !s) failed = true;
     if (s) { left += s.deferred.length; if (limit !== null) limit = Math.max(0, limit - s.run.length); log(`取り置き（${stage}）: 使い回し ${s.reused}・持ち越し ${s.carried.length}・今回した ${s.run.length}・残り ${s.deferred.length}`); }
@@ -591,7 +591,7 @@ async function warmMain() {
       const label = `warm-${Date.now().toString(36)}-brain-fl`;
       const o = await runBrainExam([`--label=${label}`, `--only=${fids.join(",")}`, "--stage=brain", "--baseline=main", "--baseline-only", REPLAY, `--repeat=${MAX_REPS}`, `--reps-file=${repsFile}`,
         ...(limit !== null ? [`--baseline-limit=${Math.floor(limit / UNIT_USD.flashRatio)}`] : []),
-        ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX === "rubric" ? ["--judge-prefix=rubric"] : []), ...(CONV ? [`--conv=${CONV}`] : []), ...PASS],
+        ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX !== "as-is" ? [`--judge-prefix=${JUDGE_PREFIX}`] : []), ...(CONV ? [`--conv=${CONV}`] : []), ...PASS],
         { ...(CONV ? {} : { REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${label}.json` }), DEEPSEEK_MODEL: FLASH_MODEL, EXAM_JUDGE_MODEL: PRO_MODEL });
       const s = readBaselineSummary(label);
       if (o.code !== 0 || !s) failed = true;

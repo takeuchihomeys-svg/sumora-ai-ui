@@ -18,7 +18,7 @@ export const LOCAL_SPEND_FILE = join(examCacheRoot(), "local-llm-spend.jsonl");
 export const jstDate = (ms = Date.now()) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
 
 // ─── その日の費用（DB に書かない LLM の分） ───────────────────────────────
-export type LocalSpend = { at: string; tool: string; usd: number; calls: number };
+export type LocalSpend = { at: string; tool: string; usd: number; calls: number; model?: string; cacheHit?: number; cacheMiss?: number; out?: number; label?: string };
 export function appendLocalSpend(s: LocalSpend, file = LOCAL_SPEND_FILE): void {
   mkdirSync(dirname(file), { recursive: true });
   appendFileSync(file, JSON.stringify(s) + "\n");

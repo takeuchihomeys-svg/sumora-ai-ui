@@ -3,7 +3,8 @@
 // 実行: npx tsx scripts/lib/__tests__/exam-brain-like-line.test.ts（全 PASS で exit 0）
 import { examStageKeysOf, type FileMap } from "../exam-scope";
 import { findCarryOver, relevantStageOf, siblingDirs, type BaselineFile } from "../brain-exam-baseline";
-import { modelOf, flashProof, isFixTarget, type PlanProblem } from "../exam-brain";
+import { modelOf, flashProof, isFixTarget, UNIT_USD, type PlanProblem } from "../exam-brain";
+import { buildConductorUser } from "../exam-conductor";
 import { warmDecision, warmLimit, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3, repSig, type Cmp, type RowLite } from "../exam-brain";
 
 let fail = 0, pass = 0;
@@ -96,6 +97,14 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   ok("auto: 型が通っていてもその問題で道が違った → pro", modelOf(P("q3", "A"), o) === "pro");
   ok("auto: 直しの的（名指し・前に落ちた）→ pro・関所 → pro・--model=pro → pro", modelOf(P("x", "A"), { ...o, protect: isFixTarget(["名指し"]) }) === "pro" && modelOf(P("x", "A"), { ...o, protect: isFixTarget(["前に落ちた（直前2回は道が合った）"]) }) === "pro" && modelOf(P("x", "A"), { ...o, gate: true }) === "flash".replace("flash", "pro") && modelOf(P("x", "A"), { ...o, mode: "pro" }) === "pro");
   ok("直しの的でない理由（RAG・お手本）→ flash のまま", !isFixTarget(["差分の言葉に近い（0.52）", "竹内さんのお手本（必ず）"]));
+}
+
+// ─── COST④ キャッシュの並び（司令塔の材料: 変わりにくい物が先・実行ごとに変わる物が後ろ） ─────────────
+{
+  const mk = (cls: string, cap: number) => buildConductorUser({ change: { cls, files: [{ file: `app/lib/${cls}.ts`, cls }], kbIds: [], commits: [], reading: null }, missTop: [{ kind: "約束の抜け", n: 3 }], linkMiss: [{ link: "L1", label: "x", n: 2, miss: 1 }], candidates: [], capUsd: cap, unit: UNIT_USD, flashOkTypes: ["A"], prevFocus: [], reasons: [{ kind: "道の取り違え", n: 2 }] });
+  const a = mk("brain", 0.5), b = mk("draft", 0.3);
+  let k = 0; while (k < a.length && a[k] === b[k]) k++;
+  ok("並び: 外れの型・線・単価・外れの理由が先頭で同じ＝直した中身・上限が変わっても前置きが揃う", a.indexOf("【今までの外れの型") === 0 && k >= a.indexOf("【直した中身】") && a.indexOf("【直した中身】") < a.indexOf("【上限】") && a.includes("前の実行の外れの理由"), String(k));
 }
 
 console.log(`exam-brain-like-line: ${pass} PASS / ${fail} FAIL`);

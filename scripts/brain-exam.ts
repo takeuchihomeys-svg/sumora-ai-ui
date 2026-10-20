@@ -129,7 +129,10 @@ const REPEAT_FLAKY = flag("repeat-flaky");
 const SELECT = arg("select");
 const SELECT_N = Math.max(1, Number(arg("select-n", "12")) || 12);
 const ORDER = (arg("order") || process.env.EXAM_ORDER || "cache").trim() === "as-is" ? "as-is" : "cache";
-const JUDGE_RUBRIC_FIRST = (arg("judge-prefix") || process.env.EXAM_JUDGE_PREFIX || "").trim() === "rubric";
+const JUDGE_PREFIX_ARG = (arg("judge-prefix") || process.env.EXAM_JUDGE_PREFIX || "").trim();
+// 10/20 COST④ 判定の並び: as-is（旧・既定）／rubric（決まりが先頭）／stable（場面 → 決まり → 答案）。判定の段（tier）は rubricFirst を明示して並びを変える
+const JUDGE_ORDER: "as-is" | "rubric" | "stable" = JUDGE_PREFIX_ARG === "rubric" ? "rubric" : JUDGE_PREFIX_ARG === "stable" ? "stable" : "as-is";
+const judgeOrderOf = (rubricFirst: boolean | undefined): "as-is" | "rubric" | "stable" => rubricFirst === true ? "rubric" : rubricFirst === false ? "as-is" : JUDGE_ORDER;
 const KB_RULES_MODE = kbRulesMode(arg("kb-rules"));
 const LINK_KB = arg("link-kb").split(",").map((s) => s.trim()).filter(Boolean);
 // 2026-10-17 試験のブレイン（scripts/exam-brain.ts・scripts/lib/exam-brain.ts）から使う口（付けなければ今まで通り）:
@@ -195,7 +198,8 @@ let h: LlmTestHarness | null = null;
 let own: string[] = [];
 let ownLedger: Record<string, string[]> = {};
 let pcRestore: { id: string; row: Record<string, unknown> } | null = null;
-const judgeCost = { calls: 0, usd: 0, fail: 0, replayed: 0, tier: undefined as undefined | { machine: number; flash: number; pro: number; unresolved: number; flashCalls: number; proCalls: number; problems: number } };
+// 10/20 COST④: 判定の入力のキャッシュの当たり（DeepSeek の prompt_cache_hit_tokens／miss・出力）も数える（cost.json の judge.tokens）
+const judgeCost = { calls: 0, usd: 0, fail: 0, replayed: 0, tokens: { hit: 0, miss: 0, out: 0 }, tier: undefined as undefined | { machine: number; flash: number; pro: number; unresolved: number; flashCalls: number; proCalls: number; problems: number } };
 // 2026-10-20 判定の段（設計知見 487b8921「判定は機械の照らし→flash→割れた時だけ pro」）: EXAM_JUDGE_TIER=on で、
 //   ① 機械の照らし（決まりで確実に決まる項目だけ・0円）→ ② flash を並びを変えて2回（旧の並び＋rubric の並び）→ 揃った項目は確定 → ③ 割れた項目がある時だけ pro を1回。
 //   既定 off（今まで通り pro 1回）。試験のブレインの司令塔の計画（--run-plan）が judge=tier の時に付ける。比べは scripts/exam-brain.ts --judge-check
@@ -435,8 +439,12 @@ async function deepseekJson(sys: string, user: string, modelOverride?: string): 
       const pr = altPriceOf(model);
       // 2026-10-15: 録った答えの再生（x-llm-cassette: replay）は払っていない＝数えない
       if (res.headers.get("x-llm-cassette") === "replay") { judgeCost.replayed++; return JSON.parse(String(j.choices?.[0]?.message?.content ?? "{}")) as Record<string, unknown>; }
-      if (pr && j.usage) judgeCost.usd += (((j.usage.prompt_cache_miss_tokens ?? 0) * pr.in + (j.usage.prompt_cache_hit_tokens ?? 0) * pr.read + (j.usage.completion_tokens ?? 0) * pr.out) / 1e6) * (pr.peakDouble && isDeepseekPeakAt(new Date()) ? 2 : 1);
+      const usd1 = pr && j.usage ? (((j.usage.prompt_cache_miss_tokens ?? 0) * pr.in + (j.usage.prompt_cache_hit_tokens ?? 0) * pr.read + (j.usage.completion_tokens ?? 0) * pr.out) / 1e6) * (pr.peakDouble && isDeepseekPeakAt(new Date()) ? 2 : 1) : 0;
+      judgeCost.usd += usd1;
       judgeCost.calls++;
+      judgeCost.tokens.hit += j.usage?.prompt_cache_hit_tokens ?? 0; judgeCost.tokens.miss += j.usage?.prompt_cache_miss_tokens ?? 0; judgeCost.tokens.out += j.usage?.completion_tokens ?? 0;
+      // 10/20: 判定（DeepSeek 直）は llm_usage_logs に残らない＝手元の記録（local-llm-spend.jsonl）に足す＝試験のブレインの1日の上限に数える（旧は数えていなかった）
+      try { const { appendLocalSpend } = await import("./lib/brain-self-review-io"); appendLocalSpend({ at: new Date().toISOString(), tool: "brain-exam-judge", usd: usd1, calls: 1, model, cacheHit: j.usage?.prompt_cache_hit_tokens ?? 0, cacheMiss: j.usage?.prompt_cache_miss_tokens ?? 0, out: j.usage?.completion_tokens ?? 0, label: LABEL }); } catch { /* 記録の失敗で止めない */ }
       return JSON.parse(String(j.choices?.[0]?.message?.content ?? "{}")) as Record<string, unknown>;
     } catch (e) { if (attempt === 1) { judgeCost.fail++; console.warn(`  判定の失敗: ${e instanceof Error ? e.message : e}`); } }
   }
@@ -489,8 +497,9 @@ async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, r
   ];
   // 2026-10-16 --judge-prefix=rubric: 採点の決まり（正解の依頼・言ってはいけない事）と場面を先に、毎回変わる答案を後ろに（文は変えない・並びだけ）。
   //   同じ問題の回（--repeat）・判定の過半数で前置きが同じになり DeepSeek の自動キャッシュが効く。既定は旧の並び（録音の鍵を変えない）
-  const rf = o.rubricFirst ?? JUDGE_RUBRIC_FIRST;
-  const user = (rf ? [asksNgText(p), contextText(p), ...answer] : [contextText(p), ...answer, asksNgText(p)]).join("\n\n");
+  // 2026-10-20 COST④ --judge-prefix=stable: 場面 → 採点の決まり → 答案（場面が先頭＝旧の並びの頭は変えず、問題ごとに変わらない決まりを答案の前に）
+  const ord = judgeOrderOf(o.rubricFirst);
+  const user = (ord === "rubric" ? [asksNgText(p), contextText(p), ...answer] : ord === "stable" ? [contextText(p), asksNgText(p), ...answer] : [contextText(p), ...answer, asksNgText(p)]).join("\n\n");
   const jo = await deepseekJson(sys, user, o.model);
   if (!jo) return null;
   const A = (jo.asks ?? []) as Array<{ i: number; covered: boolean; route?: boolean; why?: string }>, G = (jo.ng ?? []) as Array<{ i: number; violated: boolean; why?: string }>;
@@ -553,8 +562,8 @@ async function judgeDraftOnce(p: ExamProblem, draft: string, opt: { model?: stri
     "③ ng: 正解の『言ってはいけない事』を下書きが言っているか（violated）。",
     '出力は JSON だけ: {"path":"返信","asks":[{"i":1,"covered":true}],"ng":[{"i":1,"violated":false}]}',
   ].join("\n");
-  const rf = opt.rubricFirst ?? JUDGE_RUBRIC_FIRST;
-  const o = await deepseekJson(sys, rf ? `${asksNgText(p)}\n\n${contextText(p)}\n\n【下書き】\n${draft}` : `${contextText(p)}\n\n【下書き】\n${draft}\n\n${asksNgText(p)}`, opt.model);
+  const ord = judgeOrderOf(opt.rubricFirst);
+  const o = await deepseekJson(sys, ord === "rubric" ? `${asksNgText(p)}\n\n${contextText(p)}\n\n【下書き】\n${draft}` : ord === "stable" ? `${contextText(p)}\n\n${asksNgText(p)}\n\n【下書き】\n${draft}` : `${contextText(p)}\n\n【下書き】\n${draft}\n\n${asksNgText(p)}`, opt.model);
   if (!o) return null;
   const A = (o.asks ?? []) as Array<{ i: number; covered: boolean }>, G = (o.ng ?? []) as Array<{ i: number; violated: boolean }>;
   const code = typeof o.path === "string" && PATH_CHOICES.includes(o.path) ? o.path : "返信";
@@ -810,7 +819,7 @@ async function prepareMainBaseline(): Promise<boolean> {
     // 2026-10-15 ④ 新しいスイッチは「入れた時だけ」構成に足す（入れない時の構成の hash＝今までの取り置きを変えない）
     ...(REPEAT_FLAKY && REPEAT > 1 ? { repeatFlaky: true } : {}),
     // 2026-10-16 判定の並び・知見の決まりを合否に入れる時も、入れた時だけ構成に足す
-    ...(JUDGE_RUBRIC_FIRST ? { judgePrefix: "rubric" } : {}), ...(KB_RULES_MODE === "score" ? { kbRules: "score" } : {}),
+    ...(JUDGE_ORDER !== "as-is" ? { judgePrefix: JUDGE_ORDER } : {}), ...(KB_RULES_MODE === "score" ? { kbRules: "score" } : {}),
     // 2026-10-17 試験のブレインの口も入れた時だけ（判定を省く・判定のモデル）
     ...(JUDGE_LAZY ? { judgeLazy: true } : {}), ...(JUDGE_MODEL ? { judgeModel: JUDGE_MODEL } : {}),
   });
@@ -1226,7 +1235,7 @@ main().catch((e) => { console.error(e instanceof Error ? e.message : e); process
   if (h) {
     await h.finish();
     if (judgeCost.tier) console.log(`判定の段（EXAM_JUDGE_TIER=on）: ${judgeCost.tier.problems}件・機械で決めた ${judgeCost.tier.machine}項目・flash 2回で揃った ${judgeCost.tier.flash}項目・割れて pro ${judgeCost.tier.pro}項目${judgeCost.tier.unresolved ? `・決まらない ${judgeCost.tier.unresolved}` : ""}（flash ${judgeCost.tier.flashCalls}回・pro ${judgeCost.tier.proCalls}回）`);
-    console.log(`判定（DeepSeek 直・記録の外）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.replayed ? `（うち再生 ${judgeCost.replayed}回・費用0）` : ""}${judgeSkip.lazy ? `・決まりで済んで呼ばなかった ${judgeSkip.lazy}問回（--judge=lazy）` : ""}${injectStats.calls ? `・試しの材料を足した呼び出し ${injectStats.calls}回` : ""}`);
+    console.log(`判定（DeepSeek 直・記録の外）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.calls ? `（入力のキャッシュ ${Math.round((100 * judgeCost.tokens.hit) / Math.max(1, judgeCost.tokens.hit + judgeCost.tokens.miss))}%＝当たり ${judgeCost.tokens.hit}・外れ ${judgeCost.tokens.miss}トークン・並び ${JUDGE_ORDER}）` : ""}${judgeCost.replayed ? `（うち再生 ${judgeCost.replayed}回・費用0）` : ""}${judgeSkip.lazy ? `・決まりで済んで呼ばなかった ${judgeSkip.lazy}問回（--judge=lazy）` : ""}${injectStats.calls ? `・試しの材料を足した呼び出し ${injectStats.calls}回` : ""}`);
     // 2026-10-15 ④ 1回の試験の数え（新しく呼んだ・再生・使い回した）。問題ごとの数えは <label>.cost.json（前の取り置きの「呼んでいたら」に使う）
     const cas = await import("./lib/llm-cassette");
     const cst = cas.cassetteStats();
