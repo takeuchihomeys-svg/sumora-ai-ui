@@ -4,6 +4,7 @@
 // 実行: npx tsx app/lib/__tests__/company-fact-turn-scope.test.ts
 import { customerTextsForCompanyFacts, matchCompanyFacts, buildCompanyFactsNote } from "../company-facts";
 import { buildCompanyFactsForCheck } from "../company-fact-guard";
+import { companyFactCustomerTexts, companyFactGuardCustomerTexts, runVocabSemanticChecks } from "../final-check";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -58,6 +59,21 @@ it("こちらの送信が無い会話（初回の連投）は全部（最大10�
 });
 it("戻す COMPANY_FACT_TURN_SCOPE=off は旧の窓（お客様の直近3通）", () => {
   eq(customerTextsForCompanyFacts(conv, { env: { COMPANY_FACT_TURN_SCOPE: "off" } }), [conv[5].text, conv[7].text, conv[8].text]);
+});
+
+// 2026-10-20 確かめる人: 止め（V16・V16b）の窓は狭めない＝今回の番 ∪ 旧の窓
+const cardConv = [
+  { sender: "customer", text: "初期費用って分割払いできますか？" },
+  { sender: "staff", text: "お送り頂いたお部屋の募集状況確認させて頂きます！！" },
+  { sender: "customer", text: "ありがとうございます" },
+];
+it("止めの窓: [COMPANY_FACTS] の窓は今回の番だけ・止めの窓は前の番の問いも含む", () => {
+  eq(companyFactCustomerTexts({ recentMessages: cardConv }), ["ありがとうございます"]);
+  eq(companyFactGuardCustomerTexts({ recentMessages: cardConv }).includes(cardConv[0].text), true);
+});
+it("V16b: 前の番でカード払いを聞かれ、下書きが手数料無しで「カードで分割できます」と書いたら今まで通り止める", () => {
+  const issues = runVocabSemanticChecks("クレジットカード払いですと分割でのお支払いも可能です！！", { lastCustomerMessage: "ありがとうございます", recentMessages: cardConv } as never);
+  eq(issues.some((i) => i.code === "COMPANY_FACT_CONTRADICTION"), true);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

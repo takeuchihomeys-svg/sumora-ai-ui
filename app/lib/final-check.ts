@@ -831,11 +831,21 @@ function customerTextsForFabrication(ctx: FinalCheckContext): string[] {
   return [ctx.lastCustomerMessage ?? "", ...(ctx.recentMessages ?? []).filter((m) => m.sender === "customer").slice(-12).map((m) => m.text ?? "")];
 }
 
-/** 会社の事実のブロック（anomaly_scan・verify の動的部）。お客様が聞いていなければ空文字（関係ない会話には出さない） */
 /** 会社の事実を当てる直近のお客様の発言（今回の番だけ・旧は直近のお客様3通）。export はテスト用 */
 export function companyFactCustomerTexts(ctx: Pick<FinalCheckContext, "recentMessages">): string[] {
   return customerTextsForCompanyFacts((ctx.recentMessages ?? []).map((m) => ({ sender: m.sender === "staff" ? "staff" : "customer", text: m.text })));
 }
+/**
+ * V16・V16b（会社の事実に反する断定・カード手数料の抜け）の「聞かれたか」の窓＝今回の番 ∪ 旧の窓（お客様の直近3通）。export はテスト用
+ * 2026-10-20 確かめる人: 窓を今回の番に狭めるのは「今これを聞いている・先に答える」と渡す [COMPANY_FACTS] のため。決定論の止め（block→書き直し）は
+ *   下書きに反する断定がある時だけ当たり（ゲート無しでも実送信365日で0通）、狭めると前の番で聞かれた話題を下書きが書いた時に見逃すだけ
+ *   （例: 前の番でカード払いを聞かれ、こちらが別の話で返した後に下書きが「カードで分割できます」と手数料無しで書く）。止めの窓は旧より狭めない
+ */
+export function companyFactGuardCustomerTexts(ctx: Pick<FinalCheckContext, "recentMessages">): string[] {
+  const msgs = (ctx.recentMessages ?? []).map((m) => ({ sender: m.sender === "staff" ? "staff" : "customer", text: m.text }));
+  return [...new Set([...customerTextsForCompanyFacts(msgs, { env: { COMPANY_FACT_TURN_SCOPE: "off" } }), ...customerTextsForCompanyFacts(msgs)])];
+}
+/** 会社の事実のブロック（anomaly_scan・verify の動的部）。お客様が聞いていなければ空文字（関係ない会話には出さない） */
 function companyFactsForCheck(ctx: FinalCheckContext): string {
   // 2026-10-20: 窓は今回の番（こちらの最後の送信より後のお客様の発言）だけ（company-facts.customerTextsForCompanyFacts・戻す COMPANY_FACT_TURN_SCOPE=off）
   const custRecent = companyFactCustomerTexts(ctx);
@@ -2809,7 +2819,7 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
   //     申込テンプレ「ご来店頂けますと」は純関数側の除外で残る。AI 下書き 6,971件では1件（クレカ不可・スタッフが「対応しております」に直していた）。
   //   → 誤削除0が取れたので **block**（修正ループで書き直させる。本文は決定論で削らない）。お客様がその事実を聞いている時だけ（matchCompanyFacts＝生成と同じ関数）。
   {
-    const custRecent = companyFactCustomerTexts(ctx);   // 2026-10-20 今回の番だけ（戻す COMPANY_FACT_TURN_SCOPE=off）
+    const custRecent = companyFactGuardCustomerTexts(ctx);   // 2026-10-20 止めの窓は今回の番 ∪ 旧の窓（狭めない・確かめる人）
     const hit = findCompanyFactContradiction(text, [cust, ...custRecent]);
     if (hit) {
       issues.push({ pass: "anomaly_scan", severity: "block", code: "COMPANY_FACT_CONTRADICTION",
