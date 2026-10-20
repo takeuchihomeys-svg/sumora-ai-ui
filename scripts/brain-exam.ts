@@ -195,7 +195,13 @@ let h: LlmTestHarness | null = null;
 let own: string[] = [];
 let ownLedger: Record<string, string[]> = {};
 let pcRestore: { id: string; row: Record<string, unknown> } | null = null;
-const judgeCost = { calls: 0, usd: 0, fail: 0, replayed: 0 };
+const judgeCost = { calls: 0, usd: 0, fail: 0, replayed: 0, tier: undefined as undefined | { machine: number; flash: number; pro: number; unresolved: number; flashCalls: number; proCalls: number; problems: number } };
+// 2026-10-20 判定の段（設計知見 487b8921「判定は機械の照らし→flash→割れた時だけ pro」）: EXAM_JUDGE_TIER=on で、
+//   ① 機械の照らし（決まりで確実に決まる項目だけ・0円）→ ② flash を並びを変えて2回（旧の並び＋rubric の並び）→ 揃った項目は確定 → ③ 割れた項目がある時だけ pro を1回。
+//   既定 off（今まで通り pro 1回）。試験のブレインの司令塔の計画（--run-plan）が judge=tier の時に付ける。比べは scripts/exam-brain.ts --judge-check
+const JUDGE_TIER = (process.env.EXAM_JUDGE_TIER ?? "").trim().toLowerCase() === "on";
+const JUDGE_TIER_FLASH = (process.env.EXAM_JUDGE_FLASH_MODEL ?? "deepseek-flash").trim();
+if (JUDGE_TIER) judgeCost.tier = { machine: 0, flash: 0, pro: 0, unresolved: 0, flashCalls: 0, proCalls: 0, problems: 0 };
 
 type Verdict = { code: string; acceptHit: string | null; mustNotHit: string | null; ok: boolean };
 type ResultRow = {
@@ -411,12 +417,12 @@ const AIX_JA: Record<string, string> = { property_recommendation: "物件オス�
 const ROUTE_JA: Record<string, string> = { reply: "返信の本文で答える", promise: "後でやると約束する返信（確認・見積・ピックアップ・撮影・交渉）", aix: "AIX（スタッフが確かめた事・検索の結果・見積・内覧の段取りを送る）", none: "答えない" };
 const PATH_CHOICES = ["返信", "2段:pickup", "2段:check", "2段:estimate", "2段:photo", "なし"];
 
-async function deepseekJson(sys: string, user: string): Promise<Record<string, unknown> | null> {
+async function deepseekJson(sys: string, user: string, modelOverride?: string): Promise<Record<string, unknown> | null> {
   const key = process.env.DEEPSEEK_API_KEY ?? process.env.LLM_ALT_DEEPSEEK_KEY;
   if (!key) throw new Error("DEEPSEEK_API_KEY が無い（判定に使う）");
   const { DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL } = await import("../app/lib/llm-alt-provider");
   const { altPriceOf, isDeepseekPeakAt } = await import("../app/lib/llm-price");
-  const model = JUDGE_MODEL || (process.env.DEEPSEEK_MODEL ?? DEEPSEEK_DEFAULT_MODEL);
+  const model = modelOverride || JUDGE_MODEL || (process.env.DEEPSEEK_MODEL ?? DEEPSEEK_DEFAULT_MODEL);
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(DEEPSEEK_ENDPOINT, {
@@ -449,6 +455,7 @@ const maj = (xs: boolean[]) => xs.filter(Boolean).length * 2 > xs.length;
 const modeOf = <T,>(xs: T[]): T | null => { const c = new Map<T, number>(); for (const x of xs) c.set(x, (c.get(x) ?? 0) + 1); let best: T | null = null, n = 0; for (const [k, v] of c) if (v > n) { best = k; n = v; } return best; };
 /** 10/09: 判定を JUDGE_REPEAT 回して過半数（依頼・答え方・言ってはいけない事は項目ごと・本質の道は多数） */
 async function judge(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean): Promise<JudgeOut | null> {
+  if (JUDGE_TIER) return judgeTiered(p, meta, raw, needRawPath);
   const outs: JudgeOut[] = [];
   for (let k = 0; k < JUDGE_REPEAT; k++) { const o = await judgeOnce(p, meta, raw, needRawPath); if (o) outs.push(o); }
   if (!outs.length) return null;
@@ -457,7 +464,7 @@ async function judge(p: ExamProblem, meta: Record<string, unknown> | null, raw: 
   const na = (p.asks ?? []).length, nn = (p.ng ?? []).length;
   return { asks: col((o) => o.asks, na), route: col((o) => o.route, na), ng: col((o) => o.ng, nn), asksWhy: outs[0].asksWhy.map((w, i) => `${w}（判定 ${outs.filter((o) => o.asks[i]).length}/${outs.length}）`), ngWhy: outs[0].ngWhy, rawPath: modeOf(outs.map((o) => o.rawPath)) };
 }
-async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean): Promise<JudgeOut | null> {
+async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean, o: { model?: string; rubricFirst?: boolean } = {}): Promise<JudgeOut | null> {
   const asks = p.asks ?? [], ng = p.ng ?? [];
   if (!asks.length && !ng.length && !needRawPath) return { asks: [], asksWhy: [], ng: [], ngWhy: [], rawPath: null, route: [] };
   const plan = planOf(meta);
@@ -482,24 +489,63 @@ async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, r
   ];
   // 2026-10-16 --judge-prefix=rubric: 採点の決まり（正解の依頼・言ってはいけない事）と場面を先に、毎回変わる答案を後ろに（文は変えない・並びだけ）。
   //   同じ問題の回（--repeat）・判定の過半数で前置きが同じになり DeepSeek の自動キャッシュが効く。既定は旧の並び（録音の鍵を変えない）
-  const user = (JUDGE_RUBRIC_FIRST ? [asksNgText(p), contextText(p), ...answer] : [contextText(p), ...answer, asksNgText(p)]).join("\n\n");
-  const o = await deepseekJson(sys, user);
-  if (!o) return null;
-  const A = (o.asks ?? []) as Array<{ i: number; covered: boolean; route?: boolean; why?: string }>, G = (o.ng ?? []) as Array<{ i: number; violated: boolean; why?: string }>;
+  const rf = o.rubricFirst ?? JUDGE_RUBRIC_FIRST;
+  const user = (rf ? [asksNgText(p), contextText(p), ...answer] : [contextText(p), ...answer, asksNgText(p)]).join("\n\n");
+  const jo = await deepseekJson(sys, user, o.model);
+  if (!jo) return null;
+  const A = (jo.asks ?? []) as Array<{ i: number; covered: boolean; route?: boolean; why?: string }>, G = (jo.ng ?? []) as Array<{ i: number; violated: boolean; why?: string }>;
   const a = asks.map((_, i) => A.find((x) => x.i === i + 1)), g = ng.map((_, i) => G.find((x) => x.i === i + 1));
   if (a.some((x) => !x) || g.some((x) => !x)) { judgeCost.fail++; return null; }
-  const rp = typeof o.raw_path === "string" && PATH_CHOICES.includes(o.raw_path) ? o.raw_path : null;
+  const rp = typeof jo.raw_path === "string" && PATH_CHOICES.includes(jo.raw_path) ? jo.raw_path : null;
   // 要点が合えば答え方も合う（covered ⇒ route）
   return { asks: a.map((x) => !!x!.covered), route: a.map((x) => !!x!.covered || x!.route !== false), asksWhy: a.map((x) => String(x!.why ?? "")), ng: g.map((x) => !!x!.violated), ngWhy: g.map((x) => String(x!.why ?? "")), rawPath: rp };
 }
+/** 2026-10-20 判定の段（EXAM_JUDGE_TIER=on）: 機械 → flash 2回（並びを変える）→ 割れた時だけ pro。決め方は scripts/lib/exam-conductor.ts（machineJudge・mergeFlash・tierFinal・needPro） */
+async function judgeTiered(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean): Promise<JudgeOut | null> {
+  const { machineJudge, mergeFlash, tierFinal, needPro } = await import("./lib/exam-conductor");
+  const asks = p.asks ?? [], ng = p.ng ?? [];
+  if (!asks.length && !ng.length && !needRawPath) return { asks: [], asksWhy: [], ng: [], ngWhy: [], rawPath: null, route: [] };
+  const t = judgeCost.tier!; t.problems++;
+  const mj = machineJudge(asks, planOf(meta));
+  const a = await judgeOnce(p, meta, raw, needRawPath, { model: JUDGE_TIER_FLASH, rubricFirst: false });
+  const b = await judgeOnce(p, meta, raw, needRawPath, { model: JUDGE_TIER_FLASH, rubricFirst: true });
+  t.flashCalls += (a ? 1 : 0) + (b ? 1 : 0);
+  // flash が答えなかった時は pro 1回（今まで通り）
+  if (!a || !b) { const pr = await judgeOnce(p, meta, raw, needRawPath); t.proCalls++; if (pr) t.pro += pr.asks.length + pr.ng.length; return pr ?? a ?? b; }
+  const fm = mergeFlash(a, b);
+  // 2026-10-20 確かめる人: 本質の道が要らない問題（LLM の最初の答え＝なし）は raw_path の割れで pro を呼ばない（中身の無い所の割れ＝費用だけ増える）
+  if (!needRawPath) fm.splitRaw = false;
+  const pro = needPro(mj, fm) ? await judgeOnce(p, meta, raw, needRawPath) : null;
+  if (pro) t.proCalls++;
+  const fin = tierFinal(mj, fm, pro);
+  t.machine += fin.by.machine; t.flash += fin.by.flash; t.pro += fin.by.pro; t.unresolved += fin.by.unresolved;
+  return { asks: fin.asks, route: fin.route, ng: fin.ng, rawPath: fin.rawPath, asksWhy: a.asksWhy.map((w, i) => `${w}（${mj.asks[i] !== null ? "機械" : fm.splitAsks.includes(i) ? (pro ? "割れ→pro" : "割れ") : "flash 2回一致"}）`), ngWhy: a.ngWhy };
+}
+async function judgeDraftTiered(p: ExamProblem, draft: string): Promise<{ code: string; asks: boolean[]; ng: boolean[] } | null> {
+  const t = judgeCost.tier!; t.problems++;
+  const a = await judgeDraftOnce(p, draft, { model: JUDGE_TIER_FLASH, rubricFirst: false });
+  const b = await judgeDraftOnce(p, draft, { model: JUDGE_TIER_FLASH, rubricFirst: true });
+  t.flashCalls += (a ? 1 : 0) + (b ? 1 : 0);
+  if (!a || !b) { const pr = await judgeDraftOnce(p, draft); t.proCalls++; return pr ?? a ?? b; }
+  const split = a.code !== b.code || a.asks.some((v, i) => v !== b.asks[i]) || a.ng.some((v, i) => v !== b.ng[i]);
+  if (!split) { t.flash += a.asks.length + a.ng.length + 1; return a; }
+  const pr = await judgeDraftOnce(p, draft); t.proCalls++;
+  if (!pr) { t.unresolved++; return a; }
+  // 揃った項目は flash・割れた項目だけ pro
+  const asks = a.asks.map((v, i) => (v === b.asks[i] ? (t.flash++, v) : (t.pro++, pr.asks[i])));
+  const ngv = a.ng.map((v, i) => (v === b.ng[i] ? (t.flash++, v) : (t.pro++, pr.ng[i])));
+  const code = a.code === b.code ? (t.flash++, a.code) : (t.pro++, pr.code);
+  return { code, asks, ng: ngv };
+}
 /** 下書きの判定（道の分類・依頼・言ってはいけない事） */
 async function judgeDraft(p: ExamProblem, draft: string): Promise<{ code: string; asks: boolean[]; ng: boolean[] } | null> {
+  if (JUDGE_TIER) return judgeDraftTiered(p, draft);
   const outs: Array<{ code: string; asks: boolean[]; ng: boolean[] }> = [];
   for (let k = 0; k < JUDGE_REPEAT; k++) { const o = await judgeDraftOnce(p, draft); if (o) outs.push(o); }
   if (outs.length <= 1) return outs[0] ?? null;
   return { code: modeOf(outs.map((o) => o.code)) ?? "返信", asks: (p.asks ?? []).map((_, i) => maj(outs.map((o) => o.asks[i]))), ng: (p.ng ?? []).map((_, i) => maj(outs.map((o) => o.ng[i]))) };
 }
-async function judgeDraftOnce(p: ExamProblem, draft: string): Promise<{ code: string; asks: boolean[]; ng: boolean[] } | null> {
+async function judgeDraftOnce(p: ExamProblem, draft: string, opt: { model?: string; rubricFirst?: boolean } = {}): Promise<{ code: string; asks: boolean[]; ng: boolean[] } | null> {
   const sys = [
     "あなたは賃貸仲介の LINE 接客で、AI が書いた返信の下書きを採点する係です。推測で甘くしない。",
     `① path: 下書きの道を1つ: ${PATH_CHOICES.filter((x) => x !== "なし").join(" / ")}（返信＝約束なしで答える／2段:pickup＝お部屋をピックアップして送ると約束／2段:check＝確認すると約束／2段:estimate＝見積書を作って送ると約束／2段:photo＝撮影して送ると約束）。複数の約束がある時は一番主な物。`,
@@ -507,7 +553,8 @@ async function judgeDraftOnce(p: ExamProblem, draft: string): Promise<{ code: st
     "③ ng: 正解の『言ってはいけない事』を下書きが言っているか（violated）。",
     '出力は JSON だけ: {"path":"返信","asks":[{"i":1,"covered":true}],"ng":[{"i":1,"violated":false}]}',
   ].join("\n");
-  const o = await deepseekJson(sys, JUDGE_RUBRIC_FIRST ? `${asksNgText(p)}\n\n${contextText(p)}\n\n【下書き】\n${draft}` : `${contextText(p)}\n\n【下書き】\n${draft}\n\n${asksNgText(p)}`);
+  const rf = opt.rubricFirst ?? JUDGE_RUBRIC_FIRST;
+  const o = await deepseekJson(sys, rf ? `${asksNgText(p)}\n\n${contextText(p)}\n\n【下書き】\n${draft}` : `${contextText(p)}\n\n【下書き】\n${draft}\n\n${asksNgText(p)}`, opt.model);
   if (!o) return null;
   const A = (o.asks ?? []) as Array<{ i: number; covered: boolean }>, G = (o.ng ?? []) as Array<{ i: number; violated: boolean }>;
   const code = typeof o.path === "string" && PATH_CHOICES.includes(o.path) ? o.path : "返信";
@@ -1150,6 +1197,7 @@ main().catch((e) => { console.error(e instanceof Error ? e.message : e); process
   await restorePc().catch((e) => console.warn("restorePc:", String(e)));
   if (h) {
     await h.finish();
+    if (judgeCost.tier) console.log(`判定の段（EXAM_JUDGE_TIER=on）: ${judgeCost.tier.problems}件・機械で決めた ${judgeCost.tier.machine}項目・flash 2回で揃った ${judgeCost.tier.flash}項目・割れて pro ${judgeCost.tier.pro}項目${judgeCost.tier.unresolved ? `・決まらない ${judgeCost.tier.unresolved}` : ""}（flash ${judgeCost.tier.flashCalls}回・pro ${judgeCost.tier.proCalls}回）`);
     console.log(`判定（DeepSeek 直・記録の外）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.replayed ? `（うち再生 ${judgeCost.replayed}回・費用0）` : ""}${judgeSkip.lazy ? `・決まりで済んで呼ばなかった ${judgeSkip.lazy}問回（--judge=lazy）` : ""}${injectStats.calls ? `・試しの材料を足した呼び出し ${injectStats.calls}回` : ""}`);
     // 2026-10-15 ④ 1回の試験の数え（新しく呼んだ・再生・使い回した）。問題ごとの数えは <label>.cost.json（前の取り置きの「呼んでいたら」に使う）
     const cas = await import("./lib/llm-cassette");
