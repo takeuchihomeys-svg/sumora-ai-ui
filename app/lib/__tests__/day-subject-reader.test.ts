@@ -114,6 +114,10 @@ t("文の中の『〜の件かしこまりました』1つだけは触らない"
   t("ACK_BLOCK_PLACE=on で動く", tidyAckForm(src, { ACK_BLOCK_PLACE: "on" }) !== src);
   t("ACK_DEDUPE=off で重なりを残す", tidyAckForm("かしこまりました！！かしこまりました！！", { ACK_DEDUPE: "off" }) === "かしこまりました！！かしこまりました！！");
 }
+// 査読: 「承知しましたが／承知しましたら」の文の途中を削らない（同じ段の2つ目でも区切れていない受けは触らない）
+t("2つ目の行頭の『承知しましたが、』は残す", dedupeKashikomarimashita("かしこまりました！！\n承知しましたが、念のため確認します").removed === 0);
+t("2つ目の行頭の『承知しましたら』は残す", dedupeKashikomarimashita("かしこまりました\n承知しましたら教えてください").removed === 0);
+t("読みの失敗（材料が null）でも空文字で返る", daySubjectNoteIfEnabled(null as unknown as [], null, { DAY_SUBJECT_READER: "on" }) === "");
 t("画面・送信の文（draftToSendableText）でも同じ行の重なりを1つに", (draftToSendableText("かしこまりました😊！！かしこまりました😌！！\n\nお送りさせて頂きます！！") ?? "").split("かしこまりました").length === 2);
 
 console.log(`\n${pass} OK / ${fail} NG`);

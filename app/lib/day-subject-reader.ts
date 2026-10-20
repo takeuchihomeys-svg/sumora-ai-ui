@@ -270,5 +270,7 @@ export function buildDaySubjectNote(r: DaySubjectReading): string {
 /** 切り替えつき（off の時は必ず ""） */
 export function daySubjectNoteIfEnabled(msgsOldestFirst: ReadonlyArray<ReaderMsg>, viewingStage?: ViewingFlowStage | null, env?: Record<string, string | undefined>): string {
   if (!daySubjectReaderEnabled(env)) return "";
-  return buildDaySubjectNote(readDaySubject(msgsOldestFirst, viewingStage));
+  // 読みの失敗でブレイン・書く役を止めない（注記が無いだけにする）
+  try { return buildDaySubjectNote(readDaySubject(msgsOldestFirst ?? [], viewingStage)); }
+  catch (e) { console.warn("[day-subject] read failed", e instanceof Error ? e.message : e); return ""; }
 }
