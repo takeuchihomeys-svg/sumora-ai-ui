@@ -40,7 +40,7 @@ import { extractCircumstances, validCircumstances, circumstanceDelaysViewing, on
 import { propertyAppealFitEnabled, readAppealReaction, resolvePropertyAppealFit, type AppealFit } from "./property-appeal-fit";
 import { decideGapEnabled, decideSignalOf, readDecideGapsInTurn } from "./customer-mindset";
 import { headOfFirstMessage, type PickupAppealRow } from "./recommend-cta";
-import { isOtherAgentViewingApplyQuestion } from "./other-agent-viewing";
+import { isOtherAgentViewingApplyQuestion, isOtherAgentViewingPlan } from "./other-agent-viewing";
 
 /* ───────────── 検出（実送信の文から訴求を読む・監査とテストが同じ関数を使う） ───────────── */
 
@@ -163,6 +163,8 @@ export type AppealTimingInput = {
   hoursSinceLastAppeal?: number | null;
   /** 前回の訴求の種類 */
   lastAppealKind?: "apply" | "viewing" | null;
+  /** 2026-10-20 竹内さんの決定（d6b6edc1）: お客様が他社でこれから内覧する予定を伝えた（other-agent-viewing.isOtherAgentViewingPlan）。OTHER_VIEWING_INVITE_APPEAL=on の時だけ入れる */
+  otherAgentViewingPlan?: boolean;
 };
 
 export type AppealTimingVerdict = {
@@ -182,6 +184,7 @@ export const APPEAL_LINES = {
   viewing: "お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！",
   viewing_accept: "かしこまりました😊！！ お部屋ご案内させて頂きます！！",
   viewing_reschedule: "別日でも内覧調整可能ですので、お気に召されましたらお部屋ご案内させていただきます😊！！",
+  viewing_other_agent: "〇〇さんよろしければ弊社にてご内見可能です！！ ご挨拶も兼ねまして一度ご内見頂ければ〇〇さんもご安心してお任せ頂けると思います！！",
   apply: "お気に召されましたらお申込しお部屋抑えさせて頂きます！！",
   apply_hold_then_view: "ご内覧前にお部屋が埋まってしまう可能性もございますので、お気に召されましたらお申込しお部屋抑えた状態でご内覧頂く事も出来ます！！",
   apply_scarce: "1部屋のみの募集となりますので、お気に召されましたらお申込しお部屋抑えさせて頂きます！！",
@@ -287,6 +290,17 @@ export function resolveAppealTiming(i: AppealTimingInput): AppealTimingVerdict {
   const onlineTxt = i.viewingDelayed && i.onlineViewing
     ? `${i.onlineViewing === "business_trip" ? "出張中" : "遠方"}のお客様なので、オンライン内見も対応可能と伝える（竹内さんの実送信の形「${ONLINE_VIEWING_LINE}」）。`
     : "";
+
+  // 2026-10-20 竹内さんの決定（d6b6edc1・c16e9f4a）: 他社でこれから内覧する予定を伝えられた → 否定せず、弊社でも内覧できる・弊社で内覧する利点で誘う
+  //   （申込の意思「契約はスモラでしたい」が同じ通にあっても誘う＝② より先）。日時はこの返信に書かない（受けた次の通で調整）。
+  //   既定は切（訴求の判定を変えるため・会社の事実 other_company_viewing_plan は既定で入る）。入れる OTHER_VIEWING_INVITE_APPEAL=on
+  if (i.otherAgentViewingPlan) {
+    return {
+      kind: "viewing", level: "suggest", line: APPEAL_LINES.viewing_other_agent, staffRate: null,
+      reason: "他社で内覧する予定＝弊社での内覧に誘う",
+      note: `【訴求のタイミング】お客様は他社でこれから内覧する予定を伝えている${i.customer === "apply_intent" ? "（弊社で申込む意思もある）" : ""}。否定せず「大丈夫です😊！！」と受け止め、弊社でもご内覧できる旨と利点を添える（竹内さんの形「${APPEAL_LINES.viewing_other_agent}」・〇〇はお名前）。内覧の日時はこの返信に書かない。申込の後押しは書かない。`,
+    };
+  }
 
   // ② 申込の意思 → 受ける
   if (i.customer === "apply_intent") {
@@ -560,6 +574,7 @@ export function buildAppealInput(o: {
       resolveAckTopicScope(msgs.map((m) => ({ sender: m.sender, text: m.text, created_at: m.createdAt })))),
     hoursSinceLastAppeal: lastAt !== null ? Math.round((turnStart - lastAt) / 3600_000) : null,
     lastAppealKind: lastKind,
+    otherAgentViewingPlan: (process.env.OTHER_VIEWING_INVITE_APPEAL ?? "").trim().toLowerCase() === "on" && isOtherAgentViewingPlan(turnText),
   };
 }
 

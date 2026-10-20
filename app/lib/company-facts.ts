@@ -23,7 +23,7 @@ import { isRoomPhotoRequest } from "./room-photo-request";
 import { detectProcedureQuestion, isProcedureReplyQuestion, PROCEDURE_FACTS } from "./procedure-question";
 import { isRentIncludedQuestion, RENT_INCLUDED_FACT } from "./rent-included-question";
 import { customerAsksStaffCallTime } from "./phone-call";
-import { isOtherAgentViewingApplyQuestion } from "./other-agent-viewing";
+import { isOtherAgentViewingApplyQuestion, isOtherAgentViewingPlan } from "./other-agent-viewing";
 
 export type CompanyFact = {
   id: string;
@@ -481,7 +481,16 @@ export const COMPANY_FACTS: CompanyFact[] = [
     ask: (t) => process.env.COMPANY_FACT_1014 !== "off" && (/(?:他(?:社|の(?:不動産|会社|業者))|別の(?:不動産|会社)|違う(?:不動産|会社))[^。\n]{0,24}(?:内覧|内見|見学|見た|見に|案内|申込|申し込)|(?:内覧|内見|見学)[^。\n]{0,16}(?:他(?:社|の不動産)|別の不動産|違う不動産)/.test(t) || isOtherAgentViewingApplyQuestion(t)),
     n: 2,
     // 2026-10-18: 他社で内覧する話は弊社への内覧の希望ではない（ブレインが内覧日の調整に倒れた・q166）＝その線も事実に足す
-    fact: "**他社で内覧した（する）物件でも、弊社でお申込みしてお部屋を抑えられる**（可能・確認の約束にしない・その場で答える）。**弊社でもご内覧できる**（ご希望なら弊社でご案内）。他社で内覧する予定の話は弊社への内覧の希望ではない（内覧の日程を決める話ではない）。ただしお客様が弊社での内覧を頼んでいる時（「こちらでも内覧お願いできますか」）は内覧の希望。",
+    fact: "**他社で内覧した（する）物件でも、弊社でお申込みしてお部屋を抑えられる**（可能・確認の約束にしない・その場で答える）。**弊社でもご内覧できる**（ご希望なら弊社でご案内）。他社で内覧する予定の話は弊社への内覧の希望ではない（この返信で内覧の日程を決める話ではない。ただし弊社でもご内覧できる旨は添える）。ただしお客様が弊社での内覧を頼んでいる時（「こちらでも内覧お願いできますか」）は内覧の希望。",
+  },
+  {
+    id: "other_company_viewing_plan",
+    // 2026-10-20 竹内さんの決定（設計知見 d6b6edc1・c16e9f4a 10/20）: 他社で内覧する予定を伝えられた時は否定せず、弊社でも内覧できる＋弊社で内覧する利点で誘う
+    //   （弊社で内覧してもらうと信頼関係ができ決定率が上がる）。本番の下書きは「大丈夫・他社で内覧した後でも弊社で申込できる」だけで②③が抜けた。
+    //   もう他社で見た（過去）の時は上の other_company_viewing だけ（今まで通り）。戻す OTHER_VIEWING_INVITE=off
+    ask: (t) => process.env.COMPANY_FACT_1014 !== "off" && isOtherAgentViewingPlan(t),
+    n: 1,
+    fact: "お客様が**他社でこれから内覧する予定**を伝えている。否定せず受け止め、**弊社でもご内覧できる**ことと**弊社で内覧する利点**を必ず添えて、出来る限り弊社でご内覧頂く方向に誘う（他社での内覧を止めない・選ぶのはお客様）。流れは ①受け止める（竹内さんの形「大丈夫です😊！！」）②弊社でも内覧できる（「〇〇さんよろしければ弊社にてご内見可能です！！」）③利点で誘う（「ご挨拶も兼ねまして一度ご内見頂ければ〇〇さんもご安心してお任せ頂けると思います！！」）。こちらで申込めるかも聞かれている時は ① の後に「はい、弊社でお申込みしてお部屋を抑えられる」と答えてから ②③。**内覧の日時（候補）はこの返信に書かない**（お客様が弊社での内覧を受けた次の通で調整する）。",
   },
   {
     id: "student_contract",
