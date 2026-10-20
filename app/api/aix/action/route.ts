@@ -43,7 +43,7 @@ import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBrea
 import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
 // 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキング」「申込以降は渡さなくて大丈夫」
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
-import { loadKnownCustomerNames, loadPartyAliases } from "@/app/lib/pii-known-names";
+import { loadKnownCustomerNames, loadKnownCallNames, loadPartyAliases } from "@/app/lib/pii-known-names";
 import { willRouteAlt } from "@/app/lib/llm-alt-provider";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
 import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, cutoffMs, cutoffMarkOf, formatCutoffMark, filterAfterCutoff, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
@@ -134,7 +134,7 @@ import { buildEstimateSecondNote, resolveEstimateClosing, ensureEstimateClosing,
 import { loadEstimateAppeal } from "@/app/lib/estimate-appeal-server"; // 2026-10-08 11巡目 竹内さんの送信の形
 // 2026-10-06 ⑰: スタッフが冒頭で2回以上呼んだ名前は形を問わず使う（名前の欄の「お客様」をなくす）
 import { staffCalledName } from "@/app/lib/aix-staff-called-name";
-import { hasNameLetter } from "@/app/lib/call-name-pick";
+import { isCallableName } from "@/app/lib/call-name-pick";
 // 2026-10-06 ⑫: 呼び名の固定（会話に出ない別の名前で呼ばない）
 import { enforceCallName } from "@/app/lib/call-name-guard";
 // 2026-10-06 ⑫: 御見積書の費用の事情の1行（報酬が出ない・スモ割なし・仲介手数料の額）
@@ -1049,7 +1049,8 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
     ctx.masker = createMasker({
       conversationId: conversationId ?? action,
       customerName,
-      knownNames: await loadKnownCustomerNames(),
+      // 2026-10-20: 他のお客様の固定の呼び名（call_name）も伏せる（loadKnownCallNames）
+      knownNames: [...await loadKnownCustomerNames(), ...await loadKnownCallNames()],
       // 2026-09-23: 希望条件の「顧客名: 登録名」（property_customers）は表示名と違うので当事者の別名として可逆に伏せる
       partyAliases: await loadPartyAliases(conversationId),
     });
@@ -2060,7 +2061,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
       Array.isArray(recent_messages) ? (recent_messages as Array<{ sender: string; text?: string | null }>) : [],
       rawName
     );
-    const preferredRawName = convCallName || (hasNameLetter(windowName) ? windowName : "");
+    const preferredRawName = convCallName || (isCallableName(windowName) ? windowName : "");
     const familyName = preferredRawName.includes(" ") || preferredRawName.includes("　")
       ? preferredRawName.split(/[ 　]/)[0]
       // スペースなし漢字フルネーム（4文字以上）は先頭2文字を姓とみなす（例: 他谷遥香→他谷）

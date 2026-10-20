@@ -82,7 +82,8 @@ export async function resolveAddressNameForConversation(
   const staffCalledOk = hasNameLetter(staffCalled) ? staffCalled : "";
   const locked = lockedCallName({ stored: storedOk, staffCalled: staffCalledOk, resolved: verdict.name });
   const lockFromConv = (process.env.CALL_NAME_LOCK_FROM_CONVERSATION ?? "").trim().toLowerCase() !== "off";
-  const toLock = !names.callName && locked.name && (locked.source === "staff_called" || (lockFromConv && locked.source === "resolved" && lockableCallNameSource(verdict.source, locked.name)))
+  //   2026-10-20 確かめる人: グループの会話は1回の呼びかけでは固定しない（スタッフが参加者ごとに呼ぶ・本番の5会話すべてが1回の呼びかけで固定される所だった）
+  const toLock = !names.callName && locked.name && (locked.source === "staff_called" || (lockFromConv && !isGroup && locked.source === "resolved" && lockableCallNameSource(verdict.source, locked.name)))
     ? locked.name : "";
   if (toLock) {
     void supabase.from("conversations").update({ call_name: toLock }).eq("id", conversationId).is("call_name", null)
@@ -95,16 +96,19 @@ export async function resolveAddressNameForConversation(
 }
 
 /**
- * 2026-10-20 竹内さん（P1 979a4c55）: AIX・テンプレートの名前の差し込みも返信の下書きと同じ呼び名にする（固定の呼び名 → 会話で確定した名前 → 名前なし）。
- *   会話が分からない・読めない時は渡された名前（絵文字・記号・数字だけなら ""）。表示名の変更（ayaka→🎀）で変わらない
+ * 2026-10-20 竹内さん（P1 979a4c55）: AIX・テンプレートの名前の差し込みも返信の下書きと同じ呼び名にする（固定の呼び名 → 会話で確定した名前 → 表示名 → 名前なし）。
+ *   本当の名前が分からない時は表示名（絵文字でも「🎀さん」＝2026-10-20 竹内さんの答え）。数字だけ・空・グループの会話名は呼ばない（""）。
+ *   表示名の変更（ayaka→🎀）で、固定した名前・会話で確定した名前は変わらない
  */
 export async function callNameForConversation(conversationId: string | null | undefined, fallbackName?: string | null): Promise<string> {
   const { pickCallName } = await import("@/app/lib/call-name-pick");
-  if (!conversationId) return pickCallName({ conversational: fallbackName ?? "" });
+  const fb = isGroupConversationName(fallbackName) ? "" : (fallbackName ?? "");
+  if (!conversationId) return pickCallName({ conversational: fb });
   try {
     const r = await resolveAddressNameForConversation(conversationId, [], null);
-    return pickCallName({ conversational: r.name }) || "";
+    const disp = isGroupConversationName(r.convName) || isGroupConversationName(fallbackName) ? "" : (r.convName || fb);
+    return pickCallName({ conversational: r.name, display: disp }) || "";
   } catch {
-    return pickCallName({ conversational: fallbackName ?? "" });
+    return pickCallName({ conversational: fb });
   }
 }

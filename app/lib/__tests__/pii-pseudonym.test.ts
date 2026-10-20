@@ -263,7 +263,7 @@ console.log("── ★ AIX に実際に配線されているか（消えても�
   t("★ 判定に失敗したら回さない側へ倒す（fail-closed）",
     /ctx\.postApply = true;\s*\n\s*ctx\.masker = null;/.test(aix));
   t("★ 事例の他人の名前も照合対象にしている（当事者だけでは足りない）",
-    /knownNames:\s*await loadKnownCustomerNames\(\)/.test(aix));
+    /knownNames:\s*(?:\[\.\.\.)?await loadKnownCustomerNames\(\)/.test(aix));
   t("★ 画像つきの呼び出しは素通し（対象外なので読み替えない）",
     /callClaudeVision[\s\S]{0,400}?dynamicSuffix: dynamicSystemSuffix/.test(aix));
   t("★ 名前の正解集合は AIX と返信生成で同じ物を使う（同じ事実を2か所に置かない）",

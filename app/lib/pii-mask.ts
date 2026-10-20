@@ -227,6 +227,25 @@ export function maskPII(text: string, knownNames?: (string | null | undefined)[]
   return result;
 }
 
+/**
+ * 2026-10-20 確かめる人（竹内さん「質の影響でなければ、できる限り個人情報に近い物も DeepSeek に渡さない」）:
+ *   当事者の短い名前（固定の呼び名「ゆき」「あ」「R」・2字の姓「日野」）は maskPII の既知の名前（2字以上を裸で置換）や敬称の網（漢字・カタカナだけ）では
+ *   伏せられない／裸で置換すると駅名・物件名（日野・石川町）を壊す。→ 敬称（さん・様・さま・ちゃん・くん）が続く時だけ「お客様」に伏せる。
+ *   名前の字（かな・カナ・漢字・英字）が無い物（絵文字の表示名）は個人情報でないので触らない
+ */
+export function maskHonorificNames(text: string, names: ReadonlyArray<string | null | undefined>): string {
+  if (!text || !names.length) return text;
+  let result = text;
+  const list = [...new Set(names.map((n) => String(n ?? '').trim().replace(/(?:さん|様|さま)$/, '').trim()))]
+    .filter((n) => n && /[ぁ-んァ-ヴ一-龯々A-Za-z]/.test(n.normalize('NFKC')))
+    .sort((a, b) => b.length - a.length);
+  for (const n of list) {
+    const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(new RegExp(`(?<![ぁ-んァ-ヴ一-龯々A-Za-z])${esc}(?=\\s*(?:さん|様|さま|ちゃん|くん))`, 'g'), 'お客様');
+  }
+  return normalizeMaskedHonorifics(result);
+}
+
 // 2026-09-13 RAG 監査: 検索の問い（直近の顧客発言を含む）が平文のまま OpenAI に送られ、同じ平文が embedding_cache に期限なしで残っていた
 //   （電話番号・郵便番号・生年月日・個人番号らしい行が251行。マイナンバーカード画像の文字起こし・申込フォームの記入内容も入っていた）。
 //   埋め込み（knowledge-utils generateEmbedding）の共通入口で使う: maskPII＋生年月日（西暦年つき）・12桁の番号。検索の意味（場面・物件・金額）は残る

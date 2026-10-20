@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
-import { maskPII } from "@/app/lib/pii-mask";
+import { maskPII, maskHonorificNames } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { buildSentProps, buildSentPropsText } from "@/app/lib/sent-props-text";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
@@ -45,7 +45,7 @@ import { buildSendReplyTimingNote } from "@/app/lib/send-reply-timing";
 import { buildAixSceneNote } from "@/app/lib/aix-scene-stats";
 import { buildCompanyFactsNote, brandCostOverrideNote, matchCompanyFacts } from "@/app/lib/company-facts";
 import { isApplicationPayload, APPLICATION_FORM_PLACEHOLDER, APPLICATION_FORMAT_SENT_PLACEHOLDER } from "@/app/lib/pii-pseudonym";
-import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
+import { loadKnownCustomerNames, loadKnownCallNames, loadPartyAliases } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
@@ -2994,13 +2994,21 @@ ${history}`;
   const knownNamesForMask = (await loadKnownCustomerNames().catch(() => [] as string[]))
     .map((s) => (s ?? "").trim())
     .filter((s) => s.length >= 3 && /[一-龯ぁ-んァ-ヶA-Za-z]/.test(s));
-  const maskNames = [opts?.customerName, ...knownNamesForMask];
-  const maskedStableText = maskPII(stableKnowledgeText, maskNames);
+  // 2026-10-20 確かめる人（P1 979a4c55 の見直し）: 当事者の別名（固定の呼び名 call_name・顧客管理の登録名）も伏せる。
+  //   表示名を🎀に変えたお客様では、本文の「ayakaさん」が表示名と違い素のまま渡っていた。3字以上は既知の名前に、短い物は敬称つきの時だけ（駅名・物件名を壊さない）
+  //   竹内さん「Claude の経路は今のまま」: 別クラウド（DeepSeek）に回る時だけ足す（Claude に回る時は今までと1文字も変わらない）
+  const brainRoutesAlt = willRouteAlt(isFreshLayer ? "brain_fresh" : "brain_full", { postApply: isPostApplyStatus(convStatus) });
+  const partyAliasesForMask = brainRoutesAlt ? (await loadPartyAliases(conversationId).catch(() => [] as string[])).map((s) => (s ?? "").trim()).filter(Boolean) : [];
+  const knownCallNamesForMask = brainRoutesAlt ? (await loadKnownCallNames().catch(() => [] as string[])).filter((s) => s.length >= 3 && /[一-龯ぁ-んァ-ヶA-Za-z]/.test(s)) : [];
+  const maskNames = [opts?.customerName, ...knownNamesForMask, ...knownCallNamesForMask, ...partyAliasesForMask.filter((s) => s.length >= 3)];
+  const partyShortNames = brainRoutesAlt ? [opts?.customerName, ...partyAliasesForMask] : [];
+  const maskBrain = (s: string) => maskPII(maskHonorificNames(s, partyShortNames), maskNames);
+  const maskedStableText = maskBrain(stableKnowledgeText);
   // 今回の発言の層は A・B の2ブロック（上の並べ替え）。全体分析の層は今まで通り1ブロック（今は空＝省略）
   const convBlocks = buildConvBlocks({
     isFreshLayer,
-    a: isFreshLayer ? maskPII(freshStableA, maskNames) : "",
-    b: isFreshLayer ? maskPII(freshStableB, maskNames) : "",
+    a: isFreshLayer ? maskBrain(freshStableA) : "",
+    b: isFreshLayer ? maskBrain(freshStableB) : "",
     combined: isFreshLayer ? "" : maskedStableText,
     warmCc: convBlockCacheControl(opts?.cacheWarm, cacheWarmMode()),
     // 2026-10-07 ③キャッシュ: 温めのスイッチが ON の時だけ印（5分の印は 974回書いて 61回しか読めていなかった・BRAIN_CONV_BLOCK_MARK=always で戻す）
@@ -3008,7 +3016,7 @@ ${history}`;
   });
   const userContent = [
     ...convBlocks,
-    { type: "text" as const, text: maskPII(customerSpecificText, maskNames) },
+    { type: "text" as const, text: maskBrain(customerSpecificText) },
   ];
   // 2026-10-02 温めのスイッチ: 会話専用ブロックの指紋を控える（brain_decision_logs.digest.cw.h＝次の本物まで変わらない率 q を監査で測る）。
   //   分けた後は最初の印のブロック（A・無ければ B）の指紋＝温めが読み直す範囲。
@@ -3130,7 +3138,7 @@ ${history}`;
           const second = await client.messages.create({
             ...brainRequestBase(sys),
             max_tokens: 4000,
-            messages: [{ role: "user", content: [...userContent, { type: "text" as const, text: maskPII(block, maskNames) }] }],
+            messages: [{ role: "user", content: [...userContent, { type: "text" as const, text: maskBrain(block) }] }],
           }, { headers: brainHeaders });
           logLlmUsage("brain:deep-check", second.usage, { conversationId, mode: isFreshLayer ? "fresh" : (opts?.mode ?? "full") });
           const secondParsed = tryParseBrainJson(second.content.find((c) => c.type === "text")?.text ?? "");
@@ -4762,7 +4770,7 @@ ${history}`;
       const brainCpForShadow = checkKind?.check_pattern || null;
       const shadow = (async () => {
         try {
-          const maskForJev = (s: string) => maskPII(s, maskNames);
+          const maskForJev = (s: string) => maskBrain(s);
           const msgsForJev = [...typedMessages].reverse().slice(-8)
             .map((m) => ({ sender: m.sender, text: maskForJev(m.text ?? ""), createdAt: m.created_at, isAix: !!m.is_aix_generated }));
           const materials = buildAixJevMaterials({

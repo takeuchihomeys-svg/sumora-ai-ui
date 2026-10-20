@@ -38,7 +38,7 @@ import { resolveTemplateSentMessage } from "./lib/aix-template-source";
 import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
-import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
+import { sendBlockedMessage, isMultiPersonTarget, isGroupConversationName } from "./lib/line-target";
 import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
 import { morningGreetingCardDue, morningGreetingCardNote } from "./lib/viewing-day-greeting";
 import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA, ABOUT_JA as REQUEST_ABOUT_JA } from "./lib/request-ledger";
@@ -261,11 +261,14 @@ function getTodayJST(): string {
 
 /**
  * 2026-10-20 竹内さん（P1 979a4c55）「お客さんが LINE のアカウント名を🎀に変えてから呼び方も🎀さんに変わってしまった…最初呼んでいた名前で連絡する」:
- *   画面の呼び名の唯一の入口。固定の呼び名（conversations.call_name）→ 会話でスタッフが呼んだ名前 → 表示名（名前の字がある時だけ）→ ""。
+ *   画面の呼び名の唯一の入口。固定の呼び名（conversations.call_name）→ 会話でスタッフが呼んだ名前 → 表示名（絵文字の表示名も「🎀さん」＝2026-10-20 竹内さんの答え）→ ""。
+ *   数字だけ・空の表示名・グループの会話名は呼ばない
  *   ピッカー（内覧誘導・物件成約した）・文の手直し・下書きの挨拶・AIX・テンプレートに渡す名前はここから取る（LINE の表示名をそのまま「〇〇さん」にしない）
  */
 function conversationCallName(conv: { messages?: Array<{ sender: string; text?: string | null }>; customerName?: string | null; callName?: string | null }): string {
-  return pickCallName({ stored: conv.callName ?? null, conversational: extractPreferredName(conv.messages || [], conv.customerName || "") });
+  const isGroup = isGroupConversationName(conv.customerName);
+  const disp = isGroup ? "" : (conv.customerName || "");
+  return pickCallName({ stored: conv.callName ?? null, conversational: extractPreferredName(conv.messages || [], disp), display: disp });
 }
 
 // 会話履歴からスタッフが実際に使っていた呼び名を抽出（LINE表示名より優先）
@@ -3744,7 +3747,7 @@ export default function Home() {
       isAixTemplateDraftRef.current = true;
       templateSelectionMetaRef.current = null;
       pendingSecondMsgRef.current = null;
-      setReplyDraft(normalizePetWording(data.text.replace(/アカウント名/g, preferredCustomerName), { PET_WORDING: process.env.NEXT_PUBLIC_PET_WORDING }).text);
+      setReplyDraft(normalizePetWording(data.text.replace(/アカウント名((?:さん|様)?)/g, (_m: string, h: string) => (preferredCustomerName ? `${preferredCustomerName}${h}` : "")), { PET_WORDING: process.env.NEXT_PUBLIC_PET_WORDING }).text);
       setPostAixGen((p) => ({ ...p, [cid]: { status: "done", ...prev } }));
     } catch (e) {
       setPostAixGen((prev) => ({ ...prev, [cid]: { status: "error", error: e instanceof Error ? e.message : "生成に失敗しました" } }));
@@ -5435,8 +5438,9 @@ export default function Home() {
       if (textSent && secondMsgCapture) {
         const customerName = preferredCustomerName;
         const secondText = secondMsgCapture.type === "内覧誘導"
-          ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
-          : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+          // 2026-10-20 確かめる人: 名前が無い時に「さんお気に召されましたら」と崩れていた → sanOf（呼べる名前が無ければ名前なしで書く・絵文字は「🎀さん」）
+          ? `${sanOf(customerName)}ご都合よろしいお日にちにご案内させて頂きます😊！！`
+          : `${sanOf(customerName)}お気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
         // G-08: 2通目学習用にこの時点の顧客メッセージ・状態をキャプチャ（timer発火時にはrefがクリア済みのため）
         const secondLearnMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage || "";
         const secondLearnState = (newStatus ?? selectedConversation.status);
@@ -11467,7 +11471,7 @@ export default function Home() {
             isAixTemplateDraftRef.current = !!(category?.includes("AIX"));
             // テンプレート内「アカウント名」→ preferredCustomerName に置換
             // 2026-10-09 竹内さん「ペットの部分だけペット飼育可能に統一」: テンプレートの「ペットの飼育も相談可能」「ペット（〇〇）飼育可」も入力欄に入れる時に揃える（pet-wording.ts・戻す NEXT_PUBLIC_PET_WORDING=off）
-            const resolvedText = normalizePetWording(text.replace(/アカウント名/g, preferredCustomerName), { PET_WORDING: process.env.NEXT_PUBLIC_PET_WORDING }).text;
+            const resolvedText = normalizePetWording(text.replace(/アカウント名((?:さん|様)?)/g, (_m: string, h: string) => (preferredCustomerName ? `${preferredCustomerName}${h}` : "")), { PET_WORDING: process.env.NEXT_PUBLIC_PET_WORDING }).text;
             setReplyDraft(resolvedText);
             // テンプレート選択ログ（phase=select）を記録。送信時に修正有無を追記
             // CRIT-01修正: 先に PENDING 状態をセットして race condition を防ぐ
@@ -11765,8 +11769,9 @@ export default function Home() {
               if (!meta?.scheduled) {
                 const customerName = preferredCustomerName;
                 const secondText = config.type === "内覧誘導"
-                  ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
-                  : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+                  // 2026-10-20 確かめる人: 名前が無い時の崩れ（「さんお気に召されましたら」）を防ぐ（sanOf）
+                  ? `${sanOf(customerName)}ご都合よろしいお日にちにご案内させて頂きます😊！！`
+                  : `${sanOf(customerName)}お気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
                 // G-08: 2通目学習用にこの時点の顧客メッセージ・状態をキャプチャ
                 const secondLearnMsg = [...selectedConversation.messages]
                   .reverse()
