@@ -29,10 +29,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rea
 import { join, resolve } from "node:path";
 import { execSync, execFileSync } from "node:child_process";
 import {
-  mergePicks, firstReps, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse, dbKeyOf,
+  mergePicks, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse, dbKeyOf,
   modelOf, estimateUsd, DEFAULT_STOP, draftEligible, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
   decidePhase, pickSmall, smallRank, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
-  warmDecision, warmLimit,
+  warmDecision, warmLimit, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3,
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
@@ -74,6 +74,8 @@ const JUDGE = arg("judge", "lazy") === "full" ? "full" : "lazy";
 // 2026-10-17 確かめ: rubric の並べ替えは判定の答えを変える（q113 の下書き 2/3→0/3）＝既定は旧の並び（as-is）。rubric は別に比べてから
 const JUDGE_PREFIX = arg("judge-prefix", "as-is") === "rubric" ? "rubric" : "as-is";
 const REPLAY = arg("replay") === "strict" ? "--replay=strict" : "--replay";
+// 10/20 COST② 回数の決め方（confidence＝既定・自信が低い問題だけ1回ずつ足す／old＝旧）
+const REPS_MODE = repsModeOf(arg("reps"), process.env);
 // 10/20 COST①: 前（main）の答えが無い問題を今 main で解くか（now・既定）／今は解かず夜中の取り置きに回すか（night＝答えの無い問題は前との比べに入らない）。最後の関所は常に now
 const MAIN_MISSING = (arg("main-missing") || process.env.EXAM_MAIN_MISSING || "now").trim().toLowerCase() === "night" ? "night" : "now";
 const PRO_MODEL = "deepseek-v4-pro", FLASH_MODEL = "deepseek-flash";
@@ -225,7 +227,7 @@ async function makePlan(label: string): Promise<Plan> {
     const model = fo ? fo.model : modelOf(p as PlanProblem, { mode: modelMode, flashOkTypes: mc.okTypes, gate: GATE });
     const modelLabel = model === "flash" ? `deepseek-all:${FLASH_MODEL}` : "deepseek-all";
     const fv = flakeVerdict(readObs(p.id), { problemHash: problemHash(p), model: modelLabel });
-    const reps = fo ? fo.reps : firstReps(fv.verdict, repsCap, { gate: GATE });
+    const reps = fo ? fo.reps : firstRepsOf(REPS_MODE, fv.verdict, repsCap, { gate: GATE });
     const hash = problemHash(p);
     const kbKey = kbKeyOf(links[p.id], kbNow);
     const convKey = conv.key ?? "-";
@@ -286,7 +288,7 @@ function printPlan(pl: Plan, now: Date, x: { budget?: Budget; peakWarn?: string 
   log(`問題 ${its.length}問（使い回し ${its.filter((x) => x.reuse).length}・揺れる ${its.filter((x) => x.flake === "flaky").length}・flash ${its.filter((x) => x.model === "flash").length}）`);
   for (const it of its) log(`  ${it.reuse ? "♻" : "▶"} ${it.id} [${pl.probs.get(it.id)?.type}] 回 ${it.reps}${it.flake === "flaky" ? "（揺れる）" : ""}・段 ブレイン${it.draft ? "→下書き" : pl.draftPlan.mode === "if-changed" && draftEligibleOf(pl, it.id) ? "（判断が変われば下書き）" : ""}${it.model === "flash" ? "・flash" : ""}${it.reuse ? "・前の結果を使う（使う物が同じ）" : ""} ← ${it.why.slice(0, 3).join("／")}`);
   log(`段: 1段目＝全部をブレインの判断まで（stage=brain）／2段目＝${pl.draftPlan.mode === "all" ? `下書きまで ${pl.draftPlan.ids.length}問（${pl.draftPlan.why}）` : pl.draftPlan.mode === "if-changed" ? `判断が前と変わった問題だけ下書きまで（最大 ${ifChangedMax}問）` : "下書きなし"}`);
-  log(`途中で止める: ${flag("no-early-stop") ? "しない" : `最初の ${DEFAULT_STOP.minSeen}問以上で前より悪い問題が ${Number(arg("stop-worse", String(DEFAULT_STOP.worseN)))}問（揺れる問題は数えない）`}・前と違った問題は確かめに ${pl.repsCap}回まで足す（はっきり良い時は良くなった・悪くなった問題だけ）`);
+  log(`途中で止める: ${flag("no-early-stop") ? "しない" : `最初の ${DEFAULT_STOP.minSeen}問以上で前より悪い問題が ${Number(arg("stop-worse", String(DEFAULT_STOP.worseN)))}問（揺れる問題は数えない）`}・${REPS_MODE === "old" ? `前と違った問題は確かめに ${pl.repsCap}回まで足す（旧・--reps=old）` : `回数は自信で（2回目は前と違った・外れた・揺れる問題だけ・3回目は割れた問題だけ・最大 ${pl.repsCap}回）`}`);
   log(`見込みの費用（今の側・${peak ? "混雑時の値段込み" : "通常の値段"}）: 約 $${est.now.toFixed(2)}＋判断が変わった問題の下書き 最大 $${(ifChangedMax * 0.015 * (peak ? 1.6 : 1)).toFixed(2)}／前（main）の取り置きが無い問題は main でも回す（1問 約 $0.03・夜中の --warm-main で作っておけば0）`);
 }
 function draftEligibleOf(pl: Plan, id: string): boolean { const p = pl.probs.get(id); return !!p && [...(p.accept ?? []), ...(((p.acceptWhen as { searchExhausted?: string[] } | undefined)?.searchExhausted) ?? [])].some((a) => !a.startsWith("AIX")); }
@@ -350,10 +352,9 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   if (res.stopped) return res;
   // 2. 確かめの回: 1回目が前と違った問題（揺れか本当の変化か）を max 回まで。はっきり良い時は良くなった・悪くなった問題だけ
   const d = stopDecision(res.cmps, flaky);
-  const conf = pl.repsCap <= 1 ? [] : confirmTargets(res.cmps, new Set(ids.filter((id) => pl.items.get(id)!.reps >= pl.repsCap)), { clearlyGood: d.action === "fewer" });
-  if (conf.length) {
-    log(`\n🔁 確かめの回（前と違った ${conf.length}問 を ${pl.repsCap}回まで${pl.phase === "small" ? "・小さな確かめ＝繰り返し最小" : ""}${d.action === "fewer" ? "・はっきり良いので判断だけ変わった問題は省く" : ""}）: ${conf.join(",")}`);
-    for (const id of conf) pl.items.get(id)!.reps = pl.repsCap;
+  // 確かめの回を流す（回数を書いて子を回し、前の結果を差し替えて比べ直す）
+  const confirmRun = async (conf: string[], reps: number) => {
+    for (const id of conf) pl.items.get(id)!.reps = Math.max(pl.items.get(id)!.reps, reps);
     writeReps(Object.fromEntries(ids.map((id) => [id, pl.items.get(id)!.reps])));
     const o2 = await runBrainExam(baseArgs(conf), env);
     addBase(res, readBaselineSummary(label));
@@ -362,8 +363,28 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
     const got = new Set(b2.map((r) => r.id));
     baseRows = [...baseRows.filter((r) => !got.has(r.id)), ...b2];
     res.cmps = compareAll(ids, label, res.baseLabels, baseRows);
-    res.confirm = conf;
+    res.confirm = [...new Set([...res.confirm, ...conf])];
+  };
+  if (REPS_MODE === "old") {
+    const conf = pl.repsCap <= 1 ? [] : confirmTargets(res.cmps, new Set(ids.filter((id) => pl.items.get(id)!.reps >= pl.repsCap)), { clearlyGood: d.action === "fewer" });
+    if (conf.length) {
+      log(`\n🔁 確かめの回（前と違った ${conf.length}問 を ${pl.repsCap}回まで${pl.phase === "small" ? "・小さな確かめ＝繰り返し最小" : ""}${d.action === "fewer" ? "・はっきり良いので判断だけ変わった問題は省く" : ""}）: ${conf.join(",")}`);
+      await confirmRun(conf, pl.repsCap);
+    }
+    return res;
   }
+  // 10/20 COST② 自信の気づき: 2回目は前と違った・外れた・揺れる問題だけ → 3回目は1回目と2回目が割れた問題だけ（揃えば止める）
+  const rowsOf = (id: string) => readRows(label).filter((r) => r.id === id);
+  const failedOf = (id: string) => { const rs = rowsOf(id).filter((r) => !r.error); return rs.length > 0 && !(rs.filter((r) => !!r.path?.ok && !!r.score?.pass).length * 2 > rs.length); };
+  const r2 = confidenceRound2(ids.map((id) => ({ id, cmp: res.cmps.find((c) => c.id === id)?.cmp ?? "nocur", failed: failedOf(id), flake: pl.items.get(id)!.flake, have: rowsOf(id).filter((r) => !r.error).length })), { clearlyGood: d.action === "fewer", cap: pl.repsCap });
+  if (r2.length) {
+    log(`\n🔁 2回目（自信が低い ${r2.length}問だけ・${d.action === "fewer" ? "はっきり良いので判断だけ変わった問題は省く・" : ""}揃えばここで止める）: ${r2.map((x) => `${x.id}（${x.why}）`).join(",")}`);
+    await confirmRun(r2.map((x) => x.id), 2);
+    const r3 = confidenceRound3(rowsOf, r2.map((x) => x.id), pl.repsCap);
+    const same = r2.length - r3.length;
+    log(`  1回目と2回目: 揃った ${same}問（止める）・割れた ${r3.length}問${r3.length ? `（${r3.join(",")}）→ 3回目` : ""}`);
+    if (r3.length) await confirmRun(r3, 3);
+  } else log(`\n🔁 2回目なし（前と同じ・外れていない・揺れない＝自信が高い）`);
   return res;
 }
 
@@ -529,7 +550,7 @@ async function warmMain() {
   const { spec, full } = loadExamProblems();
   const types = list("types");
   const ids = spec.filter((p) => !types.length || types.includes(p.type)).map((p) => p.id);
-  const reps = Object.fromEntries(ids.map((id) => { const p = effective((full.get(id) ?? spec.find((s) => s.id === id)!) as AnyProblem); return [id, firstReps(flakeVerdict(readObs(id), { problemHash: problemHash(p), model: "deepseek-all" }).verdict, MAX_REPS, { gate: true })]; }));
+  const reps = Object.fromEntries(ids.map((id) => { const p = effective((full.get(id) ?? spec.find((s) => s.id === id)!) as AnyProblem); return [id, warmRepsOf(REPS_MODE, flakeVerdict(readObs(id), { problemHash: problemHash(p), model: "deepseek-all" }).verdict, MAX_REPS)]; }));
   // 10/17 ② 1日の上限: 取り置きも数える（守る線は無い）。10/20: 全部か0かでなく、残りの額で回せる数だけ今（--baseline-limit）・残りは次の夜中に続き
   //   （旧は見込み全部が上限を超えると毎晩先送りされた。取り置きに無い問題だけ回す＝使い回し・持ち越しは0円なので、見込みは回す問題の上限）
   const cap = dailyCapUsd(process.env);

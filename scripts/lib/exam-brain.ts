@@ -395,3 +395,40 @@ export function warmLimit(o: { cap: number | null; usedUsd: number; unitUsd: num
   if (o.cap === null) return null;
   return Math.max(0, Math.floor((o.cap - o.usedUsd) / Math.max(1e-9, o.unitUsd)));
 }
+
+// ─── 10/20 COST② 自信の気づき（LINE のブレインの「迷った時だけ深く」）: 回数を1回ずつ足す ─────────────────────
+/**
+ * 回数の決め方: confidence（既定）＝全部1回 → 2回目は「前（main）と違った・外れた・揺れる問題」だけ → 3回目は「1回目と2回目が割れた問題」だけ（揃えば止める）。
+ *   old＝旧（前と違った問題を一度に max 回まで・最後の関所の揺れる問題は最初から max 回）。--reps=old か EXAM_REPS=old
+ */
+export type RepsMode = "confidence" | "old";
+export function repsModeOf(argVal: string | undefined, env: Record<string, string | undefined> = {}): RepsMode {
+  return String(argVal || env.EXAM_REPS || "").trim().toLowerCase() === "old" ? "old" : "confidence";
+}
+/** 1回目の回数（confidence は全部1回・旧は firstReps） */
+export function firstRepsOf(mode: RepsMode, v: FlakeKind, max = 3, o: { gate?: boolean } = {}): number { return mode === "old" ? firstReps(v, max, o) : 1; }
+/** 取り置き（main の答え）の回数: 比べる相手なので揺れる問題だけ2回（割れたら過半数が決まらない＝揺れる問題は止める判断に数えない）。旧は関所と同じ */
+export function warmRepsOf(mode: RepsMode, v: FlakeKind, max = 3): number { return mode === "old" ? firstReps(v, max, { gate: true }) : v === "flaky" ? Math.min(2, Math.max(1, max)) : 1; }
+/**
+ * 2回目を回す問題: 回が1回だけで、①前（main）と違った（悪化・改善・判断の変化。はっきり良い時は判断だけの変化は省く）②外れた（ただし揺れの記録で安定かつ前と同じ外れ＝いつもの外れは省く）③揺れる問題。
+ *   前が無い問題（nobase）は②③だけ
+ */
+export function confidenceRound2(xs: Array<{ id: string; cmp: Cmp; failed: boolean; flake: FlakeKind; have: number }>, o: { clearlyGood?: boolean; cap: number }): Array<{ id: string; why: string }> {
+  if (o.cap < 2) return [];
+  const out: Array<{ id: string; why: string }> = [];
+  for (const x of xs) {
+    if (x.have !== 1 || x.cmp === "nocur") continue;
+    const differs = x.cmp === "worse" || x.cmp === "better" || (x.cmp === "changed" && !o.clearlyGood);
+    if (differs) out.push({ id: x.id, why: `前と違った（${x.cmp}）` });
+    else if (x.flake === "flaky") out.push({ id: x.id, why: "揺れる問題" });
+    else if (x.failed && !(x.flake === "stable" && x.cmp === "same")) out.push({ id: x.id, why: "外れた" });
+  }
+  return out;
+}
+/** 回の答えの印（道の符号・道の合否・合格・下書きの合否）。2回が同じ印なら揃った＝止める */
+export function repSig(r: RowLite): string { return `${String(r.path?.code ?? "")}|${r.path?.ok ? 1 : 0}|${r.score?.pass ? 1 : 0}|${r.draft ? (r.draft.pass ? 1 : 0) : "-"}`; }
+/** 3回目を回す問題: 2回あって印が割れた問題だけ（揃った問題はそこで止める） */
+export function confidenceRound3(rowsOf: (id: string) => RowLite[], ids: string[], cap: number): string[] {
+  if (cap < 3) return [];
+  return ids.filter((id) => { const rs = rowsOf(id).filter((r) => !r.error); return rs.length === 2 && new Set(rs.map(repSig)).size > 1; });
+}

@@ -3,7 +3,7 @@
 // 実行: npx tsx scripts/lib/__tests__/exam-brain-like-line.test.ts（全 PASS で exit 0）
 import { examStageKeysOf, type FileMap } from "../exam-scope";
 import { findCarryOver, relevantStageOf, siblingDirs, type BaselineFile } from "../brain-exam-baseline";
-import { warmDecision, warmLimit } from "../exam-brain";
+import { warmDecision, warmLimit, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3, repSig, type Cmp, type RowLite } from "../exam-brain";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -57,6 +57,28 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   ok("予約: もう予約がある → しない（force でも二重にしない）", !warmDecision({ vk: "v1", log: {}, queued: ["warm-auto-v1"], force: true }).enqueue);
   ok("予約: 途中（done=false）→ 続きを予約", warmDecision({ vk: "v1", log: { v1: { at: "2026-10-20T00:00:00Z", commit: "c", done: false, left: 5 } }, queued: [] }).enqueue);
   ok("回す数: 残り $1・1問 $0.03 → 33問／上限なし → null／使い切り → 0", warmLimit({ cap: 10, usedUsd: 9, unitUsd: 0.03 }) === 33 && warmLimit({ cap: null, usedUsd: 0, unitUsd: 0.03 }) === null && warmLimit({ cap: 10, usedUsd: 11, unitUsd: 0.03 }) === 0);
+}
+
+// ─── COST② 自信の気づき（回数） ─────────────────────────────────────────
+{
+  ok("回数の決め方: 既定 confidence・--reps=old / EXAM_REPS=old で旧", repsModeOf(undefined, {}) === "confidence" && repsModeOf("old", {}) === "old" && repsModeOf("", { EXAM_REPS: "old" }) === "old");
+  ok("1回目: confidence は全部1回（最後の関所の揺れる問題も）・旧は関所の揺れる問題 3回", firstRepsOf("confidence", "flaky", 3, { gate: true }) === 1 && firstRepsOf("old", "flaky", 3, { gate: true }) === 3 && firstRepsOf("old", "stable", 3, { gate: true }) === 1);
+  ok("取り置きの回: confidence は揺れる問題だけ2回・旧は3回", warmRepsOf("confidence", "flaky", 3) === 2 && warmRepsOf("confidence", "stable", 3) === 1 && warmRepsOf("confidence", "unknown", 3) === 1 && warmRepsOf("old", "flaky", 3) === 3);
+  const x = (id: string, cmp: Cmp, failed = false, flake: "flaky" | "stable" | "unknown" = "unknown", have = 1) => ({ id, cmp, failed, flake, have });
+  const r2 = confidenceRound2([x("a", "worse"), x("b", "better"), x("c", "changed"), x("d", "same"), x("e", "same", true), x("f", "same", true, "stable"), x("g", "same", false, "flaky"), x("h", "nobase", true), x("i", "nobase"), x("j", "worse", false, "unknown", 2), x("k", "nocur", true), x("l", "shape")], { cap: 3 }).map((r) => r.id);
+  ok("2回目: 前と違った（悪化・改善・判断）・外れた・揺れる問題だけ。いつもの外れ（安定×前と同じ）・同じ・形だけ・答案なし・もう2回ある問題は省く", r2.join() === "a,b,c,e,g,h", r2.join());
+  ok("2回目: はっきり良い時は判断だけの変化を省く", confidenceRound2([x("c", "changed"), x("a", "worse")], { cap: 3, clearlyGood: true }).map((r) => r.id).join() === "a");
+  ok("2回目: 上限1回（cap<2）なら無し", confidenceRound2([x("a", "worse")], { cap: 1 }).length === 0);
+  const rows: Record<string, RowLite[]> = {
+    s: [{ id: "s", rep: 1, path: { code: "返信", ok: true }, score: { pass: true } }, { id: "s", rep: 2, path: { code: "返信", ok: true }, score: { pass: true } }],
+    t: [{ id: "t", rep: 1, path: { code: "返信", ok: true }, score: { pass: true } }, { id: "t", rep: 2, path: { code: "AIX:x", ok: false }, score: { pass: false } }],
+    u: [{ id: "u", rep: 1, path: { code: "返信", ok: true }, score: { pass: true } }, { id: "u", rep: 2, path: { code: "返信", ok: true }, score: { pass: false } }],
+    v: [{ id: "v", rep: 1, path: { code: "返信", ok: true }, score: { pass: true } }],
+    w: [{ id: "w", rep: 1, path: { code: "返信", ok: true }, score: { pass: true } }, { id: "w", rep: 2, error: "x" }],
+  };
+  ok("3回目: 1回目と2回目が割れた問題だけ（道か合格が違う）・揃った・1回だけ・失敗の回は止める", confidenceRound3((id) => rows[id] ?? [], ["s", "t", "u", "v", "w"], 3).join() === "t,u");
+  ok("3回目: 上限2回（小さな確かめ）なら無し", confidenceRound3((id) => rows[id] ?? [], ["t"], 2).length === 0);
+  ok("回の印: 下書きの合否も見る", repSig({ id: "a", rep: 1, path: { code: "返信", ok: true }, score: { pass: true }, draft: { pass: true } }) !== repSig({ id: "a", rep: 1, path: { code: "返信", ok: true }, score: { pass: true }, draft: { pass: false } }));
 }
 
 console.log(`exam-brain-like-line: ${pass} PASS / ${fail} FAIL`);
