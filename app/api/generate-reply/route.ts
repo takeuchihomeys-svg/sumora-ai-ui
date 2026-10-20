@@ -329,6 +329,8 @@ import { applyPromptR11, promptR11Enabled } from "@/app/lib/prompt-r11";
 import { fixTakeuchiWording, fixProxyNegotiate } from "@/app/lib/takeuchi-wording-r11";
 import { fixUnsentReviewAck } from "@/app/lib/unsent-review-ack";
 import { buildSituationNote } from "@/app/lib/customer-situation-r11";
+import { writingBlueprintEnabled, buildWritingBlueprintNote, questionsOf } from "@/app/lib/writing-blueprint";
+import { isOtherAgentViewingPlan, isOtherAgentViewingApplyQuestion } from "@/app/lib/other-agent-viewing";
 import { resolveReplyScene, sceneMaterialsEnabled, keepMaterial, phaseGuideForScene, stripKnowledgeSections, SCENE_EXAMPLE_BOOST, consideringAvoidTopics, consideringDoorEnabled, CONSIDERING_DOOR_LINES, CONSIDERING_DOOR_EXEMPT_NOTE, filterRulesTextForScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { previewRetiredRules, RETIRE_RULE_KEYS } from "@/app/lib/rules-retire-preview";
 import { R6_RETIRE_KEYS, R6_TEXT_OVERRIDES } from "@/app/lib/rules-review-r6";
@@ -1004,7 +1006,9 @@ function buildGenerationMessages(
     /** 2026-09-26（穴2・YUMA の前後比較）: 連投の途中で、お客様の確認の依頼にもう AIX（物件確認した）で答えた（checkAnsweredFollowUp） */
     checkAnsweredFollowUp?: boolean } | null = null,
   // 2026-10-07 場面の整理（reply-scene.ts）: この番の場面と、場面ごとの材料の取捨を効かせるか。null／on=false は今まで通り全部
-  sceneSel: { scene: ReplyScene | null; on: boolean; ackUnified?: boolean; brainContract?: boolean; ackForm?: "receive_only" | "wait_line" | null } | null = null,
+  sceneSel: { scene: ReplyScene | null; on: boolean; ackUnified?: boolean; brainContract?: boolean; ackForm?: "receive_only" | "wait_line" | null;
+    /** 2026-10-20 文の設計図（writing-blueprint.ts・WRITING_BLUEPRINT=on の時だけ非空）。毎回変わる側に入れる＝off の時は1文字も変わらない */
+    blueprintNote?: string } | null = null,
 ): [SystemMessage, HumanMessage] {
   const sceneKeep = (k: Parameters<typeof keepMaterial>[1]) => keepMaterial(sceneSel?.scene ?? null, k, !!sceneSel?.on);
   const jstHour = getJSTHour();
@@ -1963,7 +1967,7 @@ ${aixDone.answeredByAix
   //   dbRules ブロックは学習で変わる DB 由来の塊なので、原則の増減で書き直しになるのはこのブロックだけ（区切りは4つのまま）
   const dynamicBlock =`${replyContentNote}
 ${propertyStatusNote}
-${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") ? closingNote + closingFallback : ""}${brainGuidanceNote}${sceneKeep("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${sceneStyleNoteText}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? demoteFixedNote(moveInTimingNote, brainContractOn) : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + demoteFixedNote(newConditionRequestNote, brainContractOn) + conditionExpansionNote + searchAgainNote : ""}${[promiseEchoNote, waitFormAckNote, pickupPromiseAckNote, estimatePromiseAckNote, aixDoneAckNote].map((n) => demoteRepeatNote(n, brainContractOn)).join("")}
+${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") ? closingNote + closingFallback : ""}${brainGuidanceNote}${sceneKeep("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${sceneStyleNoteText}${sceneSel?.blueprintNote ?? ""}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? demoteFixedNote(moveInTimingNote, brainContractOn) : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + demoteFixedNote(newConditionRequestNote, brainContractOn) + conditionExpansionNote + searchAgainNote : ""}${[promiseEchoNote, waitFormAckNote, pickupPromiseAckNote, estimatePromiseAckNote, aixDoneAckNote].map((n) => demoteRepeatNote(n, brainContractOn)).join("")}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${sceneKeep("knowledge") ? knowledgeNote : ""}
@@ -6069,7 +6073,15 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       applyReadinessNote,      // 2026-09-20 竹内: 申込が近い合図（hot の時だけ・文面ではなく材料）
       ownProperty && ownProperty.ours > 0 ? { note: ownProperty.note, all: ownProperty.all } : null, // 2026-09-22 こちらが送った物件の送り返し
       { lastStaffBlockOverride: staffBlock.dropped > 0 ? staffBlock.text : undefined, viewingScheduled, viewingAppointment: ledger.facts.viewingAppointment, checkAnsweredFollowUp }, // 2026-09-26 済んだ事（done-state）
-      { scene: replyScene, on: sceneMaterialsOn, brainContract: turnContract?.source === "brain", ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off" }, // 2026-10-07 場面の整理（3巡目: 短い了承の判定も場面に寄せる）
+      { scene: replyScene, on: sceneMaterialsOn, brainContract: turnContract?.source === "brain", ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off",
+        // 2026-10-20 文の設計図（竹内さん f5a4b51a「文生成にも軸」）: 既定 off＝"" を渡す（指示は変わらない）。分かれ道は今は他社で内覧の1つだけ（申込までの地図が入ったら地図の分かれ道に替える）
+        blueprintNote: !isTemplateOptimize && writingBlueprintEnabled() ? buildWritingBlueprintNote({
+          scene: replyScene,
+          routeBranch: isOtherAgentViewingPlan(message ?? "") || isOtherAgentViewingApplyQuestion(message ?? "") ? "other_agent_viewing" : null,
+          questions: replySceneResolved?.questions?.length ? replySceneResolved.questions : questionsOf(message ?? ""),
+          sentThisTurn: replyAixPre?.timing === "now",
+          promiseOutstanding: ledgerActive ? !!ledger.facts.pickupPromisedUnfulfilled : false,
+        }) : "" }, // 2026-10-07 場面の整理（3巡目: 短い了承の判定も場面に寄せる）
     );
 
     // 2026-10-18 竹内さん「flash の特徴に合わせる」: 書く役が DeepSeek の flash の時だけ、最後（キャッシュの前置きの後ろ）に答える項目の一覧・手本を足す
