@@ -51,6 +51,7 @@ import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } fr
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
 import { vacateMoveInEstimateEnabled } from "@/app/lib/vacate-move-in-estimate";
 import { brainCheckPatternEnabled, brainCheckPatternSchemaField, resolveCheckKindWithBrain } from "@/app/lib/brain-check-pattern";
+import { routeFix1020, broughtTypedText, contractAixWhenTopEmpty, contractPromiseIsCheck, viewingCheckAlsoVacancy, concernRepickupTarget, concernRepickupAnswer, lastStaffReportedResult, checkAfterResultTurnOk } from "@/app/lib/brain-route-fix-1020";
 import { viewingCheckFirst, VIEWING_CHECK_PROMISE_RE, viewingRoomVacating, threadRoomCheckForTurn, otherRoomSentAfterMoveOut, vacancyDateFromMaterial, vacatingViewingAnswer, type ThreadRoomCheck } from "@/app/lib/viewing-check-first";
 import { propertyThreadEnabled } from "@/app/lib/property-thread";
 import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
@@ -3575,7 +3576,8 @@ ${history}`;
       // 5巡目（10/07）: 「〇〇内覧可能か確認させて頂きます」の約束を果たすのは AIX【内覧調整】（確認の結果は内覧の候補日と一緒に伝える）
       if (promiseAix.kind === "check") {
         const lastStaffText = [...messagesOldestFirst].reverse().find((m) => m.sender !== "customer" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(m.text ?? ""))?.text ?? "";
-        if (VIEWING_CHECK_PROMISE_RE.test(lastStaffText)) { finalAix = "viewing_invite"; decisionSource = "promise:viewing_check"; }
+        // 2026-10-20 試験の道の外れ⑥（q179・BRAIN_ROUTE_FIX_1020 viewing_check_vacancy）: 同じ約束に募集状況・空きの確認もある時は【物件確認した】のまま（結果が「募集に出ていない」もある）
+        if (VIEWING_CHECK_PROMISE_RE.test(lastStaffText) && !(routeFix1020("viewing_check_vacancy") && viewingCheckAlsoVacancy(lastStaffText))) { finalAix = "viewing_invite"; decisionSource = "promise:viewing_check"; }
       }
       promiseAltAction = promiseAix.alt ?? null;
       // 2026-10-06 ⑫ チンシャン: 条件・設備の確認の約束は 確認した（条件・交渉）→ 管理会社に確認した→〈要件〉のピッカーで開く（物件確認した ではない）
@@ -3861,7 +3863,8 @@ ${history}`;
       const focusRoom = customerState?.focusKey ? customerState.properties.find((p) => p.key === customerState.focusKey) ?? null : null;
       const fe = resolveFocusedEstimateRequest(unrepliedTurn.text,
         focusRoom ? { name: focusRoom.name, sentByUs: focusRoom.sentByUs, ended: focusRoom.status === "ended" } : null);
-      if (fe.hit && applyOverride(demotedOverrides, "signal", "signal:focused_estimate_request", "estimate_sheet", finalAix)) {
+      // 2026-10-20 試験の道の外れ④（q182・BRAIN_ROUTE_FIX_1020 focused_estimate）: 主のお部屋への見積の依頼（本番 52件で次の AIX 見積書送る 47）は信号の家族ごと下げない
+      if (fe.hit && (routeFix1020("focused_estimate") || applyOverride(demotedOverrides, "signal", "signal:focused_estimate_request", "estimate_sheet", finalAix))) {
         finalAix = "estimate_sheet";
         sceneSignalCheckPattern = null;
         decisionSource = "signal:focused_estimate_request";
@@ -4073,6 +4076,26 @@ ${history}`;
       finalAix = "property_check_result";
       decisionSource = decisionSource ? `${decisionSource}+ack_to_check` : "correction:ack_to_check";
     }
+    // 2026-10-20 試験の道の外れ⑦（q170・BRAIN_ROUTE_FIX_1020 concern_repickup・app/lib/brain-route-fix-1020.ts）: 送った物件への不満（お風呂が狭い）に
+    //   ルール⑨（懸念→条件に変えた再ピックアップの宣言）があるのに LLM が返信だけにした番は、その依頼を探す約束（about=search_condition）に直す＝下の約束の2段に入る
+    if (routeFix1020("concern_repickup") && !promiseAix) {
+      const tcRaw = (parsed as { turn_contract?: unknown }).turn_contract;
+      const idx = concernRepickupTarget({
+        concern: (parsed as { customer_concern?: { topic?: unknown; object?: unknown } | null }).customer_concern ?? null,
+        customerText: unrepliedTurn.text ?? "",
+        ackOnly: customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "")),
+        propertiesSent: brainLedger.facts.propertiesSentCount > 0,
+        finalAix, decisionSource, postApply: isPostApplyStatus(convStatus), tc: tcRaw,
+      });
+      if (idx !== null && tcRaw && typeof tcRaw === "object") {
+        const asks = (tcRaw as { asks: Array<Record<string, unknown>> }).asks;
+        const answer = concernRepickupAnswer((parsed as { customer_concern?: { object?: unknown } | null }).customer_concern?.object);
+        asks[idx] = { ...asks[idx], route: "promise", about: "search_condition", answer, aix: null };
+        const av = (parsed as { avoid_topics?: unknown }).avoid_topics;
+        if (Array.isArray(av)) (parsed as { avoid_topics?: unknown }).avoid_topics = av.filter((t) => !/ピックアップ|新規物件|他の物件/.test(String(t)));
+        console.log(JSON.stringify({ tag: "brain:route-fix-1020", part: "concern_repickup", conversationId, answer }));
+      }
+    }
     // 2026-10-15（q153）: ブレインが AIX の欄を空にしたまま turn_contract で「お部屋をピックアップしてお送りする」約束（route=promise・探す条件／送った物件への反応）を
     //   言った番は、その約束を2段（約束の返信→後で物件の AIX）に通す。規則が何も変えていない番（decisionSource 無し）・お礼だけでない番だけ。戻す BRAIN_PROMISE_PICKUP=off
     if (!finalAix && decisionSource === null && !promiseAix && !isPostApplyStatus(convStatus)
@@ -4087,7 +4110,36 @@ ${history}`;
 
     // 2026-10-16（q133・q150・q157）: 本質が確認・見積の約束で最後の aix が null の番も 2段の判定に入れる（brain-route-keep.promiseAixFromContract・BRAIN_TC_PROMISE_TWO_STAGE=off）
     const { promiseAixFromContract, tcPromiseTwoStageEnabled } = await import("@/app/lib/brain-route-keep");
-    const tcPromiseAix = !finalAix && tcPromiseTwoStageEnabled() ? promiseAixFromContract((parsed as { turn_contract?: unknown }).turn_contract) : null;
+    // 2026-10-20 試験の道の外れ③（q184・BRAIN_ROUTE_FIX_1020 contract_aix）: 最後の aix が空のまま turn_contract の依頼を route=aix（見積書送る等）と書いた番は、
+    //   その AIX を最後の aix にする（後の reconcile が依頼を約束に直してただの返信になっていた）。規則が何も決めていない番だけ
+    if (!finalAix && decisionSource === null && !promiseAix && routeFix1020("contract_aix") && !isPostApplyStatus(convStatus)) {
+      const k = contractAixWhenTopEmpty((parsed as { turn_contract?: unknown }).turn_contract, (x) => normalizeAixActionKey(x as string));
+      if (k && AIX_BRAIN_NOTES[k]) {
+        finalAix = k;
+        decisionSource = "brain:contract_aix";
+        console.log(JSON.stringify({ tag: "brain:route-fix-1020", part: "contract_aix", conversationId, aix: k }));
+      }
+    }
+    // 2026-10-20 試験の道の外れ⑤b（q177・BRAIN_ROUTE_FIX_1020 check_after_result・P0「AIX と返信の分け方」）: 確認の結果を返した直後の追いの質問を
+    //   ブレインが確認の約束（route=promise）にした番は、答えがスタッフにしか分からない＝AIX【物件確認した】を直接（約束の返信にしない）
+    let checkAfterResult = false;
+    if (!finalAix && decisionSource === null && !promiseAix && routeFix1020("check_after_result") && !isPostApplyStatus(convStatus)
+      && contractPromiseIsCheck((parsed as { turn_contract?: unknown }).turn_contract)
+      && checkAfterResultTurnOk(unrepliedTurn.text ?? "", !!unrepliedTurn.hasImage)) {
+      const lastStaff = [...messagesOldestFirst].reverse().find((m) => m.sender !== "customer" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(m.text ?? ""));
+      const turnAt = [...typedMessages].reverse().filter((m) => m.sender === "customer").slice(-1)[0]?.created_at ?? null;
+      if (lastStaffReportedResult(lastStaff ? { text: lastStaff.text ?? null, at: lastStaff.created_at ?? null } : null, turnAt)) {
+        finalAix = "property_check_result";
+        decisionSource = "brain:check_after_result";
+        checkAfterResult = true;
+        console.log(JSON.stringify({ tag: "brain:route-fix-1020", part: "check_after_result", conversationId }));
+      }
+    }
+    // 2026-10-20 試験の道の外れ⑤（q177・BRAIN_ROUTE_FIX_1020 promise_check）: 約束の依頼の答えが「確認させて頂きます」だけ（about=設備など）でも確認の約束として2段へ
+    const tcPromiseAix = !finalAix && tcPromiseTwoStageEnabled()
+      ? (promiseAixFromContract((parsed as { turn_contract?: unknown }).turn_contract)
+        ?? (routeFix1020("promise_check") && contractPromiseIsCheck((parsed as { turn_contract?: unknown }).turn_contract) ? "property_check_result" : null))
+      : null;
     if (tcPromiseAix) console.log(JSON.stringify({ tag: "brain:tc-promise-two-stage", conversationId, aix: tcPromiseAix }));
     const twoStageAix = finalAix ?? tcPromiseAix;
     if (twoStageAix && /^(?:property_send|property_recommendation|property_search|property_check_result|acknowledge_check|estimate_sheet|guarantor_info|viewing_invite)$/.test(twoStageAix)) {
@@ -4208,9 +4260,11 @@ ${history}`;
           for (const m of typedMessages) { if (m.sender !== "customer") break; turnMsgs.unshift(m.text ?? ""); }
           const props = turnMsgs.filter((t) => /https?:\/\//.test(t) || (/^\s*\[画像\]/.test(t) && isPropertyCandidateImage(t)));
           const n = broughtPropertyCount(props);
-          return n > 0 ? { ask: broughtPropertyAsk(unrepliedTurn.text ?? ""), count: n, titleOnly: broughtTitleOnly(props) } : null; // 10/13 titleOnly: SNS・TikTok の題だけ（two-stage）
+          // 2026-10-20 試験の道の外れ①（q183・q184・BRAIN_ROUTE_FIX_1020 brought_text）: 何を聞いたかはお客様が打った文だけで読む（画像の読み取りの「空室／即入」・SUUMO のボタン「最新の空室状況を知りたい」を除く）
+          return n > 0 ? { ask: broughtPropertyAsk(routeFix1020("brought_text") ? broughtTypedText(turnMsgs) : (unrepliedTurn.text ?? "")), count: n, titleOnly: broughtTitleOnly(props) } : null; // 10/13 titleOnly: SNS・TikTok の題だけ（two-stage）
         })(),
       });
+      if (checkAfterResult) twoStage = null; // ⑤b: 結果は AIX で直接（約束の返信にしない）
       // 8巡目: 退去予定日が分かる内覧の希望は AIX にせず返信で「〇月〇日以降にご内覧可能です」（候補日はまだ出さない・内覧開始日の後に AIX【内覧調整】）
       // 8巡目: 聞かれた契約条件が全部資料にある番は、質問の2段（check_question＝答えが無ければ確認の約束）にせず資料で答える方向にする
       //   （YUMA「この物件は駐車場あります？」で check_question の方向から DeepSeek が「空き状況確認させて頂きます」と書いた回があった）

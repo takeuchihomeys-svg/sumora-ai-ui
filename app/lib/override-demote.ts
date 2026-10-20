@@ -196,7 +196,7 @@ export function brainContractRejectsPromise(raw: unknown, env: Env = process.env
   if (!close && (env.TWO_STAGE_BRAIN_NO_PROMISE_REPLY ?? "").trim().toLowerCase() !== "on") return { reject: false, close };
   return { reject: true, close };
 }
-const NO_PROMISE_KINDS_RE = /^rule:two_stage_promise\((?:pickup|pickup_unless_ack|check|check_question|brought_both|estimate|estimate_stale)\)$/;
+const NO_PROMISE_KINDS_RE = /^rule:two_stage_promise\((?:pickup|pickup_unless_ack|check|check_question|brought_both|brought_estimate|estimate|estimate_stale)\)$/;
 /** 2段の source がブレインの「約束しない」で下げてよい種類か */
 export function twoStageSourceDemotable(source: string | null | undefined): boolean {
   return NO_PROMISE_KINDS_RE.test(String(source ?? ""));

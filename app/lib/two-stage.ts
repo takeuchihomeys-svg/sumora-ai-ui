@@ -17,6 +17,7 @@
 //   見積書: 「最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」・「お部屋の募集状況と最大限割引させて頂いたお見積書お送りさせていただきます！！」
 import { splitRequests } from "./request-ledger";
 import { jstParts } from "./jst-date";
+import { routeFix1020 } from "./brain-route-fix-1020";
 export type TwoStageKind = "pickup" | "check" | "estimate";
 export type TwoStageInput = {
   finalAix: string | null;
@@ -218,7 +219,7 @@ function multiPromiseDirection(extra: readonly ExtraPromise[]): string {
  *   （聞かれた事への答え check_question・お仕事面・室内写真の撮影・内覧の確認・ピックアップは対象外＝ピックアップは条件の番で約束が 96%）。
  *   戻す: TWO_STAGE_SAME_DAY_DIRECT=off
  */
-const SAME_DAY_SOURCES = /^rule:two_stage_promise\((?:check|brought_both|estimate|estimate_stale)\)$/;
+const SAME_DAY_SOURCES = /^rule:two_stage_promise\((?:check|brought_both|brought_estimate|estimate|estimate_stale)\)$/;
 function sameDayDirect(v: TwoStageVerdict, i: TwoStageInput): boolean {
   if (typeof process !== "undefined" && (process.env?.TWO_STAGE_SAME_DAY_DIRECT ?? "").toLowerCase() === "off") return false;
   if (!SAME_DAY_SOURCES.test(v.source)) return false;
@@ -348,6 +349,17 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
     && (typeof process === "undefined" || (process.env?.TWO_STAGE_BROUGHT_BOTH ?? "").toLowerCase() !== "off");
   if (broughtBoth && i.brought) {
     const n = i.brought.count;
+    // 2026-10-20 試験の道の外れ（q183・q184・BRAIN_ROUTE_FIX_1020 brought_estimate）: 持ち込みで費用・見積だけを頼んだ番は見積の2段
+    //   （竹内さんの実送信「2件とも最大限割引した御見積書を作成しお送り」→ AIX【見積書送る】）。空きも聞いた・言葉なしは今まで通り両方（brought_both）
+    if (i.brought.ask === "cost" && routeFix1020("brought_estimate")) {
+      const obj = n >= 2 ? `お送り頂きました${n}件とも` : "お送り頂きましたお部屋の";
+      return {
+        kind: "estimate",
+        direction: `お客様が送ってきた物件の初期費用・御見積を頼まれている。最大限割引した初期費用の御見積書を作成しお送りすると約束する返信にする（金額は書かない・募集状況は御見積書と一緒に確かめる・送るのは後で AIX【見積書送る】）。${n >= 2 ? `件数は「${n}件」（それぞれ）と書く。` : ""}言い方は実際の送信の形「かしこまりました！！${obj}最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます😊！！」`,
+        keyTopic: n >= 2 ? `${n}件とも御見積書を作成しお送りする約束` : "御見積書を作成しお送りする約束",
+        source: "rule:two_stage_promise(brought_estimate)",
+      };
+    }
     const obj = n >= 2 ? `お送り頂きました${n}件の` : "お送り頂きました物件の";
     const order = i.brought.ask === "cost" ? "（お客様が初期費用・見積を聞いているので御見積書の事を先に書いてもよい）" : "";
     return {
