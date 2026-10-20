@@ -31,6 +31,10 @@ it("✕ 他社で内覧しましたが、こちらで申込できますか（も
 it("✕ 仲介業者さんで内見したお部屋、そちらで申し込みできますか（過去）", () => eq(isOtherAgentViewingPlan("仲介業者さんで内見したお部屋、そちらで申し込みできますか？"), false));
 it("✕ 他社で見た物件、こちらでも内覧お願いできますか（弊社での内覧の希望）", () => eq(isOtherAgentViewingPlan("他社で明日見る予定の物件ですが、こちらでも内覧お願いできますか？"), false));
 it("✕ 他社の内見はキャンセルしました", () => eq(isOtherAgentViewingPlan("他社の内見予定はキャンセルしました"), false));
+it("✕ もう見た＋別の予定語（明日申込・来週契約予定・予約できますか・予定がなくなった）", () => {
+  for (const t of ["他社で内覧しました。明日申込したいです", "他社で内見してきました。こちらで予約できますか？", "他社で内覧済みです、来週契約予定です", "他社の内見予定がなくなりました"]) eq(isOtherAgentViewingPlan(t), false, t);
+});
+it("他社で明日内見してきます（これから）→ 予定", () => eq(isOtherAgentViewingPlan("他社で明日内見してきます"), true));
 it("✕ 他社の話が無い「明日内覧予定です」", () => eq(isOtherAgentViewingPlan("明日内覧予定です"), false));
 it("戻す OTHER_VIEWING_INVITE=off で当たらない", () => eq(isOtherAgentViewingPlan(AIMI, { OTHER_VIEWING_INVITE: "off" }), false));
 

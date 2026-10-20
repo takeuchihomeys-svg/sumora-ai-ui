@@ -48,7 +48,9 @@ const PLAN_RE = /予定|予約|(?:し|見|行っ)てこよ|見に行(?:く|こ�
 /** 弊社で内覧したい（本当の内覧の希望）は誘いではなく内覧の調整＝外す */
 const VIEW_HERE_RE = /(?:こちら|そちら|御社|貴社|弊社|スモラ|イエヤス|ギガ)(?:さん|様)?(?:で|に)(?:も)?[^。、]{0,6}(?:内覧|内見|見学|案内)/;
 /** 他社での内覧の取り消し・やめた（「他社の内見はキャンセルしました」）も外す */
-const OTHER_CANCEL_RE = /キャンセル|取り消|断(?:り|っ|る)|やめ(?:ます|まし|た)|なしで/;
+const OTHER_CANCEL_RE = /キャンセル|取り消|断(?:り|っ|る)|やめ(?:ます|まし|た)|なしで|なくな/;
+/** 10/20 確かめる人: もう見た（過去）なのに「明日申込」「来週契約予定」「予約できますか」等の別の語で予定と読んでいた＝内覧が過去の形なら外す（今まで通り other_company_viewing だけ） */
+const VIEWED_PAST_RE = /(?:内覧|内見|見学)(?:を|は)?(?:し(?:ました|た(?![いくら])|てきました|てきた|てみました|てもらいました|てもらった)|済)|見てきました/;
 
 /**
  * 1通（連投の1つ）が「他社（別の不動産屋）でこれから内覧する予定」を伝えている（大丈夫かの問いを含む）か。
@@ -61,6 +63,6 @@ export function isOtherAgentViewingPlan(text: string | null | undefined, env: En
   const s = String(text ?? "").normalize("NFKC").replace(/\s+/g, " ");
   if (!s.trim()) return false;
   if (!OTHER_AGENT_RE.test(s) || !VIEWING_RE.test(s) || !PLAN_RE.test(s)) return false;
-  if (VIEW_HERE_RE.test(s) || OTHER_CANCEL_RE.test(s)) return false;
+  if (VIEW_HERE_RE.test(s) || OTHER_CANCEL_RE.test(s) || VIEWED_PAST_RE.test(s)) return false;
   return true;
 }
