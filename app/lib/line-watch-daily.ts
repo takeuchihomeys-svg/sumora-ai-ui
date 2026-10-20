@@ -11,6 +11,7 @@
 // テスト: app/lib/__tests__/line-watch-daily.test.ts
 import { isAgree, type Verdict, type VerdictDetail } from "./line-watch-judge";
 import { isBackfillTurn, jstMonthOf } from "./line-watch-backfill";
+import { watchTurnExclusion } from "./line-watch-scope";
 import { compactFinalCheck, businessMinutesBetween, type FcStage } from "./line-watch-turn";
 import { jstParts } from "./jst-date";
 import { SCREENING_SYNC_ID_PREFIX, shouldSyncViewingToScreening } from "./screening-calendar-sync";
@@ -32,7 +33,8 @@ export type StatTurn = {
   verdict: Verdict | null;
   verdict_detail?: VerdictDetail | Record<string, unknown> | null;
 };
-export type SceneWindow = { n: number; agree: number; rate: number | null; same: number; factDiff: number; different: number; textN: number; textAgree: number; uncertain: number };
+/** staleDraft＝連投の途中向けの古い下書きの番（返信の道・2026-10-20 から n に入れず別に数える） */
+export type SceneWindow = { n: number; agree: number; rate: number | null; same: number; factDiff: number; different: number; textN: number; textAgree: number; uncertain: number; staleDraft: number };
 export type SceneStat = {
   scene: string;
   path: string;
@@ -47,10 +49,12 @@ export type SceneStat = {
   remaining: string[];     // 解禁の線までの残り（人が読む）
 };
 
-const emptyWin = (): SceneWindow => ({ n: 0, agree: 0, rate: null, same: 0, factDiff: 0, different: 0, textN: 0, textAgree: 0, uncertain: 0 });
+const emptyWin = (): SceneWindow => ({ n: 0, agree: 0, rate: null, same: 0, factDiff: 0, different: 0, textN: 0, textAgree: 0, uncertain: 0, staleDraft: 0 });
 function addTo(w: SceneWindow, t: StatTurn) {
   const d = (t.verdict_detail ?? {}) as VerdictDetail;
   if (!t.verdict || t.verdict === "na") return;
+  // 2026-10-20 ③: 連投の途中向けの古い下書きの番（返信の道）は一致率の分母に入れず別に数える（下書きが番の最後の発言に答えていない）
+  if (watchTurnExclusion(t) === "stale_draft") { w.staleDraft++; return; }
   w.n++;
   if (isAgree(t.verdict)) w.agree++;
   if (t.verdict === "same") w.same++;
@@ -73,6 +77,8 @@ export function sceneStats(turns: ReadonlyArray<StatTurn>, nowMs: number): Scene
     if (!key || key.startsWith("対象外")) continue;
     // 2026-10-08 過去の番の埋め戻し（verdict_detail.backfill）は解禁・停止の線に入れない（線は今の控えだけで見る）。月ごとは sceneStatsByMonth
     if (isBackfillTurn(t)) continue;
+    // 2026-10-20 ④: 番の鍵の発言が消えた重複行（本物の行で数える）
+    if (watchTurnExclusion(t) === "duplicate_turn") continue;
     const age = nowMs - Date.parse(t.customer_turn_at);
     if (!(age >= 0)) continue;
     const s = by.get(key) ?? by.set(key, { cur: emptyWin(), prev: emptyWin(), last7: emptyWin(), prev7: emptyWin(), d14: 0 }).get(key)!;
@@ -119,6 +125,7 @@ export function sceneStatsByMonth(turns: ReadonlyArray<StatTurn>, opt: { group?:
   for (const t of turns) {
     const key = t.scene_key;
     if (!key || key.startsWith("対象外")) continue;
+    if (watchTurnExclusion(t) === "duplicate_turn") continue;
     if (!Number.isFinite(Date.parse(t.customer_turn_at))) continue;
     const month = jstMonthOf(t.customer_turn_at);
     const group = opt.group ? opt.group(t) : "all";
@@ -141,7 +148,7 @@ export function sceneLabel(key: string, aixLabels?: Record<string, string>): str
 // ─────────────────────────────────────────────────────────────
 // 最終チェックの段ごとの指摘
 // ─────────────────────────────────────────────────────────────
-export type FcTurn = { scene_key: string | null; customer_turn_at: string; final_check: unknown };
+export type FcTurn = { scene_key: string | null; customer_turn_at: string; final_check: unknown; verdict_detail?: unknown };
 export type FcRow = { scene: string; stage: FcStage; code: string; final: number; pre: number; revised: number; blocks: number };
 export type FcStats = { turns: number; withIssues: number; revisedTurns: number; byStage: Partial<Record<FcStage, number>>; rows: FcRow[] };
 
@@ -157,6 +164,7 @@ export function finalCheckStats(turns: ReadonlyArray<FcTurn>, nowMs: number, day
   for (const t of turns) {
     if (nowMs - Date.parse(t.customer_turn_at) >= days * DAY) continue;
     if (t.scene_key?.startsWith("対象外")) continue;
+    if (watchTurnExclusion(t) === "duplicate_turn") continue;
     const c = compactFinalCheck(t.final_check);
     if (!c) continue;
     n++;
@@ -188,6 +196,7 @@ export function lateStats(turns: ReadonlyArray<LateTurn>, dayStartMs: number, no
     const at = Date.parse(t.customer_turn_at);
     if (!(at >= dayStartMs && at < dayStartMs + DAY)) continue;
     if (t.scene_key?.startsWith("対象外")) continue;
+    if (watchTurnExclusion(t) === "duplicate_turn") continue;
     n++;
     const m = businessMinutesBetween(t.customer_turn_at, t.staff_first_at ?? nowMs);
     if (t.staff_first_at) { replied++; mins.push(m); if (m > LATE_LINE_MIN) late++; }

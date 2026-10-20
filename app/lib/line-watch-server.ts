@@ -207,7 +207,8 @@ export async function loadLineWatch(sb: SupabaseClient, opt: LineWatchOptions = 
       const detail = (stored ? (t.verdict_detail as VerdictDetail | null) : live?.detail) ?? null;
       turns.push({
         id: typeof t.id === "number" ? t.id : Number(t.id) || null,
-        conversationId: cid, name: names.get(cid)?.customer_name ?? null, turnAt: String(t.customer_turn_at), scene: scene.label,
+        // 2026-10-20: 毎晩の判定が番の時点の記録で申込以降（対象外）にした番は、画面でも対象外と出す（status だけの仮の場面より保存した判定を正にする）
+        conversationId: cid, name: names.get(cid)?.customer_name ?? null, turnAt: String(t.customer_turn_at), scene: stored && detail?.path === "対象外" ? "申込以降（対象外）" : scene.label,
         brain: scene.path === "AIX" ? aixLabel(String(t.brain_action ?? "")) || scene.label : "返信",
         draftVersions: Number(t.draft_versions ?? 0), draftHead: head(t.draft_last as string | null, 120), sentinel: (t.draft_sentinel as string | null) ?? null, draftAt,
         staffHead: head(staffText, 120), staffAt, staffAix,

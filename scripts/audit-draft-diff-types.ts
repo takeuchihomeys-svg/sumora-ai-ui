@@ -16,6 +16,7 @@
 //     not_generated   … 返信生成の呼び出しが窓の中に1回も無い（sweep のブレインだけ等）
 //     generated_lost  … 返信生成は呼ばれたが控えに下書きが無い
 import { createClient } from "@supabase/supabase-js";
+import { watchTurnExclusion, WATCH_EXCLUSION_JA, type WatchExclusion } from "../app/lib/line-watch-scope";
 import { classifyDraftDiff, maskText, PRIMARY_TYPES, PRIMARY_JA, CONTENT_JA, type ContentType, type DraftDiff } from "../app/lib/draft-diff-types";
 import { resolveReplyScene, REPLY_SCENE_JA, type ReplyScene } from "../app/lib/reply-scene";
 import { isTestConversation } from "../app/lib/test-conversations";
@@ -47,6 +48,7 @@ async function main() {
   const mBy = new Map<string, typeof msgs>();
   for (const m of msgs) { if (!mBy.has(m.conversation_id)) mBy.set(m.conversation_id, []); mBy.get(m.conversation_id)!.push(m); }
   const pathCount = new Map<string, number>();
+  const excluded = new Map<WatchExclusion, number>();
   const rows: Row[] = [];
   for (const w of watch) {
     if (isTestConversation(w.conversation_id)) continue;
@@ -59,6 +61,10 @@ async function main() {
     if (!staff) continue;
     const at = burst[0].at;
     if (inAutoReplyPeriod(at)) continue;
+    // 2026-10-20: 数えない番（埋め戻し・申込以降・番の鍵が消えた重複行・連投の途中向けの古い下書き＝line-watch-scope.watchTurnExclusion）は分母に入れず別に数える。
+    //   --why-no-draft は訳を全部見るので外さない
+    const excl = watchTurnExclusion({ verdict_detail: vd });
+    if (excl && !WHY) { excluded.set(excl, (excluded.get(excl) ?? 0) + 1); continue; }
     const src = String(vd.draft_src ?? "");
     const draft = src === "stale" || src === "none" ? "" : (cleanDraft(src === "first" ? w.draft_first : w.draft_last).text ?? "");
     const cust = (mBy.get(w.conversation_id) ?? []).filter((m) => m.created_at >= w.customer_turn_at && m.created_at <= (w.customer_last_at ?? w.customer_turn_at)).map((m) => m.text ?? "").join("\n");
@@ -68,6 +74,7 @@ async function main() {
   }
   if (WHY) return whyNoDraft(rows, since, mBy);
   console.log(`見張りの番 ${watch.length}（path: ${[...pathCount].map(([k, v]) => `${k} ${v}`).join("・")}）→ 返信の番で送った文あり ${rows.length}`);
+  if (excluded.size) console.log(`数えない番（分母の外）: ${[...excluded].map(([k, v]) => `${WATCH_EXCLUSION_JA[k]} ${v}`).join("・")}`);
   console.log(`書き手: 竹内 ${rows.filter((r) => r.writer === "takeuchi").length}・従業員 ${rows.filter((r) => r.writer === "employee").length}・不明 ${rows.filter((r) => !r.writer).length}`);
   const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "-");
   const byScene = (list: Row[], s: ReplyScene) => list.filter((r) => r.scene === s);
@@ -136,7 +143,7 @@ type Ctx = { phantom: boolean; gens: number; firstGenMs: number | null; sweepOnl
 function classifyNoDraft(r: Row, c: Ctx): WhyNoDraft {
   const w = r.w;
   if ((w.verdict_detail as Record<string, unknown> | null)?.backfill) return "backfill";
-  if (c.phantom) return "phantom_turn";
+  if (c.phantom || (w.verdict_detail as Record<string, unknown> | null)?.duplicate_of != null) return "phantom_turn";
   if (!w.brain_at && !w.draft_first && !w.draft_last && !w.draft_sentinel && !w.final_check) return "capture_missing";
   const appMs = Math.max(c.docMs ?? -Infinity, c.pushMs ?? -Infinity);
   if (c.badge || (Number.isFinite(appMs) && !(c.backMs !== null && c.backMs > appMs))) return "post_apply";

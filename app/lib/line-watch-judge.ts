@@ -206,6 +206,8 @@ export type JudgeInput = {
    *   渡した時だけ「手打ちでも AIX の番」を見る（null／未指定は v6 と同じ）。戻す: LINE_WATCH_STAFF_FACT=off（呼び出し側が渡さない）
    */
   staffFactGround?: string | null;
+  /** 2026-10-20: 番の時点の記録で申込以降（line-watch-scope.postApplyAtTurn）。true なら対象外（sceneKeyOf.postApply） */
+  postApply?: boolean | null;
 };
 export type VerdictDetail = {
   v: string;
@@ -237,11 +239,18 @@ export type VerdictDetail = {
   staff_writer_src?: string | null;
   /** v7: 返事のまとまりの手打ちにあった AIX の中身（型・aix-catalog の鍵・系統） */
   staff_fact?: Array<{ kind: string; key: string; family: string }>;
+  /** 2026-10-20: 対象外にした根拠が status 以外（application_push｜id_document）の時の根拠（line-watch-scope.postApplyAtTurn） */
+  post_apply_reason?: string | null;
+  /** 2026-10-20: 番の鍵の発言が消えた重複行 → 本物の行の id（数えない・line-watch-scope.findDuplicateTurns） */
+  duplicate_of?: number | null;
+  /** 2026-10-20: 重複行の控えで埋めた欄（本物の行の判定の材料） */
+  merged_from?: { id: number; cols: string[] } | null;
 };
 export type Judgement = { verdict: Verdict | null; detail: VerdictDetail };
 
 export const VERDICT_REASON_JA: Record<string, string> = {
   pending: "窓が閉じていない（まだ判定しない）",
+  duplicate_turn: "番の鍵の発言が消えた重複行（本物の行で数える）",
   out_of_scope: "申込以降（数えない）",
   no_staff: "スタッフが送っていない",
   no_staff_out_of_topic: "スタッフは返さず・AI は話題の外の行為を書いた",
@@ -331,7 +340,7 @@ const CHECK_AIX = new Set(["acknowledge_check", "property_check_result"]);
 
 /** 判定。窓が閉じていない番で何も送られていなければ verdict=null（翌晩にもう一度） */
 export function judgeTurn(i: JudgeInput): Judgement {
-  const scene = sceneKeyOf({ brainAction: i.brainAction, brainReplyMode: i.brainReplyMode, convStatus: i.convStatus });
+  const scene = sceneKeyOf({ brainAction: i.brainAction, brainReplyMode: i.brainReplyMode, convStatus: i.convStatus, postApply: i.postApply });
   const final = i.window.closed;
   const base = { v: JUDGE_VERSION, path: scene.path, final } as const;
   const brainAix = scene.path === "AIX" ? (scene.key === "AIX:種類なし" ? "" : scene.key.slice(4)) : null;

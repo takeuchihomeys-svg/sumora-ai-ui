@@ -9,6 +9,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@supabase/supabase-js";
 import { pickJudgeDraft, JUDGE_VERSION, type WindowMsg, type WindowPress, type Verdict, type VerdictDetail } from "./line-watch-judge";
 import { evalWatchTurn } from "./line-watch-turn-eval";
+import { watchPostApplyScopeEnabled, findDuplicateTurns, mergeCapture, findCaptureStalls, captureStallLine, watchStallCheckEnabled, type PostApplyTimeline, type CaptureStall } from "./line-watch-scope";
 import {
   sceneStats, finalCheckStats, lateStats, screeningCalendarDiff, reviewStats, buildLineWatchDaily, dailyLines, jstDayStartMs, jstYmd,
   type StatTurn, type OurViewing, type ScreeningTask, type C7Finding,
@@ -41,8 +42,34 @@ async function withConcurrency<T>(items: T[], limit: number, fn: (item: T) => Pr
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
+const EMPTY_TIMELINE: PostApplyTimeline = { applicationPushes: [], idDocuments: [] };
+
+/**
+ * 会話ごとの申込の記録（時刻つき・全期間）。loadPostApplyFacts（post-apply.ts）と同じ表・同じ条件で、最後の1つでなく全部を読む。
+ *   どれか読めなければ例外（呼び出し側は status だけに戻す）。会話ごとの件数は少ない（押下・書類は1会話で数件）
+ */
+export async function loadPostApplyTimelines(sb: SupabaseClient, convIds: string[]): Promise<Map<string, PostApplyTimeline>> {
+  const out = new Map<string, PostApplyTimeline & { applicationPushes: string[]; idDocuments: string[] }>();
+  const get = (id: string) => out.get(id) ?? out.set(id, { applicationPushes: [], idDocuments: [] }).get(id)!;
+  for (let i = 0; i < convIds.length; i += 50) {
+    const chunk = convIds.slice(i, i + 50);
+    const [push, docs, conv] = await Promise.all([
+      readAll<{ conversation_id: string; created_at: string }>((f, t) => sb.from("aix_usage_logs").select("conversation_id, created_at").in("conversation_id", chunk).eq("aix_type", "application_push").order("created_at").order("id").range(f, t)),
+      readAll<{ conversation_id: string; created_at: string }>((f, t) => sb.from("messages").select("conversation_id, created_at").in("conversation_id", chunk).eq("sender", "customer").in("image_type", ["id_document", "income_document"]).order("created_at").order("id").range(f, t)),
+      sb.from("conversations").select("id, status_manual_back_at, deepseek_cutoff_at").in("id", chunk),
+    ]);
+    if (conv.error) throw new Error(`conversations: ${conv.error.message}`);
+    for (const p of push) get(p.conversation_id).applicationPushes.push(p.created_at);
+    for (const d of docs) get(d.conversation_id).idDocuments.push(d.created_at);
+    for (const c of (conv.data ?? []) as Array<{ id: string; status_manual_back_at: string | null; deepseek_cutoff_at: string | null }>) {
+      const g = get(c.id); g.statusManualBackAt = c.status_manual_back_at; g.deepseekCutoffAt = c.deepseek_cutoff_at;
+    }
+  }
+  return out;
+}
+
 type TurnRow = {
-  id: number; conversation_id: string; customer_turn_at: string; conv_status: string | null;
+  id: number; conversation_id: string; customer_turn_at: string; customer_last_at?: string | null; conv_status: string | null;
   draft_last: string | null; draft_last_at: string | null; draft_first: string | null; draft_first_at: string | null; draft_versions: number | null; draft_sentinel: string | null;
   brain_action: string | null; brain_reply_mode: string | null; brain_versions: number | null; tpo_label: string | null;
   verdict: Verdict | null; verdict_detail: VerdictDetail | null; judge_version: string | null; evaluated_at: string | null;
@@ -70,7 +97,7 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
   const res: EvalResult = { ok: true, dry, judgeVersion: JUDGE_VERSION, read: 0, judged: 0, pending: 0, skippedFinal: 0, updated: 0, failed: 0, orphans: 0, verdicts: {}, reasons: {}, scenes: {}, samples: [], errors: [] };
   // 2段目の SQL（judge_version の列）を流す前でも回る（版の列なしで読み・書く。毎晩やり直すだけで中身は同じ）
   let hasVersionCol = true;
-  const colsOf = (v: boolean) => `id, conversation_id, customer_turn_at, conv_status, draft_last, draft_last_at, draft_first, draft_first_at, draft_versions, draft_sentinel, brain_action, brain_reply_mode, brain_versions, tpo_label, verdict, verdict_detail, evaluated_at${v ? ", judge_version" : ""}`;
+  const colsOf = (v: boolean) => `id, conversation_id, customer_turn_at, customer_last_at, conv_status, draft_last, draft_last_at, draft_first, draft_first_at, draft_versions, draft_sentinel, brain_action, brain_reply_mode, brain_versions, tpo_label, verdict, verdict_detail, evaluated_at${v ? ", judge_version" : ""}`;
   const read = (v: boolean) => Promise.all([
     readAll<TurnRow>((f, t) => sb.from("line_watch_turns").select(colsOf(v)).gte("customer_turn_at", iso(nowMs - (opt.days ?? 4) * DAY)).order("customer_turn_at").order("id").range(f, t), opt.limit ?? 5000),
     readAll<TurnRow>((f, t) => sb.from("line_watch_turns").select(colsOf(v)).is("evaluated_at", null).gte("customer_turn_at", iso(nowMs - (opt.backlogDays ?? 30) * DAY)).order("customer_turn_at").order("id").range(f, t), opt.limit ?? 5000),
@@ -107,16 +134,37 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
     if (cv.error) throw new Error(cv.error.message);
     for (const c of (cv.data ?? []) as Array<{ id: string }>) existing.add(c.id);
   }
+  // 2026-10-20 ①: 番の時点の申込以降（下書きの関所と同じ resolvePostApply）。記録は全期間（申込へ押下・書類は番より前の古い物も要る）。
+  //   読めない時は status だけ（今まで通り）で判定し、errors に残す。戻す: LINE_WATCH_POSTAPPLY_SCOPE=off
+  const timelines = watchPostApplyScopeEnabled() ? await loadPostApplyTimelines(sb, convIds).catch((e) => { res.errors.push(`post_apply_timeline: ${e instanceof Error ? e.message : String(e)}`); return null; }) : null;
   const group = <T extends { conversation_id: string }>(rows: T[]) => { const m = new Map<string, T[]>(); for (const r of rows) { if (!m.has(r.conversation_id)) m.set(r.conversation_id, []); m.get(r.conversation_id)!.push(r); } return m; };
   const mBy = group(msgs), pBy = group(presses), dBy = group(decisions);
+  // 2026-10-20 ④: 番の鍵（連投の最初のお客様の発言）が消えた・時刻が変わった重複行 → 本物の行に寄せる（重複行は数えない・本物の行は空の控えを重複行の値で埋めて判定）
+  const custTimes = new Map<string, string[]>();
+  for (const m of msgs) if (m.sender === "customer") { if (!custTimes.has(m.conversation_id)) custTimes.set(m.conversation_id, []); custTimes.get(m.conversation_id)!.push(m.created_at); }
+  const dupOf = findDuplicateTurns([...byId.values()], custTimes);
+  const dupByReal = new Map<number, TurnRow>();
+  for (const [dupId, realId] of dupOf) { const d = byId.get(dupId); if (d && !dupByReal.has(realId)) dupByReal.set(realId, d); }
 
   type Update = { id: number; patch: Record<string, unknown> };
   const updates: Update[] = [];
   const orphanIds: number[] = [];
-  for (const t of turns) {
-    if (!existing.has(t.conversation_id)) { orphanIds.push(t.id); continue; }
+  for (const t0 of turns) {
+    if (!existing.has(t0.conversation_id)) { orphanIds.push(t0.id); continue; }
+    const dupRow = dupByReal.get(t0.id);
+    const mg = dupRow ? mergeCapture(t0, dupRow as unknown as Record<string, unknown>) : null;
+    const t = mg ? mg.merged : t0;
     // 2026-10-08: 番1行の判定は line-watch-turn-eval.evalWatchTurn（過去の番の埋め戻しと同じ関数・中身はここから移した物）
-    const { judgement: j, scene, window: w, patch } = evalWatchTurn(t, { msgs: mBy.get(t.conversation_id) ?? [], presses: pBy.get(t.conversation_id) ?? [], decisions: dBy.get(t.conversation_id) ?? [], nowMs, hasVersionCol });
+    const ev = evalWatchTurn(t, { msgs: mBy.get(t.conversation_id) ?? [], presses: pBy.get(t.conversation_id) ?? [], decisions: dBy.get(t.conversation_id) ?? [], nowMs, hasVersionCol, postApplyTimeline: timelines?.get(t.conversation_id) ?? (timelines ? EMPTY_TIMELINE : null) });
+    const { scene, window: w, patch } = ev;
+    let j = ev.judgement;
+    if (mg?.filled.length) { j = { ...j, detail: { ...j.detail, merged_from: { id: dupRow!.id, cols: mg.filled } } }; patch.verdict_detail = j.detail; }
+    const realId = dupOf.get(t.id);
+    if (realId != null) {
+      // 重複行: 数えない（na・duplicate_of）。窓が閉じたかは元の判定のまま（閉じていれば毎晩読み直さない）
+      j = { verdict: "na", detail: { ...j.detail, reason: "duplicate_turn", duplicate_of: realId } };
+      patch.verdict = j.verdict; patch.verdict_detail = j.detail;
+    }
     const pick = pickJudgeDraft({ ...t, customer_last_at: w.customerLastAt });
     updates.push({ id: t.id, patch });
     if (j.verdict) { res.judged++; res.verdicts[j.verdict] = (res.verdicts[j.verdict] ?? 0) + 1; } else res.pending++;
@@ -196,6 +244,25 @@ async function findOutgoingResidue(sb: SupabaseClient, nowMs: number): Promise<N
   return out;
 }
 
+/**
+ * 2026-10-20 ②: 見張りの控えの止まり（line-watch-scope.findCaptureStalls）。fromMs〜toMs の営業時間（JST 10〜20）で、
+ *   ブレインの判断（brain_decision_logs）があるのに控えの欄が埋まった番（brain_at・draft_first_at・draft_last_at）が2時間以上0件の区間。
+ *   読むだけ（書かない・送らない）。テスト用の会話は両方とも数えない
+ */
+export async function checkCaptureStalls(sb: SupabaseClient, opt: { fromMs: number; toMs: number }): Promise<{ stalls: CaptureStall[]; decisions: number; captures: number; line: string }> {
+  const from = iso(opt.fromMs), to = iso(opt.toMs);
+  const [decs, caps] = await Promise.all([
+    readAll<{ conversation_id: string | null; created_at: string }>((f, t) => sb.from("brain_decision_logs").select("conversation_id, created_at").gte("created_at", from).lt("created_at", to).order("created_at").order("id").range(f, t), 20_000),
+    readAll<{ conversation_id: string; brain_at: string | null; draft_first_at: string | null; draft_last_at: string | null }>((f, t) => sb.from("line_watch_turns").select("conversation_id, brain_at, draft_first_at, draft_last_at")
+      .or(`and(brain_at.gte.${from},brain_at.lt.${to}),and(draft_first_at.gte.${from},draft_first_at.lt.${to}),and(draft_last_at.gte.${from},draft_last_at.lt.${to})`).order("id").range(f, t), 20_000),
+  ]);
+  const decisions = decs.filter((d) => !d.conversation_id || !isTestConversation(d.conversation_id)).map((d) => d.created_at);
+  const captures = caps.filter((c) => !isTestConversation(c.conversation_id)).flatMap((c) => [c.brain_at, c.draft_first_at, c.draft_last_at])
+    .filter((x): x is string => !!x && Date.parse(x) >= opt.fromMs && Date.parse(x) < opt.toMs);
+  const stalls = findCaptureStalls({ captures, decisions, fromMs: opt.fromMs, toMs: opt.toMs });
+  return { stalls, decisions: decisions.length, captures: captures.length, line: captureStallLine(stalls) };
+}
+
 export async function buildLineWatchDailyReport(sb: SupabaseClient, opt: { nowMs?: number } = {}) {
   const nowMs = opt.nowMs ?? Date.now();
   const errors: Record<string, string> = {};
@@ -248,6 +315,14 @@ export async function buildLineWatchDailyReport(sb: SupabaseClient, opt: { nowMs
     capture: { enabled: watch.capture.enabled, turns24h: watch.capture.turns24h, tableReady: watch.capture.tableReady },
     aixLabels: BRAIN_AIX_LABELS,
   });
-  return { ok: Object.keys(errors).length === 0, date, daily, lines: dailyLines(daily, BRAIN_AIX_LABELS), turnsRead: rows.length, c7Detail: c7, errors };
+  // 2026-10-20 ②: 控えの止まり（直近24時間の営業時間）。記録（cron_run_logs・画面の「今日のまとめ」）だけ・LINE には送らない。止める LINE_WATCH_STALL_CHECK=off
+  let captureStall: Awaited<ReturnType<typeof checkCaptureStalls>> | null = null;
+  if (watchStallCheckEnabled()) {
+    try { captureStall = await checkCaptureStalls(sb, { fromMs: nowMs - DAY, toMs: nowMs }); }
+    catch (e) { errors.capture_stall = e instanceof Error ? e.message : String(e); }
+  }
+  const lines = dailyLines(daily, BRAIN_AIX_LABELS);
+  if (captureStall?.line) lines.unshift(captureStall.line);
+  return { ok: Object.keys(errors).length === 0, date, daily, lines, captureStall, turnsRead: rows.length, c7Detail: c7, errors };
 }
 export type LineWatchDailyReport = Awaited<ReturnType<typeof buildLineWatchDailyReport>>;

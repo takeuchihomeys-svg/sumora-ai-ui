@@ -10,6 +10,8 @@ import { legacyActionWinRatesEnabled, outcomeApplyBasisEnabled, attributionLineO
 import { pickConfirmCandidate, outcomeConfirmEnabled } from "@/app/lib/outcome-confirm";
 import { checkRagProbes, ragProbesWarningLine } from "@/app/lib/rag-probes-check";
 import { checkSchemaObjects, schemaObjectsWarningLine } from "@/app/lib/schema-objects-check";
+import { checkCaptureStalls } from "@/app/lib/line-watch-eval-server";
+import { watchStallAlertEnabled } from "@/app/lib/line-watch-scope";
 import { loadSelfReviewSection } from "@/app/lib/self-review-morning";
 
 export const maxDuration = 60;
@@ -656,6 +658,15 @@ export async function GET(req: NextRequest) {
       if (w) { loopWarnings.push(w); console.warn(JSON.stringify({ tag: "schema:objects-missing", ...(so.status === "missing" ? { funcs: so.funcs, triggers: so.triggers } : {}) })); }
       await finishCronLog(logId, so.status === "ok", so as unknown as Record<string, unknown>,
         so.status === "missing" ? w : so.status === "unknown" ? so.error : undefined);
+    }
+    // 2026-10-20 見張りの控えの止まり（line-watch-scope.findCaptureStalls・読むだけ）: 昨日の営業時間（JST 10〜20）にブレインは動いているのに
+    //   line_watch_turns の下書き・判断の欄が2時間以上埋まらなかった区間（10/12〜10/15 の約60時間の止まりは誰も気づかなかった）。
+    //   LINE（このグループ）に出すのは LINE_WATCH_STALL_ALERT=on の時だけ（既定 off）。毎晩の line-watch-daily は常に記録する（cron_run_logs・画面）
+    if (watchStallAlertEnabled()) {
+      try {
+        const st = await checkCaptureStalls(supabase, { fromMs: Date.now() - 24 * 3600_000, toMs: Date.now() });
+        if (st.line) { loopWarnings.push(st.line); console.warn(JSON.stringify({ tag: "line-watch:capture-stall", stalls: st.stalls })); }
+      } catch (e) { console.warn(JSON.stringify({ tag: "line-watch:capture-stall-check-failed", error: e instanceof Error ? e.message : String(e) })); }
     }
     const loopWarningBlock = loopWarnings.length > 0 ? `\n${loopWarnings.join("\n")}` : "";
     statsLines.push(`🧠 学習ヘルス\n■ 直近24h学習Cron:\n${healthLines.join("\n")}\n${feedbackLine}${boundaryLine ? `\n${boundaryLine}` : ""}\n${alignLine}${loopWarningBlock}`);

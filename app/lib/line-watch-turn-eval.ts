@@ -7,6 +7,7 @@ import { staffWriterOfBurst, staffWriterSplitEnabled } from "./staff-writer";
 import { staffWindowOf, judgeTurn, cleanDraft, pickJudgeDraft, JUDGE_VERSION, type WindowMsg, type WindowPress, type Judgement, type StaffWindow, type JudgeDraftSrc } from "./line-watch-judge";
 import { resolveAckTopicScope, outOfTopicActs } from "./ack-topic-scope";
 import { sceneKeyOf, type SceneKey } from "./line-watch-turn";
+import { postApplyAtTurn, watchPostApplyScopeEnabled, type PostApplyTimeline } from "./line-watch-scope";
 
 const P = (s: string) => Date.parse(s);
 /** 2026-10-13 v7「手打ちでも AIX の番」の判定を使うか（既定 on・戻す LINE_WATCH_STAFF_FACT=off） */
@@ -38,9 +39,16 @@ export type WatchTurnEval = {
 export function evalWatchTurn(t: WatchTurnInput, ctx: {
   msgs: ReadonlyArray<WindowMsg>; presses: ReadonlyArray<WindowPress>; decisions: ReadonlyArray<WatchDecision>; nowMs: number;
   hasVersionCol?: boolean; intentFallback?: string | null;
+  /**
+   * 2026-10-20: 会話の申込の記録（時刻つき）。渡すと番の時点で resolvePostApply（下書きの関所と同じ線）を当て、申込以降なら対象外にする。
+   *   渡さない（埋め戻し・画面の仮の判定）・LINE_WATCH_POSTAPPLY_SCOPE=off は今まで通り conv_status だけ
+   */
+  postApplyTimeline?: PostApplyTimeline | null;
 }): WatchTurnEval {
   const { nowMs } = ctx;
   const w = staffWindowOf({ customerTurnAt: t.customer_turn_at, msgs: ctx.msgs, presses: ctx.presses, nowMs });
+  const pa = ctx.postApplyTimeline && watchPostApplyScopeEnabled() ? postApplyAtTurn(t.conv_status, ctx.postApplyTimeline, w.customerLastAt) : null;
+  const postApply = pa?.postApply === true;
   // 2026-10-07 uran.: お礼・了承の番で下書きが読むべき範囲の外の行為を書いたか（下書きの欄が __SHOWN__ の時は最初の下書き）
   const upto = ctx.msgs.filter((m) => P(m.created_at) <= P(w.customerLastAt));
   // 2026-10-07: 下書きの欄が __SHOWN__（画面が表示した印）の番は draft_first で比べる（旧は返信の番の 39% を「印だけ」の na にしていた）
@@ -54,7 +62,9 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
     convStatus: t.conv_status, hasBrain: (t.brain_versions ?? 0) > 0, window: w, outOfTopicActs: topicOut, staffWriter,
     // 2026-10-13 v7「手打ちでも AIX の番」: 引用の照合は番の最後のお客様の発言までの会話（msgs は番の4日前から）。戻す: LINE_WATCH_STAFF_FACT=off
     staffFactGround: staffFactJudgeEnabled() ? upto.map((m) => m.text ?? "").join("\n") : null,
+    postApply,
   });
+  if (postApply && pa?.reason && pa.reason !== "status") j.detail.post_apply_reason = pa.reason;
   if (topicOut.length && !j.detail.out_of_topic_acts) j.detail.out_of_topic_acts = topicOut;
   j.detail.draft_src = pick.src;
   const until = P(w.staffFirstAt ?? w.endAt);
@@ -62,7 +72,7 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
     const inTurn = d.analyzed_msg_ts ? P(d.analyzed_msg_ts) >= P(t.customer_turn_at) - 1000 && P(d.analyzed_msg_ts) <= P(w.customerLastAt) + 1000 : P(d.created_at) >= P(t.customer_turn_at);
     return inTurn && P(d.created_at) <= until;
   }).pop() ?? null;
-  const scene = sceneKeyOf({ brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode, tpoLabel: t.tpo_label, intent: dec?.intent ?? ctx.intentFallback ?? null, convStatus: t.conv_status });
+  const scene = sceneKeyOf({ brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode, tpoLabel: t.tpo_label, intent: dec?.intent ?? ctx.intentFallback ?? null, convStatus: t.conv_status, postApply });
   const draftAt = t.draft_last_at ?? t.draft_first_at;
   const patch: Record<string, unknown> = {
     staff_first_at: w.staffFirstAt,

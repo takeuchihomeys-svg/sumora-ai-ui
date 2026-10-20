@@ -127,7 +127,7 @@ async function collect(sb: SupabaseClient, sinceMs: number, untilMs: number, err
     }
   }
 
-  // 下書きも判断も届いていない番が続いた区間（障害）は穴に数えない（outageTurnIds）
+  // 下書きも判断も控えに入っていない番が続いた区間（控えの止まり・ブレインの障害ではない＝outageTurnIds の注）は穴に数えない
   const outage = outageTurnIds(turns.map((r) => ({ id: r.id, at: r.customer_turn_at, missing: !r.draft_last && !r.draft_sentinel && !r.brain_action })));
   let skippedOutage = 0;
   for (const r of turns) {

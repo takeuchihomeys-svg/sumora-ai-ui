@@ -164,8 +164,11 @@ const BRIEF_KEEP_RE = /お子様|お父様|お母様|ご両親様|ご家族様|�
 
 /**
  * 下書きもブレインの判断も画面に届いていない番が続いた区間（障害・記録の止まり）。番を時刻順に並べ、届いていない番が minRun 以上続いた区間の番の id を返す。
- *   2026-10-15 review: 10/13 01時〜10/14 18時（JST）の 69 番は下書き・判断が1つも届いておらず（DeepSeek の障害の頃）、「手で打った」「ブレインが走っていない」
+ *   2026-10-15 review: 10/13 01時〜10/14 18時（JST）の 69 番は控えに下書き・判断が1つも入っておらず、「手で打った」「ブレインが走っていない」
  *   「text_but_aix」に混ざってブレインの穴の数を倍にしていた。障害の区間は穴に数えず別に数える（普段の届いていない番は1日2〜4・続いても数番）
+ *   ⚠ 2026-10-20 訂正: 当時「DeepSeek の障害の頃」と書いたが誤り。ブレインも下書きも実際は動いていた（ai_reply_examples に下書き 45件・brain_decision_logs も平常）。
+ *     止まっていたのは見張りの控え（トリガー capture_line_watch_turn が失敗を EXCEPTION WHEN OTHERS → RAISE WARNING で飲んでいた）で、
+ *     10/12 12:34Z〜10/15 00:01Z の約60時間、番の行はできたが下書き・判断の欄が入らなかった。今は line-watch-scope.findCaptureStalls が見張る
  */
 export function outageTurnIds(turns: ReadonlyArray<{ id: number | string; at: string; missing: boolean }>, minRun = 8): Set<string> {
   const out = new Set<string>();

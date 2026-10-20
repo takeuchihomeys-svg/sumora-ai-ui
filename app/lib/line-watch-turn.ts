@@ -32,6 +32,11 @@ export type SceneInput = {
   /** ブレインの digest.intent 等（返信の場面が tpo で決まらない時だけ使う） */
   intent?: string | null;
   convStatus?: string | null;
+  /**
+   * 2026-10-20: 番の時点の記録で申込以降だった（line-watch-scope.postApplyAtTurn＝下書きの関所 resolvePostApply と同じ線）。
+   *   true の時だけ効く（status が申込前でも対象外）。渡さない・null・false は今まで通り status だけで決める
+   */
+  postApply?: boolean | null;
 };
 export type SceneKey = { key: string; path: "AIX" | "返信" | "対象外"; label: string };
 
@@ -47,7 +52,7 @@ const AIX_ACTION_RE = /^[a-z][a-z0-9_]{1,60}$/;
  */
 export function sceneKeyOf(i: SceneInput): SceneKey {
   const status = (i.convStatus ?? "").trim();
-  if (status && AUTO_REPLY_SKIP_STATUSES.has(status)) return { key: "対象外:申込以降", path: "対象外", label: "申込以降（対象外）" };
+  if ((status && AUTO_REPLY_SKIP_STATUSES.has(status)) || i.postApply === true) return { key: "対象外:申込以降", path: "対象外", label: "申込以降（対象外）" };
   const action = (i.brainAction ?? "").trim();
   const mode = (i.brainReplyMode ?? "").trim();
   const validAction = action && action !== "null" && AIX_ACTION_RE.test(action) ? normalizeAixForMatch(action) : "";
