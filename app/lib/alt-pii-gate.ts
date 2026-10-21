@@ -239,7 +239,8 @@ function customerLineValue(line: string): string | null {
 }
 // ─── 勤め先の手がかりがある行（スタッフの1通も）: 在籍確認の案内で勤務先の法人名・住所を書き写した1通（10/21 の確かめ）───
 //   法人名は管理会社・保証会社・自社の名前と同じ形なので、勤め先の手がかりの語がある行だけで伏せる
-const WORK_CUE_RE = /勤務先|お勤め|勤め先|職場|在籍確認|お仕事|代表者|勤続|就業|就労|年収|雇用/;
+//   10/21 確かめ役: 「在籍証明」「会社名」「勤務」の行の法人名（勤め先）も残っていた → 手がかりの語に足す
+const WORK_CUE_RE = /勤務|お勤め|勤め先|職場|在籍|会社名|お仕事|代表者|勤続|就業|就労|年収|雇用/;
 const ADDRESS_NUM_G = /(?:[一-龯]{2,3}[都道府県])?[一-龯]{1,6}[市区町村郡][^\s、。,，]{0,24}\d[^\s、。,，]{0,16}/g;
 function maskWorkCueLine(line: string): string {
   if (!WORK_CUE_RE.test(line)) return line;
@@ -258,15 +259,123 @@ function customerish(mode: FieldStart, inCustomer: boolean, inStaff: boolean): b
   return mode === true ? !inStaff : mode === "customer" && inCustomer;
 }
 
+// ─── 10/21 確かめ役が見つけた穴（伏せ字に置き換えてから DeepSeek の網の取りこぼし）──────────────────────
+//   ① 欄の名前の無い生年月日（「・1990.12.19」「・1994/8/13」「・昭和40年7/23」）
+//   ② 全角空白入りの見出し（「住　所」「氏　名」「生 年 月 日」）＝欄の名前の網に当たらない
+//   ③ ファイル名の中の名前（「_姓_名_給与明細.pdf」）
+//   ④ 読みの文（「フリガナはハシモト」）
+//   ⑤ お客様の住所（「〜3-13-3です！」「〜1-18-8ルシエル202」）＝丁目・番地・号の数字はいつも伏せる（町名・駅名は残す。物件の住所の数字も伏せる＝品質の損は小さい）
+//   ⑥ 在籍証明・会社名の行の法人名（WORK_CUE_RE に「在籍」「会社名」「勤務」を足した）
+/** 全角空白入りの見出しを詰める（詰めた後は欄の名前の網に当たる。「住　所」は申込フォームの形なので「現住所」として扱う） */
+const SPACED_HEADINGS: Array<[RegExp, string]> = [
+  [/現[ 　]+住[ 　]*所|現[ 　]*住[ 　]+所/g, "現住所"],
+  [/(?<![一-龯])住[ 　]+所/g, "現住所"],
+  [/(?<![一-龯])氏[ 　]+名(?![一-龯])/g, "氏名"],
+  [/生(?:[ 　]+年[ 　]*月[ 　]*日|[ 　]*年[ 　]+月[ 　]*日|[ 　]*年[ 　]*月[ 　]+日)/g, "生年月日"],
+  [/フ[ 　]+リ[ 　]*ガ[ 　]*ナ|フ[ 　]*リ[ 　]+ガ[ 　]*ナ|フ[ 　]*リ[ 　]*ガ[ 　]+ナ/g, "フリガナ"],
+  [/(?<![一-龯])年[ 　]+収(?![一-龯])/g, "年収"],
+  [/勤[ 　]+務[ 　]*先|勤[ 　]*務[ 　]+先/g, "勤務先"],
+];
+function unspaceHeadings(t: string): string {
+  let s = t;
+  for (const [re, to] of SPACED_HEADINGS) s = s.replace(re, to);
+  return s;
+}
+/** 見出しだけの行（値は次の行に書く形） */
+const HEAD_ONLY_RE = new RegExp(`^\\s*[・･\\-*＊●○◆■□◎]?\\s*[【\\[［]?\\s*(?:${SENSITIVE_LABELS}|住所|お名前|名前|誕生日)\\s*[】\\]］]?\\s*[:：]?\\s*$`);
+/** 見出しだけの行の次の行が値か（空行・1通の頭・見出し・欄の名前の行・伏せ字だけは値ではない） */
+function isValueAfterHeading(next: string | undefined): boolean {
+  if (next === undefined || !next.trim()) return false;
+  return !MSG_HEAD_RE.test(next) && !HEAD_ONLY_RE.test(next) && !FORM_FIELD_LINE_RE.test(next) && !placeholderOnly(next);
+}
+/** ① 古い年（1920〜2009）の年月日（区切りが . / -・全角も）・西暦2桁（30〜99・00〜09）・和暦の年月日（「昭和40年7/23」「平成2.3.4」「H2.3.4」） */
+//   10/21 2人目の確かめ役: 全角の数字（「１９９０．１２．１９」）・西暦2桁（「90/12/19」）・「H2.3.4」「S60.7.23」「平成2.3.4」が素通りしていた
+const OLD_DATE_G = /(?<![0-9０-９.．])(?:(?:19|１９)[2-9２-９][0-9０-９]|(?:20|２０)[0０][0-9０-９]|[3-9３-９][0-9０-９]|[0０][0-9０-９])\s*[./\-．／－]\s*[0-9０-９]{1,2}\s*[./\-．／－]\s*[0-9０-９]{1,2}(?![0-9０-９])/g;
+const WAREKI_FULL_G = /(?:(?:昭和|平成)\s*(?:[0-9０-９]{1,2}|元)\s*[年./．／]|(?<![A-Za-zＡ-Ｚａ-ｚ0-9０-９])[HSＨＳ]\s*[.．]?\s*[0-9０-９]{1,2}\s*[./年．／])\s*[0-9０-９]{1,2}\s*[/.月．／]\s*[0-9０-９]{1,2}(?:\s*日)?(?:\s*生(?:まれ)?)?/g;
+/** ④ 読みの文（カタカナの値／ひらがなは区切りの前まで。「ふりがなはいりますか」等の問いは伏せない） */
+const READING_STMT_G = /((?:フリガナ|ふりがな|読み方?|よみかた|カナ)\s*(?:は|が|：|:|＝|=)\s*)([ァ-ヶー]{2,}(?:[ 　][ァ-ヶー]{2,})?|[ぁ-ん]{2,8}?(?:[ 　][ぁ-ん]{2,8}?)?(?=です|でござ|と[読申言い]|って|$|[\s。、！!？?）)」]))/gm;
+const READING_QUESTION_RE = /ます|ません|でしょ|ください|ひつよう|いる$|ない$|どう|なん|いつ/;
+/** 「シケン ハナコと読みます」 */
+const READ_AS_G = /[ァ-ヶーぁ-ん]{2,}(?:[ 　][ァ-ヶーぁ-ん]{2,})?(?=\s*(?:と読|って読))/g;
+function maskReading(s: string): string {
+  return s
+    .replace(READING_STMT_G, (m, head: string, val: string, off: number, all: string) => {
+      const next = all.charAt(off + m.length);
+      return /^[ぁ-ん]/.test(val) && (READING_QUESTION_RE.test(val) || /[？?]/.test(next)) ? m : `${head}${ALT_MASK}`;
+    })
+    // 問い（「なんと読みますか？」）は伏せない（名前の後の「と読みますか？」は伏せる）
+    .replace(READ_AS_G, (m) => (/(?:なん|なに|どう|どの)$/.test(m) ? m : ALT_MASK));
+}
+/** ③ ファイル名らしい並び（_ か ＿ を含む語・拡張子で終わる語） */
+const FILE_RUN_G = /[^\s、。,，「」『』()（）[\]［］<>"'：:]*[_＿][^\s、。,，「」『』()（）[\]［］<>"'：:]*|[^\s、。,，「」『』()（）[\]［］<>"'：:_＿]{1,40}\.(?:pdf|jpe?g|png|heic|heif|gif|webp|xlsx?|docx?|csv|txt)(?![A-Za-z])/gi;
+const FILE_EXT_RE = /\.(?:pdf|jpe?g|png|heic|heif|gif|webp|xlsx?|docx?|csv|txt)$/i;
+/** ファイル名の中で名前ではない語（書類の種類・写真の場所） */
+const FILE_DOC_WORD_RE = /^(?:給与明細書?|給料明細書?|源泉徴収票?|在籍証明書?|住民票|運転免許証?|免許証|保険証|健康保険証|資格確認書|課税証明書?|非課税証明書?|所得証明書?|納税証明書?|内定通知書?|雇用契約書|労働条件通知書|申込書?|本人確認書類?|表面?|裏面?|写真|明細|証明書|書類|画像|スキャン|コピー|マイナンバーカード|マイナンバー|在留カード|学生証|パスポート|通帳|契約書|重説|請求書|見積書?|図面|間取り図?|物件|資料|最新|新|旧|修正|版|控え?|原本|写し|外観|内観|室内|キッチン|バス|トイレ|洗面|玄関|眺望|周辺|地図|月分|分)$/;
+const FILE_NAMEISH_RE = /^[一-龯々ぁ-んァ-ヶー]{1,8}$/;
+/** ローマ字の語（「shiken_hanako_kyuyo.pdf」）。写真・スキャンの決まった語は残す */
+const FILE_LATIN_RE = /^[A-Za-z]{2,}$/;
+const FILE_LATIN_KEEP_RE = /^(?:IMG|DSC|DSCN|DCIM|PXL|MVIMG|LINE|ALBUM|SCAN|Scan|scan|Screenshot|screenshot|Screen|Shot|image|Image|photo|Photo|file|File|copy|Copy|edited|front|back|SUUMO|HOMES|athome|pdf|PDF)$/;
+function maskFileRun(run: string): string {
+  const unders = (run.match(/[_＿]/g) ?? []).length;
+  if (unders < 2 && !FILE_EXT_RE.test(run)) return run;
+  const segs = run.split(/([_＿.])/);
+  const extAt = FILE_EXT_RE.test(run) ? segs.length - 1 : -1;
+  return segs.map((seg, i) => (i !== extAt && ((FILE_NAMEISH_RE.test(seg) && !FILE_DOC_WORD_RE.test(seg)) || (FILE_LATIN_RE.test(seg) && !FILE_LATIN_KEEP_RE.test(seg))) ? ALT_MASK : seg)).join("");
+}
+/** ⑤ 丁目・番地・号の数字（「3-13-3」「1-18-8ルシエル202」「3丁目13-3」「13番地」）。年月日（2026-10-21）は除く */
+//   10/21 2人目の確かめ役: 半角カナの長音（「7ｰ2ｰ201」実データにあり）・ダッシュ類も区切りに数える／
+//   「千里山東3丁目PJ」「照ヶ丘矢田2丁目貸テラス」のように丁目だけ（番地の数字なし）は物件の名前・探す範囲なので伏せない（丁目だけでは人を特定しない）
+const H = "[-－‐ー−ｰ–—―‑﹣]";
+const ADDR3_G = new RegExp(String.raw`(?<![\d０-９/.])(?!(?:19|20)\d{2}${H}\d)[0-9０-９]{1,4}${H}[0-9０-９]{1,4}${H}[0-9０-９]{1,4}(?:${H}[0-9０-９]{1,4})?(?![0-9０-９])(?:[ 　]?[^\s、。,，!！?？「」()（）［\]]{0,16}?[0-9０-９]{1,4}(?:号室)?(?![0-9０-９]))?`, "g");
+const CHOME_G = new RegExp(String.raw`[0-9０-９]{1,3}[ 　]*丁目[ 　]*[0-9０-９]+(?:(?:[番地号の 　]|${H})+[0-9０-９]+)*(?:[ 　]*(?:号|番地?))?|[0-9０-９]{1,4}[ 　]*番地(?:[ 　]*(?:の|${H})?[ 　]*[0-9０-９]{1,4}(?:[ 　]*号)?)?|[0-9０-９]{1,4}[ 　]*番[ 　]*[0-9０-９]{1,4}[ 　]*号`, "g");
+/** 町名の直後の2つの数字（「照ヶ丘3-13」）。時刻・日付・分・金額・広さ・順番は除く。ひらがなの後（「は1-2番手」「は101-102」）は町名ではないので見ない */
+const ADDR2_G = new RegExp(String.raw`(?<=[一-龯々ァ-ヶ])[0-9０-９]{1,4}${H}[0-9０-９]{1,4}(?![0-9０-９]|\s*(?:時|日|月|分|万|円|階|名|人|歳|才|件|%|％|㎡|m|帖|畳|年|か月|ヶ月|ケ月|週|回|号室|号棟|LDK|DK|K|番(?!地)|位|戸|棟|室|部屋|駅|社|本|枚|通|組|点|割|か所|ヶ所|箇所))`, "g");
+/** 〒つきの郵便番号（入口の伏せの取りこぼし） */
+const POSTAL_G = new RegExp(String.raw`〒[ 　]*[0-9０-９]{3}[ 　]*${H}?[ 　]*[0-9０-９]{4}`, "g");
+/** 弊社の事務所の住所（company-facts の「大阪市中央区瓦町3-4-10 日宝御堂ビル5階」＝鍵のお渡し・所在地の案内で下書きが書く・お客様の個人情報ではない）は伏せない */
+const OWN_OFFICE_G = new RegExp(String.raw`瓦町[ 　]*[3３][ 　]*${H}[ 　]*[4４][ 　]*${H}[ 　]*[1１][0０](?:[ 　]*日宝御堂(?:筋)?ビル(?:[ 　]*[5５][ 　]*(?:階|F|Ｆ))?)?`, "g");
+const OWN_OFFICE_HOLD = "\uE000";
+/** URL の外だけで置き換える */
+function replaceOutsideUrls(t: string, f: (s: string) => string): string {
+  let out = "", last = 0;
+  for (const m of t.matchAll(URL_RE)) { out += f(t.slice(last, m.index)) + m[0]; last = (m.index ?? 0) + m[0].length; }
+  return out + f(t.slice(last));
+}
+function maskHoles(t: string): string {
+  return replaceOutsideUrls(t, (s) => {
+    const held: string[] = [];
+    const h = s.replace(OWN_OFFICE_G, (m) => { held.push(m); return OWN_OFFICE_HOLD; });
+    const masked = maskReading(h
+      .replace(OLD_DATE_G, ALT_MASK)
+      .replace(WAREKI_FULL_G, ALT_MASK))
+      .replace(FILE_RUN_G, (m) => maskFileRun(m))
+      .replace(POSTAL_G, ALT_MASK)
+      .replace(CHOME_G, ALT_MASK)
+      .replace(ADDR3_G, ALT_MASK)
+      .replace(ADDR2_G, ALT_MASK);
+    let k = 0;
+    return masked.replace(new RegExp(OWN_OFFICE_HOLD, "g"), () => held[k++] ?? "");
+  });
+}
+/** 穴の形の値が残っているか（maskHoles と同じ網で、伏せる所があれば残っている＋見出しだけの行の次の値） */
+function holeValueRemain(t: string): string | null {
+  if (maskHoles(t) !== t) return "欄の名前の無い値（生年月日・読み・ファイル名・丁目番地の数字）";
+  const lines = unspaceHeadings(t).split("\n");
+  for (let i = 0; i < lines.length - 1; i++) if (HEAD_ONLY_RE.test(splitHead(lines[i]).body) && isValueAfterHeading(lines[i + 1])) return "見出しの次の行の値";
+  return null;
+}
+
 export function maskApplicationValuesForAlt(text: string | null | undefined, opts: { fieldStart?: FieldStart } = {}): string {
   const mode: FieldStart = opts.fieldStart ?? true;
   let inCustomer = false, inStaff = false;
-  const raw = String(text ?? "");
+  const raw = unspaceHeadings(String(text ?? ""));
   if (!raw) return raw;
   const lines = raw.split("\n");
   const out: string[] = [];
   for (let i = 0; i < lines.length;) {
     const l = lines[i];
+    // ② 見出しだけの行（「氏名」「住　所」）の次の行は値＝行ごと伏せる
+    if (i > 0 && HEAD_ONLY_RE.test(splitHead(lines[i - 1]).body) && isValueAfterHeading(l)) { out.push(ALT_MASK); i++; continue; }
     if (IMAGE_MARK_RE.test(l) || STRONG_DOC_RE.test(l)) {
       const end = regionEnd(lines, i, 60);
       if (isDocBlock(lines.slice(i, end).join("\n"))) { out.push(ALT_DOC_MASK); i = end; continue; }
@@ -284,7 +393,7 @@ export function maskApplicationValuesForAlt(text: string | null | undefined, opt
     out.push(maskWorkCueLine(customerish(mode, inCustomer, inStaff) ? maskCustomerLine(l) : l));
     i++;
   }
-  return out.join("\n")
+  return maskHoles(out.join("\n")
     .replace(LABELED_BIRTH_G, `$1${ALT_MASK}`)
     .replace(BIRTH_DAY_G, ALT_MASK)
     .replace(INCOME_G, `年収${ALT_MASK}`)
@@ -298,7 +407,7 @@ export function maskApplicationValuesForAlt(text: string | null | undefined, opt
     .replace(NAME_WITH_READING_G, ALT_MASK)
     .replace(NAME_KANA_PAIR_G, ALT_MASK)
     .replace(KANA_CORP_G, (m) => (m ? ALT_MASK : m))
-    .replace(KANA_READING_RUN_G, ALT_MASK);
+    .replace(KANA_READING_RUN_G, ALT_MASK));
 }
 
 // ─── どの行でも伏せる人の名前の形（スタッフが申込の中身を書き写した1通にも出る・10/21 の確かめ）───
@@ -360,7 +469,7 @@ export function altPiiValuesRemain(text: string | null | undefined, opts: { docs
   if (BIRTH_DAY_RE.test(t)) return "生年月日らしい日付";
   if (WORKPLACE_VALUE_RE.test(t)) return "勤務先の値";
   if (formValuesRemain(t, opts.docs === true ? true : "customer")) return "申込フォームの値";
-  const cv = customerValuesRemain(t, opts.docs === true ? true : "customer") ?? globalNameValue(t) ?? workCueValue(t);
+  const cv = customerValuesRemain(t, opts.docs === true ? true : "customer") ?? globalNameValue(t) ?? workCueValue(t) ?? holeValueRemain(t);
   if (cv) return cv;
   if (opts.docs) {
     const lines = t.split("\n");

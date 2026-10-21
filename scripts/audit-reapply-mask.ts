@@ -37,6 +37,20 @@ function looseNet(masked: string): string | null {
   for (const [k, re] of LOOSE) if (re.test(c2)) return k;
   return null;
 }
+// 10/21 確かめ役が見つけた穴の網（出口の網とは別に書いた形・送る本文のどの行でも見る・URL は除く）
+const HOLES: Array<[string, RegExp]> = [
+  ["①「・」の後の生年月日", /[・･]\s*(?:(?:19\d{2}|200\d)\s*[./\-年]\s*\d{1,2}\s*[./\-月]\s*\d{1,2}|(?:昭和|平成)\s*(?:\d{1,2}|元)\s*年\s*\d{1,2}\s*[/.月]\s*\d{1,2})/],
+  ["①' 古い年の年月日（区切りが . / -）", /(?<!\d)(?:19[2-9]\d|200\d)\s*[./\-]\s*\d{1,2}\s*[./\-]\s*\d{1,2}(?!\d)/],
+  ["② 全角空白の見出し＋値", /(?:住[ 　]+所|氏[ 　]+名|生[ 　]*年[ 　]*月[ 　]*日|フ[ 　]+リ[ 　]*ガ[ 　]*ナ)[ 　]*[:：]?[ 　]*(?![［[〇○\s、。:：をのはがにへ])\S/],
+  ["③ ファイル名の中の名前", /[_＿][一-龯々ぁ-ん]{1,5}[_＿][一-龯々ぁ-ん]{1,5}[_＿.]|[一-龯々]{1,4}[_＿][一-龯々]{1,4}[_＿](?:給与|源泉|在籍|住民|免許|保険|課税|所得)/],
+  ["④ 読みの文", /(?:フリガナ|ふりがな|読み方?|よみかた|カナ)\s*(?:は|が|：|:|＝)\s*[ァ-ヶーぁ-ん]{2,}/],
+  ["⑤ 丁目・番地の数字", /(?<![\d/.:])(?!(?:19|20)\d{2}[-－‐ー−]\d)\d{1,4}[-－‐ー−]\d{1,4}[-－‐ー−]\d{1,4}(?!\d)|\d{1,3}丁目\s*\d{1,4}|\d{1,4}番地/],
+  ["⑥ 在籍・勤務先の行の法人名", /(?:在籍|勤務先|会社名|お勤め|勤め先)[^\n]{0,40}(?:株式会社|有限会社|合同会社|（株）|\(株\))|(?:株式会社|有限会社|合同会社|（株）|\(株\))[^\n]{0,40}(?:在籍|勤務先|会社名)/],
+];
+function holeKinds(body: string): string[] {
+  const t = body.replace(/https?:\/\/\S+/g, " ").replace(/\[(?:電話番号|メールアドレス|郵便番号)非表示\]/g, " ");
+  return HOLES.filter(([, re]) => re.test(t)).map(([k]) => k);
+}
 const extra = (process.argv.find((a) => a.startsWith("--extra="))?.slice(8) ?? "d46290ff").split(",").map((s) => s.trim()).filter(Boolean);
 type Msg = { sender: string; text: string | null; created_at: string };
 
@@ -76,6 +90,7 @@ async function main() {
     targets.map((t) => `${id8(t.id)}${t.kind === "parallel" ? "(並行)" : ""}`).join(" "));
 
   let calls = 0, oldDs = 0, newDs = 0, newClaude = 0, remainAfter = 0, otherNetHits = 0, sens = 0;
+  const holeHits: Record<string, number> = {}; let holeCalls = 0;
   const oldWhy: Record<string, number> = {}, newWhy: Record<string, number> = {}, otherKinds: Record<string, number> = {};
   const perConv: string[] = [];
   for (const t of targets) {
@@ -102,6 +117,8 @@ async function main() {
       newDs++; cNew++;
       // 別の網でもう一度（送る本文）
       const body = `${mk.masked.system}\n${mk.masked.messages![0].content}`;
+      const hk = holeKinds(body);
+      if (hk.length) { holeCalls++; for (const k of hk) holeHits[k] = (holeHits[k] ?? 0) + 1; }
       const k = piiValueSignal(body) ?? altPiiValuesRemain(String(mk.masked.messages![0].content), { docs: true }) ?? altPiiValuesRemain(String(mk.masked.system)) ?? looseNet(String(mk.masked.messages![0].content));
       if (k) { otherNetHits++; otherKinds[k] = (otherKinds[k] ?? 0) + 1; }
     }
@@ -111,6 +128,7 @@ async function main() {
   console.log("   旧で Claude に戻した理由:", JSON.stringify(oldWhy));
   console.log("   新で Claude に戻した理由:", JSON.stringify(newWhy));
   console.log(`── ② 新で送る本文に別の網で値が見つかった呼び出し: ${otherNetHits} ${JSON.stringify(otherKinds)}`);
+  console.log(`── ②' 新で送る本文に穴の形が残る呼び出し: ${holeCalls} ${JSON.stringify(holeHits)}`);
   for (const l of perConv) console.log("   ", l);
 
   // ③ 本番の記録（参考）
