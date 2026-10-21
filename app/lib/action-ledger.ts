@@ -441,7 +441,8 @@ export function fillConfirmObjectFromCustomer(e: LedgerEntry, msgs: ReadonlyArra
 export function linkPromisePickerEnabled(env: Record<string, string | undefined> = typeof process !== 'undefined' ? process.env : {}): boolean {
   return (env.LINK_PROMISE_PICKER ?? '').trim().toLowerCase() !== 'off';
 }
-const VACANCY_TOPIC_LABELS = new Set(['募集状況', '空室', '番手', '申込状況']);
+// 退去も外す（「9月末退去予定で募集されております」＝物件そのものの募集で退去の要件ではない。レビュー 2026-10-21: 直近30日の報告で 初期費用→退去 に化けた）
+const VACANCY_TOPIC_LABELS = new Set(['募集状況', '空室', '番手', '申込状況', '退去']);
 // 要件の語と空き・募集の間は3字まで（「バイク置き場の空き」）。お部屋・物件を挟む言い方（「退去予定のお部屋の募集状況」）・並べた言い方
 // （「ご内覧可否と募集状況」＝2つの確認）は物件の募集状況のまま
 const BOUND_VACANCY_TAIL = '[^\\n。！!？?、部屋物件と・や及]{0,3}?(?:の|は|が)?(?:空き|空室|募集)(?:状況|の有無|有無)?';

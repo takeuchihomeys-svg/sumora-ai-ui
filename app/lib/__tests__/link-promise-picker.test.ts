@@ -28,6 +28,7 @@ it("物件そのものの募集状況は今まで通り（並べた言い方・�
   eq(confirmObjectOf("お送り頂きました物件の募集状況と猫飼育可能か確認させて頂きます"), "募集状況");
   eq(confirmObjectOf("ご内覧可否と募集状況を管理会社に確認させて頂きます"), "募集状況");
   eq(boundObjectTopicOf("退去予定のお部屋の募集状況確認させて頂きます"), null);
+  eq(boundObjectTopicOf("お送り頂きましたお部屋9月末退去予定で募集されております"), null);
   eq(confirmObjectOf("こちらのお部屋の空き状況確認させて頂きます"), "空室");
 });
 it("off の時は今まで通り（空室）", () => withEnv("LINK_PROMISE_PICKER", "off", () => eq(confirmObjectOf("駐車場の空き状況確認させて頂きます！！"), "空室")));
