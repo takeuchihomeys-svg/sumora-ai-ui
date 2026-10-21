@@ -1,11 +1,11 @@
 // 2番手で申込中（並行で探す）・【申込歴あり】・出口で値を伏せてから DeepSeek に渡す のテスト（自己完結ハーネス・LLM なし・本物のお客様の文は使わない＝全部作り物）
 // 実行: npx tsx app/lib/__tests__/reapply-followups.test.ts
 import {
-  isApplied2ndText, isOffer2ndText, isParallelEndText, resolveParallelSecond, staffParallelChoiceOf, effectiveStatusForParallel, buildParallelBrainNote,
+  isApplied2ndText, isOffer2ndText, isParallelEndText, resolveParallelSecond, staffParallelChoiceOf, staffParallelChoiceAt, effectiveStatusForParallel, buildParallelBrainNote,
   PARALLEL_MEMO_ID, PARALLEL_MEMO_ON, PARALLEL_MEMO_OFF, PARALLEL_2ND_LABEL,
 } from "../parallel-second";
 import {
-  postApplyDraftSkip, parallelEligible, parallelSecondActive, resolveDeepseekEntrance, entranceMarkOf, formatCutoffMark, parseCutoffMark, NO_CUTOFF, type PostApplyFacts,
+  postApplyDraftSkip, parallelEligible, parallelSecondActive, parallelSecondCutoff, resolveDeepseekEntrance, entranceMarkOf, formatCutoffMark, parseCutoffMark, NO_CUTOFF, type PostApplyFacts,
 } from "../post-apply";
 import { maskApplicationValuesForAlt, altPiiValuesRemain, maskAltBody, altPiiSignal, altPiiSignalReapply, ALT_DOC_MASK } from "../alt-pii-gate";
 import { reapplyBadgeText, REAPPLY_MARK_TEXT } from "../reapply-customer";
@@ -22,6 +22,8 @@ const ok = (c: boolean, m: string) => { if (!c) throw new Error(m); };
 const T = (d: string) => new Date(d).toISOString();
 const NOW = Date.parse("2026-10-21T03:00:00Z");
 const ENV_ON: Record<string, string> = {};
+/** 2番手で並行の会話を DeepSeek に回すスイッチ（既定 off） */
+const ENV_DS: Record<string, string> = { REAPPLY_PARALLEL_DEEPSEEK: "on" };
 const applying = (over: Partial<PostApplyFacts> = {}): PostApplyFacts => ({ status: "applying", applicationPushAt: T("2026-10-15T00:00:00Z"), ...over });
 
 async function main() {
@@ -46,6 +48,10 @@ async function main() {
         // 同じ文の別の所の「させて頂きました」に当てない・「2番手以降」は部屋の状況の案内
         "物件の募集状況確認させて頂きましたところ、テスト本町は既に1番手のお申し込みが入っており、現在2番手以降でのお申込み受付となるお部屋となります",
         "お部屋の状況を確認させて頂きました、現在2番手でのお申込みとなるお部屋です",
+        // 10/21 確かめ役（実データの形を作り物に）: 条件の形「〜ましたら」「よろしければ」「〜次第」は申込んだ文ではない
+        "ご費用面もお気に召されましたら2番手ですがお部屋のお申込みもさせていただきます",
+        "テストさんよろしければ2番手でお申し込みさせて頂き、並行してお部屋探しサポートさせて頂きます",
+        "お送り頂き次第、テストハイツ102号室のお部屋お申込し2番手で抑えさせて頂きます",
       ]) ok(!isApplied2ndText(s), s);
     });
     await it("案内は isOffer2ndText・できない形は外す", () => {
@@ -128,15 +134,35 @@ async function main() {
       // status が遅れて提案中のまま（記録で申込中）は入る
       eq(parallelEligible({ status: "proposing", applicationPushAt: T("2026-10-15T00:00:00Z") }), true);
     });
-    await it("入口: 並行は申込以降に数えず・線なし・印 masked", () => {
+    await it("入口: 既定（REAPPLY_PARALLEL_DEEPSEEK 無し）は並行でも DeepSeek に渡さない（Claude・下書きは止めない）", () => {
       const e = resolveDeepseekEntrance(applying({ parallel2nd: true }), ENV_ON);
-      eq([e.altPostApply, e.cutoff === NO_CUTOFF, e.masked], [false, true, true]);
-      eq(entranceMarkOf(e.cutoff, e.masked), { kind: "masked" });
+      eq([e.altPostApply, e.cutoff, e.masked], [true, null, false]);
+      eq(entranceMarkOf(e.cutoff, e.masked), { kind: "blocked" });
+      eq(postApplyDraftSkip(applying({ parallel2nd: true }), ENV_ON), false);
+    });
+    await it("入口: on の時、並行は申込以降に数えず・線は申込の記録と2番手の時刻の遅い方（申込の期間は渡さない・印 cut）", () => {
+      const e = resolveDeepseekEntrance(applying({ parallel2nd: true }), ENV_DS);
+      eq([e.altPostApply, e.cutoff, e.masked], [false, T("2026-10-15T00:00:00Z"), false]);
+      eq(entranceMarkOf(e.cutoff, e.masked), { kind: "cut", at: T("2026-10-15T00:00:00Z") });
+      // 2番手の時刻・書類・フォームが後なら線はそこ（線なし＝全部にはしない）
+      eq(resolveDeepseekEntrance(applying({ parallel2nd: true, parallel2ndAt: T("2026-10-16T00:00:00Z"), idDocumentAt: T("2026-10-17T00:00:00Z") }), ENV_DS).cutoff, T("2026-10-17T00:00:00Z"));
+      eq(resolveDeepseekEntrance(applying({ parallel2nd: true, applicationFormAt: T("2026-10-18T00:00:00Z") }), ENV_DS).cutoff, T("2026-10-18T00:00:00Z"));
+    });
+    await it("入口: 並行でも時刻が1つも無い・読めない時は渡さない（Claude）", () => {
+      eq(parallelSecondCutoff({ status: "applying", parallel2nd: true }), null);
+      eq(parallelSecondCutoff(applying({ parallel2nd: true, idDocumentAt: "bad" })), null);
+      eq(parallelSecondCutoff(applying({ parallel2nd: true, applicationFormUnreadable: true })), null);
+      eq(entranceMarkOf(null, false), { kind: "blocked" });
+    });
+    await it("スタッフが選んだ時刻が線の材料になる", () => {
+      const st = resolveParallelSecond({ msgs: [], staffChoice: true, staffAt: T("2026-10-19T00:00:00Z") });
+      eq([st.parallel, st.source, st.at], [true, "staff", T("2026-10-19T00:00:00Z")]);
+      eq(staffParallelChoiceAt([{ id: PARALLEL_MEMO_ID, updatedAt: T("2026-10-19T00:00:00Z") }]), T("2026-10-19T00:00:00Z"));
     });
     await it("入口: 出口の網が止まっていれば masked にしない（Claude のまま）", () => {
-      const e = resolveDeepseekEntrance(applying({ parallel2nd: true }), { LLM_ALT_REAPPLY_GATE: "off" });
-      eq([e.altPostApply, e.masked], [true, false]);
-      eq(resolveDeepseekEntrance(applying({ parallel2nd: true }), { LLM_ALT_PII_GATE: "off" }).masked, false);
+      const e = resolveDeepseekEntrance(applying({ parallel2nd: true }), { ...ENV_DS, LLM_ALT_REAPPLY_GATE: "off" });
+      eq([e.altPostApply, e.cutoff, e.masked], [true, null, false]);
+      eq(resolveDeepseekEntrance(applying({ parallel2nd: true }), { ...ENV_DS, LLM_ALT_PII_GATE: "off" }).cutoff, null);
     });
     await it("入口: 並行でない申込中は今まで通り申込以降（渡さない）", () => {
       const e = resolveDeepseekEntrance(applying(), ENV_ON);

@@ -7,7 +7,7 @@
 //   ③ 本番の記録（llm_usage_logs の alt_skipped_pii）でこれらの会話が網で Claude に戻った回数（参考）。
 // 実行: npx tsx --env-file=.env.local scripts/audit-reapply-mask.ts [--extra=<会話ID先頭8桁,...>]
 import { createClient } from "@supabase/supabase-js";
-import { loadPostApplyFacts, deepseekSafeCutoff, cutoffMs, NO_CUTOFF, parallelSecondActive, parallelEligible, loadParallelSecondState } from "../app/lib/post-apply";
+import { loadPostApplyFacts, deepseekSafeCutoff, cutoffMs, NO_CUTOFF, parallelSecondActive, parallelEligible, loadParallelSecondState, parallelSecondCutoff } from "../app/lib/post-apply";
 import { resolveReapply } from "../app/lib/reapply-customer";
 import { altPiiSignal, altPiiSignalReapply, altPiiSignalReapplyValues, maskAltBody, altPiiValuesRemain } from "../app/lib/alt-pii-gate";
 import { piiValueSignal } from "../app/lib/test-pii-guard";
@@ -16,7 +16,7 @@ import { maskPII } from "../app/lib/pii-mask";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const id8 = (s: string) => s.slice(0, 8);
-// --as-parallel=…: スタッフが「はい」を選んだと仮定して並行（線なし・全部を伏せて渡す）で数える会話（伏せの確かめ用）
+// --as-parallel=…: スタッフが「はい」を選んだと仮定して並行で数える会話（10/21 確かめ役の後: 線＝申込の記録・2番手の時刻の遅い方より後だけ・REAPPLY_PARALLEL_DEEPSEEK=on の時の形）
 const asParallel = (process.argv.find((a) => a.startsWith("--as-parallel="))?.slice(14) ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 // 別の網（出口の網とは独立）: お客様の行に残る住所らしい形・カナの氏名・7桁の郵便番号・100万以上の金額（年収）
 const LOOSE: Array<[string, RegExp]> = [
@@ -60,7 +60,7 @@ async function main() {
   for (const r of rows) {
     const f = await loadPostApplyFacts(sb, r.id).catch(() => null);
     if (!f) continue;
-    if (asParallel.some((p) => r.id.startsWith(p)) && parallelEligible(f)) { targets.push({ id: r.id, kind: "parallel", cut: NO_CUTOFF }); continue; }
+    if (asParallel.some((p) => r.id.startsWith(p)) && parallelEligible(f)) { const pl = cutoffMs(parallelSecondCutoff({ ...f, parallel2nd: true })); if (pl !== null) targets.push({ id: r.id, kind: "parallel", cut: pl }); continue; }
     if (resolveReapply(f).reapply) {
       const line = cutoffMs(deepseekSafeCutoff(f, { reapply: true }));
       if (line !== null) targets.push({ id: r.id, kind: "reapply", cut: line });
@@ -68,7 +68,8 @@ async function main() {
     }
     if (parallelEligible(f)) {
       const st = await loadParallelSecondState(sb, r.id, f).catch(() => null);
-      if (st?.parallel && parallelSecondActive({ ...f, parallel2nd: true })) targets.push({ id: r.id, kind: "parallel", cut: NO_CUTOFF });
+      const pl = cutoffMs(parallelSecondCutoff({ ...f, parallel2nd: true, parallel2ndAt: st?.at ?? null }));
+      if (st?.parallel && parallelSecondActive({ ...f, parallel2nd: true }) && pl !== null) targets.push({ id: r.id, kind: "parallel", cut: pl });
     }
   }
   console.log(`── 対象: 申込歴あり ${targets.filter((t) => t.kind === "reapply").length}・2番手で並行 ${targets.filter((t) => t.kind === "parallel").length}`,

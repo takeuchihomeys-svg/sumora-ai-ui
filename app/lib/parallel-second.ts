@@ -7,7 +7,7 @@
 //
 // 【何が変わるか】（この状態だと明示的に決まった会話だけ。申込中の他の会話は今まで通り止める）
 //   ・下書き・AIX・ブレインを止めない（post-apply.postApplyDraftSkip・post-apply-brain-gate-server・generate-reply / bg-async / brain-core の status）
-//   ・DeepSeek には全部渡すが、出口で申込フォームの値（氏名・生年月日・勤務先・年収・保証人・書類の読み取り）を伏せる（印 masked・alt-pii-gate.maskApplicationValuesForAlt）
+//   ・DeepSeek には既定で渡さない（Claude・REAPPLY_PARALLEL_DEEPSEEK=on の時だけ、申込の記録・2番手の時刻より後を出口で伏せてから渡す＝post-apply.parallelSecondCutoff）
 //   ・審査の事情（screening-sensitive）が出た会話は今まで通り Claude
 // 【決め方】①スタッフが画面（メモの帯）で選んだ物（customer_memos の1行 id=PARALLEL_MEMO_ID・on/off）が最優先
 //   ②スタッフの文で「2番手で受理／受け付け／お申込み完了／お申込みさせて頂きます／同時並行」（案内だけの「2番手でのお申込みが可能」・問いの形は数えない）
@@ -25,6 +25,15 @@ export const PARALLEL_MEMO_OFF = `${PARALLEL_2ND_LABEL}：いいえ`;
 /** この状態で「申込中」に数える status（契約・成約以降は並行の探しではない） */
 export const PARALLEL_STATUSES: ReadonlySet<string> = new Set(["applying", "application", "screening"]);
 
+/**
+ * 2番手で申込中（並行で探す）の会話を DeepSeek に回すか（既定 off＝Claude のまま。下書き・ブレインは止めない）。
+ *   2026-10-21 確かめ役: この状態は申込が続いている（線より後にも書類・生年月日・勤め先の社名変更の案内・現住所が届く）ので、
+ *   出口の伏せ・値の網（申込歴ありの網）でも実データで値が残った（scripts/audit-reapply-mask.ts の別の網）。on にすると線より後だけを伏せて渡す
+ */
+export function parallelSecondDeepseekEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.REAPPLY_PARALLEL_DEEPSEEK ?? "").trim().toLowerCase() === "on";
+}
+
 export function parallelSecondEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.REAPPLY_PARALLEL_2ND ?? "").trim().toLowerCase() !== "off";
 }
@@ -40,6 +49,8 @@ export type ParallelInput = {
   lastBackAt?: string | null;
   /** スタッフの選択（メモの行）: true / false / null（選んでいない） */
   staffChoice?: boolean | null;
+  /** スタッフが選んだ時刻（メモの行の updatedAt・ISO）。DeepSeek の線に使う（無ければ null） */
+  staffAt?: string | null;
   nowMs?: number;
 };
 export type ParallelState = { parallel: boolean; source: "staff" | "auto" | null; via: "message" | "picker" | null; at: string | null };
@@ -58,8 +69,8 @@ const BANTE_2 = /[2２二]番手/;
 /** 2番手で申込んだ（受理・受け付け・完了・させて頂く・手続き・同時並行・管理会社からの連絡） */
 // 動詞は「2番手」の後ろ25字以内だけ数える（同じ文の「確認させて頂きました」等に当てない・実データ 0adcc5f1 の外れ）
 const APPLIED_2ND_VERB = /受理|受け?付け?(?:て|ま|致|いた|中|し)|完了|させて(?:頂|いただ)|させ頂|手続き|とのご連絡|とのこと|同時並行|並行して(?:お部屋|物件)?(?:を)?(?:お)?探|並行で/;
-/** 案内・問い・できない形（申込んだ事にしない） */
-const NOT_APPLIED = /[2２二]番手以降|可能|でき(?:ます|る|ない|ません)|出来|受け?付け?(?:てい)?(?:ない|ません)|受付(?:不可|していない)|不可|如何|いかが|でしょうか|ますか|場合|もし|たら[、,\s]|なら[、,\s]|おすすめ|オススメ|お勧め|ご提案/;
+/** 案内・問い・できない形・条件の形（申込んだ事にしない）。10/21 確かめ役: 「お気に召されましたら2番手で…させて頂きます」「よろしければ2番手でお申し込みさせて頂き」「お送り頂き次第…2番手で抑えさせて頂きます」は申込んだ文ではない */
+const NOT_APPLIED = /[2２二]番手以降|可能|でき(?:ます|る|ない|ません)|出来|受け?付け?(?:てい)?(?:ない|ません)|受付(?:不可|していない)|不可|如何|いかが|でしょうか|ますか|場合|もし|たら[、,\s]|なら[、,\s]|おすすめ|オススメ|お勧め|ご提案|ましたら|でしたら|よろしければ|宜しければ|良ければ|次第|お申し?付け|される場合|であれば/;
 /** 終わり（繰り上がった・自分の審査が通った・1番手が通って取れなかった） */
 const END_RE = /繰り上が(?:り(?:まし|ます|となり)|った|れ(?:まし|ます))|[1１一]番手(?:に|と)(?:なり|繰り)|審査(?:が|に|は)?.{0,4}(?:通過(?:しま|いた|とな|の(?:ご)?連絡)|通りまし|承認(?:され|とな)|OK(?:でし|とな))|[1１一]番手.{0,20}(?:審査(?:が|に)?.{0,4}(?:通|通過|承認)|決ま|契約|成約)|(?:お部屋|物件|そちら|こちら)(?:が|は).{0,8}(?:埋まって|決まって|成約)|繰り上が(?:りませ|らな|りが無|り無|りなし|れませ)/;
 const END_NOT = /場合|もし|たら[、,\s]|なら[、,\s]|かもしれ|可能性|でしょうか|ますか|如何|いかが/;
@@ -96,7 +107,7 @@ export const PARALLEL_LOOKBACK_MS = 60 * 86_400_000;
  */
 export function resolveParallelSecond(i: ParallelInput): ParallelState {
   if (i.staffChoice === false) return NOT;
-  if (i.staffChoice === true) return { parallel: true, source: "staff", via: null, at: null };
+  if (i.staffChoice === true) return { parallel: true, source: "staff", via: null, at: ms(i.staffAt ?? null) !== null ? new Date(ms(i.staffAt)!).toISOString() : null };
   const now = i.nowMs ?? Date.now();
   const last = ms(i.lastApplyAt ?? null), back = ms(i.lastBackAt ?? null);
   const from = Math.max(last !== null ? last - PARALLEL_WINDOW_BEFORE_MS : now - PARALLEL_LOOKBACK_MS, back ?? -Infinity);
@@ -122,6 +133,11 @@ export function resolveParallelSecond(i: ParallelInput): ParallelState {
   return { parallel: true, source: "auto", via: ev.via, at: new Date(evAt).toISOString() };
 }
 
+/** スタッフが選んだ時刻（メモの行の updatedAt → sourceAt・無ければ null） */
+export function staffParallelChoiceAt(items: ReadonlyArray<{ id?: string; retiredAt?: string | null; updatedAt?: string | null; sourceAt?: string | null }> | null | undefined): string | null {
+  const it = (items ?? []).find((x) => x.id === PARALLEL_MEMO_ID && !x.retiredAt);
+  return it?.updatedAt ?? it?.sourceAt ?? null;
+}
 /** メモの行からスタッフの選択を読む（無い・外した行は null） */
 export function staffParallelChoiceOf(items: ReadonlyArray<{ id?: string; text?: string; retiredAt?: string | null }> | null | undefined): boolean | null {
   const it = (items ?? []).find((x) => x.id === PARALLEL_MEMO_ID && !x.retiredAt);
