@@ -20,7 +20,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { resolveRouteName, testDeepseekModelOverride } from "../../app/lib/llm-alt-provider";
-import { examEnvFingerprint } from "./exam-env-fp";
+import { examEnvFingerprint, readDotenvLocal } from "./exam-env-fp";
 
 /** 2026-10-18: LLM_TEST_DS_MODEL_BY_ACTION で替えた名札のモデル（無ければ null）。名札の無い返信生成は system の先頭で見分ける（llm-alt と同じ） */
 function actionModelOverride(env: Record<string, string | undefined>, action: string | null, body: string | null): string | null {
@@ -278,6 +278,18 @@ const callLog = new Map<string, CallRef[]>();
 const pinUsed = new Map<string, Set<number>>();
 let pins: Map<string, CallRef[]> | null = null;
 let pinOnly = false;
+/**
+ * 2026-10-21 確かめる人: pk はスイッチの指紋を入れないが、要求の本文に出ずに答えを変える「運び方」のスイッチ
+ *   （別クラウドの振り分け LLM_ALT_*・DeepSeek の打ち切り／落ちた時の Claude DEEPSEEK_*・ALT_STREAM_CUT・QWEN_*・最後の確かめを Claude に LLM_TEST_FINAL_CHECK_CLAUDE 等）
+ *   を替えた回が main の答えを使うと悪化が隠れる → .env.local と違う物だけ pk に足す（既定の回は空＝今までの控えがそのまま合う）
+ */
+const TRANSPORT_RE = /^(?:LLM_ALT_|DEEPSEEK_|QWEN_|AZURE_AI_|BEDROCK_|VISION_ALT_|ALT_STREAM_CUT$|LLM_TEST_FINAL_CHECK_CLAUDE$|LLM_TEST_ALLOW_CLAUDE$)/;
+const TRANSPORT_SKIP_RE = /KEY|SECRET|TOKEN|ACCESS|^DEEPSEEK_MODEL$/;
+export function transportFpOf(env: Record<string, string | undefined>, dotenv: Record<string, string>): string {
+  const names = [...new Set([...Object.keys(env), ...Object.keys(dotenv)])].filter((k) => TRANSPORT_RE.test(k) && !TRANSPORT_SKIP_RE.test(k)).sort();
+  const diff = names.filter((k) => String(env[k] ?? "").trim() !== String(dotenv[k] ?? "").trim()).map((k) => `${k}=${String(env[k] ?? "").trim()}`);
+  return diff.length ? createHash("sha256").update(diff.join(",")).digest("hex").slice(0, 10) : "";
+}
 function tagKeyOf(t: Record<string, string>): string | null { return t.problem ? `${t.problem}#${t.rep || "1"}` : null; }
 export function shaOfBody(text: string): string { return createHash("sha256").update(text).digest("hex").slice(0, 16); }
 /**
@@ -351,8 +363,9 @@ export type CassetteRpcTally = { replayed: number; recorded: number; failed: num
  * 包みを作る（純粋に inner を包む・テストで使う）。stats に数える。
  * 返り値の Response には x-llm-cassette: replay|record|miss を付ける（判定の費用を二重に数えないため）
  */
-export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir: string; stats: CassetteStats; env?: Record<string, string | undefined>; log?: (s: string) => void; envFp?: string }): FetchLike {
+export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir: string; stats: CassetteStats; env?: Record<string, string | undefined>; log?: (s: string) => void; envFp?: string; transportFp?: string }): FetchLike {
   const env = o.env ?? process.env;
+  const tfp = o.transportFp ?? (() => { try { return transportFpOf(env, readDotenvLocal()); } catch { return ""; } })();
   const log = o.log ?? ((s: string) => console.warn(s));
   const seen = new Map<string, number>(); // この回で同じ鍵を何回呼んだか
   const tallyOf = (m: Map<string, CassetteTally>, k: string) => { let t = m.get(k); if (!t) { t = emptyTally(); m.set(k, t); } return t; };
@@ -377,7 +390,7 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
     //   2026-10-18: 名札ごとにモデルを替えた回（LLM_TEST_DS_MODEL_BY_ACTION＝書く役だけ flash）は、その名札の要求だけ鍵にモデルを足す
     //   （ブレインは既定のモデルの鍵のまま＝pro の答えの再生で判断を固定できる）
     const actionModel = !/deepseek/.test(u!.host) ? actionModelOverride(env, action, body) : null;
-    const pk = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host, actionModel) });
+    const pk = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host, actionModel) + (tfp ? `\n#transport=${tfp}` : "") });
     if (pins) {
       const pin = findPinned(o.dir, pk);
       if (pin) {

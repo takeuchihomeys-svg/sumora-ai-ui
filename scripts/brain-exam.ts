@@ -154,8 +154,10 @@ const JUDGE_LAZY = arg("judge") === "lazy";
 const JUDGE_MODEL = (process.env.EXAM_JUDGE_MODEL ?? "").trim();
 const STOP_FILE = process.env.BRAIN_EXAM_BASELINE_CHILD === "1" ? "" : (process.env.EXAM_STOP_FILE ?? "").trim();
 const judgeSkip = { lazy: 0, rules: 0 };
-// 2026-10-21 ⑤ 決まりで決まる採点を先に（--judge=lazy の時・scripts/lib/exam-brain.ts ruleJudge）。止める: EXAM_JUDGE_RULES=off
-const JUDGE_RULES = (process.env.EXAM_JUDGE_RULES ?? "").trim().toLowerCase() !== "off";
+// 2026-10-21 ⑤ 決まりで決まる採点を先に（--judge=lazy の時・scripts/lib/exam-brain.ts ruleJudge）。
+//   確かめる人: 取ってある判定（AIX・なしの答案 69件）と照らすと 25件で AI の判定と食い違った（AIX の答案にも返信の本文が付く・AIX の中身の要点で✕にする）
+//   ＝合格を AI の判定と違う物にする → 既定は止める。入れる: EXAM_JUDGE_RULES=on
+const JUDGE_RULES = (process.env.EXAM_JUDGE_RULES ?? "").trim().toLowerCase() === "on";
 /** --select=rag で選んだ問題（null＝選んでいない＝今まで通り） */
 let SELECTED: Set<string> | null = null;
 let selectKbNow: Record<string, string> | null = null;

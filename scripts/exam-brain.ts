@@ -583,6 +583,8 @@ async function runMain() {
   for (const ph of phases) {
     const st = ledger.filter((l) => l.label === ph.label);
     log(`${ph.label}: ${st.length}問・道 ${st.filter((l) => l.pathOk).length}・合格 ${st.filter((l) => l.pass).length}・前より悪い ${st.filter((l) => l.cmp === "worse").length}・良い ${st.filter((l) => l.cmp === "better").length}・判断だけ変わった ${st.filter((l) => l.cmp === "changed").length}・turn_contract の形だけ変わった ${st.filter((l) => l.cmp === "shape").length}・前が無い ${st.filter((l) => l.cmp === "nobase").length}${ph.stopped ? `・止めた（${ph.stopWhy}）` : ""}${ph.confirm.length ? `・確かめた ${ph.confirm.length}` : ""}`);
+    // 確かめる人: 途中で止めた時は流さなかった問題を名指しする（黙って抜けない）
+    if (ph.stopped) { const notRun = ph.ids.filter((id) => !st.some((l) => l.id === id)); if (notRun.length) log(`  ⏹ 止めたので流さなかった ${notRun.length}問: ${notRun.join(",")}`); }
   }
   for (const l of by("worse")) log(`  ✕ 悪化 ${l.id}[${l.stage}] ${l.cmpWhy}・${l.verdict === "real" ? "本当の悪化（確かめの回でも同じ）" : l.verdict === "flake" ? "揺れ（回で割れた・揺れる問題）" : "1回だけ（確かめていない）"}`);
   for (const l of by("better")) log(`  ○ 良くなった ${l.id}[${l.stage}] ${l.cmpWhy}・${l.verdict ?? ""}`);

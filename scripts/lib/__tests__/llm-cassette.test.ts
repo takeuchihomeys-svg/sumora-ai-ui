@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeCassetteFetch, normalizeBody, cassetteSalt, cassetteResponseFits, usageOfResponse, wrapGlobalFetch, setCassetteTag, flushCassette, formatCassetteStats, type CassetteStats, type CassetteMode,
-  setCassettePins, cassetteCallsOf, inputDiffOf, pinsFromRows, hasPinsFor } from "../llm-cassette";
+  setCassettePins, cassetteCallsOf, inputDiffOf, pinsFromRows, hasPinsFor, transportFpOf } from "../llm-cassette";
 import { planBaseline, childArgs, examConfig, configHash, problemHash } from "../brain-exam-baseline";
 
 let fail = 0, pass = 0;
@@ -213,6 +213,20 @@ const quiet = () => {};
     await (await fOff(URL_A, req("読み手の入力", "brain_reader"))).text();
     await flushCassette();
     ok("控えを外すと今まで通り（スイッチの指紋が違えば呼ぶ）", calls === mainCalls + 2 && !sOff.total.pinned);
+    // 確かめる人: 運び方のスイッチ（LLM_ALT_PROVIDER 等・本文に出ない）を替えた回は main の答えを使わない
+    {
+      const tA = transportFpOf({ LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "x" }, { LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "y" });
+      const tB = transportFpOf({ LLM_ALT_PROVIDER: "qwen", ALT_STREAM_CUT: "off" }, { LLM_ALT_PROVIDER: "deepseek" });
+      ok("運び方の指紋: 既定と同じ（鍵の違いは見ない）＝空・替えた＝印", tA === "" && tB.length === 10, `${tA} ${tB}`);
+      setCassettePins(pins);
+      const before = calls;
+      const fT = makeCassetteFetch(llm, { mode: "replay", dir: pdir, stats: st("replay"), env: {}, log: quiet, envFp: "abc123", transportFp: tB });
+      setCassetteTag({ problem: "q177", rep: "2" });
+      await (await fT(URL_A, req("読み手の入力", "brain_reader"))).text();
+      await flushCassette();
+      const d3 = inputDiffOf(cassetteCallsOf("q177", "2"), true);
+      ok("運び方のスイッチを替えた回は main の答えを使わず呼ぶ", calls === before + 1 && !d3.same && d3.pinned === 0, JSON.stringify(d3));
+    }
     rmSync(pdir, { recursive: true, force: true });
   }
 
