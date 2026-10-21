@@ -232,7 +232,7 @@ export function diffHint(oldBody: string, newBody: string, span = 90): string {
 }
 
 // ─── 数え ──────────────────────────────────────────────────────────────
-export type CassetteTally = { real: number; realUsd: number; replayed: number; replayUsd: number; missed: number; unrecordable: number };
+export type CassetteTally = { real: number; realUsd: number; replayed: number; replayUsd: number; missed: number; unrecordable: number; /** 2026-10-21 入力の差: main と同じ要求に main の答えを返した数（replayed にも入る） */ pinned?: number };
 const emptyTally = (): CassetteTally => ({ real: 0, realUsd: 0, replayed: 0, replayUsd: 0, missed: 0, unrecordable: 0 });
 export type CassetteStats = {
   mode: CassetteMode; dir: string;
@@ -258,8 +258,71 @@ export function wrapGlobalFetch(make: (prev: FetchLike) => FetchLike): void {
 }
 
 let currentTag: Record<string, string> = {};
-/** 今の問題・回を札にする（数えを問題ごとに分け、変わった所を探す時に同じ問題の録音を先に見る） */
-export function setCassetteTag(tag: Record<string, string>): void { currentTag = { ...tag }; }
+/** 今の問題・回を札にする（数えを問題ごとに分け、変わった所を探す時に同じ問題の録音を先に見る）。札を付け直すとその回の呼び出しの控え・main の答えの使い済みを空にする（回し直しの回） */
+export function setCassetteTag(tag: Record<string, string>): void {
+  currentTag = { ...tag };
+  const k = tagKeyOf(currentTag);
+  if (k) { callLog.delete(k); pinUsed.delete(k); }
+}
+
+// ─── 2026-10-21 入力の差（main と同じ要求なら main の答えをそのまま使う） ─────────────────────────────
+// 竹内さん 10/21「試験の次の節約（質は落とさない）」①: q177・q139・q049 は入力が main と全く同じなのに呼んで「悪くなった」と出た
+//   （スイッチの指紋・回の印が鍵に入るので、同じ要求でも別の答えを新しく呼んでいた）。
+//   問題×回ごとに「どの要求（pk＝本文＋宛先＋名札＋モデルの印。スイッチの指紋と回の印は入れない）に、どの答え（録音の鍵＋本文の sha）を使ったか」を控え、
+//   結果の行（llmCalls）に残す → main の取り置きの行にも残る。今の版の同じ問題×回で同じ pk の要求が来たら、main が使った答えをそのまま返す（呼ばない）。
+//   段ごとに効く: 1段目が同じなら main の答え → それを材料にした2段目の要求も同じなら main の答え …（最初に違った段から本当に呼ぶ）。
+//   全部の呼び出しが main の答えで済んだ回＝「入力が同じ」（答え・判定も main と同じ＝悪化・改善と数えない）。
+/** 1回の呼び出しの控え（pk＝要求の印・key＝録音の置き場の鍵・sha＝返した答えの本文の印・src＝どこから） */
+export type CallRef = { pk: string; key: string; sha: string; action: string | null; src: "pin" | "replay" | "record" | "miss" | "fail" };
+const callLog = new Map<string, CallRef[]>();
+const pinUsed = new Map<string, Set<number>>();
+let pins: Map<string, CallRef[]> | null = null;
+let pinOnly = false;
+function tagKeyOf(t: Record<string, string>): string | null { return t.problem ? `${t.problem}#${t.rep || "1"}` : null; }
+export function shaOfBody(text: string): string { return createHash("sha256").update(text).digest("hex").slice(0, 16); }
+/**
+ * main の答えの控えを入れる（{ "q177#1": CallRef[] }）。only＝下見（plan・呼ばない）: main と同じ要求は main の答え・違う要求は呼ばずに止める（400）。
+ *   null で外す。
+ */
+export function setCassettePins(p: Record<string, CallRef[]> | null, o: { only?: boolean } = {}): void {
+  pins = p ? new Map(Object.entries(p).map(([k, v]) => [k, v.filter((c) => c.sha && c.key && (c.src === "pin" || c.src === "replay" || c.src === "record"))])) : null;
+  pinOnly = !!o.only && !!p;
+  pinUsed.clear();
+}
+export function cassettePinsActive(): boolean { return !!pins; }
+export function hasPinsFor(problem: string, rep: number | string): boolean { return !!pins?.get(`${problem}#${rep}`)?.length; }
+/** この問題×回の呼び出しの控え（結果の行の llmCalls に入れる） */
+export function cassetteCallsOf(problem: string, rep: number | string): CallRef[] { return (callLog.get(`${problem}#${rep}`) ?? []).map((c) => ({ ...c })); }
+/** 入力の差の判定: 全部の呼び出しが main の答え（pin）＝同じ。最初に違った段（名札）と、main の答えで済んだ数 */
+export type InputDiff = { same: boolean; calls: number; pinned: number; firstChanged: string | null; changed: string[] };
+export function inputDiffOf(calls: CallRef[], hadPins: boolean): InputDiff {
+  const pinned = calls.filter((c) => c.src === "pin").length;
+  const ch = calls.filter((c) => c.src !== "pin");
+  return { same: hadPins && calls.length > 0 && ch.length === 0, calls: calls.length, pinned, firstChanged: ch[0] ? (ch[0].action ?? "判定") : null, changed: [...new Set(ch.map((c) => c.action ?? "判定"))] };
+}
+/** main の行（llmCalls 付き）から控えを作る（同じ問題×回が2つあれば先の物） */
+export function pinsFromRows(rows: Array<{ id: string; rep: number; llmCalls?: CallRef[]; error?: string }>): Record<string, CallRef[]> {
+  const out: Record<string, CallRef[]> = {};
+  for (const r of rows) { const k = `${r.id}#${r.rep}`; if (!r.error && r.llmCalls?.length && !out[k]) out[k] = r.llmCalls; }
+  return out;
+}
+function logCall(c: CallRef): CallRef { const k = tagKeyOf(currentTag); if (k) { let a = callLog.get(k); if (!a) { a = []; callLog.set(k, a); } a.push(c); } return c; }
+/** 同じ pk の main の答え（まだ使っていない物）を探して返す。録音が消えている・sha が合わない時は null */
+function findPinned(dir: string, pk: string): { ref: CallRef; resp: CassetteResponse } | null {
+  const k = tagKeyOf(currentTag);
+  const list = k ? pins?.get(k) : undefined;
+  if (!k || !list?.length) return null;
+  let used = pinUsed.get(k); if (!used) { used = new Set(); pinUsed.set(k, used); }
+  for (let i = 0; i < list.length; i++) {
+    if (used.has(i) || list[i].pk !== pk) continue;
+    const e = readEntry(dir, list[i].key);
+    const resp = e?.responses.find((r) => shaOfBody(r.body) === list[i].sha);
+    if (!resp) continue;
+    used.add(i);
+    return { ref: list[i], resp };
+  }
+  return null;
+}
 
 const STATS_KEY = Symbol.for("sumora.llmCassetteStats");
 export function cassetteStats(): CassetteStats | null { return ((globalThis as unknown as Record<symbol, unknown>)[STATS_KEY] as CassetteStats | undefined) ?? null; }
@@ -314,6 +377,21 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
     //   2026-10-18: 名札ごとにモデルを替えた回（LLM_TEST_DS_MODEL_BY_ACTION＝書く役だけ flash）は、その名札の要求だけ鍵にモデルを足す
     //   （ブレインは既定のモデルの鍵のまま＝pro の答えの再生で判断を固定できる）
     const actionModel = !/deepseek/.test(u!.host) ? actionModelOverride(env, action, body) : null;
+    const pk = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host, actionModel) });
+    if (pins) {
+      const pin = findPinned(o.dir, pk);
+      if (pin) {
+        bump(action, (t) => { t.replayed++; t.replayUsd += pin.resp.usd; t.pinned = (t.pinned ?? 0) + 1; });
+        logCall({ pk, key: pin.ref.key, sha: pin.ref.sha, action, src: "pin" });
+        return new Response(pin.resp.body, { status: pin.resp.status, headers: { "content-type": pin.resp.contentType, [CASSETTE_HEADER]: "replay", "x-llm-cassette-pin": "1" } });
+      }
+      if (pinOnly) {
+        o.stats.misses.push({ action, tag: { ...currentTag }, hint: "入力が main と違う（下見なので呼ばない）" });
+        bump(action, (t) => t.missed++);
+        logCall({ pk, key: "", sha: "", action, src: "miss" });
+        return new Response(JSON.stringify({ type: "error", error: { type: "cassette_miss", message: `llm-cassette plan: 入力が main と違う（${action ?? "名札なし"}）` } }), { status: 400, headers: { "content-type": "application/json", [CASSETTE_HEADER]: "miss" } });
+      }
+    }
     const keyFor = (mode: CassetteMode) => cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host, actionModel) + cassetteRunSalt({ envFp: o.envFp, host: u!.host, action, rep: currentTag.rep, mode, env }) });
     // 2026-10-21 確かめる人: strict は旧の鍵（回なし）だが、回を足して録った2回目以降（record/replay で録った物）があればそちらを再生する
     //   （無いと --repeat=2 で録った回を strict で流すと2回目が「録った答えは1個」で止まる）
@@ -325,6 +403,7 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
     const hit = o.mode !== "record" ? (entry?.responses.filter((r) => cassetteResponseFits(env, r.usage?.model ?? null))[nth] ?? null) : null;
     if (hit) {
       bump(action, (t) => { t.replayed++; t.replayUsd += hit.usd; });
+      logCall({ pk, key, sha: shaOfBody(hit.body), action, src: "replay" });
       return new Response(hit.body, { status: hit.status, headers: { "content-type": hit.contentType, [CASSETTE_HEADER]: "replay" } });
     }
     if (o.mode === "strict") {
@@ -332,6 +411,7 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
       const why = entry ? `録った答えは ${entry.responses.length} 個（この回 ${nth + 1} 回目）` : near ? diffHint(near.normBody, normBody) : "同じ名札の録音なし";
       o.stats.misses.push({ action, tag: { ...currentTag }, hint: why });
       bump(action, (t) => t.missed++);
+      logCall({ pk, key, sha: "", action, src: "miss" });
       log(`[llm-cassette] ⛔ 録音なし（呼ばない）: ${action ?? "(名札なし)"} ${currentTag.problem ?? ""} — ${why}`);
       const msg = `llm-cassette strict: 要求が録音と違う（${action ?? "名札なし"}）`;
       return new Response(JSON.stringify({ type: "error", error: { type: "cassette_miss", message: msg } }), { status: 400, headers: { "content-type": "application/json", [CASSETTE_HEADER]: "miss" } });
@@ -342,7 +422,9 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
     // 録るのは成功した答えだけ（失敗を再生すると直った後も失敗が返る）
     if (res.status >= 200 && res.status < 300) {
       const clone = res.clone();
+      const ref = logCall({ pk, key, sha: "", action, src: "record" });
       const done = clone.text().then(async (text) => {
+        ref.sha = shaOfBody(text);
         const usage = usageOfResponse(text, ct);
         const usd = await usdOfUsage(usage, at).catch(() => 0);
         bump(action, (t) => { t.real++; t.realUsd += usd; });
@@ -353,7 +435,7 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
         writeEntry(o.dir, e);
       }).catch((err) => log(`[llm-cassette] 録れなかった: ${err instanceof Error ? err.message : err}`));
       pending.add(done); void done.finally(() => pending.delete(done));
-    } else bump(action, (t) => t.real++);
+    } else { bump(action, (t) => t.real++); logCall({ pk, key, sha: "", action, src: "fail" }); }
     return res;
   };
 }
@@ -415,7 +497,7 @@ export function formatCassetteStats(s: CassetteStats, extra: { reusedProblems?: 
   const L: string[] = [];
   L.push(`=== この回の API（試験の道具の数え・${s.mode}）===`);
   L.push(`  新しく呼んだ   ${t.real}回 $${t.realUsd.toFixed(4)}`);
-  L.push(`  再生で済んだ   ${t.replayed}回（呼んでいたら $${t.replayUsd.toFixed(4)}）`);
+  L.push(`  再生で済んだ   ${t.replayed}回（呼んでいたら $${t.replayUsd.toFixed(4)}）${t.pinned ? `・うち main と入力が同じで main の答えを使った ${t.pinned}回` : ""}`);
   if (t.missed) L.push(`  録音なし・要求が変わった（strict で呼ばずに止めた） ${t.missed}回`);
   if (t.unrecordable) L.push(`  録れない形（本文が文字でない）${t.unrecordable}回（そのまま呼んだ）`);
   if (s.rpc && (s.rpc.replayed || s.rpc.recorded || s.rpc.failed)) L.push(`  似た物探し（RPC match_*・DB を読むだけ）: 再生 ${s.rpc.replayed}・録った ${s.rpc.recorded}・失敗 ${s.rpc.failed}（失敗は録らない＝次の回にもう一度読む）`);
