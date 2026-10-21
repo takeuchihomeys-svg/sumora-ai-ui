@@ -12,7 +12,7 @@ import { isTestConversation } from "../app/lib/test-conversations";
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const N = Number(arg("n", "5"));
 const SHOW = arg("show", "");
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 const d = (s: string | null | undefined) => (s ? new Date(Date.parse(s) + 9 * 3600_000).toISOString().slice(5, 16).replace("T", " ") : "-");
 
 async function texts() {

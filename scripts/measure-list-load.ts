@@ -2,7 +2,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/measure-list-load.ts
 // 2026-10-06 ⑫ 竹内「AIXツールひらくとき重すぎる…今全部見ている気がする」。旧（全件＋メッセージ丸ごと）と新（conversation-list-sync）を並べる
 import { createClient } from "@supabase/supabase-js";
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 const COLS = "id,customer_name,status,line_user_id,last_message,last_sender,profile_image_url,updated_at,created_at,account,property_customer_id,is_post_apply,is_hot,is_flagged,ai_draft,draft_pending_at,has_viewed,auto_send_enabled,auto_sent_at,auto_sent_draft,success_pattern_at,loss_analyzed_at,draft_attempted_at,line_status,suggested_next_aix,draft_fail_count,draft_last_error,reply_mode_decision,suggested_aix_meta,brain_analyzed_at,learned_at,brain_full_analyzed_at,brain_full_msg_count,brain_deep_analyzed_at,brain_deep_msg_count,acquisition_source,applying_text_received,applying_image_received,screening_last_status,status_manual_back_at,auto_send_enabled_at,line_source_type,send_blocked_reason,call_tapped_at";
 const PC = "id,customer_name,status,last_property_sent_at,property_viewed_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary,floor_area_min,floor_area_max,pet,rp_update_days";
 type R = { name: string; kb: number; ms: number; rows: number };

@@ -5,7 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { parseUndatedContactPromise, parseContactPromise, pendingUndatedPromise } from "../app/lib/contact-promise";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 async function main() {
   const rows: Array<{ id: string; conversation_id: string; text: string; created_at: string; staff_writer: string | null }> = [];
   for (const pat of ["%来年%", "%年明け%", "%時期%", "%再相談%", "%ヶ月後%", "%か月後%", "%ましたら%ご連絡%", "%春%", "%頃になりましたら%", "%落ち着%", "%タイミング%", "%その頃%"]) {

@@ -41,7 +41,7 @@ const AD_OFF = args.ad === "off";
 // 🌟本文・property_details の辞書は🌟の物件に偏る（選ばれた建物ほど本文がある）→ 既定では判定の材料にしない
 const DICT_STAR = args["dict-star"] === "on";
 const TEST_CONV = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7"; // YUMA（竹内さんのテスト用）は除く
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 
 type Row = Record<string, any>;
 const H = 3600_000, D = 24 * H;

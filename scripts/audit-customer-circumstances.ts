@@ -8,7 +8,7 @@ import { extractCircumstances, type CircumstanceKind } from "../app/lib/customer
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const DAYS = Number(arg("days", "180")); const SHOW = arg("show", ""); const N = Number(arg("n", "40"));
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 type M = { conversation_id: string; sender: string; created_at: string; text: string | null; is_aix_generated: boolean | null };
 const ECHO: Record<CircumstanceKind, RegExp> = {
   available_from: /以降|以後|ご帰国|お戻り|ご都合|抑え|オンライン|撮影/, cannot_come_soon: /抑え|オンライン|撮影|ご都合|落ち着/,

@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { extractPdfText } from "../app/lib/pdf-text";
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 async function main() {
   const { data: pk } = await sb.from("property_pickups").select("id, site, pdf_text, pdf_blob_url").order("id");
   for (const r of pk!) {

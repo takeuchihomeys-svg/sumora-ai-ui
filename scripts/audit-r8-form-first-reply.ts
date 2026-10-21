@@ -4,7 +4,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync } from "node:fs";
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%/${b}` : "-");
 (async () => {
   const rows = readFileSync(arg("in", ""), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r: any) => r.at >= "2026-05-30" && r.sub === "conditions:条件のフォーム・初回" && ["hand", "edited", "asis"].includes(r.src));

@@ -8,7 +8,7 @@ import { createClient } from "@supabase/supabase-js";
 import { enrichSummariesFromPdf, buildRankPrompt, buildRankMaterials, parseRankReply } from "../app/lib/pickup-rank";
 import { buildCustomerConditionsString } from "./audit-condition-coverage";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 const arg = (k: string) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? "").split("=").slice(1).join("=") || null;
 type Row = Record<string, any>;
 

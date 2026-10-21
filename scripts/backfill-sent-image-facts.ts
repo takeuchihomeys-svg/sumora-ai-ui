@@ -23,7 +23,7 @@ const args = Object.fromEntries(process.argv.slice(2).map((a) => { const m = a.m
 const DAYS = parseInt(String(args.days ?? "90"), 10);
 const LIMIT = parseInt(String(args.limit ?? "2"), 10);
 const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 type Row = Record<string, any>;
 // deepseek-flash の単価（USD / 100万トークン・scripts/audit-brain-cost-mode.ts と同じ）
 const PRICE = { in: 0.15, cacheRead: 0.003, out: 0.6 };

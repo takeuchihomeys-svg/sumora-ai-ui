@@ -24,7 +24,7 @@ const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--$
 const APPLY = process.argv.includes("--apply");
 const WITH_CONTEXT = process.argv.includes("--with-context");
 const RAW = process.argv.includes("--raw-confidence");
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
 const GROUP_SQL = `-- グループの発言（過去分）: 発言者の LINE で決める
 UPDATE messages SET staff_writer = 'takeuchi', staff_writer_source = 'group_speaker', staff_writer_confidence = 'sure'

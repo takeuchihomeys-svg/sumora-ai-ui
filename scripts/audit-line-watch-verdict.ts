@@ -24,7 +24,7 @@ const ALL = process.argv.includes("--all");
 /** ブレインの判断の記録がある番だけ（9/05〜）。本番の控えは毎番ブレインがあるので、こちらが本番に近い */
 const BRAIN_ONLY = process.argv.includes("--brain-only");
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
 async function readAll<T>(q: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>, cap = 200_000): Promise<T[]> {
   const out: T[] = [];

@@ -4,7 +4,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { customerAsksMoreListings } from "../app/lib/reply-context";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 const PICKUP_RE = /新着|ピックアップ|出次第|随時|探させて|お探し|ご紹介/;
 const ESTIMATE_RE = /見積/;
 const VIEWING_RE = /ご案内させて|ご内覧/;
