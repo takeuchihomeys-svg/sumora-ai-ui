@@ -19,6 +19,7 @@ import { AIX_PICKERS, type PickerOption } from "./aix-pickers";
 import { AIX_BUTTON_LABELS } from "./aix-taxonomy";
 import { aixNewPickers1020Enabled, isPropertyInfoCheckPattern, NEW_CHECK_PATTERNS_1020, PROPERTY_INFO_BUTTON } from "./aix-new-pickers";
 import type { ReplyScene } from "./reply-scene";
+import { isScreeningButtonAction, screeningBrainEnabled, screeningButtonEnabled, SCREENING_BUTTON } from "./aix-owner-answers-1021";
 
 export type CatalogEntry = {
   /** 一覧の鍵: "ボタン" か "ボタン/ピッカーの値"（例 property_check_result/unavailable） */
@@ -409,8 +410,15 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
   const inScene = (e: CatalogEntry) => o.includeAll || !scene || !e.scenes.length || e.scenes.includes(scene);
   const allButtons = catalogAllButtonsEnabled(o.env);
   // 2026-10-20 新しいピッカー: AIX_NEW_PICKERS_1020=on でない時はブレインに見せない
-  const newOff = !aixNewPickers1020Enabled(o.env ?? (typeof process !== "undefined" ? process.env : {}));
-  const rows = AIX_CATALOG.filter((e) => e.brainSelectable && (allButtons || inScene(e)) && !(newOff && e.picker && (NEW_CHECK_PATTERNS_1020 as readonly string[]).includes(e.picker.value)));
+  const envNow = o.env ?? (typeof process !== "undefined" ? process.env : {});
+  const newOff = !aixNewPickers1020Enabled(envNow);
+  // 2026-10-21 竹内さん C9: 【審査について】の中に 保証会社について（guarantor_info）・審査について（ご相談）（mgmt_screening）を並べる（値は今まで通り・名前だけ）。
+  //   mgmt_screening をブレインが選べるのは AIX_NEW_PICKERS_1020=on か AIX_SCREENING_BUTTON=brain の時だけ（既定は今まで通り見せない）
+  const scrOn = screeningButtonEnabled(envNow);
+  const scrBrain = screeningBrainEnabled(envNow);
+  const rows = AIX_CATALOG
+    .filter((e) => e.brainSelectable && (allButtons || inScene(e)) && !(newOff && e.picker && (NEW_CHECK_PATTERNS_1020 as readonly string[]).includes(e.picker.value) && !(scrBrain && e.picker.value === "mgmt_screening")))
+    .map((e) => (scrOn && isScreeningButtonAction(e.aixType, e.picker?.value ?? null) ? { ...e, button: e.aixType === "guarantor_info" ? `${SCREENING_BUTTON}→保証会社について` : SCREENING_BUTTON } : e));
   const byBtn = new Map<string, CatalogEntry[]>();
   for (const e of rows) { const k = `${e.aixType}|${e.button}`; if (!byBtn.has(k)) byBtn.set(k, []); byBtn.get(k)!.push(e); }
   const lines: string[] = [AIX_DECISION_ORDER, `【AIX のボタン×ピッカー（${scene ? `場面「${scene}」に関係する物` : "全部"}）＝aix の値はボタンのキー・check_pattern はピッカーの値】`];

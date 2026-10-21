@@ -4846,6 +4846,20 @@ CREATE TABLE IF NOT EXISTS customer_memos (
 );
 ALTER TABLE customer_memos DISABLE ROW LEVEL SECURITY;
 
+-- 2026-10-21 竹内さんの決定（f87ccb7e G3「グループの✅も済みに」）: 【やることリスト】の行をスタッフがグループで✅にした印。
+--   書くのは hanbancyo-webhook（staff-todo-reply-server.ts）・読むのは staff-todo-list-server.ts。本番に流す SQL は scripts/staff-todo-marks-migration.sql（同じ文）
+CREATE TABLE IF NOT EXISTS staff_todo_marks (
+  id BIGSERIAL PRIMARY KEY,
+  item_key TEXT NOT NULL UNIQUE,
+  conversation_id TEXT,
+  marked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  marked_by TEXT,
+  via TEXT NOT NULL DEFAULT 'group_reply',
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_staff_todo_marks_marked_at ON staff_todo_marks(marked_at DESC);
+ALTER TABLE staff_todo_marks DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

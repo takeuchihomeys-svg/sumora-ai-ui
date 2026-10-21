@@ -9,14 +9,15 @@ let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, info?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}${info !== undefined ? `  → ${JSON.stringify(info)}` : ""}`); } };
 const withEnv = <T>(v: string | undefined, fn: () => T): T => {
   const old = process.env.STAFF_ONLY_AIX_1020;
-  if (v === undefined) delete process.env.STAFF_ONLY_AIX_1020; else process.env.STAFF_ONLY_AIX_1020 = v;
+  // 10/21 から既定 on — このテストの「off（旧）」は明示の off で表す
+  process.env.STAFF_ONLY_AIX_1020 = v === undefined ? "off" : v;
   try { return fn(); } finally { if (old === undefined) delete process.env.STAFF_ONLY_AIX_1020; else process.env.STAFF_ONLY_AIX_1020 = old; }
 };
 const split = (s: string) => s.split(/\n|(?<=[。！!？?])(?![。！!？?])/);
 const kinds = (text: string) => classifyStaffTextFacts(text, "2026-10-08T10:22:00Z").map((e) => `${e.kind}/${e.status}`);
 
 // 切り替え
-t("既定は off", staffOnlyAix1020("mgmt_pending", {}) === false);
+t("既定は on（10/21）", staffOnlyAix1020("mgmt_pending", {}) === true && staffOnlyAix1020("mgmt_pending", { STAFF_ONLY_AIX_1020: "off" }) === false);
 t("on で入る", staffOnlyAix1020("mgmt_pending", { STAFF_ONLY_AIX_1020: "on" }));
 t("名指し", staffOnlyAix1020("mgmt_pending", { STAFF_ONLY_AIX_1020: "mgmt_pending" }));
 t("on でも1つ止める", !staffOnlyAix1020("mgmt_pending", { STAFF_ONLY_AIX_1020: "on", STAFF_ONLY_AIX_1020_MGMT_PENDING: "off" }));
@@ -86,7 +87,7 @@ t("ふつうの確認の約束は on でも同じ", JSON.stringify(route("on", C
 const ON = { STAFF_ONLY_AIX_1020: "on" };
 const rx = (text: string, pending = true, env: Record<string, string> = ON, img = false) => reactionOnlyAfterMgmtPending({ lastStaffMgmtPending: pending, customerText: text, hasImage: img, env });
 t("反応だけ（on・返事待ちの後）", rx("めちゃくちゃ安いですね！\nありがとうございます！"));
-t("off は当てない", !rx("めちゃくちゃ安いですね！ありがとうございます！", true, {}));
+t("off は当てない", !rx("めちゃくちゃ安いですね！ありがとうございます！", true, { STAFF_ONLY_AIX_1020: "off" }));
 t("返事待ちでない約束の後は当てない", !rx("めちゃくちゃ安いですね！ありがとうございます！", false));
 t("問いがあれば当てない", !rx("ありがとうございます！他にもありますか？"));
 t("頼みがあれば当てない", !rx("ありがとうございます！内覧お願いできますか"));

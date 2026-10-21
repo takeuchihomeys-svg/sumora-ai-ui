@@ -10,7 +10,7 @@ import { newerCustomerMessageAfter, revertDraftIfSupersededAfterSave, SUPERSEDED
 import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
 // 2026-09-23 竹内「申込中は…ここ文生成しなくて大丈夫」: 申込以降の判定は status だけでなく記録（申込へ押下・本人確認書類・戻し）で
-import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, resolvePostApply, postApplyDraftSkip } from "@/app/lib/post-apply";
 // 2026-09-09 Fable5: 複数通の結合は "\n" ではなく MSG_SEP（1通内の改行を「N通」に分割しない）
 import { MSG_SEP } from "@/app/lib/reply-context";
 // 2026-09-21 竹内「文締めることなくて完全にしまってたら返信しなくて大丈夫」
@@ -368,8 +368,10 @@ export async function POST(req: NextRequest) {
   //   status は27.4%の会話で遅れるので、申込へ押下・本人確認書類・スタッフの印も見る（否決で戻したら時間順で解く。app/lib/post-apply.ts）。
   //   記録が読めなければ止めない（status の判定は上で済んでいる）
   try {
-    const pa = resolvePostApply(await loadPostApplyFacts(db, convId));
-    if (pa.postApply) { logSkip("post_apply", { why: pa.reason, status: conv.status }); return NextResponse.json({ ok: true, skipped: "post_apply", reason: pa.reason }); }
+    const paFacts = await loadPostApplyFacts(db, convId);
+    const pa = resolvePostApply(paFacts);
+    // 2026-10-21 印だけ残って戻した会話は止めない（Claude で作る・post-apply.ts badgeOnlyMovedBack）
+    if (pa.postApply && postApplyDraftSkip(paFacts)) { logSkip("post_apply", { why: pa.reason, status: conv.status }); return NextResponse.json({ ok: true, skipped: "post_apply", reason: pa.reason }); }
   } catch (e) {
     console.warn("[bg-async] post-apply の記録が読めない → status の判定のまま続行:", e instanceof Error ? e.message : String(e));
   }

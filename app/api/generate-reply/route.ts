@@ -12,7 +12,7 @@ import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, L
 import { willRouteAlt, ALT_STREAM_CUT_STOP, altDeepseekModelFor } from "@/app/lib/llm-alt-provider";
 import { flashWriterAdaptOn, flashWriterRecheckOn, isFlashModel, flashWriterParts, buildFlashChecklist, renderFlashChecklistNote, renderFlashExamplesNote, missingFlashItems, buildFlashRewriteFeedback, buildFlashPlanRequest, buildFlashWriteRequest, contractForbidsInvite, INVITE_RE, type FlashChecklistItem } from "@/app/lib/flash-writer";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
-import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, loadDeepseekCutoff, cutoffMs, isAfterCutoff, filterAfterCutoff, cutoffMarkOf, formatCutoffMark, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, resolvePostApply, postApplyDraftSkip, deepseekSafeCutoff, loadDeepseekCutoff, cutoffMs, isAfterCutoff, filterAfterCutoff, cutoffMarkOf, formatCutoffMark, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
 import { loadScreeningSensitive, screeningSensitiveInMessages, screeningPiiClaudeEnabled, type ScreeningSensitiveHit } from "@/app/lib/screening-sensitive";
 // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 線で派生データを切る・出口の印を置く箱
 import { cutBrainGate, keepIfMadeAfter } from "@/app/lib/deepseek-cut";
@@ -3400,6 +3400,7 @@ async function handleGenerateReply(req: NextRequest) {
   let postApplyConversation = false;
   // 記録が読めた時の判定（下書きを止める側はこちらを見る。読めない時は止めない）
   let postApplyResolved: ReturnType<typeof resolvePostApply> | null = null;
+  let postApplyDraftAllowed = false;
   // DeepSeek に渡してよい線（null＝申込中・読めない／ISO＝この時刻より後だけ／-Infinity＝全部）。会話が無ければ申込の記録も無い
   let deepseekCutoff: DeepseekCutoff = conversationId ? null : NO_CUTOFF;
   // 2026-10-20 審査の事情（夜の仕事・外国籍・保証人の事情・他人の名義・滞納 等）が会話に出たか（screening-sensitive.ts・LLM なし）。
@@ -3424,6 +3425,8 @@ async function handleGenerateReply(req: NextRequest) {
       autoSendConversation = row?.auto_send_enabled === true;
       const r = resolvePostApply(facts);
       postApplyResolved = r;
+      // 2026-10-21 印だけ残って戻した会話は下書きを止めない（個人情報の線＝Claude 固定はそのまま・post-apply.ts badgeOnlyMovedBack）
+      postApplyDraftAllowed = r.postApply && !postApplyDraftSkip(facts);
       // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、申込落ちてステータスを切り替えたら切り替えたところ以降渡せば個人情報防げる」:
       //   戻した会話（movedBack）は、切り替えた時刻（conversations.deepseek_cutoff_at・消えない列）より後だけを DeepSeek に渡す（下の「時刻の線」）。
       //   旧の歯止め（戻した会話は丸ごと Claude のまま）はこの仕組みに置き換えた。監査: scripts/audit-deepseek-pii.ts
@@ -3442,7 +3445,7 @@ async function handleGenerateReply(req: NextRequest) {
   // 2026-09-23 竹内「申込中は別のツールで文生成しているので、ここ文生成しなくて大丈夫なところとなる」:
   //   旧は is_post_apply と status だけを見ていた（status は27.4%の会話で遅れる）。上で読んだ同じ記録（post-apply.ts:
   //   status ∪ 印 ∪ 申込へ押下 ∪ 本人確認書類、否決で戻したら時間順で解く）で止める。読めなかった時は止めない（下書きが黙って消えないように）
-  if (conversationId && externalBrainGate === null && !isTemplateOptimize && postApplyResolved?.postApply) {
+  if (conversationId && externalBrainGate === null && !isTemplateOptimize && postApplyResolved?.postApply && !postApplyDraftAllowed) {
     console.log("[generate-reply] post_apply → ドラフト生成スキップ:", JSON.stringify({ conversationId, reason: postApplyResolved.reason }));
     return NextResponse.json({ skipped: true, reason: "post_apply_or_skip_status", post_apply_reason: postApplyResolved.reason });
   }

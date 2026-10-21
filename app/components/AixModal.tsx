@@ -29,6 +29,7 @@ import { countCustomerSentProperties } from "../lib/customer-property-count";
 import { customerPropertyOptionsForAix, customerNameAfterShareEnvFromPublic } from "../lib/customer-property-names";
 import { withBrainPropertyFirst, brainPropertyDisplayEnvFromPublic, brainPickRef, type BrainPropertyPick } from "../lib/brain-property-display";
 import { cbImagesByPropertyEnabled, pickCostBreakdownImages, type CbSentRow, type CbMsg } from "../lib/cost-breakdown-images";
+import { SCREENING_BUTTON, SCREENING_TOPIC_OPTIONS, screeningTopicLabel, type ScreeningTopic } from "../lib/aix-owner-answers-1021";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
 import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, resolveGuarantorForText, buildGuarantorListText, detectGuarantorFromMessages, parseGuarantorTypeJa, guarantorTypeJa, normalizeGuarantorType, type GuarantorType } from "../lib/guarantor-companies";
 import { extractPropertyLabels } from "../lib/action-ledger";
@@ -122,6 +123,8 @@ interface AixModalProps {
   autoConvMatch?: boolean;
   // 2026-09-17 竹内（a🤫 事例）: interior_photo（室内写真を確認した）もブレインから初期値で渡る
   initialCheckPattern?: "available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "room_vacancies";
+  /** 2026-10-21 竹内さん C9: AIX【審査について】で選んだ審査内容（mgmt_screening の時だけ） */
+  initialScreeningTopic?: ScreeningTopic;
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
@@ -590,6 +593,7 @@ export default function AixModal({
   initialFollowupSubMode,
   initialInputText,
   initialCheckPattern,
+  initialScreeningTopic,
   templateId,
   autoConvMatch,
   onClose,
@@ -761,6 +765,7 @@ export default function AixModal({
   const [appStatusFirst, setAppStatusFirst] = useState<"審査中" | "審査待ち" | "不明" | null>(null);
   const [appStatusNoSecond, setAppStatusNoSecond] = useState(false);
   const [screeningOutlook, setScreeningOutlook] = useState<"前向き" | "条件つき" | "別の手" | "厳しい" | null>(null);
+  const [screeningTopic, setScreeningTopic] = useState<ScreeningTopic | null>(initialScreeningTopic ?? null);
   const [contractTermsItems, setContractTermsItems] = useState<string[]>([]);
   const [rentNegotiationResult, setRentNegotiationResult] = useState<"下がった" | "下がらなかった" | null>(null);
   const [rentAfter, setRentAfter] = useState("");
@@ -1595,6 +1600,7 @@ export default function AixModal({
           mgmt_cost_type: mgmtCostType, proxy_result: checkPattern === "mgmt_two_person" ? null : proxyResult, two_person_result: checkPattern === "mgmt_two_person" ? proxyResult : null, lifeline_designation: checkPattern === "mgmt_lifeline" ? lifelineDesignation : null, parking: mgmtParkingAvailability,
           parking_kind: checkPattern === "mgmt_parking" ? parkingKind : null,
           screening_outlook: checkPattern === "mgmt_screening" ? screeningOutlook : null,
+          screening_topic: checkPattern === "mgmt_screening" ? screeningTopic : null,
           app_status_has: checkPattern === "mgmt_application_status" ? appStatusHas : null, app_status_ahead: checkPattern === "mgmt_application_status" && appStatusHas === "あり" ? appStatusAhead : null,
           app_status_first: checkPattern === "mgmt_application_status" ? appStatusFirst : null, app_status_no_second: checkPattern === "mgmt_application_status" ? appStatusNoSecond : null,
           surroundings_items: checkPattern === "mgmt_surroundings" ? surroundingsItems : null, surroundings_source: checkPattern === "mgmt_surroundings" ? surroundingsSource : null,
@@ -2865,6 +2871,7 @@ export default function AixModal({
         // 2026-10-20 竹内さんの新しいピッカー
         if (checkPattern === "mgmt_parking" && parkingKind === "bike") body.parking_kind = "bike";
         if (checkPattern === "mgmt_screening" && screeningOutlook) body.screening_outlook = screeningOutlook;
+        if (checkPattern === "mgmt_screening" && screeningTopic) body.screening_topic = screeningTopic;
         if (checkPattern === "mgmt_application_status") {
           if (!appStatusHas) throw new Error("ほかの方の申込あり／なしを選択してください");
           body.app_status_has = appStatusHas;
@@ -4993,7 +5000,7 @@ export default function AixModal({
                 </span>
                 <div>
                   <div className="text-[13px] font-bold text-[#111b21]">
-                    {checkPattern === "nearby_parking" ? "近隣の月極駐車場を確認した" : checkPattern === "owner_other" ? "オーナーに確認した（その他）" : checkPattern === "room_vacancies" ? "物件について：募集号室について" : <>管理会社に確認した：{checkPattern === "mgmt_screening" ? "審査について（ご相談）" : checkPattern === "mgmt_application_status" ? "申込状況について" : checkPattern === "mgmt_contract_terms" ? "契約の条件について" : checkPattern === "mgmt_rent_negotiation" ? "家賃の交渉について" : checkPattern === "mgmt_surroundings" ? "周辺の様子について" : checkPattern === "mgmt_parking" && parkingKind === "bike" ? "バイク置き場" : checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : checkPattern === "mgmt_proxy" ? "代理契約" : checkPattern === "mgmt_two_person" ? "二人入居" : checkPattern === "mgmt_lifeline" ? "ライフライン" : checkPattern === "mgmt_guarantor" ? "保証会社（審査面）" : checkPattern === "mgmt_company" ? "管理会社について" : checkPattern === "mgmt_parking" ? "駐車場" : checkPattern === "mgmt_pet" ? "ペット飼育" : checkPattern === "mgmt_equipment" ? "設備" : checkPattern === "mgmt_availability" ? "募集状況" : "初期費用"}</>}
+                    {checkPattern === "nearby_parking" ? "近隣の月極駐車場を確認した" : checkPattern === "owner_other" ? "オーナーに確認した（その他）" : checkPattern === "room_vacancies" ? "物件について：募集号室について" : checkPattern === "mgmt_screening" ? <>{SCREENING_BUTTON}：{screeningTopicLabel(screeningTopic) ?? "審査内容を選んでください"}</> : <>管理会社に確認した：{checkPattern === "mgmt_application_status" ? "申込状況について" : checkPattern === "mgmt_contract_terms" ? "契約の条件について" : checkPattern === "mgmt_rent_negotiation" ? "家賃の交渉について" : checkPattern === "mgmt_surroundings" ? "周辺の様子について" : checkPattern === "mgmt_parking" && parkingKind === "bike" ? "バイク置き場" : checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : checkPattern === "mgmt_proxy" ? "代理契約" : checkPattern === "mgmt_two_person" ? "二人入居" : checkPattern === "mgmt_lifeline" ? "ライフライン" : checkPattern === "mgmt_guarantor" ? "保証会社（審査面）" : checkPattern === "mgmt_company" ? "管理会社について" : checkPattern === "mgmt_parking" ? "駐車場" : checkPattern === "mgmt_pet" ? "ペット飼育" : checkPattern === "mgmt_equipment" ? "設備" : checkPattern === "mgmt_availability" ? "募集状況" : "初期費用"}</>}
                   </div>
                   <div className="text-[10px] text-[#8696a0]">確認内容を入力するだけでAIが報告文を作成します</div>
                 </div>
@@ -5466,6 +5473,19 @@ export default function AixModal({
               )}
 
               {/* 2026-10-20 竹内さんの新しいピッカーの入力 */}
+              {checkPattern === "mgmt_screening" && (
+                <div>
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">審査内容</p>
+                  <div className="flex flex-wrap gap-2">
+                    {SCREENING_TOPIC_OPTIONS.filter((o) => o.value !== "guarantor").map((o) => (
+                      <button key={o.value} onClick={() => { setScreeningTopic((p) => p === o.value ? null : o.value); setPreview(""); }}
+                        className="rounded-xl border px-3 py-2 text-xs font-semibold transition"
+                        style={screeningTopic === o.value ? { border: "2px solid #3949AB", background: "#3949AB14", color: "#3949AB" } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                      >{o.label}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {checkPattern === "mgmt_screening" && (
                 <div>
                   <p className="mb-1.5 text-xs font-bold text-[#54656f]">審査の見込み <span className="font-normal text-[#90a4ae]">（任意）</span></p>
