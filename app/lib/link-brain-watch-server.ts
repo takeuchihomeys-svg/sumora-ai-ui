@@ -50,7 +50,7 @@ export async function loadLinkWatchInputs(sb: SupabaseClient, w: LinkWindow): Pr
       .gte("customer_turn_at", new Date(w.fromMs - 4 * DAY).toISOString()).lte("customer_turn_at", nowIso).order("customer_turn_at").order("id").range(a, b)),
     pageAll<Irow>((a, b) => sb.from("aix_action_items").select("conversation_id, action, check_pattern, status, created_at, done_at, resolution_note, dismissed_reason")
       .gte("created_at", since).lte("created_at", nowIso).order("created_at").order("id").range(a, b)),
-    pageAll<Prow>((a, b) => sb.from("property_pickups").select("conversation_id, property_customer_id, created_at, sent_at, status, verdict, summary_text, search_conditions")
+    pageAll<Prow>((a, b) => sb.from("property_pickups").select("conversation_id, property_customer_id, created_at, sent_at, expired_at, status, verdict, summary_text, search_conditions")
       .gte("created_at", since).lte("created_at", nowIso).order("created_at").order("id").range(a, b)),
   ]);
 

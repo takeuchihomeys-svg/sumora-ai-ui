@@ -14,6 +14,7 @@ import { buildPromiseQueue, promisesInStaffText, PROMISE_QUEUE_MAX_AGE_MS, PROMI
 import { confirmTopicsForCheckPattern } from "./action-ledger";
 import { isPreApplyForNudge } from "./apply-stage-nudge";
 import { maskPII } from "./pii-mask";
+import { PICKUP_FRESH_DAYS } from "./two-stage";
 
 const H = 3600_000;
 const DAY = 24 * H;
@@ -36,7 +37,7 @@ export type LinkStaffAix = { at: string; burst?: boolean; aix_type: string; chec
 export type LinkStaffText = { at: string; text: string | null; burst?: boolean };
 export type LinkTurn = { customer_turn_at: string; brain_action: string | null; brain_check_pattern: string | null; staff_first_at: string | null; brain_at?: string | null; staff_aix: LinkStaffAix[] | null; staff_texts?: LinkStaffText[] | null };
 export type LinkAixItem = { action: string; check_pattern: string | null; status: string; created_at: string; done_at: string | null; resolution_note: string | null; dismissed_reason?: string | null };
-export type LinkPickup = { created_at: string; sent_at: string | null; status: string | null; verdict: string | null; summary_text?: string | null; search_conditions?: unknown };
+export type LinkPickup = { created_at: string; sent_at: string | null; expired_at?: string | null; status: string | null; verdict: string | null; summary_text?: string | null; search_conditions?: unknown };
 export type LinkJudgment = { created_at: string; profile_snapshot: unknown };
 export type LinkMemoItem = { text?: string | null; sourceAt?: string | null; updatedAt?: string | null };
 
@@ -150,9 +151,24 @@ const promisePicker: Reader = {
   },
 };
 
-/** 送れる物件（property_pickups の未送付・ブレインが通す pass）がその番の時点で揃っているか（audit-pickup-promise-vs-shared と同じ線: 30分の余裕・保留 hold は数えない） */
-export function pickupReadyAt(pickups: ReadonlyArray<LinkPickup>, atMs: number): boolean {
-  return pickups.some((k) => ms(k.created_at) <= atMs + 30 * 60_000 && (!k.sent_at || ms(k.sent_at) > atMs) && k.status !== "misattributed" && k.verdict === "pass");
+/**
+ * 送れる物件（property_pickups の未送付・ブレインが通す pass）がその番の時点で揃っているか（30分の余裕・保留 hold は数えない）。
+ *   新しさはブレインの材料（two-stage.ts freshPickupReady）と同じ線: 期限切れ（expired_at）でない・作って PICKUP_FRESH_DAYS 日以内・最後に物件を送った時刻より後に作った。
+ *   （レビュー 2026-10-21: 新しさを見ないと、送らずに残った古いピックアップ（220〜400時間前）が何日も「揃った」になり、②の切れ 14件中 13件がこれだった）
+ */
+export function pickupReadyAt(pickups: ReadonlyArray<LinkPickup>, atMs: number, lastPropertiesSentMs: number = NaN): boolean {
+  return pickups.some((k) => {
+    const c = ms(k.created_at);
+    if (!Number.isFinite(c) || c > atMs + 30 * 60_000 || atMs - c > PICKUP_FRESH_DAYS * DAY) return false;
+    if (k.expired_at && ms(k.expired_at) <= atMs) return false;
+    if (Number.isFinite(lastPropertiesSentMs) && c <= lastPropertiesSentMs) return false;
+    return (!k.sent_at || ms(k.sent_at) > atMs) && k.status !== "misattributed" && k.verdict === "pass";
+  });
+}
+/** その時点より前に最後に物件を送った時刻（sent_facts properties_sent done・無ければ NaN） */
+function lastPropertiesSentBefore(facts: ReadonlyArray<LinkFact>, atMs: number): number {
+  const t = facts.filter((f) => f.kind === "properties_sent" && f.status === "done" && ms(f.sent_at) < atMs).map((f) => ms(f.sent_at)).filter(Number.isFinite);
+  return t.length ? Math.max(...t) : NaN;
 }
 
 /** ② 約束の結果→ブレイン: 開いた約束があり結果が手元にある番で、ブレインが結果を送る AIX を次の一手にしたか */
@@ -168,7 +184,7 @@ const resultBrain: Reader = {
       const staff = burstAix(t);
       // 確認の結果はお礼の番の後で送る事が多い（すぐの並びに入らない）＝この番の後のスタッフの AIX 全部で見る
       const staffAll = (t.staff_aix ?? []).map((a) => (a.aix_type === "property_check" ? "property_check_result" : a.aix_type));
-      if (open.some((s) => s.kind === "pickup") && pickupReadyAt(input.pickups, at)) {
+      if (open.some((s) => s.kind === "pickup") && pickupReadyAt(input.pickups, at, lastPropertiesSentBefore(input.facts, at))) {
         const ok = PROPERTY_AIX.has(brain);
         out.push({ link: this.link, at: t.customer_turn_at, ok, breakType: ok ? undefined : "pickup_ready_brain_other", detail: `ブレイン=${brain || "返信"} スタッフ=${staff.join("+") || "手打ち"}` });
       } else if (open.some((s) => s.kind === "check" || s.kind === "confirm" || s.kind === "photo") && staffAll.includes("property_check_result")) {
@@ -259,16 +275,15 @@ const brainSecond: Reader = {
   },
 };
 
-/** ⑤ 新着とピックアップ: 宣言の記録に印（watch）が書かれているか／新着の約束を【物件ピックアップ】・ピックアップの約束を【物件オススメ】で果たしていないか */
+/**
+ * ⑤ 新着とピックアップ: 新着の約束を【物件ピックアップ】・ピックアップの約束を【物件オススメ】で果たしていないか
+ *   ※ 宣言の記録（sent_facts.detail.watch）は新着の時だけ true を書き、ピックアップの時は書かない（無い＝ピックアップ・action-ledger の作り）。
+ *     「印が無い」を切れに数えると宣言のほぼ全部が切れになる（14日で 100/105）＝記録の作りの数え違い → 数えない（レビュー 2026-10-21）
+ */
 const pickupVsWatch: Reader = {
   link: "pickup_vs_watch", matureMs: 0,
   read(input, w) {
     const out: LinkVerdict[] = [];
-    for (const f of input.facts) {
-      if (f.kind !== "pickup_declared" || !inWin(ms(f.sent_at), w, this.matureMs)) continue;
-      const recorded = typeof (f.detail as { watch?: unknown } | null)?.watch === "boolean";
-      out.push({ link: this.link, at: f.sent_at, ok: recorded, breakType: recorded ? undefined : "kind_unrecorded", detail: String((f.detail as { sentence?: unknown } | null)?.sentence ?? "").slice(0, 40) });
-    }
     const steps = buildPromiseQueue(toQueueMsgs(input.messages), toQueueLogs(input.aixLogs), w.nowMs, { windowDays: Math.ceil((w.nowMs - w.fromMs) / DAY) + 4 });
     for (const s of steps) {
       if (s.kind !== "pickup" || s.status !== "done" || !s.doneBy?.startsWith("AIX") || !inWin(ms(s.doneAt), w, this.matureMs)) continue;

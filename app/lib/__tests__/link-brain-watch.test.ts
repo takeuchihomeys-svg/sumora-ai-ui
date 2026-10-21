@@ -84,6 +84,13 @@ it("保留（hold）だけ・送付済みは揃ったと見ない", () => {
   eq(pickupReadyAt([{ created_at: iso(0), sent_at: iso(0.5), status: "sent", verdict: "pass" }], T0 + H), false);
   eq(pickupReadyAt([{ created_at: iso(0), sent_at: null, status: "pending", verdict: "pass" }], T0 + H), true);
 });
+it("古い（3日超）・期限切れ・最後の送付より前のピックアップは揃ったと見ない（ブレインの freshPickupReady と同じ線）", () => {
+  const p = [{ created_at: iso(0), sent_at: null, status: "pending", verdict: "pass" }];
+  eq(pickupReadyAt(p, T0 + 80 * H), false);
+  eq(pickupReadyAt([{ ...p[0], expired_at: iso(0.5) }], T0 + H), false);
+  eq(pickupReadyAt(p, T0 + H, T0 + 0.5 * H), false);
+  eq(pickupReadyAt(p, T0 + H, T0 - H), true);
+});
 
 console.log("③反応→物件の条件");
 it("外す地域・広さを拾う／条件の語（保証人・礼金）は地域にしない", () => {
@@ -117,12 +124,12 @@ it("駐車場の約束を果たした AIX の本文に『駐車場』が無い�
 });
 
 console.log("⑤新着とピックアップ");
-it("宣言の記録に印（watch）が無い＝kind_unrecorded・あれば ok", () => {
+it("宣言の記録の印（watch）の有無は切れに数えない（ピックアップは印を書かない作り）", () => {
   const v = of(watchConversation(base({ facts: [
     { kind: "pickup_declared", status: "promised", sent_at: iso(0), detail: { sentence: "ピックアップ出来次第お送り" } },
     { kind: "pickup_declared", status: "promised", sent_at: iso(1), detail: { watch: true } },
   ] }), W), "pickup_vs_watch");
-  eq(v.map((x) => x.breakType ?? "ok"), ["kind_unrecorded", "ok"]);
+  eq(v.length, 0);
 });
 it("新着の約束を【物件ピックアップ】で果たした＝mislabeled", () => {
   const v = of(watchConversation(base({
