@@ -11,9 +11,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { loadStaffTodoList } from "@/app/lib/staff-todo-list-server";
-import { renderStaffTodoList, staffTodoListEnabled, TODO_LIST_MAX_CHARS, STAFF_TODO_COOLDOWN_MS } from "@/app/lib/staff-todo-list";
+import { composeStaffTodoPost, staffTodoListEnabled, TODO_LIST_MAX_CHARS, STAFF_TODO_COOLDOWN_MS } from "@/app/lib/staff-todo-list";
 import { pushToHanbancyoGroupWithId, dismissStaleAixActionItems, AIX_NOTICE_FRESH_MS } from "@/app/lib/aix-action-items";
-import { saveTodoSnapshot, snapshotOf } from "@/app/lib/staff-todo-reply-server";
+import { saveTodoSnapshot, snapshotOf, loadTodoSnapshots } from "@/app/lib/staff-todo-reply-server";
 
 export const maxDuration = 60;
 
@@ -29,8 +29,9 @@ export async function GET(req: NextRequest) {
 
   if (preview) {
     const list = await loadStaffTodoList(supabase, atMs);
-    const text = renderStaffTodoList(list);
-    return NextResponse.json({ ok: true, preview: true, text, length: text?.length ?? 0, open: list.openCount, done: list.doneCount, skipped: list.skipped });
+    const post = composeStaffTodoPost(list, { snapshots: await loadTodoSnapshots(supabase) });
+    const text = post.text;
+    return NextResponse.json({ ok: true, preview: true, text, length: text?.length ?? 0, open: list.openCount, done: list.doneCount, carried: post.carried, skipped: list.skipped });
   }
   if (!staffTodoListEnabled()) return NextResponse.json({ ok: true, skipped: true, reason: "STAFF_TODO_LIST is off" });
 
@@ -44,17 +45,19 @@ export async function GET(req: NextRequest) {
   const stale = await dismissStaleAixActionItems(AIX_NOTICE_FRESH_MS).catch((e) => { console.warn("[staff-todo] stale:", e); return null; });
 
   const list = await loadStaffTodoList(supabase, Date.now());
-  const text = renderStaffTodoList(list);
+  // 長い時は④⑤を入るだけ出して残りは次の便へ（2026-10-21 竹内さん「オススメでおねがい」）。回す順は前の便の控えから
+  const post = composeStaffTodoPost(list, { snapshots: await loadTodoSnapshots(supabase) });
+  const text = post.text;
   if (!text) return NextResponse.json({ ok: true, skipped: true, reason: "no items", stale });
 
-  // LINE の text は 5000字まで（超えると送信が 400 で落ちる）。長い時は組み立てが④の新着確認を1人1行に詰める。それでも長ければ後ろ（優先度の低い方）を切る
+  // LINE の text は 5000字まで（超えると送信が 400 で落ちる）。長い時は組み立てが④⑤を1人1行に詰め、それでも長ければ入るだけ出して残りを次の便に回す。それでも長ければ後ろを切る
   const safeText = text.length > TODO_LIST_MAX_CHARS ? `${text.slice(0, TODO_LIST_MAX_CHARS)}\n…（以下省略）` : text;
   const sent = await pushToHanbancyoGroupWithId(safeText);
   if (sent.ok) {
     const nowIso = new Date().toISOString();
     await supabase.from("hanbancyo_settings").upsert({ key: "staff_todo_last_sent_at", value: nowIso }, { onConflict: "key" });
-    // 番号の控え（グループで「✅3」と返された時にどの行か分かるように）
-    await saveTodoSnapshot(supabase, snapshotOf(list, sent.messageId, nowIso));
+    // 番号の控え（グループで「✅3」と返された時にどの行か分かるように）。この便に出した一覧（回した人は入らない）で振る＝次の便の回す順にも使う
+    await saveTodoSnapshot(supabase, snapshotOf(post.list, sent.messageId, nowIso));
   }
-  return NextResponse.json({ ok: sent.ok, open: list.openCount, done: list.doneCount, length: safeText.length, stale });
+  return NextResponse.json({ ok: sent.ok, open: list.openCount, done: list.doneCount, carried: post.carried, length: safeText.length, stale });
 }

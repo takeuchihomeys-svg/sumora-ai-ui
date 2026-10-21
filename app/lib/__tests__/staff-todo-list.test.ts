@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/staff-todo-list.test.ts（全 PASS で exit 0）
 import {
   buildStaffTodoList, renderStaffTodoList, customerHeader, isCloserOnly, promiseTaskOf, promiseAixLabelOf, routeRank,
-  staffTodoListEnabled, aixInstantNoticeEnabled, actionTask, TODO_MAX_AGE_DAYS, todoNumberMark, numberTodoItems, promiseMootReason, type TodoInput,
+  staffTodoListEnabled, aixInstantNoticeEnabled, actionTask, TODO_MAX_AGE_DAYS, todoNumberMark, numberTodoItems, promiseMootReason, MORNING_CALL_LINE, type TodoInput,
 } from "../staff-todo-list";
 
 let passed = 0, failed = 0;
@@ -74,7 +74,8 @@ it("AIX 要対応: 未完了は（●日）、今日済んだ物は✅、昨日�
     { id: "a3", conversation_id: "c1", customer_name: "テストA", action: "meeting_place", check_pattern: null, status: "done", created_at: iso("2026-10-18T09:00:00+09:00"), done_at: iso("2026-10-19T09:30:00+09:00"), done_aix_type: "meeting_place", done_by: "aix" },
   ];
   const text = renderStaffTodoList(buildStaffTodoList(i))!;
-  ok(text.startsWith("【やることリスト】10/20 10:30"), text);
+  // 10:30 はその日の最初の便＝一番上に朝の掛け声、その下に見出し
+  ok(text.startsWith(`${MORNING_CALL_LINE}\n【やることリスト】10/20 10:30`), text);
   ok(text.includes("テストAさん（スモラ）"));
   ok(text.includes("①AIX【見積書送る】：御見積書を作ってお送りする（期限 10/18 過ぎ）（2日）"), text);
   ok(text.includes("✅AIX【内覧日調整】"), text);
