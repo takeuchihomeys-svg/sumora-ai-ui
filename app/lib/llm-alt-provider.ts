@@ -27,7 +27,7 @@ import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReaso
 import { AIX_PICKERS } from "./aix-pickers";
 import { isTestOnlyConversation } from "./test-conversations";
 import { testPiiRefusal } from "./test-pii-guard";
-import { altPiiSignal, altPiiGateEnabled } from "./alt-pii-gate";
+import { altPiiSignal, altPiiGateEnabled, altPiiSignalReapply, altPiiSignalReapplyValues, altReapplyGateEnabled } from "./alt-pii-gate";
 import { screeningSensitiveSignal, screeningPiiClaudeEnabled } from "./screening-sensitive";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
@@ -1104,7 +1104,19 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     //   残っていれば DeepSeek に出さない（入口の伏せ漏れの最後の歯止め・alt-pii-gate.ts）。実データ 10/01〜15 の 2,830通: 伏せた後も当たる通 6
     //   （空白区切りの携帯番号・記入済みの申込フォーム＝申込へ を押す前に届くと時刻の線が引かれない）・スタッフ／AIX の通 0。
     //   物件の判断・読み取り（Claude に倒さない名札）は送らずに失敗にする。費用0の行を残す（後から回数を数える）。止める LLM_ALT_PII_GATE=off
-    const piiGate = altPiiGateEnabled(process.env) ? altPiiSignal(altBodyText(body)) : null;
+    // 2026-10-21（023ec7bd）申込から戻ったお客様（線より後だけに切った呼び出し＝cut）は、messages の本文に申込情報の名残（年収・生年月日らしい日付・勤務先・
+    //   本人確認書類／収入の書類の読み取り・申込フォームの欄・入口で伏せた跡）が1つでもあれば Claude（alt-pii-gate.altPiiSignalReapply）。止める LLM_ALT_REAPPLY_GATE=off
+    const piiGate = altPiiGateEnabled(process.env)
+      ? altPiiSignal(altBodyText(body))
+        ?? (mark?.kind === "cut" && altReapplyGateEnabled(process.env)
+          ? altPiiSignalReapply((body.messages ?? []).map((m) => flattenContent(m.content) ?? "").join("\n"))
+            // 2026-10-21 確かめ役: AIX は会話の材料を system の動的な塊に入れる → system にも値だけの網（指示文の語では止めない）
+            ?? altPiiSignalReapplyValues(flattenContent(body.system))
+            // 2026-10-21 確かめ役: 線より後に作ったセーブデータ・会話の方向にも審査の事情（夜職・滞納・名義…）が持ち越される（実データ 4a79a43e のセーブデータ）。
+            //   入口の会話単位の判定（SCREENING_PII_CLAUDE）の取りこぼしの歯止めとして、線のある呼び出しの messages にも当てる
+            ?? (screeningPiiClaudeEnabled() ? (screeningSensitiveSignal((body.messages ?? []).map((m) => flattenContent(m.content) ?? "").join("\n")) ? "審査の事情" : null) : null)
+          : null)
+      : null;
     if (piiGate) {
       recordAltUsage({ model: targetConfigFor(cfg, routeName).model, action: routeName, conversationId: convForGate, usage: {}, status: 0, errorType: "alt_skipped_pii",
         durationMs: 0, stream: !!body.stream, sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null });

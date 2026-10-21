@@ -50,6 +50,11 @@ export function aixInstantNoticeEnabled(env: Record<string, string | undefined> 
 // ─── 入力（DB の行のまま・読み手は staff-todo-list-server.ts） ─────────────────────────
 export type TodoConversation = {
   id: string; customer_name: string | null; account: string | null; status: string | null; is_post_apply?: boolean | null;
+  /**
+   * 2026-10-21 竹内さんの決定（70193195）: 申込歴あり（再探し）＝一度申込まで進んで物件探しに戻ったアツいお客様（reapply-customer.resolveReapply・読み手が付ける）。
+   *   印（is_post_apply）が残ったまま戻した会話も約束・未返信をやる事にする・並びを上げる・見出しに「申込歴あり」を付ける
+   */
+  reapply?: boolean;
 };
 export type TodoAixItemRow = {
   id: string; conversation_id: string; customer_name: string | null; action: string; check_pattern: string | null;
@@ -109,7 +114,11 @@ export type TodoItem = {
 export type TodoCustomer = {
   conversationId: string; name: string; accountLabel: string; status: string | null;
   items: TodoItem[];
+  /** 申込歴あり（再探し）（TodoConversation.reapply） */
+  reapply?: boolean;
 };
+/** 見出しに付ける印（申込歴あり＝アツいお客様） */
+export const REAPPLY_HEADER_MARK = "🔥申込歴あり（再探し）";
 export type TodoList = { atMs: number; customers: TodoCustomer[]; openCount: number; doneCount: number; skipped: Record<string, number> };
 
 // ─── 小さな道具 ────────────────────────────────────────────────────────
@@ -207,7 +216,7 @@ const UNANSWERED_MIN_MS = 30 * 60_000;
 export const TODO_MAX_AGE_DAYS = 14;
 /** 申込より後（審査管理の領分）・失注の会話は、約束と未返信をやる事にしない（AIX 要対応は今の一覧と同じく出す） */
 function postApplyOrClosed(c: TodoConversation | undefined): boolean {
-  return !!c && (!!c.is_post_apply || DRAFT_SKIP_STATUSES.has((c.status ?? "").trim()) || c.status === "closed_lost");
+  return !!c && ((!!c.is_post_apply && !c.reapply) || DRAFT_SKIP_STATUSES.has((c.status ?? "").trim()) || c.status === "closed_lost");
 }
 const UNANSWERED_MAX_MS = 48 * 3600_000;
 const FULFIL_KINDS: ReadonlySet<string> = new Set(["properties_sent", "estimate_sent", "confirmation_reported", "guarantor_explained"]);
@@ -442,7 +451,11 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
     const conv = convById.get(cid);
     const name = conv?.customer_name ?? input.aixItems.find((r) => r.conversation_id === cid)?.customer_name ?? input.promises.find((p) => p.conversation_id === cid)?.customer_name ?? null;
     its.sort((a, b) => compareItems(a, b, at, conv?.status ?? null));
-    customers.push({ conversationId: cid, name: (name ?? "").trim() || "お客様", accountLabel: customerHeader(name, conv?.account ?? null), status: conv?.status ?? null, items: its });
+    customers.push({
+      conversationId: cid, name: (name ?? "").trim() || "お客様",
+      accountLabel: `${customerHeader(name, conv?.account ?? null)}${conv?.reapply ? REAPPLY_HEADER_MARK : ""}`,
+      status: conv?.status ?? null, items: its, ...(conv?.reapply ? { reapply: true } : {}),
+    });
   }
   customers.sort((a, b) => compareCustomers(a, b, at));
   const openCount = merged.filter((i) => !i.doneAt).length;
@@ -465,7 +478,10 @@ function compareItems(a: TodoItem, b: TodoItem, at: number, status: string | nul
     || elapsedDays(b, at) - elapsedDays(a, at)
     || routeRank(b.action, status) - routeRank(a.action, status);
 }
-/** お客様の並び: 残りがある人を先に → 期限を過ぎた日数 → 経過日数 → 申込に近い → 早く立った順 */
+/**
+ * お客様の並び: 残りがある人を先に → 期限を過ぎた日数 → 申込歴あり（再探し）を先に → 経過日数 → 申込に近い → 早く立った順
+ *   2026-10-21 竹内さんの決定（70193195）: 申込歴ありはアツいお客様＝期限を過ぎた物（約束の遅れ）の次に上げる（遅れの順は崩さない）
+ */
 function compareCustomers(a: TodoCustomer, b: TodoCustomer, at: number): number {
   const open = (c: TodoCustomer) => c.items.filter((i) => !i.doneAt);
   const ao = open(a), bo = open(b);
@@ -474,6 +490,7 @@ function compareCustomers(a: TodoCustomer, b: TodoCustomer, at: number): number 
   const min = (xs: TodoItem[], f: (i: TodoItem) => number) => xs.reduce((m, i) => Math.min(m, f(i)), Infinity);
   const xa = ao.length ? ao : a.items, xb = bo.length ? bo : b.items;
   return max(xb, (i) => overdueDays(i, at)) - max(xa, (i) => overdueDays(i, at))
+    || (b.reapply ? 1 : 0) - (a.reapply ? 1 : 0)
     || max(xb, (i) => elapsedDays(i, at)) - max(xa, (i) => elapsedDays(i, at))
     || max(xb, (i) => routeRank(i.action, b.status)) - max(xa, (i) => routeRank(i.action, a.status))
     || min(xa, (i) => t(i.originAt)) - min(xb, (i) => t(i.originAt));
