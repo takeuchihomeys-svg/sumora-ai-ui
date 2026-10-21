@@ -3080,6 +3080,11 @@ ${history}`;
       viewings: viewingsText.length, examples: examplesText.length, checkpoint: checkpointText.length, ragKnowledge: ragKnowledgeText.length,
       sentProps: sentPropsText.length, propertySearch: propertySearchText.length, history: history.length,
       customerState: customerStateBlockText.length, parallelSearch: parallelSearchBrainText.length,
+      // 2026-10-22 費用の調べ: 素の入力に入るのに見張りに出ていなかった材料（AIX のボタン一覧は場面で 2.2k〜6.4k 字＝素の入力の約2割）。
+      //   文字数を足すだけ（プロンプトは1文字も変えない）。scripts/audit-brain-cache-1015-materials.ts がそのまま拾う
+      aixCatalog: aixCatalogText.length, companyFacts: companyFactsText.length, sendReplyTiming: sendReplyTimingText.length,
+      promise: promiseBrainText.length, seeMore: seeMoreBrainText.length, applyRoute: applyRouteText.length,
+      applyReadiness: applyReadinessText.length, appealTiming: appealTimingText.length,
     },
     customerStage: customerState?.stage ?? null, parallelScene: parallelSearchCtx.scene, brainScene: brainSceneOn ? brainScene : "off",
     userTotal: customerSpecificText.length, staticSystem: sys.staticText.length, dynamicSystem: sys.dynamicText.length,
