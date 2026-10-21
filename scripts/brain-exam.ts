@@ -57,11 +57,12 @@ import type { ExamProblem, LedgerRow } from "./brain-exam-add";
 import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
-import { cassetteStats as cassetteStatsNow } from "./lib/llm-cassette";
+import { cassetteStats as cassetteStatsNow, type CallRef, type InputDiff } from "./lib/llm-cassette";
 import { examEnvFingerprint, defaultEnvOf, readDotenvLocal, formatEnvFp, envFpMismatchNote } from "./lib/exam-env-fp";
 /** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
 function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return 0; return st.total.real - (st.byAction.get("(名札なし)")?.real ?? 0); }
 import { formatLinks, orderForCache, topLinks, type KbLink } from "./lib/exam-rag";
+import { ruleJudge } from "./lib/exam-brain";
 import { checkKbRules, kbRulesMode, type KbRuleHit } from "./lib/exam-kb-rules";
 import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, sigOfRow, pathSigOfRow, type FlakeVerdict } from "./lib/exam-flake";
 
@@ -117,6 +118,9 @@ const JUDGE_REPEAT = Math.max(1, Number(arg("judge-repeat", MAJORITY ? "3" : "1"
 const NO_JUDGE = flag("no-judge");
 // 比べる「前」の label。--baseline=main の時は main の版の取り置きから組み立てた label に置き換える（prepareMainBaseline）
 let BASELINE = arg("baseline");
+// 2026-10-21 竹内さん「試験の次の節約（質は落とさない）」①入力の差: main の答えの行に残した呼び出しの控え（llmCalls）と、今の版の要求（pk）が同じなら main の答えを使う（呼ばない）。
+//   on（既定）＝同じ段は main の答え・違った段から本当に呼ぶ／plan＝呼ばない下見（同じ問題×回の答案だけ書く・違う問題は書かずに <label>.inputdiff.json に段を残す）／off＝旧
+const INPUT_DIFF: "on" | "plan" | "off" = (() => { const v = (arg("input-diff") || process.env.EXAM_INPUT_DIFF || "on").trim().toLowerCase(); return v === "off" ? "off" : v === "plan" ? "plan" : "on"; })();
 let baselineReuse: { reused: number; ran: number; reusedUsd: number; commit: string; dir: string; carried?: number; deferred?: number } | null = null;
 let flakeSkip: { n: number; byVerdict: Record<string, number> } | null = null; // 2026-10-15 ④ --repeat-flaky で省いた回
 const GAP_MS = Number(arg("gap-ms", "2000"));
@@ -149,7 +153,11 @@ const REPS_OF: Record<string, number> | null = (() => { const f = arg("reps-file
 const JUDGE_LAZY = arg("judge") === "lazy";
 const JUDGE_MODEL = (process.env.EXAM_JUDGE_MODEL ?? "").trim();
 const STOP_FILE = process.env.BRAIN_EXAM_BASELINE_CHILD === "1" ? "" : (process.env.EXAM_STOP_FILE ?? "").trim();
-const judgeSkip = { lazy: 0 };
+const judgeSkip = { lazy: 0, rules: 0 };
+// 2026-10-21 ⑤ 決まりで決まる採点を先に（--judge=lazy の時・scripts/lib/exam-brain.ts ruleJudge）。
+//   確かめる人: 取ってある判定（AIX・なしの答案 69件）と照らすと 25件で AI の判定と食い違った（AIX の答案にも返信の本文が付く・AIX の中身の要点で✕にする）
+//   ＝合格を AI の判定と違う物にする → 既定は止める。入れる: EXAM_JUDGE_RULES=on
+const JUDGE_RULES = (process.env.EXAM_JUDGE_RULES ?? "").trim().toLowerCase() === "on";
 /** --select=rag で選んだ問題（null＝選んでいない＝今まで通り） */
 let SELECTED: Set<string> | null = null;
 let selectKbNow: Record<string, string> | null = null;
@@ -232,6 +240,11 @@ type ResultRow = {
   pathStrict?: boolean;
   /** 2026-10-16 決まりで判定できる設計知見の違反（下書き・exam-kb-rules） */
   kbRules?: KbRuleHit[];
+  /** 2026-10-21 入力の差: この回の LLM の呼び出しの控え（要求の印・使った答え）。main の取り置きにも残り、次の版の「同じ要求なら main の答え」に使う */
+  llmCalls?: CallRef[];
+  /** 2026-10-21 入力の差: 全部の呼び出しが main と同じ要求だった（main の答えを使った・呼んでいない） */
+  inputSame?: boolean;
+  inputDiff?: Omit<InputDiff, "same">;
 };
 
 // ─── YUMA の写し（yuma-r10-brain-replay と同じ線） ─────────────────────────
@@ -747,7 +760,9 @@ async function orderProblems(ps: ExamProblem[]): Promise<ExamProblem[]> {
   if (ORDER === "as-is" || ps.length < 2) return ps;
   const { readPrefixes } = await import("./lib/exam-rag-store");
   const pre = readPrefixes();
-  const out = orderForCache(ps, { stageOf, prefixOf: (id) => pre[id]?.prefix ?? null });
+  // 2026-10-21 ④ 同じ元の会話の問題を続けて（録音の調べ: 前の問題が同じ会話だと DeepSeek のキャッシュ 80.4%→81.9%・外れ 9.1k→8.3k トークン）。止める: EXAM_ORDER_CONV=off
+  const byConv = (process.env.EXAM_ORDER_CONV ?? "").trim().toLowerCase() !== "off";
+  const out = orderForCache(ps, { stageOf, prefixOf: (id) => pre[id]?.prefix ?? null, ...(byConv ? { convOf: (p: ExamProblem) => p.conv ?? null, lenOf: (p: ExamProblem) => p.context.length } : {}) });
   if (out.some((p, k) => p.id !== ps[k].id)) console.log(`並べ方（キャッシュ・--order=as-is で旧）: ${out.map((p) => p.id).join(",").slice(0, 300)}`);
   return out;
 }
@@ -962,7 +977,17 @@ async function main() {
   if (!process.env.LLM_CASSETTE_ENV_FP?.trim()) process.env.LLM_CASSETTE_ENV_FP = ENV_FP.hash || "-";
   h = await setupLlmTest(`brain-exam-${LABEL}`.slice(0, 60));
   await installRawBrainCapture(); // ← brain-core を読む前に（SDK は読んだ時の fetch を握る）
-  const { setCassetteTag } = await import("./lib/llm-cassette");
+  const { setCassetteTag, setCassettePins, pinsFromRows, hasPinsFor, cassetteCallsOf, inputDiffOf, flushCassette } = await import("./lib/llm-cassette");
+  // 2026-10-21 ①入力の差: 前（main）の行の呼び出しの控えを入れる（前の子＝main 自身・録音を止めた回・off の時は入れない）
+  let pinsOn = false;
+  const inputPlan: Record<string, { same: boolean; firstChanged: string | null; pinned: number; calls: number; why?: string }> = {};
+  if (INPUT_DIFF !== "off" && CASSETTE_MODE !== "off" && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1" && BASELINE && BASELINE !== "main") {
+    const pins = pinsFromRows(readResults(BASELINE));
+    const n = Object.keys(pins).length;
+    if (n) { setCassettePins(pins, { only: INPUT_DIFF === "plan" }); pinsOn = true; }
+    console.log(`入力の差（--input-diff=${INPUT_DIFF}）: 前（${BASELINE}）の呼び出しの控え ${n}問×回${n ? "＝main と同じ要求は main の答えを使う（呼ばない）" : "（控えの無い古い取り置き＝今まで通り）"}`);
+  }
+  if (INPUT_DIFF === "plan" && !pinsOn) { console.log("--input-diff=plan: main の控えが無い → 下見なし"); writeFileSync(`${RESULTS_DIR}/${LABEL}.inputdiff.json`, JSON.stringify({ at: new Date().toISOString(), base: BASELINE, pins: 0, items: {} }, null, 1)); return; }
   // 2026-10-17: DEEPSEEK_MODEL で既定と違うモデルにした時は名前に入れる（揺れの記録・比べを既定のモデルと混ぜない）
   const dsModel = (process.env.DEEPSEEK_MODEL ?? "").trim();
   const model = h.run === "final-claude" ? "claude（本番のブレイン）" : dsModel && dsModel !== (await import("../app/lib/llm-alt-provider")).DEEPSEEK_DEFAULT_MODEL ? `deepseek-all:${dsModel}` : "deepseek-all";
@@ -1051,6 +1076,8 @@ async function main() {
   const pcRetries = new Map<string, number>();
   problemLoop: for (const p of problems) for (let rep = 1; rep <= REPEAT; rep++) {
     if (done.has(`${p.id}#${rep}`)) continue;
+    // 2026-10-21 ①下見: main の控えの無い回は下見しない（本番の回で呼ぶ）
+    if (INPUT_DIFF === "plan" && !hasPinsFor(p.id, rep)) { inputPlan[`${p.id}#${rep}`] = { same: false, firstChanged: null, pinned: 0, calls: 0, why: "main の控えなし" }; continue; }
     if (STOP_FILE && existsSync(STOP_FILE)) { console.log(`⏹ 止める印（${STOP_FILE}）→ ここで止める（残りの問題は回さない）`); break problemLoop; }
     // 2026-10-17 試験のブレインが決めた回数（--reps-file）。書いてあれば揺れの決め方より先
     if (REPS_OF) { if (rep > Math.max(1, REPS_OF[p.id] ?? 1)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; } }
@@ -1145,7 +1172,10 @@ async function main() {
       // 2026-10-17 --judge=lazy: 道が外れていれば合格は決まりで✕。本質の道も決まりで出る（AIX か最初の答えが無い）なら判定を呼ばない
       const skipLazy = JUDGE_LAZY && !pv.ok && !needRaw && !NO_JUDGE;
       if (skipLazy) { judgeSkip.lazy++; (row as ResultRow & { judgeSkipped?: string }).judgeSkipped = "lazy"; }
-      const jg = NO_JUDGE || skipLazy ? null : await judge(ps, meta, row.raw ?? null, needRaw);
+      // ⑤ 決まりで全部決まる時は判定の AI を呼ばない（決まりは答案だけで決まる＝main の取り置きも同じ決まりで採点する）
+      const rj = JUDGE_LAZY && JUDGE_RULES && !NO_JUDGE && !skipLazy ? ruleJudge({ asks: ps.asks ?? [], ngN: (ps.ng ?? []).length, pathLabel: code.label, pathOk: pv.ok, needRawPath: needRaw }) : null;
+      if (rj) { judgeSkip.rules++; (row as ResultRow & { judgeSkipped?: string }).judgeSkipped = "rules"; }
+      const jg: JudgeOut | null = NO_JUDGE || skipLazy ? null : rj ? { asks: rj.asks, route: rj.route, ng: rj.ng, asksWhy: rj.asks.map(() => rj.why), ngWhy: rj.ng.map(() => rj.why), rawPath: null } : await judge(ps, meta, row.raw ?? null, needRaw);
       if (jg) {
         row.asks = (p.asks ?? []).map((a, i) => ({ q: a.q, covered: jg.asks[i], why: jg.asksWhy[i], route: jg.route[i] }));
         row.ng = (p.ng ?? []).map((x, i) => ({ text: x, violated: jg.ng[i], why: jg.ngWhy[i] }));
@@ -1207,6 +1237,21 @@ async function main() {
       const k = `${p.id}#${rep}`, n = pcRetries.get(k) ?? 0;
       if (n < 2) { pcRetries.set(k, n + 1); console.warn(`  ↻ ${p.id}#${rep} 条件の行が混ざった（${row.pcMismatch.join(",")}）→ 回し直す（${n + 1}回目）`); rep--; await new Promise((r) => setTimeout(r, GAP_MS)); continue; }
     }
+    // 2026-10-21 ①入力の差: この回の呼び出しの控えと、main と同じ要求だったか
+    if (CASSETTE_MODE !== "off") {
+      await flushCassette();
+      const calls = cassetteCallsOf(p.id, rep);
+      if (calls.length) row.llmCalls = calls;
+      if (pinsOn) {
+        const { same, ...d } = inputDiffOf(calls, hasPinsFor(p.id, rep));
+        row.inputSame = same && !row.error; row.inputDiff = d;
+        inputPlan[`${p.id}#${rep}`] = { same: row.inputSame, firstChanged: d.firstChanged, pinned: d.pinned, calls: d.calls };
+      }
+    }
+    if (INPUT_DIFF === "plan" && !row.inputSame) {
+      console.log(`  → ${p.id}#${rep} 入力が main と違う（${row.inputDiff?.firstChanged ?? "?"} から・main の答えで済んだ ${row.inputDiff?.pinned ?? 0}段）→ 本番の回で呼ぶ（下見の答案は書かない）`);
+      continue;
+    }
     appendFileSync(OUT, JSON.stringify(row) + "\n");
     if (!row.error) {
       doneSigs.set(p.id, [...(doneSigs.get(p.id) ?? []), sigOfRow(row)]);
@@ -1218,8 +1263,17 @@ async function main() {
       }
     }
     const miss = row.asks?.filter((a) => !a.covered).length ?? 0, vio = row.ng?.filter((g) => g.violated).length ?? 0;
-    console.log(`${row.score.pass ? "○" : "✕"} ${p.id}#${rep} [${p.type}] ${row.essence ? `本質=${row.essence.code} ` : ""}ブレイン=${row.path.code || "-"}${row.draft ? ` 下書き=${row.draft.code}${row.draft.pass ? "○" : "✕"}` : ""} 正解=${acc.join("|")}${row.path.mustNotHit ? ` ⛔${row.path.mustNotHit}` : ""}${miss ? ` 依頼の抜け${miss}` : ""}${vio ? ` 違反${vio}` : ""}${row.ledger?.errors.length ? ` 台帳の失敗 ${row.ledger.errors.join("／")}` : ""}${row.pcMismatch ? ` 条件の混ざり ${row.pcMismatch.join(",")}` : ""}${row.error ? ` 失敗: ${row.error}` : ""}`);
+    console.log(`${row.score.pass ? "○" : "✕"} ${p.id}#${rep}${row.inputSame ? "【入力が同じ】" : row.inputDiff?.pinned ? `【${row.inputDiff.firstChanged} から違う】` : ""} [${p.type}] ${row.essence ? `本質=${row.essence.code} ` : ""}ブレイン=${row.path.code || "-"}${row.draft ? ` 下書き=${row.draft.code}${row.draft.pass ? "○" : "✕"}` : ""} 正解=${acc.join("|")}${row.path.mustNotHit ? ` ⛔${row.path.mustNotHit}` : ""}${miss ? ` 依頼の抜け${miss}` : ""}${vio ? ` 違反${vio}` : ""}${row.ledger?.errors.length ? ` 台帳の失敗 ${row.ledger.errors.join("／")}` : ""}${row.pcMismatch ? ` 条件の混ざり ${row.pcMismatch.join(",")}` : ""}${row.error ? ` 失敗: ${row.error}` : ""}`);
     await new Promise((r) => setTimeout(r, GAP_MS));
+  }
+  if (pinsOn) {
+    const items = Object.entries(inputPlan);
+    const same = items.filter(([, v]) => v.same).map(([k]) => k);
+    writeFileSync(`${RESULTS_DIR}/${LABEL}.inputdiff.json`, JSON.stringify({ at: new Date().toISOString(), base: BASELINE, mode: INPUT_DIFF, items: inputPlan }, null, 1));
+    console.log(`入力の差: 入力が同じ ${same.length}／${items.length} 問×回（main の答え・呼んでいない）${same.length ? `: ${same.join(",")}` : ""}`);
+    const byStage = new Map<string, string[]>();
+    for (const [k, v] of items) if (!v.same && v.firstChanged) byStage.set(v.firstChanged, [...(byStage.get(v.firstChanged) ?? []), k]);
+    for (const [st, ks] of byStage) console.log(`  違った段 ${st}: ${ks.join(",")}`);
   }
   if ((REPEAT_FLAKY || REPS_OF) && REPEAT > 1) {
     flakeSkip = skippedReps;
@@ -1260,7 +1314,7 @@ main().catch((e) => { console.error(e instanceof Error ? e.message : e); process
   if (h) {
     await h.finish();
     if (judgeCost.tier) console.log(`判定の段（EXAM_JUDGE_TIER=on）: ${judgeCost.tier.problems}件・機械で決めた ${judgeCost.tier.machine}項目・flash 2回で揃った ${judgeCost.tier.flash}項目・割れて pro ${judgeCost.tier.pro}項目${judgeCost.tier.unresolved ? `・決まらない ${judgeCost.tier.unresolved}` : ""}（flash ${judgeCost.tier.flashCalls}回・pro ${judgeCost.tier.proCalls}回）`);
-    console.log(`判定（DeepSeek 直・記録の外）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.calls ? `（入力のキャッシュ ${Math.round((100 * judgeCost.tokens.hit) / Math.max(1, judgeCost.tokens.hit + judgeCost.tokens.miss))}%＝当たり ${judgeCost.tokens.hit}・外れ ${judgeCost.tokens.miss}トークン・並び ${JUDGE_ORDER}）` : ""}${judgeCost.replayed ? `（うち再生 ${judgeCost.replayed}回・費用0）` : ""}${judgeSkip.lazy ? `・決まりで済んで呼ばなかった ${judgeSkip.lazy}問回（--judge=lazy）` : ""}${injectStats.calls ? `・試しの材料を足した呼び出し ${injectStats.calls}回` : ""}`);
+    console.log(`判定（DeepSeek 直・記録の外）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.calls ? `（入力のキャッシュ ${Math.round((100 * judgeCost.tokens.hit) / Math.max(1, judgeCost.tokens.hit + judgeCost.tokens.miss))}%＝当たり ${judgeCost.tokens.hit}・外れ ${judgeCost.tokens.miss}トークン・並び ${JUDGE_ORDER}）` : ""}${judgeCost.replayed ? `（うち再生 ${judgeCost.replayed}回・費用0）` : ""}${judgeSkip.lazy ? `・決まりで済んで呼ばなかった ${judgeSkip.lazy}問回（--judge=lazy）` : ""}${judgeSkip.rules ? `・項目を決まりで採点した ${judgeSkip.rules}問回（AIX・送らない答案）` : ""}${injectStats.calls ? `・試しの材料を足した呼び出し ${injectStats.calls}回` : ""}`);
     // 2026-10-15 ④ 1回の試験の数え（新しく呼んだ・再生・使い回した）。問題ごとの数えは <label>.cost.json（前の取り置きの「呼んでいたら」に使う）
     const cas = await import("./lib/llm-cassette");
     const cst = cas.cassetteStats();

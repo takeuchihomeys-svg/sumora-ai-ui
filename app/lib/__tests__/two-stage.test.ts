@@ -80,7 +80,12 @@ t("見積書の約束の言い回し → estimate_declared", kinds(TWO_STAGE_WOR
   const two = resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "", brought: { ask: "none", count: 2 } });
   t("持ち込み2件・物件確認した → 両方の約束・「2件の」", two?.source === "rule:two_stage_promise(brought_both)" && /2件の募集状況確認/.test(two?.direction ?? "") && /初期費用の御見積書/.test(two?.direction ?? ""), two?.direction);
   const est = resolveTwoStage({ ...base, finalAix: "estimate_sheet", customerText: "この二つで初期費用出してもらえたら嬉しいです！", brought: { ask: "cost", count: 2 } });
-  t("持ち込み・費用だけ聞いた（見積書送る）→ それでも両方（実送信の過半数）・御見積書を先に書いてよい", est?.kind === "check" && /募集状況/.test(est?.direction ?? "") && /御見積書の事を先に/.test(est?.direction ?? ""), est?.direction);
+  // 10/21 竹内さん B1（brought_estimate 既定 on）: 費用だけ聞いた持ち込みは見積の約束（BRAIN_ROUTE_FIX_1020=off で旧の両方）
+  t("10/21 B1: 持ち込み・費用だけ聞いた → 見積の約束（brought_estimate）", est?.kind === "estimate" && /brought_estimate/.test(est?.source ?? ""), est?.source);
+  const prevRf = process.env.BRAIN_ROUTE_FIX_1020; process.env.BRAIN_ROUTE_FIX_1020 = "off";
+  const estOld = resolveTwoStage({ ...base, finalAix: "estimate_sheet", customerText: "この二つで初期費用出してもらえたら嬉しいです！", brought: { ask: "cost", count: 2 } });
+  if (prevRf === undefined) delete process.env.BRAIN_ROUTE_FIX_1020; else process.env.BRAIN_ROUTE_FIX_1020 = prevRf;
+  t("持ち込み・費用だけ聞いた（見積書送る・BRAIN_ROUTE_FIX_1020=off）→ それでも両方（実送信の過半数）・御見積書を先に書いてよい", estOld?.kind === "check" && /募集状況/.test(estOld?.direction ?? "") && /御見積書の事を先に/.test(estOld?.direction ?? ""), estOld?.direction);
   const one = resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "この物件空いてるか調べてもらえますか？", brought: { ask: "vacancy", count: 1 } });
   t("持ち込み1件・空きだけ聞いた → 両方（「物件の」）", /お送り頂きました物件の募集状況確認させて頂きます/.test(one?.direction ?? "") && /御見積書/.test(one?.direction ?? ""), one?.direction);
   t("確認の約束を既にしている（correction:check_already_declared）は AIX のまま", resolveTwoStage({ ...base, finalAix: "property_check_result", decisionSource: "correction:check_already_declared", brought: { ask: "none", count: 1 } }) === null);

@@ -26,7 +26,7 @@ export function collapseRepeatedOpener(text: string | null | undefined): { text:
 //   ①dedupeKashikomarimashita: 同じ段の中で重なった「かしこまりました」を1つに（同じ行に2つ・行まるごと・行頭）。段が違う受けは触らない。
 //     文の中の「〜の件かしこまりました」は落とすと文が崩れるので触らない＝落とすのは重なった開口語だけ。戻す: ACK_DEDUPE=off（既定 on）
 //   ②placeAckInContentBlock: 挨拶の段（〇〇さんお世話になっております）の直後に付いた受けの行を、空行の後の中身の段の頭へ移す。
-//     竹内さんの決定（受けは受けている中身の段の頭）。並べ替え＝文を変えるので既定 off（ACK_BLOCK_PLACE=on で入る）
+//     竹内さんの決定（受けは受けている中身の段の頭）。10/21 竹内さん B6「よい」で既定 on（戻す: ACK_BLOCK_PLACE=off）
 const ACK_ONLY_LINE_RE = /^[ \t　]*(?:かしこまりました|承知(?:いた|致)?しました)[😊😌✨]*[！!。]*[ \t　]*$/;
 // 受けの後が記号・絵文字・空白で区切れている時だけ（「承知しましたが／承知しましたら」の文の途中を削らない）
 const ACK_HEAD_RE = /^([ \t　]*)(?:かしこまりました|承知(?:いた|致)?しました)(?:[😊😌✨！!。、]+[ \t　]*|[ \t　]+)(?=\S)/u;
@@ -36,7 +36,7 @@ export function ackDedupeEnabled(env: Record<string, string | undefined> = proce
   return (env.ACK_DEDUPE ?? "").toLowerCase() !== "off";
 }
 export function ackBlockPlaceEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.ACK_BLOCK_PLACE ?? "").toLowerCase() === "on";
+  return (env.ACK_BLOCK_PLACE ?? "").toLowerCase() !== "off";
 }
 
 /** 同じ行で受けの言葉が2つ続く（「かしこまりました😊！！かしこまりました😌！！」） */
