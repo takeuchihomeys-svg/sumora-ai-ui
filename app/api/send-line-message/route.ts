@@ -504,6 +504,13 @@ export async function POST(req: NextRequest) {
             await new Promise((r) => setTimeout(r, 2000));
           }
           await new Promise((r) => setTimeout(r, 2000)); // 会話行の更新（updated_at）が落ち着いてから分析（ウォーターマーク競合を避ける）
+          // 2026-10-22: 募集状況の確認・見積書の約束だけで次の AIX がはっきり決まる時は Sonnet を呼ばず決まった計算で要対応を立てる
+          //   （既定 OFF・BRAIN_POSTSEND_CHEAP=on・試算 scripts/audit-brain-postsend-value.ts）。分からない時・失敗した時は今まで通りブレイン
+          const { tryPostSendCheap } = await import("@/app/lib/brain-postsend-cheap-server");
+          if (await tryPostSendCheap(cid, message, new Date(Date.parse(sentAtIso) + 60_000).toISOString()).catch((e) => {
+            console.warn("[send-line-message] postsend cheap failed:", e instanceof Error ? e.message : e);
+            return false;
+          })) return;
           // 2026-09-24 竹内「22時〜9時のお客さんは分析せず」: スタッフの宣言送信は夜も動かす（origin: staff・費用は人の操作回数で有界）
           await runBrainWithFollowups(cid, undefined, { forceIncremental: true, origin: "staff" });
         } catch (e) {
