@@ -165,18 +165,41 @@ const ENDED_RE = /募集終了|お申込みが入|お申込が入|申込(?:み)?
 /**
  * 直近 windowDays 日のこちらの約束を並べ、その後の AIX・手打ちで果たしたかを組み立てる（古い約束から・同じ種類の未果たしの約束は1つにまとめる）。
  *   msgs は会話の通（順不同でよい）・aixLogs は AIX の送信（aix_usage_logs）
+ *
+ * 2026-10-22 時刻の順に組み立てる（本番の取りこぼし: 1191b1… 10/02 確認の約束が消えた）:
+ *   前は通を全部読んで約束を並べてから AIX を当てていた＝前の同じ種類の約束が「まだ開いている」間に来た新しい約束は「もう並んでいる」で捨てられ、
+ *   その後で前の約束が AIX で果たされると、新しい約束は果たされないまま消えていた。
+ *   → AIX の送信も時刻の順に当てる。同じ種類の約束が来た時に、それより前の AIX がまだ当たっていなければ先に当ててから「まだ開いているか」を見る
+ *     （1本の AIX は1つの約束＝古い物から）。新しい約束は自分より後の AIX（今までどおり 60秒の幅）で果たす。
+ *   同じ種類が重ならない時は今までと同じ（AIX はその約束の 60秒後までの通を読んでから当てる＝60秒の幅もそのまま）。
+ *   違い: 募集終了でやめる見積・内覧の約束は、その AIX の時点（60秒の幅）までの約束だけ（前は後の約束までやめていた）／
+ *        手打ちの報告と AIX のどちらで果たしたかは時刻の順で決まる。
+ *   戻す PROMISE_QUEUE_CHRONO=off（前の組み立て）
  */
 export function buildPromiseQueue(msgs: ReadonlyArray<QueueMsg>, aixLogs: ReadonlyArray<QueueAixLog>, nowMs: number, o: { windowDays?: number } = {}): PromiseStep[] {
   const win = (o.windowDays ?? 7) * 86_400_000;
+  const chrono = chronoEnabled();
   const sorted = [...msgs].filter((m) => Number.isFinite(Date.parse(m.createdAt)) && Date.parse(m.createdAt) <= nowMs)
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   const logs = [...aixLogs].filter((l) => Number.isFinite(Date.parse(l.sentAt))).sort((a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt));
   const steps: PromiseStep[] = [];
+  let li = 0;
+  /** lMs < untilMs の AIX を当てる（時刻の順） */
+  const applyLogsBefore = (untilMs: number) => { while (li < logs.length && Date.parse(logs[li].sentAt) < untilMs) applyAixLog(steps, logs[li++]); };
+  /** 同じ種類の約束がまだ開いているか（開いていれば、この時刻より前の AIX を先に当ててから見直す） */
+  const pendingSame = (kind: PromiseKind, atMs: number): boolean => {
+    if (!steps.some((s) => s.status === "pending" && s.kind === kind)) return false;
+    if (!chrono) return true;
+    applyLogsBefore(atMs);
+    return steps.some((s) => s.status === "pending" && s.kind === kind);
+  };
   for (let mi = 0; mi < sorted.length; mi++) {
     const m = sorted[mi];
     if (m.sender === "customer") continue;
     const at = m.createdAt;
     const atMs = Date.parse(at);
+    // AIX は、その約束の 60秒後までの通を読んでから当てる（今までの 60秒の幅と同じ候補）
+    if (chrono) applyLogsBefore(atMs - 60_000);
     const text = String(m.text ?? "");
     // 先に、この通が今までの約束を果たしたか（手打ちの報告・AIX の本文）
     for (const s of steps) {
@@ -185,7 +208,7 @@ export function buildPromiseQueue(msgs: ReadonlyArray<QueueMsg>, aixLogs: Readon
     }
     if (nowMs - atMs > win) continue;
     for (const p of promisesInStaffText(text, at)) {
-      if (steps.some((s) => s.status === "pending" && s.kind === p.kind)) continue;
+      if (pendingSame(p.kind, atMs)) continue;
       steps.push(p);
     }
     // 10/13 竹内さん①: 後に回した依頼（この返信で約束しなかった探す・内覧の依頼）を約束の続きの後ろに並べる。
@@ -196,27 +219,38 @@ export function buildPromiseQueue(msgs: ReadonlyArray<QueueMsg>, aixLogs: Readon
       let b = a; const bundle: string[] = []; while (b > 0 && sorted[b - 1].sender === "customer") { bundle.unshift(String(sorted[b - 1].text ?? "")); b--; }
       const run = sorted.slice(a, mi + 1).filter((x) => !x.isAix);
       const kinds = new Set(run.flatMap((x) => promisesInStaffText(x.text, x.createdAt).map((p) => p.kind)));
-      for (const d of deferredFromTurn(bundle, kinds, at)) if (!steps.some((s) => s.status === "pending" && s.kind === d.kind)) steps.push(d);
+      for (const d of deferredFromTurn(bundle, kinds, at)) if (!pendingSame(d.kind, atMs)) steps.push(d);
     }
   }
-  for (const l of logs) {
-    const lMs = Date.parse(l.sentAt);
-    // 1本の AIX は1つの約束を果たす（物件確認した＋御見積書同封だけは確認と見積の両方）
-    const hit = PROMISE_ORDER.map((k) => steps.find((s) => s.status === "pending" && s.kind === k && lMs > Date.parse(s.promisedAt) - 60_000 && aixFulfills(s, l)))
-      .filter((x): x is PromiseStep => !!x);
-    if (!hit.length) continue;
-    const label = `AIX【${AIX_BUTTON_LABELS[l.aixType] ?? l.aixType}】`;
-    const first = hit[0];
-    first.status = "done"; first.doneAt = l.sentAt; first.doneBy = label;
-    const est = hit.find((s) => s.kind === "estimate" && s !== first);
-    if (est && first.kind === "check" && (l.estimateSent === true || /御?見積書|お見積/.test(l.text ?? ""))) { est.status = "done"; est.doneAt = l.sentAt; est.doneBy = label; }
-    // 募集状況の確認の結果が募集終了 → 同じ物件の見積・内覧の確認の約束は果たせない（やめた・新しい物件のピックアップは残す）
-    if (first.kind === "check" && ENDED_RE.test(l.text ?? "") && !/御?見積書|お見積/.test(l.text ?? "")) {
-      for (const s of steps) if (s.status === "pending" && (s.kind === "estimate" || s.kind === "viewing_check")) { s.status = "dropped"; s.doneAt = l.sentAt; s.doneBy = "募集終了"; }
-    }
-  }
+  applyLogsBefore(Infinity);
   return steps;
 }
+
+/** 1本の AIX を当てる（1本の AIX は1つの約束を果たす・物件確認した＋御見積書同封だけは確認と見積の両方） */
+function applyAixLog(steps: PromiseStep[], l: QueueAixLog): void {
+  const lMs = Date.parse(l.sentAt);
+  const hit = PROMISE_ORDER.map((k) => steps.find((s) => s.status === "pending" && s.kind === k && lMs > Date.parse(s.promisedAt) - 60_000 && aixFulfills(s, l)))
+    .filter((x): x is PromiseStep => !!x);
+  if (!hit.length) return;
+  const label = `AIX【${AIX_BUTTON_LABELS[l.aixType] ?? l.aixType}】`;
+  const first = hit[0];
+  first.status = "done"; first.doneAt = l.sentAt; first.doneBy = label;
+  const est = hit.find((s) => s.kind === "estimate" && s !== first);
+  if (est && first.kind === "check" && (l.estimateSent === true || /御?見積書|お見積/.test(l.text ?? ""))) { est.status = "done"; est.doneAt = l.sentAt; est.doneBy = label; }
+  // 募集状況の確認の結果が募集終了 → 同じ物件の見積・内覧の確認の約束は果たせない（やめた・新しい物件のピックアップは残す）
+  if (first.kind === "check" && ENDED_RE.test(l.text ?? "") && !/御?見積書|お見積/.test(l.text ?? "")) {
+    for (const s of steps) if (s.status === "pending" && (s.kind === "estimate" || s.kind === "viewing_check")) { s.status = "dropped"; s.doneAt = l.sentAt; s.doneBy = "募集終了"; }
+  }
+  // 2026-10-22: 「現在募集に出ていないお部屋」（ピッカー unavailable）も、同じ通（3分以内）で確認と一緒に約束した見積・内覧の確認はやめた
+  //   （実物 96c140 10/20「大日の物件、募集状況確認…御見積書とあわせてお送り」→ 募集に出ていない＝見積は送れない。時刻の順にして初めて開いて見えた）
+  if (first.kind === "check" && (l.checkPattern === "unavailable" || UNAVAILABLE_RE.test(l.text ?? "")) && !/御?見積書|お見積/.test(l.text ?? "")) {
+    const pAt = Date.parse(first.promisedAt);
+    for (const s of steps) if (s.status === "pending" && (s.kind === "estimate" || s.kind === "viewing_check") && Math.abs(Date.parse(s.promisedAt) - pAt) <= 180_000) { s.status = "dropped"; s.doneAt = l.sentAt; s.doneBy = "募集に出ていない"; }
+  }
+}
+const UNAVAILABLE_RE = /募集に出て(?:い|お)(?:ない|りません)|募集(?:中では|しておりませ|していな)/;
+/** 2026-10-22 約束と AIX を時刻の順に組み立てる（戻す PROMISE_QUEUE_CHRONO=off） */
+function chronoEnabled(): boolean { return typeof process === "undefined" || (process.env?.PROMISE_QUEUE_CHRONO ?? "").trim().toLowerCase() !== "off"; }
 
 /** 次の AIX に並べる約束の古さの上限（竹内さんの番で全部果たすまで中央 32時間・audit-multi-request-turns）。それより古い約束は画面に出すが要対応は立てない */
 export const PROMISE_QUEUE_MAX_AGE_MS = 72 * 3600_000;
