@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { ParsedProperty, parsePropertyFromImage, calcScore } from "@/app/lib/property-scoring";
 
 export async function POST(req: NextRequest) {

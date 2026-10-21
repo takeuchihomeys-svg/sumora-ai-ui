@@ -13,7 +13,7 @@
 //   - 結果はボタンと同じ形（property_pickups.image_analysis に {…分析, wants, analyzed_at}）＋ auto: {at, labels}。
 //     失敗しても記録（property_pickups の行）はそのまま
 //   - llm_usage_logs の action は pickup_image_analysis_auto（ボタンと分ける）・conversation_id を入れる
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { loadImageWants } from "@/app/lib/image-wants-server";
 import { imageAnalysisNeed } from "@/app/lib/image-wants";
 import { analyzePickupRow } from "@/app/lib/pickup-analyze-server";

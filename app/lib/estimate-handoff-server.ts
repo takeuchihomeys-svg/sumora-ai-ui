@@ -4,7 +4,7 @@
 // 2026-10-01 竹内「見積書きかれたら…押したら見積書のツールに連携・送った物件がセットされた状態で・AD も分かるように・
 //   見積書の画面にも監視する部分配置」
 //   返す物: ①見積書のお部屋（出所つき）と資料・家賃・AD ②割引の目安 ③見張りの板（お客様・今の段階・最近の発言・送った物・ブレインの判断・警告）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { hasNameLetter } from "@/app/lib/call-name-pick";
 import { getCustomerState, loadCustomerStateInput } from "@/app/lib/customer-state-server";
 import { resolveCustomerState, type CustomerState } from "@/app/lib/customer-state";

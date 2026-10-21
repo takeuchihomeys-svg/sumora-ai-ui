@@ -1,3 +1,4 @@
+import { screeningAdminSupabaseKey } from "@/app/lib/supabase-server-key";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { isValidSyncKey, screeningTaskIdFor } from "@/app/lib/screening-calendar-sync";
@@ -5,7 +6,7 @@ import { isValidSyncKey, screeningTaskIdFor } from "@/app/lib/screening-calendar
 function getScreeningClient() {
   return createClient(
     process.env.SCREENING_ADMIN_SUPABASE_URL!,
-    process.env.SCREENING_ADMIN_SUPABASE_ANON_KEY!
+    screeningAdminSupabaseKey()!
   );
 }
 

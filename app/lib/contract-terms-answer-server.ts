@@ -8,7 +8,7 @@
 //     ① 売上サポの行（property_pickups: terms・image_lines・pdf_text・60日以内）
 //     ② この会話で送った画像の読み取り（image_details.lines）
 //   質問でなければ DB も引かない。失敗・時間切れは null（呼び出し側は今まで通り）。戻す CONTRACT_TERMS_ANSWER=off
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { pickEquipmentTargets, type SentPropertyLite } from "@/app/lib/equipment-question";
 import { collectStaffFreeRent, staffFreeRentFor, type StaffFreeRentFact } from "@/app/lib/staff-free-rent";
 import {

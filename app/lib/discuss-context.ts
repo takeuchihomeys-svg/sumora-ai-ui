@@ -10,7 +10,7 @@
 // ⚠️ AIXボタンIDの正は app/api/aix/action/route.ts。変更したらここも更新すること。
 // ⚠️ 業務ルールの正は app/lib/line-reply-prompts.ts。変更したらここも更新すること。
 
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 // ─────────────────────────────────────────────

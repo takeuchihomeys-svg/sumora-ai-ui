@@ -1,5 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 // 2026-09-18 保存する action_type が「取りに行く呼び出しのある値」かを門で確かめる（届かない行を新しく作らない）
 import { normalizePromptRuleActionType } from "@/app/lib/prompt-rule-registry";

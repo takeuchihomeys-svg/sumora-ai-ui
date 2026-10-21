@@ -8,7 +8,7 @@
 //   ブレインの判断とぶつかる時はブレインが勝つ（次のお客様の発言でブレインが違う AIX にしたら上書き・お客様が止まった/断ったら取り下げ＝aix-action-items）。
 //   記録は増やさない: 約束は送った通の記録（sent_facts の約束の行・行動台帳）と通の本文に既にある＝毎回ここで組み立てる（DDL なし）。
 //   戻す: 戻す PROMISE_QUEUE=off
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildPromiseQueue, nextPromiseAix, numberedPromiseLabels, promiseStepName, pickupNeedSignals, type PickupNeed, promiseQueueEnabled, promiseQueueNote, promiseStepLabel, PROMISE_KIND_JA, type PromiseStep, type QueueAixLog, type QueueMsg } from "@/app/lib/promise-queue";
 import { isTestConversation, isNoLineTestConversation } from "@/app/lib/test-conversations";
 import { MAIN_AIX_ITEM_OR } from "@/app/lib/viewing-day-greeting";

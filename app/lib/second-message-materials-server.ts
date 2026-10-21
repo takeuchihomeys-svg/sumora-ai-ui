@@ -1,6 +1,6 @@
 // app/lib/second-message-materials-server.ts
 // AIX の2通目の材料を読む（DB）。判定・組み立ては second-message-materials.ts（純関数）。SECOND_MSG_MATERIALS=on の時だけ呼ぶ。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER, sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, cutoffMs, NO_CUTOFF } from "@/app/lib/post-apply";
 import { loadScreeningSensitive, screeningSensitiveInMessages, screeningPiiClaudeEnabled } from "@/app/lib/screening-sensitive";

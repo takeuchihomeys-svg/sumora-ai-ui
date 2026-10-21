@@ -1,4 +1,4 @@
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 // confirmed ナレッジの conversation_state → ai_prompt_rules の action_type マップ
 // AIX固有ステート → AIXのaction_type（scoped注入）

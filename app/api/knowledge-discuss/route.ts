@@ -1,6 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic, { APIError } from "@anthropic-ai/sdk";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import {
   SYSTEM_OVERVIEW,
   BUSINESS_RULES,

@@ -1,3 +1,4 @@
+import { serverSupabaseKey } from "@/app/lib/supabase-server-key";
 import { manYen } from "@/app/lib/man-yen";
 import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
 import { NextRequest, NextResponse, after } from "next/server";
@@ -35,7 +36,7 @@ export const maxDuration = 300;
 function getDb() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    serverSupabaseKey()!,
   );
 }
 

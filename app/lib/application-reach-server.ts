@@ -1,7 +1,7 @@
 // app/lib/application-reach-server.ts — 申込到達率（場面×段階×ブレインの判断）を台帳から数えて brain_action_reach_stats に置く／ブレインに渡す注記を読む（サーバー専用・LLM なし）
 //   決まりは application-reach.ts（純関数）。⚠ 画面から import しない（supabase を読む）。
 //   書くのは brain_action_reach_stats だけ（集計の置き場・毎日作り直す）。元の表（deal_outcomes・outcome_events）は読むだけ。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { isTestConversation } from "@/app/lib/test-conversations";
 import {
   computeReachStats, buildReachNote, reachMinN, REACH_WINDOW_DAYS, confirmedWinWeight, confirmedWinWeightEnabled,

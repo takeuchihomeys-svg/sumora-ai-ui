@@ -6,7 +6,7 @@
 // 次回以降の「AIで最適化」時にこれらのルールが自動注入される。
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 60;

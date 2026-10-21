@@ -1,5 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 // 2026-09-29 API 費用の調査: ナレッジの一括判定の Sonnet（7日で200回・$1.2）が名前なしだった → 名札だけ付ける
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { canInsertAiQuestion, buildRuleConflictQuestion } from "@/app/lib/ai-feedback-guard";

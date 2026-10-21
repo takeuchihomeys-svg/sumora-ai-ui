@@ -5,7 +5,7 @@
 // 読むだけ（書かない）。中身の決まりは app/lib/new-arrival-card.ts・新着の数は app/lib/new-arrivals.ts（AIXツールと同じ関数）。
 // お客様に出ない: 返すのは画面の表示だけ。messages・LINE 送信・下書き・ブレインの材料には入れない。
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildNewArrivalCards, type NacAudit, type NacPickupRow } from "@/app/lib/new-arrival-card";
 import { summarizeNewArrivals, NEW_ARRIVAL_WINDOW_HOURS, type NewArrivalRow, type SentBuilding } from "@/app/lib/new-arrivals";
 import { primaryConversationsForCustomers } from "@/app/lib/customer-conversation-server";

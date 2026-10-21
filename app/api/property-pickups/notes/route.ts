@@ -2,7 +2,7 @@
 // 売上サポのピックアップ会話で、スタッフが右側に書くメモ（LINE の会話風の「スタッフの発言」）。
 // 2026-09-24 竹内「DeepSeek 側は左・スタッフの会話は右」
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as { property_customer_id?: string; batch_id?: string; text?: string; author?: string };

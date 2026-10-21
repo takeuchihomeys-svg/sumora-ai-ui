@@ -7,7 +7,7 @@
 //   リアプロの資料（MS ゴシックの埋め込みなし）はサーバーで描くと Noto Sans JP に全部の文字を差し替えるので作らない（画面＝スタッフのパソコンで描く）。
 //   旧は page_image_url（サーバーが差し替えて描いた画像）を元に切っていた道もあった → 消した
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { trimSheetImage } from "@/app/lib/pdf-trim";

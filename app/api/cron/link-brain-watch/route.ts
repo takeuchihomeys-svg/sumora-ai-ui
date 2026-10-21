@@ -6,7 +6,7 @@
 //     1件ずつの通知が on（STAFF_TODO_INSTANT_NOTICE）の間は立てない＝LINE へ出さない）
 //   ?dry=1 … 記録しない・立てない（数えだけ返す）
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { runLinkWatch } from "@/app/lib/link-brain-watch-server";
 import { compactLinkSummary, linkBrainTodoEnabled, linkBrainWatchEnabled, LINK_BRAIN_NOTE_PREFIX } from "@/app/lib/link-brain-watch";

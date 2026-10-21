@@ -1,6 +1,6 @@
 // app/lib/suggest-next-action-prompt-server.ts
 // 次の一手の予想の固定の前置きの材料を DB から読む（route と温め prefix-warm が同じ関数を使う＝1文字もずれない）
-import { supabase } from "./supabase";
+import { supabase } from "./supabase-server";
 import type { SuggestNextActionPrefixInputs } from "./suggest-next-action-prompt";
 // 9巡目（10/08）: 学習ルールの見直しの重ね（テストの会話だけ・rules-overlay.ts）。重ねが無ければ今と同じ
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "./rules-overlay";

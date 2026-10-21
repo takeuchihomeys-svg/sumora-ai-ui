@@ -1,4 +1,4 @@
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 // ── AI質問（ai_feedback_items）起票ガード（全書き込み元共通）──
 // analyze-diffs だけでなく corpus2skill / adapt-feedback 等の直接INSERTにも

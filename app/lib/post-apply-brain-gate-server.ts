@@ -6,7 +6,7 @@
 //   bg-async は記録（申込へ押下・本人確認書類・印＝resolvePostApply）で申込以降と見て下書きも止めているのに、sweep とブレイン本体は status だけだった。
 //   → 同じ記録の判定で「申込以降」なら関所に入れる（status が遅れている時は lagging＝申込が流れた動きがあれば回す側）。
 //   戻す: BRAIN_POST_APPLY_RECORDS=off（status だけの今まで）。関所ごと戻す: BRAIN_POST_APPLY_GATE=off
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
 import { decidePostApplyBrainGate, POST_APPLY_GATE_STATUSES, postApplyAnchorAt, type GateMsg } from "@/app/lib/post-apply-brain-gate";
 

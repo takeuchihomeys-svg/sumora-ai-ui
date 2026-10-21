@@ -5,7 +5,7 @@
 //   決めるのは viewing-day-greeting.morningViewingGreetingPlan（純関数）・材料は行動台帳（ブレインと同じ buildActionLedger）。
 //   送ったら自動で済み（AIX → completeAixActionItem／普通の送信の挨拶 → completeAixActionItemByStaffText）。前の日の残りはここで取り下げる。
 //   dryRun=true は読むだけ（登録・通知・取り下げをしない）＝監査とテスト用
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildActionLedger, type LedgerAixRow } from "@/app/lib/action-ledger";
 import { loadCustomerStateInput } from "@/app/lib/customer-state-server";
 import { isPostApplyStatus } from "@/app/lib/llm-alt-provider";

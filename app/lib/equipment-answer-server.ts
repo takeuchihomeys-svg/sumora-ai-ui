@@ -9,7 +9,7 @@
 //   ・写真の中の設備（コンロ等）は読ませない（equipment-question.ts の説明: DeepSeek は両向きに読み違えた）
 //   ・読めない・時間切れは「材料なし」（呼び出し側は今まで通り）。Claude には倒さない
 import { createHash } from "node:crypto";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { callDeepSeekRead } from "@/app/lib/vision-alt-provider";
 import { parseListingEquipment, downgradeNegatedItems, type EquipKey, type EquipFact } from "@/app/lib/listing-equipment";
 import {

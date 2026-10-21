@@ -6,7 +6,7 @@
 //   ④ 分野ごとの「今の決まり」（design_rules_digest）を作り直す。手元の memory/rules_digest_*.md は scripts/kb-digest.ts --write で写す
 //   2026-10-07（段）同じ場面の P0/P1 の決まり同士の食い違い・確かな同じ（近さ 0.95 以上）の退役・札の正規化・段の見張り（design-knowledge-priority.ts）
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { runDesignKnowledgeCycle } from "@/app/lib/design-knowledge-curation-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 

@@ -146,7 +146,7 @@ const report: Record<string, unknown> = { startedAt: new Date().toISOString() };
 async function main() {
   if (!API_KEY) throw new Error("ANTHROPIC_API_KEY が未設定（--env-file=.env.local）");
   // アプリのモジュールは fetch を包んだ後に読む（Supabase・Anthropic の client が包んだ fetch を掴む）
-  const { supabase } = await import("@/app/lib/supabase");
+  const { supabase } = await import("@/app/lib/supabase-server");
   const { getCachedPromptRules } = await import("@/app/lib/prompt-cache");
   const fc = await import("@/app/lib/final-check");
   const { buildActionLedger } = await import("@/app/lib/action-ledger");

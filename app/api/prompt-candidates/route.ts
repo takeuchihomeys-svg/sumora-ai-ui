@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 // プロンプト候補ピッカー API
 // cron（prompt-candidate-gen）が生成した prompt_candidates を

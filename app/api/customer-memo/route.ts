@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { customerMemoView, applyStaffMemoEdit, setReapplyPatternMemo } from "@/app/lib/customer-memo-server";
 import { LLM_MEMO_KINDS, CALL_MEMO_CHARS, type MemoKind } from "@/app/lib/customer-memo";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { loadReapplyInfo } from "@/app/lib/reapply-customer-server";
 import { RETURN_PATTERNS, RETURN_PATTERN_LABEL, reapplyBadgeText, type ReturnPattern } from "@/app/lib/reapply-customer";
 

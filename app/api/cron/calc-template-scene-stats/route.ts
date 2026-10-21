@@ -13,7 +13,7 @@
 // suggest-next-action がここから recommended_template_id を導出する。
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 // HINT-1: brain の template_hint ラベル許可リスト（一致率集計のラベル抽出に使用）と知識化ユーティリティ
 import { TEMPLATE_HINT_ALLOWED_LABELS } from "@/app/lib/brain-core";

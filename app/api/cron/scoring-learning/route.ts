@@ -5,7 +5,7 @@
 // 件数・確かめ用・続けて良くなった週の条件を満たした時だけ（app/lib/scoring-learning.ts の AUTO_APPLY_RULES）。
 // 2026-09-25 竹内「自動的に学習されていく仕組みを作る。判定基準をより精度高くしていくために。データを積み重ねていけばかなり質高くなっていく」
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { runScoringLearning } from "@/app/lib/scoring-learning-server";
 
 export const maxDuration = 300;

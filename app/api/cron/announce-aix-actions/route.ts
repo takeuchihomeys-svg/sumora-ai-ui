@@ -9,7 +9,7 @@
 //   STAFF_TODO_LIST が on（既定）の間はこの一覧を送らない（同じ時刻に cron/staff-todo-list が AIX 要対応を含む【やることリスト】を送る・
 //   48時間より古い要対応の片付けもあちらがする）。戻す: STAFF_TODO_LIST=off でこの一覧が元どおり出る（cron の登録は残してある）
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildAixActionList, pushToHanbancyoGroup, dismissStaleAixActionItems, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "@/app/lib/aix-action-items";
 import { staffTodoListEnabled } from "@/app/lib/staff-todo-list";
 import { jstDayStartMs } from "@/app/lib/jst-date";

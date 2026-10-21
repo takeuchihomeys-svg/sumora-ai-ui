@@ -7,7 +7,7 @@
 //   サーバー側で断つので、本番ビルドが落ちていた間の旧画面・開いたままのタブ・PWA のキャッシュから押されても LINE に届かない（410 を返す）。
 //   説明文（AD・🌟）は社内用。お客様向けの本文は AIX が作る（出口の決定論: 説明文を本文に変える関数ごと消した）。
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { classifyPickupSendAction, PICKUP_DIRECT_SEND_GONE_MESSAGE } from "@/app/lib/property-pickups";
 import { CLEAR_MANUAL_UPDATE_DAYS } from "@/app/lib/search-update-days";

@@ -219,7 +219,7 @@ export async function loadRankConditions(propertyCustomerId: string | null, extC
   //   個人情報の画像は customer-sent-property の線で落とす。申込以降の会話は渡さない。戻す: CUSTOMER_SENT_PROPERTY=off
   if (!conversationId) return base;
   try {
-    const [{ supabase }, { loadCustomerSentPropertyBlock }] = await Promise.all([import("@/app/lib/supabase"), import("@/app/lib/customer-sent-property-server")]);
+    const [{ supabase }, { loadCustomerSentPropertyBlock }] = await Promise.all([import("@/app/lib/supabase-server"), import("@/app/lib/customer-sent-property-server")]);
     const r = await loadCustomerSentPropertyBlock(supabase, conversationId);
     console.log(JSON.stringify({ tag: "rank:customer-sent", conversationId, reason: r.reason, items: r.items.length, stats: r.stats ?? null }));
     if (!r.block) return base;
@@ -234,7 +234,7 @@ async function loadRankConditionsBase(propertyCustomerId: string | null, extCond
   if (!propertyCustomerId) return buildRankConditions(extConditions, null);
   try {
     const [{ supabase }, { loadConditionSummary, SUMMARY_COLS }, { detectWantsLowInitialCost }] = await Promise.all([
-      import("@/app/lib/supabase"), import("@/app/lib/condition-summary-server"), import("@/app/lib/property-brain"),
+      import("@/app/lib/supabase-server"), import("@/app/lib/condition-summary-server"), import("@/app/lib/property-brain"),
     ]);
     // 構造の欄（structure_types）も読む（設備・構造の希望の1行に「RC以上」として入れる）。列が読めない時は無しで読み直す
     let { data, error } = await supabase.from("property_customers").select(`${SUMMARY_COLS}, structure_types`).eq("id", propertyCustomerId).maybeSingle();

@@ -1,7 +1,7 @@
 // app/lib/area-rent-server.ts（サーバー専用・DB を読む）
 // お客様の希望のエリア（area_plan の近い区・希望の区・希望の駅の区）と間取りで、相場の材料（rent_observations）を読み、
 // area-rent-explain.buildRentMarket に渡す。材料のため方は DB のトリガー（migrate-schema の rent_observations の節）。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { parseAreaWant, customerAreaPlan } from "@/app/lib/area-want";
 import type { AreaPlan } from "@/app/lib/osaka-area-profile";
 import { wardOfStation, wardsAdjacent, WARD_COORDS } from "@/app/lib/osaka-geo";

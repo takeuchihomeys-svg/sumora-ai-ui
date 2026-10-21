@@ -1,11 +1,12 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
+import { serverSupabaseKey } from "@/app/lib/supabase-server-key";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 
 function getDb() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    serverSupabaseKey()!,
   );
 }
 

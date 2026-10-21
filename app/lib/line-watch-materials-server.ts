@@ -3,7 +3,7 @@
 // 2026-10-08 竹内「大丈夫」（返信の質 8巡目・記録）。戻す: LINE_WATCH_MATERIALS=off
 //   ・列 materials が本番に無い間は、最初の失敗で書くのをやめる（このインスタンスの間）
 //   ・テストの起動（LLM_TEST_MODE / LLM_TEST_FINAL_CLAUDE）では書かない（再生の材料を今の番に混ぜない）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import {
   lineWatchMaterialsEnabled, summarizeMaterialLog, mergeWatchMaterials, openTurnKey, suppressedDraftSummary,
   type WatchSource, type MaterialSummary,

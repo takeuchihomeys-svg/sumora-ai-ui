@@ -12,7 +12,7 @@
 import { loadEstimateHandoff } from "../app/lib/estimate-handoff-server";
 import { viewingCandidatesFromChoice, preselectViewingCandidates, candidateMatchesName, latestCustomerTurnStartAt } from "../app/lib/viewing-property-candidates";
 import { latestCustomerTurnText } from "../app/lib/viewing-date-request";
-import { supabase } from "../app/lib/supabase";
+import { supabase } from "../app/lib/supabase-server";
 
 const DAYS = Number(process.env.DAYS ?? 120);
 const DUMP = process.env.DUMP === "1";

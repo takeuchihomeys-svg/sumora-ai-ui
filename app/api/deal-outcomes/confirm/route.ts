@@ -4,7 +4,7 @@
 //   竹内さんの決定（2026-10-08）②④。決まりは app/lib/outcome-confirm.ts・app/lib/apply-stage-nudge.ts。計画: memory/plan_outcome_ledger.md 9章
 import { NextRequest, NextResponse } from "next/server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { pickConfirmCandidate, confirmPatch, isConfirmChoice, outcomeConfirmEnabled, type ConfirmCandidateRow } from "@/app/lib/outcome-confirm";
 import { resolveApplyStageNudge, applyStageNudgeEnabled, applyStageNudgeText } from "@/app/lib/apply-stage-nudge";

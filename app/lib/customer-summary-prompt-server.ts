@@ -1,6 +1,6 @@
 // app/lib/customer-summary-prompt-server.ts
 // お客様の要約の固定の前置きの材料を DB から読む（route と温め prefix-warm が同じ関数を使う＝1文字もずれない）
-import { supabase } from "./supabase";
+import { supabase } from "./supabase-server";
 import { CUSTOMER_SUMMARY_SYSTEM } from "./customer-summary-prompt";
 
 export type CustomerSummaryPrefixInputs = { systemPrompt: string; nextActionRuleContents: string[] };

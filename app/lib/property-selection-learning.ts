@@ -6,7 +6,7 @@
 //
 // 反応評価（72h 待ち・申込中除外）とは独立して毎回実行する。旧実装は反応評価のバッチに相乗りしていたため、
 // 機能追加前の送信・申込に進んだ会話への送信（最良の正例）が学習から漏れていた。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { extractRecommendationReason, deriveCustomerProfileTags } from "@/app/lib/knowledge-utils";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";

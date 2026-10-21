@@ -2,7 +2,7 @@
 // 401修正: 以前は app/page.tsx が /api/auto-knowledge をAuthorizationヘッダなしでfetchしており
 // 常に401で学習が停止していた。HTTPを介さずサーバー側（save-reply-example PATCH の after()）から
 // この関数を直接呼ぶ構成に変更。/api/auto-knowledge ルート（cron/手動用）も同じ関数を使う。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
 
 const STATE_NORMALIZE: Record<string, string> = {

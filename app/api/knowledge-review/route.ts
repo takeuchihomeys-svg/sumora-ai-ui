@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { deactivatePromptRule } from "@/app/lib/knowledge-promote";
 
 // GET: hypothesis ナレッジ一覧（手動承認待ち）

@@ -4,7 +4,7 @@
 // 2026-09-24 竹内「紐づいているお客さんで LINE のチャット一覧のような UI。判断したのが会話風に送られる形。DeepSeek 側は左・スタッフは右」
 import { chooseDetailRowIds, type LightPickupRow } from "@/app/lib/pickup-detail-window";
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { toPickupHandoffItem } from "@/app/lib/property-pickups";
 import { orderByRequestedIds } from "@/app/lib/sent-image-order";
 import { waitUntil } from "@vercel/functions";

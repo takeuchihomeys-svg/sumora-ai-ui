@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { maskForEmbedding } from "@/app/lib/pii-mask";
 import { sanitizeExampleFields } from "@/app/lib/example-pii-guard";
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import crypto from "crypto";
 import { CLEAR_MANUAL_UPDATE_DAYS } from "@/app/lib/search-update-days";
 import { handleTodoGroupReply, todoListGroupId } from "@/app/lib/staff-todo-reply-server";

@@ -1,5 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { resolveScreeningSync } from "@/app/lib/conversation-status";
 import webpush from "web-push";
 import Anthropic from "@anthropic-ai/sdk";

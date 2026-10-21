@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 
 const TASK_LABEL: Record<string, string> = {

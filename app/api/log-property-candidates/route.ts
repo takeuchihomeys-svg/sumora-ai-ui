@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { enrichCandidate, clipRawForStorage, FACTS_VERSION } from "@/app/lib/candidate-facts";
 
 const CORS = {

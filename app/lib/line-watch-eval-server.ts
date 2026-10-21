@@ -5,6 +5,7 @@
 //                            （updated_at は触らない＝1段目の「控えの様子」はトリガーの書き込みだけを数える）
 //   buildLineWatchDailyReport … 毎日のまとめ（場面ごとの一致率・最終チェックの段ごと・返信遅れ・約束・カレンダー C1〜C7・検索・👍✋）
 // LLM なし。送信・AIX・会話の表には一切書かない。
+import { screeningAdminSupabaseKey } from "@/app/lib/supabase-server-key";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@supabase/supabase-js";
 import { pickJudgeDraft, JUDGE_VERSION, type WindowMsg, type WindowPress, type Verdict, type VerdictDetail } from "./line-watch-judge";
@@ -205,7 +206,7 @@ type StatRow = StatTurn & { final_check: unknown; staff_first_at: string | null;
 
 /** 申込ツールの DB（読むだけ）。環境変数が無い手元では null */
 function screeningClient(): SupabaseClient | null {
-  const url = process.env.SCREENING_ADMIN_SUPABASE_URL, key = process.env.SCREENING_ADMIN_SUPABASE_ANON_KEY;
+  const url = process.env.SCREENING_ADMIN_SUPABASE_URL, key = screeningAdminSupabaseKey();
   return url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
 }
 

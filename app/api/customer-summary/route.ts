@@ -4,7 +4,7 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 // 2026-09-29 API 費用の調査: 要約の Sonnet（7日で198回・$4.8）が llm_usage_logs で名前なしだった → 名札と会話 ID だけ付ける（動きは変えない）
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 // 成約パターンの RAG は戦略の層と共通（2026-10-13・app/lib/summary-winning-patterns.ts へ移した・中身は同じ）
 import { fetchWinningPatterns } from "@/app/lib/summary-winning-patterns";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）

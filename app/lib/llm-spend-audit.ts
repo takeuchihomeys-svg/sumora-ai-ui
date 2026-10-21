@@ -90,7 +90,7 @@ export function summarizeLlmSpend(rows: SpendRow[], opts: { days?: number; now?:
 
 /** サーバー: llm_usage_logs の 2×days 日分を id の順にページで読む（必要な列だけ） */
 export async function fetchLlmSpend(opts: { days?: number; now?: number } = {}): Promise<LlmSpendReport> {
-  const { supabase } = await import("@/app/lib/supabase");
+  const { supabase } = await import("@/app/lib/supabase-server");
   const days = opts.days ?? 7;
   const now = opts.now ?? Date.now();
   const prevIso = new Date(now - 2 * days * 86400_000).toISOString();

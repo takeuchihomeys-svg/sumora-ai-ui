@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { analyzeClosedConversation, type ClosedOutcome } from "@/app/lib/analyze-closed-conversation";
 import { loadBlockedItems, recordAttemptFailure } from "@/app/lib/llm-job-attempts";

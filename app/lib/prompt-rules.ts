@@ -1,4 +1,4 @@
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import {
   formatPromptRuleSections, promptRulesSafetyTop, promptRuleMatchesConditions, dedupePromptRules, promptRuleNotExcluded, orderRulesForInjection, promptRulesOrderV2, PROMPT_RULE_V2_MIN_PRIORITY,
   type PromptRuleRow, type PromptRuleConditions,

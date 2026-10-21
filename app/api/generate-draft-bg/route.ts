@@ -1,3 +1,4 @@
+import { serverSupabaseKey } from "@/app/lib/supabase-server-key";
 import { manYen } from "@/app/lib/man-yen";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -10,7 +11,7 @@ export const maxDuration = 60;
 function getDb() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    serverSupabaseKey()!,
   );
 }
 

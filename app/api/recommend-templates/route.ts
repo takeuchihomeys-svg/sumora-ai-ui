@@ -14,7 +14,7 @@
 // エラー時は { ok: false, recommendations: [] } を返す（UI側はおすすめなし表示にフォールバック）
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import Anthropic from "@anthropic-ai/sdk";
 // 2026-09-29 API 費用の調査: テンプレのおすすめの Sonnet（7日で57回・$1.5・キャッシュなし）が名前なしだった → 名札だけ付ける
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";

@@ -1,7 +1,7 @@
 // app/lib/image-wants-server.ts
 // 画像で確かめられる希望（image-wants.ts）の材料を DB から集める: 条件欄・お客様の会話（120日）・物件オススメの訴求点。
 // 2026-09-24 竹内「画像からしか分からない事を会話から読み取って抜けている部分を入れる。物件オススメで訴求している部分も見れば分かる」
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { maskPII } from "@/app/lib/pii-mask";
 import { extractImageWants, dedupeWantsByTopic, type ImageWant } from "@/app/lib/image-wants";
 

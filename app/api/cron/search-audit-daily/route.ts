@@ -4,7 +4,7 @@
 //   LLM は呼ばない（数えるだけ・app/lib/search-audit-daily.ts）。結果は cron_run_logs.result_json に残す。LINE には送らない。
 //   ?dry=1 … 記録しない ／ ?date=2026-09-30 … その日の分を作り直す
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildDailyDigest, digestLines, type DailyAuditRow } from "@/app/lib/search-audit-daily";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 

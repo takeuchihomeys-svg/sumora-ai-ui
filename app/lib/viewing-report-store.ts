@@ -2,7 +2,7 @@
 // 内覧の内容（viewing_history.viewing_report）を書く・読む。形の整え・プロンプトの文は viewing-report.ts（純関数）。
 // 2026-09-15 竹内（yasuki 事例）: 内覧後の挨拶の画面で入れた「内覧に行ったスタッフが分かったこと」を、その日の内覧の記録に書き、実施済みにする
 //   （旧: 内覧前の挨拶・待ち合わせで作った「予定」は、内覧後に何をしても予定のまま。日付が過ぎると「日付経過（実施は未確認）」で閉じていた）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { jstYmd } from "./jst-date";
 import { normalizeViewingReport, pickViewingRowForReport, type ViewingReport } from "./viewing-report";
 

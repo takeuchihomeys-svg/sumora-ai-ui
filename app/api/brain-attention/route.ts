@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { loadAttentionMap } from "@/app/lib/brain-attention-server";
 
 // お客様一覧の画面（app/customers/page.tsx）の「要対応」と並びの元（読むだけ）。

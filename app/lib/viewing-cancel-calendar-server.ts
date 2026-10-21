@@ -4,8 +4,9 @@
 // 2026-09-30 竹内さん: 呼ぶのはブレインが内覧の流れを解いた所（brain-core）。応答は待たせない（after）。
 //   二重に走っても同じ結果（もう無ければ何もしない）。消す前の行の中身を calendar_event_deletions に残してから消す
 //   （残せなかった時は消さない＝戻せない削除をしない）。VIEWING_CANCEL_AUTO=off で止まる
+import { screeningAdminSupabaseKey } from "@/app/lib/supabase-server-key";
 import { createClient } from "@supabase/supabase-js";
-import { supabase } from "./supabase";
+import { supabase } from "./supabase-server";
 import type { LedgerInput } from "./action-ledger";
 import { screeningTaskIdFor, isValidSyncKey } from "./screening-calendar-sync";
 import { decideViewingCancelFromLedgerInput, pickViewingEventsToCancel, viewingCancelAutoEnabled, type CalEventRow } from "./viewing-cancel-calendar";
@@ -13,7 +14,7 @@ import { decideViewingCancelFromLedgerInput, pickViewingEventsToCancel, viewingC
 /** 申込ツールのカレンダーの行（この予定から入れた dt_sumora_cal_<id>）を消す。/api/daily-tasks の DELETE ?sync_key= と同じ処理。鍵が無い環境では何もしない */
 export async function deleteScreeningTaskBySyncKey(key: string | number): Promise<{ ok: boolean; skipped?: string; error?: string }> {
   if (!isValidSyncKey(key)) return { ok: false, error: "invalid sync_key" };
-  const url = process.env.SCREENING_ADMIN_SUPABASE_URL; const anon = process.env.SCREENING_ADMIN_SUPABASE_ANON_KEY;
+  const url = process.env.SCREENING_ADMIN_SUPABASE_URL; const anon = screeningAdminSupabaseKey();
   if (!url || !anon) return { ok: false, skipped: "no_screening_env" };
   const { error } = await createClient(url, anon).from("daily_tasks").delete().eq("id", screeningTaskIdFor(key));
   return error ? { ok: false, error: error.message } : { ok: true };

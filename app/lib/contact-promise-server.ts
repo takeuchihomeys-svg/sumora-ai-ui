@@ -2,7 +2,7 @@
 // 2026-10-08 竹内さん「連絡する期間を約束したらカレンダーに入れる…その日に連絡するように約束後カレンダーに組み込む」
 //   決まりは contact-promise.ts（純関数）。ここは DB の読み書きだけ。戻す: CONTACT_PROMISE_CALENDAR=off
 //   申込ツール（screening-admin）のカレンダーへの連動は内覧の予定だけの決まり（screening-calendar-sync.shouldSyncViewingToScreening）なので、ここでは入れない（竹内さんに確認中）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { parseContactPromise, contactEventRow, planContactPromiseSync, CONTACT_DATE_MARK_RE } from "@/app/lib/contact-promise";
 
 export function contactPromiseCalendarOn(): boolean {

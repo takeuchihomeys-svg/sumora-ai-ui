@@ -1,3 +1,4 @@
+import { serverSupabaseKey } from "@/app/lib/supabase-server-key";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
@@ -122,7 +123,7 @@ const REINS_LINE_MAP: Record<string, string> = {
 function getDb() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    serverSupabaseKey()!,
   );
 }
 

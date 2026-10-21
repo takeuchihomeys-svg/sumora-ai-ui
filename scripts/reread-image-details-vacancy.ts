@@ -12,7 +12,7 @@ const arg = (k: string, d: string) => (process.argv.find((a) => a.startsWith(`--
 async function main() {
   const { readPropertyImageDetailByTranscript } = await import("../app/lib/property-image-read");
   const { loadDeepseekCutoff, isAfterCutoff } = await import("../app/lib/post-apply");
-  const { supabase } = await import("../app/lib/supabase");
+  const { supabase } = await import("../app/lib/supabase-server");
   const rows: Array<{ image_url: string; conversation_id: string | null; lines: unknown }> = [];
   for (let f = 0; ; f += 1000) {
     const { data, error } = await sb.from("image_details").select("image_url, conversation_id, lines").gte("read_at", arg("since", "2026-10-13T00:15:00Z")).range(f, f + 999);

@@ -294,7 +294,7 @@ async function notifyContradiction(
   contradiction: string,
   messageText: string
 ): Promise<void> {
-  const { supabase } = await import("@/app/lib/supabase");
+  const { supabase } = await import("@/app/lib/supabase-server");
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
   let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
   if (!groupId) {
@@ -322,7 +322,7 @@ export async function runConditionBrain(
   convId: string,
   fullMessageText: string
 ): Promise<ConditionUpdates | null> {
-  const { supabase } = await import("@/app/lib/supabase");
+  const { supabase } = await import("@/app/lib/supabase-server");
   // 2026-09-30 竹内（黒明様の事例）「お客さんの条件か、ただ物件 SUUMO 等のサイト送ってきているだけか」: 入口の見分け（condition-source-gate）。
   //   物件の問い合わせ・物件のスクショ・書類だけの発言では条件を更新しない。同居の文は条件の部分だけを LLM に渡す
   //   （この経路は送った物件の一覧も文脈に持つので、根拠の無い駅を足さないよう出口の手前でも関所に当てる）

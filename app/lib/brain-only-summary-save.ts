@@ -1,7 +1,7 @@
 // ブレインの戦略の層（と全体の分析）がお客様の要約を保存する1か所（2026-10-13・純関数は brain-only-summary.ts）
 //   前の JSON の our_actions・inspection・estimate を残す／予測の記録（next_action_logs・winning_pattern_logs）を書く（旧は /api/customer-summary が書いていた）
 //   BRAIN_ONLY_SUMMARY=off の時は旧と同じ（JSON をそのまま上書き・予測の記録は書かない＝要約の route が書く）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { brainOnlySummaryEnabled, mergeStrategySummaryJson, summaryPredictionRows } from "@/app/lib/brain-only-summary";
 

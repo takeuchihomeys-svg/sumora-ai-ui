@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { CLEAR_MANUAL_UPDATE_DAYS } from "@/app/lib/search-update-days";
 

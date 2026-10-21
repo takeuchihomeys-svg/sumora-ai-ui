@@ -9,7 +9,7 @@
 //   切替 STAFF_TODO_LIST（既定 on）。off にすると送らず、announce-aix-actions が元の AIX要対応リスト・announce-hot-customers がターゲットを送る。
 //   ?preview=1 … 送らずに文だけ返す（切替に関係なく・読むだけ・片付けもしない）。&at=<ISO> でその時点の一覧
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { loadStaffTodoList } from "@/app/lib/staff-todo-list-server";
 import { renderStaffTodoList, staffTodoListEnabled, TODO_LIST_MAX_CHARS, STAFF_TODO_COOLDOWN_MS } from "@/app/lib/staff-todo-list";
 import { pushToHanbancyoGroupWithId, dismissStaleAixActionItems, AIX_NOTICE_FRESH_MS } from "@/app/lib/aix-action-items";

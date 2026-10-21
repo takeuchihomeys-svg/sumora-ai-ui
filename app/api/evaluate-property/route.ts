@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { loadDeepseekCutoff, NO_CUTOFF, type DeepseekCutoff } from "@/app/lib/post-apply";
 import { keepIfMadeAfter, keepBrainMeta } from "@/app/lib/deepseek-cut";

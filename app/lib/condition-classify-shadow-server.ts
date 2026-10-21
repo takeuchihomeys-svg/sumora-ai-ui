@@ -5,7 +5,7 @@
 //
 // ⚠ 個人情報: 会話の文は pii-pseudonym（createMasker）で仮名化してから渡す。申込以降（DRAFT_SKIP_STATUSES）の会話は呼ばない。
 //   鍵（TYPESAFE_API_KEY）が無ければ何もしない。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { isJevEnabled } from "@/app/lib/jev-client";
 import { isPostApplyStatus } from "@/app/lib/llm-alt-provider";
 import { createMasker } from "@/app/lib/pii-pseudonym";

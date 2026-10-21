@@ -1,7 +1,7 @@
 // app/lib/draft-fact-grounding-server.ts — 下書きの事実の照らし（draft-fact-grounding.ts）の材料のうち、会話の本文に出ない物を DB から読む（読むだけ）
 // 2026-10-09: 送った資料の画像の名前・号室（本文は「[画像]」だけ）・AIX の記録の物件名・見積書の記録・内覧の予定・カレンダー・会社の事実。
 //   scripts/audit-draft-fact-grounding.ts の材料と同じ形（監査で線を引いた材料と本番の材料をそろえる）。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { COMPANY_FACTS } from "@/app/lib/company-facts";
 import { extractDraftFacts, findUngroundedFacts, groundingKinds, aixForUngroundedFact, groundFactsText, unclearUnitKinds, dropUnclearUnitLines, type DraftFactKind } from "@/app/lib/draft-fact-grounding";
 

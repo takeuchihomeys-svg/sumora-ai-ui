@@ -2,7 +2,7 @@
 // 2026-10-06 ⑫ 竹内さん（R）: LINE の言葉で自動で変えた検索の条件を、画面で1押しで戻せるように（一番新しい変更の束を取り消す）。
 //   決め方は condition-restore.planUndoLatestChange（今の値が後で変わっている列・戻す先が空の列は触らない）。戻した事も履歴に残す（書き手 undo）
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { undoLatestConditionChange } from "@/app/lib/condition-restore-server";
 import { inferAreaMode } from "@/app/lib/line-webhook-text";
 

@@ -1,8 +1,9 @@
+import { screeningAdminSupabaseKey } from "@/app/lib/supabase-server-key";
 import { manYen } from "./man-yen";
 import Anthropic from "@anthropic-ai/sdk";
 import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { buildSentProps, buildSentPropsText } from "@/app/lib/sent-props-text";
@@ -6972,7 +6973,7 @@ async function createCalendarEventFromBrainAction(
 
     // 申込ツール（screening-admin daily_tasks）にも同期（取りこぼし防止）
     const screeningUrl = process.env.SCREENING_ADMIN_SUPABASE_URL;
-    const screeningKey = process.env.SCREENING_ADMIN_SUPABASE_ANON_KEY;
+    const screeningKey = screeningAdminSupabaseKey();
     if (screeningUrl && screeningKey) {
       const EVENT_EMOJI: Record<string, string> = {
         viewing: "🔍", application: "📋", phone: "📞", photo: "📸",
