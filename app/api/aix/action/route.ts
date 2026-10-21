@@ -8,7 +8,7 @@ import { buildMustSendNote, mustMoveInLabel, normalizeRequirementStrengths } fro
 import { AsyncLocalStorage } from "node:async_hooks";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（AIX キャッシュ点検）: system を「共通 prefix（1h）→ 準静的（1h）→ 経路固有（5m）→ 動的（なし）」のブロックに分ける
-import { altPiiSignal, altPiiSignalReapply, altPiiSignalReapplyValues, altReapplyGateEnabled } from "@/app/lib/alt-pii-gate";
+import { altPiiSignal, altPiiSignalReapply, altPiiSignalReapplyValues, altReapplyGateEnabled, maskInsteadEnabled, maskApplicationValuesForAlt, altPiiValuesRemain } from "@/app/lib/alt-pii-gate";
 import { buildSystemBlocks, systemStaticLength, splitSharedPrefix, llmMetaHeaderValue, LLM_META_HEADER_ACTION, LLM_META_HEADER_CONVERSATION, type SystemSpec, type SystemSpecBlocks, type SystemTtl } from "@/app/lib/aix-system-blocks";
 import { supabase } from "@/app/lib/supabase-server";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
@@ -53,7 +53,7 @@ import { willRouteAlt, readAltConfig } from "@/app/lib/llm-alt-provider";
 import { screeningPiiAixEnabled, screeningPiiPinsAction, screeningPiiForcesClaude } from "@/app/lib/screening-sensitive";
 import { screeningSensitiveForConversation } from "@/app/lib/screening-sensitive-server";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
-import { loadPostApplyFacts, resolvePostApply, deepseekPostApply, deepseekSafeCutoff, cutoffMs, cutoffMarkOf, formatCutoffMark, filterAfterCutoff, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, resolvePostApply, resolveDeepseekEntrance, entranceMarkOf, cutoffMs, formatCutoffMark, filterAfterCutoff, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
 import { keepBrainMeta } from "@/app/lib/deepseek-cut";
 import { runInDeepseekScope, setDeepseekScope, onceAsync } from "@/app/lib/deepseek-scope";
 // 2026-09-27 竹内「申込中の部分はクロードに切り替えて要約して…DeepSeek に渡す」: 申込期間のまとめ（個人情報なし・検査済み）
@@ -994,6 +994,8 @@ type AixReqCtx = {
    */
   cutoff?: DeepseekCutoff;
   cutActive?: boolean;
+  /** 2026-10-21（ec4d5990）2番手で申込中（並行で探す）: 線は引かず出口で申込情報の値を伏せる（印 masked） */
+  masked?: boolean;
   /** 出口に渡す「判定を通った印」（ヘッダ x-sumora-llm-deepseek-cutoff） */
   cutMark?: CutoffMark;
 };
@@ -1050,8 +1052,11 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
       // 2026-09-26 竹内（申込中は DeepSeek に渡さない・戻したら切り替え以降だけ）: 戻した会話（movedBack）は丸ごと Claude のまま、を
       //   「切り替えた時刻（deepseek_cutoff_at）より後だけ渡す」に置き換えた（generate-reply と同じ・下の cutActive で履歴と派生データを切る）
       // 2026-10-21（023ec7bd）印だけ残って戻した会話は申込以降に数えず時刻の線で切る（post-apply.ts deepseekPostApply）
-      ctx.postApply = deepseekPostApply(facts);
-      ctx.cutoff = deepseekSafeCutoff(facts, { reapply: true });
+      // 2026-10-21（ec4d5990）2番手で申込中（並行で探す）は線を引かず印 masked（出口で申込フォームの値を伏せてから渡す・post-apply.resolveDeepseekEntrance）
+      const entrance = resolveDeepseekEntrance(facts);
+      ctx.postApply = entrance.altPostApply;
+      ctx.cutoff = entrance.cutoff;
+      ctx.masked = entrance.masked;
       if (ctx.cutoff === null) ctx.postApply = true; // 線が引けない＝渡さない（fail-closed）
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "aix:post-apply", conversationId, reason: r.reason, action }));
     }
@@ -1066,7 +1071,7 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
     const goesAlt = willRouteAlt(action, { postApply: ctx.postApply }) || (shouldRouteVisionAlt(action) && !ctx.postApply);
     ctx.cutActive = goesAlt && line !== null && line !== NO_CUTOFF;
     // Claude に行く時も、線がある会話は blocked にしておく（名札の無い呼び出しが DeepSeek に回らないように）
-    ctx.cutMark = ctx.postApply || (line !== NO_CUTOFF && !ctx.cutActive) ? { kind: "blocked" } : cutoffMarkOf(ctx.cutoff ?? null);
+    ctx.cutMark = ctx.postApply || (line !== NO_CUTOFF && !ctx.cutActive) ? { kind: "blocked" } : entranceMarkOf(ctx.cutoff ?? null, ctx.masked === true);
     const cutIso = ctx.cutActive && conversationId && typeof ctx.cutoff === "string" ? ctx.cutoff : null;
     setDeepseekScope({
       conversationId,
@@ -1222,17 +1227,27 @@ async function callClaudeVision(system: SystemSpec, content: unknown[], action: 
   const visionCutMark = aixRequestCtx.getStore()?.cutMark;
   // 2026-10-21 確かめ役: この経路は出口の網（llm-alt-provider）を通らないので、線のある呼び出し（cut＝申込から戻った会話）は
   //   system（会話の履歴・材料が入る）と文の部分に個人の値・申込情報の名残があれば Claude（alt-pii-gate・止める LLM_ALT_REAPPLY_GATE=off）
-  const visionPii = visionCutMark?.kind === "cut" && altReapplyGateEnabled(process.env)
-    ? (() => {
-      const sysText = systemBlocks.map((b) => b.text).join("\n\n");
-      const contentText = content.map((c) => (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : "")).join("\n");
-      return altPiiSignal(`${sysText}\n${contentText}`) ?? altPiiSignalReapplyValues(sysText) ?? altPiiSignalReapply(contentText);
-    })()
-    : null;
+  // 2026-10-21（ec4d5990・414dc9d4）印 masked（2番手で申込中・並行で探す）も同じ網。網に当たったら Claude に戻す前に、まず値を伏せて渡す（伏せきれない時だけ Claude）。
+  //   伏せた system・文の部分は DeepSeek に渡す時だけ使う（Claude には元のまま）。止める REAPPLY_MASK_INSTEAD=off
+  const visionNet = (visionCutMark?.kind === "cut" || visionCutMark?.kind === "masked") && altReapplyGateEnabled(process.env);
+  const textOfPart = (c: unknown): string => (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : "");
+  let altSystemBlocks = systemBlocks;
+  let altContent = content;
+  let visionPii: string | null = null;
+  if (visionCutMark?.kind === "masked" && !visionNet) visionPii = "印 masked だが出口の網が止まっている";
+  else if (visionNet && maskInsteadEnabled(process.env)) {
+    altSystemBlocks = systemBlocks.map((b) => ({ ...b, text: maskApplicationValuesForAlt(b.text, { fieldStart: "customer" }) }));
+    altContent = content.map((c) => (textOfPart(c) ? { ...(c as object), text: maskApplicationValuesForAlt(textOfPart(c)) } : c));
+    visionPii = altPiiValuesRemain(altSystemBlocks.map((b) => b.text).join("\n\n")) ?? altPiiValuesRemain(altContent.map(textOfPart).join("\n"), { docs: true });
+  } else if (visionNet) {
+    const sysText = systemBlocks.map((b) => b.text).join("\n\n");
+    const contentText = content.map(textOfPart).join("\n");
+    visionPii = altPiiSignal(`${sysText}\n${contentText}`) ?? altPiiSignalReapplyValues(sysText) ?? altPiiSignalReapply(contentText);
+  }
   if (visionPii) console.log(JSON.stringify({ tag: "aix:vision-alt-skipped-pii", action, why: visionPii }));
   if (!visionPii && !opts.forceClaude && shouldRouteVisionAlt(action) && !aixRequestCtx.getStore()?.postApply && !!visionCutMark && visionCutMark.kind !== "blocked") {
     const altT0 = Date.now();
-    const alt = await callVisionAlt(systemBlocks, content);
+    const alt = await callVisionAlt(altSystemBlocks, altContent);
     if (alt) {
       // DeepSeek は区切りの指定が要らない**自動の前置きキャッシュ**。
       //   buildSystemBlocks が shared → semiStatic → routeStatic → dynamic の順で並べるので、

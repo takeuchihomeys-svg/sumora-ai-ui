@@ -27,6 +27,7 @@ import { readDecideGaps, buildDecideGapNote, buildMindsetReplyLinesNote, decideG
 import { readClosingGaps } from "@/app/lib/closing-target";
 import { buildMoveTableNote, moveTableMode } from "@/app/lib/mindset-move-table";
 import { REAPPLY_MEMO_ID, reapplyMemoText, type ReturnPattern } from "@/app/lib/reapply-customer";
+import { PARALLEL_MEMO_ID, PARALLEL_MEMO_ON, PARALLEL_MEMO_OFF } from "@/app/lib/parallel-second";
 
 /**
  * 2026-10-08 竹内さん「メモの読み取りは影で1週間」: DeepSeek が読んだ行（origin=llm）は保存と画面だけ・ブレインと返信には渡さない。
@@ -41,8 +42,10 @@ function forNote(memo: StoredMemo): StoredMemo {
   return memoLlmNoteEnabled() ? m : { ...m, items: m.items.filter((x) => x.origin === "staff") };
 }
 /** 申込から戻った理由の行（スタッフが選ぶ・REAPPLY_MEMO_ID）はメモの普通の行・注記に出さない（札と申込歴ありの材料で出す＝二重にしない） */
+//   2026-10-21（ec4d5990）2番手で申込中（並行で探す）のスタッフの選択（PARALLEL_MEMO_ID）も同じ（札と材料で出す）
+const STATE_MEMO_IDS: ReadonlySet<string> = new Set([REAPPLY_MEMO_ID, PARALLEL_MEMO_ID]);
 function withoutReapplyItem(memo: StoredMemo): StoredMemo {
-  return memo.items.some((x) => x.id === REAPPLY_MEMO_ID) ? { ...memo, items: memo.items.filter((x) => x.id !== REAPPLY_MEMO_ID) } : memo;
+  return memo.items.some((x) => STATE_MEMO_IDS.has(x.id)) ? { ...memo, items: memo.items.filter((x) => !STATE_MEMO_IDS.has(x.id)) } : memo;
 }
 
 /** 申込の書類・個人の値の通（決め手の残りを読まない） */
@@ -253,6 +256,21 @@ export async function setReapplyPatternMemo(conversationId: string, pattern: Ret
   const rest = memo.items.filter((x) => x.id !== REAPPLY_MEMO_ID);
   const items = pattern === null ? rest : [...rest, {
     id: REAPPLY_MEMO_ID, kind: "circumstance" as const, text: reapplyMemoText(pattern), property: null, sourceAt: nowIso, sourceQuote: null,
+    sourceBy: "staff" as const, certainty: "sure" as const, expiresAt: null, origin: "staff" as const, locked: true, retiredAt: null, updatedAt: nowIso,
+  }];
+  return { ok: await saveCustomerMemo(conversationId, { ...memo, items }) };
+}
+
+/**
+ * 2026-10-21 竹内さんの決定（ec4d5990）: 2番手で申込中（並行で探す）をスタッフが選ぶ（自動の読み違いを直す）。メモの1行（id=PARALLEL_MEMO_ID・手で付けた印）。
+ *   on=true（並行で探している）／false（違う）／null（外して自動の読みに戻す）
+ */
+export async function setParallelSecondMemo(conversationId: string, on: boolean | null): Promise<{ ok: boolean }> {
+  const memo = await loadCustomerMemo(conversationId);
+  const nowIso = new Date().toISOString();
+  const rest = memo.items.filter((x) => x.id !== PARALLEL_MEMO_ID);
+  const items = on === null ? rest : [...rest, {
+    id: PARALLEL_MEMO_ID, kind: "circumstance" as const, text: on ? PARALLEL_MEMO_ON : PARALLEL_MEMO_OFF, property: null, sourceAt: nowIso, sourceQuote: null,
     sourceBy: "staff" as const, certainty: "sure" as const, expiresAt: null, origin: "staff" as const, locked: true, retiredAt: null, updatedAt: nowIso,
   }];
   return { ok: await saveCustomerMemo(conversationId, { ...memo, items }) };

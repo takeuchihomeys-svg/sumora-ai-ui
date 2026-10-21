@@ -11,7 +11,8 @@ import { newerCustomerMessageAfter, revertDraftIfSupersededAfterSave, SUPERSEDED
 import { brainMissedCustomerMessage } from "@/app/lib/brain-meta-restore";
 import { BG_ASYNC_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
 // 2026-09-23 竹内「申込中は…ここ文生成しなくて大丈夫」: 申込以降の判定は status だけでなく記録（申込へ押下・本人確認書類・戻し）で
-import { loadPostApplyFacts, resolvePostApply, postApplyDraftSkip } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, resolvePostApply, postApplyDraftSkip, parallelSecondActive } from "@/app/lib/post-apply";
+import { PARALLEL_STATUSES, parallelSecondEnabled, effectiveStatusForParallel } from "@/app/lib/parallel-second";
 // 2026-09-09 Fable5: 複数通の結合は "\n" ではなく MSG_SEP（1通内の改行を「N通」に分割しない）
 import { MSG_SEP } from "@/app/lib/reply-context";
 // 2026-09-21 竹内「文締めることなくて完全にしまってたら返信しなくて大丈夫」
@@ -364,7 +365,18 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: true, skipped: "already_has_draft" });
   }
-  if (BG_ASYNC_SKIP_STATUSES.has(conv.status as string)) { logSkip("status", { status: conv.status }); return NextResponse.json({ ok: true, skipped: "status" }); }
+  // 2026-10-21 竹内さんの決定（ec4d5990）: 2番手で申込中（並行で探す）と明示的に決まった会話だけは status が申込中でも止めず、物件提案中として作る
+  //   （申込中の他の会話は今まで通り止める・読めなければ止める・parallel-second.ts）。戻す REAPPLY_PARALLEL_2ND=off
+  let parallelState: string | null = null;
+  if (BG_ASYNC_SKIP_STATUSES.has(conv.status as string)) {
+    let par = false;
+    if (PARALLEL_STATUSES.has(conv.status as string) && parallelSecondEnabled()) {
+      try { par = parallelSecondActive(await loadPostApplyFacts(db, convId)); } catch { par = false; }
+    }
+    if (!par) { logSkip("status", { status: conv.status }); return NextResponse.json({ ok: true, skipped: "status" }); }
+    parallelState = effectiveStatusForParallel(conv.status as string, true);
+    console.log(JSON.stringify({ tag: "bg-async:parallel-2nd", conversationId: convId, status: conv.status }));
+  }
   // 2026-09-23 竹内「申込中は別のツールで文生成しているので、ここ文生成しなくて大丈夫なところとなる」:
   //   status は27.4%の会話で遅れるので、申込へ押下・本人確認書類・スタッフの印も見る（否決で戻したら時間順で解く。app/lib/post-apply.ts）。
   //   記録が読めなければ止めない（status の判定は上で済んでいる）
@@ -725,7 +737,8 @@ export async function POST(req: NextRequest) {
           .eq("conversation_id", convId).eq("sender", "staff").not("text", "is", null).limit(20);
         staffEngaged = staffHasEngaged(((anyStaff ?? []) as Array<{ text: string | null }>).map((m) => ({ sender: "staff", text: m.text })));
       }
-      const effectiveState = firstReplyStateOrNull(conv.status as string, staffEngaged) ?? (conv.status as string);
+      const baseState = parallelState ?? (conv.status as string);
+      const effectiveState = firstReplyStateOrNull(baseState, staffEngaged) ?? baseState;
 
       type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string; initial_cost_limit?: number } | null;
       const pcData = pc as PC;

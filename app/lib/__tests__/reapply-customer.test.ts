@@ -112,12 +112,12 @@ async function main() {
       eq(staffPatternOf([{ id: "s-1", text: reapplyMemoText("switched") }]), null);
     });
     await it("札は短い形", () => {
-      eq(reapplyBadgeText({ pattern: "screening_denied" }), "申込歴あり（再探し）・①審査否決");
-      eq(reapplyBadgeText({ pattern: "unknown" }), "申込歴あり（再探し）・理由不明");
+      eq(reapplyBadgeText({ pattern: "screening_denied" }), "【申込歴あり】①審査否決");
+      eq(reapplyBadgeText({ pattern: "unknown" }), "【申込歴あり】理由不明");
     });
     await it("ブレインの材料にパターンと次の一手が入り、個人の値は入らない", () => {
       const n = buildReapplyBrainNote({ reapply: true, returnedAt: T("2026-10-10T00:00:00Z"), pattern: "lost_to_first", source: "auto" }, Date.parse("2026-10-12T00:00:00Z"));
-      if (!/申込歴あり（再探し）/.test(n) || !/1番手が審査通過/.test(n) || !/似た物件をすぐ出す/.test(n) || !/戻って2日/.test(n)) throw new Error(n);
+      if (!/^【申込歴あり】/.test(n) || !/再探し/.test(n) || !/1番手が審査通過/.test(n) || !/似た物件をすぐ出す/.test(n) || !/戻って2日/.test(n)) throw new Error(n);
       eq(altPiiSignal(n), null);
     });
   });

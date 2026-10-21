@@ -16,7 +16,7 @@ import { brainHotDrop, FOLLOWUP_AIX_TYPES, ignoredFollowUpStreak, silentDaysSett
 import { screeningSummaryLine, targetSummaryLine } from "@/app/lib/target-list-format";
 import { contactDateOfNotes, contactDue } from "@/app/lib/contact-promise";
 import { loadReapplyStates, loadReapplyInfo, type ReapplyConvRow } from "@/app/lib/reapply-customer-server";
-import { RETURN_PATTERN_LABEL, RETURN_PATTERN_SHORT, type ReapplyInfo } from "@/app/lib/reapply-customer";
+import { RETURN_PATTERN_LABEL, RETURN_PATTERN_SHORT, REAPPLY_MARK_TEXT, type ReapplyInfo } from "@/app/lib/reapply-customer";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 連絡の約束の日（2026-10-08 竹内さん「その日に連絡するように約束後カレンダーに組み込む」）
@@ -320,12 +320,12 @@ export async function loadBrainTargets(db: Db = supabase, opts: { sinceDays?: nu
     const mv = d?.title.match(/（入居([^）]+)）/)?.[1];
     t.summaryLine = [`連絡の約束の日${d ? ` ${Number(d.ymd.slice(5, 7))}/${Number(d.ymd.slice(8, 10))}` : ""}${mv ? `・入居${mv}` : ""}`, t.summaryLine].filter(Boolean).join("、");
   }
-  // 申込歴あり（再探し）の人は一言の頭に「🔥申込歴あり・戻った理由」（理由不明なら理由は書かない）
+  // 申込歴あり（再探し）の人は一言の頭に「【申込歴あり】戻った理由」（理由不明なら理由は書かない・414dc9d4 で 🔥 から【】に）
   for (const t of out) {
     const ra = reapplyBy.get(t.conversationId);
     if (!ra) continue;
-    const head = `🔥申込歴あり${ra.pattern !== "unknown" ? `・${RETURN_PATTERN_SHORT[ra.pattern]}` : ""}`;
-    t.reason = `申込歴あり（再探し）・${RETURN_PATTERN_LABEL[ra.pattern]}`;
+    const head = `${REAPPLY_MARK_TEXT}${ra.pattern !== "unknown" ? RETURN_PATTERN_SHORT[ra.pattern] : ""}`;
+    t.reason = `${REAPPLY_MARK_TEXT}${RETURN_PATTERN_LABEL[ra.pattern]}`;
     t.summaryLine = [head, t.summaryLine].filter(Boolean).join("、");
     t.summary = [head, (t.summary ?? "").replace(/^審査落ち・切り替え、?/, "")].filter(Boolean).join("、");
   }

@@ -42,7 +42,8 @@
 
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { examplePiiReason } from "./example-pii-guard";
-import { altPiiSignal } from "./alt-pii-gate";
+import { altPiiSignal, altReapplyGateEnabled } from "./alt-pii-gate";
+import { resolveParallelSecond, staffParallelChoiceOf, staffParallelChoiceAt, parallelSecondEnabled, parallelSecondDeepseekEnabled, PARALLEL_STATUSES, PARALLEL_WINDOW_BEFORE_MS, PARALLEL_LOOKBACK_MS, type ParallelState } from "./parallel-second";
 
 export type PostApplyFacts = {
   status: string | null | undefined;
@@ -63,6 +64,13 @@ export type PostApplyFacts = {
   applicationFormAt?: string | null;
   /** フォームの記録が読めなかった（DeepSeek の線は渡さない側へ倒す・下書きの判定には効かない） */
   applicationFormUnreadable?: boolean;
+  /**
+   * 2026-10-21 竹内さんの決定（ec4d5990）: 2番手で申込中（並行で探す）と明示的に決まった会話（parallel-second.ts）。
+   *   loadPostApplyFacts が「今も申込中」の時だけ読む（読めなければ false＝今まで通り止める・Claude）
+   */
+  parallel2nd?: boolean;
+  /** 2番手で申込中になった時刻（スタッフの文・ピッカー・スタッフの選択。ISO・無ければ null）。DeepSeek の線に使う */
+  parallel2ndAt?: string | null;
 };
 
 /**
@@ -128,7 +136,62 @@ export function badgeMovedBackCore(f: PostApplyFacts): boolean {
 
 /** 下書きを止めるか（個人情報の線とは別）: 申込以降でも、印だけ残って戻した会話は止めない（Claude で作る） */
 export function postApplyDraftSkip(f: PostApplyFacts, env: Record<string, string | undefined> = process.env): boolean {
-  return resolvePostApply(f).postApply && !badgeOnlyMovedBack(f, env);
+  return resolvePostApply(f).postApply && !badgeOnlyMovedBack(f, env) && !parallelSecondActive(f, env);
+}
+
+// ═══ 2番手で申込中（並行で探す）（2026-10-21 竹内さんの決定 ec4d5990）═══════════════════════════════
+/**
+ * 並行の判定に入ってよい会話か（今も申込中・申込以降の先＝契約・成約ではない・印だけ残って戻した会話＝申込歴ありではない）。
+ *   ここに入らない会話は parallel2nd を読まない（止め方は今まで通り）
+ */
+export function parallelEligible(f: PostApplyFacts): boolean {
+  const s = (f.status ?? "").trim();
+  if (DRAFT_SKIP_STATUSES.has(s) && !PARALLEL_STATUSES.has(s)) return false;
+  if (!resolvePostApply(f).postApply) return false;
+  return !badgeMovedBackCore(f);
+}
+/** 2番手で並行して探している会話として扱うか（下書き・ブレインを止めない側）。明示的に決まった会話だけ・スイッチ REAPPLY_PARALLEL_2ND */
+export function parallelSecondActive(f: PostApplyFacts, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return f.parallel2nd === true && parallelSecondEnabled(env) && parallelEligible(f);
+}
+/**
+ * 2番手で並行の会話を DeepSeek に回すか（線より後を出口で伏せてから）。既定 off（REAPPLY_PARALLEL_DEEPSEEK=on の時だけ）。
+ *   出口の網（LLM_ALT_PII_GATE・LLM_ALT_REAPPLY_GATE）が止まっている時も渡さない（伏せる仕組みが動かない＝Claude のまま）。
+ */
+export function parallelSecondDeepseek(f: PostApplyFacts, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return parallelSecondActive(f, env) && parallelSecondDeepseekEnabled(env) && altReapplyGateEnabled(env);
+}
+
+/**
+ * 2番手で申込中（並行で探す）の会話の DeepSeek の線（申込の期間は丸ごと渡さない）。
+ *   2026-10-21 確かめ役: 線なし（全部）＋出口で伏せる形は、実データ（申込中・申込歴ありの会話78件の全履歴＋要約＋メモ）で伏せた後にも
+ *   お客様の現住所（丁目・番地・部屋番号）・生年月日（「・1990.12.19」「・昭和40年7/23」）・ファイル名の氏名（「_姓_名_給与明細」）・在籍証明の勤め先の法人名が残った。
+ *   → 申込歴ありと同じ時刻の線にする: 線＝申込の記録（申込へ押下・本人確認／収入の書類・記入済みフォーム）・2番手になった時刻・切り替え・戻しの遅い方。
+ *   線より後だけを渡し（出口は cut として伏せてから値の網・線より前のお客様の発言の網）、線より前（申込フォーム・書類の読み取り・保証人の話）は DeepSeek に出さない。
+ *   時刻が1つも無い・読めない時は null（Claude のまま）。
+ */
+export function parallelSecondCutoff(f: PostApplyFacts): DeepseekCutoff {
+  const vals = [f.applicationPushAt, f.idDocumentAt, f.applicationFormAt, f.parallel2ndAt, f.deepseekCutoffAt, f.statusManualBackAt];
+  for (const v of vals) if (v && ms(v) === null) return null;
+  if (f.applicationFormUnreadable) return null;
+  const ts = vals.map((v) => ms(v ?? null)).filter((x): x is number => x !== null);
+  if (!ts.length) return null;
+  return new Date(Math.max(...ts)).toISOString();
+}
+
+/**
+ * 返信生成・AIX の入口（出口の網を通る道）で DeepSeek をどう扱うかを1か所で決める。
+ *   2番手で並行の会話: 申込以降に数えない・線は parallelSecondCutoff（申込の期間は渡さない）・線より後は出口で伏せてから渡す（印 cut）
+ *   それ以外: 今まで通り（deepseekPostApply・deepseekSafeCutoff の reapply）
+ *   masked（線なし・全部を伏せる）はどの入口も作らない（実データで伏せ漏れ・上の parallelSecondCutoff）。出口の印 masked の扱いは残す
+ */
+export function resolveDeepseekEntrance(f: PostApplyFacts, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): { altPostApply: boolean; cutoff: DeepseekCutoff; masked: boolean } {
+  if (parallelSecondDeepseek(f, env)) return { altPostApply: false, cutoff: parallelSecondCutoff(f), masked: false };
+  return { altPostApply: deepseekPostApply(f, env), cutoff: deepseekSafeCutoff(f, { reapply: true }), masked: false };
+}
+/** 印を決める（入口の共通・blocked の判定は呼び出し側）: masked の会話は masked、それ以外は cutoffMarkOf */
+export function entranceMarkOf(cutoff: DeepseekCutoff | undefined, masked: boolean): CutoffMark {
+  return masked && cutoffMs(cutoff) === NO_CUTOFF ? { kind: "masked" } : cutoffMarkOf(cutoff);
 }
 
 export function isPostApplyConversation(f: PostApplyFacts): boolean {
@@ -193,7 +256,7 @@ export async function loadPostApplyFacts(sb: Sb, conversationId: string): Promis
   if (idDoc.error) throw new Error(`post-apply: messages: ${idDoc.error.message}`);
   const row = (conv.data ?? null) as { status?: string | null; is_post_apply?: boolean | null; status_manual_back_at?: string | null; deepseek_cutoff_at?: string | null } | null;
   const first = (r: Res): string | null => (((r.data ?? []) as Array<{ created_at?: string | null }>)[0]?.created_at ?? null);
-  return {
+  const facts: PostApplyFacts = {
     status: row?.status ?? null,
     isPostApply: row?.is_post_apply === true,
     applicationPushAt: first(push),
@@ -203,6 +266,45 @@ export async function loadPostApplyFacts(sb: Sb, conversationId: string): Promis
     applicationFormAt: form.error ? null : (((form.data ?? []) as Array<{ created_at?: string | null; text?: string | null }>).find((m) => isFilledApplicationForm(m.text))?.created_at ?? null),
     applicationFormUnreadable: !!form.error,
   };
+  // 2026-10-21（ec4d5990）今も申込中の会話だけ「2番手で並行して探しているか」を読む（申込前・契約以降は読まない＝余計なクエリなし）。読めなければ false（今まで通り）
+  if (parallelSecondEnabled() && parallelEligible(facts)) {
+    const st = await loadParallelSecondState(sb, conversationId, facts).catch(() => null);
+    if (st?.parallel === true) { facts.parallel2nd = true; facts.parallel2ndAt = st.at; }
+  }
+  return facts;
+}
+
+/**
+ * 2番手で申込中（並行で探す）の状態を記録から読む（スタッフの選択 → スタッフの文 → ピッカー）。読めなければ例外。
+ *   メモの行（customer_memos）・「番手」を含む通（新しい方から60通）・申込状況のピッカー（20件）
+ */
+export async function loadParallelSecondState(sb: Sb, conversationId: string, f: PostApplyFacts, nowMs: number = Date.now()): Promise<ParallelState> {
+  const recs = [ms(f.applicationPushAt), ms(f.idDocumentAt), ms(f.applicationFormAt)].filter((x): x is number => x !== null);
+  const last = recs.length ? Math.max(...recs) : null;
+  const backs = [ms(f.statusManualBackAt), ms(f.deepseekCutoffAt)].filter((x): x is number => x !== null);
+  const back = backs.length ? Math.max(...backs) : null;
+  const fromMs = Math.max(last !== null ? last - PARALLEL_WINDOW_BEFORE_MS : nowMs - PARALLEL_LOOKBACK_MS, back ?? -Infinity);
+  const fromIso = new Date(fromMs).toISOString();
+  const [memo, msgs, pk] = (await Promise.all([
+    sb.from("customer_memos").select("items").eq("conversation_id", conversationId).maybeSingle(),
+    sb.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId).gte("created_at", fromIso)
+      .or("text.ilike.%番手%,text.ilike.%繰り上%,text.ilike.%審査%,text.ilike.%決まって%,text.ilike.%埋まって%,text.ilike.%成約%")
+      .order("created_at", { ascending: false }).limit(60),
+    sb.from("aix_usage_logs").select("check_pattern, picker_choices, created_at").eq("conversation_id", conversationId).eq("aix_type", "property_check_result")
+      .gte("created_at", fromIso).order("created_at", { ascending: false }).limit(20),
+  ])) as [{ data: { items?: unknown } | null; error: { message: string } | null }, Res, Res];
+  if (memo.error) throw new Error(`parallel-2nd: customer_memos: ${memo.error.message}`);
+  if (msgs.error) throw new Error(`parallel-2nd: messages: ${msgs.error.message}`);
+  const items = Array.isArray(memo.data?.items) ? (memo.data!.items as Array<{ id?: string; text?: string; retiredAt?: string | null; updatedAt?: string | null; sourceAt?: string | null }>) : [];
+  return resolveParallelSecond({
+    msgs: ((msgs.data ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).map((r) => ({ sender: r.sender, text: r.text, createdAt: r.created_at })),
+    pickers: pk.error ? [] : ((pk.data ?? []) as Array<{ check_pattern: string | null; picker_choices: unknown; created_at: string }>).map((r) => ({ checkPattern: r.check_pattern, choices: r.picker_choices, createdAt: r.created_at })),
+    lastApplyAt: last === null ? null : new Date(last).toISOString(),
+    lastBackAt: back === null ? null : new Date(back).toISOString(),
+    staffChoice: staffParallelChoiceOf(items),
+    staffAt: staffParallelChoiceAt(items),
+    nowMs,
+  });
 }
 // ═══ 時刻の線（DeepSeek に渡してよいのはこの時刻より後だけ）═══════════════════════════════════════
 
@@ -275,8 +377,10 @@ export function filterAfterCutoff<T>(items: ReadonlyArray<T>, tsOf: (x: T) => st
  * fetch の出口（llm-alt-provider）に渡す「切り替えの判定を通った印」。
  *   all … 全部渡してよい／cut … 線より後だけに切った（at は線）／blocked … 渡さない（Claude のまま）
  * 会話の呼び出しで印が無い物は、出口で DeepSeek に回さない（二重の鍵）。
+ *   masked … 2026-10-21（ec4d5990）2番手で申込中（並行で探す）: 線は引かないが、出口で申込情報の値を伏せてから渡す（伏せきれなければ Claude）。
+ *     出口の網が止まっている時は Claude（llm-alt-provider）。cutoffMarkOf は masked を作らない（入口が entranceMarkOf で明示する時だけ）
  */
-export type CutoffMark = { kind: "all" } | { kind: "cut"; at: string } | { kind: "blocked" };
+export type CutoffMark = { kind: "all" } | { kind: "cut"; at: string } | { kind: "blocked" } | { kind: "masked" };
 export function cutoffMarkOf(c: DeepseekCutoff | undefined): CutoffMark {
   const line = cutoffMs(c);
   if (line === null) return { kind: "blocked" };
@@ -291,6 +395,7 @@ export function parseCutoffMark(v: string | null | undefined): CutoffMark | null
   const s = (v ?? "").trim();
   if (!s) return null;
   if (s === "all") return { kind: "all" };
+  if (s === "masked") return { kind: "masked" };
   if (s.startsWith("cut:")) { const t = ms(s.slice(4)); return t === null ? { kind: "blocked" } : { kind: "cut", at: new Date(t).toISOString() }; }
   return { kind: "blocked" };
 }

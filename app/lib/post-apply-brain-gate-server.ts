@@ -7,7 +7,8 @@
 //   → 同じ記録の判定で「申込以降」なら関所に入れる（status が遅れている時は lagging＝申込が流れた動きがあれば回す側）。
 //   戻す: BRAIN_POST_APPLY_RECORDS=off（status だけの今まで）。関所ごと戻す: BRAIN_POST_APPLY_GATE=off
 import { supabase } from "@/app/lib/supabase-server";
-import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, resolvePostApply, parallelSecondActive } from "@/app/lib/post-apply";
+import { PARALLEL_STATUSES, parallelSecondEnabled } from "@/app/lib/parallel-second";
 import { decidePostApplyBrainGate, POST_APPLY_GATE_STATUSES, postApplyAnchorAt, type GateMsg } from "@/app/lib/post-apply-brain-gate";
 
 export type PostApplyBrainGateResult = { run: boolean; reason: string; lagging: boolean; anchorAt: string | null };
@@ -23,6 +24,12 @@ export async function loadPostApplyBrainGate(conversationId: string, status: str
   const inGate = POST_APPLY_GATE_STATUSES.has((status ?? "").trim());
   let anchorAt: string | null = null;
   let idDocumentAt: string | null = null;
+  // 2026-10-21 竹内さんの決定（ec4d5990）: 2番手で申込中（並行で探す）と明示的に決まった会話は関所に入れない（並行して物件を探すのでブレインを回す）。
+  //   読めなければ今まで通り関所に入れる。戻す REAPPLY_PARALLEL_2ND=off
+  if (inGate && parallelSecondEnabled(env) && PARALLEL_STATUSES.has((status ?? "").trim())) {
+    const pf = await loadPostApplyFacts(supabase, conversationId).catch(() => null);
+    if (pf && parallelSecondActive(pf, env)) return null;
+  }
   if (inGate) {
     const { data: pushRow, error } = await supabase.from("aix_usage_logs").select("created_at")
       .eq("conversation_id", conversationId).eq("aix_type", "application_push")
@@ -33,6 +40,7 @@ export async function loadPostApplyBrainGate(conversationId: string, status: str
     if (off(env.BRAIN_POST_APPLY_RECORDS)) return null;
     const facts = await loadPostApplyFacts(supabase, conversationId);
     if (!resolvePostApply(facts).postApply) return null;
+    if (parallelSecondActive(facts, env)) return null; // 2番手で並行して探している（上と同じ）
     anchorAt = postApplyAnchorAt(facts.applicationPushAt, facts.idDocumentAt);
     idDocumentAt = facts.idDocumentAt ?? null;
   }
