@@ -2859,6 +2859,17 @@ ${catalogBlockForBrain(brainScene)}
       if (memo?.note) { customerStateBlockText += `\n\n${memo.note}`; console.log(JSON.stringify({ tag: "brain:customer-memo", conversationId, memoChars: memo.memoChars, moodChars: memo.moodChars, items: memo.items, pay: memo.pay?.decision ?? null })); }
       paymentPlan = memo?.pay ?? null;
     } catch (e) { console.warn("[brain-core] customer-memo skipped:", e instanceof Error ? e.message : String(e)); }
+    // 2026-10-21 竹内さんの決定（a5838a0b・b01d793d）②相手の頭の中・反応の予想: 今ほしい物・気にしている事・温度と、返し方ごとの次の反応（過去の実データの数え表）を 1〜2 行の材料に。
+    //   決まった計算だけ（LLM なし・customer-reaction-predict.ts）。判断と文はブレイン。既定 off（BRAIN_REACTION_PREDICT=on で入る）
+    try {
+      const { reactionPredictEnabled, readCustomerMind, buildReactionNote, reactionRisk } = await import("@/app/lib/customer-reaction-predict");
+      if (reactionPredictEnabled()) {
+        const mind = readCustomerMind([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at, isAix: !!(m as { is_aix_generated?: boolean | null }).is_aix_generated })));
+        const rpNote = buildReactionNote(mind);
+        if (rpNote) customerStateBlockText += `\n${rpNote}`;
+        if (mind) { const sig = reactionRisk(mind, null); console.log(JSON.stringify({ tag: "brain:reaction-predict", conversationId, now: mind.now, temp: mind.temperature, likely: sig.likely, risk: sig.risk, kinds: sig.kinds, chars: rpNote.length })); }
+      }
+    } catch (e) { console.warn("[brain-core] reaction-predict skipped:", e instanceof Error ? e.message : String(e)); }
     // 2026-10-21 竹内さんの決定（70193195・c2909936）: 申込歴あり（再探し）のお客様は、アツいお客様である事・戻った理由（①否決 ②1番手が通過 ③切り替え／理由不明）と
     //   理由ごとの次の一手を材料に足す（パターンの名前と一手だけ・申込中の中身は書かない・reapply-customer.ts）。戻す REAPPLY_MARK=off
     try {
