@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { runLinkWatch } from "@/app/lib/link-brain-watch-server";
-import { compactLinkSummary, linkBrainTodoEnabled, linkBrainWatchEnabled } from "@/app/lib/link-brain-watch";
+import { compactLinkSummary, linkBrainTodoEnabled, linkBrainWatchEnabled, LINK_BRAIN_NOTE_PREFIX } from "@/app/lib/link-brain-watch";
 import { registerRuleAixActionItem } from "@/app/lib/aix-action-items";
 import { aixInstantNoticeEnabled } from "@/app/lib/staff-todo-list";
 
@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
     if (!dry && linkBrainTodoEnabled() && !aixInstantNoticeEnabled()) {
       let added = 0;
       for (const t of s.todo.slice(0, LINK_TODO_MAX)) {
-        if (await registerRuleAixActionItem({ conversationId: t.conversationId, customerName: t.customerName, action: t.action, checkPattern: t.checkPattern, note: `rule:link_brain:${t.breakType}` })) added++;
+        if (await registerRuleAixActionItem({ conversationId: t.conversationId, customerName: t.customerName, action: t.action, checkPattern: t.checkPattern, note: `${LINK_BRAIN_NOTE_PREFIX}:${t.breakType}` })) added++;
       }
       out.todo_added = added;
     }

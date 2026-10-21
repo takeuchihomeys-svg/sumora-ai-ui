@@ -76,6 +76,8 @@ export const LINK_JA: Record<LinkId, string> = {
   staff_todo: "要対応→スタッフ",
 };
 export const LINK_IDS = Object.keys(LINK_JA) as LinkId[];
+/** やることリストへ足した要対応の印（aix_action_items.resolution_note）。同じ夜に cron が2回走っても同じ約束を2度立てない（立った物は「要対応は立った」に数える） */
+export const LINK_BRAIN_NOTE_PREFIX = "rule:link_brain";
 
 /** 切れの型の日本語（数えの表に出す） */
 export const BREAK_JA: Record<string, string> = {
@@ -136,7 +138,7 @@ const promisePicker: Reader = {
       if (s.status === "dropped") { out.push({ ...base, ok: true }); continue; }
       const doneMs = ms(s.doneAt);
       if (s.status === "pending" || doneMs - at > PROMISE_QUEUE_MAX_AGE_MS) {
-        const queued = input.aixItems.some((i) => (i.resolution_note ?? "").startsWith(PROMISE_QUEUE_NOTE_PREFIX) && ms(i.created_at) >= at - 60_000);
+        const queued = input.aixItems.some((i) => [PROMISE_QUEUE_NOTE_PREFIX, LINK_BRAIN_NOTE_PREFIX].some((p) => (i.resolution_note ?? "").startsWith(p)) && ms(i.created_at) >= at - 60_000);
         out.push({ ...base, ok: false, breakType: queued ? "unsent_queued" : "unsent_not_queued", todo: s.status === "pending" && !queued ? { action: s.action, checkPattern: s.checkPattern } : undefined });
         continue;
       }
