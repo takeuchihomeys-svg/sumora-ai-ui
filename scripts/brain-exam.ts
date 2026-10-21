@@ -57,7 +57,7 @@ import type { ExamProblem, LedgerRow } from "./brain-exam-add";
 import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
-import { cassetteStats as cassetteStatsNow, type CallRef, type InputDiff } from "./lib/llm-cassette";
+import { cassetteStats as cassetteStatsNow, pinsFromRows, type CallRef, type InputDiff } from "./lib/llm-cassette";
 import { examEnvFingerprint, defaultEnvOf, readDotenvLocal, formatEnvFp, envFpMismatchNote } from "./lib/exam-env-fp";
 /** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
 function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return 0; return st.total.real - (st.byAction.get("(名札なし)")?.real ?? 0); }
@@ -793,7 +793,8 @@ async function floorGaps(): Promise<Record<string, number>> {
 /** main の作業ツリー（.claude/worktrees/brain-exam-main）を commit に合わせ、今の試験の道具（scripts/brain-exam*.ts・scripts/lib）と問題を写す */
 function prepareMainWorktree(commit: string): string {
   const common = execSync("git rev-parse --path-format=absolute --git-common-dir").toString().trim();
-  const wt = join(dirname(common), ".claude", "worktrees", "brain-exam-main");
+  // 2026-10-21: EXAM_MAIN_WORKTREE で別の作業ツリーにできる（試しの時に他の担当が使っている main の作業ツリーを触らない）
+  const wt = process.env.EXAM_MAIN_WORKTREE?.trim() ? resolve(process.env.EXAM_MAIN_WORKTREE.trim()) : join(dirname(common), ".claude", "worktrees", "brain-exam-main");
   if (!existsSync(join(wt, ".git"))) execFileSync("git", ["worktree", "add", "--detach", wt, commit], { stdio: "inherit" });
   else execFileSync("git", ["-C", wt, "checkout", "--detach", "-f", commit], { stdio: "inherit" });
   const copy = (rel: string) => { if (!existsSync(rel)) return; mkdirSync(dirname(join(wt, rel)), { recursive: true }); copyFileSync(rel, join(wt, rel)); };
@@ -908,25 +909,101 @@ async function prepareMainBaseline(): Promise<boolean> {
   const baseLabel = `main-${commit.slice(0, 7)}-${ch}`;
   console.log(`=== 前＝main（${ref}・${commit.slice(0, 7)}${vk ? `・版 ${vk}` : ""}・構成 ${ch}・置き場 ${dir}）: 使い回す ${plan.reuse.length - carried.length}問・前の main から持ち越す ${carried.length}問（main の変更は${rel === "brain" ? "ブレイン" : "下書きまで"}の段に効かない）・回す ${plan.run.length}問${deferred.length ? `・今は回さない ${deferred.length}問（${flag("baseline-defer") ? "--baseline-defer＝夜中の取り置きに回す" : `--baseline-limit=${limitArg}`}）` : ""}${plan.stale.length ? `（問題が直った ${plan.stale.join(",")}）` : ""}${plan.expired.length ? `（${maxAgeMs! / 86_400_000}日より古い ${plan.expired.join(",")}・--baseline-max-age=off で使い回す）` : ""} ===`);
   try { writeFileSync(`${RESULTS_DIR}/${LABEL}.baseline.json`, JSON.stringify({ at: new Date().toISOString(), commit, versionKey: vk, stageKeys: sk, cfg: ch, reused: plan.reuse.length - carried.length, carried, run: plan.run, deferred }, null, 1)); } catch { /* */ }
+  // 2026-10-21 連携（竹内さん「ここちゃんと連携がされていたらもっと費用抑えられるのでは」・scripts/lib/exam-coord.ts）:
+  //   ① 同じ版の同じ問題は1人だけが作る: 置き場の .claims/<問題>.claim を取れた問題だけ自分で回し、他の担当が作っている問題は待って出来た答えを使う
+  //      （待つ上限 EXAM_BASELINE_WAIT_MIN・既定 90分。過ぎたら自分で回す）。main の作業ツリー（1つ）も1人ずつ使う（版の違う担当が同時に checkout しない）
+  //   ② 作り直す問題も、前の main の版の行の呼び出しの控え（llmCalls）を子に渡す＝要求が同じ段は前の答え（呼ばない）。止める: EXAM_BASELINE_PIN=off
+  const C = await import("./lib/exam-coord");
+  const waitedReuse: string[] = [], pinnedIds: string[] = [];
+  let pinnedUsd = 0;
   if (plan.run.length) {
-    const runLabel = `${baseLabel}-r${Date.now().toString(36)}`;
-    const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${runLabel}`, `--only=${plan.run.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage })];
     const cassetteDir = resolve(String(process.env.LLM_CASSETTE_DIR ?? "").trim() || DEFAULT_CASSETTE_DIR);
-    const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1" };
-    if (flag("baseline-dry")) { console.log(`（--baseline-dry: 回さない）main の作業ツリーで: npx ${cmd.join(" ")}\n  録音の置き場（共有）: ${cassetteDir}`); return false; }
-    const wt = prepareMainWorktree(commit);
-    console.log(`  main の作業ツリー ${wt} で「前」を回す: npx ${cmd.join(" ")}`);
-    // 2026-10-17: shell で回す時（Windows）は空白・引用符を含む引数を囲む（置き場のパスに「竹内 悠馬」の空白がある＝--reps-file が切れていた）
-    const r = spawnSync("npx", process.platform === "win32" ? cmd.map((x) => (/[\s"]/.test(x) ? `"${x.replace(/"/g, '\\"')}"` : x)) : cmd, { cwd: wt, stdio: "inherit", env: childEnv, shell: process.platform === "win32" });
-    if (r.status !== 0) console.warn(`  ⚠ 前（main）の実行が ${r.status} で終わった（取れた問題だけ取り置く）`);
-    const rows = (() => { const f = join(wt, RESULTS_DIR, `${runLabel}.jsonl`); return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as ResultRow) : []; })();
-    const cost = (() => { try { return JSON.parse(readFileSync(join(wt, RESULTS_DIR, `${runLabel}.cost.json`), "utf8")) as { byTag?: Record<string, { real: number; realUsd: number; replayed: number; replayUsd: number }> }; } catch { return {}; } })();
-    for (const id of plan.run) {
-      const rs = rows.filter((x) => x.id === id);
-      if (!rs.length || rs.some((x) => x.error)) continue; // 失敗した問題は取り置かない（次にまた回す）
-      const c = cost.byTag?.[id];
-      B.saveBaseline<ResultRow>(dir, { id, problemHash: hashOf.get(id)!, commit, config: cfg, savedAt: new Date().toISOString(), fromLabel: runLabel, rows: rs, cost: c ? { real: c.real, realUsd: c.realUsd, replayed: c.replayed, replayUsd: c.replayUsd } : null,
-        ...(vk ? { versionKey: vk } : {}), ...((REPEAT_FLAKY || REPS_OF) && REPEAT > 1 ? { complete: true } : {}), stageKeys: sk, envFp: "" });
+    if (flag("baseline-dry")) {
+      const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${baseLabel}-r…`, `--only=${plan.run.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage })];
+      console.log(`（--baseline-dry: 回さない）main の作業ツリーで: npx ${cmd.join(" ")}\n  録音の置き場（共有）: ${cassetteDir}`); return false;
+    }
+    const opts = { acceptComplete: REPEAT_FLAKY || !!REPS_OF, maxAgeMs, envFp: "" };
+    // --baseline-refresh の時は今から後に書かれた答えだけ「出来た」とみる（前からある答えは使わない）
+    const startIso = new Date().toISOString();
+    const loadFresh = () => { const m = loadAll(); if (flag("baseline-refresh")) for (const [id, b] of m) if (String(b.savedAt) < startIso) m.delete(id); return m; };
+    const doneNow = (ids: string[]) => new Set(B.planBaseline(ids.map((id) => ({ id, hash: hashOf.get(id)!, alt: altOf.get(id) })), loadFresh(), REPEAT, opts).reuse);
+    const held = new Set<string>();
+    process.on("exit", () => { C.releaseClaims(dir, [...held]); C.releaseClaims(B.BASELINE_DIR, [MAIN_WT_CLAIM]); });
+    const runChild = async (ids: string[]) => {
+      const runLabel = `${baseLabel}-r${Date.now().toString(36)}`;
+      const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${runLabel}`, `--only=${ids.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage })];
+      // ② 前の main の版の答え（同じ構成の他の置き場・同じ問題・期限の内・控え付き）
+      const pinSrc = new Map<string, { dir?: string; savedAt: string; answeredAt?: string }>();
+      let pinsFile = "";
+      if (process.env.EXAM_BASELINE_PIN !== "off" && INPUT_DIFF !== "off" && CASSETTE_MODE !== "off") {
+        const sibs = B.siblingDirs(C.listDirs(B.BASELINE_DIR), ch, basename(dir)).filter((n) => !legacyDirs.some((d) => basename(d) === n));
+        const pins: Record<string, CallRef[]> = {};
+        for (const id of ids) {
+          const hit = C.pickPrevMainRows(C.readSiblingFiles<import("./lib/brain-exam-baseline").BaselineFile<ResultRow>>(B.BASELINE_DIR, sibs, id), { hash: hashOf.get(id)!, alt: altOf.get(id) }, { maxAgeMs });
+          if (!hit) continue;
+          Object.assign(pins, pinsFromRows(hit.rows));
+          pinSrc.set(id, hit);
+        }
+        if (pinSrc.size) {
+          pinsFile = join(B.BASELINE_DIR, ".pins", `${runLabel}.json`);
+          atomicWriteJson(pinsFile, pins);
+          console.log(`  前の main の答えの控え: ${pinSrc.size}/${ids.length}問（${[...pinSrc].map(([id, s]) => `${id}←${s.dir ?? "?"}`).slice(0, 6).join(" ")}${pinSrc.size > 6 ? " …" : ""}）＝要求が同じ段は前の答えを使う（呼ばない）`);
+        }
+      }
+      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}) };
+      // main の作業ツリーは1つ＝1人ずつ（版の違う担当が checkout を取り合わない）
+      for (let k = 0; ; k++) {
+        const r = C.tryClaim(B.BASELINE_DIR, MAIN_WT_CLAIM, LABEL);
+        if (r.ok) break;
+        if (k === 0) console.log(`  main の作業ツリーを他の担当（${r.holder.label}・pid ${r.holder.pid}）が使っている → 空くまで待つ`);
+        await new Promise((res) => setTimeout(res, 15_000));
+      }
+      try {
+        const wt = prepareMainWorktree(commit);
+        console.log(`  main の作業ツリー ${wt} で「前」を回す: npx ${cmd.join(" ")}`);
+        // 2026-10-17: shell で回す時（Windows）は空白・引用符を含む引数を囲む（置き場のパスに「竹内 悠馬」の空白がある＝--reps-file が切れていた）
+        const r = spawnSync("npx", process.platform === "win32" ? cmd.map((x) => (/[\s"]/.test(x) ? `"${x.replace(/"/g, '\\"')}"` : x)) : cmd, { cwd: wt, stdio: "inherit", env: childEnv, shell: process.platform === "win32" });
+        if (r.status !== 0) console.warn(`  ⚠ 前（main）の実行が ${r.status} で終わった（取れた問題だけ取り置く）`);
+        const rows = (() => { const f = join(wt, RESULTS_DIR, `${runLabel}.jsonl`); return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as ResultRow) : []; })();
+        const cost = (() => { try { return JSON.parse(readFileSync(join(wt, RESULTS_DIR, `${runLabel}.cost.json`), "utf8")) as { byTag?: Record<string, { real: number; realUsd: number; replayed: number; replayUsd: number }> }; } catch { return {}; } })();
+        const nowIso = new Date().toISOString();
+        for (const id of ids) {
+          const rs = rows.filter((x) => x.id === id);
+          if (!rs.length || rs.some((x) => x.error)) continue; // 失敗した問題は取り置かない（次にまた回す）
+          const c = cost.byTag?.[id];
+          const src = pinSrc.get(id) ?? null;
+          if (src && rs.every((x) => x.inputSame)) { pinnedIds.push(id); pinnedUsd += c?.replayUsd ?? 0; }
+          B.saveBaseline<ResultRow>(dir, { id, problemHash: hashOf.get(id)!, commit, config: cfg, savedAt: nowIso, fromLabel: runLabel, rows: rs, cost: c ? { real: c.real, realUsd: c.realUsd, replayed: c.replayed, replayUsd: c.replayUsd } : null,
+            ...(vk ? { versionKey: vk } : {}), ...((REPEAT_FLAKY || REPS_OF) && REPEAT > 1 ? { complete: true } : {}), stageKeys: sk, envFp: "",
+            answeredAt: C.carriedAnsweredAt(rs, src, nowIso), ...(src?.dir ? { pinnedFrom: src.dir } : {}) });
+        }
+      } finally { C.releaseClaims(B.BASELINE_DIR, [MAIN_WT_CLAIM]); }
+    };
+    const maxWait = C.baselineWaitMs();
+    const t0 = Date.now();
+    let pending = [...plan.run], lastNote = "";
+    while (pending.length) {
+      const done = doneNow(pending);
+      const holders = new Map<string, import("./lib/exam-coord").Claim>();
+      const st = C.coordStep(pending, { done: (id) => done.has(id), claim: (id) => { const r = C.tryClaim(dir, id, LABEL); if (r.ok) held.add(id); else holders.set(id, r.holder); return r.ok; }, waitedMs: Date.now() - t0, maxWaitMs: maxWait });
+      waitedReuse.push(...st.reuse);
+      for (const id of st.steal) { C.tryClaim(dir, id, LABEL, { force: true }); held.add(id); }
+      if (st.steal.length) console.warn(`  ⚠ ${Math.round(maxWait / 60_000)}分待っても他の担当の答えが出ない → 自分で回す: ${st.steal.join(",")}`);
+      let mine = [...st.mine, ...st.steal];
+      if (mine.length) {
+        const d2 = doneNow(mine); // 印を取る間に他の担当が書き終えた
+        waitedReuse.push(...mine.filter((id) => d2.has(id)));
+        mine = mine.filter((id) => !d2.has(id));
+        try { if (mine.length) await runChild(mine); }
+        finally { const all = [...st.mine, ...st.steal]; C.releaseClaims(dir, all); for (const id of all) held.delete(id); }
+      }
+      pending = st.wait;
+      if (pending.length) {
+        const note = [...new Set([...holders.values()].map((h) => `${h.label}（pid ${h.pid}）`))].join("・");
+        if (note !== lastNote) console.log(`  同じ版の ${pending.length}問を他の担当が今作っている（${note}）→ 作り直さず待って使う（最大 ${Math.round(maxWait / 60_000)}分・EXAM_BASELINE_WAIT_MIN）: ${pending.join(",")}`);
+        lastNote = note;
+        await new Promise((res) => setTimeout(res, 15_000));
+      }
     }
   } else if (flag("baseline-dry")) { console.log("（--baseline-dry: 全部使い回せる）"); return false; }
   // 比べる「前」の結果ファイルを組み立てる（今回の問題だけ）
@@ -939,8 +1016,19 @@ async function prepareMainBaseline(): Promise<boolean> {
   const missing = picked.filter((p) => !now.has(p.id)).length;
   console.log(`  前の結果: ${baseLabel}（使い回した ${plan.reuse.length}問・新しく回した ${Math.max(0, plan.run.length - missing)}問・取り置きの無い問題 ${missing}）`);
   if (missing) console.warn(`  ⚠ 前（main）の答案が ${missing}問 無い（上の「前」の実行の失敗を見る）。その問題は前との比べに入らない`);
+  // 連携の帳簿（--spend-today が「避けた分」として出す）
+  const waitedU = [...new Set(waitedReuse)];
+  if (waitedU.length || pinnedIds.length) {
+    const waitedUsd = waitedU.reduce((s, id) => { const c = now.get(id)?.cost; return s + (c ? c.realUsd + c.replayUsd : 0); }, 0);
+    console.log(`  連携: 他の担当が作った同じ版の答えを待って使った ${waitedU.length}問（約 $${waitedUsd.toFixed(3)} 作り直さずに済んだ）・前の main と入力が同じで呼ばずに済んだ ${pinnedIds.length}問（約 $${pinnedUsd.toFixed(3)}）`);
+    if (waitedU.length) C.appendCoordEvent({ at: new Date().toISOString(), kind: "wait-reuse", label: LABEL, ids: waitedU, usd: waitedUsd, note: basename(dir) });
+    if (pinnedIds.length) C.appendCoordEvent({ at: new Date().toISOString(), kind: "pin", label: LABEL, ids: pinnedIds, usd: pinnedUsd, note: basename(dir) });
+    try { const f = `${RESULTS_DIR}/${LABEL}.baseline.json`; const j = JSON.parse(readFileSync(f, "utf8")) as Record<string, unknown>; writeFileSync(f, JSON.stringify({ ...j, waited: waitedU, pinned: pinnedIds }, null, 1)); } catch { /* */ }
+  }
   return true;
 }
+/** main の作業ツリー（.claude/worktrees/brain-exam-main・1つ）を使う印の名前（置き場の根の .claims） */
+const MAIN_WT_CLAIM = `_main-worktree${process.env.EXAM_MAIN_WORKTREE?.trim() ? `-${basename(resolve(process.env.EXAM_MAIN_WORKTREE.trim()))}` : ""}`;
 
 async function main() {
   if (!LABEL) throw new Error("--label=<名前> が要る（結果のファイル名・続きからの印）");
@@ -986,6 +1074,15 @@ async function main() {
     const n = Object.keys(pins).length;
     if (n) { setCassettePins(pins, { only: INPUT_DIFF === "plan" }); pinsOn = true; }
     console.log(`入力の差（--input-diff=${INPUT_DIFF}）: 前（${BASELINE}）の呼び出しの控え ${n}問×回${n ? "＝main と同じ要求は main の答えを使う（呼ばない）" : "（控えの無い古い取り置き＝今まで通り）"}`);
+  }
+  // 2026-10-21 連携②: 前（main）の子は、親が渡した「前の main の版」の控えを入れる＝要求が前の main と同じ段は前の答え（呼ばない）。変わった問題・段だけ本当に解く
+  if (process.env.BRAIN_EXAM_BASELINE_CHILD === "1" && process.env.BRAIN_EXAM_MAIN_PINS_FILE && CASSETTE_MODE !== "off") {
+    try {
+      const pins = JSON.parse(readFileSync(process.env.BRAIN_EXAM_MAIN_PINS_FILE, "utf8")) as Record<string, CallRef[]>;
+      const n = Object.keys(pins).length;
+      if (n) { setCassettePins(pins); pinsOn = true; }
+      console.log(`入力の差（main の作り直し）: 前の main の版の控え ${n}問×回＝要求が同じ段は前の main の答えを使う（呼ばない）`);
+    } catch (e) { console.warn(`前の main の控えが読めない（全部解く）: ${String(e).slice(0, 120)}`); }
   }
   if (INPUT_DIFF === "plan" && !pinsOn) { console.log("--input-diff=plan: main の控えが無い → 下見なし"); writeFileSync(`${RESULTS_DIR}/${LABEL}.inputdiff.json`, JSON.stringify({ at: new Date().toISOString(), base: BASELINE, pins: 0, items: {} }, null, 1)); return; }
   // 2026-10-17: DEEPSEEK_MODEL で既定と違うモデルにした時は名前に入れる（揺れの記録・比べを既定のモデルと混ぜない）

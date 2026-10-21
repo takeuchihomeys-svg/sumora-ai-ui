@@ -14,6 +14,10 @@
 //   台帳:       npx tsx scripts/exam-brain.ts --ledger [--id=q153] [--days=14]
 //   モデル比べ: npx tsx --env-file=.env.local scripts/exam-brain.ts --model-check --conv=YUMA4 [--types=待って・閉じる] [--n=8]
 //   片付け:     npx tsx --env-file=.env.local scripts/exam-brain.ts --cleanup --conv=YUMA2 --label=dg1016-a [--from=<作業ツリー>] [--apply]
+//   今日の費用: npx tsx --env-file=.env.local scripts/exam-brain.ts --spend-today（main の作り直し／担当の確かめ／夜・同じ版の作り直しの重なり・連携で避けた分）
+// 10/21 連携（scripts/lib/exam-coord.ts）: 同じ比べ（コード・スイッチ・main の版・問題と回数）を今日もう流していれば止める（--force で流す）。
+//   担当ごとの1日の上限 EXAM_RUN_CAP_USD（既定 $1・off で無し）を超える回は夜中に予約（--over-cap／--force で今）。
+//   main の答えは版ごとに1人だけが作る（他の担当は待って使う・EXAM_BASELINE_WAIT_MIN）・前の main と要求が同じ段は前の答え（EXAM_BASELINE_PIN=off で止める）
 // 決める事の引数（既定は試験のブレインが決める）:
 //   --when=auto|now|night（auto: 最後の関所・見込み $1 以上は安い時間 JST 1:30〜9:30 に予約）・--wait（予約の代わりにその時間まで待って流す）
 //   --max-reps=3・--no-early-stop・--stop-worse=3・--no-reuse・--judge=lazy|full（既定 lazy）・--judge-prefix=as-is|rubric（既定 as-is）
@@ -34,7 +38,7 @@ import {
   mergePicks, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, CHEAP_WINDOW_JST, reuseKey, kbKeyOf, canReuse, dbKeyOf,
   modelOf, estimateUsd, DEFAULT_STOP, draftEligible, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
   decidePhase, pickSmall, smallRank, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
-  warmDecision, warmLimit, flashSpotCheck, flashProof, FLASH_TYPE_MIN_N, isFixTarget, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3,
+  warmDecision, warmLimit, flashSpotCheck, flashProof, FLASH_TYPE_MIN_N, isFixTarget, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3, jstDayStart,
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
@@ -44,6 +48,7 @@ import {
 import { decideStageFromDiff, examVersionKey } from "./lib/exam-scope";
 import { BASELINE_DIR } from "./lib/brain-exam-baseline";
 import { examEnvFingerprint, formatEnvFp } from "./lib/exam-env-fp";
+import * as C from "./lib/exam-coord";
 // 2026-10-21 スイッチの指紋（既定＝.env.local と違うスイッチ・exam-env-fp.ts）。使い回しの鍵に入れる・見出しと台帳に残す
 const ENV_FP = examEnvFingerprint(process.env);
 import { dbFpMode, problemReadsRent, type DbFpMode } from "./lib/exam-db-fp";
@@ -105,7 +110,12 @@ const jst = (d: Date) => new Date(d.getTime() + 9 * 3600_000).toISOString().repl
 
 // ─── 10/20 COST① main の答えは版ごとに1回（merge の後の安い時間に自動で取り置く） ─────────────────────
 /** 今の main（origin/main を取り直す・失敗しても手元で続ける）と試験に効く所の版の鍵 */
+let mainHeadMemo: { commit: string; vk: string } | null | undefined;
 function mainHead(): { commit: string; vk: string } | null {
+  if (mainHeadMemo === undefined) mainHeadMemo = mainHead0();
+  return mainHeadMemo;
+}
+function mainHead0(): { commit: string; vk: string } | null {
   try { execFileSync("git", ["fetch", "-q", "origin", "main"], { stdio: "ignore", timeout: 20_000 }); } catch { /* 手元で続ける */ }
   let commit = "";
   try { commit = execFileSync("git", ["rev-parse", "--verify", "origin/main^{commit}"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch { return null; }
@@ -497,6 +507,71 @@ async function spendOf(labels: string[], since: string): Promise<{ n: number; us
 }
 
 // ─── 本体（流す） ─────────────────────────────────────────────────────────
+// ─── 10/21 連携③④（scripts/lib/exam-coord.ts） ─────────────────────────────────
+function runFpOf(pl: Plan): string {
+  return C.runFingerprint({ codeKey: pl.versionKey, envFp: ENV_FP.hash, mainKey: mainHead()?.vk ?? null, items: [...pl.items.values()].map((x) => ({ id: x.id, reps: x.reps, model: x.model, draft: x.draft })), extra: [GATE ? "gate" : "", `judge=${JUDGE}`, REPLAY, `prefix=${JUDGE_PREFIX}`, ...PASS].filter(Boolean) });
+}
+/**
+ * 1回ごとの見張り: ①同じ比べ（コード・スイッチの指紋・比べる main の版・問題と回数・モデル・段）を今日もう流した → 止める（--force）。
+ *   ②担当（--label の元・自動の label は作業ツリー）の今日の費用＋見込みが EXAM_RUN_CAP_USD（既定 $1）を超える → 夜中に予約（--over-cap／--force で今）
+ */
+async function runGuard(pl: Plan, label: string, estNow: number, now: Date): Promise<{ go: boolean; record?: () => void }> {
+  const fp = runFpOf(pl);
+  const today = C.readRunsToday(now);
+  const dup = C.findDuplicateRun(today, fp);
+  if (dup && !flag("force")) {
+    log(`\n⛔ 同じ比べ（コード・スイッチ・main の版・問題と回数が同じ）を今日もう流した: ${dup.label}（${jst(new Date(dup.at))} JST・${dup.cwd}）→ 流さない（見込み $${estNow.toFixed(2)} を使わない）。`);
+    log(`  結果: scripts/.replay-out/brain-exam の ${dup.label}（--report=${dup.label}）。揺れを測り直す等で本当に流すなら --force`);
+    C.appendCoordEvent({ at: new Date().toISOString(), kind: "dup-refused", label, ids: [...pl.items.keys()], usd: estNow, note: dup.label });
+    return { go: false };
+  }
+  if (dup) log(`同じ比べを今日もう流した（${dup.label}）が --force で流す`);
+  const ident = C.labelIdentity(label, process.cwd());
+  const cap = C.runCapUsd(process.env);
+  const fromQueue = process.env.EXAM_FROM_QUEUE === "1";
+  let spent = 0;
+  if (cap !== null && !fromQueue) {
+    try {
+      const rows = await C.readExamSpendRows(sb, jstDayStart(now));
+      const labels = [...new Set(today.filter((r) => r.ident === ident).map((r) => r.label))];
+      spent = rows.filter((r) => C.routeBelongs(r.route, ident, labels)).reduce((s, r) => s + r.usd, 0);
+    } catch (e) { log(`⚠ 担当の今日の費用が読めない（0 とみて続ける・1日の全体の上限は別に守る）: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
+  }
+  const d = C.runCapDecision({ spentUsd: spent, estUsd: estNow, cap, force: flag("force") || flag("over-cap"), fromQueue });
+  log(`担当の上限（${ident}）: ${d.why}`);
+  if (!d.ok) {
+    const at = nextNightRun(now);
+    const f = enqueue({ label, argv: [...args.filter((a) => !/^--(when|phase)=/.test(a)), "--when=now", ...(pl.phase !== "off" ? [`--phase=${pl.phase}`] : []), ...(PASS.length ? ["--", ...PASS] : [])], cwd: process.cwd(), at: at.toISOString(), createdAt: now.toISOString(), estUsd: estNow });
+    log(`夜中に予約した（${jst(at)} JST の --run-queue）: ${f}`);
+    C.appendCoordEvent({ at: new Date().toISOString(), kind: "cap-deferred", label, ids: [...pl.items.keys()], usd: estNow, note: ident });
+    return { go: false };
+  }
+  return { go: true, record: () => { try { C.appendRun({ fp: runFpOf(pl), label, ident, at: new Date().toISOString(), cwd: process.cwd(), estUsd: estNow, ids: [...pl.items.keys()] }); } catch { /* 帳簿が書けなくても流す */ } } };
+}
+/** --spend-today: 今日（JST）の試験の費用を種類で分け、同じ版の main の作り直しの重なりと、連携で避けた分を出す */
+async function spendToday() {
+  const now = new Date(), since = jstDayStart(now);
+  const rows = await C.readExamSpendRows(sb, since);
+  const s = C.summarizeSpend(rows, CHEAP_WINDOW_JST);
+  const ev = C.readCoordEvents(since);
+  const pct = (x: number) => (s.total ? Math.round((x / s.total) * 100) : 0);
+  log(`=== 今日の試験の費用（${jst(since)}〜 JST・route script:brain-exam-*）: $${s.total.toFixed(2)}（${s.byRoute.length} 本）===`);
+  log(`  main の作り直し: $${s.byKind.main.usd.toFixed(2)}（${pct(s.byKind.main.usd)}%・${s.byKind.main.routes} 本）`);
+  log(`  担当の確かめ:   $${s.byKind.worker.usd.toFixed(2)}（${pct(s.byKind.worker.usd)}%・${s.byKind.worker.routes} 本）`);
+  log(`  夜（安い時間・warm）: $${s.byKind.night.usd.toFixed(2)}（${pct(s.byKind.night.usd)}%・${s.byKind.night.routes} 本）`);
+  if (s.mainDup.length) {
+    log(`同じ版の main を2本以上で作り直した: ${s.mainDup.length} 版・重なりの無駄 約 $${s.dupExtraUsd.toFixed(2)}（連携があれば1本で済んだ分）`);
+    for (const d of s.mainDup.slice(0, 8)) log(`  ${d.version}: ${d.routes} 本 $${d.usd.toFixed(3)}（重なり $${d.extraUsd.toFixed(3)}）`);
+  } else log("同じ版の main の作り直しの重なり: なし");
+  const by = (k: string) => ev.filter((e) => e.kind === k);
+  const sum = (k: string) => by(k).reduce((a, e) => a + e.usd, 0);
+  log(`連携で避けた分（帳簿 ${C.COORD_LOG}）:`);
+  log(`  他の担当の同じ版の答えを待って使った: ${by("wait-reuse").reduce((a, e) => a + e.ids.length, 0)}問・約 $${sum("wait-reuse").toFixed(2)}`);
+  log(`  前の main と入力が同じで呼ばずに済んだ（main の作り直し）: ${by("pin").reduce((a, e) => a + e.ids.length, 0)}問・約 $${sum("pin").toFixed(2)}`);
+  log(`  同じ比べを止めた: ${by("dup-refused").length}回・見込み $${sum("dup-refused").toFixed(2)}／担当の上限で夜に回した: ${by("cap-deferred").length}回・見込み $${sum("cap-deferred").toFixed(2)}`);
+  if (flag("routes")) for (const r of s.byRoute.slice(0, 30)) log(`  ${r.kind.padEnd(6)} $${r.usd.toFixed(3)} ${r.route}`);
+}
+
 async function runMain() {
   const now = new Date();
   const label = arg("label") || `eb-${jst(now).slice(5, 10).replace("-", "")}-${Math.random().toString(36).slice(2, 6)}`;
@@ -513,6 +588,9 @@ async function runMain() {
   printPlan(pl, now, { budget, peakWarn: pa.warn, when: `${w.why}${w.runNow ? "" : `（${jst(w.at)} JST から）`}` });
   if (!budget) log("1日の上限: 予約した時（実行する日の JST）に数える");
   if (flag("plan")) { log("\n（--plan: 流さない）"); return; }
+  // 10/21 連携③: 同じ比べを今日もう流した・担当の1日の上限を超える → 流さない／夜中に
+  const guard = await runGuard(pl, label, est.now, now);
+  if (!guard.go) return;
   ensureMainWarm();
   if (!w.runNow) {
     if (flag("wait")) { log(`安い時間まで待つ（--wait）…`); while (Date.now() < w.at.getTime()) await sleep(Math.min(10 * 60_000, w.at.getTime() - Date.now() + 1000)); }
@@ -534,6 +612,7 @@ async function runMain() {
     pl.draftPlan.ids = pl.draftPlan.ids.filter((id) => pl.items.has(id));
     if (!pl.items.size) { log("今流す問題は無い（全部夜中）"); return; }
   }
+  guard.record?.();
   let head = ""; try { head = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* */ }
   const startedAt = new Date().toISOString();
   const groups: Array<{ model: "pro" | "flash"; ids: string[] }> = (["pro", "flash"] as const).map((m) => ({ model: m, ids: [...pl.items.values()].filter((x) => x.model === m).map((x) => x.id) })).filter((g) => g.ids.length);
@@ -1111,6 +1190,6 @@ function readCostTier(label: string): { any: boolean; machine: number; flash: nu
 
 // 2026-10-20 --range の版がこの倉庫に無い（別の倉庫の commit 等）時は、お金を使う前に分かる言葉で止める（前は RAG の選びが落ちて「安全側で全部」になっていた）
 const checkRange = () => { if (arg("range")) verifyRange(arg("range"), "."); };
-const main0 = flag("conduct") ? conduct : args.some((x) => /^--run-plan(=|$)/.test(x)) ? runPlan : flag("miss-map") ? showMissMap : flag("coverage") ? showCoverage : flag("ledger") ? async () => showLedger() : flag("cleanup") ? cleanup : flag("run-queue") ? runQueue : flag("warm-main") ? warmMain : flag("model-check") ? modelCheck : runMain;
+const main0 = flag("spend-today") ? spendToday : flag("conduct") ? conduct : args.some((x) => /^--run-plan(=|$)/.test(x)) ? runPlan : flag("miss-map") ? showMissMap : flag("coverage") ? showCoverage : flag("ledger") ? async () => showLedger() : flag("cleanup") ? cleanup : flag("run-queue") ? runQueue : flag("warm-main") ? warmMain : flag("model-check") ? modelCheck : runMain;
 const main = async () => { checkRange(); await main0(); };
 main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; }).finally(() => setTimeout(() => process.exit(process.exitCode ?? 0), 300));
