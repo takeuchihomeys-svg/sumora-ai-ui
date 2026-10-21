@@ -9,7 +9,8 @@ import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { createGenerationModel } from "@/app/lib/reply-generation-model";
 // 2026-09-19 竹内: 自動返信オンの会話の下書きは Claude のまま（印を付けて llm-alt-provider が守る）
 import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER, LLM_ACTION_HEADER } from "@/app/lib/llm-usage-recorder";
-import { willRouteAlt, ALT_STREAM_CUT_STOP, altDeepseekModelFor } from "@/app/lib/llm-alt-provider";
+import { willRouteAlt, ALT_STREAM_CUT_STOP, altDeepseekModelFor, DEEPSEEK_FLASH_MODEL } from "@/app/lib/llm-alt-provider";
+import { writerFlashDecision, writerFlashScenes, WRITER_FLASH_ACTION } from "@/app/lib/writer-flash-scenes";
 import { flashWriterAdaptOn, flashWriterRecheckOn, isFlashModel, flashWriterParts, buildFlashChecklist, renderFlashChecklistNote, renderFlashExamplesNote, missingFlashItems, buildFlashRewriteFeedback, buildFlashPlanRequest, buildFlashWriteRequest, contractForbidsInvite, INVITE_RE, type FlashChecklistItem } from "@/app/lib/flash-writer";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
 import { loadPostApplyFacts, resolvePostApply, postApplyDraftSkip, loadDeepseekCutoff, cutoffMs, isAfterCutoff, filterAfterCutoff, formatCutoffMark, loadPreCutoffCustomerChunks, NO_CUTOFF, parallelSecondActive, resolveDeepseekEntrance, entranceMarkOf, type DeepseekCutoff, type CutoffMark, type PostApplyFacts } from "@/app/lib/post-apply";
@@ -6128,8 +6129,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
 
     // 2026-10-18 竹内さん「flash の特徴に合わせる」: 書く役が DeepSeek の flash の時だけ、最後（キャッシュの前置きの後ろ）に答える項目の一覧・手本を足す
     //   （app/lib/flash-writer.ts・pro／Claude の時は何も足さない＝指示は1文字も変えない・FLASH_WRITER_ADAPT=off で旧・FLASH_WRITER_PARTS で手当てを選ぶ）
+    // 2026-10-21 書く役の flash（app/lib/writer-flash-scenes.ts・WRITER_FLASH_SCENES・既定 off）: 試験で質が落ちない場面だけ、
+    //   名札 reply_generate_flash で同じ DeepSeek の flash に回す（申込の記録が無い会話・自動返信でない・続きの番でない時だけ。個人情報の門は今のまま全部通る）
+    const replyDsModel = altDeepseekModelFor("reply_generate", { postApply: altPostApply || deepseekBlocked, autoSend: autoSendConversation });
+    const writerFlash = writerFlashDecision({
+      scene: replyScene, deepseekModel: replyDsModel, cutMarkKind: replyCutMark.kind,
+      autoSend: autoSendConversation, followUp: !!isFollowUp, templateOptimize: !!isTemplateOptimize,
+    });
+    if (writerFlash.on || writerFlashScenes()) console.log(JSON.stringify({ tag: "gen:writer-flash", conversationId, scene: replyScene, on: writerFlash.on, why: writerFlash.why }));
     const flashWriterModel = !isTemplateOptimize && !isFollowUp && flashWriterAdaptOn()
-      ? altDeepseekModelFor("reply_generate", { postApply: altPostApply || deepseekBlocked, autoSend: autoSendConversation })
+      ? (writerFlash.on ? DEEPSEEK_FLASH_MODEL : replyDsModel)
       : null;
     const flashParts = isFlashModel(flashWriterModel) ? flashWriterParts() : new Set<string>();
     const flashItems: FlashChecklistItem[] = flashParts.size
@@ -6207,6 +6216,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       ...(altPostApply || deepseekBlocked ? { [LLM_POST_APPLY_HEADER]: "1" } : {}),
       // 2026-09-26 時刻の線: 判定を通った印（出口の二重の鍵）。blocked・印なしの会話の呼び出しは DeepSeek に回らない
       [LLM_CUTOFF_HEADER]: formatCutoffMark(replyCutMark),
+      // 2026-10-21 書く役の flash: この番の書く役（書き直し・1段目の決めを含む）だけ名札を替える（llm-alt-provider が flash に送る・Claude に戻る時は返信生成と同じモデル）
+      ...(writerFlash.on ? { [LLM_ACTION_HEADER]: WRITER_FLASH_ACTION } : {}),
     };
 
     // ─── 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキングするように」────────────────
