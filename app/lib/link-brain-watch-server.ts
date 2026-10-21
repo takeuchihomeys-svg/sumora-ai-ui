@@ -6,6 +6,8 @@ import {
   watchLinks, type LinkConvInput, type LinkWatchSummary, type LinkWindow, type LinkConversation, type LinkMessage, type LinkAixLog,
   type LinkFact, type LinkTurn, type LinkAixItem, type LinkPickup, type LinkJudgment, type LinkMemoItem,
 } from "@/app/lib/link-brain-watch";
+import { linkHubEnabled } from "@/app/lib/customer-hub";
+import { auditCustomerHubs } from "@/app/lib/customer-hub-server";
 
 const DAY = 86_400_000;
 const PAGE = 1000;
@@ -100,6 +102,18 @@ export async function loadLinkWatchInputs(sb: SupabaseClient, w: LinkWindow): Pr
   }));
 }
 
-export async function runLinkWatch(sb: SupabaseClient, w: LinkWindow, o: { examplesPerType?: number } = {}): Promise<LinkWatchSummary> {
-  return watchLinks(await loadLinkWatchInputs(sb, w), w, o);
+/** 段2: 見張りがハブ（customer-hub）を読む上限の会話数（1会話 10本ほどの読み） */
+export const LINK_HUB_MAX_CONVERSATIONS = 150;
+
+export async function runLinkWatch(sb: SupabaseClient, w: LinkWindow, o: { examplesPerType?: number; env?: Record<string, string | undefined> } = {}): Promise<LinkWatchSummary> {
+  const inputs = await loadLinkWatchInputs(sb, w);
+  const s = watchLinks(inputs, w, o);
+  // 段2（既定 off・LINK_HUB=on）: 見張った会話のハブを組み、元どうしの食い違いを型ごとに数える（読むだけ・本番の返信/AIX には何もつながない）
+  if (linkHubEnabled(o.env)) {
+    try {
+      const a = await auditCustomerHubs(sb, { ids: inputs.map((i) => i.conv.id), nowMs: w.nowMs, limit: LINK_HUB_MAX_CONVERSATIONS, samplesPerType: 0 });
+      s.hub = { conversations: a.conversations, withContradiction: a.withContradiction, byType: a.byType as Record<string, number>, actors: a.actors };
+    } catch (e) { console.warn("[link-brain-watch] hub skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  return s;
 }
