@@ -26,6 +26,7 @@ import { MORNING_GREETING_NOTE_PREFIX } from "./viewing-day-greeting";
 import { PROMISE_QUEUE_NOTE_PREFIX } from "./promise-queue";
 import type { LedgerKind } from "./action-ledger";
 import type { TargetTier } from "./brain-attention";
+import type { TodoSnapshot } from "./staff-todo-reply";
 import { todoInstruction, conditionShort, type TodoConditionRow } from "./staff-todo-instruction";
 import {
   todoGroupOf, todoScore, compareTodoPriority, applyConductor, TODO_GROUP_LABEL,
@@ -696,28 +697,119 @@ export const STAFF_TODO_COOLDOWN_MS = 50 * 60_000;
 /** 朝の時間割を入れる便（ターゲットの投稿と同じ・JST 10 時台＝10:30 の便） */
 const SCHEDULE_HOUR_JST = 10;
 /**
+ * その日の最初の便（10:30）の一番上の掛け声（2026-10-21 竹内さん「オススメでおねがい」）。
+ *   旧 daily-brief の朝の便の締めの言葉と同じ文（app/api/cron/daily-brief/route.ts）
+ */
+export const MORNING_CALL_LINE = "全員に物件出して返信して！！それがしょーへいの今日の全仕事！！";
+/**
+ * その日（JST の暦の日）の最初に送る便か。前の便の控え（送れた便だけ残る）に今日の分が無ければ最初＝10:30 が送れず 11:30 になった日もそこで1回出す。
+ *   10:30 の再試行・手動は控えが今日の分を持つので2回出ない。控えが無い（読めない）時は JST 10 時台の便だけ（毎便に出さない）
+ */
+export function isFirstPostOfDay(atMs: number, snapshots?: ReadonlyArray<TodoSnapshot>): boolean {
+  if (!snapshots?.length) return new Date(atMs + JST_OFFSET_MS).getUTCHours() === SCHEDULE_HOUR_JST;
+  const day = jstDayStartMs(atMs);
+  return !snapshots.some((s) => { const ms = Date.parse(s.sentAt); return Number.isFinite(ms) && ms <= atMs && jstDayStartMs(ms) === day; });
+}
+/** 次の便に回した④⑤の人数の1行 */
+export function carriedLine(group: 4 | 5, n: number): string {
+  return `${group === 4 ? "④" : "⑤"}の残り ${n}人は次の便で`;
+}
+
+/** 1便の中身（出す一覧＝番号はこの一覧だけで振る・控えもこれで作る） */
+export type TodoPost = {
+  /** この便に出す一覧（次の便に回した④⑤のお客様と、回した時の済みの④⑤は除いてある） */
+  list: TodoList;
+  text: string | null;
+  /** 次の便に回した人数（④・⑤） */
+  carried: { 4: number; 5: number };
+};
+type RenderMode = { compact: 0 | 1 | 2; carried?: { 4: number; 5: number }; morning?: boolean };
+
+/**
+ * 1便を組む（2026-10-21 竹内さん「オススメでおねがい」）。
+ *   収まる時は今まで通り（詰めない → ④⑤を1人1行・条件つき）。それでも長い時は条件を外さず（スタッフが「何も考えず」動けるように）、
+ *   ④⑤の新着確認を入るだけ出して残りは次の便に回す。回す順は「今日の前の便で出ていない人が先 → 出たのが古い人が先」、同じなら並びの点の順。
+ *   今日もう✅・☑の人は回す組から外す（出さない）。出た人は控え（snapshots）の新着確認の行の鍵で分かる（鍵に日付が入るので今日の分だけ当たる）
+ */
+export function composeStaffTodoPost(list: TodoList, opts: { snapshots?: ReadonlyArray<TodoSnapshot>; compact?: boolean } = {}): TodoPost {
+  const none = { 4: 0, 5: 0 };
+  if (list.customers.length === 0 && !(list.screening?.length)) return { list, text: null, carried: none };
+  const morning = isFirstPostOfDay(list.atMs, opts.snapshots);
+  if (!opts.compact) {
+    const full = renderList(list, { compact: 0, morning });
+    if (full.length <= TODO_LIST_MAX_CHARS) return { list, text: full, carried: none };
+  }
+  const compact = renderList(list, { compact: 1, morning });
+  if (compact.length <= TODO_LIST_MAX_CHARS) return { list, text: compact, carried: none };
+
+  // 回す: ④⑤の新着確認だけのお客様（済みは外す）を、出ていない順に並べて入るだけ
+  const isDaily = (c: TodoCustomer) => c.group === 4 || c.group === 5;
+  const isDone = (c: TodoCustomer) => !c.items.some((i) => !i.doneAt);
+  const pool = rotationOrder(list.customers.filter((c) => isDaily(c) && !isDone(c)), opts.snapshots ?? [], list.atMs);
+  const build = (k: number): TodoPost => {
+    const chosen = new Set(pool.slice(0, k).map((c) => c.conversationId));
+    const carried = { 4: 0, 5: 0 };
+    for (const c of pool.slice(k)) carried[c.group as 4 | 5]++;
+    const shown: TodoList = { ...list, customers: list.customers.filter((c) => !isDaily(c) || chosen.has(c.conversationId)) };
+    return { list: shown, text: renderList(shown, { compact: 1, carried, morning }), carried };
+  };
+  // 行の長さはほぼ足し算なので二分で入る人数を探す（0人でも長い時はそのまま返す＝送る側が後ろを切る）
+  let lo = 0, hi = pool.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if ((build(mid).text ?? "").length <= TODO_LIST_MAX_CHARS) lo = mid; else hi = mid - 1;
+  }
+  return build(lo);
+}
+/**
+ * 回す順: 今日の控えに新着確認の行が無い人（まだ出ていない）が先 → 最後に出たのが古い人 → 同じなら今の並び（点の順）。
+ *   今より後の控え・別の日の鍵は数えない
+ */
+export function rotationOrder(pool: ReadonlyArray<TodoCustomer>, snapshots: ReadonlyArray<TodoSnapshot>, atMs: number): TodoCustomer[] {
+  const lastShown = new Map<string, number>();
+  for (const s of snapshots) {
+    const sMs = Date.parse(s.sentAt);
+    if (!Number.isFinite(sMs) || sMs > atMs) continue;
+    for (const it of s.items) {
+      if (!it.key.startsWith("newarrival:")) continue;
+      if (sMs > (lastShown.get(it.key) ?? -Infinity)) lastShown.set(it.key, sMs);
+    }
+  }
+  const shownAt = (c: TodoCustomer) => lastShown.get(newArrivalKey(c.conversationId, atMs)) ?? -Infinity;
+  return pool.map((c, i) => ({ c, i, s: shownAt(c) })).sort((a, b) => a.s - b.s || a.i - b.i).map((x) => x.c);
+}
+/**
  * グループに出す文（やる事が1つも無ければ null＝送らない）。
  *   組の見出し（①〜④）・お客様の見出しに「▶なぜ上か」・ターゲットに🌟。ターゲットをまとめた時は【審査中】の1行と朝の便の時間割。
- *   長すぎる（TODO_LIST_MAX_CHARS 超え）時は ④ターゲットの新着確認だけのお客様を1人1行に詰める（opts.compact で最初から詰める）
+ *   長すぎる（TODO_LIST_MAX_CHARS 超え）時は ④ターゲットの新着確認だけのお客様を1人1行に詰め、それでも長い時は入るだけ出して残りを次の便に回す
+ *   （回す順に前の便の控えを使う時は composeStaffTodoPost。番号と控えは返った list で振ること）
  */
 export function renderStaffTodoList(list: TodoList, opts: { compact?: boolean } = {}): string | null {
-  if (list.customers.length === 0 && !(list.screening?.length)) return null;
-  const full = renderList(list, opts.compact ? 1 : 0);
-  if (opts.compact || full.length <= TODO_LIST_MAX_CHARS) return full;
-  const compact = renderList(list, 1);
-  if (compact.length <= TODO_LIST_MAX_CHARS) return compact;
-  // まだ長い時は詰めた行から条件と理由も外す（名前と番号だけ）
-  return renderList(list, 2);
+  return composeStaffTodoPost(list, opts).text;
 }
-/** compact: 0=詰めない／1=④⑤を1人1行（条件・理由つき）／2=④⑤を1人1行（名前と番号だけ） */
-function renderList(list: TodoList, compact: 0 | 1 | 2): string {
+/**
+ * compact: 0=詰めない／1=④⑤を1人1行（条件・理由つき）／2=④⑤を1人1行（名前と番号だけ・今は使わない＝条件は外さず次の便に回す）。
+ * carried: 次の便に回した人数（その組の最後に「④の残り N人は次の便で」）。その日の最初の便（10:30）は一番上に朝の掛け声
+ */
+function renderList(list: TodoList, mode: RenderMode): string {
+  const { compact, carried, morning } = mode;
   const nums = new Map(numberTodoItems(list).map((x) => [x.item.key, x.n]));
-  const out = [`【やることリスト】${jstMDHm(list.atMs)}`];
+  const out = [
+    ...(morning ? [MORNING_CALL_LINE] : []),
+    `【やることリスト】${jstMDHm(list.atMs)}`,
+  ];
   const hasDaily = list.customers.some((c) => c.items.some((i) => i.source === "target_new_arrival"));
   const showGroups = !!list.targetsMerged || hasDaily;
+  const carriedDone = new Set<number>();
+  const flushCarried = (g: number | null) => {
+    if (!carried || (g !== 4 && g !== 5) || carriedDone.has(g) || !carried[g]) return;
+    out.push(carriedLine(g, carried[g]));
+    carriedDone.add(g);
+  };
   let lastGroup: number | null = null;
   for (const c of list.customers) {
     if (showGroups && c.group && c.group !== lastGroup) {
+      flushCarried(lastGroup);
       out.push("", `━ ${TODO_GROUP_LABEL[c.group]} ━`);
       // 詰めた形の④⑤は1人1行なので、やり方を見出しの下に1回だけ書く
       if (compact && (c.group === 4 || c.group === 5)) out.push(COMPACT_DAILY_HOWTO);
@@ -726,6 +818,13 @@ function renderList(list: TodoList, compact: 0 | 1 | 2): string {
     if (compact && (c.group === 4 || c.group === 5)) { out.push(renderCompactNewArrival(c, list.atMs, nums, compact === 2)); continue; }
     const head = `${c.accountLabel}${c.why && c.items.some((i) => !i.doneAt) ? ` ▶${c.why}` : ""}`;
     out.push("", head, ...c.items.map((i) => renderTodoItem(i, list.atMs, nums.get(i.key))));
+  }
+  flushCarried(lastGroup);
+  // 組ごと次の便に回した時（見出しが出なかった組）も1行
+  if (carried && (carried[4] && !carriedDone.has(4) || carried[5] && !carriedDone.has(5))) {
+    out.push("");
+    flushCarried(4);
+    flushCarried(5);
   }
   if (list.targetsMerged) {
     out.push("", `【審査中】${list.screening?.length ? list.screening.join("、") : "（なし）"}`);
