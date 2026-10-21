@@ -40,7 +40,7 @@ import { loadCacheWarmDecision, saveConvWarmPrefix } from "@/app/lib/cache-warm-
 import { decideNightDeferNow, type BrainOrigin } from "@/app/lib/brain-night-defer";
 export type { BrainOrigin };
 import { isPostApplyStatus, willRouteAlt, brainDsPartsOn } from "@/app/lib/llm-alt-provider";
-import { loadDeepseekCutoff, cutoffMarkOf, formatCutoffMark } from "@/app/lib/post-apply";
+import { loadDeepseekCutoff, cutoffMarkOf, formatCutoffMark, loadPostApplyFacts, parallelSecondActive } from "@/app/lib/post-apply";
 import { buildSendReplyTimingNote } from "@/app/lib/send-reply-timing";
 import { buildAixSceneNote } from "@/app/lib/aix-scene-stats";
 import { buildCompanyFactsNote, brandCostOverrideNote, matchCompanyFacts, customerTextsForCompanyFacts } from "@/app/lib/company-facts";
@@ -200,6 +200,7 @@ import { isExplicitNoAix, isMeaninglessRuleKeyword, humanKeywordRuleHit, summedK
 // 2026-09-27 ②: お客様の「審査落ちた」（別物件への切り替え）に 物件確認した を選ばせない（本番の線は 物件ピックアップ）
 import { resolveScreeningFailedSwitch } from "@/app/lib/screening-failed-switch";
 import { loadPostApplyBrainGate } from "@/app/lib/post-apply-brain-gate-server";
+import { PARALLEL_STATUSES, parallelSecondEnabled, effectiveStatusForParallel, buildParallelBrainNote } from "@/app/lib/parallel-second";
 // 2026-10-18: 同じ入力の鍵で2回ブレインを回さない（brain-input-key.ts）
 import { brainInputKeyOf, decideInputKeyReuse } from "@/app/lib/brain-input-key";
 // 2026-09-27 ③: 資料の現況が「審査中」のお送りしたお部屋をブレインに渡す（資料の文字のまま）
@@ -1474,7 +1475,9 @@ export async function analyzeConversation(
     /** 3巡目（10/07）: 材料を場面で絞るか（テストの前後比べ用・無ければ BRAIN_SCENE_MATERIALS） */
     sceneMaterials?: "on" | "off";
     /** 2026-10-02: お客様ごと・1日ごとの温めのスイッチ（analyzeAndSaveBrainMeta が decideCacheWarm で決めた値。null＝OFF） */
-    cacheWarm?: CacheWarmDecision | null },
+    cacheWarm?: CacheWarmDecision | null;
+    /** 2026-10-21（ec4d5990）2番手で申込中（並行で探す）: 材料に1ブロック足す（呼び出し元が status を物件提案中に読み替えている） */
+    parallelSecond?: boolean },
 ): Promise<SuggestedAixMeta> {
   // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
   await ensureLlmFetchChainInDev().catch(() => {});
@@ -2857,6 +2860,8 @@ ${catalogBlockForBrain(brainScene)}
       const ra = await Promise.race([reapplyBrainNoteFor(supabase, conversationId), new Promise<null>((r) => setTimeout(() => r(null), 4_000))]);
       if (ra?.note) { customerStateBlockText += `\n\n${ra.note}`; console.log(JSON.stringify({ tag: "brain:reapply", conversationId, pattern: ra.info?.pattern ?? null, source: ra.info?.source ?? null })); }
     } catch (e) { console.warn("[brain-core] reapply skipped:", e instanceof Error ? e.message : String(e)); }
+    // 2026-10-21 竹内さんの決定（ec4d5990）: 2番手で申込中（並行で探す）— 申込は止めずに別の物件を並行して出す（申込の中身には触れない・parallel-second.ts）
+    if (opts?.parallelSecond) customerStateBlockText += `\n\n${buildParallelBrainNote()}`;
   }
   // 2026-10-08 竹内さん「2月に引っ越すなどなれば、物件を抑える事ができるのは1ヶ月のため、1ヶ月半前から探し出す形が理想の流れと伝えて、その日に連絡するように約束」:
   //   入居・引越しの時期が先（連絡の日＝1ヶ月半前が7日以上先）で、まだ連絡の日を約束していない番だけ（contact-promise.farMoveInTurn・決定論）。FAR_MOVE_IN_CONTACT=off で止まる
@@ -5870,6 +5875,16 @@ async function analyzeAndSaveBrainMetaInner(
   } catch (e) {
     console.warn("[brain-core] post-apply gate read failed (run as before):", conversationId, e instanceof Error ? e.message : e);
   }
+  // 2026-10-21 竹内さんの決定（ec4d5990）: 2番手で申込中（並行で探す）と明示的に決まった会話は、物件提案中として判断する（申込中の材料の切り替えを外す・DB の status は変えない）。
+  //   材料に「2番手で申込中（並行で探す）」の1ブロックを足す。読めなければ今まで通り。戻す REAPPLY_PARALLEL_2ND=off
+  let brainStatus = status;
+  let parallelSecond = false;
+  if (status && PARALLEL_STATUSES.has(status) && parallelSecondEnabled()) {
+    try {
+      const pf = await loadPostApplyFacts(supabase, conversationId);
+      if (parallelSecondActive(pf)) { parallelSecond = true; brainStatus = effectiveStatusForParallel(status, true); console.log(JSON.stringify({ tag: "brain:parallel-2nd", conversationId, status })); }
+    } catch (e) { console.warn("[brain-core] parallel-2nd read failed (as before):", conversationId, e instanceof Error ? e.message : e); }
+  }
   // 2026-09-12 竹内（名無しの権兵衛事例）: 旧「申込以降バッジあり（is_post_apply）→ 分析不要」は廃止。
   //   申込中でもお客様は並行して別の物件の内見・初期費用を聞く（「因みに、昭和グランドハイツ恵比寿の初期費用教えて下さい」→ AIX 見積書送る）。
   //   30日で is_post_apply の会話 13件にスタッフが AIX を 91回押していた（物件オススメ34・物件ピックアップ17・物件確認11・見積書10…）のに、
@@ -6137,7 +6152,7 @@ async function analyzeAndSaveBrainMetaInner(
   const meta = await analyzeConversation(
     conversationId,
     isUrgent,
-    status,
+    brainStatus,
     (conv.property_customer_id as string | null) ?? null,
     "brain",
     {
@@ -6154,6 +6169,7 @@ async function analyzeAndSaveBrainMetaInner(
       strategy: useFreshLayer ? brainStrategy : null,
       totalMsgCount: totalMsgCount ?? 0,
       cacheWarm,
+      parallelSecond,
     },
   );
   // 2026-09-30 竹内: 今回の連投で決まった内覧が取りやめになっていたら、カレンダーの予定を消す（LLM の結果に依らない決定論・応答は待たせない）

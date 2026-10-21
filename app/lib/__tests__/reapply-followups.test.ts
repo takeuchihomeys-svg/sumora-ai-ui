@@ -1,0 +1,240 @@
+// 2番手で申込中（並行で探す）・【申込歴あり】・出口で値を伏せてから DeepSeek に渡す のテスト（自己完結ハーネス・LLM なし・本物のお客様の文は使わない＝全部作り物）
+// 実行: npx tsx app/lib/__tests__/reapply-followups.test.ts
+import {
+  isApplied2ndText, isOffer2ndText, isParallelEndText, resolveParallelSecond, staffParallelChoiceOf, effectiveStatusForParallel, buildParallelBrainNote,
+  PARALLEL_MEMO_ID, PARALLEL_MEMO_ON, PARALLEL_MEMO_OFF, PARALLEL_2ND_LABEL,
+} from "../parallel-second";
+import {
+  postApplyDraftSkip, parallelEligible, parallelSecondActive, resolveDeepseekEntrance, entranceMarkOf, formatCutoffMark, parseCutoffMark, NO_CUTOFF, type PostApplyFacts,
+} from "../post-apply";
+import { maskApplicationValuesForAlt, altPiiValuesRemain, maskAltBody, altPiiSignal, altPiiSignalReapply, ALT_DOC_MASK } from "../alt-pii-gate";
+import { reapplyBadgeText, REAPPLY_MARK_TEXT } from "../reapply-customer";
+import { REAPPLY_HEADER_MARK } from "../staff-todo-list";
+
+let passed = 0, failed = 0; const failures: string[] = []; let current = "";
+function describe(name: string, fn: () => void | Promise<void>) { current = name; return fn(); }
+async function it(name: string, fn: () => void | Promise<void>) {
+  try { await fn(); passed++; console.log(`  ✓ ${current} › ${name}`); }
+  catch (e) { failed++; failures.push(`${current} › ${name}`); console.log(`  ✗ ${current} › ${name}\n      ${e instanceof Error ? e.message : String(e)}`); }
+}
+const eq = (a: unknown, b: unknown, m = "") => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${m} expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`); };
+const ok = (c: boolean, m: string) => { if (!c) throw new Error(m); };
+const T = (d: string) => new Date(d).toISOString();
+const NOW = Date.parse("2026-10-21T03:00:00Z");
+const ENV_ON: Record<string, string> = {};
+const applying = (over: Partial<PostApplyFacts> = {}): PostApplyFacts => ({ status: "applying", applicationPushAt: T("2026-10-15T00:00:00Z"), ...over });
+
+async function main() {
+  await describe("2番手で申込んだ文の見分け", async () => {
+    await it("申込んだ形は当たる", () => {
+      for (const s of [
+        "テストハイツ203号室、2番手で受理されました！！",
+        "現在1番手の方が審査中となりお申込み2番手で受け付けている状況となります！！",
+        "テストレジデンス1001号室、無事2番手でお申込み完了しております！！",
+        "2番手でお申込みさせて頂きます！！",
+        "テスト101号室2番手でお申込みと同時並行で別のお部屋もお探しします",
+        "管理会社より2番手でのお申込みとのご連絡がございました。",
+      ]) ok(isApplied2ndText(s), s);
+    });
+    await it("案内・問い・できない形は当たらない", () => {
+      for (const s of [
+        "現在1件お申込みが入っており、2番手でのお申込みが可能となります！！",
+        "よろしければ2番手でお申込を行い、繰り上がりを待ちながら並行して物件をお探しさせて頂くのは如何でしょうか！！",
+        "既にお申込みが入っており2番手でのお申込み受け付けていないお部屋となります",
+        "こちらのマンションは2番手でのお申込が出来ない形との事です。",
+        "2番手でお申込した場合1番手の方がキャンセルすると繰り上がります",
+        // 同じ文の別の所の「させて頂きました」に当てない・「2番手以降」は部屋の状況の案内
+        "物件の募集状況確認させて頂きましたところ、テスト本町は既に1番手のお申し込みが入っており、現在2番手以降でのお申込み受付となるお部屋となります",
+        "お部屋の状況を確認させて頂きました、現在2番手でのお申込みとなるお部屋です",
+      ]) ok(!isApplied2ndText(s), s);
+    });
+    await it("案内は isOffer2ndText・できない形は外す", () => {
+      ok(isOffer2ndText("2番手でのお申込みが可能となります！！"), "可能");
+      ok(!isOffer2ndText("2番手でのお申込み受け付けていないとのことです"), "受け付けていない");
+    });
+    await it("終わりの文（繰り上がり・自分の審査通過・1番手が通過）", () => {
+      ok(isParallelEndText("1番手の方がキャンセルとなり繰り上がりました！！"), "繰り上がり");
+      ok(isParallelEndText("審査通過のご連絡がありました！！"), "審査通過");
+      ok(isParallelEndText("1番手の方が審査通過となりました"), "1番手が通過");
+      ok(!isParallelEndText("1番手の方が審査否決となった場合繰り上がる形となります"), "仮定は終わりにしない");
+    });
+  });
+
+  await describe("2番手で申込中（並行で探す）の判定", async () => {
+    const msg = (sender: string, text: string, at: string) => ({ sender, text, createdAt: T(at) });
+    await it("スタッフの『2番手で受理』→ 並行（自動・文）", () => {
+      const st = resolveParallelSecond({ msgs: [msg("staff", "2番手で受理されております！！", "2026-10-16T00:00:00Z")], lastApplyAt: T("2026-10-15T00:00:00Z"), nowMs: NOW });
+      eq([st.parallel, st.source, st.via], [true, "auto", "message"]);
+    });
+    await it("お客様の文・案内だけでは並行にしない", () => {
+      eq(resolveParallelSecond({ msgs: [msg("customer", "2番手で受理されました", "2026-10-16T00:00:00Z")], lastApplyAt: T("2026-10-15T00:00:00Z"), nowMs: NOW }).parallel, false);
+      eq(resolveParallelSecond({ msgs: [msg("staff", "2番手でのお申込みが可能となります！！", "2026-10-14T00:00:00Z")], lastApplyAt: T("2026-10-15T00:00:00Z"), nowMs: NOW }).parallel, false);
+    });
+    await it("ピッカー（ほかの方の申込あり）＋2番手の案内 → その後に申込の記録 ＝ 並行（ピッカー）", () => {
+      const st = resolveParallelSecond({
+        msgs: [msg("staff", "1番手で審査中のため2番手でのお申込みが可能となります！！", "2026-10-14T00:00:00Z")],
+        pickers: [{ checkPattern: "mgmt_application_status", choices: { status: "申込あり" }, createdAt: T("2026-10-14T00:00:00Z") }],
+        lastApplyAt: T("2026-10-15T00:00:00Z"), nowMs: NOW,
+      });
+      eq([st.parallel, st.via], [true, "picker"]);
+    });
+    await it("ピッカーが『なし』だけなら数えない", () => {
+      const st = resolveParallelSecond({
+        msgs: [msg("staff", "2番手でのお申込みが可能となります！！", "2026-10-14T00:00:00Z")],
+        pickers: [{ checkPattern: "mgmt_application_status", choices: { status: "申込なし" }, createdAt: T("2026-10-14T00:00:00Z") }],
+        lastApplyAt: T("2026-10-15T00:00:00Z"), nowMs: NOW,
+      });
+      eq(st.parallel, false);
+    });
+    await it("その後に繰り上がり・審査通過があれば終わり", () => {
+      const msgs = [msg("staff", "2番手で受理されております！！", "2026-10-16T00:00:00Z"), msg("staff", "1番手の方がキャンセルとなり繰り上がりました！！", "2026-10-18T00:00:00Z")];
+      eq(resolveParallelSecond({ msgs, lastApplyAt: T("2026-10-15T00:00:00Z"), nowMs: NOW }).parallel, false);
+    });
+    await it("戻した時刻より前の文（前回の申込の話）は数えない", () => {
+      const st = resolveParallelSecond({ msgs: [msg("staff", "2番手で受理されております！！", "2026-10-01T00:00:00Z")], lastApplyAt: T("2026-10-15T00:00:00Z"), lastBackAt: T("2026-10-05T00:00:00Z"), nowMs: NOW });
+      eq(st.parallel, false);
+    });
+    await it("スタッフの選択が最優先（はい／いいえ）", () => {
+      eq(resolveParallelSecond({ msgs: [], staffChoice: true, nowMs: NOW }).parallel, true);
+      eq(resolveParallelSecond({ msgs: [msg("staff", "2番手で受理されております！！", "2026-10-16T00:00:00Z")], staffChoice: false, lastApplyAt: T("2026-10-15T00:00:00Z"), nowMs: NOW }).parallel, false);
+      eq(staffParallelChoiceOf([{ id: PARALLEL_MEMO_ID, text: PARALLEL_MEMO_ON }]), true);
+      eq(staffParallelChoiceOf([{ id: PARALLEL_MEMO_ID, text: PARALLEL_MEMO_OFF }]), false);
+      eq(staffParallelChoiceOf([{ id: PARALLEL_MEMO_ID, text: PARALLEL_MEMO_ON, retiredAt: T("2026-10-20T00:00:00Z") }]), null);
+    });
+    await it("下書き・ブレインに渡す status は物件提案中（申込中の時だけ）", () => {
+      eq(effectiveStatusForParallel("applying", true), "proposing");
+      eq(effectiveStatusForParallel("contract", true), "contract");
+      eq(effectiveStatusForParallel("applying", false), "applying");
+    });
+    await it("ブレインの材料に個人の値が無い・札の文", () => {
+      const n = buildParallelBrainNote();
+      ok(n.includes(PARALLEL_2ND_LABEL), n);
+      eq(altPiiSignalReapply(n.replace(/申込の中身（[^）]*）/, "")), null);
+      eq(PARALLEL_2ND_LABEL, "2番手で申込中（並行で探す）");
+    });
+  });
+
+  await describe("下書きの止め・DeepSeek の入口（この状態だけ緩める）", async () => {
+    await it("並行の会話は下書きを止めない・並行でない申込中は今まで通り止める", () => {
+      eq(postApplyDraftSkip(applying({ parallel2nd: true }), ENV_ON), false);
+      eq(postApplyDraftSkip(applying(), ENV_ON), true);
+      eq(postApplyDraftSkip(applying({ parallel2nd: true }), { REAPPLY_PARALLEL_2ND: "off" }), true);
+    });
+    await it("契約以降・申込前・印だけ残って戻した会話は並行に入らない", () => {
+      eq(parallelEligible(applying({ status: "contract" })), false);
+      eq(parallelEligible({ status: "proposing" }), false);
+      eq(parallelEligible({ status: "proposing", isPostApply: true, applicationPushAt: T("2026-10-01T00:00:00Z"), statusManualBackAt: T("2026-10-05T00:00:00Z") }), false);
+      eq(parallelSecondActive(applying({ status: "contract", parallel2nd: true }), ENV_ON), false);
+      // status が遅れて提案中のまま（記録で申込中）は入る
+      eq(parallelEligible({ status: "proposing", applicationPushAt: T("2026-10-15T00:00:00Z") }), true);
+    });
+    await it("入口: 並行は申込以降に数えず・線なし・印 masked", () => {
+      const e = resolveDeepseekEntrance(applying({ parallel2nd: true }), ENV_ON);
+      eq([e.altPostApply, e.cutoff === NO_CUTOFF, e.masked], [false, true, true]);
+      eq(entranceMarkOf(e.cutoff, e.masked), { kind: "masked" });
+    });
+    await it("入口: 出口の網が止まっていれば masked にしない（Claude のまま）", () => {
+      const e = resolveDeepseekEntrance(applying({ parallel2nd: true }), { LLM_ALT_REAPPLY_GATE: "off" });
+      eq([e.altPostApply, e.masked], [true, false]);
+      eq(resolveDeepseekEntrance(applying({ parallel2nd: true }), { LLM_ALT_PII_GATE: "off" }).masked, false);
+    });
+    await it("入口: 並行でない申込中は今まで通り申込以降（渡さない）", () => {
+      const e = resolveDeepseekEntrance(applying(), ENV_ON);
+      eq([e.altPostApply, e.cutoff, e.masked], [true, null, false]);
+      eq(entranceMarkOf(e.cutoff, e.masked), { kind: "blocked" });
+    });
+    await it("印 masked はヘッダで行き来できる・知らない値は blocked", () => {
+      eq(parseCutoffMark(formatCutoffMark({ kind: "masked" })), { kind: "masked" });
+      eq(parseCutoffMark("masked2"), { kind: "blocked" });
+      // masked でも線がある時は cut（masked を作るのは線なしの時だけ）
+      eq(entranceMarkOf(T("2026-10-10T00:00:00Z"), true).kind, "cut");
+    });
+  });
+
+  await describe("出口で値を伏せる（maskApplicationValuesForAlt・作り物の申込フォーム）", async () => {
+    const form = [
+      "お客様: 申込者様記入欄",
+      "・氏名、フリガナ テスト 太郎 テスト タロウ",
+      "・生年月日 1995年3月12日",
+      "・携帯番号 090-1234-5678",
+      "・勤務先：テスト商事株式会社",
+      "・年収 350万円",
+      "・メール test.taro@example.com",
+      "",
+      "スタッフ: ありがとうございます！！テストハイツ203号室（家賃8万円）は10月25日に内見できます",
+      "管理会社名：テスト不動産",
+    ].join("\n");
+    await it("伏せる前は網に当たる", () => {
+      ok(altPiiSignal(form) !== null, "記入済みのフォーム");
+      ok(altPiiValuesRemain(form) !== null, "値が残る");
+    });
+    await it("伏せた後は値が残らない・物件と内見の日・管理会社名は残る", () => {
+      const m = maskApplicationValuesForAlt(form);
+      eq(altPiiValuesRemain(m, { docs: true }), null, m);
+      eq(altPiiSignal(m), null, m);
+      for (const v of ["1995", "090-1234", "テスト商事", "350万", "example.com", "タロウ", "テスト 太郎"]) ok(!m.includes(v), `${v} が残った: ${m}`);
+      for (const v of ["申込者様記入欄", "テストハイツ203号室", "家賃8万円", "10月25日", "管理会社名：テスト不動産"]) ok(m.includes(v), `${v} が消えた: ${m}`);
+    });
+    await it("書類の読み取りの束は丸ごと伏せる", () => {
+      const doc = "お客様: [画像] 運転免許証\n氏名：テスト 花子\n生年月日：平成8年4月1日生\n住所：テスト県テスト市1-2-3\n公安委員会\n\nスタッフ: 確認しました！！";
+      ok(altPiiValuesRemain(doc, { docs: true }) !== null, "伏せる前は当たる");
+      const m = maskApplicationValuesForAlt(doc);
+      ok(m.includes(ALT_DOC_MASK), m);
+      ok(!m.includes("テスト 花子") && !m.includes("平成8年"), m);
+      eq(altPiiValuesRemain(m, { docs: true }), null, m);
+      ok(m.includes("確認しました"), m);
+    });
+    await it("指示文の語（本人確認書類・生年月日の欄の名前）だけの文は変えない", () => {
+      const sys = "申込には申込フォーマットと本人確認書類（運転免許証またはマイナンバーカードの裏表）が必要です。生年月日・勤務先は聞かない。";
+      eq(maskApplicationValuesForAlt(sys), sys);
+      eq(altPiiValuesRemain(sys), null);
+    });
+    await it("本文（system・messages）を伏せて remain=null・元の本文は変えない", () => {
+      const body = { system: [{ type: "text", text: "会話の材料:\n年収 420万円のお客様" }], messages: [{ role: "user", content: form }] };
+      const r = maskAltBody(body);
+      eq(r.remain, null);
+      eq(r.changed, true);
+      ok(!JSON.stringify(r.masked).includes("420万"), "system の年収が残った");
+      ok(JSON.stringify(body).includes("420万"), "元の本文を書き換えた");
+    });
+    await it("入口の伏せで見出しが変わった束・欄の名前の無い「・値」だけの束も伏せる", () => {
+      const t = ["スモラ: こちらご記入お願いします", "お客様: 【おお客様記入欄】", "・11月頭", "・テスト　タロウ", "・テスト県テスト市1-2-3", "・テスト工業", "・400万ボーナス別", "", "【緊急連絡先欄】", "・テスト　ハナコ", "スモラ: ありがとうございます！！"].join("\n");
+      const m = maskApplicationValuesForAlt(t);
+      for (const v of ["タロウ", "テスト市1-2-3", "テスト工業", "400万", "ハナコ"]) ok(!m.includes(v), `${v} が残った: ${m}`);
+      ok(m.includes("【おお客様記入欄】") && m.includes("ありがとうございます"), m);
+      eq(altPiiValuesRemain(m, { docs: true }), null, m);
+      ok(altPiiValuesRemain(t, { docs: true }) !== null, "伏せる前は当たる");
+    });
+    await it("スタッフが書き写した勤め先の案内（【お仕事情報】・氏名と読み・勤め先の法人名）も伏せる", () => {
+      const t = ["スモラ: 保証会社から連絡が来ましたらこちらでお答えください！！", "テスト 花子（テスト ハナコ）さん 【お仕事情報】", "株式会社テスト設備", "テスト県テスト市テスト町1-2-3-4階", "スモラ: 合同会社テスト会での就業年数と年収をご教示ください", "お客様: 1年です。250万円程度です。"].join("\n");
+      const m = maskApplicationValuesForAlt(t);
+      for (const v of ["ハナコ", "テスト設備", "1-2-3-4階", "テスト会", "250万"]) ok(!m.includes(v), `${v} が残った: ${m}`);
+      eq(altPiiValuesRemain(m, { docs: true }), null, m);
+    });
+    await it("物件の文・自社の名乗り・設備の読み・指示文は変えない", () => {
+      const t = ["スモラ: 蓮産業株式会社の竹内です。", "テストレジデンス 203号室 家賃7.5万円 WIC（ウォークインクローゼット）付き", "【所在地】テスト県テスト市テスト町1丁目4-31 【交通】テスト線 徒歩5分", "管理会社はテスト管理株式会社です"].join("\n");
+      eq(maskApplicationValuesForAlt(t), t);
+      const sys = "・仕事内容を聞かれたら答える\n・氏名は呼び名だけ\n・年収は聞かない\n・勤務先は聞かない";
+      eq(maskApplicationValuesForAlt(sys, { fieldStart: "customer" }), sys);
+    });
+    await it("画像のブロックはそのまま通す", () => {
+      const body = { messages: [{ role: "user", content: [{ type: "image", text: undefined }, { type: "text", text: "年収 500万円" }] }] };
+      const r = maskAltBody(body);
+      eq((r.masked.messages[0].content as Array<{ type: string }>)[0].type, "image");
+      eq(r.remain, null);
+    });
+  });
+
+  await describe("【申込歴あり】の文字（札・やることリスト・材料）", async () => {
+    await it("札・見出しは【申込歴あり】でそろう", () => {
+      eq(REAPPLY_MARK_TEXT, "【申込歴あり】");
+      eq(REAPPLY_HEADER_MARK, REAPPLY_MARK_TEXT);
+      eq(reapplyBadgeText({ pattern: "switched" }), "【申込歴あり】③別の物件に切替");
+      ok(!/🔥/.test(reapplyBadgeText({ pattern: "unknown" })), "🔥 が残った");
+    });
+  });
+
+  console.log(`\n${passed} passed, ${failed} failed`);
+  if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
+}
+main();

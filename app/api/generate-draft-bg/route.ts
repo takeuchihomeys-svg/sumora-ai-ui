@@ -2,7 +2,8 @@ import { manYen } from "@/app/lib/man-yen";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
-import { loadPostApplyFacts, postApplyDraftSkip } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, postApplyDraftSkip, parallelSecondActive } from "@/app/lib/post-apply";
+import { PARALLEL_STATUSES, parallelSecondEnabled, effectiveStatusForParallel } from "@/app/lib/parallel-second";
 import { MSG_SEP } from "@/app/lib/reply-context";
 
 export const maxDuration = 60;
@@ -48,7 +49,16 @@ export async function POST(req: NextRequest) {
     if (!conv) return NextResponse.json({ ok: false, skipped: true });
     if (conv.last_sender !== "customer") return NextResponse.json({ ok: true, skipped: true });
     if (conv.ai_draft) return NextResponse.json({ ok: true, skipped: true, draft: conv.ai_draft as string });
-    if (DRAFT_SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: true });
+    // 2026-10-21（ec4d5990）2番手で申込中（並行で探す）と明示的に決まった会話だけは止めず、物件提案中として作る（読めなければ止める）
+    let parallelState: string | null = null;
+    if (DRAFT_SKIP_STATUSES.has(conv.status as string)) {
+      let par = false;
+      if (PARALLEL_STATUSES.has(conv.status as string) && parallelSecondEnabled()) {
+        try { par = parallelSecondActive(await loadPostApplyFacts(db, convId)); } catch { par = false; }
+      }
+      if (!par) return NextResponse.json({ ok: true, skipped: true });
+      parallelState = effectiveStatusForParallel(conv.status as string, true);
+    }
     // 2026-09-23 竹内「申込中は…ここ文生成しなくて大丈夫」: status の遅れに強い判定（app/lib/post-apply.ts）。読めなければ status のまま続行
     try {
       // 2026-10-21 印だけ残って戻した会話は止めない（Claude で作る・post-apply.ts badgeOnlyMovedBack）
@@ -74,7 +84,7 @@ export async function POST(req: NextRequest) {
     // first_reply変換：スタッフ返信ゼロ + hearing → 初回挨拶文
     const hasStaffMsg = recentMsgs.some((m) => m.sender === "staff");
     const normalizedStatus = STATUS_ALIAS[conv.status as string] ?? conv.status;
-    const effectiveState = !hasStaffMsg && normalizedStatus === "hearing" ? "first_reply" : (conv.status as string);
+    const effectiveState = !hasStaffMsg && normalizedStatus === "hearing" ? "first_reply" : (parallelState ?? (conv.status as string));
 
     const lastStaffIdx = recentMsgs.map((m, i) => m.sender === "staff" ? i : -1).filter((i) => i >= 0).at(-1);
     const msgsAfterStaff = lastStaffIdx !== undefined ? recentMsgs.slice(lastStaffIdx + 1) : recentMsgs;
