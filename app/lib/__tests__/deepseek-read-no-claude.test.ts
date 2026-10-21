@@ -35,6 +35,7 @@ type Reply = { status: number; body?: unknown } | "throw";
 let deepseekReplies: Reply[] = [];
 const calls = { deepseek: 0, anthropic: 0, other: 0 };
 const deepseekBodies: string[] = [];
+const otherCalls: { method: string; url: string }[] = [];
 const stub = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
   if (url.includes("api.anthropic.com")) { calls.anthropic++; return new Response(JSON.stringify({ content: [{ type: "text", text: '{"recommended":[1]}' }] }), { status: 200 }); }
@@ -46,6 +47,7 @@ const stub = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
     return new Response(typeof r.body === "string" ? r.body : JSON.stringify(r.body ?? {}), { status: r.status });
   }
   calls.other++;
+  otherCalls.push({ method: (init?.method ?? "GET").toUpperCase(), url });
   return new Response("{}", { status: 200 });
 }) as typeof fetch;
 globalThis.fetch = stub;
@@ -54,6 +56,7 @@ function reset(replies: Reply[], key: string | null = "dummy-deepseek") {
   deepseekReplies = [...replies];
   calls.deepseek = 0; calls.anthropic = 0; calls.other = 0;
   deepseekBodies.length = 0;
+  otherCalls.length = 0;
   if (key) process.env.DEEPSEEK_API_KEY = key; else delete process.env.DEEPSEEK_API_KEY;
 }
 const dsText = (text: string) => ({ status: 200, body: { choices: [{ message: { content: text } }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_cache_hit_tokens: 896, prompt_cache_miss_tokens: 104 } } });
@@ -234,7 +237,10 @@ const SUMMARIES = ["【1】テスト物件A 101\n賃料 7.2万円 / 1K / 25㎡",
     const s = await summaryServer.loadConditionSummary("test-id", { allowLlm: true, customer });
     ok(!!s, "null");
     if (s!.called) {
-      ok(s!.readFailed === true && calls.deepseek === 2 && calls.anthropic === 0 && calls.other === 0, JSON.stringify({ rf: s!.readFailed, ...calls }));
+      // 2026-10-21: 8ba5ea1d（伏せ字の網に当事者・他のお客様の呼び名を足す）で、DeepSeek に出す前に conversations を GET で読むようになった（意図した変更）。
+      // 守る事は同じ「保存しない」＝ DB 以外への外出し 0・GET 以外（書き込み）0・読むのは呼び名の表（conversations）だけ
+      const writes = otherCalls.filter((c) => c.method !== "GET" || !/\/rest\/v1\/conversations\?/.test(c.url));
+      ok(s!.readFailed === true && calls.deepseek === 2 && calls.anthropic === 0 && writes.length === 0, JSON.stringify({ rf: s!.readFailed, ...calls, writes }));
     } else {
       // 決定論で全部読めた（読めない節が無い）時は DeepSeek を呼ばない
       ok(calls.deepseek === 0 && calls.anthropic === 0, JSON.stringify(calls));

@@ -136,7 +136,8 @@ async function main() {
   const src = (p: string) => readFileSync(join(__dirname, "..", "..", "..", p), "utf8");
   await it("返信生成: DeepSeek に回る時だけまとめを行動台帳の後ろに足す・無ければ after で作る", () => {
     const s = src("app/api/generate-reply/route.ts");
-    ok(/loadApplyPeriodNote\(conversationId, deepseekCutoff\)/.test(s) && /\+ viewingReportNote \+ applyPeriodNote;/.test(s) && /after\(\(\) => ensureApplyPeriodSummary\(cid\)/.test(s), "generate-reply");
+    // 2026-10-21: 9c8dd1f9 で「何の日か」の読み手（daySubjectNote）がまとめの後ろに足された（意図した変更）
+    ok(/loadApplyPeriodNote\(conversationId, deepseekCutoff\)/.test(s) && /\+ viewingReportNote \+ applyPeriodNote \+ daySubjectNote;/.test(s) && /after\(\(\) => ensureApplyPeriodSummary\(cid\)/.test(s), "generate-reply");
   });
   await it("AIX: cutActive の時だけ足す", () => ok(/aixRequestCtx\.getStore\(\)\?\.cutActive\s*\n?\s*\? \(await loadApplyPeriodNote/.test(src("app/api/aix/action/route.ts")) && /\+ aixViewingReportNote \+ aixApplyPeriodNote;/.test(src("app/api/aix/action/route.ts")), "aix"));
   await it("物件の評価: 網を通した要約を渡す（元の要約をそのまま渡さない）・まとめを足す", () => {
