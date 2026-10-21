@@ -171,18 +171,28 @@ export function selectProblems(i: SelectInput): SelectResult {
  *   段: ブレインだけの問題をまとめ、下書きまでの問題を後ろにまとめる（generate-reply・最終チェックの前置きが5分の切れの内に続く）。
  *   前置きの印は録音から（無ければ型だけ）。並べ替えは安定（同じ印の中は元の順）。
  */
-export function orderForCache<P extends { id: string; type: string }>(ps: P[], o: { stageOf: (p: P) => "brain" | "draft"; prefixOf?: (id: string) => string | null }): P[] {
+export function orderForCache<P extends { id: string; type: string }>(ps: P[], o: { stageOf: (p: P) => "brain" | "draft"; prefixOf?: (id: string) => string | null; convOf?: (p: P) => string | null; lenOf?: (p: P) => number }): P[] {
   const idx = new Map(ps.map((p, k) => [p.id, k]));
   const firstSeen = new Map<string, number>();
-  const pref = (p: P) => o.prefixOf?.(p.id) ?? `型:${p.type}`;
+  const pref = (p: P) => o.prefixOf?.(p.id) ?? (o.convOf ? "" : `型:${p.type}`);
   for (const p of ps) { const k = pref(p); if (!firstSeen.has(k)) firstSeen.set(k, idx.get(p.id)!); }
   const typeSeen = new Map<string, number>();
   for (const p of ps) if (!typeSeen.has(p.type)) typeSeen.set(p.type, idx.get(p.id)!);
+  // 2026-10-21 ④ 同じ元の会話の問題を続けて流す（会話の前置き・判断の手本の除き方＝要求の前の方が同じ＝キャッシュに当たる）。会話の中は短い履歴から
+  const convSeen = new Map<string, number>();
+  if (o.convOf) for (const p of ps) { const c = o.convOf(p); if (c && !convSeen.has(c)) convSeen.set(c, idx.get(p.id)!); }
   return [...ps].sort((a, b) => {
     const sa = o.stageOf(a) === "brain" ? 0 : 1, sb = o.stageOf(b) === "brain" ? 0 : 1;
     if (sa !== sb) return sa - sb;
     const pa = firstSeen.get(pref(a))!, pb = firstSeen.get(pref(b))!;
     if (pa !== pb) return pa - pb;
+    if (o.convOf) {
+      const ca = o.convOf(a), cb = o.convOf(b);
+      const ka = ca ? convSeen.get(ca)! : idx.get(a.id)!, kb = cb ? convSeen.get(cb)! : idx.get(b.id)!;
+      if (ka !== kb) return ka - kb;
+      if (ca && ca === cb && o.lenOf) { const d = o.lenOf(a) - o.lenOf(b); if (d) return d; }
+      return idx.get(a.id)! - idx.get(b.id)!;
+    }
     const ta = typeSeen.get(a.type)!, tb = typeSeen.get(b.type)!;
     if (ta !== tb) return ta - tb;
     return idx.get(a.id)! - idx.get(b.id)!;

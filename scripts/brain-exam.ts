@@ -755,7 +755,9 @@ async function orderProblems(ps: ExamProblem[]): Promise<ExamProblem[]> {
   if (ORDER === "as-is" || ps.length < 2) return ps;
   const { readPrefixes } = await import("./lib/exam-rag-store");
   const pre = readPrefixes();
-  const out = orderForCache(ps, { stageOf, prefixOf: (id) => pre[id]?.prefix ?? null });
+  // 2026-10-21 ④ 同じ元の会話の問題を続けて（録音の調べ: 前の問題が同じ会話だと DeepSeek のキャッシュ 80.4%→81.9%・外れ 9.1k→8.3k トークン）。止める: EXAM_ORDER_CONV=off
+  const byConv = (process.env.EXAM_ORDER_CONV ?? "").trim().toLowerCase() !== "off";
+  const out = orderForCache(ps, { stageOf, prefixOf: (id) => pre[id]?.prefix ?? null, ...(byConv ? { convOf: (p: ExamProblem) => p.conv ?? null, lenOf: (p: ExamProblem) => p.context.length } : {}) });
   if (out.some((p, k) => p.id !== ps[k].id)) console.log(`並べ方（キャッシュ・--order=as-is で旧）: ${out.map((p) => p.id).join(",").slice(0, 300)}`);
   return out;
 }
