@@ -147,8 +147,21 @@ export function stopDecision(cmps: Array<{ id: string; cmp: Cmp }>, flaky: Set<s
  */
 export const CHEAP_WINDOW_JST = { startMin: 90, endMin: 570 };
 const jstMin = (d: Date) => { const j = new Date(d.getTime() + 9 * 3600_000); return j.getUTCHours() * 60 + j.getUTCMinutes(); };
+/**
+ * 2026-10-21 試験の節約③: DeepSeek の混雑（2倍）の時間を変えられるように（値段の表が変わった時に試験の決め方だけ先に合わせる）。
+ *   EXAM_DEEPSEEK_PEAK_UTC="1-4,6-10"（UTC の時・始まり-終わり〔終わりは含まない〕）・EXAM_DEEPSEEK_PEAK_DAYS="1-5"（曜日 0=日）。off＝混雑なし。無ければ app/lib/llm-price の表
+ */
+export function examPeakAt(d: Date, env: Record<string, string | undefined> = process.env): boolean {
+  const spec = String(env.EXAM_DEEPSEEK_PEAK_UTC ?? "").trim().toLowerCase();
+  if (!spec) return isDeepseekPeakAt(d);
+  if (spec === "off") return false;
+  const ranges = (s: string) => s.split(",").map((x) => x.trim().split("-").map(Number)).filter((r) => r.length === 2 && r.every(Number.isFinite)) as Array<[number, number]>;
+  const days = ranges(String(env.EXAM_DEEPSEEK_PEAK_DAYS ?? "1-5"));
+  const w = d.getUTCDay(), h = d.getUTCHours();
+  return days.some(([a, b]) => w >= a && w <= b) && ranges(spec).some(([a, b]) => h >= a && h < b);
+}
 export function isCheapWindow(d: Date, w?: { startMin: number; endMin: number }): boolean {
-  if (isDeepseekPeakAt(d)) return false;
+  if (examPeakAt(d)) return false;
   if (!w) return true;
   const m = jstMin(d); return m >= w.startMin && m < w.endMin;
 }
