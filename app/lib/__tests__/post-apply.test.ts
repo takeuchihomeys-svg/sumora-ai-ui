@@ -1,6 +1,6 @@
 // 「申込以降の会話か」の判定のテスト（自己完結ハーネス）
 // 実行: npx tsx app/lib/__tests__/post-apply.test.ts
-import { resolvePostApply, isPostApplyConversation, loadPostApplyFacts } from "../post-apply";
+import { resolvePostApply, isPostApplyConversation, loadPostApplyFacts, postApplyDraftSkip } from "../post-apply";
 import { DRAFT_SKIP_STATUSES } from "../conversation-status";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
@@ -38,6 +38,17 @@ async function main() {
   });
 
   // 2026-09-23 竹内「一度申込にした人でも審査が否決となって再度物件提案中にもどる場合もあるから、その場合は渡してよい」
+  // 2026-10-21 本番の外れ: 書類 9/25 → 10/09 に物件提案中へ戻した・印が残って下書きが黙って作られなかった
+  await describe("印だけ残って戻した会話は下書きを止めない（個人情報の線はそのまま）", async () => {
+    const f = { status: "proposing", isPostApply: true, idDocumentAt: T("2026-09-25T15:27:00+09:00"), statusManualBackAt: T("2026-10-09T11:26:00+09:00") };
+    await it("個人情報の線は申込以降のまま（Claude 固定）", () => eq(resolvePostApply(f).postApply, true));
+    await it("下書きは止めない", () => eq(postApplyDraftSkip(f, {}), false));
+    await it("戻しが書類より前なら止める", () => eq(postApplyDraftSkip({ ...f, statusManualBackAt: T("2026-09-20T10:00:00+09:00") }, {}), true));
+    await it("戻しが無ければ止める（印＝スタッフの意思）", () => eq(postApplyDraftSkip({ status: "proposing", isPostApply: true }, {}), true));
+    await it("status が申込以降なら止める", () => eq(postApplyDraftSkip({ ...f, status: "applying" }, {}), true));
+    await it("DRAFT_BADGE_MOVEDBACK=off で旧（止める）", () => eq(postApplyDraftSkip(f, { DRAFT_BADGE_MOVEDBACK: "off" }), true));
+  });
+
   await describe("否決→物件提案中に戻したら、また渡してよい（時間順）", async () => {
     // 実物: 9/11 に申込へ → 9/16 にスタッフが物件提案中へ戻した（status_manual_back_at）会話（62d01e33…）
     await it("最後の申込へ押下より後に戻していれば申込前（movedBack）", () =>
