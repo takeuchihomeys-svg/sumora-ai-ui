@@ -16,12 +16,12 @@ export async function tryPostSendCheap(conversationId: string, sentText: string,
   const since = new Date(nowMs - WINDOW_MS).toISOString();
   const [{ data: conv }, { data: msgs, error: mErr }, { count: propCount, error: lErr }, { data: open, error: oErr }] = await Promise.all([
     supabase.from("conversations").select("customer_name, is_post_apply").eq("id", conversationId).maybeSingle(),
-    supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId).gte("created_at", since).order("created_at", { ascending: true }).limit(400),
+    supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId).gte("created_at", since).order("created_at", { ascending: false }).limit(400),
     supabase.from("aix_usage_logs").select("id", { count: "exact", head: true }).eq("conversation_id", conversationId).in("aix_type", ["property_send", "property_recommendation", "estimate_sheet"]),
     supabase.from("aix_action_items").select("action").eq("conversation_id", conversationId).eq("status", "pending").or(MAIN_AIX_ITEM_OR).limit(1),
   ]);
   if (!conv || mErr || lErr || oErr) return false; // 読めない時はブレインへ
-  const rows = ((msgs ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at }));
+  const rows = ((msgs ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).slice().reverse().map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at }));
   const sentAtMs = Date.parse(sentAtIso);
   const d = decidePostSendCheap({
     sentSteps, nowMs, need: null,
