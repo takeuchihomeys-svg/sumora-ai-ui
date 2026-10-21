@@ -243,7 +243,10 @@ function applyAixLog(steps: PromiseStep[], l: QueueAixLog): void {
   }
   // 2026-10-22: 「現在募集に出ていないお部屋」（ピッカー unavailable）も、同じ通（3分以内）で確認と一緒に約束した見積・内覧の確認はやめた
   //   （実物 96c140 10/20「大日の物件、募集状況確認…御見積書とあわせてお送り」→ 募集に出ていない＝見積は送れない。時刻の順にして初めて開いて見えた）
-  if (first.kind === "check" && (l.checkPattern === "unavailable" || UNAVAILABLE_RE.test(l.text ?? "")) && !/御?見積書|お見積/.test(l.text ?? "")) {
+  //   レビュー 10/22: 「別の部屋が募集してた」（available で『〇〇号室募集中…他は募集に出ていない』・『明日再度費用面確認』 217a4b 08/09）は見積が生きている＝やめない。
+  //   ピッカーが unavailable の時、またはピッカーの結果が無くて本文が募集に出ていないだけ（「募集中」が無い）の時だけ。戻す PROMISE_QUEUE_CHRONO=off で一緒に戻る
+  const unavailText = !l.checkPattern && UNAVAILABLE_RE.test(l.text ?? "") && !/募集中/.test(l.text ?? "");
+  if (chronoEnabled() && first.kind === "check" && (l.checkPattern === "unavailable" || unavailText) && !/御?見積書|お見積/.test(l.text ?? "")) {
     const pAt = Date.parse(first.promisedAt);
     for (const s of steps) if (s.status === "pending" && (s.kind === "estimate" || s.kind === "viewing_check") && Math.abs(Date.parse(s.promisedAt) - pAt) <= 180_000) { s.status = "dropped"; s.doneAt = l.sentAt; s.doneBy = "募集に出ていない"; }
   }

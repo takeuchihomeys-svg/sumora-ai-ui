@@ -201,6 +201,21 @@ console.log("buildPromiseQueue 時刻の順（2026-10-22 同じ種類の約束�
     const q = buildPromiseQueue(m, [{ aixType: "property_check_result", checkPattern: "unavailable", sentAt: at(10, 38), text: "こちらのお部屋現在募集に出ていないお部屋となっております！！" }], Date.parse(at(11)));
     eq(q.find((s) => s.kind === "estimate")?.status, "dropped"); eq(nextPromiseAix(q, { nowMs: Date.parse(at(11)) }), null);
   });
+  const CHK_EST = "お送り頂きました物件の募集状況確認させて頂きます！！\n確認出来次第、最大限割引させて頂いた初期費用の御見積書を作成しお送りさせて頂きます！！";
+  it("別の部屋が募集してた（available・『他は募集に出ていない』）→ 見積はやめない（レビュー 10/22・217a4b 型）", () => {
+    const q = buildPromiseQueue([{ sender: "staff", text: CHK_EST, createdAt: at(10, 15) }], [{ aixType: "property_check_result", checkPattern: "available", sentAt: at(10, 38), text: "サンライズ成田現在募集中となります！！明日再度費用面確認させていただきます！！他2件は募集に出ていないお部屋となっております。" }], Date.parse(at(11)));
+    eq(q.find((s) => s.kind === "estimate")?.status, "pending");
+  });
+  it("ピッカーの結果が無い本文でも「募集中」があれば見積はやめない／無ければやめる", () => {
+    const q1 = buildPromiseQueue([{ sender: "staff", text: CHK_EST, createdAt: at(10, 15) }], [{ aixType: "property_check_result", sentAt: at(10, 38), text: "203号室現在募集中となります！！他2件は募集に出ていないお部屋となっております。" }], Date.parse(at(11)));
+    eq(q1.find((s) => s.kind === "estimate")?.status, "pending");
+    const q2 = buildPromiseQueue([{ sender: "staff", text: CHK_EST, createdAt: at(10, 15) }], [{ aixType: "property_check_result", sentAt: at(10, 38), text: "こちらのお部屋現在募集に出ていないお部屋となっております！！" }], Date.parse(at(11)));
+    eq(q2.find((s) => s.kind === "estimate")?.status, "dropped");
+  });
+  it("「現在募集に出ていない」でも 3分より後の通の見積の約束はやめない", () => {
+    const q = buildPromiseQueue([{ sender: "staff", text: CHECK, createdAt: at(10, 0) }, { sender: "staff", text: "最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！", createdAt: at(10, 20) }], [{ aixType: "property_check_result", checkPattern: "unavailable", sentAt: at(10, 38), text: "こちらのお部屋現在募集に出ていないお部屋となっております！！" }], Date.parse(at(11)));
+    eq(q.find((s) => s.kind === "estimate")?.status, "pending");
+  });
   it("戻す PROMISE_QUEUE_CHRONO=off（前の組み立て＝新しい約束はまとめられて消える）", () => {
     process.env.PROMISE_QUEUE_CHRONO = "off";
     try {
