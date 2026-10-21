@@ -121,15 +121,17 @@ export function brainChangedOf(cmps: Array<{ id: string; cmp: Cmp }>): Set<strin
 }
 
 // ─── 5. 途中で止める ────────────────────────────────────────────────────
-export type StopRule = { minSeen: number; worseN: number; betterN: number };
+/** window＝最初の何問で決めるか（0・無し＝見た問題全部）。2026-10-21 ⑥: 入力が同じ問題（exclude）は数えない＝「最初の8問で本当の悪化3つ」で止める */
+export type StopRule = { minSeen: number; worseN: number; betterN: number; window?: number };
 export const DEFAULT_STOP: StopRule = { minSeen: 4, worseN: 3, betterN: 3 };
 /**
  * 最初の数問ではっきり悪化（道・合格が前より悪い問題が worseN 以上・良くなった数を worseN 以上上回る）→ 止める。
  *   はっきり良い（良くなった betterN 以上・悪化0）→ 確かめの繰り返しを減らす。どちらでもなければ続ける。
  *   揺れる問題の1回目は数えない（揺れで止めない）
  */
-export function stopDecision(cmps: Array<{ id: string; cmp: Cmp }>, flaky: Set<string>, rule: StopRule = DEFAULT_STOP): { action: "stop" | "go" | "fewer"; why: string; worse: string[]; better: string[] } {
-  const seen = cmps.filter((c) => c.cmp !== "nobase" && c.cmp !== "nocur" && !flaky.has(c.id));
+export function stopDecision(cmps: Array<{ id: string; cmp: Cmp }>, flaky: Set<string>, rule: StopRule = DEFAULT_STOP, exclude: Set<string> = new Set()): { action: "stop" | "go" | "fewer"; why: string; worse: string[]; better: string[] } {
+  const all = cmps.filter((c) => c.cmp !== "nobase" && c.cmp !== "nocur" && !flaky.has(c.id) && !exclude.has(c.id));
+  const seen = rule.window && rule.window > 0 ? all.slice(0, rule.window) : all;
   const worse = seen.filter((c) => c.cmp === "worse").map((c) => c.id), better = seen.filter((c) => c.cmp === "better").map((c) => c.id);
   if (seen.length >= rule.minSeen && worse.length >= rule.worseN && worse.length - better.length >= rule.worseN)
     return { action: "stop", why: `${seen.length}問中 ${worse.length}問が前より悪い（良くなった ${better.length}）＝はっきり悪化`, worse, better };
@@ -145,8 +147,21 @@ export function stopDecision(cmps: Array<{ id: string; cmp: Cmp }>, flaky: Set<s
  */
 export const CHEAP_WINDOW_JST = { startMin: 90, endMin: 570 };
 const jstMin = (d: Date) => { const j = new Date(d.getTime() + 9 * 3600_000); return j.getUTCHours() * 60 + j.getUTCMinutes(); };
+/**
+ * 2026-10-21 試験の節約③: DeepSeek の混雑（2倍）の時間を変えられるように（値段の表が変わった時に試験の決め方だけ先に合わせる）。
+ *   EXAM_DEEPSEEK_PEAK_UTC="1-4,6-10"（UTC の時・始まり-終わり〔終わりは含まない〕）・EXAM_DEEPSEEK_PEAK_DAYS="1-5"（曜日 0=日）。off＝混雑なし。無ければ app/lib/llm-price の表
+ */
+export function examPeakAt(d: Date, env: Record<string, string | undefined> = process.env): boolean {
+  const spec = String(env.EXAM_DEEPSEEK_PEAK_UTC ?? "").trim().toLowerCase();
+  if (!spec) return isDeepseekPeakAt(d);
+  if (spec === "off") return false;
+  const ranges = (s: string) => s.split(",").map((x) => x.trim().split("-").map(Number)).filter((r) => r.length === 2 && r.every(Number.isFinite)) as Array<[number, number]>;
+  const days = ranges(String(env.EXAM_DEEPSEEK_PEAK_DAYS ?? "1-5"));
+  const w = d.getUTCDay(), h = d.getUTCHours();
+  return days.some(([a, b]) => w >= a && w <= b) && ranges(spec).some(([a, b]) => h >= a && h < b);
+}
 export function isCheapWindow(d: Date, w?: { startMin: number; endMin: number }): boolean {
-  if (isDeepseekPeakAt(d)) return false;
+  if (examPeakAt(d)) return false;
   if (!w) return true;
   const m = jstMin(d); return m >= w.startMin && m < w.endMin;
 }
@@ -392,6 +407,31 @@ export function needJudge(o: { asks: number; ng: number; needRawPath: boolean; p
   if (!o.asks && !o.ng && !o.needRawPath) return false;
   if (o.lazy && !o.pathOk && !o.needRawPath) return false;
   return true;
+}
+
+/**
+ * 2026-10-21 ⑤ 決まりで決まる採点を先に（竹内さん「試験の次の節約」）: 道が合っている答案のうち、全部の項目が決まりで決まる時だけ判定の AI を呼ばない。
+ *   ・答案が AIX（label が AIX:）: AIX で応える依頼（答え方に aix を含む）＝道が合う AIX＝covered・route とも true／
+ *     返信・約束だけで応える依頼＝AIX は返信も約束もしない＝false。言ってはいけない事がある時は決めない（AIX の選び自体が言ってはいけない事のことがある）
+ *   ・答案が「なし（連絡待ち）」: 送らない＝依頼は全部 false（答え方 none だけの依頼は決めない）・言ってはいけない事は全部 false（言っていない）
+ *   ・返信・約束（依頼の扱いの読み取りが要る）は決めない＝AI の判定。本質の道（LLM の最初の答え）が要る時も決めない。
+ *   返り値 null＝AI の判定に回す
+ */
+export function ruleJudge(o: { asks: Array<{ route?: string; routes?: string[] }>; ngN: number; pathLabel: string; pathOk: boolean; needRawPath: boolean }): { asks: boolean[]; route: boolean[]; ng: boolean[]; why: string } | null {
+  if (!o.pathOk || o.needRawPath) return null;
+  const routesOf = (x: { route?: string; routes?: string[] }) => [...new Set([x.route, ...(x.routes ?? [])].filter((r): r is string => !!r))];
+  if (/^AIX:/.test(o.pathLabel)) {
+    if (o.ngN > 0) return null;
+    const v = o.asks.map((x) => { const rs = routesOf(x); return rs.length ? rs.includes("aix") : null; });
+    if (v.some((x) => x === null)) return null;
+    return { asks: v as boolean[], route: v as boolean[], ng: [], why: "AIX の答案（決まり）" };
+  }
+  if (/^なし/.test(o.pathLabel)) {
+    const v = o.asks.map((x) => { const rs = routesOf(x); return rs.length && !rs.includes("none") ? false : null; });
+    if (v.some((x) => x === null)) return null;
+    return { asks: v as boolean[], route: v as boolean[], ng: Array.from({ length: o.ngN }, () => false), why: "送らない答案（決まり）" };
+  }
+  return null;
 }
 
 // ─── 10/20 COST① main の答えは版ごとに1回（merge の後の安い時間に自動で取り置く） ─────────────────────

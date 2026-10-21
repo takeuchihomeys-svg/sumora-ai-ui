@@ -85,6 +85,8 @@ export async function setupLlmTest(name: string): Promise<LlmTestHarness> {
   // 最後の確かめは本番と同じモデル（Sonnet 5.5）に（.env.local に無いと Sonnet 5 で走る）
   const modelNote = applyFinalClaudeProductionModels(env);
   if (modelNote) console.log(modelNote);
+  // 2026-10-21 試験の節約③: 夜・予約の回の Claude の呼び出しは Message Batches（半額）に回す（一番内側＝録音・使用量の記録は答えを見る）。EXAM_CLAUDE_BATCH=off で止める
+  (await import("./llm-claude-batch")).installClaudeBatch(env);
   // ② 開発サーバと同じ順（instrumentation.ts）: 絵文字の片割れ除去 → 使用量の記録 → 別クラウド
   const san = await import("../../app/lib/llm-request-sanitize");
   san.installLlmFetchSanitizer();

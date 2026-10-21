@@ -84,6 +84,10 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   const o2 = R.orderForCache(shuffled, { stageOf: stage, prefixOf: (id) => pre[id] ?? null });
   const contiguous = (o: typeof ps) => { const seen = new Set<string>(); let last = ""; for (const p of o) { const k = `${stage(p)}|${pre[p.id] ?? `型:${p.type}`}`; if (k !== last && seen.has(k)) return false; seen.add(k); last = k; } return true; };
   ok("同じ前置きは続けて流れる（入りの順が違っても）", contiguous(o1) && contiguous(o2));
+  // 2026-10-21 ④ 同じ元の会話を続けて・会話の中は短い履歴から
+  { const cs = [{ id: "a", type: "T", conv: "c1", n: 30 }, { id: "b", type: "T", conv: "c2", n: 10 }, { id: "c", type: "U", conv: "c1", n: 12 }, { id: "d", type: "T", conv: "c2", n: 5 }];
+    const oc = R.orderForCache(cs, { stageOf: () => "brain", convOf: (p) => p.conv, lenOf: (p) => p.n });
+    ok("並べ方: 同じ会話を続けて・短い履歴から", oc.map((p) => p.id).join() === "c,a,d,b", oc.map((p) => p.id).join()); }
   // 比べは問題 id で束ねる＝並べ替えで結果が変わらない（planBaseline は id ごと）
   const cached = new Map<string, import("../brain-exam-baseline").BaselineFile<{ rep: number }>>([["q1", { id: "q1", problemHash: "h1", commit: "c", config: { args: {}, env: {} }, savedAt: new Date().toISOString(), fromLabel: "l", rows: [{ rep: 1 }] }]]);
   const pl1 = B.planBaseline(ps.map((p) => ({ id: p.id, hash: p.id === "q1" ? "h1" : "x" })), cached, 1);
