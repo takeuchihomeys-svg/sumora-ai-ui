@@ -5,7 +5,7 @@
 //     aix_action_items … AIX 要対応の行なら status=done・done_by=staff_group（AIX要対応の他の画面・朝の報告とも揃う）
 //     calendar_events  … お客様への約束の行なら is_done=true（カレンダー・朝の報告とも揃う）
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { numberTodoItems, type TodoList } from "@/app/lib/staff-todo-list";
+import { numberTodoItems, TODO_MARK_VIA_NONE, type TodoList } from "@/app/lib/staff-todo-list";
 import {
   parseTodoReply, pickTodoSnapshot, resolveTodoReply, renderTodoReplyAck, TODO_SNAPSHOT_KEEP,
   type TodoSnapshot, type TodoSnapshotItem,
@@ -50,11 +50,11 @@ export async function saveTodoSnapshot(sb: SupabaseClient, snap: TodoSnapshot): 
 }
 
 /** 行を✅にする（表への記録＋元の行の完了）。表に書けなかった鍵を返す */
-export async function markTodoItemsDone(sb: SupabaseClient, items: ReadonlyArray<TodoSnapshotItem>, by: { userId: string | null; text: string }, nowIso: string): Promise<{ unrecorded: string[] }> {
+export async function markTodoItemsDone(sb: SupabaseClient, items: ReadonlyArray<TodoSnapshotItem>, by: { userId: string | null; text: string; none?: boolean }, nowIso: string): Promise<{ unrecorded: string[] }> {
   const unrecorded: string[] = [];
   if (items.length === 0) return { unrecorded };
   const { error } = await sb.from("staff_todo_marks").upsert(
-    items.map((i) => ({ item_key: i.key, conversation_id: i.conversationId, marked_at: nowIso, marked_by: by.userId, via: "group_reply", note: by.text.slice(0, 200) })),
+    items.map((i) => ({ item_key: i.key, conversation_id: i.conversationId, marked_at: nowIso, marked_by: by.userId, via: by.none ? TODO_MARK_VIA_NONE : "group_reply", note: by.text.slice(0, 200) })),
     { onConflict: "item_key", ignoreDuplicates: true },
   );
   if (error) { console.warn("[staff-todo] staff_todo_marks write:", error.message); unrecorded.push(...items.map((i) => i.key)); }
@@ -86,7 +86,7 @@ export async function handleTodoGroupReply(sb: SupabaseClient, ev: { text: strin
   // 番号も名前も当たらず、名前だけの返信（普段の会話の「〇〇さん済みです」等）は黙る。番号を書いた時だけ「無い」と返す
   if (res.hits.length === 0 && res.unknownNumbers.length === 0) return null;
   const nowIso = new Date(nowMs).toISOString();
-  const { unrecorded } = await markTodoItemsDone(sb, res.hits, { userId: ev.userId ?? null, text: ev.text }, nowIso);
+  const { unrecorded } = await markTodoItemsDone(sb, res.hits, { userId: ev.userId ?? null, text: ev.text, none: !!res.none }, nowIso);
   // 残りの数は返さない（LINE の送信で自動の✅になった行は表に無いので、表だけで数えると多く見える）。次の一覧で分かる
   const ack = renderTodoReplyAck(res, null);
   const lost = res.hits.filter((h) => unrecorded.includes(h.key) && !h.key.startsWith("aix:") && !h.key.startsWith("promise:"));

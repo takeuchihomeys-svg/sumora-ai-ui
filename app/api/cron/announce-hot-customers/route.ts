@@ -4,6 +4,7 @@ import { PROPERTY_DELIVERY_AIX } from "@/app/lib/aix-task-link";
 import { flagOn, TARGET_TIER_RANK } from "@/app/lib/brain-attention";
 import { loadBrainTargets, loadScreeningList, syncBrainHotDrops, type BrainTarget, type HotDropRow, type ScreeningRow } from "@/app/lib/brain-attention-server";
 import { formatTargetList, withScheduleAt } from "@/app/lib/target-list-format";
+import { todoTargetMergeEnabled } from "@/app/lib/staff-todo-list";
 
 export const maxDuration = 60;
 
@@ -37,6 +38,16 @@ export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  // 2026-10-21 竹内さんの決定（268a904a）: 🌟ターゲット🌟は【やることリスト】にまとめた（staff-todo-list の cron が1時間ごとに出す）。
+  //   まとめている間はこの別の投稿を出さない。hot の外し（追客3回無視）だけは今まで通り続ける（一覧のターゲットの読みが同じ判断を使う）。
+  //   戻す: TODO_TARGET_MERGE=off（または STAFF_TODO_LIST=off）でこの投稿が元どおり出る
+  if (todoTargetMergeEnabled()) {
+    const dropped = flagOn(process.env.BRAIN_TARGET_LIST)
+      ? await syncBrainHotDrops(supabase).catch((e) => { console.warn("announce-hot-customers hot drops:", e); return [] as HotDropRow[]; })
+      : [];
+    return NextResponse.json({ ok: true, skipped: true, reason: "merged into staff-todo-list (TODO_TARGET_MERGE)", hotDropped: dropped.length });
   }
 
   // クールダウンガード（90分）

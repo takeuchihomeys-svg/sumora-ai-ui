@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { flagOn } from "@/app/lib/brain-attention";
 import { loadBrainTargets } from "@/app/lib/brain-attention-server";
+import { todoSonotaMergeEnabled } from "@/app/lib/staff-todo-list";
 
 export const maxDuration = 60;
 
@@ -17,6 +18,12 @@ export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  // 2026-10-21 竹内さん: 【その他 本日のリスト】は【やることリスト】にまとめた（上位を「⑤その他の新着確認」の行として一番下に・staff-todo-list の cron）。
+  //   まとめている間はこの投稿を出さない。戻す: TODO_SONOTA_MERGE=off（または STAFF_TODO_LIST=off）
+  if (todoSonotaMergeEnabled()) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "merged into staff-todo-list (TODO_SONOTA_MERGE)" });
   }
 
   // クールダウンガード（20時間）

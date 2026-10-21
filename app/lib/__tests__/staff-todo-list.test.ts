@@ -12,6 +12,8 @@ function it(name: string, fn: () => void) {
 }
 function eq<T>(a: T, b: T) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`expected ${JSON.stringify(b)} but got ${JSON.stringify(a)}`); }
 function ok(v: unknown, m = "expected truthy") { if (!v) throw new Error(m); }
+/** 見出しの「▶なぜ上か」を外す（並びの理由は staff-todo-priority のテストで見る） */
+const noWhy = (s: string) => s.replace(/ ▶[^\n]*/g, "");
 
 // 2026-10-20 10:30 JST
 const AT = Date.parse("2026-10-20T10:30:00+09:00");
@@ -103,7 +105,7 @@ it("約束: 待ち・先の日付・申込より後・古すぎる物は出な�
   const l = buildStaffTodoList(i);
   const text = renderStaffTodoList(l)!;
   ok(text.includes("✅AIX【確認した（条件・交渉）→駐車場】：駐車場の確認→ご連絡（お約束）"), text);
-  ok(text.includes("テストCさん（ギガ賃貸）\n①AIX【物件ピックアップした】：物件ピックアップ送付（お約束）（期限 10/18 過ぎ）（2日）"), text);
+  ok(noWhy(text).includes("テストCさん（ギガ賃貸）\n①AIX【物件ピックアップした】：物件ピックアップ送付（お約束）（期限 10/18 過ぎ）（2日）"), text);
   ok(!text.includes("テストB"), text);
   eq(l.skipped.promise_wait, 1); eq(l.skipped.promise_future, 1); eq(l.skipped.promise_post_apply, 1); eq(l.skipped.promise_stale, 1);
   ok(TODO_MAX_AGE_DAYS === 14);
@@ -131,10 +133,10 @@ it("未返信: 30分以上・48時間以内・お礼だけでない・要対応�
   ];
   i.aixItems = [{ id: "a4", conversation_id: "c4", customer_name: "テストD", action: "viewing_invite", check_pattern: null, status: "pending", created_at: iso("2026-10-20T09:01:00+09:00"), done_at: null, done_aix_type: null }];
   const text = renderStaffTodoList(buildStaffTodoList(i))!;
-  ok(text.includes("テストAさん（スモラ）\n②返信：10/20 09:00 のご連絡に返信する（期限 今日中）\n"), text);
+  ok(noWhy(text).includes("テストAさん（スモラ）\n②返信：10/20 09:00 のご連絡に返信する（期限 今日中）\n"), text);
   ok(!text.includes("（0日）"), text);
   ok(!text.includes("テストBさん") && !text.includes("テストCさん"), text);
-  ok(text.includes("テストDさん（スモラ）\n①AIX【内覧日調整】"), text);
+  ok(noWhy(text).includes("テストDさん（スモラ）\n①AIX【内覧日調整】"), text);
   ok(!/テストDさん[^\n]*\n[^\n]*\n.返信/.test(text), text);
 });
 
