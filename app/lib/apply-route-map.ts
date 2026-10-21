@@ -9,7 +9,7 @@
 // ── 線（P0 9eb6aa9c「判断はすべてブレイン基準」）──
 //   位置は「候補の網」。どう返すか・AIX をどれにするかはブレインが決める（材料の文にもそう書く）。
 //   合図は作り直さない: 段階＝customer-state.resolveCustomerState・約束＝action-ledger の facts・発言の型＝brain-route-type.routeTypeOf・
-//   場面＝aix-scene-evidence・すぐ来られない＝customer-circumstances.holdFirstReason・他社で内覧＝other-agent-viewing・番手＝parallel-search.RANK_WAITING_RE。
+//   場面＝aix-scene-evidence・すぐ来られない＝customer-circumstances.holdFirstReason・他社で内覧＝other-agent-viewing・番手＝parallel-second.latestRankMention（申込んだ／案内を分ける）と2番手で申込中の1つの判定（post-apply.judgeParallelSecond）。
 //   この表に無い分かれ道（相見積もり・入居時期が先）だけ、ここで小さな語の網を持つ（COMPETING_ESTIMATE_RE・MOVE_IN_LATER_RE）。
 //
 // ── ブレインへの渡し方 ──
@@ -20,7 +20,7 @@ import type { LedgerFacts } from "./action-ledger";
 import type { RouteType } from "./brain-route-type";
 import type { SceneId } from "./aix-scene-evidence";
 import { isOtherAgentViewingApplyQuestion, isOtherAgentViewingPlan } from "./other-agent-viewing";
-import { RANK_WAITING_RE } from "./parallel-search";
+import { latestRankMention } from "./parallel-second";
 
 const N = (s: string | null | undefined) => String(s ?? "").normalize("NFKC");
 
@@ -85,7 +85,7 @@ export const MAIN_ROUTE: readonly RouteNodeId[] = ["inquiry", "hearing", "pickup
 /** 分かれ道 */
 export type RouteBranchId =
   | "brought_property" | "other_agent_viewing" | "competing_estimate" | "screening_concern" | "condition_change"
-  | "negotiation" | "cannot_come_soon" | "move_in_later" | "rank_waiting" | "considering" | "new_arrival_wait"
+  | "negotiation" | "cannot_come_soon" | "move_in_later" | "rank_waiting" | "rank_offered" | "considering" | "new_arrival_wait"
   | "silent" | "postponed" | "declined";
 
 export type RouteBranch = {
@@ -126,9 +126,13 @@ export const ROUTE_BRANCHES: Record<RouteBranchId, RouteBranch> = {
   move_in_later: { id: "move_in_later", name: "入居時期が先", meaning: "入居・引越しの時期がまだ先", aim: ["関係をつなぐ"],
     next: { label: "申込の時期を逆算して伝え、再開の時期を約束する", aix: [] },
     wayBack: { to: "pickup", how: "約束した時期に条件の確認とピックアップを再開" } },
-  rank_waiting: { id: "rank_waiting", name: "申込が入っていた・番手", meaning: "先に申込が入っている（2番手・繰り上がり待ち）", aim: ["関係をつなぐ", "申込へ誘う"],
-    next: { label: "番手での申込か、代わりの好条件のお部屋をお送りする", aix: ["property_recommendation"] },
-    wayBack: { to: "apply_prep", how: "番手で申込、または代わりの物件で提案に戻る" } },
+  // 2026-10-21 番手を2つに分けた（旧 rank_waiting は案内「2番手でのお申込可能」「お気に召されましたら2番手で…」にも当たり、申込んだ後に「番手での申込」を勧めていた）
+  rank_offered: { id: "rank_offered", name: "申込が入っていた・番手のご案内", meaning: "先に申込が入っている物件で、番手（2番手以降）での申込をご案内した（まだ申込んでいない）", aim: ["申込へ誘う", "関係をつなぐ"],
+    next: { label: "番手で申込んでお部屋を抑え並行して探すか、代わりの好条件のお部屋をお送りする", aix: ["application_push", "property_recommendation"] },
+    wayBack: { to: "apply_prep", how: "番手で申込（申込準備へ）、または代わりの物件で提案に戻る" } },
+  rank_waiting: { id: "rank_waiting", name: "番手で申込中", meaning: "2番手以降で申込んで繰り上がりを待っている（並行して探す）", aim: ["関係をつなぐ"],
+    next: { label: "繰り上がりの結果は分かり次第お伝えし、並行して代わりの好条件のお部屋をお送りする", aix: ["property_recommendation"] },
+    wayBack: { to: "applying", how: "繰り上がれば申込・審査へ、取れなければ代わりの物件で提案に戻る" } },
   considering: { id: "considering", name: "検討・保留", meaning: "検討します・家族と相談・確認してみます", aim: ["関係をつなぐ"],
     next: { label: "受け止めて締める（必要なら柔らかい次の一手を1文）", aix: [] },
     wayBack: { to: null, how: "お客様の反応で、見積・内覧・申込のいずれかへ" } },
@@ -188,6 +192,8 @@ export type ApplyRouteSignals = {
   customerTurnText?: string | null;
   /** 直近のこちらの本文（72時間以内・新しい順） */
   recentStaffTexts?: ReadonlyArray<string>;
+  /** 2番手で申込中（並行で探す）の1つの判定（post-apply.judgeParallelSecond）。分からなければ省く */
+  parallelSecond?: boolean | null;
   /** customer-circumstances.holdFirstReason（すぐ来られない事情の文・無ければ null） */
   holdReason?: string | null;
   /** contact-promise.farMoveInTurn の結果（brain-core の farMoveInEarly が在るか）。渡された時はこちらを使い、語の網（moveInLaterOf）は使わない
@@ -239,7 +245,11 @@ export function resolveRouteBranch(s: ApplyRouteSignals): { branch: RouteBranchI
   if (s.stage === "dropped" || rt === "decided_elsewhere") return { branch: "declined", why: s.stage === "dropped" ? "段階:dropped" : "型:decided_elsewhere" };
   if (rt === "postpone_cancel") return { branch: "postponed", why: "型:postpone_cancel" };
   if (turn && (isOtherAgentViewingApplyQuestion(turn) || isOtherAgentViewingPlan(turn))) return { branch: "other_agent_viewing", why: "他社で内覧の話" };
-  if (!post && (s.recentStaffTexts ?? []).some((t) => RANK_WAITING_RE.test(N(t)) && !/1番手/.test(N(t)))) return { branch: "rank_waiting", why: "こちらが番手を伝えた後" };
+  // 番手（2026-10-21）: 2番手で申込中は申込の段階でも開く（並行で探すのが次の一手）。文は一番新しい番手の話で、申込んだ／案内を分ける
+  if (s.parallelSecond === true && s.stage !== "won") return { branch: "rank_waiting", why: "2番手で申込中（並行で探す）" };
+  const rank = post ? null : latestRankMention(s.recentStaffTexts ?? []);
+  if (rank === "applied") return { branch: "rank_waiting", why: "こちらが番手で申込んだ・繰り上がり待ちを伝えた後" };
+  if (rank === "offered") return { branch: "rank_offered", why: "こちらが番手のご案内をした後" };
   if (turn && COMPETING_ESTIMATE_RE.test(turn)) return { branch: "competing_estimate", why: "相見積もりの語" };
   if (rt === "screening_question" || s.sceneId === "S3_screening" || (!post && SCREENING_WORRY_RE.test(turn) && !CONDITION_FORM_RE.test(turn))) return { branch: "screening_concern", why: rt === "screening_question" ? "型:screening_question" : s.sceneId === "S3_screening" ? "場面:S3_screening" : "審査の不安の語" };
   if (rt === "negotiation") return { branch: "negotiation", why: "型:negotiation" };

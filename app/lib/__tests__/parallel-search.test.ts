@@ -140,8 +140,14 @@ it("申込・審査中＋きっかけ（ほかの物件も） → applying／き
   expect(resolveParallelSearchScene({ state: state({ stage: "applying" }), customerTurnText: "よろしくお願いします", recentStaffTexts: [], silenceDays: 0, nowMs: NOW }).scene).toBe(null);
 });
 it("内覧後でもきっかけが無い「ありがとうございました！」は場面にしない", () => expect(resolveParallelSearchScene({ state: viewedState, customerTurnText: "本日はありがとうございました！", recentStaffTexts: [], silenceDays: 0.1, nowMs: NOW }).scene).toBe(null));
-it("2番手を伝えた後 → rank_waiting（「1番手でお申込み可能」は含めない）", () => {
-  expect(resolveParallelSearchScene({ state: state({ stage: "interested" }), customerTurnText: "そうなんですね", recentStaffTexts: ["先行申込が入っており2番手でのお申込みとなります"], silenceDays: 0, nowMs: NOW }).scene).toBe("rank_waiting");
+it("番手の案内の後 → rank_offered・申込んだ後 → rank_waiting（「1番手でお申込み可能」は含めない・2026-10-21 分けた）", () => {
+  expect(resolveParallelSearchScene({ state: state({ stage: "interested" }), customerTurnText: "そうなんですね", recentStaffTexts: ["先行申込が入っており2番手でのお申込みとなります"], silenceDays: 0, nowMs: NOW }).scene).toBe("rank_offered");
+  expect(resolveParallelSearchScene({ state: state({ stage: "interested" }), customerTurnText: "そうなんですね", recentStaffTexts: ["きえさんよろしければ2番手でお申し込みさせて頂き、並行してお部屋探しさせて頂きます"], silenceDays: 0, nowMs: NOW }).scene).toBe("rank_offered");
+  expect(resolveParallelSearchScene({ state: state({ stage: "interested" }), customerTurnText: "ありがとうございます", recentStaffTexts: ["無事2番手でお申込み完了しております!!"], silenceDays: 0, nowMs: NOW }).scene).toBe("rank_waiting");
+  expect(resolveParallelSearchScene({ state: state({ stage: "interested" }), customerTurnText: "はい", recentStaffTexts: ["お申込みが既に入っており2番手申込み受け付けていないとのことです!!"], silenceDays: 0, nowMs: NOW }).scene).toBe(null);
+  expect(resolveParallelSearchScene({ state: state({ stage: "applying" }), customerTurnText: "よろしくお願いします", recentStaffTexts: [], silenceDays: 0, parallelSecond: true, nowMs: NOW }).scene).toBe("rank_waiting");
+  expect(buildParallelSearchBrainNote(resolveParallelSearchScene({ state: state({ stage: "interested" }), customerTurnText: "はい", recentStaffTexts: ["2番手でのお申込み可能です!!"], silenceDays: 0, nowMs: NOW }))).toContain("まだ申込んでいない");
+  expect(buildParallelSearchBrainNote(resolveParallelSearchScene({ state: state({ stage: "interested" }), customerTurnText: "はい", recentStaffTexts: ["2番手でお申込みさせていただきます!!"], silenceDays: 0, nowMs: NOW }))).toContain("もう番手で申込んで");
   expect(resolveParallelSearchScene({ state: state({ stage: "interested" }), customerTurnText: "そうなんですね", recentStaffTexts: ["1301号室は1番手でお申込み可能なお部屋となります"], silenceDays: 0, nowMs: NOW }).scene).toBe(null);
 });
 it("7日以上ぶり → returned_after_silence", () => expect(resolveParallelSearchScene({ state: state({ stage: "proposing" }), customerTurnText: "お久しぶりです、他にも物件ありますか？", recentStaffTexts: [], silenceDays: 12.3, nowMs: NOW }).evidence).toBe("12日ぶり"));

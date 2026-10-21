@@ -63,9 +63,22 @@ it("入居時期が先（来年・2か月以上先の月）／今月・来月は
   eq(locateApplyRoute(base({ customerTurnText: "入居は11月末までに" })).branch, null);
 });
 it("審査の不安の申告（問いの形でない）→ 審査の相談", () => eq(locateApplyRoute(base({ customerTurnText: "クレカブラックなのと、夜職なので給料明細だせませんが💦" })).branch, "screening_concern"));
-it("番手（こちらが2番手を伝えた後）・1番手は当てない", () => {
-  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["現在2番手でのお申込みとなります"] })).branch, "rank_waiting");
+it("番手: 案内の後は rank_offered・申込んだ後は rank_waiting・1番手／受け付けていない／保証会社の2番手は当てない（2026-10-21）", () => {
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["現在2番手でのお申込みとなります"] })).branch, "rank_offered");
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["よろしければ2番手でお申し込みさせて頂き、並行してお部屋探しさせて頂きます"] })).branch, "rank_offered");
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["お気に召されましたら2番手でお部屋お申込みさせて頂きます!!"] })).branch, "rank_offered");
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["アーバン西九条201号室、2番手でお申込みさせて頂きます!!"] })).branch, "rank_waiting");
   eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["1番手でお申込み可能です"] })).branch, null);
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["お申込みが既に入っており2番手申込み受け付けていないとのことです!!"] })).branch, null);
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["・2番手保証会社日本セーフティ(独立系)"] })).branch, null);
+  // 一番新しい番手の話で決める（案内 → 申込んだ）
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["2番手にてお申し込み完了しております!!", "現在お申込みが入っており、2番手でのお申込みが可能となっております!!"] })).branch, "rank_waiting");
+  ok(ROUTE_BRANCHES.rank_offered.next.aix.includes("application_push") && !ROUTE_BRANCHES.rank_waiting.next.aix.includes("application_push"), "申込んだ後に申込を勧めない");
+});
+it("番手: 2番手で申込中（1つの判定）は申込の段階でも rank_waiting・申込の段階の文だけでは開かない", () => {
+  eq(locateApplyRoute(base({ stage: "applying", parallelSecond: true })).branch, "rank_waiting");
+  eq(locateApplyRoute(base({ stage: "applying", recentStaffTexts: ["2番手にてお申し込み完了しております!!"] })).branch, null);
+  eq(locateApplyRoute(base({ stage: "won", parallelSecond: true })).branch, null);
 });
 it("新着待ち（searching.reason=watch_promised）", () => {
   const l = locateApplyRoute(base({ stage: "searching", searching: { active: true, reason: "watch_promised" } }));

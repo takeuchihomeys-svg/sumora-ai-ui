@@ -16,16 +16,22 @@
 //     それでも両方は 11%・7%（しばらくぶり＋きっかけ 38%・8件）で、進めるだけが 6割 → 材料にはこの実数をそのまま書き、ブレインが既定で false に倒れるようにする
 //     AIX（主の一手）は今まで通り1つ。並行で探す時は 2つ目の AIX（alt_actions）に物件ピックアップを並べる＝既存の「探す約束の時に物件オススメも並べる」を広げた形。
 import type { CustomerState } from "./customer-state";
+import { latestRankMention } from "./parallel-second";
 
-export type ParallelSearchScene = "after_viewing" | "applying" | "rank_waiting" | "returned_after_silence";
+// 2026-10-21 番手を2つに分けた（旧 rank_waiting は「2番手でのお申込可能」「お気に召されましたら2番手で…」等の案内にも当たっていた）:
+//   rank_waiting＝番手で申込んで繰り上がりを待っている（2番手で申込中＝post-apply.judgeParallelSecond と同じ言葉の規則・parallel-second.rankMentionOf）
+//   rank_offered＝番手のご案内の後（先に申込が入っている・まだ申込んでいない・2番手で抑えるかを考えている）
+export type ParallelSearchScene = "after_viewing" | "applying" | "rank_waiting" | "rank_offered" | "returned_after_silence";
 export const PARALLEL_SEARCH_SCENE_LABEL: Record<ParallelSearchScene, string> = {
-  after_viewing: "内覧後", applying: "申込中（お部屋を抑えている）", rank_waiting: "番手待ち（2番手以降・繰り上がり待ち）", returned_after_silence: "しばらくぶりに戻ってきた",
+  after_viewing: "内覧後", applying: "申込中（お部屋を抑えている）", rank_waiting: "番手で申込中（2番手以降で申込済み・繰り上がり待ち）", rank_offered: "番手のご案内の後（先に申込あり・まだ申込んでいない）", returned_after_silence: "しばらくぶりに戻ってきた",
 };
 /** 場面ごとのスタッフの動き（CS-5・直近60日・同じターンで。n が小さい物は参考） */
 const SCENE_BOTH_RATE: Record<ParallelSearchScene, string> = {
   after_viewing: "両方 11%・探すだけ 18%・今のお部屋を進めるだけ 61%（56ターン）",
   applying: "両方 7%・今のお部屋を進めるだけ 63%（60ターン）",
-  rank_waiting: "両方 0%・探すだけ 20%・進めるだけ 60%（10ターン・参考）",
+  // 旧の10ターンは申込んだ後と案内の後を合わせた数（分けた数はまだ無い）
+  rank_waiting: "両方 0%・探すだけ 20%・進めるだけ 60%（案内の後と合わせた10ターン・参考）",
+  rank_offered: "両方 0%・探すだけ 20%・進めるだけ 60%（申込んだ後と合わせた10ターン・参考）",
   returned_after_silence: "両方 38%・進めるだけ 63%（8ターン・参考）",
 };
 
@@ -37,7 +43,7 @@ export type ParallelSearchContext = {
   blockedBy: string | null;
 };
 
-/** スタッフの「2番手・繰り上がり待ち」の言葉（「1番手でお申込み可能」は含めない） */
+/** 旧の「番手待ち」の語（案内・受け付けていない・保証会社の2番手にも当たる。場面の判定には使わない＝監査の比べ用・parallel-second.rankMentionOf を使う） */
 export const RANK_WAITING_RE = /[2-9２-９二三]番手|繰り上が/;
 /** お客様が「ほかはもう探さなくてよい」と言った */
 export const STOP_SEARCH_RE = /(?:他|ほか)(?:の(?:お部屋|物件))?(?:は|も)?(?:もう)?(?:大丈夫|結構|いらない|要らない|探さなくて)|探さなくて(?:大丈夫|いい|良い)|(?:ここ|こちら)(?:に|で)(?:決め|決まり)(?:ました|ます)/;
@@ -52,6 +58,8 @@ export function resolveParallelSearchScene(input: {
   recentStaffTexts: string[];
   /** 今回のお客様のターンの直前の発言（どちらでも）からの日数。分からなければ null */
   silenceDays: number | null;
+  /** 2番手で申込中（並行で探す）の1つの判定（post-apply.judgeParallelSecond → loadPostApplyFacts.parallel2nd）。分からなければ省く */
+  parallelSecond?: boolean | null;
   nowMs?: number;
 }): ParallelSearchContext {
   const s = input.state;
@@ -62,9 +70,10 @@ export function resolveParallelSearchScene(input: {
   if (s.stage === "first" || s.stage === "searching") return none(); // まだ主のお部屋が無い（探すのが主の一手）
   if (STOP_SEARCH_RE.test(input.customerTurnText.normalize("NFKC"))) return none("お客様がこのお部屋に決めた・ほかは探さなくてよいと言った");
   const now = input.nowMs ?? Date.now();
-  if (input.recentStaffTexts.some((t) => RANK_WAITING_RE.test((t ?? "").normalize("NFKC")) && !/1番手/.test(t ?? ""))) {
-    return { scene: "rank_waiting", evidence: "こちらが2番手・繰り上がり待ちを伝えた後", blockedBy: null };
-  }
+  if (input.parallelSecond === true) return { scene: "rank_waiting", evidence: "2番手で申込中（並行で探す）", blockedBy: null };
+  const rank = latestRankMention(input.recentStaffTexts);
+  if (rank === "applied") return { scene: "rank_waiting", evidence: "こちらが番手で申込んだ・繰り上がり待ちを伝えた後", blockedBy: null };
+  if (rank === "offered") return { scene: "rank_offered", evidence: "こちらが番手のご案内（先に申込あり）を伝えた後", blockedBy: null };
   // 内覧後・申込中・しばらくぶりは、お客様のきっかけ（別の物件・URL/画像・探す・条件・迷い・比べる）がある時だけ（上の反証）
   const trigger = hasParallelTrigger(input.customerTurnText);
   if (!trigger) return none();
@@ -78,6 +87,11 @@ export function resolveParallelSearchScene(input: {
   return none();
 }
 
+/** 番手の場面はお客様のきっかけが無くても場面にする（旧から）。申込んだ後と案内の後で前提が違う */
+const RANK_SCENE_NOTE: Record<"rank_waiting" | "rank_offered", string> = {
+  rank_waiting: "お客様はもう番手で申込んでいて、繰り上がりの結果を待っている（もう一度申込を勧めない）。",
+  rank_offered: "お客様はまだ申込んでいない（申込済みとして扱わない）。番手で申込んでお部屋を抑えながら並行して探す形もある（スタッフの実送信「2番手でお申込をし並行して物件を探す形がオススメ」）。",
+};
 /**
  * ブレインに渡す材料（毎回変わる所）。場面が無ければ空文字。
  * 決まりにしない: 「並行で探せ」とは書かず、場面の事実とスタッフの実績を渡し、出すかどうかを JSON の項目で答えさせる
@@ -85,7 +99,7 @@ export function resolveParallelSearchScene(input: {
 export function buildParallelSearchBrainNote(ctx: ParallelSearchContext): string {
   if (!ctx.scene) return "";
   return `\n【並行で探すかの判断（場面の材料・決定論）】場面: ${PARALLEL_SEARCH_SCENE_LABEL[ctx.scene]}（${ctx.evidence ?? ""}）。` +
-    `お客様の発言に、ほかのお部屋に目を向けるきっかけ（別の物件・探す・条件・迷い）がある。この場面のスタッフの動き: ${SCENE_BOTH_RATE[ctx.scene]}＝多くは今のお部屋を進めるだけで、両方は少数。` +
+    (ctx.scene === "rank_waiting" || ctx.scene === "rank_offered" ? RANK_SCENE_NOTE[ctx.scene] : `お客様の発言に、ほかのお部屋に目を向けるきっかけ（別の物件・探す・条件・迷い）がある。`) + `この場面のスタッフの動き: ${SCENE_BOTH_RATE[ctx.scene]}＝多くは今のお部屋を進めるだけで、両方は少数。` +
     `AIX（aix）は今まで通り主の一手を1つだけ選ぶ。そのうえで、ほかのお部屋も並行して探すのがこのお客様に良いかを判断し、出力 JSON に "parallel_search"（true/false）と "parallel_search_reason"（20字以内）を足す。` +
     `既定は false。お客様がほかのお部屋も見たい・今のお部屋に引っかかり（条件・費用・立地）があって迷っている時だけ true。今のお部屋に気持ちが固まっている・ほかは要らないと言った・手続きの連絡だけの時は false。`;
 }
