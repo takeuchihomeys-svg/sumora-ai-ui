@@ -170,9 +170,14 @@ export type ReapplyInfo = {
   source: "staff" | "auto" | "none";
 };
 
-/** 画面の札の文（「申込歴あり（再探し）・①審査否決」） */
+/**
+ * 申込歴ありの印の文字（2026-10-21 竹内さんの決定 414dc9d4「【申込歴あり】とつける形とする」）。
+ *   札・やることリストの見出し・ターゲット・ブレインの材料で同じ文字を使う（旧「🔥申込歴あり（再探し）」「申込歴あり（再探し）・」）
+ */
+export const REAPPLY_MARK_TEXT = "【申込歴あり】";
+/** 画面の札の文（「【申込歴あり】①審査否決」） */
 export function reapplyBadgeText(i: Pick<ReapplyInfo, "pattern">): string {
-  return `申込歴あり（再探し）・${RETURN_PATTERN_SHORT[i.pattern]}`;
+  return `${REAPPLY_MARK_TEXT}${RETURN_PATTERN_SHORT[i.pattern]}`;
 }
 
 /**
@@ -182,7 +187,7 @@ export function buildReapplyBrainNote(i: ReapplyInfo, nowMs: number = Date.now()
   const back = ms(i.returnedAt);
   const days = back === null ? null : Math.max(0, Math.floor((nowMs - back) / 86_400_000));
   return [
-    "【申込歴あり（再探し）】このお客様は一度申込まで進み、申込から物件探しに戻っている（申込情報も送ってくれた＝決定率が高いアツいお客様・優先して動く）",
+    `${REAPPLY_MARK_TEXT}このお客様は一度申込まで進み、申込から物件探しに戻っている（再探し・申込情報も送ってくれた＝決定率が高いアツいお客様・優先して動く）`,
     `・戻った理由: ${RETURN_PATTERN_LABEL[i.pattern]}${i.source === "staff" ? "（スタッフが選んだ）" : i.source === "auto" ? "（会話の記録から）" : "（会話から読めない・推測で書かない）"}${days !== null ? `・戻って${days}日` : ""}`,
     `・次の一手: ${RETURN_PATTERN_NEXT_MOVE[i.pattern]}`,
     "・前回の申込の中身（氏名・生年月日・勤務先・年収・書類・審査の事情）には触れない。申込の手順は一度通っているので短く案内してよい",

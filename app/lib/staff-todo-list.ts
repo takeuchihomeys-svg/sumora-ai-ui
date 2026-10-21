@@ -118,7 +118,8 @@ export type TodoCustomer = {
   reapply?: boolean;
 };
 /** 見出しに付ける印（申込歴あり＝アツいお客様） */
-export const REAPPLY_HEADER_MARK = "🔥申込歴あり（再探し）";
+// 2026-10-21 竹内さんの決定（414dc9d4）: 印は【申込歴あり】（旧「🔥申込歴あり（再探し）」）。札・ターゲットと同じ文字（reapply-customer.REAPPLY_MARK_TEXT）
+export const REAPPLY_HEADER_MARK = "【申込歴あり】";
 export type TodoList = { atMs: number; customers: TodoCustomer[]; openCount: number; doneCount: number; skipped: Record<string, number> };
 
 // ─── 小さな道具 ────────────────────────────────────────────────────────
