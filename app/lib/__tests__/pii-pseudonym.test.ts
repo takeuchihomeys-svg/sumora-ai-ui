@@ -276,7 +276,7 @@ console.log("── ★ 返信文の生成にも配線されているか（竹�
   t("★ 回る時だけ読み替え器を作る（Claude へ行く時は素通し）",
     /willRouteAlt\("reply_generate", \{[\s\S]{0,120}?postApply: altPostApply \|\| deepseekBlocked, autoSend: autoSendConversation/.test(gen));
   t("★ キャッシュの印が無いブロックだけ読み替える（前置きを壊さない）",
-    /if \(b\.cache_control\) return b;/.test(gen) && /maskUncachedBlocks\(messages, replyMasker\)/.test(gen));
+    /if \(b\.cache_control\) return b;/.test(gen) && /maskUncachedBlocks\(writerMessages, replyMasker\)/.test(gen));
   t("★ 生成文を実名に戻している（後処理より先）", /replyMasker\.unmask\(fullText\)/.test(gen));
   t("★ 戻し切れなければその下書きを使わない（fail-closed）",
     /gen:unmask-leftover/.test(gen) && /throw new Error\("生成文の伏せ字を元に戻せませんでした/.test(gen));
@@ -284,7 +284,9 @@ console.log("── ★ 返信文の生成にも配線されているか（竹�
     /\.\.\.genMessages,\s*\n\s*new AIMessage\(replyMasker \? replyMasker\.maskBlock\(draftBody\)/.test(gen));
   t("★ 申込以降は印を付けて回さない（竹内「申込以降はいれない」）",
     // 2026-10-21（023ec7bd）: DeepSeek の判定は印だけ残って戻した会話を線で切る altPostApply（post-apply.ts deepseekPostApply）
-    /altPostApply \|\| deepseekBlocked \? \{ \[LLM_POST_APPLY_HEADER\]: "1" \}/.test(gen) && /altPostApply = deepseekPostApply\(facts\)/.test(gen)
+    /altPostApply \|\| deepseekBlocked \? \{ \[LLM_POST_APPLY_HEADER\]: "1" \}/.test(gen) && /const entrance = resolveDeepseekEntrance\(facts\);\s*\n\s*altPostApply = entrance\.altPostApply;/.test(gen)
+    // 2026-10-21（ec4d5990）入口は post-apply.resolveDeepseekEntrance 1か所: 2番手で並行（REAPPLY_PARALLEL_DEEPSEEK=on の時だけ線）以外は deepseekPostApply のまま
+    && /return \{ altPostApply: deepseekPostApply\(f, env\), cutoff: deepseekSafeCutoff\(f, \{ reapply: true \}\), masked: false \};/.test(readFileSync("app/lib/post-apply.ts", "utf8"))
     // 2026-09-26: 線より前の発言への返信（deepseekBlocked）も同じ印で Claude のまま（post-apply.ts deepseekSafeCutoff）
     // 2026-09-23: 判定は status だけでなく記録（申込へ押下・本人確認書類・戻し）を見る post-apply.ts に移した
     && /loadPostApplyFacts\(supabase, conversationId\)/.test(gen) && /postApplyConversation = r\.postApply/.test(gen));
