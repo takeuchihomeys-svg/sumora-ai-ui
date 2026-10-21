@@ -48,7 +48,7 @@ import { isApplicationPayload, APPLICATION_FORM_PLACEHOLDER, APPLICATION_FORMAT_
 import { loadKnownCustomerNames, loadKnownCallNames, loadPartyAliases, loadAltNameMask } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
-import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
+import { resolveStaffPromiseAix, linkPromiseNewArrivalRecEnabled } from "@/app/lib/aix-task-link";
 import { vacateMoveInEstimateEnabled } from "@/app/lib/vacate-move-in-estimate";
 import { brainCheckPatternEnabled, brainCheckPatternSchemaField, resolveCheckKindWithBrain } from "@/app/lib/brain-check-pattern";
 import { reactionOnlyAfterMgmtPending } from "@/app/lib/staff-only-aix-1020";
@@ -4006,9 +4006,11 @@ ${history}`;
     //   物件ピックアップを立て直して下書きが出なかった（signal:pending_pickup・穴:G5）
     if (!promiseAix && !closedAckWait && !viewingDayWait && !rentIncludedReply && procedureDecision !== "reply" && !confirmTopicReply && pendingPickup.pending && finalAix === null
       && applyOverride(demotedOverrides, "signal", "signal:pending_pickup", "property_send", finalAix)) {
-      finalAix = "property_send";
+      // 2026-10-21 つなぎ⑤: 新着の約束（出し切った後に探し続ける）は 物件オススメ（新着・1件）を先に（LINK_PROMISE_NEW_ARRIVAL_REC=on の時だけ・既定 off）
+      const newArrivalRec = linkPromiseNewArrivalRecEnabled() && brainLedger.facts.pickupPromisedKind === "new_arrival";
+      finalAix = newArrivalRec ? "property_recommendation" : "property_send";
       decisionSource = "signal:pending_pickup";
-      promiseAltAction = promiseAltAction ?? "property_recommendation";
+      promiseAltAction = promiseAltAction ?? (newArrivalRec ? "property_send" : "property_recommendation");
     }
     // 2026-10-02 竹内さんの決定「物件ピックアップは条件がそろってから。そろっていなければ AIX【条件ヒアリング】（フォーマットはそのまま・
     //   もらっている条件は項目に入れる）」: まだ物件を1件も送っていないのに条件（エリア＋家賃）がそろわないまま 物件ピックアップ を選んだ時は
