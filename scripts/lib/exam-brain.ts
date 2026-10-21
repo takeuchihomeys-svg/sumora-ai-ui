@@ -396,6 +396,31 @@ export function needJudge(o: { asks: number; ng: number; needRawPath: boolean; p
   return true;
 }
 
+/**
+ * 2026-10-21 ⑤ 決まりで決まる採点を先に（竹内さん「試験の次の節約」）: 道が合っている答案のうち、全部の項目が決まりで決まる時だけ判定の AI を呼ばない。
+ *   ・答案が AIX（label が AIX:）: AIX で応える依頼（答え方に aix を含む）＝道が合う AIX＝covered・route とも true／
+ *     返信・約束だけで応える依頼＝AIX は返信も約束もしない＝false。言ってはいけない事がある時は決めない（AIX の選び自体が言ってはいけない事のことがある）
+ *   ・答案が「なし（連絡待ち）」: 送らない＝依頼は全部 false（答え方 none だけの依頼は決めない）・言ってはいけない事は全部 false（言っていない）
+ *   ・返信・約束（依頼の扱いの読み取りが要る）は決めない＝AI の判定。本質の道（LLM の最初の答え）が要る時も決めない。
+ *   返り値 null＝AI の判定に回す
+ */
+export function ruleJudge(o: { asks: Array<{ route?: string; routes?: string[] }>; ngN: number; pathLabel: string; pathOk: boolean; needRawPath: boolean }): { asks: boolean[]; route: boolean[]; ng: boolean[]; why: string } | null {
+  if (!o.pathOk || o.needRawPath) return null;
+  const routesOf = (x: { route?: string; routes?: string[] }) => [...new Set([x.route, ...(x.routes ?? [])].filter((r): r is string => !!r))];
+  if (/^AIX:/.test(o.pathLabel)) {
+    if (o.ngN > 0) return null;
+    const v = o.asks.map((x) => { const rs = routesOf(x); return rs.length ? rs.includes("aix") : null; });
+    if (v.some((x) => x === null)) return null;
+    return { asks: v as boolean[], route: v as boolean[], ng: [], why: "AIX の答案（決まり）" };
+  }
+  if (/^なし/.test(o.pathLabel)) {
+    const v = o.asks.map((x) => { const rs = routesOf(x); return rs.length && !rs.includes("none") ? false : null; });
+    if (v.some((x) => x === null)) return null;
+    return { asks: v as boolean[], route: v as boolean[], ng: Array.from({ length: o.ngN }, () => false), why: "送らない答案（決まり）" };
+  }
+  return null;
+}
+
 // ─── 10/20 COST① main の答えは版ごとに1回（merge の後の安い時間に自動で取り置く） ─────────────────────
 /** 取り置きの記録（main の版の鍵 → いつ・どの commit・全部取れたか） */
 export type WarmLog = Record<string, { at: string; commit: string; done: boolean; left?: number; label?: string }>;

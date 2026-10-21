@@ -62,6 +62,7 @@ import { examEnvFingerprint, defaultEnvOf, readDotenvLocal, formatEnvFp, envFpMi
 /** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
 function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return 0; return st.total.real - (st.byAction.get("(名札なし)")?.real ?? 0); }
 import { formatLinks, orderForCache, topLinks, type KbLink } from "./lib/exam-rag";
+import { ruleJudge } from "./lib/exam-brain";
 import { checkKbRules, kbRulesMode, type KbRuleHit } from "./lib/exam-kb-rules";
 import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, sigOfRow, pathSigOfRow, type FlakeVerdict } from "./lib/exam-flake";
 
@@ -152,7 +153,9 @@ const REPS_OF: Record<string, number> | null = (() => { const f = arg("reps-file
 const JUDGE_LAZY = arg("judge") === "lazy";
 const JUDGE_MODEL = (process.env.EXAM_JUDGE_MODEL ?? "").trim();
 const STOP_FILE = process.env.BRAIN_EXAM_BASELINE_CHILD === "1" ? "" : (process.env.EXAM_STOP_FILE ?? "").trim();
-const judgeSkip = { lazy: 0 };
+const judgeSkip = { lazy: 0, rules: 0 };
+// 2026-10-21 ⑤ 決まりで決まる採点を先に（--judge=lazy の時・scripts/lib/exam-brain.ts ruleJudge）。止める: EXAM_JUDGE_RULES=off
+const JUDGE_RULES = (process.env.EXAM_JUDGE_RULES ?? "").trim().toLowerCase() !== "off";
 /** --select=rag で選んだ問題（null＝選んでいない＝今まで通り） */
 let SELECTED: Set<string> | null = null;
 let selectKbNow: Record<string, string> | null = null;
@@ -1167,7 +1170,11 @@ async function main() {
       // 2026-10-17 --judge=lazy: 道が外れていれば合格は決まりで✕。本質の道も決まりで出る（AIX か最初の答えが無い）なら判定を呼ばない
       const skipLazy = JUDGE_LAZY && !pv.ok && !needRaw && !NO_JUDGE;
       if (skipLazy) { judgeSkip.lazy++; (row as ResultRow & { judgeSkipped?: string }).judgeSkipped = "lazy"; }
-      const jg = NO_JUDGE || skipLazy ? null : await judge(ps, meta, row.raw ?? null, needRaw);
+      // ⑤ 決まりで全部決まる時は判定の AI を呼ばない。ただし今まで全部 main と同じ要求だった回（入力が同じ）は main の判定の答え（呼ばない）をそのまま使う＝main と同じ採点
+      const allPinned = pinsOn && hasPinsFor(p.id, rep) && cassetteCallsOf(p.id, rep).every((c) => c.src === "pin");
+      const rj = JUDGE_LAZY && JUDGE_RULES && !NO_JUDGE && !skipLazy && !allPinned ? ruleJudge({ asks: ps.asks ?? [], ngN: (ps.ng ?? []).length, pathLabel: code.label, pathOk: pv.ok, needRawPath: needRaw }) : null;
+      if (rj) { judgeSkip.rules++; (row as ResultRow & { judgeSkipped?: string }).judgeSkipped = "rules"; }
+      const jg: JudgeOut | null = NO_JUDGE || skipLazy ? null : rj ? { asks: rj.asks, route: rj.route, ng: rj.ng, asksWhy: rj.asks.map(() => rj.why), ngWhy: rj.ng.map(() => rj.why), rawPath: null } : await judge(ps, meta, row.raw ?? null, needRaw);
       if (jg) {
         row.asks = (p.asks ?? []).map((a, i) => ({ q: a.q, covered: jg.asks[i], why: jg.asksWhy[i], route: jg.route[i] }));
         row.ng = (p.ng ?? []).map((x, i) => ({ text: x, violated: jg.ng[i], why: jg.ngWhy[i] }));
@@ -1306,7 +1313,7 @@ main().catch((e) => { console.error(e instanceof Error ? e.message : e); process
   if (h) {
     await h.finish();
     if (judgeCost.tier) console.log(`判定の段（EXAM_JUDGE_TIER=on）: ${judgeCost.tier.problems}件・機械で決めた ${judgeCost.tier.machine}項目・flash 2回で揃った ${judgeCost.tier.flash}項目・割れて pro ${judgeCost.tier.pro}項目${judgeCost.tier.unresolved ? `・決まらない ${judgeCost.tier.unresolved}` : ""}（flash ${judgeCost.tier.flashCalls}回・pro ${judgeCost.tier.proCalls}回）`);
-    console.log(`判定（DeepSeek 直・記録の外）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.calls ? `（入力のキャッシュ ${Math.round((100 * judgeCost.tokens.hit) / Math.max(1, judgeCost.tokens.hit + judgeCost.tokens.miss))}%＝当たり ${judgeCost.tokens.hit}・外れ ${judgeCost.tokens.miss}トークン・並び ${JUDGE_ORDER}）` : ""}${judgeCost.replayed ? `（うち再生 ${judgeCost.replayed}回・費用0）` : ""}${judgeSkip.lazy ? `・決まりで済んで呼ばなかった ${judgeSkip.lazy}問回（--judge=lazy）` : ""}${injectStats.calls ? `・試しの材料を足した呼び出し ${injectStats.calls}回` : ""}`);
+    console.log(`判定（DeepSeek 直・記録の外）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.calls ? `（入力のキャッシュ ${Math.round((100 * judgeCost.tokens.hit) / Math.max(1, judgeCost.tokens.hit + judgeCost.tokens.miss))}%＝当たり ${judgeCost.tokens.hit}・外れ ${judgeCost.tokens.miss}トークン・並び ${JUDGE_ORDER}）` : ""}${judgeCost.replayed ? `（うち再生 ${judgeCost.replayed}回・費用0）` : ""}${judgeSkip.lazy ? `・決まりで済んで呼ばなかった ${judgeSkip.lazy}問回（--judge=lazy）` : ""}${judgeSkip.rules ? `・項目を決まりで採点した ${judgeSkip.rules}問回（AIX・送らない答案）` : ""}${injectStats.calls ? `・試しの材料を足した呼び出し ${injectStats.calls}回` : ""}`);
     // 2026-10-15 ④ 1回の試験の数え（新しく呼んだ・再生・使い回した）。問題ごとの数えは <label>.cost.json（前の取り置きの「呼んでいたら」に使う）
     const cas = await import("./lib/llm-cassette");
     const cst = cas.cassetteStats();
