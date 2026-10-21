@@ -36,6 +36,7 @@ const tmp = mkdtempSync(join(tmpdir(), "exam-coord-"));
   ok("印: 時間切れは古い", claimStale({ pid: 1, host: "other", label: "x", at: new Date(Date.now() - 7 * 3600_000).toISOString() }, { ttlMs: 6 * 3600_000 }));
   ok("印: 他の機械の新しい印は古くない", !claimStale({ pid: 1, host: "other-host", label: "x", at: new Date().toISOString() }, {}));
   ok("印: force は持ち主がいても上書き", tryClaim(bdir, "q002", "worker-a", { pid: 1001, alive, force: true }).ok);
+  { writeFileSync(claimFileOf(bdir, "q004"), ""); const r = tryClaim(bdir, "q004", "worker-b", { pid: 1002, alive }); ok("印: 書きかけ（読めない・30秒以内）の印は外さない＝2人で作らない", !r.ok); ok("印: 書きかけの印も古くなれば取り直す", tryClaim(bdir, "q004", "worker-b", { pid: 1002, alive, now: Date.now() + 60_000 }).ok); }
   ok("待つ上限: 既定 90分・0 で待たない", baselineWaitMs({}) === 90 * 60_000 && baselineWaitMs({ EXAM_BASELINE_WAIT_MIN: "0" }) === 0);
 
   // 本当に2つの process で同時に取る → 1人だけ（ファイルの wx 作成）
@@ -62,6 +63,7 @@ const tmp = mkdtempSync(join(tmpdir(), "exam-coord-"));
   ok("前の main: 古い答え（answeredAt）は期限で外す", pickPrevMainRows([f({ dir: "a", answeredAt: "2026-10-01T00:00:00Z" })], { hash: "h1" }, { now, maxAgeMs: 7 * 86_400_000 }) === null);
   ok("答えた時刻: 全部の回が前と同じなら前の答えた時刻を持ち越す", carriedAnsweredAt([{ id: "q1", rep: 1, inputSame: true }], { savedAt: "S", answeredAt: "A" }, "NOW") === "A");
   ok("答えた時刻: 1回でも違えば今", carriedAnsweredAt([{ id: "q1", rep: 1, inputSame: true }, { id: "q1", rep: 2, inputSame: false }], { savedAt: "S" }, "NOW") === "NOW" && answeredAtOf({ savedAt: "S" }) === "S");
+  ok("答えた時刻: 一部の段だけ前の答え（pin）を使った回も前の答えた時刻（期限が延びない）", carriedAnsweredAt([{ id: "q1", rep: 1, inputSame: false, llmCalls: [call("pin"), call("record")] }], { savedAt: "S", answeredAt: "A" }, "NOW") === "A");
   // planBaseline の期限は answeredAt で見る（持ち越しで期限が延び続けない）
   const cached = new Map([["q1", f({ savedAt: new Date(now).toISOString(), answeredAt: "2026-10-01T00:00:00Z", rows: [{ id: "q1", rep: 1 }] })]]);
   ok("期限: 持ち越した答えは元の答えた時刻で期限を見る", planBaseline([{ id: "q1", hash: "h1" }], cached as never, 1, { maxAgeMs: 7 * 86_400_000, now, envFp: "" }).expired.join() === "q1");
@@ -114,7 +116,7 @@ const tmp = mkdtempSync(join(tmpdir(), "exam-coord-"));
   ok("担当の名前: 自動の label は作業ツリー", labelIdentity("eb-1021-ab12", "C:/w/.claude/worktrees/exam-brain3") === "wt:exam-brain3" && labelIdentity("eb-1021-ab12-fl", "/a/b/") === "wt:b");
   ok("担当の route: label で始まる route は担当の物・main の作り直しは数えない", routeBelongs("script:brain-exam-fix1-fl-d", "fix1", []) && !routeBelongs("script:brain-exam-main-4f2cd4d-abc123-r1", "fix1", []) && !routeBelongs("script:brain-exam-fix10", "fix1", []));
   ok("担当の route: 作業ツリーの担当は帳簿の label で数える", routeBelongs("script:brain-exam-eb-1021-ab12-fl", "wt:x", ["eb-1021-ab12"]) && !routeBelongs("script:brain-exam-eb-1021-zz99", "wt:x", ["eb-1021-ab12"]));
-  ok("担当の上限: 既定 $1・off で無し", runCapUsd({}) === 1 && runCapUsd({ EXAM_RUN_CAP_USD: "off" }) === null && runCapUsd({ EXAM_RUN_CAP_USD: "2.5" }) === 2.5);
+  ok("担当の上限: 既定 $2・off で無し", runCapUsd({}) === 2 && runCapUsd({ EXAM_RUN_CAP_USD: "off" }) === null && runCapUsd({ EXAM_RUN_CAP_USD: "2.5" }) === 2.5);
   ok("担当の上限: 超えたら夜中", !runCapDecision({ spentUsd: 0.8, estUsd: 0.3, cap: 1 }).ok && runCapDecision({ spentUsd: 0.5, estUsd: 0.3, cap: 1 }).ok);
   ok("担当の上限: --force／夜中の予約は今", runCapDecision({ spentUsd: 5, estUsd: 1, cap: 1, force: true }).ok && runCapDecision({ spentUsd: 5, estUsd: 1, cap: 1, fromQueue: true }).ok);
 

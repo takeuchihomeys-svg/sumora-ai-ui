@@ -952,10 +952,15 @@ async function prepareMainBaseline(): Promise<boolean> {
       }
       const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}) };
       // main の作業ツリーは1つ＝1人ずつ（版の違う担当が checkout を取り合わない）
+      // 2026-10-21 確かめる人: 待つのは上限まで（EXAM_MAIN_WT_WAIT_MIN・既定 120分）。持ち主が生きたまま止まっていても永遠には待たない。
+      //   上限を過ぎても奪わない（生きている持ち主の作業ツリーを checkout -f で壊す）→ この回は作らずに進む（その問題は前との比べに入らない）
+      const wtWait = (() => { const v = Number(String(process.env.EXAM_MAIN_WT_WAIT_MIN ?? "").trim() || "120"); return (Number.isFinite(v) && v >= 0 ? v : 120) * 60_000; })();
+      const tw = Date.now();
       for (let k = 0; ; k++) {
         const r = C.tryClaim(B.BASELINE_DIR, MAIN_WT_CLAIM, LABEL);
         if (r.ok) break;
-        if (k === 0) console.log(`  main の作業ツリーを他の担当（${r.holder.label}・pid ${r.holder.pid}）が使っている → 空くまで待つ`);
+        if (Date.now() - tw >= wtWait) { console.warn(`  ⚠ main の作業ツリーが ${Math.round(wtWait / 60_000)}分空かない（${r.holder.label}・pid ${r.holder.pid}）→ 今回は前（main）を作らない: ${ids.join(",")}（EXAM_MAIN_WT_WAIT_MIN）`); return; }
+        if (k === 0) console.log(`  main の作業ツリーを他の担当（${r.holder.label}・pid ${r.holder.pid}）が使っている → 空くまで待つ（最大 ${Math.round(wtWait / 60_000)}分）`);
         await new Promise((res) => setTimeout(res, 15_000));
       }
       try {

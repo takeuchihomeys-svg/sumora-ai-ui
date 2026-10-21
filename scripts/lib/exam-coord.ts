@@ -6,11 +6,11 @@
 //   ① 版ごとに1回: 共有の置き場（exam-cache/brain-exam-baseline/<版>/.claims/<問題>.claim）に「この問題は私が作っている」を置く（ファイルの wx 作成＝1人しか成功しない）。
 //      他の担当は待って、出来た答えを使う（作り直さない）。持ち主の pid が止まっていれば古い印として外す。
 //   ② 前の main の答えの持ち越し（入力の差）: 作り直す問題でも、前の main の版の行に残った呼び出しの控え（llmCalls）を入れて回す＝要求が同じ段は前の答え（呼ばない）。
-//   ③ 1回ごとの見張り: 同じ比べ（コード＋スイッチの指紋＋問題と回数）を今日もう流していれば止める（--force で流す）。担当ごとの1日の上限（EXAM_RUN_CAP_USD・既定 $1）。
+//   ③ 1回ごとの見張り: 同じ比べ（コード＋スイッチの指紋＋問題と回数）を今日もう流していれば止める（--force で流す）。担当ごとの1日の上限（EXAM_RUN_CAP_USD・既定 $2）。
 //   ④ --spend-today: 今日の試験の費用を種類（main の作り直し／担当の確かめ／夜）で分け、同じ版の作り直しの重なりと、避けた分を出す。
 // 決め方は純関数（単体テスト scripts/lib/__tests__/exam-coord.test.ts）。読み書きは小さく、置き場は全部の作業ツリーで共有（examCacheRoot）。
 import { createHash } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { examCacheRoot } from "./llm-cassette";
@@ -52,9 +52,15 @@ export function tryClaim(baselineDir: string, id: string, label: string, o: { fo
       try { writeSync(fd, JSON.stringify(me)); } finally { closeSync(fd); }
       return { ok: true };
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      const code = (e as NodeJS.ErrnoException).code;
+      const busy: Claim = { pid: 0, host: "?", label: "(書きかけ)", at: me.at };
+      // 2026-10-21 確かめる人: Windows は消している最中のファイルを開くと EPERM/EACCES/EBUSY＝他の担当が今触っている → 今回は取れない（落とさない）
+      if (code === "EPERM" || code === "EACCES" || code === "EBUSY") return { ok: false, holder: readClaim(f) ?? busy };
+      if (code !== "EEXIST") throw e;
       const cur = readClaim(f);
       if (cur && cur.pid === me.pid && cur.host === me.host) return { ok: true }; // 自分の印
+      // 2026-10-21 確かめる人: 読めない印は、作った人が wx の直後でまだ書いていない途中かもしれない → 30秒以内は古いとみない（外すと2人が作る）
+      if (!cur) { let young = false; try { young = (o.now ?? Date.now()) - statSync(f).mtimeMs < 30_000; } catch { /* 消えた＝取り直す */ } if (young) return { ok: false, holder: busy }; }
       if (!claimStale(cur, o)) return { ok: false, holder: cur! };
       try { unlinkSync(f); } catch { /* 他の担当が先に外した */ }
     }
@@ -111,7 +117,9 @@ export function pickPrevMainRows<R extends RowLike>(cands: Array<FileLike<R>>, p
 }
 /** 作り直した問題の答えた時刻: 全部の回が前の答えで済んだ（inputSame）なら前の答えた時刻・それ以外は今 */
 export function carriedAnsweredAt(rows: RowLike[], src: { savedAt: string; answeredAt?: string } | null, nowIso: string): string {
-  return src && rows.length && rows.every((r) => r.inputSame) ? answeredAtOf(src) : nowIso;
+  // 2026-10-21 確かめる人: 一部の段だけ前の答え（pin）を使った回も、その段の答えは前の時刻のまま。今の時刻にすると次の main がまた持ち越し
+  //   期限が延び続ける → 前の答えを1つでも使ったら前の答えた時刻（古い方）にする（期限が来たら全部解き直す）
+  return src && rows.length && (rows.every((r) => r.inputSame) || rows.some((r) => r.llmCalls?.some((c) => c.src === "pin"))) ? answeredAtOf(src) : nowIso;
 }
 
 // ─── ③ 1回ごとの見張り（同じ比べ・担当ごとの上限） ───────────────────────────────
@@ -140,8 +148,8 @@ export function appendRun(r: RunRecord, now = new Date(), dir = RUNS_DIR): void 
 }
 /** 同じ比べを今日もう流したか */
 export function findDuplicateRun(today: RunRecord[], fp: string): RunRecord | null { return today.find((r) => r.fp === fp) ?? null; }
-export const RUN_CAP_DEFAULT_USD = 1;
-/** 担当ごとの1日の上限（EXAM_RUN_CAP_USD・既定 $1・off で無し） */
+export const RUN_CAP_DEFAULT_USD = 2;
+/** 担当ごとの1日の上限（EXAM_RUN_CAP_USD・既定 $2・off で無し）。2026-10-21 確かめる人: $1 だと担当の確かめ（1回 $0.2〜2）の2回目でほぼ夜に回る＝昼に直して確かめる流れが止まる → $2 */
 export function runCapUsd(env: Record<string, string | undefined> = process.env): number | null {
   const raw = String(env.EXAM_RUN_CAP_USD ?? "").trim().toLowerCase();
   if (raw === "off" || raw === "0" || raw === "none") return null;
