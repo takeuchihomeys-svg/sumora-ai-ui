@@ -238,8 +238,22 @@ function applyAixLog(steps: PromiseStep[], l: QueueAixLog): void {
   const est = hit.find((s) => s.kind === "estimate" && s !== first);
   if (est && first.kind === "check" && (l.estimateSent === true || /御?見積書|お見積/.test(l.text ?? ""))) { est.status = "done"; est.doneAt = l.sentAt; est.doneBy = label; }
   // 募集状況の確認の結果が募集終了 → 同じ物件の見積・内覧の確認の約束は果たせない（やめた・新しい物件のピックアップは残す）
+  //   2026-10-22 下の「募集に出ていない」とそろえる（前は会話の開いた見積・内覧の確認を全部やめていた＝別の日・別の部屋の約束まで）:
+  //   同じ通（確認の約束から3分以内）で約束した物だけ・ピッカーが available の時と本文に別の部屋の募集（「〇〇号室募集中」「別のお部屋は募集」）がある時はやめない。
+  //   戻す PROMISE_QUEUE_CHRONO=off（前の「全部やめる」）
   if (first.kind === "check" && ENDED_RE.test(l.text ?? "") && !/御?見積書|お見積/.test(l.text ?? "")) {
-    for (const s of steps) if (s.status === "pending" && (s.kind === "estimate" || s.kind === "viewing_check")) { s.status = "dropped"; s.doneAt = l.sentAt; s.doneBy = "募集終了"; }
+    const chrono = chronoEnabled();
+    const otherAvailable = chrono && (l.checkPattern === "available" || OTHER_AVAILABLE_RE.test(l.text ?? ""));
+    const pAt = Date.parse(first.promisedAt);
+    const allEnded = /(?:いずれも|どちらも|全て|すべて|両方とも|[0-9０-９二三四五]件とも|全件)[^\n。！!]{0,6}(?:募集終了|お申込|申込|成約)/.test(l.text ?? "");
+    if (!otherAvailable) {
+      for (const s of steps) {
+        if (s.status !== "pending" || (s.kind !== "estimate" && s.kind !== "viewing_check")) continue;
+        // 「いずれも／2件とも募集終了」は会話の確認したお部屋が全部終わった＝別の通の見積も果たせない（実物 bfd172 07/15・前日の見積の約束）
+        if (chrono && !allEnded && Math.abs(Date.parse(s.promisedAt) - pAt) > 180_000) continue;
+        s.status = "dropped"; s.doneAt = l.sentAt; s.doneBy = "募集終了";
+      }
+    }
   }
   // 2026-10-22: 「現在募集に出ていないお部屋」（ピッカー unavailable）も、同じ通（3分以内）で確認と一緒に約束した見積・内覧の確認はやめた
   //   （実物 96c140 10/20「大日の物件、募集状況確認…御見積書とあわせてお送り」→ 募集に出ていない＝見積は送れない。時刻の順にして初めて開いて見えた）
@@ -252,6 +266,8 @@ function applyAixLog(steps: PromiseStep[], l: QueueAixLog): void {
   }
 }
 const UNAVAILABLE_RE = /募集に出て(?:い|お)(?:ない|りません)|募集(?:中では|しておりませ|していな)/;
+/** 募集終了の通に別の部屋の募集がある（「〇〇号室募集中」「別のお部屋は募集しております」）＝見積・内覧の確認は生きている */
+const OTHER_AVAILABLE_RE = /募集中(?!止|でした|だった|では)|(?:別|他|ほか)の(?:お)?部屋[^\n。！!]{0,16}(?:募集(?:して(?:おります|います|る)|に出て(?:おります|います))|空いて(?:おります|います|る)|空室(?:が|も)?(?:あり|ござい)|ご紹介(?:出来|でき)ます)/;
 /** 2026-10-22 約束と AIX を時刻の順に組み立てる（戻す PROMISE_QUEUE_CHRONO=off） */
 function chronoEnabled(): boolean { return typeof process === "undefined" || (process.env?.PROMISE_QUEUE_CHRONO ?? "").trim().toLowerCase() !== "off"; }
 

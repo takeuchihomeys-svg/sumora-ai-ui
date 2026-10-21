@@ -216,6 +216,41 @@ console.log("buildPromiseQueue 時刻の順（2026-10-22 同じ種類の約束�
     const q = buildPromiseQueue([{ sender: "staff", text: CHECK, createdAt: at(10, 0) }, { sender: "staff", text: "最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！", createdAt: at(10, 20) }], [{ aixType: "property_check_result", checkPattern: "unavailable", sentAt: at(10, 38), text: "こちらのお部屋現在募集に出ていないお部屋となっております！！" }], Date.parse(at(11)));
     eq(q.find((s) => s.kind === "estimate")?.status, "pending");
   });
+  // 2026-10-22 募集終了（ENDED_RE）も「募集に出ていない」とそろえる
+  const EST_LATER = "最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！";
+  const ENDED = "確認させて頂きましたところ、既に募集終了となっておりました！！";
+  it("募集終了: 同じ通（3分以内）の見積はやめる・3分より後の通の見積は残す", () => {
+    const q = buildPromiseQueue([{ sender: "staff", text: CHECK, createdAt: at(10, 0) }, { sender: "staff", text: EST_LATER, createdAt: at(10, 20) }], [{ aixType: "property_check_result", sentAt: at(10, 38), text: ENDED }], Date.parse(at(11)));
+    eq(q.find((s) => s.kind === "estimate")?.status, "pending");
+    const q2 = buildPromiseQueue([{ sender: "staff", text: CHK_EST, createdAt: at(10, 15) }], [{ aixType: "property_check_result", sentAt: at(10, 38), text: ENDED }], Date.parse(at(11)));
+    eq(q2.find((s) => s.kind === "estimate")?.status, "dropped"); eq(q2.find((s) => s.kind === "estimate")?.doneBy, "募集終了");
+  });
+  it("「いずれも募集終了」は3分より後の通の見積もやめる（bfd172 07/15 型）", () => {
+    const q = buildPromiseQueue([{ sender: "staff", text: CHECK, createdAt: at(1) }, { sender: "staff", text: "御見積書出来次第お送りさせて頂きます！！", createdAt: at(8) }], [{ aixType: "property_check_result", checkPattern: "unavailable", sentAt: at(10, 38), text: "お送り頂きました2件の物件につきまして、募集状況確認しましたところいずれも募集終了しておりました。" }], Date.parse(at(11)));
+    eq(q.find((s) => s.kind === "estimate")?.status, "dropped");
+  });
+  it("募集終了でも別の部屋が募集（「〇〇号室募集中」「別のお部屋は募集しております」・ピッカー available）→ 見積はやめない", () => {
+    for (const [text, cp] of [
+      ["302号室は募集終了となっておりましたが、205号室現在募集中となります！！", null],
+      ["こちらのお部屋は既にお申込みが入っておりました！！別のお部屋は募集しております！！", null],
+      ["こちらのお部屋は募集終了となっておりました！！", "available"],
+    ] as const) {
+      const q = buildPromiseQueue([{ sender: "staff", text: CHK_EST, createdAt: at(10, 15) }], [{ aixType: "property_check_result", checkPattern: cp, sentAt: at(10, 38), text }], Date.parse(at(11)));
+      eq(q.find((s) => s.kind === "estimate")?.status, "pending", text);
+    }
+    // 「募集中でした」「他のお部屋も募集していない」は別の部屋の募集ではない
+    for (const text of ["先日まで募集中でしたが、募集終了となっておりました！！", "募集終了となっておりました！！他のお部屋も募集していない状況です！！"]) {
+      const q = buildPromiseQueue([{ sender: "staff", text: CHK_EST, createdAt: at(10, 15) }], [{ aixType: "property_check_result", sentAt: at(10, 38), text }], Date.parse(at(11)));
+      eq(q.find((s) => s.kind === "estimate")?.status, "dropped", text);
+    }
+  });
+  it("募集終了: 戻す PROMISE_QUEUE_CHRONO=off で前の「開いた見積・内覧を全部やめる」", () => {
+    process.env.PROMISE_QUEUE_CHRONO = "off";
+    try {
+      const q = buildPromiseQueue([{ sender: "staff", text: CHECK, createdAt: at(10, 0) }, { sender: "staff", text: EST_LATER, createdAt: at(10, 20) }], [{ aixType: "property_check_result", sentAt: at(10, 38), text: "302号室は募集終了となっておりましたが、205号室現在募集中となります！！" }], Date.parse(at(11)));
+      eq(q.find((s) => s.kind === "estimate")?.status, "dropped");
+    } finally { delete process.env.PROMISE_QUEUE_CHRONO; }
+  });
   it("戻す PROMISE_QUEUE_CHRONO=off（前の組み立て＝新しい約束はまとめられて消える）", () => {
     process.env.PROMISE_QUEUE_CHRONO = "off";
     try {
