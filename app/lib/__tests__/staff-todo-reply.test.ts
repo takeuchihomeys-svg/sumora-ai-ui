@@ -52,6 +52,16 @@ it("名前: 「〇〇さん 完了」「完了 〇〇さん」「✅〇〇さん
   eq(parseTodoReply("✅はなこさん")!.names, ["はなこ"]);
 });
 
+it("普段の会話を✅にしない（すみません・長い文の数字・名前の1文字）", () => {
+  eq(parseTodoReply("すみません、3つ目の物件どうでした？"), null);
+  eq(parseTodoReply("テスト太郎さん、すみません折り返します"), null);
+  eq(parseTodoReply("やったー！2件決まりました"), null);
+  eq(parseTodoReply("申込完了しました！2回目でやっと通りました"), null);
+  eq(parseTodoReply("テスト太郎さんの申込の件はさっき完了しました、あと5も見ておきます")?.numbers ?? [], []);
+  const s = snap("m1", "2026-10-21T12:30:00+09:00");
+  eq(resolveTodoReply({ numbers: [], names: ["は"] }, s).hits.length, 0);
+});
+
 it("一覧を貼り返した文は読まない", () => {
   eq(parseTodoReply("【やることリスト】10/21 10:30\n✅AIX【…】"), null);
 });

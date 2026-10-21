@@ -19,7 +19,10 @@ export const TODO_SNAPSHOT_KEEP = 6;
 /** 引用の無い返信が読む「最後の一覧」の有効時間（次の一覧が来るまで＋余裕） */
 export const TODO_SNAPSHOT_FRESH_MS = 26 * 3600_000;
 
-const DONE_WORD_RE = /✅|☑️|✔️?|完了|済み|済|すみ|おわり|終わり|終わった|やった|done/i;
+// 2026-10-21 確かめる人: 「すみ」（すみません）・「やった」・「終わり」は普段の会話に多く、番号・名前と一緒に誤って✅にするので読まない（✅／完了／済 だけ）
+const DONE_WORD_RE = /✅|☑️|✔️?|完了|済|\bdone\b/i;
+/** 半角・全角数字の番号は短い返信の時だけ読む（「申込完了しました！2回目で…」の 2 を番号にしない）。丸数字はいつでも読む */
+const NUMBER_REPLY_MAX_CHARS = 20;
 
 const CIRCLED: Array<[number, number, number]> = [[0x2460, 1, 20], [0x3251, 21, 35], [0x32b1, 36, 50]];
 /** ①〜㊿ を数字に（それ以外は null） */
@@ -43,8 +46,8 @@ export function parseTodoReply(text: string | null | undefined): ParsedTodoReply
   for (const ch of raw) { const n = circledToNumber(ch); if (n) numbers.add(n); }
   // 全角数字を半角に（丸数字は上で読んだので NFKC は使わない＝①が 1 にならないように）
   const ascii = raw.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
-  const noTime = ascii.replace(/\d{1,2}[:：]\d{2}/g, " ").replace(/\d{1,2}\/\d{1,2}/g, " ").replace(/\d+\s*(?:件|日|時|分|人|名|号室|万|円)/g, " ");
-  for (const m of noTime.matchAll(/(?<![\d.])(\d{1,3})(?![\d.])/g)) {
+  const noTime = ascii.replace(/\d{1,2}[:：]\d{2}/g, " ").replace(/\d{1,2}\/\d{1,2}/g, " ").replace(/\d+\s*(?:件|日|時|分|人|名|号室|号|室|万|円|回|つ|組|目|階|通|枚|個|部屋|月|年|週|歳|才|%|％)/g, " ");
+  if (raw.replace(/\s/g, "").length <= NUMBER_REPLY_MAX_CHARS) for (const m of noTime.matchAll(/(?<![\d.])(\d{1,3})(?![\d.])/g)) {
     const n = Number(m[1]);
     if (n >= 1 && n <= 200) numbers.add(n);
   }
@@ -87,7 +90,7 @@ export function resolveTodoReply(parsed: ParsedTodoReply, snap: TodoSnapshot): T
     const q = normName(raw);
     if (q.length < 2 && !/[^\x00-\x7f]/.test(q)) { unknownNames.push(raw); continue; }
     const exact = snap.items.filter((x) => normName(x.name) === q);
-    const part = exact.length ? exact : snap.items.filter((x) => { const nm = normName(x.name); return !!nm && (nm.includes(q) || q.includes(nm)); });
+    const part = exact.length ? exact : snap.items.filter((x) => { const nm = normName(x.name); return nm.length >= 2 && q.length >= 2 && (nm.includes(q) || q.includes(nm)); });
     // 違うお客様が2人以上当たる時は決めない（番号で返してもらう）
     const people = new Set(part.map((x) => x.conversationId));
     if (people.size !== 1) { unknownNames.push(raw); continue; }

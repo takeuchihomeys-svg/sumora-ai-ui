@@ -22,6 +22,17 @@ export async function loadTodoSnapshots(sb: SupabaseClient): Promise<TodoSnapsho
   } catch { return []; }
 }
 
+/**
+ * 【やることリスト】を送るグループ（pushToHanbancyoGroup と同じ決め方: env → hanbancyo_settings.group_id）。
+ *   2026-10-21 確かめる人: 同じボットが入っている物件出しのグループ（pickup_group_id）の「✅3」「完了 〇〇」で一覧の行を✅にしないように、
+ *   このグループの発言だけを読む
+ */
+export async function todoListGroupId(sb: SupabaseClient): Promise<string | null> {
+  if (process.env.LINE_STAFF_GROUP_ID) return process.env.LINE_STAFF_GROUP_ID;
+  const { data } = await sb.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
+  return (data?.value as string | undefined) ?? null;
+}
+
 /** 送った一覧の番号の控え（新しい順に数件） */
 export function snapshotOf(list: TodoList, messageId: string | null, sentAtIso: string): TodoSnapshot {
   return {

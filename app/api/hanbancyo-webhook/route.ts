@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import crypto from "crypto";
 import { CLEAR_MANUAL_UPDATE_DAYS } from "@/app/lib/search-update-days";
-import { handleTodoGroupReply } from "@/app/lib/staff-todo-reply-server";
+import { handleTodoGroupReply, todoListGroupId } from "@/app/lib/staff-todo-reply-server";
 import { isTodoNumbersOnly } from "@/app/lib/staff-todo-reply";
 
 export const maxDuration = 30;
@@ -119,7 +119,10 @@ export async function POST(req: NextRequest) {
     // 【やることリスト】の✅（2026-10-21 竹内さん G3・staff-todo-reply.ts）: 「✅3」「3 完了」「〇〇さん 完了」。
     //   「完了 [顧客名]」（物件出しの完了の古いコマンド）は先に下で読み、物件出しの顧客が見つからなかった時だけ【やることリスト】で読む
     const legacyDone = text.startsWith("完了") && !isTodoNumbersOnly(text.replace(/^完了\s*/, ""));
-    if (!legacyDone && sourceType === "group") {
+    // 一覧を送ったグループの発言だけ読む（同じボットの物件出しのグループ pickup_group_id の「✅3」等で一覧の行を✅にしない）
+    const fromTodoGroup = sourceType === "group" && !!sourceGroupId
+      && sourceGroupId === (await todoListGroupId(supabase).catch(() => null));
+    if (!legacyDone && fromTodoGroup) {
       const ack = await handleTodoGroupReply(supabase, { text, quotedMessageId: event.message.quotedMessageId ?? null, userId: event.source?.userId ?? null })
         .catch((e) => { console.error("[hanbancyo-webhook] todo reply:", e); return null; });
       if (ack && replyToken) await replyToLine(replyToken, ack);
@@ -152,7 +155,7 @@ export async function POST(req: NextRequest) {
         if (replyToken) await replyToLine(replyToken, msg);
       } else {
         // 物件出しの顧客に無い名前は【やることリスト】のお客様として読む（「完了 〇〇さん」）
-        const ack = sourceType === "group"
+        const ack = fromTodoGroup
           ? await handleTodoGroupReply(supabase, { text: /さん|様|さま/.test(name) ? text : `${name}さん 完了`, quotedMessageId: event.message.quotedMessageId ?? null, userId: event.source?.userId ?? null })
             .catch((e) => { console.error("[hanbancyo-webhook] todo reply:", e); return null; })
           : null;
