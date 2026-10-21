@@ -96,6 +96,14 @@ it("要対応が開いたまま、同じ約束はもう AIX で果たした＝ai
   const c = hubContradictions(h, i);
   ok(c.some((x) => x.type === "aix_item_open_promise_done"), JSON.stringify(c));
 });
+it("約束した送信そのものが同じ時刻に done（物件送付の1通に次の約束）→【必ず】が開いていても食い違いにしない", () => {
+  const cal: HubCalendarEvent = { id: 1, conversation_id: "abcdef12-0000-0000-0000-000000000000", customer_name: null, event_type: "property_send", start_at: iso(0.01), created_at: iso(0.01), notes: "【必ず】新着が出たら物件送付【新着待ち】", is_done: false };
+  const i = input([{ sender: "staff", text: PICKUP_PROMISE, h: 0 }], { calendarEvents: [cal] });
+  i.state.messages[0].isAix = true;
+  i.state.aixRows = [{ aix_type: "property_send", check_pattern: null, created_at: iso(0), sent_at: iso(0), generated_text: PICKUP_PROMISE }];
+  const c = hubContradictions(buildCustomerHub(i), i);
+  ok(!c.some((x) => x.type === "calendar_open_promise_done"), JSON.stringify(c));
+});
 it("新着待ちでなく、約束も要対応も無ければ食い違いなし", () => {
   const i = input([{ sender: "customer", text: "こんにちは", h: 0 }, { sender: "staff", text: "こんにちは！！", h: 0.1 }]);
   eq(hubContradictions(buildCustomerHub(i), i).filter((x) => x.type !== "state_conflict").length, 0);

@@ -320,7 +320,9 @@ export function hubContradictions(hub: CustomerHub, input: HubInput): HubContrad
 
   const steps = buildPromiseQueue(toQueueMsgs(input.state), toQueueLogs(input.state), now, { windowDays: 14 });
   const doneAfter = (action: string | null, cp: string | null, afterMs: number) => steps.find((st) => st.status === "done" && st.doneBy?.startsWith("AIX") && st.action === action
-    && (!cp || !st.checkPattern || st.checkPattern === cp) && ms(st.doneAt) >= afterMs - 60_000);
+    && (!cp || !st.checkPattern || st.checkPattern === cp) && ms(st.doneAt) >= afterMs - 60_000
+    // 約束した送信そのもの（約束と同じ1通で done と数えた物）は「果たした」に入れない（実データ: 物件送付の1通に「新着が出たら送る」→ 同じ時刻で done）
+    && ms(st.doneAt) > ms(st.promisedAt) + 60_000);
   for (const i of input.aixItems) {
     if (i.status !== "pending" || ms(i.created_at) > now) continue;
     const d = doneAfter(i.action, i.check_pattern, ms(i.created_at));
