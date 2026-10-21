@@ -54,7 +54,8 @@ it("注記は1〜2行・進む形が先・止まる形は1つ", () => {
   ok(n.includes("内覧の誘い") && n.includes("+15pt") && n.includes("物件を送る −12pt"), n);
   ok(n.indexOf("内覧の誘い") < n.indexOf("物件を送る"), "順");
   ok(n.includes("誘う・勧めるをやめる理由にはしない"), "営業の意図");
-  eq(n.trim().split("\n").length, 2);
+  ok(n.includes("お客様が求めた物（他の物件・答え・確認）は必ず出す") && n.includes("気に入ったお部屋がある時"), "逆向きの因果・申込の時");
+  eq(n.trim().split("\n").length, 3);
 });
 it("内覧の予定の後は申込30日で書く", () => ok(buildOutcomeNote("viewing", { ...T, cells: [cell({ scene: "viewing", shape: "apply" })] }).includes("30日で申込に進んだ")));
 it("言えるマスが無ければ空", () => { eq(buildOutcomeNote("viewing", T), ""); eq(buildOutcomeNote(null, T), ""); });

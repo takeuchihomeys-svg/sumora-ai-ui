@@ -89,7 +89,7 @@ export type OutcomeCell = {
   scene: OutcomeScene; shape: ReplyShape; n: number; convs: number;
   progress: number; view14: number; apply30: number; reply7: number;
   lift: number; lo: number; hi: number;
-  /** 古い側と新しい側で lift の向きが同じだったか（時間で分けた確かめ） */
+  /** 時間で分けた確かめ: 古い側だけで確か（30番以上・幅が 0 をまたがない）だったマスが新しい側でも同じ向きだったか。古い側で確かでなければ null */
   held: boolean | null;
 };
 export type OutcomeTable = { builtAt: string; days: number; turns: number; outcome: "progress"; cells: OutcomeCell[] };
@@ -103,7 +103,7 @@ export function outcomeLearnEnabled(env: Record<string, string | undefined> = ty
 const pt = (x: number) => `${x >= 0 ? "+" : "−"}${Math.abs(Math.round(x * 100))}pt`;
 const pc = (x: number) => `${Math.round(x * 100)}%`;
 
-/** その段階で言える（数が足り、幅が 0 をまたがず、新しい側でも向きが保たれた）マス。差の大きい順 */
+/** その段階で言える（数が足り、幅が 0 をまたがず、古い側だけで選んで新しい側でも向きが保たれた）マス。差の大きい順 */
 export function reliableCells(scene: OutcomeScene | null | undefined, table: OutcomeTable = REPLY_OUTCOME_TABLE): OutcomeCell[] {
   if (!scene) return [];
   return table.cells
@@ -126,5 +126,5 @@ export function buildOutcomeNote(scene: OutcomeScene | null | undefined, table: 
   const down = xs.filter((c) => c.lift < 0).slice(-1);
   const parts = [...up.map(fmt), ...down.map(fmt)];
   if (!parts.length) return "";
-  return `\n【結果から学ぶ（${OUTCOME_SCENE_JA[scene]}・過去の実データ ${table.turns}番・${goal}に進んだ割合の、同じ段階×お客様の番の種類×返事の速さの平均との差／相関の材料で因果ではない・誘う・勧めるをやめる理由にはしない・答えが要る時は答えを先に）】\n- ${parts.join("／")}\n`;
+  return `\n【結果から学ぶ（${OUTCOME_SCENE_JA[scene]}・過去の実データ ${table.turns}番・${goal}に進んだ割合の、同じ段階×お客様の番の種類×返事の速さの平均との差／相関の材料で因果ではない・誘う・勧めるをやめる理由にはしない・答えが要る時は答えを先に）】\n- ${parts.join("／")}\n- 数はお客様の様子の結果でもある（申込で抑えた番＝気に入ったお部屋があった・物件をまた送った番＝前のが合わなかった・聞き返した番＝条件が足りなかった）＝お客様が求めた物（他の物件・答え・確認）は必ず出す／申込で抑えるのは気に入ったお部屋がある時（遠方・内覧まで期間がある・内覧の後）だけ／文はいつもの竹内基準\n`;
 }

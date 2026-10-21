@@ -8,7 +8,7 @@
 //   確かめ: 古い 70% と新しい 30% に分け、両方で差の向き・順位が保たれるか（会話ごとの再標本で 90% の幅）。
 // 実行:
 //   npx tsx --env-file=.env.local scripts/audit-reply-outcome.ts [--days=365] [--examples] [--write-table]
-//   --write-table: 全部の番で数え表を作り、古い／新しいで向きが保たれたかの印を付けて app/lib/reply-outcome-table-data.ts に書く（数だけ）
+//   --write-table: 全部の番で数え表を作り、古い側だけで確かだったマスに新しい側でも向きが保たれたかの印を付けて app/lib/reply-outcome-table-data.ts に書く（数だけ）
 //   週1回の作り直し: scripts/refresh-reply-outcome.ps1（この --write-table を回して差分があればコミットの候補を出す）
 import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
@@ -206,7 +206,10 @@ async function main() {
   if (has("write-table")) {
     const cells: OutcomeCell[] = all3.filter((c) => c.n >= 10).map((c) => {
       const o = get(so, c.scene, c.shape), nn = get(sn, c.scene, c.shape);
-      const held = o && nn && o.n >= 15 && nn.n >= 15 ? Math.sign(o.lift) === Math.sign(nn.lift) && Math.sign(c.lift) === Math.sign(nn.lift) : null;
+      // 選ぶのは古い側だけ（古い側で 30番以上・幅が 0 をまたがない）→ 新しい側は確かめだけ（同じ向きか）。
+      //   新しい側で選ぶと確かめが選びに混ざって甘くなる（2026-10-21 レビュー）。古い側で確かでないマスは null（出さない）
+      const oldSure = !!o && o.n >= 30 && (o.lo > 0 || o.hi < 0);
+      const held = oldSure && nn && nn.n >= 15 ? Math.sign(o!.lift) === Math.sign(nn.lift) && Math.sign(c.lift) === Math.sign(o!.lift) : null;
       const r3 = (x: number) => Math.round(x * 1000) / 1000;
       return { scene: c.scene, shape: c.shape, n: c.n, convs: c.convs, progress: r3(c.progress), view14: r3(c.view14), apply30: r3(c.apply30), reply7: r3(c.reply7), lift: r3(c.lift), lo: r3(c.lo), hi: r3(c.hi), held };
     }).sort((a, b) => a.scene.localeCompare(b.scene) || b.lift - a.lift);
