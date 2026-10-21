@@ -396,7 +396,9 @@ export const READERS: readonly Reader[] = [promisePicker, resultBrain, reactionC
 // ───────── 司令塔: 会話ごとに読み手を回し、つなぎごとに数える ─────────
 export type LinkExample = { conv: string; at: string; breakType: string; text: string };
 export type LinkCount = { checked: number; ok: number; broken: number; byType: Record<string, number>; examples: LinkExample[] };
-export type LinkWatchSummary = { fromIso: string; toIso: string; conversations: number; links: Record<LinkId, LinkCount>; todo: Array<{ conversationId: string; customerName: string; action: string; checkPattern: string | null; breakType: string; at: string }> };
+export type LinkWatchSummary = { fromIso: string; toIso: string; conversations: number; links: Record<LinkId, LinkCount>; todo: Array<{ conversationId: string; customerName: string; action: string; checkPattern: string | null; breakType: string; at: string }>;
+  /** 段2 LINK_HUB=on の時だけ: お客様ごとの共通の状態（customer-hub）の食い違いの数（型ごと・例の文なし） */
+  hub?: { conversations: number; withContradiction: number; byType: Record<string, number>; actors: Record<string, number> } };
 
 /** 例の文（名前・電話・番号を伏せ・会話 id は頭8文字） */
 export function maskedExample(input: LinkConvInput, v: LinkVerdict): LinkExample {
@@ -432,6 +434,7 @@ export function compactLinkSummary(s: LinkWatchSummary): Record<string, unknown>
     from: s.fromIso, to: s.toIso, conversations: s.conversations,
     links: Object.fromEntries(LINK_IDS.map((id) => { const c = s.links[id]; return [id, { checked: c.checked, broken: c.broken, byType: c.byType }]; })),
     todo_candidates: s.todo.length,
+    ...(s.hub ? { hub: s.hub } : {}),
   };
 }
 
