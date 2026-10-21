@@ -2842,6 +2842,13 @@ ${catalogBlockForBrain(brainScene)}
       if (memo?.note) { customerStateBlockText += `\n\n${memo.note}`; console.log(JSON.stringify({ tag: "brain:customer-memo", conversationId, memoChars: memo.memoChars, moodChars: memo.moodChars, items: memo.items, pay: memo.pay?.decision ?? null })); }
       paymentPlan = memo?.pay ?? null;
     } catch (e) { console.warn("[brain-core] customer-memo skipped:", e instanceof Error ? e.message : String(e)); }
+    // 2026-10-21 竹内さんの決定（70193195・c2909936）: 申込歴あり（再探し）のお客様は、アツいお客様である事・戻った理由（①否決 ②1番手が通過 ③切り替え／理由不明）と
+    //   理由ごとの次の一手を材料に足す（パターンの名前と一手だけ・申込中の中身は書かない・reapply-customer.ts）。戻す REAPPLY_MARK=off
+    try {
+      const { reapplyBrainNoteFor } = await import("@/app/lib/reapply-customer-server");
+      const ra = await Promise.race([reapplyBrainNoteFor(supabase, conversationId), new Promise<null>((r) => setTimeout(() => r(null), 4_000))]);
+      if (ra?.note) { customerStateBlockText += `\n\n${ra.note}`; console.log(JSON.stringify({ tag: "brain:reapply", conversationId, pattern: ra.info?.pattern ?? null, source: ra.info?.source ?? null })); }
+    } catch (e) { console.warn("[brain-core] reapply skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-08 竹内さん「2月に引っ越すなどなれば、物件を抑える事ができるのは1ヶ月のため、1ヶ月半前から探し出す形が理想の流れと伝えて、その日に連絡するように約束」:
   //   入居・引越しの時期が先（連絡の日＝1ヶ月半前が7日以上先）で、まだ連絡の日を約束していない番だけ（contact-promise.farMoveInTurn・決定論）。FAR_MOVE_IN_CONTACT=off で止まる

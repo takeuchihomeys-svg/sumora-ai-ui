@@ -7,6 +7,7 @@ import {
   buildStaffTodoList, type TodoInput, type TodoList, type TodoAixItemRow, type TodoPromiseRow, type TodoFactRow,
   type TodoViewingRow, type TodoMessageRow, type TodoConversation, type TodoMarkRow, type TodoCustomerTurnRow,
 } from "@/app/lib/staff-todo-list";
+import { loadReapplyStates, type ReapplyConvRow } from "@/app/lib/reapply-customer-server";
 
 const DAY = 86_400_000;
 const PAGE = 1000;
@@ -82,7 +83,7 @@ export async function loadStaffTodoInput(sb: SupabaseClient, atMs: number = Date
   const CH = 100;
   for (let i = 0; i < Math.max(ids.length, factConv.length, promiseConv.length); i += CH) {
     const [c, f, m] = await Promise.all([
-      ids.length > i ? pageAll<TodoConversation>((a, b) => sb.from("conversations").select("id, customer_name, account, status, is_post_apply")
+      ids.length > i ? pageAll<TodoConversation & ReapplyConvRow>((a, b) => sb.from("conversations").select("id, customer_name, account, status, is_post_apply, status_manual_back_at, deepseek_cutoff_at")
         .in("id", ids.slice(i, i + CH)).order("id").range(a, b)) : Promise.resolve([]),
       factConv.length > i ? pageAll<TodoFactRow>((a, b) => sb.from("sent_facts").select("conversation_id, kind, sent_at, detail")
         .in("conversation_id", factConv.slice(i, i + CH)).eq("status", "done").gte("sent_at", since60).order("sent_at").order("id").range(a, b)) : Promise.resolve([]),
@@ -90,7 +91,11 @@ export async function loadStaffTodoInput(sb: SupabaseClient, atMs: number = Date
         .in("conversation_id", promiseConv.slice(i, i + CH)).eq("sender", "customer").gte("created_at", since60).lte("created_at", atIso)
         .order("created_at").order("id").range(a, b)) : Promise.resolve([]),
     ]);
-    conversations.push(...c);
+    // 2026-10-21 竹内さんの決定（70193195）: 申込歴あり（再探し）を付ける（読めなければ付けないだけ・reapply-customer-server）
+    const re = await loadReapplyStates(sb, c as ReadonlyArray<ReapplyConvRow>);
+    conversations.push(...(c as TodoConversation[]).map((row): TodoConversation => ({
+      id: row.id, customer_name: row.customer_name, account: row.account, status: row.status, is_post_apply: row.is_post_apply, ...(re.has(row.id) ? { reapply: true } : {}),
+    })));
     facts.push(...f);
     customerTurns.push(...m);
   }

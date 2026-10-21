@@ -26,6 +26,7 @@ import { buildPaymentTimingNote, extractMoneyReady, paymentTimingEnabled, planAp
 import { readDecideGaps, buildDecideGapNote, buildMindsetReplyLinesNote, decideGapEnabled, decideGapLine, hesitationKindOf, type DecideGap, type BrainGap } from "@/app/lib/customer-mindset";
 import { readClosingGaps } from "@/app/lib/closing-target";
 import { buildMoveTableNote, moveTableMode } from "@/app/lib/mindset-move-table";
+import { REAPPLY_MEMO_ID, reapplyMemoText, type ReturnPattern } from "@/app/lib/reapply-customer";
 
 /**
  * 2026-10-08 竹内さん「メモの読み取りは影で1週間」: DeepSeek が読んだ行（origin=llm）は保存と画面だけ・ブレインと返信には渡さない。
@@ -36,7 +37,12 @@ export function memoLlmNoteEnabled(env: Record<string, string | undefined> = pro
   return (env.CUSTOMER_MEMO_LLM_NOTE ?? "").trim().toLowerCase() !== "off";
 }
 function forNote(memo: StoredMemo): StoredMemo {
-  return memoLlmNoteEnabled() ? memo : { ...memo, items: memo.items.filter((x) => x.origin === "staff") };
+  const m = withoutReapplyItem(memo);
+  return memoLlmNoteEnabled() ? m : { ...m, items: m.items.filter((x) => x.origin === "staff") };
+}
+/** 申込から戻った理由の行（スタッフが選ぶ・REAPPLY_MEMO_ID）はメモの普通の行・注記に出さない（札と申込歴ありの材料で出す＝二重にしない） */
+function withoutReapplyItem(memo: StoredMemo): StoredMemo {
+  return memo.items.some((x) => x.id === REAPPLY_MEMO_ID) ? { ...memo, items: memo.items.filter((x) => x.id !== REAPPLY_MEMO_ID) } : memo;
 }
 
 /** 申込の書類・個人の値の通（決め手の残りを読まない） */
@@ -205,7 +211,7 @@ export async function customerMemoView(conversationId: string): Promise<{ rows: 
   return {
     background,
     rows: [
-      ...memoViewRows({ memo: b.memo, told: b.told, nowMs: now }),
+      ...memoViewRows({ memo: withoutReapplyItem(b.memo), told: b.told, nowMs: now }),
       ...(summaryStyleText(b.summaryStyle) ? [{ id: "summary:style", kind: "style" as const, label: "言葉づかい", text: summaryStyleText(b.summaryStyle), source: `AI の要約${b.summaryStyle?.at ? ` ${mdOf(b.summaryStyle.at)}` : ""}`, origin: "rule" as const, locked: false }] : []),
       ...b.gaps.slice(0, 3).map((g, i) => ({ id: `rule:gap:${i}`, kind: "decide_gap" as const, label: "決め手の残り", text: decideGapLine(g), source: `${g.at ? mdOf(g.at) : ""} お客様「${g.quote}」`, origin: "rule" as const, locked: false })),
       ...(b.money ? [{ id: "rule:money", kind: "circumstance" as const, label: "お金の時期", text: `${mdOf(new Date(b.money.fromDayMs).toISOString())} 以降に用意`, source: `${mdOf(b.money.saidAt)} お客様「${b.money.quote.slice(0, 30)}」`, origin: "rule" as const, locked: false }] : []),
@@ -236,6 +242,21 @@ export async function applyStaffMemoEdit(conversationId: string, edit: { op: "ad
   return { ok: await saveCustomerMemo(conversationId, next) };
 }
 export { toldRuleId };
+
+/**
+ * 2026-10-21 竹内さんの決定（c2909936）: 申込から戻った理由をスタッフが選ぶ（理由不明の時・読み違いの時）。メモの1行（id=REAPPLY_MEMO_ID・手で付けた印＝locked）に置く。
+ *   pattern=null で外す（自動の読み取りに戻す）。表は customer_memos（新しい表・列は作らない）
+ */
+export async function setReapplyPatternMemo(conversationId: string, pattern: ReturnPattern | null): Promise<{ ok: boolean }> {
+  const memo = await loadCustomerMemo(conversationId);
+  const nowIso = new Date().toISOString();
+  const rest = memo.items.filter((x) => x.id !== REAPPLY_MEMO_ID);
+  const items = pattern === null ? rest : [...rest, {
+    id: REAPPLY_MEMO_ID, kind: "circumstance" as const, text: reapplyMemoText(pattern), property: null, sourceAt: nowIso, sourceQuote: null,
+    sourceBy: "staff" as const, certainty: "sure" as const, expiresAt: null, origin: "staff" as const, locked: true, retiredAt: null, updatedAt: nowIso,
+  }];
+  return { ok: await saveCustomerMemo(conversationId, { ...memo, items }) };
+}
 
 export function customerMemoLlmEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return customerMemoEnabled(env) && (env.CUSTOMER_MEMO_LLM ?? "").trim().toLowerCase() !== "off";
