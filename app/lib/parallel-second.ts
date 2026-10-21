@@ -65,12 +65,25 @@ function sentencesOf(text: string): string[] {
   return text.split(/[\n。！!？?]+/).map((s) => s.trim()).filter(Boolean);
 }
 
-const BANTE_2 = /[2２二]番手/;
+/**
+ * 申込の番手（2〜9番手）。2026-10-22 確かめ役: 「3番手でお申し込みさせて頂きます」（d3f7f5f3・be73fa13）も番手で申込中。
+ *   1番手・2桁（12番手）は数えない。保証会社の番手（「保証会社が2番手で控えています」）は申込の番手ではないので、番手の前15字に「保証」がある所は数えない
+ */
+const BANTE_RANK = /(?<![0-9０-９])[2-9２-９二三四五六七八九]番手/g;
+function rankIndexes(s: string): number[] {
+  const out: number[] = [];
+  for (const m of s.matchAll(BANTE_RANK)) {
+    const i = m.index ?? -1;
+    if (i >= 0 && !/保証/.test(s.slice(Math.max(0, i - 15), i))) out.push(i);
+  }
+  return out;
+}
 /** 2番手で申込んだ（受理・受け付け・完了・させて頂く・手続き・同時並行・管理会社からの連絡） */
 // 動詞は「2番手」の後ろ25字以内だけ数える（同じ文の「確認させて頂きました」等に当てない・実データ 0adcc5f1 の外れ）
 const APPLIED_2ND_VERB = /受理|受け?付け?(?:て|ま|致|いた|中|し)|完了|させて(?:頂|いただ)|させ頂|手続き|とのご連絡|とのこと|同時並行|並行して(?:お部屋|物件)?(?:を)?(?:お)?探|並行で/;
 /** 案内・問い・できない形・条件の形（申込んだ事にしない）。10/21 確かめ役: 「お気に召されましたら2番手で…させて頂きます」「よろしければ2番手でお申し込みさせて頂き」「お送り頂き次第…2番手で抑えさせて頂きます」は申込んだ文ではない */
-const NOT_APPLIED = /[2２二]番手以降|可能|でき(?:ます|る|ない|ません)|出来|受け?付け?(?:てい)?(?:ない|ません)|受付(?:不可|していない)|不可|如何|いかが|でしょうか|ますか|場合|もし|たら[、,\s]|なら[、,\s]|おすすめ|オススメ|お勧め|ご提案|ましたら|でしたら|よろしければ|宜しければ|良ければ|次第|お申し?付け|される場合|であれば/;
+// 「可能」は「お申込み可能」（案内）だけ。「1番手に上がる可能性ございますので、2番手でお申込させて頂きます」（00a98cde）は申込んだ文（2026-10-22）
+const NOT_APPLIED = /[2-9２-９二三四五六七八九]番手以降|可能(?!性)|でき(?:ます|る|ない|ません)|出来|受け?付け?(?:てい)?(?:ない|ません)|受付(?:不可|していない)|不可|如何|いかが|でしょうか|ますか|場合|もし|たら[、,\s]|なら[、,\s]|おすすめ|オススメ|お勧め|ご提案|ましたら|でしたら|よろしければ|宜しければ|良ければ|次第|お申し?付け|される場合|であれば/;
 /**
  * 終わり（繰り上がった・自分の審査が通った・1番手が通って取れなかった・審査否決・申込の取り下げ）。
  *   2026-10-21 判定を1つにした時: 戻した会話も数えるので、否決・取り下げ（並行で探していたのではなく申込が終わった）も終わりにする
@@ -78,49 +91,85 @@ const NOT_APPLIED = /[2２二]番手以降|可能|でき(?:ます|る|ない|ま
 const END_RE = /審査(?:は|が|の結果)?.{0,6}否決(?:と(?:なり|なっ)|され|でし|の(?:ご)?連絡)|審査(?:が|に)?(?:通りませ|通らなかった)|お申込(?:み)?(?:は|を)?(?:取り下げ|キャンセル(?:させ|と(?:なり|させ)|しま|いた))|繰り上が(?:り(?:まし|ます|となり)|った|れ(?:まし|ます))|[1１一]番手(?:に|と)(?:なり|繰り)|審査(?:が|に|は)?.{0,4}(?:通過(?:しま|いた|とな|の(?:ご)?連絡)|通りまし|承認(?:され|とな)|OK(?:でし|とな))|[1１一]番手.{0,20}(?:審査(?:が|に)?.{0,4}(?:通|通過|承認)|決ま|契約|成約)|(?:お部屋|物件|そちら|こちら)(?:が|は).{0,8}(?:埋まって|決まって|成約)|繰り上が(?:りませ|らな|りが無|り無|りなし|れませ)/;
 const END_NOT = /場合|もし|たら[、,\s]|なら[、,\s]|かもしれ|可能性|でしょうか|ますか|如何|いかが/;
 
-function appliedRankSentence(s: string, bante: RegExp): boolean {
+/**
+ * 番手の語が無くても、繰り上がりを待っている（＝番手で申込んでいる）形（2026-10-22 確かめ役）。
+ *   「1番手繰り上がり連絡待ちながら、同時並行で…探させていただきます」（1191b1eb・「ご」なし）
+ *   「管理会社より1番手繰り上がり連絡ございましたら、審査開始となります」（b50fd451・申込んだ後の流れの説明）
+ *   NOT_APPLIED は使わない（「ご入居可能なお部屋」「〜ましたら」を含むため）。案内・問い・誘い・仮定の形だけ外す
+ */
+const WAITING_RE = /繰り上が(?:り)?(?:の)?(?:ご)?(?:連絡)?(?:を)?待ち(?:ながら|つつ|の間)[^。]{0,20}並行|繰り上がり(?:の)?(?:ご)?連絡(?:が)?(?:ございましたら|ありましたら|あり次第|入り次第|入りましたら)[、,\s]?.{0,8}審査開始/;
+const WAITING_NOT = /場合|もし|でしょうか|ますか|如何|いかが|よろしければ|宜しければ|良ければ|おすすめ|オススメ|お勧め|ご提案|(?:頂|いただ)くの/;
+/** 番手（2〜9番手）で申込んだ・繰り上がりを待っている1文か（isApplied2ndText と rankMentionOf で共通の規則） */
+function appliedRankSentence(s: string): boolean {
+  if (WAITING_RE.test(s) && !WAITING_NOT.test(s)) return true;
   if (NOT_APPLIED.test(s)) return false;
-  const i = s.search(bante);
-  return i >= 0 && APPLIED_2ND_VERB.test(s.slice(i, i + 30));
+  // 番手の後ろ35字（「3番手にて〇〇〇〇〇〇〇〇501号室お申込みさせていただきます」が30字に収まらなかった）
+  return rankIndexes(s).some((i) => APPLIED_2ND_VERB.test(s.slice(i, i + 35)));
 }
 /** 2番手で申込んだ文か（スタッフの1通） */
 export function isApplied2ndText(text: string | null | undefined): boolean {
-  return sentencesOf(String(text ?? "")).some((s) => appliedRankSentence(s, BANTE_2));
+  return sentencesOf(String(text ?? "")).some(appliedRankSentence);
 }
 /** 2番手の案内（「2番手でのお申込みが可能」「2番手でお申込を行い…並行して…如何でしょうか」）。申込んだ文でなくてよい・できない形は除く */
 export function isOffer2ndText(text: string | null | undefined): boolean {
-  return sentencesOf(String(text ?? "")).some((s) => BANTE_2.test(s) && /申(?:し)?込/.test(s) && !/(?:受け?付け?(?:てい)?(?:ない|ません)|出来ない|できない|不可)/.test(s));
+  return sentencesOf(String(text ?? "")).some((s) => rankIndexes(s).length > 0 && /申(?:し)?込/.test(s) && !/(?:受け?付け?(?:てい)?(?:ない|ません)|出来ない|できない|不可)/.test(s));
 }
-/** 並行の終わりの文か */
+/**
+ * 終わりの語のすぐ後ろが条件・先の約束の形（「繰り上がりましたらご連絡」「繰り上がったら」「決まり次第」「通過した際は」「承認されれば」）。
+ *   2026-10-22 確かめ役（be73fa13）: 「番手が繰り上がりましたらご連絡させて頂きます」を終わりに数えていた（約束であって済んだ事実ではない）
+ */
+//   2026-10-22 独立レビュー: 「〜たから」「〜ましたのでこちら」「〜ましたばかり」を条件にしない（「たら／だら」・直後の「ら」・え段＋「ば」だけ）
+const END_TAIL_COND = /^(?:[ぁ-ん]{0,6}?(?:たら|だら)|ら|[ぁ-ん]{0,3}?(?:次第|際|場合)|[ぁ-ん]{0,3}?[えけせてねめれげべ]ば(?!かり))/;
+/**
+ * 並行の終わりの文か。文の最初の終わりの語が済んだ事（「繰り上がりました」）なら終わり。
+ *   条件・約束の形（「〜ましたら」）なら終わりにしない＝その後ろ（「否決となりましたら繰り上がります」の「繰り上がります」）は条件の結果で済んだ事ではない
+ */
 export function isParallelEndText(text: string | null | undefined): boolean {
-  return sentencesOf(String(text ?? "")).some((s) => END_RE.test(s) && !END_NOT.test(s));
+  return sentencesOf(String(text ?? "")).some((s) => {
+    if (END_NOT.test(s)) return false;
+    const m = END_RE.exec(s);
+    if (!m) return false;
+    const end = m.index + m[0].length;
+    return !END_TAIL_COND.test(s.slice(end, end + 10));
+  });
 }
 // ═══ 番手の文の読み分け（2026-10-21・ブレインの場面 parallel-search と申込までの地図 apply-route-map で共通） ═══════════
 // 旧（parallel-search.RANK_WAITING_RE＝「2〜9番手／繰り上が」の語だけ）は、案内（「2番手でのお申込可能」「お気に召されましたら2番手で…」
 //   「よろしければ2番手で…」）・2番手を受け付けていない・保証会社の「2番手」も「番手待ち」に数えていた
 //   （365日のスタッフの文で旧に当たる80通のうち、申込んだ・繰り上がりを待っている文は18通）。
 //   ここで1通を「申込んだ・待っている」「案内（まだ申込んでいない）」「終わった」「受け付けていない」に分ける。
-//   「申込んだ」は2番手で申込中の判定（isApplied2ndText・judgeParallelSecond）と同じ規則を 2〜9番手に広げた物（判定そのものは変えない）
+//   「申込んだ」は2番手で申込中の判定（isApplied2ndText・judgeParallelSecond）と同じ1文の規則（appliedRankSentence）
 export type RankMention = "applied" | "offered" | "ended" | "unavailable";
-const BANTE_N = /[2-9２-９二三]番手/;
 const RANK_WORD = /[2-9２-９二三]番手|繰り上が/;
-/** 保証会社の「2番手」（申込の番手ではない） */
-const GUARANTOR_RANK = /番手(?:の|に|で|が)?[\s・]*保証会社|保証会社.{0,20}番手/;
+/** 保証会社の「2番手」（申込の番手ではない）。2026-10-22 独立レビュー: 保証会社の並び「1番手：〇〇」「2番手：〇〇」・「2番手は信販系」も */
+const GUARANTOR_RANK = /番手(?:の|に|で|が)?[\s・]*保証会社|保証会社.{0,20}番手|[1-9１-９一二三]番手\s*[:：]|番手[^。\n]{0,20}(?:独立系|信用系|信販系|LICC系)/;
 /** 番手で申込んだ後の待ち（勧め・問いの形は除く。審査開始待ち・繰り上がり待ち・繰り上がったらご連絡・繰り上がりの連絡がまだ） */
 const RANK_SUGGEST = /オススメ|おすすめ|お勧め|如何|いかが|でしょうか|よろしければ|宜しければ|良ければ|ますか/;
 const RANK_WAITING_SENT = /審査開始待ち|繰り上がり(?:の)?(?:ご連絡)?(?:を)?待|繰り上が(?:りましたら|り次第|ったら|れば)|繰り上がり審査開始(?:しましたら|し次第|になりましたら)|繰り上がりの(?:ご)?連絡が(?:まだ)?(?:来て|きて|入って)/;
-/** 2番手以降の申込を受け付けていない（番手の場面にしない） */
-const RANK_UNAVAILABLE = /受け?付け?(?:てい)?(?:ない|ません)|出来ない|できない|出来ません|できません|不可/;
+/**
+ * 勧め・問いの語が同じ文にあっても「申込んだ・待っている」に数える形（2026-10-22 独立レビュー）。
+ *   「繰り上がりのご連絡を待ちながら並行して探すのがオススメ」は申込んだ後の並行の勧めで、まだ申込んでいない案内ではない
+ */
+const RANK_WAITING_STRONG = /繰り上がり(?:の)?(?:ご)?連絡(?:を)?待|繰り上がり(?:の)?(?:ご)?連絡(?:が)?(?:ございましたら|ありましたら|あり次第)|審査開始待ちの|繰り上がり(?:の)?(?:ご)?(?:連絡)?待ち(?:ながら|と同時|の間)/;
+/** 2番手以降の申込を受け付けていない（番手の場面にしない）。2026-10-22 独立レビュー: 「出来ず／できず」「お申込みストップ」「申込停止」も */
+/** 申込の受け付けが止まっている（文の単位で見る＝同じ文に「とのこと」等があっても申込んだにしない） */
+const RANK_STOP = /お申し?込み?(?:が|を)?ストップ|申し?込み?停止/;
+const RANK_UNAVAILABLE = /受け?付け?(?:てい)?(?:ない|ません)|出来ない|できない|出来ません|できません|出来ず|できず|不可/;
 /** 条件の形（「繰り上がりましたらご連絡」は終わりではない） */
 const RANK_CONDITIONAL = /ましたら|たら|次第|場合|もし|なら|れば/;
+/** 終わりにしない形（割合・可能性・「〜で繰り上がり」「〜に繰り上がる」の流れの説明・「となります」）2026-10-22 独立レビュー */
+const RANK_END_NOT = /割合|可能性|で繰り上がり|に繰り上がる(?!ま)|となります/;
+/** 番手の申込が取り消しになった（「1番手の方がご契約となりますので、お客様の2番手お申込みがキャンセルとなっております」1191b1eb）＝終わり。RANK_END_NOT の「となります」より先に見る */
+const RANK_CANCELLED = /番手(?:の)?(?:お)?申し?込み?(?:が|は)?キャンセル(?:となっ|になっ|され(?:まし|て))/;
 
 /** スタッフの1通の番手の文を読む（番手の話が無ければ null）。強い順: 申込んだ・待っている → 終わった → 案内 → 受け付けていない */
 export function rankMentionOf(text: string | null | undefined): RankMention | null {
   const ss = sentencesOf(String(text ?? "").normalize("NFKC")).filter((s) => RANK_WORD.test(s) && !GUARANTOR_RANK.test(s));
   if (!ss.length) return null;
-  if (ss.some((s) => appliedRankSentence(s, BANTE_N) || (RANK_WAITING_SENT.test(s) && !RANK_SUGGEST.test(s)))) return "applied";
-  if (ss.some((s) => END_RE.test(s) && !END_NOT.test(s) && !RANK_CONDITIONAL.test(s))) return "ended";
-  if (ss.some((s) => !RANK_UNAVAILABLE.test(s))) return "offered";
+  if (ss.some((s) => !RANK_STOP.test(s) && (appliedRankSentence(s) || RANK_WAITING_STRONG.test(s) || (RANK_WAITING_SENT.test(s) && !RANK_SUGGEST.test(s))))) return "applied";
+  if (ss.some((s) => !RANK_STOP.test(s) && RANK_CANCELLED.test(s))) return "ended";
+  if (ss.some((s) => !RANK_STOP.test(s) && END_RE.test(s) && !END_NOT.test(s) && !RANK_CONDITIONAL.test(s) && !RANK_END_NOT.test(s))) return "ended";
+  if (ss.some((s) => !RANK_UNAVAILABLE.test(s) && !RANK_STOP.test(s))) return "offered";
   return "unavailable";
 }
 /**
@@ -131,7 +180,6 @@ export function latestRankMention(newestFirst: ReadonlyArray<string | null | und
   for (const t of newestFirst) { const m = rankMentionOf(t); if (m) return m; }
   return null;
 }
-
 function pickerSaysOther(p: ParallelPicker): boolean {
   if (p.checkPattern !== "mgmt_application_status") return false;
   const s = JSON.stringify(p.choices ?? null);

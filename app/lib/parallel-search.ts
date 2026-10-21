@@ -93,15 +93,26 @@ const RANK_SCENE_NOTE: Record<"rank_waiting" | "rank_offered", string> = {
   rank_offered: "お客様はまだ申込んでいない（申込済みとして扱わない）。番手で申込んでお部屋を抑えながら並行して探す形もある（スタッフの実送信「2番手でお申込をし並行して物件を探す形がオススメ」）。",
 };
 /**
+ * 番手の場面の既定（2026-10-22 竹内さんの決定 d08bc127・e851e601・ec4d5990 に合わせた）:
+ *   案内の後＝お客様がこのお部屋を気に入っているなら「2番手で申込んで抑え、並行して探す」（true）・申込中＝繰り上がりを待ちながら並行して探すに倒す（true）
+ */
+const RANK_SCENE_DEFAULT: Record<"rank_waiting" | "rank_offered", string> = {
+  rank_waiting: `既定は true（繰り上がりを待ちながら、並行して代わりのお部屋を探す）。お客様がほかは要らない・このお部屋の結果だけ待つと言った・繰り上がりが決まった時だけ false。`,
+  rank_offered: `お客様がこのお部屋を気に入っているなら true（2番手で申込んでお部屋を抑え、並行して探す形を勧める）。このお部屋に気持ちが無い・ほかは要らないと言った時は false。`,
+};
+/**
  * ブレインに渡す材料（毎回変わる所）。場面が無ければ空文字。
  * 決まりにしない: 「並行で探せ」とは書かず、場面の事実とスタッフの実績を渡し、出すかどうかを JSON の項目で答えさせる
  */
 export function buildParallelSearchBrainNote(ctx: ParallelSearchContext): string {
   if (!ctx.scene) return "";
+  const rank = ctx.scene === "rank_waiting" || ctx.scene === "rank_offered" ? ctx.scene : null;
   return `\n【並行で探すかの判断（場面の材料・決定論）】場面: ${PARALLEL_SEARCH_SCENE_LABEL[ctx.scene]}（${ctx.evidence ?? ""}）。` +
-    (ctx.scene === "rank_waiting" || ctx.scene === "rank_offered" ? RANK_SCENE_NOTE[ctx.scene] : `お客様の発言に、ほかのお部屋に目を向けるきっかけ（別の物件・探す・条件・迷い）がある。`) + `この場面のスタッフの動き: ${SCENE_BOTH_RATE[ctx.scene]}＝多くは今のお部屋を進めるだけで、両方は少数。` +
+    (rank ? RANK_SCENE_NOTE[rank] + `この場面のスタッフの動き（参考）: ${SCENE_BOTH_RATE[ctx.scene]}。`
+      : `お客様の発言に、ほかのお部屋に目を向けるきっかけ（別の物件・探す・条件・迷い）がある。この場面のスタッフの動き: ${SCENE_BOTH_RATE[ctx.scene]}＝多くは今のお部屋を進めるだけで、両方は少数。`) +
     `AIX（aix）は今まで通り主の一手を1つだけ選ぶ。そのうえで、ほかのお部屋も並行して探すのがこのお客様に良いかを判断し、出力 JSON に "parallel_search"（true/false）と "parallel_search_reason"（20字以内）を足す。` +
-    `既定は false。お客様がほかのお部屋も見たい・今のお部屋に引っかかり（条件・費用・立地）があって迷っている時だけ true。今のお部屋に気持ちが固まっている・ほかは要らないと言った・手続きの連絡だけの時は false。`;
+    (rank ? RANK_SCENE_DEFAULT[rank]
+      : `既定は false。お客様がほかのお部屋も見たい・今のお部屋に引っかかり（条件・費用・立地）があって迷っている時だけ true。今のお部屋に気持ちが固まっている・ほかは要らないと言った・手続きの連絡だけの時は false。`);
 }
 
 export type ParallelSearchOutput = { on: boolean; reason: string | null; scene: ParallelSearchScene | null };

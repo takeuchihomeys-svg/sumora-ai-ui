@@ -128,7 +128,7 @@ export const ROUTE_BRANCHES: Record<RouteBranchId, RouteBranch> = {
     wayBack: { to: "pickup", how: "約束した時期に条件の確認とピックアップを再開" } },
   // 2026-10-21 番手を2つに分けた（旧 rank_waiting は案内「2番手でのお申込可能」「お気に召されましたら2番手で…」にも当たり、申込んだ後に「番手での申込」を勧めていた）
   rank_offered: { id: "rank_offered", name: "申込が入っていた・番手のご案内", meaning: "先に申込が入っている物件で、番手（2番手以降）での申込をご案内した（まだ申込んでいない）", aim: ["申込へ誘う", "関係をつなぐ"],
-    next: { label: "番手で申込んでお部屋を抑え並行して探すか、代わりの好条件のお部屋をお送りする", aix: ["application_push", "property_recommendation"] },
+    next: { label: "このお部屋を気に入っているなら番手で申込んで抑え、並行して代わりの好条件のお部屋を探す（2026-10-22 竹内さんの決定）", aix: ["application_push", "property_recommendation"] },
     wayBack: { to: "apply_prep", how: "番手で申込（申込準備へ）、または代わりの物件で提案に戻る" } },
   rank_waiting: { id: "rank_waiting", name: "番手で申込中", meaning: "2番手以降で申込んで繰り上がりを待っている（並行して探す）", aim: ["関係をつなぐ"],
     next: { label: "繰り上がりの結果は分かり次第お伝えし、並行して代わりの好条件のお部屋をお送りする", aix: ["property_recommendation"] },

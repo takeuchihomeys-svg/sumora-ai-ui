@@ -6,6 +6,7 @@ import {
   locateApplyRoute, resolveRouteNode, buildApplyRouteBrainText, applyRouteBrainTextIfEnabled, applyRouteMapEnabled,
   ROUTE_NODES, ROUTE_BRANCHES, MAIN_ROUTE, APPLY_ROUTE_TEXT_MAX, SILENT_DAYS, type ApplyRouteSignals,
 } from "../apply-route-map";
+import { rankMentionOf } from "../parallel-second";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -79,6 +80,28 @@ it("番手: 2番手で申込中（1つの判定）は申込の段階でも rank_
   eq(locateApplyRoute(base({ stage: "applying", parallelSecond: true })).branch, "rank_waiting");
   eq(locateApplyRoute(base({ stage: "applying", recentStaffTexts: ["2番手にてお申し込み完了しております!!"] })).branch, null);
   eq(locateApplyRoute(base({ stage: "won", parallelSecond: true })).branch, null);
+});
+it("番手の文の読み分け（2026-10-22 独立レビュー）: 待つ形は勧めの語があっても申込んだ・保証会社の並び・受け付けていない・終わりにしない形", () => {
+  // (1) 繰り上がりの連絡を待つ形は勧め・問いの語があっても applied
+  eq(rankMentionOf("2番手で繰り上がりのご連絡を待ちながら、並行してお部屋探しするのがオススメです!!"), "applied");
+  eq(rankMentionOf("繰り上がり連絡がございましたら審査開始となりますので、それまで他のお部屋も見てみませんか？"), "applied");
+  eq(rankMentionOf("現在2番手で審査開始待ちの状態ですが、よろしければ他もお探ししましょうか"), "applied");
+  eq(rankMentionOf("繰り上がり待ちの間に、他のお部屋も如何でしょうか"), "applied");
+  eq(rankMentionOf("よろしければ2番手でお申し込みさせて頂き、並行してお部屋探しさせて頂きます"), "offered");
+  // (2) 保証会社の並び
+  eq(rankMentionOf("1番手：全保連\n2番手：日本セーフティ"), null);
+  eq(rankMentionOf("2番手は信販系のオリコになります"), null);
+  // (3) 受け付けていない
+  eq(rankMentionOf("2番手のお申込みは出来ずとのことです"), "unavailable");
+  eq(rankMentionOf("1番手の審査中のため2番手のお申込みストップとのことです"), "unavailable");
+  eq(rankMentionOf("現在2番手申込停止中です"), "unavailable");
+  // (4) 終わりにしない（割合・可能性・流れの説明）
+  eq(rankMentionOf("2番手でも繰り上がりました割合は3割ほどです"), "offered");
+  eq(rankMentionOf("1番手がキャンセルの場合は2番手に繰り上がる形となります"), "offered");
+  eq(rankMentionOf("無事1番手に繰り上がりました!!"), "ended");
+  eq(rankMentionOf("204号室は1番手の方がご契約となりますので、お客様の2番手お申込みがキャンセルとなっております"), "ended");
+  // 申込んだ判定は isApplied2ndText と同じ1文の規則（main の 3番手・可能性）
+  eq(rankMentionOf("1番手に上がる可能性ございますので、3番手でお申込させて頂きます"), "applied");
 });
 it("新着待ち（searching.reason=watch_promised）", () => {
   const l = locateApplyRoute(base({ stage: "searching", searching: { active: true, reason: "watch_promised" } }));

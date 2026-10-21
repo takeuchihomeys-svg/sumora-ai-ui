@@ -193,6 +193,15 @@ it("ブレインへの材料は場面・実績・JSON の項目を書く（「�
   expect(n).toContain("既定は false");
   expect(buildParallelSearchBrainNote({ scene: null, evidence: null, blockedBy: null })).toBe("");
 });
+it("番手の場面の既定は竹内さんの決定に合わせる（案内の後＝気に入っていれば2番手で抑えて並行・申込中＝並行に倒す・2026-10-22）", () => {
+  const offered = buildParallelSearchBrainNote({ scene: "rank_offered", evidence: "x", blockedBy: null });
+  expect(offered).toContain("2番手で申込んでお部屋を抑え、並行して探す");
+  expect(offered).notToContain("既定は false");
+  const waiting = buildParallelSearchBrainNote({ scene: "rank_waiting", evidence: "x", blockedBy: null });
+  expect(waiting).toContain("既定は true");
+  expect(waiting).notToContain("既定は false");
+  expect(waiting).notToContain("両方は少数");
+});
 it("生成への材料は許可（添えてもよい・添えなくてもよい）で、実送信の形を示す", () => {
   const n = buildParallelSearchReplyNote({ on: true, reason: "迷っている", scene: "after_viewing" });
   expect(n).toContain("添えてもよい（添えなくてもよい）");
