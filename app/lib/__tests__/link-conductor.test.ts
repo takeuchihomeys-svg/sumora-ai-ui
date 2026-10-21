@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/link-conductor.test.ts
 import { buildCustomerHub, hubContradictions, type HubInput, type HubAixItem, type HubCalendarEvent } from "../customer-hub";
 import {
-  conductCustomer, renderConductorBrainNote, conductorTodoOrder, countDecisions, isStaffOnlyAction, tieBreakPrompt, parseTieBreak,
+  conductCustomer, renderConductorBrainNote, conductorNoteAix, flashLabelOf, conductorTodoOrder, countDecisions, isStaffOnlyAction, tieBreakPrompt, parseTieBreak,
   linkConductorEnabled, linkConductorBrainEnabled, linkConductorTodoEnabled, linkConductorExamEnabled, RECOMMENDED, HESITATE_GAP,
   type ConductorDecision,
 } from "../link-conductor";
@@ -58,11 +58,11 @@ it("約束と同じ要対応（pending）は1つにまとまる", () => {
   eq(d.kind, "ask_staff");
   eq(d.alternatives.filter((a) => a.action === "property_check_result" && a.checkPattern === "mgmt_parking").length, 0, "重なり");
 });
-it("お客様の番＋開いた確認の約束 → 1位は返信・ブレインの材料に「返信の後に残る AIX」と下書きに書かない旨", () => {
+it("お客様の番＋開いた確認の約束 → 1位は返信・ブレインの材料は下書きに書かない旨だけ（残る一手は出さない）", () => {
   const d = decide(input([{ sender: "customer", text: "駐車場ありますか？", h: 0 }, { sender: "staff", text: PARKING_PROMISE, h: 0.1 }, { sender: "customer", text: "あと初期費用はどれくらいですか？", h: 1 }]));
   eq(d.kind, "send"); eq(d.by, "brain");
   const note = renderConductorBrainNote(d, "山田 花子");
-  ok(/返信の後に残る一手は AIX【property_check_result\/mgmt_parking】/.test(note), note);
+  ok(!/返信の後に残る一手/.test(note), "約束由来・スタッフしか分からない残る一手は一手として出さない（不要な AIX に寄せない）");
   ok(/下書きに答えを書かない/.test(note), note);
   ok(!/山田/.test(note), "名前を伏せる");
 });
@@ -169,6 +169,23 @@ it("やることリストの順: 同じ組で点が近い時だけ司令塔の�
 it("数え: 種類・迷い・片付け", () => {
   const c = countDecisions([decide(input([{ sender: "customer", text: "こんにちは", h: 1 }])), decide(input([{ sender: "customer", text: "駐車場ありますか？", h: 0 }, { sender: "staff", text: PARKING_PROMISE, h: 0.1 }]))]);
   eq(c.conversations, 2); eq(c.byKind.send, 1); eq(c.byKind.ask_staff, 1); eq(c.staffOnly, 1);
+});
+
+it("お客様の番＋開いた要対応（内覧の誘い）→ 返信の後に残る一手として出す", () => {
+  const item: HubAixItem = { id: "v", conversation_id: CID, customer_name: null, action: "viewing_invite", check_pattern: null, status: "pending", created_at: iso(0.5), done_at: null, done_aix_type: null, resolution_note: null };
+  const d = decide(input([{ sender: "staff", text: "こんにちは", h: 0 }, { sender: "customer", text: "ありがとうございます、見てみます", h: 1 }, { sender: "customer", text: "週末は空いてますか？", h: 1.1 }], { aixItems: [item] }));
+  eq(d.kind, "send"); eq(d.by, "brain");
+  const n = conductorNoteAix(d); ok(n && !n.protectOnly && n.action === "viewing_invite", JSON.stringify(n));
+  ok(/返信の後に残る一手は AIX【viewing_invite】/.test(renderConductorBrainNote(d)));
+});
+it("お客様の番＋開いた要対応（物件送付）→ 残る一手に出さない（物件が揃った時は1位で出る）", () => {
+  const item: HubAixItem = { id: "p", conversation_id: CID, customer_name: null, action: "property_send", check_pattern: null, status: "pending", created_at: iso(0.5), done_at: null, done_aix_type: null, resolution_note: null };
+  const d = decide(input([{ sender: "staff", text: "こんにちは", h: 0 }, { sender: "customer", text: "週末は空いてますか？", h: 1 }], { aixItems: [item] }));
+  eq(d.kind, "send"); eq(conductorNoteAix(d), null); eq(renderConductorBrainNote(d), "");
+});
+it("flash の札: 約束の札は自由な文（カレンダーの題・物件名）を渡さない", () => {
+  const l = flashLabelOf({ kind: "send", by: "aix", action: "property_send", checkPattern: null, label: "約束: 【必ず】山田様 サンハイツ101 送付", score: 80, certainty: 0.8, reader: "promise", why: "x", dueAt: iso(-1) }, NOW);
+  ok(!/山田|サンハイツ/.test(l), l); ok(/期限過ぎ/.test(l), l);
 });
 
 console.log("試験の連携（8c3bf572）");

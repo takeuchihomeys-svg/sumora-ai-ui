@@ -136,7 +136,8 @@ type Msg = { sender: string; text: string | null; created_at: string; staff_writ
   }
   console.log(L.join("\n"));
   mkdirSync(OUT_DIR, { recursive: true });
-  const day = jst.slice(0, 10);
+  // 手で --link を付けた試しは今日の候補ファイル（毎晩の分）を上書きしない（.link を付けて別に保存）。LINK_CONDUCTOR_EXAM=on の毎晩は同じ名前に混ぜる
+  const day = `${jst.slice(0, 10)}${process.argv.includes("--link") && !linkConductorExamEnabled() ? ".link" : ""}`;
   writeFileSync(join(OUT_DIR, `${day}.md`), L.join("\n"));
   writeFileSync(join(OUT_DIR, `${day}.json`), JSON.stringify({ builtAt: new Date().toISOString(), days: DAYS, skip, candidates: ranked }, null, 1));
   // 足せる形（正解の道が決まっている物だけ・人が読んでから --add-batch に渡す）

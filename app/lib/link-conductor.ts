@@ -262,6 +262,14 @@ function housekeepingOf(contradictions: ReadonlyArray<HubContradiction>): Housek
   return out;
 }
 
+/** flash に渡す札。約束の読み手の札はカレンダーの題・約束の物（自由な文・名前や物件名が入り得る）→ 種類・ボタン・期限だけの札に置き換える */
+export function flashLabelOf(c: ConductorCandidate, nowMs: number): string {
+  if (c.reader !== "promise") return c.label;
+  const due = ms(c.dueAt);
+  const when = !Number.isFinite(due) ? "" : due < nowMs ? "（期限過ぎ）" : due - nowMs <= DAY ? "（期限1日以内）" : "（期限まだ先）";
+  return `約束${c.action ? ` AIX ${c.action}${c.checkPattern ? `/${c.checkPattern}` : ""}` : ""}${when}`;
+}
+
 export function conductCustomer(hub: CustomerHub, contradictions: ReadonlyArray<HubContradiction>, input: HubInput, o: { tieBreaker?: ConductorTieBreaker | null } = {}): ConductorDecision {
   const nowMs = input.nowMs;
   const housekeeping = housekeepingOf(contradictions);
@@ -300,7 +308,7 @@ export function conductCustomer(hub: CustomerHub, contradictions: ReadonlyArray<
     if (o.tieBreaker && !claudeOnly) {
       const pool = ranked.filter((c) => c.kind !== "wait").slice(0, 4);
       try {
-        const i = o.tieBreaker({ stageLabel: hub.where.stageLabel, candidates: pool.map((c, i) => ({ i, kind: c.kind, label: c.label, score: c.score })) });
+        const i = o.tieBreaker({ stageLabel: hub.where.stageLabel, candidates: pool.map((c, i) => ({ i, kind: c.kind, label: flashLabelOf(c, nowMs), score: c.score })) });
         if (typeof i === "number" && i >= 0 && i < pool.length) { top = pool[i]; reader = "flash"; flashPicked = true; }
       } catch { /* 点の順のまま */ }
     }
@@ -321,13 +329,32 @@ export function conductCustomer(hub: CustomerHub, contradictions: ReadonlyArray<
 
 // ───────── 配る先（消費する物） ─────────
 /** LINE のブレインの材料（1〜2行・伏せる）。送るだけの「お客様の番・返信」は何も足さない（今のブレインと同じ） */
+/**
+ * ブレインの材料に出す AIX（無ければ null）。
+ *   1位が AIX → そのまま。1位が返信 → 2位以下の AIX は「開いている要対応（aix_item）で、物件を送る AIX でない物」だけ「返信の後に残る一手」として出す。
+ *   2位以下のスタッフしか分からない事（物件確認の結果・見積 等）は一手として出さず、下書きに書かない旨だけ（protectOnly）。
+ *   2026-10-21 試し（お客様の番 300）: 残る一手を全部出すと、スタッフが返信だけで済ませた番の 34% に AIX を勧めていた。
+ *     約束由来の残る一手はスタッフが押したのが 13 件中 1 件（期限過ぎは 7 件中 0）・物件確認の結果／物件送付は 17 件中 2 件。
+ *     開いた要対応（内覧の誘い・待ち合わせ・申込の後押し 等）は 15 件中 12 件で当たった → これだけ残す（ブレインを不要な AIX に寄せない）
+ */
+export type ConductorNoteAix = { action: string; checkPattern: string | null; label: string; kind: ConductorKind; first: boolean; protectOnly: boolean };
+export function conductorNoteAix(d: ConductorDecision): ConductorNoteAix | null {
+  if (d.action) return { action: d.action, checkPattern: d.checkPattern, label: d.label, kind: d.kind, first: true, protectOnly: false };
+  const c = d.alternatives.find((x) => x.action && (x.kind === "ask_staff" || x.kind === "send"));
+  if (!c || !c.action) return null;
+  if (isStaffOnlyAction(c.action, c.checkPattern)) return { action: c.action, checkPattern: c.checkPattern, label: c.label, kind: c.kind, first: false, protectOnly: true };
+  if (c.reader !== "aix_item" || PROPERTY_SEND_AIX.has(c.action)) return null;
+  return { action: c.action, checkPattern: c.checkPattern, label: c.label, kind: c.kind, first: false, protectOnly: false };
+}
+
 export function renderConductorBrainNote(d: ConductorDecision, customerName?: string | null): string {
   const m = (t: string) => maskPII(t, [customerName ?? null]).replace(/\s+/g, " ").slice(0, 80);
   const lines: string[] = [];
-  // お客様の番（返信）が1位でも、開いた約束の AIX（2位以下）は「返信の後に」と渡す
-  const aix = d.action ? { action: d.action, checkPattern: d.checkPattern, label: d.label, kind: d.kind, first: true }
-    : (() => { const c = d.alternatives.find((x) => x.action && (x.kind === "ask_staff" || x.kind === "send")); return c ? { action: c.action!, checkPattern: c.checkPattern, label: c.label, kind: c.kind, first: false } : null; })();
-  if (aix) {
+  // お客様の番（返信）が1位の時、2位以下は絞って渡す（conductorNoteAix）
+  const aix = conductorNoteAix(d);
+  if (aix?.protectOnly) {
+    lines.push(`・スタッフしか分からない事（${m(aix.label)}）がまだ開いている。返信の下書きに答えを書かない（返信の形・一手はこの行で変えない）`);
+  } else if (aix) {
     const btn = `AIX【${aix.action}${aix.checkPattern ? `/${aix.checkPattern}` : ""}】`;
     const when = aix.first ? "次の一手は" : "返信の後に残る一手は";
     lines.push(isStaffOnlyAction(aix.action, aix.checkPattern)
