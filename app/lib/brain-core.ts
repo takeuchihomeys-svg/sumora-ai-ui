@@ -2870,6 +2870,17 @@ ${catalogBlockForBrain(brainScene)}
         if (mind) { const sig = reactionRisk(mind, null); console.log(JSON.stringify({ tag: "brain:reaction-predict", conversationId, now: mind.now, temp: mind.temperature, likely: sig.likely, risk: sig.risk, kinds: sig.kinds, chars: rpNote.length })); }
       }
     } catch (e) { console.warn("[brain-core] reaction-predict skipped:", e instanceof Error ? e.message : String(e)); }
+    // 2026-10-21 竹内さんの決定（a5838a0b）③結果から学ぶ: 今の段階で、過去に内覧の予定・申込へ進みやすかった返し方／止まりやすかった返し方（数え表・相関）を 1〜2 行の材料に。
+    //   決まった計算だけ（LLM なし・reply-outcome-learn.ts）。言えるマスが無ければ何も足さない。既定 off（BRAIN_OUTCOME_LEARN=on で入る）
+    try {
+      const { outcomeLearnEnabled, sceneFromCustomerStage, buildOutcomeNote } = await import("@/app/lib/reply-outcome-learn");
+      if (outcomeLearnEnabled()) {
+        const olScene = sceneFromCustomerStage(customerState?.stage ?? null);
+        const olNote = buildOutcomeNote(olScene);
+        if (olNote) customerStateBlockText += olNote;
+        console.log(JSON.stringify({ tag: "brain:outcome-learn", conversationId, scene: olScene, chars: olNote.length }));
+      }
+    } catch (e) { console.warn("[brain-core] outcome-learn skipped:", e instanceof Error ? e.message : String(e)); }
     // 2026-10-21 竹内さんの決定（70193195・c2909936）: 申込歴あり（再探し）のお客様は、アツいお客様である事・戻った理由（①否決 ②1番手が通過 ③切り替え／理由不明）と
     //   理由ごとの次の一手を材料に足す（パターンの名前と一手だけ・申込中の中身は書かない・reapply-customer.ts）。戻す REAPPLY_MARK=off
     try {
