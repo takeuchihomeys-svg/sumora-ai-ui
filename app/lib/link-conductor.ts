@@ -36,14 +36,15 @@ export const ABANDON_MS = 3 * DAY;
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 const on = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "on";
-/** 見張り（link-brain-watch）が司令塔の決定を数える（既定 off） */
-export function linkConductorEnabled(env: Env = envOf()): boolean { return on(env.LINK_CONDUCTOR); }
+const notOff = (v: string | undefined) => (v ?? "").trim().toLowerCase() !== "off";
+/** 見張り（link-brain-watch）が司令塔の決定を数える（2026-10-21 確かめ役「今すぐ on でよい・$0」→ 既定 on・止める LINK_CONDUCTOR=off） */
+export function linkConductorEnabled(env: Env = envOf()): boolean { return notOff(env.LINK_CONDUCTOR); }
 /** LINE のブレインの材料に司令塔の1行を入れる（既定 off） */
 export function linkConductorBrainEnabled(env: Env = envOf()): boolean { return on(env.LINK_CONDUCTOR_BRAIN); }
 /** やることリストの迷う所（同じ組で点が近い）の順を司令塔が決める（既定 off） */
 export function linkConductorTodoEnabled(env: Env = envOf()): boolean { return on(env.LINK_CONDUCTOR_TODO); }
-/** 試験の問題の候補に、見張りの本物の切れ（ブレインの番の物）を足す（既定 off・scripts/exam-question-candidates.ts は --link でも足す） */
-export function linkConductorExamEnabled(env: Env = envOf()): boolean { return on(env.LINK_CONDUCTOR_EXAM); }
+/** 試験の問題の候補に、見張りの本物の切れ（ブレインの番の物）を足す（2026-10-21 既定 on・候補を出すだけ・止める LINK_CONDUCTOR_EXAM=off・scripts/exam-question-candidates.ts は --link でも足す） */
+export function linkConductorExamEnabled(env: Env = envOf()): boolean { return notOff(env.LINK_CONDUCTOR_EXAM); }
 
 /** 質問待ち 21 に当てたオススメ（報告・テストが読む1か所） */
 export const RECOMMENDED = {

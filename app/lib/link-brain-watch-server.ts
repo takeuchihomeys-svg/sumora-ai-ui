@@ -116,7 +116,7 @@ export async function runLinkWatch(sb: SupabaseClient, w: LinkWindow, o: { examp
       s.hub = { conversations: a.conversations, withContradiction: a.withContradiction, byType: a.byType as Record<string, number>, actors: a.actors };
     } catch (e) { console.warn("[link-brain-watch] hub skipped:", e instanceof Error ? e.message : String(e)); }
   }
-  // 段3（既定 off・LINK_CONDUCTOR=on）: 司令塔が会話ごとに次の一手を決め、種類ごとに数える（読むだけ・flash なし・$0）
+  // 段3（2026-10-21 既定 on・止める LINK_CONDUCTOR=off）: 司令塔が会話ごとに次の一手を決め、種類ごとに数える（読むだけ・flash なし・$0）
   if (linkConductorEnabled(o.env)) {
     try {
       const { auditConductor } = await import("@/app/lib/link-conductor-server");

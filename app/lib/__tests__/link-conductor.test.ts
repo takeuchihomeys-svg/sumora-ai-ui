@@ -35,7 +35,9 @@ const PICKUP_PROMISE = "かしこまりました！！\nご条件に合うお部
 
 console.log("切替（全部 既定 off）");
 it("4つの切替は既定 off・on で入る", () => {
-  for (const f of [linkConductorEnabled, linkConductorBrainEnabled, linkConductorTodoEnabled, linkConductorExamEnabled]) eq(f({}), false);
+  for (const f of [linkConductorBrainEnabled, linkConductorTodoEnabled]) eq(f({}), false);
+  for (const f of [linkConductorEnabled, linkConductorExamEnabled]) eq(f({}), true); // 2026-10-21 数えるだけ・候補だけは既定 on
+  eq(linkConductorExamEnabled({ LINK_CONDUCTOR_EXAM: "off" }), false);
   eq(linkConductorEnabled({ LINK_CONDUCTOR: "on" }), true); eq(linkConductorBrainEnabled({ LINK_CONDUCTOR_BRAIN: "ON" }), true);
   eq(linkConductorTodoEnabled({ LINK_CONDUCTOR_TODO: "on" }), true); eq(linkConductorExamEnabled({ LINK_CONDUCTOR_EXAM: "on" }), true);
   eq(linkConductorEnabled({ LINK_CONDUCTOR: "off" }), false);
