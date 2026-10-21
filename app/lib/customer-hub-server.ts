@@ -16,9 +16,32 @@ import { maskPII } from "@/app/lib/pii-mask";
 const DAY = 86_400_000;
 
 /** 1会話の材料（会話が無い・customer-state の材料が読めない時は null） */
-export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: string, nowMs: number = Date.now()): Promise<HubInput | null> {
+/**
+ * 過去の時点（試し・監査）で組む時、customer-state の材料（今の最新の行を読む）から nowMs より後の行を外す。
+ *   statusAt を渡すとその時点の状態（line_watch_turns.conv_status 等）を使う（今の status は後で変わっている事がある）
+ */
+export function clipStateToTime(state: NonNullable<Awaited<ReturnType<typeof loadCustomerStateInput>>>, nowMs: number, statusAt?: string | null): typeof state {
+  const le = (s: string | null | undefined) => { const t = s ? Date.parse(s) : NaN; return !Number.isFinite(t) || t <= nowMs; };
+  return {
+    ...state,
+    ...(statusAt !== undefined ? { status: statusAt, isPostApply: false } : {}),
+    messages: state.messages.filter((m) => le(m.createdAt)),
+    aixRows: state.aixRows.filter((r) => le(r.sent_at ?? r.created_at)),
+    recordedFacts: (state.recordedFacts ?? []).filter((f) => le(f.sent_at)),
+    viewingHistory: state.viewingHistory.filter((v) => le((v as { created_at?: string | null }).created_at)),
+    sentProperties: state.sentProperties.filter((p) => le((p as { sent_at?: string | null }).sent_at)),
+    lineTasks: (state.lineTasks ?? []).filter((t) => le(t.created_at)),
+  };
+}
+
+/** pointInTime=true の時だけ「その時点」で組む（試し・監査だけが渡す。本番の呼び出しは渡さない＝前と同じ読み方・同じ結果） */
+export type HubLoadOptions = { statusAt?: string | null; pointInTime?: boolean };
+export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: string, nowMs: number = Date.now(), o: HubLoadOptions = {}): Promise<HubInput | null> {
+  const past = o.pointInTime === true;
   const since30 = new Date(nowMs - 30 * DAY).toISOString();
   const nowIso = new Date(nowMs).toISOString();
+  const calQ = sb.from("calendar_events").select("id, conversation_id, customer_name, event_type, start_at, created_at, notes, is_done, title, all_day")
+    .eq("conversation_id", conversationId).gte("start_at", new Date(nowMs - 60 * DAY).toISOString());
   const [conv, state, items, pickups, cal, memo] = await Promise.all([
     sb.from("conversations").select("id, customer_name, account, status, is_post_apply, status_manual_back_at, property_customer_id").eq("id", conversationId).maybeSingle(),
     loadCustomerStateInput(conversationId, { now: nowMs }).catch(() => null),
@@ -26,8 +49,7 @@ export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: s
       .eq("conversation_id", conversationId).gte("created_at", since30).lte("created_at", nowIso).order("created_at").limit(300),
     sb.from("property_pickups").select("created_at, sent_at, expired_at, status, verdict, summary_text, search_conditions")
       .eq("conversation_id", conversationId).gte("created_at", since30).lte("created_at", nowIso).order("created_at").limit(500),
-    sb.from("calendar_events").select("id, conversation_id, customer_name, event_type, start_at, created_at, notes, is_done, title, all_day")
-      .eq("conversation_id", conversationId).gte("start_at", new Date(nowMs - 60 * DAY).toISOString()).order("start_at").limit(200),
+    (past ? calQ.lte("created_at", nowIso) : calQ).order("start_at").limit(200),
     sb.from("customer_memos").select("items").eq("conversation_id", conversationId).maybeSingle(),
   ]);
   const c = conv.data as (HubInput["conv"] & { property_customer_id: string | null }) | null;
@@ -42,12 +64,15 @@ export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: s
     } catch { reactions = null; }
   }
   const reapply = await loadReapplyInfo(sb, conversationId);
+  // 過去の時点で組む時（試し・監査）は、その時点より後の行を外し、後で片付いた要対応はその時点では開いていた物に戻す
+  const st = past || o.statusAt !== undefined ? clipStateToTime(state, nowMs, o.statusAt) : state;
+  const aixItems = ((items.data ?? []) as HubAixItem[]).map((i) => (past && i.status !== "pending" && i.done_at && Date.parse(i.done_at) > nowMs ? { ...i, status: "pending" as const, done_at: null } : i));
   const memoItems = (memo.data as { items?: unknown } | null)?.items;
   return {
     nowMs,
-    conv: { id: c.id, customer_name: c.customer_name, account: c.account ?? null, status: c.status, is_post_apply: c.is_post_apply, status_manual_back_at: c.status_manual_back_at },
-    state,
-    aixItems: (items.data ?? []) as HubAixItem[],
+    conv: { id: c.id, customer_name: c.customer_name, account: c.account ?? null, status: o.statusAt !== undefined ? o.statusAt : c.status, is_post_apply: o.statusAt !== undefined ? false : c.is_post_apply, status_manual_back_at: c.status_manual_back_at },
+    state: st,
+    aixItems,
     pickups: (pickups.data ?? []) as LinkPickup[],
     calendarEvents: (cal.data ?? []) as HubCalendarEvent[],
     memoItems: Array.isArray(memoItems) ? (memoItems as LinkMemoItem[]) : [],
@@ -57,8 +82,8 @@ export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: s
 }
 
 /** 1会話のハブ（読めなければ null） */
-export async function getCustomerHub(sb: SupabaseClient, conversationId: string, nowMs: number = Date.now()): Promise<{ hub: CustomerHub; contradictions: HubContradiction[]; input: HubInput } | null> {
-  const input = await loadCustomerHubInput(sb, conversationId, nowMs);
+export async function getCustomerHub(sb: SupabaseClient, conversationId: string, nowMs: number = Date.now(), o: HubLoadOptions = {}): Promise<{ hub: CustomerHub; contradictions: HubContradiction[]; input: HubInput } | null> {
+  const input = await loadCustomerHubInput(sb, conversationId, nowMs, o);
   if (!input) return null;
   const hub = buildCustomerHub(input);
   return { hub, contradictions: hubContradictions(hub, input), input };
