@@ -71,7 +71,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { resolveTwoStageOrDirect, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
+import { resolveTwoStageOrDirect, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { holdSoftNextMaterial, rule8HoldNote, rule8HoldDirectionSuffix } from "@/app/lib/hold-soft-next";
 import { lastPropertyMoveAllUnavailable } from "@/app/lib/unavailable-ack";
@@ -4125,9 +4125,13 @@ ${history}`;
     const { promiseAixFromContract, tcPromiseTwoStageEnabled } = await import("@/app/lib/brain-route-keep");
     // 2026-10-20 試験の道の外れ③（q184・BRAIN_ROUTE_FIX_1020 contract_aix）: 最後の aix が空のまま turn_contract の依頼を route=aix（見積書送る等）と書いた番は、
     //   その AIX を最後の aix にする（後の reconcile が依頼を約束に直してただの返信になっていた）。規則が何も決めていない番だけ
-    if (!finalAix && decisionSource === null && !promiseAix && routeFix1020("contract_aix") && !isPostApplyStatus(convStatus)) {
+    // 2026-10-21 竹内さん A1「すぐAIXでかえす」: 確かめれば分かる問い（物件確認した・見積書送る）を依頼で route=aix と書いた番は、contract_aix が off でも
+    //   その AIX を最後の aix にする（試験 ans1021b q133#2: 依頼は見積書送るの AIX・最後の aix が空 → 後の reconcile が約束に直し、出し切りの締めの返信になった）。
+    //   他の AIX の種類は contract_aix（既定 off）のまま。戻す TWO_STAGE_ANSWERABLE_DIRECT=off
+    const answerableContractAix = answerableDirectEnabled();
+    if (!finalAix && decisionSource === null && !promiseAix && (routeFix1020("contract_aix") || answerableContractAix) && !isPostApplyStatus(convStatus)) {
       const k = contractAixWhenTopEmpty((parsed as { turn_contract?: unknown }).turn_contract, (x) => normalizeAixActionKey(x as string));
-      if (k && AIX_BRAIN_NOTES[k]) {
+      if (k && AIX_BRAIN_NOTES[k] && (routeFix1020("contract_aix") || k === "property_check_result" || k === "estimate_sheet")) {
         finalAix = k;
         decisionSource = "brain:contract_aix";
         console.log(JSON.stringify({ tag: "brain:route-fix-1020", part: "contract_aix", conversationId, aix: k }));
