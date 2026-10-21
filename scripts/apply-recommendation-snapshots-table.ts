@@ -34,7 +34,7 @@ const STMTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS uq_rec_snap_message ON recommendation_snapshots(message_id) WHERE message_id IS NOT NULL;`,
   `CREATE INDEX IF NOT EXISTS idx_rec_snap_conv ON recommendation_snapshots(conversation_id, sent_at DESC);`,
   `CREATE INDEX IF NOT EXISTS idx_rec_snap_customer ON recommendation_snapshots(property_customer_id, sent_at DESC);`,
-  `ALTER TABLE recommendation_snapshots DISABLE ROW LEVEL SECURITY;`,
+  // 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（recommendation_snapshots）
   // 送った画像1枚ごとの値（2026-09-25 追加の指示）
   `ALTER TABLE sent_image_properties ADD COLUMN IF NOT EXISTS facts JSONB;`,
   `ALTER TABLE sent_image_properties ADD COLUMN IF NOT EXISTS facts_read_at TIMESTAMPTZ;`,

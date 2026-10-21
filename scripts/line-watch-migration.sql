@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS line_watch_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO line_watch_settings (id, capture_enabled) VALUES (1, true) ON CONFLICT (id) DO NOTHING;
-ALTER TABLE line_watch_settings DISABLE ROW LEVEL SECURITY;
+-- 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（line_watch_settings）
 
 -- line_watch_turns: お客様の番1つにつき1行（「その時 AI が出していた案」の控え）。
 --   番の鍵 = 連投の最初のお客様の発言（最後のスタッフの発言より後で一番古い物）。連投が続くと customer_last_at だけ進む（同じ行）。
@@ -67,8 +67,8 @@ CREATE TABLE IF NOT EXISTS line_watch_turns (
 );
 CREATE INDEX IF NOT EXISTS idx_line_watch_turns_turn ON line_watch_turns(customer_turn_at DESC);
 CREATE INDEX IF NOT EXISTS idx_line_watch_turns_updated ON line_watch_turns(updated_at DESC);
--- RLS は他の表と同じく無効（サーバーが公開キーで読むため・project_rls_anon_key_pending の決まり「個別の表だけ有効にしない」）
-ALTER TABLE line_watch_turns DISABLE ROW LEVEL SECURITY;
+-- ~~旧: RLS は他の表と同じく無効~~ → 2026-10-21 サーバーだけの表（サーバーは service_role）なので RLS を入れる。DISABLE の行は消した
+-- 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（line_watch_turns）
 
 -- capture_line_watch_turn: conversations の ai_draft・ai_draft_check・suggested_aix_meta が変わった時に番の行へ控える。
 --   安全の決まり（最重要）: 中で何が失敗しても元の更新（conversations）を止めない

@@ -39,7 +39,7 @@ const STMTS = [
   `CREATE INDEX IF NOT EXISTS idx_search_audits_ai_pending ON search_audits(created_at) WHERE ai_status = 'pending';`,
   `CREATE INDEX IF NOT EXISTS idx_search_audits_cause ON search_audits(cause_key, created_at DESC);`,
   `CREATE INDEX IF NOT EXISTS idx_search_audits_customer ON search_audits(property_customer_id, created_at DESC);`,
-  `ALTER TABLE search_audits DISABLE ROW LEVEL SECURITY;`,
+  // 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（search_audits）
   `CREATE TABLE IF NOT EXISTS search_audit_causes (
   cause_key TEXT PRIMARY KEY,
   title TEXT,
@@ -56,7 +56,7 @@ const STMTS = [
   note TEXT
 );`,
   `CREATE INDEX IF NOT EXISTS idx_search_audit_causes_last_seen ON search_audit_causes(last_seen DESC);`,
-  `ALTER TABLE search_audit_causes DISABLE ROW LEVEL SECURITY;`,
+  // 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（search_audit_causes）
   `SELECT pg_notify('pgrst', 'reload schema');`,
 ];
 

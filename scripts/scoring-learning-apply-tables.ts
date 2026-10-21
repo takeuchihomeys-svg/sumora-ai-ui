@@ -20,7 +20,7 @@ const STMTS = [
   retired_at TIMESTAMPTZ
 );`,
   `CREATE UNIQUE INDEX IF NOT EXISTS uq_scoring_weights_active ON scoring_weights((status)) WHERE status = 'active';`,
-  `ALTER TABLE scoring_weights DISABLE ROW LEVEL SECURITY;`,
+  // 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（scoring_weights）
   `CREATE TABLE IF NOT EXISTS scoring_learning_runs (
   id BIGSERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -46,7 +46,7 @@ const STMTS = [
   auto_reason TEXT
 );`,
   `CREATE INDEX IF NOT EXISTS idx_scoring_learning_runs_created ON scoring_learning_runs(created_at DESC);`,
-  `ALTER TABLE scoring_learning_runs DISABLE ROW LEVEL SECURITY;`,
+  // 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（scoring_learning_runs）
   `SELECT pg_notify('pgrst', 'reload schema');`,
 ];
 

@@ -35,7 +35,7 @@ const STMTS = [
   `CREATE INDEX IF NOT EXISTS idx_property_pickups_batch ON property_pickups(batch_id, rank);`,
   `CREATE INDEX IF NOT EXISTS idx_property_pickups_status ON property_pickups(status, created_at DESC);`,
   `CREATE INDEX IF NOT EXISTS idx_property_pickups_customer ON property_pickups(property_customer_id, created_at DESC);`,
-  `ALTER TABLE property_pickups DISABLE ROW LEVEL SECURITY;`,
+  // 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（property_pickups）
   `ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS page_image_url TEXT;`,
   `ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_lines JSONB;`,
   `ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_facts JSONB;`,
@@ -55,7 +55,7 @@ const STMTS = [
      author TEXT
    );`,
   `CREATE INDEX IF NOT EXISTS idx_property_pickup_notes_customer ON property_pickup_notes(property_customer_id, created_at DESC);`,
-  `ALTER TABLE property_pickup_notes DISABLE ROW LEVEL SECURITY;`,
+  // 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（property_pickup_notes）
   `ALTER TABLE region_map ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 0;`,
   `ALTER TABLE station_map ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 0;`,
   `UPDATE region_map SET priority = 100 WHERE source = 'manual' AND priority = 0;`,

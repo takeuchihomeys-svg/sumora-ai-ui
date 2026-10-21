@@ -26,7 +26,7 @@ const STMTS = [
   finished_at TIMESTAMPTZ
 );`,
   `CREATE INDEX IF NOT EXISTS idx_property_pickup_completions_customer ON property_pickup_completions(property_customer_id, created_at DESC);`,
-  `ALTER TABLE property_pickup_completions DISABLE ROW LEVEL SECURITY;`,
+  // 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（property_pickup_completions）
   `SELECT pg_notify('pgrst', 'reload schema');`,
 ];
 

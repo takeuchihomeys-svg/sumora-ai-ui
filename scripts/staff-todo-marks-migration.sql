@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS staff_todo_marks (
   note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_staff_todo_marks_marked_at ON staff_todo_marks(marked_at DESC);
-ALTER TABLE staff_todo_marks DISABLE ROW LEVEL SECURITY;
+-- 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（staff_todo_marks）
 
 -- ════════════════════════════════════════════════════════════════════
 -- 流した後の確かめ（読むだけ）
