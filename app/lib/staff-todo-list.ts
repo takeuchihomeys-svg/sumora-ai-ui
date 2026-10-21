@@ -36,7 +36,7 @@ import { TARGET_SCHEDULE_LINES } from "./target-list-format";
 const DAY = 86_400_000;
 
 /**
- * 切替（2026-10-21 竹内さんの決定 f87ccb7e で既定 on）。on の間は staff-todo-list の cron が2時間ごとにグループへ送り、
+ * 切替（2026-10-21 竹内さんの決定 f87ccb7e で既定 on）。on の間は staff-todo-list の cron が1時間ごとにグループへ送り、
  * 被っていた AIX要対応リスト（announce-aix-actions）と朝の報告の約束・AIX要対応・未返信の節は出さない。
  * 戻す: STAFF_TODO_LIST=off（AIX要対応リストと朝の報告の節が元どおり出る）。組み立て・見本は off でも動く
  */
@@ -615,8 +615,11 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
     ...(input.targets?.some((x) => !x.other) ? { targetsMerged: true, screening: [...(input.screening ?? [])] } : {}),
   };
 }
-/** 新規の問い合わせ（物件をまだ一度も送っていない・会話を作って何日以内） */
-export const NEW_INQUIRY_DAYS = 14;
+/**
+ * 新規の問い合わせ（物件をまだ一度も送っていない・会話を作って何日以内）。
+ *   2026-10-21 確かめる人: 14日だと「13日放置・期限過ぎ」のターゲットでない人まで②（新規）に上がるので7日（ターゲットの「新規」は3日・brain-attention.TARGET_NEW_DAYS）
+ */
+export const NEW_INQUIRY_DAYS = 7;
 
 /** 期限を過ぎた日数（その日の終わりが期限の物は翌日から 1） */
 export function overdueDays(it: Pick<TodoItem, "dueAt">, atMs: number): number {
