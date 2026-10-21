@@ -64,7 +64,14 @@ export type BaselineFile<R> = {
    *   main の答えは既定のスイッチで回す（brain-exam の prepareMainBaseline）。無い（古い取り置き）＝既定とみる＝既定の回にだけ使う
    */
   envFp?: string;
+  /**
+   * 2026-10-21 連携②: 答えた時刻。前の main の答えを入力が同じで持ち越した（全部の回が inputSame）時は元の答えの時刻（期限が延び続けない）。無い＝savedAt
+   */
+  answeredAt?: string;
+  /** 2026-10-21 連携②: 呼び出しの控えを入れた前の main の置き場の名前 */ pinnedFrom?: string;
 };
+/** 期限を見る時刻（answeredAt が無ければ savedAt） */
+const ageAt = (b: { savedAt?: string; answeredAt?: string }) => String(b.answeredAt ?? b.savedAt ?? "");
 /** 取り置きの指紋が欲しい指紋と同じか（無い古い物は既定 "" とみる） */
 export function sameEnvFp(b: { envFp?: string | null }, want: string | null | undefined): boolean { return (b.envFp ?? "") === (want ?? ""); }
 
@@ -80,7 +87,7 @@ export function findCarryOver<R extends { rep: number; error?: string }>(cands: 
   const ok = cands.filter((b) => {
     if (!sameProblem(b, p)) return false;
     if (!sameEnvFp(b, want.envFp)) return false; // 2026-10-21 スイッチの違う答えは持ち越さない
-    const t = Date.parse(String(b.savedAt ?? ""));
+    const t = Date.parse(ageAt(b));
     if (o.maxAgeMs && o.maxAgeMs > 0 && (!Number.isFinite(t) || now - t > o.maxAgeMs)) return false;
     if (b.rows.some((r) => r.error)) return false;
     const reps = new Set(b.rows.map((r) => r.rep));
@@ -122,7 +129,7 @@ export function planBaseline<R extends { rep: number; error?: string }>(problems
     if (!sameProblem(b, p)) { run.push(p.id); stale.push(p.id); continue; }
     if (!sameEnvFp(b, o.envFp)) { run.push(p.id); stale.push(p.id); continue; } // 2026-10-21 スイッチの違う答え（既定でない）は使わない
     // 2026-10-16 比べる相手の答えに期限: DB の中身・モデル側の変化は鍵に入らない → savedAt が古ければ流し直す（savedAt が読めない物も古いとみる）
-    if (o.maxAgeMs && o.maxAgeMs > 0) { const t = Date.parse(String(b.savedAt ?? "")); if (!Number.isFinite(t) || now - t > o.maxAgeMs) { run.push(p.id); expired.push(p.id); continue; } }
+    if (o.maxAgeMs && o.maxAgeMs > 0) { const t = Date.parse(ageAt(b)); if (!Number.isFinite(t) || now - t > o.maxAgeMs) { run.push(p.id); expired.push(p.id); continue; } }
     const ok = new Set(b.rows.filter((r) => !r.error).map((r) => r.rep));
     if (o.acceptComplete && b.complete && ok.has(1) && !b.rows.some((r) => r.error)) { reuse.push(p.id); continue; }
     if (Array.from({ length: repeat }, (_, i) => i + 1).every((k) => ok.has(k))) reuse.push(p.id); else run.push(p.id);
@@ -151,6 +158,6 @@ export function mergeBaselines<R>(primary: Map<string, BaselineFile<R>>, ...lega
  * 2026-10-15 ①: --stage=diff は子（main の作業ツリー）で決めると main との差が無い＝いつも brain になる → 親で決めた段（resolvedStage）に置き換える
  */
 export function childArgs(args: string[], o: { resolvedStage?: string } = {}): string[] {
-  return args.filter((a) => !/^--(?:label|only|types|only-type|per-type|baseline|baseline-ref|baseline-refresh|baseline-dry|baseline-key|baseline-max-age|baseline-defer|baseline-limit|select|select-n|select-q|link-kb|report)(?:=|$)/.test(a))
+  return args.filter((a) => !/^--(?:label|only|types|only-type|per-type|baseline|baseline-ref|baseline-refresh|baseline-dry|baseline-key|baseline-max-age|baseline-defer|baseline-limit|select|select-n|select-q|link-kb|report|input-diff|force)(?:=|$)/.test(a))
     .map((a) => (a === "--stage=diff" && o.resolvedStage ? `--stage=${o.resolvedStage}` : a));
 }
