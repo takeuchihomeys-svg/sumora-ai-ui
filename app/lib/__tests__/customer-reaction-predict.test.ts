@@ -65,6 +65,10 @@ it("お礼の番: 返し方ごとの差を1行で", () => {
   const n = buildReactionNote(readCustomerMind(msgs), T);
   ok(n.includes("【相手の頭の中・反応の予想"), n); ok(n.includes("こちらから聞く"), n); ok(n.split("\n").filter((l) => l.startsWith("- ")).length <= 2, n);
 });
+it("迷いの流れ: 誘いをやめさせない（進む割合も見せる・誘いは最後の一文）", () => {
+  const n = buildReactionNote(readCustomerMind([{ sender: "staff", text: "ご内覧いかがでしょうか", createdAt: at(1) }, { sender: "customer", text: "うーん、ちょっと迷ってます", createdAt: at(2) }]));
+  ok(n.includes("やめる理由にはしない"), n); ok(n.includes("進む"), n); ok(n.includes("誘いはやめず"), n); ok(!n.includes("押されない"), n);
+});
 it("確認の約束は比べに入れない", () => ok(!buildReactionNote(readCustomerMind(msgs), T).includes("確認して後で送る約束")));
 it("画像だけの番は出さない", () => eq(buildReactionNote(readCustomerMind([{ sender: "customer", text: "[画像]", createdAt: at(1) }]), T), ""));
 it("既定 off", () => { eq(reactionPredictEnabled({}), false); eq(reactionPredictEnabled({ BRAIN_REACTION_PREDICT: "on" }), true); });

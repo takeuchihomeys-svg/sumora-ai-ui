@@ -87,7 +87,7 @@ export type CustomerMind = {
 };
 
 const WANTS: Record<ReactionCat, string> = {
-  question: "聞いた事・頼んだ事への答え", thanks: "受け止め（短いお礼・了承）", stall: "考える時間・押されない事", complaint: "不満の受け止めと直し",
+  question: "聞いた事・頼んだ事への答え", thanks: "受け止め（短いお礼・了承）", stall: "考える時間（気持ちを受け止め・ふんわりさせず扉の1文で締める）", complaint: "不満の受け止めと直し",
   proceed: "内覧・申込の段取りを進める事", silent: "—", other: "（画像・資料だけ＝何を見てほしいか）",
 };
 
@@ -202,21 +202,23 @@ export function buildReactionNote(mind: CustomerMind | null, table: ReactionTabl
   let second = "";
   if (rows.length >= 2) {
     const bad = (r: (typeof rows)[number]) => [...BAD_CATS].reduce((a, k) => a + (r.pr.dist[k] ?? 0), 0);
+    const go = (r: (typeof rows)[number]) => r.pr.dist.proceed ?? 0;
     const sorted = [...rows].sort((a, b) => bad(a) - bad(b));
     const lo = sorted[0], hi = sorted[sorted.length - 1];
     if (bad(hi) - bad(lo) >= 0.07) {
-      second = `- 似た番の次の反応（過去の実データ）: ${DRAFT_JA[lo.d]}→${REACTION_JA[lo.pr.likely]}が多い（止まる・返事なし・不満 ${pc(bad(lo))}）／${DRAFT_JA[hi.d]}→止まる・返事なし・不満 ${pc(bad(hi))}`;
+      second = `- 似た番の次の反応（過去の実データ・数の傾向）: ${DRAFT_JA[lo.d]}→${REACTION_JA[lo.pr.likely]}が多い（止まる・返事なし・不満 ${pc(bad(lo))}・進む ${pc(go(lo))}）／${DRAFT_JA[hi.d]}→止まる・返事なし・不満 ${pc(bad(hi))}・進む ${pc(go(hi))}`;
     }
   }
   // 下向きの流れの時は「勧めると止まる」の差を優先して見せる（実データで勧めた番全体より悪い反応が多い）
   if (isDownMood(mind)) {
     const dp = badShare(table.byMoodDraft?.["down|push"]), da = badShare(table.byMoodDraft?.["down|answer"]);
     if (dp.n >= MIN_N && da.n >= MIN_N && dp.bad - da.bad >= 0.05) {
-      second = `- 今は迷い・不安の流れ: 過去の似た流れで内覧・申込を勧めた番は 止まる・返事なし・不満 ${pc(dp.bad)}（答え・受け止めだけは ${pc(da.bad)}）＝勧める前に受け止めと答えを先にするか判断`;
+      const gp = (c: Record<string, number> | undefined) => { const n = Object.values(c ?? {}).reduce((a, b) => a + b, 0); return n ? (c!.proceed ?? 0) / n : 0; };
+      second = `- 今は迷い・不安の流れ: 過去の似た流れで内覧・申込を勧めた番は 止まる・返事なし・不満 ${pc(dp.bad)}・進む ${pc(gp(table.byMoodDraft?.["down|push"]))}（答え・受け止めだけは ${pc(da.bad)}・進む ${pc(gp(table.byMoodDraft?.["down|answer"]))}）＝誘いはやめず、受け止めと答えを先にして誘いは最後の一文にする形かを判断`;
     }
   }
   const qLine = mind.questions >= 2 ? `（質問が${mind.questions}つ＝答えが抜けると同じ事をまた聞かれやすい）` : "";
-  return `\n【相手の頭の中・反応の予想（決まった計算・材料）】\n${head}${qLine}${second ? `\n${second}` : ""}\n`;
+  return `\n【相手の頭の中・反応の予想（決まった計算・材料／数の傾向で、誘う・勧めるをやめる理由にはしない）】\n${head}${qLine}${second ? `\n${second}` : ""}\n`;
 }
 
 /**
