@@ -197,6 +197,13 @@ it("回す: 返信より後に出た一覧の番号では読まない（返信�
   eq(pickTodoSnapshot(snaps, null, J("11:31"), J("10:00")), null);
 });
 
+it("回す: 前の一覧のその番号の行がもう✅／☑済みなら比べない（番号が詰まっただけ）", () => {
+  const p = parseTodoReply("✅3")!;
+  eq(ambiguousTodoNumbers(p.numbers, snaps, null, J("11:35"), J("11:35"), new Set([A3.key])), []);
+  // 今の一覧の行が済みでも今の一覧の番号は外さない（前の一覧の③はまだ）
+  eq(ambiguousTodoNumbers(p.numbers, snaps, null, J("11:35"), J("11:35"), new Set([B3.key])), [3]);
+});
+
 // サーバーの読み（handleTodoGroupReply）: 作り物の DB（控えを読むだけ・書き込みは数える）で、ずれる番号は書かずに聞き返す
 async function serverCase() {
   const { handleTodoGroupReply } = await import("../staff-todo-reply-server");

@@ -125,7 +125,9 @@ export const TODO_SNAPSHOT_SKEW_MS = 60_000;
  *   ＋（控えの書き込みのずれ）返信のすぐ後に書かれた一覧。その中で同じ番号が違う行（行の鍵）を指す時、その番号は決めない。
  *   引用した時は使わない（引用はその一覧で決まる）。名前は番号ではないので関係ない
  */
-export function ambiguousTodoNumbers(numbers: ReadonlyArray<number>, snaps: ReadonlyArray<TodoSnapshot>, quotedMessageId: string | null | undefined, nowMs: number, replyAtMs?: number | null): number[] {
+export function ambiguousTodoNumbers(numbers: ReadonlyArray<number>, snaps: ReadonlyArray<TodoSnapshot>, quotedMessageId: string | null | undefined, nowMs: number, replyAtMs?: number | null,
+  /** グループでもう✅／☑済みの行の鍵。今の一覧でない一覧のその行とは比べない（✅1 の後に次の一覧で番号が詰まっただけの「✅1」を聞き返さない） */
+  doneKeys?: ReadonlySet<string>): number[] {
   if (numbers.length === 0) return [];
   if (quotedMessageId && snaps.some((s) => s.messageId && s.messageId === quotedMessageId)) return [];
   const at = atOf(nowMs, replyAtMs);
@@ -138,7 +140,7 @@ export function ambiguousTodoNumbers(numbers: ReadonlyArray<number>, snaps: Read
   for (const s of sorted) if (snapMs(s) > at && snapMs(s) - at <= TODO_SNAPSHOT_SKEW_MS) seen.push(s);
   if (seen.length < 2) return [];
   return numbers.filter((n) => {
-    const keys = seen.map((s) => s.items.find((x) => x.n === n)?.key).filter((k): k is string => !!k);
+    const keys = seen.map((s, i) => s.items.find((x) => x.n === n && (i === 0 || !doneKeys?.has(x.key)))?.key).filter((k): k is string => !!k);
     // 今の一覧に無い番号を前の一覧が持つ＝前の一覧の番号かもしれない。今の一覧だけが持つ番号は今の一覧の番号（前の一覧は短かった）
     const curHas = seen[0].items.some((x) => x.n === n);
     return (!curHas && keys.length > 0) || new Set(keys).size > 1;
