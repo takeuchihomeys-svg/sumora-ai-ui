@@ -3435,7 +3435,7 @@ async function handleGenerateReply(req: NextRequest) {
       //   旧の歯止め（戻した会話は丸ごと Claude のまま）はこの仕組みに置き換えた。監査: scripts/audit-deepseek-pii.ts
       postApplyConversation = r.postApply;
       altPostApply = deepseekPostApply(facts);
-      deepseekCutoff = deepseekSafeCutoff(facts);
+      deepseekCutoff = deepseekSafeCutoff(facts, { reapply: true });
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "generate-reply:post-apply", conversationId, reason: r.reason }));
     } catch {
       // 読めなければ自動返信は false（通常どおり）だが、申込以降は true に倒す（個人情報を外に出さない）

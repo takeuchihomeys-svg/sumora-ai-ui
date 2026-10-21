@@ -309,7 +309,8 @@ export async function refreshCustomerMemoLlm(conversationId: string): Promise<{ 
     }
     const { callDeepSeekRead } = await import("@/app/lib/vision-alt-provider");
     // 今のメモも線より後に作った行だけ見せる（線より前＝申込中の中身から作った行は渡さない）
-    const memoForLlm = { ...memo, items: filterAfterCutoff(memo.items, (x) => x.sourceAt ?? x.updatedAt, cutoff) };
+    // 申込から戻った理由の行（スタッフが選ぶ・審査の結果）は DeepSeek に見せない（2026-10-21 確かめ役）
+    const memoForLlm = { ...memo, items: filterAfterCutoff(withoutReapplyItem(memo).items, (x) => x.sourceAt ?? x.updatedAt, cutoff) };
     const user = buildMemoLlmUser({ memo: memoForLlm, nowMs: now, msgs: sendMsgs });
     const read = await callDeepSeekRead(MEMO_LLM_SYSTEM, user, { maxTokens: 900, timeoutMs: 40_000 }, (t) => parseMemoLlmOutput(t));
     for (const a of read.attempts) {

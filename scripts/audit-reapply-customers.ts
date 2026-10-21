@@ -52,7 +52,7 @@ async function main() {
   const rowsOut: string[] = [];
   for (const x of reapply) {
     const facts = await loadPostApplyFacts(sb, x.id);
-    const cut = deepseekSafeCutoff(facts);
+    const cut = deepseekSafeCutoff(facts, { reapply: true });
     const line = cutoffMs(cut);
     if (line === null) { blockedLine++; continue; }
     checked++;

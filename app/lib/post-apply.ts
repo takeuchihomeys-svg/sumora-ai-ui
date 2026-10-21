@@ -218,9 +218,11 @@ export type DeepseekCutoff = string | null | number;
  *   -Infinity … 申込の記録も切り替えも無い。全部渡してよい
  * 切り替えの時刻は deepseek_cutoff_at を正にし、無い時だけ status_manual_back_at（旧の線・前進で消える）を使う。
  */
-export function deepseekSafeCutoff(f: PostApplyFacts): DeepseekCutoff {
+export function deepseekSafeCutoff(f: PostApplyFacts, opts: { reapply?: boolean } = {}): DeepseekCutoff {
   try {
-    if (deepseekPostApply(f)) return null;
+    // 2026-10-21 確かめ役: 印だけ残って戻した会話の線は、出口の強めの網（alt-pii-gate.altPiiSignalReapply）を通る入口（返信生成・AIX）だけが
+    //   opts.reapply で開く。それ以外（loadDeepseekCutoff を読むメモの読み取り・好みの学習・画像の読み取り等＝DeepSeek を直接呼び出口の網を通らない道がある）は今まで通り渡さない
+    if (opts.reapply ? deepseekPostApply(f) : resolvePostApply(f).postApply) return null;
     // 書いてあるのに読めない時刻がある＝判定が読めない → 渡さない
     for (const v of [f.applicationPushAt, f.idDocumentAt, f.statusManualBackAt, f.deepseekCutoffAt, f.applicationFormAt]) if (v && ms(v) === null) return null;
     // 2026-10-18 弱い所A-3③: 記入済みの申込フォームも申込の記録と同じに数える（フォームの後に戻していなければ渡さない・戻した後は戻した時刻より後だけ）

@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/reapply-customer.test.ts
 import { resolveReapply, detectReturnPattern, staffPatternOf, reapplyMemoText, buildReapplyBrainNote, reapplyBadgeText, REAPPLY_MEMO_ID, RETURN_PATTERNS } from "../reapply-customer";
 import { deepseekPostApply, deepseekSafeCutoff, postApplyDraftSkip, resolvePostApply, filterAfterCutoff } from "../post-apply";
-import { altPiiSignalReapply, altPiiSignal } from "../alt-pii-gate";
+import { altPiiSignalReapply, altPiiSignalReapplyValues, altPiiSignal } from "../alt-pii-gate";
 import { buildStaffTodoList, REAPPLY_HEADER_MARK, type TodoInput } from "../staff-todo-list";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
@@ -124,34 +124,40 @@ async function main() {
 
   await describe("戻った会話の DeepSeek の線（印だけ残って戻した会話）", async () => {
     const f = { status: "proposing", isPostApply: true, idDocumentAt: T("2026-09-25T00:00:00Z"), statusManualBackAt: T("2026-10-09T00:00:00Z") };
+    /** 出口の強めの網を通る入口（返信生成・AIX）だけが開く */
+    const R = { reapply: true };
+    await it("網を通らない入口（loadDeepseekCutoff の既定）は今まで通り渡さない", () => {
+      const prev = process.env.REAPPLY_DEEPSEEK; process.env.REAPPLY_DEEPSEEK = "on";
+      try { eq(deepseekSafeCutoff(f), null); } finally { if (prev === undefined) delete process.env.REAPPLY_DEEPSEEK; else process.env.REAPPLY_DEEPSEEK = prev; }
+    });
     await it("REAPPLY_DEEPSEEK=on: DeepSeek の申込以降に数えず、線は戻した時刻", () => {
       eq(deepseekPostApply(f, ON), false);
       const prev = process.env.REAPPLY_DEEPSEEK; process.env.REAPPLY_DEEPSEEK = "on";
-      try { eq(deepseekSafeCutoff(f), T("2026-10-09T00:00:00Z")); } finally { if (prev === undefined) delete process.env.REAPPLY_DEEPSEEK; else process.env.REAPPLY_DEEPSEEK = prev; }
+      try { eq(deepseekSafeCutoff(f, R), T("2026-10-09T00:00:00Z")); } finally { if (prev === undefined) delete process.env.REAPPLY_DEEPSEEK; else process.env.REAPPLY_DEEPSEEK = prev; }
     });
     await it("申込中の期間（書類〜戻した時刻）の通は線で落ちる", () => {
       const prev = process.env.REAPPLY_DEEPSEEK; process.env.REAPPLY_DEEPSEEK = "on";
       try {
         const msgs = [{ at: T("2026-09-24T00:00:00Z") }, { at: T("2026-09-26T00:00:00Z") }, { at: T("2026-10-08T23:59:00Z") }, { at: T("2026-10-09T00:00:00Z") }, { at: T("2026-10-10T00:00:00Z") }];
-        eq(filterAfterCutoff(msgs, (x) => x.at, deepseekSafeCutoff(f)).map((x) => x.at), [T("2026-10-10T00:00:00Z")]);
+        eq(filterAfterCutoff(msgs, (x) => x.at, deepseekSafeCutoff(f, R)).map((x) => x.at), [T("2026-10-10T00:00:00Z")]);
       } finally { if (prev === undefined) delete process.env.REAPPLY_DEEPSEEK; else process.env.REAPPLY_DEEPSEEK = prev; }
     });
     await it("REAPPLY_DEEPSEEK=off: 旧のまま（Claude 固定・線なし）", () => {
       eq(deepseekPostApply(f, OFF), true);
       const prev = process.env.REAPPLY_DEEPSEEK; process.env.REAPPLY_DEEPSEEK = "off";
-      try { eq(deepseekSafeCutoff(f), null); } finally { if (prev === undefined) delete process.env.REAPPLY_DEEPSEEK; else process.env.REAPPLY_DEEPSEEK = prev; }
+      try { eq(deepseekSafeCutoff(f, R), null); } finally { if (prev === undefined) delete process.env.REAPPLY_DEEPSEEK; else process.env.REAPPLY_DEEPSEEK = prev; }
     });
     await it("消えない列（deepseek_cutoff_at）だけ＝印を付ける前の古い戻しかもしれない → Claude のまま", () => {
       eq(deepseekPostApply({ status: "proposing", isPostApply: true, deepseekCutoffAt: T("2026-10-09T00:00:00Z") }, ON), true);
     });
     await it("記録の無い印＋戻し: 全部（NO_CUTOFF）にせず戻しの印より後だけ", () => {
       const prev = process.env.REAPPLY_DEEPSEEK; process.env.REAPPLY_DEEPSEEK = "on";
-      try { eq(deepseekSafeCutoff({ status: "proposing", isPostApply: true, statusManualBackAt: T("2026-10-09T00:00:00Z") }), T("2026-10-09T00:00:00Z")); }
+      try { eq(deepseekSafeCutoff({ status: "proposing", isPostApply: true, statusManualBackAt: T("2026-10-09T00:00:00Z") }, R), T("2026-10-09T00:00:00Z")); }
       finally { if (prev === undefined) delete process.env.REAPPLY_DEEPSEEK; else process.env.REAPPLY_DEEPSEEK = prev; }
     });
     await it("戻した後にフォームが届いた（また申込中）→ 渡さない", () => {
       const prev = process.env.REAPPLY_DEEPSEEK; process.env.REAPPLY_DEEPSEEK = "on";
-      try { eq(deepseekSafeCutoff({ ...f, applicationFormAt: T("2026-10-11T00:00:00Z") }), null); }
+      try { eq(deepseekSafeCutoff({ ...f, applicationFormAt: T("2026-10-11T00:00:00Z") }, R), null); }
       finally { if (prev === undefined) delete process.env.REAPPLY_DEEPSEEK; else process.env.REAPPLY_DEEPSEEK = prev; }
     });
     await it("戻した後に書類・押下 → 申込以降（Claude）", () => {
@@ -190,6 +196,20 @@ async function main() {
       eq(altPiiSignalReapply("築年月 平成20年3月築・家賃 68,000円・管理費 5,000円"), null);
       eq(altPiiSignalReapply("勤務先が梅田なので通勤しやすい所がいいです"), null);
       eq(altPiiSignalReapply("2026年10月25日に内覧希望です"), null);
+    });
+    await it("system の値だけの網: 値は当て、指示文の語（申込フォーム・本人確認書類）では止めない", () => {
+      eq(altPiiSignalReapplyValues("【ブレインの判断】勤務先：テスト商事・年収 350万円"), "年収の値");
+      eq(altPiiSignalReapplyValues("前回のまとめ: 勤務先：テスト商事"), "勤務先の値");
+      eq(altPiiSignalReapplyValues("申込に要る物は申込者様記入欄のフォーマットと本人確認書類（運転免許証）の2つ"), null);
+    });
+    await it("出口（cut）: system の値・messages の審査の事情も当てる／AIX の画像の道も同じ網", () => {
+      const { readFileSync } = require("node:fs") as typeof import("node:fs");
+      const { join } = require("node:path") as typeof import("node:path");
+      const prov = readFileSync(join(__dirname, "..", "llm-alt-provider.ts"), "utf8");
+      const aix = readFileSync(join(__dirname, "..", "..", "api", "aix", "action", "route.ts"), "utf8");
+      if (!/altPiiSignalReapplyValues\(flattenContent\(body\.system\)\)/.test(prov)) throw new Error("system values");
+      if (!/screeningSensitiveSignal\(\(body\.messages \?\? \[\]\)[^\n]*\? "審査の事情"/.test(prov)) throw new Error("screening");
+      if (!/if \(!visionPii && !opts\.forceClaude && shouldRouteVisionAlt/.test(aix)) throw new Error("vision");
     });
   });
 

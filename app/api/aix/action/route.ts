@@ -8,6 +8,7 @@ import { buildMustSendNote, mustMoveInLabel, normalizeRequirementStrengths } fro
 import { AsyncLocalStorage } from "node:async_hooks";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（AIX キャッシュ点検）: system を「共通 prefix（1h）→ 準静的（1h）→ 経路固有（5m）→ 動的（なし）」のブロックに分ける
+import { altPiiSignal, altPiiSignalReapply, altPiiSignalReapplyValues, altReapplyGateEnabled } from "@/app/lib/alt-pii-gate";
 import { buildSystemBlocks, systemStaticLength, splitSharedPrefix, llmMetaHeaderValue, LLM_META_HEADER_ACTION, LLM_META_HEADER_CONVERSATION, type SystemSpec, type SystemSpecBlocks, type SystemTtl } from "@/app/lib/aix-system-blocks";
 import { supabase } from "@/app/lib/supabase";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
@@ -1050,7 +1051,7 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
       //   「切り替えた時刻（deepseek_cutoff_at）より後だけ渡す」に置き換えた（generate-reply と同じ・下の cutActive で履歴と派生データを切る）
       // 2026-10-21（023ec7bd）印だけ残って戻した会話は申込以降に数えず時刻の線で切る（post-apply.ts deepseekPostApply）
       ctx.postApply = deepseekPostApply(facts);
-      ctx.cutoff = deepseekSafeCutoff(facts);
+      ctx.cutoff = deepseekSafeCutoff(facts, { reapply: true });
       if (ctx.cutoff === null) ctx.postApply = true; // 線が引けない＝渡さない（fail-closed）
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "aix:post-apply", conversationId, reason: r.reason, action }));
     }
@@ -1219,7 +1220,17 @@ async function callClaudeVision(system: SystemSpec, content: unknown[], action: 
   //     判定は setupAltProviderGuards が同じ純関数（post-apply.ts）で決めた ctx.postApply を読む（四者同名）。
   // 2026-09-26 時刻の線: この経路は fetch の出口を通らない（callVisionAlt が直接 DeepSeek を呼ぶ）ので、ここで印を見る（blocked・印なしは Claude）
   const visionCutMark = aixRequestCtx.getStore()?.cutMark;
-  if (!opts.forceClaude && shouldRouteVisionAlt(action) && !aixRequestCtx.getStore()?.postApply && !!visionCutMark && visionCutMark.kind !== "blocked") {
+  // 2026-10-21 確かめ役: この経路は出口の網（llm-alt-provider）を通らないので、線のある呼び出し（cut＝申込から戻った会話）は
+  //   system（会話の履歴・材料が入る）と文の部分に個人の値・申込情報の名残があれば Claude（alt-pii-gate・止める LLM_ALT_REAPPLY_GATE=off）
+  const visionPii = visionCutMark?.kind === "cut" && altReapplyGateEnabled(process.env)
+    ? (() => {
+      const sysText = systemBlocks.map((b) => b.text).join("\n\n");
+      const contentText = content.map((c) => (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : "")).join("\n");
+      return altPiiSignal(`${sysText}\n${contentText}`) ?? altPiiSignalReapplyValues(sysText) ?? altPiiSignalReapply(contentText);
+    })()
+    : null;
+  if (visionPii) console.log(JSON.stringify({ tag: "aix:vision-alt-skipped-pii", action, why: visionPii }));
+  if (!visionPii && !opts.forceClaude && shouldRouteVisionAlt(action) && !aixRequestCtx.getStore()?.postApply && !!visionCutMark && visionCutMark.kind !== "blocked") {
     const altT0 = Date.now();
     const alt = await callVisionAlt(systemBlocks, content);
     if (alt) {

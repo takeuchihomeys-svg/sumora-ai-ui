@@ -77,6 +77,20 @@ export function altPiiSignalReapply(text: string | null | undefined): string | n
   return null;
 }
 
+/**
+ * 2026-10-21 確かめ役: 同じ呼び出しの system に当てる「値」だけの網。AIX は会話の材料（ブレインの判断・メモ・要約）を system の動的な塊に入れるので、
+ *   messages だけでは見落とす。指示文の語（申込フォーム・本人確認書類）では止めない＝値（年収・生年月日らしい日付・勤務先の値・入口で伏せた跡）だけ。
+ */
+export function altPiiSignalReapplyValues(text: string | null | undefined): string | null {
+  const t = String(text ?? "").replace(URL_RE, " ");
+  if (!t.trim()) return null;
+  if (INCOME_VALUE_RE.test(t)) return "年収の値";
+  if (BIRTH_DAY_RE.test(t)) return "生年月日らしい日付";
+  if (WORKPLACE_VALUE_RE.test(t)) return "勤務先の値";
+  if (MASKED_APPLICATION_TRACE_RE.test(t)) return "申込情報を伏せた跡";
+  return null;
+}
+
 /** 強めの網を使うか（既定 on） */
 export function altReapplyGateEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return altPiiGateEnabled(env) && (env.LLM_ALT_REAPPLY_GATE ?? "on").trim().toLowerCase() !== "off";
