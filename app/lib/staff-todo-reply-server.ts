@@ -7,7 +7,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { numberTodoItems, TODO_MARK_VIA_NONE, type TodoList } from "@/app/lib/staff-todo-list";
 import {
-  parseTodoReply, pickTodoSnapshot, resolveTodoReply, renderTodoReplyAck, TODO_SNAPSHOT_KEEP,
+  parseTodoReply, pickTodoSnapshot, ambiguousTodoNumbers, resolveTodoReply, renderTodoReplyAck, TODO_SNAPSHOT_KEEP,
   type TodoSnapshot, type TodoSnapshotItem,
 } from "@/app/lib/staff-todo-reply";
 
@@ -49,6 +49,16 @@ export async function saveTodoSnapshot(sb: SupabaseClient, snap: TodoSnapshot): 
   if (error) console.warn("[staff-todo] snapshot save:", error.message);
 }
 
+/** グループで✅／☑済みの行の鍵（staff_todo_marks・表が無い／読めない時は空＝聞き返す側に倒す） */
+async function loadMarkedKeys(sb: SupabaseClient, keys: ReadonlyArray<string>): Promise<Set<string>> {
+  if (keys.length === 0) return new Set();
+  try {
+    const { data, error } = await sb.from("staff_todo_marks").select("item_key").in("item_key", [...keys]);
+    if (error || !Array.isArray(data)) return new Set();
+    return new Set((data as Array<{ item_key: string }>).map((r) => r.item_key));
+  } catch { return new Set(); }
+}
+
 /** 行を✅にする（表への記録＋元の行の完了）。表に書けなかった鍵を返す */
 export async function markTodoItemsDone(sb: SupabaseClient, items: ReadonlyArray<TodoSnapshotItem>, by: { userId: string | null; text: string; none?: boolean }, nowIso: string): Promise<{ unrecorded: string[] }> {
   const unrecorded: string[] = [];
@@ -76,15 +86,23 @@ export async function markTodoItemsDone(sb: SupabaseClient, items: ReadonlyArray
  * グループの発言を読んで✅にし、返事の文を返す（読まない発言は null＝何も返さない）。
  * 表がまだ無い時、AIX 要対応・約束の行は元の行を閉じるので✅になる。返信・内覧の行は表が無いと残る（返事でそう伝える）
  */
-export async function handleTodoGroupReply(sb: SupabaseClient, ev: { text: string; quotedMessageId?: string | null; userId?: string | null }, nowMs: number = Date.now()): Promise<string | null> {
+export async function handleTodoGroupReply(sb: SupabaseClient, ev: { text: string; quotedMessageId?: string | null; userId?: string | null; /** LINE の発言の時刻（event.timestamp・ms） */ replyAtMs?: number | null }, nowMs: number = Date.now()): Promise<string | null> {
   const parsed = parseTodoReply(ev.text);
   if (!parsed) return null;
   const snaps = await loadTodoSnapshots(sb);
-  const snap = pickTodoSnapshot(snaps, ev.quotedMessageId ?? null, nowMs);
+  // 引用の無い番号は、返信した時に最後だった一覧で読む。前の一覧と同じ番号が別の行の時は決めず、引用か名前で返してもらう（回す一覧の取り違え防止）
+  const snap = pickTodoSnapshot(snaps, ev.quotedMessageId ?? null, nowMs, ev.replyAtMs ?? null);
   if (!snap) return null;
-  const res = resolveTodoReply(parsed, snap);
-  // 番号も名前も当たらず、名前だけの返信（普段の会話の「〇〇さん済みです」等）は黙る。番号を書いた時だけ「無い」と返す
-  if (res.hits.length === 0 && res.unknownNumbers.length === 0) return null;
+  let ambiguous = ambiguousTodoNumbers(parsed.numbers, snaps, ev.quotedMessageId ?? null, nowMs, ev.replyAtMs ?? null);
+  if (ambiguous.length) {
+    // 前の一覧のその番号の行がもう✅／☑済みなら比べない（✅1 の後に次の一覧で番号が詰まっただけの「✅1」を聞き返さない）
+    const keys = [...new Set(snaps.flatMap((s) => s.items.filter((x) => ambiguous.includes(x.n)).map((x) => x.key)))];
+    const done = await loadMarkedKeys(sb, keys);
+    if (done.size) ambiguous = ambiguousTodoNumbers(parsed.numbers, snaps, ev.quotedMessageId ?? null, nowMs, ev.replyAtMs ?? null, done);
+  }
+  const res = resolveTodoReply(parsed, snap, ambiguous);
+  // 番号も名前も当たらず、名前だけの返信（普段の会話の「〇〇さん済みです」等）は黙る。番号を書いた時だけ「無い」「ずれている」と返す
+  if (res.hits.length === 0 && res.unknownNumbers.length === 0 && !res.ambiguousNumbers?.length) return null;
   const nowIso = new Date(nowMs).toISOString();
   const { unrecorded } = await markTodoItemsDone(sb, res.hits, { userId: ev.userId ?? null, text: ev.text, none: !!res.none }, nowIso);
   // 残りの数は返さない（LINE の送信で自動の✅になった行は表に無いので、表だけで数えると多く見える）。次の一覧で分かる

@@ -1,7 +1,7 @@
 // グループの返信 → 【やることリスト】の行（app/lib/staff-todo-reply.ts）— 作り物のデータだけ・LLM なし
 // 実行: npx tsx app/lib/__tests__/staff-todo-reply.test.ts（全 PASS で exit 0）
 import {
-  parseTodoReply, resolveTodoReply, pickTodoSnapshot, renderTodoReplyAck, circledToNumber, isTodoNumbersOnly, TODO_SNAPSHOT_FRESH_MS,
+  parseTodoReply, resolveTodoReply, pickTodoSnapshot, renderTodoReplyAck, ambiguousTodoNumbers, circledToNumber, isTodoNumbersOnly, TODO_SNAPSHOT_FRESH_MS,
   type TodoSnapshot,
 } from "../staff-todo-reply";
 
@@ -106,5 +106,128 @@ it("返事: ✅番号・名前・行の中身", () => {
   eq(renderTodoReplyAck({ hits: [], unknownNumbers: [], unknownNames: [] }, null), null);
 });
 
-console.log(`\n${passed} passed, ${failed} failed`);
-if (failed > 0) process.exit(1);
+// ─── 回す一覧の取り違え（2026-10-21）: 引用の無い「☑3」が前の一覧の③（別の新着確認の人）の時 ───
+const J = (hm: string) => Date.parse(`2026-10-21T${hm}:00+09:00`);
+const rot = (messageId: string, hm: string, n3: { key: string; cid: string; name: string } | null, extra: TodoSnapshot["items"] = []): TodoSnapshot => ({
+  messageId, sentAt: new Date(J(hm)).toISOString(),
+  items: [
+    { n: 1, key: "aix:a1", conversationId: "c1", name: "テスト太郎", label: "AIX【見積書送る】：御見積書" },
+    { n: 2, key: "newarrival:cK:2026-10-21", conversationId: "cK", name: "けいこ", label: "新着の物件確認：…" },
+    ...(n3 ? [{ n: 3, key: n3.key, conversationId: n3.cid, name: n3.name, label: "新着の物件確認：…" }] : []),
+    ...extra,
+  ],
+});
+const A3 = { key: "newarrival:cA:2026-10-21", cid: "cA", name: "あいこ" };
+const B3 = { key: "newarrival:cB:2026-10-21", cid: "cB", name: "べにこ" };
+const m1 = rot("m1", "10:30", A3), m2 = rot("m2", "11:30", B3);
+const snaps = [m2, m1];
+/** サーバーと同じ順で読む（引用・返信の時刻・今） */
+function readReply(text: string, quoted: string | null, replyAt: number, now = replyAt + 2000, ss: TodoSnapshot[] = snaps) {
+  const p = parseTodoReply(text)!;
+  const s = pickTodoSnapshot(ss, quoted, now, replyAt)!;
+  const amb = ambiguousTodoNumbers(p.numbers, ss, quoted, now, replyAt);
+  return { snap: s, res: resolveTodoReply(p, s, amb) };
+}
+
+it("回す: 新しい一覧のすぐ後の引用の無い「☑3」で前後の③が別の人 → ☑しない・引用か名前で返してと言う", () => {
+  const { res } = readReply("☑3", null, J("11:40"));
+  eq(res.hits.length, 0); eq(res.ambiguousNumbers, [3]); eq(res.unknownNumbers, []);
+  const ack = renderTodoReplyAck(res, null)!;
+  ok(ack.includes("引用") && ack.includes("「☑3」") && ack.includes("〇〇さん なし"), ack);
+  ok(!ack.includes("あいこ") && !ack.includes("べにこ"), ack);
+});
+it("回す: ✅の時も同じ（返事は「✅3」「〇〇さん 完了」）", () => {
+  const { res } = readReply("✅3", null, J("11:31"));
+  eq(res.hits.length, 0); eq(res.ambiguousNumbers, [3]);
+  const ack = renderTodoReplyAck(res, null)!;
+  ok(ack.includes("「✅3」") && ack.includes("〇〇さん 完了") && !ack.includes("なし"), ack);
+});
+it("回す: 一覧を引用した「☑3」はその一覧の③（前の一覧でも今の一覧でも）", () => {
+  eq(readReply("☑3", "m1", J("11:40")).res.hits.map((h) => h.key), [A3.key]);
+  eq(readReply("☑3", "m2", J("11:40")).res.hits.map((h) => h.key), [B3.key]);
+  eq(readReply("☑3", "m1", J("11:40")).res.ambiguousNumbers, undefined);
+});
+it("回す: 「べにこさん なし」（名前）はずれない＝すぐ☑", () => {
+  const { res } = readReply("べにこさん なし", null, J("11:35"));
+  eq(res.hits.map((h) => h.key), [B3.key]); eq(res.ambiguousNumbers, undefined);
+});
+it("回す: 新しい一覧から30分を過ぎた引用の無い「☑3」は今の一覧の③", () => {
+  const { res } = readReply("☑3", null, J("12:01"));
+  eq(res.hits.map((h) => h.key), [B3.key]); eq(res.ambiguousNumbers, undefined);
+});
+it("回す: 次の一覧が出る前に送った返信（届くのが遅れた）は、その時の一覧（前の一覧）の③", () => {
+  const { snap, res } = readReply("☑3", null, J("11:20"), J("11:31"));
+  eq(snap.messageId, "m1"); eq(res.hits.map((h) => h.key), [A3.key]); eq(res.ambiguousNumbers, undefined);
+});
+it("回す: 控えの書き込みの直前（1分内）に送った返信は決めない（新しい一覧を見ていたかもしれない）", () => {
+  const { res } = readReply("☑3", null, J("11:29") + 30_000, J("11:31"));
+  eq(res.hits.length, 0); eq(res.ambiguousNumbers, [3]);
+});
+it("回す: 前後で同じ行の番号はずれない＝すぐ☑（②は両方けいこさん）", () => {
+  const { res } = readReply("☑2", null, J("11:35"));
+  eq(res.hits.map((h) => h.key), ["newarrival:cK:2026-10-21"]); eq(res.ambiguousNumbers, undefined);
+});
+it("回す: ずれる番号とずれない番号を一緒に返した時は、ずれない方だけ☑して、ずれる方は聞く", () => {
+  const { res } = readReply("☑2 3", null, J("11:35"));
+  eq(res.hits.map((h) => h.n), [2]); eq(res.ambiguousNumbers, [3]);
+  const ack = renderTodoReplyAck(res, null)!;
+  ok(ack.includes("☑2 けいこさん") && ack.includes("⚠️ 3 は前の一覧と番号がずれています"), ack);
+});
+it("回す: 前の一覧にだけある番号は決めない／今の一覧にだけある番号は今の一覧の番号", () => {
+  const onlyPrev = [rot("m2", "11:30", null), m1];
+  const r1 = readReply("☑3", null, J("11:35"), J("11:35") + 2000, onlyPrev).res;
+  eq(r1.hits.length, 0); eq(r1.ambiguousNumbers, [3]); eq(r1.unknownNumbers, []);
+  const onlyCur = [m2, rot("m1", "10:30", null)];
+  const r2 = readReply("☑3", null, J("11:35"), J("11:35") + 2000, onlyCur).res;
+  eq(r2.hits.map((h) => h.key), [B3.key]); eq(r2.ambiguousNumbers, undefined);
+});
+it("回す: 一覧が1つだけ・控えの時刻が読めない物は数えない", () => {
+  eq(readReply("☑3", null, J("10:35"), J("10:35"), [m1]).res.hits.map((h) => h.key), [A3.key]);
+  const broken = { ...m1, sentAt: "not-a-date" };
+  eq(readReply("☑3", null, J("11:35"), J("11:35"), [m2, broken]).res.hits.map((h) => h.key), [B3.key]);
+});
+it("回す: 返信の時刻が無い（古い呼び方）時は今の時刻で読む", () => {
+  const p = parseTodoReply("☑3")!;
+  eq(pickTodoSnapshot(snaps, null, J("11:40"))?.messageId, "m2");
+  eq(ambiguousTodoNumbers(p.numbers, snaps, null, J("11:40")), [3]);
+  eq(ambiguousTodoNumbers(p.numbers, snaps, null, J("12:40")), []);
+});
+it("回す: 返信より後に出た一覧の番号では読まない（返信の時刻より前の一覧を選ぶ）", () => {
+  eq(pickTodoSnapshot(snaps, null, J("11:31"), J("11:10"))?.messageId, "m1");
+  eq(pickTodoSnapshot(snaps, null, J("11:31"), J("10:00")), null);
+});
+
+it("回す: 前の一覧のその番号の行がもう✅／☑済みなら比べない（番号が詰まっただけ）", () => {
+  const p = parseTodoReply("✅3")!;
+  eq(ambiguousTodoNumbers(p.numbers, snaps, null, J("11:35"), J("11:35"), new Set([A3.key])), []);
+  // 今の一覧の行が済みでも今の一覧の番号は外さない（前の一覧の③はまだ）
+  eq(ambiguousTodoNumbers(p.numbers, snaps, null, J("11:35"), J("11:35"), new Set([B3.key])), [3]);
+});
+
+// サーバーの読み（handleTodoGroupReply）: 作り物の DB（控えを読むだけ・書き込みは数える）で、ずれる番号は書かずに聞き返す
+async function serverCase() {
+  const { handleTodoGroupReply } = await import("../staff-todo-reply-server");
+  const writes: string[] = [];
+  const builder = (table: string) => {
+    const b: Record<string, unknown> = {};
+    b.select = () => b; b.eq = () => b; b.in = () => b;
+    b.maybeSingle = async () => ({ data: table === "hanbancyo_settings" ? { value: JSON.stringify(snaps) } : null, error: null });
+    b.upsert = async () => { writes.push(`upsert:${table}`); return { error: null }; };
+    b.update = () => { writes.push(`update:${table}`); return b; };
+    return b;
+  };
+  const sb = { from: builder } as unknown as Parameters<typeof handleTodoGroupReply>[0];
+  const amb = await handleTodoGroupReply(sb, { text: "☑3", quotedMessageId: null, userId: "u", replyAtMs: J("11:40") }, J("11:40") + 1500);
+  it("サーバー: ずれる「☑3」は何も書かず、聞き返す文を返す", () => {
+    ok(amb?.includes("〇〇さん なし") && amb.includes("引用"), String(amb)); eq(writes, []);
+  });
+  const quoted = await handleTodoGroupReply(sb, { text: "☑3", quotedMessageId: "m1", userId: "u", replyAtMs: J("11:40") }, J("11:40") + 1500);
+  it("サーバー: 引用した「☑3」は前の一覧の③（あいこさん）を☑", () => {
+    ok(quoted?.includes("☑3 あいこさん"), String(quoted)); eq(writes, ["upsert:staff_todo_marks"]);
+  });
+}
+
+serverCase().catch((e) => { failed++; console.log(`  ✗ serverCase ${e}`); }).finally(() => {
+  console.log(`\n${passed} passed, ${failed} failed`);
+  if (failed > 0) process.exit(1);
+});
