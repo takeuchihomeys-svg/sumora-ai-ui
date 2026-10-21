@@ -11,7 +11,7 @@
 //   ＝毎晩の数えが日ごとに重ならない（[from-熟す, to-熟す] に起点がある物だけ）。
 // テスト: app/lib/__tests__/link-brain-watch.test.ts
 import { buildPromiseQueue, promisesInStaffText, PROMISE_QUEUE_MAX_AGE_MS, PROMISE_QUEUE_NOTE_PREFIX, type PromiseStep, type QueueAixLog, type QueueMsg } from "./promise-queue";
-import { confirmTopicsForCheckPattern } from "./action-ledger";
+import { linkPromisePickerEnabled, confirmTopicsForCheckPattern, confirmObjectOf, checkPatternForConfirmTopic, findConfirmReportSentence, isConfirmPartyObject } from "./action-ledger";
 import { isPreApplyForNudge } from "./apply-stage-nudge";
 import { maskPII } from "./pii-mask";
 import { PICKUP_FRESH_DAYS } from "./two-stage";
@@ -31,7 +31,7 @@ export function linkBrainWatchEnabled(env: Record<string, string | undefined> = 
 // ───────── 材料（DB の行をそのまま・読むだけ） ─────────
 export type LinkConversation = { id: string; customer_name: string | null; status: string | null; status_manual_back_at?: string | null };
 export type LinkMessage = { sender: string; text: string | null; created_at: string; is_aix_generated?: boolean | null };
-export type LinkAixLog = { aix_type: string; check_pattern: string | null; sent_at: string | null; created_at: string; estimate_sent?: boolean | null; generated_text?: string | null };
+export type LinkAixLog = { aix_type: string; check_pattern: string | null; sent_at: string | null; created_at: string; estimate_sent?: boolean | null; generated_text?: string | null; send_mode?: string | null };
 export type LinkFact = { kind: string; status: string; sent_at: string; detail?: Record<string, unknown> | null };
 export type LinkStaffAix = { at: string; burst?: boolean; aix_type: string; check_pattern?: string | null };
 export type LinkStaffText = { at: string; text: string | null; burst?: boolean };
@@ -291,12 +291,24 @@ const pickupVsWatch: Reader = {
       if (s.kind !== "pickup" || s.status !== "done" || !s.doneBy?.startsWith("AIX") || !inWin(ms(s.doneAt), w, this.matureMs)) continue;
       const log = input.aixLogs.find((l) => (l.sent_at ?? l.created_at) === s.doneAt);
       if (!log || !PROPERTY_AIX.has(log.aix_type)) continue;
-      const wrong = s.watch ? log.aix_type === "property_send" : log.aix_type === "property_recommendation";
-      out.push({ link: this.link, at: s.doneAt!, ok: !wrong, breakType: wrong ? "mislabeled" : undefined, detail: `${s.watch ? "新着" : "ピックアップ"}の約束→${log.aix_type}` });
+      const wrong = isPickupButtonMislabeled(!!s.watch, log.aix_type, log.send_mode);
+      out.push({ link: this.link, at: s.doneAt!, ok: !wrong, breakType: wrong ? "mislabeled" : undefined, detail: `${s.watch ? "新着" : "ピックアップ"}の約束→${log.aix_type}${log.send_mode ? `/${log.send_mode}` : ""}` });
     }
     return out;
   },
 };
+
+/**
+ * ⑤ の取り違えか。新着のボタンは 物件オススメ（新着・1件）か 物件ピックアップした の「新着まとめ」（send_mode=new_arrival・条件を広げた／代替も可）。
+ *   2026-10-21 LINK_PROMISE_PICKER: 旧は send_mode を見ず、新着の約束を 物件ピックアップした で果たした3件を全部取り違えに数えていたが、
+ *   3件とも send_mode=new_arrival（新着まとめ）＝正しい新着のボタンだった（数え違い）。send_mode が初回（normal）・不明の時だけ取り違え
+ */
+export function isPickupButtonMislabeled(watch: boolean, aixType: string, sendMode: string | null | undefined, env?: Record<string, string | undefined>): boolean {
+  if (!watch) return aixType === "property_recommendation";
+  if (aixType !== "property_send") return false;
+  if (!linkPromisePickerEnabled(env)) return true;
+  return !["new_arrival", "widen", "alternative"].includes(String(sendMode ?? ""));
+}
 
 /** A1 すぐ AIX: 約束の無い番でスタッフがすぐ結果の AIX（物件確認した・見積書送る）を送った時、ブレインも同じ AIX だったか */
 const directAix: Reader = {
@@ -351,6 +363,33 @@ const staffTodo: Reader = {
     return out;
   },
 };
+
+/**
+ * 手打ちで果たした約束の中身（決まった語で分ける・読むだけの監査用）。ピッカーがあればその AIX（action・checkPattern）、無ければ action=null（新しいピッカーの候補）。
+ *   P0（4b744a33）: スタッフしか分からない事（確認の結果・見積の金額・審査の結果）は AIX で送る＝手打ちで果たした約束の続きはこのピッカーを指す
+ */
+export function classifyHandFulfillment(text: string | null | undefined): { topic: string; action: string | null; checkPattern: string | null } {
+  const t = String(text ?? "").normalize("NFKC");
+  const ended = /終了|停止|ストップ|申込(?:み)?(?:が)?(?:入|はい)|成約|満室|専任/.test(t);
+  if (/御?見積書|お見積|初期費用(?:の)?(?:合計|総額)|[0-9,]{4,}円/.test(t) && !/交渉/.test(t)) return { topic: "見積書の金額", action: "estimate_sheet", checkPattern: null };
+  if (/審査(?:通過|否決|結果|が通|に通|落ち|NG|OK|承認|可決|(?:を)?継続(?:出来|でき)な)/.test(t)) return { topic: "審査の結果", action: null, checkPattern: null };
+  if (/^\s*(?:\[(?:画像|動画)\]\s*)+$/.test(t) || /写真|動画|撮影/.test(t)) return { topic: "室内写真", action: "property_check_result", checkPattern: "interior_photo" };
+  if (/募集(?:されて|して)いるお部屋(?:の)?一覧|募集中のお部屋(?:の)?一覧/.test(t)) return { topic: "募集号室（一覧）", action: "property_check_result", checkPattern: "room_vacancies" };
+  if (/内覧|内見|ご案内(?:可能|出来|でき)/.test(t)) return { topic: "内覧の可否・日程", action: "viewing_invite", checkPattern: null };
+  const sentence = findConfirmReportSentence(t) ?? t;
+  const o = confirmObjectOf(sentence) ?? confirmObjectOf(t);
+  if (o && !isConfirmPartyObject(o)) {
+    if (o === "募集状況" || o === "空室") return { topic: "空き（募集状況）", action: "property_check_result", checkPattern: ended ? "unavailable" : "available" };
+    if (o === "番手") return { topic: "申込状況", action: "property_check_result", checkPattern: "mgmt_application_status" };
+    const cp = checkPatternForConfirmTopic(o);
+    return { topic: o, action: cp ? "property_check_result" : null, checkPattern: cp };
+  }
+  if (/(?:小学生|未就学|お子様|子供|子ども|年齢)[^\n。！!]{0,20}入居/.test(t)) return { topic: "入居者の条件（お子様・年齢）", action: null, checkPattern: null };
+  if (/小型犬|大型犬|犬|猫|[0-9０-９一二]匹|飼育/.test(t)) return { topic: "ペット", action: "property_check_result", checkPattern: "mgmt_pet" };
+  if (/水道(?:代|料)|ガス代|電気代/.test(t)) return { topic: "水道代・光熱費", action: null, checkPattern: null };
+  if (/募集(?:が)?(?:中|終了|して|停止|ストップ)|空き|空室|申込(?:み)?(?:が)?(?:入|はい)|専任|掲載/.test(t)) return { topic: "空き（募集状況）", action: "property_check_result", checkPattern: ended ? "unavailable" : "available" };
+  return { topic: "その他", action: null, checkPattern: null };
+}
 
 export const READERS: readonly Reader[] = [promisePicker, resultBrain, reactionCondition, brainSecond, pickupVsWatch, directAix, reapplyMemo, staffTodo];
 
