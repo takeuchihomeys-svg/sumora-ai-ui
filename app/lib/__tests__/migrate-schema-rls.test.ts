@@ -46,6 +46,10 @@ it("fill_message_staff_writer は SECURITY DEFINER・search_path 固定", () => 
   if (!/SECURITY DEFINER/.test(tail) || !/SET search_path = public/.test(tail)) throw new Error(`定義の終わり: ${tail}`);
 });
 
+it("サーバーだけの表を読むビュー llm_usage_daily は security_invoker", () => {
+  if (!SQL.includes("CREATE OR REPLACE VIEW llm_usage_daily WITH (security_invoker = true) AS")) throw new Error("security_invoker が無い（持ち主の権限で RLS をすり抜ける）");
+});
+
 it("手で流す scripts/ にもサーバーだけの表の DISABLE が無い", () => {
   const dir = join(ROOT, "scripts");
   const bad: string[] = [];

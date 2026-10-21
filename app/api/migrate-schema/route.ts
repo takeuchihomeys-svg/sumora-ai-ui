@@ -3430,7 +3430,8 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_action ON llm_usage_logs(action, c
 
 -- 日次の集計（JST の日付）。input_equiv = 入力単価に換算したトークン（読み0.1・5分書き1.25・1時間書き2・出力5）
 -- est_usd は目安: 入力単価（1M トークンあたり）Haiku $1・Sonnet 5/5.5 $2・Opus 5 $5・Opus 5.5 $4 で計算（2026-09-29 公式に直した・下の注記）
-CREATE OR REPLACE VIEW llm_usage_daily AS
+-- 2026-10-21 RLS ②: security_invoker（見る人の権限）。無いと持ち主 postgres の権限で llm_usage_logs（サーバーだけの表・RLS あり）を読む＝公開キーでも中身（sys_head 等）が見えてしまう。サーバーは service_role なので変わらない
+CREATE OR REPLACE VIEW llm_usage_daily WITH (security_invoker = true) AS
 SELECT
   (created_at AT TIME ZONE 'Asia/Tokyo')::date AS day_jst,
   model, route, sys_key, MIN(sys_head) AS sys_head,
