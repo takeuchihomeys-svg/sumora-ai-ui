@@ -1170,9 +1170,8 @@ async function main() {
       // 2026-10-17 --judge=lazy: 道が外れていれば合格は決まりで✕。本質の道も決まりで出る（AIX か最初の答えが無い）なら判定を呼ばない
       const skipLazy = JUDGE_LAZY && !pv.ok && !needRaw && !NO_JUDGE;
       if (skipLazy) { judgeSkip.lazy++; (row as ResultRow & { judgeSkipped?: string }).judgeSkipped = "lazy"; }
-      // ⑤ 決まりで全部決まる時は判定の AI を呼ばない。ただし今まで全部 main と同じ要求だった回（入力が同じ）は main の判定の答え（呼ばない）をそのまま使う＝main と同じ採点
-      const allPinned = pinsOn && hasPinsFor(p.id, rep) && cassetteCallsOf(p.id, rep).every((c) => c.src === "pin");
-      const rj = JUDGE_LAZY && JUDGE_RULES && !NO_JUDGE && !skipLazy && !allPinned ? ruleJudge({ asks: ps.asks ?? [], ngN: (ps.ng ?? []).length, pathLabel: code.label, pathOk: pv.ok, needRawPath: needRaw }) : null;
+      // ⑤ 決まりで全部決まる時は判定の AI を呼ばない（決まりは答案だけで決まる＝main の取り置きも同じ決まりで採点する）
+      const rj = JUDGE_LAZY && JUDGE_RULES && !NO_JUDGE && !skipLazy ? ruleJudge({ asks: ps.asks ?? [], ngN: (ps.ng ?? []).length, pathLabel: code.label, pathOk: pv.ok, needRawPath: needRaw }) : null;
       if (rj) { judgeSkip.rules++; (row as ResultRow & { judgeSkipped?: string }).judgeSkipped = "rules"; }
       const jg: JudgeOut | null = NO_JUDGE || skipLazy ? null : rj ? { asks: rj.asks, route: rj.route, ng: rj.ng, asksWhy: rj.asks.map(() => rj.why), ngWhy: rj.ng.map(() => rj.why), rawPath: null } : await judge(ps, meta, row.raw ?? null, needRaw);
       if (jg) {
