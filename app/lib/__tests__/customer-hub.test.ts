@@ -78,9 +78,22 @@ it("審査の事情（お客様の発言）→ claudeOnly", () => {
   const h = buildCustomerHub(input([{ sender: "customer", text: "実は自己破産したことがあるのですが審査通りますか", h: 0 }]));
   ok(h.flags.screeningSensitive, "sensitive"); eq(h.flags.claudeOnly, true);
 });
-it("2番手を伝えた後（申込前）→ rankWaiting", () => {
-  const h = buildCustomerHub(input([{ sender: "staff", text: "確認しましたところ、現在2番手でのお申込みとなります！！", h: 0 }]));
-  eq(h.flags.rankWaiting, true);
+it("2番手の案内だけ（申込前）→ 2番手で申込中ではない（旧 rankWaiting は数えていた）", () => {
+  for (const t of ["確認しましたところ、現在2番手でのお申込みとなります！！", "よろしければ2番手でお申し込みさせて頂きます！！", "お気に召されましたら2番手でお申込みさせて頂きます！！"]) {
+    const h = buildCustomerHub(input([{ sender: "staff", text: t, h: 0 }], {}, "viewing"));
+    eq(h.flags.parallelSecond, false, t); eq(h.flags.claudeOnly, false, t);
+  }
+});
+it("申込中＋2番手で受理（記録を渡さない＝ハブの材料から同じ判定）→ 2番手で申込中・Claude だけ", () => {
+  const h = buildCustomerHub(input([{ sender: "staff", text: "テストハイツ203号室、2番手で受理されました！！", h: 0 }], {}, "applying"));
+  eq(h.flags.parallelSecond, true); eq(h.flags.claudeOnly, true);
+});
+it("読み手が渡した判定が正（true / false / null）・申込中で読めない時は Claude だけ", () => {
+  const m = [{ sender: "staff", text: "テストハイツ203号室、2番手で受理されました！！", h: 0 }];
+  eq(buildCustomerHub(input(m, { parallelSecond: false }, "applying")).flags.parallelSecond, false);
+  const u = buildCustomerHub(input(m, { parallelSecond: null }, "applying"));
+  eq(u.flags.parallelSecond, null); eq(u.flags.claudeOnly, true);
+  eq(buildCustomerHub(input([], { parallelSecond: null }, "proposing")).flags.claudeOnly, false);
 });
 it("申込歴あり（reapply）→ 印", () => {
   const h = buildCustomerHub(input([{ sender: "customer", text: "また探したいです", h: 0 }], { reapply: { reapply: true, returnedAt: iso(-24), pattern: "screening_denied", source: "staff" } }));

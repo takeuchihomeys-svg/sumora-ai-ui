@@ -8,6 +8,8 @@ import {
   type TodoViewingRow, type TodoMessageRow, type TodoConversation, type TodoMarkRow, type TodoCustomerTurnRow,
 } from "@/app/lib/staff-todo-list";
 import { loadReapplyStates, type ReapplyConvRow } from "@/app/lib/reapply-customer-server";
+import { loadParallelSecondActive } from "@/app/lib/post-apply";
+import { PARALLEL_STATUSES, parallelSecondEnabled } from "@/app/lib/parallel-second";
 import { type TodoTargetRow, type TodoDeliveryRow, type OtherConvRow, type OtherPcRow, todoTargetMergeEnabled, todoSonotaMergeEnabled, pickOtherDaily } from "@/app/lib/staff-todo-list";
 import type { TodoConditionRow } from "@/app/lib/staff-todo-instruction";
 import type { TodoPrioritySignal } from "@/app/lib/staff-todo-priority";
@@ -145,9 +147,11 @@ export async function loadStaffTodoInput(sb: SupabaseClient, atMs: number = Date
     ]);
     // 2026-10-21 竹内さんの決定（70193195）: 申込歴あり（再探し）を付ける（読めなければ付けないだけ・reapply-customer-server）
     const re = await loadReapplyStates(sb, c as ReadonlyArray<ReapplyConvRow>);
+    // 2026-10-21 2番手で申込中（並行で探す）: 下書き・ブレイン・司令塔と同じ判定（申込以降の会話だけ読む・読めなければ付けない＝今まで通り外す）
+    const par = await loadParallelSecondSet(sb, c);
     conversations.push(...c.map((row): TodoConversation => ({
       id: row.id, customer_name: row.customer_name, account: row.account, status: row.status, is_post_apply: row.is_post_apply,
-      created_at: row.created_at ?? null, ...(re.has(row.id) ? { reapply: true } : {}),
+      created_at: row.created_at ?? null, ...(re.has(row.id) ? { reapply: true } : {}), ...(par.has(row.id) ? { parallelSecond: true } : {}),
     })));
     for (const row of c) if (row.property_customer_id) pcByConv.set(row.id, row.property_customer_id);
     facts.push(...f);
@@ -196,6 +200,17 @@ export function pickTargets(ts: ReadonlyArray<BrainTarget>): TodoTargetRow[] {
   const top = ts.filter((t) => t.tier === "viewed" || t.tier === "screening_failed" || t.tier === "contact_due").slice(0, 25);
   const rest = ts.filter((t) => t.tier === "new" || t.tier === "engaged").slice(0, 40);
   return [...top, ...rest].map((t) => ({ conversationId: t.conversationId, tier: t.tier, name: t.customerName, lastCustomerAt: t.lastCustomerAt }));
+}
+
+/** 申込以降として外れる会話（印・申込中の status）のうち、2番手で申込中（並行で探す）の会話（post-apply.loadParallelSecondActive・6本ずつ） */
+async function loadParallelSecondSet(sb: SupabaseClient, rows: ReadonlyArray<{ id: string; status?: string | null; is_post_apply?: boolean | null }>): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!parallelSecondEnabled()) return out;
+  const cand = rows.filter((r) => r.is_post_apply === true || PARALLEL_STATUSES.has((r.status ?? "").trim())).map((r) => r.id);
+  let next = 0;
+  const worker = async () => { while (next < cand.length) { const id = cand[next++]; if ((await loadParallelSecondActive(sb, id)) === true) out.add(id); } };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  return out;
 }
 
 /** ハブ（customer-hub）から並びの材料: 地図の駅・申込歴あり・良い反応。時間の上限を過ぎた分は読まない（行と状態から数える） */

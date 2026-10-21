@@ -6,7 +6,9 @@ import {
 } from "../parallel-second";
 import {
   postApplyDraftSkip, parallelEligible, parallelSecondActive, parallelSecondCutoff, resolveDeepseekEntrance, entranceMarkOf, formatCutoffMark, parseCutoffMark, NO_CUTOFF, type PostApplyFacts,
+  judgeParallelSecond, deepseekSafeCutoff, deepseekPostApply,
 } from "../post-apply";
+import { resolveReapply } from "../reapply-customer";
 import { maskApplicationValuesForAlt, altPiiValuesRemain, maskAltBody, altPiiSignal, altPiiSignalReapply, ALT_DOC_MASK } from "../alt-pii-gate";
 import { reapplyBadgeText, REAPPLY_MARK_TEXT } from "../reapply-customer";
 import { REAPPLY_HEADER_MARK } from "../staff-todo-list";
@@ -126,10 +128,12 @@ async function main() {
       eq(postApplyDraftSkip(applying(), ENV_ON), true);
       eq(postApplyDraftSkip(applying({ parallel2nd: true }), { REAPPLY_PARALLEL_2ND: "off" }), true);
     });
-    await it("契約以降・申込前・印だけ残って戻した会話は並行に入らない", () => {
+    await it("契約以降・失注・申込の記録が無い会話は並行に入らない（2026-10-21 戻した会話は入る＝戻した後の文だけ数える）", () => {
       eq(parallelEligible(applying({ status: "contract" })), false);
+      eq(parallelEligible(applying({ status: "closed_lost" })), false);
       eq(parallelEligible({ status: "proposing" }), false);
-      eq(parallelEligible({ status: "proposing", isPostApply: true, applicationPushAt: T("2026-10-01T00:00:00Z"), statusManualBackAt: T("2026-10-05T00:00:00Z") }), false);
+      eq(parallelEligible({ status: "proposing", isPostApply: true, applicationPushAt: T("2026-10-01T00:00:00Z"), statusManualBackAt: T("2026-10-05T00:00:00Z") }), true);
+      eq(parallelEligible({ status: "proposing", applicationPushAt: T("2026-10-01T00:00:00Z"), statusManualBackAt: T("2026-10-05T00:00:00Z") }), true);
       eq(parallelSecondActive(applying({ status: "contract", parallel2nd: true }), ENV_ON), false);
       // status が遅れて提案中のまま（記録で申込中）は入る
       eq(parallelEligible({ status: "proposing", applicationPushAt: T("2026-10-15T00:00:00Z") }), true);
@@ -313,6 +317,54 @@ async function main() {
       ok(altPiiValuesRemain("お客様: カナはシケン", { docs: true }) !== null, "読みの文");
       const r = maskAltBody({ messages: [{ role: "user", content: "お客様: ・1990.12.19\nテスト丘3-13-3です" }] });
       eq(r.remain, null); ok(r.changed, "置き換えた");
+    });
+  });
+
+  await describe("判定を1つにした（2026-10-21・ハブ・やることリスト・司令塔・個人情報の門が同じ judgeParallelSecond）", async () => {
+    const msg = (sender: string, text: string, at: string) => ({ sender, text, createdAt: T(at) });
+    const back = { status: "proposing", applicationPushAt: T("2026-10-12T00:00:00Z"), statusManualBackAt: T("2026-10-13T00:00:00Z") };
+    await it("申込を続けたまま物件提案中へ戻した会話: 戻した後の「2番手で申込完了」で並行", () => {
+      const st = judgeParallelSecond(back, { msgs: [msg("staff", "2番手でお申し込み完了しております！！", "2026-10-13T05:00:00Z")] }, NOW, ENV_ON);
+      eq(st.parallel, true);
+    });
+    await it("戻す直前（2日以内）に伝えた「2番手で受理」→ 戻して並行（実データ a3cc571e の形）・それより前の文は数えない", () => {
+      eq(judgeParallelSecond(back, { msgs: [msg("staff", "2番手で受理されております！！", "2026-10-12T20:00:00Z")] }, NOW, ENV_ON).parallel, true);
+      eq(judgeParallelSecond(back, { msgs: [msg("staff", "2番手で受理されております！！", "2026-10-10T05:00:00Z")] }, NOW, ENV_ON).parallel, false);
+    });
+    await it("その後に否決・取り下げ・1番手が通過・繰り上がり → 並行ではない（申込歴あり側）", () => {
+      for (const end of ["審査否決となりました", "お申込みキャンセルさせていただきます", "1番手の方が審査承認となりました", "繰り上がりました！！"]) {
+        eq(judgeParallelSecond(back, { msgs: [msg("staff", "2番手で受理されております！！", "2026-10-12T20:00:00Z"), msg("staff", end, "2026-10-14T00:00:00Z")] }, NOW, ENV_ON).parallel, false, end);
+      }
+      // 仮定は終わりにしない
+      ok(!isParallelEndText("1番手の方審査否決、キャンセルの場合繰り上がり審査開始となります"), "仮定");
+    });
+    await it("案内（「よろしければ2番手で…」「お気に召されましたら2番手で…」「2番手でのお申込可能」）は申込前でも申込中でも並行にしない", () => {
+      for (const t of ["よろしければ2番手でお申し込みさせて頂きます！！", "お気に召されましたら2番手ですがお部屋のお申込みもさせていただきます！！", "2番手でのお申込可能となります！！"]) {
+        eq(judgeParallelSecond(applying(), { msgs: [msg("staff", t, "2026-10-16T00:00:00Z")] }, NOW, ENV_ON).parallel, false, t);
+        eq(judgeParallelSecond({ status: "viewing" }, { msgs: [msg("staff", t, "2026-10-16T00:00:00Z")] }, NOW, ENV_ON).parallel, false, t);
+      }
+    });
+    await it("申込の記録が無い申込前の会話は、申込んだ文があっても並行にしない（申込前の止めはそもそも無い）", () => {
+      eq(judgeParallelSecond({ status: "viewing" }, { msgs: [msg("staff", "2番手で受理されております！！", "2026-10-16T00:00:00Z")] }, NOW, ENV_ON).parallel, false);
+    });
+    await it("スタッフの選択（メモの行）が最優先・スイッチ off は全部 false", () => {
+      eq(judgeParallelSecond(applying(), { msgs: [], memoItems: [{ id: PARALLEL_MEMO_ID, text: PARALLEL_MEMO_ON }] }, NOW, ENV_ON).parallel, true);
+      eq(judgeParallelSecond(applying(), { msgs: [msg("staff", "2番手で受理されております！！", "2026-10-16T00:00:00Z")], memoItems: [{ id: PARALLEL_MEMO_ID, text: PARALLEL_MEMO_OFF }] }, NOW, ENV_ON).parallel, false);
+      eq(judgeParallelSecond(applying(), { msgs: [msg("staff", "2番手で受理されております！！", "2026-10-16T00:00:00Z")] }, NOW, { REAPPLY_PARALLEL_2ND: "off" }).parallel, false);
+    });
+    await it("個人情報の門: 戻した会話でも並行なら DeepSeek の線を引かない（Claude）・申込以降に数える", () => {
+      const f: PostApplyFacts = { ...back, parallel2nd: true };
+      eq(deepseekSafeCutoff(f), null);
+      eq(deepseekSafeCutoff(f, { reapply: true }), null);
+      eq(deepseekPostApply(f, ENV_ON), true);
+      const e = resolveDeepseekEntrance(f, ENV_ON);
+      eq([e.altPostApply, e.cutoff], [true, null]);
+      // 並行でない戻した会話は今まで通り戻した時刻より後
+      eq(deepseekSafeCutoff(back), T("2026-10-13T00:00:00Z"));
+    });
+    await it("申込歴ありの札: 2番手で申込中なら付けない（並行でなければ今まで通り）", () => {
+      eq(resolveReapply({ ...back, parallel2nd: true }).reapply, false);
+      eq(resolveReapply(back).reapply, true);
     });
   });
 

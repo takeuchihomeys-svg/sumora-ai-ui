@@ -43,7 +43,7 @@
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { examplePiiReason } from "./example-pii-guard";
 import { altPiiSignal, altReapplyGateEnabled } from "./alt-pii-gate";
-import { resolveParallelSecond, staffParallelChoiceOf, staffParallelChoiceAt, parallelSecondEnabled, parallelSecondDeepseekEnabled, PARALLEL_STATUSES, PARALLEL_WINDOW_BEFORE_MS, PARALLEL_LOOKBACK_MS, type ParallelState } from "./parallel-second";
+import { resolveParallelSecond, staffParallelChoiceOf, staffParallelChoiceAt, parallelSecondEnabled, parallelSecondDeepseekEnabled, PARALLEL_STATUSES, PARALLEL_WINDOW_BEFORE_MS, PARALLEL_LOOKBACK_MS, PARALLEL_BACK_GRACE_MS, type ParallelState, type ParallelInput } from "./parallel-second";
 
 export type PostApplyFacts = {
   status: string | null | undefined;
@@ -141,14 +141,19 @@ export function postApplyDraftSkip(f: PostApplyFacts, env: Record<string, string
 
 // ═══ 2番手で申込中（並行で探す）（2026-10-21 竹内さんの決定 ec4d5990）═══════════════════════════════
 /**
- * 並行の判定に入ってよい会話か（今も申込中・申込以降の先＝契約・成約ではない・印だけ残って戻した会話＝申込歴ありではない）。
+ * 並行の判定に入ってよい会話か。契約・成約・失注ではなく、申込の記録がある（今も申込以降／記録の後に戻した／印だけ残って戻した）会話。
  *   ここに入らない会話は parallel2nd を読まない（止め方は今まで通り）
+ * 2026-10-21 判定を1つにした時（scripts/audit-parallel-unify.ts）: 2番手で申込を続けたまま status を物件提案中へ戻して並行で探す会話
+ *   （実データ a3cc571e「2番手でお申し込み完了しております」・ab7ea742「2番手での受理とのご連絡」）は戻した側＝申込前に数えられ、
+ *   申込歴ありの札・戻した時刻より後の DeepSeek の線で扱われていた。戻した会話も入れる（数えるのは戻した時刻より後の文だけ＝前の申込の話は数えない）。
+ *   入った会話は Claude（既定）・下書きは今まで通り作る＝個人情報の門は安全側にしか動かない
  */
+const PARALLEL_TERMINAL: ReadonlySet<string> = new Set(["closed_lost", "lost", "closed_won", "contract", "approved"]);
 export function parallelEligible(f: PostApplyFacts): boolean {
   const s = (f.status ?? "").trim();
-  if (DRAFT_SKIP_STATUSES.has(s) && !PARALLEL_STATUSES.has(s)) return false;
-  if (!resolvePostApply(f).postApply) return false;
-  return !badgeMovedBackCore(f);
+  if ((DRAFT_SKIP_STATUSES.has(s) && !PARALLEL_STATUSES.has(s)) || PARALLEL_TERMINAL.has(s)) return false;
+  const pa = resolvePostApply(f);
+  return pa.postApply || pa.movedBack || ms(f.deepseekCutoffAt) !== null;
 }
 /** 2番手で並行して探している会話として扱うか（下書き・ブレインを止めない側）。明示的に決まった会話だけ・スイッチ REAPPLY_PARALLEL_2ND */
 export function parallelSecondActive(f: PostApplyFacts, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -223,6 +228,8 @@ export function badgeMovedBackForDeepseek(f: PostApplyFacts, env: Record<string,
 }
 /** DeepSeek に渡さない側の「申込以降」（下書きを止める判定とは別）: 印だけ残って戻した会話は申込以降に数えない（線で切る） */
 export function deepseekPostApply(f: PostApplyFacts, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  // 2番手で申込中（並行で探す）は申込が続いている＝申込以降に数える（戻した会話でも。線で開くのは resolveDeepseekEntrance の parallelSecondDeepseek だけ）
+  if (parallelSecondActive(f, env)) return true;
   if (!resolvePostApply(f).postApply) return false;
   return !badgeMovedBackForDeepseek(f, env);
 }
@@ -274,17 +281,43 @@ export async function loadPostApplyFacts(sb: Sb, conversationId: string): Promis
   return facts;
 }
 
-/**
- * 2番手で申込中（並行で探す）の状態を記録から読む（スタッフの選択 → スタッフの文 → ピッカー）。読めなければ例外。
- *   メモの行（customer_memos）・「番手」を含む通（新しい方から60通）・申込状況のピッカー（20件）
- */
-export async function loadParallelSecondState(sb: Sb, conversationId: string, f: PostApplyFacts, nowMs: number = Date.now()): Promise<ParallelState> {
+/** 2番手の文・ピッカーを数える窓と、申込の記録・戻した時刻（読み手と純関数で同じ物を使う） */
+export function parallelWindowOf(f: PostApplyFacts, nowMs: number): { fromMs: number; lastApplyAt: string | null; lastBackAt: string | null } {
   const recs = [ms(f.applicationPushAt), ms(f.idDocumentAt), ms(f.applicationFormAt)].filter((x): x is number => x !== null);
   const last = recs.length ? Math.max(...recs) : null;
   const backs = [ms(f.statusManualBackAt), ms(f.deepseekCutoffAt)].filter((x): x is number => x !== null);
-  const back = backs.length ? Math.max(...backs) : null;
+  // 戻した時刻の少し前から数える（戻す操作そのものが並行の始まりの事がある・PARALLEL_BACK_GRACE_MS）。それより前は前の申込の話
+  const back = backs.length ? Math.max(...backs) - PARALLEL_BACK_GRACE_MS : null;
   const fromMs = Math.max(last !== null ? last - PARALLEL_WINDOW_BEFORE_MS : nowMs - PARALLEL_LOOKBACK_MS, back ?? -Infinity);
-  const fromIso = new Date(fromMs).toISOString();
+  return { fromMs, lastApplyAt: last === null ? null : new Date(last).toISOString(), lastBackAt: back === null ? null : new Date(back).toISOString() };
+}
+
+type ParallelMemoItem = { id?: string; text?: string; retiredAt?: string | null; updatedAt?: string | null; sourceAt?: string | null };
+/**
+ * 「2番手で申込中（並行で探す）」の1つの判定（純関数・2026-10-21 判定を1つにした）。
+ *   下書き・ブレイン・個人情報の門（loadPostApplyFacts → parallel2nd → parallelSecondActive）・ハブ（customer-hub）・やることリスト・司令塔は全部これ。
+ *   旧のハブの判定（申込前の status ＋「2〜9番手／繰り上が」の語）は案内（「2番手でのお申込可能」「よろしければ2番手で…」）も数え、申込中の会話は数えなかった。
+ */
+export function judgeParallelSecond(
+  f: PostApplyFacts,
+  ev: { msgs: ParallelInput["msgs"]; pickers?: ParallelInput["pickers"]; memoItems?: ReadonlyArray<ParallelMemoItem> | null },
+  nowMs: number = Date.now(),
+  env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {},
+): ParallelState {
+  if (!parallelSecondEnabled(env) || !parallelEligible(f)) return { parallel: false, source: null, via: null, at: null };
+  const w = parallelWindowOf(f, nowMs);
+  return resolveParallelSecond({
+    msgs: ev.msgs, pickers: ev.pickers ?? [], lastApplyAt: w.lastApplyAt, lastBackAt: w.lastBackAt,
+    staffChoice: staffParallelChoiceOf(ev.memoItems ?? []), staffAt: staffParallelChoiceAt(ev.memoItems ?? []), nowMs,
+  });
+}
+
+/**
+ * 2番手で申込中（並行で探す）の状態を記録から読む（スタッフの選択 → スタッフの文 → ピッカー）。読めなければ例外。
+ *   メモの行（customer_memos）・「番手」を含む通（新しい方から60通）・申込状況のピッカー（20件）。判定は judgeParallelSecond
+ */
+export async function loadParallelSecondState(sb: Sb, conversationId: string, f: PostApplyFacts, nowMs: number = Date.now(), env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): Promise<ParallelState> {
+  const fromIso = new Date(parallelWindowOf(f, nowMs).fromMs).toISOString();
   const [memo, msgs, pk] = (await Promise.all([
     sb.from("customer_memos").select("items").eq("conversation_id", conversationId).maybeSingle(),
     sb.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId).gte("created_at", fromIso)
@@ -295,16 +328,20 @@ export async function loadParallelSecondState(sb: Sb, conversationId: string, f:
   ])) as [{ data: { items?: unknown } | null; error: { message: string } | null }, Res, Res];
   if (memo.error) throw new Error(`parallel-2nd: customer_memos: ${memo.error.message}`);
   if (msgs.error) throw new Error(`parallel-2nd: messages: ${msgs.error.message}`);
-  const items = Array.isArray(memo.data?.items) ? (memo.data!.items as Array<{ id?: string; text?: string; retiredAt?: string | null; updatedAt?: string | null; sourceAt?: string | null }>) : [];
-  return resolveParallelSecond({
+  const items = Array.isArray(memo.data?.items) ? (memo.data!.items as ParallelMemoItem[]) : [];
+  return judgeParallelSecond(f, {
     msgs: ((msgs.data ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).map((r) => ({ sender: r.sender, text: r.text, createdAt: r.created_at })),
     pickers: pk.error ? [] : ((pk.data ?? []) as Array<{ check_pattern: string | null; picker_choices: unknown; created_at: string }>).map((r) => ({ checkPattern: r.check_pattern, choices: r.picker_choices, createdAt: r.created_at })),
-    lastApplyAt: last === null ? null : new Date(last).toISOString(),
-    lastBackAt: back === null ? null : new Date(back).toISOString(),
-    staffChoice: staffParallelChoiceOf(items),
-    staffAt: staffParallelChoiceAt(items),
-    nowMs,
-  });
+    memoItems: items,
+  }, nowMs, env);
+}
+
+/**
+ * 1会話が2番手で申込中（並行で探す）か（ハブ・やることリスト・申込歴ありの札の読み手）。
+ *   true / false、記録が読めない時は null（読み手は「分からない」＝個人情報の線では Claude 側・止め方は今まで通り）
+ */
+export async function loadParallelSecondActive(sb: Sb, conversationId: string): Promise<boolean | null> {
+  try { return parallelSecondActive(await loadPostApplyFacts(sb, conversationId)); } catch { return null; }
 }
 // ═══ 時刻の線（DeepSeek に渡してよいのはこの時刻より後だけ）═══════════════════════════════════════
 
@@ -322,6 +359,8 @@ export type DeepseekCutoff = string | null | number;
  */
 export function deepseekSafeCutoff(f: PostApplyFacts, opts: { reapply?: boolean } = {}): DeepseekCutoff {
   try {
+    // 2番手で申込中（並行で探す）は申込が続いている＝渡さない（戻した会話でも。線を引くのは出口の網を通る入口の parallelSecondCutoff だけ）
+    if (parallelSecondActive(f)) return null;
     // 2026-10-21 確かめ役: 印だけ残って戻した会話の線は、出口の強めの網（alt-pii-gate.altPiiSignalReapply）を通る入口（返信生成・AIX）だけが
     //   opts.reapply で開く。それ以外（loadDeepseekCutoff を読むメモの読み取り・好みの学習・画像の読み取り等＝DeepSeek を直接呼び出口の網を通らない道がある）は今まで通り渡さない
     if (opts.reapply ? deepseekPostApply(f) : resolvePostApply(f).postApply) return null;

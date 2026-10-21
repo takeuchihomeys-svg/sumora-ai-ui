@@ -3,6 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCustomerStateInput } from "@/app/lib/customer-state-server";
 import { loadReapplyInfo } from "@/app/lib/reapply-customer-server";
+import { loadPostApplyFacts, parallelSecondActive } from "@/app/lib/post-apply";
 import { loadReactionRows, assembleReactionInput } from "@/app/lib/reaction-negatives-server";
 import { buildReactionNegatives, REACTION_RULE, type ReactionState } from "@/app/lib/reaction-negatives";
 import { isTestConversation } from "@/app/lib/test-conversations";
@@ -63,7 +64,11 @@ export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: s
       reactions = buildReactionNegatives({ ...assembleReactionInput(rows), now: new Date(nowMs) });
     } catch { reactions = null; }
   }
-  const reapply = await loadReapplyInfo(sb, conversationId);
+  // 2番手で申込中（並行で探す）: 下書き・ブレイン・個人情報の門と同じ読み手（今の記録）。過去の時点で組む時は渡さず、ハブの材料から同じ純関数で決める
+  //   記録は1回だけ読む（申込歴ありの札も同じ記録＝2番手で申込中なら申込歴ありにしない）。読めなければ null（ハブは「分からない」＝Claude だけ）
+  const facts = await loadPostApplyFacts(sb, conversationId).catch(() => null);
+  const reapply = facts ? await loadReapplyInfo(sb, conversationId, facts) : null;
+  const parallelSecond: boolean | null | undefined = past || o.statusAt !== undefined ? undefined : facts ? parallelSecondActive(facts) : null;
   // 過去の時点で組む時（試し・監査）は、その時点より後の行を外し、後で片付いた要対応はその時点では開いていた物に戻す
   const st = past || o.statusAt !== undefined ? clipStateToTime(state, nowMs, o.statusAt) : state;
   const aixItems = ((items.data ?? []) as HubAixItem[]).map((i) => (past && i.status !== "pending" && i.done_at && Date.parse(i.done_at) > nowMs ? { ...i, status: "pending" as const, done_at: null } : i));
@@ -78,6 +83,7 @@ export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: s
     memoItems: Array.isArray(memoItems) ? (memoItems as LinkMemoItem[]) : [],
     reactions,
     reapply,
+    ...(parallelSecond !== undefined ? { parallelSecond } : {}),
   };
 }
 
@@ -100,7 +106,7 @@ export type HubAuditSummary = {
   byType: Partial<Record<HubContradictionType, number>>;
   convByType: Partial<Record<HubContradictionType, number>>;
   actors: Record<HubActor, number>;
-  flags: { reapply: number; rankWaiting: number; claudeOnly: number };
+  flags: { reapply: number; parallelSecond: number; claudeOnly: number };
   samples: Array<{ conv: string; type: HubContradictionType; detail: string }>;
 };
 
@@ -120,7 +126,7 @@ export async function activeConversationIds(sb: SupabaseClient, sinceIso: string
 export async function auditCustomerHubs(sb: SupabaseClient, o: { days?: number; nowMs?: number; limit?: number; ids?: ReadonlyArray<string>; concurrency?: number; samplesPerType?: number; onProgress?: (n: number, total: number) => void } = {}): Promise<HubAuditSummary> {
   const days = o.days ?? 14, nowMs = o.nowMs ?? Date.now(), per = o.samplesPerType ?? 3;
   const ids = (o.ids ? o.ids.filter((x) => !isTestConversation(x)) : await activeConversationIds(sb, new Date(nowMs - days * DAY).toISOString(), new Date(nowMs).toISOString())).slice(0, o.limit ?? Infinity);
-  const sum: HubAuditSummary = { days, conversations: 0, failed: 0, withContradiction: 0, byType: {}, convByType: {}, actors: { brain: 0, aix: 0, staff: 0, none: 0 }, flags: { reapply: 0, rankWaiting: 0, claudeOnly: 0 }, samples: [] };
+  const sum: HubAuditSummary = { days, conversations: 0, failed: 0, withContradiction: 0, byType: {}, convByType: {}, actors: { brain: 0, aix: 0, staff: 0, none: 0 }, flags: { reapply: 0, parallelSecond: 0, claudeOnly: 0 }, samples: [] };
   let next = 0, done = 0;
   const worker = async () => {
     while (next < ids.length) {
@@ -131,7 +137,7 @@ export async function auditCustomerHubs(sb: SupabaseClient, o: { days?: number; 
         sum.conversations++;
         sum.actors[r.hub.actor.who]++;
         if (r.hub.flags.reapply) sum.flags.reapply++;
-        if (r.hub.flags.rankWaiting) sum.flags.rankWaiting++;
+        if (r.hub.flags.parallelSecond) sum.flags.parallelSecond++;
         if (r.hub.flags.claudeOnly) sum.flags.claudeOnly++;
         if (r.contradictions.length) sum.withContradiction++;
         const seen = new Set<HubContradictionType>();
@@ -157,6 +163,6 @@ export function renderHubAudit(s: HubAuditSummary): string {
     for (const x of s.samples.filter((y) => y.type === t)) L.push(`    例 ${x.conv} ${x.detail}`);
   }
   L.push(`誰が動く: ブレイン ${s.actors.brain}・AIX ${s.actors.aix}・スタッフ ${s.actors.staff}・なし ${s.actors.none}`);
-  L.push(`印: 申込歴あり ${s.flags.reapply}・2番手並行 ${s.flags.rankWaiting}・審査の事情(Claudeだけ) ${s.flags.claudeOnly}`);
+  L.push(`印: 申込歴あり ${s.flags.reapply}・2番手で申込中 ${s.flags.parallelSecond}・審査の事情(Claudeだけ) ${s.flags.claudeOnly}`);
   return L.join("\n");
 }

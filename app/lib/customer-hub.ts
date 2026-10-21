@@ -8,7 +8,7 @@
 //     次の一手    = promise-queue.nextPromiseAix・aix_action_items（要対応）・staff-todo-list（やることリスト）・地図の次の一手
 //     予定        = customer-state の内覧（viewing_history＋本文）・calendar_events（内覧・連絡日）
 //     物件        = customer-state のお部屋・property_pickups（送れる物件＝link-brain-watch.pickupReadyAt）・reaction-negatives（反応）
-//     印          = reapply-customer（申込歴あり）・parallel-search（2番手並行）・screening-sensitive（審査の事情＝Claude だけ）
+//     印          = reapply-customer（申込歴あり）・post-apply.judgeParallelSecond（2番手で申込中＝並行で探す・下書き・ブレイン・個人情報の門と同じ判定）・screening-sensitive（審査の事情＝Claude だけ）
 //   それぞれの元の間の食い違い（hubContradictions）＝司令塔が次に決めるべき所。
 //
 // 線: 本番の動き（プロンプト・返信・AIX）には何もつながない。見張り（link-brain-watch）が読めるのは LINK_HUB=on の時だけ（既定 off）。
@@ -22,12 +22,13 @@ import { buildRequestLedger } from "./request-ledger";
 import { isContactPromiseNotes, contactDateOfNotes } from "./contact-promise";
 import { PROMISE_MUST_MARK, promiseAixActionOf, promiseCheckPatternOf } from "./promise-calendar";
 import { buildStaffTodoList, type TodoAixItemRow, type TodoPromiseRow, type TodoItem } from "./staff-todo-list";
-import { RANK_WAITING_RE } from "./parallel-search";
 import { screeningSensitiveInMessages, type ScreeningSensitiveHit } from "./screening-sensitive";
 import { REACTION_ATTR_JA, type ReactionState } from "./reaction-negatives";
 import { RETURN_PATTERN_SHORT, type ReapplyInfo } from "./reapply-customer";
 import { pickupReadyAt, type LinkPickup, type LinkMemoItem } from "./link-brain-watch";
 import { isPreApplyForNudge } from "./apply-stage-nudge";
+import { judgeParallelSecond } from "./post-apply";
+import { PARALLEL_STATUSES, PARALLEL_2ND_LABEL } from "./parallel-second";
 import { maskPII } from "./pii-mask";
 
 const H = 3600_000;
@@ -56,6 +57,11 @@ export type HubInput = {
   reactions?: ReactionState | null;
   /** 申込歴あり（reapply-customer・無ければ null） */
   reapply?: ReapplyInfo | null;
+  /**
+   * 2番手で申込中（並行で探す）。読み手（customer-hub-server）が記録から読んだ物（post-apply.loadParallelSecondActive・読めなければ null）。
+   *   渡さない時（試し・過去の時点）は、この材料から同じ純関数（post-apply.judgeParallelSecond）で決める
+   */
+  parallelSecond?: boolean | null;
 };
 
 // ───────── 出力 ─────────
@@ -104,9 +110,13 @@ export type CustomerHub = {
   };
   flags: {
     reapply: boolean; reapplyPattern: string | null;
-    rankWaiting: boolean;
+    /**
+     * 2番手で申込中（並行で探す）（post-apply.judgeParallelSecond＝下書き・ブレイン・個人情報の門と同じ）。null＝記録が読めない。
+     *   2026-10-21 旧の rankWaiting（申込前の status ＋「2〜9番手／繰り上が」の語）は案内の文も数え、申込中の会話は数えなかったので置き換えた
+     */
+    parallelSecond: boolean | null;
     screeningSensitive: ScreeningSensitiveHit | null;
-    /** 審査の事情がある＝生成は Claude だけ（screening-sensitive の決まり） */
+    /** 生成は Claude だけ: 審査の事情がある（screening-sensitive）・2番手で申込中・申込中の会話で2番手か読めない（個人情報の門は分からなければ Claude） */
     claudeOnly: boolean;
     searching: CustomerState["searching"] | null;
   };
@@ -117,6 +127,22 @@ export type CustomerHub = {
 };
 
 // ───────── 組み立て ─────────
+/**
+ * 記録を渡されない時（試し・過去の時点）の「2番手で申込中」: ハブの材料から下書き・ブレインと同じ純関数（post-apply.judgeParallelSecond）で決める。
+ *   申込の記録はハブの材料にある物だけ（送った AIX の申込へ）＝本番の読み手（loadParallelSecondActive）が正
+ */
+export function parallelSecondOfHubInput(input: HubInput): boolean {
+  const pushes = input.state.aixRows.filter((r) => r.aix_type === "application_push").map((r) => ms(r.created_at)).filter(Number.isFinite);
+  return judgeParallelSecond(
+    { status: input.conv.status, isPostApply: input.conv.is_post_apply === true, statusManualBackAt: input.conv.status_manual_back_at ?? null, applicationPushAt: pushes.length ? iso(Math.max(...pushes)) : null },
+    {
+      msgs: input.state.messages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt })),
+      memoItems: (input.memoItems ?? []).map((x) => ({ ...(x as { id?: string; retiredAt?: string | null }), text: x.text ?? undefined, updatedAt: x.updatedAt ?? null, sourceAt: x.sourceAt ?? null })),
+    },
+    input.nowMs,
+  ).parallel;
+}
+
 const toQueueMsgs = (s: CustomerStateInput): QueueMsg[] => s.messages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt, isAix: !!m.isAix }));
 const toQueueLogs = (s: CustomerStateInput): QueueAixLog[] => s.aixRows.filter((r) => !!r.aix_type && (r.sent_at || r.created_at))
   .map((r) => ({ aixType: r.aix_type as string, checkPattern: r.check_pattern ?? null, sentAt: (r.sent_at ?? r.created_at) as string, estimateSent: r.estimate_sent, text: r.generated_text }));
@@ -195,11 +221,13 @@ export function buildCustomerHub(input: HubInput): CustomerHub {
   for (const v of state?.viewings ?? []) schedule.push({ kind: "viewing", at: `${v.ymd}T${v.time ?? "00:00"}:00+09:00`, label: `内覧 ${v.name ?? "（物件名なし）"}・${v.status}`, done: v.status === "done" || v.status === "cancelled", source: "customer_state" });
   schedule.sort((a, b) => ms(a.at) - ms(b.at));
 
+  // 2番手で申込中（並行で探す）: 下書き・ブレイン・個人情報の門・やることリスト・司令塔と同じ判定（post-apply.judgeParallelSecond）
+  const parallelSecond = input.parallelSecond !== undefined ? input.parallelSecond : parallelSecondOfHubInput(input);
   // ── やることリスト（この会話だけで組み立て直す） ──
   const todayYmd = new Date(now + 9 * H).toISOString().slice(0, 10);
   const todo = buildStaffTodoList({
     atMs: now,
-    conversations: [{ id: input.conv.id, customer_name: input.conv.customer_name, account: input.conv.account ?? null, status: input.conv.status, is_post_apply: input.conv.is_post_apply, ...(input.reapply?.reapply ? { reapply: true } : {}) }],
+    conversations: [{ id: input.conv.id, customer_name: input.conv.customer_name, account: input.conv.account ?? null, status: input.conv.status, is_post_apply: input.conv.is_post_apply, ...(input.reapply?.reapply ? { reapply: true } : {}), ...(parallelSecond === true ? { parallelSecond: true } : {}) }],
     aixItems: input.aixItems.filter((i) => ms(i.created_at) <= now),
     promises: input.calendarEvents.filter((e) => (e.notes ?? "").startsWith(PROMISE_MUST_MARK) && ms(e.created_at) <= now),
     facts: (s.recordedFacts ?? []).filter((f) => f.status === "done").map((f) => ({ conversation_id: input.conv.id, kind: f.kind, sent_at: f.sent_at, detail: (f.detail ?? null) as { object?: string | null; checkPattern?: string | null } | null })),
@@ -222,8 +250,7 @@ export function buildCustomerHub(input: HubInput): CustomerHub {
 
   // ── 印 ──
   const sensitive = screeningSensitiveInMessages(s.messages.map((m) => ({ sender: m.sender, text: m.text, isAix: m.isAix })));
-  const rankWaiting = isPreApplyForNudge(input.conv.status)
-    && s.messages.some((m) => m.sender !== "customer" && now - ms(m.createdAt) <= 30 * DAY && RANK_WAITING_RE.test(String(m.text ?? "").normalize("NFKC")) && !/1番手/.test(String(m.text ?? "").normalize("NFKC")));
+  const applyish = !!input.conv.is_post_apply || PARALLEL_STATUSES.has((input.conv.status ?? "").trim());
 
   // ── 次の一手の候補（今ある決め方の順に並べるだけ・選ぶのは司令塔／ブレイン） ──
   const nextActions: HubNextAction[] = [];
@@ -266,7 +293,7 @@ export function buildCustomerHub(input: HubInput): CustomerHub {
     },
     flags: {
       reapply: !!input.reapply?.reapply, reapplyPattern: input.reapply?.reapply ? RETURN_PATTERN_SHORT[input.reapply.pattern] : null,
-      rankWaiting, screeningSensitive: sensitive, claudeOnly: !!sensitive, searching: state?.searching ?? null,
+      parallelSecond, screeningSensitive: sensitive, claudeOnly: !!sensitive || parallelSecond === true || (parallelSecond === null && applyish), searching: state?.searching ?? null,
     },
     actor,
     stateConflicts: state?.conflicts ?? [],
@@ -380,7 +407,7 @@ export function renderCustomerHub(hub: CustomerHub, o: { customerName?: string |
   const p = hub.properties;
   L.push(`物件: 送った ${p.sentCount}・お部屋 ${p.rooms.length}（${p.rooms.slice(0, 4).map((r) => r.status).join("・")}）・未送付ピックアップ ${p.pickupsPending}${p.pickupReady ? "（送れる）" : ""}${p.reactions ? `・反応 ×${p.reactions.declined} ○${p.reactions.good} [${p.reactions.negatives.join(",")}]` : ""}`);
   const f = hub.flags;
-  L.push(`印: ${[f.reapply ? `申込歴あり(${f.reapplyPattern})` : "", f.rankWaiting ? "2番手並行" : "", f.screeningSensitive ? `審査の事情(${f.screeningSensitive.category})→Claudeだけ` : "", f.searching?.active ? `探し中(${f.searching.reason})` : ""].filter(Boolean).join("・") || "なし"}`);
+  L.push(`印: ${[f.reapply ? `申込歴あり(${f.reapplyPattern})` : "", f.parallelSecond ? PARALLEL_2ND_LABEL : f.parallelSecond === null ? "2番手か読めない→Claudeだけ" : "", f.screeningSensitive ? `審査の事情(${f.screeningSensitive.category})→Claudeだけ` : "", f.searching?.active ? `探し中(${f.searching.reason})` : ""].filter(Boolean).join("・") || "なし"}`);
   L.push(`誰が動く: ${hub.actor.who}（${m(hub.actor.why)}）${hub.actor.dueAt ? ` 期限 ${hub.actor.dueAt.slice(5, 16)}` : ""}`);
   if (o.contradictions?.length) { L.push(`食い違い:`); for (const c of o.contradictions) L.push(`  - ${HUB_CONTRADICTION_JA[c.type]}: ${m(c.detail)}`); }
   return L.join("\n");

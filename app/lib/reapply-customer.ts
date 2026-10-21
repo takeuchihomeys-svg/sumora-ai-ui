@@ -16,7 +16,7 @@
 // 戻す: REAPPLY_MARK=off（表記・材料・優先度をまとめて止める）
 
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
-import { resolvePostApply, badgeMovedBackCore, type PostApplyFacts } from "./post-apply";
+import { resolvePostApply, badgeMovedBackCore, parallelSecondActive, type PostApplyFacts } from "./post-apply";
 
 export type ReturnPattern = "screening_denied" | "lost_to_first" | "switched" | "unknown";
 export const RETURN_PATTERNS: readonly ReturnPattern[] = ["screening_denied", "lost_to_first", "switched", "unknown"];
@@ -63,6 +63,8 @@ const NOT: ReapplyState = { reapply: false, returnedAt: null, lastApplyAt: null 
 /** 申込歴あり（再探し）か（純関数） */
 export function resolveReapply(f: PostApplyFacts): ReapplyState {
   if (DRAFT_SKIP_STATUSES.has((f.status ?? "").trim())) return NOT;
+  // 2026-10-21 判定を1つにした: 2番手で申込中（並行で探す・post-apply.judgeParallelSecond）は申込が続いている＝申込歴ありにしない（札・やることリストの【申込歴あり】・ブレインの材料が食い違わない）
+  if (parallelSecondActive(f)) return NOT;
   const pa = resolvePostApply(f);
   // 今も申込以降（印だけ残って戻した会話は戻した側）
   if (pa.postApply && !badgeMovedBackCore(f)) return NOT;

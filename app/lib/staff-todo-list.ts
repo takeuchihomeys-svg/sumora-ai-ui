@@ -90,6 +90,11 @@ export type TodoConversation = {
    *   印（is_post_apply）が残ったまま戻した会話も約束・未返信をやる事にする・並びを上げる・見出しに「申込歴あり」を付ける
    */
   reapply?: boolean;
+  /**
+   * 2026-10-21 2番手で申込中（並行で探す）＝申込しながら並行して物件を探している（post-apply.judgeParallelSecond・下書き・ブレイン・司令塔と同じ判定・読み手が付ける）。
+   *   下書き・ブレインを止めないのと同じく、約束・未返信・新着確認をやる事にする（申込以降として外さない）
+   */
+  parallelSecond?: boolean;
   /** 会話を作った時（新規の問い合わせの見分け・無ければ見分けない） */
   created_at?: string | null;
 };
@@ -289,7 +294,7 @@ const UNANSWERED_MIN_MS = 30 * 60_000;
 export const TODO_MAX_AGE_DAYS = 14;
 /** 申込より後（審査管理の領分）・失注の会話は、約束と未返信をやる事にしない（AIX 要対応は今の一覧と同じく出す） */
 function postApplyOrClosed(c: TodoConversation | undefined): boolean {
-  return !!c && ((!!c.is_post_apply && !c.reapply) || DRAFT_SKIP_STATUSES.has((c.status ?? "").trim()) || c.status === "closed_lost");
+  return !!c && !c.parallelSecond && ((!!c.is_post_apply && !c.reapply) || DRAFT_SKIP_STATUSES.has((c.status ?? "").trim()) || c.status === "closed_lost");
 }
 const UNANSWERED_MAX_MS = 48 * 3600_000;
 const FULFIL_KINDS: ReadonlySet<string> = new Set(["properties_sent", "estimate_sent", "confirmation_reported", "guarantor_explained"]);
@@ -521,7 +526,7 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
     const cid = tg.conversationId;
     if (isTestConversation(cid)) continue;
     const conv = convById.get(cid);
-    if (conv && ((conv.is_post_apply && !conv.reapply) || DRAFT_SKIP_STATUSES.has((conv.status ?? "").trim()) || conv.status === "closed_lost" || conv.status === "applying")) { skip("target_post_apply"); continue; }
+    if (conv && !conv.parallelSecond && ((conv.is_post_apply && !conv.reapply) || DRAFT_SKIP_STATUSES.has((conv.status ?? "").trim()) || conv.status === "closed_lost" || conv.status === "applying")) { skip("target_post_apply"); continue; }
     const key = newArrivalKey(cid, at);
     const delivered = (input.deliveries ?? []).filter((d) => d.conversation_id === cid && t(d.at) >= dayStart && t(d.at) <= at).sort((a, b) => t(a.at) - t(b.at))[0]?.at ?? null;
     const mk = markOf(key, input.marks, at);

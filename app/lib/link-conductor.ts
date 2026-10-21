@@ -281,7 +281,8 @@ export function conductCustomer(hub: CustomerHub, contradictions: ReadonlyArray<
 
   // 見送り・成約・申込以降 → 待つ（申込以降は管理ツール側の流れ。片付けは出す＝決定2）
   const stage = hub.where.stage;
-  const postApply = hub.where.isPostApply || stage === "applying";
+  // 2026-10-21 2番手で申込中（並行で探す・post-apply.judgeParallelSecond）は下書き・ブレインと同じく止めない（並行で探すのがつなぎの仕事）
+  const postApply = (hub.where.isPostApply || stage === "applying") && hub.flags.parallelSecond !== true;
   if (stage === "dropped" || stage === "won" || postApply) {
     for (const c of contradictions) if (c.type === "open_after_closed") { housekeeping.push({ type: "close_item", detail: c.detail, decision: 2 }); applied.add(2); }
     return { ...base, kind: "wait", by: "none", action: null, checkPattern: null, label: postApply ? "申込以降（管理ツールの流れ）" : "見送り・成約", confidence: 0.9, hesitant: false,
@@ -321,7 +322,7 @@ export function conductCustomer(hub: CustomerHub, contradictions: ReadonlyArray<
   if (hesitant) whyParts.push(flashPicked ? `迷い（${second!.label} と点が近い）→ flash が選んだ` : `迷い（${second!.label} と点が近い）→ 点の順`);
   if (pausedPickup) whyParts.push("内覧が決まったのでピックアップは保留");
   if (staffOnly) whyParts.push("スタッフしか分からない事＝AIX で送る（下書きに書かない）");
-  if (claudeOnly) whyParts.push("審査の事情あり（生成は Claude だけ）");
+  if (claudeOnly) whyParts.push(hub.flags.screeningSensitive ? "審査の事情あり（生成は Claude だけ）" : "2番手で申込中（生成は Claude だけ）");
   return {
     ...base, kind: top.kind, by: top.by, action: top.action, checkPattern: top.checkPattern, label: top.label, confidence, hesitant, why: whyParts.join("・"),
     reader, alternatives: ranked.filter((c) => c !== top).slice(0, 3), appliedRecommendations: [...applied].sort(), staffOnly,

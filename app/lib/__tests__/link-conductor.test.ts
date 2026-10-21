@@ -148,6 +148,16 @@ it("審査の事情がある会話は flash に聞かない", () => {
   const d = decide(inp, { tieBreaker: () => { called = true; return 0; } });
   eq(called, false); eq(d.claudeOnly, true);
 });
+it("2番手で申込中（並行で探す）の会話は申込以降で止めない・flash に聞かない（Claude だけ）", () => {
+  const m = [{ sender: "staff", text: PARKING_PROMISE, h: 0 }, { sender: "customer", text: "ほかのお部屋も見たいです", h: 1 }];
+  const par = decide(input(m, { parallelSecond: true }, "applying"), { tieBreaker: () => 0 });
+  ok(par.reader !== "closed", JSON.stringify(par)); eq(par.claudeOnly, true); ok(par.reader !== "flash", "flash に聞いた");
+  const notPar = decide(input(m, { parallelSecond: false }, "applying"));
+  eq(notPar.reader, "closed");
+  // 読めない時は今まで通り止める（Claude だけ）
+  const unk = decide(input(m, { parallelSecond: null }, "applying"));
+  eq(unk.reader, "closed"); eq(unk.claudeOnly, true);
+});
 it("迷いの線は点の差 < HESITATE_GAP", () => ok(HESITATE_GAP > 0));
 it("flash の返事の読み: 範囲外・壊れは null", () => {
   eq(parseTieBreak('{"i": 1, "why": "x"}', 3), 1); eq(parseTieBreak('{"i": 5}', 3), null); eq(parseTieBreak("わからない", 3), null);

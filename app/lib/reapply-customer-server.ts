@@ -1,7 +1,8 @@
 // app/lib/reapply-customer-server.ts（サーバー専用・読むだけ・LLM なし）
 // 「申込歴あり（再探し）」と戻った理由を DB から読む。決まりは reapply-customer.ts（純関数）。
 //   1会話: loadReapplyInfo（画面のメモの帯・ブレインの材料）／たくさん: loadReapplyStates（やることリスト・ターゲットの並び）
-import { loadPostApplyFacts } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, loadParallelSecondState, parallelEligible, type PostApplyFacts } from "@/app/lib/post-apply";
+import { parallelSecondEnabled } from "@/app/lib/parallel-second";
 import {
   resolveReapply, detectReturnPattern, staffPatternOf, reapplyMarkEnabled, buildReapplyBrainNote,
   PATTERN_WINDOW_BEFORE_MS, PATTERN_WINDOW_AFTER_MS,
@@ -35,10 +36,10 @@ async function patternFor(sb: Sb, conversationId: string, st: ReapplyState): Pro
 }
 
 /** 1会話の申込歴あり（無ければ null・読めなければ null＝札を出さないだけ） */
-export async function loadReapplyInfo(sb: Sb, conversationId: string): Promise<ReapplyInfo | null> {
+export async function loadReapplyInfo(sb: Sb, conversationId: string, facts?: PostApplyFacts): Promise<ReapplyInfo | null> {
   if (!reapplyMarkEnabled()) return null;
   try {
-    const st = resolveReapply(await loadPostApplyFacts(sb, conversationId));
+    const st = resolveReapply(facts ?? await loadPostApplyFacts(sb, conversationId));
     if (!st.reapply) return null;
     return await patternFor(sb, conversationId, st);
   } catch (e) {
@@ -84,11 +85,16 @@ export async function loadReapplyStates(sb: Sb, rows: ReadonlyArray<ReapplyConvR
     return out;
   }
   for (const r of cand) {
-    const st = resolveReapply({
+    const f: PostApplyFacts = {
       status: r.status ?? null, isPostApply: r.is_post_apply === true, applicationPushAt: pushBy.get(r.id) ?? null, idDocumentAt: docBy.get(r.id) ?? null,
       statusManualBackAt: r.status_manual_back_at ?? null, deepseekCutoffAt: r.deepseek_cutoff_at ?? null,
-    });
+    };
+    const st = resolveReapply(f);
     if (!st.reapply) continue;
+    // 2026-10-21 判定を1つにした: 2番手で申込中（並行で探す・post-apply.judgeParallelSecond）は申込歴ありにしない（1会話の loadReapplyInfo と同じ）。読めなければ今まで通り
+    if (parallelSecondEnabled() && parallelEligible(f)) {
+      try { if ((await loadParallelSecondState(sb, r.id, f)).parallel) continue; } catch { /* 読めない＝今まで通り */ }
+    }
     if (opts.withPattern?.(r.id)) {
       try { out.set(r.id, await patternFor(sb, r.id, st)); continue; } catch { /* 理由は読めないだけ */ }
     }

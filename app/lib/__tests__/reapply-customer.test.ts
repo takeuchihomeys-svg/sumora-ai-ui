@@ -236,6 +236,12 @@ async function main() {
       const l = buildStaffTodoList({ ...base, conversations: base.conversations.map((c) => (c.id.endsWith("b") ? { ...c, reapply: false } : c)) });
       eq(l.customers.map((c) => c.name), ["テストA"]);
     });
+    await it("2番手で申込中（並行で探す）の会話は申込以降でも出す（下書き・ブレイン・司令塔と同じ）・申込歴ありの印は付けない", () => {
+      const l = buildStaffTodoList({ ...base, conversations: base.conversations.map((c) => (c.id.endsWith("b") ? { ...c, reapply: false, status: "applying", parallelSecond: true } : c)) });
+      const b = l.customers.find((c) => c.name === "テストB");
+      if (!b) throw new Error(JSON.stringify(l.customers.map((c) => c.name)));
+      if (b.accountLabel.endsWith(REAPPLY_HEADER_MARK)) throw new Error(b.accountLabel);
+    });
   });
 
   console.log(`\n${passed} passed, ${failed} failed`);
