@@ -239,7 +239,7 @@ console.log("buildPromiseQueue 時刻の順（2026-10-22 同じ種類の約束�
       eq(q.find((s) => s.kind === "estimate")?.status, "pending", text);
     }
     // 「募集中でした」「他のお部屋も募集していない」は別の部屋の募集ではない
-    for (const text of ["先日まで募集中でしたが、募集終了となっておりました！！", "募集終了となっておりました！！他のお部屋も募集していない状況です！！"]) {
+    for (const text of ["先日まで募集中でしたが、募集終了となっておりました！！", "募集終了となっておりました！！他のお部屋も募集していない状況です！！", "募集終了となっておりました！！同じ建物で募集中のお部屋ございませんでした！！"]) {
       const q = buildPromiseQueue([{ sender: "staff", text: CHK_EST, createdAt: at(10, 15) }], [{ aixType: "property_check_result", sentAt: at(10, 38), text }], Date.parse(at(11)));
       eq(q.find((s) => s.kind === "estimate")?.status, "dropped", text);
     }
