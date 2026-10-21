@@ -207,5 +207,16 @@ it("グループの☑: 「☑3」「〇〇さん なし」は☑（名前は新
   eq(d.hits.map((h) => h.n), [1, 2]);
 });
 
+it("グループの☑: 普段の会話の「なし」は読まない・☑の番号は新着確認の行だけ（AIX・約束を閉じない）", () => {
+  for (const t of ["テスト太郎さん 連絡なし", "テスト太郎さんから返信なし", "テスト太郎さん 問題なしです", "問題なし", "特になし", "3件なし"]) eq(parseTodoReply(t), null);
+  eq(parseTodoReply("3 なし"), { numbers: [3], names: [], none: true });
+  eq(parseTodoReply("テスト太郎さん 物件なしです"), { numbers: [], names: ["テスト太郎"], none: true });
+  eq(parseTodoReply("テスト太郎さん、新着ありませんでした🙏"), { numbers: [], names: ["テスト太郎"], none: true });
+  const r = resolveTodoReply(parseTodoReply("☑1")!, SNAP);
+  eq(r.hits, []);
+  eq(r.unknownNumbers, [1]);
+  ok(renderTodoReplyAck(r, null)!.includes("新着の物件確認"));
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

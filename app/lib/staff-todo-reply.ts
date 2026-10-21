@@ -27,6 +27,19 @@ const DONE_WORD_RE = /✅|✔️?|完了|済|\bdone\b/i;
 /** ☑（確かめたが物件が無い・2026-10-21 竹内さんの決定 268a904a）。☑ は✅と違う意味なので✅の言葉に入れない */
 const NONE_MARK_RE = /☑/;
 const NONE_WORD_RE = /なし|無し|ありませんでした|ありません|無かった|なかった/;
+/**
+ * 「なし」の言葉だけ（☑ の字が無い）の時は、一覧への短い返信の形だけ読む（2026-10-21 確かめる人）:
+ *   番号・「〇〇さん」と区切りを外した残りが「なし」「物件なし」「新着なし」「ありませんでした」等だけの時。
+ *   「〇〇さん 連絡なし」「問題なし」「特になし」「〇〇さんから返信なし」は読まない（普段の会話）
+ */
+const NONE_REPLY_REST_RE = /^(?:(?:新着|物件|新着物件|新着の物件|紹介できる物件|送れる物件)(?:は|も|が)?)?(?:なし|無し|ありませんでした|ありません|無かった|なかった)(?:です|でした)?$/;
+function isNoneListReply(raw: string): boolean {
+  const rest = raw
+    .replace(/([^\s、,，。!！?？✅☑️✔️（）()「」:：・]{1,20}?)\s*(?:さん|様|さま)/g, "")
+    .replace(/[0-9０-９①-⑳㉑-㉟㊱-㊿]/g, "")
+    .replace(/[\s、,，。.!！?？・:：\-ー〜~…☑️\u{1F300}-\u{1FAFF}☀-➿]/gu, "");
+  return NONE_REPLY_REST_RE.test(rest);
+}
 /** 半角・全角数字の番号は短い返信の時だけ読む（「申込完了しました！2回目で…」の 2 を番号にしない）。丸数字はいつでも読む */
 const NUMBER_REPLY_MAX_CHARS = 20;
 
@@ -47,7 +60,7 @@ export function parseTodoReply(text: string | null | undefined): ParsedTodoReply
   const raw = text ?? "";
   if (!raw.trim()) return null;
   const done = DONE_WORD_RE.test(raw);
-  const none = NONE_MARK_RE.test(raw) || (!done && NONE_WORD_RE.test(raw));
+  const none = NONE_MARK_RE.test(raw) || (!done && NONE_WORD_RE.test(raw) && isNoneListReply(raw));
   if (!done && !none) return null;
   // 一覧そのものを貼り返した長文は読まない
   if (raw.includes("【やることリスト】")) return null;
@@ -94,7 +107,8 @@ export function resolveTodoReply(parsed: ParsedTodoReply, snap: TodoSnapshot): T
   const unknownNumbers: number[] = [];
   for (const n of parsed.numbers) {
     const it = snap.items.find((x) => x.n === n);
-    if (it) hits.set(it.key, it); else unknownNumbers.push(n);
+    // ☑（物件なし）は新着確認の行だけ。他の行（AIX 要対応・約束）の番号を☑で閉じない
+    if (it && (!parsed.none || isNewArrivalKey(it.key))) hits.set(it.key, it); else unknownNumbers.push(n);
   }
   const unknownNames: string[] = [];
   for (const raw of parsed.names) {
@@ -116,7 +130,7 @@ export function resolveTodoReply(parsed: ParsedTodoReply, snap: TodoSnapshot): T
 export function renderTodoReplyAck(r: TodoReplyResolution, remaining: number | null): string | null {
   const lines: string[] = [];
   for (const h of r.hits) lines.push(r.none ? `☑${h.n} ${h.name}さん ${h.label}（確認済み・物件なし）` : `✅${h.n} ${h.name}さん ${h.label}`);
-  if (r.unknownNumbers.length) lines.push(`⚠️ 番号 ${r.unknownNumbers.join("・")} は一覧にありません`);
+  if (r.unknownNumbers.length) lines.push(r.none ? `⚠️ 番号 ${r.unknownNumbers.join("・")} は一覧の「新着の物件確認」の行ではありません（☑は新着確認の行だけ）` : `⚠️ 番号 ${r.unknownNumbers.join("・")} は一覧にありません`);
   if (r.unknownNames.length) lines.push(`⚠️「${r.unknownNames.join("・")}」は一覧で1人に決まりません（番号で「✅3」と返してください）`);
   if (lines.length === 0) return null;
   if (r.hits.length && remaining !== null) lines.push(remaining > 0 ? `残り ${remaining}件` : "🎉 一覧の残りは全部✅！");
