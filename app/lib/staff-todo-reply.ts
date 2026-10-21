@@ -5,7 +5,9 @@
 //   グループに返すと✅になる。
 // 結びつけ方（一番単純で外れにくい形）:
 //   ① 番号: 一覧の残りの行には ①② … の番号が付いている → 「✅3」「✅③⑤」「3 完了」「3,5済み」。一覧を引用して返した時はその一覧の番号、
-//      引用が無ければ最後に送った一覧の番号（一覧は1時間ごとなので、古い一覧の番号は引用した時だけ使う）
+//      引用が無ければ返信した時に最後だった一覧の番号（一覧は1時間ごとなので、古い一覧の番号は引用した時だけ使う）。
+//      2026-10-21: 一覧は回す（新着確認の人が便ごとに入れ替わる）ので、新しい一覧が出てすぐ（30分内）の引用の無い番号で、
+//      前の一覧と今の一覧で同じ番号が別の行の時は✅も☑もせず「引用して返す か 〇〇さん なし／完了」と返す（ambiguousTodoNumbers）
 //   ② お客様の名前: 「〇〇さん 完了」「✅〇〇さん」→ その一覧のそのお客様の残りの行を全部✅
 //   ③ ☑（色の無いチェック・2026-10-21 竹内さんの決定 268a904a）: 「☑3」「〇〇さん なし」＝ターゲットの新着を確かめたが物件が無い。
 //      番号はその行、名前はそのお客様の「新着の物件確認」の行だけを☑にする（他のやる事は済みにしない）
@@ -89,23 +91,72 @@ export function normName(s: string | null | undefined): string {
   return (s ?? "").normalize("NFKC").toLowerCase().replace(/[\s　・.。、,!！?？~〜ー\-_'"’”]/g, "").replace(/(?:さん|様|さま)$/, "");
 }
 
-/** どの一覧で読むか: 引用した一覧 → 無ければ最後の一覧（新しすぎず古すぎない物） */
-export function pickTodoSnapshot(snaps: ReadonlyArray<TodoSnapshot>, quotedMessageId: string | null | undefined, nowMs: number): TodoSnapshot | null {
+const snapMs = (s: TodoSnapshot) => { const v = Date.parse(s.sentAt); return Number.isFinite(v) ? v : NaN; };
+/** 新しい順（時刻の読めない控えは外す） */
+const byNewest = (snaps: ReadonlyArray<TodoSnapshot>) => snaps.filter((s) => Number.isFinite(snapMs(s))).sort((a, b) => snapMs(b) - snapMs(a));
+const atOf = (nowMs: number, replyAtMs?: number | null) => (typeof replyAtMs === "number" && Number.isFinite(replyAtMs) ? replyAtMs : nowMs);
+
+/**
+ * どの一覧で読むか: 引用した一覧 → 無ければ返信した時に最後だった一覧（新しすぎず古すぎない物）。
+ *   replyAtMs（LINE の発言の時刻）が無い時は nowMs で選ぶ。返信の後に出た一覧の番号では読まない（2026-10-21）
+ */
+export function pickTodoSnapshot(snaps: ReadonlyArray<TodoSnapshot>, quotedMessageId: string | null | undefined, nowMs: number, replyAtMs?: number | null): TodoSnapshot | null {
   if (quotedMessageId) {
     const q = snaps.find((s) => s.messageId && s.messageId === quotedMessageId);
     if (q) return q;
   }
-  const latest = [...snaps].sort((a, b) => Date.parse(b.sentAt) - Date.parse(a.sentAt))[0];
-  if (!latest || nowMs - Date.parse(latest.sentAt) > TODO_SNAPSHOT_FRESH_MS) return null;
+  const at = atOf(nowMs, replyAtMs);
+  const latest = byNewest(snaps).find((s) => snapMs(s) <= at);
+  if (!latest || at - snapMs(latest) > TODO_SNAPSHOT_FRESH_MS) return null;
   return latest;
 }
 
-export type TodoReplyResolution = { hits: TodoSnapshotItem[]; unknownNumbers: number[]; unknownNames: string[]; none?: boolean };
-/** 返信 → 一覧の行。名前は一覧のお客様の名前と前方・部分一致（2文字以上） */
-export function resolveTodoReply(parsed: ParsedTodoReply, snap: TodoSnapshot): TodoReplyResolution {
+/**
+ * 引用の無い番号の返信で「前の一覧の番号かもしれない」と見る時間（2026-10-21）。一覧は1時間ごとに回す（新着確認の人が入れ替わる）ので、
+ *   新しい一覧が出てからこの時間の内は、前の一覧を見ながら「☑3」と返した人がいる。その間に前の一覧と今の一覧で同じ番号が別の行なら決めない
+ */
+export const TODO_AMBIGUOUS_WINDOW_MS = 30 * 60_000;
+/** 控えの時刻（送れた後に書く）と返信の時刻のずれの余裕。返信のすぐ後に書かれた控えの一覧も、返信した人が見ていた一覧に入れる */
+export const TODO_SNAPSHOT_SKEW_MS = 60_000;
+
+/**
+ * 引用の無い番号の返信で、どの一覧の番号か決まらない番号（2026-10-21・回す一覧の取り違え防止）。
+ *   見ていたかもしれない一覧 = 返信した時に最後だった一覧＋（それが出てから TODO_AMBIGUOUS_WINDOW_MS 内なら）その前の一覧
+ *   ＋（控えの書き込みのずれ）返信のすぐ後に書かれた一覧。その中で同じ番号が違う行（行の鍵）を指す時、その番号は決めない。
+ *   引用した時は使わない（引用はその一覧で決まる）。名前は番号ではないので関係ない
+ */
+export function ambiguousTodoNumbers(numbers: ReadonlyArray<number>, snaps: ReadonlyArray<TodoSnapshot>, quotedMessageId: string | null | undefined, nowMs: number, replyAtMs?: number | null): number[] {
+  if (numbers.length === 0) return [];
+  if (quotedMessageId && snaps.some((s) => s.messageId && s.messageId === quotedMessageId)) return [];
+  const at = atOf(nowMs, replyAtMs);
+  const sorted = byNewest(snaps);
+  const curIdx = sorted.findIndex((s) => snapMs(s) <= at);
+  if (curIdx < 0 || at - snapMs(sorted[curIdx]) > TODO_SNAPSHOT_FRESH_MS) return [];
+  const seen: TodoSnapshot[] = [sorted[curIdx]];
+  const prev = sorted[curIdx + 1];
+  if (prev && at - snapMs(sorted[curIdx]) <= TODO_AMBIGUOUS_WINDOW_MS) seen.push(prev);
+  for (const s of sorted) if (snapMs(s) > at && snapMs(s) - at <= TODO_SNAPSHOT_SKEW_MS) seen.push(s);
+  if (seen.length < 2) return [];
+  return numbers.filter((n) => {
+    const keys = seen.map((s) => s.items.find((x) => x.n === n)?.key).filter((k): k is string => !!k);
+    // 今の一覧に無い番号を前の一覧が持つ＝前の一覧の番号かもしれない。今の一覧だけが持つ番号は今の一覧の番号（前の一覧は短かった）
+    const curHas = seen[0].items.some((x) => x.n === n);
+    return (!curHas && keys.length > 0) || new Set(keys).size > 1;
+  });
+}
+
+export type TodoReplyResolution = {
+  hits: TodoSnapshotItem[]; unknownNumbers: number[]; unknownNames: string[]; none?: boolean;
+  /** 前の一覧と今の一覧で別の行を指す番号（引用の無い返信・✅も☑もしない） */
+  ambiguousNumbers?: number[];
+};
+/** 返信 → 一覧の行。名前は一覧のお客様の名前と前方・部分一致（2文字以上）。ambiguous の番号は読まない（ambiguousNumbers に返す） */
+export function resolveTodoReply(parsed: ParsedTodoReply, snap: TodoSnapshot, ambiguous: ReadonlyArray<number> = []): TodoReplyResolution {
   const hits = new Map<string, TodoSnapshotItem>();
   const unknownNumbers: number[] = [];
+  const ambiguousNumbers: number[] = [];
   for (const n of parsed.numbers) {
+    if (ambiguous.includes(n)) { ambiguousNumbers.push(n); continue; }
     const it = snap.items.find((x) => x.n === n);
     // ☑（物件なし）は新着確認の行だけ。他の行（AIX 要対応・約束）の番号を☑で閉じない
     if (it && (!parsed.none || isNewArrivalKey(it.key))) hits.set(it.key, it); else unknownNumbers.push(n);
@@ -123,7 +174,10 @@ export function resolveTodoReply(parsed: ParsedTodoReply, snap: TodoSnapshot): T
     if (people.size !== 1) { unknownNames.push(raw); continue; }
     for (const it of part) hits.set(it.key, it);
   }
-  return { hits: [...hits.values()].sort((a, b) => a.n - b.n), unknownNumbers, unknownNames, ...(parsed.none ? { none: true } : {}) };
+  return {
+    hits: [...hits.values()].sort((a, b) => a.n - b.n), unknownNumbers, unknownNames,
+    ...(parsed.none ? { none: true } : {}), ...(ambiguousNumbers.length ? { ambiguousNumbers } : {}),
+  };
 }
 
 /** グループへの返事（返信の replyToken で返す・push の数を使わない） */
@@ -131,6 +185,13 @@ export function renderTodoReplyAck(r: TodoReplyResolution, remaining: number | n
   const lines: string[] = [];
   for (const h of r.hits) lines.push(r.none ? `☑${h.n} ${h.name}さん ${h.label}（確認済み・物件なし）` : `✅${h.n} ${h.name}さん ${h.label}`);
   if (r.unknownNumbers.length) lines.push(r.none ? `⚠️ 番号 ${r.unknownNumbers.join("・")} は一覧の「新着の物件確認」の行ではありません（☑は新着確認の行だけ）` : `⚠️ 番号 ${r.unknownNumbers.join("・")} は一覧にありません`);
+  if (r.ambiguousNumbers?.length) {
+    const ns = r.ambiguousNumbers.join("・");
+    const ex = r.ambiguousNumbers[0];
+    lines.push(r.none
+      ? `⚠️ ${ns} は前の一覧と番号がずれています。一覧を引用して「☑${ex}」か「〇〇さん なし」で返してください`
+      : `⚠️ ${ns} は前の一覧と番号がずれています。一覧を引用して「✅${ex}」か「〇〇さん 完了」で返してください`);
+  }
   if (r.unknownNames.length) lines.push(`⚠️「${r.unknownNames.join("・")}」は一覧で1人に決まりません（番号で「✅3」と返してください）`);
   if (lines.length === 0) return null;
   if (r.hits.length && remaining !== null) lines.push(remaining > 0 ? `残り ${remaining}件` : "🎉 一覧の残りは全部✅！");

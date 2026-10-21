@@ -103,8 +103,14 @@ it("ターゲットの毎日の新着確認: 物件を送れば✅・グルー�
   i.conditions = { t1: { commute_station: "テスト駅", rent_max: 80000, floor_plan: "2LDK" }, t4: { rent_max: 70000 } };
   const list = buildStaffTodoList(i);
   const text = renderStaffTodoList(list)!;
-  ok(text.includes("━ ①ターゲット×やること ━"), text);
-  ok(text.includes("━ ④ターゲットの新着確認 ━"), text);
+  ok(text.includes("━ 1. ターゲット×やること ━"), text);
+  ok(text.includes("━ 4. ターゲットの新着確認 ━"), text);
+  // 見出しは丸数字を使わない（行の番号の③と取り違えない・2026-10-21）。丸数字は番号の行だけ
+  const CIRC = /[①-⑳㉑-㉟㊱-㊿]/;
+  const heads = text.split("\n").filter((l) => l.startsWith("━"));
+  ok(heads.length >= 2 && heads.every((l) => !CIRC.test(l)), heads.join(" / "));
+  // 番号の行は丸数字のまま
+  ok(text.split("\n").some((l) => l.startsWith("①")), text);
   ok(text.includes("AIX【物件ピックアップした】→新着まとめ：条件（テスト駅・〜8万・2LDK）で新着を確認して送る、無ければ☑"), text);
   ok(text.includes("✅新着の物件確認：物件をお送りした"), text);
   ok(text.includes("☑新着の物件確認：確認済み・物件なし"), text);
@@ -161,7 +167,7 @@ it("長すぎる時: 少なければ④を1人1行（条件つき）で全員", 
   ok(!t40.includes("次の便で"), t40.slice(-300));
 });
 
-it("それでも長い時: 条件を外さず入るだけ出し、残りは「④の残り N人は次の便で」・番号は出した行だけ", () => {
+it("それでも長い時: 条件を外さず入るだけ出し、残りは「（4. ターゲットの新着確認）の残り N人は次の便で」・番号は出した行だけ", () => {
   const n = 70;
   const list = buildStaffTodoList(manyDaily(n));
   const post = composeStaffTodoPost(list);
@@ -286,7 +292,7 @@ it("1日10便: ④200人＋AIX の行で回し続けても飢える人はいな�
     // 文の番号の行 = 控えの同じ番号のお客様（どの番号も別の人に当たらない）
     const lines = text.split("\n");
     for (const it of snap.items) {
-      const ls = lines.filter((l) => l.includes(todoNumberMark(it.n)) && !l.startsWith("━") && !l.includes("次の便で"));
+      const ls = lines.filter((l) => l.includes(todoNumberMark(it.n))); // 見出し（━ 3. … ━）・「次の便で」の行は丸数字を持たない＝番号の行だけが当たる
       if (ls.length !== 1) throw new Error(`${hm} n=${it.n} ${JSON.stringify(ls)}`);
       ok(ls[0].includes(it.name) || it.conversationId.startsWith("x"), `${hm} ${it.n} ${ls[0]} ≠ ${it.name}`);
     }
@@ -355,7 +361,7 @@ it("その他（announce-sonota と同じ選び方）: ターゲット除外・7
   const list = buildStaffTodoList(i);
   eq(list.customers[0].group, 5);
   const text = renderStaffTodoList(list)!;
-  ok(text.includes("━ ⑤その他の新着確認 ━") && !text.includes("🌟") && !text.includes("【審査中】"), text);
+  ok(text.includes("━ 5. その他の新着確認 ━") && !text.includes("🌟") && !text.includes("【審査中】"), text);
   ok(text.includes("初回まとめ"), text);
 });
 

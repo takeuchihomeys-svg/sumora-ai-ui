@@ -55,11 +55,11 @@ async function rotatePreview() {
     console.log(`
 ==================== ${label} の便 ====================`);
     console.log(p.text ?? "（やる事なし）");
-    console.log(`--- 長さ ${p.text?.length ?? 0}字・④に出した ${daily(p.list).length}人・次の便へ ④${p.carried[4]}人 ⑤${p.carried[5]}人`);
+    console.log(`--- 長さ ${p.text?.length ?? 0}字・4.(新着確認) に出した ${daily(p.list).length}人・次の便へ 4.: ${p.carried[4]}人 5.: ${p.carried[5]}人`);
   }
   const both = new Set([...daily(p1.list), ...daily(p2.list)]);
   const again = daily(p2.list).filter((id) => daily(p1.list).includes(id)).length;
-  console.log(`--- 2便で④に出た人 ${both.size}人（11:30 で 10:30 と重なった人 ${again}人）`);
+  console.log(`--- 2便で 4. に出た人 ${both.size}人（11:30 で 10:30 と重なった人 ${again}人）`);
 }
 
 async function main() {

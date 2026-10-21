@@ -712,7 +712,7 @@ export function isFirstPostOfDay(atMs: number, snapshots?: ReadonlyArray<TodoSna
 }
 /** 次の便に回した④⑤の人数の1行 */
 export function carriedLine(group: 4 | 5, n: number): string {
-  return `${group === 4 ? "④" : "⑤"}の残り ${n}人は次の便で`;
+  return `（${TODO_GROUP_LABEL[group]}）の残り ${n}人は次の便で`;
 }
 
 /** 1便の中身（出す一覧＝番号はこの一覧だけで振る・控えもこれで作る） */

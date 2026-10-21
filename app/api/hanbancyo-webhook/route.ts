@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
   let body: {
     events: Array<{
       type: string;
+      timestamp?: number;
       source?: { type?: string; groupId?: string; userId?: string };
       message?: { type: string; text?: string; id?: string; quotedMessageId?: string };
       replyToken?: string;
@@ -123,7 +124,7 @@ export async function POST(req: NextRequest) {
     const fromTodoGroup = sourceType === "group" && !!sourceGroupId
       && sourceGroupId === (await todoListGroupId(supabase).catch(() => null));
     if (!legacyDone && fromTodoGroup) {
-      const ack = await handleTodoGroupReply(supabase, { text, quotedMessageId: event.message.quotedMessageId ?? null, userId: event.source?.userId ?? null })
+      const ack = await handleTodoGroupReply(supabase, { text, quotedMessageId: event.message.quotedMessageId ?? null, userId: event.source?.userId ?? null, replyAtMs: event.timestamp ?? null })
         .catch((e) => { console.error("[hanbancyo-webhook] todo reply:", e); return null; });
       if (ack && replyToken) await replyToLine(replyToken, ack);
       if (ack) continue;
@@ -156,7 +157,7 @@ export async function POST(req: NextRequest) {
       } else {
         // 物件出しの顧客に無い名前は【やることリスト】のお客様として読む（「完了 〇〇さん」）
         const ack = fromTodoGroup
-          ? await handleTodoGroupReply(supabase, { text: /さん|様|さま/.test(name) ? text : `${name}さん 完了`, quotedMessageId: event.message.quotedMessageId ?? null, userId: event.source?.userId ?? null })
+          ? await handleTodoGroupReply(supabase, { text: /さん|様|さま/.test(name) ? text : `${name}さん 完了`, quotedMessageId: event.message.quotedMessageId ?? null, userId: event.source?.userId ?? null, replyAtMs: event.timestamp ?? null })
             .catch((e) => { console.error("[hanbancyo-webhook] todo reply:", e); return null; })
           : null;
         if (replyToken) await replyToLine(replyToken, ack ?? `⚠️「${name}」に一致する顧客が見つかりませんでした`);

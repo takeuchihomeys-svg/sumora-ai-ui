@@ -7,7 +7,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { numberTodoItems, TODO_MARK_VIA_NONE, type TodoList } from "@/app/lib/staff-todo-list";
 import {
-  parseTodoReply, pickTodoSnapshot, resolveTodoReply, renderTodoReplyAck, TODO_SNAPSHOT_KEEP,
+  parseTodoReply, pickTodoSnapshot, ambiguousTodoNumbers, resolveTodoReply, renderTodoReplyAck, TODO_SNAPSHOT_KEEP,
   type TodoSnapshot, type TodoSnapshotItem,
 } from "@/app/lib/staff-todo-reply";
 
@@ -76,15 +76,17 @@ export async function markTodoItemsDone(sb: SupabaseClient, items: ReadonlyArray
  * グループの発言を読んで✅にし、返事の文を返す（読まない発言は null＝何も返さない）。
  * 表がまだ無い時、AIX 要対応・約束の行は元の行を閉じるので✅になる。返信・内覧の行は表が無いと残る（返事でそう伝える）
  */
-export async function handleTodoGroupReply(sb: SupabaseClient, ev: { text: string; quotedMessageId?: string | null; userId?: string | null }, nowMs: number = Date.now()): Promise<string | null> {
+export async function handleTodoGroupReply(sb: SupabaseClient, ev: { text: string; quotedMessageId?: string | null; userId?: string | null; /** LINE の発言の時刻（event.timestamp・ms） */ replyAtMs?: number | null }, nowMs: number = Date.now()): Promise<string | null> {
   const parsed = parseTodoReply(ev.text);
   if (!parsed) return null;
   const snaps = await loadTodoSnapshots(sb);
-  const snap = pickTodoSnapshot(snaps, ev.quotedMessageId ?? null, nowMs);
+  // 引用の無い番号は、返信した時に最後だった一覧で読む。前の一覧と同じ番号が別の行の時は決めず、引用か名前で返してもらう（回す一覧の取り違え防止）
+  const snap = pickTodoSnapshot(snaps, ev.quotedMessageId ?? null, nowMs, ev.replyAtMs ?? null);
   if (!snap) return null;
-  const res = resolveTodoReply(parsed, snap);
-  // 番号も名前も当たらず、名前だけの返信（普段の会話の「〇〇さん済みです」等）は黙る。番号を書いた時だけ「無い」と返す
-  if (res.hits.length === 0 && res.unknownNumbers.length === 0) return null;
+  const ambiguous = ambiguousTodoNumbers(parsed.numbers, snaps, ev.quotedMessageId ?? null, nowMs, ev.replyAtMs ?? null);
+  const res = resolveTodoReply(parsed, snap, ambiguous);
+  // 番号も名前も当たらず、名前だけの返信（普段の会話の「〇〇さん済みです」等）は黙る。番号を書いた時だけ「無い」「ずれている」と返す
+  if (res.hits.length === 0 && res.unknownNumbers.length === 0 && !res.ambiguousNumbers?.length) return null;
   const nowIso = new Date(nowMs).toISOString();
   const { unrecorded } = await markTodoItemsDone(sb, res.hits, { userId: ev.userId ?? null, text: ev.text, none: !!res.none }, nowIso);
   // 残りの数は返さない（LINE の送信で自動の✅になった行は表に無いので、表だけで数えると多く見える）。次の一覧で分かる
