@@ -15,6 +15,8 @@ import { loadBrainTargets, loadScreeningList, type BrainTarget, type ScreeningRo
 import { PROPERTY_DELIVERY_AIX } from "@/app/lib/aix-task-link";
 import { getCustomerHub } from "@/app/lib/customer-hub-server";
 import { MAIN_ROUTE, type RouteNodeId } from "@/app/lib/apply-route-map";
+// 2026-10-21 つなぎのブレイン 段3 司令塔: 迷う所（同じ組で点が近い）の順（LINK_CONDUCTOR_TODO=on の時だけ・既定 off）
+import { conductCustomer, conductorTodoOrder, linkConductorTodoEnabled, type ConductorDecision } from "@/app/lib/link-conductor";
 
 const DAY = 86_400_000;
 const PAGE = 1000;
@@ -197,7 +199,7 @@ export function pickTargets(ts: ReadonlyArray<BrainTarget>): TodoTargetRow[] {
 }
 
 /** ハブ（customer-hub）から並びの材料: 地図の駅・申込歴あり・良い反応。時間の上限を過ぎた分は読まない（行と状態から数える） */
-export async function loadHubSignals(sb: SupabaseClient, ids: ReadonlyArray<string>, atMs: number, budgetMs: number): Promise<Record<string, TodoPrioritySignal>> {
+export async function loadHubSignals(sb: SupabaseClient, ids: ReadonlyArray<string>, atMs: number, budgetMs: number, decisionsOut?: Map<string, ConductorDecision>): Promise<Record<string, TodoPrioritySignal>> {
   const out: Record<string, TodoPrioritySignal> = {};
   const deadline = Date.now() + budgetMs;
   let next = 0;
@@ -207,6 +209,7 @@ export async function loadHubSignals(sb: SupabaseClient, ids: ReadonlyArray<stri
       try {
         const r = await getCustomerHub(sb, id, atMs);
         if (!r) continue;
+        if (decisionsOut) { try { decisionsOut.set(id, conductCustomer(r.hub, r.contradictions, r.input)); } catch { /* 司令塔なしの順 */ } }
         const node = r.hub.where.node as RouteNodeId | null;
         const idx = node ? MAIN_ROUTE.indexOf(node) : -1;
         out[id] = {
@@ -229,6 +232,7 @@ export async function loadStaffTodoList(sb: SupabaseClient, atMs: number = Date.
   const ids = first.customers.filter((c) => c.items.some((i) => !i.doneAt && i.source !== "target_new_arrival")).map((c) => c.conversationId);
   if (!ids.length) return first;
   const budget = opts.hubBudgetMs ?? Number(process.env.STAFF_TODO_HUB_BUDGET_MS ?? 20_000);
-  const signals = await loadHubSignals(sb, ids, atMs, Number.isFinite(budget) ? budget : 20_000);
-  return buildStaffTodoList({ ...input, signals });
+  const decisions = linkConductorTodoEnabled() ? new Map<string, ConductorDecision>() : undefined;
+  const signals = await loadHubSignals(sb, ids, atMs, Number.isFinite(budget) ? budget : 20_000, decisions);
+  return buildStaffTodoList({ ...input, signals }, decisions?.size ? { conductor: conductorTodoOrder(decisions) } : {});
 }

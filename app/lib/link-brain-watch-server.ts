@@ -7,6 +7,7 @@ import {
   type LinkFact, type LinkTurn, type LinkAixItem, type LinkPickup, type LinkJudgment, type LinkMemoItem,
 } from "@/app/lib/link-brain-watch";
 import { linkHubEnabled } from "@/app/lib/customer-hub";
+import { linkConductorEnabled } from "@/app/lib/link-conductor";
 import { auditCustomerHubs } from "@/app/lib/customer-hub-server";
 
 const DAY = 86_400_000;
@@ -114,6 +115,13 @@ export async function runLinkWatch(sb: SupabaseClient, w: LinkWindow, o: { examp
       const a = await auditCustomerHubs(sb, { ids: inputs.map((i) => i.conv.id), nowMs: w.nowMs, limit: LINK_HUB_MAX_CONVERSATIONS, samplesPerType: 0 });
       s.hub = { conversations: a.conversations, withContradiction: a.withContradiction, byType: a.byType as Record<string, number>, actors: a.actors };
     } catch (e) { console.warn("[link-brain-watch] hub skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  // 段3（既定 off・LINK_CONDUCTOR=on）: 司令塔が会話ごとに次の一手を決め、種類ごとに数える（読むだけ・flash なし・$0）
+  if (linkConductorEnabled(o.env)) {
+    try {
+      const { auditConductor } = await import("@/app/lib/link-conductor-server");
+      s.conductor = { ...(await auditConductor(sb, inputs.map((i) => i.conv.id).slice(0, LINK_HUB_MAX_CONVERSATIONS), w.nowMs)) };
+    } catch (e) { console.warn("[link-brain-watch] conductor skipped:", e instanceof Error ? e.message : String(e)); }
   }
   return s;
 }

@@ -19,12 +19,17 @@ import { maskExamText } from "./lib/brain-exam-mask";
 import { autoAnswerOf } from "./lib/brain-exam-watch";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { EXAM_BRAIN_DIR, SPEC_FILE } from "./lib/exam-brain-io";
-import { piiGate, dedupeCandidates, rankCandidates, toAddBatch, type QCand } from "./lib/exam-question-candidates";
+import { piiGate, dedupeCandidates, rankCandidates, toAddBatch, linkBreakToWatchRow, LINK_EXAM_BREAKS, type QCand, type QSource } from "./lib/exam-question-candidates";
+import { linkConductorExamEnabled } from "../app/lib/link-conductor";
+import { loadLinkWatchInputs } from "../app/lib/link-brain-watch-server";
+import { watchConversation, BREAK_JA } from "../app/lib/link-brain-watch";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const DAYS = Math.max(1, Number(arg("days", "2")) || 2);
 const MAX = Math.max(1, Number(arg("max", "20")) || 20);
+// 2026-10-21（8c3bf572）: つなぎのブレインの見張りの本物の切れも候補に（--link か LINK_CONDUCTOR_EXAM=on・既定 off）
+const LINK = process.argv.includes("--link") || linkConductorExamEnabled();
 const OUT_DIR = join(EXAM_BRAIN_DIR, "question-candidates");
 const P = (s: string) => Date.parse(s);
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -37,21 +42,14 @@ type Msg = { sender: string; text: string | null; created_at: string; staff_writ
   const skip: Record<string, number> = {};
   const sk = (k: string) => { skip[k] = (skip[k] ?? 0) + 1; };
   const cands: QCand[] = [];
-  // ① 見張りの道の外れ
-  const since = new Date(Date.now() - DAYS * 86_400_000).toISOString();
-  const { data, error } = await sb.from("line_watch_turns").select("conversation_id, customer_turn_at, customer_last_at, brain_action, brain_reply_mode, brain_check_pattern, scene_key, verdict_detail, staff_aix, staff_texts")
-    .gte("customer_turn_at", since).eq("verdict", "different").order("customer_turn_at", { ascending: false }).limit(2000);
-  if (error) throw new Error(`line_watch_turns が読めない: ${error.message}`);
-  for (const r of (data ?? []) as Row[]) {
-    const reason = String(r.verdict_detail?.reason ?? "");
-    if (!PATH_MISS_REASONS.has(reason)) { sk("見張り: 道の外れでない"); continue; }
-    if (isTestConversation(r.conversation_id)) { sk("テスト会話"); continue; }
-    if (String(r.scene_key ?? "").startsWith("対象外")) { sk("申込以降"); continue; }
+  const fromWatchRow = async (r: Row, reason: string, source: QSource, tags: string[], whyHead: string): Promise<QCand | null> => {
+    if (isTestConversation(r.conversation_id)) { sk("テスト会話"); return null; }
+    if (String(r.scene_key ?? "").startsWith("対象外")) { sk("申込以降"); return null; }
     const custLast = r.customer_last_at ?? r.customer_turn_at;
     const { data: mm } = await sb.from("messages").select("sender, text, created_at, staff_writer").eq("conversation_id", r.conversation_id).lte("created_at", new Date(P(custLast) + 3 * 3600_000).toISOString()).order("created_at", { ascending: false }).limit(60);
     const msgs = ((mm ?? []) as Msg[]).reverse();
     const before = msgs.filter((m) => P(m.created_at) <= P(custLast));
-    if (before.some((m) => m.sender !== "customer" && APPLY_FORM_RE.test(m.text ?? ""))) { sk("申込以降（申込フォームの後）"); continue; }
+    if (before.some((m) => m.sender !== "customer" && APPLY_FORM_RE.test(m.text ?? ""))) { sk("申込以降（申込フォームの後）"); return null; }
     const cust = before.filter((m) => m.sender === "customer" && P(m.created_at) >= P(r.customer_turn_at));
     const burst = (r.staff_texts ?? []).filter((x) => x.burst).map((x) => x.text);
     const after = msgs.filter((m) => P(m.created_at) > P(custLast) && m.sender !== "customer");
@@ -61,13 +59,46 @@ type Msg = { sender: string; text: string | null; created_at: string; staff_writ
     const staff = oneLine(maskExamText(burst.join("\n―\n"), null)).slice(0, 300);
     // 生の文で申込の書類を見て、伏せた後の文で個人の値を見る（両方とも通らない番は出さない）
     const g = piiGate([...cust.map((m) => m.text ?? ""), ...burst], { piiValueSignal: () => null, applicationMaterialReason }) ?? piiGate([customer, staff], gate);
-    if (g) { sk(`個人情報の網: ${g.replace(/（.*$/, "")}`); continue; }
+    if (g) { sk(`個人情報の網: ${g.replace(/（.*$/, "")}`); return null; }
     const brain = r.brain_reply_mode === "aix" ? `AIX:${r.brain_action ?? "?"}${r.brain_check_pattern ? `/${r.brain_check_pattern}` : ""}` : "返信";
     const pressed = (r.staff_aix ?? []).map((p) => `${p.aix_type}${p.check_pattern ? `/${p.check_pattern}` : ""}${p.burst ? "" : "(後)"}`);
     const ans = writer === "employee" ? null : autoAnswerOf(r);
-    cands.push({ source: "見張り", conv: r.conversation_id, at: cust[cust.length - 1]?.created_at ?? custLast, type: ans?.type ?? "返信かAIXか", tags: ["見張り", reason], accept: ans?.accept ?? [], mustNot: ans?.mustNot ?? [brain],
-      customer, staff, writer, why: `見張りの道の外れ（${reason}・ブレイン ${brain} → スタッフ ${pressed.join(",") || "手打ち"}）`,
-      needs: ans ? ["依頼（asks）の要点"] : ["正解の道（会話を読んで決める）", "依頼（asks）の要点"] });
+    return { source, conv: r.conversation_id, at: cust[cust.length - 1]?.created_at ?? custLast, type: ans?.type ?? "返信かAIXか", tags, accept: ans?.accept ?? [], mustNot: ans?.mustNot ?? [brain],
+      customer, staff, writer, why: `${whyHead}・ブレイン ${brain} → スタッフ ${pressed.join(",") || "手打ち"}）`,
+      needs: ans ? ["依頼（asks）の要点"] : ["正解の道（会話を読んで決める）", "依頼（asks）の要点"] };
+  };
+  // ① 見張りの道の外れ
+  const since = new Date(Date.now() - DAYS * 86_400_000).toISOString();
+  const { data, error } = await sb.from("line_watch_turns").select("conversation_id, customer_turn_at, customer_last_at, brain_action, brain_reply_mode, brain_check_pattern, scene_key, verdict_detail, staff_aix, staff_texts")
+    .gte("customer_turn_at", since).eq("verdict", "different").order("customer_turn_at", { ascending: false }).limit(2000);
+  if (error) throw new Error(`line_watch_turns が読めない: ${error.message}`);
+  for (const r of (data ?? []) as Row[]) {
+    const reason = String(r.verdict_detail?.reason ?? "");
+    if (!PATH_MISS_REASONS.has(reason)) { sk("見張り: 道の外れでない"); continue; }
+    const c = await fromWatchRow(r, reason, "見張り", ["見張り", reason], `見張りの道の外れ（${reason}`);
+    if (c) cands.push(c);
+  }
+  // ④ つなぎの切れ（link-brain-watch の本物の切れのうち、お客様の番でブレインが違う一手を出した物）
+  let linkNote = "つなぎの切れ: 足していない（--link か LINK_CONDUCTOR_EXAM=on で足す）";
+  if (LINK) {
+    const nowMs = Date.now();
+    const w = { fromMs: nowMs - DAYS * 86_400_000, toMs: nowMs, nowMs };
+    const inputs = await loadLinkWatchInputs(sb, w);
+    const staffSide: Record<string, number> = {};
+    let n = 0;
+    for (const input of inputs) {
+      for (const v of watchConversation(input, w)) {
+        if (v.ok || !v.breakType) continue;
+        if (!LINK_EXAM_BREAKS[v.breakType]) { staffSide[v.breakType] = (staffSide[v.breakType] ?? 0) + 1; continue; }
+        const { data: tr } = await sb.from("line_watch_turns").select("conversation_id, customer_turn_at, customer_last_at, brain_action, brain_reply_mode, brain_check_pattern, scene_key, verdict_detail, staff_aix, staff_texts")
+          .eq("conversation_id", input.conv.id).eq("customer_turn_at", v.at).limit(1).maybeSingle();
+        const row = tr ? linkBreakToWatchRow(v.breakType, tr as Row) : null;
+        if (!row) { sk("つなぎの切れ: 番が見つからない"); continue; }
+        const c = await fromWatchRow(row as Row, String(row.verdict_detail.reason), "つなぎの切れ", ["つなぎ", v.breakType], `つなぎの切れ（${LINK_EXAM_BREAKS[v.breakType]}`);
+        if (c) { cands.push(c); n++; }
+      }
+    }
+    linkNote = `つなぎの切れ ${n}（問題にならないスタッフ側の切れ: ${Object.entries(staffSide).map(([k, x]) => `${BREAK_JA[k] ?? k} ${x}`).join("・") || "0"}）`;
   }
   // ② 大きく直された番（edited-turn-miner の一番新しい日の exam-batch.json）
   const etDir = join(examCacheRoot(), "edited-turns");
@@ -94,7 +125,7 @@ type Msg = { sender: string; text: string | null; created_at: string; staff_writ
   for (const s of spec) typeCount[String(s.type ?? "")] = (typeCount[String(s.type ?? "")] ?? 0) + 1;
   const ranked = rankCandidates(d.keep, { typeCount }).slice(0, MAX);
   const jst = new Date(Date.now() + 9 * 3600_000).toISOString();
-  const L = [`# 試験の問題の候補（本番の外れから・${jst.slice(0, 16).replace("T", " ")} JST・直近 ${DAYS}日）`, "", `源: 見張り ${cands.filter((c) => c.source === "見張り").length}・${etNote}・${dtNote}`,
+  const L = [`# 試験の問題の候補（本番の外れから・${jst.slice(0, 16).replace("T", " ")} JST・直近 ${DAYS}日）`, "", `源: 見張り ${cands.filter((c) => c.source === "見張り").length}・${linkNote}・${etNote}・${dtNote}`,
     `外した: ${Object.entries(skip).map(([k, v]) => `${k} ${v}`).join("・") || "0"}`, `候補 ${d.keep.length}（上位 ${ranked.length} を出す）。spec.json には足していない＝人が読んで足す`, ""];
   for (const [i, c] of ranked.entries()) {
     L.push(`## ${i + 1}. [${c.source}] ${c.type}・${c.conv.slice(0, 8)} ${c.at.slice(0, 16)}（点 ${c.score}: ${c.rankWhy.join("・") || "-"}）`);
