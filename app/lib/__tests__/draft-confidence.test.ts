@@ -20,8 +20,9 @@ const BASE: ConfidenceInput = {
 };
 
 console.log("── 切替（既定 off）");
-t("未設定は off", !draftConfidenceEnabled({}));
-t("on の時だけ on", draftConfidenceEnabled({ DRAFT_CONFIDENCE: "on" }));
+t("未設定は on（2026-10-21 既定 on）", draftConfidenceEnabled({}));
+t("off で止まる", !draftConfidenceEnabled({ DRAFT_CONFIDENCE: "off" }));
+t("on は on", draftConfidenceEnabled({ DRAFT_CONFIDENCE: "on" }));
 t("ON（大文字）も on", draftConfidenceEnabled({ DRAFT_CONFIDENCE: " ON " }));
 
 console.log("── 型どおりの番は高い");

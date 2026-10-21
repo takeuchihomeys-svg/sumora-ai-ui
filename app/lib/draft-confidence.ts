@@ -30,7 +30,8 @@ export const DRAFT_CONFIDENCE_VERSION = "dc-2026-10-21";
 
 /** 切替（既定 off）。on の時だけ generate-reply が計算して載せる・画面が印を出す・自動返信の関所が低い番を止める */
 export function draftConfidenceEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.DRAFT_CONFIDENCE ?? "").trim().toLowerCase() === "on";
+  // 2026-10-21 確かめ役「画面の低の印と自動返信を人に残す側だけなら on でよい」→ 既定 on（止める DRAFT_CONFIDENCE=off）。高＝送ってよいの根拠にはまだしない
+  return (env.DRAFT_CONFIDENCE ?? "").trim().toLowerCase() !== "off";
 }
 
 export type ConfidenceBand = "high" | "mid" | "low";
