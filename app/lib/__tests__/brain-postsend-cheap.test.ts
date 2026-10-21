@@ -12,7 +12,8 @@ const at = "2026-10-20T03:00:00.000Z"; const now = Date.parse(at) + 30_000;
 const base: { nowMs: number; need: null; openItemAction: string | null; isPostApply: boolean; propertyInPlay: boolean; customerPointedProperty: boolean } = { nowMs: now, need: null, openItemAction: null, isPostApply: false, propertyInPlay: true, customerPointedProperty: true };
 const kind = (t: string, o: Partial<typeof base> = {}) => { const d = decidePostSendCheap({ ...base, ...o, sentSteps: promisesInStaffText(t, at) }); return d.kind === "insert" ? `insert:${d.step.action}:${d.tasks.join(",")}` : `${d.kind}:${d.reason}`; };
 
-eq("既定 OFF", brainPostSendCheapEnabled({}), false);
+eq("既定 ON（2026-10-22）", brainPostSendCheapEnabled({}), true);
+eq("off で止まる", brainPostSendCheapEnabled({ BRAIN_POSTSEND_CHEAP: "off" }), false);
 eq("on で使う", brainPostSendCheapEnabled({ BRAIN_POSTSEND_CHEAP: "on" }), true);
 eq("募集状況の確認の約束 → 物件確認した", kind("お部屋お送りいただきありがとうございます😊！！\nお部屋の募集状況確認させていただきます！！"), "insert:property_check_result:property_check");
 eq("見積書の約束 → 見積書送る", kind("かしこまりました！！ 3部屋の最大限割引させていただいたお見積書お送りさせていただきます😊！！"), "insert:estimate_sheet:estimate_sheet");

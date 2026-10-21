@@ -10,11 +10,11 @@
 //   安い道に乗る番の試算（30日）: 90/319回（$4.8/月 の節約）・ブレインの判断と同じ AIX 73・ブレインは返信だったが安い道は AIX 17（その多くはスタッフが後でその AIX を押した）・
 //     違う AIX 0・ブレインだけ AIX 0・役に立った番 21/21 同じ。
 //   失う物: 画面の判断（suggested_aix_meta）と brain_decision_logs はその番だけ更新されない（次のお客様の発言でブレインが回る）。
-// 既定 OFF: BRAIN_POSTSEND_CHEAP=on で使う。
+// 2026-10-22 確かめ役「on にしてよい」→ 既定 ON（止める BRAIN_POSTSEND_CHEAP=off）。
 import { nextPromiseAix, type PickupNeed, type PromiseStep } from "./promise-queue";
 
 export function brainPostSendCheapEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_POSTSEND_CHEAP ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_POSTSEND_CHEAP ?? "").trim().toLowerCase() !== "off";
 }
 
 const PROP_FAMILY = new Set(["property_send", "property_recommendation"]);
