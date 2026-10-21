@@ -50,7 +50,12 @@ import { BASELINE_DIR } from "./lib/brain-exam-baseline";
 import { examEnvFingerprint, formatEnvFp } from "./lib/exam-env-fp";
 import * as C from "./lib/exam-coord";
 // 2026-10-21 スイッチの指紋（既定＝.env.local と違うスイッチ・exam-env-fp.ts）。使い回しの鍵に入れる・見出しと台帳に残す
+// 2026-10-21 査読: 予約（--run-queue）は env を運べず、夜の回が既定のスイッチ（DAY_SUBJECT_READER 無し＝off）で流れて on/off の比べが無効になっていた
+//   → 予約の argv に --switch=NAME=値（指紋の組・(unset) は消す）を入れ、子の最初にここで env に戻す（指紋より前）
+for (const a of process.argv.slice(2)) { if (a === "--") break; const m = /^--switch=([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(a); if (!m) continue; if (m[2] === "(unset)") delete process.env[m[1]]; else process.env[m[1]] = m[2]; }
 const ENV_FP = examEnvFingerprint(process.env);
+/** 予約に入れるスイッチ（指紋の組＝既定と違う物だけ・既定なら空） */
+const SWITCH_ARGS = ENV_FP.pairs.map(([k, v]) => `--switch=${k}=${v}`);
 import { dbFpMode, problemReadsRent, type DbFpMode } from "./lib/exam-db-fp";
 import { problemHash, examConfig, configHash } from "./lib/brain-exam-baseline";
 import { flakeVerdict, readObs, FLAKE_DIR } from "./lib/exam-flake";
@@ -541,7 +546,7 @@ async function runGuard(pl: Plan, label: string, estNow: number, now: Date): Pro
   log(`担当の上限（${ident}）: ${d.why}`);
   if (!d.ok) {
     const at = nextNightRun(now);
-    const f = enqueue({ label, argv: [...args.filter((a) => !/^--(when|phase)=/.test(a)), "--when=now", ...(pl.phase !== "off" ? [`--phase=${pl.phase}`] : []), ...(PASS.length ? ["--", ...PASS] : [])], cwd: process.cwd(), at: at.toISOString(), createdAt: now.toISOString(), estUsd: estNow });
+    const f = enqueue({ label, argv: [...args.filter((a) => !/^--(when|phase|switch)=/.test(a)), "--when=now", ...(pl.phase !== "off" ? [`--phase=${pl.phase}`] : []), ...SWITCH_ARGS, ...(PASS.length ? ["--", ...PASS] : [])], cwd: process.cwd(), at: at.toISOString(), createdAt: now.toISOString(), estUsd: estNow });
     log(`夜中に予約した（${jst(at)} JST の --run-queue）: ${f}`);
     C.appendCoordEvent({ at: new Date().toISOString(), kind: "cap-deferred", label, ids: [...pl.items.keys()], usd: estNow, note: ident });
     return { go: false };
@@ -595,7 +600,7 @@ async function runMain() {
   if (!w.runNow) {
     if (flag("wait")) { log(`安い時間まで待つ（--wait）…`); while (Date.now() < w.at.getTime()) await sleep(Math.min(10 * 60_000, w.at.getTime() - Date.now() + 1000)); }
     else {
-      const f = enqueue({ label, argv: [...args.filter((a) => !/^--(when|phase)=/.test(a)), "--when=now", ...(pl.phase !== "off" ? [`--phase=${pl.phase}`] : []), ...(PASS.length ? ["--", ...PASS] : [])], cwd: process.cwd(), at: w.at.toISOString(), createdAt: now.toISOString(), estUsd: est.now });
+      const f = enqueue({ label, argv: [...args.filter((a) => !/^--(when|phase|switch)=/.test(a)), "--when=now", ...(pl.phase !== "off" ? [`--phase=${pl.phase}`] : []), ...SWITCH_ARGS, ...(PASS.length ? ["--", ...PASS] : [])], cwd: process.cwd(), at: w.at.toISOString(), createdAt: now.toISOString(), estUsd: est.now });
       log(`予約した: ${f}\n  安い時間に流す: npx tsx --env-file=.env.local scripts/exam-brain.ts --run-queue（タスクスケジューラ SumoraExamNight が JST 1:40 に。今すぐなら --when=now）`);
       return;
     }
@@ -604,8 +609,8 @@ async function runMain() {
   const split = (budget ?? await budgetOf(pl, pricePeak(pl, new Date()), new Date())).split;
   if (!budget && split) log(`1日の上限: ${split.why}`);
   if (split && split.later.length) {
-    const keep = (a: string) => !/^--(when|only|name|select-q|select-n|select|types|phase|label|plan)(=|$)/.test(a);
-    const f = enqueue({ label: `${label}-n`, argv: [...args.filter(keep), `--only=${split.later.join(",")}`, "--phase=final", "--when=now", `--label=${label}-n`, ...(PASS.length ? ["--", ...PASS] : [])], cwd: process.cwd(), at: nextNightRun(now).toISOString(), createdAt: now.toISOString(), estUsd: split.estLater });
+    const keep = (a: string) => !/^--(when|only|name|select-q|select-n|select|types|phase|label|plan|switch)(=|$)/.test(a);
+    const f = enqueue({ label: `${label}-n`, argv: [...args.filter(keep), `--only=${split.later.join(",")}`, "--phase=final", "--when=now", `--label=${label}-n`, ...SWITCH_ARGS, ...(PASS.length ? ["--", ...PASS] : [])], cwd: process.cwd(), at: nextNightRun(now).toISOString(), createdAt: now.toISOString(), estUsd: split.estLater });
     log(`上限: 夜中に回した ${split.later.length}問（${jst(nextNightRun(now))} JST・見込み $${split.estLater.toFixed(2)}・翌日の分として数える）: ${f}`);
     for (const id of split.later) pl.items.delete(id);
     pl.picks = pl.picks.filter((p) => pl.items.has(p.id));
