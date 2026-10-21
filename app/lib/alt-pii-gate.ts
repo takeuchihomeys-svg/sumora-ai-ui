@@ -14,6 +14,8 @@
 // 止める: LLM_ALT_PII_GATE=off（既定 on）
 
 import { MOBILE_RE, EMAIL_RE, APPLICATION_FORM_RE, INCOME_VALUE_RE } from "./test-pii-guard";
+import { isIdDocument } from "./id-document-guard";
+import { classifyPersonalDocument } from "./personal-document-guard";
 
 const URL_RE = /https?:\/\/[^\s"'<>）)]+/g;
 /** 生年月日の欄と値の組（「生年月日：1995年3月12日」「生年月日 平成7年」「生年月日 1995/03/12」） */
@@ -42,4 +44,40 @@ export function altPiiSignal(text: string | null | undefined): string | null {
 /** 門を使うか（既定 on・LLM_ALT_PII_GATE=off で止める） */
 export function altPiiGateEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.LLM_ALT_PII_GATE ?? "on").trim().toLowerCase() !== "off";
+}
+
+// ═══ 申込から戻ったお客様（線のある呼び出し＝cut）の強めの網 ═══════════════════════════════════════
+// 2026-10-21 竹内さんの決定（023ec7bd）「申込中の会話などマスキングちゃんとおこなえば DeepSeek にわたして生成しても良い…申込中のマスキングの部分のしくみ徹底」:
+//   線（deepseek_cutoff_at・戻しの印）より後だけを渡すが、線の後に申込情報の名残（記入済みの値・書類の読み取り・伏せた跡）が残っていれば
+//   DeepSeek に出さない（Claude のまま）。入口の伏せ（pii-pseudonym・maskPII）が置いた跡（仮名の生年月日・勤務先・申込フォームの伏せ字）も当てる
+//   ＝申込情報が1つでも絡む呼び出しは Claude（伏せ方に頼らない）。見るのは messages の本文だけ（system＝指示文の語では止めない）。
+//   止める LLM_ALT_REAPPLY_GATE=off（既定 on・LLM_ALT_PII_GATE=off なら一緒に止まる）
+
+/** 生年月日らしい日付（2009年以前の年月日／和暦の年月日＋生）。築年月（「平成20年3月築」）は日が無いので当てない */
+const BIRTH_DAY_RE = /(?:19\d{2}|200\d)\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|(?:昭和|平成)\s*(?:\d{1,2}|元)\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*生/;
+/** 勤務先の欄と値（コロンつき・伏せ字以外） */
+const WORKPLACE_VALUE_RE = /(?:勤務先|勤め先|職場)\s*[:：]\s*(?![\[［(（]|〇〇|○○)[^\s\n、。]{2,}/;
+/** 入口の伏せが置いた跡（申込フォームの伏せ字・仮名の勤務先・ラベルの値の伏せ字） */
+const MASKED_APPLICATION_TRACE_RE = /申込フォームに記入して送信|（勤務先）|\[回答済み・非表示\]/;
+
+/** 申込から戻った会話の呼び出し（cut）で、messages の本文に申込情報の名残があれば理由・無ければ null */
+export function altPiiSignalReapply(text: string | null | undefined): string | null {
+  const base = altPiiSignal(text);
+  if (base) return base;
+  const t = String(text ?? "").replace(URL_RE, " ");
+  if (!t.trim()) return null;
+  if (INCOME_VALUE_RE.test(t)) return "年収の値";
+  if (BIRTH_DAY_RE.test(t)) return "生年月日らしい日付";
+  if (WORKPLACE_VALUE_RE.test(t)) return "勤務先の値";
+  if (MASKED_APPLICATION_TRACE_RE.test(t)) return "申込情報を伏せた跡";
+  if (APPLICATION_FORM_RE.test(t)) return "申込フォームの欄";
+  if (isIdDocument(null, t)) return "本人確認書類の読み取り";
+  const doc = classifyPersonalDocument(t);
+  if (doc) return `個人の書類の読み取り（${doc}）`;
+  return null;
+}
+
+/** 強めの網を使うか（既定 on） */
+export function altReapplyGateEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return altPiiGateEnabled(env) && (env.LLM_ALT_REAPPLY_GATE ?? "on").trim().toLowerCase() !== "off";
 }

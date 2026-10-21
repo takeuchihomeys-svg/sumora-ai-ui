@@ -165,7 +165,8 @@ async function main() {
   await it("AIX: 両方の入口で箱を開け、本文を読む前に線を引いて履歴を切る", () => {
     ok((aix.match(/runInDeepseekScope\(\(\) => aixRequestCtx\.run/g) ?? []).length === 2, "run x2");
     ok(/body\.recent_messages = filterAfterCutoff\(/.test(aix), "history");
-    ok(/ctx\.postApply = r\.postApply;/.test(aix) && !/r\.postApply \|\| r\.movedBack/.test(aix), "movedBack");
+    // 2026-10-21（023ec7bd）印だけ残って戻した会話も線で切る（post-apply.ts deepseekPostApply）
+    ok(/ctx\.postApply = deepseekPostApply\(facts\);/.test(aix) &&!/r\.postApply \|\| r\.movedBack/.test(aix), "movedBack");
     ok(/if \(store\?\.cutMark\) h\[LLM_CUTOFF_HEADER\]/.test(aix), "header");
     ok(/keepBrainMeta\(metaRaw/.test(aix), "brain");
     ok(/visionCutMark\.kind !== "blocked"/.test(aix), "vision");

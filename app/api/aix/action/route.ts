@@ -52,7 +52,7 @@ import { willRouteAlt, readAltConfig } from "@/app/lib/llm-alt-provider";
 import { screeningPiiAixEnabled, screeningPiiPinsAction, screeningPiiForcesClaude } from "@/app/lib/screening-sensitive";
 import { screeningSensitiveForConversation } from "@/app/lib/screening-sensitive-server";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
-import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, cutoffMs, cutoffMarkOf, formatCutoffMark, filterAfterCutoff, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, resolvePostApply, deepseekPostApply, deepseekSafeCutoff, cutoffMs, cutoffMarkOf, formatCutoffMark, filterAfterCutoff, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
 import { keepBrainMeta } from "@/app/lib/deepseek-cut";
 import { runInDeepseekScope, setDeepseekScope, onceAsync } from "@/app/lib/deepseek-scope";
 // 2026-09-27 竹内「申込中の部分はクロードに切り替えて要約して…DeepSeek に渡す」: 申込期間のまとめ（個人情報なし・検査済み）
@@ -1048,7 +1048,8 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
       const r = resolvePostApply(facts);
       // 2026-09-26 竹内（申込中は DeepSeek に渡さない・戻したら切り替え以降だけ）: 戻した会話（movedBack）は丸ごと Claude のまま、を
       //   「切り替えた時刻（deepseek_cutoff_at）より後だけ渡す」に置き換えた（generate-reply と同じ・下の cutActive で履歴と派生データを切る）
-      ctx.postApply = r.postApply;
+      // 2026-10-21（023ec7bd）印だけ残って戻した会話は申込以降に数えず時刻の線で切る（post-apply.ts deepseekPostApply）
+      ctx.postApply = deepseekPostApply(facts);
       ctx.cutoff = deepseekSafeCutoff(facts);
       if (ctx.cutoff === null) ctx.postApply = true; // 線が引けない＝渡さない（fail-closed）
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "aix:post-apply", conversationId, reason: r.reason, action }));
