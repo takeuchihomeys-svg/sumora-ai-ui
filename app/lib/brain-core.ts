@@ -71,7 +71,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
+import { resolveTwoStageOrDirect, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { holdSoftNextMaterial, rule8HoldNote, rule8HoldDirectionSuffix } from "@/app/lib/hold-soft-next";
 import { lastPropertyMoveAllUnavailable } from "@/app/lib/unavailable-ack";
@@ -2695,7 +2695,15 @@ ${catalogBlockForBrain(brainScene)}
   let ackAfterPickupNow = false;
   /** 2026-10-16（事例 f）: 了承だけの番の、まだ果たしていない探す約束の文（turn_contract.open_search に入れて下書きの待ちの形まで届ける） */
   let openSearchQuote: string | null = null;
-  if (ackAfterPromiseReplyEnabled() && ackAfterPromiseBrainEnabled() && !isPostApplyStatus(convStatus)) {
+  // 2026-10-21 竹内さんの答え B8・C8（other-agent-viewing.ts）: 判断の原則を今の番の材料で渡す（決まった文ではない・決めるのはブレイン）
+  if (!isPostApplyStatus(convStatus)) {
+    const { isLikeThenHereQuestion, supportStanceNoteEnabled, SUPPORT_STANCE_LINE, isLookElsewhereForConditions, LOOK_ELSEWHERE_LINE } = await import("@/app/lib/other-agent-viewing");
+    const tNow = unrepliedTurn.text ?? "";
+    if (supportStanceNoteEnabled() && isLikeThenHereQuestion(tNow)) customerStateBlockText += `\n\n${SUPPORT_STANCE_LINE}`;
+    if (isLookElsewhereForConditions(tNow)) customerStateBlockText += `\n\n${LOOK_ELSEWHERE_LINE}`;
+  }
+  // 2026-10-21 A2: 決定 C を既定 off にしても、今の番が「ピックアップの約束の直後のお礼」かは材料で渡す（行の中身は ackAfterPickupTurnLine が A2 の形にする）
+  if (ackAfterPromiseBrainEnabled() && !isPostApplyStatus(convStatus)) {
     const lastIsCust = typedMessages[0]?.sender === "customer";
     const f = brainLedger.facts;
     ackAfterPickupNow = ackAfterPickupTurn({
@@ -4117,9 +4125,13 @@ ${history}`;
     const { promiseAixFromContract, tcPromiseTwoStageEnabled } = await import("@/app/lib/brain-route-keep");
     // 2026-10-20 試験の道の外れ③（q184・BRAIN_ROUTE_FIX_1020 contract_aix）: 最後の aix が空のまま turn_contract の依頼を route=aix（見積書送る等）と書いた番は、
     //   その AIX を最後の aix にする（後の reconcile が依頼を約束に直してただの返信になっていた）。規則が何も決めていない番だけ
-    if (!finalAix && decisionSource === null && !promiseAix && routeFix1020("contract_aix") && !isPostApplyStatus(convStatus)) {
+    // 2026-10-21 竹内さん A1「すぐAIXでかえす」: 確かめれば分かる問い（物件確認した・見積書送る）を依頼で route=aix と書いた番は、contract_aix が off でも
+    //   その AIX を最後の aix にする（試験 ans1021b q133#2: 依頼は見積書送るの AIX・最後の aix が空 → 後の reconcile が約束に直し、出し切りの締めの返信になった）。
+    //   他の AIX の種類は contract_aix（既定 off）のまま。戻す TWO_STAGE_ANSWERABLE_DIRECT=off
+    const answerableContractAix = answerableDirectEnabled();
+    if (!finalAix && decisionSource === null && !promiseAix && (routeFix1020("contract_aix") || answerableContractAix) && !isPostApplyStatus(convStatus)) {
       const k = contractAixWhenTopEmpty((parsed as { turn_contract?: unknown }).turn_contract, (x) => normalizeAixActionKey(x as string));
-      if (k && AIX_BRAIN_NOTES[k]) {
+      if (k && AIX_BRAIN_NOTES[k] && (routeFix1020("contract_aix") || k === "property_check_result" || k === "estimate_sheet")) {
         finalAix = k;
         decisionSource = "brain:contract_aix";
         console.log(JSON.stringify({ tag: "brain:route-fix-1020", part: "contract_aix", conversationId, aix: k }));
@@ -4231,8 +4243,10 @@ ${history}`;
           } catch (e) { console.warn("[brain-core] 退去予定日の読み取りに失敗（確認の約束）:", e instanceof Error ? e.message : String(e)); }
         }
       }
-      twoStage = resolveTwoStage({
+      const twoStageRes = resolveTwoStageOrDirect({
         finalAix: finalAix ?? tcPromiseAix, decisionSource: decisionSource ?? (tcPromiseAix ? "llm" : null), pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
+        // 2026-10-21 見直し: 真の初回（下の初回のガードと同じ定義）は A1 の AIX 直接にしない（2段の約束のまま・ガードはこの後で決まる）
+        firstContact: !isIncremental && !typedMessages.some((m) => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"),
         // 5巡目（10/07）: 内覧の希望（日時の指定なし・内覧できるかまだ伝えていない）はまず内覧できるかの確認の約束（viewing-check-first）
         viewingCheckFirst: finalAix === "viewing_invite" && !viewingDateAnswer && !!brainLedger.facts.viewingFlow && viewingCheckFirst({
           stage: brainLedger.facts.viewingFlow.stage, currentReply: brainLedger.facts.viewingFlow.currentReply, currentWish: brainLedger.facts.viewingFlow.currentWish,
@@ -4269,12 +4283,27 @@ ${history}`;
           return n > 0 ? { ask: broughtPropertyAsk(routeFix1020("brought_text") ? broughtTypedText(turnMsgs) : (unrepliedTurn.text ?? "")), count: n, titleOnly: broughtTitleOnly(props) } : null; // 10/13 titleOnly: SNS・TikTok の題だけ（two-stage）
         })(),
       });
+      twoStage = twoStageRes.verdict;
+      // 2026-10-21 竹内さん A1「すぐAIXでかえす」（two-stage answerableDirectAix・TWO_STAGE_ANSWERABLE_DIRECT=off で2段の約束に戻す）:
+      //   管理会社に確かめれば分かる問い（空き状況・見積・設備）は約束を挟まず AIX【物件確認した／見積書送る】を直接
+      let answerableDirectFrom: string | null = null;
+      if (twoStageRes.direct) {
+        answerableDirectFrom = twoStageRes.coreSource;
+        if (finalAix !== twoStageRes.direct) {
+          console.log(JSON.stringify({ tag: "brain:answerable-direct", conversationId, from: finalAix, to: twoStageRes.direct, core: twoStageRes.coreSource }));
+          decisionSource = finalAix
+            ? `${decisionSource ?? "llm"}+answerable_direct`
+            : `rule:answerable_direct(${(twoStageRes.coreSource ?? "").replace(/^rule:two_stage_promise\(|\)$/g, "")})`;
+          finalAix = twoStageRes.direct;
+          sceneSignalCheckPattern = null;
+        }
+      }
       if (checkAfterResult) twoStage = null; // ⑤b: 結果は AIX で直接（約束の返信にしない）
       // 8巡目: 退去予定日が分かる内覧の希望は AIX にせず返信で「〇月〇日以降にご内覧可能です」（候補日はまだ出さない・内覧開始日の後に AIX【内覧調整】）
       // 8巡目: 聞かれた契約条件が全部資料にある番は、質問の2段（check_question＝答えが無ければ確認の約束）にせず資料で答える方向にする
       //   （YUMA「この物件は駐車場あります？」で check_question の方向から DeepSeek が「空き状況確認させて頂きます」と書いた回があった）
-      if (twoStage && /check_question/.test(twoStage.source) && contractTerms?.allInMaterial && process.env.CONTRACT_TERMS_REPLY !== "off") {
-        console.log(JSON.stringify({ tag: "brain:contract-terms-over-two-stage", conversationId, from: twoStage.source }));
+      if (((twoStage && /check_question/.test(twoStage.source)) || /check_question/.test(answerableDirectFrom ?? "")) && contractTerms?.allInMaterial && process.env.CONTRACT_TERMS_REPLY !== "off") {
+        console.log(JSON.stringify({ tag: "brain:contract-terms-over-two-stage", conversationId, from: twoStage?.source ?? answerableDirectFrom }));
         twoStage = null;
         finalAix = null;
         sceneSignalCheckPattern = null;

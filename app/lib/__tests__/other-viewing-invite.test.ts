@@ -66,18 +66,20 @@ it("COMPANY_FACT_1014=off で誘いの事実も止まる", () => {
   try { eq(ids(AIMI).includes("other_company_viewing_plan"), false); } finally { delete process.env.COMPANY_FACT_1014; }
 });
 
-console.log("訴求の判定（OTHER_VIEWING_INVITE_APPEAL・既定は切）");
+console.log("訴求の判定（OTHER_VIEWING_INVITE_APPEAL・10/21 から既定は入）");
 const msgs = [
   { sender: "staff", text: "【〇〇 406号室】\n\n初期費用さらに\n🌟82,000円", createdAt: "2026-10-20T03:51:08Z" },
   { sender: "customer", text: AIMI.replace("契約スモラさんでしたい", "スモラさんで契約したい"), createdAt: "2026-10-20T03:53:08Z" },
 ];
-it("既定（切）: 入力に印が付かない＝今まで通り", () => {
-  delete process.env.OTHER_VIEWING_INVITE_APPEAL;
-  const i = buildAppealInput({ msgs, aixLogs: [{ aixType: "estimate_sheet", at: "2026-10-20T03:51:08Z" }], customerKind: "question" });
-  eq(i.otherAgentViewingPlan, false);
+it("切（off）: 入力に印が付かない＝前の動き", () => {
+  process.env.OTHER_VIEWING_INVITE_APPEAL = "off";
+  try {
+    const i = buildAppealInput({ msgs, aixLogs: [{ aixType: "estimate_sheet", at: "2026-10-20T03:51:08Z" }], customerKind: "question" });
+    eq(i.otherAgentViewingPlan, false);
+  } finally { delete process.env.OTHER_VIEWING_INVITE_APPEAL; }
 });
-it("入（on）: 申込の意思があっても弊社での内覧に誘う（日時は書かない）", () => {
-  process.env.OTHER_VIEWING_INVITE_APPEAL = "on";
+it("既定（入）: 申込の意思があっても弊社での内覧に誘う（日時は書かない）", () => {
+  delete process.env.OTHER_VIEWING_INVITE_APPEAL;
   try {
     const i = buildAppealInput({ msgs, aixLogs: [{ aixType: "estimate_sheet", at: "2026-10-20T03:51:08Z" }], customerKind: "question" });
     eq(i.otherAgentViewingPlan, true); eq(i.customer, "apply_intent");
