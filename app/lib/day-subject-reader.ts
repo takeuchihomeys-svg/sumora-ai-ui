@@ -64,6 +64,10 @@ const ASKISH_RE =/希望|がいい|が良い|がよい|で(?:お願い|大丈夫
 /** こちらの文: 内覧の候補日を出した・日程を聞いた（内覧の日程の調整中の印） */
 /** ※「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます」は物件のご紹介の決まり文句＝調整中の印にしない（条件の聞き取りの番で誤読した） */
 export const STAFF_VIEWING_SCHEDULING_RE = /ご案内可能|ご内覧可能|内覧可能|お日にち御座いますでしょうか|お日にちございますでしょうか|ご都合よろしいお時間|(?:内覧|ご案内|ご内覧)[^。！!？?\n]{0,16}(?:日程|お日にち|いつ|何日)|[0-9]{1,2}\s*:\s*[0-9]{2}\s*[〜~～\-－]\s*[0-9]{1,2}\s*:\s*[0-9]{2}/;
+/** こちらの直前の文: 聞かれたお部屋への答えで「よろしければ一度ご都合よろしいお日にちにお部屋ご案内させて頂きます」と内覧に誘った
+ *  （物件のご紹介の決まり文句「お気に召されたお部屋ご都合よろしいお日にちに…」は当たらない）。流れの段（viewing-flow）はまだ none の所。
+ *  次のお客様の語の無い日付（「明日空いてたりしますでしょうか」）は内覧の日（q181: 残った別の確認の約束に寄って確認の返信にした） */
+export const STAFF_VIEWING_INVITE_RE = /(?:よろしければ|宜しければ)(?:一度|是非|ぜひ)?[^。！!？?\n]{0,4}ご都合(?:の)?(?:よろしい|宜しい|良い)(?:お日にち|日)に[^。！!？?\n]{0,4}ご案内/;
 /** こちらの文: 待ち合わせを案内した（内覧は決まった＝調整中ではない） */
 const STAFF_MEETING_RE = /待ち合わせ|現地エントランス|お待ちしております/;
 /** こちらの文: 入居の時期を聞いた */
@@ -99,9 +103,12 @@ export function splitTurn(msgsOldestFirst: ReadonlyArray<ReaderMsg>): { customer
 /**
  * 内覧の日程の調整が開いているか。流れの段（viewing-flow・台帳と同じ値）が渡されたらそれだけで決める。
  *   段が無い時（試験・監査の一部）だけ、こちらの直近の文の印で見る
+ *   段が none でも、こちらの直前の文が聞かれたお部屋の内覧に誘った（STAFF_VIEWING_INVITE_RE）時は開く（q181・段がまだ動いていない所）
  */
 export function viewingSchedulingOpen(stage: ViewingFlowStage | null | undefined, staffBefore: readonly string[]): boolean {
-  if (stage) return stage === "wished" || stage === "proposing" || stage === "date_agreed";
+  const invitedJustNow = !!staffBefore[0] && STAFF_VIEWING_INVITE_RE.test(N(staffBefore[0]));
+  if (stage) return stage === "wished" || stage === "proposing" || stage === "date_agreed" || (stage === "none" && invitedJustNow);
+  if (invitedJustNow) return true;
   const recent = staffBefore.slice(0, 3).map(N);
   if (recent.some((t) => STAFF_MEETING_RE.test(t) && !STAFF_VIEWING_SCHEDULING_RE.test(t))) return false;
   return recent.some((t) => STAFF_VIEWING_SCHEDULING_RE.test(t));
