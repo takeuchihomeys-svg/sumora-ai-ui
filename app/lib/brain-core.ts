@@ -4245,6 +4245,8 @@ ${history}`;
       }
       const twoStageRes = resolveTwoStageOrDirect({
         finalAix: finalAix ?? tcPromiseAix, decisionSource: decisionSource ?? (tcPromiseAix ? "llm" : null), pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
+        // 2026-10-21 見直し: 真の初回（下の初回のガードと同じ定義）は A1 の AIX 直接にしない（2段の約束のまま・ガードはこの後で決まる）
+        firstContact: !isIncremental && !typedMessages.some((m) => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"),
         // 5巡目（10/07）: 内覧の希望（日時の指定なし・内覧できるかまだ伝えていない）はまず内覧できるかの確認の約束（viewing-check-first）
         viewingCheckFirst: finalAix === "viewing_invite" && !viewingDateAnswer && !!brainLedger.facts.viewingFlow && viewingCheckFirst({
           stage: brainLedger.facts.viewingFlow.stage, currentReply: brainLedger.facts.viewingFlow.currentReply, currentWish: brainLedger.facts.viewingFlow.currentWish,

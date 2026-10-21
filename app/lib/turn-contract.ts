@@ -180,7 +180,7 @@ function closeOnlyAnswerRule(env: Record<string, string | undefined> = typeof pr
 function answerableDirectRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   const lines: string[] = [];
   if ((env.TWO_STAGE_ANSWERABLE_DIRECT ?? "").trim().toLowerCase() !== "off") {
-    lines.push("- ★管理会社に確かめれば分かる問い（空き状況・募集状況・見積・初期費用・設備・入居条件・内覧できるか）は、確認の約束（promise）を挟まず route=\"aix\"（空き・設備・条件＝property_check_result／費用・見積＝estimate_sheet）にする。スタッフが確かめてその AIX で結果を送る（竹内さん 10/21・実送信もすぐ AIX が多数）。約束（promise）は探す・交渉する・撮影する・退去予定の内覧開始日など、すぐには結果が出ない事だけ。");
+    lines.push("- ★管理会社に確かめれば分かる問い（空き状況・募集状況・見積・初期費用・設備・入居条件・内覧できるか）は、確認の約束（promise）を挟まず route=\"aix\"（空き・設備・条件＝property_check_result／費用・見積＝estimate_sheet）にする。スタッフが確かめてその AIX で結果を送る（竹内さん 10/21・実送信もすぐ AIX が多数）。約束（promise）は探す・交渉する・撮影する・退去予定の内覧開始日など、すぐには結果が出ない事だけ。会話・送った資料・会社の事実で答えられる事は今まで通り reply。");
   }
   if ((env.ACK_AFTER_PROMISE_REPLY ?? "").trim().toLowerCase() !== "on") {
     lines.push("- ★こちらの約束の直後にお客様がお礼・了承（「ありがとうございます」「よろしくお願いします」）だけを言った番は、返信で締めず約束を果たす AIX にする（竹内さん 10/21）: ピックアップの約束の後＝物件ピックアップした（property_send）／物件オススメ（property_recommendation）・確認・交渉の約束の後＝property_check_result・見積の約束の後＝estimate_sheet。close_only の受けの返信にしない。");

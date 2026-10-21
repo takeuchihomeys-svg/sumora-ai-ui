@@ -50,6 +50,8 @@ export type TwoStageInput = {
   askAbout?: string | null;
   /** 2026-10-18 竹内さん 10/16: 見積もる物件の資料が届いて（こちらが送った・お客様が送った・最後に募集状況を確かめた）からの日数。7日以上なら先に最新の募集状況を確認する旨を伝える */
   estimateMaterialAgeDays?: number | null;
+  /** 2026-10-21 見直し: 真の初回（スタッフがまだ何も送っていない・incremental でない）。A1 の AIX 直接の外（初回のガードは2段の後で決まるので decisionSource では見えない） */
+  firstContact?: boolean;
 };
 /** 2026-10-18 竹内さん 10/16「古い資料（届いて7日以上）の物件の見積依頼は『一度最新の募集状況を確認させて頂きます』旨を伝えてから AIX で送る」。戻す ESTIMATE_STALE_RECHECK=off */
 export const ESTIMATE_STALE_DAYS = 7;
@@ -120,11 +122,21 @@ export function answerableDirectEnabled(env: Record<string, string | undefined> 
   return (env.TWO_STAGE_ANSWERABLE_DIRECT ?? "").trim().toLowerCase() !== "off";
 }
 const ANSWERABLE_DIRECT_SOURCES = /^rule:two_stage_promise\((?:brought_both|brought_estimate|check|check_question|estimate)\)$/;
+// 2026-10-21 見直し（本番 30日の check_question 16番: スタッフは会話・会社の事実で手打ちの答え 8・確認の約束 2・別の AIX 2・送信なし 4＝物件確認した直接は外れが多い／B4「質問内容による」）:
+//   募集状況・見積でない「聞かれた事」（check_question）と、元が AIX【確認します】の聞かれた事の確認（ack_to_check・費用なし）は2段のまま
+//   （答えがあれば答える・無ければその事の確認の約束）。入れる TWO_STAGE_ANSWERABLE_DIRECT_QUESTION=on
+function answerableDirectQuestionEnabled(env?: Record<string, string | undefined>): boolean {
+  return ((env ?? (typeof process !== "undefined" ? process.env : {})).TWO_STAGE_ANSWERABLE_DIRECT_QUESTION ?? "").trim().toLowerCase() === "on";
+}
 /** 2段の判定（core）が確認・見積の約束を出した番を、AIX 直接にする時の AIX のキー（しない時 null） */
-export function answerableDirectAix(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "decisionSource">, env?: Record<string, string | undefined>): string | null {
+export function answerableDirectAix(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "decisionSource" | "firstContact" | "asksCost">, env?: Record<string, string | undefined>): string | null {
   if (!v || !answerableDirectEnabled(env)) return null;
-  if (/^guard:first_contact/.test(i.decisionSource ?? "")) return null;
+  if (i.firstContact || /^guard:first_contact/.test(i.decisionSource ?? "")) return null;
   if (!ANSWERABLE_DIRECT_SOURCES.test(v.source)) return null;
+  if (!answerableDirectQuestionEnabled(env)) {
+    if (/check_question/.test(v.source)) return null;
+    if (/\(check\)$/.test(v.source) && /ack_to_check/.test(i.decisionSource ?? "") && !i.asksCost) return null;
+  }
   return v.kind === "estimate" ? "estimate_sheet" : "property_check_result";
 }
 /** brain-core が使う形: 2段の約束の返信（verdict）か、AIX 直接（direct＝AIX のキー・coreSource＝元の2段の出所）か */
