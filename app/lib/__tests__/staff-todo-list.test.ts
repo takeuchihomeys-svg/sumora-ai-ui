@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/staff-todo-list.test.ts（全 PASS で exit 0）
 import {
   buildStaffTodoList, renderStaffTodoList, customerHeader, isCloserOnly, promiseTaskOf, promiseAixLabelOf, routeRank,
-  staffTodoListEnabled, actionTask, TODO_MAX_AGE_DAYS, todoNumberMark, numberTodoItems, promiseMootReason, type TodoInput,
+  staffTodoListEnabled, aixInstantNoticeEnabled, actionTask, TODO_MAX_AGE_DAYS, todoNumberMark, numberTodoItems, promiseMootReason, type TodoInput,
 } from "../staff-todo-list";
 
 let passed = 0, failed = 0;
@@ -29,6 +29,10 @@ it("切替は既定 on（off の時だけ止まる）", () => {
   eq(staffTodoListEnabled({ STAFF_TODO_LIST: "off" }), false);
   eq(staffTodoListEnabled({ STAFF_TODO_LIST: "on" }), true);
   eq(staffTodoListEnabled({ STAFF_TODO_LIST: " OFF " }), false);
+  // 1件ずつの AIX要対応の通知は一覧が on の間は止まる（STAFF_TODO_INSTANT_NOTICE=on で併用・一覧を off にすれば元どおり）
+  eq(aixInstantNoticeEnabled({}), false);
+  eq(aixInstantNoticeEnabled({ STAFF_TODO_INSTANT_NOTICE: "on" }), true);
+  eq(aixInstantNoticeEnabled({ STAFF_TODO_LIST: "off" }), true);
 });
 
 it("お客様の段: 名前さん＋アカウント名（英語キー・日本語名どちらも）", () => {
@@ -231,6 +235,40 @@ it("グループの✅（staff_todo_marks）で済み・番号は残りの行だ
   const after = buildStaffTodoList({ ...i, marks: [{ item_key: "viewing:7", conversation_id: "c1", marked_at: iso("2026-10-20T10:00:00+09:00") }] });
   eq(after.openCount, 1); eq(after.doneCount, 1);
   ok(renderStaffTodoList(after)!.includes("✅内覧"), renderStaffTodoList(after)!);
+});
+
+it("営業時間外（最後の一覧 20:30 より後）の連絡・要対応は翌営業日の今日（期限 今日中・経過は数えない）", () => {
+  const i = base();
+  i.conversations = [conv("c1", "テストA", "sumora"), conv("c2", "テストB", "sumora"), conv("c3", "テストC", "sumora")];
+  i.messages = [
+    { conversation_id: "c1", sender: "customer", text: "夜分にすみません、内覧できますか？", created_at: iso("2026-10-19T22:00:00+09:00") },
+    { conversation_id: "c2", sender: "customer", text: "初期費用を教えてください", created_at: iso("2026-10-20T07:30:00+09:00") },
+  ];
+  i.aixItems = [
+    { id: "a3", conversation_id: "c3", customer_name: "テストC", action: "estimate_sheet", check_pattern: null, status: "pending", created_at: iso("2026-10-19T20:45:00+09:00"), done_at: null, done_aix_type: null },
+  ];
+  const text = renderStaffTodoList(buildStaffTodoList(i))!;
+  ok(text.includes("返信：10/19 22:00 のご連絡に返信する（期限 今日中）\n"), text);
+  ok(text.includes("返信：10/20 07:30 のご連絡に返信する（期限 今日中）\n"), text);
+  ok(text.includes("AIX【見積書送る】：御見積書を作ってお送りする（期限 今日中）\n"), text);
+  ok(!text.includes("過ぎ") && !text.includes("（1日）"), text);
+  // 営業時間内（20:30 より前）に立った物は翌朝には期限を過ぎて（1日）
+  i.aixItems = [{ ...i.aixItems[0], created_at: iso("2026-10-19T20:00:00+09:00") }];
+  ok(renderStaffTodoList(buildStaffTodoList(i))!.includes("（期限 10/19 過ぎ）（1日）"), renderStaffTodoList(buildStaffTodoList(i))!);
+});
+
+it("番号は表示の順（優先度の高いお客様から・お客様の中も優先度順）に 1 から通し", () => {
+  const i = base();
+  i.conversations = [conv("c1", "テストA", "sumora"), conv("c2", "テストB", "sumora")];
+  const a = (id: string, c: string, action: string, created: string) => ({ id, conversation_id: c, customer_name: null, action, check_pattern: null, status: "pending" as const, created_at: iso(created), done_at: null, done_aix_type: null });
+  i.aixItems = [a("x1", "c1", "property_send", "2026-10-20T09:00:00+09:00"), a("x2", "c2", "estimate_sheet", "2026-10-17T09:00:00+09:00")];
+  i.promises = [{ id: 9, conversation_id: "c2", customer_name: null, event_type: "follow_up", start_at: iso("2026-10-19T12:00:00+09:00"), created_at: iso("2026-10-19T12:00:00+09:00"), notes: NOTES_CONFIRM, is_done: false }];
+  const l = buildStaffTodoList(i);
+  const shown = l.customers.flatMap((c) => c.items.filter((x) => !x.doneAt).map((x) => x.key));
+  eq(numberTodoItems(l).map((x) => x.item.key), shown);
+  eq(shown, ["aix:x2", "promise:9", "aix:x1"]);
+  const text = renderStaffTodoList(l)!;
+  ok(text.indexOf("①") < text.indexOf("②") && text.indexOf("②") < text.indexOf("③"), text);
 });
 
 it("番号の印: ①〜⑳・㉑〜㊿・51 から (51)", () => {

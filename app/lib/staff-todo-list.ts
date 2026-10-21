@@ -37,6 +37,16 @@ export function staffTodoListEnabled(env: Record<string, string | undefined> = t
   return (env.STAFF_TODO_LIST ?? "").trim().toLowerCase() !== "off";
 }
 
+/**
+ * AIX要対応の1件ずつの即時通知（ブレインが立てた時・内覧当日の朝の挨拶・約束の続き）をグループに送るか。
+ * 2026-10-21 竹内さん「やることリストが on の間は1件ずつの通知は止めて一覧に入れる」→ STAFF_TODO_LIST が on の間は送らない。
+ * 戻す: STAFF_TODO_INSTANT_NOTICE=on（一覧と併用）／STAFF_TODO_LIST=off（一覧ごと元に戻る）
+ */
+export function aixInstantNoticeEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  if (!staffTodoListEnabled(env)) return true;
+  return (env.STAFF_TODO_INSTANT_NOTICE ?? "").trim().toLowerCase() === "on";
+}
+
 // ─── 入力（DB の行のまま・読み手は staff-todo-list-server.ts） ─────────────────────────
 export type TodoConversation = {
   id: string; customer_name: string | null; account: string | null; status: string | null; is_post_apply?: boolean | null;
@@ -105,9 +115,19 @@ export type TodoList = { atMs: number; customers: TodoCustomer[]; openCount: num
 // ─── 小さな道具 ────────────────────────────────────────────────────────
 const t = (iso: string | null | undefined) => { const v = Date.parse(iso ?? ""); return Number.isFinite(v) ? v : NaN; };
 /** JST の日の番号（同じ日なら同じ値） */
-const jstDayNo = (ms: number) => Math.floor((ms + JST_OFFSET_MS) / DAY);
 const jstYmdOf = (ms: number) => new Date(ms + JST_OFFSET_MS).toISOString().slice(0, 10);
-const endOfJstDayIso = (ms: number) => new Date(jstDayStartMs(ms) + DAY - 1).toISOString();
+/**
+ * スタッフの営業日（2026-10-21 竹内さん「営業時間外のお客様の連絡は翌営業日の今日として扱う」）:
+ *   その日の最後の一覧（20:30）より後に立った物は翌日の物（翌朝の一覧で「期限 今日中」・経過はその日から数える）。
+ *   営業日 n ＝ JST の [前日 20:30, 当日 20:30)。期限・経過・「今日済んだ」はこの営業日で数える（内覧・朝の挨拶の時刻は JST のまま）
+ */
+export const STAFF_BIZ_DAY_END_MIN = 20 * 60 + 30;
+const BIZ_SHIFT_MS = (24 * 60 - STAFF_BIZ_DAY_END_MIN) * 60_000;
+export const bizDayNo = (ms: number) => Math.floor((ms + JST_OFFSET_MS + BIZ_SHIFT_MS) / DAY);
+const bizDayStartMs = (ms: number) => bizDayNo(ms) * DAY - JST_OFFSET_MS - BIZ_SHIFT_MS;
+const endOfBizDayIso = (ms: number) => new Date(bizDayStartMs(ms) + DAY - 1).toISOString();
+/** 営業日の日付（M/D） */
+const bizMd = (ms: number) => { const d = new Date(bizDayNo(ms) * DAY); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`; };
 
 /** スタッフのグループでのお客様の出し方: 今ある通知（AIX要対応リスト・ターゲット）と同じ「名前さん」＋アカウント名（社内のグループなので伏せない） */
 export function customerHeader(name: string | null | undefined, account: string | null | undefined): string {
@@ -280,8 +300,9 @@ const earliest = (...xs: Array<string | null | undefined>): string | null =>
 // ─── 組み立て ───────────────────────────────────────────────────────────
 export function buildStaffTodoList(input: TodoInput): TodoList {
   const at = input.atMs;
-  const dayStart = jstDayStartMs(at);
-  const today = jstDayNo(at);
+  const dayStart = bizDayStartMs(at); // 「今日済んだ」の起点＝営業日の始まり（前日 20:30）
+  const jstStart = jstDayStartMs(at); // 内覧・朝の挨拶の時刻の起点（JST の 0:00）
+  const today = bizDayNo(at);
   const skipped: Record<string, number> = {};
   const skip = (k: string) => { skipped[k] = (skipped[k] ?? 0) + 1; };
   const convById = new Map(input.conversations.map((c) => [c.id, c]));
@@ -308,14 +329,14 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
     }
     if (!openAtAt && !doneToday) continue;
     // 14日より前に立って開いたままの要対応（台帳に未履行のピックアップ宣言があると取り下げない物）も、約束と同じく今日のやる事にしない
-    if (openAtAt && today - jstDayNo(created) > TODO_MAX_AGE_DAYS) { skip("aix_stale"); continue; }
+    if (openAtAt && today - bizDayNo(created) > TODO_MAX_AGE_DAYS) { skip("aix_stale"); continue; }
     const morning = (r.resolution_note ?? "").startsWith(MORNING_GREETING_NOTE_PREFIX);
     const appt = morning ? (r.resolution_note ?? "").slice(MORNING_GREETING_NOTE_PREFIX.length).trim() : "";
     const shownAction = doneToday && r.done_aix_type && r.done_aix_type !== r.action ? r.done_aix_type : r.action;
     const task = morning ? `本日${appt ? ` ${appt} ` : ""}の内覧の前にご挨拶を送る` : actionTask(r.action, r.check_pattern);
     // 期限: その日のうち（ブレインが要ると判断した番・約束の続き）。朝の挨拶は内覧の時刻
     const hm = appt.match(/(\d{1,2}):(\d{2})/);
-    const dueAt = morning && hm ? new Date(dayStart + (+hm[1] * 60 + +hm[2]) * 60_000).toISOString() : endOfJstDayIso(created);
+    const dueAt = morning && hm ? new Date(jstStart + (+hm[1] * 60 + +hm[2]) * 60_000).toISOString() : endOfBizDayIso(created);
     if (openAtAt) openAixConv.add(r.conversation_id);
     items.push({
       key: `aix:${r.id}`, conversationId: r.conversation_id, source: "aix_item", action: r.action, checkPattern: r.check_pattern,
@@ -332,7 +353,7 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
     if (!(created <= at)) continue;
     if (isWaitPromiseNotes(p.notes, at)) { skip("promise_wait"); continue; }
     const due = t(p.start_at);
-    if (jstDayNo(due) > today) { skip("promise_future"); continue; }
+    if (bizDayNo(due) > today) { skip("promise_future"); continue; }
     if (postApplyOrClosed(convById.get(p.conversation_id))) { skip("promise_post_apply"); continue; }
     // 済み: 履行の送信（カレンダーを閉じるのと同じ判定・カレンダーがまだ開いていても送信が立てば済み）・グループの✅
     let doneAt: string | null = earliest(promiseDoneAt(p, input.facts), markedAt(`promise:${p.id}`, input.marks, at));
@@ -346,14 +367,14 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
     }
     const doneMs = doneAt ? t(doneAt) : NaN;
     if (doneAt && doneMs <= at && doneMs < dayStart) continue; // 今日より前に済んだ
-    if (!(doneAt && doneMs <= at) && today - jstDayNo(due) > TODO_MAX_AGE_DAYS) { skip("promise_stale"); continue; }
+    if (!(doneAt && doneMs <= at) && today - bizDayNo(due) > TODO_MAX_AGE_DAYS) { skip("promise_stale"); continue; }
     const isDoneNow = !!doneAt && doneMs <= at;
     const action = promiseAixActionOf(p.event_type);
     items.push({
       key: `promise:${p.id}`, conversationId: p.conversation_id, source: "promise", action, checkPattern: promiseCheckPatternOf(p.notes),
       kindLabel: promiseAixLabelOf(p.notes) ?? (action ? aixButtonText(action) : "約束"),
       task: `${promiseTaskOf(p.notes)}（お約束）`,
-      originAt: p.created_at, dueAt: endOfJstDayIso(due), dueHasTime: false, doneAt: isDoneNow ? doneAt : null,
+      originAt: p.created_at, dueAt: endOfBizDayIso(due), dueHasTime: false, doneAt: isDoneNow ? doneAt : null,
     });
   }
 
@@ -363,12 +384,12 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
     if (!v.conversation_id || isTestConversation(v.conversation_id)) continue;
     if (v.scheduled_date !== todayYmd || /cancel/.test(v.status ?? "")) continue;
     const hm = (v.scheduled_time ?? "").match(/(\d{1,2}):(\d{2})/);
-    const dueMs = hm ? dayStart + (+hm[1] * 60 + +hm[2]) * 60_000 : dayStart + DAY - 1;
+    const dueMs = hm ? jstStart + (+hm[1] * 60 + +hm[2]) * 60_000 : jstStart + DAY - 1;
     const doneAt = earliest(viewingDoneAt(v, dueMs, input, at), markedAt(`viewing:${v.id}`, input.marks, at));
     items.push({
       key: `viewing:${v.id}`, conversationId: v.conversation_id, source: "viewing", action: null, checkPattern: null, kindLabel: "内覧",
       task: `${hm ? `${hm[1]}:${hm[2]} ` : ""}${v.property_name ? `${v.property_name}の` : ""}ご案内（終わったら内覧の記録）`,
-      originAt: new Date(dayStart).toISOString(), dueAt: new Date(dueMs).toISOString(), dueHasTime: !!hm, doneAt,
+      originAt: new Date(jstStart).toISOString(), dueAt: new Date(dueMs).toISOString(), dueHasTime: !!hm, doneAt,
     });
   }
 
@@ -397,7 +418,7 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
     items.push({
       key, conversationId: cid, source: "unanswered", action: null, checkPattern: null, kindLabel: "返信",
       task: `${jstMDHm(turn[0].created_at)} のご連絡に返信する`,
-      originAt: turn[0].created_at, dueAt: endOfJstDayIso(first), dueHasTime: false, doneAt: marked,
+      originAt: turn[0].created_at, dueAt: endOfBizDayIso(first), dueHasTime: false, doneAt: marked,
     });
   }
 
@@ -430,11 +451,11 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
 
 /** 期限を過ぎた日数（その日の終わりが期限の物は翌日から 1） */
 export function overdueDays(it: Pick<TodoItem, "dueAt">, atMs: number): number {
-  return Math.max(0, jstDayNo(atMs) - jstDayNo(t(it.dueAt)));
+  return Math.max(0, bizDayNo(atMs) - bizDayNo(t(it.dueAt)));
 }
 /** 仕事が立ってからの経過日数（JST の日付で数える・今日立った物は 0） */
 export function elapsedDays(it: Pick<TodoItem, "originAt">, atMs: number): number {
-  return Math.max(0, jstDayNo(atMs) - jstDayNo(t(it.originAt)));
+  return Math.max(0, bizDayNo(atMs) - bizDayNo(t(it.originAt)));
 }
 function compareItems(a: TodoItem, b: TodoItem, at: number, status: string | null): number {
   if (!!a.doneAt !== !!b.doneAt) return a.doneAt ? 1 : -1;
@@ -462,7 +483,7 @@ function compareCustomers(a: TodoCustomer, b: TodoCustomer, at: number): number 
 function dueLabel(it: TodoItem, atMs: number): string {
   const od = overdueDays(it, atMs);
   const due = new Date(t(it.dueAt) + JST_OFFSET_MS);
-  const md = `${due.getUTCMonth() + 1}/${due.getUTCDate()}`;
+  const md = it.dueHasTime ? `${due.getUTCMonth() + 1}/${due.getUTCDate()}` : bizMd(t(it.dueAt)); // 期限が日の物は営業日の日付
   if (od > 0) return `期限 ${md} 過ぎ`;
   if (it.dueHasTime) return `期限 ${String(due.getUTCHours())}:${String(due.getUTCMinutes()).padStart(2, "0")}まで`;
   return "期限 今日中";

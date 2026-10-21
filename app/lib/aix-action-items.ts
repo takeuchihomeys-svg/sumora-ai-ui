@@ -20,6 +20,7 @@ import { staffTextFulfillsAixItem, brainPausedCustomer } from "@/app/lib/aix-ite
 import { keepViewingGreetingItem, MAIN_AIX_ITEM_OR, MORNING_GREETING_NOTE_PREFIX } from "@/app/lib/viewing-day-greeting";
 import { keepPromiseQueueItem } from "@/app/lib/promise-queue";
 import { isNoLineTestConversation } from "@/app/lib/test-conversations";
+import { aixInstantNoticeEnabled } from "@/app/lib/staff-todo-list";
 export { aixButtonText, buildAixActionNotice, buildAixActionList, isFreshAixTurn, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "@/app/lib/aix-action-text";
 
 /** 売上番長グループへ push（宛先・トークンの決め方は notify-group と同じ: env → hanbancyo_settings.group_id） */
@@ -203,7 +204,8 @@ export async function syncAixActionItem(input: {
     // 同時実行で一意制約（1会話1件の pending）に当たった＝もう一方が登録・通知済み
     if (error) { if (!/duplicate|unique/i.test(error.message)) console.warn("[aix-action-items] insert failed:", error.message); return; }
   }
-  await pushToHanbancyoGroup(buildAixActionNotice(customerName, action!, checkPattern));
+  // 2026-10-21: 【やることリスト】が on の間は1件ずつの通知を送らない（一覧に入る・STAFF_TODO_INSTANT_NOTICE=on で戻す）
+  if (aixInstantNoticeEnabled()) await pushToHanbancyoGroup(buildAixActionNotice(customerName, action!, checkPattern));
   if (AIX_AUTO_SEARCH_ACTIONS.has(action!)) {
     await enqueueAixPropertySearch(conversationId, action!, searchOverride).catch((e) =>
       console.warn("[aix-action-items] enqueue auto search failed:", conversationId, e instanceof Error ? e.message : e));
@@ -225,7 +227,8 @@ export async function registerRuleAixActionItem(input: { conversationId: string;
   });
   if (error) { if (!/duplicate|unique/i.test(error.message)) console.warn("[aix-action-items] rule insert failed:", error.message); return false; }
   const notice = buildAixActionNotice(input.customerName, input.action, input.checkPattern);
-  await pushToHanbancyoGroup(input.noticeExtra ? `${notice}\n${input.noticeExtra}` : notice);
+  // 2026-10-21: 【やることリスト】が on の間は1件ずつの通知を送らない（一覧に「本日の内覧の前にご挨拶」で入る・STAFF_TODO_INSTANT_NOTICE=on で戻す）
+  if (aixInstantNoticeEnabled()) await pushToHanbancyoGroup(input.noticeExtra ? `${notice}\n${input.noticeExtra}` : notice);
   return true;
 }
 
