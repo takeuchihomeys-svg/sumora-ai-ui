@@ -116,7 +116,7 @@ const tmp = mkdtempSync(join(tmpdir(), "exam-coord-"));
   ok("担当の名前: 自動の label は作業ツリー", labelIdentity("eb-1021-ab12", "C:/w/.claude/worktrees/exam-brain3") === "wt:exam-brain3" && labelIdentity("eb-1021-ab12-fl", "/a/b/") === "wt:b");
   ok("担当の route: label で始まる route は担当の物・main の作り直しは数えない", routeBelongs("script:brain-exam-fix1-fl-d", "fix1", []) && !routeBelongs("script:brain-exam-main-4f2cd4d-abc123-r1", "fix1", []) && !routeBelongs("script:brain-exam-fix10", "fix1", []));
   ok("担当の route: 作業ツリーの担当は帳簿の label で数える", routeBelongs("script:brain-exam-eb-1021-ab12-fl", "wt:x", ["eb-1021-ab12"]) && !routeBelongs("script:brain-exam-eb-1021-zz99", "wt:x", ["eb-1021-ab12"]));
-  ok("担当の上限: 既定 $2・off で無し", runCapUsd({}) === 2 && runCapUsd({ EXAM_RUN_CAP_USD: "off" }) === null && runCapUsd({ EXAM_RUN_CAP_USD: "2.5" }) === 2.5);
+  ok("担当の上限: 既定 $5・off で無し", runCapUsd({}) === 5 && runCapUsd({ EXAM_RUN_CAP_USD: "off" }) === null && runCapUsd({ EXAM_RUN_CAP_USD: "2.5" }) === 2.5);
   ok("担当の上限: 超えたら夜中", !runCapDecision({ spentUsd: 0.8, estUsd: 0.3, cap: 1 }).ok && runCapDecision({ spentUsd: 0.5, estUsd: 0.3, cap: 1 }).ok);
   ok("担当の上限: --force／夜中の予約は今", runCapDecision({ spentUsd: 5, estUsd: 1, cap: 1, force: true }).ok && runCapDecision({ spentUsd: 5, estUsd: 1, cap: 1, fromQueue: true }).ok);
 

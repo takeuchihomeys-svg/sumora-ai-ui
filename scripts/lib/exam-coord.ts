@@ -6,7 +6,7 @@
 //   ① 版ごとに1回: 共有の置き場（exam-cache/brain-exam-baseline/<版>/.claims/<問題>.claim）に「この問題は私が作っている」を置く（ファイルの wx 作成＝1人しか成功しない）。
 //      他の担当は待って、出来た答えを使う（作り直さない）。持ち主の pid が止まっていれば古い印として外す。
 //   ② 前の main の答えの持ち越し（入力の差）: 作り直す問題でも、前の main の版の行に残った呼び出しの控え（llmCalls）を入れて回す＝要求が同じ段は前の答え（呼ばない）。
-//   ③ 1回ごとの見張り: 同じ比べ（コード＋スイッチの指紋＋問題と回数）を今日もう流していれば止める（--force で流す）。担当ごとの1日の上限（EXAM_RUN_CAP_USD・既定 $2）。
+//   ③ 1回ごとの見張り: 同じ比べ（コード＋スイッチの指紋＋問題と回数）を今日もう流していれば止める（--force で流す）。担当ごとの1日の上限（EXAM_RUN_CAP_USD・既定 $5）。
 //   ④ --spend-today: 今日の試験の費用を種類（main の作り直し／担当の確かめ／夜）で分け、同じ版の作り直しの重なりと、避けた分を出す。
 // 決め方は純関数（単体テスト scripts/lib/__tests__/exam-coord.test.ts）。読み書きは小さく、置き場は全部の作業ツリーで共有（examCacheRoot）。
 import { createHash } from "node:crypto";
@@ -148,8 +148,8 @@ export function appendRun(r: RunRecord, now = new Date(), dir = RUNS_DIR): void 
 }
 /** 同じ比べを今日もう流したか */
 export function findDuplicateRun(today: RunRecord[], fp: string): RunRecord | null { return today.find((r) => r.fp === fp) ?? null; }
-export const RUN_CAP_DEFAULT_USD = 2;
-/** 担当ごとの1日の上限（EXAM_RUN_CAP_USD・既定 $2・off で無し）。2026-10-21 確かめる人: $1 だと担当の確かめ（1回 $0.2〜2）の2回目でほぼ夜に回る＝昼に直して確かめる流れが止まる → $2 */
+export const RUN_CAP_DEFAULT_USD = 5;
+/** 担当ごとの1日の上限（EXAM_RUN_CAP_USD・既定 $5・off で無し）。10/21 竹内さん「5ドルに上げてよい」。2026-10-21 確かめる人: $1 だと担当の確かめ（1回 $0.2〜2）の2回目でほぼ夜に回る＝昼に直して確かめる流れが止まる → $2 */
 export function runCapUsd(env: Record<string, string | undefined> = process.env): number | null {
   const raw = String(env.EXAM_RUN_CAP_USD ?? "").trim().toLowerCase();
   if (raw === "off" || raw === "0" || raw === "none") return null;

@@ -16,7 +16,7 @@
 //   片付け:     npx tsx --env-file=.env.local scripts/exam-brain.ts --cleanup --conv=YUMA2 --label=dg1016-a [--from=<作業ツリー>] [--apply]
 //   今日の費用: npx tsx --env-file=.env.local scripts/exam-brain.ts --spend-today（main の作り直し／担当の確かめ／夜・同じ版の作り直しの重なり・連携で避けた分）
 // 10/21 連携（scripts/lib/exam-coord.ts）: 同じ比べ（コード・スイッチ・main の版・問題と回数）を今日もう流していれば止める（--force で流す）。
-//   担当ごとの1日の上限 EXAM_RUN_CAP_USD（既定 $2・off で無し）を超える回は夜中に予約（--over-cap／--force で今）。
+//   担当ごとの1日の上限 EXAM_RUN_CAP_USD（既定 $5・off で無し）を超える回は夜中に予約（--over-cap／--force で今）。
 //   main の答えは版ごとに1人だけが作る（他の担当は待って使う・EXAM_BASELINE_WAIT_MIN）・前の main と要求が同じ段は前の答え（EXAM_BASELINE_PIN=off で止める）
 // 決める事の引数（既定は試験のブレインが決める）:
 //   --when=auto|now|night（auto: 最後の関所・見込み $1 以上は安い時間 JST 1:30〜9:30 に予約）・--wait（予約の代わりにその時間まで待って流す）
@@ -513,7 +513,7 @@ function runFpOf(pl: Plan): string {
 }
 /**
  * 1回ごとの見張り: ①同じ比べ（コード・スイッチの指紋・比べる main の版・問題と回数・モデル・段）を今日もう流した → 止める（--force）。
- *   ②担当（--label の元・自動の label は作業ツリー）の今日の費用＋見込みが EXAM_RUN_CAP_USD（既定 $2）を超える → 夜中に予約（--over-cap／--force で今）
+ *   ②担当（--label の元・自動の label は作業ツリー）の今日の費用＋見込みが EXAM_RUN_CAP_USD（既定 $5）を超える → 夜中に予約（--over-cap／--force で今）
  */
 async function runGuard(pl: Plan, label: string, estNow: number, now: Date): Promise<{ go: boolean; record?: () => void }> {
   const fp = runFpOf(pl);
