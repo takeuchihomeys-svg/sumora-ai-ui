@@ -2400,7 +2400,7 @@ ${catalogBlockForBrain(brainScene)}
     ? `\n・お客様が今回送ってきた物件${ownProperty.items}件のうち${ownProperty.ours}件は、こちらが前に送った物件（記録で照合済み）。${ownPropertyReturnedAll ? "新しく見つけた物件ではないので、募集状況の確認（property_check_result）の理由にしない。お客様の言葉（気に入った・もっと見たい・内覧したい 等）で判断する。" : "残りはこちらの記録に無い物件。"}`
     : "";
   const conductorNote = linkConductorBrainEnabled()
-    ? await import("@/app/lib/link-conductor-server").then(({ conductorBrainNoteIfEnabled }) => conductorBrainNoteIfEnabled(supabase, conversationId, Date.parse(typedMessages[0]?.created_at ?? "") || Date.now())).catch(() => "")
+    ? await import("@/app/lib/link-conductor-server").then(({ conductorBrainNoteIfEnabled }) => conductorBrainNoteIfEnabled(supabase, conversationId, Date.now())).catch(() => "")
     : "";
   const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}${buildLedgerLinesForBrain(brainLedger)}${ownPropertyText}${buildViewingFlowForBrain(brainLedger)}${daySubjectNoteIfEnabled(brainLedgerInput.messages, brainLedger.facts.viewingFlow?.stage ?? null)}${conductorNote}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
 

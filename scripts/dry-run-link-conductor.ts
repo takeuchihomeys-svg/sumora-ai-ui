@@ -5,7 +5,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/dry-run-link-conductor.ts [--days=7] [--turns=150] [--snap=150] [--flash]
 import { createClient } from "@supabase/supabase-js";
 import { getConductorDecision, deepseekTieBreaker, type AsyncTieBreaker } from "../app/lib/link-conductor-server";
-import { renderConductorDecision, countDecisions, CONDUCTOR_KIND_JA, RECOMMENDED, type ConductorDecision } from "../app/lib/link-conductor";
+import { renderConductorDecision, countDecisions, conductorNoteAix, CONDUCTOR_KIND_JA, RECOMMENDED, type ConductorDecision } from "../app/lib/link-conductor";
 import { activeConversationIds } from "../app/lib/customer-hub-server";
 import { isTestConversation } from "../app/lib/test-conversations";
 import { maskPII } from "../app/lib/pii-mask";
@@ -62,7 +62,7 @@ type Turn = { conv_status: string | null; conversation_id: string; customer_turn
       const t = sample[next++];
       const at = (P(t.customer_last_at ?? t.customer_turn_at)) + 60_000;
       try {
-        const r = await getConductorDecision(sb, t.conversation_id, at, { flash, statusAt: t.conv_status ?? null });
+        const r = await getConductorDecision(sb, t.conversation_id, at, { flash, statusAt: t.conv_status ?? null, pointInTime: true });
         if (!r) { A.failed++; continue; }
         const d = r.decision; decisions.push(d);
         A.n++; A.byKind[d.kind] = (A.byKind[d.kind] ?? 0) + 1; if (d.hesitant) A.hesitant++;
@@ -74,13 +74,14 @@ type Turn = { conv_status: string | null; conversation_id: string; customer_turn
         if (coarse(cp) === staff) A.coarseAgree++;
         const brainPath = t.brain_reply_mode === "aix" && t.brain_action ? `aix:${t.brain_action}` : "reply";
         if (coarse(brainPath) === staff) A.brainCoarseAgree++;
-        const noteAixAll = d.action ? cp : (() => { const c = d.alternatives.find((x) => x.action && (x.kind === "ask_staff" || x.kind === "send")); return c ? `aix:${c.action}` : ""; })();
+        // ブレインの材料に実際に入る AIX（conductorNoteAix・下書きに書かない旨だけの行は一手を勧めないので数えない）
+        const na = conductorNoteAix(d); const noteAixAll = na && !na.protectOnly ? `aix:${na.action}` : "";
         if (staff === "reply") { A.replyTurns++; if (noteAixAll) A.noteOnReply++; }
         if (staffAix.length) {
           A.staffAix++;
           if (sameAix(cp, staffAix)) A.aixAgree++;
           // ブレインの材料（返信の後に残る AIX）まで含めて当たったか
-          const noteAix = d.action ? cp : (() => { const c = d.alternatives.find((x) => x.action && (x.kind === "ask_staff" || x.kind === "send")); return c ? `aix:${c.action}` : ""; })();
+          const noteAix = noteAixAll;
           if (sameAix(cp, staffAix) || sameAix(noteAix, staffAix)) A.aixAgreeWithNote++;
           if (sameAix(brainPath, staffAix)) A.brainAixAgree++;
           // LINK_CONDUCTOR_BRAIN=on の時にブレインが受け取る物（ブレインの一手＋司令塔の残る一手）のどちらかで当たるか
@@ -111,7 +112,7 @@ type Turn = { conv_status: string | null; conversation_id: string; customer_turn
     while (nb < points.length) {
       const p = points[nb++];
       try {
-        const r = await getConductorDecision(sb, p.id, p.at, { flash });
+        const r = await getConductorDecision(sb, p.id, p.at, { flash, pointInTime: true });
         if (!r) { B.failed++; continue; }
         // 今が申込以降の会話は、その日の状態が分からない（今の status で決めると「待つ」が水増しになる）＝数えない
         if (r.hub.where.isPostApply || r.hub.where.stage === "applying" || r.hub.where.stage === "won") { B.postApply++; continue; }

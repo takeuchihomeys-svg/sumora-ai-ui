@@ -36,8 +36,8 @@ export function deepseekTieBreaker(o: { onUsage?: (u: { input: number; output: n
 }
 
 /** 1会話の決定（読めなければ null） */
-export async function getConductorDecision(sb: SupabaseClient, conversationId: string, nowMs: number = Date.now(), o: { flash?: AsyncTieBreaker | null; statusAt?: string | null } = {}): Promise<{ decision: ConductorDecision; hub: CustomerHub; contradictions: HubContradiction[]; input: HubInput; flashCalled: boolean } | null> {
-  const r = await getCustomerHub(sb, conversationId, nowMs, o.statusAt !== undefined ? { statusAt: o.statusAt } : {});
+export async function getConductorDecision(sb: SupabaseClient, conversationId: string, nowMs: number = Date.now(), o: { flash?: AsyncTieBreaker | null; statusAt?: string | null; pointInTime?: boolean } = {}): Promise<{ decision: ConductorDecision; hub: CustomerHub; contradictions: HubContradiction[]; input: HubInput; flashCalled: boolean } | null> {
+  const r = await getCustomerHub(sb, conversationId, nowMs, { ...(o.statusAt !== undefined ? { statusAt: o.statusAt } : {}), ...(o.pointInTime ? { pointInTime: true } : {}) });
   if (!r) return null;
   const { decision, flashCalled } = await conductWithFlash(r.hub, r.contradictions, r.input, o.flash ?? null);
   return { decision, hub: r.hub, contradictions: r.contradictions, input: r.input, flashCalled };

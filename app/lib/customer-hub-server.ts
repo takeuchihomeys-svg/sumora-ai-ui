@@ -34,9 +34,14 @@ export function clipStateToTime(state: NonNullable<Awaited<ReturnType<typeof loa
   };
 }
 
-export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: string, nowMs: number = Date.now(), o: { statusAt?: string | null } = {}): Promise<HubInput | null> {
+/** pointInTime=true の時だけ「その時点」で組む（試し・監査だけが渡す。本番の呼び出しは渡さない＝前と同じ読み方・同じ結果） */
+export type HubLoadOptions = { statusAt?: string | null; pointInTime?: boolean };
+export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: string, nowMs: number = Date.now(), o: HubLoadOptions = {}): Promise<HubInput | null> {
+  const past = o.pointInTime === true;
   const since30 = new Date(nowMs - 30 * DAY).toISOString();
   const nowIso = new Date(nowMs).toISOString();
+  const calQ = sb.from("calendar_events").select("id, conversation_id, customer_name, event_type, start_at, created_at, notes, is_done, title, all_day")
+    .eq("conversation_id", conversationId).gte("start_at", new Date(nowMs - 60 * DAY).toISOString());
   const [conv, state, items, pickups, cal, memo] = await Promise.all([
     sb.from("conversations").select("id, customer_name, account, status, is_post_apply, status_manual_back_at, property_customer_id").eq("id", conversationId).maybeSingle(),
     loadCustomerStateInput(conversationId, { now: nowMs }).catch(() => null),
@@ -44,8 +49,7 @@ export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: s
       .eq("conversation_id", conversationId).gte("created_at", since30).lte("created_at", nowIso).order("created_at").limit(300),
     sb.from("property_pickups").select("created_at, sent_at, expired_at, status, verdict, summary_text, search_conditions")
       .eq("conversation_id", conversationId).gte("created_at", since30).lte("created_at", nowIso).order("created_at").limit(500),
-    sb.from("calendar_events").select("id, conversation_id, customer_name, event_type, start_at, created_at, notes, is_done, title, all_day")
-      .eq("conversation_id", conversationId).gte("start_at", new Date(nowMs - 60 * DAY).toISOString()).lte("created_at", nowIso).order("start_at").limit(200),
+    (past ? calQ.lte("created_at", nowIso) : calQ).order("start_at").limit(200),
     sb.from("customer_memos").select("items").eq("conversation_id", conversationId).maybeSingle(),
   ]);
   const c = conv.data as (HubInput["conv"] & { property_customer_id: string | null }) | null;
@@ -61,7 +65,6 @@ export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: s
   }
   const reapply = await loadReapplyInfo(sb, conversationId);
   // 過去の時点で組む時（試し・監査）は、その時点より後の行を外し、後で片付いた要対応はその時点では開いていた物に戻す
-  const past = nowMs < Date.now() - 5 * 60_000;
   const st = past || o.statusAt !== undefined ? clipStateToTime(state, nowMs, o.statusAt) : state;
   const aixItems = ((items.data ?? []) as HubAixItem[]).map((i) => (past && i.status !== "pending" && i.done_at && Date.parse(i.done_at) > nowMs ? { ...i, status: "pending" as const, done_at: null } : i));
   const memoItems = (memo.data as { items?: unknown } | null)?.items;
@@ -79,7 +82,7 @@ export async function loadCustomerHubInput(sb: SupabaseClient, conversationId: s
 }
 
 /** 1会話のハブ（読めなければ null） */
-export async function getCustomerHub(sb: SupabaseClient, conversationId: string, nowMs: number = Date.now(), o: { statusAt?: string | null } = {}): Promise<{ hub: CustomerHub; contradictions: HubContradiction[]; input: HubInput } | null> {
+export async function getCustomerHub(sb: SupabaseClient, conversationId: string, nowMs: number = Date.now(), o: HubLoadOptions = {}): Promise<{ hub: CustomerHub; contradictions: HubContradiction[]; input: HubInput } | null> {
   const input = await loadCustomerHubInput(sb, conversationId, nowMs, o);
   if (!input) return null;
   const hub = buildCustomerHub(input);
