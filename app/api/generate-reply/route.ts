@@ -135,6 +135,8 @@ import { estimateRedeclareArmed, vacancyRedeclareArmed, brainKeepsRedeclare, log
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
 import { runFinalCheckGated, type FinalCheckGateLog } from "@/app/lib/final-check-gated";
+import { scoreDraftConfidence, draftConfidenceEnabled } from "@/app/lib/draft-confidence";
+import { sceneKeyOf } from "@/app/lib/line-watch-turn";
 import { duplicateOfSentApplies } from "@/app/lib/final-check-overfire"; // 2026-10-02 DUPLICATE_OF_SENT はお客様が了承・お礼だけの番だけ
 import { findNearDuplicateSent } from "@/app/lib/closed-ack";
 // 2026-09-17 竹内（あや事例）: 対象の無い「ご案内させて頂きます」を落とす／この会話で既に送った文を繰り返さない
@@ -7486,6 +7488,38 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               if (isCustomerEcho(finalDraftText, echoSources)) {
                 console.log(JSON.stringify({ tag: "draft:customer-echo-dropped", conversationId, caller: generationCaller, chars: finalDraftText.length, hintOverride: !!replyHint, brainFresh: !!brainFreshForMessage }));
                 finalDraftText = "";
+              }
+            }
+            // 2026-10-21 竹内さん（設計知見 a5838a0b ①自信の気づき・b01d793d）: 下書きの自信を数字と理由で持つ（決まった計算・LLM なし・本文は変えない）。
+            //   最終チェックの結果に載せる＝トレーラー（画面の印）と ai_draft_check（自動返信の関所が低い番を止める・見張りの控え）に同じ値が渡る。
+            //   既定 off（DRAFT_CONFIDENCE=on で動く）。重みと線は scripts/audit-draft-confidence.ts で決めた
+            if (finalCheck && finalDraftText && !isTemplateOptimize && draftConfidenceEnabled()) {
+              try {
+                const fcTpo = (finalCheck.tpo_debug ?? {}) as Record<string, unknown>;
+                const bm = brainMeta as (typeof brainMeta & { customer_intent?: string | null }) | null;
+                const conf = scoreDraftConfidence({
+                  draft: finalDraftText,
+                  customerText: message ?? "",
+                  groundText: [...recentMessages.map((m) => m.text ?? ""), customerConditions ?? ""].join("\n"),
+                  convStatus: state ?? null,
+                  finalCheck: {
+                    ok: finalCheck.ok, issues: finalCheck.issues, revisionExhausted: finalCheck.revision_exhausted ?? null,
+                    regenCount: finalCheck.regen_count ?? null, preIssues: finalCheck.pre_revision_issues ?? null,
+                  },
+                  brain: bm ? {
+                    replyMode: bm.reply_mode ?? null, action: bm.action ?? null,
+                    llmAction: bm.aix_llm ?? bm.llm_raw?.action ?? bm.action ?? null,
+                    property: bm.current_property ?? null, llmProperty: bm.llm_raw?.cp ?? null,
+                    questions: Array.isArray(bm.customer_questions) ? bm.customer_questions.length : null,
+                    deepCheck: !!bm.deep_check,
+                  } : null,
+                  isFirstContact: isFirstEverReplyFromMsgs === true,
+                  sceneKey: sceneKeyOf({ brainAction: bm?.action ?? null, brainReplyMode: bm?.reply_mode ?? null, tpoLabel: typeof fcTpo.tpo_label === "string" ? fcTpo.tpo_label : null, intent: bm?.customer_intent ?? null, convStatus: state ?? null }).key,
+                });
+                finalCheck.confidence = conf;
+                console.log(JSON.stringify({ tag: "draft:confidence", conversationId, score: conf.score, band: conf.band, codes: conf.reasons.map((r) => r.code) }));
+              } catch (e) {
+                console.warn("[generate-reply] draft confidence failed:", conversationId, e instanceof Error ? e.message : String(e));
               }
             }
             if (finalDraftText) controller.enqueue(encoder.encode(finalDraftText));

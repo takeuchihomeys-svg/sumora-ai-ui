@@ -10467,6 +10467,15 @@ export default function Home() {
                     return "✅ そのまま送信OK";
                   })()}
                 </span>
+                {/* 2026-10-21 自信の気づき（draft-confidence.ts）: 自信が低い下書きだけ印を出す（理由の上位2つ）。サーバーの DRAFT_CONFIDENCE=on の時だけ値が来る */}
+                {checkResult?.confidence?.band === "low" && (
+                  <span
+                    className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700"
+                    title={checkResult.confidence.reasons.filter((r) => r.delta < 0).map((r) => `${r.ja}（${r.delta}）`).join("\n")}
+                  >
+                    🤔 自信 低（{checkResult.confidence.reasons.filter((r) => r.delta < 0).slice(0, 2).map((r) => r.ja).join("・") || checkResult.confidence.score}）
+                  </span>
+                )}
               </div>
             )}
 

@@ -4009,7 +4009,9 @@ BEGIN
         'revision_outcome', v_check #> '{tpo_debug,revisionOutcome}',
         'final_codes', v_check #> '{tpo_debug,finalCheckCodes}',
         'text_hash', v_check -> 'checked_text_hash',
-        'elapsed_ms', v_check -> 'elapsed_ms'
+        'elapsed_ms', v_check -> 'elapsed_ms',
+        -- 2026-10-21 自信の気づき（draft-confidence.ts・DRAFT_CONFIDENCE=on の時だけ値がある）: 点・段・理由を控えに残す（自信の段ごとの答え合わせ）
+        'confidence', v_check -> 'confidence'
       );
       v_tpo := left(v_check #>> '{tpo_debug,tpo_label}', 300);
     END IF;
