@@ -12,6 +12,7 @@ import { supabase } from "@/app/lib/supabase";
 import { buildPromiseQueue, nextPromiseAix, numberedPromiseLabels, promiseStepName, pickupNeedSignals, type PickupNeed, promiseQueueEnabled, promiseQueueNote, promiseStepLabel, PROMISE_KIND_JA, type PromiseStep, type QueueAixLog, type QueueMsg } from "@/app/lib/promise-queue";
 import { isTestConversation, isNoLineTestConversation } from "@/app/lib/test-conversations";
 import { MAIN_AIX_ITEM_OR } from "@/app/lib/viewing-day-greeting";
+import { aixInstantNoticeEnabled } from "@/app/lib/staff-todo-list";
 
 const WINDOW_DAYS = 7;
 
@@ -69,7 +70,8 @@ export async function advancePromiseQueue(conversationId: string, o: { trigger: 
   });
   if (error) { if (!/duplicate|unique/i.test(error.message)) console.warn("[promise-queue] insert failed:", conversationId, error.message); return false; }
   console.log(JSON.stringify({ tag: "promise-queue:next", conversationId, trigger: o.trigger, next: nx.next.kind, action: nx.next.action, rest: nx.rest.map((s) => s.kind) }));
-  if (!isTestConversation(conversationId)) {
+  // 2026-10-21: 【やることリスト】が on の間は1件ずつの通知を送らない（一覧に「約束の続き」で入る・STAFF_TODO_INSTANT_NOTICE=on で戻す）
+  if (!isTestConversation(conversationId) && aixInstantNoticeEnabled()) {
     const { buildAixActionNotice, pushToHanbancyoGroup } = await import("@/app/lib/aix-action-items");
     const extra = `（約束の続き: 1. ${promiseStepName(nx.next)}${nx.rest.length ? `／${nx.rest.map((s, n) => `${n + 2}. ${promiseStepName(s)}`).join("／")}` : ""}）`;
     await pushToHanbancyoGroup(`${buildAixActionNotice((conv.customer_name as string | null) ?? "", nx.next.action, nx.next.checkPattern)}\n${extra}`);

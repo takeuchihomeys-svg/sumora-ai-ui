@@ -109,6 +109,10 @@
       "schedule": "30 1,3,5,7,9,11 * * *"
     },
     {
+      "path": "/api/cron/staff-todo-list",
+      "schedule": "30 1,3,5,7,9,11 * * *"
+    },
+    {
       "path": "/api/analyze-diffs?mode=maintain",
       "schedule": "0 18 * * *"
     },

@@ -28,9 +28,23 @@ import type { LedgerKind } from "./action-ledger";
 
 const DAY = 86_400_000;
 
-/** 切替（既定 off）。on の時だけ cron が LINE のグループへ送る。組み立て・見本は off でも動く */
+/**
+ * 切替（2026-10-21 竹内さんの決定 f87ccb7e で既定 on）。on の間は staff-todo-list の cron が2時間ごとにグループへ送り、
+ * 被っていた AIX要対応リスト（announce-aix-actions）と朝の報告の約束・AIX要対応・未返信の節は出さない。
+ * 戻す: STAFF_TODO_LIST=off（AIX要対応リストと朝の報告の節が元どおり出る）。組み立て・見本は off でも動く
+ */
 export function staffTodoListEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.STAFF_TODO_LIST ?? "").trim().toLowerCase() === "on";
+  return (env.STAFF_TODO_LIST ?? "").trim().toLowerCase() !== "off";
+}
+
+/**
+ * AIX要対応の1件ずつの即時通知（ブレインが立てた時・内覧当日の朝の挨拶・約束の続き）をグループに送るか。
+ * 2026-10-21 竹内さん「やることリストが on の間は1件ずつの通知は止めて一覧に入れる」→ STAFF_TODO_LIST が on の間は送らない。
+ * 戻す: STAFF_TODO_INSTANT_NOTICE=on（一覧と併用）／STAFF_TODO_LIST=off（一覧ごと元に戻る）
+ */
+export function aixInstantNoticeEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  if (!staffTodoListEnabled(env)) return true;
+  return (env.STAFF_TODO_INSTANT_NOTICE ?? "").trim().toLowerCase() === "on";
 }
 
 // ─── 入力（DB の行のまま・読み手は staff-todo-list-server.ts） ─────────────────────────
@@ -52,15 +66,23 @@ export type TodoViewingRow = {
   status: string | null; property_name: string | null; actual_date?: string | null; viewing_report_at?: string | null;
 };
 export type TodoMessageRow = { conversation_id: string; sender: string; text: string | null; created_at: string };
+/** スタッフのグループの✅（staff_todo_marks・表がまだ無い間は空） */
+export type TodoMarkRow = { item_key: string; conversation_id: string | null; marked_at: string };
+/** お客様の発言の時刻だけ（約束の後にお客様が返したか＝条件待ちの約束の見分け） */
+export type TodoCustomerTurnRow = { conversation_id: string; created_at: string };
 
 export type TodoInput = {
   atMs: number;
   conversations: ReadonlyArray<TodoConversation>;
   aixItems: ReadonlyArray<TodoAixItemRow>;
   promises: ReadonlyArray<TodoPromiseRow>;
+  /** 履行の送信（sent_facts の done）。AIX 要対応・約束のある会話の分 */
   facts: ReadonlyArray<TodoFactRow>;
   viewings: ReadonlyArray<TodoViewingRow>;
   messages: ReadonlyArray<TodoMessageRow>;
+  marks?: ReadonlyArray<TodoMarkRow>;
+  /** 約束のある会話のお客様の発言（時刻だけ）。無ければ条件待ちの見分けをしない */
+  customerTurns?: ReadonlyArray<TodoCustomerTurnRow>;
 };
 
 // ─── 出力 ─────────────────────────────────────────────────────────────
@@ -93,9 +115,19 @@ export type TodoList = { atMs: number; customers: TodoCustomer[]; openCount: num
 // ─── 小さな道具 ────────────────────────────────────────────────────────
 const t = (iso: string | null | undefined) => { const v = Date.parse(iso ?? ""); return Number.isFinite(v) ? v : NaN; };
 /** JST の日の番号（同じ日なら同じ値） */
-const jstDayNo = (ms: number) => Math.floor((ms + JST_OFFSET_MS) / DAY);
 const jstYmdOf = (ms: number) => new Date(ms + JST_OFFSET_MS).toISOString().slice(0, 10);
-const endOfJstDayIso = (ms: number) => new Date(jstDayStartMs(ms) + DAY - 1).toISOString();
+/**
+ * スタッフの営業日（2026-10-21 竹内さん「営業時間外のお客様の連絡は翌営業日の今日として扱う」）:
+ *   その日の最後の一覧（20:30）より後に立った物は翌日の物（翌朝の一覧で「期限 今日中」・経過はその日から数える）。
+ *   営業日 n ＝ JST の [前日 20:30, 当日 20:30)。期限・経過・「今日済んだ」はこの営業日で数える（内覧・朝の挨拶の時刻は JST のまま）
+ */
+export const STAFF_BIZ_DAY_END_MIN = 20 * 60 + 30;
+const BIZ_SHIFT_MS = (24 * 60 - STAFF_BIZ_DAY_END_MIN) * 60_000;
+export const bizDayNo = (ms: number) => Math.floor((ms + JST_OFFSET_MS + BIZ_SHIFT_MS) / DAY);
+const bizDayStartMs = (ms: number) => bizDayNo(ms) * DAY - JST_OFFSET_MS - BIZ_SHIFT_MS;
+const endOfBizDayIso = (ms: number) => new Date(bizDayStartMs(ms) + DAY - 1).toISOString();
+/** 営業日の日付（M/D） */
+const bizMd = (ms: number) => { const d = new Date(bizDayNo(ms) * DAY); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`; };
 
 /** スタッフのグループでのお客様の出し方: 今ある通知（AIX要対応リスト・ターゲット）と同じ「名前さん」＋アカウント名（社内のグループなので伏せない） */
 export function customerHeader(name: string | null | undefined, account: string | null | undefined): string {
@@ -195,11 +227,82 @@ export function promiseDoneAt(row: TodoPromiseRow, facts: ReadonlyArray<TodoFact
   return null;
 }
 
+// ─── LINE から済みを読む（2026-10-21 竹内さん G3「基本は LINE から自動で判断出来れば理想」）───────────
+/**
+ * AIX 要対応の仕事を済ませる送信（sent_facts の done）。AIX のボタンを押さずに送った（物件のリンクを貼った・御見積書の画像を送った）時も、
+ * 送信の記録が立てば済み。10/15〜10/20 の見本で「AIX 要対応が開いたまま、4分後に物件を送っていた」型の「まだ」を減らす
+ */
+export const AIX_FULFIL_FACT: Readonly<Record<string, readonly string[]>> = {
+  property_send: ["properties_sent"], property_recommendation: ["properties_sent"],
+  estimate_sheet: ["estimate_sent"], property_check_result: ["confirmation_reported"],
+  viewing_invite: ["viewing_invited"], meeting_place: ["meeting_place_sent"], condition_hearing: ["condition_asked"],
+  application_push: ["application_guided"], cost_explain: ["cost_explained"], cost_breakdown: ["cost_breakdown_explained"],
+  guarantor_info: ["guarantor_explained"], phone_call: ["call_requested"], phone_followup: ["call_followup_sent"],
+  followup_revive: ["followup_sent"],
+};
+function factsOf(facts: ReadonlyArray<TodoFactRow>, cid: string, fromMs: number, toMs: number, kinds?: readonly string[]): TodoFactRow[] {
+  return facts.filter((f) => f.conversation_id === cid && t(f.sent_at) >= fromMs && t(f.sent_at) <= toMs && (!kinds || kinds.includes(f.kind)))
+    .sort((a, b) => t(a.sent_at) - t(b.sent_at));
+}
+/** AIX 要対応が送信で済んだ時刻（立った後・at まで）。無ければ null */
+export function aixDoneByFact(r: Pick<TodoAixItemRow, "conversation_id" | "action" | "created_at">, facts: ReadonlyArray<TodoFactRow>, atMs: number): string | null {
+  const kinds = AIX_FULFIL_FACT[r.action];
+  if (!kinds) return null;
+  return factsOf(facts, r.conversation_id, t(r.created_at), atMs, kinds)[0]?.sent_at ?? null;
+}
+const CONDITION_WAIT_MS = 10 * 60_000;
+const COST_CONFIRM_RE = /初期費用|交渉|割引|値引|見積|仲介手数料|礼金/;
+/**
+ * もう要らなくなった約束（済みではなく、やる事から外す）。理由の札を返す（無ければ null）
+ *   apply   … 約束の後に申込のご案内をした（物件出し・確認・御見積書の前の段の約束は申込に進めば終わり）
+ *   cond    … 「ご条件を頂いたらピックアップします」の約束（条件を伺った送信と同じ時に立った物件の約束）で、まだお客様が返していない＝お客様待ち
+ *   gone    … 初期費用・交渉の確認の約束の後に、そのお部屋の募集終了・別のお部屋の報告をした（確かめる対象が無くなった）
+ */
+export function promiseMootReason(p: TodoPromiseRow, input: Pick<TodoInput, "facts" | "customerTurns">, atMs: number): "apply" | "cond" | "gone" | null {
+  if (!p.conversation_id) return null;
+  const created = t(p.created_at);
+  if (factsOf(input.facts, p.conversation_id, created, atMs, ["application_guided"]).length) return "apply";
+  const action = promiseAixActionOf(p.event_type);
+  if (action === "property_send" && input.customerTurns) {
+    const asked = input.facts.some((f) => f.conversation_id === p.conversation_id && f.kind === "condition_asked" && Math.abs(t(f.sent_at) - created) <= CONDITION_WAIT_MS);
+    const replied = input.customerTurns.some((m) => m.conversation_id === p.conversation_id && t(m.created_at) > created && t(m.created_at) <= atMs);
+    if (asked && !replied) return "cond";
+  }
+  if (action === "property_check_result" && COST_CONFIRM_RE.test(promiseTaskOf(p.notes))) {
+    const gone = factsOf(input.facts, p.conversation_id, created, atMs, ["confirmation_reported"])
+      .some((f) => f.detail?.checkPattern === "unavailable" || f.detail?.checkPattern === "alternative");
+    if (gone) return "gone";
+  }
+  return null;
+}
+const VIEWING_DONE_TEXT_RE = /内覧|ご案内|お越し/;
+/** 内覧が済んだ時刻: 内覧の記録 → 内覧の時刻の後のスタッフの送信（内覧のお礼・ご案内の話）→ 時刻の後の申込のご案内 */
+export function viewingDoneAt(v: TodoViewingRow, dueMs: number, input: Pick<TodoInput, "facts" | "messages">, atMs: number): string | null {
+  const reportMs = t(v.viewing_report_at);
+  if (Number.isFinite(reportMs) && reportMs <= atMs) return v.viewing_report_at!;
+  if (!v.conversation_id || dueMs > atMs) return null;
+  const staff = input.messages.filter((m) => m.conversation_id === v.conversation_id && m.sender !== "customer"
+    && t(m.created_at) > dueMs && t(m.created_at) <= atMs && VIEWING_DONE_TEXT_RE.test(m.text ?? ""))
+    .sort((a, b) => t(a.created_at) - t(b.created_at))[0];
+  const applied = factsOf(input.facts, v.conversation_id, dueMs, atMs, ["application_guided"])[0];
+  const cands = [staff?.created_at, applied?.sent_at].filter((x): x is string => !!x).sort((a, b) => t(a) - t(b));
+  if (cands[0]) return cands[0];
+  return v.status === "done" ? new Date(dueMs).toISOString() : null;
+}
+/** グループの✅の時刻（at まで） */
+function markedAt(key: string, marks: ReadonlyArray<TodoMarkRow> | undefined, atMs: number): string | null {
+  const m = (marks ?? []).filter((x) => x.item_key === key && t(x.marked_at) <= atMs).sort((a, b) => t(a.marked_at) - t(b.marked_at))[0];
+  return m?.marked_at ?? null;
+}
+const earliest = (...xs: Array<string | null | undefined>): string | null =>
+  xs.filter((x): x is string => !!x && Number.isFinite(t(x))).sort((a, b) => t(a) - t(b))[0] ?? null;
+
 // ─── 組み立て ───────────────────────────────────────────────────────────
 export function buildStaffTodoList(input: TodoInput): TodoList {
   const at = input.atMs;
-  const dayStart = jstDayStartMs(at);
-  const today = jstDayNo(at);
+  const dayStart = bizDayStartMs(at); // 「今日済んだ」の起点＝営業日の始まり（前日 20:30）
+  const jstStart = jstDayStartMs(at); // 内覧・朝の挨拶の時刻の起点（JST の 0:00）
+  const today = bizDayNo(at);
   const skipped: Record<string, number> = {};
   const skip = (k: string) => { skipped[k] = (skipped[k] ?? 0) + 1; };
   const convById = new Map(input.conversations.map((c) => [c.id, c]));
@@ -213,24 +316,33 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
     if (!(created <= at)) continue;
     const doneMs = r.status === "done" ? t(r.done_at) : NaN;
     const closedMs = r.status === "done" ? doneMs : r.status === "dismissed" ? t(r.updated_at) : NaN;
-    const openAtAt = r.status === "pending" || (Number.isFinite(closedMs) && closedMs > at);
-    const doneToday = r.status === "done" && Number.isFinite(doneMs) && doneMs >= dayStart && doneMs <= at;
+    let openAtAt = r.status === "pending" || (Number.isFinite(closedMs) && closedMs > at);
+    let doneToday = r.status === "done" && Number.isFinite(doneMs) && doneMs >= dayStart && doneMs <= at;
+    let doneAtShown: string | null = r.done_at;
+    if (openAtAt) {
+      // AIX のボタンを押さずに済ませた（送信の記録）・グループの✅
+      const auto = earliest(aixDoneByFact(r, input.facts, at), markedAt(`aix:${r.id}`, input.marks, at));
+      if (auto) {
+        if (t(auto) < dayStart) { skip("aix_done_by_send_before"); continue; }
+        openAtAt = false; doneToday = true; doneAtShown = auto;
+      }
+    }
     if (!openAtAt && !doneToday) continue;
     // 14日より前に立って開いたままの要対応（台帳に未履行のピックアップ宣言があると取り下げない物）も、約束と同じく今日のやる事にしない
-    if (openAtAt && today - jstDayNo(created) > TODO_MAX_AGE_DAYS) { skip("aix_stale"); continue; }
+    if (openAtAt && today - bizDayNo(created) > TODO_MAX_AGE_DAYS) { skip("aix_stale"); continue; }
     const morning = (r.resolution_note ?? "").startsWith(MORNING_GREETING_NOTE_PREFIX);
     const appt = morning ? (r.resolution_note ?? "").slice(MORNING_GREETING_NOTE_PREFIX.length).trim() : "";
     const shownAction = doneToday && r.done_aix_type && r.done_aix_type !== r.action ? r.done_aix_type : r.action;
     const task = morning ? `本日${appt ? ` ${appt} ` : ""}の内覧の前にご挨拶を送る` : actionTask(r.action, r.check_pattern);
     // 期限: その日のうち（ブレインが要ると判断した番・約束の続き）。朝の挨拶は内覧の時刻
     const hm = appt.match(/(\d{1,2}):(\d{2})/);
-    const dueAt = morning && hm ? new Date(dayStart + (+hm[1] * 60 + +hm[2]) * 60_000).toISOString() : endOfJstDayIso(created);
+    const dueAt = morning && hm ? new Date(jstStart + (+hm[1] * 60 + +hm[2]) * 60_000).toISOString() : endOfBizDayIso(created);
     if (openAtAt) openAixConv.add(r.conversation_id);
     items.push({
       key: `aix:${r.id}`, conversationId: r.conversation_id, source: "aix_item", action: r.action, checkPattern: r.check_pattern,
       kindLabel: aixButtonText(shownAction, shownAction === r.action ? r.check_pattern : null),
       task: (r.resolution_note ?? "").startsWith(PROMISE_QUEUE_NOTE_PREFIX) ? `${task}（約束の続き）` : task,
-      originAt: r.created_at, dueAt, dueHasTime: !!(morning && hm), doneAt: openAtAt ? null : r.done_at,
+      originAt: r.created_at, dueAt, dueHasTime: !!(morning && hm), doneAt: openAtAt ? null : doneAtShown,
     });
   }
 
@@ -241,24 +353,28 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
     if (!(created <= at)) continue;
     if (isWaitPromiseNotes(p.notes, at)) { skip("promise_wait"); continue; }
     const due = t(p.start_at);
-    if (jstDayNo(due) > today) { skip("promise_future"); continue; }
+    if (bizDayNo(due) > today) { skip("promise_future"); continue; }
     if (postApplyOrClosed(convById.get(p.conversation_id))) { skip("promise_post_apply"); continue; }
-    let doneAt: string | null = null;
-    if (p.is_done) {
-      doneAt = promiseDoneAt(p, input.facts);
-      // 閉じたのに履行の送信が見つからない（手で完了・別の判定）＝いつ済んだか分からないので出さない
-      if (!doneAt) { skip("promise_closed_unknown"); continue; }
+    // 済み: 履行の送信（カレンダーを閉じるのと同じ判定・カレンダーがまだ開いていても送信が立てば済み）・グループの✅
+    let doneAt: string | null = earliest(promiseDoneAt(p, input.facts), markedAt(`promise:${p.id}`, input.marks, at));
+    // 閉じたのに履行の送信も✅も見つからない（画面で手で完了・別の判定）＝いつ済んだか分からないので出さない
+    if (p.is_done && !doneAt) { skip("promise_closed_unknown"); continue; }
+    if (doneAt && t(doneAt) > at && !p.is_done) doneAt = null;
+    // もう要らない約束（申込に進んだ・お客様のご条件待ち・確かめるお部屋が無くなった）はやる事から外す
+    if (!(doneAt && t(doneAt) <= at)) {
+      const moot = promiseMootReason(p, input, at);
+      if (moot) { skip(`promise_moot_${moot}`); continue; }
     }
     const doneMs = doneAt ? t(doneAt) : NaN;
     if (doneAt && doneMs <= at && doneMs < dayStart) continue; // 今日より前に済んだ
-    if (!(doneAt && doneMs <= at) && today - jstDayNo(due) > TODO_MAX_AGE_DAYS) { skip("promise_stale"); continue; }
+    if (!(doneAt && doneMs <= at) && today - bizDayNo(due) > TODO_MAX_AGE_DAYS) { skip("promise_stale"); continue; }
     const isDoneNow = !!doneAt && doneMs <= at;
     const action = promiseAixActionOf(p.event_type);
     items.push({
       key: `promise:${p.id}`, conversationId: p.conversation_id, source: "promise", action, checkPattern: promiseCheckPatternOf(p.notes),
       kindLabel: promiseAixLabelOf(p.notes) ?? (action ? aixButtonText(action) : "約束"),
       task: `${promiseTaskOf(p.notes)}（お約束）`,
-      originAt: p.created_at, dueAt: endOfJstDayIso(due), dueHasTime: false, doneAt: isDoneNow ? doneAt : null,
+      originAt: p.created_at, dueAt: endOfBizDayIso(due), dueHasTime: false, doneAt: isDoneNow ? doneAt : null,
     });
   }
 
@@ -268,13 +384,12 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
     if (!v.conversation_id || isTestConversation(v.conversation_id)) continue;
     if (v.scheduled_date !== todayYmd || /cancel/.test(v.status ?? "")) continue;
     const hm = (v.scheduled_time ?? "").match(/(\d{1,2}):(\d{2})/);
-    const dueMs = hm ? dayStart + (+hm[1] * 60 + +hm[2]) * 60_000 : dayStart + DAY - 1;
-    const reportMs = t(v.viewing_report_at);
-    const doneAt = Number.isFinite(reportMs) && reportMs <= at ? v.viewing_report_at! : (v.status === "done" && dueMs <= at ? new Date(dueMs).toISOString() : null);
+    const dueMs = hm ? jstStart + (+hm[1] * 60 + +hm[2]) * 60_000 : jstStart + DAY - 1;
+    const doneAt = earliest(viewingDoneAt(v, dueMs, input, at), markedAt(`viewing:${v.id}`, input.marks, at));
     items.push({
       key: `viewing:${v.id}`, conversationId: v.conversation_id, source: "viewing", action: null, checkPattern: null, kindLabel: "内覧",
       task: `${hm ? `${hm[1]}:${hm[2]} ` : ""}${v.property_name ? `${v.property_name}の` : ""}ご案内（終わったら内覧の記録）`,
-      originAt: new Date(dayStart).toISOString(), dueAt: new Date(dueMs).toISOString(), dueHasTime: !!hm, doneAt,
+      originAt: new Date(jstStart).toISOString(), dueAt: new Date(dueMs).toISOString(), dueHasTime: !!hm, doneAt,
     });
   }
 
@@ -297,10 +412,13 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
     const first = t(turn[0].created_at), lastMs = t(last.created_at);
     if (at - lastMs < UNANSWERED_MIN_MS || at - first > UNANSWERED_MAX_MS) { skip("unanswered_window"); continue; }
     if (turn.every((m) => isCloserOnly(m.text))) { skip("unanswered_closer"); continue; }
+    const key = `reply:${cid}:${turn[0].created_at}`;
+    const marked = markedAt(key, input.marks, at);
+    if (marked && t(marked) < dayStart) continue;
     items.push({
-      key: `reply:${cid}:${turn[0].created_at}`, conversationId: cid, source: "unanswered", action: null, checkPattern: null, kindLabel: "返信",
+      key, conversationId: cid, source: "unanswered", action: null, checkPattern: null, kindLabel: "返信",
       task: `${jstMDHm(turn[0].created_at)} のご連絡に返信する`,
-      originAt: turn[0].created_at, dueAt: endOfJstDayIso(first), dueHasTime: false, doneAt: null,
+      originAt: turn[0].created_at, dueAt: endOfBizDayIso(first), dueHasTime: false, doneAt: marked,
     });
   }
 
@@ -333,11 +451,11 @@ export function buildStaffTodoList(input: TodoInput): TodoList {
 
 /** 期限を過ぎた日数（その日の終わりが期限の物は翌日から 1） */
 export function overdueDays(it: Pick<TodoItem, "dueAt">, atMs: number): number {
-  return Math.max(0, jstDayNo(atMs) - jstDayNo(t(it.dueAt)));
+  return Math.max(0, bizDayNo(atMs) - bizDayNo(t(it.dueAt)));
 }
 /** 仕事が立ってからの経過日数（JST の日付で数える・今日立った物は 0） */
 export function elapsedDays(it: Pick<TodoItem, "originAt">, atMs: number): number {
-  return Math.max(0, jstDayNo(atMs) - jstDayNo(t(it.originAt)));
+  return Math.max(0, bizDayNo(atMs) - bizDayNo(t(it.originAt)));
 }
 function compareItems(a: TodoItem, b: TodoItem, at: number, status: string | null): number {
   if (!!a.doneAt !== !!b.doneAt) return a.doneAt ? 1 : -1;
@@ -365,23 +483,42 @@ function compareCustomers(a: TodoCustomer, b: TodoCustomer, at: number): number 
 function dueLabel(it: TodoItem, atMs: number): string {
   const od = overdueDays(it, atMs);
   const due = new Date(t(it.dueAt) + JST_OFFSET_MS);
-  const md = `${due.getUTCMonth() + 1}/${due.getUTCDate()}`;
+  const md = it.dueHasTime ? `${due.getUTCMonth() + 1}/${due.getUTCDate()}` : bizMd(t(it.dueAt)); // 期限が日の物は営業日の日付
   if (od > 0) return `期限 ${md} 過ぎ`;
   if (it.dueHasTime) return `期限 ${String(due.getUTCHours())}:${String(due.getUTCMinutes()).padStart(2, "0")}まで`;
   return "期限 今日中";
 }
-/** 1行: ・AIX【種類】：やる事（期限）（●日）／済みは ✅AIX【種類】：やる事 */
-export function renderTodoItem(it: TodoItem, atMs: number): string {
+/** 残りの行の番号（グループで「✅3」と返すための番号・①〜㊿、51 からは (51)） */
+export function todoNumberMark(n: number): string {
+  if (n >= 1 && n <= 20) return String.fromCodePoint(0x2460 + n - 1);
+  if (n >= 21 && n <= 35) return String.fromCodePoint(0x3251 + n - 21);
+  if (n >= 36 && n <= 50) return String.fromCodePoint(0x32b1 + n - 36);
+  return `(${n})`;
+}
+/** 残りの行に上から番号を振る（文と、グループの✅を読む控え（スナップショット）で同じ番号） */
+export function numberTodoItems(list: TodoList): Array<{ n: number; item: TodoItem; customer: TodoCustomer }> {
+  const out: Array<{ n: number; item: TodoItem; customer: TodoCustomer }> = [];
+  for (const c of list.customers) for (const i of c.items) if (!i.doneAt) out.push({ n: out.length + 1, item: i, customer: c });
+  return out;
+}
+/**
+ * 1行: ①AIX【種類】：やる事（期限）（●日）／済みは ✅AIX【種類】：やる事。
+ * 経過が0日（今日立った）の物は（0日）を書かない（2026-10-21 竹内さん G5「０にちいれない」）
+ */
+export function renderTodoItem(it: TodoItem, atMs: number, n?: number): string {
   if (it.doneAt) return `✅${it.kindLabel}：${it.task}`;
-  return `・${it.kindLabel}：${it.task}（${dueLabel(it, atMs)}）（${elapsedDays(it, atMs)}日）`;
+  const d = elapsedDays(it, atMs);
+  return `${n ? todoNumberMark(n) : "・"}${it.kindLabel}：${it.task}（${dueLabel(it, atMs)}）${d > 0 ? `（${d}日）` : ""}`;
 }
 /** グループに出す文（やる事が1つも無ければ null＝送らない） */
 export function renderStaffTodoList(list: TodoList): string | null {
   if (list.customers.length === 0) return null;
+  const nums = new Map(numberTodoItems(list).map((x) => [x.item.key, x.n]));
   const out = [`【やることリスト】${jstMDHm(list.atMs)}`];
   for (const c of list.customers) {
-    out.push("", c.accountLabel, ...c.items.map((i) => renderTodoItem(i, list.atMs)));
+    out.push("", c.accountLabel, ...c.items.map((i) => renderTodoItem(i, list.atMs, nums.get(i.key))));
   }
   out.push("", list.openCount === 0 ? "🎉 全部✅！" : `残り ${list.openCount}件／済み ${list.doneCount}件（✅=済み・（●日）=経過日数）`);
+  if (list.openCount > 0) out.push("済んだら「✅3」「✅3 5」や「〇〇さん 完了」とこのグループに返すと✅になります（LINE で送った物は自動で✅）");
   return out.join("\n");
 }
