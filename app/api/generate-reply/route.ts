@@ -12,7 +12,7 @@ import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, L
 import { willRouteAlt, ALT_STREAM_CUT_STOP, altDeepseekModelFor } from "@/app/lib/llm-alt-provider";
 import { flashWriterAdaptOn, flashWriterRecheckOn, isFlashModel, flashWriterParts, buildFlashChecklist, renderFlashChecklistNote, renderFlashExamplesNote, missingFlashItems, buildFlashRewriteFeedback, buildFlashPlanRequest, buildFlashWriteRequest, contractForbidsInvite, INVITE_RE, type FlashChecklistItem } from "@/app/lib/flash-writer";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
-import { loadPostApplyFacts, resolvePostApply, postApplyDraftSkip, deepseekSafeCutoff, loadDeepseekCutoff, cutoffMs, isAfterCutoff, filterAfterCutoff, cutoffMarkOf, formatCutoffMark, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, resolvePostApply, postApplyDraftSkip, deepseekPostApply, deepseekSafeCutoff, loadDeepseekCutoff, cutoffMs, isAfterCutoff, filterAfterCutoff, cutoffMarkOf, formatCutoffMark, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
 import { loadScreeningSensitive, screeningSensitiveInMessages, screeningPiiClaudeEnabled, type ScreeningSensitiveHit } from "@/app/lib/screening-sensitive";
 // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 線で派生データを切る・出口の印を置く箱
 import { cutBrainGate, keepIfMadeAfter } from "@/app/lib/deepseek-cut";
@@ -3398,6 +3398,9 @@ async function handleGenerateReply(req: NextRequest) {
   //   同じ1クエリで状態も読む（読めなければ「回さない」側へ倒す＝fail-closed）。
   let autoSendConversation = false;
   let postApplyConversation = false;
+  // 2026-10-21（023ec7bd）DeepSeek に渡さない側の申込以降: 印だけ残って戻した会話は申込以降に数えず時刻の線で切る（post-apply.ts deepseekPostApply）。
+  //   下書きの中の機能（手続きの答え・メモ等）の切り替えは今までどおり postApplyConversation（変えない）
+  let altPostApply = false;
   // 記録が読めた時の判定（下書きを止める側はこちらを見る。読めない時は止めない）
   let postApplyResolved: ReturnType<typeof resolvePostApply> | null = null;
   let postApplyDraftAllowed = false;
@@ -3431,11 +3434,13 @@ async function handleGenerateReply(req: NextRequest) {
       //   戻した会話（movedBack）は、切り替えた時刻（conversations.deepseek_cutoff_at・消えない列）より後だけを DeepSeek に渡す（下の「時刻の線」）。
       //   旧の歯止め（戻した会話は丸ごと Claude のまま）はこの仕組みに置き換えた。監査: scripts/audit-deepseek-pii.ts
       postApplyConversation = r.postApply;
-      deepseekCutoff = deepseekSafeCutoff(facts);
+      altPostApply = deepseekPostApply(facts);
+      deepseekCutoff = deepseekSafeCutoff(facts, { reapply: true });
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "generate-reply:post-apply", conversationId, reason: r.reason }));
     } catch {
       // 読めなければ自動返信は false（通常どおり）だが、申込以降は true に倒す（個人情報を外に出さない）
       postApplyConversation = true;
+      altPostApply = true;
       deepseekCutoff = null;
     }
   }
@@ -3456,7 +3461,7 @@ async function handleGenerateReply(req: NextRequest) {
   //   ・線より前の発言への返信（戻した直後に申込中の発言へ下書きを作る）は DeepSeek に渡さない（今の発言そのものが線より前）
   //   ・出口（llm-alt-provider）には「判定を通った印」を置く（ヘッダ＋リクエストの箱）。印が blocked・無い会話の呼び出しは出口で Claude に戻す（二重の鍵）
   const replyCutLine = cutoffMs(deepseekCutoff);
-  const replyGoesAlt = !postApplyConversation && replyCutLine !== null
+  const replyGoesAlt = !altPostApply && replyCutLine !== null
     && willRouteAlt("reply_generate", { postApply: false, autoSend: autoSendConversation });
   const latestCustomerAtForCut = [...recentMessages].reverse().find((m) => m.sender === "customer")?.createdAt ?? null;
   let deepseekBlocked = replyCutLine === null;
@@ -6102,7 +6107,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // 2026-10-18 竹内さん「flash の特徴に合わせる」: 書く役が DeepSeek の flash の時だけ、最後（キャッシュの前置きの後ろ）に答える項目の一覧・手本を足す
     //   （app/lib/flash-writer.ts・pro／Claude の時は何も足さない＝指示は1文字も変えない・FLASH_WRITER_ADAPT=off で旧・FLASH_WRITER_PARTS で手当てを選ぶ）
     const flashWriterModel = !isTemplateOptimize && !isFollowUp && flashWriterAdaptOn()
-      ? altDeepseekModelFor("reply_generate", { postApply: postApplyConversation || deepseekBlocked, autoSend: autoSendConversation })
+      ? altDeepseekModelFor("reply_generate", { postApply: altPostApply || deepseekBlocked, autoSend: autoSendConversation })
       : null;
     const flashParts = isFlashModel(flashWriterModel) ? flashWriterParts() : new Set<string>();
     const flashItems: FlashChecklistItem[] = flashParts.size
@@ -6177,7 +6182,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     const autoSendHeaders = {
       ...(conversationId ? { [LLM_CONVERSATION_HEADER]: conversationId } : {}),
       ...(autoSendConversation ? { [LLM_AUTO_SEND_HEADER]: "1" } : {}),
-      ...(postApplyConversation || deepseekBlocked ? { [LLM_POST_APPLY_HEADER]: "1" } : {}),
+      ...(altPostApply || deepseekBlocked ? { [LLM_POST_APPLY_HEADER]: "1" } : {}),
       // 2026-09-26 時刻の線: 判定を通った印（出口の二重の鍵）。blocked・印なしの会話の呼び出しは DeepSeek に回らない
       [LLM_CUTOFF_HEADER]: formatCutoffMark(replyCutMark),
     };
@@ -6189,7 +6194,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     //   前置きが変わるとプロンプトキャッシュが効かなくなる（DeepSeek は前置き一致で 1/30 の値段）。
     // 2026-09-27: テンプレ最適化も DeepSeek に回っていた（createTemplateOptimizeModel の注記）ので、読み替えを同じ条件で掛ける
     const replyMasker = (willRouteAlt("reply_generate", {
-      postApply: postApplyConversation || deepseekBlocked, autoSend: autoSendConversation,
+      postApply: altPostApply || deepseekBlocked, autoSend: autoSendConversation,
     }))
       ? createMasker({
         conversationId: conversationId ?? "reply",

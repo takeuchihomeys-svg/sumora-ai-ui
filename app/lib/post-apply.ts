@@ -114,6 +114,10 @@ export function resolvePostApply(f: PostApplyFacts): { postApply: boolean; reaso
  */
 export function badgeOnlyMovedBack(f: PostApplyFacts, env: Record<string, string | undefined> = process.env): boolean {
   if ((env.DRAFT_BADGE_MOVEDBACK ?? "").trim().toLowerCase() === "off") return false;
+  return badgeMovedBackCore(f);
+}
+/** 印だけが申込以降の理由で、最後の申込の記録（押下・書類）より後に戻している（スイッチを見ない純関数） */
+export function badgeMovedBackCore(f: PostApplyFacts): boolean {
   if (f.isPostApply !== true || DRAFT_SKIP_STATUSES.has((f.status ?? "").trim())) return false;
   const backs = [ms(f.statusManualBackAt), ms(f.deepseekCutoffAt)].filter((x): x is number => x !== null);
   if (!backs.length) return false;
@@ -129,6 +133,35 @@ export function postApplyDraftSkip(f: PostApplyFacts, env: Record<string, string
 
 export function isPostApplyConversation(f: PostApplyFacts): boolean {
   return resolvePostApply(f).postApply;
+}
+
+/**
+ * 2026-10-21 竹内さんの決定（023ec7bd）「一度申込になってもう一度戻ってきたお客さん…申込中のマスキングちゃんとおこなえば DeepSeek にわたして生成しても良い」:
+ *   印（is_post_apply）だけ残って戻した会話にも時刻の線を当てる＝戻した時刻より後だけ DeepSeek に渡す。
+ *   申込中の期間（最初の申込の記録〜戻した時刻）は線より前なので渡らない。戻した後に申込フォーム・書類・押下があればまた申込中（線は引けない）。
+ *   出口では線のある呼び出し（cut）に申込情報の値の網を強めて当てる（alt-pii-gate.altPiiSignalReapply）。審査の事情は SCREENING_PII_CLAUDE のまま Claude。
+ *   止める REAPPLY_DEEPSEEK=off（旧＝印が残っていれば Claude 固定）
+ */
+export function reapplyDeepseekEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.REAPPLY_DEEPSEEK ?? "").trim().toLowerCase() !== "off";
+}
+/**
+ * 印だけ残って戻した会話を DeepSeek の線で扱ってよいか。下書きの判定（badgeMovedBackCore）より狭くする:
+ *   印の時刻は残らないので、印を付けた後の「戻す操作」を戻しの印（status_manual_back_at）で確かめる
+ *   （画面で印を付けると status_manual_back_at は消え status は申込へ進む＝その後に段階を戻した時だけ新しく付く）。
+ *   消えない列（deepseek_cutoff_at）だけでは印を付ける前の古い戻しの可能性があるので使わない。
+ */
+export function badgeMovedBackForDeepseek(f: PostApplyFacts, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  if (!reapplyDeepseekEnabled(env) || !badgeMovedBackCore(f)) return false;
+  const back = ms(f.statusManualBackAt);
+  if (back === null) return false;
+  const latest = Math.max(ms(f.applicationPushAt) ?? -Infinity, ms(f.idDocumentAt) ?? -Infinity);
+  return back > latest;
+}
+/** DeepSeek に渡さない側の「申込以降」（下書きを止める判定とは別）: 印だけ残って戻した会話は申込以降に数えない（線で切る） */
+export function deepseekPostApply(f: PostApplyFacts, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  if (!resolvePostApply(f).postApply) return false;
+  return !badgeMovedBackForDeepseek(f, env);
 }
 
 // supabase-js の型をそのまま受けると TS2589（型の展開が深すぎる）になるので、使う形だけを緩く受ける
@@ -185,9 +218,11 @@ export type DeepseekCutoff = string | null | number;
  *   -Infinity … 申込の記録も切り替えも無い。全部渡してよい
  * 切り替えの時刻は deepseek_cutoff_at を正にし、無い時だけ status_manual_back_at（旧の線・前進で消える）を使う。
  */
-export function deepseekSafeCutoff(f: PostApplyFacts): DeepseekCutoff {
+export function deepseekSafeCutoff(f: PostApplyFacts, opts: { reapply?: boolean } = {}): DeepseekCutoff {
   try {
-    if (resolvePostApply(f).postApply) return null;
+    // 2026-10-21 確かめ役: 印だけ残って戻した会話の線は、出口の強めの網（alt-pii-gate.altPiiSignalReapply）を通る入口（返信生成・AIX）だけが
+    //   opts.reapply で開く。それ以外（loadDeepseekCutoff を読むメモの読み取り・好みの学習・画像の読み取り等＝DeepSeek を直接呼び出口の網を通らない道がある）は今まで通り渡さない
+    if (opts.reapply ? deepseekPostApply(f) : resolvePostApply(f).postApply) return null;
     // 書いてあるのに読めない時刻がある＝判定が読めない → 渡さない
     for (const v of [f.applicationPushAt, f.idDocumentAt, f.statusManualBackAt, f.deepseekCutoffAt, f.applicationFormAt]) if (v && ms(v) === null) return null;
     // 2026-10-18 弱い所A-3③: 記入済みの申込フォームも申込の記録と同じに数える（フォームの後に戻していなければ渡さない・戻した後は戻した時刻より後だけ）
@@ -196,6 +231,12 @@ export function deepseekSafeCutoff(f: PostApplyFacts): DeepseekCutoff {
     const pushAt = ms(f.applicationPushAt), docAt = ms(f.idDocumentAt), formAt = formOn ? ms(f.applicationFormAt) : null;
     const latest = Math.max(pushAt ?? -Infinity, docAt ?? -Infinity, formAt ?? -Infinity);
     const cut = ms(f.deepseekCutoffAt), back = ms(f.statusManualBackAt);
+    // 2026-10-21 印だけ残って戻した会話（023ec7bd）: 印の時刻は分からないので、記録が無くても全部（NO_CUTOFF）にはしない＝戻しの印（印の後の戻す操作）より後だけ。
+    //   戻しの後にフォームが届いていればまた申込中（渡さない）。線は戻しの印と切り替えた時刻の遅い方（遅い方が狭い＝安全側）
+    if (f.isPostApply === true) {
+      if (back === null || !(back > latest)) return null;
+      return new Date(Math.max(back, cut ?? -Infinity)).toISOString();
+    }
     if (!Number.isFinite(latest)) {
       // 申込へ押下・書類の記録は無いが、status が申込以降だった所から戻した（審査管理の同期で申込・審査中になっていた等）
       return cut !== null ? new Date(cut).toISOString() : NO_CUTOFF;

@@ -42,7 +42,7 @@ export async function loadLinkWatchInputs(sb: SupabaseClient, w: LinkWindow): Pr
   const [msgs, logs, facts, turns, items, pickups] = await Promise.all([
     pageAll<Mrow>((a, b) => sb.from("messages").select("conversation_id, sender, text, created_at, is_aix_generated")
       .gte("created_at", since).lte("created_at", nowIso).order("created_at").order("id").range(a, b)),
-    pageAll<Lrow>((a, b) => sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, sent_at, created_at, estimate_sent, generated_text")
+    pageAll<Lrow>((a, b) => sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, sent_at, created_at, estimate_sent, generated_text, send_mode")
       .gte("created_at", since).lte("created_at", nowIso).not("aix_type", "is", null).order("created_at").order("id").range(a, b)),
     pageAll<Frow>((a, b) => sb.from("sent_facts").select("conversation_id, kind, status, sent_at, detail")
       .gte("sent_at", since).lte("sent_at", nowIso).in("kind", ["pickup_declared", "properties_sent"]).order("sent_at").order("id").range(a, b)),
