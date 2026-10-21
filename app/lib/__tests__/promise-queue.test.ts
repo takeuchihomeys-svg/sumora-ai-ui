@@ -138,6 +138,92 @@ it("戻す TWO_STAGE_MULTI_PROMISE=off", () => {
   try { eq(resolveTwoStage({ ...base, customerText: "こちらまだ空いてますか？\n空いていたら内覧したいです\n他にも似たような物件ありますか？" })!.extraPromises, undefined); }
   finally { delete process.env.TWO_STAGE_MULTI_PROMISE; }
 });
+console.log("buildPromiseQueue 時刻の順（2026-10-22 同じ種類の約束が重なると新しい約束が消えていた・1191b1 10/02）");
+{
+  const CHECK = "お部屋お送りいただきありがとうございます😊！！\nお部屋の募集状況確認させていただきます！！";
+  const at = (h: number, m = 0) => new Date(Date.UTC(2026, 9, 2, h, m)).toISOString();
+  const res = (h: number, m = 0, text = "お送りいただきました物件〇〇号室現在募集中となります！！"): QueueAixLog => ({ aixType: "property_check_result", checkPattern: "available", sentAt: at(h, m), text });
+  const pend = (q: ReturnType<typeof buildPromiseQueue>) => q.filter((s) => s.status === "pending").map((s) => `${s.kind}@${s.promisedAt.slice(11, 16)}`);
+  it("同じ種類の約束 → AIX で果たす → また約束: 新しい約束は開いたまま（前は消えていた）", () => {
+    const m: QueueMsg[] = [{ sender: "staff", text: CHECK, createdAt: at(1) }, { sender: "customer", text: "ここも出してもらっていいですか？", createdAt: at(9, 50) }, { sender: "staff", text: CHECK, createdAt: at(10, 12) }];
+    const q = buildPromiseQueue(m, [res(2)], Date.parse(at(10, 13)));
+    eq(q.filter((s) => s.kind === "check").map((s) => s.status), ["done", "pending"]);
+    eq(nextPromiseAix(q, { nowMs: Date.parse(at(10, 13)) })?.next.promisedAt, at(10, 12));
+  });
+  it("その後の AIX で新しい約束も果たす（AIX は自分より前の約束だけ）", () => {
+    const m: QueueMsg[] = [{ sender: "staff", text: CHECK, createdAt: at(1) }, { sender: "staff", text: CHECK, createdAt: at(10, 12) }];
+    const q = buildPromiseQueue(m, [res(2), res(10, 27)], Date.parse(at(11)));
+    eq(q.filter((s) => s.kind === "check").map((s) => `${s.status}@${s.doneAt?.slice(11, 16)}`), ["done@02:00", "done@10:27"]);
+  });
+  it("前の約束がまだ開いている間の同じ種類の約束は1つにまとめる（今までどおり）・AIX 1本で済み", () => {
+    const m: QueueMsg[] = [{ sender: "staff", text: CHECK, createdAt: at(1) }, { sender: "staff", text: CHECK, createdAt: at(3) }];
+    const q = buildPromiseQueue(m, [res(4)], Date.parse(at(5)));
+    eq(q.filter((s) => s.kind === "check").length, 1); eq(pend(q), []);
+  });
+  it("違う種類が間に入っても、それぞれの約束はそれぞれの AIX で果たす", () => {
+    const m: QueueMsg[] = [
+      { sender: "staff", text: CHECK, createdAt: at(1) },
+      { sender: "staff", text: "最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！", createdAt: at(1, 30) },
+      { sender: "staff", text: CHECK, createdAt: at(6) },
+    ];
+    const q = buildPromiseQueue(m, [res(2), { aixType: "estimate_sheet", sentAt: at(3) }], Date.parse(at(7)));
+    eq(pend(q), ["check@06:00"]);
+    eq(q.find((s) => s.kind === "estimate")?.doneBy, "AIX【見積書送る】");
+  });
+  it("AIX が約束より前（60秒より前）なら、その約束は果たさない", () => {
+    const m: QueueMsg[] = [{ sender: "staff", text: CHECK, createdAt: at(10, 12) }];
+    eq(pend(buildPromiseQueue(m, [res(10, 0)], Date.parse(at(11)))), ["check@10:12"]);
+  });
+  it("60秒の幅は今までどおり（AIX の30秒後の約束の通も果たした扱い）", () => {
+    const m: QueueMsg[] = [{ sender: "staff", text: CHECK, createdAt: "2026-10-02T10:12:30.000Z" }];
+    eq(pend(buildPromiseQueue(m, [res(10, 12)], Date.parse(at(11)))), []);
+  });
+  it("手打ちの報告で果たした新しい約束は済み（手打ちの判定は残す）", () => {
+    const m: QueueMsg[] = [
+      { sender: "staff", text: CHECK, createdAt: at(1) },
+      { sender: "staff", text: CHECK, createdAt: at(10, 12) },
+      { sender: "staff", text: "〇〇の管理会社に確認しましたところ、現在募集中となります！！", createdAt: at(10, 40) },
+    ];
+    const q = buildPromiseQueue(m, [res(2)], Date.parse(at(11)));
+    eq(q.filter((s) => s.kind === "check").map((s) => `${s.status}/${s.doneBy}`), ["done/AIX【物件確認した（募集状況）】", "done/返信"]);
+  });
+  it("後に回した依頼（探す）も、前の探す約束を果たした後なら新しく並ぶ", () => {
+    const m: QueueMsg[] = [
+      { sender: "staff", text: "ご条件に合ったお部屋ピックアップしてお送りさせて頂きます！！", createdAt: at(1) },
+      { sender: "customer", text: "ここ空いてますか？\n他にも良い物件ありますか？\n大阪市北区でお願いします", createdAt: at(5) },
+      { sender: "staff", text: CHECK, createdAt: at(5, 10) },
+    ];
+    const q = buildPromiseQueue(m, [{ aixType: "property_send", sentAt: at(2) }], Date.parse(at(6)));
+    eq(q.filter((s) => s.kind === "pickup").map((s) => `${s.status}${s.deferred ? "/後" : ""}`), ["done", "pending/後"]);
+  });
+  it("「現在募集に出ていない」結果 → 同じ通で約束した見積はやめる（96c140）", () => {
+    const m: QueueMsg[] = [{ sender: "staff", text: "お送り頂きました大日の物件、募集状況確認させて頂きます！！\n確認出来次第、最大限割引させて頂いた初期費用の御見積書とあわせてお送りさせて頂きます！！", createdAt: at(10, 15) }];
+    const q = buildPromiseQueue(m, [{ aixType: "property_check_result", checkPattern: "unavailable", sentAt: at(10, 38), text: "こちらのお部屋現在募集に出ていないお部屋となっております！！" }], Date.parse(at(11)));
+    eq(q.find((s) => s.kind === "estimate")?.status, "dropped"); eq(nextPromiseAix(q, { nowMs: Date.parse(at(11)) }), null);
+  });
+  const CHK_EST = "お送り頂きました物件の募集状況確認させて頂きます！！\n確認出来次第、最大限割引させて頂いた初期費用の御見積書を作成しお送りさせて頂きます！！";
+  it("別の部屋が募集してた（available・『他は募集に出ていない』）→ 見積はやめない（レビュー 10/22・217a4b 型）", () => {
+    const q = buildPromiseQueue([{ sender: "staff", text: CHK_EST, createdAt: at(10, 15) }], [{ aixType: "property_check_result", checkPattern: "available", sentAt: at(10, 38), text: "サンライズ成田現在募集中となります！！明日再度費用面確認させていただきます！！他2件は募集に出ていないお部屋となっております。" }], Date.parse(at(11)));
+    eq(q.find((s) => s.kind === "estimate")?.status, "pending");
+  });
+  it("ピッカーの結果が無い本文でも「募集中」があれば見積はやめない／無ければやめる", () => {
+    const q1 = buildPromiseQueue([{ sender: "staff", text: CHK_EST, createdAt: at(10, 15) }], [{ aixType: "property_check_result", sentAt: at(10, 38), text: "203号室現在募集中となります！！他2件は募集に出ていないお部屋となっております。" }], Date.parse(at(11)));
+    eq(q1.find((s) => s.kind === "estimate")?.status, "pending");
+    const q2 = buildPromiseQueue([{ sender: "staff", text: CHK_EST, createdAt: at(10, 15) }], [{ aixType: "property_check_result", sentAt: at(10, 38), text: "こちらのお部屋現在募集に出ていないお部屋となっております！！" }], Date.parse(at(11)));
+    eq(q2.find((s) => s.kind === "estimate")?.status, "dropped");
+  });
+  it("「現在募集に出ていない」でも 3分より後の通の見積の約束はやめない", () => {
+    const q = buildPromiseQueue([{ sender: "staff", text: CHECK, createdAt: at(10, 0) }, { sender: "staff", text: "最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！", createdAt: at(10, 20) }], [{ aixType: "property_check_result", checkPattern: "unavailable", sentAt: at(10, 38), text: "こちらのお部屋現在募集に出ていないお部屋となっております！！" }], Date.parse(at(11)));
+    eq(q.find((s) => s.kind === "estimate")?.status, "pending");
+  });
+  it("戻す PROMISE_QUEUE_CHRONO=off（前の組み立て＝新しい約束はまとめられて消える）", () => {
+    process.env.PROMISE_QUEUE_CHRONO = "off";
+    try {
+      const m: QueueMsg[] = [{ sender: "staff", text: CHECK, createdAt: at(1) }, { sender: "staff", text: CHECK, createdAt: at(10, 12) }];
+      eq(buildPromiseQueue(m, [res(2)], Date.parse(at(11))).filter((s) => s.kind === "check").map((s) => s.status), ["done"]);
+    } finally { delete process.env.PROMISE_QUEUE_CHRONO; }
+  });
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log("  - " + f); process.exit(1); }
