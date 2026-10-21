@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 const CONV = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 (async () => {
   const { data } = await sb.from("messages").select("created_at,sender,is_aix_generated,image_url,line_message_id,text").eq("conversation_id", CONV).order("created_at", { ascending: false }).limit(6);

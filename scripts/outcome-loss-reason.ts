@@ -15,7 +15,7 @@ import { lossReasonNeedsText, type LostType } from "../app/lib/deal-outcome";
 
 const CALL = process.argv.includes("--call");
 const APPLY = process.argv.includes("--apply");
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
 async function main() {
   const { data, error } = await sb.from("deal_outcomes").select("id, conversation_id, episode_no, lost_type, lost_at, lost_reason_source").eq("result", "lost").in("lost_type", ["declined_elsewhere", "move_cancelled"]);

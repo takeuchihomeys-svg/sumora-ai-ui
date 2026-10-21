@@ -4,7 +4,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { readPropertyImage } from "../app/lib/property-image-read";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 
 async function main() {
   const { data } = await sb.from("image_details").select("image_url").eq("kind", "property").order("read_at", { ascending: false }).limit(2);

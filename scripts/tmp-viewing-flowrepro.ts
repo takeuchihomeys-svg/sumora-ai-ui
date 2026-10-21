@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { resolveViewingFlow } from "../app/lib/viewing-flow";
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const Y = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 async function main() {
   const { data } = await sb.from("messages").select("sender,text,created_at").eq("conversation_id", Y).gte("created_at", "2026-09-30T11:26:00Z").order("created_at");

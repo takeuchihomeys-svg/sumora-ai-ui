@@ -4,7 +4,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 // /api/cleanup-images と同じ接続（公開キー）で呼ぶ
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const DAYS = Number((process.argv.find((a) => a.startsWith("--days=")) ?? "--days=90").split("=")[1]);
 
 async function main() {

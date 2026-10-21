@@ -554,7 +554,7 @@ async function main() {
   console.log("\n■ 案"); for (const p of PLANS.slice(1)) console.log(`  ${p.name}: ${p.label}`);
   runExamples();
   if (args.examples) return;
-  const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+  const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
   const days = args.days ? parseInt(String(args.days), 10) : 400;
   const { eps, counts } = await loadEps(sb, days);
   console.log(`\n■ 実データ（${days}日・正解＝スタッフが選んで送った物）`, counts);

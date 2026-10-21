@@ -7,7 +7,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { selectAutoSearchTargets, rpUpdateDaysFor, lastPropertyTouchAt, MAX_TARGETS_PER_RUN } from "../app/lib/auto-search-schedule";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
 async function main() {
   const { data, error } = await sb

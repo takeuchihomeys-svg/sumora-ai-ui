@@ -6,7 +6,7 @@ import { isTestConversation } from "../app/lib/test-conversations";
 import { isViewingDayNotice } from "../app/lib/reply-subscene";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 (async () => {
   const since = new Date(Date.now() - Number(arg("days", "365")) * 86_400_000).toISOString();
   const msgs: Array<{ conversation_id: string; sender: string; created_at: string; text: string | null; is_aix_generated: boolean | null }> = [];

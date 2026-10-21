@@ -6,7 +6,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { META_BLOCK_HEADING_RE } from "../app/lib/meta-narration";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const LINE_RE = /^\s*(?:以下|下記|こちら)(?:、|が|は)?(?:の)?(?:返信案|回答案|修正版|修正案|返信文|下書き)(?:です|となります|になります)?[。．：:]?\s*$/m;
 
 async function scan(keywords: string[], test: (t: string) => boolean): Promise<{ n: number; hit: string[] }> {

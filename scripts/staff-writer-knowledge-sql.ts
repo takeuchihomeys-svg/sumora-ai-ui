@@ -23,7 +23,7 @@ const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--$
 const OUT = arg("out", "scripts/.replay-out/staff-writer-knowledge.sql");
 const DEVICE = arg("device", "");
 const SAMPLE = Number(arg("sample", "0"));
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
 export type KnowledgeDecision = "invalid" | "unsure" | "rewrite" | "keep";
 /** 定型の言葉（これだけで出来ている phrase は書き方だけ＝中身なし） */

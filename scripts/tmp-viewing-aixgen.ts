@@ -1,6 +1,6 @@
 // tmp: 本番 /api/aix/action で AIX の文を作るだけ（送らない）。usage: tmp-viewing-aixgen.ts <action> '<extra json>'
 import { createClient } from "@supabase/supabase-js";
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const Y = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 async function main() {
   const [action, extraJson] = process.argv.slice(2);

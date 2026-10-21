@@ -5,7 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { extractScreenshotProperty, matchOwnProperty, type SentProperty } from "../app/lib/own-property-match";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const DAYS = Number((process.argv.find((a) => a.startsWith("--days=")) ?? "--days=90").split("=")[1]);
 const mask = (s: string) => s.replace(/[ぁ-んァ-ヶー一-龥A-Za-z]{1,6}(?:さん|様|さま)/g, "〈お客様〉");
 const CONFIRM_RE = /募集状況(?:を)?確認|空室確認|空き状況(?:を)?確認|確認させて(?:頂|いただ)きます/;

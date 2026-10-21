@@ -9,7 +9,7 @@ import { promisesInStaffText, PROMISE_KIND_JA, type PromiseKind } from "../app/l
 import { splitRequests } from "../app/lib/request-ledger";
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const DAYS = Number(arg("days", "150")); const WRITER = arg("writer", "takeuchi"); const SHOW = arg("show", "");
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 type M = { conversation_id: string; sender: string; created_at: string; text: string | null; is_aix_generated: boolean | null; staff_writer: string | null };
 const FORM_RE = /①|【ご入居の時期】|ご希望の家賃|希望の広さ|ご希望のエリア/;
 const SNS_RE = /【物件の画面（SNS・広告）】|TikTok|tiktok|投稿|sumora___/;

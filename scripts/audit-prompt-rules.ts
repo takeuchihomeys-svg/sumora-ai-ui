@@ -18,7 +18,7 @@ import {
   type ReachabilityFailure,
 } from "../app/lib/prompt-rule-registry";
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
 type Row = PromptRuleAuditRow & { rule_text: string; updated_at: string | null; created_at: string | null };
 

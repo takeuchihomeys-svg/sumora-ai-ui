@@ -1,6 +1,6 @@
 // scripts/audit-pickup-mismatch-phrases.ts（読むだけ・LLM なし）: スタッフの物件ピックアップの送付文で「〇〇では御座いませんが」「〇〇は募集ございませんでしたので」の型を数える（2026-10-07 会話「し」）
 import { createClient } from "@supabase/supabase-js";
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 (async () => {
   const rows: any[] = [];

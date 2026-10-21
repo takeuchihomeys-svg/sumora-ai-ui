@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { supabase } from "../lib/supabase";
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDayResult } from "../lib/calendarSlots";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す内覧の時間は1つ
 import { pickDaySlots } from "../lib/viewing-slots";
@@ -163,7 +164,7 @@ function CalendarDatePicker({ templateText, customerName, onInsert }: CalendarDa
     let cancelled = false;
     (async () => {
       try {
-        const { days: d } = await fetchCalendarSlots();
+        const { days: d } = await fetchCalendarSlots(supabase);
         if (cancelled) return;
         setDays(d);
         setEnabled(d.map(x => !x.fullyBooked));

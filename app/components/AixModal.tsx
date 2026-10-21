@@ -1823,7 +1823,7 @@ export default function AixModal({
     setCheckCalendarLoading(true);
     (async () => {
       try {
-        const { days, infoString } = await fetchCalendarSlots();
+        const { days, infoString } = await fetchCalendarSlots(supabase);
         setCheckCalendarInfo(infoString);
         setCheckCalendarDays(days);
       } catch {
@@ -1841,7 +1841,7 @@ export default function AixModal({
     setCalendarLoading(true);
     (async () => {
       try {
-        const { days, infoString } = await fetchCalendarSlots();
+        const { days, infoString } = await fetchCalendarSlots(supabase);
         setCalendarInfo(infoString);
         setCalendarDays(days);
         setEditableCalendarSlots(days.map(d => d.fullyBooked ? "" : (d.slots[0] || "")));
@@ -1861,7 +1861,7 @@ export default function AixModal({
     setCalendarLoading(true);
     (async () => {
       try {
-        const { days, infoString } = await fetchCalendarSlots();
+        const { days, infoString } = await fetchCalendarSlots(supabase);
         setCalendarInfo(infoString);
         setCalendarDays(days);
       } catch {
@@ -1894,7 +1894,7 @@ export default function AixModal({
         // 2026-09-19 竹内（a🤫 事例）: 退去予定物件は退去日の翌日から連続6日も取りに行く（直近3日は全部内覧できない日なので）
         //   お客様の希望日を先に渡す（fetchCalendarSlots は渡された順に先着で採る）
         const extraYmds = [...viewingRequested.map((r) => r.ymd), ...specExtraYmds(viewingDateSpec), ...(viewingVacancyFromYmd ? vacancyExtraYmds(viewingVacancyMoveOut) : [])];
-        const { days, baseCount } = await fetchCalendarSlots(extraYmds, { ignoreHoldsForConversationId: conversationId ?? null, viewingCount: viewingInviteCount, viewingPlace: viewingInvitePlace });
+        const { days, baseCount } = await fetchCalendarSlots(supabase, extraYmds, { ignoreHoldsForConversationId: conversationId ?? null, viewingCount: viewingInviteCount, viewingPlace: viewingInvitePlace });
         setViewingCalendarDays(days);
         // "11:00〜14:00" → start: "11:00", end: "14:00"
         const parseTime = (slot: string) => {

@@ -7159,7 +7159,7 @@ export default function Home() {
           // 2026-09-16 竹内（𝒮 さん事例）: お客様が日にちを1日だけ指定していれば、その日の空き時間を全部。
           //   こちらから日にちを出す日は1日1つ（旧: カレンダーの空き枠を全部そのまま渡していた）
           const req = requestedViewingDatesFromMessages(recentMessages);
-          const { infoString } = await fetchCalendarSlots(req.map((r) => r.ymd));
+          const { infoString } = await fetchCalendarSlots(supabase, req.map((r) => r.ymd));
           calendarInfoStr = limitSlotsPerDay(infoString, req.length === 1 ? req.map((r) => r.md) : []);
         } catch {
           // カレンダー取得失敗は無視して続行

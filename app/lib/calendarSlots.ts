@@ -1,4 +1,7 @@
-import { supabase } from "./supabase";
+// 2026-10-21 RLS を入れる準備 ②: この部品は画面とサーバーの両方から読まれうるので、Supabase の窓口を自分では持たない。
+//   表を読む関数（fetchCalendarSlots）は呼ぶ側が窓口を渡す（画面＝app/lib/supabase.ts の公開キー・サーバー＝app/lib/supabase-server.ts）。
+//   calcSlots などの計算だけの部品は今まで通り共通。
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { jstParts, jstYmd } from "./jst-date";
 import { isViewingHoldNotes } from "./viewing-hold";
 
@@ -35,6 +38,8 @@ export type CalendarDayResult = {
  *   → 希望日（'YYYY-MM-DD'・最大5日）も同じ計算で出す（ラベルは「9/18(金)」）。日付・曜日・時刻は日本時間で計算する（端末の時間帯に左右されない・jst-date）
  */
 export async function fetchCalendarSlots(
+  /** Supabase の窓口（画面＝app/lib/supabase.ts・サーバー＝app/lib/supabase-server.ts） */
+  db: SupabaseClient,
   extraYmds: ReadonlyArray<string> = [],
   // 2026-09-16 竹内（カイナ事例）: そのお客様自身の「時間確保」（前に送った候補）は、そのお客様への提案では空き扱いにする
   //   （他のお客様に対しては確保として埋まったまま）。決まったら確保は消える
@@ -64,7 +69,7 @@ export async function fetchCalendarSlots(
   const endISO   = new Date(`${toDate}T23:59:59+09:00`).toISOString();
 
   const [evResult, tasksRaw] = await Promise.all([
-    supabase
+    db
       .from("calendar_events")
       .select("start_at, end_at, event_type, title, all_day, notes, conversation_id")
       .gte("start_at", startISO)

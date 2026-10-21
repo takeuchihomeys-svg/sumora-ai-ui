@@ -22,7 +22,7 @@ const OUT = arg("out", "scripts/.replay-out/r7-diff.jsonl");
 //   書き手は直した所の表記（app/lib/staff-writer.writerFromEdit）。直した所に手掛かりが無い組は送った文全体（writerFromText）で「たぶん」
 const WRITER = arg("writer", "all");
 const WRITER_FALLBACK = !process.argv.includes("--writer-edit-only"); // 直した所に手掛かりが無い組を不明にする
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 async function readAll<T>(q: (f: number, t: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
   const out: T[] = [];
   for (let i = 0; i < 200_000; i += 1000) { const r = await q(i, i + 999); if (r.error) throw new Error(r.error.message); const d = (r.data ?? []) as T[]; out.push(...d); if (d.length < 1000) break; }

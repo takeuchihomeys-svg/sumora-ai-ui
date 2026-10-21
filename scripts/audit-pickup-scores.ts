@@ -15,7 +15,7 @@ import { parseListingText, normalizeListingText } from "../app/lib/listing-text"
 import { parseAreaWant, parseCommuteWants, buildPropertyLocation, matchArea, matchCommute, locationReasonCodes } from "../app/lib/area-want";
 import { loadCustomerProfit } from "../app/lib/estimate-profit-server";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const idsArg = process.argv.find((a) => a.startsWith("--ids="))?.slice(6).split(",").map(Number);
 
 async function b64Of(url: string | null): Promise<string | null> {

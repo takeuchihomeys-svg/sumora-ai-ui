@@ -13,7 +13,7 @@ const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--$
 const DAYS = Number(arg("days", "30"));
 const PER = Number(arg("per", "22"));
 const OUT = arg("out", "scripts/.replay-out/r7-turns.jsonl");
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 type M = { sender: string; created_at: string; text: string | null; is_aix_generated: boolean | null };
 
 (async () => {
