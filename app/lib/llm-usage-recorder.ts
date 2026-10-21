@@ -14,6 +14,7 @@
 //   → 呼び出し側がリクエストの headers に x-sumora-llm-action / x-sumora-llm-conversation を付け、出口で読んで action / conversation_id に残す。
 //   この2つは Anthropic に送らない（送る前に取り除く）。sys_key_full は system 全ブロックを "\n\n" で結合した全文のハッシュ（プロンプト変更の検出用）。
 
+import { serverSupabaseKey } from "@/app/lib/supabase-server-key";
 import { usageEnvLabel, readTestRun, testConversationRefusal, strictClaudeBlockReason, noteTestBlocked, finalClaudeDailyCapReason, jstDayStartIso, outsideHarnessRefusal, isScriptProcess, underLlmTestHarness } from "./llm-test-mode";
 import { sendWithClaudeModelMap, effectiveActionName, type ClaudeModelEnv } from "./claude-model-map";
 import { testPiiRefusal } from "./test-pii-guard";
@@ -562,7 +563,7 @@ let altRecorder: AltRecorder | null = null;
 
 function lazyAltRecorder(): AltRecorder | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const key = serverSupabaseKey();
   if (process.env.LLM_USAGE_RECORD === "off" || !url || !key) return null;
   let warned = false;
   return {
@@ -620,7 +621,7 @@ export function recordAltUsage(input: {
 /** 記録の書き込み口を作る（記録を止めている時は null） */
 async function buildRecorderDeps(): Promise<AltRecorder | null> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const key = serverSupabaseKey();
   if (process.env.LLM_USAGE_RECORD === "off" || !url || !key) return null;
   const { createClient } = await import("@supabase/supabase-js");
   const { waitUntil } = await import("@vercel/functions");

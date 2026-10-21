@@ -1,4 +1,13 @@
-import { checkPatternForConfirmTopic, customerAskedConfirmTopic } from "./action-ledger";
+import { checkPatternForConfirmTopic, customerAskedConfirmTopic, linkPromisePickerEnabled } from "./action-ledger";
+
+/**
+ * 2026-10-21 つなぎ⑤（設計知見 81f0727b「新着とピックアップは別の約束」）: 新着の約束（出し切った後に探し続ける）の続きは AIX【物件オススメ】（新着・1件）を先に、
+ *   物件ピックアップした（新着まとめ）を2つ目に。実測（150日・約束の後に最初に送った物件の AIX）は 新着の約束 → 物件オススメ 64・物件ピックアップ 64 の五分＝
+ *   ブレインの判断を変えるので既定 off（入れる LINK_PROMISE_NEW_ARRIVAL_REC=on・LINK_PROMISE_PICKER が on の時だけ）
+ */
+export function linkPromiseNewArrivalRecEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return linkPromisePickerEnabled(env) && (env.LINK_PROMISE_NEW_ARRIVAL_REC ?? "").trim().toLowerCase() === "on";
+}
 import { OWN_APPLICATION_PROGRESS_RE } from "./aix-new-pickers";
 // app/lib/aix-task-link.ts
 // AIX の送信と「やること（line_tasks）」・物件出しの完了（✅）の対応表（2026-09-12 竹内方針）。
@@ -60,9 +69,9 @@ const APPLY_PROGRESS_CHECK_RE = /番手|お?部屋止め|お?申込(?:み)?(?:�
 
 export function resolveStaffPromiseAix(
   facts: {
-    lastStaffEntry: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null; watch?: boolean; objectFrom?: "staff" | "customer" } } | null;
+    lastStaffEntry: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null; watch?: boolean; pickupKind?: "new_arrival" | "pickup"; objectFrom?: "staff" | "customer" } } | null;
     /** 直前スタッフ発言が AIX の時、その本文に書き足した未履行の約束（2026-09-15 ゆうこ事例: 初期費用について＋「ピックアップさせて頂きます」） */
-    lastStaffAixTextPromise?: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null; watch?: boolean; objectFrom?: "staff" | "customer" } } | null;
+    lastStaffAixTextPromise?: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null; watch?: boolean; pickupKind?: "new_arrival" | "pickup"; objectFrom?: "staff" | "customer" } } | null;
     estimatePromisedUnfulfilled: boolean;
     pickupPromisedUnfulfilled: boolean;
     confirmationPromisedUnfulfilled?: boolean;
@@ -80,7 +89,7 @@ export function resolveStaffPromiseAix(
     /** 見積る物件があるか（こちらの送付・お客様の URL/画像/「ここの」/見積の語）。false の時は見積書の宣言でも 見積書送る をセットしない（ゆうこ事例）。未指定は従来どおり */
     propertyInPlay?: boolean;
   } = {},
-): { action: "estimate_sheet" | "property_send" | "property_check_result"; kind: "estimate" | "pickup" | "check"; alt?: "property_recommendation"; checkPattern?: string } | null {
+): { action: "estimate_sheet" | "property_send" | "property_recommendation" | "property_check_result"; kind: "estimate" | "pickup" | "check"; alt?: "property_recommendation" | "property_send"; checkPattern?: string } | null {
   const nonMedia = messages.filter((m) => {
     const t = (m.text ?? "").trim();
     return t && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(t);
@@ -122,6 +131,9 @@ export function resolveStaffPromiseAix(
   if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && (typeof process === "undefined" || (process.env?.PROMISE_ORDER_CHECK_FIRST ?? "").toLowerCase() !== "off")) {
     if (facts.estimatePromisedUnfulfilled && opts.propertyInPlay !== false && !opts.customerWillSend) return { action: "estimate_sheet", kind: "estimate" };
     if (facts.confirmationPromisedUnfulfilled && (opts.customerRequestedCheck || opts.customerAckAfter)) return { action: "property_check_result", kind: "check" };
+  }
+  if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && linkPromiseNewArrivalRecEnabled() && (e.detail?.watch === true || e.detail?.pickupKind === "new_arrival")) {
+    return { action: "property_recommendation", kind: "pickup", alt: "property_send" };
   }
   if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && e.detail?.watch === true) {
     return { action: "property_send", kind: "pickup", alt: "property_recommendation" };

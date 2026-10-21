@@ -1,13 +1,16 @@
 import { composeLifelineMessage } from "@/app/lib/aix-lifeline";
 // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・契約の条件・家賃の交渉・バイク置き場・物件について→募集号室について）
+import { isScreeningTopic, screeningTopicLine, isOtherAgentCostCompare, costCompareFactEnabled, COST_COMPARE_FACT_BLOCK, isEstimateCorrectionContext, mentionsOtherAgentProperty, applyEstimateOwnerLines, estimateOwnerNote } from "@/app/lib/aix-owner-answers-1021";
+import { followupRevive1021Enabled, hasNewArrivalFact, composeFollowupText, sanitizeFollowupText, followupShapeNote } from "@/app/lib/followup-revive-1021";
 import { aixRequestMustUseClaude, applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, stripUncheckedScreeningClaims, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
 import { NextRequest, NextResponse, after } from "next/server";
 import { buildMustSendNote, mustMoveInLabel, normalizeRequirementStrengths } from "@/app/lib/requirement-strength";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（AIX キャッシュ点検）: system を「共通 prefix（1h）→ 準静的（1h）→ 経路固有（5m）→ 動的（なし）」のブロックに分ける
+import { altPiiSignal, altPiiSignalReapply, altPiiSignalReapplyValues, altReapplyGateEnabled, maskInsteadEnabled, maskApplicationValuesForAlt, altPiiValuesRemain } from "@/app/lib/alt-pii-gate";
 import { buildSystemBlocks, systemStaticLength, splitSharedPrefix, llmMetaHeaderValue, LLM_META_HEADER_ACTION, LLM_META_HEADER_CONVERSATION, type SystemSpec, type SystemSpecBlocks, type SystemTtl } from "@/app/lib/aix-system-blocks";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable, jstDayStartMs } from "@/app/lib/jst-date";
@@ -50,7 +53,7 @@ import { willRouteAlt, readAltConfig } from "@/app/lib/llm-alt-provider";
 import { screeningPiiAixEnabled, screeningPiiPinsAction, screeningPiiForcesClaude } from "@/app/lib/screening-sensitive";
 import { screeningSensitiveForConversation } from "@/app/lib/screening-sensitive-server";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
-import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, cutoffMs, cutoffMarkOf, formatCutoffMark, filterAfterCutoff, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, resolvePostApply, resolveDeepseekEntrance, entranceMarkOf, cutoffMs, formatCutoffMark, filterAfterCutoff, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
 import { keepBrainMeta } from "@/app/lib/deepseek-cut";
 import { runInDeepseekScope, setDeepseekScope, onceAsync } from "@/app/lib/deepseek-scope";
 // 2026-09-27 竹内「申込中の部分はクロードに切り替えて要約して…DeepSeek に渡す」: 申込期間のまとめ（個人情報なし・検査済み）
@@ -991,6 +994,8 @@ type AixReqCtx = {
    */
   cutoff?: DeepseekCutoff;
   cutActive?: boolean;
+  /** 2026-10-21（ec4d5990）2番手で申込中（並行で探す）: 線は引かず出口で申込情報の値を伏せる（印 masked） */
+  masked?: boolean;
   /** 出口に渡す「判定を通った印」（ヘッダ x-sumora-llm-deepseek-cutoff） */
   cutMark?: CutoffMark;
 };
@@ -1046,8 +1051,12 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
       const r = resolvePostApply(facts);
       // 2026-09-26 竹内（申込中は DeepSeek に渡さない・戻したら切り替え以降だけ）: 戻した会話（movedBack）は丸ごと Claude のまま、を
       //   「切り替えた時刻（deepseek_cutoff_at）より後だけ渡す」に置き換えた（generate-reply と同じ・下の cutActive で履歴と派生データを切る）
-      ctx.postApply = r.postApply;
-      ctx.cutoff = deepseekSafeCutoff(facts);
+      // 2026-10-21（023ec7bd）印だけ残って戻した会話は申込以降に数えず時刻の線で切る（post-apply.ts deepseekPostApply）
+      // 2026-10-21（ec4d5990）2番手で申込中（並行で探す）は線を引かず印 masked（出口で申込フォームの値を伏せてから渡す・post-apply.resolveDeepseekEntrance）
+      const entrance = resolveDeepseekEntrance(facts);
+      ctx.postApply = entrance.altPostApply;
+      ctx.cutoff = entrance.cutoff;
+      ctx.masked = entrance.masked;
       if (ctx.cutoff === null) ctx.postApply = true; // 線が引けない＝渡さない（fail-closed）
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "aix:post-apply", conversationId, reason: r.reason, action }));
     }
@@ -1062,7 +1071,7 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
     const goesAlt = willRouteAlt(action, { postApply: ctx.postApply }) || (shouldRouteVisionAlt(action) && !ctx.postApply);
     ctx.cutActive = goesAlt && line !== null && line !== NO_CUTOFF;
     // Claude に行く時も、線がある会話は blocked にしておく（名札の無い呼び出しが DeepSeek に回らないように）
-    ctx.cutMark = ctx.postApply || (line !== NO_CUTOFF && !ctx.cutActive) ? { kind: "blocked" } : cutoffMarkOf(ctx.cutoff ?? null);
+    ctx.cutMark = ctx.postApply || (line !== NO_CUTOFF && !ctx.cutActive) ? { kind: "blocked" } : entranceMarkOf(ctx.cutoff ?? null, ctx.masked === true);
     const cutIso = ctx.cutActive && conversationId && typeof ctx.cutoff === "string" ? ctx.cutoff : null;
     setDeepseekScope({
       conversationId,
@@ -1216,9 +1225,29 @@ async function callClaudeVision(system: SystemSpec, content: unknown[], action: 
   //     判定は setupAltProviderGuards が同じ純関数（post-apply.ts）で決めた ctx.postApply を読む（四者同名）。
   // 2026-09-26 時刻の線: この経路は fetch の出口を通らない（callVisionAlt が直接 DeepSeek を呼ぶ）ので、ここで印を見る（blocked・印なしは Claude）
   const visionCutMark = aixRequestCtx.getStore()?.cutMark;
-  if (!opts.forceClaude && shouldRouteVisionAlt(action) && !aixRequestCtx.getStore()?.postApply && !!visionCutMark && visionCutMark.kind !== "blocked") {
+  // 2026-10-21 確かめ役: この経路は出口の網（llm-alt-provider）を通らないので、線のある呼び出し（cut＝申込から戻った会話）は
+  //   system（会話の履歴・材料が入る）と文の部分に個人の値・申込情報の名残があれば Claude（alt-pii-gate・止める LLM_ALT_REAPPLY_GATE=off）
+  // 2026-10-21（ec4d5990・414dc9d4）印 masked（2番手で申込中・並行で探す）も同じ網。網に当たったら Claude に戻す前に、まず値を伏せて渡す（伏せきれない時だけ Claude）。
+  //   伏せた system・文の部分は DeepSeek に渡す時だけ使う（Claude には元のまま）。止める REAPPLY_MASK_INSTEAD=off
+  const visionNet = (visionCutMark?.kind === "cut" || visionCutMark?.kind === "masked") && altReapplyGateEnabled(process.env);
+  const textOfPart = (c: unknown): string => (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : "");
+  let altSystemBlocks = systemBlocks;
+  let altContent = content;
+  let visionPii: string | null = null;
+  if (visionCutMark?.kind === "masked" && !visionNet) visionPii = "印 masked だが出口の網が止まっている";
+  else if (visionNet && maskInsteadEnabled(process.env)) {
+    altSystemBlocks = systemBlocks.map((b) => ({ ...b, text: maskApplicationValuesForAlt(b.text, { fieldStart: "customer" }) }));
+    altContent = content.map((c) => (textOfPart(c) ? { ...(c as object), text: maskApplicationValuesForAlt(textOfPart(c)) } : c));
+    visionPii = altPiiValuesRemain(altSystemBlocks.map((b) => b.text).join("\n\n")) ?? altPiiValuesRemain(altContent.map(textOfPart).join("\n"), { docs: true });
+  } else if (visionNet) {
+    const sysText = systemBlocks.map((b) => b.text).join("\n\n");
+    const contentText = content.map(textOfPart).join("\n");
+    visionPii = altPiiSignal(`${sysText}\n${contentText}`) ?? altPiiSignalReapplyValues(sysText) ?? altPiiSignalReapply(contentText);
+  }
+  if (visionPii) console.log(JSON.stringify({ tag: "aix:vision-alt-skipped-pii", action, why: visionPii }));
+  if (!visionPii && !opts.forceClaude && shouldRouteVisionAlt(action) && !aixRequestCtx.getStore()?.postApply && !!visionCutMark && visionCutMark.kind !== "blocked") {
     const altT0 = Date.now();
-    const alt = await callVisionAlt(systemBlocks, content);
+    const alt = await callVisionAlt(altSystemBlocks, altContent);
     if (alt) {
       // DeepSeek は区切りの指定が要らない**自動の前置きキャッシュ**。
       //   buildSystemBlocks が shared → semiStatic → routeStatic → dynamic の順で並べるので、
@@ -3463,7 +3492,15 @@ ${aixTakeuchiFormOn() ? "・形・書き出し・締めはユーザーメッセ�
           coverShapeNote = buildEstimateSecondNote({ name: name.replace(/さん$/, ""), properties: coverProps, closing: dec.closing, staffSentToday: staffMessagedToday });
           console.log(JSON.stringify({ tag: "aix:cover-takeuchi-form", closing: dec.closing, reason: dec.reason, viewed, props: coverProps.length }));
         }
+        // 2026-10-21 竹内さん C5（他社に見積の抜けを指摘→訂正した御見積書）・C6（他社で紹介・仮押さえ・内覧の物件→弊社でもお申込み・ご内覧頂けます）
+        const coverMsgs = Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : [];
+        const coverOwner = {
+          correction: isEstimateCorrectionContext(coverMsgs, typeof body.estimate_correction === "boolean" ? body.estimate_correction : null),
+          otherAgent: mentionsOtherAgentProperty(coverMsgs),
+        };
+        const coverOwnerNote = estimateOwnerNote(coverOwner);
         const coverUserFinal = greetingTimeNote + `${name}への見積書送付メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}${coverPropertyNote}`
+          + (coverOwnerNote ? `\n\n${coverOwnerNote}` : "")
           + (campaignNote ? `\n\n${campaignNote}` : "")
           + (coverDiffNote ? `\n\n${coverDiffNote}` : "") + (coverStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + coverStarNote : "")
           + (coverShapeNote ? `\n\n${coverShapeNote}` : "");
@@ -3524,6 +3561,10 @@ ${aixTakeuchiFormOn() ? "・形・書き出し・締めはユーザーメッセ�
         if (coverShapeNote && cover_letter.trim()) {
           const ec = ensureEstimateClosing(cover_letter, coverClosing);
           if (ec.added) { console.log(JSON.stringify({ tag: "aix:cover-closing-added", closing: coverClosing, conversationId })); cover_letter = ec.text; }
+        }
+        if (cover_letter.trim() && (coverOwner.correction || coverOwner.otherAgent)) {
+          const ow = applyEstimateOwnerLines(cover_letter, coverOwner);
+          if (ow.added.length) { console.log(JSON.stringify({ tag: "aix:cover-owner-1021", added: ow.added, conversationId })); cover_letter = ow.text; }
         }
         const campaignFix = ensureCampaignLine(cover_letter, estimateCampaign);
         if (campaignFix.added) {
@@ -5417,7 +5458,10 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
       if (check_pattern === "mgmt_screening") {
         const outlook = typeof body.screening_outlook === "string" ? body.screening_outlook : "";
         screeningNoInput = !mgmtInfo && !outlook;
+        // 2026-10-21 竹内さん C9: 新しいボタン【審査について】で選んだ審査内容（職業・名義・保証人・外国籍・時期・その他）＝文の中心だけを決める
+        const topicLine = isScreeningTopic(body.screening_topic) ? screeningTopicLine(body.screening_topic) : "";
         mgmtInfo = [
+          topicLine,
           mgmtInfo ? `確認した結果・必要書類：${mgmtInfo}` : "確認した結果：入力なし（管理会社の回答・書類に触れず、基本の考え方だけで返す）",
           outlook ? `審査の見込み：${outlook}` : "",
         ].filter(Boolean).join("\n");
@@ -7505,6 +7549,16 @@ ${SMORA_COMMON_RULES}
     } else if (action === "followup_revive") {
       const followSubMode = body.follow_sub_mode as string | undefined;
       const followPropertyName = (body.property_name as string | undefined) || "";
+      // 2026-10-21 竹内さん D5: 追客の出口（申込補足の催促は除く）。「その後いかがでしょうか」（実送信365日で0通）を落とし、
+      //   新着の材料が無いのに新着と書いた・本文が空になった時は竹内さんの形（継続の確認＋まだお決まりでなければピックアップしてお送り）に差し替える
+      const followNewArrival = hasNewArrivalFact({ propertyName: followPropertyName, extraInput: extra_input ? String(extra_input) : null });
+      const followShape1021 = followupRevive1021Enabled() && followSubMode !== "apply_supplement";
+      const applyFollowup1021 = (t: string): string => {
+        if (!followShape1021) return t;
+        const s = sanitizeFollowupText(t, { newArrivalFact: followNewArrival });
+        if (s.removed.length || s.text === null) console.log(JSON.stringify({ tag: "aix:followup-1021", removed: s.removed, replaced: s.text === null, conversationId }));
+        return s.text ?? composeFollowupText({ name: familyName || null, greet: !staffMessagedToday, newArrival: followNewArrival, propertyName: followPropertyName });
+      };
 
       // ── 申込補足情報催促 ────────────────────────────────────────────────────
       if (followSubMode === "apply_supplement") {
@@ -7583,7 +7637,11 @@ ${SMORA_COMMON_RULES}
 【文字数】①②③の3パート・完成したLINEメッセージのみを出力（JSONや説明文は不要）`;
 
         // 物件名は呼び出しごとに変わる動的コンテンツ → キャッシュ対象の system から分離
-        const scDynamicNote = `【構成ルール（この順番で・必ず守ること）】
+        // 2026-10-21 竹内さん D5: 竹内さんの形（10/06 の実送信）。新着の一文は物件名か補足に新着がある時だけ（無いのに新着を作らない）・
+        //   締めは「まだお決まりになっていない場合…ピックアップしお送りさせて頂きます😌！！」。戻す FOLLOWUP_REVIVE_1021=off
+        const scDynamicNote = followupRevive1021Enabled() ? followupShapeNote({ name: familyName || null, newArrivalFact: hasNewArrivalFact({ propertyName: followPropertyName, extraInput: extra_input ? String(extra_input) : null }), propertyName: followPropertyName })
+          + `\n・物件名を創作しない（${followPropertyName ? `「${followPropertyName}」以外の物件名を出さない` : "物件名は書かない"}）。補足に無い設備・家賃・条件を創作しない\n・「様」を使わない（「さん」で統一）・🙏絵文字は絶対禁止`
+          : `【構成ルール（この順番で・必ず守ること）】
 ① 書き出し: 「[お客様名]（時候の挨拶）」（greetingTimeNoteの時間帯・初回・当日挨拶済みルールと整合させる）
 ② 新着のご連絡: ${followPropertyName ? `「新しく${followPropertyName}が募集にでましたのでご連絡させていただきました！！」` : `「新しくオススメ出来る物件が募集にでましたのでご連絡させていただきました！！」`}
   ※補足情報に物件の特徴（駅近・築浅・家賃など）があれば、②に一言だけ自然に添えてよい
@@ -7630,7 +7688,7 @@ ${SMORA_COMMON_RULES}
 【この返信の目的】
 ・しばらく連絡が取れていないお客様への追客メッセージ
 ・お客様の直近の会話内容（条件・物件・懸念点）を引き合いに出して、具体的に再接触する
-・「その後いかがでしょうか！！」から始めつつ、過去の会話から1つ具体的な話題を引き出す
+${followShape1021 ? "・竹内さんの形（下の【竹内さんの追客の形】）で書き、過去の会話から1つ具体的な話題を引き出す" : "・「その後いかがでしょうか！！」から始めつつ、過去の会話から1つ具体的な話題を引き出す"}
 ・補足情報（新着物件・条件変更提案等）があれば自然に盛り込む
 ・2〜4行程度・押しつけがましくないトーン
 
@@ -7650,6 +7708,7 @@ ${SMORA_COMMON_RULES}
         const followupCMDynamicSuffix = [
           followupCMBrainAddendum ? `【ブレイン改善ルール】\n${followupCMBrainAddendum}` : "",
           brainGuidanceNote,
+          followShape1021 ? followupShapeNote({ name: familyName || null, newArrivalFact: followNewArrival, propertyName: followPropertyName }) : "",
         ].filter(Boolean).join("\n\n");
         // ブロック: [shared 1h] → [global ルール 1h] → [固有文＋action 別ルール 5m] → [ブレイン（動的）]
         const followupCMShared = splitSharedPrefix(followupCMSystem);
@@ -7667,6 +7726,7 @@ ${SMORA_COMMON_RULES}
         );
         // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
         message_text = messageFromAixJson(rawFCM, currentAction);
+        message_text = applyFollowup1021(message_text);
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
         return finalizeResponse(message_text);
       } else {
@@ -7686,7 +7746,7 @@ ${SMORA_COMMON_RULES}
 
 【追客メッセージのルール】
 ・[お客様名]と呼びかけ、現在もお部屋探しをサポートする意思を伝える
-・「その後いかがでしょうか！！」などの近況確認から入ると自然
+${followShape1021 ? "・竹内さんの形（下の【竹内さんの追客の形】）で書く" : "・「その後いかがでしょうか！！」などの近況確認から入ると自然"}
 ・補足情報（extra_input）がある場合は活用する（例: 新着物件あり、条件変更の提案など）
 ・押しつけがましくならず、お客様のペースを尊重した文体
 ・2〜4行程度・完成したLINEメッセージのみ出力`;
@@ -7694,6 +7754,7 @@ ${SMORA_COMMON_RULES}
       const followupDynamic = [
         followupBrainAddendum ? `【ブレイン改善ルール】\n${followupBrainAddendum}` : "",
         brainGuidanceNote,
+        followShape1021 ? followupShapeNote({ name: familyName || null, newArrivalFact: followNewArrival, propertyName: followPropertyName }) : "",
       ].filter(Boolean).join("\n\n");
       // ブロック: [global ルール 1h] → [固有文＋action 別ルール 5m] → [ブレイン（動的）]
       const followupSystemSpec: SystemSpecBlocks = {
@@ -7708,6 +7769,8 @@ ${SMORA_COMMON_RULES}
         currentAction
       );
       }
+      // search_continue と既定の追客の出口（申込補足の催促は applyFollowup1021 の中で除く）
+      message_text = applyFollowup1021(message_text);
 
     // ── 💪 全力サポート ──────────────────────────────────────────────────────
     } else if (action === "zenryoku_support") {
@@ -7847,8 +7910,14 @@ ${COST_BREAKDOWN_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
+      // 2026-10-21 竹内さん C2/C3: 他社の見積と比べている・『なぜ安い』の時だけ、会社の事実（還元・他社は保証料など別払い・弊社は全部込み）を足す
+      //   （関係ある時だけ＝直近のお客様の発言3通で読む）。戻す COST_COMPARE_FACT=off
+      const cbCompare = costCompareFactEnabled() && (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string; text?: string | null }> : [])
+        .filter((m) => m.sender === "customer").slice(-3).some((m) => isOtherAgentCostCompare(m.text ?? ""));
+      if (cbCompare) console.log(JSON.stringify({ tag: "aix:cost-breakdown-compare-fact", conversationId }));
       const cbDynamicSuffix = [
         cbFacts.block,
+        cbCompare ? COST_COMPARE_FACT_BLOCK : "",
         brainGuidanceNote ? `【ブレインの判断（この局面の方針）】${brainGuidanceNote}` : "",
         cbBrainAddendum ? `【ブレイン改善ルール】\n${cbBrainAddendum}` : "",
       ].filter(Boolean).join("\n\n");

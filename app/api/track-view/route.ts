@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 export async function POST(_req: NextRequest) {
   const { error } = await supabase.from("iyeyasu_page_views").insert({});

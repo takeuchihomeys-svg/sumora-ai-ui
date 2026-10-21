@@ -24,7 +24,7 @@ import { sortForReview } from "../app/lib/pickup-review-order";
 import { pickCustomerBest } from "../app/lib/pickup-best";
 import { reasonPoints } from "../app/lib/property-brain";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 const has = (k: string) => process.argv.includes(`--${k}`);
 const arg = (k: string) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? "").split("=").slice(1).join("=") || null;
 const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";

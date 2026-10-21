@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 // お客様が送ってきた物件探しフォーマット文を検出するヒューリスティック
 function isFormatMessage(text: string): boolean {

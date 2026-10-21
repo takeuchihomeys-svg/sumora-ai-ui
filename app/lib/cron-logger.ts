@@ -1,4 +1,4 @@
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 /**
  * cron_run_logs テーブルへの実行記録ユーティリティ。

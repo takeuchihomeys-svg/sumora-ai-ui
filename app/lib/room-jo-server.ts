@@ -5,7 +5,7 @@
 //   判定（property-pickups-server の judgeProperty）の時に資料の文字で帖数が読めなかった物件は ROOM_JO_UNKNOWN（0点の要確認）で入る。
 //   間取り図の読み取り（sheet-read-server・DeepSeek・物件ごとに保存）は rooms の帖数を前から読んでいる → 新しい LLM 呼び出しは足さず、
 //   読めた帖数で札・点・判定（7帖未満＝外す候補）を付け直す。図は資料と一致した時（review ok）だけ使う
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { applyRoomJoToRow, roomJoWantOfCustomer, reasonJa, type CustomerLike } from "@/app/lib/property-brain";
 import { roomJoOfSheet, parseSummaryFacts } from "@/app/lib/sheet-facts";
 import type { SheetReadOutcome } from "@/app/lib/sheet-read-server";

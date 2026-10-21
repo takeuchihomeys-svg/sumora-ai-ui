@@ -16,7 +16,7 @@
 // 戻す: PROMISE_QUEUE=off（次の要対応を立てない）／NEXT_PUBLIC_PROMISE_QUEUE=off（画面に出さない）。既定 on（2026-10-09 竹内さん「できる限り早く本番に入れる」）
 // テスト: app/lib/__tests__/promise-queue.test.ts（実物の約束の文）
 
-import { classifyStaffTextFacts, checkPatternForConfirmTopic } from "./action-ledger";
+import { classifyStaffTextFacts, checkPatternForConfirmTopic, pickupPromiseKindOf, pickupPickerKey, stripObjectBoundVacancy, linkPromisePickerEnabled } from "./action-ledger";
 import { OWN_APPLICATION_PROGRESS_RE } from "./aix-new-pickers";
 import { VIEWING_CHECK_PROMISE_RE } from "./viewing-check-first";
 import { AIX_BUTTON_LABELS } from "./aix-taxonomy";
@@ -42,6 +42,11 @@ export type PromiseStep = {
   watch?: boolean;
   /** 10/13: この返信では約束せず後に回した依頼（お客様の連投にあったが約束しなかった探す・内覧の依頼）。約束した物の後に並ぶ */
   deferred?: boolean;
+  /**
+   * 10/21 LINK_PROMISE_PICKER: 約束の続きの AIX のピッカー（確認＝check_pattern／ピックアップ＝新着なら "property_recommendation/pickup_type=新着1件"・
+   *   ピックアップなら "property_send"）。見張り（link-brain-watch）と要対応が同じ値を見る
+   */
+  pickerKey?: string | null;
 };
 export type QueueMsg = { sender: string; text: string | null | undefined; createdAt: string; isAix?: boolean | null };
 export type QueueAixLog = { aixType: string; checkPattern?: string | null; sentAt: string; estimateSent?: boolean | null; text?: string | null };
@@ -93,7 +98,8 @@ export function promisesInStaffText(text: string | null | undefined, at: string)
       push({ kind: "estimate", action: "estimate_sheet", checkPattern: null, object: labels.length ? labels.join("・").slice(0, 40) : null, evidence: e.evidence ?? "" });
     } else if (e.kind === "pickup_declared") {
       const d = (e.detail ?? {}) as { watch?: boolean; sentence?: string | null };
-      push({ kind: "pickup", action: "property_send", checkPattern: null, object: null, evidence: e.evidence ?? "", watch: d.watch === true || /新着|随時|出次第|出(?:て|た)?(?:き)?次第|見つかり次第|お部屋探し/.test(`${d.sentence ?? ""} ${e.evidence ?? ""}`) });
+      const pk = pickupPromiseKindOf(d.sentence, e.evidence, d.watch);
+      push({ kind: "pickup", action: "property_send", checkPattern: null, object: null, evidence: e.evidence ?? "", watch: pk === "new_arrival", ...(linkPromisePickerEnabled() ? { pickerKey: pickupPickerKey(pk) } : {}) });
     } else if (e.kind === "confirmation_promised") {
       const d = (e.detail ?? {}) as { object?: string | null; sentence?: string | null };
       const sentence = d.sentence ?? sentences.find((s) => (e.evidence ?? "") && s.includes(String(e.evidence).slice(0, 6))) ?? t;
@@ -103,13 +109,14 @@ export function promisesInStaffText(text: string | null | undefined, at: string)
       // 「初期費用の確認」で同じ通が御見積書を約束していれば見積の約束（estimate）に任せる
       if (d.object === "初期費用" && /見積/.test(t)) continue;
       const k = confirmStep(d.object ?? null, sentence);
-      push({ ...k, object: d.object ?? null, evidence: e.evidence ?? "" });
+      push({ ...k, object: d.object ?? null, evidence: e.evidence ?? "", ...(linkPromisePickerEnabled() && k.checkPattern ? { pickerKey: k.checkPattern } : {}) });
     }
   }
   // 台帳の確認の約束は1通に1つ（最初の文）。同じ通の別の文の内覧の確認・募集状況の確認・撮影の約束も拾う
   for (const s of sentences) {
     if (VIEWING_CHECK_PROMISE_RE.test(s) || VIEWING_SCHEDULE_PROMISE_RE.test(s)) push({ kind: "viewing_check", action: "viewing_invite", checkPattern: null, object: null, evidence: s.slice(0, 40) });
-    else if (VACANCY_WORD_RE.test(s) && /確認[^\n。！!]{0,8}(?:させて(?:頂|いただ)きます|致します|いたします)/.test(s) && !APPLY_PROGRESS_RE.test(s)) {
+    // 10/21 LINK_PROMISE_PICKER: 「駐車場の空き状況確認させて頂きます」の空きは駐車場の話（物件の募集状況の確認を足さない）
+    else if (VACANCY_WORD_RE.test(stripObjectBoundVacancy(s)) && /確認[^\n。！!]{0,8}(?:させて(?:頂|いただ)きます|致します|いたします)/.test(s) && !APPLY_PROGRESS_RE.test(s)) {
       push({ kind: "check", action: "property_check_result", checkPattern: null, object: null, evidence: s.slice(0, 40) });
     }
     // 「募集状況と初期費用（まとめて）確認させて頂きます」＝竹内さんの初期費用は最大限割引の御見積書（2段の brought_both と同じ）

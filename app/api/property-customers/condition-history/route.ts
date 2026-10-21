@@ -4,7 +4,7 @@
 //   POST { id, group } → その束を確認済みに（property_condition_history.confirmed_at）。一番新しい束なら今までの「確認済み」と同じく additional_conditions を空にする
 //   ⚠ confirmed_at の列は migrate-schema に足した（本番の DDL は未実行の可能性）＝列が無くても読める・確認は additional_conditions を空にするだけで続ける
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { groupConditionHistory, RESTORE_FIELDS, type RestoreHistoryRow } from "@/app/lib/condition-restore";
 
 export const dynamic = "force-dynamic";

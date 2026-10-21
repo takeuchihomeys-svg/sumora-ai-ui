@@ -1,8 +1,9 @@
+import { screeningAdminSupabaseKey } from "@/app/lib/supabase-server-key";
 import { manYen } from "./man-yen";
 import Anthropic from "@anthropic-ai/sdk";
 import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { buildSentProps, buildSentPropsText } from "@/app/lib/sent-props-text";
@@ -40,7 +41,7 @@ import { loadCacheWarmDecision, saveConvWarmPrefix } from "@/app/lib/cache-warm-
 import { decideNightDeferNow, type BrainOrigin } from "@/app/lib/brain-night-defer";
 export type { BrainOrigin };
 import { isPostApplyStatus, willRouteAlt, brainDsPartsOn } from "@/app/lib/llm-alt-provider";
-import { loadDeepseekCutoff, cutoffMarkOf, formatCutoffMark } from "@/app/lib/post-apply";
+import { loadDeepseekCutoff, cutoffMarkOf, formatCutoffMark, loadPostApplyFacts, parallelSecondActive } from "@/app/lib/post-apply";
 import { buildSendReplyTimingNote } from "@/app/lib/send-reply-timing";
 import { buildAixSceneNote } from "@/app/lib/aix-scene-stats";
 import { buildCompanyFactsNote, brandCostOverrideNote, matchCompanyFacts, customerTextsForCompanyFacts } from "@/app/lib/company-facts";
@@ -48,9 +49,10 @@ import { isApplicationPayload, APPLICATION_FORM_PLACEHOLDER, APPLICATION_FORMAT_
 import { loadKnownCustomerNames, loadKnownCallNames, loadPartyAliases, loadAltNameMask } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
-import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
+import { resolveStaffPromiseAix, linkPromiseNewArrivalRecEnabled } from "@/app/lib/aix-task-link";
 import { vacateMoveInEstimateEnabled } from "@/app/lib/vacate-move-in-estimate";
 import { brainCheckPatternEnabled, brainCheckPatternSchemaField, resolveCheckKindWithBrain } from "@/app/lib/brain-check-pattern";
+import { reactionOnlyAfterMgmtPending } from "@/app/lib/staff-only-aix-1020";
 import { routeFix1020, broughtTypedText, contractAixWhenTopEmpty, contractPromiseIsCheck, viewingCheckAlsoVacancy, concernRepickupTarget, concernRepickupAnswer, lastStaffReportedResult, checkAfterResultTurnOk } from "@/app/lib/brain-route-fix-1020";
 import { viewingCheckFirst, VIEWING_CHECK_PROMISE_RE, viewingRoomVacating, threadRoomCheckForTurn, otherRoomSentAfterMoveOut, vacancyDateFromMaterial, vacatingViewingAnswer, type ThreadRoomCheck } from "@/app/lib/viewing-check-first";
 import { propertyThreadEnabled } from "@/app/lib/property-thread";
@@ -70,7 +72,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
+import { resolveTwoStageOrDirect, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { holdSoftNextMaterial, rule8HoldNote, rule8HoldDirectionSuffix } from "@/app/lib/hold-soft-next";
 import { lastPropertyMoveAllUnavailable } from "@/app/lib/unavailable-ack";
@@ -199,6 +201,7 @@ import { isExplicitNoAix, isMeaninglessRuleKeyword, humanKeywordRuleHit, summedK
 // 2026-09-27 ②: お客様の「審査落ちた」（別物件への切り替え）に 物件確認した を選ばせない（本番の線は 物件ピックアップ）
 import { resolveScreeningFailedSwitch } from "@/app/lib/screening-failed-switch";
 import { loadPostApplyBrainGate } from "@/app/lib/post-apply-brain-gate-server";
+import { PARALLEL_STATUSES, parallelSecondEnabled, effectiveStatusForParallel, buildParallelBrainNote } from "@/app/lib/parallel-second";
 // 2026-10-18: 同じ入力の鍵で2回ブレインを回さない（brain-input-key.ts）
 import { brainInputKeyOf, decideInputKeyReuse } from "@/app/lib/brain-input-key";
 // 2026-09-27 ③: 資料の現況が「審査中」のお送りしたお部屋をブレインに渡す（資料の文字のまま）
@@ -1473,7 +1476,9 @@ export async function analyzeConversation(
     /** 3巡目（10/07）: 材料を場面で絞るか（テストの前後比べ用・無ければ BRAIN_SCENE_MATERIALS） */
     sceneMaterials?: "on" | "off";
     /** 2026-10-02: お客様ごと・1日ごとの温めのスイッチ（analyzeAndSaveBrainMeta が decideCacheWarm で決めた値。null＝OFF） */
-    cacheWarm?: CacheWarmDecision | null },
+    cacheWarm?: CacheWarmDecision | null;
+    /** 2026-10-21（ec4d5990）2番手で申込中（並行で探す）: 材料に1ブロック足す（呼び出し元が status を物件提案中に読み替えている） */
+    parallelSecond?: boolean },
 ): Promise<SuggestedAixMeta> {
   // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
   await ensureLlmFetchChainInDev().catch(() => {});
@@ -2694,7 +2699,15 @@ ${catalogBlockForBrain(brainScene)}
   let ackAfterPickupNow = false;
   /** 2026-10-16（事例 f）: 了承だけの番の、まだ果たしていない探す約束の文（turn_contract.open_search に入れて下書きの待ちの形まで届ける） */
   let openSearchQuote: string | null = null;
-  if (ackAfterPromiseReplyEnabled() && ackAfterPromiseBrainEnabled() && !isPostApplyStatus(convStatus)) {
+  // 2026-10-21 竹内さんの答え B8・C8（other-agent-viewing.ts）: 判断の原則を今の番の材料で渡す（決まった文ではない・決めるのはブレイン）
+  if (!isPostApplyStatus(convStatus)) {
+    const { isLikeThenHereQuestion, supportStanceNoteEnabled, SUPPORT_STANCE_LINE, isLookElsewhereForConditions, LOOK_ELSEWHERE_LINE } = await import("@/app/lib/other-agent-viewing");
+    const tNow = unrepliedTurn.text ?? "";
+    if (supportStanceNoteEnabled() && isLikeThenHereQuestion(tNow)) customerStateBlockText += `\n\n${SUPPORT_STANCE_LINE}`;
+    if (isLookElsewhereForConditions(tNow)) customerStateBlockText += `\n\n${LOOK_ELSEWHERE_LINE}`;
+  }
+  // 2026-10-21 A2: 決定 C を既定 off にしても、今の番が「ピックアップの約束の直後のお礼」かは材料で渡す（行の中身は ackAfterPickupTurnLine が A2 の形にする）
+  if (ackAfterPromiseBrainEnabled() && !isPostApplyStatus(convStatus)) {
     const lastIsCust = typedMessages[0]?.sender === "customer";
     const f = brainLedger.facts;
     ackAfterPickupNow = ackAfterPickupTurn({
@@ -2841,6 +2854,15 @@ ${catalogBlockForBrain(brainScene)}
       if (memo?.note) { customerStateBlockText += `\n\n${memo.note}`; console.log(JSON.stringify({ tag: "brain:customer-memo", conversationId, memoChars: memo.memoChars, moodChars: memo.moodChars, items: memo.items, pay: memo.pay?.decision ?? null })); }
       paymentPlan = memo?.pay ?? null;
     } catch (e) { console.warn("[brain-core] customer-memo skipped:", e instanceof Error ? e.message : String(e)); }
+    // 2026-10-21 竹内さんの決定（70193195・c2909936）: 申込歴あり（再探し）のお客様は、アツいお客様である事・戻った理由（①否決 ②1番手が通過 ③切り替え／理由不明）と
+    //   理由ごとの次の一手を材料に足す（パターンの名前と一手だけ・申込中の中身は書かない・reapply-customer.ts）。戻す REAPPLY_MARK=off
+    try {
+      const { reapplyBrainNoteFor } = await import("@/app/lib/reapply-customer-server");
+      const ra = await Promise.race([reapplyBrainNoteFor(supabase, conversationId), new Promise<null>((r) => setTimeout(() => r(null), 4_000))]);
+      if (ra?.note) { customerStateBlockText += `\n\n${ra.note}`; console.log(JSON.stringify({ tag: "brain:reapply", conversationId, pattern: ra.info?.pattern ?? null, source: ra.info?.source ?? null })); }
+    } catch (e) { console.warn("[brain-core] reapply skipped:", e instanceof Error ? e.message : String(e)); }
+    // 2026-10-21 竹内さんの決定（ec4d5990）: 2番手で申込中（並行で探す）— 申込は止めずに別の物件を並行して出す（申込の中身には触れない・parallel-second.ts）
+    if (opts?.parallelSecond) customerStateBlockText += `\n\n${buildParallelBrainNote()}`;
   }
   // 2026-10-08 竹内さん「2月に引っ越すなどなれば、物件を抑える事ができるのは1ヶ月のため、1ヶ月半前から探し出す形が理想の流れと伝えて、その日に連絡するように約束」:
   //   入居・引越しの時期が先（連絡の日＝1ヶ月半前が7日以上先）で、まだ連絡の日を約束していない番だけ（contact-promise.farMoveInTurn・決定論）。FAR_MOVE_IN_CONTACT=off で止まる
@@ -3516,13 +3538,17 @@ ${history}`;
     // 見積る物件があるか（こちらの送付・見積の送付・お客様の URL/画像/「ここの」/見積の語）。見積書送るの約束・補正の共通の前提（ゆうこ事例）
     const estimatePropertyInPlay = brainLedger.facts.propertiesSentCount > 0 || brainLedger.facts.estimateSent || unrepliedTurn.hasImage
       || messagesOldestFirst.some((m) => m.sender === "customer" && customerPointsAtProperty(m.text ?? ""));
+    // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 管理会社の返事待ちの約束の直後の、問い・頼みの無い反応だけの番もお礼・了承と同じ（約束を果たす AIX の番・本番 2996）
+    const ackAfterForPromise = customerAckAfter || (lastIsCustomer && reactionOnlyAfterMgmtPending({
+      lastStaffMgmtPending: !!brainLedger.facts.lastStaffEntry?.detail?.mgmtPending, customerText: unrepliedTurn.text, hasImage: unrepliedTurn.hasImage,
+    }));
     let promiseAix = resolveStaffPromiseAix(brainLedger.facts, messagesOldestFirst, {
       customerRequestedCheck: customerRequestedPropertyCheck({
         recentMessages: promiseBasis.map((m) => ({ sender: m.sender, text: m.text })),
         sentPropertyCount: brainLedger.facts.propertiesSentCount,
       }),
       customerWillSend: customerWillSendFirst,
-      customerAckAfter,
+      customerAckAfter: ackAfterForPromise,
       propertyInPlay: estimatePropertyInPlay,
     });
     // 2026-09-17 竹内（慶次事例）: 探し続ける約束（オススメできるお部屋を随時確認→出次第お送り）は
@@ -3534,7 +3560,7 @@ ${history}`;
     //   10/14 試験（route1014-final-b・sp-on）: 約束の直後のお礼・了承だけの番（q094「ありがとうございます！よろしくお願いいたします」）を返信にした＝
     //   この番は約束を果たす AIX（竹内さんは黙って後で AIX 80%・3巡目の線）。下げるのはお客様が中身を書いた番だけ
     //   10/14 確かめる人: 約束の催促（「まだですか」「どうなりましたか」）も約束を果たす番＝下げない（isPromiseNudge）
-    if (promiseAix && !customerAckAfter && !isPromiseNudge(unrepliedTurn.text ?? "") && !samePromiseFamily(promiseAix.action, finalAix ?? null)
+    if (promiseAix && !ackAfterForPromise && !isPromiseNudge(unrepliedTurn.text ?? "") && !samePromiseFamily(promiseAix.action, finalAix ?? null)
       && !applyOverride(demotedOverrides, "staff_promise", `promise:${promiseAix.kind}`, promiseAix.action, finalAix ?? null)) {
       console.log(JSON.stringify({ tag: "brain:staff-promise-demoted", conversationId, kind: promiseAix.kind, would: promiseAix.action, brain: finalAix ?? null }));
       promiseAix = null;
@@ -3993,9 +4019,11 @@ ${history}`;
     //   物件ピックアップを立て直して下書きが出なかった（signal:pending_pickup・穴:G5）
     if (!promiseAix && !closedAckWait && !viewingDayWait && !rentIncludedReply && procedureDecision !== "reply" && !confirmTopicReply && pendingPickup.pending && finalAix === null
       && applyOverride(demotedOverrides, "signal", "signal:pending_pickup", "property_send", finalAix)) {
-      finalAix = "property_send";
+      // 2026-10-21 つなぎ⑤: 新着の約束（出し切った後に探し続ける）は 物件オススメ（新着・1件）を先に（LINK_PROMISE_NEW_ARRIVAL_REC=on の時だけ・既定 off）
+      const newArrivalRec = linkPromiseNewArrivalRecEnabled() && brainLedger.facts.pickupPromisedKind === "new_arrival";
+      finalAix = newArrivalRec ? "property_recommendation" : "property_send";
       decisionSource = "signal:pending_pickup";
-      promiseAltAction = promiseAltAction ?? "property_recommendation";
+      promiseAltAction = promiseAltAction ?? (newArrivalRec ? "property_send" : "property_recommendation");
     }
     // 2026-10-02 竹内さんの決定「物件ピックアップは条件がそろってから。そろっていなければ AIX【条件ヒアリング】（フォーマットはそのまま・
     //   もらっている条件は項目に入れる）」: まだ物件を1件も送っていないのに条件（エリア＋家賃）がそろわないまま 物件ピックアップ を選んだ時は
@@ -4112,9 +4140,13 @@ ${history}`;
     const { promiseAixFromContract, tcPromiseTwoStageEnabled } = await import("@/app/lib/brain-route-keep");
     // 2026-10-20 試験の道の外れ③（q184・BRAIN_ROUTE_FIX_1020 contract_aix）: 最後の aix が空のまま turn_contract の依頼を route=aix（見積書送る等）と書いた番は、
     //   その AIX を最後の aix にする（後の reconcile が依頼を約束に直してただの返信になっていた）。規則が何も決めていない番だけ
-    if (!finalAix && decisionSource === null && !promiseAix && routeFix1020("contract_aix") && !isPostApplyStatus(convStatus)) {
+    // 2026-10-21 竹内さん A1「すぐAIXでかえす」: 確かめれば分かる問い（物件確認した・見積書送る）を依頼で route=aix と書いた番は、contract_aix が off でも
+    //   その AIX を最後の aix にする（試験 ans1021b q133#2: 依頼は見積書送るの AIX・最後の aix が空 → 後の reconcile が約束に直し、出し切りの締めの返信になった）。
+    //   他の AIX の種類は contract_aix（既定 off）のまま。戻す TWO_STAGE_ANSWERABLE_DIRECT=off
+    const answerableContractAix = answerableDirectEnabled();
+    if (!finalAix && decisionSource === null && !promiseAix && (routeFix1020("contract_aix") || answerableContractAix) && !isPostApplyStatus(convStatus)) {
       const k = contractAixWhenTopEmpty((parsed as { turn_contract?: unknown }).turn_contract, (x) => normalizeAixActionKey(x as string));
-      if (k && AIX_BRAIN_NOTES[k]) {
+      if (k && AIX_BRAIN_NOTES[k] && (routeFix1020("contract_aix") || k === "property_check_result" || k === "estimate_sheet")) {
         finalAix = k;
         decisionSource = "brain:contract_aix";
         console.log(JSON.stringify({ tag: "brain:route-fix-1020", part: "contract_aix", conversationId, aix: k }));
@@ -4226,8 +4258,10 @@ ${history}`;
           } catch (e) { console.warn("[brain-core] 退去予定日の読み取りに失敗（確認の約束）:", e instanceof Error ? e.message : String(e)); }
         }
       }
-      twoStage = resolveTwoStage({
+      const twoStageRes = resolveTwoStageOrDirect({
         finalAix: finalAix ?? tcPromiseAix, decisionSource: decisionSource ?? (tcPromiseAix ? "llm" : null), pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
+        // 2026-10-21 見直し: 真の初回（下の初回のガードと同じ定義）は A1 の AIX 直接にしない（2段の約束のまま・ガードはこの後で決まる）
+        firstContact: !isIncremental && !typedMessages.some((m) => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"),
         // 5巡目（10/07）: 内覧の希望（日時の指定なし・内覧できるかまだ伝えていない）はまず内覧できるかの確認の約束（viewing-check-first）
         viewingCheckFirst: finalAix === "viewing_invite" && !viewingDateAnswer && !!brainLedger.facts.viewingFlow && viewingCheckFirst({
           stage: brainLedger.facts.viewingFlow.stage, currentReply: brainLedger.facts.viewingFlow.currentReply, currentWish: brainLedger.facts.viewingFlow.currentWish,
@@ -4264,12 +4298,27 @@ ${history}`;
           return n > 0 ? { ask: broughtPropertyAsk(routeFix1020("brought_text") ? broughtTypedText(turnMsgs) : (unrepliedTurn.text ?? "")), count: n, titleOnly: broughtTitleOnly(props) } : null; // 10/13 titleOnly: SNS・TikTok の題だけ（two-stage）
         })(),
       });
+      twoStage = twoStageRes.verdict;
+      // 2026-10-21 竹内さん A1「すぐAIXでかえす」（two-stage answerableDirectAix・TWO_STAGE_ANSWERABLE_DIRECT=off で2段の約束に戻す）:
+      //   管理会社に確かめれば分かる問い（空き状況・見積・設備）は約束を挟まず AIX【物件確認した／見積書送る】を直接
+      let answerableDirectFrom: string | null = null;
+      if (twoStageRes.direct) {
+        answerableDirectFrom = twoStageRes.coreSource;
+        if (finalAix !== twoStageRes.direct) {
+          console.log(JSON.stringify({ tag: "brain:answerable-direct", conversationId, from: finalAix, to: twoStageRes.direct, core: twoStageRes.coreSource }));
+          decisionSource = finalAix
+            ? `${decisionSource ?? "llm"}+answerable_direct`
+            : `rule:answerable_direct(${(twoStageRes.coreSource ?? "").replace(/^rule:two_stage_promise\(|\)$/g, "")})`;
+          finalAix = twoStageRes.direct;
+          sceneSignalCheckPattern = null;
+        }
+      }
       if (checkAfterResult) twoStage = null; // ⑤b: 結果は AIX で直接（約束の返信にしない）
       // 8巡目: 退去予定日が分かる内覧の希望は AIX にせず返信で「〇月〇日以降にご内覧可能です」（候補日はまだ出さない・内覧開始日の後に AIX【内覧調整】）
       // 8巡目: 聞かれた契約条件が全部資料にある番は、質問の2段（check_question＝答えが無ければ確認の約束）にせず資料で答える方向にする
       //   （YUMA「この物件は駐車場あります？」で check_question の方向から DeepSeek が「空き状況確認させて頂きます」と書いた回があった）
-      if (twoStage && /check_question/.test(twoStage.source) && contractTerms?.allInMaterial && process.env.CONTRACT_TERMS_REPLY !== "off") {
-        console.log(JSON.stringify({ tag: "brain:contract-terms-over-two-stage", conversationId, from: twoStage.source }));
+      if (((twoStage && /check_question/.test(twoStage.source)) || /check_question/.test(answerableDirectFrom ?? "")) && contractTerms?.allInMaterial && process.env.CONTRACT_TERMS_REPLY !== "off") {
+        console.log(JSON.stringify({ tag: "brain:contract-terms-over-two-stage", conversationId, from: twoStage?.source ?? answerableDirectFrom }));
         twoStage = null;
         finalAix = null;
         sceneSignalCheckPattern = null;
@@ -5827,6 +5876,16 @@ async function analyzeAndSaveBrainMetaInner(
   } catch (e) {
     console.warn("[brain-core] post-apply gate read failed (run as before):", conversationId, e instanceof Error ? e.message : e);
   }
+  // 2026-10-21 竹内さんの決定（ec4d5990）: 2番手で申込中（並行で探す）と明示的に決まった会話は、物件提案中として判断する（申込中の材料の切り替えを外す・DB の status は変えない）。
+  //   材料に「2番手で申込中（並行で探す）」の1ブロックを足す。読めなければ今まで通り。戻す REAPPLY_PARALLEL_2ND=off
+  let brainStatus = status;
+  let parallelSecond = false;
+  if (status && PARALLEL_STATUSES.has(status) && parallelSecondEnabled()) {
+    try {
+      const pf = await loadPostApplyFacts(supabase, conversationId);
+      if (parallelSecondActive(pf)) { parallelSecond = true; brainStatus = effectiveStatusForParallel(status, true); console.log(JSON.stringify({ tag: "brain:parallel-2nd", conversationId, status })); }
+    } catch (e) { console.warn("[brain-core] parallel-2nd read failed (as before):", conversationId, e instanceof Error ? e.message : e); }
+  }
   // 2026-09-12 竹内（名無しの権兵衛事例）: 旧「申込以降バッジあり（is_post_apply）→ 分析不要」は廃止。
   //   申込中でもお客様は並行して別の物件の内見・初期費用を聞く（「因みに、昭和グランドハイツ恵比寿の初期費用教えて下さい」→ AIX 見積書送る）。
   //   30日で is_post_apply の会話 13件にスタッフが AIX を 91回押していた（物件オススメ34・物件ピックアップ17・物件確認11・見積書10…）のに、
@@ -6094,7 +6153,7 @@ async function analyzeAndSaveBrainMetaInner(
   const meta = await analyzeConversation(
     conversationId,
     isUrgent,
-    status,
+    brainStatus,
     (conv.property_customer_id as string | null) ?? null,
     "brain",
     {
@@ -6111,6 +6170,7 @@ async function analyzeAndSaveBrainMetaInner(
       strategy: useFreshLayer ? brainStrategy : null,
       totalMsgCount: totalMsgCount ?? 0,
       cacheWarm,
+      parallelSecond,
     },
   );
   // 2026-09-30 竹内: 今回の連投で決まった内覧が取りやめになっていたら、カレンダーの予定を消す（LLM の結果に依らない決定論・応答は待たせない）
@@ -6929,7 +6989,7 @@ async function createCalendarEventFromBrainAction(
 
     // 申込ツール（screening-admin daily_tasks）にも同期（取りこぼし防止）
     const screeningUrl = process.env.SCREENING_ADMIN_SUPABASE_URL;
-    const screeningKey = process.env.SCREENING_ADMIN_SUPABASE_ANON_KEY;
+    const screeningKey = screeningAdminSupabaseKey();
     if (screeningUrl && screeningKey) {
       const EVENT_EMOJI: Record<string, string> = {
         viewing: "🔍", application: "📋", phone: "📞", photo: "📸",

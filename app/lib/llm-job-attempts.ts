@@ -9,7 +9,7 @@
 
 // supabase は使う時に読み込む（純関数 isAttemptBlocked・attemptKey を環境変数なしで単体テストできるように）
 async function db() {
-  return (await import("@/app/lib/supabase")).supabase;
+  return (await import("@/app/lib/supabase-server")).supabase;
 }
 
 export const DEFAULT_MAX_ATTEMPTS = 3;

@@ -8,7 +8,7 @@
 //     （hash='convwarm:<会話id>'。温めは同じバイト列を送る＝1文字もずれない。keep-warm の候補からは外す）
 //   ・tryConvWarms: mode=on の時だけ温める（ブレインの温めと同じ窓 50〜58 分・冷えていたら退く）。shadow は「温めるはずだった会話」を数えて残すだけ
 //   止める: BRAIN_CACHE_WARM=off。既定は shadow（判断と前置きの指紋を brain_decision_logs.digest.cw に残すだけ・費用0）
-import { supabase } from "./supabase";
+import { supabase } from "./supabase-server";
 import { jstDayStartMs } from "./jst-date";
 import { decideBrainWarm } from "./brain-warm";
 import { sumoraLlmMarks } from "./llm-usage-recorder";

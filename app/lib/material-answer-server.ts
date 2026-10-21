@@ -10,7 +10,7 @@
 // ⚠ 読むのはこちらが送った物件の資料の画像だけ（sent_image_properties の画像・image_details の kind が property か未読）。
 //   お客様の画像・本人確認書類は絶対に回さない（設計知見「別クラウドに出してよいのは物件資料だけ」）。漢字は日本の字形に直してから使う（P0 89bc2c3e）。
 import { createHash } from "node:crypto";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { callDeepSeekRead } from "@/app/lib/vision-alt-provider";
 import { pickEquipmentTargets, type SentPropertyLite, type EquipTarget } from "@/app/lib/equipment-question";
 import {

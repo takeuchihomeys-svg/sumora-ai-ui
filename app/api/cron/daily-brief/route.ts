@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { jstParts } from "@/app/lib/jst-date";
 import { flagOn } from "@/app/lib/brain-attention";
 import { loadBrainTargets, type BrainTarget } from "@/app/lib/brain-attention-server";
+import { todoDailyBriefMergeEnabled } from "@/app/lib/staff-todo-list";
 
 export const maxDuration = 60;
 
@@ -234,6 +235,13 @@ export async function GET(req: NextRequest) {
   const mode = req.nextUrl.searchParams.get("mode") ?? "morning";
   const isEvening = mode === "evening";
   const isDeadline = mode === "deadline";
+
+  // 2026-10-21 竹内さん「ターゲットは【やることリスト】の中だけで出す」: この便（朝・夕・締切）の中身は全部ターゲット・新規・返信ありの一覧＝
+  //   【やることリスト】（1時間ごと・①ターゲット×やること ②新規 ③返信 ④新着確認）と同じ物なので、まとめている間は出さない。
+  //   戻す: TODO_DAILY_BRIEF_MERGE=off（または STAFF_TODO_LIST=off）
+  if (todoDailyBriefMergeEnabled()) {
+    return NextResponse.json({ ok: true, skipped: true, mode, reason: "merged into staff-todo-list (TODO_DAILY_BRIEF_MERGE)" });
+  }
 
   const COOLDOWN_KEY = isDeadline
     ? "daily_brief_deadline_last_sent_at"

@@ -4,7 +4,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { parseContactPromise, ymdStr } from "../app/lib/contact-promise";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 async function main() {
   const rows: Array<{ id: string; conversation_id: string; text: string; created_at: string; staff_writer: string | null }> = [];
   // 候補: 月か「日頃」があり、こちらの動詞がある送信（全期間）

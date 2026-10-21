@@ -1,4 +1,5 @@
 // app/lib/line-webhook-text.ts
+import { serverSupabaseKey } from "@/app/lib/supabase-server-key";
 import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
 import { flagOn } from "@/app/lib/brain-attention";
 // LINE webhook の「お客様の文字の発言を受けた時」の処理（保存・未読・引用・下書きの起動・ブレイン・条件の読み取り 等）。
@@ -129,7 +130,7 @@ export async function fetchLineProfile(
 export function getDb() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    serverSupabaseKey()!,
   );
 }
 

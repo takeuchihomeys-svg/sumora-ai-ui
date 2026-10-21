@@ -3,7 +3,7 @@ import { enforceCallName } from "@/app/lib/call-name-guard";
 import { secondLinesFromCard } from "@/app/lib/estimate-explain";
 import { NextRequest, NextResponse, after } from "next/server";
 import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 // 2026-09-29 API 費用の調査: 名札を付ける（llm-alt-provider は system の先頭の語で既に "aix_template" と見なしている＝同じ名前なので回し方は変わらない）
 import { sumoraLlmMarks, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
@@ -93,6 +93,7 @@ import { resolveTemplateSentMessage } from "@/app/lib/aix-template-source";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
 // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 見積書の直後の2通目の形・締め・検査（スタッフが書いた2通目 132通から）
 import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
+import { isEstimateCorrectionContext, mentionsOtherAgentProperty, applyEstimateOwnerLines, estimateOwnerNote } from "@/app/lib/aix-owner-answers-1021";
 import { customerAskedEstimate } from "@/app/lib/customer-mindset";
 import { loadEstimateAppeal } from "@/app/lib/estimate-appeal-server";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、1通目（aix/action）と同じ関数・同じ材料で決める
@@ -1596,6 +1597,7 @@ export async function POST(req: NextRequest) {
   })();
   let estimateClosing: EstimateClosing = "receipt";
   let estimateSecondNote = "";
+  let estimateOwner: { correction: boolean; otherAgent: boolean } = { correction: false, otherAgent: false };
   if (isEstimateSecond) {
     let viewed = false;
     try {
@@ -1621,6 +1623,13 @@ export async function POST(req: NextRequest) {
     console.log(JSON.stringify({ tag: "aix-template-generate:estimate-appeal", appeal: ap.appeal, notViewable: ap.notViewable, found: ap.found }));
     estimateClosing = dec.closing;
     estimateSecondNote = buildEstimateSecondNote({ name: resolvedCustomerName, properties: estimateProps, closing: dec.closing, staffSentToday: greetSentToday });
+    // 2026-10-21 竹内さん C5（訂正した御見積書）・C6（他社の物件→弊社でもお申込み・ご内覧頂けます）
+    {
+      const msgs = (recentMessages ?? []) as Array<{ sender?: string | null; text?: string | null }>;
+      estimateOwner = { correction: isEstimateCorrectionContext(msgs, null, undefined, { justSent: true }), otherAgent: mentionsOtherAgentProperty(msgs) };
+      const n = estimateOwnerNote(estimateOwner);
+      if (n) estimateSecondNote += `\n${n}`;
+    }
     // 2026-10-06 ⑫ 竹内（R の見積書の2通目）「実際にスタッフが送っているような正確で具体的なちゃんとした返信を」:
     //   1通目の札に「報酬が出ない…仲介手数料〇円」等の行があれば、2通目に事情の文（スタッフの実送信の言い方・数字は札の字だけ）を入れる（estimate-explain）
     {
@@ -2262,6 +2271,10 @@ ${text}
     if (isEstimateSecond) {
       const ec = ensureEstimateClosing(text, estimateClosing);
       if (ec.added) { console.log(JSON.stringify({ tag: "aix-template-generate:estimate-closing-added", closing: estimateClosing })); text = ec.text; }
+      if (estimateOwner.correction || estimateOwner.otherAgent) {
+        const ow = applyEstimateOwnerLines(text, estimateOwner);
+        if (ow.added.length) { console.log(JSON.stringify({ tag: "aix-template-generate:estimate-owner-1021", added: ow.added })); text = ow.text; }
+      }
     }
     // 2026-10-01 竹内「同じ絵文字を2重で使っているが実際していない。もう一つの絵文字を使うか省いている」:
     //   文末の同じ絵文字の2回目以降は、誘導の締めなら外し・他は 😌／😊 の未使用の方に替える（実送信で同じ絵文字だけは 4.0%・emoji-repeat.ts）

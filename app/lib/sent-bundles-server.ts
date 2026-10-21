@@ -1,5 +1,5 @@
 // app/lib/sent-bundles-server.ts（サーバー専用・DB を読むだけ）: 送った束（sent-bundles.ts）の材料を読む。画面側から import しない
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildSentBundles, sentBundlesEnabled, BUNDLE_STALE_DAYS, type BundleLog, type BundleMsg, type BundleImageRead, type SentBundle } from "@/app/lib/sent-bundles";
 
 /** この会話の直近 days 日の送った束（新しい順）。読めない・止めてある時は [] */

@@ -6,7 +6,7 @@
 //   （Cron・拡張の alarm・詳細を開いた時・止まったまとめのやり直しが重なっても送るのは1つだけ）。
 //   先に取ってから送るので、LINE が失敗した時は announce_error に残す（送り直しはしない＝同じ文が2回届くより、1回抜ける方を選ぶ）
 // dry: 取る・送るをせず、送る文だけ返す（確かめ用・グループに送らない）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { announcePlan, buildAnnouncement, announceLink, type AnnounceItem } from "@/app/lib/pickup-group-announce";
 
 const HANBANCYO_TOKEN = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;

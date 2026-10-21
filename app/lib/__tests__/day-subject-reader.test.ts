@@ -127,9 +127,9 @@ t("文の中の『〜の件かしこまりました』1つだけは触らない"
   const same = placeAckInContentBlock("Aさんお世話になっております！！かしこまりました！！\n\nお送りさせて頂きます！！");
   t("挨拶と受けが同じ行も分ける", same.moved && same.text === "Aさんお世話になっております！！\n\nかしこまりました！！\nお送りさせて頂きます！！", JSON.stringify(same.text));
   t("もう正しい形は動かさない", !placeAckInContentBlock("Aさんお世話になっております！！\n\nかしこまりました！！\nお送りさせて頂きます！！").moved);
-  t("既定: 重なりの網は on・置き場所の網は off", ackDedupeEnabled({}) && !ackBlockPlaceEnabled({}));
-  t("既定（off）の置き場所は変えない", tidyAckForm(src, {}) === src);
-  t("ACK_BLOCK_PLACE=on で動く", tidyAckForm(src, { ACK_BLOCK_PLACE: "on" }) !== src);
+  t("既定: 重なりの網も置き場所の網も on（10/21 竹内さん B6）", ackDedupeEnabled({}) && ackBlockPlaceEnabled({}));
+  t("既定（on）で置き場所を直す", tidyAckForm(src, {}) !== src);
+  t("ACK_BLOCK_PLACE=off で置き場所は変えない", tidyAckForm(src, { ACK_BLOCK_PLACE: "off" }) === src);
   t("ACK_DEDUPE=off で重なりを残す", tidyAckForm("かしこまりました！！かしこまりました！！", { ACK_DEDUPE: "off" }) === "かしこまりました！！かしこまりました！！");
 }
 // 査読: 「承知しましたが／承知しましたら」の文の途中を削らない（同じ段の2つ目でも区切れていない受けは触らない）

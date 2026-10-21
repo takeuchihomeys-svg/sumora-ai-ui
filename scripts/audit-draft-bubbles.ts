@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../app/lib/test-conversations";
 import { splitDraftBubbles } from "../app/lib/draft-bubbles";
 const DAYS = Number(process.argv.find((a) => a.startsWith("--days="))?.slice(7) ?? "150");
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 type M = { conversation_id: string; sender: string; created_at: string; text: string | null; is_aix_generated: boolean | null };
 (async () => {
   const since = new Date(Date.now() - DAYS * 86_400_000).toISOString();

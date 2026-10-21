@@ -23,7 +23,7 @@ const EDGE = arg("edge", "");
 const LABELS = arg("labels", "");
 const MAP = arg("map", "");
 const OUT = arg("out", "");
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
 type Hit = { ua: string; net: string; ip: string };
 /** 回線の場所の印: S＝STARCAT（ケーブル）・O＝KDDI の固定（毎日同じ接続元）・M＝携帯の回線・K＝その他の KDDI。IP そのものは出さない */

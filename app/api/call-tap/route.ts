@@ -6,7 +6,7 @@
 //   ・売上番長グループへ「〇〇さんが電話ボタンを押しました」（同じ会話で3分以内の押し直しは重ねない）
 //   お客様の端末から開かれるので認証は付けない。代わりにリンクの署名が合う物だけ扱う
 import { NextRequest, NextResponse, after } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { callUrlSettingKey, isValidLineCallUrl } from "@/app/lib/phone-call";
 import { verifyCallTap, callTapSecret, buildCallTapNotice, CALL_TAP_NOTIFY_GAP_MS } from "@/app/lib/call-tap";
 import { pushToHanbancyoGroup } from "@/app/lib/aix-action-items";

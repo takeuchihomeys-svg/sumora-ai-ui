@@ -25,6 +25,7 @@ import { parseContactPromise, ymdStr as contactYmd } from './contact-promise';
 // 2026-09-21 竹内（まりあさん事例）: 「内覧が終わった」の判定は viewing-thread と同じ1か所
 import { STAFF_VIEWING_DONE_RE } from './viewing-thread';
 import { aixMgmtLifelineEnabled, LIFELINE_PROMISE_RE } from './aix-lifeline';
+import { staffOnlyAix1020, findMgmtPendingSentence, stripPendingClause } from './staff-only-aix-1020';
 // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・バイク置き場・契約の条件・家賃の交渉）の約束の要件の網
 import { aixNewPickers1020Enabled, APPLICATION_STATUS_Q_RE, CONTRACT_TERMS_RE, RENT_NEGOTIATION_RE, SURROUNDINGS_RE } from './aix-new-pickers';
 import { findPrematureViewing, customerMentionsFixedViewing, findStaffViewingDeclaration } from './viewing-premature';
@@ -78,6 +79,16 @@ export interface LedgerEntry {
      */
     watch?: boolean;
     /**
+     * pickup_declared: 約束の種類（2026-10-21 つなぎ①⑤・LINK_PROMISE_PICKER）。new_arrival＝出し切った後に探し続ける『新着で出次第』／
+     * pickup＝新しい条件でまだ探していない物件を探す『ピックアップ出来次第』（設計知見 81f0727b「別の約束」）。判定は pickupPromiseKindOf（約束の並びと同じ）
+     */
+    pickupKind?: "new_arrival" | "pickup";
+    /**
+     * pickup_declared / confirmation_promised: 約束の続きの AIX のピッカー（2026-10-21 LINK_PROMISE_PICKER・設計知見 408cf7bb「約束の続きにピッカーをセット」）。
+     *   確認の約束＝check_pattern（mgmt_parking 等）／ピックアップの約束＝"pickup_type:新着1件"（新着）・"send_mode:normal"（ピックアップ）
+     */
+    pickerKey?: string | null;
+    /**
      * confirmation_promised: 要件をお客様の直前の質問から読んだ（約束の文が「確認出来次第ご連絡させて頂きます」だけで要件が無い時）。
      * 2026-10-06 ⑫ 竹内（チンシャン事例）: 要件が無いと【必ず】は「確認事項」・AIX は 物件確認した（募集状況）になり、
      * お客様のお礼の番はブレインが約束の AIX を立てず返信（「気になる点等…」）にしていた
@@ -97,6 +108,8 @@ export interface LedgerEntry {
     parallel?: boolean;
     /** confirmation_reported（AIX 物件確認した）: 物件ごとの結果（propertyNames と同じ順） */
     propStatuses?: string[];
+    /** confirmation_promised: 管理会社の返事待ちを伝えた文から読んだ約束（STAFF_ONLY_AIX_1020 mgmt_pending・staff-only-aix-1020.ts） */
+    mgmtPending?: boolean;
   };
   /** done 直後（次のスタッフ発言より前）の顧客返答（往復文脈の一般化） */
   customerReactionAfter?: ReactionKind;
@@ -137,6 +150,8 @@ export interface LedgerFacts {
   pickupPromisedUnfulfilled: boolean;
   pickupPromisedAt: string | null;
   pickupPromisedCount: number;
+  /** 最後の未履行のピックアップの約束の種類（LINK_PROMISE_PICKER=on の時だけ入る・無ければ undefined/null） */
+  pickupPromisedKind?: "new_arrival" | "pickup" | null;
   estimatePromisedUnfulfilled: boolean;
   confirmationPromisedUnfulfilled: boolean;
   confirmationPromisedObject: string | null;
@@ -414,11 +429,73 @@ export function fillConfirmObjectFromCustomer(e: LedgerEntry, msgs: ReadonlyArra
   e.detail.object = hit.object;
   e.detail.objectFrom = 'customer';
   e.detail.question = hit.question;
+  if (linkPromisePickerEnabled()) { delete e.detail.pickerKey; Object.assign(e.detail, withConfirmPickerKey(hit.object)); }
+}
+
+// ─── 2026-10-21 つなぎ① 約束→ピッカーを太くする（LINK_PROMISE_PICKER・既定 on・戻す =off）────────────────
+//   見張り（scripts/audit-link-brain.ts・14日）で ①約束→ピッカーの切れ 53/74。読み違いの1つ: 「駐車場の空き状況確認させて頂きます」が
+//   空室（募集状況）の確認に読まれ、駐車場のピッカーに結ばれなかった（AIX_NEW_PICKERS_1020=on の時だけ駐車場を先に見ていた）。
+//   → 要件の語のすぐ後ろに空き・募集（状況）が付く言い方（駐車場の空き状況・バイク置き場の募集状況・ペット可の空き）は、空き・募集でなくその要件
+//   （切替に関係なく）。物件そのものの募集状況（「お送り頂きました物件の募集状況と猫飼育可能か」）は今まで通り募集状況が先
+/** 切替: つなぎ①⑤の読み直し・約束の記録の種類とピッカー（既定 on・戻す LINK_PROMISE_PICKER=off） */
+export function linkPromisePickerEnabled(env: Record<string, string | undefined> = typeof process !== 'undefined' ? process.env : {}): boolean {
+  return (env.LINK_PROMISE_PICKER ?? '').trim().toLowerCase() !== 'off';
+}
+// 退去も外す（「9月末退去予定で募集されております」＝物件そのものの募集で退去の要件ではない。レビュー 2026-10-21: 直近30日の報告で 初期費用→退去 に化けた）
+const VACANCY_TOPIC_LABELS = new Set(['募集状況', '空室', '番手', '申込状況', '退去']);
+// 要件の語と空き・募集の間は3字まで（「バイク置き場の空き」）。お部屋・物件を挟む言い方（「退去予定のお部屋の募集状況」）・並べた言い方
+// （「ご内覧可否と募集状況」＝2つの確認）は物件の募集状況のまま
+const BOUND_VACANCY_TAIL = '[^\\n。！!？?、部屋物件と・や及]{0,3}?(?:の|は|が)?(?:空き|空室|募集)(?:状況|の有無|有無)?';
+/** 要件の語のすぐ後ろに空き・募集が付いた言い方の要件（駐車場の空き状況→駐車場）。無ければ null */
+export function boundObjectTopicOf(text: string | null | undefined): string | null {
+  const t = String(text ?? '').normalize('NFKC');
+  if (!/空き|空室|募集/.test(t)) return null;
+  for (const r of confirmTopicRules()) {
+    if (VACANCY_TOPIC_LABELS.has(r.label)) continue;
+    if (new RegExp(`(?:${r.re.source})${BOUND_VACANCY_TAIL}`).test(t)) return r.label;
+  }
+  return null;
+}
+/** 要件に付いた空き・募集の句を外す（約束の並びの「募集状況の確認」の拾いが 駐車場の空き状況 を物件の募集状況と数えないように） */
+export function stripObjectBoundVacancy(text: string | null | undefined): string {
+  let t = String(text ?? '').normalize('NFKC');
+  if (!linkPromisePickerEnabled() || !/空き|空室|募集/.test(t)) return t;
+  for (const r of confirmTopicRules()) {
+    if (VACANCY_TOPIC_LABELS.has(r.label)) continue;
+    t = t.replace(new RegExp(`(?:${r.re.source})${BOUND_VACANCY_TAIL}`, 'g'), r.label);
+  }
+  return t;
+}
+/** ピックアップの約束の種類（新着で出次第／ピックアップ出来次第）。約束の並び（promise-queue）と台帳が同じ線で読む */
+const NEW_ARRIVAL_PROMISE_RE = /新着|随時|出次第|出(?:て|た)?(?:き)?次第|見つかり次第|お部屋探し/;
+export function pickupPromiseKindOf(sentence: string | null | undefined, evidence: string | null | undefined, watch?: boolean | null): 'new_arrival' | 'pickup' {
+  return watch === true || NEW_ARRIVAL_PROMISE_RE.test(`${sentence ?? ''} ${evidence ?? ''}`) ? 'new_arrival' : 'pickup';
+}
+/**
+ * ピックアップの約束の続きのピッカー。新着＝AIX【物件オススメ】の「新着・1件訴求」（設計知見 81f0727b: 新着の監視→物件オススメ）／ピックアップ＝AIX【物件ピックアップした】。
+ *   実測（150日・約束の後に最初に送った物件の AIX）: 新着の約束 → 物件オススメ 64・物件ピックアップ 64（うち新着まとめ 41）／
+ *   ピックアップの約束 → 物件ピックアップ 364・物件オススメ 87。send_mode（初回／新着まとめ）は約束の種類で決めない（前に送ったかで決める今の先入れが 363/416 で上）
+ */
+export function pickupPickerKey(kind: 'new_arrival' | 'pickup'): string {
+  return kind === 'new_arrival' ? 'property_recommendation/pickup_type=新着1件' : 'property_send';
+}
+/** 確認の約束の記録に足すピッカー（check_pattern）。無ければ何も足さない */
+function withConfirmPickerKey(object: string | null | undefined): { pickerKey?: string } {
+  if (!linkPromisePickerEnabled()) return {};
+  const cp = checkPatternForConfirmTopic(object);
+  return cp ? { pickerKey: cp } : {};
+}
+/** ピックアップの約束の記録に足す種類とピッカー */
+function withPickupKind(sentence: string | null | undefined, evidence: string | null | undefined, watch?: boolean): { pickupKind?: 'new_arrival' | 'pickup'; pickerKey?: string } {
+  if (!linkPromisePickerEnabled()) return {};
+  const k = pickupPromiseKindOf(sentence, evidence, watch);
+  return { pickupKind: k, pickerKey: pickupPickerKey(k) };
 }
 
 /** 本文の確認の要件（何を: 入居時期・保証会社・募集状況…を先に、無ければ誰に: 管理会社）。AIX の本文からも同じ語彙で取る */
 export function confirmObjectOf(text: string | null | undefined): string | null {
   const t = text ?? '';
+  if (linkPromisePickerEnabled()) { const b = boundObjectTopicOf(t); if (b) return b; }
   for (const r of confirmTopicRules()) if (r.re.test(t)) return r.label;
   return t.match(CONFIRM_PARTY_RE)?.[0] ?? null;
 }
@@ -457,7 +534,9 @@ export function findConfirmReportSentence(text: string | null | undefined): stri
     const x = s.trim();
     if (!x) continue;
     if (REPORT_HEDGE_RE.test(x) || REPORT_ECHO_RE.test(x)) { prev = x; continue; }
-    if (STAFF_CONFIRM_REPORT_RE.test(x) || LEDGER_CONFIRM_REPORT_RE.test(x)) {
+    // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 「担当者よりご返答あり次第ご連絡」の待ちの句は報告の語（よりご返答あり）に当てない
+    const xr = stripPendingClause(x);
+    if (STAFF_CONFIRM_REPORT_RE.test(xr) || LEDGER_CONFIRM_REPORT_RE.test(xr)) {
       // 2026-10-06 R 事例: 「…備わっております。とのご返答でした！！」の「とのご返答でした」だけの文は中身（要件）が前の文にある → 前の文と合わせて返す
       return /^との/.test(x) && prev ? `${prev}${x}` : x;
     }
@@ -692,8 +771,21 @@ export function extractViewingAppointment(text: string | null | undefined, sentA
   return { dateMD, time, place };
 }
 
+/**
+ * 約束の記録に種類とピッカーを足す（2026-10-21 LINK_PROMISE_PICKER）。ピックアップの約束＝pickupKind（新着/ピックアップ）＋pickerKey・
+ *   確認の約束＝pickerKey（check_pattern）。送信時の記録（sent_facts.detail）にそのまま残る。既にある値は上書きしない
+ */
+export function annotatePromiseRecord<T extends LedgerEntry | null>(e: T): T {
+  if (!e || e.status !== 'promised' || !linkPromisePickerEnabled()) return e;
+  if (e.kind === 'pickup_declared' && !e.detail.pickupKind) Object.assign(e.detail, withPickupKind(e.detail.sentence, e.evidence, e.detail.watch));
+  if (e.kind === 'confirmation_promised' && !e.detail.pickerKey) Object.assign(e.detail, withConfirmPickerKey(e.detail.object));
+  return e;
+}
 /** スタッフ本文1通 → 台帳エントリ（本文 regex＝confidence 1）。時制で promised / done を分ける */
 export function classifyStaffTextForLedger(text: string, at: string | null): LedgerEntry | null {
+  return annotatePromiseRecord(classifyStaffTextForLedgerRaw(text, at));
+}
+function classifyStaffTextForLedgerRaw(text: string, at: string | null): LedgerEntry | null {
   const t = (text ?? '').trim();
   if (!t) return null;
   const base = (kind: LedgerKind, status: LedgerStatus, evidence: string, detail: LedgerEntry['detail'] = {}): LedgerEntry =>
@@ -756,6 +848,11 @@ export function classifyStaffTextForLedger(text: string, at: string | null): Led
     if (ls) return base('confirmation_promised', 'promised', ls.match(LIFELINE_PROMISE_RE)![0], { object: 'ライフライン', sentence: promiseSentenceText(ls) });
   }
   if (bare) return base('confirmation_promised', 'promised', bare.evidence, { object: confirmObjectOf(bare.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([bare.sentence, ...sentences], bare.sentence), ...confirmPropertyDetail(t) });
+  // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 管理会社の返事待ち（「確認いただいております」「確認中」「ご返答あり次第ご連絡」）も確認の約束
+  if (staffOnlyAix1020('mgmt_pending')) {
+    const mp = findMgmtPendingSentence(sentences);
+    if (mp) return base('confirmation_promised', 'promised', mp.evidence, { object: confirmObjectOf(mp.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([mp.sentence, ...sentences], mp.sentence), mgmtPending: true, ...confirmPropertyDetail(t) });
+  }
   if (STAFF_QUESTION_RE.test(lastLine)) return base('question_asked', 'done', lastLine.slice(-30));
   return null;
 }
@@ -806,8 +903,13 @@ export function classifyStaffTextFacts(text: string, at: string | null): LedgerE
   if (!has('confirmation_promised')) {
     const c = findConfirmPromiseSentence(sentences);
     if (c) add('confirmation_promised', 'promised', c.evidence, { object: confirmObjectOf(c.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([c.sentence, ...sentences], c.sentence), ...confirmPropertyDetail(t) });
+    // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 同じ通に済みの行い（御見積書の送付 等）があっても、管理会社の返事待ちの文は確認の約束として残す（本番 2996）
+    else if (staffOnlyAix1020('mgmt_pending')) {
+      const mp = findMgmtPendingSentence(sentences);
+      if (mp) add('confirmation_promised', 'promised', mp.evidence, { object: confirmObjectOf(mp.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([mp.sentence, ...sentences], mp.sentence), mgmtPending: true, ...confirmPropertyDetail(t) });
+    }
   }
-  return out;
+  return out.map(annotatePromiseRecord);
 }
 
 /** AIX 待ち合わせ場所の画面入力（「9/14（月）」「12:00〜14:00」）→ 待ち合わせ（送信時の記録 sent_facts・内覧の記録） */
@@ -847,7 +949,9 @@ export function aixTextPromises(aixType: string | null | undefined, text: string
     && (e.kind === 'pickup_declared' || e.kind === 'estimate_declared' || e.kind === 'confirmation_promised')
     && !(e.kind === 'pickup_declared' && self === 'properties_sent')
     && !(e.kind === 'estimate_declared' && (self === 'estimate_sent' || opts.estimateEnclosed === true))
-    && !(e.kind === 'confirmation_promised' && (self === 'confirmation_reported' || self === 'confirmation_promised')));
+    && !(e.kind === 'confirmation_promised' && (self === 'confirmation_reported' || self === 'confirmation_promised')
+      // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 【物件確認した】の本文の「管理会社に〜確認いただいております」（別の要件の返事待ち）は残す
+      && !(self === 'confirmation_reported' && e.detail.mgmtPending && staffOnlyAix1020('mgmt_pending'))));
 }
 
 /**
@@ -921,6 +1025,12 @@ export function buildViewingFlowForBrain(ledger: ActionLedger): string {
 function pickLastStaffEntry(merged: LedgerEntry[], lastStaffAt: number): LedgerEntry | null {
   const win = merged.filter((e) => near(ms(e.at), lastStaffAt, AIX_ATTACH_WINDOW_MS));
   if (win.length === 0) return null;
+  // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: 最後の発言に管理会社の返事待ち（まだ果たしていない確認の約束）があれば、それを最後の行いにする
+  //   （同じ通の御見積書の送付・確認の報告より先。お礼・了承の番に約束を果たす AIX を立てる resolveStaffPromiseAix が読む）
+  if (staffOnlyAix1020('mgmt_pending')) {
+    const pending = win.find((e) => e.kind === 'confirmation_promised' && e.status === 'promised' && e.detail.mgmtPending && e.fulfilledBy == null);
+    if (pending) return pending;
+  }
   const rank = (e: LedgerEntry): number[] => [
     LEDGER_OUTBOUND_SOURCES.has(e.source) ? 1 : 0,
     e.confidence,
@@ -990,6 +1100,13 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
       if (x.f.kind === map.kind && x.f.detail) e.detail = { ...e.detail, ...x.f.detail };
     }
     entries.push(e);
+    // 2026-10-20 STAFF_ONLY_AIX_1020 mgmt_pending: AIX の本文に書き足した管理会社の返事待ち（本番 2996: 【物件確認した】の本文に
+    //   「管理会社担当さんに子供のご入居が可能か確認いただいております」）は、送信時の記録に無くても（記録前・旧の分け方）この AIX の本文から読む
+    if (staffOnlyAix1020('mgmt_pending') && !recorded.some((x) => x.f.origin === 'aix' && x.f.kind === 'confirmation_promised' && near(ms(x.f.sent_at), ms(at), AIX_ATTACH_WINDOW_MS))) {
+      for (const p of aixTextPromises(r.aix_type, r.generated_text, at, { estimateEnclosed: r.estimate_sent === true })) {
+        if (p.kind === 'confirmation_promised' && p.detail.mgmtPending) entries.push({ ...p, source: 'aix_log' });
+      }
+    }
     // estimate_sent=true の別 aix_type（property_check_result 等に見積添付）→ estimate_sent も立てる
     if (map.kind !== 'estimate_sent' && r.estimate_sent === true) {
       entries.push({ kind: 'estimate_sent', status: 'done', at, source: 'aix_log', confidence: 3, evidence: `estimate_sent@${r.aix_type}`, detail: { estimateFor: names } });
@@ -1206,6 +1323,7 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     pickupPromisedUnfulfilled: pickupOpen.length > 0,
     pickupPromisedAt: pickupOpen.at(-1)?.at ?? null,
     pickupPromisedCount: pickupOpen.length,
+    ...(linkPromisePickerEnabled() ? { pickupPromisedKind: pickupOpen.length ? (pickupOpen.at(-1)!.detail.pickupKind ?? pickupPromiseKindOf(pickupOpen.at(-1)!.detail.sentence, pickupOpen.at(-1)!.evidence, pickupOpen.at(-1)!.detail.watch)) : null } : {}),
     estimatePromisedUnfulfilled: estimateOpen.length > 0,
     confirmationPromisedUnfulfilled: confirmOpen.length > 0,
     confirmationPromisedObject: confirmOpen.at(-1)?.detail.object ?? null,

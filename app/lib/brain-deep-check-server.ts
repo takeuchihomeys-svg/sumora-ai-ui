@@ -2,7 +2,7 @@
 // ブレインの1回目の判断で「根拠が足りない」依頼があった時だけ、足りない種類の材料を追加で引く（brain-deep-check.ts の決まりで呼ぶ）。
 //   1回目と違う所: ①網に当てる文はブレインが言い換えた依頼（quote）＋お客様の文 ②対象の物件はブレインの current_property（1回目はお客様が物件を持ち込んだ番は対象なし）
 //   ③過去の会話（1回目の履歴より前も）から依頼の型の行。材料の作り方そのものは今ある関数（設備・契約条件・間取り/広さ・手続き・確認した系・会社の事実）。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildCompanyFactsNote } from "@/app/lib/company-facts";
 import { detectConfirmTopics } from "@/app/lib/procedure-question";
 import { splitPropertyName } from "@/app/lib/customer-state";

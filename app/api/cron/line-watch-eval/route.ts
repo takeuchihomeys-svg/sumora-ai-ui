@@ -6,7 +6,7 @@
 //   ?dry=1 … 書かない（判定の結果だけ返す）／ ?days=N … 直近 N 日の番をやり直す（既定4）
 //   止め方: vercel.json から外す（書くのはこの表の列だけなので、止めても他は何も変わらない）
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { evaluateLineWatchTurns } from "@/app/lib/line-watch-eval-server";
 

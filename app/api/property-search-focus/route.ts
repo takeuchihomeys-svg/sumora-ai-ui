@@ -12,7 +12,7 @@
 //   印を消す書き込みはしない（拡張の search-focus.js が「押した後に検索した・送った・24時間」で効いていない印にする）。
 //   表 property_search_focus は migrate-schema に追記（本番に無い間は POST が table-missing を返し、画面は「印の表が未作成」と出す）
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { FOCUS_TTL_MS, deviceOf, lastConditionChange, type ConditionHistoryRow } from "@/app/lib/search-focus";
 import { isMissingFocusTable as isMissingTable, resolveFocusCustomer, loadFocusClosing } from "@/app/lib/search-focus-server";

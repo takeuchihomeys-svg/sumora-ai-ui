@@ -13,7 +13,7 @@
 //
 // ⚠ 読むのは**こちらが送った画像だけ**。お客様の画像は line-webhook が既に Vision で書き起こしており、
 //   身分証が写っている事がある（設計知見「画像は伏せようがない」）。この関数を customer の画像に使わない。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { readPropertyImageDetail, readPropertyImageDetailByTranscript, sentImageDetailMode, sharedPropertyImageRead, SENT_IMAGE_READ_TIMEOUT_MS, type ImageKind, type DetailResult } from "@/app/lib/property-image-read";
 import { pickupRowDetailPlan, readPropertyDetailFromText, detailModelLabel, pickupRowForProperty, PICKUP_LINK_MAX_AGE_DAYS } from "@/app/lib/property-detail-source";
 import { loadDeepseekCutoff, isAfterCutoff } from "@/app/lib/post-apply";

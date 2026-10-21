@@ -101,7 +101,7 @@ export function draftToSendableText(text: string | null | undefined): string | n
   //   一部を削るのではなく**丸ごと使わない**（削ると残りが意味を成さず、かえって危ない）
   if (isNotACustomerReply(raw)) return null;
   // 2026-10-06 ⑫（ゆいと「かしこまりました が並んでいる」）: 画面・送信の直前の最後の網でも続く同じ開口語の行を1つに（どの出口の後に重なっても残さない）
-  // 2026-10-20 竹内さん（18c6ef71）: 同じ段の中で重なった「かしこまりました」を1つに（ACK_DEDUPE・既定 on）・挨拶の段に付いた受けを中身の段の頭へ（ACK_BLOCK_PLACE・既定 off）
+  // 2026-10-20 竹内さん（18c6ef71）: 同じ段の中で重なった「かしこまりました」を1つに（ACK_DEDUPE・既定 on）・挨拶の段に付いた受けを中身の段の頭へ（ACK_BLOCK_PLACE・10/21 から既定 on）
   const out = tidyAckForm(collapseRepeatedOpener(stripInternalTags(raw)).text);
   if (!out) return null;
   // 整形した後に社内向けの文だけが残った場合も使わない（先頭だけ削れて後ろが残る形を塞ぐ）

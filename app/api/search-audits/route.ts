@@ -10,7 +10,7 @@ import { requireInternalAuth } from "@/app/lib/api-auth";
 import {
   validRunId, recordStarted, recordFinished, runDiagnosis, listCauses, listRuns, setCauseStatus, latestWeekly,
 } from "@/app/lib/search-audit-server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildDailyDigest, digestLines, type DailyAuditRow } from "@/app/lib/search-audit-daily";
 
 export const dynamic = "force-dynamic";

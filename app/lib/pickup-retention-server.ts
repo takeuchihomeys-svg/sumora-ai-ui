@@ -6,7 +6,7 @@
 //   消さない物（protectedUrls）: お客様に送った画像＝messages.image_url・sent_properties.image_url・sent_image_properties.image_url が
 //     指す URL（完全一致＋Blob の pickups/ を指す行の総なめ）と、まだ期限内の行が使っている URL。
 //   失敗時: Blob の削除が失敗した行は印を付けない → 次の日にやり直す。1回の上限 LIMIT 行（残りは次の日）。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { planPickupPurge, rowsToMarkExpired, PICKUP_RETENTION_HOURS, PICKUP_URL_COLUMNS, type PurgeRow } from "@/app/lib/pickup-retention";
 
 const DEFAULT_LIMIT = 300;

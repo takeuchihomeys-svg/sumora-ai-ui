@@ -7,7 +7,7 @@
 //   ③ Cron（/api/cron/pickup-auto-complete・2分おき）… ②の取りこぼし（全部送付済みで行が作られなかった回・点検が遅れて閉じた回）
 // 止める: 環境変数 SEARCH_WIDEN_CHAIN=off（決めるだけで積まない＝ログに残る）
 // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形（おススメの物件や新着物件がなければ）」
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { listingDealStatus } from "@/app/lib/listing-deal-status";
 import {
   decideWiden, commandSiteOf, pickupSiteOf, pinpointSession, LOOKBACK_MS, ROWS_WAIT_MS, CUMULATIVE_LOOKBACK_DAYS,

@@ -152,7 +152,7 @@ async function main() {
   const aix = src("app/api/aix/action/route.ts");
   await it("返信生成: リクエストごとに箱を開ける", () => ok(/return runInDeepseekScope\(\(\) => (?:runInRulesOverlayScope\(\(\) => )?handleGenerateReply\(req\)\)/.test(gen), "POST"));
   await it("返信生成: 戻した会話を丸ごと Claude にする旧の歯止め（movedBack）を線に置き換えた", () =>
-    ok(!/postApplyConversation = r\.postApply \|\| r\.movedBack/.test(gen) && /deepseekCutoff = deepseekSafeCutoff\(facts\)/.test(gen), "movedBack"));
+    ok(!/postApplyConversation = r\.postApply \|\| r\.movedBack/.test(gen) && /const entrance = resolveDeepseekEntrance\(facts\);/.test(gen) && /deepseekCutoff = entrance\.cutoff;/.test(gen), "movedBack"));
   await it("返信生成: 線より前の発言への返信は blocked（Claude）", () => ok(/isAfterCutoff\(latestCustomerAtForCut, deepseekCutoff\)/.test(gen) && /else deepseekBlocked = true/.test(gen), "blocked"));
   await it("返信生成: 履歴・台帳・AIX の履歴・送った事実・内覧の報告・ブレインの判断・要約・セーブデータ・引用を線で切る", () => {
     for (const re of [
@@ -165,7 +165,8 @@ async function main() {
   await it("AIX: 両方の入口で箱を開け、本文を読む前に線を引いて履歴を切る", () => {
     ok((aix.match(/runInDeepseekScope\(\(\) => aixRequestCtx\.run/g) ?? []).length === 2, "run x2");
     ok(/body\.recent_messages = filterAfterCutoff\(/.test(aix), "history");
-    ok(/ctx\.postApply = r\.postApply;/.test(aix) && !/r\.postApply \|\| r\.movedBack/.test(aix), "movedBack");
+    // 2026-10-21（023ec7bd・deb80f69）入口は post-apply.resolveDeepseekEntrance に1つ（線が引けなければ渡さない）
+    ok(/const entrance = resolveDeepseekEntrance\(facts\);/.test(aix) && /ctx\.postApply = entrance\.altPostApply;/.test(aix) && /if \(ctx\.cutoff === null\) ctx\.postApply = true;/.test(aix) &&!/r\.postApply \|\| r\.movedBack/.test(aix), "movedBack");
     ok(/if \(store\?\.cutMark\) h\[LLM_CUTOFF_HEADER\]/.test(aix), "header");
     ok(/keepBrainMeta\(metaRaw/.test(aix), "brain");
     ok(/visionCutMark\.kind !== "blocked"/.test(aix), "vision");

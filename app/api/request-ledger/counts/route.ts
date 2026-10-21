@@ -4,7 +4,7 @@
 //   （会話画面の帯と同じ buildRequestLedger の14日＝帯と同じ数）。読むだけ（書かない）。60秒はサーバーの記憶を返す。
 //   数え方は app/lib/request-ledger.ts の countOpenRequestsByConversation（純関数・テストあり）
 import { NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { countOpenRequestsByConversation } from "@/app/lib/request-ledger";
 import { POST_APPLY_STATUSES } from "@/app/lib/brain-attention";
 import { STAFF_INTERNAL_CONVERSATION_IDS } from "@/app/lib/test-conversations";

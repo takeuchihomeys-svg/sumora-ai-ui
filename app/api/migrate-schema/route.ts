@@ -19,6 +19,12 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE INDEX IF NOT EXISTS idx_conversations_line_user_id ON conversations(line_user_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at DESC);
 
+-- ★ 2026-10-21 RLS（竹内さん OK「RLSおこなう」）: サーバーだけの表（127個・RLS ② の (a)）は RLS を入れたままにする。
+--   この毎晩の SQL で "ALTER TABLE <表> DISABLE ROW LEVEL SECURITY;" を流すと RLS が毎晩 OFF に戻るので、(a) の表の DISABLE の行は消した。新しい表にも書かない。
+--   サーバーは service_role の鍵（app/lib/supabase-server.ts）＝RLS をすり抜けるので動きは変わらない。
+--   まだ DISABLE が残るのは画面（公開キー）が読む・書く・購読する表だけ（conversations, messages, property_customers, ai_reply_examples, line_tasks,
+--   aix_usage_logs, viewings, scheduled_messages, calendar_events, sent_properties, conversation_stage_history, brain_decision_logs, aix_action_items,
+--   sent_image_properties）。これらは anon の方針を決める RLS ③ で扱う。試験: app/lib/__tests__/migrate-schema-rls.test.ts
 -- RLS を無効化: このアプリはサービスロールキーのみで接続するサーバーサイド専用のため、
 -- RLS による行単位制御は不要。anon キーによるクライアント直接アクセスは想定しない。
 -- セキュリティは API ルートレベルの認証（CRON_SECRET / INTERNAL_API_SECRET）で担保する。
@@ -43,7 +49,6 @@ CREATE TABLE IF NOT EXISTS line_contacts (
 
 CREATE INDEX IF NOT EXISTS idx_line_contacts_line_user_id ON line_contacts(line_user_id);
 
-ALTER TABLE line_contacts DISABLE ROW LEVEL SECURITY;
 
 -- 既存conversations.account を line_contacts から正しい値に修正
 -- ※line_contacts にデータが溜まり次第、このSQLを再実行すること
@@ -185,7 +190,6 @@ CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_category ON ai_reply_knowledge
 CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_importance ON ai_reply_knowledge(importance DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_state ON ai_reply_knowledge(conversation_state);
 
-ALTER TABLE ai_reply_knowledge DISABLE ROW LEVEL SECURITY;
 
 -- phrase_dictionary テーブル（LINE営業フレーズ辞書）
 -- カテゴリ別にフレーズを管理。辞書ボタンや文案生成プロンプトに活用
@@ -202,7 +206,6 @@ CREATE TABLE IF NOT EXISTS phrase_dictionary (
 CREATE INDEX IF NOT EXISTS idx_phrase_dictionary_category ON phrase_dictionary(category);
 CREATE INDEX IF NOT EXISTS idx_phrase_dictionary_priority ON phrase_dictionary(priority DESC);
 
-ALTER TABLE phrase_dictionary DISABLE ROW LEVEL SECURITY;
 
 -- templates テーブル（LINEテンプレート管理）
 CREATE TABLE IF NOT EXISTS templates (
@@ -219,7 +222,6 @@ CREATE TABLE IF NOT EXISTS templates (
 CREATE INDEX IF NOT EXISTS idx_templates_category ON templates(category);
 CREATE INDEX IF NOT EXISTS idx_templates_sort_order ON templates(sort_order);
 
-ALTER TABLE templates DISABLE ROW LEVEL SECURITY;
 
 ALTER TABLE templates ADD COLUMN IF NOT EXISTS second_msg_type TEXT DEFAULT NULL;
 ALTER TABLE templates ADD COLUMN IF NOT EXISTS second_msg_delay INTEGER DEFAULT NULL;
@@ -257,7 +259,6 @@ CREATE TABLE IF NOT EXISTS estimates (
 CREATE INDEX IF NOT EXISTS idx_estimates_account ON estimates(account);
 CREATE INDEX IF NOT EXISTS idx_estimates_created_at ON estimates(created_at DESC);
 
-ALTER TABLE estimates DISABLE ROW LEVEL SECURITY;
 
 -- push_subscriptions テーブル（Web Push通知）
 CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -268,7 +269,6 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-ALTER TABLE push_subscriptions DISABLE ROW LEVEL SECURITY;
 
 -- 追加条件カラム（LINE追加メッセージを蓄積）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS additional_conditions TEXT;
@@ -282,7 +282,6 @@ CREATE TABLE IF NOT EXISTS hanbancyo_settings (
   value TEXT NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE hanbancyo_settings DISABLE ROW LEVEL SECURITY;
 
 -- 地名自動学習テーブル（AIが解決した地名→市区マッピングを蓄積）
 CREATE TABLE IF NOT EXISTS region_map (
@@ -293,7 +292,6 @@ CREATE TABLE IF NOT EXISTS region_map (
   source TEXT DEFAULT 'ai',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE region_map DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_region_map_token ON region_map(token);
 
 -- 駅自動学習テーブル（Web検索で解決した駅→路線+市区マッピングを蓄積）
@@ -308,7 +306,6 @@ CREATE TABLE IF NOT EXISTS station_map (
   confidence INT DEFAULT 80,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE station_map DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_station_map_token ON station_map(token);
 
 -- LINE顧客画像のStorageバケット（公開・5MB制限）
@@ -414,7 +411,6 @@ CREATE TABLE IF NOT EXISTS aix_settings (
   value TEXT NOT NULL DEFAULT '',
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE aix_settings DISABLE ROW LEVEL SECURITY;
 
 -- AI要約カラム（お客さん一覧のAI要約機能用）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS ai_summary TEXT;
@@ -460,7 +456,6 @@ CREATE TABLE IF NOT EXISTS ai_prompts (
   content TEXT NOT NULL DEFAULT '',
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE ai_prompts DISABLE ROW LEVEL SECURITY;
 
 -- ai_reply_examples: 4パターン返信の選択角度を記録（パターン学習用）
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS reply_angle TEXT;
@@ -511,7 +506,6 @@ CREATE TABLE IF NOT EXISTS trigger_action_rules (
 );
 CREATE INDEX IF NOT EXISTS idx_trigger_action_rules_action ON trigger_action_rules(action_type);
 CREATE INDEX IF NOT EXISTS idx_trigger_action_rules_confidence ON trigger_action_rules(confidence DESC);
-ALTER TABLE trigger_action_rules DISABLE ROW LEVEL SECURITY;
 
 -- ── trigger_action_rules.category: 行タイプのDB側一元分類（2026-08-22）──
 -- keyword 接頭辞による NOT LIKE 6連チェーン（brain-core / suggest-next-action /
@@ -574,7 +568,6 @@ CREATE TABLE IF NOT EXISTS template_phrase_logs (
   UNIQUE(action_type, conversation_status, phrase)
 );
 CREATE INDEX IF NOT EXISTS idx_template_phrase_logs_action ON template_phrase_logs(action_type, conversation_status);
-ALTER TABLE template_phrase_logs DISABLE ROW LEVEL SECURITY;
 
 -- テンプレート選択ログ（どのテンプレを選んだか・AIおすすめと一致したか・修正したか）
 CREATE TABLE IF NOT EXISTS template_selection_logs (
@@ -613,7 +606,6 @@ CREATE INDEX IF NOT EXISTS idx_tsl_prev_template ON template_selection_logs(prev
 -- テンプレ却下学習: brain の template_hint スナップショット（送信時に conversations.suggested_aix_meta がワイプされるため、select フェーズで記録して不一致学習に使う）
 ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS brain_template_hint TEXT;
 CREATE INDEX IF NOT EXISTS idx_tsl_brain_hint ON template_selection_logs(brain_template_hint) WHERE brain_template_hint IS NOT NULL;
-ALTER TABLE template_selection_logs DISABLE ROW LEVEL SECURITY;
 
 -- AI最適化後修正パターンの学習ルールテーブル（カテゴリ別・自動蓄積）
 CREATE TABLE IF NOT EXISTS adaptation_improvement_rules (
@@ -627,7 +619,6 @@ CREATE TABLE IF NOT EXISTS adaptation_improvement_rules (
   is_active BOOLEAN DEFAULT true
 );
 CREATE INDEX IF NOT EXISTS idx_air_category ON adaptation_improvement_rules(category) WHERE is_active = true;
-ALTER TABLE adaptation_improvement_rules DISABLE ROW LEVEL SECURITY;
 
 -- AIXアクションパターン学習テーブル
 -- 「このステータスでこのアクションが取られた」を蓄積して次アクション提案に活用
@@ -642,7 +633,6 @@ CREATE TABLE IF NOT EXISTS action_pattern_logs (
 CREATE INDEX IF NOT EXISTS idx_action_pattern_logs_status ON action_pattern_logs(conversation_status);
 CREATE INDEX IF NOT EXISTS idx_action_pattern_logs_action ON action_pattern_logs(action_type);
 CREATE INDEX IF NOT EXISTS idx_action_pattern_logs_created_at ON action_pattern_logs(created_at DESC);
-ALTER TABLE action_pattern_logs DISABLE ROW LEVEL SECURITY;
 ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS previous_action_type TEXT;
 
 -- line_tasks: estimate_sheet を許可
@@ -732,7 +722,6 @@ CREATE TABLE IF NOT EXISTS line_stations (
 );
 CREATE INDEX IF NOT EXISTS idx_line_stations_line ON line_stations(line_name);
 CREATE INDEX IF NOT EXISTS idx_line_stations_station ON line_stations(station_name);
-ALTER TABLE line_stations DISABLE ROW LEVEL SECURITY;
 
 -- pg_trgm 拡張（表記ゆれ吸収・類似検索）
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
@@ -797,7 +786,6 @@ CREATE TABLE IF NOT EXISTS ai_template_candidates (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_template_candidates_action ON ai_template_candidates(action_type);
 CREATE INDEX IF NOT EXISTS idx_ai_template_candidates_pending ON ai_template_candidates(is_adopted, is_dismissed);
-ALTER TABLE ai_template_candidates DISABLE ROW LEVEL SECURITY;
 
 -- AIX編集検知カラム（ユーザーがAI生成文を編集して送信した場合にaix_editとして記録）
 ALTER TABLE ai_template_candidates ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual';
@@ -876,7 +864,6 @@ CREATE TABLE IF NOT EXISTS aix_action_attribution (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_aix_action_attribution_unique
   ON aix_action_attribution (action_type, COALESCE(template_id::text, 'none'), period_start);
 CREATE INDEX IF NOT EXISTS idx_aix_action_attribution_period ON aix_action_attribution(period_start DESC);
-ALTER TABLE aix_action_attribution DISABLE ROW LEVEL SECURITY;
 
 -- ⑥ embedding_cache テーブル（OpenAI embedding の永続キャッシュ・再起動後も再利用）
 CREATE TABLE IF NOT EXISTS embedding_cache (
@@ -884,7 +871,6 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
   embedding JSONB NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE embedding_cache DISABLE ROW LEVEL SECURITY;
 
 -- ai_reply_knowledge: 仮説検証ループ（RLHF学習）
 -- hypothesis → 確認中 / confirmed → 5回以上・正解率70%以上 / rejected → 5回以上・外れ率70%以上
@@ -906,7 +892,6 @@ CREATE TABLE IF NOT EXISTS knowledge_apply_log (
 CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_knowledge ON knowledge_apply_log(knowledge_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_conversation ON knowledge_apply_log(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_conv_pending ON knowledge_apply_log(conversation_id, result) WHERE result = 'pending';
-ALTER TABLE knowledge_apply_log DISABLE ROW LEVEL SECURITY;
 -- C05: generate-reply と aix/action が同一 conversation_id に書くため、どちら由来かを区別するカラムを追加
 --      confirm_knowledge_feedback を source でスコープすることで誤フィードバック混入を防ぐ
 ALTER TABLE knowledge_apply_log ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'generate_reply';
@@ -982,7 +967,6 @@ CREATE TABLE IF NOT EXISTS next_action_logs (
   gap_analysis TEXT,
   validated_at TIMESTAMPTZ
 );
-ALTER TABLE next_action_logs DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_next_action_logs_customer ON next_action_logs(customer_id, validated, predicted_at DESC);
 
 -- ai_reply_examples: 物件ピックアップした の構成パーツ別JSON（コンポーネント学習ループ用）
@@ -1014,7 +998,6 @@ CREATE TABLE IF NOT EXISTS ai_prompt_rules (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_prompt_rules_action ON ai_prompt_rules(action_type);
 CREATE INDEX IF NOT EXISTS idx_ai_prompt_rules_active ON ai_prompt_rules(is_active) WHERE is_active = TRUE;
-ALTER TABLE ai_prompt_rules DISABLE ROW LEVEL SECURITY;
 
 -- 初期ルール（ON CONFLICT DO NOTHING で冪等・重複挿入しない）
 INSERT INTO ai_prompt_rules (rule_key, action_type, condition_key, condition_value, rule_text, reason, priority) VALUES
@@ -1086,7 +1069,6 @@ CREATE TABLE IF NOT EXISTS cron_run_logs (
   error_message TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cron_run_logs_name_at ON cron_run_logs(cron_name, started_at DESC);
-ALTER TABLE cron_run_logs DISABLE ROW LEVEL SECURITY;
 
 -- ④ AIX生成文案ログ（AIXが生成した文案を保存しAI改善ループを完成させる）
 -- generated_text: AIXが生成したが実際に送られたかどうかは line_message_id で照合
@@ -1142,7 +1124,6 @@ CREATE TABLE IF NOT EXISTS aix_shadow_logs (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_aix_shadow_logs_usage_log
   ON aix_shadow_logs(usage_log_id) WHERE usage_log_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_aix_shadow_logs_evaluated_at ON aix_shadow_logs(evaluated_at DESC);
-ALTER TABLE aix_shadow_logs DISABLE ROW LEVEL SECURITY;
 
 -- 将来3: 顧客反応評価（AIX送信後24時間以内に顧客返信があったか / eval-customer-reaction cron が毎日更新）
 -- NULL=未評価 / TRUE=24h以内に顧客返信あり / FALSE=返信なし
@@ -1163,7 +1144,6 @@ CREATE INDEX IF NOT EXISTS idx_winning_pattern_logs_pending
   ON winning_pattern_logs(created_at DESC) WHERE actual_outcome IS NULL;
 CREATE INDEX IF NOT EXISTS idx_winning_pattern_logs_conversation
   ON winning_pattern_logs(conversation_id);
-ALTER TABLE winning_pattern_logs DISABLE ROW LEVEL SECURITY;
 
 -- 中3: 負のフィードバック用RPC — AI文案に注入されたのにスタッフが消したフレーズ/パターンの importance を減衰
 -- （ai_reply_knowledge に priority カラムは存在しないため importance を減衰対象とする。最小1で下げ止め）
@@ -1228,7 +1208,6 @@ CREATE TABLE IF NOT EXISTS aix_feature_suggestions (
 );
 CREATE INDEX IF NOT EXISTS idx_aix_feature_suggestions_pending
   ON aix_feature_suggestions(created_at DESC) WHERE status = 'pending';
-ALTER TABLE aix_feature_suggestions DISABLE ROW LEVEL SECURITY;
 
 -- AI盲点フィードバック（corpus2skill 週次Opusが「分からない部分・憶測・発見した抜け」を質問として生成 →
 -- TemplateModal「❓ AI質問」タブで竹内さんが回答 → /api/ai-feedback がSonnetで知識化して
@@ -1251,7 +1230,6 @@ CREATE TABLE IF NOT EXISTS ai_feedback_items (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_feedback_items_pending
   ON ai_feedback_items(created_at DESC) WHERE status = 'pending';
-ALTER TABLE ai_feedback_items DISABLE ROW LEVEL SECURITY;
 
 -- trigger_action_rules.conversation_status（aix/suggest でステータス別フィルタに使用）
 -- 本番には既に存在するが migrate-schema 未定義だったため追記
@@ -1316,7 +1294,6 @@ CREATE TABLE IF NOT EXISTS calendar_event_deletions (
   deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_event_deletions_conv ON calendar_event_deletions(conversation_id, deleted_at DESC);
-ALTER TABLE calendar_event_deletions DISABLE ROW LEVEL SECURITY;
 
 -- ── 追加カラム（2026-07-12）──
 
@@ -1387,7 +1364,6 @@ CREATE TABLE IF NOT EXISTS aix_generate_log (
 );
 CREATE INDEX IF NOT EXISTS idx_aix_generate_log_conversation ON aix_generate_log(conversation_id, status, generated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_aix_generate_log_status ON aix_generate_log(status, generated_at DESC);
-ALTER TABLE aix_generate_log DISABLE ROW LEVEL SECURITY;
 -- property_recommendation の物件画像から GPT-5.4-nano で抽出した構造データ
 ALTER TABLE aix_generate_log ADD COLUMN IF NOT EXISTS property_details JSONB;
 
@@ -1574,7 +1550,6 @@ CREATE TABLE IF NOT EXISTS token_block (
   type TEXT NOT NULL CHECK (type IN ('station', 'region')),
   blocked_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE token_block DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_token_block_token ON token_block(token);
 
 -- ── Fix-1c: AIX提案キャッシュ（2026-07-13）──
@@ -1628,7 +1603,6 @@ CREATE TABLE IF NOT EXISTS public.chrome_extension_feedback (
   site       TEXT,
   resolved   BOOLEAN DEFAULT false
 );
-ALTER TABLE chrome_extension_feedback DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_chrome_extension_feedback_category
   ON chrome_extension_feedback(category, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chrome_extension_feedback_resolved
@@ -1777,7 +1751,6 @@ CREATE TABLE IF NOT EXISTS prompt_candidates (
 ALTER TABLE prompt_candidates ADD COLUMN IF NOT EXISTS action_type TEXT;
 CREATE INDEX IF NOT EXISTS idx_prompt_candidates_pending
   ON prompt_candidates(created_at DESC) WHERE status = 'pending';
-ALTER TABLE prompt_candidates DISABLE ROW LEVEL SECURITY;
 
 -- ── suggested_aix_meta: AIX提案の付随メタデータ（2026-08-03追加）──
 -- suggested_next_aix（TEXT）に対する構造化メタ情報を保持するJSONBカラム。
@@ -1837,7 +1810,6 @@ CREATE TABLE IF NOT EXISTS unknown_tokens (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_unknown_tokens_token ON unknown_tokens (token);
-ALTER TABLE unknown_tokens DISABLE ROW LEVEL SECURITY;
 
 -- ── 町字絞り込み（リアプロ town_code[] 対応）（2026-08-06）──
 -- Chrome拡張の popup-maps.js TOWN_CODE_MAP と連携して顧客の希望町字を保存する。
@@ -1886,7 +1858,6 @@ CREATE TABLE IF NOT EXISTS conversation_checkpoints (
   UNIQUE(conversation_id, checkpoint_index)
 );
 CREATE INDEX IF NOT EXISTS idx_checkpoints_conversation ON conversation_checkpoints(conversation_id, checkpoint_index DESC);
-ALTER TABLE conversation_checkpoints DISABLE ROW LEVEL SECURITY;
 
 -- ── closing_strategy_logs: クロージング戦略ログ（2026-08-13）──
 -- deriveSuggestedAix が closing_strategy を生成するたびに記録する。
@@ -1906,7 +1877,6 @@ CREATE INDEX IF NOT EXISTS idx_closing_logs_conversation
   ON closing_strategy_logs(conversation_id, proposed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_closing_logs_outcome
   ON closing_strategy_logs(outcome, proposed_at DESC);
-ALTER TABLE closing_strategy_logs DISABLE ROW LEVEL SECURITY;
 
 -- 送付物件履歴（2026-08-13追加）
 -- AIX物件オススメ送信時に物件名・号室をVision OCRで記録。重複送付防止・送付履歴追跡に使用
@@ -1976,7 +1946,6 @@ CREATE TABLE IF NOT EXISTS reply_engagement_signals (
 );
 CREATE INDEX IF NOT EXISTS idx_reply_engagement_conv ON reply_engagement_signals(conversation_id, staff_sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reply_engagement_type ON reply_engagement_signals(signal_type);
-ALTER TABLE reply_engagement_signals DISABLE ROW LEVEL SECURITY;
 
 -- ── weekly_learning_metrics: 週次学習スコアボード（Fable5 Fix3: 2026-08-14追加）──
 -- weekly-learning chunk=1 が毎週 upsert する。「今週の学習は効いたのか？」に答えるボトムラインKPI。
@@ -1992,7 +1961,6 @@ CREATE TABLE IF NOT EXISTS weekly_learning_metrics (
   mean_edit_distance NUMERIC,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE weekly_learning_metrics DISABLE ROW LEVEL SECURITY;
 
 -- ── ai_draft_check: AI返信最終チェック結果（前頭前野モデル・2026-08-14追加）──
 -- generate-reply が ai_draft 保存時に併せて保存する CheckResult JSON
@@ -2053,7 +2021,6 @@ CREATE TABLE IF NOT EXISTS viewing_history (
 CREATE INDEX IF NOT EXISTS idx_viewing_history_conversation ON viewing_history(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_viewing_history_scheduled_date ON viewing_history(scheduled_date);
 CREATE INDEX IF NOT EXISTS idx_viewing_history_is_primary ON viewing_history(conversation_id) WHERE is_primary = TRUE;
-ALTER TABLE viewing_history DISABLE ROW LEVEL SECURITY;
 
 -- ── templates.won_count: テンプレート成約実績（2026-08-15追加）──
 -- analyze-applying が closed_won 会話の自発送信（手打ち含む）と templates.text を
@@ -2100,7 +2067,6 @@ CREATE TABLE IF NOT EXISTS brain_meta_insights (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_brain_meta_insights_category ON brain_meta_insights(category);
-ALTER TABLE brain_meta_insights DISABLE ROW LEVEL SECURITY;
 
 -- design_knowledge テーブル（LP/HP制作ノウハウ蓄積・Claudeが次回から活用）
 -- brain_kt.md のデザイン版。案件ごとに学んだ判断軸・失敗パターン・UX軸を蓄積する
@@ -2119,7 +2085,6 @@ CREATE TABLE IF NOT EXISTS design_knowledge (
 CREATE INDEX IF NOT EXISTS idx_design_knowledge_category ON design_knowledge(category);
 CREATE INDEX IF NOT EXISTS idx_design_knowledge_domain ON design_knowledge(domain);
 CREATE INDEX IF NOT EXISTS idx_design_knowledge_importance ON design_knowledge(importance DESC);
-ALTER TABLE design_knowledge DISABLE ROW LEVEL SECURITY;
 
 -- 初期データ（brain_kt.md のデザイン版として転記）
 INSERT INTO design_knowledge (category, domain, rule_title, rule_content, reason, source_project, importance) VALUES
@@ -2214,7 +2179,6 @@ CREATE TABLE IF NOT EXISTS iyeyasu_page_views (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_iyeyasu_pv_created_at ON iyeyasu_page_views(created_at DESC);
-ALTER TABLE iyeyasu_page_views DISABLE ROW LEVEL SECURITY;
 
 -- ══ Brain監査（2026-08-20）: LLM推測→DB事実化のためのカラム・テーブル追加 ══════
 -- brain(suggested_aix_meta) の action / urgency_appropriate / condition_change_type /
@@ -2265,7 +2229,6 @@ CREATE TABLE IF NOT EXISTS estimate_records (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_estimate_records_log_item ON estimate_records(aix_usage_log_id, item_index);
 CREATE INDEX IF NOT EXISTS idx_estimate_records_customer ON estimate_records(property_customer_id, estimated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_estimate_records_conv ON estimate_records(conversation_id, estimated_at DESC);
-ALTER TABLE estimate_records DISABLE ROW LEVEL SECURITY;
 
 -- ── property_pickups: 物件ピックアップの1回分を「売上サポ」で確認して送るための行（2026-09-24）──
 -- 竹内「ピックアップしたのを一度アプリの売上サポに飛ばして、LINE のトーク一覧のように並べ、送る物件とオススメを判断して共有。
@@ -2301,7 +2264,6 @@ CREATE TABLE IF NOT EXISTS property_pickups (
 CREATE INDEX IF NOT EXISTS idx_property_pickups_batch ON property_pickups(batch_id, rank);
 CREATE INDEX IF NOT EXISTS idx_property_pickups_status ON property_pickups(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_property_pickups_customer ON property_pickups(property_customer_id, created_at DESC);
-ALTER TABLE property_pickups DISABLE ROW LEVEL SECURITY;
 -- 2026-09-24 竹内「PDF の文字だけではよくない。資料を読み取れる形に」: 1ページ目の画像（Blob）と DeepSeek が画像から読んだ中身
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS page_image_url TEXT;
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS image_lines JSONB;
@@ -2364,7 +2326,6 @@ CREATE TABLE IF NOT EXISTS condition_scope_decisions (
 );
 CREATE INDEX IF NOT EXISTS idx_condition_scope_decisions_created ON condition_scope_decisions(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_condition_scope_decisions_pc ON condition_scope_decisions(property_customer_id, created_at DESC);
-ALTER TABLE condition_scope_decisions DISABLE ROW LEVEL SECURITY;
 -- 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形。検索結果はピンポイント検索で行ったか広げて検索を行ったかも分かるように」:
 --   その回を見つけた検索の種類（拡張 v2.5.28〜 が merge-pdfs に送る・無い行＝分からない）。ピンポイントの物件は判定で +10（SEARCH_PINPOINT）。
 --   ピンポイントの回の「通す」が足りない時は同じお客様・同じサイトで広げてを1回だけ自動で積む（search-widen-chain.ts・automation_commands.payload.chain）
@@ -2389,7 +2350,6 @@ CREATE TABLE IF NOT EXISTS property_pickup_completions (
   finished_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_property_pickup_completions_customer ON property_pickup_completions(property_customer_id, created_at DESC);
-ALTER TABLE property_pickup_completions DISABLE ROW LEVEL SECURITY;
 -- 2026-09-29 竹内「売上番長のグループにアナウンスされるのは、AIX ツールで物件の解析が終わった時にする…PDF もここに添付しなくて大丈夫（ブレインの際）。
 --   ブレイン以外の状態なら今まで通りここのグループに共有する」（★物件出し★＝pickup_group_id）:
 --   group_notice='deferred'＝merge-pdfs がこの回の本文・PDF をグループに送らなかった（ブレイン）。解析の完了で1回アナウンスする（pickup-group-announce.ts）
@@ -2425,7 +2385,6 @@ CREATE TABLE IF NOT EXISTS property_sheet_facts (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_property_sheet_facts_unit ON property_sheet_facts(unit_key, prompt_version);
 CREATE INDEX IF NOT EXISTS idx_property_sheet_facts_fp ON property_sheet_facts(fp_hash, prompt_version);
-ALTER TABLE property_sheet_facts DISABLE ROW LEVEL SECURITY;
 -- 2026-09-24 夜: 希望の文字の照合（DeepSeek）の答えを物件ごとに保存し、2回目は呼ばない（{ 希望の文: {result, why} }）
 ALTER TABLE property_sheet_facts ADD COLUMN IF NOT EXISTS wants_judged JSONB;
 -- スタッフのメモ（売上サポの会話風画面の右側）。2026-09-24 竹内「DeepSeek 側は左・スタッフの会話は右」
@@ -2438,7 +2397,6 @@ CREATE TABLE IF NOT EXISTS property_pickup_notes (
   author TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_property_pickup_notes_customer ON property_pickup_notes(property_customer_id, created_at DESC);
-ALTER TABLE property_pickup_notes DISABLE ROW LEVEL SECURITY;
 
 -- ── region_map / station_map に priority（2026-09-24）──
 -- 竹内「従業員が手直ししたところはデータベースに入って学習されているのか」: 手直し（manual）は priority 100 にして、
@@ -2473,7 +2431,6 @@ CREATE TABLE IF NOT EXISTS property_condition_history (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_pch_customer ON property_condition_history(property_customer_id, created_at DESC);
-ALTER TABLE property_condition_history DISABLE ROW LEVEL SECURITY;
 -- 2026-10-13 竹内さん（未桜）: 会話画面の「条件の更新」の履歴の行ごとの「確認済み」（app/api/property-customers/condition-history）
 ALTER TABLE property_condition_history ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
 
@@ -2500,7 +2457,6 @@ CREATE TABLE IF NOT EXISTS brain_learning_queue (
 );
 CREATE INDEX IF NOT EXISTS idx_blq_unprocessed ON brain_learning_queue(processed_by_corpus2skill, quality_score DESC);
 CREATE INDEX IF NOT EXISTS idx_blq_created_at ON brain_learning_queue(created_at DESC);
-ALTER TABLE brain_learning_queue DISABLE ROW LEVEL SECURITY;
 
 -- ── aix_brain_templates（2026-08-20追加）──
 -- AIXボタン別のブレイン管轄テンプレート。
@@ -2517,7 +2473,6 @@ CREATE TABLE IF NOT EXISTS aix_brain_templates (
   PRIMARY KEY (action_type, sub_mode)
 );
 CREATE INDEX IF NOT EXISTS idx_abt_action_type ON aix_brain_templates (action_type);
-ALTER TABLE aix_brain_templates DISABLE ROW LEVEL SECURITY;
 
 -- 申込ステータス誤昇格バグ修正（2026-08-20）: テキストと画像の両方が揃って初めて applying に昇格
 -- applying_text_received: 顧客が申込フォームをテキストで送ってきた
@@ -2530,7 +2485,6 @@ CREATE TABLE IF NOT EXISTS iyeyasu_page_views (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE iyeyasu_page_views DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_iyeyasu_page_views_created_at ON iyeyasu_page_views(created_at DESC);
 
 -- 物件選定パターン学習テーブル（2026-08-24追加）
@@ -2551,7 +2505,6 @@ CREATE TABLE IF NOT EXISTS property_selection_patterns (
     CHECK (customer_reaction IN ('pending','interested','no_response')),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE property_selection_patterns DISABLE ROW LEVEL SECURITY;
 -- 推薦理由（GPT-5.4-nanoがAIXオススメ文から抽出）・プロファイルタグ（費用重視等）
 ALTER TABLE property_selection_patterns ADD COLUMN IF NOT EXISTS recommendation_reason TEXT;
 ALTER TABLE property_selection_patterns ADD COLUMN IF NOT EXISTS customer_profile_tags TEXT[] DEFAULT '{}';
@@ -2594,7 +2547,6 @@ CREATE INDEX IF NOT EXISTS idx_system_design_thinking_category ON system_design_
 CREATE INDEX IF NOT EXISTS idx_system_design_thinking_current ON system_design_thinking(is_current) WHERE is_current = true;
 -- 2026-10-18: ivfflat の索引 idx_system_design_thinking_embedding はここで作らない（後ろで DROP する＝全件比較の match_design_thinking_exact へ移った）。
 --   毎晩ここで作り直して 8秒の statement timeout で失敗し（10/17 の夜の postgres ログ）、後ろで DROP していた
-ALTER TABLE system_design_thinking DISABLE ROW LEVEL SECURITY;
 
 CREATE OR REPLACE FUNCTION match_design_thinking(
   query_embedding vector(1536),
@@ -2635,7 +2587,6 @@ CREATE TABLE IF NOT EXISTS line_meta (
 );
 CREATE INDEX IF NOT EXISTS idx_line_meta_internal_name ON line_meta(internal_name);
 CREATE INDEX IF NOT EXISTS idx_line_meta_aliases ON line_meta USING GIN(aliases);
-ALTER TABLE line_meta DISABLE ROW LEVEL SECURITY;
 
 -- ── property_search_knowledge: 物件検索担当ブレイン（2026-08-22追加）──
 -- エリア・駅の解決失敗パターン・変換ルール・顧客条件の読み取りパターンを蓄積する。
@@ -2656,14 +2607,12 @@ CREATE TABLE IF NOT EXISTS property_search_knowledge (
 );
 CREATE INDEX IF NOT EXISTS idx_property_search_knowledge_category ON property_search_knowledge(category);
 CREATE INDEX IF NOT EXISTS idx_property_search_knowledge_importance ON property_search_knowledge(importance DESC);
-ALTER TABLE property_search_knowledge DISABLE ROW LEVEL SECURITY;
 
 -- ── ward_codes: 市区町村コード（JIS X 0402 6桁コード）(2026-08-22追加) ──
 CREATE TABLE IF NOT EXISTS ward_codes (
   ward TEXT PRIMARY KEY,
   code TEXT NOT NULL
 );
-ALTER TABLE ward_codes DISABLE ROW LEVEL SECURITY;
 
 -- ── town_codes: 町名コード（市区町村→町名→JIS 8桁コード）(2026-08-22追加) ──
 CREATE TABLE IF NOT EXISTS town_codes (
@@ -2676,21 +2625,18 @@ CREATE TABLE IF NOT EXISTS town_codes (
 );
 CREATE INDEX IF NOT EXISTS idx_town_codes_ward ON town_codes(ward);
 CREATE INDEX IF NOT EXISTS idx_town_codes_town_code ON town_codes(town_code);
-ALTER TABLE town_codes DISABLE ROW LEVEL SECURITY;
 
 -- ── adjacent_area_map: 隣接市区マップ（「周辺も探す」拡張用）(2026-08-22追加) ──
 CREATE TABLE IF NOT EXISTS adjacent_area_map (
   ward TEXT PRIMARY KEY,
   adjacent_wards TEXT[] NOT NULL DEFAULT '{}'
 );
-ALTER TABLE adjacent_area_map DISABLE ROW LEVEL SECURITY;
 
 -- ── station_hub_map: 乗換駅ハブ（同一駅の表記ゆれグルーピング）(2026-08-22追加) ──
 CREATE TABLE IF NOT EXISTS station_hub_map (
   hub_station TEXT PRIMARY KEY,
   member_stations TEXT[] NOT NULL DEFAULT '{}'
 );
-ALTER TABLE station_hub_map DISABLE ROW LEVEL SECURITY;
 
 -- ── metro_graph: 地下鉄路線グラフ（Dijkstra 最短経路計算用・JSONB edges）(2026-08-22追加) ──
 -- edges: [{from, to, minutes, line}, ...] の配列 JSONB で1行に全路線を保持
@@ -2700,7 +2646,6 @@ CREATE TABLE IF NOT EXISTS metro_graph (
   edges JSONB NOT NULL DEFAULT '[]',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE metro_graph DISABLE ROW LEVEL SECURITY;
 
 -- ── itandi_line_map: リアプロ路線名→itandi路線名変換マップ (2026-08-22追加) ──
 -- realpro_line: STATION_LINE_MAPで使う内部路線名 / itandi_lines: itandiの路線名（複数の場合あり）
@@ -2708,7 +2653,6 @@ CREATE TABLE IF NOT EXISTS itandi_line_map (
   realpro_line TEXT PRIMARY KEY,
   itandi_lines TEXT[] NOT NULL DEFAULT '{}'
 );
-ALTER TABLE itandi_line_map DISABLE ROW LEVEL SECURITY;
 
 -- ── station_map / region_map: pgvector embedding カラム（2026-08-22追加） ──
 -- ハードコードで解決できない駅名・地名トークンのベクトル類似検索に使用（text-embedding-3-small 1536次元）
@@ -2883,7 +2827,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_rec_snap_aix_log ON recommendation_snapshot
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rec_snap_message ON recommendation_snapshots(message_id) WHERE message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_rec_snap_conv ON recommendation_snapshots(conversation_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_rec_snap_customer ON recommendation_snapshots(property_customer_id, sent_at DESC);
-ALTER TABLE recommendation_snapshots DISABLE ROW LEVEL SECURITY;
 -- 2026-10-06 竹内さん「なおす」: 🌟が新着1件（single）か束の中の🌟（bundle）か・その時の束の候補（売上サポの行の id・★物件出し★グループに届いた行）。
 --   束はグループに届いた画像を LINE の画面から転送するので送付の記録（candidates）に残らず、候補1件の🌟の多くが実は束だった（app/lib/star-bundle.ts）。
 --   candidates の作り方は変えない（学習・監査の物差しを変えない）。列が無い間は書き手（insertRecommendationSnapshot）がこの2列を外して書く
@@ -2910,7 +2853,6 @@ CREATE TABLE IF NOT EXISTS scoring_weights (
   retired_at TIMESTAMPTZ
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_scoring_weights_active ON scoring_weights((status)) WHERE status = 'active';
-ALTER TABLE scoring_weights DISABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS scoring_learning_runs (
   id BIGSERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -2936,7 +2878,6 @@ CREATE TABLE IF NOT EXISTS scoring_learning_runs (
   auto_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_scoring_learning_runs_created ON scoring_learning_runs(created_at DESC);
-ALTER TABLE scoring_learning_runs DISABLE ROW LEVEL SECURITY;
 
 -- ── scoring_pref_weights / scoring_pref_learning_runs / scoring_pref_reads: お客様ごとのこだわりの倍率の表と、毎週の学習の結果（2026-09-29追加）──
 -- 竹内「（お客様ごとの採点の倍率を毎週の学習に）組み込む」「DeepSeek で分析できるかな？ 物件検索ブレイン（DeepSeek）の部分が分析する形」
@@ -2960,7 +2901,6 @@ CREATE TABLE IF NOT EXISTS scoring_pref_weights (
   retired_at TIMESTAMPTZ
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_scoring_pref_weights_active ON scoring_pref_weights((status)) WHERE status = 'active';
-ALTER TABLE scoring_pref_weights DISABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS scoring_pref_learning_runs (
   id BIGSERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -2994,7 +2934,6 @@ CREATE TABLE IF NOT EXISTS scoring_pref_learning_runs (
   duration_ms INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_scoring_pref_learning_runs_created ON scoring_pref_learning_runs(created_at DESC);
-ALTER TABLE scoring_pref_learning_runs DISABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS scoring_pref_reads (
   id BIGSERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -3009,7 +2948,6 @@ CREATE TABLE IF NOT EXISTS scoring_pref_reads (
   conversation_id TEXT,
   UNIQUE (kind, key)
 );
-ALTER TABLE scoring_pref_reads DISABLE ROW LEVEL SECURITY;
 
 -- ── property_brain_judgments: 物件検索ブレインの判定記録（2026-09-23追加）──
 -- 拡張のブレインモードが /api/property-brain/judge に送った物件1件ごとの pass/hold/drop・点数・理由コード・
@@ -3036,7 +2974,6 @@ CREATE TABLE IF NOT EXISTS property_brain_judgments (
   image_used BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE property_brain_judgments DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_pbj_customer_id ON property_brain_judgments(property_customer_id);
 CREATE INDEX IF NOT EXISTS idx_pbj_created_at ON property_brain_judgments(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pbj_verdict ON property_brain_judgments(verdict);
@@ -3051,7 +2988,6 @@ CREATE TABLE IF NOT EXISTS aix_transition_stats (
   last_updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (from_aix_type, to_aix_type)
 );
-ALTER TABLE aix_transition_stats DISABLE ROW LEVEL SECURITY;
 
 CREATE OR REPLACE FUNCTION increment_aix_transition(p_from TEXT, p_to TEXT)
 RETURNS void AS $$
@@ -3312,7 +3248,6 @@ CREATE TABLE IF NOT EXISTS brain_aix_feedback (
 -- pressed: 窓の中でスタッフが何かの AIX を押した判断の数（一致率の分母・押されずテキストで返した判断は含めない）
 ALTER TABLE brain_aix_feedback ADD COLUMN IF NOT EXISTS pressed INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_brain_aix_feedback_kind ON brain_aix_feedback(kind);
-ALTER TABLE brain_aix_feedback DISABLE ROW LEVEL SECURITY;
 
 -- ── aix_action_items: 売上番長グループの「AIX要対応」一覧（2026-09-12 竹内方針）──
 -- ブレインが AIX 必要と判断した会話を1会話1件の pending で持ち、スタッフが AIX を送ったら done（一覧で✅）。
@@ -3441,7 +3376,6 @@ CREATE TABLE IF NOT EXISTS sent_facts (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS sent_facts_uniq ON sent_facts(conversation_id, sent_at, origin, kind);
 CREATE INDEX IF NOT EXISTS idx_sent_facts_conversation ON sent_facts(conversation_id, sent_at DESC);
-ALTER TABLE sent_facts DISABLE ROW LEVEL SECURITY;
 
 -- viewing_history.status に lapsed（日付が過ぎたが実施は未確認・viewing-status-update が閉じる）を追加（2026-09-14）
 --   done（ブレインは「対面済み」と扱う）と分ける。旧: 閉じる経路が無く「予定」24件中23件が日付を過ぎたまま残っていた
@@ -3482,7 +3416,6 @@ CREATE TABLE IF NOT EXISTS llm_usage_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_created ON llm_usage_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_route ON llm_usage_logs(route, created_at DESC);
-ALTER TABLE llm_usage_logs DISABLE ROW LEVEL SECURITY;
 -- 2026-09-17 竹内（AIX キャッシュ点検）: sys_key は system 先頭400字のハッシュなので、AIX の共通 prefix を最初のブロックに分けると
 --   「会話を合わせる」系 11 経路が1つの sys_key に潰れる。呼び出し側が headers（x-sumora-llm-action / x-sumora-llm-conversation）で付けた印を
 --   出口（llm-usage-recorder）が action / conversation_id に残す。sys_key_full は system 全ブロック結合の全文ハッシュ（プロンプト変更の検出用）
@@ -3497,7 +3430,8 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_action ON llm_usage_logs(action, c
 
 -- 日次の集計（JST の日付）。input_equiv = 入力単価に換算したトークン（読み0.1・5分書き1.25・1時間書き2・出力5）
 -- est_usd は目安: 入力単価（1M トークンあたり）Haiku $1・Sonnet 5/5.5 $2・Opus 5 $5・Opus 5.5 $4 で計算（2026-09-29 公式に直した・下の注記）
-CREATE OR REPLACE VIEW llm_usage_daily AS
+-- 2026-10-21 RLS ②: security_invoker（見る人の権限）。無いと持ち主 postgres の権限で llm_usage_logs（サーバーだけの表・RLS あり）を読む＝公開キーでも中身（sys_head 等）が見えてしまう。サーバーは service_role なので変わらない
+CREATE OR REPLACE VIEW llm_usage_daily WITH (security_invoker = true) AS
 SELECT
   (created_at AT TIME ZONE 'Asia/Tokyo')::date AS day_jst,
   model, route, sys_key, MIN(sys_head) AS sys_head,
@@ -3532,7 +3466,6 @@ CREATE TABLE IF NOT EXISTS llm_job_attempts (
   done_at TIMESTAMPTZ,
   PRIMARY KEY (job, item_id)
 );
-ALTER TABLE llm_job_attempts DISABLE ROW LEVEL SECURITY;
 
 -- conversations.screening_last_status: 審査管理（screening-admin）から前回の同期で届いた状態（2026-09-15 竹内・隼斗事例）
 --   同期が状態を動かすのは審査管理の状態が前回から変わった時だけ（否決の後も screening のまま届き続けて、物件提案中に戻した会話を審査中へ戻していた）
@@ -3597,7 +3530,6 @@ CREATE TABLE IF NOT EXISTS image_details (
   read_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_image_details_conv ON image_details(conversation_id);
-ALTER TABLE image_details DISABLE ROW LEVEL SECURITY;
 
 -- expired_line_upload_objects: こちらが LINE で送るためにアップロードした画像の保存期間（2026-09-22 竹内「保存期間を3ヶ月に。公式LINEのように」）
 --   property-images は消す仕組みが無く 6.1GB・毎月1.5〜2GB 増えていた（お客様の画像 line-images は30日で消えている）。
@@ -3655,7 +3587,6 @@ CREATE TABLE IF NOT EXISTS guarantor_companies (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE guarantor_companies DISABLE ROW LEVEL SECURITY;
 
 -- ── llm_warm_prefixes: 返信生成が実際に送ったプロンプトキャッシュの prefix（2026-09-17 竹内・返信生成の keep-warm）──
 --   /api/generate-reply の本体（Sonnet 5）は cache_control（1h）の hit 93% だが、62〜643 分空くと失効して全書き直し（≈$0.7・週 ≈$22）。
@@ -3682,7 +3613,6 @@ CREATE TABLE IF NOT EXISTS llm_warm_prefixes (
 ALTER TABLE llm_warm_prefixes ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ;
 ALTER TABLE llm_warm_prefixes ADD COLUMN IF NOT EXISTS sys0_hash TEXT;
 CREATE INDEX IF NOT EXISTS idx_llm_warm_prefixes_last_used ON llm_warm_prefixes(last_used_at DESC);
-ALTER TABLE llm_warm_prefixes DISABLE ROW LEVEL SECURITY;
 
 -- ── jev_shadow_logs: Jev（TypeSafe AI・System One）の影の運用ログ（2026-09-23）──
 -- 竹内「AIX でどのピッカーを選択するかの部分は Jev で強化」「Jev がブレインの一部にいてそこから選択」。
@@ -3737,7 +3667,6 @@ ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS brain_prob DOUBLE PRECISION
 ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS brain_source TEXT;
 CREATE INDEX IF NOT EXISTS idx_jev_shadow_logs_conv_created ON jev_shadow_logs(conversation_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jev_shadow_logs_created_at ON jev_shadow_logs(created_at DESC);
-ALTER TABLE jev_shadow_logs DISABLE ROW LEVEL SECURITY;
 
 -- ── 検索の点検（2026-09-25 竹内「ブレインモードで物件自動検索や一括検索した際に、検索がちゃんとされていなかったら原因を見つけられるようにする」）──
 -- search_audits: 拡張がブレインモードで検索した1回（入れようとした条件・実際に入った値・結果・決定論の札・DeepSeek の見立て）。名前・電話は入れない
@@ -3775,7 +3704,6 @@ CREATE INDEX IF NOT EXISTS idx_search_audits_started ON search_audits(created_at
 CREATE INDEX IF NOT EXISTS idx_search_audits_ai_pending ON search_audits(created_at) WHERE ai_status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_search_audits_cause ON search_audits(cause_key, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_search_audits_customer ON search_audits(property_customer_id, created_at DESC);
-ALTER TABLE search_audits DISABLE ROW LEVEL SECURITY;
 -- search_audit_causes: 原因ごと（cause_key の形 station_missing:itandi:JR京都線:東三国）の数・直し方の案・状態（未対応／直した＋版／無視）
 CREATE TABLE IF NOT EXISTS search_audit_causes (
   cause_key TEXT PRIMARY KEY,
@@ -3793,7 +3721,6 @@ CREATE TABLE IF NOT EXISTS search_audit_causes (
   note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_search_audit_causes_last_seen ON search_audit_causes(last_seen DESC);
-ALTER TABLE search_audit_causes DISABLE ROW LEVEL SECURITY;
 
 -- conversations.deepseek_cutoff_at: 申込以降→申込前に切り替えた時刻（2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、
 --   申込落ちてステータスを切り替えたら、切り替えたところ以降渡せば個人情報防げる」）。DeepSeek に渡すのはこの時刻より後だけ（app/lib/post-apply.ts deepseekSafeCutoff）。
@@ -3849,7 +3776,6 @@ CREATE TABLE IF NOT EXISTS apply_period_summaries (
   message_count INTEGER,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE apply_period_summaries DISABLE ROW LEVEL SECURITY;
 
 -- 2026-09-27 竹内「ピッカー選択した部分の記録はない状態なのか／無ければそこも作っておく」:
 --   aix_usage_logs に画面で選んだピッカー・入力値（check_pattern / app_sub_mode / send_mode 以外）を1つの jsonb で残す。
@@ -3864,7 +3790,6 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS prefill JSONB DEFAULT NULL;
 -- 2026-10-01 竹内「いっかい今はとめておく」: 拡張の自動の物件検索の一時停止（1行だけ）。paused=true の間は
 --   /api/automation/pending が指示を渡さず・/api/cron/auto-property-search が積まない。再開は UPDATE automation_settings SET paused=false
 CREATE TABLE IF NOT EXISTS automation_settings (id INT PRIMARY KEY DEFAULT 1, paused BOOLEAN NOT NULL DEFAULT false, note TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), CONSTRAINT automation_settings_one_row CHECK (id = 1));
-ALTER TABLE automation_settings DISABLE ROW LEVEL SECURITY;
 INSERT INTO automation_settings (id, paused) VALUES (1, false) ON CONFLICT (id) DO NOTHING;
 
 -- ── 拡張の心拍と「今の画面」（2026-09-29 v2.5.40 竹内「なぜ固まっているのか」「画面開いているのも目で見ることができるのが理想」）──
@@ -3968,7 +3893,6 @@ CREATE TABLE IF NOT EXISTS line_watch_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO line_watch_settings (id, capture_enabled) VALUES (1, true) ON CONFLICT (id) DO NOTHING;
-ALTER TABLE line_watch_settings DISABLE ROW LEVEL SECURITY;
 
 -- line_watch_turns: お客様の番1つにつき1行（「その時 AI が出していた案」の控え）。
 --   番の鍵 = 連投の最初のお客様の発言（最後のスタッフの発言より後で一番古い物）。連投が続くと customer_last_at だけ進む（同じ行）。
@@ -4017,8 +3941,7 @@ CREATE TABLE IF NOT EXISTS line_watch_turns (
 );
 CREATE INDEX IF NOT EXISTS idx_line_watch_turns_turn ON line_watch_turns(customer_turn_at DESC);
 CREATE INDEX IF NOT EXISTS idx_line_watch_turns_updated ON line_watch_turns(updated_at DESC);
--- RLS は他の表と同じく無効（サーバーが公開キーで読むため・project_rls_anon_key_pending の決まり「個別の表だけ有効にしない」）
-ALTER TABLE line_watch_turns DISABLE ROW LEVEL SECURITY;
+-- ~~旧: RLS は他の表と同じく無効~~ → 2026-10-21 サーバーだけの表（サーバーは service_role）なので RLS を入れる。DISABLE の行は消した
 
 -- capture_line_watch_turn: conversations の ai_draft・ai_draft_check・suggested_aix_meta が変わった時に番の行へ控える。
 --   安全の決まり（最重要）: 中で何が失敗しても元の更新（conversations）を止めない
@@ -4527,7 +4450,6 @@ CREATE TABLE IF NOT EXISTS design_rules_digest (
   review JSONB,
   generated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE design_rules_digest DISABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE design_rules_digest IS '設計知見の分野ごとの今の決まり（現行の行だけ・元の行の id 付き）。/api/cron/design-knowledge と scripts/kb-curate.ts が作る';
 COMMENT ON COLUMN design_rules_digest.review IS '要確認の一覧（area=要確認 の行だけ）: [{kind, ids, relation, note}]';
 -- 設計知見の RAG（2026-10-06 竹内「設計知見ひっぱるときRAG検索いれたらどうか」・⑯）:
@@ -4636,7 +4558,6 @@ CREATE TABLE IF NOT EXISTS property_search_focus (
   device TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_psf_requested_at ON property_search_focus(requested_at DESC);
-ALTER TABLE property_search_focus DISABLE ROW LEVEL SECURITY;
 
 -- 2026-10-08 送った人（書き手）の記録（竹内「竹内のLINEか従業員のLINEかで考える方がかなり分析の質が変わる」「端末で…判断」）
 --   staff_devices: ブラウザごとの端末（画面が x-staff-device で添える ID）。writer は竹内さんが1回付ける（'takeuchi'｜'employee'）
@@ -4654,7 +4575,6 @@ CREATE TABLE IF NOT EXISTS staff_devices (
   last_seen_at TIMESTAMPTZ DEFAULT NOW(),
   send_count INTEGER DEFAULT 0
 );
-ALTER TABLE staff_devices DISABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS staff_send_log (
   id BIGSERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -4670,13 +4590,13 @@ CREATE TABLE IF NOT EXISTS staff_send_log (
 );
 CREATE INDEX IF NOT EXISTS idx_staff_send_log_ids ON staff_send_log USING GIN (line_message_ids);
 CREATE INDEX IF NOT EXISTS idx_staff_send_log_created ON staff_send_log(created_at DESC);
-ALTER TABLE staff_send_log DISABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS sent_device_id TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS staff_writer TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS staff_writer_source TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS staff_writer_confidence TEXT;
 CREATE INDEX IF NOT EXISTS idx_messages_staff_writer ON messages(staff_writer) WHERE staff_writer IS NOT NULL;
 -- messages の行が入る時（画面は送信の後に line_message_id つきで入れる）に、送信の記録から端末と書き手を写す。
+--   2026-10-21 RLS: SECURITY DEFINER（作った人の権限）。画面は公開キーで messages に入れ、読む staff_send_log・staff_devices・hanbancyo_settings はサーバーだけの表（RLS あり）＝INVOKER のままだと 0 行しか読めず書き手が黙って入らない
 --   グループの発言（speaker_user_id）は hanbancyo_settings の takeuchi_line_user_id／suzuki_line_user_id で決める
 CREATE OR REPLACE FUNCTION fill_message_staff_writer() RETURNS trigger AS $func$
 DECLARE log_row RECORD; dev_writer TEXT; tk TEXT; em TEXT;
@@ -4705,7 +4625,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$func$ LANGUAGE plpgsql;
+$func$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 CREATE OR REPLACE TRIGGER trg_fill_message_staff_writer BEFORE INSERT OR UPDATE OF speaker_user_id, line_message_id ON messages
   FOR EACH ROW EXECUTE FUNCTION fill_message_staff_writer();
 -- 竹内さんの個人 LINE（グループの発言者・今の staff_line_user_ids の1件）。違っていれば直す
@@ -4767,7 +4687,6 @@ CREATE TABLE IF NOT EXISTS deal_outcomes (
 );
 CREATE INDEX IF NOT EXISTS idx_deal_outcomes_result ON deal_outcomes(result, result_certainty);
 CREATE INDEX IF NOT EXISTS idx_deal_outcomes_building ON deal_outcomes(building_key) WHERE building_key IS NOT NULL;
-ALTER TABLE deal_outcomes DISABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS outcome_events (
   id BIGSERIAL PRIMARY KEY,
   conversation_id TEXT NOT NULL,
@@ -4789,7 +4708,6 @@ CREATE INDEX IF NOT EXISTS idx_outcome_events_conv_at ON outcome_events(conversa
 CREATE INDEX IF NOT EXISTS idx_outcome_events_kind_at ON outcome_events(kind, at DESC);
 CREATE INDEX IF NOT EXISTS idx_outcome_events_building ON outcome_events(building_key) WHERE building_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_outcome_events_decision ON outcome_events(decision_id) WHERE decision_id IS NOT NULL;
-ALTER TABLE outcome_events DISABLE ROW LEVEL SECURITY;
 -- 段2: ブレインの判断の行に、判断した物件の鍵・号室・場面・版を残す（今ある出力を残すだけ・LLM は足さない）。
 --   two_choice・pending_pickup・checkpoint_stage・closing_strategy の要約は digest（JSONB）の tc・pp・cp・cs に入れる（列は足さない）
 ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS building_key TEXT;
@@ -4816,7 +4734,6 @@ CREATE TABLE IF NOT EXISTS brain_action_reach_stats (
   computed_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (scene_key, stage_bucket, action)
 );
-ALTER TABLE brain_action_reach_stats DISABLE ROW LEVEL SECURITY;
 -- 2026-10-08 竹内さん「さらにちゃんと成約したのはより良いデータとして」: 申込に届いた案件のうち確定の成約まで行った数（並べ方で重く扱う・application-reach.reachScore）
 ALTER TABLE brain_action_reach_stats ADD COLUMN IF NOT EXISTS won INTEGER NOT NULL DEFAULT 0;
 
@@ -4844,7 +4761,19 @@ CREATE TABLE IF NOT EXISTS customer_memos (
   version TEXT,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE customer_memos DISABLE ROW LEVEL SECURITY;
+
+-- 2026-10-21 竹内さんの決定（f87ccb7e G3「グループの✅も済みに」）: 【やることリスト】の行をスタッフがグループで✅にした印。
+--   書くのは hanbancyo-webhook（staff-todo-reply-server.ts）・読むのは staff-todo-list-server.ts。本番に流す SQL は scripts/staff-todo-marks-migration.sql（同じ文）
+CREATE TABLE IF NOT EXISTS staff_todo_marks (
+  id BIGSERIAL PRIMARY KEY,
+  item_key TEXT NOT NULL UNIQUE,
+  conversation_id TEXT,
+  marked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  marked_by TEXT,
+  via TEXT NOT NULL DEFAULT 'group_reply',
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_staff_todo_marks_marked_at ON staff_todo_marks(marked_at DESC);
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
@@ -4865,7 +4794,7 @@ async function runMigration(req: Request, force: boolean) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const t0 = Date.now();
-  const { supabase } = await import("@/app/lib/supabase");
+  const { supabase } = await import("@/app/lib/supabase-server");
   const { startCronLog, finishCronLog } = await import("@/app/lib/cron-logger");
   const fingerprint = sqlFingerprint(SQL);
   const batchOn = (process.env.MIGRATE_BATCH ?? "").toLowerCase() !== "off";

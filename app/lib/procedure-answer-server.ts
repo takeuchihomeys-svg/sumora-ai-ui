@@ -9,7 +9,7 @@
 //     ② 送った画像の読み取り（sent_image_properties → image_details.lines の「現況」「入居可能日」「退去予定」）
 //     ③ 物件確認の結果が退去予定（customer-state の vacating）
 //   質問でなければ DB も引かない。失敗・時間切れは null（呼び出し側は今まで通り）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { getCustomerState } from "@/app/lib/customer-state-server";
 import { moveInFactOfPickup } from "@/app/lib/aix-material-facts";
 import { normalizePropertyName } from "@/app/lib/property-name-match";

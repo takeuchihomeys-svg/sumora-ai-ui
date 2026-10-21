@@ -8,7 +8,7 @@
 //     ③ 切り出した間取り図の画素のハッシュ（fp_hash）。同じ棟・同じ型の部屋（調査: 15部屋で読むのは12回）
 //     ④ どれも無ければ DeepSeek で読む（推論なし・崩れた／fp_ok=false の時だけ推論 low で1回読み直す）
 //   ⚠ 使い回した事実でも、その部屋の説明文・文字層との突き合わせ（sheet-facts.checkSheetConsistency）は毎回行う
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { callDeepSeek, callDeepSeekRead } from "@/app/lib/vision-alt-provider";
 import { createHash } from "node:crypto";
 import { readSheetPdf, loadImageCanvas, cropCanvas, cropCanvasStack, findItandiFrameOnCanvas } from "@/app/lib/pdf-sheet-crop";

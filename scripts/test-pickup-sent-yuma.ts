@@ -3,7 +3,7 @@
 // 最後にテスト行を全部片付け、始める前の控えと比べて差が0であることを出す。
 // 実行: npx tsx --env-file=.env.local scripts/test-pickup-sent-yuma.ts
 import { NextRequest } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { POST as pickupSendPOST } from "@/app/api/property-pickups/send/route";
 import { GET as dupGET } from "@/app/api/check-property-duplicate/route";
 import { recordSentImageProperty } from "@/app/lib/sent-image-record";

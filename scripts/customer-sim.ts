@@ -82,7 +82,7 @@ let noSendImagePickups: string[] = [];
 const SHADOW_DRAFT_OK = SHADOW && isLocalBase(SHADOW_BASE) && existsSync("app/api/generate-reply/route.ts")
   && generateReplyAcceptsShadow(readFileSync("app/api/generate-reply/route.ts", "utf8"));
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const jst = (iso: string | null | undefined) => iso ? new Date(new Date(iso).getTime() + 9 * 3600_000).toISOString().slice(5, 16).replace("T", " ") : "-";
 const one = (s: string | null | undefined, n = 80) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);

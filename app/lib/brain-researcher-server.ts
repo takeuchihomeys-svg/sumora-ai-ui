@@ -1,6 +1,6 @@
 // app/lib/brain-researcher-server.ts（サーバー専用・DB は読むだけ・DeepSeek 1回）— 調べる係（brain-researcher.ts の決まりで呼ぶ）
 //   DeepSeek に渡すのはお客様の今の連投の文（maskPII・個人の値があれば渡さない）だけ。記録の読み取りはコード。材料は記録の行そのまま。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { maskPIIForAlt } from "@/app/lib/pii-mask";
 import { loadAltNameMask } from "@/app/lib/pii-known-names";
 import { altPiiSignal } from "@/app/lib/alt-pii-gate";

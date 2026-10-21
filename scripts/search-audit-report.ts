@@ -4,7 +4,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { causeTitle, type AuditCheck } from "../app/lib/search-audit-check";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 const arg = (k: string, d: string) => (process.argv.find((a) => a.startsWith(`--${k}=`))?.split("=")[1] ?? d);
 const days = Math.max(1, Math.min(90, Number(arg("days", "7")) || 7));
 

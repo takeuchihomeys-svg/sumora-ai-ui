@@ -3,7 +3,7 @@
 // 判定はすべて app/lib/brain-attention.ts（純関数）。ここは DB の読み書きだけ。
 //
 // 2026-10-08 竹内さんの決定（原文は brain-attention.ts の頭）: ブレイン以外が「次にやる事」を決めている所をブレインに寄せる。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 import {
@@ -15,6 +15,8 @@ import { detectDealLossText, isApplicationCancelText } from "@/app/lib/deal-outc
 import { brainHotDrop, FOLLOWUP_AIX_TYPES, ignoredFollowUpStreak, silentDaysSetting } from "@/app/lib/brain-hot-drop";
 import { screeningSummaryLine, targetSummaryLine } from "@/app/lib/target-list-format";
 import { contactDateOfNotes, contactDue } from "@/app/lib/contact-promise";
+import { loadReapplyStates, loadReapplyInfo, type ReapplyConvRow } from "@/app/lib/reapply-customer-server";
+import { RETURN_PATTERN_LABEL, RETURN_PATTERN_SHORT, REAPPLY_MARK_TEXT, type ReapplyInfo } from "@/app/lib/reapply-customer";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 連絡の約束の日（2026-10-08 竹内さん「その日に連絡するように約束後カレンダーに組み込む」）
@@ -122,6 +124,7 @@ async function syncBrainHot(db: Db, conversationId: string, meta: AttentionMeta)
 type ConvRow = {
   id: string; customer_name?: string | null; status: string | null; line_status?: string | null; created_at?: string | null; updated_at?: string | null;
   last_sender?: string | null; last_message?: string | null; property_customer_id?: string | null; status_manual_back_at?: string | null; suggested_aix_meta?: unknown;
+  is_post_apply?: boolean | null; deepseek_cutoff_at?: string | null;
 };
 
 export type BrainTarget = {
@@ -248,7 +251,7 @@ async function buildTargetInputs(
 export async function loadBrainTargets(db: Db = supabase, opts: { sinceDays?: number; limit?: number } = {}): Promise<BrainTarget[]> {
   const since = new Date(Date.now() - (opts.sinceDays ?? 60) * 86_400_000).toISOString();
   const { data: convRows, error } = await db.from("conversations")
-    .select("id, customer_name, status, line_status, created_at, updated_at, last_sender, last_message, property_customer_id, status_manual_back_at, suggested_aix_meta")
+    .select("id, customer_name, status, line_status, created_at, updated_at, last_sender, last_message, property_customer_id, status_manual_back_at, suggested_aix_meta, is_post_apply, deepseek_cutoff_at")
     .not("status", "in", "(closed_won,closed_lost,lost,contract)")
     .gte("updated_at", since)
     .order("updated_at", { ascending: false })
@@ -257,7 +260,20 @@ export async function loadBrainTargets(db: Db = supabase, opts: { sinceDays?: nu
   const due = await loadDueContacts(db);
   const convs = await withDueConversations(db, ((convRows ?? []) as ConvRow[]).filter((c) => !isAttentionExcluded(c.id, c.customer_name)), due);
   const inputs = await buildTargetInputs(db, convs, { contactDue: due });
+  // 2026-10-21 竹内さんの決定（70193195）: 申込歴あり（再探し）＝アツいお客様は ②審査落ち・切り替えの段に入れる（戻しの印が前進で消えても、消えない切り替えの時刻で拾う）。
+  //   一言の頭に「申込歴あり・戻った理由」を付ける（reapply-customer-server・読めなければ今まで通り）
+  const reapplyBy = await loadReapplyStates(db, convs as ReadonlyArray<ReapplyConvRow>).catch(() => new Map<string, ReapplyInfo>());
+  for (const x of inputs) {
+    const ra = reapplyBy.get(x.conv.id);
+    if (ra?.returnedAt) x.input.screeningFailedAt = latestIso(x.input.screeningFailedAt, ra.returnedAt);
+  }
   const picked = inputs.map((x) => ({ x, t: classifyTarget(x.input) })).filter((r): r is { x: typeof inputs[number]; t: NonNullable<ReturnType<typeof classifyTarget>> } => !!r.t);
+  for (const r of picked) {
+    const st = reapplyBy.get(r.x.conv.id);
+    if (!st) continue;
+    const full = await loadReapplyInfo(db, r.x.conv.id).catch(() => null);
+    reapplyBy.set(r.x.conv.id, full ?? st);
+  }
   const pcIds = [...new Set(picked.map((r) => r.x.conv.property_customer_id).filter(Boolean) as string[])];
   const { data: pcs } = pcIds.length
     ? await db.from("property_customers").select("id, desired_area, commute_station, commute_minutes, rent_max, floor_plan, other_requests, ai_summary_json, ai_summary_at").in("id", pcIds)
@@ -303,6 +319,15 @@ export async function loadBrainTargets(db: Db = supabase, opts: { sinceDays?: nu
     const d = due.get(t.conversationId);
     const mv = d?.title.match(/（入居([^）]+)）/)?.[1];
     t.summaryLine = [`連絡の約束の日${d ? ` ${Number(d.ymd.slice(5, 7))}/${Number(d.ymd.slice(8, 10))}` : ""}${mv ? `・入居${mv}` : ""}`, t.summaryLine].filter(Boolean).join("、");
+  }
+  // 申込歴あり（再探し）の人は一言の頭に「【申込歴あり】戻った理由」（理由不明なら理由は書かない・414dc9d4 で 🔥 から【】に）
+  for (const t of out) {
+    const ra = reapplyBy.get(t.conversationId);
+    if (!ra) continue;
+    const head = `${REAPPLY_MARK_TEXT}${ra.pattern !== "unknown" ? RETURN_PATTERN_SHORT[ra.pattern] : ""}`;
+    t.reason = `${REAPPLY_MARK_TEXT}${RETURN_PATTERN_LABEL[ra.pattern]}`;
+    t.summaryLine = [head, t.summaryLine].filter(Boolean).join("、");
+    t.summary = [head, (t.summary ?? "").replace(/^審査落ち・切り替え、?/, "")].filter(Boolean).join("、");
   }
   return out.sort(compareTargets);
 }

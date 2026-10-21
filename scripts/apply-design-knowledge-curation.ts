@@ -14,7 +14,7 @@ const STMTS = [
   `COMMENT ON COLUMN system_design_thinking.retired_at IS '非現行にした時刻';`,
   `COMMENT ON COLUMN system_design_thinking.retired_by IS '非現行にした仕組み（kb-curate:duplicate／kb-curate:decision／kb-retire 等）';`,
   `CREATE TABLE IF NOT EXISTS design_rules_digest (area TEXT PRIMARY KEY, markdown TEXT NOT NULL, row_ids UUID[] NOT NULL DEFAULT '{}', review JSONB, generated_at TIMESTAMPTZ NOT NULL DEFAULT now());`,
-  `ALTER TABLE design_rules_digest DISABLE ROW LEVEL SECURITY;`,
+  // 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（design_rules_digest）
   `COMMENT ON TABLE design_rules_digest IS '設計知見の分野ごとの今の決まり（現行の行だけ・元の行の id 付き）。/api/cron/design-knowledge と scripts/kb-curate.ts が作る';`,
   `COMMENT ON COLUMN design_rules_digest.review IS '要確認の一覧（area=要確認 の行だけ）: [{kind, ids, relation, note}]';`,
   `SELECT pg_notify('pgrst', 'reload schema');`,

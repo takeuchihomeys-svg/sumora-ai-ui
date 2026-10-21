@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import {
   runBrainAndNotify, BRAIN_SKIP_STATUSES, BRAIN_MODEL,
   loadBrainSystemInputs, buildBrainSystemBlocks, brainSysKeyFull, sendBrainWarm,

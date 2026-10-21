@@ -1,6 +1,6 @@
 // 物件ピックアップが1回の検索で何回に分かれて届くか・まとめ（完了）までの時間・分析の呼び出し数（読むだけ・個人情報は出さない）
 // 2026-09-26 自動まとめを10分→3分にした根拠（pickup-complete.ts AUTO_COMPLETE_QUIET_MINUTES）。実行: npx tsx --env-file=.env.local scripts/audit-pickup-arrivals.ts
-import { supabase } from "../app/lib/supabase";
+import { supabase } from "../app/lib/supabase-server";
 const since = "2026-09-19T00:00:00Z";
 async function all<T>(q: (from: number) => any): Promise<T[]> { const out: T[] = []; for (let f = 0; ; f += 1000) { const { data, error } = await q(f); if (error) throw error; out.push(...(data ?? [])); if (!data || data.length < 1000) break; } return out; }
 (async () => {

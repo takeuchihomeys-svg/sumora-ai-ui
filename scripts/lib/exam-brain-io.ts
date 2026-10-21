@@ -163,6 +163,8 @@ export type LedgerLine = {
   reps: number; codes: string[]; pathOk: boolean; pass: boolean; cmp: string; cmpWhy: string; flake: string; reused: boolean;
   /** 揺れか本当の変化か（前と違った問題だけ）: real＝確かめの回でも同じ向き／flake＝揺れる問題・回で割れた／unconfirmed＝1回だけ */
   verdict?: "real" | "flake" | "unconfirmed" | null;
+  /** 2026-10-21 既定と違うスイッチ（NAME=値,…）。無い＝既定 */
+  envFp?: string;
 };
 export function appendLedger(lines: LedgerLine[], file = LEDGER_FILE): void {
   if (!lines.length) return;

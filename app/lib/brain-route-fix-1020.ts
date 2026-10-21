@@ -1,5 +1,5 @@
 // app/lib/brain-route-fix-1020.ts（純関数・DB/LLM なし）
-// 2026-10-20 試験の道の外れ（見積・約束の後・不満→次の探し）の根の直し。既定は全部「何もしない」（BRAIN_ROUTE_FIX_1020=on で入る）。
+// 2026-10-20 試験の道の外れ（見積・約束の後・不満→次の探し）の根の直し。10/21 から一部既定 on（下の「戻す」）。
 //
 // 道の外れと根（scripts/exam-brain.ts の q170・q177・q179・q182・q183・q184・録音の再生で同じ答えを見て確かめた）:
 //   見積 estimate
@@ -23,7 +23,11 @@
 //        （q170・avoid_topics に「新規物件ピックアップ」まで入れた）。→ customer_concern が物件の作り（広さ・設備・階・築年・駅・日当たり・騒音）で、
 //        問いでなく、こちらが物件を送った後で、依頼が返信だけの時は、その依頼を探す約束（route=promise・about=search_condition）に直す（concern_repickup）。
 //
-// 戻す: BRAIN_ROUTE_FIX_1020 を付けない（既定）。一部だけ: BRAIN_ROUTE_FIX_1020=brought_text,brought_estimate,... ／ on で全部・on でも BRAIN_ROUTE_FIX_1020_<名前>=off で1つ止める
+// 2026-10-21 竹内さん B1「入れて良い」・B3「よい」・B5「よい」（設計知見 e2558968）: 既定で入る部分 = ROUTE_FIX_1020_DEFAULT_ON
+//   （brought_text・brought_estimate・focused_estimate・promise_check・viewing_check_vacancy・concern_repickup）。
+//   check_after_result は B4「質問内容による」で既定 off のまま・contract_aix は決定に無いので既定 off のまま。
+// 戻す: BRAIN_ROUTE_FIX_1020=off で全部止める。一部だけ: BRAIN_ROUTE_FIX_1020=brought_text,brought_estimate,... ／ on で全部・
+//   BRAIN_ROUTE_FIX_1020_<名前>=off で1つ止める（既定でも効く）
 
 type Env = Record<string, string | undefined>;
 
@@ -32,11 +36,16 @@ export const ROUTE_FIX_1020_PARTS = [
   "promise_check", "check_after_result", "viewing_check_vacancy", "concern_repickup",
 ] as const;
 export type RouteFix1020Part = (typeof ROUTE_FIX_1020_PARTS)[number];
+/** 10/21 竹内さんの決定で既定 on の部分（BRAIN_ROUTE_FIX_1020 を付けない時） */
+export const ROUTE_FIX_1020_DEFAULT_ON: readonly RouteFix1020Part[] = [
+  "brought_text", "brought_estimate", "focused_estimate", "promise_check", "viewing_check_vacancy", "concern_repickup",
+];
 
 export function routeFix1020(part: RouteFix1020Part, env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
   const v = (env.BRAIN_ROUTE_FIX_1020 ?? "").trim().toLowerCase();
-  if (!v || v === "off") return false;
+  if (v === "off" || v === "0" || v === "false") return false;
   if ((env[`BRAIN_ROUTE_FIX_1020_${part.toUpperCase()}`] ?? "").trim().toLowerCase() === "off") return false;
+  if (!v || v === "default") return ROUTE_FIX_1020_DEFAULT_ON.includes(part);
   if (v === "on" || v === "all" || v === "1" || v === "true") return true;
   return v.split(",").map((s) => s.trim()).includes(part);
 }

@@ -16,7 +16,7 @@ async function knownNames(conversationId: string): Promise<string[]> {
   return [...known].filter((s) => s.length >= 2);
 }
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 
 async function main() {
   // 物件資料（旧 Haiku が記録した名前と並べる）6枚 ＋ 見積書 2枚

@@ -2,7 +2,7 @@
 //   staff_devices（端末ごとに1行・書き手は竹内さんが1回付ける）＋ staff_send_log（送信ごとに1行・LINE の message id つき）。
 //   messages の行は画面が送信の後に line_message_id つきで入れる → DB のトリガー（migrate-schema の fill_message_staff_writer）が
 //   staff_send_log から端末と書き手を写す。ここは失敗しても送信を止めない（表が無い間は何もしない）。戻す: STAFF_SEND_LOG=off
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { deviceLabelOf, parseStaffDeviceId, STAFF_DEVICE_HEADER } from "@/app/lib/staff-device";
 
 export type StaffSendLogInput = {

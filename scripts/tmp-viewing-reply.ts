@@ -1,6 +1,6 @@
 // tmp: 手元サーバー(:3000)の /api/generate-reply で YUMA の今の会話の返信下書きを作る（page.tsx generateReply と同じ組み立て・送らない）
 import { createClient } from "@supabase/supabase-js";
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 const Y = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 const MSG_SEP = "\n⁣\n";
 async function main() {

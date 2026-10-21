@@ -14,7 +14,7 @@ const STMTS = [
      read_at TIMESTAMPTZ DEFAULT now()
    );`,
   `CREATE INDEX IF NOT EXISTS idx_image_details_conv ON image_details(conversation_id);`,
-  `ALTER TABLE image_details DISABLE ROW LEVEL SECURITY;`,
+  // 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（image_details）
   `SELECT pg_notify('pgrst', 'reload schema');`,
 ];
 

@@ -15,7 +15,7 @@ import { createClient } from "@supabase/supabase-js";
 import { classifyReplyBody, detectOpener } from "../app/lib/greeting";
 import { fixAbsenceWording } from "../app/lib/reply-phrasing";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 const DAYS = Number(process.argv.find((a) => a.startsWith("--days="))?.split("=")[1] ?? 365);
 
 type Msg = { conversation_id: string; sender: string; text: string; created_at: string };

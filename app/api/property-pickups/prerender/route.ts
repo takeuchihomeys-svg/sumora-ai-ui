@@ -7,7 +7,7 @@
 //   ?count=1 … 数だけ（認証なし・拡張の background が「作る物があるか」を見るだけ。行の中身は返さない）
 //   それ以外 … 行（id・pdf_blob_url・物件名）。内部認証が要る。?ids=1,2 で行を指定・?limit=
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { needsPrerender, PRERENDER_MAX_AGE_DAYS, PRERENDER_BATCH } from "@/app/lib/pickup-send-image";
 

@@ -1,7 +1,7 @@
 // app/lib/brain-meta-load.ts
 // 生成（返信・AIX 文面・テンプレ）がブレインの判断を読む時の共通の入口（サーバー専用）。
 // 判定は brain-meta-restore.ts の restoreMetaAfterShown（純関数）。ここは DB から「最新のお客様発言の時刻」を読むだけ。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { restoreMetaAfterShown, staffTurnStillOpen, staffTurnSameJstDay, SHOWN_DRAFT_SENTINEL, type ShownRestoreResult } from "@/app/lib/brain-meta-restore";
 

@@ -4,7 +4,7 @@
 //
 // 2026-09-25 竹内「ブレインモードで物件自動検索や一括検索した際に、検索がちゃんとされていなかったら原因を見つけられるようにする」
 // 静かに壊れないために: DB の error は全部見て返す（data ?? [] で握り潰さない）・見立ては「成功して保存した数」を返す。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { ghostSourceOf, GHOST_WINDOW_MS, type GhostRowLite } from "@/app/lib/search-audit-ghost";
 import { callDeepSeekRead } from "@/app/lib/vision-alt-provider";
 import { DEEPSEEK_FLASH_MODEL } from "@/app/lib/llm-alt-provider";

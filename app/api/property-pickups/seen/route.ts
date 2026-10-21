@@ -4,7 +4,7 @@
 //   → 既読はスタッフ全員で共有（誰かが開けば全員の画面で消える・LINE の既読と同じ）。新着の決まりは app/lib/new-arrivals.ts
 // 書くのは seen_at / seen_by だけ（送信・判定・並びは変えない）。冪等（もう読んだ行は触らない）。
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 
 export async function POST(req: NextRequest) {

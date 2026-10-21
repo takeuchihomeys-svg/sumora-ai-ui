@@ -5,7 +5,7 @@
 //   決まりは app/lib/contact-promise.ts（pendingUndatedPromise・undatedPromiseToContact）。戻す: CONTACT_PROMISE_UNDATED=off
 import { NextRequest, NextResponse } from "next/server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { pendingUndatedPromise, undatedPromiseToContact, contactEventRow, UNDATED_FROM_MARK, type UndatedPromise } from "@/app/lib/contact-promise";
 
 export const maxDuration = 20;

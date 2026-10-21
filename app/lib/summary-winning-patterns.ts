@@ -1,7 +1,7 @@
 // お客様の要約の「人間性が似た成約事例」の RAG（2026-10-13 customer-summary の route から移した・中身は同じ）
 //   竹内さん 10/13「要約をブレインだけにする＝はい」: 要約はブレインの戦略の層だけが書く。戦略の層にも同じ成約パターンの RAG を渡すため共通にした
 //   （route の要約＝顧客一覧の手動の要約は今まで通り使う）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 type SummaryJsonLite = { personality_profile?: string };

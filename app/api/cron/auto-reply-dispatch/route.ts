@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { canAutoReply, resolveAutoSendAt, type AutoReplyInput } from "@/app/lib/auto-reply-policy";
 // 2026-09-18 竹内「文の生成とかは返信の下書き通りになるよね」:
 //   画面の入力欄に出ているのと**まったく同じ文**を送るため、画面と同じ整形関数を通す

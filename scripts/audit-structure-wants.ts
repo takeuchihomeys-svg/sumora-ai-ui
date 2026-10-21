@@ -9,7 +9,7 @@ import { pathToFileURL } from "url";
 import { extractPdfText } from "../app/lib/pdf-text";
 import { parseEquipmentWants, parseListingEquipment, wantLabel, STRUCTURE_TIER_NAMES } from "../app/lib/listing-equipment";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 const oldPath = process.argv.find((a) => a.startsWith("--old="))?.slice(6) ?? null;
 type Row = Record<string, any>;
 const RE = /木造|鉄骨|鉄筋|(?<![A-Za-z])S?RC(?![A-Za-z])|ＲＣ|構造|マンション|アパート|コンクリ/;

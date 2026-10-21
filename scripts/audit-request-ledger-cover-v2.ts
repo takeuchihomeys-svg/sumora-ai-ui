@@ -7,7 +7,7 @@ import { buildRequestLedger, TOPIC_JA, type LedgerMsg, type LedgerItem } from ".
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const DAYS = Number(arg("days", "30"));
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 type M = { conversation_id: string; sender: string; created_at: string; text: string | null; is_aix_generated: boolean | null };
 const one = (s: string | null | undefined, n: number) => String(s ?? "").replace(/\s+/g, " ").slice(0, n);
 async function main() {

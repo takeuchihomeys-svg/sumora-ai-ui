@@ -147,7 +147,12 @@ async function main() {
     const text = mat.buildMeetingPlaceText({ date: "10/3(土)", time: "15:00", propertyName: "エステムコート大阪WEST", address: null });
     t("待ち合わせの文（画面の時間ありの形）", text === "かしこまりました！！\n10/3（土）ご案内させて頂きます！！\n\n10/3 15:00にエステムコート大阪WEST\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！", text);
     const modal = readFileSync("app/components/AixModal.tsx", "utf8");
-    t("★ 画面（AixModal の meeting_place・時間あり）の文面と一字一句同じ型", modal.includes("let msg = `かしこまりました！！\\n${meetingDateFixed}ご案内させて頂きます！！\\n\\n${meetingDateNoWd} ${meetingTime}に${meetingPropertyName}\\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;") && modal.includes("if (meetingPropertyAddress.trim()) msg += `\\n住所: ${meetingPropertyAddress}`;"));
+    // 2026-10-21: 32a348d3（2026-10-13 竹内さん）で画面の2行目は meetingSecondLine（今日・明日なら「本日/明日{時間}〜」）になった（意図した変更）。
+    // 今日・明日でない日は「{日付}ご案内させて頂きます！！」＝お客様役の文の2行目と同じ型
+    const form = await import("../meeting-place-form");
+    const line2 = form.meetingSecondLine("10/3（土）", "15:00", NOW);
+    t("★ 画面の2行目（今日・明日でない日）＝お客様役の文の2行目", line2 === "10/3（土）ご案内させて頂きます！！" && text.split("\n")[1] === line2, line2);
+    t("★ 画面（AixModal の meeting_place・時間あり）の文面と一字一句同じ型", modal.includes("let msg = `かしこまりました！！\\n${meetingLine2}\\n\\n${meetingDateNoWd} ${meetingTime}に${meetingPropertyName}\\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;") && modal.includes("if (meetingPropertyAddress.trim()) msg += `\\n住所: ${meetingPropertyAddress}`;"));
   }
 
   console.log("── 材料の選び方のまとめ・planStaffAction");

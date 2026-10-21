@@ -14,7 +14,7 @@ export function otherAgentViewingEnabled(env: Env = envOf()): boolean {
 }
 
 /** 他社・掲載元の不動産屋の話（「不動産屋さんに依頼して」「スーモに載せていた業者」「他社で」） */
-const OTHER_AGENT_RE = /他(?:社|の(?:不動産|会社|業者|お店|店舗))|別の(?:不動産|会社|業者|お店)|違う(?:不動産|会社|業者)|(?:不動産屋|不動産会社|業者|仲介(?:業者|会社)?)(?:さん)?(?:に|で|経由|から)|(?:スーモ|SUUMO|ホームズ|HOME'?S|アットホーム|ポータル)(?:に|で)(?:載|乗|掲載|出)(?:せ|し|て)/i;
+export const OTHER_AGENT_RE = /他(?:社|の(?:不動産|会社|業者|お店|店舗))|別の(?:不動産|会社|業者|お店)|違う(?:不動産|会社|業者)|(?:不動産屋|不動産会社|業者|仲介(?:業者|会社)?)(?:さん)?(?:に|で|経由|から)|(?:スーモ|SUUMO|ホームズ|HOME'?S|アットホーム|ポータル)(?:に|で)(?:載|乗|掲載|出)(?:せ|し|て)/i;
 /** その話の内覧（依頼して・予約して・内覧予定・内見した） */
 const VIEWING_RE = /内覧|内見|見学|案内/;
 /** こちらで申込める／お願いできるかの問い（「こちらでお願いとかもできますか」「御社で申し込めますか」）。
@@ -67,3 +67,37 @@ export function isOtherAgentViewingPlan(text: string | null | undefined, env: En
   if (VIEW_HERE_RE.test(s) || OTHER_CANCEL_RE.test(s) || VIEWED_PAST_RE.test(s)) return false;
   return true;
 }
+
+// ── 2026-10-21 竹内さんの答え（B8・C8）: ブレインの材料の行（決まった文ではなく判断の原則）──────────────────────────
+//   B8「良い 状況にもよるがお客さんをサポートする姿勢の文をブレイン判断」: 「気に入ればこちらで（お願いできますか）」の問いには、
+//     お客様をサポートする姿勢の一文を入れるかをブレインが状況で決める（言い回しは固定しない）。戻す SUPPORT_STANCE_NOTE=off
+//   C8「別の物件をだすやくそくしてAIX物件ピックアップや物件オススメからおくる」: 条件が合わず他（他社）で探すと言われた番は、
+//     お礼で終えず別の物件を出す約束をして、物件の AIX（物件ピックアップした／物件オススメ）から送る。
+//     ⚠ 他社で契約が決まった（C7＝お礼で終える）は当てない。戻す LOOK_ELSEWHERE_PICKUP=off
+export function supportStanceNoteEnabled(env: Env = envOf()): boolean {
+  return (env.SUPPORT_STANCE_NOTE ?? "").trim().toLowerCase() !== "off";
+}
+export function lookElsewherePickupEnabled(env: Env = envOf()): boolean {
+  return (env.LOOK_ELSEWHERE_PICKUP ?? "").trim().toLowerCase() !== "off";
+}
+const LIKE_THEN_HERE_RE = /気に入(?:れば|ったら|りましたら|った場合)[^。]{0,16}(?:こちら|そちら|御社|貴社|スモラ|イエヤス|ギガ)(?:さん|様)?(?:で|に)/;
+/** 「気に入ればこちらで（お願いできますか）」の問いか（他社で内覧＋こちらで申込の問い・気に入ればこちらでの形） */
+export function isLikeThenHereQuestion(text: string | null | undefined, env: Env = envOf()): boolean {
+  const s = String(text ?? "").normalize("NFKC").replace(/\s+/g, " ");
+  if (!s.trim()) return false;
+  return isOtherAgentViewingApplyQuestion(s, env) || (LIKE_THEN_HERE_RE.test(s) && ASK_RE.test(s));
+}
+export const SUPPORT_STANCE_LINE = "【今の番（材料・竹内さんの答え 10/21 B8）】お客様は「気に入ればこちらで」と聞いている。答え（弊社でお手続き・ご内覧できる）に加えて、お客様をサポートする姿勢の一文を入れるかは会話の状況を読んであなたが決める（決まった言い回しは無い・同じ文を毎回使わない・押し付けない）。";
+
+const ELSEWHERE_RE = /他(?:社|の(?:不動産|会社|業者|お店|ところ|所)|で|を|も|当た)|別の(?:不動産|会社|業者|お店|ところ)|違う(?:不動産|会社|ところ)|自分で/;
+const SEARCH_RE = /探(?:し|す|そう|してみ)|当たっ?て|見てみ|あたっ?て/;
+const MISMATCH_RE = /条件|合わ(?:な|ず)|合いそうに|希望(?:に|の)[^。]{0,6}(?:な|無|合)|予算|無さそう|なさそう|ないので|無いので|厳し|難しそう|見つからな/;
+const CONTRACT_DONE_RE = /(?:決ま|決め|契約(?:し|が決|する事|することに))(?:り|た|まし|て)|申込(?:み)?(?:し|ま)(?:ました|た)/;
+/** 条件が合わず他（他社）で探すと言った番か（他社で契約が決まった番は外す） */
+export function isLookElsewhereForConditions(text: string | null | undefined, env: Env = envOf()): boolean {
+  if (!lookElsewherePickupEnabled(env)) return false;
+  const s = String(text ?? "").normalize("NFKC").replace(/\s+/g, " ");
+  if (!s.trim() || CONTRACT_DONE_RE.test(s)) return false;
+  return ELSEWHERE_RE.test(s) && SEARCH_RE.test(s) && MISMATCH_RE.test(s);
+}
+export const LOOK_ELSEWHERE_LINE = "【今の番（材料・竹内さんの答え 10/21 C8）】お客様は条件が合わず他で探すと言っている。お礼だけで終えず、別の物件をお出しする約束（route=promise・about=search_condition）にし、物件は AIX【物件ピックアップした】（複数）／【物件オススメ】（1件）から送る。他社で契約が決まった時だけはお礼で終える。";

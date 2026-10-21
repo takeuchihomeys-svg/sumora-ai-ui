@@ -32,7 +32,7 @@ export function pickupOverrideFromCommand(cmd: CommandRowLike | null | undefined
 export async function loadPickupSearchOverride(commandId: unknown, propertyCustomerId: string | null): Promise<PickupSearchOverride | null> {
   if (typeof commandId !== "string" || !ID_RE.test(commandId) || !propertyCustomerId) return null;
   try {
-    const { supabase } = await import("@/app/lib/supabase");
+    const { supabase } = await import("@/app/lib/supabase-server");
     const { data, error } = await supabase.from("automation_commands").select("id, created_at, customer_ids, payload").eq("id", commandId).maybeSingle();
     if (error || !data) return null;
     const r = pickupOverrideFromCommand(data as CommandRowLike, propertyCustomerId);

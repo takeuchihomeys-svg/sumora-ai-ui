@@ -7,7 +7,7 @@
 //
 // ⚠ AIX と返信生成で別々に実装しない（設計知見「同じ事実を2か所に置かない」）。
 //   pii-pseudonym.ts は DB に触らない純関数のままにしたいので、取得はこのファイルに分ける。
-import { supabase } from "./supabase";
+import { supabase } from "./supabase-server";
 import { buildAltNameMask, type AltNameMask } from "./pii-mask";
 
 let cache: { at: number; names: string[] } | null = null;

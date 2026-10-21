@@ -2,7 +2,7 @@
 // applying への自動昇格は line-webhook + app/lib/application-form-detect.ts に実装済みのため、
 // このエンドポイントの申込検知ロジックは冗長。将来「ステータス変更提案UI」を作る場合のみ再利用すること。
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { normalizeStatus } from "@/app/lib/status-normalize";
 
 const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");

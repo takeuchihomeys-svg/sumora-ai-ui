@@ -2,7 +2,7 @@
 // お客様の状況（customer-state.ts の resolveCustomerState）の材料を DB から読む（サーバー専用）。
 //   画面は GET /api/customer-state（内部認証）経由で読む。ブレイン・返信生成は getCustomerState を直接呼ぶ（段2・段3でつなぐ）。
 //   読むだけ（書き込みなし）。1会話あたり 7 本のクエリを並列に投げる。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import {
   resolveCustomerState,
   type CustomerState, type CustomerStateInput, type CustomerStateMessage, type CustomerStateAixRow, type ViewingHistoryRow, type SentPropertyRow,

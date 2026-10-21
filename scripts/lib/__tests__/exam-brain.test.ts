@@ -2,7 +2,7 @@
 // 実行: npx tsx scripts/lib/__tests__/exam-brain.test.ts（全 PASS で exit 0）
 import {
   mergePicks, firstReps, confirmTargets, draftEligible, draftTargets, compareProblem, brainChangedOf, stopDecision, isCheapWindow, nextCheapStart, decideWhen,
-  reuseKey, kbKeyOf, canReuse, modelOf, estimateUsd, needJudge, contractShape, dbKeyOf, type PlanProblem, type RowLite, type DbPart,
+  reuseKey, kbKeyOf, canReuse, ruleJudge, modelOf, estimateUsd, needJudge, contractShape, dbKeyOf, type PlanProblem, type RowLite, type DbPart,
   pickSmall, smallRank, decidePhase, SMALL_MAX_REPS, dailyCapUsd, jstDayStart, nextNightRun, capSplit, isProtected, peakAdvice, convKeyOf, convCtxHash,
 } from "../exam-brain";
 import { readDbFingerprint, dbTablesOf, DB_FINGERPRINT_TABLES, type DbTableSpec } from "../exam-brain-io";
@@ -72,11 +72,26 @@ ok("判断が変わった集合", [...brainChangedOf([{ id: "a", cmp: "same" }, 
   ok("形の変化は途中で止める数に入れない", stopDecision([{ id: "a", cmp: "shape" }, { id: "b", cmp: "shape" }, { id: "c", cmp: "shape" }, { id: "d", cmp: "shape" }], new Set()).action === "go");
   ok("関所でない・ブレインだけの直し: 形が変わった問題は下書きまで", draftTargets("brain", all, brainChangedOf([{ id: "q3", cmp: "shape" }, { id: "q1", cmp: "same" }])).ids.join() === "q3");
 }
+// 2026-10-21 ⑤ 決まりで決まる採点
+{
+  const A = [{ route: "aix" }], R = [{ route: "reply" }];
+  ok("AIX の答案・AIX の依頼＝決まりで true", JSON.stringify(ruleJudge({ asks: A, ngN: 0, pathLabel: "AIX:viewing_invite", pathOk: true, needRawPath: false })?.asks) === "[true]");
+  ok("AIX の答案・返信の依頼＝決まりで false", JSON.stringify(ruleJudge({ asks: R, ngN: 0, pathLabel: "AIX:viewing_invite", pathOk: true, needRawPath: false })?.asks) === "[false]");
+  ok("AIX の答案でも言ってはいけない事があれば AI", ruleJudge({ asks: A, ngN: 1, pathLabel: "AIX:viewing_invite", pathOk: true, needRawPath: false }) === null);
+  ok("返信の答案は AI", ruleJudge({ asks: R, ngN: 0, pathLabel: "返信", pathOk: true, needRawPath: false }) === null);
+  ok("本質の道が要る時は AI", ruleJudge({ asks: A, ngN: 0, pathLabel: "AIX:x", pathOk: true, needRawPath: true }) === null);
+  ok("送らない答案＝依頼 false・言ってはいけない事 false", JSON.stringify(ruleJudge({ asks: R, ngN: 2, pathLabel: "なし（連絡待ち）", pathOk: true, needRawPath: false })) === JSON.stringify({ asks: [false], route: [false], ng: [false, false], why: "送らない答案（決まり）" }));
+  ok("道が外れは lazy の受け持ち（ここは null）", ruleJudge({ asks: A, ngN: 0, pathLabel: "AIX:x", pathOk: false, needRawPath: false }) === null);
+}
 // 5. 途中で止める
 {
   const cm = (xs: string) => xs.split(",").map((c, i) => ({ id: `p${i}`, cmp: c as never }));
   ok("はっきり悪化で止める", stopDecision(cm("worse,worse,worse,same"), new Set()).action === "stop");
   ok("数が少ない内は止めない", stopDecision(cm("worse,worse,worse"), new Set()).action === "go");
+  // 2026-10-21 ⑥ 入力が同じ問題は数えない・最初の8問で決める
+  ok("入力が同じ問題は見た数に入れない", stopDecision(cm("worse,worse,worse,same"), new Set(), { minSeen: 4, worseN: 3, betterN: 3, window: 8 }, new Set(["p3"])).action === "go");
+  ok("最初の8問に悪化3つで止める", stopDecision(cm("same,worse,same,worse,same,worse,same,same,better,better,better"), new Set(), { minSeen: 4, worseN: 3, betterN: 3, window: 8 }).action === "stop");
+  ok("9問目以降の悪化は窓の外", stopDecision(cm("same,same,same,same,same,same,same,same,worse,worse,worse"), new Set(), { minSeen: 4, worseN: 3, betterN: 3, window: 8 }).action === "go");
   ok("揺れる問題の悪化は数えない", stopDecision(cm("worse,worse,worse,same,same"), new Set(["p0"])).action === "go");
   ok("良くなった分を差し引く", stopDecision(cm("worse,worse,worse,better,better"), new Set()).action === "go");
   ok("はっきり良い", stopDecision(cm("better,better,better,same"), new Set()).action === "fewer");

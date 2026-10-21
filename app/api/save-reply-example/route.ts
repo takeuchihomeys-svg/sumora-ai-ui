@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
+import { screeningAdminSupabaseKey } from "@/app/lib/supabase-server-key";
 import { createClient } from "@supabase/supabase-js";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 // 2026-09-29 API 費用の調査: 送信後の学習（Sonnet 165回・Haiku 206回／7日）が llm_usage_logs で名前なしだった → 名札だけ付ける
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
@@ -1030,7 +1031,7 @@ async function notifyCalendarCreated({
 
     // 申込ツール（screening-admin daily_tasks）にも同期（取りこぼし防止）
     const screeningUrl = process.env.SCREENING_ADMIN_SUPABASE_URL;
-    const screeningKey = process.env.SCREENING_ADMIN_SUPABASE_ANON_KEY;
+    const screeningKey = screeningAdminSupabaseKey();
     if (screeningUrl && screeningKey) {
       const EVENT_EMOJI: Record<string, string> = {
         viewing: "🔍", application: "📋", phone: "📞", photo: "📸",
@@ -1077,7 +1078,7 @@ async function markRelatedDailyTasksDone(
 ): Promise<void> {
   try {
     const screeningUrl = process.env.SCREENING_ADMIN_SUPABASE_URL;
-    const screeningKey = process.env.SCREENING_ADMIN_SUPABASE_ANON_KEY;
+    const screeningKey = screeningAdminSupabaseKey();
     if (!screeningUrl || !screeningKey) return;
 
     // 顧客名を conversations テーブルから取得

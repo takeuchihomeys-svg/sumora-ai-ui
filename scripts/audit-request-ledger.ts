@@ -8,7 +8,7 @@ import { splitRequests, buildRequestLedger, uncoveredRequests, TOPIC_JA, type Le
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const DAYS = Number(arg("days", "60")); const SHOW = arg("show", "open"); const N = Number(arg("n", "40"));
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 type M = { conversation_id: string; sender: string; created_at: string; text: string | null; is_aix_generated: boolean | null };
 async function main() {
   const since = new Date(Date.now() - DAYS * 86_400_000).toISOString();

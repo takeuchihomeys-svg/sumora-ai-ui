@@ -27,7 +27,7 @@ import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReaso
 import { AIX_PICKERS } from "./aix-pickers";
 import { isTestOnlyConversation } from "./test-conversations";
 import { testPiiRefusal } from "./test-pii-guard";
-import { altPiiSignal, altPiiGateEnabled } from "./alt-pii-gate";
+import { altPiiSignal, altPiiGateEnabled, altPiiSignalReapply, altPiiSignalReapplyValues, altReapplyGateEnabled, maskAltBody, maskInsteadEnabled } from "./alt-pii-gate";
 import { screeningSensitiveSignal, screeningPiiClaudeEnabled } from "./screening-sensitive";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
@@ -1097,6 +1097,22 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
         return toClaude("線より前のお客様の発言が本文に残っている");
       }
     }
+    // 2026-10-21 竹内さんの決定（ec4d5990）: 印 masked（2番手で申込中・並行で探す）は出口の網が動いている時だけ渡す（伏せる仕組みが止まっていれば Claude）
+    const reapplyNet = (mark?.kind === "cut" || mark?.kind === "masked") && altReapplyGateEnabled(process.env);
+    if (mark?.kind === "masked" && !reapplyNet) return toClaude("印 masked だが出口の網（LLM_ALT_PII_GATE / LLM_ALT_REAPPLY_GATE）が止まっている");
+    // 2026-10-21 竹内さんの決定（414dc9d4）「申込中のところのお客さんの情報マスキングすればちゃんと DeepSeek に渡せる」:
+    //   線のある呼び出し（cut）と masked は、網に当たったら Claude に戻す前に、まず申込情報の値（年収・生年月日・勤務先・書類の読み取り・申込フォームの欄・携帯・メール）を
+    //   伏せ字に置き換える（alt-pii-gate.maskAltBody）。置き換えた後にまだ値が残る時だけ Claude。審査の事情は伏せずに Claude（下の網）。止める REAPPLY_MASK_INSTEAD=off
+    let maskedRemain: string | null = null;
+    if (reapplyNet && maskInsteadEnabled(process.env)) {
+      const mk = maskAltBody(body);
+      maskedRemain = mk.remain;
+      if (!mk.remain) {
+        if (mk.changed) console.log(JSON.stringify({ tag: "llm-alt:masked-application-values", route: routeName, mark: mark?.kind, conversationId: convForGate }));
+        body = mk.masked;
+      }
+    }
+    const maskMode = reapplyNet && maskInsteadEnabled(process.env);
     // 2026-10-01 再生の場面に記入済みの申込フォームが混ざり DeepSeek に渡った事故（⑦・会話 ae321772）: テストの間は個人の値がある本文を送らない（本番は null）
     const piiRefusal = testPiiRefusal(process.env, altBodyText(body), "DeepSeek");
     if (piiRefusal) blockAndThrow(piiRefusal);
@@ -1104,7 +1120,24 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     //   残っていれば DeepSeek に出さない（入口の伏せ漏れの最後の歯止め・alt-pii-gate.ts）。実データ 10/01〜15 の 2,830通: 伏せた後も当たる通 6
     //   （空白区切りの携帯番号・記入済みの申込フォーム＝申込へ を押す前に届くと時刻の線が引かれない）・スタッフ／AIX の通 0。
     //   物件の判断・読み取り（Claude に倒さない名札）は送らずに失敗にする。費用0の行を残す（後から回数を数える）。止める LLM_ALT_PII_GATE=off
-    const piiGate = altPiiGateEnabled(process.env) ? altPiiSignal(altBodyText(body)) : null;
+    // 2026-10-21（023ec7bd）申込から戻ったお客様（線より後だけに切った呼び出し＝cut）は、messages の本文に申込情報の名残（年収・生年月日らしい日付・勤務先・
+    //   本人確認書類／収入の書類の読み取り・申込フォームの欄・入口で伏せた跡）が1つでもあれば Claude（alt-pii-gate.altPiiSignalReapply）。止める LLM_ALT_REAPPLY_GATE=off
+    const piiGate = altPiiGateEnabled(process.env)
+      // 伏せる形（maskMode）: 伏せきれなかった値（maskedRemain）・伏せた後の値の網・審査の事情だけで戻す（欄の見出し・伏せ字の跡では戻さない）
+      ? maskMode
+        ? maskedRemain
+          ?? altPiiSignal(altBodyText(body))
+          ?? (screeningPiiClaudeEnabled() ? (screeningSensitiveSignal((body.messages ?? []).map((m) => flattenContent(m.content) ?? "").join("\n")) ? "審査の事情" : null) : null)
+        : altPiiSignal(altBodyText(body))
+        ?? (reapplyNet
+          ? altPiiSignalReapply((body.messages ?? []).map((m) => flattenContent(m.content) ?? "").join("\n"))
+            // 2026-10-21 確かめ役: AIX は会話の材料を system の動的な塊に入れる → system にも値だけの網（指示文の語では止めない）
+            ?? altPiiSignalReapplyValues(flattenContent(body.system))
+            // 2026-10-21 確かめ役: 線より後に作ったセーブデータ・会話の方向にも審査の事情（夜職・滞納・名義…）が持ち越される（実データ 4a79a43e のセーブデータ）。
+            //   入口の会話単位の判定（SCREENING_PII_CLAUDE）の取りこぼしの歯止めとして、線のある呼び出しの messages にも当てる
+            ?? (screeningPiiClaudeEnabled() ? (screeningSensitiveSignal((body.messages ?? []).map((m) => flattenContent(m.content) ?? "").join("\n")) ? "審査の事情" : null) : null)
+          : null)
+      : null;
     if (piiGate) {
       recordAltUsage({ model: targetConfigFor(cfg, routeName).model, action: routeName, conversationId: convForGate, usage: {}, status: 0, errorType: "alt_skipped_pii",
         durationMs: 0, stream: !!body.stream, sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null });

@@ -18,7 +18,7 @@
 // 【線】申込中の会話・線より前は DeepSeek に渡さない（loadDeepseekCutoff・ensureImageDetail と同じ）。こちらが送る資料の画像だけに使う
 // 戻す: IMAGE_READ_LEDGER=off（AIX は台帳を作らない・送った後は今まで通り読む）
 import { createHash } from "node:crypto";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { PROPERTY_IMAGE_TRANSCRIBE_PROMPT, PROPERTY_IMAGE_PROMPT, parseReadResult, parseTranscript, type ReadResult, type ReadItem, type ImageKind } from "@/app/lib/property-image-read";
 import { JA_KANJI_INSTRUCTION, jaKanji } from "@/app/lib/ja-kanji";
 import { parseLedgerFacts, trimTranscriptRepetition, type LedgerFacts } from "@/app/lib/recommend-fact-guard";

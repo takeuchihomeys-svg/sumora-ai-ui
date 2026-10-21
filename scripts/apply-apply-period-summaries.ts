@@ -21,7 +21,7 @@ const STMTS = [
   message_count INTEGER,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`,
-  `ALTER TABLE apply_period_summaries DISABLE ROW LEVEL SECURITY;`,
+  // 2026-10-21 RLS: サーバーだけの表は RLS を入れたまま（DISABLE の行は消した・戻さない）（apply_period_summaries）
   `SELECT pg_notify('pgrst', 'reload schema');`,
 ];
 

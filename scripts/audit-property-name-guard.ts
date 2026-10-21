@@ -10,7 +10,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { guardPropertyNames, collectPropertyNames, hasFixedViewing } from "../app/lib/property-name-guard";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 const DAYS = Number(process.argv.find((a) => a.startsWith("--days="))?.split("=")[1] ?? 365);
 const short = (s: string, n = 90) => s.replace(/\s+/g, " ").slice(0, n);
 

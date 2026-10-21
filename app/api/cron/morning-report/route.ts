@@ -1,7 +1,7 @@
 ﻿// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { isWaitPromiseNotes } from "@/app/lib/promise-timing";
 import { flagOn } from "@/app/lib/brain-attention";
@@ -13,6 +13,7 @@ import { checkSchemaObjects, schemaObjectsWarningLine } from "@/app/lib/schema-o
 import { checkCaptureStalls } from "@/app/lib/line-watch-eval-server";
 import { watchStallAlertEnabled } from "@/app/lib/line-watch-scope";
 import { loadSelfReviewSection } from "@/app/lib/self-review-morning";
+import { staffTodoListEnabled } from "@/app/lib/staff-todo-list";
 
 export const maxDuration = 60;
 
@@ -661,7 +662,7 @@ export async function GET(req: NextRequest) {
     }
     // 2026-10-20 見張りの控えの止まり（line-watch-scope.findCaptureStalls・読むだけ）: 昨日の営業時間（JST 10〜20）にブレインは動いているのに
     //   line_watch_turns の下書き・判断の欄が2時間以上埋まらなかった区間（10/12〜10/15 の約60時間の止まりは誰も気づかなかった）。
-    //   LINE（このグループ）に出すのは LINE_WATCH_STALL_ALERT=on の時だけ（既定 off）。毎晩の line-watch-daily は常に記録する（cron_run_logs・画面）
+    //   LINE（このグループ）に出す（既定 on・竹内さん 10/21 OK・止める LINE_WATCH_STALL_ALERT=off）。毎晩の line-watch-daily は常に記録する（cron_run_logs・画面）
     if (watchStallAlertEnabled()) {
       try {
         const st = await checkCaptureStalls(supabase, { fromMs: Date.now() - 24 * 3600_000, toMs: Date.now() });
@@ -688,10 +689,15 @@ export async function GET(req: NextRequest) {
     : "";
 
   const sections: string[] = [];
+  // 2026-10-21 竹内さんの決定（f87ccb7e）「被っているの全部こっちに置き換える」: 【やることリスト】（cron/staff-todo-list・10:30〜20:30 の1時間ごと）が
+  //   お客様との約束・AIX要対応・未返信を持つので、この朝の報告では出さない（line_tasks の残り・今日物件を出すべきお客さん＝ターゲットは今のまま）。
+  //   戻す: STAFF_TODO_LIST=off
+  const todoOn = staffTodoListEnabled();
+  if (todoOn) sections.push("📝 お客様との約束・AIX要対応・未返信は【やることリスト】（10:30〜20:30 の1時間ごと）にまとめてお送りします");
 
   // ⓪ お客様との約束（【必ず】）で、まだ履行していないもの（2026-09-16 竹内「連絡漏れが多い」）
   //   送信時の記録から決定論で置いた行。時刻が過ぎても自動では消えず、物件送付・御見積書送付・確認結果の報告で完了になる
-  try {
+  if (!todoOn) try {
     //   7日以内は1件ずつ（line_tasks の放置40件のように先頭に固定されないため上限30）。
     //   2026-09-16 竹内（𝒮❦ 事例）「絶対に逃さない」: 7日超も黙って落とさず件数だけ末尾に出す（カレンダーには残っている）
     const { data: mustRows } = await supabase
@@ -734,7 +740,7 @@ export async function GET(req: NextRequest) {
   const allTasks = pendingTasks ?? [];
   const tasks = brainTasks ? allTasks.filter((t) => Date.parse(t.created_at as string) >= staleCutoffMs) : allTasks;
   const staleTaskCount = allTasks.length - tasks.length;
-  if (brainTasks) {
+  if (brainTasks && !todoOn) {
     try {
       const { data: items } = await supabase.from("aix_action_items")
         .select("customer_name, action, check_pattern, notified_at, created_at")
@@ -761,7 +767,7 @@ export async function GET(req: NextRequest) {
 
   // ② 未返信
   const unreplied = unrepliedConvs ?? [];
-  if (unreplied.length > 0) {
+  if (unreplied.length > 0 && !todoOn) {
     const lines = unreplied.map((c, i) => {
       const acct = ACCOUNT_LABEL[(c.account as string) ?? "sumora"] ?? "スモラ";
       return `${i + 1}. ${c.customer_name ?? "名称未設定"}さん（${acct}）— ${relTime(c.updated_at as string)}`;

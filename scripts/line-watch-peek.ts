@@ -3,7 +3,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { loadLineWatch } from "../app/lib/line-watch-server";
 (async () => {
-  const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+  const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
   const t0 = Date.now();
   const d = await loadLineWatch(sb, { includeTest: process.argv.includes("--test") });
   console.log("ms", Date.now() - t0);

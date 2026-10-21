@@ -1,6 +1,6 @@
 // scripts/preview-target-list.ts — 「🌟ターゲット🌟」の見本と hot から外す候補を本番のデータで出す（読むだけ・グループには流さない・DB に書かない・LLM なし）
 // 実行: npx tsx --env-file=.env.local scripts/preview-target-list.ts
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { loadBrainTargets, loadScreeningList, syncBrainHotDrops } from "@/app/lib/brain-attention-server";
 import { formatTargetList } from "@/app/lib/target-list-format";
 

@@ -27,7 +27,7 @@ const args = Object.fromEntries(process.argv.slice(2).map((a) => { const m = a.m
 const DAYS = parseInt(String(args.days ?? "60"), 10);
 const UNTIL = String(args.until ?? new Date().toISOString());
 const SHOW = parseInt(String(args.show ?? "8"), 10);
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 type Row = Record<string, any>;
 const D = 864e5;
 

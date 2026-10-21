@@ -42,6 +42,7 @@ import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
 import { sendBlockedMessage, isMultiPersonTarget, isGroupConversationName } from "./lib/line-target";
+import { SCREENING_BUTTON, SCREENING_TOPIC_OPTIONS, type ScreeningTopic } from "./lib/aix-owner-answers-1021";
 import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
 import { morningGreetingCardDue, morningGreetingCardNote } from "./lib/viewing-day-greeting";
 import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA, ABOUT_JA as REQUEST_ABOUT_JA } from "./lib/request-ledger";
@@ -1073,6 +1074,9 @@ export default function Home() {
   const [showDaihyoCheckPicker, setShowDaihyoCheckPicker] = useState(false);
   const [suggestedDaihyoCostMode, setSuggestedDaihyoCostMode] = useState<"initial_cost" | "other" | null>(null);
   const [showKoshoParentPicker, setShowKoshoParentPicker] = useState(false);
+  // 2026-10-21 竹内さん C9: 新しいボタン【審査について】の選択肢シート・選んだ審査内容（AixModal に渡す）
+  const [showScreeningPicker, setShowScreeningPicker] = useState(false);
+  const [aixInitScreeningTopic, setAixInitScreeningTopic] = useState<ScreeningTopic | null>(null);
   const [suggestedKoshoMode, setSuggestedKoshoMode] = useState<"mgmt" | "daihyo" | "owner" | null>(null);
   const [showOwnerCheckPicker, setShowOwnerCheckPicker] = useState(false);
   const [suggestedOwnerCostMode, setSuggestedOwnerCostMode] = useState<"initial_cost" | "other" | null>(null);
@@ -7155,7 +7159,7 @@ export default function Home() {
           // 2026-09-16 竹内（𝒮 さん事例）: お客様が日にちを1日だけ指定していれば、その日の空き時間を全部。
           //   こちらから日にちを出す日は1日1つ（旧: カレンダーの空き枠を全部そのまま渡していた）
           const req = requestedViewingDatesFromMessages(recentMessages);
-          const { infoString } = await fetchCalendarSlots(req.map((r) => r.ymd));
+          const { infoString } = await fetchCalendarSlots(supabase, req.map((r) => r.ymd));
           calendarInfoStr = limitSlotsPerDay(infoString, req.length === 1 ? req.map((r) => r.md) : []);
         } catch {
           // カレンダー取得失敗は無視して続行
@@ -11837,6 +11841,7 @@ export default function Home() {
           initialFollowupSubMode={aixInitFollowupSubMode ?? undefined}
           initialInputText={aixInitInputText || undefined}
           initialCheckPattern={aixInitCheckPattern ?? undefined}
+          initialScreeningTopic={aixInitScreeningTopic ?? undefined}
           // 2026-10-01 竹内「AIX 開いたら…物件名等はセットされていて」: 売上サポで選んで渡した物件（同じ会話の時だけ）
           // 2026-10-13 当たり率の直し（区切り3・未桜 10/9・dd34f5b0 9/27）: 売上サポの handoff はその AIX（物件ピックアップ／オススメ）の1回分。
           //   旧は会話が同じなら別の AIX（物件確認した・待ち合わせ・見積書）にも handoff の物件名を先入れしていた → 送った本文と違う物件名が記録に残った。
@@ -11871,6 +11876,7 @@ export default function Home() {
             setAixInitFollowupSubMode(null);
             setAixInitInputText("");
             setAixInitCheckPattern(null);
+            setAixInitScreeningTopic(null);
             // 未使用の2通目設定をクリア（キャンセル時に手動送信で誤発火しないよう）
             pendingSecondMsgRef.current = null;
             setActiveAixFlow(null);
@@ -14810,17 +14816,7 @@ export default function Home() {
                     <path d="M30 36l4 4 8-8" stroke="#546E7A" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
                   </>
                 },
-                {
-                  // 2026-10-20 竹内さん（P1 84519320）: 審査の相談（名義・保証人なし・職業・国籍）への答え。基本は「気に入ったお部屋なら審査はかけてみることが出来ます」
-                  key: "mgmt_screening",
-                  label: "審査について（ご相談）",
-                  desc: "名義・保証人・職業・国籍など審査の相談を管理会社・保証会社に確認した結果",
-                  hint: "",
-                  icon: <>
-                    <path d="M36 20L50 28V36C50 44.8 43.6 52.4 36 55C28.4 52.4 22 44.8 22 36V28L36 20Z" stroke="#546E7A" strokeWidth="1.8" strokeLinejoin="round"/>
-                    <path d="M33 33a3 3 0 116 0c0 2-3 2.5-3 5M36 42v.5" stroke="#546E7A" strokeWidth="1.8" strokeLinecap="round"/>
-                  </>
-                },
+                // 2026-10-21 竹内さん C9: 「審査について（ご相談）」は新しいボタン【審査について】に移した（審査の答えは1か所から・値 mgmt_screening は今まで通り）
                 {
                   // 2026-10-20 竹内さん（P1 ec545624）「申込状況についてのピッカーを作り…申込誘導を入れる」
                   key: "mgmt_application_status",
@@ -15188,6 +15184,40 @@ export default function Home() {
               onClick={() => { setShowKoshoParentPicker(false); setActiveAixFlow(null); }}
               className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
             >キャンセル</button>
+          </div>
+        </div>
+      )}
+
+      {/* 2026-10-21 竹内さん C9: AIX【審査について】の選択肢（保証会社について＝旧ボタンの流れ・他＝審査について（ご相談）に審査内容を付けて開く） */}
+      {showScreeningPicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => { setShowScreeningPicker(false); setActiveAixFlow(null); }}
+        >
+          <div className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">{SCREENING_BUTTON}</p>
+            <p className="mb-5 text-center text-[13px] leading-snug text-[#6B7280]">何についての審査のご相談ですか？</p>
+            <div className="flex flex-col gap-2">
+              {SCREENING_TOPIC_OPTIONS.map((o) => (
+                <button
+                  key={o.value}
+                  onClick={() => {
+                    setShowScreeningPicker(false);
+                    if (o.value === "guarantor") { setActiveAixFlow("guarantor_info"); openAixDirect("guarantor_info"); return; }
+                    setActiveAixFlow("property_check_result");
+                    propertyCheckSubTypeRef.current = "mgmt";
+                    setAixInitCheckPattern("mgmt_screening");
+                    setAixInitScreeningTopic(o.value);
+                    openAixDirect("property_check_result");
+                  }}
+                  className="flex flex-col rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3 text-left transition active:bg-[#E8EAF6] active:border-[#3949AB]"
+                >
+                  <span className="text-[14px] font-semibold text-[#111827]">{o.label}</span>
+                  <span className="text-[11px] text-[#9CA3AF]">{o.desc}</span>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => { setShowScreeningPicker(false); setActiveAixFlow(null); }} className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">キャンセル</button>
           </div>
         </div>
       )}
@@ -15798,7 +15828,8 @@ export default function Home() {
                   { color: "#2E7D32", label: "初期費用を説明", actionType: "cost_explain", sub: "安さを不審に思われた時に仕組み＋貸主からの報酬・還元額を1通で説明", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("cost_explain"); openAixDirect("cost_explain"); } },
                   { color: "#558B2F", label: "初期費用について", actionType: "cost_breakdown", sub: "御見積書の画像を貼り付け→会話を合わせるで初期費用の中身（含まれる項目・家賃だけで入居できるか）を説明", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("cost_breakdown"); openAixDirect("cost_breakdown"); } },
                   { color: "#06C755", label: "電話する", actionType: "phone_call", sub: "「電話をかける」ボタン＋案内文を送る／電話が終わったら話した内容からお礼とまとめを作る", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("phone_call"); setShowPhonePicker(true); } },
-                  { color: "#3949AB", label: "保証会社について", actionType: "guarantor_info", sub: "物件ごとの保証会社名・種類を入れて一覧と審査の通りやすさ、かぶらない保証会社なら並行審査の勧めを1通で", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("guarantor_info"); openAixDirect("guarantor_info"); } },
+                  // 2026-10-21 竹内さん C9: 旧【保証会社について】は新しいボタン【審査について】の中の選択肢の1つ（審査内容: 職業・名義・保証人・外国籍・時期・その他）
+                  { color: "#3949AB", label: SCREENING_BUTTON, actionType: "guarantor_info", sub: "保証会社について／職業・名義・保証人・外国籍・時期など審査の相談に、確認した結果で答える（必ず Claude）", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setShowScreeningPicker(true); } },
                   { color: "#0288D1", label: "お部屋探し条件ヒアリング", actionType: "condition_hearing", sub: "条件フォーム①〜⑧をワンタップで送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("condition_hearing"); openAixDirect("condition_hearing"); } },
                   { color: "#9C27B0", label: "内覧日を調整する", actionType: "viewing_invite", sub: "日程をタップして選択→AI文生成→内覧案内LINEを送信。内覧率UPに直結！", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ場所", actionType: "meeting_place", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },

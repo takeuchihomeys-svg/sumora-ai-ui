@@ -14,7 +14,7 @@
 //         npx tsx --env-file=.env.local scripts/verify-sent-image-read-yuma.ts [--cases=1,2,3] [--keep]
 // 実行（手元・送信の口なし）: VERIFY_BASE_URL=http://localhost:3217 npx tsx --env-file=.env.local scripts/verify-sent-image-read-yuma.ts --direct
 // 実行（本番・デプロイ後）: VERIFY_BASE_URL=https://sumora-ai-ui.vercel.app VERIFY_INTERNAL_SECRET=<本番の INTERNAL_API_SECRET> … 同じ
-import { supabase as sb } from "../app/lib/supabase";
+import { supabase as sb } from "../app/lib/supabase-server";
 
 const BASE = process.env.VERIFY_BASE_URL ?? "http://localhost:3217";
 const SECRET = process.env.VERIFY_INTERNAL_SECRET ?? "";

@@ -1,4 +1,4 @@
-﻿import { supabase } from "@/app/lib/supabase";
+﻿import { supabase } from "@/app/lib/supabase-server";
 import { manYen } from "./man-yen";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）

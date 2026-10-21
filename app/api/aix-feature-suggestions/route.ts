@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 // P4: AIX機能改善提案（aix_feature_suggestions）
 // corpus2skill 週次Opusが new_aix_picker 提案をINSERTし、

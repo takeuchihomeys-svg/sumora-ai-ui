@@ -6,7 +6,7 @@
 //   2026-10-16: 同じ回で大きく直された番の拾い出し（edited-turn-miner・cron_run_logs の edited-turn-miner・数だけ）も回す。止める EDITED_TURN_MINER=off
 //   ?dry=1 … 記録しない
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { buildLineWatchDailyReport } from "@/app/lib/line-watch-eval-server";
 import { mineEditedTurns } from "@/app/lib/edited-turn-miner-server";

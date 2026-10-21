@@ -12,7 +12,7 @@ const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--$
 const IN = arg("in", "scripts/.replay-out/grasp-r7diff-40d.jsonl");
 const DAYS = Number(arg("days", "45"));
 const SHOW = arg("show", "");
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 type Pair = { cid: string; at: string; sub: string; customer: string; draft: string; staff: string; sim: number; added?: string[]; removed?: string[]; staffOnly?: boolean };
 type Msg = { conversation_id: string; sender: string; created_at: string; text: string | null; is_aix_generated: boolean | null };
 

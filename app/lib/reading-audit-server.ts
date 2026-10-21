@@ -10,7 +10,7 @@
 //     amounts  … 送った画像の読み取りの金額（賃料・管理費・敷金・礼金）を同じ部屋の売上サポの行（資料の文字の層）で答え合わせした誤り
 //     vacancy  … 売上サポの行の読み取り（image_lines）で、入居時期の日付を退去予定にした行（sheet-vacancy.ts＝0 が正）
 //   落ちた時（alerts が1つ以上）は cron_run_logs.result_json に残す（AIXツールの見張りが読む）。LINE には送らない（送る案は memory/dept_line_reply.md）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { CHINESE_FORM_RE } from "@/app/lib/ja-kanji";
 import { canonicalRoomNo, canonicalRoomLabel } from "@/app/lib/room-no";
 import type { LlmSpendReport } from "@/app/lib/llm-spend-audit";

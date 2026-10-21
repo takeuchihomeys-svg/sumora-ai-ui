@@ -1,7 +1,7 @@
 // app/lib/ground-truth.ts
 // final-check anomaly_scan 用の正解データ取得（チェックポイント + property_customers）
 // 絶対に throw しない・GT_TIMEOUT_MS で諦める（fail-open — 送信を絶対に止めない）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { isAfterCutoff, cutoffMs, NO_CUTOFF, type DeepseekCutoff } from "@/app/lib/post-apply";
 import { scrubDerivedForDeepseek } from "@/app/lib/apply-period-summary";
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
 import { flagOn } from "@/app/lib/brain-attention";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { isGenerationFailureText } from "@/app/lib/example-hygiene";
 import { classifyStaffTextFacts } from "@/app/lib/action-ledger";

@@ -48,7 +48,7 @@ export async function screeningSensitiveForConversation(conversationId: string, 
   if (running) return running;
   const p = (async () => {
     try {
-      const sb = opts.sb ?? (await import("./supabase")).supabase;
+      const sb = opts.sb ?? (await import("./supabase-server")).supabase;
       const hit = await (opts.load ?? loadScreeningSensitive)(sb as Sb, conversationId);
       if (c.size > 5000) for (const [k, v] of c) if (!v.hit) c.delete(k);   // 当たらなかった物だけ捨てる（当たった会話は残す）
       c.set(conversationId, { at: now, hit });

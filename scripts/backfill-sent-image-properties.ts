@@ -13,7 +13,7 @@ import { readPropertyImage } from "../app/lib/property-image-read";
 import { resolveReadProperty } from "../app/lib/property-name-match";
 import { extractPropertyLabels } from "../app/lib/action-ledger";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 const arg = (k: string, d: string) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split("=")[1];
 const DAYS = Number(arg("days", "90")), LIMIT = Number(arg("limit", "10")), CONC = Number(arg("conc", "6"));
 const DRY = process.argv.includes("--dry");

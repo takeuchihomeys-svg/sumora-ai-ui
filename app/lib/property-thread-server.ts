@@ -1,7 +1,7 @@
 // app/lib/property-thread-server.ts — 物件ごとの状況の台帳（property-thread.ts）の材料を DB から読む所（読むだけ・新しい表は作らない）
 // 2026-10-07 竹内（S❤ 事例）「物件にたいして反応や進捗があれば1件ずつそのデータ保管して、物件の事にたいしての話になったときは、状況を理解出来るように」
 //   保管は既存の記録（messages の引用・送った画像の記録 sent_image_properties／sent_properties・aix_usage_logs・estimate_records）＝二重に持たない。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { resolvePropertyThreads, buildPropertyThreadNote, propertyThreadEnabled, type PropertyThreadState, type PtMsg, type PtAix, type PtEstimate, type PtRecommendation } from "@/app/lib/property-thread";
 

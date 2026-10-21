@@ -6,7 +6,7 @@
 //   認証: 画面の内部認証（Authorization: Bearer NEXT_PUBLIC_INTERNAL_API_SECRET）。お客様の名前・下書きの文が載るので付ける
 import { NextRequest, NextResponse } from "next/server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { loadLineWatch } from "@/app/lib/line-watch-server";
 
 export const dynamic = "force-dynamic";

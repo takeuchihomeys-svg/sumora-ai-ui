@@ -14,6 +14,10 @@
 //   台帳:       npx tsx scripts/exam-brain.ts --ledger [--id=q153] [--days=14]
 //   モデル比べ: npx tsx --env-file=.env.local scripts/exam-brain.ts --model-check --conv=YUMA4 [--types=待って・閉じる] [--n=8]
 //   片付け:     npx tsx --env-file=.env.local scripts/exam-brain.ts --cleanup --conv=YUMA2 --label=dg1016-a [--from=<作業ツリー>] [--apply]
+//   今日の費用: npx tsx --env-file=.env.local scripts/exam-brain.ts --spend-today（main の作り直し／担当の確かめ／夜・同じ版の作り直しの重なり・連携で避けた分）
+// 10/21 連携（scripts/lib/exam-coord.ts）: 同じ比べ（コード・スイッチ・main の版・問題と回数）を今日もう流していれば止める（--force で流す）。
+//   担当ごとの1日の上限 EXAM_RUN_CAP_USD（既定 $5・off で無し）を超える回は夜中に予約（--over-cap／--force で今）。
+//   main の答えは版ごとに1人だけが作る（他の担当は待って使う・EXAM_BASELINE_WAIT_MIN）・前の main と要求が同じ段は前の答え（EXAM_BASELINE_PIN=off で止める）
 // 決める事の引数（既定は試験のブレインが決める）:
 //   --when=auto|now|night（auto: 最後の関所・見込み $1 以上は安い時間 JST 1:30〜9:30 に予約）・--wait（予約の代わりにその時間まで待って流す）
 //   --max-reps=3・--no-early-stop・--stop-worse=3・--no-reuse・--judge=lazy|full（既定 lazy）・--judge-prefix=as-is|rubric（既定 as-is）
@@ -31,10 +35,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rea
 import { join, resolve } from "node:path";
 import { execSync, execFileSync } from "node:child_process";
 import {
-  mergePicks, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse, dbKeyOf,
+  mergePicks, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, CHEAP_WINDOW_JST, reuseKey, kbKeyOf, canReuse, dbKeyOf,
   modelOf, estimateUsd, DEFAULT_STOP, draftEligible, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
   decidePhase, pickSmall, smallRank, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
-  warmDecision, warmLimit, flashSpotCheck, flashProof, FLASH_TYPE_MIN_N, isFixTarget, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3,
+  warmDecision, warmLimit, flashSpotCheck, flashProof, FLASH_TYPE_MIN_N, isFixTarget, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3, jstDayStart,
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
@@ -43,6 +47,10 @@ import {
 } from "./lib/exam-brain-io";
 import { decideStageFromDiff, examVersionKey } from "./lib/exam-scope";
 import { BASELINE_DIR } from "./lib/brain-exam-baseline";
+import { examEnvFingerprint, formatEnvFp } from "./lib/exam-env-fp";
+import * as C from "./lib/exam-coord";
+// 2026-10-21 スイッチの指紋（既定＝.env.local と違うスイッチ・exam-env-fp.ts）。使い回しの鍵に入れる・見出しと台帳に残す
+const ENV_FP = examEnvFingerprint(process.env);
 import { dbFpMode, problemReadsRent, type DbFpMode } from "./lib/exam-db-fp";
 import { problemHash, examConfig, configHash } from "./lib/brain-exam-baseline";
 import { flakeVerdict, readObs, FLAKE_DIR } from "./lib/exam-flake";
@@ -78,6 +86,11 @@ const JUDGE = arg("judge", "lazy") === "full" ? "full" : "lazy";
 // 2026-10-17 確かめ: rubric の並べ替えは判定の答えを変える（q113 の下書き 2/3→0/3）＝既定は旧の並び（as-is）。rubric は別に比べてから
 const JUDGE_PREFIX: "as-is" | "rubric" | "stable" = (() => { const v = arg("judge-prefix", "as-is"); return v === "rubric" || v === "stable" ? v : "as-is"; })();
 const REPLAY = arg("replay") === "strict" ? "--replay=strict" : "--replay";
+// 2026-10-21 竹内さん「試験の次の節約（質は落とさない）」①入力の差の下見: 子を流す前に、AI を呼ばずに今の版の要求を作って main の要求と比べ、
+//   同じ問題×回は main の答えで答案を作る（呼ばない）。違う問題だけ本当に呼ぶ。止める: --input-diff=off（または EXAM_INPUT_DIFF=off）
+const INPUT_DIFF_PRE = (arg("input-diff") || process.env.EXAM_INPUT_DIFF || "on").trim().toLowerCase() !== "off";
+// ②揺れる問題で入力が同じ物は、揺れを測る時（夜の安い時間）だけ回を足す。止める: EXAM_FLAKY_NIGHT=off
+const FLAKY_NIGHT = (process.env.EXAM_FLAKY_NIGHT ?? "").trim().toLowerCase() !== "off";
 // 10/20 COST② 回数の決め方（confidence＝既定・自信が低い問題だけ1回ずつ足す／old＝旧）
 const REPS_MODE = repsModeOf(arg("reps"), process.env);
 // 10/20 COST①: 前（main）の答えが無い問題を今 main で解くか（now・既定）／今は解かず夜中の取り置きに回すか（night＝答えの無い問題は前との比べに入らない）。最後の関所は常に now
@@ -97,7 +110,12 @@ const jst = (d: Date) => new Date(d.getTime() + 9 * 3600_000).toISOString().repl
 
 // ─── 10/20 COST① main の答えは版ごとに1回（merge の後の安い時間に自動で取り置く） ─────────────────────
 /** 今の main（origin/main を取り直す・失敗しても手元で続ける）と試験に効く所の版の鍵 */
+let mainHeadMemo: { commit: string; vk: string } | null | undefined;
 function mainHead(): { commit: string; vk: string } | null {
+  if (mainHeadMemo === undefined) mainHeadMemo = mainHead0();
+  return mainHeadMemo;
+}
+function mainHead0(): { commit: string; vk: string } | null {
   try { execFileSync("git", ["fetch", "-q", "origin", "main"], { stdio: "ignore", timeout: 20_000 }); } catch { /* 手元で続ける */ }
   let commit = "";
   try { commit = execFileSync("git", ["rev-parse", "--verify", "origin/main^{commit}"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch { return null; }
@@ -105,12 +123,12 @@ function mainHead(): { commit: string; vk: string } | null {
 }
 /**
  * 今の main の版の答えが取り置かれていなければ、安い時間（夜中の --run-queue・JST 1:40）に --warm-main を予約する（同じ版は1回だけ）。
- *   既定は入れない（夜中に自動でお金を使う＝竹内さんの OK が出るまで）: 入れる EXAM_AUTO_WARM=on。会話は EXAM_WARM_CONV（無ければ今の --conv が YUMA2〜5 ならそれ・それ以外は YUMA5）
+ *   既定は入れる（竹内さん 10/21 OK・1日の上限の内）: 止める EXAM_AUTO_WARM=off。会話は EXAM_WARM_CONV（無ければ今の --conv が YUMA2〜5 ならそれ・それ以外は YUMA5）
  *   cont＝人が流した --warm-main の続き（上限で途中まで）＝旧の「次の夜中に回す」と同じ扱い（EXAM_AUTO_WARM=off の時だけ止める）
  */
 function ensureMainWarm(o: { force?: boolean; runNow?: boolean; quiet?: boolean; cont?: boolean } = {}): void {
   const aw = (process.env.EXAM_AUTO_WARM ?? "").trim().toLowerCase();
-  if (aw === "off" || (!o.cont && aw !== "on")) { if (!o.quiet && aw !== "off") log("main の取り置きの自動予約: 入れていない（EXAM_AUTO_WARM=on で入る・人が流すなら --warm-main）"); return; }
+  if (aw === "off") { if (!o.quiet) log("main の取り置きの自動予約: 止めている（EXAM_AUTO_WARM=off）"); return; }
   const h = mainHead();
   const d = warmDecision({ vk: h?.vk ?? null, log: readWarmLog(), queued: readQueue().map((x) => x.label), force: o.force });
   if (!d.enqueue || !h) { if (!o.quiet) log(`main の取り置き: ${d.why}`); return; }
@@ -135,6 +153,12 @@ function runBrainExam(a: string[], env: Record<string, string>, watch?: (out: Ch
     // 試験は既定で DeepSeek（最後の Claude は LLM_TEST_FINAL_CLAUDE=1 を自分で付ける）
     const base = process.env.LLM_TEST_MODE || process.env.LLM_TEST_FINAL_CLAUDE ? {} : { LLM_TEST_MODE: "deepseek-all" };
     const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", cmd.map(q), { env: { ...process.env, ...base, ...env }, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"] });
+    // 2026-10-21 確かめる人: Windows は親（この実行）を止めても npx の下の node が残り、試験が LLM を呼び続け・会話に書き続けた
+    //   → 親が止まる時（Ctrl+C・kill・終わり）は子の木ごと止める（taskkill /T）
+    const killTree = () => { if (ch.exitCode !== null || !ch.pid) return; try { if (process.platform === "win32") execFileSync("taskkill", ["/pid", String(ch.pid), "/T", "/F"], { stdio: "ignore" }); else ch.kill("SIGTERM"); } catch { /* 既に止まっている */ } };
+    const onSig = (sig: NodeJS.Signals) => { killTree(); process.exit(sig === "SIGINT" ? 130 : 143); };
+    process.on("exit", killTree); process.once("SIGINT", onSig); process.once("SIGTERM", onSig); process.once("SIGHUP", onSig);
+    ch.on("close", () => { process.off("exit", killTree); process.off("SIGINT", onSig); process.off("SIGTERM", onSig); process.off("SIGHUP", onSig); });
     let buf = "";
     const onData = (d: Buffer, err: boolean) => {
       const t = d.toString(); (err ? process.stderr : process.stdout).write(t);
@@ -170,6 +194,8 @@ type Plan = {
   phase: Phase; phaseWhy: string; allPicks: Pick[]; repsCap: number; versionKey: string;
   /** 10/17 ③ 会話の鍵（"-"＝会話の違いは答えに効かない・null＝読めない＝使い回さない） */
   conv: { key: string | null; why: string };
+  /** 2026-10-21 スイッチの指紋（"" ＝既定） */
+  envFp: string;
 };
 async function makePlan(label: string): Promise<Plan> {
   const { spec, full } = loadExamProblems();
@@ -242,8 +268,8 @@ async function makePlan(label: string): Promise<Plan> {
     // 2026-10-18: 相場の材料（rent_observations）は相場を聞く番の問題だけ鍵に入れる（中身の形だけ・旧は全部同じ）。読めない表がある時は db.brain/draft が null＝使い回さない（下の判定）
     const rent = problemReadsRent(p as never);
     const dbB = db.brain && dbKeyOf(dbParts, dbPartsOf("brain", fpMode, { rent })), dbD = db.draft && dbKeyOf(dbParts, dbPartsOf("draft", fpMode, { rent }));
-    const key = reuseKey({ problemHash: hash, stage: "brain", scopeKey: keys.brain, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: dbB ?? "-", convKey });
-    const draftKey = reuseKey({ problemHash: hash, stage: "draft", scopeKey: keys.draft, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: dbD ?? "-", convKey });
+    const key = reuseKey({ problemHash: hash, stage: "brain", scopeKey: keys.brain, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: dbB ?? "-", convKey, envFp: ENV_FP.hash });
+    const draftKey = reuseKey({ problemHash: hash, stage: "draft", scopeKey: keys.draft, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: dbD ?? "-", convKey, envFp: ENV_FP.hash });
     const reuse = !flag("no-reuse") && !!db.brain && conv.key !== null && canReuse(readReuse(p.id, key), key, reps);
     items.set(p.id, { id: p.id, reps, draft: false, reuse, model, why: pk.why, stage1: "brain", draftWhy: "", flake: fv.verdict, flakeWhy: fv.why, key, draftKey, hash });
   }
@@ -254,7 +280,7 @@ async function makePlan(label: string): Promise<Plan> {
   const draftPlan = { ids: draftMode === "all" ? dAll.ids : [], why: draftMode === "all" ? dAll.why : "ブレインの判断が前（main）と変わった問題だけ（1段目の後に決める）", mode: draftMode };
   if (CONDUCTED) { const ds = CONDUCTED.plan.focus.filter((f) => f.stage === "draft" && items.has(f.id) && draftEligible(probs.get(f.id) as PlanProblem)).map((f) => f.id); draftPlan.ids = ds; draftPlan.mode = ds.length ? "all" : "if-changed"; draftPlan.why = ds.length ? "司令塔が下書きまでと決めた問題" : "司令塔は下書きを選ばなかった（判断が前と変わった問題だけ）"; }
   for (const id of draftPlan.ids) { const it = items.get(id); if (it) { it.draft = true; it.draftWhy = draftPlan.why; } }
-  return { label, cls, clsNote, picks, items, probs, draftPlan, keys, cfgHash, ragNote, db, phase: ph.phase, phaseWhy: ph.why, allPicks, repsCap, versionKey, conv };
+  return { label, cls, clsNote, picks, items, probs, draftPlan, keys, cfgHash, ragNote, db, phase: ph.phase, phaseWhy: ph.why, allPicks, repsCap, versionKey, conv, envFp: ENV_FP.hash };
 }
 /** 見込みの値段: 旧は「安い時間（JST 1:30〜9:30）の外は混雑の値段」で数えていた。小さな確かめ・仕上げは本当の値段（2倍の時間だけ高い・llm-price の isDeepseekPeakAt） */
 const pricePeak = (pl: Plan, d: Date) => pl.phase === "off" ? !isCheapWindow(d) : isDeepseekPeakAt(d);
@@ -283,6 +309,7 @@ function printPlan(pl: Plan, now: Date, x: { budget?: Budget; peakWarn?: string 
   if (x.peakWarn) log(x.peakWarn);
   log(`形: ${pl.phase === "small" ? `小さな確かめ（${pl.picks.length}/${pl.allPicks.length}問・繰り返し ${pl.repsCap}回まで）` : pl.phase === "final" ? `仕上げ（選んだ問題全部 ${pl.allPicks.length}問）` : `旧（選んだ問題全部 ${pl.allPicks.length}問）`} — ${pl.phaseWhy}${pl.phase === "small" ? `／仕上げの時に足す ${pl.allPicks.length - pl.picks.length}問` : ""}`);
   log(`使い回し（作る人と確かめる人で分け合う・置き場 ${EXAM_BRAIN_DIR}）: ${pl.conv.why}`);
+  log(`スイッチの指紋（使い回し・録音の鍵に入る・前＝main は既定のスイッチで回す）: ${formatEnvFp(ENV_FP)}`);
   if (x.budget) {
     const b = x.budget, s = b.split;
     log(`1日の上限: ${b.cap === null ? "なし（EXAM_DAILY_CAP_USD=off）" : `今日の使用額 ${b.used ? `$${b.used.usd.toFixed(2)}（JST ${jst(now).slice(5, 10)}・試験 env の DeepSeek＋Claude ${b.used.rows}行）` : `読めない（${b.usedErr ?? ""}）＝上限まで使った物として数える`}・上限 $${b.cap}・この実行の見込み $${((s?.estNow ?? 0) + (s?.estLater ?? 0)).toFixed(2)}`}${s ? ` → ${s.why}` : ""}`);
@@ -307,12 +334,14 @@ function readModelCheck(): { okTypes: Set<string>; okIds: Set<string>; badIds: S
 
 // ─── 1つの段を流す（使い回し → 子 → 途中で止める → 確かめの回） ─────────────────────────
 type PhaseResult = { label: string; ids: string[]; cmps: Array<{ id: string; cmp: Cmp; why: string }>; baseLabels: string[]; mainLabels: string[]; stopped: boolean; stopWhy: string; confirm: string[];
+  /** 2026-10-21 ①入力が main と同じだった問題（全部の回が main の答え・呼んでいない） */
+  inputSame: string[];
   /** 10/20 COST① 前（main）の答え: 使い回した・前の main から持ち越した・今 main で解いた・今は解かなかった（夜中に回す） */
   base: { reused: number; carried: number; ran: number; deferred: string[] } };
 // 確かめの回（confirm）は同じ問題をもう一度「前」に照らす＝使い回し・持ち越しは数えない（二重に数えない）・新しく解いた分だけ足す
 const addBase = (res: PhaseResult, s: ReturnType<typeof readBaselineSummary>, o: { confirm?: boolean } = {}) => { if (!s) return; if (!o.confirm) { res.base.reused += s.reused; res.base.carried += s.carried.length; } res.base.ran += s.run.length; res.base.deferred = [...new Set([...res.base.deferred, ...s.deferred])]; };
 async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label: string, model: "pro" | "flash"): Promise<PhaseResult> {
-  const res: PhaseResult = { label, ids, cmps: [], baseLabels: [], mainLabels: [], stopped: false, stopWhy: "", confirm: [], base: { reused: 0, carried: 0, ran: 0, deferred: [] } };
+  const res: PhaseResult = { label, ids, cmps: [], baseLabels: [], mainLabels: [], stopped: false, stopWhy: "", confirm: [], inputSame: [], base: { reused: 0, carried: 0, ran: 0, deferred: [] } };
   if (!ids.length) return res;
   mkdirSync(join(EXAM_BRAIN_DIR, "run"), { recursive: true });
   // 6. 使い回し: 前の結果を結果のファイルに先に書く（brain-exam は済んだ問題×回を回さない）
@@ -347,9 +376,23 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   const watch = async (o: ChildOut) => {
     if (flag("no-early-stop") || res.stopped || !o.baseLabels.length) return;
     const cmps = compareAll(ids, label, o.baseLabels).filter((c) => c.cmp !== "nocur");
-    const d = stopDecision(cmps, flaky, { ...DEFAULT_STOP, worseN: stopWorse });
+    // ⑥ 入力が同じ問題（main の答えそのもの）は数えない・最初の数問（既定 8）ではっきり悪化なら止める
+    const d = stopDecision(cmps, flaky, { ...DEFAULT_STOP, worseN: stopWorse, window: STOP_WINDOW }, new Set(res.inputSame));
     if (d.action === "stop") { writeFileSync(stopFile, JSON.stringify({ at: new Date().toISOString(), why: d.why, worse: d.worse })); res.stopped = true; res.stopWhy = d.why; log(`\n⏹ 試験のブレイン: ${d.why} → 止める（悪化: ${d.worse.join(",")}）`); }
   };
+  // ①入力の差の下見（呼ばない）: 同じ問題×回は答案ができる → 本番の子はそれを済んだ回として飛ばす
+  const pre = INPUT_DIFF_PRE ? await inputDiffPrepass(pl, ids, label, baseArgs, env) : { same: [] as string[], partial: [] as string[] };
+  res.inputSame = pre.same;
+  if (pre.same.length) {
+    // ② 入力が同じ問題は main の回数のまま（増やさない）。揺れる問題は夜の安い時間だけ1回足して揺れを測る
+    const night = FLAKY_NIGHT && isCheapWindow(new Date(), CHEAP_WINDOW_JST);
+    for (const id of pre.same) {
+      const have = readRows(label).filter((r) => r.id === id && !r.error).length;
+      const it = pl.items.get(id)!;
+      it.reps = night && it.flake === "flaky" ? Math.min(pl.repsCap, have + 1) : have;
+    }
+    writeReps(Object.fromEntries(ids.map((id) => [id, pl.items.get(id)!.reps])));
+  }
   const o1 = await runBrainExam(baseArgs(ids), env, watch);
   res.baseLabels = o1.baseLabels; res.mainLabels = o1.mainLabels;
   addBase(res, readBaselineSummary(label));
@@ -375,7 +418,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
     res.confirm = [...new Set([...res.confirm, ...conf])];
   };
   if (REPS_MODE === "old") {
-    const conf = pl.repsCap <= 1 ? [] : confirmTargets(res.cmps, new Set(ids.filter((id) => pl.items.get(id)!.reps >= pl.repsCap)), { clearlyGood: d.action === "fewer" });
+    const conf = pl.repsCap <= 1 ? [] : confirmTargets(res.cmps, new Set(ids.filter((id) => pl.items.get(id)!.reps >= pl.repsCap || res.inputSame.includes(id))), { clearlyGood: d.action === "fewer" });
     if (conf.length) {
       log(`\n🔁 確かめの回（前と違った ${conf.length}問 を ${pl.repsCap}回まで${pl.phase === "small" ? "・小さな確かめ＝繰り返し最小" : ""}${d.action === "fewer" ? "・はっきり良いので判断だけ変わった問題は省く" : ""}）: ${conf.join(",")}`);
       await confirmRun(conf, pl.repsCap);
@@ -385,7 +428,9 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   // 10/20 COST② 自信の気づき: 2回目は前と違った・外れた・揺れる問題だけ → 3回目は1回目と2回目が割れた問題だけ（揃えば止める）
   const rowsOf = (id: string) => readRows(label).filter((r) => r.id === id);
   const failedOf = (id: string) => { const rs = rowsOf(id).filter((r) => !r.error); return rs.length > 0 && !(rs.filter((r) => !!r.path?.ok && !!r.score?.pass).length * 2 > rs.length); };
-  const r2 = confidenceRound2(ids.map((id) => ({ id, cmp: res.cmps.find((c) => c.id === id)?.cmp ?? "nocur", failed: failedOf(id), flake: pl.items.get(id)!.flake, have: rowsOf(id).filter((r) => !r.error).length })), { clearlyGood: d.action === "fewer", cap: pl.repsCap, wide: REPS_MODE === "wide" });
+  // ② 入力が同じ問題は2回目を回さない（main の答えそのもの＝回しても同じ要求の別の答えを足すだけ）
+  const sameSet = new Set(res.inputSame);
+  const r2 = confidenceRound2(ids.filter((id) => !sameSet.has(id)).map((id) => ({ id, cmp: res.cmps.find((c) => c.id === id)?.cmp ?? "nocur", failed: failedOf(id), flake: pl.items.get(id)!.flake, have: rowsOf(id).filter((r) => !r.error).length })), { clearlyGood: d.action === "fewer", cap: pl.repsCap, wide: REPS_MODE === "wide" });
   if (r2.length) {
     log(`\n🔁 2回目（自信が低い ${r2.length}問だけ・${d.action === "fewer" ? "はっきり良いので判断だけ変わった問題は省く・" : ""}揃えばここで止める）: ${r2.map((x) => `${x.id}（${x.why}）`).join(",")}`);
     await confirmRun(r2.map((x) => x.id), 2);
@@ -395,6 +440,34 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
     if (r3.length) await confirmRun(r3, 3);
   } else log(`\n🔁 2回目なし（前と同じ・外れていない・揺れない＝自信が高い）`);
   return res;
+}
+
+// ─── 2026-10-21 ①入力の差の下見 ─────────────────────────────────────────────
+const STOP_WINDOW = Math.max(0, Number(arg("stop-window", process.env.EXAM_STOP_WINDOW ?? "8")) || 0);
+/**
+ * 子を --input-diff=plan で流す（LLM は呼ばない: main と同じ要求は main の答え・違う要求はそこで止める）。
+ *   同じ問題×回の答案は結果に書かれる（本番の子は済んだ回として飛ばす）。問題の全部の回が同じなら「入力が同じ」。
+ */
+async function inputDiffPrepass(pl: Plan, ids: string[], label: string, baseArgs: (only: string[]) => string[], env: Record<string, string>): Promise<{ same: string[]; partial: string[] }> {
+  const before = new Set(readRows(label).filter((r) => !r.error).map((r) => `${r.id}#${r.rep}`));
+  const todo = ids.filter((id) => !readRows(label).some((r) => r.id === id && !r.error));
+  if (!todo.length) return { same: [], partial: [] };
+  log(`\n🔍 入力の差の下見（AI を呼ばない）: ${todo.length}問 — main と同じ要求の問題は main の答えで答案を作り、違う問題だけ本当に呼ぶ`);
+  await runBrainExam([...baseArgs(todo), "--input-diff=plan"], env);
+  let items: Record<string, { same: boolean; firstChanged: string | null; pinned: number }> = {};
+  try { items = (JSON.parse(readFileSync(join(RESULTS_DIR, `${label}.inputdiff.json`), "utf8")) as { items?: typeof items }).items ?? {}; } catch { /* 下見できなかった＝全部本番で */ }
+  const rows = readRows(label).filter((r) => !r.error);
+  const same: string[] = [], partial: string[] = [];
+  for (const id of todo) {
+    const mine = Object.entries(items).filter(([k]) => k.startsWith(`${id}#`));
+    const wrote = rows.filter((r) => r.id === id && !before.has(`${r.id}#${r.rep}`));
+    if (mine.length && mine.every(([, v]) => v.same) && wrote.length) same.push(id);
+    else if (mine.some(([, v]) => v.pinned > 0)) partial.push(id);
+  }
+  const stageOf = (id: string) => [...new Set(Object.entries(items).filter(([k, v]) => k.startsWith(`${id}#`) && !v.same).map(([, v]) => v.firstChanged ?? "控えなし"))].join("・");
+  log(`🔍 下見の結果: 入力が同じ ${same.length}問（main の答え・呼ばない）${same.length ? `: ${same.join(",")}` : ""}／違う ${todo.length - same.length}問${todo.length - same.length ? `: ${todo.filter((id) => !same.includes(id)).map((id) => `${id}（${stageOf(id) || "控えなし"}）`).join(",")}` : ""}`);
+  void pl;
+  return { same, partial };
 }
 
 // ─── 台帳・使い回しの保存・報告 ───────────────────────────────────────────────
@@ -419,7 +492,7 @@ function finishPhase(pl: Plan, ph: PhaseResult, stage: "brain" | "draft", model:
     if (!ok.length) continue;
     const maj = (f: (r: RowLite) => boolean) => ok.filter(f).length * 2 > ok.length;
     out.push({ at: new Date().toISOString(), label: ph.label, id, type: String(pl.probs.get(id)?.type ?? ""), stage, model: model === "flash" ? FLASH_MODEL : PRO_MODEL, head, scopeKey: stage === "brain" ? pl.keys.brain : pl.keys.draft, base: ph.baseLabels.join(",") || null,
-      reps: ok.length, codes: [...new Set(ok.map((r) => String(r.path?.code ?? "")))], pathOk: maj((r) => !!r.path?.ok), pass: maj((r) => !!r.score?.pass), cmp: c.cmp, cmpWhy: c.why, flake: it.flake, reused, verdict: verdictOf(id, c.cmp, ok, it.flake === "flaky") });
+      reps: ok.length, codes: [...new Set(ok.map((r) => String(r.path?.code ?? "")))], pathOk: maj((r) => !!r.path?.ok), pass: maj((r) => !!r.score?.pass), cmp: c.cmp, cmpWhy: c.why, flake: it.flake, reused, verdict: verdictOf(id, c.cmp, ok, it.flake === "flaky"), ...(ENV_FP.hash ? { envFp: ENV_FP.text } : {}) });
   }
   return out;
 }
@@ -434,6 +507,71 @@ async function spendOf(labels: string[], since: string): Promise<{ n: number; us
 }
 
 // ─── 本体（流す） ─────────────────────────────────────────────────────────
+// ─── 10/21 連携③④（scripts/lib/exam-coord.ts） ─────────────────────────────────
+function runFpOf(pl: Plan): string {
+  return C.runFingerprint({ codeKey: pl.versionKey, envFp: ENV_FP.hash, mainKey: mainHead()?.vk ?? null, items: [...pl.items.values()].map((x) => ({ id: x.id, reps: x.reps, model: x.model, draft: x.draft })), extra: [GATE ? "gate" : "", `judge=${JUDGE}`, REPLAY, `prefix=${JUDGE_PREFIX}`, ...PASS].filter(Boolean) });
+}
+/**
+ * 1回ごとの見張り: ①同じ比べ（コード・スイッチの指紋・比べる main の版・問題と回数・モデル・段）を今日もう流した → 止める（--force）。
+ *   ②担当（--label の元・自動の label は作業ツリー）の今日の費用＋見込みが EXAM_RUN_CAP_USD（既定 $5）を超える → 夜中に予約（--over-cap／--force で今）
+ */
+async function runGuard(pl: Plan, label: string, estNow: number, now: Date): Promise<{ go: boolean; record?: () => void }> {
+  const fp = runFpOf(pl);
+  const today = C.readRunsToday(now);
+  const dup = C.findDuplicateRun(today, fp);
+  if (dup && !flag("force")) {
+    log(`\n⛔ 同じ比べ（コード・スイッチ・main の版・問題と回数が同じ）を今日もう流した: ${dup.label}（${jst(new Date(dup.at))} JST・${dup.cwd}）→ 流さない（見込み $${estNow.toFixed(2)} を使わない）。`);
+    log(`  結果: scripts/.replay-out/brain-exam の ${dup.label}（--report=${dup.label}）。揺れを測り直す等で本当に流すなら --force`);
+    C.appendCoordEvent({ at: new Date().toISOString(), kind: "dup-refused", label, ids: [...pl.items.keys()], usd: estNow, note: dup.label });
+    return { go: false };
+  }
+  if (dup) log(`同じ比べを今日もう流した（${dup.label}）が --force で流す`);
+  const ident = C.labelIdentity(label, process.cwd());
+  const cap = C.runCapUsd(process.env);
+  const fromQueue = process.env.EXAM_FROM_QUEUE === "1";
+  let spent = 0;
+  if (cap !== null && !fromQueue) {
+    try {
+      const rows = await C.readExamSpendRows(sb, jstDayStart(now));
+      const labels = [...new Set(today.filter((r) => r.ident === ident).map((r) => r.label))];
+      spent = rows.filter((r) => C.routeBelongs(r.route, ident, labels)).reduce((s, r) => s + r.usd, 0);
+    } catch (e) { log(`⚠ 担当の今日の費用が読めない（0 とみて続ける・1日の全体の上限は別に守る）: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
+  }
+  const d = C.runCapDecision({ spentUsd: spent, estUsd: estNow, cap, force: flag("force") || flag("over-cap"), fromQueue });
+  log(`担当の上限（${ident}）: ${d.why}`);
+  if (!d.ok) {
+    const at = nextNightRun(now);
+    const f = enqueue({ label, argv: [...args.filter((a) => !/^--(when|phase)=/.test(a)), "--when=now", ...(pl.phase !== "off" ? [`--phase=${pl.phase}`] : []), ...(PASS.length ? ["--", ...PASS] : [])], cwd: process.cwd(), at: at.toISOString(), createdAt: now.toISOString(), estUsd: estNow });
+    log(`夜中に予約した（${jst(at)} JST の --run-queue）: ${f}`);
+    C.appendCoordEvent({ at: new Date().toISOString(), kind: "cap-deferred", label, ids: [...pl.items.keys()], usd: estNow, note: ident });
+    return { go: false };
+  }
+  return { go: true, record: () => { try { C.appendRun({ fp: runFpOf(pl), label, ident, at: new Date().toISOString(), cwd: process.cwd(), estUsd: estNow, ids: [...pl.items.keys()] }); } catch { /* 帳簿が書けなくても流す */ } } };
+}
+/** --spend-today: 今日（JST）の試験の費用を種類で分け、同じ版の main の作り直しの重なりと、連携で避けた分を出す */
+async function spendToday() {
+  const now = new Date(), since = jstDayStart(now);
+  const rows = await C.readExamSpendRows(sb, since);
+  const s = C.summarizeSpend(rows, CHEAP_WINDOW_JST);
+  const ev = C.readCoordEvents(since);
+  const pct = (x: number) => (s.total ? Math.round((x / s.total) * 100) : 0);
+  log(`=== 今日の試験の費用（${jst(since)}〜 JST・route script:brain-exam-*）: $${s.total.toFixed(2)}（${s.byRoute.length} 本）===`);
+  log(`  main の作り直し: $${s.byKind.main.usd.toFixed(2)}（${pct(s.byKind.main.usd)}%・${s.byKind.main.routes} 本）`);
+  log(`  担当の確かめ:   $${s.byKind.worker.usd.toFixed(2)}（${pct(s.byKind.worker.usd)}%・${s.byKind.worker.routes} 本）`);
+  log(`  夜（安い時間・warm）: $${s.byKind.night.usd.toFixed(2)}（${pct(s.byKind.night.usd)}%・${s.byKind.night.routes} 本）`);
+  if (s.mainDup.length) {
+    log(`同じ版の main を2本以上で作り直した: ${s.mainDup.length} 版・重なりの無駄 約 $${s.dupExtraUsd.toFixed(2)}（連携があれば1本で済んだ分）`);
+    for (const d of s.mainDup.slice(0, 8)) log(`  ${d.version}: ${d.routes} 本 $${d.usd.toFixed(3)}（重なり $${d.extraUsd.toFixed(3)}）`);
+  } else log("同じ版の main の作り直しの重なり: なし");
+  const by = (k: string) => ev.filter((e) => e.kind === k);
+  const sum = (k: string) => by(k).reduce((a, e) => a + e.usd, 0);
+  log(`連携で避けた分（帳簿 ${C.COORD_LOG}）:`);
+  log(`  他の担当の同じ版の答えを待って使った: ${by("wait-reuse").reduce((a, e) => a + e.ids.length, 0)}問・約 $${sum("wait-reuse").toFixed(2)}`);
+  log(`  前の main と入力が同じで呼ばずに済んだ（main の作り直し）: ${by("pin").reduce((a, e) => a + e.ids.length, 0)}問・約 $${sum("pin").toFixed(2)}`);
+  log(`  同じ比べを止めた: ${by("dup-refused").length}回・見込み $${sum("dup-refused").toFixed(2)}／担当の上限で夜に回した: ${by("cap-deferred").length}回・見込み $${sum("cap-deferred").toFixed(2)}`);
+  if (flag("routes")) for (const r of s.byRoute.slice(0, 30)) log(`  ${r.kind.padEnd(6)} $${r.usd.toFixed(3)} ${r.route}`);
+}
+
 async function runMain() {
   const now = new Date();
   const label = arg("label") || `eb-${jst(now).slice(5, 10).replace("-", "")}-${Math.random().toString(36).slice(2, 6)}`;
@@ -450,6 +588,9 @@ async function runMain() {
   printPlan(pl, now, { budget, peakWarn: pa.warn, when: `${w.why}${w.runNow ? "" : `（${jst(w.at)} JST から）`}` });
   if (!budget) log("1日の上限: 予約した時（実行する日の JST）に数える");
   if (flag("plan")) { log("\n（--plan: 流さない）"); return; }
+  // 10/21 連携③: 同じ比べを今日もう流した・担当の1日の上限を超える → 流さない／夜中に
+  const guard = await runGuard(pl, label, est.now, now);
+  if (!guard.go) return;
   ensureMainWarm();
   if (!w.runNow) {
     if (flag("wait")) { log(`安い時間まで待つ（--wait）…`); while (Date.now() < w.at.getTime()) await sleep(Math.min(10 * 60_000, w.at.getTime() - Date.now() + 1000)); }
@@ -471,6 +612,7 @@ async function runMain() {
     pl.draftPlan.ids = pl.draftPlan.ids.filter((id) => pl.items.has(id));
     if (!pl.items.size) { log("今流す問題は無い（全部夜中）"); return; }
   }
+  guard.record?.();
   let head = ""; try { head = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* */ }
   const startedAt = new Date().toISOString();
   const groups: Array<{ model: "pro" | "flash"; ids: string[] }> = (["pro", "flash"] as const).map((m) => ({ model: m, ids: [...pl.items.values()].filter((x) => x.model === m).map((x) => x.id) })).filter((g) => g.ids.length);
@@ -520,6 +662,8 @@ async function runMain() {
   for (const ph of phases) {
     const st = ledger.filter((l) => l.label === ph.label);
     log(`${ph.label}: ${st.length}問・道 ${st.filter((l) => l.pathOk).length}・合格 ${st.filter((l) => l.pass).length}・前より悪い ${st.filter((l) => l.cmp === "worse").length}・良い ${st.filter((l) => l.cmp === "better").length}・判断だけ変わった ${st.filter((l) => l.cmp === "changed").length}・turn_contract の形だけ変わった ${st.filter((l) => l.cmp === "shape").length}・前が無い ${st.filter((l) => l.cmp === "nobase").length}${ph.stopped ? `・止めた（${ph.stopWhy}）` : ""}${ph.confirm.length ? `・確かめた ${ph.confirm.length}` : ""}`);
+    // 確かめる人: 途中で止めた時は流さなかった問題を名指しする（黙って抜けない）
+    if (ph.stopped) { const notRun = ph.ids.filter((id) => !st.some((l) => l.id === id)); if (notRun.length) log(`  ⏹ 止めたので流さなかった ${notRun.length}問: ${notRun.join(",")}`); }
   }
   for (const l of by("worse")) log(`  ✕ 悪化 ${l.id}[${l.stage}] ${l.cmpWhy}・${l.verdict === "real" ? "本当の悪化（確かめの回でも同じ）" : l.verdict === "flake" ? "揺れ（回で割れた・揺れる問題）" : "1回だけ（確かめていない）"}`);
   for (const l of by("better")) log(`  ○ 良くなった ${l.id}[${l.stage}] ${l.cmpWhy}・${l.verdict ?? ""}`);
@@ -1046,6 +1190,6 @@ function readCostTier(label: string): { any: boolean; machine: number; flash: nu
 
 // 2026-10-20 --range の版がこの倉庫に無い（別の倉庫の commit 等）時は、お金を使う前に分かる言葉で止める（前は RAG の選びが落ちて「安全側で全部」になっていた）
 const checkRange = () => { if (arg("range")) verifyRange(arg("range"), "."); };
-const main0 = flag("conduct") ? conduct : args.some((x) => /^--run-plan(=|$)/.test(x)) ? runPlan : flag("miss-map") ? showMissMap : flag("coverage") ? showCoverage : flag("ledger") ? async () => showLedger() : flag("cleanup") ? cleanup : flag("run-queue") ? runQueue : flag("warm-main") ? warmMain : flag("model-check") ? modelCheck : runMain;
+const main0 = flag("spend-today") ? spendToday : flag("conduct") ? conduct : args.some((x) => /^--run-plan(=|$)/.test(x)) ? runPlan : flag("miss-map") ? showMissMap : flag("coverage") ? showCoverage : flag("ledger") ? async () => showLedger() : flag("cleanup") ? cleanup : flag("run-queue") ? runQueue : flag("warm-main") ? warmMain : flag("model-check") ? modelCheck : runMain;
 const main = async () => { checkRange(); await main0(); };
 main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; }).finally(() => setTimeout(() => process.exit(process.exitCode ?? 0), 300));

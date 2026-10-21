@@ -2,7 +2,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 // 2026-09-29 API 費用の調査: 次の一手の Haiku（7日で428回・$2.1）が llm_usage_logs で名前なしだった → 名札だけ付ける
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { normalizeStatus } from "@/app/lib/status-normalize";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { PROPERTY_CHECK_RESULT_LABEL, PROPERTY_CHECK_RESULT_DESCRIPTION } from "@/app/lib/aix-taxonomy";

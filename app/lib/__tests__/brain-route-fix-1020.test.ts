@@ -7,7 +7,12 @@ const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  
 const norm = (k: unknown) => (typeof k === "string" && k ? k : null);
 
 // 切り替え
-t("既定は off", routeFix1020("brought_text", {}) === false);
+// 10/21 竹内さん B1・B3・B5: 6つは既定 on・check_after_result（B4）と contract_aix は既定 off
+for (const p of ["brought_text", "brought_estimate", "focused_estimate", "promise_check", "viewing_check_vacancy", "concern_repickup"] as const) t(`既定 on: ${p}`, routeFix1020(p, {}) === true);
+t("既定 off: check_after_result", routeFix1020("check_after_result", {}) === false);
+t("既定 off: contract_aix", routeFix1020("contract_aix", {}) === false);
+t("off で全部止める", !routeFix1020("brought_text", { BRAIN_ROUTE_FIX_1020: "off" }));
+t("既定でも1つ止める", !routeFix1020("promise_check", { BRAIN_ROUTE_FIX_1020_PROMISE_CHECK: "off" }) && routeFix1020("brought_text", { BRAIN_ROUTE_FIX_1020_PROMISE_CHECK: "off" }));
 t("on で全部", routeFix1020("concern_repickup", { BRAIN_ROUTE_FIX_1020: "on" }));
 t("名指し", routeFix1020("contract_aix", { BRAIN_ROUTE_FIX_1020: "contract_aix,brought_text" }) && !routeFix1020("promise_check", { BRAIN_ROUTE_FIX_1020: "contract_aix" }));
 t("on でも1つ止める", !routeFix1020("focused_estimate", { BRAIN_ROUTE_FIX_1020: "on", BRAIN_ROUTE_FIX_1020_FOCUSED_ESTIMATE: "off" }));
@@ -23,7 +28,7 @@ t("空きを聞いた文は vacancy のまま", broughtPropertyAsk(broughtTypedT
 // ② 持ち込みで費用だけ → 見積の2段
 {
   const base = { finalAix: "property_check_result", decisionSource: "llm", pickupReady: false, postApply: false, customerText: "見積もり出してもらえますか？", ackOnly: false };
-  process.env.BRAIN_ROUTE_FIX_1020 = "";
+  process.env.BRAIN_ROUTE_FIX_1020 = "off";
   const off = resolveTwoStage({ ...base, brought: { ask: "cost", count: 2 } });
   t("off: brought_both（check）", off?.kind === "check" && /brought_both/.test(off.source));
   process.env.BRAIN_ROUTE_FIX_1020 = "on";
