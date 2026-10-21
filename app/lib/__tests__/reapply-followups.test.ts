@@ -239,8 +239,9 @@ async function main() {
     });
     await it("物件の文・自社の名乗り・設備の読み・指示文は変えない", () => {
       const t = ["スモラ: 蓮産業株式会社の竹内です。", "テストレジデンス 203号室 家賃7.5万円 WIC（ウォークインクローゼット）付き", "【所在地】テスト県テスト市テスト町1丁目4-31 【交通】テスト線 徒歩5分", "管理会社はテスト管理株式会社です"].join("\n");
-      eq(maskApplicationValuesForAlt(t), t);
-      const sys = "・仕事内容を聞かれたら答える\n・氏名は呼び名だけ\n・年収は聞かない\n・勤務先は聞かない";
+      // 10/21 確かめ役の後: 丁目・番地の数字はいつも伏せる（物件の住所の数字も）＝町名・駅名・それ以外は変えない
+      eq(maskApplicationValuesForAlt(t), t.replace("1丁目4-31", "［伏せ字］"));
+      const sys ="・仕事内容を聞かれたら答える\n・氏名は呼び名だけ\n・年収は聞かない\n・勤務先は聞かない";
       eq(maskApplicationValuesForAlt(sys, { fieldStart: "customer" }), sys);
     });
     await it("画像のブロックはそのまま通す", () => {
@@ -248,6 +249,51 @@ async function main() {
       const r = maskAltBody(body);
       eq((r.masked.messages[0].content as Array<{ type: string }>)[0].type, "image");
       eq(r.remain, null);
+    });
+  });
+
+  await describe("出口の網の穴（10/21 確かめ役・作り物）", async () => {
+    const M = (t: string) => maskApplicationValuesForAlt(t);
+    const clean = (t: string, vals: string[]) => {
+      const m = M(t);
+      for (const v of vals) ok(!m.includes(v), `${v} が残った: ${m}`);
+      eq(altPiiValuesRemain(m, { docs: true }), null, `伏せた後に値が残る判定: ${m}`);
+      return m;
+    };
+    await it("① 「・」の後の生年月日（. / 和暦＋月日）", () => {
+      clean("お客様: ・テスト太郎\n・1990.12.19\n・1994/8/13\n・昭和40年7/23", ["1990.12.19", "1994/8/13", "昭和40年7/23"]);
+      ok(altPiiValuesRemain("お客様: ・1990.12.19", { docs: true }) !== null, "伏せる前は当たる");
+    });
+    await it("② 全角空白の見出し（同じ行・次の行）", () => {
+      clean("お客様: 住　所：テスト県テスト市テスト町\n氏　名　試験 花子\n生 年 月 日 1988年2月3日", ["テスト県テスト市テスト町", "試験 花子", "1988"]);
+      clean("お客様: 氏名\n試験 花子\n住所\nテスト市テスト町", ["試験 花子", "テスト市テスト町"]);
+    });
+    await it("③ ファイル名の中の名前", () => {
+      const m = clean("お客様: [ファイル] 2024_試験_花子_給与明細.pdf を送ります", ["試験", "花子"]);
+      ok(m.includes("給与明細"), m);
+    });
+    await it("④ 読みの文", () => {
+      clean("お客様: フリガナはシケン ハナコです", ["シケン", "ハナコ"]);
+      eq(M("お客様: ふりがなはいりますか？"), "お客様: ふりがなはいりますか？");
+    });
+    await it("⑤ お客様の住所（丁目・番地・号・建物名と部屋）", () => {
+      const m1 = clean("お客様: 今はテスト区テスト丘3-13-3です！", ["3-13-3"]);
+      ok(m1.includes("テスト区テスト丘") && m1.includes("です！"), m1);
+      clean("お客様: テスト市テスト1-18-8ルシエル202に住んでます", ["1-18-8", "ルシエル202"]);
+      clean("お客様: テスト町2丁目5番3号", ["2丁目", "5番3号"]);
+      // 日付・時刻・広さ・徒歩は伏せない
+      const keep = "お客様: 2026-10-21 の 10:00-12:00 に内見、徒歩5-10分、25㎡";
+      eq(M(keep), keep);
+    });
+    await it("⑥ 在籍証明・会社名の行の法人名（スタッフの1通も）", () => {
+      clean("スモラ: 在籍証明はテスト工業株式会社で取れました", ["テスト工業株式会社"]);
+      clean("スタッフ: 会社名 有限会社テスト食品", ["テスト食品"]);
+    });
+    await it("伏せきれない時は remain が立つ（fail closed → Claude）", () => {
+      ok(altPiiValuesRemain("お客様: 住所はテスト丘3-13-3", { docs: true }) !== null, "番地の数字");
+      ok(altPiiValuesRemain("お客様: カナはシケン", { docs: true }) !== null, "読みの文");
+      const r = maskAltBody({ messages: [{ role: "user", content: "お客様: ・1990.12.19\nテスト丘3-13-3です" }] });
+      eq(r.remain, null); ok(r.changed, "置き換えた");
     });
   });
 

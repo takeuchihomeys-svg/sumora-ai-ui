@@ -239,7 +239,8 @@ function customerLineValue(line: string): string | null {
 }
 // ─── 勤め先の手がかりがある行（スタッフの1通も）: 在籍確認の案内で勤務先の法人名・住所を書き写した1通（10/21 の確かめ）───
 //   法人名は管理会社・保証会社・自社の名前と同じ形なので、勤め先の手がかりの語がある行だけで伏せる
-const WORK_CUE_RE = /勤務先|お勤め|勤め先|職場|在籍確認|お仕事|代表者|勤続|就業|就労|年収|雇用/;
+//   10/21 確かめ役: 「在籍証明」「会社名」「勤務」の行の法人名（勤め先）も残っていた → 手がかりの語に足す
+const WORK_CUE_RE = /勤務|お勤め|勤め先|職場|在籍|会社名|お仕事|代表者|勤続|就業|就労|年収|雇用/;
 const ADDRESS_NUM_G = /(?:[一-龯]{2,3}[都道府県])?[一-龯]{1,6}[市区町村郡][^\s、。,，]{0,24}\d[^\s、。,，]{0,16}/g;
 function maskWorkCueLine(line: string): string {
   if (!WORK_CUE_RE.test(line)) return line;
@@ -258,15 +259,94 @@ function customerish(mode: FieldStart, inCustomer: boolean, inStaff: boolean): b
   return mode === true ? !inStaff : mode === "customer" && inCustomer;
 }
 
+// ─── 10/21 確かめ役が見つけた穴（伏せ字に置き換えてから DeepSeek の網の取りこぼし）──────────────────────
+//   ① 欄の名前の無い生年月日（「・1990.12.19」「・1994/8/13」「・昭和40年7/23」）
+//   ② 全角空白入りの見出し（「住　所」「氏　名」「生 年 月 日」）＝欄の名前の網に当たらない
+//   ③ ファイル名の中の名前（「_姓_名_給与明細.pdf」）
+//   ④ 読みの文（「フリガナはハシモト」）
+//   ⑤ お客様の住所（「〜3-13-3です！」「〜1-18-8ルシエル202」）＝丁目・番地・号の数字はいつも伏せる（町名・駅名は残す。物件の住所の数字も伏せる＝品質の損は小さい）
+//   ⑥ 在籍証明・会社名の行の法人名（WORK_CUE_RE に「在籍」「会社名」「勤務」を足した）
+/** 全角空白入りの見出しを詰める（詰めた後は欄の名前の網に当たる。「住　所」は申込フォームの形なので「現住所」として扱う） */
+const SPACED_HEADINGS: Array<[RegExp, string]> = [
+  [/現[ 　]+住[ 　]*所|現[ 　]*住[ 　]+所/g, "現住所"],
+  [/(?<![一-龯])住[ 　]+所/g, "現住所"],
+  [/(?<![一-龯])氏[ 　]+名(?![一-龯])/g, "氏名"],
+  [/生(?:[ 　]+年[ 　]*月[ 　]*日|[ 　]*年[ 　]+月[ 　]*日|[ 　]*年[ 　]*月[ 　]+日)/g, "生年月日"],
+  [/フ[ 　]+リ[ 　]*ガ[ 　]*ナ|フ[ 　]*リ[ 　]+ガ[ 　]*ナ|フ[ 　]*リ[ 　]*ガ[ 　]+ナ/g, "フリガナ"],
+  [/(?<![一-龯])年[ 　]+収(?![一-龯])/g, "年収"],
+  [/勤[ 　]+務[ 　]*先|勤[ 　]*務[ 　]+先/g, "勤務先"],
+];
+function unspaceHeadings(t: string): string {
+  let s = t;
+  for (const [re, to] of SPACED_HEADINGS) s = s.replace(re, to);
+  return s;
+}
+/** 見出しだけの行（値は次の行に書く形） */
+const HEAD_ONLY_RE = new RegExp(`^\\s*[・･\\-*＊●○◆■□◎]?\\s*[【\\[［]?\\s*(?:${SENSITIVE_LABELS}|住所|お名前|名前|誕生日)\\s*[】\\]］]?\\s*[:：]?\\s*$`);
+/** 見出しだけの行の次の行が値か（空行・1通の頭・見出し・欄の名前の行・伏せ字だけは値ではない） */
+function isValueAfterHeading(next: string | undefined): boolean {
+  if (next === undefined || !next.trim()) return false;
+  return !MSG_HEAD_RE.test(next) && !HEAD_ONLY_RE.test(next) && !FORM_FIELD_LINE_RE.test(next) && !placeholderOnly(next);
+}
+/** ① 古い年（1920〜2009）の年月日（区切りが . / -）・和暦の年月日（「昭和40年7/23」） */
+const OLD_DATE_G = /(?<![\d０-９])(?:19[2-9]\d|200\d)\s*[./\-]\s*\d{1,2}\s*[./\-]\s*\d{1,2}(?![\d０-９])/g;
+const WAREKI_FULL_G = /(?:昭和|平成)\s*(?:\d{1,2}|元)\s*年\s*\d{1,2}\s*[/.月]\s*\d{1,2}(?:\s*日)?(?:\s*生(?:まれ)?)?/g;
+/** ④ 読みの文（カタカナの値／ひらがなは「です」の前だけ＝「ふりがなはいりますか」を伏せない） */
+const READING_STMT_G = /((?:フリガナ|ふりがな|読み方?|よみかた|カナ)\s*(?:は|が|：|:|＝|=)\s*)(?:[ァ-ヶー]{2,}(?:[ 　][ァ-ヶー]{2,})?|[ぁ-ん]{2,8}(?:[ 　][ぁ-ん]{2,8})?(?=です|でございます))/g;
+/** ③ ファイル名らしい並び（_ か ＿ を含む語） */
+const FILE_RUN_G = /[^\s、。,，「」『』()（）[\]［］<>"'：:]*[_＿][^\s、。,，「」『』()（）[\]［］<>"'：:]*/g;
+const FILE_EXT_RE = /\.(?:pdf|jpe?g|png|heic|heif|gif|webp|xlsx?|docx?|csv|txt)$/i;
+/** ファイル名の中で名前ではない語（書類の種類・写真の場所） */
+const FILE_DOC_WORD_RE = /^(?:給与明細書?|給料明細書?|源泉徴収票?|在籍証明書?|住民票|運転免許証?|免許証|保険証|健康保険証|資格確認書|課税証明書?|非課税証明書?|所得証明書?|納税証明書?|内定通知書?|雇用契約書|労働条件通知書|申込書?|本人確認書類?|表面?|裏面?|写真|明細|証明書|書類|画像|スキャン|コピー|マイナンバーカード|マイナンバー|在留カード|学生証|パスポート|通帳|契約書|重説|請求書|見積書?|図面|間取り図?|物件|資料|最新|新|旧|修正|版|控え?|原本|写し|外観|内観|室内|キッチン|バス|トイレ|洗面|玄関|眺望|周辺|地図|月分|分)$/;
+const FILE_NAMEISH_RE = /^[一-龯々ぁ-んァ-ヶー]{1,8}$/;
+function maskFileRun(run: string): string {
+  const unders = (run.match(/[_＿]/g) ?? []).length;
+  if (unders < 2 && !FILE_EXT_RE.test(run)) return run;
+  return run.split(/([_＿.])/).map((seg) => (FILE_NAMEISH_RE.test(seg) && !FILE_DOC_WORD_RE.test(seg) ? ALT_MASK : seg)).join("");
+}
+/** ⑤ 丁目・番地・号の数字（「3-13-3」「1-18-8ルシエル202」「3丁目13-3」「13番地」）。年月日（2026-10-21）は除く */
+const ADDR3_G = /(?<![\d０-９/.])(?!(?:19|20)\d{2}[-－‐ー−]\d)[0-9０-９]{1,4}[-－‐ー−][0-9０-９]{1,4}[-－‐ー−][0-9０-９]{1,4}(?:[-－‐ー−][0-9０-９]{1,4})?(?![0-9０-９])(?:[ 　]?[^\s、。,，!！?？「」()（）［\]]{0,16}?[0-9０-９]{1,4}(?:号室)?(?![0-9０-９]))?/g;
+const CHOME_G = /[0-9０-９]{1,3}\s*丁目(?:\s*[0-9０-９]{1,4}\s*(?:番地?|[-－‐ー−])(?:\s*[0-9０-９]{1,4}(?:\s*号)?)?)?|[0-9０-９]{1,4}\s*番地(?:\s*[0-9０-９]{1,4}(?:\s*号)?)?|[0-9０-９]{1,4}\s*番\s*[0-9０-９]{1,4}\s*号/g;
+/** 町名の直後の2つの数字（「照ヶ丘3-13」）。時刻・日付・分・金額・広さは除く */
+const ADDR2_G = /(?<=[一-龯々ぁ-んァ-ヶ])[0-9０-９]{1,4}[-－‐ー−][0-9０-９]{1,4}(?![0-9０-９]|\s*(?:時|日|月|分|万|円|階|名|人|歳|才|件|%|％|㎡|m|帖|畳|年|か月|ヶ月|ケ月|週|回|号室|LDK|DK|K))/g;
+/** URL の外だけで置き換える */
+function replaceOutsideUrls(t: string, f: (s: string) => string): string {
+  let out = "", last = 0;
+  for (const m of t.matchAll(URL_RE)) { out += f(t.slice(last, m.index)) + m[0]; last = (m.index ?? 0) + m[0].length; }
+  return out + f(t.slice(last));
+}
+function maskHoles(t: string): string {
+  return replaceOutsideUrls(t, (s) => s
+    .replace(OLD_DATE_G, ALT_MASK)
+    .replace(WAREKI_FULL_G, ALT_MASK)
+    .replace(READING_STMT_G, `$1${ALT_MASK}`)
+    .replace(FILE_RUN_G, (m) => maskFileRun(m))
+    .replace(CHOME_G, ALT_MASK)
+    .replace(ADDR3_G, ALT_MASK)
+    .replace(ADDR2_G, ALT_MASK));
+}
+/** 穴の形の値が残っているか（URL を除いた文で見る・maskHoles と同じ網＋見出しだけの行の次の値） */
+function holeValueRemain(t: string): string | null {
+  if (new RegExp(OLD_DATE_G.source).test(t) || new RegExp(WAREKI_FULL_G.source).test(t)) return "欄の名前の無い生年月日";
+  if (new RegExp(READING_STMT_G.source).test(t)) return "読みの文";
+  for (const run of t.match(FILE_RUN_G) ?? []) if (maskFileRun(run) !== run) return "ファイル名の中の名前";
+  if (new RegExp(CHOME_G.source).test(t) || new RegExp(ADDR3_G.source).test(t) || new RegExp(ADDR2_G.source).test(t)) return "丁目・番地の数字";
+  const lines = unspaceHeadings(t).split("\n");
+  for (let i = 0; i < lines.length - 1; i++) if (HEAD_ONLY_RE.test(splitHead(lines[i]).body) && isValueAfterHeading(lines[i + 1])) return "見出しの次の行の値";
+  return null;
+}
+
 export function maskApplicationValuesForAlt(text: string | null | undefined, opts: { fieldStart?: FieldStart } = {}): string {
   const mode: FieldStart = opts.fieldStart ?? true;
   let inCustomer = false, inStaff = false;
-  const raw = String(text ?? "");
+  const raw = unspaceHeadings(String(text ?? ""));
   if (!raw) return raw;
   const lines = raw.split("\n");
   const out: string[] = [];
   for (let i = 0; i < lines.length;) {
     const l = lines[i];
+    // ② 見出しだけの行（「氏名」「住　所」）の次の行は値＝行ごと伏せる
+    if (i > 0 && HEAD_ONLY_RE.test(splitHead(lines[i - 1]).body) && isValueAfterHeading(l)) { out.push(ALT_MASK); i++; continue; }
     if (IMAGE_MARK_RE.test(l) || STRONG_DOC_RE.test(l)) {
       const end = regionEnd(lines, i, 60);
       if (isDocBlock(lines.slice(i, end).join("\n"))) { out.push(ALT_DOC_MASK); i = end; continue; }
@@ -284,7 +364,7 @@ export function maskApplicationValuesForAlt(text: string | null | undefined, opt
     out.push(maskWorkCueLine(customerish(mode, inCustomer, inStaff) ? maskCustomerLine(l) : l));
     i++;
   }
-  return out.join("\n")
+  return maskHoles(out.join("\n")
     .replace(LABELED_BIRTH_G, `$1${ALT_MASK}`)
     .replace(BIRTH_DAY_G, ALT_MASK)
     .replace(INCOME_G, `年収${ALT_MASK}`)
@@ -298,7 +378,7 @@ export function maskApplicationValuesForAlt(text: string | null | undefined, opt
     .replace(NAME_WITH_READING_G, ALT_MASK)
     .replace(NAME_KANA_PAIR_G, ALT_MASK)
     .replace(KANA_CORP_G, (m) => (m ? ALT_MASK : m))
-    .replace(KANA_READING_RUN_G, ALT_MASK);
+    .replace(KANA_READING_RUN_G, ALT_MASK));
 }
 
 // ─── どの行でも伏せる人の名前の形（スタッフが申込の中身を書き写した1通にも出る・10/21 の確かめ）───
@@ -360,7 +440,7 @@ export function altPiiValuesRemain(text: string | null | undefined, opts: { docs
   if (BIRTH_DAY_RE.test(t)) return "生年月日らしい日付";
   if (WORKPLACE_VALUE_RE.test(t)) return "勤務先の値";
   if (formValuesRemain(t, opts.docs === true ? true : "customer")) return "申込フォームの値";
-  const cv = customerValuesRemain(t, opts.docs === true ? true : "customer") ?? globalNameValue(t) ?? workCueValue(t);
+  const cv = customerValuesRemain(t, opts.docs === true ? true : "customer") ?? globalNameValue(t) ?? workCueValue(t) ?? holeValueRemain(t);
   if (cv) return cv;
   if (opts.docs) {
     const lines = t.split("\n");
