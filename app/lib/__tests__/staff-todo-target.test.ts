@@ -8,7 +8,7 @@ import {
 } from "../staff-todo-list";
 import { todoInstruction, conditionShort } from "../staff-todo-instruction";
 import { todoGroupOf, todoScore, compareTodoPriority, applyConductor } from "../staff-todo-priority";
-import { parseTodoReply, resolveTodoReply, renderTodoReplyAck, type TodoSnapshot } from "../staff-todo-reply";
+import { parseTodoReply, resolveTodoReply, renderTodoReplyAck, pickTodoSnapshot, type TodoSnapshot } from "../staff-todo-reply";
 
 let passed = 0, failed = 0;
 function it(name: string, fn: () => void) {
@@ -245,6 +245,88 @@ it("朝の掛け声: その日の最初の便（10:30）だけ一番上に1行",
   const big = composeStaffTodoPost(buildStaffTodoList(manyDaily(80, at1030))).text!;
   eq(big.split("\n")[0], MORNING_CALL_LINE);
   ok(big.length <= TODO_LIST_MAX_CHARS);
+});
+
+it("朝の掛け声: その日に最初に送る便に1回だけ（10:30 が送れなければ 11:30・再試行で2回出ない・昨日の控えは数えない）", () => {
+  const at = (hm: string) => Date.parse(`2026-10-21T${hm}:00+09:00`);
+  const snap = (sentAt: string): TodoSnapshot => ({ messageId: sentAt, sentAt: iso(sentAt), items: [] });
+  const first = (hm: string, snaps: TodoSnapshot[]) => composeStaffTodoPost(buildStaffTodoList(manyDaily(2, at(hm))), { snapshots: snaps }).text!.split("\n")[0] === MORNING_CALL_LINE;
+  const yday = snap("2026-10-20T20:30:00+09:00");
+  eq(first("10:30", [yday]), true);
+  eq(first("11:30", [yday]), true); // 10:30 が送れなかった日
+  eq(first("10:31", [snap("2026-10-21T10:30:00+09:00"), yday]), false); // 再試行・手動
+  eq(first("11:30", [snap("2026-10-21T10:30:00+09:00"), yday]), false);
+  eq(first("20:30", [snap("2026-10-21T19:30:00+09:00")]), false);
+  // この便より後の控え（preview の at を過去にした時）は数えない
+  eq(first("10:30", [snap("2026-10-21T12:30:00+09:00")]), true);
+  // 控えが読めない（空）時は 10 時台だけ（毎便に出さない）
+  eq(first("10:30", []), true);
+  eq(first("11:30", []), false);
+});
+
+it("1日10便: ④200人＋AIX の行で回し続けても飢える人はいない・番号は常にその便の行の人だけ・引用した古い便の☑はその便の人・☑でAIXは閉じない", () => {
+  const n = 200;
+  const hours = ["10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30", "18:30", "19:30"];
+  const snaps: TodoSnapshot[] = [];
+  const posts: Array<{ post: TodoPost; snap: TodoSnapshot; text: string }> = [];
+  const seen = new Set<string>();
+  const marks: Array<{ item_key: string; conversation_id: string; marked_at: string; via: string }> = [];
+  for (const [k, hm] of hours.entries()) {
+    const at = Date.parse(`2026-10-21T${hm}:00+09:00`);
+    const i = manyDaily(n, at);
+    // AIX の行（①③）を持つお客様も混ぜる
+    i.conversations = [...i.conversations, conv("x1", "エーアイエックス一"), conv("x2", "エーアイエックス二")];
+    i.aixItems = [pending("ax1", "x1", "property_send", "2026-10-21T09:00:00+09:00"), pending("ax2", "x2", "reply", "2026-10-21T09:10:00+09:00")];
+    i.marks = [...marks];
+    const post = composeStaffTodoPost(buildStaffTodoList(i), { snapshots: [...snaps] });
+    const text = post.text!;
+    ok(text.length <= TODO_LIST_MAX_CHARS, `${hm} ${text.length}`);
+    eq(text.split("\n")[0] === MORNING_CALL_LINE, k === 0);
+    const snap = { ...snapOfPost(post, `2026-10-21T${hm}:00+09:00`), messageId: `m${k}` };
+    // 文の番号の行 = 控えの同じ番号のお客様（どの番号も別の人に当たらない）
+    const lines = text.split("\n");
+    for (const it of snap.items) {
+      const ls = lines.filter((l) => l.includes(todoNumberMark(it.n)) && !l.startsWith("━") && !l.includes("次の便で"));
+      if (ls.length !== 1) throw new Error(`${hm} n=${it.n} ${JSON.stringify(ls)}`);
+      ok(ls[0].includes(it.name) || it.conversationId.startsWith("x"), `${hm} ${it.n} ${ls[0]} ≠ ${it.name}`);
+    }
+    // 出していない④の人は控えに無い
+    const shownSet = new Set(shownIds(post));
+    ok(snap.items.filter((x) => x.key.startsWith("newarrival:")).every((x) => shownSet.has(x.conversationId)));
+    for (const id of shownSet) seen.add(id);
+    // この便で☑3 を返した人は次から外れる（3 が新着確認の行なら）
+    const r3 = resolveTodoReply(parseTodoReply("☑3")!, snap);
+    if (r3.hits.length) marks.push({ item_key: r3.hits[0].key, conversation_id: r3.hits[0].conversationId, marked_at: new Date(at + 60_000).toISOString(), via: TODO_MARK_VIA_NONE });
+    snaps.unshift(snap);
+    posts.push({ post, snap, text });
+  }
+  ok(posts[0].post.carried[4] > 100, String(posts[0].post.carried[4])); // 本当に回している
+  // 1日で全員出た
+  eq(seen.size, n);
+  // ☑した人はその後の便に出ない
+  for (const m of marks) {
+    const after = posts.filter((p) => Date.parse(p.snap.sentAt) > Date.parse(m.marked_at));
+    ok(after.every((p) => !shownIds(p.post).includes(m.conversation_id)), m.conversation_id);
+  }
+  // 古い便を引用した「☑1」は引用した便の1番の人（新しい便の1番ではない）・引用なしは最後の便
+  const nowMs = Date.parse("2026-10-21T19:45:00+09:00");
+  for (const [k, p] of posts.entries()) {
+    const quoted = pickTodoSnapshot(snaps, `m${k}`, nowMs)!;
+    eq(quoted.messageId, `m${k}`);
+    const daily = p.snap.items.find((x) => x.key.startsWith("newarrival:"))!;
+    const r = resolveTodoReply(parseTodoReply(`☑${daily.n}`)!, quoted);
+    eq(r.hits.map((h) => h.conversationId), [daily.conversationId]);
+    // AIX の行の番号に☑ → 閉じない（「新着確認の行ではありません」）
+    for (const ax of p.snap.items.filter((x) => x.key.startsWith("aix:"))) {
+      const ra = resolveTodoReply(parseTodoReply(`☑${ax.n}`)!, quoted);
+      eq(ra.hits.length, 0);
+      eq(ra.unknownNumbers, [ax.n]);
+    }
+    // 出していない番号（この便の行数より大きい）は当たらない
+    const over = p.snap.items.length + 1;
+    eq(resolveTodoReply(parseTodoReply(`☑${over}`)!, quoted).hits.length, 0);
+  }
+  eq(pickTodoSnapshot(snaps, null, nowMs)!.messageId, `m${hours.length - 1}`);
 });
 
 it("その他（announce-sonota と同じ選び方）: ターゲット除外・7日以内に送った人は出さない・☑→・→✅・上限", () => {

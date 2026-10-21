@@ -701,8 +701,15 @@ const SCHEDULE_HOUR_JST = 10;
  *   旧 daily-brief の朝の便の締めの言葉と同じ文（app/api/cron/daily-brief/route.ts）
  */
 export const MORNING_CALL_LINE = "全員に物件出して返信して！！それがしょーへいの今日の全仕事！！";
-/** その日の最初の便か（JST 10 時台＝10:30 の便） */
-export const isFirstPostOfDay = (atMs: number) => new Date(atMs + JST_OFFSET_MS).getUTCHours() === SCHEDULE_HOUR_JST;
+/**
+ * その日（JST の暦の日）の最初に送る便か。前の便の控え（送れた便だけ残る）に今日の分が無ければ最初＝10:30 が送れず 11:30 になった日もそこで1回出す。
+ *   10:30 の再試行・手動は控えが今日の分を持つので2回出ない。控えが無い（読めない）時は JST 10 時台の便だけ（毎便に出さない）
+ */
+export function isFirstPostOfDay(atMs: number, snapshots?: ReadonlyArray<TodoSnapshot>): boolean {
+  if (!snapshots?.length) return new Date(atMs + JST_OFFSET_MS).getUTCHours() === SCHEDULE_HOUR_JST;
+  const day = jstDayStartMs(atMs);
+  return !snapshots.some((s) => { const ms = Date.parse(s.sentAt); return Number.isFinite(ms) && ms <= atMs && jstDayStartMs(ms) === day; });
+}
 /** 次の便に回した④⑤の人数の1行 */
 export function carriedLine(group: 4 | 5, n: number): string {
   return `${group === 4 ? "④" : "⑤"}の残り ${n}人は次の便で`;
@@ -716,7 +723,7 @@ export type TodoPost = {
   /** 次の便に回した人数（④・⑤） */
   carried: { 4: number; 5: number };
 };
-type RenderMode = { compact: 0 | 1 | 2; carried?: { 4: number; 5: number } };
+type RenderMode = { compact: 0 | 1 | 2; carried?: { 4: number; 5: number }; morning?: boolean };
 
 /**
  * 1便を組む（2026-10-21 竹内さん「オススメでおねがい」）。
@@ -727,11 +734,12 @@ type RenderMode = { compact: 0 | 1 | 2; carried?: { 4: number; 5: number } };
 export function composeStaffTodoPost(list: TodoList, opts: { snapshots?: ReadonlyArray<TodoSnapshot>; compact?: boolean } = {}): TodoPost {
   const none = { 4: 0, 5: 0 };
   if (list.customers.length === 0 && !(list.screening?.length)) return { list, text: null, carried: none };
+  const morning = isFirstPostOfDay(list.atMs, opts.snapshots);
   if (!opts.compact) {
-    const full = renderList(list, { compact: 0 });
+    const full = renderList(list, { compact: 0, morning });
     if (full.length <= TODO_LIST_MAX_CHARS) return { list, text: full, carried: none };
   }
-  const compact = renderList(list, { compact: 1 });
+  const compact = renderList(list, { compact: 1, morning });
   if (compact.length <= TODO_LIST_MAX_CHARS) return { list, text: compact, carried: none };
 
   // 回す: ④⑤の新着確認だけのお客様（済みは外す）を、出ていない順に並べて入るだけ
@@ -743,7 +751,7 @@ export function composeStaffTodoPost(list: TodoList, opts: { snapshots?: Readonl
     const carried = { 4: 0, 5: 0 };
     for (const c of pool.slice(k)) carried[c.group as 4 | 5]++;
     const shown: TodoList = { ...list, customers: list.customers.filter((c) => !isDaily(c) || chosen.has(c.conversationId)) };
-    return { list: shown, text: renderList(shown, { compact: 1, carried }), carried };
+    return { list: shown, text: renderList(shown, { compact: 1, carried, morning }), carried };
   };
   // 行の長さはほぼ足し算なので二分で入る人数を探す（0人でも長い時はそのまま返す＝送る側が後ろを切る）
   let lo = 0, hi = pool.length;
@@ -784,10 +792,10 @@ export function renderStaffTodoList(list: TodoList, opts: { compact?: boolean } 
  * carried: 次の便に回した人数（その組の最後に「④の残り N人は次の便で」）。その日の最初の便（10:30）は一番上に朝の掛け声
  */
 function renderList(list: TodoList, mode: RenderMode): string {
-  const { compact, carried } = mode;
+  const { compact, carried, morning } = mode;
   const nums = new Map(numberTodoItems(list).map((x) => [x.item.key, x.n]));
   const out = [
-    ...(isFirstPostOfDay(list.atMs) ? [MORNING_CALL_LINE] : []),
+    ...(morning ? [MORNING_CALL_LINE] : []),
     `【やることリスト】${jstMDHm(list.atMs)}`,
   ];
   const hasDaily = list.customers.some((c) => c.items.some((i) => i.source === "target_new_arrival"));
