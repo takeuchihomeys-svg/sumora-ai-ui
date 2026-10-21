@@ -366,7 +366,8 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   const watch = async (o: ChildOut) => {
     if (flag("no-early-stop") || res.stopped || !o.baseLabels.length) return;
     const cmps = compareAll(ids, label, o.baseLabels).filter((c) => c.cmp !== "nocur");
-    const d = stopDecision(cmps, flaky, { ...DEFAULT_STOP, worseN: stopWorse });
+    // ⑥ 入力が同じ問題（main の答えそのもの）は数えない・最初の数問（既定 8）ではっきり悪化なら止める
+    const d = stopDecision(cmps, flaky, { ...DEFAULT_STOP, worseN: stopWorse, window: STOP_WINDOW }, new Set(res.inputSame));
     if (d.action === "stop") { writeFileSync(stopFile, JSON.stringify({ at: new Date().toISOString(), why: d.why, worse: d.worse })); res.stopped = true; res.stopWhy = d.why; log(`\n⏹ 試験のブレイン: ${d.why} → 止める（悪化: ${d.worse.join(",")}）`); }
   };
   // ①入力の差の下見（呼ばない）: 同じ問題×回は答案ができる → 本番の子はそれを済んだ回として飛ばす
@@ -432,6 +433,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
 }
 
 // ─── 2026-10-21 ①入力の差の下見 ─────────────────────────────────────────────
+const STOP_WINDOW = Math.max(0, Number(arg("stop-window", process.env.EXAM_STOP_WINDOW ?? "8")) || 0);
 /**
  * 子を --input-diff=plan で流す（LLM は呼ばない: main と同じ要求は main の答え・違う要求はそこで止める）。
  *   同じ問題×回の答案は結果に書かれる（本番の子は済んだ回として飛ばす）。問題の全部の回が同じなら「入力が同じ」。

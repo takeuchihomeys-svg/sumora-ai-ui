@@ -77,6 +77,10 @@ ok("判断が変わった集合", [...brainChangedOf([{ id: "a", cmp: "same" }, 
   const cm = (xs: string) => xs.split(",").map((c, i) => ({ id: `p${i}`, cmp: c as never }));
   ok("はっきり悪化で止める", stopDecision(cm("worse,worse,worse,same"), new Set()).action === "stop");
   ok("数が少ない内は止めない", stopDecision(cm("worse,worse,worse"), new Set()).action === "go");
+  // 2026-10-21 ⑥ 入力が同じ問題は数えない・最初の8問で決める
+  ok("入力が同じ問題は見た数に入れない", stopDecision(cm("worse,worse,worse,same"), new Set(), { minSeen: 4, worseN: 3, betterN: 3, window: 8 }, new Set(["p3"])).action === "go");
+  ok("最初の8問に悪化3つで止める", stopDecision(cm("same,worse,same,worse,same,worse,same,same,better,better,better"), new Set(), { minSeen: 4, worseN: 3, betterN: 3, window: 8 }).action === "stop");
+  ok("9問目以降の悪化は窓の外", stopDecision(cm("same,same,same,same,same,same,same,same,worse,worse,worse"), new Set(), { minSeen: 4, worseN: 3, betterN: 3, window: 8 }).action === "go");
   ok("揺れる問題の悪化は数えない", stopDecision(cm("worse,worse,worse,same,same"), new Set(["p0"])).action === "go");
   ok("良くなった分を差し引く", stopDecision(cm("worse,worse,worse,better,better"), new Set()).action === "go");
   ok("はっきり良い", stopDecision(cm("better,better,better,same"), new Set()).action === "fewer");

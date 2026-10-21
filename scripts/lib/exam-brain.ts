@@ -121,15 +121,17 @@ export function brainChangedOf(cmps: Array<{ id: string; cmp: Cmp }>): Set<strin
 }
 
 // ─── 5. 途中で止める ────────────────────────────────────────────────────
-export type StopRule = { minSeen: number; worseN: number; betterN: number };
+/** window＝最初の何問で決めるか（0・無し＝見た問題全部）。2026-10-21 ⑥: 入力が同じ問題（exclude）は数えない＝「最初の8問で本当の悪化3つ」で止める */
+export type StopRule = { minSeen: number; worseN: number; betterN: number; window?: number };
 export const DEFAULT_STOP: StopRule = { minSeen: 4, worseN: 3, betterN: 3 };
 /**
  * 最初の数問ではっきり悪化（道・合格が前より悪い問題が worseN 以上・良くなった数を worseN 以上上回る）→ 止める。
  *   はっきり良い（良くなった betterN 以上・悪化0）→ 確かめの繰り返しを減らす。どちらでもなければ続ける。
  *   揺れる問題の1回目は数えない（揺れで止めない）
  */
-export function stopDecision(cmps: Array<{ id: string; cmp: Cmp }>, flaky: Set<string>, rule: StopRule = DEFAULT_STOP): { action: "stop" | "go" | "fewer"; why: string; worse: string[]; better: string[] } {
-  const seen = cmps.filter((c) => c.cmp !== "nobase" && c.cmp !== "nocur" && !flaky.has(c.id));
+export function stopDecision(cmps: Array<{ id: string; cmp: Cmp }>, flaky: Set<string>, rule: StopRule = DEFAULT_STOP, exclude: Set<string> = new Set()): { action: "stop" | "go" | "fewer"; why: string; worse: string[]; better: string[] } {
+  const all = cmps.filter((c) => c.cmp !== "nobase" && c.cmp !== "nocur" && !flaky.has(c.id) && !exclude.has(c.id));
+  const seen = rule.window && rule.window > 0 ? all.slice(0, rule.window) : all;
   const worse = seen.filter((c) => c.cmp === "worse").map((c) => c.id), better = seen.filter((c) => c.cmp === "better").map((c) => c.id);
   if (seen.length >= rule.minSeen && worse.length >= rule.worseN && worse.length - better.length >= rule.worseN)
     return { action: "stop", why: `${seen.length}問中 ${worse.length}問が前より悪い（良くなった ${better.length}）＝はっきり悪化`, worse, better };
