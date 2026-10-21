@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
 import { itemizeWants, type WantsCustomerLike } from "@/app/lib/customer-wants";
 import { searchRentMinOf, type CustomerLike } from "@/app/lib/property-brain";

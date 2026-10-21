@@ -4,7 +4,7 @@
 //   npx tsx --env-file=.env.local scripts/preview-staff-todo.ts                       今の時点
 //   npx tsx --env-file=.env.local scripts/preview-staff-todo.ts --days=3 --hm=10:30   今日と過去3日の 10:30（JST）＋その日の終わりに済んだか
 //   --mask  お客様の名前を 顧客A・顧客B… に置き換える（見本を人に見せる時）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { loadStaffTodoList } from "@/app/lib/staff-todo-list-server";
 import { renderStaffTodoList, type TodoList } from "@/app/lib/staff-todo-list";
 import { jstDayStartMs } from "@/app/lib/jst-date";

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { legacyActionWinRatesEnabled } from "@/app/lib/application-reach";
 import { watchAixMatchRates, WATCH_MATCH_MIN, WATCH_MATCH_MIN_N } from "@/app/lib/watch-aix-match";
 

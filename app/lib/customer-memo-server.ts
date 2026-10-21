@@ -9,7 +9,7 @@
 //   - DeepSeek に渡す前に: 申込の書類・本人確認書類・個人の値の通は落とす（test-pii-guard.applicationMaterialReason）・名前と番号は maskPII・
 //     DeepSeek に渡してよい線（post-apply.loadDeepseekCutoff＝申込の記録の後に戻した時刻）より後の通・メモの行だけ渡す・申込中は読まない（申込以降は対象外）。
 // 戻す: CUSTOMER_MEMO=off（注記）／CUSTOMER_MEMO_LLM=off（読み取り）／CUSTOMER_MOOD_FLOW=off（気持ちの流れ）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { isPostApplyStatus } from "@/app/lib/llm-alt-provider";
 import { loadDeepseekCutoff, filterAfterCutoff } from "@/app/lib/post-apply";
 import { applicationMaterialReason } from "@/app/lib/test-pii-guard";

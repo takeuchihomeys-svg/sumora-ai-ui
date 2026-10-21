@@ -4,7 +4,7 @@
 // 判定は estimate-profit.ts（純関数）。ここは記録を引いて渡し、書くだけ。失敗しても投げない。
 //
 // 2026-09-24 竹内「AD − 見積書の割引金額が利益。物件オススメ・ピックアップで送った物件なら AD も分かっているはず。連動する」
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { rentFromSummary } from "@/app/lib/estimate-handoff";
 import { linkAdForEstimate, computeProfitYen, summarizeEstimateProfit, type AdSource, type ProfitSummary } from "@/app/lib/estimate-profit";
 // 2026-10-08 8巡目（記録）: 物件確認した＋同封・【】の無い見積書も全件残す（決め方は estimate-record-items.ts・戻す ESTIMATE_RECORDS_ALL=off）

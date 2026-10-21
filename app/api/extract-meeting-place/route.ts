@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { hasBanchi, materialAddressFromPdfText, pickupMatchesName, supplementMeetingAddress, MEETING_ADDRESS_NO_BANCHI_MESSAGE } from "@/app/lib/meeting-address";
 
 export const maxDuration = 30;

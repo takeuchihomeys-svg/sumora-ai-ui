@@ -1,7 +1,7 @@
 // scripts/audit-brain-targets.ts — 読むだけ。ブレインのターゲット（今日のターゲット全リストの新しい中身）と、旧の is_flagged の一覧・hot の比較
 // 実行: npx tsx --env-file=.env.local scripts/audit-brain-targets.ts
 // 2026-10-08 竹内さんの決定「ブレインの判断に寄せる」・ターゲットの正の基準（①内覧済み ②審査落ち ③新規 ④物件検索中）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { loadBrainTargets } from "@/app/lib/brain-attention-server";
 import { TARGET_TIER_LABEL, brainNeedsStaff, type AttentionMeta } from "@/app/lib/brain-attention";
 

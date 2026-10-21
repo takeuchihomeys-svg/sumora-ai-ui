@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 async function sendGroupMessage(text: string, mentionUserId?: string, groupKey?: string): Promise<void> {
   const key = groupKey ?? "group_id";

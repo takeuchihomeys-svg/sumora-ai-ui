@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 // 2026-09-20 竹内「一度送った物件が間違えって入ってしまうこと防げる（アナウンスがでる）」:
 //   重複の線は sent-property-record の純関数に一本化する（四者同名）。
 //   旧実装は「号室が完全一致したら名前を見ずに重複確定」だったが、実測（scripts/audit-property-dup-threshold.ts・

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { createGenerationModel, REPLY_GENERATION_MODEL } from "@/app/lib/reply-generation-model";
 import { LLM_ACTION_HEADER } from "@/app/lib/llm-usage-recorder";

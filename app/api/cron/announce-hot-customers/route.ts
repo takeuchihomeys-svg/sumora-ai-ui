@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { PROPERTY_DELIVERY_AIX } from "@/app/lib/aix-task-link";
 import { flagOn, TARGET_TIER_RANK } from "@/app/lib/brain-attention";
 import { loadBrainTargets, loadScreeningList, syncBrainHotDrops, type BrainTarget, type HotDropRow, type ScreeningRow } from "@/app/lib/brain-attention-server";

@@ -4,7 +4,7 @@
 //   書くのは新しい2つの表だけ（元の表は1行も書き換えない）。outcome_events は会話ごとに消して作り直す（派生・元の表が正）。
 //   deal_outcomes は locked=true の行（スタッフが手で付けた結果・いずれ申込のツールから受けた結果）を上書きしない。
 import { createHash } from "node:crypto";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { loadCustomerStateInput } from "@/app/lib/customer-state-server";
 import { resolveCustomerState } from "@/app/lib/customer-state";
 import { isTestConversation } from "@/app/lib/test-conversations";

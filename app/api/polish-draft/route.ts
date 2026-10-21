@@ -1,6 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
 import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";

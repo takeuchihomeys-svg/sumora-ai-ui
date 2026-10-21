@@ -9,7 +9,7 @@
 //   ⑤env で絞らない（キャッシュは Anthropic アカウント×内容の鍵。local の温めも本番の蓄えを温める）
 //     ただし「最後の本物の呼び出し」は 2026-10-15 から本番の Claude の行だけで数える（手元の試験の同じ鍵の行で too_soon が続かないよう・BRAIN_WARM_REAL_ENV=any で旧）
 //   止める: PREFIX_WARM=off。時間帯: PREFIX_WARM_HOURS_JST（既定 "9-22"）。1対象 1日20回まで
-import { supabase } from "./supabase";
+import { supabase } from "./supabase-server";
 import { getCachedPromptRules, getCachedTopPrinciples, getCachedLossPatterns } from "./prompt-cache";
 import { aixTemplateSharedParts } from "./aix-template-cache";
 import { loadCustomerSummaryPrefixInputs } from "./customer-summary-prompt-server";

@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
+import { serverSupabaseKey } from "@/app/lib/supabase-server-key";
 import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
 import { manYen } from "@/app/lib/man-yen";
 import { createClient } from "@supabase/supabase-js";
@@ -16,7 +17,7 @@ import { MSG_SEP } from "@/app/lib/reply-context";
 function getDb() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    serverSupabaseKey()!,
   );
 }
 

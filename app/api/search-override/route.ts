@@ -5,7 +5,7 @@
 // 要約の1か所（将来の拡張の AIX モードも同じ口を使う）。DB には書かない（読むのはお客様の登録の条件の欄だけ）。
 // 内部認証（DeepSeek を呼ぶので誰でも叩ける口にしない）。
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { overrideLine, isEmptyOverride, type RegisteredConditions } from "@/app/lib/search-override";
 import { summarizeSearchMemo } from "@/app/lib/search-override-server";

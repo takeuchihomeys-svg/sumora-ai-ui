@@ -6,7 +6,7 @@
 //     aix_usage_logs.property_names（AIX でスタッフが入れた名前・試験の bexam は除く）→ staff
 //     sent_properties（source≠vision）→ shared（グループに共有・照合済みの送付）／ source=vision → read（数えるだけ・信頼に入れない）
 //   直しの決まりは property-name-fix.ts（純関数）。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildLedger, fixReadPropertyName, kanjiRuns, placeFixCandidate, type LedgerEntry, type LedgerSource, type NameFixResult } from "@/app/lib/property-name-fix";
 import { toJapaneseKanji } from "@/app/lib/ja-kanji";
 

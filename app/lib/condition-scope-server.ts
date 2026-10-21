@@ -7,7 +7,7 @@
 // 2026-09-30 強化（竹内「一時調整でその一回限定して行うか、そもそもの条件自体を変えるのかの判断の部分も強化する」）:
 //   ③ 弱い「今回だけ」の語（一旦・とりあえず）の時は、戻す先の登録の条件が空なら切り替えのまま（戻さない・上書きも作らない）＝初めての条件を消さない
 //   ④ 判断を1か所（condition_scope_decisions）に残し、週のまとめ（weeklyConditionScope）がその後のスタッフの動きと照らして当たり外れを付ける
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { recordConditionHistory } from "@/app/lib/condition-history";
 import {
   planScopeRevert, hasRegisteredConditions, labelScopeOutcome, scoreScopeDecisions, stripRevertedAutoNotes, SCOPE_REVERT_FIELDS,

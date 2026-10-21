@@ -7,7 +7,7 @@
 //     ① この会話で送った画像の読み取り（sent_image_properties → image_details.lines）＝お客様が実際に見た資料
 //     ② 売上サポの行（property_pickups: pdf_text の「保証会社」の見出し → 無ければ image_lines）。この会話・このお客様の行 → 無ければ全体（60日）
 //   決まらない・読めない時は空＋理由（推測で入れない）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { resolveGuarantorTargets, type GuarantorTargetMsg, type GuarantorTargets } from "@/app/lib/guarantor-target";
 import { guarantorFromMaterial, type MaterialGuarantorResult } from "@/app/lib/guarantor-material";

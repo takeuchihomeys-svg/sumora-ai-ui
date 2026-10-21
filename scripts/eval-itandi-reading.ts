@@ -18,7 +18,7 @@ import { readSheetCanvas, type SheetUsage } from "../app/lib/sheet-read-server";
 import { recordSheetUsage } from "../app/lib/pickup-analyze-server";
 import { parseSheetText } from "../app/lib/sheet-facts";
 import { SHEET_PROMPT_VERSION, type SheetImageFacts } from "../app/lib/sheet-prompt";
-import { supabase } from "../app/lib/supabase";
+import { supabase } from "../app/lib/supabase-server";
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? null;
 const DIR = resolve(arg("dir") ?? process.env.IT_DIR ?? ".");

@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { weeklyReadingAudit } from "@/app/lib/reading-audit-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { runBrainGapFinder, compactGapReport } from "@/app/lib/brain-gap-finder-server";
 import { brainGapFinderEnabled } from "@/app/lib/brain-gap-finder";
 

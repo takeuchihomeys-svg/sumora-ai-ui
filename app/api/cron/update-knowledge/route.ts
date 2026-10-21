@@ -1,5 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { runKnowledgeCleanup } from "@/app/lib/knowledge-cleanup";
 // 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";

@@ -6,7 +6,7 @@
 //   「物件ごとに保存し、2回目以降は画像を読み直さない」）:
 //   1件分は pickup-analyze-server.analyzePickupRow（事実: 保存 → 同じ部屋 → 同じ図 → 読む の順／照合と点: 純関数）
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { pickBest } from "@/app/lib/pickup-image-analysis";
 import { loadImageWants } from "@/app/lib/image-wants-server";

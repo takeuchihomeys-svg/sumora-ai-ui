@@ -4,7 +4,7 @@
 //   静的な一覧（名寄せ・種類）は app/lib/guarantor-companies.ts にハードコード（feedback_static_vs_dynamic_db）。
 //   マスタと同じ会社は登録せず duplicate:true でマスタ側を返す（UI はそれを選択状態にする）
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { GUARANTOR_COMPANY_MASTER, normalizeGuarantorName, isMasterGuarantor, normalizeGuarantorType, resolveGuarantor, type GuarantorType } from "@/app/lib/guarantor-companies";
 

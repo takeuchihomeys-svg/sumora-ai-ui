@@ -11,7 +11,7 @@
 //                    2026-09-27: 通常の返信の本文で AIX の仕事を済ませた時（send-line-message → completeAixActionItemByStaffText・done_by=staff_text）
 //   ※ 片付けの判定は app/lib/aix-item-cleanup.ts（純関数）・監査 scripts/audit-aix-item-cleanup.ts
 //   定時一覧       … cron/announce-aix-actions（10:30〜20:30 の2時間ごと）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildAixActionNotice, isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";

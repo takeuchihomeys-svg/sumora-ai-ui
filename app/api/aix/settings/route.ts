@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 // 各設定のデフォルト値（DB未設定時のフォールバック）
 // ⚠️ 注意: property_recommendation の設定は【現在無効】。

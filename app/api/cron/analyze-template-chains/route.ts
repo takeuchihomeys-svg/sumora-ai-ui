@@ -11,7 +11,7 @@
 //   ai_prompts key=chain_stats_history         — 週次スナップショット履歴（最新8件・新しい順）
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 export const maxDuration = 300;

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { jstParts } from "@/app/lib/jst-date";
 import { flagOn } from "@/app/lib/brain-attention";
 import { loadBrainTargets, type BrainTarget } from "@/app/lib/brain-attention-server";

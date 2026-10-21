@@ -5,7 +5,7 @@
 //   落ちる行が本当に文字層に無いか（書き方の違い・康煕部首で見落としていないか）を1行ずつ出す。⚠ DB には書かない。
 //
 // 実行: npx tsx --env-file=.env.local scripts/audit-text-detail-grounding.ts [--since=2026-09-29T07:30:00Z] [--limit=400]
-import { supabase as sb } from "../app/lib/supabase";
+import { supabase as sb } from "../app/lib/supabase-server";
 import { dropUngroundedLines, DETAIL_TEXT_MAX_CHARS, detailSourceFor } from "../app/lib/property-detail-source";
 
 const arg = (k: string, d = "") => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split("=").slice(1).join("=");

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { jstWeekMondayYmd } from "@/app/lib/jst-date";
 
 export async function GET(req: NextRequest) {

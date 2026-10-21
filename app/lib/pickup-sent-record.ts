@@ -6,7 +6,7 @@
 //   ・経路は channel='pickup'、source='aix:property_send'、delivery='customer'、pickup_id で property_pickups に戻れる
 //   ・同じ画像を後から読み取る recordSentImageProperty は、ここで先に書いた sent_image_properties を既読として使い
 //     （DeepSeek を呼ばない）、sent_properties の image_url 一致で duplicate_skipped になる（二重にしない）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { planPickupSentWrites, type ExistingSentRow, type PickupForRecord } from "@/app/lib/pickup-sent-plan";
 
 export type PickupSentRecordResult = { inserted: number; updated: number; images: number; skipped: string[]; error?: string };

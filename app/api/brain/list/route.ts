@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { BRAIN_SKIP_STATUSES, URGENT_WINDOW_MS, type SuggestedAixMeta } from "@/app/lib/brain-core";
 import { brainNeedsStaff, flagOn, type AttentionMeta } from "@/app/lib/brain-attention";
 

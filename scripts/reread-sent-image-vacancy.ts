@@ -53,7 +53,7 @@ async function main() {
   const { readPropertyImageDetailByTranscript } = await import("../app/lib/property-image-read");
   const { detailModelLabel } = await import("../app/lib/property-detail-source");
   const { loadDeepseekCutoff, isAfterCutoff } = await import("../app/lib/post-apply");
-  const { supabase } = await import("../app/lib/supabase");
+  const { supabase } = await import("../app/lib/supabase-server");
   const model = (process.env.PROPERTY_IMAGE_MODEL ?? "deepseek-flash").trim();
   const t0 = new Date().toISOString();
   console.log(`開始 ${t0}（再開する時は --before=${before} をそのまま付ける）`);

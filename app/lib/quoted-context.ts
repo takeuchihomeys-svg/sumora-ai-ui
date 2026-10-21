@@ -13,7 +13,7 @@
 //   読み取りは image_details（送った時・引用が来た時に読んで残す）。ここでは**表を見るだけ**なので待ち時間は増えない。
 //
 // ※ プロンプトに入れる文（純関数）は quoted-note.ts。ここは DB から引用先を引く所だけ。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { getImageDetails } from "@/app/lib/image-detail-store";
 import type { ImageKind } from "@/app/lib/property-image-read";
 import type { QuotedContext } from "@/app/lib/quoted-note";

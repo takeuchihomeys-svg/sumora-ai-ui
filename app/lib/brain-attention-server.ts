@@ -3,7 +3,7 @@
 // 判定はすべて app/lib/brain-attention.ts（純関数）。ここは DB の読み書きだけ。
 //
 // 2026-10-08 竹内さんの決定（原文は brain-attention.ts の頭）: ブレイン以外が「次にやる事」を決めている所をブレインに寄せる。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 import {

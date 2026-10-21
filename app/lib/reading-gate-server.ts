@@ -11,7 +11,7 @@
 //   読み直しは1枚1回（欄をまとめて読む）。
 // 戻す: READING_CONFIDENCE=off（ゲートごと止める）・READING_RECHECK=off（LLM の読み直しだけ止める）・PROPERTY_NAME_ATTR_FIX=off（①の名前の照らしを止める）
 //       PROPERTY_NAME_ATTR_FIX_PLACELESS=off（地名の無い片仮名・英字だけの名前は①で直さない。既定は直す＝竹内悠馬 10/14「直す」・賃料・㎡・間取りで1つに決まり名前が似ている時だけ）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import {
   readingConfidenceEnabled, nameSignals, NAME_TRIGGER, roomSignals, amountUnitSignals, lookupByAttributes, attrNameFix,
   adoptRecheckedName, adoptRecheckedRoom, alignUnitWithPickup, applyRecheckedUnits, markUnitUnclear,

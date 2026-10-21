@@ -2,7 +2,7 @@
 // お客様役（テスト・YUMA 専用）のサーバー側: 会話を読んで DeepSeek にお客様の次の返事を書かせる／webhook と同じ関数で会話に入れる。
 //   鍵は呼ぶ側（app/api/test/customer-sim/route.ts）が customer-sim-guard.checkCustomerSimAccess で確かめてから呼ぶ。
 //   ここでも入れる直前にテスト用の会話かをもう一度見る（二重の歯止め）。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { newSimLineMessageId } from "@/app/lib/customer-sim-guard";
 import { ACCOUNTS, handleTextMessage } from "@/app/lib/line-webhook-text";

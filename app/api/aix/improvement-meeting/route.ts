@@ -1,6 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 // 改善案打ち合わせフロー:
 // 改善案タブ（ai_template_candidates source="improvement"）の候補について、

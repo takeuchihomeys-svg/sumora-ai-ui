@@ -10,7 +10,7 @@
 //     ・照合できない → 読んだ名前のまま記録（既存の記録は上書きしない・source="vision"）＝①と同じ範囲を記録
 //   既に同じ画像の記録があれば**読み直さず**、記録済みの名前を照合し直すだけ（AIX 物件オススメは
 //   生成の時と送る時に同じ画像を渡すので、2回目は DeepSeek を呼ばない）。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { channelFromSource, isCustomerRow, rowChannel } from "@/app/lib/sent-delivery";
 import { starHeadBuilding } from "@/app/lib/aix-material-facts";
 

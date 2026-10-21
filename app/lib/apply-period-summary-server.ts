@@ -18,7 +18,7 @@
 // 【Claude で作る】ヘッダ x-sumora-llm-post-apply=1 ＋ 線の印 blocked を付ける＝出口（llm-alt-provider）はテスト用の切り替え
 //   （LLM_TEST_MODE=deepseek-all）の時も必ず Claude のまま（申込中の中身を読む呼び出しなので）。
 import Anthropic from "@anthropic-ai/sdk";
-import { supabase } from "./supabase";
+import { supabase } from "./supabase-server";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER } from "./llm-usage-recorder";
 import { logLlmUsage } from "./llm-usage-log";

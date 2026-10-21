@@ -13,7 +13,7 @@ import { customerMemoView, applyStaffMemoEdit, setReapplyPatternMemo, setParalle
 import { loadPostApplyFacts, loadParallelSecondState, parallelEligible } from "@/app/lib/post-apply";
 import { PARALLEL_2ND_LABEL, parallelSecondEnabled } from "@/app/lib/parallel-second";
 import { LLM_MEMO_KINDS, CALL_MEMO_CHARS, type MemoKind } from "@/app/lib/customer-memo";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { loadReapplyInfo } from "@/app/lib/reapply-customer-server";
 import { RETURN_PATTERNS, RETURN_PATTERN_LABEL, reapplyBadgeText, type ReturnPattern } from "@/app/lib/reapply-customer";
 

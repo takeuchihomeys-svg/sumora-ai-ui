@@ -174,7 +174,7 @@ type DbLike = {
 export async function recordWarmPrefix(prefix: WarmPrefix, dbArg?: DbLike, nowIso: string = new Date().toISOString()): Promise<"inserted" | "updated" | "failed"> {
   try {
     // テスト（自己完結ハーネス・Supabase の env なし）から純関数だけ使えるように、DB クライアントは必要な時に読み込む
-    const db: DbLike = dbArg ?? ((await import("./supabase")).supabase as unknown as DbLike);
+    const db: DbLike = dbArg ?? ((await import("./supabase-server")).supabase as unknown as DbLike);
     const { data, error } = await db.from("llm_warm_prefixes").select("use_count").eq("hash", prefix.hash).maybeSingle();
     if (error) { console.warn("[reply-warm-prefix] select failed:", error.message); return "failed"; }
     if (data) {

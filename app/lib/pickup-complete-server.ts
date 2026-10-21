@@ -15,7 +15,7 @@
 //     ③ 売上サポの詳細を開いた時（/api/property-pickups?view=detail）… 開いた時に10分を過ぎていればその場でまとめる
 //   止まった時: まとめ ID を付けた後に読み取り・順位が途中で切れた（関数の打ち切り等）まとめは status=running のまま残る
 //     → Cron が 15分を過ぎた running を1回だけ retry に変えて（条件付き UPDATE で取る）finishCompleteGroup をやり直す（保存済みの分析は読まない）
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { selectCompleteTargets, completeGroupId, joinableGroupId, rankCompleteGroup, autoCompleteDue, isQuietFor, lastOpenAt, searchHold, COMPLETE_WINDOW_HOURS, AUTO_COMPLETE_QUIET_MS, SEARCH_HOLD_MAX_MS, type CompleteSourceRow, type CompleteRankRow, type CompleteRanking, type AutoCompleteRow, type HoldAudit, type HoldCommand, type HoldArrival } from "@/app/lib/pickup-complete";
 import { bestBasisFor, bestRuleTag, customerImageNeed, type BestBasis } from "@/app/lib/pickup-best";
 import { starRankMode, type StarSituation } from "@/app/lib/recommend-star-rank";

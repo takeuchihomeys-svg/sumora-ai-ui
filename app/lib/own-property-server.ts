@@ -2,7 +2,7 @@
 // お客様の最新の連投に含まれる物件（スクショ）が、こちらが前に送った物件かを DB の記録で照合する。
 // 判定そのものは own-property-match.ts（純関数）。ここは記録を引いて渡すだけ。
 // 2026-09-22 竹内（𝓡さん事例）「こっちが送った物件をお客さんが送ってくることもある。判断できるようにする」
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { extractScreenshotProperty, matchOwnProperty, buildOwnPropertyNote, type SentProperty, type OwnMatch, type ScreenshotProperty } from "@/app/lib/own-property-match";
 import { isJevEnabled } from "@/app/lib/jev-client";
 import { askOwnPropertyJev } from "@/app/lib/own-property-jev";

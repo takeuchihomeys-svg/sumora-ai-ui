@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import {
   selectAutoSearchTargets, buildAutoSearchPayload, isBatchedRun,
   MAX_TARGETS_PER_RUN, RECENT_SENT_DAYS, NEW_CUSTOMER_DAYS,

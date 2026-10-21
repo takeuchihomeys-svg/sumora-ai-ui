@@ -4879,7 +4879,7 @@ async function runMigration(req: Request, force: boolean) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const t0 = Date.now();
-  const { supabase } = await import("@/app/lib/supabase");
+  const { supabase } = await import("@/app/lib/supabase-server");
   const { startCronLog, finishCronLog } = await import("@/app/lib/cron-logger");
   const fingerprint = sqlFingerprint(SQL);
   const batchOn = (process.env.MIGRATE_BATCH ?? "").toLowerCase() !== "off";

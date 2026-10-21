@@ -3,7 +3,7 @@
 // Vercel Functions のウォームインスタンス内でDBクエリを削減する。
 // TTL切れでもSWR（stale-while-revalidate）で古いキャッシュを返し生成をブロックしない。
 
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { currentRulesOverlay } from "@/app/lib/rules-overlay";
 

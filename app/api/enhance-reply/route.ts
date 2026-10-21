@@ -1,5 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 // 2026-09-11 データ衛生: 生成失敗文・テスト送信を正解例として注入しない（読む側で除外）
 import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";

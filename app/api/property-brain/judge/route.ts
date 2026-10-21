@@ -20,7 +20,7 @@
 //   ここが落ちても拡張は今までどおり全件送る（拡張側で 30秒タイムアウト・エラーは全件送付）。
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import {
   buildCustomerProfile, parsePropertyFacts, judgeProperty, applyImageFacts, parseDiscountYen,
   formatBrainNoteLine, countVerdicts,

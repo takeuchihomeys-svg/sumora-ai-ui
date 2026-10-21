@@ -1,5 +1,5 @@
 // tmp: 物件オススメの本文の「🌟建物 号室」が、その会話の売上サポの資料の物件名と字が違う（似ているが一致しない）件数を数える
-import { supabase as sb } from "../app/lib/supabase";
+import { supabase as sb } from "../app/lib/supabase-server";
 import { normalizePropertyName, similarity } from "../app/lib/property-name-match";
 async function main() {
   const since = new Date(Date.now() - 21 * 86400000).toISOString();

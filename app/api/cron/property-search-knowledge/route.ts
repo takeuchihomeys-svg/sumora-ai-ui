@@ -5,7 +5,7 @@
 //   → 統合・退役（消さない）・食い違い（届け先の1番の駅の入れ替わり）・読まれない物の報告
 // 2026-10-02 竹内「物件検索のところちゃんと知識積み重なるようになっているのか」「知識溜まってもちゃんと整理するような環境もつくる」（⑯ 手順5）
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { runKnowledgeCycle } from "@/app/lib/property-search-knowledge-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 

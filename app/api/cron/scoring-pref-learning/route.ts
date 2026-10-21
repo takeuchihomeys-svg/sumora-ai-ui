@@ -6,7 +6,7 @@
 // （物件検索ブレインと同じ口・週 $1 の上限）。既定は「良くなった時だけ自動で表を更新」（CUSTOMER_PREF_LEARNING_AUTO_APPLY=off で提案だけ）。
 // 2026-09-29 竹内「（お客様ごとの採点の倍率を毎週の学習に）組み込む」「DeepSeek で分析できるかな？ 物件検索ブレイン（DeepSeek）の部分が分析する形」
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { runPrefLearning } from "@/app/lib/customer-pref-learning-server";
 
 export const maxDuration = 300;

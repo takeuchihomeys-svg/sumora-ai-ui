@@ -1,5 +1,5 @@
 ﻿import { NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 300;

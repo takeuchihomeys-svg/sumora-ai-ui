@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { flagOn } from "@/app/lib/brain-attention";
 import { loadBrainTargets } from "@/app/lib/brain-attention-server";
 import { todoSonotaMergeEnabled } from "@/app/lib/staff-todo-list";

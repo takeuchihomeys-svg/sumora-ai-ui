@@ -3,7 +3,7 @@
 // 2026-09-15 竹内（H 事例）: 通話URL は管理画面（設定 → チャット → 通話 → LINEコールを告知）でアカウントごとに発行される。
 //   Messaging API からは取得できないので、AIX の画面で1回貼り付けて aix_settings に保存する（静的な設定・認証情報ではない）
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { normalizeLineAccountKey, LINE_ACCOUNT_LABELS } from "@/app/lib/line-accounts";
 import { callUrlSettingKey, isValidLineCallUrl } from "@/app/lib/phone-call";

@@ -9,7 +9,7 @@
 //   POST /api/staff-device { device_id, writer }   → { ok, writer, backfilled: { messages, send_log } }
 import { NextRequest, NextResponse } from "next/server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { parseStaffDeviceId, parseDeviceWriter, deviceWriterLabel, deviceLabelOf } from "@/app/lib/staff-device";
 
 export const maxDuration = 20;

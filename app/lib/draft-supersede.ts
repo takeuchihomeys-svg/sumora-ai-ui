@@ -8,7 +8,7 @@
 //   新しい発言があれば1通目向けの下書きは保存せず、生成中の印を外して draft_pending_at を残す → cron（generate-pending-drafts）が
 //   ブレイン（brain_analyzed_at < updated_at）→ 2通目まで含めた下書きを作り直す。
 //   保存する3か所（generate-reply・bg-async・cron）が同じ判定を使う（どこか1か所でも保存すると2通目の下書きが作られない）。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { isTrivialAckText, ackExemptEnabled } from "@/app/lib/stale-reply";
 
 /** 同じ秒の書き込みの丸め（答えた発言そのものを「新しい」と誤判定しない） */

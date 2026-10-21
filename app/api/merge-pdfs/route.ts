@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PDFDocument } from "pdf-lib";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 // 2026-09-25: Anthropic の import を外した（🌟 の Claude Haiku への切り替えを外し、このルートは Claude を呼ばない）
 // 2026-09-21 竹内「一度共有した物件を除いてLINEに送ることが出来ればかなり質高くなる」
 import {

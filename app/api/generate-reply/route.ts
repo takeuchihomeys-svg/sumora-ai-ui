@@ -3,7 +3,7 @@ import { enforceCallName } from "@/app/lib/call-name-guard";
 import { NextRequest, NextResponse, after } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（返信生成の keep-warm）: 生成モデルの設定は1か所（cron/keep-warm と共有）。実際に送った prefix を記録して cron が読み直す
 import { createGenerationModel } from "@/app/lib/reply-generation-model";

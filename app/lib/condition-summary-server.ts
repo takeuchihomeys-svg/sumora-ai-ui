@@ -7,7 +7,7 @@
 //   - 推論なし（thinking disabled）・温度 0・固定の前置き（SUMMARY_SYSTEM_PROMPT）を先頭＝前置きキャッシュが効く
 //   - 失敗しても投げない（決定論の要約だけ返す）
 import { createHash } from "node:crypto";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildAltNameMask, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { loadPartyAliasesByCustomer, loadKnownCallNames } from "@/app/lib/pii-known-names";
 import { altPiiSignal, altPiiGateEnabled } from "@/app/lib/alt-pii-gate";

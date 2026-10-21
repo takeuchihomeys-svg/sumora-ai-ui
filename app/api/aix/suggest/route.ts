@@ -3,7 +3,7 @@
 // データが少ない場合は null を返す（UI側はフォールバック）
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { normalizeStatus } from "@/app/lib/status-normalize";
 import { legacyActionWinRatesEnabled } from "@/app/lib/application-reach";
 

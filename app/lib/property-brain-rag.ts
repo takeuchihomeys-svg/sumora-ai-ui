@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { buildCustomerProfile } from "@/app/lib/property-brain";
 // 2026-10-02 ⑯ 「なんば・梅田に出やすい」の決定論の範囲（area_plan）と家賃の相場（rent_observations）
 import { customerAreaAndRent } from "@/app/lib/area-rent-server";

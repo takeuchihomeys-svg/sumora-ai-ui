@@ -1,7 +1,7 @@
 ﻿// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { isWaitPromiseNotes } from "@/app/lib/promise-timing";
 import { flagOn } from "@/app/lib/brain-attention";

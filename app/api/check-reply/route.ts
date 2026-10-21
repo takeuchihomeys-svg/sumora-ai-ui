@@ -16,7 +16,7 @@ import { resolveAddressNameForConversation } from "@/app/lib/address-name-server
 // 2026-09-11 統合設計（経路G・T4）: 送信時チェック（2.3s）は Sonnet の context_check が時間内にほぼ返らない（24h で約76%タイムアウト）。
 //   context_check を Haiku で走らせる（生成時の3パス結果を未完走の結果で上書きしない）。モデル ID は final-check の MODEL_CHECK_FAST と同じ
 const MODEL_CHECK_FAST_FOR_SEND = "claude-haiku-4-5-20251001";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 // ─── 送信時の最終チェックAPI（スタッフ編集後テキストの再チェック専用）───────────
 // page.tsx executeSend() が「生成時チェックのハッシュと不一致」（=スタッフが編集した）

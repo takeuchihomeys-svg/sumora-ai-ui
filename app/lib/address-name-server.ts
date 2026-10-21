@@ -2,7 +2,7 @@
 //   旧: generate-reply は DB名＋スタッフ送信100件の取り直し＋resolveAddressName、check-reply は窓内の表示名だけで決めていて、
 //   窓（25件）にスタッフの呼びかけが無い会話では送信時チェックが別の名前を基準にしうる。
 //   履歴は顧客の発言も取る（名乗り・申込フォーマット・本人確認書類＝「元の名前の固定」の判定に使う）。is_aix_generated で人間の呼び名を優先する。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { resolveAddressName, type AddrMsg, type AddressNameVerdict } from "@/app/lib/validate-reply";
 import { mergeHistoryForAddress, type AddressWindowMsg, type AddressDbMsg } from "@/app/lib/address-history";
 import { isGroupConversationName } from "@/app/lib/line-target";

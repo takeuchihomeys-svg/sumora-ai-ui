@@ -11,7 +11,7 @@
 //   これで「今の番がお客様役か」を DB から読める。お客様役の番では売上番長グループ・鈴木さんへの通知
 //   （AIX要対応・条件受領・地域変更・物件出しの依頼・条件の矛盾）とカレンダーの登録と物件の自動検索を出さない。
 //   竹内さんが YUMA の LINE から送った本物の発言（手動のテスト）は印が無いので今まで通り。
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { isTestConversation } from "@/app/lib/test-conversations";
 
 /** お客様役の発言の line_message_id の頭（LINE の message id は数字だけ） */

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 
 // AIXアクション → テンプレートカテゴリ変換

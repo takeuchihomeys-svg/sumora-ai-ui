@@ -9,7 +9,7 @@
 //   ③ region_map     → AI学習済み地域マッピング（token → ward）
 // ward_codes は未投入のため参照しない。
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 
 export const maxDuration = 60;
 

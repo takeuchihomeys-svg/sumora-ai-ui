@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/app/lib/supabase";
+import { supabase } from "@/app/lib/supabase-server";
 import { newerCustomerMessageAfter, newerSubstantiveCustomerMessageAfter, staleDraftGuardOn } from "@/app/lib/draft-supersede";
 
 // Vercel Functions のタイムアウト上限（秒）— 最大100件のLINE push送信に余裕を持たせる
