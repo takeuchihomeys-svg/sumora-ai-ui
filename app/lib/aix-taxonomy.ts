@@ -11,6 +11,7 @@
 // 各ラベルマップの説明文は下の PROPERTY_CHECK_RESULT_LABEL / PROPERTY_CHECK_RESULT_DESCRIPTION に統一する。
 import { PROXY_CONTRACT_RE, MGMT_COMPANY_Q_RE, TWO_PERSON_CHECK_REQUEST_RE } from "./scene-patterns";
 import { LIFELINE_Q_RE } from "./aix-lifeline";
+import { screeningButtonEnabled, SCREENING_BUTTON } from "./aix-owner-answers-1021";
 import { aixNewPickers1020Enabled, NEW_CHECK_PATTERNS_1020, APPLICATION_STATUS_Q_RE, CONTRACT_TERMS_RE, RENT_NEGOTIATION_RE, ROOM_VACANCIES_Q_RE, SCREENING_CONSULT_RE, SURROUNDINGS_RE, BIKE_PARKING_RE, PROPERTY_INFO_BUTTON, PROPERTY_INFO_PICKER_LABELS } from "./aix-new-pickers";
 
 export const AIX_BUTTON_TAXONOMY = {
@@ -297,6 +298,10 @@ export function propertyCheckKindFor(pattern: string | null | undefined): Proper
   if (!d) return null;
   // 2026-10-20: 切替 off の時は 駐車場 の言葉を今まで通りに
   const topic = d.pattern === "mgmt_parking" && !aixNewPickers1020Enabled() ? "駐車場" : d.topic;
+  // 2026-10-21 竹内さん C9: 審査について（ご相談）は新しいボタン【審査について】から押す（値・ui_button は今まで通り＝画面の開き方は変えない・言葉だけ）
+  if (d.pattern === "mgmt_screening" && screeningButtonEnabled()) {
+    return { check_pattern: d.pattern, ui_button: "確認した（条件・交渉）", topic, note: `AIX【${SCREENING_BUTTON}】を押し、審査内容（職業・名義・保証人・外国籍・時期・その他）を選んでください: ${topic}の確認結果を顧客への報告文に変換する場面です（サブパターン: ${d.pattern}。結果報告の手打ちはNG）` };
+  }
   return {
     check_pattern: d.pattern,
     ui_button: "確認した（条件・交渉）",
@@ -310,6 +315,8 @@ export function propertyCheckKindFor(pattern: string | null | undefined): Proper
 // 2ボタン併記の丸投げ文言ではなく「確認した（条件・交渉）」への具体的指示に切り替える。
 export function buildAixStaffNote(action: string, checkKind?: PropertyCheckKind | null): string {
   if (action === "property_check_result" && checkKind) return checkKind.note;
+  // 2026-10-21 竹内さん C9: 保証会社について は新しいボタン【審査について】の中の選択肢
+  if (action === "guarantor_info" && screeningButtonEnabled() && AIX_STAFF_NOTES[action]) return AIX_STAFF_NOTES[action].replace(/AIX【保証会社について】/g, `AIX【${SCREENING_BUTTON}】→「保証会社について」`);
   return AIX_STAFF_NOTES[action] ?? `AIX【${AIX_BUTTON_LABELS[action] ?? action}】を押してください`;
 }
 

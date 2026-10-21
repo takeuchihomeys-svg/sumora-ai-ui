@@ -1,6 +1,6 @@
 // app/lib/staff-only-aix-1020.ts（純関数・DB/LLM なし）
 // 2026-10-20 P0「AIX と返信の分け方」（竹内さん 10/20「AIが知らないスタッフしか確認できないことはAIXからの送信やで。ここの部分忘れてること多い」）。
-//   既定は全部「何もしない」（STAFF_ONLY_AIX_1020=on で入る）。
+//   10/21 から既定 on（竹内さん B2「オススメで」）・止める STAFF_ONLY_AIX_1020=off。
 //
 // 本番 30日の見張り（返信の番でスタッフの送った文がスタッフだけが知る事の報告 91番・返信の番でスタッフが AIX を押した 96番）を全部分けた（読むだけ）:
 //   多くはブレインの読み違いではなかった — 2段の約束（10/02 竹内さんの決定「いつも約束の返信を先に」）・ピックアップの約束の後のお礼（10/14 決定 C）・
@@ -24,8 +24,9 @@ export const STAFF_ONLY_AIX_1020_PARTS = ["mgmt_pending"] as const;
 export type StaffOnlyAix1020Part = (typeof STAFF_ONLY_AIX_1020_PARTS)[number];
 
 export function staffOnlyAix1020(part: StaffOnlyAix1020Part, env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  const v = (env.STAFF_ONLY_AIX_1020 ?? "").trim().toLowerCase();
-  if (!v || v === "off") return false;
+  // 2026-10-21 竹内さん（B2「オススメで」）: 既定 on（付けない＝全部入る）・止める STAFF_ONLY_AIX_1020=off
+  const v = (env.STAFF_ONLY_AIX_1020 ?? "").trim().toLowerCase() || "on";
+  if (v === "off") return false;
   if ((env[`STAFF_ONLY_AIX_1020_${part.toUpperCase()}`] ?? "").trim().toLowerCase() === "off") return false;
   if (v === "on" || v === "all" || v === "1" || v === "true") return true;
   return v.split(",").map((s) => s.trim()).includes(part);

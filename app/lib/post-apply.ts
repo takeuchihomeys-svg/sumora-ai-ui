@@ -105,6 +105,28 @@ export function resolvePostApply(f: PostApplyFacts): { postApply: boolean; reaso
   return { postApply: true, reason: latest === pushAt ? "application_push" : "id_document", movedBack: false };
 }
 
+/**
+ * 2026-10-21 本番の外れ（まりあ・b50fd451）: 9/25 に本人確認書類→ 10/09 にスタッフが物件提案中へ戻したが、スタッフの印（is_post_apply）が
+ *   残ったまま＝下書きが黙って作られず「AI文案を作成」を押しても何も出なかった（同じ形の会話 4件）。
+ *   印だけが申込以降の理由で、最後の申込の記録（押下・書類）より後に戻している時は、下書きは作る（竹内さん承認「申込から戻ったら Claude だけで下書き」）。
+ *   個人情報の線（postApply・Claude 固定・DeepSeek に渡さない）はそのまま＝下書きを止めるかだけをここで分ける。
+ *   止める DRAFT_BADGE_MOVEDBACK=off（旧＝印があれば止める）
+ */
+export function badgeOnlyMovedBack(f: PostApplyFacts, env: Record<string, string | undefined> = process.env): boolean {
+  if ((env.DRAFT_BADGE_MOVEDBACK ?? "").trim().toLowerCase() === "off") return false;
+  if (f.isPostApply !== true || DRAFT_SKIP_STATUSES.has((f.status ?? "").trim())) return false;
+  const backs = [ms(f.statusManualBackAt), ms(f.deepseekCutoffAt)].filter((x): x is number => x !== null);
+  if (!backs.length) return false;
+  const backAt = Math.max(...backs);
+  const latest = Math.max(ms(f.applicationPushAt) ?? -Infinity, ms(f.idDocumentAt) ?? -Infinity);
+  return backAt > latest;
+}
+
+/** 下書きを止めるか（個人情報の線とは別）: 申込以降でも、印だけ残って戻した会話は止めない（Claude で作る） */
+export function postApplyDraftSkip(f: PostApplyFacts, env: Record<string, string | undefined> = process.env): boolean {
+  return resolvePostApply(f).postApply && !badgeOnlyMovedBack(f, env);
+}
+
 export function isPostApplyConversation(f: PostApplyFacts): boolean {
   return resolvePostApply(f).postApply;
 }

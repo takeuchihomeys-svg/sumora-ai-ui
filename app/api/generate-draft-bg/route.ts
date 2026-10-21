@@ -2,7 +2,7 @@ import { manYen } from "@/app/lib/man-yen";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { DRAFT_SKIP_STATUSES } from "@/app/lib/conversation-status";
-import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, postApplyDraftSkip } from "@/app/lib/post-apply";
 import { MSG_SEP } from "@/app/lib/reply-context";
 
 export const maxDuration = 60;
@@ -51,7 +51,8 @@ export async function POST(req: NextRequest) {
     if (DRAFT_SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: true });
     // 2026-09-23 竹内「申込中は…ここ文生成しなくて大丈夫」: status の遅れに強い判定（app/lib/post-apply.ts）。読めなければ status のまま続行
     try {
-      if (resolvePostApply(await loadPostApplyFacts(db, convId)).postApply) return NextResponse.json({ ok: true, skipped: true, reason: "post_apply" });
+      // 2026-10-21 印だけ残って戻した会話は止めない（Claude で作る・post-apply.ts badgeOnlyMovedBack）
+      if (postApplyDraftSkip(await loadPostApplyFacts(db, convId))) return NextResponse.json({ ok: true, skipped: true, reason: "post_apply" });
     } catch (e) {
       console.warn("[generate-draft-bg] post-apply の記録が読めない → status の判定のまま続行:", e instanceof Error ? e.message : String(e));
     }
