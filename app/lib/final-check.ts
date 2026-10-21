@@ -168,6 +168,8 @@ export interface CheckResult {
   revision_held?: string[];
   /** 2026-10-13: ブレインの裏付けで書き直しに渡した指摘（引用が本文に無い取りこぼし・"CODE"）（監査用） */
   revision_brain_backed?: string[];
+  /** 2026-10-21 自信の気づき（draft-confidence.ts・DRAFT_CONFIDENCE=on の時だけ generate-reply が載せる）。JSONB のキー追加のみ */
+  confidence?: import("./draft-confidence").DraftConfidence;
 }
 
 export interface FinalCheckContext {

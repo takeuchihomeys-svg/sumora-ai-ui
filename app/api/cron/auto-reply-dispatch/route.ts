@@ -11,6 +11,7 @@ import { resolveAckTopicScope, outOfTopicActs, type ScopeMsg } from "@/app/lib/a
 import { staffActsOf } from "@/app/lib/customer-sim-shadow";
 import { extractDraftFacts } from "@/app/lib/draft-fact-grounding";
 import { loadDraftGroundExtra } from "@/app/lib/draft-fact-grounding-server";
+import { draftConfidenceEnabled, confidenceFromCheck } from "@/app/lib/draft-confidence";
 
 export const maxDuration = 60;
 
@@ -129,6 +130,8 @@ export async function GET(req: NextRequest) {
       suggestedAixAction: action,
       draft: sendable,
       draftHasBlock: hasBlock(c.ai_draft_check),
+      // 2026-10-21 自信の気づき: 自信が低い下書きは送らない（DRAFT_CONFIDENCE=on の時だけ・draft-confidence.ts）
+      draftConfidenceLow: draftConfidenceEnabled() && confidenceFromCheck(c.ai_draft_check)?.band === "low",
       status: c.status,
       hasPendingScheduled: pendingIds.has(c.id),
       groundText,

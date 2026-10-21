@@ -137,6 +137,8 @@ export type AutoReplyInput = {
   draft: string | null | undefined;
   /** 最終チェックで止められているか */
   draftHasBlock: boolean;
+  /** 2026-10-21 自信の気づき（draft-confidence.ts）: 下書きの自信が低い（DRAFT_CONFIDENCE=on の時だけ呼び出し側が立てる）。立っていたら送らない＝人に残す */
+  draftConfidenceLow?: boolean;
   /** 会話のステータス */
   status: string | null | undefined;
   /** 同じ会話に未送信の予約が既にあるか */
@@ -178,6 +180,8 @@ export function canAutoReply(i: AutoReplyInput): AutoReplyVerdict {
   if (visibleLength(draft) < 10) return { ok: false, reason: "draft_too_short" };
   // ⑥ 最終チェックで止められている文は送らない
   if (i.draftHasBlock) return { ok: false, reason: "final_check_block" };
+  // ⑥-1b 2026-10-21 自信の気づき（設計知見 a5838a0b）: 自信が低い下書きは人に残す（送る側には倒さない・低くない事は送ってよい理由にはならない）
+  if (i.draftConfidenceLow === true) return { ok: false, reason: "low_confidence" };
   // ⑥-2 2026-10-02 竹内さんの決定「スタッフの確認が要る物は AIX で止める」: 空き状況・初期費用の金額・待ち合わせの住所・内覧の確定日時を
   //   言い切っている下書きは自動で送らない（スタッフが確かめてから送る）。本文は変えない＝人に残すだけ（staff-confirm-facts.ts）
   const staffFact = findStaffOnlyFact(draft);
