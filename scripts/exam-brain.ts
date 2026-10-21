@@ -31,7 +31,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rea
 import { join, resolve } from "node:path";
 import { execSync, execFileSync } from "node:child_process";
 import {
-  mergePicks, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse, dbKeyOf,
+  mergePicks, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, CHEAP_WINDOW_JST, reuseKey, kbKeyOf, canReuse, dbKeyOf,
   modelOf, estimateUsd, DEFAULT_STOP, draftEligible, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
   decidePhase, pickSmall, smallRank, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
   warmDecision, warmLimit, flashSpotCheck, flashProof, FLASH_TYPE_MIN_N, isFixTarget, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3,
@@ -81,6 +81,11 @@ const JUDGE = arg("judge", "lazy") === "full" ? "full" : "lazy";
 // 2026-10-17 確かめ: rubric の並べ替えは判定の答えを変える（q113 の下書き 2/3→0/3）＝既定は旧の並び（as-is）。rubric は別に比べてから
 const JUDGE_PREFIX: "as-is" | "rubric" | "stable" = (() => { const v = arg("judge-prefix", "as-is"); return v === "rubric" || v === "stable" ? v : "as-is"; })();
 const REPLAY = arg("replay") === "strict" ? "--replay=strict" : "--replay";
+// 2026-10-21 竹内さん「試験の次の節約（質は落とさない）」①入力の差の下見: 子を流す前に、AI を呼ばずに今の版の要求を作って main の要求と比べ、
+//   同じ問題×回は main の答えで答案を作る（呼ばない）。違う問題だけ本当に呼ぶ。止める: --input-diff=off（または EXAM_INPUT_DIFF=off）
+const INPUT_DIFF_PRE = (arg("input-diff") || process.env.EXAM_INPUT_DIFF || "on").trim().toLowerCase() !== "off";
+// ②揺れる問題で入力が同じ物は、揺れを測る時（夜の安い時間）だけ回を足す。止める: EXAM_FLAKY_NIGHT=off
+const FLAKY_NIGHT = (process.env.EXAM_FLAKY_NIGHT ?? "").trim().toLowerCase() !== "off";
 // 10/20 COST② 回数の決め方（confidence＝既定・自信が低い問題だけ1回ずつ足す／old＝旧）
 const REPS_MODE = repsModeOf(arg("reps"), process.env);
 // 10/20 COST①: 前（main）の答えが無い問題を今 main で解くか（now・既定）／今は解かず夜中の取り置きに回すか（night＝答えの無い問題は前との比べに入らない）。最後の関所は常に now
@@ -319,12 +324,14 @@ function readModelCheck(): { okTypes: Set<string>; okIds: Set<string>; badIds: S
 
 // ─── 1つの段を流す（使い回し → 子 → 途中で止める → 確かめの回） ─────────────────────────
 type PhaseResult = { label: string; ids: string[]; cmps: Array<{ id: string; cmp: Cmp; why: string }>; baseLabels: string[]; mainLabels: string[]; stopped: boolean; stopWhy: string; confirm: string[];
+  /** 2026-10-21 ①入力が main と同じだった問題（全部の回が main の答え・呼んでいない） */
+  inputSame: string[];
   /** 10/20 COST① 前（main）の答え: 使い回した・前の main から持ち越した・今 main で解いた・今は解かなかった（夜中に回す） */
   base: { reused: number; carried: number; ran: number; deferred: string[] } };
 // 確かめの回（confirm）は同じ問題をもう一度「前」に照らす＝使い回し・持ち越しは数えない（二重に数えない）・新しく解いた分だけ足す
 const addBase = (res: PhaseResult, s: ReturnType<typeof readBaselineSummary>, o: { confirm?: boolean } = {}) => { if (!s) return; if (!o.confirm) { res.base.reused += s.reused; res.base.carried += s.carried.length; } res.base.ran += s.run.length; res.base.deferred = [...new Set([...res.base.deferred, ...s.deferred])]; };
 async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label: string, model: "pro" | "flash"): Promise<PhaseResult> {
-  const res: PhaseResult = { label, ids, cmps: [], baseLabels: [], mainLabels: [], stopped: false, stopWhy: "", confirm: [], base: { reused: 0, carried: 0, ran: 0, deferred: [] } };
+  const res: PhaseResult = { label, ids, cmps: [], baseLabels: [], mainLabels: [], stopped: false, stopWhy: "", confirm: [], inputSame: [], base: { reused: 0, carried: 0, ran: 0, deferred: [] } };
   if (!ids.length) return res;
   mkdirSync(join(EXAM_BRAIN_DIR, "run"), { recursive: true });
   // 6. 使い回し: 前の結果を結果のファイルに先に書く（brain-exam は済んだ問題×回を回さない）
@@ -362,6 +369,19 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
     const d = stopDecision(cmps, flaky, { ...DEFAULT_STOP, worseN: stopWorse });
     if (d.action === "stop") { writeFileSync(stopFile, JSON.stringify({ at: new Date().toISOString(), why: d.why, worse: d.worse })); res.stopped = true; res.stopWhy = d.why; log(`\n⏹ 試験のブレイン: ${d.why} → 止める（悪化: ${d.worse.join(",")}）`); }
   };
+  // ①入力の差の下見（呼ばない）: 同じ問題×回は答案ができる → 本番の子はそれを済んだ回として飛ばす
+  const pre = INPUT_DIFF_PRE ? await inputDiffPrepass(pl, ids, label, baseArgs, env) : { same: [] as string[], partial: [] as string[] };
+  res.inputSame = pre.same;
+  if (pre.same.length) {
+    // ② 入力が同じ問題は main の回数のまま（増やさない）。揺れる問題は夜の安い時間だけ1回足して揺れを測る
+    const night = FLAKY_NIGHT && isCheapWindow(new Date(), CHEAP_WINDOW_JST);
+    for (const id of pre.same) {
+      const have = readRows(label).filter((r) => r.id === id && !r.error).length;
+      const it = pl.items.get(id)!;
+      it.reps = night && it.flake === "flaky" ? Math.min(pl.repsCap, have + 1) : have;
+    }
+    writeReps(Object.fromEntries(ids.map((id) => [id, pl.items.get(id)!.reps])));
+  }
   const o1 = await runBrainExam(baseArgs(ids), env, watch);
   res.baseLabels = o1.baseLabels; res.mainLabels = o1.mainLabels;
   addBase(res, readBaselineSummary(label));
@@ -387,7 +407,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
     res.confirm = [...new Set([...res.confirm, ...conf])];
   };
   if (REPS_MODE === "old") {
-    const conf = pl.repsCap <= 1 ? [] : confirmTargets(res.cmps, new Set(ids.filter((id) => pl.items.get(id)!.reps >= pl.repsCap)), { clearlyGood: d.action === "fewer" });
+    const conf = pl.repsCap <= 1 ? [] : confirmTargets(res.cmps, new Set(ids.filter((id) => pl.items.get(id)!.reps >= pl.repsCap || res.inputSame.includes(id))), { clearlyGood: d.action === "fewer" });
     if (conf.length) {
       log(`\n🔁 確かめの回（前と違った ${conf.length}問 を ${pl.repsCap}回まで${pl.phase === "small" ? "・小さな確かめ＝繰り返し最小" : ""}${d.action === "fewer" ? "・はっきり良いので判断だけ変わった問題は省く" : ""}）: ${conf.join(",")}`);
       await confirmRun(conf, pl.repsCap);
@@ -397,7 +417,9 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   // 10/20 COST② 自信の気づき: 2回目は前と違った・外れた・揺れる問題だけ → 3回目は1回目と2回目が割れた問題だけ（揃えば止める）
   const rowsOf = (id: string) => readRows(label).filter((r) => r.id === id);
   const failedOf = (id: string) => { const rs = rowsOf(id).filter((r) => !r.error); return rs.length > 0 && !(rs.filter((r) => !!r.path?.ok && !!r.score?.pass).length * 2 > rs.length); };
-  const r2 = confidenceRound2(ids.map((id) => ({ id, cmp: res.cmps.find((c) => c.id === id)?.cmp ?? "nocur", failed: failedOf(id), flake: pl.items.get(id)!.flake, have: rowsOf(id).filter((r) => !r.error).length })), { clearlyGood: d.action === "fewer", cap: pl.repsCap, wide: REPS_MODE === "wide" });
+  // ② 入力が同じ問題は2回目を回さない（main の答えそのもの＝回しても同じ要求の別の答えを足すだけ）
+  const sameSet = new Set(res.inputSame);
+  const r2 = confidenceRound2(ids.filter((id) => !sameSet.has(id)).map((id) => ({ id, cmp: res.cmps.find((c) => c.id === id)?.cmp ?? "nocur", failed: failedOf(id), flake: pl.items.get(id)!.flake, have: rowsOf(id).filter((r) => !r.error).length })), { clearlyGood: d.action === "fewer", cap: pl.repsCap, wide: REPS_MODE === "wide" });
   if (r2.length) {
     log(`\n🔁 2回目（自信が低い ${r2.length}問だけ・${d.action === "fewer" ? "はっきり良いので判断だけ変わった問題は省く・" : ""}揃えばここで止める）: ${r2.map((x) => `${x.id}（${x.why}）`).join(",")}`);
     await confirmRun(r2.map((x) => x.id), 2);
@@ -407,6 +429,33 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
     if (r3.length) await confirmRun(r3, 3);
   } else log(`\n🔁 2回目なし（前と同じ・外れていない・揺れない＝自信が高い）`);
   return res;
+}
+
+// ─── 2026-10-21 ①入力の差の下見 ─────────────────────────────────────────────
+/**
+ * 子を --input-diff=plan で流す（LLM は呼ばない: main と同じ要求は main の答え・違う要求はそこで止める）。
+ *   同じ問題×回の答案は結果に書かれる（本番の子は済んだ回として飛ばす）。問題の全部の回が同じなら「入力が同じ」。
+ */
+async function inputDiffPrepass(pl: Plan, ids: string[], label: string, baseArgs: (only: string[]) => string[], env: Record<string, string>): Promise<{ same: string[]; partial: string[] }> {
+  const before = new Set(readRows(label).filter((r) => !r.error).map((r) => `${r.id}#${r.rep}`));
+  const todo = ids.filter((id) => !readRows(label).some((r) => r.id === id && !r.error));
+  if (!todo.length) return { same: [], partial: [] };
+  log(`\n🔍 入力の差の下見（AI を呼ばない）: ${todo.length}問 — main と同じ要求の問題は main の答えで答案を作り、違う問題だけ本当に呼ぶ`);
+  await runBrainExam([...baseArgs(todo), "--input-diff=plan"], env);
+  let items: Record<string, { same: boolean; firstChanged: string | null; pinned: number }> = {};
+  try { items = (JSON.parse(readFileSync(join(RESULTS_DIR, `${label}.inputdiff.json`), "utf8")) as { items?: typeof items }).items ?? {}; } catch { /* 下見できなかった＝全部本番で */ }
+  const rows = readRows(label).filter((r) => !r.error);
+  const same: string[] = [], partial: string[] = [];
+  for (const id of todo) {
+    const mine = Object.entries(items).filter(([k]) => k.startsWith(`${id}#`));
+    const wrote = rows.filter((r) => r.id === id && !before.has(`${r.id}#${r.rep}`));
+    if (mine.length && mine.every(([, v]) => v.same) && wrote.length) same.push(id);
+    else if (mine.some(([, v]) => v.pinned > 0)) partial.push(id);
+  }
+  const stageOf = (id: string) => [...new Set(Object.entries(items).filter(([k, v]) => k.startsWith(`${id}#`) && !v.same).map(([, v]) => v.firstChanged ?? "控えなし"))].join("・");
+  log(`🔍 下見の結果: 入力が同じ ${same.length}問（main の答え・呼ばない）${same.length ? `: ${same.join(",")}` : ""}／違う ${todo.length - same.length}問${todo.length - same.length ? `: ${todo.filter((id) => !same.includes(id)).map((id) => `${id}（${stageOf(id) || "控えなし"}）`).join(",")}` : ""}`);
+  void pl;
+  return { same, partial };
 }
 
 // ─── 台帳・使い回しの保存・報告 ───────────────────────────────────────────────
