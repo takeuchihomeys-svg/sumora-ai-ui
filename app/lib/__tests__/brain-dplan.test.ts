@@ -1,6 +1,6 @@
 // app/lib/__tests__/brain-dplan.test.ts — D案の核（読み手 flash → 指揮官が材料を選ぶ）の決まった計算
 //   実行: npx tsx app/lib/__tests__/brain-dplan.test.ts
-import { dPlanOn, dPlanGate, MATERIAL_KEYS, buildCoreUserText, trimmedKeys, digestBlock, parseReaderOut, parseNeedMaterials, recalledBlock, coreOverTwoStage, readerUser, readerSystem, clipHistory, READERS, READER_KEYS, catalogPicks, compactCatalog, type Materials, type ReaderResult } from "../brain-dplan";
+import { dPlanOn, dPlanGate, MATERIAL_KEYS, buildCoreUserText, trimmedKeys, digestBlock, parseReaderOut, parseNeedMaterials, recalledBlock, coreOverTwoStage, readerUser, readerSystem, clipHistory, READERS, READER_KEYS, catalogPicks, compactCatalog, NEVER_TRIM, dPlanReaders, compactCatalogByScene, isUncertainFullCatalog, pickedCompressedButton, type Materials, type ReaderResult } from "../brain-dplan";
 import { applyOverride, markCoreWins, type DemotedOverride } from "../override-demote";
 import { altPiiSignal } from "../alt-pii-gate";
 let pass = 0, fail = 0;
@@ -12,8 +12,9 @@ t("BRAIN_D_PLAN=on", dPlanOn({ BRAIN_D_PLAN: "on" }));
 t("知らない値は off", !dPlanOn({ BRAIN_D_PLAN: "shadow" }));
 
 // 個人情報の入口
-const g0 = { postApply: false, cutoffKind: "all", applicationForm: false, personalImage: false, parallelSecond: false, readerText: "駐車場ありますか", piiSignal: altPiiSignal };
+const g0 = { conversationId: "c1", postApply: false, cutoffKind: "all", applicationForm: false, personalImage: false, parallelSecond: false, readerText: "駐車場ありますか", piiSignal: altPiiSignal };
 t("普通の番は通す", dPlanGate(g0).ok);
+t("会話 ID が無ければ通さない（3周目）", dPlanGate({ ...g0, conversationId: null }).reason === "会話 ID なし" && !dPlanGate({ ...g0, conversationId: "" }).ok);
 t("申込以降は通さない", !dPlanGate({ ...g0, postApply: true }).ok);
 t("時刻の線 cut は通さない", !dPlanGate({ ...g0, cutoffKind: "cut" }).ok);
 t("印なしは通さない", !dPlanGate({ ...g0, cutoffKind: null }).ok);
@@ -33,15 +34,16 @@ t("削らなければ1文字も変わらない", buildCoreUserText(m, [], "", ta
 const r = (key: ReaderResult["key"], ok: boolean, keepFull = false): ReaderResult => ({ key, ok, out: ok ? { points: [`${key} の要点`], keepFull } : null, error: ok ? null : "x", ms: 1, usd: 0, inTok: 0, outTok: 0, cacheHit: 0 });
 const res1 = [r("state", true), r("promise", false), r("props", true, true), r("dates", true), r("aixfacts", true), r("intent", true)];
 const tk = trimmedKeys(res1, m);
-t("お客様の状態は外す", tk.includes("customerState"));
+t("3周目: お客様の状態は外さない", !tk.includes("customerState"));
 t("失敗した読み手（約束）の材料は外さない", !tk.includes("ledger") && !tk.includes("aixHistory"));
 t("keep_full の読み手（物件）の材料は外さない", !tk.includes("sentProps"));
-t("ナレッジは外す", tk.includes("rag"));
-t("小さい材料は外さない", !trimmedKeys([r("state", true)], { customerState: "短い" }).length);
-const out = buildCoreUserText(m, tk, digestBlock(res1, tk, m), tail);
-t("外した材料の本文は無い", !out.includes("【customerState】") && !out.includes("【rag】"));
-t("外していない材料は残る", out.includes("【ledger】") && out.includes("【aixCatalog】"));
-t("目次に外した物の名前", out.includes("- customerState: お客様の状態"));
+t("3周目: ナレッジは外さない", !tk.includes("rag"));
+t("3周目: 読み手が全部読めても何も外さない（一覧以外）", tk.length === 0);
+t("3周目: 証拠の材料は全部 NEVER_TRIM", ["sentProps","propertySearch","rag","ledger","aixHistory","tasks","customerState","companyFacts"].every((k) => NEVER_TRIM.has(k as never)) && !NEVER_TRIM.has("aixCatalog"));
+const out = buildCoreUserText(m, ["aixCatalog"], digestBlock(res1, ["aixCatalog"], m), tail, { aixCatalog: "\n【縮めた一覧】" });
+t("証拠の材料は残る", out.includes("【customerState】") && out.includes("【rag】") && out.includes("【ledger】") && out.includes("【sentProps】"));
+t("縮めた一覧に差し替わる", out.includes("【縮めた一覧】") && !out.includes("【aixCatalog】"));
+t("目次に縮めた物の名前", out.includes("- aixCatalog: AIX のボタン一覧"));
 t("下ごしらえは履歴の前", out.indexOf("state の要点") < out.indexOf("会話履歴（…）"));
 t("核の決まり（原則の優先）が入る", out.includes("原則の優先順位") && out.includes("need_materials"));
 t("失敗した読み手は下ごしらえに出ない", !out.includes("promise の要点"));
@@ -95,6 +97,33 @@ t("候補でないボタンは名前とキーだけ", cc.includes("- phone_call�
 t("誰に確認したかは残す", cc.includes("誰に確認したか"));
 t("場面の外の1行は残す", cc.includes("今の場面の外のボタン: guarantor_info"));
 t("縮めた一覧を差し込める", buildCoreUserText({ aixCatalog: "全文", status: "S" }, ["aixCatalog"], "", "", { aixCatalog: "縮め" }) === "縮めS");
+
+// 3周目: 読み手の選び（既定 intent だけ）
+t("読み手の既定は intent だけ", JSON.stringify(dPlanReaders({})) === JSON.stringify(["intent"]));
+t("読み手なし", dPlanReaders({ BRAIN_D_PLAN_READERS: "none" }).length === 0);
+t("読み手を指定・知らない名前は捨てる", JSON.stringify(dPlanReaders({ BRAIN_D_PLAN_READERS: "intent,dates,xx" })) === JSON.stringify(["intent", "dates"]));
+
+// 3周目: 一覧は場面で縮める（候補で縮めない）
+const ucat = ["【返信か AIX かの決め方（この順番で決める）】", "① 決め方", "【AIX のボタン×ピッカー（場面の読みが弱いので全部）＝aix の値はボタンのキー】",
+  "- property_check_result【確認した（条件・交渉）】 送る情報: 管理会社に確認した結果",
+  "    ・誰に確認したか: 管理会社に確認した／代表に確認した",
+  "    ・駐車場について（mgmt_parking）: 物件の駐車場の有無｜資料に駐車場がある時は返信（8巡目）",
+  "    ・ペット飼育について（mgmt_pet）: ペット可否・条件",
+  "- estimate_sheet【見積書送る】 送る情報: 御見積書の金額",
+  "    ・1件（single）: お部屋1件の御見積書",
+  "- guarantor_info【審査について】 送る情報: 保証会社名｜線: 資料にある時は返信",
+  "    ・押された実績（30日）: 返信で答えた 6"].join("\n");
+t("場面の読みが弱い一覧だと分かる", isUncertainFullCatalog(ucat) && !isUncertainFullCatalog("【AIX のボタン×ピッカー（場面「cost」に関係する物）】"));
+const uc = compactCatalogByScene(ucat, ["estimate_sheet"]);
+t("決め方はそのまま", uc.includes("① 決め方"));
+t("場面のボタンは細目まで全文", uc.includes("お部屋1件の御見積書"));
+t("場面の外のボタンの行は全文（送る情報・線）", uc.includes("- property_check_result【確認した（条件・交渉）】 送る情報: 管理会社に確認した結果") && uc.includes("｜線: 資料にある時は返信"));
+t("場面の外のピッカーは名前と値＋返信の決まり", uc.includes("・駐車場について（mgmt_parking）｜資料に駐車場がある時は返信（8巡目）") && !uc.includes("物件の駐車場の有無"));
+t("返信の決まりの無いピッカーは名前と値だけ", uc.includes("・ペット飼育について（mgmt_pet）\n") && !uc.includes("ペット可否・条件"));
+t("誰に確認したか・押された実績は残す", uc.includes("誰に確認したか") && uc.includes("押された実績"));
+t("縮める", uc.length < ucat.length + 80);
+t("食い違い: 細目を縮めたボタンを選んだ", pickedCompressedButton("property_check_result", ["estimate_sheet"], ucat));
+t("食い違いでない: 場面のボタン・null・一覧に無い値", !pickedCompressedButton("estimate_sheet", ["estimate_sheet"], ucat) && !pickedCompressedButton(null, [], ucat) && !pickedCompressedButton("nope", [], ucat));
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

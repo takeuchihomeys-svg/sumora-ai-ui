@@ -22,6 +22,8 @@ export function dPlanOn(env: Env = typeof process !== "undefined" ? process.env 
 
 // ── 個人情報の入口（番ごと1回） ─────────────────────────────────────────
 export type DPlanGateInput = {
+  /** 会話 ID（無い番は時刻の線を読めない＝通さない・3周目 fail-closed） */
+  conversationId?: string | null;
   postApply: boolean;
   /** 時刻の線の印（all＝全部渡してよい。cut／blocked／masked／null は渡さない） */
   cutoffKind: string | null;
@@ -34,6 +36,7 @@ export type DPlanGateInput = {
   piiSignal: (t: string) => string | null;
 };
 export function dPlanGate(p: DPlanGateInput): { ok: boolean; reason: string | null } {
+  if (!String(p.conversationId ?? "").trim()) return { ok: false, reason: "会話 ID なし" };
   if (p.postApply) return { ok: false, reason: "申込以降の番" };
   if (p.cutoffKind !== "all") return { ok: false, reason: `時刻の線（${p.cutoffKind ?? "印なし"}）` };
   if (p.applicationForm) return { ok: false, reason: "申込フォーム" };
@@ -106,6 +109,27 @@ export const READERS: Record<ReaderKey, ReaderDef> = {
   },
 };
 
+// ── 3周目（10/23 査読の再試験で悪化: 道 12→10・依頼 12→8）: 返信で答えられる証拠を核から消さない ───────────
+/**
+ * 核から絶対に外さない材料。返信か AIX かの証拠（送った物件・物件の探し・ナレッジ・行動台帳・AIX の履歴・やること・お客様の状態・会社の事実・約束 等）。
+ *   2周目は読み手が読めた時に 8〜9個を目次だけにしていた（素の入力 −40%）＝「送った物で答えられる」の証拠が消え、見積書の AIX に寄った（q156・q160）。
+ *   外してよいのは AIX のボタン一覧の「場面の外のピッカーの細目」だけ（compactCatalogByScene）
+ */
+export const NEVER_TRIM: ReadonlySet<MaterialKey> = new Set<MaterialKey>(MATERIAL_KEYS.filter((k) => k !== "aixCatalog"));
+/**
+ * 回す読み手（BRAIN_D_PLAN_READERS・既定 intent だけ）。"none" で読み手なし（AIX の一覧の縮め＋呼び戻しだけ）。
+ *   state/promise/props/aixfacts の材料は外さない＝要約は重ねるだけ（aixfacts の「見積の金額はスタッフだけ」は見積書への偏りの元）。
+ *   aixpick は一覧を場面で縮める（候補で縮めない＝偏らせない）ので既定から外す
+ */
+export function dPlanReaders(env: Env = typeof process !== "undefined" ? process.env : {}): ReaderKey[] {
+  const raw = String(env.BRAIN_D_PLAN_READERS ?? "").trim().toLowerCase();
+  if (!raw) return ["intent"];
+  if (raw === "none" || raw === "off") return [];
+  const out: ReaderKey[] = [];
+  for (const x of raw.split(",").map((t) => t.trim())) if ((READER_KEYS as readonly string[]).includes(x) && !out.includes(x as ReaderKey)) out.push(x as ReaderKey);
+  return out;
+}
+
 export const READER_HEAD = `あなたは不動産の賃貸仲介（スモラ）の LINE を「1つの分野だけ読む係」です。読む分野は【あなたの仕事】の1つだけ。
 決まり:
 1. 判断しない。返信するか・確認の約束にするか・AIX で送るか・何と返すかは書かない（別の係が全部を見て決める）。
@@ -169,7 +193,7 @@ export function trimmedKeys(results: ReadonlyArray<ReaderResult>, m: Materials, 
   for (const r of results) {
     if (!r.ok || r.out?.keepFull) continue;
     for (const k of READERS[r.key].trims) {
-      if (keep.has(k) || out.includes(k)) continue;
+      if (keep.has(k) || out.includes(k) || NEVER_TRIM.has(k)) continue;
       if ((m[k] ?? "").length < minChars) continue; // 小さい物は外しても得が無い
       out.push(k);
     }
@@ -186,8 +210,8 @@ export function digestBlock(results: ReadonlyArray<ReaderResult>, trimmed: Reado
     for (const p of r.out.points) lines.push(`- ${p}`);
   }
   if (trimmed.length) {
-    lines.push("", "【削った材料の目次（読み手が読んで上に要約済み。道を決めるのに元の全文が要る時だけ need_materials で呼び戻す）】");
-    for (const k of trimmed) lines.push(`- ${k}: ${MATERIAL_JA[k]}（${(m[k] ?? "").length}字）`);
+    lines.push("", "【縮めた材料の目次（上の材料は縮めた形。道を決めるのに元の全文が要る時だけ need_materials で呼び戻す）】");
+    for (const k of trimmed) lines.push(`- ${k}: ${MATERIAL_JA[k]}（全文 ${(m[k] ?? "").length}字）`);
   }
   lines.push("", CORE_RULES);
   return `${lines.join("\n")}\n`;
@@ -198,7 +222,7 @@ export const CORE_RULES = `【D案の核（指揮官）の決まり】
 - あなたが最後に決める（返信か・確認の約束か・AIX か・どのボタン×ピッカーか・何を先に答えるか）。読み手の下ごしらえは参考で、食い違えば会話履歴と材料の元の文に戻る。
 - 原則の優先順位: 1 正直（嘘・推測で書かない）→ 2 確認の約束（物件ごとに違う事・スタッフしか知らない事）→ 3 一つ一つに答える → 4 即答 → 5 気持ち → 6 次の一手 → 7 形。
   ただし一般的な事・資料や会社の事実・送った物で答えられる事まで確認の約束や AIX にしない（AIX と確認の約束はスタッフしか知らない事・確かめないと分からない事だけ）。
-- 上の目次の材料の全文が無いと道を決められない時だけ、いつもの JSON の代わりに {"need_materials":["目次の名前",…]} だけを返す（最大3つ・1回だけ）。足りていればいつもの JSON をそのまま返す。`;
+- 縮めた材料の目次の全文が無いと道を決められない時だけ、いつもの JSON の代わりに {"need_materials":["目次の名前",…]} だけを返す（最大3つ・1回だけ）。足りていればいつもの JSON をそのまま返す。`;
 
 /** 核の1回目が材料の呼び戻しか（いつもの JSON でない）。呼び戻せる名前だけ・最大3つ */
 export function parseNeedMaterials(o: Record<string, unknown> | null, trimmed: ReadonlyArray<MaterialKey>): MaterialKey[] {
@@ -291,4 +315,42 @@ export function compactCatalog(catalog: string, picks: ReadonlyArray<string>): s
     // その他の細目（押された実績 等）は候補のボタンの時だけ
   }
   return `${out.join("\n")}\n（D案: 細目の説明は読み手が候補に挙げた物だけ全文。他は名前と値だけ＝全文が要る時は need_materials の aixCatalog）\n`;
+}
+
+// ── 3周目: AIX のボタン一覧は「場面」で縮める（読み手の候補で縮めない＝候補への偏りを作らない） ─────────────────────
+/** 場面の読みが弱くて全部のピッカーの細目を出した一覧か（それ以外の一覧は既に場面で絞ってある＝縮めない） */
+export function isUncertainFullCatalog(catalog: string): boolean {
+  return /【AIX のボタン×ピッカー（場面の読みが弱いので全部）/.test(String(catalog ?? ""));
+}
+/**
+ * 核に渡す縮めた一覧（3周目）:
+ *   - 決め方（①〜⑤）・見出し・全部のボタンの行（送る情報・線・使う時）はそのまま
+ *   - 今の場面のボタン（sceneButtons）はピッカーの細目まで全文
+ *   - 場面の外のボタンのピッカーは「名前（値）」だけ。ただし返信か AIX かの決まり（「返信」を含む｜の句）・押された実績・結果のピッカー・誰に確認したかは残す
+ */
+export function compactCatalogByScene(catalog: string, sceneButtons: ReadonlyArray<string>): string {
+  const scene = new Set(sceneButtons);
+  const out: string[] = [];
+  let entered = false, inScene = false;
+  for (const line of String(catalog ?? "").split("\n")) {
+    const b = /^- ([a-z_]+)【/.exec(line);
+    if (b) { entered = true; inScene = scene.has(b[1]); out.push(line); continue; }
+    if (!entered || /^- /.test(line) || inScene) { out.push(line); continue; }
+    if (/^\s+・(?:結果のピッカー|誰に確認したか|押された実績)/.test(line)) { out.push(line); continue; }
+    const pk = /^(\s+・.*?（[a-z_:]+）)[:：]?(.*)$/.exec(line);
+    if (pk) {
+      const reply = pk[2].split("｜").slice(1).filter((x) => /返信/.test(x));
+      out.push(reply.length ? `${pk[1]}｜${reply.join("｜")}` : pk[1]);
+      continue;
+    }
+    out.push(line);
+  }
+  return `${out.join("\n")}\n（D案: 今の場面の外のボタンのピッカーは名前と値（と返信の決まり）だけ＝細目の全文が要る時は need_materials の aixCatalog）\n`;
+}
+/** 核が選んだ AIX のボタンが、細目を縮めたボタンか（＝細目を見ずに選んだ食い違い → 一覧の全文を足して読み直す） */
+export function pickedCompressedButton(aix: unknown, sceneButtons: ReadonlyArray<string>, catalog: string): boolean {
+  const a = String(aix ?? "").trim();
+  if (!/^[a-z_]+$/.test(a)) return false;
+  if (sceneButtons.includes(a)) return false;
+  return new RegExp(`^- ${a}【`, "m").test(String(catalog ?? ""));
 }
