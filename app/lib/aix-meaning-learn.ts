@@ -259,6 +259,13 @@ export type LearnedMeaning = {
   needsOwnerGold: boolean;
   /** 関係する竹内さんの決定（設計知見 id の先頭8字） */
   kb: string[];
+  /**
+   * 2026-10-23 竹内さんの手打ちで、本来はこのピッカーで送る物（aix-should-be.shouldBeAixOf がはっきり当てた文）のお手本の候補（伏せた文・最大3）。
+   *   竹内さん 10/22 d04ed51b「手打ちの良い文はそのピッカーのお手本に足す」。AIX の送信のお手本（exemplars）とは分けて持つ（候補＝人が確かめて使う）
+   */
+  handExemplars?: string[];
+  /** 本来はこのピッカーの竹内さんの手打ちの数（はっきり当てた物） */
+  ownerHand?: number;
 };
 
 /** 割合の高い順に label (xx%) を返す（min 以上・最大 n） */
