@@ -1,6 +1,6 @@
 import { composeLifelineMessage } from "@/app/lib/aix-lifeline";
 // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・契約の条件・家賃の交渉・バイク置き場・物件について→募集号室について）
-import { isScreeningTopic, screeningTopicLine, isOtherAgentCostCompare, costCompareFactEnabled, COST_COMPARE_FACT_BLOCK, isEstimateCorrectionContext, mentionsOtherAgentProperty, applyEstimateOwnerLines, estimateOwnerNote } from "@/app/lib/aix-owner-answers-1021";
+import { isScreeningTopic, screeningTopicLine, isOtherAgentCostCompare, costCompareFactEnabled, COST_COMPARE_FACT_BLOCK, isEstimateCorrectionContext, resolveOtherAgentEstimate, applyEstimateOwnerLines, estimateOwnerNote } from "@/app/lib/aix-owner-answers-1021";
 import { followupRevive1021Enabled, hasNewArrivalFact, composeFollowupText, sanitizeFollowupText, followupShapeNote } from "@/app/lib/followup-revive-1021";
 import { aixRequestMustUseClaude, applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, stripUncheckedScreeningClaims, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
 import { NextRequest, NextResponse, after } from "next/server";
@@ -3496,7 +3496,8 @@ ${aixTakeuchiFormOn() ? "・形・書き出し・締めはユーザーメッセ�
         const coverMsgs = Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : [];
         const coverOwner = {
           correction: isEstimateCorrectionContext(coverMsgs, typeof body.estimate_correction === "boolean" ? body.estimate_correction : null),
-          otherAgent: mentionsOtherAgentProperty(coverMsgs),
+          // C6 は状況で判断（1c4dddf7）: 出口で足すのは他社で内覧の予定の時だけ・他は書く役への材料（ESTIMATE_OTHER_AGENT_LINE=always で旧の毎回）
+          ...resolveOtherAgentEstimate(coverMsgs),
         };
         const coverOwnerNote = estimateOwnerNote(coverOwner);
         const coverUserFinal = greetingTimeNote + `${name}への見積書送付メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}${coverPropertyNote}`
@@ -3564,7 +3565,7 @@ ${aixTakeuchiFormOn() ? "・形・書き出し・締めはユーザーメッセ�
         }
         if (cover_letter.trim() && (coverOwner.correction || coverOwner.otherAgent)) {
           const ow = applyEstimateOwnerLines(cover_letter, coverOwner);
-          if (ow.added.length) { console.log(JSON.stringify({ tag: "aix:cover-owner-1021", added: ow.added, conversationId })); cover_letter = ow.text; }
+          if (ow.added.length) { console.log(JSON.stringify({ tag: "aix:cover-owner-1021", added: ow.added, situation: coverOwner.otherAgentSituation, mode: coverOwner.otherAgentMode, conversationId })); cover_letter = ow.text; }
         }
         const campaignFix = ensureCampaignLine(cover_letter, estimateCampaign);
         if (campaignFix.added) {

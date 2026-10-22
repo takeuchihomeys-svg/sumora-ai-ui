@@ -1,7 +1,7 @@
 // 2026-10-13 竹内さん（いしのまさや）: 約束は順序の先頭だけ・後は約束の続き・件数・題だけの物件・2通に分ける。お客様の文は実物（名前を伏せた）
 // 実行: npx tsx app/lib/__tests__/promise-sequence.test.ts
 import { buildPromiseQueue, nextPromiseAix, numberedPromiseLabels, type QueueMsg } from "../promise-queue";
-import { resolveTwoStage, broughtTitleOnly, customerAreaKnown, twoStageOtherQuestions, firstContactCheckTwoStage } from "../two-stage";
+import { resolveTwoStage, broughtTitleOnly, broughtCostWishOnly, customerAreaKnown, twoStageOtherQuestions, firstContactCheckTwoStage } from "../two-stage";
 import { resolveFirstContactPickup } from "../first-contact-pickup";
 import { splitDraftBubbles } from "../draft-bubbles";
 
@@ -31,6 +31,17 @@ it("いしのまさや: 2件の確認＋御見積書だけ約束・探す依頼�
   eq(v.extraPromises, ["wish"]); eq(v.laterPromises, ["pickup_hearing"]);
   has(v.direction, "2通目は「初期費用も」から"); has(v.direction, "初期費用を抑えたい・敷金礼金なし");
   eq(twoStageOtherQuestions(text, "check"), []);
+});
+it("10/22 費用の語がご希望だけ（安く抑えたい・敷金礼金なし）→ 両方・見積を頼んだ番は見積だけ（brought_estimate）・戻す BROUGHT_ESTIMATE_WISH_BOTH=off", () => {
+  eq(broughtCostWishOnly(text), true);
+  eq(broughtCostWishOnly("初期費用を安く抑えたいです。見積もり出してもらえますか？"), false);
+  eq(broughtCostWishOnly("初期費用まあまあしますね。\nこちらはどれくらいでしょうか？"), false);
+  eq(broughtCostWishOnly("見積もり出してもらえますか？"), false);
+  const base = { finalAix: "property_check_result", decisionSource: "llm", pickupReady: false, postApply: false, ackOnly: false, brought: { ask: "cost" as const, count: 2 } };
+  eq(resolveTwoStage({ ...base, customerText: "初期費用を安く抑えたいです。見積もり出してもらえますか？" })!.source, "rule:two_stage_promise(brought_estimate)");
+  process.env.BROUGHT_ESTIMATE_WISH_BOTH = "off";
+  try { eq(resolveTwoStage({ ...base, customerText: text })!.source, "rule:two_stage_promise(brought_estimate)"); }
+  finally { delete process.env.BROUGHT_ESTIMATE_WISH_BOTH; }
 });
 it("初回: 物件の指名（画像）があれば LLM がピックアップを選んでも最初の一手は募集状況の確認・約束の順を使う（q138 の Claude）", () => {
   eq(resolveFirstContactPickup({ finalAix: "property_send", custSentConditionForm: false, sceneEvidence: { scene: "S1_vacancy", reason: "property_nomination", property_by: "image" } }), "property_check_result");

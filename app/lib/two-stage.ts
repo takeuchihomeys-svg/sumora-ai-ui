@@ -392,7 +392,10 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
     const n = i.brought.count;
     // 2026-10-20 試験の道の外れ（q183・q184・BRAIN_ROUTE_FIX_1020 brought_estimate）: 持ち込みで費用・見積だけを頼んだ番は見積の2段
     //   （竹内さんの実送信「2件とも最大限割引した御見積書を作成しお送り」→ AIX【見積書送る】）。空きも聞いた・言葉なしは今まで通り両方（brought_both）
-    if (i.brought.ask === "cost" && routeFix1020("brought_estimate")) {
+    //   2026-10-22（いしのまさや 10/08・実送信は「2件の物件の募集状況確認…御見積書とあわせて」＝両方）: 費用の語が
+    //   ご希望だけ（「初期費用を安く抑えたい」「敷金礼金なし」）で金額・見積を頼んでいない番は今まで通り両方（broughtCostWishOnly・
+    //   戻す BROUGHT_ESTIMATE_WISH_BOTH=off）
+    if (i.brought.ask === "cost" && routeFix1020("brought_estimate") && !broughtCostWishOnly(i.customerText)) {
       const obj = n >= 2 ? `お送り頂きました${n}件とも` : "お送り頂きましたお部屋の";
       return {
         kind: "estimate",
@@ -519,6 +522,19 @@ export function broughtPropertyAsk(turn: string | null | undefined): BroughtAsk 
   const own = String(turn ?? "").split(/\n+/).filter((l) => !/https?:\/\/|^\s*\[(?:画像|ファイル)\]/.test(l) && !/^by SUUMO|^\s*[-・]|：|:/.test(l)).join("\n");
   const c = BROUGHT_COST_RE.test(own), v = BROUGHT_VACANCY_RE.test(own);
   return c && v ? "both" : c ? "cost" : v ? "vacancy" : "none";
+}
+/** 金額・見積を頼む言葉（q183「見積もり出して」・q184「どれくらい」・「初期費用出して」） */
+const BROUGHT_ESTIMATE_REQUEST_RE = /見積|いくら|幾ら|どれ[くぐ]らい|どの[くぐ]らい|総額|金額|費用[^\n。？?]{0,8}(?:出し|出せ|教え|知り|計算|算出|わかり|分かり)/;
+/**
+ * 2026-10-22: 持ち込みの番の費用の語がご希望（wishWords: 初期費用を抑えたい・敷金礼金なし）だけで、金額・見積を頼む言葉が無いか。
+ *   true の時は brought_estimate（見積だけの2段）にせず両方（brought_both）。お客様が打った文（画像・URL の行を除く）だけを見る。
+ *   戻す BROUGHT_ESTIMATE_WISH_BOTH=off
+ */
+export function broughtCostWishOnly(turn: string | null | undefined): boolean {
+  if (typeof process !== "undefined" && (process.env?.BROUGHT_ESTIMATE_WISH_BOTH ?? "").toLowerCase() === "off") return false;
+  if (!wishWords(turn).length) return false;
+  const own = String(turn ?? "").normalize("NFKC").split(/\n+/).filter((l) => !/https?:\/\/|^\s*\[(?:画像|ファイル)\]/.test(l)).join("\n");
+  return !BROUGHT_ESTIMATE_REQUEST_RE.test(own);
 }
 /** 持ち込みの件数（URL・画像の通の数。同じ URL は1件） */
 export function broughtPropertyCount(turnMsgs: readonly string[]): number {

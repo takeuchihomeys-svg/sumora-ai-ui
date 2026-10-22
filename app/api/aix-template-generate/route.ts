@@ -93,7 +93,7 @@ import { resolveTemplateSentMessage } from "@/app/lib/aix-template-source";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
 // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 見積書の直後の2通目の形・締め・検査（スタッフが書いた2通目 132通から）
 import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
-import { isEstimateCorrectionContext, mentionsOtherAgentProperty, applyEstimateOwnerLines, estimateOwnerNote } from "@/app/lib/aix-owner-answers-1021";
+import { isEstimateCorrectionContext, resolveOtherAgentEstimate, applyEstimateOwnerLines, estimateOwnerNote, type OtherAgentSituation, type OtherAgentLineMode } from "@/app/lib/aix-owner-answers-1021";
 import { customerAskedEstimate } from "@/app/lib/customer-mindset";
 import { loadEstimateAppeal } from "@/app/lib/estimate-appeal-server";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、1通目（aix/action）と同じ関数・同じ材料で決める
@@ -1597,7 +1597,7 @@ export async function POST(req: NextRequest) {
   })();
   let estimateClosing: EstimateClosing = "receipt";
   let estimateSecondNote = "";
-  let estimateOwner: { correction: boolean; otherAgent: boolean } = { correction: false, otherAgent: false };
+  let estimateOwner: { correction: boolean; otherAgent: boolean; otherAgentSituation?: OtherAgentSituation | null; otherAgentMode?: OtherAgentLineMode } = { correction: false, otherAgent: false };
   if (isEstimateSecond) {
     let viewed = false;
     try {
@@ -1626,7 +1626,8 @@ export async function POST(req: NextRequest) {
     // 2026-10-21 竹内さん C5（訂正した御見積書）・C6（他社の物件→弊社でもお申込み・ご内覧頂けます）
     {
       const msgs = (recentMessages ?? []) as Array<{ sender?: string | null; text?: string | null }>;
-      estimateOwner = { correction: isEstimateCorrectionContext(msgs, null, undefined, { justSent: true }), otherAgent: mentionsOtherAgentProperty(msgs) };
+      // C6 は状況で判断（1c4dddf7）: 出口で足すのは他社で内覧の予定の時だけ・他は書く役への材料（ESTIMATE_OTHER_AGENT_LINE=always で旧の毎回）
+      estimateOwner = { correction: isEstimateCorrectionContext(msgs, null, undefined, { justSent: true }), ...resolveOtherAgentEstimate(msgs) };
       const n = estimateOwnerNote(estimateOwner);
       if (n) estimateSecondNote += `\n${n}`;
     }

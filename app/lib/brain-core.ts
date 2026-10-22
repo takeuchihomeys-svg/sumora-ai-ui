@@ -113,7 +113,7 @@ import { viewingReportBlockForBrain } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
 import { buildActionLedger, buildLedgerLinesForBrain, buildViewingFlowForBrain, type LedgerInput } from "@/app/lib/action-ledger";
-// 2026-10-20 竹内さん（5b0b8e82・67f54c24）: 何の日か・確認の相手の決まった読み（DAY_SUBJECT_READER=on の時だけ材料に入る）
+// 2026-10-20 竹内さん（5b0b8e82・67f54c24）: 何の日か・確認の相手の決まった読み（既定 on・DAY_SUBJECT_READER=off で止まる）
 import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 // 2026-10-21 つなぎのブレイン 段3 司令塔: 次の一手（スタッフしか分からない事は AIX）を1行（LINK_CONDUCTOR_BRAIN=on の時だけ・既定 off＝1文字も変わらない）
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";

@@ -11,13 +11,14 @@
 //   → ここで決まった処理で読み、ブレインの材料（行動台帳の後ろ）と書く役の台帳の注記に同じ文で渡す（四者同名・同じ関数）。
 //
 // ⚠ 判断（AIX・返信）はブレインが決める（P0 9eb6aa9c）。ここは「この日付は何の日の話か」「この確認は誰が答えを持っているか」の読みだけ。
-// 切り替え: DAY_SUBJECT_READER=on の時だけ材料に入る（既定 off＝ブレイン・書く役の文は1文字も変わらない）。
+// 切り替え: 既定 on（2026-10-22 試験の後）。DAY_SUBJECT_READER=off で材料に入らない（ブレイン・書く役の文は1文字も変わらない）。
 //   監査: scripts/audit-day-subject.ts（見張りの下書きとスタッフの送信で数える・LLM なし）
 
 import type { ViewingFlowStage } from "./viewing-flow";
 
 export function daySubjectReaderEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.DAY_SUBJECT_READER ?? "").toLowerCase() === "on";
+  // 2026-10-22 試験 dsr-invite-on-n（16問）: ブレインの合格 9→10・道 75%→81%・下書き同じ → 既定 on（止める DAY_SUBJECT_READER=off）
+  return (env.DAY_SUBJECT_READER ?? "").toLowerCase() !== "off";
 }
 
 const N = (s: string | null | undefined) => String(s ?? "").normalize("NFKC");

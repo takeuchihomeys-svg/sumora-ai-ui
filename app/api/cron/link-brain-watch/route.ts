@@ -5,6 +5,8 @@
 //   切替: LINK_BRAIN_WATCH（既定 on・止める =off）／LINK_BRAIN_TODO（既定 off・on で、果たしていない約束（要対応も無い）を AIX要対応に立て【やることリスト】に載せる。
 //     1件ずつの通知が on（STAFF_TODO_INSTANT_NOTICE）の間は立てない＝LINE へ出さない）
 //   ?dry=1 … 記録しない・立てない（数えだけ返す）
+//   2026-10-22 竹内さんの決定（設計知見 395e0064）: 同じ回でブレインの「分からない事」を brain_unknowns に足す（app/lib/brain-unknowns.ts・LLM なし・$0）。
+//     窓は前の回が集めた所の続き（最大48時間）＝やり直しても二重に数えない。止める BRAIN_UNKNOWNS=off
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
@@ -12,6 +14,9 @@ import { runLinkWatch } from "@/app/lib/link-brain-watch-server";
 import { compactLinkSummary, linkBrainTodoEnabled, linkBrainWatchEnabled, LINK_BRAIN_NOTE_PREFIX } from "@/app/lib/link-brain-watch";
 import { registerRuleAixActionItem } from "@/app/lib/aix-action-items";
 import { aixInstantNoticeEnabled } from "@/app/lib/staff-todo-list";
+import { BREAK_JA, LINK_JA } from "@/app/lib/link-brain-watch";
+import { brainUnknownsEnabled, unknownsFromLinkSummary } from "@/app/lib/brain-unknowns";
+import { collectBrainUnknowns } from "@/app/lib/brain-unknowns-server";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -27,7 +32,7 @@ export async function GET(req: NextRequest) {
   const logId = dry ? null : await startCronLog("link-brain-watch");
   try {
     const nowMs = Date.now();
-    const s = await runLinkWatch(supabase, { fromMs: nowMs - 86_400_000, toMs: nowMs, nowMs }, { examplesPerType: 0 });
+    const s = await runLinkWatch(supabase, { fromMs: nowMs - 86_400_000, toMs: nowMs, nowMs }, { examplesPerType: 2 }); // 例は会話 id と時刻だけ brain_unknowns に使う（記録の要約には例の文を入れない）
     const out: Record<string, unknown> = compactLinkSummary(s);
     if (!dry && linkBrainTodoEnabled() && !aixInstantNoticeEnabled()) {
       let added = 0;
@@ -36,6 +41,17 @@ export async function GET(req: NextRequest) {
       }
       out.todo_added = added;
     }
+    if (!dry && brainUnknownsEnabled()) {
+      try {
+        const fromIso = await lastUnknownsTo(nowMs);
+        const toIso = new Date(nowMs).toISOString();
+        // つなぎの切れは見張りの窓（24時間）ごとの数なので、同じ日にやり直した回（前の回から20時間未満）では足さない
+        const linkHits = nowMs - Date.parse(fromIso) >= 20 * 3_600_000 ? unknownsFromLinkSummary(s, BREAK_JA, LINK_JA) : [];
+        const u = await collectBrainUnknowns(supabase, fromIso, toIso, linkHits);
+        out.unknowns = { from: fromIso, ...u };
+        out.unknowns_to = toIso;
+      } catch (e) { out.unknowns_error = e instanceof Error ? e.message : String(e); }
+    }
     await finishCronLog(logId, true, out);
     return NextResponse.json({ ok: true, dry, ...out });
   } catch (e) {
@@ -43,4 +59,18 @@ export async function GET(req: NextRequest) {
     await finishCronLog(logId, false, { ok: false, error: msg }, msg);
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
+}
+
+/** 前の回が分からない事を集め終えた時刻（無ければ24時間前・48時間より前には戻らない） */
+async function lastUnknownsTo(nowMs: number): Promise<string> {
+  const floor = nowMs - 48 * 3_600_000;
+  try {
+    const { data } = await supabase.from("cron_run_logs").select("result_json").eq("cron_name", "link-brain-watch").eq("ok", true)
+      .order("started_at", { ascending: false }).limit(5);
+    for (const r of (data ?? []) as Array<{ result_json: { unknowns_to?: unknown } | null }>) {
+      const t = Date.parse(String(r.result_json?.unknowns_to ?? ""));
+      if (Number.isFinite(t)) return new Date(Math.max(floor, Math.min(t, nowMs))).toISOString();
+    }
+  } catch { /* 読めなければ24時間 */ }
+  return new Date(nowMs - 86_400_000).toISOString();
 }
