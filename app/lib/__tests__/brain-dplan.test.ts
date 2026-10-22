@@ -1,6 +1,6 @@
 // app/lib/__tests__/brain-dplan.test.ts — D案の核（読み手 flash → 指揮官が材料を選ぶ）の決まった計算
 //   実行: npx tsx app/lib/__tests__/brain-dplan.test.ts
-import { dPlanOn, dPlanGate, MATERIAL_KEYS, buildCoreUserText, trimmedKeys, digestBlock, parseReaderOut, parseNeedMaterials, recalledBlock, coreOverTwoStage, readerUser, readerSystem, clipHistory, READERS, READER_KEYS, type Materials, type ReaderResult } from "../brain-dplan";
+import { dPlanOn, dPlanGate, MATERIAL_KEYS, buildCoreUserText, trimmedKeys, digestBlock, parseReaderOut, parseNeedMaterials, recalledBlock, coreOverTwoStage, readerUser, readerSystem, clipHistory, READERS, READER_KEYS, catalogPicks, compactCatalog, type Materials, type ReaderResult } from "../brain-dplan";
 import { applyOverride, markCoreWins, type DemotedOverride } from "../override-demote";
 import { altPiiSignal } from "../alt-pii-gate";
 let pass = 0, fail = 0;
@@ -55,7 +55,7 @@ t("読み手の頭はブレインの印の語で始めない", READER_KEYS.every
 t("今回の連投は最後の方", (() => { const u = readerUser("state", m, "履歴", "今回の発言"); return u.indexOf("今回の発言") > u.indexOf("履歴"); })());
 t("材料は読む物だけ", !readerUser("dates", m, "", "x").includes("【材料: ナレッジ】") && readerUser("aixfacts", m, "", "x").includes("【材料: ナレッジ】"));
 t("履歴は新しい方を残す", clipHistory("古い\n".repeat(100) + "新しい", 50).endsWith("新しい"));
-t("読み手は6人・全員に仕事", READER_KEYS.length === 6 && READER_KEYS.every((k) => READERS[k].task.length > 20));
+t("読み手は7人・全員に仕事", READER_KEYS.length === 7 && READER_KEYS.every((k) => READERS[k].task.length > 20));
 
 // 呼び戻し
 t("呼び戻し: 目次の名前だけ", JSON.stringify(parseNeedMaterials({ need_materials: ["customerState", "aixCatalog", "rag"] }, ["customerState", "rag"])) === JSON.stringify(["customerState", "rag"]));
@@ -75,6 +75,26 @@ t("既定で上書きする家族（signal_decided）は上書き", applyOverrid
 const l2: DemotedOverride[] = []; markCoreWins(l2);
 t("D案の番は下げる（記録だけ）", applyOverride(l2, "signal_decided", "s", "x", null, {}) === false && l2.length === 1);
 t("印は一覧ごと（別の一覧に漏れない）", applyOverride([], "search_exhausted", "s", "x", null, {}) === true);
+
+// AIX のボタン一覧の縮め（2周目）
+const cat = ["【返信か AIX かの決め方】", "① 決め方", "【AIX のボタン×ピッカー】",
+  "- property_check_result【確認した（条件・交渉）】 送る情報: 管理会社に確認した結果",
+  "    ・誰に確認したか: 管理会社に確認した／代表に確認した",
+  "    ・駐車場について（mgmt_parking）: 物件の駐車場の有無｜資料にある時は返信",
+  "    ・ペット飼育について（mgmt_pet）: ペット可否・条件",
+  "- phone_call【電話をかける】 送る情報: 定型の文｜使う時: 電話の依頼",
+  "    ・押された実績（30日）: 1",
+  "- 今の場面の外のボタン: guarantor_info【審査について】"].join("\n");
+const picks = catalogPicks(cat, ["property_check_result/mgmt_parking: 駐車場の空き", "unknown_x"]);
+t("候補の値を拾う", picks.includes("property_check_result") && picks.includes("mgmt_parking") && !picks.includes("unknown_x"));
+const cc = compactCatalog(cat, ["mgmt_parking"]);
+t("決め方はそのまま", cc.includes("① 決め方"));
+t("候補のピッカーは全文", cc.includes("物件の駐車場の有無｜資料にある時は返信"));
+t("候補でないピッカーは名前と値だけ", cc.includes("・ペット飼育について（mgmt_pet）") && !cc.includes("ペット可否・条件"));
+t("候補でないボタンは名前とキーだけ", cc.includes("- phone_call【電話をかける】") && !cc.includes("電話の依頼") && !cc.includes("押された実績"));
+t("誰に確認したかは残す", cc.includes("誰に確認したか"));
+t("場面の外の1行は残す", cc.includes("今の場面の外のボタン: guarantor_info"));
+t("縮めた一覧を差し込める", buildCoreUserText({ aixCatalog: "全文", status: "S" }, ["aixCatalog"], "", "", { aixCatalog: "縮め" }) === "縮めS");
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

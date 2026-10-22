@@ -3172,9 +3172,16 @@ ${history}`;
         const t0 = Date.now();
         const { runDPlanReaders } = await import("@/app/lib/brain-dplan-server");
         const results = await runDPlanReaders({ conversationId: conversationId ?? null, materials: readerMats, historyText: readerHistory, turnText: readerTurn, piiSignal: altPiiSignal });
-        const trimmed = D.trimmedKeys(results, mats);
+        let trimmed = D.trimmedKeys(results, mats);
+        // 2周目: AIX のボタン一覧は消さずに縮める（名前と値だけ＋候補の細目は全文）。候補が1つも拾えない時は縮めない（安全側）
+        const replace: import("@/app/lib/brain-dplan").Materials = {};
+        if (trimmed.includes("aixCatalog")) {
+          const picks = D.catalogPicks(mats.aixCatalog ?? "", results.find((r) => r.key === "aixpick")?.out?.points ?? []);
+          if (picks.length) replace.aixCatalog = D.compactCatalog(mats.aixCatalog ?? "", picks);
+          else trimmed = trimmed.filter((k) => k !== "aixCatalog");
+        }
         // 核には伏せる前の材料（今と同じ maskBrain を後で全体に掛ける）。下ごしらえは読み手の答え（伏せた材料から作った物）
-        coreUserText = D.buildCoreUserText(mats, trimmed, D.digestBlock(results, trimmed, mats), historyTail);
+        coreUserText = D.buildCoreUserText(mats, trimmed, D.digestBlock(results, trimmed, mats), historyTail, replace);
         dplan = {
           trimmed, materials: mats, readerUsd: results.reduce((a, r) => a + r.usd, 0), readerMs: Date.now() - t0,
           readers: results.map((r) => ({ k: r.key, ok: r.ok, err: r.error, ms: r.ms, pts: r.out?.points.length ?? 0, kf: !!r.out?.keepFull })),

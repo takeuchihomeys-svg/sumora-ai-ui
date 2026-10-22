@@ -62,7 +62,7 @@ export const MATERIAL_JA: Record<MaterialKey, string> = {
 };
 
 // ── 読み手（flash）── 短い1つの仕事・はっきりした出す形・大事な事は最後・判断はさせない ──────────
-export const READER_KEYS = ["state", "promise", "props", "dates", "aixfacts", "intent"] as const;
+export const READER_KEYS = ["state", "promise", "props", "dates", "aixfacts", "intent", "aixpick"] as const;
 export type ReaderKey = typeof READER_KEYS[number];
 
 export type ReaderDef = {
@@ -94,6 +94,11 @@ export const READERS: Record<ReaderKey, ReaderDef> = {
   aixfacts: {
     ja: "答えの出どころ", reads: ["rag", "companyFacts", "templates", "examples", "sentProps"], trims: ["rag", "templates", "examples"],
     task: "今回の依頼ごとに、答えの出どころを読む: 会社の事実・ナレッジ・資料・一般的な不動産の知識で答えられる（答えの事実を短く）／スタッフしか知らない・管理会社に確かめないと分からない（空き状況・見積の金額・確認の結果・交渉・内覧の確定・入居可能日）。ナレッジ・手本の中で今回に効く物は要点を短く写す。",
+  },
+  aixpick: {
+    // 2026-10-22 2周目: AIX のボタン一覧（場面の読みが弱い番は全部の細目＝平均 4.5k字・素の入力の最大）を核には名前と値だけにし、候補の細目だけ全文で渡す
+    ja: "AIX の候補", reads: ["aixCatalog"], trims: ["aixCatalog"],
+    task: "AIX のボタン一覧から、今回の連投に関係しそうなボタン×ピッカーの候補を最大6つ挙げる。1行に1つ「ボタンのキー/ピッカーの値: 理由（短く）」の形で、キーと値は一覧の英字のまま（例 property_check_result/mgmt_parking: 駐車場の空きを聞いた）。返信で答えられそうでも、関係するボタンは挙げる（使うかは別の係が決める）。迷う物は多めに挙げる。",
   },
   intent: {
     ja: "依頼と抜け", reads: [], trims: [],
@@ -219,8 +224,8 @@ export function recalledBlock(keys: ReadonlyArray<MaterialKey>, m: Materials): s
  * 核に渡す素の入力（今の customerSpecificText と同じ並び・削った材料を外し、下ごしらえを会話履歴の前に置く）。
  *   historyTail は「\n\n会話履歴（…）:\n<履歴>」の形（brain-core の今の文字のまま）
  */
-export function buildCoreUserText(m: Materials, trimmed: ReadonlyArray<MaterialKey>, digest: string, historyTail: string): string {
-  const body = MATERIAL_KEYS.filter((k) => !trimmed.includes(k)).map((k) => m[k] ?? "").join("");
+export function buildCoreUserText(m: Materials, trimmed: ReadonlyArray<MaterialKey>, digest: string, historyTail: string, replace: Materials = {}): string {
+  const body = MATERIAL_KEYS.map((k) => (trimmed.includes(k) ? replace[k] ?? "" : m[k] ?? "")).join("");
   return `${body}${digest}${historyTail}`;
 }
 
@@ -246,4 +251,44 @@ export function coreOverTwoStage(raw: unknown): { demote: boolean; replyOnly: bo
 export function estimateCoreSavings(fullChars: number, sentChars: number, tokPerChar: number, inUsdPerM = 2): { savedTok: number; savedUsd: number } {
   const savedTok = Math.max(0, Math.round((fullChars - sentChars) * tokPerChar));
   return { savedTok, savedUsd: (savedTok * inUsdPerM) / 1e6 };
+}
+
+// ── AIX のボタン一覧の縮め（2周目） ───────────────────────────────────────
+/** 一覧に出てくる値（ボタンのキー・ピッカーの値）を読み手の答えから拾う */
+export function catalogPicks(catalog: string, points: ReadonlyArray<string>): string[] {
+  const known = new Set<string>();
+  for (const m of catalog.matchAll(/^- ([a-z_]+)【/gm)) known.add(m[1]);
+  for (const m of catalog.matchAll(/（([a-z_:]+)）/g)) known.add(m[1]);
+  const out: string[] = [];
+  for (const p of points) for (const m of p.matchAll(/[a-z][a-z_:]*[a-z_]/g)) {
+    const tok = m[0];
+    if (known.has(tok) && !out.includes(tok)) out.push(tok);
+    // 「after:apply」の形の値も、前の部分（after）だけの値も拾う
+    for (const part of tok.split(":")) if (known.has(part) && !out.includes(part)) out.push(part);
+  }
+  return out;
+}
+/**
+ * 核に渡す縮めた一覧: 決め方（①〜⑤）と見出しはそのまま・ボタンとピッカーは名前と値だけ・読み手の候補（picks）に当たるボタン／ピッカーの行は全文。
+ *   「誰に確認したか」「結果のピッカー」は短く大事なので全文のまま。場面の外のボタンの1行もそのまま
+ */
+export function compactCatalog(catalog: string, picks: ReadonlyArray<string>): string {
+  const pick = new Set(picks);
+  const out: string[] = [];
+  let entered = false, btnPicked = false;
+  for (const line of String(catalog ?? "").split("\n")) {
+    const b = /^- ([a-z_]+)(【[^】]*】)/.exec(line);
+    if (b) {
+      entered = true;
+      btnPicked = pick.has(b[1]);
+      out.push(btnPicked || /^- 今の場面の外/.test(line) ? line : `- ${b[1]}${b[2]}`);
+      continue;
+    }
+    if (!entered || /^- /.test(line)) { out.push(line); continue; }
+    const pk = /^(\s+・.*?（([a-z_:]+)）)/.exec(line);
+    if (pk) { out.push(pick.has(pk[2]) ? line : pk[1]); continue; }
+    if (/^\s+・(?:結果のピッカー|誰に確認したか)/.test(line) || btnPicked) { out.push(line); continue; }
+    // その他の細目（押された実績 等）は候補のボタンの時だけ
+  }
+  return `${out.join("\n")}\n（D案: 細目の説明は読み手が候補に挙げた物だけ全文。他は名前と値だけ＝全文が要る時は need_materials の aixCatalog）\n`;
 }
