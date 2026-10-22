@@ -507,3 +507,17 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
   if (outside.length) lines.push(`- 今の場面の外のボタン（場面の読みが外れていることもある＝会話の事実で選んでよい・ピッカーは画面でスタッフが選ぶ）: ${outside.join(" ／ ")}`);
   return lines.join("\n");
 }
+
+/**
+ * 2026-10-23 D案 3周目: 今の場面のボタン（細目まで全文で核に渡す物）。catalogBlockForBrain の inScene と同じ決め方（場面の読みが弱い時の「全部」は使わない）。
+ *   場面が無い時は全部のボタン（＝縮めない）
+ */
+export function catalogSceneButtons(scene: ReplyScene | null | undefined): string[] {
+  const out: string[] = [];
+  for (const e of AIX_CATALOG) {
+    if (!e.brainSelectable) continue;
+    if (scene && e.scenes.length && !e.scenes.includes(scene)) continue;
+    if (!out.includes(e.aixType)) out.push(e.aixType);
+  }
+  return out;
+}

@@ -15,6 +15,8 @@ export async function runDPlanReaders(p: {
   turnText: string;
   /** 本文に個人の値が残っていないかの網（当たった読み手は呼ばない） */
   piiSignal: (t: string) => string | null;
+  /** 回す読み手（既定 全員・brain-core は dPlanReaders() を渡す） */
+  readers?: ReadonlyArray<ReaderKey>;
 }): Promise<ReaderResult[]> {
   const { callDeepSeek } = await import("@/app/lib/vision-alt-provider");
   const { DEEPSEEK_FLASH_MODEL } = await import("@/app/lib/llm-alt-provider");
@@ -41,5 +43,5 @@ export async function runDPlanReaders(p: {
     }
     return { key: k, ok: !!out, out, error: res ? (out ? null : "読めない形") : "応答なし", ms, usd, inTok: res?.usage.input ?? 0, outTok: res?.usage.output ?? 0, cacheHit: res?.usage.cacheHit ?? 0 };
   };
-  return Promise.all(READER_KEYS.map((k) => one(k).catch((e) => ({ key: k, ok: false, out: null, error: (e instanceof Error ? e.message : String(e)).slice(0, 120), ms: 0, usd: 0, inTok: 0, outTok: 0, cacheHit: 0 } as ReaderResult))));
+  return Promise.all((p.readers ?? READER_KEYS).map((k) => one(k).catch((e) => ({ key: k, ok: false, out: null, error: (e instanceof Error ? e.message : String(e)).slice(0, 120), ms: 0, usd: 0, inTok: 0, outTok: 0, cacheHit: 0 } as ReaderResult))));
 }
