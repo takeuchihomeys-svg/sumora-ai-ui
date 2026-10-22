@@ -17,7 +17,8 @@
 // 難しい番: 質問3つ以上・クレーム／否決／キャンセル・審査の事情・人生の出来事・条件の変更（条件の文の型でない）・
 //   不満の束・過去によく直された場面（そのまま率が全体の 0.6 倍以下）。
 //   ※ 物件の URL が2つ以上は難しいにしない（本番: 物件の持ち込みの長い番はそのまま 50%・合った 61%＝型どおりの番だった）
-// 切替: BRAIN_FAST_SLOW=on（既定 off＝何もしない）。2回目を止める BRAIN_FAST_SLOW_SECOND=off。速い道だけ止める BRAIN_FAST_SLOW_FAST=off
+// 切替: BRAIN_FAST_SLOW=on（既定 off＝何もしない）。2回目を止める BRAIN_FAST_SLOW_SECOND=off。速い道は既定で止める（BRAIN_FAST_SLOW_FAST=on の時だけ）
+//   ※ 2026-10-22 試験 fs1022b: 慣れた番 6/6 が戻り道（AIX・約束の依頼）に入った＝呼び出しが毎回1回増えるだけで安くならない
 // 測り方: scripts/audit-fast-slow.ts（本番の見張り line_watch_turns・読むだけ・LLM なし）
 import type { ReplyScene } from "./reply-scene";
 import { BRAIN_FAST_SLOW_SCENE_PRIORS, BRAIN_FAST_SLOW_PRIOR_BASE } from "./brain-fast-slow-priors";
@@ -31,9 +32,9 @@ const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 export function brainFastSlowEnabled(env: Env = envOf()): boolean {
   return (env.BRAIN_FAST_SLOW ?? "").trim().toLowerCase() === "on";
 }
-/** 速い道（easy で材料を減らす）。BRAIN_FAST_SLOW=on の時だけ・BRAIN_FAST_SLOW_FAST=off で止める */
+/** 速い道（easy で材料を減らす）。BRAIN_FAST_SLOW=on かつ BRAIN_FAST_SLOW_FAST=on の時だけ（既定は止める） */
 export function brainFastPathEnabled(env: Env = envOf()): boolean {
-  return brainFastSlowEnabled(env) && (env.BRAIN_FAST_SLOW_FAST ?? "").trim().toLowerCase() !== "off";
+  return brainFastSlowEnabled(env) && (env.BRAIN_FAST_SLOW_FAST ?? "").trim().toLowerCase() === "on";
 }
 /** じっくりの道の2回目（hard で同じ入力をもう1回）。BRAIN_FAST_SLOW=on の時だけ・BRAIN_FAST_SLOW_SECOND=off で止める */
 export function brainSlowSecondEnabled(env: Env = envOf()): boolean {

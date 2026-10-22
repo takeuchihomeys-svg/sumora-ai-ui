@@ -16,10 +16,12 @@ const lv = (i: Partial<TurnDifficultyInput>) => decideTurnDifficulty({ ...base, 
 
 // スイッチ（既定 off）
 t("既定 off", !brainFastSlowEnabled({}) && !brainFastPathEnabled({}) && !brainSlowSecondEnabled({}));
-t("on で速い道・2回目", brainFastSlowEnabled({ BRAIN_FAST_SLOW: "on" }) && brainFastPathEnabled({ BRAIN_FAST_SLOW: "on" }) && brainSlowSecondEnabled({ BRAIN_FAST_SLOW: "on" }));
-t("2回目だけ止める", !brainSlowSecondEnabled({ BRAIN_FAST_SLOW: "on", BRAIN_FAST_SLOW_SECOND: "off" }) && brainFastPathEnabled({ BRAIN_FAST_SLOW: "on", BRAIN_FAST_SLOW_SECOND: "off" }));
-t("off の時は何も渡さない材料が無い", fastDrops("easy", {}).size === 0);
-t("on・easy だけ材料を減らす", fastDrops("easy", { BRAIN_FAST_SLOW: "on" }).has("ragKnowledge") && fastDrops("normal", { BRAIN_FAST_SLOW: "on" }).size === 0 && fastDrops("hard", { BRAIN_FAST_SLOW: "on" }).size === 0);
+t("on で2回目・速い道は既定で止める", brainFastSlowEnabled({ BRAIN_FAST_SLOW: "on" }) && !brainFastPathEnabled({ BRAIN_FAST_SLOW: "on" }) && brainSlowSecondEnabled({ BRAIN_FAST_SLOW: "on" }));
+t("速い道は FAST=on の時だけ", brainFastPathEnabled({ BRAIN_FAST_SLOW: "on", BRAIN_FAST_SLOW_FAST: "on" }) && !brainFastPathEnabled({ BRAIN_FAST_SLOW_FAST: "on" }));
+t("2回目だけ止める", !brainSlowSecondEnabled({ BRAIN_FAST_SLOW: "on", BRAIN_FAST_SLOW_SECOND: "off" }) && brainFastPathEnabled({ BRAIN_FAST_SLOW: "on", BRAIN_FAST_SLOW_SECOND: "off", BRAIN_FAST_SLOW_FAST: "on" }));
+t("off の時は何も渡さない材料が無い", fastDrops("easy", {}).size === 0 && fastDrops("easy", { BRAIN_FAST_SLOW: "on" }).size === 0);
+const FAST_ON = { BRAIN_FAST_SLOW: "on", BRAIN_FAST_SLOW_FAST: "on" };
+t("FAST=on・easy だけ材料を減らす", fastDrops("easy", FAST_ON).has("ragKnowledge") && fastDrops("normal", FAST_ON).size === 0 && fastDrops("hard", FAST_ON).size === 0);
 
 // 慣れた（全部を満たした時だけ）
 t("慣れた場面の短い文 → easy", lv({ customerText: "駅から10分以内でお願いします", scene: "conditions" }).level === "easy");
