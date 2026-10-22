@@ -377,6 +377,9 @@ export function chooseText(draft: string, brain: string | null, check: (t: strin
   if (!brain || !brain.trim()) return { text: draft, used: "draft", reason: "実行役の文なし", draftIssues: di, brainIssues: null };
   const bi = check(brain);
   if (bi.empty || bi.maskLeak || (bi.placeholder && !di.placeholder)) return { text: draft, used: "draft", reason: `実行役の文が送れない（${describeIssues(bi).join("／")}）`, draftIssues: di, brainIssues: bi };
+  // 下書きに無い新しい事実（材料に無い数字・スタッフの入力に無い言い切り）を持ち込んだら、他の外れが減っても使わない（足し引きで新しい事実を通さない）
+  const added = [...bi.unfounded.filter((x) => !di.unfounded.includes(x)), ...bi.staffNoBasis.filter((x) => !di.staffNoBasis.includes(x))];
+  if (added.length) return { text: draft, used: "draft", reason: `実行役の文が下書きに無い事実を持ち込んだ（${added.join("・")}）`, draftIssues: di, brainIssues: bi };
   const wd = issueWeight(di), wb = issueWeight(bi);
   if (wb >= wd) return { text: draft, used: "draft", reason: `組み立てで確かめの外れが減らない（${wb}≥${wd}）`, draftIssues: di, brainIssues: bi };
   return { text: brain.trim(), used: "brain", reason: wb < wd ? `確かめの外れが減った（${wd}→${wb}）` : "設計図どおり", draftIssues: di, brainIssues: bi };

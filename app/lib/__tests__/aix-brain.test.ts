@@ -46,6 +46,11 @@ ok("悪くなれば下書き", chooseText(good, "はい😊！！", chk).used ==
 ok("空は下書き", chooseText(good, "", chk).used === "draft");
 ok("埋め字が出たら下書き", chooseText(good, `${good}\n〇〇万円`, chk).used === "draft");
 ok("重さ", issueWeight(chk("はい")) > issueWeight(chk(good)));
+// 2026-10-23 レビュー: 抜けを埋めても、下書きに無い事実（スタッフの入力に無い言い切り・材料に無い数字）を持ち込んだら下書き
+ok("新しい言い切りを持ち込んだら下書き", chooseText("はい😊！！", `${good}
+募集終了となっておりました！！`, chk).used === "draft");
+ok("材料に無い数字を持ち込んだら下書き", chooseText("はい😊！！", `${good}
+家賃は85,000円です！！`, chk).used === "draft");
 
 // 設計図・本文の読み
 const plan = parseConductorPlan('```json\n{"keep":false,"why":"日時が無い","drop":["何卒よろしくお願い致します😌！！"],"add":[{"part":"日時","after":"先頭","brief":"候補日","facts":["10/16(金) 13:00〜15:00"]}],"close":"質問"}\n```');

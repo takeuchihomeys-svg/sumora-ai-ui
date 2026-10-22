@@ -2450,8 +2450,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
         return draft;
       }
     };
-    const finalizeResponse = async (text0: string, extra?: Record<string, unknown>) => {
-      const text = holdCloseOf(await brainPass(text0));
+    const finalizeResponseSync = (text0: string, extra?: Record<string, unknown>) => {
+      const text = holdCloseOf(text0);
       const { message: finalizedMessage, notice } = finalize(text);
       // 2026-10-02 竹内さん「分割もクレジットカードの手数料いれる」: AIX の文は最終チェック（V16b）を通らない → 手数料の一文を足す（足すだけ・company-fact-guard）
       const feeFix = ensureCardFeeLine(finalizedMessage, [latestCustomerMsg]);
@@ -2496,6 +2496,9 @@ async function handleAction(request: NextRequest): Promise<Response> {
       const mergedNotice = [notice, typeof extraNotice === "string" ? extraNotice : "", pickupSendExitNotice(message), checkExit.notice, duplicateNotice].filter(Boolean).join("\n");
       return NextResponse.json({ ok: true, message_text: message, ...(mergedNotice ? { notice: mergedNotice } : {}), ...(checkExit.hold ? { send_hold: checkExit.hold } : {}), ...(suggestTemplateCategory ? { suggest_template_category: suggestTemplateCategory } : {}), ...extraRest });
     };
+    // off（既定）・通さない AIX の時は今まで通り同期で返す（try の中の return finalizeResponse(...) の例外の捕まり方を変えない＝off はバイト同一）
+    const finalizeResponse = (text0: string, extra?: Record<string, unknown>): Response | Promise<Response> =>
+      aixBrainOn() && AIX_BRAIN_ACTIONS.has(currentAction) ? brainPass(text0).then((t) => finalizeResponseSync(t, extra)) : finalizeResponseSync(text0, extra);
 
     /**
      * 2026-09-21: 物件を送る AIX では、重複の注意を付けてから返す。
@@ -8202,7 +8205,7 @@ ${(giShape === "list" ? GUARANTOR_INFO_STAFF_EXAMPLES : GUARANTOR_ANSWER_STAFF_E
 
     // ⑦修正: 共通後処理（号室の先頭ゼロ除去 + 内部メモ分離）を finalize() に統一
     // 2026-10-22 AIX のブレイン（AIX_BRAIN=on の時だけ・finalizeResponse と同じ）
-    if (message_text) message_text = await brainPass(message_text);
+    if (message_text && aixBrainOn()) message_text = await brainPass(message_text);
     // 2026-10-13 竹内さん（未桜）: 物件確認した（物件あった）の文にピッカーの「申込あり」が出ていない時は足す（finalizeResponse と同じ・足すだけ）
     if (action === "property_check_result" && check_pattern === "available" && Array.isArray(prop_statuses) && message_text) {
       const ap = ensureAppliedTalk(message_text, {
