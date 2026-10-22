@@ -3,8 +3,9 @@
 import {
   secondMsgMaterialsOn, splitTurn, sentThisTurn, outstandingAsks, openPromises, confirmAnswersOf, askedCostKind, lastCustomerBundle,
   buildSecondMaterialsNote, fixReceiptWhenNotSent, fixImageTypeWording, fixEstimateNames, costKindMismatch, applySecondFinalChecks,
-  hasViewingOrApplyPush, secondMaterialsRoute, type SmMsg,
+  hasViewingOrApplyPush, secondMaterialsRoute, buildBrainBundleNote, buildPropertyJudgeNote, type SmMsg,
 } from "../second-message-materials";
+import { customerReasonSplit } from "../property-brain";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -21,8 +22,8 @@ const CARD_B = "🌟Belle Court大美野 201号室\n【Belle Court大美野 201�
 
 console.log("second-message-materials");
 
-it("既定 off・on の時だけ", () => {
-  eq(secondMsgMaterialsOn({}), false);
+it("既定 on（10/22）・off で止まる", () => {
+  eq(secondMsgMaterialsOn({}), true);
   eq(secondMsgMaterialsOn({ SECOND_MSG_MATERIALS: "on" }), true);
   eq(secondMsgMaterialsOn({ SECOND_MSG_MATERIALS: "off" }), false);
 });
@@ -175,6 +176,71 @@ it("個人情報の線: 申込以降・審査の事情・申込の線・読め�
   eq(secondMaterialsRoute({ postApply: false, cutoffAll: true, sensitive: false, readFailed: true, goesAlt: false }), "pin");
   eq(secondMaterialsRoute({ postApply: false, cutoffAll: true, sensitive: false, goesAlt: true }), "alt");
   eq(secondMaterialsRoute({ postApply: false, cutoffAll: true, sensitive: false, goesAlt: false }), "claude");
+});
+
+it("質問11: 画面の画像の通（text 空＋imageUrl）も送った物・物件確認した で画像が見えない時はご査収を外さない", () => {
+  const msgs: SmMsg[] = [
+    { sender: "customer", text: "ここ空いてますか？", rawCreatedAt: at(30) },
+    { sender: "staff", text: "現在募集に出ていないお部屋となっております！！", isAix: true, rawCreatedAt: at(3) },
+    { sender: "staff", text: "", imageUrl: "https://example.invalid/a.jpg", isAix: true, rawCreatedAt: at(2) },
+  ];
+  const t = splitTurn(msgs, null);
+  eq(t.turnStaff.length, 2);
+  const s = sentThisTurn({ actionType: "property_check_result", turnStaff: t.turnStaff });
+  eq(s.anySent, true);
+  eq(s.kind, "images");
+  const none = sentThisTurn({ actionType: "property_check_result", turnStaff: ["現在募集に出ていないお部屋となっております！！"] });
+  eq(none.anySent, false);
+  eq(none.uncertain, true);
+  const txt = "別のお部屋お送りさせて頂きます！！\nお手隙の際にご査収ください！！";
+  eq(fixReceiptWhenNotSent(txt, none).text, txt);
+  ok(!/何も送っていない番/.test(buildSecondMaterialsNote({ sent: none, asks: [], promises: [], answers: [] })));
+});
+
+it("質問11: 室内イメージの URL だけの1通目 → 送った物（ご査収を残す）", () => {
+  const s = sentThisTurn({ actionType: "property_check_result", turnStaff: ["（室内イメージ）\nhttps://suumo.jp/chintai/bc_1/"] });
+  eq(s.anySent, true);
+  const t = "こちら室内イメージとなります😊！！\nお手隙の際にご査収ください！！";
+  eq(fixReceiptWhenNotSent(t, s).text, t);
+});
+
+it("統括の判断の束: 新しい判断・同じ AIX だけ一手となぜ・この AIX で受ける依頼", () => {
+  const msgs = [{ sender: "customer", rawCreatedAt: at(30) }];
+  const meta = {
+    action: "estimate_sheet", reason: "初期費用を気にしている", after_aix_template: "【申込誘導】", analyzed_msg_ts: at(29),
+    turn_contract: { asks: [
+      { quote: "見積もりお願いします", route: "aix", aix: "estimate_sheet", answer: "最大限割引した御見積書" },
+      { quote: "角部屋は空いてますか", route: "promise", answer: "空き状況を確認" },
+      { quote: "駐車場ありますか", route: "aix", aix: "property_check_result/mgmt_parking" },
+    ] },
+  };
+  const n = buildBrainBundleNote(meta, { actionType: "estimate_sheet", messages: msgs, labelOf: (k) => `【${k}】` });
+  ok(/統括が選んだ一手: 【estimate_sheet】/.test(n), n);
+  ok(/なぜ（統括）: 初期費用/.test(n));
+  ok(/見積もりお願いします/.test(n));
+  ok(!/角部屋/.test(n), "空きの約束は見積の AIX では受けない（promiseFulfilledBy・物件確認した で受ける）");
+  ok(!/駐車場/.test(n));
+  ok(/【申込誘導】/.test(n));
+  // 古い判断は渡さない
+  eq(buildBrainBundleNote({ ...meta, analyzed_msg_ts: at(60) }, { actionType: "estimate_sheet", messages: msgs }), "");
+  // 違う AIX を押した番は一手・なぜを渡さない
+  const other = buildBrainBundleNote(meta, { actionType: "property_check_result", checkPattern: "mgmt_parking", messages: msgs });
+  ok(!/なぜ/.test(other) && /駐車場/.test(other), other);
+});
+
+it("物件の判断の中身: 推す理由・合わない所・反応（AD・割引の理由は入れない）", () => {
+  const n = buildPropertyJudgeNote({ label: "メゾンシュシュ 101号室", recommended: true, goodJa: ["敷金礼金0", "AD 2ヶ月以上", "駅徒歩5分以内"], badJa: ["家賃が上限の110%超"], reaction: { good: true, attrsJa: [] }, bundleNegativesJa: ["狭い"] });
+  ok(/👑/.test(n) && /敷金礼金0/.test(n) && /駅徒歩5分/.test(n) && /110%/.test(n) && /良い反応/.test(n) && /狭い/.test(n), n);
+  ok(!/AD/.test(n));
+  eq(buildPropertyJudgeNote({ label: "x 1号室", goodJa: [], badJa: [] }), "");
+  ok(/見送り/.test(buildPropertyJudgeNote({ label: "x 1号室", goodJa: [], badJa: [], reaction: { declined: true } })));
+});
+
+it("判定の理由の分け方（customerReasonSplit）: AD の札は外す", () => {
+  const sp = customerReasonSplit(["ZERO_ZERO_MATCH", "AD_HIGH", "RENT_OVER_110", "EQUIP_AUTOLOCK_OK", "ALREADY_SENT_SAME_ROOM"]);
+  eq(sp.goodJa.length, 2);
+  eq(sp.badJa.length, 1);
+  ok(!sp.goodJa.some((x) => /AD|広告/.test(x)));
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

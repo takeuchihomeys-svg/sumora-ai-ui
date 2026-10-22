@@ -12,17 +12,26 @@
 //   ・確認の結果（約束の答え） … action-ledger.findConfirmReportSentence（AIX の確認の結果の文）
 //   ・送った見積書の件数・物件名 … estimate-second-message.isEstimateCard / estimatePropertiesOf
 //   ・会社として決まっている事実 … company-facts.buildCompanyFactsNote（呼ぶ側）
-// 切替: SECOND_MSG_MATERIALS=on の時だけ（既定 off＝プロンプトも出力も今までと1文字も同じ）。
+// 切替: 2026-10-22 既定 on（止める SECOND_MSG_MATERIALS=off＝プロンプトも出力も旧と1文字も同じ）。試し（✨2通目 22番・竹内さんの送信が正解・scripts/yuma-r11-aix-text.ts --toggle）: 似ている度 0.372→0.380・作り事 0/0・見積書の後のご査収の食い違い 3→2。
+//   10/22 足した材料（同じスイッチの中）: 統括（LINE のブレイン）の判断の束（ボタン・ピッカー・なぜ・この AIX で受ける依頼・続けて送る物）／
+//   このボタン・ピッカーの意味（竹内基準・aix-catalog.aixMeaningForGenerator・お手本の文は渡さない）／物件の判断の中身（売上サポの理由・合う条件・決め手・お客様の反応）
 import { buildRequestLedger, applyBrainRequestStatus, uncoveredRequests, TOPIC_JA, type LedgerItem, type RequestItem } from "./request-ledger";
 import { trackPromises, type OpenPromise } from "./promise-tracker";
 import { findConfirmReportSentence } from "./action-ledger";
 import { isEstimateCard, estimatePropertiesOf } from "./estimate-second-message";
+import { contractFreshForAix, askIsThisAix, promiseFulfilledBy } from "./aix-brain-contract";
+import { normalizeBrainTurnContract } from "./turn-contract";
 
 export function secondMsgMaterialsOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.SECOND_MSG_MATERIALS ?? "").trim().toLowerCase() === "on";
+  return (env.SECOND_MSG_MATERIALS ?? "").trim().toLowerCase() !== "off";
 }
 
-export type SmMsg = { sender?: string | null; text?: string | null; isAix?: boolean | null; rawCreatedAt?: string | null };
+/** 画面の会話は画像の通を text 空＋imageUrl で渡す（試験・DB は "[画像]"）＝どちらも画像の通として数える */
+export type SmMsg = { sender?: string | null; text?: string | null; isAix?: boolean | null; rawCreatedAt?: string | null; imageUrl?: string | null };
+const textOfMsg = (m: SmMsg | null | undefined): string => {
+  const t = String(m?.text ?? "");
+  return !t.trim() && String(m?.imageUrl ?? "").trim() ? "[画像]" : t;
+};
 
 /** この番の送信のまとまり（最後の送信から3時間） */
 export const TURN_WINDOW_MS = 3 * 3600_000;
@@ -38,10 +47,10 @@ export function splitTurn(msgs: ReadonlyArray<SmMsg>, sentMessage?: string | nul
   let last = -1;
   for (let i = list.length - 1; i >= 0; i--) if (list[i]?.sender === "customer") { last = i; break; }
   // この番の送信は直近のまとまりだけ（最後の送信から3時間より前の物は前の番＝お客様が返事をしないまま続けた別の件）
-  const staffMsgs = list.slice(last + 1).filter((m) => m?.sender !== "customer" && String(m?.text ?? "").trim());
+  const staffMsgs = list.slice(last + 1).filter((m) => m?.sender !== "customer" && textOfMsg(m).trim());
   const times = staffMsgs.map((m) => (m?.rawCreatedAt ? Date.parse(m.rawCreatedAt) : NaN));
   const newest = Math.max(...times.filter((t) => Number.isFinite(t)), -Infinity);
-  const turnStaff = staffMsgs.filter((_, k) => !Number.isFinite(newest) || !Number.isFinite(times[k]) || newest - times[k] <= TURN_WINDOW_MS).map((m) => String(m?.text ?? ""));
+  const turnStaff = staffMsgs.filter((_, k) => !Number.isFinite(newest) || !Number.isFinite(times[k]) || newest - times[k] <= TURN_WINDOW_MS).map((m) => textOfMsg(m));
   const sm = String(sentMessage ?? "").trim();
   if (sm && !turnStaff.some((t) => t.trim() === sm)) turnStaff.push(sm);
   return { before: list.slice(0, last + 1), turnStaff };
@@ -54,9 +63,17 @@ export type SentThisTurn = {
   estimateCards: number;
   images: number;
   kind: SentKind;
-  /** 何かを送った（資料・画像・見積書）＝「ご査収」を書いてよい */
+  /** 何かを送った（資料・画像・見積書・URL）＝「ご査収」を書いてよい */
   anySent: boolean;
+  /**
+   * 送ったか分からない（物件確認した で画像・URL がまだ会話に見えない）＝「ご査収」は外さない。
+   * 2026-10-22 質問11（scripts/audit-second-receipt-other-room.ts・90日）: 物件確認した の後に竹内さん達が「ご査収」を書いた 24番のうち、
+   *   募集なし→別の部屋の画像の 5番は、画像が会話に見えないと全部外していた（画面は画像の通を text 空で渡す＝見えなかった）／
+   *   室内イメージの URL だけの番 2番は画像が見えても外していた
+   */
+  uncertain?: boolean;
 };
+const URL_RE = /https?:\/\/\S+|〈URL〉|<URL>/;
 
 /** 物件の資料（画像）を送る AIX */
 const PROPERTY_IMAGE_ACTIONS: ReadonlySet<string> = new Set(["property_send", "property_recommendation"]);
@@ -69,15 +86,17 @@ export function sentThisTurn(i: { actionType?: string | null; turnStaff: Readonl
   for (const c of cards) for (const p of estimatePropertiesOf(c)) if (!estimates.includes(p)) estimates.push(p);
   // ↑ 1枚の見積書に同じ物件の見出しが2回ある・同じ見積書を送り直した時は1件（重なりなし）
   const images = i.turnStaff.filter((t) => IMAGE_ONLY_RE.test(t)).length;
+  // 室内イメージ・資料の URL（物件確認した→室内写真）も送った物（竹内さん「こちら室内イメージとなります😊！！お手隙の際にご査収ください！！」）
+  const links = i.turnStaff.filter((t) => URL_RE.test(t)).length;
   // 種類は AIX の種類が先（物件オススメの番に前の見積書が残っていても見積書の番にしない）。種類の無い・他の AIX は送った物で見る
   const kind: SentKind = a === "estimate_sheet" ? "estimate"
     : PROPERTY_IMAGE_ACTIONS.has(a) ? "property_images"
-    : a === "property_check_result" ? (cards.length > 0 ? "estimate" : "check_result")
+    : a === "property_check_result" ? (cards.length > 0 ? "estimate" : images + links > 0 ? "images" : "check_result")
     : cards.length > 0 ? "estimate"
     : images > 0 ? "images" : "none";
   if (kind !== "estimate") estimates.length = 0;
-  const anySent = cards.length > 0 || images > 0 || ((kind === "estimate" || kind === "property_images") && i.turnStaff.length > 0);
-  return { estimates, estimateCards: cards.length, images, kind, anySent };
+  const anySent = cards.length > 0 || images > 0 || links > 0 || ((kind === "estimate" || kind === "property_images") && i.turnStaff.length > 0);
+  return { estimates, estimateCards: cards.length, images, kind, anySent, ...(kind === "check_result" && !anySent ? { uncertain: true } : {}) };
 }
 
 const msOf = (iso: string | null | undefined, fallback: number) => {
@@ -162,7 +181,7 @@ export function lastCustomerBundle(before: ReadonlyArray<SmMsg>): string[] {
 const SENT_KIND_LINE: Record<SentKind, string> = {
   estimate: "",
   property_images: "送ったのは物件の資料（画像）。「御見積書」とは書かない（見積書はまだ送っていない）。",
-  check_result: "送ったのは確認の結果の文。資料・見積書を送ったとは書かない。",
+  check_result: "送ったのは確認の結果の文（別の部屋の画像・資料を一緒に送った時だけ「ご査収」）。御見積書を送ったとは書かない。",
   images: "",
   none: "この番ではまだ資料・画像・見積書を送っていない（約束の文だけ）。「ご査収ください」は書かない。",
 };
@@ -177,7 +196,101 @@ export type SecondMaterialsInput = {
   memoNote?: string;
   costKind?: "initial" | "monthly" | null;
   reactionKind?: string | null;
+  /** 統括（LINE のブレイン）の判断の束（buildBrainBundleNote） */
+  brainBundleNote?: string;
+  /** このボタン・ピッカーの意味（竹内基準・aixMeaningForGenerator） */
+  meaningNote?: string;
+  /** 物件の判断の中身（buildPropertyJudgeNote） */
+  propertyJudgeNote?: string;
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-22 統括の判断の束・物件の判断の中身（竹内さん「AIX は LINE のブレイン（統括）が管轄」・P1 696c96ba）
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type BrainBundleMeta = {
+  action?: string | null;
+  check_pattern?: string | null;
+  reason?: string | null;
+  after_aix_template?: string | null;
+  turn_contract?: unknown;
+  analyzed_msg_ts?: string | null;
+} | null | undefined;
+
+/**
+ * 統括（LINE のブレイン）がこの番に決めた判断の束を、2通目の材料にする（1つの束＝ボタン・ピッカー・なぜ・この AIX で受ける依頼・続けて送る物）。
+ *   ・古い判断（最後のお客様の発言より前の分析）は渡さない（aix-brain-contract と同じ鮮度の線）。
+ *   ・統括の一手と押した AIX が違う番は「なぜ」を渡さない（別の判断の理由で書かない）。この AIX で受ける依頼だけ渡す。
+ *   ・答えの値は書かない（値はスタッフの入力・1通目・確認の結果だけ）。
+ *   labelOf: ボタン・ピッカーの画面の名前（呼ぶ側が aix-catalog から引く）
+ */
+export function buildBrainBundleNote(meta: BrainBundleMeta, o: {
+  actionType: string | null | undefined;
+  checkPattern?: string | null;
+  messages?: ReadonlyArray<{ sender?: string | null; rawCreatedAt?: string | null }> | null;
+  labelOf?: (aix: string, picker: string | null) => string;
+}): string {
+  const a = String(o.actionType ?? "").trim();
+  if (!meta || !a) return "";
+  if (!contractFreshForAix(meta, (o.messages ?? []) as never)) return "";
+  const same = !!meta.action && askIsThisAix(String(meta.action), a, null);
+  const label = (k: string, p: string | null) => (o.labelOf ? o.labelOf(k, p) : `${k}${p ? `/${p}` : ""}`);
+  const L: string[] = [];
+  if (same) {
+    const cp = String(meta.check_pattern ?? "").trim() || null;
+    L.push(`・統括が選んだ一手: ${label(a, cp)}（スタッフが押した物と同じ）`);
+    if (meta.reason?.trim()) L.push(`・なぜ（統括）: ${meta.reason.trim().slice(0, 120)}`);
+  }
+  const c = normalizeBrainTurnContract(meta.turn_contract);
+  const asks = ((c?.asks ?? []) as Array<{ quote?: unknown; route?: unknown; answer?: unknown; aix?: unknown }>)
+    .filter((x) => (x.route === "aix" && askIsThisAix(String(x.aix ?? ""), a, o.checkPattern ?? null)) || (x.route === "promise" && promiseFulfilledBy(`${x.quote ?? ""} ${x.answer ?? ""}`, a)));
+  if (asks.length) {
+    L.push("・この AIX で受ける依頼（2通目までで書き切る部品・→ の後は統括の方向。値は1通目・確認の結果・資料の物だけ）:");
+    for (const x of asks.slice(0, 4)) L.push(`  - 「${String(x.quote ?? "").slice(0, 60)}」${x.answer ? `→ ${String(x.answer).slice(0, 80)}` : ""}`);
+  }
+  if (same && meta.after_aix_template?.trim()) L.push(`・この後に続けて送る物（統括）: ${meta.after_aix_template.trim().slice(0, 40)}（2通目で先取りして書かない）`);
+  if (!L.length) return "";
+  return ["【統括（LINE のブレイン）の判断の束（この番の判断・2通目もこれに沿う。分析の言葉は本文に書かない）】", ...L].join("\n");
+}
+
+export type PropertyJudgeInput = {
+  /** 物件の見出し（建物名 号室） */
+  label: string;
+  /** 売上サポで 👑（一番オススメ）にした */
+  recommended?: boolean;
+  /** 判定の良い所（お客様に関係する物だけ・AD・利益は入れない） */
+  goodJa: ReadonlyArray<string>;
+  /** 判定で合わない所（良い所として書かない） */
+  badJa: ReadonlyArray<string>;
+  /** この物件へのお客様の反応（送った物件の時） */
+  reaction?: { good?: boolean; declined?: boolean; attrsJa?: ReadonlyArray<string> } | null;
+  /** お客様が前に送った物件で言った不満（この物件の良い所の言い方の参考・値は書かない） */
+  bundleNegativesJa?: ReadonlyArray<string>;
+};
+
+/** AD・利益・割引・業者の推定（お客様に関係しない・言ってはいけない）の言葉 */
+const INTERNAL_REASON_RE = /AD|広告|利益|割引|業者|保留の物件|点に入れない|上限\d+点|元付|手数料/;
+
+/**
+ * 物件の判断の中身（なぜ推すか・合う条件・点の理由・決め手・お客様の反応）を2通目の材料にする（P1 696c96ba）。
+ *   ⚠ 理由に使うのは資料で確かめた事実だけ（判定の言葉をそのまま本文に書かない）。AD・利益・割引の理由は入れない。
+ */
+export function buildPropertyJudgeNote(i: PropertyJudgeInput | null | undefined): string {
+  if (!i || !i.label.trim()) return "";
+  const clean = (xs: ReadonlyArray<string> | undefined) => [...new Set((xs ?? []).map((x) => String(x).trim()).filter((x) => x && !INTERNAL_REASON_RE.test(x)))].slice(0, 6);
+  const good = clean(i.goodJa), bad = clean(i.badJa), neg = clean(i.bundleNegativesJa);
+  const L: string[] = [];
+  if (i.recommended) L.push("・売上サポで一番オススメ（👑）にしたお部屋");
+  if (good.length) L.push(`・推す理由（お客様のご希望に合う所）: ${good.join("／")}`);
+  if (bad.length) L.push(`・ご希望と合わない所（良い所・合う所として書かない）: ${bad.join("／")}`);
+  const r = i.reaction;
+  if (r?.declined) L.push("・このお部屋はお客様が見送りと言った（推さない・申込へ押さない）");
+  else if (r?.good) L.push("・このお部屋にお客様が良い反応をしている（内覧・申込へ進める根拠）");
+  if (r?.attrsJa?.length) L.push(`・このお部屋へのお客様の不満: ${clean(r.attrsJa).join("／")}（触れるなら受け止める・打ち消さない）`);
+  if (neg.length) L.push(`・前に送ったお部屋でお客様が言った不満: ${neg.join("／")}（このお部屋で解消している点だけ言ってよい）`);
+  if (!L.length) return "";
+  return [`【物件の判断の中身（${i.label}・売上サポの判定から。値は資料の字のまま・判定の言葉を本文に書かない）】`, ...L].join("\n");
+}
 
 /** 2通目に渡す材料の1ブロック（何も無ければ空文字） */
 export function buildSecondMaterialsNote(i: SecondMaterialsInput): string {
@@ -192,7 +305,7 @@ export function buildSecondMaterialsNote(i: SecondMaterialsInput): string {
   } else if (SENT_KIND_LINE[s.kind]) {
     L.push(`・この番で送った物: ${SENT_KIND_LINE[s.kind]}`);
   }
-  if (!s.anySent) L.push("・何も送っていない番なので「お手隙の際にご査収ください」は書かない。");
+  if (!s.anySent && !s.uncertain) L.push("・何も送っていない番なので「お手隙の際にご査収ください」は書かない。");
   if (i.costKind === "initial") L.push("・お客様が聞いたのは初期費用（入居の時に払う額）。月額（家賃・管理費）の話と取り違えない。");
   else if (i.costKind === "monthly") L.push("・お客様が聞いたのは毎月の額（家賃・管理費）。初期費用の話と取り違えない。");
   if (i.asks.length) {
@@ -211,7 +324,10 @@ export function buildSecondMaterialsNote(i: SecondMaterialsInput): string {
   }
   if (i.ngPoints?.trim()) L.push(`・お客様の NG 条件（物件の良い所・合う所として書かない）: ${i.ngPoints.trim().slice(0, 160)}`);
   const body = L.join("\n");
-  const extra = [i.companyFactsNote?.trim() ?? "", i.memoNote?.trim() ? `【お客様のメモ（返信と同じ材料・2通目では関係する所だけ使う）】\n${i.memoNote.trim().slice(0, 700)}` : ""].filter(Boolean).join("\n\n");
+  const extra = [
+    i.brainBundleNote?.trim() ?? "", i.meaningNote?.trim() ?? "", i.propertyJudgeNote?.trim() ?? "",
+    i.companyFactsNote?.trim() ?? "", i.memoNote?.trim() ? `【お客様のメモ（返信と同じ材料・2通目では関係する所だけ使う）】\n${i.memoNote.trim().slice(0, 700)}` : "",
+  ].filter(Boolean).join("\n\n");
   if (!body && !extra) return "";
   return [`【2通目の材料（返信の書く役と同じ材料・事実だけ。形と締めは下の【この2通目の形】が正）】`, body, extra].filter(Boolean).join("\n");
 }
@@ -224,8 +340,8 @@ export function buildSecondMaterialsNote(i: SecondMaterialsInput): string {
 const RECEIPT_LINE_RE = /^[^\n]*ご査収(?:ください|下さい|願います|の程)[^\n]*$/gm;
 
 /** 何も送っていないのにご査収を書いた → その行を外す */
-export function fixReceiptWhenNotSent(text: string, sent: Pick<SentThisTurn, "anySent">): { text: string; applied: string[] } {
-  if (sent.anySent) return { text, applied: [] };
+export function fixReceiptWhenNotSent(text: string, sent: Pick<SentThisTurn, "anySent"> & { uncertain?: boolean }): { text: string; applied: string[] } {
+  if (sent.anySent || sent.uncertain) return { text, applied: [] };
   const applied: string[] = [];
   const out = String(text ?? "").replace(RECEIPT_LINE_RE, (m) => { applied.push(m.trim()); return ""; }).replace(/\n{3,}/g, "\n\n").trim();
   return applied.length ? { text: out, applied } : { text, applied: [] };
