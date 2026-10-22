@@ -233,11 +233,12 @@ export function buildBrainBundleNote(meta: BrainBundleMeta, o: {
   const a = String(o.actionType ?? "").trim();
   if (!meta || !a) return "";
   if (!contractFreshForAix(meta, (o.messages ?? []) as never)) return "";
-  const same = !!meta.action && askIsThisAix(String(meta.action), a, null);
+  // ピッカーまで見る（統括＝物件確認した→駐車場・スタッフ＝物件確認した→空き の番は別の判断＝なぜを渡さない）
+  const cp = String(meta.check_pattern ?? "").trim() || null;
+  const same = !!meta.action && askIsThisAix(cp ? `${meta.action}/${cp}` : String(meta.action), a, o.checkPattern ?? null);
   const label = (k: string, p: string | null) => (o.labelOf ? o.labelOf(k, p) : `${k}${p ? `/${p}` : ""}`);
   const L: string[] = [];
   if (same) {
-    const cp = String(meta.check_pattern ?? "").trim() || null;
     L.push(`・統括が選んだ一手: ${label(a, cp)}（スタッフが押した物と同じ）`);
     if (meta.reason?.trim()) L.push(`・なぜ（統括）: ${meta.reason.trim().slice(0, 120)}`);
   }

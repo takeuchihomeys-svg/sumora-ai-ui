@@ -226,6 +226,10 @@ it("統括の判断の束: 新しい判断・同じ AIX だけ一手となぜ・
   // 違う AIX を押した番は一手・なぜを渡さない
   const other = buildBrainBundleNote(meta, { actionType: "property_check_result", checkPattern: "mgmt_parking", messages: msgs });
   ok(!/なぜ/.test(other) && /駐車場/.test(other), other);
+  // 同じボタンでもピッカーが違う番は一手・なぜを渡さない
+  const pm = { ...meta, action: "property_check_result", check_pattern: "mgmt_parking" };
+  ok(!/なぜ/.test(buildBrainBundleNote(pm, { actionType: "property_check_result", checkPattern: "vacancy", messages: msgs })));
+  ok(/なぜ/.test(buildBrainBundleNote(pm, { actionType: "property_check_result", checkPattern: "mgmt_parking", messages: msgs })));
 });
 
 it("物件の判断の中身: 推す理由・合わない所・反応（AD・割引の理由は入れない）", () => {

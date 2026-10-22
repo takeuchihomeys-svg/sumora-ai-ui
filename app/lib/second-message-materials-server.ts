@@ -127,7 +127,10 @@ export async function loadSecondMaterials(o: {
 
   let goesAlt = false;
   try { goesAlt = (await import("@/app/lib/llm-alt-provider")).willRouteAlt("aix_template", { postApply }); } catch { goesAlt = false; }
-  const route = secondMaterialsRoute({ postApply, cutoffAll, sensitive, readFailed, goesAlt });
+  // 審査について（guarantor_info）・物件確認した→審査（mgmt_screening）の2通目は 1通目と同じく Claude に固定（aixRequestMustUseClaude）
+  let mustClaude = false;
+  try { mustClaude = (await import("@/app/lib/aix-new-pickers")).aixRequestMustUseClaude({ action: o.actionType ?? null, check_pattern: o.pickerValue ?? null }); } catch { mustClaude = true; }
+  const route = secondMaterialsRoute({ postApply, cutoffAll, sensitive: sensitive || mustClaude, readFailed, goesAlt });
   const headers: Record<string, string> = route === "pin"
     ? { ...sumoraLlmMarks("aix_template", cid), [LLM_POST_APPLY_HEADER]: "1" }
     : route === "alt" ? { ...sumoraLlmMarks("aix_template", cid), [LLM_CUTOFF_HEADER]: "all" } : {};
