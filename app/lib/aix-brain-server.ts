@@ -4,7 +4,7 @@
 //   ・審査について（aixRequestMustUseClaude）・申込以降・審査の事情・申込の時刻の線がある会話・読めない時 → Claude（x-sumora-llm-post-apply: 1）
 //   ・それ以外で DeepSeek に回る設定の時 → 呼び名を札（〈名前〉）にしてから既知の名前・電話等を伏せ（maskPIIForAlt）、印 all を付けて flash に回す
 //   出口（llm-alt-provider）の網（個人の値・審査の事情）も今まで通り効く。
-// 呼ぶのは AIX_BRAIN=on の時だけ（既定 off）。失敗・時間切れは下書きのまま（止めない）。
+// 呼ぶのは AIX_BRAIN でそのボタンが入っている時だけ（既定＝内覧日調整だけ・aixBrainEnabledFor）。失敗・時間切れは下書きのまま（止めない）。
 import { supabase } from "@/app/lib/supabase-server";
 import { LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER, sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, cutoffMs, NO_CUTOFF } from "@/app/lib/post-apply";
@@ -13,7 +13,7 @@ import { maskPIIForAlt } from "@/app/lib/pii-mask";
 import { loadAltNameMask } from "@/app/lib/pii-known-names";
 import {
   AIX_BRAIN_ACTION, CONDUCTOR_SYSTEM, EXECUTOR_SYSTEM, buildConductorUser, buildExecutorUser, parseConductorPlan, parseExecutorParts, assembleText,
-  mustItemsOf, checkAixText, chooseText, describeIssues, tokenizeName, restoreName, staffInputsBlock,
+  mustItemsOf, checkAixText, chooseText, describeIssues, tokenizeName, restoreName, staffInputsBlock, copyNamesVerbatim,
   type AixBrainInput, type ConductorPlan,
 } from "@/app/lib/aix-brain";
 
@@ -148,7 +148,10 @@ export async function runAixBrain(input: AixBrainInput, o: { conversationId: str
     if (!ps) return out(draft, "draft", plan, "実行役の部品が読めない", route, calls);
     parts = ps;
   }
-  const built = restoreName(assembleText(mi.draft, plan, parts), input.callName);
+  // 物件名は入力の字のまま（組み立て・実行役が「鳳Ⅱ」を「鳳II」に書き換えても戻す）
+  const inputNames = input.staffInputs.filter(([k]) => /^物件名|推す物件/.test(k)).flatMap(([, v]) => String(v ?? "").split(/[\n、,]+/)).map((v) => v.trim()).filter(Boolean);
+  const keyFacts = must.filter((m) => !/^\d{1,2}\//.test(m));
+  const built = copyNamesVerbatim(restoreName(assembleText(mi.draft, plan, parts, { keyFacts }), input.callName), inputNames).text;
   const ch = chooseText(draft, built, checkAll);
   return out(ch.text, ch.used, plan, `${ch.reason}${ch.brainIssues ? `／組み立ての確かめ: ${describeIssues(ch.brainIssues).join("・") || "外れなし"}` : ""}`, route, calls);
 }

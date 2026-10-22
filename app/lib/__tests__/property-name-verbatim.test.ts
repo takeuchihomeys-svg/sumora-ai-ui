@@ -1,5 +1,5 @@
 // app/lib/__tests__/property-name-verbatim.test.ts — 2026-10-02 ⑫: 物件名はデータの字のまま（実行: npx tsx app/lib/__tests__/property-name-verbatim.test.ts）
-import { enforceVerbatimPropertyNames, knownPropertyNamesFrom } from "../property-name-verbatim";
+import { enforceVerbatimPropertyNames, knownPropertyNamesFrom, enforceChosenPropertyName } from "../property-name-verbatim";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name} -- ${extra}`); } };
 
@@ -24,6 +24,12 @@ t("🌟の見出しから名前を拾う", known.includes("エグゼ難波西Ⅱ
 {
   const r = enforceVerbatimPropertyNames("ご都合よろしいお日にち御座いますでしょうか😌！！", known);
   t("名前の無い文は変えない", r.fixes.length === 0);
+}
+{
+  // 2026-10-23 レビュー（内覧日調整）: 「プレミアス鳳Ⅱ」が「プレミアス鳳II」になった（NFKC で同じ・長さが変わる）
+  const r = enforceChosenPropertyName("プレミアス鳳IIの102号室にてご案内させて頂きます！！", "プレミアス鳳Ⅱ 102号室");
+  t("ローマ数字の書き換えを入力の字に戻す", r.text.startsWith("プレミアス鳳Ⅱの102号室") && r.fixes.length === 1, r.text);
+  t("入力の字のままは触らない", enforceChosenPropertyName("プレミアス鳳Ⅱ 102号室", "プレミアス鳳Ⅱ 102号室").fixes.length === 0);
 }
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);
 // 2026-10-02 ⑫ 11巡目（YUMA 再生 flow8 t08）

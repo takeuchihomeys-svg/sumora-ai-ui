@@ -2,8 +2,8 @@ import { composeLifelineMessage } from "@/app/lib/aix-lifeline";
 // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・契約の条件・家賃の交渉・バイク置き場・物件について→募集号室について）
 import { isScreeningTopic, screeningTopicLine, isScreeningResult, screeningResultFormat, screeningResultKeepsSupportLine, type ScreeningResult,isOtherAgentCostCompare, costCompareFactEnabled, COST_COMPARE_FACT_BLOCK, isEstimateCorrectionContext, resolveOtherAgentEstimate, applyEstimateOwnerLines, estimateOwnerNote } from "@/app/lib/aix-owner-answers-1021";
 import { followupRevive1021Enabled, hasNewArrivalFact, composeFollowupText, sanitizeFollowupText, followupShapeNote } from "@/app/lib/followup-revive-1021";
-// 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN=on の時だけ（既定 off）
-import { aixBrainOn } from "@/app/lib/aix-brain";
+// 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ）
+import { aixBrainEnabledFor } from "@/app/lib/aix-brain";
 import { staffInputsFromBody, pickerValueOf } from "@/app/lib/aix-brain-inputs";
 import { aixRequestMustUseClaude, applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, stripUncheckedScreeningClaims, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
 import { NextRequest, NextResponse, after } from "next/server";
@@ -2418,12 +2418,12 @@ async function handleAction(request: NextRequest): Promise<Response> {
     /**
      * 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3・55575458）: AIX のブレイン（実行の指揮官）。統括（LINE のブレイン）の判断の束・このボタン×ピッカーの意味（竹内基準）・
      *   スタッフが入力した事・材料を読み、下書き（今までの書く役の文）の組み立てを決め（設計図）、要る時だけ実行役（flash）が書き直し、確かめで悪くなれば下書きのまま。
-     *   AIX_BRAIN=on の時だけ（既定 off＝LLM も呼ばない）。定型の文（申込へのフォーマット・室内写真の固定文）は通さない
+     *   AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ・off で全部止める）。定型の文（申込へのフォーマット・室内写真の固定文）は通さない
      */
     // 通すのは組み立ての要る AIX だけ（試験 aixbrain1: 待ち合わせ・見積書は定型の文で、書き直すと崩れた／変わらず費用だけ増えた）
     const AIX_BRAIN_ACTIONS = new Set(["property_send", "property_check_result", "viewing_invite"]);
     const brainPass = async (draft: string): Promise<string> => {
-      if (!aixBrainOn() || !draft.trim() || !AIX_BRAIN_ACTIONS.has(currentAction)) return draft;
+      if (!aixBrainEnabledFor(currentAction) || !draft.trim() || !AIX_BRAIN_ACTIONS.has(currentAction)) return draft;
       if (currentAction === "property_check_result" && check_pattern === "interior_photo") return draft;
       try {
         const { runAixBrain } = await import("@/app/lib/aix-brain-server");
@@ -2498,7 +2498,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
     };
     // off（既定）・通さない AIX の時は今まで通り同期で返す（try の中の return finalizeResponse(...) の例外の捕まり方を変えない＝off はバイト同一）
     const finalizeResponse = (text0: string, extra?: Record<string, unknown>): Response | Promise<Response> =>
-      aixBrainOn() && AIX_BRAIN_ACTIONS.has(currentAction) ? brainPass(text0).then((t) => finalizeResponseSync(t, extra)) : finalizeResponseSync(text0, extra);
+      aixBrainEnabledFor(currentAction) && AIX_BRAIN_ACTIONS.has(currentAction) ? brainPass(text0).then((t) => finalizeResponseSync(t, extra)) : finalizeResponseSync(text0, extra);
 
     /**
      * 2026-09-21: 物件を送る AIX では、重複の注意を付けてから返す。
@@ -8204,8 +8204,8 @@ ${(giShape === "list" ? GUARANTOR_INFO_STAFF_EXAMPLES : GUARANTOR_ANSWER_STAFF_E
     }
 
     // ⑦修正: 共通後処理（号室の先頭ゼロ除去 + 内部メモ分離）を finalize() に統一
-    // 2026-10-22 AIX のブレイン（AIX_BRAIN=on の時だけ・finalizeResponse と同じ）
-    if (message_text && aixBrainOn()) message_text = await brainPass(message_text);
+    // 2026-10-22 AIX のブレイン（AIX_BRAIN のボタンごとの切替・finalizeResponse と同じ）
+    if (message_text && aixBrainEnabledFor(currentAction)) message_text = await brainPass(message_text);
     // 2026-10-13 竹内さん（未桜）: 物件確認した（物件あった）の文にピッカーの「申込あり」が出ていない時は足す（finalizeResponse と同じ・足すだけ）
     if (action === "property_check_result" && check_pattern === "available" && Array.isArray(prop_statuses) && message_text) {
       const ap = ensureAppliedTalk(message_text, {

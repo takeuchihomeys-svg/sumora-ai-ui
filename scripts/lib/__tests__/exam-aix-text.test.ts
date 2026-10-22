@@ -1,6 +1,6 @@
 // 試験の AIX の文の段（scripts/lib/exam-aix-text.ts・2026-10-22）
 // 実行: npx tsx scripts/lib/__tests__/exam-aix-text.test.ts（自己完結・LLM も DB も使わない。全 PASS で exit 0）
-import { scoreAixText, factsOf, propNamesOf, sectionsOf, lcsRatio, closePartsOf, pickerClaims, needsJudge, withJudge, pickQuestions, goldUnusable, compareRows, summarize, questionHash, aixShiftDays, shiftQuestionDates, isAppFormat, type AixQuestion } from "../exam-aix-text";
+import { scoreAixText, factsOf, propNamesOf, sectionsOf, lcsRatio, closePartsOf, pickerClaims, needsJudge, withJudge, pickQuestions, goldUnusable, compareRows, summarize, questionHash, aixShiftDays, shiftQuestionDates, isAppFormat, examConvClean, examConvOrder, type AixQuestion } from "../exam-aix-text";
 
 let fail = 0, n = 0;
 const ok = (c: boolean, name: string) => { n++; if (c) console.log(`PASS ${name}`); else { fail++; console.log(`FAIL ${name}`); } };
@@ -68,6 +68,20 @@ ok(rd === 12 && shiftQuestionDates({ ...vq, at: "2026-10-11T04:41:16Z", gold: "�
 ok(aixShiftDays({ aixType: "property_send", at: "2026-10-01T00:00:00Z" }) === 0, "他のボタンはずらさない");
 ok(!propNamesOf("【緊急連絡先欄】\n・氏名").length, "記入の欄の見出しは物件名にしない");
 ok(isAppFormat({ aixType: "application_push", body: { app_sub_mode: "format" } }) && !isAppFormat({ aixType: "application_push", body: { app_sub_mode: "push" } }), "申込へ・フォーマットは入口を呼ばない");
+
+// 2026-10-23 レビュー: 物件名は入力の字のまま（鳳Ⅱ→鳳II は一致と数えない）
+{
+  const q = { gold: "かしこまりました！！\nプレミアス鳳Ⅱ 102号室お部屋ご案内させて頂きます😊！！", inputText: "プレミアス鳳Ⅱ 102号室", body: {} };
+  const bad = scoreAixText(q, "かしこまりました！！\nプレミアス鳳II 102号室お部屋ご案内させて頂きます😊！！");
+  const good = scoreAixText(q, "かしこまりました！！\nプレミアス鳳Ⅱ 102号室お部屋ご案内させて頂きます😊！！");
+  ok(bad.missing.some((m) => m.startsWith("物件名")) && !good.missing.some((m) => m.startsWith("物件名")), "ローマ数字を書き換えた物件名は抜け");
+  ok(bad.fabricated.some((m) => m.startsWith("物件名")) && !good.fabricated.length, "書き換えた物件名は入力に無い名前");
+}
+// 試験の会話: 申込以降に変わったら外す・移る順
+ok(examConvClean({ postApply: false, reason: null, cutoff: false }).clean, "申込前のままは使う");
+ok(!examConvClean({ postApply: true, reason: "status", cutoff: false }).clean, "申込以降は外す");
+ok(!examConvClean({ postApply: false, reason: null, cutoff: true }).clean, "申込の時刻の線は外す");
+ok(JSON.stringify(examConvOrder("yuma4", ["YUMA2", "YUMA3", "YUMA4", "YUMA5"])) === JSON.stringify(["YUMA4", "YUMA2", "YUMA3", "YUMA5"]), "指定の会話を先に");
 
 console.log(`\n${n - fail}/${n} PASS`);
 process.exit(fail ? 1 : 0);
