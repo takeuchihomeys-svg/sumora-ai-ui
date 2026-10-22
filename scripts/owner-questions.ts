@@ -2,7 +2,7 @@
 //   2026-10-22 竹内さんの決定（設計知見 395e0064）: 確認事項は全部まとめて聞く → 答えを設計知見とブレインに入れる → 試験で確かめる。
 //
 //   npx tsx --env-file=.env.local scripts/owner-questions.ts --open                 … 未回答の質問を話題ごと・推奨つきで並べる（gold・judge は数だけ）
-//   npx tsx --env-file=.env.local scripts/owner-questions.ts --answer <id> "<答え>"  … 答えを入れる。普通の質問は設計知見（P1・札 竹内さんの決定）も作る
+//   npx tsx --env-file=.env.local scripts/owner-questions.ts --answer <id> "<答え>"  … 答えを入れる。普通の質問は設計知見（P1・札 竹内さんの決定）も作る（--dry で書かずに見るだけ・答え済みには入れない）
 //                                                                                     judge_check は答えを same/partial/different（同じ/一部同じ/違う も可）で
 //   npx tsx --env-file=.env.local scripts/owner-questions.ts --obsolete <id> "<理由>" … 不要にする
 //   npx tsx --env-file=.env.local scripts/owner-questions.ts --gold | --judge         … 正解を決めてもらう番・AI の判定の比べの一覧
@@ -67,6 +67,7 @@ async function main() {
     const answer = rest.join(" ").trim();
     if (!id || !answer) throw new Error('使い方: --answer <id> "<答え>"');
     const q = await findOne(id);
+    if (q.status !== "open") throw new Error(`この質問は ${q.status}（答え済み・不要）です。設計知見を二重に作らないため止めます: ${q.id.slice(0, 8)}`);
     const now = new Date().toISOString();
     const patch: Record<string, unknown> = { status: "answered", answer, answered_at: now, updated_at: now };
     if (q.kind === "judge_check") {
@@ -75,7 +76,14 @@ async function main() {
       patch.owner_verdict = v;
     } else if (q.kind === "gold") {
       patch.owner_verdict = answer;
-    } else {
+    }
+    if (has("dry")) {
+      // 書かずに、入る物だけ見せる
+      if (q.kind === "question") { const kb = kbRowForAnswer(q, answer, now); kb.tags = normalizeTags(kb.tags as string[]).tags; console.log("設計知見に入る行（dry）:", JSON.stringify(kb, null, 2)); }
+      console.log(`台帳の更新（dry・書いていません）: ${q.id.slice(0, 8)}（${q.kind}）`, JSON.stringify(patch));
+      return;
+    }
+    if (q.kind === "question") {
       patch.kb_id = await insertKb(kbRowForAnswer(q, answer, now));
       console.log(`設計知見を作りました: ${String(patch.kb_id).slice(0, 8)}`);
     }

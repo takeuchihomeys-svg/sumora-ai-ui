@@ -24,7 +24,8 @@ export async function loadTurnUnknowns(sb: SupabaseClient, fromIso: string, toIs
 export async function upsertUnknowns(sb: SupabaseClient, aggs: ReadonlyArray<UnknownAgg>, nowIso: string = new Date().toISOString()): Promise<{ rows: number; hits: number }> {
   if (!aggs.length) return { rows: 0, hits: 0 };
   const kinds = [...new Set(aggs.map((a) => a.kind))];
-  const { data, error } = await sb.from("brain_unknowns").select("kind, key, count, sample_ref, first_at, last_at").in("kind", kinds);
+  const { data, error } = await sb.from("brain_unknowns").select("kind, key, count, sample_ref, first_at, last_at").in("kind", kinds)
+    .in("key", [...new Set(aggs.map((a) => a.key))]); // 鍵でも絞る（行が1000を超えても読み漏らして数を0から数え直さない）
   if (error) throw new Error(`brain_unknowns 読み: ${error.message}`);
   const existing = new Map(((data ?? []) as Array<{ kind: string; key: string; count: number; sample_ref: unknown; first_at: string; last_at: string }>).map((r) => [`${r.kind}\u0000${r.key}`, r]));
   const rows = aggs.map((a) => ({ kind: a.kind, key: a.key, label: a.label, ...mergeUnknownRow(existing.get(`${a.kind}\u0000${a.key}`) ?? null, a, nowIso) }));

@@ -57,7 +57,8 @@ export function renderOpenQuestions(rows: ReadonlyArray<OwnerQuestion>): string 
 
 /** --answer で作る設計知見の行（category architecture・P1・札 竹内さんの決定） */
 export function kbRowForAnswer(q: Pick<OwnerQuestion, "id" | "topic" | "question" | "recommended" | "why" | "source_ref" | "kind">, answer: string, todayIso: string): Record<string, unknown> {
-  const day = todayIso.slice(0, 10);
+  const t = Date.parse(todayIso);
+  const day = Number.isFinite(t) ? new Date(t + 9 * 3_600_000).toISOString().slice(0, 10) : todayIso.slice(0, 10); // 日本の日付（日本の朝9時前は UTC では前の日になるため）
   const shortQ = q.question.replace(/\s+/g, " ").slice(0, 70);
   return {
     title: `【決定】${shortQ} → ${answer.replace(/\s+/g, " ").slice(0, 60)}`,

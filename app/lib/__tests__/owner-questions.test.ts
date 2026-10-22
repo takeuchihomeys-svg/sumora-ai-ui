@@ -51,5 +51,7 @@ ok(text.includes("1. Q用意") && text.includes("2. Q費用") && !text.includes(
 const kb = kbRowForAnswer(rows[0], "そうする", "2026-10-22T10:00:00Z");
 ok(kb.category === "architecture" && kb.priority === 1 && (kb.tags as string[]).includes("竹内さんの決定"), "答えの設計知見は P1・札 竹内さんの決定");
 
+ok(String(kbRowForAnswer(rows[0], "x", "2026-10-21T23:58:00Z").insight).includes("2026-10-22"), "答えの日付は日本の日付");
+
 if (fail) { console.log(`\n${fail} 件 FAIL`); process.exit(1); }
 console.log("\nALL PASS");
