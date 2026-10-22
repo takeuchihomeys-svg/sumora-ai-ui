@@ -29,7 +29,7 @@ import { countCustomerSentProperties } from "../lib/customer-property-count";
 import { customerPropertyOptionsForAix, customerNameAfterShareEnvFromPublic } from "../lib/customer-property-names";
 import { withBrainPropertyFirst, brainPropertyDisplayEnvFromPublic, brainPickRef, type BrainPropertyPick } from "../lib/brain-property-display";
 import { cbImagesByPropertyEnabled, pickCostBreakdownImages, type CbSentRow, type CbMsg } from "../lib/cost-breakdown-images";
-import { SCREENING_BUTTON, SCREENING_TOPIC_OPTIONS, screeningTopicLabel, type ScreeningTopic } from "../lib/aix-owner-answers-1021";
+import { SCREENING_BUTTON, SCREENING_TOPIC_OPTIONS, SCREENING_RESULT_OPTIONS, screeningTopicLabel, type ScreeningTopic, type ScreeningResult } from "../lib/aix-owner-answers-1021";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
 import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, resolveGuarantorForText, buildGuarantorListText, detectGuarantorFromMessages, parseGuarantorTypeJa, guarantorTypeJa, normalizeGuarantorType, type GuarantorType } from "../lib/guarantor-companies";
 import { extractPropertyLabels } from "../lib/action-ledger";
@@ -766,6 +766,8 @@ export default function AixModal({
   const [appStatusNoSecond, setAppStatusNoSecond] = useState(false);
   const [screeningOutlook, setScreeningOutlook] = useState<"前向き" | "条件つき" | "別の手" | "厳しい" | null>(null);
   const [screeningTopic, setScreeningTopic] = useState<ScreeningTopic | null>(initialScreeningTopic ?? null);
+  // 2026-10-22 審査の結果について（通過／否決／審査中）
+  const [screeningResult, setScreeningResult] = useState<ScreeningResult | null>(null);
   const [contractTermsItems, setContractTermsItems] = useState<string[]>([]);
   const [rentNegotiationResult, setRentNegotiationResult] = useState<"下がった" | "下がらなかった" | null>(null);
   const [rentAfter, setRentAfter] = useState("");
@@ -1601,6 +1603,7 @@ export default function AixModal({
           parking_kind: checkPattern === "mgmt_parking" ? parkingKind : null,
           screening_outlook: checkPattern === "mgmt_screening" ? screeningOutlook : null,
           screening_topic: checkPattern === "mgmt_screening" ? screeningTopic : null,
+          screening_result: checkPattern === "mgmt_screening" && screeningTopic === "result" ? screeningResult : null,
           app_status_has: checkPattern === "mgmt_application_status" ? appStatusHas : null, app_status_ahead: checkPattern === "mgmt_application_status" && appStatusHas === "あり" ? appStatusAhead : null,
           app_status_first: checkPattern === "mgmt_application_status" ? appStatusFirst : null, app_status_no_second: checkPattern === "mgmt_application_status" ? appStatusNoSecond : null,
           surroundings_items: checkPattern === "mgmt_surroundings" ? surroundingsItems : null, surroundings_source: checkPattern === "mgmt_surroundings" ? surroundingsSource : null,
@@ -2872,6 +2875,10 @@ export default function AixModal({
         if (checkPattern === "mgmt_parking" && parkingKind === "bike") body.parking_kind = "bike";
         if (checkPattern === "mgmt_screening" && screeningOutlook) body.screening_outlook = screeningOutlook;
         if (checkPattern === "mgmt_screening" && screeningTopic) body.screening_topic = screeningTopic;
+        if (checkPattern === "mgmt_screening" && screeningTopic === "result") {
+          if (!screeningResult) throw new Error("審査の結果（通過／否決／審査中）を選択してください");
+          body.screening_result = screeningResult;
+        }
         if (checkPattern === "mgmt_application_status") {
           if (!appStatusHas) throw new Error("ほかの方の申込あり／なしを選択してください");
           body.app_status_has = appStatusHas;
@@ -5486,7 +5493,21 @@ export default function AixModal({
                   </div>
                 </div>
               )}
-              {checkPattern === "mgmt_screening" && (
+              {/* 2026-10-22 竹内さんの答え: 審査の結果について（結果はスタッフの選択のまま） */}
+              {checkPattern === "mgmt_screening" && screeningTopic === "result" && (
+                <div>
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">審査の結果</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {SCREENING_RESULT_OPTIONS.map((r) => (
+                      <button key={r} onClick={() => { setScreeningResult((p) => p === r ? null : r); setPreview(""); }}
+                        className="rounded-xl border py-2.5 text-xs font-semibold transition"
+                        style={screeningResult === r ? { border: "2px solid #3949AB", background: "#3949AB14", color: "#3949AB" } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                      >{r}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {checkPattern === "mgmt_screening" && !(screeningTopic === "result" && screeningResult !== "審査中") && (
                 <div>
                   <p className="mb-1.5 text-xs font-bold text-[#54656f]">審査の見込み <span className="font-normal text-[#90a4ae]">（任意）</span></p>
                   <div className="grid grid-cols-2 gap-2">

@@ -18,11 +18,11 @@
 //   ・hard（「NG」「無理」「絶対」と言った）だけ保留（外す候補にはしない）。それ以外は点だけ
 //   ・オススメの正誤のラベルにはしない（property_selection_patterns・scoring-learning にはつながない）
 //   ・新しい LLM は呼ばない（読めない言い方は拾わない＝外す側に倒れない）
-// 戻す: AIX_REACTIONS_LINK（既定 off。on の時だけ呼ぶ側が渡す）
+// 戻す: AIX_REACTIONS_LINK=off（2026-10-22 既定 on。scripts/audit-reactions-link.ts 60日: 点の1位が不満に当たる 29→25・上位3件 59→55・通す→保留 0）
 // テスト: app/lib/__tests__/reaction-negatives.test.ts
 
 export function reactionsLinkEnabled(env: Record<string, string | undefined> = (typeof process !== "undefined" ? process.env : {})): boolean {
-  return /^(?:on|1|true)$/i.test((env.AIX_REACTIONS_LINK ?? "").trim());
+  return !/^(?:off|0|false)$/i.test((env.AIX_REACTIONS_LINK ?? "").trim());
 }
 
 export type ReactionAttr = "floor_high" | "narrow" | "far" | "expensive" | "old";

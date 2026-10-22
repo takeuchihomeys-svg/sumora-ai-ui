@@ -27,10 +27,12 @@ export function brainDecisionLedgerCols(meta: Record<string, unknown>, turnText:
 }
 
 /** digest に足す短い項目（無い物は入れない） */
-export function brainDecisionDigestExtra(meta: Record<string, unknown>): { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown> } {
-  const out: { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown> } = {};
+export function brainDecisionDigestExtra(meta: Record<string, unknown>): { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown> } {
+  const out: { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown> } = {};
   // 2026-10-15 追加の調査（brain-deep-check）をかけた番だけ（2回目の呼び出しの割合・変わった率を数える）
   if (meta.deep_check && typeof meta.deep_check === "object") out.dc = meta.deep_check as Record<string, unknown>;
+  // 2026-10-22 慣れた事は速く・難しい事はじっくり（BRAIN_FAST_SLOW=on の番だけ・難しさ・戻り道・2回目の割れを数える）
+  if (meta.fast_slow && typeof meta.fast_slow === "object") out.fs = meta.fast_slow as Record<string, unknown>;
   if (meta.two_choice_mode === true) out.tc = true;
   if (meta.pending_pickup === true) out.pp = true;
   if (typeof meta.checkpoint_stage === "string" && meta.checkpoint_stage.trim()) out.cp = meta.checkpoint_stage.trim().slice(0, 20);

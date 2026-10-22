@@ -2,7 +2,7 @@
 //   LLM は呼ばない（純関数と切替だけ・文は作った例）
 // 実行: npx tsx app/lib/__tests__/aix-owner-answers-1021.test.ts
 import {
-  screeningButtonEnabled, screeningBrainEnabled, screeningCardLabel, isScreeningButtonAction, SCREENING_TOPIC_OPTIONS, screeningTopicLine, isScreeningTopic,
+  screeningButtonEnabled, screeningBrainEnabled, screeningCardLabel, isScreeningButtonAction, SCREENING_TOPIC_OPTIONS, screeningTopicLine, isScreeningTopic, isScreeningResult, screeningResultFormat, screeningResultKeepsSupportLine, SCREENING_RESULT_OPTIONS,
   isOtherAgentCostCompare, isEstimateCorrectionContext, mentionsOtherAgentProperty, applyEstimateOwnerLines, OTHER_AGENT_HERE_LINE, ESTIMATE_CORRECTION_LINE, estimateOwnerNote, otherAgentSituation, resolveOtherAgentEstimate, estimateOtherAgentLineMode,
 } from "../aix-owner-answers-1021";
 import { aixRequestMustUseClaude } from "../aix-new-pickers";
@@ -184,6 +184,20 @@ it("D5: 追客の竹内さんの形・その後いかがでしょうかを落と
   ok(/その後いかがでしょうか」は書かない/.test(followupShapeNote({ newArrivalFact: false })), "指示");
   const act = readFileSync("app/api/aix/action/route.ts", "utf8");
   ok((act.match(/applyFollowup1021\(message_text\)/g) ?? []).length === 2, "追客の出口2か所");
+});
+
+// ─── 2026-10-22 審査の結果について（【審査について】の中の選択肢） ───
+it("審査の結果について: 選択肢にある・結果は3つ・通過/否決は締めのサポートを付けない・Claude 固定", () => {
+  ok(isScreeningTopic("result") && SCREENING_TOPIC_OPTIONS.some((o) => o.value === "result" && o.label === "審査の結果について"), "選択肢");
+  ok(SCREENING_RESULT_OPTIONS.join(",") === "通過,否決,審査中" && isScreeningResult("通過") && !isScreeningResult("合格"), "結果");
+  ok(/通過/.test(screeningResultFormat("通過").format) && /書かない/.test(screeningResultFormat("通過").rules), "通過の型");
+  ok(/謝罪表現/.test(screeningResultFormat("否決").rules), "否決の決まり");
+  ok(/結果が出次第/.test(screeningResultFormat("審査中").format), "審査中の型");
+  ok(!screeningResultKeepsSupportLine("通過") && !screeningResultKeepsSupportLine("否決") && screeningResultKeepsSupportLine("審査中") && screeningResultKeepsSupportLine(null), "締め");
+  ok(/審査の結果/.test(screeningTopicLine("result")), "話題の行");
+  ok(aixRequestMustUseClaude({ action: "property_check_result", check_pattern: "mgmt_screening", screening_topic: "result" }), "Claude 固定");
+  const act = readFileSync("app/api/aix/action/route.ts", "utf8");
+  ok(act.includes("screeningResultKeepsSupportLine(screeningResult)") && act.includes("isScreeningResult(body.screening_result)"), "aix/action の配線");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

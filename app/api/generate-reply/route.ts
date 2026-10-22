@@ -7525,6 +7525,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     deepCheck: !!bm.deep_check,
                   } : null,
                   isFirstContact: isFirstEverReplyFromMsgs === true,
+                  // 2026-10-22 じっくりの道（brain-fast-slow）で3回とも道が割れた番＝読み手の割れ（BRAIN_FAST_SLOW=on の時だけ値がある）
+                  readerSplit: (bm as { fast_slow?: { split?: boolean } } | null)?.fast_slow?.split === true,
                   sceneKey: sceneKeyOf({ brainAction: bm?.action ?? null, brainReplyMode: bm?.reply_mode ?? null, tpoLabel: typeof fcTpo.tpo_label === "string" ? fcTpo.tpo_label : null, intent: bm?.customer_intent ?? null, convStatus: state ?? null }).key,
                 });
                 finalCheck.confidence = conf;

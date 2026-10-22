@@ -13,7 +13,7 @@
 //   この表に無い分かれ道（相見積もり・入居時期が先）だけ、ここで小さな語の網を持つ（COMPETING_ESTIMATE_RE・MOVE_IN_LATER_RE）。
 //
 // ── ブレインへの渡し方 ──
-//   applyRouteMapEnabled()（APPLY_ROUTE_MAP=on の時だけ・既定 off）。置き場所は brain-core の毎回変わる並び（キャッシュの印の無い user の最後のブロック）。
+//   applyRouteMapEnabled()（2026-10-22 から既定 on・止める APPLY_ROUTE_MAP=off）。置き場所は brain-core の毎回変わる並び（キャッシュの印の無い user の最後のブロック）。
 //   off の時は空文字＝プロンプトは1バイトも変わらない（app/lib/__tests__/apply-route-map.test.ts）。
 import type { CustomerStage, SearchingMark } from "./customer-state";
 import type { LedgerFacts } from "./action-ledger";
@@ -112,7 +112,8 @@ export const ROUTE_BRANCHES: Record<RouteBranchId, RouteBranch> = {
     wayBack: { to: "estimate", how: "抑えた見積で決めて頂き、内覧へ" } },
   screening_concern: { id: "screening_concern", name: "審査の相談", meaning: "審査・保証会社・保証人の不安や問い", aim: ["不安を解く"],
     // 10/20 竹内さんの決定（a0c5ecf0・84519320）: 物件の審査の見込み→AIX【保証会社について】／名義・職業・保証人等の相談→確認の約束の後 AIX【管理会社に確認した→審査について（ご相談）】
-    next: { label: "保証会社の説明と、通るまでサポートする旨（物件の審査の見込み→保証会社について／名義・職業などの相談→確認の後 審査について（ご相談））", aix: ["guarantor_info", "property_check_result"] },
+    // 10/21 竹内さんの答え D3（f7ed2a87）: 次の一手は「通るまでサポート＋通りやすい物件」（今はこれ・今後変える）
+    next: { label: "保証会社の説明と、通るまでサポートする旨（物件の審査の見込み→保証会社について／名義・職業などの相談→確認の後 審査について（ご相談））。必要なら審査の通りやすいお部屋もご提案", aix: ["guarantor_info", "property_check_result"] },
     wayBack: { to: "apply_prep", how: "気に入ったお部屋ならまず審査をかけてみる（申込へ）" } },
   condition_change: { id: "condition_change", name: "条件変更", meaning: "条件の言い直し・物件への感想・別の物件の依頼", aim: ["条件を聞き出す"],
     next: { label: "新しい条件でピックアップしてお送りする（約束の返信→物件ピックアップした）", aix: ["property_send"] },
@@ -120,7 +121,7 @@ export const ROUTE_BRANCHES: Record<RouteBranchId, RouteBranch> = {
   negotiation: { id: "negotiation", name: "交渉", meaning: "礼金・家賃などの交渉の依頼", aim: ["申込へ誘う"],
     next: { label: "交渉の約束→結果を確認した（交渉）で", aix: ["property_check_result"] },
     wayBack: { to: "apply_prep", how: "交渉の結果でお申込みへ" } },
-  cannot_come_soon: { id: "cannot_come_soon", name: "すぐ来られない", meaning: "遠方・内覧に来られるのが先・予定が詰まっている", aim: ["申込へ誘う"],
+  cannot_come_soon: { id: "cannot_come_soon", name: "すぐ来られない", meaning: "遠方・海外・内覧に来られるのが先・予定が詰まっている", aim: ["申込へ誘う"],
     next: { label: "お申込みでお部屋を抑えた状態でのご内覧を提案（オンライン内見・撮影も）", aix: ["application_push"] },
     wayBack: { to: "apply_prep", how: "申込で抑えてから内覧" } },
   move_in_later: { id: "move_in_later", name: "入居時期が先", meaning: "入居・引越しの時期がまだ先", aim: ["関係をつなぐ"],
@@ -288,11 +289,11 @@ export function locateApplyRoute(s: ApplyRouteSignals): ApplyRouteLocation {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ブレインへの材料（毎回変わる並び・既定 off）
+// ブレインへの材料（毎回変わる並び・2026-10-22 から既定 on）
 // ═════════════════════════════════════════════════════════════════════════════
 
 export function applyRouteMapEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.APPLY_ROUTE_MAP ?? "").trim().toLowerCase() === "on";
+  return (env.APPLY_ROUTE_MAP ?? "").trim().toLowerCase() !== "off";
 }
 
 export const APPLY_ROUTE_TEXT_MAX = 600;

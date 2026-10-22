@@ -252,7 +252,9 @@ it("新しい語彙の報告は要件を持ち、要件の違う【必ず】を�
   const closed2 = planPromiseCompletion(doneOf("かしこまりました！！\nご状況説明いただきありがとうございます！！\n\nグラン心斎橋EAST904号室も募集中となりお申込みも可能です！！"), open);
   expect(closed2.includes(1)).toBe(false);
   // 旧の語彙（とのご連絡がございました）で通全体の要件＝番手 → 旧と同じ
-  expect(reportObjectOf("管理会社より1番手お申込みの方が審査通過し契約も確実とのご連絡がございました。", "YUMAさん\n管理会社より1番手お申込みの方が審査通過し契約も確実とのご連絡がございました。", true) ?? "").toBe("番手");
+  // 2026-10-22 AIX_NEW_PICKERS_1020 既定 on からは 申込状況（=off で旧の 番手）
+  expect(reportObjectOf("管理会社より1番手お申込みの方が審査通過し契約も確実とのご連絡がございました。", "YUMAさん\n管理会社より1番手お申込みの方が審査通過し契約も確実とのご連絡がございました。", true) ?? "").toBe("申込状況");
+  (() => { const prev = process.env.AIX_NEW_PICKERS_1020; process.env.AIX_NEW_PICKERS_1020 = "off"; try { expect(reportObjectOf("管理会社より1番手お申込みの方が審査通過し契約も確実とのご連絡がございました。", "YUMAさん\n管理会社より1番手お申込みの方が審査通過し契約も確実とのご連絡がございました。", true) ?? "").toBe("番手"); } finally { if (prev === undefined) delete process.env.AIX_NEW_PICKERS_1020; else process.env.AIX_NEW_PICKERS_1020 = prev; } })();
   // 要件の読めない新しい語彙の報告は「確認結果」（相手・不明の約束だけに当たる）
   expect(reportObjectOf("確認させて頂きましたところ、10月中旬まで工事中となり工事中はご内覧出来ないとの事です！！", "確認させて頂きましたところ、10月中旬まで工事中となり工事中はご内覧出来ないとの事です！！", true) ?? "").toBe(REPORT_OBJECT_UNKNOWN);
 });

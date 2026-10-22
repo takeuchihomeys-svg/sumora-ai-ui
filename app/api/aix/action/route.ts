@@ -1,6 +1,6 @@
 import { composeLifelineMessage } from "@/app/lib/aix-lifeline";
 // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・契約の条件・家賃の交渉・バイク置き場・物件について→募集号室について）
-import { isScreeningTopic, screeningTopicLine, isOtherAgentCostCompare, costCompareFactEnabled, COST_COMPARE_FACT_BLOCK, isEstimateCorrectionContext, resolveOtherAgentEstimate, applyEstimateOwnerLines, estimateOwnerNote } from "@/app/lib/aix-owner-answers-1021";
+import { isScreeningTopic, screeningTopicLine, isScreeningResult, screeningResultFormat, screeningResultKeepsSupportLine, type ScreeningResult,isOtherAgentCostCompare, costCompareFactEnabled, COST_COMPARE_FACT_BLOCK, isEstimateCorrectionContext, resolveOtherAgentEstimate, applyEstimateOwnerLines, estimateOwnerNote } from "@/app/lib/aix-owner-answers-1021";
 import { followupRevive1021Enabled, hasNewArrivalFact, composeFollowupText, sanitizeFollowupText, followupShapeNote } from "@/app/lib/followup-revive-1021";
 import { aixRequestMustUseClaude, applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, stripUncheckedScreeningClaims, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
 import { NextRequest, NextResponse, after } from "next/server";
@@ -5456,14 +5456,21 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
       }
       // 審査の相談で確認した結果も見込みも入れていない＝管理会社に確認していない（出口で「確認しました」の行を落とす）
       let screeningNoInput = false;
+      // 2026-10-22 竹内さんの答え: 【審査について】の中の「審査の結果について」（結果＝スタッフの選択のまま）
+      let screeningResult: ScreeningResult | null = null;
       if (check_pattern === "mgmt_screening") {
         const outlook = typeof body.screening_outlook === "string" ? body.screening_outlook : "";
-        screeningNoInput = !mgmtInfo && !outlook;
+        if (body.screening_topic === "result") {
+          if (!isScreeningResult(body.screening_result)) throw new Error("審査の結果（通過／否決／審査中）が必要です");
+          screeningResult = body.screening_result;
+        }
+        screeningNoInput = !mgmtInfo && !outlook && !screeningResult;
         // 2026-10-21 竹内さん C9: 新しいボタン【審査について】で選んだ審査内容（職業・名義・保証人・外国籍・時期・その他）＝文の中心だけを決める
         const topicLine = isScreeningTopic(body.screening_topic) ? screeningTopicLine(body.screening_topic) : "";
         mgmtInfo = [
           topicLine,
-          mgmtInfo ? `確認した結果・必要書類：${mgmtInfo}` : "確認した結果：入力なし（管理会社の回答・書類に触れず、基本の考え方だけで返す）",
+          screeningResult ? `審査の結果：${screeningResult}` : "",
+          mgmtInfo ? `確認した結果・必要書類：${mgmtInfo}` : screeningResult ? "確認した結果・必要書類：入力なし（次の手続き・書類・理由に触れない）" : "確認した結果：入力なし（管理会社の回答・書類に触れず、基本の考え方だけで返す）",
           outlook ? `審査の見込み：${outlook}` : "",
         ].filter(Boolean).join("\n");
       }
@@ -5703,7 +5710,7 @@ ${guidanceRule}`,
         },
         // 2026-10-20 竹内さん（P1 84519320）「審査について（ご相談）」: 名義・保証人なし・職業・国籍・時期などの審査の相談に、確認した結果で返す。
         //   基本の考え方（竹内さん 10/18 の答え）: 気に入ったお部屋なら審査はかけてみることができる。締めは「無事に審査通過するまで全力でサポート」（出口で必ず1回）
-        mgmt_screening: {
+        mgmt_screening: screeningResult ? { label: "審査の結果", ...(() => { const r = screeningResultFormat(screeningResult); return { format: r.format, rules: `${r.rules}\n・お客様の職業・収入・国籍・ご家族のことを文に繰り返し書かない\n${guidanceRule}` }; })() } : {
           label: "審査のご相談",
           format: `[物件名]の審査につきまして管理会社に確認させて頂きました！！
 [確認結果]
@@ -5958,7 +5965,7 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
       if (check_pattern === "mgmt_screening") {
         // 入力なし（確認していない）の時に LLM が書いた「管理会社・保証会社に確認した」行は落とす（スタッフだけが知る事実を作らない）
         if (screeningNoInput) message_text = stripUncheckedScreeningClaims(message_text);
-        message_text = ensureScreeningSupportLine(message_text);
+        if (screeningResultKeepsSupportLine(screeningResult)) message_text = ensureScreeningSupportLine(message_text);
       }
       // 2026-10-20 申込状況について: 番手の数字・繰り上がり・申込の誘導を外れた文は、入力で組んだ決まった型（お手本 d08bc127）に差し替える
       if (check_pattern === "mgmt_application_status" && appStatusIn && !applicationStatusTextOk(message_text, appStatusIn)) {

@@ -2378,6 +2378,17 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined,
 /** 理由の日本語に良い点として出す札（AD の段は 1.5ヶ月・2.5ヶ月も） */
 const POSITIVE_BASE_CODES = ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_2_5M", "AD_HIGH", "AD_1_5M", "AD_1M", "FLOOR_PLAN_MATCH"];
 
+/**
+ * 2026-10-22（P1 696c96ba 物件の判断の中身を AIX の2通目の材料に）: 判定の理由コードを、お客様に関係する「良い所」と「合わない所」の日本語に分ける。
+ *   良い所＝判定の理由の日本語の良い点と同じ選び方（AD の札は外す）。合わない所＝外す・保留の札と *_NG（反応・設備・条件）。AD・利益・推定の札は入れない。
+ */
+export function customerReasonSplit(codes: ReadonlyArray<string> | null | undefined): { goodJa: string[]; badJa: string[] } {
+  const cs = [...new Set((codes ?? []).map(String))].filter((c) => !/^AD_|PROFIT|ASSUMED/.test(c));
+  const good = cs.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK(?:_MAX)?$/.test(c) || /^(?:MOVE_IN_OK|MOVE_IN_OK_MUST|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const bad = cs.filter((c) => !good.includes(c) && (DROP_REASON_CODES.has(c) || HOLD_REASON_CODES.has(c) || /_NG(?:_MUST)?$|_HARD$/.test(c)) && !/^ALREADY_SENT/.test(c));
+  return { goodJa: good.map(reasonJa), badJa: bad.map(reasonJa) };
+}
+
 /** 2026-09-25 に足した加点の札（理由の日本語に出す） */
 function isNewPositive(c: string): boolean {
   return /^(?:FLOOR_PLAN_ALT_MATCH|FLOOR_PLAN_SAME_CLASS|FLOOR_PLAN_LARGER|SQM_OK|ROOM_JO_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|AREA_ANCHOR_REACH|AREA_ANCHOR_REACH_SOME|AREA_ANCHOR_TAXI|COMMUTE_OK)$/.test(c)

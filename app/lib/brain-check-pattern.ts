@@ -9,7 +9,7 @@
 //       決まり自体が AIX を決めた番（場面の信号・管理会社の名前・手続きの2択など sceneSignalCheckPattern）は、その決まりの値（安全の線）。
 // 戻す: BRAIN_CHECK_PATTERN=off
 import { propertyCheckKindFor, availabilityKind, availabilityFirstKind, type PropertyCheckKind } from "./aix-taxonomy";
-import { aixNewPickers1020Enabled, NEW_CHECK_PATTERNS_1020 } from "./aix-new-pickers";
+import { aixNewPickers1020Enabled, NEW_CHECK_PATTERNS_1020, screeningPickerForBrain } from "./aix-new-pickers";
 import { screeningBrainEnabled } from "./aix-owner-answers-1021";
 
 type Env = Record<string, string | undefined>;
@@ -32,6 +32,8 @@ export function normalizeBrainCheckPattern(v: unknown): BrainCheckPattern | null
   if (s === "募集状況" || s === "available" || s === "unavailable" || s === "alternative") return "availability";
   // 2026-10-21 C9: 審査について（ご相談）は AIX_SCREENING_BUTTON=brain の時も読む（既定は今まで通り）
   if ((NEW_CHECK_PATTERNS_1020 as readonly string[]).includes(s) && !aixNewPickers1020Enabled() && !(s === "mgmt_screening" && screeningBrainEnabled())) return null;
+  // 2026-10-22 新しいピッカーを既定 on にしても、審査について（ご相談）は明示の on か brain の時だけ（screeningPickerForBrain）
+  if (s === "mgmt_screening" && !screeningPickerForBrain()) return null;
   return (BRAIN_CHECK_PATTERN_VALUES as readonly string[]).includes(s) ? (s as BrainCheckPattern) : null;
 }
 
