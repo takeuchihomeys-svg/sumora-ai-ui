@@ -1013,7 +1013,7 @@ function buildGenerationMessages(
     checkAnsweredFollowUp?: boolean } | null = null,
   // 2026-10-07 場面の整理（reply-scene.ts）: この番の場面と、場面ごとの材料の取捨を効かせるか。null／on=false は今まで通り全部
   sceneSel: { scene: ReplyScene | null; on: boolean; ackUnified?: boolean; brainContract?: boolean; ackForm?: "receive_only" | "wait_line" | null;
-    /** 2026-10-20 文の設計図（writing-blueprint.ts・WRITING_BLUEPRINT=on の時だけ非空）。毎回変わる側に入れる＝off の時は1文字も変わらない */
+    /** 2026-10-20 文の設計図（writing-blueprint.ts・WRITING_BLUEPRINT 既定 on（10/23）・=off の時は空）。毎回変わる側に入れる＝off の時は1文字も変わらない */
     blueprintNote?: string } | null = null,
 ): [SystemMessage, HumanMessage] {
   const sceneKeep = (k: Parameters<typeof keepMaterial>[1]) => keepMaterial(sceneSel?.scene ?? null, k, !!sceneSel?.on);
