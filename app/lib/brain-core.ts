@@ -2218,7 +2218,7 @@ export async function analyzeConversation(
   const brainSceneOn = brainSceneMaterialsEnabled(process.env, opts?.sceneMaterials ?? null);
   const brainSceneRes = brainSceneOn ? resolveReplyScene({ customerText: unrepliedCustomerTurn(typedMessages).text ?? "" }) : null;
   const brainScene: ReplyScene | null = brainSceneRes?.scene ?? null;
-  // 2026-10-22 場面の読みが弱い番は AIX の一覧を全部のピッカーで（AIX_CATALOG_UNCERTAIN_FULL=on の時だけ・既定 off）
+  // 2026-10-22 場面の読みが弱い番は AIX の一覧を全部のピッカーで（既定 on・AIX_CATALOG_UNCERTAIN_FULL=off で止まる）
   const brainSceneUncertain = !brainSceneRes || isSceneUncertain(brainSceneRes.scene, brainSceneRes.evidence);
   const actionRulesRaw = applyRulesOverlay((actionRulesResult.data ?? []) as ActionRule[], currentRulesOverlay(), currentRulesOverlay() ? 40 : undefined);
   const actionRulesFiltered = (brainSceneOn ? actionRulesRaw : actionRulesRaw.slice(0, 15))

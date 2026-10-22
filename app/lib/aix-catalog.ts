@@ -418,7 +418,8 @@ export function aixCatalogLearnedEnabled(env: Record<string, string | undefined>
   return (env.AIX_CATALOG_LEARNED ?? "").trim().toLowerCase() === "on";
 }
 export function catalogUncertainFullEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.AIX_CATALOG_UNCERTAIN_FULL ?? "").trim().toLowerCase() === "on";
+  // 2026-10-22 試験 aixunc-on（60問）: 道 44→47・合格 34→38・本当の悪化 0 → 既定 on（止める AIX_CATALOG_UNCERTAIN_FULL=off）
+  return (env.AIX_CATALOG_UNCERTAIN_FULL ?? "").trim().toLowerCase() !== "off";
 }
 /** 場面の読み（resolveReplyScene の evidence）が弱い＝当てにならない番 */
 export const WEAK_SCENE_EVIDENCE: ReadonlySet<string> = new Set(["none", "empty", "ack_with_appraisal", "phone", "conditions_kw", "viewing_time", "cost_r7", "viewing_r7", "considering_r7"]);

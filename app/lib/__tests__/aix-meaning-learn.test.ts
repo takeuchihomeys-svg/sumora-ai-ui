@@ -49,7 +49,8 @@ t("AIX_CATALOG_LEARNED=on は学んだ行が出る（学んだデータがある
 const full = catalogBlockForBrain("cost", { env: { AIX_CATALOG_UNCERTAIN_FULL: "on" }, sceneUncertain: true });
 t("場面が弱い＋切替 on は全部のピッカーの細目（内覧の候補日も出る）", full.includes("場面の読みが弱いので全部") && full.includes("内覧日指定あり（内覧日指定あり）"));
 t("場面が強い時は切替 on でも絞ったまま", catalogBlockForBrain("cost", { env: { AIX_CATALOG_UNCERTAIN_FULL: "on" }, sceneUncertain: false }) === off);
-t("場面が弱くても切替 off なら今まで通り", catalogBlockForBrain("cost", { env: {}, sceneUncertain: true }) === off);
+t("場面が弱くても切替 off なら今まで通り", catalogBlockForBrain("cost", { env: { AIX_CATALOG_UNCERTAIN_FULL: "off" }, sceneUncertain: true }) === off);
+t("既定 on（2026-10-22）: 場面が弱い番は全部", catalogBlockForBrain("cost", { env: {}, sceneUncertain: true }).includes("場面の読みが弱いので全部"));
 
 // 学んだデータ: 個人の値が無い・従業員の押下で意味を作っていない
 const dump = JSON.stringify(AIX_LEARNED);
