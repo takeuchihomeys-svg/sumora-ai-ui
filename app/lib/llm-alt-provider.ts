@@ -20,6 +20,7 @@
 //   ・応答は Anthropic の形に戻すので、使用量の記録（llm_usage_logs）はそのまま動く（model 名で見分けられる）
 
 import { WRITER_FLASH_ACTION } from "./writer-flash-scenes";
+import { AIX_BRAIN_ACTION } from "./aix-brain";
 import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CONVERSATION_HEADER, LLM_CUTOFF_HEADER, recordAltUsage, systemFullKey } from "./llm-usage-recorder";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { parseCutoffMark, countCutoffLeaks, type CutoffMark } from "./post-apply";
@@ -177,7 +178,7 @@ export function readAltRoutes(env: EnvLike): Map<string, ProviderTarget> {
 export function isAltRouteDenied(name: string): boolean {
   const n = (name ?? "").trim();
   if (!n) return true;
-  if (n === "reply_generate" || n === WRITER_FLASH_ACTION || n === "aix_template") return true;
+  if (n === "reply_generate" || n === WRITER_FLASH_ACTION || n === "aix_template" || n === AIX_BRAIN_ACTION) return true;
   if (n === "brain" || n.startsWith("brain_")) return true;
   if (NO_CLAUDE_FALLBACK_ACTIONS.has(n)) return true;
   for (const aix of Object.keys(AIX_PICKERS)) if (n === aix || n.startsWith(`${aix}_`)) return true;
@@ -287,7 +288,8 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
 export function targetConfigFor(cfg: AltProviderConfig, routeName: string | null): AltProviderConfig {
   const base0 = (routeName && cfg.routes?.get(routeName)) || cfg;
   // 2026-10-21 書く役の flash（writer-flash-scenes.ts・WRITER_FLASH_SCENES）: 名札 reply_generate_flash は同じ DeepSeek の鍵で flash のモデルに送る
-  const base = routeName === WRITER_FLASH_ACTION && base0.provider === "deepseek" ? { ...base0, model: DEEPSEEK_FLASH_MODEL } : base0;
+  // 2026-10-22 AIX のブレイン（指揮官・実行役・aix-brain.ts）も DeepSeek の時は flash（伏せた材料だけ・申込以降／審査の事情は入口で Claude に固定）
+  const base = (routeName === WRITER_FLASH_ACTION || routeName === AIX_BRAIN_ACTION) && base0.provider === "deepseek" ? { ...base0, model: DEEPSEEK_FLASH_MODEL } : base0;
   // 2026-10-18 試験だけ（flash の書く役の調べ）: 名札ごとの DeepSeek のモデル。テスト用の切り替え（testMode）の時だけ効く＝本番は今まで通り
   const ov = cfg.testMode && base.provider === "deepseek" ? testDeepseekModelOverride(process.env, routeName) : null;
   return ov && ov !== base.model ? { ...base, model: ov } : base;
@@ -348,6 +350,8 @@ export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string 
   if (cfg.actions.has(routeName)) return true;
   // 2026-10-21 書く役の flash: 返信生成（reply_generate）を DeepSeek に回している時だけ、同じ門で回す（Claude の構成なら回さない）
   if (routeName === WRITER_FLASH_ACTION) return cfg.provider === "deepseek" && cfg.actions.has("reply_generate");
+  // 2026-10-22 AIX のブレイン（AIX_BRAIN=on の時だけ呼ばれる）: DeepSeek が主の相手なら flash に回す（入口が申込以降・審査の事情・時刻の線を Claude に固定し、名前を伏せてから呼ぶ）
+  if (routeName === AIX_BRAIN_ACTION) return cfg.provider === "deepseek";
   // 2026-09-29 名前ごとの振り分け（LLM_ALT_ROUTES）に書いた名前
   if (cfg.routes?.has(routeName)) return true;
   // 2026-09-23: ブレインは層で名札を分けた（brain_fresh / brain_full）。設定に古い "brain" と書いてあれば両方を指す

@@ -2,6 +2,9 @@ import { composeLifelineMessage } from "@/app/lib/aix-lifeline";
 // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・契約の条件・家賃の交渉・バイク置き場・物件について→募集号室について）
 import { isScreeningTopic, screeningTopicLine, isScreeningResult, screeningResultFormat, screeningResultKeepsSupportLine, type ScreeningResult,isOtherAgentCostCompare, costCompareFactEnabled, COST_COMPARE_FACT_BLOCK, isEstimateCorrectionContext, resolveOtherAgentEstimate, applyEstimateOwnerLines, estimateOwnerNote } from "@/app/lib/aix-owner-answers-1021";
 import { followupRevive1021Enabled, hasNewArrivalFact, composeFollowupText, sanitizeFollowupText, followupShapeNote } from "@/app/lib/followup-revive-1021";
+// 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN=on の時だけ（既定 off）
+import { aixBrainOn } from "@/app/lib/aix-brain";
+import { staffInputsFromBody, pickerValueOf } from "@/app/lib/aix-brain-inputs";
 import { aixRequestMustUseClaude, applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, stripUncheckedScreeningClaims, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
 import { NextRequest, NextResponse, after } from "next/server";
 import { buildMustSendNote, mustMoveInLabel, normalizeRequirementStrengths } from "@/app/lib/requirement-strength";
@@ -2412,8 +2415,43 @@ async function handleAction(request: NextRequest): Promise<Response> {
         return r.text;
       } catch (e) { console.warn("[aix/action] decide-gap-hold-close skipped:", e instanceof Error ? e.message : String(e)); return text; }
     };
-    const finalizeResponse = (text0: string, extra?: Record<string, unknown>) => {
-      const text = holdCloseOf(text0);
+    /**
+     * 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3・55575458）: AIX のブレイン（実行の指揮官）。統括（LINE のブレイン）の判断の束・このボタン×ピッカーの意味（竹内基準）・
+     *   スタッフが入力した事・材料を読み、下書き（今までの書く役の文）の組み立てを決め（設計図）、要る時だけ実行役（flash）が書き直し、確かめで悪くなれば下書きのまま。
+     *   AIX_BRAIN=on の時だけ（既定 off＝LLM も呼ばない）。定型の文（申込へのフォーマット・室内写真の固定文）は通さない
+     */
+    // 通すのは組み立ての要る AIX だけ（試験 aixbrain1: 待ち合わせ・見積書は定型の文で、書き直すと崩れた／変わらず費用だけ増えた）
+    const AIX_BRAIN_ACTIONS = new Set(["property_send", "property_check_result", "viewing_invite"]);
+    const brainPass = async (draft: string): Promise<string> => {
+      if (!aixBrainOn() || !draft.trim() || !AIX_BRAIN_ACTIONS.has(currentAction)) return draft;
+      if (currentAction === "property_check_result" && check_pattern === "interior_photo") return draft;
+      try {
+        const { runAixBrain } = await import("@/app/lib/aix-brain-server");
+        const { aixMeaningForGenerator } = await import("@/app/lib/aix-catalog");
+        const pv = pickerValueOf(currentAction, body as Record<string, unknown>);
+        const callName = name.endsWith("さん") ? name.slice(0, -2) : null;
+        const rm = (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []);
+        const meaning = aixMeaningForGenerator(currentAction, typeof check_pattern === "string" && check_pattern ? check_pattern : pv, { maxExemplars: 0 })
+          .split("\n").filter((l) => !/^竹内さんのお手本/.test(l)).join("\n");
+        const material = [
+          typeof customer_conditions === "string" && customer_conditions.trim() ? `【お客様の希望条件】\n${String(customer_conditions).slice(0, 800)}` : "",
+          typeof baseMessage === "string" && baseMessage ? `【元の文（スタッフが選んだ型）】\n${baseMessage}` : "",
+        ].filter(Boolean).join("\n\n");
+        const r = await runAixBrain({
+          aixType: currentAction, picker: pv, kind: "first", callName,
+          staffInputs: staffInputsFromBody(currentAction, body as Record<string, unknown>),
+          material, recent: rm, bundleNote: aixContractNote, meaning, draft,
+          // 内覧日調整で候補日を出す時は「ご都合よろしいお日にち御座いますでしょうか」まで（竹内さんの文に入る物＝内覧の日時 100%）
+          closeKind: currentAction === "viewing_invite" && typeof calendar_info === "string" && calendar_info.trim() ? "ask_date" : null,
+        }, { conversationId: conversationId ?? null, mustClaude: aixRequestMustUseClaude(body), postApply: !!aixRequestCtx.getStore()?.postApply, names: [typeof customer_name === "string" ? customer_name : null], tag: "aix/action" });
+        return r.text;
+      } catch (e) {
+        console.warn("[aix/action] aix-brain skipped:", e instanceof Error ? e.message : String(e));
+        return draft;
+      }
+    };
+    const finalizeResponse = async (text0: string, extra?: Record<string, unknown>) => {
+      const text = holdCloseOf(await brainPass(text0));
       const { message: finalizedMessage, notice } = finalize(text);
       // 2026-10-02 竹内さん「分割もクレジットカードの手数料いれる」: AIX の文は最終チェック（V16b）を通らない → 手数料の一文を足す（足すだけ・company-fact-guard）
       const feeFix = ensureCardFeeLine(finalizedMessage, [latestCustomerMsg]);
@@ -8163,6 +8201,8 @@ ${(giShape === "list" ? GUARANTOR_INFO_STAFF_EXAMPLES : GUARANTOR_ANSWER_STAFF_E
     }
 
     // ⑦修正: 共通後処理（号室の先頭ゼロ除去 + 内部メモ分離）を finalize() に統一
+    // 2026-10-22 AIX のブレイン（AIX_BRAIN=on の時だけ・finalizeResponse と同じ）
+    if (message_text) message_text = await brainPass(message_text);
     // 2026-10-13 竹内さん（未桜）: 物件確認した（物件あった）の文にピッカーの「申込あり」が出ていない時は足す（finalizeResponse と同じ・足すだけ）
     if (action === "property_check_result" && check_pattern === "available" && Array.isArray(prop_statuses) && message_text) {
       const ap = ensureAppliedTalk(message_text, {
