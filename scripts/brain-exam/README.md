@@ -215,3 +215,31 @@ npx tsx --env-file=.env.local scripts/exam-brain.ts --coverage [--json]
 | NIGHT⑤（10/22） | 予約は1本ずつ: 比べを先（作った順）→ 取り置きは最後に1本だけ（古い版・重なりの取り置きは理由を出して捨てる・夜の作業ツリーの今のコードで流す）。取り置きは予算で切って続きを予約し直す（30分おきの回で比べが先）。1回の上限 `EXAM_QUEUE_MAX_MIN`（既定 300分）・1本の上限 `EXAM_QUEUE_ITEM_MAX_MIN`（既定 240分・超えたら子の木ごと止める）。止まった実行の条件の行の控え（.brain-exam-…-pc-backup.json）は、持ち主の pid が止まっている／pid の無い古い形で `EXAM_STALE_LOCK_HOURS`（既定 6）時間より古く同じ label が動いていない時に `<名前>.stale-<JST の時刻>` へ寄せる（消さない・ログに1行） | scripts/lib/exam-night.ts |
 | QUALITY②（10/22） | 場面の今: 曜日・週の言い方が無い問題はちょうど実行日へずらす（試験の時計と場面の日付が揃う＝q181 の「明日」）。ある問題は今まで通り7日の倍数 | 旧 `EXAM_DATE_SHIFT=week` |
 | QUALITY⑧ | 見張りの釣り合い: 直す的ごとに今合っている周りの問題（同じ型 → 同じ段・同じ線 → 同じ段）を見張りの候補に足し、司令塔が付けなければ1つ足す（上限に入らなければ見張りから削る） | `--conduct` で既定 |
+
+## AIX の文の段（2026-10-22・試験のブレインの穴「押した後の文を測る段が無い」）
+
+ブレインの試験はボタンを選ぶ所まで。押した後の文（1通目＝AIX の本文・2通目／✨この会話に合った文）は測れていなかった（前は `yuma-r11-aix-text.ts --toggle` で竹内さんの2通目 22本を手で比べた）。
+物差しは**竹内基準**（竹内さんが実際に送った AIX の通・`messages.staff_writer='takeuchi'`）。
+
+| 段 | ファイル | 中身 |
+|---|---|---|
+| 問題 | `scripts/exam-aix-text-build.ts` | 本番の竹内さんの AIX の番（`audit-r9s2-aix-cases.ts --fixed`＋`audit-r11-aix-second-cases.ts`・書類の手前で切る・名前は YUMA・maskPII）→ 個人の値・書類・**審査の事情（本番は Claude に固定）**・お客様の名前の関所 → ボタン×ピッカーを散らして 30問。置き場 `.claude/exam-cache/aix-text-exam/questions.json`（倉庫に上げない） |
+| 生成 | `scripts/exam-aix-text.ts` | 本番と同じ入口（`aix/action`・`aix-template-generate` の POST を同じプロセスで）。after() は空の箱＝試験の会話に行を残さない・LINE に送らない。`--switch=NAME=値` |
+| 採点 | `scripts/lib/exam-aix-text.ts`（単体テスト `__tests__/exam-aix-text.test.ts`） | 決まった物差し: ①中身（竹内さんの文にあり入力にもある金額・号室・日付・時刻・物件名・訴求・ご査収・締め・呼びかけ）②作り事（入力に無い事実・物件名）③形（行の段の並び LCS）④近さ（dice）⑤スタッフだけが知る事（募集中・募集終了・退去予定・入居時期・内覧可否・割引・確認済み: 入力にあって竹内さんも書いた物の抜け／どこにも無い物の断定）。曖昧な時だけ LLM の判定（DeepSeek flash・伏せた2つの文だけ・`--judge=lazy`） |
+| 節約 | 録音と再生＋入力の差 | 同じ要求は録った答え（`LLM_CASSETTE=replay` が既定）。main と同じコード×既定のスイッチの回は main の取り置き（`aix-text-exam/baseline/main-<commit>.json`）→ 後の回は main と同じ要求に main の答え（問題ごとに「入力が main と同じ」） |
+| 上限 | | 1日 `EXAM_DAILY_CAP_USD`（この回の止める線は残りまで）・1回 `--budget`（既定 `EXAM_RUN_CAP_USD` と $5 の小さい方）・同時2本（`aix-text-exam/slots`）・空きメモリ 800MB |
+
+```bash
+npx tsx --env-file=.env.local scripts/exam-aix-text-build.ts [--since=2026-08-01] [--reuse-raw]      # 問題を作る（LLM なし）
+npx tsx --env-file=.env.local scripts/exam-aix-text.ts --label=main                                 # main の基準（取り置きになる）
+npx tsx --env-file=.env.local scripts/exam-aix-text.ts --label=fix1 [--switch=AIX_TAKEUCHI_FORM=off] # 直した後・スイッチの比べ（main と並べる）
+npx tsx --env-file=.env.local scripts/exam-aix-text.ts --label=fix1 --plan                          # 下見（呼ばない・入力が main と違う問題を数える）
+npx tsx --env-file=.env.local scripts/exam-brain.ts --aix-text -- --label=fix1 --buttons=見積書,待ち合わせ  # 試験のブレインから
+```
+- 絞る: `--only=<id>`・`--buttons=見積書,物件オススメ,物件確認した,ピックアップ,内覧日調整,待ち合わせ,申込へ`・`--kinds=aix,tpl,second`・会話 `--conv=YUMA2〜5`（既定 YUMA4・YUMA は申込以降＝✨の文が止まる）
+- 結果: `aix-text-exam/results/<label>-<時刻>.json`（伏せた生成の文・点・抜け・作り事・入力の差）
+- 竹内さんの文にあって入力に無い物（その場でスタッフが足した事実）は「作れない」に分けて点に入れない（unreachable）
+- 採点し直し（物差しを直した時・LLM なし・$0）: `--rescore=baseline`／`--rescore=<結果の json>`。竹内さんが送った時の時（JST）に `TEST_CLOCK_JST_HOUR` をそろえる（時刻の挨拶）
+- 既定の会話は YUMA4（YUMA は申込以降＝✨この会話に合った文が Claude に固定されて DeepSeek の試験で止まる）
+- main の基準（2026-10-22・main 01e22e5・30問・DeepSeek）: 合格 13/30・平均 75.5点（待ち合わせ 4/4 92.8・見積書 3/5 81.2・物件確認した 3/5 73.6・内覧日調整 1/4 73.5・ピックアップ 1/5 73.0・物件オススメ 1/5 69.2・申込へ 0/2 57.5）。費用 約 $0.32（作り直し込み）
+- 分かっている穴: 内覧日調整は問題の候補日が過去の日＝入口が今日以降の日に作り直す（日付の抜け・作り事に出る）。申込へ（format）は入口がフォームでなく申込の後押しの文を返す（要確認）
