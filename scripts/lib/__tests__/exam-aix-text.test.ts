@@ -1,6 +1,6 @@
 // 試験の AIX の文の段（scripts/lib/exam-aix-text.ts・2026-10-22）
 // 実行: npx tsx scripts/lib/__tests__/exam-aix-text.test.ts（自己完結・LLM も DB も使わない。全 PASS で exit 0）
-import { scoreAixText, factsOf, propNamesOf, sectionsOf, lcsRatio, closePartsOf, pickerClaims, needsJudge, withJudge, pickQuestions, goldUnusable, compareRows, summarize, questionHash, type AixQuestion } from "../exam-aix-text";
+import { scoreAixText, factsOf, propNamesOf, sectionsOf, lcsRatio, closePartsOf, pickerClaims, needsJudge, withJudge, pickQuestions, goldUnusable, compareRows, summarize, questionHash, aixShiftDays, shiftQuestionDates, isAppFormat, type AixQuestion } from "../exam-aix-text";
 
 let fail = 0, n = 0;
 const ok = (c: boolean, name: string) => { n++; if (c) console.log(`PASS ${name}`); else { fail++; console.log(`FAIL ${name}`); } };
@@ -54,6 +54,20 @@ const rows = [{ id: "x", hash: "h", button: "待ち合わせ", kind: "aix" as co
 ok(compareRows(rows, [{ ...rows[0], score: wrongTime }])[0].flip === "pass→fail", "前後の比べ");
 ok(summarize(rows).byButton[0].pass === 1, "集計");
 ok(questionHash({ route: "aix/action", body: { a: 1, b: 2 }, gold: "g" }) === questionHash({ route: "aix/action", body: { b: 2, a: 1 }, gold: "g" }), "問題の印は鍵の順に依らない");
+
+// 2026-10-23 試験の穴: 内覧日調整の過去の日付は今日以降へずらす（曜日はそのまま）・時刻の印は触らない・他のボタンはずらさない
+const vq = { aixType: "viewing_invite", at: "2026-10-15T11:06:09Z", gold: "直近ですと\n10/16(金) 13:00〜15:00\n10/17(土) 16:00〜17:30", inputText: "{\"calendar_info\":\"10/16(金) 13:00〜15:00\"}", body: { calendar_info: "10/16(金) 13:00〜15:00", recent_messages: [{ text: "10/16はどうですか", createdAt: "2026-10-15T10:00:00Z" }] } as Record<string, unknown> };
+const days = aixShiftDays(vq, Date.parse("2026-10-23T03:00:00Z"));
+ok(days === 14, `ずらす日数は7の倍数（${days}）`);
+const vs = shiftQuestionDates(vq, days);
+ok(vs.gold.includes("10/30(金)") && vs.gold.includes("10/31(土)") && String(vs.body.calendar_info).startsWith("10/30(金)") && vs.inputText.includes("10/30(金)"), "正解・本文・入力を同じだけずらす");
+const rm = (vs.body.recent_messages as Array<{ text: string; createdAt: string }>)[0];
+ok(rm.text === "10/30はどうですか" && rm.createdAt === "2026-10-15T10:00:00Z", "会話の文はずらし・時刻の印は触らない");
+const rd = aixShiftDays({ ...vq, at: "2026-10-11T04:41:16Z", gold: "明日10/12(月) 11:00〜11:30" }, Date.parse("2026-10-23T03:00:00Z"));
+ok(rd === 12 && shiftQuestionDates({ ...vq, at: "2026-10-11T04:41:16Z", gold: "明日10/12(月) 11:00〜11:30" }, rd).gold === "明日10/24(土) 11:00〜11:30", `「明日」がある問題はちょうど今日へ（${rd}）・曜日を付け直す`);
+ok(aixShiftDays({ aixType: "property_send", at: "2026-10-01T00:00:00Z" }) === 0, "他のボタンはずらさない");
+ok(!propNamesOf("【緊急連絡先欄】\n・氏名").length, "記入の欄の見出しは物件名にしない");
+ok(isAppFormat({ aixType: "application_push", body: { app_sub_mode: "format" } }) && !isAppFormat({ aixType: "application_push", body: { app_sub_mode: "push" } }), "申込へ・フォーマットは入口を呼ばない");
 
 console.log(`\n${n - fail}/${n} PASS`);
 process.exit(fail ? 1 : 0);

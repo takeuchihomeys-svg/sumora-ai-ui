@@ -14,6 +14,7 @@
 //      入力にあって竹内さんも書いた物が生成に無い＝抜け／入力にも竹内さんの文にも無い物を生成が言う＝根拠の無い断定
 import { createHash } from "node:crypto";
 import { coreOf, dice } from "../../app/lib/text-diff-types";
+import { shiftDatesInText } from "./scenario-date-shift";
 
 export type AixTextKind = "aix" | "tpl" | "second";
 export const KIND_JA: Record<AixTextKind, string> = { aix: "1通目（AIX の本文）", tpl: "この会話に合った文", second: "2通目（この会話に合った文）" };
@@ -89,7 +90,7 @@ export function propNamesOf(t: string): string[] {
   const out = new Set<string>();
   // 「10/24 12:00にレオン… 1301号室」「中でも特にリンクハウス… 502号室」: 助詞の後ろを名前にする（物件名に「に・は・が・で・を」はほぼ無い）
   for (const m of s.matchAll(ROOM_NAME_RE)) { const nm = (m[1].split(/さん|様|[にはがでを、]|(?:頂|いただ)?きました|ました|します|した/).pop() ?? "").replace(/^[\d/:：\-]+/, "").replace(/^(?:の|特に|中でも)/, "").trim(); if (nm.length >= 2 && !/^(?:お部屋|こちら|同じ|別の|その|この|現在|只今|今回|全て|全部)$|^(?:お部屋|こちら|同じ|別の|その|この)/.test(nm)) out.add(nm); }
-  for (const m of s.matchAll(/【([^】]{2,40})】/g)) { const nm = m[1].replace(/\s*\d{2,4}[A-Za-z]?\s*号?室?$/, "").trim(); if (nm.length >= 2 && !/記入欄|AIX|お客様|オススメ|ポイント/.test(nm)) out.add(nm); }
+  for (const m of s.matchAll(/【([^】]{2,40})】/g)) { const nm = m[1].replace(/\s*\d{2,4}[A-Za-z]?\s*号?室?$/, "").trim(); if (nm.length >= 2 && !/欄$|記入欄|AIX|お客様|オススメ|ポイント/.test(nm)) out.add(nm); }
   for (const m of s.matchAll(/🌟\s*([^\n🌟]{2,40}?)\s+\d{2,4}[A-Za-z]?\s*$/gm)) out.add(m[1].trim());
   return [...out];
 }
@@ -330,3 +331,33 @@ export function goldUnusable(gold: string): string | null {
   if (g.replace(/〈URL〉|\s/g, "").length < 20) return "URL だけ";
   return null;
 }
+
+// ─── 2026-10-23 試験の穴の直し（確かめる人） ───────────────────────────────
+// ① 内覧日調整・待ち合わせ: 竹内さんが送った時の日付（10/16 等）は試験の日には過去＝入口が過去の日付を作り直し（10/31 等）、作り事に数えた。
+//    ブレインの段と同じく、問題の時刻から今日までの日数（曜日を変えない＝7の倍数に切り上げ）だけ、本文・会話・正解・入力の日付をずらす。
+export const DATE_SHIFT_TYPES = new Set(["viewing_invite", "meeting_place"]);
+//    「明日」「今日」等の言い方がある問題はちょうど今日へ（経った日数そのまま・曜日の括弧は shiftDatesInText が付け直す）＝試験の時計の「明日」と合う
+export const RELATIVE_DAY_RE = /明日|明後日|本日|今日/;
+export function aixShiftDays(q: Pick<AixQuestion, "aixType" | "at"> & Partial<Pick<AixQuestion, "body" | "gold">>, nowMs = Date.now()): number {
+  if (!DATE_SHIFT_TYPES.has(q.aixType)) return 0;
+  const jstDay = (ms: number) => Math.floor((ms + 9 * 3600_000) / 86_400_000);
+  const diff = jstDay(nowMs) - jstDay(Date.parse(q.at));
+  if (!Number.isFinite(diff) || diff <= 0) return 0;
+  return RELATIVE_DAY_RE.test(`${JSON.stringify(q.body ?? {})}
+${q.gold ?? ""}`) ? diff : Math.ceil(diff / 7) * 7;
+}
+/** 問題の日付を days 日ずらした写し（本文の文字の値・会話の text・正解・入力。時刻の印 createdAt 等は触らない） */
+export function shiftQuestionDates<T extends Pick<AixQuestion, "body" | "gold" | "inputText" | "at">>(q: T, days: number): T {
+  if (!days) return q;
+  const year = new Date(Date.parse(q.at) + 9 * 3600_000).getUTCFullYear();
+  const sh = (t: string) => shiftDatesInText(t, days, year);
+  const walk = (v: unknown, key = ""): unknown => {
+    if (typeof v === "string") return /^(?:createdAt|rawCreatedAt|created_at|at)$/.test(key) ? v : sh(v);
+    if (Array.isArray(v)) return v.map((x) => walk(x, key));
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, walk(x, k)]));
+    return v;
+  };
+  return { ...q, body: walk(q.body) as Record<string, unknown>, gold: sh(q.gold), inputText: sh(q.inputText) };
+}
+// ② 申込へ・フォーマット: 本番は入口を呼ばず画面が決まった記入欄を組む（AixModal.tsx・application-format.ts）＝入口を呼ぶと押す文が返った
+export const isAppFormat = (q: Pick<AixQuestion, "aixType" | "body">) => q.aixType === "application_push" && q.body.app_sub_mode === "format";

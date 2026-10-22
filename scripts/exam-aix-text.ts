@@ -43,7 +43,8 @@ import { dailyCapUsd } from "./lib/exam-brain";
 import { readDailySpend } from "./lib/exam-brain-io";
 import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 import { maskPII } from "../app/lib/pii-mask";
-import { scoreAixText, needsJudge, withJudge, parseJudge, JUDGE_SYSTEM, judgeUser, summarize, compareRows, KIND_JA, PASS_RULE, type AixQuestion, type AixRow, type AixScore } from "./lib/exam-aix-text";
+import { buildApplicationFormat } from "../app/lib/application-format";
+import { scoreAixText, needsJudge, withJudge, parseJudge, JUDGE_SYSTEM, judgeUser, summarize, compareRows, KIND_JA, PASS_RULE, aixShiftDays, shiftQuestionDates, isAppFormat, type AixQuestion, type AixRow, type AixScore } from "./lib/exam-aix-text";
 
 const args = process.argv.slice(2);
 const arg = (k: string, d = "") => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -60,7 +61,7 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
 const AIX_ENTRIES = ["app/api/aix/action/route.ts", "app/api/aix-template-generate/route.ts"];
 const git = (a: string[]) => { try { return execFileSync("git", a, { stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 }).toString().trim(); } catch { return ""; } };
 
-type Row = AixRow & { picker: string | null; rep: number; llmCalls: CallRef[]; ms: number; error?: string };
+type Row = AixRow & { picker: string | null; rep: number; llmCalls: CallRef[]; ms: number; error?: string; /** 日付をずらした日数（採点し直しも同じだけずらす） */ shiftDays?: number };
 type BaseFile = { mainCommit: string; codeKey: string; savedAt: string; rows: Row[] };
 
 /** 生成の入口から届くコードの印と、origin/main と同じか */
@@ -122,7 +123,7 @@ function rescore(target: string): void {
       const q = qs.get(r.id);
       if (!q || q.hash !== r.hash || !r.text) continue;
       const before = r.score?.score;
-      const s0 = scoreAixText(q, r.text);
+      const s0 = scoreAixText(shiftQuestionDates(q, r.shiftDays ?? 0), r.text);
       r.score = r.score?.judge ? withJudge(s0, r.score.judge) : s0;
       if (before !== r.score.score) changed++;
     }
@@ -194,7 +195,10 @@ async function main() {
 
   const rows: Row[] = [];
   let stopped = 0;
-  for (const q of qs) {
+  for (const q0 of qs) {
+    // 内覧日調整・待ち合わせは日付を今日以降へずらす（過去の日付は入口が作り直す＝作り事に数えていた）
+    const shiftDays = aixShiftDays(q0);
+    const q = shiftQuestionDates(q0, shiftDays);
     const spentNow = (cassetteStats()?.total.realUsd ?? 0) + judgeCost.usd;
     if (spentNow >= BUDGET) { stopped++; continue; }
     const recent = ((q.body.recent_messages ?? q.body.recentMessages) as Array<{ text: string }> | undefined) ?? [];
@@ -204,9 +208,15 @@ async function main() {
     const tag = `aix:${q.id}`;
     setCassetteTag({ problem: tag, rep: "1" });
     const t0 = Date.now();
+    // 録音の鍵は日付（M/D・時刻）を伏せる＝ずらす前の答え（過去の日付を作り直した文）を再生してしまう → ずらした問題は伏せない鍵（その日の録音だけ使う）
+    const keyMode = process.env.LLM_CASSETTE_KEY;
+    if (shiftDays) process.env.LLM_CASSETTE_KEY = "exact";
     let text = "", err = "";
     try {
-      if (q.route === "aix/action") {
+      if (isAppFormat(q)) {
+        // 申込へ・フォーマット: 本番は入口を呼ばず画面が決まった記入欄を組む（AixModal.tsx と同じ組み立て・LLM なし）
+        text = buildApplicationFormat(q.body.living_type === "shared" ? "shared" : "single", q.body.guarantor_kind === "guarantor" ? "guarantor" : "emergency");
+      } else if (q.route === "aix/action") {
         const body = { ...q.body, conversation_id: CONV, customer_name: "YUMA", testFlags: { rules_r9: "off" } };
         const res = await workAsyncStorage.run(store, () => aixPost(new Request("http://localhost/api/aix/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) as never)) as Response;
         const j = await res.json().catch(() => ({})) as Record<string, unknown>;
@@ -220,6 +230,7 @@ async function main() {
         if (!text) err = String(j.error ?? JSON.stringify(j).slice(0, 160));
       }
     } catch (e) { err = `失敗: ${e instanceof Error ? e.message : String(e)}`; }
+    if (keyMode === undefined) delete process.env.LLM_CASSETTE_KEY; else process.env.LLM_CASSETTE_KEY = keyMode;
     const calls = cassetteCallsOf(tag, "1");
     const idf = inputDiffOf(calls, hasPinsFor(tag, "1"));
     // 生成も正解と同じ伏せ方を通す（正解は maskPII 済み＝「申込者様→お客様」等の書き換えをそろえる）
@@ -229,7 +240,7 @@ async function main() {
       setCassetteTag({ problem: `aix-judge:${q.id}`, rep: "1" });
       score = withJudge(score, parseJudge(await deepseekJson(JUDGE_SYSTEM, judgeUser(q.gold, gen))));
     }
-    const row: Row = { id: q.id, hash: q.hash, button: q.button, kind: q.kind, picker: q.picker, text: gen, err: err || null, score, inputSame: idf.same, calls: calls.length, rep: 1, llmCalls: calls, ms: Date.now() - t0 };
+    const row: Row = { id: q.id, hash: q.hash, button: q.button, kind: q.kind, picker: q.picker, text: gen, err: err || null, score, inputSame: idf.same, calls: calls.length, rep: 1, llmCalls: calls, ms: Date.now() - t0, ...(shiftDays ? { shiftDays } : {}) };
     rows.push(row);
     const s = score;
     console.log(`[${rows.length}/${qs.length}] ${q.id} ${q.button}・${KIND_JA[q.kind]}${q.picker ? `・${q.picker}` : ""} ${Math.round(row.ms / 1000)}s ${err ? `ERR ${err.slice(0, 120)}` : `${s!.pass ? "○" : "×"} ${s!.score}点（中身 ${s!.content.toFixed(2)}・形 ${s!.structure.toFixed(2)}・近さ ${s!.similarity.toFixed(2)}）${idf.same ? "・入力が main と同じ" : idf.pinned ? `・main と違う所 ${idf.changed.join("/")}` : ""}${s!.missing.length ? ` 抜け[${s!.missing.join(" ")}]` : ""}${s!.fabricated.length ? ` 作り事[${s!.fabricated.join(" ")}]` : ""}${s!.staffOnly.length ? ` スタッフだけ[${s!.staffOnly.join(" ")}]` : ""}${s!.judge ? ` 判定:${s!.judge.same ? "同じ要件" : `違う(${s!.judge.missing.join("/")})`}` : ""}`}`);
