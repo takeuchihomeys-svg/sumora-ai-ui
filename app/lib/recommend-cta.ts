@@ -115,6 +115,8 @@ export type RecommendCtaDecision = {
   reason: string;
   /** 2026-10-18 竹内さん 10/16: 空室でもお客様がすぐ来られない（遠方・内覧まで期間がある）ので申込で抑える時の理由（customer-circumstances.holdFirstReason）。それ以外は無し */
   holdReason?: string | null;
+  /** 2026-10-23 竹内さんの決定 6bdfb441: 本当に新着の1件（空室）で申込の誘導にした時（退去予定とは書かない・recommend-second-appeal） */
+  newListing?: boolean;
 };
 
 /** 2026-10-18 竹内さん 10/16「空室でも、状況によって（内覧できるまで期間がある・遠方等）申込で抑えるを勧めてよい」。戻す VACANT_HOLD_APPLY=off */
@@ -373,7 +375,7 @@ export function buildFirstMessageCtaNote(d: RecommendCtaDecision, o: { viewableF
  */
 export function buildSecondMessageCtaNote(
   d: RecommendCtaDecision,
-  o: { firstMessage?: string | null; viewableFrom?: string | null } = {},
+  o: { firstMessage?: string | null; viewableFrom?: string | null; withReceipt?: boolean } = {},
 ): string {
   // 2026-10-01 竹内さん了承「実送信の形に合わせる」(a): 1通目が同じ締めで終わっていても、2通目にも締めを付ける。
   //   実送信（scripts/audit-second-message-phrasing.ts --closing-pairs・365日）: 1通目が🌟の物件オススメ 224組のうち1通目に締めがある 20組 →
@@ -381,7 +383,9 @@ export function buildSecondMessageCtaNote(
   //   ＝「重ねない」は実送信の形ではなかった（旧: 1通目と同じ締めなら2通目はオススメの文で終える）。firstMessage は受けるだけ（呼び出し側の互換）
   void o.firstMessage;
   const L: string[] = ["【この2通目の締め（1件を特にオススメする通・刺さり具合で決まる。上の CTA の指示より優先）】"];
-  if (d.kind === "viewing") {
+  if (d.kind === "apply" && d.newListing && !d.notViewable) {
+    L.push(`・新着で募集に出た1件（空室）（${d.reason}） → 申込の誘導 1文。実送信の形「${APPLY_CLOSING_LINE}」のまま（竹内さんの形。退去予定とは書かない＝空室の事実のまま）`);
+  } else if (d.kind === "viewing") {
     L.push(`・お客様に刺さる物件（${d.reason}）で、今ご内覧頂ける → 締めは内覧の誘導 1文。実送信の形「${VIEWING_CLOSING_LINE}」のまま`);
   } else if (d.kind === "apply" && d.holdReason && !d.notViewable) {
     L.push(`・お客様に刺さる物件で空室だが、お客様が${d.holdReason}のため、すぐにはご内覧頂けない（${d.reason}） → 申込の誘導 1文。実送信の形「${APPLY_CLOSING_LINE}」のまま（退去予定とは書かない・内覧の誘導は書かない）`);
@@ -390,7 +394,12 @@ export function buildSecondMessageCtaNote(
   } else {
     L.push(`・そこまで刺さるとは言い切れない（${d.reason}） → 押さず、実送信の形「${RECEIPT_CLOSING_LINE}」で締める`);
   }
-  L.push("・締めの一文は上の形のまま（言い回しを足さない・変えない）。締めの後に別の一文（「気になる点があれば〜」等）を足さない");
+  if (o.withReceipt && d.kind !== "receipt") {
+    // 2026-10-23 竹内さんの2通目（b5043827・recommend-second-appeal.ts）: 誘導の次の行に「お手隙の際にご査収ください😌！！」（誘導＋ご査収）
+    L.push("・誘導の1文の次の行に「お手隙の際にご査収ください😌！！」を置く（竹内さんの形: 誘導＋ご査収の2行で締める）。誘導の言い回しは上の形のまま。その後に別の一文を足さない");
+  } else {
+    L.push("・締めの一文は上の形のまま（言い回しを足さない・変えない）。締めの後に別の一文（「気になる点があれば〜」等）を足さない");
+  }
   L.push("・1通目に出ている物件だけを書く。**別の物件を持ち出して比べない**（「こちらの方が」「私個人的には」も書かない）。していない約束を足さない");
   return L.join("\n");
 }
