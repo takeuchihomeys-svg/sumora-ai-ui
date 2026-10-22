@@ -178,9 +178,12 @@ export function buildCustomerHub(input: HubInput): CustomerHub {
   let state: CustomerState | null = null;
   try { state = resolveCustomerState({ ...s, now, ledger }); } catch { state = null; }
   const turn = turnOf(s);
+  // 2番手で申込中（並行で探す）: 下書き・ブレイン・個人情報の門・やることリスト・司令塔と同じ判定（post-apply.judgeParallelSecond）。地図の番手の分かれ道にも渡す
+  const parallelSecond = input.parallelSecond !== undefined ? input.parallelSecond : parallelSecondOfHubInput(input);
   const loc = locateApplyRoute({
     stage: state?.stage ?? null, searching: state?.searching ?? null, ledger: ledger.facts,
     customerTurnText: turn.customerTurnText, recentStaffTexts: turn.recentStaffTexts, lastStaffAtIfStaffLast: turn.lastStaffAtIfStaffLast, nowMs: now,
+    parallelSecond,
   });
 
   // ── 約束（5つの台帳を1つの並びに。台帳はまとめず上に並べるだけ＝設計の案 5-1 の小さい案） ──
@@ -221,8 +224,6 @@ export function buildCustomerHub(input: HubInput): CustomerHub {
   for (const v of state?.viewings ?? []) schedule.push({ kind: "viewing", at: `${v.ymd}T${v.time ?? "00:00"}:00+09:00`, label: `内覧 ${v.name ?? "（物件名なし）"}・${v.status}`, done: v.status === "done" || v.status === "cancelled", source: "customer_state" });
   schedule.sort((a, b) => ms(a.at) - ms(b.at));
 
-  // 2番手で申込中（並行で探す）: 下書き・ブレイン・個人情報の門・やることリスト・司令塔と同じ判定（post-apply.judgeParallelSecond）
-  const parallelSecond = input.parallelSecond !== undefined ? input.parallelSecond : parallelSecondOfHubInput(input);
   // ── やることリスト（この会話だけで組み立て直す） ──
   const todayYmd = new Date(now + 9 * H).toISOString().slice(0, 10);
   const todo = buildStaffTodoList({

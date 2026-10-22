@@ -100,7 +100,8 @@ t("期日を繰り返さない良い形は当たらない", !draftEchoesCustomer
 console.log("── 切り替え ──");
 {
   const msgs = [{ sender: "staff", text: SLOTS }, { sender: "customer", text: "朝方は空いてないでしょうか？" }];
-  t("既定 off: 注記は空", daySubjectNoteIfEnabled(msgs, "proposing", {}) === "");
+  t("off: 注記は空", daySubjectNoteIfEnabled(msgs, "proposing", { DAY_SUBJECT_READER: "off" }) === "");
+  t("既定 on（2026-10-22）: 注記が出る", /内覧の日時/.test(daySubjectNoteIfEnabled(msgs, "proposing", {})));
   const on = daySubjectNoteIfEnabled(msgs, "proposing", { DAY_SUBJECT_READER: "on" });
   t("on: 注記が出る（内覧の日時・1行・見出しの塊にしない）", /内覧の日時/.test(on) && /確認の約束にせず/.test(on) && on.trim().split("\n").length === 1 && !/【/.test(on), on);
   t("読み: お客様が最後でない時は空", readDaySubject([{ sender: "customer", text: "明日" }, { sender: "staff", text: "はい" }]).dates.length === 0);

@@ -5,13 +5,16 @@
 //      action_type の値は変えない（記録・ブレインの値はそのまま＝旧の値 → 新しいボタンの名前に読み替えるだけ）。審査の事情は必ず Claude。
 //   C2/C3 他社の見積が安い・『なぜ安い』→ AIX【初期費用について】の説明の部分（会社の事実: 貸主様からの手数料を初期費用に還元／他社は保証料など別払い・弊社は全部込み）
 //   C5 他社に見積の抜けを指摘された → AIX【見積書送る】から送り直す（2通目の言い方を『訂正しました御見積書』に）
-//   C6 他社で紹介・仮押さえ・内覧予定の物件の見積には毎回『弊社でもお申込み・ご内覧頂けます』を添える（決定論・既定 on）
+//   C6 他社で紹介・仮押さえ・内覧予定の物件の見積に『弊社でもお申込み・ご内覧頂けます』を添えるか
+//      ~~旧 10/21: 毎回添える（決定論・既定 on）~~ → 10/21 後の決定（設計知見 1c4dddf7）「状況による・割引で信頼を握り、こちらが良いとなれば
+//      弊社でもいれずに正規ルートに転換」で状況の判断に改めた（resolveOtherAgentEstimate・ESTIMATE_OTHER_AGENT_LINE=always で旧に戻す）
 // 切替（どれも off で今まで通り）:
 //   AIX_SCREENING_BUTTON（既定 on）= ブレインのカードの名前『AIX 審査について』・ブレインの一覧で 保証会社について／審査について（ご相談）を【審査について】の中に並べる。
 //     値 "brain" の時だけ、AIX_NEW_PICKERS_1020 が off でもブレインが mgmt_screening を選べる（まだ測っていないので既定にしない）
-//   COST_COMPARE_FACT（既定 on）・ESTIMATE_CORRECTION_WORDING（既定 on）・ESTIMATE_OTHER_AGENT_LINE（既定 on）
+//   COST_COMPARE_FACT（既定 on）・ESTIMATE_CORRECTION_WORDING（既定 on）
+//   ESTIMATE_OTHER_AGENT_LINE（既定 situational＝状況で判断／always＝旧の毎回機械的に足す／off＝何もしない）
 
-import { OTHER_AGENT_RE } from "./other-agent-viewing";
+import { OTHER_AGENT_RE, isOtherAgentViewingPlan } from "./other-agent-viewing";
 
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
@@ -160,20 +163,61 @@ export function isEstimateCorrectionContext(msgs: ReadonlyArray<Msg>, explicit?:
 
 /** 他社で紹介・仮押さえ・内覧（予定）・見積の話の物件（お客様の発言）。「他社で決まりました」でも当たるが、その時は見積書を送らない */
 const OTHER_PROP_ACT_RE = /紹介|仮押さ|仮押え|押さえ|抑え|内覧|内見|見学|案内|申込|申し込|見積|検討/;
-export function estimateOtherAgentLineEnabled(env: Env = envOf()): boolean {
-  return !offOf(env.ESTIMATE_OTHER_AGENT_LINE);
+/** C6 の動き方。situational（既定・1c4dddf7）／always（旧 10/21 の毎回機械的に足す）／off */
+export type OtherAgentLineMode = "situational" | "always" | "off";
+export function estimateOtherAgentLineMode(env: Env = envOf()): OtherAgentLineMode {
+  const v = (env.ESTIMATE_OTHER_AGENT_LINE ?? "").trim().toLowerCase();
+  if (v === "off") return "off";
+  if (v === "always" || v === "legacy") return "always";
+  return "situational";
 }
+export function estimateOtherAgentLineEnabled(env: Env = envOf()): boolean {
+  return estimateOtherAgentLineMode(env) !== "off";
+}
+const otherAgentPropText = (m: Msg): string | null => {
+  if (!isCustomer(m)) return null;
+  const s = String(m.text ?? "").normalize("NFKC").replace(/\s+/g, " ");
+  // 画像の読み取り・引越しの業者（「運ぶのは業者さんに頼みます」180日の実データで当たった外れ）は見ない
+  if (/^\[画像\]/.test(s.trim()) || /引っ?越し?(?:の)?業者|運ぶ|搬入|搬出|配送/.test(s)) return null;
+  return OTHER_AGENT_WORD_RE.test(s) && OTHER_PROP_ACT_RE.test(s) ? s : null;
+};
 /** お客様が他社で紹介・仮押さえ・内覧（予定）・見積を受けた物件の話をしているか（直近のお客様の発言） */
 export function mentionsOtherAgentProperty(msgs: ReadonlyArray<Msg>, env: Env = envOf(), window = 30): boolean {
   if (!estimateOtherAgentLineEnabled(env)) return false;
+  return (Array.isArray(msgs) ? msgs : []).slice(-window).some((m) => otherAgentPropText(m) !== null);
+}
+
+/**
+ * 他社の物件の場面（直近で一番新しい他社の話のお客様の発言で読む）。
+ *   viewing_plan … 他社でこれから内覧する予定（d6b6edc1: 否定せず弊社でも内覧できると誘う＝決定論で添える）
+ *   hold         … 他社で仮押さえ・申込済み／審査中（他社の押さえを崩す話＝書く役の判断・押し付けない）
+ *   compare      … 他社で紹介された・見積を取った・内覧した・検討中（1c4dddf7: 割引の御見積書で信頼を握るのが先＝判断・毎回は入れない）
+ */
+export type OtherAgentSituation = "viewing_plan" | "hold" | "compare";
+const OTHER_HOLD_RE = /仮押さ|仮押え|(?:押さえ|抑え)(?:て|た)|申込(?:み)?(?:を)?(?:し(?:て|た|ました)|済|中)|申し込(?:み)?(?:を)?(?:し(?:て|た|ました)|済|中|んで)|審査(?:中|に出|を出|して)/;
+export function otherAgentSituation(msgs: ReadonlyArray<Msg>, env: Env = envOf(), window = 30): OtherAgentSituation | null {
+  if (!estimateOtherAgentLineEnabled(env)) return null;
   const arr = (Array.isArray(msgs) ? msgs : []).slice(-window);
-  return arr.some((m) => {
-    if (!isCustomer(m)) return false;
-    const s = String(m.text ?? "").normalize("NFKC").replace(/\s+/g, " ");
-    // 画像の読み取り・引越しの業者（「運ぶのは業者さんに頼みます」180日の実データで当たった外れ）は見ない
-    if (/^\[画像\]/.test(s.trim()) || /引っ?越し?(?:の)?業者|運ぶ|搬入|搬出|配送/.test(s)) return false;
-    return OTHER_AGENT_WORD_RE.test(s) && OTHER_PROP_ACT_RE.test(s);
-  });
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const s = otherAgentPropText(arr[i]);
+    if (s === null) continue;
+    if (OTHER_HOLD_RE.test(s)) return "hold";
+    if (isOtherAgentViewingPlan(s, env)) return "viewing_plan";
+    return "compare";
+  }
+  return null;
+}
+/**
+ * C6 の決め（出口で機械的に足すか・書く役に何を渡すか）。
+ *   situational（既定）: 足すのは viewing_plan の時だけ（d6b6edc1）。hold・compare は判断の材料だけ渡す（1c4dddf7）
+ *   always: 旧 10/21（他社の物件の話があれば毎回足す）
+ */
+export function resolveOtherAgentEstimate(msgs: ReadonlyArray<Msg>, env: Env = envOf()): { otherAgent: boolean; otherAgentSituation: OtherAgentSituation | null; otherAgentMode: OtherAgentLineMode } {
+  const mode = estimateOtherAgentLineMode(env);
+  if (mode === "off") return { otherAgent: false, otherAgentSituation: null, otherAgentMode: mode };
+  const situation = otherAgentSituation(msgs, env);
+  if (!situation) return { otherAgent: false, otherAgentSituation: null, otherAgentMode: mode };
+  return { otherAgent: mode === "always" || situation === "viewing_plan", otherAgentSituation: situation, otherAgentMode: mode };
 }
 
 /** C6 の一文（竹内さん 10/21「弊社でもお申込み・ご内覧できます」を添える・実送信 7/16「弊社でお申込みも可能です」の言い方） */
@@ -217,10 +261,24 @@ export function applyEstimateOwnerLines(text: string, o: { correction?: boolean;
   return { text: src, added };
 }
 
-/** 2通目の指示に足す文（指示だけでは落ちるので出口の applyEstimateOwnerLines と両方） */
-export function estimateOwnerNote(o: { correction?: boolean; otherAgent?: boolean }): string {
+/** 2通目の指示に足す文（決定論で足す時は出口の applyEstimateOwnerLines と両方・判断の時は材料だけ） */
+export function estimateOwnerNote(o: { correction?: boolean; otherAgent?: boolean; otherAgentSituation?: OtherAgentSituation | null; otherAgentMode?: OtherAgentLineMode }): string {
   const L: string[] = [];
   if (o.correction) L.push(`・今回の御見積書はお客様のご指摘で直した物（訂正版）。1文目は「${ESTIMATE_CORRECTION_LINE}」の形（「最大限割引しました」とは書かない）。何を直したか（項目・金額）は書かない。謝罪の言葉（申し訳ございません）は使わない`);
-  if (o.otherAgent) L.push(`・お客様は他社でこのお部屋の紹介・仮押さえ・内覧の話をしている。締めの前に「${OTHER_AGENT_HERE_LINE}」を必ず入れる（他社を悪く言わない）`);
+  if (o.otherAgent && (o.otherAgentMode === "always" || !o.otherAgentSituation)) {
+    // 旧 10/21（ESTIMATE_OTHER_AGENT_LINE=always の時）
+    L.push(`・お客様は他社でこのお部屋の紹介・仮押さえ・内覧の話をしている。締めの前に「${OTHER_AGENT_HERE_LINE}」を必ず入れる（他社を悪く言わない）`);
+  } else if (o.otherAgentSituation === "viewing_plan") {
+    L.push(`・お客様は他社でこのお部屋をこれから内覧する予定。否定せず、締めの前に「${OTHER_AGENT_HERE_LINE}」の形で弊社でもご内覧・お申込み頂ける事を添える（竹内さん 10/20 の決定・他社を悪く言わない）`);
+  } else if (o.otherAgentSituation === "hold" || o.otherAgentSituation === "compare") {
+    L.push([
+      `・お客様は他社でこのお部屋の${o.otherAgentSituation === "hold" ? "仮押さえ・申込" : "紹介・見積・内覧"}の話をしている。竹内さんの決定（状況による）:`,
+      "  弊社の強みは割引して初期費用を抑えられる所。まず御見積書の安さで信頼を握るのが先で、「弊社でもお申込み・ご内覧頂けます」の一文は毎回は入れない（押し付けない・他社を悪く言わない）。",
+      "  入れるのは、お客様が弊社で進めたい気持ちを見せている（こちらの方が安い・こちらでお願いしたい・こちらでも申込できるか聞いている）時だけ・1文だけ。",
+      o.otherAgentSituation === "hold"
+        ? "  他社で仮押さえ・申込が進んでいる時は特に慎重に。お客様から弊社で進めたいと言われていなければ書かない（御見積書の金額で比べて頂く）。"
+        : "  紹介・見積を受けただけの時は、御見積書の割引の金額で比べて頂く形で十分（こちらが良いとなれば自然に弊社の正規ルートに移る）。",
+    ].join("\n"));
+  }
   return L.length ? `【この御見積書の事情（竹内さん 10/21 の決定）】\n${L.join("\n")}` : "";
 }

@@ -3,7 +3,7 @@
 // 実行: npx tsx app/lib/__tests__/aix-owner-answers-1021.test.ts
 import {
   screeningButtonEnabled, screeningBrainEnabled, screeningCardLabel, isScreeningButtonAction, SCREENING_TOPIC_OPTIONS, screeningTopicLine, isScreeningTopic,
-  isOtherAgentCostCompare, isEstimateCorrectionContext, mentionsOtherAgentProperty, applyEstimateOwnerLines, OTHER_AGENT_HERE_LINE, ESTIMATE_CORRECTION_LINE, estimateOwnerNote,
+  isOtherAgentCostCompare, isEstimateCorrectionContext, mentionsOtherAgentProperty, applyEstimateOwnerLines, OTHER_AGENT_HERE_LINE, ESTIMATE_CORRECTION_LINE, estimateOwnerNote, otherAgentSituation, resolveOtherAgentEstimate, estimateOtherAgentLineMode,
 } from "../aix-owner-answers-1021";
 import { aixRequestMustUseClaude } from "../aix-new-pickers";
 import { brainAixButtonLabel } from "../aix-button-view";
@@ -125,9 +125,47 @@ it("C6: 他社の物件（紹介・仮押さえ・内覧予定）→ 弊社で�
   ok(ls[1] === OTHER_AGENT_HERE_LINE && /ご査収/.test(ls[2]), r.text);
   ok(applyEstimateOwnerLines("弊社でもお申込み可能です！！", { otherAgent: true }).added.length === 0, "2回書いた");
   ok(/弊社でもお申込み・ご内覧頂けます/.test(estimateOwnerNote({ otherAgent: true })), "指示に入らない");
+  ok(/弊社でもお申込み・ご内覧頂けます/.test(estimateOwnerNote({ otherAgent: true, otherAgentSituation: "viewing_plan", otherAgentMode: "situational" })), "内覧予定の指示に入らない");
   const tg = readFileSync("app/api/aix-template-generate/route.ts", "utf8");
   const act = readFileSync("app/api/aix/action/route.ts", "utf8");
   ok(/applyEstimateOwnerLines\(text, estimateOwner\)/.test(tg) && /applyEstimateOwnerLines\(cover_letter, coverOwner\)/.test(act), "2通目の出口2か所に配線していない");
+});
+
+it("C6（10/21 後の決定 1c4dddf7）: 既定は状況で判断 — 機械的に足すのは他社で内覧の予定の時だけ", () => {
+  const S = (t: string) => [{ sender: "customer", text: t }];
+  ok(otherAgentSituation(S("他社さんで紹介してもらった物件なんですが見積もりお願いできますか"), {}) === "compare", "紹介→compare");
+  ok(otherAgentSituation(S("不動産屋さんで仮押さえしてもらってます"), {}) === "hold", "仮押さえ→hold");
+  ok(otherAgentSituation(S("他社でもう申込しています"), {}) === "hold", "申込済→hold");
+  ok(otherAgentSituation(S("他社で明日内覧予定です"), {}) === "viewing_plan", "内覧予定→viewing_plan");
+  ok(otherAgentSituation(S("他社で内覧しました"), {}) === "compare", "内覧した（過去）→compare");
+  ok(otherAgentSituation(S("他の物件も見積お願いします"), {}) === null, "他の物件で当たった");
+  // 一番新しい他社の話で読む
+  ok(otherAgentSituation([{ sender: "customer", text: "他社で明日内覧予定です" }, { sender: "customer", text: "他社さんで仮押さえしてもらいました" }], {}) === "hold", "新しい方で読まない");
+  // 既定（situational）
+  const a = resolveOtherAgentEstimate(S("他社さんで紹介してもらった物件の見積お願いします"), {});
+  ok(!a.otherAgent && a.otherAgentSituation === "compare" && a.otherAgentMode === "situational", JSON.stringify(a));
+  const h = resolveOtherAgentEstimate(S("不動産屋さんで仮押さえしてもらってます"), {});
+  ok(!h.otherAgent && h.otherAgentSituation === "hold", JSON.stringify(h));
+  const v = resolveOtherAgentEstimate(S("他社で明日内覧予定です"), {});
+  ok(v.otherAgent && v.otherAgentSituation === "viewing_plan", JSON.stringify(v));
+  // 指示: 「必ず」を出さない・判断の材料（割引で信頼・毎回は入れない）
+  const na = estimateOwnerNote(a);
+  ok(!/必ず/.test(na) && /毎回は入れない/.test(na) && /割引/.test(na), na);
+  ok(/仮押さえ/.test(estimateOwnerNote(h)) && !/必ず/.test(estimateOwnerNote(h)), estimateOwnerNote(h));
+  ok(/これから内覧する予定/.test(estimateOwnerNote(v)) && !/必ず/.test(estimateOwnerNote(v)), estimateOwnerNote(v));
+  // 出口: compare/hold では足さない（otherAgent=false）
+  ok(applyEstimateOwnerLines("A 101号室最大限割引しました初期費用の御見積書となります！！\nお手隙の際にご査収ください😌！！", a).added.length === 0, "compare で足した");
+  // 戻すスイッチ: always＝旧（毎回足す＋必ず）・off＝何もしない
+  const old = resolveOtherAgentEstimate(S("他社さんで紹介してもらった物件の見積お願いします"), { ESTIMATE_OTHER_AGENT_LINE: "always" });
+  ok(old.otherAgent && /必ず入れる/.test(estimateOwnerNote(old)), JSON.stringify(old));
+  ok(estimateOtherAgentLineMode({ ESTIMATE_OTHER_AGENT_LINE: "legacy" }) === "always" && estimateOtherAgentLineMode({}) === "situational", "mode");
+  const off = resolveOtherAgentEstimate(S("他社で明日内覧予定です"), { ESTIMATE_OTHER_AGENT_LINE: "off" });
+  ok(!off.otherAgent && off.otherAgentSituation === null && estimateOwnerNote(off) === "", JSON.stringify(off));
+  // 配線: 呼び出し2か所が resolveOtherAgentEstimate を使う（mentionsOtherAgentProperty で毎回足さない）
+  const tg = readFileSync("app/api/aix-template-generate/route.ts", "utf8");
+  const act = readFileSync("app/api/aix/action/route.ts", "utf8");
+  ok(/resolveOtherAgentEstimate\(msgs\)/.test(tg) && /resolveOtherAgentEstimate\(coverMsgs\)/.test(act), "配線");
+  ok(!/otherAgent: mentionsOtherAgentProperty/.test(tg + act), "旧の配線が残っている");
 });
 
 // ─── D5 ───
