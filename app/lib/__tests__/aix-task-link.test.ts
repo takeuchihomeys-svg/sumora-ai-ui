@@ -1,7 +1,7 @@
 // 2026-09-12 竹内方針: AIX 送信 → 完了にするやること（物件出しは物件ピックアップした／物件オススメだけ）と、
 // スタッフの未履行の宣言 → それを履行する AIX（見積書送る宣言 → AIX 見積書送る）
 // 実行: npx tsx app/lib/__tests__/aix-task-link.test.ts
-import { taskTypesCompletedByAix, resolveStaffPromiseAix } from "../aix-task-link";
+import { taskTypesCompletedByAix, resolveStaffPromiseAix, newArrivalPickByBrain } from "../aix-task-link";
 import { classifyStaffTextForLedger } from "../action-ledger";
 import { customerRequestedPropertyCheck } from "../aix-scene-evidence";
 
@@ -185,6 +185,15 @@ it("募集状況・代理契約の確認は従来どおり 物件確認した（
   const t2 = "かしこまりました！！\n代理契約可能か明日管理会社に確認出来次第ご連絡させて頂きます😌！！";
   const m2 = [C("1度この2つで代理契約可能か確認していただけますでしょうか？"), S(t2)];
   expect(resolveStaffPromiseAix(facts(t2, { conf: true }), m2, asked(m2))?.action ?? null).toBe("property_check_result");
+});
+
+it("新着の約束: ブレインが物件の AIX を選んでいればそれを先に（1件ならオススメ・複数ならピックアップ）", () => {
+  const p = { action: "property_recommendation", alt: "property_send" };
+  expect(newArrivalPickByBrain(p, "property_send")).toBe({ action: "property_send", alt: "property_recommendation" });
+  expect(newArrivalPickByBrain(p, "property_recommendation")).toBe({ action: "property_recommendation", alt: "property_send" });
+  expect(newArrivalPickByBrain(p, null)).toBe(null);
+  expect(newArrivalPickByBrain(p, "estimate_sheet")).toBe(null);
+  expect(newArrivalPickByBrain({ action: "estimate_sheet" }, "property_send")).toBe(null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

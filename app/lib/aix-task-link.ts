@@ -8,6 +8,18 @@ import { checkPatternForConfirmTopic, customerAskedConfirmTopic, linkPromisePick
 export function linkPromiseNewArrivalRecEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return linkPromisePickerEnabled(env) && (env.LINK_PROMISE_NEW_ARRIVAL_REC ?? "").trim().toLowerCase() === "on";
 }
+/**
+ * 2026-10-22 竹内さんの答え「新着の約束はブレインが状況で選ぶ（1件ならオススメ・複数ならピックアップ）」:
+ *   新着の約束を果たす番で、ブレイン（LLM）自身が物件の AIX（物件ピックアップした／物件オススメ）を選んでいればそれを先に・もう片方を2つ目に。
+ *   ブレインが物件の AIX を選んでいない時は null（約束の規則の並び＝物件オススメが先のまま）。切替 LINK_PROMISE_NEW_ARRIVAL_REC の中だけで使う
+ */
+export function newArrivalPickByBrain(promise: { action: string; alt?: string | null }, llmAix: string | null | undefined): { action: string; alt: string } | null {
+  const isProp = (a: string | null | undefined): a is string => a === "property_send" || a === "property_recommendation";
+  if (!isProp(promise.action) || !isProp(promise.alt ?? null) || !isProp(llmAix)) return null;
+  return { action: llmAix, alt: llmAix === "property_send" ? "property_recommendation" : "property_send" };
+}
+/** ブレインの材料の1行（新着の約束が残っている時だけ・切替の中だけ） */
+export const NEW_ARRIVAL_PROMISE_MATERIAL_LINE = "【新着の約束（材料）】まだ果たしていない約束は「新着が出次第お送り」（ピックアップの約束とは別）。果たす番は、届ける新着が1件なら AIX【物件オススメ】・複数なら AIX【物件ピックアップした】を状況で選ぶ（竹内さんの決定）";
 import { OWN_APPLICATION_PROGRESS_RE } from "./aix-new-pickers";
 // app/lib/aix-task-link.ts
 // AIX の送信と「やること（line_tasks）」・物件出しの完了（✅）の対応表（2026-09-12 竹内方針）。
