@@ -20,15 +20,15 @@ function it(name: string, fn: () => void) {
   catch (e) { failed++; console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); }
 }
 const ok = (c: unknown, m: string) => { if (!c) throw new Error(m); };
-function withSwitch(v: "on" | undefined, fn: () => void) {
+function withSwitch(v: "on" | "off" | undefined, fn: () => void) {
   const prev = process.env.AIX_NEW_PICKERS_1020;
   if (v) process.env.AIX_NEW_PICKERS_1020 = v; else delete process.env.AIX_NEW_PICKERS_1020;
   try { fn(); } finally { if (prev === undefined) delete process.env.AIX_NEW_PICKERS_1020; else process.env.AIX_NEW_PICKERS_1020 = prev; }
 }
 
-it("切替は既定 off（on の時だけ）", () => {
-  ok(!aixNewPickers1020Enabled({}), "既定 on になっている");
-  ok(aixNewPickers1020Enabled({ AIX_NEW_PICKERS_1020: "on" }), "on で動かない");
+it("切替は既定 on（2026-10-22 試験 p12-np-on で悪化なし・off で止める）", () => {
+  ok(aixNewPickers1020Enabled({}), "既定 on でない");
+  ok(!aixNewPickers1020Enabled({ AIX_NEW_PICKERS_1020: "off" }), "off で止まらない");
 });
 
 it("申込状況: 問いの網（ほかの方の申込）とご本人の申込の進捗は分ける", () => {
@@ -88,12 +88,12 @@ it("物件について→募集号室について: 入力の行のまま一覧�
 });
 
 it("切替 off: 約束の台帳・網は今まで通り（バイクは駐車場・申込状況の要件は無い）", () => {
-  withSwitch(undefined, () => {
+  withSwitch("off", () => {
     ok(confirmObjectOf("バイク置き場があるか確認させて頂きます！！") === "駐車場", String(confirmObjectOf("バイク置き場があるか確認させて頂きます！！")));
     ok(checkPatternForConfirmTopic("申込状況") === null && checkPatternForConfirmTopic("家賃の交渉") === null, "off でも新しいピッカー");
     ok(normalizeBrainCheckPattern("mgmt_screening") === null, "off でもブレインの値");
     ok(detectPropertyCheckPattern("短期解約の違約金はありますか？")?.check_pattern !== "mgmt_contract_terms", "off でも網");
-    ok(!catalogBlockForBrain(null, { includeAll: true, env: {} }).includes("mgmt_application_status"), "off でもカタログ");
+    ok(!catalogBlockForBrain(null, { includeAll: true, env: { AIX_NEW_PICKERS_1020: "off" } }).includes("mgmt_application_status"), "off でもカタログ");
   });
 });
 

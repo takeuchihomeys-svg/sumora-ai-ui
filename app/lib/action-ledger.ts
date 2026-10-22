@@ -27,7 +27,7 @@ import { STAFF_VIEWING_DONE_RE } from './viewing-thread';
 import { aixMgmtLifelineEnabled, LIFELINE_PROMISE_RE } from './aix-lifeline';
 import { staffOnlyAix1020, findMgmtPendingSentence, stripPendingClause } from './staff-only-aix-1020';
 // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・バイク置き場・契約の条件・家賃の交渉）の約束の要件の網
-import { aixNewPickers1020Enabled, APPLICATION_STATUS_Q_RE, CONTRACT_TERMS_RE, RENT_NEGOTIATION_RE, SURROUNDINGS_RE } from './aix-new-pickers';
+import { aixNewPickers1020Enabled, screeningPickerForBrain, APPLICATION_STATUS_Q_RE, CONTRACT_TERMS_RE, RENT_NEGOTIATION_RE, SURROUNDINGS_RE } from './aix-new-pickers';
 import { findPrematureViewing, customerMentionsFixedViewing, findStaffViewingDeclaration } from './viewing-premature';
 import { resolveViewingFlow, buildViewingFlowLedgerLine, buildViewingFlowBrainText, type ViewingFlow } from './viewing-flow';
 // 2026-09-15 竹内（YUYA 事例）: 保証会社の種類の日本語は guarantor-companies の1表から（依存ゼロの純関数モジュールなので循環しない）
@@ -381,7 +381,7 @@ export function checkPatternForConfirmTopic(topic: string | null | undefined): s
   const t = (topic ?? '').trim();
   if (aixNewPickers1020Enabled()) {
     switch (t) {
-      case '審査': return 'mgmt_screening';
+      case '審査': return screeningPickerForBrain() ? 'mgmt_screening' : null; // 2026-10-22 明示の on か brain の時だけ
       case '申込状況': return 'mgmt_application_status';
       case '契約の条件': case '退去時費用': return 'mgmt_contract_terms';
       case '家賃の交渉': return 'mgmt_rent_negotiation';

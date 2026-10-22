@@ -6,7 +6,7 @@ import { checkPatternForConfirmTopic, customerAskedConfirmTopic, linkPromisePick
  *   ブレインの判断を変えるので既定 off（入れる LINK_PROMISE_NEW_ARRIVAL_REC=on・LINK_PROMISE_PICKER が on の時だけ）
  */
 export function linkPromiseNewArrivalRecEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return linkPromisePickerEnabled(env) && (env.LINK_PROMISE_NEW_ARRIVAL_REC ?? "").trim().toLowerCase() === "on";
+  return linkPromisePickerEnabled(env) && (env.LINK_PROMISE_NEW_ARRIVAL_REC ?? "").trim().toLowerCase() !== "off";
 }
 /**
  * 2026-10-22 竹内さんの答え「新着の約束はブレインが状況で選ぶ（1件ならオススメ・複数ならピックアップ）」:

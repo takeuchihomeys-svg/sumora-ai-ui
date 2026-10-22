@@ -12,7 +12,15 @@
 //   画面のボタン（ピッカーの選択肢）と aix/action の生成は足すだけの物なので切替なしで出る（押した時だけ動く）
 
 export function aixNewPickers1020Enabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.AIX_NEW_PICKERS_1020 ?? "").trim().toLowerCase() === "on";
+  return (env.AIX_NEW_PICKERS_1020 ?? "").trim().toLowerCase() !== "off";
+}
+/**
+ * 2026-10-22 既定 on にした時の線（竹内さん 3948d74c「審査についてはブレインは試験後」）: 審査について（ご相談）mgmt_screening を
+ *   ブレイン・約束の台帳・場面の網が選ぶのは、AIX_NEW_PICKERS_1020=on を明示した時か AIX_SCREENING_BUTTON=brain の時だけ（既定では選ばない・画面のボタンは今まで通り）。
+ *   試験 p12-np-on（10問）は審査の問題 q021・q116 が揺れで悪化・審査で良くなった問題は無かった
+ */
+export function screeningPickerForBrain(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.AIX_NEW_PICKERS_1020 ?? "").trim().toLowerCase() === "on" || (env.AIX_SCREENING_BUTTON ?? "").trim().toLowerCase() === "brain";
 }
 
 /**

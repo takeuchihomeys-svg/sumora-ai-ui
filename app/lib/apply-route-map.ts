@@ -292,7 +292,7 @@ export function locateApplyRoute(s: ApplyRouteSignals): ApplyRouteLocation {
 // ═════════════════════════════════════════════════════════════════════════════
 
 export function applyRouteMapEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.APPLY_ROUTE_MAP ?? "").trim().toLowerCase() === "on";
+  return (env.APPLY_ROUTE_MAP ?? "").trim().toLowerCase() !== "off";
 }
 
 export const APPLY_ROUTE_TEXT_MAX = 600;

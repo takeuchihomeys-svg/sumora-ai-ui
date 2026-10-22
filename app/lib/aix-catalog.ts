@@ -17,7 +17,7 @@
 // 使う所: ①正解の表と一致率（scripts/audit-r10-path-truth.ts の catalogKeyOfPress）②ブレイン（brain-core が場面に関係するボタン・ピッカーだけを渡す＝catalogBlockForBrain）
 import { AIX_PICKERS, type PickerOption } from "./aix-pickers";
 import { AIX_BUTTON_LABELS } from "./aix-taxonomy";
-import { aixNewPickers1020Enabled, isPropertyInfoCheckPattern, NEW_CHECK_PATTERNS_1020, PROPERTY_INFO_BUTTON } from "./aix-new-pickers";
+import { aixNewPickers1020Enabled, screeningPickerForBrain, isPropertyInfoCheckPattern, NEW_CHECK_PATTERNS_1020, PROPERTY_INFO_BUTTON } from "./aix-new-pickers";
 import type { ReplyScene } from "./reply-scene";
 import { isScreeningButtonAction, screeningBrainEnabled, screeningButtonEnabled, SCREENING_BUTTON } from "./aix-owner-answers-1021";
 import { AIX_LEARNED } from "./aix-catalog-learned";
@@ -463,7 +463,9 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
   const scrOn = screeningButtonEnabled(envNow);
   const scrBrain = screeningBrainEnabled(envNow);
   const rows = AIX_CATALOG
-    .filter((e) => e.brainSelectable && (allButtons || inScene(e)) && !(newOff && e.picker && (NEW_CHECK_PATTERNS_1020 as readonly string[]).includes(e.picker.value) && !(scrBrain && e.picker.value === "mgmt_screening")))
+    .filter((e) => e.brainSelectable && (allButtons || inScene(e)) && !(newOff && e.picker && (NEW_CHECK_PATTERNS_1020 as readonly string[]).includes(e.picker.value) && !(scrBrain && e.picker.value === "mgmt_screening"))
+      // 2026-10-22 新しいピッカーを既定 on にしても、審査について（ご相談）は明示の on か brain の時だけ
+      && !(e.picker?.value === "mgmt_screening" && !screeningPickerForBrain(envNow)))
     .map((e) => (scrOn && isScreeningButtonAction(e.aixType, e.picker?.value ?? null) ? { ...e, button: e.aixType === "guarantor_info" ? `${SCREENING_BUTTON}→保証会社について` : SCREENING_BUTTON } : e));
   const byBtn = new Map<string, CatalogEntry[]>();
   for (const e of rows) { const k = `${e.aixType}|${e.button}`; if (!byBtn.has(k)) byBtn.set(k, []); byBtn.get(k)!.push(e); }
