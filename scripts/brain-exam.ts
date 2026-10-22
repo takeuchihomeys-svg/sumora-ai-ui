@@ -857,6 +857,9 @@ async function prepareMainBaseline(): Promise<boolean> {
     ...(JUDGE_ORDER !== "as-is" ? { judgePrefix: JUDGE_ORDER } : {}), ...(KB_RULES_MODE === "score" ? { kbRules: "score" } : {}),
     // 2026-10-17 試験のブレインの口も入れた時だけ（判定を省く・判定のモデル）
     ...(JUDGE_LAZY ? { judgeLazy: true } : {}), ...(JUDGE_MODEL ? { judgeModel: JUDGE_MODEL } : {}),
+    // 2026-10-22 査読: 日付のずらし方を旧（EXAM_DATE_SHIFT=week）に戻した回は、ちょうどずらした main の答えと比べない（場面の日付と時計の関係が違う・
+    //   日付は録音の鍵で伏せる＝入力の差でも同じに見える）。既定（ちょうど）の時は足さない＝今までの置き場のまま
+    ...(String(process.env.EXAM_DATE_SHIFT ?? "").trim().toLowerCase() === "week" ? { dateShift: "week" } : {}),
   });
   const ch = B.configHash(cfg);
   // 2026-10-15 ② 比べる相手の版: main の commit ではなく「試験に効く所の中身」の鍵で置く。main が進んでも試験に効く所が同じなら同じ置き場（使い回す）、
