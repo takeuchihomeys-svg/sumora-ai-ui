@@ -86,7 +86,7 @@ t("on の時は文", writingBlueprintNoteIfEnabled({ scene: "question" }, { WRIT
 // 返信の指示に入る所は「off の時は空文字」の1か所だけ（キャッシュする側には入れない）
 const route = readFileSync(join(__dirname, "../../api/generate-reply/route.ts"), "utf8");
 t("route: 差し込みは毎回変わる側の1か所", (route.match(/sceneSel\?\.blueprintNote/g) ?? []).length === 1 && /\$\{sceneStyleNoteText\}\$\{sceneSel\?\.blueprintNote \?\? ""\}/.test(route));
-t("route: off の時は空文字を渡す（on でも投げたら空文字）", /blueprintNote: !isTemplateOptimize && writingBlueprintEnabled\(\) \? \(\(\) => \{ try \{ return buildWritingBlueprintNote\([\s\S]{0,700}?catch[\s\S]{0,120}?return ""; \} \}\)\(\) : ""/.test(route));
+t("route: off の時は空文字を渡す（on でも投げたら空文字）", /blueprintNote: !isTemplateOptimize && writingBlueprintEnabled\(\) \? \(\(\) => \{ try \{ return buildWritingBlueprintNote\([\s\S]{0,2000}?catch[\s\S]{0,120}?return ""; \} \}\)\(\) : ""/.test(route));
 t("route: 差し込みは dynamicBlock の中", (() => { const a = route.indexOf("const dynamicBlock ="); const b = route.indexOf("sceneSel?.blueprintNote"); const c = route.indexOf("const priorityOrderNote", a); return a > 0 && b > a && b < c; })());
 
 console.log(`\nwriting-blueprint: ${pass} OK / ${fail} NG`);
