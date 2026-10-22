@@ -56,6 +56,13 @@ export function overrideDemoted(f: OverrideFamily, env: Env = process.env): bool
 
 export type DemotedOverride = { family: OverrideFamily; src: string; would: string | null; brain: string | null };
 
+/**
+ * 2026-10-22 D案（8c00271d②「D案の時は決まった処理の上書きを止めて核を勝たせる」）: その番で D案の核が判断した時は、
+ *   上書きの関所（applyOverride）を家族の既定に関わらず全部「下げる」（記録だけ・finalAix は核のまま）。番ごとの印＝一覧に付ける（他の会話に漏れない）
+ */
+export type DemotedList = DemotedOverride[] & { coreWins?: boolean };
+export function markCoreWins(list: DemotedOverride[]): void { (list as DemotedList).coreWins = true; }
+
 /** 下げた上書きを1つ足す（同じ src は1回） */
 export function addDemoted(list: DemotedOverride[], d: DemotedOverride): void {
   if (list.some((x) => x.src === d.src)) return;
@@ -68,7 +75,7 @@ export function addDemoted(list: DemotedOverride[], d: DemotedOverride): void {
  *   ブレインの判断と規則の答えが同じ時は記録しない（食い違いではない）
  */
 export function applyOverride(list: DemotedOverride[], family: OverrideFamily, src: string, would: string | null, brain: string | null, env: Env = process.env): boolean {
-  if (!overrideDemoted(family, env)) return true;
+  if (!(list as DemotedList).coreWins && !overrideDemoted(family, env)) return true;
   if ((would ?? null) !== (brain ?? null)) addDemoted(list, { family, src, would: would ?? null, brain: brain ?? null });
   return false;
 }
