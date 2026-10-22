@@ -10,6 +10,8 @@
 //   直した後:   npx tsx --env-file=.env.local scripts/exam-brain.ts --conv=YUMA4 [--label=fix1] [--select-q="言葉 q112"] [--name=q112,q153]
 //   最後の関所: npx tsx --env-file=.env.local scripts/exam-brain.ts --gate --conv=YUMA5 [--types=出し切り] [--when=night --wait]
 //   取り置き:   npx tsx --env-file=.env.local scripts/exam-brain.ts --warm-main --conv=YUMA5 [--when=night]（本番に入れた版の答えを夜中に取り置く）
+//   取り置きの見込み: npx tsx --env-file=.env.local scripts/exam-brain.ts --warm-main --warm-plan --conv=YUMA4（10/22・AI を呼ばない下見だけ: 入力が前の main と同じ問題は0円で取り置き、違う問題の数と見込みの $ を出す）
+//   10/22 差分だけの取り置き・1本ずつ: scripts/lib/exam-night.ts（予約は比べが先・取り置きは最後に1本・予算 EXAM_WARM_BUDGET_MIN で切って続きを予約・古い控えは脇へ）
 //   予約を流す: npx tsx --env-file=.env.local scripts/exam-brain.ts --run-queue（安い時間に。タスクスケジューラ等から）
 //   台帳:       npx tsx scripts/exam-brain.ts --ledger [--id=q153] [--days=14]
 //   モデル比べ: npx tsx --env-file=.env.local scripts/exam-brain.ts --model-check --conv=YUMA4 [--types=待って・閉じる] [--n=8]
@@ -49,6 +51,7 @@ import { decideStageFromDiff, examVersionKey } from "./lib/exam-scope";
 import { BASELINE_DIR } from "./lib/brain-exam-baseline";
 import { examEnvFingerprint, formatEnvFp } from "./lib/exam-env-fp";
 import * as C from "./lib/exam-coord";
+import { budgetMsOf, orderQueue, sweepStaleBackups, itemHardMs, queueTotalMs } from "./lib/exam-night";
 // 2026-10-21 スイッチの指紋（既定＝.env.local と違うスイッチ・exam-env-fp.ts）。使い回しの鍵に入れる・見出しと台帳に残す
 // 2026-10-21 査読: 予約（--run-queue）は env を運べず、夜の回が既定のスイッチ（DAY_SUBJECT_READER 無し＝off）で流れて on/off の比べが無効になっていた
 //   → 予約の argv に --switch=NAME=値（指紋の組・(unset) は消す）を入れ、子の最初にここで env に戻す（指紋より前）
@@ -143,8 +146,12 @@ function ensureMainWarm(o: { force?: boolean; runNow?: boolean; quiet?: boolean;
   log(`main の取り置き: ${d.why} → ${o.runNow ? "今" : `${jst(at)} JST の --run-queue`}で（${f}）`);
 }
 /** brain-exam が書いた「前（main）」の数（使い回し・持ち越し・解いた・回さなかった） */
-function readBaselineSummary(label: string): { reused: number; carried: string[]; run: string[]; deferred: string[] } | null {
-  try { const j = JSON.parse(readFileSync(join(RESULTS_DIR, `${label}.baseline.json`), "utf8")) as { reused?: number; carried?: string[]; run?: string[]; deferred?: string[] }; return { reused: j.reused ?? 0, carried: j.carried ?? [], run: j.run ?? [], deferred: j.deferred ?? [] }; } catch { return null; }
+//   2026-10-22 差分だけの取り置き: 下見で入力が同じだった問題（planSame・呼んでいない）は使い回しに数える。deferWhy＝残りが出た訳（budget・main-moved・limit）
+function readBaselineSummary(label: string): { reused: number; carried: string[]; run: string[]; deferred: string[]; planSame: string[]; planChanged: string[]; planUsd: number; deferWhy: string | null } | null {
+  try {
+    const j = JSON.parse(readFileSync(join(RESULTS_DIR, `${label}.baseline.json`), "utf8")) as { reused?: number; carried?: string[]; run?: string[]; deferred?: string[]; planSame?: string[]; planChanged?: string[]; planUsd?: number; deferWhy?: string | null };
+    return { reused: (j.reused ?? 0) + (j.planSame?.length ?? 0), carried: j.carried ?? [], run: j.run ?? [], deferred: j.deferred ?? [], planSame: j.planSame ?? [], planChanged: j.planChanged ?? [], planUsd: j.planUsd ?? 0, deferWhy: j.deferWhy ?? null };
+  } catch { return null; }
 }
 
 // ─── 子（brain-exam.ts）を回す ───────────────────────────────────────────────
@@ -752,9 +759,20 @@ async function runQueue() {
   if (!isCheapWindow(now) && !flag("force")) { log(`今は DeepSeek の混雑の時間（平日 JST 10-13・15-19）→ 流さない（--force で流す）`); return; }
   // 10/20 COST①: 安い時間の予約の口で main の版の取り置きを確かめる（merge の後の最初の夜に1回だけ・今流す）
   ensureMainWarm({ runNow: true });
-  // 取り置き（warm-auto-*）を先に流す＝同じ夜の他の予約が main の答えを使い回せる
-  const due = readQueue().filter((x) => Date.parse(x.at) <= now.getTime()).sort((a, b) => Number(b.label.startsWith("warm-auto-")) - Number(a.label.startsWith("warm-auto-")));
+  // 2026-10-22 ⑤ 1本ずつ（10/22 の夜: 166問の取り置きが約 11時間 夜のタスク（IgnoreNew）を塞ぎ、比べの予約が遅れた）:
+  //   比べ（取り置き以外）を先に作った順で流す → 取り置きは最後に1本だけ（何本予約されていても子は「今の main」を作る＝古い版の物は捨てる）。
+  //   取り置きは予算（EXAM_WARM_BUDGET_MIN・既定 90分）で自分で切り、続きは予約し直す＝次の回（30分おき）でも比べが先に流れる。
+  //   1回の上限（EXAM_QUEUE_MAX_MIN・既定 300分）を過ぎたら次の予約は始めない。1本の上限（EXAM_QUEUE_ITEM_MAX_MIN・既定 240分）を超えた子は止める
+  const due0 = readQueue().filter((x) => Date.parse(x.at) <= now.getTime());
+  const { run: due, drop } = orderQueue(due0, { currentVk: mainHead()?.vk ?? null });
+  for (const d of drop) { log(`予約を捨てる: ${d.item.label}（${d.why}）`); dequeue(d.item.file); }
+  // 古い鍵・控え（止まった実行の条件の行の控え）を脇へ（消さない）: 夜の作業ツリー・main の作業ツリー・予約の作業ツリー
+  try {
+    const wts = [process.cwd(), resolve(process.cwd(), "..", "brain-exam-main"), ...due.map((x) => x.cwd)];
+    sweepStaleBackups(wts.map((d) => join(d, "scripts", ".replay-out")), { log });
+  } catch (e) { log(`  古い控えの見回りができない: ${String(e).slice(0, 120)}`); }
   if (!due.length) log("予約: 流す物が無い");
+  else log(`予約の順（1本ずつ・比べが先・取り置きは最後）: ${due.map((x) => x.label).join(" → ")}`);
   await runQueueItems(due);
   // 2026-10-18 竹内さん 10/18 OK「毎晩の自己点検を朝の報告に載せる」: 予約の後にブレインの自己点検を1回（1日の上限 $10 の内・1回 $1 まで・
   //   今日済んでいれば流さない・結果は表 brain_self_review_runs へ＝朝の報告が読む）。申込以降の会話は対象外のまま。止める BRAIN_SELF_REVIEW_NIGHTLY=off
@@ -764,20 +782,38 @@ async function runQueue() {
   }
 }
 async function runQueueItems(due: ReturnType<typeof readQueue>) {
+  const t0 = Date.now(), total = queueTotalMs(process.env), hard = itemHardMs(process.env);
   for (const x of due) {
-    log(`予約を流す: ${x.label}（${x.createdAt} に予約・見込み $${x.estUsd.toFixed(2)}）`);
+    if (total !== null && Date.now() - t0 >= total) { log(`予約: この回の上限 ${Math.round(total / 60_000)}分を過ぎた → 残り ${due.length - due.indexOf(x)}本は次の回（予約はそのまま）`); break; }
+    // 版ごとの取り置き（全部の問題）は夜の作業ツリー（origin/main の今のコード）で流す＝予約した担当の作業ツリーの古いコードで回さない
+    const whole = x.argv.includes("--warm-main") && !x.argv.some((a) => /^--(types|stage|only)=/.test(a));
+    const cwd = whole && existsSync(join(process.cwd(), "scripts", "exam-brain.ts")) ? process.cwd() : x.cwd;
+    log(`予約を流す: ${x.label}（${x.createdAt} に予約・見込み $${x.estUsd.toFixed(2)}${cwd !== x.cwd ? `・夜の作業ツリーで` : ""}）`);
     // 2026-10-17 確かめる人: 予約した作業ツリーが消えていると spawn が error で落ち、後ろの予約も流れない＝飛ばす
-    if (!existsSync(x.cwd)) { log(`  予約した作業ツリーが無い（${x.cwd}）→ 飛ばす`); dequeue(x.file); continue; }
+    if (!existsSync(cwd)) { log(`  予約した作業ツリーが無い（${cwd}）→ 飛ばす`); dequeue(x.file); continue; }
     dequeue(x.file);
+    const ts = Date.now();
     // EXAM_FROM_QUEUE: 夜中の予約の実行＝上限を超える時も収まる分だけ流す（capSplit の fill）
-    await new Promise<void>((res) => { const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", ["tsx", "--env-file=.env.local", "scripts/exam-brain.ts", ...x.argv].map(q), { cwd: x.cwd, stdio: "inherit", shell: process.platform === "win32", env: { ...process.env, EXAM_FROM_QUEUE: "1" } }); ch.on("error", (e) => { log(`  流せない: ${String(e).slice(0, 120)}`); res(); }); ch.on("close", () => res()); });
+    await new Promise<void>((res) => {
+      const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", ["tsx", "--env-file=.env.local", "scripts/exam-brain.ts", ...x.argv].map(q), { cwd, stdio: "inherit", shell: process.platform === "win32", env: { ...process.env, EXAM_FROM_QUEUE: "1" } });
+      // 1本の上限: 超えたら子の木ごと止める（止まった子の控え・鍵は次の回の見回りで脇へ寄る）
+      const timer = hard === null ? null : setTimeout(() => {
+        log(`  ⏹ ${x.label} が ${Math.round(hard / 60_000)}分を超えた → 止める（EXAM_QUEUE_ITEM_MAX_MIN）`);
+        try { if (process.platform === "win32" && ch.pid) execFileSync("taskkill", ["/PID", String(ch.pid), "/T", "/F"], { stdio: "ignore" }); else ch.kill("SIGTERM"); } catch { /* 既に終わった */ }
+      }, hard);
+      const done = () => { if (timer) clearTimeout(timer); res(); };
+      ch.on("error", (e) => { log(`  流せない: ${String(e).slice(0, 120)}`); done(); }); ch.on("close", done);
+    });
+    log(`  ${x.label}: ${Math.round((Date.now() - ts) / 60_000)}分`);
   }
 }
 
 // ─── 本番に入れた版の答えを取り置く ───────────────────────────────────────────
 async function warmMain() {
   const now = new Date();
-  const w = decideWhen({ when: (arg("when", "night") as When), estUsd: 99, gate: true, now });
+  // 2026-10-22 --warm-plan: 下見だけ（AI を呼ばない）。今の main で入力が前の main と同じ問題はその答案を取り置き、違う問題の数と見込みの費用を出す
+  const PLAN = flag("warm-plan");
+  const w = decideWhen({ when: PLAN ? "now" : (arg("when", "night") as When), estUsd: 99, gate: true, now });
   if (!w.runNow) {
     if (!flag("wait")) { const f = enqueue({ label: `warm-${jst(now).slice(5, 10)}`, argv: [...args.filter((a) => !/^--when=/.test(a)), "--when=now"], cwd: process.cwd(), at: w.at.toISOString(), createdAt: now.toISOString(), estUsd: 0 }); log(`取り置きを予約した（${jst(w.at)} JST から）: ${f}`); return; }
     while (Date.now() < w.at.getTime()) await sleep(Math.min(10 * 60_000, w.at.getTime() - Date.now() + 1000));
@@ -788,10 +824,11 @@ async function warmMain() {
   const reps = Object.fromEntries(ids.map((id) => { const p = effective((full.get(id) ?? spec.find((s) => s.id === id)!) as AnyProblem); return [id, warmRepsOf(REPS_MODE, flakeVerdict(readObs(id), { problemHash: problemHash(p), model: "deepseek-all" }).verdict, MAX_REPS)]; }));
   // 10/17 ② 1日の上限: 取り置きも数える（守る線は無い）。10/20: 全部か0かでなく、残りの額で回せる数だけ今（--baseline-limit）・残りは次の夜中に続き
   //   （旧は見込み全部が上限を超えると毎晩先送りされた。取り置きに無い問題だけ回す＝使い回し・持ち越しは0円なので、見込みは回す問題の上限）
+  //   10/22: 上限は「本当に回す（入力が前の main と違う）」問題に当てる（下見で同じだった問題は0円＝上限を使わない）
   const cap = dailyCapUsd(process.env);
   const peakK = isDeepseekPeakAt(new Date()) ? UNIT_USD.peakRatio : 1;
   let limit: number | null = null;
-  if (cap !== null && !flag("over-cap")) {
+  if (cap !== null && !flag("over-cap") && !PLAN) {
     const used = await readDailySpend(sb).then((x) => x.usd).catch(() => cap);
     limit = warmLimit({ cap, usedUsd: used, unitUsd: UNIT_USD.brain * peakK * Math.max(1, ...Object.values(reps)) });
     if (!limit) {
@@ -800,42 +837,67 @@ async function warmMain() {
       log(`取り置き: 今日 $${used.toFixed(2)}・上限 $${cap}＝今は1問も回せない → 次の夜中（${jst(at)} JST）に回した: ${f}`);
       return;
     }
-    log(`取り置き: 今日 $${used.toFixed(2)}・上限 $${cap} → 取り置きに無い問題を今 ${limit}問まで回す（残りは次の夜中）`);
+    log(`取り置き: 今日 $${used.toFixed(2)}・上限 $${cap} → 入力が前の main と違う問題を今 ${limit}問まで回す（残りは次の夜中）`);
   }
+  // 10/22 ⑤ 1本ずつ: 取り置きは時間の予算（EXAM_WARM_BUDGET_MIN・既定 90分・off で無し）で自分で切る。残りはすぐ予約し直す
+  //   （夜のタスクは30分おき・予約は比べを先に流す＝長い取り置きが比べを塞がない）。main が途中で進んだら古い main の答えを作り続けない
+  const budgetMs = PLAN ? null : budgetMsOf(arg("budget-min") || (process.env.EXAM_WARM_BUDGET_MIN ?? "90"));
+  const t0 = Date.now();
+  const budgetArg = () => budgetMs === null ? [] : [`--baseline-budget-min=${Math.max(1, Math.round((budgetMs - (Date.now() - t0)) / 60_000))}`];
   const h = arg("warm-vk") ? { vk: arg("warm-vk"), commit: "" } : mainHead();
   mkdirSync(join(EXAM_BRAIN_DIR, "run"), { recursive: true });
   const repsFile = resolve(join(EXAM_BRAIN_DIR, "run", `warm-${Date.now().toString(36)}.reps.json`));
   writeFileSync(repsFile, JSON.stringify(reps));
   let left = 0, failed = false, commit = h?.commit ?? "";
+  const why = new Set<string>();
+  const plans: Array<{ stage: string; same: number; changed: string[]; usd: number }> = [];
   for (const stage of (arg("stage") ? list("stage") : ["brain"])) {
     const label = `warm-${Date.now().toString(36)}-${stage}`;
     const o = await runBrainExam([`--label=${label}`, `--only=${ids.join(",")}`, `--stage=${stage}`, "--baseline=main", "--baseline-only", REPLAY, `--repeat=${MAX_REPS}`, `--reps-file=${repsFile}`,
-      ...(limit !== null ? [`--baseline-limit=${limit}`] : []),
+      ...(limit !== null ? [`--baseline-limit=${limit}`] : []), ...budgetArg(), ...(PLAN ? ["--baseline-plan-only"] : []),
       ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX !== "as-is" ? [`--judge-prefix=${JUDGE_PREFIX}`] : []), ...(CONV ? [`--conv=${CONV}`] : []), ...PASS], CONV ? {} : { REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${label}.json` });
     const s = readBaselineSummary(label);
     if (o.code !== 0 || !s) failed = true;
-    if (s) { left += s.deferred.length; if (limit !== null) limit = Math.max(0, limit - s.run.length); log(`取り置き（${stage}）: 使い回し ${s.reused}・持ち越し ${s.carried.length}・今回した ${s.run.length}・残り ${s.deferred.length}`); }
+    if (s) {
+      left += s.deferred.length; if (s.deferWhy) why.add(s.deferWhy);
+      if (limit !== null) limit = Math.max(0, limit - s.run.length);
+      plans.push({ stage, same: s.planSame.length, changed: s.planChanged, usd: s.planUsd });
+      log(`取り置き（${stage}）: 使い回し ${s.reused}（うち下見で入力が同じ ${s.planSame.length}）・持ち越し ${s.carried.length}・${PLAN ? `入力が違う ${s.planChanged.length}問（見込み 約 $${s.planUsd.toFixed(2)}）` : `今回した ${s.run.length}`}・残り ${s.deferred.length}${s.deferWhy ? `（${s.deferWhy}）` : ""}`);
+    }
     try { commit = commit || (JSON.parse(readFileSync(join(RESULTS_DIR, `${label}.baseline.json`), "utf8")) as { commit?: string }).commit || ""; } catch { /* */ }
   }
+  if (PLAN) {
+    for (const p of plans) log(`\n📋 今の main の取り置きの見込み（${p.stage}）: 下見で入力が前の main と同じ ${p.same}問（0円）／入力が違う＝本当に回す ${p.changed.length}問・約 $${p.usd.toFixed(2)}${p.changed.length ? `（${p.changed.join(",")}）` : ""}`);
+    return;
+  }
   // 10/20 COST③: flash にした型・問題の「前」は flash の main で比べる（構成が違う置き場）→ 同じ夜に flash でも取り置く（1問 約 1/4 の値段）。--model=pro の時はしない
-  if (arg("model", "auto") === "auto" && (arg("stage") ? list("stage") : ["brain"]).includes("brain")) {
+  if (arg("model", "auto") === "auto" && (arg("stage") ? list("stage") : ["brain"]).includes("brain") && !why.has("main-moved") && (budgetMs === null || Date.now() - t0 < budgetMs)) {
     const mc = readModelCheck();
     const fids = ids.filter((id) => { const t = String(spec.find((s) => s.id === id)?.type ?? ""); return !mc.badIds.has(id) && (mc.okTypes.has(t) || mc.okIds.has(id)); });
     if (fids.length && (limit === null || limit > 0)) {
       const label = `warm-${Date.now().toString(36)}-brain-fl`;
       const o = await runBrainExam([`--label=${label}`, `--only=${fids.join(",")}`, "--stage=brain", "--baseline=main", "--baseline-only", REPLAY, `--repeat=${MAX_REPS}`, `--reps-file=${repsFile}`,
-        ...(limit !== null ? [`--baseline-limit=${Math.floor(limit / UNIT_USD.flashRatio)}`] : []),
+        ...(limit !== null ? [`--baseline-limit=${Math.floor(limit / UNIT_USD.flashRatio)}`] : []), ...budgetArg(),
         ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX !== "as-is" ? [`--judge-prefix=${JUDGE_PREFIX}`] : []), ...(CONV ? [`--conv=${CONV}`] : []), ...PASS],
         { ...(CONV ? {} : { REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${label}.json` }), DEEPSEEK_MODEL: FLASH_MODEL, EXAM_JUDGE_MODEL: PRO_MODEL });
       const s = readBaselineSummary(label);
       if (o.code !== 0 || !s) failed = true;
-      if (s) { left += s.deferred.length; log(`取り置き（brain・flash ${fids.length}問）: 使い回し ${s.reused}・持ち越し ${s.carried.length}・今回した ${s.run.length}・残り ${s.deferred.length}`); }
+      if (s) { left += s.deferred.length; if (s.deferWhy) why.add(s.deferWhy); log(`取り置き（brain・flash ${fids.length}問）: 使い回し ${s.reused}（うち下見で入力が同じ ${s.planSame.length}）・持ち越し ${s.carried.length}・今回した ${s.run.length}・残り ${s.deferred.length}${s.deferWhy ? `（${s.deferWhy}）` : ""}`); }
     }
-  }
-  // 10/20 COST①: 版ごとの取り置きの記録（全部取れたら同じ版は二度と予約しない・途中なら次の夜中に続き）
+  } else if (budgetMs !== null && Date.now() - t0 >= budgetMs) { why.add("budget"); left += 1; }
+  // 10/20 COST①: 版ごとの取り置きの記録（全部取れたら同じ版は二度と予約しない・途中なら続き）
   if (h?.vk) {
     writeWarmLog(h.vk, { at: new Date().toISOString(), commit, done: !failed && left === 0, left, label: `warm-${jst(new Date())}` });
-    if (failed || left) ensureMainWarm({ cont: true });
+    if (why.has("main-moved")) {
+      // 10/22: 途中で main が進んだ＝古い版の続きは要らない。今の main の版の取り置きを今予約する（次の夜のタスクの回で比べの後に流れる）
+      mainHeadMemo = undefined;
+      log("取り置き: 途中で main が進んだ → 古い版の続きはやめ、今の main の取り置きを予約する");
+      ensureMainWarm({ runNow: true });
+    } else if (why.has("budget") && !failed) {
+      // 予算で切った続き: すぐ予約し直す（同じ label＝同じ版。30分おきの夜のタスクが比べの後に流す）
+      const f = enqueue({ label: arg("warm-vk") ? `warm-auto-${arg("warm-vk")}` : `warm-auto-${h.vk}`, argv: [...args.filter((a) => !/^--(when|warm-vk)=/.test(a)), "--when=now", `--warm-vk=${h.vk}`], cwd: process.cwd(), at: new Date().toISOString(), createdAt: new Date().toISOString(), estUsd: 0 });
+      log(`取り置き: 時間の予算で切った（残り ${left}問）→ 続きを予約した（次の夜のタスクの回で、比べの予約の後に流す）: ${f}`);
+    } else if (failed || left) ensureMainWarm({ cont: true });
   }
 }
 
