@@ -6,6 +6,7 @@ import {
   locateApplyRoute, resolveRouteNode, buildApplyRouteBrainText, applyRouteBrainTextIfEnabled, applyRouteMapEnabled,
   ROUTE_NODES, ROUTE_BRANCHES, MAIN_ROUTE, APPLY_ROUTE_TEXT_MAX, SILENT_DAYS, type ApplyRouteSignals,
 } from "../apply-route-map";
+import { rankMentionOf, latestRankMention } from "../parallel-second";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -63,9 +64,52 @@ it("入居時期が先（来年・2か月以上先の月）／今月・来月は
   eq(locateApplyRoute(base({ customerTurnText: "入居は11月末までに" })).branch, null);
 });
 it("審査の不安の申告（問いの形でない）→ 審査の相談", () => eq(locateApplyRoute(base({ customerTurnText: "クレカブラックなのと、夜職なので給料明細だせませんが💦" })).branch, "screening_concern"));
-it("番手（こちらが2番手を伝えた後）・1番手は当てない", () => {
-  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["現在2番手でのお申込みとなります"] })).branch, "rank_waiting");
+it("番手: 案内の後は rank_offered・申込んだ後は rank_waiting・1番手／受け付けていない／保証会社の2番手は当てない（2026-10-21）", () => {
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["現在2番手でのお申込みとなります"] })).branch, "rank_offered");
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["よろしければ2番手でお申し込みさせて頂き、並行してお部屋探しさせて頂きます"] })).branch, "rank_offered");
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["お気に召されましたら2番手でお部屋お申込みさせて頂きます!!"] })).branch, "rank_offered");
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["アーバン西九条201号室、2番手でお申込みさせて頂きます!!"] })).branch, "rank_waiting");
   eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["1番手でお申込み可能です"] })).branch, null);
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["お申込みが既に入っており2番手申込み受け付けていないとのことです!!"] })).branch, null);
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["・2番手保証会社日本セーフティ(独立系)"] })).branch, null);
+  // 一番新しい番手の話で決める（案内 → 申込んだ）
+  eq(locateApplyRoute(base({ stage: "interested", recentStaffTexts: ["2番手にてお申し込み完了しております!!", "現在お申込みが入っており、2番手でのお申込みが可能となっております!!"] })).branch, "rank_waiting");
+  ok(ROUTE_BRANCHES.rank_offered.next.aix.includes("application_push") && !ROUTE_BRANCHES.rank_waiting.next.aix.includes("application_push"), "申込んだ後に申込を勧めない");
+});
+it("番手: 2番手で申込中（1つの判定）は申込の段階でも rank_waiting・申込の段階の文だけでは開かない", () => {
+  eq(locateApplyRoute(base({ stage: "applying", parallelSecond: true })).branch, "rank_waiting");
+  eq(locateApplyRoute(base({ stage: "applying", recentStaffTexts: ["2番手にてお申し込み完了しております!!"] })).branch, null);
+  eq(locateApplyRoute(base({ stage: "won", parallelSecond: true })).branch, null);
+});
+it("番手の文の読み分け（2026-10-22 独立レビュー）: 待つ形は勧めの語があっても申込んだ・保証会社の並び・受け付けていない・終わりにしない形", () => {
+  // (1) 繰り上がりの連絡を待つ形は勧め・問いの語があっても applied
+  eq(rankMentionOf("2番手で繰り上がりのご連絡を待ちながら、並行してお部屋探しするのがオススメです!!"), "applied");
+  eq(rankMentionOf("繰り上がり連絡がございましたら審査開始となりますので、それまで他のお部屋も見てみませんか？"), "applied");
+  eq(rankMentionOf("現在2番手で審査開始待ちの状態ですが、よろしければ他もお探ししましょうか"), "applied");
+  eq(rankMentionOf("繰り上がり待ちの間に、他のお部屋も如何でしょうか"), "applied");
+  eq(rankMentionOf("よろしければ2番手でお申し込みさせて頂き、並行してお部屋探しさせて頂きます"), "offered");
+  // (2) 保証会社の並び
+  eq(rankMentionOf("1番手：全保連\n2番手：日本セーフティ"), null);
+  eq(rankMentionOf("2番手は信販系のオリコになります"), null);
+  // (3) 受け付けていない
+  eq(rankMentionOf("2番手のお申込みは出来ずとのことです"), "unavailable");
+  eq(rankMentionOf("1番手の審査中のため2番手のお申込みストップとのことです"), "unavailable");
+  eq(rankMentionOf("現在2番手申込停止中です"), "unavailable");
+  // (4) 終わりにしない（割合・可能性・流れの説明）
+  eq(rankMentionOf("2番手でも繰り上がりました割合は3割ほどです"), "offered");
+  eq(rankMentionOf("1番手がキャンセルの場合は2番手に繰り上がる形となります"), "offered");
+  eq(rankMentionOf("無事1番手に繰り上がりました!!"), "ended");
+  eq(rankMentionOf("204号室は1番手の方がご契約となりますので、お客様の2番手お申込みがキャンセルとなっております"), "ended");
+  // 案内の後にこちらが別の中身を送っていれば案内の場面は過ぎた（q004）・画像だけは数えない・申込んだは続く
+  eq(latestRankMention(["現在募集中のお部屋で全てピックアップさせて頂きました！！お気に召されたお部屋お申込み可能です！！", "[画像]", "1001号室は現在既に1番手のお申込が入っており、お申込される場合は2番手以降でのご案内となります！！"]), null);
+  eq(latestRankMention(["[画像]", "[画像]", "現在2番手でのお申込みとなります"]), "offered");
+  eq(latestRankMention(["ピックアップさせて頂きました", "2番手にてお申し込み完了しております!!"]), "applied");
+  // お客様が番手のことを聞いている時は、後に別の中身があっても案内の場面のまま（独立レビュー 365日）
+  eq(latestRankMention(["12階のお部屋は募集が終了しております!!", "13階のお部屋は1番手のお申込みが入っており、2番手でのお申込となります!!"], "13階は何人待ちですか？"), "offered");
+  eq(latestRankMention(["ピックアップさせて頂きました", "既に1番手のお申込が入っておりますので、お申込頂ける場合は2番手以降でのご案内となります!!"], "1つ目の物件だと、別の方が契約しない場合いつ入居可能ですか？"), "offered");
+  eq(latestRankMention(["ピックアップさせて頂きました", "既に1番手のお申込が入っておりますので、お申込頂ける場合は2番手以降でのご案内となります!!"], "こちらの物件の詳細希望です"), null);
+  // 申込んだ判定は isApplied2ndText と同じ1文の規則（main の 3番手・可能性）
+  eq(rankMentionOf("1番手に上がる可能性ございますので、3番手でお申込させて頂きます"), "applied");
 });
 it("新着待ち（searching.reason=watch_promised）", () => {
   const l = locateApplyRoute(base({ stage: "searching", searching: { active: true, reason: "watch_promised" } }));

@@ -2960,6 +2960,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const parallelSearchCtx = resolveParallelSearchScene({
     state: customerState,
     ...parallelSearchInputsFromMessages(typedMessages.map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at }))),
+    // 2026-10-21 番手の場面は「2番手で申込中」の1つの判定（post-apply.judgeParallelSecond）とそろえる
+    parallelSecond: opts?.parallelSecond === true,
   });
   const parallelSearchBrainText = buildParallelSearchBrainNote(parallelSearchCtx);
   // 2026-10-20 竹内さん（55bf37b6「申込までの地図」）: 本線＋分かれ道の上の今の位置・申込へ向けた次の一手・本線への戻り方（app/lib/apply-route-map.ts・決定論・LLM なし）。
@@ -2984,6 +2986,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
         sceneId: sceneEvidence?.scene ?? null,
         customerTurnText: unrepliedTurn.text ?? "",
         recentStaffTexts: psInAR.recentStaffTexts,
+        parallelSecond: opts?.parallelSecond === true,
         holdReason: holdReasonAR,
         farMoveIn: !!farMoveInEarly,
         lastStaffAtIfStaffLast: lastMsgAR && lastMsgAR.sender !== "customer" ? lastMsgAR.created_at : null,
