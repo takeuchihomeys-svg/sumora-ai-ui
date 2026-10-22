@@ -178,7 +178,7 @@ async function main() {
   h = await setupLlmTest(`exam-aix-text-${LABEL}`);
   h.assertTestConversation(CONV);
   // main の答えの控え（入力の差）: 同じ要求は main の答え。下見は main の答えか録音だけ・違う要求は呼ばない
-  const pinRows = isMainRun ? [] : (base?.rows ?? []).map((r) => ({ ...r, id: `aix:${r.id}`, rep: 1, error: r.err ?? undefined }));
+  const pinRows = isMainRun || args.includes("--no-pins") ? [] : (base?.rows ?? []).map((r) => ({ ...r, id: `aix:${r.id}`, rep: 1, error: r.err ?? undefined }));
   if (pinRows.length) setCassettePins(pinsFromRows(pinRows), { only: PLAN });
   const stateOf = async () => {
     const { data: conv } = await sb.from("conversations").select("*").eq("id", CONV).single();

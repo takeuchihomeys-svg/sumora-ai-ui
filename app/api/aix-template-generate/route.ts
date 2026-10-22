@@ -1,4 +1,7 @@
 import { manYen } from "@/app/lib/man-yen";
+// 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN=on の時だけ（既定 off）
+import { aixBrainOn } from "@/app/lib/aix-brain";
+import { aixRequestMustUseClaude } from "@/app/lib/aix-new-pickers";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { secondLinesFromCard } from "@/app/lib/estimate-explain";
 import { NextRequest, NextResponse, after } from "next/server";
@@ -2040,6 +2043,47 @@ ${text}
         // 再生成が違反を解消していれば採用。まだ違反していれば初回結果を維持する
         if (!detectFrameViolation(retryText, recommendationScenario)) text = retryText;
         else console.warn("[aix-template-generate] frame violation 再生成後も未解消 — 初回結果を返却");
+      }
+    }
+
+    // ── 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3・55575458）: AIX のブレイン（実行の指揮官）──────────────────────
+    //   統括の判断の束（材料の中）・このボタン×ピッカーの意味・推す物件・締めの向き・資料の事実を読み、下書きの組み立てを決め（設計図）、
+    //   要る時だけ実行役（flash・伏せた材料）が部品を書く。確かめで悪くなれば下書きのまま。
+    //   置き場所: 書く役の作り直し（別の物件・言い回し・見積・訴求フレーム）の後＝下書きは今まで通りの文。この後は決まった掃除と2通目の確かめだけ。
+    //   AIX_BRAIN=on の時だけ（既定 off＝LLM も呼ばない）。物件オススメ・物件ピックアップの後の文だけ（試験 aixbrain1: 見積書の2通目は変わらず費用だけ増えた）
+    if (aixBrainOn() && (actionType === "property_recommendation" || actionType === "property_send")) {
+      try {
+        const { runAixBrain } = await import("@/app/lib/aix-brain-server");
+        const { aixMeaningForGenerator } = await import("@/app/lib/aix-catalog");
+        const pickerV = (typeof pickupType === "string" && pickupType) ? pickupType : null;
+        const meaning = aixMeaningForGenerator(actionType, pickerV, { maxExemplars: 0 }).split("\n").filter((l) => !/^竹内さんのお手本|^竹内さんの文の型/.test(l)).join("\n");
+        const decided: string[] = [];
+        if (secondPropertyLabel) decided.push(`推す物件: ${secondPropertyLabel}`);
+        if (recCta) decided.push(`締めの向き: ${recCta.kind === "viewing" ? "内覧へ（お気に召されましたらご都合よろしいお日にちにお部屋ご案内）" : recCta.kind === "apply" ? "申込へ（お気に召されましたらお申込しお部屋抑え）" : "ご査収だけ（誘いを足さない）"}（${recCta.reason}）`);
+        if (secondViewable.line) decided.push(`現況の一文: ${secondViewable.line}`);
+        if (firstDeclaresNew) decided.push("1通目で新着を伝え済み");
+        const material = [
+          sentMessage ? `【直前に送った1通目（AIX）】\n${sentMessage}` : "",
+          secondMaterialNote ? `【推す物件の資料の事実】\n${secondMaterialNote}` : "",
+          secondMaterials?.note ? `【2通目の材料（依頼・約束・確認の結果・統括の判断）】\n${secondMaterials.note.slice(0, 2500)}` : "",
+        ].filter(Boolean).join("\n\n");
+        const callName = resolvedCustomerName ? String(resolvedCustomerName).replace(/(?:さん|様)$/, "") : null;
+        const r = await runAixBrain({
+          aixType: actionType, picker: pickerV, kind: sentMessage ? "second" : "first", callName,
+          staffInputs: secondPropertyLabel ? [["推す物件", secondPropertyLabel]] : [],
+          material, recent: Array.isArray(recentMessages) ? recentMessages : [], meaning, decided, draft: text,
+          closeKind: recCta?.kind === "viewing" ? "viewing" : recCta?.kind === "apply" ? "apply" : null,
+        }, {
+          conversationId: conversationId ?? null,
+          mustClaude: aixRequestMustUseClaude({ action: actionType, check_pattern: typeof lastAixCheckPattern === "string" ? lastAixCheckPattern : null }) || secondMaterials?.route === "pin",
+          names: [customerName ?? null],
+          tag: "aix-template-generate",
+          // 2通目の AI くさい言い回し（second-message-style）が下書きに無いのに出たら下書き（上の作り直しをもう一度呼ばない）
+          extraCheck: (t) => findAiPhrases(t).map((h) => `AI の言い回し:${h.key}`),
+        });
+        text = r.text;
+      } catch (e) {
+        console.warn("[aix-template-generate] aix-brain skipped:", e instanceof Error ? e.message : String(e));
       }
     }
 
