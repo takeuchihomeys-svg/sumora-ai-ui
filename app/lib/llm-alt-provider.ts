@@ -350,7 +350,7 @@ export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string 
   if (cfg.actions.has(routeName)) return true;
   // 2026-10-21 書く役の flash: 返信生成（reply_generate）を DeepSeek に回している時だけ、同じ門で回す（Claude の構成なら回さない）
   if (routeName === WRITER_FLASH_ACTION) return cfg.provider === "deepseek" && cfg.actions.has("reply_generate");
-  // 2026-10-22 AIX のブレイン（AIX_BRAIN=on の時だけ呼ばれる）: DeepSeek が主の相手なら flash に回す（入口が申込以降・審査の事情・時刻の線を Claude に固定し、名前を伏せてから呼ぶ）
+  // 2026-10-22 AIX のブレイン（AIX_BRAIN でそのボタンが入っている時だけ呼ばれる・既定＝内覧日調整だけ）: DeepSeek が主の相手なら flash に回す（入口が申込以降・審査の事情・時刻の線を Claude に固定し、名前を伏せてから呼ぶ）
   if (routeName === AIX_BRAIN_ACTION) return cfg.provider === "deepseek";
   // 2026-09-29 名前ごとの振り分け（LLM_ALT_ROUTES）に書いた名前
   if (cfg.routes?.has(routeName)) return true;

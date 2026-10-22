@@ -1,6 +1,6 @@
 import { manYen } from "@/app/lib/man-yen";
-// 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN=on の時だけ（既定 off）
-import { aixBrainOn } from "@/app/lib/aix-brain";
+// 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ）
+import { aixBrainEnabledFor } from "@/app/lib/aix-brain";
 import { aixRequestMustUseClaude } from "@/app/lib/aix-new-pickers";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { secondLinesFromCard } from "@/app/lib/estimate-explain";
@@ -2070,8 +2070,8 @@ ${text}
     //   統括の判断の束（材料の中）・このボタン×ピッカーの意味・推す物件・締めの向き・資料の事実を読み、下書きの組み立てを決め（設計図）、
     //   要る時だけ実行役（flash・伏せた材料）が部品を書く。確かめで悪くなれば下書きのまま。
     //   置き場所: 書く役の作り直し（別の物件・言い回し・見積・訴求フレーム）の後＝下書きは今まで通りの文。この後は決まった掃除と2通目の確かめだけ。
-    //   AIX_BRAIN=on の時だけ（既定 off＝LLM も呼ばない）。物件オススメ・物件ピックアップの後の文だけ（試験 aixbrain1: 見積書の2通目は変わらず費用だけ増えた）
-    if (aixBrainOn() && (actionType === "property_recommendation" || actionType === "property_send")) {
+    //   AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ＝ここは既定で通らない・on か名前で入る）。物件オススメ・物件ピックアップの後の文だけ（試験 aixbrain1: 見積書の2通目は変わらず費用だけ増えた）
+    if (aixBrainEnabledFor(actionType ?? "") && (actionType === "property_recommendation" || actionType === "property_send")) {
       try {
         const { runAixBrain } = await import("@/app/lib/aix-brain-server");
         const { aixMeaningForGenerator } = await import("@/app/lib/aix-catalog");

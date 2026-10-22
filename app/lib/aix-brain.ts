@@ -12,14 +12,35 @@
 //   ② 指揮官（LLM）: 下書き（今までの書く役の文）・材料・意味・統括の判断の束を読み、設計図（段・事実・外す文・締め）を決める。下書きが設計図どおりなら keep
 //   ③ 実行役（LLM）: 設計図どおりに竹内基準で書く
 //   ④ 確かめ（決まった処理）: 埋め字・伏せ字の残り・必ず入れる字の抜け・材料に無い数字・スタッフだけが知る事の根拠なし → 下書きより悪ければ下書きを使う
-// 切替: AIX_BRAIN=on の時だけ（既定 off＝今まで通り・LLM も呼ばない）
+// 切替: AIX_BRAIN（既定＝内覧日調整だけ・off＝全部止める・on＝通せるボタン全部・viewing_invite,… ＝書いたボタンだけ）＝aixBrainEnabledFor
 // テスト: app/lib/__tests__/aix-brain.test.ts
 
 export type EnvLike = Record<string, string | undefined>;
 
-/** 既定 off。AIX_BRAIN=on で入る */
+/**
+ * ボタンごとの切替（2026-10-23 レビューの3回の試験: 内覧日調整だけ on が一貫して良い＝off 約71点 → on 約90点・ほかのボタンはばらつきの中）。
+ *   AIX_BRAIN 未設定・空 … 既定＝AIX_BRAIN_DEFAULT_ACTIONS（内覧日調整だけ）
+ *   off              … 全部止める
+ *   on / all         … 通せるボタン全部（呼ぶ側の AIX_BRAIN_ACTIONS 等で絞った物）
+ *   viewing_invite,property_send … 書いたボタンだけ（aix_type の名前・カンマ区切り）
+ */
+export const AIX_BRAIN_DEFAULT_ACTIONS: readonly string[] = ["viewing_invite"];
+export type AixBrainSwitch = { mode: "off" } | { mode: "all" } | { mode: "list"; actions: ReadonlySet<string> };
+export function aixBrainSwitch(env: EnvLike = typeof process !== "undefined" ? process.env : {}): AixBrainSwitch {
+  const v = (env.AIX_BRAIN ?? "").trim().toLowerCase();
+  if (v === "off" || v === "false" || v === "0") return { mode: "off" };
+  if (v === "on" || v === "all" || v === "true" || v === "1") return { mode: "all" };
+  const actions = v ? v.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean) : [...AIX_BRAIN_DEFAULT_ACTIONS];
+  return actions.length ? { mode: "list", actions: new Set(actions) } : { mode: "off" };
+}
+/** このボタンでブレインを通すか（呼ぶ側の「通せるボタン」の絞りはこの後に掛かる） */
+export function aixBrainEnabledFor(aixType: string | null | undefined, env: EnvLike = typeof process !== "undefined" ? process.env : {}): boolean {
+  const s = aixBrainSwitch(env);
+  return s.mode === "all" || (s.mode === "list" && s.actions.has(String(aixType ?? "").trim().toLowerCase()));
+}
+/** どれか1つのボタンでも入っているか（AIX_BRAIN=off の時だけ false） */
 export function aixBrainOn(env: EnvLike = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.AIX_BRAIN ?? "").trim().toLowerCase() === "on";
+  return aixBrainSwitch(env).mode !== "off";
 }
 
 /** 指揮官・実行役の呼び出しの名札（llm-alt-provider が DeepSeek の flash に回す・申込以降／審査の事情は Claude） */
@@ -86,7 +107,47 @@ export function formHintOf(aixType: string, picker: string | null, kind: AixText
 
 // ─── ① 網: 必ず入れる字 ────────────────────────────────────────────────
 const N = (t: string) => String(t ?? "").normalize("NFKC");
-const squash = (t: string) => N(t).replace(/[\s　・()（）「」『』【】🌟,，、。！!？?😊😌]/g, "").toLowerCase();
+const SQ_RE = /[\s　・()（）「」『』【】🌟,，、。！!？?😊😌]/g;
+const squash = (t: string) => N(t).replace(SQ_RE, "").toLowerCase();
+/**
+ * 物件名の字を変えない正規化（2026-10-23 レビュー: 「鳳Ⅱ」が「鳳II」に書き換わっても NFKC では同じ＝抜けと数えなかった）。
+ *   ローマ数字（Ⅰ〜ⅿ）は NFKC を掛けずに残す（全角・半角の英数字・空白の揺れは今まで通り同じと見る）
+ */
+const NK = (t: string) => String(t ?? "").replace(/[^Ⅰ-ⅿ]+/g, (s) => s.normalize("NFKC"));
+const squashKeep = (t: string) => NK(t).replace(SQ_RE, "").toLowerCase();
+const DATE_MUST_RE = /^(\d{1,2}\/\d{1,2})\([^)]*\)\s*(\d{1,2}:\d{2})/;
+
+/**
+ * 本文の中の「入力の物件名を書き換えた並び」（NFKC で同じだが字が違う＝鳳Ⅱ→鳳II）を入力の字に戻す（決まった処理）。
+ *   names は入力の字のまま（号室つき・なしのどちらでも）。字が同じ所は触らない
+ */
+export function copyNamesVerbatim(text: string, names: ReadonlyArray<string | null | undefined>): { text: string; fixes: Array<{ from: string; to: string }> } {
+  let out = String(text ?? "");
+  const fixes: Array<{ from: string; to: string }> = [];
+  const ks = [...new Set(names.flatMap((n) => { const s = String(n ?? "").trim(); if (!s) return []; const base = s.replace(/\s*\d{2,4}[A-Za-z]?\s*号室?$/, "").trim(); return [s, base]; }).filter((k) => k.length >= 3 && N(k) !== k))]
+    .sort((a, b) => b.length - a.length);
+  for (const k of ks) {
+    const kn = N(k);
+    let res = "";
+    for (let i = 0; i < out.length;) {
+      let hit = 0;
+      if (N(out[i]) === kn[0] || out[i] === k[0]) {
+        for (let len = Math.max(1, k.length - 2); len <= k.length + 6 && i + len <= out.length; len++) {
+          const seg = out.slice(i, i + len);
+          // 後ろに英字・ローマ数字が続く（「鳳III」の頭の「鳳II」）時は別の名前＝触らない
+          if (N(seg) === kn) { if (!/^[A-Za-zＡ-Ｚａ-ｚⅠ-ⅿ]/.test(out.slice(i + len, i + len + 1)) || !/[A-Za-zⅠ-ⅿ]$/.test(kn)) hit = len; break; }
+        }
+      }
+      if (hit) {
+        const seg = out.slice(i, i + hit);
+        if (seg !== k) fixes.push({ from: seg, to: k });
+        res += k; i += hit;
+      } else { res += out[i]; i++; }
+    }
+    out = res;
+  }
+  return { text: out, fixes };
+}
 
 /** スタッフの入力から「そのまま必ず入れる字」（日時の行・物件名）。網＝候補。決めるのは指揮官（設計図の facts）＋確かめ */
 export function mustItemsOf(input: Pick<AixBrainInput, "aixType" | "staffInputs">): string[] {
@@ -101,7 +162,8 @@ export function mustItemsOf(input: Pick<AixBrainInput, "aixType" | "staffInputs"
       }
     }
     if (/^物件名$|推す物件/.test(k)) {
-      const name = N(v).replace(/\s*\d{2,4}[A-Za-z]?\s*号室?$/, "").trim();
+      // 物件名は入力の字のまま（NFKC を掛けると「鳳Ⅱ」が「鳳II」になる＝書き換えた名前を抜けと数えなくなる）
+      const name = NK(v).replace(/\s*\d{2,4}[A-Za-z]?\s*号室?$/, "").trim();
       if (name.length >= 2) out.push(name);
     }
   }
@@ -110,16 +172,18 @@ export function mustItemsOf(input: Pick<AixBrainInput, "aixType" | "staffInputs"
 
 /** 必ず入れる字のうち本文に無い物 */
 export function missingMust(text: string, must: ReadonlyArray<string>): string[] {
-  const t = squash(text);
+  const t = squash(text), tk = squashKeep(text);
   return must.filter((m) => {
     const s = squash(m);
     if (!s) return false;
-    if (t.includes(s)) return false;
     // 日時は「10/16(金) 13:00〜15:00」を日付と時刻に分けて探す（曜日の表記の揺れ）
-    const dm = N(m).match(/^(\d{1,2}\/\d{1,2})\([^)]*\)\s*(\d{1,2}:\d{2})/);
-    if (dm) return !(t.includes(squash(dm[1])) && t.includes(squash(dm[2])));
-    // 物件名は頭の5字（全角・半角・ローマ数字の揺れ）
-    return !t.includes(s.slice(0, 5));
+    const dm = N(m).match(DATE_MUST_RE);
+    if (dm) return !(t.includes(s) || (t.includes(squash(dm[1])) && t.includes(squash(dm[2]))));
+    // 物件名: 入力の字のまま（ローマ数字を変えない）で探す。NFKC でだけ同じ＝書き換えた名前は抜け
+    const sk = squashKeep(m);
+    if (tk.includes(sk)) return false;
+    // NFKC でだけ同じ（書き換え）も、頭だけ同じ（字を落とした）も抜け。2026-10-23 試験 it2c: 頭の5字で通すと「プレミアス鳳Ⅱ」→「プレミアス鳳」（Ⅱを落とした）を抜けと数えなかった → 物件名は全部の字を求める（空白・記号の揺れだけ許す）
+    return true;
   });
 }
 
@@ -162,6 +226,29 @@ const STAFF_CLAIMS: Array<[string, RegExp]> = [
 ];
 export function claimsOf(t: string): Set<string> { const s = N(t); return new Set(STAFF_CLAIMS.filter(([, re]) => re.test(s)).map(([k]) => k)); }
 
+// ─── 文の働き（同じ働きの文を重ねない・組み立てと確かめで使う）─────────────────────────────
+// 2026-10-23 レビュー（内覧日調整）: 下書きの「お部屋ご案内させて頂きます！！」の前に実行役の「〈物件〉の102号室にてご案内させて頂きます」「内覧のご希望承りました」が足され、
+//   受け・ご案内の宣言が2回になった → 働きで見て、同じ働きの文が下書きにあれば足さない（足す方に物件名・号室等の事実があって下書きの文に無い時は、下書きの文と入れ替える）
+export type LineFunction = "受け" | "ご案内の宣言" | "直近ですと" | "ご都合の伺い";
+const LINE_FUNCTIONS: Array<[LineFunction, RegExp]> = [
+  ["受け", /かしこまりました|承知(?:致し|いたし)?ました|承りました|^\s*はい[😊😌]*[！!、。]*\s*$/],
+  ["ご案内の宣言", /(?:ご)?案内(?:させて|致し|いたし)(?:頂|いただ)?きます|ご案内(?:です|致します)|ご案内させて(?:頂|いただ)ければ/],
+  ["直近ですと", /^\s*直近ですと/],
+  ["ご都合の伺い", /ご都合[^。！!\n]{0,20}(?:御座|ござ)いますでしょうか|ご都合[^。！!\n]{0,20}(?:伺え|お知らせ|お聞かせ|教えて)/],
+];
+/** 文（1行・1文）の働き。「〜にてご案内可能です」は日時の段の終わり（宣言ではない） */
+export function lineFunctionsOf(line: string): LineFunction[] {
+  const s = N(line);
+  return LINE_FUNCTIONS.filter(([, re]) => re.test(s)).map(([k]) => k);
+}
+const sentencesOf = (text: string) => String(text ?? "").split(/\n|(?<=！！)/).map((x) => x.trim()).filter(Boolean);
+/** 同じ働きの文が2回以上ある働き */
+export function dupFunctionsOf(text: string): LineFunction[] {
+  const count = new Map<LineFunction, number>();
+  for (const sent of sentencesOf(text)) for (const f of lineFunctionsOf(sent)) count.set(f, (count.get(f) ?? 0) + 1);
+  return [...count].filter(([, n]) => n >= 2).map(([f]) => f);
+}
+
 export type AixBrainIssues = {
   placeholder: boolean;
   maskLeak: boolean;
@@ -173,6 +260,8 @@ export type AixBrainIssues = {
   empty: boolean;
   /** 決めた締めの向きが文に無い */
   closeMissing: CloseKind | null;
+  /** 同じ働きの文が2回（受け・ご案内の宣言・直近ですと・ご都合の伺い） */
+  dupParts: string[];
 };
 export function checkAixText(text: string, o: { must: ReadonlyArray<string>; basis: string; staffBasis: string; callName: string | null; draft?: string; closeKind?: CloseKind | null }): AixBrainIssues {
   const t = String(text ?? "").trim();
@@ -187,11 +276,12 @@ export function checkAixText(text: string, o: { must: ReadonlyArray<string>; bas
     staffNoBasis: [...claimsOf(t)].filter((c) => !basisClaims.has(c)),
     nameLost: !!callRe && !!o.draft && callRe.test(o.draft) && !callRe.test(t),
     closeMissing: o.closeKind && !CLOSE_KIND_RE[o.closeKind].test(N(t)) ? o.closeKind : null,
+    dupParts: dupFunctionsOf(t),
   };
 }
 /** 重さ（大きいほど悪い）。埋め字・伏せ字・空は送れない＝大きく */
 export function issueWeight(i: AixBrainIssues): number {
-  return (i.empty ? 100 : 0) + (i.maskLeak ? 50 : 0) + (i.placeholder ? 20 : 0) + 6 * i.missingMust.length + 5 * i.unfounded.length + 4 * i.staffNoBasis.length + (i.nameLost ? 2 : 0) + (i.closeMissing ? 5 : 0);
+  return (i.empty ? 100 : 0) + (i.maskLeak ? 50 : 0) + (i.placeholder ? 20 : 0) + 6 * i.missingMust.length + 5 * i.unfounded.length + 4 * i.staffNoBasis.length + (i.nameLost ? 2 : 0) + (i.closeMissing ? 5 : 0) + 3 * (i.dupParts?.length ?? 0);
 }
 export function describeIssues(i: AixBrainIssues): string[] {
   const L: string[] = [];
@@ -203,6 +293,7 @@ export function describeIssues(i: AixBrainIssues): string[] {
   if (i.staffNoBasis.length) L.push(`スタッフの入力に無い言い切り: ${i.staffNoBasis.join("・")}`);
   if (i.nameLost) L.push("名前の呼びかけが消えた");
   if (i.closeMissing) L.push(`決めた締めが無い: ${CLOSE_KIND_JA[i.closeMissing]}`);
+  if (i.dupParts?.length) L.push(`同じ働きの文が重なる: ${i.dupParts.join("・")}`);
   return L;
 }
 
@@ -285,6 +376,7 @@ export const EXECUTOR_SYSTEM = `あなたは不動産仲介スモラの AIX の�
 - 頂く・致します・御座います は漢字。「お待たせ致しました」は使わない。名前を書く時は「〈名前〉さん」。
 - 事実（物件名・号室・金額・帖・駅徒歩・日付・時刻）は facts の字のまま。facts に無い数字・物件名・日時は書かない。〇〇 のような埋め字は書かない。
 - 日時の部品は「直近ですと」の行の後に facts の日時を1行ずつ（字のまま）、最後の行に「にてご案内可能です！！」。
+- ご都合を伺う部品は「〈名前〉さんご都合よろしいお日にち御座いますでしょうか😌！！」の字のまま（「伺えますと幸いです」等に言い換えない）。
 - 前後の下書きの文と同じ言葉を繰り返さない。挨拶・名前の呼びかけ・締めの言葉は、その部品でなければ書かない。
 
 【返す JSON だけ】{"parts":["部品1の文","部品2の文"]}（指揮官の部品の順・同じ数。1つの部品は2文でも1つの文字列に入れる）
@@ -324,8 +416,95 @@ export function parseExecutorMessage(raw: string): string {
 
 // ─── 組み立て（決まった処理）──────────────────────────────────────────────
 const CLOSING_LINE_RE = /ご査収|何卒|よろしくお願い|お気軽に/;
-/** 下書きの行から外す文を消し、部品を置く（置き場所が見つからない部品は締めの前） */
-export function assembleText(draft: string, plan: Pick<ConductorPlan, "drop" | "add">, parts: ReadonlyArray<string>): string {
+const DATE_LINE_RE = /^\s*(?:明日|本日|今日)?\s*\d{1,2}\s*[\/月]\s*\d{1,2}/;
+const DATE_BLOCK_RE = /^\s*直近ですと|ご案内可能/;
+/** 日時の段（直近ですと→日時の行→にてご案内可能です）の途中か（ここに部品を挟むと段が割れる） */
+function insideDateBlock(lines: ReadonlyArray<string>, at: number): boolean {
+  if (at <= 0 || at >= lines.length) return false;
+  const cur = lines[at], prev = lines[at - 1];
+  if (/^\s*(?:にて|で(?:の)?ご案内|と(?:なり|なって))/.test(cur)) return true;
+  return (DATE_LINE_RE.test(cur) || /^\s*にて/.test(cur)) && (DATE_LINE_RE.test(prev) || /^\s*直近ですと/.test(prev));
+}
+/** 文に物件名・号室等の事実があるか（keyFacts は入力の字＝物件名） */
+/** 事実の多さ（入力の物件名を字のまま全部含む＝2・頭だけ＝1・号室＝1）。入れ替えるかの比べに使う */
+function keyFactScore(s: string, keyFacts: ReadonlyArray<string>): number {
+  const sk = squashKeep(s);
+  let n = /\d{2,4}\s*号室/.test(N(s)) ? 1 : 0;
+  for (const f of keyFacts) {
+    const fk = squashKeep(f);
+    if (fk.length < 3) continue;
+    if (sk.includes(fk)) n += 2; else if (sk.includes(fk.slice(0, Math.min(5, fk.length)))) n += 1;
+  }
+  return n;
+}
+/** 日時の段（直近ですと の行から、日時の行・「にてご案内可能」の行まで）の範囲と日時の行の数。無ければ null */
+// 2026-10-23 試験 it2b-view-r3: 下書きが「最短ですと」で始めた段を見落とし、部品の「直近ですと」の段を別に足した → 段の始まりを広げる・間の空行は段の中
+const DATE_INTRO_RE = /^\s*(?:直近|最短|明日|本日|今日)[^。！!\n]{0,14}ですと[😊😌！!]*\s*$/;
+function dateBlockOf(lines: ReadonlyArray<string>): { from: number; to: number; dates: number } | null {
+  let from = lines.findIndex((l) => DATE_INTRO_RE.test(l) || /^\s*直近ですと/.test(l));
+  if (from < 0) from = lines.findIndex((l) => DATE_LINE_RE.test(l));
+  if (from < 0) return null;
+  let to = from, dates = DATE_LINE_RE.test(lines[from]) ? 1 : 0;
+  if (dates && /ご案内可能/.test(lines[from])) return { from, to, dates };
+  for (let k = from + 1; k < lines.length; k++) {
+    const l = lines[k];
+    if (!l.trim()) { if (k + 1 < lines.length && (DATE_LINE_RE.test(lines[k + 1]) || /^\s*にて/.test(lines[k + 1]))) continue; break; }
+    if (DATE_LINE_RE.test(l)) { dates++; to = k; if (/ご案内可能/.test(l)) break; continue; }
+    if (/^\s*にて|ご案内可能/.test(l)) to = k;
+    break;
+  }
+  return { from, to, dates };
+}
+/**
+ * 部品の文のうち、下書きに同じ働きの文がある物を除く（2026-10-23 レビュー・内覧日調整の重なり）。
+ *   足す文に物件名・号室があって下書きの同じ働きの文に無い時は、下書きの文をその文に入れ替える（場所は下書きのまま）。
+ *   日時の段（直近ですと）が下書きにあれば、部品の日時の段は丸ごと足さない。戻りは残った部品の文（空なら足さない）
+ */
+export function dedupePart(lines: string[], part: string, keyFacts: ReadonlyArray<string> = []): string {
+  // 日時の段は2回足さない。部品の段の方が日時の行が多い（下書きが日時を落とした）時は、下書きの段をその場で部品の段に入れ替える
+  const db = dateBlockOf(lines);
+  const pl = part.split("\n");
+  const pb = dateBlockOf(pl);
+  if (db && pb && pb.dates > 0) {
+    const dateKey = (l: string) => { const m = N(l).match(/(\d{1,2}\/\d{1,2})[^\d]{0,6}(\d{1,2}:\d{2})/); return m ? `${m[1]} ${m[2]}` : squash(l); };
+    const have = new Set(lines.slice(db.from, db.to + 1).filter((l) => DATE_LINE_RE.test(l)).map(dateKey));
+    const partDates = pl.slice(pb.from, pb.to + 1).filter((l) => DATE_LINE_RE.test(l));
+    const newDates = partDates.map((l) => l.replace(/\s*にて.*$/, "").trim()).filter((l) => l && !have.has(dateKey(l)));
+    if (pb.dates > db.dates && [...have].every((k) => partDates.some((l) => dateKey(l) === k))) {
+      // 部品の段が下書きの日時を全部含んで多い → 段ごと入れ替える
+      lines.splice(db.from, db.to - db.from + 1, ...pl.slice(pb.from, pb.to + 1));
+    } else if (newDates.length) {
+      // 下書きの段に無い日時の行だけを、段の最後（「にてご案内可能」の前）に足す
+      const last = db.to, m = lines[last].match(/^(.*?)(\s*にて.*)$/);
+      if (m && DATE_LINE_RE.test(m[1])) { lines[last] = m[1]; newDates[newDates.length - 1] += m[2].trim(); lines.splice(last + 1, 0, ...newDates); }
+      else if (/^\s*にて/.test(lines[last])) lines.splice(last, 0, ...newDates);
+      else lines.splice(last + 1, 0, ...newDates);
+    }
+    const rest = [...pl.slice(0, pb.from), ...pl.slice(pb.to + 1)].join("\n").trim();
+    return rest ? dedupePart(lines, rest, keyFacts) : "";
+  }
+  const keep: string[] = [];
+  for (const pl of part.split("\n")) {
+    const sents = pl.split(/(?<=！！)/).filter((x) => x.trim());
+    const rest: string[] = [];
+    for (const s of sents) {
+      const fs = lineFunctionsOf(s);
+      if (!fs.length) { rest.push(s); continue; }
+      const idx = lines.findIndex((l) => sentencesOf(l).some((ls) => lineFunctionsOf(ls).some((f) => fs.includes(f))));
+      if (idx < 0) { rest.push(s); continue; }
+      if (keyFactScore(s, keyFacts) > keyFactScore(lines[idx], keyFacts)) {
+        // 下書きの同じ働きの文（行の中の1文）だけを入れ替える
+        const old = sentencesOf(lines[idx]).find((ls) => lineFunctionsOf(ls).some((f) => fs.includes(f))) ?? lines[idx];
+        lines[idx] = lines[idx].replace(old, s.trim());
+      }
+    }
+    if (rest.join("").trim()) keep.push(rest.join("").trim());
+    else if (!sents.length) keep.push(pl);
+  }
+  return keep.join("\n").replace(/^\n+|\n+$/g, "");
+}
+/** 下書きの行から外す文を消し、部品を置く（置き場所が見つからない部品は締めの前）。同じ働きの文は重ねない・日時の段は割らない */
+export function assembleText(draft: string, plan: Pick<ConductorPlan, "drop" | "add">, parts: ReadonlyArray<string>, opts: { keyFacts?: ReadonlyArray<string> } = {}): string {
   let lines = String(draft ?? "").replace(/\r/g, "").split("\n");
   for (const d of plan.drop) {
     const ds = squash(d);
@@ -340,7 +519,7 @@ export function assembleText(draft: string, plan: Pick<ConductorPlan, "drop" | "
   }
   const closingIdx = () => { for (let i = lines.length - 1; i >= 0; i--) if (CLOSING_LINE_RE.test(lines[i])) { let k = i; while (k > 0 && CLOSING_LINE_RE.test(lines[k - 1])) k--; return k; } return lines.length; };
   plan.add.forEach((a, i) => {
-    const text = String(parts[i] ?? "").trim();
+    const text = dedupePart(lines, String(parts[i] ?? "").trim(), opts.keyFacts ?? []).trim();
     if (!text) return;
     let at: number;
     if (a.after === "先頭") {
@@ -352,6 +531,13 @@ export function assembleText(draft: string, plan: Pick<ConductorPlan, "drop" | "
       const as = squash(a.after);
       const idx = as.length >= 4 ? lines.findIndex((l) => { const ls = squash(l); return ls && (ls.includes(as) || as.includes(ls)); }) : -1;
       at = idx >= 0 ? idx + 1 : closingIdx();
+    }
+    // 日時の段の途中には挟まない（試験: 「…16:00〜17:30」と「にてご案内可能です！！」の間にご都合の伺いが入った）
+    while (insideDateBlock(lines, at)) at++;
+    // ご都合の伺いは日時の段より後（日時を出す前に聞かない）
+    if (lineFunctionsOf(text).includes("ご都合の伺い")) {
+      let last = -1; lines.forEach((l, k) => { if (DATE_BLOCK_RE.test(l) || DATE_LINE_RE.test(l)) last = k; });
+      if (last >= at) at = last + 1;
     }
     const block = ["", ...text.split("\n"), ""];
     lines.splice(at, 0, ...block);
