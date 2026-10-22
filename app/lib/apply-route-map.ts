@@ -247,7 +247,7 @@ export function resolveRouteBranch(s: ApplyRouteSignals): { branch: RouteBranchI
   if (turn && (isOtherAgentViewingApplyQuestion(turn) || isOtherAgentViewingPlan(turn))) return { branch: "other_agent_viewing", why: "他社で内覧の話" };
   // 番手（2026-10-21）: 2番手で申込中は申込の段階でも開く（並行で探すのが次の一手）。文は一番新しい番手の話で、申込んだ／案内を分ける
   if (s.parallelSecond === true && s.stage !== "won") return { branch: "rank_waiting", why: "2番手で申込中（並行で探す）" };
-  const rank = post ? null : latestRankMention(s.recentStaffTexts ?? []);
+  const rank = post ? null : latestRankMention(s.recentStaffTexts ?? [], turn);
   if (rank === "applied") return { branch: "rank_waiting", why: "こちらが番手で申込んだ・繰り上がり待ちを伝えた後" };
   if (rank === "offered") return { branch: "rank_offered", why: "こちらが番手のご案内をした後" };
   if (turn && COMPETING_ESTIMATE_RE.test(turn)) return { branch: "competing_estimate", why: "相見積もりの語" };

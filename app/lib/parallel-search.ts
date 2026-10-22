@@ -71,7 +71,7 @@ export function resolveParallelSearchScene(input: {
   if (STOP_SEARCH_RE.test(input.customerTurnText.normalize("NFKC"))) return none("お客様がこのお部屋に決めた・ほかは探さなくてよいと言った");
   const now = input.nowMs ?? Date.now();
   if (input.parallelSecond === true) return { scene: "rank_waiting", evidence: "2番手で申込中（並行で探す）", blockedBy: null };
-  const rank = latestRankMention(input.recentStaffTexts);
+  const rank = latestRankMention(input.recentStaffTexts, input.customerTurnText);
   if (rank === "applied") return { scene: "rank_waiting", evidence: "こちらが番手で申込んだ・繰り上がり待ちを伝えた後", blockedBy: null };
   if (rank === "offered") return { scene: "rank_offered", evidence: "こちらが番手のご案内（先に申込あり）を伝えた後", blockedBy: null };
   // 内覧後・申込中・しばらくぶりは、お客様のきっかけ（別の物件・URL/画像・探す・条件・迷い・比べる）がある時だけ（上の反証）

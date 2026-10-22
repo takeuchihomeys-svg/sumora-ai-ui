@@ -176,9 +176,11 @@ export function rankMentionOf(text: string | null | undefined): RankMention | nu
  * 直近のこちらの文（新しい順）から今の番手の状態を決める（一番新しい番手の話）。
  *   applied＝番手で申込中（繰り上がり待ち）・offered＝番手のご案内（先に申込あり・まだ申込んでいない）・ended／unavailable／null＝番手の場面ではない
  */
-export function latestRankMention(newestFirst: ReadonlyArray<string | null | undefined>): RankMention | null {
+export function latestRankMention(newestFirst: ReadonlyArray<string | null | undefined>, customerTurnText?: string | null): RankMention | null {
   // 2026-10-22 試験 rankwait1021（q004）: 案内の後にこちらが別の中身（新しいピックアップ等）を送っていれば、案内の場面は過ぎた（申込んだ・待っているは続く）。
   //   画像だけ・空の通は数えない（旧の語の網は「1番手」を含む通を丸ごと外していたので、この形の案内は場面にならなかった）
+  //   ただしお客様の今のターンが番手のことを聞いている時は案内の場面のまま（独立レビュー 365日: 「13階は何人待ちですか」「別の方が契約しない場合いつ入居可能」を落としていた）
+  if (CUSTOMER_RANK_ASK.test(String(customerTurnText ?? "").normalize("NFKC"))) return newestFirst.map((t) => rankMentionOf(t)).find((m) => m) ?? null;
   let newerContent = false;
   for (const t of newestFirst) {
     const m = rankMentionOf(t);
@@ -187,6 +189,8 @@ export function latestRankMention(newestFirst: ReadonlyArray<string | null | und
   }
   return null;
 }
+/** お客様が番手のことを聞いている（何人待ち・番手・繰り上がり・先の方が契約しない／キャンセルしたら） */
+const CUSTOMER_RANK_ASK = /番手|何人待ち|繰り上が|(?:別の方|他の方|ほかの方|先の方|前の方)(?:が|は)?.{0,10}(?:契約しな|キャンセル|辞退|審査(?:に)?(?:落ち|通らな))/;
 /** 中身の無い通（画像・スタンプ・動画・ファイルだけ・空） */
 const RANK_NO_CONTENT = /^\s*(?:\[(?:画像|スタンプ|動画|ファイル)\]\s*)*$/;
 function pickerSaysOther(p: ParallelPicker): boolean {
