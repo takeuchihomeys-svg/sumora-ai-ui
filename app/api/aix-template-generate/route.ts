@@ -2261,8 +2261,10 @@ ${text}
       if (recCta) {
         // 2026-10-23（recommend-second-appeal）: 誘導＋ご査収の形では、先に最後のご査収の行を外してから締めを揃え、誘導の次の行にご査収を戻す
         const strip = secondAppeal && recCta.kind !== "receipt" ? text.replace(/\n+お手隙の際に(?:ごゆっくり)?(?:ご査収|ご確認|ご検討)(?:ください|下さい)[^\n]{0,6}\s*$/, "") : text;
-        const cta = setRecommendClosing(strip, recCta.kind);
-        if (cta.applied.length > 0 || strip !== text) {
+        // 建築中（skip）の時は締めを揃えない＝外したご査収の行も戻す（外したまま誘導も付かず、締めの無い文になっていた）
+        const cta0 = setRecommendClosing(strip, recCta.kind);
+        const cta = cta0.applied.some((a) => a.startsWith("skip:")) ? { text, applied: cta0.applied } : cta0;
+        if (cta.applied.length > 0 || cta.text !== text) {
           console.log(JSON.stringify({ tag: "aix-template-generate:recommend-cta-closing", kind: recCta.kind, applied: cta.applied }));
           text = cta.text;
         }
