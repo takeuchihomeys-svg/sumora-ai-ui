@@ -21,7 +21,7 @@ import { aixNewPickers1020Enabled, isPropertyInfoCheckPattern, NEW_CHECK_PATTERN
 import type { ReplyScene } from "./reply-scene";
 import { isScreeningButtonAction, screeningBrainEnabled, screeningButtonEnabled, SCREENING_BUTTON } from "./aix-owner-answers-1021";
 import { AIX_LEARNED } from "./aix-catalog-learned";
-import { learnedLine, type LearnedMeaning } from "./aix-meaning-learn";
+import { learnedLine, meaningfulWriteContains, type LearnedMeaning } from "./aix-meaning-learn";
 
 export type CatalogEntry = {
   /** 一覧の鍵: "ボタン" か "ボタン/ピッカーの値"（例 property_check_result/unavailable） */
@@ -439,7 +439,8 @@ export function aixMeaningForGenerator(aixType: string, pickerValue?: string | n
   if (!m && !e) return "";
   const L: string[] = [`【このボタン・ピッカーの意味（竹内基準）】${e ? `${e.button}${e.picker ? `→${e.picker.label}` : ""}` : aixType}`];
   if (m?.purpose) L.push(`目的: ${m.purpose}`); else if (e) L.push(`目的: ${e.staffOnly || "定型の文"}／${e.when}`);
-  if (m?.writeContains.length) L.push(`竹内さんの文に入る物: ${m.writeContains.join("・")}`);
+  const wc = m ? meaningfulWriteContains(m) : [];
+  if (wc.length) L.push(`竹内さんの文に入る物: ${wc.join("・")}`);
   if (m?.structure) L.push(`竹内さんの文の型: 受け ${m.structure.uke}%・金額 ${m.structure.amount}%・約束 ${m.structure.promise}%・訴求 ${m.structure.appeal}%・締め ${m.structure.close}%`);
   if (m?.nextStep.length) L.push(`この後に多い事: ${m.nextStep.join("・")}`);
   const ex = (m?.exemplars ?? []).slice(0, o.maxExemplars ?? 2);

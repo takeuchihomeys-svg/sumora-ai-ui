@@ -226,6 +226,8 @@ export function handTypedAixTopic(text: string | null | undefined): string | nul
 export function maskExemplar(text: string): string {
   return String(text ?? "")
     .replace(/【[^】]{1,40}】/g, "【物件名】")
+    // 2026-10-22 レビュー: 号室はお客様の住む部屋（物件名＋号室＋入居日でお客様に近づく）＝伏せる
+    .replace(/[0-9０-９]{1,5}\s*号室/g, "〇〇号室")
     .replace(/[A-Za-z][A-Za-z0-9_.-]{0,15}(さん|様)/g, (m0, h) => (/^YUMA/.test(m0) ? m0 : `YUMA${h}`))
     .replace(/https?:\/\/[^\s　]+/g, "（URL）")
     .replace(/[^\n]*(?:住所|〒|丁目|番地|[0-9０-９]+\s*-\s*[0-9０-９]+\s*-\s*[0-9０-９]+)[^\n]*/g, "（住所の行）")
@@ -270,11 +272,27 @@ export function topShares(counts: Record<string, number>, total: number, o: { mi
     .map(([k, r]) => `${k}（${Math.round(r * 100)}%）`);
 }
 
+/**
+ * 定型の文（テンプレートの固定行・フォームの項目）から正規表現が拾うだけの話題＝意味ではない（2026-10-22 レビュー）。
+ *   例: 御見積書の「※ご入居日によって日割家賃」→ 入居日 99%／内訳の「1日でのご入居がオススメ」→ 1件の推し／条件ヒアリングの項目「駐車場等」→ 駐車場 100%。
+ */
+export const BOILERPLATE_TOPICS: Record<string, readonly ContentTopic[]> = {
+  estimate_sheet: ["move_in", "breakdown"],
+  cost_breakdown: ["recommend", "move_in"],
+  condition_hearing: ["parking", "pet", "move_in", "equipment", "guarantor", "amount", "two_person"],
+};
+/** writeContains から定型の文の話題を外した物（ブレイン・生成に見せる中身） */
+export function meaningfulWriteContains(m: LearnedMeaning): string[] {
+  const bad = new Set((BOILERPLATE_TOPICS[m.key.split("/")[0]] ?? []).map((k) => TOPIC_JA[k]));
+  return m.writeContains.filter((w) => !bad.has(w.replace(/（\d+%）$/, "")));
+}
+
 /** ブレインに渡す1行（ピッカーの行に添える・短く） */
 export function learnedLine(m: LearnedMeaning | undefined): string {
   if (!m) return "";
   const parts: string[] = [];
-  if (m.writeContains.length) parts.push(`竹内さんの文の中身: ${m.writeContains.slice(0, 2).join("・")}`);
+  const wc = meaningfulWriteContains(m);
+  if (wc.length) parts.push(`竹内さんの文の中身: ${wc.slice(0, 2).join("・")}`);
   if (m.nextStep.length) parts.push(`次: ${m.nextStep.slice(0, 1).join("・")}`);
   if (m.needsOwnerGold) parts.push(`竹内さんのお手本 ${m.counts.owner}件（少ない・定義で判断）`);
   if (m.counts.misPressStaff >= 3) parts.push(`押し間違いが多い（${m.counts.misPressStaff}件）＝中身で選ぶ`);
