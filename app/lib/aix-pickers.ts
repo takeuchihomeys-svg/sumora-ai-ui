@@ -144,8 +144,12 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
       ] },
       // 2026-10-21 竹内さん C9: 新しいボタン【審査について】で選んだ審査内容（値は aix-owner-answers-1021 の SCREENING_TOPIC_OPTIONS と同じ）
       { key: "screening_topic", label: "審査内容（AIX【審査について】）", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_screening"] }, options: [
-        { value: "job", label: "職業・収入について", when: "" }, { value: "holder", label: "名義について", when: "" }, { value: "guarantor_person", label: "保証人について", when: "" },
+        { value: "result", label: "審査の結果について", when: "" }, { value: "job", label: "職業・収入について", when: "" }, { value: "holder", label: "名義について", when: "" }, { value: "guarantor_person", label: "保証人について", when: "" },
         { value: "nationality", label: "外国籍について", when: "" }, { value: "timing", label: "時期について", when: "" }, { value: "other", label: "その他", when: "" },
+      ] },
+      // 2026-10-22 審査の結果について の結果（値は aix-owner-answers-1021 の SCREENING_RESULT_OPTIONS と同じ）
+      { key: "screening_result", label: "審査の結果", kind: "choice", onlyWhen: { key: "screening_topic", values: ["result"] }, options: [
+        { value: "通過", label: "通過", when: "" }, { value: "否決", label: "否決", when: "" }, { value: "審査中", label: "審査中", when: "" },
       ] },
       // 2026-10-20 審査について（ご相談）
       { key: "screening_holder", label: "契約者の名義", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_screening"] }, options: [

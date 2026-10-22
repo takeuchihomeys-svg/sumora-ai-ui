@@ -31,15 +31,16 @@ it("物件そのものの募集状況は今まで通り（並べた言い方・�
   eq(boundObjectTopicOf("お送り頂きましたお部屋9月末退去予定で募集されております"), null);
   eq(confirmObjectOf("こちらのお部屋の空き状況確認させて頂きます"), "空室");
 });
-it("off の時は今まで通り（空室）", () => withEnv("LINK_PROMISE_PICKER", "off", () => eq(confirmObjectOf("駐車場の空き状況確認させて頂きます！！"), "空室")));
+// 2026-10-22 AIX_NEW_PICKERS_1020 を既定 on にした: 旧（今まで通り）は2つの切替を off にした時
+it("off の時は今まで通り（空室）", () => withEnv("AIX_NEW_PICKERS_1020", "off", () => withEnv("LINK_PROMISE_PICKER", "off", () => eq(confirmObjectOf("駐車場の空き状況確認させて頂きます！！"), "空室"))));
 it("約束の並び: 駐車場の空き状況の約束は 確認（mgmt_parking）だけ・募集状況の確認を足さない", () => {
   const steps = promisesInStaffText("福田さん\n駐車場の空き状況確認させて頂きます！！\n確認出来次第ご連絡させて頂きます！！", AT);
   eq(steps.map((s) => `${s.kind}:${s.checkPattern ?? "-"}:${s.pickerKey ?? "-"}`), ["confirm:mgmt_parking:mgmt_parking"]);
 });
-it("約束の並び（off）: 旧は 募集状況の確認（check）になっていた", () => withEnv("LINK_PROMISE_PICKER", "off", () => {
+it("約束の並び（off）: 旧は 募集状況の確認（check）になっていた", () => withEnv("AIX_NEW_PICKERS_1020", "off", () => withEnv("LINK_PROMISE_PICKER", "off", () => {
   const steps = promisesInStaffText("福田さん\n駐車場の空き状況確認させて頂きます！！\n確認出来次第ご連絡させて頂きます！！", AT);
   eq(steps.map((s) => s.kind), ["check"]);
-}));
+})));
 it("要件の句を外す（約束の並びの募集状況の拾い）", () => {
   eq(/空き/.test(stripObjectBoundVacancy("駐車場の空き状況確認させて頂きます")), false);
   eq(/募集/.test(stripObjectBoundVacancy("お部屋の募集状況確認させて頂きます")), true);
@@ -81,12 +82,12 @@ it("新着の約束を 物件ピックアップした（新着まとめ）で果
   eq(isPickupButtonMislabeled(false, "property_send", "new_arrival"), false);
 });
 it("off の時は旧の数え（新着の約束→物件ピックアップした は全部取り違え）", () => eq(isPickupButtonMislabeled(true, "property_send", "new_arrival", { LINK_PROMISE_PICKER: "off" }), true));
-it("新着の約束の続き: 既定は 物件ピックアップした（＋物件オススメ）・LINK_PROMISE_NEW_ARRIVAL_REC=on で 物件オススメが先", () => {
+it("新着の約束の続き: 既定（2026-10-22 から on）は 物件オススメが先（＋物件ピックアップした）・LINK_PROMISE_NEW_ARRIVAL_REC=off で旧の 物件ピックアップした", () => {
   const facts = { lastStaffEntry: { kind: "pickup_declared", status: "promised", evidence: "確認させて", detail: { watch: true, pickupKind: "new_arrival" as const } }, estimatePromisedUnfulfilled: false, pickupPromisedUnfulfilled: true };
   const msgs = [{ sender: "customer", text: "お願いします" }, { sender: "staff", text: "引き続き新着でオススメ出来るお部屋随時確認させて頂きます" }];
-  eq(linkPromiseNewArrivalRecEnabled({}), false);
-  eq(resolveStaffPromiseAix(facts, msgs, {})?.action, "property_send");
-  withEnv("LINK_PROMISE_NEW_ARRIVAL_REC", "on", () => {
+  eq(linkPromiseNewArrivalRecEnabled({}), true);
+  withEnv("LINK_PROMISE_NEW_ARRIVAL_REC", "off", () => eq(resolveStaffPromiseAix(facts, msgs, {})?.action, "property_send"));
+  withEnv("LINK_PROMISE_NEW_ARRIVAL_REC", undefined, () => {
     const r = resolveStaffPromiseAix(facts, msgs, {});
     eq(r?.action, "property_recommendation"); eq((r as { alt?: string } | null)?.alt, "property_send");
   });

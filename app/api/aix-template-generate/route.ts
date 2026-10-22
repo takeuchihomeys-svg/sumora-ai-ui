@@ -104,8 +104,8 @@ import { knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 const AIX_TEMPLATE_KNOWLEDGE_ANCHOR = "AIX の入力（構造化データ＝AIX が正）"; // 10/13 レビュー（軽微2）: ✨ を押した時はブレインの判断がほぼ無いので AIX の入力だけを指す
 
 import { buildAixContractNote, type AixContractMeta } from "@/app/lib/aix-brain-contract";
-// 2026-10-20 竹内さん（P1 ef272b2d）「2通目の文を作る所が弱すぎる。返信・ブレインと同じ材料・同じ確かめで」: 材料と出口の確かめ（SECOND_MSG_MATERIALS=on の時だけ・既定 off）
-import { secondMsgMaterialsOn, applySecondFinalChecks } from "@/app/lib/second-message-materials";
+// 2026-10-20 竹内さん（P1 ef272b2d）「2通目の文を作る所が弱すぎる。返信・ブレインと同じ材料・同じ確かめで」: 材料と出口の確かめ（10/22 から既定 on・止める SECOND_MSG_MATERIALS=off）
+import { secondMsgMaterialsOn, applySecondFinalChecks, type BrainBundleMeta } from "@/app/lib/second-message-materials";
 import type { SecondMaterials } from "@/app/lib/second-message-materials-server";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
@@ -1380,7 +1380,7 @@ export async function POST(req: NextRequest) {
       if (pickupPush) materialRow = pickupPush;
       const head = pickupPush ? null : headOfFirstMessage(sentMessage);
       if (conversationId && head) {
-        const { data } = await supabase.from("property_pickups").select("property_name, room_no, verdict, reason_codes, created_at, terms, location, equipment")
+        const { data } = await supabase.from("property_pickups").select("property_name, room_no, verdict, reason_codes, recommended, created_at, terms, location, equipment")
           .eq("conversation_id", conversationId).eq("room_no", head.room).order("created_at", { ascending: false }).limit(20);
         pickup = pickupForFirstMessage((data ?? []) as PickupLookupRow[], head);
         materialRow = (pickup as SecondMaterialRow | null) ?? null;
@@ -1573,7 +1573,7 @@ export async function POST(req: NextRequest) {
   //   「本当に良いお部屋ですよね」のような評する一文（長さの注記「スタッフが書いているのは自分の見立て」）だった。
   //   この場面では長さの注記・この種別の書き方・CTA 強度の上書き・段落構成・フレーズ集・⭐実例（AI の下書きのまま送った申込の締め）・一般の CTA 率を渡さない
   const isEstimateSecond = actionType === "estimate_sheet" && isEstimateCard(sentMessage);
-  // 2026-10-20 2通目の材料（既定 off＝読まない・プロンプトも出力も今までと同じ）。返信と同じ関数で、この番に送った物・まだ答えていない依頼・約束・確認の結果・
+  // 2026-10-20 2通目の材料（10/22 から既定 on・SECOND_MSG_MATERIALS=off＝読まない・プロンプトも出力も旧と同じ）。返信と同じ関数で、この番に送った物・まだ答えていない依頼・約束・確認の結果・
   //   お客様のメモ・NG 条件・会社の事実を読み、個人情報の線（申込以降・審査の事情・申込の線は Claude に固定・DeepSeek なら材料を伏せる）も決める
   let secondMaterials: SecondMaterials | null = null;
   if (secondMsgMaterialsOn() && (sentMessage ?? "").trim()) {
@@ -1586,6 +1586,14 @@ export async function POST(req: NextRequest) {
         brainRequestStatus: (brainMeta as { request_status?: unknown } | null)?.request_status ?? null,
         ngPointsFromBrain: brainMeta?.property_search_params?.ng_points ?? null,
         names: [resolvedCustomerName, customerName],
+        // 2026-10-22 竹内さん「AIX は LINE のブレイン（統括）が管轄」: 統括の判断の束（ボタン・ピッカー・なぜ・この AIX で受ける依頼）。
+        //   1通目を送ると画面が suggested_aix_meta を消すが、brainMeta は resolveBrainMetaForGeneration（afterStaffSend）が last_brain_meta から戻した物
+        brainMeta: brainMeta as BrainBundleMeta,
+        pickerValue: actionType === "property_check_result" ? (effectiveCheckPattern ?? null)
+          : actionType === "property_send" ? (/新着/.test(pickupType ?? "") ? "new_arrival" : /広げ/.test(pickupType ?? "") ? "widen" : /代替/.test(pickupType ?? "") ? "alternative" : "normal")
+          : null,
+        // 2026-10-22（P1 696c96ba）2通目が推す物件の売上サポの判定（なぜ推すか・合う条件・決め手・反応）
+        propertyRow: isRecSecond ? ((pickupPush ?? materialRow) as unknown as { property_name?: string | null; room_no?: string | null; recommended?: number | boolean | null; reason_codes?: string[] | null } | null) : null,
       }), new Promise<null>((r) => setTimeout(() => r(null), 8_000))]);
     } catch (e) { console.warn("[aix-template-generate] second-materials failed:", e instanceof Error ? e.message : e); }
   }
@@ -1771,7 +1779,7 @@ export async function POST(req: NextRequest) {
     //   「CTA強度の上書き」「【必ず守る2点】①段落構成に従う」と、**1通目用の骨格が何重にも入っている**。
     //   YUMA で測ると申込の誘導が 100%（実送信8.8%）になり、前に置いた上書きは効かなかった。
     //   設計知見「同じ事実について書くなと書けを別の場所から渡さない」→ 最後に1回だけ明示して上書きする。
-    // 2026-10-20 2通目の材料（返信と同じ材料・既定 off＝空＝並びは今までと同じ）
+    // 2026-10-20 2通目の材料（返信と同じ材料・SECOND_MSG_MATERIALS=off＝空＝並びは旧と同じ）
     secondMaterials?.note ?? "",
     aixChainNote,
     // 物件オススメの直後の2通目: 資料の事実 → 場面の形（実送信の実物）→ 締め の順で最後に置く

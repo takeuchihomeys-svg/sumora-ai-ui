@@ -34,9 +34,11 @@ export function screeningBrainEnabled(env: Env = envOf()): boolean {
 }
 
 /** 審査について の中の選択肢。guarantor＝既存の【保証会社について】（guarantor_info）・他は 審査について（ご相談）（mgmt_screening）＋話題 */
-export type ScreeningTopic = "guarantor" | "job" | "holder" | "guarantor_person" | "nationality" | "timing" | "other";
+export type ScreeningTopic = "guarantor" | "result" | "job" | "holder" | "guarantor_person" | "nationality" | "timing" | "other";
 export const SCREENING_TOPIC_OPTIONS: ReadonlyArray<{ value: ScreeningTopic; label: string; desc: string }> = [
   { value: "guarantor", label: "保証会社について", desc: "物件ごとの保証会社名・種類を入れて一覧と審査の通りやすさ・並行審査の勧めを1通で" },
+  // 2026-10-22 竹内さんの答え: 「審査の結果について」は【審査について】の中の選択肢（管理会社・保証会社から届いた結果をそのまま伝える）
+  { value: "result", label: "審査の結果について", desc: "管理会社・保証会社から届いた審査の結果（通過・否決・まだ審査中）をそのまま伝える" },
   { value: "job", label: "職業・収入について", desc: "お勤め先・雇用形態・収入（夜職・内定・無職など）の審査の相談に答える" },
   { value: "holder", label: "名義について", desc: "ご本人以外（ご家族・パートナー）の名義での契約の相談に答える" },
   { value: "guarantor_person", label: "保証人について", desc: "保証人がいない・立てられない時の審査の相談に答える" },
@@ -60,8 +62,38 @@ export function screeningTopicLine(v: unknown): string {
     case "nationality": return "相談の中身：外国籍・在留資格。国籍・在留資格を文に繰り返さない";
     case "timing": return "相談の中身：審査にかける時期（先に審査・内定後 等）";
     case "other": return "相談の中身：審査の相談（その他）";
+    case "result": return "伝える中身：審査の結果（スタッフが入れた結果のまま・結果を変えない・推測を足さない）";
     default: return "";
   }
+}
+
+/** 審査の結果について の結果（画面の選択・事実はスタッフの入力のまま） */
+export type ScreeningResult = "通過" | "否決" | "審査中";
+export const SCREENING_RESULT_OPTIONS: readonly ScreeningResult[] = ["通過", "否決", "審査中"];
+export function isScreeningResult(v: unknown): v is ScreeningResult {
+  return typeof v === "string" && (SCREENING_RESULT_OPTIONS as readonly string[]).includes(v);
+}
+/**
+ * 審査の結果について の生成の決まり（mgmt_screening の相談の型の代わり）。
+ *   通過＝お祝い＋次の手続き（入力にある物だけ）・否決＝事実を正直に＋別の手（入力にある物だけ・謝罪表現は使わない）・審査中＝結果が出次第すぐご連絡
+ */
+export function screeningResultFormat(r: ScreeningResult): { format: string; rules: string } {
+  if (r === "通過") return {
+    format: "[物件名]の審査につきまして、無事に審査通過となりました😊！！\n[次の手続き]",
+    rules: "・1行目は審査通過のご連絡（結果はスタッフ入力の「審査の結果：通過」のまま）\n・[次の手続き]はスタッフ入力の「確認した結果・必要書類」に契約の手続き・初期費用・必要書類・日程がある時だけ1〜2行。無ければこの行は書かない（入力に無い金額・期日・書類は書かない）\n・「無事に審査通過するまで全力でサポート」は書かない（もう通過している）",
+  };
+  if (r === "否決") return {
+    format: "[物件名]の審査につきまして管理会社より連絡があり、今回は審査が通らなかったとのことでした。\n[別の手]",
+    rules: "・1行目は結果を正直に（スタッフ入力の「審査の結果：否決」のまま・理由は入力にある時だけ）。謝罪表現（申し訳ございません等）は使わない\n・[別の手]はスタッフ入力に別の保証会社・名義・別のお部屋の進め方がある時はそれを1〜2行。無ければ「他にオススメ出来るお部屋もお探しさせて頂きますのでご安心ください😊！！」の形で前向きに締める\n・「無事に審査通過するまで全力でサポート」は書かない",
+  };
+  return {
+    format: "[物件名]の審査につきまして、現在審査中となります！！\n結果が出次第すぐにご連絡させて頂きます😊！！",
+    rules: "・まだ審査中（スタッフ入力の「審査の結果：審査中」のまま）。見込み・通りそう等の推測は書かない（スタッフ入力の「審査の見込み」がある時だけ1行）\n・スタッフ入力の「確認した結果・必要書類」に追加の書類・確認事項がある時だけ1行足す",
+  };
+}
+/** 審査の結果について で締めの「審査通過するまで全力でサポート」を付けるか（審査中だけ付ける） */
+export function screeningResultKeepsSupportLine(r: ScreeningResult | null | undefined): boolean {
+  return !r || r === "審査中";
 }
 
 /**

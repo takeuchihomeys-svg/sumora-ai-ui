@@ -125,7 +125,8 @@ t("物件の値（階・家賃＋管理費・徒歩）", asm.sends[0].props[0].k
 t("引用の画像を引ける", asm.msgs.length === 1 && asm.msgs[0].quotedImageUrl === "img-x");
 
 console.log("── スイッチ");
-t("既定は off", reactionsLinkEnabled({}) === false);
+t("既定は on（10/22）", reactionsLinkEnabled({}) === true);
+t("off で off", reactionsLinkEnabled({ AIX_REACTIONS_LINK: "off" }) === false);
 t("on で on", reactionsLinkEnabled({ AIX_REACTIONS_LINK: "on" }) === true);
 
 console.log(`\n${pass} passed, ${fail} failed`);

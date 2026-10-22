@@ -1,7 +1,7 @@
 // 2026-09-12 竹内方針: AIX 送信 → 完了にするやること（物件出しは物件ピックアップした／物件オススメだけ）と、
 // スタッフの未履行の宣言 → それを履行する AIX（見積書送る宣言 → AIX 見積書送る）
 // 実行: npx tsx app/lib/__tests__/aix-task-link.test.ts
-import { taskTypesCompletedByAix, resolveStaffPromiseAix } from "../aix-task-link";
+import { taskTypesCompletedByAix, resolveStaffPromiseAix, newArrivalPickByBrain } from "../aix-task-link";
 import { classifyStaffTextForLedger } from "../action-ledger";
 import { customerRequestedPropertyCheck } from "../aix-scene-evidence";
 
@@ -48,9 +48,15 @@ it("最後はピックアップの約束・確認の約束も残る（お客様�
   const t = "かしこまりました！！梅田周辺全域からオススメできるお部屋ピックアップしお送りさせて頂きます！！";
   expect(resolveStaffPromiseAix(facts(t, { conf: true }), [C("ここ空いてますか？あとほかの部屋も"), S(t)], { customerRequestedCheck: true })?.action ?? null).toBe("property_check_result");
 });
-it("「新着でオススメ出来るお部屋出次第お送り」（条件付き）→ AIX なし", () => {
+// 2026-10-22（81f0727b「新着は出し切った後の継続」）: 条件付きの新着の約束は、新着が実際に出た時（newArrivalReady）だけ 物件オススメ（＋ピックアップ）。締めの直後は AIX なし
+it("「新着でオススメ出来るお部屋出次第お送り」（条件付き）→ 新着が無い番は AIX なし・新着が出たら 物件オススメ・=off は AIX なし", () => {
   const t = "新着でオススメ出来るお部屋で次第お送りさせていただきます！！";
   expect(resolveStaffPromiseAix(facts(t), [C("ありがとうございます"), S(t)])).toBe(null);
+  const r = resolveStaffPromiseAix(facts(t), [C("ありがとうございます"), S(t)], { newArrivalReady: true });
+  expect(r?.action ?? null).toBe("property_recommendation");
+  expect(r?.alt ?? null).toBe("property_send");
+  const prev = process.env.LINK_PROMISE_NEW_ARRIVAL_REC; process.env.LINK_PROMISE_NEW_ARRIVAL_REC = "off";
+  try { expect(resolveStaffPromiseAix(facts(t), [C("ありがとうございます"), S(t)], { newArrivalReady: true })).toBe(null); } finally { if (prev === undefined) delete process.env.LINK_PROMISE_NEW_ARRIVAL_REC; else process.env.LINK_PROMISE_NEW_ARRIVAL_REC = prev; }
 });
 it("宣言の後にお客様が返信した（最後が顧客）→ この規則は使わない（ブレインが顧客発言で判断）", () => {
   const t = "見積書を作成しお送りさせて頂きます！！";
@@ -185,6 +191,15 @@ it("募集状況・代理契約の確認は従来どおり 物件確認した（
   const t2 = "かしこまりました！！\n代理契約可能か明日管理会社に確認出来次第ご連絡させて頂きます😌！！";
   const m2 = [C("1度この2つで代理契約可能か確認していただけますでしょうか？"), S(t2)];
   expect(resolveStaffPromiseAix(facts(t2, { conf: true }), m2, asked(m2))?.action ?? null).toBe("property_check_result");
+});
+
+it("新着の約束: ブレインが物件の AIX を選んでいればそれを先に（1件ならオススメ・複数ならピックアップ）", () => {
+  const p = { action: "property_recommendation", alt: "property_send" };
+  expect(newArrivalPickByBrain(p, "property_send")).toBe({ action: "property_send", alt: "property_recommendation" });
+  expect(newArrivalPickByBrain(p, "property_recommendation")).toBe({ action: "property_recommendation", alt: "property_send" });
+  expect(newArrivalPickByBrain(p, null)).toBe(null);
+  expect(newArrivalPickByBrain(p, "estimate_sheet")).toBe(null);
+  expect(newArrivalPickByBrain({ action: "estimate_sheet" }, "property_send")).toBe(null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

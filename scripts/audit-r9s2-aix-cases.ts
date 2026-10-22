@@ -19,9 +19,12 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
 const SINCE = arg("since", "2026-09-01T00:00:00Z");
 const PER = Number(arg("per", "12"));
 const OUT = arg("out", "scripts/.replay-out/r9s2-aix-cases.json");
+// 2026-10-22 試験の AIX の文の段（scripts/exam-aix-text-build.ts）: --fixed＝固定の文の経路（会話を合わせるを押していない）も番にする・会話を合わせるは押した通り
+const FIXED = process.argv.includes("--fixed");
+const cm = (p: { conversation_match: boolean | null }) => (FIXED ? p.conversation_match === true : true);
 const ms = (s: string) => Date.parse(s);
 
-type Press = { id: string; conversation_id: string; aix_type: string; check_pattern: string | null; send_mode: string | null; app_sub_mode: string | null; created_at: string; conversation_match: boolean | null; property_names: string[] | null; prop_statuses: string[] | null; send_keyword: string | null; estimate_sent: boolean | null };
+type Press = { id: string; conversation_id: string; aix_type: string; check_pattern: string | null; send_mode: string | null; app_sub_mode: string | null; created_at: string; conversation_match: boolean | null; property_names: string[] | null; prop_statuses: string[] | null; send_keyword: string | null; estimate_sent: boolean | null; picker_choices?: Record<string, unknown> | null };
 type Msg = { id: string; conversation_id: string; sender: string; text: string | null; image_url: string | null; created_at: string; is_aix_generated: boolean | null; staff_writer: string | null };
 type Gen = { conversation_id: string; action_type: string; generated_text: string | null; generated_at: string; status: string | null; conditions_snapshot: Record<string, unknown> | null };
 
@@ -69,7 +72,7 @@ function estimateFromSent(s: string): { property_name: string; room_number: stri
 (async () => {
   const ACTIONS = ["property_check_result", "viewing_invite", "property_recommendation", "estimate_sheet", "property_send", "application_push", "meeting_place"];
   const [presses, gens] = await Promise.all([
-    readAll<Press>((f, t) => sb.from("aix_usage_logs").select("id, conversation_id, aix_type, check_pattern, send_mode, app_sub_mode, created_at, conversation_match, property_names, prop_statuses, send_keyword, estimate_sent").in("aix_type", ACTIONS).gte("created_at", SINCE).order("created_at").range(f, t)),
+    readAll<Press>((f, t) => sb.from("aix_usage_logs").select("id, conversation_id, aix_type, check_pattern, send_mode, app_sub_mode, created_at, conversation_match, property_names, prop_statuses, send_keyword, estimate_sent, picker_choices").in("aix_type", ACTIONS).gte("created_at", SINCE).order("created_at").range(f, t)),
     readAll<Gen>((f, t) => sb.from("aix_generate_log").select("conversation_id, action_type, generated_text, generated_at, status, conditions_snapshot").in("action_type", ACTIONS).gte("generated_at", SINCE).not("generated_text", "is", null).order("generated_at").range(f, t)),
   ]);
   const convIds = [...new Set(presses.map((p) => p.conversation_id).concat(gens.map((g) => g.conversation_id)))].filter((c) => !isTestConversation(c));
@@ -122,7 +125,7 @@ function estimateFromSent(s: string): { property_name: string; room_number: stri
     if ((perAction[p.aix_type] ?? 0) >= PER) continue;
     const pt = ms(p.created_at);
     if (appliedAt.has(p.conversation_id) && appliedAt.get(p.conversation_id)! <= pt && p.aix_type !== "application_push") { bump(p.aix_type, "申込以降"); continue; }
-    if (!want[p.aix_type](p)) { bump(p.aix_type, "LLM の経路でない"); continue; }
+    if (!(FIXED || want[p.aix_type](p))) { bump(p.aix_type, "LLM の経路でない"); continue; }
     const all = await msgsOf(p.conversation_id);
     const near = all.filter((m) => m.sender !== "customer" && m.is_aix_generated && ms(m.created_at) >= pt - 15 * 60_000 && ms(m.created_at) <= pt + 20 * 60_000 && (m.text ?? "").trim().length >= 10);
     if (!near.length) { bump(p.aix_type, "送った通なし"); continue; }
@@ -154,7 +157,7 @@ function estimateFromSent(s: string): { property_name: string; room_number: stri
     const body: Record<string, unknown> = { action: p.aix_type, account: "sumora", conversation_id: "YUMA", customer_name: "YUMA", recent_messages: ctx.recent };
     const pn = (p.property_names ?? []).filter(Boolean);
     if (p.aix_type === "property_check_result") {
-      Object.assign(body, { conversation_match: true, check_pattern: p.check_pattern ?? "available", ...(pn.length ? { property_names: pn, property_count: pn.length } : {}), ...(p.prop_statuses?.length ? { prop_statuses: p.prop_statuses } : {}) });
+      Object.assign(body, { conversation_match: cm(p), check_pattern: p.check_pattern ?? "available", ...(pn.length ? { property_names: pn, property_count: pn.length } : {}), ...(p.prop_statuses?.length ? { prop_statuses: p.prop_statuses } : {}) });
       // 管理会社に確認した（mgmt_*・退去日 等）はスタッフが確認した結果の入力が要る → 送った通の本文（呼びかけ・締めを除く）を入力の近似にする
       if (/^(mgmt_|vacate_date|nearby_parking)/.test(String(p.check_pattern ?? ""))) {
         const core = sent.split("\n").map((l) => l.trim()).filter((l) => l && !/^YUMAさん(お世話になっております)?[！!]*$/.test(l) && !/お手隙の際|ご確認(よろしく)?お願い|ご査収/.test(l)).join("\n");
@@ -162,7 +165,7 @@ function estimateFromSent(s: string): { property_name: string; room_number: stri
       }
     } else if (p.aix_type === "viewing_invite") {
       const cal = calendarFromSent(sent);
-      Object.assign(body, { conversation_match: true, ...(cal ? { calendar_info: cal } : {}), ...(pn[0] ? { property_name: pn[0] } : {}) });
+      Object.assign(body, { conversation_match: cm(p), ...(cal ? { calendar_info: cal } : {}), ...(pn[0] ? { property_name: pn[0] } : {}) });
     } else if (p.aix_type === "property_send") {
       const imgs = all.filter((m) => m.sender !== "customer" && m.image_url && ms(m.created_at) >= pt - 15 * 60_000 && ms(m.created_at) <= pt + 20 * 60_000).map((m) => m.image_url!).slice(0, 10);
       Object.assign(body, { send_mode: p.send_mode ?? "simple", ...(p.conversation_match ? { conversation_match: true } : {}), ...(p.send_keyword ? { keyword: ctx.mask(p.send_keyword) } : {}), ...(imgs.length ? { image_urls: imgs, property_count: imgs.length } : {}) });
@@ -172,12 +175,17 @@ function estimateFromSent(s: string): { property_name: string; room_number: stri
       if (!est) { bump(p.aix_type, "見積書の1通目が読めない"); continue; }
       Object.assign(body, { parsed_estimate: est, image_url: "https://example.invalid/estimate.png" });
     } else if (p.aix_type === "application_push") {
-      Object.assign(body, { conversation_match: true, app_sub_mode: p.app_sub_mode ?? "push", ...(pn[0] ? { property_name: pn[0] } : {}) });
+      Object.assign(body, { conversation_match: cm(p), app_sub_mode: p.app_sub_mode ?? "push", ...(pn[0] ? { property_name: pn[0] } : {}) });
     } else if (p.aix_type === "meeting_place") {
       const addr = propAddr;
       if (!addr || !/\d/.test(addr)) { bump(p.aix_type, "住所が読めない"); continue; }
       const d = sent.match(/\d{1,2}\s*[\/月]\s*\d{1,2}\s*日?[^\n]{0,20}?\d{1,2}[:：]\d{2}/);
-      Object.assign(body, { conversation_match: true, meeting_property_name: pn[0] ?? "", meeting_property_address: addr, ...(d ? { meeting_date: d[0] } : {}) });
+      Object.assign(body, { conversation_match: cm(p), meeting_property_name: pn[0] ?? "", meeting_property_address: addr, ...(d ? { meeting_date: d[0] } : {}) });
+    }
+    // --fixed: スタッフが選んだピッカーの値（ペット可否・別の部屋の有無 等＝スタッフだけが知る事）を押下の記録から本文へ（無いと入口が「〇〇が必要です」で止まる）
+    if (FIXED && p.picker_choices) {
+      for (const [k, v] of Object.entries(p.picker_choices)) if (!(k in body) && v !== null && v !== undefined && typeof v !== "object") body[k] = typeof v === "string" ? ctx.mask(v) : v;
+      if (p.picker_choices.other_room !== undefined && body.other_room_status === undefined) body.other_room_status = p.picker_choices.other_room;
     }
     const inputText = [...ctx.recent.map((m) => m.text), JSON.stringify({ ...body, recent_messages: undefined })].join("\n");
     cases.push({ id: `${p.aix_type}:${p.id.slice(0, 8)}`, action: p.aix_type, route: "aix/action", src: p.id, at: p.created_at, body, sent, genThen: genText ? ctx.mask(genText) : null, inputText });

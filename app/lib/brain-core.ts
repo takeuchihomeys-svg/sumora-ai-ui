@@ -49,7 +49,7 @@ import { isApplicationPayload, APPLICATION_FORM_PLACEHOLDER, APPLICATION_FORMAT_
 import { loadKnownCustomerNames, loadKnownCallNames, loadPartyAliases, loadAltNameMask } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
-import { resolveStaffPromiseAix, linkPromiseNewArrivalRecEnabled } from "@/app/lib/aix-task-link";
+import { resolveStaffPromiseAix, linkPromiseNewArrivalRecEnabled, newArrivalPickByBrain, NEW_ARRIVAL_PROMISE_MATERIAL_LINE } from "@/app/lib/aix-task-link";
 import { vacateMoveInEstimateEnabled } from "@/app/lib/vacate-move-in-estimate";
 import { brainCheckPatternEnabled, brainCheckPatternSchemaField, resolveCheckKindWithBrain } from "@/app/lib/brain-check-pattern";
 import { reactionOnlyAfterMgmtPending } from "@/app/lib/staff-only-aix-1020";
@@ -59,7 +59,7 @@ import { propertyThreadEnabled } from "@/app/lib/property-thread";
 import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
 import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from "@/app/lib/brain-scene";
 // 10巡目（10/08 竹内「AIXのボタンの種類・ピッカーの種類を分かっていたら簡単に完全にすることできる」）: AIX の全ボタン×主のピッカーの一覧と判断の順番を場面で絞って渡す（BRAIN_AIX_CATALOG=off で外す）
-import { catalogBlockForBrain } from "@/app/lib/aix-catalog";
+import { catalogBlockForBrain, isSceneUncertain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
@@ -2219,7 +2219,10 @@ export async function analyzeConversation(
   type ActionRule = { rule_key: string; action_type: string | null; rule_text: string; priority: number | null; condition_key: string | null; condition_value: string | null };
   // 3巡目（10/07）: ブレインの材料を場面で絞る（app/lib/brain-scene.ts・既定 on・BRAIN_SCENE_MATERIALS=off で戻す／テストは opts.sceneMaterials）
   const brainSceneOn = brainSceneMaterialsEnabled(process.env, opts?.sceneMaterials ?? null);
-  const brainScene: ReplyScene | null = brainSceneOn ? resolveReplyScene({ customerText: unrepliedCustomerTurn(typedMessages).text ?? "" }).scene : null;
+  const brainSceneRes = brainSceneOn ? resolveReplyScene({ customerText: unrepliedCustomerTurn(typedMessages).text ?? "" }) : null;
+  const brainScene: ReplyScene | null = brainSceneRes?.scene ?? null;
+  // 2026-10-22 場面の読みが弱い番は AIX の一覧を全部のピッカーで（既定 on・AIX_CATALOG_UNCERTAIN_FULL=off で止まる）
+  const brainSceneUncertain = !brainSceneRes || isSceneUncertain(brainSceneRes.scene, brainSceneRes.evidence);
   // 2026-10-22 D案 4つの脳の働きの4つ目「慣れた事は速く・難しい事はじっくり」（設計知見 b01d793d・brain-fast-slow.ts）:
   //   入口の決まった計算（お客様の文・場面の前例・気持ちの読み・申込以降・初めての返信）で番を easy／normal／hard に分ける。
   //   easy＝判断に効きにくい大きな材料を渡さない（下で・戻り道あり）／hard＝場面で外す材料も渡す＋2回目の確かめ（下で）。normal は今のまま。
@@ -2265,7 +2268,7 @@ export async function analyzeConversation(
 
   // 10巡目（10/08）: 返信か AIX かの判断の土台＝AIX のボタン×ピッカーの一覧（場面に関係する物だけ・feedback_scene_first）。戻す BRAIN_AIX_CATALOG=off
   const aixCatalogText = process.env.BRAIN_AIX_CATALOG === "off" ? "" : `
-${catalogBlockForBrain(brainScene)}
+${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
 `;
 
   const knowledgePrinciples = systemInputs.knowledgePrinciples;
@@ -2732,6 +2735,10 @@ ${catalogBlockForBrain(brainScene)}
   if (overrideDemoted("staff_promise") && !isPostApplyStatus(convStatus)) {
     const spLine = staffPromiseMaterialLine(brainLedger.facts);
     if (spLine) customerStateBlockText += `\n\n${spLine}${ackAfterPromiseMaterial()}`;
+  }
+  // 2026-10-22 新着の約束（LINK_PROMISE_NEW_ARRIVAL_REC=on の時だけ）: 1件ならオススメ・複数ならピックアップを状況で選ぶ材料
+  if (linkPromiseNewArrivalRecEnabled() && !isPostApplyStatus(convStatus) && brainLedger.facts.pickupPromisedUnfulfilled && brainLedger.facts.pickupPromisedKind === "new_arrival") {
+    customerStateBlockText += `\n\n${NEW_ARRIVAL_PROMISE_MATERIAL_LINE}`;
   }
   // 2026-10-14 決定 C をブレイン基準に（P0 9eb6aa9c ②）: 今の番が決定 C の番か（網）を材料で渡し、返信か AIX かはブレインが決める。
   //   後の rule:ack_after_promise_reply は aix の欄が無い時だけの網（ACK_AFTER_PROMISE_BRAIN=off で旧の上書き）
@@ -3665,7 +3672,17 @@ ${history}`;
     const ackAfterForPromise = customerAckAfter || (lastIsCustomer && reactionOnlyAfterMgmtPending({
       lastStaffMgmtPending: !!brainLedger.facts.lastStaffEntry?.detail?.mgmtPending, customerText: unrepliedTurn.text, hasImage: unrepliedTurn.hasImage,
     }));
+    // 2026-10-22 レビュー（81f0727b）: 条件付きの新着の約束は、約束・最後の送付より後に作った新しい候補が実際にある時だけ AIX（締めの直後は付けない）
+    let newArrivalReady = false;
+    if (linkPromiseNewArrivalRecEnabled() && brainLedger.facts.pickupPromisedUnfulfilled && brainLedger.facts.pickupPromisedKind === "new_arrival" && !isPostApplyStatus(convStatus)) {
+      try {
+        const { data: pendNa } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
+        const sinceMs = Math.max(Date.parse(brainLedger.facts.lastPropertiesSentAt ?? "") || 0, Date.parse(brainLedger.facts.pickupPromisedAt ?? "") || 0);
+        newArrivalReady = freshPickupReady((pendNa ?? []) as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: sinceMs > 0 ? new Date(sinceMs).toISOString() : null, nowMs: Date.now() });
+      } catch (e) { console.warn("[brain-core] new-arrival ready skipped:", e instanceof Error ? e.message : String(e)); }
+    }
     let promiseAix = resolveStaffPromiseAix(brainLedger.facts, messagesOldestFirst, {
+      newArrivalReady,
       customerRequestedCheck: customerRequestedPropertyCheck({
         recentMessages: promiseBasis.map((m) => ({ sender: m.sender, text: m.text })),
         sentPropertyCount: brainLedger.facts.propertiesSentCount,
@@ -3729,6 +3746,11 @@ ${history}`;
         if (VIEWING_CHECK_PROMISE_RE.test(lastStaffText) && !(routeFix1020("viewing_check_vacancy") && viewingCheckAlsoVacancy(lastStaffText))) { finalAix = "viewing_invite"; decisionSource = "promise:viewing_check"; }
       }
       promiseAltAction = promiseAix.alt ?? null;
+      // 2026-10-22 竹内さんの答え: 新着の約束はブレインが状況で選ぶ（1件ならオススメ・複数ならピックアップ）＝ブレインが物件の AIX を選んでいればそれを先に
+      if (promiseAix.kind === "pickup" && linkPromiseNewArrivalRecEnabled() && brainLedger.facts.pickupPromisedKind === "new_arrival") {
+        const nb = newArrivalPickByBrain(promiseAix, llmAixRawC);
+        if (nb) { finalAix = nb.action; promiseAltAction = nb.alt; console.log(JSON.stringify({ tag: "brain:new-arrival-brain-pick", conversationId, pick: nb.action })); }
+      }
       // 2026-10-06 ⑫ チンシャン: 条件・設備の確認の約束は 確認した（条件・交渉）→ 管理会社に確認した→〈要件〉のピッカーで開く（物件確認した ではない）
       if (promiseAix.checkPattern) sceneSignalCheckPattern = promiseAix.checkPattern;
     }

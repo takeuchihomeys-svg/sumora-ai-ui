@@ -12,7 +12,7 @@
 import { PROXY_CONTRACT_RE, MGMT_COMPANY_Q_RE, TWO_PERSON_CHECK_REQUEST_RE } from "./scene-patterns";
 import { LIFELINE_Q_RE } from "./aix-lifeline";
 import { screeningButtonEnabled, SCREENING_BUTTON } from "./aix-owner-answers-1021";
-import { aixNewPickers1020Enabled, NEW_CHECK_PATTERNS_1020, APPLICATION_STATUS_Q_RE, CONTRACT_TERMS_RE, RENT_NEGOTIATION_RE, ROOM_VACANCIES_Q_RE, SCREENING_CONSULT_RE, SURROUNDINGS_RE, BIKE_PARKING_RE, PROPERTY_INFO_BUTTON, PROPERTY_INFO_PICKER_LABELS } from "./aix-new-pickers";
+import { aixNewPickers1020Enabled, screeningPickerForBrain, NEW_CHECK_PATTERNS_1020, APPLICATION_STATUS_Q_RE, CONTRACT_TERMS_RE, RENT_NEGOTIATION_RE, ROOM_VACANCIES_Q_RE, SCREENING_CONSULT_RE, SURROUNDINGS_RE, BIKE_PARKING_RE, PROPERTY_INFO_BUTTON, PROPERTY_INFO_PICKER_LABELS } from "./aix-new-pickers";
 
 export const AIX_BUTTON_TAXONOMY = {
   property_check_result: {
@@ -204,6 +204,7 @@ export function detectPropertyCheckPattern(recentText: string): PropertyCheckKin
   const on = aixNewPickers1020Enabled();
   for (const d of CHECK_PATTERN_DETECTORS) {
     if (!on && (NEW_CHECK_PATTERNS_1020 as readonly string[]).includes(d.pattern)) continue;
+    if (d.pattern === "mgmt_screening" && !screeningPickerForBrain()) continue; // 2026-10-22 審査の相談は明示の on か brain の時だけ
     const re = !on && d.pattern === "mgmt_parking" ? /駐車場|バイク置|駐輪/ : d.re;
     // off は今まで通りの言葉（ブレイン・帯に渡る文を変えない）
     const topic = !on && d.pattern === "mgmt_parking" ? "駐車場" : d.topic;

@@ -141,13 +141,16 @@ it("文は600字以内・今どこに［］・分かれ道と戻り方を含む"
   }
 });
 it("位置が分からない時は空文字", () => eq(buildApplyRouteBrainText(locateApplyRoute(base({ stage: null }))), ""));
-it("スイッチ: 既定 off（未設定・off・on 以外）→ 空文字・loc=null", () => {
-  for (const env of [{}, { APPLY_ROUTE_MAP: "off" }, { APPLY_ROUTE_MAP: "1" }, { APPLY_ROUTE_MAP: "" }]) {
+it("スイッチ: 既定 on（2026-10-22 試験 p12-arm-on で悪化なし）・off だけで止める → off は空文字・loc=null", () => {
+  for (const env of [{ APPLY_ROUTE_MAP: "off" }, { APPLY_ROUTE_MAP: " OFF " }]) {
     eq(applyRouteMapEnabled(env), false);
     const r = applyRouteBrainTextIfEnabled(base({ stage: "estimate_sent" }), env);
     eq([r.text, r.loc], ["", null]);
   }
-  ok(applyRouteBrainTextIfEnabled(base({ stage: "estimate_sent" }), { APPLY_ROUTE_MAP: "on" }).text.includes("申込までの地図"), "on");
+  for (const env of [{}, { APPLY_ROUTE_MAP: "on" }, { APPLY_ROUTE_MAP: "" }]) {
+    eq(applyRouteMapEnabled(env), true);
+    ok(applyRouteBrainTextIfEnabled(base({ stage: "estimate_sent" }), env).text.includes("申込までの地図"), "on");
+  }
 });
 it("brain-core: off の時プロンプトは同じ（applyRouteText は '' で始まり、on の分岐の中でだけ代入・差し込みは user の毎回変わる並びだけ）", () => {
   const src = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8").replace(/\r\n/g, "\n");

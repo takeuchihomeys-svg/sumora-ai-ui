@@ -1257,6 +1257,14 @@ function readCostTier(label: string): { any: boolean; machine: number; flash: nu
 
 // 2026-10-20 --range の版がこの倉庫に無い（別の倉庫の commit 等）時は、お金を使う前に分かる言葉で止める（前は RAG の選びが落ちて「安全側で全部」になっていた）
 const checkRange = () => { if (arg("range")) verifyRange(arg("range"), "."); };
-const main0 = flag("spend-today") ? spendToday : flag("conduct") ? conduct : args.some((x) => /^--run-plan(=|$)/.test(x)) ? runPlan : flag("miss-map") ? showMissMap : flag("coverage") ? showCoverage : flag("ledger") ? async () => showLedger() : flag("cleanup") ? cleanup : flag("run-queue") ? runQueue : flag("warm-main") ? warmMain : flag("model-check") ? modelCheck : runMain;
+// 2026-10-22 AIX の文の段（押した後の1通目・2通目・✨この会話に合った文を本番の入口で作り、竹内さんが送った文と比べる）: scripts/exam-aix-text.ts を子で回す
+//   --aix-text の後ろ（-- の後ろ）はそのまま渡す。例: exam-brain.ts --aix-text -- --label=fix1 --switch=AIX_TAKEUCHI_FORM=off
+async function aixText(): Promise<void> {
+  const env = { ...process.env };
+  for (const [k, v] of ENV_FP.pairs) env[k] = v;
+  const code = await new Promise<number>((res) => { const c = spawn(process.platform === "win32" ? "npx.cmd" : "npx", ["tsx", "--env-file=.env.local", "scripts/exam-aix-text.ts", ...SWITCH_ARGS, ...PASS].map(q), { stdio: "inherit", env, shell: process.platform === "win32" }); c.on("error", () => res(1)); c.on("close", (n) => res(n ?? 1)); });
+  if (code) process.exitCode = code;
+}
+const main0 = flag("aix-text") ? aixText : flag("spend-today") ? spendToday : flag("conduct") ? conduct : args.some((x) => /^--run-plan(=|$)/.test(x)) ? runPlan : flag("miss-map") ? showMissMap : flag("coverage") ? showCoverage : flag("ledger") ? async () => showLedger() : flag("cleanup") ? cleanup : flag("run-queue") ? runQueue : flag("warm-main") ? warmMain : flag("model-check") ? modelCheck : runMain;
 const main = async () => { checkRange(); await main0(); };
 main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; }).finally(() => setTimeout(() => process.exit(process.exitCode ?? 0), 300));
