@@ -3233,7 +3233,8 @@ ${history}`;
         const sceneButtons = brainScene ? catalogSceneButtons(brainScene) : [];
         if (brainScene && D.isUncertainFullCatalog(mats.aixCatalog ?? "")) {
           const cc = D.compactCatalogByScene(mats.aixCatalog ?? "", sceneButtons);
-          if (cc.length < (mats.aixCatalog ?? "").length) { replace.aixCatalog = cc; trimmed.push("aixCatalog"); }
+          // 縮めて減るのが小さい番（場面 other 等でほとんどのボタンが場面の中）は縮めない＝食い違いの読み直しの方が高くつく（試験 dp3-on6: 平均 −180字で読み直し1回）
+          if ((mats.aixCatalog ?? "").length - cc.length >= D.DPLAN_CATALOG_MIN_SAVE) { replace.aixCatalog = cc; trimmed.push("aixCatalog"); }
         }
         // 核には伏せる前の材料（今と同じ maskBrain を後で全体に掛ける）。下ごしらえは読み手の答え（伏せた材料から作った物）
         coreUserText = D.buildCoreUserText(mats, trimmed, D.digestBlock(results, trimmed, mats), historyTail, replace);

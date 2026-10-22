@@ -221,7 +221,7 @@ export function digestBlock(results: ReadonlyArray<ReaderResult>, trimmed: Reado
 export const CORE_RULES = `【D案の核（指揮官）の決まり】
 - あなたが最後に決める（返信か・確認の約束か・AIX か・どのボタン×ピッカーか・何を先に答えるか）。読み手の下ごしらえは参考で、食い違えば会話履歴と材料の元の文に戻る。
 - 原則の優先順位: 1 正直（嘘・推測で書かない）→ 2 確認の約束（物件ごとに違う事・スタッフしか知らない事）→ 3 一つ一つに答える → 4 即答 → 5 気持ち → 6 次の一手 → 7 形。
-  ただし一般的な事・資料や会社の事実・送った物で答えられる事まで確認の約束や AIX にしない（AIX と確認の約束はスタッフしか知らない事・確かめないと分からない事だけ）。
+  返信か AIX か（約束か）は【返信か AIX かの決め方】の①〜⑤の順で決める（⑤ スタッフだけが知る情報が無くても AIX で送る物も含む）。ここで別の線を足さない。
 - 縮めた材料の目次の全文が無いと道を決められない時だけ、いつもの JSON の代わりに {"need_materials":["目次の名前",…]} だけを返す（最大3つ・1回だけ）。足りていればいつもの JSON をそのまま返す。`;
 
 /** 核の1回目が材料の呼び戻しか（いつもの JSON でない）。呼び戻せる名前だけ・最大3つ */
@@ -354,3 +354,5 @@ export function pickedCompressedButton(aix: unknown, sceneButtons: ReadonlyArray
   if (sceneButtons.includes(a)) return false;
   return new RegExp(`^- ${a}【`, "m").test(String(catalog ?? ""));
 }
+/** 一覧を縮めるのは、縮めて減る字数がこれ以上の番だけ（小さい得のために細目を外さない） */
+export const DPLAN_CATALOG_MIN_SAVE = 1500;
