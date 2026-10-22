@@ -58,14 +58,17 @@ it("1通に探し続ける宣言と本物の確認が両方ある時は両方残
 
 console.log("\n[押す AIX（物件ピックアップ＋物件オススメ）]");
 const msgs = [{ sender: "customer", text: "ガスコンロ付きが良いです" }, { sender: "staff", text: KEIJI }];
-it("探し続ける約束 →「次第」が入っていても物件ピックアップをセットし、2つ目に物件オススメ", () => {
-  const r = resolveStaffPromiseAix(
+// 2026-10-22 LINK_PROMISE_NEW_ARRIVAL_REC 既定 on（試験 p12-nar-on 悪化なし）: 探し続ける約束は 物件オススメが先・2つ目に物件ピックアップ。=off で旧
+it("探し続ける約束 →「次第」が入っていても物件の AIX をセット（既定 物件オススメ＋ピックアップ・=off で旧の ピックアップ＋オススメ）", () => {
+  const run = () => resolveStaffPromiseAix(
     { lastStaffEntry: classifyStaffTextForLedger(KEIJI, AT), estimatePromisedUnfulfilled: false, pickupPromisedUnfulfilled: true, confirmationPromisedUnfulfilled: false },
     msgs, { customerRequestedCheck: true },
   );
-  expect(r?.action).toBe("property_send");
+  const r = run();
+  expect(r?.action).toBe("property_recommendation");
   expect(r?.kind).toBe("pickup");
-  expect(r?.alt).toBe("property_recommendation");
+  expect(r?.alt).toBe("property_send");
+  (() => { const prev = process.env.LINK_PROMISE_NEW_ARRIVAL_REC; process.env.LINK_PROMISE_NEW_ARRIVAL_REC = "off"; try { const o = run(); expect(o?.action).toBe("property_send"); expect(o?.alt).toBe("property_recommendation"); } finally { if (prev === undefined) delete process.env.LINK_PROMISE_NEW_ARRIVAL_REC; else process.env.LINK_PROMISE_NEW_ARRIVAL_REC = prev; } })();
 });
 it("AIX【物件確認した】にはならない（お客様から確認の依頼があっても・果たしていない確認の約束が無い時）", () => {
   const r = resolveStaffPromiseAix(
@@ -98,7 +101,9 @@ it("従来の「次第」つきピックアップ宣言（探し続ける形で�
     { lastStaffEntry: classifyStaffTextForLedger(t, AT), estimatePromisedUnfulfilled: false, pickupPromisedUnfulfilled: true, confirmationPromisedUnfulfilled: false },
     [{ sender: "customer", text: "お願いします" }, { sender: "staff", text: t }], {},
   );
-  expect(r).toBe(null);
+  // 2026-10-22 既定 on: 新着の約束は 物件オススメ（＋ピックアップ）。=off で旧の AIX なし
+  expect(r?.action ?? null).toBe("property_recommendation");
+  (() => { const prev = process.env.LINK_PROMISE_NEW_ARRIVAL_REC; process.env.LINK_PROMISE_NEW_ARRIVAL_REC = "off"; try { expect(resolveStaffPromiseAix({ lastStaffEntry: classifyStaffTextForLedger(t, AT), estimatePromisedUnfulfilled: false, pickupPromisedUnfulfilled: true, confirmationPromisedUnfulfilled: false }, [{ sender: "customer", text: "お願いします" }, { sender: "staff", text: t }], {})).toBe(null); } finally { if (prev === undefined) delete process.env.LINK_PROMISE_NEW_ARRIVAL_REC; else process.env.LINK_PROMISE_NEW_ARRIVAL_REC = prev; } })();
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
