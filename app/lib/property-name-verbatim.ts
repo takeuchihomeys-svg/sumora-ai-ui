@@ -82,6 +82,15 @@ export function enforceChosenPropertyName(text: string, chosen: string | null | 
   const fixes: VerbatimFix[] = [];
   const out = text.replace(RUN, (run) => {
     if (run.includes(c)) return run;
+    // 2026-10-23 レビュー: 「プレミアス鳳Ⅱ」が「プレミアス鳳II」（NFKC で同じ・字が違う＝長さも変わる）になった → 入力の字に戻す
+    for (const k of names) {
+      const kn = k.normalize("NFKC");
+      if (kn === k) continue;
+      for (let len = Math.max(4, k.length - 2); len <= Math.min(run.length, k.length + 6); len++) {
+        const seg = run.slice(0, len);
+        if (seg !== k && seg.normalize("NFKC") === kn && !/^[A-Za-zＡ-Ｚａ-ｚⅠ-ⅿ]/.test(run.slice(len, len + 1))) { fixes.push({ from: seg, to: k }); return k + run.slice(len); }
+      }
+    }
     for (const k of names) for (const len of [k.length - 1, k.length, k.length + 1]) {
       if (len < 4 || len > run.length) continue;
       const seg = run.slice(0, len);

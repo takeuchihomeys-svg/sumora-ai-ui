@@ -12,6 +12,7 @@ import { isJevEnabled } from "@/app/lib/jev-client";
 import { evaluateAixWithJev, evaluatePickerWithJev, hasPickerQuestion, recordJevShadow, toPickerShadowRow, toShadowRow } from "@/app/lib/aix-jev";
 import { buildAixJevMaterials } from "@/app/lib/aix-jev-materials";
 import { waitUntil } from "@vercel/functions";
+import { dPlanOn, parseNeedMaterials, recalledBlock, coreOverTwoStage, pickedCompressedButton } from "@/app/lib/brain-dplan";
 import { logWatchMaterial, noteWatchMaterials } from "@/app/lib/line-watch-materials-server";
 import { isTimeoutError } from "@/app/lib/line-watch-materials";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
@@ -23,7 +24,7 @@ import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists, refineCurrentProperty, currentPropertiesOf } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
 import { ackFormBrainEnabled, ackFormFacts, ackFormMaterialLine } from "@/app/lib/repeat-brain-align";
-import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractPromisesPickup, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, pickupPromiseOpen, directPropertyNeedsPromise, staffPromiseMaterialLine, samePromiseFamily, isPromiseNudge, type DemotedOverride } from "@/app/lib/override-demote";
+import { markCoreWins, applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractPromisesPickup, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, pickupPromiseOpen, directPropertyNeedsPromise, staffPromiseMaterialLine, samePromiseFamily, isPromiseNudge, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -3169,9 +3170,90 @@ ${history}`;
     // 2026-10-07 ③キャッシュ: 温めのスイッチが ON の時だけ印（5分の印は 974回書いて 61回しか読めていなかった・BRAIN_CONV_BLOCK_MARK=always で戻す）
     mark: convBlockMarkEnabled(opts?.cacheWarm, cacheWarmMode()),
   });
+  // 2026-10-22 D案の核（BRAIN_D_PLAN・既定 off＝ここは素通りで今と1文字も変わらない）: 分野ごとの読み手（flash・伏せた材料だけ）が大きい材料を読み、
+  //   核（このブレインの呼び出し・今と同じモデル・同じ system・同じ出力の形）は下ごしらえ＋削らない材料＋会話履歴で判断する。
+  //   読み手が読めた大きい材料は目次だけにし、要る時は核が呼び戻す（need_materials）。読めなかった材料は削らない。個人情報の番は今の形（app/lib/brain-dplan.ts）
+  let coreUserText = customerSpecificText;
+  let dplan: null | {
+    trimmed: import("@/app/lib/brain-dplan").MaterialKey[]; materials: import("@/app/lib/brain-dplan").Materials;
+    readers: Array<{ k: string; ok: boolean; err: string | null; ms: number; pts: number; kf: boolean }>; readerUsd: number; readerMs: number;
+    /** 3周目: 細目まで全文で渡した今の場面のボタン（核がこれ以外のボタンを選んだら一覧の全文を足して読み直す） */
+    sceneButtons: string[];
+  } = null;
+  let dplanSkip: string | null = null;
+  if (isFreshLayer && dPlanOn()) {
+    try {
+      const D = await import("@/app/lib/brain-dplan");
+      const { altPiiSignal } = await import("@/app/lib/alt-pii-gate");
+      const historyTail = `
+
+会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
+${history}`;
+      // 3周目: 速い道で外した材料（fsDropSet）は部品でも外す（旧: 外した番は並びのずれで毎回回らなかった）
+      const fd = (k: string, s: string) => (fsDropSet.has(k) ? "" : s);
+      const mats: import("@/app/lib/brain-dplan").Materials = {
+        aixCatalog: aixCatalogText, actionRules: actionRulesText, templates: fd("templates", templatesText), status: statusText, cond: condText, sentProps: sentPropsText,
+        propertySearch: propertySearchText, viewings: viewingsText, tasks: tasksText, scheduled: scheduledText, examples: fd("examples", examplesText), timing: timingText,
+        companyFacts: companyFactsText, sendReplyTiming: sendReplyTimingText, flags: flagsText, aixHistory: aixHistoryText, ledger: ledgerText, promise: promiseBrainText,
+        seeMore: seeMoreBrainText, customerState: customerStateBlockText, parallelSearch: parallelSearchBrainText, applyRoute: applyRouteText,
+        applyReadiness: applyReadinessText, appealTiming: appealTimingText, sceneEvidence: sceneEvidenceText, judgeExamples: fd("judgeExamples", judgeExamplesText), routeType: fd("routeType", routeTypeText), rag: fd("ragKnowledge", ragKnowledgeText),
+      };
+      // 並びのずれの歯止め: 部品を今の並びでつないだ物が今の素の入力と1文字でも違えば回さない（材料の足し忘れ・並びの変更）
+      if (D.buildCoreUserText(mats, [], "", historyTail) !== customerSpecificText) dplanSkip = "材料の並びのずれ";
+      // 読み手（DeepSeek）に渡す伏せ: 返信生成と同じ全顧客の名前＋当事者の別名・固定の呼び名（Claude の経路より強く・209b9a92）
+      const aliases = (await loadPartyAliases(conversationId).catch(() => [] as string[])).map((s) => (s ?? "").trim()).filter(Boolean);
+      const callNames = (await loadKnownCallNames().catch(() => [] as string[])).filter((s) => s.length >= 3 && /[一-龯ぁ-んァ-ヶA-Za-z]/.test(s));
+      const readerNames = [...maskNames, ...callNames, ...aliases.filter((s) => s.length >= 3)];
+      const maskReader = (s: string) => maskPII(maskHonorificNames(s, [opts?.customerName, ...aliases]), readerNames);
+      const readerMats: import("@/app/lib/brain-dplan").Materials = {};
+      for (const [k, v] of Object.entries(mats)) readerMats[k as keyof typeof mats] = maskReader(v ?? "");
+      const readerHistory = maskReader(history);
+      const readerTurn = maskReader(unrepliedTurn.text ?? "");
+      const cutMark = conversationId ? cutoffMarkOf(await loadDeepseekCutoff(supabase, conversationId)) : { kind: "all" as const };
+      const gate = D.dPlanGate({
+        conversationId: conversationId ?? null,
+        postApply: isPostApplyStatus(convStatus), cutoffKind: cutMark.kind,
+        applicationForm: typedMessages.some((m) => isApplicationPayload(m.text ?? "")),
+        personalImage: typedMessages.some((m) => m.sender === "customer" && (customerImageGroup(m.text, m.image_type) === "personal_document" || savedImageKind(m.text) === "personal_unknown" || m.image_type === "id_document")),
+        parallelSecond: opts?.parallelSecond === true,
+        readerText: [...Object.values(readerMats), readerHistory, readerTurn].join("\n"),
+        piiSignal: altPiiSignal,
+      });
+      if (!dplanSkip && !gate.ok) dplanSkip = gate.reason;
+      if (!dplanSkip) {
+        const t0 = Date.now();
+        const { runDPlanReaders } = await import("@/app/lib/brain-dplan-server");
+        const readerKeys = D.dPlanReaders();
+        const results = readerKeys.length ? await runDPlanReaders({ conversationId: conversationId ?? null, materials: readerMats, historyText: readerHistory, turnText: readerTurn, piiSignal: altPiiSignal, readers: readerKeys }) : [];
+        // 3周目: 返信か AIX かの証拠（送った物件・物件の探し・ナレッジ・台帳・AIX の履歴…）は外さない（NEVER_TRIM）。
+        //   縮めるのは AIX のボタン一覧の「場面の外のピッカーの細目」だけで、場面の読みが弱くて全部を出した番だけ（読み手の候補では縮めない＝偏らせない）
+        const trimmed: import("@/app/lib/brain-dplan").MaterialKey[] = D.trimmedKeys(results, mats);
+        const replace: import("@/app/lib/brain-dplan").Materials = {};
+        const { catalogSceneButtons } = await import("@/app/lib/aix-catalog");
+        const sceneButtons = brainScene ? catalogSceneButtons(brainScene) : [];
+        if (brainScene && D.isUncertainFullCatalog(mats.aixCatalog ?? "")) {
+          const cc = D.compactCatalogByScene(mats.aixCatalog ?? "", sceneButtons);
+          // 縮めて減るのが小さい番（場面 other 等でほとんどのボタンが場面の中）は縮めない＝食い違いの読み直しの方が高くつく（試験 dp3-on6: 平均 −180字で読み直し1回）
+          if ((mats.aixCatalog ?? "").length - cc.length >= D.DPLAN_CATALOG_MIN_SAVE) { replace.aixCatalog = cc; trimmed.push("aixCatalog"); }
+        }
+        // 核には伏せる前の材料（今と同じ maskBrain を後で全体に掛ける）。下ごしらえは読み手の答え（伏せた材料から作った物）
+        coreUserText = D.buildCoreUserText(mats, trimmed, D.digestBlock(results, trimmed, mats), historyTail, replace);
+        dplan = {
+          trimmed, materials: mats, readerUsd: results.reduce((a, r) => a + r.usd, 0), readerMs: Date.now() - t0, sceneButtons,
+          readers: results.map((r) => ({ k: r.key, ok: r.ok, err: r.error, ms: r.ms, pts: r.out?.points.length ?? 0, kf: !!r.out?.keepFull })),
+        };
+      }
+    } catch (e) {
+      dplanSkip = `失敗: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`;
+      coreUserText = customerSpecificText;
+      dplan = null;
+    }
+    console.log(JSON.stringify({ tag: "brain:dplan", conversationId, ran: !!dplan, skip: dplanSkip, fullChars: customerSpecificText.length, sentChars: coreUserText.length,
+      trimmed: dplan?.trimmed ?? [], readers: dplan?.readers ?? [], readerUsd: dplan ? Math.round(dplan.readerUsd * 1e6) / 1e6 : 0, readerMs: dplan?.readerMs ?? 0 }));
+  }
   let userContent = [
     ...convBlocks,
-    { type: "text" as const, text: maskBrain(customerSpecificText) },
+    { type: "text" as const, text: maskBrain(coreUserText) },
   ];
   // 2026-10-02 温めのスイッチ: 会話専用ブロックの指紋を控える（brain_decision_logs.digest.cw.h＝次の本物まで変わらない率 q を監査で測る）。
   //   分けた後は最初の印のブロック（A・無ければ B）の指紋＝温めが読み直す範囲。
@@ -3243,6 +3325,39 @@ ${history}`;
       logLlmUsage("brain:retry", response.usage, { conversationId });
       raw = response.content.find((c) => c.type === "text")?.text ?? "";
       parsedAny = tryParseBrainJson(raw);
+    }
+    // 2026-10-22 D案: 核が目次の材料を呼び戻した時だけ、その材料を最後に足してもう1回（1回だけ・同じ前置き＝キャッシュの範囲はそのまま）
+    if (dplan && parsedAny) {
+      let need = parseNeedMaterials(parsedAny, dplan.trimmed);
+      // 3周目: 指揮官（核）が自分で呼び戻した（asked）か、細目を縮めたボタンを選んだ食い違い（mismatch）で一覧の全文を足したか
+      let recallBy: "asked" | "mismatch" | null = need.length ? "asked" : null;
+      if (!need.length && dplan.trimmed.includes("aixCatalog") && pickedCompressedButton(parsedAny.aix, dplan.sceneButtons, dplan.materials.aixCatalog ?? "")) {
+        need = ["aixCatalog"]; recallBy = "mismatch";
+      }
+      const usage1 = response.usage as unknown as Record<string, number>;
+      let usage2: Record<string, number> | null = null;
+      let recallFallback = false;
+      if (need.length) {
+        const second = await client.messages.create({
+          ...brainRequestBase(sys),
+          max_tokens: 4000,
+          messages: [{ role: "user", content: [...userContent, { type: "text" as const, text: maskBrain(recalledBlock(need, dplan.materials)) }] }],
+        }, { headers: brainHeaders });
+        logLlmUsage("brain:dplan-recall", second.usage, { conversationId, mode: "fresh" });
+        usage2 = second.usage as unknown as Record<string, number>;
+        const p2 = tryParseBrainJson(second.content.find((c) => c.type === "text")?.text ?? "");
+        // 2回目が読めなければ削らない全文で今の形の1回（安全側）
+        if (p2 && !parseNeedMaterials(p2, dplan.trimmed).length) { parsedAny = p2; response = second; }
+        else {
+          recallFallback = true;
+          const full = await client.messages.create({ ...brainRequestBase(sys), max_tokens: 4000, messages: [{ role: "user", content: [...convBlocks, { type: "text" as const, text: maskBrain(customerSpecificText) }] }] }, { headers: brainHeaders });
+          logLlmUsage("brain:dplan-fallback", full.usage, { conversationId, mode: "fresh" });
+          parsedAny = tryParseBrainJson(full.content.find((c) => c.type === "text")?.text ?? "");
+          response = full;
+        }
+      }
+      const u = (x: Record<string, number> | null) => x ? { in: x.input_tokens ?? 0, read: x.cache_read_input_tokens ?? 0, write: x.cache_creation_input_tokens ?? 0, out: x.output_tokens ?? 0 } : null;
+      console.log(JSON.stringify({ tag: "brain:dplan-core", conversationId, recall: need, recallBy, recallFallback, sentChars: coreUserText.length, fullChars: customerSpecificText.length, u1: u(usage1), u2: u(usage2), model: String((response as { model?: string }).model ?? "") }));
     }
     if (!parsedAny) {
       console.warn("[brain-core] analyzeConversation abort: Claude returned no parsable JSON", conversationId,
@@ -3442,6 +3557,8 @@ ${history}`;
     }
     // 2026-10-13（ブレインの使い残し 4）: 下げた上書き（規則は当たったがブレインの判断のまま）。meta.demoted_overrides とログ brain:override-demoted に残す
     const demotedOverrides: DemotedOverride[] = [];
+    // 2026-10-22 D案（8c00271d②）: 核が判断した番は、決まった処理の上書きを全部「候補」に下げる（記録だけ・核の道のまま）
+    if (dplan) markCoreWins(demotedOverrides);
     // 場面の信号（S2/S3）で決まった時の check_pattern（証拠の check_pattern を優先する）
     let sceneSignalCheckPattern: string | null = null;
     // Case1対策（決定論的矯正・プロンプト任せにしない）:
@@ -4501,6 +4618,17 @@ ${history}`;
           console.log(JSON.stringify({ tag: "brain:two-stage-brain-no-promise", conversationId, src: twoStage.source, close: nop.close, aix: finalAix, llmAix: llmOwnAix }));
           twoStage = null;
           if (!nop.close) { finalAix = null; sceneSignalCheckPattern = null; decisionSource = "brain:contract_no_promise"; }
+        }
+      }
+      // 2026-10-22 D案（8c00271d② q057 の型）: 核の turn_contract に依頼があり約束を1つも言っていなければ、2段の約束は当てない（核の道のまま・食い違いは記録）。
+      //   核が AIX も約束も言わず閉じる番でもない＝答える返信 → AIX を外して返信
+      if (twoStage && dplan) {
+        const cw = coreOverTwoStage((parsed as { turn_contract?: unknown }).turn_contract);
+        if (cw.demote) {
+          addDemoted(demotedOverrides, { family: "two_stage_promise", src: `${twoStage.source}(dplan_core)`, would: "promise", brain: cw.replyOnly ? "reply" : finalAix });
+          console.log(JSON.stringify({ tag: "brain:dplan-two-stage", conversationId, src: twoStage.source, aix: finalAix, replyOnly: cw.replyOnly }));
+          twoStage = null;
+          if (cw.replyOnly) { finalAix = null; sceneSignalCheckPattern = null; decisionSource = "brain:dplan_core"; }
         }
       }
       if (twoStage) {

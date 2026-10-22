@@ -1,4 +1,7 @@
 import { manYen } from "@/app/lib/man-yen";
+// 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ）
+import { aixBrainEnabledFor } from "@/app/lib/aix-brain";
+import { aixRequestMustUseClaude } from "@/app/lib/aix-new-pickers";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { secondLinesFromCard } from "@/app/lib/estimate-explain";
 import { NextRequest, NextResponse, after } from "next/server";
@@ -107,6 +110,7 @@ import { buildAixContractNote, type AixContractMeta } from "@/app/lib/aix-brain-
 // 2026-10-20 竹内さん（P1 ef272b2d）「2通目の文を作る所が弱すぎる。返信・ブレインと同じ材料・同じ確かめで」: 材料と出口の確かめ（10/22 から既定 on・止める SECOND_MSG_MATERIALS=off）
 import { secondMsgMaterialsOn, applySecondFinalChecks, type BrainBundleMeta } from "@/app/lib/second-message-materials";
 import type { SecondMaterials } from "@/app/lib/second-message-materials-server";
+import { recommendSecondAppealOn, recentAreaText, recentRequestCoversProperty, appendReceiptAfterCta, ensureRentTotalInRecommend } from "@/app/lib/recommend-second-appeal";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
 export const maxDuration = 60;
@@ -1417,7 +1421,8 @@ export async function POST(req: NextRequest) {
         holdReason: holdReasonFromRecent(Array.isArray(recentMessages) ? recentMessages : [], Date.now()),
         // 2026-10-14 竹内さん「AIX の後の返信を竹内さんの基準に」: AIX の後の2通目で決められない時は竹内さんの形（誘導 59%）。
         //   ブレインが押さない（engagement_stance=wait）時はご査収のまま。既定 off（入れる RECOMMEND_CTA_TAKEUCHI=on・一致が上がらないため・recommend-cta.ts）
-        undecided: isRecSecond && recommendCtaTakeuchiOn() && brainMeta?.engagement_stance !== "wait" ? "cta" : "receipt",
+        // 2026-10-23 竹内さんの決定 b5043827（2通目は内覧か申込の訴求を入れて動かす）: RECOMMEND_SECOND_APPEAL（既定 on・recommend-second-appeal.ts）でも決められない時は誘導
+        undecided: isRecSecond && (recommendCtaTakeuchiOn() || recommendSecondAppealOn()) && brainMeta?.engagement_stance !== "wait" ? "cta" : "receipt",
       });
       console.log(JSON.stringify({ tag: "aix-template-generate:recommend-cta", kind: recCta.kind, appeal: recCta.appeal, notViewable: recCta.notViewable, reason: recCta.reason, pickupFound: !!pickup, firstHasSame: hasClosingKind(sentMessage, recCta.kind) }));
     } catch (e) {
@@ -1443,6 +1448,12 @@ export async function POST(req: NextRequest) {
   // 2026-10-08 竹内「AIX テンプレート竹内の方に寄せる」: 竹内さんは1通目の🌟カードが「1件新着で…募集に出ました」でも、2通目で新着の一文をもう一度書く
   //   （10/04〜10/06 の2通目 10通中 7通・「こちらのお部屋如何でしょうか」3通）→ 新着の形（new_listing・竹内さんの手本）。戻すのは AIX_TAKEUCHI_FORM=off
   const secondScene = pickupPushLabel ? "compare" as const : firstDeclaresNew ? (aixTakeuchiFormOn() ? "new_listing" as const : "single" as const) : secondSceneOf(recommendationScenario);
+  // 2026-10-23 竹内さんの決定 6bdfb441: 本当に新着（1通目が「新着で…募集に出ました」）の2通目は「お気に召されましたらお申込しお部屋抑えさせて頂きます！！」を添える
+  //   （スタッフが画面で締めを選んだ時はそちらが先・押さない判定＝ご査収のままは変えない）。戻す RECOMMEND_SECOND_APPEAL=off
+  const secondAppeal = isRecSecond && recommendSecondAppealOn();
+  if (secondAppeal && recCta && recCta.kind === "viewing" && secondScene === "new_listing" && ctaPreference !== "viewing") {
+    recCta = { ...recCta, kind: "apply", newListing: true, reason: `${recCta.reason}・新着の1件（申込で抑える＝竹内さんの形）` };
+  }
   // 2通目の出口（別の物件の号室が出ていないか）で「1通目の物件」として見る文。ピックアップの後は推す物件だけ
   const secondFirstForCheck = pickupPushLabel ? `🌟${pickupPushLabel}` : sentMessage;
   // 2026-10-15 竹内さん「物件検索ブレインを有効に活用できる部分あれば使う」: 物件オススメの2通目で売上サポの行が無い時（30日 226件中 191件）は、
@@ -1516,6 +1527,15 @@ export async function POST(req: NextRequest) {
           materialAreaCode: materialIsPickupRow ? (materialRow?.location?.area?.code ?? null) : null,
           savedReadStations,
         });
+        // 2026-10-23（recommend-second-appeal）: お客様の欄の希望が古く、直近の会話（お客様の言葉・スタッフのピックアップの宣言）が物件の場所を求めている時はずれと言わない
+        if (gapRes.gap && secondAppeal) {
+          const cov = recentRequestCoversProperty({
+            recentText: recentAreaText(Array.isArray(recentMessages) ? recentMessages : []),
+            firstMessage: sentMessage,
+            materialStations: materialIsPickupRow ? (materialRow?.location?.stations ?? []).filter((x) => x?.station).map((x) => ({ station: String(x.station), walk: typeof x.walk === "number" ? x.walk : null })) : null,
+          });
+          if (cov.covered) { gapRes.gap = null; gapRes.reason = `covered_by_recent(${cov.why})`; }
+        }
         const rentTotal = rentTotalOfFirst(sentMessage);
         const planGroup = planGroupOf(planOfFirst(sentMessage));
         let cheap = false, marketBasis: string | null = null;
@@ -1528,7 +1548,7 @@ export async function POST(req: NextRequest) {
           cheap = cheapVsMarket(rentTotal, band);
           if (band) marketBasis = `${wards.slice(0, 3).map((w) => w.replace(/^大阪市/, "")).join("・")}の${planGroup} ${band.n}件・下から25%が${band.p25.toLocaleString("ja-JP")}円・中央値${band.p50.toLocaleString("ja-JP")}円`;
         }
-        secondWishGapNote = buildSecondWishGapNote({ gap: gapRes.gap, rentTotal, cheap, marketBasis, name: resolvedCustomerName });
+        secondWishGapNote = buildSecondWishGapNote({ gap: gapRes.gap, rentTotal, cheap, marketBasis, name: resolvedCustomerName, rentTotalAsFact: secondAppeal });
         secondWishGapKind = gapRes.gap?.kind ?? null;
         secondWishGap = gapRes.gap;
         console.log(JSON.stringify({ tag: "aix-template-generate:second-wish-gap", gap: gapRes.gap?.kind ?? null, reason: gapRes.reason, rentTotal, planGroup, cheap, marketBasis }));
@@ -1554,6 +1574,7 @@ export async function POST(req: NextRequest) {
     ? buildSecondSceneNote({
         // 希望とのずれを先に書く時は、新着の宣言の形（1行目「1件新着で…」）ではなく1件の形（「こちらのお部屋如何でしょうか」）＝竹内さんの実送信（recommend-second-wish-gap.ts）
         scene: secondWishGapKind && secondScene === "new_listing" ? "single" as const : secondScene,
+        ...(secondAppeal ? { appeal: { rentTotal: rentTotalOfFirst(pickupPushLabel ? null : sentMessage) } } : {}),
         vacating: secondNotViewable,
         name: resolvedCustomerName,
         propertyLabel: secondPropertyLabel,
@@ -1591,6 +1612,8 @@ export async function POST(req: NextRequest) {
         brainMeta: brainMeta as BrainBundleMeta,
         pickerValue: actionType === "property_check_result" ? (effectiveCheckPattern ?? null)
           : actionType === "property_send" ? (/新着/.test(pickupType ?? "") ? "new_arrival" : /広げ/.test(pickupType ?? "") ? "widen" : /代替/.test(pickupType ?? "") ? "alternative" : "normal")
+          // 2026-10-23: 物件オススメのピッカー（継続ピックアップ・新着1件…）の意味（竹内基準）を渡す（無いと「初回・1件訴求」の意味が出ていた）
+          : actionType === "property_recommendation" && recommendSecondAppealOn() && pickupType ? pickupType
           : null,
         // 2026-10-22（P1 696c96ba）2通目が推す物件の売上サポの判定（なぜ推すか・合う条件・決め手・反応）
         propertyRow: isRecSecond ? ((pickupPush ?? materialRow) as unknown as { property_name?: string | null; room_no?: string | null; recommended?: number | boolean | null; reason_codes?: string[] | null } | null) : null,
@@ -1789,7 +1812,7 @@ export async function POST(req: NextRequest) {
     secondWishGapNote,
     // CTA の有無は**お客様の反応と AIX の種類**で決める（実測・cta-guidance）。最後に置くのは上と同じ理由
     recCta
-      ? buildSecondMessageCtaNote(recCta, { firstMessage: sentMessage, viewableFrom: isRecSecond ? secondViewableFrom : recommendState.viewableFrom })
+      ? buildSecondMessageCtaNote(recCta, { firstMessage: sentMessage, viewableFrom: isRecSecond ? secondViewableFrom : recommendState.viewableFrom, withReceipt: secondAppeal })
       : isEstimateSecond ? "" : (ctaGuidance?.note ?? ""),
     // 見積書の直後の2通目の形・締め（最後に1か所）
     estimateSecondNote,
@@ -2043,6 +2066,47 @@ ${text}
       }
     }
 
+    // ── 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3・55575458）: AIX のブレイン（実行の指揮官）──────────────────────
+    //   統括の判断の束（材料の中）・このボタン×ピッカーの意味・推す物件・締めの向き・資料の事実を読み、下書きの組み立てを決め（設計図）、
+    //   要る時だけ実行役（flash・伏せた材料）が部品を書く。確かめで悪くなれば下書きのまま。
+    //   置き場所: 書く役の作り直し（別の物件・言い回し・見積・訴求フレーム）の後＝下書きは今まで通りの文。この後は決まった掃除と2通目の確かめだけ。
+    //   AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ＝ここは既定で通らない・on か名前で入る）。物件オススメ・物件ピックアップの後の文だけ（試験 aixbrain1: 見積書の2通目は変わらず費用だけ増えた）
+    if (aixBrainEnabledFor(actionType ?? "") && (actionType === "property_recommendation" || actionType === "property_send")) {
+      try {
+        const { runAixBrain } = await import("@/app/lib/aix-brain-server");
+        const { aixMeaningForGenerator } = await import("@/app/lib/aix-catalog");
+        const pickerV = (typeof pickupType === "string" && pickupType) ? pickupType : null;
+        const meaning = aixMeaningForGenerator(actionType, pickerV, { maxExemplars: 0 }).split("\n").filter((l) => !/^竹内さんのお手本|^竹内さんの文の型/.test(l)).join("\n");
+        const decided: string[] = [];
+        if (secondPropertyLabel) decided.push(`推す物件: ${secondPropertyLabel}`);
+        if (recCta) decided.push(`締めの向き: ${recCta.kind === "viewing" ? "内覧へ（お気に召されましたらご都合よろしいお日にちにお部屋ご案内）" : recCta.kind === "apply" ? "申込へ（お気に召されましたらお申込しお部屋抑え）" : "ご査収だけ（誘いを足さない）"}（${recCta.reason}）`);
+        if (secondViewable.line) decided.push(`現況の一文: ${secondViewable.line}`);
+        if (firstDeclaresNew) decided.push("1通目で新着を伝え済み");
+        const material = [
+          sentMessage ? `【直前に送った1通目（AIX）】\n${sentMessage}` : "",
+          secondMaterialNote ? `【推す物件の資料の事実】\n${secondMaterialNote}` : "",
+          secondMaterials?.note ? `【2通目の材料（依頼・約束・確認の結果・統括の判断）】\n${secondMaterials.note.slice(0, 2500)}` : "",
+        ].filter(Boolean).join("\n\n");
+        const callName = resolvedCustomerName ? String(resolvedCustomerName).replace(/(?:さん|様)$/, "") : null;
+        const r = await runAixBrain({
+          aixType: actionType, picker: pickerV, kind: sentMessage ? "second" : "first", callName,
+          staffInputs: secondPropertyLabel ? [["推す物件", secondPropertyLabel]] : [],
+          material, recent: Array.isArray(recentMessages) ? recentMessages : [], meaning, decided, draft: text,
+          closeKind: recCta?.kind === "viewing" ? "viewing" : recCta?.kind === "apply" ? "apply" : null,
+        }, {
+          conversationId: conversationId ?? null,
+          mustClaude: aixRequestMustUseClaude({ action: actionType, check_pattern: typeof lastAixCheckPattern === "string" ? lastAixCheckPattern : null }) || secondMaterials?.route === "pin",
+          names: [customerName ?? null],
+          tag: "aix-template-generate",
+          // 2通目の AI くさい言い回し（second-message-style）が下書きに無いのに出たら下書き（上の作り直しをもう一度呼ばない）
+          extraCheck: (t) => findAiPhrases(t).map((h) => `AI の言い回し:${h.key}`),
+        });
+        text = r.text;
+      } catch (e) {
+        console.warn("[aix-template-generate] aix-brain skipped:", e instanceof Error ? e.message : String(e));
+      }
+    }
+
     // ── 出口の掃除（2026-09-18 竹内「テンプレートよくわからん文生成される」）──────────────
     // 返信生成（generate-reply）と AIX 本体（aix/action）には、竹内さんとの積み重ねで作った出口の決定論が
     // 通っているのに、**テンプレート生成には1つも通っていなかった**（入口だけ直しても生成後の癖が残る）。
@@ -2195,11 +2259,24 @@ ${text}
       }
       // 2026-10-01 竹内さん了承(a): 1通目が同じ締めでも2通目に締めを付ける（実送信: 1通目に締め20組→2通目にも締め17・同じ種類10）
       if (recCta) {
-        const cta = setRecommendClosing(text, recCta.kind);
-        if (cta.applied.length > 0) {
+        // 2026-10-23（recommend-second-appeal）: 誘導＋ご査収の形では、先に最後のご査収の行を外してから締めを揃え、誘導の次の行にご査収を戻す
+        const strip = secondAppeal && recCta.kind !== "receipt" ? text.replace(/\n+お手隙の際に(?:ごゆっくり)?(?:ご査収|ご確認|ご検討)(?:ください|下さい)[^\n]{0,6}\s*$/, "") : text;
+        // 建築中（skip）の時は締めを揃えない＝外したご査収の行も戻す（外したまま誘導も付かず、締めの無い文になっていた）
+        const cta0 = setRecommendClosing(strip, recCta.kind);
+        const cta = cta0.applied.some((a) => a.startsWith("skip:")) ? { text, applied: cta0.applied } : cta0;
+        if (cta.applied.length > 0 || cta.text !== text) {
           console.log(JSON.stringify({ tag: "aix-template-generate:recommend-cta-closing", kind: recCta.kind, applied: cta.applied }));
           text = cta.text;
         }
+        if (secondAppeal && recCta.kind !== "receipt") {
+          const rc = appendReceiptAfterCta(text);
+          if (rc.applied) { console.log(JSON.stringify({ tag: "aix-template-generate:second-receipt-after-cta", applied: rc.applied })); text = rc.text; }
+        }
+      }
+      // 2026-10-23（recommend-second-appeal）: 1通目に家賃管理費込の合計があり2通目に家賃が無い時、オススメの文に「家賃管理費込◯円」を足す（1通目の字のまま）
+      if (secondAppeal && !pickupPushLabel) {
+        const rt = ensureRentTotalInRecommend(text, rentTotalOfFirst(sentMessage));
+        if (rt.applied) { console.log(JSON.stringify({ tag: "aix-template-generate:second-rent-total-added" })); text = rt.text; }
       }
     }
 

@@ -44,7 +44,8 @@ function stable(v: unknown): string {
   return JSON.stringify(v) ?? "null";
 }
 
-const N = (t: string) => String(t ?? "").normalize("NFKC");
+// ローマ数字（Ⅰ〜ⅿ）は NFKC を掛けない（2026-10-23 レビュー: 「鳳Ⅱ」を「鳳II」に書き換えた文を物件名の一致と数えていた＝入力の字のままを求める）
+const N = (t: string) => String(t ?? "").replace(/[^Ⅰ-ⅿ]+/g, (s) => s.normalize("NFKC"));
 const squash = (t: string) => N(t).replace(/[\s　・()（）「」『』【】🌟,，]/g, "").toLowerCase();
 
 // ─── 事実 ─────────────────────────────────────────────────────────────
@@ -361,3 +362,18 @@ export function shiftQuestionDates<T extends Pick<AixQuestion, "body" | "gold" |
 }
 // ② 申込へ・フォーマット: 本番は入口を呼ばず画面が決まった記入欄を組む（AixModal.tsx・application-format.ts）＝入口を呼ぶと押す文が返った
 export const isAppFormat = (q: Pick<AixQuestion, "aixType" | "body">) => q.aixType === "application_push" && q.body.app_sub_mode === "format";
+
+// ③ 試験の会話（2026-10-23 レビュー）: 既定の YUMA4 が流している途中で申込以降に変わることがあった（他の作業が同じ会話を触る）＝
+//    ✨・ブレインの線が Claude に固定され、途中から別の条件で流れていた。→ 始める時と1問ごとに「申込前のまま」を確かめ、変わったら
+//    その問題は採点から外し（err）、空いている別のテスト専用の会話（鍵を取る）へ移る。DB には書かない（試験の道具だけ）。
+/** 試験の会話が申込前のままか（post-apply の事実から・純関数） */
+export function examConvClean(o: { postApply: boolean; reason: string | null; cutoff: boolean }): { clean: boolean; why: string } {
+  if (o.postApply) return { clean: false, why: `申込以降（${o.reason ?? "?"}）` };
+  if (o.cutoff) return { clean: false, why: "DeepSeek の線（申込の時刻の線）がある" };
+  return { clean: true, why: "" };
+}
+/** 試す会話の順（指定の会話を先頭・残りのテスト専用の会話を後ろ） */
+export function examConvOrder(first: string, all: ReadonlyArray<string>): string[] {
+  const f = first.toUpperCase();
+  return [...(all.some((n) => n.toUpperCase() === f) ? [f] : []), ...all.map((n) => n.toUpperCase()).filter((n) => n !== f)];
+}

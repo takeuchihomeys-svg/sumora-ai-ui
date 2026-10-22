@@ -3,7 +3,8 @@
 // 2026-10-22 試験のブレインの穴: ブレインの試験はボタンまで・押した後の文（1通目・2通目・✨この会話に合った文）を測る段が無かった。
 //   問題: scripts/exam-aix-text-build.ts（本番の竹内さんの AIX の番・伏せ済み・<倉庫の根>/.claude/exam-cache/aix-text-exam/questions.json）
 //   生成: 本番と同じ入口（app/api/aix/action・app/api/aix-template-generate の POST）を同じプロセスで呼ぶ。after()（aix_generate_log 等の記録）は空の箱＝
-//         試験の会話（既定 YUMA4・--conv=YUMA・YUMA2〜5。YUMA は申込以降＝✨の文が Claude に固定されて止まる）に行を残さない。学習ルールは今の DB のまま（testFlags.rules_r9=off）。
+//         試験の会話（既定 YUMA4・--conv=YUMA・YUMA2〜5。YUMA は申込以降＝✨の文が Claude に固定されて止まる）に行を残さない。
+//         2026-10-23: テスト専用の会話は鍵を取り、始める時と1問ごとに「申込前のまま」を確かめる。途中で変わったら（他の作業）その問題は採点から外して別の会話へ移る（DB は書かない）。学習ルールは今の DB のまま（testFlags.rules_r9=off）。
 //   採点: scripts/lib/exam-aix-text.ts（中身・作り事・形・近さ・スタッフだけが知る事＝決まった物差し）。曖昧な時だけ LLM の判定（DeepSeek flash・伏せた文だけ・--judge=lazy）
 //   節約（ブレインの段と同じ道具）: LLM の録音と再生（LLM_CASSETTE=replay・同じ要求は呼ばない）＋入力の差（main の答えの控え＝同じ要求は main の答え・
 //         問題ごとに「入力が main と同じ」を出す）。main と同じコード×既定のスイッチの回は main の取り置き（baseline）になる。
@@ -44,7 +45,9 @@ import { readDailySpend } from "./lib/exam-brain-io";
 import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 import { maskPII } from "../app/lib/pii-mask";
 import { buildApplicationFormat } from "../app/lib/application-format";
-import { scoreAixText, needsJudge, withJudge, parseJudge, JUDGE_SYSTEM, judgeUser, summarize, compareRows, KIND_JA, PASS_RULE, aixShiftDays, shiftQuestionDates, isAppFormat, type AixQuestion, type AixRow, type AixScore } from "./lib/exam-aix-text";
+import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, cutoffMs, NO_CUTOFF } from "../app/lib/post-apply";
+import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lease";
+import { scoreAixText, needsJudge, withJudge, parseJudge, JUDGE_SYSTEM, judgeUser, summarize, compareRows, KIND_JA, PASS_RULE, aixShiftDays, shiftQuestionDates, isAppFormat, examConvClean, examConvOrder, type AixQuestion, type AixRow, type AixScore } from "./lib/exam-aix-text";
 
 const args = process.argv.slice(2);
 const arg = (k: string, d = "") => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -171,14 +174,45 @@ async function main() {
   }
 
   // 既定は YUMA4（YUMA は申込以降の会話＝✨この会話に合った文が Claude に固定され、DeepSeek の試験で止まる）
-  const convName = arg("conv", "YUMA4").toUpperCase();
-  const CONV = convName === "YUMA" ? YUMA : NO_LINE_TEST_CONVERSATIONS.find((c) => c.name.toUpperCase() === convName)?.id;
-  if (!CONV) throw new Error(`--conv=${convName} が分からない（YUMA・${NO_LINE_TEST_CONVERSATIONS.map((c) => c.name).join("・")}）`);
+  // 2026-10-23 レビュー: 途中で申込以降に変わる（他の作業が触る）→ 申込前のテスト専用の会話を鍵を取って使い、1問ごとに確かめる（examConvClean）
+  const convWant = arg("conv", "YUMA4").toUpperCase();
+  let convName = convWant;
+  let CONV: string;
+  let lease: TestConvLease | null = null;
+  const dirtyConvs = new Set<string>();
+  const convCheck = async (id: string) => {
+    try {
+      const fa = await loadPostApplyFacts(sb as never, id);
+      const pa = resolvePostApply(fa);
+      return examConvClean({ postApply: pa.postApply, reason: pa.reason, cutoff: cutoffMs(deepseekSafeCutoff(fa)) !== NO_CUTOFF });
+    } catch (e) { return { clean: false, why: `読めない（${e instanceof Error ? e.message : String(e)}）` }; }
+  };
+  /** 申込前の空いているテスト専用の会話を鍵を取って選ぶ（指定の会話を先に）。無ければ null */
+  const pickConv = async (): Promise<{ id: string; name: string } | null> => {
+    for (const nm of examConvOrder(convWant, NO_LINE_TEST_CONVERSATIONS.map((c) => c.name))) {
+      if (dirtyConvs.has(nm)) continue;
+      let l: TestConvLease;
+      try { l = acquireTestConversation(nm, `exam-aix-text-${LABEL}`); } catch { continue; }
+      const ck = await convCheck(l.id);
+      if (ck.clean) { lease?.release(); lease = l; return { id: l.id, name: l.name }; }
+      console.log(`  試験の会話 ${nm}: ${ck.why} → 使わない`);
+      dirtyConvs.add(nm); l.release();
+    }
+    return null;
+  };
+  if (convWant === "YUMA") { CONV = YUMA; }
+  else {
+    if (!NO_LINE_TEST_CONVERSATIONS.some((c) => c.name.toUpperCase() === convWant)) throw new Error(`--conv=${convWant} が分からない（YUMA・${NO_LINE_TEST_CONVERSATIONS.map((c) => c.name).join("・")}）`);
+    const p = await pickConv();
+    if (!p) throw new Error("申込前のまま空いているテスト専用の会話がありません（YUMA2〜5）");
+    CONV = p.id; convName = p.name.toUpperCase();
+  }
+  console.log(`  試験の会話: ${convName}${convName !== convWant ? `（${convWant} の代わり）` : ""}`);
 
   h = await setupLlmTest(`exam-aix-text-${LABEL}`);
   h.assertTestConversation(CONV);
   // main の答えの控え（入力の差）: 同じ要求は main の答え。下見は main の答えか録音だけ・違う要求は呼ばない
-  const pinRows = isMainRun ? [] : (base?.rows ?? []).map((r) => ({ ...r, id: `aix:${r.id}`, rep: 1, error: r.err ?? undefined }));
+  const pinRows = isMainRun || args.includes("--no-pins") ? [] : (base?.rows ?? []).map((r) => ({ ...r, id: `aix:${r.id}`, rep: 1, error: r.err ?? undefined }));
   if (pinRows.length) setCassettePins(pinsFromRows(pinRows), { only: PLAN });
   const stateOf = async () => {
     const { data: conv } = await sb.from("conversations").select("*").eq("id", CONV).single();
@@ -194,13 +228,30 @@ async function main() {
   const store = { afterContext: { after: () => {} }, route: "/api/aix/action", isStaticGeneration: false } as never;
 
   const rows: Row[] = [];
-  let stopped = 0;
+  let stopped = 0, convLost = 0;
+  const convStart = convName;
+  const convSwitches: string[] = [];
+  /** 1問ごとの確かめ: 申込以降に変わっていたら別の申込前の会話へ移る（移れなければ残りは流さない） */
+  const ensureConvClean = async (): Promise<boolean> => {
+    if (convName === "YUMA" || PLAN) return true;
+    const ck = await convCheck(CONV);
+    if (ck.clean) return true;
+    console.log(`  ⚠ 試験の会話 ${convName} が途中で変わった: ${ck.why} → 別の会話へ`);
+    dirtyConvs.add(convName);
+    const p = await pickConv();
+    if (!p) return false;
+    convSwitches.push(`${convName}→${p.name}`);
+    CONV = p.id; convName = p.name.toUpperCase();
+    h!.assertTestConversation(CONV);
+    return true;
+  };
   for (const q0 of qs) {
     // 内覧日調整・待ち合わせは日付を今日以降へずらす（過去の日付は入口が作り直す＝作り事に数えていた）
     const shiftDays = aixShiftDays(q0);
     const q = shiftQuestionDates(q0, shiftDays);
     const spentNow = (cassetteStats()?.total.realUsd ?? 0) + judgeCost.usd;
     if (spentNow >= BUDGET) { stopped++; continue; }
+    if (!(await ensureConvClean())) { convLost++; continue; }
     const recent = ((q.body.recent_messages ?? q.body.recentMessages) as Array<{ text: string }> | undefined) ?? [];
     h.assertSceneSafe(recent.map((m) => m.text), q.id);
     // 竹内さんが送った時の時（JST）にそろえる（「夜分遅くに失礼致します」等の時刻の挨拶が正解と同じ条件になる）
@@ -212,6 +263,9 @@ async function main() {
     const keyMode = process.env.LLM_CASSETTE_KEY;
     if (shiftDays) process.env.LLM_CASSETTE_KEY = "exact";
     let text = "", err = "";
+    // 2026-10-23: 流している間に会話が申込以降に変わった（入口が Claude に固定して止めた／前後の確かめで変わった）時は、別の申込前の会話へ移って1回だけ流し直す
+    for (let attempt = 0; attempt < 2; attempt++) {
+    text = ""; err = "";
     try {
       if (isAppFormat(q)) {
         // 申込へ・フォーマット: 本番は入口を呼ばず画面が決まった記入欄を組む（AixModal.tsx と同じ組み立て・LLM なし）
@@ -230,6 +284,16 @@ async function main() {
         if (!text) err = String(j.error ?? JSON.stringify(j).slice(0, 160));
       }
     } catch (e) { err = `失敗: ${e instanceof Error ? e.message : String(e)}`; }
+    const lost = convName !== "YUMA" && !PLAN && (/申込以降の会話/.test(err) || !(await convCheck(CONV)).clean);
+    if (!lost || attempt > 0) break;
+    console.log(`  ⚠ 試験の会話 ${convName} が流している間に申込以降になった → 別の会話で流し直す`);
+    dirtyConvs.add(convName);
+    const p2 = await pickConv();
+    if (!p2) break;
+    convSwitches.push(`${convName}→${p2.name}`);
+    CONV = p2.id; convName = p2.name.toUpperCase();
+    h!.assertTestConversation(CONV);
+    }
     if (keyMode === undefined) delete process.env.LLM_CASSETTE_KEY; else process.env.LLM_CASSETTE_KEY = keyMode;
     const calls = cassetteCallsOf(tag, "1");
     const idf = inputDiffOf(calls, hasPinsFor(tag, "1"));
@@ -240,6 +304,9 @@ async function main() {
       setCassetteTag({ problem: `aix-judge:${q.id}`, rep: "1" });
       score = withJudge(score, parseJudge(await deepseekJson(JUDGE_SYSTEM, judgeUser(q.gold, gen))));
     }
+    // 流している間に会話が申込以降に変わった問題は採点から外す（別の条件で作った文＝比べられない）
+    if (convName !== "YUMA" && !PLAN) { const ck = await convCheck(CONV); if (!ck.clean) { err = `試験の会話が流している間に変わった（${ck.why}）＝採点から外す`; score = null; } }
+    if (/申込以降の会話/.test(err)) { err = `試験の会話が申込以降（入口が止めた）＝採点から外す: ${err.slice(0, 80)}`; score = null; }
     const row: Row = { id: q.id, hash: q.hash, button: q.button, kind: q.kind, picker: q.picker, text: gen, err: err || null, score, inputSame: idf.same, calls: calls.length, rep: 1, llmCalls: calls, ms: Date.now() - t0, ...(shiftDays ? { shiftDays } : {}) };
     rows.push(row);
     const s = score;
@@ -252,7 +319,7 @@ async function main() {
   // ─ 結果・取り置き・比べ ─
   const sum = summarize(rows);
   const st = cassetteStats();
-  const meta = { label: LABEL, at: new Date().toISOString(), head: git(["rev-parse", "HEAD"]), mainCommit: cs.mainCommit, codeKey: cs.codeKey, sameAsMain: cs.sameAsMain, switches: fp.pairs, conv: convName, plan: PLAN, judge: JUDGE, stopped,
+  const meta = { label: LABEL, at: new Date().toISOString(), head: git(["rev-parse", "HEAD"]), mainCommit: cs.mainCommit, codeKey: cs.codeKey, sameAsMain: cs.sameAsMain, switches: fp.pairs, conv: convName, convStart, convSwitches, convLost, plan: PLAN, judge: JUDGE, stopped,
     cost: { realUsd: st?.total.realUsd ?? 0, real: st?.total.real ?? 0, replayed: st?.total.replayed ?? 0, pinned: st?.total.pinned ?? 0, judgeUsd: judgeCost.usd, judgeCalls: judgeCost.calls } };
   mkdirSync(RES_DIR, { recursive: true });
   const resFile = join(RES_DIR, `${LABEL}-${meta.at.replace(/[-:T]/g, "").slice(0, 12)}.json`);
@@ -279,7 +346,8 @@ async function main() {
   }
   console.log(`  費用: 生成 新しく呼んだ ${meta.cost.real}回 $${meta.cost.realUsd.toFixed(4)}／再生 ${meta.cost.replayed}回（main の答え ${meta.cost.pinned}）／判定 ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}（再生 ${judgeCost.replayed}）`);
   console.log(`  結果: ${resFile}`);
-  const stateAfter = await stateOf();
+  if (convSwitches.length || convLost) console.log(`  試験の会話: 移った ${convSwitches.join("・") || "なし"}／申込前の会話が無く流していない ${convLost}問`);
+  const stateAfter = convName === convStart ? await stateOf() : stateBefore;
   console.log(stateAfter === stateBefore ? `${convName} の会話・条件の行: 変わっていない` : `⚠ ${convName} の会話・条件の行が変わった（他の実行か生成の書き込み）`);
 }
 (arg("rescore") ? Promise.resolve(rescore(arg("rescore"))) : main()).catch((e) => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; })
