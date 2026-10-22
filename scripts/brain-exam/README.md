@@ -128,6 +128,7 @@ npx tsx --env-file=.env.local scripts/exam-brain.ts --conv=YUMA4 [--select-q="�
 npx tsx --env-file=.env.local scripts/exam-brain.ts --gate --conv=YUMA5 [--types=..] [--wait]          # 最後の関所（昼なら安い時間に予約）
 npx tsx --env-file=.env.local scripts/exam-brain.ts --warm-main --conv=YUMA5                          # 本番に入れた版の答えを夜中に取り置く
 npx tsx --env-file=.env.local scripts/exam-brain.ts --run-queue                                       # 予約を流す（JST 1:30〜9:30 だけ）
+npx tsx --env-file=.env.local scripts/exam-brain.ts --warm-main --warm-plan --conv=YUMA4             # 10/22 取り置きの見込み（AI を呼ばない下見だけ・違う問題の数と $）
 npx tsx scripts/exam-brain.ts --ledger [--id=q153]                                                   # 試験の台帳
 npx tsx --env-file=.env.local scripts/exam-brain.ts --model-check --conv=YUMA4 [--types=..] [--n=8]   # flash と pro の比べ（型ごとに累計）
 npx tsx --env-file=.env.local scripts/exam-brain.ts --cleanup --conv=YUMA2 --label=<止まった label> [--apply]  # 止まった実行の残り
@@ -210,4 +211,7 @@ npx tsx --env-file=.env.local scripts/exam-brain.ts --coverage [--json]
 | QUALITY⑤ | 外れの理由の読み手（flash・短い JSON）: 落ちた問題ごとに 道の取り違え／依頼の抜け／注記・材料に引っ張られた／言ってはいけない事／正解が揺れている／判定の誤り と1行の根拠。決まりで決まる物は呼ばない。結果に型ごとの数・保存 `conductor/<label>.reasons.json`・`reasons-latest.json` → 次の `--conduct` の材料（型の数・候補の理由） | 既定（`--no-reasons`／`EXAM_REASONS=off`・上限 `--reasons-max=10`） |
 | QUALITY⑥ | 正解の食い違い: `npx tsx --env-file=.env.local scripts/exam-gold-check.ts`。場面の印（お客様の発言の種類×直前のこちらの送信の種類）・札・発言の近さで似た問題を集め、どちらの正解の道で答えても相手で外れる組を出す（相手の言ってはいけない道に当たる＝強い）。関係しそうな設計知見を並べて「竹内さんへの確認」の一覧に。外れの理由の読み手が「似た場面の正解」を手がかりに使う | 置き場 `exam-brain/gold-check/`（latest.json・<日付>.md）。正解は直さない |
 | QUALITY⑦ | 本番の外れから問題の候補: `npx tsx --env-file=.env.local scripts/exam-question-candidates.ts [--days=2] [--max=20]`。見張りの道の外れ・edited-turn-miner の直された番（draft-diff-types は main に入ったら）を、個人情報の網・もう入っている番・重なりを外して並べる。spec.json には足さない | 置き場 `exam-brain/question-candidates/`（.md・.json・.add-batch.json＝読んで brain-exam-add.ts --add-batch） |
+| NIGHT①（10/22） | 差分だけの取り置き: main の答えを作る時、回す問題を15問ずつ（`EXAM_BASELINE_CHUNK`）に分け、塊ごとに下見（AI を呼ばない・前の main の答えの控えで新しい main の入力を組む）→ 入力が全部の回で同じ問題はその答案を取り置く（0円）→ 違う問題だけ本当に回す。`--baseline-limit` は本当に回す数に当てる。塊の間で時間の予算（`--baseline-budget-min`・取り置きは `EXAM_WARM_BUDGET_MIN` 既定 90分）と main の進み（進んだら古い main の答えを作り続けない）を見る。`--warm-plan` で見込みだけ | 止める `EXAM_BASELINE_INCREMENTAL=off` |
+| NIGHT⑤（10/22） | 予約は1本ずつ: 比べを先（作った順）→ 取り置きは最後に1本だけ（古い版・重なりの取り置きは理由を出して捨てる・夜の作業ツリーの今のコードで流す）。取り置きは予算で切って続きを予約し直す（30分おきの回で比べが先）。1回の上限 `EXAM_QUEUE_MAX_MIN`（既定 300分）・1本の上限 `EXAM_QUEUE_ITEM_MAX_MIN`（既定 240分・超えたら子の木ごと止める）。止まった実行の条件の行の控え（.brain-exam-…-pc-backup.json）は、持ち主の pid が止まっている／pid の無い古い形で `EXAM_STALE_LOCK_HOURS`（既定 6）時間より古く同じ label が動いていない時に `<名前>.stale-<JST の時刻>` へ寄せる（消さない・ログに1行） | scripts/lib/exam-night.ts |
+| QUALITY②（10/22） | 場面の今: 曜日・週の言い方が無い問題はちょうど実行日へずらす（試験の時計と場面の日付が揃う＝q181 の「明日」）。ある問題は今まで通り7日の倍数 | 旧 `EXAM_DATE_SHIFT=week` |
 | QUALITY⑧ | 見張りの釣り合い: 直す的ごとに今合っている周りの問題（同じ型 → 同じ段・同じ線 → 同じ段）を見張りの候補に足し、司令塔が付けなければ1つ足す（上限に入らなければ見張りから削る） | `--conduct` で既定 |

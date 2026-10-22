@@ -38,3 +38,17 @@ export function shiftExamText(text: string, days: number, year: number, refMs: n
       .replace(BARE_NO_RE, (all, d: string) => { const n = shiftBareDay(Number(d), refMs, days); return n ? `${n}の` : all; });
   }).join("");
 }
+
+// ─── 2026-10-22 ② 場面の「今」を問題の時刻に揃える（q181 のずれ） ─────────────────────────
+// 旧: 場面は7日の倍数だけ先へずらす（曜日を変えない）＝場面の日付が実行日より最大6日先になり、試験の時計（実行日・時だけ問題の時刻）と食い違った。
+//   q181（10/16(金) の「明日空いてたりしますでしょうか？」・正解「明日（10/17）の時間帯」）を 10/22(木) に回すと、場面は 10/23・正解は「明日（10/24）」に
+//   ずれるのに、ブレインの時計は 10/22＝「明日」を 10/23 と読む → 正しく読んでも✕になった。
+// 新: 曜日・週に頼る言い方が無い問題は、ちょうど実行日（経った日数そのまま）にずらす＝場面の日付と時計の日付が同じ（「明日」「明後日」「今日中」が一致）。
+//   曜日・週の言い方（〇曜・(土)・土日・週末・平日・祝日・今週・来週・定休 等）がある問題は今まで通り7日の倍数（曜日を変えない）。止める: EXAM_DATE_SHIFT=week
+export const WEEKDAY_DEP_RE = /[月火水木金土日]曜|[（(][月火水木金土日](?:曜日?)?[)）]|土日|週末|平日|祝日|祝祭|祭日|今週|来週|再来週|先週|定休|[0-9０-９]+\s*週/;
+export function examShiftDays(o: { diffDays: number; texts: string[]; noDateShift?: boolean; mode?: string }): { days: number; exact: boolean } {
+  if (o.diffDays <= 0 || o.noDateShift) return { days: 0, exact: false };
+  const week = Math.ceil(o.diffDays / 7) * 7;
+  if (String(o.mode ?? "").trim().toLowerCase() === "week") return { days: week, exact: false };
+  return o.texts.some((t) => WEEKDAY_DEP_RE.test(t ?? "")) ? { days: week, exact: false } : { days: o.diffDays, exact: true };
+}
