@@ -34,7 +34,9 @@ export type StatTurn = {
   verdict_detail?: VerdictDetail | Record<string, unknown> | null;
 };
 /** staleDraft＝連投の途中向けの古い下書きの番（返信の道・2026-10-20 から n に入れず別に数える） */
-export type SceneWindow = { n: number; agree: number; rate: number | null; same: number; factDiff: number; different: number; textN: number; textAgree: number; uncertain: number; staleDraft: number };
+export type SceneWindow = { n: number; agree: number; rate: number | null; same: number; factDiff: number; different: number; textN: number; textAgree: number; uncertain: number; staleDraft: number;
+  /** 2026-10-23 v8: 一致のうち本来の AIX の当てはめで一致に直した番（reason=same_via_mapping・元の判定は raw_verdict）。v7 の数え方＝agree−viaMapping */
+  viaMapping: number };
 export type SceneStat = {
   scene: string;
   path: string;
@@ -49,7 +51,7 @@ export type SceneStat = {
   remaining: string[];     // 解禁の線までの残り（人が読む）
 };
 
-const emptyWin = (): SceneWindow => ({ n: 0, agree: 0, rate: null, same: 0, factDiff: 0, different: 0, textN: 0, textAgree: 0, uncertain: 0, staleDraft: 0 });
+const emptyWin = (): SceneWindow => ({ n: 0, agree: 0, rate: null, same: 0, factDiff: 0, different: 0, textN: 0, textAgree: 0, uncertain: 0, staleDraft: 0, viaMapping: 0 });
 function addTo(w: SceneWindow, t: StatTurn) {
   const d = (t.verdict_detail ?? {}) as VerdictDetail;
   if (!t.verdict || t.verdict === "na") return;
@@ -58,6 +60,7 @@ function addTo(w: SceneWindow, t: StatTurn) {
   w.n++;
   if (isAgree(t.verdict)) w.agree++;
   if (t.verdict === "same") w.same++;
+  if (d.reason === "same_via_mapping") w.viaMapping++;
   if (t.verdict === "different") w.different++;
   if (d.fact_diff) w.factDiff++;
   if (d.uncertain) w.uncertain++;
@@ -392,7 +395,7 @@ export function dailyLines(d: LineWatchDaily, aixLabels?: Record<string, string>
   if (d.alerts.length) { L.push("■ 知らせる事"); for (const a of d.alerts) L.push(`・${a}`); } else L.push("■ 知らせる事はありません");
   L.push("■ 場面ごとの一致率（28日・比べられた番）");
   for (const s of d.scenes.slice(0, 15)) {
-    L.push(`・${sceneLabel(s.scene, aixLabels)}: ${s.cur.n}番・一致 ${pct(s.cur.rate)}${s.cur.textN ? `（文 ${s.cur.textN}番中 ${s.cur.textAgree}）` : ""}・事実違い ${s.cur.factDiff}・別の事(14日) ${s.last14Different}${s.unlock ? "・【解禁の線】" : ""}${s.stop ? "・【停止の線】" : ""}${!s.unlock && s.remaining.length ? `・残り: ${s.remaining.join("／")}` : ""}`);
+    L.push(`・${sceneLabel(s.scene, aixLabels)}: ${s.cur.n}番・一致 ${pct(s.cur.rate)}${s.cur.textN ? `（文 ${s.cur.textN}番中 ${s.cur.textAgree}）` : ""}${s.cur.viaMapping ? `（うち本来の AIX で一致 ${s.cur.viaMapping}）` : ""}・事実違い ${s.cur.factDiff}・別の事(14日) ${s.last14Different}${s.unlock ? "・【解禁の線】" : ""}${s.stop ? "・【停止の線】" : ""}${!s.unlock && s.remaining.length ? `・残り: ${s.remaining.join("／")}` : ""}`);
   }
   if (d.fc.turns) {
     L.push(`■ 最終チェック（28日・${d.fc.turns}番・指摘あり ${d.fc.withIssues}・直した ${d.fc.revisedTurns}）: ${Object.entries(d.fc.byStage).map(([k, n]) => `${k} ${n}`).join("・") || "最後に残った指摘なし"}`);

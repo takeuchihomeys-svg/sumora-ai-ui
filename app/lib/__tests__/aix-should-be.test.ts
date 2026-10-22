@@ -64,6 +64,21 @@ it("押し間違い: 別の AIX を押したが AIX の文の中身はブレイ�
   const j = judgeTurn({ draft: null, brainAction: "property_check_result", brainReplyMode: "aix", hasBrain: true, window: win([], [{ aix_type: "property_send", check_pattern: null, at: at(5), burst: true }], [sent]), aixMapping: true });
   eq([j.verdict, j.detail.reason, j.detail.raw_reason, j.detail.should_be?.via, j.detail.aix_verdict], ["same", "same_via_mapping", "aix_other", "mis_press", "other"]);
 });
+it("押した AIX を自分の文が裏付ける（物件の束の中の室内イメージ）→ 押し間違いにしない（変えない）", () => {
+  const pick = "〇〇さんお世話になっております！！ 家賃13万円まで上げて頂いたので、御堂筋線梅田〜大国町周辺全域から1LDK〜2LDKで〇〇さんにオススメできるお部屋ピックアップさせて頂きました😊！！";
+  const j = judgeTurn({ draft: null, brainAction: "property_check_result", brainReplyMode: "aix", hasBrain: true, window: win([], [{ aix_type: "property_send", check_pattern: null, at: at(5), burst: true }], [pick, "（室内イメージ）\n（URL）"]), aixMapping: true });
+  eq([j.verdict, j.detail.reason], ["different", "aix_other"]);
+});
+it("押し間違いの根拠に手打ちの文は使わない（費用を押して手打ちで内覧の誘い）", () => {
+  const est = "【物件名】 初期費用さらに 🌟134,875円割引させて頂き 初期費用：170,480円 スモラなら一般的な不動産業者より316,145円節約出来ます！！";
+  const j = judgeTurn({ draft: null, brainAction: "viewing_invite", brainReplyMode: "aix", hasBrain: true, window: win([HAND_VIEW], [{ aix_type: "estimate_sheet", check_pattern: null, at: at(5), burst: true }], [est]), aixMapping: true });
+  eq([j.verdict, j.detail.reason], ["different", "aix_other"]);
+});
+it("同じ文に添えた弱い中身（also）では一致にしない", () => {
+  const t = "お待たせ致しました！！管理会社様に確認させて頂きましたところ、〇〇号室は現在募集中となります！！ 新着でご希望のお部屋が出次第すぐにお送りさせて頂きます！！";
+  const j = judgeTurn({ draft: null, brainAction: "zenryoku_support", brainReplyMode: "aix", hasBrain: true, window: win([t]), aixMapping: true });
+  eq(j.detail.reason === "same_via_mapping", false);
+});
 it("AI は返信の番は当てはめない", () => {
   const j = judgeTurn({ draft: "かしこまりました！！", brainAction: "", brainReplyMode: "auto_reply", hasBrain: true, window: win([HAND_VIEW]), aixMapping: true });
   eq(j.detail.reason === "same_via_mapping", false);

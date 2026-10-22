@@ -367,7 +367,8 @@ export function judgeTurn(i: JudgeInput): Judgement {
 /**
  * v8（2026-10-23 竹内さん 10/22「スタッフは押し間違いが多い」「竹内も手打ちで送る」「押すのは竹内基準」）:
  *   AI は AIX の番で、スタッフが手打ちで送った・別の AIX を押した（判定が一部違う／別の事）時、送った文を「本来の AIX」に当てはめる。
- *   ブレインの AIX のボタンが本来の AIX（主か同じ文の他の中身）と同じなら一致（same・same_via_mapping）。元の判定は raw_verdict に残す。
+ *   ブレインの AIX のボタンが本来の AIX の主のボタンと同じなら一致（same・same_via_mapping）。元の判定は raw_verdict に残す。
+ *   押し間違いは、押した AIX の文が押したボタンを裏付けない時だけ（裏付ける＝押し間違いではない・手打ちの文は根拠にしない）。
  *   aix_verdict（自動返信化の関所が読む押した AIX の一致）は変えない＝関所は緩まない。
  */
 export function applyAixMapping(i: JudgeInput, j: Judgement): Judgement {
@@ -381,13 +382,18 @@ export function applyAixMapping(i: JudgeInput, j: Judgement): Judgement {
     // 返事のまとまりの AIX の文（まとまりの外で押した番＝まとまりに AIX の文が無い時は窓の全部）
     const all = i.window.aixTexts ?? [];
     const aixBurst = (all.some((t) => t.burst) ? all.filter((t) => t.burst) : all).map((t) => t.text);
-    const cands = [...aixBurst.map((t) => shouldBeAixOf(t, { mode: "aix" })), burst ? shouldBeAixOf(burst, { mode: "hand" }) : null].filter((x): x is ShouldBeAix => !!x);
-    sb = cands.find((c) => shouldBeButtons(c).includes(brain)) ?? cands[0] ?? null;
+    const cands = aixBurst.map((t) => shouldBeAixOf(t, { mode: "aix" })).filter((x): x is ShouldBeAix => !!x);
+    // 2026-10-23 レビュー: 押した AIX を自分の文が裏付けている＝押し間違いではない（例: 物件の束の中の（室内イメージ）・費用の説明＋手打ちの内覧の誘い）→ 直さない。
+    //   手打ちの文は押し間違いの根拠にしない（押した AIX と手打ちの両方をした番＝ブレインは片方しか選んでいない）
+    const pressed = new Set((d.staff_aix ?? []).map(String));
+    if (!cands.length || cands.some((c) => shouldBeButtons(c).some((b) => pressed.has(b)))) return j;
+    sb = cands.find((c) => c.button === brain) ?? cands[0];
   } else if (burst) {
     sb = shouldBeAixOf(burst, { mode: "hand" });
   }
   if (!sb) return j;
-  const match = shouldBeButtons(sb).includes(brain);
+  // 一致は主のボタンだけ（同じ文に添えた弱い中身＝also で一致にしない・膨らませない）。ピッカーは時期で変わる物があるのでボタンで比べる
+  const match = sb.button === brain;
   const should_be = { key: sb.key, also: sb.also, strength: sb.strength, via: misPress ? "mis_press" as const : "hand" as const, match };
   if (!match) return { verdict: j.verdict, detail: { ...d, should_be } };
   return { verdict: "same", detail: { ...d, should_be, raw_verdict: j.verdict, raw_reason: d.reason, reason: "same_via_mapping" } };
