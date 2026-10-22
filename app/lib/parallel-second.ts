@@ -177,9 +177,18 @@ export function rankMentionOf(text: string | null | undefined): RankMention | nu
  *   applied＝番手で申込中（繰り上がり待ち）・offered＝番手のご案内（先に申込あり・まだ申込んでいない）・ended／unavailable／null＝番手の場面ではない
  */
 export function latestRankMention(newestFirst: ReadonlyArray<string | null | undefined>): RankMention | null {
-  for (const t of newestFirst) { const m = rankMentionOf(t); if (m) return m; }
+  // 2026-10-22 試験 rankwait1021（q004）: 案内の後にこちらが別の中身（新しいピックアップ等）を送っていれば、案内の場面は過ぎた（申込んだ・待っているは続く）。
+  //   画像だけ・空の通は数えない（旧の語の網は「1番手」を含む通を丸ごと外していたので、この形の案内は場面にならなかった）
+  let newerContent = false;
+  for (const t of newestFirst) {
+    const m = rankMentionOf(t);
+    if (m) return m === "offered" && newerContent ? null : m;
+    if (!RANK_NO_CONTENT.test(String(t ?? ""))) newerContent = true;
+  }
   return null;
 }
+/** 中身の無い通（画像・スタンプ・動画・ファイルだけ・空） */
+const RANK_NO_CONTENT = /^\s*(?:\[(?:画像|スタンプ|動画|ファイル)\]\s*)*$/;
 function pickerSaysOther(p: ParallelPicker): boolean {
   if (p.checkPattern !== "mgmt_application_status") return false;
   const s = JSON.stringify(p.choices ?? null);

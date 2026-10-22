@@ -6,7 +6,7 @@ import {
   locateApplyRoute, resolveRouteNode, buildApplyRouteBrainText, applyRouteBrainTextIfEnabled, applyRouteMapEnabled,
   ROUTE_NODES, ROUTE_BRANCHES, MAIN_ROUTE, APPLY_ROUTE_TEXT_MAX, SILENT_DAYS, type ApplyRouteSignals,
 } from "../apply-route-map";
-import { rankMentionOf } from "../parallel-second";
+import { rankMentionOf, latestRankMention } from "../parallel-second";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -100,6 +100,10 @@ it("番手の文の読み分け（2026-10-22 独立レビュー）: 待つ形は
   eq(rankMentionOf("1番手がキャンセルの場合は2番手に繰り上がる形となります"), "offered");
   eq(rankMentionOf("無事1番手に繰り上がりました!!"), "ended");
   eq(rankMentionOf("204号室は1番手の方がご契約となりますので、お客様の2番手お申込みがキャンセルとなっております"), "ended");
+  // 案内の後にこちらが別の中身を送っていれば案内の場面は過ぎた（q004）・画像だけは数えない・申込んだは続く
+  eq(latestRankMention(["現在募集中のお部屋で全てピックアップさせて頂きました！！お気に召されたお部屋お申込み可能です！！", "[画像]", "1001号室は現在既に1番手のお申込が入っており、お申込される場合は2番手以降でのご案内となります！！"]), null);
+  eq(latestRankMention(["[画像]", "[画像]", "現在2番手でのお申込みとなります"]), "offered");
+  eq(latestRankMention(["ピックアップさせて頂きました", "2番手にてお申し込み完了しております!!"]), "applied");
   // 申込んだ判定は isApplied2ndText と同じ1文の規則（main の 3番手・可能性）
   eq(rankMentionOf("1番手に上がる可能性ございますので、3番手でお申込させて頂きます"), "applied");
 });
