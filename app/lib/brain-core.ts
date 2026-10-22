@@ -3584,7 +3584,17 @@ ${history}`;
     const ackAfterForPromise = customerAckAfter || (lastIsCustomer && reactionOnlyAfterMgmtPending({
       lastStaffMgmtPending: !!brainLedger.facts.lastStaffEntry?.detail?.mgmtPending, customerText: unrepliedTurn.text, hasImage: unrepliedTurn.hasImage,
     }));
+    // 2026-10-22 レビュー（81f0727b）: 条件付きの新着の約束は、約束・最後の送付より後に作った新しい候補が実際にある時だけ AIX（締めの直後は付けない）
+    let newArrivalReady = false;
+    if (linkPromiseNewArrivalRecEnabled() && brainLedger.facts.pickupPromisedUnfulfilled && brainLedger.facts.pickupPromisedKind === "new_arrival" && !isPostApplyStatus(convStatus)) {
+      try {
+        const { data: pendNa } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
+        const sinceMs = Math.max(Date.parse(brainLedger.facts.lastPropertiesSentAt ?? "") || 0, Date.parse(brainLedger.facts.pickupPromisedAt ?? "") || 0);
+        newArrivalReady = freshPickupReady((pendNa ?? []) as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: sinceMs > 0 ? new Date(sinceMs).toISOString() : null, nowMs: Date.now() });
+      } catch (e) { console.warn("[brain-core] new-arrival ready skipped:", e instanceof Error ? e.message : String(e)); }
+    }
     let promiseAix = resolveStaffPromiseAix(brainLedger.facts, messagesOldestFirst, {
+      newArrivalReady,
       customerRequestedCheck: customerRequestedPropertyCheck({
         recentMessages: promiseBasis.map((m) => ({ sender: m.sender, text: m.text })),
         sentPropertyCount: brainLedger.facts.propertiesSentCount,

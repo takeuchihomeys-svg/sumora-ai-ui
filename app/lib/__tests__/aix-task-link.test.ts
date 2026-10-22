@@ -48,12 +48,15 @@ it("最後はピックアップの約束・確認の約束も残る（お客様�
   const t = "かしこまりました！！梅田周辺全域からオススメできるお部屋ピックアップしお送りさせて頂きます！！";
   expect(resolveStaffPromiseAix(facts(t, { conf: true }), [C("ここ空いてますか？あとほかの部屋も"), S(t)], { customerRequestedCheck: true })?.action ?? null).toBe("property_check_result");
 });
-// 2026-10-22 LINK_PROMISE_NEW_ARRIVAL_REC を既定 on（試験 p12-nar-on で悪化なし）: 新着の約束は 物件オススメ（＋物件ピックアップ）。旧（off）は条件付き＝AIX なし
-it("「新着でオススメ出来るお部屋出次第お送り」（条件付き）→ 既定は 物件オススメ（＋ピックアップ）・LINK_PROMISE_NEW_ARRIVAL_REC=off で AIX なし", () => {
+// 2026-10-22（81f0727b「新着は出し切った後の継続」）: 条件付きの新着の約束は、新着が実際に出た時（newArrivalReady）だけ 物件オススメ（＋ピックアップ）。締めの直後は AIX なし
+it("「新着でオススメ出来るお部屋出次第お送り」（条件付き）→ 新着が無い番は AIX なし・新着が出たら 物件オススメ・=off は AIX なし", () => {
   const t = "新着でオススメ出来るお部屋で次第お送りさせていただきます！！";
-  expect(resolveStaffPromiseAix(facts(t), [C("ありがとうございます"), S(t)])?.action ?? null).toBe("property_recommendation");
+  expect(resolveStaffPromiseAix(facts(t), [C("ありがとうございます"), S(t)])).toBe(null);
+  const r = resolveStaffPromiseAix(facts(t), [C("ありがとうございます"), S(t)], { newArrivalReady: true });
+  expect(r?.action ?? null).toBe("property_recommendation");
+  expect(r?.alt ?? null).toBe("property_send");
   const prev = process.env.LINK_PROMISE_NEW_ARRIVAL_REC; process.env.LINK_PROMISE_NEW_ARRIVAL_REC = "off";
-  try { expect(resolveStaffPromiseAix(facts(t), [C("ありがとうございます"), S(t)])).toBe(null); } finally { if (prev === undefined) delete process.env.LINK_PROMISE_NEW_ARRIVAL_REC; else process.env.LINK_PROMISE_NEW_ARRIVAL_REC = prev; }
+  try { expect(resolveStaffPromiseAix(facts(t), [C("ありがとうございます"), S(t)], { newArrivalReady: true })).toBe(null); } finally { if (prev === undefined) delete process.env.LINK_PROMISE_NEW_ARRIVAL_REC; else process.env.LINK_PROMISE_NEW_ARRIVAL_REC = prev; }
 });
 it("宣言の後にお客様が返信した（最後が顧客）→ この規則は使わない（ブレインが顧客発言で判断）", () => {
   const t = "見積書を作成しお送りさせて頂きます！！";

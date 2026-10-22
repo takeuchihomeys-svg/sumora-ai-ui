@@ -3,7 +3,7 @@ import { checkPatternForConfirmTopic, customerAskedConfirmTopic, linkPromisePick
 /**
  * 2026-10-21 つなぎ⑤（設計知見 81f0727b「新着とピックアップは別の約束」）: 新着の約束（出し切った後に探し続ける）の続きは AIX【物件オススメ】（新着・1件）を先に、
  *   物件ピックアップした（新着まとめ）を2つ目に。実測（150日・約束の後に最初に送った物件の AIX）は 新着の約束 → 物件オススメ 64・物件ピックアップ 64 の五分＝
- *   ブレインの判断を変えるので既定 off（入れる LINK_PROMISE_NEW_ARRIVAL_REC=on・LINK_PROMISE_PICKER が on の時だけ）
+ *   2026-10-22 から既定 on（止める LINK_PROMISE_NEW_ARRIVAL_REC=off・LINK_PROMISE_PICKER が on の時だけ）
  */
 export function linkPromiseNewArrivalRecEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return linkPromisePickerEnabled(env) && (env.LINK_PROMISE_NEW_ARRIVAL_REC ?? "").trim().toLowerCase() !== "off";
@@ -100,6 +100,8 @@ export function resolveStaffPromiseAix(
     customerAckAfter?: boolean;
     /** 見積る物件があるか（こちらの送付・お客様の URL/画像/「ここの」/見積の語）。false の時は見積書の宣言でも 見積書送る をセットしない（ゆうこ事例）。未指定は従来どおり */
     propertyInPlay?: boolean;
+    /** 条件付きの新着の約束（新着で募集に出次第）の後に、新しい候補（約束・最後の送付より後に作ったピックアップ）が実際にあるか（2026-10-22・81f0727b） */
+    newArrivalReady?: boolean;
   } = {},
 ): { action: "estimate_sheet" | "property_send" | "property_recommendation" | "property_check_result"; kind: "estimate" | "pickup" | "check"; alt?: "property_recommendation" | "property_send"; checkPattern?: string } | null {
   const nonMedia = messages.filter((m) => {
@@ -144,7 +146,11 @@ export function resolveStaffPromiseAix(
     if (facts.estimatePromisedUnfulfilled && opts.propertyInPlay !== false && !opts.customerWillSend) return { action: "estimate_sheet", kind: "estimate" };
     if (facts.confirmationPromisedUnfulfilled && (opts.customerRequestedCheck || opts.customerAckAfter)) return { action: "property_check_result", kind: "check" };
   }
-  if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && linkPromiseNewArrivalRecEnabled() && (e.detail?.watch === true || e.detail?.pickupKind === "new_arrival")) {
+  // 2026-10-22 レビュー（設計知見 81f0727b「新着は出し切った後の継続＝新着が出た時に AIX【物件オススメ】」）:
+  //   随時確認の約束（watch・9/17 慶次事例で前から AIX を立てていた）は並びだけ オススメ先に。
+  //   「新着で良いお部屋が出次第お送りします」（条件付き）は新着が実際に出た時（newArrivalReady）だけ。締めの直後に AIX を付けない（下の「次第」の線と同じ）
+  if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && linkPromiseNewArrivalRecEnabled()
+    && (e.detail?.watch === true || (e.detail?.pickupKind === "new_arrival" && opts.newArrivalReady === true))) {
     return { action: "property_recommendation", kind: "pickup", alt: "property_send" };
   }
   if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && e.detail?.watch === true) {

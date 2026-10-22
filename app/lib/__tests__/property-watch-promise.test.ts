@@ -101,9 +101,15 @@ it("従来の「次第」つきピックアップ宣言（探し続ける形で�
     { lastStaffEntry: classifyStaffTextForLedger(t, AT), estimatePromisedUnfulfilled: false, pickupPromisedUnfulfilled: true, confirmationPromisedUnfulfilled: false },
     [{ sender: "customer", text: "お願いします" }, { sender: "staff", text: t }], {},
   );
-  // 2026-10-22 既定 on: 新着の約束は 物件オススメ（＋ピックアップ）。=off で旧の AIX なし
-  expect(r?.action ?? null).toBe("property_recommendation");
-  (() => { const prev = process.env.LINK_PROMISE_NEW_ARRIVAL_REC; process.env.LINK_PROMISE_NEW_ARRIVAL_REC = "off"; try { expect(resolveStaffPromiseAix({ lastStaffEntry: classifyStaffTextForLedger(t, AT), estimatePromisedUnfulfilled: false, pickupPromisedUnfulfilled: true, confirmationPromisedUnfulfilled: false }, [{ sender: "customer", text: "お願いします" }, { sender: "staff", text: t }], {})).toBe(null); } finally { if (prev === undefined) delete process.env.LINK_PROMISE_NEW_ARRIVAL_REC; else process.env.LINK_PROMISE_NEW_ARRIVAL_REC = prev; } })();
+  // 2026-10-22（81f0727b）: 新着が出ていない番（締めの直後）は AIX なし。新着が実際に出た時（newArrivalReady）だけ 物件オススメ（＋ピックアップ）
+  expect(r).toBe(null);
+  const ready = resolveStaffPromiseAix(
+    { lastStaffEntry: classifyStaffTextForLedger(t, AT), estimatePromisedUnfulfilled: false, pickupPromisedUnfulfilled: true, confirmationPromisedUnfulfilled: false },
+    [{ sender: "customer", text: "お願いします" }, { sender: "staff", text: t }], { newArrivalReady: true },
+  );
+  expect(ready?.action ?? null).toBe("property_recommendation");
+  expect(ready?.alt).toBe("property_send");
+  (() => { const prev = process.env.LINK_PROMISE_NEW_ARRIVAL_REC; process.env.LINK_PROMISE_NEW_ARRIVAL_REC = "off"; try { expect(resolveStaffPromiseAix({ lastStaffEntry: classifyStaffTextForLedger(t, AT), estimatePromisedUnfulfilled: false, pickupPromisedUnfulfilled: true, confirmationPromisedUnfulfilled: false }, [{ sender: "customer", text: "お願いします" }, { sender: "staff", text: t }], { newArrivalReady: true })).toBe(null); } finally { if (prev === undefined) delete process.env.LINK_PROMISE_NEW_ARRIVAL_REC; else process.env.LINK_PROMISE_NEW_ARRIVAL_REC = prev; } })();
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
