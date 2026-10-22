@@ -27,8 +27,10 @@ export function brainDecisionLedgerCols(meta: Record<string, unknown>, turnText:
 }
 
 /** digest に足す短い項目（無い物は入れない） */
-export function brainDecisionDigestExtra(meta: Record<string, unknown>): { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown> } {
-  const out: { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown> } = {};
+export function brainDecisionDigestExtra(meta: Record<string, unknown>): { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown> } {
+  const out: { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown> } = {};
+  // 2026-10-23 優先順位の段（BRAIN_PRIORITY_STEP=on の番だけ・項目の数・依頼の抜けを足した数・AIX とのそろえ・取り寄せた材料の id）
+  if (meta.priority_step && typeof meta.priority_step === "object") out.pr = meta.priority_step as Record<string, unknown>;
   // 2026-10-15 追加の調査（brain-deep-check）をかけた番だけ（2回目の呼び出しの割合・変わった率を数える）
   if (meta.deep_check && typeof meta.deep_check === "object") out.dc = meta.deep_check as Record<string, unknown>;
   // 2026-10-22 慣れた事は速く・難しい事はじっくり（BRAIN_FAST_SLOW=on の番だけ・難しさ・戻り道・2回目の割れを数える）
