@@ -20,6 +20,8 @@ import { AIX_BUTTON_LABELS } from "./aix-taxonomy";
 import { aixNewPickers1020Enabled, isPropertyInfoCheckPattern, NEW_CHECK_PATTERNS_1020, PROPERTY_INFO_BUTTON } from "./aix-new-pickers";
 import type { ReplyScene } from "./reply-scene";
 import { isScreeningButtonAction, screeningBrainEnabled, screeningButtonEnabled, SCREENING_BUTTON } from "./aix-owner-answers-1021";
+import { AIX_LEARNED } from "./aix-catalog-learned";
+import { learnedLine, meaningfulWriteContains, type LearnedMeaning } from "./aix-meaning-learn";
 
 export type CatalogEntry = {
   /** 一覧の鍵: "ボタン" か "ボタン/ピッカーの値"（例 property_check_result/unavailable） */
@@ -406,8 +408,52 @@ export function lowPressNote(aixType: string, env: Record<string, string | undef
 export function catalogAllButtonsEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.BRAIN_CATALOG_ALL_BUTTONS ?? "").trim().toLowerCase() !== "off";
 }
-export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { includeAll?: boolean; env?: Record<string, string | undefined> } = {}): string {
-  const inScene = (e: CatalogEntry) => o.includeAll || !scene || !e.scenes.length || e.scenes.includes(scene);
+// ─── 2026-10-22 DB から学んだ意味（竹内基準）・場面の読みが弱い時は全部のピッカー ─────────────────────────
+//   竹内さん「データベース見たらボタン毎の意味やピッカー毎の意味が分かるから、その意味を理解すればもっと判断の質上がる」。
+//   意味は scripts/learn-aix-meanings.ts が 竹内さんの送信（staff_writer='takeuchi'）と定義・決定だけから作る（app/lib/aix-catalog-learned.ts）。
+//   従業員の押下は正解にしない（押し間違いが多い）。お手本が足りないピッカーは「定義で判断」と出す。
+//   切替（どれも既定 off＝今まで通り）: AIX_CATALOG_LEARNED=on … ブレインの一覧のピッカーの行に学んだ1行を添える
+//                                       AIX_CATALOG_UNCERTAIN_FULL=on … 場面の読みが弱い番（evidence が none 等）は全部のボタンのピッカーの細目を出す
+export function aixCatalogLearnedEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.AIX_CATALOG_LEARNED ?? "").trim().toLowerCase() === "on";
+}
+export function catalogUncertainFullEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  // 2026-10-22 試験 aixunc-on（60問）: 道 44→47・合格 34→38・本当の悪化 0 → 既定 on（止める AIX_CATALOG_UNCERTAIN_FULL=off）
+  return (env.AIX_CATALOG_UNCERTAIN_FULL ?? "").trim().toLowerCase() !== "off";
+}
+/** 場面の読み（resolveReplyScene の evidence）が弱い＝当てにならない番 */
+export const WEAK_SCENE_EVIDENCE: ReadonlySet<string> = new Set(["none", "empty", "ack_with_appraisal", "phone", "conditions_kw", "viewing_time", "cost_r7", "viewing_r7", "considering_r7"]);
+export function isSceneUncertain(scene: ReplyScene | null | undefined, evidence: string | null | undefined): boolean {
+  return !scene || scene === "other" || WEAK_SCENE_EVIDENCE.has(String(evidence ?? ""));
+}
+/** 学んだ意味（ピッカーの鍵 → 無ければボタンの鍵） */
+export function learnedMeaningFor(aixType: string, pickerValue?: string | null): LearnedMeaning | null {
+  return (pickerValue ? AIX_LEARNED[`${aixType}/${pickerValue}`] : undefined) ?? AIX_LEARNED[aixType] ?? null;
+}
+/**
+ * AIX の2通目・テンプレートの生成に渡す「このピッカーの意味」の塊（まだどこにもつないでいない・使う側で切替を持つ）。
+ *   目的・竹内さんの文の中身と型・次の一手・竹内さんのお手本（伏せた文）。お手本が足りない時は定義だけ。
+ */
+export function aixMeaningForGenerator(aixType: string, pickerValue?: string | null, o: { maxExemplars?: number } = {}): string {
+  const m = learnedMeaningFor(aixType, pickerValue);
+  const e = AIX_CATALOG.find((x) => x.key === (pickerValue ? `${aixType}/${pickerValue}` : aixType)) ?? AIX_CATALOG.find((x) => x.aixType === aixType);
+  if (!m && !e) return "";
+  const L: string[] = [`【このボタン・ピッカーの意味（竹内基準）】${e ? `${e.button}${e.picker ? `→${e.picker.label}` : ""}` : aixType}`];
+  if (m?.purpose) L.push(`目的: ${m.purpose}`); else if (e) L.push(`目的: ${e.staffOnly || "定型の文"}／${e.when}`);
+  const wc = m ? meaningfulWriteContains(m) : [];
+  if (wc.length) L.push(`竹内さんの文に入る物: ${wc.join("・")}`);
+  if (m?.structure) L.push(`竹内さんの文の型: 受け ${m.structure.uke}%・金額 ${m.structure.amount}%・約束 ${m.structure.promise}%・訴求 ${m.structure.appeal}%・締め ${m.structure.close}%`);
+  if (m?.nextStep.length) L.push(`この後に多い事: ${m.nextStep.join("・")}`);
+  const ex = (m?.exemplars ?? []).slice(0, o.maxExemplars ?? 2);
+  if (ex.length) L.push("竹内さんのお手本（伏せた文・言い回しの参考。事実は今の材料から）:", ...ex.map((x) => `「${x}」`));
+  else if (m?.needsOwnerGold) L.push("竹内さんのお手本が少ない（定義どおりに書く）");
+  return L.join("\n");
+}
+
+export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { includeAll?: boolean; env?: Record<string, string | undefined>; sceneUncertain?: boolean; learned?: boolean } = {}): string {
+  const fullForUncertain = !!o.sceneUncertain && catalogUncertainFullEnabled(o.env ?? (typeof process !== "undefined" ? process.env : {}));
+  const learnedOn = o.learned ?? aixCatalogLearnedEnabled(o.env ?? (typeof process !== "undefined" ? process.env : {}));
+  const inScene = (e: CatalogEntry) => o.includeAll || fullForUncertain || !scene || !e.scenes.length || e.scenes.includes(scene);
   const allButtons = catalogAllButtonsEnabled(o.env);
   // 2026-10-20 新しいピッカー: AIX_NEW_PICKERS_1020=on でない時はブレインに見せない
   const envNow = o.env ?? (typeof process !== "undefined" ? process.env : {});
@@ -421,7 +467,8 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
     .map((e) => (scrOn && isScreeningButtonAction(e.aixType, e.picker?.value ?? null) ? { ...e, button: e.aixType === "guarantor_info" ? `${SCREENING_BUTTON}→保証会社について` : SCREENING_BUTTON } : e));
   const byBtn = new Map<string, CatalogEntry[]>();
   for (const e of rows) { const k = `${e.aixType}|${e.button}`; if (!byBtn.has(k)) byBtn.set(k, []); byBtn.get(k)!.push(e); }
-  const lines: string[] = [AIX_DECISION_ORDER, `【AIX のボタン×ピッカー（${scene ? `場面「${scene}」に関係する物` : "全部"}）＝aix の値はボタンのキー・check_pattern はピッカーの値】`];
+  const lines: string[] = [AIX_DECISION_ORDER, `【AIX のボタン×ピッカー（${scene && !fullForUncertain ? `場面「${scene}」に関係する物` : fullForUncertain ? "場面の読みが弱いので全部" : "全部"}）＝aix の値はボタンのキー・check_pattern はピッカーの値】`];
+  if (learnedOn) lines.push("（各行の「竹内さんの文の中身」「次」は竹内さんの送信から学んだ意味。従業員の押下は基準にしない。お手本が少ない物は定義で判断）");
   const outside: string[] = [];
   for (const [k, es0] of byBtn) {
     const [t, btn] = k.split("|");
@@ -436,7 +483,7 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
     lines.push(`- ${t}【${btn}】 送る情報: ${btnInfo || "（定型の文・フォーム。スタッフだけが知る情報なし）"}${bk?.lines && !es[0].picker ? `｜線: ${bk.lines}` : ""}${!es[0].picker ? `｜使う時: ${es[0].when}` : ""}`);
     const low = lowPressNote(t);
     if (low) lines.push(`    ・${low}`);
-    if (!es[0].picker) continue;
+    if (!es[0].picker) { const ll = learnedOn ? learnedLine(AIX_LEARNED[t]) : ""; if (ll) lines.push(`    ・${ll}`); continue; }
     if (t === "property_check_result" && btn.startsWith("物件確認した")) {
       const res = es.filter((e) => RESULT_PICKERS.has(e.picker!.value)).map((e) => e.picker!.label);
       if (res.length) lines.push(`    ・結果のピッカー（${res.join("／")}）: 確認の約束の後、スタッフが確認してから選ぶ（ブレインは check_pattern を空にする）。${bk?.lines ?? ""}`);
@@ -451,7 +498,8 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
       const own = PICKER_KNOW[e.key]?.lines;
       // 2026-10-20: 切替 off の時は 駐車場について の説明を今まで通りに（バイク置き場の言葉をブレインに出さない）
       const when = newOff && e.picker!.value === "mgmt_parking" ? e.when.replace("駐車場・バイク置き場の有無・料金・空き（中で駐車場／バイク置き場を選ぶ）", "駐車場の有無・料金・空き") : e.when;
-      lines.push(`    ・${e.picker!.label}（${e.picker!.value}）: ${when}${own ? `｜${own}` : ""}`);
+      const ll = learnedOn ? learnedLine(AIX_LEARNED[e.key]) : "";
+      lines.push(`    ・${e.picker!.label}（${e.picker!.value}）: ${when}${own ? `｜${own}` : ""}${ll ? `｜${ll}` : ""}`);
     }
   }
   if (outside.length) lines.push(`- 今の場面の外のボタン（場面の読みが外れていることもある＝会話の事実で選んでよい・ピッカーは画面でスタッフが選ぶ）: ${outside.join(" ／ ")}`);

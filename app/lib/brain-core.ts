@@ -59,7 +59,7 @@ import { propertyThreadEnabled } from "@/app/lib/property-thread";
 import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
 import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from "@/app/lib/brain-scene";
 // 10巡目（10/08 竹内「AIXのボタンの種類・ピッカーの種類を分かっていたら簡単に完全にすることできる」）: AIX の全ボタン×主のピッカーの一覧と判断の順番を場面で絞って渡す（BRAIN_AIX_CATALOG=off で外す）
-import { catalogBlockForBrain } from "@/app/lib/aix-catalog";
+import { catalogBlockForBrain, isSceneUncertain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
@@ -113,7 +113,7 @@ import { viewingReportBlockForBrain } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
 import { buildActionLedger, buildLedgerLinesForBrain, buildViewingFlowForBrain, type LedgerInput } from "@/app/lib/action-ledger";
-// 2026-10-20 竹内さん（5b0b8e82・67f54c24）: 何の日か・確認の相手の決まった読み（DAY_SUBJECT_READER=on の時だけ材料に入る）
+// 2026-10-20 竹内さん（5b0b8e82・67f54c24）: 何の日か・確認の相手の決まった読み（既定 on・DAY_SUBJECT_READER=off で止まる）
 import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 // 2026-10-21 つなぎのブレイン 段3 司令塔: 次の一手（スタッフしか分からない事は AIX）を1行（LINK_CONDUCTOR_BRAIN=on の時だけ・既定 off＝1文字も変わらない）
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
@@ -2216,7 +2216,10 @@ export async function analyzeConversation(
   type ActionRule = { rule_key: string; action_type: string | null; rule_text: string; priority: number | null; condition_key: string | null; condition_value: string | null };
   // 3巡目（10/07）: ブレインの材料を場面で絞る（app/lib/brain-scene.ts・既定 on・BRAIN_SCENE_MATERIALS=off で戻す／テストは opts.sceneMaterials）
   const brainSceneOn = brainSceneMaterialsEnabled(process.env, opts?.sceneMaterials ?? null);
-  const brainScene: ReplyScene | null = brainSceneOn ? resolveReplyScene({ customerText: unrepliedCustomerTurn(typedMessages).text ?? "" }).scene : null;
+  const brainSceneRes = brainSceneOn ? resolveReplyScene({ customerText: unrepliedCustomerTurn(typedMessages).text ?? "" }) : null;
+  const brainScene: ReplyScene | null = brainSceneRes?.scene ?? null;
+  // 2026-10-22 場面の読みが弱い番は AIX の一覧を全部のピッカーで（既定 on・AIX_CATALOG_UNCERTAIN_FULL=off で止まる）
+  const brainSceneUncertain = !brainSceneRes || isSceneUncertain(brainSceneRes.scene, brainSceneRes.evidence);
   const actionRulesRaw = applyRulesOverlay((actionRulesResult.data ?? []) as ActionRule[], currentRulesOverlay(), currentRulesOverlay() ? 40 : undefined);
   const actionRulesFiltered = (brainSceneOn ? actionRulesRaw : actionRulesRaw.slice(0, 15))
     // condition_key 付きルールは conversation_state 一致のみ許可（brain は他の条件コンテキストを持たない）
@@ -2233,7 +2236,7 @@ export async function analyzeConversation(
 
   // 10巡目（10/08）: 返信か AIX かの判断の土台＝AIX のボタン×ピッカーの一覧（場面に関係する物だけ・feedback_scene_first）。戻す BRAIN_AIX_CATALOG=off
   const aixCatalogText = process.env.BRAIN_AIX_CATALOG === "off" ? "" : `
-${catalogBlockForBrain(brainScene)}
+${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
 `;
 
   const knowledgePrinciples = systemInputs.knowledgePrinciples;
@@ -2961,6 +2964,8 @@ ${catalogBlockForBrain(brainScene)}
   const parallelSearchCtx = resolveParallelSearchScene({
     state: customerState,
     ...parallelSearchInputsFromMessages(typedMessages.map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at }))),
+    // 2026-10-21 番手の場面は「2番手で申込中」の1つの判定（post-apply.judgeParallelSecond）とそろえる
+    parallelSecond: opts?.parallelSecond === true,
   });
   const parallelSearchBrainText = buildParallelSearchBrainNote(parallelSearchCtx);
   // 2026-10-20 竹内さん（55bf37b6「申込までの地図」）: 本線＋分かれ道の上の今の位置・申込へ向けた次の一手・本線への戻り方（app/lib/apply-route-map.ts・決定論・LLM なし）。
@@ -2985,6 +2990,7 @@ ${catalogBlockForBrain(brainScene)}
         sceneId: sceneEvidence?.scene ?? null,
         customerTurnText: unrepliedTurn.text ?? "",
         recentStaffTexts: psInAR.recentStaffTexts,
+        parallelSecond: opts?.parallelSecond === true,
         holdReason: holdReasonAR,
         farMoveIn: !!farMoveInEarly,
         lastStaffAtIfStaffLast: lastMsgAR && lastMsgAR.sender !== "customer" ? lastMsgAR.created_at : null,

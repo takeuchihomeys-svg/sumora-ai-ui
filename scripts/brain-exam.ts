@@ -49,7 +49,7 @@ import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { setupLlmTest, YUMA, type LlmTestHarness } from "./lib/llm-test-harness";
 import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lease";
-import { shiftExamText } from "./lib/brain-exam-dates";
+import { shiftExamText, examShiftDays } from "./lib/brain-exam-dates";
 import { brainPathCode, judgePath, problemScore, rateByType, aixFamily, judgeCurrentProperty, normalizeDraftCode, type BrainExamOutput, type ProblemScore, type PathCode } from "./lib/brain-exam-score";
 import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
@@ -258,6 +258,9 @@ async function waitOtherPcCopies(maxMin = 240) {
   const deadline = Date.now() + maxMin * 60_000;
   let n = 0;
   for (;;) {
+    // 2026-10-22 止まった実行の控え（持ち主の pid が止まった／pid の無い古い形で N 時間（EXAM_STALE_LOCK_HOURS・既定 6）より古く同じ label が動いていない）は
+    //   脇へ寄せる（消さない・<名前>.stale-<時刻>）。10/18 の止まった実行の控えが残って他の実行が待ち続けた
+    if (n % 25 === 0) { try { (await import("./lib/exam-night")).sweepStaleBackups(["scripts/.replay-out"]); } catch { /* 寄せられなくても待つだけ */ } }
     // 2026-10-09: 同じ会話の写しだけ待つ（YUMA は今まで通り -yuma-pc-backup・テスト専用の会話は -yuma2-pc-backup 等）
     const re = CONV_TAG === "yuma" ? /^\..*-yuma-pc-backup\.json$/ : new RegExp(`^\\..*-${CONV_TAG}-pc-backup\\.json$`);
     const busy = readdirSync("scripts/.replay-out").filter((f) => re.test(f) && `scripts/.replay-out/${f}` !== PC_BACKUP)
@@ -284,7 +287,8 @@ async function writePc(yumaPc: string, pc: Record<string, unknown> | null) {
   if (!pcRestore) {
     const { data } = await sb.from("property_customers").select((await pcFields()).join(", ")).eq("id", yumaPc).maybeSingle();
     pcRestore = { id: yumaPc, row: (data ?? {}) as unknown as Record<string, unknown> };
-    writeFileSync(PC_BACKUP, JSON.stringify(pcRestore));
+    // 2026-10-22 持ち主の pid と label も入れる（止まった実行の控えを他の実行が見分けて脇へ寄せる・exam-night.sweepStaleBackups）。戻す側は id・row だけ読む
+    writeFileSync(PC_BACKUP, JSON.stringify({ ...pcRestore, pid: process.pid, label: LABEL }));
   }
   const { error } = await sb.from("property_customers").update(pcPatchOf(pc)).eq("id", yumaPc);
   if (error) throw new Error(`条件の行の写し: ${error.message}`);
@@ -853,6 +857,9 @@ async function prepareMainBaseline(): Promise<boolean> {
     ...(JUDGE_ORDER !== "as-is" ? { judgePrefix: JUDGE_ORDER } : {}), ...(KB_RULES_MODE === "score" ? { kbRules: "score" } : {}),
     // 2026-10-17 試験のブレインの口も入れた時だけ（判定を省く・判定のモデル）
     ...(JUDGE_LAZY ? { judgeLazy: true } : {}), ...(JUDGE_MODEL ? { judgeModel: JUDGE_MODEL } : {}),
+    // 2026-10-22 査読: 日付のずらし方を旧（EXAM_DATE_SHIFT=week）に戻した回は、ちょうどずらした main の答えと比べない（場面の日付と時計の関係が違う・
+    //   日付は録音の鍵で伏せる＝入力の差でも同じに見える）。既定（ちょうど）の時は足さない＝今までの置き場のまま
+    ...(String(process.env.EXAM_DATE_SHIFT ?? "").trim().toLowerCase() === "week" ? { dateShift: "week" } : {}),
   });
   const ch = B.configHash(cfg);
   // 2026-10-15 ② 比べる相手の版: main の commit ではなく「試験に効く所の中身」の鍵で置く。main が進んでも試験に効く所が同じなら同じ置き場（使い回す）、
@@ -902,13 +909,40 @@ async function prepareMainBaseline(): Promise<boolean> {
     plan.reuse.push(...carried);
   }
   // 2026-10-20 回す数の上限（--baseline-limit=N・夜中の取り置きを1日の上限の残りに収める）と、今は回さず夜中に回す（--baseline-defer・答案が無い問題は前との比べに入らない）
+  // 2026-10-22 差分だけの取り置き（竹内さんの決まり「試験のブレインは見つけたら直す」・10/22 の夜 166問×最大2回・約 $5・約 11時間）:
+  //   回す問題を n 問ずつ（EXAM_BASELINE_CHUNK・既定 15）に分け、塊ごとに ①下見（AI を呼ばない・前の main の答えの控えで新しい main の入力を組む）
+  //   → 入力が全部同じ問題はその答案をそのまま取り置く（呼ばない）→ ②違う問題だけ本当に回す。上限（--baseline-limit）は②の数に当てる（0円の問題で上限を使わない）。
+  //   塊の間で時間の予算（--baseline-budget-min=N・EXAM_BASELINE_BUDGET_MIN）と main の進み（進んだら古い main の答えを作り続けない）を見て、止めたら残りは次の回。
+  //   --baseline-plan-only＝下見だけ（②を回さない・違う問題の数と見込みの費用を出す）。止める: EXAM_BASELINE_INCREMENTAL=off（旧＝1回の子で全部・控えは使う）
+  const N = await import("./lib/exam-night");
+  const INCR = process.env.EXAM_BASELINE_INCREMENTAL !== "off" && process.env.EXAM_BASELINE_PIN !== "off" && INPUT_DIFF !== "off" && CASSETTE_MODE !== "off";
+  const PLAN_ONLY = flag("baseline-plan-only");
   let deferred: string[] = [];
   const limitArg = arg("baseline-limit");
+  let limitLeft: number | null = limitArg !== "" && !PLAN_ONLY ? Math.max(0, Number(limitArg) || 0) : null;
   if (flag("baseline-defer")) { deferred = [...plan.run]; plan.run = []; }
-  else if (limitArg !== "" && plan.run.length > Math.max(0, Number(limitArg) || 0)) { const n = Math.max(0, Number(limitArg) || 0); deferred = plan.run.slice(n); plan.run = plan.run.slice(0, n); }
+  else if (!INCR && limitLeft !== null && plan.run.length > limitLeft) { deferred = plan.run.slice(limitLeft); plan.run = plan.run.slice(0, limitLeft); limitLeft = null; }
+  else if (!INCR) limitLeft = null;
+  const budgetMs = N.budgetMsOf(arg("baseline-budget-min") || process.env.EXAM_BASELINE_BUDGET_MIN);
+  const chunkN = Math.max(1, Number(process.env.EXAM_BASELINE_CHUNK ?? "15") || 15);
+  const t0Budget = Date.now();
+  const lateDeferred: string[] = [], planSame: string[] = [], planChanged: string[] = [], realRun: string[] = [];
+  let stopWhy: string | null = null, planUsd = 0;
   const baseLabel = `main-${commit.slice(0, 7)}-${ch}`;
-  console.log(`=== 前＝main（${ref}・${commit.slice(0, 7)}${vk ? `・版 ${vk}` : ""}・構成 ${ch}・置き場 ${dir}）: 使い回す ${plan.reuse.length - carried.length}問・前の main から持ち越す ${carried.length}問（main の変更は${rel === "brain" ? "ブレイン" : "下書きまで"}の段に効かない）・回す ${plan.run.length}問${deferred.length ? `・今は回さない ${deferred.length}問（${flag("baseline-defer") ? "--baseline-defer＝夜中の取り置きに回す" : `--baseline-limit=${limitArg}`}）` : ""}${plan.stale.length ? `（問題が直った ${plan.stale.join(",")}）` : ""}${plan.expired.length ? `（${maxAgeMs! / 86_400_000}日より古い ${plan.expired.join(",")}・--baseline-max-age=off で使い回す）` : ""} ===`);
-  try { writeFileSync(`${RESULTS_DIR}/${LABEL}.baseline.json`, JSON.stringify({ at: new Date().toISOString(), commit, versionKey: vk, stageKeys: sk, cfg: ch, reused: plan.reuse.length - carried.length, carried, run: plan.run, deferred }, null, 1)); } catch { /* */ }
+  console.log(`=== 前＝main（${ref}・${commit.slice(0, 7)}${vk ? `・版 ${vk}` : ""}・構成 ${ch}・置き場 ${dir}）: 使い回す ${plan.reuse.length - carried.length}問・前の main から持ち越す ${carried.length}問（main の変更は${rel === "brain" ? "ブレイン" : "下書きまで"}の段に効かない）・回す ${plan.run.length}問${INCR && plan.run.length ? `（差分だけ: 下見で入力が同じ問題は呼ばない${limitLeft !== null ? `・本当に回すのは ${limitLeft}問まで` : ""}${budgetMs !== null ? `・予算 ${Math.round(budgetMs / 60_000)}分` : ""}${PLAN_ONLY ? "・下見だけ" : ""}）` : ""}${deferred.length ? `・今は回さない ${deferred.length}問（${flag("baseline-defer") ? "--baseline-defer＝夜中の取り置きに回す" : `--baseline-limit=${limitArg}`}）` : ""}${plan.stale.length ? `（問題が直った ${plan.stale.join(",")}）` : ""}${plan.expired.length ? `（${maxAgeMs! / 86_400_000}日より古い ${plan.expired.join(",")}・--baseline-max-age=off で使い回す）` : ""} ===`);
+  const writeSummary = (extra: Record<string, unknown> = {}) => { try { writeFileSync(`${RESULTS_DIR}/${LABEL}.baseline.json`, JSON.stringify({ at: new Date().toISOString(), commit, versionKey: vk, stageKeys: sk, cfg: ch, reused: plan.reuse.length - carried.length, carried, run: plan.run, deferred, ...extra }, null, 1)); } catch { /* */ } };
+  writeSummary();
+  // main が進んだか（塊の間で見る・5分に1回まで）。進んで試験に効く所の版が変わったら、古い main の答えを作り続けない
+  let movedMemo: { at: number; v: string | null } = { at: Date.now(), v: null };
+  const mainMoved = (): string | null => {
+    if (ref !== "main" || !vk || !flag("baseline-only") || Date.now() - movedMemo.at < 5 * 60_000) return movedMemo.v; // 比べの回は決まった main と比べる＝取り置き（--baseline-only）だけ見る
+    movedMemo = { at: Date.now(), v: null };
+    try {
+      const now = execFileSync("git", ["rev-parse", "--verify", `${resolveMainRef("main")}^{commit}`]).toString().trim();
+      if (now && now !== commit) { const v2 = examVersionKey(now, memoFile); if (v2 !== vk) movedMemo.v = `${commit.slice(0, 7)} → ${now.slice(0, 7)}・版 ${vk} → ${v2}`; }
+    } catch { /* 読めない時は続ける */ }
+    return movedMemo.v;
+  };
   // 2026-10-21 連携（竹内さん「ここちゃんと連携がされていたらもっと費用抑えられるのでは」・scripts/lib/exam-coord.ts）:
   //   ① 同じ版の同じ問題は1人だけが作る: 置き場の .claims/<問題>.claim を取れた問題だけ自分で回し、他の担当が作っている問題は待って出来た答えを使う
   //      （待つ上限 EXAM_BASELINE_WAIT_MIN・既定 90分。過ぎたら自分で回す）。main の作業ツリー（1つ）も1人ずつ使う（版の違う担当が同時に checkout しない）
@@ -929,28 +963,33 @@ async function prepareMainBaseline(): Promise<boolean> {
     const doneNow = (ids: string[]) => new Set(B.planBaseline(ids.map((id) => ({ id, hash: hashOf.get(id)!, alt: altOf.get(id) })), loadFresh(), REPEAT, opts).reuse);
     const held = new Set<string>();
     process.on("exit", () => { C.releaseClaims(dir, [...held]); C.releaseClaims(B.BASELINE_DIR, [MAIN_WT_CLAIM]); });
-    const runChild = async (ids: string[]) => {
-      const runLabel = `${baseLabel}-r${Date.now().toString(36)}`;
-      const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${runLabel}`, `--only=${ids.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage })];
-      // ② 前の main の版の答え（同じ構成の他の置き場・同じ問題・期限の内・控え付き）
-      const pinSrc = new Map<string, { dir?: string; savedAt: string; answeredAt?: string }>();
-      let pinsFile = "";
-      if (process.env.EXAM_BASELINE_PIN !== "off" && INPUT_DIFF !== "off" && CASSETTE_MODE !== "off") {
-        const sibs = B.siblingDirs(C.listDirs(B.BASELINE_DIR), ch, basename(dir)).filter((n) => !legacyDirs.some((d) => basename(d) === n));
-        const pins: Record<string, CallRef[]> = {};
-        for (const id of ids) {
-          const hit = C.pickPrevMainRows(C.readSiblingFiles<import("./lib/brain-exam-baseline").BaselineFile<ResultRow>>(B.BASELINE_DIR, sibs, id), { hash: hashOf.get(id)!, alt: altOf.get(id) }, { maxAgeMs });
-          if (!hit) continue;
-          Object.assign(pins, pinsFromRows(hit.rows));
-          pinSrc.set(id, hit);
-        }
-        if (pinSrc.size) {
-          pinsFile = join(B.BASELINE_DIR, ".pins", `${runLabel}.json`);
-          atomicWriteJson(pinsFile, pins);
-          console.log(`  前の main の答えの控え: ${pinSrc.size}/${ids.length}問（${[...pinSrc].map(([id, s]) => `${id}←${s.dir ?? "?"}`).slice(0, 6).join(" ")}${pinSrc.size > 6 ? " …" : ""}）＝要求が同じ段は前の答えを使う（呼ばない）`);
-        }
+    const repsWant = (id: string) => Math.max(1, Math.min(REPEAT, REPS_OF?.[id] ?? REPEAT));
+    type PinHit = { dir?: string; savedAt: string; answeredAt?: string; rows: ResultRow[]; cost?: { realUsd: number; replayUsd: number } | null };
+    // ② 前の main の版の答え（同じ構成の他の置き場・同じ問題・期限の内・控え付き）
+    const pinsOf = (ids: string[]): Map<string, PinHit> => {
+      const m = new Map<string, PinHit>();
+      if (process.env.EXAM_BASELINE_PIN === "off" || INPUT_DIFF === "off" || CASSETTE_MODE === "off") return m;
+      const sibs = B.siblingDirs(C.listDirs(B.BASELINE_DIR), ch, basename(dir)).filter((n) => !legacyDirs.some((d) => basename(d) === n));
+      for (const id of ids) {
+        const hit = C.pickPrevMainRows(C.readSiblingFiles<import("./lib/brain-exam-baseline").BaselineFile<ResultRow>>(B.BASELINE_DIR, sibs, id), { hash: hashOf.get(id)!, alt: altOf.get(id) }, { maxAgeMs });
+        if (hit) m.set(id, hit as unknown as PinHit);
       }
-      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}) };
+      return m;
+    };
+    /** main の作業ツリーで子を1回回し、取れた問題を取り置く。plan＝下見（AI を呼ばない・入力が全部同じ問題だけ答案が出る）。取り置いた問題を返す（作業ツリーが空かない時は null） */
+    const spawnMain = async (ids: string[], mode: "plan" | "run", pinSrc: Map<string, PinHit>): Promise<{ saved: string[]; rows: ResultRow[] } | null> => {
+      const runLabel = `${baseLabel}-${mode === "plan" ? "p" : "r"}${Date.now().toString(36)}`;
+      const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${runLabel}`, `--only=${ids.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage })];
+      const mine = new Map([...pinSrc].filter(([id]) => ids.includes(id)));
+      let pinsFile = "";
+      if (mine.size) {
+        const pins: Record<string, CallRef[]> = {};
+        for (const [, hit] of mine) Object.assign(pins, pinsFromRows(hit.rows));
+        pinsFile = join(B.BASELINE_DIR, ".pins", `${runLabel}.json`);
+        atomicWriteJson(pinsFile, pins);
+        if (mode === "run") console.log(`  前の main の答えの控え: ${mine.size}/${ids.length}問（${[...mine].map(([id, s]) => `${id}←${s.dir ?? "?"}`).slice(0, 6).join(" ")}${mine.size > 6 ? " …" : ""}）＝要求が同じ段は前の答えを使う（呼ばない）`);
+      }
+      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
       // main の作業ツリーは1つ＝1人ずつ（版の違う担当が checkout を取り合わない）
       // 2026-10-21 確かめる人: 待つのは上限まで（EXAM_MAIN_WT_WAIT_MIN・既定 120分）。持ち主が生きたまま止まっていても永遠には待たない。
       //   上限を過ぎても奪わない（生きている持ち主の作業ツリーを checkout -f で壊す）→ この回は作らずに進む（その問題は前との比べに入らない）
@@ -959,20 +998,26 @@ async function prepareMainBaseline(): Promise<boolean> {
       for (let k = 0; ; k++) {
         const r = C.tryClaim(B.BASELINE_DIR, MAIN_WT_CLAIM, LABEL);
         if (r.ok) break;
-        if (Date.now() - tw >= wtWait) { console.warn(`  ⚠ main の作業ツリーが ${Math.round(wtWait / 60_000)}分空かない（${r.holder.label}・pid ${r.holder.pid}）→ 今回は前（main）を作らない: ${ids.join(",")}（EXAM_MAIN_WT_WAIT_MIN）`); return; }
+        if (Date.now() - tw >= wtWait) { console.warn(`  ⚠ main の作業ツリーが ${Math.round(wtWait / 60_000)}分空かない（${r.holder.label}・pid ${r.holder.pid}）→ 今回は前（main）を作らない: ${ids.join(",")}（EXAM_MAIN_WT_WAIT_MIN）`); return null; }
         if (k === 0) console.log(`  main の作業ツリーを他の担当（${r.holder.label}・pid ${r.holder.pid}）が使っている → 空くまで待つ（最大 ${Math.round(wtWait / 60_000)}分）`);
         await new Promise((res) => setTimeout(res, 15_000));
       }
       try {
         const wt = prepareMainWorktree(commit);
-        console.log(`  main の作業ツリー ${wt} で「前」を回す: npx ${cmd.join(" ")}`);
+        // 止まった実行の控えが main の作業ツリーに残っていたら脇へ（10/18 の控えで夜の実行が待ち続けた）
+        try { N.sweepStaleBackups([join(wt, "scripts", ".replay-out")]); } catch { /* */ }
+        console.log(`  main の作業ツリー ${wt} で「前」を${mode === "plan" ? "下見（AI を呼ばない）" : "回す"}: npx ${cmd.join(" ").slice(0, 400)}`);
         // 2026-10-17: shell で回す時（Windows）は空白・引用符を含む引数を囲む（置き場のパスに「竹内 悠馬」の空白がある＝--reps-file が切れていた）
         const r = spawnSync("npx", process.platform === "win32" ? cmd.map((x) => (/[\s"]/.test(x) ? `"${x.replace(/"/g, '\\"')}"` : x)) : cmd, { cwd: wt, stdio: "inherit", env: childEnv, shell: process.platform === "win32" });
-        if (r.status !== 0) console.warn(`  ⚠ 前（main）の実行が ${r.status} で終わった（取れた問題だけ取り置く）`);
+        if (r.status !== 0) console.warn(`  ⚠ 前（main）の${mode === "plan" ? "下見" : "実行"}が ${r.status} で終わった（取れた問題だけ取り置く）`);
         const rows = (() => { const f = join(wt, RESULTS_DIR, `${runLabel}.jsonl`); return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as ResultRow) : []; })();
         const cost = (() => { try { return JSON.parse(readFileSync(join(wt, RESULTS_DIR, `${runLabel}.cost.json`), "utf8")) as { byTag?: Record<string, { real: number; realUsd: number; replayed: number; replayUsd: number }> }; } catch { return {}; } })();
         const nowIso = new Date().toISOString();
-        for (const id of ids) {
+        // 下見は「全部の回の入力が同じ」問題だけ取り置く（回が足りない・違う回がある問題は本当に回す）
+        const items = mode === "plan" ? (() => { try { return (JSON.parse(readFileSync(join(wt, RESULTS_DIR, `${runLabel}.inputdiff.json`), "utf8")) as { items?: Record<string, { same: boolean; firstChanged: string | null; pinned: number }> }).items ?? null; } catch { return null; } })() : null;
+        const okIds = mode === "plan" ? N.splitByPlan(ids, rows, repsWant, items).same : ids;
+        const saved: string[] = [];
+        for (const id of okIds) {
           const rs = rows.filter((x) => x.id === id);
           if (!rs.length || rs.some((x) => x.error)) continue; // 失敗した問題は取り置かない（次にまた回す）
           const c = cost.byTag?.[id];
@@ -981,8 +1026,44 @@ async function prepareMainBaseline(): Promise<boolean> {
           B.saveBaseline<ResultRow>(dir, { id, problemHash: hashOf.get(id)!, commit, config: cfg, savedAt: nowIso, fromLabel: runLabel, rows: rs, cost: c ? { real: c.real, realUsd: c.realUsd, replayed: c.replayed, replayUsd: c.replayUsd } : null,
             ...(vk ? { versionKey: vk } : {}), ...((REPEAT_FLAKY || REPS_OF) && REPEAT > 1 ? { complete: true } : {}), stageKeys: sk, envFp: "",
             answeredAt: C.carriedAnsweredAt(rs, src, nowIso), ...(src?.dir ? { pinnedFrom: src.dir } : {}) });
+          saved.push(id);
         }
+        return { saved, rows };
       } finally { C.releaseClaims(B.BASELINE_DIR, [MAIN_WT_CLAIM]); }
+    };
+    // 塊ごとに: 予算・上限・main の進みを見る → 下見（控えのある問題）→ 違う問題だけ本当に回す
+    const runChild = async (ids: string[]) => {
+      const pinSrc = pinsOf(ids);
+      const chunks = INCR || budgetMs !== null || flag("baseline-only") ? N.chunksOf(ids, chunkN) : [ids];
+      for (let i = 0; i < chunks.length; i++) {
+        const g = N.chunkGate({ startMs: t0Budget, nowMs: Date.now(), budgetMs, limitLeft: PLAN_ONLY ? null : limitLeft, mainMoved: mainMoved() });
+        if (!g.go) {
+          const rest = chunks.slice(i).flat();
+          lateDeferred.push(...rest); stopWhy = stopWhy ?? g.why;
+          console.log(`  ⏸ ${g.text}: 残り ${rest.length}問（${rest.slice(0, 10).join(",")}${rest.length > 10 ? " …" : ""}）`);
+          return;
+        }
+        const chunk = chunks[i];
+        let changed = chunk.filter((id) => !(INCR && pinSrc.has(id)));
+        const planIds = chunk.filter((id) => INCR && pinSrc.has(id));
+        if (planIds.length) {
+          const pr = await spawnMain(planIds, "plan", pinSrc);
+          if (!pr) { lateDeferred.push(...chunks.slice(i).flat()); stopWhy = stopWhy ?? "worktree"; return; }
+          planSame.push(...pr.saved);
+          const ch2 = planIds.filter((id) => !pr.saved.includes(id));
+          changed = [...changed, ...ch2];
+          console.log(`  🔍 下見 ${i + 1}/${chunks.length}: 入力が前の main と同じ ${pr.saved.length}問（取り置いた・呼ばない）／違う ${ch2.length}問${ch2.length ? `（${ch2.join(",")}）` : ""}／控えが無い ${chunk.length - planIds.length}問`);
+        }
+        planChanged.push(...changed);
+        planUsd += N.estimateRunUsd(changed, { prevCost: (id) => { const h = pinSrc.get(id); return h?.cost ? { usd: (h.cost.realUsd ?? 0) + (h.cost.replayUsd ?? 0), reps: h.rows.length } : null; }, reps: repsWant, unitUsd: 0.03 });
+        if (PLAN_ONLY || !changed.length) continue;
+        let take = changed;
+        if (limitLeft !== null) { take = changed.slice(0, limitLeft); if (take.length < changed.length) { lateDeferred.push(...changed.slice(take.length)); stopWhy = stopWhy ?? "limit"; } limitLeft -= take.length; }
+        if (!take.length) continue;
+        const rr = await spawnMain(take, "run", pinSrc);
+        if (!rr) { lateDeferred.push(...take, ...chunks.slice(i + 1).flat()); stopWhy = stopWhy ?? "worktree"; return; }
+        realRun.push(...take);
+      }
     };
     const maxWait = C.baselineWaitMs();
     const t0 = Date.now();
@@ -1003,6 +1084,8 @@ async function prepareMainBaseline(): Promise<boolean> {
         finally { const all = [...st.mine, ...st.steal]; C.releaseClaims(dir, all); for (const id of all) held.delete(id); }
       }
       pending = st.wait;
+      // 予算・main の進みで止めた時は、他の担当の分を待ち続けない（残りは次の回）
+      if ((stopWhy || PLAN_ONLY) && pending.length) { lateDeferred.push(...pending); console.log(`  ⏸ 他の担当が作っている ${pending.length}問も待たない（次の回で使い回す）`); break; }
       if (pending.length) {
         const note = [...new Set([...holders.values()].map((h) => `${h.label}（pid ${h.pid}）`))].join("・");
         if (note !== lastNote) console.log(`  同じ版の ${pending.length}問を他の担当が今作っている（${note}）→ 作り直さず待って使う（最大 ${Math.round(maxWait / 60_000)}分・EXAM_BASELINE_WAIT_MIN）: ${pending.join(",")}`);
@@ -1010,6 +1093,12 @@ async function prepareMainBaseline(): Promise<boolean> {
         await new Promise((res) => setTimeout(res, 15_000));
       }
     }
+    if (INCR || lateDeferred.length) {
+      deferred = [...new Set([...deferred, ...lateDeferred])];
+      console.log(`  差分だけの取り置き: 下見で入力が同じ ${planSame.length}問（呼ばない）・入力が違う ${planChanged.length}問${PLAN_ONLY ? `（見込み 約 $${planUsd.toFixed(2)}・回していない）` : `（本当に回した ${realRun.length}問）`}${deferred.length ? `・残り ${deferred.length}問（${stopWhy ?? "上限"}）` : ""}`);
+      writeSummary({ run: PLAN_ONLY ? [] : realRun, deferred, planSame, planChanged, deferWhy: stopWhy, planUsd: Number(planUsd.toFixed(4)), planOnly: PLAN_ONLY });
+    }
+    if (PLAN_ONLY) return false;
   } else if (flag("baseline-dry")) { console.log("（--baseline-dry: 全部使い回せる）"); return false; }
   // 比べる「前」の結果ファイルを組み立てる（今回の問題だけ）
   const now = loadAll();
@@ -1017,7 +1106,7 @@ async function prepareMainBaseline(): Promise<boolean> {
   writeFileSync(`${RESULTS_DIR}/${baseLabel}.jsonl`, lines.map((l) => JSON.stringify(l)).join("\n") + (lines.length ? "\n" : ""));
   BASELINE = baseLabel;
   const reusedUsd = plan.reuse.reduce((s, id) => { const c = now.get(id)?.cost; return s + (c ? c.realUsd + c.replayUsd : 0); }, 0);
-  baselineReuse = { reused: plan.reuse.length, ran: plan.run.length, reusedUsd, commit, dir, carried: carried.length, deferred: deferred.length };
+  baselineReuse = { reused: plan.reuse.length, ran: INCR ? realRun.length : plan.run.length, reusedUsd, commit, dir, carried: carried.length, deferred: deferred.length };
   const missing = picked.filter((p) => !now.has(p.id)).length;
   console.log(`  前の結果: ${baseLabel}（使い回した ${plan.reuse.length}問・新しく回した ${Math.max(0, plan.run.length - missing)}問・取り置きの無い問題 ${missing}）`);
   if (missing) console.warn(`  ⚠ 前（main）の答案が ${missing}問 無い（上の「前」の実行の失敗を見る）。その問題は前との比べに入らない`);
@@ -1085,8 +1174,9 @@ async function main() {
     try {
       const pins = JSON.parse(readFileSync(process.env.BRAIN_EXAM_MAIN_PINS_FILE, "utf8")) as Record<string, CallRef[]>;
       const n = Object.keys(pins).length;
-      if (n) { setCassettePins(pins); pinsOn = true; }
-      console.log(`入力の差（main の作り直し）: 前の main の版の控え ${n}問×回＝要求が同じ段は前の main の答えを使う（呼ばない）`);
+      // 2026-10-22 差分だけの取り置き: 親が下見（EXAM_INPUT_DIFF=plan）で呼ぶ時は控えだけ使う（違う要求は呼ばずに止める＝AI を呼ばない）
+      if (n) { setCassettePins(pins, { only: INPUT_DIFF === "plan" }); pinsOn = true; }
+      console.log(`入力の差（main の作り直し${INPUT_DIFF === "plan" ? "・下見＝呼ばない" : ""}）:前の main の版の控え ${n}問×回＝要求が同じ段は前の main の答えを使う（呼ばない）`);
     } catch (e) { console.warn(`前の main の控えが読めない（全部解く）: ${String(e).slice(0, 120)}`); }
   }
   if (INPUT_DIFF === "plan" && !pinsOn) { console.log("--input-diff=plan: main の控えが無い → 下見なし"); writeFileSync(`${RESULTS_DIR}/${LABEL}.inputdiff.json`, JSON.stringify({ at: new Date().toISOString(), base: BASELINE, pins: 0, items: {} }, null, 1)); return; }
@@ -1193,7 +1283,10 @@ async function main() {
     curPc = p.pc;
     try {
       const jd = (x: number) => Math.floor((x + 9 * 3600_000) / 86_400_000);
-      const diffDays = jd(Date.now()) - jd(Date.parse(p.at)); const shiftDays = diffDays <= 0 || (p as ExamProblem & { noDateShift?: boolean }).noDateShift ? 0 : Math.ceil(diffDays / 7) * 7; // 曜日を変えない（scenario-date-shift.shiftDaysFor と同じ）。10/09: 月の家賃の計算の問題（q060）はずらすと月の言い方（11月分・12月分）と食い違う＝spec の noDateShift
+      // 2026-10-22 ② 曜日・週の言い方が無い問題はちょうど実行日へ（試験の時計と場面の日付を揃える＝q181 の「明日」のずれ）・ある問題は7日の倍数（brain-exam-dates.examShiftDays・EXAM_DATE_SHIFT=week で旧）
+      const diffDays = jd(Date.now()) - jd(Date.parse(p.at));
+      const shiftDays = examShiftDays({ diffDays, noDateShift: !!(p as ExamProblem & { noDateShift?: boolean }).noDateShift, mode: process.env.EXAM_DATE_SHIFT,
+        texts: [...p.context.map((m) => m.t), p.customer, p.staffText ?? "", ...(p.asks ?? []).flatMap((a) => [a.q, a.point]), ...(p.ng ?? [])] }).days; // 旧: 曜日を変えない（scenario-date-shift.shiftDaysFor と同じ）。10/09: 月の家賃の計算の問題（q060）はずらすと月の言い方（11月分・12月分）と食い違う＝spec の noDateShift
       // 10/09: 日付のずらしを会話・お客様の日だけの言い方・正解（要点・言ってはいけない事）に同じく当てる。判定にはずらした問題（ps）を渡す
       const ps = shiftProblem(p, shiftDays);
       const texts = ps.context.map((m) => m.t);
