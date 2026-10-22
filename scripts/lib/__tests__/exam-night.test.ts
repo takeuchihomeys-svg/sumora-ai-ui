@@ -22,6 +22,13 @@ ok("塊: 0 や変な数は1", chunksOf([1, 2], 0).length === 2);
   ok("下見: 全部の回が同じ問題だけ same", JSON.stringify(r.same) === '["q1","q5"]', JSON.stringify(r));
   ok("下見: 回が足りない・答案が無い・失敗は changed", JSON.stringify(r.changed) === '["q2","q3","q4"]', JSON.stringify(r));
 }
+{
+  const rows = [{ id: "a", rep: 1, inputSame: true }, { id: "b", rep: 1, inputSame: true }];
+  const items = { "a#1": { same: true, firstChanged: null, pinned: 3 }, "a#2": { same: false, firstChanged: null, pinned: 0, why: "main の控えなし" },
+    "b#1": { same: true, firstChanged: null, pinned: 3 }, "b#2": { same: false, firstChanged: "brain_full", pinned: 0 }, "c#1": { same: false, firstChanged: "brain_fresh", pinned: 1 } };
+  const r = splitByPlan(["a", "b", "c"], rows, () => 2, items);
+  ok("下見（控えつき）: 控えの無い回は足さない＝同じ回だけで same", JSON.stringify(r) === '{"same":["a"],"changed":["b","c"]}', JSON.stringify(r));
+}
 ok("関所: 予算の内は進む", chunkGate({ startMs: 0, nowMs: 10 * 60_000, budgetMs: 90 * 60_000, limitLeft: 5, mainMoved: null }).go);
 ok("関所: 予算を使い切ったら止める", chunkGate({ startMs: 0, nowMs: 91 * 60_000, budgetMs: 90 * 60_000, limitLeft: 5, mainMoved: null }).why === "budget");
 ok("関所: 上限に届いたら止める", chunkGate({ startMs: 0, nowMs: 0, budgetMs: null, limitLeft: 0, mainMoved: null }).why === "limit");

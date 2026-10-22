@@ -18,18 +18,28 @@ export function chunksOf<T>(xs: T[], n: number): T[][] {
   return out;
 }
 type PlanRow = { id: string; rep: number; error?: string; inputSame?: boolean };
+type PlanItem = { same: boolean; firstChanged: string | null; pinned: number; why?: string };
 /**
  * 下見（AI を呼ばない・前の main の答えの控えだけで新しい main の入力を組む）の結果から、問題を分ける。
- *   same＝全部の回の入力が前の main と同じで、答案が全部の回ぶんできた（その答えを新しい main の取り置きにする・呼ばない）
- *   changed＝どこかの回の入力が違う／控えが無い回がある／失敗した（本当に呼ぶ）
+ *   same＝控えのある回の入力が全部前の main と同じで、答案が1回以上できた（その答えを新しい main の取り置きにする・呼ばない）。
+ *     控えの無い回（前の main は1回だけ・今は揺れる問題で2回欲しい等）は足さない＝入力が同じなら前の main の答えと同じ要求の別の答えを足すだけ（10/22 竹内さんの方針: 変わっていない問題は回を足さない）
+ *   changed＝控えのある回で入力が違う／答案が1つも無い／失敗した（本当に呼ぶ）
+ *   items（<label>.inputdiff.json の items）が無い時は旧の厳しい決め方（欲しい回が全部そろった時だけ same）
  */
-export function splitByPlan(ids: string[], rows: PlanRow[], repsOf: (id: string) => number): { same: string[]; changed: string[] } {
+export function splitByPlan(ids: string[], rows: PlanRow[], repsOf: (id: string) => number, items?: Record<string, PlanItem> | null): { same: string[]; changed: string[] } {
   const same: string[] = [], changed: string[] = [];
   for (const id of ids) {
     const rs = rows.filter((r) => r.id === id);
-    const want = Math.max(1, repsOf(id));
-    const reps = new Set(rs.filter((r) => !r.error && r.inputSame).map((r) => r.rep));
-    const ok = rs.length > 0 && !rs.some((r) => r.error || !r.inputSame) && [...Array(want).keys()].every((k) => reps.has(k + 1));
+    const good = rs.length > 0 && !rs.some((r) => r.error || !r.inputSame);
+    let ok: boolean;
+    if (items) {
+      const differs = Object.entries(items).some(([k, v]) => k.startsWith(`${id}#`) && !v.same && (v.firstChanged !== null || v.pinned > 0));
+      ok = good && !differs;
+    } else {
+      const want = Math.max(1, repsOf(id));
+      const reps = new Set(rs.filter((r) => !r.error && r.inputSame).map((r) => r.rep));
+      ok = good && [...Array(want).keys()].every((k) => reps.has(k + 1));
+    }
     (ok ? same : changed).push(id);
   }
   return { same, changed };

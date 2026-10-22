@@ -1011,7 +1011,8 @@ async function prepareMainBaseline(): Promise<boolean> {
         const cost = (() => { try { return JSON.parse(readFileSync(join(wt, RESULTS_DIR, `${runLabel}.cost.json`), "utf8")) as { byTag?: Record<string, { real: number; realUsd: number; replayed: number; replayUsd: number }> }; } catch { return {}; } })();
         const nowIso = new Date().toISOString();
         // 下見は「全部の回の入力が同じ」問題だけ取り置く（回が足りない・違う回がある問題は本当に回す）
-        const okIds = mode === "plan" ? N.splitByPlan(ids, rows, repsWant).same : ids;
+        const items = mode === "plan" ? (() => { try { return (JSON.parse(readFileSync(join(wt, RESULTS_DIR, `${runLabel}.inputdiff.json`), "utf8")) as { items?: Record<string, { same: boolean; firstChanged: string | null; pinned: number }> }).items ?? null; } catch { return null; } })() : null;
+        const okIds = mode === "plan" ? N.splitByPlan(ids, rows, repsWant, items).same : ids;
         const saved: string[] = [];
         for (const id of okIds) {
           const rs = rows.filter((x) => x.id === id);
@@ -1081,7 +1082,7 @@ async function prepareMainBaseline(): Promise<boolean> {
       }
       pending = st.wait;
       // 予算・main の進みで止めた時は、他の担当の分を待ち続けない（残りは次の回）
-      if (stopWhy && pending.length) { lateDeferred.push(...pending); console.log(`  ⏸ 他の担当が作っている ${pending.length}問も待たない（次の回で使い回す）`); break; }
+      if ((stopWhy || PLAN_ONLY) && pending.length) { lateDeferred.push(...pending); console.log(`  ⏸ 他の担当が作っている ${pending.length}問も待たない（次の回で使い回す）`); break; }
       if (pending.length) {
         const note = [...new Set([...holders.values()].map((h) => `${h.label}（pid ${h.pid}）`))].join("・");
         if (note !== lastNote) console.log(`  同じ版の ${pending.length}問を他の担当が今作っている（${note}）→ 作り直さず待って使う（最大 ${Math.round(maxWait / 60_000)}分・EXAM_BASELINE_WAIT_MIN）: ${pending.join(",")}`);
