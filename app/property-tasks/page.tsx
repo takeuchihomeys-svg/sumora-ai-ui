@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import BottomNav from "../components/BottomNav";
+import { propertyListSendBook, propertyListSendKey, sendWithIdempotency, UncertainSendError } from "../lib/send-idempotency";
 
 type Task = {
   id: string;
@@ -107,17 +108,22 @@ export default function PropertyTasksPage() {
     setSending(true);
     setSendResult("");
     try {
-      const res = await fetch("/api/send-property-list", {
+      // 2026-10-23 送信の二重防止: 同じ日の押し直しは同じ印（届いていれば LINE は送らない・返事が無ければ同じ印で確かめる）
+      const { res } = await sendWithIdempotency(propertyListSendBook, propertyListSendKey(), (send_id, ms) => fetch("/api/send-property-list", {
         method: "POST",
         // 内部認証: NEXT_PUBLIC_INTERNAL_API_SECRET はサーバー側 INTERNAL_API_SECRET と同じ値を設定
-        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
-      });
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
+        body: JSON.stringify({ send_id }),
+        signal: AbortSignal.timeout(ms),
+      }));
       if (!res.ok) throw new Error(`send failed: ${res.status}`);
       const data = await res.json() as { ok: boolean; count?: number; error?: string };
       setSendResult(data.ok ? `✅ ${data.count}名のリストをLINEに送信しました` : `❌ ${data.error}`);
     } catch (e) {
       console.error("[handleSendToLine] error:", e);
-      setSendResult("❌ 送信に失敗しました。通信環境を確認してください");
+      setSendResult(e instanceof UncertainSendError
+        ? "⚠️ 返事が来ず、LINE に届いたか分かりません。LINE で確かめてから押し直してください（同じ送信の印なので二重には届きません）"
+        : "❌ 送信に失敗しました。通信環境を確認してください");
     } finally {
       setSending(false);
     }

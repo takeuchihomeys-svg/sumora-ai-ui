@@ -1,6 +1,6 @@
 // ブレインの試験の決まった計算（scripts/lib/brain-exam-score.ts）
 // 実行: npx tsx scripts/lib/__tests__/brain-exam-score.test.ts（自己完結。全 PASS で exit 0）
-import { brainPathCode, judgePath, codeMatches, problemScore, rateByType, pathOfDirection, normalizeDraftCode } from "../brain-exam-score";
+import { brainPathCode, judgePath, codeMatches, problemScore, rateByType, pathOfDirection, normalizeDraftCode, weightedScore, primaryAskIndex } from "../brain-exam-score";
 
 let fail = 0, pass = 0;
 function eq(name: string, a: unknown, b: unknown) {
@@ -60,6 +60,18 @@ eq("asks を1つ落とすと不合格", problemScore(pv, [true, false], []).pass
 eq("全部当たれば合格", problemScore(pv, [true, true], [false]).pass, true);
 eq("判定なしは道だけ", problemScore(pv, null, null).pass, true);
 eq("言ってはいけない事を言うと不合格", problemScore(pv, [true], [true]).pass, false);
+// 2026-10-23 優先の重み（旧の pass は同じ・主な依頼の外れは他の依頼の外れより重い）
+eq("重み: 全部当たり 1", weightedScore(true, [true, true], [false]).weighted, 1);
+eq("重み: 主な依頼の外れ（2+1+1 のうち 2 落とす）", weightedScore(true, [false, true], [false]).weighted, 0.5);
+eq("重み: 小さな依頼の外れ（2+1+1 のうち 1 落とす）", weightedScore(true, [true, false], [false]).weighted, 0.75);
+eq("重み: 道が外れは0", weightedScore(false, [true], []).weighted, 0);
+eq("重み: 主な依頼の印", weightedScore(true, [false, true], null).primary, false);
+eq("重み: 判定なしは道だけ", weightedScore(true, null, null), { weighted: 1, primary: null });
+eq("重み: 主な依頼の位置が依頼の数を超えたら最後に寄せる（印と重みが同じ依頼）", weightedScore(true, [false, true], null, 5), { weighted: 2 / 3, primary: true });
+eq("主な依頼の位置: main の印", primaryAskIndex([{}, { main: true }]), 1);
+eq("主な依頼の位置: 無ければ1つ目", primaryAskIndex([{}, {}]), 0);
+eq("主な依頼の位置で重みが変わる", problemScore(pv, [false, true], [], { primaryIdx: 1 }).weighted, 2 / 3);
+eq("旧の pass は重みで変えない", problemScore(pv, [true, false], []).pass, false);
 
 // 型ごと
 const r = rateByType([

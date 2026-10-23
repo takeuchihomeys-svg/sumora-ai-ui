@@ -236,7 +236,10 @@ async function makePlan(label: string): Promise<Plan> {
   let kbNow: Record<string, string> | null = null;
   try { const st = await import("./lib/exam-rag-store"); links = await st.loadLinks(sb) as never; const { kbHashMap } = await import("./lib/exam-rag-run"); kbNow = kbHashMap(await st.loadKbRows(sb)); } catch (e) { log(`（知見の紐付けが読めない: ${String(e).slice(0, 100)}）`); }
   const weak = GATE ? {} : weakSpotProblems(links);
-  const allPicks = mergePicks(scope as PlanProblem[], rag, { gate: GATE, named: list("name"), weakSpotProblems: weak });
+  // 2026-10-23 弱い所の台帳（読むだけ）: 開いている弱い所の証拠の問題を、選んだ問題の中で先に回す（小さな確かめの順・司令塔の候補）。問題は足さない
+  const wq = GATE ? { map: {}, note: "" } : await openWeaknessQids();
+  if (wq.note) ragNote = `${ragNote}${ragNote ? "・" : ""}弱い所の台帳: ${wq.note}`;
+  const allPicks = mergePicks(scope as PlanProblem[], rag, { gate: GATE, named: list("name"), weakSpotProblems: weak, weaknessQids: wq.map });
   // 2. 何回・6. 使い回し・8. モデル
   const keys = workingScopeKeys(".");
   // 6. 使い回しの鍵に DB の中身（穴③）: ブレインと下書きが読む表の指紋を1回だけ読む（読むだけ）。--no-reuse の時は読まない
@@ -561,6 +564,21 @@ async function runGuard(pl: Plan, label: string, estNow: number, now: Date): Pro
     return { go: false };
   }
   return { go: true, record: () => { try { C.appendRun({ fp: runFpOf(pl), label, ident, at: new Date().toISOString(), cwd: process.cwd(), estUsd: estNow, ids: [...pl.items.keys()] }); } catch { /* 帳簿が書けなくても流す */ } } };
+}
+/**
+ * 2026-10-23 弱い所の台帳 brain_weaknesses（読むだけ・書かない）: 開いている・作業中の弱い所の証拠の問題（evidence.exam_qids）→ {問題: [鍵]}。
+ *   サービスの鍵が無い（RLS でポリシーなしの表＝anon では読めない）・読めない時は空＝選びは今まで通り。止める EXAM_WEAKNESS_PICK=off
+ */
+async function openWeaknessQids(): Promise<{ map: Record<string, string[]>; note: string }> {
+  if ((process.env.EXAM_WEAKNESS_PICK ?? "").trim().toLowerCase() === "off") return { map: {}, note: "使わない（EXAM_WEAKNESS_PICK=off）" };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { map: {}, note: "サービスの鍵が無い＝使わない" };
+  try {
+    const { data, error } = await sb.from("brain_weaknesses").select("key, status, evidence").in("status", ["open", "in_progress"]).limit(500);
+    if (error) return { map: {}, note: `読めない（${error.message.slice(0, 80)}）＝使わない` };
+    const map: Record<string, string[]> = {};
+    for (const r of (data ?? []) as Array<{ key: string; evidence: { exam_qids?: string[] } | null }>) for (const q of r.evidence?.exam_qids ?? []) (map[q] ??= []).includes(r.key) || map[q].push(r.key);
+    return { map, note: `開いている弱い所の証拠 ${Object.keys(map).length}問（選んだ問題の中で先に回す）` };
+  } catch (e) { return { map: {}, note: `読めない（${String(e).slice(0, 80)}）＝使わない` }; }
 }
 /** --spend-today: 今日（JST）の試験の費用を種類で分け、同じ版の main の作り直しの重なりと、連携で避けた分を出す */
 async function spendToday() {
@@ -1109,7 +1127,7 @@ async function conductInner() {
   // 2026-10-20 確かめる人: 選びが「全部」（道具の変更等）の時に q001〜q040 の並びだけが候補になり、前の結果・読み手の型の候補が入らなかった＝
   //   小さな確かめの順（名指し→前に落ちた→直した所に近い→お手本）で 24 まで → 前の結果 → 読み手の型・線 → 残りの順で 40 まで
   const ranked = pl.allPicks.map((p, i) => ({ p, i, ...smallRank(p.why) })).sort((a, b) => a.tier - b.tier || b.sim - a.sim || a.i - b.i);
-  for (const x of ranked) if (x.tier <= 1 || cands.size < 24) addCand(x.p.id, "");
+  for (const x of ranked) if (x.tier <= 1.5 || cands.size < 24) addCand(x.p.id, "");
   for (const f of prev?.next ?? []) addCand(f.id, `前の結果: ${f.why}`);
   // 10/20 QUALITY⑤: 前の実行で読み手が付けた外れの理由（「正解が揺れている」「判定の誤り」は直す的でない＝候補の理由に書くだけ）
   const lastReasons = loadLatestReasons();

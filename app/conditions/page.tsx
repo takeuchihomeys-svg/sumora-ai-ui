@@ -1,6 +1,7 @@
 "use client";
 
 import { manYen } from "@/app/lib/man-yen";
+import { propertyListSendBook, propertyListSendKey, sendWithIdempotency, UncertainSendError } from "@/app/lib/send-idempotency";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
 import { cacheGet, cacheSet, cacheDrop, cacheUpdate } from "@/app/lib/page-cache";
@@ -24,15 +25,18 @@ function SendTaskListButton() {
     setSending(true);
     setResult("");
     try {
-      const res = await fetch("/api/send-property-list", {
+      // 2026-10-23 送信の二重防止: 同じ日の押し直しは同じ印（届いていれば LINE は送らない・返事が無ければ同じ印で確かめる）
+      const { res } = await sendWithIdempotency(propertyListSendBook, propertyListSendKey(), (send_id, ms) => fetch("/api/send-property-list", {
         method: "POST",
         // 内部認証: NEXT_PUBLIC_INTERNAL_API_SECRET はサーバー側 INTERNAL_API_SECRET と同じ値を設定
-        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
-      });
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
+        body: JSON.stringify({ send_id }),
+        signal: AbortSignal.timeout(ms),
+      }));
       const data = await res.json() as { ok: boolean; count?: number; error?: string };
       setResult(data.ok ? `✅ ${data.count}名送信` : `❌ ${data.error}`);
-    } catch {
-      setResult("❌ エラー");
+    } catch (e) {
+      setResult(e instanceof UncertainSendError ? "⚠️ 届いたか分かりません（LINE で確かめてから押し直してください・二重には届きません）" : "❌ エラー");
     } finally {
       setSending(false);
       setTimeout(() => setResult(""), 3000);

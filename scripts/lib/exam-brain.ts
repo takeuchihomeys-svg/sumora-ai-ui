@@ -22,6 +22,8 @@ export const MUST_TAGS = ["お手本", "竹内さんの番"];
  */
 export function mergePicks(all: PlanProblem[], rag: { mode: "all" | "rag"; picked: Array<{ id: string; why: string[]; must: boolean }> } | null, o: {
   gate?: boolean; named?: string[]; weakSpotProblems?: Record<string, string[]>; mustTags?: string[];
+  /** 2026-10-23 弱い所の台帳（brain_weaknesses の開いている物の証拠の問題）: 選んだ問題の中で先に回す印だけ付ける（問題は足さない＝費用を増やさない） */
+  weaknessQids?: Record<string, string[]>;
 }): Pick[] {
   const ids = new Set(all.map((p) => p.id));
   const why = new Map<string, { why: string[]; must: boolean }>();
@@ -33,6 +35,7 @@ export function mergePicks(all: PlanProblem[], rag: { mode: "all" | "rag"; picke
   const tags = o.mustTags ?? MUST_TAGS;
   for (const p of all) for (const t of p.tags ?? []) if (tags.includes(t)) add(p.id, `竹内さんの${t === "お手本" ? "お手本" : "番"}（必ず）`, true);
   for (const [id, kbs] of Object.entries(o.weakSpotProblems ?? {})) add(id, `毎日拾った弱い所の知見 ${kbs.slice(0, 2).map((k) => k.slice(0, 8)).join("・")} に紐付く`, true);
+  for (const [id, keys] of Object.entries(o.weaknessQids ?? {})) if (why.has(id)) add(id, `開いている弱い所 ${keys.slice(0, 2).join("・")} の証拠`, false);
   return all.filter((p) => why.has(p.id)).map((p) => ({ id: p.id, ...why.get(p.id)! }));
 }
 
@@ -311,6 +314,8 @@ export function smallRank(why: string[]): { tier: number; sim: number } {
   const sim = sims.length ? Math.max(...sims) : 0;
   if (has(/名指し/)) return { tier: 0, sim };
   if (has(/前に落ちた/)) return { tier: 1, sim };
+  // 2026-10-23 弱い所の台帳の開いている物の証拠の問題（今ブレインが外している所）は、直した所に近い問題より先
+  if (has(/開いている弱い所/)) return { tier: 1.5, sim };
   if (has(/差分の言葉に近い|知見 .{0,12}を(入れた|変えた|退役した)|差分で当たった知見|知見 .{0,12}に近い/)) return { tier: 2, sim };
   if (has(/お手本|竹内さんの番/)) return { tier: 3, sim };
   return { tier: 4, sim };

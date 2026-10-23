@@ -12,6 +12,7 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
 import { newerSubstantiveCustomerMessageAfter, staleDraftGuardOn } from "@/app/lib/draft-supersede";
 import { STALE_REPLY_ERROR_CODE } from "@/app/lib/stale-reply";
+import { parseSendId, parseRetryKeyAccepted, retryKeyFor, sendIdempotencyOn } from "@/app/lib/send-idempotency";
 
 // 宣言直後のブレイン再分析（after 内で最大 ~20秒待ち＋分析）に余裕を持たせる
 export const maxDuration = 120;
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
 
-  const { line_user_id, message, image_url, image_urls, account, conversation_id, origin, call_button, aix_type, reply_based_on_customer_at, allow_stale } = await req.json() as {
+  const { line_user_id, message, image_url, image_urls, account, conversation_id, origin, call_button, aix_type, reply_based_on_customer_at, allow_stale, send_id } = await req.json() as {
     line_user_id?: string;
     message?: string;
     image_url?: string;
@@ -97,7 +98,13 @@ export async function POST(req: NextRequest) {
     reply_based_on_customer_at?: string | null;
     /** スタッフが画面で「このまま送る」を選んだ（新しい発言を見た上で送る） */
     allow_stale?: boolean;
+    /**
+     * 2026-10-23 送信の二重防止（send-idempotency.ts）: 画面が送信1回ごとに作る印（UUID）。押し直しでも同じ印。
+     * LINE の X-Line-Retry-Key に入れる → 前の送信で届いていたら LINE は送らずに 409＋届いた通の id を返す
+     */
+    send_id?: string;
   };
+  const sendId = sendIdempotencyOn() ? parseSendId(send_id) : null;
 
   const batchImages = Array.isArray(image_urls) ? image_urls.filter((u) => typeof u === "string" && u.trim()) : [];
   if (!line_user_id || (!message && !image_url && !call_button && batchImages.length === 0)) {
@@ -209,16 +216,35 @@ export async function POST(req: NextRequest) {
 
   let res: Response | null = null;
   let sentMessageIds: string[] = [];
+  // 同じ印の push が「もう届いていた」回数（全部がそうなら、前の送信で届いていた＝今回は何も送っていない）
+  let alreadyAcceptedPushes = 0;
   // 送った通の数だけ id を返す（画像をまとめて送った時も1枚ずつ messages.line_message_id に入る・LINE の応答と同じ形）
   if (skipLinePush) sentMessageIds = pushes.flat().map(() => `simstaff-${crypto.randomUUID()}`);
   for (let pi = 0; pi < (skipLinePush ? 0 : pushes.length); pi++) {
     res = await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: {
+        "Content-Type": "application/json", Authorization: `Bearer ${token}`,
+        ...(sendId ? { "X-Line-Retry-Key": retryKeyFor(sendId, pi) } : {}),
+      },
       body: JSON.stringify({ to: line_user_id, messages: pushes[pi] }),
       // LINE APIハング時に関数がタイムアウト上限まで滞留するのを防ぐ
       signal: AbortSignal.timeout(10_000),
     });
+    if (sendId && res.status === 409) {
+      // 2026-10-23 同じ印の2回目: LINE は送らずに「最初に届いた通の id」を返す → 届いている扱いで続ける（二重にしない）
+      const bodyText = await res.text().catch(() => "");
+      const acc = parseRetryKeyAccepted(res.status, bodyText);
+      if (acc.accepted) {
+        alreadyAcceptedPushes++;
+        sentMessageIds.push(...acc.sentMessageIds);
+        console.warn(JSON.stringify({ tag: "send-line-message:retry-key-accepted", conversationId: conversation_id ?? null, pushIndex: pi, ids: acc.sentMessageIds.length }));
+        res = new Response(null, { status: 200 });
+        continue;
+      }
+      res = new Response(bodyText, { status: 409 });
+      break;
+    }
     if (!res.ok) break;
     // P4: LINE push レスポンスの sentMessages から message id を取得（送った順）
     try {
@@ -259,6 +285,12 @@ export async function POST(req: NextRequest) {
       { ok: false, error: friendlyError, errorCode, lineStatus: res.status, sentMessageIds, partialSent: sentMessageIds.length > 0 },
       { status: 500 }
     );
+  }
+
+  // 2026-10-23 送信の二重防止: 全部が前の送信で届いていた（同じ印の押し直し）→ 何も送っていないので、送信の後の記録・分析は繰り返さない
+  //   （前の送信の処理が後で続けている／続けた）。画面は届いた通の id で messages の行を入れる
+  if (!skipLinePush && pushes.length > 0 && alreadyAcceptedPushes === pushes.length) {
+    return NextResponse.json({ ok: true, account: accountKey, sentMessageIds, alreadySent: true });
   }
 
   // 2026-10-08 竹内「竹内のLINEか従業員のLINEかで考える方がかなり分析の質が変わる」「端末で…判断」:

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { put } from "@vercel/blob";
 import { requireInternalAuth } from "@/app/lib/api-auth";
+import { linePushIdem, parseSendId, sendIdempotencyOn } from "@/app/lib/send-idempotency";
 
 const TOKEN = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? "";
 
@@ -19,11 +20,14 @@ export async function POST(req: NextRequest) {
   if (authError) return authError;
 
   try {
-    const { image_base64, file_name, caption } = await req.json() as {
+    const { image_base64, file_name, caption, send_id } = await req.json() as {
       image_base64: string;
       file_name?: string;
       caption?: string;
+      /** 2026-10-23 送信の二重防止: 押し直しで同じ印 → LINE の X-Line-Retry-Key（前の送信で届いていれば送らない） */
+      send_id?: string;
     };
+    const sendId = sendIdempotencyOn() ? parseSendId(send_id) : null;
 
     if (!image_base64) {
       return NextResponse.json({ error: "image_base64が空です" }, { status: 400 });
@@ -57,26 +61,17 @@ export async function POST(req: NextRequest) {
       messages.unshift({ type: "text", text: caption });
     }
 
-    const res = await fetch("https://api.line.me/v2/bot/message/push", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${TOKEN}`,
-      },
-      body: JSON.stringify({ to: groupId, messages }),
-      signal: AbortSignal.timeout(10_000),
-    });
+    const r = await linePushIdem({ token: TOKEN, to: groupId, messages, sendId });
 
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => "");
-      console.error("[send-image-to-line] LINE push失敗:", res.status, errBody);
+    if (!r.ok) {
+      console.error("[send-image-to-line] LINE push失敗:", r.status, r.errorText);
       return NextResponse.json(
-        { error: `LINE送信に失敗しました (status ${res.status})`, url: blob.url, line_sent: false },
+        { error: `LINE送信に失敗しました (status ${r.status})`, url: blob.url, line_sent: false },
         { status: 502 }
       );
     }
 
-    return NextResponse.json({ ok: true, url: blob.url, line_sent: true });
+    return NextResponse.json({ ok: true, url: blob.url, line_sent: true, ...(r.alreadySent ? { alreadySent: true } : {}) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

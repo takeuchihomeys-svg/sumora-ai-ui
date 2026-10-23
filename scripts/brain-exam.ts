@@ -44,20 +44,20 @@
 //   --kb-rules=show|score|off（既定 show）… 決まりで判定できる知見の違反を出す／--link-kb=<知見 id|id8|title:題>,… … 通った問題を知見に結ぶ
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, mkdirSync, copyFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { setupLlmTest, YUMA, type LlmTestHarness } from "./lib/llm-test-harness";
 import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lease";
 import { shiftExamText, examShiftDays } from "./lib/brain-exam-dates";
-import { brainPathCode, judgePath, problemScore, rateByType, aixFamily, judgeCurrentProperty, normalizeDraftCode, type BrainExamOutput, type ProblemScore, type PathCode } from "./lib/brain-exam-score";
+import { brainPathCode, judgePath, problemScore, primaryAskIndex, rateByType, aixFamily, judgeCurrentProperty, normalizeDraftCode, type BrainExamOutput, type ProblemScore, type PathCode } from "./lib/brain-exam-score";
 import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
 import type { ExamProblem, LedgerRow } from "./brain-exam-add";
 import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
-import { cassetteStats as cassetteStatsNow, pinsFromRows, type CallRef, type InputDiff } from "./lib/llm-cassette";
+import { cassetteStats as cassetteStatsNow, pinsFromRows, examCacheRoot, type CallRef, type InputDiff } from "./lib/llm-cassette";
 import { examEnvFingerprint, defaultEnvOf, readDotenvLocal, formatEnvFp, envFpMismatchNote } from "./lib/exam-env-fp";
 /** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
 function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return 0; return st.total.real - (st.byAction.get("(名札なし)")?.real ?? 0); }
@@ -139,6 +139,8 @@ const SELECT_N = Math.max(1, Number(arg("select-n", "12")) || 12);
 const ORDER = (arg("order") || process.env.EXAM_ORDER || "cache").trim() === "as-is" ? "as-is" : "cache";
 const JUDGE_PREFIX_ARG = (arg("judge-prefix") || process.env.EXAM_JUDGE_PREFIX || "").trim();
 // 10/20 COST④ 判定の並び: as-is（旧・既定）／rubric（決まりが先頭）／stable（場面 → 決まり → 答案）。判定の段（tier）は rubricFirst を明示して並びを変える
+// 2026-10-23 実測（--judge-compare・同じ50件）: 並びを変えると合否が変わる（stable 39/50＝78%・rubric 38/50＝76%・主な依頼の食い違い 11〜12）＝判定の物差しが変わる。
+//   入力のキャッシュも as-is が一番当たる（同じ問題の2つ目 97%・stable 46%・rubric 34%）→ 既定は as-is のまま（昔の結果と比べられる）
 const JUDGE_ORDER: "as-is" | "rubric" | "stable" = JUDGE_PREFIX_ARG === "rubric" ? "rubric" : JUDGE_PREFIX_ARG === "stable" ? "stable" : "as-is";
 const judgeOrderOf = (rubricFirst: boolean | undefined): "as-is" | "rubric" | "stable" => rubricFirst === true ? "rubric" : rubricFirst === false ? "as-is" : JUDGE_ORDER;
 const KB_RULES_MODE = kbRulesMode(arg("kb-rules"));
@@ -214,10 +216,12 @@ let own: string[] = [];
 let ownLedger: Record<string, string[]> = {};
 let pcRestore: { id: string; row: Record<string, unknown> } | null = null;
 // 10/20 COST④: 判定の入力のキャッシュの当たり（DeepSeek の prompt_cache_hit_tokens／miss・出力）も数える（cost.json の judge.tokens）
-const judgeCost = { calls: 0, usd: 0, fail: 0, replayed: 0, tokens: { hit: 0, miss: 0, out: 0 }, tier: undefined as undefined | { machine: number; flash: number; pro: number; unresolved: number; flashCalls: number; proCalls: number; problems: number } };
+const judgeCost = { calls: 0, usd: 0, fail: 0, replayed: 0, cached: 0, tokens: { hit: 0, miss: 0, out: 0 }, tier: undefined as undefined | { machine: number; flash: number; pro: number; unresolved: number; flashCalls: number; proCalls: number; problems: number } };
 // 2026-10-20 判定の段（設計知見 487b8921「判定は機械の照らし→flash→割れた時だけ pro」）: EXAM_JUDGE_TIER=on で、
 //   ① 機械の照らし（決まりで確実に決まる項目だけ・0円）→ ② flash を並びを変えて2回（旧の並び＋rubric の並び）→ 揃った項目は確定 → ③ 割れた項目がある時だけ pro を1回。
 //   既定 off（今まで通り pro 1回）。試験のブレインの司令塔の計画（--run-plan）が judge=tier の時に付ける。比べは scripts/exam-brain.ts --judge-check
+// 2026-10-23 実測（--judge-compare・保存した答案50件・25問）: 段の判定は pro との合否の一致 46/50（92%・揺れの床＝pro 同士 98%）・主な依頼の食い違い 3・
+//   費用 1答案 $0.00110（pro だけ $0.00062 の 1.8倍＝flash 2回の入力がキャッシュに当たらない）＝質も費用も良くならない → 既定 off のまま
 const JUDGE_TIER = (process.env.EXAM_JUDGE_TIER ?? "").trim().toLowerCase() === "on";
 const JUDGE_TIER_FLASH = (process.env.EXAM_JUDGE_FLASH_MODEL ?? "deepseek-flash").trim();
 if (JUDGE_TIER) judgeCost.tier = { machine: 0, flash: 0, pro: 0, unresolved: 0, flashCalls: 0, proCalls: 0, problems: 0 };
@@ -445,31 +449,48 @@ const AIX_JA: Record<string, string> = { property_recommendation: "物件オス�
 const ROUTE_JA: Record<string, string> = { reply: "返信の本文で答える", promise: "後でやると約束する返信（確認・見積・ピックアップ・撮影・交渉）", aix: "AIX（スタッフが確かめた事・検索の結果・見積・内覧の段取りを送る）", none: "答えない" };
 const PATH_CHOICES = ["返信", "2段:pickup", "2段:check", "2段:estimate", "2段:photo", "なし"];
 
-async function deepseekJson(sys: string, user: string, modelOverride?: string): Promise<Record<string, unknown> | null> {
+// 2026-10-23 判定のキャッシュ: 同じ要求（答案の文・正解の一覧・場面・判定の指示文＝版・モデル・並び・過半数の何回目）なら前の判定を使う（呼ばない・$0）。
+//   temperature 0 の同じ要求＝同じ分布なので合否は変わらない。前（main）の取り置きの作り直し・同じ答案の流し直し・段の判定の pro の重なりで効く。
+//   置き場は試験のブレインの置き場（.claude/exam-cache/exam-brain/judge-cache・全部の作業ツリーで共有）。止める EXAM_JUDGE_CACHE=off
+const JUDGE_CACHE_VERSION = "jc1";
+const judgeCacheOn = () => (process.env.EXAM_JUDGE_CACHE ?? "").trim().toLowerCase() !== "off" && (!JUDGE_COMPARE.length || arg("judge-compare-cache") === "on");
+// 2026-10-23 レビュー: 要求の決まり（宛先・temperature・max_tokens・出力の形・考えの有無）も鍵に入れる（変えたのに前の判定を使わない）。置き場の根は1回だけ調べる（毎回 git を呼ばない）
+const JUDGE_REQ = { temperature: 0, max_tokens: 1400, response_format: { type: "json_object" }, thinking: { type: "disabled" } } as const;
+let judgeCacheRoot: string | null = null;
+function judgeCachePath(sys: string, user: string, model: string, salt: string, endpoint: string): string {
+  const k = createHash("sha256").update(JSON.stringify([JUDGE_CACHE_VERSION, endpoint, model, JUDGE_REQ, salt, sys, user])).digest("hex");
+  return join((judgeCacheRoot ??= examCacheRoot()), "exam-brain", "judge-cache", k.slice(0, 2), `${k}.json`);
+}
+async function deepseekJson(sys: string, user: string, modelOverride?: string, opt: { salt?: string; valid?: (o: Record<string, unknown>) => boolean } = {}): Promise<Record<string, unknown> | null> {
   const key = process.env.DEEPSEEK_API_KEY ?? process.env.LLM_ALT_DEEPSEEK_KEY;
   if (!key) throw new Error("DEEPSEEK_API_KEY が無い（判定に使う）");
   const { DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL } = await import("../app/lib/llm-alt-provider");
   const { altPriceOf, isDeepseekPeakAt } = await import("../app/lib/llm-price");
   const model = modelOverride || JUDGE_MODEL || (process.env.DEEPSEEK_MODEL ?? DEEPSEEK_DEFAULT_MODEL);
+  const cachePath = judgeCacheOn() ? judgeCachePath(sys, user, model, opt.salt ?? "", DEEPSEEK_ENDPOINT) : "";
+  if (cachePath && existsSync(cachePath)) {
+    try { const c = JSON.parse(readFileSync(cachePath, "utf8")) as { out?: Record<string, unknown> }; if (c.out && (!opt.valid || opt.valid(c.out))) { judgeCost.cached++; return c.out; } } catch { /* 壊れた控えは使わない＝呼ぶ */ }
+  }
+  const remember = (out: Record<string, unknown>) => { if (!cachePath || (opt.valid && !opt.valid(out))) return out; try { mkdirSync(dirname(cachePath), { recursive: true }); atomicWriteJson(cachePath, { at: new Date().toISOString(), model, out }); } catch { /* 控えの失敗で止めない */ } return out; };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(DEEPSEEK_ENDPOINT, {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ model, messages: [{ role: "system", content: sys }, { role: "user", content: user }], temperature: 0, max_tokens: 1400, response_format: { type: "json_object" }, thinking: { type: "disabled" } }),
+        body: JSON.stringify({ model, messages: [{ role: "system", content: sys }, { role: "user", content: user }], ...JUDGE_REQ }),
         signal: AbortSignal.timeout(90_000),
       });
       const j = await res.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number; completion_tokens?: number } };
       if (!res.ok) throw new Error(`DeepSeek ${res.status}: ${JSON.stringify(j).slice(0, 200)}`);
       const pr = altPriceOf(model);
       // 2026-10-15: 録った答えの再生（x-llm-cassette: replay）は払っていない＝数えない
-      if (res.headers.get("x-llm-cassette") === "replay") { judgeCost.replayed++; return JSON.parse(String(j.choices?.[0]?.message?.content ?? "{}")) as Record<string, unknown>; }
+      if (res.headers.get("x-llm-cassette") === "replay") { judgeCost.replayed++; return remember(JSON.parse(String(j.choices?.[0]?.message?.content ?? "{}")) as Record<string, unknown>); }
       const usd1 = pr && j.usage ? (((j.usage.prompt_cache_miss_tokens ?? 0) * pr.in + (j.usage.prompt_cache_hit_tokens ?? 0) * pr.read + (j.usage.completion_tokens ?? 0) * pr.out) / 1e6) * (pr.peakDouble && isDeepseekPeakAt(new Date()) ? 2 : 1) : 0;
       judgeCost.usd += usd1;
       judgeCost.calls++;
       judgeCost.tokens.hit += j.usage?.prompt_cache_hit_tokens ?? 0; judgeCost.tokens.miss += j.usage?.prompt_cache_miss_tokens ?? 0; judgeCost.tokens.out += j.usage?.completion_tokens ?? 0;
       // 10/20: 判定（DeepSeek 直）は llm_usage_logs に残らない＝手元の記録（local-llm-spend.jsonl）に足す＝試験のブレインの1日の上限に数える（旧は数えていなかった）
       try { const { appendLocalSpend } = await import("./lib/brain-self-review-io"); appendLocalSpend({ at: new Date().toISOString(), tool: "brain-exam-judge", usd: usd1, calls: 1, model, cacheHit: j.usage?.prompt_cache_hit_tokens ?? 0, cacheMiss: j.usage?.prompt_cache_miss_tokens ?? 0, out: j.usage?.completion_tokens ?? 0, label: LABEL }); } catch { /* 記録の失敗で止めない */ }
-      return JSON.parse(String(j.choices?.[0]?.message?.content ?? "{}")) as Record<string, unknown>;
+      return remember(JSON.parse(String(j.choices?.[0]?.message?.content ?? "{}")) as Record<string, unknown>);
     } catch (e) { if (attempt === 1) { judgeCost.fail++; console.warn(`  判定の失敗: ${e instanceof Error ? e.message : e}`); } }
   }
   return null;
@@ -489,14 +510,14 @@ const modeOf = <T,>(xs: T[]): T | null => { const c = new Map<T, number>(); for 
 async function judge(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean): Promise<JudgeOut | null> {
   if (JUDGE_TIER) return judgeTiered(p, meta, raw, needRawPath);
   const outs: JudgeOut[] = [];
-  for (let k = 0; k < JUDGE_REPEAT; k++) { const o = await judgeOnce(p, meta, raw, needRawPath); if (o) outs.push(o); }
+  for (let k = 0; k < JUDGE_REPEAT; k++) { const o = await judgeOnce(p, meta, raw, needRawPath, { rep: k }); if (o) outs.push(o); }
   if (!outs.length) return null;
   if (outs.length === 1) return outs[0];
   const col = (f: (o: JudgeOut) => boolean[], n: number) => Array.from({ length: n }, (_, i) => maj(outs.map((o) => f(o)[i])));
   const na = (p.asks ?? []).length, nn = (p.ng ?? []).length;
   return { asks: col((o) => o.asks, na), route: col((o) => o.route, na), ng: col((o) => o.ng, nn), asksWhy: outs[0].asksWhy.map((w, i) => `${w}（判定 ${outs.filter((o) => o.asks[i]).length}/${outs.length}）`), ngWhy: outs[0].ngWhy, rawPath: modeOf(outs.map((o) => o.rawPath)) };
 }
-async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean, o: { model?: string; rubricFirst?: boolean } = {}): Promise<JudgeOut | null> {
+async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean, o: { model?: string; rubricFirst?: boolean; order?: "as-is" | "rubric" | "stable"; rep?: number } = {}): Promise<JudgeOut | null> {
   const asks = p.asks ?? [], ng = p.ng ?? [];
   if (!asks.length && !ng.length && !needRawPath) return { asks: [], asksWhy: [], ng: [], ngWhy: [], rawPath: null, route: [] };
   const plan = planOf(meta);
@@ -522,9 +543,10 @@ async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, r
   // 2026-10-16 --judge-prefix=rubric: 採点の決まり（正解の依頼・言ってはいけない事）と場面を先に、毎回変わる答案を後ろに（文は変えない・並びだけ）。
   //   同じ問題の回（--repeat）・判定の過半数で前置きが同じになり DeepSeek の自動キャッシュが効く。既定は旧の並び（録音の鍵を変えない）
   // 2026-10-20 COST④ --judge-prefix=stable: 場面 → 採点の決まり → 答案（場面が先頭＝旧の並びの頭は変えず、問題ごとに変わらない決まりを答案の前に）
-  const ord = judgeOrderOf(o.rubricFirst);
+  const ord = o.order ?? judgeOrderOf(o.rubricFirst);
   const user = (ord === "rubric" ? [asksNgText(p), contextText(p), ...answer] : ord === "stable" ? [contextText(p), asksNgText(p), ...answer] : [contextText(p), ...answer, asksNgText(p)]).join("\n\n");
-  const jo = await deepseekJson(sys, user, o.model);
+  const okShape = (x: Record<string, unknown>) => { const A = (x.asks ?? []) as Array<{ i: number }>, G = (x.ng ?? []) as Array<{ i: number }>; return Array.isArray(A) && Array.isArray(G) && asks.every((_, i) => A.some((y) => y?.i === i + 1)) && ng.every((_, i) => G.some((y) => y?.i === i + 1)); };
+  const jo = await deepseekJson(sys, user, o.model, { salt: o.rep ? `#${o.rep}` : "", valid: okShape });
   if (!jo) return null;
   const A = (jo.asks ?? []) as Array<{ i: number; covered: boolean; route?: boolean; why?: string }>, G = (jo.ng ?? []) as Array<{ i: number; violated: boolean; why?: string }>;
   const a = asks.map((_, i) => A.find((x) => x.i === i + 1)), g = ng.map((_, i) => G.find((x) => x.i === i + 1));
@@ -574,11 +596,11 @@ async function judgeDraftTiered(p: ExamProblem, draft: string): Promise<{ code: 
 async function judgeDraft(p: ExamProblem, draft: string): Promise<{ code: string; asks: boolean[]; ng: boolean[] } | null> {
   if (JUDGE_TIER) return judgeDraftTiered(p, draft);
   const outs: Array<{ code: string; asks: boolean[]; ng: boolean[] }> = [];
-  for (let k = 0; k < JUDGE_REPEAT; k++) { const o = await judgeDraftOnce(p, draft); if (o) outs.push(o); }
+  for (let k = 0; k < JUDGE_REPEAT; k++) { const o = await judgeDraftOnce(p, draft, { rep: k }); if (o) outs.push(o); }
   if (outs.length <= 1) return outs[0] ?? null;
   return { code: modeOf(outs.map((o) => o.code)) ?? "返信", asks: (p.asks ?? []).map((_, i) => maj(outs.map((o) => o.asks[i]))), ng: (p.ng ?? []).map((_, i) => maj(outs.map((o) => o.ng[i]))) };
 }
-async function judgeDraftOnce(p: ExamProblem, draft: string, opt: { model?: string; rubricFirst?: boolean } = {}): Promise<{ code: string; asks: boolean[]; ng: boolean[] } | null> {
+async function judgeDraftOnce(p: ExamProblem, draft: string, opt: { model?: string; rubricFirst?: boolean; order?: "as-is" | "rubric" | "stable"; rep?: number } = {}): Promise<{ code: string; asks: boolean[]; ng: boolean[] } | null> {
   const sys = [
     "あなたは賃貸仲介の LINE 接客で、AI が書いた返信の下書きを採点する係です。推測で甘くしない。",
     `① path: 下書きの道を1つ: ${PATH_CHOICES.filter((x) => x !== "なし").join(" / ")}（返信＝約束なしで答える／2段:pickup＝お部屋をピックアップして送ると約束／2段:check＝確認すると約束／2段:estimate＝見積書を作って送ると約束／2段:photo＝撮影して送ると約束）。複数の約束がある時は一番主な物。`,
@@ -586,8 +608,8 @@ async function judgeDraftOnce(p: ExamProblem, draft: string, opt: { model?: stri
     "③ ng: 正解の『言ってはいけない事』を下書きが言っているか（violated）。",
     '出力は JSON だけ: {"path":"返信","asks":[{"i":1,"covered":true}],"ng":[{"i":1,"violated":false}]}',
   ].join("\n");
-  const ord = judgeOrderOf(opt.rubricFirst);
-  const o = await deepseekJson(sys, ord === "rubric" ? `${asksNgText(p)}\n\n${contextText(p)}\n\n【下書き】\n${draft}` : ord === "stable" ? `${contextText(p)}\n\n${asksNgText(p)}\n\n【下書き】\n${draft}` : `${contextText(p)}\n\n【下書き】\n${draft}\n\n${asksNgText(p)}`, opt.model);
+  const ord = opt.order ?? judgeOrderOf(opt.rubricFirst);
+  const o = await deepseekJson(sys, ord === "rubric" ? `${asksNgText(p)}\n\n${contextText(p)}\n\n【下書き】\n${draft}` : ord === "stable" ? `${contextText(p)}\n\n${asksNgText(p)}\n\n【下書き】\n${draft}` : `${contextText(p)}\n\n【下書き】\n${draft}\n\n${asksNgText(p)}`, opt.model, { salt: opt.rep ? `#${opt.rep}` : "", valid: (x) => { const A = (x.asks ?? []) as Array<{ i: number }>, G = (x.ng ?? []) as Array<{ i: number }>; return Array.isArray(A) && Array.isArray(G) && (p.asks ?? []).every((_, i) => A.some((y) => y?.i === i + 1)) && (p.ng ?? []).every((_, i) => G.some((y) => y?.i === i + 1)); } });
   if (!o) return null;
   const A = (o.asks ?? []) as Array<{ i: number; covered: boolean }>, G = (o.ng ?? []) as Array<{ i: number; violated: boolean }>;
   const code = typeof o.path === "string" && PATH_CHOICES.includes(o.path) ? o.path : "返信";
@@ -620,7 +642,10 @@ function perProblem(rows: ResultRow[]) {
     const routeN = rs.filter(routeOk).length;
     const strictN = rs.filter((r) => r.pathStrict ?? r.score.path).length;
     const strictPassN = rs.filter((r) => r.score.pass && (r.pathStrict ?? true)).length;
-    return { id, type: rs[0].type, tags: rs[0].tags, n: rs.length, pass: pass * 2 > rs.length, passN: pass, pathN: path, pathMaj: path * 2 > rs.length, routeN, routeMaj: routeN * 2 > rs.length, strictN, strictMaj: strictN * 2 > rs.length, strictPass: strictPassN * 2 > rs.length, routeKnown: rs.some((r) => r.asks?.some((a) => a.route !== undefined)), drMaj: dr.length ? drOk * 2 > dr.length : null, asksHit, asksN, ngOk, ngN, ess: ess, essOk, dr: dr.length, drOk, drPath, codes: [...new Set(rs.map((r) => r.path.code))], rows: rs };
+    // 2026-10-23 優先の重み（回の平均・主な依頼が入った回）。旧の合格と並べて出す
+    const wSum = rs.reduce((s, r) => s + (r.score.weighted ?? (r.score.pass ? 1 : 0)), 0);
+    const prim = rs.filter((r) => r.score.primary !== undefined && r.score.primary !== null), primOk = prim.filter((r) => r.score.primary).length;
+    return { id, type: rs[0].type, tags: rs[0].tags, n: rs.length, wAvg: wSum / Math.max(1, rs.length), primN: prim.length, primOk, pass: pass * 2 > rs.length, passN: pass, pathN: path, pathMaj: path * 2 > rs.length, routeN, routeMaj: routeN * 2 > rs.length, strictN, strictMaj: strictN * 2 > rs.length, strictPass: strictPassN * 2 > rs.length, routeKnown: rs.some((r) => r.asks?.some((a) => a.route !== undefined)), drMaj: dr.length ? drOk * 2 > dr.length : null, asksHit, asksN, ngOk, ngN, ess: ess, essOk, dr: dr.length, drOk, drPath, codes: [...new Set(rs.map((r) => r.path.code))], rows: rs };
   }).sort((a, b) => a.id.localeCompare(b.id));
 }
 /** 保存した答案を今の正解（出し切りの決まりの切り替え・spec の直し）で採点し直す（asks・言ってはいけない事の判定はそのまま） */
@@ -635,7 +660,7 @@ function rescore(rows: ResultRow[], probs: Map<string, ExamProblem>): ResultRow[
     const asks = r.asks ? r.asks.map((a) => a.covered) : null, ng = r.ng ? r.ng.map((g) => g.violated) : null;
     const essence = r.essence ? (() => { const v = judgePath(codeFromString(r.essence!.code), acc, mn); return { ...r.essence!, acceptHit: v.acceptHit, mustNotHit: v.mustNotHit, ok: v.ok }; })() : r.essence;
     const draft = r.draft ? (() => { const v = judgePath(codeFromString(normalizeDraftCode(r.draft!.code, r.draft!.text, acc)), acc, mn); return { ...r.draft!, ok: v.ok, pass: v.ok && (!r.draft!.asks || r.draft!.asks.every(Boolean)) && (!r.draft!.ng || !r.draft!.ng.some(Boolean)) && !(KB_RULES_MODE === "score" && r.kbRules?.length) }; })() : r.draft;
-    return { ...r, path: { ...r.path, acceptHit: pv.acceptHit, mustNotHit: pv.mustNotHit, ok: pv.ok }, pathStrict, score: problemScore(pv, asks, ng), essence, draft };
+    return { ...r, path: { ...r.path, acceptHit: pv.acceptHit, mustNotHit: pv.mustNotHit, ok: pv.ok }, pathStrict, score: problemScore(pv, asks, ng, { primaryIdx: primaryAskIndex(p.asks) }), essence, draft };
   });
 }
 function summarize(label: string, baseline: string | null): string {
@@ -658,6 +683,8 @@ function summarize(label: string, baseline: string | null): string {
   const essN = pp.reduce((s, p) => s + p.ess, 0), essOk = pp.reduce((s, p) => s + p.essOk, 0);
   const drN = pp.reduce((s, p) => s + p.dr, 0), drOk = pp.reduce((s, p) => s + p.drOk, 0), drPath = pp.reduce((s, p) => s + p.drPath, 0);
   L.push(`合格（道・依頼・言ってはいけない事が全部）: ${pct(totalPass, pp.length)}｜最終の道: ${pct(pathAll, runAll)}｜依頼が入った: ${pct(aH, aN)}｜言ってはいけない事を守った: ${pct(gO, gN)}`);
+  // 2026-10-23 優先の重み（旧の合格は変えない・並べるだけ）: 主な依頼（お客様の一番の問い）の外れは他の依頼の外れの2倍引く・道が外れは0
+  L.push(`重みの点（主な依頼×2・道が外れは0・問題の平均）: ${pp.length ? ((100 * pp.reduce((s, p) => s + p.wAvg, 0)) / pp.length).toFixed(1) : "-"}%｜主な依頼が入った: ${pct(pp.reduce((s, p) => s + p.primOk, 0), pp.reduce((s, p) => s + p.primN, 0))}`);
   // 10/13 レビュー（重要3）: 厳しい採点（物件の AIX の種類まで分ける・acceptStrict）を並べる
   L.push(`厳しい採点（物件の AIX の種類まで分ける・acceptStrict）: 合格 ${pct(pp.filter((p) => p.strictPass).length, pp.length)}｜最終の道 ${pct(pp.reduce((s, p) => s + p.strictN, 0), runAll)}`);
   {
@@ -725,6 +752,7 @@ ${fpNote}`);
     L.push(`\n## 前との物差し: 道 ${both.filter((p) => bp.get(p.id)!.pathMaj).length} → ${both.filter((p) => p.pathMaj).length}（厳しい採点 ${both.filter((p) => bp.get(p.id)!.strictMaj).length} → ${both.filter((p) => p.strictMaj).length}）／答え方 ${both.filter((p) => bp.get(p.id)!.routeMaj).length} → ${both.filter((p) => p.routeMaj).length}（${both.length} 問）`);
     L.push(`\n## 前（${baseline}・${bModel}）との比べ${crossModel ? "（モデルが違う＝参考・関所にしない）" : ""}（両方で解いた ${both.length} 問）: 合格 前 ${both.filter((p) => bp.get(p.id)!.pass).length} → 今 ${both.filter((p) => p.pass).length}｜道 前 ${pct(bPath, bRun)} → 今 ${pct(both.reduce((s, p) => s + p.pathN, 0), both.reduce((s, p) => s + p.n, 0))}｜依頼 前 ${pct(bA, bAN)} → 今 ${pct(both.reduce((s, p) => s + p.asksHit, 0), both.reduce((s, p) => s + p.asksN, 0))}`);
     const typesAll = [...new Set(both.map((p) => p.type))];
+    { const wav = (xs: Array<{ wAvg: number }>) => xs.length ? ((100 * xs.reduce((s, p) => s + p.wAvg, 0)) / xs.length).toFixed(1) : "-"; const bb = both.map((p) => bp.get(p.id)!); L.push(`  重みの点（主な依頼×2・旧の合格と並べる）: 前 ${wav(bb)}% → 今 ${wav(both)}%｜主な依頼が入った 前 ${bb.reduce((s, p) => s + p.primOk, 0)}/${bb.reduce((s, p) => s + p.primN, 0)} → 今 ${both.reduce((s, p) => s + p.primOk, 0)}/${both.reduce((s, p) => s + p.primN, 0)}${(() => { const lostP = both.filter((p) => bp.get(p.id)!.primN && p.primN && bp.get(p.id)!.primOk * 2 > bp.get(p.id)!.primN && p.primOk * 2 <= p.primN); return lostP.length ? `｜⚠ 主な依頼を落とした ${lostP.map((p) => p.id).join(",")}` : ""; })()}`); }
     L.push(`  型ごとの合格（前→今）: ${typesAll.map((t) => { const x = both.filter((p) => p.type === t); return `${t} ${x.filter((p) => bp.get(p.id)!.pass).length}→${x.filter((p) => p.pass).length}/${x.length}`; }).join("・")}`);
     L.push(`  悪くなった ${worse.length}: ${worse.map((p) => `${p.id}[${p.type}] ${bp.get(p.id)!.codes.join("/")}→${p.codes.join("/")}`).join("、") || "なし"}`);
     L.push(`  良くなった ${better.length}: ${better.map((p) => `${p.id}[${p.type}] ${bp.get(p.id)!.codes.join("/")}→${p.codes.join("/")}`).join("、") || "なし"}`);
@@ -1122,9 +1150,94 @@ async function prepareMainBaseline(): Promise<boolean> {
   return true;
 }
 /** main の作業ツリー（.claude/worktrees/brain-exam-main・1つ）を使う印の名前（置き場の根の .claims） */
+// 2026-10-23 竹内さん「テストのブレイン更に質上げれる部分や API 抑えられる方法あるか」: 判定の段（tier）と並び（as-is/stable/rubric）を、
+//   保存した答案（ブレインは回さない・YUMA に書かない）を判定し直して pro（今まで通り）と比べる。
+//   npx tsx --env-file=.env.local scripts/brain-exam.ts --judge-compare=<results の jsonl,...> [--judge-compare-n=40] [--judge-compare-variants=tier,stable,rubric]
+//   出す物: 項目ごと・問題×回ごとの一致（主な依頼＝1つ目の依頼の食い違いは別に数える）・費用・入力のキャッシュの当たり（同じ問題の2つ目以降の答案だけ）
+const JUDGE_COMPARE = arg("judge-compare").split(",").map((s) => s.trim()).filter(Boolean);
+async function judgeCompare(): Promise<void> {
+  const N = Math.max(1, Number(arg("judge-compare-n", "40")) || 40);
+  const variants = (arg("judge-compare-variants") || "tier,stable,rubric").split(",").map((s) => s.trim()).filter(Boolean);
+  const probs = new Map(loadProblems().map((p) => [p.id, effectiveProblem(p)]));
+  type Cand = { row: ResultRow; ps: ExamProblem; needRaw: boolean; key: string; file: string };
+  const seen = new Set<string>(), byId = new Map<string, Cand[]>();
+  for (const f of JUDGE_COMPARE) {
+    if (!existsSync(f)) { console.warn(`無い: ${f}`); continue; }
+    for (const l of readFileSync(f, "utf8").split("\n")) {
+      if (!l.trim()) continue;
+      let r: ResultRow & { judgeSkipped?: string }; try { r = JSON.parse(l); } catch { continue; }
+      if (r.error || !r.brain || r.judgeSkipped || !r.asks || !r.ng) continue;
+      if (r.asks.some((a) => /flash 2回一致|割れ|（機械）/.test(a.why ?? ""))) continue; // 段の判定で付けた行は比べの元にしない
+      const p0 = probs.get(r.id); if (!p0) continue;
+      const jd = (x: number) => Math.floor((x + 9 * 3600_000) / 86_400_000);
+      const days = examShiftDays({ diffDays: jd(Date.parse(r.at)) - jd(Date.parse(p0.at)), noDateShift: !!(p0 as ExamProblem & { noDateShift?: boolean }).noDateShift, mode: process.env.EXAM_DATE_SHIFT, texts: [...p0.context.map((m) => m.t), p0.customer, p0.staffText ?? "", ...(p0.asks ?? []).flatMap((a) => [a.q, a.point]), ...(p0.ng ?? [])] }).days;
+      const ps = shiftProblem(p0, days);
+      if ((ps.asks ?? []).length !== r.asks.length || (ps.ng ?? []).length !== r.ng.length || (!r.asks.length && !r.ng.length)) continue;
+      const rawAction = String(r.raw?.aix ?? "").trim() || String(r.raw?.action ?? "").trim();
+      const key = createHash("sha1").update(JSON.stringify([r.id, r.brain, r.raw ?? null, days])).digest("hex");
+      if (seen.has(key)) continue; seen.add(key);
+      byId.set(r.id, [...(byId.get(r.id) ?? []), { row: r, ps, needRaw: !!r.raw && !AIX_KEYS.has(rawAction), key, file: f }]);
+    }
+  }
+  // 1問2つまで・2つある問題を先に（キャッシュの当たりを2つ目で測る）
+  const ids = [...byId.keys()].sort((a, b) => Number((byId.get(b)!.length >= 2)) - Number((byId.get(a)!.length >= 2)) || a.localeCompare(b));
+  const picked: Cand[] = [];
+  for (const id of ids) { for (const c of byId.get(id)!.slice(0, 2)) if (picked.length < N) picked.push(c); }
+  console.log(`判定の比べ: 候補 ${[...byId.values()].reduce((s, x) => s + x.length, 0)}答案（${byId.size}問）→ ${picked.length}答案（${new Set(picked.map((c) => c.row.id)).size}問）・比べる: pro(as-is) と ${variants.join("/")}`);
+  judgeCost.tier = { machine: 0, flash: 0, pro: 0, unresolved: 0, flashCalls: 0, proCalls: 0, problems: 0 };
+  type V = { asks: boolean[]; route: boolean[]; ng: boolean[]; rawPath: string | null };
+  const snap = () => ({ usd: judgeCost.usd, calls: judgeCost.calls, hit: judgeCost.tokens.hit, miss: judgeCost.tokens.miss });
+  const acc: Record<string, { usd: number; calls: number; hit2: number; miss2: number; n: number; fail: number }> = {};
+  const tally = (k: string, b: ReturnType<typeof snap>, second: boolean, ok: boolean) => { const a = (acc[k] ??= { usd: 0, calls: 0, hit2: 0, miss2: 0, n: 0, fail: 0 }); const e = snap(); a.usd += e.usd - b.usd; a.calls += e.calls - b.calls; a.n++; if (!ok) a.fail++; if (second) { a.hit2 += e.hit - b.hit; a.miss2 += e.miss - b.miss; } };
+  const out: Array<{ id: string; key: string; stored: V; v: Record<string, V | null> }> = [];
+  const doneIds = new Set<string>();
+  // 並びごとにまとめて回す（同じ問題の答案を続けて＝2つ目でキャッシュの当たりを測る）。pro(as-is) を先に
+  const order = ["pro", ...variants.filter((v) => v !== "pro")];
+  const res = new Map<string, Record<string, V | null>>();
+  for (const vname of order) {
+    const firstSeen = new Set<string>();
+    for (const c of picked) {
+      const second = firstSeen.has(c.row.id); firstSeen.add(c.row.id);
+      const b = snap();
+      let o: JudgeOut | null = null;
+      try {
+        if (vname === "tier") o = await judgeTiered(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw);
+        else o = await judgeOnce(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw, { order: vname === "pro" ? "as-is" : (vname as "stable" | "rubric") });
+      } catch (e) { console.warn(`  ${c.row.id} ${vname}: ${String(e).slice(0, 120)}`); }
+      tally(vname, b, second, !!o);
+      const m = res.get(c.key) ?? {}; m[vname] = o ? { asks: o.asks, route: o.route, ng: o.ng, rawPath: c.needRaw ? o.rawPath : null } : null; res.set(c.key, m);
+    }
+    console.log(`  ${vname}: ${acc[vname]?.calls ?? 0}回 $${(acc[vname]?.usd ?? 0).toFixed(4)}`);
+  }
+  for (const c of picked) out.push({ id: c.row.id, key: c.key, stored: { asks: c.row.asks!.map((a) => a.covered), route: c.row.asks!.map((a) => a.route ?? a.covered), ng: c.row.ng!.map((g) => g.violated), rawPath: null }, v: res.get(c.key) ?? {} });
+  void doneIds;
+  const passOf = (x: V) => x.asks.every(Boolean) && !x.ng.some(Boolean);
+  const cmp = (name: string, get: (o: (typeof out)[number]) => [V | null, V | null], withRaw: boolean) => {
+    let items = 0, itemsSame = 0, rows = 0, rowsSame = 0, mainFlip = 0, rawN = 0, rawSame = 0; const flips: string[] = [];
+    for (const o of out) {
+      const [x, y] = get(o); if (!x || !y) continue;
+      rows++; const same = passOf(x) === passOf(y) && (!withRaw || x.rawPath === y.rawPath); if (same) rowsSame++; else flips.push(o.id);
+      x.asks.forEach((v, i) => { items++; if (v === y.asks[i]) itemsSame++; });
+      x.ng.forEach((v, i) => { items++; if (v === y.ng[i]) itemsSame++; });
+      if (x.asks.length && x.asks[0] !== y.asks[0]) mainFlip++;
+      if (withRaw && (x.rawPath || y.rawPath)) { rawN++; if (x.rawPath === y.rawPath) rawSame++; }
+    }
+    const pc = (a: number, b: number) => `${a}/${b}（${b ? ((100 * a) / b).toFixed(1) : "-"}%）`;
+    console.log(`${name}: 問題×回の合否 ${pc(rowsSame, rows)}・項目 ${pc(itemsSame, items)}・主な依頼の食い違い ${mainFlip}${withRaw ? `・本質の道 ${pc(rawSame, rawN)}` : ""}${flips.length ? `・違った ${flips.join(",")}` : ""}`);
+  };
+  console.log("\n── 一致（相手は pro・as-is を今回もう一度＝同じ日の判定） ──");
+  cmp("揺れの床: 保存した判定 vs pro もう一度", (o) => [o.stored, o.v.pro ?? null], false);
+  for (const vn of variants) cmp(`${vn} vs pro`, (o) => [o.v[vn] ?? null, o.v.pro ?? null], true);
+  for (const vn of variants) cmp(`${vn} vs 保存した判定`, (o) => [o.v[vn] ?? null, o.stored], false);
+  console.log("\n── 費用・入力のキャッシュ（当たりは同じ問題の2つ目の答案だけ） ──");
+  for (const [k, a] of Object.entries(acc)) console.log(`${k.padEnd(7)} 答案 ${a.n}・呼び ${a.calls}・$${a.usd.toFixed(4)}（1答案 $${(a.usd / Math.max(1, a.n)).toFixed(5)}）・2つ目の当たり ${Math.round((100 * a.hit2) / Math.max(1, a.hit2 + a.miss2))}%${a.fail ? `・失敗 ${a.fail}` : ""}`);
+  const t = judgeCost.tier!; if (t.problems) console.log(`tier: 機械 ${t.machine}項目・flash 一致 ${t.flash}・割れて pro ${t.pro}（pro 呼び ${t.proCalls}/${t.problems}答案）・決まらない ${t.unresolved}`);
+  const fo = arg("judge-compare-out"); if (fo) writeFileSync(fo, JSON.stringify({ at: new Date().toISOString(), files: JUDGE_COMPARE, acc, tier: t, rows: out }, null, 1));
+}
 const MAIN_WT_CLAIM = `_main-worktree${process.env.EXAM_MAIN_WORKTREE?.trim() ? `-${basename(resolve(process.env.EXAM_MAIN_WORKTREE.trim()))}` : ""}`;
 
 async function main() {
+  if (JUDGE_COMPARE.length) { await judgeCompare(); return; }
   if (!LABEL) throw new Error("--label=<名前> が要る（結果のファイル名・続きからの印）");
   mkdirSync(RESULTS_DIR, { recursive: true });
   if (REPORT) { await loadKbLinksForReport(); const s = summarize(LABEL, BASELINE || null); console.log(s); writeFileSync(`${RESULTS_DIR}/${LABEL}.summary.txt`, s); return; }
@@ -1377,7 +1490,7 @@ async function main() {
       }
       const essCode = rawIsAix ? brainPathCode({ reply_mode: "aix", action: rawAction, check_pattern: (row.raw?.check_pattern as string | null) ?? null }) : jg?.rawPath ? codeFromString(jg.rawPath) : null;
       if (essCode) { const ev = judgePath(essCode, acc, mn); row.essence = { code: essCode.label, acceptHit: ev.acceptHit, mustNotHit: ev.mustNotHit, ok: ev.ok }; }
-      row.score = problemScore(pv, jg ? jg.asks : null, jg ? jg.ng : null);
+      row.score = problemScore(pv, jg ? jg.asks : null, jg ? jg.ng : null, { primaryIdx: primaryAskIndex(ps.asks) });
       // ④ 下書き（返信・2段が正解の問題だけ・ブレインの答案を固定して generate-reply を1回）
       // 10/09 --draft-first-only: 下書き（④）は1回目だけ（過半数の回の費用を抑える）
       if (POST && stageOf(p) === "draft" && acc.some((a) => !a.startsWith("AIX")) && (rep === 1 || !flag("draft-first-only"))) {
@@ -1509,7 +1622,7 @@ main().catch((e) => { console.error(e instanceof Error ? e.message : e); process
   if (h) {
     await h.finish();
     if (judgeCost.tier) console.log(`判定の段（EXAM_JUDGE_TIER=on）: ${judgeCost.tier.problems}件・機械で決めた ${judgeCost.tier.machine}項目・flash 2回で揃った ${judgeCost.tier.flash}項目・割れて pro ${judgeCost.tier.pro}項目${judgeCost.tier.unresolved ? `・決まらない ${judgeCost.tier.unresolved}` : ""}（flash ${judgeCost.tier.flashCalls}回・pro ${judgeCost.tier.proCalls}回）`);
-    console.log(`判定（DeepSeek 直・記録の外）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.calls ? `（入力のキャッシュ ${Math.round((100 * judgeCost.tokens.hit) / Math.max(1, judgeCost.tokens.hit + judgeCost.tokens.miss))}%＝当たり ${judgeCost.tokens.hit}・外れ ${judgeCost.tokens.miss}トークン・並び ${JUDGE_ORDER}）` : ""}${judgeCost.replayed ? `（うち再生 ${judgeCost.replayed}回・費用0）` : ""}${judgeSkip.lazy ? `・決まりで済んで呼ばなかった ${judgeSkip.lazy}問回（--judge=lazy）` : ""}${judgeSkip.rules ? `・項目を決まりで採点した ${judgeSkip.rules}問回（AIX・送らない答案）` : ""}${injectStats.calls ? `・試しの材料を足した呼び出し ${injectStats.calls}回` : ""}`);
+    console.log(`判定（DeepSeek 直・記録の外）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.calls ? `（入力のキャッシュ ${Math.round((100 * judgeCost.tokens.hit) / Math.max(1, judgeCost.tokens.hit + judgeCost.tokens.miss))}%＝当たり ${judgeCost.tokens.hit}・外れ ${judgeCost.tokens.miss}トークン・並び ${JUDGE_ORDER}）` : ""}${judgeCost.replayed ? `（うち再生 ${judgeCost.replayed}回・費用0）` : ""}${judgeCost.cached ? `・判定のキャッシュで呼ばなかった ${judgeCost.cached}回` : ""}${judgeSkip.lazy ? `・決まりで済んで呼ばなかった ${judgeSkip.lazy}問回（--judge=lazy）` : ""}${judgeSkip.rules ? `・項目を決まりで採点した ${judgeSkip.rules}問回（AIX・送らない答案）` : ""}${injectStats.calls ? `・試しの材料を足した呼び出し ${injectStats.calls}回` : ""}`);
     // 2026-10-15 ④ 1回の試験の数え（新しく呼んだ・再生・使い回した）。問題ごとの数えは <label>.cost.json（前の取り置きの「呼んでいたら」に使う）
     const cas = await import("./lib/llm-cassette");
     const cst = cas.cassetteStats();
