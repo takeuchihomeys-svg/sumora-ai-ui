@@ -60,3 +60,115 @@ export function sendFingerprint(convId: string, text: string, files: Array<{ nam
 export function newSendId(): string {
   return crypto.randomUUID().toLowerCase();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-23 送信の二重防止を AIX・物件出しリスト・見積の送信にも広げる（手動送信と同じ仕組み）
+
+/** 返事が来ず、同じ印での確かめも返事が無い（＝届いたか分からない）。「未送信」とは言わない */
+export class UncertainSendError extends Error {
+  constructor() { super("send_uncertain"); this.name = "UncertainSendError"; }
+}
+
+/**
+ * 画面の送信の印の帳簿（AIX・電話ボタン・物件出しリスト等の、入力欄を持たない送信用）。
+ * 同じ中身（鍵）の押し直しには同じ印を返す。届いたら done で消す。古い印（既定10分）は捨てる
+ * （後で同じ中身をわざと送る時、古い印が残ると LINE が「もう届いている」として送らない＝新しい送信が消えるため）。
+ */
+export class SendIdBook {
+  private m = new Map<string, { id: string; at: number }>();
+  constructor(private ttlMs = 10 * 60_000, private gen: () => string = newSendId) {}
+  idFor(key: string, now = Date.now()): string {
+    for (const [k, v] of this.m) if (now - v.at > this.ttlMs) this.m.delete(k);
+    const cur = this.m.get(key);
+    if (cur) return cur.id;
+    const id = this.gen();
+    this.m.set(key, { id, at: now });
+    return id;
+  }
+  done(key: string): void { this.m.delete(key); }
+  has(key: string): boolean { return this.m.has(key); }
+}
+
+/**
+ * 印つきの送信を1回送る。最初の返事を firstMs 待ち、打ち切り・通信切れなら同じ印でもう一度（confirmMs）送って確かめる
+ * （届いていれば LINE は送らずに届いた通の id を返す）。確かめも返事が無い・失敗なら UncertainSendError。
+ * 印が無い（hasSendId=false）時は従来どおり1回だけ（打ち切りはそのまま投げる）。
+ */
+export async function postWithConfirm(
+  doFetch: (timeoutMs: number) => Promise<Response>,
+  opts: { hasSendId: boolean; firstMs?: number; confirmMs?: number },
+): Promise<{ res: Response; confirmedAfterTimeout: boolean }> {
+  try {
+    return { res: await doFetch(opts.firstMs ?? 30_000), confirmedAfterTimeout: false };
+  } catch (e) {
+    if (!opts.hasSendId || !isUncertainFetchError(e)) throw e;
+    let r: Response;
+    try {
+      r = await doFetch(opts.confirmMs ?? 25_000);
+    } catch {
+      throw new UncertainSendError();
+    }
+    if (!r.ok) throw new UncertainSendError();
+    return { res: r, confirmedAfterTimeout: true };
+  }
+}
+
+/** サーバー: 印つきで LINE に push 1回（409「同じ鍵はもう受け付けた」→ 届いている扱い・alreadySent） */
+export type LinePushResult = { ok: boolean; status: number; alreadySent: boolean; sentMessageIds: string[]; errorText: string };
+export async function linePushIdem(opts: {
+  token: string; to: string; messages: unknown[]; sendId: string | null; pushIndex?: number; timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<LinePushResult> {
+  const f = opts.fetchImpl ?? fetch;
+  const res = await f("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json", Authorization: `Bearer ${opts.token}`,
+      ...(opts.sendId ? { "X-Line-Retry-Key": retryKeyFor(opts.sendId, opts.pushIndex ?? 0) } : {}),
+    },
+    body: JSON.stringify({ to: opts.to, messages: opts.messages }),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 10_000),
+  });
+  if (opts.sendId && res.status === 409) {
+    const bodyText = await res.text().catch(() => "");
+    const acc = parseRetryKeyAccepted(res.status, bodyText);
+    if (acc.accepted) return { ok: true, status: 200, alreadySent: true, sentMessageIds: acc.sentMessageIds, errorText: "" };
+    return { ok: false, status: 409, alreadySent: false, sentMessageIds: [], errorText: bodyText };
+  }
+  if (!res.ok) return { ok: false, status: res.status, alreadySent: false, sentMessageIds: [], errorText: await res.text().catch(() => "") };
+  let ids: string[] = [];
+  try {
+    const j = await res.json() as { sentMessages?: Array<{ id?: string }> };
+    ids = (j.sentMessages ?? []).map((m) => m.id).filter((x): x is string => Boolean(x));
+  } catch { /* 送信自体は成功 */ }
+  return { ok: true, status: res.status, alreadySent: false, sentMessageIds: ids, errorText: "" };
+}
+
+/** 帳簿の印で1回送る（同じ鍵の押し直しは同じ印・届いたら（2xx）印を消す・返事が無ければ同じ印で確かめる） */
+export async function sendWithIdempotency(
+  book: SendIdBook, key: string,
+  doFetch: (sendId: string, timeoutMs: number) => Promise<Response>,
+  firstMs?: number,
+): Promise<{ res: Response; confirmedAfterTimeout: boolean }> {
+  const sendId = book.idFor(key);
+  const out = await postWithConfirm((ms) => doFetch(sendId, ms), { hasSendId: true, firstMs });
+  if (out.res.ok) book.done(key);
+  return out;
+}
+
+/** 大きな中身（画像の base64 等）から短い鍵を作る（FNV-1a 32bit×2・長さつき。送信の押し直しの見分けだけに使う） */
+export function contentKey(s: string): string {
+  let h1 = 0x811c9dc5, h2 = 0x01000193 ^ s.length;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0x5bd1e995) >>> 0;
+  }
+  return `${s.length}:${h1.toString(16)}:${h2.toString(16)}`;
+}
+
+/** 物件出しリスト（売上番長グループ）の送信の帳簿（物件条件・物件出しの画面で共有）。同じ日の押し直しは同じ印 */
+export const propertyListSendBook = new SendIdBook();
+export function propertyListSendKey(now = new Date()): string {
+  return `property-list\u0001${now.toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" })}`;
+}

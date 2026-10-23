@@ -29,7 +29,7 @@ import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraft
 // 2026-10-08 竹内（未桜）「AI返信案がセットされていない事も多い」: 表示済みにした下書きの本文を DB に控え、別の端末・読み込み直しでも戻す
 import { decideShownDraftRestore, shownDraftUpdate, shownDraftRestoreEnabled } from "./lib/shown-draft-restore";
 import { latestCustomerAtOf, newerCustomerMessageSince, nextComposerBase, staleGuardEnabled, ackExemptEnabled, STALE_REPLY_ERROR_CODE } from "./lib/stale-reply";
-import { isUncertainFetchError, newSendId } from "./lib/send-idempotency";
+import { isUncertainFetchError, newSendId, sendWithIdempotency, SendIdBook, UncertainSendError } from "./lib/send-idempotency";
 import { isCustomerEcho, draftEchoGuardEnabled } from "./lib/draft-echo";
 import { decideForeignSendDraft, foreignSendClearEnabled } from "./lib/foreign-send-draft";
 import { refreshDraftGreetingForNow, draftGreetingRefreshEnabled } from "./lib/time-greeting";
@@ -91,10 +91,8 @@ import { isTestOnlyConversation } from "./lib/test-conversations";
 import { brainPickFromMetas } from "./lib/brain-property-display";
 import { VIEWING_MOOD_OPTIONS, VIEWING_LIKE_OPTIONS, VIEWING_CONCERN_OPTIONS, VIEWING_NEXT_OPTIONS, composeViewingReport, parseViewingReport, staffCaptureUiEnabled, type ViewingTaps } from "./lib/staff-capture";
 
-// 2026-10-23 送信の返事が来ず、同じ印での確かめも返事が無い（届いたか分からない）
-class UncertainSendError extends Error {
-  constructor() { super("send_uncertain"); this.name = "UncertainSendError"; }
-}
+// 2026-10-23 送信の返事が来ず、同じ印での確かめも返事が無い（届いたか分からない）→ UncertainSendError（send-idempotency.ts）
+const UNCERTAIN_SEND_MSG = "⚠️ 送信の返事が来ませんでした（サーバーが混んでいます）。LINE に届いているか分かりません。LINE の画面で確かめてから、もう一度送ってください（同じ送信の印なので二重には届きません）";
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
@@ -934,6 +932,8 @@ export default function Home() {
   //   画像は上げ直さない（同じ URL で押し直す）
   const textSendIdRef = useRef<{ key: string; id: string } | null>(null);
   const imageSendRef = useRef<Map<string, { id: string; url: string | null }>>(new Map());
+  // 2026-10-23 AIX・電話ボタン・AIX の2通目など、入力欄を持たない送信の印（同じ中身の押し直しだけ同じ印・届いたら消す・10分で捨てる）
+  const aixSendBookRef = useRef(new SendIdBook());
   // 返事が来なかった送信（届いたか分からない）の時だけ、エラーの「再試行」を「同じ印で送り直す」にする
   const [sendRetryable, setSendRetryable] = useState(false);
   // 返事は遅れたが、同じ印で確かめたら届いていた時の知らせ
@@ -2601,8 +2601,21 @@ export default function Home() {
   // 予約送信リストを30秒ごとに自動更新（送信済みになったらバッジを自動消去 + 失敗通知）
   useEffect(() => {
     if (!selectedId) return;
-    const interval = setInterval(async () => {
-      if (pageHidden()) return; // 2026-10-23: 見ていない画面では読まない（DB で上位の読み取り・1台で1分に4回）。失敗の知らせは見える画面に戻った後の回で出る
+    // 2026-10-23: 見ていない間に飛ばした回があれば、見える画面に戻った時にすぐ1回読む（失敗の知らせを最大30秒遅らせない）
+    let skippedWhileHidden = false;
+    let checking = false;
+    const check = async () => {
+      if (pageHidden()) { skippedWhileHidden = true; return; } // 見ていない画面では読まない（DB で上位の読み取り・1台で1分に4回）
+      if (checking) return;
+      checking = true;
+      try { await checkOnce(); } finally { checking = false; }
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || !skippedWhileHidden) return;
+      skippedWhileHidden = false;
+      void check();
+    };
+    const checkOnce = async () => {
       const [{ data: pending }, { data: failed }] = await Promise.all([
         supabase.from("scheduled_messages")
           .select("id, text, image_urls, scheduled_at")
@@ -2624,8 +2637,10 @@ export default function Home() {
         const { error: ackErr } = await supabase.from("scheduled_messages").update({ status: "failed_ack" }).eq("id", (failed[0] as { id: string }).id);
         if (ackErr) console.error("[scheduled] failed_ack更新失敗:", ackErr.message);
       }
-    }, 30000);
-    return () => clearInterval(interval);
+    };
+    const interval = setInterval(() => { void check(); }, 30000);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(interval); document.removeEventListener("visibilitychange", onVisible); };
   }, [selectedId]);
 
   // キーワード履歴を localStorage から読み込む
@@ -6170,16 +6185,33 @@ export default function Home() {
     setCalendarEditingEventId(eventId);
   };
 
+  // 2026-10-23 送信の二重防止（手動送信と同じ仕組み）: AIX・電話ボタン・2通目の送信にも印（send_id）を付ける。
+  //   同じ中身（key）の押し直しは同じ印 → サーバーが LINE の X-Line-Retry-Key に入れる → 前の送信で届いていたら LINE は送らない。
+  //   返事が firstMs 来なければ同じ印でもう一度送って確かめる（届いていれば届いた通の id が返る）。確かめも返事が無ければ UncertainSendError。
+  //   届いたら（2xx）印を消す（後で同じ中身をわざと送る時に消えないように）
+  const postSendLineIdem = async (key: string, body: Record<string, unknown>, firstMs = 30_000): Promise<Response> => {
+    const { res, confirmedAfterTimeout } = await sendWithIdempotency(aixSendBookRef.current, key, (send_id, ms) => fetch("/api/send-line-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+      body: JSON.stringify({ ...body, send_id }),
+      signal: AbortSignal.timeout(ms),
+    }), firstMs);
+    if (confirmedAfterTimeout && res.ok) setSendNotice("返事が遅れましたが、LINE には1回だけ届いています（二重には送っていません）");
+    return res;
+  };
+
   // 2026-09-15 竹内（H 事例）: AIX【電話をかける】の「電話をかける」ボタン（LINEコール）のカードを送り、会話に記録する。
   //   失敗（通話URL 未登録・LINE エラー）は例外にして AIX 画面に出す（本文は送らない）
   const sendCallButton = async (): Promise<void> => {
     const cid = selectedConversation.id;
     if (!cid) throw new Error("会話が選択されていません");
-    const res = await fetch("/api/send-line-message", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-      body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, account: selectedConversation.account, call_button: true, conversation_id: cid, origin: "aix" }),
-    });
+    let res: Response;
+    try {
+      res = await postSendLineIdem(`call\u0001${cid}`, { line_user_id: selectedConversation.lineUserId, account: selectedConversation.account, call_button: true, conversation_id: cid, origin: "aix" });
+    } catch (e) {
+      if (e instanceof UncertainSendError) throw new Error(UNCERTAIN_SEND_MSG);
+      throw e;
+    }
     const json = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; sentMessageIds?: string[] };
     if (!res.ok || !json.ok) throw new Error(json.error || `電話ボタンを送れませんでした（HTTP ${res.status}）`);
     const at = new Date();
@@ -6202,16 +6234,19 @@ export default function Home() {
   const sendImagesBatch = async (imageUrls: string[], isAix: boolean): Promise<string[]> => {
     const urls = imageUrls.filter(Boolean);
     if (!selectedConversation.id || urls.length === 0) return [];
-    const res = await fetch("/api/send-line-message", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-      body: JSON.stringify({
+    let res: Response;
+    try {
+      // まとめて送る画像は push が複数回になり得るので最初の返事は 60秒待つ（塊ごとの鍵は retryKeyFor で別・同じ印なら毎回同じ）
+      res = await postSendLineIdem(`imgs\u0001${selectedConversation.id}\u0001${urls.join("\u0002")}`, {
         line_user_id: selectedConversation.lineUserId, image_urls: urls,
         account: selectedConversation.account, conversation_id: selectedConversation.id,
         origin: isAix ? "aix" : "manual",
         ...(isAix && activeAixFlow ? { aix_type: activeAixFlow } : {}),
-      }),
-    });
+      }, 60_000);
+    } catch (e) {
+      if (e instanceof UncertainSendError) throw new Error(UNCERTAIN_SEND_MSG);
+      throw e;
+    }
     const json = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; sentMessageIds?: string[] };
     const ids = json.sentMessageIds ?? [];
     // 画像は送った順に1通ずつ id が返る。途中で失敗した時は返ってきた数だけ届いている
@@ -6282,15 +6317,13 @@ export default function Home() {
 
     try {
       if (imageUrl) {
-        const imgRes = await fetch("/api/send-line-message", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+        const imgRes = await postSendLineIdem(`img\u0001${selectedConversation.id}\u0001${imageUrl}`,
           // 2026-09-20 竹内「どの物件をお客さんにたいしてオススメしたのか分かるように。
           //   お客さんに送った画像の中でも物件オススメで送ったと区別できるようにする」:
           //   conversation_id と AIX の種類を渡す。サーバは画像を読んで
           //   sent_image_properties に source="aix:<種類>" で記録する（区別できる）。
           //   ⚠ これを渡さないと記録処理そのものが動かない（会話が分からないため）
-          body: JSON.stringify({
+          {
             line_user_id: selectedConversation.lineUserId, image_url: imageUrl,
             account: selectedConversation.account,
             conversation_id: selectedConversation.id,
@@ -6298,8 +6331,7 @@ export default function Home() {
             // 今開いている AIX の種類（"property_recommendation" など）。
             // onSend の引数を増やさずに済むよう、画面が持っている activeAixFlow をそのまま渡す
             ...(isAix && activeAixFlow ? { aix_type: activeAixFlow } : {}),
-          }),
-        });
+          });
         if (!imgRes.ok) {
           const imgErr = await imgRes.json().catch(() => ({ error: `HTTP ${imgRes.status}` })) as { error?: string };
           lineErrorMsg = `⚠️ LINE画像送信失敗: ${imgErr.error || imgRes.statusText}`;
@@ -6311,12 +6343,9 @@ export default function Home() {
         }
       }
       if (text.trim()) {
-        const txtRes = await fetch("/api/send-line-message", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-          // 送信時の記録（sent_facts）: AIX の本文は log-aix-usage が AIX の種類・画面入力で記録するので origin で分ける
-          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim(), account: selectedConversation.account, conversation_id: selectedConversation.id, origin: isAix ? "aix" : "manual" }),
-        });
+        // 送信時の記録（sent_facts）: AIX の本文は log-aix-usage が AIX の種類・画面入力で記録するので origin で分ける
+        const txtRes = await postSendLineIdem(`txt\u0001${selectedConversation.id}\u0001${text.trim()}`,
+          { line_user_id: selectedConversation.lineUserId, message: text.trim(), account: selectedConversation.account, conversation_id: selectedConversation.id, origin: isAix ? "aix" : "manual" });
         if (!txtRes.ok) {
           const txtErr = await txtRes.json().catch(() => ({ error: `HTTP ${txtRes.status}` })) as { error?: string };
           lineErrorMsg = `⚠️ LINE送信失敗: ${txtErr.error || txtRes.statusText}`;
@@ -6328,12 +6357,15 @@ export default function Home() {
         }
       }
     } catch (lineEx) {
-      lineErrorMsg = `⚠️ LINE送信エラー: ${lineEx instanceof Error ? lineEx.message : "通信エラー"}`;
+      // 2026-10-23: 返事が来ず確かめも返事が無い → 届いたか分からない（「未送信」とは言わない・同じ中身の押し直しは同じ印）
+      lineErrorMsg = lineEx instanceof UncertainSendError
+        ? UNCERTAIN_SEND_MSG
+        : `⚠️ LINE送信エラー: ${lineEx instanceof Error ? lineEx.message : "通信エラー"}`;
     }
 
     // 全て送信失敗 → DBに記録せず終了
     if (!imageSent && !textSent) {
-      setError(`${lineErrorMsg}。未送信の内容は入力欄に残っています。`);
+      setError(lineErrorMsg === UNCERTAIN_SEND_MSG ? lineErrorMsg : `${lineErrorMsg}。未送信の内容は入力欄に残っています。`);
       return;
     }
     if (lineErrorMsg) setError(lineErrorMsg);

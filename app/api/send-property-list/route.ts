@@ -2,6 +2,7 @@
 import { supabase } from "@/app/lib/supabase-server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireInternalAuth } from "@/app/lib/api-auth";
+import { linePushIdem, parseSendId, sendIdempotencyOn } from "@/app/lib/send-idempotency";
 
 export const maxDuration = 30;
 
@@ -56,25 +57,17 @@ async function getSuzukiUserId(): Promise<string | null> {
   return data?.value ?? null;
 }
 
-async function pushToLine(to: string, text: string, suzukiUserId?: string | null) {
+// 2026-10-23 送信の二重防止: 画面の印（send_id）があれば LINE の X-Line-Retry-Key に入れる（リスト=0・名言=1 の回数ごとに別の鍵）。
+//   同じ印の押し直しで「もう届いていた」なら alreadySent（LINE は送らない）
+async function pushToLine(to: string, text: string, suzukiUserId?: string | null, sendId: string | null = null, pushIndex = 0): Promise<{ alreadySent: boolean }> {
   const message = suzukiUserId
     ? { type: "textV2", text: `{0}\n${text}`, substitution: { "0": { type: "mention", mentionee: { type: "user", userId: suzukiUserId } } } }
     : { type: "text", text };
-  const res = await fetch("https://api.line.me/v2/bot/message/push", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${TOKEN}`,
-    },
-    body: JSON.stringify({
-      to,
-      messages: [message],
-    }),
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) {
-    console.error("[send-property-list] LINE push failed:", res.status, await res.text());
+  const r = await linePushIdem({ token: TOKEN, to, messages: [message], sendId, pushIndex });
+  if (!r.ok) {
+    console.error("[send-property-list] LINE push failed:", r.status, r.errorText);
   }
+  return { alreadySent: r.alreadySent };
 }
 
 async function generateQuote(hotCount: number, totalCount: number): Promise<string> {
@@ -121,6 +114,8 @@ export async function POST(req: NextRequest) {
   if (!TOKEN) {
     return NextResponse.json({ ok: false, error: "LINE token not configured" }, { status: 500 });
   }
+  const body = await req.json().catch(() => ({})) as { send_id?: string };
+  const sendId = sendIdempotencyOn() ? parseSendId(body.send_id) : null;
   const [groupId, suzukiUserId] = await Promise.all([getGroupId(), getSuzukiUserId()]);
   if (!groupId) {
     return NextResponse.json({ ok: false, error: "グループIDが未設定です" }, { status: 400 });
@@ -129,8 +124,8 @@ export async function POST(req: NextRequest) {
   const customers = await getTodayList();
 
   if (customers.length === 0) {
-    await pushToLine(groupId, "✅ 今日の物件出し対象者はいません！\nお疲れ様です😊");
-    return NextResponse.json({ ok: true, count: 0 });
+    const r0 = await pushToLine(groupId, "✅ 今日の物件出し対象者はいません！\nお疲れ様です😊", null, sendId, 0);
+    return NextResponse.json({ ok: true, count: 0, ...(r0.alreadySent ? { alreadySent: true } : {}) });
   }
 
   const today = new Date().toLocaleDateString("ja-JP", { month: "long", day: "numeric", weekday: "short", timeZone: "Asia/Tokyo" });
@@ -151,13 +146,16 @@ export async function POST(req: NextRequest) {
   ];
 
   // 物件リストと名言を並行生成
-  const [, quote] = await Promise.all([
-    pushToLine(groupId, lines.join("\n"), suzukiUserId),
+  const [listPush, quote] = await Promise.all([
+    pushToLine(groupId, lines.join("\n"), suzukiUserId, sendId, 0),
     generateQuote(hotCount, customers.length),
   ]);
 
+  // 同じ印の押し直しでリストがもう届いていた → 名言も前の送信が送る（送った）ので繰り返さない
+  if (listPush.alreadySent) return NextResponse.json({ ok: true, count: customers.length, alreadySent: true });
+
   if (quote) {
-    await pushToLine(groupId, quote);
+    await pushToLine(groupId, quote, null, sendId, 1);
   }
 
   return NextResponse.json({ ok: true, count: customers.length });

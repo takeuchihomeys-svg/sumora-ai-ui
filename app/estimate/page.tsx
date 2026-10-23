@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import html2canvas from "html2canvas";
+import { contentKey, SendIdBook, sendWithIdempotency, UncertainSendError } from "../lib/send-idempotency";
 import BottomNav from "../components/BottomNav";
 import type { ExtractedEstimate } from "../api/extract-estimate-info/route";
 // 2026-09-20 竹内（H さん事例）: 見積書の金額文は AIX【見積書送る】と同じ純関数から作る
@@ -10,6 +11,9 @@ import { buildEstimateMessage, buildSavingsLine, calcSavings } from "../lib/esti
 // 2026-10-01 竹内「見積書きかれたら LINE のところに見積書のがでて押したら見積書のツールのところに連携・送った物件がセットされた状態で」
 import { parseEstimateHandoff, buildEstimateReturnHref, profitLine, suggestEstimateDiscount, type EstimateHandoff, type EstimateTarget } from "../lib/estimate-handoff";
 import EstimateWatchPanel from "../components/EstimateWatchPanel";
+
+// 2026-10-23 見積の画像を売上番長グループに送る時の印（同じ画像の押し直しだけ同じ印・届いたら消す）
+const estimatePreviewSendBook = new SendIdBook();
 
 type Account = "sumora" | "ieyasu" | "giga";
 type Step = "input" | "review";
@@ -825,12 +829,21 @@ function EstimatePageContent() {
       const imageBase64 = canvas.toDataURL("image/png");
 
       // 自分のLINEに送る
-      const res = await fetch("/api/send-estimate-preview", {
-        method: "POST",
-        // 内部認証: NEXT_PUBLIC_INTERNAL_API_SECRET はサーバー側 INTERNAL_API_SECRET と同じ値を設定
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
-        body: JSON.stringify({ imageBase64 }),
-      });
+      //   2026-10-23 送信の二重防止: 同じ画像の押し直しは同じ印（届いていれば LINE は送らない・返事が無ければ同じ印で確かめる）
+      let res: Response;
+      try {
+        ({ res } = await sendWithIdempotency(estimatePreviewSendBook, contentKey(imageBase64), (send_id, ms) => fetch("/api/send-estimate-preview", {
+          method: "POST",
+          // 内部認証: NEXT_PUBLIC_INTERNAL_API_SECRET はサーバー側 INTERNAL_API_SECRET と同じ値を設定
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
+          body: JSON.stringify({ imageBase64, send_id }),
+          signal: AbortSignal.timeout(ms),
+        })));
+      } catch (e) {
+        // 届いたか分からない時はダウンロードに切り替えない（届いていたら二重の手間になるだけ・押し直しは同じ印で安全）
+        if (e instanceof UncertainSendError) { alert("返事が来ず、LINE に届いたか分かりません。LINE で確かめてから押し直してください（二重には届きません）"); return; }
+        throw e;
+      }
 
       if (!res.ok) {
         // フォールバック: ダウンロード
