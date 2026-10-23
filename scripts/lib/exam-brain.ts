@@ -278,6 +278,38 @@ export function flashProof(mc: { byType?: Record<string, ModelCheckStat>; byId?:
   const badIds = new Set(Object.entries(mc.byId ?? {}).filter(([, v]) => v.samePath < v.n).map(([k]) => k));
   return { okTypes, okIds, badIds };
 }
+/**
+ * 2026-10-23 竹内さん「API 抑えられる方法」（費用の調べ）: model-check の問題の選び。
+ *   旧: 型ごとに spec の先頭から選ぶ＝毎回同じ問題 → --replay で前の答えの再生になると「同じ証拠を2回数える」（型の n だけ増えて flash の判断が甘くなる）。
+ *   新: 型ごとの枠（n を型の数で割った数）は今まで通り・枠の中は「まだ比べていない問題」を先に（前に比べた回数の少ない順・同じなら spec の並び）。
+ *   checked＝問題ごとの前に比べた回数（byId の n と runs の ids を合わせた物）
+ */
+export function pickModelCheckIds(ps: ReadonlyArray<{ id: string; type: string }>, o: { n: number; checked: Record<string, number> }): string[] {
+  const types = new Set(ps.map((p) => p.type));
+  const quota = Math.ceil(o.n / Math.max(1, types.size));
+  const order = new Map(ps.map((p, i) => [p.id, i]));
+  const sorted = [...ps].sort((a, b) => (o.checked[a.id] ?? 0) - (o.checked[b.id] ?? 0) || order.get(a.id)! - order.get(b.id)!);
+  const c = new Map<string, number>();
+  const picked = new Set(sorted.filter((p) => { const k = c.get(p.type) ?? 0; if (k >= quota) return false; c.set(p.type, k + 1); return true; }).map((p) => p.id));
+  // 出す並びは spec の並び（旧と同じ見え方）。全体の上限 n
+  return ps.filter((p) => picked.has(p.id)).slice(0, o.n).map((p) => p.id);
+}
+/** model-check の前に比べた回数（問題ごと）: byId の n ＋ runs の ids（byId が無かった頃の回） */
+export function modelCheckedCounts(mc: { byId?: Record<string, ModelCheckStat>; runs?: Array<{ ids?: string[] }> }): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [id, v] of Object.entries(mc.byId ?? {})) out[id] = (out[id] ?? 0) + (v?.n ?? 0);
+  for (const r of mc.runs ?? []) for (const id of r.ids ?? []) out[id] = (out[id] ?? 0) + 1;
+  return out;
+}
+/**
+ * model-check の1組を数えてよいか: pro と flash の両方のブレインの呼び出しが全部「録った答えの再生」（replay/pin）＝前の比べと同じ証拠 → 数えない。
+ *   呼び出しの控えが無い行（古い行）は数える（今まで通り）
+ */
+export function modelPairCountable(rows: ReadonlyArray<{ llmCalls?: ReadonlyArray<{ action: string | null; src: string }> }>): boolean {
+  const brainCalls = (r: { llmCalls?: ReadonlyArray<{ action: string | null; src: string }> }) => (r.llmCalls ?? []).filter((c) => /^brain_/.test(c.action ?? ""));
+  if (rows.some((r) => !r.llmCalls)) return true;
+  return !rows.every((r) => { const b = brainCalls(r); return b.length > 0 && b.every((c) => c.src === "replay" || c.src === "pin"); });
+}
 /** 直しの的（flash にしない）: 名指し・前に落ちた */
 export const isFixTarget = (why: string[]) => why.some((w) => /名指し|前に落ちた/.test(w));
 
@@ -400,6 +432,25 @@ export function peakAdvice(o: { now: Date; phase: Phase; gate?: boolean; when: W
   if (!peak) return { peak, defer: false, warn: null };
   const defer = o.when === "auto" && !o.gate && o.phase === "final";
   return { peak, defer, warn: `⚠ 今は DeepSeek の2倍の時間（平日 JST 10〜13・15〜19）。${defer ? "仕上げは急がない＝夜中に回す（今なら --when=now）" : o.phase === "small" ? "小さな確かめは今流す（急がない物は 13:00〜15:00 か夜中に）" : "急がない物は 13:00〜15:00 か夜中に"}` };
+}
+
+/**
+ * 2026-10-23 竹内さん「API 抑えられる方法」（費用の調べ・llm_usage_logs の試験 env 平日7日）: 2倍の時間の割増 $15.4 のうち
+ *   窓の終わりの30分（JST 12:30〜13:00・18:30〜19:00）が 18%。小さな確かめでも、安い時間がすぐ（既定30分以内）始まるならそこまで待って流す
+ *   （待つのは最大 EXAM_PEAK_WAIT_MIN 分・off／0 で旧＝すぐ流す）。返り値は待つ ms（0＝待たない）
+ */
+export const PEAK_WAIT_MIN_DEFAULT = 30;
+export function peakWaitMinOf(env: Record<string, string | undefined> = process.env): number {
+  const v = String(env.EXAM_PEAK_WAIT_MIN ?? "").trim().toLowerCase();
+  if (!v) return PEAK_WAIT_MIN_DEFAULT;
+  if (v === "off") return 0;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.min(n, 24 * 60) : PEAK_WAIT_MIN_DEFAULT;
+}
+export function peakWaitMs(o: { now: Date; waitMin: number }): number {
+  if (!(o.waitMin > 0) || isCheapWindow(o.now)) return 0;
+  const ms = nextCheapStart(o.now).getTime() - o.now.getTime();
+  return ms > 0 && ms <= o.waitMin * 60_000 ? ms : 0;
 }
 
 // ─── 7. 採点（決まりで決まる所は AI を呼ばない） ─────────────────────────

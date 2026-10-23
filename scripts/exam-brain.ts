@@ -40,7 +40,7 @@ import {
   mergePicks, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, CHEAP_WINDOW_JST, reuseKey, kbKeyOf, canReuse, dbKeyOf,
   modelOf, estimateUsd, DEFAULT_STOP, draftEligible, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
   decidePhase, pickSmall, smallRank, SMALL_MAX_REPS, convKeyOf, dailyCapUsd, capSplit, nextNightRun, peakAdvice, UNIT_USD, type Phase,
-  warmDecision, warmLimit, flashSpotCheck, flashProof, FLASH_TYPE_MIN_N, isFixTarget, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3, jstDayStart,
+  warmDecision, warmLimit, flashSpotCheck, flashProof, FLASH_TYPE_MIN_N, isFixTarget, pickModelCheckIds, modelCheckedCounts, modelPairCountable, peakWaitMinOf, peakWaitMs, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3, jstDayStart,
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
@@ -592,7 +592,8 @@ async function spendToday() {
   log(`  担当の確かめ:   $${s.byKind.worker.usd.toFixed(2)}（${pct(s.byKind.worker.usd)}%・${s.byKind.worker.routes} 本）`);
   log(`  夜（安い時間・warm）: $${s.byKind.night.usd.toFixed(2)}（${pct(s.byKind.night.usd)}%・${s.byKind.night.routes} 本）`);
   if (s.mainDup.length) {
-    log(`同じ版の main を2本以上で作り直した: ${s.mainDup.length} 版・重なりの無駄 約 $${s.dupExtraUsd.toFixed(2)}（連携があれば1本で済んだ分）`);
+    // 10/23 費用の調べ: route ごとの数え＝問題が違う本も「重なり」に入る上限の目安（10/22 夜〜10/23: 28版 818行で同じ版の同じ問題×回の作り直しは1行だけ＝実際の無駄はほぼ0）
+    log(`同じ版の main を2本以上で作った: ${s.mainDup.length} 版・重なりの上限の目安 $${s.dupExtraUsd.toFixed(2)}（route ごとの数え＝問題が違えば無駄でない・同じ問題の作り直しは claim で止めている）`);
     for (const d of s.mainDup.slice(0, 8)) log(`  ${d.version}: ${d.routes} 本 $${d.usd.toFixed(3)}（重なり $${d.extraUsd.toFixed(3)}）`);
   } else log("同じ版の main の作り直しの重なり: なし");
   const by = (k: string) => ev.filter((e) => e.kind === k);
@@ -624,6 +625,11 @@ async function runMain() {
   const guard = await runGuard(pl, label, est.now, now);
   if (!guard.go) return;
   ensureMainWarm();
+  // 10/23 2倍の時間の少し待ち: 今流すと決まった回でも、安い時間が EXAM_PEAK_WAIT_MIN 分（既定30）以内に始まるならそこまで待つ（--when=now・関所は対象外）
+  if (w.runNow && whenArg === "auto" && !GATE) {
+    const waitMs = peakWaitMs({ now: new Date(), waitMin: peakWaitMinOf(process.env) });
+    if (waitMs > 0) { log(`2倍の時間の終わりまで ${Math.ceil(waitMs / 60_000)}分 → 待ってから流す（半額・止める: EXAM_PEAK_WAIT_MIN=off か --when=now）`); await sleep(waitMs + 5_000); }
+  }
   if (!w.runNow) {
     if (flag("wait")) { log(`安い時間まで待つ（--wait）…`); while (Date.now() < w.at.getTime()) await sleep(Math.min(10 * 60_000, w.at.getTime() - Date.now() + 1000)); }
     else {
@@ -929,7 +935,11 @@ async function modelCheck() {
   const types = list("types"), only = list("only");
   const n = Math.max(1, Number(arg("n", "8")) || 8);
   let ps = spec.filter((p) => (!only.length || only.includes(p.id)) && (!types.length || types.includes(p.type)));
-  if (!only.length) { const c = new Map<string, number>(); ps = ps.filter((p) => { const k = c.get(p.type) ?? 0; if (k >= Math.ceil(n / Math.max(1, new Set(ps.map((x) => x.type)).size))) return false; c.set(p.type, k + 1); return true; }).slice(0, n); }
+  // 10/23: 型ごとの枠の中は、まだ比べていない問題を先に（旧＝spec の先頭から毎回同じ問題＝再生だと同じ証拠を2回数える）。旧の選び: MODEL_CHECK_PICK=head
+  if (!only.length) {
+    if (process.env.MODEL_CHECK_PICK === "head") { const c = new Map<string, number>(); ps = ps.filter((p) => { const k = c.get(p.type) ?? 0; if (k >= Math.ceil(n / Math.max(1, new Set(ps.map((x) => x.type)).size))) return false; c.set(p.type, k + 1); return true; }).slice(0, n); }
+    else { let mc0: Parameters<typeof modelCheckedCounts>[0] = {}; try { mc0 = JSON.parse(readFileSync(MODEL_CHECK_FILE, "utf8")); } catch { /* 初回 */ } const pick = new Set(pickModelCheckIds(ps, { n, checked: modelCheckedCounts(mc0) })); ps = ps.filter((p) => pick.has(p.id)); }
+  }
   const ids = ps.map((p) => p.id);
   const label = arg("label") || `mc-${Date.now().toString(36)}`;
   const common = (lb: string) => [`--label=${lb}`, `--only=${ids.join(",")}`, "--stage=brain", REPLAY, "--repeat=1", ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(CONV ? [`--conv=${CONV}`] : [])];
@@ -945,6 +955,8 @@ async function modelCheck() {
     const x = a.find((r) => r.id === id && !r.error), y = b.find((r) => r.id === id && !r.error);
     if (!x || !y) { lines.push(`  ${id}: 片方が無い`); continue; }
     const t = String(full.get(id)?.type ?? spec.find((s) => s.id === id)?.type ?? "");
+    // 10/23: pro も flash もブレインが全部「録った答えの再生」＝前の比べと同じ証拠 → 数えない（型の n を水増ししない）
+    if (!modelPairCountable([x, y] as never)) { lines.push(`  ・ ${id}[${t}] 両方とも録った答えの再生＝前と同じ証拠なので数えない`); continue; }
     const e = prev.byType[t] ?? { n: 0, samePath: 0, proOk: 0, flashOk: 0 };
     e.n++; if (x.path?.code === y.path?.code) e.samePath++; if (x.path?.ok) e.proOk++; if (y.path?.ok) e.flashOk++;
     prev.byType[t] = e;

@@ -4,6 +4,7 @@ import {
   mergePicks, firstReps, confirmTargets, draftEligible, draftTargets, compareProblem, brainChangedOf, stopDecision, isCheapWindow, nextCheapStart, decideWhen,
   reuseKey, kbKeyOf, canReuse, ruleJudge, modelOf, estimateUsd, needJudge, contractShape, dbKeyOf, type PlanProblem, type RowLite, type DbPart,
   pickSmall, smallRank, decidePhase, SMALL_MAX_REPS, dailyCapUsd, jstDayStart, nextNightRun, capSplit, isProtected, peakAdvice, convKeyOf, convCtxHash,
+  pickModelCheckIds, modelCheckedCounts, modelPairCountable, peakWaitMinOf, peakWaitMs, flashProof,
 } from "../exam-brain";
 import { readDbFingerprint, dbTablesOf, DB_FINGERPRINT_TABLES, type DbTableSpec } from "../exam-brain-io";
 
@@ -267,6 +268,26 @@ ok("lazy: 道が合えば呼ぶ", needJudge({ asks: 2, ng: 0, needRawPath: false
   ok("会話の鍵: 読めない → null（使い回さない）", convKeyOf({ name: "YUMA4", ok: false, conv: null, pc: null, gaps: {}, why: "x" }, all).key === null);
   const b = { problemHash: "h", stage: "brain" as const, scopeKey: "s", toolKey: "t", cfgHash: "c", model: "m", kbKey: "k", dbKey: "d" };
   ok("鍵: 会話が効かない（'-'）時は旧の鍵と同じ＝今までの置き場を使える", reuseKey({ ...b, convKey: "-" }) === reuseKey(b) && reuseKey({ ...b, convKey: "abc" }) !== reuseKey(b));
+}
+
+// ─── 10/23 費用の調べ: model-check の選び・数え／2倍の時間の少し待ち ─────────────
+{
+  const ps = [{ id: "a1", type: "A" }, { id: "a2", type: "A" }, { id: "a3", type: "A" }, { id: "b1", type: "B" }, { id: "b2", type: "B" }];
+  ok("model-check: まだ比べていない問題を先に", pickModelCheckIds(ps, { n: 4, checked: { a1: 2, b1: 1 } }).join() === "a2,a3,b1,b2", pickModelCheckIds(ps, { n: 4, checked: { a1: 2, b1: 1 } }).join());
+  ok("model-check: 比べた事が無ければ旧と同じ（spec の先頭から）", pickModelCheckIds(ps, { n: 4, checked: {} }).join() === "a1,a2,b1,b2");
+  ok("model-check: 前の回数＝byId＋runs", JSON.stringify(modelCheckedCounts({ byId: { a1: { n: 2, samePath: 2, proOk: 1, flashOk: 1 } }, runs: [{ ids: ["a1", "b1"] }] })) === JSON.stringify({ a1: 3, b1: 1 }));
+  const rp = { llmCalls: [{ action: "brain_full", src: "replay" }, { action: "brain_fresh", src: "pin" }, { action: null, src: "record" }] };
+  const rr = { llmCalls: [{ action: "brain_full", src: "record" }] };
+  ok("model-check: 両方とも再生 → 数えない", !modelPairCountable([rp, rp]));
+  ok("model-check: 片方でも新しく呼んだ → 数える", modelPairCountable([rp, rr]));
+  ok("model-check: 控えの無い古い行 → 数える", modelPairCountable([{}, rp]));
+  ok("model-check: n=3 では flash の型にならない", flashProof({ byType: { A: { n: 3, samePath: 3, proOk: 3, flashOk: 3 } } }).okTypes.size === 0);
+  const at = (jst: string) => new Date(Date.parse(`${jst}+09:00`));
+  ok("少し待ち: 既定30分", peakWaitMinOf({}) === 30 && peakWaitMinOf({ EXAM_PEAK_WAIT_MIN: "off" }) === 0 && peakWaitMinOf({ EXAM_PEAK_WAIT_MIN: "45" }) === 45);
+  ok("少し待ち: JST 12:40（月）→ 20分待つ", peakWaitMs({ now: at("2026-10-19T12:40:00"), waitMin: 30 }) === 20 * 60_000, String(peakWaitMs({ now: at("2026-10-19T12:40:00"), waitMin: 30 })));
+  ok("少し待ち: JST 11:00（月）→ 2時間先は待たない", peakWaitMs({ now: at("2026-10-19T11:00:00"), waitMin: 30 }) === 0);
+  ok("少し待ち: 安い時間は待たない", peakWaitMs({ now: at("2026-10-19T13:10:00"), waitMin: 30 }) === 0 && peakWaitMs({ now: at("2026-10-18T12:40:00"), waitMin: 30 }) === 0);
+  ok("少し待ち: off は待たない・18:50 は10分", peakWaitMs({ now: at("2026-10-19T18:50:00"), waitMin: 0 }) === 0 && peakWaitMs({ now: at("2026-10-19T18:50:00"), waitMin: 30 }) === 10 * 60_000);
 }
 
 // 終わりの数え（上の非同期の指紋のテストの後で出す）
