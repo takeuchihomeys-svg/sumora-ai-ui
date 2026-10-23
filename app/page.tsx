@@ -72,7 +72,7 @@ import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewing
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
 // 2026-09-18 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面の赤帯と一覧のバッジに出す
 import { cacheGet, cacheSet } from "./lib/page-cache";
-import { lastCustomerTs, badgeMessages, pollPlan, deltaSinceIso, upsertConversationRows, deltaNeedsLastCustomerRefresh, listPollLeanEnabled } from "./lib/conversation-list-sync";
+import { lastCustomerTs, badgeMessages, pollPlan, deltaSinceIso, upsertConversationRows, deltaNeedsLastCustomerRefresh, listPollLeanEnabled, rtLeanEnabled, rtUpdatePlan, convUiFingerprint, convDraftSignature } from "./lib/conversation-list-sync";
 import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, promiseCheckPatternOf, promiseOverdueDays, splitPromisesForFreshInquiry } from "./lib/promise-calendar";
 import { isWaitPromiseNotes, waitPromiseBadge } from "./lib/promise-timing";
 // 一覧の並び: 直近やり取り順（新しい方が上）だけ。2026-09-18 竹内「本来のLINEのように時間最新順に戻す」
@@ -119,6 +119,8 @@ const DRAFT_ECHO_GUARD = draftEchoGuardEnabled(process.env.NEXT_PUBLIC_DRAFT_ECH
 const FOREIGN_SEND_CLEAR = foreignSendClearEnabled(process.env.NEXT_PUBLIC_FOREIGN_SEND_CLEAR);
 // 2026-10-23 竹内「かなり重くなることもある LINE の画面」: 見ていない画面は定期の読み直しを休む・集計の取り直しは変わった時だけ（戻す NEXT_PUBLIC_LIST_POLL_LEAN=off）
 const LIST_POLL_LEAN = listPollLeanEnabled(process.env.NEXT_PUBLIC_LIST_POLL_LEAN);
+// 2026-10-23 同上（Realtime）: 会話の更新で画面が使う列が変わっていない物は読み飛ばし・0.4秒の間はまとめて当てる（戻す NEXT_PUBLIC_RT_LEAN=off）
+const RT_LEAN = rtLeanEnabled(process.env.NEXT_PUBLIC_RT_LEAN);
 const pageHidden = () => LIST_POLL_LEAN && typeof document !== "undefined" && document.visibilityState === "hidden";
 /** 下書きと比べるお客様の文: 最後のスタッフの発言より後の通（未返信）＋一番新しいお客様の通 */
 function customerTextsForEcho(msgs: ReadonlyArray<{ sender: string; text?: string | null }>): string[] {
@@ -816,6 +818,12 @@ function conversationRowToItem(conversation: SupabaseConversationRow, relatedMes
     suggestedNextAix: conversation.suggested_next_aix ?? null,
     messages: relatedMessages,
   };
+}
+
+/** 2026-10-23 RT_LEAN: 行の「画面が使う列の指紋・下書きの印・電話の印」 */
+function rowInfoOf(r: SupabaseConversationRow): { fp: string | null; draftSig: string | null; call: string | null } {
+  const rec = r as unknown as Record<string, unknown>;
+  return { fp: convUiFingerprint(rec), draftSig: convDraftSignature(rec), call: r.call_tapped_at ?? null };
 }
 
 function formatTime(dateString: string) {
@@ -2081,6 +2089,60 @@ export default function Home() {
       refreshTimer = setTimeout(() => { refreshTimer = null; void fetchConversationsAndMessages(true); }, 2500);
     };
 
+    /** Realtime の会話の行の下書き・AIX を画面の行へ当てる（旧の UPDATE の即時の扱いをそのまま関数にした） */
+    const patchDraftFromRow = (c: Conversation, upd: SupabaseConversationRow): Conversation => {
+      const newAiDraft = stripInternalTagsOrNull(upd.ai_draft);
+      // "__SHOWN__" = スタッフが既に返信案を読み込み済み。
+      // brain-sweepがその後にsuggestedAixMetaを書き込んでもUIに反映しない（返信+AIX誘導同時表示バグ防止）
+      if (upd.ai_draft === "__SHOWN__") return { ...c, aiDraft: newAiDraft };
+      // reply_mode="aix" のとき: テキストドラフトがあっても aiDraft を null 扱いにしてAIXのみ表示
+      // （バックエンドのチェックポイントBをすり抜けた場合の最終防衛ライン）
+      const newAixMeta = upd.suggested_aix_meta ?? null;
+      if (newAixMeta?.reply_mode === "aix") return { ...c, aiDraft: null, suggestedAixMeta: newAixMeta };
+      return { ...c, aiDraft: newAiDraft, suggestedAixMeta: newAixMeta };
+    };
+    /** 下書きが届いた時の仕事（プリ生成の印・表示済みキャッシュ・準備中の解除・次の一手の取り直し）。RT_LEAN では下書きの印が変わった時だけ */
+    const runDraftSideEffects = (upd: SupabaseConversationRow) => {
+      // async プリ生成完了 → preGenInProgress をクリア（sentinelは実下書きではないため除外）
+      // 2026-09-21 竹内「完全にしまってたら返信しなくて大丈夫」: [返信不要] も sentinel（実下書きではない）
+      if (upd.ai_draft && !isDraftSentinel(upd.ai_draft)) preGenInProgress.current.delete(String(upd.id));
+      // 新しいAIドラフトが届いたら旧表示済みキャッシュは陳腐化 → 破棄（sentinel は除外）
+      if (upd.ai_draft && !isDraftSentinel(upd.ai_draft)) {
+        delete shownDraftCacheRef.current[String(upd.id)];
+      }
+      // sentinel が届いたら即座に draftPreparing をリセット（60秒待ち防止）
+      if (upd.ai_draft && isDraftSentinel(upd.ai_draft) && upd.ai_draft !== "__SHOWN__" && selectedIdRef.current === String(upd.id)) {
+        if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
+        setDraftPreparing(false);
+      }
+      // 新規顧客メッセージ → AI次アクション提案を再取得（dismiss もリセット）
+      // 2026-09-14 API の漏れ調査: 画面が下書きを表示した印（__SHOWN__）の書き込みでも再取得（Haiku）していた
+      //   → 会話を開くたびに2回以上。表示の印は新しい状態ではないので除く
+      if (upd.ai_draft && upd.ai_draft !== "__SHOWN__") {
+        const convId = String(upd.id);
+        setNextActionMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
+        setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
+        // 選択中の会話は useEffect([selectedId]) が再実行されないため、削除だけだとバナーが消えたままになる → 即再フェッチ
+        if (selectedIdRef.current === convId) {
+          nextActionFetchingRef.current.delete(convId);
+          void fetchNextAction(convId);
+        }
+      }
+    };
+    // 2026-10-23 RT_LEAN: まとめて当てる会話の行（id → 最新の行）。当てた後に同じ行の下書き・AIX を旧と同じ決まりで直す（1回の描き直し）
+    const rtPending = new Map<string, SupabaseConversationRow>();
+    let rtFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushRtPending = () => {
+      if (rtFlushTimer) { clearTimeout(rtFlushTimer); rtFlushTimer = null; }
+      if (!rtPending.size) return;
+      const rows = [...rtPending.values()];
+      rtPending.clear();
+      refreshStatsRef.current.rowPatch += rows.length;
+      applyConversationRows(rows);
+      const byId = new Map(rows.filter((r) => r.ai_draft !== undefined).map((r) => [String(r.id), r] as const));
+      if (byId.size) setConversations((prev) => prev.map((c) => { const r = byId.get(c.id); return r ? patchDraftFromRow(c, r) : c; }));
+    };
+
     // Supabase real-time: 新しいメッセージ・会話をリアルタイム反映
     const channel = supabase
       .channel("realtime-messages")
@@ -2099,6 +2161,28 @@ export default function Home() {
         { event: "UPDATE", schema: "public", table: "conversations" },
         (payload) => {
           const upd = payload.new as SupabaseConversationRow | null;
+          // 2026-10-23 RT_LEAN: 画面が使う列が変わっていない更新（脳の分析・下書きの試み・学習の印など）は何もしない。
+          //   変わった更新は 0.4 秒まとめて当てる。下書き・AIX・電話の印が変わった時はすぐ（下の即時の扱いはそのまま）
+          let rtDraftChanged = true;
+          if (RT_LEAN && upd?.id) {
+            const id = String(upd.id);
+            // まとめ待ちの行がある時はそれと比べる（当てた行と比べると、まとめ待ちの間に元に戻した更新を読み飛ばして古い行を当ててしまう）
+            const pend = rtPending.get(id);
+            const prev = pend ? rowInfoOf(pend) : appliedRowInfoRef.current.get(id);
+            const plan = rtUpdatePlan(prev?.fp ?? undefined, prev?.draftSig ?? undefined, prev ? prev.call : undefined, upd as unknown as Record<string, unknown>);
+            if (plan.skip) { refreshStatsRef.current.rtSkip++; return; }
+            rtDraftChanged = plan.draftChanged;
+            // 電話の印の通知は当てる前の値と比べる（旧と同じ before を先に取る）
+            const before = conversationsRef.current.find((c) => c.id === id);
+            rtPending.set(id, upd);
+            if (plan.urgent) flushRtPending();
+            else { refreshStatsRef.current.rtBatched++; if (!rtFlushTimer) rtFlushTimer = setTimeout(flushRtPending, 400); }
+            if (upd.call_tapped_at && Date.now() - Date.parse(upd.call_tapped_at) < 2 * 60_000 && before && before.callTappedAt !== upd.call_tapped_at) {
+              showNotif("📞 電話ボタンが押されました", `${upd.customer_name || before.customerName || ""}さん — 出られなかった時は折り返しを`, "/");
+            }
+            if (rtDraftChanged && upd.ai_draft !== undefined) runDraftSideEffects(upd);
+            return;
+          }
           // 2026-10-06 ⑫: 変わった行だけ直す（旧: 1件の更新ごとに2.5秒後の全件の読み直し＝会話・メッセージ・物件顧客で約2MB）。
           //   下の下書き・AIX の即時の扱いはこの後に当てる（旧も全件の読み直しの後は DB の行の値になっていた）
           if (upd?.id) { refreshStatsRef.current.rowPatch++; applyConversationRows([upd]); }
@@ -2111,45 +2195,8 @@ export default function Home() {
           }
           // ai_draft が payload に含まれていればローカルStateを即時更新（バナー遅延ゼロに）
           if (upd?.id && upd.ai_draft !== undefined) {
-            setConversations((prev) =>
-              prev.map((c) => {
-                if (c.id !== String(upd.id)) return c;
-                const newAiDraft = stripInternalTagsOrNull(upd.ai_draft);
-                // "__SHOWN__" = スタッフが既に返信案を読み込み済み。
-                // brain-sweepがその後にsuggestedAixMetaを書き込んでもUIに反映しない（返信+AIX誘導同時表示バグ防止）
-                if (upd.ai_draft === "__SHOWN__") return { ...c, aiDraft: newAiDraft };
-                // reply_mode="aix" のとき: テキストドラフトがあっても aiDraft を null 扱いにしてAIXのみ表示
-                // （バックエンドのチェックポイントBをすり抜けた場合の最終防衛ライン）
-                const newAixMeta = upd.suggested_aix_meta ?? null;
-                if (newAixMeta?.reply_mode === "aix") return { ...c, aiDraft: null, suggestedAixMeta: newAixMeta };
-                return { ...c, aiDraft: newAiDraft, suggestedAixMeta: newAixMeta };
-              })
-            );
-            // async プリ生成完了 → preGenInProgress をクリア（sentinelは実下書きではないため除外）
-            // 2026-09-21 竹内「完全にしまってたら返信しなくて大丈夫」: [返信不要] も sentinel（実下書きではない）
-            if (upd.ai_draft && !isDraftSentinel(upd.ai_draft)) preGenInProgress.current.delete(String(upd.id));
-            // 新しいAIドラフトが届いたら旧表示済みキャッシュは陳腐化 → 破棄（sentinel は除外）
-            if (upd.ai_draft && !isDraftSentinel(upd.ai_draft)) {
-              delete shownDraftCacheRef.current[String(upd.id)];
-            }
-            // sentinel が届いたら即座に draftPreparing をリセット（60秒待ち防止）
-            if (upd.ai_draft && isDraftSentinel(upd.ai_draft) && upd.ai_draft !== "__SHOWN__" && selectedIdRef.current === String(upd.id)) {
-              if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
-              setDraftPreparing(false);
-            }
-            // 新規顧客メッセージ → AI次アクション提案を再取得（dismiss もリセット）
-            // 2026-09-14 API の漏れ調査: 画面が下書きを表示した印（__SHOWN__）の書き込みでも再取得（Haiku）していた
-            //   → 会話を開くたびに2回以上。表示の印は新しい状態ではないので除く
-            if (upd.ai_draft && upd.ai_draft !== "__SHOWN__") {
-              const convId = String(upd.id);
-              setNextActionMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
-              setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
-              // 選択中の会話は useEffect([selectedId]) が再実行されないため、削除だけだとバナーが消えたままになる → 即再フェッチ
-              if (selectedIdRef.current === convId) {
-                nextActionFetchingRef.current.delete(convId);
-                void fetchNextAction(convId);
-              }
-            }
+            setConversations((prev) => prev.map((c) => (c.id !== String(upd.id) ? c : patchDraftFromRow(c, upd))));
+            runDraftSideEffects(upd);
           }
           if (!upd?.id) scheduleFullRefresh();
         }
@@ -2388,6 +2435,7 @@ export default function Home() {
       clearInterval(pollInterval);
       document.removeEventListener("visibilitychange", onVisible);
       if (refreshTimer) clearTimeout(refreshTimer);
+      if (rtFlushTimer) clearTimeout(rtFlushTimer);
     };
   }, []);
 
@@ -2789,7 +2837,9 @@ export default function Home() {
   const lastFullRefreshAtRef = useRef<number | null>(lineListCache()?.lastFullAt ?? null);
   const lastPollAtRef = useRef<number | null>(lineListCache()?.lastPollAt ?? null);
   /** 読み直しの回数（測る用・window.__aixListRefresh で見られる） */
-  const refreshStatsRef = useRef<{ full: number; delta: number; rowPatch: number; startedAt: number }>({ full: 0, delta: 0, rowPatch: 0, startedAt: Date.now() });
+  const refreshStatsRef = useRef<{ full: number; delta: number; rowPatch: number; rtSkip: number; rtBatched: number; startedAt: number }>({ full: 0, delta: 0, rowPatch: 0, rtSkip: 0, rtBatched: 0, startedAt: Date.now() });
+  /** 2026-10-23 RT_LEAN: 最後に画面へ当てた行の「画面が使う列の指紋・下書きの印・電話の印」（Realtime・読み直しの両方で更新） */
+  const appliedRowInfoRef = useRef<Map<string, { fp: string | null; draftSig: string | null; call: string | null }>>(new Map());
   useEffect(() => { (window as unknown as { __aixListRefresh?: unknown }).__aixListRefresh = refreshStatsRef.current; }, []);
   /** 会話ごとのお客様の最後の発言の時刻（DB の集計）。一覧の未読・AIX の鮮度・下書きの先回りに使う */
   const lastCustomerAtRef = useRef<Record<string, string>>(lineListCache()?.lastCustomerAt ?? {});
@@ -2813,9 +2863,15 @@ export default function Home() {
   };
   const linkedCustomerMapRef = useRef(linkedCustomerMap);
   useEffect(() => { linkedCustomerMapRef.current = linkedCustomerMap; }, [linkedCustomerMap]);
+  /** 2026-10-23 RT_LEAN: 画面へ当てた行の印を覚える（Realtime・差分・丸ごと・最初の40件のどれで当てても。覚えないと古い印と比べて読み飛ばしを誤る） */
+  const recordAppliedRows = (rows: SupabaseConversationRow[]) => {
+    if (!RT_LEAN) return;
+    for (const r of rows) appliedRowInfoRef.current.set(String(r.id), rowInfoOf(r));
+  };
   /** DB の会話の行（Realtime・差分の読み直し）を一覧に当てる。読み込み済みのメッセージは残す */
   const applyConversationRows = (rows: SupabaseConversationRow[]) => {
     if (!rows.length) return;
+    recordAppliedRows(rows);
     setConversations((prev) => {
       const next = upsertConversationRows(prev, rows, (r) => String(r.id), (r, existing) => {
         const item = conversationRowToItem(r, existing?.messages ?? []);
@@ -2878,6 +2934,7 @@ export default function Home() {
         .limit(FIRST_PAGE_CONVERSATIONS);
       if (!firstErr && firstRows && firstRows.length > 0) {
         const rows = firstRows as unknown as SupabaseConversationRow[];
+        recordAppliedRows(rows);
         setConversations((prev) => {
           const prevMap = new Map(prev.map((c) => [c.id, c]));
           const firstIds = new Set(rows.map((r) => String(r.id)));
@@ -2961,6 +3018,7 @@ export default function Home() {
 
     // メッセージは持っている物だけ使う（開いた会話・Realtime で届いた分）。一覧の行は DB の last_message で出す
     const formatted: Conversation[] = conversationsData.map((conversation) => conversationRowToItem(conversation, []));
+    recordAppliedRows(conversationsData);
 
     // 既存のメッセージ配列の方が長い場合は保持（ポーリングによる縮退を防ぐ）
     // メッセージを保持する場合もメタデータ（lastMessage等）は新しい値を使う

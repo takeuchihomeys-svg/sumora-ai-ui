@@ -1,5 +1,5 @@
 // app/lib/__tests__/conversation-list-sync.test.ts — 会話一覧の読み込みを変わった所だけにする決まり（実行: npx tsx app/lib/__tests__/conversation-list-sync.test.ts）
-import { lastCustomerTs, badgeMessages, pollPlan, deltaSinceIso, upsertConversationRows, FULL_REFRESH_EVERY_MS, deltaNeedsLastCustomerRefresh, listPollLeanEnabled } from "../conversation-list-sync";
+import { lastCustomerTs, badgeMessages, pollPlan, deltaSinceIso, upsertConversationRows, FULL_REFRESH_EVERY_MS, deltaNeedsLastCustomerRefresh, listPollLeanEnabled, rtUpdatePlan, convUiFingerprint, convDraftSignature, rtLeanEnabled, CONV_UI_KEYS } from "../conversation-list-sync";
 import { isAixListBadge } from "../aix-button-view";
 
 let pass = 0, fail = 0;
@@ -57,6 +57,30 @@ t("更新時刻が無ければ null（丸ごとに落とす）", deltaSinceIso([
   t("手元に無いお客様の行 → 取り直す", deltaNeedsLastCustomerRefresh(known, [{ id: "z", last_sender: "customer", updated_at: "2026-10-23T01:05:00Z" }]));
   t("スタッフの行だけ変わった → 取り直さない", !deltaNeedsLastCustomerRefresh(known, [{ id: "b", last_sender: "staff", updated_at: "2026-10-23T01:05:00Z" }]));
   t("NEXT_PUBLIC_LIST_POLL_LEAN=off で止まる", !listPollLeanEnabled("off") && listPollLeanEnabled(undefined));
+}
+
+{
+  // 2026-10-23 RT_LEAN: 会話の行の Realtime の更新を画面に当てるかの判断
+  const base: Record<string, unknown> = Object.fromEntries(CONV_UI_KEYS.map((k) => [k, null]));
+  Object.assign(base, { id: 1, customer_name: "A", last_message: "こんにちは", updated_at: "2026-10-23T01:00:00Z", ai_draft: "下書き", brain_analyzed_at: "2026-10-23T01:00:00Z", last_brain_meta: { a: 1 } });
+  const fp = convUiFingerprint(base)!; const ds = convDraftSignature(base)!;
+  const bgOnly = { ...base, brain_analyzed_at: "2026-10-23T02:00:00Z", last_brain_meta: { a: 2 }, draft_attempted_at: "x", ai_draft_check: { big: true } };
+  const p1 = rtUpdatePlan(fp, ds, null, bgOnly);
+  t("裏の列だけ変わった更新（脳の分析・下書きの確認）→ 読み飛ばす", p1.skip && !p1.draftChanged);
+  const p2 = rtUpdatePlan(fp, ds, null, { ...base, last_message: "次の文", updated_at: "2026-10-23T02:00:00Z" });
+  t("一覧の列が変わった → 当てる（急がない＝まとめる）", !p2.skip && !p2.draftChanged && !p2.urgent);
+  const p3 = rtUpdatePlan(fp, ds, null, { ...base, ai_draft: "新しい下書き" });
+  t("下書きが変わった → すぐ当てて下書きの仕事もする", !p3.skip && p3.draftChanged && p3.urgent);
+  const p4 = rtUpdatePlan(fp, ds, null, { ...base, suggested_aix_meta: { reply_mode: "aix" } });
+  t("AIX の判断が変わった → すぐ", !p4.skip && p4.draftChanged && p4.urgent);
+  const p5 = rtUpdatePlan(fp, ds, null, { ...base, call_tapped_at: "2026-10-23T02:00:00Z" });
+  t("電話の印 → すぐ（下書きの仕事はしない）", !p5.skip && p5.urgent && !p5.draftChanged);
+  const partial = { ...base }; delete partial.has_viewed;
+  t("列が欠けた行（分からない）→ 必ず当てる", !rtUpdatePlan(fp, ds, null, partial).skip && convUiFingerprint(partial) === null);
+  const p6 = rtUpdatePlan(undefined, undefined, undefined, bgOnly);
+  t("手元に記録が無い会話 → 当てて下書きの仕事もする（旧と同じ）", !p6.skip && p6.draftChanged);
+  t("is_flagged だけ変わっても当てる", !rtUpdatePlan(fp, ds, null, { ...base, is_flagged: true }).skip);
+  t("NEXT_PUBLIC_RT_LEAN=off で止まる", !rtLeanEnabled("off") && rtLeanEnabled(undefined) && rtLeanEnabled("on"));
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);
