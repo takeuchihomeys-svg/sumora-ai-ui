@@ -36,7 +36,7 @@
 //   → ③ --gate の時だけ pro で違った問題（最大 8）を Claude。見落とし（flash 同じ・pro 違う）は型ごとに screen-stats.json に数え、多い型は次から最初から pro
 import { createClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execSync, execFileSync } from "node:child_process";
 import {
@@ -403,7 +403,8 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   writeReps(Object.fromEntries(ids.map((id) => [id, o.screen ? 1 : pl.items.get(id)!.reps])));
   const flaky = new Set(ids.filter((id) => pl.items.get(id)!.flake === "flaky"));
   const baseArgs = (only: string[]) => [
-    `--label=${label}`, `--only=${only.join(",")}`, `--stage=${stage}`, "--baseline=main", REPLAY, `--repeat=${MAX_REPS}`, `--reps-file=${repsFile}`,
+    // 関所の Claude は1回（brain-exam は「問題×--repeat×2 が 20 を超える Claude」を止める＝4問×3回でもう落ちていた）
+    `--label=${label}`, `--only=${only.join(",")}`, `--stage=${stage}`, "--baseline=main", REPLAY, `--repeat=${o.env?.LLM_TEST_FINAL_CLAUDE ? 1 : MAX_REPS}`, `--reps-file=${repsFile}`,
     ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX !== "as-is" ? [`--judge-prefix=${JUDGE_PREFIX}`] : []), ...(CONV ? [`--conv=${CONV}`] : []),
     ...(MAIN_MISSING === "night" && !GATE ? ["--baseline-defer"] : []), ...PASS,
   ];
@@ -538,7 +539,30 @@ function finishPhase(pl: Plan, ph: PhaseResult, stage: "brain" | "draft", model:
 // ─── 2026-10-23 ふるい（flash で今と前 → pro は違った物だけ → 関所は Claude） ─────────────────────
 const SCREEN_FILE = join(EXAM_BRAIN_DIR, "screen-stats.json");
 function loadScreenStats(): ScreenStats { try { return JSON.parse(readFileSync(SCREEN_FILE, "utf8")) as ScreenStats; } catch { return { byType: {}, runs: [] }; } }
-function saveScreenStats(st: ScreenStats): void { try { mkdirSync(EXAM_BRAIN_DIR, { recursive: true }); writeFileSync(SCREEN_FILE, JSON.stringify(st, null, 1)); } catch (e) { log(`（ふるいの数えが書けない: ${String(e).slice(0, 100)}）`); } }
+/**
+ * 数えを足す（作業ツリーどうしで共有）: 鍵（mkdir）の中で読み直して足し・別名に書いて置き換える（書きかけを読んで空に見え、数えが消えるのを防ぐ）。
+ *   ファイルはあるのに読めない時は上書きしない（数えを0に戻さない）
+ */
+function updateScreenStats(f: (st: ScreenStats) => ScreenStats): ScreenStats | null {
+  const lock = `${SCREEN_FILE}.lock`, t0 = Date.now();
+  const nap = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  try { mkdirSync(EXAM_BRAIN_DIR, { recursive: true }); } catch { /* */ }
+  for (;;) {
+    try { mkdirSync(lock); break; } catch { /* 他が書いている */ }
+    try { if (Date.now() - statSync(lock).mtimeMs > 60_000) { rmSync(lock, { recursive: true, force: true }); continue; } } catch { /* */ }
+    if (Date.now() - t0 > 30_000) { log("（ふるいの数え: 鍵が取れない → この回は足さない）"); return null; }
+    nap(200);
+  }
+  try {
+    let cur: ScreenStats = { byType: {}, runs: [] };
+    if (existsSync(SCREEN_FILE)) { try { cur = JSON.parse(readFileSync(SCREEN_FILE, "utf8")) as ScreenStats; } catch (e) { log(`（ふるいの数えが読めない → 上書きしない: ${String(e).slice(0, 100)}）`); return null; } }
+    const nx = f(cur), tmp = `${SCREEN_FILE}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(nx, null, 1));
+    for (let i = 0; ; i++) { try { renameSync(tmp, SCREEN_FILE); break; } catch (e) { if (i >= 5) throw e; nap(100); } }
+    return nx;
+  } catch (e) { log(`（ふるいの数えが書けない: ${String(e).slice(0, 100)}）`); return null; }
+  finally { try { rmSync(lock, { recursive: true, force: true }); } catch { /* */ } }
+}
 /** 抜き取りの割合（EXAM_SCREEN_AUDIT・0〜1・既定 0.15）。確かめの夜の回は 1（flash で同じ問題も全部 pro で照らす＝見落としを全部数える） */
 const screenAuditRate = (): number => { const v = Number(process.env.EXAM_SCREEN_AUDIT); return Number.isFinite(v) && v >= 0 && v <= 1 && (process.env.EXAM_SCREEN_AUDIT ?? "").trim() !== "" ? v : SCREEN.auditRate; };
 /** ふるうか・何問か（計画の表示と本体で同じ物） */
@@ -747,9 +771,7 @@ async function runMain() {
       await runGroup("pro", redo, `${label}-sc2`);
       obs = [...obs, ...obsOf(redo, () => "見落としの型の追い確かめ")];
     }
-    const before = loadScreenStats();
-    const nx = mergeBlind(before, obs, { at: new Date().toISOString(), label, screened: sc.ids.length, unchanged: sc.dec.unchanged.length - redo.length, escalated: sc.dec.escalate.length + redo.length, audit: sc.audit.size, flashSame: sc.ids.filter((id) => flCmp.get(id) === "same").length });
-    saveScreenStats(nx);
+    const nx = updateScreenStats((before) => mergeBlind(before, obs, { at: new Date().toISOString(), label, screened: sc.ids.length, unchanged: sc.dec.unchanged.length - redo.length, escalated: sc.dec.escalate.length + redo.length, audit: sc.audit.size, flashSame: sc.ids.filter((id) => flCmp.get(id) === "same").length })) ?? mergeBlind(loadScreenStats(), obs);
     const t = totalsOf(nx);
     log(`\n🧪 ふるいの見落とし: この回 ${obs.length}問を照らした（はっきり ${obs.filter((o) => o.hard).length}・判断だけ ${obs.filter((o) => o.soft).length}）／通算 ${t.blind}/${t.n}（${t.n ? Math.round((t.blind / t.n) * 100) : 0}%）・flash でふるわない型: ${[...bannedTypes(nx)].join("・") || "なし"}`);
     // ③ 関所だけ: pro で前と違った問題（最大 8問）を Claude（本番のブレイン）で。判定は Claude の比べを使う
