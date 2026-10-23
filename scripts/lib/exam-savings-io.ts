@@ -5,7 +5,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSy
 import { join } from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  applyAutoToEnv, detectSavings, externalFixNotes, planAutoApply, renderRunSavings, renderTopSavings, type AutoApplied, type AutoFile, type BaselineFileLite, type CoordEventLite,
+  SAFE_ACTIONS, applyAutoToEnv, detectSavings, externalFixNotes, planAutoApply, renderRunSavings, renderTopSavings, type AutoApplied, type AutoFile, type BaselineFileLite, type CoordEventLite,
   type LedgerLite, type ModelCheckLite, type SavingHit, type UsageRowLite,
 } from "../../app/lib/exam-savings";
 import { markAutoApplied, readOpenSavings, upsertSavingHits } from "../../app/lib/exam-savings-server";
@@ -22,7 +22,8 @@ export async function readUsageRows(sb: SupabaseClient, since: Date, until?: Dat
   const out: UsageRowLite[] = [];
   const want = labels?.length ? new Set(labels.map((l) => `script:brain-exam-${l}`)) : null;
   for (let from = 0; from < 300_000; from += 1000) {
-    let q = sb.from("llm_usage_logs").select("route,action,model,created_at,input_uncached,cache_read,cache_write,output_tokens,max_tokens").gte("created_at", since.toISOString()).like("route", "script:brain-exam-%");
+    let q = sb.from("llm_usage_logs").select("route,action,model,created_at,input_uncached,cache_read,cache_write,output_tokens,max_tokens").gte("created_at", since.toISOString());
+    q = want ? q.in("route", [...want]) : q.like("route", "script:brain-exam-%"); // 1回の試験はその回の route だけ読む（並んで流れる他の回は読まない）
     if (until) q = q.lt("created_at", until.toISOString());
     const { data, error } = await q.order("created_at", { ascending: true }).range(from, from + 999);
     if (error) throw new Error(`llm_usage_logs が読めない: ${error.message}`);
@@ -100,10 +101,33 @@ export function readAutoFile(file = SAVINGS_AUTO_FILE): AutoFile {
   try { const j = JSON.parse(readFileSync(file, "utf8")) as AutoFile; return { applied: Array.isArray(j.applied) ? j.applied : [] }; } catch { return { applied: [] }; }
 }
 export function writeAutoFile(f: AutoFile, file = SAVINGS_AUTO_FILE): void { mkdirSync(join(file, ".."), { recursive: true }); writeFileSync(file, JSON.stringify(f, null, 1)); }
-/** 試験の始まり: 自動で戻すスイッチを env に当てる（人が --switch= で決めた名前は触らない） */
-export function applySavingsAutoAtStart(env: Record<string, string | undefined>, explicit: ReadonlySet<string>, file = SAVINGS_AUTO_FILE): string[] {
+/** この回で人が決めたスイッチ（試験の終わりの「次から戻す」の対象からも外す） */
+let startExplicit: Set<string> = new Set();
+/** .env.local（--env-file）の KEY=値。読めない時は null（＝env は全部人が決めた扱い） */
+export function readEnvFileValues(file = join(process.cwd(), ".env.local")): Record<string, string> | null {
+  try {
+    const out: Record<string, string> = {};
+    for (const l of readFileSync(file, "utf8").split(/\r?\n/)) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(l);
+      if (m) out[m[1]] = m[2].trim().replace(/^(['"])(.*)\1$/, "$2");
+    }
+    return out;
+  } catch { return null; }
+}
+/**
+ * 人が決めた名前: 引数（--switch=・--input-diff= 等）＋ env にあって .env.local の値と違う（シェル・予約の子から渡した）スイッチ。
+ *   査読 10/23: 自動で戻すのは .env.local に置き忘れた off だけ。シェルで EXAM_X=off と付けた回（on/off の比べ等）は触らない
+ */
+export function explicitSavingSwitches(env: Record<string, string | undefined>, argNames: ReadonlySet<string>, fileVals: Record<string, string> | null): Set<string> {
+  const out = new Set(argNames);
+  for (const a of SAFE_ACTIONS) { const v = env[a.env]; if (v === undefined) continue; if (!fileVals || fileVals[a.env] !== v) out.add(a.env); }
+  return out;
+}
+/** 試験の始まり: 自動で戻すスイッチを env に当てる（人が引数・シェルで決めた名前は触らない） */
+export function applySavingsAutoAtStart(env: Record<string, string | undefined>, argNames: ReadonlySet<string>, file = SAVINGS_AUTO_FILE): string[] {
+  startExplicit = explicitSavingSwitches(env, argNames, readEnvFileValues());
   if (!existsSync(file)) return [];
-  return applyAutoToEnv(env, readAutoFile(file), explicit);
+  return applyAutoToEnv(env, readAutoFile(file), startExplicit);
 }
 
 // ─── 見つけて書く ─────────────────────────────────────────────────────────
@@ -119,7 +143,7 @@ export async function detectAndRecord(sb: SupabaseClient, o: DetectOpts): Promis
   const notes: string[] = [];
   if (o.autoApply && o.env) {
     const prev = readAutoFile();
-    auto = planAutoApply(hits, o.env, prev, nowIso, (n) => switchAvailable(n));
+    auto = planAutoApply(hits, o.env, prev, nowIso, (n) => switchAvailable(n), startExplicit);
     if (auto.length && o.write && (o.env.EXAM_SAVINGS_AUTO ?? "").trim().toLowerCase() !== "off") writeAutoFile({ applied: [...prev.applied, ...auto] });
     else if (auto.length) notes.push(o.write ? "（EXAM_SAVINGS_AUTO=off＝自動で戻さない）" : "（下見＝自動で戻さない）");
   }

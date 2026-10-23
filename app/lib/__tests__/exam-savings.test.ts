@@ -5,7 +5,7 @@ import {
   detectPeak, detectRepsOverkill, externalFixNotes, detectSavings, detectSwitchesOff, isSavingKey, mergeSavingRow, ownerQuestionFor, perDayOf, planAutoApply, renderRunSavings, renderTopSavings,
   type LedgerLite, type UsageRowLite,
 } from "../exam-savings";
-import { sameAnswers } from "../../../scripts/lib/exam-savings-io";
+import { explicitSavingSwitches, sameAnswers } from "../../../scripts/lib/exam-savings-io";
 
 let fail = 0;
 const ok = (c: boolean, m: string) => { if (c) console.log(`PASS ${m}`); else { fail++; console.log(`FAIL ${m}`); } };
@@ -61,11 +61,16 @@ const olAgg = aggregateSavingHits(ol);
 ok(olAgg.length === 1 && olAgg[0].key === "overlong-output:brain" && !olAgg[0].safe, "brain_fresh と brain_full は1つの鍵にまとまる");
 
 // 9. スイッチが off → 自動で戻す
-const env = { EXAM_INPUT_DIFF: "off", EXAM_PEAK_WAIT_MIN: "0", EXAM_WARM_COALESCE: "off", EXAM_JUDGE_CACHE: "on" };
-const so = detectSwitchesOff(env, (n) => n !== "EXAM_WARM_COALESCE");
-ok(so.map((h) => h.key).sort().join(",") === "switch-off:exam_input_diff,switch-off:exam_peak_wait_min", "off の質を変えないスイッチ（まだ無い他の担当のスイッチは除く）");
-const plan = planAutoApply([...so, ...pk], env, { applied: [] }, "2026-10-23T12:00:00Z", (n) => n !== "EXAM_WARM_COALESCE");
+const env = { EXAM_INPUT_DIFF: "off", EXAM_PEAK_WAIT_MIN: "0", EXAM_SCREEN: "off", EXAM_REPS: "old", EXAM_JUDGE_CACHE: "on" };
+const so = detectSwitchesOff(env, () => true);
+ok(so.map((h) => h.key).sort().join(",") === "switch-off:exam_input_diff,switch-off:exam_peak_wait_min", "off の質を変えないスイッチだけ（質に関わる EXAM_SCREEN・EXAM_REPS は除く）");
+const plan = planAutoApply([...so, ...pk], env, { applied: [] }, "2026-10-23T12:00:00Z", () => true);
 ok(plan.length === 2 && plan.every((a) => a.value === null), "2つを既定に戻す計画");
+ok(planAutoApply([...so, ...pk], env, { applied: [] }, "x", () => true, new Set(["EXAM_INPUT_DIFF"])).map((a) => a.env).join(",") === "EXAM_PEAK_WAIT_MIN", "人がこの回で決めた名前は次から戻す計画に入れない");
+const e5: Record<string, string | undefined> = { EXAM_REPS: "old", EXAM_SCREEN: "off" };
+ok(applyAutoToEnv(e5, { applied: [{ env: "EXAM_REPS", value: null, key: "k", at: "x", why: "", from: "" }, { env: "EXAM_SCREEN", value: null, key: "k", at: "x", why: "", from: "" }] }).length === 0 && e5.EXAM_REPS === "old" && e5.EXAM_SCREEN === "off", "質に関わるスイッチは古いファイルにあっても当てない");
+ok([...explicitSavingSwitches({ EXAM_INPUT_DIFF: "off", EXAM_PEAK_WAIT_MIN: "0" }, new Set(), { EXAM_PEAK_WAIT_MIN: "0" })].join(",") === "EXAM_INPUT_DIFF", "シェルで渡した値は人が決めた物・.env.local と同じ値は置き忘れ扱い");
+ok(explicitSavingSwitches({ EXAM_PEAK_WAIT_MIN: "0" }, new Set(), null).has("EXAM_PEAK_WAIT_MIN"), ".env.local が読めない時は全部人が決めた扱い");
 ok(planAutoApply(so, env, { applied: plan }, "x").length === 0, "戻した物は二度足さない");
 const e2: Record<string, string | undefined> = { ...env };
 const notes = applyAutoToEnv(e2, { applied: plan }, new Set(["EXAM_PEAK_WAIT_MIN"]));
@@ -101,9 +106,9 @@ ok(/見つからない/.test(renderRunSavings([], [])), "何も無い時");
 ok(Array.isArray(detectSavings({ usage: [], baseline: [], ledger: [], modelCheckByType: {}, coord: [], isPeak, nextCheap, flashTypeMinN: 5 })), "空でも動く");
 
 // 13b. 他の担当の直しが入った知らせ
-const xn = externalFixNotes([{ key: "version-same-content", kind: "version_same_content", status: "open" }, { key: "peak-hour-calls", kind: "peak_hour", status: "open" }], (n) => n === "EXAM_MAIN_KEY");
-ok(xn.length === 1 && /EXAM_MAIN_KEY/.test(xn[0]) && /version-same-content/.test(xn[0]), "main の鍵の直しが入ったら作り直しの案に知らせる");
-ok(externalFixNotes([{ key: "version-same-content", kind: "version_same_content", status: "open" }], () => false).length === 0, "まだ入っていなければ知らせない");
+const xn = externalFixNotes([{ key: "flash-eligible-pro", kind: "flash_eligible_pro", status: "open" }, { key: "peak-hour-calls", kind: "peak_hour", status: "open" }], (n) => n === "EXAM_SCREEN");
+ok(xn.length === 1 && /EXAM_SCREEN/.test(xn[0]) && /flash-eligible-pro/.test(xn[0]), "ふるい（EXAM_SCREEN）が入ったら flash の案に知らせる");
+ok(externalFixNotes([{ key: "flash-eligible-pro", kind: "flash_eligible_pro", status: "open" }], () => false).length === 0, "まだ入っていなければ知らせない");
 
 // 14. 答えの比べ（io）
 ok(sameAnswers([{ path: { code: "返信" }, score: { pass: true } }], [{ path: { code: "返信" }, score: { pass: true } }]) === true, "同じ答え");

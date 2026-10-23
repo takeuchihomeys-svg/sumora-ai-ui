@@ -207,7 +207,7 @@ export function detectOverlongOutput(usage: ReadonlyArray<UsageRowLite>, at?: st
 
 // ─── 自分で直す道（質を変えないスイッチ） ─────────────────────────────────
 /** 種類 → 既にある質を変えないスイッチ。off（offValues）の回があれば、次の回から want（undefined＝消して既定に戻す）にする */
-export type SafeAction = { id: string; env: string; offValues: string[]; want?: string; kinds: SavingKind[]; why: string; /** 他の担当のスイッチ（まだ無いかもしれない）。ソースに名前がある時だけ使う */ external?: boolean };
+export type SafeAction = { id: string; env: string; offValues: string[]; want?: string; kinds: SavingKind[]; why: string; /** false＝質に関わる・人が決める（自動で戻さない・off の印も付けない） */ auto?: false; /** 他の担当のスイッチ（まだ無いかもしれない）。ソースに名前がある時だけ使う */ external?: boolean };
 export const SAFE_ACTIONS: readonly SafeAction[] = [
   { id: "input-diff", env: "EXAM_INPUT_DIFF", offValues: ["off"], kinds: ["regen_same_input", "version_same_content", "duplicate_run"], why: "入力が main と同じ問題×回は呼ばない（答えは同じ）" },
   { id: "baseline-pin", env: "EXAM_BASELINE_PIN", offValues: ["off"], kinds: ["regen_same_input", "version_same_content"], why: "main の作り直しで要求が同じ段は前の答え" },
@@ -215,15 +215,17 @@ export const SAFE_ACTIONS: readonly SafeAction[] = [
   { id: "peak-wait", env: "EXAM_PEAK_WAIT_MIN", offValues: ["off", "0"], kinds: ["peak_hour"], why: "安い時間が30分以内なら待ってから流す（半額）" },
   { id: "judge-cache", env: "EXAM_JUDGE_CACHE", offValues: ["off"], kinds: ["duplicate_run", "other"], why: "同じ答えの判定は控えを使う" },
   { id: "reuse-conv", env: "EXAM_REUSE_CONV", offValues: ["off"], kinds: ["duplicate_run"], why: "会話が同じなら前の答えを使い回す（会話を見て決める）" },
-  { id: "reps-confidence", env: "EXAM_REPS", offValues: ["old", "wide"], kinds: ["reps_overkill"], why: "回数は自信が低い問題だけ足す（既定）" },
-  { id: "warm-coalesce", env: "EXAM_WARM_COALESCE", offValues: ["off"], kinds: ["version_same_content", "duplicate_run"], why: "同じ版の取り置きを1本にまとめる（perf/exam-main-key）", external: true },
-  { id: "main-key", env: "EXAM_MAIN_KEY", offValues: ["off"], kinds: ["version_same_content"], why: "main の答えはブレインのファイルの指紋で鍵（関係ない push で作り直さない・perf/exam-main-key）", external: true },
-  { id: "flash-screen", env: "EXAM_FLASH_SCREEN", offValues: ["off"], kinds: ["flash_eligible_pro"], why: "flash で先に見て pro で確かめる（perf/exam-flash-screen）", external: true },
+  // 査読 10/23: 回数（old/wide）は揺れの見落としに効く＝質に関わる → 自動で戻さない
+  { id: "reps-confidence", env: "EXAM_REPS", offValues: ["old", "wide"], kinds: ["reps_overkill"], why: "回数は自信が低い問題だけ足す（既定）", auto: false },
+  // 査読 10/23: perf/exam-main-key はスイッチを持たない（EXAM_MAIN_KEY・EXAM_WARM_COALESCE は無い）＝載せない。
+  //   ふるいの本当の名前は EXAM_SCREEN（flash で先に見る＝質に関わる・自動で戻さない。入ったら知らせるだけ）
+  { id: "flash-screen", env: "EXAM_SCREEN", offValues: ["off"], kinds: ["flash_eligible_pro"], why: "flash で先に見て pro で確かめる（perf/exam-flash-screen）", external: true, auto: false },
 ];
 
 /** その回で off だった質を変えないスイッチ（ソースにある物だけ）→ 自分で直す候補 */
 export function offSafeSwitches(env: Record<string, string | undefined>, available: (name: string) => boolean = () => true): SafeAction[] {
   return SAFE_ACTIONS.filter((a) => {
+    if (a.auto === false) return false;
     const v = String(env[a.env] ?? "").trim().toLowerCase();
     return !!v && a.offValues.includes(v) && (!a.external || available(a.env));
   });
@@ -312,8 +314,8 @@ export type AutoFile = { applied: AutoApplied[] };
  * 見つかった印から、次の回で自動で戻すスイッチを決める。① その回で off だった質を変えないスイッチ（switch-off:）、
  *   ② $ の出た種類に対応するスイッチが off だった物。既に自動で戻した物は足さない。
  */
-export function planAutoApply(hits: ReadonlyArray<SavingHit>, env: Record<string, string | undefined>, prev: AutoFile, nowIso: string, available?: (name: string) => boolean): AutoApplied[] {
-  const off = offSafeSwitches(env, available);
+export function planAutoApply(hits: ReadonlyArray<SavingHit>, env: Record<string, string | undefined>, prev: AutoFile, nowIso: string, available?: (name: string) => boolean, explicit: ReadonlySet<string> = new Set()): AutoApplied[] {
+  const off = offSafeSwitches(env, available).filter((a) => !explicit.has(a.env)); // 人がこの回で決めた値は「戻す」対象にしない
   const kinds = new Set(hits.filter((h) => h.usd > 0 || h.key.startsWith("switch-off:")).map((h) => h.kind));
   const have = new Set(prev.applied.map((a) => a.env));
   const out: AutoApplied[] = [];
@@ -336,7 +338,7 @@ export function applyAutoToEnv(env: Record<string, string | undefined>, file: Au
     if (explicit.has(a.env)) { notes.push(`${a.env}: 人が決めた値を使う（節約の自動は当てない）`); continue; }
     const cur = env[a.env];
     const act = SAFE_ACTIONS.find((s) => s.env === a.env);
-    if (!act || !act.offValues.includes(String(cur ?? "").trim().toLowerCase())) continue; // off でなければ触らない
+    if (!act || act.auto === false || !act.offValues.includes(String(cur ?? "").trim().toLowerCase())) continue; // off でなければ触らない
     if (a.value === null) delete env[a.env]; else env[a.env] = a.value;
     notes.push(`${a.env}: ${cur} → ${a.value ?? "既定"}（節約の台帳 ${a.key}・止める EXAM_SAVINGS_AUTO=off）`);
   }
