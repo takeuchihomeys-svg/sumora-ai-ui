@@ -130,10 +130,11 @@ export const PRIMARY_ASK_WEIGHT = 2;
 export function primaryAskIndex(asks: ReadonlyArray<{ main?: boolean }> | null | undefined): number { const i = (asks ?? []).findIndex((a) => a?.main === true); return i >= 0 ? i : 0; }
 /** 2026-10-23 優先の重みの点: 道が外れは0。道が合えば（主な依頼×2＋他の依頼＋守った言ってはいけない事）÷（重みの合計）。判定なしは道だけ（1 か 0） */
 export function weightedScore(pathOk: boolean, asks: ReadonlyArray<boolean> | null, ngViolated: ReadonlyArray<boolean> | null, primaryIdx = 0): { weighted: number; primary: boolean | null } {
-  const primary = asks && asks.length ? !!asks[Math.min(Math.max(0, primaryIdx), asks.length - 1)] : null;
+  const pi = asks && asks.length ? Math.min(Math.max(0, primaryIdx), asks.length - 1) : 0;
+  const primary = asks && asks.length ? !!asks[pi] : null;
   if (!pathOk) return { weighted: 0, primary };
   let got = 0, tot = 0;
-  (asks ?? []).forEach((v, i) => { const w = i === primaryIdx ? PRIMARY_ASK_WEIGHT : 1; tot += w; if (v) got += w; });
+  (asks ?? []).forEach((v, i) => { const w = i === pi ? PRIMARY_ASK_WEIGHT : 1; tot += w; if (v) got += w; });
   (ngViolated ?? []).forEach((v) => { tot += 1; if (!v) got += 1; });
   return { weighted: tot ? got / tot : 1, primary };
 }

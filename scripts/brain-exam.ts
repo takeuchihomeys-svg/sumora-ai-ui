@@ -454,9 +454,12 @@ const PATH_CHOICES = ["返信", "2段:pickup", "2段:check", "2段:estimate", "2
 //   置き場は試験のブレインの置き場（.claude/exam-cache/exam-brain/judge-cache・全部の作業ツリーで共有）。止める EXAM_JUDGE_CACHE=off
 const JUDGE_CACHE_VERSION = "jc1";
 const judgeCacheOn = () => (process.env.EXAM_JUDGE_CACHE ?? "").trim().toLowerCase() !== "off" && (!JUDGE_COMPARE.length || arg("judge-compare-cache") === "on");
-function judgeCachePath(sys: string, user: string, model: string, salt: string): string {
-  const k = createHash("sha256").update(JSON.stringify([JUDGE_CACHE_VERSION, model, salt, sys, user])).digest("hex");
-  return join(examCacheRoot(), "exam-brain", "judge-cache", k.slice(0, 2), `${k}.json`);
+// 2026-10-23 レビュー: 要求の決まり（宛先・temperature・max_tokens・出力の形・考えの有無）も鍵に入れる（変えたのに前の判定を使わない）。置き場の根は1回だけ調べる（毎回 git を呼ばない）
+const JUDGE_REQ = { temperature: 0, max_tokens: 1400, response_format: { type: "json_object" }, thinking: { type: "disabled" } } as const;
+let judgeCacheRoot: string | null = null;
+function judgeCachePath(sys: string, user: string, model: string, salt: string, endpoint: string): string {
+  const k = createHash("sha256").update(JSON.stringify([JUDGE_CACHE_VERSION, endpoint, model, JUDGE_REQ, salt, sys, user])).digest("hex");
+  return join((judgeCacheRoot ??= examCacheRoot()), "exam-brain", "judge-cache", k.slice(0, 2), `${k}.json`);
 }
 async function deepseekJson(sys: string, user: string, modelOverride?: string, opt: { salt?: string; valid?: (o: Record<string, unknown>) => boolean } = {}): Promise<Record<string, unknown> | null> {
   const key = process.env.DEEPSEEK_API_KEY ?? process.env.LLM_ALT_DEEPSEEK_KEY;
@@ -464,7 +467,7 @@ async function deepseekJson(sys: string, user: string, modelOverride?: string, o
   const { DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL } = await import("../app/lib/llm-alt-provider");
   const { altPriceOf, isDeepseekPeakAt } = await import("../app/lib/llm-price");
   const model = modelOverride || JUDGE_MODEL || (process.env.DEEPSEEK_MODEL ?? DEEPSEEK_DEFAULT_MODEL);
-  const cachePath = judgeCacheOn() ? judgeCachePath(sys, user, model, opt.salt ?? "") : "";
+  const cachePath = judgeCacheOn() ? judgeCachePath(sys, user, model, opt.salt ?? "", DEEPSEEK_ENDPOINT) : "";
   if (cachePath && existsSync(cachePath)) {
     try { const c = JSON.parse(readFileSync(cachePath, "utf8")) as { out?: Record<string, unknown> }; if (c.out && (!opt.valid || opt.valid(c.out))) { judgeCost.cached++; return c.out; } } catch { /* 壊れた控えは使わない＝呼ぶ */ }
   }
@@ -473,7 +476,7 @@ async function deepseekJson(sys: string, user: string, modelOverride?: string, o
     try {
       const res = await fetch(DEEPSEEK_ENDPOINT, {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ model, messages: [{ role: "system", content: sys }, { role: "user", content: user }], temperature: 0, max_tokens: 1400, response_format: { type: "json_object" }, thinking: { type: "disabled" } }),
+        body: JSON.stringify({ model, messages: [{ role: "system", content: sys }, { role: "user", content: user }], ...JUDGE_REQ }),
         signal: AbortSignal.timeout(90_000),
       });
       const j = await res.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number; completion_tokens?: number } };
@@ -606,7 +609,7 @@ async function judgeDraftOnce(p: ExamProblem, draft: string, opt: { model?: stri
     '出力は JSON だけ: {"path":"返信","asks":[{"i":1,"covered":true}],"ng":[{"i":1,"violated":false}]}',
   ].join("\n");
   const ord = opt.order ?? judgeOrderOf(opt.rubricFirst);
-  const o = await deepseekJson(sys, ord === "rubric" ? `${asksNgText(p)}\n\n${contextText(p)}\n\n【下書き】\n${draft}` : ord === "stable" ? `${contextText(p)}\n\n${asksNgText(p)}\n\n【下書き】\n${draft}` : `${contextText(p)}\n\n【下書き】\n${draft}\n\n${asksNgText(p)}`, opt.model, { salt: opt.rep ? `#${opt.rep}` : "" });
+  const o = await deepseekJson(sys, ord === "rubric" ? `${asksNgText(p)}\n\n${contextText(p)}\n\n【下書き】\n${draft}` : ord === "stable" ? `${contextText(p)}\n\n${asksNgText(p)}\n\n【下書き】\n${draft}` : `${contextText(p)}\n\n【下書き】\n${draft}\n\n${asksNgText(p)}`, opt.model, { salt: opt.rep ? `#${opt.rep}` : "", valid: (x) => { const A = (x.asks ?? []) as Array<{ i: number }>, G = (x.ng ?? []) as Array<{ i: number }>; return Array.isArray(A) && Array.isArray(G) && (p.asks ?? []).every((_, i) => A.some((y) => y?.i === i + 1)) && (p.ng ?? []).every((_, i) => G.some((y) => y?.i === i + 1)); } });
   if (!o) return null;
   const A = (o.asks ?? []) as Array<{ i: number; covered: boolean }>, G = (o.ng ?? []) as Array<{ i: number; violated: boolean }>;
   const code = typeof o.path === "string" && PATH_CHOICES.includes(o.path) ? o.path : "返信";

@@ -67,6 +67,7 @@ eq("重み: 小さな依頼の外れ（2+1+1 のうち 1 落とす）", weighted
 eq("重み: 道が外れは0", weightedScore(false, [true], []).weighted, 0);
 eq("重み: 主な依頼の印", weightedScore(true, [false, true], null).primary, false);
 eq("重み: 判定なしは道だけ", weightedScore(true, null, null), { weighted: 1, primary: null });
+eq("重み: 主な依頼の位置が依頼の数を超えたら最後に寄せる（印と重みが同じ依頼）", weightedScore(true, [false, true], null, 5), { weighted: 2 / 3, primary: true });
 eq("主な依頼の位置: main の印", primaryAskIndex([{}, { main: true }]), 1);
 eq("主な依頼の位置: 無ければ1つ目", primaryAskIndex([{}, {}]), 0);
 eq("主な依頼の位置で重みが変わる", problemScore(pv, [false, true], [], { primaryIdx: 1 }).weighted, 2 / 3);
