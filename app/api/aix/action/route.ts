@@ -5,6 +5,7 @@ import { followupRevive1021Enabled, hasNewArrivalFact, composeFollowupText, sani
 // 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ）
 import { aixBrainEnabledFor } from "@/app/lib/aix-brain";
 import { staffInputsFromBody, pickerValueOf } from "@/app/lib/aix-brain-inputs";
+import { buildOccupantMgmtInfo, ensureOccupantCondition, isOccupantPolicy, occupantFormat, OCCUPANT_RULES } from "@/app/lib/aix-occupant-picker";
 import { aixRequestMustUseClaude, applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, stripUncheckedScreeningClaims, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
 import { NextRequest, NextResponse, after } from "next/server";
 import { buildMustSendNote, mustMoveInLabel, normalizeRequirementStrengths } from "@/app/lib/requirement-strength";
@@ -2272,7 +2273,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
       }
       const addGreetingHere = aixDailyRequired
         || ((currentAction === "property_send" || currentAction === "property_recommendation" || currentAction === "property_check_result")
-          && check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_company");
+          && check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_occupant" && check_pattern !== "mgmt_company");
       // 必ず付ける形（aixDailyRequired）では今日の会話文で決め、挨拶は「お世話になっております」（初回は「ご連絡頂きありがとうございます」・夜にこちらから届ける連絡は夜分の文＝buildGreeting のまま）
       const dailyPhrase = aixDailyRequired && !aixTalkedToday ? (greetingPhrase || "お世話になっております！！") : greetingPhrase;
       const daily =applyDailyGreeting(sendCleaned, { staffSentToday: aixTalkedToday, greetingPhrase: addGreetingHere ? dailyPhrase : "", name: familyName ? name : "", joinNameLine: aixTakeuchiFormOn() });
@@ -5440,7 +5441,7 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
     } else if (
       action === "property_check_result" &&
       (check_pattern === "mgmt_screening" || check_pattern === "mgmt_application_status" || check_pattern === "mgmt_contract_terms" || check_pattern === "mgmt_rent_negotiation" || check_pattern === "mgmt_surroundings" ||
-       check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_lifeline" || check_pattern === "mgmt_company" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
+       check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_occupant" || check_pattern === "mgmt_lifeline" || check_pattern === "mgmt_company" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
     ) {
       let mgmtInfo = extra_input ? String(extra_input).trim() : "";
       // 2026-09-16 竹内（カイナ事例）: 代理契約の可否。入れるのは物件名と可能／不可だけで、あとは会話に合わせる
@@ -5454,6 +5455,12 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
       if (check_pattern === "mgmt_two_person") {
         if (twoPersonResult !== "可能" && twoPersonResult !== "不可") throw new Error("二人入居が可能か不可かが必要です");
         mgmtInfo = [`二人入居：${twoPersonResult}`, property_name ? `物件名：${property_name}` : "物件名：入力なし（物件名に触れない）"].join("\n");
+      }
+      // 2026-10-23 竹内さんの決定（2d860ddb）入居者の条件について（お子様の入居・年齢）。二人入居と同じ形（物件名＋可否・条件ありは条件の字のまま）
+      const occupantPolicy = isOccupantPolicy(body.occupant_policy) ? body.occupant_policy : null;
+      const occupantCondition = typeof body.occupant_condition === "string" ? body.occupant_condition.trim() : "";
+      if (check_pattern === "mgmt_occupant") {
+        mgmtInfo = buildOccupantMgmtInfo({ policy: body.occupant_policy, condition: occupantCondition, propertyName: property_name, extra: mgmtInfo });
       }
       // 2026-10-18 竹内さん 10/18: ライフライン（管理会社に確認した→ライフラインについて）。二人入居のピッカーに倣い、入れるのは
       //   指定の有無（指定なし／指定あり）・連絡先（電気・ガス・水道の会社と電話番号・スタッフが写した文字のまま）・物件名。
@@ -5593,7 +5600,7 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
         const label = m.sender === "staff" && m.imageUrl ? staffImageLabels.get(m.imageUrl) : undefined;
         return { sender: m.sender, text: label ? `[画像: ${label}の資料・御見積書]` : m.text };
       });
-      const mgmtTarget = check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_lifeline" && check_pattern !== "mgmt_move_in" && !(typeof property_name === "string" && property_name.trim())
+      const mgmtTarget = check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_occupant" && check_pattern !== "mgmt_lifeline" && check_pattern !== "mgmt_move_in" && !(typeof property_name === "string" && property_name.trim())
         ? resolveConfirmTargetProperty(mgmtTargetRows, { topic: confirmTopicForCheckPattern(String(check_pattern)) })
         : null;
       if (mgmtTarget) {
@@ -5667,6 +5674,12 @@ ${guidanceRule}`,
 ・[物件名]はスタッフ入力の物件名をそのまま使う（複数は「〇〇・〇〇ともに」）。物件名が「入力なし」なら1行目は「二人入居可能か管理会社に確認させて頂きましたところ」から始める
 ・3行目（次の一手）を足してよいのは、**この会話で内覧のご案内も申込のご案内も一度もしていない時だけ**（可能の時「よろしければ一度お部屋ご内覧如何でしょうか😊！！」）。不可の時は足さない（代わりの提案はスタッフが別の AIX で送る）
 ・「審査に通る」「大丈夫です」など確認していない断定はしない`,
+        },
+        // 2026-10-23 入居者の条件について（型は aix-occupant-picker＝竹内さんの 二人入居について の2行の型）
+        mgmt_occupant: {
+          label: "入居者の条件（お子様のご入居）",
+          format: occupantFormat(occupantPolicy ?? "可能", occupantCondition),
+          rules: OCCUPANT_RULES,
         },
         // 2026-10-18 竹内さん 10/18「ライフラインを聞かれた時の返信は『別途ご案内させて頂きます』の約束→答えはこのピッカーから」。
         //   1行の結果＋（連絡先があれば）【ライフラインご連絡先】の欄。連絡先の欄は出口でスタッフの入力をそのまま付ける（LLM に写させない）
@@ -5955,7 +5968,7 @@ ${mgmtTarget ? `②の文頭に「${mgmtTarget.name}につきまして」と付�
 ${mgmtDef.format}
 
 【置き換えルール】
-${check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_lifeline" ? "" : mgmtTarget ? `・[物件名]は【確認した物件】の名前をそのまま使う（${mgmtTarget.name}）。会話に出てくる他の物件の名前は書かない
+${check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_occupant" || check_pattern === "mgmt_lifeline" ? "" : mgmtTarget ? `・[物件名]は【確認した物件】の名前をそのまま使う（${mgmtTarget.name}）。会話に出てくる他の物件の名前は書かない
 ` : `・[物件名]は会話履歴からお客様が確認依頼した物件を特定する（号室があれば「マンション名 806号室」形式・号室は資料や会話の表記のまま: 0806 は 0806）。特定できない場合は「ご確認頂きましたお部屋」とする
 `}${mgmtDef.rules}
 
@@ -5992,15 +6005,20 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
         currentAction,
         // 代理契約はお客様の依頼への返答＝挨拶を付けない（実送信の形。カイナ 9/16 11:48）
         // 管理会社名の返答も同じ（実送信 9/11・9/30 は挨拶なしの1〜2行）
-        check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_company" && greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined
+        check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_occupant" && check_pattern !== "mgmt_company" && greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined
       );
       // 挨拶フレーズを渡さなくても LLM が「〇〇さんお世話になっております！！」を書くので出口で落とす（本番4回とも付いた）
-      if (check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_company") {
+      if (check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_occupant" || check_pattern === "mgmt_company") {
         const sg = stripHeadGreeting(message_text);
         if (sg.count) {
           message_text = sg.text;
           console.log(JSON.stringify({ tag: check_pattern === "mgmt_proxy" ? "aix:proxy-head-greeting-stripped" : "aix:mgmt-company-head-greeting-stripped", conversationId }));
         }
+      }
+      // 2026-10-23 入居者の条件について: 条件ありで、スタッフの条件の字が本文に無ければ決まった型の2行目に差し替える（事実はスタッフの入力のまま）
+      if (check_pattern === "mgmt_occupant" && occupantPolicy) {
+        const fixed = ensureOccupantCondition(message_text, occupantPolicy, occupantCondition);
+        if (fixed !== message_text) { console.warn(JSON.stringify({ tag: "aix:occupant-condition-fallback", conversationId })); message_text = fixed; }
       }
       // 2026-10-20 審査について（ご相談）: 締めの「無事に審査通過するまで全力でサポート」を必ず1回（竹内さんの言い方のまま）
       if (check_pattern === "mgmt_screening") {

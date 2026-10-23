@@ -22,6 +22,7 @@ const CHECK_WHAT: Record<string, string> = {
   mgmt_company: "管理会社の名前と連絡先",
   mgmt_proxy: "代理契約の可否",
   mgmt_two_person: "二人入居の可否",
+  mgmt_occupant: "お子様のご入居の可否（可能／不可／条件あり）と条件",
   mgmt_lifeline: "ライフラインの指定の有無と連絡先",
   mgmt_application_status: "申込の有無と何番手か",
   mgmt_initial_cost: "初期費用の交渉の結果（見積書おくる／管理会社交渉 を選ぶ）",

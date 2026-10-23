@@ -67,6 +67,7 @@ export const PICKERS: Array<{ key: string; label: string; planned?: boolean }> =
   { key: "property_check_result/条件:mgmt_proxy", label: "代理契約" },
   { key: "property_check_result/条件:mgmt_lifeline", label: "ライフライン" },
   { key: "property_check_result/条件:mgmt_two_person", label: "二人入居" },
+  { key: "property_check_result/条件:mgmt_occupant", label: "入居者の条件（お子様・年齢）" },
   { key: "property_check_result/条件:mgmt_guarantor", label: "保証会社（審査面）" },
   { key: "property_check_result/条件:mgmt_company", label: "管理会社" },
   { key: "property_check_result/条件:mgmt_parking", label: "駐車場" },

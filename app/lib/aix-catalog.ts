@@ -21,6 +21,7 @@ import { aixNewPickers1020Enabled, screeningPickerForBrain, isPropertyInfoCheckP
 import type { ReplyScene } from "./reply-scene";
 import { isScreeningButtonAction, screeningBrainEnabled, screeningButtonEnabled, SCREENING_BUTTON } from "./aix-owner-answers-1021";
 import { AIX_LEARNED } from "./aix-catalog-learned";
+import { aixOccupantPickerEnabled, OCCUPANT_CHECK_PATTERN } from "./aix-occupant-picker";
 import { learnedLine, meaningfulWriteContains, type LearnedMeaning } from "./aix-meaning-learn";
 
 export type CatalogEntry = {
@@ -203,6 +204,8 @@ const PICKER_KNOW: Record<string, Partial<Know>> = {
   "property_check_result/mgmt_initial_cost": { staffOnly: "管理会社・代表・オーナーとの初期費用の交渉の結果（礼金・消臭代を外せるか 等）", lines: "費用を知りたいだけの依頼は見積書送る" },
   "property_check_result/mgmt_proxy": { staffOnly: "代理契約の可否（管理会社の回答）" },
   "property_check_result/mgmt_two_person": { staffOnly: "二人入居の可否（管理会社の回答・2026-10-18）" },
+  // 2026-10-23 竹内さんの決定（2d860ddb）入居者の条件について（ブレインが選べるのは AIX_OCCUPANT_PICKER=on の時だけ）
+  "property_check_result/mgmt_occupant": { scenes: S("question", "property_share", "considering"), staffOnly: "管理会社に確認したお子様のご入居の可否・年齢などの条件", when: "「子ども不可ですか」「小学生でも入居できますか」に管理会社に確認すると約束した後", lines: "資料に「子供可・不可」が書いてある時は返信。二人入居の可否は 二人入居について" },
   "property_check_result/mgmt_lifeline": { staffOnly: "ライフラインの指定・連絡先（管理会社の回答）" },
   // 2026-10-20 竹内さんの新しいピッカー（ブレインが約束の続きに選ぶ・P1 408cf7bb「各ピッカーの役割を分かっていれば…」）
   "property_check_result/mgmt_screening": { scenes: S("apply", "question", "considering"), staffOnly: "管理会社・保証会社に確認した審査の見込みと必要書類", when: "事情（名義・保証人なし・職業・国籍）の審査の相談に確認を約束した後", lines: "保証会社の名前・種類・中身の無い不安は guarantor_info" },
@@ -465,7 +468,9 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
   const rows = AIX_CATALOG
     .filter((e) => e.brainSelectable && (allButtons || inScene(e)) && !(newOff && e.picker && (NEW_CHECK_PATTERNS_1020 as readonly string[]).includes(e.picker.value) && !(scrBrain && e.picker.value === "mgmt_screening"))
       // 2026-10-22 新しいピッカーを既定 on にしても、審査について（ご相談）は明示の on か brain の時だけ
-      && !(e.picker?.value === "mgmt_screening" && !screeningPickerForBrain(envNow)))
+      && !(e.picker?.value === "mgmt_screening" && !screeningPickerForBrain(envNow))
+      // 2026-10-23 入居者の条件について は AIX_OCCUPANT_PICKER=on の時だけ
+      && !(e.picker?.value === OCCUPANT_CHECK_PATTERN && !aixOccupantPickerEnabled(envNow)))
     .map((e) => (scrOn && isScreeningButtonAction(e.aixType, e.picker?.value ?? null) ? { ...e, button: e.aixType === "guarantor_info" ? `${SCREENING_BUTTON}→保証会社について` : SCREENING_BUTTON } : e));
   const byBtn = new Map<string, CatalogEntry[]>();
   for (const e of rows) { const k = `${e.aixType}|${e.button}`; if (!byBtn.has(k)) byBtn.set(k, []); byBtn.get(k)!.push(e); }
