@@ -11,6 +11,7 @@
 //   【必ず】の行は日付が過ぎても自動で完了にせず、それを履行する送信（物件送付・御見積書送付・確認結果の報告）で完了にする。
 import { jstParts } from "./jst-date";
 import { aixNewPickers1020Enabled } from "./aix-new-pickers";
+import { aixOccupantPickerEnabled, OCCUPANT_CONFIRM_TOPIC } from "./aix-occupant-picker";
 import { isConfirmPartyObject, confirmTopicsForCheckPattern, checkPatternForConfirmTopic, type LedgerEntry, type LedgerKind } from "./action-ledger";
 // 2026-10-01 竹内（和樹事例）「『引き続き新着で…お送り』は『新着が出たら送る』約束として扱う」: ピックアップの約束がいつやる約束か（promise-timing.ts）
 import { classifyPickupPromiseTiming, isWaitPromiseNotes, PICKUP_TIMING_LABEL, WAIT_TIMINGS, type PickupPromiseTiming } from "./promise-timing";
@@ -41,7 +42,8 @@ const CONDITION_TOPIC_RE_OFF = /入居時期|初期費用|退去時費用|保証
 const CONDITION_TOPIC_RE_ON = /入居時期|初期費用|退去時費用|保証会社|代理契約|二人入居|ライフライン|ペット|駐車場|バイク置き場|設備|退去|審査|申込状況|契約の条件|家賃の交渉|周辺の様子|内覧可否/;
 function confirmAixLabel(object: string | null | undefined): string {
   const o = (object ?? "").trim();
-  return o && (aixNewPickers1020Enabled() ? CONDITION_TOPIC_RE_ON : CONDITION_TOPIC_RE_OFF).test(o) ? `確認した（条件・交渉）→${o}` : "物件確認した（確認結果を送る）";
+  // 2026-10-23 入居者の条件（AIX_OCCUPANT_PICKER=on の時だけ 確認した（条件・交渉）→入居者の条件）
+  return o && ((aixNewPickers1020Enabled() ? CONDITION_TOPIC_RE_ON : CONDITION_TOPIC_RE_OFF).test(o) || (o === OCCUPANT_CONFIRM_TOPIC && aixOccupantPickerEnabled())) ? `確認した（条件・交渉）→${o}` : "物件確認した（確認結果を送る）";
 }
 type PromiseDetail = { object?: string | null; estimateFor?: string[]; timing?: PickupPromiseTiming; propertyName?: string | null };
 const PROMISE_SPEC: Record<PromiseKind, { eventType: string; label: (o: PromiseDetail) => string; aix: (o: { object?: string | null }) => string; fulfilledBy: LedgerKind }> = {

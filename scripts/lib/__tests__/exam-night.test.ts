@@ -3,7 +3,7 @@
 import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chunksOf, splitByPlan, chunkGate, budgetMsOf, estimateRunUsd, orderQueue, backupOwnerOf, staleVerdict, staleNameOf, sweepStaleBackups, itemHardMs, queueTotalMs, type QItem } from "../exam-night";
+import { chunksOf, splitByPlan, chunkGate, budgetMsOf, estimateRunUsd, orderQueue, backupOwnerOf, staleVerdict, staleNameOf, sweepStaleBackups, itemHardMs, queueTotalMs, supersededWarms, supersededNameOf, supersedeQueueFile, type QItem } from "../exam-night";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -57,6 +57,27 @@ const qi = (label: string, argv: string[], createdAt: string): QItem => ({ label
   const r2 = orderQueue(due.filter((x) => x.label !== "warm-auto-aaa"), { currentVk: "zzz" });
   ok("順: 今の版の物が無ければ一番新しい取り置きを1本", r2.run.at(-1)!.label === "warm-auto-bbb" && r2.drop.length === 1, r2.run.map((x) => x.label).join(","));
   ok("順: 取り置きが無くても比べはそのまま", orderQueue([due[1]], { currentVk: null }).run.length === 1);
+}
+{
+  // 10/23 取り置きの予約をまとめる: 新しい版を予約したら、他の版の全部の取り置きだけ脇へ（型を絞った物・比べ・同じ版には触らない）
+  const q = [
+    qi("warm-auto-aaa", ["--warm-main", "--when=now", "--warm-vk=aaa"], "2026-10-23T01:00:00Z"),
+    qi("warm-auto-bbb", ["--warm-main", "--when=now", "--warm-vk=bbb"], "2026-10-23T02:00:00Z"),
+    qi("warm-auto-ccc", ["--warm-main", "--when=now"], "2026-10-23T00:00:00Z"), // 版は label から
+    qi("warm-types", ["--warm-main", "--types=x", "--warm-vk=aaa"], "2026-10-23T01:30:00Z"),
+    qi("cmp-1", ["--select=x"], "2026-10-23T01:40:00Z"),
+  ];
+  const s = supersededWarms(q, "bbb");
+  ok("まとめ: 他の版の全部の取り置きだけ脇へ", s.map((x) => x.item.label).sort().join(",") === "warm-auto-aaa,warm-auto-ccc", JSON.stringify(s.map((x) => x.item.label)));
+  ok("まとめ: 理由に新旧の版", s.find((x) => x.item.label === "warm-auto-aaa")!.why.includes("bbb") && s.find((x) => x.item.label === "warm-auto-aaa")!.why.includes("aaa"));
+  ok("まとめ: 同じ版だけなら何もしない", supersededWarms(q.filter((x) => x.label !== "warm-auto-aaa" && x.label !== "warm-auto-ccc"), "bbb").length === 0);
+  ok("まとめ: 脇の名前は .json で終わらない", supersededNameOf("/q/warm-auto-aaa.json", new Date("2026-10-23T03:04:00Z")) === "/q/warm-auto-aaa.json.superseded-202610231204");
+  const d = mkdtempSync(join(tmpdir(), "exam-night-q-"));
+  const f = join(d, "warm-auto-aaa.json"); writeFileSync(f, "{}");
+  const to = supersedeQueueFile(f, new Date("2026-10-23T03:04:00Z"));
+  ok("まとめ: 消さずに名前を変える", !!to && !existsSync(f) && existsSync(to!) && readdirSync(d).length === 1);
+  ok("まとめ: 無いファイルは null", supersedeQueueFile(join(d, "none.json")) === null);
+  rmSync(d, { recursive: true, force: true });
 }
 ok("上限: 1本 240分・1回 300分・off で無し", itemHardMs({}) === 240 * 60_000 && queueTotalMs({}) === 300 * 60_000 && itemHardMs({ EXAM_QUEUE_ITEM_MAX_MIN: "off" }) === null);
 

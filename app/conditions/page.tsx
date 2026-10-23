@@ -1,7 +1,7 @@
 "use client";
 
 import { manYen } from "@/app/lib/man-yen";
-import { propertyListSendBook, propertyListSendKey, sendWithIdempotency, UncertainSendError } from "@/app/lib/send-idempotency";
+import { propertyListSendBook, propertyListSendKey, sendWithIdempotency, UNCERTAIN_SAFE_WINDOW_NOTE, UncertainSendError } from "@/app/lib/send-idempotency";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
 import { cacheGet, cacheSet, cacheDrop, cacheUpdate } from "@/app/lib/page-cache";
@@ -36,7 +36,7 @@ function SendTaskListButton() {
       const data = await res.json() as { ok: boolean; count?: number; error?: string };
       setResult(data.ok ? `✅ ${data.count}名送信` : `❌ ${data.error}`);
     } catch (e) {
-      setResult(e instanceof UncertainSendError ? "⚠️ 届いたか分かりません（LINE で確かめてから押し直してください・二重には届きません）" : "❌ エラー");
+      setResult(e instanceof UncertainSendError ? `⚠️ 届いたか分かりません（LINE で確かめてから押し直してください・${UNCERTAIN_SAFE_WINDOW_NOTE}）` : "❌ エラー");
     } finally {
       setSending(false);
       setTimeout(() => setResult(""), 3000);

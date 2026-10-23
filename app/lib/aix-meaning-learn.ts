@@ -13,7 +13,7 @@ export type ContentTopic =
   | "estimate" | "amount" | "property_list" | "recommend" | "new_arrival" | "from_sent" | "availability_ok" | "availability_ng"
   | "viewing_dates" | "meeting" | "apply_form" | "apply" | "hearing_form" | "move_in" | "photo" | "guarantor" | "screening"
   | "parking" | "pet" | "equipment" | "phone" | "zenryoku" | "viewing_greeting" | "cost_reason" | "breakdown" | "followup"
-  | "daihyo" | "promise" | "rooms" | "contract_terms" | "lifeline" | "two_person" | "proxy" | "negotiation";
+  | "daihyo" | "promise" | "rooms" | "contract_terms" | "lifeline" | "two_person" | "proxy" | "negotiation" | "occupant";
 
 export const TOPIC_JA: Record<ContentTopic, string> = {
   estimate: "御見積書", amount: "金額", property_list: "物件の束", recommend: "1件の推し", new_arrival: "新着", from_sent: "送った中から",
@@ -22,6 +22,7 @@ export const TOPIC_JA: Record<ContentTopic, string> = {
   parking: "駐車場", pet: "ペット", equipment: "設備", phone: "電話", zenryoku: "全力サポート", viewing_greeting: "内覧の挨拶",
   cost_reason: "安さの理由", breakdown: "内訳", followup: "追客", daihyo: "代表", promise: "約束", rooms: "号室・部屋数",
   contract_terms: "契約の条件", negotiation: "交渉", lifeline: "ライフライン", two_person: "二人入居", proxy: "代理契約",
+  occupant: "入居者の条件（お子様・年齢）",
 };
 
 const BRACKETS_RE = /【[^】]{1,40}】/g;
@@ -57,6 +58,8 @@ const TOPIC_RES: Array<[ContentTopic, RegExp]> = [
   ["negotiation", /交渉/],
   ["lifeline", /ライフライン|電気|ガス(?:会社)?|水道/],
   ["two_person", /二人入居|2人入居|お二人/],
+  // 2026-10-23 入居者の条件について（お子様の入居・年齢）
+  ["occupant", /(?:お子様|お子さん|子供|子ども|小学生|中学生|未就学|乳幼児|幼児|乳児)[^\n。！!]{0,14}(?:ご入居|入居|ご同居)|年齢(?:制限|の?条件)/],
   ["proxy", /代理契約/],
 ];
 
@@ -133,6 +136,7 @@ export const EXPECTED_TOPICS: Record<string, readonly ContentTopic[]> = {
   "property_check_result/mgmt_contract_terms": ["contract_terms"],
   "property_check_result/mgmt_lifeline": ["lifeline"],
   "property_check_result/mgmt_two_person": ["two_person"],
+  "property_check_result/mgmt_occupant": ["occupant"],
   "property_check_result/mgmt_proxy": ["proxy"],
   property_send: ["property_list", "new_arrival"],
   property_recommendation: ["recommend", "new_arrival", "from_sent"],

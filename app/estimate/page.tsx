@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import html2canvas from "html2canvas";
-import { contentKey, SendIdBook, sendWithIdempotency, UncertainSendError } from "../lib/send-idempotency";
+import { contentKey, SendIdBook, sendWithIdempotency, UNCERTAIN_SAFE_WINDOW_NOTE, UncertainSendError } from "../lib/send-idempotency";
 import BottomNav from "../components/BottomNav";
 import type { ExtractedEstimate } from "../api/extract-estimate-info/route";
 // 2026-09-20 竹内（H さん事例）: 見積書の金額文は AIX【見積書送る】と同じ純関数から作る
@@ -841,7 +841,7 @@ function EstimatePageContent() {
         })));
       } catch (e) {
         // 届いたか分からない時はダウンロードに切り替えない（届いていたら二重の手間になるだけ・押し直しは同じ印で安全）
-        if (e instanceof UncertainSendError) { alert("返事が来ず、LINE に届いたか分かりません。LINE で確かめてから押し直してください（二重には届きません）"); return; }
+        if (e instanceof UncertainSendError) { alert(`返事が来ず、LINE に届いたか分かりません。LINE で確かめてから押し直してください（${UNCERTAIN_SAFE_WINDOW_NOTE}）`); return; }
         throw e;
       }
 

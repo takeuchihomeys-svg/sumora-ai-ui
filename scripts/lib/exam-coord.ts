@@ -196,11 +196,29 @@ export type SpendSummary = {
   total: number; byKind: Record<RunKind, { usd: number; routes: number }>;
   mainDup: Array<{ version: string; routes: number; usd: number; extraUsd: number }>;
   dupExtraUsd: number; byRoute: Array<{ route: string; kind: RunKind; usd: number }>;
+  /** 2026-10-23: main の作り直しの route を commit ごとに数えた版の数と、試験に効く所の指紋（versionOf）でまとめた版の数 */
+  mainVersions: { byCommit: number; byKey: number };
 };
+/**
+ * 2026-10-23: route（main-<commit7>-<構成>）→ 指紋の版（v-<版の鍵>-<構成>）。commitToVk＝commit（全桁）→ 版の鍵（置き場の version-keys.json）。
+ *   引けない commit は commit のまま（main-<commit7>-<構成>）。--spend-today は commit ごとに数えていて「版が12本」に見えたが、指紋では同じ版の物がある
+ */
+export function mainKeyResolver(commitToVk: Record<string, string>): (route: string) => string | null {
+  const heads = Object.entries(commitToVk);
+  return (route) => {
+    const v = mainVersionOfRoute(route);
+    if (!v) return null;
+    const [, c7, cfg] = v.split("-");
+    const hit = heads.find(([c]) => c.startsWith(c7));
+    return hit ? `v-${hit[1]}-${cfg}` : v;
+  };
+}
 /**
  * 今日の費用のまとめ（純関数）。同じ版の main の作り直しが2つ以上の route に分かれていたら「重なり」＝一番高い1本以外は無駄だった分（extraUsd）
  */
-export function summarizeSpend(rows: SpendRow[], cheap?: { startMin: number; endMin: number }): SpendSummary {
+export function summarizeSpend(rows: SpendRow[], cheap?: { startMin: number; endMin: number }, o: { versionOf?: (route: string) => string | null } = {}): SpendSummary {
+  const versionOf = o.versionOf ?? mainVersionOfRoute;
+  const commits = new Set<string>();
   const byRouteM = new Map<string, { usd: number; first: string }>();
   for (const r of rows) { const e = byRouteM.get(r.route) ?? { usd: 0, first: r.created_at }; e.usd += r.usd; if (r.created_at < e.first) e.first = r.created_at; byRouteM.set(r.route, e); }
   const byKind: SpendSummary["byKind"] = { main: { usd: 0, routes: 0 }, worker: { usd: 0, routes: 0 }, night: { usd: 0, routes: 0 } };
@@ -210,11 +228,13 @@ export function summarizeSpend(rows: SpendRow[], cheap?: { startMin: number; end
     const kind = classifyRoute(route, e.first, cheap);
     byKind[kind].usd += e.usd; byKind[kind].routes++;
     byRoute.push({ route, kind, usd: e.usd });
-    const v = kind === "main" ? mainVersionOfRoute(route) : null;
+    const v = kind === "main" ? versionOf(route) : null;
     if (v) ver.set(v, [...(ver.get(v) ?? []), e.usd]);
+    const c = kind === "main" ? mainVersionOfRoute(route) : null;
+    if (c) commits.add(c);
   }
   const mainDup = [...ver.entries()].filter(([, us]) => us.length > 1).map(([version, us]) => { const tot = us.reduce((s, x) => s + x, 0); return { version, routes: us.length, usd: tot, extraUsd: tot - Math.max(...us) }; }).sort((a, b) => b.extraUsd - a.extraUsd);
-  return { total: [...byRouteM.values()].reduce((s, e) => s + e.usd, 0), byKind, mainDup, dupExtraUsd: mainDup.reduce((s, x) => s + x.extraUsd, 0), byRoute: byRoute.sort((a, b) => b.usd - a.usd) };
+  return { total: [...byRouteM.values()].reduce((s, e) => s + e.usd, 0), byKind, mainDup, dupExtraUsd: mainDup.reduce((s, x) => s + x.extraUsd, 0), byRoute: byRoute.sort((a, b) => b.usd - a.usd), mainVersions: { byCommit: commits.size, byKey: ver.size } };
 }
 /** 今日の試験の費用の行を読む（llm_usage_logs・route が script:brain-exam-） */
 export async function readExamSpendRows(sb: { from: (t: string) => any }, since: Date): Promise<SpendRow[]> { // eslint-disable-line @typescript-eslint/no-explicit-any

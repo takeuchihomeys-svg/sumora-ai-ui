@@ -376,6 +376,8 @@ export function classifyHandFulfillment(text: string | null | undefined): { topi
   if (/^\s*(?:\[(?:画像|動画)\]\s*)+$/.test(t) || /写真|動画|撮影/.test(t)) return { topic: "室内写真", action: "property_check_result", checkPattern: "interior_photo" };
   if (/募集(?:されて|して)いるお部屋(?:の)?一覧|募集中のお部屋(?:の)?一覧/.test(t)) return { topic: "募集号室（一覧）", action: "property_check_result", checkPattern: "room_vacancies" };
   if (/内覧|内見|ご案内(?:可能|出来|でき)/.test(t)) return { topic: "内覧の可否・日程", action: "viewing_invite", checkPattern: null };
+  // 2026-10-23 入居者の条件について のピッカーができた（2d860ddb）。「子供のご入居が可能か」は 入居時期 の語にも当たるので先に見る
+  if (/(?:小学生|未就学|お子様|子供|子ども|年齢)[^\n。！!]{0,20}入居/.test(t)) return { topic: "入居者の条件（お子様・年齢）", action: "property_check_result", checkPattern: "mgmt_occupant" };
   const sentence = findConfirmReportSentence(t) ?? t;
   const o = confirmObjectOf(sentence) ?? confirmObjectOf(t);
   if (o && !isConfirmPartyObject(o)) {
@@ -384,7 +386,6 @@ export function classifyHandFulfillment(text: string | null | undefined): { topi
     const cp = checkPatternForConfirmTopic(o);
     return { topic: o, action: cp ? "property_check_result" : null, checkPattern: cp };
   }
-  if (/(?:小学生|未就学|お子様|子供|子ども|年齢)[^\n。！!]{0,20}入居/.test(t)) return { topic: "入居者の条件（お子様・年齢）", action: null, checkPattern: null };
   if (/小型犬|大型犬|犬|猫|[0-9０-９一二]匹|飼育/.test(t)) return { topic: "ペット", action: "property_check_result", checkPattern: "mgmt_pet" };
   if (/水道(?:代|料)|ガス代|電気代/.test(t)) return { topic: "水道代・光熱費", action: null, checkPattern: null };
   if (/募集(?:が)?(?:中|終了|して|停止|ストップ)|空き|空室|申込(?:み)?(?:が)?(?:入|はい)|専任|掲載/.test(t)) return { topic: "空き（募集状況）", action: "property_check_result", checkPattern: ended ? "unavailable" : "available" };

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import BottomNav from "../components/BottomNav";
-import { propertyListSendBook, propertyListSendKey, sendWithIdempotency, UncertainSendError } from "../lib/send-idempotency";
+import { propertyListSendBook, propertyListSendKey, sendWithIdempotency, UNCERTAIN_SAFE_WINDOW_NOTE, UncertainSendError } from "../lib/send-idempotency";
 
 type Task = {
   id: string;
@@ -122,7 +122,7 @@ export default function PropertyTasksPage() {
     } catch (e) {
       console.error("[handleSendToLine] error:", e);
       setSendResult(e instanceof UncertainSendError
-        ? "⚠️ 返事が来ず、LINE に届いたか分かりません。LINE で確かめてから押し直してください（同じ送信の印なので二重には届きません）"
+        ? `⚠️ 返事が来ず、LINE に届いたか分かりません。LINE で確かめてから押し直してください（${UNCERTAIN_SAFE_WINDOW_NOTE}）`
         : "❌ 送信に失敗しました。通信環境を確認してください");
     } finally {
       setSending(false);

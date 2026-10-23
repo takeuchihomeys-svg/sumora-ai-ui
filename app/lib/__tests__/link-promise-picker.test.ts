@@ -97,7 +97,8 @@ console.log("③ 手打ちで果たした中身の分け方");
 it("見積書の金額 → 見積書送る", () => eq(classifyHandFulfillment("最大限割引しました初期費用の御見積書となります！！").action, "estimate_sheet"));
 it("設備の報告 → 管理会社に確認した→設備", () => eq(classifyHandFulfillment("管理会社にエアコンの件確認させていただき、リビング洋室共に備わっております。とのご返答でした！！").checkPattern, "mgmt_equipment"));
 it("募集終了 → 物件なかった", () => eq(classifyHandFulfillment("12階のお部屋は募集が終了しております！！").checkPattern, "unavailable"));
-it("お子様の入居の条件 → ピッカー無し（新しいピッカーの候補）", () => eq(classifyHandFulfillment("管理会社担当者よりご返事があり、過去に小学生以下の年齢のご入居者様でトラブルがあり").action, null));
+// 2026-10-23 入居者の条件について のピッカーができた（2d860ddb）
+it("お子様の入居の条件 → 管理会社に確認した→入居者の条件について", () => eq(classifyHandFulfillment("管理会社担当者よりご返事があり、過去に小学生以下の年齢のご入居者様でトラブルがあり").checkPattern, "mgmt_occupant"));
 it("審査の結果 → ピッカー無し（新しいピッカーの候補）", () => eq(classifyHandFulfillment("他仲介業者からのお申込みで審査を継続出来ないとのことです").topic, "審査の結果"));
 
 console.log(`\n${passed} passed, ${failed} failed`);

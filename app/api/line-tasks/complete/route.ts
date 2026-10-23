@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
+import { cronRetryKey, linePushIdem, sendIdempotencyOn } from "@/app/lib/send-idempotency";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { CLEAR_MANUAL_UPDATE_DAYS } from "@/app/lib/search-update-days";
 
@@ -9,7 +10,8 @@ const TASK_LABEL: Record<string, string> = {
   estimate_sheet: "見積書対応",
 };
 
-async function sendGroupMessage(text: string): Promise<void> {
+// 2026-10-23 送信の二重防止: 行の id から決まる鍵（X-Line-Retry-Key）。同じ行の知らせを2回送っても LINE は2回目を送らない（409＝届いている扱い）
+async function sendGroupMessage(text: string, retryKey: string | null = null): Promise<void> {
   let targetId = process.env.LINE_STAFF_GROUP_ID ?? null;
   if (!targetId) {
     const { data: grpRow } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
@@ -19,11 +21,8 @@ async function sendGroupMessage(text: string): Promise<void> {
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
   if (!token) return;
 
-  await fetch("https://api.line.me/v2/bot/message/push", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ to: targetId, messages: [{ type: "text", text }] }),
-  });
+  const r = await linePushIdem({ token, to: targetId, messages: [{ type: "text", text }], sendId: null, retryKey: sendIdempotencyOn() ? retryKey : null, timeoutMs: 10_000 });
+  if (!r.ok) console.error("[line-tasks/complete] LINE push failed:", r.status, r.errorText);
 }
 
 // POST: タスク完了 + 完了アナウンス
@@ -82,7 +81,7 @@ export async function POST(req: NextRequest) {
     const label = TASK_LABEL[task.task_type as string] ?? task.task_type;
     const suffix = source === "aix" ? "AIX送信で完了しました" : "2通送信で自動完了しました";
     const text = `✅【${label} 完了】\n${task.customer_name as string}さんへ${suffix}`;
-    sendGroupMessage(text).catch(console.error);
+    sendGroupMessage(text, cronRetryKey("line_tasks:completed", id)).catch(console.error);
   }
 
   // 物件出し完了時：紐付き顧客の property_send_count を自動+1

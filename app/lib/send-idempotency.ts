@@ -74,9 +74,14 @@ export class UncertainSendError extends Error {
  * 同じ中身（鍵）の押し直しには同じ印を返す。届いたら done で消す。古い印（既定10分）は捨てる
  * （後で同じ中身をわざと送る時、古い印が残ると LINE が「もう届いている」として送らない＝新しい送信が消えるため）。
  */
+/** 帳簿の印を覚えておく分数（この間の押し直しだけ同じ印＝二重に届かない） */
+export const SEND_ID_TTL_MIN = 10;
+/** 「届いたか分からない」の知らせに添える、安全に押し直せる時間（帳簿を使う送信用） */
+export const UNCERTAIN_SAFE_WINDOW_NOTE = `${SEND_ID_TTL_MIN}分以内にもう一度押せば二重には届きません（${SEND_ID_TTL_MIN}分を過ぎてからだと二重に届くことがあります）`;
+
 export class SendIdBook {
   private m = new Map<string, { id: string; at: number }>();
-  constructor(private ttlMs = 10 * 60_000, private gen: () => string = newSendId) {}
+  constructor(private ttlMs = SEND_ID_TTL_MIN * 60_000, private gen: () => string = newSendId) {}
   idFor(key: string, now = Date.now()): string {
     for (const [k, v] of this.m) if (now - v.at > this.ttlMs) this.m.delete(k);
     const cur = this.m.get(key);
@@ -118,18 +123,21 @@ export type LinePushResult = { ok: boolean; status: number; alreadySent: boolean
 export async function linePushIdem(opts: {
   token: string; to: string; messages: unknown[]; sendId: string | null; pushIndex?: number; timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /** 鍵をそのまま渡す（中身つきの鍵 retryKeyForContent・cron の行の鍵 cronRetryKey）。あれば sendId・pushIndex より優先 */
+  retryKey?: string | null;
 }): Promise<LinePushResult> {
   const f = opts.fetchImpl ?? fetch;
+  const key = opts.retryKey ?? (opts.sendId ? retryKeyFor(opts.sendId, opts.pushIndex ?? 0) : null);
   const res = await f("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
       "Content-Type": "application/json", Authorization: `Bearer ${opts.token}`,
-      ...(opts.sendId ? { "X-Line-Retry-Key": retryKeyFor(opts.sendId, opts.pushIndex ?? 0) } : {}),
+      ...(key ? { "X-Line-Retry-Key": key } : {}),
     },
     body: JSON.stringify({ to: opts.to, messages: opts.messages }),
     signal: AbortSignal.timeout(opts.timeoutMs ?? 10_000),
   });
-  if (opts.sendId && res.status === 409) {
+  if (key && res.status === 409) {
     const bodyText = await res.text().catch(() => "");
     const acc = parseRetryKeyAccepted(res.status, bodyText);
     if (acc.accepted) return { ok: true, status: 200, alreadySent: true, sentMessageIds: acc.sentMessageIds, errorText: "" };
@@ -145,15 +153,20 @@ export async function linePushIdem(opts: {
 }
 
 /** 帳簿の印で1回送る（同じ鍵の押し直しは同じ印・届いたら（2xx）印を消す・返事が無ければ同じ印で確かめる） */
+/**
+ * opts.keep=true: 届いても印を消さない（AIX の「画像 → 文」のひとまとまりで、文が届くまで画像の印を残す。
+ *   文が「届いたか分からない」まま押し直した時、届いた画像を同じ印で送り直す＝LINE は送らない。呼ぶ側が後で book.done する）
+ */
 export async function sendWithIdempotency(
   book: SendIdBook, key: string,
   doFetch: (sendId: string, timeoutMs: number) => Promise<Response>,
   firstMs?: number,
+  opts: { keep?: boolean } = {},
 ): Promise<{ res: Response; confirmedAfterTimeout: boolean }> {
   const sendId = book.idFor(key);
   // 確かめも最初と同じだけ待つ（画像をまとめて送る時は push が複数回で長い。25秒で切ると届いていても「分からない」になる）
   const out = await postWithConfirm((ms) => doFetch(sendId, ms), { hasSendId: true, firstMs, confirmMs: firstMs && firstMs > 25_000 ? firstMs : undefined });
-  if (out.res.ok) book.done(key);
+  if (out.res.ok && !opts.keep) book.done(key);
   return out;
 }
 
@@ -166,6 +179,56 @@ export function contentKey(s: string): string {
     h2 = Math.imul(h2 ^ c, 0x5bd1e995) >>> 0;
   }
   return `${s.length}:${h1.toString(16)}:${h2.toString(16)}`;
+}
+
+/**
+ * 印と中身から決まる LINE の再送の鍵（同じ印・同じ中身なら毎回同じ鍵・中身が違えば別の鍵）。
+ *   2026-10-23 物件出しリスト: 「対象者なし」が届いたか分からないまま対象者が増えて押し直すと、旧は同じ鍵でリストが送られず
+ *   画面だけ「✅ N名送信」になった → 鍵に中身（送る文の種類・対象者）を混ぜる。UUID の形（下16桁に中身の指紋を XOR）を保つ
+ */
+export function retryKeyForContent(sendId: string, content: string): string {
+  const hex = sendId.toLowerCase().replace(/-/g, "");
+  let h1 = 0x811c9dc5, h2 = (0x9747b28c ^ content.length) >>> 0;
+  for (let i = 0; i < content.length; i++) {
+    const c = content.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0x5bd1e995) >>> 0;
+  }
+  const mix = h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");   // 16桁
+  let out = hex.slice(0, 16);
+  for (let i = 0; i < 16; i++) out += (parseInt(hex[16 + i], 16) ^ parseInt(mix[i], 16)).toString(16);
+  return `${out.slice(0, 8)}-${out.slice(8, 12)}-${out.slice(12, 16)}-${out.slice(16, 20)}-${out.slice(20)}`;
+}
+
+/**
+ * サーバーの定期処理（cron）の送信の印: 行の id から毎回同じ UUID を作る（回数・時刻に依らない）。
+ *   cron が重なって同じ行を2回送っても、LINE は同じ鍵の2回目を送らずに 409 を返す（24時間有効）。
+ *   scope で処理ごとに分ける（同じ id でも別の処理なら別の鍵）
+ */
+export function cronRetryKey(scope: string, rowId: string | number): string {
+  // 上16桁は scope の指紋（処理ごと）・下16桁は scope＋行の指紋（64ビット）
+  const head = retryKeyForContent("00000000-0000-4000-8000-000000000000", scope).replace(/-/g, "").slice(16);
+  const base = `${head.slice(0, 8)}-${head.slice(8, 12)}-4${head.slice(13, 16)}-8000-000000000000`;
+  return retryKeyForContent(base, `${scope}\u0001${rowId}`);
+}
+
+/**
+ * 画面が messages に入れる前に、もう入っている LINE の通（line_message_id）を外す（同じ印の押し直しで LINE が
+ * 「もう届いていた通の id」を返した時に二重の行・二重の吹き出しにしない）。同じ id が束の中に2回ある時も1回だけ。
+ * 印の無い行（id 無し）はそのまま入れる
+ */
+export function splitByExistingLineIds<T>(
+  items: T[], lineIdOf: (t: T) => string | null | undefined, existing: ReadonlySet<string>,
+): { toInsert: T[]; skipped: T[] } {
+  const seen = new Set(existing);
+  const toInsert: T[] = [], skipped: T[] = [];
+  for (const it of items) {
+    const lid = lineIdOf(it);
+    if (lid && seen.has(lid)) { skipped.push(it); continue; }
+    if (lid) seen.add(lid);
+    toInsert.push(it);
+  }
+  return { toInsert, skipped };
 }
 
 /** 物件出しリスト（売上番長グループ）の送信の帳簿（物件条件・物件出しの画面で共有）。同じ日の押し直しは同じ印 */

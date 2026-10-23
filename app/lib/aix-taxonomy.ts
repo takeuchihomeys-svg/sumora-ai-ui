@@ -12,6 +12,7 @@
 import { PROXY_CONTRACT_RE, MGMT_COMPANY_Q_RE, TWO_PERSON_CHECK_REQUEST_RE } from "./scene-patterns";
 import { LIFELINE_Q_RE } from "./aix-lifeline";
 import { screeningButtonEnabled, SCREENING_BUTTON } from "./aix-owner-answers-1021";
+import { aixOccupantPickerEnabled, OCCUPANT_COND_RE, OCCUPANT_TOPIC } from "./aix-occupant-picker";
 import { aixNewPickers1020Enabled, screeningPickerForBrain, NEW_CHECK_PATTERNS_1020, APPLICATION_STATUS_Q_RE, CONTRACT_TERMS_RE, RENT_NEGOTIATION_RE, ROOM_VACANCIES_Q_RE, SCREENING_CONSULT_RE, SURROUNDINGS_RE, BIKE_PARKING_RE, PROPERTY_INFO_BUTTON, PROPERTY_INFO_PICKER_LABELS } from "./aix-new-pickers";
 
 export const AIX_BUTTON_TAXONOMY = {
@@ -22,6 +23,7 @@ export const AIX_BUTTON_TAXONOMY = {
       "確認した（条件・交渉）": [
         "mgmt_proxy",        // 管理会社: 代理契約の可否（2026-09-16 竹内・カイナ事例）
         "mgmt_two_person",   // 管理会社: 二人入居の可否（2026-10-18 竹内さん 10/16）
+        "mgmt_occupant",     // 管理会社: 入居者の条件（お子様の入居・年齢）（2026-10-23 竹内さんの決定 2d860ddb）
         "mgmt_lifeline",     // 管理会社: ライフラインの指定・連絡先（2026-10-18 竹内さん 10/18）
         "mgmt_screening",          // 管理会社: 審査について（ご相談）（2026-10-20 竹内さん）
         "mgmt_application_status", // 管理会社: 申込状況について（何番手・何人待ち）（2026-10-20 竹内さん）
@@ -174,6 +176,8 @@ const CHECK_PATTERN_DETECTORS: Array<{ pattern: string; topic: string; re: RegEx
   { pattern: "mgmt_proxy",        topic: "代理契約の可否",         re: PROXY_CONTRACT_RE },
   // 2026-10-18 竹内さん 10/16: 二人入居の可否（管理会社に確認した→二人入居について）
   { pattern: "mgmt_two_person",   topic: "二人入居の可否",         re: TWO_PERSON_CHECK_REQUEST_RE },
+  // 2026-10-23 竹内さんの決定（2d860ddb）: 入居者の条件（お子様の入居・年齢）。入居可能日より先（「子供のご入居が可能か」）。網は AIX_OCCUPANT_PICKER=on の時だけ
+  { pattern: "mgmt_occupant",     topic: OCCUPANT_TOPIC,           re: OCCUPANT_COND_RE },
   // 2026-10-18 竹内さん 10/18: ライフライン（管理会社に確認した→ライフラインについて）
   { pattern: "mgmt_lifeline",     topic: "ライフライン（指定・連絡先）", re: LIFELINE_Q_RE },
   // 2026-10-20 竹内さん（P1 ec545624）: 申込状況（何人待ち・何番手）。募集状況・保証会社より先
@@ -204,7 +208,8 @@ export function detectPropertyCheckPattern(recentText: string): PropertyCheckKin
   const on = aixNewPickers1020Enabled();
   for (const d of CHECK_PATTERN_DETECTORS) {
     if (!on && (NEW_CHECK_PATTERNS_1020 as readonly string[]).includes(d.pattern)) continue;
-    if (d.pattern === "mgmt_screening" && !screeningPickerForBrain()) continue; // 2026-10-22 審査の相談は明示の on か brain の時だけ
+    if (d.pattern === "mgmt_screening" && !screeningPickerForBrain()) continue;
+    if (d.pattern === "mgmt_occupant" && !aixOccupantPickerEnabled()) continue; // 2026-10-23 入居者の条件は AIX_OCCUPANT_PICKER=on の時だけ // 2026-10-22 審査の相談は明示の on か brain の時だけ
     const re = !on && d.pattern === "mgmt_parking" ? /駐車場|バイク置|駐輪/ : d.re;
     // off は今まで通りの言葉（ブレイン・帯に渡る文を変えない）
     const topic = !on && d.pattern === "mgmt_parking" ? "駐車場" : d.topic;
@@ -374,6 +379,7 @@ const CHECK_PATTERN_TOPICS: Record<string, string> = {
   nearby_parking:    "近隣月極駐車場",
   mgmt_proxy:        "代理契約の可否",
   mgmt_two_person:   "二人入居の可否",
+  mgmt_occupant:     OCCUPANT_TOPIC,
   mgmt_lifeline:     "ライフライン（指定・連絡先）",
   mgmt_screening:    "審査の相談（名義・保証人・職業・国籍）",
   mgmt_application_status: "申込状況（何番手・何人待ち）",

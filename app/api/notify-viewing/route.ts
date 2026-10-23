@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
+import { linePushIdem } from "@/app/lib/send-idempotency";
 import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -191,18 +192,18 @@ export async function POST(req: NextRequest) {
     // 「今日Kさん16時〜内覧お願い！\n連帯保証人で契約の場合の流れ説明…」
     const text = `${dateLabel}${customer_name}さん${timeLabel}${eventLabel}お願い！${notesText}`;
 
-    const res = await fetch("https://api.line.me/v2/bot/message/push", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+    // 2026-10-23 送信の二重防止の見直し: ここには鍵（X-Line-Retry-Key）を付けない。
+    //   呼ぶのは予定の保存だけ（押し直し・送り直しの道が無い）。中身から決まる鍵は LINE が24時間覚えるので、
+    //   16時→17時→16時と直した時の3通目（16時に戻した知らせ）が送られず、グループには17時のまま残ってしまう
+    const r = await linePushIdem({
+      token, to: groupId, messages: [{ type: "text", text }], sendId: null, retryKey: null,
       // LINE APIハング時に関数がタイムアウト上限まで滞留するのを防ぐ
-      signal: AbortSignal.timeout(10_000),
+      timeoutMs: 10_000,
     });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error("[notify-viewing] LINE push error:", errText);
-      return NextResponse.json({ ok: false, error: errText }, { status: 500 });
+    if (!r.ok) {
+      console.error("[notify-viewing] LINE push error:", r.errorText);
+      return NextResponse.json({ ok: false, error: r.errorText }, { status: 500 });
     }
 
     // 内覧・申込・契約確定 → 成功パターンをレスポンス送信後に学習（after=Vercelのレスポンス後も実行保証）

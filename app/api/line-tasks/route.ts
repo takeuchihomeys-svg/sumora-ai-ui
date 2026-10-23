@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
+import { cronRetryKey, linePushIdem, sendIdempotencyOn } from "@/app/lib/send-idempotency";
 import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 
 const TASK_LABEL: Record<string, string> = {
@@ -14,7 +15,8 @@ const TASK_EMOJI: Record<string, string> = {
   estimate_sheet: "📋",
 };
 
-async function sendGroupMessage(text: string): Promise<void> {
+// 2026-10-23 送信の二重防止: 行の id から決まる鍵（X-Line-Retry-Key）。同じ行の知らせを2回送っても LINE は2回目を送らない（409＝届いている扱い）
+async function sendGroupMessage(text: string, retryKey: string | null = null): Promise<void> {
   let targetId = process.env.LINE_STAFF_GROUP_ID ?? null;
   if (!targetId) {
     const { data: grpRow } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
@@ -24,11 +26,8 @@ async function sendGroupMessage(text: string): Promise<void> {
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
   if (!token) return;
 
-  await fetch("https://api.line.me/v2/bot/message/push", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ to: targetId, messages: [{ type: "text", text }] }),
-  });
+  const r = await linePushIdem({ token, to: targetId, messages: [{ type: "text", text }], sendId: null, retryKey: sendIdempotencyOn() ? retryKey : null, timeoutMs: 10_000 });
+  if (!r.ok) console.error("[line-tasks] LINE push failed:", r.status, r.errorText);
 }
 
 // GET: pending タスク一覧取得
@@ -76,7 +75,7 @@ export async function DELETE(req: NextRequest) {
   if (task.task_type === "property_send") {
     const label = TASK_LABEL[task.task_type as string] ?? task.task_type;
     const text = `🚫【${label} キャンセル】\n${task.customer_name as string}さんのタスクが取り消されました`;
-    sendGroupMessage(text).catch(console.error);
+    sendGroupMessage(text, cronRetryKey("line_tasks:cancelled", id)).catch(console.error);
   }
   return NextResponse.json({ ok: true });
 }
@@ -143,7 +142,7 @@ export async function POST(req: NextRequest) {
     const label = TASK_LABEL[task_type] ?? task_type;
     const emoji = TASK_EMOJI[task_type] ?? "📋";
     const text = `${emoji}【${label}依頼】\n${customer_name}さんの${label}を開始しました\n担当スタッフ: 対応よろしくお願いします！`;
-    sendGroupMessage(text).catch(console.error);
+    sendGroupMessage(text, cronRetryKey("line_tasks:created", task.id as string)).catch(console.error);
   }
 
   return NextResponse.json({ ok: true, id: task.id, created_at: task.created_at });

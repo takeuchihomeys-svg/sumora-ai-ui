@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import {
   tryClaim, releaseClaims, claimFileOf, claimStale, coordStep, baselineWaitMs, pickPrevMainRows, carriedAnsweredAt, answeredAtOf,
   runFingerprint, labelIdentity, readRunsToday, appendRun, findDuplicateRun, runCapUsd, runCapDecision, routeBelongs,
-  classifyRoute, mainVersionOfRoute, summarizeSpend, jstDate, readCoordEvents, appendCoordEvent, type Claim,
+  classifyRoute, mainVersionOfRoute, mainKeyResolver, summarizeSpend, jstDate, readCoordEvents, appendCoordEvent, type Claim,
 } from "../exam-coord";
 import { planBaseline, childArgs, type BaselineFile } from "../brain-exam-baseline";
 import { makeCassetteFetch, setCassetteTag, flushCassette, setCassettePins, cassetteCallsOf, inputDiffOf, pinsFromRows, hasPinsFor, type CassetteStats, type CassetteMode, type CallRef } from "../llm-cassette";
@@ -132,6 +132,14 @@ const tmp = mkdtempSync(join(tmpdir(), "exam-coord-"));
   const s = summarizeSpend(rows);
   ok("費用: 種類ごとの合計", Math.abs(s.byKind.main.usd - 2.5) < 1e-9 && Math.abs(s.byKind.worker.usd - 0.75) < 1e-9 && s.byKind.main.routes === 5, JSON.stringify(s.byKind));
   ok("費用: 同じ版の4本は重なり（一番高い1本以外が無駄）", s.mainDup.length === 1 && s.mainDup[0].routes === 4 && Math.abs(s.dupExtraUsd - (2.2 - 0.7)) < 1e-9, JSON.stringify(s.mainDup));
+  ok("費用: 版の数（commit＋構成）", s.mainVersions.byCommit === 2 && s.mainVersions.byKey === 2, JSON.stringify(s.mainVersions));
+  {
+    // 10/23: 2つの commit が同じ指紋（版の鍵）なら1つの版にまとめる・引けない commit は commit のまま
+    const res = mainKeyResolver({ "4f2cd4d0000000000000000000000000000000aa": "vk1", "1111111000000000000000000000000000000000": "vk1" });
+    ok("指紋: route → v-<鍵>-<構成>", res("script:brain-exam-main-4f2cd4d-a1b2c3d4e5-rmvhcokim") === "v-vk1-a1b2c3d4e5" && res("script:brain-exam-main-2222222-a1b2c3d4e5-r1") === "main-2222222-a1b2c3d4e5" && res("script:brain-exam-fix1") === null);
+    const s2 = summarizeSpend(rows, undefined, { versionOf: res });
+    ok("指紋: 同じ指紋の2つの commit は1つの版（重なりに入る）", s2.mainVersions.byCommit === 2 && s2.mainVersions.byKey === 1 && s2.mainDup.length === 1 && s2.mainDup[0].routes === 5, JSON.stringify([s2.mainVersions, s2.mainDup]));
+  }
   const evf = join(tmp, "ev.jsonl");
   appendCoordEvent({ at: "2026-10-21T01:00:00Z", kind: "wait-reuse", label: "a", ids: ["q1"], usd: 0.03 }, evf);
   appendCoordEvent({ at: "2026-10-19T01:00:00Z", kind: "pin", label: "a", ids: ["q2"], usd: 0.05 }, evf);

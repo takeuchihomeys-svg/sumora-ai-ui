@@ -2,7 +2,7 @@
 import { supabase } from "@/app/lib/supabase-server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireInternalAuth } from "@/app/lib/api-auth";
-import { linePushIdem, parseSendId, sendIdempotencyOn } from "@/app/lib/send-idempotency";
+import { linePushIdem, parseSendId, retryKeyForContent, sendIdempotencyOn } from "@/app/lib/send-idempotency";
 
 export const maxDuration = 30;
 
@@ -57,13 +57,18 @@ async function getSuzukiUserId(): Promise<string | null> {
   return data?.value ?? null;
 }
 
-// 2026-10-23 送信の二重防止: 画面の印（send_id）があれば LINE の X-Line-Retry-Key に入れる（リスト=0・名言=1 の回数ごとに別の鍵）。
-//   同じ印の押し直しで「もう届いていた」なら alreadySent（LINE は送らない）
-async function pushToLine(to: string, text: string, suzukiUserId?: string | null, sendId: string | null = null, pushIndex = 0): Promise<{ alreadySent: boolean }> {
+// 2026-10-23 送信の二重防止: 画面の印（send_id）があれば LINE の X-Line-Retry-Key に入れる。
+//   同じ印の押し直しで「もう届いていた」なら alreadySent（LINE は送らない）。
+//   鍵は「印＋送る中身」から決める（retryKeyForContent）: 「対象者なし」が届いたか分からないまま対象者が増えて押し直した時、
+//   旧は同じ鍵でリストが送られず画面だけ「✅ N名送信」になった → 中身が違えば別の鍵で送る
+function keyFor(sendId: string | null, content: string): string | null {
+  return sendId ? retryKeyForContent(sendId, content) : null;
+}
+async function pushToLine(to: string, text: string, suzukiUserId: string | null | undefined, retryKey: string | null): Promise<{ alreadySent: boolean }> {
   const message = suzukiUserId
     ? { type: "textV2", text: `{0}\n${text}`, substitution: { "0": { type: "mention", mentionee: { type: "user", userId: suzukiUserId } } } }
     : { type: "text", text };
-  const r = await linePushIdem({ token: TOKEN, to, messages: [message], sendId, pushIndex });
+  const r = await linePushIdem({ token: TOKEN, to, messages: [message], sendId: null, retryKey });
   if (!r.ok) {
     console.error("[send-property-list] LINE push failed:", r.status, r.errorText);
   }
@@ -124,7 +129,8 @@ export async function POST(req: NextRequest) {
   const customers = await getTodayList();
 
   if (customers.length === 0) {
-    const r0 = await pushToLine(groupId, "✅ 今日の物件出し対象者はいません！\nお疲れ様です😊", null, sendId, 0);
+    const noneText = "✅ 今日の物件出し対象者はいません！\nお疲れ様です😊";
+    const r0 = await pushToLine(groupId, noneText, null, keyFor(sendId, `none\u0001${noneText}`));
     return NextResponse.json({ ok: true, count: 0, ...(r0.alreadySent ? { alreadySent: true } : {}) });
   }
 
@@ -145,9 +151,10 @@ export async function POST(req: NextRequest) {
     "完了したら「完了 [名前]」と返信してください",
   ];
 
-  // 物件リストと名言を並行生成
+  // 物件リストと名言を並行生成（名言の文は毎回 AI が作るので、名言の鍵もリストの中身から決める）
+  const listText = lines.join("\n");
   const [listPush, quote] = await Promise.all([
-    pushToLine(groupId, lines.join("\n"), suzukiUserId, sendId, 0),
+    pushToLine(groupId, listText, suzukiUserId, keyFor(sendId, `list\u0001${listText}`)),
     generateQuote(hotCount, customers.length),
   ]);
 
@@ -155,7 +162,7 @@ export async function POST(req: NextRequest) {
   if (listPush.alreadySent) return NextResponse.json({ ok: true, count: customers.length, alreadySent: true });
 
   if (quote) {
-    await pushToLine(groupId, quote, null, sendId, 1);
+    await pushToLine(groupId, quote, null, keyFor(sendId, `quote\u0001${listText}`));
   }
 
   return NextResponse.json({ ok: true, count: customers.length });

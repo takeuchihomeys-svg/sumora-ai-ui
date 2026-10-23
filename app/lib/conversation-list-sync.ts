@@ -92,3 +92,50 @@ export function deltaNeedsLastCustomerRefresh(
 export function listPollLeanEnabled(v: string | undefined): boolean {
   return (v ?? "on").toLowerCase() !== "off";
 }
+
+/**
+ * 2026-10-23 竹内「かなり重くなることもある LINE の画面 原因見つけて改善する」(Realtime 側):
+ *   会話の行は平均 7KB（最大 21KB・脳の JSON・下書きの確認など）。裏の仕事（脳の分析・下書きの試み・学習の印）が書くたびに
+ *   行全体が Realtime で届き、画面は毎回 一覧を作り直して並べ替え・描き直していた（さらに下書きがある会話では次の一手の取り直し＝Haiku も）。
+ *   ところが画面が行から使うのは下の列だけ（conversationRowToItem と 申込後・熱い・旗の印）。**この列が1つも変わっていない更新は画面に何も起きない**
+ *   → 読み飛ばす。変わった時も 0.4 秒の間の更新は1回にまとめて当てる（下書き・AIX・電話の印が変わった時はすぐ）。戻す NEXT_PUBLIC_RT_LEAN=off
+ */
+export const CONV_UI_KEYS = [
+  "customer_name", "last_message", "last_sender", "status", "line_user_id", "send_blocked_reason", "call_name", "call_tapped_at",
+  "profile_image_url", "updated_at", "account", "property_customer_id", "is_post_apply", "is_hot", "is_flagged", "has_viewed",
+  "ai_draft", "suggested_aix_meta", "suggested_next_aix",
+] as const;
+
+/** 画面が使う列だけの指紋。どれかの列が行に無い（undefined）時は分からない＝null（必ず当てる） */
+export function convUiFingerprint(row: Record<string, unknown> | null | undefined): string | null {
+  if (!row) return null;
+  const vals: unknown[] = [];
+  for (const k of CONV_UI_KEYS) {
+    if (!(k in row) || row[k] === undefined) return null;
+    vals.push(row[k]);
+  }
+  try { return JSON.stringify(vals); } catch { return null; }
+}
+
+/** 下書きの印（下書き本文と AIX の判断）。前と違う時だけ「新しい下書きが届いた」の仕事（次の一手の取り直し等）をする */
+export function convDraftSignature(row: Record<string, unknown> | null | undefined): string | null {
+  if (!row || !("ai_draft" in row) || row.ai_draft === undefined) return null;
+  try { return JSON.stringify([row.ai_draft ?? null, row.suggested_aix_meta ?? null]); } catch { return null; }
+}
+
+/** Realtime の更新を画面に当てるかの判断（純関数） */
+export function rtUpdatePlan(
+  prevFp: string | undefined, prevDraftSig: string | undefined, prevCallTappedAt: string | null | undefined,
+  row: Record<string, unknown>,
+): { skip: boolean; draftChanged: boolean; urgent: boolean; fp: string | null; draftSig: string | null } {
+  const fp = convUiFingerprint(row);
+  const draftSig = convDraftSignature(row);
+  if (fp !== null && prevFp !== undefined && fp === prevFp) return { skip: true, draftChanged: false, urgent: false, fp, draftSig };
+  const draftChanged = draftSig === null || prevDraftSig === undefined || draftSig !== prevDraftSig;
+  const callChanged = (row.call_tapped_at ?? null) !== (prevCallTappedAt ?? null);
+  return { skip: false, draftChanged, urgent: draftChanged || callChanged, fp, draftSig };
+}
+
+export function rtLeanEnabled(v: string | undefined): boolean {
+  return (v ?? "on").toLowerCase() !== "off";
+}

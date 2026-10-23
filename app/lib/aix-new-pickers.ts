@@ -28,7 +28,8 @@ export function screeningPickerForBrain(env: Record<string, string | undefined> 
  * ご家族の勤め先などのお客様の事情を入れるので、スイッチに関係なく必ず Claude（DeepSeek に回さない）。
  * aix/action の歯止め（setupAltProviderGuards）がこれを見て「申込以降」と同じ扱い（回さない・印を付けて Anthropic）にする。
  */
-export const CLAUDE_ONLY_CHECK_PATTERNS: readonly string[] = ["mgmt_screening"];
+// 2026-10-23 入居者の条件について（mgmt_occupant・お子様の有無と年齢＝ご家族の事情）も必ず Claude（aix-occupant-picker）
+export const CLAUDE_ONLY_CHECK_PATTERNS: readonly string[] = ["mgmt_screening", "mgmt_occupant"];
 /** 2026-10-21 竹内さん C9: 新しいボタン【審査について】の中の物は全部 Claude（保証会社について guarantor_info も審査の話・話題つきの審査の相談も） */
 export const CLAUDE_ONLY_ACTIONS: readonly string[] = ["guarantor_info"];
 export function aixRequestMustUseClaude(body: { action?: unknown; check_pattern?: unknown; screening_topic?: unknown } | null | undefined): boolean {

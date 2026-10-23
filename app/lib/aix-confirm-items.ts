@@ -28,6 +28,8 @@ export const AIX_CONFIRM_ITEMS: ConfirmItem[] = [
   { key: "property_check_result/mgmt_initial_cost", button: "確認した（条件・交渉）", picker: "初期費用について", items: ["礼金・消臭代・鍵交換等を外せるか（交渉の結果）"], re: /礼金|消臭|鍵交換|抗菌|初期費用.{0,8}(?:交渉|外|減額|下が|お安く|なし)/ },
   { key: "property_check_result/mgmt_proxy", button: "確認した（条件・交渉）", picker: "代理契約について", items: ["代理契約の可否"], re: /代理(?:契約|で)/ },
   { key: "property_check_result/mgmt_lifeline", button: "確認した（条件・交渉）", picker: "ライフラインについて", items: ["電気・ガス・水道の指定の有無と連絡先"], re: /ライフライン|電気|ガス(?!コンロ)|水道/ },
+  // 2026-10-23 竹内さんの決定（2d860ddb）入居者の条件について（お子様の入居・年齢）
+  { key: "property_check_result/mgmt_occupant", button: "確認した（条件・交渉）", picker: "入居者の条件について", items: ["お子様のご入居の可否・年齢などの条件"], re: /(?:お子様|お子さん|子供|子ども|小学生|中学生|未就学|乳幼児|幼児|乳児)[^\n。！!]{0,14}(?:ご入居|入居|ご同居)|年齢(?:制限|の?条件)/ },
   { key: "property_check_result/mgmt_two_person", button: "確認した（条件・交渉）", picker: "二人入居について", items: ["二人入居の可否"], re: /二人入居|2人入居|ふたり入居|同棲|ルームシェア|二人暮らし/ },
   { key: "property_check_result/mgmt_guarantor", button: "審査について", picker: "保証会社について（審査面）", items: ["保証会社・保証人・審査の条件"], re: /保証会社|保証人|連帯保証/ },
   { key: "property_check_result/mgmt_screening", button: "審査について", picker: "審査について（ご相談）", items: ["名義・保証人・職業と収入・国籍・審査の見込み・時期"], re: /審査|名義|職業|国籍|外国籍|収入/ },

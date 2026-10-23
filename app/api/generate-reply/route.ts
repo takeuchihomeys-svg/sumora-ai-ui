@@ -321,6 +321,7 @@ import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWai
 import { isAckOnlyTurn } from "@/app/lib/draft-repeat";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { priorityStepOn, normalizePriorities } from "@/app/lib/brain-priority";
+import { relativeDatesWriterNote } from "@/app/lib/relative-dates"; // 2026-10-23 送った日と今日の距離（BRAIN_RELATIVE_DATES・既定 off）
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, turnNeedsSupport, SUPPORT_CLOSER_LINE, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
 import { dedupeExamplesBySent, isReplyUnsafeKnowledge, ragReplyCleanEnabled } from "@/app/lib/rag-garbage";
@@ -5478,7 +5479,7 @@ async function handleGenerateReply(req: NextRequest) {
       if (message && !(last && last.sender === "customer" && last.text.includes(message.trim()))) ms.push({ sender: "customer", text: message });
       return daySubjectNoteIfEnabled(ms, ledger.facts.viewingFlow?.stage ?? null);
     })();
-    const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote + daySubjectNote;
+    const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote + daySubjectNote + (ledgerActive && !isFollowUp ? relativeDatesWriterNote(ledger.entries) : "");
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
     const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm, turnContract?.openSearch ?? null) : turnNeedsSupport(turnContract) ? SUPPORT_CLOSER_LINE : null });

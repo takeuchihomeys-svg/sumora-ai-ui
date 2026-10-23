@@ -27,6 +27,7 @@ import { STAFF_VIEWING_DONE_RE } from './viewing-thread';
 import { aixMgmtLifelineEnabled, LIFELINE_PROMISE_RE } from './aix-lifeline';
 import { staffOnlyAix1020, findMgmtPendingSentence, stripPendingClause } from './staff-only-aix-1020';
 // 2026-10-20 竹内さんの新しいピッカー（審査について・申込状況について・バイク置き場・契約の条件・家賃の交渉）の約束の要件の網
+import { aixOccupantPickerEnabled, OCCUPANT_COND_RE, OCCUPANT_CONFIRM_TOPIC, OCCUPANT_CHECK_PATTERN } from './aix-occupant-picker';
 import { aixNewPickers1020Enabled, screeningPickerForBrain, APPLICATION_STATUS_Q_RE, CONTRACT_TERMS_RE, RENT_NEGOTIATION_RE, SURROUNDINGS_RE } from './aix-new-pickers';
 import { findPrematureViewing, customerMentionsFixedViewing, findStaffViewingDeclaration } from './viewing-premature';
 import { resolveViewingFlow, buildViewingFlowLedgerLine, buildViewingFlowBrainText, type ViewingFlow } from './viewing-flow';
@@ -229,7 +230,7 @@ const MEDIA_ONLY_RE = /^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*
 //   1本の正規表現に混ざり、本文で先に出た語が勝っていた（実データ: object=管理会社 21件中 20件は本文に中身が書いてある）。
 //   → 「何を」を先に探し、無ければ「誰に」。言い回しの揺れは1つの要件名に揃える（「ご入居が可能か」「11月中旬でのご入居」→ 入居時期）
 // 2026-10-20: nw＝新しいピッカーの要件（AIX_NEW_PICKERS_1020=on の時だけ）／old＝その切替が off の時だけ使う今まで通りの行
-const CONFIRM_TOPIC_RULES_ALL: ReadonlyArray<{ re: RegExp; label: string; nw?: true; old?: true }> = [
+const CONFIRM_TOPIC_RULES_ALL: ReadonlyArray<{ re: RegExp; label: string; nw?: true; old?: true; oc?: true }> = [
   // 2026-10-20 竹内さん（P1 ec545624）: ほかの方の申込の有無・何人待ち・何番手・1番手の方の審査の状況（AIX【管理会社に確認した→申込状況について】で閉じる）。
   //   募集状況より先に見る（「13階は何人待ちですか？」→「確認させて頂きます」）。ご本人の申込の進捗（「無事1番手でお申込完了しているか」「申込み番手」）は語が当たらない
   { re: APPLICATION_STATUS_Q_RE, label: '申込状況', nw: true },
@@ -240,6 +241,9 @@ const CONFIRM_TOPIC_RULES_ALL: ReadonlyArray<{ re: RegExp; label: string; nw?: t
   { re: /代理契約/, label: '代理契約' },
   // 2026-10-18 竹内さん 10/16: 二人入居の確認の約束（AIX【管理会社に確認した→二人入居について】で閉じる）。入居時期より先に見る
   { re: /(?:二人|2人|２人|ふたり)(?:での)?(?:入居|暮らし)/, label: '二人入居' },
+  // 2026-10-23 竹内さんの決定（2d860ddb）: 入居者の条件（お子様の入居・年齢）の確認の約束（AIX【管理会社に確認した→入居者の条件について】で閉じる）。
+  //   入居時期より先に見る（「子供のご入居が可能か確認いただいております」が 入居時期 に読まれていた）。AIX_OCCUPANT_PICKER=on の時だけ
+  { re: OCCUPANT_COND_RE, label: OCCUPANT_CONFIRM_TOPIC, oc: true },
   // 2026-10-18 竹内さん 10/18: ライフラインの約束（「別途ご案内させて頂きます」→ AIX【確認した→ライフラインについて】で閉じる）。入居時期・設備より先に見る
   { re: /ライフライン|電気・?ガス・?水道/, label: 'ライフライン' },
   { re: /入居(?:可能)?(?:時期|日)|ご?入居が可能|入居可否|(?:上旬|中旬|下旬|[0-9０-９]{1,2}日)(?:での|から|の|まで)?ご?入居/, label: '入居時期' },
@@ -270,10 +274,15 @@ const CONFIRM_TOPIC_RULES_ON = [
   ...CONFIRM_TOPIC_RULES_ALL.filter((r) => !r.old && PARKING_LABELS.has(r.label)),
   ...CONFIRM_TOPIC_RULES_ALL.filter((r) => !r.old && r.label !== '申込状況' && !PARKING_LABELS.has(r.label)),
 ];
-const CONFIRM_TOPIC_RULES_OFF = CONFIRM_TOPIC_RULES_ALL.filter((r) => !r.nw);
+const CONFIRM_TOPIC_RULES_OFF = CONFIRM_TOPIC_RULES_ALL.filter((r) => !r.nw && !r.oc);
+const CONFIRM_TOPIC_RULES_OFF_OC = CONFIRM_TOPIC_RULES_ALL.filter((r) => !r.nw);
+const CONFIRM_TOPIC_RULES_ON_NO_OC = CONFIRM_TOPIC_RULES_ON.filter((r) => !r.oc);
 /** 確認の要件の語彙（AIX_NEW_PICKERS_1020=on の時だけ 申込状況・契約の条件・家賃の交渉・バイク置き場 を足す） */
 function confirmTopicRules(): ReadonlyArray<{ re: RegExp; label: string }> {
-  return aixNewPickers1020Enabled() ? CONFIRM_TOPIC_RULES_ON : CONFIRM_TOPIC_RULES_OFF;
+  // 2026-10-23 入居者の条件（AIX_OCCUPANT_PICKER=on の時だけ・off は今まで通り）
+  const oc = aixOccupantPickerEnabled();
+  if (aixNewPickers1020Enabled()) return oc ? CONFIRM_TOPIC_RULES_ON : CONFIRM_TOPIC_RULES_ON_NO_OC;
+  return oc ? CONFIRM_TOPIC_RULES_OFF_OC : CONFIRM_TOPIC_RULES_OFF;
 }
 const CONFIRM_OBJECT_RE = new RegExp(`${CONFIRM_TOPIC_RULES_OFF.map((r) => r.re.source).join('|')}|${CONFIRM_PARTY_RE.source}`);
 /** 確認の要件が「相手」だけで中身が無い（管理会社・オーナー・確認事項…） */
@@ -293,6 +302,7 @@ export function confirmTopicForCheckPattern(checkPattern: string | null | undefi
     case 'mgmt_equipment': return '設備';
     case 'mgmt_proxy': return '代理契約';
     case 'mgmt_two_person': return '二人入居';
+    case OCCUPANT_CHECK_PATTERN: return OCCUPANT_CONFIRM_TOPIC;
     case 'mgmt_lifeline': return 'ライフライン';
     // 2026-10-20 新しいピッカー
     case 'mgmt_screening': return '審査';
@@ -399,6 +409,7 @@ export function checkPatternForConfirmTopic(topic: string | null | undefined): s
     case '設備': return 'mgmt_equipment';
     case '代理契約': return 'mgmt_proxy';
     case '二人入居': return 'mgmt_two_person';
+    case OCCUPANT_CONFIRM_TOPIC: return aixOccupantPickerEnabled() ? OCCUPANT_CHECK_PATTERN : null;
     case 'ライフライン': return 'mgmt_lifeline';
     default: return null;
   }

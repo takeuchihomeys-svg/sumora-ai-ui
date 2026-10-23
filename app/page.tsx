@@ -29,7 +29,7 @@ import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraft
 // 2026-10-08 竹内（未桜）「AI返信案がセットされていない事も多い」: 表示済みにした下書きの本文を DB に控え、別の端末・読み込み直しでも戻す
 import { decideShownDraftRestore, shownDraftUpdate, shownDraftRestoreEnabled } from "./lib/shown-draft-restore";
 import { latestCustomerAtOf, newerCustomerMessageSince, nextComposerBase, staleGuardEnabled, ackExemptEnabled, STALE_REPLY_ERROR_CODE } from "./lib/stale-reply";
-import { isUncertainFetchError, newSendId, sendWithIdempotency, SendIdBook, UncertainSendError } from "./lib/send-idempotency";
+import { isUncertainFetchError, newSendId, sendWithIdempotency, SendIdBook, splitByExistingLineIds, UNCERTAIN_SAFE_WINDOW_NOTE, UncertainSendError } from "./lib/send-idempotency";
 import { isCustomerEcho, draftEchoGuardEnabled } from "./lib/draft-echo";
 import { decideForeignSendDraft, foreignSendClearEnabled } from "./lib/foreign-send-draft";
 import { refreshDraftGreetingForNow, draftGreetingRefreshEnabled } from "./lib/time-greeting";
@@ -72,7 +72,7 @@ import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewing
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
 // 2026-09-18 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面の赤帯と一覧のバッジに出す
 import { cacheGet, cacheSet } from "./lib/page-cache";
-import { lastCustomerTs, badgeMessages, pollPlan, deltaSinceIso, upsertConversationRows, deltaNeedsLastCustomerRefresh, listPollLeanEnabled } from "./lib/conversation-list-sync";
+import { lastCustomerTs, badgeMessages, pollPlan, deltaSinceIso, upsertConversationRows, deltaNeedsLastCustomerRefresh, listPollLeanEnabled, rtLeanEnabled, rtUpdatePlan, convUiFingerprint, convDraftSignature } from "./lib/conversation-list-sync";
 import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, promiseCheckPatternOf, promiseOverdueDays, splitPromisesForFreshInquiry } from "./lib/promise-calendar";
 import { isWaitPromiseNotes, waitPromiseBadge } from "./lib/promise-timing";
 // 一覧の並び: 直近やり取り順（新しい方が上）だけ。2026-09-18 竹内「本来のLINEのように時間最新順に戻す」
@@ -88,11 +88,16 @@ import { imageUrlsInRankOrder } from "./lib/sent-image-order";
 import { decideApplySubMode } from "./lib/apply-sub-mode";
 import { normalizePetWording } from "./lib/pet-wording";
 import { isTestOnlyConversation } from "./lib/test-conversations";
+// 2026-10-23 試験の通（入る通の約93%）の Realtime は、その会話を選んでいる時だけ当てる（戻す NEXT_PUBLIC_RT_IGNORE_TEST=off）
+import { RT_IGNORE_TEST, shouldIgnoreTestRealtime, shouldIgnoreTestRealtimeForConvs } from "./lib/realtime-test-ignore";
+/** 会話画面の紐付け（linkedEntryOf）に使う物件顧客の列（一覧の読み込み・テスト専用の会話を選んだ時の読み直しで同じ） */
+const PC_LINK_COLUMNS = "id,customer_name,status,last_property_sent_at,property_viewed_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary,floor_area_min,floor_area_max,pet,rp_update_days";
 import { brainPickFromMetas } from "./lib/brain-property-display";
 import { VIEWING_MOOD_OPTIONS, VIEWING_LIKE_OPTIONS, VIEWING_CONCERN_OPTIONS, VIEWING_NEXT_OPTIONS, composeViewingReport, parseViewingReport, staffCaptureUiEnabled, type ViewingTaps } from "./lib/staff-capture";
 
 // 2026-10-23 送信の返事が来ず、同じ印での確かめも返事が無い（届いたか分からない）→ UncertainSendError（send-idempotency.ts）
-const UNCERTAIN_SEND_MSG = "⚠️ 送信の返事が来ませんでした（サーバーが混んでいます）。LINE に届いているか分かりません。LINE の画面で確かめてから、もう一度送ってください（同じ送信の印なので二重には届きません）";
+//   AIX・電話ボタン等（帳簿の印）は10分で印を捨てるので、安全に押し直せる時間を添える（2026-10-23 見直し）
+const UNCERTAIN_SEND_MSG = `⚠️ 送信の返事が来ませんでした（サーバーが混んでいます）。LINE に届いているか分かりません。LINE の画面で確かめてから、もう一度送ってください（同じ中身なら${UNCERTAIN_SAFE_WINDOW_NOTE}）`;
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
@@ -116,6 +121,8 @@ const DRAFT_ECHO_GUARD = draftEchoGuardEnabled(process.env.NEXT_PUBLIC_DRAFT_ECH
 const FOREIGN_SEND_CLEAR = foreignSendClearEnabled(process.env.NEXT_PUBLIC_FOREIGN_SEND_CLEAR);
 // 2026-10-23 竹内「かなり重くなることもある LINE の画面」: 見ていない画面は定期の読み直しを休む・集計の取り直しは変わった時だけ（戻す NEXT_PUBLIC_LIST_POLL_LEAN=off）
 const LIST_POLL_LEAN = listPollLeanEnabled(process.env.NEXT_PUBLIC_LIST_POLL_LEAN);
+// 2026-10-23 同上（Realtime）: 会話の更新で画面が使う列が変わっていない物は読み飛ばし・0.4秒の間はまとめて当てる（戻す NEXT_PUBLIC_RT_LEAN=off）
+const RT_LEAN = rtLeanEnabled(process.env.NEXT_PUBLIC_RT_LEAN);
 const pageHidden = () => LIST_POLL_LEAN && typeof document !== "undefined" && document.visibilityState === "hidden";
 /** 下書きと比べるお客様の文: 最後のスタッフの発言より後の通（未返信）＋一番新しいお客様の通 */
 function customerTextsForEcho(msgs: ReadonlyArray<{ sender: string; text?: string | null }>): string[] {
@@ -815,6 +822,12 @@ function conversationRowToItem(conversation: SupabaseConversationRow, relatedMes
   };
 }
 
+/** 2026-10-23 RT_LEAN: 行の「画面が使う列の指紋・下書きの印・電話の印」 */
+function rowInfoOf(r: SupabaseConversationRow): { fp: string | null; draftSig: string | null; call: string | null } {
+  const rec = r as unknown as Record<string, unknown>;
+  return { fp: convUiFingerprint(rec), draftSig: convDraftSignature(rec), call: r.call_tapped_at ?? null };
+}
+
 function formatTime(dateString: string) {
   const date = new Date(dateString);
   const hours = String(date.getHours()).padStart(2, "0");
@@ -934,6 +947,8 @@ export default function Home() {
   const imageSendRef = useRef<Map<string, { id: string; url: string | null }>>(new Map());
   // 2026-10-23 AIX・電話ボタン・AIX の2通目など、入力欄を持たない送信の印（同じ中身の押し直しだけ同じ印・届いたら消す・10分で捨てる）
   const aixSendBookRef = useRef(new SendIdBook());
+  // 文が届くまで残す印（会話ごと・画像と電話ボタン）。文が届いたら releaseComposeKeys で消す（帳簿の10分でも消える）
+  const composeHeldKeysRef = useRef<Map<string, Set<string>>>(new Map());
   // 返事が来なかった送信（届いたか分からない）の時だけ、エラーの「再試行」を「同じ印で送り直す」にする
   const [sendRetryable, setSendRetryable] = useState(false);
   // 返事は遅れたが、同じ印で確かめたら届いていた時の知らせ
@@ -1101,7 +1116,7 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "room_vacancies" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_occupant" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "room_vacancies" | null>(null);
   // オーナーに確認した（その他）: 中間フォーム用state
   const [showOwnerOtherForm, setShowOwnerOtherForm] = useState(false);
   const [ownerOtherWhat, setOwnerOtherWhat] = useState("");
@@ -2076,6 +2091,60 @@ export default function Home() {
       refreshTimer = setTimeout(() => { refreshTimer = null; void fetchConversationsAndMessages(true); }, 2500);
     };
 
+    /** Realtime の会話の行の下書き・AIX を画面の行へ当てる（旧の UPDATE の即時の扱いをそのまま関数にした） */
+    const patchDraftFromRow = (c: Conversation, upd: SupabaseConversationRow): Conversation => {
+      const newAiDraft = stripInternalTagsOrNull(upd.ai_draft);
+      // "__SHOWN__" = スタッフが既に返信案を読み込み済み。
+      // brain-sweepがその後にsuggestedAixMetaを書き込んでもUIに反映しない（返信+AIX誘導同時表示バグ防止）
+      if (upd.ai_draft === "__SHOWN__") return { ...c, aiDraft: newAiDraft };
+      // reply_mode="aix" のとき: テキストドラフトがあっても aiDraft を null 扱いにしてAIXのみ表示
+      // （バックエンドのチェックポイントBをすり抜けた場合の最終防衛ライン）
+      const newAixMeta = upd.suggested_aix_meta ?? null;
+      if (newAixMeta?.reply_mode === "aix") return { ...c, aiDraft: null, suggestedAixMeta: newAixMeta };
+      return { ...c, aiDraft: newAiDraft, suggestedAixMeta: newAixMeta };
+    };
+    /** 下書きが届いた時の仕事（プリ生成の印・表示済みキャッシュ・準備中の解除・次の一手の取り直し）。RT_LEAN では下書きの印が変わった時だけ */
+    const runDraftSideEffects = (upd: SupabaseConversationRow) => {
+      // async プリ生成完了 → preGenInProgress をクリア（sentinelは実下書きではないため除外）
+      // 2026-09-21 竹内「完全にしまってたら返信しなくて大丈夫」: [返信不要] も sentinel（実下書きではない）
+      if (upd.ai_draft && !isDraftSentinel(upd.ai_draft)) preGenInProgress.current.delete(String(upd.id));
+      // 新しいAIドラフトが届いたら旧表示済みキャッシュは陳腐化 → 破棄（sentinel は除外）
+      if (upd.ai_draft && !isDraftSentinel(upd.ai_draft)) {
+        delete shownDraftCacheRef.current[String(upd.id)];
+      }
+      // sentinel が届いたら即座に draftPreparing をリセット（60秒待ち防止）
+      if (upd.ai_draft && isDraftSentinel(upd.ai_draft) && upd.ai_draft !== "__SHOWN__" && selectedIdRef.current === String(upd.id)) {
+        if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
+        setDraftPreparing(false);
+      }
+      // 新規顧客メッセージ → AI次アクション提案を再取得（dismiss もリセット）
+      // 2026-09-14 API の漏れ調査: 画面が下書きを表示した印（__SHOWN__）の書き込みでも再取得（Haiku）していた
+      //   → 会話を開くたびに2回以上。表示の印は新しい状態ではないので除く
+      if (upd.ai_draft && upd.ai_draft !== "__SHOWN__") {
+        const convId = String(upd.id);
+        setNextActionMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
+        setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
+        // 選択中の会話は useEffect([selectedId]) が再実行されないため、削除だけだとバナーが消えたままになる → 即再フェッチ
+        if (selectedIdRef.current === convId) {
+          nextActionFetchingRef.current.delete(convId);
+          void fetchNextAction(convId);
+        }
+      }
+    };
+    // 2026-10-23 RT_LEAN: まとめて当てる会話の行（id → 最新の行）。当てた後に同じ行の下書き・AIX を旧と同じ決まりで直す（1回の描き直し）
+    const rtPending = new Map<string, SupabaseConversationRow>();
+    let rtFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushRtPending = () => {
+      if (rtFlushTimer) { clearTimeout(rtFlushTimer); rtFlushTimer = null; }
+      if (!rtPending.size) return;
+      const rows = [...rtPending.values()];
+      rtPending.clear();
+      refreshStatsRef.current.rowPatch += rows.length;
+      applyConversationRows(rows);
+      const byId = new Map(rows.filter((r) => r.ai_draft !== undefined).map((r) => [String(r.id), r] as const));
+      if (byId.size) setConversations((prev) => prev.map((c) => { const r = byId.get(c.id); return r ? patchDraftFromRow(c, r) : c; }));
+    };
+
     // Supabase real-time: 新しいメッセージ・会話をリアルタイム反映
     const channel = supabase
       .channel("realtime-messages")
@@ -2094,6 +2163,37 @@ export default function Home() {
         { event: "UPDATE", schema: "public", table: "conversations" },
         (payload) => {
           const upd = payload.new as SupabaseConversationRow | null;
+          // 2026-10-23 試験の会話の更新は選んでいない時は当てない（NEXT_PUBLIC_RT_IGNORE_TEST）
+          if (shouldIgnoreTestRealtime(upd?.id, selectedIdRef.current)) {
+            // 画面には当てないが、新しい下書きが来たら表示済みの控え・プリ生成の印は捨てる（後で選んだ時に古い下書きを戻さない）
+            if (upd?.ai_draft && !isDraftSentinel(upd.ai_draft)) {
+              preGenInProgress.current.delete(String(upd.id));
+              delete shownDraftCacheRef.current[String(upd.id)];
+            }
+            return;
+          }
+          // 2026-10-23 RT_LEAN: 画面が使う列が変わっていない更新（脳の分析・下書きの試み・学習の印など）は何もしない。
+          //   変わった更新は 0.4 秒まとめて当てる。下書き・AIX・電話の印が変わった時はすぐ（下の即時の扱いはそのまま）
+          let rtDraftChanged = true;
+          if (RT_LEAN && upd?.id) {
+            const id = String(upd.id);
+            // まとめ待ちの行がある時はそれと比べる（当てた行と比べると、まとめ待ちの間に元に戻した更新を読み飛ばして古い行を当ててしまう）
+            const pend = rtPending.get(id);
+            const prev = pend ? rowInfoOf(pend) : appliedRowInfoRef.current.get(id);
+            const plan = rtUpdatePlan(prev?.fp ?? undefined, prev?.draftSig ?? undefined, prev ? prev.call : undefined, upd as unknown as Record<string, unknown>);
+            if (plan.skip) { refreshStatsRef.current.rtSkip++; return; }
+            rtDraftChanged = plan.draftChanged;
+            // 電話の印の通知は当てる前の値と比べる（旧と同じ before を先に取る）
+            const before = conversationsRef.current.find((c) => c.id === id);
+            rtPending.set(id, upd);
+            if (plan.urgent) flushRtPending();
+            else { refreshStatsRef.current.rtBatched++; if (!rtFlushTimer) rtFlushTimer = setTimeout(flushRtPending, 400); }
+            if (upd.call_tapped_at && Date.now() - Date.parse(upd.call_tapped_at) < 2 * 60_000 && before && before.callTappedAt !== upd.call_tapped_at) {
+              showNotif("📞 電話ボタンが押されました", `${upd.customer_name || before.customerName || ""}さん — 出られなかった時は折り返しを`, "/");
+            }
+            if (rtDraftChanged && upd.ai_draft !== undefined) runDraftSideEffects(upd);
+            return;
+          }
           // 2026-10-06 ⑫: 変わった行だけ直す（旧: 1件の更新ごとに2.5秒後の全件の読み直し＝会話・メッセージ・物件顧客で約2MB）。
           //   下の下書き・AIX の即時の扱いはこの後に当てる（旧も全件の読み直しの後は DB の行の値になっていた）
           if (upd?.id) { refreshStatsRef.current.rowPatch++; applyConversationRows([upd]); }
@@ -2106,45 +2206,8 @@ export default function Home() {
           }
           // ai_draft が payload に含まれていればローカルStateを即時更新（バナー遅延ゼロに）
           if (upd?.id && upd.ai_draft !== undefined) {
-            setConversations((prev) =>
-              prev.map((c) => {
-                if (c.id !== String(upd.id)) return c;
-                const newAiDraft = stripInternalTagsOrNull(upd.ai_draft);
-                // "__SHOWN__" = スタッフが既に返信案を読み込み済み。
-                // brain-sweepがその後にsuggestedAixMetaを書き込んでもUIに反映しない（返信+AIX誘導同時表示バグ防止）
-                if (upd.ai_draft === "__SHOWN__") return { ...c, aiDraft: newAiDraft };
-                // reply_mode="aix" のとき: テキストドラフトがあっても aiDraft を null 扱いにしてAIXのみ表示
-                // （バックエンドのチェックポイントBをすり抜けた場合の最終防衛ライン）
-                const newAixMeta = upd.suggested_aix_meta ?? null;
-                if (newAixMeta?.reply_mode === "aix") return { ...c, aiDraft: null, suggestedAixMeta: newAixMeta };
-                return { ...c, aiDraft: newAiDraft, suggestedAixMeta: newAixMeta };
-              })
-            );
-            // async プリ生成完了 → preGenInProgress をクリア（sentinelは実下書きではないため除外）
-            // 2026-09-21 竹内「完全にしまってたら返信しなくて大丈夫」: [返信不要] も sentinel（実下書きではない）
-            if (upd.ai_draft && !isDraftSentinel(upd.ai_draft)) preGenInProgress.current.delete(String(upd.id));
-            // 新しいAIドラフトが届いたら旧表示済みキャッシュは陳腐化 → 破棄（sentinel は除外）
-            if (upd.ai_draft && !isDraftSentinel(upd.ai_draft)) {
-              delete shownDraftCacheRef.current[String(upd.id)];
-            }
-            // sentinel が届いたら即座に draftPreparing をリセット（60秒待ち防止）
-            if (upd.ai_draft && isDraftSentinel(upd.ai_draft) && upd.ai_draft !== "__SHOWN__" && selectedIdRef.current === String(upd.id)) {
-              if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
-              setDraftPreparing(false);
-            }
-            // 新規顧客メッセージ → AI次アクション提案を再取得（dismiss もリセット）
-            // 2026-09-14 API の漏れ調査: 画面が下書きを表示した印（__SHOWN__）の書き込みでも再取得（Haiku）していた
-            //   → 会話を開くたびに2回以上。表示の印は新しい状態ではないので除く
-            if (upd.ai_draft && upd.ai_draft !== "__SHOWN__") {
-              const convId = String(upd.id);
-              setNextActionMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
-              setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
-              // 選択中の会話は useEffect([selectedId]) が再実行されないため、削除だけだとバナーが消えたままになる → 即再フェッチ
-              if (selectedIdRef.current === convId) {
-                nextActionFetchingRef.current.delete(convId);
-                void fetchNextAction(convId);
-              }
-            }
+            setConversations((prev) => prev.map((c) => (c.id !== String(upd.id) ? c : patchDraftFromRow(c, upd))));
+            runDraftSideEffects(upd);
           }
           if (!upd?.id) scheduleFullRefresh();
         }
@@ -2153,6 +2216,19 @@ export default function Home() {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages" },
         (payload) => {
+          // 2026-10-23: テスト専用の会話（YUMA・YUMA2〜5）の通は選んでいない限り読み飛ばす（一覧の作り直し・並べ替えをしない・30秒の読み直しで追いつく）
+          {
+            const ign = payload.new as { conversation_id?: string | number; sender?: string } | null;
+            if (shouldIgnoreTestRealtime(ign?.conversation_id, selectedIdRef.current)) {
+              // 画面には当てないが、お客様の新しい通で古くなった表示済みの下書きの控えは捨てる（後で選んだ時に古い下書きを戻さない）
+              if (ign?.sender === "customer") {
+                const cid = String(ign.conversation_id);
+                delete shownDraftCacheRef.current[cid];
+                clearedShownDraftRef.current.delete(cid);
+              }
+              return;
+            }
+          }
           // お客様メッセージが届いたら通知＋手動既読を解除
           if (payload.new && (payload.new as { sender: string }).sender === "customer") {
             const msgText = (payload.new as { text?: string }).text || "新しいメッセージが届きました";
@@ -2240,6 +2316,7 @@ export default function Home() {
           // image_url / file_url が後から埋まったとき（画像・ファイルの非同期取得）に反映する
           const upd = payload.new as { id: number; conversation_id: number; image_url?: string; image_expires_at?: string; file_url?: string; file_name?: string };
           if (!upd?.id || (!upd.image_url && !upd.file_url)) return;
+          if (shouldIgnoreTestRealtime(upd.conversation_id, selectedIdRef.current)) return;
           setConversations((prev) =>
             prev.map((c) => {
               if (c.id !== String(upd.conversation_id)) return c;
@@ -2326,6 +2403,8 @@ export default function Home() {
         if (!pc?.id) return;
         const convIds = conversationsRef.current.filter((c) => c.propertyCustomerId === pc.id).map((c) => c.id);
         if (!convIds.length) return;
+        // 2026-10-23: 試験の片付けが戻すテスト専用の会話の条件の行は、その会話を選んでいない限り読み飛ばす
+        if (shouldIgnoreTestRealtimeForConvs(convIds, selectedIdRef.current)) return;
         const entry = linkedEntryOf(pc);
         setLinkedCustomerMap((prev) => {
           const next = { ...prev };
@@ -2378,6 +2457,7 @@ export default function Home() {
       clearInterval(pollInterval);
       document.removeEventListener("visibilitychange", onVisible);
       if (refreshTimer) clearTimeout(refreshTimer);
+      if (rtFlushTimer) clearTimeout(rtFlushTimer);
     };
   }, []);
 
@@ -2779,7 +2859,9 @@ export default function Home() {
   const lastFullRefreshAtRef = useRef<number | null>(lineListCache()?.lastFullAt ?? null);
   const lastPollAtRef = useRef<number | null>(lineListCache()?.lastPollAt ?? null);
   /** 読み直しの回数（測る用・window.__aixListRefresh で見られる） */
-  const refreshStatsRef = useRef<{ full: number; delta: number; rowPatch: number; startedAt: number }>({ full: 0, delta: 0, rowPatch: 0, startedAt: Date.now() });
+  const refreshStatsRef = useRef<{ full: number; delta: number; rowPatch: number; rtSkip: number; rtBatched: number; startedAt: number }>({ full: 0, delta: 0, rowPatch: 0, rtSkip: 0, rtBatched: 0, startedAt: Date.now() });
+  /** 2026-10-23 RT_LEAN: 最後に画面へ当てた行の「画面が使う列の指紋・下書きの印・電話の印」（Realtime・読み直しの両方で更新） */
+  const appliedRowInfoRef = useRef<Map<string, { fp: string | null; draftSig: string | null; call: string | null }>>(new Map());
   useEffect(() => { (window as unknown as { __aixListRefresh?: unknown }).__aixListRefresh = refreshStatsRef.current; }, []);
   /** 会話ごとのお客様の最後の発言の時刻（DB の集計）。一覧の未読・AIX の鮮度・下書きの先回りに使う */
   const lastCustomerAtRef = useRef<Record<string, string>>(lineListCache()?.lastCustomerAt ?? {});
@@ -2803,9 +2885,15 @@ export default function Home() {
   };
   const linkedCustomerMapRef = useRef(linkedCustomerMap);
   useEffect(() => { linkedCustomerMapRef.current = linkedCustomerMap; }, [linkedCustomerMap]);
+  /** 2026-10-23 RT_LEAN: 画面へ当てた行の印を覚える（Realtime・差分・丸ごと・最初の40件のどれで当てても。覚えないと古い印と比べて読み飛ばしを誤る） */
+  const recordAppliedRows = (rows: SupabaseConversationRow[]) => {
+    if (!RT_LEAN) return;
+    for (const r of rows) appliedRowInfoRef.current.set(String(r.id), rowInfoOf(r));
+  };
   /** DB の会話の行（Realtime・差分の読み直し）を一覧に当てる。読み込み済みのメッセージは残す */
   const applyConversationRows = (rows: SupabaseConversationRow[]) => {
     if (!rows.length) return;
+    recordAppliedRows(rows);
     setConversations((prev) => {
       const next = upsertConversationRows(prev, rows, (r) => String(r.id), (r, existing) => {
         const item = conversationRowToItem(r, existing?.messages ?? []);
@@ -2852,6 +2940,26 @@ export default function Home() {
     rawData: pc,
   });
 
+  // 2026-10-23 RT_IGNORE_TEST: テスト専用の会話の物件顧客の更新は選んでいない時は読み飛ばす。静かな読み直しは知っている物件顧客を読まないので、
+  //   テスト専用の会話を選んだ時にその行だけ読み直す（読まないと条件の帯が古いまま）
+  useEffect(() => {
+    if (!RT_IGNORE_TEST || !selectedId || !isTestOnlyConversation(selectedId)) return;
+    const pcId = conversationsRef.current.find((c) => c.id === selectedId)?.propertyCustomerId;
+    if (!pcId) return;
+    void supabase.from("property_customers").select(PC_LINK_COLUMNS).eq("id", pcId).maybeSingle()
+      .then(({ data }) => {
+        if (!data) return;
+        const pc = data as unknown as PropertyCustomerRow;
+        const entry = linkedEntryOf(pc);
+        const convIds = conversationsRef.current.filter((c) => c.propertyCustomerId === pc.id).map((c) => c.id);
+        setLinkedCustomerMap((prev) => {
+          const next = { ...prev };
+          for (const id of convIds) next[id] = { ...(prev[id] ?? {}), ...entry };
+          return next;
+        });
+      }, () => {});
+  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const fetchConversationsAndMessages = async (silent = false, retries = 0) => {
     if (!silent) setPageLoading(true);
     if (!silent) setError("");
@@ -2868,6 +2976,7 @@ export default function Home() {
         .limit(FIRST_PAGE_CONVERSATIONS);
       if (!firstErr && firstRows && firstRows.length > 0) {
         const rows = firstRows as unknown as SupabaseConversationRow[];
+        recordAppliedRows(rows);
         setConversations((prev) => {
           const prevMap = new Map(prev.map((c) => [c.id, c]));
           const firstIds = new Set(rows.map((r) => String(r.id)));
@@ -2951,6 +3060,7 @@ export default function Home() {
 
     // メッセージは持っている物だけ使う（開いた会話・Realtime で届いた分）。一覧の行は DB の last_message で出す
     const formatted: Conversation[] = conversationsData.map((conversation) => conversationRowToItem(conversation, []));
+    recordAppliedRows(conversationsData);
 
     // 既存のメッセージ配列の方が長い場合は保持（ポーリングによる縮退を防ぐ）
     // メッセージを保持する場合もメタデータ（lastMessage等）は新しい値を使う
@@ -3004,7 +3114,7 @@ export default function Home() {
     if (propCustomerIds.length > 0) {
       const { data: pcData } = await supabase
         .from("property_customers")
-        .select("id,customer_name,status,last_property_sent_at,property_viewed_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary,floor_area_min,floor_area_max,pet,rp_update_days")
+        .select(PC_LINK_COLUMNS)
         .in("id", propCustomerIds);
       if (pcData) {
         const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen; rawData?: PropertyCustomerRow | null }> = {};
@@ -5433,7 +5543,8 @@ export default function Home() {
         console.error("LINE send error:", lineEx);
         if (lineEx instanceof UncertainSendError) {
           // 2026-10-23: 返事が来ず、同じ印での確かめも返事が無い → 届いたか分からない（「未送信」とは言わない）
-          lineErrorMsg = "⚠️ 送信の返事が来ませんでした（サーバーが混んでいます）。LINE に届いているか分かりません。LINE の画面で確かめてから「もう一度送る」を押してください（同じ送信の印なので二重には届きません）";
+          //   入力欄の印は入力欄の文・画像が変わるまで残る（時間では捨てない・LINE は24時間同じ鍵を覚える）→ 安全な押し直し方を添える
+          lineErrorMsg = "⚠️ 送信の返事が来ませんでした（サーバーが混んでいます）。LINE に届いているか分かりません。LINE の画面で確かめてから「もう一度送る」を押してください（入力欄の文・画像を変えずに押せば二重には届きません。画面を開き直した後や文を変えた後は二重に届くことがあります）";
           lineErrorCode = "uncertain";
         } else {
           lineErrorMsg = `⚠️ LINE送信エラー: ${lineEx instanceof Error ? lineEx.message : "通信エラー"}`;
@@ -5504,20 +5615,17 @@ export default function Home() {
       // 画像は複数でも1メッセージ行にまとめて保存（JSON配列）
       if (anyImageSent) {
         const imageUrlData = sentImageUrls.length === 1 ? sentImageUrls[0] : JSON.stringify(sentImageUrls);
-        markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-        const { data: imgRow, error: imgInsertError } = await supabase
-          .from("messages")
-          .insert({
-            conversation_id: convId,
-            sender: "staff",
-            text: "[画像]",
-            image_url: imageUrlData,
-            created_at: now.toISOString(),
-            // 引用リプライ検出用: LINE送信で確定した message id をそのままinsert（書き戻し不要）
-            ...(firstImageLineMsgId ? { line_message_id: firstImageLineMsgId } : {}),
-          })
-          .select();
-        if (imgInsertError) throw imgInsertError;
+        // 引用リプライ検出用: LINE送信で確定した message id をそのままinsert（書き戻し不要）
+        //   2026-10-23: 同じ印の押し直しで「もう届いていた通の id」が返った時は、もう入っている行を使う（二重の行にしない）
+        const imgIns = await insertStaffMessageOnce({
+          conversation_id: convId,
+          sender: "staff",
+          text: "[画像]",
+          image_url: imageUrlData,
+          created_at: now.toISOString(),
+        }, firstImageLineMsgId);
+        if (imgIns.error) throw imgIns.error;
+        const imgRow = imgIns.id ? [{ id: imgIns.id }] : null;
         newMessages.push({
           id: String(imgRow?.[0]?.id || crypto.randomUUID()),
           sender: "staff",
@@ -5531,19 +5639,14 @@ export default function Home() {
       // テキストメッセージを保存（画像の1秒後のタイムスタンプで後ろに表示）
       if (textSent && textToSend) {
         const textNow = anyImageSent ? new Date(now.getTime() + 1000) : now;
-        markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-        const { data: textRow, error: textInsertError } = await supabase
-          .from("messages")
-          .insert({
-            conversation_id: convId,
-            sender: "staff",
-            text: textToSend,
-            created_at: textNow.toISOString(),
-            // 引用リプライ検出用: LINE送信で確定した message id をそのままinsert（書き戻し不要）
-            ...(textLineMsgId ? { line_message_id: textLineMsgId } : {}),
-          })
-          .select();
-        if (textInsertError) throw textInsertError;
+        const textIns = await insertStaffMessageOnce({
+          conversation_id: convId,
+          sender: "staff",
+          text: textToSend,
+          created_at: textNow.toISOString(),
+        }, textLineMsgId);
+        if (textIns.error) throw textIns.error;
+        const textRow = textIns.id ? [{ id: textIns.id }] : null;
         newMessages.push({
           id: String(textRow?.[0]?.id || crypto.randomUUID()),
           sender: "staff",
@@ -6189,15 +6292,60 @@ export default function Home() {
   //   同じ中身（key）の押し直しは同じ印 → サーバーが LINE の X-Line-Retry-Key に入れる → 前の送信で届いていたら LINE は送らない。
   //   返事が firstMs 来なければ同じ印でもう一度送って確かめる（届いていれば届いた通の id が返る）。確かめも返事が無ければ UncertainSendError。
   //   届いたら（2xx）印を消す（後で同じ中身をわざと送る時に消えないように）
-  const postSendLineIdem = async (key: string, body: Record<string, unknown>, firstMs = 30_000): Promise<Response> => {
+  //   2026-10-23 見直し: holdForCompose（画像・電話ボタン）は届いても印を残し、同じ会話の文が届いた時に消す。
+  //   AIX の「画像 → 文」で文が届いたか分からないまま閉じ、同じ中身で送り直した時、届いた画像を同じ印で送る＝LINE は送らない
+  //   （旧は画像が届いた時点で印を消していたので、押し直しで画像が二重に届いた）。印は帳簿の10分で必ず消える
+  const postSendLineIdem = async (key: string, body: Record<string, unknown>, firstMs = 30_000, holdForCompose = false): Promise<Response> => {
     const { res, confirmedAfterTimeout } = await sendWithIdempotency(aixSendBookRef.current, key, (send_id, ms) => fetch("/api/send-line-message", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
       body: JSON.stringify({ ...body, send_id }),
       signal: AbortSignal.timeout(ms),
-    }), firstMs);
+    }), firstMs, { keep: holdForCompose });
+    if (holdForCompose && res.ok) {
+      const cid = String(body.conversation_id ?? "");
+      const held = composeHeldKeysRef.current.get(cid) ?? new Set<string>();
+      held.add(key);
+      composeHeldKeysRef.current.set(cid, held);
+    }
     if (confirmedAfterTimeout && res.ok) setSendNotice("返事が遅れましたが、LINE には1回だけ届いています（二重には送っていません）");
     return res;
+  };
+  /** 同じ会話の文が届いた → ひとまとまり（画像・電話ボタン → 文）が終わったので、残していた印を消す */
+  const releaseComposeKeys = (cid: string) => {
+    const held = composeHeldKeysRef.current.get(cid);
+    if (!held) return;
+    for (const k of held) aixSendBookRef.current.done(k);
+    composeHeldKeysRef.current.delete(cid);
+  };
+  /**
+   * 2026-10-23 送信の二重防止の見直し: 同じ印の押し直しで LINE が「もう届いていた通の id」を返した時、messages の行を二重に入れない
+   * （messages.line_message_id には一意の索引がある＝二重に入れると失敗する・旧は失敗を投げるか、仮の id で吹き出しが二重になった）。
+   * もう入っている id は入れずに、その行の id を返す
+   */
+  const existingRowsByLineId = async (ids: Array<string | null | undefined>): Promise<Map<string, string>> => {
+    const list = [...new Set(ids.filter((x): x is string => Boolean(x)))];
+    if (list.length === 0) return new Map();
+    try {
+      const { data } = await supabase.from("messages").select("id, line_message_id").in("line_message_id", list);
+      return new Map((data ?? []).map((r: { id: unknown; line_message_id: unknown }) => [String(r.line_message_id), String(r.id)]));
+    } catch {
+      return new Map();
+    }
+  };
+  /** 1行入れる（LINE の通の id がもう入っていれば入れずにその行の id・同時に入った時の一意の索引の失敗もその行の id） */
+  const insertStaffMessageOnce = async (row: Record<string, unknown>, lineMsgId: string | null): Promise<{ id: string | null; existed: boolean; error: unknown }> => {
+    if (lineMsgId) {
+      const ex = (await existingRowsByLineId([lineMsgId])).get(lineMsgId);
+      if (ex) return { id: ex, existed: true, error: null };
+    }
+    markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
+    const { data, error } = await supabase.from("messages").insert({ ...row, ...(lineMsgId ? { line_message_id: lineMsgId } : {}) }).select();
+    if (error && lineMsgId && (error as { code?: string }).code === "23505") {
+      const ex = (await existingRowsByLineId([lineMsgId])).get(lineMsgId);
+      return { id: ex ?? null, existed: true, error: null };
+    }
+    return { id: data?.[0]?.id != null ? String(data[0].id) : null, existed: false, error };
   };
 
   // 2026-09-15 竹内（H 事例）: AIX【電話をかける】の「電話をかける」ボタン（LINEコール）のカードを送り、会話に記録する。
@@ -6207,7 +6355,7 @@ export default function Home() {
     if (!cid) throw new Error("会話が選択されていません");
     let res: Response;
     try {
-      res = await postSendLineIdem(`call\u0001${cid}`, { line_user_id: selectedConversation.lineUserId, account: selectedConversation.account, call_button: true, conversation_id: cid, origin: "aix" });
+      res = await postSendLineIdem(`call\u0001${cid}`, { line_user_id: selectedConversation.lineUserId, account: selectedConversation.account, call_button: true, conversation_id: cid, origin: "aix" }, undefined, true);
     } catch (e) {
       if (e instanceof UncertainSendError) throw new Error(UNCERTAIN_SEND_MSG);
       throw e;
@@ -6216,12 +6364,10 @@ export default function Home() {
     if (!res.ok || !json.ok) throw new Error(json.error || `電話ボタンを送れませんでした（HTTP ${res.status}）`);
     const at = new Date();
     const lineMsgId = json.sentMessageIds?.[0] ?? null;
-    markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-    const { data: row } = await supabase.from("messages").insert({
+    const ins = await insertStaffMessageOnce({
       conversation_id: cid, sender: "staff", text: CALL_BUTTON_MESSAGE_TEXT, created_at: at.toISOString(), is_aix_generated: true,
-      ...(lineMsgId ? { line_message_id: lineMsgId } : {}),
-    }).select();
-    const newMsg: Message = { id: String(row?.[0]?.id || crypto.randomUUID()), sender: "staff", text: CALL_BUTTON_MESSAGE_TEXT, time: formatTime(at.toISOString()), rawCreatedAt: at.toISOString(), isAix: true };
+    }, lineMsgId);
+    const newMsg: Message = { id: String(ins.id || crypto.randomUUID()), sender: "staff", text: CALL_BUTTON_MESSAGE_TEXT, time: formatTime(at.toISOString()), rawCreatedAt: at.toISOString(), isAix: true };
     setConversations((prev) => prev.map((c) => c.id !== cid || c.messages.some((m) => m.id === newMsg.id) ? c : { ...c, messages: [...c.messages, newMsg] }));
   };
 
@@ -6242,7 +6388,7 @@ export default function Home() {
         account: selectedConversation.account, conversation_id: selectedConversation.id,
         origin: isAix ? "aix" : "manual",
         ...(isAix && activeAixFlow ? { aix_type: activeAixFlow } : {}),
-      }, 60_000);
+      }, 60_000, true);
     } catch (e) {
       if (e instanceof UncertainSendError) throw new Error(UNCERTAIN_SEND_MSG);
       throw e;
@@ -6254,15 +6400,19 @@ export default function Home() {
     if (delivered.length === 0) throw new Error(json.error || `画像を送れませんでした（HTTP ${res.status}）`);
     const cid = selectedConversation.id;
     const newMessages: Message[] = [];
-    for (let i = 0; i < delivered.length; i++) {
-      const at = new Date(Date.now() + i).toISOString();   // 送った順に並ぶよう1msずつずらす
-      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-      const { data: row } = await supabase.from("messages").insert({
-        conversation_id: cid, sender: "staff", text: "[画像]", image_url: delivered[i], created_at: at,
-        is_aix_generated: isAix, ...(ids[i] ? { line_message_id: ids[i] } : {}),
-      }).select();
+    // 2026-10-23: 同じ印の押し直しで「もう届いていた通の id」が返ると、もう入っている行と同じ id になる → 入れずにその行を使う
+    //   （束の中で同じ id が2回ある時も1回だけ。id の無い画像はそのまま入れる）
+    const existing = await existingRowsByLineId(ids.slice(0, delivered.length));
+    const items = delivered.map((url, i) => ({ url, i, lid: ids[i] ?? null }));
+    const { toInsert } = splitByExistingLineIds(items, (it) => it.lid, new Set<string>());   // 束の中の重なりだけ外す
+    for (const it of toInsert) {
+      const at = new Date(Date.now() + it.i).toISOString();   // 送った順に並ぶよう1msずつずらす
+      const exId = it.lid ? existing.get(it.lid) : undefined;
+      const rowId = exId ?? (await insertStaffMessageOnce({
+        conversation_id: cid, sender: "staff", text: "[画像]", image_url: it.url, created_at: at, is_aix_generated: isAix,
+      }, it.lid)).id;
       // 物件名の読み取りは送信API（send-line-message）が1枚ずつ1回だけ行う（2026-09-22 二重読みをやめた）
-      newMessages.push({ id: String(row?.[0]?.id || crypto.randomUUID()), sender: "staff", text: "[画像]", imageUrl: delivered[i], time: formatTime(at), rawCreatedAt: at, isAix });
+      newMessages.push({ id: String(rowId || crypto.randomUUID()), sender: "staff", text: "[画像]", imageUrl: it.url, time: formatTime(at), rawCreatedAt: at, isAix });
     }
     const upgrade = (STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status) === "hearing";
     const nowIso = new Date().toISOString();
@@ -6331,7 +6481,7 @@ export default function Home() {
             // 今開いている AIX の種類（"property_recommendation" など）。
             // onSend の引数を増やさずに済むよう、画面が持っている activeAixFlow をそのまま渡す
             ...(isAix && activeAixFlow ? { aix_type: activeAixFlow } : {}),
-          });
+          }, undefined, true);   // 2026-10-23: 文が届くまで画像の印を残す（文が届いたか分からないまま押し直しても画像は二重に届かない）
         if (!imgRes.ok) {
           const imgErr = await imgRes.json().catch(() => ({ error: `HTTP ${imgRes.status}` })) as { error?: string };
           lineErrorMsg = `⚠️ LINE画像送信失敗: ${imgErr.error || imgRes.statusText}`;
@@ -6351,6 +6501,7 @@ export default function Home() {
           lineErrorMsg = `⚠️ LINE送信失敗: ${txtErr.error || txtRes.statusText}`;
         } else {
           textSent = true;
+          releaseComposeKeys(selectedConversation.id);   // 文が届いた → 画像・電話ボタンの印も消す（後で同じ画像をわざと送れるように）
           const txtJson = await txtRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
           textLineMsgId = txtJson?.sentMessageIds?.[0] ?? null;
           lastLineSendRef.current = { messageId: textLineMsgId, sentAt: now.toISOString() };
@@ -6375,20 +6526,17 @@ export default function Home() {
     // 画像が先、テキストが後の順で保存（LINE送信成功分のみ）
     if (imageSent && imageUrl) {
       const imgNow = new Date();
-      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-      const { data: imgRow, error: imgError } = await supabase
-        .from("messages")
-        .insert({
-          conversation_id: selectedConversation.id,
-          sender: "staff",
-          text: "[画像]",
-          image_url: imageUrl,
-          created_at: imgNow.toISOString(),
-          is_aix_generated: isAix ?? false,
-          ...(imageLineMsgId ? { line_message_id: imageLineMsgId } : {}),
-        })
-        .select();
-      if (imgError) throw imgError;
+      // 2026-10-23: 同じ印の押し直しで「もう届いていた通の id」が返った時は、もう入っている行を使う（二重の行にしない）
+      const imgIns = await insertStaffMessageOnce({
+        conversation_id: selectedConversation.id,
+        sender: "staff",
+        text: "[画像]",
+        image_url: imageUrl,
+        created_at: imgNow.toISOString(),
+        is_aix_generated: isAix ?? false,
+      }, imageLineMsgId);
+      if (imgIns.error) throw imgIns.error;
+      const imgRow = imgIns.id ? [{ id: imgIns.id }] : null;
       // 2026-09-22 竹内「やる」: 物件名の読み取りは送信API（send-line-message の after）が1回だけ行う。
       //   旧はここでも /api/extract-property-info を呼び、同じ画像を2回読んでいた
       newMessages.push({
@@ -6403,19 +6551,15 @@ export default function Home() {
     }
 
     if (textSent && text.trim()) {
-      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-      const { data: insertedRows, error: insertError } = await supabase
-        .from("messages")
-        .insert({
-          conversation_id: selectedConversation.id,
-          sender: "staff",
-          text: text.trim(),
-          created_at: now.toISOString(),
-          is_aix_generated: isAix ?? false,
-          ...(textLineMsgId ? { line_message_id: textLineMsgId } : {}),
-        })
-        .select();
-      if (insertError) throw insertError;
+      const txtIns = await insertStaffMessageOnce({
+        conversation_id: selectedConversation.id,
+        sender: "staff",
+        text: text.trim(),
+        created_at: now.toISOString(),
+        is_aix_generated: isAix ?? false,
+      }, textLineMsgId);
+      if (txtIns.error) throw txtIns.error;
+      const insertedRows = txtIns.id ? [{ id: txtIns.id }] : null;
       newMessages.push({
         id: String(insertedRows?.[0]?.id || crypto.randomUUID()),
         sender: "staff",
@@ -6859,7 +7003,7 @@ export default function Home() {
   // 次アクション提案バナー経由でAIXを開く（paramsからaixInit系stateを初期化してから開く）
   const openAixWithParams = (type: AixActionType, params?: NextActionParams) => {
     // 2026-10-06 ⑫: 設備・管理会社について・代理契約・募集状況（管理会社）も選んだ状態で開く（旧は8種類だけで、設備の確認の約束が素の画面で開いた）
-    const CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
+    const CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_occupant", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
     if (params?.check_pattern && (CP_OK as readonly string[]).includes(params.check_pattern)) {
       setAixInitCheckPattern(params.check_pattern as (typeof CP_OK)[number]);
     }
@@ -9450,7 +9594,7 @@ export default function Home() {
                   onClick={() => {
                     setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result");
                     // 条件側はブレインのピッカーを開く（代表・オーナー・その他の時は AIX メニューの「確認した（条件・交渉）」から）
-                    const CP_OK = ["vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
+                    const CP_OK = ["vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_occupant", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
                     if (guideCheckPattern && (CP_OK as readonly string[]).includes(guideCheckPattern)) setAixInitCheckPattern(guideCheckPattern as (typeof CP_OK)[number]);
                     openAixDirect("property_check_result");
                   }}
@@ -9952,7 +10096,7 @@ export default function Home() {
                     setActiveAixFlow(brainAction);
                     // 2026-09-12 段1: ブレインが決めた check_pattern（mgmt_move_in 等）をそのままモーダルに渡す（判定し直さない）
                     const brainCp = (brainMeta as { check_pattern?: string | null }).check_pattern ?? null;
-                    const BRAIN_CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
+                    const BRAIN_CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_occupant", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
                     if (brainAction === "property_check_result" && brainCp && (BRAIN_CP_OK as readonly string[]).includes(brainCp)) {
                       setAixInitCheckPattern(brainCp as (typeof BRAIN_CP_OK)[number]);
                     }
@@ -14934,6 +15078,18 @@ export default function Home() {
                   </>
                 },
                 {
+                  // 2026-10-23 竹内さんの決定（2d860ddb・質問7）「入居者の条件（お子様・年齢）のピッカーを作る」
+                  key: "mgmt_occupant",
+                  label: "入居者の条件について",
+                  desc: "お子様のご入居（年齢の条件）を管理会社に確認した結果",
+                  hint: "",
+                  icon: <>
+                    <circle cx="28" cy="27" r="6.5" stroke="#546E7A" strokeWidth="1.6"/>
+                    <circle cx="44" cy="33" r="4.5" stroke="#546E7A" strokeWidth="1.6"/>
+                    <path d="M18 50c0-5.5 4.5-10 10-10s10 4.5 10 10M37 50c0-4 3-7 7-7s7 3 7 7" stroke="#546E7A" strokeWidth="1.6" strokeLinecap="round"/>
+                  </>
+                },
+                {
                   // 2026-10-18 竹内さん 10/18「ライフラインを聞かれた時の返信は『別途ご案内させて頂きます』の約束→答えはこのピッカーから」
                   key: "mgmt_lifeline",
                   label: "ライフラインについて",
@@ -15055,7 +15211,7 @@ export default function Home() {
                     <path d="M30 39l4 4 9-9.5" stroke="#2E7D32" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
                   </>
                 },
-              ] as Array<{ key: "mgmt_availability" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
+              ] as Array<{ key: "mgmt_availability" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_occupant" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
                 const isSuggested = suggestedPropertyCheckMode === key;
                 return (
                 <button
