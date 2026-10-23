@@ -1,6 +1,6 @@
 // 2026-10-18 flash-writer（書く役が flash の時だけの手当て）。お客様の発言は試験の問題の型（名前は伏せた）
 // 実行: npx tsx app/lib/__tests__/flash-writer.test.ts
-import { buildFlashChecklist, missingFlashItems, renderFlashChecklistNote, isFlashModel, flashWriterParts, flashWriterAdaptOn, topExamples, buildFlashRewriteFeedback } from "../flash-writer";
+import { RESTATE_APOLOGY_HOW, buildFlashChecklist, missingFlashItems, renderFlashChecklistNote, isFlashModel, flashWriterParts, flashWriterAdaptOn, topExamples, buildFlashRewriteFeedback } from "../flash-writer";
 import { testDeepseekModelOverride } from "../llm-alt-provider";
 import type { TurnContract } from "../turn-contract";
 
@@ -23,6 +23,10 @@ ok("手当ての指定", [...flashWriterParts({ FLASH_WRITER_PARTS: "list,plan,b
   const miss = missingFlashItems(items, "かしこまりました！！大国町エリアで1K・7畳以上のお部屋を新たにピックアップしてお送りさせて頂きます！！");
   ok("q032 謝りを受けない下書きは抜け", miss.length === 1 && /すみません/.test(miss[0].label));
   ok("q032 受けた下書きは抜けなし", missingFlashItems(items, "全然大丈夫です😊！！大国町エリアで1K・7畳以上のお部屋をピックアップしてお送りさせて頂きます！！").length === 0);
+  // 2026-10-23 317c7a7c: 要望の言い直しの謝りは「全然大丈夫です」でなく受け入れ＋ご満足頂けるお部屋が一番
+  ok("q032 言い直しの謝りの受け方", items.some((x) => x.how === RESTATE_APOLOGY_HOW));
+  ok("q032 317c7a7c の形は抜けなし", missingFlashItems(items, "かしこまりました！！大国町エリアで1K・7畳以上のお部屋をピックアップしてお送りさせて頂きます！！ご満足頂けるお部屋が見つかるのが一番ですのでご要望等出てきましたらいつでもお気軽にご連絡ください😊！！").length === 0);
+  ok("言い直しでない謝りは今まで通り", buildFlashChecklist({ contract: base, ledgerItems: [], customerUnits: ["返信遅くなってすみません"] }).every((x) => x.how !== RESTATE_APOLOGY_HOW));
   ok("一覧の文", /答える項目の一覧/.test(renderFlashChecklistNote(items)) && /すみません/.test(renderFlashChecklistNote(items)));
 }
 // q157 型: 物件ごとの答え（物件名を書く）
