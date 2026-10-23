@@ -89,7 +89,9 @@ import { decideApplySubMode } from "./lib/apply-sub-mode";
 import { normalizePetWording } from "./lib/pet-wording";
 import { isTestOnlyConversation } from "./lib/test-conversations";
 // 2026-10-23 試験の通（入る通の約93%）の Realtime は、その会話を選んでいる時だけ当てる（戻す NEXT_PUBLIC_RT_IGNORE_TEST=off）
-import { shouldIgnoreTestRealtime, shouldIgnoreTestRealtimeForConvs } from "./lib/realtime-test-ignore";
+import { RT_IGNORE_TEST, shouldIgnoreTestRealtime, shouldIgnoreTestRealtimeForConvs } from "./lib/realtime-test-ignore";
+/** 会話画面の紐付け（linkedEntryOf）に使う物件顧客の列（一覧の読み込み・テスト専用の会話を選んだ時の読み直しで同じ） */
+const PC_LINK_COLUMNS = "id,customer_name,status,last_property_sent_at,property_viewed_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary,floor_area_min,floor_area_max,pet,rp_update_days";
 import { brainPickFromMetas } from "./lib/brain-property-display";
 import { VIEWING_MOOD_OPTIONS, VIEWING_LIKE_OPTIONS, VIEWING_CONCERN_OPTIONS, VIEWING_NEXT_OPTIONS, composeViewingReport, parseViewingReport, staffCaptureUiEnabled, type ViewingTaps } from "./lib/staff-capture";
 
@@ -2162,7 +2164,14 @@ export default function Home() {
         (payload) => {
           const upd = payload.new as SupabaseConversationRow | null;
           // 2026-10-23 試験の会話の更新は選んでいない時は当てない（NEXT_PUBLIC_RT_IGNORE_TEST）
-          if (shouldIgnoreTestRealtime(upd?.id, selectedIdRef.current)) return;
+          if (shouldIgnoreTestRealtime(upd?.id, selectedIdRef.current)) {
+            // 画面には当てないが、新しい下書きが来たら表示済みの控え・プリ生成の印は捨てる（後で選んだ時に古い下書きを戻さない）
+            if (upd?.ai_draft && !isDraftSentinel(upd.ai_draft)) {
+              preGenInProgress.current.delete(String(upd.id));
+              delete shownDraftCacheRef.current[String(upd.id)];
+            }
+            return;
+          }
           // 2026-10-23 RT_LEAN: 画面が使う列が変わっていない更新（脳の分析・下書きの試み・学習の印など）は何もしない。
           //   変わった更新は 0.4 秒まとめて当てる。下書き・AIX・電話の印が変わった時はすぐ（下の即時の扱いはそのまま）
           let rtDraftChanged = true;
@@ -2208,7 +2217,18 @@ export default function Home() {
         { event: "INSERT", schema: "public", table: "messages" },
         (payload) => {
           // 2026-10-23: テスト専用の会話（YUMA・YUMA2〜5）の通は選んでいない限り読み飛ばす（一覧の作り直し・並べ替えをしない・30秒の読み直しで追いつく）
-          if (shouldIgnoreTestRealtime((payload.new as { conversation_id?: string | number } | null)?.conversation_id, selectedIdRef.current)) return;
+          {
+            const ign = payload.new as { conversation_id?: string | number; sender?: string } | null;
+            if (shouldIgnoreTestRealtime(ign?.conversation_id, selectedIdRef.current)) {
+              // 画面には当てないが、お客様の新しい通で古くなった表示済みの下書きの控えは捨てる（後で選んだ時に古い下書きを戻さない）
+              if (ign?.sender === "customer") {
+                const cid = String(ign.conversation_id);
+                delete shownDraftCacheRef.current[cid];
+                clearedShownDraftRef.current.delete(cid);
+              }
+              return;
+            }
+          }
           // お客様メッセージが届いたら通知＋手動既読を解除
           if (payload.new && (payload.new as { sender: string }).sender === "customer") {
             const msgText = (payload.new as { text?: string }).text || "新しいメッセージが届きました";
@@ -2920,6 +2940,26 @@ export default function Home() {
     rawData: pc,
   });
 
+  // 2026-10-23 RT_IGNORE_TEST: テスト専用の会話の物件顧客の更新は選んでいない時は読み飛ばす。静かな読み直しは知っている物件顧客を読まないので、
+  //   テスト専用の会話を選んだ時にその行だけ読み直す（読まないと条件の帯が古いまま）
+  useEffect(() => {
+    if (!RT_IGNORE_TEST || !selectedId || !isTestOnlyConversation(selectedId)) return;
+    const pcId = conversationsRef.current.find((c) => c.id === selectedId)?.propertyCustomerId;
+    if (!pcId) return;
+    void supabase.from("property_customers").select(PC_LINK_COLUMNS).eq("id", pcId).maybeSingle()
+      .then(({ data }) => {
+        if (!data) return;
+        const pc = data as unknown as PropertyCustomerRow;
+        const entry = linkedEntryOf(pc);
+        const convIds = conversationsRef.current.filter((c) => c.propertyCustomerId === pc.id).map((c) => c.id);
+        setLinkedCustomerMap((prev) => {
+          const next = { ...prev };
+          for (const id of convIds) next[id] = { ...(prev[id] ?? {}), ...entry };
+          return next;
+        });
+      }, () => {});
+  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const fetchConversationsAndMessages = async (silent = false, retries = 0) => {
     if (!silent) setPageLoading(true);
     if (!silent) setError("");
@@ -3074,7 +3114,7 @@ export default function Home() {
     if (propCustomerIds.length > 0) {
       const { data: pcData } = await supabase
         .from("property_customers")
-        .select("id,customer_name,status,last_property_sent_at,property_viewed_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary,floor_area_min,floor_area_max,pet,rp_update_days")
+        .select(PC_LINK_COLUMNS)
         .in("id", propCustomerIds);
       if (pcData) {
         const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen; rawData?: PropertyCustomerRow | null }> = {};
