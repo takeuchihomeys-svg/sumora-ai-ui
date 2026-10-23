@@ -11,6 +11,7 @@
 //   監査: scripts/audit-final-check-gate.ts の ⑦（影の運用の skip 率と、skip で LLM が指摘した回）
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, type CheckResult, type FinalCheckContext, type RevisionLoopResult } from "./final-check";
 import { needsFinalCheck, finalCheckGateEnforced, type FinalCheckGateRun } from "./final-check-gate";
+import { finalCheckFlashOn } from "./final-check-flash";
 
 /** 記録の形（JSONB にそのまま入る小さな形） */
 export type FinalCheckGateLog = {
@@ -37,6 +38,8 @@ export type FinalCheckGateLog = {
   brainBacked?: string[];
   /** 2026-10-13: ブレインの判断と逆のため直さず画面からも外した warning の code */
   brainOverruled?: string[];
+  /** 2026-10-23 FINAL_CHECK_FLASH: 下確かめの使い方（used／fallback／ineligible）・指揮官を呼んだか・時間・費用の見込み（作り直しで finalCheck が置き換わっても残す） */
+  flash?: { mode: string; reason: string | null; conductor: boolean | null; hits: number | null; ms: number | null; usd: number | null };
 };
 
 export type GatedOptions = {
@@ -94,7 +97,11 @@ export async function runFinalCheckGated(draft: string, ctx: FinalCheckContext, 
     };
     loop = { finalDraft: draft, finalCheck: result };
   } else {
-    loop = await runFinalCheckWithRevision(draft, ctx, o.budgetMs ?? 90000);
+    // 2026-10-23 FINAL_CHECK_FLASH（既定 off＝ctx はそのまま）: FLASH の入口の判定に使う会話の状態を載せる（センシティブは上の枝＝FLASH を使わない）
+    const ctxRun: FinalCheckContext = finalCheckFlashOn(o.env ?? process.env)
+      ? { ...ctx, flashGate: { autoSendConversation: o.autoSendConversation, sensitive: o.sensitive, postApply: !!o.postApply, stateUnknown: !!o.stateUnknown } }
+      : ctx;
+    loop = await runFinalCheckWithRevision(draft, ctxRun, o.budgetMs ?? 90000);
   }
   gate.ms = Date.now() - started;
   if (loop.finalDraft !== draft) gate.draftIn = draft.slice(0, 600);
@@ -104,6 +111,8 @@ export async function runFinalCheckGated(draft: string, ctx: FinalCheckContext, 
   if (loop.finalCheck.revision_held?.length) gate.revisionHeld = loop.finalCheck.revision_held.slice(0, 12);
   if (loop.finalCheck.revision_brain_backed?.length) gate.brainBacked = loop.finalCheck.revision_brain_backed.slice(0, 8);
   if (loop.finalCheck.brain_overruled?.length) gate.brainOverruled = loop.finalCheck.brain_overruled.map((i) => i.code).slice(0, 8);
+  const fl = loop.finalCheck.flash;
+  if (fl) gate.flash = { mode: fl.mode, reason: fl.reason, conductor: fl.conductor ? fl.conductor.ran : null, hits: fl.hits ?? null, ms: fl.ms ?? null, usd: fl.est_usd ?? null };
   (loop.finalCheck as CheckResult & { gate?: FinalCheckGateLog }).gate = gate;
   return { ...loop, gate };
 }

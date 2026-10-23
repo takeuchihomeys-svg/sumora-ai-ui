@@ -100,6 +100,12 @@ import { issueContradictsContract, renderTurnContractNote, isConfirmPromiseAsk, 
 import { selectRevisionIssues, annotateUnfixed, finalCheckBrainAlignEnabled, contractConfirmMiss, type HoldReason } from "./final-check-brain-align";
 import { contractAlreadySaidRepeat } from "./repeat-brain-align";
 import { isAckOnlyTurn } from "./draft-repeat";
+// 2026-10-23 竹内さん 10/22（KB a6dff652）: 最終チェックも指揮官 Claude＋FLASH の下確かめ（FINAL_CHECK_FLASH=on の時だけ・既定 off）
+import {
+  finalCheckFlashOn, finalCheckFlashSkipOn, finalCheckFlashTimeoutMs, flashEligibility, runFlashSubChecks, lowRiskForSkip, passOfCode,
+  CONDUCTOR_STATIC, buildConductorUser, FINAL_CHECK_FLASH_VERSION, type FlashGateInput, type FlashMaterials, type FlashCaller, type FinalCheckFlashLog,
+} from "./final-check-flash";
+import { claudeUsageUsd, usageFromAnthropic, isDeepseekPeakAt } from "./llm-price";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -170,6 +176,8 @@ export interface CheckResult {
   revision_brain_backed?: string[];
   /** 2026-10-21 自信の気づき（draft-confidence.ts・DRAFT_CONFIDENCE=on の時だけ generate-reply が載せる）。JSONB のキー追加のみ */
   confidence?: import("./draft-confidence").DraftConfidence;
+  /** 2026-10-23 FINAL_CHECK_FLASH（指揮官 Claude＋FLASH の下確かめ）の記録。JSONB のキー追加のみ（migrate-schema 不要） */
+  flash?: FinalCheckFlashLog;
 }
 
 export interface FinalCheckContext {
@@ -294,6 +302,8 @@ export interface FinalCheckContext {
   aixDone?: { propertySend: boolean; vacancyCheck: boolean; mgmtCheck: boolean; pickupGateReason?: string } | null;
   /** 2026-09-19 竹内（慶次事例）: 登録条件（property_customers）。宣言行の条件語の根拠に使う */
   customerConditions?: string | null;
+  /** 2026-10-23 FINAL_CHECK_FLASH の入口（runFinalCheckGated が載せる。無い＝別の入口＝FLASH を使わない・fail-closed） */
+  flashGate?: FlashGateInput | null;
 }
 
 // ─── SHA-1（送信時のハッシュ一致判定用。Web Crypto はNode18+/ブラウザ両対応）──
@@ -2887,6 +2897,18 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
   // ── 決定論チェック群（禁止語・本日中・THANK_OPENING・！！過剰・NG物件・自己紹介再生成・具体アクション欠落）──
   issues.push(...runDeterministicChecks(draft, ctx));
 
+  // ── 2026-10-23 FINAL_CHECK_FLASH（KB a6dff652）: 指揮官 Claude＋FLASH の下確かめ。既定 off＝null（今のまま1文字も変わらない）。
+  //    入口で外れた・時間切れ・失敗・個人の値の網に当たった → result が無い＝下の今の3パス（Claude だけ）で見る ──
+  const flashTry = await tryFinalCheckFlash(draft, ctx, issues, remain, cap);
+  const t0 = Date.now();
+  const passMs: Partial<Record<CheckPass, number>> = {};
+  let passList: CheckPass[];
+  let settled: PromiseSettledResult<RawIssue[]>[];
+  if (flashTry?.result) {
+    passList = flashTry.result.passList;
+    settled = flashTry.result.settled;
+    Object.assign(passMs, flashTry.result.passMs);
+  } else {
   // ── 3パス並列チェック（rule_check・anomaly_scan=Haiku / context_check=Sonnet）──
   // context_check のみ Sonnet: 10種の複雑な会話理解が必要で誤検知が revision 誤発火に直結するため
   const passes: Array<{ pass: CheckPass; prompt: PromptContent; model: string }> = [
@@ -2894,14 +2916,12 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
     { pass: "anomaly_scan",  prompt: buildAnomalyScanPrompt(draft, ctx),  model: o.passModels?.anomaly_scan ?? MODEL_CHECK_FAST },
     { pass: "context_check", prompt: buildContextCheckPrompt(draft, ctx), model: o.passModels?.context_check ?? MODEL_CHECK_DEEP },
   ];
-  const t0 = Date.now();
-  const passMs: Partial<Record<CheckPass, number>> = {};
   const timed = (i: number, attempt: 0 | 1) => {
     const p = passes[i];
     const s = Date.now();
     return callSonnet(p.prompt, passTimeoutMs(p.pass, remain(), attempt, cap), 2400, p.model, `final_check_${p.pass}`).then((v) => { passMs[p.pass] = Date.now() - s; return v; });
   };
-  const settled: PromiseSettledResult<RawIssue[]>[] = await Promise.allSettled(passes.map((_, i) => timed(i, 0)));
+  settled = await Promise.allSettled(passes.map((_, i) => timed(i, 0)));
   // 落ちたパスだけ同じプロンプトで1回再送（タイムアウト / 5xx / 529 のみ。残り 4s 未満なら再送しない）
   if (o.retry !== false) {
     const idx = settled.map((r, i) => (r.status === "rejected" && isRetryableFailure(r.reason) ? i : -1)).filter((i) => i >= 0);
@@ -2911,12 +2931,14 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
       idx.forEach((i, k) => { if (again[k].status === "fulfilled") settled[i] = again[k]; });
     }
   }
+  passList = passes.map((p) => p.pass);
+  }
   const passFailures: NonNullable<CheckResult["pass_failures"]> = [];
 
   const passesCompleted: CheckPass[] = [];
 
   settled.forEach((r, i) => {
-    const pass = passes[i].pass;
+    const pass = passList[i];
     if (r.status !== "fulfilled") {
       // fail-open: 失敗passは passes_completed に載せず監査ログ＋pass_failures に記録
       console.warn(`[final-check] ${pass} 失敗（fail-open）:`, r.reason instanceof Error ? r.reason.message : String(r.reason));
@@ -3045,7 +3067,139 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
     checked_text_hash: await sha1(draft.trim()),
     ...(passFailures.length ? { pass_failures: passFailures } : {}),
     pass_ms: passMs,
+    ...(flashTry ? { flash: { ...flashTry.log, ms: flashTry.log.ms ?? (flashTry.result ? undefined : Date.now() - started) } } : {}),
   };
+}
+
+// ─── 2026-10-23 FINAL_CHECK_FLASH: 指揮官 Claude＋FLASH の下確かめ（app/lib/final-check-flash.ts）────────────
+type FlashTry = {
+  log: FinalCheckFlashLog;
+  /** あれば FLASH＋指揮官で決めた（3パスの代わり）。無ければ今の3パスで見る */
+  result?: { passList: CheckPass[]; settled: PromiseSettledResult<RawIssue[]>[]; passMs: Partial<Record<CheckPass, number>> };
+};
+
+/** FLASH に渡す材料（伏せない元の文。伏せるのは final-check-flash 側・指揮官には元のまま） */
+export function buildFlashMaterials(draft: string, ctx: FinalCheckContext): FlashMaterials {
+  const facts = [
+    ctx.checkpointFacts ? `[確認済みの事実]\n${ctx.checkpointFacts}` : "",
+    ctx.staffSourceText ? `[スタッフの材料]\n${ctx.staffSourceText}` : "",
+    ctx.materialFacts && process.env.MATERIAL_FACTS_TO_CHECK !== "off" ? `[物件の資料の値]\n${ctx.materialFacts}` : "",
+    ctx.customerConditionsDb || ctx.customerConditions ? `[登録の条件]\n${ctx.customerConditionsDb ?? ctx.customerConditions}` : "",
+  ].filter(Boolean).join("\n");
+  const companyFacts = buildCompanyFactsForCheck([ctx.lastCustomerMessage ?? "", ...companyFactCustomerTexts(ctx)]);
+  const rules = [ctx.dbRules ? selectRulesForCheckCached(ctx.dbRules).text : "", ctx.finalCheckRules ? `[最終チェック専用]\n${ctx.finalCheckRules}` : ""].filter(Boolean).join("\n\n");
+  return {
+    draft,
+    lastCustomer: ctx.lastCustomerMessage ?? "",
+    history: formatHistory(ctx.recentMessages, 6),
+    facts,
+    companyFacts,
+    rules,
+    customerQuestions: (ctx.customerQuestions ?? []).filter(Boolean).slice(0, 6),
+    now: nowJstString(),
+    names: [ctx.customerName ?? "", ...(ctx.allowNames ?? []), ...(ctx.nameAliases ?? [])].filter((n) => !!n && n.trim().length >= 2),
+  };
+}
+
+/** DeepSeek flash を直に呼ぶ口（D案の読み手と同じ・Claude には倒さない＝失敗は今の3パスに戻す） */
+const defaultFlashCaller: FlashCaller = async (system, user, opts) => {
+  const { callDeepSeek } = await import("./vision-alt-provider");
+  const r = await callDeepSeek(system, user, { model: opts.model, maxTokens: opts.maxTokens, timeoutMs: opts.timeoutMs, thinking: false, temperature: 0 });
+  return r ? { text: r.text, usage: { input: r.usage.input, output: r.usage.output, cacheHit: r.usage.cacheHit }, model: r.model } : null;
+};
+let flashCallerOverride: FlashCaller | null = null;
+let conductorOverride: ((prompt: PromptBlock[], timeoutMs: number) => Promise<{ issues: RawIssue[]; usd: number }>) | null = null;
+/** テスト用（fetch を出さない） */
+export function __setFinalCheckFlashDeps(d: { flash?: FlashCaller | null; conductor?: typeof conductorOverride }): void {
+  if ("flash" in d) flashCallerOverride = d.flash ?? null;
+  if ("conductor" in d) conductorOverride = d.conductor ?? null;
+}
+
+/** 指揮官 Claude（Sonnet・短い指示・構造化 JSON）。費用の見込みを返すため callSonnet と別の口 */
+async function callConductor(prompt: PromptBlock[], timeoutMs: number): Promise<{ issues: RawIssue[]; usd: number }> {
+  if (conductorOverride) return conductorOverride(prompt, timeoutMs);
+  const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("final_check_conductor") },
+    body: JSON.stringify(buildFinalCheckRequestBody(prompt, MODEL_CHECK_DEEP, 1600, { structured: true })),
+  });
+  if (!res.ok) throw new Error(`final-check conductor HTTP ${res.status}`);
+  const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string; usage?: AnthropicUsageLike; model?: string };
+  logLlmUsage("final-check:conductor", data.usage, { model: MODEL_CHECK_DEEP });
+  if (data.stop_reason === "max_tokens") throw new Error("final-check conductor max_tokens reached");
+  const text = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
+  const parsed = JSON.parse(text) as { issues?: RawIssue[] };
+  const usd = claudeUsageUsd(usageFromAnthropic(MODEL_CHECK_DEEP, (data.usage ?? null) as Record<string, unknown> | null));
+  return { issues: Array.isArray(parsed.issues) ? parsed.issues : [], usd };
+}
+
+async function tryFinalCheckFlash(draft: string, ctx: FinalCheckContext, detIssues: CheckIssue[], remain: () => number, cap: number): Promise<FlashTry | null> {
+  if (!finalCheckFlashOn()) return null;
+  const base = { version: FINAL_CHECK_FLASH_VERSION };
+  const m = buildFlashMaterials(draft, ctx);
+  const elig = flashEligibility({
+    gate: ctx.flashGate, isAutoSend: ctx.isAutoSend, phaseKey: ctx.phaseKey ?? null, conversationStage: ctx.checkpointStage ?? ctx.conversationStage ?? null,
+    rawTexts: [m.lastCustomer, m.history, m.facts, m.draft],
+  });
+  if (!elig.ok) return { log: { ...base, mode: "ineligible", reason: elig.reason } };
+  const timeoutMs = Math.min(finalCheckFlashTimeoutMs(), Math.max(0, remain() - 6000));
+  if (timeoutMs < 1500) return { log: { ...base, mode: "fallback", reason: "時間の残りが足りない" } };
+  const started = Date.now();
+  const out = await runFlashSubChecks(m, {
+    call: flashCallerOverride ?? defaultFlashCaller,
+    timeoutMs,
+    peak: isDeepseekPeakAt(new Date()),
+    onUsage: flashCallerOverride ? undefined : (k, r, ms, ok) => {
+      void import("./llm-usage-recorder").then(({ recordAltUsage }) => recordAltUsage({
+        model: r.model, action: `final_check_flash_${k}`, conversationId: null,
+        usage: { input_tokens: Math.max(0, r.usage.input - r.usage.cacheHit), output_tokens: r.usage.output, cache_read_input_tokens: r.usage.cacheHit },
+        status: 200, errorType: ok ? null : "unparsable", durationMs: ms, sysHead: `【最終チェックの下確かめ】${k}`, sysKeyFull: null, maxTokens: 500,
+      })).catch(() => {});
+    },
+  });
+  const flashLogBase = { ...base, subs: out.subs, hits: out.hits.length };
+  if (!out.ok) {
+    console.log(JSON.stringify({ tag: "final-check:flash-fallback", reason: out.fallbackReason, ms: out.ms }));
+    return { log: { ...flashLogBase, mode: "fallback", reason: out.fallbackReason, ms: out.ms, est_usd: out.usd } };
+  }
+  const passList: CheckPass[] = ["rule_check", "anomaly_scan", "context_check"];
+  const skip = lowRiskForSkip({
+    draft, hits: out.hits, allOk: out.ok, detSeverities: detIssues.map((i) => i.severity),
+    isEarlyConversation: ctx.isEarlyConversation, enforcementRequired: ctx.brainMeta?.enforcement_level === "required",
+    isDeliverableReply: ctx.isDeliverableReply, ngPropertiesCount: ctx.ngProperties?.length ?? 0,
+  });
+  if (skip.skip && finalCheckFlashSkipOn()) {
+    const ms = Date.now() - started;
+    console.log(JSON.stringify({ tag: "final-check:flash", conductor: "skipped", ms, usd: out.usd }));
+    return {
+      log: { ...flashLogBase, mode: "used", reason: null, conductor: { ran: false, why: skip.why }, ms, est_usd: out.usd },
+      result: { passList, settled: passList.map(() => ({ status: "fulfilled", value: [] as RawIssue[] })), passMs: Object.fromEntries(passList.map((p) => [p, ms])) },
+    };
+  }
+  // ④ 指揮官 Claude: 候補がある（または低リスクでない）時。候補0で低リスクでない時は「候補なし」を見て最後の合否だけを出す
+  const prompt: PromptBlock[] = [
+    { type: "text", text: CONDUCTOR_STATIC, cache_control: { type: "ephemeral", ttl: "1h" } },
+    { type: "text", text: buildConductorUser(m, out.hits.length ? out.hits : [], { brainNote: buildBrainBaselineNote(ctx) || undefined, finalCheckRules: ctx.finalCheckRules }) + (out.hits.length ? "" : "\n\n（下確かめの候補は0件。返信に明らかなハルシネーション・答えの抜けがある時だけ挙げる）") },
+  ];
+  const cs = Date.now();
+  try {
+    const c = await callConductor(prompt, passTimeoutMs("context_check", remain(), 0, cap));
+    const cms = Date.now() - cs;
+    const by = new Map<CheckPass, RawIssue[]>(passList.map((p) => [p, []]));
+    for (const raw of c.issues) by.get(passOfCode((raw.code ?? "").trim()))!.push(raw);
+    const ms = Date.now() - started;
+    console.log(JSON.stringify({ tag: "final-check:flash", conductor: "ran", hits: out.hits.length, kept: c.issues.length, ms, usd: out.usd + c.usd }));
+    return {
+      log: { ...flashLogBase, mode: "used", reason: null, conductor: { ran: true, ms: cms, usd: c.usd, why: skip.why, kept: c.issues.length }, ms, est_usd: out.usd + c.usd },
+      result: { passList, settled: passList.map((p) => ({ status: "fulfilled", value: by.get(p) ?? [] })), passMs: Object.fromEntries(passList.map((p) => [p, ms])) },
+    };
+  } catch (e) {
+    const err = (e instanceof Error ? e.message : String(e)).slice(0, 80);
+    console.warn("[final-check] 指揮官の失敗 → 今の3パスへ:", err);
+    return { log: { ...flashLogBase, mode: "fallback", reason: "指揮官の失敗", conductor: { ran: true, ms: Date.now() - cs, why: skip.why, error: err }, ms: Date.now() - started, est_usd: out.usd } };
+  }
 }
 
 // ─── Sonnetによる修正プロンプト（外科的修正 or 全体書き直しをSonnetが判断）──────
@@ -3607,7 +3761,7 @@ async function runDiffRecheck(
 }
 
 /** 2026-10-13 ブレイン基準: 書き直しの選び方の記録（selectRevisionIssues の held と、ブレインの裏付けで渡した指摘） */
-type AlignLog = { held: Array<{ issue: CheckIssue; reason: HoldReason }>; brainBacked: string[] };
+type AlignLog = { held: Array<{ issue: CheckIssue; reason: HoldReason }>; brainBacked: string[]; flash?: FinalCheckFlashLog };
 /** 書き直しに渡す指摘を選ぶ（warning・block の道で同じ関数）。旧の条件（isRevisable・本質とぶつからない・引用が本文にそのまま）は FINAL_CHECK_BRAIN_ALIGN=off で戻る */
 function pickRevisionIssues(issues: CheckIssue[], draft: string, ctx: FinalCheckContext, log: AlignLog, path: "warning" | "block"): CheckIssue[] {
   const draftNorm = normalizeForMatch(draft);
@@ -3634,6 +3788,7 @@ export async function runFinalCheckWithRevision(
 ): Promise<RevisionLoopResult> {
   const log: AlignLog = { held: [], brainBacked: [] };
   const r = await runFinalCheckWithRevisionCore(draft, ctx, budgetMs, log);
+  if (log.flash && !r.finalCheck.flash) r.finalCheck.flash = log.flash;
   // 2026-10-13 ブレイン基準: 残った指摘に「直さなかった理由」を付け、ブレインとぶつかる warning は画面の指摘から外す（brain_overruled に残す）
   if (finalCheckBrainAlignEnabled()) {
     const fc = r.finalCheck;
@@ -3662,6 +3817,7 @@ async function runFinalCheckWithRevisionCore(
   //   予算が修正枠に満たない時（loop2 の下限 20s 等）は最低 15s をチェックに使う（修正はどのみち走らない）
   const checkDeadline = started + Math.max(budgetMs - (REVISION_MS + RECHECK_MS) - 1000, Math.min(budgetMs - 1000, 15000));
   const check1 = await runFinalCheck(draft, ctx, { deadlineAt: checkDeadline });
+  if (check1.flash) alignLog.flash = check1.flash; // 2026-10-23 FINAL_CHECK_FLASH: 書き直し後の再検査で結果が置き換わっても1回目の記録を残す
   checkIterations++;
   check1.revision_count = 0;
   // 2026-09-10 Fable5: 最終 CheckResult は recheck で丸ごと置換されるため、修正前の指摘をここで保存する
