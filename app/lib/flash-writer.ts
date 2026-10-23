@@ -12,6 +12,7 @@
 
 import type { TurnContract, ContractAsk } from "./turn-contract";
 import type { RequestItem } from "./request-ledger";
+import { isRestateApology } from "./writing-blueprint-patterns";
 
 export type EnvLike = Record<string, string | undefined>;
 
@@ -43,6 +44,8 @@ export type FlashChecklistItem = {
 
 const APOLOGY_RE = /すみません|すいません|申し訳|ごめんなさい|ごめんね|失礼しました|恐縮/;
 const THANKS_RE = /ありがと|有難う|有り難う|助かります|感謝/;
+/** 2026-10-23 317c7a7c 要望の言い直しの謝りの受け方 */
+export const RESTATE_APOLOGY_HOW = "【受け止め】要望の言い直しの謝り＝「全然大丈夫です」と打ち消さず、要望を受け入れて約束し「ご満足頂けるお部屋が見つかるのが一番ですのでご要望等出てきましたらいつでもお気軽にご連絡ください」と添える";
 const APOLOGY_COVER = /大丈夫|とんでもない|お気になさらず|お気遣い|お気軽|遠慮なく|ご遠慮|いつでも|何時でも|むしろ|嬉しい/;
 const WORRY_RE = /不安|心配|難しい(?:かな|なって|ですかね)|迷って|悩んで|💦|思っちゃって|大丈夫(?:でしょうか|ですかね)/;
 const WORRY_COVER = /ご不安|ご心配|不安|心配|大丈夫|ご安心|お気持ち|難しい|ですよね|かと思います|ご要望/;
@@ -141,7 +144,9 @@ export function buildFlashChecklist(input: {
   // 2026-10-18 受け止める事（お礼・謝り・気遣い・不安の一言）は、答える事とは別の行で必ず並べる（flash の外れの多くは答えではなく受け止めの抜け: q164・q172・q032）
   const sents = sentencesOf(input.customerUnits);
   const apology = sents.find((s) => APOLOGY_RE.test(s));
-  if (apology) items.push({ label: apology.slice(0, 60), how: "【受け止め】謝りを受ける一言（「全然大丈夫です」「お気になさらず」の形・いつでも言ってほしいと添える）", keys: [APOLOGY_COVER], mustProperty: null, lenient: false });
+  // 2026-10-23 竹内さんの決定 317c7a7c: 要望を言い直して謝った番は「全然大丈夫です」でなく、要望を受け入れ「ご満足頂けるお部屋が見つかるのが一番」の姿勢（writing-blueprint-patterns の restate_apology と同じ判定）
+  const restate = !!apology && isRestateApology(sents.join("\n"));
+  if (apology) items.push({ label: apology.slice(0, 60), how: restate ? RESTATE_APOLOGY_HOW : "【受け止め】謝りを受ける一言（「全然大丈夫です」「お気になさらず」の形・いつでも言ってほしいと添える）", keys: [APOLOGY_COVER], mustProperty: null, lenient: false });
   const thanks = sents.find((s) => THANKS_RE.test(s) && !APOLOGY_RE.test(s));
   if (thanks) items.push({ label: thanks.slice(0, 60), how: "【受け止め】お礼・了承を受ける一言（「はい😊！！」の形で始める）", keys: [THANKS_COVER], mustProperty: null, lenient: false });
   const worry = sents.find((s) => WORRY_RE.test(s) && s !== apology && s !== thanks);
@@ -178,7 +183,8 @@ export function renderFlashChecklistNote(items: ReadonlyArray<FlashChecklistItem
   if (o.noInvite) L.push("- この番は内覧・申込の誘いを書かない（お客様が頼んでいない・ブレインの提案に無い）。✕「お気に召されましたら実際にお部屋ご案内させて頂きます」／○「気になる点出てきましたら何時でもお気軽にご連絡ください」");
   // 2026-10-18 (b) 同じ外れの型には悪い例と良い例の対（竹内さんの実送信の形・名前と物件は伏せた）
   const pairs: string[] = [];
-  if (items.some((it) => APOLOGY_RE.test(it.label))) pairs.push("✕ 「かしこまりました！！その条件でお探しさせて頂きます！！」（謝りに触れない）／○ 「全然大丈夫です😊！！ご要望はいつでもお気軽にお申し付けください！！その条件でお探しさせて頂きます！！」");
+  if (items.some((it) => it.how === RESTATE_APOLOGY_HOW)) pairs.push("✕ 「全然大丈夫です！！その条件でお探しさせて頂きます！！」（要望の言い直しの謝りを打ち消すだけ）／○ 「かしこまりました！！（その条件で）お探しさせて頂きます！！〇〇さんご満足頂けるお部屋が見つかるのが一番ですのでご要望等出てきましたらいつでもお気軽にご連絡ください😊！！」");
+  else if (items.some((it) => APOLOGY_RE.test(it.label))) pairs.push("✕ 「かしこまりました！！その条件でお探しさせて頂きます！！」（謝りに触れない）／○ 「全然大丈夫です😊！！ご要望はいつでもお気軽にお申し付けください！！その条件でお探しさせて頂きます！！」");
   if (items.some((it) => it.mustProperty)) pairs.push("✕ 「お送り頂いた物件、確認させて頂きます！！」（物件ごとに答えない）／○ 「〇〇（物件名）の代理契約につきましては管理会社に交渉させて頂きます！！お送り頂きました△△（物件名）の募集状況も確認させて頂きます！！」");
   if (items.some((it) => THANKS_RE.test(it.label))) pairs.push(o.closeOnly ? "✕ お礼に新しい約束・内覧の誘いを足す／○ 「はい😊！！気になる点出てきましたら何時でもお気軽にご連絡ください！！」" : "✕ お礼に触れずにいきなり本題／○ 「はい😊！！（または ご要望お聞かせ頂きありがとうございます😊！！）」で受けてから本題");
   if (items.some((it) => WORRY_RE.test(it.label))) pairs.push("✕ 不安の一言を飛ばして約束だけ／○ 「〇〇だと△△が難しいですよね。」「ご不安ですよね。」のようにお客様の言葉で一言受けてから約束");

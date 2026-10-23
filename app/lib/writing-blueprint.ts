@@ -9,7 +9,7 @@
 //      段: 名前→挨拶→お礼→受け（かしこまりました等）→答え（質問の順）→約束（期日つき）→誘い（内覧・申込）→支える一言→締め
 //      並びと要る段は、竹内さんの手打ちの実送信（90日・場面ごと）で数えた形に合わせた（scripts/audit-writing-blueprint.ts）
 //   ②選ぶ関数（場面＋その番の事実 → 書く役への短い指示 ≤500字）＝ buildWritingBlueprintNote
-//      WRITING_BLUEPRINT=on の時だけ generate-reply の毎回変わる側（キャッシュしない側）に入る。既定 off＝指示は1文字も変わらない
+//      WRITING_BLUEPRINT（2026-10-23 から既定 on・=off で止める）の時 generate-reply の毎回変わる側（キャッシュしない側）に入る。off＝指示は1文字も変わらない
 //   ③確かめる関数（下書き → 段の並び・要る段・書かない言葉の外れ）＝ checkDraftAgainstBlueprint
 //      見張り（line_watch_turns）の下書きとスタッフの送信を読むだけで比べる（scripts/audit-writing-blueprint.ts）
 //
@@ -182,8 +182,12 @@ export type BlueprintTurnFacts = {
   promiseOutstanding?: boolean;
 };
 
+/**
+ * 2026-10-23 計画7: 既定 on（試験 YUMA4・下書きまで 30問で前より悪い 0・良い 2（揺れ））。止める WRITING_BLUEPRINT=off
+ *   on で動く物: 設計図の注記（buildWritingBlueprintNote）・場面の型（writing-blueprint-patterns.ts）・出口2つ（約束だけの番のご査収・致します/いたします）
+ */
 export function writingBlueprintEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.WRITING_BLUEPRINT ?? "").trim().toLowerCase() === "on";
+  return (env.WRITING_BLUEPRINT ?? "").trim().toLowerCase() !== "off";
 }
 
 /** その番の設計図（場面＋分かれ道で上書き） */

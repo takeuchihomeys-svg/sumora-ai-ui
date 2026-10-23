@@ -78,15 +78,15 @@ t("送っていない番はご査収を書かない指示", /ご査収/.test(n1)
 t("送った番はご査収の行を出さない", !/ご査収」は書かない/.test(buildWritingBlueprintNote({ scene: "cost", sentThisTurn: true })));
 t("他社で内覧の必ず3つ", (buildWritingBlueprintNote({ scene: "viewing", routeBranch: "other_agent_viewing" }).match(/必ず:/g) ?? []).length === 3);
 
-// ── 切り替え（既定 off＝指示は1文字も変わらない）──
-t("既定 off", !writingBlueprintEnabled({}));
-t("on の時だけ on", writingBlueprintEnabled({ WRITING_BLUEPRINT: "on" }) && !writingBlueprintEnabled({ WRITING_BLUEPRINT: "off" }) && !writingBlueprintEnabled({ WRITING_BLUEPRINT: "1" }));
-t("off の時は空文字", writingBlueprintNoteIfEnabled({ scene: "question", questions: qs }, {}) === "");
+// ── 切り替え（2026-10-23 計画7 で既定 on・WRITING_BLUEPRINT=off で止める＝指示は1文字も変わらない）──
+t("既定 on", writingBlueprintEnabled({}));
+t("off の時だけ off", !writingBlueprintEnabled({ WRITING_BLUEPRINT: "off" }) && writingBlueprintEnabled({ WRITING_BLUEPRINT: "on" }) && writingBlueprintEnabled({ WRITING_BLUEPRINT: "1" }));
+t("off の時は空文字", writingBlueprintNoteIfEnabled({ scene: "question", questions: qs }, { WRITING_BLUEPRINT: "off" }) === "");
 t("on の時は文", writingBlueprintNoteIfEnabled({ scene: "question" }, { WRITING_BLUEPRINT: "on" }).startsWith("\n\n【🧩 文の設計図"));
 // 返信の指示に入る所は「off の時は空文字」の1か所だけ（キャッシュする側には入れない）
 const route = readFileSync(join(__dirname, "../../api/generate-reply/route.ts"), "utf8");
 t("route: 差し込みは毎回変わる側の1か所", (route.match(/sceneSel\?\.blueprintNote/g) ?? []).length === 1 && /\$\{sceneStyleNoteText\}\$\{sceneSel\?\.blueprintNote \?\? ""\}/.test(route));
-t("route: off の時は空文字を渡す（on でも投げたら空文字）", /blueprintNote: !isTemplateOptimize && writingBlueprintEnabled\(\) \? \(\(\) => \{ try \{ return buildWritingBlueprintNote\([\s\S]{0,700}?catch[\s\S]{0,120}?return ""; \} \}\)\(\) : ""/.test(route));
+t("route: off の時は空文字を渡す（on でも投げたら空文字）", /blueprintNote: !isTemplateOptimize && writingBlueprintEnabled\(\) \? \(\(\) => \{ try \{ return buildWritingBlueprintNote\([\s\S]{0,2000}?catch[\s\S]{0,120}?return ""; \} \}\)\(\) : ""/.test(route));
 t("route: 差し込みは dynamicBlock の中", (() => { const a = route.indexOf("const dynamicBlock ="); const b = route.indexOf("sceneSel?.blueprintNote"); const c = route.indexOf("const priorityOrderNote", a); return a > 0 && b > a && b < c; })());
 
 console.log(`\nwriting-blueprint: ${pass} OK / ${fail} NG`);
