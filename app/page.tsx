@@ -88,6 +88,8 @@ import { imageUrlsInRankOrder } from "./lib/sent-image-order";
 import { decideApplySubMode } from "./lib/apply-sub-mode";
 import { normalizePetWording } from "./lib/pet-wording";
 import { isTestOnlyConversation } from "./lib/test-conversations";
+// 2026-10-23 試験の通（入る通の約93%）の Realtime は、その会話を選んでいる時だけ当てる（戻す NEXT_PUBLIC_RT_IGNORE_TEST=off）
+import { shouldIgnoreTestRealtime, shouldIgnoreTestRealtimeForConvs } from "./lib/realtime-test-ignore";
 import { brainPickFromMetas } from "./lib/brain-property-display";
 import { VIEWING_MOOD_OPTIONS, VIEWING_LIKE_OPTIONS, VIEWING_CONCERN_OPTIONS, VIEWING_NEXT_OPTIONS, composeViewingReport, parseViewingReport, staffCaptureUiEnabled, type ViewingTaps } from "./lib/staff-capture";
 
@@ -2156,6 +2158,8 @@ export default function Home() {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages" },
         (payload) => {
+          // 2026-10-23: テスト専用の会話（YUMA・YUMA2〜5）の通は選んでいない限り読み飛ばす（一覧の作り直し・並べ替えをしない・30秒の読み直しで追いつく）
+          if (shouldIgnoreTestRealtime((payload.new as { conversation_id?: string | number } | null)?.conversation_id, selectedIdRef.current)) return;
           // お客様メッセージが届いたら通知＋手動既読を解除
           if (payload.new && (payload.new as { sender: string }).sender === "customer") {
             const msgText = (payload.new as { text?: string }).text || "新しいメッセージが届きました";
@@ -2243,6 +2247,7 @@ export default function Home() {
           // image_url / file_url が後から埋まったとき（画像・ファイルの非同期取得）に反映する
           const upd = payload.new as { id: number; conversation_id: number; image_url?: string; image_expires_at?: string; file_url?: string; file_name?: string };
           if (!upd?.id || (!upd.image_url && !upd.file_url)) return;
+          if (shouldIgnoreTestRealtime(upd.conversation_id, selectedIdRef.current)) return;
           setConversations((prev) =>
             prev.map((c) => {
               if (c.id !== String(upd.conversation_id)) return c;
@@ -2329,6 +2334,8 @@ export default function Home() {
         if (!pc?.id) return;
         const convIds = conversationsRef.current.filter((c) => c.propertyCustomerId === pc.id).map((c) => c.id);
         if (!convIds.length) return;
+        // 2026-10-23: 試験の片付けが戻すテスト専用の会話の条件の行は、その会話を選んでいない限り読み飛ばす
+        if (shouldIgnoreTestRealtimeForConvs(convIds, selectedIdRef.current)) return;
         const entry = linkedEntryOf(pc);
         setLinkedCustomerMap((prev) => {
           const next = { ...prev };
