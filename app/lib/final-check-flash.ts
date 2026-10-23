@@ -22,7 +22,7 @@
 // テスト: app/lib/__tests__/final-check-flash.test.ts
 
 import { maskPII } from "./pii-mask";
-import { maskApplicationValuesForAlt, altPiiSignal } from "./alt-pii-gate";
+import { maskApplicationValuesForAlt, altPiiSignal, altPiiSignalReapply } from "./alt-pii-gate";
 import { piiValueSignal } from "./test-pii-guard";
 import { screeningSensitiveSignal } from "./screening-sensitive";
 
@@ -34,9 +34,12 @@ export function finalCheckFlashOn(env: Env = envOf()): boolean {
   const v = (env.FINAL_CHECK_FLASH ?? "").trim().toLowerCase();
   return v === "on" || v === "1" || v === "true";
 }
-/** 候補0・低リスクで Claude を呼ばない（既定 on・FINAL_CHECK_FLASH_SKIP=off で必ず指揮官を呼ぶ） */
+/** 候補0・低リスクで Claude を呼ばない（既定 off＝必ず指揮官を呼ぶ・FINAL_CHECK_FLASH_SKIP=on の時だけ省く）。
+ *  2026-10-23 確かめる人: 省いた番は passes_completed=3 で記録され、送信時の check-reply もその結果を使い回す＝Claude が一度も見ずに送られる。
+ *  数字の無い言い切り（「まだ空いております」「ペット可です」）・答えの抜けは FLASH の見落としだけで通る。試験で質が今以上と分かるまで省かない */
 export function finalCheckFlashSkipOn(env: Env = envOf()): boolean {
-  return (env.FINAL_CHECK_FLASH_SKIP ?? "").trim().toLowerCase() !== "off";
+  const v = (env.FINAL_CHECK_FLASH_SKIP ?? "").trim().toLowerCase();
+  return v === "on" || v === "1" || v === "true";
 }
 /** FLASH の硬い時間切れ（既定 4500ms・1500〜8000）。flash（推論なし）は 1.1〜1.6秒（vision-alt-provider の実測）＝待ちの尾を作らない線 */
 export const FINAL_CHECK_FLASH_TIMEOUT_DEFAULT_MS = 4500;
@@ -79,7 +82,8 @@ export function flashEligibility(p: FlashEligibilityInput): { ok: boolean; reaso
   const all = p.rawTexts.filter(Boolean).join("\n");
   const scr = screeningSensitiveSignal(all);
   if (scr) return { ok: false, reason: `審査の事情（${scr.word}）` };
-  const pii = piiValueSignal(all) ?? altPiiSignal(all);
+  // 2026-10-23 確かめる人: 申込の名残（勤務先の値・年収・生年月日らしい日付・申込フォームの欄・本人確認書類の読み取り）も入口で Claude へ（迷ったら Claude）
+  const pii = piiValueSignal(all) ?? altPiiSignal(all) ?? altPiiSignalReapply(all);
   if (pii) return { ok: false, reason: `個人の値（${pii}）` };
   return { ok: true, reason: null };
 }

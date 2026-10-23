@@ -1,7 +1,7 @@
 // app/lib/__tests__/final-check-flash.test.ts — 2026-10-23 最終チェックの指揮官 Claude＋FLASH の下確かめ（実行: npx tsx app/lib/__tests__/final-check-flash.test.ts）
 // LLM・DB・LINE は呼ばない（FLASH・指揮官・fetch は全部差し替え）。
 import {
-  finalCheckFlashOn, finalCheckFlashTimeoutMs, flashEligibility, maskForFlash, parseFlashOut, runFlashSubChecks, lowRiskForSkip, passOfCode, flashUsd,
+  finalCheckFlashOn, finalCheckFlashSkipOn, finalCheckFlashTimeoutMs, flashEligibility, maskForFlash, parseFlashOut, runFlashSubChecks, lowRiskForSkip, passOfCode, flashUsd,
   type FlashMaterials, type FlashCaller,
 } from "../final-check-flash";
 import { piiValueSignal } from "../test-pii-guard";
@@ -42,6 +42,9 @@ async function main() {
   t("審査の事情（保証人がいない）は使わない", !flashEligibility({ gate: okGate, rawTexts: ["保証人がいないのですが大丈夫ですか"] }).ok);
   t("携帯の番号が入っていたら使わない", !flashEligibility({ gate: okGate, rawTexts: ["090-1234-5678 に連絡ください"] }).ok);
   t("物件の条件の言い方（保証人不要）は審査の事情ではない", flashEligibility({ gate: okGate, rawTexts: ["保証人不要の物件がいいです"] }).ok);
+  t("勤務先の値（申込の名残）が入っていたら使わない", !flashEligibility({ gate: okGate, rawTexts: ["勤務先：株式会社サンプル商事です"] }).ok);
+  t("年収の値が入っていたら使わない", !flashEligibility({ gate: okGate, rawTexts: ["年収は400万円です"] }).ok);
+  t("指揮官を省くのは既定 off（FINAL_CHECK_FLASH_SKIP=on の時だけ）", !finalCheckFlashSkipOn({}) && finalCheckFlashSkipOn({ FINAL_CHECK_FLASH_SKIP: "on" }) && !finalCheckFlashSkipOn({ FINAL_CHECK_FLASH_SKIP: "off" }));
   t("ふつうの番は使う", flashEligibility({ gate: okGate, phaseKey: "proposing", rawTexts: ["北堀江で探しています"] }).ok);
 
   console.log("■ 伏せる");
@@ -139,10 +142,16 @@ async function main() {
     const lowRisk = !detOnly.some((i) => i.severity === "block" || i.severity === "warning");
     t("FLASH を使った（mode used）", r1.flash?.mode === "used", JSON.stringify(r1.flash));
     t("今の3パス（Anthropic の fetch）は呼ばない", anthropicCalls === 0, String(anthropicCalls));
+    // 既定（FINAL_CHECK_FLASH_SKIP 無し）は候補0・低リスクでも必ず指揮官を呼ぶ
+    t("既定は候補0でも指揮官を呼ぶ", conductorCalls === 1 && r1.flash?.conductor?.ran === true, String(conductorCalls));
     if (lowRisk) {
-      t("候補0・低リスク → 指揮官も呼ばない", conductorCalls === 0 && r1.flash?.conductor?.ran === false);
+      process.env.FINAL_CHECK_FLASH_SKIP = "on";
+      conductorCalls = 0;
+      const r1s = await fc.runFinalCheck(draftClean, ctx() as never, 30000);
+      delete process.env.FINAL_CHECK_FLASH_SKIP;
+      t("SKIP=on・候補0・低リスク → 指揮官も呼ばない", conductorCalls === 0 && r1s.flash?.conductor?.ran === false);
     } else {
-      t("決定論の指摘あり → 指揮官を呼ぶ", conductorCalls === 1, JSON.stringify(detOnly.map((i) => i.code)));
+      t("決定論の指摘あり → 指揮官を呼ぶ", conductorCalls >= 1, JSON.stringify(detOnly.map((i) => i.code)));
     }
     t("3重チェックの完走として数える（自動送信でない番だけ）", r1.passes_completed.length === 3);
     t("PARTIALLY_UNCHECKED を出さない", !r1.issues.some((i) => i.code === "PARTIALLY_UNCHECKED"));
