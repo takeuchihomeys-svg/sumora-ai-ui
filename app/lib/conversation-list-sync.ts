@@ -74,3 +74,21 @@ export function upsertConversationRows<C extends { id: string; updatedAt?: strin
   for (const [id, c] of incoming) if (!byId.has(id)) out.push(c);
   return out.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
 }
+
+/**
+ * 2026-10-23 竹内「かなり重くなることもある LINE の画面 原因見つけて改善する」:
+ * 差分の読み直しは前回の2分前から読むので、同じ行が毎回返る → そのたびにお客様の最後の発言の集計（RPC conversation_last_customer_at・
+ * 平均62ms・DB で2番目に重いアプリの読み取り）を呼んでいた。**お客様が書いた行の更新時刻が手元と違う時だけ**取り直す
+ * （新しい発言は Realtime でも手元に入る・これは届かなかった時の保険）。
+ */
+export function deltaNeedsLastCustomerRefresh(
+  known: ReadonlyMap<string, string | undefined>,
+  rows: ReadonlyArray<{ id: string | number; last_sender?: string | null; updated_at?: string | null }>,
+): boolean {
+  return rows.some((r) => r.last_sender === "customer" && known.get(String(r.id)) !== (r.updated_at ?? undefined));
+}
+
+/** 画面を見ていない（別のタブ・アプリの裏・画面が消えている）時は定期の読み直しを休む。戻す NEXT_PUBLIC_LIST_POLL_LEAN=off */
+export function listPollLeanEnabled(v: string | undefined): boolean {
+  return (v ?? "on").toLowerCase() !== "off";
+}
