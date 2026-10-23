@@ -29,7 +29,7 @@ import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraft
 // 2026-10-08 竹内（未桜）「AI返信案がセットされていない事も多い」: 表示済みにした下書きの本文を DB に控え、別の端末・読み込み直しでも戻す
 import { decideShownDraftRestore, shownDraftUpdate, shownDraftRestoreEnabled } from "./lib/shown-draft-restore";
 import { latestCustomerAtOf, newerCustomerMessageSince, nextComposerBase, staleGuardEnabled, ackExemptEnabled, STALE_REPLY_ERROR_CODE } from "./lib/stale-reply";
-import { isUncertainFetchError, newSendId, sendWithIdempotency, SendIdBook, UncertainSendError } from "./lib/send-idempotency";
+import { isUncertainFetchError, newSendId, sendWithIdempotency, SendIdBook, splitByExistingLineIds, UNCERTAIN_SAFE_WINDOW_NOTE, UncertainSendError } from "./lib/send-idempotency";
 import { isCustomerEcho, draftEchoGuardEnabled } from "./lib/draft-echo";
 import { decideForeignSendDraft, foreignSendClearEnabled } from "./lib/foreign-send-draft";
 import { refreshDraftGreetingForNow, draftGreetingRefreshEnabled } from "./lib/time-greeting";
@@ -92,7 +92,8 @@ import { brainPickFromMetas } from "./lib/brain-property-display";
 import { VIEWING_MOOD_OPTIONS, VIEWING_LIKE_OPTIONS, VIEWING_CONCERN_OPTIONS, VIEWING_NEXT_OPTIONS, composeViewingReport, parseViewingReport, staffCaptureUiEnabled, type ViewingTaps } from "./lib/staff-capture";
 
 // 2026-10-23 送信の返事が来ず、同じ印での確かめも返事が無い（届いたか分からない）→ UncertainSendError（send-idempotency.ts）
-const UNCERTAIN_SEND_MSG = "⚠️ 送信の返事が来ませんでした（サーバーが混んでいます）。LINE に届いているか分かりません。LINE の画面で確かめてから、もう一度送ってください（同じ送信の印なので二重には届きません）";
+//   AIX・電話ボタン等（帳簿の印）は10分で印を捨てるので、安全に押し直せる時間を添える（2026-10-23 見直し）
+const UNCERTAIN_SEND_MSG = `⚠️ 送信の返事が来ませんでした（サーバーが混んでいます）。LINE に届いているか分かりません。LINE の画面で確かめてから、もう一度送ってください（同じ中身なら${UNCERTAIN_SAFE_WINDOW_NOTE}）`;
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
@@ -934,6 +935,8 @@ export default function Home() {
   const imageSendRef = useRef<Map<string, { id: string; url: string | null }>>(new Map());
   // 2026-10-23 AIX・電話ボタン・AIX の2通目など、入力欄を持たない送信の印（同じ中身の押し直しだけ同じ印・届いたら消す・10分で捨てる）
   const aixSendBookRef = useRef(new SendIdBook());
+  // 文が届くまで残す印（会話ごと・画像と電話ボタン）。文が届いたら releaseComposeKeys で消す（帳簿の10分でも消える）
+  const composeHeldKeysRef = useRef<Map<string, Set<string>>>(new Map());
   // 返事が来なかった送信（届いたか分からない）の時だけ、エラーの「再試行」を「同じ印で送り直す」にする
   const [sendRetryable, setSendRetryable] = useState(false);
   // 返事は遅れたが、同じ印で確かめたら届いていた時の知らせ
@@ -5433,7 +5436,8 @@ export default function Home() {
         console.error("LINE send error:", lineEx);
         if (lineEx instanceof UncertainSendError) {
           // 2026-10-23: 返事が来ず、同じ印での確かめも返事が無い → 届いたか分からない（「未送信」とは言わない）
-          lineErrorMsg = "⚠️ 送信の返事が来ませんでした（サーバーが混んでいます）。LINE に届いているか分かりません。LINE の画面で確かめてから「もう一度送る」を押してください（同じ送信の印なので二重には届きません）";
+          //   入力欄の印は入力欄の文・画像が変わるまで残る（時間では捨てない・LINE は24時間同じ鍵を覚える）→ 安全な押し直し方を添える
+          lineErrorMsg = "⚠️ 送信の返事が来ませんでした（サーバーが混んでいます）。LINE に届いているか分かりません。LINE の画面で確かめてから「もう一度送る」を押してください（入力欄の文・画像を変えずに押せば二重には届きません。画面を開き直した後や文を変えた後は二重に届くことがあります）";
           lineErrorCode = "uncertain";
         } else {
           lineErrorMsg = `⚠️ LINE送信エラー: ${lineEx instanceof Error ? lineEx.message : "通信エラー"}`;
@@ -5504,20 +5508,17 @@ export default function Home() {
       // 画像は複数でも1メッセージ行にまとめて保存（JSON配列）
       if (anyImageSent) {
         const imageUrlData = sentImageUrls.length === 1 ? sentImageUrls[0] : JSON.stringify(sentImageUrls);
-        markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-        const { data: imgRow, error: imgInsertError } = await supabase
-          .from("messages")
-          .insert({
-            conversation_id: convId,
-            sender: "staff",
-            text: "[画像]",
-            image_url: imageUrlData,
-            created_at: now.toISOString(),
-            // 引用リプライ検出用: LINE送信で確定した message id をそのままinsert（書き戻し不要）
-            ...(firstImageLineMsgId ? { line_message_id: firstImageLineMsgId } : {}),
-          })
-          .select();
-        if (imgInsertError) throw imgInsertError;
+        // 引用リプライ検出用: LINE送信で確定した message id をそのままinsert（書き戻し不要）
+        //   2026-10-23: 同じ印の押し直しで「もう届いていた通の id」が返った時は、もう入っている行を使う（二重の行にしない）
+        const imgIns = await insertStaffMessageOnce({
+          conversation_id: convId,
+          sender: "staff",
+          text: "[画像]",
+          image_url: imageUrlData,
+          created_at: now.toISOString(),
+        }, firstImageLineMsgId);
+        if (imgIns.error) throw imgIns.error;
+        const imgRow = imgIns.id ? [{ id: imgIns.id }] : null;
         newMessages.push({
           id: String(imgRow?.[0]?.id || crypto.randomUUID()),
           sender: "staff",
@@ -5531,19 +5532,14 @@ export default function Home() {
       // テキストメッセージを保存（画像の1秒後のタイムスタンプで後ろに表示）
       if (textSent && textToSend) {
         const textNow = anyImageSent ? new Date(now.getTime() + 1000) : now;
-        markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-        const { data: textRow, error: textInsertError } = await supabase
-          .from("messages")
-          .insert({
-            conversation_id: convId,
-            sender: "staff",
-            text: textToSend,
-            created_at: textNow.toISOString(),
-            // 引用リプライ検出用: LINE送信で確定した message id をそのままinsert（書き戻し不要）
-            ...(textLineMsgId ? { line_message_id: textLineMsgId } : {}),
-          })
-          .select();
-        if (textInsertError) throw textInsertError;
+        const textIns = await insertStaffMessageOnce({
+          conversation_id: convId,
+          sender: "staff",
+          text: textToSend,
+          created_at: textNow.toISOString(),
+        }, textLineMsgId);
+        if (textIns.error) throw textIns.error;
+        const textRow = textIns.id ? [{ id: textIns.id }] : null;
         newMessages.push({
           id: String(textRow?.[0]?.id || crypto.randomUUID()),
           sender: "staff",
@@ -6189,15 +6185,60 @@ export default function Home() {
   //   同じ中身（key）の押し直しは同じ印 → サーバーが LINE の X-Line-Retry-Key に入れる → 前の送信で届いていたら LINE は送らない。
   //   返事が firstMs 来なければ同じ印でもう一度送って確かめる（届いていれば届いた通の id が返る）。確かめも返事が無ければ UncertainSendError。
   //   届いたら（2xx）印を消す（後で同じ中身をわざと送る時に消えないように）
-  const postSendLineIdem = async (key: string, body: Record<string, unknown>, firstMs = 30_000): Promise<Response> => {
+  //   2026-10-23 見直し: holdForCompose（画像・電話ボタン）は届いても印を残し、同じ会話の文が届いた時に消す。
+  //   AIX の「画像 → 文」で文が届いたか分からないまま閉じ、同じ中身で送り直した時、届いた画像を同じ印で送る＝LINE は送らない
+  //   （旧は画像が届いた時点で印を消していたので、押し直しで画像が二重に届いた）。印は帳簿の10分で必ず消える
+  const postSendLineIdem = async (key: string, body: Record<string, unknown>, firstMs = 30_000, holdForCompose = false): Promise<Response> => {
     const { res, confirmedAfterTimeout } = await sendWithIdempotency(aixSendBookRef.current, key, (send_id, ms) => fetch("/api/send-line-message", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
       body: JSON.stringify({ ...body, send_id }),
       signal: AbortSignal.timeout(ms),
-    }), firstMs);
+    }), firstMs, { keep: holdForCompose });
+    if (holdForCompose && res.ok) {
+      const cid = String(body.conversation_id ?? "");
+      const held = composeHeldKeysRef.current.get(cid) ?? new Set<string>();
+      held.add(key);
+      composeHeldKeysRef.current.set(cid, held);
+    }
     if (confirmedAfterTimeout && res.ok) setSendNotice("返事が遅れましたが、LINE には1回だけ届いています（二重には送っていません）");
     return res;
+  };
+  /** 同じ会話の文が届いた → ひとまとまり（画像・電話ボタン → 文）が終わったので、残していた印を消す */
+  const releaseComposeKeys = (cid: string) => {
+    const held = composeHeldKeysRef.current.get(cid);
+    if (!held) return;
+    for (const k of held) aixSendBookRef.current.done(k);
+    composeHeldKeysRef.current.delete(cid);
+  };
+  /**
+   * 2026-10-23 送信の二重防止の見直し: 同じ印の押し直しで LINE が「もう届いていた通の id」を返した時、messages の行を二重に入れない
+   * （messages.line_message_id には一意の索引がある＝二重に入れると失敗する・旧は失敗を投げるか、仮の id で吹き出しが二重になった）。
+   * もう入っている id は入れずに、その行の id を返す
+   */
+  const existingRowsByLineId = async (ids: Array<string | null | undefined>): Promise<Map<string, string>> => {
+    const list = [...new Set(ids.filter((x): x is string => Boolean(x)))];
+    if (list.length === 0) return new Map();
+    try {
+      const { data } = await supabase.from("messages").select("id, line_message_id").in("line_message_id", list);
+      return new Map((data ?? []).map((r: { id: unknown; line_message_id: unknown }) => [String(r.line_message_id), String(r.id)]));
+    } catch {
+      return new Map();
+    }
+  };
+  /** 1行入れる（LINE の通の id がもう入っていれば入れずにその行の id・同時に入った時の一意の索引の失敗もその行の id） */
+  const insertStaffMessageOnce = async (row: Record<string, unknown>, lineMsgId: string | null): Promise<{ id: string | null; existed: boolean; error: unknown }> => {
+    if (lineMsgId) {
+      const ex = (await existingRowsByLineId([lineMsgId])).get(lineMsgId);
+      if (ex) return { id: ex, existed: true, error: null };
+    }
+    markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
+    const { data, error } = await supabase.from("messages").insert({ ...row, ...(lineMsgId ? { line_message_id: lineMsgId } : {}) }).select();
+    if (error && lineMsgId && (error as { code?: string }).code === "23505") {
+      const ex = (await existingRowsByLineId([lineMsgId])).get(lineMsgId);
+      return { id: ex ?? null, existed: true, error: null };
+    }
+    return { id: data?.[0]?.id != null ? String(data[0].id) : null, existed: false, error };
   };
 
   // 2026-09-15 竹内（H 事例）: AIX【電話をかける】の「電話をかける」ボタン（LINEコール）のカードを送り、会話に記録する。
@@ -6207,7 +6248,7 @@ export default function Home() {
     if (!cid) throw new Error("会話が選択されていません");
     let res: Response;
     try {
-      res = await postSendLineIdem(`call\u0001${cid}`, { line_user_id: selectedConversation.lineUserId, account: selectedConversation.account, call_button: true, conversation_id: cid, origin: "aix" });
+      res = await postSendLineIdem(`call\u0001${cid}`, { line_user_id: selectedConversation.lineUserId, account: selectedConversation.account, call_button: true, conversation_id: cid, origin: "aix" }, undefined, true);
     } catch (e) {
       if (e instanceof UncertainSendError) throw new Error(UNCERTAIN_SEND_MSG);
       throw e;
@@ -6216,12 +6257,10 @@ export default function Home() {
     if (!res.ok || !json.ok) throw new Error(json.error || `電話ボタンを送れませんでした（HTTP ${res.status}）`);
     const at = new Date();
     const lineMsgId = json.sentMessageIds?.[0] ?? null;
-    markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-    const { data: row } = await supabase.from("messages").insert({
+    const ins = await insertStaffMessageOnce({
       conversation_id: cid, sender: "staff", text: CALL_BUTTON_MESSAGE_TEXT, created_at: at.toISOString(), is_aix_generated: true,
-      ...(lineMsgId ? { line_message_id: lineMsgId } : {}),
-    }).select();
-    const newMsg: Message = { id: String(row?.[0]?.id || crypto.randomUUID()), sender: "staff", text: CALL_BUTTON_MESSAGE_TEXT, time: formatTime(at.toISOString()), rawCreatedAt: at.toISOString(), isAix: true };
+    }, lineMsgId);
+    const newMsg: Message = { id: String(ins.id || crypto.randomUUID()), sender: "staff", text: CALL_BUTTON_MESSAGE_TEXT, time: formatTime(at.toISOString()), rawCreatedAt: at.toISOString(), isAix: true };
     setConversations((prev) => prev.map((c) => c.id !== cid || c.messages.some((m) => m.id === newMsg.id) ? c : { ...c, messages: [...c.messages, newMsg] }));
   };
 
@@ -6242,7 +6281,7 @@ export default function Home() {
         account: selectedConversation.account, conversation_id: selectedConversation.id,
         origin: isAix ? "aix" : "manual",
         ...(isAix && activeAixFlow ? { aix_type: activeAixFlow } : {}),
-      }, 60_000);
+      }, 60_000, true);
     } catch (e) {
       if (e instanceof UncertainSendError) throw new Error(UNCERTAIN_SEND_MSG);
       throw e;
@@ -6254,15 +6293,19 @@ export default function Home() {
     if (delivered.length === 0) throw new Error(json.error || `画像を送れませんでした（HTTP ${res.status}）`);
     const cid = selectedConversation.id;
     const newMessages: Message[] = [];
-    for (let i = 0; i < delivered.length; i++) {
-      const at = new Date(Date.now() + i).toISOString();   // 送った順に並ぶよう1msずつずらす
-      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-      const { data: row } = await supabase.from("messages").insert({
-        conversation_id: cid, sender: "staff", text: "[画像]", image_url: delivered[i], created_at: at,
-        is_aix_generated: isAix, ...(ids[i] ? { line_message_id: ids[i] } : {}),
-      }).select();
+    // 2026-10-23: 同じ印の押し直しで「もう届いていた通の id」が返ると、もう入っている行と同じ id になる → 入れずにその行を使う
+    //   （束の中で同じ id が2回ある時も1回だけ。id の無い画像はそのまま入れる）
+    const existing = await existingRowsByLineId(ids.slice(0, delivered.length));
+    const items = delivered.map((url, i) => ({ url, i, lid: ids[i] ?? null }));
+    const { toInsert } = splitByExistingLineIds(items, (it) => it.lid, new Set<string>());   // 束の中の重なりだけ外す
+    for (const it of toInsert) {
+      const at = new Date(Date.now() + it.i).toISOString();   // 送った順に並ぶよう1msずつずらす
+      const exId = it.lid ? existing.get(it.lid) : undefined;
+      const rowId = exId ?? (await insertStaffMessageOnce({
+        conversation_id: cid, sender: "staff", text: "[画像]", image_url: it.url, created_at: at, is_aix_generated: isAix,
+      }, it.lid)).id;
       // 物件名の読み取りは送信API（send-line-message）が1枚ずつ1回だけ行う（2026-09-22 二重読みをやめた）
-      newMessages.push({ id: String(row?.[0]?.id || crypto.randomUUID()), sender: "staff", text: "[画像]", imageUrl: delivered[i], time: formatTime(at), rawCreatedAt: at, isAix });
+      newMessages.push({ id: String(rowId || crypto.randomUUID()), sender: "staff", text: "[画像]", imageUrl: it.url, time: formatTime(at), rawCreatedAt: at, isAix });
     }
     const upgrade = (STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status) === "hearing";
     const nowIso = new Date().toISOString();
@@ -6331,7 +6374,7 @@ export default function Home() {
             // 今開いている AIX の種類（"property_recommendation" など）。
             // onSend の引数を増やさずに済むよう、画面が持っている activeAixFlow をそのまま渡す
             ...(isAix && activeAixFlow ? { aix_type: activeAixFlow } : {}),
-          });
+          }, undefined, true);   // 2026-10-23: 文が届くまで画像の印を残す（文が届いたか分からないまま押し直しても画像は二重に届かない）
         if (!imgRes.ok) {
           const imgErr = await imgRes.json().catch(() => ({ error: `HTTP ${imgRes.status}` })) as { error?: string };
           lineErrorMsg = `⚠️ LINE画像送信失敗: ${imgErr.error || imgRes.statusText}`;
@@ -6351,6 +6394,7 @@ export default function Home() {
           lineErrorMsg = `⚠️ LINE送信失敗: ${txtErr.error || txtRes.statusText}`;
         } else {
           textSent = true;
+          releaseComposeKeys(selectedConversation.id);   // 文が届いた → 画像・電話ボタンの印も消す（後で同じ画像をわざと送れるように）
           const txtJson = await txtRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
           textLineMsgId = txtJson?.sentMessageIds?.[0] ?? null;
           lastLineSendRef.current = { messageId: textLineMsgId, sentAt: now.toISOString() };
@@ -6375,20 +6419,17 @@ export default function Home() {
     // 画像が先、テキストが後の順で保存（LINE送信成功分のみ）
     if (imageSent && imageUrl) {
       const imgNow = new Date();
-      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-      const { data: imgRow, error: imgError } = await supabase
-        .from("messages")
-        .insert({
-          conversation_id: selectedConversation.id,
-          sender: "staff",
-          text: "[画像]",
-          image_url: imageUrl,
-          created_at: imgNow.toISOString(),
-          is_aix_generated: isAix ?? false,
-          ...(imageLineMsgId ? { line_message_id: imageLineMsgId } : {}),
-        })
-        .select();
-      if (imgError) throw imgError;
+      // 2026-10-23: 同じ印の押し直しで「もう届いていた通の id」が返った時は、もう入っている行を使う（二重の行にしない）
+      const imgIns = await insertStaffMessageOnce({
+        conversation_id: selectedConversation.id,
+        sender: "staff",
+        text: "[画像]",
+        image_url: imageUrl,
+        created_at: imgNow.toISOString(),
+        is_aix_generated: isAix ?? false,
+      }, imageLineMsgId);
+      if (imgIns.error) throw imgIns.error;
+      const imgRow = imgIns.id ? [{ id: imgIns.id }] : null;
       // 2026-09-22 竹内「やる」: 物件名の読み取りは送信API（send-line-message の after）が1回だけ行う。
       //   旧はここでも /api/extract-property-info を呼び、同じ画像を2回読んでいた
       newMessages.push({
@@ -6403,19 +6444,15 @@ export default function Home() {
     }
 
     if (textSent && text.trim()) {
-      markOwnStaffInsert(); // 2026-10-20 別の画面の送信の見分け（foreign-send-draft.ts）
-      const { data: insertedRows, error: insertError } = await supabase
-        .from("messages")
-        .insert({
-          conversation_id: selectedConversation.id,
-          sender: "staff",
-          text: text.trim(),
-          created_at: now.toISOString(),
-          is_aix_generated: isAix ?? false,
-          ...(textLineMsgId ? { line_message_id: textLineMsgId } : {}),
-        })
-        .select();
-      if (insertError) throw insertError;
+      const txtIns = await insertStaffMessageOnce({
+        conversation_id: selectedConversation.id,
+        sender: "staff",
+        text: text.trim(),
+        created_at: now.toISOString(),
+        is_aix_generated: isAix ?? false,
+      }, textLineMsgId);
+      if (txtIns.error) throw txtIns.error;
+      const insertedRows = txtIns.id ? [{ id: txtIns.id }] : null;
       newMessages.push({
         id: String(insertedRows?.[0]?.id || crypto.randomUUID()),
         sender: "staff",

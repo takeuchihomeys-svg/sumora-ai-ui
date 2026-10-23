@@ -3,6 +3,7 @@
 import {
   parseSendId, retryKeyFor, parseRetryKeyAccepted, isUncertainFetchError, sendIdempotencyOn,
   SendIdBook, postWithConfirm, sendWithIdempotency, linePushIdem, contentKey, propertyListSendKey, UncertainSendError,
+  retryKeyForContent, cronRetryKey, splitByExistingLineIds, UNCERTAIN_SAFE_WINDOW_NOTE, SEND_ID_TTL_MIN,
 } from "../send-idempotency";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -90,6 +91,53 @@ async function main() {
   t("中身の鍵: 同じ中身は同じ・1文字違えば別", contentKey(big) === contentKey(big) && contentKey(big) !== contentKey(big.slice(0, -1) + "B"));
   t("物件出しリスト: 同じ日は同じ鍵・日が違えば別", propertyListSendKey(new Date("2026-10-23T01:00:00Z")) === propertyListSendKey(new Date("2026-10-23T14:00:00Z"))
     && propertyListSendKey(new Date("2026-10-23T14:00:00Z")) !== propertyListSendKey(new Date("2026-10-23T15:30:00Z")));
+
+  // ── 2026-10-23 見直し（レビューの残り） ──
+  // 1. 物件出しリスト: 鍵に中身を混ぜる（「対象者なし」とリストは別の鍵）
+  const kNone = retryKeyForContent(sid, "none\u0001✅ 今日の物件出し対象者はいません！");
+  const kList = retryKeyForContent(sid, "list\u0001📋 リスト（3名）");
+  t("中身つきの鍵: UUID の形・同じ中身は同じ", UUID.test(kNone) && kNone === retryKeyForContent(sid, "none\u0001✅ 今日の物件出し対象者はいません！"));
+  t("中身つきの鍵: 「対象者なし」とリストは別の鍵（押し直しでリストが送られる）", kNone !== kList);
+  t("中身つきの鍵: 対象者が変われば別の鍵", kList !== retryKeyForContent(sid, "list\u0001📋 リスト（4名）"));
+  t("中身つきの鍵: 印が違えば別の鍵", kList !== retryKeyForContent("3f2b8c1e-9a4d-4e2f-8b7a-000000000002", "list\u0001📋 リスト（3名）"));
+  t("中身つきの鍵: 上半分は印のまま（大文字も小文字に）", retryKeyForContent(sid.toUpperCase(), "x").slice(0, 19) === sid.toLowerCase().slice(0, 19));
+  // 2. 知らせの文に安全な時間
+  t("知らせ: 安全に押し直せる時間（帳簿の分数）を言う", UNCERTAIN_SAFE_WINDOW_NOTE.includes(`${SEND_ID_TTL_MIN}分以内`) && SEND_ID_TTL_MIN === 10);
+  // 3. AIX の「画像 → 文」: 文が届くまで画像の印を残す
+  {
+    let n = 0;
+    const book = new SendIdBook(600_000, () => `id-${++n}`);
+    const seen: string[] = [];
+    await sendWithIdempotency(book, "imgs-A", async (s) => { seen.push(s); return resp(200, { sentMessageIds: ["L1"] }); }, undefined, { keep: true });
+    t("ひとまとまり: 画像が届いても印を残す（keep）", book.has("imgs-A"));
+    let threw = false;
+    try { await sendWithIdempotency(book, "txt-A", async () => { throw abortErr(); }); } catch (e) { threw = e instanceof UncertainSendError; }
+    t("ひとまとまり: 文は届いたか分からない", threw && book.has("txt-A"));
+    await sendWithIdempotency(book, "imgs-A", async (s) => { seen.push(s); return resp(200, { alreadySent: true }); }, undefined, { keep: true });
+    t("ひとまとまり: 押し直しの画像は同じ印（LINE は送らない）", seen[0] === seen[1]);
+    await sendWithIdempotency(book, "txt-A", async () => resp(200, {}));
+    book.done("imgs-A");   // 画面: 文が届いたら releaseComposeKeys
+    t("ひとまとまり: 文が届いたら両方の印が消える", !book.has("txt-A") && !book.has("imgs-A"));
+    await sendWithIdempotency(book, "imgs-B", async () => resp(200, {}));
+    t("keep なしは従来どおり届いたら消す", !book.has("imgs-B"));
+  }
+  // 4. messages の行を二重に入れない
+  {
+    const items = [{ u: "a", lid: "L1" }, { u: "b", lid: "L2" }, { u: "c", lid: "L2" }, { u: "d", lid: null }, { u: "e", lid: "L3" }];
+    const { toInsert, skipped } = splitByExistingLineIds(items, (x) => x.lid, new Set(["L1"]));
+    t("二重の行: もう入っている id は外す・束の中の重なりも1回・id 無しは入れる",
+      toInsert.map((x) => x.u).join() === "b,d,e" && skipped.map((x) => x.u).join() === "a,c");
+    t("二重の行: 何も入っていなければ全部", splitByExistingLineIds(items.slice(0, 2), (x) => x.lid, new Set()).toInsert.length === 2);
+  }
+  // 5. cron の行の鍵
+  const c1 = cronRetryKey("scheduled_messages", "row-1\u0001text");
+  t("cron の鍵: UUID の形・同じ行は毎回同じ", UUID.test(c1) && c1 === cronRetryKey("scheduled_messages", "row-1\u0001text"));
+  t("cron の鍵: 行・部分・処理が違えば別", new Set([c1, cronRetryKey("scheduled_messages", "row-2\u0001text"), cronRetryKey("scheduled_messages", "row-1\u0001img0"), cronRetryKey("viewing-announce", "row-1\u0001text")]).size === 4);
+  t("cron の鍵: 数の id も使える", UUID.test(cronRetryKey("line_tasks:completed", 42)));
+  const p6 = await linePushIdem({ token: "x", to: "g", messages: [], sendId: null, retryKey: c1, fetchImpl: fakeFetch(409, { message: "The retry key is already accepted", sentMessages: [{ id: "5" }] }) });
+  t("push: 鍵を渡せばその鍵・409 は届いている扱い（cron の重なり）", hdr["X-Line-Retry-Key"] === c1 && p6.ok && p6.alreadySent && p6.sentMessageIds.join() === "5");
+  const p7 = await linePushIdem({ token: "x", to: "g", messages: [], sendId: sid, pushIndex: 2, retryKey: kList, fetchImpl: fakeFetch(200, {}) });
+  t("push: 渡した鍵は印と回数より優先", hdr["X-Line-Retry-Key"] === kList && p7.ok);
 
   console.log(`\n${pass} OK / ${fail} NG`);
   if (fail) process.exit(1);
