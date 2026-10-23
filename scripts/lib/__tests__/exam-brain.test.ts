@@ -6,7 +6,7 @@ import {
   pickSmall, smallRank, decidePhase, SMALL_MAX_REPS, dailyCapUsd, jstDayStart, nextNightRun, capSplit, isProtected, peakAdvice, convKeyOf, convCtxHash,
   pickModelCheckIds, modelCheckedCounts, modelPairCountable, peakWaitMinOf, peakWaitMs, flashProof,
 } from "../exam-brain";
-import { readDbFingerprint, dbTablesOf, DB_FINGERPRINT_TABLES, type DbTableSpec } from "../exam-brain-io";
+import { readDbFingerprint, dbTablesOf, DB_FINGERPRINT_TABLES, cwdLooksStripped, type DbTableSpec } from "../exam-brain-io";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -281,6 +281,9 @@ ok("lazy: 道が合えば呼ぶ", needJudge({ asks: 2, ng: 0, needRawPath: false
   ok("model-check: 両方とも再生 → 数えない", !modelPairCountable([rp, rp]));
   ok("model-check: 片方でも新しく呼んだ → 数える", modelPairCountable([rp, rr]));
   ok("model-check: 控えの無い古い行 → 数える", modelPairCountable([{}, rp]));
+  ok("model-check: 道の答えが再生なら checkpoint が新しくても数えない", !modelPairCountable([{ llmCalls: [{ action: "brain_full", src: "replay" }, { action: "brain_checkpoint", src: "record" }] }, rp]));
+  ok("model-check: 道の呼び出しが fail／miss（Claude の代わり）は数えない", !modelPairCountable([{ llmCalls: [{ action: "brain_fresh", src: "fail" }, { action: "brain_fresh_claude", src: "record" }] }, rr]) && !modelPairCountable([{ llmCalls: [{ action: "brain_full", src: "miss" }] }, rr]));
+  ok("予約: 区切りの抜けた cwd を見分ける", cwdLooksStripped("C:Users竹内 悠馬sumora-ai-ui.claudeworktreeswriter-root") && !cwdLooksStripped("C:\\Users\\x") && !cwdLooksStripped("C:/Users/x"));
   ok("model-check: n=3 では flash の型にならない", flashProof({ byType: { A: { n: 3, samePath: 3, proOk: 3, flashOk: 3 } } }).okTypes.size === 0);
   const at = (jst: string) => new Date(Date.parse(`${jst}+09:00`));
   ok("少し待ち: 既定30分", peakWaitMinOf({}) === 30 && peakWaitMinOf({ EXAM_PEAK_WAIT_MIN: "off" }) === 0 && peakWaitMinOf({ EXAM_PEAK_WAIT_MIN: "45" }) === 45);

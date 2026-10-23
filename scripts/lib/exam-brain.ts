@@ -306,7 +306,10 @@ export function modelCheckedCounts(mc: { byId?: Record<string, ModelCheckStat>; 
  *   呼び出しの控えが無い行（古い行）は数える（今まで通り）
  */
 export function modelPairCountable(rows: ReadonlyArray<{ llmCalls?: ReadonlyArray<{ action: string | null; src: string }> }>): boolean {
-  const brainCalls = (r: { llmCalls?: ReadonlyArray<{ action: string | null; src: string }> }) => (r.llmCalls ?? []).filter((c) => /^brain_/.test(c.action ?? ""));
+  // 10/23 査読: 道を決める呼び出し（brain_full・brain_fresh）だけを見る。brain_checkpoint・brain_strategy が新しく呼ばれても道の答えが再生なら同じ証拠。
+  //   brain_fresh_claude は flash が落ちた時の Claude の代わり＝そのモデルの証拠でない。道を決める呼び出しが miss／fail（答えなし）の組も数えない
+  const brainCalls = (r: { llmCalls?: ReadonlyArray<{ action: string | null; src: string }> }) => (r.llmCalls ?? []).filter((c) => c.action === "brain_full" || c.action === "brain_fresh");
+  if (rows.some((r) => brainCalls(r).some((c) => c.src === "miss" || c.src === "fail"))) return false;
   if (rows.some((r) => !r.llmCalls)) return true;
   return !rows.every((r) => { const b = brainCalls(r); return b.length > 0 && b.every((c) => c.src === "replay" || c.src === "pin"); });
 }

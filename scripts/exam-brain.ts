@@ -43,7 +43,7 @@ import {
   warmDecision, warmLimit, flashSpotCheck, flashProof, FLASH_TYPE_MIN_N, isFixTarget, pickModelCheckIds, modelCheckedCounts, modelPairCountable, peakWaitMinOf, peakWaitMs, type ModelCheckStat, repsModeOf, firstRepsOf, warmRepsOf, confidenceRound2, confidenceRound3, jstDayStart,
 } from "./lib/exam-brain";
 import {
-  loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
+  loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue, cwdLooksStripped,
   planCleanup, runCleanup, readDbFingerprintFor, dbPartsOf, EXAM_BRAIN_DIR, MODEL_CHECK_FILE, RESULTS_DIR, type AnyProblem, type LedgerLine,
   readPhaseLog, appendPhaseLog, readDailySpend, readConvContexts, readWarmLog, writeWarmLog,
 } from "./lib/exam-brain-io";
@@ -791,7 +791,7 @@ async function runQueue() {
   //   比べ（取り置き以外）を先に作った順で流す → 取り置きは最後に1本だけ（何本予約されていても子は「今の main」を作る＝古い版の物は捨てる）。
   //   取り置きは予算（EXAM_WARM_BUDGET_MIN・既定 90分）で自分で切り、続きは予約し直す＝次の回（30分おき）でも比べが先に流れる。
   //   1回の上限（EXAM_QUEUE_MAX_MIN・既定 300分）を過ぎたら次の予約は始めない。1本の上限（EXAM_QUEUE_ITEM_MAX_MIN・既定 240分）を超えた子は止める
-  const due0 = readQueue().filter((x) => Date.parse(x.at) <= now.getTime());
+  const due0 = readQueue({ onBad: (f, why) => log(`⚠⚠ 予約を読めない（流さない・消さない）: ${f} — ${why}。予約は enqueue（scripts/lib/exam-brain-io.ts）で書き直す`) }).filter((x) => Date.parse(x.at) <= now.getTime());
   const { run: due, drop } = orderQueue(due0, { currentVk: mainHead()?.vk ?? null });
   for (const d of drop) { log(`予約を捨てる: ${d.item.label}（${d.why}）`); dequeue(d.item.file); }
   // 古い鍵・控え（止まった実行の条件の行の控え）を脇へ（消さない）: 夜の作業ツリー・main の作業ツリー・予約の作業ツリー
@@ -818,7 +818,8 @@ async function runQueueItems(due: ReturnType<typeof readQueue>) {
     const cwd = whole && existsSync(join(process.cwd(), "scripts", "exam-brain.ts")) ? process.cwd() : x.cwd;
     log(`予約を流す: ${x.label}（${x.createdAt} に予約・見込み $${x.estUsd.toFixed(2)}${cwd !== x.cwd ? `・夜の作業ツリーで` : ""}）`);
     // 2026-10-17 確かめる人: 予約した作業ツリーが消えていると spawn が error で落ち、後ろの予約も流れない＝飛ばす
-    if (!existsSync(cwd)) { log(`  予約した作業ツリーが無い（${cwd}）→ 飛ばす`); dequeue(x.file); continue; }
+    //   10/23 査読: 黙って消していた（cwd の区切りが抜けた手書きの予約もここで消えた）→ 大きく知らせて残す（直せば次の回に流れる）
+    if (!existsSync(cwd)) { log(`  ⚠⚠ 予約した作業ツリーが無い（${cwd}）→ 流さず残す（${x.file}）${cwdLooksStripped(cwd) ? "。cwd の区切り（\\）が抜けている＝手書きの JSON。enqueue（JSON.stringify・path.resolve）で書き直す" : "。作業ツリーを戻すか予約を消す"}`); continue; }
     dequeue(x.file);
     const ts = Date.now();
     // EXAM_FROM_QUEUE: 夜中の予約の実行＝上限を超える時も収まる分だけ流す（capSplit の fill）

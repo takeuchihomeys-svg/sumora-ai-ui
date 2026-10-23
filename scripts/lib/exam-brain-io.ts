@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./llm-cassette";
 import { atomicWriteJson, atomicWriteText, updateJsonFile } from "./exam-shared-file";
@@ -268,11 +268,22 @@ export async function readConvContexts(sb: SupabaseClient, convName: string): Pr
 
 // ─── 4. 予約 ─────────────────────────────────────────────────────────
 export type QueueItem = { label: string; argv: string[]; cwd: string; at: string; createdAt: string; estUsd: number };
-export function enqueue(q: QueueItem): string { const f = join(QUEUE_DIR, `${q.label.replace(/[^\w.-]/g, "_")}.json`); atomicWriteJson(f, q, true); return f; }
-export function readQueue(): Array<QueueItem & { file: string }> {
+// 2026-10-23 査読: 手で書いた予約の JSON で cwd の「\」が抜けた物（"C:Users竹内 悠馬sumora-ai-ui..."）が --run-queue で黙って捨てられていた。
+//   予約は必ずこの enqueue で書く（JSON.stringify・cwd は path.resolve）。読めない予約は onBad で知らせる（黙って飛ばさない・消さない）
+export function enqueue(q: QueueItem): string { const f = join(QUEUE_DIR, `${q.label.replace(/[^\w.-]/g, "_")}.json`); atomicWriteJson(f, { ...q, cwd: resolve(q.cwd) }, true); return f; }
+export function readQueue(o: { onBad?: (file: string, why: string) => void } = {}): Array<QueueItem & { file: string }> {
   if (!existsSync(QUEUE_DIR)) return [];
-  return readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json")).flatMap((f) => { try { return [{ ...(JSON.parse(readFileSync(join(QUEUE_DIR, f), "utf8")) as QueueItem), file: join(QUEUE_DIR, f) }]; } catch { return []; } });
+  return readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json")).flatMap((f) => {
+    const file = join(QUEUE_DIR, f);
+    try {
+      const q = JSON.parse(readFileSync(file, "utf8")) as Partial<QueueItem>;
+      if (!q || typeof q.label !== "string" || !Array.isArray(q.argv) || typeof q.cwd !== "string" || typeof q.at !== "string") { o.onBad?.(file, "形が違う（label・argv・cwd・at が要る）"); return []; }
+      return [{ ...q, createdAt: typeof q.createdAt === "string" ? q.createdAt : q.at, estUsd: Number(q.estUsd) || 0, file } as QueueItem & { file: string }];
+    } catch (e) { o.onBad?.(file, `JSON が読めない: ${String(e instanceof Error ? e.message : e).slice(0, 100)}`); return []; }
+  });
 }
+/** 予約の cwd が「\」の抜けた形（"C:Users..."＝ドライブの後に区切りが無い）か */
+export const cwdLooksStripped = (cwd: string) => /^[A-Za-z]:[^\\/]/.test(cwd);
 export function dequeue(file: string): void { try { unlinkSync(file); } catch { /* */ } }
 
 // ─── 止まった実行の残りの片付け（試験の会話 YUMA* の bexam- 行だけ） ───────────────
