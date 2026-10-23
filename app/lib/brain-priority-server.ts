@@ -5,7 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadRagRows } from "@/app/lib/design-knowledge-rag-server";
 import { hybridRank, rowInScene, sceneQuery, KB_SCENES, type KbScene, type RagRow } from "@/app/lib/design-knowledge-rag";
-import type { PulledKbRow } from "@/app/lib/brain-priority";
+import { priorityKbP1On, type PulledKbRow } from "@/app/lib/brain-priority";
 
 const TTL_MS = 30 * 60 * 1000;
 let cache: { at: number; rows: RagRow[] } | null = null;
@@ -35,9 +35,12 @@ export const PULL_P0_MAX = 4;
 export const PULL_P1_K = 5;
 
 /** 純: 行の一覧 → 引く行（P0 は先頭・場面の P1 の決定を上位 k）。テストできるように DB と分けた */
-export function pickPulledRows(rows: RagRow[], scene: string | null, turnText: string, nowIso: string): PulledKbRow[] {
+export function pickPulledRows(rows: RagRow[], scene: string | null, turnText: string, nowIso: string, opts: { p1?: boolean } = {}): PulledKbRow[] {
   const cur = rows.filter((r) => r.is_current);
   const p0 = cur.filter(isReplyP0).sort((a, b) => (a.created_at < b.created_at ? -1 : 1)).slice(0, PULL_P0_MAX);
+  const brief0 = (r: RagRow): PulledKbRow => ({ id: r.id, title: r.title, insight: String(r.insight ?? "").replace(/s+/g, " ").trim().slice(0, 160), priority: r.priority ?? null });
+  // 2026-10-23 P1 の決定は既定で引かない（brain-priority.priorityKbP1On の注・試験 q047 q106）
+  if (!(opts.p1 ?? priorityKbP1On())) return p0.map(brief0);
   const ks = (scene && scene in KB_SCENES ? scene : "other") as KbScene;
   const cand = cur.filter(isReplyP1Decision);
   const inScene = ks !== "other" ? cand.filter((r) => rowInScene(r, ks)) : [];

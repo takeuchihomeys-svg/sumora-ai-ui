@@ -1,6 +1,6 @@
 // 2026-10-23 優先順位の段（brain-priority.ts）: 整え・抜けの確かめ・AIX とのそろえ・書く役への行・取り寄せの選び
 // 実行: npx tsx app/lib/__tests__/brain-priority.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { normalizePriorities, ensureAsksCovered, reconcilePrioritiesWithAix, renderPrioritiesNote, priorityStepOn, priorityRetrievalOn, renderPulledBlock, askCovered } from "../brain-priority";
+import { normalizePriorities, ensureAsksCovered, reconcilePrioritiesWithAix, renderPrioritiesNote, priorityStepOn, priorityRetrievalOn, renderPulledBlock, askCovered, priorityKbP1On } from "../brain-priority";
 import { pickPulledRows, isReplyP0, isReplyP1Decision } from "../brain-priority-server";
 import type { RagRow } from "../design-knowledge-rag";
 
@@ -59,12 +59,22 @@ const rows: RagRow[] = [
 ];
 ok("P0 の選び", isReplyP0(rows[0]) && !isReplyP0(rows[1]) && !isReplyP0(rows[2]));
 ok("P1 の選び", isReplyP1Decision(rows[3]) && !isReplyP1Decision(rows[5]) && !isReplyP1Decision(rows[6]));
-const picked = pickPulledRows(rows, "viewing", "土曜に内覧できますか", "2026-10-23T00:00:00Z");
+const picked0 = pickPulledRows(rows, "viewing", "土曜に内覧できますか", "2026-10-23T00:00:00Z", { p1: false });
+ok("既定は P0 だけ（P1 の決定は引かない）", picked0.length === 1 && picked0[0].id.startsWith("p0a"), JSON.stringify(picked0.map((p) => p.id.slice(0, 3))));
+const picked = pickPulledRows(rows, "viewing", "土曜に内覧できますか", "2026-10-23T00:00:00Z", { p1: true });
 ok("P0 が先頭", picked[0].id.startsWith("p0a") && picked[0].priority === 0, JSON.stringify(picked.map((p) => p.id.slice(0, 3))));
 ok("仕組みの行は引かない", !picked.some((p) => /^(p0b|p0c|d3|d4)/.test(p.id)));
 ok("場面の決定を引く", picked.some((p) => p.id.startsWith("d1")) && picked.some((p) => p.id.startsWith("d2")));
 const blk = renderPulledBlock("viewing", picked, { promise: true, sentProps: 2, customerMemory: false, examples: 3, judgeExamples: 1, timing: true, applyRoute: false });
 ok("ブロックに★と目次", blk.includes("★AIX と返信の分け方") && blk.includes("送った物件=2件") && blk.includes("場面: viewing"), blk);
+ok("P0 は題だけ（本文を切って入れない）", !blk.includes("AIX と返信の分け方の本文"), blk);
+ok("P1 は参考の枠", blk.includes("状況が同じ時だけ当てる") && blk.includes("【決定】内覧の日にちの指定は AIX【内覧へ】"), blk);
+// お礼だけの番の伝える事の AIX は後の番・聞かれた事は約束
+const ackItems = normalizePriorities([{ rank: 1, kind: "convey", item: "ピックアップを送る", handling: "aix", aix: "property_send", reason: "約束の続き" }, { rank: 2, kind: "asked", item: "空き", quote: "空いてますか", handling: "aix", aix: "property_check_result", reason: "スタッフしか知らない" }]);
+const ra = reconcilePrioritiesWithAix(ackItems, null, { ackOnly: true });
+ok("お礼だけの番の伝える事は later", ra.items[0].handling === "later" && ra.toLater === 1 && ra.items[1].handling === "confirm" && ra.toConfirm === 1, JSON.stringify(ra));
+ok("依頼がある番の伝える事は約束のまま", reconcilePrioritiesWithAix(ackItems, null).items[0].handling === "confirm");
+ok("P1 のスイッチは既定 off", !priorityKbP1On({}) && priorityKbP1On({ BRAIN_PRIORITY_KB_P1: "on" }));
 
 console.log(`brain-priority: ${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log("FAIL", f); process.exit(1); }

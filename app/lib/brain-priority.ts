@@ -22,14 +22,23 @@ export function priorityRetrievalOn(env: Env = envOf()): boolean {
   if (!priorityStepOn(env)) return false;
   return (env.BRAIN_PRIORITY_RETRIEVAL ?? "").trim().toLowerCase() !== "off";
 }
+/**
+ * 2026-10-23 試験 q047・q106 の悪化の根（brain-priority-server の取り寄せ）: 場面の語だけで引いた P1 の決定は「同じ場面の別の状況」の決まりだった
+ *   （q047 送った見積の金額の確かめ＝返信 に「初期費用→AIX 見積書」の決定群・q106 申込の流れの質問＝返信 に「審査の相談→AIX 管理会社に確認した」）。
+ *   それを「竹内さんの決定（応用の根拠）」として見せると、ブレインが状況の違う決まりを当てて約束・AIX に倒れる。手元の語の点では状況の一致を見分けられない
+ *   （34問で測った: 関係する行もしない行も同じ点）。→ P1 の決定は既定で引かない（原則＝P0 の題と状況の材料の目次だけ）。試す時だけ BRAIN_PRIORITY_KB_P1=on
+ */
+export function priorityKbP1On(env: Env = envOf()): boolean { return on(env.BRAIN_PRIORITY_KB_P1); }
 
 // ── ① 原則の層（静的・キャッシュの前置きに入る） ───────────────────────────────
 export const BRAIN_PRIORITY_RULES = `【基本の考え方（原則）と応用 — 優先順位を決めて考える（priorities の決め方）】
 人の営業と同じに、まず原則（土台）で考え、場面の決まり（応用）はそこから導く。決まりに無い場面・決まりがぶつかる場面も原則に戻って決める。
 原則の優先順位（オススメの順。状況で入れ替えてよいが、入れ替えた時は理由に書く）:
   1 正直（嘘・推測で書かない。分からない事は分からない）→ 2 確認の約束（物件ごとに違う事・スタッフ／管理会社しか知らない事は確かめると約束するか AIX）→ 3 一つ一つに答える（依頼を落とさない）→ 4 即答（答えられる事はこの返信で答える）→ 5 気持ち（不安・焦り・恐縮を受ける）→ 6 次の一手（内覧・申込・ピックアップ等、申込までの地図の次の駅）→ 7 形（言い方・長さ）。
+「スタッフしか知らない・確かめる事」かは話題の語（費用・審査・空き・内覧）ではなく、答えが今ある材料（会話・こちらが送った物・資料・会社の事実・業界の知識）に有るかで決める。
+  有る＝即答（例: こちらが送った見積の金額の確かめ・申込から入居までの流れ・審査の一般の流れと期間）／無い＝確認の約束か AIX（例: その部屋の空き・管理会社の判断・この方の審査の見込み・まだ作っていない見積）。
 考える順（この順で priorities を作る）:
-  ① 何を聞かれているか: 今回の連投の依頼・質問・懸念・報告を全部（turn_contract.asks と同じ物は必ず全部入れる・1つも落とさない）。
+  ① 何を聞かれているか: 今回の連投の依頼・質問・懸念・報告・意思（「契約したい」「ここに決めたい」等＝次の一手につながる）を全部（turn_contract.asks と同じ物は必ず全部入れる・1つも落とさない）。
   ② 何を伝えるか: こちらから伝えるべき事（まだ果たしていない約束の続き・期限・送った物への続き・次の一手・気持ちの受け）。無ければ入れない。
   ③ 状況で順位を決める: お客様の熱（新規・内覧歴・申込歴・反応の速さ）／申込までの地図のどの駅か／期限まで何日か（今日から数えた日数で考える）／気持ち／スタッフしか知らない事か。【この番に引いた判断の材料】があれば竹内さんの決定を応用の根拠にする。
   ④ それぞれの扱いを1つ: answer_now（この返信で答える）／confirm（確かめる・作る・探すと約束する）／aix（AIX で送る＝スタッフだけが知る事・AIX の番。ボタンのキーも書く）／later（今は触れず後の番で）／skip（触れない＝もう答えた・触れない方がよい）。
@@ -130,15 +139,18 @@ export function ensureAsksCovered(items: PriorityItem[], asks: ReadonlyArray<Cov
  * 最終の AIX（決まりで直された後）とそろえる: AIX が無くなった番の aix 項目は「確かめる約束」に・違うキーは記録だけ（2つの AIX の番もあるので書き換えない）。
  *   AIX がある番で aix の項目が1つも無い時は印（noItem）だけ
  */
-export function reconcilePrioritiesWithAix(items: PriorityItem[], finalAix: string | null): { items: PriorityItem[]; toConfirm: number; mismatch: number; noItem: boolean } {
-  let toConfirm = 0, mismatch = 0;
+export function reconcilePrioritiesWithAix(items: PriorityItem[], finalAix: string | null, opts: { ackOnly?: boolean } = {}): { items: PriorityItem[]; toConfirm: number; mismatch: number; noItem: boolean; toLater?: number } {
+  let toConfirm = 0, mismatch = 0, toLater = 0;
   const out = items.map((p) => {
     if (p.handling !== "aix") return p;
+    // 2026-10-23 お客様の依頼が無い番（お礼・了承だけ）の「伝える事」の AIX が最終で外れた時は約束にしない＝後の番（竹内さんの決定 10/14: お礼に短く返す・約束を果たす AIX はその後）。
+    //   聞かれた事は今まで通り約束（turn-contract.reconcileTurnContractWithAix と同じ＝AIX は約束の後で立つ）
+    if (!finalAix && opts.ackOnly && p.kind === "convey") { toLater++; return { ...p, handling: "later" as Handling, aix: null }; }
     if (!finalAix) { toConfirm++; return { ...p, handling: "confirm" as Handling, aix: null }; }
     if (p.aix && p.aix !== finalAix && !finalAix.startsWith(`${p.aix}/`) && !p.aix.startsWith(`${finalAix}/`)) mismatch++;
     return { ...p, aix: p.aix ?? finalAix };
   });
-  return { items: out, toConfirm, mismatch, noItem: !!finalAix && !out.some((p) => p.handling === "aix") };
+  return { items: out, toConfirm, mismatch, noItem: !!finalAix && !out.some((p) => p.handling === "aix"), ...(toLater ? { toLater } : {}) };
 }
 
 // ── 書く役への材料（並べた一覧） ──────────────────────────────────────────────
@@ -159,9 +171,16 @@ export type PulledSituation = { promise: boolean; sentProps: number; customerMem
 export function renderPulledBlock(scene: string | null, rows: ReadonlyArray<PulledKbRow>, sit: PulledSituation | null): string {
   if (!rows.length && !sit) return "";
   const L: string[] = [`【この番に引いた判断の材料（優先順位を決める根拠・場面: ${scene ?? "不明"}）】`];
-  if (rows.length) {
-    L.push("竹内さんの決定（設計知見・★は絶対・最優先＝原則）:");
-    for (const r of rows) L.push(`- ${r.priority === 0 ? "★" : ""}${r.title.slice(0, 90)}${r.insight ? `: ${r.insight.slice(0, 160)}` : ""}`);
+  // 2026-10-23 原則（P0）は題だけ（本文の頭160字で切ると「AIX で送る物」の一覧だけ残り「返信は AI が知り得る材料で書ける番」の後半が落ちていた＝q047）。
+  //   P1（BRAIN_PRIORITY_KB_P1=on の時だけ）は似た場面の参考＝状況が同じ時だけ当てる
+  const p0 = rows.filter((r) => r.priority === 0), p1 = rows.filter((r) => r.priority !== 0);
+  if (p0.length) {
+    L.push("竹内さんの原則（★絶対・最優先）:");
+    for (const r of p0) L.push(`- ★${r.title.slice(0, 150)}`);
+  }
+  if (p1.length) {
+    L.push("似た場面の竹内さんの過去の決定（参考。今の番と状況が同じ時だけ当てる・違えば使わず原則で決める）:");
+    for (const r of p1) L.push(`- ${r.title.split(/s+—s+/)[0].slice(0, 110)}`);
   }
   if (sit) {
     const has = (b: boolean) => (b ? "あり" : "なし");

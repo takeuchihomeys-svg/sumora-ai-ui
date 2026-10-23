@@ -5399,7 +5399,7 @@ ${history}`;
       const asksForCov = tcAsks.length ? tcAsks.map((a) => ({ quote: String(a.quote ?? ""), route: String(a.route ?? "reply"), aix: a.aix ? normAix(String(a.aix)) : null }))
         : customerQuestions.map((q) => ({ quote: q, route: "reply" }));
       const cov = ensureAsksCovered(items0, asksForCov);
-      const rec = reconcilePrioritiesWithAix(cov.items, finalAix ?? null);
+      const rec = reconcilePrioritiesWithAix(cov.items, finalAix ?? null, { ackOnly: !asksForCov.some((a) => a.quote.trim()) });
       priorityItems = rec.items;
       priorityRec = priorityRecord(rec.items, cov, rec, priorityPulled);
       console.log(JSON.stringify({ tag: "brain:priority", conversationId, raw: items0.length, ...priorityRec, pulled: undefined }));
