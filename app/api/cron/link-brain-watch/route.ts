@@ -7,6 +7,7 @@
 //   ?dry=1 … 記録しない・立てない（数えだけ返す）
 //   2026-10-22 竹内さんの決定（設計知見 395e0064）: 同じ回でブレインの「分からない事」を brain_unknowns に足す（app/lib/brain-unknowns.ts・LLM なし・$0）。
 //     窓は前の回が集めた所の続き（最大48時間）＝やり直しても二重に数えない。止める BRAIN_UNKNOWNS=off
+//   2026-10-23: 同じまとめを型ごとに弱い所の台帳 brain_weaknesses へ寄せる（app/lib/brain-weaknesses.ts・LLM なし・印は番 id と分からない事の id だけ）。止める BRAIN_WEAKNESS_LEDGER=off
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";

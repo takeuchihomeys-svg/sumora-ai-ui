@@ -4825,6 +4825,32 @@ CREATE TABLE IF NOT EXISTS brain_unknowns (
 CREATE INDEX IF NOT EXISTS idx_brain_unknowns_count ON brain_unknowns(count DESC);
 ALTER TABLE brain_unknowns ENABLE ROW LEVEL SECURITY;
 
+-- 2026-10-23 竹内さん「ブレイン弱い部分見つかったらメモ入れていく…根本から改善繰り返していけば精度完全に強くなっていく」:
+--   brain_weaknesses … ブレインの弱い所の台帳（key で一意）。試験の外れ・毎晩の見張りの切れ・分からない事を型ごとに寄せて occurrences を足す。
+--   evidence は印だけ（試験の問題 id・回の名前・見張りの番 id・brain_unknowns の id）。お客様の文・名前は入れない。
+--   書くのはサーバーの鍵だけ（RLS 有効・ポリシーなし）。手で見る・直す: scripts/brain-weaknesses.ts（--open・--set-status 等）
+CREATE TABLE IF NOT EXISTS brain_weaknesses (
+  id BIGSERIAL PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  area TEXT NOT NULL DEFAULT 'brain',
+  symptom TEXT,
+  root_cause TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  fix_ref TEXT,
+  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+  occurrences INTEGER NOT NULL DEFAULT 0,
+  first_seen TIMESTAMPTZ,
+  last_seen TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT brain_weaknesses_status_chk CHECK (status IN ('open', 'in_progress', 'fixed', 'wont_fix')),
+  CONSTRAINT brain_weaknesses_area_chk CHECK (area IN ('brain', 'writer', 'aix', 'exam', 'conductor', 'memory'))
+);
+CREATE INDEX IF NOT EXISTS idx_brain_weaknesses_status ON brain_weaknesses(status, occurrences DESC);
+ALTER TABLE brain_weaknesses ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON brain_weaknesses FROM anon, authenticated;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

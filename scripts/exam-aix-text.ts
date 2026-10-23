@@ -46,6 +46,8 @@ import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 import { maskPII } from "../app/lib/pii-mask";
 import { buildApplicationFormat } from "../app/lib/application-format";
 import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, cutoffMs, NO_CUTOFF } from "../app/lib/post-apply";
+import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
+import { weaknessHitsFromAixRows } from "../app/lib/brain-weaknesses";
 import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lease";
 import { scoreAixText, needsJudge, withJudge, parseJudge, JUDGE_SYSTEM, judgeUser, summarize, compareRows, KIND_JA, PASS_RULE, aixShiftDays, shiftQuestionDates, isAppFormat, examConvClean, examConvOrder, type AixQuestion, type AixRow, type AixScore } from "./lib/exam-aix-text";
 
@@ -346,6 +348,9 @@ async function main() {
   }
   console.log(`  費用: 生成 新しく呼んだ ${meta.cost.real}回 $${meta.cost.realUsd.toFixed(4)}／再生 ${meta.cost.replayed}回（main の答え ${meta.cost.pinned}）／判定 ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}（再生 ${judgeCost.replayed}）`);
   console.log(`  結果: ${resFile}`);
+  // 2026-10-23 弱い所の台帳（brain_weaknesses）: 落ちた問題の抜け/作り事/スタッフだけの「種類」だけ足す（値・文は入れない・下見は書かない）
+  const wLabel = `aix-text:${LABEL}:${meta.at.slice(0, 16)}`;
+  console.log(`  ${await recordExamWeaknesses(sb, wLabel, weaknessHitsFromAixRows(wLabel, rows, meta.at), { dry: PLAN })}`);
   if (convSwitches.length || convLost) console.log(`  試験の会話: 移った ${convSwitches.join("・") || "なし"}／申込前の会話が無く流していない ${convLost}問`);
   const stateAfter = convName === convStart ? await stateOf() : stateBefore;
   console.log(stateAfter === stateBefore ? `${convName} の会話・条件の行: 変わっていない` : `⚠ ${convName} の会話・条件の行が変わった（他の実行か生成の書き込み）`);

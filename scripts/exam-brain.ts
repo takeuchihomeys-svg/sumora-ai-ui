@@ -68,6 +68,8 @@ import {
   CONDUCTOR_SYSTEM, DIFF_READER_SYSTEM, TRIAGE_SYSTEM, LINKS, LINK_IDS, MAP_STAGES, MAP_STAGE_JA, MAP_STAGE_SHORT,
   type MissMap, type ProblemLike, type RowLike, type GoldLite, type Candidate, type ConductorInput, type DiffReading, type TriageItem,
 } from "./lib/exam-conductor";
+import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
+import { weaknessHitsFromExamReasons } from "../app/lib/brain-weaknesses";
 import { READER_SYSTEM, REASON_KINDS, buildReaderUser, parseReason, machineReason, aggregateReasons, failedOf, type Reason, type ReaderProblem, type ReaderRow } from "./lib/exam-failure-reader";
 import { conflictPeers, type GoldConflict } from "./lib/exam-gold-check";
 import { diffMaterial, verifyRange, mainAnsweredIds, callConductorLlm, newTally, setLocalSpendRecording, savePlan, loadPlan, saveResult, loadLatestResult, mainRowsOf, latestRowsOf, refreshPath, saveMissMap, safeLines, CONDUCTOR_DIR, PRO_MODEL as C_PRO, FLASH_MODEL as C_FLASH, type SavedPlan } from "./lib/exam-conductor-io";
@@ -747,6 +749,8 @@ async function readFailureReasons(label: string, phases: PhaseResult[], pl: Plan
   writeFileSync(join(CONDUCTOR_DIR, `${label}.reasons.json`), JSON.stringify(rec, null, 1));
   writeFileSync(join(CONDUCTOR_DIR, "reasons-latest.json"), JSON.stringify(rec, null, 1));
   log(`  保存: ${join(CONDUCTOR_DIR, `${label}.reasons.json`)}（次の --conduct の材料）`);
+  // 2026-10-23 弱い所の台帳（brain_weaknesses）に型ごとに足して、この回で触った開いている弱い所を出す（止める BRAIN_WEAKNESS_LEDGER=off・失敗しても試験は止めない）
+  log(await recordExamWeaknesses(sb, label, weaknessHitsFromExamReasons(label, out, rec.at)));
 }
 /** 前の実行の外れの理由（次の --conduct の材料）。無ければ null */
 function loadLatestReasons(): { label: string; at: string; reasons: Reason[]; aggregate: Array<{ kind: string; n: number; ids: string[] }> } | null {
