@@ -1,5 +1,5 @@
 // app/lib/__tests__/conversation-list-sync.test.ts — 会話一覧の読み込みを変わった所だけにする決まり（実行: npx tsx app/lib/__tests__/conversation-list-sync.test.ts）
-import { lastCustomerTs, badgeMessages, pollPlan, deltaSinceIso, upsertConversationRows, FULL_REFRESH_EVERY_MS } from "../conversation-list-sync";
+import { lastCustomerTs, badgeMessages, pollPlan, deltaSinceIso, upsertConversationRows, FULL_REFRESH_EVERY_MS, deltaNeedsLastCustomerRefresh, listPollLeanEnabled } from "../conversation-list-sync";
 import { isAixListBadge } from "../aix-button-view";
 
 let pass = 0, fail = 0;
@@ -47,6 +47,16 @@ t("更新時刻が無ければ null（丸ごとに落とす）", deltaSinceIso([
   const keep = upsertConversationRows(prev, [{ id: "a", updated_at: "2026-10-06T05:00:00Z", name: "A2" }], (r) => r.id, (r, ex) => ({ id: r.id, updatedAt: r.updated_at, messages: ex?.messages ?? [], name: r.name }));
   t("読み込み済みのメッセージは残す", keep[0].messages.length === 2 && keep[0].name === "A2");
   t("行が無ければ同じ配列", upsertConversationRows(prev, [], (r: { id: string }) => r.id, () => prev[0]) === prev);
+}
+
+// 2026-10-23 差分で同じ行が毎回返る時は集計（RPC）を取り直さない
+{
+  const known = new Map<string, string | undefined>([["a", "2026-10-23T01:00:00Z"], ["b", "2026-10-23T01:00:00Z"]]);
+  t("同じ行（更新時刻が手元と同じ）→ 取り直さない", !deltaNeedsLastCustomerRefresh(known, [{ id: "a", last_sender: "customer", updated_at: "2026-10-23T01:00:00Z" }]));
+  t("お客様の行の更新時刻が新しい → 取り直す", deltaNeedsLastCustomerRefresh(known, [{ id: "a", last_sender: "customer", updated_at: "2026-10-23T01:05:00Z" }]));
+  t("手元に無いお客様の行 → 取り直す", deltaNeedsLastCustomerRefresh(known, [{ id: "z", last_sender: "customer", updated_at: "2026-10-23T01:05:00Z" }]));
+  t("スタッフの行だけ変わった → 取り直さない", !deltaNeedsLastCustomerRefresh(known, [{ id: "b", last_sender: "staff", updated_at: "2026-10-23T01:05:00Z" }]));
+  t("NEXT_PUBLIC_LIST_POLL_LEAN=off で止まる", !listPollLeanEnabled("off") && listPollLeanEnabled(undefined));
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);
