@@ -5226,6 +5226,16 @@ export default function Home() {
     finalCheckSkipRef.current = false;
   };
 
+  // 2026-10-23 送信の二重防止の見直し: 入力欄の文・画像が印の中身と変わったら印を捨てる。
+  //   （届いたか分からない送信の後に入力欄を空にし、後で同じ文「了解です」をわざと送る時、古い印が残ると
+  //    LINE が「もう届いている」として送らない＝新しい送信が消える。押し直しは中身が同じなので印は残る）
+  useEffect(() => {
+    const cur = textSendIdRef.current;
+    if (cur && cur.key !== `${selectedId}\u0001${replyDraft.trim()}`) textSendIdRef.current = null;
+    const keep = new Set(selectedImageFiles.map((f) => `${selectedId}\u0001${f.name}:${f.size}:${f.lastModified}`));
+    for (const k of [...imageSendRef.current.keys()]) if (!keep.has(k)) imageSendRef.current.delete(k);
+  }, [selectedId, replyDraft, selectedImageFiles]);
+
   const executeSend = async () => {
     if (sending) return; // 二重送信防止（再入ガード）
     setShowSendConfirm(false);
@@ -5323,12 +5333,9 @@ export default function Home() {
           } catch {
             throw new UncertainSendError();
           }
-          if (!r.ok) {
-            // 確かめの途中でお客様の新しい発言が来た等で止まった → 前の送信が届いたかは分からないまま
-            const j = await r.clone().json().catch(() => null) as { errorCode?: string } | null;
-            if (j?.errorCode === STALE_REPLY_ERROR_CODE) throw new UncertainSendError();
-            return r;
-          }
+          // 確かめが失敗（お客様の新しい発言で止まった・サーバーの 5xx 等）→ 前の送信が届いたかは分からないまま
+          //   （「未送信」と出すと、届いていた時に別の文で送り直して二重になる。印は残すので「もう一度送る」は安全）
+          if (!r.ok) throw new UncertainSendError();
           confirmedAfterTimeout = true;
           return r;
         }
@@ -8968,7 +8975,7 @@ export default function Home() {
                 {error.includes("LINEの送信上限") ? (
                   // 月間上限は再試行しても解決しない → 再試行ボタンの代わりにLINE管理画面へのリンクを表示
                   <a href="https://manager.line.biz/" target="_blank" rel="noopener noreferrer" className="ml-3 shrink-0 font-bold text-[#1565C0] active:opacity-60">LINEプランを確認</a>
-                ) : sendRetryable ? (
+                ) : sendRetryable && error.startsWith("⚠️ 送信の返事が来ませんでした") ? (
                   // 2026-10-23 届いたか分からない送信: 同じ印で送り直す（届いていれば LINE は送らない＝二重にならない）
                   <button onClick={() => { void executeSend(); }} disabled={sending} className="ml-3 shrink-0 font-bold text-[#1565C0] active:opacity-60 disabled:opacity-40">もう一度送る</button>
                 ) : (
