@@ -298,10 +298,14 @@ export async function POST(req: NextRequest) {
   //   画面が直後に入れる messages の行へは DB のトリガーが写す → 応答の前に待つ（表が無い・失敗しても送信は止めない・STAFF_SEND_LOG=off で止める）
   if (!skipLinePush && sentMessageIds.length) {
     const { recordStaffSend } = await import("@/app/lib/staff-send-log-server");
-    await recordStaffSend({
+    const logP = recordStaffSend({
       headers: req.headers, conversationId: conversation_id ?? null, lineMessageIds: sentMessageIds, origin: origin ?? null, aixType: aix_type ?? null,
       kind: call_button ? "call_button" : batchImages.length ? "images" : image_url && !message ? "image" : "text",
-    });
+    }).catch(() => {});
+    // 2026-10-23 竹内「LINE送ったのに固まる」: DB が重い時にこの記録を最大100秒待って応答が遅れ、画面が「送信エラー」になっていた
+    //   （LINE には届いている）。待つのは最大3秒・残りは応答の後（after）で続ける
+    await Promise.race([logP, new Promise((r) => setTimeout(r, 3_000))]);
+    after(() => logP);
   }
 
   // 2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」: 手打ちの送信は送った時に1回だけ分類して記録する（sent_facts）。
