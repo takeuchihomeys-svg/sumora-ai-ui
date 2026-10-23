@@ -14,6 +14,7 @@ import { buildAixJevMaterials } from "@/app/lib/aix-jev-materials";
 import { waitUntil } from "@vercel/functions";
 import { dPlanOn, parseNeedMaterials, recalledBlock, coreOverTwoStage, pickedCompressedButton } from "@/app/lib/brain-dplan";
 import { logWatchMaterial, noteWatchMaterials } from "@/app/lib/line-watch-materials-server";
+import { withRelativeDatesRule, relativeDatesBrainNoteFor } from "@/app/lib/relative-dates"; // 2026-10-23 日付の距離（BRAIN_RELATIVE_DATES・既定 off）
 import { isTimeoutError } from "@/app/lib/line-watch-materials";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 // 2026-10-13 要約はブレインの戦略の層だけが書く（送信の後の customer-summary をやめた）。要約側の成約パターンの RAG も戦略へ
@@ -1405,12 +1406,12 @@ export function buildBrainSystemBlocks(inputs: BrainSystemInputs): BrainSystemBl
   const cc = { type: "ephemeral" as const, ttl: "1h" as const };
   const blocks: BrainSystemBlock[] = [
     // ブロック[0]: 完全静的（冒頭指示・AIX_CAPABILITY_MAP・REPLY_STYLE_RULES・PHASE_TEMPLATE_HINTS・JSONスキーマ等）→ 1h キャッシュ
-    { type: "text", text: STATIC_BRAIN_SYSTEM, cache_control: cc },
+    { type: "text", text: withRelativeDatesRule(STATIC_BRAIN_SYSTEM), cache_control: cc },
     // ブロック[1]: DB由来動的部分 → 1h キャッシュ。学習cronで更新されてもブロック[0]のプレフィックスキャッシュは無傷。
     // 空のtextブロックはAPIエラーになるため、空の場合はブロックごと省略。
     ...(dynamicText ? [{ type: "text" as const, text: dynamicText, cache_control: cc }] : []),
   ];
-  return { staticText: STATIC_BRAIN_SYSTEM, dynamicText, blocks, promptRulesText, knowledgeText, boundaryText, actionWinRateText };
+  return { staticText: withRelativeDatesRule(STATIC_BRAIN_SYSTEM), dynamicText, blocks, promptRulesText, knowledgeText, boundaryText, actionWinRateText };
 }
 
 /** 純関数。client.messages.create に渡す「キャッシュの鍵に入る部分」。tools・temperature は付けない・thinking は disabled 固定 */
@@ -2521,7 +2522,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   } catch (e) {
     console.warn("[brain-core] brain_aix_feedback read failed (fail-open):", e instanceof Error ? e.message : e);
   }
-  const sceneEvidenceText = buildSceneEvidencePromptText(sceneEvidence, brainAixFeedback);
+  let sceneEvidenceText = buildSceneEvidencePromptText(sceneEvidence, brainAixFeedback);
   // 2026-10-13 判断の手本（見張りで道が外れた番の竹内さんの一手・同じ場面で最大3件・毎回変わる並び＝キャッシュの印の外・app/lib/brain-judge-examples.ts）。既定 off・入れる: BRAIN_JUDGE_EXAMPLES=on
   const judgeExamplesText = judgeExamplesEnabled() && !isPostApplyStatus(convStatus)
     ? judgeExamplesBrainText(pickJudgeExamples(JUDGE_EXAMPLES, { customerText: unrepliedTurn.text ?? "", conversationId, historyCustomerTexts: typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "") }))
@@ -2979,6 +2980,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
         return s;
       }).join(" / ")}`
     : "";
+  // 2026-10-23 日付の距離（relative-dates.ts・BRAIN_RELATIVE_DATES=on の時だけ・off は空）: 毎回変わる材料の最後の方（場面の証拠の後ろ）に足す
+  sceneEvidenceText += relativeDatesBrainNoteFor({ ledgerEntries: brainLedger.entries, sentProps, csViewings: customerState?.viewings ?? null, rawViewings: viewings, openPromises: promiseTrack.open, lastCustomerAt: lastCustomerMsg?.created_at ?? null });
   // 内覧済み顧客の特別扱い（修正5）: 完了内覧がある顧客は対面済み
   // 2026-09-26 段3 竹内「内覧終了して別の物件に切り替えるなら切り替える・その物件も候補にしてほかも探す」:
   //   旧「①他社への並行問い合わせが実質終了 … application_push を優先」は実態と逆だった（設計知見「1つの物件へのとらわれは…」）。
