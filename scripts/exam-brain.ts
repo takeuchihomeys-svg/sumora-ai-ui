@@ -51,7 +51,7 @@ import { decideStageFromDiff, examVersionKey } from "./lib/exam-scope";
 import { BASELINE_DIR } from "./lib/brain-exam-baseline";
 import { examEnvFingerprint, formatEnvFp } from "./lib/exam-env-fp";
 import * as C from "./lib/exam-coord";
-import { budgetMsOf, orderQueue, sweepStaleBackups, itemHardMs, queueTotalMs } from "./lib/exam-night";
+import { budgetMsOf, orderQueue, sweepStaleBackups, itemHardMs, queueTotalMs, supersededWarms, supersedeQueueFile } from "./lib/exam-night";
 // 2026-10-21 スイッチの指紋（既定＝.env.local と違うスイッチ・exam-env-fp.ts）。使い回しの鍵に入れる・見出しと台帳に残す
 // 2026-10-21 査読: 予約（--run-queue）は env を運べず、夜の回が既定のスイッチ（DAY_SUBJECT_READER 無し＝off）で流れて on/off の比べが無効になっていた
 //   → 予約の argv に --switch=NAME=値（指紋の組・(unset) は消す）を入れ、子の最初にここで env に戻す（指紋より前）
@@ -146,6 +146,8 @@ function ensureMainWarm(o: { force?: boolean; runNow?: boolean; quiet?: boolean;
   const conv = (process.env.EXAM_WARM_CONV || (/^YUMA[2-5]$/i.test(CONV) ? CONV : "YUMA5")).toUpperCase();
   const f = enqueue({ label: d.label, argv: ["--warm-main", "--when=now", `--conv=${conv}`, `--warm-vk=${h.vk}`], cwd: process.cwd(), at: at.toISOString(), createdAt: now.toISOString(), estUsd: 0 });
   log(`main の取り置き: ${d.why} → ${o.runNow ? "今" : `${jst(at)} JST の --run-queue`}で（${f}）`);
+  // 10/23 まとめる: 古い版の取り置きの予約は脇へ（.superseded-<JST>・消さない）＝1日に何版来ても流すのは今の版の1本
+  for (const s of supersededWarms(readQueue(), h.vk)) { const to = supersedeQueueFile(s.item.file, now); if (to) log(`  予約を脇へ寄せた: ${s.item.label}（${s.why}）→ ${to}`); }
 }
 /** brain-exam が書いた「前（main）」の数（使い回し・持ち越し・解いた・回さなかった） */
 //   2026-10-22 差分だけの取り置き: 下見で入力が同じだった問題（planSame・呼んでいない）は使い回しに数える。deferWhy＝残りが出た訳（budget・main-moved・limit）
@@ -584,11 +586,16 @@ async function openWeaknessQids(): Promise<{ map: Record<string, string[]>; note
 async function spendToday() {
   const now = new Date(), since = jstDayStart(now);
   const rows = await C.readExamSpendRows(sb, since);
-  const s = C.summarizeSpend(rows, CHEAP_WINDOW_JST);
+  // 10/23: main の作り直しは commit ではなく試験に効く所の指紋（版の鍵）＋構成でまとめる（commit ごとだと答えの置き場が同じ物も別の版に見えた）
+  const commitToVk: Record<string, string> = {};
+  for (const c7 of new Set(rows.map((r) => /^script:brain-exam-main-([0-9a-f]{7})-/.exec(r.route)?.[1]).filter((x): x is string => !!x))) {
+    try { const full = execFileSync("git", ["rev-parse", "--verify", `${c7}^{commit}`], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); commitToVk[full] = examVersionKey(full, join(BASELINE_DIR, "version-keys.json")); } catch { /* 手元に無い commit は commit のまま */ }
+  }
+  const s = C.summarizeSpend(rows, CHEAP_WINDOW_JST, { versionOf: C.mainKeyResolver(commitToVk) });
   const ev = C.readCoordEvents(since);
   const pct = (x: number) => (s.total ? Math.round((x / s.total) * 100) : 0);
   log(`=== 今日の試験の費用（${jst(since)}〜 JST・route script:brain-exam-*）: $${s.total.toFixed(2)}（${s.byRoute.length} 本）===`);
-  log(`  main の作り直し: $${s.byKind.main.usd.toFixed(2)}（${pct(s.byKind.main.usd)}%・${s.byKind.main.routes} 本）`);
+  log(`  main の作り直し: $${s.byKind.main.usd.toFixed(2)}（${pct(s.byKind.main.usd)}%・${s.byKind.main.routes} 本・commit＋構成で ${s.mainVersions.byCommit} 版 → 試験に効く所の指紋＋構成で ${s.mainVersions.byKey} 版）`);
   log(`  担当の確かめ:   $${s.byKind.worker.usd.toFixed(2)}（${pct(s.byKind.worker.usd)}%・${s.byKind.worker.routes} 本）`);
   log(`  夜（安い時間・warm）: $${s.byKind.night.usd.toFixed(2)}（${pct(s.byKind.night.usd)}%・${s.byKind.night.routes} 本）`);
   if (s.mainDup.length) {
@@ -793,7 +800,8 @@ async function runQueue() {
   //   1回の上限（EXAM_QUEUE_MAX_MIN・既定 300分）を過ぎたら次の予約は始めない。1本の上限（EXAM_QUEUE_ITEM_MAX_MIN・既定 240分）を超えた子は止める
   const due0 = readQueue({ onBad: (f, why) => log(`⚠⚠ 予約を読めない（流さない・消さない）: ${f} — ${why}。予約は enqueue（scripts/lib/exam-brain-io.ts）で書き直す`) }).filter((x) => Date.parse(x.at) <= now.getTime());
   const { run: due, drop } = orderQueue(due0, { currentVk: mainHead()?.vk ?? null });
-  for (const d of drop) { log(`予約を捨てる: ${d.item.label}（${d.why}）`); dequeue(d.item.file); }
+  // 10/23: 捨てる予約も消さずに脇へ（.superseded-<JST>）。寄せられない時だけ旧の通り消す（同じ予約を毎回流さない）
+  for (const d of drop) { const to = supersedeQueueFile(d.item.file, now); log(`予約を流さない: ${d.item.label}（${d.why}）${to ? ` → 脇へ ${to}` : ""}`); if (!to) dequeue(d.item.file); }
   // 古い鍵・控え（止まった実行の条件の行の控え）を脇へ（消さない）: 夜の作業ツリー・main の作業ツリー・予約の作業ツリー
   try {
     const wts = [process.cwd(), resolve(process.cwd(), "..", "brain-exam-main"), ...due.map((x) => x.cwd)];

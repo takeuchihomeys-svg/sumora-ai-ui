@@ -99,6 +99,25 @@ export function orderQueue(due: QItem[], o: { currentVk: string | null }): { run
   }
   return { run: [...cmp, ...partWarm, ...(keep ? [keep] : [])], drop };
 }
+/**
+ * 2026-10-23 取り置きの予約をまとめる（--spend-today: 1日に main の版が何本も来ると warm-auto-<版> が版ごとに溜まっていた）:
+ *   新しい版（keepVk）の取り置きを予約した時、他の版の「全部の問題の取り置き」（warm-auto-<版>・--types/--stage/--only なし）は古い＝要らない。
+ *   子は流す時に「今の main」を作るので、古い版の予約を流しても今の版の物を作るだけ＝重ねて流す意味が無い。返した物は呼ぶ側が脇へ寄せる（消さない）。
+ *   型を絞った取り置き・比べの予約・版の分からない物には触らない
+ */
+export function supersededWarms<T extends Pick<QItem, "label" | "argv">>(queue: T[], keepVk: string): Array<{ item: T; why: string }> {
+  return queue.filter((x) => isWholeWarm(x as unknown as QItem)).flatMap((x) => {
+    const vk = vkOfWarm(x as unknown as QItem);
+    return vk && vk !== keepVk ? [{ item: x, why: `新しい main の版（${keepVk}）の取り置きを予約した＝古い版（${vk}）の取り置きは要らない` }] : [];
+  });
+}
+/** 脇へ寄せた予約の名前（.json で終わらない＝readQueue が読まない・中身は残る＝名前を戻せば流れる） */
+export const supersededNameOf = (file: string, now: Date) => `${file}.superseded-${new Date(now.getTime() + 9 * 3600_000).toISOString().replace(/[-:T]/g, "").slice(0, 12)}`;
+/** 予約を脇へ寄せる（消さない）。寄せた先の名前を返す（できなければ null） */
+export function supersedeQueueFile(file: string, now = new Date()): string | null {
+  const to = supersededNameOf(file, now);
+  try { renameSync(file, to); return to; } catch { return null; }
+}
 /** 予約1本の上限（分）: 取り置きは予算で自分で切るので長め・比べは既定 240分（EXAM_QUEUE_ITEM_MAX_MIN・off で無し） */
 export function itemHardMs(env: Record<string, string | undefined>): number | null {
   const v = budgetMsOf(env.EXAM_QUEUE_ITEM_MAX_MIN ?? "240");
