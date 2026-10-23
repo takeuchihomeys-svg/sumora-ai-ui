@@ -818,6 +818,12 @@ function conversationRowToItem(conversation: SupabaseConversationRow, relatedMes
   };
 }
 
+/** 2026-10-23 RT_LEAN: 行の「画面が使う列の指紋・下書きの印・電話の印」 */
+function rowInfoOf(r: SupabaseConversationRow): { fp: string | null; draftSig: string | null; call: string | null } {
+  const rec = r as unknown as Record<string, unknown>;
+  return { fp: convUiFingerprint(rec), draftSig: convDraftSignature(rec), call: r.call_tapped_at ?? null };
+}
+
 function formatTime(dateString: string) {
   const date = new Date(dateString);
   const hours = String(date.getHours()).padStart(2, "0");
@@ -2158,7 +2164,9 @@ export default function Home() {
           let rtDraftChanged = true;
           if (RT_LEAN && upd?.id) {
             const id = String(upd.id);
-            const prev = appliedRowInfoRef.current.get(id);
+            // まとめ待ちの行がある時はそれと比べる（当てた行と比べると、まとめ待ちの間に元に戻した更新を読み飛ばして古い行を当ててしまう）
+            const pend = rtPending.get(id);
+            const prev = pend ? rowInfoOf(pend) : appliedRowInfoRef.current.get(id);
             const plan = rtUpdatePlan(prev?.fp ?? undefined, prev?.draftSig ?? undefined, prev ? prev.call : undefined, upd as unknown as Record<string, unknown>);
             if (plan.skip) { refreshStatsRef.current.rtSkip++; return; }
             rtDraftChanged = plan.draftChanged;
@@ -2848,15 +2856,15 @@ export default function Home() {
   };
   const linkedCustomerMapRef = useRef(linkedCustomerMap);
   useEffect(() => { linkedCustomerMapRef.current = linkedCustomerMap; }, [linkedCustomerMap]);
+  /** 2026-10-23 RT_LEAN: 画面へ当てた行の印を覚える（Realtime・差分・丸ごと・最初の40件のどれで当てても。覚えないと古い印と比べて読み飛ばしを誤る） */
+  const recordAppliedRows = (rows: SupabaseConversationRow[]) => {
+    if (!RT_LEAN) return;
+    for (const r of rows) appliedRowInfoRef.current.set(String(r.id), rowInfoOf(r));
+  };
   /** DB の会話の行（Realtime・差分の読み直し）を一覧に当てる。読み込み済みのメッセージは残す */
   const applyConversationRows = (rows: SupabaseConversationRow[]) => {
     if (!rows.length) return;
-    if (RT_LEAN) {
-      for (const r of rows) {
-        const rec = r as unknown as Record<string, unknown>;
-        appliedRowInfoRef.current.set(String(r.id), { fp: convUiFingerprint(rec), draftSig: convDraftSignature(rec), call: r.call_tapped_at ?? null });
-      }
-    }
+    recordAppliedRows(rows);
     setConversations((prev) => {
       const next = upsertConversationRows(prev, rows, (r) => String(r.id), (r, existing) => {
         const item = conversationRowToItem(r, existing?.messages ?? []);
@@ -2919,6 +2927,7 @@ export default function Home() {
         .limit(FIRST_PAGE_CONVERSATIONS);
       if (!firstErr && firstRows && firstRows.length > 0) {
         const rows = firstRows as unknown as SupabaseConversationRow[];
+        recordAppliedRows(rows);
         setConversations((prev) => {
           const prevMap = new Map(prev.map((c) => [c.id, c]));
           const firstIds = new Set(rows.map((r) => String(r.id)));
@@ -3002,6 +3011,7 @@ export default function Home() {
 
     // メッセージは持っている物だけ使う（開いた会話・Realtime で届いた分）。一覧の行は DB の last_message で出す
     const formatted: Conversation[] = conversationsData.map((conversation) => conversationRowToItem(conversation, []));
+    recordAppliedRows(conversationsData);
 
     // 既存のメッセージ配列の方が長い場合は保持（ポーリングによる縮退を防ぐ）
     // メッセージを保持する場合もメタデータ（lastMessage等）は新しい値を使う
