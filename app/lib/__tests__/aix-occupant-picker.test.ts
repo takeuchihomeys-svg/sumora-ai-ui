@@ -42,7 +42,8 @@ it("画面のピッカーは切替なしである（確認した（条件・交�
 
 it("網: 当たる・当たらない", () => {
   for (const s of ["202は子ども不可ですか", "子供のご入居が可能か確認いただいております", "お子様可ですか？", "小学生以下は入居できますか", "年齢制限はありますか"]) ok(isOccupantConditionText(s), `当たらない: ${s}`);
-  for (const s of ["子供の声NGです", "大人2人、子供2人、犬2匹でいい物件があれば", "お子様のお部屋と分けやすい間取り", "入居日はいつですか"]) ok(!isOccupantConditionText(s), `当たる: ${s}`);
+  for (const s of ["子供の声NGです", "大人2人、子供2人、犬2匹でいい物件があれば", "お子様のお部屋と分けやすい間取り", "入居日はいつですか", "子供の入居日は3月末です", "子供が入居する部屋を探しています", "子どもの入居時期は春です"]) ok(!isOccupantConditionText(s), `当たる: ${s}`);
+  for (const s of ["お子様のご入居可能となります", "中学生以下のお子様のご入居が出来ないとのことです"]) ok(isOccupantConditionText(s), `結果の文に当たらない: ${s}`);
 });
 
 it("入力: 可否が要る・条件ありは条件が要る・物件名なしは触れない", () => {
@@ -69,6 +70,12 @@ it("出口: 条件の字が無ければ2行目を差し替える・あれば触�
   const good = "…確認させて頂きましたところ\n中学生以上のお子様でしたらご入居可能となります😊！！";
   ok(ensureOccupantCondition(good, "条件あり", "中学生以上のお子様") === good, "触った");
   ok(ensureOccupantCondition(bad, "可能", "") === bad, "可能で触った");
+  const head = "サンライトあべの8 202号室にお子様のご入居可能か管理会社に確認させて頂きましたところ";
+  const yes = `${head}\nお子様のご入居可能となります😊！！`, no = `${head}\nお子様のご入居が出来ないお部屋となります。`;
+  ok(ensureOccupantCondition(yes, "不可", "") === no, "不可なのに可能が残る");
+  ok(ensureOccupantCondition(no, "不可", "") === no, "不可を触った");
+  ok(ensureOccupantCondition(no, "可能", "") === yes, "可能なのに不可が残る");
+  ok(ensureOccupantCondition(yes, "可能", "") === yes, "可能を触った");
 });
 
 it("必ず Claude（お子様の有無・年齢＝ご家族の事情・切替に関係なく）", () => {

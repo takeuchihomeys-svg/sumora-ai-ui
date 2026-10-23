@@ -42,9 +42,10 @@ const CHILD = "(?:お子様|お子さん|お子さま|子供|子ども|こども
  * 入居者の条件（お子様の入居・年齢）の問い・約束の語（候補を拾う網・判断はブレイン）。
  *   当たる: 「202は子ども不可ですか」「子供のご入居が可能か確認」「お子様可ですか」「小学生以下は入居できますか」「年齢制限」
  *   当たらない: 「子供の声NG」（騒音の気にし方）・「大人2人、子供2人、犬2匹でいい物件」（探す条件）・「お子様のお部屋と分けやすい」
+ *              「子供の入居日は3月末」「子供が入居する部屋を探しています」（親がお子様のお部屋を探す＝入居時期・探す条件。2026-10-23 確かめる人）
  */
 export const OCCUPANT_COND_RE = new RegExp([
-  `${CHILD}(?:以下|以上|未満)?(?:の|は|が|って|でも)?(?:ご?入居|ご?同居)`,
+  `${CHILD}(?:以下|以上|未満)?(?:の|は|が|って|でも)?(?:ご?入居|ご?同居)(?!(?:可能)?日|時期|予定|する|される|させ|開始)`,
   `${CHILD}(?:以下|以上|未満)?(?:は|って)?(?:可|不可|OK|NG|ＯＫ|ＮＧ|大丈夫|だめ|ダメ)`,
   `${CHILD}[^\\n。！!？?]{0,12}(?:住め|住む事|暮らせ)`,
   `入居者?の?年齢|入居者の条件|年齢(?:制限|の?条件)`,
@@ -90,14 +91,21 @@ export function occupantConditionLine(condition: string, label?: string): string
   return /お子|子供|子ども|こども|小学生|中学生|高校生|幼児|乳児|未就学/.test(c) ? `${w}でしたらご入居可能となります😊！！` : `${w}でしたらお子様のご入居可能となります😊！！`;
 }
 
-/** 出口の安全の線:条件ありで、スタッフの条件の字が本文に無ければ 2行目を決まった型で差し替える */
+const OCCUPANT_NEG_RE = /出来な|できな|不可|ご遠慮|お断り|難し/;
+/**
+ * 出口の安全の線:
+ *   条件あり＝スタッフの条件の字が本文に無ければ 2行目を決まった型で差し替える
+ *   不可＝「出来ない」等の打ち消しが本文に無ければ 2行目を決まった型で差し替える（可否の取り違えを出さない・2026-10-23 確かめる人）
+ *   可能＝お子様の行に打ち消しがあれば 2行目を決まった型で差し替える
+ */
 export function ensureOccupantCondition(text: string, policy: OccupantPolicy, condition: string | null | undefined): string {
   const t = String(text ?? "");
-  const cond = String(condition ?? "").trim();
-  if (policy !== "条件あり" || !cond || t.normalize("NFKC").includes(cond.normalize("NFKC"))) return t;
   const lines = t.replace(/\r\n/g, "\n").split("\n");
-  const i = lines.findIndex((l) => /お子様[^\n]{0,10}(?:ご入居|入居)/.test(l) && !/確認させて/.test(l));
-  const fixed = occupantConditionLine(cond);
-  if (i >= 0) lines[i] = fixed; else lines.push(fixed);
-  return lines.join("\n");
+  const childLine = (l: string) => /お子様[^\n]{0,10}(?:ご入居|入居)/.test(l) && !/確認させて/.test(l);
+  const put = (fixed: string) => { const i = lines.findIndex(childLine); if (i >= 0) lines[i] = fixed; else lines.push(fixed); return lines.join("\n"); };
+  if (policy === "不可") return OCCUPANT_NEG_RE.test(t.normalize("NFKC")) ? t : put("お子様のご入居が出来ないお部屋となります。");
+  if (policy === "可能") return lines.some((l) => childLine(l) && OCCUPANT_NEG_RE.test(l.normalize("NFKC"))) ? put("お子様のご入居可能となります😊！！") : t;
+  const cond = String(condition ?? "").trim();
+  if (!cond || t.normalize("NFKC").includes(cond.normalize("NFKC"))) return t;
+  return put(occupantConditionLine(cond));
 }
