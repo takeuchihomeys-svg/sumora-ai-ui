@@ -327,6 +327,10 @@ export const HUB_CONTRADICTION_JA: Record<HubContradictionType, string> = {
   state_conflict: "customer-state のずれ",
 };
 export type HubContradiction = { type: HubContradictionType; detail: string };
+/** 要対応の見分けの札（食い違いの detail の頭・link-hub-brain が「果たした要対応」を外すのに使う） */
+export function aixItemKey(action: string | null | undefined, checkPattern: string | null | undefined, createdAt: string): string {
+  return `${action ?? ""}${checkPattern ? `/${checkPattern}` : ""} 立った ${createdAt.slice(5, 16)}`;
+}
 
 const POST_STAGES = new Set<CustomerStage>(["applying", "won"]);
 const jstYmdOf = (n: number) => new Date(n + 9 * H).toISOString().slice(0, 10);
@@ -354,7 +358,7 @@ export function hubContradictions(hub: CustomerHub, input: HubInput): HubContrad
   for (const i of input.aixItems) {
     if (i.status !== "pending" || ms(i.created_at) > now) continue;
     const d = doneAfter(i.action, i.check_pattern, ms(i.created_at));
-    if (d) out.push({ type: "aix_item_open_promise_done", detail: `${i.action}${i.check_pattern ? `/${i.check_pattern}` : ""} 立った ${i.created_at.slice(5, 16)}・果たした ${String(d.doneAt).slice(5, 16)}` });
+    if (d) out.push({ type: "aix_item_open_promise_done", detail: `${aixItemKey(i.action, i.check_pattern, i.created_at)}・果たした ${String(d.doneAt).slice(5, 16)}` });
   }
   for (const e of input.calendarEvents) {
     if (e.is_done || !(e.notes ?? "").startsWith(PROMISE_MUST_MARK) || isContactPromiseNotes(e.notes)) continue;

@@ -8,6 +8,9 @@ import {
   type ConductorDecision, type ConductorTieBreaker, type ConductorCounts,
 } from "@/app/lib/link-conductor";
 import type { CustomerHub, HubContradiction, HubInput } from "@/app/lib/customer-hub";
+import { hubBrainNote, linkHubBrainEnabled } from "@/app/lib/link-hub-brain";
+import { isTestConversation } from "@/app/lib/test-conversations";
+import { currentReplayFloor } from "@/app/lib/test-replay-floor";
 
 /** 非同期の flash（迷いの時だけ呼ばれる） */
 export type AsyncTieBreaker = (q: Parameters<ConductorTieBreaker>[0]) => Promise<number | null>;
@@ -54,6 +57,27 @@ export async function conductorBrainNoteIfEnabled(sb: SupabaseClient, conversati
     return r ? renderConductorBrainNote(r.decision, customerName ?? r.input.conv.customer_name) : "";
   } catch (e) {
     console.warn("[link-conductor] brain note:", e instanceof Error ? e.message : String(e));
+    return "";
+  }
+}
+
+/**
+ * 2026-10-24 弱い所4: つなぎの芯の「今の番の前から開いている事」（要対応・約束の並び・【必ず】・連絡日）を LINE のブレインの材料に（LINK_HUB_BRAIN=on の時だけ・既定 off＝空）。
+ *   決まった計算だけ・LLM なし・$0。読めない・時間切れは空。形と理由は link-hub-brain.ts。
+ *   テストの会話で試験の線のファイルに hubSource がある時は、その番の時点の元の会話から組む（写しは要対応・カレンダーを持たない・読むだけ）
+ */
+export async function hubBrainNoteIfEnabled(sb: SupabaseClient, conversationId: string, nowMs: number, timeoutMs = 6_000): Promise<string> {
+  if (!linkHubBrainEnabled()) return "";
+  try {
+    let src = conversationId, at = nowMs, pointInTime = false, statusAt: string | undefined;
+    if (isTestConversation(conversationId)) {
+      const f = currentReplayFloor();
+      if (f && f.conversationId === conversationId && f.hubSource) { src = f.hubSource.conversationId; at = Date.parse(f.hubSource.at) + 1_000; pointInTime = true; statusAt = f.status ?? "proposing"; } // 番の発言の直後（+60秒だと速いスタッフの返信が入り、今の番の要対応が混ざる）・状態は試験の場面の状態（後で申込になった会話を申込以降と読まない）
+    }
+    const r = await Promise.race([getCustomerHub(sb, src, at, pointInTime ? { pointInTime: true, statusAt } : {}), new Promise<null>((res) => setTimeout(() => res(null), timeoutMs))]);
+    return r ? hubBrainNote(r.hub, r.contradictions, r.input) : "";
+  } catch (e) {
+    console.warn("[link-hub-brain] brain note:", e instanceof Error ? e.message : String(e));
     return "";
   }
 }

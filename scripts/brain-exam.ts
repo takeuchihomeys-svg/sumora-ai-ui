@@ -254,9 +254,10 @@ type ResultRow = {
 // ─── YUMA の写し（yuma-r10-brain-replay と同じ線） ─────────────────────────
 function floorFile(): string { return String(process.env.REPLAY_FLOOR_FILE ?? ""); }
 let curFloor: string | null = null; // 10/09: 今の問題の線（他の問題の発言の混ざりを数える時に使う）
-function writeFloor(floor: string | null) {
+// 2026-10-24 つなぎの芯（LINK_HUB_BRAIN）: その番の元の会話と時刻（hubSource）も書く＝写しに無い要対応・カレンダーをその時点の元の会話から組む（読むだけ・off の時は読まれない）
+function writeFloor(floor: string | null, hubSource?: { conversationId: string; at: string } | null) {
   curFloor = floor;
-  writeFileSync(floorFile(), JSON.stringify(floor ? { conversationId: CONV, floor, status: "proposing", messageIdPrefix: PREFIX, keepPropertyCustomer: true } : {}));
+  writeFileSync(floorFile(), JSON.stringify(floor ? { conversationId: CONV, floor, status: "proposing", messageIdPrefix: PREFIX, keepPropertyCustomer: true, ...(hubSource ? { hubSource } : {}) } : {}));
 }
 async function waitOtherPcCopies(maxMin = 240) {
   const deadline = Date.now() + maxMin * 60_000;
@@ -1431,7 +1432,7 @@ async function main() {
         if (ins.error) throw new Error(ins.error.message);
         own = [...own, ...((ins.data ?? []) as Array<{ id: string }>).map((r) => r.id)];
       };
-      writeFloor(new Date(Date.parse(times[0]) - 1000).toISOString());
+      writeFloor(new Date(Date.parse(times[0]) - 1000).toISOString(), p.conv && p.at ? { conversationId: p.conv, at: p.at } : null);
       if (USE_LEDGER) row.ledger = await insertLedger(p, times, yumaPc, shiftDays);
       process.env.TEST_CLOCK_JST_HOUR = String(p.hourJst);
       if (CONV === YUMA) h.assertYuma(CONV, "brain"); else h.assertTestConversation(CONV, "brain");

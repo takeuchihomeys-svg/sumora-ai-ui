@@ -67,6 +67,11 @@ export type ReplayFloor = {
   /** お客様の条件の行の紐付けを残す（REPLAY_KEEP_PC=1・家賃の相場の材料を試す時だけ） */ keepPropertyCustomer?: boolean;
   /** 場面の状態（conversations.status の代わりに返す・無ければ proposing） */ status?: string;
   /** messages は line_message_id がこの頭の行だけ読む（同じ YUMA に他の担当が同時に入れた場面の通を混ぜない・2026-10-01 3回目の再生で混ざった） */ messageIdPrefix?: string;
+  /**
+   * 2026-10-24 つなぎの芯（link-hub-brain）: 試験の写しは要対応・カレンダーを写さない（通知・画面に出る）ので、その番の時点の元の会話からハブを組む（読むだけ）。
+   *   brain-exam.ts が問題ごとに書く。LINK_HUB_BRAIN=on の時だけ読まれる（link-conductor-server.hubBrainNoteIfEnabled）
+   */
+  hubSource?: { conversationId: string; at: string };
 };
 
 /** URL を書き換える（純関数）。対象でなければ同じ文字列を返す */
@@ -126,7 +131,8 @@ export function currentReplayFloor(env: Record<string, string | undefined> = pro
     if (!fsm) throw new Error("no fs");
     const j = JSON.parse(fsm.readFileSync(file, "utf8")) as Partial<ReplayFloor>;
     if (j && typeof j.conversationId === "string" && isTestConversation(j.conversationId) && typeof j.floor === "string" && Number.isFinite(Date.parse(j.floor))) {
-      v = { conversationId: j.conversationId, floor: new Date(Date.parse(j.floor)).toISOString(), ...(j.keepPropertyCustomer === true ? { keepPropertyCustomer: true } : {}), ...(typeof j.status === "string" && /^[a-z_]{2,30}$/.test(j.status) ? { status: j.status } : {}), ...(typeof j.messageIdPrefix === "string" && /^[a-z0-9-]{3,30}$/.test(j.messageIdPrefix) ? { messageIdPrefix: j.messageIdPrefix } : {}) };
+      v = { conversationId: j.conversationId, floor: new Date(Date.parse(j.floor)).toISOString(), ...(j.keepPropertyCustomer === true ? { keepPropertyCustomer: true } : {}), ...(typeof j.status === "string" && /^[a-z_]{2,30}$/.test(j.status) ? { status: j.status } : {}), ...(typeof j.messageIdPrefix === "string" && /^[a-z0-9-]{3,30}$/.test(j.messageIdPrefix) ? { messageIdPrefix: j.messageIdPrefix } : {}),
+        ...(j.hubSource && typeof j.hubSource.conversationId === "string" && /^[0-9a-f-]{36}$/.test(j.hubSource.conversationId) && !isTestConversation(j.hubSource.conversationId) && typeof j.hubSource.at === "string" && Number.isFinite(Date.parse(j.hubSource.at)) ? { hubSource: { conversationId: j.hubSource.conversationId, at: j.hubSource.at } } : {}) };
     }
   } catch { v = null; }
   cache = { at: now, v };
