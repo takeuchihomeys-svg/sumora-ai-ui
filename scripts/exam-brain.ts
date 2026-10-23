@@ -31,9 +31,12 @@
 //   --phase=auto|small|final|off（既定 auto・EXAM_PHASE）: 直しの途中は小さな確かめ（5〜8問・繰り返し2回まで）→ 同じ版で通ったら仕上げ（選んだ問題全部）。off＝旧
 //   EXAM_DAILY_CAP_USD=10（off で無し）: 今日（JST）の試験 env の費用＋見込みが超えたら守る線を今・残りを夜中（--over-cap で全部今）
 //   2倍の時間（平日 JST 10〜13・15〜19）は警告・仕上げは夜中に。EXAM_REUSE_CONV=off＝会話を見ずに使い回す（旧）
+// 2026-10-23 竹内さん「テスト flash でして最後 pro・どうすれば質も高く節約できるか」: ふるい EXAM_SCREEN=on|off|auto（既定 auto＝見落としを数えてから・scripts/lib/exam-screen.ts）
+//   ① flash で今と前を1回ずつ（前の flash の答えは main の版ごとに取り置き）→ ② pro は flash で違った・直しの的・揺れる・抜き取り（EXAM_SCREEN_AUDIT・既定 0.15）だけ
+//   → ③ --gate の時だけ pro で違った問題（最大 8）を Claude。見落とし（flash 同じ・pro 違う）は型ごとに screen-stats.json に数え、多い型は次から最初から pro
 import { createClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execSync, execFileSync } from "node:child_process";
 import {
@@ -50,6 +53,7 @@ import {
 import { decideStageFromDiff, examVersionKey } from "./lib/exam-scope";
 import { BASELINE_DIR } from "./lib/brain-exam-baseline";
 import { examEnvFingerprint, formatEnvFp } from "./lib/exam-env-fp";
+import { SCREEN, screenModeOf, bannedTypes, screenCandidates, auditPick, screenDecide, blindObs, mergeBlind, totalsOf, claudeTargets, finalCmpOf, escalateRateOf, estimateScreen, type ScreenStats } from "./lib/exam-screen";
 import * as C from "./lib/exam-coord";
 import { budgetMsOf, orderQueue, sweepStaleBackups, itemHardMs, queueTotalMs } from "./lib/exam-night";
 // 2026-10-21 スイッチの指紋（既定＝.env.local と違うスイッチ・exam-env-fp.ts）。使い回しの鍵に入れる・見出しと台帳に残す
@@ -168,8 +172,11 @@ function runBrainExam(a: string[], env: Record<string, string>, watch?: (out: Ch
     log(`\n▶ npx ${cmd.join(" ")}${Object.keys(env).length ? `（${Object.entries(env).filter(([k]) => !/KEY|SECRET|TOKEN/.test(k)).map(([k, v]) => `${k}=${v}`).join(" ")}）` : ""}`);
     const out: ChildOut = { code: 0, baseLabels: [], mainLabels: [], stopped: false };
     // 試験は既定で DeepSeek（最後の Claude は LLM_TEST_FINAL_CLAUDE=1 を自分で付ける）
-    const base = process.env.LLM_TEST_MODE || process.env.LLM_TEST_FINAL_CLAUDE ? {} : { LLM_TEST_MODE: "deepseek-all" };
-    const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", cmd.map(q), { env: { ...process.env, ...base, ...env }, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"] });
+    const base = process.env.LLM_TEST_MODE || process.env.LLM_TEST_FINAL_CLAUDE || env.LLM_TEST_FINAL_CLAUDE ? {} : { LLM_TEST_MODE: "deepseek-all" };
+    const childEnv: Record<string, string | undefined> = { ...process.env, ...base, ...env };
+    // 2026-10-23 ふるい③（関所の Claude）: 両方の印が付くと試験の入口が安い方（deepseek-all）を採る＝Claude で回らない → Claude の回は DeepSeek の印を外す
+    if (env.LLM_TEST_FINAL_CLAUDE) delete childEnv.LLM_TEST_MODE;
+    const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", cmd.map(q), { env: childEnv as NodeJS.ProcessEnv, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"] });
     // 2026-10-21 確かめる人: Windows は親（この実行）を止めても npx の下の node が残り、試験が LLM を呼び続け・会話に書き続けた
     //   → 親が止まる時（Ctrl+C・kill・終わり）は子の木ごと止める（taskkill /T）
     const killTree = () => { if (ch.exitCode !== null || !ch.pid) return; try { if (process.platform === "win32") execFileSync("taskkill", ["/pid", String(ch.pid), "/T", "/F"], { stdio: "ignore" }); else ch.kill("SIGTERM"); } catch { /* 既に止まっている */ } };
@@ -344,6 +351,15 @@ function printPlan(pl: Plan, now: Date, x: { budget?: Budget; peakWarn?: string 
   for (const it of its) log(`  ${it.reuse ? "♻" : "▶"} ${it.id} [${pl.probs.get(it.id)?.type}] 回 ${it.reps}${it.flake === "flaky" ? "（揺れる）" : ""}・段 ブレイン${it.draft ? "→下書き" : pl.draftPlan.mode === "if-changed" && draftEligibleOf(pl, it.id) ? "（判断が変われば下書き）" : ""}${it.model === "flash" ? "・flash" : ""}${it.reuse ? "・前の結果を使う（使う物が同じ）" : ""} ← ${it.why.slice(0, 3).join("／")}`);
   log(`段: 1段目＝全部をブレインの判断まで（stage=brain）／2段目＝${pl.draftPlan.mode === "all" ? `下書きまで ${pl.draftPlan.ids.length}問（${pl.draftPlan.why}）` : pl.draftPlan.mode === "if-changed" ? `判断が前と変わった問題だけ下書きまで（最大 ${ifChangedMax}問）` : "下書きなし"}`);
   log(`途中で止める: ${flag("no-early-stop") ? "しない" : `最初の ${DEFAULT_STOP.minSeen}問以上で前より悪い問題が ${Number(arg("stop-worse", String(DEFAULT_STOP.worseN)))}問（揺れる問題は数えない）`}・${REPS_MODE === "old" ? `前と違った問題は確かめに ${pl.repsCap}回まで足す（旧・--reps=old）` : `回数は自信で（2回目は前と違った・外れた・揺れる問題だけ・3回目は割れた問題だけ・最大 ${pl.repsCap}回）`}`);
+  {
+    const sp = screenPlanOf(pl);
+    if (sp.on) {
+      const st = loadScreenStats(), its2 = sp.screen.map((id) => pl.items.get(id)!);
+      const reps = its2.reduce((a, x) => a + x.reps, 0) / Math.max(1, its2.length);
+      const e = estimateScreen({ q: its2.length, reps, flashDiffRate: escalateRateOf(st), auditRate: screenAuditRate(), unitPro: UNIT_USD.brain * (peak ? UNIT_USD.peakRatio : 1), unitFlash: UNIT_USD.brain * UNIT_USD.flashRatio * (peak ? UNIT_USD.peakRatio : 1) });
+      log(`ふるい: ${sp.why}・${its2.length}問を flash でふるう（pro へ 約 ${Math.round(e.escalated)}問の見込み）→ この分 約 $${e.before.toFixed(2)} → $${e.after.toFixed(2)}${sp.skip.length ? `・最初から pro ${sp.skip.length}` : ""}`);
+    } else log(`ふるい: ${sp.why}`);
+  }
   log(`見込みの費用（今の側・${peak ? "混雑時の値段込み" : "通常の値段"}）: 約 $${est.now.toFixed(2)}＋判断が変わった問題の下書き 最大 $${(ifChangedMax * 0.015 * (peak ? 1.6 : 1)).toFixed(2)}／前（main）の取り置きが無い問題は main でも回す（1問 約 $0.03・夜中の --warm-main で作っておけば0）`);
 }
 function draftEligibleOf(pl: Plan, id: string): boolean { const p = pl.probs.get(id); return !!p && [...(p.accept ?? []), ...(((p.acceptWhen as { searchExhausted?: string[] } | undefined)?.searchExhausted) ?? [])].some((a) => !a.startsWith("AIX")); }
@@ -360,14 +376,19 @@ type PhaseResult = { label: string; ids: string[]; cmps: Array<{ id: string; cmp
   base: { reused: number; carried: number; ran: number; deferred: string[] } };
 // 確かめの回（confirm）は同じ問題をもう一度「前」に照らす＝使い回し・持ち越しは数えない（二重に数えない）・新しく解いた分だけ足す
 const addBase = (res: PhaseResult, s: ReturnType<typeof readBaselineSummary>, o: { confirm?: boolean } = {}) => { if (!s) return; if (!o.confirm) { res.base.reused += s.reused; res.base.carried += s.carried.length; } res.base.ran += s.run.length; res.base.deferred = [...new Set([...res.base.deferred, ...s.deferred])]; };
-async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label: string, model: "pro" | "flash"): Promise<PhaseResult> {
+/**
+ * o.screen＝2026-10-23 ふるい（今と前を1回ずつ・使い回さない・回を足さない・途中で止めない＝比べだけ取る）。
+ * o.env＝子に足す env（関所の Claude の回＝LLM_TEST_FINAL_CLAUDE=1 と screen を一緒に使う）
+ */
+async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label: string, model: "pro" | "flash", o: { screen?: boolean; env?: Record<string, string> } = {}): Promise<PhaseResult> {
   const res: PhaseResult = { label, ids, cmps: [], baseLabels: [], mainLabels: [], stopped: false, stopWhy: "", confirm: [], inputSame: [], base: { reused: 0, carried: 0, ran: 0, deferred: [] } };
   if (!ids.length) return res;
   mkdirSync(join(EXAM_BRAIN_DIR, "run"), { recursive: true });
   // 6. 使い回し: 前の結果を結果のファイルに先に書く（brain-exam は済んだ問題×回を回さない）
   const have = new Set(readRows(label).filter((r) => !r.error).map((r) => `${r.id}#${r.rep}`));
   const reusedIds: string[] = [];
-  for (const id of ids) {
+  // ふるいの答えは pro の使い回しの置き場の鍵（pro の鍵）と別物＝読まない・書かない
+  for (const id of o.screen ? [] : ids) {
     const it = pl.items.get(id)!;
     const key = stage === "brain" ? it.key : it.draftKey;
     const e = flag("no-reuse") || pl.conv.key === null || !(stage === "brain" ? pl.db.brain : pl.db.draft) ? null : readReuse(id, key);
@@ -382,20 +403,21 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   try { if (existsSync(stopFile)) writeFileSync(stopFile + ".old", readFileSync(stopFile)); } catch { /* */ }
   try { (await import("node:fs")).rmSync(stopFile, { force: true }); } catch { /* */ }
   const writeReps = (m: Record<string, number>) => writeFileSync(repsFile, JSON.stringify(m));
-  writeReps(Object.fromEntries(ids.map((id) => [id, pl.items.get(id)!.reps])));
+  writeReps(Object.fromEntries(ids.map((id) => [id, o.screen ? 1 : pl.items.get(id)!.reps])));
   const flaky = new Set(ids.filter((id) => pl.items.get(id)!.flake === "flaky"));
   const baseArgs = (only: string[]) => [
-    `--label=${label}`, `--only=${only.join(",")}`, `--stage=${stage}`, "--baseline=main", REPLAY, `--repeat=${MAX_REPS}`, `--reps-file=${repsFile}`,
+    // 関所の Claude は1回（brain-exam は「問題×--repeat×2 が 20 を超える Claude」を止める＝4問×3回でもう落ちていた）
+    `--label=${label}`, `--only=${only.join(",")}`, `--stage=${stage}`, "--baseline=main", REPLAY, `--repeat=${o.env?.LLM_TEST_FINAL_CLAUDE ? 1 : MAX_REPS}`, `--reps-file=${repsFile}`,
     ...(JUDGE === "lazy" ? ["--judge=lazy"] : []), ...(JUDGE_PREFIX !== "as-is" ? [`--judge-prefix=${JUDGE_PREFIX}`] : []), ...(CONV ? [`--conv=${CONV}`] : []),
     ...(MAIN_MISSING === "night" && !GATE ? ["--baseline-defer"] : []), ...PASS,
   ];
-  const env: Record<string, string> = { EXAM_STOP_FILE: stopFile, ...(model === "flash" ? { DEEPSEEK_MODEL: FLASH_MODEL, EXAM_JUDGE_MODEL: PRO_MODEL } : {}), ...(CONDUCTED?.plan.judge === "tier" && !process.env.EXAM_JUDGE_TIER ? { EXAM_JUDGE_TIER: "on" } : {}) };
+  const env: Record<string, string> = { EXAM_STOP_FILE: stopFile, ...(model === "flash" ? { DEEPSEEK_MODEL: FLASH_MODEL, EXAM_JUDGE_MODEL: PRO_MODEL } : {}), ...(CONDUCTED?.plan.judge === "tier" && !process.env.EXAM_JUDGE_TIER ? { EXAM_JUDGE_TIER: "on" } : {}), ...(o.env ?? {}) };
   if (!CONV && !process.env.REPLAY_FLOOR_FILE) env.REPLAY_FLOOR_FILE = `scripts/.replay-out/brain-exam-floor-${label}.json`;
   // 5. 途中で止める（1段目の最初の数問）
   const stopWorse = Number(arg("stop-worse", String(DEFAULT_STOP.worseN)));
-  const watch = async (o: ChildOut) => {
-    if (flag("no-early-stop") || res.stopped || !o.baseLabels.length) return;
-    const cmps = compareAll(ids, label, o.baseLabels).filter((c) => c.cmp !== "nocur");
+  const watch = async (out: ChildOut) => {
+    if (o.screen || flag("no-early-stop") || res.stopped || !out.baseLabels.length) return;
+    const cmps = compareAll(ids, label, out.baseLabels).filter((c) => c.cmp !== "nocur");
     // ⑥ 入力が同じ問題（main の答えそのもの）は数えない・最初の数問（既定 8）ではっきり悪化なら止める
     const d = stopDecision(cmps, flaky, { ...DEFAULT_STOP, worseN: stopWorse, window: STOP_WINDOW }, new Set(res.inputSame));
     if (d.action === "stop") { writeFileSync(stopFile, JSON.stringify({ at: new Date().toISOString(), why: d.why, worse: d.worse })); res.stopped = true; res.stopWhy = d.why; log(`\n⏹ 試験のブレイン: ${d.why} → 止める（悪化: ${d.worse.join(",")}）`); }
@@ -403,7 +425,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   // ①入力の差の下見（呼ばない）: 同じ問題×回は答案ができる → 本番の子はそれを済んだ回として飛ばす
   const pre = INPUT_DIFF_PRE ? await inputDiffPrepass(pl, ids, label, baseArgs, env) : { same: [] as string[], partial: [] as string[] };
   res.inputSame = pre.same;
-  if (pre.same.length) {
+  if (pre.same.length && !o.screen) {
     // ② 入力が同じ問題は main の回数のまま（増やさない）。揺れる問題は夜の安い時間だけ1回足して揺れを測る
     const night = FLAKY_NIGHT && isCheapWindow(new Date(), CHEAP_WINDOW_JST);
     for (const id of pre.same) {
@@ -421,7 +443,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   let baseRows: RowLite[] = res.baseLabels.flatMap((b) => readRows(b));
   res.cmps = compareAll(ids, label, res.baseLabels, baseRows);
   if (o1.code !== 0) log(`⚠ brain-exam が ${o1.code} で終わった（取れた問題だけ比べる）`);
-  if (res.stopped) return res;
+  if (res.stopped || o.screen) return res;
   // 2. 確かめの回: 1回目が前と違った問題（揺れか本当の変化か）を max 回まで。はっきり良い時は良くなった・悪くなった問題だけ
   const d = stopDecision(res.cmps, flaky);
   // 確かめの回を流す（回数を書いて子を回し、前の結果を差し替えて比べ直す）
@@ -499,22 +521,74 @@ function verdictOf(id: string, cmp: Cmp, rows: RowLite[], flaky: boolean): Ledge
   if (ok.length < 2) return "unconfirmed";
   return new Set(ok.map((r) => `${!!r.path?.ok}|${!!r.score?.pass}`)).size === 1 ? "real" : "flake";
 }
-function finishPhase(pl: Plan, ph: PhaseResult, stage: "brain" | "draft", model: "pro" | "flash", head: string): LedgerLine[] {
+function finishPhase(pl: Plan, ph: PhaseResult, stage: "brain" | "draft", model: "pro" | "flash", head: string, o: { noReuse?: boolean; modelName?: string; only?: Set<string> } = {}): LedgerLine[] {
   const rows = readRows(ph.label);
   const out: LedgerLine[] = [];
   for (const id of ph.ids) {
+    if (o.only && !o.only.has(id)) continue;
     const it = pl.items.get(id)!;
     const rs = rows.filter((r) => r.id === id);
     const c = ph.cmps.find((x) => x.id === id) ?? { cmp: "nocur" as Cmp, why: "" };
     const ok = rs.filter((r) => !r.error);
     const reused = rs.some((r) => (r as Record<string, unknown>).reusedFrom);
-    if (ok.length && ok.length === rs.length && !reused && !ph.stopped && pl.conv.key !== null && (stage === "brain" ? pl.db.brain : pl.db.draft)) writeReuse({ id, key: stage === "brain" ? it.key : it.draftKey, savedAt: new Date().toISOString(), label: ph.label, stage, model, rows: ok });
+    if (!o.noReuse && ok.length && ok.length === rs.length && !reused && !ph.stopped && pl.conv.key !== null && (stage === "brain" ? pl.db.brain : pl.db.draft)) writeReuse({ id, key: stage === "brain" ? it.key : it.draftKey, savedAt: new Date().toISOString(), label: ph.label, stage, model, rows: ok });
     if (!ok.length) continue;
     const maj = (f: (r: RowLite) => boolean) => ok.filter(f).length * 2 > ok.length;
-    out.push({ at: new Date().toISOString(), label: ph.label, id, type: String(pl.probs.get(id)?.type ?? ""), stage, model: model === "flash" ? FLASH_MODEL : PRO_MODEL, head, scopeKey: stage === "brain" ? pl.keys.brain : pl.keys.draft, base: ph.baseLabels.join(",") || null,
+    out.push({ at: new Date().toISOString(), label: ph.label, id, type: String(pl.probs.get(id)?.type ?? ""), stage, model: o.modelName ?? (model === "flash" ? FLASH_MODEL : PRO_MODEL), head, scopeKey: stage === "brain" ? pl.keys.brain : pl.keys.draft, base: ph.baseLabels.join(",") || null,
       reps: ok.length, codes: [...new Set(ok.map((r) => String(r.path?.code ?? "")))], pathOk: maj((r) => !!r.path?.ok), pass: maj((r) => !!r.score?.pass), cmp: c.cmp, cmpWhy: c.why, flake: it.flake, reused, verdict: verdictOf(id, c.cmp, ok, it.flake === "flaky"), ...(ENV_FP.hash ? { envFp: ENV_FP.text } : {}) });
   }
   return out;
+}
+// ─── 2026-10-23 ふるい（flash で今と前 → pro は違った物だけ → 関所は Claude） ─────────────────────
+const SCREEN_FILE = join(EXAM_BRAIN_DIR, "screen-stats.json");
+function loadScreenStats(): ScreenStats { try { return JSON.parse(readFileSync(SCREEN_FILE, "utf8")) as ScreenStats; } catch { return { byType: {}, runs: [] }; } }
+/**
+ * 数えを足す（作業ツリーどうしで共有）: 鍵（mkdir）の中で読み直して足し・別名に書いて置き換える（書きかけを読んで空に見え、数えが消えるのを防ぐ）。
+ *   ファイルはあるのに読めない時は上書きしない（数えを0に戻さない）
+ */
+function updateScreenStats(f: (st: ScreenStats) => ScreenStats): ScreenStats | null {
+  const lock = `${SCREEN_FILE}.lock`, t0 = Date.now();
+  const nap = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  try { mkdirSync(EXAM_BRAIN_DIR, { recursive: true }); } catch { /* */ }
+  for (;;) {
+    try { mkdirSync(lock); break; } catch { /* 他が書いている */ }
+    try { if (Date.now() - statSync(lock).mtimeMs > 60_000) { rmSync(lock, { recursive: true, force: true }); continue; } } catch { /* */ }
+    if (Date.now() - t0 > 30_000) { log("（ふるいの数え: 鍵が取れない → この回は足さない）"); return null; }
+    nap(200);
+  }
+  try {
+    let cur: ScreenStats = { byType: {}, runs: [] };
+    if (existsSync(SCREEN_FILE)) { try { cur = JSON.parse(readFileSync(SCREEN_FILE, "utf8")) as ScreenStats; } catch (e) { log(`（ふるいの数えが読めない → 上書きしない: ${String(e).slice(0, 100)}）`); return null; } }
+    const nx = f(cur), tmp = `${SCREEN_FILE}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(nx, null, 1));
+    for (let i = 0; ; i++) { try { renameSync(tmp, SCREEN_FILE); break; } catch (e) { if (i >= 5) throw e; nap(100); } }
+    return nx;
+  } catch (e) { log(`（ふるいの数えが書けない: ${String(e).slice(0, 100)}）`); return null; }
+  finally { try { rmSync(lock, { recursive: true, force: true }); } catch { /* */ } }
+}
+/** 抜き取りの割合（EXAM_SCREEN_AUDIT・0〜1・既定 0.15）。確かめの夜の回は 1（flash で同じ問題も全部 pro で照らす＝見落としを全部数える） */
+const screenAuditRate = (): number => { const v = Number(process.env.EXAM_SCREEN_AUDIT); return Number.isFinite(v) && v >= 0 && v <= 1 && (process.env.EXAM_SCREEN_AUDIT ?? "").trim() !== "" ? v : SCREEN.auditRate; };
+/** ふるうか・何問か（計画の表示と本体で同じ物） */
+function screenPlanOf(pl: Plan): { on: boolean; why: string; screen: string[]; skip: Array<{ id: string; why: string }> } {
+  const st = loadScreenStats();
+  const m = screenModeOf(process.env.EXAM_SCREEN, { gate: GATE, stats: st });
+  if (!m.on) return { ...m, screen: [], skip: [] };
+  const c = screenCandidates([...pl.items.values()].map((x) => ({ id: x.id, type: String(pl.probs.get(x.id)?.type ?? ""), model: x.model, reuse: x.reuse, draft: x.draft })), bannedTypes(st));
+  if (c.screen.length < SCREEN.minQ && !flag("screen-any")) return { on: false, why: `${m.why}・ふるえる問題 ${c.screen.length}問 < ${SCREEN.minQ}問 → ふるわない（全部 pro・--screen-any で少なくてもふるう）`, screen: [], skip: c.skip };
+  return { ...m, ...c };
+}
+async function screenStage(pl: Plan, label: string): Promise<{ ph: PhaseResult; ids: string[]; dec: ReturnType<typeof screenDecide>; audit: Set<string> } | null> {
+  const sp = screenPlanOf(pl);
+  if (!sp.on) { if ((process.env.EXAM_SCREEN ?? "").trim()) log(`\nふるい: ${sp.why}`); return null; }
+  log(`\n🧪 ① ふるい（flash で今と前を1回ずつ・${sp.why}）: ${sp.screen.length}問${sp.skip.length ? `・最初から pro ${sp.skip.length}（${sp.skip.map((s) => `${s.id}＝${s.why}`).join("／")}）` : ""}`);
+  const ph = await runPhase(pl, "brain", sp.screen, `${label}-sc`, "flash", { screen: true });
+  const cmpOf = new Map(ph.cmps.map((c) => [c.id, c.cmp] as const));
+  const fix = (id: string) => isFixTarget(pl.items.get(id)!.why), flaky = (id: string) => pl.items.get(id)!.flake === "flaky";
+  const pool = sp.screen.filter((id) => cmpOf.get(id) === "same" && !ph.inputSame.includes(id) && !fix(id) && !flaky(id));
+  const audit = new Set(auditPick(pool, screenAuditRate(), `${label}|${pl.versionKey}`));
+  const dec = screenDecide(sp.screen.map((id) => ({ id, cmp: cmpOf.get(id) ?? "nocur", inputSame: ph.inputSame.includes(id), fix: fix(id), flaky: flaky(id) })), audit);
+  log(`🧪 ② pro へ ${dec.escalate.length}問（${dec.escalate.map((e) => `${e.id}＝${e.why}`).join("／") || "なし"}）・flash だけで「変わらない」${dec.unchanged.length}問${dec.unchanged.length ? `: ${dec.unchanged.join(",")}` : ""}`);
+  return { ph, ids: sp.screen, dec, audit };
 }
 async function spendOf(labels: string[], since: string): Promise<{ n: number; usd: number }> {
   const { altUsageUsd, claudeUsageUsd } = await import("../app/lib/llm-price");
@@ -659,23 +733,64 @@ async function runMain() {
   guard.record?.();
   let head = ""; try { head = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* */ }
   const startedAt = new Date().toISOString();
-  const groups: Array<{ model: "pro" | "flash"; ids: string[] }> = (["pro", "flash"] as const).map((m) => ({ model: m, ids: [...pl.items.values()].filter((x) => x.model === m).map((x) => x.id) })).filter((g) => g.ids.length);
   const ledger: LedgerLine[] = [];
   const phases: PhaseResult[] = [];
-  for (const g of groups) {
-    const lb = g.model === "flash" ? `${label}-fl` : label;
+  // 2026-10-23 ふるい（EXAM_SCREEN）: ① flash で今と前を1回ずつ → ② pro は flash で違った・直しの的・揺れる・抜き取りだけ（→ ③ 関所は Claude）
+  const sc = await screenStage(pl, label);
+  if (sc?.dec.unchanged.length) ledger.push(...finishPhase(pl, sc.ph, "brain", "flash", head, { noReuse: true, only: new Set(sc.dec.unchanged) }));
+  const out = new Set(sc?.dec.unchanged ?? []);
+  const groups: Array<{ model: "pro" | "flash"; ids: string[] }> = (["pro", "flash"] as const).map((m) => ({ model: m, ids: [...pl.items.values()].filter((x) => x.model === m && !out.has(x.id)).map((x) => x.id) })).filter((g) => g.ids.length);
+  /** 1つの組（モデル）を1段目→2段目で流す。止めた時は false */
+  const runGroup = async (model: "pro" | "flash", ids: string[], lb: string): Promise<boolean> => {
     // 1段目: 全部をブレインの判断まで
-    const a = await runPhase(pl, "brain", g.ids, lb, g.model);
-    phases.push(a); ledger.push(...finishPhase(pl, a, "brain", g.model, head));
-    if (a.stopped) { log(`\n⏹ 1段目で止めた（${a.stopWhy}）→ 下書きは流さない`); break; }
+    const a = await runPhase(pl, "brain", ids, lb, model);
+    phases.push(a); ledger.push(...finishPhase(pl, a, "brain", model, head));
+    if (a.stopped) { log(`\n⏹ 1段目で止めた（${a.stopWhy}）→ 下書きは流さない`); return false; }
     // 2段目: 下書きに効くファイルを直した問題・判断が前と変わった問題だけ
     const changed = brainChangedOf(a.cmps);
-    const dt0 = draftTargets(pl.cls, g.ids.map((id) => pl.probs.get(id)!) as PlanProblem[], changed, { gate: GATE });
+    const dt0 = draftTargets(pl.cls, ids.map((id) => pl.probs.get(id)!) as PlanProblem[], changed, { gate: GATE });
     // 司令塔の計画: 司令塔が下書きまでと決めた問題＋判断が前と変わった問題（下書き可の物だけ）
-    const dt = CONDUCTED ? (() => { const want = new Set(pl.draftPlan.ids); const ids = g.ids.filter((id) => draftEligibleOf(pl, id) && (want.has(id) || changed.has(id))); return { ids, why: "司令塔が下書きまでと決めた問題＋判断が前と変わった問題" }; })() : dt0;
+    const dt = CONDUCTED ? (() => { const want = new Set(pl.draftPlan.ids); const xs = ids.filter((id) => draftEligibleOf(pl, id) && (want.has(id) || changed.has(id))); return { ids: xs, why: "司令塔が下書きまでと決めた問題＋判断が前と変わった問題" }; })() : dt0;
     log(`\n2段目（下書きまで）: ${dt.ids.length}問 — ${dt.why}${dt.ids.length ? `（${dt.ids.join(",")}）` : ""}`);
-    const b = await runPhase(pl, "draft", dt.ids, `${lb}-d`, g.model);
-    phases.push(b); ledger.push(...finishPhase(pl, b, "draft", g.model, head));
+    const b = await runPhase(pl, "draft", dt.ids, `${lb}-d`, model);
+    phases.push(b); ledger.push(...finishPhase(pl, b, "draft", model, head));
+    return true;
+  };
+  let stoppedRun = false;
+  for (const g of groups) { if (!(await runGroup(g.model, g.ids, g.model === "flash" ? `${label}-fl` : label))) { stoppedRun = true; break; } }
+  // ふるいの見落としを数える（flash 同じ → pro で流した問題）。この回ではっきりの見落としがあれば、同じ型の flash だけの問題も今 pro で流す（質を守る）
+  let claudeCmps = new Map<string, Cmp>();
+  if (sc && !stoppedRun) {
+    const proCmp = () => new Map(phases.filter((p) => p.label === label || p.label === `${label}-sc2`).flatMap((p) => p.cmps).map((c) => [c.id, c.cmp] as const));
+    const flCmp = new Map(sc.ph.cmps.map((c) => [c.id, c.cmp] as const));
+    const typeOf = (id: string) => String(pl.probs.get(id)?.type ?? "");
+    const obsOf = (ids: string[], why: (id: string) => string) => { const pc = proCmp(); return blindObs(ids.map((id) => ({ id, type: typeOf(id), flashCmp: flCmp.get(id) ?? "nocur", inputSame: sc.ph.inputSame.includes(id), proCmp: pc.get(id) ?? "nocur", why: why(id) }))); };
+    const escWhy = new Map(sc.dec.escalate.map((e) => [e.id, e.why] as const));
+    let obs = obsOf(sc.dec.escalate.map((e) => e.id), (id) => escWhy.get(id) ?? "");
+    const hardTypes = new Set(obs.filter((o) => o.hard).map((o) => o.type));
+    const redo = sc.dec.unchanged.filter((id) => hardTypes.has(typeOf(id)));
+    if (redo.length) {
+      log(`\n⚠ ふるいの見落とし（flash 同じ・pro で違った）: ${obs.filter((o) => o.hard).map((o) => `${o.id}[${o.type}]（${o.proCmp}・${o.why}）`).join("・")} → 同じ型の flash だけの ${redo.length}問も今 pro で流す: ${redo.join(",")}`);
+      for (const id of redo) out.delete(id);
+      const keep = ledger.filter((l) => !(l.label === `${label}-sc` && redo.includes(l.id)));
+      ledger.length = 0; ledger.push(...keep);
+      await runGroup("pro", redo, `${label}-sc2`);
+      obs = [...obs, ...obsOf(redo, () => "見落としの型の追い確かめ")];
+    }
+    const nx = updateScreenStats((before) => mergeBlind(before, obs, { at: new Date().toISOString(), label, screened: sc.ids.length, unchanged: sc.dec.unchanged.length - redo.length, escalated: sc.dec.escalate.length + redo.length, audit: sc.audit.size, flashSame: sc.ids.filter((id) => flCmp.get(id) === "same").length })) ?? mergeBlind(loadScreenStats(), obs);
+    const t = totalsOf(nx);
+    log(`\n🧪 ふるいの見落とし: この回 ${obs.length}問を照らした（はっきり ${obs.filter((o) => o.hard).length}・判断だけ ${obs.filter((o) => o.soft).length}）／通算 ${t.blind}/${t.n}（${t.n ? Math.round((t.blind / t.n) * 100) : 0}%）・flash でふるわない型: ${[...bannedTypes(nx)].join("・") || "なし"}`);
+    // ③ 関所だけ: pro で前と違った問題（最大 8問）を Claude（本番のブレイン）で。判定は Claude の比べを使う
+    if (GATE) {
+      const inSame = new Set(phases.flatMap((p) => p.inputSame));
+      const cl = claudeTargets([...proCmp()].map(([id, cmp]) => ({ id, cmp })), { exclude: inSame });
+      if (cl.length) {
+        log(`\n🟣 ③ 関所の Claude（pro で前と違った ${cl.length}問・最大 ${SCREEN.claudeMax}）: ${cl.join(",")}`);
+        const cp = await runPhase(pl, "brain", cl, `${label}-cl`, "pro", { screen: true, env: { LLM_TEST_FINAL_CLAUDE: "1" } });
+        phases.push(cp); ledger.push(...finishPhase(pl, cp, "brain", "pro", head, { noReuse: true, modelName: "claude" }));
+        claudeCmps = new Map(cp.cmps.map((c) => [c.id, c.cmp] as const));
+      } else log("\n🟣 ③ 関所の Claude: pro で前と違った問題なし → 流さない");
+    }
   }
   appendLedger(ledger);
   // 10/20 COST③ の見張り: flash で流した問題を、同じ main の版の pro の答え（取り置き済みの物だけ）と照らして model-check に足す（0円・道が違えば次から pro）
@@ -703,7 +818,9 @@ async function runMain() {
   // 報告
   const by = (c: Cmp) => ledger.filter((l) => l.cmp === c);
   log(`\n=== 試験のブレインの結果（${label}）===`);
-  for (const ph of phases) {
+  const allPh = sc ? [sc.ph, ...phases] : phases;
+  if (sc) { const un = sc.dec.unchanged.filter((id) => out.has(id)); log(`ふるい（flash）: ${sc.ids.length}問 → 変わらない ${un.length}（flash の今と前が同じ・pro は流さない）・pro へ ${sc.ids.length - un.length}（${sc.dec.escalate.map((e) => `${e.id}＝${e.why}`).join("／")}）`); }
+  for (const ph of allPh) {
     const st = ledger.filter((l) => l.label === ph.label);
     log(`${ph.label}: ${st.length}問・道 ${st.filter((l) => l.pathOk).length}・合格 ${st.filter((l) => l.pass).length}・前より悪い ${st.filter((l) => l.cmp === "worse").length}・良い ${st.filter((l) => l.cmp === "better").length}・判断だけ変わった ${st.filter((l) => l.cmp === "changed").length}・turn_contract の形だけ変わった ${st.filter((l) => l.cmp === "shape").length}・前が無い ${st.filter((l) => l.cmp === "nobase").length}${ph.stopped ? `・止めた（${ph.stopWhy}）` : ""}${ph.confirm.length ? `・確かめた ${ph.confirm.length}` : ""}`);
     // 確かめる人: 途中で止めた時は流さなかった問題を名指しする（黙って抜けない）
@@ -715,7 +832,9 @@ async function runMain() {
   const bs = phases.reduce((s, p) => ({ reused: s.reused + p.base.reused, carried: s.carried + p.base.carried, ran: s.ran + p.base.ran, deferred: [...new Set([...s.deferred, ...p.base.deferred])] }), { reused: 0, carried: 0, ran: 0, deferred: [] as string[] });
   log(`前（main）の答え: 使い回した ${bs.reused}・前の main から持ち越した ${bs.carried}・今 main で解いた ${bs.ran}${bs.deferred.length ? `・今は解かず夜中に回した ${bs.deferred.length}（${bs.deferred.join(",")}＝前との比べに入らない）` : ""}`);
   if (bs.deferred.length) ensureMainWarm({ force: true, cont: true }); // --main-missing=night は人が選んだ＝夜に回すのは続き扱い
-  const real = by("worse").filter((l) => l.verdict !== "flake");
+  // ③ 関所の Claude を流した問題は Claude の比べで決める（pro の悪化は数えず Claude の行で数える）
+  const real = by("worse").filter((l) => l.verdict !== "flake" && !(l.model !== "claude" && l.stage === "brain" && finalCmpOf(l.cmp as Cmp, claudeCmps.get(l.id)).by === "claude"));
+  for (const [id, c] of claudeCmps) log(`  🟣 Claude ${id}: ${c}${c === "nocur" || c === "nobase" ? "（判定に使えない＝pro のまま）" : "（判定は Claude）"}`);
   log(real.length ? "⚠ 本当の悪化か確かめていない悪化がある＝このまま入れない" : "前より悪くなった問題は無い（揺れを除く）");
   // 10/17 ① 小さな確かめの記録（同じ版で悪化なし＝次は仕上げ）
   if (pl.phase !== "off") {
@@ -723,9 +842,9 @@ async function runMain() {
     appendPhaseLog({ at: new Date().toISOString(), label, phase: pl.phase, keys: pl.versionKey, clean, ids: [...pl.items.keys()] });
     if (pl.phase === "small") log(clean ? `小さな確かめが通った（まだ main に入れない＝仕上げが要る）→直しが終わったら同じ命令でもう一度＝仕上げ（${pl.allPicks.length}問・使う物が同じ問題は今の結果を使う）` : "小さな確かめに悪化 → 直してもう一度（小さな確かめのまま）");
   }
-  const labels = [...phases.map((p) => p.label), ...phases.flatMap((p) => p.mainLabels)];
+  const labels = [...allPh.map((p) => p.label), ...allPh.flatMap((p) => p.mainLabels)];
   const sp = await spendOf(labels, startedAt).catch(() => ({ n: 0, usd: 0 }));
-  const judge = phases.reduce((s, p) => { const c = readCost(p.label); return { usd: s.usd + (c?.judgeUsd ?? 0), n: s.n + (c?.judgeCalls ?? 0) }; }, { usd: 0, n: 0 });
+  const judge = allPh.reduce((s, p) => { const c = readCost(p.label); return { usd: s.usd + (c?.judgeUsd ?? 0), n: s.n + (c?.judgeCalls ?? 0) }; }, { usd: 0, n: 0 });
   log(`費用（この実行・llm_usage_logs の ${labels.length}つの route）: ${sp.n}回 $${sp.usd.toFixed(3)}＋判定 ${judge.n}回 $${judge.usd.toFixed(3)}`);
   // 10/23 節約の台帳: この回の無駄（2倍の時間・flash で足りる型・キャッシュ・重なり・回数・出力・off のスイッチ）を数えて足す。質を変えないスイッチが off なら次から自動で戻す
   try { log((await detectAndRecord(sb, { since: new Date(startedAt), labels, env: process.env, write: !!process.env.SUPABASE_SERVICE_ROLE_KEY, mode: "add", onceLabel: label, autoApply: true })).text); }
