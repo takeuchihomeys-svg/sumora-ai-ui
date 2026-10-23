@@ -117,12 +117,31 @@ export function judgePath(code: PathCode, accept: ReadonlyArray<string>, mustNot
 }
 
 /** 1問の合否（道・asks・言ってはいけない事）。判定が無い項目（DeepSeek を回さなかった）は数えない */
-export type ProblemScore = { path: boolean; asks: { hit: number; n: number } | null; ng: { ok: number; n: number } | null; pass: boolean };
-export function problemScore(path: PathVerdict, asks: ReadonlyArray<boolean> | null, ngViolated: ReadonlyArray<boolean> | null): ProblemScore {
+export type ProblemScore = {
+  path: boolean; asks: { hit: number; n: number } | null; ng: { ok: number; n: number } | null; pass: boolean;
+  /** 2026-10-23 優先の重み（旧の pass・asks・ng は変えない＝昔の結果と比べられる）: 0〜1。道が外れは0・主な依頼は他の依頼の PRIMARY_ASK_WEIGHT 倍 */
+  weighted?: number;
+  /** 主な依頼（お客様の一番の問い＝spec の main・無ければ1つ目）が入ったか。依頼が無い・判定なしは null */
+  primary?: boolean | null;
+};
+/** 主な依頼の重み（他の依頼・言ってはいけない事は1） */
+export const PRIMARY_ASK_WEIGHT = 2;
+/** 主な依頼の位置: spec の asks[].main があればそれ・無ければ0（1つ目＝お客様の最初の問い） */
+export function primaryAskIndex(asks: ReadonlyArray<{ main?: boolean }> | null | undefined): number { const i = (asks ?? []).findIndex((a) => a?.main === true); return i >= 0 ? i : 0; }
+/** 2026-10-23 優先の重みの点: 道が外れは0。道が合えば（主な依頼×2＋他の依頼＋守った言ってはいけない事）÷（重みの合計）。判定なしは道だけ（1 か 0） */
+export function weightedScore(pathOk: boolean, asks: ReadonlyArray<boolean> | null, ngViolated: ReadonlyArray<boolean> | null, primaryIdx = 0): { weighted: number; primary: boolean | null } {
+  const primary = asks && asks.length ? !!asks[Math.min(Math.max(0, primaryIdx), asks.length - 1)] : null;
+  if (!pathOk) return { weighted: 0, primary };
+  let got = 0, tot = 0;
+  (asks ?? []).forEach((v, i) => { const w = i === primaryIdx ? PRIMARY_ASK_WEIGHT : 1; tot += w; if (v) got += w; });
+  (ngViolated ?? []).forEach((v) => { tot += 1; if (!v) got += 1; });
+  return { weighted: tot ? got / tot : 1, primary };
+}
+export function problemScore(path: PathVerdict, asks: ReadonlyArray<boolean> | null, ngViolated: ReadonlyArray<boolean> | null, o: { primaryIdx?: number } = {}): ProblemScore {
   const a = asks ? { hit: asks.filter(Boolean).length, n: asks.length } : null;
   const g = ngViolated ? { ok: ngViolated.filter((v) => !v).length, n: ngViolated.length } : null;
   const pass = path.ok && (!a || a.hit === a.n) && (!g || g.ok === g.n);
-  return { path: path.ok, asks: a, ng: g, pass };
+  return { path: path.ok, asks: a, ng: g, pass, ...weightedScore(path.ok, asks, ngViolated, o.primaryIdx ?? 0) };
 }
 
 /**

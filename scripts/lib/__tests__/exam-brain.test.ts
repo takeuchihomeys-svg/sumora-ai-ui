@@ -21,6 +21,12 @@ const all = [P("q1"), P("q2", "t", ["AIX:x"]), P("q3", "t", ["返信"], ["お手
   ok("RAG だけの問題は must でない", r.find((x) => x.id === "q1")!.must === false);
   ok("お手本は必ず", r.find((x) => x.id === "q3")!.must);
   ok("gate は全部", mergePicks(all, null, { gate: true }).length === 5);
+  // 2026-10-23 弱い所の台帳: 選んだ問題には印を付ける・選んでいない問題は足さない・小さな確かめで前に落ちた問題の次
+  const wr = mergePicks(all, { mode: "rag", picked: [{ id: "q1", why: ["差分の言葉に近い（0.80）"], must: false }, { id: "q4", why: ["差分の言葉に近い（0.90）"], must: false }] }, { weaknessQids: { q1: ["brain:aix-route"], q2: ["x"] }, mustTags: [] });
+  ok("弱い所: 選んでいない問題は足さない", wr.map((x) => x.id).join() === "q1,q4", wr.map((x) => x.id).join());
+  ok("弱い所: must にしない", wr.find((x) => x.id === "q1")!.must === false && wr.find((x) => x.id === "q1")!.why.some((w) => /開いている弱い所 brain:aix-route/.test(w)));
+  ok("弱い所: 近さより先", pickSmall(wr, { max: 1 })[0].id === "q1");
+  ok("弱い所: 前に落ちたより後", smallRank(["開いている弱い所 k の証拠"]).tier > smallRank(["前に落ちた"]).tier && smallRank(["開いている弱い所 k の証拠"]).tier < smallRank(["差分の言葉に近い"]).tier);
   ok("選びが無い時は全部（安全側）", mergePicks(all, null, {}).length === 5);
   ok("無い id は足さない", !mergePicks(all, { mode: "rag", picked: [] }, { named: ["q999"] }).some((x) => x.id === "q999"));
 }

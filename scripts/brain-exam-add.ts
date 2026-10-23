@@ -36,7 +36,7 @@ export const EXAM_DIR = "scripts/brain-exam";
 export const SPEC_FILE = `${EXAM_DIR}/spec.json`;
 export const PROBLEMS_FILE = `${EXAM_DIR}/problems.json`;
 
-export type ExamAsk = { q: string; route: "reply" | "promise" | "aix" | "none"; point: string; /** 10/09: 他にも正解の答え方（例 q038 物件オススメの AIX が第一・探す約束も可） */ routes?: Array<"reply" | "promise" | "aix" | "none"> };
+export type ExamAsk = { q: string; route: "reply" | "promise" | "aix" | "none"; point: string; /** 10/09: 他にも正解の答え方（例 q038 物件オススメの AIX が第一・探す約束も可） */ routes?: Array<"reply" | "promise" | "aix" | "none">; /** 2026-10-23 お客様の一番の問い（無ければ1つ目を主な依頼とみなす・重みの点で他の依頼の2倍） */ main?: boolean };
 export type ExamSpec = {
   id: string; type: string; tags?: string[]; source: string; conv: string; at: string;
   accept: string[]; mustNot?: string[]; asks?: ExamAsk[]; ng?: string[]; why: string; addedAt?: string; addedBy?: string;

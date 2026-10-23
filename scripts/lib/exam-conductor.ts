@@ -286,9 +286,9 @@ export const CONDUCTOR_SYSTEM = [
   "- reps: 1 が基本。揺れる問題（flaky=true）で直した所の重点だけ 2〜3。",
   "- model: 既定 pro。flash は flashOkTypes に入っている型だけ。",
   "- 上限 capUsd に収める（1問1回 brain ≈ unit.brain・draft は +unit.draftExtra・flash は ×unit.flashRatio）。",
-  "- judge: 'tier'（機械→flash→割れた時だけ pro）が既定。判定の揺れが直しの的なら 'pro'。",
+  "- judge: 'pro' が既定（2026-10-23 実測: 段の判定 'tier' は保存した答案50件で pro との合否の一致 92%・主な依頼の食い違い 3・費用 1.8倍＝勧めない）。",
   "- claude_final: 本番に入れる前の最後の確かめに Claude が要るか（Claude にしか無い部分＝最終チェック・個人情報の番・書く役の Claude を直した時だけ true）。",
-  '出力は JSON だけ（説明の文を付けない）: {"focus":[{"id":"q001","role":"fix","stage":"brain","reps":1,"model":"pro","why":"20字"}],"judge":"tier","claude_final":false,"claude_why":"20字","note":"30字"}',
+  '出力は JSON だけ（説明の文を付けない）: {"focus":[{"id":"q001","role":"fix","stage":"brain","reps":1,"model":"pro","why":"20字"}],"judge":"pro","claude_final":false,"claude_why":"20字","note":"30字"}',
 ].join("\n");
 export function buildConductorUser(i: ConductorInput): string {
   const c = i.change;
@@ -421,7 +421,7 @@ export function normalizePlan(raw: Record<string, unknown> | null, i: Pick<Condu
     freshOut = fr.focus.map((x) => x.id);
   }
   // 判定の段（tier）は構成の鍵を変える＝前（main）の取り置きも段の判定で作り直しになる。使うのは allowTier（--judge-tier か EXAM_JUDGE_TIER=on）の時だけ・司令塔の勧めは judgeAdvice に残す
-  const judgeAdvice = raw?.judge === "pro" ? "pro" : "tier";
+  const judgeAdvice = raw?.judge === "tier" ? "tier" : "pro";
   const judge = o.allowTier && judgeAdvice === "tier" ? "tier" : "pro";
   const claudeFinal = raw?.claude_final === true || raw?.claude_final === "true";
   return { focus: fitted.focus, judge, judgeAdvice, claudeFinal, claudeWhy: String(raw?.claude_why ?? "").slice(0, 60), note: String(raw?.note ?? "").slice(0, 80), source: raw ? "pro" : "fallback", estUsd: fitted.est, dropped, ...(freshOut ? { fresh: freshOut } : {}) };
@@ -443,7 +443,7 @@ export function fitToCap(focus: FocusItem[], cap: number, unit = UNIT_USD, byId?
 }
 /** 司令塔が答えない時の代わり（今の試験のブレインの小さな確かめと同じ順の候補・1回・pro） */
 export function fallbackRaw(cands: Candidate[], max = 8): Record<string, unknown> {
-  return { focus: cands.slice(0, max).map((c) => ({ id: c.id, role: c.lastOk === false || c.protectedPick ? "fix" : "guard", stage: "brain", reps: 1, model: "pro", why: c.why[0] ?? "" })), judge: "tier", claude_final: false, note: "司令塔なし（決まった順）" };
+  return { focus: cands.slice(0, max).map((c) => ({ id: c.id, role: c.lastOk === false || c.protectedPick ? "fix" : "guard", stage: "brain", reps: 1, model: "pro", why: c.why[0] ?? "" })), judge: "pro", claude_final: false, note: "司令塔なし（決まった順）" };
 }
 
 // ─── 6. 読み手（flash）: 差分の読み・結果の振り分け ─────────────────────────────────────
