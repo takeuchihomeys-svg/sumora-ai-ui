@@ -2161,6 +2161,8 @@ export default function Home() {
         { event: "UPDATE", schema: "public", table: "conversations" },
         (payload) => {
           const upd = payload.new as SupabaseConversationRow | null;
+          // 2026-10-23 試験の会話の更新は選んでいない時は当てない（NEXT_PUBLIC_RT_IGNORE_TEST）
+          if (shouldIgnoreTestRealtime(upd?.id, selectedIdRef.current)) return;
           // 2026-10-23 RT_LEAN: 画面が使う列が変わっていない更新（脳の分析・下書きの試み・学習の印など）は何もしない。
           //   変わった更新は 0.4 秒まとめて当てる。下書き・AIX・電話の印が変わった時はすぐ（下の即時の扱いはそのまま）
           let rtDraftChanged = true;
