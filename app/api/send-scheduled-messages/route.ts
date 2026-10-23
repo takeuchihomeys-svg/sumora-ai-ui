@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { newerCustomerMessageAfter, newerSubstantiveCustomerMessageAfter, staleDraftGuardOn } from "@/app/lib/draft-supersede";
+import { cronRetryKey, linePushIdem, sendIdempotencyOn } from "@/app/lib/send-idempotency";
 
 // Vercel Functions のタイムアウト上限（秒）— 最大100件のLINE push送信に余裕を持たせる
 export const maxDuration = 300;
@@ -27,15 +28,18 @@ function resolveAccountKey(account?: string): string {
   return ACCOUNT_KEY_MAP[account] ?? "sumora";
 }
 
-async function pushToLine(lineUserId: string, messages: unknown[], token: string) {
-  const res = await fetch("https://api.line.me/v2/bot/message/push", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ to: lineUserId, messages }),
+// 2026-10-23 送信の二重防止: 予約の行の id から決まる鍵（X-Line-Retry-Key・回数や時刻に依らない）を付ける。
+//   定期処理が重なる・LINE の返事が10秒で切れて「失敗」にした行を送り直す時、前に届いていれば LINE は送らずに 409
+//   （同じ鍵はもう受け付けた）と届いた通の id を返す → 届いている扱いで続ける（二重に届かない・24時間有効）。戻す SEND_IDEMPOTENCY=off
+async function pushToLine(lineUserId: string, messages: unknown[], token: string, retryKey: string | null): Promise<string[]> {
+  const r = await linePushIdem({
+    token, to: lineUserId, messages, sendId: null, retryKey,
     // LINE APIハング時にmaxDuration(300秒)まで滞留するのを防ぐ
-    signal: AbortSignal.timeout(10_000),
+    timeoutMs: 10_000,
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!r.ok) throw new Error(r.errorText || `LINE push failed: ${r.status}`);
+  if (r.alreadySent) console.warn(JSON.stringify({ tag: "send-scheduled:retry-key-accepted", ids: r.sentMessageIds.length }));
+  return r.sentMessageIds;
 }
 
 export async function GET(req: NextRequest) {
@@ -160,16 +164,21 @@ export async function GET(req: NextRequest) {
       }
       const sentAt = new Date();
 
-      // 画像送信（1枚ずつ）
-      for (const imageUrl of imageUrls) {
-        await pushToLine(msg.line_user_id as string, [
-          { type: "image", originalContentUrl: imageUrl, previewImageUrl: imageUrl },
-        ], token);
+      // 画像送信（1枚ずつ）・鍵は行の id ＋何枚目（同じ行を2回送っても同じ鍵）
+      const keyOn = sendIdempotencyOn();
+      const rowKey = (part: string) => (keyOn ? cronRetryKey("scheduled_messages", `${msg.id as string}\u0001${part}`) : null);
+      let firstImageLineId: string | null = null;
+      for (let i = 0; i < imageUrls.length; i++) {
+        const ids = await pushToLine(msg.line_user_id as string, [
+          { type: "image", originalContentUrl: imageUrls[i], previewImageUrl: imageUrls[i] },
+        ], token, rowKey(`img${i}`));
+        if (i === 0) firstImageLineId = ids[0] ?? null;
       }
 
       // テキスト送信
+      let textLineId: string | null = null;
       if (text) {
-        await pushToLine(msg.line_user_id as string, [{ type: "text", text }], token);
+        textLineId = (await pushToLine(msg.line_user_id as string, [{ type: "text", text }], token, rowKey("text")))[0] ?? null;
       }
 
       // messages テーブルに記録
@@ -184,6 +193,7 @@ export async function GET(req: NextRequest) {
           image_url: imageUrlData,
           created_at: sentAt.toISOString(),
           is_aix_generated: isAixGenerated,
+          ...(firstImageLineId ? { line_message_id: firstImageLineId } : {}),
         });
         if (imgInsertErr) {
           console.error("[send-scheduled] 画像message記録失敗（LINE送信は成功）:", imgInsertErr.message, "id:", msg.id);
@@ -197,6 +207,7 @@ export async function GET(req: NextRequest) {
           text,
           created_at: textAt.toISOString(),
           is_aix_generated: isAixGenerated,
+          ...(textLineId ? { line_message_id: textLineId } : {}),
         });
         if (textInsertErr) {
           console.error("[send-scheduled] message記録失敗（LINE送信は成功）:", textInsertErr.message, "id:", msg.id);

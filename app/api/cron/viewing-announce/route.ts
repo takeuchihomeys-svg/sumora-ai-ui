@@ -1,5 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
+import { cronRetryKey, linePushIdem, sendIdempotencyOn } from "@/app/lib/send-idempotency";
+
+// 2026-10-23 送信の二重防止: 内覧の行の id ＋知らせの種類（cheer / pre / post）から決まる鍵（X-Line-Retry-Key）。
+//   LINE の返事が10秒で切れると旗を戻して次の回（30分ごと）にもう一度送る → 前に届いていれば LINE は送らずに 409（届いている扱い）
+function announceKey(viewingId: string, kind: "cheer" | "pre" | "post"): string | null {
+  return sendIdempotencyOn() ? cronRetryKey("viewing-announce", `${viewingId}\u0001${kind}`) : null;
+}
+async function pushOnce(cfg: { targetId: string; token: string }, message: unknown, retryKey: string | null, tag: string): Promise<boolean> {
+  try {
+    const r = await linePushIdem({ token: cfg.token, to: cfg.targetId, messages: [message], sendId: null, retryKey, timeoutMs: 10_000 });
+    if (!r.ok) { console.error(`[viewing-announce] LINE ${tag} push failed:`, r.status, r.errorText); return false; }
+    if (r.alreadySent) console.warn(JSON.stringify({ tag: "viewing-announce:retry-key-accepted", kind: tag }));
+    return true;
+  } catch (err) {
+    console.error(`[viewing-announce] LINE ${tag} push error:`, err);
+    return false;
+  }
+}
 
 export const maxDuration = 60;
 
@@ -26,23 +44,8 @@ async function resolveLineConfig(): Promise<{ targetId: string; token: string } 
 }
 
 // 成否を boolean で返す（送信失敗時はフラグを立てない設計に対応）
-async function sendGroupMessage(cfg: { targetId: string; token: string }, text: string): Promise<boolean> {
-  try {
-    const res = await fetch("https://api.line.me/v2/bot/message/push", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
-      body: JSON.stringify({ to: cfg.targetId, messages: [{ type: "text", text }] }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) {
-      console.error("[viewing-announce] LINE push failed:", res.status, await res.text().catch(() => ""));
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error("[viewing-announce] LINE push error:", err);
-    return false;
-  }
+async function sendGroupMessage(cfg: { targetId: string; token: string }, text: string, retryKey: string | null = null): Promise<boolean> {
+  return pushOnce(cfg, { type: "text", text }, retryKey, "text");
 }
 
 export async function GET(req: NextRequest) {
@@ -63,22 +66,11 @@ export async function GET(req: NextRequest) {
   const suzukiUserId: string | null = suzukiRow?.value ?? null;
 
   // メンション付き or 通常テキスト送信
-  async function sendWithMention(cfg: { targetId: string; token: string }, text: string): Promise<boolean> {
+  async function sendWithMention(cfg: { targetId: string; token: string }, text: string, retryKey: string | null = null): Promise<boolean> {
     const msg = suzukiUserId
       ? { type: "textV2", text: `{0}\n${text}`, substitution: { "0": { type: "mention", mentionee: { type: "user", userId: suzukiUserId } } } }
       : { type: "text", text };
-    try {
-      const res = await fetch("https://api.line.me/v2/bot/message/push", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
-        body: JSON.stringify({ to: cfg.targetId, messages: [msg] }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) { console.error("[viewing-announce] LINE mention push failed:", res.status, await res.text().catch(() => "")); return false; }
-      return true;
-    } catch (err) {
-      console.error("[viewing-announce] LINE mention push error:", err); return false;
-    }
+    return pushOnce(cfg, msg, retryKey, "mention");
   }
 
   // 今日の内覧を取得
@@ -131,7 +123,7 @@ export async function GET(req: NextRequest) {
             .select("id");
           if (upErr) { console.error("[viewing-announce] cheer_sent CAS error:", upErr.message); }
           else if (casData && casData.length > 0) {
-            const sent = await sendWithMention(cfg, cheerText);
+            const sent = await sendWithMention(cfg, cheerText, announceKey(v.id as string, "cheer"));
             if (sent) announced++;
             else await supabase.from("viewings").update({ cheer_sent: false }).eq("id", v.id as string);
           }
@@ -164,7 +156,7 @@ export async function GET(req: NextRequest) {
           if (upErr) { console.error("[viewing-announce] pre_announce_sent CAS error:", upErr.message); }
           else if (casData && casData.length > 0) {
             // 更新できた = 今回のインスタンスが送信権を獲得
-            const sent = await sendGroupMessage(cfg, text);
+            const sent = await sendGroupMessage(cfg, text, announceKey(v.id as string, "pre"));
             if (sent) announced++;
             else {
               // LINE送信失敗時はフラグを戻して次回再試行できるようにする
@@ -196,7 +188,7 @@ export async function GET(req: NextRequest) {
             .select("id");
           if (upErr) { console.error("[viewing-announce] post_announce_sent CAS error:", upErr.message); }
           else if (casData && casData.length > 0) {
-            const sent = await sendGroupMessage(cfg, text);
+            const sent = await sendGroupMessage(cfg, text, announceKey(v.id as string, "post"));
             if (sent) announced++;
             else {
               await supabase.from("viewings").update({ post_announce_sent: false }).eq("id", v.id as string);
