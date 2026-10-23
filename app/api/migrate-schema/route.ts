@@ -4851,6 +4851,34 @@ CREATE INDEX IF NOT EXISTS idx_brain_weaknesses_status ON brain_weaknesses(statu
 ALTER TABLE brain_weaknesses ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON brain_weaknesses FROM anon, authenticated;
 
+-- 2026-10-23 竹内さん「無駄な部分優先して改善する」「テスト回すブレインに節約できる案のデータベース作って」「テスト回しながら節約できるにＭつかれば自己改善できるように」:
+--   exam_savings … 試験の節約できる案の台帳（key で一意）。試験の終わり・--spend-today に llm_usage_logs（読むだけ）・連携の帳簿・main の答えの置き場から無駄を数えて足す。
+--   evidence は印だけ（回の名前・route・action・問題 id・数・日ごとの $）。お客様の文は入れない。質を変えないスイッチが off の無駄は次から自動で戻す（auto_applied）・
+--   質に関わる案は needs_owner＋owner_questions。書くのはサーバーの鍵だけ（RLS 有効・ポリシーなし）。手で見る・直す: scripts/exam-savings.ts
+CREATE TABLE IF NOT EXISTS exam_savings (
+  id BIGSERIAL PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'other',
+  detail TEXT,
+  est_usd_per_day DOUBLE PRECISION NOT NULL DEFAULT 0,
+  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL DEFAULT 'open',
+  safe BOOLEAN NOT NULL DEFAULT true,
+  fix_ref TEXT,
+  occurrences INTEGER NOT NULL DEFAULT 0,
+  first_seen TIMESTAMPTZ,
+  last_seen TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT exam_savings_status_chk CHECK (status IN ('open', 'auto_applied', 'needs_owner', 'fixed', 'wont_fix')),
+  CONSTRAINT exam_savings_kind_chk CHECK (kind IN ('regen_same_input', 'version_same_content', 'peak_hour', 'flash_eligible_pro', 'cache_miss_prefix', 'duplicate_run', 'overlong_output', 'reps_overkill', 'other'))
+);
+CREATE INDEX IF NOT EXISTS idx_exam_savings_status ON exam_savings(status, est_usd_per_day DESC);
+ALTER TABLE exam_savings ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON exam_savings FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE exam_savings_id_seq FROM anon, authenticated;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

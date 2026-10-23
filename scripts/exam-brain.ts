@@ -56,6 +56,8 @@ import { budgetMsOf, orderQueue, sweepStaleBackups, itemHardMs, queueTotalMs } f
 // 2026-10-21 査読: 予約（--run-queue）は env を運べず、夜の回が既定のスイッチ（DAY_SUBJECT_READER 無し＝off）で流れて on/off の比べが無効になっていた
 //   → 予約の argv に --switch=NAME=値（指紋の組・(unset) は消す）を入れ、子の最初にここで env に戻す（指紋より前）
 for (const a of process.argv.slice(2)) { if (a === "--") break; const m = /^--switch=([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(a); if (!m) continue; if (m[2] === "(unset)") delete process.env[m[1]]; else process.env[m[1]] = m[2]; }
+// 2026-10-23 節約の台帳（scripts/lib/exam-savings-io.ts）: 前の回で off だった質を変えないスイッチを、次の回から自動で戻す（--switch= と引数で人が決めた物は触らない・止める EXAM_SAVINGS_AUTO=off）
+for (const n of applySavingsAutoAtStart(process.env, new Set([...process.argv.slice(2).flatMap((a) => /^--switch=([A-Za-z_][A-Za-z0-9_]*)=/.exec(a)?.[1] ?? []), ...(process.argv.some((a) => a.startsWith("--input-diff=")) ? ["EXAM_INPUT_DIFF"] : []), ...(process.argv.some((a) => a.startsWith("--reps=")) ? ["EXAM_REPS"] : [])]))) console.log(`節約の自動: ${n}`);
 const ENV_FP = examEnvFingerprint(process.env);
 /** 予約に入れるスイッチ（指紋の組＝既定と違う物だけ・既定なら空） */
 const SWITCH_ARGS = ENV_FP.pairs.map(([k, v]) => `--switch=${k}=${v}`);
@@ -69,6 +71,7 @@ import {
   type MissMap, type ProblemLike, type RowLike, type GoldLite, type Candidate, type ConductorInput, type DiffReading, type TriageItem,
 } from "./lib/exam-conductor";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
+import { applySavingsAutoAtStart, detectAndRecord, topOpenSavingsText } from "./lib/exam-savings-io";
 import { weaknessHitsFromExamReasons } from "../app/lib/brain-weaknesses";
 import { READER_SYSTEM, REASON_KINDS, buildReaderUser, parseReason, machineReason, aggregateReasons, failedOf, type Reason, type ReaderProblem, type ReaderRow } from "./lib/exam-failure-reader";
 import { conflictPeers, type GoldConflict } from "./lib/exam-gold-check";
@@ -602,7 +605,10 @@ async function spendToday() {
   log(`  他の担当の同じ版の答えを待って使った: ${by("wait-reuse").reduce((a, e) => a + e.ids.length, 0)}問・約 $${sum("wait-reuse").toFixed(2)}`);
   log(`  前の main と入力が同じで呼ばずに済んだ（main の作り直し）: ${by("pin").reduce((a, e) => a + e.ids.length, 0)}問・約 $${sum("pin").toFixed(2)}`);
   log(`  同じ比べを止めた: ${by("dup-refused").length}回・見込み $${sum("dup-refused").toFixed(2)}／担当の上限で夜に回した: ${by("cap-deferred").length}回・見込み $${sum("cap-deferred").toFixed(2)}`);
-  if (flag("routes")) for (const r of s.byRoute.slice(0, 30)) log(`  ${r.kind.padEnd(6)} $${r.usd.toFixed(3)} ${r.route}`);
+  if (flag("routes")) for (const r of s.byRoute.slice(0, 30)) log(`  ${r.kind.padEnd(6)} ${r.usd.toFixed(3)} ${r.route}`);
+  // 10/23 節約の台帳: 今日の全部で数え直して今日の分を上書き（--dry で書かない）→ 開いている上位
+  try { log((await detectAndRecord(sb, { since, write: !flag("dry") && !!process.env.SUPABASE_SERVICE_ROLE_KEY, mode: "set" })).text); } catch (e) { log(`（節約の台帳: ${String(e instanceof Error ? e.message : e).slice(0, 160)}）`); }
+  log(await topOpenSavingsText(sb));
 }
 
 async function runMain() {
@@ -720,7 +726,10 @@ async function runMain() {
   const labels = [...phases.map((p) => p.label), ...phases.flatMap((p) => p.mainLabels)];
   const sp = await spendOf(labels, startedAt).catch(() => ({ n: 0, usd: 0 }));
   const judge = phases.reduce((s, p) => { const c = readCost(p.label); return { usd: s.usd + (c?.judgeUsd ?? 0), n: s.n + (c?.judgeCalls ?? 0) }; }, { usd: 0, n: 0 });
-  log(`費用（この実行・llm_usage_logs の ${labels.length}つの route）: ${sp.n}回 $${sp.usd.toFixed(3)}＋判定 ${judge.n}回 $${judge.usd.toFixed(3)}`);
+  log(`費用（この実行・llm_usage_logs の ${labels.length}つの route）: ${sp.n}回 ${sp.usd.toFixed(3)}＋判定 ${judge.n}回 ${judge.usd.toFixed(3)}`);
+  // 10/23 節約の台帳: この回の無駄（2倍の時間・flash で足りる型・キャッシュ・重なり・回数・出力・off のスイッチ）を数えて足す。質を変えないスイッチが off なら次から自動で戻す
+  try { log((await detectAndRecord(sb, { since: new Date(startedAt), labels, env: process.env, write: !!process.env.SUPABASE_SERVICE_ROLE_KEY, mode: "add", onceLabel: label, autoApply: true })).text); }
+  catch (e) { log(`（節約の台帳: ${String(e instanceof Error ? e.message : e).slice(0, 160)}）`); }
   // 10/20 QUALITY⑤ 外れの理由を読む（flash・短い JSON）→ 型ごとに数えて保存（次の --conduct の材料）
   if (!flag("no-reasons") && (process.env.EXAM_REASONS ?? "").trim().toLowerCase() !== "off") {
     try { await readFailureReasons(label, phases, pl); } catch (e) { log(`（外れの理由が読めない: ${String(e instanceof Error ? e.message : e).slice(0, 160)}）`); }
