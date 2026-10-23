@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
-import { cronRetryKey, linePushIdem, sendIdempotencyOn } from "@/app/lib/send-idempotency";
+import { linePushIdem } from "@/app/lib/send-idempotency";
 import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -192,11 +192,11 @@ export async function POST(req: NextRequest) {
     // 「今日Kさん16時〜内覧お願い！\n連帯保証人で契約の場合の流れ説明…」
     const text = `${dateLabel}${customer_name}さん${timeLabel}${eventLabel}お願い！${notesText}`;
 
-    // 2026-10-23 送信の二重防止: 会話＋知らせの文から決まる鍵（X-Line-Retry-Key）。返事が切れて押し直す・2回呼ばれても、
-    //   同じ知らせ（同じ会話・同じ日時・同じ内容）は LINE が2回目を送らない（409＝届いている扱い・24時間）。中身が変われば別の鍵
+    // 2026-10-23 送信の二重防止の見直し: ここには鍵（X-Line-Retry-Key）を付けない。
+    //   呼ぶのは予定の保存だけ（押し直し・送り直しの道が無い）。中身から決まる鍵は LINE が24時間覚えるので、
+    //   16時→17時→16時と直した時の3通目（16時に戻した知らせ）が送られず、グループには17時のまま残ってしまう
     const r = await linePushIdem({
-      token, to: groupId, messages: [{ type: "text", text }], sendId: null,
-      retryKey: sendIdempotencyOn() ? cronRetryKey("notify-viewing", `${conversation_id ?? ""}\u0001${event_type}\u0001${text}`) : null,
+      token, to: groupId, messages: [{ type: "text", text }], sendId: null, retryKey: null,
       // LINE APIハング時に関数がタイムアウト上限まで滞留するのを防ぐ
       timeoutMs: 10_000,
     });
