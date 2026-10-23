@@ -181,7 +181,9 @@ export function buildRelativeDatesNote(input: RelativeDatesInput, nowMs: number,
     if (dueDiff != null) line += ` 期限 ${mdw(due!)}（${deadlineLabel(dueDiff)}）`;
     else line += "（期限の語なし）";
     if (p.status && /待ち/.test(p.status)) line += "・相手の結果待ち";
-    if (dueDiff != null && dueDiff < 0) line += "\n  ⚠ 期限切れの約束: 今回の返信で触れるなら、遅れの一言と今どうなっているか（いつ果たすか）を先に伝える";
+    // 約束の追跡が「記録なし（公式LINEから返信した可能性）」＝果たしたかもしれない。遅れと言い切らない（promise-tracker の方針）ので ⚠ は出さない
+    if (p.status && /記録なし/.test(p.status)) line += "・公式LINEから返信した可能性（遅れと言い切らない）";
+    else if (dueDiff != null && dueDiff < 0) line += "\n  ⚠ 期限切れの約束: 今回の返信で触れるなら、遅れの一言と今どうなっているか（いつ果たすか）を先に伝える";
     else if (dueDiff === 0) line += "\n  ⚠ 期限は今日: 今日中に果たす（果たせないなら今日のうちに状況を伝える）";
     else if (dueDiff == null && jstDayDiff(p.at, nowMs)! <= -3 && !(p.status && /待ち/.test(p.status))) line += "\n  ⚠ 3日以上たった約束: お客様から見ると止まっている。今回触れるなら今の状況から伝える";
     L.push(line);

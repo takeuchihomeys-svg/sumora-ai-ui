@@ -77,6 +77,11 @@ it("約束: 期限切れ・今日・期限の語なし3日以上", () => {
   has(s, "（期限は今日）\n  ⚠ 期限は今日");
   has(s, "10/19(月)（4日前）「ピックアップ出来次第お送りさせて頂きます」（期限の語なし）\n  ⚠ 3日以上たった約束");
 });
+it("約束: 記録なし（公式LINEから返信した可能性）は期限切れでも ⚠ を出さない", () => {
+  const s = buildRelativeDatesNote({ openPromises: [{ kind: "ご連絡", sentence: "明日ご連絡致します", at: iso("2026-10-19T12:00:00+09:00"), status: "記録なし（公式LINEから返信した可能性）" }] }, NOW, ON);
+  has(s, "公式LINEから返信した可能性");
+  not(s, "⚠");
+});
 it("内覧: 明後日・済んだかの記録なし・取り消しは出さない", () => {
   const s = buildRelativeDatesNote({ viewings: normalizeViewings(null, [
     { viewing_date: "2026-10-25", viewing_time: "14:00:00", status: "scheduled", property_name: "A荘" },
