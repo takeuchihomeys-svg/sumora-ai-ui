@@ -151,7 +151,8 @@ export async function sendWithIdempotency(
   firstMs?: number,
 ): Promise<{ res: Response; confirmedAfterTimeout: boolean }> {
   const sendId = book.idFor(key);
-  const out = await postWithConfirm((ms) => doFetch(sendId, ms), { hasSendId: true, firstMs });
+  // 確かめも最初と同じだけ待つ（画像をまとめて送る時は push が複数回で長い。25秒で切ると届いていても「分からない」になる）
+  const out = await postWithConfirm((ms) => doFetch(sendId, ms), { hasSendId: true, firstMs, confirmMs: firstMs && firstMs > 25_000 ? firstMs : undefined });
   if (out.res.ok) book.done(key);
   return out;
 }
