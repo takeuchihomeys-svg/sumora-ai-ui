@@ -27,6 +27,7 @@ import { staffActsOf, type StaffAct } from "./customer-sim-shadow";
 import { normalizeAixForMatch } from "./brain-aix-feedback";
 import { sceneKeyOf } from "./line-watch-turn";
 import { classifyAixContent } from "./aix-content-gate";
+import { shouldBeAixOf, shouldBeButtons, type ShouldBeAix } from "./aix-should-be";
 
 /** 判定の規則の版（規則を変えたら上げる。再判定の対象を見分ける） */
 //   v3-2026-10-07: スタッフが返さなかった番で、AI の下書きがお礼・了承の番の読むべき範囲の外の行為（お部屋を探す宣言 等）を書いた → different（no_staff_out_of_topic）
@@ -37,7 +38,10 @@ import { classifyAixContent } from "./aix-content-gate";
 //     ①AI は AIX（同じ系統）・スタッフは手打ちでその中身 → same_meaning（aix_by_text_staff_fact）
 //     ②AI は返信・スタッフは手打ちでその中身 → 下書きがその約束（確認・見積・ピックアップ）なら same_meaning（two_stage_fulfilled_by_text）・他は different（text_but_staff_fact）
 //     下書きも同じ系統の中身を言っている番は今まで通り文で比べる。戻す: LINE_WATCH_STAFF_FACT=off（呼び出し側が根拠の文を渡さない＝v6 と同じ判定）
-export const JUDGE_VERSION = "v7-2026-10-13";
+//   v8-2026-10-23（竹内さん 10/22 d04ed51b・76c249e0・aad87f41「スタッフは押し間違いが多い」「竹内も AIX で送る所を手打ち」「押すのは竹内基準」）:
+//     AI は AIX の番でスタッフが手打ち・別の AIX を押した時、送った文を本来の AIX（aix-should-be.ts）に当てはめ、ブレインの AIX と同じなら一致（same・same_via_mapping）。
+//     元の判定は raw_verdict・raw_reason に残す。aix_verdict（関所）は変えない。戻す: LINE_WATCH_AIX_MAPPING=off（呼び出し側が渡さない＝v7 と同じ判定）
+export const JUDGE_VERSION = "v8-2026-10-23";
 
 export type Verdict = "same" | "same_meaning" | "partial" | "different" | "na";
 export const VERDICTS: readonly Verdict[] = ["same", "same_meaning", "partial", "different", "na"];
@@ -64,6 +68,8 @@ export type StaffWindow = {
   aixMessages: number;
   aixMessagesBurst: number;
   presses: StaffPress[];
+  /** 2026-10-23 v8: AIX の文（is_aix_generated）の本文（押し間違いの当てはめに使う・無い時は空） */
+  aixTexts?: StaffText[];
 };
 
 const MIN = 60_000;
@@ -113,7 +119,8 @@ export function staffWindowOf(o: { customerTurnAt: string; msgs: ReadonlyArray<W
   const texts = staff.filter((m) => !m.is_aix_generated && (m.text ?? "").trim()).map((m) => ({ at: m.created_at, text: String(m.text), burst: inBurst(m.created_at) }));
   const presses = pressesRaw.map((p) => ({ aix_type: String(p.aix_type), check_pattern: p.check_pattern ?? null, at: p.created_at, burst: inBurst(p.created_at) }));
   const aix = staff.filter((m) => m.is_aix_generated);
-  return { endAt, closed, customerLastAt: lastCust, staffFirstAt, texts, aixMessages: aix.length, aixMessagesBurst: aix.filter((m) => inBurst(m.created_at)).length, presses };
+  const aixTexts = aix.filter((m) => (m.text ?? "").trim()).map((m) => ({ at: m.created_at, text: String(m.text), burst: inBurst(m.created_at) }));
+  return { endAt, closed, customerLastAt: lastCust, staffFirstAt, texts, aixMessages: aix.length, aixMessagesBurst: aix.filter((m) => inBurst(m.created_at)).length, presses, aixTexts };
 }
 
 // ─── 下書きの掃除 ───
@@ -193,7 +200,7 @@ export type JudgeInput = {
   convStatus?: string | null;
   /** その番でブレインの判断を控えたか（false で下書きも無ければ na） */
   hasBrain?: boolean;
-  window: Pick<StaffWindow, "closed" | "texts" | "presses" | "aixMessages" | "aixMessagesBurst">;
+  window: Pick<StaffWindow, "closed" | "texts" | "presses" | "aixMessages" | "aixMessagesBurst" | "aixTexts">;
   /** 下書きの行為のうち、お礼・了承の番の読むべき範囲の外の物（ack-topic-scope.outOfTopicActs・呼び出し側が会話から決める） */
   outOfTopicActs?: StaffAct[];
   /**
@@ -208,6 +215,11 @@ export type JudgeInput = {
   staffFactGround?: string | null;
   /** 2026-10-20: 番の時点の記録で申込以降（line-watch-scope.postApplyAtTurn）。true なら対象外（sceneKeyOf.postApply） */
   postApply?: boolean | null;
+  /**
+   * 2026-10-23 v8: 手打ち・押し間違いの文を「本来の AIX」に当てはめて採点するか（aix-should-be.ts）。
+   *   true の時だけ、ブレインの AIX が本来の AIX と同じなら一致（same・reason=same_via_mapping・元の判定は raw_verdict）。戻す: LINE_WATCH_AIX_MAPPING=off（呼び出し側が渡さない）
+   */
+  aixMapping?: boolean;
 };
 export type VerdictDetail = {
   v: string;
@@ -247,6 +259,11 @@ export type VerdictDetail = {
   merged_from?: { id: number; cols: string[] } | null;
   /** 2026-10-20: 自動返信化の関所用の今までの aix_verdict（①④で aix_verdict が変わった番だけ・無い時 "none"）。watch-aix-match が先に読む */
   guard_aix_verdict?: string | null;
+  /** 2026-10-23 v8: スタッフの手打ち・押した AIX の文を当てはめた「本来の AIX」（aix-should-be）。via＝hand（手打ち）｜mis_press（別の AIX を押した） */
+  should_be?: { key: string; also: string[]; strength: "strong" | "weak"; via: "hand" | "mis_press"; match: boolean } | null;
+  /** 2026-10-23 v8: 本来の AIX で一致に直した時の元の判定と理由 */
+  raw_verdict?: Verdict | null;
+  raw_reason?: string;
 };
 export type Judgement = { verdict: Verdict | null; detail: VerdictDetail };
 
@@ -282,6 +299,7 @@ export const VERDICT_REASON_JA: Record<string, string> = {
   aix_by_text_staff_fact: "AI は AIX・スタッフは AIX の中身（スタッフだけが知る事）を手打ちで（AIX の番）",
   two_stage_fulfilled_by_text: "AI は約束の返信・スタッフはその約束の中身を手打ちで直接（決まりどおり）",
   text_but_staff_fact: "AI は返信・スタッフは AIX の中身（スタッフだけが知る事）を手打ちで（AIX の番）",
+  same_via_mapping: "スタッフは手打ち・別の AIX だが、本来の AIX（中身の意味）がブレインの AIX と同じ",
 };
 
 /**
@@ -342,6 +360,46 @@ const CHECK_AIX = new Set(["acknowledge_check", "property_check_result"]);
 
 /** 判定。窓が閉じていない番で何も送られていなければ verdict=null（翌晩にもう一度） */
 export function judgeTurn(i: JudgeInput): Judgement {
+  const j = judgeTurnRaw(i);
+  return i.aixMapping ? applyAixMapping(i, j) : j;
+}
+
+/**
+ * v8（2026-10-23 竹内さん 10/22「スタッフは押し間違いが多い」「竹内も手打ちで送る」「押すのは竹内基準」）:
+ *   AI は AIX の番で、スタッフが手打ちで送った・別の AIX を押した（判定が一部違う／別の事）時、送った文を「本来の AIX」に当てはめる。
+ *   ブレインの AIX のボタンが本来の AIX の主のボタンと同じなら一致（same・same_via_mapping）。元の判定は raw_verdict に残す。
+ *   押し間違いは、押した AIX の文が押したボタンを裏付けない時だけ（裏付ける＝押し間違いではない・手打ちの文は根拠にしない）。
+ *   aix_verdict（自動返信化の関所が読む押した AIX の一致）は変えない＝関所は緩まない。
+ */
+export function applyAixMapping(i: JudgeInput, j: Judgement): Judgement {
+  const d = j.detail;
+  const brain = d.brain_aix;
+  if (d.path !== "AIX" || !brain || (j.verdict !== "partial" && j.verdict !== "different")) return j;
+  const burst = i.window.texts.filter((t) => t.burst).map((t) => t.text).join("\n").trim();
+  const misPress = d.reason === "aix_other";
+  let sb: ShouldBeAix | null = null;
+  if (misPress) {
+    // 返事のまとまりの AIX の文（まとまりの外で押した番＝まとまりに AIX の文が無い時は窓の全部）
+    const all = i.window.aixTexts ?? [];
+    const aixBurst = (all.some((t) => t.burst) ? all.filter((t) => t.burst) : all).map((t) => t.text);
+    const cands = aixBurst.map((t) => shouldBeAixOf(t, { mode: "aix" })).filter((x): x is ShouldBeAix => !!x);
+    // 2026-10-23 レビュー: 押した AIX を自分の文が裏付けている＝押し間違いではない（例: 物件の束の中の（室内イメージ）・費用の説明＋手打ちの内覧の誘い）→ 直さない。
+    //   手打ちの文は押し間違いの根拠にしない（押した AIX と手打ちの両方をした番＝ブレインは片方しか選んでいない）
+    const pressed = new Set((d.staff_aix ?? []).map(String));
+    if (!cands.length || cands.some((c) => shouldBeButtons(c).some((b) => pressed.has(b)))) return j;
+    sb = cands.find((c) => c.button === brain) ?? cands[0];
+  } else if (burst) {
+    sb = shouldBeAixOf(burst, { mode: "hand" });
+  }
+  if (!sb) return j;
+  // 一致は主のボタンだけ（同じ文に添えた弱い中身＝also で一致にしない・膨らませない）。ピッカーは時期で変わる物があるのでボタンで比べる
+  const match = sb.button === brain;
+  const should_be = { key: sb.key, also: sb.also, strength: sb.strength, via: misPress ? "mis_press" as const : "hand" as const, match };
+  if (!match) return { verdict: j.verdict, detail: { ...d, should_be } };
+  return { verdict: "same", detail: { ...d, should_be, raw_verdict: j.verdict, raw_reason: d.reason, reason: "same_via_mapping" } };
+}
+
+function judgeTurnRaw(i: JudgeInput): Judgement {
   const scene = sceneKeyOf({ brainAction: i.brainAction, brainReplyMode: i.brainReplyMode, convStatus: i.convStatus, postApply: i.postApply });
   const final = i.window.closed;
   const base = { v: JUDGE_VERSION, path: scene.path, final } as const;

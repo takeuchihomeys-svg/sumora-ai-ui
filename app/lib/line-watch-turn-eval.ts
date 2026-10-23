@@ -7,6 +7,7 @@ import { staffWriterOfBurst, staffWriterSplitEnabled } from "./staff-writer";
 import { staffWindowOf, judgeTurn, cleanDraft, pickJudgeDraft, JUDGE_VERSION, type WindowMsg, type WindowPress, type Judgement, type StaffWindow, type JudgeDraftSrc } from "./line-watch-judge";
 import { resolveAckTopicScope, outOfTopicActs } from "./ack-topic-scope";
 import { sceneKeyOf, type SceneKey } from "./line-watch-turn";
+import { watchAixMappingEnabled } from "./aix-should-be";
 import { postApplyAtTurn, watchPostApplyScopeEnabled, type PostApplyTimeline } from "./line-watch-scope";
 
 const P = (s: string) => Date.parse(s);
@@ -63,6 +64,8 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
     // 2026-10-13 v7「手打ちでも AIX の番」: 引用の照合は番の最後のお客様の発言までの会話（msgs は番の4日前から）。戻す: LINE_WATCH_STAFF_FACT=off
     staffFactGround: staffFactJudgeEnabled() ? upto.map((m) => m.text ?? "").join("\n") : null,
     postApply,
+    // 2026-10-23 v8: 手打ち・押し間違いを本来の AIX に当てはめて採点（aix-should-be）。戻す: LINE_WATCH_AIX_MAPPING=off
+    aixMapping: watchAixMappingEnabled(),
   });
   if (postApply && pa?.reason && pa.reason !== "status") j.detail.post_apply_reason = pa.reason;
   if (topicOut.length && !j.detail.out_of_topic_acts) j.detail.out_of_topic_acts = topicOut;

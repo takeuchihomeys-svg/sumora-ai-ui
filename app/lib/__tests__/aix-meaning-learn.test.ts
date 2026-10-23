@@ -59,6 +59,7 @@ t("お手本が足りない物はお手本も中身も持たない", Object.valu
 t("learnedMeaningFor はピッカー→ボタンの順", Object.keys(AIX_LEARNED).length === 0 || learnedMeaningFor("estimate_sheet", "single")?.key.startsWith("estimate_sheet") === true);
 t("生成側の塊は目的を持つ", aixMeaningForGenerator("meeting_place").includes("目的:"));
 t("learnedLine は無い時に空", learnedLine(undefined) === "");
+t("物件名の後の部屋番号も伏せる", !/1212|303/.test(maskExemplar("Eminence 1212のご案内") + maskExemplar("星田303です")) && /2025年/.test(maskExemplar("2025年に築")) && /65000円/.test(maskExemplar("家賃65000円")));
 t("お手本に号室を残さない", !/[0-9０-９]s*号室/.test(dump) && !/[0-9]号室/.test(maskExemplar("セレニテ 1501号室です")));
 { const fake = { key: "estimate_sheet/single", purpose: "", writeContains: ["金額（100%）", "入居日・退去日（100%）"], structure: null, nextStep: [], before: [], exemplars: [], counts: { owner: 9, all: 9, misPressStaff: 0, misPressOwner: 0 }, needsOwnerGold: false, kb: [] };
   t("定型の文の話題（御見積書の入居日）はブレインに見せない", learnedLine(fake).includes("金額") && !learnedLine(fake).includes("入居日")); }

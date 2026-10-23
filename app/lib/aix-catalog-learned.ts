@@ -1,9 +1,9 @@
 // app/lib/aix-catalog-learned.ts — 生成物（scripts/learn-aix-meanings.ts が作る・手で直さない）
-// 作った時: 2026-10-22 11:37 JST・aix_usage_logs 2588件（2026-06-26〜）・竹内基準（竹内さんの送信 messages.staff_writer='takeuchi' と定義・設計知見）だけで意味を作る
+// 作った時: 2026-10-23 08:16 JST・aix_usage_logs 2611件（2026-06-26〜）・竹内基準（竹内さんの送信 messages.staff_writer='takeuchi' と定義・設計知見）だけで意味を作る
 // お手本は伏せた文だけ（お客様の名前・電話・住所・物件名・URL は出さない）。needsOwnerGold＝竹内さんのお手本が 3 未満（竹内さんに聞く）
 import type { LearnedMeaning } from "./aix-meaning-learn";
 
-export const AIX_LEARNED_GENERATED_AT = "2026-10-22 11:37";
+export const AIX_LEARNED_GENERATED_AT = "2026-10-23 08:16";
 export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
   "property_check_result/available": {
     "key": "property_check_result/available",
@@ -34,14 +34,20 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     ],
     "counts": {
       "owner": 33,
-      "all": 271,
+      "all": 272,
       "misPressStaff": 7,
       "misPressOwner": 3
     },
     "needsOwnerGold": false,
     "kb": [
       "c18a0d32"
-    ]
+    ],
+    "handExemplars": [
+      "YUMAさんお待たせ致しました！！\nこちらがサザンネスト住ノ江駅前現在募集されているお部屋一覧となります！！\n\n管理会社に水道代について確認しましたところ、水道代は家賃に含まれておらず別途お支払い頂く形となります！！",
+      "エスリード中之島クロスゲート募集状況確認させて頂きましたところ、現在お部屋お申込が入っており、2番手以降でのお申込となります！！",
+      "YUMAさんお待たせ致しました！！\n淀川区周辺全域からYUMAさんご希望のご条件にあったお部屋探させて頂きましたところ、1件だけご条件に合ったお部屋が募集しておりました！！\nお手隙の際にご査収ください😌！！"
+    ],
+    "ownerHand": 14
   },
   "property_check_result/alternative": {
     "key": "property_check_result/alternative",
@@ -79,7 +85,11 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "ビバーチェ鷺洲ですがお送り頂きました1LDKのお部屋募集終了しておりますので、別の間取りとなりますが1DKのお部屋まだ募集されております！！\n最大限割引しました初期費用御見積させて頂きました！！\nお手隙の際にご査収ください😌！！"
+    ],
+    "ownerHand": 1
   },
   "property_check_result/unavailable": {
     "key": "property_check_result/unavailable",
@@ -116,7 +126,13 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "needsOwnerGold": false,
     "kb": [
       "c18a0d32"
-    ]
+    ],
+    "handExemplars": [
+      "YUMAさんお待たせ致しました！！\nお送り頂きました物件3件につきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！",
+      "確認させて頂きましたところ、10月中旬まで工事中となり工事中はご内覧出来ないとの事です！！\n工事完了日が決まりましたらご報告頂く形となっております！！\n\nその間お申込がはいりお部屋埋まってしまう可能性も御座いますのでご了承頂きますと幸いです😌！！",
+      "YUMAさんお送り頂きましたプレサンスOSAKA DOMECITYワンダーにつきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！\n\nYUMAさんのご条件に合った新着物件随時確認させて頂きご条件にあったお部屋が新しく募集に出次第お送りさせて頂きます！\n何卒よろしくお願い致します！！"
+    ],
+    "ownerHand": 4
   },
   "property_check_result/exclusive": {
     "key": "property_check_result/exclusive",
@@ -181,7 +197,13 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 1
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "③ オルフェア難波東10番館\n\n（室内イメージ）\n（URL）",
+      "①南堀江アパートメントグランデ\n\n（室内イメージ）\n（URL）",
+      "【物件名】\n（URL）"
+    ],
+    "ownerHand": 14
   },
   "property_check_result/other_room_check": {
     "key": "property_check_result/other_room_check",
@@ -198,7 +220,11 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": true,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "お世話になっております！！\n管理会社担当確認しましたところバルコニーに洗濯機置く事が出来るとの事です！！\nこちらの〇〇号室のみ募集中となり、\n現在空室ですので、よろしければ一度ご内覧頂きお確かめ頂く形となります！！"
+    ],
+    "ownerHand": 1
   },
   "property_check_result/mgmt_availability": {
     "key": "property_check_result/mgmt_availability",
@@ -270,7 +296,13 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 1
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "BLANCOSTA SQUARE管理会社に確認しましたところ、11月2日からご内覧が出来そこからクリーニング工事がはいりますので、最短で11月中旬でのご入居となります！！\n\nかしこまりました！！\n10月後半ご入居可能なお部屋も、茨木・豊中周辺全域からYUMAさんにオススメできるお部屋を新たにピックアップしてお送りさせて頂きます！！",
+      "管理会社確認しましたところ、即入居可能なお部屋となりますので、お申込日から2週間以内にご入居頂きたいとの事です！！\nYUMAさんご希望のお日にち御座いましたら交渉させて頂きます！！",
+      "お待たせ致しました！！\n最大限割引しました初期費用の御見積書となります！！\n初回保証料が家賃初回引き落としの際に\nお支払い頂く形となるため\n🌟1枚目の御見積書が正確な費用となります！！\n\n※ご入居日によって別途日割家賃が発生致します。"
+    ],
+    "ownerHand": 3
   },
   "property_check_result/mgmt_initial_cost": {
     "key": "property_check_result/mgmt_initial_cost",
@@ -289,7 +321,13 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "needsOwnerGold": true,
     "kb": [
       "76212115"
-    ]
+    ],
+    "handExemplars": [
+      "お待たせ致しました！！\n\nセレニテ難波ミラク参番館〇〇号室・エスリード難波ザ・プレミア〇〇号室、2件とも最大限割引しました初期費用の御見積書となります！！\n\nどちらのお部屋と敷金礼金なしのため、初期費用をかなり抑えてご入居頂けます😊！！",
+      "YUMAさんお待たせ致しました！！\n\nS-RESIDENCE江坂Eminence 1212\nかなりオススメ出来るお部屋となります！！\n敷金礼金なし、更に弊社割引させて頂き初期費用をかなり抑えてご入居頂けます！！\n\nYUMAさん、お気に召されましたら、オンライン内見や、室内撮影も行わせていただきます！！\nお手隙の際にご査収ください😌！！",
+      "YUMAさんお世話になっております！！\n\nシャンヴェルジェ豊中Ⅲ〇〇号室ですが\n貸主様側に交渉しましたところ\n今月内のお申込で初期費用を更に減額する事が可能となりました！！\nそこから弊社最大限割引させて頂きました御見積金額となります！！\nかなりの好条件となります！！\n確認させて頂きましたところ、現在募集が出ているお部屋で、初期費用を抑えられるかつフリーレントのお部屋で、YUMAさんのご希望のご条件に合ったお部屋、こちらのシャンヴェルジェ豊中Ⅲのみとなります！！\nお手隙の際にご査収ください😌！！"
+    ],
+    "ownerHand": 3
   },
   "property_check_result/mgmt_proxy": {
     "key": "property_check_result/mgmt_proxy",
@@ -308,7 +346,12 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "needsOwnerGold": true,
     "kb": [
       "4696868e"
-    ]
+    ],
+    "handExemplars": [
+      "アーバンフラッツ心斎橋に代理契約可能か確認させて頂きましたところ\n代理契約可能となります😊！！",
+      "お待たせ致しました！！\nS-RESIDENCE難波大国町Deux\nS-RESIDENCE難波Brillerともに\n代理契約可能となります！！\n\nよろしければ一度お部屋ご内覧如何でしょうか😊！！\nご都合よろしいお日にちにお部屋ご案内させて頂きます！！"
+    ],
+    "ownerHand": 2
   },
   "property_check_result/mgmt_lifeline": {
     "key": "property_check_result/mgmt_lifeline",
@@ -361,7 +404,12 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": true,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "お待たせ致しました！！\n・ジーメゾン石津町東プリシェ\n・フジパレス瓜破Ⅱ番館\nそれぞれの御見積書となります😊！！\n\nジーメゾン石津町東プリシェ〇〇号室は空室ですので審査通過しましたらご入居出来るお部屋となります！！\n保証会社もエイト賃貸保証と独立系の保証会社ですので審査基準が緩く審査通過する可能性御座います！！\n\nYUMAさんよろしければ一度審査かけてみるのは如何でしょうか😌！！",
+      "YUMAさんお世話になっております。\nクイーンズハイツ名倉ですが審査結果が管理会社から連絡はいり、審査否決となってしまいました。\n独立系保証会社の審査で審査継続不能との事です。"
+    ],
+    "ownerHand": 2
   },
   "property_check_result/mgmt_screening": {
     "key": "property_check_result/mgmt_screening",
@@ -378,7 +426,12 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": true,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "確認しましたところ現在まだ審査中となります！！\n審査状況進捗あり次第ご連絡させて頂きます！！",
+      "お待たせ致しました！！\n最大限割引しました初期費用の御見積書となります！！\n夜職の方でも審査通りますようサポートさせて頂きます😊！！\nお仕事面をご用意させて頂く審査面の費用もこちらの御見積書込の金額となります！！"
+    ],
+    "ownerHand": 2
   },
   "property_check_result/mgmt_application_status": {
     "key": "property_check_result/mgmt_application_status",
@@ -429,7 +482,12 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": true,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "お世話になっております。\n駐輪場ですがご入居後でのご契約大丈夫との事です😊！！",
+      "現在駐輪場途中申請可能か管理会社確認中となります。\nこちら管理会社から連絡があり次第ご連絡させて頂きます！！\n何卒よろしくお願い致します。"
+    ],
+    "ownerHand": 2
   },
   "property_check_result/mgmt_pet": {
     "key": "property_check_result/mgmt_pet",
@@ -448,7 +506,13 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "needsOwnerGold": true,
     "kb": [
       "0dab071b"
-    ]
+    ],
+    "handExemplars": [
+      "はい！！\n鳴き声が近隣の住民の方とトラブルになる可能性があるとの事でペット飼育出来ないとのことでした。\nペット2匹可のお部屋を中心に、布施〜八戸の里あたりで改めてピックアップしてお送りさせて頂きます！！",
+      "お待たせ致しました！！\nこちら最大限割引しました初期費用の御見積書となります！！\nペット飼育時別途敷金1ヶ月分必要となります！！\nお手隙の際にご査収ください😌！！",
+      "管理会社担当と確認させて頂きました！！\n体重10キロ程のコーギー飼育可能との事です！！\nこちらどちらも物件を管理している管理会社が同じとなりますので、お申し込みさせて頂く場合どちらか1物件となります！"
+    ],
+    "ownerHand": 3
   },
   "property_check_result/mgmt_equipment": {
     "key": "property_check_result/mgmt_equipment",
@@ -501,7 +565,13 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": true,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "YUMAさんお待たせ致しました！！\n3件の初期費用の御見積と確認事項の確認をさせて頂きました！！\n\n家賃やフリーレントは交渉出来ないとの事でしたが弊社にて初期費用面最大限割引させて頂きました！！\n御見積同封させて頂いております😊！！\nお手隙の際にご査収ください😌！！",
+      "YUMAさんお世話になっております！！\n管理会社に交渉させて頂きましたがこちらクリーニング費用必須となります。\nクリーニング費用に関しましてはご入居の際、または退去時に必ず必要となりますが出来る限りの交渉はさせて頂きます。\nYUMAさん出来る限りご満足頂くご入居が出来ますよう最善のサポートをさせて頂きます！！",
+      "YUMAさんお待たせ致しました！！\nお送り頂きました5物件の最大限割引しました初期費用の御見積書となります😊！！\nスプランディッド梅田WEST〇〇号室はフリーレントのキャンペーン中となり、今月中のお申込みでご入居後1ヶ月の家賃が免除となります！！\n\nYUMAさんお気に召されたお部屋全てご都合よろしいお日にちにご案内させて頂きます！！\nお気軽にお申し付けください😌！！"
+    ],
+    "ownerHand": 4
   },
   "property_check_result/mgmt_rent_negotiation": {
     "key": "property_check_result/mgmt_rent_negotiation",
@@ -535,7 +605,11 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": true,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "YUMAさん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！\n\n都島駅・桜ノ宮駅周辺全域から家賃7万円〜10万円以内・1LDKまたは2LDKのYUMAさんにオススメできるお部屋をピックアップしてお送りさせて頂きます！！\n\n騒音にお悩みとのことですので、防音性の高いRC造のお部屋を中心に、初期費用も最大限割引させて頂きYUMAさんのお引越しにかかる費用を出来る限り抑えさせて頂きます😌！！\n\nYUMAさんがご満足頂くお部屋が見つかるまでお部屋探し全力でサポ…"
+    ],
+    "ownerHand": 1
   },
   "property_check_result/nearby_parking": {
     "key": "property_check_result/nearby_parking",
@@ -615,12 +689,18 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     ],
     "counts": {
       "owner": 58,
-      "all": 179,
+      "all": 180,
       "misPressStaff": 4,
       "misPressOwner": 1
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "YUMAさんお探しのお部屋類似条件のお部屋でオススメ出来るお部屋ピックアップさせて頂きました！！\n2025年築の築浅物件、敷金礼金0円の為初期費用面もかなり抑える事が出来ます！！\nYUMAさんお気に召されましたら2部屋ともご都合よろしいお日にちにご案内させて頂きます！！\nお手隙の際にご査収ください😌！！",
+      "大阪市内全域から現在募集中のお部屋で中型犬飼育可能なお部屋こちらの1件のみとなります！！\nYUMAさんお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！",
+      "こちら2件は退去予定で新しく募集が出たお部屋となります！！\n・グランパシフィック生野東（10月末退去予定）\n・グランパシフィック今里Luxe（9月末退去予定）"
+    ],
+    "ownerHand": 15
   },
   "property_send/new_arrival": {
     "key": "property_send/new_arrival",
@@ -651,12 +731,16 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     ],
     "counts": {
       "owner": 25,
-      "all": 221,
+      "all": 223,
       "misPressStaff": 12,
       "misPressOwner": 7
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "YUMAさんお世話になっております！！\n長居駅から徒歩24分と距離は離れてしまいますが、かなりご条件に合ったお部屋が1件募集にでました！！\n近隣（徒歩2分）に月極駐車場御座います！！\nお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！\n\nYUMAさんお手隙の際にご査収ください😌！！"
+    ],
+    "ownerHand": 1
   },
   "property_send/widen": {
     "key": "property_send/widen",
@@ -720,12 +804,18 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "exemplars": [],
     "counts": {
       "owner": 0,
-      "all": 13,
+      "all": 14,
       "misPressStaff": 0,
       "misPressOwner": 0
     },
     "needsOwnerGold": true,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "（住所の行）\n\n（オススメポイント）\n・家賃100,000円・管理費なし\n・間取り：2DK（DK7.5帖、洋室4.5帖・和室6帖）\n・中型犬飼育可能\n・環状線「弁天町」徒歩9分・中央線「弁天町」徒歩8分\n・室内洗濯機置場・エアコン付き",
+      "🌟グランバシフィック桜川WEST 〇〇号室\n\n（オススメポイント）\n・家賃69,000円・共益費7,000円（合計76,000円）\n・洋室7.2帖\n・大正駅徒歩5分\n・敷金礼金なしのため初期費用をかなり抑えてご入居頂けます！！\n・2020年3月築で築年数浅く室内綺麗なお部屋です！！\n・オートロック・宅配BOX・独立洗面台・温水洗浄便座・TVモニターホン\n・室内洗濯機置場あり\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！",
+      "YUMAさんにオススメ物件\n（ラクラス阿倍野元町）\n（URL）"
+    ],
+    "ownerHand": 14
   },
   "property_recommendation/新着1件": {
     "key": "property_recommendation/新着1件",
@@ -753,34 +843,66 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     ],
     "exemplars": [
       "🌟ノイヴェル野里 〇〇号室\n\n1件独立洗面台でYUMAさんにかなりオススメ出来るお部屋が募集に出ました！！\n\n（オススメポイント）\n・間取り：1K（洋室7.5帖）\n・阪神本線「姫島」徒歩7分／JR東西線「御幣島」徒歩9分\n・敷金礼金なしのため初期費用をかなり抑えてご入居頂けます！！\n・独立洗面台あり\n・オートロック付き\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！",
-      "🌟プレサンス天王寺デルニエ 〇〇号室\n\n（オススメポイント）\n・家賃96,110円・管理費8,890円（合計105,000円）\n・間取り：1LDK（リビング10.5帖、洋室4.7帖）\n・専有面積29.64㎡\n・御堂筋線「天王寺」徒歩12分\n・敷金礼金なしのため初期費用をかなり抑えてご入居頂けます！！\n・2025年6月築で築年数浅く、室内が綺麗なお部屋です！！\n・2口コンロ・オートロック・浴室乾燥機・追い焚き機能付き\n・インターネット無料で毎月の通信費も節約出来ます！！\n\n🌟最大限割引しました初期費用の御見積…",
+      "🌟プレサンス天王寺デルニエ 〇〇号室\n\n（オススメポイント）\n・家賃96,110円・管理費8,890円（合計105,000円）\n・間取り：1LDK（リビング10.5帖、洋室4.7帖）\n・専有面積29.64㎡\n・御堂筋線「天王寺」徒歩12分\n・敷金礼金なしのため初期費用をかなり抑えてご入居頂けます！！\n・2025年6月築で築年数浅く、室内が綺麗なお部屋です！！\n・2口コンロ・オートロック・浴室乾燥機・追い焚き機能付き\n・インターネット無料で毎月の通信費も節約出来ます！！\n\n🌟最大限割引しました初期費用の御見積書同…",
       "🌟Vinoプレジオ本町 〇〇号室\n\n（オススメポイント）\n・家賃153,000円・管理費12,000円（合計165,000円）\n・間取り：1LDK（リビング10.01帖、洋室6.37帖）\n（住所の行）\n・敷金礼金なしのため初期費用をかなり抑えてご入居頂けます！！\n・2023年8月築で築年数浅く\n・インターネット使用料不要\n・浴室乾燥機・追い焚き・シャワートイレなど水回り設備が充実\n・宅配ボックス・オートロック・防犯カメラで安心\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！"
     ],
     "counts": {
       "owner": 32,
-      "all": 132,
+      "all": 134,
       "misPressStaff": 4,
       "misPressOwner": 1
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "YUMAさんにオススメ出来るお部屋が募集に出ました！！\n礼金0円キャンペーン中となり、初期費用面もかなり抑える事が出来ます！！\nお気に召されましたらお部屋ご案内させて頂きます😌！！\nお気軽にお申し付けください！！",
+      "🌟新着で1件YUMAさんにオススメ出来るお部屋が募集に出ました！！\n\n江坂駅エリアでフルリノベーション済みのお部屋で、リビング11帖・洋室6帖・洋室6帖の2LDK・約60.24㎡とご希望の2LDK・50㎡以上にしっかり収まる広さとなっております！！南向き・角部屋で採光・通風も良好です。\n\n家賃110,000円・共益費10,000円の合計120,000円で、ご希望の14万円以内にも余裕を持って収まっております。\n\n無料インターネット（Wi-Fi・1Gbps対応）導入物件のため、毎月の通信費も抑えてお過ごし頂けます\ud83d…",
+      "🌟YUMAさんオススメのお部屋が新着で募集に出ました！！\n初期費用につきまして管理会社営業時間外ですので、分かる範囲で御見積書作成させて頂いております！！\n※鍵交換費用等別途必要となる可能性御座います！\n正確な費用分かりましたら再度見積書お送りさせて頂きます！！\n\n1部屋のみ募集となりますので、お気に召されましたらお申込しお部屋抑えさせて頂きます！！"
+    ],
+    "ownerHand": 9
   },
   "property_recommendation/継続ピックアップ": {
     "key": "property_recommendation/継続ピックアップ",
     "purpose": "送る情報: スタッフが選んだ1件（資料の画像）とその推しどころ／使う時: AIX【物件ピックアップした】で複数件送った直後（1時間以内）に、続けてその中から1件を推す（竹内さん 23%・「お送りさせて頂きましたお部屋の中でも」）",
-    "writeContains": [],
-    "structure": null,
-    "nextStep": [],
-    "before": [],
-    "exemplars": [],
+    "writeContains": [
+      "金額（100%）",
+      "1件の推し（100%）",
+      "設備（100%）",
+      "号室・部屋数（100%）"
+    ],
+    "structure": {
+      "uke": 0,
+      "amount": 100,
+      "promise": 0,
+      "appeal": 100,
+      "close": 0
+    },
+    "nextStep": [
+      "AIX 物件ピックアップした（33%）",
+      "AIX 内覧日調整（内覧へ！）（33%）",
+      "返事なし（2日）（33%）"
+    ],
+    "before": [
+      "お礼・了承（67%）",
+      "条件（33%）"
+    ],
+    "exemplars": [
+      "🌟リンクハウス南堀江 〇〇号室\n\n（オススメポイント）\n・家賃113,000円・管理費10,000円（合計123,000円）\n・間取り：1LDK（リビング8帖、洋室4帖）\n・敷金礼金0円　\n・長堀鶴見線「西長堀」徒歩4分、千日前線「桜川」徒歩7分\n・2021年3月築（築5年）で築年数浅く\n・角部屋・オートロック・宅配ボックスで安心の設備\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！\n※こちらクリーニング費用入居時支払いの物件となります。",
+      "🌟大阪難波Noah 〇〇号室\n\n（オススメポイント）\n・家賃99,000円・管理費10,000円（合計109,000円）\n・間取り：1DK（DK7.7帖、洋室3.4帖）\n・敷金礼金なし\n・2024年6月築で築年数浅く\n・千日前線「桜川」駅徒歩7分・関西線「JR難波」駅徒歩7分\n・独立洗面台・浴室乾燥機・オートロック・カメラ付インターホン完備\n・インターネット無料",
+      "🌟モノトーン難波 〇〇号室\n\n（オススメポイント）\n・家賃78,000円・管理費10,000円（合計88,000円）\n・1K 26.63㎡　（9帖・ロフト付）\n・大阪メトロ谷町線「四天王寺前夕陽ヶ丘」徒歩8分・千日前線「日本橋」徒歩11分\n・2018年2月築\n・独立洗面台・浴室乾燥機・ロフト付き\n・オートロック・モニタ付インターホン完備"
+    ],
     "counts": {
-      "owner": 2,
-      "all": 4,
+      "owner": 3,
+      "all": 5,
       "misPressStaff": 0,
       "misPressOwner": 0
     },
-    "needsOwnerGold": true,
-    "kb": []
+    "needsOwnerGold": false,
+    "kb": [],
+    "handExemplars": [
+      "🌟YMK NAMBA\nお送りさせて頂いたお部屋の中でも\n30.77㎡とお部屋かなり広いです！！\n敷金礼金0円の為初期費用面も抑える事が出来、オススメのご条件のお部屋となります！！"
+    ],
+    "ownerHand": 1
   },
   "property_recommendation/条件広げピックアップ": {
     "key": "property_recommendation/条件広げピックアップ",
@@ -845,24 +967,24 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "uke": 0,
       "amount": 100,
       "promise": 0,
-      "appeal": 93,
+      "appeal": 94,
       "close": 0
     },
     "nextStep": [
-      "AIX 物件オススメ（1件特にオススメ）（22%）"
+      "AIX 物件オススメ（1件特にオススメ）（20%）"
     ],
     "before": [
-      "費用（41%）",
-      "物件の共有（35%）"
+      "費用（45%）",
+      "物件の共有（33%）"
     ],
     "exemplars": [
-      "【物件名】\n\n初期費用さらに\n🌟36,000円割引させて頂き\n初期費用：159,830円\n\nスモラなら一般的な不動産業者より96,270円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。",
-      "【物件名】\n\n初期費用さらに\n🌟44,000円割引させて頂き\n初期費用：150,980円\n\nスモラなら一般的な不動産業者より103,720円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。",
-      "【物件名】\n\n初期費用さらに\n🌟82,000円割引させて頂き\n初期費用：179,480円\n\nスモラなら一般的な不動産業者より227,520円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。"
+      "【物件名】\n\n初期費用さらに\n🌟42,000円割引させて頂き\n初期費用：109,000円\n\nギガ賃貸なら一般的な不動産業者より110,200円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。",
+      "【物件名】\n\n初期費用さらに\n🌟62,000円割引させて頂き\n初期費用：129,890円\n\nギガ賃貸なら一般的な不動産業者より126,900円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。",
+      "【物件名】\n\n初期費用さらに\n🌟48,000円割引させて頂き\n初期費用：99,300円\n\nギガ賃貸なら一般的な不動産業者より118,400円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。"
     ],
     "counts": {
-      "owner": 46,
-      "all": 58,
+      "owner": 49,
+      "all": 63,
       "misPressStaff": 0,
       "misPressOwner": 0
     },
@@ -870,7 +992,13 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "kb": [
       "3f67fd3f",
       "5cb4bd2f"
-    ]
+    ],
+    "handExemplars": [
+      "こちらお送り頂きました物件の詳細となります😊！！\n初期費用を106,900円割引させて頂き\n前家賃+2,980円でご入居できます！！\nお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！",
+      "🟢気になるお部屋の初期費用がスモ割最大適用【物件名】だけに✨\n\n（スモ割方法）\n①SUUMO等で気になるお部屋をスクショ\n②LINEに送るだけ📲\n初期費用を最大限割引させて頂きます！\n\nYUMAさん気になるお部屋御座いましたらお気軽にお送りください☺️💫",
+      "プレアール遠里小野ですが初期費用最大限割引させて頂き前家賃＋2,980円でご入居出来るお部屋となります😊！！\nお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！\nお気軽にお申し付けください😌！！"
+    ],
+    "ownerHand": 27
   },
   "estimate_sheet/multi": {
     "key": "estimate_sheet/multi",
@@ -894,35 +1022,42 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "purpose": "送る情報: スタッフの空いている日時（内覧の候補日）・退去予定の部屋の内覧開始日／使う時: 内覧の希望（日時なし・今見られる部屋）に候補日を出す",
     "writeContains": [
       "内覧の日時（100%）",
-      "号室・部屋数（63%）"
+      "号室・部屋数（67%）"
     ],
     "structure": {
-      "uke": 75,
+      "uke": 67,
       "amount": 0,
-      "promise": 88,
-      "appeal": 25,
+      "promise": 89,
+      "appeal": 22,
       "close": 0
     },
     "nextStep": [
-      "AIX 待ち合わせ（63%）"
+      "AIX 待ち合わせ（56%）",
+      "返事なし（2日）（22%）"
     ],
     "before": [
-      "その他（38%）",
-      "内覧（25%）"
+      "その他（44%）",
+      "内覧（22%）"
     ],
     "exemplars": [
+      "YUMAさんお世話になっております！！\nかしこまりました😊！！\n\nカシミマンション 〇〇号室ご案内させて頂きます！！\n\n直近ですと\n10/26(月) 13:00〜15:00\n10/27(火) 15:00〜17:00\n10/28(水) 12:00〜15:00にてご案内可能です！！\n\nYUMAさんご都合よろしいお日にち御座いますでしょうか😌！！",
       "かしこまりました😊！！\n\n25日が予定埋まっておりまして\n28日以降にスプランディッド難波SOUTH 〇〇号室お部屋ご案内させて頂きます！！\n\n直近ですと\n10/28(水) 15:00〜18:00\n10/29(木) 12:00〜14:00\n10/30(金) 13:00〜15:00にてご案内可能です！！\n\nYUMAさんご都合よろしいお日にち御座いますでしょうか！！",
-      "YUMAさんお世話になっております！！\nかしこまりました！！\n\nグランパシフィック桜川南〇〇号室、お部屋ご案内させて頂きます😊！！\n\n直近ですと\n本日 10/19(月) 16:00〜18:30\n明日 10/20(火) 15:30〜17:30\n10/21(水) 12:00〜15:00にてご案内可能です！！\n\nYUMAさんご都合よろしいお日にち御座いますでしょうか😌！！\n\nお部屋他にもオススメできるお部屋、引き続き新着でピックアップ出来次第お送りさせて頂きます！！",
-      "かしこまりました！！\nレジェンドール心斎橋EAST 〇〇号室ご案内させて頂きます😊！！\n\n直近ですと\n10/16(金) 12:00〜15:00\n10/17(土) 16:00〜18:30にてご案内可能です！！\n\nYUMAさんご都合よろしいお日にち御座いますでしょうか😌！！"
+      "YUMAさんお世話になっております！！\nかしこまりました！！\n\nグランパシフィック桜川南〇〇号室、お部屋ご案内させて頂きます😊！！\n\n直近ですと\n本日 10/19(月) 16:00〜18:30\n明日 10/20(火) 15:30〜17:30\n10/21(水) 12:00〜15:00にてご案内可能です！！\n\nYUMAさんご都合よろしいお日にち御座いますでしょうか😌！！\n\nお部屋他にもオススメできるお部屋、引き続き新着でピックアップ出来次第お送りさせて頂きます！！"
     ],
     "counts": {
-      "owner": 8,
-      "all": 31,
+      "owner": 9,
+      "all": 33,
       "misPressStaff": 0,
       "misPressOwner": 0
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "YUMAさんお世話になっております！！\n本日ご内覧如何でしょうか😌！\n明日や明後日ご案内可能です！！\nご内覧ご希望の際はお気軽にお申し付けください！！",
+      "明日10:45〜11:15ですとお部屋ご案内出来ます！！\nYUMAさんご都合如何でしょうか！",
+      "明日ご内覧可能です😊！！\n10:30〜11:00の間\n18:00〜18:30\nご案内出来ます！！\nYUMAさんご都合如何でしょうか！！"
+    ],
+    "ownerHand": 8
   },
   "viewing_invite/退去予定物件": {
     "key": "viewing_invite/退去予定物件",
@@ -939,7 +1074,12 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": true,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "よろしければ一度ご内覧如何でしょうか😊！！\n\nThe Peak Osaka Bay 〇〇号室は空室ですので、YUMAさんご都合よろしいお日にちにお部屋ご案内させて頂きます！！\n\nエスリード弁天町パークプレイスにつきましては退去予定のお部屋となりますので10月1日以降ご内覧可能です😌！！",
+      "YUMAお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！\n\n　\n・PLAISIR La Lumierepure\n空室の為ご内覧可能です！！\n\n・ALEGRIA姫島\n7月29日退去予定の為7月30日以後ご内覧可能です！！\n\n・リアライズ小路\n8月末退去予定となります！！"
+    ],
+    "ownerHand": 2
   },
   "viewing_invite/内覧日指定あり": {
     "key": "viewing_invite/内覧日指定あり",
@@ -973,7 +1113,13 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "かしこまりました😊！！\n\n弊社直近ですと\n本日18:00〜18:30\n明日 12:00〜16:00\nご案内可能です！！\nYUMAさんご都合如何でしょうか😌！！",
+      "かしこまりました！！\n本日ご内覧如何でしょうか😊！！\n17:30〜18:30お部屋ご案内出来ます！！",
+      "かしこまりました！！\n19日（土）15:30〜17:30ご案内可能です！\nYUMAさんご都合如何でしょうか😌！！"
+    ],
+    "ownerHand": 3
   },
   "viewing_invite/日程変更": {
     "key": "viewing_invite/日程変更",
@@ -997,7 +1143,7 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "purpose": "送る情報: 内覧の確定（日時）と待ち合わせの場所・住所（番地まで）／使う時: 内覧の候補日を出した後、お客様が日時を選んだ・了承した",
     "writeContains": [
       "待ち合わせ（100%）",
-      "内覧の日時（75%）"
+      "内覧の日時（76%）"
     ],
     "structure": {
       "uke": 93,
@@ -1008,22 +1154,28 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     },
     "nextStep": [],
     "before": [
-      "お礼・了承（38%）",
-      "物件の質問（28%）"
+      "お礼・了承（37%）",
+      "物件の質問（27%）"
     ],
     "exemplars": [
+      "かしこまりました！！\n10/24（土）ご案内させて頂きます！！\n\n10/24 12:00にレオンコンフォート難波南 〇〇号室\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！\n（住所の行）",
       "かしこまりました！！\n10/28（水）ご案内させて頂きます！！\n\n10/28 17:00にスプランディッド難波SOUTH \n現地エントランスお待ち合わせで何卒よろしくお願い致します！！\n（住所の行）",
-      "かしこまりました！！\n10/29（木）ご案内させて頂きます！！\n\n10/29 15:00にグランパシフィック桜川南 〇〇号室\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！\n（住所の行）",
-      "かしこまりました！！\n明日12:00にお部屋ご案内させて頂きます！！\n\n10/16 12:00にレジェンドール心斎橋EAST \n現地エントランスお待ち合わせで何卒よろしくお願い致します！！\n（住所の行）"
+      "かしこまりました！！\n10/29（木）ご案内させて頂きます！！\n\n10/29 15:00にグランパシフィック桜川南 〇〇号室\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！\n（住所の行）"
     ],
     "counts": {
-      "owner": 40,
-      "all": 109,
+      "owner": 41,
+      "all": 111,
       "misPressStaff": 0,
       "misPressOwner": 0
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "はい！！12:00〜16:00の間でしたら何時でもご案内可能です😊！！\n10/5(月)12:00〜でお待ち合わせ如何でしょうか！！",
+      "明日16:00にRISING Maison 本町橋 \n現地エントランスお待ち合わせで何卒よろしくお願い致します😌！！\n（住所の行）\n\n本町から阿波座、堀江とご案内させて頂き最後ご自宅近くまでお送りさせて頂きます！！",
+      "9月8日ですが、お手数おかけしますが、13:00までのお時間でご内覧頂く形となります！！\n\n11:45にアプリーレ南堀江お待ち合わせ如何でしょうか😊！！"
+    ],
+    "ownerHand": 6
   },
   "application_push/push": {
     "key": "application_push/push",
@@ -1108,7 +1260,9 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [],
+    "ownerHand": 4
   },
   "application_push/docs_request": {
     "key": "application_push/docs_request",
@@ -1139,7 +1293,9 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [],
+    "ownerHand": 17
   },
   "followup_revive/apply_supplement": {
     "key": "followup_revive/apply_supplement",
@@ -1173,7 +1329,11 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": true,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "YUMAさんお世話になっております！！\nお部屋探し継続されていますでしょうか😌！！\n1件YUMAさんにオススメ出来るお部屋募集に出ましたのでお送りさせて頂きました！！\n最大限割引しました初期費用の御見積書同封させて頂いております！\nお手隙の際にご査収ください😊！！"
+    ],
+    "ownerHand": 1
   },
   "acknowledge_check/daihyo_initial_cost": {
     "key": "acknowledge_check/daihyo_initial_cost",
@@ -1279,7 +1439,11 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "（ご希望のお部屋探しご条件）\n①【物件名】⇒\n②【物件名】⇒\n③【物件名】⇒\n④【物件名】\n⑤【物件名】⇒\n⑥【物件名】⇒\n⑦【物件名】⇒\n⑧【物件名】⇒"
+    ],
+    "ownerHand": 3
   },
   "cost_explain/fee": {
     "key": "cost_explain/fee",
@@ -1395,35 +1559,40 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "purpose": "送る情報: 定型の文・フォーム／使う時: お客様が電話で話したい（電話の依頼）",
     "writeContains": [
       "電話（100%）",
-      "審査（43%）"
+      "審査（50%）"
     ],
     "structure": {
-      "uke": 14,
+      "uke": 13,
       "amount": 0,
-      "promise": 14,
-      "appeal": 0,
-      "close": 29
+      "promise": 25,
+      "appeal": 13,
+      "close": 25
     },
     "nextStep": [
-      "AIX 申込へ！（43%）"
+      "AIX 申込へ！（38%）",
+      "AIX 物件確認した（募集状況）／確認した（条件・交渉）（25%）"
     ],
     "before": [
-      "申込・審査（43%）",
-      "物件の質問（29%）"
+      "申込・審査（38%）",
+      "物件の質問（38%）"
     ],
     "exemplars": [
+      "ご事情お聞かせ頂きありがとうございます😊！！\n審査面通過出来ますように最大限サポートさせて頂きます！！\n\nお電話にて5分程で簡単に審査面についてお打ち合わせさせて頂きます😌！\nこちらの電話をかけるボタンよりお電話お願い致します！！",
       "YUMAさん\nお世話になっております！！\n\nかしこまりました！！\n本日10:00～18:00\nご都合よろしいお時間にお電話おかけください！！\n何卒よろしくおねがい致します！！",
-      "審査無事通過する為に一度5分程お電話させて頂けますと幸いです！！\nお手隙の際にこちらの電話をかけるボタンよりお電話お願い致します😊！！",
-      "YUMAさん　\nお手隙の際にこちらの電話をかけるボタンよりお電話お願い致します！！"
+      "審査無事通過する為に一度5分程お電話させて頂けますと幸いです！！\nお手隙の際にこちらの電話をかけるボタンよりお電話お願い致します😊！！"
     ],
     "counts": {
-      "owner": 7,
-      "all": 24,
+      "owner": 8,
+      "all": 25,
       "misPressStaff": 0,
       "misPressOwner": 0
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "お電話大丈夫です😊！！\nこちらの電話をかけるボタンよりお電話お願い致します！！"
+    ],
+    "ownerHand": 1
   },
   "phone_followup": {
     "key": "phone_followup",
@@ -1480,7 +1649,13 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "kb": [
       "76212115",
       "3f67fd3f"
-    ]
+    ],
+    "handExemplars": [
+      "YUMAさんお世話になっております！！\nかしこまりました😊！！\n\n肥後橋は対象から外させて頂き、YUMAさんのご希望に沿った価格帯で低層階過ぎない心斎橋近くのタワーマンション新着で募集に出次第お送りさせて頂きます！！\n何卒よろしくお願い致します！！",
+      "YUMAさんお世話になっております！！\n全然大丈夫です！！ご相談いただきありがとうございます😊！！\nお送り頂きました日本橋・桜川の2LDKのお部屋、どちらも募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます！！\nYUMAさんにオススメできるお部屋も新着で出次第お送りさせて頂きます😌！！",
+      "かしこまりました！！\n初期費用も出来る限り抑えられるお部屋を中心に、新着のお部屋募集状況を随時確認させて頂きYUMAさんにオススメできるお部屋が新たに募集が出次第お送りさせて頂きます！！\n何卒よろしくお願い致します！！"
+    ],
+    "ownerHand": 45
   },
   "greeting_viewing/before": {
     "key": "greeting_viewing/before",
@@ -1501,7 +1676,11 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "6c38daca",
       "fca29a19",
       "a92b6655"
-    ]
+    ],
+    "handExemplars": [
+      "お世話になっております！！\n本日16時よりお部屋ご案内させて頂きます！\n本日は何卒よろしくお願い致します😌！！"
+    ],
+    "ownerHand": 1
   },
   "greeting_viewing/after:apply": {
     "key": "greeting_viewing/after:apply",
@@ -1513,7 +1692,7 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "exemplars": [],
     "counts": {
       "owner": 0,
-      "all": 9,
+      "all": 10,
       "misPressStaff": 0,
       "misPressOwner": 0
     },
@@ -1670,7 +1849,7 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     ],
     "counts": {
       "owner": 77,
-      "all": 410,
+      "all": 411,
       "misPressStaff": 9,
       "misPressOwner": 8
     },
@@ -1704,7 +1883,7 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     ],
     "counts": {
       "owner": 110,
-      "all": 542,
+      "all": 545,
       "misPressStaff": 22,
       "misPressOwner": 11
     },
@@ -1737,13 +1916,13 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "お礼・了承（31%）"
     ],
     "exemplars": [
+      "🌟リンクハウス南堀江 〇〇号室\n\n（オススメポイント）\n・家賃113,000円・管理費10,000円（合計123,000円）\n・間取り：1LDK（リビング8帖、洋室4帖）\n・敷金礼金0円　\n・長堀鶴見線「西長堀」徒歩4分、千日前線「桜川」徒歩7分\n・2021年3月築（築5年）で築年数浅く\n・角部屋・オートロック・宅配ボックスで安心の設備\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！\n※こちらクリーニング費用入居時支払いの物件となります。",
       "🌟ロンド・エーデルワイス 〇〇号室\n\n（オススメポイント）\n・家賃100,000円・管理費10,000円（合計110,000円）\n・間取り：2LDK（リビング10.4帖、洋室6.0帖・洋室4.5帖）\n・専有面積47.23㎡\n・千日前線「南巽」徒歩11分\n・角部屋のお部屋です\n・浴室乾燥機・追い焚き・独立洗面台など水回り設備充実\n・敷地内駐車場あり（15,000円）\n・インターネット無料",
-      "🌟ノイヴェル野里 〇〇号室\n\n1件独立洗面台でYUMAさんにかなりオススメ出来るお部屋が募集に出ました！！\n\n（オススメポイント）\n・間取り：1K（洋室7.5帖）\n・阪神本線「姫島」徒歩7分／JR東西線「御幣島」徒歩9分\n・敷金礼金なしのため初期費用をかなり抑えてご入居頂けます！！\n・独立洗面台あり\n・オートロック付き\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！",
-      "🌟ACT正雀(イタンジ最新) 〇〇号室\n\n（オススメポイント）\n・家賃80,000円・管理費8,000円（合計88,000円）\n・間取り：1LDK（リビング8.4帖、洋室6.6帖）\n・敷金礼金なしのため初期費用をかなり抑えてご入居頂けます！！\n・新築\n・インターネット無料で毎月の通信費も節約出来ます！！\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！"
+      "🌟ノイヴェル野里 〇〇号室\n\n1件独立洗面台でYUMAさんにかなりオススメ出来るお部屋が募集に出ました！！\n\n（オススメポイント）\n・間取り：1K（洋室7.5帖）\n・阪神本線「姫島」徒歩7分／JR東西線「御幣島」徒歩9分\n・敷金礼金なしのため初期費用をかなり抑えてご入居頂けます！！\n・独立洗面台あり\n・オートロック付き\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！"
     ],
     "counts": {
-      "owner": 288,
-      "all": 825,
+      "owner": 289,
+      "all": 833,
       "misPressStaff": 10,
       "misPressOwner": 4
     },
@@ -1765,22 +1944,20 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "appeal": 98,
       "close": 0
     },
-    "nextStep": [
-      "AIX 物件オススメ（1件特にオススメ）（20%）"
-    ],
+    "nextStep": [],
     "before": [
-      "物件の共有（37%）",
-      "費用（29%）",
+      "物件の共有（36%）",
+      "費用（30%）",
       "お礼・了承（22%）"
     ],
     "exemplars": [
-      "【物件名】\n\n初期費用さらに\n🌟36,000円割引させて頂き\n初期費用：159,830円\n\nスモラなら一般的な不動産業者より96,270円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。",
-      "【物件名】\n\n初期費用さらに\n🌟44,000円割引させて頂き\n初期費用：150,980円\n\nスモラなら一般的な不動産業者より103,720円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。",
-      "【物件名】\n\n初期費用さらに\n🌟82,000円割引させて頂き\n初期費用：179,480円\n\nスモラなら一般的な不動産業者より227,520円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。"
+      "【物件名】\n\n初期費用さらに\n🌟42,000円割引させて頂き\n初期費用：109,000円\n\nギガ賃貸なら一般的な不動産業者より110,200円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。",
+      "【物件名】\n\n初期費用さらに\n🌟62,000円割引させて頂き\n初期費用：129,890円\n\nギガ賃貸なら一般的な不動産業者より126,900円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。",
+      "【物件名】\n\n初期費用さらに\n🌟48,000円割引させて頂き\n初期費用：99,300円\n\nギガ賃貸なら一般的な不動産業者より118,400円節約出来ます！！\n\n※ご入居日によって日割家賃が発生致します。"
     ],
     "counts": {
-      "owner": 190,
-      "all": 315,
+      "owner": 193,
+      "all": 320,
       "misPressStaff": 0,
       "misPressOwner": 0
     },
@@ -1794,26 +1971,26 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "内覧の日時（100%）"
     ],
     "structure": {
-      "uke": 60,
+      "uke": 58,
       "amount": 0,
-      "promise": 65,
+      "promise": 66,
       "appeal": 25,
       "close": 0
     },
     "nextStep": [
-      "AIX 待ち合わせ（58%）"
+      "AIX 待ち合わせ（57%）"
     ],
     "before": [
-      "内覧（56%）"
+      "内覧（55%）"
     ],
     "exemplars": [
+      "YUMAさんお世話になっております！！\nかしこまりました😊！！\n\nカシミマンション 〇〇号室ご案内させて頂きます！！\n\n直近ですと\n10/26(月) 13:00〜15:00\n10/27(火) 15:00〜17:00\n10/28(水) 12:00〜15:00にてご案内可能です！！\n\nYUMAさんご都合よろしいお日にち御座いますでしょうか😌！！",
       "かしこまりました😊！！\n\n25日が予定埋まっておりまして\n28日以降にスプランディッド難波SOUTH 〇〇号室お部屋ご案内させて頂きます！！\n\n直近ですと\n10/28(水) 15:00〜18:00\n10/29(木) 12:00〜14:00\n10/30(金) 13:00〜15:00にてご案内可能です！！\n\nYUMAさんご都合よろしいお日にち御座いますでしょうか！！",
-      "YUMAさんお世話になっております！！\nかしこまりました！！\n\nグランパシフィック桜川南〇〇号室、お部屋ご案内させて頂きます😊！！\n\n直近ですと\n本日 10/19(月) 16:00〜18:30\n明日 10/20(火) 15:30〜17:30\n10/21(水) 12:00〜15:00にてご案内可能です！！\n\nYUMAさんご都合よろしいお日にち御座いますでしょうか😌！！\n\nお部屋他にもオススメできるお部屋、引き続き新着でピックアップ出来次第お送りさせて頂きます！！",
-      "かしこまりました！！\nレジェンドール心斎橋EAST 〇〇号室ご案内させて頂きます😊！！\n\n直近ですと\n10/16(金) 12:00〜15:00\n10/17(土) 16:00〜18:30にてご案内可能です！！\n\nYUMAさんご都合よろしいお日にち御座いますでしょうか😌！！"
+      "YUMAさんお世話になっております！！\nかしこまりました！！\n\nグランパシフィック桜川南〇〇号室、お部屋ご案内させて頂きます😊！！\n\n直近ですと\n本日 10/19(月) 16:00〜18:30\n明日 10/20(火) 15:30〜17:30\n10/21(水) 12:00〜15:00にてご案内可能です！！\n\nYUMAさんご都合よろしいお日にち御座いますでしょうか😌！！\n\nお部屋他にもオススメできるお部屋、引き続き新着でピックアップ出来次第お送りさせて頂きます！！"
     ],
     "counts": {
-      "owner": 52,
-      "all": 156,
+      "owner": 53,
+      "all": 158,
       "misPressStaff": 3,
       "misPressOwner": 1
     },
@@ -1961,7 +2138,13 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
       "misPressOwner": 0
     },
     "needsOwnerGold": false,
-    "kb": []
+    "kb": [],
+    "handExemplars": [
+      "YUMAさんお待たせ致しました！！\nお送り頂きましたお部屋の中で、現在こちらの2件弊社にてお取り扱いできます！！\nshamaison 学研都市星田303はシャーメゾンの専属のお部屋となります！！\n\nグレイスカルムですが貸主から報酬が少ないお部屋となりますが、仲介手数料0円でお取引させて頂きます！！",
+      "お待たせ致しました！！\n初期費用の御見積書となります！！\n貸主様から報酬が出ない物件となりますので、スモ割は出来ませんが仲介手数料33,000円となりますので、最安値の費用でお取引させて頂きます😌！！",
+      "お待たせ致しました！！\n初期費用の御見積書となります！！\nこちらのお部屋クリーニング費用はご契約時にお支払いの為費用が初期費用がかかる物件となります！！\n貸主様から報酬が出ない物件となりますので、スモ割は出来ませんが仲介手数料33,000円となりますので、最安値の費用でお取引させて頂きます😌！！"
+    ],
+    "ownerHand": 13
   },
   "greeting_viewing": {
     "key": "greeting_viewing",
@@ -1973,7 +2156,7 @@ export const AIX_LEARNED: Readonly<Record<string, LearnedMeaning>> = {
     "exemplars": [],
     "counts": {
       "owner": 1,
-      "all": 25,
+      "all": 26,
       "misPressStaff": 0,
       "misPressOwner": 0
     },

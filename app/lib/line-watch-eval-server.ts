@@ -84,6 +84,8 @@ export type EvalResult = {
   ok: boolean; dry: boolean; judgeVersion: string;
   read: number; judged: number; pending: number; skippedFinal: number; updated: number; failed: number; orphans: number;
   verdicts: Record<string, number>; reasons: Record<string, number>; scenes: Record<string, number>;
+  /** 2026-10-23 v8: 本来の AIX の当てはめ（aix-should-be）。手打ち・押し間違いで一致に直した数・当てたが違った数 */
+  mapping: { hand: number; mis_press: number; unmatched: number };
   samples: Array<Record<string, unknown>>;
   errors: string[];
 };
@@ -95,7 +97,7 @@ export type EvalResult = {
 export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOptions = {}): Promise<EvalResult> {
   const nowMs = opt.nowMs ?? Date.now();
   const dry = !!opt.dry;
-  const res: EvalResult = { ok: true, dry, judgeVersion: JUDGE_VERSION, read: 0, judged: 0, pending: 0, skippedFinal: 0, updated: 0, failed: 0, orphans: 0, verdicts: {}, reasons: {}, scenes: {}, samples: [], errors: [] };
+  const res: EvalResult = { ok: true, dry, judgeVersion: JUDGE_VERSION, read: 0, judged: 0, pending: 0, skippedFinal: 0, updated: 0, failed: 0, orphans: 0, verdicts: {}, reasons: {}, scenes: {}, mapping: { hand: 0, mis_press: 0, unmatched: 0 }, samples: [], errors: [] };
   // 2段目の SQL（judge_version の列）を流す前でも回る（版の列なしで読み・書く。毎晩やり直すだけで中身は同じ）
   let hasVersionCol = true;
   const colsOf = (v: boolean) => `id, conversation_id, customer_turn_at, customer_last_at, conv_status, draft_last, draft_last_at, draft_first, draft_first_at, draft_versions, draft_sentinel, brain_action, brain_reply_mode, brain_versions, tpo_label, verdict, verdict_detail, evaluated_at${v ? ", judge_version" : ""}`;
@@ -178,6 +180,7 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
     updates.push({ id: t.id, patch });
     if (j.verdict) { res.judged++; res.verdicts[j.verdict] = (res.verdicts[j.verdict] ?? 0) + 1; } else res.pending++;
     res.reasons[j.detail.reason] = (res.reasons[j.detail.reason] ?? 0) + 1;
+    if (j.detail.should_be && j.verdict) { if (j.detail.reason === "same_via_mapping") res.mapping[j.detail.should_be.via]++; else if (!j.detail.should_be.match) res.mapping.unmatched++; }
     res.scenes[scene.key] = (res.scenes[scene.key] ?? 0) + 1;
     if (res.samples.length < 12 && !isTestConversation(t.conversation_id)) {
       res.samples.push({ turn: t.id, conv: t.conversation_id.slice(0, 8), at: t.customer_turn_at, scene: scene.key, verdict: j.verdict, reason: j.detail.reason, draft: (pick.draft ?? "").slice(0, 60), staff: w.texts.filter((x) => x.burst).map((x) => x.text).join(" / ").slice(0, 60), aix: w.presses.map((p) => p.aix_type).join(",") });

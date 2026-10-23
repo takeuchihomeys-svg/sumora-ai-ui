@@ -22,6 +22,7 @@ import {
   TOPIC_JA, type LearnedMeaning,
 } from "../app/lib/aix-meaning-learn";
 import { isTestConversation } from "../app/lib/test-conversations";
+import { shouldBeAixOf } from "../app/lib/aix-should-be";
 import { isApplicationStatusQuestion } from "../app/lib/aix-new-pickers";
 import { applicationMaterialReason, piiValueSignal } from "../app/lib/test-pii-guard";
 import { maskExamText, addressNamesOf } from "./lib/brain-exam-mask";
@@ -201,6 +202,25 @@ const writerOf = (m: Msg | undefined) => (m?.staff_writer && m.staff_writer_conf
   }
   const pressedLms = new Set(usages.map((u) => u.line_message_id).filter(Boolean) as string[]);
   const hand: Record<string, { takeuchi: number; employee: number; unknown: number; ex: string[] }> = {};
+  // 2026-10-23（竹内さん 10/22 d04ed51b）: 竹内さんの手打ちで本来の AIX がはっきり当たる文（aix-should-be）＝そのピッカーのお手本の候補（伏せる・最大3・新しい順）
+  const handEx: Record<string, { n: number; ex: string[] }> = {};
+  for (const m of [...msgs].sort((a, b) => P(b.created_at) - P(a.created_at))) {
+    if (m.sender === "customer" || m.is_aix_generated || (m.line_message_id && pressedLms.has(m.line_message_id))) continue;
+    if (m.staff_writer !== "takeuchi" || m.staff_writer_confidence !== "sure") continue;
+    const sb = shouldBeAixOf(m.text, { mode: "hand" });
+    if (!sb || sb.strength !== "strong") continue;
+    const k = learned[sb.key] ? sb.key : learned[sb.button] ? sb.button : null;
+    if (!k) continue;
+    const o = (handEx[k] ??= { n: 0, ex: [] }); o.n++;
+    const raw = (m.text ?? "").trim();
+    if (o.ex.length >= 3 || raw.length < 40 || raw.length > 600 || applicationMaterialReason(raw)) continue;
+    const masked = maskFor(m.conversation_id, raw);
+    if (piiGate([masked], gate)) continue;
+    const short = masked.length > 260 ? `${masked.slice(0, 260)}…` : masked;
+    if (o.ex.some((e) => e.slice(0, 40) === short.slice(0, 40)) || learned[k].exemplars.some((e) => e.slice(0, 40) === short.slice(0, 40))) continue;
+    o.ex.push(short);
+  }
+  for (const [k, o] of Object.entries(handEx)) { learned[k].handExemplars = o.ex; learned[k].ownerHand = o.n; }
   for (const m of msgs) {
     if (m.sender === "customer" || m.is_aix_generated || (m.line_message_id && pressedLms.has(m.line_message_id))) continue;
     const k = handTypedAixTopic(m.text); if (!k) continue;
@@ -268,6 +288,8 @@ const writerOf = (m: Msg | undefined) => (m?.staff_writer && m.staff_writer_conf
     "## 2. 竹内さんの送信の数（竹内さん/全部）", ownerByKey.join("・"), "",
     "## 3. 押し間違いの候補（送った文の中身が押したピッカーの意味と合わない）",
     ...Object.entries(misByBtn).sort((a, b) => b[1].n - a[1].n).map(([k, o]) => `- ${k}: ${o.n}（従業員 ${o.staff}・竹内さん ${o.owner}）— ${Object.entries(o.reasons).map(([r, n]) => `${r} ${n}`).join("／")}${o.ex.length ? `\n  例: ${o.ex.map((e) => `「${e}」`).join(" ")}` : ""}`), "",
+    `## 4-2. 竹内さんの手打ちで本来の AIX がはっきりした文（お手本の候補・aix-should-be）: ${Object.values(handEx).reduce((a, o) => a + o.n, 0)}通・候補 ${Object.values(handEx).reduce((a, o) => a + o.ex.length, 0)}`,
+    ...Object.entries(handEx).sort((a, b) => b[1].n - a[1].n).map(([k, o]) => `- ${k}: ${o.n}通（候補 ${o.ex.length}）`), "",
     "## 4. 手打ちで送った AIX の結果（H3: AIX が正解）",
     ...Object.entries(hand).map(([k, o]) => `- ${k}: 竹内さん ${o.takeuchi}・従業員 ${o.employee}・不明 ${o.unknown}${o.ex.length ? `\n  例: ${o.ex.map((e) => `「${e}」`).join(" ")}` : ""}`), "",
     `## 5. 試験の候補（竹内さんの押下＝正解）${exam.length}（全 ${examRaw.length}）／正解を聞く番 ${goldPicked.length}（全 ${goldTurn.length}）／お手本が足りないピッカー ${goldNeed.length}`,
