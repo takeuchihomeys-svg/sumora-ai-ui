@@ -4879,6 +4879,31 @@ ALTER TABLE exam_savings ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON exam_savings FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE exam_savings_id_seq FROM anon, authenticated;
 
+-- 2026-10-24 竹内さん「会話大切な部分データベースにいれているのか」→「それでおねがい」:
+--   work_log … 作業の途中経過（何の作業が・どこまで・どの枝とコミット・次にやる事・待っている事）。始めた時・区切り・止まる前に1行ずつ足す（上書きしない）。
+--   手元の記憶ファイルにしか無かったため、VS Code を別のフォルダで開いた・PC が落ちた時に続きが分からなくなった（10/24）。
+--   お客様の文・名前は入れない。書くのはサーバーの鍵だけ（RLS 有効・ポリシーなし）。手で見る・足す: scripts/work-log.ts
+CREATE TABLE IF NOT EXISTS work_log (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  task TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'progress',
+  summary TEXT,
+  next_step TEXT,
+  waiting_on TEXT,
+  branch TEXT,
+  commit_ref TEXT,
+  actor TEXT NOT NULL DEFAULT 'session',
+  session_id TEXT,
+  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+  CONSTRAINT work_log_status_chk CHECK (status IN ('started', 'progress', 'blocked', 'waiting_owner', 'done', 'stopped'))
+);
+CREATE INDEX IF NOT EXISTS idx_work_log_task_time ON work_log(task, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_work_log_time ON work_log(created_at DESC);
+ALTER TABLE work_log ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON work_log FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE work_log_id_seq FROM anon, authenticated;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

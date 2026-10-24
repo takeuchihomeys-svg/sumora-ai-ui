@@ -320,6 +320,7 @@ import { sceneStyleNote, replyStyleR11Enabled, noRepeatNote, noNewArrivalNote, r
 import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWait, repeatBrainAlignEnabled, confirmAckMaterialFor, pickupAckMaterialFor, ackFormCell, ackFormFollowEnabled, ackFormShapeLine, ackFormCloserLine, ackFormDropTopic } from "@/app/lib/repeat-brain-align";
 import { isAckOnlyTurn } from "@/app/lib/draft-repeat";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
+import { priorityStepOn, normalizePriorities } from "@/app/lib/brain-priority";
 import { relativeDatesWriterNote } from "@/app/lib/relative-dates"; // 2026-10-23 送った日と今日の距離（BRAIN_RELATIVE_DATES・既定 off）
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, turnNeedsSupport, SUPPORT_CLOSER_LINE, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
@@ -4353,7 +4354,7 @@ async function handleGenerateReply(req: NextRequest) {
         const lastMetaFresh = !brainFreshTc && !!lastMetaTc?.turn_contract && !!lastCustomerMsgAt && !!lastMetaTc?.analyzed_msg_ts
           && Date.parse(String(lastMetaTc.analyzed_msg_ts)) >= Date.parse(lastCustomerMsgAt) - 1000 && (process.env.TURN_CONTRACT_LASTMETA ?? "").toLowerCase() !== "off";
         if (lastMetaFresh) console.log(JSON.stringify({ tag: "turn-contract:from-last-meta", conversationId }));
-        return buildTurnContract({
+        const tcBuilt = buildTurnContract({
           brain: lastMetaFresh ? lastMetaTc!.turn_contract! : ((brainMeta as { turn_contract?: BrainTurnContractRaw } | null)?.turn_contract ?? null),
           brainFresh: brainFreshTc || lastMetaFresh,
           ledgerItems: requestLedgerEnabled() ? splitRequests(customerMsgUnits, new Date().toISOString()) : [],
@@ -4367,6 +4368,12 @@ async function handleGenerateReply(req: NextRequest) {
             nightOutsideHours: getJSTHour() >= 18,
           },
         });
+        // 2026-10-23 優先順位の段（BRAIN_PRIORITY_STEP=on・ブレインの本質の番だけ）: ブレインが決めた順（聞かれた事・伝える事・扱い）を本質の帯に並べ、書く役はこの順に書く
+        if (tcBuilt && tcBuilt.source === "brain" && priorityStepOn()) {
+          const pr = normalizePriorities(((lastMetaFresh ? brainGate?.lastMeta : brainMeta) as { priorities?: unknown } | null)?.priorities);
+          if (pr.length) tcBuilt.priorities = pr;
+        }
+        return tcBuilt;
       } catch (e) { console.warn("[turn-contract] skipped:", e instanceof Error ? e.message : String(e)); return null; }
     })();
     const confirmCtx: ConfirmationContextVerdict = applyContractToConfirm(confirmCtxWord, turnContract);

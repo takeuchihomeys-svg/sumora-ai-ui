@@ -20,6 +20,7 @@ import type { RequestItem, RequestTopic, RequestAbout } from "./request-ledger";
 import { ABOUT_VALUES, ABOUT_JA, topicOfAbout } from "./request-ledger";
 import { alreadySaidAllowance, ackFormBrainEnabled, normalizeAckForm, ackFormContractLine, isCompactWaitLine, ackFormFollowEnabled, ackFormDropTopic, type AckForm } from "./repeat-brain-align";
 import { promiseTopics } from "./draft-repeat";
+import { renderPrioritiesNote, type PriorityItem } from "./brain-priority";
 import { truncateAtBoundary } from "./brain-strategy-note";
 import { closeOnlyShape } from "./ack-form-takeuchi";
 import { brainDeepCheckGapEnabled, BRAIN_DEEP_CHECK_ASK_FIELD, BRAIN_DEEP_CHECK_RULE } from "./brain-deep-check";
@@ -81,6 +82,8 @@ export type TurnContract = {
   openSearch?: string | null;
   /** brain＝今の番を見たブレイン／ledger＝決定論の一覧だけ（予備） */
   source: "brain" | "ledger";
+  /** 2026-10-23 優先順位の段（BRAIN_PRIORITY_STEP=on・ブレインの番だけ）: 聞かれた事・伝える事の順位と扱い（brain-priority.ts） */
+  priorities?: PriorityItem[];
 };
 
 export type FeelingKind = "anxious" | "apologetic" | "hurried" | "disappointed" | "positive";
@@ -432,6 +435,9 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
     // 2026-10-17 確かめる人: 気持ちだけ（期限の事情なし）の番は前の通り本質の帯の1行だけ（締め・必ず含める内容にはしない）
     if (turnNeedsSupport(c) || c.feeling.kind === "anxious" || c.feeling.kind === "hurried" || c.feeling.kind === "disappointed") L.push("- 不安・焦りの背景がある番: 本題の後、締めの前に一言で支える（例の形「無事ご入居間に合いますように最善を尽くさせて頂きます」・言い切り・新しい約束・決まり文句の上乗せはしない）");
   }
+  // 2026-10-23 優先順位の段: ブレインが原則と状況から決めた順（書く順・扱い）。無い番は今のまま
+  const prNote = renderPrioritiesNote(c.priorities);
+  if (prNote) L.push(prNote);
   c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」${axisLabel(a.axis)}→ ${ROUTE_JA[a.route]}${a.answer && !dropAns(a.answer) ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
   if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance && !c.ackForm ? `\n${allowance}` : ""}`);
   if (c.settled.length) L.push(`- 決まった事（蒸し返さない・日付はこのまま）: ${c.settled.join(" ／ ")}`);
