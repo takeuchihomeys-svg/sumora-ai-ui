@@ -14,6 +14,8 @@
 //   今のお客様の番の後に立った要対応（同じ番のブレイン自身の提案のこだま）は入れない。果たした記録がある要対応も入れない。
 //   約束の文（promise-tracker）・お客様の依頼（request-ledger）・送れる物件の有無はブレインに別の材料で届いている → ここでは重ねない。
 //
+// 試験（2026-10-24・DeepSeek・main と比べ・3回の過半数）: 物件の約束も入れた形（11問）合格 8→6・物件の約束を外した形（材料が入る 33問）合格 24→21／道 72→71/99。
+//   本番の数では届く番があるのに、試験では道が上がらず揺れの外の悪化（q007・q143・q176 等）＝**既定 off のまま**。on にする前に形を直して測り直す。
 // 切替: LINK_HUB_BRAIN=on の時だけ（既定 off＝プロンプトは1文字も変わらない）。置き場所は行動台帳の塊の中（毎回変わる所＝キャッシュの印の外）。
 // テスト: app/lib/__tests__/link-hub-brain.test.ts
 import type { CustomerHub, HubContradiction, HubInput } from "./customer-hub";
@@ -23,6 +25,17 @@ import { maskPII } from "./pii-mask";
 const H = 3600_000;
 const DAY = 24 * H;
 const ms = (s: string | null | undefined) => (s ? Date.parse(s) : NaN);
+
+/**
+ * 物件を送る約束・要対応（ピックアップ・新着・物件送付）も一覧に入れるか（既定 off＝入れない）。
+ *   2026-10-24 試験（変わった11問×3回）: 入れると、お客様が別の事を聞いた番（入居日の質問・出し切りの後の条件）で本質が AIX【property_send】に寄った（q065・q007）。
+ *   探す約束と送れる物件の有無はブレインに別の材料（まだ果たしていない探す約束・送れる物件の候補）で届いている＝重ねると重みだけが増える
+ */
+export function linkHubBrainPropertyEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.LINK_HUB_BRAIN_PROPERTY ?? "").trim().toLowerCase() === "on";
+}
+/** 物件を送る AIX（一覧から外す仲間） */
+export const HUB_PROPERTY_SEND_AIX: ReadonlySet<string> = new Set(["property_send", "property_recommendation", "property_send_new_arrival", "property_send_widen"]);
 
 export function linkHubBrainEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.LINK_HUB_BRAIN ?? "").trim().toLowerCase() === "on";
@@ -48,8 +61,9 @@ export function customerTurnStartMs(messages: ReadonlyArray<{ sender: string; cr
 }
 
 /** 開いている事を集める（決まった計算・候補の網）。重なり（同じ AIX×ピッカー）は古い方を残す */
-export function hubOpenItems(hub: CustomerHub, contradictions: ReadonlyArray<HubContradiction>, input: HubInput): HubOpenItem[] {
+export function hubOpenItems(hub: CustomerHub, contradictions: ReadonlyArray<HubContradiction>, input: HubInput, o: { includeProperty?: boolean } = {}): HubOpenItem[] {
   const now = input.nowMs;
+  const includeProperty = o.includeProperty ?? linkHubBrainPropertyEnabled();
   const turnStart = customerTurnStartMs(input.state.messages.map((m) => ({ sender: m.sender, createdAt: m.createdAt })), now) ?? now;
   const pausedPickup = contradictions.some((c) => c.type === "pickup_promise_vs_viewing");
   const doneKeys = new Set(contradictions.filter((c) => c.type === "aix_item_open_promise_done").map((c) => c.detail.split("・果たした")[0]));
@@ -59,6 +73,7 @@ export function hubOpenItems(hub: CustomerHub, contradictions: ReadonlyArray<Hub
     // 今の番の後に立った要対応は、この番のブレイン自身の提案のこだま＝入れない
     if (!(ms(i.created_at) < turnStart)) continue;
     if (doneKeys.has(aixItemKey(i.action, i.check_pattern, i.created_at))) continue;
+    if (!includeProperty && HUB_PROPERTY_SEND_AIX.has(i.action)) continue;
     out.push({ from: "aix_item", action: i.action, checkPattern: i.check_pattern ?? null, what: null, openedAt: i.created_at, dueAt: null });
   }
   for (const p of hub.promises) {
@@ -66,6 +81,7 @@ export function hubOpenItems(hub: CustomerHub, contradictions: ReadonlyArray<Hub
     if (p.watch || p.deferred) continue;
     if (pausedPickup && p.source === "queue" && p.kind === "pickup") continue; // 内覧が決まった後のピックアップの約束は保留（司令塔の決定3）
     if (!(ms(p.promisedAt) < turnStart)) continue;
+    if (!includeProperty && ((p.source === "queue" && p.kind === "pickup") || (p.action && HUB_PROPERTY_SEND_AIX.has(p.action)))) continue;
     out.push({ from: p.source, action: p.action, checkPattern: p.pickerKey ?? p.checkPattern ?? null, what: p.label, openedAt: p.promisedAt, dueAt: p.dueAt });
   }
   // 同じ AIX×ピッカーは1つ（要対応と約束が同じ物を指す）。期限のある方の期限を残す
@@ -128,7 +144,7 @@ export function renderHubBrainNote(items: ReadonlyArray<HubOpenItem>, o: { nowMs
   }
   if (items.length > HUB_BRAIN_MAX_ITEMS) lines.push(`・ほか ${items.length - HUB_BRAIN_MAX_ITEMS}件`);
   if (o.pausedPickup) lines.push("・内覧が決まったので、ピックアップの約束は内覧の結果まで保留");
-  return `\n【つなぎの芯: 今の番の前から開いている事（事実・候補）】\n${lines.join("\n")}\n※一覧は候補。まず今の発言に答える。今の発言がこの続き（結果を待っている・同じ物件・同じ確認）の時だけ、その AIX を次の一手に選べる。関係が無ければ使わない（開いているだけで AIX にしない）。スタッフしか分からない結果（物件確認の結果・見積の金額）は下書きに書かない。`;
+  return `\n【つなぎの芯: 今の番の前から開いている事（事実・候補）】\n${lines.join("\n")}\n※一覧は候補。開いている約束はもう約束した事＝同じ確認・同じ約束をもう一度しない（結果は AIX で送る）。まず今の発言に答える。今の発言がこの続き（結果を待っている・同じ物件・同じ確認）の時だけ、その AIX を次の一手に選べる。関係が無ければ使わない（開いているだけで AIX にしない）。スタッフしか分からない結果（物件確認の結果・見積の金額）は下書きに書かない。`;
 }
 
 /** ハブから1回で（サーバーの読み手が使う） */

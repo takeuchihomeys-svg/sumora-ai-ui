@@ -28,7 +28,7 @@ const input = (msgs: Msg[], over: Partial<HubInput> = {}, status = "proposing", 
   aixItems: [], pickups: [], calendarEvents: [], memoItems: [], reactions: null, reapply: null, ...over,
 });
 const note = (inp: HubInput) => { const hub = buildCustomerHub(inp); return hubBrainNote(hub, hubContradictions(hub, inp), inp); };
-const items = (inp: HubInput) => { const hub = buildCustomerHub(inp); return hubOpenItems(hub, hubContradictions(hub, inp), inp); };
+const items = (inp: HubInput, includeProperty = true) => { const hub = buildCustomerHub(inp); return hubOpenItems(hub, hubContradictions(hub, inp), inp, { includeProperty }); };
 const item = (action: string, h: number, cp: string | null = null, status = "pending"): HubAixItem => ({ id: `i${h}`, conversation_id: CID, customer_name: null, action, check_pattern: cp, status, created_at: iso(h), done_at: null, done_aix_type: null, resolution_note: null } as HubAixItem);
 const PARKING_PROMISE = "かしこまりました！！\n駐車場について管理会社に確認させて頂きます😊！！";
 
@@ -69,6 +69,12 @@ it("果たした記録のある要対応（食い違い aix_item_open_promise_do
   eq(aixItemKey("property_check_result", "mgmt_parking", "2026-10-10T01:12:00.000Z"), "property_check_result/mgmt_parking 立った 10-10T01:12");
 });
 
+it("物件を送る約束・要対応は既定で外す（探す約束と送れる物件は別の材料で届く）・LINK_HUB_BRAIN_PROPERTY=on で入る", () => {
+  const inp = input([{ sender: "staff", text: "物件をお送りします", h: 0 }, { sender: "customer", text: "入居日はいつ頃ですか", h: 2 }], { aixItems: [item("property_send", 1), item("viewing_invite", 1.5)] });
+  eq(items(inp, false).map((x) => x.action), ["viewing_invite"]);
+  eq(items(inp, true).map((x) => x.action).sort(), ["property_send", "viewing_invite"]);
+});
+
 console.log("ブレインの材料の形");
 it("開いている物が無ければ空（プロンプトは変わらない）", () => {
   eq(note(input([{ sender: "customer", text: "こんにちは", h: 1 }])), "");
@@ -77,7 +83,7 @@ it("行は 要対応・AIX【種類/ピッカー】・いつから。締めは�
   const n = note(input([{ sender: "staff", text: "物件をお送りします", h: 0 }, { sender: "customer", text: "ありがとうございます", h: 4 }], { aixItems: [item("property_check_result", 1, "mgmt_pet")] }));
   ok(/【つなぎの芯: 今の番の前から開いている事/.test(n), n);
   ok(/・要対応 AIX【property_check_result\/mgmt_pet】（4時間前に立った）/.test(n), n);
-  ok(/まず今の発言に答える/.test(n) && /開いているだけで AIX にしない/.test(n) && /下書きに書かない/.test(n), n);
+  ok(/同じ確認・同じ約束をもう一度しない/.test(n) && /まず今の発言に答える/.test(n) && /開いているだけで AIX にしない/.test(n) && /下書きに書かない/.test(n), n);
 });
 it("名前を伏せる・上限を超えたら「ほか N件」", () => {
   const many = Array.from({ length: HUB_BRAIN_MAX_ITEMS + 2 }, (_, i) => ({ from: "queue" as const, action: `a${i}`, checkPattern: null, what: `山田 花子さんへの約束${i}`, openedAt: iso(0), dueAt: null }));
