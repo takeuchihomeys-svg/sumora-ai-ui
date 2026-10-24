@@ -39,6 +39,7 @@
 - **🧪 テスト（YUMA・ブレイン・返信・AIX）を行う前に必ず `memory/test_protocol_brain.md` を読む**（YUMA だけ・試行錯誤は `LLM_TEST_MODE=deepseek-all`／最後の Claude は `LLM_TEST_FINAL_CLAUDE=1` で場面ごとに1〜2回・スクリプトは `scripts/lib/llm-test-harness.ts` を通す・報告に model/回数/費用。2026-10-01 竹内さん指示）
 - 🧪 ブレイン・two-stage・返信の生成・最終チェックを変える時は、変える前と後に `scripts/brain-exam.ts` を回し、`--baseline` で「悪くなった問題」が0か確かめる（`memory/test_protocol_brain.md` 9.7・2026-10-08 竹内さん承認）
 - 部署詳細・チーム構成が必要な場合 → `AGENTS.md` を読む（常時ロードしない）
+- **📒 作業の途中経過は DB の `work_log` に残す**（2026-10-24 竹内さん承認）。開いた時は hook が続きのある作業を出す（無ければ `npx tsx --env-file=.env.local scripts/work-log.ts --latest`）。作業を始めた時・区切り（コミット・試験の結果）・止まる前・竹内さんの答え待ちになった時に `scripts/work-log.ts --add "<作業名>" --status=.. --summary=.. --next=..` で1行足す。作業員（サブエージェント）に頼む時も指示文に書く。決定は設計知見・質問は owner_questions・弱い所は brain_weaknesses（今まで通り）
 
 ---
 
