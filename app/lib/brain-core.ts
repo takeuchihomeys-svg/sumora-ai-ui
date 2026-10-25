@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase-server";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
-import { buildSentProps, buildSentPropsText } from "@/app/lib/sent-props-text";
+import { buildSentProps, buildSentPropsText, sentSheetVacancyOn, attachSheetVacancy } from "@/app/lib/sent-props-text";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
 import { evaluateAixWithJev, evaluatePickerWithJev, hasPickerQuestion, recordJevShadow, toPickerShadowRow, toShadowRow } from "@/app/lib/aix-jev";
@@ -1570,7 +1570,8 @@ export async function analyzeConversation(
           .from("sent_properties")
           // 監査FIX(2026-08-20): 募集状況・番手・家賃・顧客反応を追加取得
           // （current_property / urgency_appropriate をテキスト推測ではなくDB事実で接地させる）
-          .select("property_name, room_no, sent_at, rent, recruitment_status, applicant_rank, customer_reaction, source, channel, delivery, pickup_id")
+          // 2026-10-24 BRAIN_SENT_SHEET_VACANCY=on の時だけ image_url（送った資料の読み取り image_details を引く鍵）
+          .select(`property_name, room_no, sent_at, rent, recruitment_status, applicant_rank, customer_reaction, source, channel, delivery, pickup_id${sentSheetVacancyOn() ? ", image_url" : ""}`)
           .or(linkOr)
           .or("source.is.null,source.neq.line_group")
           .order("sent_at", { ascending: false })
@@ -2120,10 +2121,27 @@ export async function analyzeConversation(
   // 2026-09-24: 組み立ては app/lib/sent-props-text.ts（純関数）に切り出した。お客様に送った行 → 画像の行 → 共有のみの行 の順
   //   （物件名＋号室の重複除けがこの順で効くので送った事実が勝つ）。📤ピックアップ／🌟オススメの印は channel から
   const sentProps = buildSentProps({
-    customerRows: (sentPropsResult.data ?? []) as Parameters<typeof buildSentProps>[0]["customerRows"],
+    // 2026-10-24: 列を切り替える select（image_url）は型の読み取りができない＝unknown を通す（行の形は CustomerRow のまま）
+    customerRows: (sentPropsResult.data ?? []) as unknown as Parameters<typeof buildSentProps>[0]["customerRows"],
     imageRows: (sentImagePropsResult.data ?? []) as Parameters<typeof buildSentProps>[0]["imageRows"],
     sharedRows: ((sentPropsResult as { shared?: Parameters<typeof buildSentProps>[0]["sharedRows"] }).shared ?? []),
   });
+  // 2026-10-24 q053 型（P0「材料が届いていない」）: 送った資料の読み取りの現況・退去予定・入居可能日・内覧可能日を送った物件の行に載せる
+  //   （BRAIN_SENT_SHEET_VACANCY=on の時だけ・既定 off＝今と同じ）。読めなかった時は載せないだけ（判断は変えない）
+  if (sentSheetVacancyOn()) {
+    const urls = [...new Set(sentProps.flatMap((p) => (p.shared_only ? [] : p.image_urls ?? [])))].slice(0, 40);
+    if (urls.length) {
+      try {
+        const { data: det, error } = await supabase.from("image_details").select("image_url, lines").in("image_url", urls);
+        if (error) throw new Error(error.message);
+        const byUrl = new Map(((det ?? []) as Array<{ image_url: string; lines: unknown }>).map((d) => [d.image_url, d.lines]));
+        const n = attachSheetVacancy(sentProps, byUrl);
+        console.log(JSON.stringify({ tag: "brain:sent-sheet-vacancy", conversationId, urls: urls.length, read: byUrl.size, attached: n }));
+      } catch (e) {
+        console.warn(JSON.stringify({ tag: "brain:sent-sheet-vacancy", conversationId, error: String(e).slice(0, 160) }));
+      }
+    }
+  }
   let sentPropsText = buildSentPropsText(sentProps);
 
   // 申込経験者: ベンチマーク物件の注入
