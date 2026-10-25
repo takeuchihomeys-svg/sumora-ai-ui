@@ -126,6 +126,7 @@ it("続きの印: 同じ要件・同じ物件・お礼だけ・触れていな�
   eq(cont("駐車場について管理会社に確認させて頂きます", "確認", "駐車場って何台分ありますか？").mark, "same_topic");
   eq(cont("グランレジデンス本町の募集状況確認させて頂きます", "確認", "グランレジデンスの件どうでしたか").mark, "same_name");
   eq(cont("駐車場について管理会社に確認させて頂きます", "確認", "ありがとうございます！").mark, "ack");
+  eq(promiseContinuation({ kind: "確認", sentence: "駐車場について管理会社に確認させて頂きます" }, "よろしくお願いします", { ackOnly: true, topicOf: confirmObjectOf, turnTopicOf: confirmObjectOf, staffAfterPromise: true }).mark, "other", "約束の後に別の通（待ち合わせ等）＝その通への了承");
   eq(cont("ピックアップ出来次第お送りさせて頂きます", "物件探し", "入居日はいつ頃が最速ですか？").mark, "other");
   eq(cont("駐車場について管理会社に確認させて頂きます", "確認", "").mark, "none");
 });

@@ -2503,10 +2503,12 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   if (fastSlow?.level === "easy" && promiseTrack.open.length > 0) fastSlow = { ...fastSlow, level: "normal", reasons: [`未対応の約束${promiseTrack.open.length}`] };
   // 2026-10-24 弱い所4 v3（LINK_HUB_BRAIN=on の時だけ・既定 off＝1文字も変わらない）: まだ果たしていない約束の行に1列（果たす AIX とピッカー・今の発言がこの約束の続きか＝網の印）。
   //   一覧（v1/v2・LINK_HUB_BRAIN=list）は試験で悪化したので、既にある約束の材料に重ねずに足す。どれを今するかはブレイン（P0）
+  // 約束の後に「別の」こちらの通を送ったか（約束の通そのもの＝同じ時刻は数えない）。promiseRows は古い順
+  const staffAfterPromiseOf = (atIso: string) => { const t = Date.parse(atIso); return (promiseRows.length ? promiseRows : [...typedMessages].reverse()).some((m) => m.sender !== "customer" && Date.parse(m.created_at) > t + 1000); };
   const promiseColumn = linkHubPromiseColumnEnabled() && unrepliedTurn.text
     ? (p: import("@/app/lib/promise-tracker").OpenPromise) => renderPromiseColumn(
         promiseFulfillAix(p, confirmObjectOf, checkPatternForConfirmTopic),
-        promiseContinuation(p, unrepliedTurn.text, { ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""), topicOf: confirmObjectOf, turnTopicOf: (t) => confirmObjectFromCustomerTurn(t)?.object ?? confirmObjectOf(t) }))
+        promiseContinuation(p, unrepliedTurn.text, { ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""), topicOf: confirmObjectOf, turnTopicOf: (t) => confirmObjectFromCustomerTurn(t)?.object ?? confirmObjectOf(t), staffAfterPromise: staffAfterPromiseOf(p.at) }))
     : undefined;
   const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }), promiseColumn ? { column: promiseColumn } : {});
   if (promiseTrack.open.some((p) => p.status === "遅れ" || p.status === "遅れ気味")) console.log(JSON.stringify({ tag: "brain:promise-overdue", conversationId, open: promiseTrack.open.map((p) => ({ kind: p.kind, status: p.status, h: Math.round(p.elapsedH) })) }));

@@ -89,7 +89,7 @@ export function promiseFulfillAix(p: PromiseColumnInput, topicOf: (s: string) =>
  */
 const CHECK_KINDS: ReadonlySet<string> = new Set(["確認", "ご連絡", "交渉", "資料の送付"]);
 export type PromiseContinuation = "same_topic" | "same_name" | "ack" | "other" | "none";
-export function promiseContinuation(p: PromiseColumnInput, turnText: string | null | undefined, o: { ackOnly: boolean; topicOf: (s: string) => string | null; turnTopicOf: (s: string) => string | null }): { mark: PromiseContinuation; word: string | null } {
+export function promiseContinuation(p: PromiseColumnInput, turnText: string | null | undefined, o: { ackOnly: boolean; topicOf: (s: string) => string | null; turnTopicOf: (s: string) => string | null; /** 約束の後に、こちらが別の通を送ったか（お礼・了承はその別の通への返事） */ staffAfterPromise?: boolean }): { mark: PromiseContinuation; word: string | null } {
   const turn = String(turnText ?? "").trim();
   if (!turn) return { mark: "none", word: null };
   const pt = o.topicOf(p.sentence);
@@ -99,7 +99,8 @@ export function promiseContinuation(p: PromiseColumnInput, turnText: string | nu
   const t = turn.normalize("NFKC");
   const hit = nameTokensOf(p.sentence).find((w) => t.includes(w));
   if (hit) return { mark: "same_name", word: hit };
-  if (o.ackOnly) return { mark: "ack", word: null };
+  // お礼・了承は直前のこちらの通への返事。約束の後に別の通（待ち合わせの確定 等）を送っていれば、この約束の結果を待っているとは言えない（試験 q051）
+  if (o.ackOnly) return o.staffAfterPromise ? { mark: "other", word: null } : { mark: "ack", word: null };
   return { mark: "other", word: null };
 }
 
