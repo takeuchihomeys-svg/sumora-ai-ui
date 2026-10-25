@@ -172,13 +172,15 @@ const hStr = (h: number) => (h >= 48 ? `${Math.round(h / 24)}日` : `${Math.roun
  * ブレインに渡す【お客様との約束】。事実（今開いている約束・遅れ）と、実測（場面の約束率・成約との関係）だけを渡す。
  * どう返すか（途中経過を伝える・約束する・しない）はブレインが決める。
  */
-export function buildPromiseBrainNote(track: PromiseTrack, scene: string | null): string {
+export function buildPromiseBrainNote(track: PromiseTrack, scene: string | null, o: { column?: (p: OpenPromise) => string } = {}): string {
   const lines: string[] = ["\n【🤝 お客様との約束（確定事実＋実測）】"];
   lines.push(`・この会話の直近14日: こちらの約束 ${track.made}件・果たした ${track.kept}件${track.open.length ? `・まだ果たしていない ${track.open.length}件` : ""}`);
   for (const p of track.open) {
     const st = PROMISE_STATS[p.kind];
     lines.push(`  - 【${p.status}】${p.kind}の約束（${hStr(p.elapsedH)}前${p.hasDeadline ? "・期限の語あり" : ""}）「${p.sentence}」`
-      + (st ? `（実送信で果たすまでの中央値 ${hStr(st.medianH)}・90%で ${hStr(st.p90H)}）` : ""));
+      + (st ? `（実送信で果たすまでの中央値 ${hStr(st.medianH)}・90%で ${hStr(st.p90H)}）` : "")
+      // 2026-10-24 弱い所4 v3（LINK_HUB_BRAIN=on の時だけ・link-hub-brain.renderPromiseColumn）: 果たす AIX とピッカー・今の発言がこの約束の続きか
+      + (o.column ? o.column(p) : ""));
   }
   if (track.open.some((p) => p.status === "遅れ" || p.status === "遅れ気味")) {
     lines.push("  → 遅れている約束がある。今回の返信で、その約束の結果か途中経過（いつ頃ご連絡できるか）に触れるかを判断する（実送信で「ご連絡します」の約束は果たされたのが55.9%だけで、催促も10.5%と一番多い）。");

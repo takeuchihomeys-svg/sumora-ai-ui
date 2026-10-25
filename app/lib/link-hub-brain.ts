@@ -37,8 +37,86 @@ export function linkHubBrainPropertyEnabled(env: Record<string, string | undefin
 /** 物件を送る AIX（一覧から外す仲間） */
 export const HUB_PROPERTY_SEND_AIX: ReadonlySet<string> = new Set(["property_send", "property_recommendation", "property_send_new_arrival", "property_send_widen"]);
 
+/**
+ * 切替 LINK_HUB_BRAIN（既定 off）:
+ *   on（＝column）… v3: 一覧を足さず、既にある【🤝 お客様との約束】の「まだ果たしていない約束」の行に1列だけ足す
+ *                   （果たす AIX とピッカー・今の発言がその約束の続きか＝網の印）。DB を読まない・$0
+ *   list          … v1/v2: 【つなぎの芯】の一覧を行動台帳の塊に足す（試験で悪化・比べる時だけ）
+ */
+export type LinkHubBrainMode = "off" | "column" | "list";
+export function linkHubBrainMode(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): LinkHubBrainMode {
+  const v = (env.LINK_HUB_BRAIN ?? "").trim().toLowerCase();
+  return v === "on" || v === "column" ? "column" : v === "list" ? "list" : "off";
+}
+/** 一覧（v1/v2）を足すか＝LINK_HUB_BRAIN=list の時だけ */
 export function linkHubBrainEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.LINK_HUB_BRAIN ?? "").trim().toLowerCase() === "on";
+  return linkHubBrainMode(env) === "list";
+}
+/** 約束の行に1列足すか（v3）＝LINK_HUB_BRAIN=on の時だけ */
+export function linkHubPromiseColumnEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return linkHubBrainMode(env) === "column";
+}
+
+// ───────── v3: まだ果たしていない約束の行に足す1列（果たす AIX・続きの印） ─────────
+/** 物件名らしい語（カタカナ3字以上・英字4字以上）。よく出る一般の語は外す */
+const NAME_TOKEN_RE = /[ァ-ヶー]{4,}|[A-Za-zＡ-Ｚａ-ｚ]{4,}/g; // 3字（メゾン・ハイツ・コーポ）は建物名の一部で多くの物件に当たる
+const COMMON_KATAKANA = new Set(["ピックアップ", "エアコン", "マンション", "アパート", "インターネット", "ネット", "フリーレント", "クリーニング", "バイク", "ペット", "スタッフ", "ライフライン", "オーナー", "サポート", "キャンセル", "ルーム", "タイプ", "プラン", "ポイント", "メール", "ライン", "オススメ", "スモラ", "コンロ", "ボックス", "ウォシュレット", "シャワー", "バス", "トイレ", "キッチン", "リビング", "ロフト", "セキュリティ", "オートロック", "レジデンス", "マンション", "グランデ", "プレミアム", "テラス", "パーク"]);
+export function nameTokensOf(text: string): string[] {
+  const t = String(text ?? "").normalize("NFKC");
+  return [...new Set((t.match(NAME_TOKEN_RE) ?? []).filter((w) => !COMMON_KATAKANA.has(w) && !/^(?:LINE|AIX|SUUMO|HOME)$/i.test(w)))];
+}
+
+export type PromiseColumnInput = { kind: string; sentence: string };
+/** 約束の種類と文から、果たす AIX とピッカー（決まった表・約束の並び promise-queue と同じ要件の語） */
+export function promiseFulfillAix(p: PromiseColumnInput, topicOf: (s: string) => string | null, pickerOf: (topic: string | null) => string | null): { action: string; checkPattern: string | null } | null {
+  const topic = topicOf(p.sentence);
+  switch (p.kind) {
+    case "物件探し": return { action: "property_send", checkPattern: null };
+    case "見積書": return { action: "estimate_sheet", checkPattern: null };
+    case "資料の送付": return /写真|画像|室内/.test(p.sentence) ? { action: "property_check_result", checkPattern: "interior_photo" } : { action: "property_check_result", checkPattern: pickerOf(topic) };
+    case "確認": case "ご連絡": case "交渉": return { action: "property_check_result", checkPattern: pickerOf(topic) };
+    default: return null;
+  }
+}
+
+/**
+ * 今のお客様の発言が、その約束の続きか（網・決まった印。どう返すかはブレイン）:
+ *   same_topic … 同じ確認の要件（駐車場・ペット・初期費用…）を言った
+ *   same_name  … 約束の文の物件名らしい語を言った
+ *   ack        … お礼・了承だけ（約束の結果を待っている番）
+ *   other      … この約束に触れていない（別の事を言った）
+ *   none       … お客様の番でない
+ */
+const CHECK_KINDS: ReadonlySet<string> = new Set(["確認", "ご連絡", "交渉", "資料の送付"]);
+export type PromiseContinuation = "same_topic" | "same_name" | "ack" | "other" | "none";
+export function promiseContinuation(p: PromiseColumnInput, turnText: string | null | undefined, o: { ackOnly: boolean; topicOf: (s: string) => string | null; turnTopicOf: (s: string) => string | null }): { mark: PromiseContinuation; word: string | null } {
+  const turn = String(turnText ?? "").trim();
+  if (!turn) return { mark: "none", word: null };
+  const pt = o.topicOf(p.sentence);
+  const tt = o.turnTopicOf(turn);
+  // 同じ要件は確認の約束だけ（探す約束の文の「ペット可」等は条件で、確認の要件ではない）
+  if (pt && tt && pt === tt && CHECK_KINDS.has(p.kind) && !/^(?:管理会社|オーナー|交渉)$/.test(pt)) return { mark: "same_topic", word: pt };
+  const t = turn.normalize("NFKC");
+  const hit = nameTokensOf(p.sentence).find((w) => t.includes(w));
+  if (hit) return { mark: "same_name", word: hit };
+  if (o.ackOnly) return { mark: "ack", word: null };
+  return { mark: "other", word: null };
+}
+
+const CONT_JA: Record<PromiseContinuation, (w: string | null) => string> = {
+  same_topic: (w) => `今の発言はこの約束の続き（同じ要件「${w}」）`,
+  same_name: (w) => `今の発言はこの約束の続き（同じ物件「${w}」）`,
+  ack: () => "今の発言はお礼・了承だけ（この約束の結果を待っている）",
+  other: () => "今の発言はこの約束に触れていない",
+  none: () => "",
+};
+/** 【🤝 お客様との約束】の行の後ろに足す1列（無ければ ""） */
+export function renderPromiseColumn(aix: { action: string; checkPattern: string | null } | null, cont: { mark: PromiseContinuation; word: string | null }): string {
+  const parts: string[] = [];
+  if (aix) parts.push(`果たす AIX【${aix.action}${aix.checkPattern ? `/${aix.checkPattern}` : ""}】`);
+  const c = CONT_JA[cont.mark](cont.word);
+  if (c) parts.push(c);
+  return parts.length ? ` → ${parts.join("・")}` : "";
 }
 
 /** 1つの開いている事（ブレインに渡す1行の元） */

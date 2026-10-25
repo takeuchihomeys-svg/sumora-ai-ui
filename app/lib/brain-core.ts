@@ -115,13 +115,13 @@ import { propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { viewingReportBlockForBrain } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
-import { buildActionLedger, buildLedgerLinesForBrain, buildViewingFlowForBrain, type LedgerInput } from "@/app/lib/action-ledger";
+import { buildActionLedger, buildLedgerLinesForBrain, buildViewingFlowForBrain, confirmObjectOf, checkPatternForConfirmTopic, confirmObjectFromCustomerTurn, type LedgerInput } from "@/app/lib/action-ledger";
 // 2026-10-20 竹内さん（5b0b8e82・67f54c24）: 何の日か・確認の相手の決まった読み（既定 on・DAY_SUBJECT_READER=off で止まる）
 import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 // 2026-10-21 つなぎのブレイン 段3 司令塔: 次の一手（スタッフしか分からない事は AIX）を1行（LINK_CONDUCTOR_BRAIN=on の時だけ・既定 off＝1文字も変わらない）
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
 // 2026-10-24 弱い所4 つなぎの芯: 今の番の前から開いている事（要対応・約束の並び・【必ず】・連絡日）の一覧（LINK_HUB_BRAIN=on の時だけ・既定 off＝1文字も変わらない）
-import { linkHubBrainEnabled } from "@/app/lib/link-hub-brain";
+import { linkHubBrainEnabled, linkHubPromiseColumnEnabled, promiseFulfillAix, promiseContinuation, renderPromiseColumn } from "@/app/lib/link-hub-brain";
 import { cancelViewingCalendarOnCustomerCancel } from "@/app/lib/viewing-cancel-calendar-server";
 import { isViewingFixTopic } from "@/app/lib/viewing-premature";
 // 2026-09-23 竹内（あっぴ事例）: 未履行のピックアップ宣言が残っている間は「反応待ち」にしない（AIX【物件ピックアップした】を立てる）
@@ -2483,7 +2483,14 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const promiseTrack = trackPromises((promiseRows.length ? promiseRows : [...typedMessages].reverse()).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at, isAix: !!m.is_aix_generated })));
   // 慣れた事は速く: 台帳に未対応の約束がある番は慣れた番にしない（お礼だけに見えて前の約束の答えを待っている番・設計書 7-4 の危なさ）
   if (fastSlow?.level === "easy" && promiseTrack.open.length > 0) fastSlow = { ...fastSlow, level: "normal", reasons: [`未対応の約束${promiseTrack.open.length}`] };
-  const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }));
+  // 2026-10-24 弱い所4 v3（LINK_HUB_BRAIN=on の時だけ・既定 off＝1文字も変わらない）: まだ果たしていない約束の行に1列（果たす AIX とピッカー・今の発言がこの約束の続きか＝網の印）。
+  //   一覧（v1/v2・LINK_HUB_BRAIN=list）は試験で悪化したので、既にある約束の材料に重ねずに足す。どれを今するかはブレイン（P0）
+  const promiseColumn = linkHubPromiseColumnEnabled() && unrepliedTurn.text
+    ? (p: import("@/app/lib/promise-tracker").OpenPromise) => renderPromiseColumn(
+        promiseFulfillAix(p, confirmObjectOf, checkPatternForConfirmTopic),
+        promiseContinuation(p, unrepliedTurn.text, { ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""), topicOf: confirmObjectOf, turnTopicOf: (t) => confirmObjectFromCustomerTurn(t)?.object ?? confirmObjectOf(t) }))
+    : undefined;
+  const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }), promiseColumn ? { column: promiseColumn } : {});
   if (promiseTrack.open.some((p) => p.status === "遅れ" || p.status === "遅れ気味")) console.log(JSON.stringify({ tag: "brain:promise-overdue", conversationId, open: promiseTrack.open.map((p) => ({ kind: p.kind, status: p.status, h: Math.round(p.elapsedH) })) }));
   const seeMoreBrainText = asksMoreListings
     ? "\n【お客様の言葉（確定）】お客様は他のお部屋も見たいと言っている（「もう少し見てみたい」等）。実送信 6/6 がこちらの引き続きの新着物件のご紹介・見積書 0/6。今回の返信の中心は引き続きのご紹介（見積書・募集状況の確認にしない）。"

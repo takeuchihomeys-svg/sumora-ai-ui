@@ -1,7 +1,10 @@
 // つなぎの芯 → LINE のブレインの材料（link-hub-brain.ts）。LLM なし・DB なし。文は型だけ（名前・物件名は作り物）
 // 実行: npx tsx app/lib/__tests__/link-hub-brain.test.ts
 import { buildCustomerHub, hubContradictions, aixItemKey, type HubInput, type HubAixItem } from "../customer-hub";
-import { hubBrainNote, hubOpenItems, renderHubBrainNote, customerTurnStartMs, linkHubBrainEnabled, HUB_BRAIN_MAX_ITEMS } from "../link-hub-brain";
+import { hubBrainNote, hubOpenItems, renderHubBrainNote, customerTurnStartMs, linkHubBrainEnabled, linkHubBrainMode, linkHubPromiseColumnEnabled, promiseFulfillAix, promiseContinuation, renderPromiseColumn, nameTokensOf, HUB_BRAIN_MAX_ITEMS } from "../link-hub-brain";
+import { confirmObjectOf, checkPatternForConfirmTopic, confirmObjectFromCustomerTurn } from "../action-ledger";
+import { trackPromises, buildPromiseBrainNote } from "../promise-tracker";
+import { isAckOnlyTurn } from "../ack-topic-scope";
 import { currentReplayFloor } from "../test-replay-floor";
 import { writeFileSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +37,9 @@ const PARKING_PROMISE = "かしこまりました！！\n駐車場について�
 
 console.log("切替");
 it("既定 off・on で入る", () => {
-  eq(linkHubBrainEnabled({}), false); eq(linkHubBrainEnabled({ LINK_HUB_BRAIN: "ON" }), true); eq(linkHubBrainEnabled({ LINK_HUB_BRAIN: "1" }), false);
+  eq(linkHubBrainMode({}), "off"); eq(linkHubBrainMode({ LINK_HUB_BRAIN: "ON" }), "column"); eq(linkHubBrainMode({ LINK_HUB_BRAIN: "list" }), "list"); eq(linkHubBrainMode({ LINK_HUB_BRAIN: "1" }), "off");
+  eq(linkHubBrainEnabled({ LINK_HUB_BRAIN: "on" }), false, "一覧は list の時だけ"); eq(linkHubBrainEnabled({ LINK_HUB_BRAIN: "list" }), true);
+  eq(linkHubPromiseColumnEnabled({}), false); eq(linkHubPromiseColumnEnabled({ LINK_HUB_BRAIN: "on" }), true);
 });
 
 console.log("今の番の始まり");
@@ -106,6 +111,37 @@ it("約束の札の重なり（→ AIX【…】）・名前（1文字でも）�
   ok(/・約束 お部屋のピックアップ AIX【property_send】（5時間前に立った）/.test(n), n);
   ok(/・【必ず】の約束 【今日中】 設備の確認→ご連絡 AIX【property_check_result\/mgmt_equipment】/.test(n), n);
   ok(!/お客様 新着/.test(n) && /新着が出たら物件送付/.test(n), n);
+});
+
+
+console.log("v3: 約束の行に1列（果たす AIX・続きの印）");
+const cont = (sentence: string, kind: string, turn: string) => promiseContinuation({ kind, sentence }, turn, { ackOnly: isAckOnlyTurn(turn), topicOf: confirmObjectOf, turnTopicOf: (t) => confirmObjectFromCustomerTurn(t)?.object ?? confirmObjectOf(t) });
+it("駐車場の確認の約束 → 果たす AIX【property_check_result/mgmt_parking】", () => {
+  eq(promiseFulfillAix({ kind: "確認", sentence: "駐車場について管理会社に確認させて頂きます" }, confirmObjectOf, checkPatternForConfirmTopic), { action: "property_check_result", checkPattern: "mgmt_parking" });
+  eq(promiseFulfillAix({ kind: "物件探し", sentence: "ピックアップ出来次第お送りさせて頂きます" }, confirmObjectOf, checkPatternForConfirmTopic), { action: "property_send", checkPattern: null });
+  eq(promiseFulfillAix({ kind: "見積書", sentence: "御見積書作成させて頂きます" }, confirmObjectOf, checkPatternForConfirmTopic), { action: "estimate_sheet", checkPattern: null });
+  eq(promiseFulfillAix({ kind: "その他", sentence: "x" }, confirmObjectOf, checkPatternForConfirmTopic), null);
+});
+it("続きの印: 同じ要件・同じ物件・お礼だけ・触れていない", () => {
+  eq(cont("駐車場について管理会社に確認させて頂きます", "確認", "駐車場って何台分ありますか？").mark, "same_topic");
+  eq(cont("グランレジデンス本町の募集状況確認させて頂きます", "確認", "グランレジデンスの件どうでしたか").mark, "same_name");
+  eq(cont("駐車場について管理会社に確認させて頂きます", "確認", "ありがとうございます！").mark, "ack");
+  eq(cont("ピックアップ出来次第お送りさせて頂きます", "物件探し", "入居日はいつ頃が最速ですか？").mark, "other");
+  eq(cont("駐車場について管理会社に確認させて頂きます", "確認", "").mark, "none");
+});
+it("一般の語（エアコン・マンション）は物件名にしない", () => {
+  eq(nameTokensOf("エアコンとマンションの件 グランドメゾン"), ["グランドメゾン"]);
+});
+it("1列の形・約束の材料に入る・列が無い時は今と同じ", () => {
+  eq(renderPromiseColumn({ action: "property_check_result", checkPattern: "mgmt_parking" }, { mark: "ack", word: null }), " → 果たす AIX【property_check_result/mgmt_parking】・今の発言はお礼・了承だけ（この約束の結果を待っている）");
+  eq(renderPromiseColumn(null, { mark: "none", word: null }), "");
+  const NOW2 = Date.parse("2026-10-10T06:00:00Z");
+  const track = trackPromises([{ sender: "customer", text: "駐車場ありますか？", createdAt: "2026-10-10T01:00:00Z" }, { sender: "staff", text: "駐車場について管理会社に確認させて頂きます！！", createdAt: "2026-10-10T01:05:00Z" }, { sender: "customer", text: "よろしくお願いします", createdAt: "2026-10-10T05:00:00Z" }], NOW2);
+  ok(track.open.length === 1, JSON.stringify(track));
+  const base = buildPromiseBrainNote(track, null);
+  const withCol = buildPromiseBrainNote(track, null, { column: (p) => renderPromiseColumn(promiseFulfillAix(p, confirmObjectOf, checkPatternForConfirmTopic), cont(p.sentence, p.kind, "よろしくお願いします")) });
+  ok(withCol.includes("果たす AIX【property_check_result/mgmt_parking】・今の発言はお礼・了承だけ"), withCol);
+  ok(!base.includes("果たす AIX"), "列なしは今と同じ");
 });
 
 console.log("試験の線のファイル（hubSource）");
