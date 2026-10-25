@@ -136,6 +136,7 @@ it("一般の語（エアコン・マンション）は物件名にしない", (
 it("1列の形・約束の材料に入る・列が無い時は今と同じ", () => {
   eq(renderPromiseColumn({ action: "property_check_result", checkPattern: "mgmt_parking" }, { mark: "ack", word: null }), " → 果たす AIX【property_check_result/mgmt_parking】・今の発言はお礼・了承だけ（この約束の結果を待っている）");
   eq(renderPromiseColumn(null, { mark: "none", word: null }), "");
+  eq(renderPromiseColumn({ action: "property_send", checkPattern: null }, { mark: "other", word: null }), " → 今の発言はこの約束に触れていない", "触れていない番は AIX を書かない");
   const NOW2 = Date.parse("2026-10-10T06:00:00Z");
   const track = trackPromises([{ sender: "customer", text: "駐車場ありますか？", createdAt: "2026-10-10T01:00:00Z" }, { sender: "staff", text: "駐車場について管理会社に確認させて頂きます！！", createdAt: "2026-10-10T01:05:00Z" }, { sender: "customer", text: "よろしくお願いします", createdAt: "2026-10-10T05:00:00Z" }], NOW2);
   ok(track.open.length === 1, JSON.stringify(track));

@@ -114,7 +114,8 @@ const CONT_JA: Record<PromiseContinuation, (w: string | null) => string> = {
 /** 【🤝 お客様との約束】の行の後ろに足す1列（無ければ ""） */
 export function renderPromiseColumn(aix: { action: string; checkPattern: string | null } | null, cont: { mark: PromiseContinuation; word: string | null }): string {
   const parts: string[] = [];
-  if (aix) parts.push(`果たす AIX【${aix.action}${aix.checkPattern ? `/${aix.checkPattern}` : ""}】`);
+  // v3c: 今の発言がこの約束に触れていない番は、果たす AIX を書かない（書くと別の事を聞いた番で AIX に寄る＝試験 q006 出し切りの後 道 4/6→2/6）
+  if (aix && cont.mark !== "other") parts.push(`果たす AIX【${aix.action}${aix.checkPattern ? `/${aix.checkPattern}` : ""}】`);
   const c = CONT_JA[cont.mark](cont.word);
   if (c) parts.push(c);
   return parts.length ? ` → ${parts.join("・")}` : "";
