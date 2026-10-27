@@ -38,8 +38,9 @@ const REACTION_LABEL: Record<string, string> = { interested: "興味あり", rej
 //   状態が入っていたのは 512枚（退去予定 106枚 対 読み取りでは 241枚）。読み取りに現況が有るのに台帳が空の行 857・送った後3日以内に
 //   お客様が内覧・入居の時期に触れた番 149（42会話）。→ 読み取りの行（sheet-vacancy.alignVacancyLines で欄どおりに整えた物）をそのまま載せる。
 //   字は変えない（決めつけない）。資料は送った時点の物＝日付を付ける。戻す: BRAIN_SENT_SHEET_VACANCY（既定 off）
+//   2026-10-27 竹内さん「オススメで」から既定 on（Claude q053・q156×2 悪化0・DeepSeek で q053/q054/q184 が良くなった）。止める: BRAIN_SENT_SHEET_VACANCY=off
 export function sentSheetVacancyOn(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.BRAIN_SENT_SHEET_VACANCY ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_SENT_SHEET_VACANCY ?? "").trim().toLowerCase() !== "off";
 }
 const SHEET_VAC_LABELS = ["現況", "退去予定", "入居可能日", "内覧可能日"] as const;
 /** 読み取りの行から現況・退去予定・入居可能日・内覧可能日を拾って1行に（見出しごとに最初の1つ・各30字まで）。無ければ null */
