@@ -17,7 +17,8 @@ import { saveTodoSnapshot, snapshotOf, loadTodoSnapshots } from "@/app/lib/staff
 import { aixOverdueRemindEnabled, buildAixOverdueRemind, overdueRemindDue, AIX_OVERDUE_REMIND_KEY } from "@/app/lib/aix-overdue-remind";
 import type { AixActionItemRow } from "@/app/lib/aix-action-text";
 
-export const maxDuration = 60;
+// 10/26 午後から 60秒で切れて一覧が送れていなかった（Vercel Runtime Timeout）。読み込みが重くなったので上限を 300秒に
+export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
