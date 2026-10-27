@@ -89,6 +89,8 @@ export interface ViewingFlow {
   currentWish: boolean;
   /** 6巡目: 候補日を出す前にお客様が指定した日時（wished の時だけ・「10/12 14:00」） */
   requested: string | null;
+  /** 2026-10-28 確定の後の今回の連投で、お客様が確定の日と別の日を打診した（「24か25でも可能」「24は19時まで」）。材料だけ（段階は変えない・VIEWING_ALT_DAYS_AFTER_CONFIRM=on の時だけ） */
+  altDaysAfterConfirm?: string[];
   reason: string;
 }
 
@@ -169,6 +171,30 @@ export function parseCustomerDay(text: string, atMs: number): string | null {
   }
   return null;
 }
+/**
+ * 確定の後のお客様の連投から、別の日の打診の日（M/D）を読む（候補の網・純関数）。2026-10-28 番 6613:
+ *   確定（10/28 17:00）の後の「内見24か25でも可能なんですがいかがでしょうか」「24は19時までなら大丈夫」「28で構いません」が
+ *   parseCustomerDay（「日」の付いた数字・M/D だけ）で読めず「日にちの返事ではない」となり、ブレインが確定の日のまま下書きに 10/28 17:00 を書いた。
+ *   「数字か数字（でも|で|なら|は）」「数字（は|で|なら|でも）＋時・大丈夫・可能・構いません 等」だけを拾う（入居・契約などの行は見ない）。
+ *   どう返すか（確定の日のまま／日程の変更として AIX【内覧調整】）はブレインが決める（P0）
+ */
+export function viewingAltDaysEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.VIEWING_ALT_DAYS_AFTER_CONFIRM ?? "").trim().toLowerCase() === "on";
+}
+const ALT_TWO_DAYS_RE = /(?<![0-9\/月:.])([0-9]{1,2})\s*日?\s*(?:か|or|もしくは|または)\s*([0-9]{1,2})\s*日?\s*(?=でも|で|なら|は|に|あたり|辺り|頃|ごろ)/g;
+const ALT_ONE_DAY_RE = /(?<![0-9\/月:.])([0-9]{1,2})\s*日?\s*(?:は|で|なら|でも|の方)(?=[^0-9\n]{0,14}(?:[0-9]{1,2}\s*時|大丈夫|構いません|かまいません|可能|いけ|行け|空い|都合|お願い))/g;
+export function altDaysOfCustomerText(text: string, atMs: number): string[] {
+  const p = jstParts(Number.isFinite(atMs) ? atMs : Date.now());
+  const toMD = (d: number) => (d >= 1 && d <= 31 ? `${d >= p.d ? p.m : p.m === 12 ? 1 : p.m + 1}/${d}` : null);
+  const out: string[] = [];
+  for (const line of nfkc(text).split(/\n|(?<=[。！!？?])/)) {
+    if (NON_VIEWING_DATE_RE.test(line) && !/内覧|内見|見学/.test(line)) continue;
+    for (const m of line.matchAll(ALT_TWO_DAYS_RE)) for (const d of [m[1], m[2]]) { const md = toMD(Number(d)); if (md) out.push(md); }
+    for (const m of line.matchAll(ALT_ONE_DAY_RE)) { const md = toMD(Number(m[1])); if (md) out.push(md); }
+  }
+  return [...new Set(out)];
+}
+
 export function parseCustomerTime(text: string): string | null {
   const m = nfkc(text).match(TIME_RE);
   if (!m) return null;
@@ -461,6 +487,13 @@ export function resolveViewingFlow(input: ViewingFlowInput): ViewingFlow {
     if (st.stage === "none" && st.reason !== "customer_cancelled" && st.reason !== "customer_cancelled_after_confirm") currentReply = currentReply === "cancel" ? "cancel" : "none";
   }
 
+  // 2026-10-28 確定の後の今回の連投の別の日の打診（材料だけ・段階は変えない）
+  const altDaysAfterConfirm: string[] = [];
+  if (viewingAltDaysEnabled() && st.stage === "confirmed" && lastIdx >= 0 && msgs[lastIdx].sender === "customer") {
+    let i = lastIdx; while (i - 1 >= 0 && msgs[i - 1].sender === "customer") i--;
+    const cur = st.label?.split(" ")[0] ?? null;
+    for (const m of msgs.slice(i)) for (const d of altDaysOfCustomerText(m.text ?? "", ms(m.createdAt))) if (d !== cur && !altDaysAfterConfirm.includes(d)) altDaysAfterConfirm.push(d);
+  }
   return {
     stage: st.stage, confirmed,
     label: st.stage === "date_agreed" || st.stage === "confirmed" || (st.stage === "proposing" && st.meetingOffered) ? st.label : null,
@@ -470,6 +503,7 @@ export function resolveViewingFlow(input: ViewingFlowInput): ViewingFlow {
     askedDay: st.stage === "proposing" || st.stage === "wished" || st.stage === "date_agreed" ? st.askedDay : null,
     placePromised: st.stage === "date_agreed" && st.placePromised, meetingOffered: st.stage === "proposing" && st.meetingOffered,
     currentWish, reason: st.reason, requested: st.stage === "wished" ? st.requested : null,
+    ...(altDaysAfterConfirm.length ? { altDaysAfterConfirm } : {}),
   };
 }
 
@@ -518,6 +552,7 @@ export function buildViewingFlowBrainText(f: ViewingFlow): string {
     lines.push(`・候補を出した後のお客様の日にちの返事: ${f.lastReply ? REPLY_JA[f.lastReply] : "まだ無い"}${f.askedDay ? `（${f.askedDay}）` : ""}`);
   }
   if (f.currentReply) lines.push(`・今回のお客様の発言: ${REPLY_JA[f.currentReply]}`);
+  if (f.stage === "confirmed" && f.altDaysAfterConfirm?.length) lines.push(`・確定の後に、お客様が別の日を打診している（${f.altDaysAfterConfirm.join("・")}）。確定の日のままか、日程の変更か（その日の空きはスタッフしか分からない）は会話を読んで決める。確定の日時を本文で言い切らない`);
   // 待ち合わせを「いかがでしょうか」で送った時は、台帳の待ち合わせ案内はその打診そのもの（「別に1つある」ではない）
   if (f.confirmed && f.stage !== "confirmed" && !f.meetingOffered) lines.push("・これとは別に、待ち合わせ場所を送った（確定した）内覧が1つある（台帳の待ち合わせ案内）");
   const rule: string[] = [];

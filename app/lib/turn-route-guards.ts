@@ -11,6 +11,7 @@
 import { STATION_LINES, WARD_COORDS } from "./osaka-geo";
 import { splitRequests } from "./request-ledger";
 import { OTHER_PROPERTY_ASK_RE, zenryokuCandidateExitEnabled } from "./search-result-split";
+import { altDaysOfCustomerText, viewingAltDaysEnabled } from "./viewing-flow";
 
 export function turnRouteGuardsEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.TURN_ROUTE_GUARDS ?? "").toLowerCase() !== "off";
@@ -84,7 +85,10 @@ export function viewingInviteToReply(i: { text: string; viewingDecided: boolean 
   // 10/09 竹内さんの答え（q053「どっちも気になります」＝見積書の後の気になる・退去予定の内覧はスタッフだけが知る中身＝AIX の番）・試験 q085（日程のやり取りの中の
   //   「26日の夕方18時頃なら空いてますでしょうか」）・q087（「ここ見てみたいです」）: 内覧の語が無いだけで返信に戻すと AIX の番を消していた → 既定で使わない。戻す VIEWING_GUARD_NO_WORD=on
   if ((typeof process !== "undefined" && (process.env?.VIEWING_GUARD_NO_WORD ?? "").toLowerCase() === "on") && !VIEWING_WORD_RE.test(t)) return { yes: true, why: "内覧を頼んでいない" };
-  if (i.viewingDecided && !/変更|別の日|日程を?変え|ずら/.test(t)) return { yes: true, why: "決まった内覧への追加" };
+  // 2026-10-28 番 6613: 確定の後の「24か25でも可能」「24は19時までなら」（変更の語の無い別の日の打診）を「決まった内覧への追加」と読み、ブレインの AIX【内覧調整】を返信に下げていた
+  //   （VIEWING_ALT_DAYS_AFTER_CONFIRM=on の時だけ・その時は下げずにブレインの判断のまま）
+  const altDays = viewingAltDaysEnabled() ? altDaysOfCustomerText(t, Date.now()) : [];
+  if (i.viewingDecided && !/変更|別の日|日程を?変え|ずら/.test(t) && !altDays.length) return { yes: true, why: "決まった内覧への追加" };
   if (LATER_DATE_RE.test(t)) return { yes: true, why: "〇日以降の事情" };
   return { yes: false, why: "内覧の依頼" };
 }
