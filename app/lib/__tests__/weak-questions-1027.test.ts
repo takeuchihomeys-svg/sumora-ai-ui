@@ -21,6 +21,8 @@ t("off: 条件から離れますが は従来どおり weak/null", withEnv("EXHA
 t("on: 条件から離れますが は strong", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st(leave, "1T00:00:00Z"))) === "strong");
 t("on: 探しましたが現在募集に出ておらず は strong", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st(noneWiden, "1T00:00:00Z"))) === "strong");
 t("on: 持ち込み1件の「募集に出ておらず」は strong にしない", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st(oneProp, "1T00:00:00Z"))) !== "strong");
+t("on: 1件新着で〜募集に出ました（新着を1件ずつ送る段・q003）は strong", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st("🌟朝日プラザ 604号室 新着で1件、敷金礼金なし・ペット飼育可の1LDKが募集に出ました！", "1T00:00:00Z"))) === "strong");
+t("on: 新着状況随時確認の約束の文は従来どおり strong（新着待ちの約束）", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st("新着状況随時確認させて頂きオススメ出来るお部屋募集に出次第お送りさせて頂きます！！", "1T00:00:00Z"))) === "strong");
 t("on: 最初の束の送付は weak のまま", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st(firstBundle, "1T00:00:00Z"))) === "weak");
 {
   // q006 の形: 物件の AIX の後に「条件から離れますが」→ お客様が設備を足した
