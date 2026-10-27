@@ -1,5 +1,6 @@
 import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSentences } from "@/app/lib/draft-text";
 import { enforceCallName } from "@/app/lib/call-name-guard";
+import { brainStaffBurstWaitEnabled, staffSendingNow } from "@/app/lib/staff-burst";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
 import { NextRequest, NextResponse, after } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
@@ -4047,7 +4048,9 @@ async function handleGenerateReply(req: NextRequest) {
     //   今までは生成の後ろで起動していた（下書きには間に合わない）。待ちは最大25秒（過ぎたら今まで通り古い判断で生成し、後ろの起動に任せる）。
     //   自動の経路（bg-async・cron・enforceReplyModeGate）は自前でブレインを直列に回すので対象外。戻す BRAIN_BEFORE_GENERATE=off
     if (persist && conversationId && !isTemplateOptimize && !externalBrainGate && !enforceReplyModeGate && (process.env.BRAIN_BEFORE_GENERATE ?? "").toLowerCase() !== "off"
-      && !(state && DRAFT_SKIP_STATUSES.has(state))) {
+      && !(state && DRAFT_SKIP_STATUSES.has(state))
+      // 2026-10-28 調べの #5（未来穂）: スタッフが続けて送っている途中（最後の通がこちら・8分以内）は再分析を待たせる（BRAIN_STAFF_BURST_WAIT=on・app/lib/staff-burst.ts）
+      && !(brainStaffBurstWaitEnabled() && staffSendingNow(recentMessages, Date.now()))) {
       const lastCustAtPre = [...recentMessages].reverse().find((m) => m.sender === "customer")?.createdAt ?? null;
       const preTier = detectBrainTier(brainGatePre?.meta ?? null, lastCustAtPre);
       const analyzedAtMsPre = brainGatePre?.brainAnalyzedAt ? new Date(brainGatePre.brainAnalyzedAt).getTime() : NaN;
@@ -6001,7 +6004,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // 手動生成でブレインの判断が古い時: 生成はブロックせず、ブレインを後ろで起動する（結果は画面のリアルタイム更新で P5 カードに届く）。
     //   bg-async / cron 経路（enforceReplyModeGate=true）は自前でブレインを直列実行するので起動しない。60秒以内に分析済みなら二重起動しない
     if (persist && conversationId && !enforceReplyModeGate && !isTemplateOptimize && replyAixInput && !brainDecision?.fresh
-        && !replyAixInput.isFirstReply && !(replyAixInput.conversationStatus && DRAFT_SKIP_STATUSES.has(replyAixInput.conversationStatus))) {
+        && !replyAixInput.isFirstReply && !(replyAixInput.conversationStatus && DRAFT_SKIP_STATUSES.has(replyAixInput.conversationStatus))
+        && !(brainStaffBurstWaitEnabled() && staffSendingNow(recentMessages, Date.now()))) {
       const analyzedAtMs = brainGate?.brainAnalyzedAt ? new Date(brainGate.brainAnalyzedAt).getTime() : NaN;
       if (Number.isNaN(analyzedAtMs) || Date.now() - analyzedAtMs > 60_000) {
         const convIdForBrain = conversationId;
