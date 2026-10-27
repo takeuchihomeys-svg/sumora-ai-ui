@@ -73,6 +73,7 @@ import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewing
 // 2026-09-18 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面の赤帯と一覧のバッジに出す
 import { cacheGet, cacheSet } from "./lib/page-cache";
 import { lastCustomerTs, badgeMessages, pollPlan, deltaSinceIso, upsertConversationRows, deltaNeedsLastCustomerRefresh, listPollLeanEnabled, rtLeanEnabled, rtUpdatePlan, convUiFingerprint, convDraftSignature } from "./lib/conversation-list-sync";
+import { listSnapshotOn, loadListSnapshot, saveListSnapshot, LIST_FIRST_PAGE_TIMEOUT_MS } from "@/app/lib/list-snapshot";
 import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, promiseCheckPatternOf, promiseOverdueDays, splitPromisesForFreshInquiry } from "./lib/promise-calendar";
 import { isWaitPromiseNotes, waitPromiseBadge } from "./lib/promise-timing";
 // 一覧の並び: 直近やり取り順（新しい方が上）だけ。2026-09-18 竹内「本来のLINEのように時間最新順に戻す」
@@ -121,6 +122,8 @@ const DRAFT_ECHO_GUARD = draftEchoGuardEnabled(process.env.NEXT_PUBLIC_DRAFT_ECH
 const FOREIGN_SEND_CLEAR = foreignSendClearEnabled(process.env.NEXT_PUBLIC_FOREIGN_SEND_CLEAR);
 // 2026-10-23 竹内「かなり重くなることもある LINE の画面」: 見ていない画面は定期の読み直しを休む・集計の取り直しは変わった時だけ（戻す NEXT_PUBLIC_LIST_POLL_LEAN=off）
 const LIST_POLL_LEAN = listPollLeanEnabled(process.env.NEXT_PUBLIC_LIST_POLL_LEAN);
+// 2026-10-28 一覧の端末の控え＋最初の読み込みの短い打ち切り（app/lib/list-snapshot.ts・既定 off）
+const LIST_SNAPSHOT_ON = listSnapshotOn(process.env.NEXT_PUBLIC_LIST_SNAPSHOT);
 // 2026-10-23 同上（Realtime）: 会話の更新で画面が使う列が変わっていない物は読み飛ばし・0.4秒の間はまとめて当てる（戻す NEXT_PUBLIC_RT_LEAN=off）
 const RT_LEAN = rtLeanEnabled(process.env.NEXT_PUBLIC_RT_LEAN);
 const pageHidden = () => LIST_POLL_LEAN && typeof document !== "undefined" && document.visibilityState === "hidden";
@@ -2969,13 +2972,30 @@ export default function Home() {
     //   → 最初は**直近の会話40件だけ**（メッセージなし・一覧の行は DB の last_message で出せる）を読んで、すぐ一覧を出す。
     //     残り（全件の会話・メッセージ）はこの後に続けて読む（要対応・AIX の件数、検索、未読数が正しくなるように）。
     if (!silent) {
-      const { data: firstRows, error: firstErr } = await supabase
+      // 2026-10-28 一覧の固まり（DB 全体が止まった時）: 端末の控え（直近40件・要る列だけ）を先に出し、最初の読み込みは短く打ち切る（app/lib/list-snapshot.ts・NEXT_PUBLIC_LIST_SNAPSHOT 既定 off）
+      if (LIST_SNAPSHOT_ON && conversationsRef.current.length === 0) {
+        const snap = loadListSnapshot<SupabaseConversationRow>(typeof window !== "undefined" ? window.localStorage : null);
+        if (snap && snap.length) {
+          const items = snap.map((r) => conversationRowToItem(r, []));
+          conversationsRef.current = items;
+          setConversations(items);
+          setSelectedId((prev) => prev || String(snap[0].id));
+          setPageLoading(false);
+          console.log(JSON.stringify({ tag: "list:snapshot-shown", rows: snap.length }));
+        }
+      }
+      const firstQuery = supabase
         .from("conversations")
         .select(CONVERSATION_LIST_COLUMNS)
         .order("updated_at", { ascending: false })
         .limit(FIRST_PAGE_CONVERSATIONS);
+      const { data: firstRows, error: firstErr } = LIST_SNAPSHOT_ON && typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+        ? await firstQuery.abortSignal(AbortSignal.timeout(LIST_FIRST_PAGE_TIMEOUT_MS))
+        : await firstQuery;
+      if (firstErr && LIST_SNAPSHOT_ON) console.warn(JSON.stringify({ tag: "list:first-page-failed", error: String(firstErr.message ?? firstErr).slice(0, 120) }));
       if (!firstErr && firstRows && firstRows.length > 0) {
         const rows = firstRows as unknown as SupabaseConversationRow[];
+        if (LIST_SNAPSHOT_ON) saveListSnapshot(typeof window !== "undefined" ? window.localStorage : null, rows);
         recordAppliedRows(rows);
         setConversations((prev) => {
           const prevMap = new Map(prev.map((c) => [c.id, c]));
