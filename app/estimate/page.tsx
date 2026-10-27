@@ -10,6 +10,7 @@ import type { ExtractedEstimate } from "../api/extract-estimate-info/route";
 import { buildEstimateMessage, buildSavingsLine, calcSavings } from "../lib/estimate-body";
 // 2026-10-01 竹内「見積書きかれたら LINE のところに見積書のがでて押したら見積書のツールのところに連携・送った物件がセットされた状態で」
 import { parseEstimateHandoff, buildEstimateReturnHref, profitLine, suggestEstimateDiscount, type EstimateHandoff, type EstimateTarget } from "../lib/estimate-handoff";
+import { estimateAdInputEnabled, resolveAdYen, discountShareLine, parseYenInput, AD_MONTH_CHOICES, type AdOverride } from "../lib/estimate-ad-input";
 import EstimateWatchPanel from "../components/EstimateWatchPanel";
 
 // 2026-10-23 見積の画像を売上番長グループに送る時の印（同じ画像の押し直しだけ同じ印・届いたら消す）
@@ -258,6 +259,10 @@ function EstimatePageContent() {
   const [handoff, setHandoff] = useState<EstimateHandoff | null>(null);
   const [handoffError, setHandoffError] = useState("");
   const [handoffTarget, setHandoffTarget] = useState<EstimateTarget | null>(null);
+  // 2026-10-28 AD の入力・選択（NEXT_PUBLIC_ESTIMATE_AD_INPUT=on の時だけ・estimate-ad-input）。入れた値が分かった AD より先
+  const adInputOn = estimateAdInputEnabled();
+  const [adOverride, setAdOverride] = useState<AdOverride>(null);
+  const [adYenText, setAdYenText] = useState("");
   const [prefillSrc, setPrefillSrc] = useState<Record<string, string>>({});
   const [materialLoading, setMaterialLoading] = useState(false);
   const [returning, setReturning] = useState(false);
@@ -1338,11 +1343,13 @@ function EstimatePageContent() {
                   </tfoot>
                 </table>
                 {/* 2026-10-01 割引はスタッフが決める: 目安（このお客様の前の割引／家賃×0.54ヶ月）と AD − 割引 ＝ 利益（スタッフにだけ見せる） */}
-                {handoff && (() => {
+                {(handoff || adInputOn) && (() => {
                   // 読み取った家賃（無ければ売上サポの家賃）で目安を出し直す。AD 円が無く月数だけ分かる時は 月数×家賃
                   const rentNow = items.rent || handoffTarget?.rent || null;
-                  const adYenNow = handoffTarget?.adYen ?? (handoffTarget?.adMonths != null && rentNow ? Math.round(handoffTarget.adMonths * rentNow) : null);
-                  const sug = suggestEstimateDiscount({ rent: rentNow, adYen: adYenNow, pastDiscounts: handoff.pastDiscounts });
+                  const adYenNow = adInputOn
+                    ? resolveAdYen({ override: adOverride, knownYen: handoffTarget?.adYen ?? null, knownMonths: handoffTarget?.adMonths ?? null, rent: rentNow }).yen
+                    : handoffTarget?.adYen ?? (handoffTarget?.adMonths != null && rentNow ? Math.round(handoffTarget.adMonths * rentNow) : null);
+                  const sug = suggestEstimateDiscount({ rent: rentNow, adYen: adYenNow, pastDiscounts: handoff?.pastDiscounts ?? [] });
                   return (
                     <div className="mt-2 rounded-xl border border-[#e1bee7] bg-[#faf5fc] px-3 py-2 text-[11px] text-[#6a1b9a]">
                       <div className="font-bold">🎯 割引（スタッフが決める・最終確認）</div>
@@ -1355,7 +1362,24 @@ function EstimatePageContent() {
                       ) : <div className="mt-1 text-[#9575cd]">目安を出せません（家賃・前の見積書が無い）</div>}
                       {sug?.warning && <div className="mt-0.5 text-[#c62828]">⚠ {sug.warning}</div>}
                       {sug?.pastMedianYen != null && <div className="mt-0.5 text-[#8e7cc3]">参考: このお客様に前に送った見積書の割引 {sug.pastMedianYen.toLocaleString()}円（別のお部屋）</div>}
-                      <div className="mt-1">{profitLine(adYenNow, items.discountAmount) ?? "AD が分からないので利益は出せません"}</div>
+                      {adInputOn && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          <span className="font-bold">AD</span>
+                          {AD_MONTH_CHOICES.map((m) => (
+                            <button key={m} onClick={() => { setAdOverride({ months: m, yen: null }); setAdYenText(""); }}
+                              className="rounded-full border px-2 py-0.5 text-[11px] font-bold"
+                              style={adOverride?.months === m ? { background: "#8e24aa", color: "#fff", borderColor: "#8e24aa" } : { background: "#fff", color: "#6a1b9a", borderColor: "#ce93d8" }}>
+                              {m}ヶ月
+                            </button>
+                          ))}
+                          <input value={adYenText} inputMode="numeric" placeholder="円で入れる（例 65000）"
+                            onChange={(e) => { setAdYenText(e.target.value); const y = parseYenInput(e.target.value); setAdOverride(y ? { months: null, yen: y } : null); }}
+                            className="w-36 rounded-lg border border-[#ce93d8] bg-white px-2 py-0.5 text-[11px] text-[#4a148c] outline-none" />
+                          {adOverride && <button onClick={() => { setAdOverride(null); setAdYenText(""); }} className="text-[11px] text-[#9575cd] underline">戻す</button>}
+                          {adOverride?.months != null && !rentNow && <span className="text-[#c62828]">家賃が読めていないので円で入れてください</span>}
+                        </div>
+                      )}
+                      <div className="mt-1">{(adInputOn ? discountShareLine(adYenNow, items.discountAmount) : profitLine(adYenNow, items.discountAmount)) ?? (adInputOn ? "AD を選ぶか円で入れると、割引が AD の何%か・利益が出ます" : "AD が分からないので利益は出せません")}</div>
                     </div>
                   );
                 })()}

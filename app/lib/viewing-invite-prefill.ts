@@ -21,6 +21,7 @@ import { latestCustomerTurnText, extractRequestedViewingDates, viewingAskClauses
 import { jstParts } from "./jst-date";
 import { nearestBookableDays, isBookable, VIEWING_CANDIDATE_DAYS, type CandidateDay } from "./viewing-candidates";
 import { extractCircumstances, validCircumstances } from "./customer-circumstances";
+import { timeOfDayOf, type TimeOfDay } from "./day-subject-reader";
 
 const DAY_MS = 86_400_000;
 
@@ -28,8 +29,8 @@ type Msg = { sender?: string | null; text?: string | null };
 
 export type ViewingDateSpec =
   | { kind: "none" }
-  /** 日付の指定（今日・明日・18日・10月8日・木曜日・来週の土曜…）＝内覧日指定あり */
-  | { kind: "dates"; dates: RequestedViewingDate[]; evidence: string }
+  /** 日付の指定（今日・明日・18日・10月8日・木曜日・来週の土曜…）＝内覧日指定あり。timeOfDay＝「朝方」等の時間帯の指定（NEXT_PUBLIC_VIEWING_TIME_OF_DAY=on の時だけ付く） */
+  | { kind: "dates"; dates: RequestedViewingDate[]; evidence: string; timeOfDay?: TimeOfDay }
   /** 幅の指定（土日・週末・平日・今週・来週・再来週）＝その幅の中の空いている日 */
   | { kind: "range"; ymds: string[]; label: string; evidence: string };
 
@@ -55,7 +56,19 @@ export function customerViewingDateSpec(messagesOldestFirst: ReadonlyArray<Msg>,
   if (dates.length === 1 && fromSpecEnabled() && hasFromWord(text, dates[0].m, dates[0].d)) {
     return { kind: "range", ymds: ymdsFrom(dates[0].ymd, FROM_RANGE_DAYS), label: `${dates[0].md}以降`, evidence: text.slice(0, 80) };
   }
-  if (dates.length > 0) return { kind: "dates", dates, evidence: text.slice(0, 80) };
+  if (dates.length > 0) {
+    const tod = viewingTimeOfDayEnabled() ? timeOfDayOf(text) : null;
+    return { kind: "dates", dates, evidence: text.slice(0, 80), ...(tod ? { timeOfDay: tod } : {}) };
+  }
+  // 2026-10-28（竹内さん 10/20 会話H・owner-fb:1020-morning-viewing）: お客様「今週の土曜内覧可能ですか？」→ こちら「10/24(土) 14:00〜16:00」→
+  //   お客様「朝方は空いてないでしょうか？」＝今の発言に日付は無いが、時間帯の指定。日は前の流れ（お客様の前の発言・こちらが出した日）のまま、
+  //   時間だけ朝方に（スタッフの実送信は「10/24(土) 10:30〜12:00」）。旧はこの番で日付の指定が無い＝どの日も入らず空だった。
+  //   NEXT_PUBLIC_VIEWING_TIME_OF_DAY=on の時だけ（既定 off）
+  if (viewingTimeOfDayEnabled()) {
+    const tod = timeOfDayOf(text);
+    const carried = tod ? carriedViewingDates(messagesOldestFirst, nowMs) : null;
+    if (tod && carried) return { kind: "dates", dates: carried.dates, evidence: `${carried.evidence} ／ ${text.slice(0, 40)}`, timeOfDay: tod };
+  }
 
   const now = jstParts(nowMs);
   const today = Date.UTC(now.y, now.m - 1, now.d);
@@ -96,6 +109,33 @@ export function customerViewingDateSpec(messagesOldestFirst: ReadonlyArray<Msg>,
   }
   return fromSpec ?? { kind: "none" };
 }
+
+// ─── 2026-10-28 時間帯の指定（朝方・午後・夕方）を前の流れの日に重ねる ───
+export function viewingTimeOfDayEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.NEXT_PUBLIC_VIEWING_TIME_OF_DAY ?? "").trim().toLowerCase() === "on";
+}
+/** 前の流れの日（今の発言の前の6通を新しい順に・お客様の日付の指定かこちらが出した日）。日が無ければ null */
+export function carriedViewingDates(messagesOldestFirst: ReadonlyArray<Msg>, nowMs: number): { dates: RequestedViewingDate[]; evidence: string } | null {
+  const msgs = messagesOldestFirst.filter((m) => !!(m.text ?? "").trim());
+  let end = msgs.length - 1;
+  while (end >= 0 && msgs[end].sender !== "customer") end--;
+  while (end >= 0 && msgs[end].sender === "customer") end--; // 今の発言（お客様の連投）の前から
+  for (let i = end, n = 0; i >= 0 && n < 6; i--, n++) {
+    const dates = extractRequestedViewingDates(msgs[i].text ?? "", nowMs);
+    if (dates.length) return { dates, evidence: `${msgs[i].sender === "customer" ? "お客様" : "こちら"}「${(msgs[i].text ?? "").replace(/\s+/g, " ").slice(0, 40)}」` };
+  }
+  return null;
+}
+/**
+ * 時間帯の指定の時間の枠（AIX【内覧へ！】の開始〜終了の初期値）。
+ *   朝方＝10:30〜12:00（10/20 会話H のスタッフの実送信「10/24(土) 10:30〜12:00」）。他は内覧の枠（11:00〜18:30）の中で区切った目安
+ */
+export const TIME_OF_DAY_WINDOW: Readonly<Record<TimeOfDay, { start: string; end: string }>> = {
+  morning: { start: "10:30", end: "12:00" },
+  noon: { start: "12:00", end: "14:00" },
+  afternoon: { start: "14:00", end: "17:00" },
+  evening: { start: "17:00", end: "18:30" },
+};
 
 // ─── 2026-10-08 竹内さん（把握「お客様の事情」の続き）「その通りで AIX の内覧調整でその日以降で出すようにする。あくまでも AIX から返信」 ───
 //   お客様が前の発言（直近の会話）で「〇日以降なら来られる」と言っていて（customer-circumstances.ts の available_from・鮮度つき）、
@@ -147,6 +187,8 @@ export type ViewingInvitePrefill = {
   specificMode: boolean;
   /** 画面に出す理由（なぜこの日が入った／入っていないか） */
   reason: string;
+  /** お客様の時間帯の指定の時の時間の枠（チェックした日の開始〜終了に入れる） */
+  timeWindow?: { start: string; end: string };
 };
 
 /** 指定が無い時の既定（戻し用の切り替え） */
@@ -171,10 +213,12 @@ export function resolveViewingInvitePrefill(o: {
   if (o.vacancyEnabled) return { enabled: o.vacancyEnabled, specificMode: false, reason: "退去予定のお部屋: 退去日の翌日から順に空いている日（9/19 の決まり）" };
   if (spec.kind === "dates") {
     const want = new Set(spec.dates.map((d) => d.ymd));
+    const tw = spec.timeOfDay ? TIME_OF_DAY_WINDOW[spec.timeOfDay] : null;
     return {
       enabled: days.map((d) => want.has(d.ymd)),
       specificMode: true,
-      reason: `お客様の指定の日（${spec.dates.map((d) => d.label).join("・")}）`,
+      reason: `お客様の指定の日（${spec.dates.map((d) => d.label).join("・")}）${tw ? `・時間帯「${spec.timeOfDay === "morning" ? "朝方" : spec.timeOfDay === "noon" ? "お昼" : spec.timeOfDay === "afternoon" ? "午後" : "夕方"}」→ ${tw.start}〜${tw.end}` : ""}`,
+      ...(tw ? { timeWindow: tw } : {}),
     };
   }
   if (spec.kind === "range") {

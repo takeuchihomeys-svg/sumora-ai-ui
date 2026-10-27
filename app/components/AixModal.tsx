@@ -6,7 +6,7 @@ import { supabase } from "../lib/supabase";
 import { IMAGE_BATCH_MAX } from "../lib/line-image-batch";
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDayResult } from "../lib/calendarSlots";
 // 2026-10-05 竹内（ゆいと事例）「日程はお客さんから指定がなければいれない」: 開いた時に入れる日（純関数・テストあり）
-import { customerViewingDateSpec, resolveViewingInvitePrefill, specExtraYmds, noSpecBehaviorFromEnv } from "../lib/viewing-invite-prefill";
+import { customerViewingDateSpec, resolveViewingInvitePrefill, specExtraYmds, noSpecBehaviorFromEnv, TIME_OF_DAY_WINDOW } from "../lib/viewing-invite-prefill";
 // 2026-10-06 竹内（ゆいと・チンシャン事例）「送った物件選択してそこから おこなえるようにする（見積書作成の時のように）」: 内覧の AIX の送った物件の候補
 import SentPropertyPicker from "./SentPropertyPicker";
 import { preselectViewingCandidates, latestCustomerTurnStartAt, preselectViewingInvite, splitViewingNames, toggleViewingNames, pickedViewingLabels, viewingInviteMultiEnabled, VIEWING_NAMES_SEP, type ViewingPropertyCandidate } from "../lib/viewing-property-candidates";
@@ -44,6 +44,7 @@ import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
 import { firstSentPickupId, pickupIdsForSentFiles } from "../lib/sent-image-order";
 import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown } from "../lib/hearing-form";
+import { aixCheckStaffNoteEnabled, checkResultStaffNotes } from "../lib/aix-check-staff-note";
 import { detectCoResidentWithOccupants } from "../lib/co-resident";
 import { APP_FORMAT_SECTIONS } from "../lib/application-format";
 import ZumenZipImport from "./ZumenZipImport";
@@ -1067,6 +1068,13 @@ export default function AixModal({
       : { value: "unknown" as const, evidence: null, occupants: null }),
     [actionType, recentMessages, customerConditions],
   );
+  // 2026-10-28 物件確認した: 管理会社に一緒に聞く条件のスタッフ向けの注記（小型犬2匹 等・NEXT_PUBLIC_AIX_CHECK_STAFF_NOTE=on の時だけ・aix-check-staff-note）
+  const checkStaffNotes = useMemo(
+    () => (actionType === "property_check_result" && aixCheckStaffNoteEnabled()
+      ? checkResultStaffNotes(customerConditions ?? "", (recentMessages ?? []).filter((m) => m.sender === "customer").slice(-10).map((m) => m.text ?? ""))
+      : []),
+    [actionType, recentMessages, customerConditions],
+  );
   const coResidentPreset = (): "single" | "shared" | null => (coResidentDetected.value === "unknown" ? null : coResidentDetected.value);
   useEffect(() => {
     if (actionType === "application_push" && appSubMode === "format" && appFormatLivingType === null) setAppFormatLivingType(coResidentPreset());
@@ -1162,7 +1170,14 @@ export default function AixModal({
   const viewingAutoDateRef = useRef("");
   // お客様の最新の発言の内覧希望日（2026-09-15 隼斗事例: 断りの文を除く・「18日」も読む・日本時間）
   const viewingRequested = useMemo(
-    () => (actionType === "viewing_invite" ? requestedViewingDatesFromMessages(recentMessages ?? []) : []),
+    () => {
+      if (actionType !== "viewing_invite") return [];
+      const r = requestedViewingDatesFromMessages(recentMessages ?? []);
+      if (r.length) return r;
+      // 2026-10-28 「朝方は空いてないでしょうか」（日付なし・時間帯だけ）は前の流れの日（NEXT_PUBLIC_VIEWING_TIME_OF_DAY=on の時だけ・viewing-invite-prefill）
+      const sp = customerViewingDateSpec(recentMessages ?? []);
+      return sp.kind === "dates" && sp.timeOfDay ? sp.dates : [];
+    },
     [actionType, recentMessages],
   );
   const viewingRequestedKey = viewingRequested.map((r) => r.ymd).join(",");
@@ -1984,6 +1999,12 @@ export default function AixModal({
         });
         setViewingSlotEnabled(prefill.enabled);
         setViewingPrefillReason(prefill.reason);
+        // 2026-10-28 お客様の時間帯の指定（「朝方は空いてないでしょうか」・NEXT_PUBLIC_VIEWING_TIME_OF_DAY=on の時だけ付く）: チェックした日の時間の枠をその時間帯に
+        const tw = prefill.timeWindow;
+        if (tw) {
+          setViewingSlotStarts(days.map((d, i) => (prefill.enabled[i] ? tw.start : parseTime(d.slots[0] || "").start)));
+          setViewingSlotEnds(days.map((d, i) => (prefill.enabled[i] ? tw.end : parseTime(d.slots[0] || "").end)));
+        }
       } catch {
         setViewingCalendarDays([]);
         setViewingSlotEnabled([]);
@@ -2007,7 +2028,9 @@ export default function AixModal({
     if (!defaults) return; // 空き枠なし → 日程・時間は空欄のまま（手動入力を促す）
     viewingAutoDateRef.current = defaults.date;
     setViewingSpecificDate(defaults.date);
-    setViewingSpecificTimes(defaults.times);
+    // 2026-10-28 お客様の時間帯の指定（朝方 等）がある時はその時間の枠（viewing-invite-prefill.TIME_OF_DAY_WINDOW）
+    const todWin = viewingDateSpec.kind === "dates" && viewingDateSpec.timeOfDay ? TIME_OF_DAY_WINDOW[viewingDateSpec.timeOfDay] : null;
+    setViewingSpecificTimes(todWin ? `${todWin.start}〜${todWin.end}` : defaults.times);
     // 採用した日付に一致するカレンダー日のみチェック（本日は指定がなければチェックしない）
     setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, defaults.date));
   };
@@ -8841,6 +8864,11 @@ export default function AixModal({
               actionType === "zenryoku_support"
             ) ? (
               <div className="flex flex-col gap-2 w-full">
+                {checkStaffNotes.length > 0 && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] leading-relaxed text-amber-800">
+                    {checkStaffNotes.map((n) => <div key={n}>{n}</div>)}
+                  </div>
+                )}
                 {actionType === "condition_hearing" && (
                   <button
                     onClick={sendHearingFormOnly}
