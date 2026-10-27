@@ -217,7 +217,7 @@
   document.body.appendChild(miniBtnEl);
 
   // ── 展開状態で起動（iframeを即座に作成・コンテキスト無効時は1.5秒後リトライ）──
-  if (wasExpanded) {
+  function startExpanded() {
     pendingExpand = true;
     if (!ensureIframe()) {
       pendingExpand = false;
@@ -229,6 +229,28 @@
         }
       }, 1500);
     }
+  }
+  // v2.5.90 2026-10-27 竹内「お客さんで検索中は勝手に開かないように。おしたら開くようにする」:
+  //   案内の記録（リアプロ axlx_guide_session・ITANDI axlx_itandi_guide_session・2時間以内）がある＝お客様の検索中は、
+  //   ページを開くたびに広げずミニボタンで起動する（押せば doExpand）。検索中でない時は今まで通り展開で起動（2026-06-07 の要望）。
+  //   会話画面の「🔍 物件検索」（axlx-search-focus-open）は押した操作なので今まで通り広げる。記録が読めない時は今まで通り展開
+  const GUIDE_KEYS = ["axlx_guide_session", "axlx_itandi_guide_session"];
+  const GUIDE_TTL_MS = 2 * 3600 * 1000;
+  if (wasExpanded) {
+    let decided = false;
+    const decide = function (searching) {
+      if (decided) return;
+      decided = true;
+      if (searching) setSize(false); else startExpanded();
+    };
+    try {
+      chrome.storage.session.get(GUIDE_KEYS, function (r) {
+        if (chrome.runtime.lastError) { decide(false); return; }
+        const now = Date.now();
+        decide(GUIDE_KEYS.some(function (k) { const s = r && r[k]; return !!(s && s.at && now - s.at <= GUIDE_TTL_MS); }));
+      });
+      setTimeout(function () { decide(false); }, 1500); // 返事が来ない時は今まで通り
+    } catch (_e) { decide(false); }
   }
 
   // ── サイズ切り替え ────────────────────────────────────────────────
