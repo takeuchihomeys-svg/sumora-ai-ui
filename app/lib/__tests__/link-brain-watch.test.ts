@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/link-brain-watch.test.ts
 import {
   watchConversation, watchLinks, reactionTokensOf, pickupReadyAt, promiseWordsOf, compactLinkSummary, renderLinkSummary,
-  linkBrainTodoEnabled, linkBrainWatchEnabled, type LinkConvInput, type LinkWindow, type LinkVerdict,
+  linkBrainTodoEnabled, linkBrainWatchEnabled, isPickupButtonMislabeled, type LinkConvInput, type LinkWindow, type LinkVerdict,
 } from "../link-brain-watch";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -182,6 +182,12 @@ it("つなぎごとに数え、例の名前を伏せ、まとめに例の文を�
   const c = JSON.stringify(compactLinkSummary(s));
   if (c.includes("駐車場") || c.includes("山田")) throw new Error("まとめに文が残った");
   if (!renderLinkSummary(s, { examples: true }).includes("①約束→ピッカー")) throw new Error("表に名前が無い");
+});
+
+it("ピックアップの約束を物件オススメ（1件）で果たした: off は取り違え・LINK_WATCH_PICKUP_BY_RECOMMEND=on は果たした", () => {
+  eq(isPickupButtonMislabeled(false, "property_recommendation", null, {}), true);
+  eq(isPickupButtonMislabeled(false, "property_recommendation", null, { LINK_WATCH_PICKUP_BY_RECOMMEND: "on" }), false);
+  eq(isPickupButtonMislabeled(false, "property_send", null, { LINK_WATCH_PICKUP_BY_RECOMMEND: "on" }), false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

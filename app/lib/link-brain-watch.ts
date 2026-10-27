@@ -304,8 +304,16 @@ const pickupVsWatch: Reader = {
  *   2026-10-21 LINK_PROMISE_PICKER: 旧は send_mode を見ず、新着の約束を 物件ピックアップした で果たした3件を全部取り違えに数えていたが、
  *   3件とも send_mode=new_arrival（新着まとめ）＝正しい新着のボタンだった（数え違い）。send_mode が初回（normal）・不明の時だけ取り違え
  */
+/**
+ * 2026-10-28 竹内さんの決定（owner_questions・「全部いれてよい」）: ピックアップの約束を、見つかったのが1件の時に AIX【物件オススメ】で果たすのは正しい
+ *   （1件ならオススメ・複数ならピックアップ＝新着の約束 ef5b7dbe・代わりの物件 5cb4bd2f と同じ考え）。14日の切れ 9件は全部この形の数え違い。
+ *   LINK_WATCH_PICKUP_BY_RECOMMEND=on の時は取り違えに数えない（既定 off）
+ */
+export function linkWatchPickupByRecommendEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.LINK_WATCH_PICKUP_BY_RECOMMEND ?? "").trim().toLowerCase() === "on";
+}
 export function isPickupButtonMislabeled(watch: boolean, aixType: string, sendMode: string | null | undefined, env?: Record<string, string | undefined>): boolean {
-  if (!watch) return aixType === "property_recommendation";
+  if (!watch) return aixType === "property_recommendation" && !linkWatchPickupByRecommendEnabled(env);
   if (aixType !== "property_send") return false;
   if (!linkPromisePickerEnabled(env)) return true;
   return !["new_arrival", "widen", "alternative"].includes(String(sendMode ?? ""));
