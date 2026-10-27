@@ -33,6 +33,7 @@
 //   影の運用（既定）では drop も落とさず印だけ＝誤削除の実測が溜まってから PROPERTY_BRAIN_DROP=on にする。
 
 import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
+import { renovationOfText } from "./listing-renovation";
 import { isGenericBuildingName } from "./generic-building-name";
 import { EQUIP_LABELS, conditionalFloorOf, floorFromRoom, parseEquipmentWants, BATH_TOILET_WANT_RE, BATH_TOILET_NOT_REQUIRED_RE, type EquipmentMatch, type EquipKey } from "./listing-equipment";
 import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
@@ -528,6 +529,7 @@ export const REASON_JA: Record<string, string> = {
   BUILDING_AGE_SLIGHTLY_OVER: "築年が希望を少し超過",
   BUILDING_AGE_WIDE: "築年が広げた検索の幅の中（希望＋5年まで）",
   BUILDING_AGE_OVER: "築年が希望超過",
+  BUILDING_AGE_RENOVATED: "築年は希望超過だがリノベーション済み（減点しない）",
   ALREADY_SENT: "この建物は送付済み",
   ALREADY_SENT_OTHER_ROOM: "同じ建物を送付済み（この部屋は送った部屋に無い・号室を確認）",
   ALREADY_SENT_SAME_ROOM: "この部屋は送付済み（送り直しか確認）",
@@ -834,7 +836,7 @@ export const REASON_POINTS: Record<string, number> = {
   ZERO_ZERO_MATCH: 20, ZERO_ZERO: 8, INITIAL_COST_NOT_ZERO: -15, INITIAL_COST_NOT_ZERO_SOFT: -5, INITIAL_COST_OVER_LIMIT: -10, INITIAL_COST_UNKNOWN: 0,
   FLOOR_PLAN_MATCH: 15, FLOOR_PLAN_NEAR: 5, FLOOR_PLAN_MISMATCH: -15, FLOOR_PLAN_TOO_SMALL: -35,
   WALK_OK: 10, WALK_SLIGHTLY_OVER: -5, WALK_OVER: -15,
-  BUILDING_AGE_OK: 5, BUILDING_AGE_SLIGHTLY_OVER: -3, BUILDING_AGE_OVER: -10,
+  BUILDING_AGE_OK: 5, BUILDING_AGE_SLIGHTLY_OVER: -3, BUILDING_AGE_OVER: -10, BUILDING_AGE_RENOVATED: 0,
   ALREADY_SENT: -30,
   // 2026-09-25 竹内「AD は2ヶ月以上だと点数が高い形。ほかの項目より AD は1.3倍ほど価値ある」→
   //   竹内「AD 150%以上は1.15倍、200%以上は1.3倍と重みを付ける。ここ分ける」:
@@ -1631,7 +1633,7 @@ const FIT_TABLE: Record<string, [string, FitVerdict]> = {
   LDK_JO_OK: ["リビングの帖数", "ok"], LDK_JO_NG: ["リビングの帖数", "ng"], LDK_JO_UNKNOWN: ["リビングの帖数", "unread"],
   WALK_OK: ["徒歩", "ok"], WALK_SLIGHTLY_OVER: ["徒歩", "soft_ng"], WALK_OVER: ["徒歩", "ng"],
   WALK_TEXT_OK: ["徒歩", "ok"], WALK_TEXT_OVER: ["徒歩", "soft_ng"], WALK_TEXT_FAR: ["徒歩", "soft_ng"],
-  BUILDING_AGE_OK: ["築年", "ok"], BUILDING_AGE_WIDE: ["築年", "wide"], BUILDING_AGE_SLIGHTLY_OVER: ["築年", "soft_ng"], BUILDING_AGE_OVER: ["築年", "ng"],
+  BUILDING_AGE_OK: ["築年", "ok"], BUILDING_AGE_WIDE: ["築年", "wide"], BUILDING_AGE_SLIGHTLY_OVER: ["築年", "soft_ng"], BUILDING_AGE_OVER: ["築年", "ng"], BUILDING_AGE_RENOVATED: ["築年", "wide"],
   BUILDING_AGE_TEXT_OK: ["築年", "ok"], BUILDING_AGE_TEXT_OVER: ["築年", "soft_ng"],
   AREA_STATION_MATCH: ["エリア", "ok"], AREA_WARD_MATCH: ["エリア", "ok"], AREA_LINE_MATCH: ["エリア", "ok"], AREA_REGION_MATCH: ["エリア", "ok"],
   AREA_STATION_WIDE: ["エリア", "wide"], AREA_WARD_WIDE: ["エリア", "wide"], AREA_STATION_2STOPS: ["エリア", "wide"], AREA_NEAR: ["エリア", "wide"], AREA_CLOSE: ["エリア", "wide"],
@@ -2033,6 +2035,18 @@ export const RENT_USUAL_MIN_SENT = 3;
 /** 家賃の下限の線（下限の 85% 未満で情報の札） */
 export const RENT_MIN_RATIO = 0.85;
 
+/** リノベーション物件の築年の扱いを直すか（2026-10-20 竹内さん・KB 6497a18a）。既定 off */
+export function renovAgeFixEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PROPERTY_RENOV_AGE_1020 ?? "").trim().toLowerCase() === "on";
+}
+/** 築年の希望超過を減点しない（リノベ済みと読めた時だけ・資料の印 terms.renovated か物件名・説明文。listing-renovation.renovationOfText と同じ線） */
+export function renovatedAgeOk(facts: Pick<PropertyFacts, "name" | "rawText">, terms?: { renovated?: boolean | null } | null, env?: Record<string, string | undefined>): boolean {
+  if (!renovAgeFixEnabled(env)) return false;
+  if (terms?.renovated === true) return true;
+  return renovationOfText(`${facts.name ?? ""}
+${facts.rawText ?? ""}`) === true;
+}
+
 export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, index = 0, opts: JudgeOptions = {}): Judgment {
   let score = 50;
   const codes: string[] = [];
@@ -2156,6 +2170,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     if (facts.buildingAge <= profile.buildingAgeMax) add("BUILDING_AGE_OK", 5);
     // 広げた検索の築年（＋5年まで）は少しだけ低い +2（旧: ＋3年まで −3・＋4〜5年は保留）。BUILDING_AGE_SLIGHTLY_OVER は保存済みの行のために表に残す
     else if (facts.buildingAge <= profile.buildingAgeMax + WIDE_AGE_YEARS) add("BUILDING_AGE_WIDE", reasonPoints("BUILDING_AGE_WIDE"));
+    // 2026-10-20 竹内さんの決定（KB 6497a18a）: リノベーション物件は築年数が古くても大丈夫＝希望超過を減点・保留にしない（PROPERTY_RENOV_AGE_1020=on の時だけ・既定 off）
+    else if (renovatedAgeOk(facts, opts.terms as { renovated?: boolean | null } | null | undefined)) add("BUILDING_AGE_RENOVATED", 0);
     else add("BUILDING_AGE_OVER", -10, "hold");
   } else if (profile.buildingAgeMax != null) missing.push("building_age");
   // 築年の列が空で自由文に「新築・築浅」: 情報の札だけ（合えば +3・古くても 0点）

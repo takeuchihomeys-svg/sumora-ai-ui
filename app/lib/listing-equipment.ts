@@ -663,6 +663,29 @@ const STRONG_RE = /必須|絶対|マスト|\[必須\]/;
 const SOFT_RE = /できれば|出来れば|あれば|あったら|嬉しい|うれしい|理想|なるべく|できたら|出来たら|優先|or|または|もしくは/;
 /** 「ペットなし」「ペット飼育なし」「ペットなし対応可能」＝お客様がペットを飼っていない話（希望ではない） */
 const PET_SELF_NONE_RE = /ペット(?:飼育)?(?:は|が)?(?:なし|無し|無|いない|いません|飼っていない|飼わない)/;
+/**
+ * 2026-10-20 竹内さん（KB cd83b2c6・ワールドアイ京町堀 204）「ペット飼育可能なのに、ペット飼育可能のスコアリングがちゃんとできていなかった」:
+ *   実データ 361人の条件で、ペットの希望が ng（あってほしくない）になったのは3人。うち2人は読み違い:
+ *   NG欄の「ペット不可」＝ペット不可の物件が NG（＝ペット飼育可能を望む）を ng にしていた／「ペット不可でも可」＝こだわらない を ng にしていた。
+ *   「ペット なし」（空白入り）は自分がペットを飼っていない話。PROPERTY_PET_WANT_1020=on の時だけ（既定 off）
+ */
+export function petWantFixEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PROPERTY_PET_WANT_1020 ?? "").trim().toLowerCase() === "on";
+}
+const PET_SELF_NONE_SPACED_RE = /ペット[\s　]*(?:飼育)?[\s　]*(?:は|が)?[\s　]*(?:なし|無し|いない|いません|飼っていない|飼わない)/;
+/** 「ペット不可でも可」「ペット禁止でも大丈夫」＝こだわらない（希望ではない） */
+const PET_NG_ACCEPT_RE = /ペット(?:飼育)?(?:不可|禁止|NG)(?:でも|も)(?:可|OK|大丈夫|良い|いい|構わない)/;
+/** 物件の性質としての「ペット不可・禁止」（NG欄に書けば、その物件が NG＝ペット飼育可能を望む） */
+const PET_FORBIDDEN_RE = /ペット(?:飼育)?(?:不可|禁止)/;
+/**
+ * ペットの希望の向き（直しの線・純関数）。null＝今まで通りの読み／"skip"＝希望にしない／"must"＝ペット飼育可能を望む
+ */
+export function petWantOverride(c: string, field: WantField, env?: Record<string, string | undefined>): "skip" | "must" | null {
+  if (!petWantFixEnabled(env)) return null;
+  if (PET_SELF_NONE_SPACED_RE.test(c) || PET_NG_ACCEPT_RE.test(c)) return "skip";
+  if (field === "ng_points" && PET_FORBIDDEN_RE.test(c) && !/ペット(?:飼育)?(?:可|OK)(?:能)?(?:NG|ng|×|不可)/.test(c)) return "must";
+  return null;
+}
 /** ng_points の「Xなし」「X無」＝「X が無いのは NG」＝X が欲しい（must に反転） */
 const NG_FIELD_NONE_RE = /^(?:が|は)?(?:なし|無し|無い|ない|無)(?![料])/;
 const ACCEPT_ONLY_RE = /ユニットバス(?:でも)?(?:可|OK|大丈夫|いい|良い|よい|構わない)|3点ユニット(?:でも)?(?:可|OK|大丈夫|いい|良い|よい|構わない)/;
@@ -773,7 +796,8 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
     res.wants.push(w);
   };
   for (const [field, raw] of fields) {
-    for (const c of splitWantClauses(raw)) {
+    // 2026-10-20（petWantOverride）: 「ペット なし」の空白で節が「ペット」「なし」に割れて、自分の話が希望の must になっていた → 節に分ける前に空白を詰める
+    for (const c of splitWantClauses(petWantFixEnabled() ? raw.replace(/ペット[\s　]+(?=(?:飼育)?[\s　]*(?:なし|無し|いない|いません))/g, "ペット") : raw)) {
       if (/^(?:特になし|なし|無し|ー|-)$/.test(c)) continue;
       const strong = STRONG_RE.test(c), soft = SOFT_RE.test(c);
       let hit = false;
@@ -803,6 +827,8 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
       for (const { key, re } of WANT_RES) {
         if (key === "bath_toilet" && (ACCEPT_ONLY_RE.test(c) || BATH_TOILET_NOT_REQUIRED_RE.test(c) || /(?:バス|風呂|浴室)・?トイレ(?:一緒|同室)|トイレ同室/.test(c))) continue;
         if (key === "pet" && petSelfNone) continue; // 自分はペットを飼っていない（希望ではない）
+        const petOv = key === "pet" ? petWantOverride(c, field) : null;
+        if (petOv === "skip") { hit = true; continue; }
         const m = c.match(re);
         if (!m) continue;
         // 「オール電化orガス」「IHコンロ(ガスもOK)」のような選択は両方 soft にはせずそのまま
@@ -811,6 +837,7 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
         if (AFTER_NG_RE.test(after) || AFTER_NG_RE.test(after.replace(/^(?:可|OK|可能|相談可?)/, ""))) mode = "ng";
         else if (field === "ng_points" && NG_FIELD_NONE_RE.test(after)) mode = "must"; // NG欄の「独立洗面なし」＝無いのが NG
         else if (field === "ng_points" && !/あり|付き|付|可|希望|欲しい|ほしい|必須/.test(c)) mode = "ng";
+        if (petOv === "must") mode = "must";
         push({ key, mode, strong, soft: soft || /^(?:も|でも)(?:OK|可|大丈夫)/.test(after), text: c, field, ...(condFloor != null ? { ifFloorAtLeast: condFloor } : {}) });
         hit = true;
       }
