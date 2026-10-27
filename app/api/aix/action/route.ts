@@ -107,6 +107,7 @@ import { buildViewingBeforeGreeting, viewingAfterThankLine } from "@/app/lib/vie
 import { PROPERTY_SEARCH_SYSTEM, buildPropertySearchUser, propertySearchFallback, propertySearchTextIssues } from "@/app/lib/property-search-promise";
 import { buildGuarantorInfoText, buildGuarantorMatchedText, guarantorInfoShape, guarantorInfoStructure, GUARANTOR_ANSWER_STAFF_EXAMPLES, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, resolveGuarantorForText, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, normalizeGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, GUARANTOR_TYPE_SCREENING_NOTE, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims, DEADLINE_SUPPORT_LINE, INSERTED_PROMISE_LINES, stripUnkeptConfirmPromiseLines } from "@/app/lib/property-send-match";
+import { maybeStripListingName, listingNameStripEnabled, stripListingAnnotationInHeads } from "@/app/lib/listing-name-strip";
 import { wardOfPickupRow, moveInFactOfPickup, buildMoveInFactNote, findMoveInClaimConflict, findPickupAreaConflict, buildPickupWardNote, sanitizeSentPropertyCount, findCheckStatusContradiction, findCheckResultMoveInClaim, hasStaffMoveInClaim, PAST_MOVE_IN_CLAIM_NOTE, alignStarHeadToMaterial, type PickupMaterialRow } from "@/app/lib/aix-material-facts";
 import { labelHistoryTextForAix, labelsPastPickupFor, isPastPickupSend, PAST_PICKUP_HISTORY_NOTE, parsePickupFact, buildPickupFactsNote, findPickupSendConflicts, restoreConditionDots, type PickupFact } from "@/app/lib/pickup-send-facts";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
@@ -3228,9 +3229,15 @@ ${SMORA_COMMON_RULES}`;
       //   見出し「🌟建物 号室」の建物名を資料の字に揃える（資料「天神橋筋六丁目」→ 本文「天神橋六丁目」。送った後の物件名の照合が
       //   この見出しを拾い、sent_properties に誤った名前で残る＝同じ部屋の「送付済み」の確かめに当たらない）。本文は触らない
       if (pickupRowsForFacts.length === 1 && pickupRowsForFacts[0].property_name) {
-        const al = alignStarHeadToMaterial(message_text, { propertyName: pickupRowsForFacts[0].property_name });
+        // 2026-10-28 LISTING_NAME_STRIP=on: 資料の物件名のサイト名・「最新」の付記（「ACT正雀(イタンジ最新)」）は外してからそろえる（listing-name-strip）
+        const al = alignStarHeadToMaterial(message_text, { propertyName: maybeStripListingName(pickupRowsForFacts[0].property_name) });
         if (al.changed) { console.log(JSON.stringify({ tag: "aix:recommendation-head-aligned", conversationId, from: al.from, to: al.to })); message_text = al.text; }
         else if (al.mismatch) { recHeadMismatch = al.mismatch; console.warn(JSON.stringify({ tag: "aix:recommendation-head-mismatch", conversationId, note: al.mismatch })); }
+      }
+      // 行 ID が無く見出しをそろえない時も、見出しの行（🌟／【】）の付記のかっこだけは外す（本文の他の行は触らない）
+      if (listingNameStripEnabled()) {
+        const st = stripListingAnnotationInHeads(message_text);
+        if (st.changed) { console.log(JSON.stringify({ tag: "aix:listing-name-stripped", conversationId })); message_text = st.text; }
       }
       // 2026-09-18 竹内（𝒮 さん事例）「状況に合わせて、物件申込誘導するのと、物件1件しか送っていない場合は
       //   お送りさせて頂いたお部屋の中でもの部分はいれない」:

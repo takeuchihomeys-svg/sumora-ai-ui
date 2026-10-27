@@ -248,7 +248,7 @@ async function buildTargetInputs(
  * 今日のターゲットの一覧（並び: ①内覧済み ②審査落ち ③新規 ④物件検索中 → 最後のお客様の発言が新しい順）。
  * 申込以降は審査落ちの切り替えだけ・テスト用の会話・ブロックは入れない
  */
-export async function loadBrainTargets(db: Db = supabase, opts: { sinceDays?: number; limit?: number } = {}): Promise<BrainTarget[]> {
+export async function loadBrainTargets(db: Db = supabase, opts: { sinceDays?: number; limit?: number; reapplyConcurrency?: number } = {}): Promise<BrainTarget[]> {
   const since = new Date(Date.now() - (opts.sinceDays ?? 60) * 86_400_000).toISOString();
   const { data: convRows, error } = await db.from("conversations")
     .select("id, customer_name, status, line_status, created_at, updated_at, last_sender, last_message, property_customer_id, status_manual_back_at, suggested_aix_meta, is_post_apply, deepseek_cutoff_at")
@@ -268,12 +268,20 @@ export async function loadBrainTargets(db: Db = supabase, opts: { sinceDays?: nu
     if (ra?.returnedAt) x.input.screeningFailedAt = latestIso(x.input.screeningFailedAt, ra.returnedAt);
   }
   const picked = inputs.map((x) => ({ x, t: classifyTarget(x.input) })).filter((r): r is { x: typeof inputs[number]; t: NonNullable<ReturnType<typeof classifyTarget>> } => !!r.t);
-  for (const r of picked) {
-    const st = reapplyBy.get(r.x.conv.id);
-    if (!st) continue;
-    const full = await loadReapplyInfo(db, r.x.conv.id).catch(() => null);
-    reapplyBy.set(r.x.conv.id, full ?? st);
-  }
+  // 2026-10-28（やることリストの 60秒の時間切れ・本番で計測: この1件ずつの読みが loadBrainTargets 28秒の大半＝1会話 3〜4回の読み×申込歴ありの人数）:
+  //   reapplyConcurrency を渡された時だけ並べて読む（中身は同じ）。既定 1＝今まで通り1件ずつ（やることリストの STAFF_TODO_FAST_LOAD=on の時に 6）
+  const reapplyIds = picked.map((r) => r.x.conv.id).filter((id) => reapplyBy.has(id));
+  const conc = Math.max(1, Math.min(8, Math.floor(opts.reapplyConcurrency ?? 1)));
+  let nextRe = 0;
+  const reWorker = async () => {
+    while (nextRe < reapplyIds.length) {
+      const id = reapplyIds[nextRe++];
+      const st = reapplyBy.get(id)!;
+      const full = await loadReapplyInfo(db, id).catch(() => null);
+      reapplyBy.set(id, full ?? st);
+    }
+  };
+  await Promise.all(Array.from({ length: conc }, reWorker));
   const pcIds = [...new Set(picked.map((r) => r.x.conv.property_customer_id).filter(Boolean) as string[])];
   const { data: pcs } = pcIds.length
     ? await db.from("property_customers").select("id, desired_area, commute_station, commute_minutes, rent_max, floor_plan, other_requests, ai_summary_json, ai_summary_at").in("id", pcIds)

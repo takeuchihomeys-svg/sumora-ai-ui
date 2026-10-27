@@ -9,6 +9,7 @@ import { supabase } from "@/app/lib/supabase-server";
 import { extractPdfText } from "@/app/lib/pdf-text";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { buildPickupRows, parseAdFromPages, agentPagesText, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
+import { listingNameStripEnabled, stripListingAnnotation } from "@/app/lib/listing-name-strip";
 // 2026-09-27 竹内「株式会社アズ・スタットは AD 記載なくても基本的に 200% あるから 200% とみなす」（純関数）
 import { assumedAdAgentOf, BUILDING_AD_NAME } from "@/app/lib/agent-ad-assume";
 // 2026-10-06 竹内「だいじょうぶ」: 元付の決まりの次に、同じ建物の別の部屋の AD でみなす（純関数）
@@ -491,7 +492,9 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       // 2026-10-06 v2.5.81 この回の一覧を検索した時の条件（分からない回は列を出さない）
       .map((r) => (input.searchConditions ? { ...r, search_conditions: input.searchConditions } : r))
       // 2026-09-29 ブレインの回（★物件出し★グループへは解析の完了で1回知らせる）
-      .map((r) => (input.groupNotice === "deferred" ? { ...r, group_notice: "deferred" } : r));
+      .map((r) => (input.groupNotice === "deferred" ? { ...r, group_notice: "deferred" } : r))
+      // 2026-10-28 LISTING_NAME_STRIP=on: 物件名のサイト名・「最新」の付記（ITANDI の「ACT正雀(イタンジ最新)」）を外して記録する（listing-name-strip）
+      .map((r) => (listingNameStripEnabled() && r.property_name ? { ...r, property_name: stripListingAnnotation(r.property_name) } : r));
     // 入れる直前にもう一度（同じ部屋の別の回が先に入った時）
     const lateDup = await recentDupIndexes(input.propertyCustomerId, rows.map((r) => r.summary_text), rows.map((r) => r.pdf_url ?? null));
     if (lateDup.size) {
