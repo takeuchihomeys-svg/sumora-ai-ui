@@ -15,8 +15,8 @@ export type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 const on = (v: string | undefined) => { const s = (v ?? "").trim().toLowerCase(); return s === "on" || s === "1" || s === "true"; };
 
-/** BRAIN_PRIORITY_STEP（既定 off） */
-export function priorityStepOn(env: Env = envOf()): boolean { return on(env.BRAIN_PRIORITY_STEP); }
+/** BRAIN_PRIORITY_STEP（2026-10-27 竹内さん「オススメで」から既定 on・off で止める。DeepSeek 34問×3 合格 17→20・道 60→66%・依頼 60→65%・悪化0／Claude 悪化0） */
+export function priorityStepOn(env: Env = envOf()): boolean { return (env.BRAIN_PRIORITY_STEP ?? "").trim().toLowerCase() !== "off"; }
 /** BRAIN_PRIORITY_RETRIEVAL（STEP が on の時だけ・既定 on・off で止める） */
 export function priorityRetrievalOn(env: Env = envOf()): boolean {
   if (!priorityStepOn(env)) return false;

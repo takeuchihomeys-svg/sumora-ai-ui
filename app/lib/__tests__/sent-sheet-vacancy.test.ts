@@ -40,7 +40,7 @@ t("付けなければ注記も行も出ない", !plainText.includes("送った�
 t("共有のみには付けない", attachSheetVacancy([{ property_name: "X", room_no: "", sent_at: "", rent: null, recruitment_status: null, applicant_rank: null, customer_reaction: null, shared_only: true, image_urls: ["u"] }], new Map([["u", ["現況: 空室"]]])) === 0);
 
 // ④ スイッチ
-t("既定 off", sentSheetVacancyOn({}) === false && sentSheetVacancyOn({ BRAIN_SENT_SHEET_VACANCY: "on" }) === true && sentSheetVacancyOn({ BRAIN_SENT_SHEET_VACANCY: "off" }) === false);
+t("既定 on（10/27〜）", sentSheetVacancyOn({}) === true && sentSheetVacancyOn({ BRAIN_SENT_SHEET_VACANCY: "on" }) === true && sentSheetVacancyOn({ BRAIN_SENT_SHEET_VACANCY: "off" }) === false);
 
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 if (fail) process.exit(1);

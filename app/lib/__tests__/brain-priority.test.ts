@@ -8,9 +8,9 @@ let passed = 0, failed = 0; const failures: string[] = [];
 function ok(name: string, cond: boolean, detail = "") { if (cond) passed++; else { failed++; failures.push(`${name} ${detail}`); } }
 
 // スイッチ
-ok("既定 off", !priorityStepOn({}));
+ok("既定 on（10/27〜）", priorityStepOn({}) && !priorityStepOn({ BRAIN_PRIORITY_STEP: "off" }));
 ok("on", priorityStepOn({ BRAIN_PRIORITY_STEP: "on" }));
-ok("取り寄せは STEP に従う", priorityRetrievalOn({ BRAIN_PRIORITY_STEP: "on" }) && !priorityRetrievalOn({}) && !priorityRetrievalOn({ BRAIN_PRIORITY_STEP: "on", BRAIN_PRIORITY_RETRIEVAL: "off" }));
+ok("取り寄せは STEP に従う", priorityRetrievalOn({ BRAIN_PRIORITY_STEP: "on" }) && priorityRetrievalOn({}) && !priorityRetrievalOn({ BRAIN_PRIORITY_STEP: "off" }) && !priorityRetrievalOn({ BRAIN_PRIORITY_STEP: "on", BRAIN_PRIORITY_RETRIEVAL: "off" }));
 
 // 整え
 const raw = [
