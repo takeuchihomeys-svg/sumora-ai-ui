@@ -14,6 +14,8 @@ import { loadStaffTodoList } from "@/app/lib/staff-todo-list-server";
 import { composeStaffTodoPost, staffTodoListEnabled, TODO_LIST_MAX_CHARS, STAFF_TODO_COOLDOWN_MS } from "@/app/lib/staff-todo-list";
 import { pushToHanbancyoGroupWithId, dismissStaleAixActionItems, AIX_NOTICE_FRESH_MS } from "@/app/lib/aix-action-items";
 import { saveTodoSnapshot, snapshotOf, loadTodoSnapshots } from "@/app/lib/staff-todo-reply-server";
+import { aixOverdueRemindEnabled, buildAixOverdueRemind, overdueRemindDue, AIX_OVERDUE_REMIND_KEY } from "@/app/lib/aix-overdue-remind";
+import type { AixActionItemRow } from "@/app/lib/aix-action-text";
 
 export const maxDuration = 60;
 
@@ -44,11 +46,14 @@ export async function GET(req: NextRequest) {
   // 48時間より前のお客様発言への AIX 要対応を片付ける（置き換えた AIX要対応リストがしていた事・宣言済みのピックアップは残す）
   const stale = await dismissStaleAixActionItems(AIX_NOTICE_FRESH_MS).catch((e) => { console.warn("[staff-todo] stale:", e); return null; });
 
+  // 2026-10-28 竹内さんの決定: 24時間を過ぎた AIX要対応を1日1回知らせ直す（AIX_OVERDUE_REMIND=on の時だけ・既定 off・app/lib/aix-overdue-remind.ts）
+  const overdue = aixOverdueRemindEnabled() ? await sendOverdueRemindOnce().catch((e) => { console.warn("[staff-todo] overdue remind:", e); return null; }) : null;
+
   const list = await loadStaffTodoList(supabase, Date.now());
   // 長い時は④⑤を入るだけ出して残りは次の便へ（2026-10-21 竹内さん「オススメでおねがい」）。回す順は前の便の控えから
   const post = composeStaffTodoPost(list, { snapshots: await loadTodoSnapshots(supabase) });
   const text = post.text;
-  if (!text) return NextResponse.json({ ok: true, skipped: true, reason: "no items", stale });
+  if (!text) return NextResponse.json({ ok: true, skipped: true, reason: "no items", stale, overdue });
 
   // LINE の text は 5000字まで（超えると送信が 400 で落ちる）。長い時は組み立てが④⑤を1人1行に詰め、それでも長ければ入るだけ出して残りを次の便に回す。それでも長ければ後ろを切る
   const safeText = text.length > TODO_LIST_MAX_CHARS ? `${text.slice(0, TODO_LIST_MAX_CHARS)}\n…（以下省略）` : text;
@@ -59,5 +64,21 @@ export async function GET(req: NextRequest) {
     // 番号の控え（グループで「✅3」と返された時にどの行か分かるように）。この便に出した一覧（回した人は入らない）で振る＝次の便の回す順にも使う
     await saveTodoSnapshot(supabase, snapshotOf(post.list, sent.messageId, nowIso));
   }
-  return NextResponse.json({ ok: sent.ok, open: list.openCount, done: list.doneCount, carried: post.carried, length: safeText.length, stale });
+  return NextResponse.json({ ok: sent.ok, open: list.openCount, done: list.doneCount, carried: post.carried, length: safeText.length, stale, overdue });
+}
+
+/** 24時間を過ぎた要対応の知らせ直し（その日にまだ送っていない時だけ・送ったら日付を控える） */
+async function sendOverdueRemindOnce(): Promise<{ sent: boolean; count: number } | null> {
+  const now = Date.now();
+  const { data: last } = await supabase.from("hanbancyo_settings").select("value").eq("key", AIX_OVERDUE_REMIND_KEY).maybeSingle();
+  if (!overdueRemindDue(last?.value as string | null | undefined, now)) return null;
+  const { data: pending, error } = await supabase.from("aix_action_items")
+    .select("id, conversation_id, customer_name, action, check_pattern, status, done_aix_type, done_at, created_at, done_by")
+    .eq("status", "pending").order("created_at", { ascending: true }).limit(200);
+  if (error) throw new Error(error.message);
+  const text = buildAixOverdueRemind((pending ?? []) as AixActionItemRow[], now);
+  if (!text) return { sent: false, count: 0 };
+  const r = await pushToHanbancyoGroupWithId(text);
+  if (r.ok) await supabase.from("hanbancyo_settings").upsert({ key: AIX_OVERDUE_REMIND_KEY, value: new Date(now).toISOString() }, { onConflict: "key" });
+  return { sent: r.ok, count: text.split("\n").filter((l) => l.startsWith("・")).length };
 }
