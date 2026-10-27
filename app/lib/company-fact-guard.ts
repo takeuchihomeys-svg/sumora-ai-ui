@@ -59,9 +59,23 @@ export type CompanyFactContradiction = {
   suggestion: string;
   /** 2026-10-18 支払いの決まり（paymentLumpTransferOnly）で切り替える規則。card＝旧のカード払い可の時だけ／lump＝一括のお振込のみの時だけ／無し＝常に */
   policy?: "card" | "lump";
+  /** 2026-10-28 切替つきの規則（false の時は当てない） */
+  enabledIf?: () => boolean;
 };
 
 export const COMPANY_FACT_CONTRADICTIONS: CompanyFactContradiction[] = [
+  {
+    // 2026-10-28 見張りの外れ（陽菜 10/26・watch_turn 8112）: お客様「こちら審査を先に通していただくこと可能でしょうか？」に下書きが
+    //   「審査だけ先にお通しすることはできかねます」。会社の事実 screening_first（10/06 竹内さん「審査先に出す事もできるので了承する」）に反し、
+    //   スタッフは「かしこまりました！！お申込し審査かけさせて頂きます」＋AIX【申込へ】。審査を先に／だけ ＋ できない・できかねる・難しいの形。
+    //   COMPANY_FACT_SCREENING_FIRST_GUARD=on の時だけ（既定 off）
+    factId: "screening_first",
+    re: new RegExp(`審査${SEG}{0,12}?(?:だけ|のみ|先に|試し)${SEG}{0,14}?(?:できかね|出来かね|できません|出来ません|致しかね|いたしかね|難しい|難しく|不可)`),
+    exclude: /(?:れ|け)ば|場合|キャンセル/,
+    label: "審査だけ先に出すことはできる（会社の事実・そのお部屋にお申込みすること）のに「できかねます」と断っています",
+    suggestion: "断りの文を削除し「かしこまりました！！お申込しお部屋の審査かけさせて頂きます」の形にする（申込はAIX【申込へ】）",
+    enabledIf: () => (process.env.COMPANY_FACT_SCREENING_FIRST_GUARD ?? "").trim().toLowerCase() === "on",
+  },
   {
     factId: "room_photo",
     // 「写真…ご用意出来ていない／ございません／無い」「撮影は行えておらず／しておりません／出来ません」
@@ -278,6 +292,7 @@ export function findCompanyFactContradictionsUngated(body: string | null | undef
   for (const s of splitSentencesForFactGuard(body ?? "")) {
     for (const c of COMPANY_FACT_CONTRADICTIONS) {
       if (c.policy && c.policy !== policy) continue;
+      if (c.enabledIf && !c.enabledIf()) continue;
       if (!c.re.test(s)) continue;
       if (c.exclude && c.exclude.test(s)) continue;
       out.push({ factId: c.factId, sentence: s, label: c.label, suggestion: c.suggestion });
