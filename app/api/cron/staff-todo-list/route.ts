@@ -15,7 +15,8 @@ import { composeStaffTodoPost, staffTodoListEnabled, TODO_LIST_MAX_CHARS, STAFF_
 import { pushToHanbancyoGroupWithId, dismissStaleAixActionItems, AIX_NOTICE_FRESH_MS } from "@/app/lib/aix-action-items";
 import { saveTodoSnapshot, snapshotOf, loadTodoSnapshots } from "@/app/lib/staff-todo-reply-server";
 
-export const maxDuration = 60;
+// 10/26 午後から 60秒で切れて一覧が送れていなかった（Vercel Runtime Timeout）。読み込みが重くなったので上限を 300秒に
+export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
