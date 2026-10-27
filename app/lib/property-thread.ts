@@ -35,6 +35,44 @@ import { resolveTurnReferent, turnReferentEnabled, turnReferentLines, type Refer
 // 2026-10-16 このお部屋でもう伝えた事・募集状況の鮮度・目安（property-told.ts・PROPERTY_TOLD_NOTE=off）
 import { roomToldOf, roomToldLines, propertyToldEnabled, type RoomTold } from "./property-told";
 
+/**
+ * 物件名を頭だけで呼んだ発言も名指しと読むか（2026-10-27 番 8598「おおきに長堀橋気になります」が「主語の無い発言・決まらない」になり、
+ *   台帳の文が「1件に決めて答えない」と書いて下書きがぼかした）。PROPERTY_THREAD_PREFIX_NAME=on の時だけ（既定 off）
+ */
+export function propertyThreadPrefixNameEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PROPERTY_THREAD_PREFIX_NAME ?? "").trim().toLowerCase() === "on";
+}
+/** 頭の一致の最短の長さ（建物の鍵の字数）。5字未満の頭（「グラン」「メゾン」等）は多くの物件に当たる */
+export const PREFIX_NAME_MIN = 5;
+/**
+ * 発言（建物の鍵の形に整えた文字）の中に、物件の建物の鍵の頭（PREFIX_NAME_MIN 字以上）があるか。1部屋だけに当たる時だけ返す（2部屋以上は決めない）。
+ *   同じ建物の別の部屋（鍵が同じ）は1つとみなす
+ */
+/**
+ * 頭の後ろに続く字が、物件名の続きでなく言葉の続き（助詞・述語・記号・終わり）の時だけ名指しとみる。
+ *   実データ 60日（お客様の発言 3,687）: 続きを見ないと 75件当たり、「アーバネックス本町Ⅱ」→アーバネックス南新町・「ラパンジール長堀」→ラパンジール恵美須2 のような
+ *   同じ銘柄の別の建物を取り違えた（頭の後ろが「本町」「長堀」＝名前の続き）
+ */
+const PREFIX_TAIL_OK_RE = /^(?:$|[、。，．！!？?…\s]|気|が|は|の|を|も|に|で|と|や|って|さん|どう|いい|良|です|でした|に?ついて|より|から|まで)/;
+/** 持ち込み（URL・画像の書き起こし）の発言は頭の一致で名指しにしない（元の文で見る） */
+export const PREFIX_SKIP_RAW_RE = /https?:\/\/|\[画像\]/;
+export function roomsNamedByPrefix<T>(textKey: string, items: ReadonlyArray<{ key: string; room: T }>): Array<{ key: string; room: T }> {
+  const hits = items.filter(({ key }) => {
+    if (key.length < PREFIX_NAME_MIN + 1) return false;
+    for (let L = key.length - 1; L >= PREFIX_NAME_MIN; L--) {
+      const pre = key.slice(0, L);
+      let i = textKey.indexOf(pre);
+      while (i >= 0) {
+        if (PREFIX_TAIL_OK_RE.test(textKey.slice(i + L))) return true;
+        i = textKey.indexOf(pre, i + 1);
+      }
+    }
+    return false;
+  });
+  const keys = new Set(hits.map((h) => h.key));
+  return keys.size === 1 ? hits : [];
+}
+
 export function propertyThreadEnabled(): boolean {
   return (process.env.PROPERTY_THREAD_NOTE ?? "").toLowerCase() !== "off";
 }
@@ -329,7 +367,10 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
   const roomsNamedIn = (text: string): PtRoom[] => {
     // 照合は建物の鍵と同じ形（長音・記号・空白を外す）にそろえる
     const t = buildingKeyOf(text);
-    return rooms.filter((r) => r.ref.buildingKey.length >= 3 && t.includes(r.ref.buildingKey));
+    const full = rooms.filter((r) => r.ref.buildingKey.length >= 3 && t.includes(r.ref.buildingKey));
+    if (full.length || !propertyThreadPrefixNameEnabled() || PREFIX_SKIP_RAW_RE.test(text)) return full;
+    // 2026-10-27 番 8598: お客様は長い物件名を頭だけで呼ぶ（「おおきに長堀橋気になります」＝おおきに長堀橋鰻谷北サニーアパートメント）。頭の一致が1部屋だけの時に名指しとする
+    return roomsNamedByPrefix(t, rooms.map((x) => ({ key: x.ref.buildingKey, room: x }))).map((x) => x.room);
   };
   // 2026-10-13 竹内（未桜）: 持ち込み（動画の URL・画像）の後にお客様が名前だけ送った発言（「レジュールアッシュ難波MINAMIです」）は持ち込みの物件の名前の候補
   //   （customer-property-names.customerNamedAfterShare・戻す: CUSTOMER_NAME_AFTER_SHARE=off）。どの物件の話かはブレインが台帳の文を読んで決める
