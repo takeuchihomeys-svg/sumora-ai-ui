@@ -1,5 +1,6 @@
 import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSentences } from "@/app/lib/draft-text";
 import { enforceCallName } from "@/app/lib/call-name-guard";
+import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
 import { NextRequest, NextResponse, after } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
@@ -5479,7 +5480,9 @@ async function handleGenerateReply(req: NextRequest) {
       if (message && !(last && last.sender === "customer" && last.text.includes(message.trim()))) ms.push({ sender: "customer", text: message });
       return daySubjectNoteIfEnabled(ms, ledger.facts.viewingFlow?.stage ?? null);
     })();
-    const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote + daySubjectNote + (ledgerActive && !isFollowUp ? relativeDatesWriterNote(ledger.entries) : "");
+    // 2026-10-28 竹内さん（和樹・あかり・てん）: こちらが送った物件＝送った時点で募集中を確認済み、を書く役にも事実で渡す（SENT_CONFIRMED_NOTE=on の時だけ・app/lib/sent-confirmed.ts）
+    const sentConfirmedWriterNote = ledgerActive && !isFollowUp && sentConfirmedNoteEnabled() ? buildSentConfirmedNote(ledger.entries, Date.now()) : "";
+    const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote + daySubjectNote + (ledgerActive && !isFollowUp ? relativeDatesWriterNote(ledger.entries) : "") + sentConfirmedWriterNote;
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
     const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm, turnContract?.openSearch ?? null) : turnNeedsSupport(turnContract) ? SUPPORT_CLOSER_LINE : null });

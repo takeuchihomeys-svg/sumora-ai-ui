@@ -122,6 +122,7 @@ import { buildActionLedger, buildLedgerLinesForBrain, buildViewingFlowForBrain, 
 import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 // 2026-10-21 つなぎのブレイン 段3 司令塔: 次の一手（スタッフしか分からない事は AIX）を1行（LINK_CONDUCTOR_BRAIN=on の時だけ・既定 off＝1文字も変わらない）
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
+import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
 import { cancelViewingCalendarOnCustomerCancel } from "@/app/lib/viewing-cancel-calendar-server";
 import { isViewingFixTopic } from "@/app/lib/viewing-premature";
 // 2026-09-23 竹内（あっぴ事例）: 未履行のピックアップ宣言が残っている間は「反応待ち」にしない（AIX【物件ピックアップした】を立てる）
@@ -2468,7 +2469,9 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const conductorNote = linkConductorBrainEnabled()
     ? await import("@/app/lib/link-conductor-server").then(({ conductorBrainNoteIfEnabled }) => conductorBrainNoteIfEnabled(supabase, conversationId, Date.now())).catch(() => "")
     : "";
-  const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}${buildLedgerLinesForBrain(brainLedger)}${ownPropertyText}${buildViewingFlowForBrain(brainLedger)}${daySubjectNoteIfEnabled(brainLedgerInput.messages, brainLedger.facts.viewingFlow?.stage ?? null)}${conductorNote}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
+  // 2026-10-28 竹内さん（和樹・あかり・てん）: こちらが送った物件＝送った時点で募集中を確認済み（SENT_CONFIRMED_NOTE=on の時だけ・app/lib/sent-confirmed.ts）
+  const sentConfirmedNote = sentConfirmedNoteEnabled() ? buildSentConfirmedNote(brainLedger.entries, Date.now()) : "";
+  const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}${buildLedgerLinesForBrain(brainLedger)}${ownPropertyText}${buildViewingFlowForBrain(brainLedger)}${daySubjectNoteIfEnabled(brainLedgerInput.messages, brainLedger.facts.viewingFlow?.stage ?? null)}${conductorNote}${sentConfirmedNote}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
 
   // ─── 申込が近い合図（2026-09-20 竹内「ここなら申込になりそうなお客さんだと分析して、そこから申込の流れにいく形」）───
   // 実データ（申込到達21件 vs 30日以上動いていない未到達105件）で線を引いた決定論の合図。
