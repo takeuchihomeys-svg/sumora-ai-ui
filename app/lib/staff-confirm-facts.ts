@@ -96,6 +96,42 @@ export function findStaffOnlyFact(draft: string | null | undefined): StaffOnlyFa
   return null;
 }
 
+// ── 2026-10-28 台帳 unknown:staff-only-in-draft（watch_turn 8419・6613）: 「11/1 13:00 現地でお待ちしております」「10/28（水）17:00のご内覧でお待ちしております」は
+//   こちらが AIX【待ち合わせ場所】で送った日時の言い直し（確定はスタッフが済ませた）＝スタッフしか知らない事を作ったのではない。
+//   内覧の確定・待ち合わせの住所は、同じ日付と時刻（住所は番地）が会話のこちらの通（材料）にあれば根拠ありとする。STAFF_ONLY_GROUNDED=on の時だけ（既定 off）
+export function staffOnlyGroundedEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.STAFF_ONLY_GROUNDED ?? "").trim().toLowerCase() === "on";
+}
+// 空白は1つの区切りに残す（消すと「11/1 13:00」が「11/113:00」になって日付の終わりが分からなくなる）
+const N0 = (x: string) => x.normalize("NFKC").replace(/\s+/g, " ");
+/** 文の日付（M/D）と時刻（H:MM）を取り出す（「10/28（水）17:00」「11月1日 13時」） */
+function dateTimeKeys(sentence: string): { md: string | null; hm: string | null } {
+  const t = N0(sentence);
+  const d = t.match(/(1[0-2]|0?[1-9])[/月](3[01]|[12][0-9]|0?[1-9])/);
+  const h = t.match(/(2[0-3]|[01]?[0-9])[:：時](?:([0-5][0-9])分?)?/);
+  return { md: d ? `${Number(d[1])}/${Number(d[2])}` : null, hm: h ? `${Number(h[1])}:${h[2] ?? "00"}` : null };
+}
+/** 材料の中に同じ日付・時刻があるか */
+function groundHasDateTime(ground: string, md: string, hm: string): boolean {
+  const g = N0(ground).replace(/月/g, "/").replace(/時(?:([0-5][0-9])分?)?/g, (_x, mm) => `:${mm ?? "00"}`).replace(/(^|[^0-9])0([1-9])(?=[/:])/g, "$1$2");
+  const [m, d] = md.split("/");
+  const [hh, mm] = hm.split(":");
+  return new RegExp(`(?:^|[^0-9])0?${m}/0?${d}(?![0-9])`).test(g) && new RegExp(`(?:^|[^0-9])0?${hh}:${mm}(?![0-9])`).test(g);
+}
+/** スタッフしか知らない事の当たりが、材料（こちらが送った通）に根拠のある言い直しか（内覧の確定・待ち合わせの住所だけ） */
+export function isStaffOnlyFactGrounded(hit: StaffOnlyFactHit | null, groundText: string | null | undefined): boolean {
+  if (!hit || !groundText) return false;
+  if (hit.kind === "viewing_fixed") {
+    const k = dateTimeKeys(hit.text);
+    return !!(k.md && k.hm && groundHasDateTime(groundText, k.md, k.hm));
+  }
+  if (hit.kind === "meeting_address") {
+    const num = N0(hit.text).match(/[0-9]+丁目[0-9]+(?:番地?|-)[0-9]+|[0-9]+-[0-9]+(?:-[0-9]+)?/);
+    return !!(num && N0(groundText).includes(num[0]));
+  }
+  return false;
+}
+
 // ── 2026-10-02 ⑫ 11巡目: 会話に無い金額（相場・家賃帯）の言い切りは自動で送らない ──
 //   YUMA の再生（10巡目 cost_12・DeepSeek）の下書き「堺筋本町駅周辺は10万円〜11万円台からお部屋が出てきます」が関所を通った
 //   （見積金額内訳ゲートは費用の語が無いと見ない・⑪は一般の相場の説明をゲートから外した＝本文は書き換えない）。

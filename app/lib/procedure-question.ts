@@ -83,6 +83,18 @@ const MOVE_IN_LEAD_RE = new RegExp([
   //   入居の期日に審査・手続きが間に合うかの問い（スタッフは審査3日〜1週間・手続き1週間・最低2週間と本文で回答）。増えた当たりは scripts/audit-procedure-question.ts で全部読んだ
   `(?:入居|審査)[^。\\n]{0,30}(?:間に合|まにあ)(?:う|い|わ)[^。\\n]{0,8}(?:か|でしょう|ます|そう)`,
 ].join("|"));
+/**
+ * 2026-10-28 調べ（あかり 10/26「最短入居日どのくらいですね」「か」＝物件確認した の結果を受けた直後の問い）: 申込・審査の語が無い
+ *   「最短入居日どのくらい」「最短でいつから住めますか」は上の網に当たらず、ブレインは「2件の最短入居可能日を管理会社に確認」と物件確認した を選んだ
+ *   （スタッフは本文で「即入居可能・お申込し早くて1週間〜2週間」）。手続きの質問の決まり（返信・feedback_procedure_question_reply）に乗せる。
+ *   資料に入居時期が無い時は今まで通り2択（返信か 確認した→入居可能日）。PROCEDURE_EARLIEST_MOVE_IN=on の時だけ（既定 off）
+ */
+export function procedureEarliestMoveInEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PROCEDURE_EARLIEST_MOVE_IN ?? "").trim().toLowerCase() === "on";
+}
+const EARLIEST_MOVE_IN_RE = new RegExp(`最短(?:で|の)?\s*(?:入居|ご入居|引っ?越)[^。\n]{0,12}(?:${HOW_LONG}|いつ|日)|最短(?:で|の)?\s*いつ(?:から|頃|ごろ)?[^。\n]{0,8}(?:入居|住め|住む|入れ|引っ?越)|(?:いつ|何日)(?:から|頃|ごろ)?[^。\n]{0,6}(?:入居|住め|入れ)[^。\n]{0,6}(?:最短|一番早)`);
+/** 探す条件（「最短入居できる物件」）・内覧の日の話は外す */
+const EARLIEST_NOT_RE = /物件があれば|お部屋があれば|探して|内見|内覧|見学/;
 /** 申込・契約・入居までの流れ */
 const FLOW_RE = /(?:申込|申し込み?|お申込み?|契約|入居|審査)[^。\n]{0,10}(?:流れ|手順|ステップ|段取り)|(?:流れ|手順|段取り)[^。\n]{0,8}(?:教え|知りたい|どう|どんな|ですか|でしょうか)/;
 /** 必要書類 */
@@ -115,7 +127,7 @@ export function detectProcedureQuestion(text: string | null | undefined): Proced
   const t = units.join("\n").normalize("NFKC");
   const kinds: ProcedureKind[] = [];
   if (SCREENING_PERIOD_RE.test(t)) kinds.push("screening_period");
-  if (MOVE_IN_LEAD_RE.test(t)) kinds.push("move_in_lead");
+  if (MOVE_IN_LEAD_RE.test(t) || (procedureEarliestMoveInEnabled() && EARLIEST_MOVE_IN_RE.test(t) && !EARLIEST_NOT_RE.test(t))) kinds.push("move_in_lead");
   if (FLOW_RE.test(t)) kinds.push("flow");
   if (DOCS_RE.test(t)) kinds.push("docs");
   if (ID_DOC_RE.test(t)) kinds.push("id_doc");

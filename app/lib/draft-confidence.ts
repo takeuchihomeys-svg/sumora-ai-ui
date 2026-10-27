@@ -18,7 +18,7 @@
 // 重みは scripts/audit-draft-confidence.ts（本番の見張り line_watch_turns の下書き × スタッフが実際にした事・LLM なし・読むだけ）で決めた。
 //   線を引き直す時はそのスクリプトを回して、段ごとの「そのまま送られた率」が high ≫ low になっている事を確かめる。
 // 切替: DRAFT_CONFIDENCE=on で生成時に計算して最終チェックの結果（ai_draft_check.confidence）に載せる（既定 off＝何もしない）
-import { findStaffOnlyFact, findUngroundedAmount, STAFF_CONFIRM_AIX } from "./staff-confirm-facts";
+import { findStaffOnlyFact, findUngroundedAmount, STAFF_CONFIRM_AIX, staffOnlyGroundedEnabled, isStaffOnlyFactGrounded } from "./staff-confirm-facts";
 import { findUngroundedFacts } from "./draft-fact-grounding";
 import { findCompanyFactContradictionsUngated } from "./company-fact-guard";
 import { detectSensitiveCase } from "./sensitive-case";
@@ -183,7 +183,8 @@ export function confidenceSignals(i: ConfidenceInput): Array<{ code: ConfidenceC
   // ── 下書きの文 ──
   if (draft) {
     const sf = findStaffOnlyFact(draft);
-    if (sf) out.push({ code: "staff_only_fact", note: sf.kind });
+    // 2026-10-28 こちらが送った日時・住所の言い直しは数えない（STAFF_ONLY_GROUNDED=on の時だけ・staff-confirm-facts）
+    if (sf && !(staffOnlyGroundedEnabled() && isStaffOnlyFactGrounded(sf, ground))) out.push({ code: "staff_only_fact", note: sf.kind });
     const ug = findUngroundedFacts(draft, ground)[0];
     const ua = findUngroundedAmount(draft, ground);
     if (ug || ua) out.push({ code: "ungrounded_fact", note: ug ? ug.kind : "amount" });
