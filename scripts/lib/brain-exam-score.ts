@@ -80,7 +80,14 @@ export function brainPathCode(b: BrainExamOutput | null | undefined): PathCode {
     return main;
   }
   const ts = (b.two_stage ?? "").trim();
-  if (ts) return { codes: [`2段:${ts}`, "2段"], hard: [`2段:${ts}`, "2段"], label: `2段:${ts}` };
+  // 2026-10-27 苦手な問題②（q105）: 室内写真の撮影の約束は本番の2段の種類が check（約束を果たすのは AIX【物件確認した→室内写真】）で、
+  //   符号が "2段:check" になり、正解の "2段:photo" に当たらなかった（本質は AIX:property_check_result/interior_photo＝正しいのに毎回 ✕）。
+  //   方向が撮影の約束の時は "2段:photo" も符号に足す（採点の取りこぼしの直し・ブレインの判断は変えない）
+  if (ts) {
+    const photo = ts === "check" && pathOfDirection(String(b.reply_direction ?? "")).kind === "photo";
+    if (photo) return { codes: ["2段:photo", `2段:${ts}`, "2段"], hard: ["2段:photo", `2段:${ts}`, "2段"], label: "2段:photo" };
+    return { codes: [`2段:${ts}`, "2段"], hard: [`2段:${ts}`, "2段"], label: `2段:${ts}` };
+  }
   if (b.first_contact_pickup) {
     const k = b.first_contact_pickup === "property_check_result" ? "check" : "pickup";
     return { codes: [`2段:${k}`, "2段"], hard: [`2段:${k}`, "2段"], label: `2段:${k}（初回）` };

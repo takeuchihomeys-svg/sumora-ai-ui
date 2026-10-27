@@ -497,6 +497,11 @@ const REPLY_JA: Record<CustomerDateReply, string> = {
  * 段階から見た次の AIX の候補（監査と、ブレインへの材料の1行に使う。決めるのはブレイン）。
  *   null＝段階からは何も言わない（別の質問・保留・確定の後）
  */
+/** 2026-10-27 日にちが決まった番に「行き先が未定なら待ち合わせ場所はまだ送れない」の1文を足すか（既定 off・VIEWING_PLACE_UNDECIDED_LINE=on） */
+export function viewingPlaceUndecidedLineEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.VIEWING_PLACE_UNDECIDED_LINE ?? "").trim().toLowerCase() === "on";
+}
+
 export function viewingFlowNextAix(f: ViewingFlow): "viewing_invite" | "meeting_place" | null {
   if (f.currentReply === "cancel" || f.currentReply === "hold") return null;
   if (f.stage === "date_agreed") return f.currentReply && f.currentReply !== "none" ? "meeting_place" : null;
@@ -540,6 +545,10 @@ export function buildViewingFlowBrainText(f: ViewingFlow): string {
     rule.push(`日にちは決まったが、待ち合わせ場所は未送信＝まだ確定ではない。次の一手は meeting_place（AIX【待ち合わせ場所】${f.timeFixed ? "" : "・開始時刻はピッカーで入れる"}）`);
     // 2026-10-02 竹内さん「おって連絡とかじゃあなくて内覧日決まったら 1件目の内覧場所を集合場所とする そこから物件内覧する」
     rule.push("待ち合わせ場所＝その日に内覧する1件目の物件の現地（住所は番地まで資料から）。「待ち合わせ場所は追ってご連絡」の返信にしない（AIX【待ち合わせ場所】で1件目の物件を送る）");
+    // 2026-10-27 苦手な問題②（q141「17時からお願いします！行きたい場所決まったらまた言います！」）: 時刻は決まったが内覧するお部屋（行き先）は未定。
+    //   1件目の現地が決まらない＝待ち合わせ場所は送れない。竹内さんは返信で時刻を受け、行き先の連絡を待った。旧の行は「次の一手は meeting_place」と言い切り、
+    //   ブレインは 12/12 回 meeting_place（場面の読み違い＝原因②・材料の言い切りが元）。決めるのはブレイン（お客様の言葉を読む）。入れる: VIEWING_PLACE_UNDECIDED_LINE=on
+    if (viewingPlaceUndecidedLineEnabled()) rule.push("ただし、内覧するお部屋（行き先）がまだ決まっていない時（お客様が「行きたい場所（お部屋）は決まったら言う」「どこを見るかはまた連絡する」等と書いた・見るお部屋を選んでいない）は、1件目の現地＝待ち合わせ場所が決まらない＝meeting_place はまだ送れない。その時は日時を受け、見たいお部屋が決まったらご連絡頂くよう返信で受ける（aix は null）。行き先が決まっているかはあなたが会話から決める");
     if (f.currentReply === "none" || f.currentReply == null) rule.push("今回の発言が別の質問なら、その質問に答える（内覧の時に話す・当日よろしく は書かせない）。待ち合わせ場所の送信がまだ残っている事は next_steps に残す");
     if (f.placePromised) rule.push("こちらは「待ち合わせ場所は追ってご連絡」と伝えてある（未履行のやる事）");
   } else if (f.stage === "confirmed") {

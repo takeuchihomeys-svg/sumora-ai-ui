@@ -54,9 +54,25 @@ export function markerStrength(m: ExMsg): "strong" | "weak" | null {
   if (m.aixType === "property_send" || m.aixType === "property_recommendation") return "weak";
   const t = (m.text ?? "").normalize("NFKC");
   if (ALL_PICKED_RE.test(t) || NEW_ARRIVAL_PROMISE_RE.test(t)) return "strong";
+  if (exhaustedWeakAccurateEnabled() && LEFT_CONDITION_RE.test(t)) return "strong";
   if (DELIVERED_RE.test(t)) return "weak";
   return null;
 }
+
+/**
+ * 2026-10-27 苦手な問題②（q008・q062・q170 と q006・q007）: 送付だけの印（weak）と出し切ったと言った印（strong）の見分けを正しくする（既定 off）。
+ *   旧: 「ご条件から離れますが」（条件の外の物件を送る＝今の条件の物件はもう無い）・「〜探させて頂きましたが、現在募集に出ておらず、エリア広げ」は
+ *   weak と数えられ、weak の番にも強い言い切りの行（「出し切った印がある＝返信で締める」）を渡していた（EXHAUSTED_WEAK_TURN_LINE を off にした理由＝q006 q007）。
+ *   そのため最初の束を送っただけの番（q008 神崎川・q170 お風呂・q062 京橋）にも「出し切った」と渡り、ブレインが足した条件で探す約束をしなかった（材料の誤り＝原因①）。
+ *   新: この2つの言い方を strong に足し、weak の番には「出し切りとは限らない」行を渡し、ブレインが選んだ探す約束を規則で書き換えない（ack-exhausted-reply）。
+ *   線（実送信 120日）: 「条件から離れ」2通・「探…ましたが…募集に出ておらず」1通＝全部が今の条件の物件が無いと言った番。
+ *     「募集に出ておらず」だけ（6通）は持ち込みの1件の空きの答え（「〇〇は募集に出ておらず」）＝出し切りではないので入れない。
+ *   入れる: EXHAUSTED_WEAK_ACCURATE=on
+ */
+export function exhaustedWeakAccurateEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXHAUSTED_WEAK_ACCURATE ?? "").trim().toLowerCase() === "on";
+}
+const LEFT_CONDITION_RE = /条件から(?:は)?(?:少し)?離れ(?:ます|て|ており)|(?:探|お探し)[^。\n]{0,24}(?:ましたが|ましたところ)[^。\n]{0,12}募集に(?:出|で)ておら?ず/;
 
 /** 弱い印だけの出し切りはブレインの材料に下げる（上書きしない）か。**既定 off（旧のまま）**・BRAIN_DEMOTE_SEARCH_EXHAUSTED=on で下げる。
  *  10/13 試験（出し切り7問・DeepSeek）: 下げると道 7/7→5/7・合格 1→0（q003 が悪化・q002 q006 は2段の約束に）＝試験の正解（竹内さんの実送信）は送付だけの印の後でも全力サポート。

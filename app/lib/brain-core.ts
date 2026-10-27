@@ -2844,6 +2844,12 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       }
     } catch (e) { console.warn("[brain-core] exhausted material skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-10-27 竹内さんの答え（q093）: 名義貸しなど審査面で怪しい話は電話で打ち合わせる＝AIX【電話をかける】の番の材料（網だけ・決めるのはブレイン・SCREENING_PHONE_LINE=on）
+  if (!isPostApplyStatus(convStatus)) {
+    const { screeningPhoneTurnLine } = await import("@/app/lib/screening-phone-material");
+    const spl = screeningPhoneTurnLine(unrepliedTurn.text ?? "");
+    if (spl) customerStateBlockText += `\n\n${spl}`;
+  }
   // 2026-10-13 竹内さんの決定（B）「新規のときには使わない。新着物件のところや、他に物件あるのかの部分で使う」:
   //   右（全力サポート）はブレインが候補にした時だけ出す＝候補にするかの材料（前に送った物件・出し切りの印・お客様が他の物件を聞いたか）と出力の項目 zenryoku_candidate
   //   10/13 レビュー: 渡すのは物件を探す番になりうる時だけ（条件の場面・場面の証拠の候補が物件の AIX・他の物件／新着の問い・今送れる候補あり＝zenryokuCandidateTurn）

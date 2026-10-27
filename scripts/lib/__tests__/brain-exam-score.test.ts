@@ -89,5 +89,16 @@ eq("確認の約束・正解 check→check", normalizeDraftCode("返信", "募�
 eq("結果の報告は替えない", normalizeDraftCode("返信", "確認させて頂きましたところ募集中です", ["2段:check"]), "返信");
 eq("正解が 返信 だけ（q007 の形）は替えない", normalizeDraftCode("返信", "募集状況随時確認させて頂きます！！ご条件に合ったお部屋出次第お送りさせて頂きます！！", ["返信"]), "返信");
 
+// 2026-10-27 苦手な問題②（q105）: 室内写真の撮影の約束（本番の2段の種類は check）は "2段:photo" にも当たる
+{
+  const photoDir = "室内の写真はスタッフが撮影してお送りする物なので、撮影の約束の返信にする（…）";
+  const c = brainPathCode({ reply_mode: "aix", two_stage: "check", reply_direction: photoDir } as never);
+  eq("撮影の約束は 2段:photo", c.codes.includes("2段:photo"), true);
+  eq("撮影の約束は 2段:check にも当たる", c.codes.includes("2段:check"), true);
+  eq("q105 の正解に当たる", judgePath(c, ["AIX:property_check_result", "2段:photo"], ["返信"]).ok, true);
+  const plain = brainPathCode({ reply_mode: "aix", two_stage: "check", reply_direction: "お客様に聞かれた事に答える返信にする" } as never);
+  eq("撮影でない確認の約束は photo にしない", plain.codes.includes("2段:photo"), false);
+}
+
 console.log(`${pass} PASS / ${fail} FAIL`);
 if (fail) process.exit(1);
