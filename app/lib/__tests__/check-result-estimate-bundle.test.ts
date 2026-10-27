@@ -3,7 +3,7 @@
 // 2026-10-13 竹内さん（くれあ・未桜）
 import {
   composeSingleEstimateCostText, bundleEstimateName, buildCheckResultSendPlan, describeSendPlan,
-  shouldUseEstimateBundle, checkResultEstimateBundleOn, circled, CHECK_RESULT_MAX_PROPS,
+  shouldUseEstimateBundle, checkResultEstimateBundleOn, circled, CHECK_RESULT_MAX_PROPS, checkPatternTakesEstimate, checkAltEstimateOn,
 } from "../check-result-estimate-bundle";
 import { buildEstimateMessage, calcSavings } from "../estimate-body";
 import { estimateExplain } from "../estimate-explain";
@@ -105,4 +105,12 @@ console.log("③ ピッカーと文（未桜 10/09・みこと 9/26）");
 }
 
 console.log(`\n${pass} OK / ${fail} NG`);
+
+// 2026-10-27 P1 82027521: 別の部屋が募集してた でも見積書の同封の文・申込の状況（NEXT_PUBLIC_CHECK_ALT_ESTIMATE=on の時だけ）
+t("別の部屋: スイッチ on の時だけ見積の束", shouldUseEstimateBundle({ on: true, pattern: "alternative", estimateCount: 1, altOn: true })
+  && !shouldUseEstimateBundle({ on: true, pattern: "alternative", estimateCount: 1, altOn: false })
+  && !shouldUseEstimateBundle({ on: true, pattern: "alternative", estimateCount: 0, altOn: true }));
+t("見積・申込の行を出す結果: 物件あった は常に・別の部屋 は on の時だけ・物件なし は出さない", checkPatternTakesEstimate("available", false) && checkPatternTakesEstimate("alternative", true)
+  && !checkPatternTakesEstimate("alternative", false) && !checkPatternTakesEstimate("unavailable", true));
+t("スイッチの既定は off", !checkAltEstimateOn({}) && checkAltEstimateOn({ NEXT_PUBLIC_CHECK_ALT_ESTIMATE: "on" }));
 if (fail > 0) process.exit(1);

@@ -132,9 +132,24 @@ export function buildCheckResultSendPlan(props: ReadonlyArray<BundlePropertyInpu
   return steps;
 }
 
+/**
+ * 2026-10-27 竹内さんの決定（P1 82027521・10/20 スマホの画面）: AIX【物件確認した】の「別の部屋が募集してた（alternative）」で見積書を同封した時も、
+ *   見積書の文（割引・初期費用・節約）と申込の状況（申込あり＝2番手以降）が「物件あった」と同じように出るようにする。
+ *   旧は画面（この関数）とサーバ（aix/action の見積の束・申込あり の足し）の両方で check_pattern === "available" だけに線が引かれていた。
+ *   スイッチ: NEXT_PUBLIC_CHECK_ALT_ESTIMATE=on（画面とサーバの両方が読む・既定 off＝今と同じ）
+ */
+export function checkAltEstimateOn(env?: Record<string, string | undefined>): boolean {
+  const v = env ? env.NEXT_PUBLIC_CHECK_ALT_ESTIMATE : (typeof process !== "undefined" ? process.env.NEXT_PUBLIC_CHECK_ALT_ESTIMATE : undefined);
+  return (v ?? "").trim().toLowerCase() === "on";
+}
+/** 見積書の同封の文・申込の状況の行を出す確認の結果か（物件あった／スイッチ on の時は別の部屋が募集してたも） */
+export function checkPatternTakesEstimate(pattern: string | null | undefined, altOn: boolean = checkAltEstimateOn()): boolean {
+  return pattern === "available" || (altOn && pattern === "alternative");
+}
+
 /** 物件ごとのセットで送るか: 見積書が1件以上ある時だけ（無ければ今まで通り） */
-export function shouldUseEstimateBundle(o: { on: boolean; pattern: string | null | undefined; estimateCount: number }): boolean {
-  return o.on && o.pattern === "available" && o.estimateCount > 0;
+export function shouldUseEstimateBundle(o: { on: boolean; pattern: string | null | undefined; estimateCount: number; altOn?: boolean }): boolean {
+  return o.on && checkPatternTakesEstimate(o.pattern, o.altOn ?? checkAltEstimateOn()) && o.estimateCount > 0;
 }
 
 /** 画面に出す並び（スタッフが送る前に見る） */

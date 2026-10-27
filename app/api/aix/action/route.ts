@@ -150,7 +150,8 @@ import { isCallableName } from "@/app/lib/call-name-pick";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 // 2026-10-06 ⑫: 御見積書の費用の事情の1行（報酬が出ない・スモ割なし・仲介手数料の額）
 // （estimateExplain は check-result-estimate-bundle.composeSingleEstimateCostText の中で使う）
-import { composeSingleEstimateCostText, bundleEstimateName, CHECK_RESULT_MAX_PROPS, CIRCLED_NUMS } from "@/app/lib/check-result-estimate-bundle";
+import { composeSingleEstimateCostText, bundleEstimateName, CHECK_RESULT_MAX_PROPS, CIRCLED_NUMS, checkPatternTakesEstimate } from "@/app/lib/check-result-estimate-bundle";
+import { costBreakdownSentEstimateOn, pickSentEstimateUrls } from "@/app/lib/cost-breakdown-sent";
 import { ensureAppliedTalk, findPickerTalkMismatch, alternativeSingleLine, cmAvailableResultDesc } from "@/app/lib/check-result-status-lines";
 // 2026-10-06 ⑰（あかりさん）: 会話を合わせるの物件ピックアップで、前回の送付より後のやり取りを時系列で読む
 import { readSendNow, effectiveSendFrame, buildSendNowBlock } from "@/app/lib/property-send-now";
@@ -2466,7 +2467,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
       if (nearMiss.length) console.warn(JSON.stringify({ tag: "aix:property-name-near-miss", action: currentAction, conversationId, nearMiss }));
       // 2026-10-13 竹内さん（未桜）: 物件確認した（物件あった）でピッカーの「申込あり」が文に無い時は申込の説明を足す（足すだけ・実送信で最多の言い方）
       let message = nameFix.text;
-      if (action === "property_check_result" && check_pattern === "available" && Array.isArray(prop_statuses)) {
+      if (action === "property_check_result" && checkPatternTakesEstimate(check_pattern as string) && Array.isArray(prop_statuses)) {
         const ap = ensureAppliedTalk(message, {
           statuses: prop_statuses as string[], names: Array.isArray(property_names) ? (property_names as string[]) : [],
           propertyCount: typeof property_count === "number" && property_count > 0 ? property_count : (prop_statuses as unknown[]).length,
@@ -6065,7 +6066,7 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
       //   最後に「こちらの6件現在募集中となります！！最大限割引しました初期費用の御見積書同封させて頂きました！！」。
       //   画面が estimate_bundle を送った時だけ作る（戻す: NEXT_PUBLIC_CHECK_RESULT_ESTIMATE_BUNDLE=off）。会話を合わせるの経路でも同じ物を返す
       const bundleTextsP: Promise<(string | null)[] | null> =
-        check_pattern === "available" && body.estimate_bundle === true
+        checkPatternTakesEstimate(check_pattern as string) && body.estimate_bundle === true
           && Array.isArray(body.estimate_image_urls) && (body.estimate_image_urls as unknown[]).some(Boolean)
           ? buildCheckResultEstimateTexts({
               estimateUrls: body.estimate_image_urls as (string | null)[],
@@ -7906,9 +7907,23 @@ ${SMORA_COMMON_RULES}
       //   「家賃だけ払ったら住めるんですか？」等の初期費用の中身の質問に、スタッフが貼り付けた御見積書の画像の読み取り結果だけで答える。
       //   旧: 本文の下書きが見積書を見ずに「家賃・管理費に加え敷金礼金等含む総額」と断言した（その物件の敷金・礼金が0円かもしれないのに）。
       //   金額は読み取り結果とスタッフの入力（火災保険）にある物だけ → それ以外は〇〇円（checkAmountsAgainstBreakdown）→ 送信前チェックで止まる
-      const cbUrls = ((body.estimate_image_urls as (string | null)[] | undefined) ?? [])
+      let cbUrls = ((body.estimate_image_urls as (string | null)[] | undefined) ?? [])
         .filter((u): u is string => typeof u === "string" && !!u.trim())
         .slice(0, 3);
+      // 2026-10-27 竹内さんの指摘（owner-fb:1016-cost-explain-aix）: 初期費用を説明する場面で、実際に送った物件（見積書）を入れて AIX【初期費用について】から送る。
+      //   COST_BREAKDOWN_SENT_ESTIMATE=on の時だけ、貼られていなければこの会話で直近21日に送った見積書の画像（読み取り済み image_details.kind=estimate）を使う（既定 off＝今と同じ）
+      if (cbUrls.length === 0 && costBreakdownSentEstimateOn() && conversationId) {
+        try {
+          const sinceIso = new Date(Date.now() - 21 * 86_400_000).toISOString();
+          // 送った時刻で選ぶ（読み取りの時刻は後から読み直した分で揃うことがある）: スタッフが送った画像 → そのうち読み取りが見積書の物
+          const { data: sentImgs } = await supabase.from("messages").select("image_url, created_at").eq("conversation_id", conversationId).neq("sender", "customer").not("image_url", "is", null).gte("created_at", sinceIso).order("created_at", { ascending: false }).limit(40);
+          const imgRows = ((sentImgs ?? []) as Array<{ image_url: string | null; created_at: string | null }>).filter((r) => r.image_url);
+          const { data: est } = imgRows.length ? await supabase.from("image_details").select("image_url").eq("kind", "estimate").in("image_url", imgRows.map((r) => r.image_url as string)) : { data: [] };
+          const estSet = new Set(((est ?? []) as Array<{ image_url: string }>).map((r) => r.image_url));
+          cbUrls = pickSentEstimateUrls(imgRows.filter((r) => estSet.has(r.image_url as string)).map((r) => ({ image_url: r.image_url, read_at: r.created_at })));
+          console.log(JSON.stringify({ tag: "aix:cost-breakdown-sent-estimate", conversationId, found: cbUrls.length }));
+        } catch (e) { console.warn(JSON.stringify({ tag: "aix:cost-breakdown-sent-estimate", conversationId, error: String(e).slice(0, 160) })); }
+      }
       if (cbUrls.length === 0) throw new Error("御見積書の画像を貼り付けてください");
       const cbInsRaw = Number(body.insurance_separate_yen);
       const cbInsurance = Number.isFinite(cbInsRaw) && cbInsRaw > 0 ? Math.round(cbInsRaw) : null;
@@ -8225,7 +8240,7 @@ ${(giShape === "list" ? GUARANTOR_INFO_STAFF_EXAMPLES : GUARANTOR_ANSWER_STAFF_E
     // 2026-10-22 AIX のブレイン（AIX_BRAIN のボタンごとの切替・finalizeResponse と同じ）
     if (message_text && aixBrainEnabledFor(currentAction)) message_text = await brainPass(message_text);
     // 2026-10-13 竹内さん（未桜）: 物件確認した（物件あった）の文にピッカーの「申込あり」が出ていない時は足す（finalizeResponse と同じ・足すだけ）
-    if (action === "property_check_result" && check_pattern === "available" && Array.isArray(prop_statuses) && message_text) {
+    if (action === "property_check_result" && checkPatternTakesEstimate(check_pattern as string) && Array.isArray(prop_statuses) && message_text) {
       const ap = ensureAppliedTalk(message_text, {
         statuses: prop_statuses as string[], names: Array.isArray(property_names) ? (property_names as string[]) : [],
         propertyCount: typeof property_count === "number" && property_count > 0 ? property_count : (prop_statuses as unknown[]).length,
