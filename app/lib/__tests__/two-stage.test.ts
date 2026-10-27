@@ -158,4 +158,11 @@ t("軸: about=vacancy は「空いて」の語が無くても募集状況の約�
   process.env.ESTIMATE_STALE_RECHECK = "off";
   t("ESTIMATE_STALE_RECHECK=off → 今まで通り", resolveTwoStage({ ...base, finalAix: "estimate_sheet", estimateTarget: "エスリード難波", estimateMaterialAgeDays: 9 })?.source === "rule:two_stage_promise(estimate)");
   delete process.env.ESTIMATE_STALE_RECHECK; }
+// 2026-10-28 調べの #2（🎀）: お礼・了承だけで問いの無い番は、軸（猫）が聞いた事でも約束の返信にしない（TWO_STAGE_ACK_NO_CHECK=on）
+{ const v0 = { ...base, finalAix: "property_check_result", customerText: "かしこまりました！ありがとうございます", askAbout: "pet", ackOnly: true };
+  t("off: お礼だけでも今まで通り check の返信", resolveTwoStage(v0)?.kind === "check");
+  process.env.TWO_STAGE_ACK_NO_CHECK = "on";
+  t("on: お礼だけ・問いなし → AIX のまま（約束しない）", resolveTwoStage(v0) === null);
+  t("on: 問いのある番は今まで通り", resolveTwoStage({ ...v0, customerText: "2件とも猫OKですか？", ackOnly: false })?.kind === "check");
+  delete process.env.TWO_STAGE_ACK_NO_CHECK; }
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

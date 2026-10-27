@@ -297,6 +297,9 @@ export function promiseKindsToday(staffMsgs: ReadonlyArray<{ text: string | null
 const ESTIMATE_DELIVERED_RE = /初期費用[:：]\s*[0-9０-９][0-9０-９,，]*円|(?:御|お)見積(?:書|もり)?(?:と|に)なります|(?:御|お)見積(?:書|もり)?[^\n。！!？?]{0,12}(?:お送り|送ら)させて[^\n。！!？?]{0,6}ました/;
 /** 確認の結果を伝えた（「確認しましたところ」「確認が取れました」「募集中です／募集終了となって」） */
 const CHECK_REPORTED_RE = /確認(?:致し|いたし|させて(?:頂|いただ)き)?ましたところ|確認(?:が)?取れました|(?:募集中|空室|募集終了|募集が終了)(?:です|でした|となって|との事|とのこと)/;
+export function twoStageAckNoCheckEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_STAGE_ACK_NO_CHECK ?? "").trim().toLowerCase() === "on";
+}
 function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   const a = (i.finalAix ?? "").trim();
   if (!a || i.postApply) return null;
@@ -426,6 +429,11 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
     //   （設備・入居日・保証会社・手続き…）なら「募集状況を確認する約束」にしない＝聞かれた事の答え（資料・会話・会社の事実にあれば答える・無ければその事の確認の約束）
     //   旧は ack_to_check の時だけこの形で、LLM の物件確認したは聞かれていない募集状況の約束になった（2段の後 44番中 5番）。戻す: TWO_STAGE_CHECK_BY_QUESTION=off
     const ct = i.customerText ?? "";
+    // 2026-10-28 調べの #2（🎀 10/21・お客様「2件は猫OK？」→ スタッフが1件だけ答えた後の「かしこまりました！ありがとう」）:
+    //   軸（猫＝聞いた事）だけで askedOther が真になり、お礼・了承だけの番を「2番目の部屋の猫飼育の可否も確認します」の約束の返信にしていた。
+    //   お礼・了承だけで問いの無い番は約束の返信にしない（ブレインの AIX のまま＝黙って AIX で果たす・TWO_STAGE_ACK_FULFIL と同じ向き）。
+    //   竹内さんの答えは推奨「約束しない」で仮（答え待ち）。TWO_STAGE_ACK_NO_CHECK=on の時だけ（既定 off）
+    if (twoStageAckNoCheckEnabled() && i.ackOnly === true && !/[?？]|ですか|ますか|でしょうか/.test(ct)) return null;
     // 2026-10-15 軸: ブレインが「何について」を決めていればそれで分ける（空き・募集状況＝募集状況の約束／費用＝見積と一緒／それ以外＝聞かれた事に答える）
     //   語の網（空い・募集…）は about が無い時の予備
     const about = twoStageAxisEnabled() ? (i.askAbout ?? null) : null;
