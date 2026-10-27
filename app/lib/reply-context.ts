@@ -2844,6 +2844,22 @@ export function classifyScheduleCommitment(customerText: string, lastStaffText: 
 }
 export const STAFF_ASSERT_SCHEDULE_RE = /(?:[0-9０-９]{1,2}[\/／月][0-9０-９]{1,2}|[0-9０-９]{1,2}[:：時][0-9０-９]{0,2}|本日|明日|[月火水木金土日]曜)[^\n]{0,60}(?:お待ち合わせ|現地|エントランス)[^\n]{0,10}(?:で|にて)[^\n]{0,6}(?:何卒)?よろしくお願い|ご案内させて(?:頂|いただ)きます[！!]*$/m;
 export const SCHEDULE_ASK_RE = /(?:如何|いかが)でしょうか/;
+/**
+ * 2026-10-27 最終チェックの誤った要修正（自信が低い番 fc_block・番 8237）: 「契約方法についてご案内させて頂きます！！」（手続きの説明）を
+ *   内覧の日時の決め打ち（SCHEDULE_ASSERT_UNCONFIRMED）と読んでいた。実送信 90日で行末が「ご案内させて頂きます」の 437通は、前が「お部屋」「お日にちに」等の内覧だけで、
+ *   「〜について／方法／手続き／流れ」の説明の形は0通＝外しても内覧の決め打ちを見逃さない。FC_FALSE_BLOCK_1027=on の時だけ（既定 off）
+ */
+export function fcFalseBlockFixEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.FC_FALSE_BLOCK_1027 ?? "").trim().toLowerCase() === "on";
+}
+const STAFF_ASSERT_SCHEDULE_TOPIC_FIX_RE = new RegExp(STAFF_ASSERT_SCHEDULE_RE.source.replace("|ご案内させて(?:頂|いただ)きます[！!]*$", "|(?<!(?:について|につきまして|方法|手続き|流れ|内容|詳細|書類)[をのは]?)ご案内させて(?:頂|いただ)きます[！!]*$"), "m");
+/** 返信が内覧の日時を決め打ちで締めているか（スイッチ on の時は手続きの説明の「〜についてご案内させて頂きます」を数えない） */
+export function staffAssertsSchedule(text: string, env?: Record<string, string | undefined>): boolean {
+  return (fcFalseBlockFixEnabled(env) ? STAFF_ASSERT_SCHEDULE_TOPIC_FIX_RE : STAFF_ASSERT_SCHEDULE_RE).test(text);
+}
+export function staffAssertScheduleMatch(text: string, env?: Record<string, string | undefined>): string | undefined {
+  return text.match(fcFalseBlockFixEnabled(env) ? STAFF_ASSERT_SCHEDULE_TOPIC_FIX_RE : STAFF_ASSERT_SCHEDULE_RE)?.[0];
+}
 
 // 即答してよい既知事実（正解実例に出現した断定のみ。ASSERTION_BAN 対象＝告知・空室・入居日・審査は含めない）
 export const KNOWN_FACT_ANSWERS: Array<{ key: string; ask: RegExp; answer: string; next: string }> = [
@@ -2908,7 +2924,7 @@ export function computeStanceFlags(text: string, pair: PairContext, hedge: Hedge
     has_commit: sig.usedCommit, has_nanisotsu: sig.usedNanisotsu, nanisotsu_expected: v.nanisotsu,
     echo_ratio: Math.round(echo.ratio * 100) / 100, echo_missing: echo.missing,
     schedule_commitment: sched,
-    schedule_assert_unconfirmed: (sched === "customer_asking" || sched === "staff_proposing") && STAFF_ASSERT_SCHEDULE_RE.test(text) && !SCHEDULE_ASK_RE.test(text),
+    schedule_assert_unconfirmed: (sched === "customer_asking" || sched === "staff_proposing") && staffAssertsSchedule(text) && !SCHEDULE_ASK_RE.test(text),
     fact_deferred: fact && DEFERRED_ANSWER_RE.test(text) && !text.includes(fact.answer.replace(/[！!]+$/, "").slice(0, 10)) ? fact.key : null,
     excuse_flags: detectExcusePhrases(text, pair, tokens).map((e) => e.flag),
     emoji_count: (text.match(EMOJI_RE) ?? []).length,

@@ -147,11 +147,20 @@ const CONTRACT_BAN: PhaseBan = {
   allowIfCustomerRe: CUSTOMER_CONTRACT_KEY_RE,
   allowNote: "お客様が契約・重説・オンライン契約を質問した場合のみ手続き説明として可",
 };
+/**
+ * 2026-10-27 最終チェックの誤った要修正（番 8212・8237）: お客様が「鍵交換代はなくせますか？」と聞いたのに、許す条件の語（CUSTOMER_CONTRACT_KEY_RE）が
+ *   鍵の受け渡しの聞き方だけで鍵交換の費用を拾わず、答えの「鍵交換代をなくせるか確認」を要修正にしていた（説明は「鍵交換費用を質問した場合のみ可」）。
+ *   FC_FALSE_BLOCK_1027=on の時だけ（既定 off・読むのは読み込み時）
+ */
+export const CUSTOMER_KEY_EXCHANGE_COST_RE = /鍵(?:の)?交換(?:代|費用?|料)?/;
+export function keyBanAllowRe(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): RegExp {
+  return (env.FC_FALSE_BLOCK_1027 ?? "").trim().toLowerCase() === "on" ? new RegExp(`${CUSTOMER_CONTRACT_KEY_RE.source}|${CUSTOMER_KEY_EXCHANGE_COST_RE.source}`) : CUSTOMER_CONTRACT_KEY_RE;
+}
 const KEY_BAN: PhaseBan = {
   re: KEY_HANDOVER_RE, severity: "block", code: "TIMING_VOCAB_MISMATCH",
   why: "契約前の鍵のお渡し・鍵交換への言及",
   fix: "削除",
-  allowIfCustomerRe: CUSTOMER_CONTRACT_KEY_RE,
+  allowIfCustomerRe: keyBanAllowRe(),
   allowNote: "お客様が鍵の受け渡し・鍵交換費用を質問した場合のみ可",
 };
 const VIEWING_SCHEDULE_BAN: PhaseBan = {

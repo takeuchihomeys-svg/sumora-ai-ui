@@ -61,7 +61,7 @@ import {
   // 2026-09-09 Fable5 みく事例: ヘッジゲート・締めポリシー・姿勢ギャップ（生成側 route.ts / buildStanceNote と同一関数）
   resolveHedgeAllowance, resolveCloser, deriveCloserSignals, extractEchoTokens, evalConditionEcho, resolveCustomerDocScope, isEchoableScope, classifyScheduleCommitment, resolveAnswerability, detectExcusePhrases,
   CLOSER_TEXT, PRE_PICKUP_HEDGE_RE, SEARCH_REPORT_RE, RELAX_PROPOSAL_RE, PAST_REPORT_RE, SEARCH_DECL_RE, SELF_HEDGE_ECHO_RE, CUST_STATED_RELAX_RE,
-  STAFF_ASSERT_SCHEDULE_RE, SCHEDULE_ASK_RE, DEFERRED_ANSWER_RE, NANISOTSU_RE, OPEN_DOOR_RE, WAIT_SOFTLY_RE, RESULT_EXCUSE_RE, DELIVERABLE_RE, redoWord,
+  STAFF_ASSERT_SCHEDULE_RE, staffAssertsSchedule, staffAssertScheduleMatch, SCHEDULE_ASK_RE, DEFERRED_ANSWER_RE, NANISOTSU_RE, OPEN_DOOR_RE, WAIT_SOFTLY_RE, RESULT_EXCUSE_RE, DELIVERABLE_RE, redoWord,
   // 2026-09-12 竹内方針B: 顧客の連絡予告（締め resolveCloser と同じ verdict）
   AWAIT_CONTACT_PHRASE_RE, resolveAwaitContact,
   // 2026-09-10 Fable5 あみ事例: 顧客アンカー語彙・持込予告（生成側 buildVocabAnchorNote / PAIR_MATRIX と同一定数）
@@ -2252,10 +2252,10 @@ function runStanceChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   }
   // ② 決め打ち断定（断定削除22件）
   const commit = classifyScheduleCommitment(cust, pair.lastStaffText);
-  if ((commit === "customer_asking" || commit === "staff_proposing") && STAFF_ASSERT_SCHEDULE_RE.test(text) && !SCHEDULE_ASK_RE.test(text)) {
+  if ((commit === "customer_asking" || commit === "staff_proposing") && staffAssertsSchedule(text) && !SCHEDULE_ASK_RE.test(text)) {
     issues.push({ pass: "context_check", severity: ctx.isAutoSend ? "block" : "warning", code: "SCHEDULE_ASSERT_UNCONFIRMED",
       message: "お客様が日時を確定していないのに確定形で締めている（正解: 「はい！！ご案内可能です😊！！」＋「〜お待ち合わせ如何でしょうか！！」）",
-      evidence: text.match(STAFF_ASSERT_SCHEDULE_RE)?.[0] ?? head, suggestion: "「〜で何卒よろしくお願い致します」を「〜お待ち合わせ如何でしょうか😊！！」に、質問形の返しには冒頭に「はい！！お部屋ご案内可能です😊！！」" });
+      evidence: staffAssertScheduleMatch(text) ?? head, suggestion: "「〜で何卒よろしくお願い致します」を「〜お待ち合わせ如何でしょうか😊！！」に、質問形の返しには冒頭に「はい！！お部屋ご案内可能です😊！！」" });
   }
   // ③ 可否即答（断定追加11件）
   const fact = resolveAnswerability(cust);
