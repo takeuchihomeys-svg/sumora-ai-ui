@@ -13,6 +13,7 @@
 import { buildPromiseQueue, promisesInStaffText, PROMISE_QUEUE_MAX_AGE_MS, PROMISE_QUEUE_NOTE_PREFIX, type PromiseStep, type QueueAixLog, type QueueMsg } from "./promise-queue";
 import { linkPromisePickerEnabled, confirmTopicsForCheckPattern, confirmObjectOf, checkPatternForConfirmTopic, findConfirmReportSentence, isConfirmPartyObject } from "./action-ledger";
 import { isPreApplyForNudge } from "./apply-stage-nudge";
+import { REAPPLY_MEMO_ID, reapplyMarkEnabled } from "./reapply-customer";
 import { maskPII } from "./pii-mask";
 import { PICKUP_FRESH_DAYS } from "./two-stage";
 
@@ -330,14 +331,16 @@ const directAix: Reader = {
   },
 };
 
-export const REAPPLY_MEMO_RE = /申込歴|再探し|再申込/;
+export const REAPPLY_MEMO_RE = /申込歴|再探し|再申込|申込から戻った理由/;
 /** 申込歴→メモ: 申込以降から手で戻した会話（今は申込前）のメモに『申込歴あり（再探し）』の印があるか */
 const reapplyMemo: Reader = {
   link: "reapply_memo", matureMs: 0,
   read(input, w) {
     const back = input.conv.status_manual_back_at;
     if (!back || !inWin(ms(back), w, this.matureMs) || !isPreApplyForNudge(input.conv.status)) return [];
-    const ok = input.memoItems.some((i) => REAPPLY_MEMO_RE.test(String(i.text ?? "")));
+    // 2026-10-27: 申込歴はブレインに記録から届く（reapply-customer・REAPPLY_MARK 既定 on）。メモは理由をスタッフが選んだ時だけの行
+    //   （10/21 決定 c2909936・id=REAPPLY_MEMO_ID・「申込から戻った理由：…」）＝旧の語（申込歴・再探し）が無いのを切れと数えていた（14日 5件中5件）
+    const ok = reapplyMarkEnabled() || input.memoItems.some((i) => (i as { id?: string }).id === REAPPLY_MEMO_ID || REAPPLY_MEMO_RE.test(String(i.text ?? "")));
     return [{ link: this.link, at: back, ok, breakType: ok ? undefined : "memo_missing", detail: `status=${input.conv.status}` }];
   },
 };

@@ -155,7 +155,11 @@ it("ブレインが読んでいない番（brain_at なし）は数えない", (
 console.log("申込歴→メモ・要対応→スタッフ");
 it("申込から戻した会話でメモに印が無い＝memo_missing・あれば ok", () => {
   const conv = { id: "c1", customer_name: null, status: "proposing", status_manual_back_at: iso(0) };
+  const old = process.env.REAPPLY_MARK; process.env.REAPPLY_MARK = "off";
   eq(of(watchConversation(base({ conv }), W), "reapply_memo")[0]?.breakType, "memo_missing");
+  eq(of(watchConversation(base({ conv, memoItems: [{ text: "申込から戻った理由：審査が通らなかった" }] }), W), "reapply_memo")[0]?.ok, true, "スタッフが選んだ理由の行");
+  if (old == null) delete process.env.REAPPLY_MARK; else process.env.REAPPLY_MARK = old;
+  eq(of(watchConversation(base({ conv }), W), "reapply_memo")[0]?.ok, true, "申込歴の札が記録からブレインに届く（REAPPLY_MARK 既定 on）＝切れではない");
   eq(of(watchConversation(base({ conv, memoItems: [{ text: "申込歴あり（再探し）審査否決" }] }), W), "reapply_memo")[0]?.ok, true);
   eq(of(watchConversation(base({ conv: { ...conv, status: "applying" } }), W), "reapply_memo").length, 0);
 });
