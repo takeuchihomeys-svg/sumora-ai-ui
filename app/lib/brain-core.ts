@@ -19,6 +19,7 @@ import { logWatchMaterial, noteWatchMaterials } from "@/app/lib/line-watch-mater
 import { withRelativeDatesRule, relativeDatesBrainNoteFor } from "@/app/lib/relative-dates"; // 2026-10-23 日付の距離（BRAIN_RELATIVE_DATES・既定 off）
 import { isTimeoutError } from "@/app/lib/line-watch-materials";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
+import { brainRagStateFilterOn, filterKnowledgeByState } from "@/app/lib/brain-rag-state-filter";
 // 2026-10-13 要約はブレインの戦略の層だけが書く（送信の後の customer-summary をやめた）。要約側の成約パターンの RAG も戦略へ
 import { saveBrainSummary } from "@/app/lib/brain-only-summary-save";
 import { fetchWinningPatterns } from "@/app/lib/summary-winning-patterns";
@@ -1906,7 +1907,8 @@ export async function analyzeConversation(
               supabase.rpc("match_reply_knowledge", {
                 query_embedding: qEmb,
                 // 2026-09-13 2層ブレイン: 今回の発言の層は上位12件（今回の発言と戦略の場面に近いものだけ）
-                match_count: isFreshLayer ? 12 : 30,
+                // 2026-10-27 節約②（BRAIN_RAG_STATE_FILTER・既定 off）: 多めに取って段階の違う行を落とす（app/lib/brain-rag-state-filter.ts）
+                match_count: brainRagStateFilterOn() ? (isFreshLayer ? 30 : 60) : (isFreshLayer ? 12 : 30),
                 min_importance: 8,
                 boost_state: tpoHint ?? null,
               }),
@@ -1925,6 +1927,7 @@ export async function analyzeConversation(
               }),
             ]);
             ragKnowledgeRaw = ((knRes as { data: unknown }).data ?? []) as RagKnowledgeRow[];
+            if (brainRagStateFilterOn()) ragKnowledgeRaw = filterKnowledgeByState(ragKnowledgeRaw, convStatus, isFreshLayer ? 12 : 30);
             // 2026-09-13 RAG 監査: RPC の error を捨てていたため、検索が丸ごと死んでいても気づけなかった（セーブデータ検索は毎回エラーだった）。
             //   件数・エラー・最大類似度を1行で出す（精度の見張りと、改善の前後比較に使う）
             {
