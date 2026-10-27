@@ -1,9 +1,11 @@
 // app/lib/__tests__/aix-brought-prefill.test.ts — 物件確認した を開いた時の物件名・件数の初期値（実行: npx tsx app/lib/__tests__/aix-brought-prefill.test.ts）
 //   名前は 90日の監査（10/28）で台帳に混ざっていた実物の形
-import { broughtForCheck, cleanBroughtName, broughtMaterialLine, aixBroughtPrefillEnabled, orderByCustomerText, aixEstimatePrefillEnabled } from "../aix-brought-prefill";
+import { broughtForCheck, cleanBroughtName, broughtMaterialLine, aixBroughtPrefillEnabled, orderByCustomerText, aixEstimatePrefillEnabled, checkResultFormMaterial, aixCheckFormMaterialEnabled } from "../aix-brought-prefill";
 import type { PropertyThreadState } from "../property-thread";
+import { buildSecondMaterialNote } from "../second-message-scene";
 
 let pass = 0, fail = 0;
+const withEnv = <T>(k: string, v: string | undefined, f: () => T): T => { const old = process.env[k]; if (v === undefined) delete process.env[k]; else process.env[k] = v; try { return f(); } finally { if (old === undefined) delete process.env[k]; else process.env[k] = old; } };
 const t = (name: string, ok: boolean, info?: unknown) => { if (ok) pass++; else { fail++; console.log(`  NG  ${name}${info !== undefined ? ` → ${JSON.stringify(info)}` : ""}`); } };
 
 const room = (display: string, events: Array<{ at: string; kind: string; text?: string }>, origin: "ours" | "customer" = "customer") =>
@@ -61,6 +63,26 @@ t("スイッチ既定 off", aixBroughtPrefillEnabled({}) === false && aixBrought
   t("文に無い物は後ろ", orderByCustomerText(["別の物件 101号室", "グランドロアール上新庄 402号室"], cust).join(",") === "グランドロアール上新庄 402号室,別の物件 101号室");
   t("最大3件", orderByCustomerText(["a物件", "b物件", "c物件", "d物件"], "").length === 3);
   t("見積書の先入れは既定 off", aixEstimatePrefillEnabled({}) === false);
+}
+
+// 竹内さんの文の型の材料
+{
+  const a = checkResultFormMaterial({ pattern: "available", hasEstimate: false });
+  t("物件あった: ご査収・ご案内が多数・申込の締めは申込が入りそうな時だけ", /ご査収/.test(a) && /申込・抑えたいと言った時/.test(a));
+  t("見積書が無い時は見積の約束をしない", /約束も書かない/.test(a));
+  t("見積書がある時は見積の約束の行は無い", !/約束も書かない/.test(checkResultFormMaterial({ pattern: "available", hasEstimate: true })));
+  t("物件なかった: 1文で終える", /1文で終える/.test(checkResultFormMaterial({ pattern: "unavailable", hasEstimate: false })));
+  t("管理会社に確認した等は空", checkResultFormMaterial({ pattern: "mgmt_parking", hasEstimate: false }) === "");
+  t("型の材料は既定 off", aixCheckFormMaterialEnabled({}) === false);
+}
+
+// 物件オススメの2通目: ご希望に合わない点（資料で確かめた物）を書く役に渡す（RECOMMEND_SECOND_WISH_NG）
+{
+  const row = { equipment: { match: [{ label: "ペット可", result: "ng" }, { label: "独立洗面台", result: "ok" }] } } as never;
+  const off = withEnv("RECOMMEND_SECOND_WISH_NG", undefined, () => buildSecondMaterialNote(row));
+  const on = withEnv("RECOMMEND_SECOND_WISH_NG", "on", () => buildSecondMaterialNote(row));
+  t("off: 合わない点は材料に無い（従来）", !/合わない点/.test(off) && /独立洗面台/.test(off));
+  t("on: 合わない点を先に正直に書く材料", /ご希望に合わない点（資料で確かめた物）: ペット可/.test(on) && /御座いませんが/.test(on));
 }
 
 console.log(`${pass} passed, ${fail} failed`);

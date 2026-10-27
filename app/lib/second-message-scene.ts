@@ -305,6 +305,11 @@ const EQUIP_KEYS = ["washbasin", "bath_dryer", "net_free", "autolock", "delivery
  * 1通目の物件の資料の事実。推す理由はここに書いてある事だけを使わせる。
  * 行が無い・読める事が1つも無い時は空文字（何も主張しない）。AD・採点・点数は出さない。
  */
+/** 物件オススメの2通目の材料に「ご希望に合わない点（資料で確かめた物）」を足すか（既定 off・RECOMMEND_SECOND_WISH_NG=on） */
+export function recommendSecondWishNgEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.RECOMMEND_SECOND_WISH_NG ?? "").trim().toLowerCase() === "on";
+}
+
 export function buildSecondMaterialNote(row: SecondMaterialRow | null | undefined): string {
   if (!row) return "";
   const L: string[] = [];
@@ -329,6 +334,11 @@ export function buildSecondMaterialNote(row: SecondMaterialRow | null | undefine
   if (fit.length) L.push(`・お客様のご希望に合う点（資料で確かめた物）: ${[...new Set(fit)].join("／")}`);
   const unlisted = (row.equipment?.match ?? []).filter((m) => m?.result === "unlisted" && m.label).map((m) => String(m.label));
   if (unlisted.length) L.push(`・ご希望のうち資料に記載が無い物（合うと書かない）: ${unlisted.join("／")}`);
+  // 2026-10-28 作業員3（物件オススメ 90日・竹内さん 298通）: 竹内さんが下書きに無いのに足すのは、ご希望に合わない事を正直に先に書く一言
+  //   （「ペット飼育可能なお部屋では御座いませんが、ダントツで室内綺麗…」）。資料で合わないと確かめた物（equipment.match の ng）は今まで書く役に渡していなかった。
+  //   エリアのずれ（recommend-second-wish-gap）と同じ向き。決めるのは書く役。入れる RECOMMEND_SECOND_WISH_NG=on（既定 off）
+  const ng = (row.equipment?.match ?? []).filter((m) => m?.result === "ng" && m.label).map((m) => String(m.label));
+  if (ng.length && recommendSecondWishNgEnabled()) L.push(`・ご希望に合わない点（資料で確かめた物）: ${[...new Set(ng)].join("／")} → 勧める時は1行目で先に正直に書く（竹内さんの形「〇〇なお部屋では御座いませんが、」の後に良い所）。合うとは書かない`);
   const facts = row.equipment?.facts ?? {};
   const eq = EQUIP_KEYS.map((k) => (facts[k]?.s === "ok" ? facts[k]?.ev : null)).filter((x): x is string => !!x);
   if (eq.length) L.push(`・資料にある設備: ${[...new Set(eq)].join("・")}`);

@@ -93,3 +93,25 @@ export function orderByCustomerText(names: ReadonlyArray<string | null | undefin
 export function aixEstimatePrefillEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.NEXT_PUBLIC_AIX_ESTIMATE_PREFILL ?? "").trim().toLowerCase() === "on";
 }
+
+/**
+ * 2026-10-28 AIX【物件確認した】の文の竹内さんの型（90日 329通・竹内さん87通の実送信の多数の形）を書く役に渡す材料の1段（既定 off・AIX_CHECK_FORM_MATERIAL=on）。
+ *   物件あった（竹内さん39通）: 見積書の同封の一文 31・締めはご査収 23／ご案内 12・申込で抑える締めは 1（下書き 10/15〜 6/46 → 送ったのは 2）
+ *   物件なかった（25通）: 募集に出ていない1文で終える 18（次の約束は新着 4・ピックアップ 4）
+ *   見積書が無い時に「御見積書作成しお送り」と約束する下書きが出た（10/14 まで 1・スタッフが消した）
+ *   決めるのは書く役（材料・決定論で消さない）。申込が入りそう（お客様が申込・抑えたいと言った等）な時は申込の締めでよい
+ */
+export function checkResultFormMaterial(o: { pattern: string | null | undefined; hasEstimate: boolean }): string {
+  const p = String(o.pattern ?? "");
+  const lines: string[] = [];
+  if (p === "available" || p === "alternative") {
+    lines.push("締めはご査収（「お手隙の際にご査収ください！！」）か内覧のご案内（「ご都合よろしいお日にちにお部屋ご案内させて頂きます！！」）が竹内さんの多数の形。「お申込みしお部屋抑えさせて頂きます」の締めは、お客様が申込・抑えたいと言った時や申込が入りそうな時だけ（竹内さん 39通中 1）");
+    if (!o.hasEstimate) lines.push("今回は御見積書を同封しない。御見積書を作成してお送りする約束も書かない（聞かれていない約束を作らない）");
+  } else if (p === "unavailable") {
+    lines.push("「〈物件名〉につきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！」の1文で終えるのが竹内さんの多数の形（25通中 18）。次の物件のピックアップ・新着の約束は、お客様が次を頼んでいる時だけ");
+  }
+  return lines.length ? `【竹内さんの文の型（物件確認した・実送信の多数の形）】\n${lines.map((l) => `・${l}`).join("\n")}` : "";
+}
+export function aixCheckFormMaterialEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.AIX_CHECK_FORM_MATERIAL ?? "").trim().toLowerCase() === "on";
+}

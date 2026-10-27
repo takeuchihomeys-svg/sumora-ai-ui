@@ -172,7 +172,7 @@ import { resolveConfirmTargetProperty, otherPropertyNamedInText } from "@/app/li
 import { buildAixContractNote, keepAllQuestionsRule } from "@/app/lib/aix-brain-contract";
 import { meetingSecondLine, meetingDayWordOn } from "@/app/lib/meeting-place-form";
 import { aixBroughtMaterialEnabled, loadBroughtPrefillFor } from "@/app/lib/aix-brought-prefill-server";
-import { broughtMaterialLine } from "@/app/lib/aix-brought-prefill";
+import { broughtMaterialLine, checkResultFormMaterial, aixCheckFormMaterialEnabled } from "@/app/lib/aix-brought-prefill";
 
 export const maxDuration = 300;
 
@@ -6421,7 +6421,9 @@ ${SMORA_COMMON_RULES}
 
         // 2026-10-28（25714f9b）: お客様が送ってきた物件（まだ確認の結果を返していない）を物件名で書けるよう材料に（AIX_BROUGHT_MATERIAL=on）
         const pcrBroughtNote = aixBroughtMaterialEnabled() && conversationId ? broughtMaterialLine((await loadBroughtPrefillFor(conversationId)) ?? { rooms: [], count: 0, lastCheckAt: null }) : "";
-        const pcrConvUserFinal = greetingTimeNote + (pcrBroughtNote ? `${pcrBroughtNote}\n\n` : "") + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。` + (pcrDiffNote ? `\n\n${pcrDiffNote}` : "") + (pcrStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + pcrStarNote : "");
+        // 2026-10-28 竹内さんの文の型（物件確認した・実送信の多数の形）を材料に（AIX_CHECK_FORM_MATERIAL=on・決めるのは書く役）
+        const pcrFormNote = aixCheckFormMaterialEnabled() ? checkResultFormMaterial({ pattern: String(check_pattern ?? ""), hasEstimate: !!(body.estimate_image_url || body.estimate_bundle === true || (Array.isArray(body.estimate_image_urls) && (body.estimate_image_urls as unknown[]).some(Boolean))) }) : "";
+        const pcrConvUserFinal = greetingTimeNote + (pcrFormNote ? `${pcrFormNote}\n\n` : "") + (pcrBroughtNote ? `${pcrBroughtNote}\n\n` : "") + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。` + (pcrDiffNote ? `\n\n${pcrDiffNote}` : "") + (pcrStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + pcrStarNote : "");
         // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
         const parsePCR = (raw: string): string => messageFromAixJson(raw, currentAction);
         const rawPCR = await callClaude(
@@ -7022,7 +7024,9 @@ ${templateText}`;
         const vacatingPart = checkVacatingNote ? `\n\n${checkVacatingNote}` : "";
         // 2026-10-28（25714f9b）: お客様が送ってきた物件の名前を材料に（AIX_BROUGHT_MATERIAL=on）
         const checkBroughtNote = aixBroughtMaterialEnabled() && conversationId ? broughtMaterialLine((await loadBroughtPrefillFor(conversationId)) ?? { rooms: [], count: 0, lastCheckAt: null }) : "";
-        const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${templateSampleNote}${templateStructureNote}${calendarPart}${vacatingPart}${summaryNote}${checkBroughtNote ? `\n\n${checkBroughtNote}` : ""}${recentHistory}`;
+        // 2026-10-28 竹内さんの文の型（AIX_CHECK_FORM_MATERIAL=on）
+        const checkFormNote = aixCheckFormMaterialEnabled() ? checkResultFormMaterial({ pattern: String(check_pattern ?? ""), hasEstimate: !!(estimate_image_url || body.estimate_bundle === true || (Array.isArray(body.estimate_image_urls) && (body.estimate_image_urls as unknown[]).some(Boolean))) }) : "";
+        const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${templateSampleNote}${templateStructureNote}${calendarPart}${vacatingPart}${summaryNote}${checkFormNote ? `\n\n${checkFormNote}` : ""}${checkBroughtNote ? `\n\n${checkBroughtNote}` : ""}${recentHistory}`;
 
         // ブロック: [global ルール 1h] → [固定文＋action 別ルール 5m] → [お手本・実例・ノウハウ・ブレイン（動的）]。Vision も同じ構成
         const checkSystemSpec: SystemSpecBlocks = {
