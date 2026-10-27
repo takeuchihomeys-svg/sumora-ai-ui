@@ -6809,6 +6809,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   ].filter(Boolean).join("\n") || undefined,
                   checkpointFacts: groundTruth.checkpointFacts,
                   customerConditionsDb: groundTruth.customerConditionsDb,
+                  account: convAccount,   // 2026-10-28 下書きが触れた会社の事実のブランド分け（FC_COMPANY_FACTS_BY_DRAFT）
                   isAutoSend: enforceReplyModeGate,   // HIGH-1/2: 自動送信経路のみ true
                   // S-4: 生成側 shouldPrependGreeting（初回挨拶強制）と同値。開口語チェック／INTRO_REPEAT の初回免除に使う
                   isEarlyConversation: isFirstEverReplyFromMsgs,

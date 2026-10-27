@@ -187,7 +187,12 @@ const resultBrain: Reader = {
       const staff = burstAix(t);
       // 確認の結果はお礼の番の後で送る事が多い（すぐの並びに入らない）＝この番の後のスタッフの AIX 全部で見る
       const staffAll = (t.staff_aix ?? []).map((a) => (a.aix_type === "property_check" ? "property_check_result" : a.aix_type));
-      if (open.some((s) => s.kind === "pickup") && pickupReadyAt(input.pickups, at, lastPropertiesSentBefore(input.facts, at))) {
+      // 2026-10-28 調べ（あかり 10/26 の②の切れ 2件）: お客様が持ち込んだ物件の募集状況を確かめるために拡張で探した行（送る為の行ではない）が
+      //   「送れる物件が揃った」に数えられ、確認の約束を果たした番（ブレイン=物件確認した・スタッフ=物件確認した）まで切れにしていた。
+      //   確認の約束が開いていてスタッフがこの番の後に物件確認したで果たした時は、確認の側で見る（LINK_WATCH_CHECK_FIRST=on の時だけ・既定 off）
+      const checkFirst = (process.env.LINK_WATCH_CHECK_FIRST ?? "").toLowerCase() === "on"
+        && open.some((s) => s.kind === "check" || s.kind === "confirm" || s.kind === "photo") && staffAll.includes("property_check_result");
+      if (!checkFirst && open.some((s) => s.kind === "pickup") && pickupReadyAt(input.pickups, at, lastPropertiesSentBefore(input.facts, at))) {
         const ok = PROPERTY_AIX.has(brain);
         out.push({ link: this.link, at: t.customer_turn_at, ok, breakType: ok ? undefined : "pickup_ready_brain_other", detail: `ブレイン=${brain || "返信"} スタッフ=${staff.join("+") || "手打ち"}` });
       } else if (open.some((s) => s.kind === "check" || s.kind === "confirm" || s.kind === "photo") && staffAll.includes("property_check_result")) {
@@ -208,10 +213,15 @@ const EXCLUDE_RE = /([一-龯ァ-ヶー々]{2,8})(?:駅|エリア|周辺|方面|
 const SIZE_RE = /(?:リビング|LDK|洋室|お部屋|部屋)?[^\n。]{0,4}?([0-9０-９]{1,2}(?:[.．][0-9])?)\s*(帖|畳|㎡|平米)以上/g;
 /** 地名でない語（「保証人は無しで」「礼金なしで」等は条件の話で地域ではない） */
 const NOT_PLACE_RE = /^(?:家賃|初期費用|ロフト|ユニットバス|和室|一階|バス|トイレ|洗濯機|築年数|条件|それ|こちら|お部屋|物件|管理費|定期借家|角部屋|北向き|募集)$|保証|敷金|礼金|手数料|ペット|駐車|駐輪|鍵|クリーニング|費用|保険|更新|家具|エアコン|審査|電話|連絡|内覧|内見/;
+/** 地名でない副詞・時の語（「一旦無しで」「とりあえずなしで」「今回は無しで」） */
+const NOT_PLACE_ADVERB_RE = /^(?:一旦|いったん|とりあえず|取り敢えず|ひとまず|今回|今は|今回は|今のところ|当面|しばらく)$|一旦|とりあえず/;
 export function reactionTokensOf(text: string | null | undefined): Array<{ kind: "exclude" | "size"; token: string }> {
   const t = String(text ?? "").normalize("NFKC");
   const out: Array<{ kind: "exclude" | "size"; token: string }> = [];
-  for (const m of t.matchAll(EXCLUDE_RE)) if (!NOT_PLACE_RE.test(m[1])) out.push({ kind: "exclude", token: m[1] });
+  // 2026-10-28 調べ（③の切れ 2件＝10/21 孝成さんの「一旦無しで通して貰ってもいいですか」＝連帯保証人の話・申込の後）: 「一旦」「とりあえず」等の副詞を
+  //   外す地域と読んでいた。LINK_WATCH_REACTION_STRICT=on の時だけ副詞・時の語を地名にしない（既定 off）
+  const strict = (process.env.LINK_WATCH_REACTION_STRICT ?? "").toLowerCase() === "on";
+  for (const m of t.matchAll(EXCLUDE_RE)) if (!NOT_PLACE_RE.test(m[1]) && !(strict && NOT_PLACE_ADVERB_RE.test(m[1]))) out.push({ kind: "exclude", token: m[1] });
   for (const m of t.matchAll(SIZE_RE)) out.push({ kind: "size", token: `${m[1]}${m[2] === "畳" ? "帖" : m[2] === "平米" ? "㎡" : m[2]}` });
   return out;
 }
@@ -269,7 +279,11 @@ const brainSecond: Reader = {
       const log = input.aixLogs.find((l) => (l.sent_at ?? l.created_at) === s.doneAt);
       // 答えを運ぶのは【物件確認した】（見積書・保証会社について 等で果たした確認は、答えが別の形＝ここでは見ない）
       if (log?.aix_type !== "property_check_result") continue;
-      const follow = input.messages.filter((m) => m.sender !== "customer" && ms(m.created_at) >= at - 60_000 && ms(m.created_at) <= at + 5 * 60_000).map((m) => m.text ?? "").join("\n");
+      // 2026-10-28 調べ（④の切れ＝10/23 未来穂さん）: AIX の記録が「開いただけ」（sent_at・本文なし・07:59）で、実際の送信（答え「celeste東中島 504号室、
+      //   現在募集中」）は10分後の 08:09 だった＝5分の窓の外で「2通目に約束の中身が無い」と数えていた。本文の無い記録の時は30分まで見る
+      //   （LINK_WATCH_SECOND_WIDE=on の時だけ・既定 off）
+      const wide = (process.env.LINK_WATCH_SECOND_WIDE ?? "").toLowerCase() === "on" && !log?.generated_text && !log?.sent_at;
+      const follow = input.messages.filter((m) => m.sender !== "customer" && ms(m.created_at) >= at - 60_000 && ms(m.created_at) <= at + (wide ? 30 : 5) * 60_000).map((m) => m.text ?? "").join("\n");
       const body = `${log?.generated_text ?? ""}\n${follow}`;
       const ok = words.some((x) => body.includes(x));
       out.push({ link: this.link, at: s.doneAt!, ok, breakType: ok ? undefined : "second_lacks_promise", detail: `${s.doneBy} 約束=${words.join("・")}` });

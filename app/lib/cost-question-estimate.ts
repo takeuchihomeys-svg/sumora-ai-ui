@@ -72,6 +72,17 @@ const ESTIMATE_THANKS_RE = /見積(?:書|り|もり)?(?:を|の)?(?:ご送付|�
 const RE_ESTIMATE_RE = /再(?:度)?(?:見積|お見積)|もう(?:一度|1回|一回)[^。\n]{0,8}見積|(?:も|を)含め(?:て)?[^。\n]{0,12}見積|見積(?:もり|り)?[^。\n]{0,8}(?:し直|出し直|やり直)|入居(?:した|する)?場合[^。\n]{0,10}(?:いくら|初期費用)|日に入居[^。\n]{0,12}(?:いくら|初期費用)/;
 /** ⑤他社の御見積書（画像の読み取りの文）: 「御見積書 様 … この度は…ご利用頂き」 */
 const OTHER_COMPANY_ESTIMATE_RE = /御見積書[\s\S]{0,60}(?:この度は|ご利用頂き|ご利用いただき)/;
+/**
+ * ⑧まだ送って頂いていない他の物件の初期費用（「他にも気になっている物件があるので そちらも初期費用教えていただきたいです」）。
+ * 2026-10-28 台帳 w24（試験 q078・9/13 実物）: 竹内さんは返信で「気になるお部屋ございましたらお送りください！！お送り頂き次第募集状況確認させて頂き、
+ *   最大限割引させて頂いた初期費用の御見積書とあわせてご連絡」＝物件が届いてから（feedback_estimate_needs_property）。ブレインは 1〜2/3 で AIX【見積書送る】。
+ * こちらが送った物件の中から指さない費用の質問（adc4d260「送った中から1件を見積書つきで勧める」）とは別＝「他に」「別に」＋「気になっている／見たい物件がある」の形だけ。
+ * この番に URL・画像・引用があれば当てない（持ち込み・指す物がある）。COST_Q_OTHER_UNSENT=on の時だけ（既定 off）
+ */
+const OTHER_UNSENT_PROPERTY_RE = /(?:他|ほか|別)(?:に|にも|の|でも)[^。\n]{0,8}(?:気にな(?:って|る)|見たい|良さそう|いいな|検討して)[^。\n]{0,6}(?:物件|お?部屋|ところ|とこ)/;
+export function costQOtherUnsentEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.COST_Q_OTHER_UNSENT ?? "").trim().toLowerCase() === "on";
+}
 /** ⑥相場・平均の質問 */
 const MARKET_RE = /平均|相場|一般的に|だいたいの家賃/;
 /** ⑥金額の確かめ（数字＋ですか／でよろしいでしょうか） */
@@ -110,6 +121,8 @@ export function resolveCostQuestionEstimate(i: CostQuestionEstimateInput): CostQ
   if (NEGOTIATION_RE.test(t) && !estimateRequest && !reEstimate) return no("値下げ・交渉");
   // ⑥相場・平均
   if (MARKET_RE.test(t) && !estimateRequest) return no("相場・平均の質問");
+  // ⑧まだ送って頂いていない他の物件の費用（物件が届いてから・返信で「お送りください」）
+  if (costQOtherUnsentEnabled() && OTHER_UNSENT_PROPERTY_RE.test(t) && !i.turnHasImage && !i.turnQuotesOurMessage && !PORTAL_URL_RE.test(t) && !/https?:\/\//.test(t)) return no("まだ送って頂いていない他の物件");
   // ⑥金額の確かめ（「家賃81000円ですよね」）。初期費用・見積の語がある確かめ（「初期費用119.000円ですか？」）は見積書で答える
   //   （見積書の後の総額の確かめ S6 は呼び出し側の決まりが先）
   if (AMOUNT_CONFIRM_RE.test(t) && !estimateRequest && !reEstimate && !/初期費用|見積/.test(t)) return no("金額の確かめ");
@@ -128,6 +141,7 @@ export function resolveCostQuestionEstimate(i: CostQuestionEstimateInput): CostQ
 /** 理由のうち「見積書ではない」とはっきり言える物（LLM が 見積書送る を選んでも外す）。それ以外の no は LLM の判断を残す */
 export const CLEAR_NOT_ESTIMATE_REASONS: ReadonlySet<string> = new Set([
   "値下げ・交渉", "もっと安い物件の依頼", "費用の1項目", "見積書へのお礼・受け取り", "他社の御見積書", "相場・平均の質問", "金額の確かめ",
+  "まだ送って頂いていない他の物件",
 ]);
 
 const OUR_PROPERTY_TEXT_RE = /🌟|[0-9０-９]{2,4}号室|ご査収/;

@@ -103,6 +103,16 @@ export const NEGOTIATION_PROMISE_RE = /(?:交渉|申請)(?:を)?(?:させて(?:�
 export function negotiationPromisePending(i: { lastStaffText: string | null | undefined; customerAckOnly: boolean; reportedAfter: boolean; env?: Record<string, string | undefined> }): boolean {
   const env = i.env ?? (typeof process !== "undefined" ? process.env : {});
   if ((env.NEGOTIATION_PROMISE_AIX ?? "").toLowerCase() === "off") return false;
-  return i.customerAckOnly && !i.reportedAfter && NEGOTIATION_PROMISE_RE.test(String(i.lastStaffText ?? "").normalize("NFKC"));
+  const t = String(i.lastStaffText ?? "").normalize("NFKC");
+  // 2026-10-28 つなぎの切れ②（あかり 10/26・watch-break:result_brain）: 「こちらの保証会社審査仮に否決となった場合別の保証会社で審査行えるように
+  //   貸主側に交渉させて頂きます」は「もし〜なら」の条件つきの説明で、今果たす約束ではない。旧はこの文に当たり、お客様の「わかりました／申し込みたいです」の番が
+  //   AIX【確認した→初期費用について】（promise:negotiation）になった（スタッフは申込へ）。条件の語（仮に・もし・万が一・〜場合）の文は数えない。
+  //   NEGOTIATION_PROMISE_SKIP_CONDITIONAL=on の時だけ（既定 off＝今まで通り）
+  const hit = (env.NEGOTIATION_PROMISE_SKIP_CONDITIONAL ?? "").toLowerCase() === "on"
+    ? t.split(/[。！!\n]+/).some((s) => NEGOTIATION_PROMISE_RE.test(s) && !NEGOTIATION_CONDITIONAL_RE.test(s))
+    : NEGOTIATION_PROMISE_RE.test(t);
+  return i.customerAckOnly && !i.reportedAfter && hit;
 }
+/** 「もし〜なら」の条件つきの文（今果たす約束ではない） */
+export const NEGOTIATION_CONDITIONAL_RE = /仮に|もし(?!くは|よろしければ|宜しければ)|万が一|万一|(?:場合|際)(?:は|には|でも)?[^。！!\n]{0,30}(?:交渉|申請)|(?:となった|になった|だった|であった)(?:場合|際|時)/;
 export const NEGOTIATION_PROMISE_SOURCE = "promise:negotiation";

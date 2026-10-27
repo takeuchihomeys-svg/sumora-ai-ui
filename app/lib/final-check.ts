@@ -89,7 +89,8 @@ import { isRentNegotiationPromise, isMgmtDiscountNegotiationPromise, customerAsk
 //   調べたら最終チェックは会社の事実（company-facts）を**一度も受け取っていなかった**（生成プロンプトとブレインにしか渡っていない）。
 //   決定論の段（V16 COMPANY_FACT_CONTRADICTION・実送信365日 7,997通で当たり0＝block）と anomaly_scan の [COMPANY_FACTS] の2か所に繋ぐ
 import { findCompanyFactContradiction, buildCompanyFactsForCheck, findMissingCardFee } from "./company-fact-guard";
-import { customerTextsForCompanyFacts } from "./company-facts";
+import { customerTextsForCompanyFacts, matchCompanyFacts } from "./company-facts";
+import { fcCompanyFactsByDraftEnabled, draftCompanyFactsBlock } from "./company-facts-by-draft";
 // 2026-10-02 お客様自身の言葉の復唱を捏造と読まない（fabricated-customer-words.ts・scripts/audit-fabricated-customer-words.ts）
 import { isCustomerEchoFabrication } from "./fabricated-customer-words";
 import { isStaffSelfIntroNameFlag, STAFF_SELF_NAME } from "./final-check-staff-name";
@@ -181,6 +182,8 @@ export interface CheckResult {
 }
 
 export interface FinalCheckContext {
+  /** 2026-10-28 会話のアカウント（sumora／ieyasu／giga）。下書きが触れた会社の事実をブランドで分けて判定役に渡す（FC_COMPANY_FACTS_BY_DRAFT） */
+  account?: string | null;
   /** 2026-09-22 竹内（𝓡さん事例）: お客様が送ってきた物件が全部こちらの送った物件（own-property-server の照合・生成と同じ結果） */
   ownPropertyReturnedAll?: boolean;
   dbRules?: string;               // ai_prompt_rules の注入文字列（fetchPromptRules の戻り値）
@@ -813,7 +816,7 @@ FABRICATED_POLICY: 仲介手数料・日割家賃・AD還元など会社固有�
   ・「保証会社の費用は一般的に総賃料の50%前後（一般論として・物件により異なる旨を添えた説明）」
   ※ただし特定物件の保証料実額・特定物件の入居可能日を断定している場合は従来どおり指摘対象`;
   // 2026-09-23 竹内: 会社の事実（company-facts）を検査にも渡す。お客様が今それを聞いている時だけ載る（生成と同じ matchCompanyFacts）
-  const companyFactsNote = companyFactsForCheck(ctx);
+  const companyFactsNote = companyFactsForCheck(ctx) + companyFactsInDraftForCheck(draft, ctx);
   const dynamic = `${brainBaselineNote}${clearedFactsNote}[CHECKPOINTS]
 ${(ctx.checkpointFacts || "なし").slice(0, 2000)}
 [/CHECKPOINTS]
@@ -858,6 +861,16 @@ export function companyFactGuardCustomerTexts(ctx: Pick<FinalCheckContext, "rece
   return [...new Set([...customerTextsForCompanyFacts(msgs, { env: { COMPANY_FACT_TURN_SCOPE: "off" } }), ...customerTextsForCompanyFacts(msgs)])];
 }
 /** 会社の事実のブロック（anomaly_scan・verify の動的部）。お客様が聞いていなければ空文字（関係ない会話には出さない） */
+/**
+ * 2026-10-28 台帳 unknown:company-rules-missing: 下書きが自分から触れた会社の決まり（お客様は聞いていない）も判定役に渡す。
+ *   旧は [COMPANY_FACTS] がお客様の質問に当たった時だけで、初回の挨拶の「最大限割引」「カード手数料3.24%」を作り話（FABRICATED_POLICY）と見ていた。
+ *   FC_COMPANY_FACTS_BY_DRAFT=on の時だけ（既定 off・company-facts-by-draft）
+ */
+function companyFactsInDraftForCheck(draft: string, ctx: FinalCheckContext): string {
+  if (!fcCompanyFactsByDraftEnabled()) return "";
+  const asked = new Set(matchCompanyFacts([ctx.lastCustomerMessage ?? "", ...companyFactCustomerTexts(ctx)], { account: ctx.account ?? null }).map((f) => f.id));
+  return draftCompanyFactsBlock(draft, ctx.account ?? null, asked);
+}
 function companyFactsForCheck(ctx: FinalCheckContext): string {
   // 2026-10-20: 窓は今回の番（こちらの最後の送信より後のお客様の発言）だけ（company-facts.customerTextsForCompanyFacts・戻す COMPANY_FACT_TURN_SCOPE=off）
   const custRecent = companyFactCustomerTexts(ctx);

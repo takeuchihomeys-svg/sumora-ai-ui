@@ -22,6 +22,7 @@
 // ⚠ 判定は測った時と同じ関数（監査スクリプトはここを import する＝四者同名）。
 //   上の率は「お客様へのお願い（〜の程よろしくお願い致します）」を除く前に測った値（除いた後の全件監査は scripts/audit-open-promises.ts）。
 //   全件監査（直近14日・106会話）: 約束260件・果たした82.7%・遅れ7／遅れ気味7／新着・審査待ち14／記録なし（公式LINEから返信）6
+import { promiseDueNoteEnabled, promiseDueLabel } from "./promise-due";
 
 export const PROMISE_RE = /(?:確認|ご連絡|連絡|お送り|送付|ピックアップ|お探し|探させ|交渉|作成|手配|ご案内|お調べ|調べ|抑え|押さえ|お伝え)[^\n。！!]{0,14}(?:させて(?:頂|いただ)きます|致します|いたします|します)(?!でしょうか)/;
 export const PROMISE_DEADLINE_RE = /(?:本日中|今日中|明日|明朝|明後日|[0-9０-９]{1,2}時|[0-9０-９]{1,2}[\/／月][0-9０-９]{1,2}|今週|来週|週明け|月曜|火曜|水曜|木曜|金曜|土曜|日曜|午前中|午後|夕方|夜)/;
@@ -172,12 +173,18 @@ const hStr = (h: number) => (h >= 48 ? `${Math.round(h / 24)}日` : `${Math.roun
  * ブレインに渡す【お客様との約束】。事実（今開いている約束・遅れ）と、実測（場面の約束率・成約との関係）だけを渡す。
  * どう返すか（途中経過を伝える・約束する・しない）はブレインが決める。
  */
-export function buildPromiseBrainNote(track: PromiseTrack, scene: string | null): string {
+export function buildPromiseBrainNote(track: PromiseTrack, scene: string | null, nowMs: number = Date.now()): string {
   const lines: string[] = ["\n【🤝 お客様との約束（確定事実＋実測）】"];
+  // 2026-10-28 台帳 w05: 約束の文の期限（「明日一番で」「本日中に」「10/30までに」）→「期限 10/30（あと2日／今日／1日過ぎ）」（PROMISE_DUE_NOTE=on の時だけ・promise-due）
+  const due = (p: OpenPromise) => {
+    if (!promiseDueNoteEnabled() || !p.hasDeadline) return "";
+    const l = promiseDueLabel(p.sentence, Date.parse(p.at), nowMs);
+    return l ? `・${l}` : "";
+  };
   lines.push(`・この会話の直近14日: こちらの約束 ${track.made}件・果たした ${track.kept}件${track.open.length ? `・まだ果たしていない ${track.open.length}件` : ""}`);
   for (const p of track.open) {
     const st = PROMISE_STATS[p.kind];
-    lines.push(`  - 【${p.status}】${p.kind}の約束（${hStr(p.elapsedH)}前${p.hasDeadline ? "・期限の語あり" : ""}）「${p.sentence}」`
+    lines.push(`  - 【${p.status}】${p.kind}の約束（${hStr(p.elapsedH)}前${p.hasDeadline ? (due(p) || "・期限の語あり") : ""}）「${p.sentence}」`
       + (st ? `（実送信で果たすまでの中央値 ${hStr(st.medianH)}・90%で ${hStr(st.p90H)}）` : ""));
   }
   if (track.open.some((p) => p.status === "遅れ" || p.status === "遅れ気味")) {
