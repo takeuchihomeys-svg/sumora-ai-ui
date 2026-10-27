@@ -1,6 +1,6 @@
 // app/lib/__tests__/aix-brain-contract.test.ts — ブレインの本質を AIX の文の材料に（実行: npx tsx app/lib/__tests__/aix-brain-contract.test.ts）
 //   実物: 10/13 の本番の判断（内覧日調整の番「日曜日とかは案内可能ですか？」・言わない「申込誘導」）を伏せて使う
-import { buildAixContractNote, contractFreshForAix, askIsThisAix, keepAllQuestionsRule, aixBrainContractOn, lastCustomerAt, mustNotForAix, promiseFulfilledBy, STAFF_VALUE_LINE_RE, isOwnTopicLine } from "../aix-brain-contract";
+import { buildAixContractNote, contractFreshForAix, askIsThisAix, keepAllQuestionsRule, aixBrainContractOn, lastCustomerAt, mustNotForAix, promiseFulfilledBy, STAFF_VALUE_LINE_RE, isOwnTopicLine, situationLines, aixContractSituationOn } from "../aix-brain-contract";
 import { buildBrainStrategyNote } from "../brain-strategy-note";
 
 let pass = 0, fail = 0;
@@ -124,6 +124,15 @@ const msgs = [
   const soft = buildBrainStrategyNote(meta as never, { fresh: true, contractPresent: true });
   t("本質なし: 旧の宣言1文", forced.includes("1文だけ**入れる"), forced);
   t("本質あり: 宣言の強制を出さない", !soft.includes("1文だけ**入れる") && soft.includes("ブレインが読んだこの番】に合う時だけ"), soft);
+}
+
+// 2026-10-28 2番手の申込＋並行して探す（q152・AIX_CONTRACT_SITUATION）
+{
+  const l = situationLines("2番手で申込＋並行して探す・お客様承諾済み", "application_push");
+  t("申込へ: 状況と竹内さんの形", l.length === 2 && /並行してお部屋お探しさせて頂きます/.test(l[1]), l);
+  t("他の AIX は状況の行だけ", situationLines("2番手で申込＋並行して探す", "property_send").length === 1);
+  t("状況が無ければ空", situationLines("", "application_push").length === 0);
+  t("既定 off", aixContractSituationOn({}) === false && aixContractSituationOn({ AIX_CONTRACT_SITUATION: "on" }) === true);
 }
 
 console.log(`\n${pass} OK / ${fail} NG`);

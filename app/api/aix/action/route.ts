@@ -172,6 +172,7 @@ import { resolveConfirmTargetProperty, otherPropertyNamedInText } from "@/app/li
 import { buildAixContractNote, keepAllQuestionsRule } from "@/app/lib/aix-brain-contract";
 import { meetingSecondLine, meetingDayWordOn } from "@/app/lib/meeting-place-form";
 import { aixBroughtMaterialEnabled, loadBroughtPrefillFor } from "@/app/lib/aix-brought-prefill-server";
+import { pickupFocusOneEnabled, pickupFocusCandidates, pickupFocusNote } from "@/app/lib/pickup-focus";
 import { broughtMaterialLine, checkResultFormMaterial, aixCheckFormMaterialEnabled } from "@/app/lib/aix-brought-prefill";
 
 export const maxDuration = 300;
@@ -3908,6 +3909,8 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           psmModeNote,
           nameNote.trim(),
           conditionsInfo ? `【お客様の希望条件（②で使うのは最大2つ・会話で使った言い方を優先）】\n${conditionsInfo}` : "",
+          // 2026-10-28 PICKUP_FOCUS_ONE（既定 off）: ②の条件はエリア＋一番のこだわり1つまで
+          pickupFocusOneEnabled() ? pickupFocusNote(pickupFocusCandidates(conditionsInfo, (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-10).map((m) => m?.text ?? null))) : "",
           keywordRule.trim(),
           sendNowBlock,
           threadsBlock,
@@ -4258,6 +4261,8 @@ ${aixPropertySendRules}
         openingLine ? `【①挨拶行の実値（構成①「[挨拶行]」に使うこと）】\n${openingLine}` : "",
         conditionsRule ? `【条件ルール（構成②「[条件ルール]」に使うこと）】\n${conditionsRule.replace(/^・/, "")}${searchedConditionsNote ? "\n※【今回実際に検索した条件】がある時は、②のエリア・家賃・間取りはそちらに合わせる（検索した条件は今回の事実＝でっち上げではない）" : ""}` : "",
         newArrivalCountStr ? `【新着件数（「[新着件数]」に使うこと）】${newArrivalCountStr}` : "",
+        // 2026-10-28 owner-fb:1015-pickup-focus（PICKUP_FOCUS_ONE・既定 off）: ②の条件はエリア＋一番のこだわり1つまで（下書き 2.9 区切り → 竹内さん 1.3）
+        pickupFocusOneEnabled() ? pickupFocusNote(pickupFocusCandidates(typeof customer_conditions === "string" ? customer_conditions : null, (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-10).map((m) => m?.text ?? null))) : "",
       ].filter(Boolean).join("\n\n");
       const sendDynamic = [
         sendContextBlock,

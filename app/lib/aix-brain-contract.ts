@@ -115,7 +115,27 @@ export function buildAixContractNote(o: { meta: AixContractMeta; action: string;
   const fk = c?.feeling && (c.feeling as { kind?: unknown }).kind ? String((c.feeling as { kind?: unknown }).kind) : "";
   if (fk && (c?.feeling as { acknowledge?: unknown } | null)?.acknowledge) L.push(`- お客様の気持ち（${FEELING_JA[fk] ?? fk}）は本題の前に一言で受ける（お客様が書いた言葉に触れる・新しい言い回しを作らない）`);
   if (mindBits.length) L.push(`- お客様の今（ブレイン）: ${mindBits.join("・")}（言葉選びの判断にだけ使う・分析の言葉を本文に書かない）`);
+  // 2026-10-28 owner-fb:1015-apply-2nd-parallel（試験 q152・ryou さん 10/11）: 2番手で申込しつつ並行で探す提案をお客様が承諾した番。
+  //   ブレインの今の状況（turn_contract.situation）は AIX の文に届いていなかった＝申込へ の文が並行して探す事に触れなかった。
+  //   竹内さんの実送信（申込フォーマットの直後の手打ち）:「かしこまりました！！〈物件名 号室〉をお申込し、並行してお部屋お探しさせて頂きます！！
+  //   こちらのフォーマットご入力頂き 本人確認書類としまして運転免許証またはマイナンバーカード裏表写真お送りの程よろしくお願い致します😌！！」
+  //   入れる AIX_CONTRACT_SITUATION=on（既定 off）
+  if (aixContractSituationOn(o.env)) L.push(...situationLines(typeof c?.situation === "string" ? c.situation : null, o.action));
   return L.length > 1 ? L.join("\n") : "";
+}
+
+export function aixContractSituationOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.AIX_CONTRACT_SITUATION ?? "").trim().toLowerCase() === "on";
+}
+/** ブレインの今の状況の行（申込へ で2番手＋並行して探す時は竹内さんの文の形も） */
+export function situationLines(situation: string | null | undefined, action: string): string[] {
+  const s = String(situation ?? "").trim();
+  if (!s) return [];
+  const out = [`- 今の状況（ブレイン）: ${Array.from(s).slice(0, 80).join("")}（文の前提にだけ使う・この言葉を写さない）`];
+  if (action === "application_push" && /並行/.test(s) && /(?:2|２|二)番手|申込/.test(s)) {
+    out.push("- 2番手での申込と並行して探す事をお客様が承諾した番: 竹内さんの形「かしこまりました！！〈物件名 号室〉をお申込し、並行してお部屋お探しさせて頂きます！！こちらのフォーマットご入力頂き 本人確認書類としまして運転免許証またはマイナンバーカード裏表写真お送りの程よろしくお願い致します😌！！」（物件名・号室は会話・スタッフの入力にある物だけ）");
+  }
+  return out;
 }
 /**
  * 返信側の「スタッフだけが知る値を本文で書かない」線（AIX ではスタッフの入力として書く物＝AIX には渡さない）。

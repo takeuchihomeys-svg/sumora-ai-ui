@@ -79,6 +79,13 @@ function piiGate(q: AixQuestion, names: string[]): string | null {
   const quota = { ...DEFAULT_QUOTA };
   for (const kv of arg("quota").split(",").filter(Boolean)) { const [k, v] = kv.split("="); if (k && Number(v) >= 0) quota[k] = Number(v); }
   const questions = pickQuestions(cands, quota);
+  // 2026-10-28 --must=<元の番の id の一部,…>: 割り当て（quota）の外でも必ず入れる番（関所は通した候補だけ）。
+  //   例: 物件オススメの2通目で竹内さんが「〇〇となりますが」とご希望との差を先に正直に書いた番（RECOMMEND_SECOND_WISH_NG の比べ）
+  for (const key of arg("must").split(",").map((s) => s.trim()).filter(Boolean)) {
+    const hit = cands.find((q) => (q.src ?? "").includes(key) || q.id.includes(key) || String((q as { rawId?: string }).rawId ?? "").includes(key));
+    if (hit && !questions.some((q) => q.id === hit.id)) questions.push(hit);
+    if (!hit) console.warn(`--must: ${key} は候補に無い（関所で落ちたか元の番に無い）`);
+  }
   writeFileSync(OUT, JSON.stringify({ made: new Date().toISOString(), since: SINCE, quota, questions }, null, 1));
   console.log(`\n問題 ${questions.length}（候補 ${cands.length}）→ ${OUT}`);
   const by: Record<string, string[]> = {};
