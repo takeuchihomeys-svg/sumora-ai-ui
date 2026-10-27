@@ -1422,6 +1422,29 @@ export default function AixModal({
   const [estimateMultiMode] = useState(initialEstimateMulti ?? false);
   // ⑥ 固定長3スロットで管理（filter(Boolean)で詰めるとpreviewsとindexがずれるため、詰めるのは送信直前のみ）
   const [estimateMultiFiles, setEstimateMultiFiles] = useState<(File | null)[]>([null, null, null]);
+  // 2026-10-28 竹内さん（#4 未来穂 10/22）「指定した物件があるのだから、AIX から見積書を作成した場合はその物件がセットされているようにする」:
+  //   ①②③の枠に、見積書ツールへの引き継ぎ（/api/estimate-handoff の target＋candidates）の物件名をお客様が書いた順に出す。入れる: NEXT_PUBLIC_AIX_ESTIMATE_PREFILL=on（既定 off）
+  const [estimateSlotNames, setEstimateSlotNames] = useState<string[]>([]);
+  useEffect(() => {
+    if ((process.env.NEXT_PUBLIC_AIX_ESTIMATE_PREFILL ?? "").trim().toLowerCase() !== "on") return;
+    if (actionType !== "estimate_sheet" || !estimateMultiMode || !conversationId) return;
+    let cancelled = false;
+    fetch(`/api/estimate-handoff?conversation_id=${encodeURIComponent(conversationId)}`, { headers: INTERNAL_AUTH_HEADER })
+      .then((r) => r.json())
+      .then(async (d: { ok?: boolean; handoff?: { choice?: { target?: { name: string; room: string | null } | null; candidates?: Array<{ name: string; room: string | null }> } } }) => {
+        if (cancelled || !d?.ok) return;
+        const ch = d.handoff?.choice;
+        const label = (x: { name: string; room: string | null }) => (x.room && !x.name.includes(x.room) ? `${x.name} ${x.room}号室` : x.name);
+        const names = [ch?.target, ...(ch?.candidates ?? [])].filter((x): x is { name: string; room: string | null } => !!x?.name).map(label);
+        if (!names.length) return;
+        const { orderByCustomerText } = await import("@/app/lib/aix-brought-prefill");
+        const turnText = (recentMessages ?? []).slice(-8).filter((m) => m.sender === "customer").map((m) => m.text ?? "").join("\n");
+        if (!cancelled) setEstimateSlotNames(orderByCustomerText(names, turnText, 3));
+      })
+      .catch(() => { /* 枠の名前が出ないだけ */ });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionType, conversationId]);
   const [estimateMultiPreviews, setEstimateMultiPreviews] = useState<(string | null)[]>([null, null, null]);
   // 全力サポート専用
   const [zenryokuArea, setZenryokuArea] = useState<string>("");
@@ -1436,6 +1459,8 @@ export default function AixModal({
   const prefilledRef = useRef(prefilled);
   prefilledRef.current = prefilled;
   const prefillTriedRef = useRef<Set<string>>(new Set());
+  const broughtPrefillOn = (process.env.NEXT_PUBLIC_AIX_BROUGHT_PREFILL ?? "").trim().toLowerCase() === "on";
+  const broughtTriedRef = useRef(false);
   const namePrefill = useMemo(() => {
     const msgs = recentMessages ?? [];
     const turn = customerTurnOf(msgs);
@@ -1465,7 +1490,8 @@ export default function AixModal({
     const n = namePrefill;
     if (actionType === "property_check_result") {
       if (checkPattern === "interior_photo") applyPrefill("interiorPropertyName", n, interiorPropertyName, setInteriorPropertyName);
-      else if (checkPattern === "unavailable") applyPrefill("checkUnavailablePropName", n, checkUnavailablePropName, setCheckUnavailablePropName);
+      // 2026-10-28 NEXT_PUBLIC_AIX_BROUGHT_PREFILL=on の時は物件名をブレインの台帳から入れる（下の useEffect）＝会話の網の先入れはしない（当たりが 1/3）
+      else if (checkPattern === "unavailable") { if (!broughtPrefillOn) applyPrefill("checkUnavailablePropName", n, checkUnavailablePropName, setCheckUnavailablePropName); }
       else if (checkPattern === "exclusive") applyPrefill("exclusivePropName", n, exclusivePropName, setExclusivePropName);
       else if (checkPattern === "other_room_check") applyPrefill("otherRoomPropertyName", n, otherRoomPropertyName, setOtherRoomPropertyName);
       else if (checkPattern === "mgmt_move_in") applyPrefill("moveInPropName", n, moveInPropName, setMoveInPropName);
@@ -1478,7 +1504,7 @@ export default function AixModal({
             if (!mgmtGuarantorType) setMgmtGuarantorType(guarantorTypeJa(guarantorHint.type));
           });
         }
-      } else if (checkPattern === "available" && sentPropertyAuto.count <= 1) {
+      } else if (checkPattern === "available" && sentPropertyAuto.count <= 1 && !broughtPrefillOn) {
         // 物件あった: お客様が送った物件が1件以下の時だけ1件目に（2件以上は並びが決まらない）
         applyPrefill("checkPropNames0", n, checkPropNames[0] ?? "", (v) => setCheckPropNames((prev) => [v, ...prev.slice(1)]));
       }
@@ -1500,6 +1526,37 @@ export default function AixModal({
   // 欄の値は「空か」を見るだけ（入れた後に動かさない）なので deps に入れない
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionType, checkPattern, appSubMode, namePrefill, areaPrefill, guarantorHint, sentPropertyAuto.count]);
+  // 2026-10-28 竹内さんの決定（設計知見 25714f9b）: 物件確認した を開いた時、ブレインの「物件ごとの状況」の台帳（お客様が送ってきた物件・まだ確認の結果を返していない）から
+  //   物件名（送ってきた順）と送られた物件数を先に入れる。物件名が読めない物は空欄のまま（推測で入れない・8094f9ed）。スタッフが入れた欄は動かさない。
+  //   入れる: NEXT_PUBLIC_AIX_BROUGHT_PREFILL=on（既定 off）。純関数 app/lib/aix-brought-prefill.ts・API /api/aix/brought-properties
+  useEffect(() => {
+    if (!broughtPrefillOn) return;
+    if (actionType !== "property_check_result" || !conversationId || broughtTriedRef.current) return;
+    if (checkPattern !== "available" && checkPattern !== "unavailable") return;
+    broughtTriedRef.current = true;
+    let cancelled = false;
+    fetch(`/api/aix/brought-properties?conversation_id=${encodeURIComponent(conversationId)}`, { headers: INTERNAL_AUTH_HEADER })
+      .then((r) => r.json())
+      .then((d: { ok?: boolean; count?: number; rooms?: Array<{ name: string | null }> }) => {
+        if (cancelled || !d?.ok || !d.count) return;
+        const count = Math.min(CHECK_MAX_PROPS, Math.max(1, d.count));
+        const names = (d.rooms ?? []).map((r) => (r?.name ?? "").trim()).filter(Boolean).slice(0, CHECK_MAX_PROPS);
+        // 送られた物件数: 会話の網の数（自動）より多ければ台帳の数に（スタッフが選び直した時は動かさない）
+        setSentPropertyCount((prev) => (prev === null || (sentCountAuto && prev < count) ? count : prev));
+        setSentCountAuto(true);
+        if (checkPattern === "available") {
+          setCheckPropertyCount((prev) => Math.max(prev, Math.min(CHECK_MAX_PROPS, Math.max(1, names.length))));
+          setCheckPropNames((prev) => prev.map((v, i) => (i < names.length && !v.trim() ? names[i] : v)));
+          if (names[0]) setPrefilled((prev) => ({ ...prev, checkPropNames0: { value: names[0], source: "customer_shared", reason: "ブレインの台帳（お客様が送ってきた物件）" } }));
+        } else if (names.length) {
+          setCheckUnavailablePropName((prev) => (prev.trim() ? prev : names.join("・")));
+          setPrefilled((prev) => ({ ...prev, checkUnavailablePropName: { value: names.join("・"), source: "customer_shared", reason: "ブレインの台帳（お客様が送ってきた物件）" } }));
+        }
+      })
+      .catch(() => { /* 先入れが無いだけ */ });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionType, checkPattern, conversationId]);
   // 物件ピックアップした: 種類が決まらずに開いた時（売上サポから来た時など）は、1時間より前に物件を送った記録で 初回／新着 を入れる
   //   実測 363件で 77% 当たり（外れは主に「条件広げ」＝会話からは決められない）。aix_usage_logs は AIX の送付の記録（送付の表より抜けが少ない）
   useEffect(() => {
@@ -7190,7 +7247,7 @@ export default function AixModal({
               <div className="flex flex-col gap-2">
                 {[0, 1, 2].map((idx) => (
                   <div key={idx} className="rounded-xl border border-[#e9edef] bg-[#f8f9fa] px-3 py-2">
-                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">{"①②③"[idx]} 物件{idx + 1}</p>
+                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">{"①②③"[idx]} {estimateSlotNames[idx] ? <>{estimateSlotNames[idx]}<span className="ml-1 font-normal text-[#8696a0]">（お客様が書いた物件から自動・違えば別の見積書を入れる）</span></> : `物件${idx + 1}`}</p>
                     {estimateMultiPreviews[idx] ? (
                       <div className="relative mb-1 overflow-hidden rounded-xl border border-[#d1d7db]">
                         <img src={estimateMultiPreviews[idx] ?? undefined} alt={`見積書${idx + 1}`} className="max-h-24 w-full object-contain" />

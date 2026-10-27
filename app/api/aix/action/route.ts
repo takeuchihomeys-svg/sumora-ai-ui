@@ -171,6 +171,8 @@ import { resolveConfirmTargetProperty, otherPropertyNamedInText } from "@/app/li
 // 2026-10-13 竹内「AIX テンプレートはブレインに連動できていない」: ブレインの本質（turn_contract）とお客様の状態を AIX の文の材料に（AIX_BRAIN_CONTRACT=off で旧）
 import { buildAixContractNote, keepAllQuestionsRule } from "@/app/lib/aix-brain-contract";
 import { meetingSecondLine, meetingDayWordOn } from "@/app/lib/meeting-place-form";
+import { aixBroughtMaterialEnabled, loadBroughtPrefillFor } from "@/app/lib/aix-brought-prefill-server";
+import { broughtMaterialLine } from "@/app/lib/aix-brought-prefill";
 
 export const maxDuration = 300;
 
@@ -6417,7 +6419,9 @@ ${SMORA_COMMON_RULES}
           dynamic: pcrDynamicSuffix,
         };
 
-        const pcrConvUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。` + (pcrDiffNote ? `\n\n${pcrDiffNote}` : "") + (pcrStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + pcrStarNote : "");
+        // 2026-10-28（25714f9b）: お客様が送ってきた物件（まだ確認の結果を返していない）を物件名で書けるよう材料に（AIX_BROUGHT_MATERIAL=on）
+        const pcrBroughtNote = aixBroughtMaterialEnabled() && conversationId ? broughtMaterialLine((await loadBroughtPrefillFor(conversationId)) ?? { rooms: [], count: 0, lastCheckAt: null }) : "";
+        const pcrConvUserFinal = greetingTimeNote + (pcrBroughtNote ? `${pcrBroughtNote}\n\n` : "") + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。` + (pcrDiffNote ? `\n\n${pcrDiffNote}` : "") + (pcrStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + pcrStarNote : "");
         // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
         const parsePCR = (raw: string): string => messageFromAixJson(raw, currentAction);
         const rawPCR = await callClaude(
@@ -6896,7 +6900,21 @@ ${availableTemplate}`;
         const buildUnavailableMessage = (opening: string) =>
           `${name}お世話になっております！！\n${opening}募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！`; // 2026-10-01: 「引き続き〜ピックアップしてお送りさせて頂きます」の約束を外した（スタッフが68%消す・自分で書いた通0/19・scripts/audit-check-result-lines.ts）
         const UNAVAILABLE_DEFAULT_OPENING = "お送り頂きました物件につきまして";
-        if (sentPropCount !== null) {
+        // 2026-10-28 竹内さんの決定（25714f9b）・90日の監査（作業員3）: 送られた物件数が入っていると、物件名が分かっていても「お送り頂きました物件1件につきまして」になっていた
+        //   （下書き 39/56 が「物件N件」・竹内さんの文は「お送り頂きました〈物件名〉につきまして」）。AIX_BROUGHT_MATERIAL=on の時は物件名を先に使い、
+        //   スタッフの欄が空ならブレインの台帳（お客様が送ってきた物件）の名前（全部読めた時だけ）を使う。読めない時は今まで通り件数（推測で入れない）
+        let unavailNameFirst = "";
+        if (aixBroughtMaterialEnabled()) {
+          if (unavailPropName) unavailNameFirst = unavailPropName;
+          else if (conversationId) {
+            const bp = await loadBroughtPrefillFor(conversationId);
+            const named = bp?.rooms.map((r) => r.name).filter((n): n is string => !!n) ?? [];
+            if (bp && named.length && named.length === bp.count && (sentPropCount === null || sentPropCount === bp.count)) unavailNameFirst = named.join("・");
+          }
+        }
+        if (unavailNameFirst) {
+          message_text = buildUnavailableMessage(`お送り頂きました${unavailNameFirst}につきまして`);
+        } else if (sentPropCount !== null) {
           // 送られた物件数が指定されている → 件数入りの冒頭表現
           message_text = buildUnavailableMessage(`お送り頂きました物件${sentPropCount}件につきまして`);
         } else if (unavailPropName) {
@@ -7002,7 +7020,9 @@ ${templateText}`;
           }),
         );
         const vacatingPart = checkVacatingNote ? `\n\n${checkVacatingNote}` : "";
-        const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${templateSampleNote}${templateStructureNote}${calendarPart}${vacatingPart}${summaryNote}${recentHistory}`;
+        // 2026-10-28（25714f9b）: お客様が送ってきた物件の名前を材料に（AIX_BROUGHT_MATERIAL=on）
+        const checkBroughtNote = aixBroughtMaterialEnabled() && conversationId ? broughtMaterialLine((await loadBroughtPrefillFor(conversationId)) ?? { rooms: [], count: 0, lastCheckAt: null }) : "";
+        const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${templateSampleNote}${templateStructureNote}${calendarPart}${vacatingPart}${summaryNote}${checkBroughtNote ? `\n\n${checkBroughtNote}` : ""}${recentHistory}`;
 
         // ブロック: [global ルール 1h] → [固定文＋action 別ルール 5m] → [お手本・実例・ノウハウ・ブレイン（動的）]。Vision も同じ構成
         const checkSystemSpec: SystemSpecBlocks = {
