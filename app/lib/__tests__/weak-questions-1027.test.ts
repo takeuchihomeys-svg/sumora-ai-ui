@@ -46,7 +46,7 @@ t("on: strong はブレインの約束でも従来どおり（守らない）", 
   const off = withEnv("VIEWING_PLACE_UNDECIDED_LINE", undefined, () => buildViewingFlowBrainText(f));
   const on = withEnv("VIEWING_PLACE_UNDECIDED_LINE", "on", () => buildViewingFlowBrainText(f));
   t("off: 行き先未定の1文は無い", !off.includes("行き先") && off.includes("次の一手は meeting_place"));
-  t("on: 行き先未定なら meeting_place はまだ送れない", on.includes("行き先") && on.includes("meeting_place はまだ送れない"));
+  t("on: 行き先未定なら meeting_place はまだ送れない", on.includes("行き先") && on.includes("meeting_place はまだ送れない") && on.includes("見るお部屋（行き先）が決まっていれば次の一手は meeting_place"));
   const g: ViewingFlow = { ...EMPTY_VIEWING_FLOW, stage: "proposing", reason: "test" };
   t("on: 日にちが決まる前の段階には足さない", !withEnv("VIEWING_PLACE_UNDECIDED_LINE", "on", () => buildViewingFlowBrainText(g)).includes("行き先"));
 }
