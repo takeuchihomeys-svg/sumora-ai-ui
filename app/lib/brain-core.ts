@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase-server";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
+import { brainCacheOrderOn, withSceneBlock } from "@/app/lib/brain-cache-order";
 import { buildSentProps, buildSentPropsText, sentSheetVacancyOn, attachSheetVacancy } from "@/app/lib/sent-props-text";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
@@ -3131,16 +3132,18 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-10-22 慣れた事は速く: 速い道（easy）の番は判断に効きにくい大きな材料（brain-fast-slow FAST_DROP_MATERIALS）を渡さない。
   //   全部の材料の版（customerSpecificTextFull）も作っておき、1回目の判断に難しさの印が出たらそれで読み直す（戻り道）。drop が空なら旧と1文字も同じ
   const fsDropSet: ReadonlySet<string> = fastSlow ? fastDrops(fastSlow.level) : new Set<string>();
+  // 2026-10-27 節約①（app/lib/brain-cache-order.ts・BRAIN_CACHE_ORDER 既定 off）: 場面で決まる AIX の一覧＋アクション別ルールは、会話ごとの材料より前の独立したブロック（キャッシュの区切りつき）へ
+  const cacheOrderOn = brainCacheOrderOn();
   const buildCustomerSpecific = (drop: ReadonlySet<string>): string => {
     const d = (k: string, s: string) => (drop.has(k) ? "" : s);
     return isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${aixCatalogText}${actionRulesText}${d("templates", templatesText)}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${d("examples", examplesText)}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}
+    ? `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("templates", templatesText)}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${d("examples", examplesText)}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${aixCatalogText}${actionRulesText}${d("contractExamples", contractExamplesPhaseText)}${d("winning", winningPatternsText)}${d("templates", templatesText)}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${d("examples", examplesText)}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}${latestSupersedesRule() ? `
+    : `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("contractExamples", contractExamplesPhaseText)}${d("winning", winningPatternsText)}${d("templates", templatesText)}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${d("examples", examplesText)}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}${latestSupersedesRule() ? `
 
 【今回の発言の読み方】${latestSupersedesRule()}` : ""}
 
@@ -3295,11 +3298,13 @@ ${history}`;
     priorityPulled = { kb: pulled.rows.map((r) => r.id.slice(0, 8)), scene: sceneNow, sit, chars: priorityPulledText.length, ms: pulled.ms, ...(pulled.err ? { err: pulled.err } : {}) };
     console.log(JSON.stringify({ tag: "brain:priority-pulled", conversationId, ...priorityPulled }));
   }
-  let userContent = [
+  const sceneBlockText = cacheOrderOn ? maskBrain(`${aixCatalogText}${actionRulesText}`) : "";
+  const withScene = <T extends { type: "text"; text: string }>(uc: T[]) => (cacheOrderOn ? withSceneBlock(uc as never, sceneBlockText, sys.blocks.length) : uc);
+  let userContent = withScene([
     ...convBlocks,
     ...(priorityPulledText ? [{ type: "text" as const, text: maskBrain(priorityPulledText) }] : []),
     { type: "text" as const, text: maskBrain(coreUserText) },
-  ];
+  ]);
   // 2026-10-02 温めのスイッチ: 会話専用ブロックの指紋を控える（brain_decision_logs.digest.cw.h＝次の本物まで変わらない率 q を監査で測る）。
   //   分けた後は最初の印のブロック（A・無ければ B）の指紋＝温めが読み直す範囲。
   //   mode=on で ON の時は、本物が送るバイト列（model・thinking・system・最初の会話専用ブロック）を温め用に残す（送った後・応答は待たせない）
@@ -3449,7 +3454,7 @@ ${history}`;
         if (fsDroppedChars > 0) {
           const up = fastEscapeReason(parsedAny);
           if (up) {
-            userContent = [...convBlocks, { type: "text" as const, text: maskBrain(customerSpecificTextFull) }];
+            userContent = withScene([...convBlocks, { type: "text" as const, text: maskBrain(customerSpecificTextFull) }]);
             const full = await callBrain();
             logLlmUsage("brain:fast-escape", full.usage, { conversationId, mode: isFreshLayer ? "fresh" : (opts?.mode ?? "full") });
             const fp = parseOf(full);
