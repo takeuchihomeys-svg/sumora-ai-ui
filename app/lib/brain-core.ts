@@ -2839,7 +2839,9 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       if (exhaustedConditionBrainEnabled() && exNow.exhausted && !(exNow.strength === "weak" && weakExhaustDemoted())) {
         // 2026-10-18 弱い所B（q170）: 送付だけの印（weak）の番に「出し切った印がある＝返信で締める」と言い切る行を渡すと、材料の1行（出し切りとは限らない）と食い違い、
         //   最初の送付への最初の懸念（お風呂が狭い）までブレイン自身が「新着が出次第」で締めた。weak は弱い形の行（足した条件でまだ探していない・会話から決める）。戻す EXHAUSTED_WEAK_TURN_LINE=off
-        const tl = exNow.strength === "weak" ? exhaustedConditionWeakTurnLine() : exhaustedConditionTurnLine();
+        // 2026-10-27 苦手な問題②（EXHAUSTED_WEAK_ACCURATE）: weak でも会話で出し切ったと言っていれば（「ご条件から離れますが」等）強い行のまま
+        const { effectiveExhaustStrength } = await import("@/app/lib/search-exhausted");
+        const tl = effectiveExhaustStrength(exNow.strength, brainLedgerInput.messages) === "weak" ? exhaustedConditionWeakTurnLine() : exhaustedConditionTurnLine();
         if (tl) customerStateBlockText += `\n\n${tl}`;
       }
     } catch (e) { console.warn("[brain-core] exhausted material skipped:", e instanceof Error ? e.message : String(e)); }
@@ -5357,8 +5359,9 @@ ${history}`;
       //   「出し切りとは限らない・会話から読んで決める」と渡している。ブレイン自身が足した条件で探す約束（turn_contract の route=promise・about=search_condition）を
       //   選んだ番は、規則で「新着が出次第」の返信に書き換えない（設計知見 9eb6aa9c P0「判断はすべてブレイン基準」・食い違いは記録）。
       //   明示の印（strong＝「全てピックアップ」・新着待ちの約束・全力サポート）は今まで通り。戻す EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE=off
+      const { effectiveExhaustStrength: effStrength } = await import("@/app/lib/search-exhausted");
       const brainPromiseKept = exhCondTurn && exhaustedConditionBrainEnabled() && exhaustedWeakKeepBrainPromise({
-        strength: exh.strength ?? null,
+        strength: effStrength(exh.strength, brainLedgerInput.messages),
         asks: (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: string | null; about?: string | null; polarity?: string | null }>,
         brainText: [String((parsed as { reply_direction?: unknown }).reply_direction ?? ""), ...(((parsed as { key_topics?: unknown }).key_topics as unknown[] | undefined) ?? []).map(String)].join(" "),
       });

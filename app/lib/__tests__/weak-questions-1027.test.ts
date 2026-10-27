@@ -1,7 +1,7 @@
 // app/lib/__tests__/weak-questions-1027.test.ts — 苦手な問題②（2026-10-27）の材料の直し（実行: npx tsx app/lib/__tests__/weak-questions-1027.test.ts）
 //   ① 出し切りの印の強さ（EXHAUSTED_WEAK_ACCURATE）② 行き先が未定の内覧の日時（VIEWING_PLACE_UNDECIDED_LINE）③ 名義貸しの番は電話（SCREENING_PHONE_LINE）
 //   実物は試験の問題 q006・q007・q008・q141・q093 の文（名前は伏せた）
-import { markerStrength, searchExhausted, type ExMsg } from "../search-exhausted";
+import { markerStrength, searchExhausted, staffSaidExhausted, effectiveExhaustStrength, type ExMsg } from "../search-exhausted";
 import { exhaustedConditionWeakTurnLine, exhaustedWeakKeepBrainPromise } from "../ack-exhausted-reply";
 import { buildViewingFlowBrainText, EMPTY_VIEWING_FLOW, type ViewingFlow } from "../viewing-flow";
 import { nameLendingTurn, screeningPhoneTurnLine } from "../screening-phone-material";
@@ -17,24 +17,25 @@ const leave = "〇〇さん重ねてのご連絡失礼致します！！ こち�
 const noneWiden = "〇〇さんお世話になっております！！ 大阪市北区、福島区、西区から敷金礼金無しのガスコンロタイプのお部屋探させて頂きましたが、現在募集に出ておらず、エリア広げさせていただきお部屋ピックアップさせていただきました！！";
 const oneProp = "〇〇さんお送り頂きました物件3件につきまして募集状況確認させて頂きましたところ、 JS Houseは募集に出ておらず、メイウール木川の2部屋は既にご契約が決まり募集に出ておりませんでした。";
 const firstBundle = "〇〇さん お待たせいたしました！！ 淀川区・天六周辺全域から〇〇さんにオススメできるお部屋ピックアップさせて頂きました！！ お手隙の際にご査収ください😌！！";
-t("off: 条件から離れますが は従来どおり weak/null", withEnv("EXHAUSTED_WEAK_ACCURATE", undefined, () => markerStrength(st(leave, "1T00:00:00Z"))) !== "strong");
-t("on: 条件から離れますが は strong", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st(leave, "1T00:00:00Z"))) === "strong");
-t("on: 探しましたが現在募集に出ておらず は strong", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st(noneWiden, "1T00:00:00Z"))) === "strong");
-t("on: 持ち込み1件の「募集に出ておらず」は strong にしない", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st(oneProp, "1T00:00:00Z"))) !== "strong");
-t("on: 1件新着で〜募集に出ました（新着を1件ずつ送る段・q003）は strong", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st("🌟朝日プラザ 604号室 新着で1件、敷金礼金なし・ペット飼育可の1LDKが募集に出ました！", "1T00:00:00Z"))) === "strong");
-t("on: 新着状況随時確認の約束の文は従来どおり strong（新着待ちの約束）", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st("新着状況随時確認させて頂きオススメ出来るお部屋募集に出次第お送りさせて頂きます！！", "1T00:00:00Z"))) === "strong");
-t("on: 最初の束の送付は weak のまま", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st(firstBundle, "1T00:00:00Z"))) === "weak");
+const said = (text: string, on: boolean) => staffSaidExhausted([cu("お願いします", "1T00:00:00Z"), st(text, "1T00:01:00Z")], on ? { EXHAUSTED_WEAK_ACCURATE: "on" } : {});
+t("off: 条件から離れますが でも言ったと数えない（従来）", !said(leave, false));
+t("on: 条件から離れますが は出し切ったと言った", said(leave, true));
+t("on: 探しましたが現在募集に出ておらず は言った", said(noneWiden, true));
+t("on: 持ち込み1件の「募集に出ておらず」は言っていない", !said(oneProp, true));
+t("on: 1件新着で〜募集に出ました（新着を1件ずつ送る段・q003）は言った", said("🌟朝日プラザ 604号室 新着で1件、敷金礼金なし・ペット飼育可の1LDKが募集に出ました！", true));
+t("on: 最初の束の送付は言っていない", !said(firstBundle, true));
+t("印の強さ（左右の材料・後の規則の strong）は変えない: 条件から離れますが は strong にしない", withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => markerStrength(st(leave, "1T00:00:00Z"))) !== "strong");
 {
-  // q006 の形: 物件の AIX の後に「条件から離れますが」→ お客様が設備を足した
+  // q006 の形: 物件の AIX の後に「条件から離れますが」→ お客様が設備を足した＝weak だが、今の番の行と規則では strong と同じ
   const msgs = [st("", "1T00:00:00Z", "property_send"), st(leave, "1T00:05:00Z"), cu("ガスコンロがいいんです。", "1T01:00:00Z")];
   const r = withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => searchExhausted(msgs, { conditionChangedThisTurn: false, pickupReady: null }));
-  t("on: q006 の形は strong の出し切り", r.exhausted && r.strength === "strong", r);
-  const r0 = withEnv("EXHAUSTED_WEAK_ACCURATE", undefined, () => searchExhausted(msgs, { conditionChangedThisTurn: false, pickupReady: null }));
-  t("off: q006 の形は weak（従来）", r0.exhausted && r0.strength === "weak", r0);
+  t("q006 の形の印は weak のまま", r.exhausted && r.strength === "weak", r);
+  t("on: q006 の形は今の番の扱いで strong", effectiveExhaustStrength(r.strength, msgs, { EXHAUSTED_WEAK_ACCURATE: "on" }) === "strong");
+  t("off: q006 の形は weak（従来）", effectiveExhaustStrength(r.strength, msgs, {}) === "weak");
   // q008 の形: 最初の束を送っただけ → お客様の懸念
   const m8 = [st("", "1T00:00:00Z", "property_send"), st(firstBundle, "1T00:01:00Z"), cu("神崎川はすんでましたが 不便だったので汗", "1T02:00:00Z")];
   const r8 = withEnv("EXHAUSTED_WEAK_ACCURATE", "on", () => searchExhausted(m8, { conditionChangedThisTurn: false, pickupReady: null }));
-  t("on: q008 の形は weak のまま", r8.exhausted && r8.strength === "weak", r8);
+  t("on: q008 の形は weak のまま", r8.exhausted && effectiveExhaustStrength(r8.strength, m8, { EXHAUSTED_WEAK_ACCURATE: "on" }) === "weak", r8);
 }
 t("off: weak の番の行は従来の言い切り", withEnv("EXHAUSTED_WEAK_ACCURATE", undefined, () => exhaustedConditionWeakTurnLine({})).includes("出し切った」印がある"));
 t("on: weak の番の行は「出し切ったとは言っていない」", exhaustedConditionWeakTurnLine({ EXHAUSTED_WEAK_ACCURATE: "on" }).includes("出し切ったとは言っていない"));
