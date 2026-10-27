@@ -143,8 +143,12 @@
   }
 
   function doExpand() {
+    const existed = !!iframe;
     const fr = ensureIframe();
     if (!fr) return; // コンテキスト無効（ページリロードで回復）
+    // v2.5.91 2026-10-27 竹内「展開したら白色になる」: v2.5.90 で検索中はミニで起動（iframe 未作成）にしたため、ミニボタンから開くと
+    //   ここで作ったばかりの iframe に load 前の expand を送り、popup が受け取れず白いままだった。作った時は load の後に開く（ensureIframe の load で setSize＋expand）
+    if (!existed) { pendingExpand = true; return; }
     // cross-origin(chrome-extension://)ではcontentDocument=null→ロード済みとみなす
     if (fr.contentDocument && fr.contentDocument.readyState !== "complete") {
       pendingExpand = true;
