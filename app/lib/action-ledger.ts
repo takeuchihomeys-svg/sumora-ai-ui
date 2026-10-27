@@ -18,6 +18,7 @@ import {
   LEDGER_OUTBOUND_SOURCES, pickupRound, redoWord, fixedViewingOfferLiteral,
   type StaffTurn, type StaffTurnKind, type CustomerResponseKind,
 } from './reply-context';
+import { ledgerResumeAdviceEnabled, isCustomerSearchAdvice } from './resume-advice';
 // 2026-09-12 竹内方針D: JST の日付表示は jst-date に一本化
 import { jstMDHm, jstParts, jstDayStartMs } from './jst-date';
 // 2026-10-08 竹内さん（入居の時期が先・連絡の日の約束）: 「7月1日に…ピックアップしお送り」は連絡の日までは未履行の物件出しに数えない
@@ -37,6 +38,11 @@ import { GUARANTOR_TYPE_SHORT, GUARANTOR_TYPE_LABELS, normalizeGuarantorType } f
 const guarantorTypeJa = (t: string): string => { const n = normalizeGuarantorType(t); return n ? (GUARANTOR_TYPE_SHORT[n] || GUARANTOR_TYPE_LABELS[n]) : t; };
 // 再 export（生成・検査が action-ledger 経由でも同じ定数を得る）
 export { STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, REDO_CLAIM_RE, LEDGER_OUTBOUND_SOURCES };
+/** 約束の網を当てる本文。LEDGER_RESUME_ADVICE_NOT_PROMISE=on の時だけ「お客様にお部屋探しの再開を勧める文」を除く（off は本文そのまま＝今まで通り） */
+function pickupTextWithoutAdvice(t: string, sentences: ReadonlyArray<string>): string {
+  if (!ledgerResumeAdviceEnabled() || !sentences.some((s) => isCustomerSearchAdvice(s))) return t;
+  return sentences.filter((s) => !isCustomerSearchAdvice(s)).join("\n");
+}
 
 export type LedgerKind =
   | 'pickup_declared' | 'properties_sent' | 'estimate_declared' | 'estimate_sent'
@@ -836,9 +842,11 @@ function classifyStaffTextForLedgerRaw(text: string, at: string | null): LedgerE
   }
   // 宣言（未来形）。ピックアップ宣言は確認約束より先（「ピックアップ出来次第お送り」を確認約束にしない）
   const watchSentence = sentences.find((s) => isPropertyWatchDeclaration(s));
-  if (STAFF_PICKUP_DECL_RE.test(t)) {
-    const pickupSentence = sentences.find((s) => STAFF_PICKUP_DECL_RE.test(s));
-    return base('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0],
+  // 2026-10-28（響夢さん）: 「（お客様が）お部屋探し再開いただくのをオススメ致します」は約束ではない（LEDGER_RESUME_ADVICE_NOT_PROMISE=on の時だけ外す・resume-advice.ts）
+  const tPick = pickupTextWithoutAdvice(t, sentences);
+  if (STAFF_PICKUP_DECL_RE.test(tPick)) {
+    const pickupSentence = sentences.find((s) => STAFF_PICKUP_DECL_RE.test(s) && !(tPick !== t && isCustomerSearchAdvice(s)));
+    return base('pickup_declared', 'promised', tPick.match(STAFF_PICKUP_DECL_RE)![0],
       { sentence: promiseSentenceText(pickupSentence), ...(watchSentence ? { watch: true } : {}) });
   }
   // 2026-09-17 竹内（慶次事例）: 「引き続き新着で〇〇さんにオススメできるお部屋確認させていただきます」だけの通も
@@ -892,8 +900,9 @@ export function classifyStaffTextFacts(text: string, at: string | null): LedgerE
     const appt = extractViewingAppointment(t, at);
     if (appt) add('meeting_place_sent', 'done', `${appt.dateMD ?? ''} ${appt.time ?? ''} ${appt.place ?? ''}`.trim(), { appointment: appt });
   }
-  if (!has('pickup_declared', 'properties_sent', 'condition_asked') && STAFF_PICKUP_DECL_RE.test(t) && !STAFF_CONDITION_ASK_RE.test(t)) {
-    add('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0], { sentence: promiseSentenceText(sentences.find((s) => STAFF_PICKUP_DECL_RE.test(s))) });
+  const tPick = pickupTextWithoutAdvice(t, sentences);
+  if (!has('pickup_declared', 'properties_sent', 'condition_asked') && STAFF_PICKUP_DECL_RE.test(tPick) && !STAFF_CONDITION_ASK_RE.test(t)) {
+    add('pickup_declared', 'promised', tPick.match(STAFF_PICKUP_DECL_RE)![0], { sentence: promiseSentenceText(sentences.find((s) => STAFF_PICKUP_DECL_RE.test(s) && !(tPick !== t && isCustomerSearchAdvice(s)))) });
   }
   // 2026-09-26: 報告が主な行為になった通（「確認させて頂きましたところ募集終了…／ご条件に合ったお部屋を新着物件併せて確認させて頂きます」）でも
   //   物件を探し続ける宣言は残す（旧は宣言が主な行為だった）

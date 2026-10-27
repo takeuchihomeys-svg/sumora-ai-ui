@@ -16,11 +16,15 @@ import { pushToHanbancyoGroupWithId, dismissStaleAixActionItems, AIX_NOTICE_FRES
 import { saveTodoSnapshot, snapshotOf, loadTodoSnapshots } from "@/app/lib/staff-todo-reply-server";
 import { aixOverdueRemindEnabled, buildAixOverdueRemind, overdueRemindDue, AIX_OVERDUE_REMIND_KEY } from "@/app/lib/aix-overdue-remind";
 import type { AixActionItemRow } from "@/app/lib/aix-action-text";
+// 2026-10-28 読み込みの締め切り（STAFF_TODO_FAST_LOAD=on の時だけハブの予算を残り時間から決める）
+import { todoDeadlineAtMs } from "@/app/lib/staff-todo-load-timing";
 
 // 10/26 午後から 60秒で切れて一覧が送れていなかった（Vercel Runtime Timeout）。読み込みが重くなったので上限を 300秒に
 export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {
+  const startedAtMs = Date.now();
+  const deadlineAtMs = todoDeadlineAtMs(startedAtMs, maxDuration);
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.get("authorization") !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -31,7 +35,7 @@ export async function GET(req: NextRequest) {
   const atMs = atParam && Number.isFinite(Date.parse(atParam)) ? Date.parse(atParam) : Date.now();
 
   if (preview) {
-    const list = await loadStaffTodoList(supabase, atMs);
+    const list = await loadStaffTodoList(supabase, atMs, { deadlineAtMs });
     const post = composeStaffTodoPost(list, { snapshots: await loadTodoSnapshots(supabase) });
     const text = post.text;
     return NextResponse.json({ ok: true, preview: true, text, length: text?.length ?? 0, open: list.openCount, done: list.doneCount, carried: post.carried, skipped: list.skipped });
@@ -50,7 +54,7 @@ export async function GET(req: NextRequest) {
   // 2026-10-28 竹内さんの決定: 24時間を過ぎた AIX要対応を1日1回知らせ直す（AIX_OVERDUE_REMIND=on の時だけ・既定 off・app/lib/aix-overdue-remind.ts）
   const overdue = aixOverdueRemindEnabled() ? await sendOverdueRemindOnce().catch((e) => { console.warn("[staff-todo] overdue remind:", e); return null; }) : null;
 
-  const list = await loadStaffTodoList(supabase, Date.now());
+  const list = await loadStaffTodoList(supabase, Date.now(), { deadlineAtMs });
   // 長い時は④⑤を入るだけ出して残りは次の便へ（2026-10-21 竹内さん「オススメでおねがい」）。回す順は前の便の控えから
   const post = composeStaffTodoPost(list, { snapshots: await loadTodoSnapshots(supabase) });
   const text = post.text;

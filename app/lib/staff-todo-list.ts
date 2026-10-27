@@ -33,6 +33,8 @@ import {
   type TodoGroup, type TodoPrioritySignal, type TodoConductor,
 } from "./staff-todo-priority";
 import { TARGET_SCHEDULE_LINES } from "./target-list-format";
+import { farMoveInOfTurns, farMoveInWaitText, contactYmdOf, type MoveInTurn } from "./far-move-in-todo";
+import { todoTwoLineEnabled, todoItemTitle, todoItemNextStep } from "./staff-todo-two-line";
 
 const DAY = 86_400_000;
 
@@ -152,6 +154,13 @@ export type TodoInput = {
   signals?: Readonly<Record<string, TodoPrioritySignal>>;
   /** 【審査中】の名前（ターゲットをまとめた時だけ） */
   screening?: ReadonlyArray<string>;
+  /**
+   * 入居の時期を言ったお客様の発言（TODO_FAR_MOVE_IN=on の時だけ読み手が入れる・far-move-in-todo）。
+   * 入れた時だけ、連絡の日がまだ先のお客様の物件を送る行を「⏳連絡の日まで待つ」行にする
+   */
+  moveInTurns?: ReadonlyArray<MoveInTurn & { conversation_id: string }>;
+  /** お客様の要約の「次にする事」（会話 ID → property_customers.ai_summary_json.next_action・TODO_TWO_LINE=on の時だけ読み手が入れる） */
+  nextActions?: Readonly<Record<string, string>>;
 };
 /** 組み立ての任意の入れ口（司令塔＝将来つなぎのブレインが迷う所の順を決める） */
 export type TodoBuildOptions = { conductor?: TodoConductor | null };
@@ -180,6 +189,10 @@ export type TodoItem = {
   doneVia?: "none" | null;
   /** 的確な指示（ボタン→ピッカー→何を入れる／確かめる）。分からない時は無し＝kindLabel：task のまま */
   instruction?: string | null;
+  /** 入居の時期が先で連絡の日まで待つ（番号を振らない・残りに数えない・far-move-in-todo）。text は「11月15日に連絡（12月末〜1月前半入居）・それまで物件は探さない」 */
+  waiting?: { untilYmd: string; text: string } | null;
+  /** お客様の要約の「次にする事」（2行の形の2行目の予備・staff-todo-two-line） */
+  nextAction?: string | null;
 };
 export type TodoCustomer = {
   conversationId: string; name: string; accountLabel: string; status: string | null;
@@ -560,10 +573,29 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
     if (mk?.via === TODO_MARK_VIA_NONE && mk.marked_at === it.doneAt) it.doneVia = "none";
   }
 
+  // 2026-10-28 入居の時期が先（TODO_FAR_MOVE_IN・読み手が moveInTurns を入れた時だけ）: 連絡の日がまだ先のお客様の物件を送る行は
+  //   「⏳〇月〇日に連絡（〇〇入居）・それまで物件は探さない」の待ちの行に（1会話1行・番号を振らない・残りに数えない）
+  if (input.moveInTurns) {
+    const turnsBy = new Map<string, MoveInTurn[]>();
+    for (const m of input.moveInTurns) { const a = turnsBy.get(m.conversation_id) ?? []; a.push(m); turnsBy.set(m.conversation_id, a); }
+    const waitingConv = new Set<string>();
+    for (let i = merged.length - 1; i >= 0; i--) {
+      const it = merged[i];
+      if (it.doneAt || !it.action || !PROPERTY_SEND_ACTIONS.has(it.action)) continue;
+      const turns = turnsBy.get(it.conversationId);
+      const plan = turns ? farMoveInOfTurns(turns, at) : null;
+      if (!plan) continue;
+      skip("far_move_in_wait");
+      if (waitingConv.has(it.conversationId)) { merged.splice(i, 1); continue; }
+      waitingConv.add(it.conversationId);
+      it.waiting = { untilYmd: contactYmdOf(plan), text: farMoveInWaitText(plan) };
+    }
+  }
+
   // 的確な指示（2026-10-21 竹内さんの決定 c0a91198）: ボタン→ピッカー→何を入れる／確かめる。分からない時は今までの文のまま
   const everSent = input.everSent ? new Set(input.everSent) : null;
   for (const it of merged) {
-    if (!it.action) continue;
+    if (!it.action || it.waiting) continue;
     const ins = todoInstruction({
       action: it.action, checkPattern: it.checkPattern, source: it.source, taskText: it.task,
       everSent: everSent ? everSent.has(it.conversationId) : null,
@@ -571,6 +603,7 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
     });
     if (ins) it.instruction = ins;
   }
+  if (input.nextActions) for (const it of merged) { const na = input.nextActions[it.conversationId]; if (na) it.nextAction = na; }
 
   // お客様ごと
   const byConv = new Map<string, TodoItem[]>();
@@ -583,7 +616,7 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
     const name = conv?.customer_name ?? tg?.name ?? input.aixItems.find((r) => r.conversation_id === cid)?.customer_name ?? input.promises.find((p) => p.conversation_id === cid)?.customer_name ?? null;
     its.sort((a, b) => compareItems(a, b, at, conv?.status ?? null));
     // 並び（2026-10-21 竹内さんの決定 268a904a・cb760598・1214dc48）: 組 → 点。材料が無い物は行と状態から数える
-    const open = its.filter((i) => !i.doneAt);
+    const open = its.filter((i) => !i.doneAt && !i.waiting);
     const openTasks = open.filter((i) => i.source !== "target_new_arrival");
     const sig0 = input.signals?.[cid] ?? {};
     const newInquiry = sig0.newInquiry ?? (everSent ? !everSent.has(cid) && Number.isFinite(created(cid)) && at - created(cid) <= NEW_INQUIRY_DAYS * DAY : false);
@@ -612,13 +645,14 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
   }
   const keyed = customers.map((c) => ({
     c, conversationId: c.conversationId, group: c.group ?? 3, score: c.score ?? 0,
-    done: !c.items.some((i) => !i.doneAt), firstOriginMs: c.items.reduce((m, i) => Math.min(m, t(i.originAt)), Infinity),
+    done: !c.items.some((i) => !i.doneAt && !i.waiting), firstOriginMs: c.items.reduce((m, i) => Math.min(m, t(i.originAt)), Infinity),
   }));
   keyed.sort(compareTodoPriority);
   const ordered = applyConductor(keyed, opts.conductor).map((k) => k.c);
-  const openCount = merged.filter((i) => !i.doneAt).length;
+  const openCount = merged.filter((i) => !i.doneAt && !i.waiting).length;
+  const waitingCount = merged.filter((i) => !i.doneAt && i.waiting).length;
   return {
-    atMs: at, customers: ordered, openCount, doneCount: merged.length - openCount, skipped,
+    atMs: at, customers: ordered, openCount, doneCount: merged.length - openCount - waitingCount, skipped,
     ...(input.targets?.some((x) => !x.other) ? { targetsMerged: true, screening: [...(input.screening ?? [])] } : {}),
   };
 }
@@ -668,26 +702,30 @@ export function todoNumberMark(n: number): string {
 /** 残りの行に上から番号を振る（文と、グループの✅を読む控え（スナップショット）で同じ番号） */
 export function numberTodoItems(list: TodoList): Array<{ n: number; item: TodoItem; customer: TodoCustomer }> {
   const out: Array<{ n: number; item: TodoItem; customer: TodoCustomer }> = [];
-  for (const c of list.customers) for (const i of c.items) if (!i.doneAt) out.push({ n: out.length + 1, item: i, customer: c });
+  for (const c of list.customers) for (const i of c.items) if (!i.doneAt && !i.waiting) out.push({ n: out.length + 1, item: i, customer: c });
   return out;
 }
 /**
  * 1行: ①AIX【種類】：やる事（期限）（●日）／済みは ✅AIX【種類】：やる事。
  * 経過が0日（今日立った）の物は（0日）を書かない（2026-10-21 竹内さん G5「０にちいれない」）
  */
-export function renderTodoItem(it: TodoItem, atMs: number, n?: number): string {
+export function renderTodoItem(it: TodoItem, atMs: number, n?: number, twoLine = false): string {
   if (it.doneAt) {
     if (it.doneVia === "none") return `☑${it.kindLabel}：確認済み・物件なし`;
     if (it.source === "target_new_arrival") return `✅${it.kindLabel}：物件をお送りした`;
     return `✅${it.kindLabel}：${it.task}`;
   }
+  if (it.waiting) return `⏳${it.waiting.text}`;
   const d = elapsedDays(it, atMs);
+  // 2026-10-28 TODO_TWO_LINE: 1行目＝タイトル（期限）（経過）・2行目＝次にする事（決まった形の指示 → 要約の次にする事 → やる事）
+  if (twoLine) return `${n ? todoNumberMark(n) : "・"}${todoItemTitle(it)}（${dueLabel(it, atMs)}）${d > 0 ? `（${d}日）` : ""}\n　→ ${todoItemNextStep(it, it.nextAction)}`;
   const body = it.instruction ?? `${it.kindLabel}：${it.task}`;
   return `${n ? todoNumberMark(n) : "・"}${body}（${dueLabel(it, atMs)}）${d > 0 ? `（${d}日）` : ""}`;
 }
 /** ターゲットの新着確認だけのお客様の1行（長すぎる時の詰めた形）: ⑳🌟名前さん（スモラ）新着確認〔条件〕／✅・☑ */
 export function renderCompactNewArrival(c: TodoCustomer, atMs: number, nums: ReadonlyMap<string, number>, tight = false): string {
   const it = c.items.find((i) => i.source === "target_new_arrival") ?? c.items[0];
+  if (it.waiting) return `・${c.accountLabel} ⏳${it.waiting.text}`;
   if (it.doneAt) return `${it.doneVia === "none" ? "☑" : "✅"}${c.accountLabel} ${it.doneVia === "none" ? "物件なし" : "お送りした"}`;
   const n = nums.get(it.key);
   const cond = tight ? null : it.instruction?.match(/条件（([^）]*)）/)?.[1];
@@ -728,7 +766,7 @@ export type TodoPost = {
   /** 次の便に回した人数（④・⑤） */
   carried: { 4: number; 5: number };
 };
-type RenderMode = { compact: 0 | 1 | 2; carried?: { 4: number; 5: number }; morning?: boolean };
+type RenderMode = { compact: 0 | 1 | 2; carried?: { 4: number; 5: number }; morning?: boolean; twoLine?: boolean };
 
 /**
  * 1便を組む（2026-10-21 竹内さん「オススメでおねがい」）。
@@ -798,6 +836,7 @@ export function renderStaffTodoList(list: TodoList, opts: { compact?: boolean } 
  */
 function renderList(list: TodoList, mode: RenderMode): string {
   const { compact, carried, morning } = mode;
+  const twoLine = mode.twoLine ?? todoTwoLineEnabled();
   const nums = new Map(numberTodoItems(list).map((x) => [x.item.key, x.n]));
   const out = [
     ...(morning ? [MORNING_CALL_LINE] : []),
@@ -822,7 +861,7 @@ function renderList(list: TodoList, mode: RenderMode): string {
     }
     if (compact && (c.group === 4 || c.group === 5)) { out.push(renderCompactNewArrival(c, list.atMs, nums, compact === 2)); continue; }
     const head = `${c.accountLabel}${c.why && c.items.some((i) => !i.doneAt) ? ` ▶${c.why}` : ""}`;
-    out.push("", head, ...c.items.map((i) => renderTodoItem(i, list.atMs, nums.get(i.key))));
+    out.push("", head, ...c.items.map((i) => renderTodoItem(i, list.atMs, nums.get(i.key), twoLine)));
   }
   flushCarried(lastGroup);
   // 組ごと次の便に回した時（見出しが出なかった組）も1行

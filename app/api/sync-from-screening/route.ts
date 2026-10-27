@@ -327,9 +327,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const { error } = await supabase
-      .from("conversations")
-      .upsert(upsertData, { onConflict: "id" });
+    // 2026-10-28 一覧の固まりの調べ（10/27 10:30〜10:45 UTC に Postgres の重複の失敗が42回）: id が違う同じ (line_user_id, account) の会話がある時、
+    //   旧は upsert を投げて部分 UNIQUE の重複（23505）で失敗させてから下の UPDATE に回っていた（審査管理の行の更新のたびに失敗の INSERT が1回）。
+    //   SCREENING_SYNC_PRECHECK=on の時は先に引き、あれば upsert を投げずに同じ UPDATE（M-7）に回す（結果は旧と同じ・失敗の INSERT が出ない）
+    let preDup = false;
+    if (!existingConv && upsertData.line_user_id && (process.env.SCREENING_SYNC_PRECHECK ?? "").trim().toLowerCase() === "on") {
+      let dupQ = supabase.from("conversations").select("id").eq("line_user_id", upsertData.line_user_id as string).neq("id", String(record.id));
+      if (resolvedAccount) dupQ = dupQ.eq("account", resolvedAccount);
+      const { data: dupRows } = await dupQ.limit(1);
+      preDup = !!(dupRows && dupRows.length);
+    }
+    const { error } = preDup
+      ? { error: { code: "23505", message: "pre-check: duplicate (line_user_id, account)", details: "", hint: "" } as { code: string; message: string; details: string; hint: string } }
+      : await supabase
+        .from("conversations")
+        .upsert(upsertData, { onConflict: "id" });
 
     // M-7: id は違うが同一 (line_user_id, account) の会話が既に存在する場合、
     // 部分UNIQUEインデックス idx_conversations_line_user_id_account_unique に当たって

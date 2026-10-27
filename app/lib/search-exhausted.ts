@@ -58,6 +58,36 @@ export function markerStrength(m: ExMsg): "strong" | "weak" | null {
   return null;
 }
 
+/**
+ * 2026-10-27 苦手な問題②（q008・q062・q170 と q006・q007）: 送付だけの印（weak）と出し切ったと言った印（strong）の見分けを正しくする（既定 off）。
+ *   旧: 「ご条件から離れますが」（条件の外の物件を送る＝今の条件の物件はもう無い）・「〜探させて頂きましたが、現在募集に出ておらず、エリア広げ」は
+ *   weak と数えられ、weak の番にも強い言い切りの行（「出し切った印がある＝返信で締める」）を渡していた（EXHAUSTED_WEAK_TURN_LINE を off にした理由＝q006 q007）。
+ *   そのため最初の束を送っただけの番（q008 神崎川・q170 お風呂・q062 京橋）にも「出し切った」と渡り、ブレインが足した条件で探す約束をしなかった（材料の誤り＝原因①）。
+ *   新: weak の番でも会話でこう言っていれば（staffSaidExhausted）今の番の行と規則は strong と同じに扱い、言っていない weak の番だけ「出し切りとは限らない」行を渡し、ブレインが選んだ探す約束を規則で書き換えない（ack-exhausted-reply）。印の強さ（左右の材料）は変えない。
+ *   線（実送信 120日）: 「条件から離れ」2通・「探…ましたが…募集に出ておらず」1通＝全部が今の条件の物件が無いと言った番。
+ *   見本（weakq-after1）で q003（新着を1件ずつ送る段）が weak の行で探す約束に倒れた（3回中2回）→「1件新着で」も言った文に足した。
+ *     「募集に出ておらず」だけ（6通）は持ち込みの1件の空きの答え（「〇〇は募集に出ておらず」）＝出し切りではないので入れない。
+ *   入れる: EXHAUSTED_WEAK_ACCURATE=on
+ */
+export function exhaustedWeakAccurateEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXHAUSTED_WEAK_ACCURATE ?? "").trim().toLowerCase() === "on";
+}
+// 「1件新着で〜募集に出ました」＝束を出し切った後の新着を1件ずつ送る段（竹内さんの決定 10/14・q003「新着を1件ずつ送っている段階（出し切り後）」）。実送信 60日の12通は全部この段
+// 2026-10-27 試験 weakq-after2（q007）: この文を印の強さ（strong）に足すと、左右の材料（splitMaterialLine の strong＝「物件を求める番は全力サポートが主」）まで変わり、
+//   出し切りの後の条件の絞り込み（返信で締める番）で物件の AIX に倒れた（main 2/3 → 0/3）。印の強さは変えず、weak の番で「今の番」の行と規則の扱いを選ぶ時だけ使う（staffSaidExhausted）
+const LEFT_CONDITION_RE = /条件から(?:は)?(?:少し)?離れ(?:ます|て|ており)|(?:新着で|新着の)[^。\n]{0,6}(?:1|一)件|(?:1|一)件新着|(?:探|お探し)[^。\n]{0,24}(?:ましたが|ましたところ)[^。\n]{0,12}募集に(?:出|で)ておら?ず/;
+
+/** weak の番で、こちらが会話で今の条件の物件はもう無いと言っているか（直近のスタッフの文 12通・EXHAUSTED_WEAK_ACCURATE=on の時だけ・off は false） */
+export function staffSaidExhausted(msgs: ReadonlyArray<{ sender: string; text?: string | null }>, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  if (!exhaustedWeakAccurateEnabled(env)) return false;
+  return msgs.filter((m) => m.sender !== "customer").slice(-12).some((m) => LEFT_CONDITION_RE.test(String(m.text ?? "").normalize("NFKC")));
+}
+/** 今の番の行・規則で使う強さ: weak でも会話で出し切ったと言っていれば strong と同じに扱う */
+export function effectiveExhaustStrength(strength: "strong" | "weak" | null | undefined, msgs: ReadonlyArray<{ sender: string; text?: string | null }>, env?: Record<string, string | undefined>): "strong" | "weak" | null {
+  if (strength === "weak" && staffSaidExhausted(msgs, env)) return "strong";
+  return strength ?? null;
+}
+
 /** 弱い印だけの出し切りはブレインの材料に下げる（上書きしない）か。**既定 off（旧のまま）**・BRAIN_DEMOTE_SEARCH_EXHAUSTED=on で下げる。
  *  10/13 試験（出し切り7問・DeepSeek）: 下げると道 7/7→5/7・合格 1→0（q003 が悪化・q002 q006 は2段の約束に）＝試験の正解（竹内さんの実送信）は送付だけの印の後でも全力サポート。
  *  本番4日の 43番ではスタッフが物件の AIX を送った番が多い（21/42）＝食い違う。材料を強くしてから on にする（入れない判断・報告に書いた） */

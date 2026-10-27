@@ -21,6 +21,7 @@ import { keepViewingGreetingItem, MAIN_AIX_ITEM_OR, MORNING_GREETING_NOTE_PREFIX
 import { keepPromiseQueueItem } from "@/app/lib/promise-queue";
 import { isNoLineTestConversation } from "@/app/lib/test-conversations";
 import { aixInstantNoticeEnabled } from "@/app/lib/staff-todo-list";
+import { todoFarMoveInEnabled } from "@/app/lib/far-move-in-todo";
 export { aixButtonText, buildAixActionNotice, buildAixActionList, isFreshAixTurn, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "@/app/lib/aix-action-text";
 
 /** 売上番長グループへ push（宛先・トークンの決め方は notify-group と同じ: env → hanbancyo_settings.group_id） */
@@ -149,6 +150,12 @@ export async function syncAixActionItem(input: {
     if (open && !pause.paused && keepPromiseQueueItem(open as { resolution_note?: string | null; created_at?: string | null })) {
       console.log("[aix-action-items] keep pending (約束の続き):", conversationId, open.action);
       return;
+    }
+    // 2026-10-28（響夢さん・竹内さん「今物件を探すわけではない」）: お客様の入居の時期が先（連絡の日が7日以上先）なら、
+    //   物件を送る要対応は残さず【必ず】【連絡日】の約束に置き換える（未履行のピックアップ宣言があっても）。TODO_FAR_MOVE_IN=on の時だけ
+    if (open && !pause.paused && (open.action === "property_send" || open.action === "property_recommendation") && todoFarMoveInEnabled()) {
+      const { replacePickupItemWithContactDate } = await import("@/app/lib/far-move-in-todo-server");
+      if (await replacePickupItemWithContactDate({ conversationId, customerName, itemId: (open as { id: string | number }).id }).catch(() => false)) return;
     }
     if (open && meta.pending_pickup === true && (open.action === "property_send" || open.action === "property_recommendation")) {
       console.log("[aix-action-items] keep pending (未履行のピックアップ宣言あり):", conversationId, open.action);

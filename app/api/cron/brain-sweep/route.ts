@@ -220,7 +220,12 @@ export async function GET(req: NextRequest) {
 
   // 2026-09-13 RAG 監査: embedding_cache（検索の問いの平文＋埋め込み）に期限が無く、7日で約3,700行ずつ増え続けていた。
   //   キャッシュなので30日より古い行は消す（5分毎の sweep のうち毎時0〜4分の1回だけ）
-  if (new Date().getUTCMinutes() < 5) {
+  // 2026-10-28 一覧の固まりの調べ: この DELETE は平均 1.36秒（900回）・表は 2.9万行で 549MB（埋め込みが重い）。DB が詰まる昼の時間を避け、
+  //   EMBEDDING_PURGE_NIGHTLY=on の時は1日1回・日本時間 3:10〜3:14（UTC 18:10〜18:14・18:00 と 18:30 の他の cron と重ねない）だけにする（既定 off＝今まで通り毎時）
+  const purgeNow = (process.env.EMBEDDING_PURGE_NIGHTLY ?? "").trim().toLowerCase() === "on"
+    ? new Date().getUTCHours() === 18 && new Date().getUTCMinutes() >= 10 && new Date().getUTCMinutes() < 15
+    : new Date().getUTCMinutes() < 5;
+  if (purgeNow) {
     const { error: purgeErr } = await supabase.from("embedding_cache").delete()
       .lt("created_at", new Date(Date.now() - EMBEDDING_CACHE_TTL_MS).toISOString());
     if (purgeErr) console.warn("[brain-sweep] embedding_cache purge failed:", purgeErr.message);

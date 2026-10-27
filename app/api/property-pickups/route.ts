@@ -18,6 +18,7 @@ import { COMPLETE_BEST_WINDOW_HOURS } from "@/app/lib/pickup-complete";
 import { claimIdleComplete } from "@/app/lib/pickup-complete-server";
 import { sortForReview, sentBeforeIds, type SentHistLite } from "@/app/lib/pickup-review-order";
 import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
+import { pickupListOrderAt, pickupOrderAnalyzedFirstEnabled } from "@/app/lib/pickup-list-order";
 import { withPickupRetention } from "@/app/lib/pickup-retention";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
 import { groupPickupRounds } from "@/app/lib/pickup-card-view";
@@ -161,7 +162,8 @@ export async function GET(req: NextRequest) {
         line: cv ? { profile_image_url: cv.profile_image_url, updated_at: cv.updated_at, account: cv.account, status: cv.status, last_sender: cv.last_sender } : null,
         last_pickup_at: lastPickupAt,
         // LINE の一覧の並び＝会話の updated_at。紐付いていなければピックアップの時刻
-        order_at: cv?.updated_at ?? c.last_at,
+        // 2026-10-28 PICKUP_ORDER_ANALYZED_FIRST=on: 解析（ピックアップの回）の方が新しければその時刻で上へ（pickup-list-order）
+        order_at: pickupListOrderAt({ convUpdatedAt: cv?.updated_at ?? null, lastPickupAt, fallback: c.last_at }, pickupOrderAnalyzedFirstEnabled()),
       };
     })
     .sort((a, z) => z.order_at.localeCompare(a.order_at));
@@ -355,7 +357,7 @@ async function buildList(since: string) {
       customer_name: c.customer_name ?? cv?.customer_name ?? null,
       line: cv ? { profile_image_url: cv.profile_image_url, updated_at: cv.updated_at, account: cv.account, status: cv.status, last_sender: cv.last_sender } : null,
       last_at: last,
-      order_at: cv?.updated_at ?? last,
+      order_at: pickupListOrderAt({ convUpdatedAt: cv?.updated_at ?? null, lastPickupAt: c.last_pickup_at ?? null, fallback: last }, pickupOrderAnalyzedFirstEnabled()),
       new_count: nw?.count ?? 0,
       new_at: nw?.at ?? null,
       new_line: nw ? newArrivalLine(nw) : null,

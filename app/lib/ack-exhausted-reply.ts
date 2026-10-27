@@ -11,6 +11,9 @@
 
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
+// 2026-10-27 苦手な問題②: 出し切りの印の強さを正しくした時（search-exhausted の EXHAUSTED_WEAK_ACCURATE=on・既定 off）は、
+//   送付だけの印（weak）の番に弱い形の行を渡し、ブレインが選んだ探す約束を規則で書き換えない（10/20 に止めた理由の q006・q007 は strong に数えられるようになる）
+const weakAccurateOn = (env: Env): boolean => (env.EXHAUSTED_WEAK_ACCURATE ?? "").trim().toLowerCase() === "on";
 
 // 2026-10-21 竹内さん A2「AIXでおくる」・A3「物件確認した」（設計知見・決定 C『短く返信』を改める）: 約束の直後のお客様のお礼・了承だけの番は返信せず、
 //   約束を果たす AIX（ピックアップ→物件ピックアップした／物件オススメ・確認・交渉→物件確認した・見積→見積書送る）。決定 C は既定 off（戻す ACK_AFTER_PROMISE_REPLY=on）
@@ -104,7 +107,7 @@ export function exhaustedConditionWeakTurnLine(env: Env = envOf()): string {
   // 2026-10-20 確かめる人: 既定 off（入れる EXHAUSTED_WEAK_TURN_LINE=on）。試験 wb1018-fix2-final-n と rv1020-b（同じ12問を main と3回ずつ）で
   //   q006（「港区から離れますが」の後のガスコンロ）・q007（「募集に出ておらず、エリア広げ」の後のエリアの言い直し）が道 3→0・2→1 に悪くなった
   //   （どちらも送付だけの印＝weak と数えられるが、会話では出し切ったと言っている）。weak/strong の見分けを直すまで止める
-  if ((env.EXHAUSTED_WEAK_TURN_LINE ?? "").trim().toLowerCase() !== "on") return exhaustedConditionTurnLine(env);
+  if ((env.EXHAUSTED_WEAK_TURN_LINE ?? "").trim().toLowerCase() !== "on" && !weakAccurateOn(env)) return exhaustedConditionTurnLine(env);
   if (!exhaustedConditionReplyEnabled(env)) return "";
   return "【今の番（材料）】こちらは物件を送った（送付の報告）が、今の条件を出し切ったとは言っていない（「全てピックアップ」・新着待ちの約束・全力サポートは無い）。"
     + "お客様の今の発言が送った物件への懸念・条件の足し（設備・広さ・家賃・間取り・エリア）なら、その条件ではまだ探していない＝竹内さんはその条件で改めてお調べ（ピックアップ）してお送りする約束にする（route=promise・about=search_condition）。"
@@ -172,7 +175,7 @@ export function exhaustedWeakKeepBrainPromise(o: { strength: "strong" | "weak" |
   /** ブレインの方向（reply_direction＋key_topics）。turn_contract を出さなかった番（10/18 試験 q170 で1回）の予備 */
   brainText?: string | null; env?: Env }): boolean {
   // 2026-10-20 確かめる人: 既定 off（入れる EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE=on）。q006・q007 の悪化（上の EXHAUSTED_WEAK_TURN_LINE と同じ理由）
-  if (((o.env ?? envOf()).EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE ?? "").trim().toLowerCase() !== "on") return false;
+  if (((o.env ?? envOf()).EXHAUSTED_WEAK_KEEP_BRAIN_PROMISE ?? "").trim().toLowerCase() !== "on" && !weakAccurateOn(o.env ?? envOf())) return false;
   if (o.strength !== "weak") return false;
   if (o.asks.some((a) => a?.route === "promise" && a?.about === "search_condition")) return true;
   if (o.asks.length) return false;
