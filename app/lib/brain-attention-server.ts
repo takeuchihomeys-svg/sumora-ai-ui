@@ -16,6 +16,8 @@ import { brainHotDrop, FOLLOWUP_AIX_TYPES, ignoredFollowUpStreak, silentDaysSett
 import { screeningSummaryLine, targetSummaryLine } from "@/app/lib/target-list-format";
 import { contactDateOfNotes, contactDue } from "@/app/lib/contact-promise";
 import { loadReapplyStates, loadReapplyInfo, type ReapplyConvRow } from "@/app/lib/reapply-customer-server";
+// 2026-10-28 PostgREST の1回 1000行で切れていた読み（お客様の発言 45日・追客の送信）を回して読む（READ_ALL_ROWS=on の時だけ・既定 off）
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 import { RETURN_PATTERN_LABEL, RETURN_PATTERN_SHORT, REAPPLY_MARK_TEXT, type ReapplyInfo } from "@/app/lib/reapply-customer";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -165,14 +167,14 @@ async function buildTargetInputs(
     // 返信を送ると suggested_aix_meta は消える（判断は last_brain_meta に残る）→ 無い時は last_brain_meta（ブレインの最後の判断）を読む
     db.from("conversations").select("id, suggested_aix_meta, last_brain_meta").in("id", ids),
     // お客様の最後の発言の時刻（スタッフが返した後は会話行からは分からない）
-    db.from("messages").select("conversation_id, created_at, text").eq("sender", "customer").in("conversation_id", ids).gte("created_at", since)
-      .order("created_at", { ascending: false }).limit(8000),
+    readRowsUpTo((a, b, paged) => { const q = db.from("messages").select("conversation_id, created_at, text").eq("sender", "customer").in("conversation_id", ids).gte("created_at", since)
+      .order("created_at", { ascending: false }); return (paged ? q.order("id", { ascending: false }) : q).range(a, b); }, 8000),
     // 案件の失注の確定（L1 他で決めた・L4 引越し中止・L6 申込の取り消し）。審査落ちの後に終わった人を外す
     db.from("deal_outcomes").select("conversation_id, episode_no, result, result_certainty, lost_type, lost_at").in("conversation_id", ids),
     // 続けて返事の無い追客（hot から外す・brain-hot-drop）。お客様の最後の発言より後の追客だけ数える
     // 追客＝AIX【物件ピックアップした】【物件オススメ】の送信（2026-10-08 竹内「追客は AIX の物件ピックアップ または 物件オススメ」）
-    db.from("aix_usage_logs").select("conversation_id, created_at, sent_at").in("aix_type", [...FOLLOWUP_AIX_TYPES]).in("conversation_id", ids) /* 期間で切らない（止まった人の追客は45日より前のことがある・実物 みゅ 8/10）。物件の AIX だけなので軽い */
-      .order("created_at", { ascending: false }).limit(8000),
+    readRowsUpTo((a, b, paged) => { const q = db.from("aix_usage_logs").select("conversation_id, created_at, sent_at").in("aix_type", [...FOLLOWUP_AIX_TYPES]).in("conversation_id", ids) /* 期間で切らない（止まった人の追客は45日より前のことがある・実物 みゅ 8/10）。物件の AIX だけなので軽い */
+      .order("created_at", { ascending: false }); return (paged ? q.order("id", { ascending: false }) : q).range(a, b); }, 8000),
   ]);
   const aixBy = new Map<string, string[]>();
   for (const m of (aixMsgs ?? []) as Array<{ conversation_id: string; created_at: string; sent_at?: string | null }>) {
@@ -414,19 +416,19 @@ export async function syncBrainHotDrops(db: Db = supabase, opts: { dryRun?: bool
   const ids = convRows.map((c) => c.id);
   const since = new Date(Date.now() - 45 * 86_400_000).toISOString();
   const [{ data: custMsgs }, { data: aixMsgs }] = await Promise.all([
-    db.from("messages").select("conversation_id, created_at").eq("sender", "customer").in("conversation_id", ids).gte("created_at", since)
-      .order("created_at", { ascending: false }).limit(8000),
+    readRowsUpTo((a, b, paged) => { const q = db.from("messages").select("conversation_id, created_at").eq("sender", "customer").in("conversation_id", ids).gte("created_at", since)
+      .order("created_at", { ascending: false }); return (paged ? q.order("id", { ascending: false }) : q).range(a, b); }, 8000),
     // 追客＝AIX【物件ピックアップした】【物件オススメ】の送信（2026-10-08 竹内「追客は AIX の物件ピックアップ または 物件オススメ」）
-    db.from("aix_usage_logs").select("conversation_id, created_at, sent_at").in("aix_type", [...FOLLOWUP_AIX_TYPES]).in("conversation_id", ids) /* 期間で切らない（止まった人の追客は45日より前のことがある・実物 みゅ 8/10）。物件の AIX だけなので軽い */
-      .order("created_at", { ascending: false }).limit(8000),
+    readRowsUpTo((a, b, paged) => { const q = db.from("aix_usage_logs").select("conversation_id, created_at, sent_at").in("aix_type", [...FOLLOWUP_AIX_TYPES]).in("conversation_id", ids) /* 期間で切らない（止まった人の追客は45日より前のことがある・実物 みゅ 8/10）。物件の AIX だけなので軽い */
+      .order("created_at", { ascending: false }); return (paged ? q.order("id", { ascending: false }) : q).range(a, b); }, 8000),
   ]);
   const lastCust = new Map<string, string>();
   for (const m of (custMsgs ?? []) as Array<{ conversation_id: string; created_at: string }>) if (!lastCust.has(m.conversation_id)) lastCust.set(m.conversation_id, m.created_at);
   // 45日の窓に発言が無い会話だけ、窓の外の最後の発言を読む（理由の日数を正しく出す・止まった人は発言が少ないので軽い）
   const missing = ids.filter((id) => !lastCust.has(id));
   if (missing.length) {
-    const { data: old } = await db.from("messages").select("conversation_id, created_at").eq("sender", "customer").in("conversation_id", missing)
-      .order("created_at", { ascending: false }).limit(10000);
+    const { data: old } = await readRowsUpTo((a, b, paged) => { const q = db.from("messages").select("conversation_id, created_at").eq("sender", "customer").in("conversation_id", missing)
+      .order("created_at", { ascending: false }); return (paged ? q.order("id", { ascending: false }) : q).range(a, b); }, 10000);
     for (const m of (old ?? []) as Array<{ conversation_id: string; created_at: string }>) if (!lastCust.has(m.conversation_id)) lastCust.set(m.conversation_id, m.created_at);
   }
   const aixBy = new Map<string, string[]>();

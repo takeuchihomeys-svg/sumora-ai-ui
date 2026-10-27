@@ -1,5 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
+// 2026-10-28 対象会話のスタッフ送信（14日・最大 1,700行）は 1回 1000行で切れていた（古い順なので新しい側が抜ける）→ READ_ALL_ROWS=on の時だけ回して読む（既定 off）
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 import Anthropic from "@anthropic-ai/sdk";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
@@ -213,14 +215,13 @@ async function run() {
 
   // 2. 対象会話のスタッフ送信（後続候補）と aix_usage_logs をまとめて取得
   const [{ data: staffMsgs, error: staffErr }, { data: logs, error: logErr }] = await Promise.all([
-    supabase
+    readRowsUpTo((a, b, paged) => { const q = supabase
       .from("messages")
       .select("id, conversation_id, text, created_at, is_aix_generated")
       .in("conversation_id", convIds)
       .eq("sender", "staff")
       .gte("created_at", since)
-      .order("created_at", { ascending: true })
-      .limit(3000),
+      .order("created_at", { ascending: true }); return (paged ? q.order("id", { ascending: true }) : q).range(a, b); }, 3000),
     supabase
       .from("aix_usage_logs")
       .select("conversation_id, aix_type, created_at, sent_at, generated_text")

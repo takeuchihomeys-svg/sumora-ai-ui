@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
+// 2026-10-28 ルールは 1,611行あり 1回 1000行で切れていた → READ_ALL_ROWS=on の時だけ回して読む（既定 off）
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 
 export async function GET() {
   // ルール一覧 + accept/dismiss 集計を同時取得
   const [{ data: rules, error }, { data: feedback }] = await Promise.all([
-    supabase
+    readRowsUpTo((a, b, paged) => { const q = supabase
       .from("trigger_action_rules")
       .select("id, action_type, keyword, confidence, occurrence_count, conversation_status")
       .order("action_type", { ascending: true })
       .order("confidence", { ascending: false })
-      .order("occurrence_count", { ascending: false })
-      .limit(2000),
+      .order("occurrence_count", { ascending: false }); return (paged ? q.order("id", { ascending: false }) : q).range(a, b); }, 2000),
     supabase
       .from("action_pattern_logs")
       .select("action_type, source")

@@ -19,6 +19,7 @@ import { claimIdleComplete } from "@/app/lib/pickup-complete-server";
 import { sortForReview, sentBeforeIds, type SentHistLite } from "@/app/lib/pickup-review-order";
 import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
 import { pickupListOrderAt, pickupOrderAnalyzedFirstEnabled } from "@/app/lib/pickup-list-order";
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 import { withPickupRetention } from "@/app/lib/pickup-retention";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
 import { groupPickupRounds } from "@/app/lib/pickup-card-view";
@@ -633,9 +634,12 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
 async function readRoundIds(by: { pcid: string } | { conv: string } | { since: string }): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   try {
-    let q = supabase.from("property_pickups").select("batch_id, complete_group_id").not("complete_group_id", "is", null).order("created_at", { ascending: false }).limit(3000);
-    q = "pcid" in by ? q.eq("property_customer_id", by.pcid) : "conv" in by ? q.eq("conversation_id", by.conv) : q.gte("created_at", by.since);
-    const { data, error } = await q;
+    // 2026-10-28 一覧（since・30日）は 2,700行あり 1回 1000行で切れていた（古い回のまとめ ID が抜けて別の回に数える）→ READ_ALL_ROWS=on の時だけ回して読む
+    const { data, error } = await readRowsUpTo((a, b, paged) => {
+      let q = supabase.from("property_pickups").select("batch_id, complete_group_id").not("complete_group_id", "is", null).order("created_at", { ascending: false });
+      q = "pcid" in by ? q.eq("property_customer_id", by.pcid) : "conv" in by ? q.eq("conversation_id", by.conv) : q.gte("created_at", by.since);
+      return (paged ? q.order("id", { ascending: false }) : q).range(a, b);
+    }, 3000);
     if (error) { console.warn("[property-pickups] まとめ ID を読めない（時刻で寄せる）:", error.message); return out; }
     for (const r of (data ?? []) as Array<{ batch_id: string; complete_group_id: string | null }>) if (r.complete_group_id && !out.has(r.batch_id)) out.set(r.batch_id, r.complete_group_id);
   } catch { /* 読めなければ時刻で寄せる */ }

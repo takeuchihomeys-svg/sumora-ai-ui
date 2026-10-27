@@ -6,6 +6,8 @@ import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { excludeTestConversations } from "@/app/lib/test-conversations";
 // 2026-09-27 竹内「重い順から治す」①: 語尾・絵文字・助詞の断片・定型の敬語・フォームの断片（「ます😊」「しました」「も見て」）は作らない・次の実行で消す
 import { isMeaninglessRuleKeyword } from "@/app/lib/brain-keyword-rules";
+// 2026-10-28 1回 1000行で切れていた読み（90日のログ 1,758・1,593行／キーワードのルール 1,534行）を回して読む（READ_ALL_ROWS=on の時だけ・既定 off）
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 
 // Vercel Functions のタイムアウト上限（秒）
 // 逐次upsert廃止・バッチ化済みのため300秒に引き上げ
@@ -128,14 +130,13 @@ export async function POST(req?: Request) {
 
   // action_pattern_logs から全データ取得（source で重み付け + created_at で鮮度減衰）
   // 高3: サブモードログ（viewing_invite_submode 等）は customer_msg_summary にモードキーが入っており n-gram を汚染するため除外
-  const { data: logsRaw } = await supabase
+  const { data: logsRaw } = await readRowsUpTo((a, b, paged) => { const q = supabase
     .from("action_pattern_logs")
     .select("action_type, customer_msg_summary, source, created_at, conversation_id")
     .not("customer_msg_summary", "is", null)
     .not("action_type", "like", "%_submode")
     .gte("created_at", NINETY_DAYS_AGO)
-    .order("created_at", { ascending: false })
-    .limit(3000);
+    .order("created_at", { ascending: false }); return (paged ? q.order("id", { ascending: false }) : q).range(a, b); }, 3000);
   // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
   const logs = excludeTestConversations(logsRaw);
 
@@ -260,11 +261,10 @@ export async function POST(req?: Request) {
   {
     // 用途分離: 通常キーワードルール（category='keyword_rule'）のみノイズ削除の対象にする。
     // 統計行・チェーンルール・線引きルール・旧手動ルールは category で構造的に保護される。
-    const { data: allRules } = await supabase
+    const { data: allRules } = await readRowsUpTo((a, b, paged) => { const q = supabase
       .from("trigger_action_rules")
       .select("keyword")
-      .eq("category", "keyword_rule")
-      .limit(5000);
+      .eq("category", "keyword_rule"); return (paged ? q.order("id", { ascending: false }) : q).range(a, b); }, 5000);
     const noiseKeywords = [
       ...new Set(
         (allRules ?? [])
@@ -301,14 +301,13 @@ export async function POST(req?: Request) {
   // ── AIXチェーンパターン学習: 直前のAIX → 次のAIX ──
   // 高3: サブモードログ（%_submode）は実際のAIX遷移ではないため集計から除外
   // 高6: 直近90日窓 + created_at 降順で「最新の3000件」を確定させる
-  const { data: chainLogs } = await supabase
+  const { data: chainLogs } = await readRowsUpTo((a, b, paged) => { const q = supabase
     .from("action_pattern_logs")
     .select("action_type, previous_action_type, conversation_status, source, created_at, conversation_id")
     .not("previous_action_type", "is", null)
     .not("action_type", "like", "%_submode")
     .gte("created_at", NINETY_DAYS_AGO)
-    .order("created_at", { ascending: false })
-    .limit(3000);
+    .order("created_at", { ascending: false }); return (paged ? q.order("id", { ascending: false }) : q).range(a, b); }, 3000);
 
   // 高4: 却下・キャンセル・バイパス系は「実際に取られた遷移」ではないためチェーン学習から除外
   const CHAIN_EXCLUDED_SOURCES = new Set(["suggestion_dismissed", "send_cancelled", "suggestion_bypassed", "prediction_bypassed"]);

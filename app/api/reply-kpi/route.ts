@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { jstWeekMondayYmd } from "@/app/lib/jst-date";
+// 2026-10-28 12週の手本は 6,581行あり、古い順の 1回 1000行（PostgREST の上限）で切れて新しい週が空になっていた → READ_ALL_ROWS=on の時だけ回して読む（既定 off）
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
@@ -10,11 +12,14 @@ export async function GET(req: NextRequest) {
   const since = new Date(Date.now() - weeks * 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // 週次集計（PostgreSQLのDATE_TRUNCを使用）
-  const { data, error } = await supabase
-    .from("ai_reply_examples")
-    .select("created_at, was_ai_used, was_ai_modified, is_starred, conversation_state")
-    .gte("created_at", since)
-    .order("created_at", { ascending: true });
+  const { data, error } = await readRowsUpTo((a, b, paged) => {
+    const q = supabase
+      .from("ai_reply_examples")
+      .select("created_at, was_ai_used, was_ai_modified, is_starred, conversation_state")
+      .gte("created_at", since)
+      .order("created_at", { ascending: true });
+    return (paged ? q.order("id", { ascending: true }) : q).range(a, b);
+  }, 30000);
 
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
