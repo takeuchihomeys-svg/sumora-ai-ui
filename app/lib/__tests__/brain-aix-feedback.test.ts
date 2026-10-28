@@ -237,7 +237,7 @@ describe("buildSceneEvidencePromptText（証拠と実績の欄・規則にしな
 });
 
 describe("BRAIN_FEEDBACK_ORDER（過去の AIX 判断の欄の4行を決まった順に・10/28）", () => {
-  const row = (action: string, pressed: number, n: number, alt: Array<{ aix: string; n: number }> = [{ aix: "x", n: 1 }]) => ({ kind: "action", action, scene: null, n, pressed, matched: 0, alt_top: alt });
+  const row = (action: string, pressed: number, n: number, alt: Array<{ aix: string; n: number }> = [{ aix: "x", n: 1 }]) => ({ kind: "action" as const, action, scene: null, n, pressed, matched: 0, alt_top: alt });
   // 10/28 の DB の並び（order なしで返った順）
   const db = [row("none", 152, 1038), row("property_search", 1, 10), row("meeting_place", 24, 52), row("estimate_sheet", 30, 75), row("application_push", 11, 37),
     row("property_send", 47, 225), row("property_check_result", 73, 255), row("viewing_invite", 40, 104), row("phone_call", 2, 11, [])];
