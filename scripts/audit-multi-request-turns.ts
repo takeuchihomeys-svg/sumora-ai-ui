@@ -88,8 +88,8 @@ async function main() {
       const hp = firstHandMsg ? promisesInStaffText(firstHandMsg.text, firstHandMsg.created_at) : [];
       humanPromiseKinds += hp.length;
       if (!first.is_aix_generated) { if (hp.length >= 2) bundled++; else if (hp.length === 1) onePromise++; else answerOnly++; }
-      exList.push(`${cid} at=${list[j - 1].created_at} [${key}] 最初=${first.is_aix_generated ? "AIX" : "手打ち"} 約束=${hp.map((p) => PROMISE_KIND_JA[p.kind]).join("・") || "なし"}｜依頼: ${its.map((x) => `[${TOPIC_JA[x.topic]}]${x.quote.slice(0, 30)}`).join(" ")}｜人: ${String(firstHandMsg?.text ?? "").replace(/s+/g, " ").slice(0, 140)}`);
-      if (!first.is_aix_generated && hp.length <= 1 && exOne.length < N) exOne.push(`${cid.slice(0, 6)} ${list[i].created_at.slice(5, 16)} [${key}] 約束=${hp.map((p) => PROMISE_KIND_JA[p.kind]).join("・") || "なし"}｜客: ${bundle.join(" / ").replace(/s+/g, " ").slice(-160)}｜人: ${String(firstHandMsg?.text ?? "").replace(/s+/g, " ").slice(0, 160)}`);
+      exList.push(`${cid} at=${list[j - 1].created_at} [${key}] 最初=${first.is_aix_generated ? "AIX" : "手打ち"} 約束=${hp.map((p) => PROMISE_KIND_JA[p.kind]).join("・") || "なし"}｜依頼: ${its.map((x) => `[${TOPIC_JA[x.topic]}]${x.quote.slice(0, 30)}`).join(" ")}｜人: ${String(firstHandMsg?.text ?? "").replace(/\s+/g, " ").slice(0, 140)}`);
+      if (!first.is_aix_generated && hp.length <= 1 && exOne.length < N) exOne.push(`${cid.slice(0, 6)} ${list[i].created_at.slice(5, 16)} [${key}] 約束=${hp.map((p) => PROMISE_KIND_JA[p.kind]).join("・") || "なし"}｜客: ${bundle.join(" / ").replace(/\s+/g, " ").slice(-160)}｜人: ${String(firstHandMsg?.text ?? "").replace(/\s+/g, " ").slice(0, 160)}`);
       if (hp.length >= 2 && exWording.length < N) exWording.push(`${cid.slice(0, 6)} ${list[i].created_at.slice(5, 16)} [${key}] 約束=${hp.map((p) => PROMISE_KIND_JA[p.kind]).join("・")}｜人: ${String(firstHandMsg!.text).replace(/\s+/g, " ").slice(0, 200)}`);
       // AIX の並び（72時間）
       const winLogs = cLogs.filter((l) => Date.parse(l.at) > T && Date.parse(l.at) <= end);

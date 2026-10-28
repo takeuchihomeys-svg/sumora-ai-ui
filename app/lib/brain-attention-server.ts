@@ -7,7 +7,7 @@ import { supabase } from "@/app/lib/supabase-server";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 import {
-  attentionRank, isAttentionExcluded, BRAIN_TASK_NOTE, brainHotDecision, brainNeedsStaff, brainTaskTypes, brainTaskTypesToCancel, classifyTarget, compareTargets, flagOn,
+  attentionRank, isAttentionExcluded, sumowariNamedIn, BRAIN_TASK_NOTE, brainHotDecision, brainNeedsStaff, brainTaskTypes, brainTaskTypesToCancel, classifyTarget, compareTargets, flagOn,
   POST_APPLY_STATUSES, targetSummary,
   type AttentionMeta, type TargetInput, type TargetTier,
 } from "@/app/lib/brain-attention";
@@ -145,6 +145,8 @@ export type BrainTarget = {
   lastMessage: string | null;
   pendingAixAction: string | null;
   propertyCustomerId: string | null;
+  /** 2026-10-28 #10: お客様がスモ割を名指しした（TARGET_SUMOWARI=on の時だけ） */
+  sumowari?: boolean;
 };
 
 const latestIso = (...xs: Array<string | null | undefined>): string | null => {
@@ -241,6 +243,8 @@ async function buildTargetInputs(
       // お客様の最後の発言は45日の窓の外のこともある → 窓の外なら窓の中の AIX を全部数える（窓より前の発言なので同じ）
       ignoredAix: ignoredFollowUpStreak(aixBy.get(conv.id) ?? [], lastCustomerAt), hotDrop, hotDropSilentDays,
       contactDueYmd: opts.contactDue?.get(conv.id)?.ymd ?? null, contactDueTitle: opts.contactDue?.get(conv.id)?.title ?? null,
+      // 2026-10-28 竹内さん #10: お客様がスモ割を名指しした（読めた発言の中・新しい順の最初）。TARGET_SUMOWARI=on の時だけ
+      sumowariNamedAt: flagOn(process.env.TARGET_SUMOWARI) ? ((custTextsBy.get(conv.id) ?? []).find((m) => sumowariNamedIn(m.text))?.at ?? null) : null,
     };
     return { conv, input, pendingAixAction: item?.action ?? null, pendingCheckPattern: item?.check_pattern ?? null };
   });
@@ -321,8 +325,11 @@ export async function loadBrainTargets(db: Db = supabase, opts: { sinceDays?: nu
       lastMessage: x.conv.last_message ?? null,
       pendingAixAction: x.pendingAixAction,
       propertyCustomerId: x.conv.property_customer_id ?? null,
+      ...(x.input.sumowariNamedAt ? { sumowari: true } : {}),
     };
   });
+  // 2026-10-28 #10: スモ割を名指しした人は一言の頭に【スモ割】（SNS 経由・決まる見込みが高い）
+  for (const t of out) if (t.sumowari) t.summaryLine = ["【スモ割】", t.summaryLine].filter(Boolean).join("");
   // 連絡の約束の日の人は、一言の頭に約束（「連絡の約束の日 12/17・入居2月」）を付ける
   for (const t of out) {
     if (t.tier !== "contact_due") continue;

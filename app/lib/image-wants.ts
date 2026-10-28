@@ -253,15 +253,28 @@ export function imageAnalysisNeed(wants: ImageWant[]): ImageAnalysisNeed {
   for (const w of wants) {
     for (const key of wantFeatures(w.text)) {
       const f = WANT_FEATURES.find((x) => x.key === key);
-      if (!f?.strong) continue;
+      // 2026-10-28 竹内さん（ロト #9）「3口コンロのガスコンロをお客さん要望なので、そこも判断できるようにする」:
+      //   コンロの口数は strong=false で「画像で確かめたい希望」に出ていなかった（ロトの条件「三口ガスコンロ」）。
+      //   写真の読みはコンロを両向きに読み違える（equipment-question の PHOTO_REQUIRED）＝点にはせず、スタッフが資料・写真で確かめる希望として出す。
+      //   入れる IMAGE_WANT_BURNERS=on（既定 off）
+      const burnersOn = key === "burners" && (process.env.IMAGE_WANT_BURNERS ?? process.env.NEXT_PUBLIC_IMAGE_WANT_BURNERS ?? "").trim().toLowerCase() === "on";
+      if (!f?.strong && !burnersOn) continue;
       // 「収納」は WIC と重なる時は WIC だけ出す
       if (key === "storage" && wantFeatures(w.text).includes("wic")) continue;
-      const label = key === "layout" ? layoutLabel(w.text) : f.label;
+      const label = key === "layout" ? layoutLabel(w.text) : burnersOn ? burnersLabel(w.text) : f!.label;
       if (!labels.includes(label)) labels.push(label);
       for (const t of w.topics) topics.add(t);
     }
   }
   return labels.length ? { level: "recommended", topics: [...topics], labels: labels.slice(0, 4) } : { level: "optional", topics: [], labels: [] };
+}
+
+/** コンロの口数の希望の短い言葉（「三口ガスコンロ」→「ガスコンロ3口」・口数が読めなければ「コンロ口数」） */
+export function burnersLabel(text: string): string {
+  const m = String(text ?? "").normalize("NFKC").match(/([2-9]|二|三)口/);
+  const n = m ? ({ 二: "2", 三: "3" } as Record<string, string>)[m[1]] ?? m[1] : null;
+  const gas = /ガス/.test(text) ? "ガスコンロ" : "コンロ";
+  return n ? `${gas}${n}口` : "コンロ口数";
 }
 
 /** 部屋の配置の希望は短い言葉にする（「リビングと寝室兼書斎の生活空間を分けたい」→「リビングと寝室を分けたい」は作らず、先頭を短く切る） */

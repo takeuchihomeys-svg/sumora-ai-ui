@@ -220,7 +220,7 @@ async function explainClaude(userText: string): Promise<{ json: unknown; usd: nu
     if (!res.ok) throw new Error(`Claude ${res.status}: ${JSON.stringify(j).slice(0, 200)}`);
     const u = usageFromAnthropic(CLAUDE_MODEL, j.usage);
     const text = (j.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
-    let json: unknown = null; try { json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch { json = text; log(`  （Claude の答えが JSON で読めない: 種類 ${(j.content ?? []).map((c) => c.type).join(",")}・${[...text].length}字・頭「${[...text].slice(0, 160).join("").replace(/s+/g, " ")}」・尾「${[...text].slice(-120).join("").replace(/s+/g, " ")}」）`); }
+    let json: unknown = null; try { json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch { json = text; log(`  （Claude の答えが JSON で読めない: 種類 ${(j.content ?? []).map((c) => c.type).join(",")}・${[...text].length}字・頭「${[...text].slice(0, 160).join("").replace(/\s+/g, " ")}」・尾「${[...text].slice(-120).join("").replace(/\s+/g, " ")}」）`); }
     return { json, usd: claudeUsageUsd(u), usage: { miss: Number(u.input_uncached ?? 0), hit: Number(u.cache_read ?? 0), out: Number(u.output_tokens ?? 0) } };
   } catch (e) { log(`  ⚠ 説明の失敗（Claude）: ${e instanceof Error ? e.message : e}`); return null; }
 }

@@ -2,7 +2,7 @@
 //   画面の初期値（/api/aix/brought-properties）と、AIX の文の生成の材料（AIX_BROUGHT_MATERIAL）が同じ物を使う
 import { supabase } from "@/app/lib/supabase-server";
 import { loadPropertyThreads } from "@/app/lib/property-thread-server";
-import { broughtForCheck, type BroughtPrefill } from "@/app/lib/aix-brought-prefill";
+import { broughtForCheck, broughtMaxAgeDays, type BroughtPrefill } from "@/app/lib/aix-brought-prefill";
 
 /** AIX の文の生成に「お客様が送ってきた物件」の名前を渡すか（既定 off・AIX_BROUGHT_MATERIAL=on） */
 export function aixBroughtMaterialEnabled(env: Record<string, string | undefined> = process.env): boolean {
@@ -19,7 +19,7 @@ export async function loadBroughtPrefillFor(conversationId: string, opts: { asOf
       supabase.from("aix_usage_logs").select("sent_at").eq("conversation_id", conversationId).eq("aix_type", "property_check_result")
         .not("sent_at", "is", null).lt("sent_at", until).order("sent_at", { ascending: false }).limit(1),
     ]);
-    return broughtForCheck(state, { checkAts: (ck.data ?? []).map((r) => r.sent_at as string) });
+    return broughtForCheck(state, { checkAts: (ck.data ?? []).map((r) => r.sent_at as string), maxAgeDays: broughtMaxAgeDays(), nowMs: opts.asOf ? Date.parse(opts.asOf) : Date.now() });
   })();
   try {
     return await Promise.race([work, new Promise<null>((r) => setTimeout(() => r(null), 4_000))]);

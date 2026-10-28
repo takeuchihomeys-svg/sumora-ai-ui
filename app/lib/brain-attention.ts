@@ -189,8 +189,16 @@ export type TargetInput = {
   contactDueYmd?: string | null;
   /** その行の件名（「YUMAさんに連絡（入居2月）」） */
   contactDueTitle?: string | null;
+  /** 2026-10-28 竹内さん #10: お客様が「スモ割」を名指しした（SNS を見てくれている＝決まる見込みが高い）時刻。TARGET_SUMOWARI=on の時だけ入る */
+  sumowariNamedAt?: string | null;
   nowMs: number;
 };
+
+/** 2026-10-28 竹内さん #10（かずき 10/27「この2件スも割適用できますでしょうか」）: スモ割＝スモラの割引の名前（SNS の集客で使う）。名指しはお客様の文の語だけで見る（表記ゆれ込み） */
+export const SUMOWARI_RE = /ス[モも]割|すも割|スモワリ|すもわり|スモ割り/;
+export function sumowariNamedIn(text: string | null | undefined): boolean {
+  return SUMOWARI_RE.test(String(text ?? "").normalize("NFKC"));
+}
 
 const DAY = 86_400_000;
 const tms = (s: string | null | undefined) => { const v = s ? Date.parse(s) : NaN; return Number.isFinite(v) ? v : NaN; };
@@ -293,7 +301,8 @@ export function brainHotDecision(i: TargetInput): { hot: boolean; reason: string
   if (t.tier === "new") {
     const m = isLive(i.meta) ? i.meta : null;
     const e = engagedSignal(m, i.pendingAixAction ?? null);
-    return e ? { hot: true, reason: `新規・${e}` } : { hot: false, reason: null };
+    if (e) return { hot: true, reason: `新規・${e}` };
+    return i.sumowariNamedAt ? { hot: true, reason: "新規・スモ割を名指し（SNS 経由）" } : { hot: false, reason: null };
   }
   return { hot: true, reason: t.reason };
 }
@@ -329,9 +338,11 @@ export function targetSummary(s: SummaryInput, maxLen = 48): string {
 }
 
 /** ターゲットの並び（段 → 最後のお客様の発言が新しい順） */
-export function compareTargets(a: { tier: TargetTier; lastCustomerAt?: string | null }, b: { tier: TargetTier; lastCustomerAt?: string | null }): number {
+export function compareTargets(a: { tier: TargetTier; lastCustomerAt?: string | null; sumowari?: boolean }, b: { tier: TargetTier; lastCustomerAt?: string | null; sumowari?: boolean }): number {
   const r = TARGET_TIER_RANK[a.tier] - TARGET_TIER_RANK[b.tier];
   if (r !== 0) return r;
+  // 2026-10-28 #10: 同じ段の中はスモ割を名指しした人を先に（印が無い時は今まで通り）
+  if (!!a.sumowari !== !!b.sumowari) return a.sumowari ? -1 : 1;
   const ta = tms(a.lastCustomerAt), tb = tms(b.lastCustomerAt);
   return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
 }

@@ -49,6 +49,7 @@ import { detectCoResidentWithOccupants } from "../lib/co-resident";
 import { APP_FORMAT_SECTIONS } from "../lib/application-format";
 import ZumenZipImport from "./ZumenZipImport";
 import PickupListImport, { type PickedPickup } from "./PickupListImport";
+import { viewingVacancyPickOn, aixToolPickOn, vacateDateFromLines, sameAsPreferred } from "../lib/sent-property-pick";
 import { isPlaceholderPropertyName, missingPropertyNameIndexes, missingPropertyNameMessage } from "../lib/property-name-required";
 import { meetingSecondLine, meetingDayWordOn } from "../lib/meeting-place-form";
 import { CHECK_RESULT_MAX_PROPS as CHECK_MAX_PROPS, circled, checkResultEstimateBundleOn, shouldUseEstimateBundle, buildCheckResultSendPlan, describeSendPlan, type BundlePropertyInput } from "../lib/check-result-estimate-bundle";
@@ -1001,6 +1002,22 @@ export default function AixModal({
   const [sendImageFiles, setSendImageFiles] = useState<File[]>(initialSendImages ?? []);
   // 2026-10-18 竹内さん 10/16: 売上サポの物件一覧から足した画像（行 ID と一緒に持つ・送る時に画像ごとの行 ID に結ぶ）
   const [addedPickups, setAddedPickups] = useState<PickedPickup[]>([]);
+  // 2026-10-28 竹内さん #18: 物件オススメで AIX ツールから選んだ1件（同じ File のまま送る時だけ行 ID を渡す）
+  const [toolPick, setToolPick] = useState<PickedPickup | null>(null);
+  const brainPickName = brainPickRef(brainPropertyPick ?? null)?.display ?? null;
+  // 2026-10-28 #8: 退去予定物件に送った物件を当てる（物件名・資料の画像・退去予定日＝資料の読み取りの字のまま。読めなければ空のまま）
+  const applyVacancyCandidate = async (c: ViewingPropertyCandidate | null) => {
+    if (!c) { setViewingVacancyName(""); setViewingVacancyPreview(""); return; }
+    setViewingVacancyName(c.label);
+    if (c.imageUrl) setViewingVacancyPreview(c.imageUrl);
+    setPreview("");
+    if (!c.imageUrl) return;
+    try {
+      const { data } = await supabase.from("image_details").select("lines").eq("image_url", c.imageUrl).maybeSingle();
+      const d = vacateDateFromLines((data as { lines?: unknown } | null)?.lines);
+      if (d) setViewingVacancyMoveOut(d);
+    } catch { /* 退去予定日はスタッフが入れる */ }
+  };
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
   const [sendKeyword, setSendKeyword] = useState("");
@@ -1467,6 +1484,14 @@ export default function AixModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionType, conversationId]);
   const [estimateMultiPreviews, setEstimateMultiPreviews] = useState<(string | null)[]>([null, null, null]);
+  // 2026-10-28 竹内さん #15（かずき 10/27）: 見積書を複数送る時、枠ごとに物件資料も付け、物件ごとに［物件資料→見積書→文］の順で送る（NEXT_PUBLIC_ESTIMATE_PER_PROPERTY=on）
+  const estPerProp = (process.env.NEXT_PUBLIC_ESTIMATE_PER_PROPERTY ?? "").trim().toLowerCase() === "on";
+  const [estimateMultiPropFiles, setEstimateMultiPropFiles] = useState<(File | null)[]>([null, null, null]);
+  const [estimateMultiPropPreviews, setEstimateMultiPropPreviews] = useState<(string | null)[]>([null, null, null]);
+  /** 物件ごとの費用の文（見積書のある枠の順＝送る順）。生成し直すたびに作り直す */
+  const [estimatePerPropTexts, setEstimatePerPropTexts] = useState<string[]>([]);
+  /** 送った段（img:k／txt:k）。押し直した時に二重に送らない */
+  const perPropStepsRef = useRef<Set<string>>(new Set());
   // 全力サポート専用
   const [zenryokuArea, setZenryokuArea] = useState<string>("");
   const [zenryokuMemo, setZenryokuMemo] = useState<string>("");
@@ -2764,6 +2789,7 @@ export default function AixModal({
         // 2026-09-27: 売上サポから来た1件（物件オススメ）の行 ID。セットされた資料のまま送る時だけ渡す
         //   （サーバーが資料の入居時期を読み、「即入居」が資料と合わない時は注意を出す）
         if (initialPickupIds?.length === 1 && initialImageFile && imageFile === initialImageFile) body.pickup_ids = initialPickupIds;
+        else if (toolPick && imageFile === toolPick.file) body.pickup_ids = [toolPick.id];
         // 新着フラグ
         if (isNewArrival) body.is_new_arrival = true;
         // ピックアップ種別（継続ピックアップの場合に追客向けプロンプトを使用）
@@ -3171,6 +3197,7 @@ export default function AixModal({
         const urls = await Promise.all(multiFiles.map((f, i) => uploadImageCached(f, i)));
         body.image_urls = urls;
         body.multi_estimate = true;
+        if (estPerProp) body.estimate_per_property = true;
       } else if (actionType === "zenryoku_support") {
         if (!zenryokuArea.trim()) throw new Error("探しているエリアを入力してください");
         body.zenryoku_area = zenryokuArea.trim();
@@ -3439,6 +3466,11 @@ export default function AixModal({
         : null;
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
       setEstimateTextReady(data.estimate_text || "");
+      // 2026-10-28 #15: 見積書の複数件・物件ごと（送る順＝見積書のある枠の順）
+      if (actionType === "estimate_sheet" && estimateMultiMode && estPerProp) {
+        setEstimatePerPropTexts(Array.isArray(data.estimate_texts) ? (data.estimate_texts as (string | null)[]).map((t) => t ?? "") : []);
+        perPropStepsRef.current = new Set();
+      }
       // 物件確認した（見積書の同封・物件ごとのセット）: 物件ごとの費用の文。生成し直すたびに作り直す（送信の途中の印も消す）
       if (actionType === "property_check_result") {
         setEstimateBundleTexts(Array.isArray(data.estimate_texts) ? (data.estimate_texts as (string | null)[]).map((t) => t ?? "") : []);
@@ -4045,9 +4077,25 @@ export default function AixModal({
         } else if (actionType === "estimate_sheet" && estimateMultiMode) {
           // 複数件: 見積書を順に送ってから合算テキスト（送信済みindexはスキップ＝再押下時の重複送信防止）
           const multiFiles = estimateMultiFiles.filter((f): f is File => !!f);
+          const slotIdx = estimateMultiFiles.map((f, i) => (f ? i : -1)).filter((i) => i >= 0);
+          if (estPerProp && estimatePerPropTexts.some((t) => t.trim())) {
+            // 2026-10-28 #15: 物件ごとに［物件資料（任意）→見積書］を横並びで1回 → その物件の文。押し直しは送った段を飛ばす
+            for (let k = 0; k < multiFiles.length; k++) {
+              if (!perPropStepsRef.current.has(`img:${k}`)) {
+                const propFile = estimateMultiPropFiles[slotIdx[k]] ?? null;
+                const urls = [...(propFile ? [await uploadImageCached(propFile, 10 + k)] : []), await uploadImageCached(multiFiles[k], k)];
+                const delivered = await sendImageUrlsGrouped(urls);
+                if (delivered < urls.length) throw new Error(PARTIAL_IMAGE_ERROR);
+                perPropStepsRef.current.add(`img:${k}`);
+              }
+              const txt = (estimatePerPropTexts[k] ?? "").trim();
+              if (txt && !perPropStepsRef.current.has(`txt:${k}`)) { await sendAsAix(txt); perPropStepsRef.current.add(`txt:${k}`); }
+            }
+          } else {
           // 2026-09-22: 見積書をまとめて1回で送る（横並び）
           await sendRemainingImagesGrouped(multiFiles.length, (i) => uploadImageCached(multiFiles[i]));
           await sendAsAix(preview);
+          }
           // 申込誘導バッジON: 合算金額文の後に申込誘導テンプレを送る
           if (estimateWithAppeal) {
             await sendAsAix(buildEstimateAppealText());
@@ -4423,6 +4471,11 @@ export default function AixModal({
                   >🏠 物件資料を選択</button>
                 )}
                 <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
+                {/* 2026-10-28 竹内さん #18: AIX ツール（売上サポの物件一覧）から1件選んで物件資料にセット（ブレインが決めた物件に先にチェック・NEXT_PUBLIC_AIX_TOOL_PICK=on） */}
+                {aixToolPickOn(process.env.NEXT_PUBLIC_AIX_TOOL_PICK) && conversationId && (
+                  <PickupListImport conversationId={conversationId} single label="📋 AIX ツールから選択" preferName={brainPickName}
+                    onAdd={(picked) => { const x = picked[0]; if (!x) return; setToolPick(x); onSelectImage({ target: { files: [x.file] } } as unknown as React.ChangeEvent<HTMLInputElement>); setPreview(""); }} />
+                )}
               </div>
 
               {/* ③室内イメージURL（任意） */}
@@ -4523,7 +4576,7 @@ export default function AixModal({
                 </button>
                 <input ref={sendFileInputRef} type="file" accept="image/*" multiple onChange={onSelectSendImages} className="hidden" />
                 <ZumenZipImport onAdd={addSendImageFiles} />
-                <PickupListImport conversationId={conversationId} onAdd={(picked) => { setAddedPickups((prev) => [...prev, ...picked]); addSendImageFiles(picked.map((x) => x.file)); }} />
+                <PickupListImport conversationId={conversationId} {...(aixToolPickOn(process.env.NEXT_PUBLIC_AIX_TOOL_PICK) ? { label: "📋 AIX ツールから選択", preferName: brainPickName } : {})} onAdd={(picked) => { setAddedPickups((prev) => [...prev, ...picked]); addSendImageFiles(picked.map((x) => x.file)); }} />
               </div>
               {/* モード選択 */}
               <div>
@@ -7373,6 +7426,33 @@ export default function AixModal({
                         className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#90a4ae] py-2 text-xs text-[#546e7a]"
                       >📎 見積書を追加{idx > 0 ? "（任意）" : ""}</button>
                     )}
+                    {estPerProp && (
+                      <div className="mb-1">
+                        {estimateMultiPropPreviews[idx] ? (
+                          <div className="relative mb-1 overflow-hidden rounded-xl border border-[#d1d7db]">
+                            <img src={estimateMultiPropPreviews[idx] ?? undefined} alt={`物件資料${idx + 1}`} className="max-h-20 w-full object-contain" />
+                            <button onClick={() => { setEstimateMultiPropFiles((p) => p.map((f, i) => (i === idx ? null : f))); setEstimateMultiPropPreviews((p) => p.map((v, i) => (i === idx ? null : v))); perPropStepsRef.current = new Set(); }}
+                              className="absolute right-1 top-1 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white">削除</button>
+                          </div>
+                        ) : (
+                          <label className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#90a4ae] bg-white py-1.5 text-[11px] text-[#546e7a]">
+                            🏠 物件資料を付ける（任意・見積書の前に送る）
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                              const f = e.target.files?.[0]; if (!f) return;
+                              setEstimateMultiPropFiles((p) => p.map((v, i) => (i === idx ? f : v))); perPropStepsRef.current = new Set();
+                              const r = new FileReader(); r.onload = () => setEstimateMultiPropPreviews((p) => p.map((v, i) => (i === idx ? String(r.result ?? "") : v))); r.readAsDataURL(f);
+                            }} />
+                          </label>
+                        )}
+                        {(() => {
+                          const k = estimateMultiFiles.map((f, i) => (f ? i : -1)).filter((i) => i >= 0).indexOf(idx);
+                          return k >= 0 && estimatePerPropTexts[k] !== undefined ? (
+                            <textarea value={estimatePerPropTexts[k]} onChange={(e) => { const v = e.target.value; setEstimatePerPropTexts((p) => p.map((t, i) => (i === k ? v : t))); }}
+                              rows={5} className="mt-1 w-full resize-y rounded-lg border border-[#d1d7db] bg-white px-2 py-1 text-[12px] leading-5 text-[#111b21] outline-none" />
+                          ) : null;
+                        })()}
+                      </div>
+                    )}
                     <input
                       ref={estimateMultiRefs[idx]}
                       type="file"
@@ -7791,6 +7871,24 @@ export default function AixModal({
 
               {viewingIsVacancy && (
                 <div className="mt-2 rounded-xl border border-orange-200 bg-orange-50 p-3">
+                  {/* 2026-10-28 竹内さん #8（じゅな 10/25）: 送った物件の候補から選ぶ（話の流れで決まった物件を先に選ぶ・退去予定日は送った資料の読み取りから・NEXT_PUBLIC_VIEWING_VACANCY_PICK=on） */}
+                  {viewingVacancyPickOn(process.env.NEXT_PUBLIC_VIEWING_VACANCY_PICK) && (
+                    <SentPropertyPicker
+                      conversationId={conversationId}
+                      selected={viewingVacancyName ? [{ name: viewingVacancyName }] : []}
+                      onToggle={(c, select) => { void applyVacancyCandidate(select ? c : null); }}
+                      onLoaded={(cands) => {
+                        if (viewingVacancyName.trim()) return;
+                        const turn = { customerText: latestCustomerTurnText(recentMessages ?? []), currentName: viewingVacancyName, turnStartAt: latestCustomerTurnStartAt(recentMessages ?? []) };
+                        const p = preselectViewingCandidates(cands, { mode: "invite", ...turn });
+                        const byTurn = cands.find((x) => p.keys.includes(x.key));
+                        const byBrain = brainPickName ? cands.find((x) => sameAsPreferred(x.name, x.room, brainPickName)) : undefined;
+                        const pick = byTurn ?? byBrain ?? null;
+                        if (pick) void applyVacancyCandidate(pick);
+                      }}
+                      accent="sky"
+                    />
+                  )}
                   {/* 物件資料OCR（任意） */}
                   <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                     物件資料<span className="ml-1 font-normal text-[#90a4ae]">（画像から物件名を自動取得・任意）</span>
@@ -9145,6 +9243,16 @@ export default function AixModal({
           />
           {/* 送信ボタン（展開中も送信可） */}
           <div className="border-t border-[#f0f2f5] px-4 py-3">
+            {/* 2026-10-28 竹内さん #11: LINE から開くメッセージ編集の画面にも「会話を合わせる」（AixModal と同じ会話を合わせる生成・NEXT_PUBLIC_EDIT_CONV_MATCH=on） */}
+            {(process.env.NEXT_PUBLIC_EDIT_CONV_MATCH ?? "").trim().toLowerCase() === "on" && (
+              <button
+                onClick={async () => { setPreviewBackup(preview); await generate({ conversation_match: true }); }}
+                disabled={loading}
+                className="mb-2 w-full rounded-full border border-[#1565C0] py-3 text-sm font-bold text-[#1565C0] disabled:opacity-50 active:scale-[0.98] transition-transform"
+              >
+                {loading ? "作成中..." : "🔄 会話を合わせる"}
+              </button>
+            )}
             <button
               onClick={async () => { setPreviewExpanded(false); await handleSend(); }}
               disabled={loading || !preview.trim()}

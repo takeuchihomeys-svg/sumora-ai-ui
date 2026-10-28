@@ -7,7 +7,9 @@
 //     出す物: AD（円）・割引・利益（AD − 割引）・割引が AD の何%か。AD は画面だけ（見積書の画像・本文には出ない＝今まで通り）。
 // テスト: app/lib/__tests__/estimate-ad-input.test.ts
 
-export function estimateAdInputEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+// 2026-10-28 画面（ブラウザ）では process.env を丸ごと読むと空（Next は process.env.NEXT_PUBLIC_〇〇 と名前で書いた所だけ値を焼き込む）＝NEXT_PUBLIC_ESTIMATE_AD_INPUT=on にしても画面では効いていなかった。
+//   既定の引数を名前で書いた形にして焼き込まれるようにする（サーバ・テストは今まで通り process.env をその時に読む）
+export function estimateAdInputEnabled(env: Record<string, string | undefined> = { NEXT_PUBLIC_ESTIMATE_AD_INPUT: typeof process !== "undefined" ? process.env.NEXT_PUBLIC_ESTIMATE_AD_INPUT : undefined }): boolean {
   return (env.NEXT_PUBLIC_ESTIMATE_AD_INPUT ?? "").trim().toLowerCase() === "on";
 }
 

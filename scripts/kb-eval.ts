@@ -66,7 +66,7 @@ export async function rankForEval(q: string, rows: RagRow[], opts: { scene?: KbE
 /** 題の最初の句（— ・：・（ の前・8字未満なら40字まで）＝担当が題を覚えていて短く引く形 */
 export function selfQuery(title: string): string {
   const t = String(title ?? "").replace(/^【[^】]*】s*/, "").trim();
-  const head = t.split(/s*[—:：（(]s*/)[0].trim();
+  const head = t.split(/\s*[—:：（(]\s*/)[0].trim();
   return (head.length >= 8 ? head : t).slice(0, 40);
 }
 

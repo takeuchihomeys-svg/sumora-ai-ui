@@ -1,6 +1,6 @@
 // app/lib/__tests__/aix-brought-prefill.test.ts — 物件確認した を開いた時の物件名・件数の初期値（実行: npx tsx app/lib/__tests__/aix-brought-prefill.test.ts）
 //   名前は 90日の監査（10/28）で台帳に混ざっていた実物の形
-import { broughtForCheck, cleanBroughtName, broughtMaterialLine, aixBroughtPrefillEnabled, orderByCustomerText, aixEstimatePrefillEnabled, checkResultFormMaterial, aixCheckFormMaterialEnabled } from "../aix-brought-prefill";
+import { checkForm1028On, broughtMaxAgeDays, broughtForCheck, cleanBroughtName, broughtMaterialLine, aixBroughtPrefillEnabled, orderByCustomerText, aixEstimatePrefillEnabled, checkResultFormMaterial, aixCheckFormMaterialEnabled } from "../aix-brought-prefill";
 import type { PropertyThreadState } from "../property-thread";
 import { buildSecondMaterialNote } from "../second-message-scene";
 
@@ -83,6 +83,29 @@ t("スイッチ既定 off", aixBroughtPrefillEnabled({}) === false && aixBrought
   const on = withEnv("RECOMMEND_SECOND_WISH_NG", "on", () => buildSecondMaterialNote(row));
   t("off: 合わない点は材料に無い（従来）", !/合わない点/.test(off) && /独立洗面台/.test(off));
   t("on: 合わない点を先に正直に書く材料", /ご希望に合わない点（資料で確かめた物）: ペット可/.test(on) && /御座いませんが/.test(on));
+}
+
+// 古さの線（AIX_BROUGHT_MAX_AGE_DAYS）: ☆ 9/21 の S-RESIDENCE が確認の記録なしで残っていた形
+{
+  const s9 = st([room("S-RESIDENCE堺筋本町Deux 909号室", [{ at: "2026-09-21T15:22:00Z", kind: "customer_shared" }])]);
+  const now = Date.parse("2026-10-28T02:00:00Z");
+  t("線なし（既定）: 古い持ち込みも残る（今まで通り）", broughtForCheck(s9, { nowMs: now }).count === 1);
+  t("14日の線: 1か月前の持ち込みは入れない", broughtForCheck(s9, { maxAgeDays: 14, nowMs: now }).count === 0);
+  t("14日の線: 2日前の持ち込みは入れる", broughtForCheck(st([room("アーバネックス堺筋本町 701号室", [{ at: "2026-10-26T06:13:00Z", kind: "customer_shared" }])]), { maxAgeDays: 14, nowMs: now }).count === 1);
+  t("線の日数は既定なし", broughtMaxAgeDays({}) === null && broughtMaxAgeDays({ AIX_BROUGHT_MAX_AGE_DAYS: "14" }) === 14 && broughtMaxAgeDays({ AIX_BROUGHT_MAX_AGE_DAYS: "x" }) === null);
+}
+
+// 10/28 の追加（CHECK_FORM_1028）: タツヤ #34・ひめの #35
+{
+  const env = { CHECK_FORM_1028: "on" };
+  const a = checkResultFormMaterial({ pattern: "available", hasEstimate: true, env });
+  t("空室は内覧のご案内で締める", /空室のお部屋は内覧のご案内/.test(a) && /ご都合よろしいお日にちにお部屋ご案内/.test(a), a);
+  t("結果の文を受け止めの言葉で始めない", /ありがとうございます」等の受け止めの言葉で始めない/.test(a));
+  t("最大限割引しました", /最大限割引しました初期費用の御見積書同封/.test(a));
+  t("退去予定はご査収", /退去予定/.test(checkResultFormMaterial({ pattern: "available", hasEstimate: false, vacating: true, env })));
+  const u = checkResultFormMaterial({ pattern: "unavailable", hasEstimate: false, env });
+  t("物件なかった: 物件名は入れ号室は書かない・付随の確認は書かない", /号室は書かない/.test(u) && /駐車場/.test(u));
+  t("既定 off は旧の行のまま", checkForm1028On({}) === false && /ご査収（/.test(checkResultFormMaterial({ pattern: "available", hasEstimate: true, env: {} })) && !/駐車場/.test(checkResultFormMaterial({ pattern: "unavailable", hasEstimate: false, env: {} })));
 }
 
 console.log(`${pass} passed, ${fail} failed`);

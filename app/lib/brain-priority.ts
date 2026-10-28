@@ -185,7 +185,7 @@ export function renderPulledBlock(scene: string | null, rows: ReadonlyArray<Pull
   }
   if (p1.length) {
     L.push("似た場面の竹内さんの過去の決定（参考。今の番と状況が同じ時だけ当てる・違えば使わず原則で決める）:");
-    for (const r of p1) L.push(`- ${r.title.split(/s+—s+/)[0].slice(0, 110)}`);
+    for (const r of p1) L.push(`- ${r.title.split(/\s+—\s+/)[0].slice(0, 110)}`);
   }
   if (sit) {
     const has = (b: boolean) => (b ? "あり" : "なし");

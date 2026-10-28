@@ -9,7 +9,7 @@
 //   決まらない・読めない時は空＋理由（推測で入れない）
 import { supabase } from "@/app/lib/supabase-server";
 import { propertyLabelsForImages } from "@/app/lib/quoted-context";
-import { resolveGuarantorTargets, type GuarantorTargetMsg, type GuarantorTargets } from "@/app/lib/guarantor-target";
+import { resolveGuarantorTargets, guarantorTargetCurrentOn, narrowToCurrentProperty, type GuarantorTargetMsg, type GuarantorTargets } from "@/app/lib/guarantor-target";
 import { guarantorFromMaterial, type MaterialGuarantorResult } from "@/app/lib/guarantor-material";
 import { propertyKeyOf } from "@/app/lib/confirm-target-property";
 import { normalizeGuarantorType, guarantorTypeSure, isMasterGuarantor, type GuarantorType } from "@/app/lib/guarantor-companies";
@@ -140,16 +140,25 @@ export function guarantorCardNote(m: { result: MaterialGuarantorResult; source: 
 export async function loadGuarantorPrefill(conversationId: string, opts: { before?: string | null; names?: string[] | null } = {}): Promise<GuarantorPrefill> {
   const [msgs, conv, customsRes] = await Promise.all([
     loadGuarantorTargetMessages(conversationId, { before: opts.before ?? null }),
-    supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle(),
+    supabase.from("conversations").select("property_customer_id, suggested_aix_meta, last_brain_meta").eq("id", conversationId).maybeSingle(),
     supabase.from("guarantor_companies").select("name, type"),
   ]);
   const propertyCustomerId = (conv.data as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
   const customs = ((customsRes.data ?? []) as Array<{ name: string; type: string | null }>).map((c) => ({ name: c.name, type: normalizeGuarantorType(c.type) ?? "unknown" as GuarantorType }));
   // 売上サポで選んで渡した物件（スタッフが選んだ＝一番確か）があればそれを使い、会話から決めない
   const picked = (opts.names ?? []).map((n) => n.trim()).filter(Boolean).slice(0, 10);
-  const targets: GuarantorTargets = picked.length
+  let targets: GuarantorTargets = picked.length
     ? { names: picked, source: null, question: null, reason: "売上サポで選んだ物件" }
     : resolveGuarantorTargets(msgs);
+  // 2026-10-28 GUARANTOR_TARGET_CURRENT（既定 off・guarantor-target.ts）: 束のうち今話している物件が1件に決まればその1件だけ
+  if (guarantorTargetCurrentOn() && targets.names.length > 1) {
+    const cv = (conv.data ?? {}) as { suggested_aix_meta?: { current_property?: string | null } | null; last_brain_meta?: { current_property?: string | null } | null };
+    const nr = narrowToCurrentProperty(targets.names, {
+      currentProperty: cv.suggested_aix_meta?.current_property ?? cv.last_brain_meta?.current_property ?? null,
+      recentTexts: msgs.slice(-12).map((m) => m.text),
+    });
+    if (nr.narrowed) targets = { ...targets, names: nr.names, reason: `${nr.why}（${targets.names.length}件のうち）` };
+  }
   const cards: GuarantorPrefillCard[] = [];
   for (const name of targets.names) {
     const m = await loadMaterialGuarantor({ conversationId, propertyCustomerId, label: name, customs }).catch(() => null);

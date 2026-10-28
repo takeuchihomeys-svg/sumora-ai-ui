@@ -197,3 +197,22 @@ const FEELING_JA: Record<string, string> = { anxious: "不安", apologetic: "恐
 export function keepAllQuestionsRule(contractNote: string): boolean {
   return !contractNote;
 }
+
+/**
+ * 2026-10-28 竹内さん（陽菜・#21）: AIX【申込へ】の2通目（申込フォーマットの後）はお客様の言い方に合わせる。
+ *   スタッフの良い例:「かしこまりました！！お申込し審査かけさせて頂きます！！／上記フォーマットご入力いただき、ご本人確認書類として運転免許証またはマイナンバーカードの裏表の写真をお送りください！！
+ *   ※マイナンバーカードの場合は番号部分をマスキングいただけますと幸いです😌！！／お送り頂き次第、お部屋お申込し審査かけさせて頂きます！！」
+ *   お客様が「審査」と言った時は「お申込し審査かけさせて頂きます」、「抑えたい・押さえたい・キープ」と言った時は「お申込しお部屋抑えさせて頂きます」。
+ *   入れる APPLY_WORDING_1028=on（既定 off）。決めるのは書く役
+ */
+export function applyWording1028On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.APPLY_WORDING_1028 ?? "").trim().toLowerCase() === "on";
+}
+export function applyPushWordingLine(customerTexts: ReadonlyArray<string | null | undefined>): string {
+  const recent = customerTexts.slice(-4).map((t) => String(t ?? "")).join("\n");
+  const screening = /審査/.test(recent);
+  const hold = /抑え|押さえ|おさえ|キープ|確保/.test(recent);
+  if (!screening && !hold) return "";
+  const phrase = screening && !hold ? "お申込し審査かけさせて頂きます" : !screening && hold ? "お申込しお部屋抑えさせて頂きます" : "お申込しお部屋抑え審査かけさせて頂きます";
+  return `- お客様の言い方（${screening ? "審査" : ""}${screening && hold ? "・" : ""}${hold ? "抑えたい" : ""}）に合わせる: 「かしこまりました！！${phrase}！！」で受け、フォーマットと本人確認書類（運転免許証またはマイナンバーカードの裏表の写真・マイナンバーは番号をマスキング）のお願い、締めは「お送り頂き次第、${phrase.replace(/^お申込し/, "お部屋お申込し")}！！」`;
+}

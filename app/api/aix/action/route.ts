@@ -124,6 +124,8 @@ import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLine
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation, isTestOnlyConversation } from "@/app/lib/test-conversations";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
+import { checkResultNameGuardOn, checkResultNameMaterial, estimateHeadName } from "@/app/lib/check-result-name-guard";
+import { checkRequestFocusOn, checkRequestFocus } from "@/app/lib/check-request-focus";
 // 9巡目（10/08）: 学習ルールの総点検（rules-review-r9）を testFlags.rules_r9（off／on／stage2）で DB を変えずに重ねる。テストの会話・本番でない環境だけ
 import { runInRulesOverlayScope, setRulesOverlay, resolveTestRulesOverlay } from "@/app/lib/rules-overlay";
 // 9巡目（10/08）: 交渉が難しかった時の締め。旧「引き続き最大限サポートさせて頂きます！！で締める」は人の交渉の結果の文（全期間 16通・うち AIX 4）で 0通。
@@ -171,10 +173,10 @@ import { dedupeScheduleLines } from "@/app/lib/schedule-line-dedupe";
 // 2026-10-06 竹内（R 事例）: 確認した（条件・交渉）の物件を会話から決定論で決める
 import { resolveConfirmTargetProperty, otherPropertyNamedInText } from "@/app/lib/confirm-target-property";
 // 2026-10-13 竹内「AIX テンプレートはブレインに連動できていない」: ブレインの本質（turn_contract）とお客様の状態を AIX の文の材料に（AIX_BRAIN_CONTRACT=off で旧）
-import { buildAixContractNote, keepAllQuestionsRule } from "@/app/lib/aix-brain-contract";
+import { buildAixContractNote, keepAllQuestionsRule , applyWording1028On, applyPushWordingLine } from "@/app/lib/aix-brain-contract";
 import { meetingSecondLine, meetingDayWordOn } from "@/app/lib/meeting-place-form";
 import { aixBroughtMaterialEnabled, loadBroughtPrefillFor } from "@/app/lib/aix-brought-prefill-server";
-import { pickupFocusOneEnabled, pickupFocusCandidates, pickupFocusNote } from "@/app/lib/pickup-focus";
+import { pickupFocusOneEnabled, pickupFocusCandidates, pickupFocusNote , pickupSendForm1028On, pickupSendFormNote } from "@/app/lib/pickup-focus";
 import { broughtMaterialLine, checkResultFormMaterial, aixCheckFormMaterialEnabled } from "@/app/lib/aix-brought-prefill";
 
 export const maxDuration = 300;
@@ -1990,10 +1992,15 @@ async function handleAction(request: NextRequest): Promise<Response> {
       : "";
     // 2026-10-13 竹内「AIX テンプレートはブレインに連動できていない」: ブレインがこの番に決めた本質（依頼ごとの答え方・言わない事・提案・気持ち）と
     //   お客様の状態を、AIX の文の材料に（app/lib/aix-brain-contract.ts・古い判断は渡さない・戻す AIX_BRAIN_CONTRACT=off）
-    const aixContractNote = buildAixContractNote({
+    const aixContractNote = [buildAixContractNote({
       meta: aixBrainMeta, action: String(action ?? ""), checkPattern: typeof check_pattern === "string" ? check_pattern : null,
       messages: Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string; createdAt?: string; rawCreatedAt?: string }> : [],
-    });
+    }),
+      // 2026-10-28 APPLY_WORDING_1028（既定 off）: 申込へ はお客様の言い方（審査かけたい／抑えたい）に合わせる（陽菜 #21）
+      action === "application_push" && applyWording1028On()
+        ? applyPushWordingLine((Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string; text?: string | null }> : []).filter((m) => m?.sender === "customer").map((m) => m?.text ?? null))
+        : "",
+    ].filter(Boolean).join("\n");
     if (aixContractNote) console.log(JSON.stringify({ tag: "aix:brain-contract", action, conversationId, len: aixContractNote.length }));
     // ブレインノートをプロンプトに注入（戦略系→制約系の順）
     const brainGuidanceNote = (() => {
@@ -3414,6 +3421,8 @@ ${SMORA_COMMON_RULES}`;
           })
         );
         const estItems = multiEstResults.filter((r): r is string => r !== null);
+        // 2026-10-28 竹内さん #15: 物件ごとに［物件資料→見積書→文］で送る時は、物件ごとの費用の文（日割の注記つき＝1件の見積書と同じ形）も返す（画面が estimate_per_property を送った時だけ）
+        if (body.estimate_per_property === true) estimate_texts_result = multiEstResults.map((r) => (r ? `${r}\n\n${DAY_RENT_NOTE}` : null));
         message_text = estItems.length === 0
           ? `${NO_AMOUNT_FALLBACK}\n\n${DAY_RENT_NOTE}`
           : `${estItems.join("\n\n")}\n\n${DAY_RENT_NOTE}`;
@@ -3912,6 +3921,8 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           nameNote.trim(),
           conditionsInfo ? `【お客様の希望条件（②で使うのは最大2つ・会話で使った言い方を優先）】\n${conditionsInfo}` : "",
           // 2026-10-28 PICKUP_FOCUS_ONE（既定 off）: ②の条件はエリア＋一番のこだわり1つまで
+          // 2026-10-28 PICKUP_SEND_FORM_1028（既定 off）: 竹内さんの型・お客様の言葉で答える・お詫びの前置きを入れない
+          pickupSendForm1028On() ? pickupSendFormNote({ recentCustomerTexts: (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-6).map((m) => m?.text ?? null) }) : "",
           pickupFocusOneEnabled() ? pickupFocusNote(pickupFocusCandidates(conditionsInfo, (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-10).map((m) => m?.text ?? null))) : "",
           keywordRule.trim(),
           sendNowBlock,
@@ -4264,6 +4275,7 @@ ${aixPropertySendRules}
         conditionsRule ? `【条件ルール（構成②「[条件ルール]」に使うこと）】\n${conditionsRule.replace(/^・/, "")}${searchedConditionsNote ? "\n※【今回実際に検索した条件】がある時は、②のエリア・家賃・間取りはそちらに合わせる（検索した条件は今回の事実＝でっち上げではない）" : ""}` : "",
         newArrivalCountStr ? `【新着件数（「[新着件数]」に使うこと）】${newArrivalCountStr}` : "",
         // 2026-10-28 owner-fb:1015-pickup-focus（PICKUP_FOCUS_ONE・既定 off）: ②の条件はエリア＋一番のこだわり1つまで（下書き 2.9 区切り → 竹内さん 1.3）
+        pickupSendForm1028On() ? pickupSendFormNote({ recentCustomerTexts: (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-6).map((m) => m?.text ?? null) }) : "",
         pickupFocusOneEnabled() ? pickupFocusNote(pickupFocusCandidates(typeof customer_conditions === "string" ? customer_conditions : null, (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-10).map((m) => m?.text ?? null))) : "",
       ].filter(Boolean).join("\n\n");
       const sendDynamic = [
@@ -6222,7 +6234,17 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
           unavailable: "申込あり",
           alternative: "別のお部屋が募集中",
         };
-        const cmPropNamesRaw = ((property_names as string[] | undefined) ?? []).map((s) => (s ?? "").trim());
+        const cmPropNamesInput = ((property_names as string[] | undefined) ?? []).map((s) => (s ?? "").trim());
+        // 2026-10-28 CHECK_RESULT_NAME_GUARD（既定 off・check-result-name-guard.ts）: 物件名の入力が空なら同封した見積書の見出しの物件名・前のやり取りの別の物件名は書かせない
+        const cmNameMat = checkResultNameGuardOn()
+          ? checkResultNameMaterial({
+              inputNames: cmPropNamesInput.length ? cmPropNamesInput : [typeof property_name === "string" ? property_name : ""],
+              estimateNames: (cmBundleTexts ?? []).map((t) => estimateHeadName(t)),
+              historyTexts: recentMsgsForHistory.map((m) => m.text),
+              currentTexts: (() => { const li = recentMsgsForHistory.map((m) => m.sender).lastIndexOf("staff"); return recentMsgsForHistory.slice(li + 1).filter((m) => m.sender === "customer").map((m) => m.text); })(),
+            })
+          : null;
+        const cmPropNamesRaw = cmNameMat ? cmNameMat.targets.map((t, i) => cmPropNamesInput[i] || t) : cmPropNamesInput;
         const cmStatuses = (prop_statuses as string[] | undefined) ?? [];
         const cmPropCount = (property_count as number | undefined) ?? 0;
         const cmVacancyDates = (property_vacancy_dates as string[] | undefined) ?? [];
@@ -6232,6 +6254,7 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
               // 物件名が未入力（「物件①」は画面の仮の名前）なら本文に仮の名前を書かせない（2026-09-15 みく事例）
               const rawNm = cmPropNamesRaw[i] ?? "";
               const nm = rawNm && !/^物件[①-⑩\d]?$/.test(rawNm) ? rawNm : `物件${i + 1}（物件名は未入力。本文に「物件${i + 1}」と書かず、引用返信・会話から分かる階・お部屋として伝える）`;
+              const nmG = cmNameMat && nm.startsWith(`物件${i + 1}（`) ? `物件${i + 1}（物件名は未入力。本文に「物件${i + 1}」と書かず、お客様が直近に送ってきたお部屋の階・間取りとして伝える。前のやり取りの物件名を当てはめない）` : nm;
               const rawVac = (cmVacancyDates[i] ?? "").trim();
               // 過去日付・年号は落とす（通常生成パスの propList と同じ正規化）
               const vac = rawVac && !isPastVacancyDate(rawVac) ? rawVac.replace(/^\d{4}年/, "") : "";
@@ -6239,7 +6262,7 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
               // 2026-09-17 竹内: 退去予定は「いつから見られるか」まで材料に入れる（退去日の翌日＝内覧解禁日）
               const vacView = vac ? viewableFromVacancyDate(vac) : null;
               return [
-                `　- ${nm}: ${CM_STATUS_LABEL[cmStatuses[i] ?? ""] ?? "募集中"}${vac ? `（${vac}退去予定${vacView ? ` → ${vacView}以降ご内覧可能` : ""}）` : ""}`,
+                `　- ${nmG}: ${CM_STATUS_LABEL[cmStatuses[i] ?? ""] ?? "募集中"}${vac ? `（${vac}退去予定${vacView ? ` → ${vacView}以降ご内覧可能` : ""}）` : ""}`,
                 ...facLines.map((l) => `　　・${l}`),
               ].join("\n");
             }).join("\n")
@@ -6290,6 +6313,9 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
         const cmResultLines = [
           `・確認結果: ${CM_RESULT_DESC[cmPattern] ?? "会話履歴から読み取ること"}`,
           cmSinglePropName ? `・対象物件名: ${cmSinglePropName}` : "",
+          ...(cmNameMat?.lines ?? []),
+          // 2026-10-28 CHECK_REQUEST_FOCUS（既定 off・check-request-focus.ts）: この確認で頼まれた事（上の階・別のお部屋 等）に答える形で書く材料
+          checkRequestFocusOn() ? checkRequestFocus(recentMsgsForHistory, { conditions: typeof customer_conditions === "string" ? customer_conditions : null }).line : "",
           cmStaffNote ? `・スタッフからの補足（確定事実・必ず本文に入れる）: ${cmStaffNote}` : "",
           // 2026-09-15 みく事例: 御見積書を同封しているのに本文に書かれないことがあった（読み取りが間に合わない時も同封の事実は伝える）
           cmHasEstimate
@@ -6448,7 +6474,7 @@ ${SMORA_COMMON_RULES}
         // 2026-10-28（25714f9b）: お客様が送ってきた物件（まだ確認の結果を返していない）を物件名で書けるよう材料に（AIX_BROUGHT_MATERIAL=on）
         const pcrBroughtNote = aixBroughtMaterialEnabled() && conversationId ? broughtMaterialLine((await loadBroughtPrefillFor(conversationId)) ?? { rooms: [], count: 0, lastCheckAt: null }) : "";
         // 2026-10-28 竹内さんの文の型（物件確認した・実送信の多数の形）を材料に（AIX_CHECK_FORM_MATERIAL=on・決めるのは書く役）
-        const pcrFormNote = aixCheckFormMaterialEnabled() ? checkResultFormMaterial({ pattern: String(check_pattern ?? ""), hasEstimate: !!(body.estimate_image_url || body.estimate_bundle === true || (Array.isArray(body.estimate_image_urls) && (body.estimate_image_urls as unknown[]).some(Boolean))) }) : "";
+        const pcrFormNote = aixCheckFormMaterialEnabled() ? checkResultFormMaterial({ pattern: String(check_pattern ?? ""), vacating: Array.isArray(prop_statuses) && (prop_statuses as string[]).includes("vacating"), hasEstimate: !!(body.estimate_image_url || body.estimate_bundle === true || (Array.isArray(body.estimate_image_urls) && (body.estimate_image_urls as unknown[]).some(Boolean))) }) : "";
         const pcrConvUserFinal = greetingTimeNote + (pcrFormNote ? `${pcrFormNote}\n\n` : "") + (pcrBroughtNote ? `${pcrBroughtNote}\n\n` : "") + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。` + (pcrDiffNote ? `\n\n${pcrDiffNote}` : "") + (pcrStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + pcrStarNote : "");
         // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
         const parsePCR = (raw: string): string => messageFromAixJson(raw, currentAction);
@@ -7051,7 +7077,7 @@ ${templateText}`;
         // 2026-10-28（25714f9b）: お客様が送ってきた物件の名前を材料に（AIX_BROUGHT_MATERIAL=on）
         const checkBroughtNote = aixBroughtMaterialEnabled() && conversationId ? broughtMaterialLine((await loadBroughtPrefillFor(conversationId)) ?? { rooms: [], count: 0, lastCheckAt: null }) : "";
         // 2026-10-28 竹内さんの文の型（AIX_CHECK_FORM_MATERIAL=on）
-        const checkFormNote = aixCheckFormMaterialEnabled() ? checkResultFormMaterial({ pattern: String(check_pattern ?? ""), hasEstimate: !!(estimate_image_url || body.estimate_bundle === true || (Array.isArray(body.estimate_image_urls) && (body.estimate_image_urls as unknown[]).some(Boolean))) }) : "";
+        const checkFormNote = aixCheckFormMaterialEnabled() ? checkResultFormMaterial({ pattern: String(check_pattern ?? ""), vacating: Array.isArray(prop_statuses) && (prop_statuses as string[]).includes("vacating"), hasEstimate: !!(estimate_image_url || body.estimate_bundle === true || (Array.isArray(body.estimate_image_urls) && (body.estimate_image_urls as unknown[]).some(Boolean))) }) : "";
         const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${templateSampleNote}${templateStructureNote}${calendarPart}${vacatingPart}${summaryNote}${checkFormNote ? `\n\n${checkFormNote}` : ""}${checkBroughtNote ? `\n\n${checkBroughtNote}` : ""}${recentHistory}`;
 
         // ブロック: [global ルール 1h] → [固定文＋action 別ルール 5m] → [お手本・実例・ノウハウ・ブレイン（動的）]。Vision も同じ構成

@@ -87,7 +87,7 @@ export type EquipKey =
   | "elevator" | "delivery_box" | "autolock" | "net_free" | "parking"
   | "bath_toilet" | "washbasin" | "laundry_in" | "corner" | "pet" | "floor2" | "top_floor" | "south"
   | "aircon" | "system_kitchen" | "counter_kitchen" | "reheating" | "bath_dryer" | "washlet"
-  | "walk_in_closet" | "shoebox" | "monitor_intercom" | "city_gas" | "gas_stove" | "ih" | "burner2"
+  | "walk_in_closet" | "shoebox" | "monitor_intercom" | "city_gas" | "gas_stove" | "ih" | "burner2" | "burner3"
   | "flooring" | "balcony" | "loft" | "bike_parking" | "garbage24" | "two_person" | "no_guarantor" | "rc" | "not_wood"
   // 2026-09-25 竹内「構造も指定あればちゃんと見る。構造木造NGとかある」: 構造の段（木造→軽量鉄骨→鉄骨→RC→SRC）と物件種別（マンション／アパート）
   | "structure" | "bldg_type";
@@ -99,7 +99,7 @@ export const EQUIP_LABELS: Record<EquipKey, string> = {
   floor2: "2階以上", top_floor: "最上階", south: "南向き", aircon: "エアコン", system_kitchen: "システムキッチン",
   counter_kitchen: "対面キッチン", reheating: "追い焚き", bath_dryer: "浴室乾燥機", washlet: "温水洗浄便座",
   walk_in_closet: "WIC", shoebox: "シューズボックス", monitor_intercom: "モニター付インターホン", city_gas: "都市ガス",
-  gas_stove: "ガスコンロ", ih: "IHコンロ", burner2: "コンロ2口以上", flooring: "フローリング", balcony: "バルコニー", loft: "ロフト",
+  gas_stove: "ガスコンロ", ih: "IHコンロ", burner2: "コンロ2口以上", burner3: "コンロ3口", flooring: "フローリング", balcony: "バルコニー", loft: "ロフト",
   bike_parking: "駐輪場", garbage24: "24時間ゴミ出し", two_person: "二人入居可", no_guarantor: "保証人不要",
   rc: "鉄筋コンクリート", not_wood: "木造以外", structure: "構造", bldg_type: "物件種別",
 };
@@ -220,6 +220,8 @@ const RULES: Partial<Record<EquipKey, Rule>> = {
   gas_stove: { ok: [/ガスコンロ|ガスキッチン/], ng: [/オール電化/] },
   ih: { ok: [/IH(?:クッキングヒーター|コンロ)?(?:[（(][^)）]{0,6}[)）])?|クッキングヒーター/] },
   burner2: { ok: [/(?:[2-9]|二|三)口(?:コンロ|以上)?|IHクッキングヒーター[（(](?:[2-9]|二|三)口[^)）]{0,3}[)）]/], ng: [/(?<![0-9])(?:1|一)口コンロ/] },
+  // 2026-10-28 竹内さん（ロト #9）「3口は2口以上とは別の希望として点数に入れる・点数は資料の文字に3口と書いてある時だけ」（EQUIP_BURNER3・既定 on）
+  burner3: { ok: [/(?:3|三)口(?:コンロ|ガスコンロ|IH)?|(?:ガス)?コンロ[（(]?(?:3|三)口|IHクッキングヒーター[（(](?:3|三)口[^)）]{0,3}[)）]/], ng: [/(?<![0-9])(?:1|一|2|二)口(?:コンロ|ガスコンロ|IH)|(?:ガス)?コンロ[（(]?(?:1|一|2|二)口/] },
   flooring: { ok: [/フローリング/] },
   balcony: { ok: [/バルコニー(?:\/ベランダ)?|ベランダ/] },
   loft: { ok: [/ロフト/] },
@@ -593,6 +595,7 @@ const WANT_RES: Array<{ key: EquipKey; re: RegExp }> = [
   { key: "gas_stove", re: /ガスコンロ/ },
   { key: "ih", re: /IH/ },
   { key: "burner2", re: /(?:[2-9２-９]|二|三)口/ },
+  { key: "burner3", re: /(?:3|３|三)口/ },
   { key: "flooring", re: /フローリング/ },
   { key: "balcony", re: /バルコニー|ベランダ/ },
   { key: "loft", re: /ロフト/ },
@@ -827,6 +830,9 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
       for (const { key, re } of WANT_RES) {
         if (key === "bath_toilet" && (ACCEPT_ONLY_RE.test(c) || BATH_TOILET_NOT_REQUIRED_RE.test(c) || /(?:バス|風呂|浴室)・?トイレ(?:一緒|同室)|トイレ同室/.test(c))) continue;
         if (key === "pet" && petSelfNone) continue; // 自分はペットを飼っていない（希望ではない）
+        // 2026-10-28 EQUIP_BURNER3（既定 on・止める off）: 「3口」の希望は burner3（2口以上とは別）。off は今まで通り burner2 だけ
+        if (key === "burner3" && !equipBurner3On()) continue;
+        if (key === "burner2" && equipBurner3On() && /(?:3|３|三)口/.test(c)) continue;
         const petOv = key === "pet" ? petWantOverride(c, field) : null;
         if (petOv === "skip") { hit = true; continue; }
         const m = c.match(re);
@@ -996,4 +1002,9 @@ export function buildEquipmentAskPrompt(input: { clauses: string[]; listingText:
     `【確かめる希望】\n${input.clauses.map((c, i) => `Q${i + 1}: ${c}`).join("\n")}`,
   ].join("\n\n");
   return { system: EQUIPMENT_ASK_SYSTEM, user };
+}
+
+/** 2026-10-28 竹内さん（ロト #9）: コンロ3口を2口以上と別の希望にして点数に入れる（資料の文字に3口がある時だけ ok・1口/2口と書いてあれば ng）。既定 on（監査: 条件に3口のお客様1人・90日の売上サポ14件のうち10件が「2口以上 ○」→「3口 ×」に正しく変わる）・止める EQUIP_BURNER3=off */
+export function equipBurner3On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EQUIP_BURNER3 ?? env.NEXT_PUBLIC_EQUIP_BURNER3 ?? "on").trim().toLowerCase() !== "off";
 }

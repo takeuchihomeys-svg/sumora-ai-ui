@@ -913,6 +913,9 @@ export default function Home() {
   // 初回マウント時にプリフェッチ（初回モーダルオープンから即時表示にする）
   useEffect(() => { void fetchTemplates(); }, [fetchTemplates]);
   const pendingSecondMsgRef = useRef<{ type: string; delay: number } | null>(null);
+  // 2026-10-28 竹内さん #30（ひめの 10/28）: 下書きの2通目・3通目を押したら大きな編集の画面で直せる（NEXT_PUBLIC_EXTRA_DRAFT_EDIT=on）
+  const [extraEditIdx, setExtraEditIdx] = useState<number | null>(null);
+  const extraDraftEditOn = (process.env.NEXT_PUBLIC_EXTRA_DRAFT_EDIT ?? "").trim().toLowerCase() === "on";
   const [splitLoading, setSplitLoading] = useState(false);
   const [textareaHeightPx, setTextareaHeightPx] = useState(22);
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
@@ -2312,6 +2315,30 @@ export default function Home() {
               triggerBgDraftGeneration(selectedIdRef.current);
             }
           }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "messages" },
+        (payload) => {
+          // 2026-10-28 竹内さん「削除された部分に対しての返信が出ないように」: お客様が LINE で送信を取り消すと webhook が messages の行を消す。
+          //   画面は INSERT しか見ていなかったので取り消した通が出たままだった → 取り消し済みと分かる形にする（読み直すと消える）。
+          //   入れる NEXT_PUBLIC_UNSEND_DELETE_UI=on（既定 off）
+          if ((process.env.NEXT_PUBLIC_UNSEND_DELETE_UI ?? "").trim().toLowerCase() !== "on") return;
+          const oldId = (payload.old as { id?: string | number } | null)?.id;
+          if (oldId === undefined || oldId === null) return;
+          const mid = String(oldId);
+          setConversations((prev) => {
+            let hit = false;
+            const next = prev.map((c) => {
+              if (!c.messages.some((m) => m.id === mid)) return c;
+              hit = true;
+              return { ...c, messages: c.messages.map((m) => (m.id === mid ? { ...m, text: "（この通は送信が取り消されました）", imageUrl: undefined, fileUrl: undefined } : m)) };
+            });
+            if (!hit) return prev;
+            conversationsRef.current = next;
+            return next;
+          });
         }
       )
       .on(
@@ -10891,12 +10918,16 @@ export default function Home() {
                             {s < 60 ? `${s}秒` : `${s/60}分`}
                           </button>
                         ))}
+                        {extraDraftEditOn && (
+                          <button onClick={() => setExtraEditIdx(idx)} className="ml-1 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">✏️ 編集</button>
+                        )}
                         <button onClick={() => setExtraDraftMessages(prev => prev.filter((_, i) => i !== idx))}
                           className="ml-1 text-[11px] text-red-400 font-bold">✕</button>
                       </div>
                     </div>
                     <textarea
                       value={extra.text}
+                      onClick={() => { if (extraDraftEditOn) setExtraEditIdx(idx); }}
                       onChange={e => setExtraDraftMessages(prev => prev.map((em, i) => i === idx ? {...em, text: e.target.value} : em))}
                       onFocus={e => {
                         setInputFocused(true);
@@ -10923,6 +10954,20 @@ export default function Home() {
                   >
                     ＋ {extraDraftMessages.length + 2}通目を追加
                   </button>
+                )}
+                {extraDraftEditOn && extraEditIdx !== null && extraDraftMessages[extraEditIdx] && (
+                  <div className="fixed inset-0 z-[80] flex flex-col bg-white" style={{ paddingTop: "max(env(safe-area-inset-top), 0px)", paddingBottom: "max(env(safe-area-inset-bottom), 0px)" }}>
+                    <div className="flex items-center justify-between border-b border-[#f0f2f5] px-4 py-3" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
+                      <span className="text-sm font-bold text-white">{extraEditIdx + 2}通目を編集</span>
+                      <button onClick={() => setExtraEditIdx(null)} className="rounded-full bg-white px-4 py-1.5 text-sm font-bold text-[#1565C0] active:opacity-70">完了</button>
+                    </div>
+                    <textarea
+                      value={extraDraftMessages[extraEditIdx].text}
+                      onChange={(e) => { const v = e.target.value; const at = extraEditIdx; setExtraDraftMessages((prev) => prev.map((em, i) => (i === at ? { ...em, text: v } : em))); }}
+                      autoFocus
+                      className="min-h-0 flex-1 resize-none overflow-y-auto px-5 py-4 text-[15px] leading-7 text-[#111b21] outline-none"
+                    />
+                  </div>
                 )}
               </div>
               <button

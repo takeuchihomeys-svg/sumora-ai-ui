@@ -149,3 +149,40 @@ export function resolveGuarantorTargets(msgsIn: ReadonlyArray<GuarantorTargetMsg
   }
   return { names: batch, source: "last_send", question, reason: batch.length === 1 ? "質問の前にこちらが送った物件" : `質問の前にこちらが送った ${batch.length}件` };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-28 竹内さん（#29・あかり 10/26 19:21）: AIX【保証会社について】を開くと物件①ALEGRIA尼崎 103号室・物件②Leaf Maison 大物 0203号室の2件が入っていた。
+//   竹内さん「今話している物件は Leaf Maison 大物のことなので、ここの物件についての説明を行う必要がある」。
+//   束（送った複数・画面が渡した名前）のまま入れていた → 今話している物件（ブレインの注目物件・束を送った後の会話で1件だけ名前が出た物）が束の中にあればその1件に絞る。
+//   決まらない時は今まで通り（推測で外さない）。入れる GUARANTOR_TARGET_CURRENT=on（既定 off）
+export function guarantorTargetCurrentOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.GUARANTOR_TARGET_CURRENT ?? "").trim().toLowerCase() === "on";
+}
+const coreOf = (s: string) => String(s ?? "").normalize("NFKC").replace(/\s+/g, "").replace(/[0-9]+(?:号室)?$/, "");
+const roomOf = (s: string) => (String(s ?? "").normalize("NFKC").match(/([0-9]{2,5})(?:号室)?\s*$/)?.[1] ?? "").replace(/^0+/, "");
+/** 名前 a が名前 b と同じ部屋か（建物の芯が含み合い・号室があれば号室も同じ） */
+function samePlace(a: string, b: string): boolean {
+  const ca = coreOf(a), cb = coreOf(b);
+  if (ca.length < 3 || cb.length < 3 || !(ca.includes(cb) || cb.includes(ca))) return false;
+  const ra = roomOf(a), rb = roomOf(b);
+  return !ra || !rb || ra === rb;
+}
+export function narrowToCurrentProperty(names: ReadonlyArray<string>, o: { currentProperty?: string | null; recentTexts?: ReadonlyArray<string | null | undefined> }): { names: string[]; narrowed: boolean; why: string | null } {
+  const list = [...names];
+  if (list.length <= 1) return { names: list, narrowed: false, why: null };
+  const cp = String(o.currentProperty ?? "").trim();
+  if (cp) {
+    const hit = list.filter((n) => samePlace(n, cp));
+    if (hit.length === 1) return { names: hit, narrowed: true, why: "今話している物件（ブレインの注目物件）" };
+  }
+  // 会話の新しい方から、束の物件の名前が1件だけ出た通（その物件の話をしている）
+  const texts = [...(o.recentTexts ?? [])].reverse();
+  for (const t of texts) {
+    const s = String(t ?? "").normalize("NFKC").replace(/\s+/g, "");
+    if (!s) continue;
+    const hit = list.filter((n) => { const c = coreOf(n); return c.length >= 3 && s.includes(c); });
+    if (hit.length === 1) return { names: hit, narrowed: true, why: "直近の会話で話している物件" };
+    if (hit.length > 1) break; // 束を並べた通（送付）まで戻ったら止める
+  }
+  return { names: list, narrowed: false, why: null };
+}

@@ -8,7 +8,9 @@
 //   文はお客様に送らない（画面の注記だけ）。NEXT_PUBLIC_AIX_CHECK_STAFF_NOTE=on の時だけ（既定 off）。
 // テスト: app/lib/__tests__/aix-check-staff-note.test.ts
 
-export function aixCheckStaffNoteEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+// 2026-10-28 画面（ブラウザ）では process.env を丸ごと読むと空（Next は process.env.NEXT_PUBLIC_〇〇 と名前で書いた所だけ値を焼き込む）＝NEXT_PUBLIC_AIX_CHECK_STAFF_NOTE=on にしても画面では効いていなかった。
+//   既定の引数を名前で書いた形にして焼き込まれるようにする（サーバ・テストは今まで通り process.env をその時に読む）
+export function aixCheckStaffNoteEnabled(env: Record<string, string | undefined> = { NEXT_PUBLIC_AIX_CHECK_STAFF_NOTE: typeof process !== "undefined" ? process.env.NEXT_PUBLIC_AIX_CHECK_STAFF_NOTE : undefined }): boolean {
   return (env.NEXT_PUBLIC_AIX_CHECK_STAFF_NOTE ?? "").trim().toLowerCase() === "on";
 }
 
