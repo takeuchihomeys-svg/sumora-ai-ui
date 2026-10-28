@@ -152,7 +152,8 @@ import { enforceCallName } from "@/app/lib/call-name-guard";
 // 2026-10-06 ⑫: 御見積書の費用の事情の1行（報酬が出ない・スモ割なし・仲介手数料の額）
 // （estimateExplain は check-result-estimate-bundle.composeSingleEstimateCostText の中で使う）
 import { composeSingleEstimateCostText, bundleEstimateName, CHECK_RESULT_MAX_PROPS, CIRCLED_NUMS, checkPatternTakesEstimate } from "@/app/lib/check-result-estimate-bundle";
-import { costBreakdownSentEstimateOn, pickSentEstimateUrls } from "@/app/lib/cost-breakdown-sent";
+import { costBreakdownSentEstimateOn } from "@/app/lib/cost-breakdown-sent";
+import { loadSentEstimateUrls } from "@/app/lib/cost-breakdown-sent-server";
 import { ensureAppliedTalk, findPickerTalkMismatch, alternativeSingleLine, cmAvailableResultDesc } from "@/app/lib/check-result-status-lines";
 // 2026-10-06 ⑰（あかりさん）: 会話を合わせるの物件ピックアップで、前回の送付より後のやり取りを時系列で読む
 import { readSendNow, effectiveSendFrame, buildSendNowBlock } from "@/app/lib/property-send-now";
@@ -7100,7 +7101,8 @@ ${templateText}`;
         }
       }
       // 2026-10-13: 見積書の同封を物件ごとのセットで送る時の費用の文（上の bundleTextsP・読み取りは本文の生成と並べて走らせている）
-      if (pattern === "available") estimate_texts_result = await bundleTextsP;
+      // 2026-10-28 本番の確かめ: 別の部屋が募集してた（NEXT_PUBLIC_CHECK_ALT_ESTIMATE=on）も同じ費用の文を返す（gate を他の3か所と同じ checkPatternTakesEstimate に・読み取りだけして捨てていた）
+      if (checkPatternTakesEstimate(pattern)) estimate_texts_result = await bundleTextsP;
 
     // ── 📋 条件ヒアリング（フォームをテンプレ生成 + AI導入メッセージ） ───
     } else if (action === "condition_hearing") {
@@ -7950,13 +7952,8 @@ ${SMORA_COMMON_RULES}
       //   COST_BREAKDOWN_SENT_ESTIMATE=on の時だけ、貼られていなければこの会話で直近21日に送った見積書の画像（読み取り済み image_details.kind=estimate）を使う（既定 off＝今と同じ）
       if (cbUrls.length === 0 && costBreakdownSentEstimateOn() && conversationId) {
         try {
-          const sinceIso = new Date(Date.now() - 21 * 86_400_000).toISOString();
-          // 送った時刻で選ぶ（読み取りの時刻は後から読み直した分で揃うことがある）: スタッフが送った画像 → そのうち読み取りが見積書の物
-          const { data: sentImgs } = await supabase.from("messages").select("image_url, created_at").eq("conversation_id", conversationId).neq("sender", "customer").not("image_url", "is", null).gte("created_at", sinceIso).order("created_at", { ascending: false }).limit(40);
-          const imgRows = ((sentImgs ?? []) as Array<{ image_url: string | null; created_at: string | null }>).filter((r) => r.image_url);
-          const { data: est } = imgRows.length ? await supabase.from("image_details").select("image_url").eq("kind", "estimate").in("image_url", imgRows.map((r) => r.image_url as string)) : { data: [] };
-          const estSet = new Set(((est ?? []) as Array<{ image_url: string }>).map((r) => r.image_url));
-          cbUrls = pickSentEstimateUrls(imgRows.filter((r) => estSet.has(r.image_url as string)).map((r) => ({ image_url: r.image_url, read_at: r.created_at })));
+          // 画面の初期値（/api/aix/sent-estimates）と同じ読み方（app/lib/cost-breakdown-sent-server.ts）
+          cbUrls = await loadSentEstimateUrls(conversationId);
           console.log(JSON.stringify({ tag: "aix:cost-breakdown-sent-estimate", conversationId, found: cbUrls.length }));
         } catch (e) { console.warn(JSON.stringify({ tag: "aix:cost-breakdown-sent-estimate", conversationId, error: String(e).slice(0, 160) })); }
       }

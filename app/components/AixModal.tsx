@@ -2160,18 +2160,26 @@ export default function AixModal({
             return;
           }
         }
+        // 2026-10-28 本番の確かめ: AIX【見積書送る】の記録が無い（手で送った）見積書も、サーバの読み取り（image_details.kind=estimate）から初期値に入れる。
+        //   画像が0枚だと生成ボタンを押せず COST_BREAKDOWN_SENT_ESTIMATE が届かなかった。スイッチはサーバ側（off の時は空が返る＝今と同じ）
+        const fromSentEstimates = async () => {
+          const r = await fetch(`/api/aix/sent-estimates?conversation_id=${encodeURIComponent(conversationId)}`, { headers: INTERNAL_AUTH_HEADER });
+          const d = (await r.json().catch(() => null)) as { ok?: boolean; urls?: string[] } | null;
+          const urls = (d?.urls ?? []).filter((u) => typeof u === "string" && !!u);
+          if (urls.length) setCbImages((prev) => prev.length > 0 ? prev : urls.map((u, i) => ({ key: `s_${i}_${u.slice(-12)}`, url: u, preview: u, fromHistory: true })));
+        };
         const { data: logs } = await supabase.from("aix_usage_logs").select("created_at")
           .eq("conversation_id", conversationId).eq("aix_type", "estimate_sheet")
           .order("created_at", { ascending: false }).limit(1);
         const at = logs?.[0]?.created_at as string | undefined;
-        if (!at) return;
+        if (!at) { await fromSentEstimates(); return; }
         const t = Date.parse(at);
         const { data: imgs } = await supabase.from("messages").select("id, image_url")
           .eq("conversation_id", conversationId).eq("sender", "staff").not("image_url", "is", null)
           .gte("created_at", new Date(t - 10 * 60_000).toISOString()).lte("created_at", new Date(t + 3 * 60_000).toISOString())
           .order("created_at", { ascending: false }).limit(3);
         const found = ((imgs ?? []) as { id: string; image_url: string | null }[]).filter((m) => !!m.image_url).reverse();
-        if (!found.length) return;
+        if (!found.length) { await fromSentEstimates(); return; }
         setCbImages((prev) => prev.length > 0 ? prev : found.map((m) => ({ key: `h_${m.id}`, url: m.image_url!, preview: m.image_url!, fromHistory: true })));
       } catch (e) {
         console.warn("[AixModal] 初期費用について: 直近の御見積書の取得失敗:", e);

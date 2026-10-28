@@ -22,6 +22,7 @@ import StaffDeviceWriterBar from "./components/StaffDeviceWriterBar"; // 2026-10
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage, PRE_APPLY_STATUSES } from "./lib/application-form-detect";
+import { aixApplyStatusOn, shouldPromoteOnApplyAix } from "./lib/apply-status-aix";
 import { detectPlaceholders, canonOf } from "./lib/validate-reply";
 import { pickCallName, sanOf } from "./lib/call-name-pick";
 // 2026-09-18: 下書き→送る文の整形は画面と自動返信で同じ関数を使う（app/lib/draft-text.ts）
@@ -4190,7 +4191,7 @@ export default function Home() {
     }
   };
 
-  const updateConversationStatus = async (nextStatus: string) => {
+  const updateConversationStatus = async (nextStatus: string, trigger: "manual" | "aix_apply" = "manual") => {
     if (!selectedConversation.id) return;
 
     try {
@@ -4226,7 +4227,7 @@ export default function Home() {
         conversation_id: selectedConversation.id,
         from_status: selectedConversation.status ?? null,
         to_status: nextStatus,
-        trigger: "manual",
+        trigger,
       }).then(() => {}, () => {});
 
       // 申込以降・成約になったとき: バックグラウンドで決まるパターンを自動学習
@@ -12447,6 +12448,11 @@ export default function Home() {
               // 従来はテンプレラベル「①申込」検知（テンプレモーダル経由）のみで、
               // AixModal(format)経由では②誘導が発火しなかったため、②チェーンをここでも維持する。
               // 予約送信時は①がまだ未送信のため発火しない（②が①より先に送られるのを防ぐ）
+              // 2026-10-28 竹内さん #13（勇気 10/27）: AIX【申込へ】で申込書・申込確定・書類依頼を送ったら status を申込・審査中に（予約送信は送った時ではないので上げない）
+              //   NEXT_PUBLIC_AIX_APPLY_STATUS=on の時だけ（既定 off）。申込誘導（後押し）は上げない・申込より前の段の時だけ（apply-status-aix.ts）
+              if (aixApplyStatusOn(process.env.NEXT_PUBLIC_AIX_APPLY_STATUS) && aixModalType === "application_push" && !meta?.scheduled && shouldPromoteOnApplyAix(meta?.appSubMode, selectedConversation.status)) {
+                void updateConversationStatus("applying", "aix_apply");
+              }
               if (aixModalType === "application_push" && meta?.appSubMode === "format" && !meta?.scheduled) {
                 setSuggestApplyStep2Map((prev) => ({ ...prev, [selectedConversation.id]: true }));
                 setDismissedApplyStep2Ids((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
