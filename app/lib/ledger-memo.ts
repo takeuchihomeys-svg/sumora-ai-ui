@@ -4,13 +4,14 @@
 //   目的は2つ: ①スタッフが画面で一目で分かる ②台帳の期間（材料の窓）を過ぎても残る。
 //   ブレインへの二重渡しはしない: ブレインの材料は台帳（sent-ledger-bind の結び付け）を正とし、メモの注記ではこの行（id が ledger: で始まる）を省く。
 //   写すのは台帳から（LLM の読み取りに頼らない）。消すのはスタッフだけ（自動では外さない・数の上限だけ古い順に外す）。
-// 切替: LEDGER_MEMO_SYNC=on（既定 off・画面のメモの見え方を確かめてから既定 on）。テスト: app/lib/__tests__/ledger-memo.test.ts
+// 切替: LEDGER_MEMO_SYNC（10/28 から既定 on・off で止める）。テスト: app/lib/__tests__/ledger-memo.test.ts
 import type { MemoItem, StoredMemo } from "./customer-memo";
 import type { SentItem } from "./sent-ledger-bind";
 
 type Env = Record<string, string | undefined>;
 export function ledgerMemoSyncEnabled(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.LEDGER_MEMO_SYNC ?? "").trim().toLowerCase() === "on";
+  // 10/28 既定 on（YUMA5 で DB に写した行を確かめた・本番12会話の写りを書き込みなしで確かめた）。止める時は LEDGER_MEMO_SYNC=off
+  return (env.LEDGER_MEMO_SYNC ?? "on").trim().toLowerCase() !== "off";
 }
 export const LEDGER_MEMO_PREFIX = "ledger:";
 export const LEDGER_MEMO_MAX = 20;

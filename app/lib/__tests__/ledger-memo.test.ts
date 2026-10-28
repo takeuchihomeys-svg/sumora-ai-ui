@@ -13,7 +13,7 @@ function eq<T>(a: T, b: T, label = "") { if (JSON.stringify(a) !== JSON.stringif
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
 const NOW = "2026-10-28T10:00:00Z";
 
-it("既定 off", () => { eq(ledgerMemoSyncEnabled({}), false); eq(ledgerMemoSyncEnabled({ LEDGER_MEMO_SYNC: "on" }), true); });
+it("既定 on・off で止める", () => { eq(ledgerMemoSyncEnabled({}), true); eq(ledgerMemoSyncEnabled({ LEDGER_MEMO_SYNC: "off" }), false); });
 it("金額・確認の結果・断った事を写す（決まった id・同じ事は1行）", () => {
   const items = [
     ...itemsFromLedger([
