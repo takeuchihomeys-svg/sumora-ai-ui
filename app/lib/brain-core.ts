@@ -127,6 +127,7 @@ import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
 import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmedAckMaterialLine } from "@/app/lib/viewing-confirmed-ack";
 import { nowFulfillableEnabled, nowFulfillableLine } from "@/app/lib/situation-summary";
+import { decideBrainDepth } from "@/app/lib/brain-depth";
 import { sentLedgerBindEnabled, explainedItemsOf, itemsFromLedger, bindReaction, bindMaterialLine } from "@/app/lib/sent-ledger-bind";
 import { vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled, vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
@@ -2940,6 +2941,23 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     const nf = nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() });
     if (nf) customerStateBlockText += `\n${nf}`;
     console.log(JSON.stringify({ tag: "brain:now-fulfillable", conversationId, chars: nf.length }));
+  }
+  // 2026-10-29 統括の③深さ（brain-depth.ts）: 第1段は記録だけ（判断・費用は変えない）。数えてから軽い番の引き継ぎを入れる
+  if (typedMessages[0]?.sender === "customer") {
+    try {
+      const tTxt = unrepliedTurn.text ?? "";
+      const stampOnly = (unrepliedTurn.hasImage && !tTxt.trim()) || /^\s*\[(?:スタンプ|画像)\]\s*$/.test(tTxt);
+      const lastStaff = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim())?.text ?? "";
+      let k = 0; while (k < typedMessages.length && typedMessages[k].sender === "customer") k++;
+      const prevCust = typedMessages.slice(k).find((m) => m.sender === "customer");
+      const gapHours = prevCust ? (Date.parse(typedMessages[0].created_at) - Date.parse(prevCust.created_at)) / 3_600_000 : null;
+      const dep = decideBrainDepth({
+        turnText: tTxt, stampOnly, ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(tTxt),
+        closedBefore: /ご検討|何卒よろしく|出次第|お待ちしており|ご連絡お待ち/.test(lastStaff), pickupReady: pickupReadyMaterial,
+        openPromises: brainLedger.entries.filter((e) => e.status === "promised" && e.fulfilledBy == null).length, gapHours,
+      });
+      console.log(JSON.stringify({ tag: "brain:depth", conversationId, depth: dep.depth, reason: dep.reason }));
+    } catch (e) { console.warn("[brain-core] depth skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-28 竹内さんの決定（送った事を根本から理解する）・統括の設計図 ①拾う: お客様の今の発言が「どの送った事への反応か」を結び付け、
   //   その項目の中身（送った物件・見積・確認の結果・説明した事・断った事）を事実だけ1行で渡す（どう返すかはブレイン）。SENT_LEDGER_BIND=on（既定 off）
