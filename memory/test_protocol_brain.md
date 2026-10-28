@@ -195,6 +195,7 @@ WHERE created_at >= '<開始>' AND env LIKE 'local:%' AND conversation_id IS NOT
 - **判定**: 道（返信・2段・AIX の種類・ピッカー）は決まった計算（`scripts/lib/brain-exam-score.ts`・テスト `scripts/lib/__tests__/brain-exam-score.test.ts`）。依頼（asks）が答え方つきで入ったか・言ってはいけない事を守ったかは DeepSeek の判定（直に呼ぶ・費用はスクリプトが出す・`--no-judge` で止める）。
 - **YUMA**: 手順の 1〜2・6 どおり（同時1本: 他の担当の条件の写し `scripts/.replay-out/.*-yuma-pc-backup.json` が空になるまで待つ・**問題ごとに条件の行を戻す**＝他の担当が間に入れる・自分の行だけ消す）。返信の文は作らない（ブレインだけ）。
 - **DeepSeek の揺れ**: 1回の ✕ が直した所の効果か揺れかを分けるため、悪くなった問題は `--only=<id> --repeat=3` で回し直す（過半数で合否）。方向が決まったら最後の Claude で型ごとに1問。
+- **揺れを測る回し直しは `--replay` を外す**（2026-10-29 作業員2）: `--replay` は同じ要求を録音から返すので、同じ問題を何度回しても前と同じ答えになり揺れが見えない（msgplan-recheck は新しい呼び出し0回で前回と同じ結果だった）。揺れか悪化かを分ける時は `--replay` 無し（record）で、main 側も新しく呼ぶ。
 - **問題を足す**: 本番の見張りで新しい読み違いを見つけたら `npx tsx --env-file=.env.local scripts/brain-exam-add.ts --suggest --days=14`（竹内さんの番でブレインと違った番の候補・足すコマンドの雛形つき）→ 会話を読んで正解が決まる番だけ `--add --conv= --at= --type= --accept= --must-not= --ask="言葉|reply|要点" --ng= --why=`。型の名前は今ある物にそろえる（`spec.json` の type）。
 - **出し切りの正解の切り替え（10/08 竹内さん）**: search-exhausted（出し切ったら AIX 全力サポート）が入るまでは「新着待ちの返信 or 全力サポート」の両方、入ったら全力サポートだけ（spec の acceptWhen.searchExhausted）。入ったか＝brain-core が search-exhausted を読んでいて SEARCH_EXHAUSTED_ZENRYOKU が off でない（自動）・`--exhausted-rule=on|off` で上書き。保存した答案は `--report` の時に今の正解で採点し直す。出し切った後に条件を足した番も実送信どおり新着待ち＝出し切り。
 - **10/09 試験の穴を直した（竹内さん「テストの際ブレインの判断を邪魔している部分も調査」）**:
