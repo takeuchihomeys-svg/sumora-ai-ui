@@ -8,12 +8,12 @@ const a = resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "�
 t("物件を送ってきた・確認の約束 → 左に物件確認した（募集中）", a?.aix === "property_check_result" && a?.checkPattern === "available" && a?.label === "確認の約束", a);
 const b = resolvePromiseOrNow({ ...base, twoStageKind: "estimate", customerText: "初期費用いくらですか？" });
 t("費用の質問・見積の約束 → 左に見積書送る", b?.aix === "estimate_sheet" && b?.label === "見積の約束", b);
-t("ピックアップの約束 → 左に物件ピックアップ", resolvePromiseOrNow({ ...base, twoStageKind: "pickup", customerText: "他にもあれば送ってください" })?.aix === "property_send");
+t("ピックアップの約束は2択にしない（10/29・今は物件の AIX を送らない番）", resolvePromiseOrNow({ ...base, twoStageKind: "pickup", customerText: "他にもあれば送ってください" }) === null);
 t("確認の約束でも、物件・費用・開いている約束が無い番は出さない", resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "了解です" }) === null);
 t("開いている確認の約束を果たす番は出す", resolvePromiseOrNow({ ...base, twoStageKind: "check", decisionSource: "promise:check", customerText: "お願いします" })?.aix === "property_check_result");
-t("初回は出さない", resolvePromiseOrNow({ ...base, twoStageKind: "pickup", customerText: "よろしくお願いします", firstContact: true }) === null);
-t("申込以降は出さない", resolvePromiseOrNow({ ...base, twoStageKind: "pickup", customerText: "x", postApply: true }) === null);
-t("既に別の2択なら出さない", resolvePromiseOrNow({ ...base, twoStageKind: "pickup", customerText: "x", alreadyTwo: true }) === null);
+t("初回は出さない", resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "https://suumo.jp/x", firstContact: true }) === null);
+t("申込以降は出さない", resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "https://suumo.jp/x", postApply: true }) === null);
+t("既に別の2択なら出さない", resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "https://suumo.jp/x", alreadyTwo: true }) === null);
 t("その場の AIX の番は今は出さない（右の約束の下書きの道が無い）", resolvePromiseOrNow({ ...base, finalAix: "property_send", twoStageKind: null, customerText: "他にありますか" }) === null);
 console.log(`${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

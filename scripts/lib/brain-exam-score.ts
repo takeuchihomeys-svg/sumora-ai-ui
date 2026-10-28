@@ -76,7 +76,10 @@ export function brainPathCode(b: BrainExamOutput | null | undefined): PathCode {
     const aixSide = aixAction ? brainPathCode({ ...b, two_choice_mode: false, reply_mode: "aix", action: aixAction, check_pattern: (b.action ?? "").trim() ? b.check_pattern : b.two_choice_check_pattern ?? null }) : null;
     const replySide = brainPathCode({ ...b, two_choice_mode: false, reply_mode: "auto_reply", action: null });
     const codes = [...new Set([...(aixSide?.codes ?? []), ...replySide.codes, ...(replySide.codes.some((c) => c.startsWith("2段")) ? [] : ["返信"])])];
-    return { codes, hard: [], label: `2択（${aixSide?.label ?? "AIX"}｜${replySide.label}）` };
+    // 2026-10-29 直し: 2択でも、どちらかのボタンがその問題の「言ってはいけない道」なら外す（押せば間違いのボタンを出した）。
+    //   10/28 は hard: [] で、約束の側のピックアップの2択が「今は物件の AIX を送らない」問題で合格に数えられていた
+    const hard = [...new Set([...(aixSide?.hard ?? []), ...replySide.hard])];
+    return { codes, hard, label: `2択（${aixSide?.label ?? "AIX"}｜${replySide.label}）` };
   }
   const action = (b.action ?? "").trim();
   if (b.reply_mode === "aix" && action) {

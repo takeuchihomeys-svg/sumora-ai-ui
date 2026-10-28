@@ -109,7 +109,9 @@ eq("正解が 返信 だけ（q007 の形）は替えない", normalizeDraftCode
   const two2 = brainPathCode({ reply_mode: "aix", action: "property_send", two_choice_mode: true, reply_direction: "検討見守り" });
   eq("2択（AIX の側）: 返信も合格", judgePath(two2, ["返信"]).ok, true);
   eq("2択（AIX の側）: AIX も合格", judgePath(two2, ["AIX:property_send"]).ok, true);
-  eq("2択は言ってはいけない道で外さない", judgePath(two2, ["AIX:property_send"], ["返信"]).ok, true);
+  // 10/29: どちらかのボタンが言ってはいけない道なら外す（押せば間違いのボタン）
+  eq("2択でも言ってはいけない道のボタンを出したら外す", judgePath(two2, ["AIX:property_send"], ["返信"]).ok, false);
+  eq("2択（約束の側）: 左の AIX が言ってはいけない道なら外す", judgePath(two, ["2段:check"], ["AIX:property_check_result"]).ok, false);
 }
 
 console.log(`${pass} PASS / ${fail} FAIL`);

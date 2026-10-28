@@ -149,7 +149,10 @@ export function resolvePromiseOrNow(o: {
   const a = String(o.finalAix ?? "");
   const nowKind: PromiseOrNowKind | null = a === "property_check_result" ? "check" : a === "estimate_sheet" ? "estimate" : a === "property_send" || a === "property_recommendation" ? "pickup" : null;
   const ts = String(o.twoStageKind ?? "");
-  const promiseKind: PromiseOrNowKind | null = !a && (ts === "check" || ts === "estimate" || ts === "pickup") ? ts : null;
+  // 2026-10-29 直し: ピックアップの約束の番は2択にしない。試験の「約束の返信を先に」の問題（q008〜q011・q034〜q036・q070・q081 ほか）は
+  //   竹内さんの決定で「今は物件の AIX を送らない（言ってはいけない道 AIX:物件）」＝左に物件ピックアップを出すと押せば間違いのボタンになる。
+  //   10/28 の採点は2択の言ってはいけない道を見ていなかった（hard: []）ため悪化が隠れていた（fb-on で 13 番中 11 番が当たっていた）
+  const promiseKind: PromiseOrNowKind | null = !a && (ts === "check" || ts === "estimate") ? ts : null;
   // 今は約束の側（ブレインが約束の返信を選んだ番）だけ: 右の「返信」は約束の下書き・左に同じ種類の AIX を足す（取り違え 95 のうち 48）。
   //   その場の側（ブレインが AIX を選んだ番・ピックアップ→竹内さんは約束 35 ほか）は、右の返信を押した時に約束の下書きを作る道が今は無い＝入れない（次の作業）
   if (nowKind) return null;
