@@ -249,6 +249,8 @@ type ResultRow = {
   trace?: Record<string, unknown>;
   /** 10/09: 下書き（--draft） */
   draft?: { text: string | null; skipped?: string; code: string; ok: boolean; asks: boolean[] | null; ng: boolean[] | null; pass: boolean } | null;
+  /** 2026-10-29: 下書きの生成に失敗して下書きの段を数えなかった印 */
+  draftSkippedNote?: string;
   ledger?: { inserted: Record<string, number>; errors: string[] };
   pcMismatch?: string[];
   /** 10/13 厳しい採点（物件の AIX の種類まで分ける）の道 */
@@ -1566,7 +1568,16 @@ async function main() {
             if (ct.includes("application/json")) { const j = await res.json().catch(() => ({})) as Record<string, unknown>; skipped = String(j.reason ?? j.error ?? res.status); }
             else text = parseStream(await res.text());
           } catch (e) { skipped = `失敗: ${e instanceof Error ? e.message : String(e)}`.slice(0, 120); }
-          if (text) {
+          // 2026-10-29: 下書きが「生成に失敗」の時（試験の歯止め＝審査の事情・申込以降で Claude が要るのに deepseek-all で止めた 等）は、
+          //   下書きの外れに数えない（両側で数えると比べが汚れる・msgplan-draft で main 3回・on 4回）。下書きの段を外し、ブレインの段で採点する
+          if (text && /AI返信の生成に失敗しました/.test(text)) {
+            console.log(`  → ${p.id}#${rep} 下書きの生成に失敗（試験の歯止め等）→ 下書きの段は数えない`);
+            row.draftSkippedNote = "下書きの生成に失敗（試験の歯止め等・数えない）";
+            text = null; skipped = "__exclude__";
+          }
+          if (skipped === "__exclude__") {
+            row.draft = null;
+          } else if (text) {
             const dj = NO_JUDGE ? null : await judgeDraft(ps, text);
             const dcode = normalizeDraftCode(dj?.code ?? "返信", text, acc); // 10/13 確認＋見積の1文は 2段:check にも数える
             const dv = judgePath(codeFromString(dcode), acc, mn);
