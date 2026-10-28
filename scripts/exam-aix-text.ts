@@ -19,6 +19,9 @@
 //   下見（呼ばない）: … --plan（main の答えの控えと録音だけで流す＝入力が main と違う問題を数える・$0）
 //   絞る: --only=<id,…> --buttons=見積書,待ち合わせ --kinds=aix,second ／ 判定: --judge=lazy|full|off ／ 会話: --conv=YUMA4
 //   採点し直し（物差しを直した時・LLM なし）: … --rescore=baseline ／ --rescore=<結果の json>
+//   その番の時点の写しで（2026-10-28）: 先に scripts/exam-aix-text-snap.ts（q.snap を作る）→ … --snap [--vs=<前の結果の json か label>]
+//     写し＝条件の文字・登録の条件・売上サポの行・送った資料の読み・AIX の履歴・ブレインの判断の要点（入口は試験の会話の時だけ読む app/lib/exam-test-snapshot.ts）。
+//     --snap の回は main の取り置きにしない（写しの無い main と入力が違う）。写し同士の比べは --vs で（例: --snap と --snap --switch=X=on）
 //   試験のブレインから: npx tsx --env-file=.env.local scripts/exam-brain.ts --aix-text -- --label=fix1 …（同じ引数を渡す）
 import { AsyncLocalStorage } from "node:async_hooks";
 // next の after()/workAsyncStorage が読む前に置く（--require の .cjs の代わり）
@@ -26,6 +29,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // スイッチ（--switch=NAME=値・(unset) は消す）は何より先に env へ（指紋・録音の鍵・生成の全部が読む）
 for (const a of process.argv.slice(2)) { const m = /^--switch=([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(a); if (!m) continue; if (m[2] === "(unset)") delete process.env[m[1]]; else process.env[m[1]] = m[2]; }
 const PLAN = process.argv.includes("--plan");
+const SNAP = process.argv.includes("--snap");
 if (!process.env.LLM_TEST_FINAL_CLAUDE) process.env.LLM_TEST_MODE ??= "deepseek-all";
 process.env.LLM_CASSETTE ??= PLAN ? "strict" : "replay";
 
@@ -66,6 +70,16 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
 const AIX_ENTRIES = ["app/api/aix/action/route.ts", "app/api/aix-template-generate/route.ts"];
 const git = (a: string[]) => { try { return execFileSync("git", a, { stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 }).toString().trim(); } catch { return ""; } };
 
+/** 問題に写したその番の時点の材料（scripts/exam-aix-text-snap.ts） */
+type QSnap = { cut?: string; customerConditions?: string; testPropertyCustomer?: Record<string, unknown>; testSnapshot?: Record<string, unknown>; testBrainMeta?: Record<string, unknown>; notes?: string[] };
+/** --snap の時、入口に渡す本文へ写しを足す（入口は isTestModeAllowed＋テスト専用の会話の時だけ読む） */
+function withSnap(q: AixQuestion, body: Record<string, unknown>): Record<string, unknown> {
+  const sn = (q as AixQuestion & { snap?: QSnap }).snap;
+  if (!SNAP || !sn) return body;
+  const out: Record<string, unknown> = { ...body, ...(sn.testSnapshot ? { testSnapshot: sn.testSnapshot } : {}), ...(sn.testBrainMeta ? { testBrainMeta: sn.testBrainMeta } : {}), ...(sn.testPropertyCustomer ? { testPropertyCustomer: sn.testPropertyCustomer } : {}) };
+  if (sn.customerConditions) { if (q.route === "aix/action") out.customer_conditions ??= sn.customerConditions; else out.customerConditions ??= sn.customerConditions; }
+  return out;
+}
 type Row = AixRow & { picker: string | null; rep: number; llmCalls: CallRef[]; ms: number; error?: string; /** 日付をずらした日数（採点し直しも同じだけずらす） */ shiftDays?: number };
 type BaseFile = { mainCommit: string; codeKey: string; savedAt: string; rows: Row[] };
 
@@ -154,12 +168,13 @@ async function main() {
 
   const fp = examEnvFingerprint(process.env);
   const cs = codeState();
-  const isMainRun = cs.sameAsMain && !fp.pairs.length && !process.env.LLM_TEST_FINAL_CLAUDE;
+  const isMainRun = cs.sameAsMain && !fp.pairs.length && !process.env.LLM_TEST_FINAL_CLAUDE && !SNAP;
   const bases = readBaselines();
   const base = bases.find((b) => b.mainCommit === cs.mainCommit) ?? bases[0] ?? null;
   console.log(`=== 試験の AIX の文 label=${LABEL} 問題 ${qs.length} ${PLAN ? "下見（呼ばない）" : ""} ===`);
   console.log(`  コード: ${cs.codeKey}（生成の入口から ${cs.files} ファイル）・main ${cs.mainCommit.slice(0, 7)} と${cs.sameAsMain ? "同じ" : "違う"}／スイッチ: ${fp.pairs.map(([k, v]) => `${k}=${v}`).join(" ") || "既定"}${isMainRun ? "／この回は main の取り置きになる" : ""}`);
   console.log(`  前（main の取り置き）: ${base ? `${base.mainCommit.slice(0, 7)}（${base.savedAt.slice(0, 16)}・${base.rows.length}問）${base.mainCommit !== cs.mainCommit ? " ⚠ 今の main より古い版" : ""}` : "なし"}`);
+  if (SNAP) console.log(`  写し: ${qs.filter((q) => (q as AixQuestion & { snap?: unknown }).snap).length}/${qs.length}問にその番の時点の材料（--snap・main の取り置きにしない）`);
   console.log(`  採点: ${PASS_RULE}／判定: ${JUDGE}（${JUDGE_MODEL}）`);
 
   // ─ 上限・同時・メモリ ─
@@ -273,13 +288,13 @@ async function main() {
         // 申込へ・フォーマット: 本番は入口を呼ばず画面が決まった記入欄を組む（AixModal.tsx と同じ組み立て・LLM なし）
         text = buildApplicationFormat(q.body.living_type === "shared" ? "shared" : "single", q.body.guarantor_kind === "guarantor" ? "guarantor" : "emergency");
       } else if (q.route === "aix/action") {
-        const body = { ...q.body, conversation_id: CONV, customer_name: "YUMA", testFlags: { rules_r9: "off" } };
+        const body = withSnap(q, { ...q.body, conversation_id: CONV, customer_name: "YUMA", testFlags: { rules_r9: "off" } });
         const res = await workAsyncStorage.run(store, () => aixPost(new Request("http://localhost/api/aix/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) as never)) as Response;
         const j = await res.json().catch(() => ({})) as Record<string, unknown>;
         text = String((q.aixType === "estimate_sheet" ? j.coverLetter : j.message_text) ?? "");
         if (!text) err = String(j.error ?? JSON.stringify(j).slice(0, 160));
       } else {
-        const body = { ...q.body, conversationId: CONV, customerName: "YUMA" };
+        const body = withSnap(q, { ...q.body, conversationId: CONV, customerName: "YUMA" });
         const res = await workAsyncStorage.run(store, () => tplPost(new Request("http://localhost/api/aix-template-generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) as never)) as Response;
         const j = await res.json().catch(() => ({})) as Record<string, unknown>;
         text = String(j.text ?? "");
@@ -321,7 +336,7 @@ async function main() {
   // ─ 結果・取り置き・比べ ─
   const sum = summarize(rows);
   const st = cassetteStats();
-  const meta = { label: LABEL, at: new Date().toISOString(), head: git(["rev-parse", "HEAD"]), mainCommit: cs.mainCommit, codeKey: cs.codeKey, sameAsMain: cs.sameAsMain, switches: fp.pairs, conv: convName, convStart, convSwitches, convLost, plan: PLAN, judge: JUDGE, stopped,
+  const meta = { label: LABEL, snap: SNAP, at: new Date().toISOString(), head: git(["rev-parse", "HEAD"]), mainCommit: cs.mainCommit, codeKey: cs.codeKey, sameAsMain: cs.sameAsMain, switches: fp.pairs, conv: convName, convStart, convSwitches, convLost, plan: PLAN, judge: JUDGE, stopped,
     cost: { realUsd: st?.total.realUsd ?? 0, real: st?.total.real ?? 0, replayed: st?.total.replayed ?? 0, pinned: st?.total.pinned ?? 0, judgeUsd: judgeCost.usd, judgeCalls: judgeCost.calls } };
   mkdirSync(RES_DIR, { recursive: true });
   const resFile = join(RES_DIR, `${LABEL}-${meta.at.replace(/[-:T]/g, "").slice(0, 12)}.json`);
@@ -340,7 +355,19 @@ async function main() {
     const p = before?.byButton.find((x) => x.button === b.button);
     console.log(`  ${b.button}: ${b.n}問 合格 ${b.pass} 平均 ${b.mean.toFixed(1)}点${p ? `（main ${p.pass}/${p.n}・${p.mean.toFixed(1)}点）` : ""}`);
   }
-  if (base && !isMainRun) {
+  // --vs=<結果の json か label>: 前の回（写し同士・スイッチの前後）と比べる
+  const vsArg = arg("vs");
+  if (vsArg) {
+    const vsFile = existsSync(vsArg) ? vsArg : (readdirSync(RES_DIR).filter((f) => f.startsWith(`${vsArg}-`) && f.endsWith(".json")).sort().pop() ?? "");
+    if (vsFile) {
+      const vr = (JSON.parse(readFileSync(existsSync(vsArg) ? vsArg : join(RES_DIR, vsFile), "utf8")) as { rows: Row[] }).rows.filter((r) => !r.err);
+      const vs = summarize(vr.filter((r) => rows.some((x) => x.id === r.id && x.hash === r.hash && !x.err)));
+      const d = compareRows(vr, rows);
+      console.log(`  ${vsArg} と比べ: 前 合格 ${vs.pass}/${vs.n}・${vs.mean.toFixed(1)}点 → 今 合格 ${sum.pass}/${sum.n}・${sum.mean.toFixed(1)}点・良くなった ${d.filter((x) => x.flip === "fail→pass").length}・悪くなった ${d.filter((x) => x.flip === "pass→fail").length}`);
+      for (const x of d.filter((y) => y.flip || Math.abs(y.after - y.before) >= 10)) console.log(`    ${x.id}: ${x.before}→${x.after}点${x.flip ? `（${x.flip}）` : ""}`);
+    } else console.log(`  --vs=${vsArg}: 結果が見つからない`);
+  }
+  if (base && !isMainRun && !SNAP) {
     const d = compareRows(base.rows, rows);
     const same = d.filter((x) => x.inputSame).length;
     console.log(`  main と比べ: ${d.length}問（入力が同じ ${same}問＝答えも main のまま）・良くなった ${d.filter((x) => x.flip === "fail→pass").length}・悪くなった ${d.filter((x) => x.flip === "pass→fail").length}`);

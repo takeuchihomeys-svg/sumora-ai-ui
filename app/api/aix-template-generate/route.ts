@@ -94,6 +94,8 @@ import { dedupeRepeatedEmoji } from "@/app/lib/emoji-repeat";
 import { fixAdjectiveNakaguro } from "@/app/lib/first-message-style";
 import { resolveTemplateSentMessage } from "@/app/lib/aix-template-source";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
+import { examTestSnapshot, snapshotRows } from "@/app/lib/exam-test-snapshot";
+import { aixSecondLeanOn } from "@/app/lib/aix-second-lean";
 // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 見積書の直後の2通目の形・締め・検査（スタッフが書いた2通目 132通から）
 import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
 import { isEstimateCorrectionContext, resolveOtherAgentEstimate, applyEstimateOwnerLines, estimateOwnerNote, type OtherAgentSituation, type OtherAgentLineMode } from "@/app/lib/aix-owner-answers-1021";
@@ -743,7 +745,11 @@ export async function POST(req: NextRequest) {
 
   // ── 「1件特にオススメ」訴求シナリオ判定（compare / alternative / first）──────
   type AixUsageLogRow = { aix_type: string | null; check_pattern: string | null; send_keyword?: string | null; created_at: string };
-  const aixUsageLogs = (aixUsageLogsRes?.data ?? []) as AixUsageLogRow[];
+  // 2026-10-28 試験の写し（exam-test-snapshot・テスト専用の会話＋手元だけ）: その番の時点の AIX の履歴を DB の代わりに使う
+  const examSnap = examTestSnapshot(body, conversationId);
+  const aixUsageLogs = (examSnap?.aixUsage && conversationId && (actionType === "property_recommendation" || actionType === "property_send")
+    ? snapshotRows(examSnap.aixUsage, { where: (r) => ["property_send", "property_recommendation", "property_check_result"].includes(String(r.aix_type)), limit: 20 })
+    : (aixUsageLogsRes?.data ?? [])) as AixUsageLogRow[];
   // created_at 降順（新しい順）で取得済み
   const propertyLogs = aixUsageLogs.filter(
     (l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation"
@@ -1384,8 +1390,10 @@ export async function POST(req: NextRequest) {
       if (pickupPush) materialRow = pickupPush;
       const head = pickupPush ? null : headOfFirstMessage(sentMessage);
       if (conversationId && head) {
-        const { data } = await supabase.from("property_pickups").select("property_name, room_no, verdict, reason_codes, recommended, created_at, terms, location, equipment")
-          .eq("conversation_id", conversationId).eq("room_no", head.room).order("created_at", { ascending: false }).limit(20);
+        const { data } = examSnap?.pickups
+          ? { data: snapshotRows(examSnap.pickups, { where: (r) => String(r.room_no ?? "") === head.room, limit: 20 }) }
+          : await supabase.from("property_pickups").select("property_name, room_no, verdict, reason_codes, recommended, created_at, terms, location, equipment")
+            .eq("conversation_id", conversationId).eq("room_no", head.room).order("created_at", { ascending: false }).limit(20);
         pickup = pickupForFirstMessage((data ?? []) as PickupLookupRow[], head);
         materialRow = (pickup as SecondMaterialRow | null) ?? null;
       }
@@ -1399,9 +1407,11 @@ export async function POST(req: NextRequest) {
           try {
             const sipHead = pickupPush?.property_name && pickupPush.room_no ? { name: String(pickupPush.property_name), room: String(pickupPush.room_no) } : headOfFirstMessage(sentMessage);
             if (sipHead) {
-              const { data } = await supabase.from("sent_image_properties").select("property_name, room_no, created_at, facts")
-                .eq("conversation_id", conversationId).gte("created_at", new Date(Date.now() - 14 * 86400_000).toISOString())
-                .order("created_at", { ascending: false }).limit(60);
+              const { data } = examSnap?.sentImages
+                ? { data: snapshotRows(examSnap.sentImages, { limit: 60 }) }
+                : await supabase.from("sent_image_properties").select("property_name, room_no, created_at, facts")
+                  .eq("conversation_id", conversationId).gte("created_at", new Date(Date.now() - 14 * 86400_000).toISOString())
+                  .order("created_at", { ascending: false }).limit(60);
               const sv = sentImageViewable(sipVacating((data ?? []) as SipRow[], sipHead));
               if (sv) secondViewable = sv;
               console.log(JSON.stringify({ tag: "aix-template-generate:vacating-sent-image", rows: (data ?? []).length, notViewable: sv?.notViewable ?? null, line: sv?.line ?? null }));
@@ -1467,8 +1477,10 @@ export async function POST(req: NextRequest) {
     try {
       const head = headOfFirstMessage(sentMessage);
       if (head) {
-        const { data: sip } = await supabase.from("sent_image_properties").select("property_name, room_no, facts, created_at")
-          .eq("conversation_id", conversationId).not("facts", "is", null).order("created_at", { ascending: false }).limit(60);
+        const { data: sip } = examSnap?.sentImages
+          ? { data: snapshotRows(examSnap.sentImages, { where: (r) => r.facts != null, limit: 60 }) }
+          : await supabase.from("sent_image_properties").select("property_name, room_no, facts, created_at")
+            .eq("conversation_id", conversationId).not("facts", "is", null).order("created_at", { ascending: false }).limit(60);
         const hit = pickSavedReadForHead((sip ?? []) as SavedReadRow[], head);
         const conv = hit ? secondRowFromSavedRead(hit.facts) : null;
         if (hit && conv) {
@@ -1476,9 +1488,11 @@ export async function POST(req: NextRequest) {
           savedReadStations = (conv.row.location?.stations ?? []).filter((x) => x?.station).map((x) => ({ station: String(x.station), walk: typeof x.walk === "number" ? x.walk : null }));
           let fit: string[] = [];
           try {
-            const { data: cl } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
+            // 試験の写し: その番の登録の条件（testPropertyCustomer）があれば DB の代わりに
+            const testPcSr = examSnap ? (body as { testPropertyCustomer?: unknown }).testPropertyCustomer : null;
+            const { data: cl } = testPcSr && typeof testPcSr === "object" ? { data: null } : await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
             const pcId = (cl as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
-            const { data: pc } = pcId
+            const { data: pc } = testPcSr && typeof testPcSr === "object" ? { data: testPcSr } : pcId
               ? await supabase.from("property_customers").select("rent_max, floor_plan, walk_minutes, building_age, initial_cost_limit, pet, move_in_time, floor_area_min, preferences, ng_points, other_requests, additional_conditions").eq("id", pcId).maybeSingle()
               : { data: null };
             const p = (pc ?? null) as Record<string, any> | null;
@@ -1728,8 +1742,12 @@ export async function POST(req: NextRequest) {
     "",
     brainMetaSection,
     // 見積書の直後の2通目では渡さない（成約パターン・ナレッジは返信の材料で、40〜110字の定型の文には関係しない・長い材料が形を崩す）
+    // 2026-10-28 作業員5（AIX の費用と精度）: 物件オススメの直後の2通目ではナレッジ（似た文の学習ルール・営業パターン・フレーズ）を渡さない。
+    //   試験の要求を読むと、物件オススメの2通目に見積書の書き方の規則・見積書の営業パターンが入っていた（約1.2千字）。
+    //   成約パターンも外す案は2巡とも1問悪くなった（df63dc68: 物件名を書かず「こちらのお部屋如何でしょうか」の形に寄った）＝成約パターンは残す。
+    //   入れる AIX_SECOND_LEAN=on（既定 off・aix-second-lean.ts）
     isEstimateSecond ? "" : winningSection,
-    isEstimateSecond ? "" : knowledgeSection,
+    isEstimateSecond || (isRecSecond && aixSecondLeanOn()) ? "" : knowledgeSection,
     actionBucketSection,
     `━━━━━━━━━━━━━━━━━━━━\n【現在の状況】\n━━━━━━━━━━━━━━━━━━━━`,
     jstContextNote,

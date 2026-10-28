@@ -27,8 +27,8 @@ export function brainDecisionLedgerCols(meta: Record<string, unknown>, turnText:
 }
 
 /** digest に足す短い項目（無い物は入れない） */
-export function brainDecisionDigestExtra(meta: Record<string, unknown>): { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown> } {
-  const out: { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown> } = {};
+export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): { tc?: boolean; pp?: boolean; cp?: string; cs?: string; st?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown> } {
+  const out: { tc?: boolean; pp?: boolean; cp?: string; cs?: string; st?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown> } = {};
   // 2026-10-23 優先順位の段（BRAIN_PRIORITY_STEP=on の番だけ・項目の数・依頼の抜けを足した数・AIX とのそろえ・取り寄せた材料の id）
   if (meta.priority_step && typeof meta.priority_step === "object") out.pr = meta.priority_step as Record<string, unknown>;
   // 2026-10-15 追加の調査（brain-deep-check）をかけた番だけ（2回目の呼び出しの割合・変わった率を数える）
@@ -39,5 +39,16 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>): { tc?: 
   if (meta.pending_pickup === true) out.pp = true;
   if (typeof meta.checkpoint_stage === "string" && meta.checkpoint_stage.trim()) out.cp = meta.checkpoint_stage.trim().slice(0, 20);
   if (typeof meta.closing_strategy === "string" && meta.closing_strategy.trim()) out.cs = meta.closing_strategy.trim().slice(0, 60);
+  // 2026-10-28 作業員5: ブレインの今の状況（turn_contract.situation）は記録に残っていなかった＝AIX の文の試験（exam-aix-text --snap）で
+  //   その番の状況を写せず、AIX_CONTRACT_SITUATION を測れなかった。80字だけ残す（記録だけ・判断は変えない）。入れる BRAIN_DIGEST_SITUATION=on（既定 off）
+  if (brainDigestSituationOn(env)) {
+    const sit = (meta.turn_contract as { situation?: unknown } | null | undefined)?.situation;
+    if (typeof sit === "string" && sit.trim()) out.st = Array.from(sit.trim()).slice(0, 80).join("");
+  }
   return out;
+}
+
+/** digest にブレインの今の状況（turn_contract.situation・80字）を残すか（既定 off・BRAIN_DIGEST_SITUATION=on） */
+export function brainDigestSituationOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_DIGEST_SITUATION ?? "").trim().toLowerCase() === "on";
 }

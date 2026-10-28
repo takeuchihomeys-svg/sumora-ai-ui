@@ -158,6 +158,12 @@ it("digest の短い項目（tc・pp・cp・cs）・無い物は入れない", (
   eq(brainDecisionDigestExtra({ two_choice_mode: true, pending_pickup: true, checkpoint_stage: "viewing", closing_strategy: "x".repeat(80) }), { tc: true, pp: true, cp: "viewing", cs: "x".repeat(60) });
   eq(brainDecisionDigestExtra({ two_choice_mode: false }), {});
 });
+it("digest の st（ブレインの今の状況）は BRAIN_DIGEST_SITUATION=on の時だけ・80字", () => {
+  const m = { turn_contract: { situation: "あ".repeat(100) } };
+  eq(brainDecisionDigestExtra(m, {}), {});
+  eq(brainDecisionDigestExtra(m, { BRAIN_DIGEST_SITUATION: "on" }), { st: "あ".repeat(80) });
+  eq(brainDecisionDigestExtra({ turn_contract: { situation: " " } }, { BRAIN_DIGEST_SITUATION: "on" }), {});
+});
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  ✗ ${f}`); process.exit(1); }
