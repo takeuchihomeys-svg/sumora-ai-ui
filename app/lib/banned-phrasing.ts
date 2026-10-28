@@ -8,6 +8,7 @@
 import { enforceEmojiAllowlist } from "./emoji-allowlist";
 import { collapseRepeatedOpener } from "./opener-repeat";
 import { fixStaleNewBuildClaim } from "./new-build-claim";
+import { fixSlashDateNichi, slashDateNichiOn } from "./slash-date-nichi";
 import { normalizePetWording } from "./pet-wording";
 //
 // 実データ（2026-09-11 測定）:
@@ -243,7 +244,7 @@ export function normalizeKurai(text: string): { text: string; count: number } {
 }
 
 /** 方針4・5の決定論置換（生成・後処理・修正版・few-shot 注入の共通入口） */
-export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?: boolean; nowMs?: number } = {}): { text: string; shochi: number; hasty: number; uketamawari: number; night: number; greetDup: number; kurai: number; emoji: number; newBuild: number; pet: number } {
+export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?: boolean; nowMs?: number } = {}): { text: string; shochi: number; hasty: number; uketamawari: number; night: number; greetDup: number; kurai: number; emoji: number; newBuild: number; pet: number; slashNichi: number } {
   const n = opts.keepNightGreeting ? keepOneNightGreeting(text) : stripNightGreeting(text);
   const g = dedupeGreetings(n.text);
   const u = normalizeBareUketamawari(g.text);
@@ -259,5 +260,7 @@ export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?
   const nb = fixStaleNewBuildClaim(e.text, opts.nowMs ?? Date.now());
   // 2026-10-08 竹内「ペット相談可 → ペット飼育可能に書き換える」: 資料の「ペット相談可（能）」を竹内さんの言い方に（聞く形は触らない・pet-wording.ts・PET_WORDING=off）
   const pw = normalizePetWording(nb.text);
-  return { text: pw.text, pet: pw.fixed.length, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count, greetDup: g.count, kurai: k.count, emoji: e.changes.length, newBuild: nb.fixed.length };
+  // 2026-10-28 竹内さん #16「/ で日付したら、その後に日を入れるのはおかしい」: 「11/2日」→「11/2」（slash-date-nichi.ts・DATE_SLASH_NO_NICHI=on・既定 off）
+  const sd = slashDateNichiOn() ? fixSlashDateNichi(pw.text) : { text: pw.text, fixed: [] as string[] };
+  return { text: sd.text, slashNichi: sd.fixed.length, pet: pw.fixed.length, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count, greetDup: g.count, kurai: k.count, emoji: e.changes.length, newBuild: nb.fixed.length };
 }

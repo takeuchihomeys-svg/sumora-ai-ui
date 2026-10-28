@@ -244,7 +244,8 @@ export function viewingHoursOf(text: string | null | undefined): number[] {
  *  直近の2通は「M/D日は」。見張りの外れ W4・W36・W46 の3番が「10/6何卒」「10/10何卒」「10/8何卒」でここが出所）。戻す: VIEWING_ACK_DATE_SUFFIX=off */
 export function viewingAckLine(appointment: LedgerFacts["viewingAppointment"]): string {
   const a = appointment;
-  const suffix = process.env.VIEWING_ACK_DATE_SUFFIX === "off" ? "" : "日は";
+  // 2026-10-28 竹内さん #16（かずき「11/2日は何卒」）: DATE_SLASH_NO_NICHI=on は「M/Dは」（スラッシュの日付の後に「日」を付けない）
+  const suffix = process.env.VIEWING_ACK_DATE_SUFFIX === "off" ? "" : (process.env.DATE_SLASH_NO_NICHI ?? "").trim().toLowerCase() === "on" ? "は" : "日は";
   const day = !a ? "" : a.day === "today" ? "本日" : a.day === "tomorrow" ? "明日" : a.day === "later" && a.dateMD ? `${a.dateMD}${suffix}` : "";
   return `${day}何卒よろしくお願い致します！！`;
 }
