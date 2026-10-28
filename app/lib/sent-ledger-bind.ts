@@ -6,11 +6,12 @@
 //   説明した中身（ネット・ガス・保証料・違約金 等）と断った事は残っていなかった（未来穂・てん・☆・長堀橋・和樹）。
 // 学び（10/28 SENT_CONFIRMED_NOTE の試験 q183 6/6→3/6・q197〜q199 の依頼の落ち）: 送った物件を全部並べ、場面の決まり（「〜の場面ではない」）まで
 //   材料に書くと、依頼を押しのけ・言い切りが強すぎて道が割れた。→ ここは**事実だけ**・**今の発言が指す項目だけ**を短く渡す。どう返すかはブレイン（P0）。
-// 切替: SENT_LEDGER_BIND=on（既定 off）。テスト: app/lib/__tests__/sent-ledger-bind.test.ts
+// 切替: SENT_LEDGER_BIND（10/28 から既定 on・off で止める）。テスト: app/lib/__tests__/sent-ledger-bind.test.ts
 
 type Env = Record<string, string | undefined>;
 export function sentLedgerBindEnabled(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.SENT_LEDGER_BIND ?? "").trim().toLowerCase() === "on";
+  // 2026-10-28 既定 on（試験 ledger-bind-on: 9問×3 main と比べ 悪化0・良くなった1 q024 和樹・依頼 24→28/42・合格 5→6）。止める時は SENT_LEDGER_BIND=off
+  return (env.SENT_LEDGER_BIND ?? "on").trim().toLowerCase() !== "off";
 }
 
 const DAY = 86_400_000;

@@ -15,7 +15,7 @@ const LEDGER = [
   { kind: "estimate_sent", status: "done", at: "2026-10-20T08:00:00Z", evidence: "初期費用173,480円", detail: { estimateFor: ["アーバネックス堺筋本町 701号室"] } },
 ];
 
-it("既定 off", () => { eq(sentLedgerBindEnabled({}), false); eq(sentLedgerBindEnabled({ SENT_LEDGER_BIND: "on" }), true); });
+it("既定 on・off で止める", () => { eq(sentLedgerBindEnabled({}), true); eq(sentLedgerBindEnabled({ SENT_LEDGER_BIND: "off" }), false); eq(sentLedgerBindEnabled({ SENT_LEDGER_BIND: "on" }), true); });
 it("説明した事・断った事を拾う（約束は拾わない）", () => {
   const t = "こちらのお部屋はインターネット無料となります！！\n駐車場は現在満車のため、ご用意が難しい状況です。\n違約金につきましては確認させて頂きます！！";
   const items = explainedItemsOf(t, "2026-10-20T07:00:00Z", "m1");
