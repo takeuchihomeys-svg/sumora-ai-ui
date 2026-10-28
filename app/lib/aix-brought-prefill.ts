@@ -17,6 +17,11 @@ export type BroughtPrefill = { rooms: BroughtRoom[]; count: number; lastCheckAt:
 const PLACEHOLDER_RE = /^(?:物件|お部屋)\s*[①-⑳0-9０-９]*$/;
 const CHECK_KINDS = new Set(["check_available", "check_vacating", "check_ended", "check_alternative"]);
 
+/** 持ち込み物件の古さの線（日）。AIX_BROUGHT_MAX_AGE_DAYS（正の数の時だけ・既定なし＝今まで通り） */
+export function broughtMaxAgeDays(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): number | null {
+  const n = Number((env.AIX_BROUGHT_MAX_AGE_DAYS ?? "").trim());
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 export function aixBroughtPrefillEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.NEXT_PUBLIC_AIX_BROUGHT_PREFILL ?? env.AIX_BROUGHT_PREFILL ?? "").trim().toLowerCase() === "on";
 }
@@ -26,7 +31,7 @@ export function aixBroughtPrefillEnabled(env: Record<string, string | undefined>
  *   lastCheckAt＝会話全体の最後の「物件確認した」の出来事。それより後の customer_shared だけ
  *   windowHours＝一番新しい持ち込みから遡る幅（昔の持ち込みを混ぜない・既定 72時間）
  */
-export function broughtForCheck(s: PropertyThreadState | null | undefined, opts: { windowHours?: number; checkAts?: ReadonlyArray<string | null | undefined> } = {}): BroughtPrefill {
+export function broughtForCheck(s: PropertyThreadState | null | undefined, opts: { windowHours?: number; checkAts?: ReadonlyArray<string | null | undefined>; maxAgeDays?: number | null; nowMs?: number } = {}): BroughtPrefill {
   if (!s) return { rooms: [], count: 0, lastCheckAt: null };
   // AIX【物件確認した】を送った時刻も区切りにする（物件名の記録が空の AIX は台帳の物件に結びつかない＝90日の監査で古い持ち込みが積み上がった）
   let lastCheckAt: string | null = null;
@@ -35,7 +40,9 @@ export function broughtForCheck(s: PropertyThreadState | null | undefined, opts:
   const shared: Array<{ key: string; name: string | null; at: string; source: string | null }> = [];
   for (const r of s.rooms) {
     if (r.origin !== "customer" && !r.events.some((e) => e.kind === "customer_shared")) continue;
-    const ev = r.events.filter((e) => e.kind === "customer_shared" && (!lastCheckAt || e.at > lastCheckAt));
+    // 2026-10-28 古さの線（AIX_BROUGHT_MAX_AGE_DAYS・既定なし）: 確認の結果を返した記録が無いまま古くなった持ち込み（☆ 9/21 の物件が 10/26 にも残る形）を入れない
+    const ageFloor = opts.maxAgeDays && opts.maxAgeDays > 0 ? (opts.nowMs ?? Date.now()) - opts.maxAgeDays * 86400_000 : null;
+    const ev = r.events.filter((e) => e.kind === "customer_shared" && (!lastCheckAt || e.at > lastCheckAt) && (ageFloor === null || Date.parse(e.at) >= ageFloor));
     if (!ev.length) continue;
     const first = ev.reduce((a, b) => (a.at <= b.at ? a : b));
     shared.push({ key: r.key, name: cleanBroughtName(String(r.ref?.display ?? r.names?.[0] ?? "")), at: first.at, source: first.text ?? null });
@@ -101,16 +108,35 @@ export function aixEstimatePrefillEnabled(env: Record<string, string | undefined
  *   見積書が無い時に「御見積書作成しお送り」と約束する下書きが出た（10/14 まで 1・スタッフが消した）
  *   決めるのは書く役（材料・決定論で消さない）。申込が入りそう（お客様が申込・抑えたいと言った等）な時は申込の締めでよい
  */
-export function checkResultFormMaterial(o: { pattern: string | null | undefined; hasEstimate: boolean }): string {
+export function checkResultFormMaterial(o: { pattern: string | null | undefined; hasEstimate: boolean; vacating?: boolean; env?: Record<string, string | undefined> }): string {
   const p = String(o.pattern ?? "");
   const lines: string[] = [];
+  // 2026-10-28 竹内さん（タツヤ・#34）「空室のお部屋の場合は内覧誘導に繋げる」「2通目（結果の文）の始まりになぜ『ありがとうございます』」・見積書は「最大限割引しました」。
+  //   入れる CHECK_FORM_1028=on（既定 off・off は下の旧の行のまま）
+  if ((p === "available" || p === "alternative") && checkForm1028On(o.env)) {
+    lines.push(o.vacating
+      ? "締め: 退去予定のお部屋はまだご内覧頂けない → ご査収（「お手隙の際にご査収ください！！」）。お客様が申込・抑えたいと言った時は申込の締め"
+      : "締め: 空室のお部屋は内覧のご案内（竹内さんの形「〇〇さんお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！お気軽にお申し付けください😌！！」）");
+    lines.push("資料・御見積書の後に続く結果の文はこちらの続きの文 → 「ありがとうございます」等の受け止めの言葉で始めない（「お送り頂きました〈物件名〉、現在募集中のお部屋となります！！」から）");
+    lines.push(o.hasEstimate ? "御見積書は「最大限割引しました初期費用の御見積書同封させて頂きました😊！！」" : "今回は御見積書を同封しない。御見積書を作成してお送りする約束も書かない（聞かれていない約束を作らない）");
+    return `【竹内さんの文の型（物件確認した・実送信の多数の形）】\n${lines.map((l) => `・${l}`).join("\n")}`;
+  }
   if (p === "available" || p === "alternative") {
     lines.push("締めはご査収（「お手隙の際にご査収ください！！」）か内覧のご案内（「ご都合よろしいお日にちにお部屋ご案内させて頂きます！！」）が竹内さんの多数の形。「お申込みしお部屋抑えさせて頂きます」の締めは、お客様が申込・抑えたいと言った時や申込が入りそうな時だけ（竹内さん 39通中 1）");
     if (!o.hasEstimate) lines.push("今回は御見積書を同封しない。御見積書を作成してお送りする約束も書かない（聞かれていない約束を作らない）");
   } else if (p === "unavailable") {
     lines.push("「〈物件名〉につきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！」の1文で終えるのが竹内さんの多数の形（25通中 18）。次の物件のピックアップ・新着の約束は、お客様が次を頼んでいる時だけ");
+    // 2026-10-28 竹内さん（ひめの・#35）「号室とかは入れなくて良いが、物件名を入れた方が親切」「物件が募集なければそもそも駐車場はない（物件に付随する）」
+    if (checkForm1028On(o.env)) {
+      lines.push("物件名は入れる（号室は書かない）。物件名が分からない時は物件名を作らない");
+      lines.push("同じ約束の中の付随の確認（駐車場・ペット・設備 等）は、物件が募集に出ていないので書かない");
+    }
   }
   return lines.length ? `【竹内さんの文の型（物件確認した・実送信の多数の形）】\n${lines.map((l) => `・${l}`).join("\n")}` : "";
+}
+/** 物件確認した の文の型の 10/28 の追加（空室は内覧のご案内で締める・結果の文を受け止めで始めない・最大限割引・物件なかったは物件名だけで付随の確認を書かない）。既定 off */
+export function checkForm1028On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.CHECK_FORM_1028 ?? "").trim().toLowerCase() === "on";
 }
 export function aixCheckFormMaterialEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.AIX_CHECK_FORM_MATERIAL ?? "").trim().toLowerCase() === "on";

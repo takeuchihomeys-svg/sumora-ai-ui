@@ -60,3 +60,37 @@ export function pickupFocusNote(cands: ReadonlyArray<FocusCandidate>): string {
     cands.length ? `こだわりの候補（強い順・お客様の言い方）:\n${list}\n→ 1つ選ぶか、どれも今回の束に当てはまらない時は「〇〇さんのご条件に近いお部屋」の形にする（合わない事を合うと書かない）` : "→ こだわりが読めない時は「〈エリア〉周辺全域から〇〇さんにオススメできるお部屋」の形にする",
   ].join("\n");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-28 竹内さん（#17 ロト・#39/#40 前田）: AIX【物件ピックアップした】の竹内さんの型と、入れない前置き
+//   #17「お客さんが御堂筋沿線で無いですか？と聞いているので御堂筋沿線で答える。駅名を入れたら情報が多く読まなくなる」
+//     竹内さんの文「御堂筋線沿線全域からご条件に近いお部屋全てピックアップ…3口ガスコンロのお部屋カウンターキッチンのお部屋では御座いませんが、今回お送りする4部屋すべてペット飼育可能・バス・トイレ別のお部屋となります！！」
+//   #39 下書きの文頭「お手数おかけして申し訳ございません！！ご納得頂けるまでしっかりお部屋探しさせて頂きます😊！！」→ 竹内さん「こんな文入れない」。
+//     竹内さんの ピックアップさせて頂きました の通（90日 107通）にお詫び・「ご納得」は 0通。出どころはナレッジ（ai_reply_knowledge a4ac395f・e4f47db1＝8/10 の1通の申込キープの場面の締め）。
+//   #40 竹内さんの型:「夜分遅くに失礼致します（夜の AIX）→ 何を変えて探したか → どこから（お探しの地域全域）→ 件数 → ご条件に近い → ご案内 → ご査収」
+// 入れる PICKUP_SEND_FORM_1028=on（既定 off）。決めるのは書く役（材料）
+
+export function pickupSendForm1028On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PICKUP_SEND_FORM_1028 ?? "").trim().toLowerCase() === "on";
+}
+
+/** お客様の問いの中のエリアの言い方（「御堂筋沿線」「〇〇線沿い」「〇〇周辺」）。無ければ null */
+export function customerAreaAsk(recentCustomerTexts: ReadonlyArray<string | null | undefined>): string | null {
+  for (let i = recentCustomerTexts.length - 1; i >= 0; i--) {
+    const t = String(recentCustomerTexts[i] ?? "").normalize("NFKC");
+    const m = t.match(/([^\s、。！!？?「」]{1,10}?(?:線)?(?:沿線|沿い))/) ?? t.match(/([^\s、。！!？?「」]{2,8}(?:周辺|あたり|辺り))(?:で|の|に)/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+export function pickupSendFormNote(o: { recentCustomerTexts: ReadonlyArray<string | null | undefined> }): string {
+  const ask = customerAreaAsk(o.recentCustomerTexts);
+  const lines = [
+    "竹内さんの型の順: （夜の時は挨拶の行のとおり）→ 何を変えて探したか（お客様の言い直し・ご依頼への答え）→ どこから（「〇〇全域から」「〇〇さんお探しの地域全域から」）→ 件数 → 「ご条件に近いお部屋」→ 内覧のご案内 → ご査収",
+    ask ? `お客様は「${ask}」の言い方で聞いている → 「${ask.replace(/沿い$/, "沿線")}全域から」のようにその言葉で答える。駅名を並べない` : "エリアは一言（「〇〇全域から」）。駅名を並べない（駅名を入れると読まれない）",
+    "ご希望に合わない点がある時は「〇〇のお部屋では御座いませんが、」と正直に先に書き、その後に今回の物件に共通する良い点",
+    "お詫び（「お手数おかけして申し訳ございません」）・「ご納得頂けるまで」等の前置きは書かない（竹内さんのピックアップの通 107通中 0通）",
+  ];
+  return `【竹内さんの物件ピックアップした の型（10/28）】\n${lines.map((l) => `・${l}`).join("\n")}`;
+}

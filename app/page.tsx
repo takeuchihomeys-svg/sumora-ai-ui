@@ -2319,6 +2319,30 @@ export default function Home() {
       )
       .on(
         "postgres_changes",
+        { event: "DELETE", schema: "public", table: "messages" },
+        (payload) => {
+          // 2026-10-28 竹内さん「削除された部分に対しての返信が出ないように」: お客様が LINE で送信を取り消すと webhook が messages の行を消す。
+          //   画面は INSERT しか見ていなかったので取り消した通が出たままだった → 取り消し済みと分かる形にする（読み直すと消える）。
+          //   入れる NEXT_PUBLIC_UNSEND_DELETE_UI=on（既定 off）
+          if ((process.env.NEXT_PUBLIC_UNSEND_DELETE_UI ?? "").trim().toLowerCase() !== "on") return;
+          const oldId = (payload.old as { id?: string | number } | null)?.id;
+          if (oldId === undefined || oldId === null) return;
+          const mid = String(oldId);
+          setConversations((prev) => {
+            let hit = false;
+            const next = prev.map((c) => {
+              if (!c.messages.some((m) => m.id === mid)) return c;
+              hit = true;
+              return { ...c, messages: c.messages.map((m) => (m.id === mid ? { ...m, text: "（この通は送信が取り消されました）", imageUrl: undefined, fileUrl: undefined } : m)) };
+            });
+            if (!hit) return prev;
+            conversationsRef.current = next;
+            return next;
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
         { event: "UPDATE", schema: "public", table: "messages" },
         (payload) => {
           // image_url / file_url が後から埋まったとき（画像・ファイルの非同期取得）に反映する

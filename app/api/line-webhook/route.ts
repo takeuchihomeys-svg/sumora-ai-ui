@@ -4,6 +4,7 @@ import { PRE_APPLY_STATUSES } from "@/app/lib/application-form-detect";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { shouldSetApplyingImageFlag } from "@/app/lib/applying-promotion";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
+import { unsendRefreshOn, unsendRefreshPlan } from "@/app/lib/unsend-refresh";
 import { imageTextForSave, imageTypeForSave } from "@/app/lib/id-document-guard";
 import { parseVisionTypeOutput } from "@/app/lib/image-label";
 import { fileMessageText } from "@/app/lib/received-document";
@@ -739,7 +740,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         const db = getDb();
         const { data: unsentMsg } = await db
           .from("messages")
-          .select("id, text")
+          .select("id, text, sender, created_at, conversation_id")
           .eq("line_message_id", unsendMessageId)
           .maybeSingle();
         if (unsentMsg) {
@@ -754,6 +755,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           }
           // messages から物理削除（取り消されたメッセージは会話履歴・AI文脈から除外）
           await db.from("messages").delete().eq("id", unsentMsg.id);
+          // 2026-10-28 竹内さん「削除された部分に対しての返信が出ないように」（UNSEND_REFRESH=on・既定 off・unsend-refresh.ts）:
+          //   取り消した通を見て作ったブレインの判断・下書き・AIX の提案を外し、残った通で分析し直す
+          const convIdU = (unsentMsg as { conversation_id?: string | null }).conversation_id ?? null;
+          if (unsendRefreshOn() && convIdU) {
+            try {
+              const { data: cv } = await db.from("conversations").select("suggested_aix_meta, last_brain_meta, ai_draft").eq("id", convIdU).maybeSingle();
+              const c = (cv ?? {}) as { suggested_aix_meta?: { analyzed_msg_ts?: string | null } | null; last_brain_meta?: { analyzed_msg_ts?: string | null } | null; ai_draft?: string | null };
+              const plan = unsendRefreshPlan({
+                sender: (unsentMsg as { sender?: string | null }).sender ?? null,
+                unsentAt: (unsentMsg as { created_at?: string | null }).created_at ?? null,
+                suggestedAnalyzedTs: c.suggested_aix_meta?.analyzed_msg_ts ?? null,
+                lastAnalyzedTs: c.last_brain_meta?.analyzed_msg_ts ?? null,
+                hasDraft: !!c.ai_draft,
+              });
+              console.log(JSON.stringify({ tag: "line-webhook:unsend-refresh", conversationId: convIdU, ...plan }));
+              if (plan.rerun) {
+                const patch: Record<string, null> = {};
+                if (plan.clearSuggested) patch.suggested_aix_meta = null;
+                if (plan.clearLast) patch.last_brain_meta = null;
+                if (plan.clearDraft) patch.ai_draft = null;
+                if (Object.keys(patch).length) await db.from("conversations").update(patch).eq("id", convIdU);
+                after(() => runBrainAndNotify(convIdU).then(() => undefined).catch((e) => console.warn("[line-webhook] unsend rerun failed:", e instanceof Error ? e.message : e)));
+              }
+            } catch (e) {
+              console.warn("[line-webhook] unsend refresh failed:", e instanceof Error ? e.message : e);
+            }
+          }
         }
       }
       continue;

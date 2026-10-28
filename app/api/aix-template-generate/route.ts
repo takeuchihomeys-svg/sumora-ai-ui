@@ -96,6 +96,7 @@ import { resolveTemplateSentMessage } from "@/app/lib/aix-template-source";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
 import { examTestSnapshot, snapshotRows } from "@/app/lib/exam-test-snapshot";
 import { aixSecondLeanOn } from "@/app/lib/aix-second-lean";
+import { applyWording1028On, applyPushWordingLine } from "@/app/lib/aix-brain-contract";
 // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 見積書の直後の2通目の形・締め・検査（スタッフが書いた2通目 132通から）
 import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
 import { isEstimateCorrectionContext, resolveOtherAgentEstimate, applyEstimateOwnerLines, estimateOwnerNote, type OtherAgentSituation, type OtherAgentLineMode } from "@/app/lib/aix-owner-answers-1021";
@@ -1834,6 +1835,10 @@ export async function POST(req: NextRequest) {
       : isEstimateSecond ? "" : (ctaGuidance?.note ?? ""),
     // 見積書の直後の2通目の形・締め（最後に1か所）
     estimateSecondNote,
+    // 2026-10-28 APPLY_WORDING_1028（既定 off）: 申込へ の2通目はお客様の言い方（審査かけたい／抑えたい）に合わせる（陽菜 #21）
+    actionType === "application_push" && applyWording1028On()
+      ? applyPushWordingLine((Array.isArray(recentMessages) ? recentMessages : []).filter((m) => m?.sender === "customer").map((m) => m?.text ?? null))
+      : "",
   ].filter(Boolean).join("\n");
 
   // ── DB学習資産の第2システムブロック（TTLキャッシュ内はbyte-stable → prompt cache対象）──
