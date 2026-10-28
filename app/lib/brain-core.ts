@@ -101,7 +101,8 @@ import { customerRequestedPropertyCheck, isPropertyCandidateImage } from "@/app/
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing, moveOutViewingReleased, moveOutViewingVerdict } from "@/app/lib/move-out-context";
 // 2026-09-26 段3（竹内「ステータスや内覧予定をブレインに持たせたら…」「いつまで1つの物件にとらわれないように」）:
 //   お客様の今の段階・お部屋ごとの状況（customer-state）と、主の一手＋並行で探す（parallel-search）
-import { getCustomerState } from "@/app/lib/customer-state-server";
+import { getCustomerState, getCustomerStateChecked } from "@/app/lib/customer-state-server";
+import { brainMaterialMissEnabled, collectMaterialMisses, materialMissNote } from "@/app/lib/brain-material-miss";
 import { buildCustomerStateBrainBlock, type CustomerState } from "@/app/lib/customer-state";
 import { brainDecisionLedgerCols, brainDecisionDigestExtra } from "@/app/lib/brain-decision-ledger";
 import { legacyActionWinRatesEnabled, applicationReachEnabled, winningOutcomeTag, orderWinningPatterns } from "@/app/lib/application-reach";
@@ -1516,7 +1517,11 @@ export async function analyzeConversation(
   // CPが機能する前は30件必要だったが、CP+RAG実装後は前半15件はCPと重複するだけ → トークン削減。
   // count: "exact" は総メッセージ数のプロンプト注入用（B3）
   // 2026-09-26 段3: お客様の今の状況（7本の読み取り・約0.4秒）を下の読み取りと並べて先に投げる。失敗したら旧の【内覧履歴・予定】に戻る
-  const customerStatePromise: Promise<CustomerState | null> = getCustomerState(conversationId).catch(() => null);
+  // 2026-10-28 BRAIN_MATERIAL_MISS_NOTE=on: 読めなかった時は1回だけ読み直し、それでも読めなければ「読めなかった」をブレインに渡す（off は従来どおり）
+  const materialMissOn = brainMaterialMissEnabled();
+  const customerStatePromise: Promise<{ state: CustomerState | null; failed: string | null }> = (materialMissOn
+    ? getCustomerStateChecked(conversationId)
+    : getCustomerState(conversationId).then((state) => ({ state, failed: null as string | null }))).catch((e) => ({ state: null, failed: String(e).slice(0, 200) }));
   const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, sentImagePropsResult, templatesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult, transitionStatsResult, recordedFacts, systemInputs] = await Promise.all([
     supabase
       .from("messages")
@@ -2660,12 +2665,20 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   //   旧の【内覧履歴・予定】は viewing_history の行のまま（lapsed の34/42件は内覧後のお礼を送っているのに「実施は未確認」・物件名なし67%）で、
   //   status=viewing の残り（審査管理の同期）とも突き合わせていなかった。新は内覧の一覧（お礼があれば実施済み）＋段階＋お部屋ごと＋探し続けているか＋ずれ。
   //   毎回変わる値なので customerSpecificText（キャッシュしない所）にだけ入る（system の前置きは変えない）
-  const customerState = await customerStatePromise;
+  const customerStateRes = await customerStatePromise;
+  const customerState = customerStateRes.state;
+  // 2026-10-28 読めなかった材料（error のある読み・今の状況）。ログは off でも出す（数えるため）・ブレインへの1行は on の時だけ
+  const materialMisses = [
+    ...(customerStateRes.failed ? ["customer_state"] : []),
+    ...collectMaterialMisses({ pc: pcResult, sent_props: sentPropsResult, aix_logs: aixLogsResult, open_tasks: openTasksResult, viewings: viewingsResult, viewing_history: viewingHistoryResult, scheduled_msgs: scheduledMsgsResult, checkpoints: checkpointsResult }),
+  ];
+  if (materialMisses.length) console.warn(JSON.stringify({ tag: "brain:material-miss", conversationId, misses: materialMisses, note: materialMissOn }));
   // 2026-09-26 反証レビュー（プロンプトキャッシュ）: 今の状況は毎回変わる（段階・出来事の日付・内覧の予定/日付経過は日付でも変わる）。
   //   旧の【内覧履歴・予定】の位置（2＝この会話で当分変わらない物の並び）に置くと、DeepSeek の先頭一致のキャッシュが
   //   その後ろ（未完了タスク・手本・会社の事実…）ごと外れる → 3（毎回変わる物）の並び・並行で探すの材料の直前に置く（customerStateBlockText）
   let customerStateBlockText = customerState ? buildCustomerStateBrainBlock(customerState) : "";
   const customerStateText = customerStateBlockText;
+  if (materialMissOn && materialMisses.length) customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${materialMissNote(materialMisses)}`;
   // 2026-09-27 竹内「審査中は審査中としておく」③: お送りしたピックアップのうち資料の現況が「審査中」のお部屋（該当が無ければ何も足さない）。
   //   毎回変わる並び（3）の中・今の状況の後ろに置く（system の前置き＝1時間キャッシュは変えない）
   try {

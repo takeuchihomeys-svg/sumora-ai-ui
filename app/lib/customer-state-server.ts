@@ -73,6 +73,24 @@ export async function loadCustomerStateInput(conversationId: string, opts: { now
  * 2026-09-26 反証レビュー: 旧は失敗時に空の状況（段階＝初回・お部屋なし・内覧なし）を返していた。空の状況は「読めなかった」と区別が付かず、
  *   ブレインには「今の段階: 初回・お部屋: まだ送った・話に出たお部屋なし（こちらが正）」、生成には「内覧の話なし」として届く → null にして呼ぶ側の従来の経路に戻す
  */
+/**
+ * 2026-10-28 作業員4（BRAIN_MATERIAL_MISS_NOTE・ブレインの入口だけ）: 「会話が無い」と「読めなかった」を分けて返す。
+ *   読めなかった時は retryMs 待って1回だけ読み直す（失敗した時だけ・7本）。それでも読めなければ failed に理由（null の状況＝従来どおり）
+ */
+export async function getCustomerStateChecked(conversationId: string, opts: { now?: number; retryMs?: number } = {}): Promise<{ state: CustomerState | null; failed: string | null; retried: boolean }> {
+  const once = async () => {
+    try { const input = await loadCustomerStateInput(conversationId, { now: opts.now }); return { state: input ? resolveCustomerState(input) : null, failed: null as string | null }; }
+    catch (e) { return { state: null, failed: (e instanceof Error ? e.message : String(e)).slice(0, 300) }; }
+  };
+  const first = await once();
+  if (!first.failed) return { ...first, retried: false };
+  console.warn("[customer-state] failed (brain・読み直す):", conversationId.slice(0, 8), first.failed);
+  await new Promise((r) => setTimeout(r, opts.retryMs ?? 1500));
+  const second = await once();
+  if (second.failed) console.warn("[customer-state] failed again (brain):", conversationId.slice(0, 8), second.failed);
+  return { ...second, retried: true };
+}
+
 export async function getCustomerState(conversationId: string, opts: { now?: number; brainProperty?: boolean } = {}): Promise<CustomerState | null> {
   try {
     const input = await loadCustomerStateInput(conversationId, opts);
