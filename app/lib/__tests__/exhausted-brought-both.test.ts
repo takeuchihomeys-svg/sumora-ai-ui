@@ -12,10 +12,11 @@ function eq<T>(a: T, b: T, label = "") { if (JSON.stringify(a) !== JSON.stringif
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
 const ON = { EXHAUSTED_BROUGHT_BOTH: "on" };
 
-it("既定 off・off の時は今までの文のまま", () => {
-  eq(exhaustedBroughtBothEnabled({}), false);
-  ok(/出し切りの締めにしない/.test(exhaustedConditionTurnLine({})));
-  eq(exhaustedTodayNote("2026-10-25T23:31:06Z", Date.parse("2026-10-26T04:31:42Z"), {}), "");
+it("既定 on・off の時は今までの文のまま", () => {
+  eq(exhaustedBroughtBothEnabled({}), true);
+  const OFF = { EXHAUSTED_BROUGHT_BOTH: "off" };
+  ok(/出し切りの締めにしない/.test(exhaustedConditionTurnLine(OFF)));
+  eq(exhaustedTodayNote("2026-10-25T23:31:06Z", Date.parse("2026-10-26T04:31:42Z"), OFF), "");
 });
 it("on: 持ち込みの約束を先に＋足した条件は新着で（改めてピックアップしない）", () => {
   const t = exhaustedConditionTurnLine(ON);
@@ -33,7 +34,7 @@ it("ロト: 最後の印が AIX の物件の送付（文なし）でも、on な
     { sender: "customer", text: "出来ればカウンターキッチンが良くて、、", createdAt: "2026-10-26T03:48:11.388Z" },
   ];
   const o = { conditionChangedThisTurn: false, pickupReady: null, deliveredAixAt: ["2026-10-25T23:31:06Z"] };
-  process.env.EXHAUSTED_LABEL_STRONG_TEXT = "";
+  process.env.EXHAUSTED_LABEL_STRONG_TEXT = "off";
   ok(/全力サポート】）を送り/.test(exhaustedMaterialLine(searchExhausted(msgs, o))), "off は今まで通り");
   process.env.EXHAUSTED_LABEL_STRONG_TEXT = "on";
   const r = searchExhausted(msgs, o);

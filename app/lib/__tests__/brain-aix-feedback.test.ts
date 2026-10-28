@@ -5,7 +5,7 @@
 // 実行: npx tsx app/lib/__tests__/brain-aix-feedback.test.ts（自己完結ハーネス。全 PASS で exit 0）
 import {
   pairBrainDecisions, collapsePresses, aggregateBrainAixFeedback, sceneSignalFallback, resolveBrainCheckPattern,
-  feedbackGateRate, unrepliedCustomerTurn, customerTurnBeforePress, buildSceneEvidencePromptText, sceneEvidenceForTurn,
+  feedbackGateRate, unrepliedCustomerTurn, customerTurnBeforePress, buildSceneEvidencePromptText, sceneEvidenceForTurn, pickFeedbackActionRows, brainFeedbackOrderOn,
   type BrainDecisionRow, type AixPressRow,
 } from "../brain-aix-feedback";
 import { detectAixSceneEvidence } from "../aix-scene-evidence";
@@ -233,6 +233,32 @@ describe("buildSceneEvidencePromptText（証拠と実績の欄・規則にしな
   });
   it("証拠も実績も無ければ空文字（プロンプトを変えない）", () => {
     expect(buildSceneEvidencePromptText(null, [])).toBe("");
+  });
+});
+
+describe("BRAIN_FEEDBACK_ORDER（過去の AIX 判断の欄の4行を決まった順に・10/28）", () => {
+  const row = (action: string, pressed: number, n: number, alt: Array<{ aix: string; n: number }> = [{ aix: "x", n: 1 }]) => ({ kind: "action" as const, action, scene: null, n, pressed, matched: 0, alt_top: alt });
+  // 10/28 の DB の並び（order なしで返った順）
+  const db = [row("none", 152, 1038), row("property_search", 1, 10), row("meeting_place", 24, 52), row("estimate_sheet", 30, 75), row("application_push", 11, 37),
+    row("property_send", 47, 225), row("property_check_result", 73, 255), row("viewing_invite", 40, 104), row("phone_call", 2, 11, [])];
+  it("既定 on・off で戻る", () => {
+    expect(brainFeedbackOrderOn({})).toBe(true);
+    expect(brainFeedbackOrderOn({ BRAIN_FEEDBACK_ORDER: "off" })).toBe(false);
+  });
+  it("on: 押された件数の多い順の4行（none と代わりの無い行は除く）", () => {
+    expect(pickFeedbackActionRows(db, true).map((r) => r.action).join(",")).toBe("property_check_result,property_send,viewing_invite,estimate_sheet");
+  });
+  it("on: DB の並びが変わっても同じ4行・同じ文", () => {
+    expect(buildSceneEvidencePromptText(null, [...db].reverse(), true)).toBe(buildSceneEvidencePromptText(null, db, true));
+  });
+  it("off: 旧の通り DB の並びの先頭4行", () => {
+    expect(pickFeedbackActionRows(db, false).map((r) => r.action).join(",")).toBe("property_search,meeting_place,estimate_sheet,application_push");
+  });
+  it("on: 代わりの AIX の同数は名前順（並びの入れ替わりで文が変わらない）", () => {
+    const a = buildSceneEvidencePromptText(null, [row("application_push", 11, 37, [{ aix: "phone_call", n: 1 }, { aix: "estimate_sheet", n: 1 }])], true);
+    const b = buildSceneEvidencePromptText(null, [row("application_push", 11, 37, [{ aix: "estimate_sheet", n: 1 }, { aix: "phone_call", n: 1 }])], true);
+    expect(a).toBe(b);
+    expect(a.includes("estimate_sheet 1件・phone_call 1件")).toBe(true);
   });
 });
 

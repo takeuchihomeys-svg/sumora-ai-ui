@@ -12,7 +12,7 @@ function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected
 const ON = { SCREENING_CONSULT_PHONE: "on" };
 const SAKI = "相談なのですが、今、水商売をしていて、いつも不動産屋さんに審査通るように職場の案内してもらうのですが、こちらでもしてもらえますか？";
 
-it("既定 off", () => { eq(screeningConsultPhoneEnabled({}), false); eq(screeningPhoneTurnLine(SAKI, {}), ""); });
+it("既定 on・off で止める", () => { eq(screeningConsultPhoneEnabled({}), true); eq(screeningConsultPhoneEnabled({ SCREENING_CONSULT_PHONE: "off" }), false); eq(screeningPhoneTurnLine(SAKI, { SCREENING_CONSULT_PHONE: "off" }), ""); });
 it("咲: 水商売・職場の案内の審査の相談 → 電話の材料", () => {
   ok(screeningConsultTurn(SAKI));
   const t = screeningPhoneTurnLine(SAKI, ON);
@@ -38,7 +38,7 @@ it("本番の実物: 職業を言っただけ・初回の条件の紙・別の�
 it("名義貸しの行は on の時「通常の審査の相談は電話にしない」を書かない", () => {
   const t = screeningPhoneTurnLine("友人の名義で契約できますか", { SCREENING_PHONE_LINE: "on", ...ON });
   ok(/名義/.test(t) && !/電話にしない/.test(t), t);
-  ok(/電話にしない/.test(screeningPhoneTurnLine("友人の名義で契約できますか", { SCREENING_PHONE_LINE: "on" })));
+  ok(/電話にしない/.test(screeningPhoneTurnLine("友人の名義で契約できますか", { SCREENING_PHONE_LINE: "on", SCREENING_CONSULT_PHONE: "off" })));
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -14,10 +14,17 @@
 //   書かないための約束: analyzeConversation だけを呼ぶ（保存は analyzeAndSaveBrainMeta の仕事）・property_customer_id を渡さない
 //   （渡すと全項目の層でお客様の要約を property_customers に書く）。llm_usage_logs には使用量の記録だけが残る（route=script:replay-brain-readonly）
 import { createClient } from "@supabase/supabase-js";
-import { setupLlmTest, YUMA, type LlmTestHarness } from "./lib/llm-test-harness";
+import { setupLlmTest, YUMA as YUMA_MAIN, type LlmTestHarness } from "./lib/llm-test-harness";
+import { resolveExamConversation, liveLeaseOf } from "./lib/exam-brain-io";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.split("=").slice(1).join("=");
+// 2026-10-29 --to=YUMA2〜YUMA5: YUMA が使えない時（申込中・画面の確かめ中）に試験の会話へ写す。試験が使っている会話（鍵が生きている）は断る
+const TO = arg("to");
+const TO_CONV = TO ? resolveExamConversation(TO) : null;
+if (TO && !TO_CONV) throw new Error(`--to は YUMA2〜YUMA5 だけ: ${TO}`);
+if (TO_CONV && liveLeaseOf(TO_CONV.name)?.alive) throw new Error(`${TO_CONV.name} は今の試験が使っています（鍵 ${liveLeaseOf(TO_CONV.name)?.file}）`);
+const YUMA = TO_CONV?.id ?? YUMA_MAIN;
 let h: LlmTestHarness | null = null;
 let cleanup: string[] = [];
 
@@ -70,7 +77,7 @@ async function main() {
     await h.waitUntilYumaQuiet([]);
     await copyToYuma(source, Math.max(2, Math.min(40, Number(arg("last") ?? 12))));
   }
-  h.assertYuma(YUMA);
+  if (TO_CONV) h.assertTestConversation(YUMA); else h.assertYuma(YUMA);
   const { data: c } = await sb.from("conversations").select("status, brain_strategy, conversation_direction").eq("id", YUMA).maybeSingle();
   const cc = (c ?? {}) as Record<string, unknown>;
   const strategy = (cc.brain_strategy ?? null) as never;

@@ -346,6 +346,25 @@ const SCENE_LABEL: Record<string, string> = {
   S11_other_room: "室内の写真・動画・URL の依頼、または送った物件の別の部屋・間取りの質問（手元の写真・室内イメージURL を AIX【物件確認した→室内写真を確認した】でスタッフが送る）", application: "申込",
 };
 
+// 2026-10-28 作業員5 BRAIN_FEEDBACK_ORDER（既定 on・戻す: off）: brain_aix_feedback は order なしで読んでいたため、
+//   毎日の集計（11:21Z の upsert）で DB の並びが入れ替わり、「過去の AIX 判断」の欄に入る4行が日ごとに偶然で決まっていた
+//   （10/28: 物件確認した 73件・物件ピックアップした 47件・内覧へ 40件が入らず、10/17 で止まった property_search 1件が入っていた）。
+//   並べ方を決まった鍵に: 押された件数の多い順 → 判断の件数の多い順 → action の名前順。代わりの AIX（alt_top）も件数の多い順 → 名前順。
+//   試験の入力も揃う（同じ表なら同じ文＝録音の答えを使える）。
+export function brainFeedbackOrderOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_FEEDBACK_ORDER ?? "on").trim().toLowerCase() !== "off";
+}
+type ActionRowLike = { action: string | null; n: number; pressed: number; alt_top: ReadonlyArray<{ aix: string; n: number }> };
+/** 「過去の AIX 判断」の欄に入れる行（最大4）。ordered=true で決まった順（押された件数→件数→名前） */
+export function pickFeedbackActionRows<T extends ActionRowLike & { kind: string }>(feedback: ReadonlyArray<T>, ordered: boolean): T[] {
+  const rows = feedback.filter((f) => f.kind === "action" && f.action && f.action !== "none" && f.alt_top.length > 0);
+  if (ordered) rows.sort((a, b) => (b.pressed ?? 0) - (a.pressed ?? 0) || (b.n ?? 0) - (a.n ?? 0) || String(a.action).localeCompare(String(b.action)));
+  return rows.slice(0, 4);
+}
+function altTopOrdered(alt: ReadonlyArray<{ aix: string; n: number }>, ordered: boolean): Array<{ aix: string; n: number }> {
+  return ordered ? [...alt].sort((a, b) => b.n - a.n || a.aix.localeCompare(b.aix)) : [...alt];
+}
+
 /**
  * ブレインのプロンプトに入れる「証拠」と「実績」の欄。規則としては書かない（AIX を決めるのはブレイン）。
  * @param feedback brain_aix_feedback の行（kind=scene_staff / action）
@@ -353,6 +372,7 @@ const SCENE_LABEL: Record<string, string> = {
 export function buildSceneEvidencePromptText(
   e: AixSceneEvidence | null,
   feedback: ReadonlyArray<Pick<FeedbackRow, "kind" | "action" | "scene" | "n" | "pressed" | "matched" | "alt_top">>,
+  ordered: boolean = brainFeedbackOrderOn(),
 ): string {
   const lines: string[] = [];
   if (e) {
@@ -362,12 +382,12 @@ export function buildSceneEvidencePromptText(
     lines.push(`\n【今回の顧客発言の場面（決定論の証拠。AIX を決めるのはあなた）】${SCENE_LABEL[e.scene] ?? e.scene}／候補の AIX: ${e.candidateAction}${cp}${by}`);
     const sc = feedback.find((f) => f.kind === "scene_staff" && f.scene === e.scene);
     if (sc && sc.alt_top.length > 0) {
-      lines.push(`【この場面でスタッフが実際に押した AIX の実績（事実・直近${sc.n}件）】${sc.alt_top.map((a) => `${a.aix} ${a.n}件`).join("・")}`);
+      lines.push(`【この場面でスタッフが実際に押した AIX の実績（事実・直近${sc.n}件）】${altTopOrdered(sc.alt_top, ordered).map((a) => `${a.aix} ${a.n}件`).join("・")}`);
     }
   }
-  const actionRows = feedback.filter((f) => f.kind === "action" && f.action && f.action !== "none" && f.alt_top.length > 0).slice(0, 4);
+  const actionRows = pickFeedbackActionRows(feedback, ordered);
   if (actionRows.length > 0) {
-    lines.push(`【あなたの過去の AIX 判断と、スタッフが代わりに押した AIX（事実）】${actionRows.map((f) => `${f.action}→AIX が押された${f.pressed}件中 同じ AIX ${f.matched}件（代わりに ${f.alt_top.slice(0, 2).map((a) => `${a.aix} ${a.n}件`).join("・")}）`).join("／")}`);
+    lines.push(`【あなたの過去の AIX 判断と、スタッフが代わりに押した AIX（事実）】${actionRows.map((f) => `${f.action}→AIX が押された${f.pressed}件中 同じ AIX ${f.matched}件（代わりに ${altTopOrdered(f.alt_top, ordered).slice(0, 2).map((a) => `${a.aix} ${a.n}件`).join("・")}）`).join("／")}`);
   }
   if (lines.length === 0) return "";
   return `${lines.join("\n")}\n※上は証拠と実績。今回の会話の実態に合わない時は従わなくてよい。`;

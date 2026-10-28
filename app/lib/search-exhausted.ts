@@ -113,7 +113,8 @@ export type ExhaustResult = { exhausted: boolean; markerAt: string | null; reaso
  * 強さの判定は「強い印だけ」で同じ判定をやり直した結果（強い印の後に条件が変わった・見積に進んだなら強くない）。
  */
 export function exhaustedLabelStrongTextEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.EXHAUSTED_LABEL_STRONG_TEXT ?? "").trim().toLowerCase() === "on";
+  // 10/29 既定 on（exhausted-both-on と一緒に確かめた・悪化0）。止める時は EXHAUSTED_LABEL_STRONG_TEXT=off
+  return (env.EXHAUSTED_LABEL_STRONG_TEXT ?? "on").trim().toLowerCase() !== "off";
 }
 
 export function searchExhausted(msgs: ReadonlyArray<ExMsg>, o: { conditionChangedThisTurn: boolean; pickupReady: boolean | null | undefined; zenryokuSentAt?: ReadonlyArray<string>; deliveredAixAt?: ReadonlyArray<string>; placeMentioned?: boolean }): ExhaustResult {

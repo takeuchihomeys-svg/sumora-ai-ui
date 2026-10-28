@@ -4320,7 +4320,10 @@ export default function Home() {
     }
   };
 
-  const generateReply = async () => {
+  // 2026-10-28 その場の側の2択（TWO_CHOICE_NOW_SIDE）: 右の「返信する（〇〇の約束）」から呼ぶ時だけ promiseHint（ブレインが作った約束の指定）を受け取る。
+  //   onClick={generateReply} はイベントを渡すので、文字列の promiseHint がある時だけ使う
+  const generateReply = async (opts?: unknown) => {
+    const promiseHint = opts && typeof opts === "object" && typeof (opts as { promiseHint?: unknown }).promiseHint === "string" ? String((opts as { promiseHint: string }).promiseHint) : "";
     if (!selectedConversation.id) return;
     const genConvId = selectedConversation.id; // finallyでdraftPreparingをリセットするために保存
 
@@ -4431,6 +4434,9 @@ export default function Home() {
           genReplyHint = (genReplyHint ? genReplyHint + "\n" : "") + `【条件変更/ピックアップ依頼（追加質問禁止・変更内容を具体的に言葉にして即行動宣言）】${genMsgLines.join("・")}`;
         }
       }
+      // 2択で返信（約束）を選んだ＝スタッフの指定（✨と同じ指定生成モード・自動の手がかりではない）
+      const genHintIsStaffPick = !!promiseHint;
+      if (promiseHint) genReplyHint = promiseHint;
 
       const res = await fetch("/api/generate-reply", {
         method: "POST",
@@ -4446,7 +4452,7 @@ export default function Home() {
           customerSummary: linkedCustomerForGen?.ai_summary ?? undefined,
           customerStructured: linkedCustomerForGen?.structured ?? undefined,
           replyHint: genReplyHint || undefined,
-          replyHintAuto: !!genReplyHint, // 2026-10-15 #7: bg-async と同じ自動の手がかり（本質がブレインの番は材料に・✨のスタッフの指定は付けない）
+          replyHintAuto: !!genReplyHint && !genHintIsStaffPick, // 2026-10-15 #7: bg-async と同じ自動の手がかり（本質がブレインの番は材料に・✨のスタッフの指定は付けない）
           hasViewed: selectedConversation.hasViewed ?? false,
           activeTaskTypes: (activeTasks[selectedConversation.id] ?? []).map(t => t.task_type),
           recentMessages: (() => {
@@ -10202,7 +10208,9 @@ export default function Home() {
                           onClick={() => {
                             logTwoChoice("reply");
                             setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]));
-                            generateReply();
+                            // その場の側の2択は、右の返信で約束の下書きを作る（brain-core の two_choice_reply_hint）
+                            const tcHint = (brainMeta as { two_choice_reply_hint?: string | null }).two_choice_reply_hint;
+                            void generateReply(tcHint ? { promiseHint: tcHint } : undefined);
                           }}
                           className="flex-1 rounded-xl px-3 py-2 text-[12px] font-bold text-white text-center active:opacity-80 leading-tight"
                           style={{ background: "linear-gradient(135deg, #1565C0, #29B6F6)" }}>

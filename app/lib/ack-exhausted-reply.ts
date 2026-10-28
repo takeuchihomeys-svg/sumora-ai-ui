@@ -57,7 +57,8 @@ export function exhaustedConditionAxisEnabled(env: Env = envOf()): boolean {
 /** 材料の行の範囲の1文（足した・絞った番だけ。ゆるめた番・送った物件への反応の番は外＝理由つき） */
 /** 戻す EXHAUSTED_BROUGHT_FIRST=off */
 /** 2026-10-28 #24: 持ち込みの物件の約束と、足した条件の出し切りの締めを両方（既定 off・入れる EXHAUSTED_BROUGHT_BOTH=on） */
-export function exhaustedBroughtBothEnabled(env: Env = envOf()): boolean { return (env.EXHAUSTED_BROUGHT_BOTH ?? "").trim().toLowerCase() === "on"; }
+// 10/29 既定 on（試験 exhausted-both-on 6問×3 悪化0・良くなった2 q006 q007・合格 2→4・依頼 13→18/24）。止める時は EXHAUSTED_BROUGHT_BOTH=off
+export function exhaustedBroughtBothEnabled(env: Env = envOf()): boolean { return (env.EXHAUSTED_BROUGHT_BOTH ?? "on").trim().toLowerCase() !== "off"; }
 /** 2026-10-28 #24: 出し切りの印が今日（JST）なら「今日はもう今の条件で送り切っている」を足す（EXHAUSTED_BROUGHT_BOTH と同じ切替） */
 export function exhaustedTodayNote(markerAt: string | null | undefined, nowMs: number, env: Env = envOf()): string {
   if (!exhaustedBroughtBothEnabled(env) || !markerAt) return "";
