@@ -115,7 +115,7 @@ import { secondMsgMaterialsOn, applySecondFinalChecks, type BrainBundleMeta } fr
 import type { SecondMaterials } from "@/app/lib/second-message-materials-server";
 import { recommendSecondAppealOn, recentAreaText, recentRequestCoversProperty, appendReceiptAfterCta, ensureRentTotalInRecommend } from "@/app/lib/recommend-second-appeal";
 import { buildSecondAppealNote, secondAppealPointsOn } from "@/app/lib/second-appeal-points";
-import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, APPEAL_JUDGE_SYSTEM, type AppealJudge } from "@/app/lib/second-appeal-judge";
+import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, APPEAL_JUDGE_SYSTEM, countAppeals, overAppealCount, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
 export const maxDuration = 60;
@@ -2083,6 +2083,20 @@ export async function POST(req: NextRequest) {
           text = retryText;
         }
         if (still.length > 0) console.warn(JSON.stringify({ tag: "aix-template-generate:second-style-left", hits: still, head: (retryText || text).slice(0, 80) }));
+      }
+      // 2026-10-29 AIX_SECOND_APPEAL_JUDGE: ブレインが決めた訴求の数を超えて並べた時は1回だけ作り直す（本文は書き換えない・数が減った時だけ採る）
+      if (secondJudge && overAppealCount(text, secondJudge)) {
+        const before = countAppeals(text);
+        console.warn(JSON.stringify({ tag: "aix-template-generate:second-appeal-count-retry", n: before, judged: secondJudge.count, head: text.slice(0, 80) }));
+        const retry = await callClaude(
+          userPrompt +
+          `\n\n━━━━━━━━━━━━━━━━━━━━\n【🚨 作り直し（訴求を並べすぎた）】\n━━━━━━━━━━━━━━━━━━━━\n` +
+          `前回の出力:\n${text}\n\n` +
+          `ブレインの判断は「${secondJudge.first.text}」${secondJudge.count === 2 && secondJudge.second ? `と「${secondJudge.second.text}」の2つ` : "の1つ"}を強く言う事。前回は ${before} 個の要素を並べている。\n` +
+          `・判断の訴求だけを、理由を添えて強く言う。駅・築年・帖数・設備を足して並べない。締めは判断のまま。\n出力は本文のみ。`,
+        );
+        const retryText = retry.ok && retry.text ? fixNamePlaceholderAddress(retry.text, resolvedCustomerName).text : "";
+        if (retryText && countAppeals(retryText) < before && !isNotACustomerReply(stripMetaNarration(retryText).text) && foreignRoomsInSecond(retryText, secondFirstForCheck).length === 0) text = retryText;
       }
     }
 

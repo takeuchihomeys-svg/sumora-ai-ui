@@ -68,7 +68,7 @@ export const APPEAL_JUDGE_SYSTEM = [
   "あなたは賃貸仲介会社の営業の統括（ブレイン）です。お客様に物件を1件オススメする LINE の2通目で、何を訴求するかを決めます（文は書きません）。",
   "竹内さん（社長）は、そのお客様の希望・こだわり・不安・暮らし方・今の状況に合わせて、物件の事実のうち一番刺さる物を1〜2個だけ強く言います。一般的な設備の羅列はしません。",
   "決める物: first（一番刺さる物＝下の物件の事実の候補から1つ・お客様の何に応えるかの理由）・second（2番目・無ければ null）・count（1か2）・form（言い方の型を1つ: 下の型の要約の結び方から）・closing（viewing＝内覧へ／apply＝申込へ／receipt＝ご査収だけ）と理由。",
-  "締めの決まり: 刺さる物件で今内覧できる→viewing／刺さるが退去予定で内覧できない・他にも申込が入りそう・お客様が急いで決めたい→apply／そこまで刺さらない・様子見→receipt。",
+  "締めの決まり（竹内さん 10/29 確認事項 No.34）: 退去予定でまだ内覧できない部屋→receipt（お手隙の際にご査収）が基本。apply（申込へ）は、入居が近い・お客様が急いでいる・かなり刺さっている（前向きな言葉がある）時だけ。今内覧できる部屋は、希望の条件に合っていれば刺さると見て viewing（竹内さんは空室の2通目の64%で内覧に誘う）。条件のずれが大きい・お客様が様子見・比べている途中の時だけ receipt。",
   "物件の事実は候補に書いてある事だけ。候補に無い事実・金額・節約額は使わない。",
   "出力は JSON だけ: {\"first\":{\"text\":\"…\",\"why\":\"…\"},\"second\":{\"text\":\"…\",\"why\":\"…\"}|null,\"count\":1|2,\"form\":\"…\",\"closing\":\"viewing\"|\"apply\"|\"receipt\",\"closingWhy\":\"…\"}",
 ].join("\n");
@@ -126,4 +126,16 @@ export function judgedAppealNote(j: AppealJudge, scene: string): string {
     takeuchiFormSummary(scene),
     ex.length ? `【竹内さんの2通目の手本（場面と訴求が近い物・写さず型だけ使う）】\n${ex.map((t, k) => `${k + 1}) ${t.replace(/\n+/g, " ")}`).join("\n")}` : "",
   ].filter(Boolean).join("\n");
+}
+
+/** 2通目の訴求の数（挨拶・締めの行は数えない・「敷金礼金なし＋初期費用を抑える」は1つ）。出た後の確かめ用 */
+export function countAppeals(text: string): number {
+  const body = String(text ?? "").split(/\n/).filter((l) => !/お手隙|ご査収|お気に召され|お気軽|お世話になって/.test(l)).join("\n");
+  const els = new Set(APPEAL_ELEMENTS.filter((e) => e.re.test(body)).map((e) => e.key));
+  if (els.has("shikirei") && els.has("saving")) els.delete("saving");
+  return els.size;
+}
+/** 判断した数を超えて並べたか（竹内さんの2通目は平均 2.4＝言い回し1つが2要素に当たる分を1つ見込む） */
+export function overAppealCount(text: string, j: Pick<AppealJudge, "count">): boolean {
+  return countAppeals(text) > j.count + 1;
 }

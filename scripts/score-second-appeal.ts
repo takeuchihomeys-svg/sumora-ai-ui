@@ -18,8 +18,8 @@ function appeal(t: string): { first: string | null; n: number; close: string } {
 }
 type Row = { id: string; text: string; err?: string | null; score?: { total?: number; pass?: boolean } };
 function score(file: string) {
-  const rows = (JSON.parse(readFileSync(file, "utf8")) as { rows?: Row[] } & Row[]);
-  const list: Row[] = Array.isArray(rows) ? rows : (rows.rows ?? []);
+  const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+  const list: Row[] = Array.isArray(parsed) ? (parsed as Row[]) : ((parsed as { rows?: Row[] }).rows ?? []);
   const per = new Map<string, { first: boolean; dn: number; close: boolean; gClose: string; text: string; gold: string }>();
   for (const r of list) {
     const gold = qs.get(r.id); if (!gold || r.err || !r.text) continue;
