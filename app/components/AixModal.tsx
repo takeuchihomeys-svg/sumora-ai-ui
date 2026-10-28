@@ -49,6 +49,7 @@ import { detectCoResidentWithOccupants } from "../lib/co-resident";
 import { APP_FORMAT_SECTIONS } from "../lib/application-format";
 import ZumenZipImport from "./ZumenZipImport";
 import PickupListImport, { type PickedPickup } from "./PickupListImport";
+import { viewingVacancyPickOn, aixToolPickOn, vacateDateFromLines, sameAsPreferred } from "../lib/sent-property-pick";
 import { isPlaceholderPropertyName, missingPropertyNameIndexes, missingPropertyNameMessage } from "../lib/property-name-required";
 import { meetingSecondLine, meetingDayWordOn } from "../lib/meeting-place-form";
 import { CHECK_RESULT_MAX_PROPS as CHECK_MAX_PROPS, circled, checkResultEstimateBundleOn, shouldUseEstimateBundle, buildCheckResultSendPlan, describeSendPlan, type BundlePropertyInput } from "../lib/check-result-estimate-bundle";
@@ -1001,6 +1002,22 @@ export default function AixModal({
   const [sendImageFiles, setSendImageFiles] = useState<File[]>(initialSendImages ?? []);
   // 2026-10-18 竹内さん 10/16: 売上サポの物件一覧から足した画像（行 ID と一緒に持つ・送る時に画像ごとの行 ID に結ぶ）
   const [addedPickups, setAddedPickups] = useState<PickedPickup[]>([]);
+  // 2026-10-28 竹内さん #18: 物件オススメで AIX ツールから選んだ1件（同じ File のまま送る時だけ行 ID を渡す）
+  const [toolPick, setToolPick] = useState<PickedPickup | null>(null);
+  const brainPickName = brainPickRef(brainPropertyPick ?? null)?.display ?? null;
+  // 2026-10-28 #8: 退去予定物件に送った物件を当てる（物件名・資料の画像・退去予定日＝資料の読み取りの字のまま。読めなければ空のまま）
+  const applyVacancyCandidate = async (c: ViewingPropertyCandidate | null) => {
+    if (!c) { setViewingVacancyName(""); setViewingVacancyPreview(""); return; }
+    setViewingVacancyName(c.label);
+    if (c.imageUrl) setViewingVacancyPreview(c.imageUrl);
+    setPreview("");
+    if (!c.imageUrl) return;
+    try {
+      const { data } = await supabase.from("image_details").select("lines").eq("image_url", c.imageUrl).maybeSingle();
+      const d = vacateDateFromLines((data as { lines?: unknown } | null)?.lines);
+      if (d) setViewingVacancyMoveOut(d);
+    } catch { /* 退去予定日はスタッフが入れる */ }
+  };
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
   const [sendKeyword, setSendKeyword] = useState("");
@@ -2764,6 +2781,7 @@ export default function AixModal({
         // 2026-09-27: 売上サポから来た1件（物件オススメ）の行 ID。セットされた資料のまま送る時だけ渡す
         //   （サーバーが資料の入居時期を読み、「即入居」が資料と合わない時は注意を出す）
         if (initialPickupIds?.length === 1 && initialImageFile && imageFile === initialImageFile) body.pickup_ids = initialPickupIds;
+        else if (toolPick && imageFile === toolPick.file) body.pickup_ids = [toolPick.id];
         // 新着フラグ
         if (isNewArrival) body.is_new_arrival = true;
         // ピックアップ種別（継続ピックアップの場合に追客向けプロンプトを使用）
@@ -4423,6 +4441,11 @@ export default function AixModal({
                   >🏠 物件資料を選択</button>
                 )}
                 <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
+                {/* 2026-10-28 竹内さん #18: AIX ツール（売上サポの物件一覧）から1件選んで物件資料にセット（ブレインが決めた物件に先にチェック・NEXT_PUBLIC_AIX_TOOL_PICK=on） */}
+                {aixToolPickOn(process.env.NEXT_PUBLIC_AIX_TOOL_PICK) && conversationId && (
+                  <PickupListImport conversationId={conversationId} single label="📋 AIX ツールから選択" preferName={brainPickName}
+                    onAdd={(picked) => { const x = picked[0]; if (!x) return; setToolPick(x); onSelectImage({ target: { files: [x.file] } } as unknown as React.ChangeEvent<HTMLInputElement>); setPreview(""); }} />
+                )}
               </div>
 
               {/* ③室内イメージURL（任意） */}
@@ -4523,7 +4546,7 @@ export default function AixModal({
                 </button>
                 <input ref={sendFileInputRef} type="file" accept="image/*" multiple onChange={onSelectSendImages} className="hidden" />
                 <ZumenZipImport onAdd={addSendImageFiles} />
-                <PickupListImport conversationId={conversationId} onAdd={(picked) => { setAddedPickups((prev) => [...prev, ...picked]); addSendImageFiles(picked.map((x) => x.file)); }} />
+                <PickupListImport conversationId={conversationId} {...(aixToolPickOn(process.env.NEXT_PUBLIC_AIX_TOOL_PICK) ? { label: "📋 AIX ツールから選択", preferName: brainPickName } : {})} onAdd={(picked) => { setAddedPickups((prev) => [...prev, ...picked]); addSendImageFiles(picked.map((x) => x.file)); }} />
               </div>
               {/* モード選択 */}
               <div>
@@ -7791,6 +7814,24 @@ export default function AixModal({
 
               {viewingIsVacancy && (
                 <div className="mt-2 rounded-xl border border-orange-200 bg-orange-50 p-3">
+                  {/* 2026-10-28 竹内さん #8（じゅな 10/25）: 送った物件の候補から選ぶ（話の流れで決まった物件を先に選ぶ・退去予定日は送った資料の読み取りから・NEXT_PUBLIC_VIEWING_VACANCY_PICK=on） */}
+                  {viewingVacancyPickOn(process.env.NEXT_PUBLIC_VIEWING_VACANCY_PICK) && (
+                    <SentPropertyPicker
+                      conversationId={conversationId}
+                      selected={viewingVacancyName ? [{ name: viewingVacancyName }] : []}
+                      onToggle={(c, select) => { void applyVacancyCandidate(select ? c : null); }}
+                      onLoaded={(cands) => {
+                        if (viewingVacancyName.trim()) return;
+                        const turn = { customerText: latestCustomerTurnText(recentMessages ?? []), currentName: viewingVacancyName, turnStartAt: latestCustomerTurnStartAt(recentMessages ?? []) };
+                        const p = preselectViewingCandidates(cands, { mode: "invite", ...turn });
+                        const byTurn = cands.find((x) => p.keys.includes(x.key));
+                        const byBrain = brainPickName ? cands.find((x) => sameAsPreferred(x.name, x.room, brainPickName)) : undefined;
+                        const pick = byTurn ?? byBrain ?? null;
+                        if (pick) void applyVacancyCandidate(pick);
+                      }}
+                      accent="sky"
+                    />
+                  )}
                   {/* 物件資料OCR（任意） */}
                   <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                     物件資料<span className="ml-1 font-normal text-[#90a4ae]">（画像から物件名を自動取得・任意）</span>
@@ -9145,6 +9186,16 @@ export default function AixModal({
           />
           {/* 送信ボタン（展開中も送信可） */}
           <div className="border-t border-[#f0f2f5] px-4 py-3">
+            {/* 2026-10-28 竹内さん #11: LINE から開くメッセージ編集の画面にも「会話を合わせる」（AixModal と同じ会話を合わせる生成・NEXT_PUBLIC_EDIT_CONV_MATCH=on） */}
+            {(process.env.NEXT_PUBLIC_EDIT_CONV_MATCH ?? "").trim().toLowerCase() === "on" && (
+              <button
+                onClick={async () => { setPreviewBackup(preview); await generate({ conversation_match: true }); }}
+                disabled={loading}
+                className="mb-2 w-full rounded-full border border-[#1565C0] py-3 text-sm font-bold text-[#1565C0] disabled:opacity-50 active:scale-[0.98] transition-transform"
+              >
+                {loading ? "作成中..." : "🔄 会話を合わせる"}
+              </button>
+            )}
             <button
               onClick={async () => { setPreviewExpanded(false); await handleSend(); }}
               disabled={loading || !preview.trim()}

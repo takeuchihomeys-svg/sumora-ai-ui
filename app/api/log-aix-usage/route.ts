@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
+import { viewingDoneOnAfterGreetingOn, isAfterViewingGreeting } from "@/app/lib/viewing-done-after-greeting";
 import { supabase } from "@/app/lib/supabase-server";
 import Anthropic from "@anthropic-ai/sdk";
 // 2026-09-29 API 費用の調査: AIX 送信後の学習・メタの差分パッチの Haiku（7日で170回）が名前なしだった → 名札だけ付ける
@@ -343,6 +344,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+
+    // 2026-10-28 竹内さん #5: AIX【内覧挨拶】の内覧後を送ったら、今日の内覧の予定（カレンダー・申込ツールのカレンダーの行）を済みに（VIEWING_DONE_ON_AFTER_GREETING=on）
+    if (viewingDoneOnAfterGreetingOn() && isAfterViewingGreeting(aix_type, app_sub_mode) && conversation_id) {
+      waitUntil((async () => {
+        try {
+          const { markViewingDoneAfterGreeting } = await import("@/app/lib/viewing-done-after-greeting-server");
+          const r = await markViewingDoneAfterGreeting(String(conversation_id));
+          console.log(JSON.stringify({ tag: "aix:viewing-done-after-greeting", conversationId: conversation_id, done: r.done, screening: r.screening, error: r.error ?? null }));
+        } catch (e) { console.warn(JSON.stringify({ tag: "aix:viewing-done-after-greeting", conversationId: conversation_id, error: String(e).slice(0, 160) })); }
+      })());
+    }
 
     // 2026-09-24 竹内「AD − 見積書の割引金額が利益。物件オススメ・ピックアップで送った物件なら AD も分かっているはず。連動する」:
     //   見積書の本文（【物件名 号室】＋「N円割引」）を物件ごとに estimate_records に残し、候補プール・送付記録の AD と結び付ける。
