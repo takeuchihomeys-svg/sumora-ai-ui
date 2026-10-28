@@ -20,17 +20,17 @@ type Row = { id: string; text: string; err?: string | null; score?: { total?: nu
 function score(file: string) {
   const rows = (JSON.parse(readFileSync(file, "utf8")) as { rows?: Row[] } & Row[]);
   const list: Row[] = Array.isArray(rows) ? rows : (rows.rows ?? []);
-  const per = new Map<string, { first: boolean; dn: number; close: boolean; text: string; gold: string }>();
+  const per = new Map<string, { first: boolean; dn: number; close: boolean; gClose: string; text: string; gold: string }>();
   for (const r of list) {
     const gold = qs.get(r.id); if (!gold || r.err || !r.text) continue;
     const g = appeal(gold), a = appeal(r.text);
-    per.set(r.id, { first: !!g.first && g.first === a.first, dn: a.n - g.n, close: g.close === a.close, text: r.text, gold });
+    per.set(r.id, { first: !!g.first && g.first === a.first, dn: a.n - g.n, close: g.close === a.close, gClose: g.close, text: r.text, gold });
   }
   const v = [...per.values()];
-  return { per, n: v.length, first: v.filter((x) => x.first).length, absDn: v.reduce((s, x) => s + Math.abs(x.dn), 0) / Math.max(1, v.length), over: v.filter((x) => x.dn > 0).length, close: v.filter((x) => x.close).length };
+  return { per, n: v.length, first: v.filter((x) => x.first).length, absDn: v.reduce((s, x) => s + Math.abs(x.dn), 0) / Math.max(1, v.length), over: v.filter((x) => x.dn > 0).length, close: v.filter((x) => x.close).length, byClose: ["viewing", "apply", "receipt"].map((k) => `${({ viewing: "内覧", apply: "申込", receipt: "ご査収" } as Record<string, string>)[k]} ${v.filter((x) => x.gClose === k && x.close).length}/${v.filter((x) => x.gClose === k).length}`).join("・") };
 }
 const cur = score(arg("res"));
-const fmt = (s: ReturnType<typeof score>) => `①一番の訴求が同じ ${s.first}/${s.n}・②数の差（平均の絶対値）${s.absDn.toFixed(2)}・竹内さんより多い ${s.over}/${s.n}・③締めが同じ ${s.close}/${s.n}`;
+const fmt = (s: ReturnType<typeof score>) => `①一番の訴求が同じ ${s.first}/${s.n}・②数の差（平均の絶対値）${s.absDn.toFixed(2)}・竹内さんより多い ${s.over}/${s.n}・③締めが同じ ${s.close}/${s.n}（竹内さんの締めごと: ${s.byClose}）`;
 console.log(`今: ${fmt(cur)}`);
 if (arg("vs")) {
   const prev = score(arg("vs"));
