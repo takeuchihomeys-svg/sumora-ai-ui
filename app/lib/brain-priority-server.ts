@@ -38,7 +38,7 @@ export const PULL_P1_K = 5;
 export function pickPulledRows(rows: RagRow[], scene: string | null, turnText: string, nowIso: string, opts: { p1?: boolean } = {}): PulledKbRow[] {
   const cur = rows.filter((r) => r.is_current);
   const p0 = cur.filter(isReplyP0).sort((a, b) => (a.created_at < b.created_at ? -1 : 1)).slice(0, PULL_P0_MAX);
-  const brief0 = (r: RagRow): PulledKbRow => ({ id: r.id, title: r.title, insight: String(r.insight ?? "").replace(/s+/g, " ").trim().slice(0, 160), priority: r.priority ?? null });
+  const brief0 = (r: RagRow): PulledKbRow => ({ id: r.id, title: r.title, insight: String(r.insight ?? "").replace(/\s+/g, " ").trim().slice(0, 160), priority: r.priority ?? null });
   // 2026-10-23 P1 の決定は既定で引かない（brain-priority.priorityKbP1On の注・試験 q047 q106）
   if (!(opts.p1 ?? priorityKbP1On())) return p0.map(brief0);
   const ks = (scene && scene in KB_SCENES ? scene : "other") as KbScene;

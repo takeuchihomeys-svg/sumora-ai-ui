@@ -57,7 +57,7 @@ async function main() {
   for (const r of rows) {
     const usd = claudePriceOf(r.model) ? claudeUsageUsd(r as never) : altPriceOf(r.model) ? altUsageUsd(r as never) : 0;
     total += usd;
-    const head = String(r.sys_head ?? "").replace(/s+/g, " ").slice(0, 40);
+    const head = String(r.sys_head ?? "").replace(/\s+/g, " ").slice(0, 40);
     const k = BY === "route" ? `${r.route ?? "-"}` : BY === "head" ? `${r.route ?? "-"} | ${r.action ?? "head:" + head}` : `${r.route ?? "-"} | ${r.action ?? "-"} | ${(r.model ?? "-").replace(/-\d{8}$/, "")}`;
     const a = g.get(k) ?? { calls: 0, usd: 0, inUnc: 0, read: 0, w5: 0, w1h: 0, out: 0, hits: 0, convs: new Set<string>() };
     a.calls++; a.usd += usd;

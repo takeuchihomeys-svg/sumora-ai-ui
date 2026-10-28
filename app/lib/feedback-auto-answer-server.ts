@@ -52,7 +52,7 @@ export async function runFeedbackAutoAnswer(sb: SupabaseClient, opts: { dry?: bo
       out.usd += altUsageUsd({ model: res.model, input_uncached: res.usage.cacheMiss + res.usage.cacheHit > 0 ? res.usage.cacheMiss : res.usage.input, cache_read: res.usage.cacheHit, output_tokens: res.usage.output, created_at: new Date().toISOString() });
       const a = buildAutoAnswer(parseAutoAnswer(res.text), basisRows);
       if (!a) { out.notAnswerable++; continue; }
-      if (out.examples.length < (opts.maxExamples ?? 5)) out.examples.push({ id: q.id, answer: `${(q.question ?? "").replace(/s+/g, " ").slice(0, 160)}
+      if (out.examples.length < (opts.maxExamples ?? 5)) out.examples.push({ id: q.id, answer: `${(q.question ?? "").replace(/\s+/g, " ").slice(0, 160)}
   → ${a.text.slice(0, 300)}` });
       if (dry) { out.answered++; continue; }
       const { error: e } = await sb.from("ai_feedback_items").update({ status: AUTO_ANSWER_STATUS, user_answer: a.text, answered_at: new Date(nowMs).toISOString() }).eq("id", q.id).eq("status", "pending");
