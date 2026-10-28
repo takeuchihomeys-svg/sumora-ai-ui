@@ -1,6 +1,6 @@
 // 統括の②状況のまとめ「今すぐ果たせる物」（2026-10-29）
 // 実行: npx tsx app/lib/__tests__/situation-summary.test.ts
-import { nowFulfillableEnabled, nowFulfillableLine } from "../situation-summary";
+import { nowFulfillableEnabled, nowFulfillableLine, buildSituationSummary } from "../situation-summary";
 import type { RoomState } from "../customer-state";
 
 let passed = 0, failed = 0;
@@ -30,6 +30,20 @@ it("送った物件（2日前）＝確認済み・見積を作れる／持ち込
 });
 it("終了・申込中のお部屋は出さない・何も無ければ空", () => {
   eq(nowFulfillableLine({ nowMs: NOW, pickupReady: null, rooms: [room({ name: "終わった部屋", status: "ended", events: [{ kind: "sent", at: "2026-10-28T03:00:00Z", source: "x" }] })] }), "");
+});
+
+it("状況のまとめの型: 段階・開いている約束（pending だけ）・気持ち・今すぐ果たせる物・指している送った事", () => {
+  const s = buildSituationSummary({
+    state: { stage: "proposing" as never, stageLabel: "提案中", properties: [room({ name: "Tio Verde 302", events: [{ kind: "sent", at: "2026-10-27T03:00:00Z", source: "x" }] })] },
+    promises: [
+      { kind: "check", action: "property_check_result", checkPattern: null, object: "アーバネックス", evidence: "確認させて頂きます", promisedAt: "2026-10-28T03:00:00Z", status: "pending", doneAt: null, doneBy: null },
+      { kind: "estimate", action: "estimate_sheet", checkPattern: null, object: null, evidence: "御見積書お送り", promisedAt: "2026-10-27T03:00:00Z", status: "done", doneAt: "2026-10-27T05:00:00Z", doneBy: "AIX" },
+    ] as never,
+    emotion: { value: "前向き", source: "brain" } as never, bind: null, pickupReady: false, nowMs: NOW,
+  });
+  eq(s.openPromises.map((p) => p.kind), ["check"]);
+  eq(s.nowFulfillable.confirmed, ["Tio Verde 302"]);
+  eq([s.stage, s.bind, s.nowFulfillable.pickupReady], ["proposing", null, false]);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
