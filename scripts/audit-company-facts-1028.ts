@@ -4,9 +4,9 @@ import { createClient } from "@supabase/supabase-js";
 import { COMPANY_FACTS } from "../app/lib/company-facts";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
-const IDS = ["new_listing_timing", "screening_two_stage", "move_in_day_prorated"];
+const IDS = (process.argv.find((a) => a.startsWith("--ids="))?.slice(6) ?? "new_listing_timing,screening_two_stage,move_in_day_prorated").split(",");
 (async () => {
-  process.env.COMPANY_FACT_1028 = "on";
+  process.env.COMPANY_FACT_1028 = "on"; process.env.COMPANY_FACT_TK1028 = "on";
   const facts = COMPANY_FACTS.filter((f) => IDS.includes(f.id));
   const since = new Date(Date.now() - Number(arg("days", "365")) * 86400_000).toISOString();
   const hits = new Map<string, string[]>(IDS.map((i) => [i, []]));
