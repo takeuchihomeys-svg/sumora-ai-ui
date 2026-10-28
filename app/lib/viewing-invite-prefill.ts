@@ -111,7 +111,9 @@ export function customerViewingDateSpec(messagesOldestFirst: ReadonlyArray<Msg>,
 }
 
 // ─── 2026-10-28 時間帯の指定（朝方・午後・夕方）を前の流れの日に重ねる ───
-export function viewingTimeOfDayEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+// 2026-10-28 画面（ブラウザ）では process.env を丸ごと読むと空（Next は process.env.NEXT_PUBLIC_〇〇 と名前で書いた所だけ値を焼き込む）＝NEXT_PUBLIC_VIEWING_TIME_OF_DAY=on にしても画面では効いていなかった。
+//   既定の引数を名前で書いた形にして焼き込まれるようにする（サーバ・テストは今まで通り process.env をその時に読む）
+export function viewingTimeOfDayEnabled(env: Record<string, string | undefined> = { NEXT_PUBLIC_VIEWING_TIME_OF_DAY: typeof process !== "undefined" ? process.env.NEXT_PUBLIC_VIEWING_TIME_OF_DAY : undefined }): boolean {
   return (env.NEXT_PUBLIC_VIEWING_TIME_OF_DAY ?? "").trim().toLowerCase() === "on";
 }
 /** 前の流れの日（今の発言の前の6通を新しい順に・お客様の日付の指定かこちらが出した日）。日が無ければ null */
