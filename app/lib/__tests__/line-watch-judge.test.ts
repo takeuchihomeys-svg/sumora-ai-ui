@@ -236,7 +236,12 @@ it("根拠の文を渡さない（LINE_WATCH_STAFF_FACT=off）→ v6 と同じ",
 });
 it("AI は返信（約束でない）・スタッフは管理会社の回答を手打ち → 別の事（AIX の番を返信にした）", () => {
   const j = replyFact("はい！！ お申込み情報のご連絡ありがとうございます！！", "確認させて頂きましたところ、10月中旬まで工事中となり工事中はご内覧出来ないとの事です！！");
-  eq([j.verdict, j.detail.reason], ["different", "text_but_staff_fact"]);
+  // 2026-10-28 v9 既定 on: スタッフだけが知る事の番は返信の文の物差しの外（na・staff_only_turn）。off は v8 のまま（別の事）
+  const v9 = (process.env.LINE_WATCH_STAFF_ONLY_V9 ?? "on").trim().toLowerCase() !== "off";
+  eq([j.verdict, j.detail.reason], v9 ? ["na", "staff_only_turn"] : ["different", "text_but_staff_fact"]);
+  const prevV9 = process.env.LINE_WATCH_STAFF_ONLY_V9;
+  process.env.LINE_WATCH_STAFF_ONLY_V9 = "off";
+  try { const k = replyFact("はい！！ お申込み情報のご連絡ありがとうございます！！", "確認させて頂きましたところ、10月中旬まで工事中となり工事中はご内覧出来ないとのことです！！"); eq([k.verdict, k.detail.reason], ["different", "text_but_staff_fact"]); } finally { if (prevV9 === undefined) delete process.env.LINE_WATCH_STAFF_ONLY_V9; else process.env.LINE_WATCH_STAFF_ONLY_V9 = prevV9; }
 });
 it("AI は確認の約束・スタッフはその結果を手打ちで直接 → 同じ事（決まりどおり）", () => {
   const j = replyFact("お送り頂きましたお部屋の募集状況確認させて頂きます！！ 確認出来次第ご連絡させて頂きます！！", "お送り頂きました〇〇の募集状況確認させていただきましたが、既にご契約が決まったお部屋となります！！");

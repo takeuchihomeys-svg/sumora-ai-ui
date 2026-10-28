@@ -41,7 +41,7 @@ import { shouldBeAixOf, shouldBeButtons, type ShouldBeAix } from "./aix-should-b
 //   v8-2026-10-23（竹内さん 10/22 d04ed51b・76c249e0・aad87f41「スタッフは押し間違いが多い」「竹内も AIX で送る所を手打ち」「押すのは竹内基準」）:
 //     AI は AIX の番でスタッフが手打ち・別の AIX を押した時、送った文を本来の AIX（aix-should-be.ts）に当てはめ、ブレインの AIX と同じなら一致（same・same_via_mapping）。
 //     元の判定は raw_verdict・raw_reason に残す。aix_verdict（関所）は変えない。戻す: LINE_WATCH_AIX_MAPPING=off（呼び出し側が渡さない＝v7 と同じ判定）
-export const JUDGE_VERSION = "v8-2026-10-23";
+export const JUDGE_VERSION = "v9-2026-10-28";
 
 export type Verdict = "same" | "same_meaning" | "partial" | "different" | "na";
 export const VERDICTS: readonly Verdict[] = ["same", "same_meaning", "partial", "different", "na"];
@@ -348,7 +348,7 @@ const WATCH_EXTRA_FACTS_V9: ReadonlyArray<{ kind: string; key: string; re: RegEx
   { kind: "apply_format", key: "application_push", re: /お申込(?:み)?に必要なご情報|上記フォーマットご入力|記入欄にご入力/ },
 ];
 export function watchStaffOnlyV9On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.LINE_WATCH_STAFF_ONLY_V9 ?? "").trim().toLowerCase() === "on";
+  return (env.LINE_WATCH_STAFF_ONLY_V9 ?? "on").trim().toLowerCase() !== "off"; // 2026-10-28 既定 on（直近14日で誤って外す番 0 を目で確かめた）・止める LINE_WATCH_STAFF_ONLY_V9=off
 }
 
 function timeDateTokens(s: string): string[] {
