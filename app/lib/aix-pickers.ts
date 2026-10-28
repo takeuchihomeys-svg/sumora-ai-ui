@@ -72,6 +72,9 @@ export const CONDITION_CHECK_OPTIONS: PickerOption[] = [
   { value: "mgmt_two_person", label: "二人入居について", when: "二人入居の可否（可能／不可）。お客様に聞かれたら先に「物件ごとに違うので管理会社に確認させて頂きます」と約束→答えをここから（2026-10-18 竹内さん 10/16）" },
   // 2026-10-23 竹内さんの決定（2d860ddb・質問7）「入居者の条件（お子様・年齢）のピッカーを作る」（aix-occupant-picker）
   { value: "mgmt_occupant", label: "入居者の条件について", when: "お子様のご入居（年齢の条件）の可否を管理会社に確認した結果（可能／不可／条件あり＋条件）。お客様に聞かれたら先に管理会社に確認すると約束→答えをここから" },
+  // 2026-10-28 竹内さんの指摘 #7・#27（aix-hold-floor-picker）: お部屋止めについて・床の色について
+  { value: "mgmt_room_hold", label: "お部屋止めについて", when: "申込でお部屋を押さえられるか管理会社に確認した結果（申込可能／申込不可＋理由）" },
+  { value: "mgmt_floor_color", label: "床の色について", when: "お部屋の床の色を管理会社・資料で確かめた結果（色・階ごとの違い）" },
   { value: "mgmt_guarantor", label: "保証会社について（審査面）", when: "募集中と分かっているお部屋の保証会社・保証人・審査の条件" },
   // 2026-10-20 竹内さん（P1 84519320・夜職で保証人なし・パートナーの名義・外国籍で就活中・内定予定の相談）「新しいピッカーを作成する」。保証会社について（審査面）の隣
   { value: "mgmt_screening", label: "審査について（ご相談）", when: "名義・保証人・職業・国籍・時期など審査の相談を管理会社・保証会社に確認した結果（確認の約束の後）。締めは「無事に審査通過するまで全力でサポート」" },
@@ -131,6 +134,13 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
         { value: "可能", label: "可能", when: "" }, { value: "不可", label: "不可", when: "" }, { value: "条件あり", label: "条件あり", when: "年齢・階などの条件つき（条件の字を入れる）" },
       ] },
       { key: "occupant_condition", label: "条件（管理会社の回答のまま）", kind: "text", onlyWhen: { key: "check_pattern", values: ["mgmt_occupant"] } },
+      // 2026-10-28 お部屋止めについて・床の色について（aix-hold-floor-picker）
+      { key: "room_hold_result", label: "お部屋止め 申込可能／申込不可", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_room_hold"] }, options: [
+        { value: "申込可能", label: "申込可能", when: "" }, { value: "申込不可", label: "申込不可", when: "" },
+      ] },
+      { key: "room_hold_reason", label: "理由（管理会社の回答のまま）", kind: "text", onlyWhen: { key: "check_pattern", values: ["mgmt_room_hold"] } },
+      { key: "floor_color", label: "床の色", kind: "text", onlyWhen: { key: "check_pattern", values: ["mgmt_floor_color"] } },
+      { key: "floor_color_note", label: "補足（階・お部屋ごとの違い）", kind: "text", onlyWhen: { key: "check_pattern", values: ["mgmt_floor_color"] } },
       { key: "lifeline_designation", label: "ライフライン 指定なし／指定あり", kind: "choice", onlyWhen: { key: "check_pattern", values: ["mgmt_lifeline"] }, options: [
         { value: "指定なし", label: "指定なし", when: "" }, { value: "指定あり", label: "指定あり", when: "" },
       ] },

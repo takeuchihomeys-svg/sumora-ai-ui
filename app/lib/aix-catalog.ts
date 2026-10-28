@@ -22,6 +22,7 @@ import type { ReplyScene } from "./reply-scene";
 import { isScreeningButtonAction, screeningBrainEnabled, screeningButtonEnabled, SCREENING_BUTTON } from "./aix-owner-answers-1021";
 import { AIX_LEARNED } from "./aix-catalog-learned";
 import { aixOccupantPickerEnabled, OCCUPANT_CHECK_PATTERN } from "./aix-occupant-picker";
+import { holdFloorPickerForBrain, HOLD_CHECK_PATTERN, FLOOR_CHECK_PATTERN } from "./aix-hold-floor-picker";
 import { learnedLine, meaningfulWriteContains, type LearnedMeaning } from "./aix-meaning-learn";
 
 export type CatalogEntry = {
@@ -470,7 +471,9 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
       // 2026-10-22 新しいピッカーを既定 on にしても、審査について（ご相談）は明示の on か brain の時だけ
       && !(e.picker?.value === "mgmt_screening" && !screeningPickerForBrain(envNow))
       // 2026-10-23 入居者の条件について は AIX_OCCUPANT_PICKER=on の時だけ
-      && !(e.picker?.value === OCCUPANT_CHECK_PATTERN && !aixOccupantPickerEnabled(envNow)))
+      && !(e.picker?.value === OCCUPANT_CHECK_PATTERN && !aixOccupantPickerEnabled(envNow))
+      // 2026-10-28 お部屋止めについて・床の色について は AIX_HOLD_FLOOR_PICKER=on の時だけ（画面のピッカーは押した時だけ動く）
+      && !((e.picker?.value === HOLD_CHECK_PATTERN || e.picker?.value === FLOOR_CHECK_PATTERN) && !holdFloorPickerForBrain(envNow)))
     .map((e) => (scrOn && isScreeningButtonAction(e.aixType, e.picker?.value ?? null) ? { ...e, button: e.aixType === "guarantor_info" ? `${SCREENING_BUTTON}→保証会社について` : SCREENING_BUTTON } : e));
   const byBtn = new Map<string, CatalogEntry[]>();
   for (const e of rows) { const k = `${e.aixType}|${e.button}`; if (!byBtn.has(k)) byBtn.set(k, []); byBtn.get(k)!.push(e); }
