@@ -128,7 +128,9 @@ type Msg = { conversation_id: string; sender: string; text: string | null; creat
     const tpls = tu.filter(([, n]) => n >= 3 && n / Math.max(1, tuAll) >= 0.3).slice(0, 1).map(([id]) => tplText.get(id)).filter(Boolean) as Array<{ label: string; text: string }>;
     const scenes = ownerScenes.get(e.key) ?? [];
     const owner = ownerCount.get(e.key) ?? 0;
-    const kb = [...new Set([...((learned?.kb ?? []).map((k) => kbTitle.has(k) ? `${k} ${kbTitle.get(k)}` : null).filter(Boolean) as string[]), ...(await decisionsFor(e))])].slice(0, 4);
+    // 2026-10-29 点検: learned.kb の決定も題にボタン・ピッカーの芯の語がある物だけ
+    const kw = coreWords(e.button).concat(coreWords(e.picker?.label ?? null));
+    const kb = [...new Set([...((learned?.kb ?? []).map((k) => kbTitle.has(k) && kw.some((w) => kbTitle.get(k)!.includes(w)) ? `${k} ${kbTitle.get(k)}` : null).filter(Boolean) as string[]), ...(await decisionsFor(e))])].slice(0, 4);
     const mis = misByBtn[e.key];
     const thin: string[] = [];
     if (owner < OWNER_MIN) thin.push(`竹内さんの送信 ${owner}件（${OWNER_MIN}未満）`);
@@ -143,7 +145,8 @@ type Msg = { conversation_id: string; sender: string; text: string | null; creat
     if (learned?.purpose) lines.push(`目的: ${one(learned.purpose, 160)}`);
     if (learned?.writeContains?.length) lines.push(`竹内さんの文に入る物: ${learned.writeContains.join("・")}`);
     if (inputs.length) lines.push(`入力欄・確認事項: ${inputs.join("／")}`);
-    if (tpls.length) lines.push(`テンプレート「${one(tpls[0].label, 30)}」: ${one(maskExemplar(tpls[0].text), 200)}`);
+    // テンプレートの記録（template_id）は本文の型ではなく一緒に送った定型のことが多い＝「一緒に使われた定型」として出す
+    if (tpls.length) lines.push(`一緒に使われた定型「${one(tpls[0].label, 30)}」: ${one(maskExemplar(tpls[0].text), 200)}`);
     if (kb.length) lines.push(`竹内さんの決定: ${kb.map((t) => one(t, 70)).join("／")}`);
     for (const s of scenes) lines.push(`竹内さんの番: 客「${s.cust}」→「${s.sent}」`);
     if (mis?.ex?.length) {
