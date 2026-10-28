@@ -194,10 +194,21 @@ export function buildFirstGreeting(customerName: string): string {
  * 了承のみ（isAckOnly）は催促ではない（「よろしくお願いします」「お願いします」を催促に数えない）。
  */
 export const PROGRESS_PUSH_RE = /まだ(?:です|でしょう|ですか|なの|かな)|(?:連絡|返事|返信)(?:が|は)?(?:ない|無い|来ない|きてない|来てない|頂けて|いただけて)|進捗|いつ(?:頃|ごろ)?(?:送|届|来|ご連絡|連絡|になり)|どうなっ(?:て|た)|お待ちして(?:おり|い)ます(?:が|けど)|催促/;
+// 2026-10-28 作業員4（竹内さんの指摘 #6 てん・#12 勇気「ご連絡遅くなり申し訳御座いません」が出る）:
+//   「いつ(頃)になり(ますか)」は、こちらの約束への催促（資料はいつになりますか）だけでなく、先の事の時期の質問
+//   （最短入居日っていつになりますか・支払い時期はいつになりますか）にも当たり、進捗催促＝遅れの謝りにしていた。
+//   PROGRESS_PUSH_NARROW=on: 「いつ…になり」は同じ文にこちらの約束の語（連絡・返事・結果・見積・資料・送る）がある時だけ催促に数える。他の語はそのまま
+const PROGRESS_PUSH_RE_NARROW = /まだ(?:です|でしょう|ですか|なの|かな)|(?:連絡|返事|返信)(?:が|は)?(?:ない|無い|来ない|きてない|来てない|頂けて|いただけて)|進捗|いつ(?:頃|ごろ)?(?:送|届|来|ご連絡|連絡)|どうなっ(?:て|た)|お待ちして(?:おり|い)ます(?:が|けど)|催促/;
+const WHEN_BECOME_RE = /いつ(?:頃|ごろ)?になり/;
+const OUR_PROMISE_WORD_RE = /連絡|返事|返信|お返答|ご回答|結果|見積|資料|お送り|送って|送り/;
+export function progressPushNarrowOn(): boolean { return (process.env.PROGRESS_PUSH_NARROW ?? "").trim().toLowerCase() === "on"; }
 export function isProgressPushMessage(text: string | null | undefined, opts: { isAckOnly?: boolean } = {}): boolean {
   const t = (text ?? "").trim();
   if (!t || opts.isAckOnly) return false;
-  return PROGRESS_PUSH_RE.test(t);
+  if (!progressPushNarrowOn()) return PROGRESS_PUSH_RE.test(t);
+  if (PROGRESS_PUSH_RE_NARROW.test(t)) return true;
+  // 「いつになりますか」は文（。？！改行で切る）ごとに、こちらの約束の語と一緒の時だけ
+  return t.split(/[。？?！!\n]/).some((s) => WHEN_BECOME_RE.test(s) && OUR_PROMISE_WORD_RE.test(s));
 }
 
 export type WaitedOrigin = { createdAt: string; textHead: string; waitedMs: number };
