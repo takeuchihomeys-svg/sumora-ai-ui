@@ -326,6 +326,7 @@ import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWai
 import { isAckOnlyTurn } from "@/app/lib/draft-repeat";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { priorityStepOn, normalizePriorities } from "@/app/lib/brain-priority";
+import { messagePlanOn, normalizeMessagePlan, alignPlanWithPriorities, planHasNextBusinessDay, type MessagePlan } from "@/app/lib/message-plan";
 import { relativeDatesWriterNote } from "@/app/lib/relative-dates"; // 2026-10-23 送った日と今日の距離（BRAIN_RELATIVE_DATES・既定 off）
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, turnNeedsSupport, SUPPORT_CLOSER_LINE, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
@@ -1020,6 +1021,8 @@ function buildGenerationMessages(
     checkAnsweredFollowUp?: boolean } | null = null,
   // 2026-10-07 場面の整理（reply-scene.ts）: この番の場面と、場面ごとの材料の取捨を効かせるか。null／on=false は今まで通り全部
   sceneSel: { scene: ReplyScene | null; on: boolean; ackUnified?: boolean; brainContract?: boolean; ackForm?: "receive_only" | "wait_line" | null;
+    /** 2026-10-28 1通の計画（BRAIN_MESSAGE_PLAN=on・ブレインの番だけ）。ある時は言葉の網（#27 募集状況の4ステップ・#29 18時以降は明日）を計画に従わせる */
+    messagePlan?: MessagePlan | null;
     /** 2026-10-20 文の設計図（writing-blueprint.ts・WRITING_BLUEPRINT 既定 on（10/23）・=off の時は空）。毎回変わる側に入れる＝off の時は1文字も変わらない */
     blueprintNote?: string } | null = null,
 ): [SystemMessage, HumanMessage] {
@@ -1574,7 +1577,10 @@ ${aixDone.answeredByAix
   // この文脈では内覧誘導フレーズを完全禁止し、「確認する→確認でき次第連絡する」で完結させる。
   // 2026-09-22: お客様が送ってきた物件が全部こちらの送った物件なら、募集状況確認の文脈にしない（実送信 0/9回）
   const isAvailabilityCheckContext = !ownProperty?.all && detectAvailabilityCheckContext(customerMessage ?? "");
-  const availabilityCheckNote = isAvailabilityCheckContext ? buildAvailabilityCheckNote() : "";
+  // 2026-10-28 1通の計画がある番: 4ステップの型は材料に下げる（言葉の網 #27・実送信で純粋な4ステップは 36%・ピックアップ等と同じ1通が 18%）
+  const availabilityCheckNote = !isAvailabilityCheckContext ? "" : sceneSel?.messagePlan ? `
+【参考（言葉の網・募集状況の確認の型）】ブレインの1通の計画が先。計画に入っている「募集状況の確認」の部品にだけ、この型の言い回しを使う（計画にある他の部品＝ピックアップの約束・内覧の案内 等は消さない）。
+${buildAvailabilityCheckNote()}` : buildAvailabilityCheckNote();
 
   // AIXタイミング判定（AIXタイミングマップ 2026-08）: 顧客メッセージがAIXトリガー条件に該当する場合、
   // 「この場面ではAIXボタンを使う運用指示があり、テキストで物件情報/金額を生成してはいけない」を注入する。
@@ -1596,7 +1602,9 @@ ${aixDone.answeredByAix
 
   // G26: 管理会社ノートは verdict でゲート。確認対象が無い返信に「確認させて頂きます／確認出来次第ご連絡」を営業時間の説明付きで
   // 無条件注入していた（創作約束の再生産源）。allowed の時のみ、確認対象「${confirmCtx.object}」をリテラルで前置させる
-  const managementNote = (waitFormConfirmAck || checkAnswered) && confirmCtx.allowed ? ""
+  // 2026-10-28 1通の計画がある番: 計画に「明日確かめる」部品が無ければ営業時間の決まった文（18時以降は明日 等・言葉の網 #29）を入れない。作り話の約束を止める枝（!allowed）は安全の線なので残す
+  const managementNote = sceneSel?.messagePlan && confirmCtx.allowed && !planHasNextBusinessDay(sceneSel.messagePlan) ? ""
+    : (waitFormConfirmAck || checkAnswered) && confirmCtx.allowed ? ""
     : !confirmCtx.allowed
     ? `\n【管理会社の状況】現在${jstHour}時台（JST）${isWeekend ? "・土日" : ""}。この返信には管理会社への確認対象が存在しない（${confirmCtx.reason}）ため、「確認させて頂きます」「確認出来次第ご連絡」「明日一番でご確認」等の確認約束を書かない（営業時間・曜日の説明も不要）。`
     : isWeekend
@@ -4391,6 +4399,11 @@ async function handleGenerateReply(req: NextRequest) {
         if (tcBuilt && tcBuilt.source === "brain" && priorityStepOn()) {
           const pr = normalizePriorities(((lastMetaFresh ? brainGate?.lastMeta : brainMeta) as { priorities?: unknown } | null)?.priorities);
           if (pr.length) tcBuilt.priorities = pr;
+          // 2026-10-28 1通の計画（BRAIN_MESSAGE_PLAN=on）: ブレインの計画を本質の帯へ（無い番は今のまま）
+          if (pr.length && messagePlanOn()) {
+            const mp = alignPlanWithPriorities(normalizeMessagePlan(((lastMetaFresh ? brainGate?.lastMeta : brainMeta) as { message_plan?: unknown } | null)?.message_plan), pr);
+            if (mp) tcBuilt.messagePlan = mp;
+          }
         }
         return tcBuilt;
       } catch (e) { console.warn("[turn-contract] skipped:", e instanceof Error ? e.message : String(e)); return null; }
@@ -5099,7 +5112,7 @@ async function handleGenerateReply(req: NextRequest) {
           return `懸念→条件変換（顧客の感想・懸念語を条件語に変換し「かしこまりました！！〇〇（変換後条件）のお部屋を中心に〇〇さんにオススメできるお部屋${ledger.facts.redoAllowed ? "再度" : ""}ピックアップしお送りさせて頂きます！！」。共感文だけの返信は不合格。80〜130字）`;
         }
         // G32: 進捗催促の判定は greeting.ts isProgressPushMessage と同名（了承のみは催促に数えない）
-        if (isProgressPushMessage(message, { isAckOnly: substance.isAckOnly })) {
+        if (!turnContract?.messagePlan && isProgressPushMessage(message, { isAckOnly: substance.isAckOnly })) { // 10/28 計画がある番は網 #4 の型を出さない
           return "進捗催促対応（「ご連絡遅くなり申し訳御座いません。」＋現状事実1文＋次アクション1文。100〜150字。「お待たせ致しました」「確認中です」禁止）";
         }
         // 2026-09-10 Fable5 Sさん事例: WE DO 候補に内覧のご案内提案を追加（STATE_FALLBACK_DIRECTION.proposing と同じ列挙＝四者同名）
@@ -5800,7 +5813,8 @@ async function handleGenerateReply(req: NextRequest) {
       alreadyGreetedToday: alreadyGreetedToday ?? false,
       recentMessages,
       jstHour: getJSTHour(),
-      isProgressPush: isProgressPushMessage(message, { isAckOnly: substance.isAckOnly }),
+      // 2026-10-28 1通の計画がある番は「催促のお詫び」の型を決め打ちしない（言葉の網 #18・実送信 0/11・お詫びを入れるかは計画の部品で）
+      isProgressPush: !turnContract?.messagePlan && isProgressPushMessage(message, { isAckOnly: substance.isAckOnly }),
       isSubstantive: (t) => analyzeSubstance(t).has,
       customerKind: customerResponse.kind,
       customerSecondary: customerResponse.secondary,
@@ -6146,7 +6160,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       applyReadinessNote,      // 2026-09-20 竹内: 申込が近い合図（hot の時だけ・文面ではなく材料）
       ownProperty && ownProperty.ours > 0 ? { note: ownProperty.note, all: ownProperty.all } : null, // 2026-09-22 こちらが送った物件の送り返し
       { lastStaffBlockOverride: staffBlock.dropped > 0 ? staffBlock.text : undefined, viewingScheduled, viewingAppointment: ledger.facts.viewingAppointment, checkAnsweredFollowUp }, // 2026-09-26 済んだ事（done-state）
-      { scene: replyScene, on: sceneMaterialsOn, brainContract: turnContract?.source === "brain", ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off",
+      { scene: replyScene, on: sceneMaterialsOn, brainContract: turnContract?.source === "brain", messagePlan: turnContract?.source === "brain" ? (turnContract.messagePlan ?? null) : null, ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off",
         // 2026-10-20 文の設計図（竹内さん f5a4b51a「文生成にも軸」）: 既定 off＝"" を渡す（指示は変わらない）。分かれ道は今は他社で内覧の1つだけ（申込までの地図が入ったら地図の分かれ道に替える）
         // on の時に万一投げても返信は止めない（"" に落とす）
         blueprintNote: !isTemplateOptimize && writingBlueprintEnabled() ? (() => { try { return buildWritingBlueprintNote({
