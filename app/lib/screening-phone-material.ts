@@ -33,7 +33,8 @@ export function nameLendingTurn(text: string | null | undefined): boolean {
 //   掛かる: 咲 79f97cea（相談なのですが…水商売…審査通るように職場の案内）・d3a56a97（審査のことで職業のことを相談…→竹内さん AIX 電話）。
 //   掛けない: a0cfe4c4（審査通過のお礼。入居日のご相談＝別の文）・2f352488（「相談しやすい物件を紹介」＝探す条件）・ac34b364（在籍確認がいつ来るか＝手続きの質問）・試験の q021・q054・q117・q186（竹内さんが電話にしていない）。
 export function screeningConsultPhoneEnabled(env: Env = envOf()): boolean {
-  return (env.SCREENING_CONSULT_PHONE ?? "").trim().toLowerCase() === "on";
+  // 10/29 既定 on（試験 consult-phone-on 6問×3 悪化0・咲の再生で AIX 内覧＋電話に分かれた）。止める時は SCREENING_CONSULT_PHONE=off
+  return (env.SCREENING_CONSULT_PHONE ?? "on").trim().toLowerCase() !== "off";
 }
 const SCREENING_RE = /審査/;
 const WORKPLACE_REQ_RE = /(?:職場|勤務先|勤め先)の?(?:案内|紹介)/;
