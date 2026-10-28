@@ -25,12 +25,42 @@ export function nameLendingTurn(text: string | null | undefined): boolean {
   return NAME_LENDING_RE.test(t);
 }
 
+// 2026-10-28 竹内さんの決定（設計知見 701e2665・咲「相談なのですが、今、水商売をしていて…審査通るように職場の案内…」）:
+//   お客様から審査について相談があった時は、段階を問わず AIX【電話をかける】で状況と進め方を打ち合わせる（こちらから審査の電話を持ち掛けるのは申込の段階の熱量が高い時だけ）。
+//   下の行の「通常の審査の相談は電話にしない」（10/27・84519320 の線）と食い違う → SCREENING_CONSULT_PHONE=on の時は新しい決定（10/28）で書く。
+//   網は狭く（本番90日の「審査」を含むお客様の通211を読んで決めた）: 同じ文の中で「審査」と「相談」が並ぶ・審査のための職場の案内を頼む時だけ。
+//   職業（夜職・水商売・ホスト）を言っただけ・初回の条件の紙（【その他ご要望】）は掛けない＝竹内さんは初回はピックアップ・返信で答えていた（5f0befb7・4a79a43e・60547092・969f0162・d88bc551 10/17）。
+//   掛かる: 咲 79f97cea（相談なのですが…水商売…審査通るように職場の案内）・d3a56a97（審査のことで職業のことを相談…→竹内さん AIX 電話）。
+//   掛けない: a0cfe4c4（審査通過のお礼。入居日のご相談＝別の文）・2f352488（「相談しやすい物件を紹介」＝探す条件）・ac34b364（在籍確認がいつ来るか＝手続きの質問）・試験の q021・q054・q117・q186（竹内さんが電話にしていない）。
+export function screeningConsultPhoneEnabled(env: Env = envOf()): boolean {
+  return (env.SCREENING_CONSULT_PHONE ?? "").trim().toLowerCase() === "on";
+}
+const SCREENING_RE = /審査/;
+const WORKPLACE_REQ_RE = /(?:職場|勤務先|勤め先)の?(?:案内|紹介)/;
+const CONDITION_SHEET_RE = /【その他ご要望|【ご希望の駅徒歩/;
+/** 今の番のお客様の発言が審査の相談か（網・狭く） */
+export function screeningConsultTurn(text: string | null | undefined): boolean {
+  const t = String(text ?? "").normalize("NFKC");
+  if (!SCREENING_RE.test(t) || CONDITION_SHEET_RE.test(t)) return false;
+  if (WORKPLACE_REQ_RE.test(t)) return true;
+  return t.split(/[。！？!?]/).some((x) => /審査/.test(x) && /相談/.test(x) && !/相談(?:し|でき)やす|物件|紹介|ピックアップ/.test(x));
+}
+
 /** LLM の前の今の番の材料の行（網に掛かった番だけ・スイッチ off なら空） */
 export function screeningPhoneTurnLine(text: string | null | undefined, env: Env = envOf()): string {
+  const consultOn = screeningConsultPhoneEnabled(env);
+  if (consultOn && screeningConsultTurn(text) && !(screeningPhoneLineEnabled(env) && nameLendingTurn(text))) {
+    return "【今の番（材料・竹内さんの決定 10/28）】お客様の今の発言は審査についての相談（職業の事情・職場の案内・在籍確認 等）。"
+      + "竹内さんは、お客様から審査の相談があった時は段階を問わず文で答えず、電話で状況と進め方を打ち合わせる＝AIX【電話をかける】（phone_call）を送る番"
+      + "（返信で『審査に通りやすい保証会社中心に』『審査面は全力でサポート』『管理会社に確認』と済ませない。同じ発言の他の事は電話の中で一緒に話す）。"
+      + "本当に審査の相談か（審査の期間・流れ・必要書類の質問は返信で説明する番）はあなたが会話から決める。";
+  }
   if (!screeningPhoneLineEnabled(env) || !nameLendingTurn(text)) return "";
   return "【今の番（材料・竹内さんの決定 10/27）】お客様の今の発言に、名義を貸す・借りる・他人名義で契約する話がある。"
     + "名義貸しなど審査面で怪しい話は、竹内さんは文で答えず、電話で状況と進め方を打ち合わせる＝AIX【電話をかける】（phone_call）を送る番"
     + "（同じ発言の空きの確認・新着の依頼は電話の中で一緒に話す）。"
-    + "ただし通常の審査の相談（保証人がいない・収入が不安・審査に通るか心配）は電話にしない（物件確認した→審査について（ご相談））。"
+    + (consultOn
+      ? "お客様から審査の相談（職業・収入・名義・職場の案内 等）があった時も電話で打ち合わせる（10/28 竹内さん）。"
+      : "ただし通常の審査の相談（保証人がいない・収入が不安・審査に通るか心配）は電話にしない（物件確認した→審査について（ご相談））。")
     + "本当に審査面で怪しい話か（ただの言い間違い・名義の変更の手続きの質問ではないか）はあなたが会話から決める。";
 }
