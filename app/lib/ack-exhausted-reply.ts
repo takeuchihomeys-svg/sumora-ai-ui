@@ -56,6 +56,18 @@ export function exhaustedConditionAxisEnabled(env: Env = envOf()): boolean {
 }
 /** 材料の行の範囲の1文（足した・絞った番だけ。ゆるめた番・送った物件への反応の番は外＝理由つき） */
 /** 戻す EXHAUSTED_BROUGHT_FIRST=off */
+/** 2026-10-28 #24: 持ち込みの物件の約束と、足した条件の出し切りの締めを両方（既定 off・入れる EXHAUSTED_BROUGHT_BOTH=on） */
+export function exhaustedBroughtBothEnabled(env: Env = envOf()): boolean { return (env.EXHAUSTED_BROUGHT_BOTH ?? "").trim().toLowerCase() === "on"; }
+/** 2026-10-28 #24: 出し切りの印が今日（JST）なら「今日はもう今の条件で送り切っている」を足す（EXHAUSTED_BROUGHT_BOTH と同じ切替） */
+export function exhaustedTodayNote(markerAt: string | null | undefined, nowMs: number, env: Env = envOf()): string {
+  if (!exhaustedBroughtBothEnabled(env) || !markerAt) return "";
+  const m = Date.parse(markerAt);
+  if (!Number.isFinite(m)) return "";
+  const day = (x: number) => new Date(x + 9 * 3600_000).toISOString().slice(0, 10);
+  if (day(m) !== day(nowMs)) return "";
+  const hm = new Date(m + 9 * 3600_000).toISOString().slice(11, 16);
+  return `（出し切りの印は今日 ${hm}（JST）＝今日はもう今の条件で探して送り切っている。今日足された条件は改めて探す約束にせず、新着で募集に出次第お送りする）`;
+}
 export function exhaustedBroughtFirstEnabled(env: Env): boolean { return (env.EXHAUSTED_BROUGHT_FIRST ?? "").toLowerCase() !== "off"; }
 function exhaustedConditionScope(env: Env): string {
   return exhaustedConditionAxisEnabled(env)
@@ -94,7 +106,13 @@ export function exhaustedConditionTurnLine(env: Env = envOf()): string {
     + "竹内さんは物件の AIX（物件ピックアップした）も全力サポートのボタンも出さず、返信で締める＝足した条件を受け止め、その条件も含めて新着を随時確認し出次第お送りする約束で閉じる（aix は null・reply_mode は auto_reply）。"
     + "「もっと送って・他にあるか・新着は」の物件を探す番だけは物件の AIX と全力サポートの左右。" + exhaustedConditionScope(env)
     // 2026-10-16（q133）: 材料の主語の直し（竹内さん→お客様に伏せていた）で、この行がそのまま効くようになり、同じ連投の持ち込みの物件の約束まで出し切りの締めに倒れた
-    + (exhaustedBroughtFirstEnabled(env) ? "同じ連投でお客様が物件（URL・画像）を送ってきた・特定の物件の見積や空きを頼んだ番は、その物件の約束（募集状況の確認・御見積書）が先（出し切りの締めにしない）。" : "");
+    + (exhaustedBroughtFirstEnabled(env)
+      ? (exhaustedBroughtBothEnabled(env)
+        // 2026-10-28 竹内さん #24（ロト）: 「出し切りの締めにしない」を、ブレインは足した条件まで改めてピックアップする約束と読んだ（「カウンターキッチン付きのご条件でも、新たにピックアップ」）。
+        //   竹内さんの実送信: 送ってきた2件は募集状況の確認の約束（先）＋カウンターキッチンは「新着でオススメ出来るお部屋が募集に出次第お送り」（出し切りの締め）。両方を書く。戻す EXHAUSTED_BROUGHT_BOTH=off
+        ? "同じ連投でお客様が物件（URL・画像）を送ってきた・特定の物件の見積や空きを頼んだ番は、その物件の約束（募集状況の確認・御見積書）を先に書く。同じ番で足した条件（設備・間取り 等）は出し切りの締めのまま＝その条件のお部屋は新着で募集に出次第お送りする（改めてピックアップする約束にしない）。"
+        : "同じ連投でお客様が物件（URL・画像）を送ってきた・特定の物件の見積や空きを頼んだ番は、その物件の約束（募集状況の確認・御見積書）が先（出し切りの締めにしない）。")
+      : "");
 }
 
 /**

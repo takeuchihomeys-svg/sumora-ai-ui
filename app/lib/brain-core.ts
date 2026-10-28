@@ -171,7 +171,7 @@ import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
-import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine } from "@/app/lib/ack-exhausted-reply";
+import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine, exhaustedTodayNote } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
 import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
@@ -2851,6 +2851,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
         },
       );
       const line = searchSplitServerEnabled() ? splitMaterialLine(exNow) : exhaustedMaterialLine(exNow);
+      // 2026-10-28 #24: 出し切りの材料が届いたかをログで見られるように（静かに壊れる所）
+      console.log(JSON.stringify({ tag: "brain:exhausted", conversationId, exhausted: exNow.exhausted, strength: exNow.strength ?? null, markerAt: exNow.markerAt, reason: exNow.reason }));
       if (line && !searchSplitServerEnabled()) customerStateBlockText += `\n\n${line}`;
       if (searchSplitServerEnabled()) splitExhaustLine = line ? `${line}${exhaustedConditionMaterial()}` : line;
       // 2026-10-14 出し切りの後の条件の足しをブレイン基準に（EXHAUSTED_CONDITION_BRAIN）: 今の番の行で材料を渡す（後の規則と同じ印の強さだけ）
@@ -2860,7 +2862,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
         // 2026-10-27 苦手な問題②（EXHAUSTED_WEAK_ACCURATE）: weak でも会話で出し切ったと言っていれば（「ご条件から離れますが」等）強い行のまま
         const { effectiveExhaustStrength } = await import("@/app/lib/search-exhausted");
         const tl = effectiveExhaustStrength(exNow.strength, brainLedgerInput.messages) === "weak" ? exhaustedConditionWeakTurnLine() : exhaustedConditionTurnLine();
-        if (tl) customerStateBlockText += `\n\n${tl}`;
+        if (tl) customerStateBlockText += `\n\n${tl}${exhaustedTodayNote(exNow.markerAt, Date.now())}`;
       }
     } catch (e) { console.warn("[brain-core] exhausted material skipped:", e instanceof Error ? e.message : String(e)); }
   }
