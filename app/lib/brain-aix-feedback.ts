@@ -361,6 +361,25 @@ export function pickFeedbackActionRows<T extends ActionRowLike & { kind: string 
   if (ordered) rows.sort((a, b) => (b.pressed ?? 0) - (a.pressed ?? 0) || (b.n ?? 0) - (a.n ?? 0) || String(a.action).localeCompare(String(b.action)));
   return rows.slice(0, 4);
 }
+/**
+ * 2026-10-29 作業員2 BRAIN_FEEDBACK_SCENE（既定 off）: 「過去の AIX 判断」の4行を、件数順（全場面の多い順）ではなく今の番の場面に近い行から選ぶ。
+ *   件数順だと「物件確認した 73件」が常に先頭に入り、持ち込みの確認＋探す依頼の番（q197 てん）で物件確認した に寄る疑い（main 696cd0c で q197 6/6→1/3）。
+ *   近い行 = 今の場面の候補の AIX と、この場面でスタッフが押した AIX（scene_staff の alt_top）に当たる行。足りない分だけ件数順で埋める（最大4・近い行が無ければ2行まで）。
+ */
+export function brainFeedbackSceneOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_FEEDBACK_SCENE ?? "").trim().toLowerCase() === "on";
+}
+export function pickFeedbackActionRowsForScene<T extends ActionRowLike & { kind: string }>(feedback: ReadonlyArray<T>, scene: { candidate: string | null; sceneAix: ReadonlyArray<string> } | null): T[] {
+  const ordered = pickFeedbackActionRows(feedback, true);
+  const all = feedback.filter((f) => f.kind === "action" && f.action && f.action !== "none" && f.alt_top.length > 0)
+    .sort((a, b) => (b.pressed ?? 0) - (a.pressed ?? 0) || (b.n ?? 0) - (a.n ?? 0) || String(a.action).localeCompare(String(b.action)));
+  if (!scene) return ordered.slice(0, 2);
+  const near = new Set([scene.candidate, ...scene.sceneAix].filter(Boolean).map((x) => String(x).split("/")[0]));
+  const hit = all.filter((f) => near.has(String(f.action).split("/")[0]));
+  if (!hit.length) return ordered.slice(0, 2);
+  const rest = all.filter((f) => !hit.includes(f));
+  return [...hit, ...rest].slice(0, 4);
+}
 function altTopOrdered(alt: ReadonlyArray<{ aix: string; n: number }>, ordered: boolean): Array<{ aix: string; n: number }> {
   return ordered ? [...alt].sort((a, b) => b.n - a.n || a.aix.localeCompare(b.aix)) : [...alt];
 }
@@ -385,7 +404,10 @@ export function buildSceneEvidencePromptText(
       lines.push(`【この場面でスタッフが実際に押した AIX の実績（事実・直近${sc.n}件）】${altTopOrdered(sc.alt_top, ordered).map((a) => `${a.aix} ${a.n}件`).join("・")}`);
     }
   }
-  const actionRows = pickFeedbackActionRows(feedback, ordered);
+  const sceneSc = e ? feedback.find((f) => f.kind === "scene_staff" && f.scene === e.scene) : null;
+  const actionRows = brainFeedbackSceneOn()
+    ? pickFeedbackActionRowsForScene(feedback as never, e ? { candidate: e.candidateAction ?? null, sceneAix: (sceneSc?.alt_top ?? []).map((a) => a.aix) } : null)
+    : pickFeedbackActionRows(feedback, ordered);
   if (actionRows.length > 0) {
     lines.push(`【あなたの過去の AIX 判断と、スタッフが代わりに押した AIX（事実）】${actionRows.map((f) => `${f.action}→AIX が押された${f.pressed}件中 同じ AIX ${f.matched}件（代わりに ${altTopOrdered(f.alt_top, ordered).slice(0, 2).map((a) => `${a.aix} ${a.n}件`).join("・")}）`).join("／")}`);
   }
