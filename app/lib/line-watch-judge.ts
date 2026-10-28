@@ -41,7 +41,7 @@ import { shouldBeAixOf, shouldBeButtons, type ShouldBeAix } from "./aix-should-b
 //   v8-2026-10-23（竹内さん 10/22 d04ed51b・76c249e0・aad87f41「スタッフは押し間違いが多い」「竹内も AIX で送る所を手打ち」「押すのは竹内基準」）:
 //     AI は AIX の番でスタッフが手打ち・別の AIX を押した時、送った文を本来の AIX（aix-should-be.ts）に当てはめ、ブレインの AIX と同じなら一致（same・same_via_mapping）。
 //     元の判定は raw_verdict・raw_reason に残す。aix_verdict（関所）は変えない。戻す: LINE_WATCH_AIX_MAPPING=off（呼び出し側が渡さない＝v7 と同じ判定）
-export const JUDGE_VERSION = "v8-2026-10-23";
+export const JUDGE_VERSION = "v9-2026-10-28";
 
 export type Verdict = "same" | "same_meaning" | "partial" | "different" | "na";
 export const VERDICTS: readonly Verdict[] = ["same", "same_meaning", "partial", "different", "na"];
@@ -298,6 +298,7 @@ export const VERDICT_REASON_JA: Record<string, string> = {
   acts_equal_employee_wording: "行為は同じ・言い回しの差は従業員の書き方（数えない）",
   aix_by_text_staff_fact: "AI は AIX・スタッフは AIX の中身（スタッフだけが知る事）を手打ちで（AIX の番）",
   two_stage_fulfilled_by_text: "AI は約束の返信・スタッフはその約束の中身を手打ちで直接（決まりどおり）",
+  staff_only_turn: "AI は返信・スタッフはスタッフだけが知る事（管理会社の答え・予定・写真・申込の段）を手打ち＝返信の文の物差しの外（v9）",
   text_but_staff_fact: "AI は返信・スタッフは AIX の中身（スタッフだけが知る事）を手打ちで（AIX の番）",
   same_via_mapping: "スタッフは手打ち・別の AIX だが、本来の AIX（中身の意味）がブレインの AIX と同じ",
 };
@@ -331,6 +332,25 @@ const WATCH_EXTRA_FACTS: ReadonlyArray<{ kind: string; key: string; re: RegExp; 
   { kind: "viewing_slot", key: "viewing_invite", re: /[0-9０-９]{1,2}[:：時][0-9０-９]{0,2}[^。\n！!]{0,30}(?:ご案内|ご内覧|内見)(?:が)?(?:可能|出来|でき|かのう)|(?:ご案内|ご内覧)(?:が)?(?:可能|出来|でき)[^。\n]{0,6}(?:時間|お時間)?[^。\n]{0,6}[0-9０-９]{1,2}[:：時]/, exclude: /ご都合|お時間ございますか|でしょうか[^。\n]*$/ },
   { kind: "meeting_time", key: "meeting_place", re: /[0-9０-９]{1,2}[:：時][0-9０-９]{0,2}[^。\n]{0,40}(?:お?待ち合わせ|現地エントランス)/ },
 ];
+/**
+ * 2026-10-28 v9（作業員1・文の外れの原因 63番・判断の外れ 23番を1番ずつ追った結果）: 返信の道で、スタッフが「スタッフだけが知る事」を手打ちした番が
+ *   v8 の網（確認させて頂きました・とのご返事）では拾えず、文の外れ（partial／different）に数えられていた（10番: #5204 #5396 #6085 #6247 #6476 #6947 #7369 #7630 #8173 #8419）。
+ *   実物の言い方: 「管理会社に確認させていただき、〜も可能とのことです」「お部屋確認させていただき、〜は猫の飼育が可能なお部屋となります」「現在募集中のお部屋となります」
+ *   「床の色グレーとなります」「本日15:00より神戸市の方で次のご予定がございますので」「御堂筋線側のエントランスにおります」「こちらお申込に必要なご情報となります」
+ *   ＋画像だけ（[画像]＝スタッフが撮った・持っている写真）。これからの約束（「確認させて頂きます」）は当てない。LINE_WATCH_STAFF_ONLY_V9=on の時だけ
+ */
+const WATCH_EXTRA_FACTS_V9: ReadonlyArray<{ kind: string; key: string; re: RegExp; exclude?: RegExp }> = [
+  { kind: "check_reported_v9", key: "property_check_result/mgmt_availability", re: /確認(?:させて(?:頂|いただ)き|し)[、,][^。\n]{0,60}(?:となります|とのこと(?:です|でした)[！!。]|可能(?:です|となります)|不可(?:です|となります))|とのこと(?:です|でした)[！!。]/, exclude: /確認(?:させて(?:頂|いただ)き)?(?:ます|致します)|随時確認|確認させて(?:頂|いただ)き[、,][^。\n]{0,40}(?:お送り|ご連絡)させて/ },
+  { kind: "vacancy_stated", key: "property_check_result/mgmt_availability", re: /(?:現在|ただいま)(?:まだ)?募集中(?:の(?:お部屋|物件))?(?:と(?:なり|なって)|です)/ },
+  { kind: "room_attr_checked", key: "property_check_result/mgmt_equipment", re: /床の色[^。\n]{0,12}(?:と(?:なり|なって)|です)|(?:偶数|奇数)階のお部屋が/ },
+  { kind: "staff_schedule", key: "viewing_invite", re: /次の(?:ご)?予定(?:が|がございます|がありま)|別日で設定/ },
+  { kind: "staff_onsite", key: "meeting_place", re: /エントランスに(?:おり|居り|い)ます|(?:現地に|お部屋に)(?:到着|着き)ました/ },
+  { kind: "apply_format", key: "application_push", re: /お申込(?:み)?に必要なご情報|上記フォーマットご入力|記入欄にご入力/ },
+];
+export function watchStaffOnlyV9On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.LINE_WATCH_STAFF_ONLY_V9 ?? "on").trim().toLowerCase() !== "off"; // 2026-10-28 既定 on（直近14日で誤って外す番 0 を目で確かめた）・止める LINE_WATCH_STAFF_ONLY_V9=off
+}
+
 function timeDateTokens(s: string): string[] {
   return [...s.normalize("NFKC").matchAll(/[0-9]{1,2}\s*[\/月]\s*[0-9]{1,2}日?|[0-9]{1,2}[:時][0-9]{0,2}/g)].map((m) => m[0].replace(/\s/g, "").replace(/日$/, ""));
 }
@@ -341,13 +361,15 @@ export function staffFactsOf(staffText: string, ground: string | null | undefine
   const out: Array<{ kind: string; key: string; family: string }> = classifyAixContent(staffText, ground).filter((h) => !h.grounded).map((h) => ({ kind: String(h.kind), key: h.catalogKey, family: aixContentFamily(h.catalogKey) }));
   const g = ground.normalize("NFKC").replace(/\s/g, "");
   for (const s of staffText.split(/(?<=[。！!？?])|\n/).map((x) => x.trim()).filter(Boolean)) {
-    for (const e of WATCH_EXTRA_FACTS) {
+    for (const e of watchStaffOnlyV9On() ? [...WATCH_EXTRA_FACTS, ...WATCH_EXTRA_FACTS_V9] : WATCH_EXTRA_FACTS) {
       if (!e.re.test(s) || (e.exclude && e.exclude.test(s))) continue;
       const vals = timeDateTokens(s);
       if (vals.length && vals.every((v) => g.includes(v))) continue; // 決まった日時の引用
       if (!out.some((o) => o.kind === e.kind)) out.push({ kind: e.kind, key: e.key, family: aixContentFamily(e.key) });
     }
   }
+  // v9: 返事のまとまりに画像だけの通（スタッフが撮った・持っている写真）
+  if (watchStaffOnlyV9On() && /^\s*\[画像\]\s*$/m.test(staffText) && !out.some((o) => o.kind === "staff_image")) out.push({ kind: "staff_image", key: "property_check_result/interior_photo", family: aixContentFamily("property_check_result") });
   return out;
 }
 
@@ -488,6 +510,7 @@ function judgeTurnRaw(i: JudgeInput): Judgement {
     if (fresh.length) {
       const dActs = staffActsOf(draft);
       const fulfilled = fresh.some((f) => FAMILY_PROMISE[f.family] && dActs.has(FAMILY_PROMISE[f.family]));
+      if (!fulfilled && watchStaffOnlyV9On() && !(text && isAgree(text.verdict))) return { verdict: "na", detail: withText({ ...base, reason: "staff_only_turn", brain_aix: null, staff_aix: allPress, aix_verdict: "by_text", staff_fact: fresh }) };
       return { verdict: fulfilled ? "same_meaning" : "different", detail: withText({ ...base, reason: fulfilled ? "two_stage_fulfilled_by_text" : "text_but_staff_fact", brain_aix: null, staff_aix: allPress, aix_verdict: "by_text", staff_fact: sfacts }) };
     }
   }

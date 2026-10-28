@@ -106,6 +106,7 @@ import { getCustomerState, getCustomerStateChecked } from "@/app/lib/customer-st
 import { brainMaterialMissEnabled, collectMaterialMisses, materialMissNote } from "@/app/lib/brain-material-miss";
 import { buildCustomerStateBrainBlock, type CustomerState } from "@/app/lib/customer-state";
 import { brainDecisionLedgerCols, brainDecisionDigestExtra } from "@/app/lib/brain-decision-ledger";
+import { brainEmotionFillOn, fillCustomerEmotion } from "@/app/lib/customer-emotion-fill";
 import { legacyActionWinRatesEnabled, applicationReachEnabled, winningOutcomeTag, orderWinningPatterns } from "@/app/lib/application-reach";
 // 2026-09-27 竹内「この問題直して大丈夫」: ブレインの段階を customer-state の事実で補正（viewing に上げる）・会話の方向の段階を段階から決める（穴:G1）
 import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from "@/app/lib/brain-stage";
@@ -125,6 +126,7 @@ import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 // 2026-10-21 つなぎのブレイン 段3 司令塔: 次の一手（スタッフしか分からない事は AIX）を1行（LINK_CONDUCTOR_BRAIN=on の時だけ・既定 off＝1文字も変わらない）
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
 import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmedAckMaterialLine } from "@/app/lib/viewing-confirmed-ack";
+import { sentLedgerBindEnabled, explainedItemsOf, itemsFromLedger, bindReaction, bindMaterialLine } from "@/app/lib/sent-ledger-bind";
 import { vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled, vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
 import { cancelViewingCalendarOnCustomerCancel } from "@/app/lib/viewing-cancel-calendar-server";
@@ -2924,6 +2926,23 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       ].filter(Boolean);
       if (lines.length) customerStateBlockText += `\n\n${lines.join("\n")}`;
     } catch (e) { console.warn("[brain-core] week-scene materials skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  // 2026-10-28 竹内さんの決定（送った事を根本から理解する）・統括の設計図 ①拾う: お客様の今の発言が「どの送った事への反応か」を結び付け、
+  //   その項目の中身（送った物件・見積・確認の結果・説明した事・断った事）を事実だけ1行で渡す（どう返すかはブレイン）。SENT_LEDGER_BIND=on（既定 off）
+  if (sentLedgerBindEnabled() && typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus)) {
+    try {
+      const turnMsgs: typeof typedMessages = [];
+      for (const m of typedMessages) { if (m.sender !== "customer") break; turnMsgs.push(m); }
+      const quotedMsg = turnMsgs.find((m) => !!m.quoted_message_id);
+      const quotedId = quotedMsg?.quoted_message_id ?? null;
+      const quotedText = quotedId ? (quotedPropertyLabel.get(quotedId) ?? msgByLmid.get(quotedId)?.text ?? null) : null;
+      const staffItems = typedMessages.filter((m) => m.sender !== "customer" && !!(m.text ?? "").trim()).slice(0, 30)
+        .flatMap((m) => explainedItemsOf(m.text ?? "", m.created_at, m.line_message_id));
+      const bind = bindReaction({ customerText: unrepliedTurn.text ?? "", quotedText, quotedMessageId: quotedId, items: [...itemsFromLedger(brainLedger.entries), ...staffItems], nowMs: Date.now() });
+      const line = bindMaterialLine(bind, Date.now());
+      console.log(JSON.stringify({ tag: "brain:sent-bind", conversationId, by: bind?.by ?? null, kind: bind?.item.kind ?? null, others: bind?.others ?? 0, items: staffItems.length }));
+      if (line) customerStateBlockText += `\n\n${line}`;
+    } catch (e) { console.warn("[brain-core] sent-bind skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-08 お金の時期の逆算の A/B（customer-memo-server が payment-timing で作る・B の時は下で申込へを外す）
   let paymentPlan: (import("@/app/lib/payment-timing").ApplyPlan & { core: string }) | null = null;
@@ -6690,6 +6709,9 @@ async function analyzeAndSaveBrainMetaInner(
           // 2026-10-02 温めのスイッチの判断（on/理由/今日のやり取り/閾値/mode/会話専用ブロックの指紋）。戦略の整理は名前の決まった項目だけ読むので材料には入らない
           ...(cacheWarm ? { cw: compactCacheWarm(cacheWarm, cacheWarmModeNow, convPrefixHashOf.get(conversationId) ?? null) } : {}),
           ...brainDecisionDigestExtra(savedMeta),
+          // 2026-10-28 気持ちの欄を空にしない（customer-emotion-fill.ts・BRAIN_EMOTION_FILL 既定 on）: 気持ち→気持ちの要約→前の判断の引き継ぎ→言葉の仮の値を emoF に・出どころを emoSrc に。
+          //   emo（戦略の整理・お客様のメモの気持ちの流れが読む）は変えない＝判断の材料は今まで通り（記録を足すだけ）
+          ...(() => { if (!brainEmotionFillOn()) return {}; const fe = fillCustomerEmotion({ meta: metaObj as never, prevMeta: cachedMeta as never, customerText: latestTurnText }); return fe ? { emoF: fe.value, emoSrc: fe.source } : {}; })(),
         },
       };
       let { error: insErr } = await supabase.from("brain_decision_logs").insert({ ...extendedRow, ...ledgerCols });
