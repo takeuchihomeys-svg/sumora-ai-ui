@@ -105,6 +105,7 @@ import { getCustomerState, getCustomerStateChecked } from "@/app/lib/customer-st
 import { brainMaterialMissEnabled, collectMaterialMisses, materialMissNote } from "@/app/lib/brain-material-miss";
 import { buildCustomerStateBrainBlock, type CustomerState } from "@/app/lib/customer-state";
 import { brainDecisionLedgerCols, brainDecisionDigestExtra } from "@/app/lib/brain-decision-ledger";
+import { brainEmotionFillOn, fillCustomerEmotion } from "@/app/lib/customer-emotion-fill";
 import { legacyActionWinRatesEnabled, applicationReachEnabled, winningOutcomeTag, orderWinningPatterns } from "@/app/lib/application-reach";
 // 2026-09-27 竹内「この問題直して大丈夫」: ブレインの段階を customer-state の事実で補正（viewing に上げる）・会話の方向の段階を段階から決める（穴:G1）
 import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from "@/app/lib/brain-stage";
@@ -6680,6 +6681,9 @@ async function analyzeAndSaveBrainMetaInner(
           // 2026-10-02 温めのスイッチの判断（on/理由/今日のやり取り/閾値/mode/会話専用ブロックの指紋）。戦略の整理は名前の決まった項目だけ読むので材料には入らない
           ...(cacheWarm ? { cw: compactCacheWarm(cacheWarm, cacheWarmModeNow, convPrefixHashOf.get(conversationId) ?? null) } : {}),
           ...brainDecisionDigestExtra(savedMeta),
+          // 2026-10-28 気持ちの欄を空にしない（customer-emotion-fill.ts・BRAIN_EMOTION_FILL 既定 on）: 気持ち→気持ちの要約→前の判断の引き継ぎ→言葉の仮の値を emoF に・出どころを emoSrc に。
+          //   emo（戦略の整理・お客様のメモの気持ちの流れが読む）は変えない＝判断の材料は今まで通り（記録を足すだけ）
+          ...(() => { if (!brainEmotionFillOn()) return {}; const fe = fillCustomerEmotion({ meta: metaObj as never, prevMeta: cachedMeta as never, customerText: latestTurnText }); return fe ? { emoF: fe.value, emoSrc: fe.source } : {}; })(),
         },
       };
       let { error: insErr } = await supabase.from("brain_decision_logs").insert({ ...extendedRow, ...ledgerCols });
