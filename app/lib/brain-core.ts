@@ -172,7 +172,7 @@ import { staffTalkedToday, greetingOncePerDayEnabled } from "@/app/lib/daily-gre
 import { promiseKindsToday } from "@/app/lib/two-stage";
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
-import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn } from "@/app/lib/two-choice";
+import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
 import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine, exhaustedTodayNote } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
@@ -329,6 +329,8 @@ export type SuggestedAixMeta = {
   // 2択UIフラグ: proposing フェーズで条件トレードオフ質問が来た場合に「AIXで物件追加オススメ」か「テキスト返信」かをスタッフが選ぶ
   two_choice_aix?: string;             // 2026-10-28 約束の側から出した2択の左のボタン（TWO_CHOICE_PROMISE_OR_NOW）
   two_choice_check_pattern?: string;
+  two_choice_reply_kind?: string;      // 2026-10-28 その場の側の2択: 右の返信の約束の種類（check/estimate/pickup）
+  two_choice_reply_hint?: string;      // 同: 右の返信を押した時に generate-reply に渡す指定
   two_choice_mode?: boolean;           // 2択UI表示フラグ（物件提案中フェーズで条件トレードオフ質問検出時）
   alt_actions?: string[];              // 2つ目以降の AIX（action の横に並べて出す。2026-09-15 この事例: 連絡待ちの物件ピックアップ＋物件オススメ）
   /**
@@ -5519,7 +5521,7 @@ ${history}`;
     const promiseOrNow = twoChoicePromiseOrNowOn() ? resolvePromiseOrNow({
       finalAix: replyMode === "aix" ? finalAix ?? null : null, twoStageKind: twoStage?.kind ?? null, decisionSource,
       customerText: unrepliedTurn.text || lastCustomerMsg?.text || "", firstContact: /^guard:first_contact/.test(String(decisionSource ?? "")) || !!(parsed as { first_contact_pickup?: unknown }).first_contact_pickup,
-      postApply: isPostApplyStatus(convStatus), alreadyTwo: isTwoChoiceMode,
+      postApply: isPostApplyStatus(convStatus), alreadyTwo: isTwoChoiceMode, nowSide: twoChoiceNowSideOn(),
     }) : null;
     if (promiseOrNow) console.log(JSON.stringify({ tag: "brain:two-choice-promise-or-now", conversationId, reason: promiseOrNow.reason, aix: promiseOrNow.aix }));
     return {
@@ -5547,6 +5549,9 @@ ${history}`;
       // 2026-10-28 約束の側から出した2択は action が空＝画面の左のボタンはこの AIX（aix-button-view が cardMeta に写す）
       two_choice_aix: promiseOrNow && !finalAix ? promiseOrNow.aix : undefined,
       two_choice_check_pattern: promiseOrNow && !finalAix ? promiseOrNow.checkPattern ?? undefined : undefined,
+      // 2026-10-28 その場の側の2択（TWO_CHOICE_NOW_SIDE）: 右の返信を押した時の約束の種類と指定（画面が replyHint に渡す・採点は 2段:<種類> も道に数える）
+      two_choice_reply_kind: promiseOrNow?.side === "now" ? promiseOrNow.kind : undefined,
+      two_choice_reply_hint: promiseOrNow?.side === "now" ? promiseOrNow.replyHint ?? undefined : undefined,
       // 2026-10-15 監査の残り #9: ブレインが決めた書き出し（旧は LLM に決めさせて meta に写さず捨てていた）。BRAIN_OPENER_META=off で旧
       reply_opener: brainOpenerMetaEnabled() ? normalizeBrainOpener(parsed.reply_opener) ?? undefined : undefined,
       // 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（画面のブレインのカードに並べて出す）。連絡待ちの時は物件ピックアップ＋物件オススメ

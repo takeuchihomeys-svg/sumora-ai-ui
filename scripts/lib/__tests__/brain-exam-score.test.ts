@@ -112,6 +112,12 @@ eq("正解が 返信 だけ（q007 の形）は替えない", normalizeDraftCode
   // 10/29: どちらかのボタンが言ってはいけない道なら外す（押せば間違いのボタン）
   eq("2択でも言ってはいけない道のボタンを出したら外す", judgePath(two2, ["AIX:property_send"], ["返信"]).ok, false);
   eq("2択（約束の側）: 左の AIX が言ってはいけない道なら外す", judgePath(two, ["2段:check"], ["AIX:property_check_result"]).ok, false);
+  // その場の側（TWO_CHOICE_NOW_SIDE）: 右の返信は約束の下書き＝2段:<種類>
+  const two3 = brainPathCode({ reply_mode: "aix", action: "property_send", two_choice_mode: true, two_choice_reply_kind: "pickup" });
+  eq("2択（その場の側）: 約束で合格", judgePath(two3, ["2段:pickup"]).ok, true);
+  eq("2択（その場の側）: AIX で合格", judgePath(two3, ["AIX:property_send"]).ok, true);
+  eq("2択（その場の側）: 別の約束は不合格", judgePath(two3, ["2段:check"]).ok, false);
+  eq("2択（その場の側）: 右の約束が言ってはいけない道なら外す", judgePath(two3, ["AIX:property_send"], ["2段:pickup"]).ok, false);
 }
 
 console.log(`${pass} PASS / ${fail} FAIL`);

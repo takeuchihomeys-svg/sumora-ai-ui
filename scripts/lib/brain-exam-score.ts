@@ -21,6 +21,7 @@ export type BrainExamOutput = {
   two_choice_mode?: boolean | null;
   two_choice_aix?: string | null;
   two_choice_check_pattern?: string | null;
+  two_choice_reply_kind?: string | null;
 };
 export type PathCode = {
   /** 正解の accept に当てる符号（1つ目が主）。曖昧な書き出しは複数 */
@@ -75,11 +76,15 @@ export function brainPathCode(b: BrainExamOutput | null | undefined): PathCode {
     const aixAction = (b.action ?? "").trim() || (b.two_choice_aix ?? "").trim();
     const aixSide = aixAction ? brainPathCode({ ...b, two_choice_mode: false, reply_mode: "aix", action: aixAction, check_pattern: (b.action ?? "").trim() ? b.check_pattern : b.two_choice_check_pattern ?? null }) : null;
     const replySide = brainPathCode({ ...b, two_choice_mode: false, reply_mode: "auto_reply", action: null });
-    const codes = [...new Set([...(aixSide?.codes ?? []), ...replySide.codes, ...(replySide.codes.some((c) => c.startsWith("2段")) ? [] : ["返信"])])];
+    // その場の側の2択（TWO_CHOICE_NOW_SIDE）: 右の返信は約束の下書き＝2段:<種類>
+    const rk = (b.two_choice_reply_kind ?? "").trim();
+    const replyCodes = rk ? [`2段:${rk}`, "2段"] : replySide.codes;
+    const replyHard = rk ? [`2段:${rk}`, "2段"] : replySide.hard;
+    const codes = [...new Set([...(aixSide?.codes ?? []), ...replyCodes, ...(replyCodes.some((c) => c.startsWith("2段")) ? [] : ["返信"])])];
     // 2026-10-29 直し: 2択でも、どちらかのボタンがその問題の「言ってはいけない道」なら外す（押せば間違いのボタンを出した）。
     //   10/28 は hard: [] で、約束の側のピックアップの2択が「今は物件の AIX を送らない」問題で合格に数えられていた
-    const hard = [...new Set([...(aixSide?.hard ?? []), ...replySide.hard])];
-    return { codes, hard, label: `2択（${aixSide?.label ?? "AIX"}｜${replySide.label}）` };
+    const hard = [...new Set([...(aixSide?.hard ?? []), ...replyHard])];
+    return { codes, hard, label: `2択（${aixSide?.label ?? "AIX"}｜${rk ? `2段:${rk}` : replySide.label}）` };
   }
   const action = (b.action ?? "").trim();
   if (b.reply_mode === "aix" && action) {
