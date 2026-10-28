@@ -123,6 +123,7 @@ import { buildActionLedger, buildLedgerLinesForBrain, buildViewingFlowForBrain, 
 import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 // 2026-10-21 つなぎのブレイン 段3 司令塔: 次の一手（スタッフしか分からない事は AIX）を1行（LINK_CONDUCTOR_BRAIN=on の時だけ・既定 off＝1文字も変わらない）
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
+import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmedAckMaterialLine } from "@/app/lib/viewing-confirmed-ack";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
 import { cancelViewingCalendarOnCustomerCancel } from "@/app/lib/viewing-cancel-calendar-server";
 import { isViewingFixTopic } from "@/app/lib/viewing-premature";
@@ -2897,6 +2898,14 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     // 2026-10-13（ブレインの使い残し 4-5）: 内覧当日の送り出しの後のお礼だけの番か（後の rule:viewing_day_ack と同じ判定）も材料に
     const vdNow = overrideDemoted("viewing_day_ack") ? resolveViewingDayAck(oldestNow, ackNow, brainLedger.facts.viewingAppointment?.day === "today") : null;
     if (vdNow?.hold) customerStateBlockText += `\n\n${viewingDayAckMaterialLine(vdNow.staffLine)}`;
+  }
+  // 2026-10-28 竹内さん #2 咲・#16 かずき: 内覧が決まった後の締め＋スタンプ・了承だけ＝会話は締まっている（材料・VIEWING_CONFIRMED_ACK_WAIT=on の時だけ）
+  if (viewingConfirmedAckWaitEnabled() && typedMessages[0]?.sender === "customer") {
+    const lastStaffForVca = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim() && !/^\s*\[(?:画像|動画|スタンプ|ファイル)\]\s*$/.test(m.text ?? ""))?.text ?? null;
+    const vcaAck = !unrepliedTurn.hasImage && !!unrepliedTurn.text.trim() && analyzeSubstance(unrepliedTurn.text, [unrepliedTurn.text]).isAckOnly;
+    if (isViewingConfirmedAck({ viewingConfirmed: brainLedger.facts.viewingFlow?.stage === "confirmed" || !!brainLedger.facts.viewingAppointment, customerTurnText: unrepliedTurn.text ?? "", customerAckOnly: vcaAck, lastStaffText: lastStaffForVca })) {
+      customerStateBlockText += `\n\n${viewingConfirmedAckMaterialLine(lastStaffForVca)}`;
+    }
   }
   // 2026-10-08 お金の時期の逆算の A/B（customer-memo-server が payment-timing で作る・B の時は下で申込へを外す）
   let paymentPlan: (import("@/app/lib/payment-timing").ApplyPlan & { core: string }) | null = null;

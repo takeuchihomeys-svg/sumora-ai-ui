@@ -1,5 +1,6 @@
 import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSentences } from "@/app/lib/draft-text";
 import { enforceCallName } from "@/app/lib/call-name-guard";
+import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR } from "@/app/lib/mgmt-hours-split";
 import { brainStaffBurstWaitEnabled, staffSendingNow } from "@/app/lib/staff-burst";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
 import { NextRequest, NextResponse, after } from "next/server";
@@ -1598,6 +1599,12 @@ ${aixDone.answeredByAix
     ? `\n【管理会社の状況】現在${jstHour}時台（JST）${isWeekend ? "・土日" : ""}。この返信には管理会社への確認対象が存在しない（${confirmCtx.reason}）ため、「確認させて頂きます」「確認出来次第ご連絡」「明日一番でご確認」等の確認約束を書かない（営業時間・曜日の説明も不要）。`
     : isWeekend
       ? `\n【管理会社の状況・必ず守ること】本日は土日。「${confirmCtx.object}」の確認（空室確認）は土日でも可能なので「${confirmCtx.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」と伝えてよい。ただし交渉（フリーレント・値引き・条件変更・審査再挑戦など）は土日不可。交渉が必要な場合は「月曜日一番で管理会社に交渉させて頂きます！！」と伝える。`
+      // 2026-10-28 竹内さんの決定（KB 5d9e56b5・9fd703f4・今週の #26 #28）: 募集状況（空き）は業者の物件サイトで弊社の営業時間中に確かめられる＝「明日」を付けない。
+      //   「本日管理会社営業時間外の為明日」は管理会社にしか答えられない確認・交渉（駐車場・鍵交換・ペット 等）だけ。MGMT_HOURS_SPLIT_1028=on の時だけ（既定 off）
+      : jstHour >= 18 && mgmtHoursSplitEnabled() && isVacancyConfirmObject(confirmCtx.object) && jstHour < COMPANY_CLOSE_HOUR
+        ? `\n【確認の時間・必ず守ること】現在${jstHour}時台（JST）。「${confirmCtx.object}」（空き・募集状況）は業者の物件サイトで弊社の営業時間中に今すぐ確かめられる（管理会社の営業時間に縛られない）。「${confirmCtx.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」と伝え、「明日一番で」「営業時間外」は書かない。`
+      : jstHour >= 18 && mgmtHoursSplitEnabled()
+        ? `\n【管理会社の状況・必ず守ること】現在${jstHour}時台（JST）。18時以降のため管理会社の営業時間が終了している。「${confirmCtx.object}」の確認・交渉は「本日管理会社営業時間外の為、明日${confirmCtx.object}を確認させて頂き、確認出来次第ご連絡させて頂きます！！」と伝える（確認対象を必ず書く・竹内さんの実送信の形）。当日中の回答を約束しない。結果は翌日 AIX【確認した】で送る。`
       : jstHour >= 18
         ? `\n【管理会社の状況・必ず守ること】現在${jstHour}時台（JST）。18時以降のため管理会社の営業時間が終了している。「${confirmCtx.object}」の確認は「本日は管理会社の営業時間が終了しておりますので、明日一番で${confirmCtx.object}を確認しご連絡させて頂きます！！」と伝える（確認対象「${confirmCtx.object}」を必ず書く）。当日中の回答を約束しない。`
         : jstHour < 9
