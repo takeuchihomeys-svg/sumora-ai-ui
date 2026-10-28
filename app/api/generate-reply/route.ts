@@ -12,6 +12,7 @@ import { createGenerationModel } from "@/app/lib/reply-generation-model";
 // 2026-09-19 竹内: 自動返信オンの会話の下書きは Claude のまま（印を付けて llm-alt-provider が守る）
 import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER, LLM_ACTION_HEADER } from "@/app/lib/llm-usage-recorder";
 import { willRouteAlt, ALT_STREAM_CUT_STOP, altDeepseekModelFor, DEEPSEEK_FLASH_MODEL } from "@/app/lib/llm-alt-provider";
+import { manualDraftPostApplyOn, manualDraftAllowedPostApply } from "@/app/lib/apply-status-aix";
 import { writerFlashDecision, writerFlashScenes, WRITER_FLASH_ACTION } from "@/app/lib/writer-flash-scenes";
 import { flashWriterAdaptOn, flashWriterRecheckOn, isFlashModel, flashWriterParts, buildFlashChecklist, renderFlashChecklistNote, renderFlashExamplesNote, missingFlashItems, buildFlashRewriteFeedback, buildFlashPlanRequest, buildFlashWriteRequest, contractForbidsInvite, INVITE_RE, type FlashChecklistItem } from "@/app/lib/flash-writer";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
@@ -3304,7 +3305,10 @@ async function handleGenerateReply(req: NextRequest) {
       }
     } catch { earlyPostApplyFacts = null; }
   }
-  if (!isTemplateOptimize && state && DRAFT_SKIP_STATUSES.has(state)) {
+  // 2026-10-28 竹内さん #13: 申込・審査中でも画面の「AI文案を作成」を手で押した時だけは作る（自動の下書きは止めたまま・MANUAL_DRAFT_POST_APPLY=on・apply-status-aix.ts）
+  const manualPostApplyOk = manualDraftAllowedPostApply({ on: manualDraftPostApplyOn(), caller: generationCaller, state });
+  if (manualPostApplyOk && state && DRAFT_SKIP_STATUSES.has(state)) console.info("[generate-reply] manual:post_apply_allowed", JSON.stringify({ state, caller: generationCaller }));
+  if (!isTemplateOptimize && state && DRAFT_SKIP_STATUSES.has(state) && !manualPostApplyOk) {
     console.info("[generate-reply] skip:post_apply_status", JSON.stringify({ state, caller: generationCaller }));
     return new Response(
       JSON.stringify({ ok: false, reason: "post_apply_status", status: state }) + "\n",
@@ -3478,7 +3482,7 @@ async function handleGenerateReply(req: NextRequest) {
   // 2026-09-23 竹内「申込中は別のツールで文生成しているので、ここ文生成しなくて大丈夫なところとなる」:
   //   旧は is_post_apply と status だけを見ていた（status は27.4%の会話で遅れる）。上で読んだ同じ記録（post-apply.ts:
   //   status ∪ 印 ∪ 申込へ押下 ∪ 本人確認書類、否決で戻したら時間順で解く）で止める。読めなかった時は止めない（下書きが黙って消えないように）
-  if (conversationId && externalBrainGate === null && !isTemplateOptimize && postApplyResolved?.postApply && !postApplyDraftAllowed) {
+  if (conversationId && externalBrainGate === null && !isTemplateOptimize && postApplyResolved?.postApply && !postApplyDraftAllowed && !manualPostApplyOk) {
     console.log("[generate-reply] post_apply → ドラフト生成スキップ:", JSON.stringify({ conversationId, reason: postApplyResolved.reason }));
     return NextResponse.json({ skipped: true, reason: "post_apply_or_skip_status", post_apply_reason: postApplyResolved.reason });
   }
