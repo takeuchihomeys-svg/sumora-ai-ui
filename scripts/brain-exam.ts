@@ -457,7 +457,9 @@ function codeFromString(c: string): PathCode {
 }
 
 // ─── 判定（DeepSeek を直に・記録の外なので費用はここで数える） ─────────────────
-const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pattern", "alt_actions", "two_stage", "first_contact_pickup", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "reply_opener", "far_move_in", "appeal_timing", "hesitancy_pattern", "customer_concern", "turn_contract", "asks", "request_ledger"] as const;
+const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pattern", "alt_actions", "two_stage", "first_contact_pickup", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "reply_opener", "far_move_in", "appeal_timing", "hesitancy_pattern", "customer_concern", "turn_contract", "asks", "request_ledger",
+  // 2026-10-28 2択（採点の brainPathCode が読む・保存した行から採点し直す時に落ちていた）
+  "two_choice_mode", "two_choice_aix", "two_choice_check_pattern", "two_choice_reply_kind"] as const;
 export function planOf(meta: Record<string, unknown> | null): Record<string, unknown> {
   if (!meta) return {};
   const out: Record<string, unknown> = {};
