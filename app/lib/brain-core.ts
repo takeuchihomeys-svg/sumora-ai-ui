@@ -1820,7 +1820,7 @@ export async function analyzeConversation(
   // embedding 失敗・OPENAI_API_KEY 未設定・RPC エラー時は RAG 部分が空になるだけで、
   // 既存の静的保証バケット（principle/成約パターン/applying_pattern）のみで従来同様に動作する。
   let ragCheckpoints: Array<{ checkpoint_index: number; summary: string | null; key_facts: unknown; conversation_stage: string | null; similarity?: number }> = [];
-  type RagKnowledgeRow = { title: string | null; content: string | null; category: string | null; conversation_state: string | null; importance: number | null; similarity: number };
+  type RagKnowledgeRow = { id?: string | null; title: string | null; content: string | null; category: string | null; conversation_state: string | null; importance: number | null; similarity: number };
   let ragKnowledgeRaw: RagKnowledgeRow[] = [];
   let ragWinningPatterns: Array<{ situation: string | null; pattern: string; closing_action: string | null; human_type_label: string | null; outcome_type: string; notes: string | null; win_rate: number | null; importance: number; customer_intent: string | null; staff_reply_intent: string | null; checkpoint_stage: string | null; similarity: number }> = [];
   let ragTemplates: Array<{ id: string; category: string | null; label: string | null; win_rate: number | null; use_count: number | null; won_count: number | null; similarity: number }> = [];
@@ -2417,6 +2417,9 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const ragKnowledgeText = ragKnowledge.length > 0 && keepBrainMaterial(brainScene, "ragKnowledge", brainSceneOn && !fsKeepAll)
     ? `\n【関連ナレッジ（この会話に類似する過去の学習・RAG検索）】\n${ragKnowledge.map((k) => `- [${k.category ?? "knowledge"}${k.conversation_state ? `/${k.conversation_state}` : ""}] ${(k.title ?? "").replace(/\n/g, " ").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 1200)}`).join("\n")}\n※現在の会話状況に該当するものがあれば aix / closing_strategy / next_steps の判断に反映すること。`
     : "";
+  // 2026-10-28 作業員1（E・外れの原因①「材料が届いていない」を後から確かめる）: 今回のプロンプトに実際に入ったナレッジの行 id（頭8文字）を見張りの行に控える。
+  //   件数（brain:rag）だけでは「どの知見を見て判断したか」が分からず、外れの番で知見の誤り・抜けを追えなかった。記録だけ（判断は変えない）
+  logWatchMaterial(JSON.stringify({ tag: "brain:kn-used", conversationId, ids: ragKnowledgeText ? ragKnowledge.map((k) => String(k.id ?? "").slice(0, 8)).filter(Boolean) : [] }));
 
   // winning_patterns: RAG検索結果から類似パターンを注入（バルクフェッチ廃止・会話コンテキスト最適化）
   const winningPatternsText = ragWinningPatterns.length > 0 && keepBrainMaterial(brainScene, "winning", brainSceneOn && !fsKeepAll)
@@ -3373,7 +3376,7 @@ ${history}`;
     };
     priorityPulledText = renderPulledBlock(sceneNow, pulled.rows, sit);
     priorityPulled = { kb: pulled.rows.map((r) => r.id.slice(0, 8)), scene: sceneNow, sit, chars: priorityPulledText.length, ms: pulled.ms, ...(pulled.err ? { err: pulled.err } : {}) };
-    console.log(JSON.stringify({ tag: "brain:priority-pulled", conversationId, ...priorityPulled }));
+    logWatchMaterial(JSON.stringify({ tag: "brain:priority-pulled", conversationId, ...priorityPulled })); // 2026-10-28 E: 引いた設計知見の id を見張りの行にも控える（ログは今まで通り出る）
   }
   const sceneBlockText = cacheOrderOn ? maskBrain(`${aixCatalogText}${actionRulesText}`) : "";
   const withScene = <T extends { type: "text"; text: string }>(uc: T[]) => (cacheOrderOn ? withSceneBlock(uc as never, sceneBlockText, sys.blocks.length) : uc);

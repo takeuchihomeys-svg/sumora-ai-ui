@@ -64,6 +64,11 @@ export function summarizeMaterialLog(obj: unknown): { source: WatchSource; key: 
       if (o.error) return { source: "brain", key: "rag", summary: { err: short(o.error), timeout: isTimeoutError(String(o.error)) } };
       return { source: "brain", key: "rag", summary: { knowledge: queryStat(o.knowledge), winning: queryStat(o.winning), templates: queryStat(o.templates) } };
     }
+    // 2026-10-28 E: 材料に渡した知見の行 id（ナレッジの RAG で実際に入った物・優先順位の段で引いた設計知見）
+    case "brain:kn-used":
+      return { source: "brain", key: "knIds", summary: { ids: Array.isArray(o.ids) ? (o.ids as unknown[]).slice(0, 12).map((x) => String(x).slice(0, 8)) : [] } };
+    case "brain:priority-pulled":
+      return { source: "brain", key: "kb", summary: { ids: Array.isArray(o.kb) ? (o.kb as unknown[]).slice(0, 12).map((x) => String(x).slice(0, 8)) : [], scene: short(o.scene, 40), ...(o.err ? { err: short(o.err) } : {}) } };
     case "brain:parallel-search":
       return { source: "brain", key: "parallel", summary: { scene: short(o.scene, 40), on: o.on ?? null } };
     case "gen:scene":
