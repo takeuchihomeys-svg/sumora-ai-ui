@@ -100,5 +100,18 @@ eq("正解が 返信 だけ（q007 の形）は替えない", normalizeDraftCode
   eq("撮影でない確認の約束は photo にしない", plain.codes.includes("2段:photo"), false);
 }
 
+// 2026-10-28 2択の番はどちらかに入れば合格（feedback_two_choice_aix・TWO_CHOICE_PROMISE_OR_NOW）
+{
+  const two = brainPathCode({ reply_mode: "auto_reply", action: "", two_stage: "check", two_choice_mode: true, two_choice_aix: "property_check_result", two_choice_check_pattern: "available" });
+  eq("2択（約束の側）: AIX で合格", judgePath(two, ["AIX:property_check_result"]).ok, true);
+  eq("2択（約束の側）: 約束で合格", judgePath(two, ["2段:check"]).ok, true);
+  eq("2択（約束の側）: 別の AIX は不合格", judgePath(two, ["AIX:estimate_sheet"]).ok, false);
+  const two2 = brainPathCode({ reply_mode: "aix", action: "property_send", two_choice_mode: true, reply_direction: "検討見守り" });
+  eq("2択（AIX の側）: 返信も合格", judgePath(two2, ["返信"]).ok, true);
+  eq("2択（AIX の側）: AIX も合格", judgePath(two2, ["AIX:property_send"]).ok, true);
+  eq("2択は言ってはいけない道で外さない", judgePath(two2, ["AIX:property_send"], ["返信"]).ok, true);
+}
+
 console.log(`${pass} PASS / ${fail} FAIL`);
 if (fail) process.exit(1);
+

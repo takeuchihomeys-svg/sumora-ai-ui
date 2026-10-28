@@ -13,6 +13,8 @@ import { BRAIN_FRESHNESS_TOLERANCE_MS } from "@/app/lib/brain-meta-restore";
 import { DRAFT_SKIP_STATUSES, AIX_SKIP_TYPES, firstReplyStateOrNull, staffHasEngaged } from "@/app/lib/conversation-status";
 import { loadPostApplyFacts, resolvePostApply, postApplyDraftSkip } from "@/app/lib/post-apply";
 import { MSG_SEP } from "@/app/lib/reply-context";
+import { staleDayDraftClearEnabled, isStaleRelativeDayDraft } from "@/app/lib/stale-day-draft";
+import { jstDayStartMs } from "@/app/lib/jst-date";
 
 function getDb() {
   return createClient(
@@ -68,6 +70,30 @@ function markerOf(c: { draft_pending_at?: string | null; updated_at?: string | n
   return Number.isNaN(ms) ? Date.now() : ms;
 }
 
+/** 前の日（JST）に作った日の言い方入りの下書きを消す（ai_draft が読んだ時のままの時だけ・作り直しは②の取りこぼし救済） */
+async function clearStaleDayDrafts(db: ReturnType<typeof getDb>): Promise<number> {
+  const now = Date.now();
+  const dayStart = new Date(jstDayStartMs(now)).toISOString();
+  const { data, error } = await db.from("conversations")
+    .select("id, ai_draft, brain_analyzed_at, updated_at")
+    .eq("last_sender", "customer")
+    .not("ai_draft", "is", null)
+    .lt("brain_analyzed_at", dayStart)
+    .gte("updated_at", new Date(now - 7 * 86_400_000).toISOString())
+    .not("status", "in", `(${[...DRAFT_SKIP_STATUSES].join(",")})`)
+    .or("is_post_apply.is.null,is_post_apply.eq.false")
+    .limit(200);
+  if (error) { console.warn("[generate-pending-drafts] stale-day-draft query:", error.message); return 0; }
+  let n = 0;
+  for (const c of (data ?? []) as Array<{ id: string; ai_draft: string | null; brain_analyzed_at: string | null; updated_at: string | null }>) {
+    if (!isStaleRelativeDayDraft(c.ai_draft, c.brain_analyzed_at, now)) continue;
+    const { error: uErr, count } = await db.from("conversations").update({ ai_draft: null }, { count: "exact" }).eq("id", c.id).eq("ai_draft", c.ai_draft as string);
+    if (uErr) { console.warn("[generate-pending-drafts] stale-day-draft clear:", c.id, uErr.message); continue; }
+    if (count) { n++; console.log("[generate-pending-drafts] stale-day-draft cleared:", c.id); }
+  }
+  return n;
+}
+
 // 60秒デバウンス経過済みの会話に対してまとめ下書き生成（毎分Cronから呼ばれる）
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -89,6 +115,9 @@ async function run() {
     return NextResponse.json({ ok: true, processed: 0, skipped: 0, reason: "night_defer", until });
   }
   const db = getDb();
+  // 2026-10-28 竹内さん #4（愛実）: 前の日に作った「明日24日」「本日」の下書きは日が変わると意味が変わる → 消して、下の取りこぼし救済（②）で今日の日付で作り直す。
+  //   何を送るか（当日の挨拶の AIX 等）は作り直しの時のブレインが決める（P0）。ここは古い下書きを出さないだけ。STALE_DAY_DRAFT_CLEAR=on（既定 off）
+  if (staleDayDraftClearEnabled()) await clearStaleDayDrafts(db).catch((e) => console.warn("[generate-pending-drafts] stale-day-draft:", String(e)));
   const threshold = new Date(Date.now() - 60 * 1000).toISOString();
   // 10分以上前のpendingは対象外（処理失敗した会話が毎分再処理され続けるのを防ぐ上限）
   const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();

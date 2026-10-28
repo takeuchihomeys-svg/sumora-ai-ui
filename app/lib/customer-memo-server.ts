@@ -28,6 +28,8 @@ import { readClosingGaps } from "@/app/lib/closing-target";
 import { buildMoveTableNote, moveTableMode } from "@/app/lib/mindset-move-table";
 import { REAPPLY_MEMO_ID, reapplyMemoText, type ReturnPattern } from "@/app/lib/reapply-customer";
 import { PARALLEL_MEMO_ID, PARALLEL_MEMO_ON, PARALLEL_MEMO_OFF } from "@/app/lib/parallel-second";
+import { ledgerMemoSyncEnabled, ledgerMemoItems, mergeLedgerMemo, isLedgerMemoItem } from "@/app/lib/ledger-memo";
+import { sentLedgerBindEnabled, itemsFromLedger, explainedItemsOf, type LedgerLike } from "@/app/lib/sent-ledger-bind";
 
 /**
  * 2026-10-08 竹内さん「メモの読み取りは影で1週間」: DeepSeek が読んだ行（origin=llm）は保存と画面だけ・ブレインと返信には渡さない。
@@ -174,7 +176,9 @@ export async function loadMemoBundle(conversationId: string, o: { nowMs?: number
 export async function customerMemoNoteFor(conversationId: string, o: { scene?: string | null; nowMs?: number; customerName?: string | null } = {}): Promise<{ note: string; memoChars: number; moodChars: number; items: number; pay: (ApplyPlan & { core: string }) | null }> {
   const now = o.nowMs ?? Date.now();
   const b = await loadMemoBundle(conversationId, { nowMs: now });
-  const memoNote = customerMemoEnabled() ? buildCustomerMemoNote({ memo: forNote(b.memo), told: b.told, scene: o.scene, nowMs: now }) : "";
+  // 2026-10-28 台帳から写した行（ledger:）はブレインには台帳の結び付けで渡す＝メモの注記では省く（二重にしない・SENT_LEDGER_BIND が on の時）
+  const noteMemo = sentLedgerBindEnabled() ? { ...forNote(b.memo), items: forNote(b.memo).items.filter((x) => !isLedgerMemoItem(x)) } : forNote(b.memo);
+  const memoNote = customerMemoEnabled() ? buildCustomerMemoNote({ memo: noteMemo, told: b.told, scene: o.scene, nowMs: now }) : "";
   const moodNote = moodFlowEnabled() ? buildMoodFlowNote(b.mood, { prevEmotions: b.prevEmotions }).trim() : "";
   const payNote = buildPaymentTimingNote(b.money, { nowMs: now, desiredMoveInMs: b.desiredMoveInMs, scene: o.scene, customerName: o.customerName });
   // 10/08 A/B の判断（ブレインが B の時に申込へを外す・返信の方向に使う）。条件の場面では出さない（注記と同じ）
@@ -274,6 +278,40 @@ export async function setParallelSecondMemo(conversationId: string, on: boolean 
     sourceBy: "staff" as const, certainty: "sure" as const, expiresAt: null, origin: "staff" as const, locked: true, retiredAt: null, updatedAt: nowIso,
   }];
   return { ok: await saveCustomerMemo(conversationId, { ...memo, items }) };
+}
+
+/**
+ * 2026-10-28 竹内さん「送った事でも重要な事はメモに残す」: 台帳（sent_facts）とこちらの文から、金額・期日・条件との違い・確認の結果・断った事を
+ *   決まった手順でメモに写す（ledger-memo.ts・LLM なし）。LEDGER_MEMO_SYNC=on（既定 off）。申込以降・グループは写さない。失敗しても投げない。
+ */
+export async function syncLedgerMemo(conversationId: string): Promise<{ added: number; reason?: string }> {
+  if (!ledgerMemoSyncEnabled()) return { added: 0, reason: "off" };
+  try {
+    const { data: conv } = await supabase.from("conversations").select("status, line_source_type").eq("id", conversationId).maybeSingle();
+    const c = conv as { status?: string | null; line_source_type?: string | null } | null;
+    if (!c || isPostApplyStatus(c.status) || c.line_source_type === "group") return { added: 0, reason: "out_of_scope" };
+    const now = Date.now();
+    const sinceIso = new Date(now - MEMO_WINDOW_DAYS * DAY).toISOString();
+    const [{ data: facts }, msgs, memo] = await Promise.all([
+      supabase.from("sent_facts").select("kind, status, sent_at, detail, evidence").eq("conversation_id", conversationId).gte("sent_at", sinceIso).order("sent_at", { ascending: false }).limit(200),
+      loadMessages(conversationId, sinceIso, 200),
+      loadCustomerMemo(conversationId),
+    ]);
+    const ledger: LedgerLike[] = ((facts ?? []) as Array<{ kind: string; status: string; sent_at: string; detail: LedgerLike["detail"]; evidence: string | null }>).map((r) => ({ kind: r.kind, status: r.status, at: r.sent_at, evidence: r.evidence, detail: r.detail }));
+    const staff = msgs.filter((m) => m.sender !== "customer" && !!String(m.text ?? "").trim() && !applicationMaterialReason(String(m.text ?? "")));
+    const items = [...itemsFromLedger(ledger), ...staff.flatMap((m) => explainedItemsOf(String(m.text ?? ""), m.createdAt))];
+    const nowIso = new Date(now).toISOString();
+    const add = ledgerMemoItems({ items, staffTexts: staff.map((m) => ({ text: String(m.text ?? ""), at: m.createdAt })), nowIso });
+    const merged = mergeLedgerMemo(memo, add, nowIso);
+    if (!merged) return { added: 0 };
+    const ok = await saveCustomerMemo(conversationId, merged);
+    const added = merged.items.length - memo.items.length;
+    console.log(JSON.stringify({ tag: "customer-memo:ledger-sync", conversationId, added, ok }));
+    return { added: ok ? added : 0 };
+  } catch (e) {
+    console.warn("[customer-memo] ledger sync failed:", conversationId, e instanceof Error ? e.message : String(e));
+    return { added: 0, reason: "error" };
+  }
 }
 
 export function customerMemoLlmEnabled(env: Record<string, string | undefined> = process.env): boolean {

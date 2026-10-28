@@ -17,6 +17,10 @@ export type BrainExamOutput = {
   reply_mode?: string | null; action?: string | null; check_pattern?: string | null;
   two_stage?: string | null; reply_direction?: string | null; first_contact_pickup?: string | null;
   alt_actions?: string[] | null;
+  /** 2択（AIX か返信か）をセットした番。2026-10-28: どちらかに竹内さんの動きが入れば合格（スタッフが押すだけで済む） */
+  two_choice_mode?: boolean | null;
+  two_choice_aix?: string | null;
+  two_choice_check_pattern?: string | null;
 };
 export type PathCode = {
   /** 正解の accept に当てる符号（1つ目が主）。曖昧な書き出しは複数 */
@@ -65,6 +69,15 @@ export function pathOfDirection(dir: string): { path: string; kind: string } {
 
 export function brainPathCode(b: BrainExamOutput | null | undefined): PathCode {
   if (!b) return { codes: ["(なし: ブレインが null)"], hard: [], label: "ブレインが null" };
+  // 2026-10-28 2択の番（feedback_two_choice_aix・TWO_CHOICE_PROMISE_OR_NOW）: 画面は「AIX」と「返信」の両方のボタンを出し、スタッフが押すだけ
+  //   ＝竹内さんの動きがどちらかに入れば道は合格。言ってはいけない道（hard）は2択では当てない（片方だけでは決めていない）
+  if (b.two_choice_mode) {
+    const aixAction = (b.action ?? "").trim() || (b.two_choice_aix ?? "").trim();
+    const aixSide = aixAction ? brainPathCode({ ...b, two_choice_mode: false, reply_mode: "aix", action: aixAction, check_pattern: (b.action ?? "").trim() ? b.check_pattern : b.two_choice_check_pattern ?? null }) : null;
+    const replySide = brainPathCode({ ...b, two_choice_mode: false, reply_mode: "auto_reply", action: null });
+    const codes = [...new Set([...(aixSide?.codes ?? []), ...replySide.codes, ...(replySide.codes.some((c) => c.startsWith("2段")) ? [] : ["返信"])])];
+    return { codes, hard: [], label: `2択（${aixSide?.label ?? "AIX"}｜${replySide.label}）` };
+  }
   const action = (b.action ?? "").trim();
   if (b.reply_mode === "aix" && action) {
     const fam = aixFamily(action);

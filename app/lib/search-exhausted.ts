@@ -112,10 +112,17 @@ export type ExhaustResult = { exhausted: boolean; markerAt: string | null; reaso
  * 出し切りの判定（旧と同じ答え）に、強さ（strong＝出し切ったと言った印から判定しても出し切り／weak＝送付の印だけで出し切り）を付ける。
  * 強さの判定は「強い印だけ」で同じ判定をやり直した結果（強い印の後に条件が変わった・見積に進んだなら強くない）。
  */
+export function exhaustedLabelStrongTextEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXHAUSTED_LABEL_STRONG_TEXT ?? "").trim().toLowerCase() === "on";
+}
+
 export function searchExhausted(msgs: ReadonlyArray<ExMsg>, o: { conditionChangedThisTurn: boolean; pickupReady: boolean | null | undefined; zenryokuSentAt?: ReadonlyArray<string>; deliveredAixAt?: ReadonlyArray<string>; placeMentioned?: boolean }): ExhaustResult {
   const all = searchExhaustedCore(msgs, o, null);
   if (!all.exhausted) return { ...all, strength: null };
   const strong = searchExhaustedCore(msgs, o, "strong");
+  // 2026-10-28 #24（ロト）: 一番新しい印が AIX の物件の送付（文の無い印）だと、材料の文が「印（AIX【全力サポート】）」になり、送っていない全力サポートを送ったと書いていた。
+  //   強い時は、出し切ったと言った文（「御堂筋線沿線全域から…全てピックアップさせて頂きました」）を引く。時刻（markerAt）は変えない。入れる EXHAUSTED_LABEL_STRONG_TEXT=on（既定 off）
+  if (strong.exhausted && !String(all.markerText ?? "").trim() && strong.markerText && exhaustedLabelStrongTextEnabled()) return { ...all, strength: "strong", markerText: strong.markerText };
   return { ...all, strength: strong.exhausted ? "strong" : "weak" };
 }
 

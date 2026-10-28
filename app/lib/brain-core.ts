@@ -172,9 +172,9 @@ import { staffTalkedToday, greetingOncePerDayEnabled } from "@/app/lib/daily-gre
 import { promiseKindsToday } from "@/app/lib/two-stage";
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
-import { resolveTwoChoice } from "@/app/lib/two-choice";
+import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
-import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine } from "@/app/lib/ack-exhausted-reply";
+import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine, exhaustedTodayNote } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
 import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
@@ -327,6 +327,8 @@ export type SuggestedAixMeta = {
   next_steps?: string[];  // ["Step1: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 【AIX】○○テンプレートを送る"]
   reply_mode?: "aix" | "auto_reply";  // 'aix'=スタッフがAIXで手動対応 / 'auto_reply'=AI自動返信OK
   // 2択UIフラグ: proposing フェーズで条件トレードオフ質問が来た場合に「AIXで物件追加オススメ」か「テキスト返信」かをスタッフが選ぶ
+  two_choice_aix?: string;             // 2026-10-28 約束の側から出した2択の左のボタン（TWO_CHOICE_PROMISE_OR_NOW）
+  two_choice_check_pattern?: string;
   two_choice_mode?: boolean;           // 2択UI表示フラグ（物件提案中フェーズで条件トレードオフ質問検出時）
   alt_actions?: string[];              // 2つ目以降の AIX（action の横に並べて出す。2026-09-15 この事例: 連絡待ちの物件ピックアップ＋物件オススメ）
   /**
@@ -2857,6 +2859,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
         },
       );
       const line = searchSplitServerEnabled() ? splitMaterialLine(exNow) : exhaustedMaterialLine(exNow);
+      // 2026-10-28 #24: 出し切りの材料が届いたかをログで見られるように（静かに壊れる所）
+      console.log(JSON.stringify({ tag: "brain:exhausted", conversationId, exhausted: exNow.exhausted, strength: exNow.strength ?? null, markerAt: exNow.markerAt, reason: exNow.reason }));
       if (line && !searchSplitServerEnabled()) customerStateBlockText += `\n\n${line}`;
       if (searchSplitServerEnabled()) splitExhaustLine = line ? `${line}${exhaustedConditionMaterial()}` : line;
       // 2026-10-14 出し切りの後の条件の足しをブレイン基準に（EXHAUSTED_CONDITION_BRAIN）: 今の番の行で材料を渡す（後の規則と同じ印の強さだけ）
@@ -2866,7 +2870,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
         // 2026-10-27 苦手な問題②（EXHAUSTED_WEAK_ACCURATE）: weak でも会話で出し切ったと言っていれば（「ご条件から離れますが」等）強い行のまま
         const { effectiveExhaustStrength } = await import("@/app/lib/search-exhausted");
         const tl = effectiveExhaustStrength(exNow.strength, brainLedgerInput.messages) === "weak" ? exhaustedConditionWeakTurnLine() : exhaustedConditionTurnLine();
-        if (tl) customerStateBlockText += `\n\n${tl}`;
+        if (tl) customerStateBlockText += `\n\n${tl}${exhaustedTodayNote(exNow.markerAt, Date.now())}`;
       }
     } catch (e) { console.warn("[brain-core] exhausted material skipped:", e instanceof Error ? e.message : String(e)); }
   }
@@ -5508,6 +5512,13 @@ ${history}`;
         console.log(JSON.stringify({ tag: "brain:message-plan", conversationId, has: !!mp, bg: mp?.background ?? null, parts: mp?.parts.map((p) => `${p.rank}:${p.include}/${p.who}/${p.when}${p.omitReason ? `/${p.omitReason}` : ""}`) ?? [], msgs: mp?.messages.map((m) => `${m.no}:${m.who}${m.aix ? `:${m.aix}` : ""}[${m.ranks.join(",")}]`) ?? [], items: priorityItems.map((p) => `${p.rank}:${p.handling}:${p.item}`) }));
       }
     }
+    // 2026-10-28 TWO_CHOICE_PROMISE_OR_NOW（two-choice.ts）: 同じ種類の「約束の返信／その場の AIX」を2択で出す（確認・見積・ピックアップ）
+    const promiseOrNow = twoChoicePromiseOrNowOn() ? resolvePromiseOrNow({
+      finalAix: replyMode === "aix" ? finalAix ?? null : null, twoStageKind: twoStage?.kind ?? null, decisionSource,
+      customerText: unrepliedTurn.text || lastCustomerMsg?.text || "", firstContact: /^guard:first_contact/.test(String(decisionSource ?? "")) || !!(parsed as { first_contact_pickup?: unknown }).first_contact_pickup,
+      postApply: isPostApplyStatus(convStatus), alreadyTwo: isTwoChoiceMode,
+    }) : null;
+    if (promiseOrNow) console.log(JSON.stringify({ tag: "brain:two-choice-promise-or-now", conversationId, reason: promiseOrNow.reason, aix: promiseOrNow.aix }));
     return {
       action: finalAix ?? "",
       parallel_search: parallelOut.parallel,
@@ -5528,8 +5539,11 @@ ${history}`;
       next_steps: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer ? undefined
         : Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
       reply_mode: replyMode,
-      two_choice_mode: isTwoChoiceMode || undefined,
-      reply_direction_label: replyDirectionLabel,
+      two_choice_mode: isTwoChoiceMode || !!promiseOrNow || undefined,
+      reply_direction_label: promiseOrNow ? promiseOrNow.label : replyDirectionLabel,
+      // 2026-10-28 約束の側から出した2択は action が空＝画面の左のボタンはこの AIX（aix-button-view が cardMeta に写す）
+      two_choice_aix: promiseOrNow && !finalAix ? promiseOrNow.aix : undefined,
+      two_choice_check_pattern: promiseOrNow && !finalAix ? promiseOrNow.checkPattern ?? undefined : undefined,
       // 2026-10-15 監査の残り #9: ブレインが決めた書き出し（旧は LLM に決めさせて meta に写さず捨てていた）。BRAIN_OPENER_META=off で旧
       reply_opener: brainOpenerMetaEnabled() ? normalizeBrainOpener(parsed.reply_opener) ?? undefined : undefined,
       // 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（画面のブレインのカードに並べて出す）。連絡待ちの時は物件ピックアップ＋物件オススメ
@@ -7082,7 +7096,8 @@ async function analyzeAndSaveBrainMetaInner(
       void maybeCreateCheckpoint(conversationId, customerName).catch(() => {});
     }
     // 2026-10-08 お客様のメモ: 前回読んだ所より後の新しい通だけ DeepSeek で読み差分を当てる（customer-memo-server.refreshCustomerMemoLlm・CUSTOMER_MEMO_LLM=off）
-    const memoRefresh = () => import("@/app/lib/customer-memo-server").then((m) => m.refreshCustomerMemoLlm(conversationId)).then(() => {}, () => {});
+    // 2026-10-28 送った事の重要な5つを台帳からメモへ写す（LEDGER_MEMO_SYNC=on の時だけ・決まった手順・LLM なし）
+    const memoRefresh = () => import("@/app/lib/customer-memo-server").then(async (m) => { await m.syncLedgerMemo(conversationId); await m.refreshCustomerMemoLlm(conversationId); }).then(() => {}, () => {});
     try { after(memoRefresh); } catch { void memoRefresh(); }
   }
   return actuallyWritten; // 実際に書き込んだ時だけ true（偽陽性の根本修正）

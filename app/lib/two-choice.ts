@@ -113,3 +113,52 @@ export function resolveTwoChoice(o: {
   if (o.llmTwoChoice) return { two: true, reason: "llm" };
   return no("no_signal");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-28 作業員5（統括の振り分けの監査 scripts/audit-conductor-states.ts）: 「約束で返すか、その場で AIX で果たすか」の2択。
+//   竹内さんの番 602 のうち、ブレインと竹内さんが同じ種類（確認・見積・ピックアップ）を選び、片方が約束の返信・片方がその場の AIX だった番が 95（16%）。
+//   内訳: ブレインがピックアップ→竹内さんは約束 35・逆 16・ブレインが確認の約束→竹内さんはその場で物件確認した 13・見積の約束→その場で見積書 13 ほか。
+//   どちらにするかはスタッフが確認・見積を済ませているか（スタッフだけが知る事）で決まる＝feedback_two_choice_aix（重要な場面は2択をブレインがセット）の形。
+//   ところが2択が出ていた番は 602 中 2。→ 同じ種類の「約束の返信／その場の AIX」を2択で出す（押すだけで済む）。
+// 出す場面: 確認・見積は、お客様が物件を送ってきた・費用を聞いた・確認や見積の約束が開いている番／ピックアップは送るか約束かの番（初回は出さない＝ブレインが当てている 64%）。
+// 既定 on（10/28 試験 w5-tc-off→on 91問: 2択が出た15問で ○→✕ 0・✕→○ 1（q035）。戻す: TWO_CHOICE_PROMISE_OR_NOW=off）
+export function twoChoicePromiseOrNowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_CHOICE_PROMISE_OR_NOW ?? "on").trim().toLowerCase() !== "off";
+}
+export type PromiseOrNowKind = "check" | "estimate" | "pickup";
+export type PromiseOrNow = { two: true; reason: string; kind: PromiseOrNowKind; aix: string; checkPattern: string | null; label: string } | null;
+const NOW_AIX: Record<PromiseOrNowKind, string> = { check: "property_check_result", estimate: "estimate_sheet", pickup: "property_send" };
+const PON_LABEL: Record<PromiseOrNowKind, string> = { check: "確認の約束", estimate: "見積の約束", pickup: "探す約束" };
+const PROPERTY_SENT_RE = /https?:\/\/|^\s*\[画像\]|【物件の画面|by SUUMO|LIFULL|アットホーム/m;
+const COST_ASK_RE = /初期費用|費用|いくら|見積|割引|安く|スモ割/;
+
+export function resolvePromiseOrNow(o: {
+  /** ブレインの最終の AIX（その場）。無ければ null */
+  finalAix: string | null | undefined;
+  /** 2段の約束の種類（check・estimate・pickup・photo…）。無ければ null */
+  twoStageKind: string | null | undefined;
+  /** ブレインの決定の出どころ（promise:check 等＝開いている約束を果たす番） */
+  decisionSource: string | null | undefined;
+  customerText: string | null | undefined;
+  firstContact: boolean;
+  postApply: boolean;
+  /** 既に別の理由で2択（その2択を優先） */
+  alreadyTwo: boolean;
+}): PromiseOrNow {
+  if (o.alreadyTwo || o.postApply || o.firstContact) return null;
+  const a = String(o.finalAix ?? "");
+  const nowKind: PromiseOrNowKind | null = a === "property_check_result" ? "check" : a === "estimate_sheet" ? "estimate" : a === "property_send" || a === "property_recommendation" ? "pickup" : null;
+  const ts = String(o.twoStageKind ?? "");
+  const promiseKind: PromiseOrNowKind | null = !a && (ts === "check" || ts === "estimate" || ts === "pickup") ? ts : null;
+  // 今は約束の側（ブレインが約束の返信を選んだ番）だけ: 右の「返信」は約束の下書き・左に同じ種類の AIX を足す（取り違え 95 のうち 48）。
+  //   その場の側（ブレインが AIX を選んだ番・ピックアップ→竹内さんは約束 35 ほか）は、右の返信を押した時に約束の下書きを作る道が今は無い＝入れない（次の作業）
+  if (nowKind) return null;
+  const kind = promiseKind;
+  if (!kind) return null;
+  const t = String(o.customerText ?? "");
+  const ds = String(o.decisionSource ?? "");
+  const openPromise = /^promise:(?:check|estimate)/.test(ds);
+  if ((kind === "check" || kind === "estimate") && !(PROPERTY_SENT_RE.test(t) || COST_ASK_RE.test(t) || openPromise)) return null;
+  // 物件確認した の結果のピッカー（募集中など）が決まっている番は、ブレインの check_pattern をそのまま。約束の側から出す時は「募集中」を初期値に
+  return { two: true, reason: `promise_or_now:${kind}:${nowKind ? "now" : "promise"}`, kind, aix: nowKind ? a : NOW_AIX[kind], checkPattern: kind === "check" && !nowKind ? "available" : null, label: PON_LABEL[kind] };
+}

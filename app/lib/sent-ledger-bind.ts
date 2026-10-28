@@ -59,6 +59,14 @@ const PROMISE_RE = /(?:させて頂きます|させていただきます|お送�
 function sentencesOf(text: string): string[] {
   return norm(text).split(/(?<=[。！!？?\n])/).map((s) => s.trim()).filter((s) => s.length >= 4);
 }
+/** 確認の結果の札（action-ledger の REPORT_STATUS_JA と同じ・内部の札 property_check_result/available を日本語に） */
+const STATUS_JA: Record<string, string> = { available: "募集中", unavailable: "募集終了", vacating: "退去予定", move_out_planned: "退去予定", alternative: "代わりのお部屋を案内", taken: "申込あり", second_position: "2番手" };
+function statusJa(code: string | null | undefined): string | null {
+  const c = String(code ?? "").trim();
+  if (!c) return null;
+  const tail = c.includes("/") ? c.split("/").pop()! : c;
+  return STATUS_JA[tail] ?? STATUS_JA[c] ?? (Object.values(STATUS_JA).includes(c) ? c : null);
+}
 const clip = (s: string, n: number) => Array.from(s.replace(/\s+/g, " ").trim()).slice(0, n).join("");
 
 /** こちらの1通（手打ち・AIX）から、説明した事・断った事を項目にする（送った物件・見積・確認の結果・約束は行動台帳の行を使う） */
@@ -95,8 +103,9 @@ export function itemsFromLedger(entries: ReadonlyArray<LedgerLike>): SentItem[] 
       else out.push({ kind: "estimate", at: e.at, name: null, topic: "見積", text: ev });
     } else if (e.kind === "confirmation_reported") {
       const names = e.detail?.propertyNames ?? [];
-      if (names.length) names.forEach((n, k) => out.push({ kind: "check_result", at: e.at!, name: n, topic: "確認の結果", text: clip(`${e.detail?.propStatuses?.[k] ? `${e.detail.propStatuses[k]}・` : ""}${ev}`, 80) }));
-      else out.push({ kind: "check_result", at: e.at, name: e.detail?.object ?? null, topic: "確認の結果", text: ev });
+      // 10/28: 札（property_check_result/available）は日本語の状態に・読めない時は本文の要点を出さない（「確認させていただきましたが」だけ等は意味が無い）
+      if (names.length) names.forEach((n, k) => { const st = statusJa(e.detail?.propStatuses?.[k]) ?? statusJa(ev); out.push({ kind: "check_result", at: e.at!, name: n, topic: "確認の結果", text: st ?? "" }); });
+      else { const st = statusJa(ev); out.push({ kind: "check_result", at: e.at, name: e.detail?.object ?? null, topic: "確認の結果", text: st ?? (/^[a-z_]+\//.test(ev) ? "" : ev) }); }
     } else if (e.kind === "guarantor_explained" && e.detail?.guarantors?.length) {
       for (const g of e.detail.guarantors) out.push({ kind: "explained", at: e.at, name: g.name, topic: "保証会社", text: clip(`${g.company}（${g.type}）`, 80) });
     } else if (e.kind === "cost_explained" || e.kind === "cost_breakdown_explained") {

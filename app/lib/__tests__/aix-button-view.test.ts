@@ -269,5 +269,20 @@ console.log("■ 2026-10-15 内覧当日の内覧挨拶（朝の行）を主の�
   });
 }
 
+console.log("■ 2026-10-28 約束の側から出した2択（two_choice_aix・TWO_CHOICE_PROMISE_OR_NOW）");
+it("action が空の2択は左のボタンを two_choice_aix にする（cardMeta に写す）", () => {
+  const v = resolveAixButtonView({ meta: brain("", { two_choice_mode: true, reply_direction_label: "確認の約束", two_choice_aix: "property_check_result", two_choice_check_pattern: "available" }), messages: [cust(C1)], legacy: false });
+  expect(v.card?.kind).toBe("two_choice");
+  expect(v.card?.action).toBe("property_check_result");
+  expect(v.cardMeta?.action).toBe("property_check_result");
+  expect(v.cardMeta?.check_pattern).toBe("available");
+  expect(summarizeAixButtonView(v).shown).toBe("two_choice:property_check_result");
+});
+it("ブレインの action がある2択は今まで通り（two_choice_aix は使わない）", () => {
+  const v = resolveAixButtonView({ meta: brain("property_send", { two_choice_mode: true, two_choice_aix: "estimate_sheet" }), messages: [cust(C1)], legacy: false });
+  expect(v.card?.action).toBe("property_send");
+  expect(v.cardMeta).toBe(null);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

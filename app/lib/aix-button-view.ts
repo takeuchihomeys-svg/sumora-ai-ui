@@ -80,6 +80,9 @@ export type AixViewMeta = {
   analyzed_msg_ts?: string | null;
   reply_mode?: string | null;
   two_choice_mode?: boolean | null;
+  /** 2026-10-28 約束の側から出した2択の左のボタン（ブレインの action が空の時・TWO_CHOICE_PROMISE_OR_NOW） */
+  two_choice_aix?: string | null;
+  two_choice_check_pattern?: string | null;
   alt_actions?: string[] | null;
   source?: string | null;
   decision_source?: string | null;
@@ -321,14 +324,18 @@ export function resolveAixButtonView(input: AixButtonViewInput): AixButtonView {
   // 内覧へ！は最後がスタッフ（物件を送った後）の古い判断では出さない。AIX要対応から戻した判断は見た発言が最新なので止めない
   const viewingBlocked = action === "viewing_invite" && !customerIsLast && !pendingMeta;
   let card: AixCard | null = null;
+  let tcCardMeta: AixViewMeta | null = null;
   if (metaFresh && !d.brainHint && !viewingBlocked) {
     const two = !!meta?.two_choice_mode;
     // 旧: note 必須（2択も・AIX のカードも）。F: note が空でもカードは出す（note の行を出さないだけ）
     //   （旧の page.tsx の「ボタンなし（未知アクション）」の枝は hasValidAction か2択が前提なので通らない）
     const cardAllowed = legacy ? (!!meta?.note && (hasValidAction || two)) : (two || hasValidAction);
     if (cardAllowed) {
-      if (two) card = { kind: "two_choice", action, altActions: [], replyDirectionLabel: meta?.reply_direction_label ?? null };
+      // 2026-10-28: 約束の側から出した2択（action が空）は、左のボタンを two_choice_aix にする（cardMeta に写す・DB の判断は書き換えない）
+      const tcAix = two && !action && meta?.two_choice_aix && BRAIN_AIX_LABELS[meta.two_choice_aix] ? meta.two_choice_aix : null;
+      if (two) card = { kind: "two_choice", action: tcAix ?? action, altActions: [], replyDirectionLabel: meta?.reply_direction_label ?? null };
       else card = { kind: "brain_button", action, altActions: alt, replyDirectionLabel: null, split: !legacy && isSearchSplitTurn({ brainAction: action, twoChoiceMode: false, off: input.searchSplitOff }) };
+      if (tcAix && meta) tcCardMeta = { ...meta, action: tcAix, check_pattern: meta.two_choice_check_pattern ?? null };
     }
   }
 
@@ -352,7 +359,7 @@ export function resolveAixButtonView(input: AixButtonViewInput): AixButtonView {
   //   朝の行（cron が当日 10:00／11時より前の内覧は2時間前に立てる）がある間、画面の主のボタンを【内覧挨拶】にする。
   //   ブレインの判断は上書きしない: ブレインのカード（1つのボタン）がある時はその下に2つ目として並べる・2択／左右の形／単独の帯の番は
   //   そのまま（内覧挨拶は上の「やること」に出る）。ブレインが同じ内覧挨拶なら何もしない。DB の判断（suggested_aix_meta）には書かない
-  let cardMeta: AixViewMeta | null = null;
+  let cardMeta: AixViewMeta | null = tcCardMeta;
   let morningMain = false;
   if (!legacy && input.morningGreeting?.due && !flow && !d.brainHint) {
     const greet: AixViewMeta = { action: "greeting_viewing", check_pattern: "before", note: input.morningGreeting.note ?? null, analyzed_msg_ts: latestCustomerTs(messages), reply_mode: "aix", source: MORNING_GREETING_CARD_SOURCE };
