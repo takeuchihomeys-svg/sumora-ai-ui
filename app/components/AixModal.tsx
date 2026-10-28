@@ -1484,6 +1484,14 @@ export default function AixModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionType, conversationId]);
   const [estimateMultiPreviews, setEstimateMultiPreviews] = useState<(string | null)[]>([null, null, null]);
+  // 2026-10-28 竹内さん #15（かずき 10/27）: 見積書を複数送る時、枠ごとに物件資料も付け、物件ごとに［物件資料→見積書→文］の順で送る（NEXT_PUBLIC_ESTIMATE_PER_PROPERTY=on）
+  const estPerProp = (process.env.NEXT_PUBLIC_ESTIMATE_PER_PROPERTY ?? "").trim().toLowerCase() === "on";
+  const [estimateMultiPropFiles, setEstimateMultiPropFiles] = useState<(File | null)[]>([null, null, null]);
+  const [estimateMultiPropPreviews, setEstimateMultiPropPreviews] = useState<(string | null)[]>([null, null, null]);
+  /** 物件ごとの費用の文（見積書のある枠の順＝送る順）。生成し直すたびに作り直す */
+  const [estimatePerPropTexts, setEstimatePerPropTexts] = useState<string[]>([]);
+  /** 送った段（img:k／txt:k）。押し直した時に二重に送らない */
+  const perPropStepsRef = useRef<Set<string>>(new Set());
   // 全力サポート専用
   const [zenryokuArea, setZenryokuArea] = useState<string>("");
   const [zenryokuMemo, setZenryokuMemo] = useState<string>("");
@@ -3189,6 +3197,7 @@ export default function AixModal({
         const urls = await Promise.all(multiFiles.map((f, i) => uploadImageCached(f, i)));
         body.image_urls = urls;
         body.multi_estimate = true;
+        if (estPerProp) body.estimate_per_property = true;
       } else if (actionType === "zenryoku_support") {
         if (!zenryokuArea.trim()) throw new Error("探しているエリアを入力してください");
         body.zenryoku_area = zenryokuArea.trim();
@@ -3457,6 +3466,11 @@ export default function AixModal({
         : null;
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
       setEstimateTextReady(data.estimate_text || "");
+      // 2026-10-28 #15: 見積書の複数件・物件ごと（送る順＝見積書のある枠の順）
+      if (actionType === "estimate_sheet" && estimateMultiMode && estPerProp) {
+        setEstimatePerPropTexts(Array.isArray(data.estimate_texts) ? (data.estimate_texts as (string | null)[]).map((t) => t ?? "") : []);
+        perPropStepsRef.current = new Set();
+      }
       // 物件確認した（見積書の同封・物件ごとのセット）: 物件ごとの費用の文。生成し直すたびに作り直す（送信の途中の印も消す）
       if (actionType === "property_check_result") {
         setEstimateBundleTexts(Array.isArray(data.estimate_texts) ? (data.estimate_texts as (string | null)[]).map((t) => t ?? "") : []);
@@ -4063,9 +4077,25 @@ export default function AixModal({
         } else if (actionType === "estimate_sheet" && estimateMultiMode) {
           // 複数件: 見積書を順に送ってから合算テキスト（送信済みindexはスキップ＝再押下時の重複送信防止）
           const multiFiles = estimateMultiFiles.filter((f): f is File => !!f);
+          const slotIdx = estimateMultiFiles.map((f, i) => (f ? i : -1)).filter((i) => i >= 0);
+          if (estPerProp && estimatePerPropTexts.some((t) => t.trim())) {
+            // 2026-10-28 #15: 物件ごとに［物件資料（任意）→見積書］を横並びで1回 → その物件の文。押し直しは送った段を飛ばす
+            for (let k = 0; k < multiFiles.length; k++) {
+              if (!perPropStepsRef.current.has(`img:${k}`)) {
+                const propFile = estimateMultiPropFiles[slotIdx[k]] ?? null;
+                const urls = [...(propFile ? [await uploadImageCached(propFile, 10 + k)] : []), await uploadImageCached(multiFiles[k], k)];
+                const delivered = await sendImageUrlsGrouped(urls);
+                if (delivered < urls.length) throw new Error(PARTIAL_IMAGE_ERROR);
+                perPropStepsRef.current.add(`img:${k}`);
+              }
+              const txt = (estimatePerPropTexts[k] ?? "").trim();
+              if (txt && !perPropStepsRef.current.has(`txt:${k}`)) { await sendAsAix(txt); perPropStepsRef.current.add(`txt:${k}`); }
+            }
+          } else {
           // 2026-09-22: 見積書をまとめて1回で送る（横並び）
           await sendRemainingImagesGrouped(multiFiles.length, (i) => uploadImageCached(multiFiles[i]));
           await sendAsAix(preview);
+          }
           // 申込誘導バッジON: 合算金額文の後に申込誘導テンプレを送る
           if (estimateWithAppeal) {
             await sendAsAix(buildEstimateAppealText());
@@ -7395,6 +7425,33 @@ export default function AixModal({
                         onClick={() => estimateMultiRefs[idx]?.current?.click()}
                         className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#90a4ae] py-2 text-xs text-[#546e7a]"
                       >📎 見積書を追加{idx > 0 ? "（任意）" : ""}</button>
+                    )}
+                    {estPerProp && (
+                      <div className="mb-1">
+                        {estimateMultiPropPreviews[idx] ? (
+                          <div className="relative mb-1 overflow-hidden rounded-xl border border-[#d1d7db]">
+                            <img src={estimateMultiPropPreviews[idx] ?? undefined} alt={`物件資料${idx + 1}`} className="max-h-20 w-full object-contain" />
+                            <button onClick={() => { setEstimateMultiPropFiles((p) => p.map((f, i) => (i === idx ? null : f))); setEstimateMultiPropPreviews((p) => p.map((v, i) => (i === idx ? null : v))); perPropStepsRef.current = new Set(); }}
+                              className="absolute right-1 top-1 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white">削除</button>
+                          </div>
+                        ) : (
+                          <label className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#90a4ae] bg-white py-1.5 text-[11px] text-[#546e7a]">
+                            🏠 物件資料を付ける（任意・見積書の前に送る）
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                              const f = e.target.files?.[0]; if (!f) return;
+                              setEstimateMultiPropFiles((p) => p.map((v, i) => (i === idx ? f : v))); perPropStepsRef.current = new Set();
+                              const r = new FileReader(); r.onload = () => setEstimateMultiPropPreviews((p) => p.map((v, i) => (i === idx ? String(r.result ?? "") : v))); r.readAsDataURL(f);
+                            }} />
+                          </label>
+                        )}
+                        {(() => {
+                          const k = estimateMultiFiles.map((f, i) => (f ? i : -1)).filter((i) => i >= 0).indexOf(idx);
+                          return k >= 0 && estimatePerPropTexts[k] !== undefined ? (
+                            <textarea value={estimatePerPropTexts[k]} onChange={(e) => { const v = e.target.value; setEstimatePerPropTexts((p) => p.map((t, i) => (i === k ? v : t))); }}
+                              rows={5} className="mt-1 w-full resize-y rounded-lg border border-[#d1d7db] bg-white px-2 py-1 text-[12px] leading-5 text-[#111b21] outline-none" />
+                          ) : null;
+                        })()}
+                      </div>
                     )}
                     <input
                       ref={estimateMultiRefs[idx]}

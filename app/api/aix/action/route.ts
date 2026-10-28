@@ -3414,6 +3414,8 @@ ${SMORA_COMMON_RULES}`;
           })
         );
         const estItems = multiEstResults.filter((r): r is string => r !== null);
+        // 2026-10-28 竹内さん #15: 物件ごとに［物件資料→見積書→文］で送る時は、物件ごとの費用の文（日割の注記つき＝1件の見積書と同じ形）も返す（画面が estimate_per_property を送った時だけ）
+        if (body.estimate_per_property === true) estimate_texts_result = multiEstResults.map((r) => (r ? `${r}\n\n${DAY_RENT_NOTE}` : null));
         message_text = estItems.length === 0
           ? `${NO_AMOUNT_FALLBACK}\n\n${DAY_RENT_NOTE}`
           : `${estItems.join("\n\n")}\n\n${DAY_RENT_NOTE}`;
