@@ -124,6 +124,7 @@ import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 // 2026-10-21 つなぎのブレイン 段3 司令塔: 次の一手（スタッフしか分からない事は AIX）を1行（LINK_CONDUCTOR_BRAIN=on の時だけ・既定 off＝1文字も変わらない）
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
 import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmedAckMaterialLine } from "@/app/lib/viewing-confirmed-ack";
+import { sentLedgerBindEnabled, explainedItemsOf, itemsFromLedger, bindReaction, bindMaterialLine } from "@/app/lib/sent-ledger-bind";
 import { vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled, vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
 import { cancelViewingCalendarOnCustomerCancel } from "@/app/lib/viewing-cancel-calendar-server";
@@ -2920,6 +2921,23 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       ].filter(Boolean);
       if (lines.length) customerStateBlockText += `\n\n${lines.join("\n")}`;
     } catch (e) { console.warn("[brain-core] week-scene materials skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  // 2026-10-28 竹内さんの決定（送った事を根本から理解する）・統括の設計図 ①拾う: お客様の今の発言が「どの送った事への反応か」を結び付け、
+  //   その項目の中身（送った物件・見積・確認の結果・説明した事・断った事）を事実だけ1行で渡す（どう返すかはブレイン）。SENT_LEDGER_BIND=on（既定 off）
+  if (sentLedgerBindEnabled() && typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus)) {
+    try {
+      const turnMsgs: typeof typedMessages = [];
+      for (const m of typedMessages) { if (m.sender !== "customer") break; turnMsgs.push(m); }
+      const quotedMsg = turnMsgs.find((m) => !!m.quoted_message_id);
+      const quotedId = quotedMsg?.quoted_message_id ?? null;
+      const quotedText = quotedId ? (quotedPropertyLabel.get(quotedId) ?? msgByLmid.get(quotedId)?.text ?? null) : null;
+      const staffItems = typedMessages.filter((m) => m.sender !== "customer" && !!(m.text ?? "").trim()).slice(0, 30)
+        .flatMap((m) => explainedItemsOf(m.text ?? "", m.created_at, m.line_message_id));
+      const bind = bindReaction({ customerText: unrepliedTurn.text ?? "", quotedText, quotedMessageId: quotedId, items: [...itemsFromLedger(brainLedger.entries), ...staffItems], nowMs: Date.now() });
+      const line = bindMaterialLine(bind, Date.now());
+      console.log(JSON.stringify({ tag: "brain:sent-bind", conversationId, by: bind?.by ?? null, kind: bind?.item.kind ?? null, others: bind?.others ?? 0, items: staffItems.length }));
+      if (line) customerStateBlockText += `\n\n${line}`;
+    } catch (e) { console.warn("[brain-core] sent-bind skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-08 お金の時期の逆算の A/B（customer-memo-server が payment-timing で作る・B の時は下で申込へを外す）
   let paymentPlan: (import("@/app/lib/payment-timing").ApplyPlan & { core: string }) | null = null;
