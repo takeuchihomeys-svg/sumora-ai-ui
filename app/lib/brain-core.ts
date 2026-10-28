@@ -126,6 +126,7 @@ import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 // 2026-10-21 つなぎのブレイン 段3 司令塔: 次の一手（スタッフしか分からない事は AIX）を1行（LINK_CONDUCTOR_BRAIN=on の時だけ・既定 off＝1文字も変わらない）
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
 import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmedAckMaterialLine } from "@/app/lib/viewing-confirmed-ack";
+import { nowFulfillableEnabled, nowFulfillableLine } from "@/app/lib/situation-summary";
 import { sentLedgerBindEnabled, explainedItemsOf, itemsFromLedger, bindReaction, bindMaterialLine } from "@/app/lib/sent-ledger-bind";
 import { vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled, vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
@@ -2933,6 +2934,12 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       ].filter(Boolean);
       if (lines.length) customerStateBlockText += `\n\n${lines.join("\n")}`;
     } catch (e) { console.warn("[brain-core] week-scene materials skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  // 2026-10-29 統括の②状況のまとめ「今すぐ果たせる物」（situation-summary.ts・SITUATION_NOW_FULFILLABLE=on・既定 off）: 記録から1行。どう返すかはブレイン
+  if (nowFulfillableEnabled() && customerState && !isPostApplyStatus(convStatus)) {
+    const nf = nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() });
+    if (nf) customerStateBlockText += `\n${nf}`;
+    console.log(JSON.stringify({ tag: "brain:now-fulfillable", conversationId, chars: nf.length }));
   }
   // 2026-10-28 竹内さんの決定（送った事を根本から理解する）・統括の設計図 ①拾う: お客様の今の発言が「どの送った事への反応か」を結び付け、
   //   その項目の中身（送った物件・見積・確認の結果・説明した事・断った事）を事実だけ1行で渡す（どう返すかはブレイン）。SENT_LEDGER_BIND=on（既定 off）
