@@ -12,6 +12,7 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
 import { newerSubstantiveCustomerMessageAfter, staleDraftGuardOn } from "@/app/lib/draft-supersede";
 import { STALE_REPLY_ERROR_CODE } from "@/app/lib/stale-reply";
+import { sendPrecheckFastOn, withCap, SEND_PRECHECK_CAP_MS } from "@/app/lib/send-precheck-cap";
 import { parseSendId, parseRetryKeyAccepted, retryKeyFor, sendIdempotencyOn } from "@/app/lib/send-idempotency";
 
 // 宣言直後のブレイン再分析（after 内で最大 ~20秒待ち＋分析）に余裕を持たせる
@@ -37,7 +38,7 @@ function getToken(accountKey?: string): string | undefined {
 // アカウントキーを解決する
 // UIで明示指定されたアカウント（providedAccount）を最優先で使用する
 // → long-press→アカウント変更でユーザーが指定したアカウントを確実に尊重する
-async function resolveAccountKey(lineUserId: string, providedAccount?: string): Promise<string> {
+async function resolveAccountKey(lineUserId: string, providedAccount?: string, capMs?: number): Promise<string> {
   // UIから明示的に指定されたアカウントキーを最優先
   const validKeys = ["ieyasu", "giga", "hasu", "sumora"];
   if (providedAccount && validKeys.includes(providedAccount)) {
@@ -49,12 +50,14 @@ async function resolveAccountKey(lineUserId: string, providedAccount?: string): 
   }
 
   // 未指定の場合のみ line_contacts を参照（フォールバック）
-  const { data } = await supabase
+  const q = supabase
     .from("line_contacts")
     .select("account")
     .eq("line_user_id", lineUserId)
     .limit(1)
     .single();
+  // SEND_PRECHECK_FAST=on: 送信の前の読みは capMs で切る（読めない時は今と同じ sumora）
+  const { data } = capMs ? await withCap(q, capMs, { data: null } as unknown as Awaited<typeof q>, () => console.warn(JSON.stringify({ tag: "send-line-message:precheck-cap", step: "line_contacts" }))) : await q;
 
   if (data?.account) {
     const key = ACCOUNT_KEY_MAP[data.account as string];
@@ -143,11 +146,20 @@ export async function POST(req: NextRequest) {
   // 2026-10-20 竹内さん（P1 f9d261d4・アカウントの取り違え）: 会話の id がある時は、その会話のアカウント（conversations.account）も読む。
   //   送ろうとしているアカウントと違えば送らない・アカウントは会話の物を使う（send-account.checkSendAccount・戻す SEND_ACCOUNT_GATE=off）
   let convAccount: string | null = null;
+  // 2026-10-28 SEND_PRECHECK_FAST=on（#19 陽菜）: 送信の前の DB の読み（会話の行・新しい発言・アカウントの補い）を並べて投げ、各 4秒で切る。
+  //   読めない時の扱いは今と同じ（確かめずに進む）。旧は1本ずつ REST の上限 25秒まで待ち、確かめの要求も LINE に届く前に画面が時間切れになった
+  const fastPre = sendPrecheckFastOn();
+  const capLog = (step: string) => () => console.warn(JSON.stringify({ tag: "send-line-message:precheck-cap", step, conversationId: conversation_id ?? null }));
+  const staleNeeded = !!(conversation_id && reply_based_on_customer_at && !allow_stale && staleDraftGuardOn());
+  const stalePromise = fastPre && staleNeeded
+    ? withCap(newerSubstantiveCustomerMessageAfter(conversation_id!, reply_based_on_customer_at), SEND_PRECHECK_CAP_MS, null, capLog("stale"))
+    : null;
   {
     const { checkSendTarget } = await import("@/app/lib/line-target");
-    const { data: convRows } = conversation_id
-      ? await supabase.from("conversations").select("line_user_id, send_blocked_reason, account").eq("id", conversation_id).limit(1)
-      : await supabase.from("conversations").select("line_user_id, send_blocked_reason").eq("line_user_id", line_user_id).limit(1);
+    const convQ = conversation_id
+      ? supabase.from("conversations").select("line_user_id, send_blocked_reason, account").eq("id", conversation_id).limit(1)
+      : supabase.from("conversations").select("line_user_id, send_blocked_reason").eq("line_user_id", line_user_id).limit(1);
+    const { data: convRows } = fastPre ? await withCap(convQ, SEND_PRECHECK_CAP_MS, { data: null } as unknown as Awaited<typeof convQ>, capLog("conversations")) : await convQ;
     const convForCheck = ((convRows ?? [])[0] as { line_user_id: string | null; send_blocked_reason: string | null; account?: string | null } | undefined) ?? null;
     const check = checkSendTarget(line_user_id, convForCheck);
     if (!check.ok) {
@@ -168,7 +180,7 @@ export async function POST(req: NextRequest) {
   //   画面の手元の一覧が遅れていても DB で見る（10/19 21:08 は新しい発言の19秒後に前の質問への答えが送られた）。戻す STALE_DRAFT_GUARD=off
   if (conversation_id && reply_based_on_customer_at && !allow_stale && staleDraftGuardOn()) {
     // 短いお礼・了承だけの新しい発言では止めない（画面の確かめと同じ線・stale-reply.ts isTrivialAckText・戻す STALE_ACK_EXEMPT=off）
-    const newerAt = (await newerSubstantiveCustomerMessageAfter(conversation_id, reply_based_on_customer_at))?.at ?? null;
+    const newerAt = (await (stalePromise ?? newerSubstantiveCustomerMessageAfter(conversation_id, reply_based_on_customer_at)))?.at ?? null;
     if (newerAt) {
       console.warn(JSON.stringify({ tag: "send-line-message:stale-reply", conversationId: conversation_id, basedOn: reply_based_on_customer_at, newerAt, origin: origin ?? null }));
       return NextResponse.json({ ok: false, errorCode: STALE_REPLY_ERROR_CODE, newerAt, error: "この文を作った後にお客様から新しい LINE が届いています。新しい発言を確かめてから送ってください" }, { status: 409 });
@@ -176,7 +188,7 @@ export async function POST(req: NextRequest) {
   }
 
   // conversations.account が null/wrong でも line_contacts から正しいアカウントを解決（会話のアカウントが分かる時はそれを使う）
-  const accountKey = acctCheck?.ok && acctCheck.source === "conversation" && acctCheck.key ? acctCheck.key : await resolveAccountKey(line_user_id, account);
+  const accountKey = acctCheck?.ok && acctCheck.source === "conversation" && acctCheck.key ? acctCheck.key : await resolveAccountKey(line_user_id, account, fastPre ? SEND_PRECHECK_CAP_MS : undefined);
   const token = getToken(accountKey);
   // 2026-09-27 お客様役の DeepSeek の段（手元の開発サーバー）: 手元には LINE の鍵が無いので、YUMA だけ LINE には送らず記録だけ進める。
   //   鍵3つ（手元＝isTestModeAllowed・LOCAL_SIM_SKIP_LINE_PUSH=1・テスト用の会話）。本番（Vercel）では isTestModeAllowed が false なので通らない
