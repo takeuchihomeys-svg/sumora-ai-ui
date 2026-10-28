@@ -6,6 +6,7 @@ import { followupRevive1021Enabled, hasNewArrivalFact, composeFollowupText, sani
 import { aixBrainEnabledFor } from "@/app/lib/aix-brain";
 import { staffInputsFromBody, pickerValueOf } from "@/app/lib/aix-brain-inputs";
 import { buildOccupantMgmtInfo, ensureOccupantCondition, isOccupantPolicy, occupantFormat, OCCUPANT_RULES } from "@/app/lib/aix-occupant-picker";
+import { buildHoldMgmtInfo, buildFloorMgmtInfo, holdFormat, floorFormat, HOLD_RULES, FLOOR_RULES, isHoldResult, ensureHoldResult, ensureFloorColor } from "@/app/lib/aix-hold-floor-picker";
 import { aixRequestMustUseClaude, applicationStatusPosition, applicationStatusTextOk, composeApplicationStatusText, composeRoomVacanciesText, ensureScreeningSupportLine, parseVacancyRows, SCREENING_BASIC_STANCE, stripUncheckedScreeningClaims, type ApplicationStatusInput } from "@/app/lib/aix-new-pickers";
 import { NextRequest, NextResponse, after } from "next/server";
 import { buildMustSendNote, mustMoveInLabel, normalizeRequirementStrengths } from "@/app/lib/requirement-strength";
@@ -5457,7 +5458,7 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
     } else if (
       action === "property_check_result" &&
       (check_pattern === "mgmt_screening" || check_pattern === "mgmt_application_status" || check_pattern === "mgmt_contract_terms" || check_pattern === "mgmt_rent_negotiation" || check_pattern === "mgmt_surroundings" ||
-       check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_occupant" || check_pattern === "mgmt_lifeline" || check_pattern === "mgmt_company" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
+       check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_occupant" || check_pattern === "mgmt_room_hold" || check_pattern === "mgmt_floor_color" || check_pattern === "mgmt_lifeline" || check_pattern === "mgmt_company" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
     ) {
       let mgmtInfo = extra_input ? String(extra_input).trim() : "";
       // 2026-09-16 竹内（カイナ事例）: 代理契約の可否。入れるのは物件名と可能／不可だけで、あとは会話に合わせる
@@ -5478,6 +5479,13 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
       if (check_pattern === "mgmt_occupant") {
         mgmtInfo = buildOccupantMgmtInfo({ policy: body.occupant_policy, condition: occupantCondition, propertyName: property_name, extra: mgmtInfo });
       }
+      // 2026-10-28 竹内さん #7・#27: お部屋止めについて（申込可能／申込不可＋理由）・床の色について（色＋補足）。入れるのはスタッフの入力だけ（aix-hold-floor-picker）
+      const holdResult = isHoldResult(body.room_hold_result) ? body.room_hold_result : null;
+      const holdReason = typeof body.room_hold_reason === "string" ? body.room_hold_reason.trim() : "";
+      const floorColor = typeof body.floor_color === "string" ? body.floor_color.trim() : "";
+      const floorNote = typeof body.floor_color_note === "string" ? body.floor_color_note.trim() : "";
+      if (check_pattern === "mgmt_room_hold") mgmtInfo = buildHoldMgmtInfo({ result: body.room_hold_result, reason: holdReason, propertyName: property_name, extra: mgmtInfo });
+      if (check_pattern === "mgmt_floor_color") mgmtInfo = buildFloorMgmtInfo({ color: floorColor, note: floorNote, propertyName: property_name, extra: mgmtInfo });
       // 2026-10-18 竹内さん 10/18: ライフライン（管理会社に確認した→ライフラインについて）。二人入居のピッカーに倣い、入れるのは
       //   指定の有無（指定なし／指定あり）・連絡先（電気・ガス・水道の会社と電話番号・スタッフが写した文字のまま）・物件名。
       //   実送信の答えの型（9/28 469a614a）「ライフライン特に指定なしとのことです。／【ライフラインご連絡先】／関西電力／0800-…／大阪ガス／0120-…／堺市水道局／0570-…」
@@ -5616,7 +5624,7 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
         const label = m.sender === "staff" && m.imageUrl ? staffImageLabels.get(m.imageUrl) : undefined;
         return { sender: m.sender, text: label ? `[画像: ${label}の資料・御見積書]` : m.text };
       });
-      const mgmtTarget = check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_occupant" && check_pattern !== "mgmt_lifeline" && check_pattern !== "mgmt_move_in" && !(typeof property_name === "string" && property_name.trim())
+      const mgmtTarget = check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_occupant" && check_pattern !== "mgmt_room_hold" && check_pattern !== "mgmt_floor_color" && check_pattern !== "mgmt_lifeline" && check_pattern !== "mgmt_move_in" && !(typeof property_name === "string" && property_name.trim())
         ? resolveConfirmTargetProperty(mgmtTargetRows, { topic: confirmTopicForCheckPattern(String(check_pattern)) })
         : null;
       if (mgmtTarget) {
@@ -5692,6 +5700,9 @@ ${guidanceRule}`,
 ・「審査に通る」「大丈夫です」など確認していない断定はしない`,
         },
         // 2026-10-23 入居者の条件について（型は aix-occupant-picker＝竹内さんの 二人入居について の2行の型）
+        // 2026-10-28 竹内さん #7・#27（型は aix-hold-floor-picker＝KID 10/25・10/26 の手打ち）
+        mgmt_room_hold: { label: "お部屋止め（申込でお部屋を押さえられるか）", format: holdFormat(holdResult ?? "申込不可", holdReason, typeof property_name === "string" ? property_name : null), rules: HOLD_RULES },
+        mgmt_floor_color: { label: "床の色", format: floorFormat(floorColor || "[色]", floorNote, typeof property_name === "string" ? property_name : null), rules: FLOOR_RULES },
         mgmt_occupant: {
           label: "入居者の条件（お子様のご入居）",
           format: occupantFormat(occupantPolicy ?? "可能", occupantCondition),
@@ -5984,7 +5995,7 @@ ${mgmtTarget ? `②の文頭に「${mgmtTarget.name}につきまして」と付�
 ${mgmtDef.format}
 
 【置き換えルール】
-${check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_occupant" || check_pattern === "mgmt_lifeline" ? "" : mgmtTarget ? `・[物件名]は【確認した物件】の名前をそのまま使う（${mgmtTarget.name}）。会話に出てくる他の物件の名前は書かない
+${check_pattern === "mgmt_proxy" || check_pattern === "mgmt_two_person" || check_pattern === "mgmt_occupant" || check_pattern === "mgmt_room_hold" || check_pattern === "mgmt_floor_color" || check_pattern === "mgmt_lifeline" ? "" : mgmtTarget ? `・[物件名]は【確認した物件】の名前をそのまま使う（${mgmtTarget.name}）。会話に出てくる他の物件の名前は書かない
 ` : `・[物件名]は会話履歴からお客様が確認依頼した物件を特定する（号室があれば「マンション名 806号室」形式・号室は資料や会話の表記のまま: 0806 は 0806）。特定できない場合は「ご確認頂きましたお部屋」とする
 `}${mgmtDef.rules}
 
@@ -6032,6 +6043,15 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
         }
       }
       // 2026-10-23 入居者の条件について: 条件ありで、スタッフの条件の字が本文に無ければ決まった型の2行目に差し替える（事実はスタッフの入力のまま）
+      // 2026-10-28 お部屋止め・床の色: 結果の取り違え・入力の字（理由・色）の抜けは決まった型に差し替える（事実はスタッフの入力のまま）
+      if (check_pattern === "mgmt_room_hold" && holdResult) {
+        const fixed = ensureHoldResult(message_text, holdResult, holdReason, typeof property_name === "string" ? property_name : null);
+        if (fixed !== message_text) { console.warn(JSON.stringify({ tag: "aix:room-hold-fallback", conversationId })); message_text = fixed; }
+      }
+      if (check_pattern === "mgmt_floor_color" && floorColor) {
+        const fixed = ensureFloorColor(message_text, floorColor, floorNote, typeof property_name === "string" ? property_name : null);
+        if (fixed !== message_text) { console.warn(JSON.stringify({ tag: "aix:floor-color-fallback", conversationId })); message_text = fixed; }
+      }
       if (check_pattern === "mgmt_occupant" && occupantPolicy) {
         const fixed = ensureOccupantCondition(message_text, occupantPolicy, occupantCondition);
         if (fixed !== message_text) { console.warn(JSON.stringify({ tag: "aix:occupant-condition-fallback", conversationId })); message_text = fixed; }

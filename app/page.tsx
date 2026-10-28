@@ -23,6 +23,7 @@ import TemplateModal, { type Template as CachedTemplate } from "./components/Tem
 import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage, PRE_APPLY_STATUSES } from "./lib/application-form-detect";
 import { aixApplyStatusOn, shouldPromoteOnApplyAix } from "./lib/apply-status-aix";
+import { holdFloorPickerUiOn } from "./lib/aix-hold-floor-picker";
 import { detectPlaceholders, canonOf } from "./lib/validate-reply";
 import { pickCallName, sanOf } from "./lib/call-name-pick";
 // 2026-09-18: 下書き→送る文の整形は画面と自動返信で同じ関数を使う（app/lib/draft-text.ts）
@@ -1120,7 +1121,7 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_occupant" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "room_vacancies" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_occupant" | "mgmt_room_hold" | "mgmt_floor_color" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "room_vacancies" | null>(null);
   // オーナーに確認した（その他）: 中間フォーム用state
   const [showOwnerOtherForm, setShowOwnerOtherForm] = useState(false);
   const [ownerOtherWhat, setOwnerOtherWhat] = useState("");
@@ -7024,7 +7025,7 @@ export default function Home() {
   // 次アクション提案バナー経由でAIXを開く（paramsからaixInit系stateを初期化してから開く）
   const openAixWithParams = (type: AixActionType, params?: NextActionParams) => {
     // 2026-10-06 ⑫: 設備・管理会社について・代理契約・募集状況（管理会社）も選んだ状態で開く（旧は8種類だけで、設備の確認の約束が素の画面で開いた）
-    const CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_occupant", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
+    const CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_occupant", "mgmt_room_hold", "mgmt_floor_color", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
     if (params?.check_pattern && (CP_OK as readonly string[]).includes(params.check_pattern)) {
       setAixInitCheckPattern(params.check_pattern as (typeof CP_OK)[number]);
     }
@@ -9615,7 +9616,7 @@ export default function Home() {
                   onClick={() => {
                     setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result");
                     // 条件側はブレインのピッカーを開く（代表・オーナー・その他の時は AIX メニューの「確認した（条件・交渉）」から）
-                    const CP_OK = ["vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_occupant", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
+                    const CP_OK = ["vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_two_person", "mgmt_occupant", "mgmt_room_hold", "mgmt_floor_color", "mgmt_lifeline", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other", "mgmt_screening", "mgmt_application_status", "mgmt_contract_terms", "mgmt_rent_negotiation", "mgmt_surroundings", "room_vacancies"] as const;
                     if (guideCheckPattern && (CP_OK as readonly string[]).includes(guideCheckPattern)) setAixInitCheckPattern(guideCheckPattern as (typeof CP_OK)[number]);
                     openAixDirect("property_check_result");
                   }}
@@ -15103,6 +15104,30 @@ export default function Home() {
                     <path d="M19 50c0-5.5 4.5-10 10-10s10 4.5 10 10M33 50c0-5.5 4.5-10 10-10s10 4.5 10 10" stroke="#546E7A" strokeWidth="1.6" strokeLinecap="round"/>
                   </>
                 },
+                // 2026-10-28 竹内さんの指摘 #7・#27（aix-hold-floor-picker）: お部屋止めについて・床の色について（NEXT_PUBLIC_AIX_HOLD_FLOOR_PICKER=on の時だけ出す）
+                ...(holdFloorPickerUiOn(process.env.NEXT_PUBLIC_AIX_HOLD_FLOOR_PICKER) ? [
+                  {
+                    key: "mgmt_room_hold" as const,
+                    label: "お部屋止めについて",
+                    desc: "お申込みでお部屋を押さえられるか管理会社に確認した結果",
+                    hint: "",
+                    icon: <>
+                      <rect x="20" y="22" width="32" height="28" rx="3" stroke="#546E7A" strokeWidth="1.6"/>
+                      <path d="M28 22v-4a8 8 0 0 1 16 0v4" stroke="#546E7A" strokeWidth="1.6" strokeLinecap="round"/>
+                      <circle cx="36" cy="36" r="3" stroke="#546E7A" strokeWidth="1.6"/>
+                    </>
+                  },
+                  {
+                    key: "mgmt_floor_color" as const,
+                    label: "床の色について",
+                    desc: "お部屋の床の色を確認した結果",
+                    hint: "",
+                    icon: <>
+                      <path d="M16 44l20-10 20 10-20 10z" stroke="#546E7A" strokeWidth="1.6" strokeLinejoin="round"/>
+                      <path d="M26 39l20 10M36 34l-20 10" stroke="#546E7A" strokeWidth="1.2"/>
+                    </>
+                  },
+                ] : []),
                 {
                   // 2026-10-23 竹内さんの決定（2d860ddb・質問7）「入居者の条件（お子様・年齢）のピッカーを作る」
                   key: "mgmt_occupant",
@@ -15237,7 +15262,7 @@ export default function Home() {
                     <path d="M30 39l4 4 9-9.5" stroke="#2E7D32" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
                   </>
                 },
-              ] as Array<{ key: "mgmt_availability" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_occupant" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
+              ] as Array<{ key: "mgmt_availability" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_two_person" | "mgmt_occupant" | "mgmt_room_hold" | "mgmt_floor_color" | "mgmt_lifeline" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_screening" | "mgmt_application_status" | "mgmt_contract_terms" | "mgmt_rent_negotiation" | "mgmt_surroundings" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
                 const isSuggested = suggestedPropertyCheckMode === key;
                 return (
                 <button
