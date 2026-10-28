@@ -21,11 +21,13 @@ for (const r of rows) {
   fired++;
   const p = spec.get(r.id);
   if (!p) continue;
-  const without = judgePath(brainPathCode({ ...b, two_choice_mode: false, two_choice_reply_kind: null }), p.accept, p.mustNot ?? []).ok;
-  const withTc = r.path.ok;
-  if (withTc && without) bothOk++; else if (withTc && !without) gained++; else if (!withTc && without) lost++; else bothNg++;
   const rk = String(b.action ?? "") === "estimate_sheet" ? "estimate" : String(b.action ?? "") === "property_check_result" ? "check" : "pickup";
-  const bad = (p.mustNot ?? []).some((m) => m === `2段:${rk}` || m === "2段" || m === "返信");
+  // 今の採点（10/29: 2択でも言ってはいけない道のボタンを出したら外す）で、2択ありの道を答案から作り直す
+  const tcV = judgePath(brainPathCode({ ...b, two_choice_mode: true, two_choice_reply_kind: rk }), p.accept, p.mustNot ?? []);
+  const withTc = tcV.ok;
+  const bad = !!tcV.mustNotHit && tcV.mustNotHit.startsWith("2段");
+  const without = judgePath(brainPathCode({ ...b, two_choice_mode: false, two_choice_reply_kind: null }), p.accept, p.mustNot ?? []).ok;
+  if (withTc && without) bothOk++; else if (withTc && !without) gained++; else if (!withTc && without) lost++; else bothNg++;
   if (bad) risky++;
   console.log(`${bad ? "⚠右は言ってはいけない道 " : ""}${r.id}#${r.rep} ${without ? "○" : "✕"}→${withTc ? "○" : "✕"} ${r.path.code} 正解=${p.accept.join("|")}`);
 }

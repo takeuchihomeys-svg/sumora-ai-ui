@@ -16,7 +16,7 @@ t("申込以降は出さない", resolvePromiseOrNow({ ...base, twoStageKind: "c
 t("既に別の2択なら出さない", resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "https://suumo.jp/x", alreadyTwo: true }) === null);
 t("その場の AIX の番は今は出さない（右の約束の下書きの道が無い）", resolvePromiseOrNow({ ...base, finalAix: "property_send", twoStageKind: null, customerText: "他にありますか" }) === null);
 // その場の側（TWO_CHOICE_NOW_SIDE・10/28）
-t("その場の側: 既定 off・on で入る", twoChoiceNowSideOn({}) === false && twoChoiceNowSideOn({ TWO_CHOICE_NOW_SIDE: "on" }));
+t("その場の側: 既定 on・off で戻る", twoChoiceNowSideOn({}) === true && twoChoiceNowSideOn({ TWO_CHOICE_NOW_SIDE: "off" }) === false);
 const n1 = resolvePromiseOrNow({ ...base, finalAix: "property_send", twoStageKind: null, customerText: "他にありますか", nowSide: true });
 t("その場の側: 物件ピックアップの番 → 右に探す約束（左はブレインの AIX のまま）", n1?.side === "now" && n1?.kind === "pickup" && n1?.aix === "property_send" && n1?.label === "探す約束" && !!n1?.replyHint?.includes("ピックアップしお送りさせて頂きます"), n1);
 const n2 = resolvePromiseOrNow({ ...base, finalAix: "estimate_sheet", twoStageKind: null, customerText: "初期費用いくらになりますか", nowSide: true });
@@ -24,7 +24,7 @@ t("その場の側: 費用の質問で見積書送る → 右に見積の約束"
 t("その場の側: 物件確認した でも物件・費用の無い番は出さない", resolvePromiseOrNow({ ...base, finalAix: "property_check_result", twoStageKind: null, customerText: "ありがとうございます", nowSide: true }) === null);
 t("その場の側: 開いている約束を果たす番（promise:）は出さない", resolvePromiseOrNow({ ...base, finalAix: "property_check_result", twoStageKind: null, decisionSource: "promise:check", customerText: "https://suumo.jp/x", nowSide: true }) === null);
 t("その場の側: 初回は出さない", resolvePromiseOrNow({ ...base, finalAix: "property_send", twoStageKind: null, customerText: "x", firstContact: true, nowSide: true }) === null);
-t("約束の側は replyHint なし", resolvePromiseOrNow({ ...base, twoStageKind: "pickup", customerText: "x", nowSide: true })?.replyHint === null);
+t("約束の側は replyHint なし", resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "https://suumo.jp/x", nowSide: true })?.replyHint === null);
 t("指定の文: AIX で送らず約束・確認していない事は書かない", /AIX で送らず/.test(promiseReplyHint("check")) && /確認していない事/.test(promiseReplyHint("check")));
 console.log(`${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -136,12 +136,12 @@ const PON_LABEL: Record<PromiseOrNowKind, string> = { check: "確認の約束", 
 const PROPERTY_SENT_RE = /https?:\/\/|^\s*\[画像\]|【物件の画面|by SUUMO|LIFULL|アットホーム/m;
 const COST_ASK_RE = /初期費用|費用|いくら|見積|割引|安く|スモ割/;
 
-// 2026-10-28 その場の側（TWO_CHOICE_NOW_SIDE・既定 off → 試験で悪化0なら on）: ブレインが AIX（物件確認した・見積書送る・物件ピックアップ／オススメ）を選んだ番に、
+// 2026-10-28 その場の側（TWO_CHOICE_NOW_SIDE・既定 on・戻す: off。試験 w5-tcnow-on 91問で出た 31番を同じ答案で採点し直し ○→✕ 0・✕→○ 5・右の約束が言ってはいけない道 0）: ブレインが AIX（物件確認した・見積書送る・物件ピックアップ／オススメ）を選んだ番に、
 //   右に同じ種類の約束の返信を並べる（竹内さんはピックアップを約束で返した 35・見積を約束 13 ほか＝95 のうち 47）。
 //   右を押すと画面が generate-reply に replyHint（スタッフの指定＝指定生成モード: 受け止め→宣言→完結）を渡し、約束の下書きを作る。
 //   文の形は竹内さんの実送信の約束の形（two-stage.ts TWO_STAGE_WORDING と同じ文）。作業員2の1通の計画とは別の道（返信ボタンの指定だけ）
 export function twoChoiceNowSideOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.TWO_CHOICE_NOW_SIDE ?? "").trim().toLowerCase() === "on";
+  return (env.TWO_CHOICE_NOW_SIDE ?? "on").trim().toLowerCase() !== "off";
 }
 const PROMISE_FORM: Record<PromiseOrNowKind, { what: string; form: string }> = {
   check: { what: "お部屋の募集状況を確認する", form: "お部屋の募集状況確認させていただきます！！確認出来次第ご連絡させて頂きます！！" },
