@@ -27,8 +27,11 @@ export function brainDecisionLedgerCols(meta: Record<string, unknown>, turnText:
 }
 
 /** digest に足す短い項目（無い物は入れない） */
-export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): { tc?: boolean; pp?: boolean; cp?: string; cs?: string; st?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown> } {
-  const out: { tc?: boolean; pp?: boolean; cp?: string; cs?: string; st?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown> } = {};
+export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): { tc?: boolean; pp?: boolean; cp?: string; cs?: string; st?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown>; mm?: string[]; mx?: string[] } {
+  const out: { tc?: boolean; pp?: boolean; cp?: string; cs?: string; st?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown>; mm?: string[]; mx?: string[] } = {};
+  if (Array.isArray(meta.material_read_misses) && meta.material_read_misses.length) out.mx = (meta.material_read_misses as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 10);
+  // 2026-10-29 材料の自己申告（判断に要ったのに無かった物・記録だけ）。[] も「足りていた」として残す（申告の割合を数える）
+  if (Array.isArray(meta.material_missing)) out.mm = (meta.material_missing as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5);
   // 2026-10-23 優先順位の段（BRAIN_PRIORITY_STEP=on の番だけ・項目の数・依頼の抜けを足した数・AIX とのそろえ・取り寄せた材料の id）
   if (meta.priority_step && typeof meta.priority_step === "object") out.pr = meta.priority_step as Record<string, unknown>;
   // 2026-10-29 AIX の統括（AIX_DESK_COMMAND が off でない番だけ）: 候補・選んだ鍵・別の要件・差し戻し・ブレインと違ったか＝毎晩2つの統括の食い違いを数える

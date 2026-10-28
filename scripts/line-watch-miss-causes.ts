@@ -11,10 +11,13 @@ import { createClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../app/lib/test-conversations";
 import { isBackfillTurn } from "../app/lib/line-watch-backfill";
 import { classifyMiss, isTextMiss, MISS_CAUSE_JA, type MissCause, type MissRow } from "../app/lib/line-watch-miss-cause";
+import { tallyMaterialGaps, renderMaterialGapChapter, renderKnowledgeGapChapter, type DigestRow, type KnowledgeGapRow } from "../app/lib/material-gap-weekly";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const LIST = process.argv.includes("--list");
+// 2026-10-29 知識の弱さの章: 作業員5の拾い出しの出力（KnowledgeGapRow の配列の JSON・無ければ章は「出力が無い」）
+const KNOWLEDGE = arg("knowledge");
 const EVAL = arg("eval");
 const DAY = 86_400_000;
 const pct = (a: number, n: number) => (n ? `${Math.round((a / n) * 100)}%` : "—");
@@ -124,6 +127,25 @@ async function fetchRows(filter: (q: any) => any): Promise<Row[]> {
     console.log(`## 返信か AIX かの外れ（直近7日・スタッフが AIX を押した番でブレインが同じ系統でなかった ${cand.length}番）`);
     for (const [k, n] of Object.entries(kinds).sort((a, b) => b[1] - a[1])) console.log(`- ${k}: ${n}`);
   }
+  // 2026-10-29 章: 材料の足りなさ（brain_decision_logs.digest の mm＝自己申告・mx＝読めなかった材料）
+  const dRows: DigestRow[] = [];
+  for (let f = 0; ; f += 1000) {
+    const r = await sb.from("brain_decision_logs").select("created_at, digest").gte("created_at", new Date(nowMs - 14 * DAY).toISOString()).order("created_at").range(f, f + 999);
+    if (r.error) { console.log(`（材料の章: brain_decision_logs を読めなかった: ${r.error.message}）`); break; }
+    dRows.push(...((r.data ?? []) as DigestRow[]));
+    if ((r.data ?? []).length < 1000) break;
+  }
+  console.log("");
+  for (const l of renderMaterialGapChapter(tallyMaterialGaps(dRows, nowMs))) console.log(l);
+  // 2026-10-29 章: 知識の弱さ（作業員5の拾い出し）
+  // 作業員5の knowledge-gap-weekly.ts の出力（GapChapter）なら gapChapterMarkdown・古い形（KnowledgeGapRow の配列）なら旧の書き方
+  let kRaw: unknown = null;
+  if (KNOWLEDGE) { try { kRaw = JSON.parse(readFileSync(KNOWLEDGE, "utf8")); } catch { console.log(`（知識の章: ${KNOWLEDGE} を読めなかった）`); } }
+  console.log("");
+  if (kRaw && !Array.isArray(kRaw) && typeof kRaw === "object" && "counts" in (kRaw as object)) {
+    const { gapChapterMarkdown } = await import("../app/lib/knowledge-gap");
+    console.log(gapChapterMarkdown(kRaw as Parameters<typeof gapChapterMarkdown>[0]));
+  } else for (const l of renderKnowledgeGapChapter(Array.isArray(kRaw) ? (kRaw as KnowledgeGapRow[]) : null)) console.log(l);
   if (LIST) {
     console.log("");
     console.log("## 番ごと（直近7日）");

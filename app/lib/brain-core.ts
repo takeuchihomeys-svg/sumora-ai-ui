@@ -21,6 +21,7 @@ import { conductorHandoffOn, candidateRoles, rolesDigest } from "@/app/lib/condu
 import { recheckMaterialLine, recheckMode, recheckLimit, pickRecheck, recheckSig, recheckDigest, type BrainRecheck } from "@/app/lib/brain-recheck";
 import { priorityStepOn, priorityRetrievalOn, BRAIN_PRIORITY_RULES, BRAIN_PRIORITIES_FIELD, normalizePriorities, ensureAsksCovered, reconcilePrioritiesWithAix, priorityRecord, renderPulledBlock, type PriorityStepRecord } from "@/app/lib/brain-priority";
 import { logWatchMaterial, noteWatchMaterials } from "@/app/lib/line-watch-materials-server";
+import { brainMaterialSelfReportOn, MATERIAL_SELF_REPORT_INSTRUCTION, normalizeMaterialMissing } from "@/app/lib/brain-material-self-report";
 import { withRelativeDatesRule, relativeDatesBrainNoteFor } from "@/app/lib/relative-dates"; // 2026-10-23 日付の距離（BRAIN_RELATIVE_DATES・既定 off）
 import { isTimeoutError } from "@/app/lib/line-watch-materials";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
@@ -348,6 +349,8 @@ export type SuggestedAixMeta = {
   two_choice_check_pattern?: string;
   /** 2026-10-29 AIX の統括（AIX_DESK_COMMAND）の記録: 候補・選んだ鍵・同じ連投の別の要件・差し戻し・ブレインと違ったか（digest.ad） */
   aix_desk?: { mode: string; brain: string | null; cands: string[]; pick: string | null; also: string[]; sb: string | null; why: string; changed: boolean; skip?: string };
+  material_read_misses?: string[];     // 2026-10-29 DB から読めなかった材料の鍵（brain:material-miss と同じ・digest.mx・数えるため）
+  material_missing?: string[];         // 2026-10-29 ブレインの自己申告「判断に要ったのに材料に無かった物」（記録だけ・digest.mm）
   two_choice_reply_kind?: string;      // 2026-10-28 その場の側の2択: 右の返信の約束の種類（check/estimate/pickup）
   two_choice_reply_hint?: string;      // 同: 右の返信を押した時に generate-reply に渡す指定
   two_choice_mode?: boolean;           // 2択UI表示フラグ（物件提案中フェーズで条件トレードオフ質問検出時）
@@ -3485,7 +3488,10 @@ ${history}`;
   let userContent = withScene([
     ...convBlocks,
     ...(priorityPulledText ? [{ type: "text" as const, text: maskBrain(priorityPulledText) }] : []),
-    { type: "text" as const, text: maskBrain(coreUserText) },
+    // 2026-10-29 材料の自己申告（記録だけ・BRAIN_MATERIAL_SELF_REPORT=off で止める）: 指示は最後のブロックの末尾＝前置きのキャッシュは崩さない
+    { type: "text" as const, text: maskBrain(brainMaterialSelfReportOn() ? `${coreUserText}
+
+${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
   ]);
   // 2026-10-02 温めのスイッチ: 会話専用ブロックの指紋を控える（brain_decision_logs.digest.cw.h＝次の本物まで変わらない率 q を監査で測る）。
   //   分けた後は最初の印のブロック（A・無ければ B）の指紋＝温めが読み直す範囲。
@@ -5673,6 +5679,9 @@ ${history}`;
       // 2026-10-28 約束の側から出した2択は action が空＝画面の左のボタンはこの AIX（aix-button-view が cardMeta に写す）
       two_choice_aix: promiseOrNow && !finalAix ? promiseOrNow.aix : undefined,
       two_choice_check_pattern: promiseOrNow && !finalAix ? promiseOrNow.checkPattern ?? undefined : undefined,
+      // 2026-10-29 材料の自己申告（記録だけ）・読めなかった材料（ログだけだったのを digest にも残す＝毎週数える）
+      material_read_misses: materialMisses.length ? [...new Set(materialMisses)] : undefined,
+      material_missing: brainMaterialSelfReportOn() ? normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? undefined : undefined,
       // 2026-10-28 その場の側の2択（TWO_CHOICE_NOW_SIDE）: 右の返信を押した時の約束の種類と指定（画面が replyHint に渡す・採点は 2段:<種類> も道に数える）
       two_choice_reply_kind: promiseOrNow?.side === "now" ? promiseOrNow.kind : undefined,
       two_choice_reply_hint: promiseOrNow?.side === "now" ? promiseOrNow.replyHint ?? undefined : undefined,
