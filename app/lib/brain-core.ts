@@ -171,7 +171,7 @@ import { staffTalkedToday, greetingOncePerDayEnabled } from "@/app/lib/daily-gre
 import { promiseKindsToday } from "@/app/lib/two-stage";
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
-import { resolveTwoChoice } from "@/app/lib/two-choice";
+import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
 import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine, exhaustedTodayNote } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
@@ -324,6 +324,8 @@ export type SuggestedAixMeta = {
   next_steps?: string[];  // ["Step1: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 【AIX】○○テンプレートを送る"]
   reply_mode?: "aix" | "auto_reply";  // 'aix'=スタッフがAIXで手動対応 / 'auto_reply'=AI自動返信OK
   // 2択UIフラグ: proposing フェーズで条件トレードオフ質問が来た場合に「AIXで物件追加オススメ」か「テキスト返信」かをスタッフが選ぶ
+  two_choice_aix?: string;             // 2026-10-28 約束の側から出した2択の左のボタン（TWO_CHOICE_PROMISE_OR_NOW）
+  two_choice_check_pattern?: string;
   two_choice_mode?: boolean;           // 2択UI表示フラグ（物件提案中フェーズで条件トレードオフ質問検出時）
   alt_actions?: string[];              // 2つ目以降の AIX（action の横に並べて出す。2026-09-15 この事例: 連絡待ちの物件ピックアップ＋物件オススメ）
   /**
@@ -5502,6 +5504,13 @@ ${history}`;
       priorityRec = priorityRecord(rec.items, cov, rec, priorityPulled);
       console.log(JSON.stringify({ tag: "brain:priority", conversationId, raw: items0.length, ...priorityRec, pulled: undefined }));
     }
+    // 2026-10-28 TWO_CHOICE_PROMISE_OR_NOW（two-choice.ts）: 同じ種類の「約束の返信／その場の AIX」を2択で出す（確認・見積・ピックアップ）
+    const promiseOrNow = twoChoicePromiseOrNowOn() ? resolvePromiseOrNow({
+      finalAix: replyMode === "aix" ? finalAix ?? null : null, twoStageKind: twoStage?.kind ?? null, decisionSource,
+      customerText: unrepliedTurn.text || lastCustomerMsg?.text || "", firstContact: /^guard:first_contact/.test(String(decisionSource ?? "")) || !!(parsed as { first_contact_pickup?: unknown }).first_contact_pickup,
+      postApply: isPostApplyStatus(convStatus), alreadyTwo: isTwoChoiceMode,
+    }) : null;
+    if (promiseOrNow) console.log(JSON.stringify({ tag: "brain:two-choice-promise-or-now", conversationId, reason: promiseOrNow.reason, aix: promiseOrNow.aix }));
     return {
       action: finalAix ?? "",
       parallel_search: parallelOut.parallel,
@@ -5522,8 +5531,11 @@ ${history}`;
       next_steps: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer ? undefined
         : Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
       reply_mode: replyMode,
-      two_choice_mode: isTwoChoiceMode || undefined,
-      reply_direction_label: replyDirectionLabel,
+      two_choice_mode: isTwoChoiceMode || !!promiseOrNow || undefined,
+      reply_direction_label: promiseOrNow ? promiseOrNow.label : replyDirectionLabel,
+      // 2026-10-28 約束の側から出した2択は action が空＝画面の左のボタンはこの AIX（aix-button-view が cardMeta に写す）
+      two_choice_aix: promiseOrNow && !finalAix ? promiseOrNow.aix : undefined,
+      two_choice_check_pattern: promiseOrNow && !finalAix ? promiseOrNow.checkPattern ?? undefined : undefined,
       // 2026-10-15 監査の残り #9: ブレインが決めた書き出し（旧は LLM に決めさせて meta に写さず捨てていた）。BRAIN_OPENER_META=off で旧
       reply_opener: brainOpenerMetaEnabled() ? normalizeBrainOpener(parsed.reply_opener) ?? undefined : undefined,
       // 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（画面のブレインのカードに並べて出す）。連絡待ちの時は物件ピックアップ＋物件オススメ

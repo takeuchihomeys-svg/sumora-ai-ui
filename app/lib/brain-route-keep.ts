@@ -71,7 +71,7 @@ export function promiseAixFromContract(tc: unknown): "property_check_result" | "
 /** 道を決める欄（最初の答えのまま残す。null も「AIX なし」という正当な道なので埋めない） */
 export const ROUTE_KEYS = [
   "action", "aix", "reply_mode", "two_stage", "turn_contract", "check_pattern", "template_hint", "after_aix_template",
-  "first_contact_pickup", "alt_actions", "two_choice_mode", "engagement_stance", "condition_change_type", "condition_change_scope",
+  "first_contact_pickup", "alt_actions", "two_choice_mode", "two_choice_aix", "two_choice_check_pattern", "engagement_stance", "condition_change_type", "condition_change_scope",
 ] as const;
 
 export function emptyDirectionKeepRouteEnabled(env: Record<string, string | undefined> = process.env): boolean {
