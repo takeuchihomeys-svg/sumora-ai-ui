@@ -1,5 +1,6 @@
 import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSentences } from "@/app/lib/draft-text";
 import { enforceCallName } from "@/app/lib/call-name-guard";
+import { positiveNoNegativeEnabled, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR } from "@/app/lib/mgmt-hours-split";
 import { brainStaffBurstWaitEnabled, staffSendingNow } from "@/app/lib/staff-burst";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
@@ -1982,7 +1983,10 @@ ${aixDone.answeredByAix
   //   同じ DB 由来の dbRules ブロック（system[1]・1時間キャッシュ）の末尾へ移した（下の systemBlocks）。
   //   旧: 「行の増減で staticBlock のキャッシュが無効化される」のを避けて dynamicBlock に置いた結果、毎回割引なしで読んでいた。
   //   dbRules ブロックは学習で変わる DB 由来の塊なので、原則の増減で書き直しになるのはこのブロックだけ（区切りは4つのまま）
-  const dynamicBlock =`${replyContentNote}
+  // 2026-10-28 竹内さん #37 れい: 前向きな発言に否定（資料に記載が見当たらない 等）を返信で書かない（書く役にも同じ材料・POSITIVE_NO_NEGATIVE=on の時だけ）
+  const positiveNoNegativeNote = positiveNoNegativeEnabled() ? positiveNoNegativeLine(customerMessage ?? "") : "";
+  const dynamicBlock =`${replyContentNote}${positiveNoNegativeNote ? `
+${positiveNoNegativeNote}` : ""}
 ${propertyStatusNote}
 ${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") ? closingNote + closingFallback : ""}${brainGuidanceNote}${sceneKeep("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${sceneStyleNoteText}${sceneSel?.blueprintNote ?? ""}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? demoteFixedNote(moveInTimingNote, brainContractOn) : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + demoteFixedNote(newConditionRequestNote, brainContractOn) + conditionExpansionNote + searchAgainNote : ""}${[promiseEchoNote, waitFormAckNote, pickupPromiseAckNote, estimatePromiseAckNote, aixDoneAckNote].map((n) => demoteRepeatNote(n, brainContractOn)).join("")}
 ${staffContextNote}

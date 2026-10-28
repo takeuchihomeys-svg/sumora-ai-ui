@@ -65,5 +65,5 @@ export function positiveNoNegativeLine(customerText: string): string {
   const t = String(customerText ?? "").normalize("NFKC");
   if (!POSITIVE_RE.test(t) || !EQUIP_WORD_RE.test(t) || /[?？]/.test(t)) return "";
   const w = t.match(EQUIP_WORD_RE)?.[0] ?? "設備";
-  return `【お客様の前向きな発言（材料）】お客様は「${w}」があって前向き。竹内さんの決め（10/28）: 申込の妨げになる否定的な事（記載が見当たらない・無い 等）は返信で書かない。確かめが要る否定はスタッフが確認して AIX【確認した】から送る。返信は前向きな気持ちを受ける。`;
+  return `【お客様の前向きな発言（材料）】お客様は「${w}」があって前向き。竹内さんの決め（10/28）: 申込の妨げになる否定的な事（記載が見当たらない・無い 等）は返信で書かない。送った資料の読みには設備・間取り図の欄が無い（文字の読みだけ）＝資料で読めていない設備を「無い」「記載が見当たらない」と言い切る根拠は無い。確かめが要る否定はスタッフが確認して AIX【確認した】から送る。返信は前向きな気持ちを受ける。`;
 }
