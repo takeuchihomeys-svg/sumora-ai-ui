@@ -221,9 +221,10 @@ let pcRestore: { id: string; row: Record<string, unknown> } | null = null;
 //      （2層の問題は前半の通だけ残し、今回の発言の通は回ごとに書き直す＝1層目のブレインが後半を見ない形を保つ）。違う問題に移る時・失敗・混ざりの時は今まで通り片付ける
 //   B: --pc-skip-same（EXAM_PC_SKIP_SAME=on）… 条件の行は読み直して中身が同じなら UPDATE しない（同じ中身の UPDATE も行の新しい版を書く）
 //   --count-writes（A・B を付けた時も）… 書いた行の数を最後に出す
-const REUSE_FIXTURE = args.includes("--reuse-fixture") || (process.env.EXAM_REUSE_FIXTURE ?? "").trim().toLowerCase() === "on";
+//   2026-10-28 指揮役（竹内さんの方針「試験の改善は聞かずに直す」）: A は既定 on。止める時は --no-reuse-fixture か EXAM_REUSE_FIXTURE=off（同じ会話を使う他の担当は、1問の繰り返しが終わるまで待つ＝前は回の間に入れた）
+const REUSE_FIXTURE = !args.includes("--no-reuse-fixture") && (process.env.EXAM_REUSE_FIXTURE ?? "").trim().toLowerCase() !== "off";
 const PC_SKIP_SAME = args.includes("--pc-skip-same") || (process.env.EXAM_PC_SKIP_SAME ?? "").trim().toLowerCase() === "on";
-const COUNT_WRITES = REUSE_FIXTURE || PC_SKIP_SAME || args.includes("--count-writes");
+const COUNT_WRITES = PC_SKIP_SAME || args.includes("--count-writes") || args.includes("--reuse-fixture") || REUSE_FIXTURE;
 const writeCount = { msgIns: 0, msgDel: 0, ledgerIns: 0, ledgerDel: 0, pcUpd: 0, pcSkip: 0, reused: 0 };
 // 10/20 COST④: 判定の入力のキャッシュの当たり（DeepSeek の prompt_cache_hit_tokens／miss・出力）も数える（cost.json の judge.tokens）
 const judgeCost = { calls: 0, usd: 0, fail: 0, replayed: 0, cached: 0, tokens: { hit: 0, miss: 0, out: 0 }, tier: undefined as undefined | { machine: number; flash: number; pro: number; unresolved: number; flashCalls: number; proCalls: number; problems: number } };

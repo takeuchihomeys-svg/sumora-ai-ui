@@ -27,6 +27,8 @@
 //   10/20 LINE のブレインの組み方: --reps=old（旧の回数・既定は自信で1回ずつ足す）・--main-missing=night（前の答えが無い問題を夜に）・--no-reasons（外れの理由の読み手を止める）
 //   正解の食い違い: scripts/exam-gold-check.ts／本番の外れから問題の候補: scripts/exam-question-candidates.ts（手順書 README「LINE のブレインの組み方に寄せた8つ」）
 //   -- の後ろは brain-exam.ts にそのまま渡す
+//   10/28 brain-exam.ts は既定で写しを使い回す（--reuse-fixture・同じ問題の繰り返しの間は通・台帳・条件の行を消さない＝DB の書き込みが約半分）。
+//     同じ会話を使う他の担当は、1問の繰り返しが終わるまで待つ。止める時は -- --no-reuse-fixture か EXAM_REUSE_FIXTURE=off
 // 10/17 竹内さん「1 2 3 順に改善」「1日に上限は10ドル」:
 //   --phase=auto|small|final|off（既定 auto・EXAM_PHASE）: 直しの途中は小さな確かめ（5〜8問・繰り返し2回まで）→ 同じ版で通ったら仕上げ（選んだ問題全部）。off＝旧
 //   EXAM_DAILY_CAP_USD=10（off で無し）: 今日（JST）の試験 env の費用＋見込みが超えたら守る線を今・残りを夜中（--over-cap で全部今）
