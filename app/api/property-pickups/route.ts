@@ -36,6 +36,9 @@ export const dynamic = "force-dynamic";
 // 2026-09-25 反証: 詳細を開いた時の10分の自動まとめは、自動の読み取り（最長 約200秒で新しい物件を始めない）を waitUntil で後ろに回す。
 //   関数の上限が短いと読み取りの途中で切れ、まとめが running のまま 15分後の Cron のやり直しまで残る → complete と同じ 300秒
 export const maxDuration = 300;
+// 2026-10-29 竹内「AIX ツールから物件ひらくときこんなに重いのか」: DB（Supabase）はシンガポール（ap-southeast-1）。
+//   画面からの読みは大阪（kix1）で動き、1回の詳細で DB を8回ほど往復していた → この口だけ DB の隣（sin1）で動かす
+export const preferredRegion = "sin1";
 
 type Row = {
   id: number; created_at: string; batch_id: string; property_customer_id: string | null; conversation_id: string | null;
