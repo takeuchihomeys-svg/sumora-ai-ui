@@ -23,7 +23,7 @@ import { manYen } from "../app/lib/man-yen";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
-const QFILE = join(examCacheRoot(), "aix-text-exam", "questions.json");
+const QFILE = join(examCacheRoot(), "aix-text-exam", arg("qfile", "questions.json")); // 2026-10-29 --qfile で別の問題の組
 const only = arg("only").split(",").map((s) => s.trim()).filter(Boolean);
 
 export type AixQuestionSnap = {
