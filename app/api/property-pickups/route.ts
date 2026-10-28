@@ -443,6 +443,10 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
         .gte("created_at", new Date(Date.now() - 24 * 3600_000).toISOString()).order("created_at", { ascending: false }).limit(10))
         .then((r) => (r.error ? [] : (r.data ?? []) as ChainCommandLite[]), () => [])
     : Promise.resolve([]);
+  // 2026-10-29 竹内「AIX ツールから物件ひらくときこんなに重いのか」: 実測（detail-ms）で DB の読みを1つずつ待っていた（4〜5秒）。
+  //   お客様が分かっている時は、こだわりの倍率を本体の読みと同時に始める（中身は同じ・待ち方だけ）
+  const { prefWeightForCustomer } = await import("@/app/lib/customer-pref-learning-server");
+  const prefEarly = pcid ? prefWeightForCustomer(supabase, pcid) : null;
   const [pk, notesRes, condRes, sum, roundOf, chainCmds] = await Promise.all([
     q,
     pcid ? supabase.from("property_pickup_notes").select("id, created_at, property_customer_id, batch_id, text, author").eq("property_customer_id", pcid).order("created_at", { ascending: true }).limit(200) : Promise.resolve({ data: [] }),
@@ -459,8 +463,7 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   // 2026-09-27 竹内「AD はこっち側で自由に変えられる」: 付け直し（backfill-drop-discount-codes --apply）の前の行も、
   //   割引と AD の比べの札を外した点・判定・理由で出す（札・保留・👑 の並びが、付け直した後と同じになる）
   // 2026-09-29 お客様ごとのこだわりの倍率（判定に渡した物と同じ・表が空なら null＝今まで通り）
-  const { prefWeightForCustomer } = await import("@/app/lib/customer-pref-learning-server");
-  const prefW = await prefWeightForCustomer(supabase, pcid ?? ((pk.data ?? []) as Row[]).find((r) => r.property_customer_id)?.property_customer_id ?? null);
+  const prefW = await (prefEarly ?? prefWeightForCustomer(supabase, ((pk.data ?? []) as Row[]).find((r) => r.property_customer_id)?.property_customer_id ?? null));
   mark("pref");
   const rows = ((pk.data ?? []) as Row[]).map((r) => {
     const d = dropDiscountFromRow(r, prefW);
@@ -485,16 +488,20 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   const shownIds = batches0.flatMap((b) => b.items.map((it) => it.id));
   const listingOf = new Map<number, { ad_text: string | null; room_text: string | null; deal_status: string | null }>();
   const termsOf = new Map(rows.map((r) => [r.id, (r as { terms?: { evidence?: { moveIn?: string | null } | null } | null }).terms ?? null]));
-  for (let i = 0; i < shownIds.length; i += 100) {
-    const { data: tx, error: txErr } = await supabase.from("property_pickups").select("id, pdf_text").in("id", shownIds.slice(i, i + 100));
-    if (txErr) { console.warn("[property-pickups] 資料の文字を読めない（号室・AD の札なし）:", txErr.message); break; }
-    for (const t of (tx ?? []) as Array<{ id: number; pdf_text: string | null }>) listingOf.set(t.id, { ad_text: listingAdStamp(t.pdf_text), room_text: listingRoomText(t.pdf_text),
-      // 2026-09-28 資料の現況の申込の状況（審査中・商談中）。表の照合の根拠（terms.evidence.moveIn）→ 資料の文字の「現況/入居時期」の順
-      deal_status: pickupDealStatus({ terms: termsOf.get(t.id) ?? null, pdf_text: t.pdf_text }) });
-  }
+  // 2026-10-29 資料の文字の読みは待たずに始め、下の送った履歴・反応・まとめの読みと同時に待つ（listingOf を使うのは待った後だけ）
+  const listingP = (async () => {
+    // 100件ずつの読みも同時に（行の数は回の分だけ）
+    const chunks: number[][] = [];
+    for (let i = 0; i < shownIds.length; i += 100) chunks.push(shownIds.slice(i, i + 100));
+    const results = await Promise.all(chunks.map((ids) => supabase.from("property_pickups").select("id, pdf_text").in("id", ids)));
+    for (const { data: tx, error: txErr } of results) {
+      if (txErr) { console.warn("[property-pickups] 資料の文字を読めない（号室・AD の札なし）:", txErr.message); break; }
+      for (const t of (tx ?? []) as Array<{ id: number; pdf_text: string | null }>) listingOf.set(t.id, { ad_text: listingAdStamp(t.pdf_text), room_text: listingRoomText(t.pdf_text),
+        // 2026-09-28 資料の現況の申込の状況（審査中・商談中）。表の照合の根拠（terms.evidence.moveIn）→ 資料の文字の「現況/入居時期」の順
+        deal_status: pickupDealStatus({ terms: termsOf.get(t.id) ?? null, pdf_text: t.pdf_text }) });
+    }
+  })();
   const withListing = <T extends { id: number }>(it: T) => ({ ...it, ad_text: listingOf.get(it.id)?.ad_text ?? null, room_text: listingOf.get(it.id)?.room_text ?? null, deal_status: listingOf.get(it.id)?.deal_status ?? null });
-  const batches = batches0.map((b) => ({ ...b, items: b.items.map(withListing) }));
-  mark("pdfText");
   const first = rows[0] ?? null;
   const convId = conv ?? first?.conversation_id ?? null;
   // 2026-09-28 新規のお客様か（まだ物件を直接お送りしていない）: 一番古いお送りの行（sent_history は新しい40件だけなので別に読む）
@@ -528,13 +535,21 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     q = rowConvIds.length && custId ? q.or(`id.in.(${rowConvIds.join(",")}),property_customer_id.eq.${custId}`) : rowConvIds.length ? q.in("id", rowConvIds) : q.eq("property_customer_id", custId as string);
     return Promise.resolve(q.limit(20)).then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ id: string; account: string | null }>)), () => []);
   })();
+  // 2026-10-29 反応（AIX_REACTIONS_LINK）とまとめの 👑（property_pickup_completions）の読みも、ここで同時に始める（使い方は下のまま）
+  const rxP = reactionsLinkEnabled() && custId ? import("@/app/lib/reaction-negatives-server").then((m) => m.loadReactionState(supabase, custId)) : Promise.resolve(null);
+  const latestGid = rows[0] ? roundOf.get(rows[0].batch_id) ?? null : null;
+  const compP = latestGid
+    ? Promise.resolve(supabase.from("property_pickup_completions").select("status, best_id, finished_at, result").eq("group_id", latestGid).maybeSingle()).then((r) => r.data ?? null, () => null)
+    : Promise.resolve(null);
   const [{ data: cv }, firstSent, roomHist, lineConvs] = await Promise.all([
     convId ? supabase.from("conversations").select("customer_name, profile_image_url, updated_at, account, status, last_sender").eq("id", convId).maybeSingle() : Promise.resolve({ data: null }),
     firstSentQ,
     roomHistQ,
     lineConvsQ,
   ]);
+  await listingP;
   mark("sent");
+  const batches = batches0.map((b) => ({ ...b, items: b.items.map(withListing) }));
   // 👑 に送付済みの部屋（別の回で届けた同じ部屋・完全一致）を選ばない（既定のチェックと同じ線・sent-room-match）
   const sentBeforeSet = sentBeforeIds(rows.map((r) => ({ id: r.id, status: r.status, property_name: r.property_name, room_no: r.room_no, room_text: listingOf.get(r.id)?.room_text ?? null })), roomHist ?? []);
   const notSentBefore = <T extends { id: number }>(xs: T[]): T[] => (sentBeforeSet.size ? xs.filter((x) => !sentBeforeSet.has(x.id)) : xs);
@@ -555,7 +570,7 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   // 2026-10-20 竹内（P1 1a57c6db・6a5413e5）: 送った後に来たお客様の反応・メモ（上過ぎる・狭い・高い／この物件が良い・見送り）を 👑 の並びに入れる。
   //   保存した点は送る前の判定なので、ここで付け直す（reaction-negatives.reactionRowAdjust・画面に返す行は変えない）。
   //   候補が全部「一回送った物件」だけの時は、送った物件の中から 👑 を選ぶ（from_sent・反応の良い物件が上・見送った物件は保留）。AIX_REACTIONS_LINK=on の時だけ
-  const rx = reactionsLinkEnabled() && custId ? await (await import("@/app/lib/reaction-negatives-server")).loadReactionState(supabase, custId) : null;
+  const rx = await rxP;
   const rxRows = <T extends BestCandidateRow>(xs: T[]): T[] => {
     if (!rx) return xs;
     return xs.map((r) => {
@@ -576,12 +591,11 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     fromSent = sentPool.length > 0;
     return rxRows(sentPool);
   };
-  const latestGid = rows[0] ? roundOf.get(rows[0].batch_id) ?? null : null;
   let bestFrom: "complete" | "window" = "window";
   let bestRaw = null as ReturnType<typeof pickCustomerBest>;
   if (latestGid) {
     const groupRows = rows.filter((r) => roundOf.get(r.batch_id) === latestGid);
-    const { data: comp } = await supabase.from("property_pickup_completions").select("status, best_id, finished_at, result").eq("group_id", latestGid).maybeSingle();
+    const comp = await compP;
     const cp = comp as { status: string | null; best_id: number | null; finished_at: string | null; result: { basis_rule?: string } | null } | null;
     // 反証（2026-09-25）: 時刻は文字の比べ方だと「…Z」と「…+00:00」・小数の桁で食い違う → Date.parse で比べる。
     //   決まり（basis_rule）が無い前の版のまとめは、決まりが同じか分からないので best_id を使わない（同じ関数で並べ直す）
