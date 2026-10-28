@@ -99,6 +99,20 @@ export function replyMaterialSizes(inputs: Record<string, unknown>, meta: Record
 const MAX_JSON = 6000;
 const MAX_DRAFT = 2000;
 
+/**
+ * 2026-10-28 作業員1（見張りの物差しの穴）: 保存した下書きを materials.reply.generated にも控える（既定 off・LINE_WATCH_GEN_NOTE=on）。
+ *   見張りの下書きの列は conversations のトリガー（ai_draft が変わった時・行ロックの待ちは 200ms まで・番が開いている時だけ）で控えるので、
+ *   ロックの待ちで諦めた時・保存と同時にスタッフが送った時は「生成したのに見張りに下書きが無い」になる（10/13〜10/19 に生成ありで控えなしの番 4）。
+ *   トリガーとは別の道（会話ごとにまとめて書く materials）でも控え、どれだけ抜けているかを数えられるようにする（判定は変えない・数えるのは scripts/line-watch-gen-note-check.ts）
+ */
+export function lineWatchGenNoteOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.LINE_WATCH_GEN_NOTE ?? "").trim().toLowerCase() === "on";
+}
+/** 保存した下書きの控え（本文・字数・どこからの生成か） */
+export function generatedDraftSummary(text: string, caller: string | null | undefined): MaterialSummary {
+  return { text: String(text ?? "").slice(0, MAX_DRAFT), chars: String(text ?? "").length, caller: short(caller, 30) };
+}
+
 /** 出さなかった下書き（本文と理由） */
 export function suppressedDraftSummary(text: string, reason: string): MaterialSummary {
   return { reason: short(reason, 60), text: String(text ?? "").slice(0, MAX_DRAFT), chars: String(text ?? "").length };
@@ -118,6 +132,10 @@ export function mergeWatchMaterials(prev: unknown, add: ReadonlyArray<{ source: 
   let json = JSON.stringify(out);
   if (json.length > MAX_JSON && out.suppressed) {
     for (const v of Object.values(out.suppressed)) if (v && typeof v === "object" && typeof (v as { text?: unknown }).text === "string") (v as { text: string }).text = (v as { text: string }).text.slice(0, 600);
+    json = JSON.stringify(out);
+  }
+  if (json.length > MAX_JSON && out.reply?.generated && typeof (out.reply.generated as { text?: unknown }).text === "string") {
+    (out.reply.generated as { text: string }).text = (out.reply.generated as { text: string }).text.slice(0, 600);
     json = JSON.stringify(out);
   }
   if (json.length > MAX_JSON && out.brain?.blocks && typeof out.brain.blocks === "object") {

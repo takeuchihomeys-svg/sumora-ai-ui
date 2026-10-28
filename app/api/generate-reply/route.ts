@@ -352,7 +352,7 @@ import { R6_RETIRE_KEYS, R6_TEXT_OVERRIDES } from "@/app/lib/rules-review-r6";
 import { runInRulesOverlayScope, setRulesOverlay, resolveTestRulesOverlay, parseRulesR9Flag } from "@/app/lib/rules-overlay";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 // 2026-10-08 8巡目（記録）: 見張りの行に材料の要約・出さなかった下書きを控える
-import { logWatchMaterial, noteWatchMaterials, noteWatchSuppressedDraft } from "@/app/lib/line-watch-materials-server";
+import { logWatchMaterial, noteWatchMaterials, noteWatchSuppressedDraft, noteWatchGeneratedDraft } from "@/app/lib/line-watch-materials-server";
 import { replyMaterialSizes } from "@/app/lib/line-watch-materials";
 import { splitRequests, buildRequestLedgerNote, requestLedgerEnabled } from "@/app/lib/request-ledger";
 import { replyHintBrainEnabled } from "@/app/lib/reply-hint-auto";
@@ -7740,6 +7740,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               if (saveErr) console.error("[generate-reply] ai_draft save error:", conversationId, saveErr.message);
               // 2026-10-20 すれ違い（P1 54ec8c71）: 判定と保存の間に届いたお客様の発言を保存の後にもう一度見る（draft-supersede）
               else if (!isTruncated && !notAReply && finalDraftText.trim()) {
+                noteWatchGeneratedDraft(conversationId, finalDraftText.trim(), generationCaller);   // 2026-10-28 見張りの物差しの穴（LINE_WATCH_GEN_NOTE=on の時だけ）
                 await revertDraftIfSupersededAfterSave(conversationId, lastCustomerMsgAt, finalDraftText.trim(), generationCaller);
               }
               } // ← aixBoundaryRequired else 終端

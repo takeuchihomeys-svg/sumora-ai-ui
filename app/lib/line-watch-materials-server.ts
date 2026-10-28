@@ -5,7 +5,7 @@
 //   ・テストの起動（LLM_TEST_MODE / LLM_TEST_FINAL_CLAUDE）では書かない（再生の材料を今の番に混ぜない）
 import { supabase } from "@/app/lib/supabase-server";
 import {
-  lineWatchMaterialsEnabled, summarizeMaterialLog, mergeWatchMaterials, openTurnKey, suppressedDraftSummary,
+  lineWatchMaterialsEnabled, summarizeMaterialLog, mergeWatchMaterials, openTurnKey, suppressedDraftSummary, lineWatchGenNoteOn, generatedDraftSummary,
   type WatchSource, type MaterialSummary,
 } from "@/app/lib/line-watch-materials";
 
@@ -83,6 +83,12 @@ export function logWatchMaterial(json: string, conversationId?: string | null): 
 }
 
 /** 生成したが出さなかった下書き（直前の送信とほぼ同じ・返信でない文）を控える */
+/** 2026-10-28: 保存した下書きを見張りの materials にも控える（LINE_WATCH_GEN_NOTE=on の時だけ・トリガーの控えの抜けを数えるため） */
+export function noteWatchGeneratedDraft(conversationId: string | null | undefined, text: string, caller: string | null | undefined): void {
+  if (!lineWatchGenNoteOn() || !text?.trim()) return;
+  noteWatchMaterials(conversationId, "reply", "generated", generatedDraftSummary(text, caller));
+}
+
 export function noteWatchSuppressedDraft(conversationId: string | null | undefined, text: string, reason: string): void {
   if (!text?.trim()) return;
   noteWatchMaterials(conversationId, "suppressed", "draft", suppressedDraftSummary(text, reason));
