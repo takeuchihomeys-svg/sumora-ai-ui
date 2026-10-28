@@ -215,6 +215,16 @@ let h: LlmTestHarness | null = null;
 let own: string[] = [];
 let ownLedger: Record<string, string[]> = {};
 let pcRestore: { id: string; row: Record<string, unknown> } | null = null;
+// 2026-10-28 作業員4（試験の書き込みを減らす・作業員1の案③ A・B）: 試験は問題×回ごとに YUMA 系の会話へ通（10〜40行）・台帳の写し（30〜100行）・
+//   条件の行を書いて消す＝DB のディスクの詰まり（一覧が固まる件）の元の1つ。どちらも既定 off（off の時は今と同じ動き）。
+//   A: --reuse-fixture（EXAM_REUSE_FIXTURE=on）… 同じ問題の繰り返しの間は通・台帳・条件の行を消さずに次の回で使い回す
+//      （2層の問題は前半の通だけ残し、今回の発言の通は回ごとに書き直す＝1層目のブレインが後半を見ない形を保つ）。違う問題に移る時・失敗・混ざりの時は今まで通り片付ける
+//   B: --pc-skip-same（EXAM_PC_SKIP_SAME=on）… 条件の行は読み直して中身が同じなら UPDATE しない（同じ中身の UPDATE も行の新しい版を書く）
+//   --count-writes（A・B を付けた時も）… 書いた行の数を最後に出す
+const REUSE_FIXTURE = args.includes("--reuse-fixture") || (process.env.EXAM_REUSE_FIXTURE ?? "").trim().toLowerCase() === "on";
+const PC_SKIP_SAME = args.includes("--pc-skip-same") || (process.env.EXAM_PC_SKIP_SAME ?? "").trim().toLowerCase() === "on";
+const COUNT_WRITES = REUSE_FIXTURE || PC_SKIP_SAME || args.includes("--count-writes");
+const writeCount = { msgIns: 0, msgDel: 0, ledgerIns: 0, ledgerDel: 0, pcUpd: 0, pcSkip: 0, reused: 0 };
 // 10/20 COST④: 判定の入力のキャッシュの当たり（DeepSeek の prompt_cache_hit_tokens／miss・出力）も数える（cost.json の judge.tokens）
 const judgeCost = { calls: 0, usd: 0, fail: 0, replayed: 0, cached: 0, tokens: { hit: 0, miss: 0, out: 0 }, tier: undefined as undefined | { machine: number; flash: number; pro: number; unresolved: number; flashCalls: number; proCalls: number; problems: number } };
 // 2026-10-20 判定の段（設計知見 487b8921「判定は機械の照らし→flash→割れた時だけ pro」）: EXAM_JUDGE_TIER=on で、
@@ -294,8 +304,11 @@ async function writePc(yumaPc: string, pc: Record<string, unknown> | null) {
     // 2026-10-22 持ち主の pid と label も入れる（止まった実行の控えを他の実行が見分けて脇へ寄せる・exam-night.sweepStaleBackups）。戻す側は id・row だけ読む
     writeFileSync(PC_BACKUP, JSON.stringify({ ...pcRestore, pid: process.pid, label: LABEL }));
   }
-  const { error } = await sb.from("property_customers").update(pcPatchOf(pc)).eq("id", yumaPc);
+  const patch = pcPatchOf(pc);
+  if (PC_SKIP_SAME && !(await verifyPc(yumaPc, patch)).length) { writeCount.pcSkip++; return; }
+  const { error } = await sb.from("property_customers").update(patch).eq("id", yumaPc);
   if (error) throw new Error(`条件の行の写し: ${error.message}`);
+  writeCount.pcUpd++;
 }
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null) || (typeof a === "number" && Number(a) === Number(b)) || (typeof b === "number" && Number(a) === Number(b));
 /** 10/09 ③: 写した条件の行を読み直して確かめる（前の実行のブレインが要約を遅れて書き戻すと混ざる）。違う列の名前を返す */
@@ -306,8 +319,12 @@ async function verifyPc(yumaPc: string, want: Record<string, unknown>): Promise<
 }
 async function restorePc() {
   if (!pcRestore) return;
-  const r = await sb.from("property_customers").update(pcRestore.row).eq("id", pcRestore.id);
-  if (r.error) { console.error(`⛔ YUMA の条件の行を戻せない（控え ${PC_BACKUP} に残す）: ${r.error.message}`); return; }
+  if (PC_SKIP_SAME && !(await verifyPc(pcRestore.id, pcRestore.row)).length) writeCount.pcSkip++;
+  else {
+    const r = await sb.from("property_customers").update(pcRestore.row).eq("id", pcRestore.id);
+    if (r.error) { console.error(`⛔ YUMA の条件の行を戻せない（控え ${PC_BACKUP} に残す）: ${r.error.message}`); return; }
+    writeCount.pcUpd++;
+  }
   // 遅れて来る要約の書き戻しで上書きされていないか確かめる
   await new Promise((res) => setTimeout(res, 1500));
   const diff = await verifyPc(pcRestore.id, pcRestore.row);
@@ -323,7 +340,7 @@ async function deleteOwnLedger() {
     if (!ids.length) continue;
     const r = await sb.from(t).delete().in("id", ids);
     if (r.error) console.error(`⛔ 台帳の写し ${t} を消せない（${ids.length}件・控え ${LEDGER_OWN_FILE}）: ${r.error.message}`);
-    else ownLedger[t] = [];
+    else { writeCount.ledgerDel += ids.length; ownLedger[t] = []; }
   }
   saveOwnLedger();
 }
@@ -364,7 +381,7 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
     const r = await sb.from(t).insert(objs.map((x) => x.o)).select("id");
     if (r.error) { errors.push(`${t}: ${r.error.message.slice(0, 120)}`); continue; }
     const ids = ((r.data ?? []) as Array<{ id: string | number }>).map((x) => String(x.id));
-    ownLedger[t] = [...(ownLedger[t] ?? []), ...ids]; saveOwnLedger();
+    ownLedger[t] = [...(ownLedger[t] ?? []), ...ids]; saveOwnLedger(); writeCount.ledgerIns += ids.length;
     if (t === "aix_usage_logs") objs.forEach((x, i) => { if (x.oldId != null && ids[i]) aixIdMap.set(String(x.oldId), ids[i]); });
     inserted[t] = ids.length;
   }
@@ -1379,6 +1396,21 @@ async function main() {
     return out;
   };
   const pcRetries = new Map<string, number>();
+  // 2026-10-28 A（--reuse-fixture）: 前の回の写しを持ったまま（同じ問題の次の回で使い回す）。違う問題に移る時・ループの後に片付ける
+  type HeldFixture = { id: string; shiftDays: number; setupAt: number; times: string[]; lmMap: Map<string, string>; headIds: string[]; ledger: ResultRow["ledger"] };
+  let held: HeldFixture | null = null;
+  const examClock = await import("./lib/exam-clock");
+  if (REUSE_FIXTURE) examClock.installExamClock();
+  const heldNow = (): HeldFixture | null => held;
+  const releaseHeld = async () => {
+    if (!held) return;
+    held = null;
+    writeFloor(null);
+    if (own.length) { const del = await sb.from("messages").delete().in("id", own); if (del.error) console.error(`⛔ YUMA の自分の行を消せない: ${del.error.message}`); else writeCount.msgDel += own.length; own = []; }
+    await deleteOwnLedger();
+    await new Promise((r) => setTimeout(r, 2500));
+    await restorePc().catch((e) => console.warn("restorePc:", String(e)));
+  };
   problemLoop: for (const p of problems) for (let rep = 1; rep <= REPEAT; rep++) {
     if (done.has(`${p.id}#${rep}`)) continue;
     // 2026-10-21 ①下見: main の控えの無い回は下見しない（本番の回で呼ぶ）
@@ -1394,6 +1426,7 @@ async function main() {
     setCassetteTag({ problem: p.id, rep: String(rep) });
     process.env.BRAIN_JUDGE_EXAMPLES_EXCLUDE_CONV = p.conv; // 10/13 判断の手本: 問題の元の会話の番は手本に入れない（答えが漏れない）
     curPc = p.pc;
+    let fx: HeldFixture | null = null; // この回の写し（A の時に次の回へ持ち越す）
     try {
       const jd = (x: number) => Math.floor((x + 9 * 3600_000) / 86_400_000);
       // 2026-10-22 ② 曜日・週の言い方が無い問題はちょうど実行日へ（試験の時計と場面の日付を揃える＝q181 の「明日」のずれ）・ある問題は7日の倍数（brain-exam-dates.examShiftDays・EXAM_DATE_SHIFT=week で旧）
@@ -1404,21 +1437,32 @@ async function main() {
       const ps = shiftProblem(p, shiftDays);
       const texts = ps.context.map((m) => m.t);
       h.assertSceneSafe(texts, p.id);
+      // A: 同じ問題の前の回の写しがあれば使い回す（日のずらしが同じ時だけ）。違えば先に片付ける
+      const h0 = heldNow(); // 持ち越しは閉じた関数と finally で書く＝型の絞り込みで null に見えないように読み直す
+      const reuse: HeldFixture | null = REUSE_FIXTURE && h0 && h0.id === p.id && h0.shiftDays === shiftDays ? h0 : null;
+      if (h0 && !reuse) await releaseHeld();
+      held = null;
+      if (reuse) writeCount.reused++;
       await waitOtherPcCopies();
       await h.waitUntilYumaQuiet(own, { maxWaitMin: 120, conversationId: CONV });
       await waitOtherPcCopies();
-      await writePc(yumaPc, p.pc);
+      if (!reuse) await writePc(yumaPc, p.pc);
+      else if ((await verifyPc(yumaPc, pcPatchOf(p.pc))).length) await writePc(yumaPc, p.pc); // 前の回のブレインの書き戻し（要約等）がある時だけ写し直す
+      else writeCount.pcSkip++;
       // 10/09 ③ 読み直して確かめる（前の実行の要約の書き戻しが遅れて来ると混ざる）
       await new Promise((r) => setTimeout(r, 800));
       let mism = await verifyPc(yumaPc, pcPatchOf(p.pc));
       if (mism.length) { await writePc(yumaPc, p.pc); await new Promise((r) => setTimeout(r, 800)); mism = await verifyPc(yumaPc, pcPatchOf(p.pc)); }
       if (mism.length) row.pcMismatch = mism;
-      const times = h.sceneTimes(texts.length, { stepSec: 90 });
+      const times: string[] = reuse ? reuse.times : h.sceneTimes(texts.length, { stepSec: 90 });
+      // A: 使い回す回は、1回目に写しを作った時からの経過だけ時計を戻す（通の時刻からの経過を毎回写し直した時と同じに・exam-clock）
+      const setupAt = reuse ? reuse.setupAt : examClock.realNow();
+      if (reuse) examClock.setExamClockOffset(examClock.realNow() - reuse.setupAt);
       // 連投の始まり（最後のお客様の通のまとまり）
       let burst = p.context.length; while (burst - 1 >= 0 && p.context[burst - 1].s === "customer") burst--;
       // 2026-10-16 引用返信（ExamMsg の lm/q/img）: 引用された通と引用した通を同じ新しい id でつなぐ（元の LINE の id は使わない）。
       //   こちらの画像の URL も写す＝台帳の sent_properties（image_url）と照らして「引用返信→スタッフが送った物件資料〈物件名〉」が本番と同じく出る
-      const lmMap = new Map<string, string>();
+      const lmMap: Map<string, string> = reuse ? reuse.lmMap : new Map<string, string>();
       const newLm = (orig: string) => { let v = lmMap.get(orig); if (!v) { v = `${PREFIX}${randomUUID()}`; lmMap.set(orig, v); } return v; };
       const insertMsgs = async (from: number, to: number) => {
         if (to <= from) return;
@@ -1430,9 +1474,10 @@ async function main() {
         }))).select("id");
         if (ins.error) throw new Error(ins.error.message);
         own = [...own, ...((ins.data ?? []) as Array<{ id: string }>).map((r) => r.id)];
+        writeCount.msgIns += (ins.data ?? []).length;
       };
       writeFloor(new Date(Date.parse(times[0]) - 1000).toISOString());
-      if (USE_LEDGER) row.ledger = await insertLedger(p, times, yumaPc, shiftDays);
+      if (USE_LEDGER) row.ledger = reuse ? reuse.ledger : await insertLedger(p, times, yumaPc, shiftDays);
       process.env.TEST_CLOCK_JST_HOUR = String(p.hourJst);
       if (CONV === YUMA) h.assertYuma(CONV, "brain"); else h.assertTestConversation(CONV, "brain");
       const base = { autoSendEnabled: true, customerName: "YUMA" };
@@ -1440,7 +1485,8 @@ async function main() {
       const prodOk = LAYER === "prod" && burst > 0 && p.context.slice(0, burst).some((m) => m.s === "customer");
       if (prodOk) {
         // ② 本番と同じ2層: その番の前までの会話で全体の分析（戦略の層）→ 今回の発言の層に戦略・前回の AIX・前回の判断を渡す
-        await insertMsgs(0, burst);
+        if (!reuse) await insertMsgs(0, burst); // A: 前半の通は前の回の物を使う
+        if (REUSE_FIXTURE) fx = { id: p.id, shiftDays, setupAt, times, lmMap, headIds: [...own], ledger: row.ledger };
         await new Promise((r) => setTimeout(r, 1300));
         rawBrainOutputs = [];
         const m0 = await runBrainChecked({ ...base, prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }, !!p.pc, row);
@@ -1456,7 +1502,8 @@ async function main() {
         }
         row.trace = { ...(row.trace ?? {}), strategy: strategy ? "あり" : "なし（全体の分析が読めない）" };
       } else {
-        await insertMsgs(0, p.context.length);
+        if (!reuse) await insertMsgs(0, p.context.length); // A: 通は全部前の回の物を使う
+        if (REUSE_FIXTURE) fx = { id: p.id, shiftDays, setupAt, times, lmMap, headIds: [...own], ledger: row.ledger };
         await new Promise((r) => setTimeout(r, 1300));
         for (let attempt = 0; attempt < 2 && !meta; attempt++) {
           rawBrainOutputs = [];
@@ -1531,14 +1578,23 @@ async function main() {
       }
     } catch (e) { row.error = e instanceof Error ? e.message : String(e); }
     finally {
+      if (REUSE_FIXTURE) examClock.setExamClockOffset(0);
       if (savedClock === undefined) delete process.env.TEST_CLOCK_JST_HOUR; else process.env.TEST_CLOCK_JST_HOUR = savedClock;
+      // A: 次の回も同じ問題なら写しを持ち越す（失敗・条件の混ざりの回は今まで通り片付ける）。2層の問題の後半の通だけはここで消す
+      const keep = REUSE_FIXTURE && fx && !row.error && !row.pcMismatch?.length && rep < REPEAT;
+      if (keep && fx) {
+        const head = new Set(fx.headIds), tail = own.filter((id) => !head.has(id));
+        if (tail.length) { const del = await sb.from("messages").delete().in("id", tail); if (del.error) console.error(`⛔ YUMA の自分の行を消せない: ${del.error.message}`); else writeCount.msgDel += tail.length; }
+        own = fx.headIds; held = fx;
+      } else {
       writeFloor(null);
-      if (own.length) { const del = await sb.from("messages").delete().in("id", own); if (del.error) console.error(`⛔ YUMA の自分の行を消せない: ${del.error.message}`); own = []; }
+      if (own.length) { const del = await sb.from("messages").delete().in("id", own); if (del.error) console.error(`⛔ YUMA の自分の行を消せない: ${del.error.message}`); else writeCount.msgDel += own.length; own = []; }
       await deleteOwnLedger();
       // 要約の書き戻し（非同期）を待ってから条件の行を戻す＝次の問題・他の担当に混ぜない
       await new Promise((r) => setTimeout(r, 2500));
       // 問題ごとに条件の行を戻す（控えを空にする）＝他の担当の再生が問題の間に入れる（同時1本・待たせ続けない）
       await restorePc().catch((e) => console.warn("restorePc:", String(e)));
+      }
     }
     // 10/09: 条件の行が混ざった回は数えずに回し直す（最大2回・それでも混ざったら印を付けて残す）
     if (row.pcMismatch?.length && !row.error) {
@@ -1574,6 +1630,8 @@ async function main() {
     console.log(`${row.score.pass ? "○" : "✕"} ${p.id}#${rep}${row.inputSame ? "【入力が同じ】" : row.inputDiff?.pinned ? `【${row.inputDiff.firstChanged} から違う】` : ""} [${p.type}] ${row.essence ? `本質=${row.essence.code} ` : ""}ブレイン=${row.path.code || "-"}${row.draft ? ` 下書き=${row.draft.code}${row.draft.pass ? "○" : "✕"}` : ""} 正解=${acc.join("|")}${row.path.mustNotHit ? ` ⛔${row.path.mustNotHit}` : ""}${miss ? ` 依頼の抜け${miss}` : ""}${vio ? ` 違反${vio}` : ""}${row.ledger?.errors.length ? ` 台帳の失敗 ${row.ledger.errors.join("／")}` : ""}${row.pcMismatch ? ` 条件の混ざり ${row.pcMismatch.join(",")}` : ""}${row.error ? ` 失敗: ${row.error}` : ""}`);
     await new Promise((r) => setTimeout(r, GAP_MS));
   }
+  await releaseHeld(); // A: 最後の問題の写しを片付ける
+  if (COUNT_WRITES) console.log(`書き込み（試験の写し）: 通 +${writeCount.msgIns}／-${writeCount.msgDel}・台帳 +${writeCount.ledgerIns}／-${writeCount.ledgerDel}・条件の行の UPDATE ${writeCount.pcUpd}（同じなので省いた ${writeCount.pcSkip}）・写しを使い回した回 ${writeCount.reused}（--reuse-fixture ${REUSE_FIXTURE ? "on" : "off"}・--pc-skip-same ${PC_SKIP_SAME ? "on" : "off"}）`);
   if (pinsOn) {
     const items = Object.entries(inputPlan);
     const same = items.filter(([, v]) => v.same).map(([k]) => k);
