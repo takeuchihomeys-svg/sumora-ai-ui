@@ -7086,7 +7086,8 @@ async function analyzeAndSaveBrainMetaInner(
       void maybeCreateCheckpoint(conversationId, customerName).catch(() => {});
     }
     // 2026-10-08 お客様のメモ: 前回読んだ所より後の新しい通だけ DeepSeek で読み差分を当てる（customer-memo-server.refreshCustomerMemoLlm・CUSTOMER_MEMO_LLM=off）
-    const memoRefresh = () => import("@/app/lib/customer-memo-server").then((m) => m.refreshCustomerMemoLlm(conversationId)).then(() => {}, () => {});
+    // 2026-10-28 送った事の重要な5つを台帳からメモへ写す（LEDGER_MEMO_SYNC=on の時だけ・決まった手順・LLM なし）
+    const memoRefresh = () => import("@/app/lib/customer-memo-server").then(async (m) => { await m.syncLedgerMemo(conversationId); await m.refreshCustomerMemoLlm(conversationId); }).then(() => {}, () => {});
     try { after(memoRefresh); } catch { void memoRefresh(); }
   }
   return actuallyWritten; // 実際に書き込んだ時だけ true（偽陽性の根本修正）
