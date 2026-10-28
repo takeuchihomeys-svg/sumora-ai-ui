@@ -246,8 +246,20 @@ async function rebuild(only: string[] = []) {
   console.log(`型ごと: ${[...c].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("・")}`);
 }
 
+/** 10/28: --at の秒の下が切れていると（DB はマイクロ秒まで持つ）、その秒の中のお客様の最後の通が場面から落ちる（q197〜q199）。
+ *  at より後・1秒以内のお客様の通があれば、その一番後の通の時刻そのものに合わせる（全問の点検は scripts/audit-exam-at-second.ts） */
+async function exactCustomerAt(conv: string, at: string): Promise<string> {
+  const { data } = await sb.from("messages").select("created_at").eq("conversation_id", conv).eq("sender", "customer")
+    .gt("created_at", at).lt("created_at", new Date(ms(at) + 1000).toISOString()).order("created_at", { ascending: false }).limit(1);
+  const exact = (data as Array<{ created_at: string }> | null)?.[0]?.created_at;
+  if (!exact) return at;
+  console.log(`--at を同じ秒の中のお客様の最後の通に合わせた: ${at} → ${exact}`);
+  return exact;
+}
+
 async function add() {
-  const conv = arg("conv"), at = arg("at"), type = arg("type"), why = arg("why");
+  const conv = arg("conv"), type = arg("type"), why = arg("why");
+  const at = conv && arg("at") ? await exactCustomerAt(conv, arg("at")) : arg("at");
   const accept = arg("accept").split(",").map((x) => x.trim()).filter(Boolean);
   if (!conv || !at || !type || !accept.length || !why) throw new Error("--conv --at --type --accept --why は必須（正解が決まらない番は足さない）");
   const asks: ExamAsk[] = argAll("ask").map((a) => { const [q, route, point] = a.split("|"); if (!/^(reply|promise|aix|none)$/.test(route ?? "")) throw new Error(`--ask の答え方は reply|promise|aix|none: ${a}`); return { q, route: route as ExamAsk["route"], point: point ?? "" }; });
