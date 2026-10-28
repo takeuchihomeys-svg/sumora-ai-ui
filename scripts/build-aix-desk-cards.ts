@@ -94,7 +94,7 @@ type Msg = { conversation_id: string; sender: string; text: string | null; creat
   const kbRows = await pageAll<{ id: string; title: string; tags: string[] | null; priority: number | null; created_at: string }>("system_design_thinking", "id, title, tags, priority, created_at", (q) => q.eq("is_current", true));
   for (const r of kbRows) { const k = r.id.slice(0, 8); if (kbIds.includes(k)) kbTitle.set(k, r.title); }
   /** ボタン名・ピッカー名の芯の語（括弧・「について」を外す・2字以上） */
-  const coreWords = (label: string | null | undefined) => String(label ?? "").split(/[（）()／→・！]/).map((x) => x.replace(/について|した$|する$|送る$|してた$/g, "").trim()).filter((x) => x.length >= 2).flatMap((x) => (x.length >= 4 ? [x, x.slice(0, 2)] : [x]));
+  const coreWords = (label: string | null | undefined) => String(label ?? "").split(/[（）()／→・！]/).map((x) => x.replace(/について|した$|する$|送る$|してた$/g, "").trim()).filter((x) => x.length >= 2 && !/^(?:[0-9０-９]+件|複数件|物件|通常)$/.test(x)).flatMap((x) => (x.length >= 4 ? [x, x.slice(0, 2)] : [x]));
   // 竹内さんの決定（札「竹内さんの決定」の今の行）を担当の中身で引く（設計知見の RAG＝kb.ts と同じ searchKb・問いの埋め込みだけ）
   const ragRows = await loadRagRows(sb);
   const decisionsFor = async (e: { button: string; picker: { label: string } | null; staffOnly: string; when: string }): Promise<string[]> => {
