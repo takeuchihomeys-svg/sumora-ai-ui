@@ -17,6 +17,9 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const DAYS = Number(arg("days", "30"));
 const LIST = process.argv.includes("--list");
+// 2026-10-29 担当の札の試し（scripts/aix-desk-eval.ts）の入力: 外れた番と、比べるための当たった番（--hits=N）を JSON に書く
+const JSON_OUT = arg("json");
+const HITS = Number(arg("hits", "0"));
 
 const JA: Record<string, string> = {
   property_check_result: "物件確認した", acknowledge_check: "確認した", property_recommendation: "物件オススメ", property_send: "物件ピックアップ",
@@ -41,7 +44,7 @@ const ACK_ONLY = /^(?:[\s　]*(?:ありがと(?:う|ございます|ございま
 type Row = {
   id: number; conversation_id: string; customer_turn_at: string; customer_last_at: string | null; scene_key: string | null;
   brain_action: string | null; brain_reply_mode: string | null; brain_at: string | null; brain_analyzed_msg_ts: string | null;
-  draft_first: string | null; draft_last: string | null; staff_aix: Array<{ at: string; aix_type: string; burst: boolean }> | null;
+  draft_first: string | null; draft_last: string | null; staff_aix: Array<{ at: string; aix_type: string; burst: boolean; check_pattern?: string | null }> | null;
   verdict_detail: Record<string, unknown> | null; decision_id: string | null;
 };
 
@@ -137,6 +140,21 @@ type Row = {
   for (const [k, v] of tally(out.filter((o) => o.cause.startsWith("④")), (o) => ja(o.staff))) console.log(`- ${k}: ${v.length}`);
   console.log("\n## ⑤ 材料が届いていない");
   for (const [k, v] of tally(out.filter((o) => o.cause.startsWith("⑤")), (o) => o.why)) console.log(`- ${k}: ${v.length}`);
+  if (JSON_OUT) {
+    const { writeFileSync } = await import("node:fs");
+    const hitsAll = pressedAll.filter((t) => (t.verdict_detail ?? {}).aix_verdict === "same");
+    const step = HITS > 0 ? Math.max(1, Math.floor(hitsAll.length / HITS)) : 0;
+    const hits = HITS > 0 ? hitsAll.filter((_, i) => i % step === 0).slice(0, HITS) : [];
+    const rowOf = (t: Row, cause: string) => {
+      const p0 = (t.staff_aix ?? []).find((a) => a.burst);
+      return { id: t.id, conversation_id: t.conversation_id, customer_turn_at: t.customer_turn_at, customer_last_at: t.customer_last_at, scene_key: t.scene_key, cause,
+        staff_aix: p0?.aix_type ?? null, staff_check_pattern: p0?.check_pattern ?? null, staff_at: p0?.at ?? null, staff_writer: String((t.verdict_detail ?? {}).staff_writer ?? ""),
+        brain_action: t.brain_action, brain_reply_mode: t.brain_reply_mode, decision_id: t.decision_id };
+    };
+    writeFileSync(JSON_OUT, JSON.stringify({ misses: out.map((o) => rowOf(o.t, o.cause)), hits: hits.map((t) => rowOf(t, "hit")) }, null, 1));
+    console.log(`
+JSON: ${JSON_OUT}（外れ ${out.length}・当たり ${hits.length}）`);
+  }
   if (LIST) {
     console.log("\n## 番ごと");
     for (const o of out) console.log(`- #${o.t.id} ${o.t.customer_turn_at.slice(5, 16)} ${o.t.scene_key} ${o.cause} ブレイン=${ja(o.brain === "返信" ? null : o.brain)} スタッフ=${ja(o.staff)}（${o.why}）｜客: ${(custText.get(o.t.id) ?? "").replace(/\s+/g, " ").slice(0, 60)}`);
