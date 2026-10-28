@@ -124,6 +124,7 @@ import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 // 2026-10-21 つなぎのブレイン 段3 司令塔: 次の一手（スタッフしか分からない事は AIX）を1行（LINK_CONDUCTOR_BRAIN=on の時だけ・既定 off＝1文字も変わらない）
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
 import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmedAckMaterialLine } from "@/app/lib/viewing-confirmed-ack";
+import { vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled, vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
 import { cancelViewingCalendarOnCustomerCancel } from "@/app/lib/viewing-cancel-calendar-server";
 import { isViewingFixTopic } from "@/app/lib/viewing-premature";
@@ -2906,6 +2907,19 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     if (isViewingConfirmedAck({ viewingConfirmed: brainLedger.facts.viewingFlow?.stage === "confirmed" || !!brainLedger.facts.viewingAppointment, customerTurnText: unrepliedTurn.text ?? "", customerAckOnly: vcaAck, lastStaffText: lastStaffForVca })) {
       customerStateBlockText += `\n\n${viewingConfirmedAckMaterialLine(lastStaffForVca)}`;
     }
+  }
+  // 2026-10-28 竹内さんの今週の指摘 #33 じゅな・#3 #7 KID・#37 れい（材料だけ・決めるのはブレイン・各スイッチ既定 off・app/lib/week-scene-materials.ts）
+  if (vacateViewingHoldFirstEnabled() || vacateHoldCancelCheckEnabled() || positiveNoNegativeEnabled()) {
+    try {
+      const vacProps = sentProps.filter((p) => !p.shared_only).map((p) => ({ name: `${p.property_name} ${p.room_no}`.trim(), vacating: p.recruitment_status === "move_out_planned" || /退去予定/.test(p.sheet_vacancy ?? "") }));
+      const turnText = unrepliedTurn.text ?? "";
+      const lines = [
+        vacateViewingHoldFirstEnabled() ? vacateViewingHoldFirstLine({ appointment: brainLedger.facts.viewingAppointment, props: vacProps, nowMs: Date.now() }) : "",
+        vacateHoldCancelCheckEnabled() && typedMessages[0]?.sender === "customer" ? vacateHoldCancelLine({ customerText: turnText, props: vacProps }) : "",
+        positiveNoNegativeEnabled() && typedMessages[0]?.sender === "customer" ? positiveNoNegativeLine(turnText) : "",
+      ].filter(Boolean);
+      if (lines.length) customerStateBlockText += `\n\n${lines.join("\n")}`;
+    } catch (e) { console.warn("[brain-core] week-scene materials skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-08 お金の時期の逆算の A/B（customer-memo-server が payment-timing で作る・B の時は下で申込へを外す）
   let paymentPlan: (import("@/app/lib/payment-timing").ApplyPlan & { core: string }) | null = null;
