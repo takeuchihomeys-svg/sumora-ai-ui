@@ -24,6 +24,8 @@ const WITH_BRAIN = process.argv.includes("--with-brain");
 const WITH_SITUATION = process.argv.includes("--situation");
 // --q197=N: 試験の q197（持ち込みの確認＋探す依頼・竹内さんの正解は2段＝約束）を N 回足す。物件確認した の担当が「結果がまだ無い→約束」と差し戻せるか
 const Q197 = Number(arg("q197", "0"));
+// --compare: 担当を別々に聞かず、統括が候補の札を並べて1回で比べて選ぶ（似たボタンの組は相手も候補に足し、見分けの軸を明示する）
+const COMPARE = process.argv.includes("--compare");
 const IN = arg("in"); const OUT = arg("out"); const N = Number(arg("n", "999")); const MAX_USD = Number(arg("max-usd", "3"));
 
 type InRow = { id: number; conversation_id: string; customer_turn_at: string; customer_last_at: string | null; scene_key: string | null; cause: string; staff_aix: string | null; staff_check_pattern: string | null; staff_writer: string; brain_action: string | null; brain_reply_mode: string | null };
@@ -112,7 +114,32 @@ const COMMANDER_SYS = [
   "鍵は一覧の鍵をそのまま書く。",
   "【一覧（鍵｜ボタン→ピッカー｜送るスタッフだけが知る事）】",
   LIST_TEXT,
+  "AIX の番ではないと思う時も、押すならこれという候補を3つ書く（後で比べ直す）。",
   '出力は JSON だけ: {"aix_turn":true,"candidates":["鍵1","鍵2","鍵3"],"why":"短く"}',
+].join("\n");
+/** 取り違えやすい組（②の実データ）: 片方が候補にあれば相手も比べる */
+const PAIRS: Record<string, string[]> = {
+  property_check_result: ["estimate_sheet", "acknowledge_check"], estimate_sheet: ["property_check_result"], acknowledge_check: ["property_check_result"],
+  property_recommendation: ["property_send"], property_send: ["property_recommendation"],
+  viewing_invite: ["meeting_place"], meeting_place: ["viewing_invite"],
+  guarantor_info: ["phone_call"], zenryoku_support: ["property_send", "property_recommendation"],
+};
+/** 組の見分けの軸（竹内さんの決定・カタログの線・②の外れの読み） */
+const PAIR_AXES = [
+  "・物件確認した ↔ 見積書送る: その物件の募集中がもう分かっている（状況のまとめの「募集中と確認済み」「見積を作れる」にある）なら見積書送る。まだ確認が要る物件（持ち込み・募集の確認がまだ）は物件確認した（募集中なら見積書を同封する）。",
+  "・物件オススメ ↔ 物件ピックアップした: 1件に絞って推す（強い1件・新着1件・送った中から1件）は物件オススメ。何件かをまとめて送る（新規・新着の束・条件を広げた束）は物件ピックアップした。",
+  "・内覧調整 ↔ 待ち合わせ: お客様が候補から日と時刻を決めた・了承した（「〇日〇時でお願いします」）は待ち合わせ。日時なしの内覧の希望・空きを聞く・日だけで時刻なしは内覧調整。",
+  "・確認した（条件・交渉）↔ 物件確認した: 物件を特定する物（URL・画像・物件名＋募集の問い）は物件確認した。礼金・家賃・設備など条件の交渉・確認は確認した。",
+  "・保証会社・審査の相談（夜職・無職・ブラック・滞納など本人の事情）は電話も候補（文で言い切らない）。",
+  "・全力サポートはお客様の返信の後・送った物件が刺さらず送れる物件が無い時だけ。持ち込みの物件や新着がある時は物件の AIX。",
+];
+const COMPARE_SYS = [
+  "あなたは大阪の賃貸仲介（スモラ）の「AIX の統括」です。候補のボタン×ピッカーの担当の札を読み比べ、この番の後にスタッフ（竹内さん＝社長の基準）が送る物を1つ選びます。",
+  "選べる答え: 候補の鍵のどれか／reply（AIX ではなく返信で答える番・会話や資料や会社の事実で答えられる）／promise（スタッフだけが知る事が要るが、結果がまだ無く、同じ連投に約束で受けるべき依頼もある＝まず約束の返信・結果が出てから AIX）。",
+  "確認の結果（募集中か終了か等）はスタッフが確かめてから選ぶので、結果がまだ会話に無い事だけでは promise にしない。promise は探す・見積の作成などの依頼が一緒にあって、まとめて約束で受けるのが自然な時。",
+  "【取り違えやすい組の見分けの軸】",
+  ...PAIR_AXES,
+  '出力は JSON だけ: {"pick":"鍵 か reply か promise","second":"2番目","why":"見分けの軸に沿って短く"}',
 ].join("\n");
 const deskSys = (key: string) => [
   "あなたは大阪の賃貸仲介（スモラ）の AIX の担当です。下の札があなたの担当のボタン×ピッカーの中身です（竹内さん＝社長の送り方が基準）。",
@@ -158,6 +185,23 @@ ${user.slice(0, 2500)}
         if (brainKey && !cands.includes(brainKey)) cands = [...cands, brainKey];
       }
       base.aixTurn = c?.aix_turn === false ? false : true; base.cands = cands;
+      if (COMPARE) {
+        // 組の相手を足す（候補のボタンの相手のボタンの札を1枚ずつ・最大6）
+        const btns = new Set(cands.map(buttonOfKey));
+        for (const k of [...cands]) for (const pb of PAIRS[buttonOfKey(k)] ?? []) {
+          if (btns.has(pb) || cands.length >= 6) continue;
+          const pk = AIX_DESK_CARDS[pb] ? pb : Object.keys(AIX_DESK_CARDS).find((x) => buttonOfKey(x) === pb);
+          if (pk) { cands.push(pk); btns.add(pb); }
+        }
+        base.cands = cands;
+        const cardsText = cands.map((k) => AIX_DESK_CARDS[k]?.text ?? `■担当 ${k}`).join("\n\n");
+        const o = await deepseekJson(COMPARE_SYS, `${user}\n\n【候補の担当の札】\n${cardsText}\n\n【候補の鍵】${cands.join(" / ")} / reply / promise`);
+        const pk = String(o?.pick ?? "");
+        if (pk === "promise" || pk === "reply") { base.pick = null; base.sendBack = pk === "promise" ? "promise" : "not_aix"; }
+        else base.pick = AIX_DESK_CARDS[pk] ? pk : null;
+        base.desks = [{ key: "compare", mine: !!base.pick, score: 1, why: String(o?.why ?? "").slice(0, 120), missing: [], sendBack: base.sendBack }];
+        return base;
+      }
       const desks = await Promise.all(cands.map(async (k) => {
         const d = await deepseekJson(deskSys(k), user);
         const sbk = typeof d?.send_back === "string" && /^(promise|not_aix)$/.test(d.send_back) ? d.send_back : null;
