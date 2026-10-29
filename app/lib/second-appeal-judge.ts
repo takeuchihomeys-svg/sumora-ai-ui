@@ -68,13 +68,13 @@ export const APPEAL_JUDGE_SYSTEM = [
   "あなたは賃貸仲介会社の営業の統括（ブレイン）です。お客様に物件を1件オススメする LINE の2通目で、何を訴求するかを決めます（文は書きません）。",
   "竹内さん（社長）は、そのお客様の希望・こだわり・不安・暮らし方・今の状況に合わせて、物件の事実のうち一番刺さる物を1〜2個だけ強く言います。一般的な設備の羅列はしません。",
   "決める物: first（一番刺さる物＝下の物件の事実の候補から1つ・お客様の何に応えるかの理由）・second（2番目・無ければ null）・count（1か2）・form（言い方の型を1つ: 下の型の要約の結び方から）・closing（viewing＝内覧へ／apply＝申込へ／receipt＝ご査収だけ）と理由。",
-  "締めの決まり（竹内さん 10/29 確認事項 No.34）: 退去予定でまだ内覧できない部屋→receipt（お手隙の際にご査収）が基本。apply（申込へ）は、入居が近い・お客様が急いでいる・かなり刺さっている（前向きな言葉がある）時だけ。今内覧できる部屋は、希望の条件に合っていれば刺さると見て viewing（竹内さんは空室の2通目の64%で内覧に誘う）。条件のずれが大きい・お客様が様子見・比べている途中の時だけ receipt。",
+  "締めの決まり（竹内さん 10/29 確認事項 No.34）: 退去予定でまだ内覧できない部屋→receipt（お手隙の際にご査収）が基本。apply（申込へ）は、入居が近い・お客様が急いでいる・かなり刺さっている（前向きな言葉がある）時だけ。今内覧できる部屋は、希望の条件に合っていれば刺さると見て viewing（竹内さんは空室の2通目の64%で内覧に誘う）。条件のずれが大きい・お客様が様子見・比べている途中の時だけ receipt。下の「締めの候補になる状況」（新着1件で先に申込が入りそう・入居が近い）がある時は、条件にぴったり合う時だけ apply も選ぶ（候補が無ければ上の決まりのまま）。",
   "物件の事実は候補に書いてある事だけ。候補に無い事実・金額・節約額は使わない。",
   "出力は JSON だけ: {\"first\":{\"text\":\"…\",\"why\":\"…\"},\"second\":{\"text\":\"…\",\"why\":\"…\"}|null,\"count\":1|2,\"form\":\"…\",\"closing\":\"viewing\"|\"apply\"|\"receipt\",\"closingWhy\":\"…\"}",
 ].join("\n");
 
 /** 判断の入力（候補は網・お客様の要点はブレイン） */
-export function appealJudgePrompt(i: AppealInput & { situation?: string | null; scene: string; notViewable: boolean; materialFacts?: string | null }): { prompt: string; candidates: string[] } {
+export function appealJudgePrompt(i: AppealInput & { situation?: string | null; scene: string; notViewable: boolean; materialFacts?: string | null; closingCandidates?: string[] }): { prompt: string; candidates: string[] } {
   const net = rankAppealPoints(i).map((p) => p.text);
   const allLines = firstMessagePoints(i.firstMessage);
   const candidates = [...new Set([...net, ...allLines])].slice(0, 10);
@@ -85,6 +85,7 @@ export function appealJudgePrompt(i: AppealInput & { situation?: string | null; 
     `## 物件の事実の候補（1通目のオススメポイント・網が刺さりそうな順に先頭）\n${candidates.map((c, k) => `${k + 1}. ${c}`).join("\n") || "（無し）"}`,
     i.materialFacts ? `## 資料の事実\n${i.materialFacts.slice(0, 400)}` : "",
     `## 内覧\n${i.notViewable ? "まだ内覧できない（退去予定等）" : "今内覧できる"}`,
+    i.closingCandidates?.length ? `## 締めの候補になる状況（網が拾った物・決めるのはあなた）\n${i.closingCandidates.map((c) => `・${c}`).join("\n")}` : "",
     takeuchiFormSummary(i.scene),
   ].filter(Boolean).join("\n\n");
   return { prompt, candidates };
@@ -138,4 +139,16 @@ export function countAppeals(text: string): number {
 /** 判断した数を超えて並べたか（竹内さんの2通目は平均 2.4＝言い回し1つが2要素に当たる分を1つ見込む） */
 export function overAppealCount(text: string, j: Pick<AppealJudge, "count">): boolean {
   return countAppeals(text) > j.count + 1;
+}
+
+/** 締めの候補になる状況（決定論の網・決めるのはブレイン）。竹内さんが申込で締めた番の型（10/29・30番中4番）:
+ *   新着1件で条件に合う（先に申込が入りそう）／見積書を送った後で費用の話が進んでいる／退去予定でも入居の希望時期が近い（今月か来月）／お客様が急いでいる */
+export function closingCandidatesOf(i: { newListing: boolean; estimateSent: boolean; vacating: boolean; customerText: string; nowMonth: number }): string[] {
+  const out: string[] = [];
+  if (i.newListing) out.push("新着1件で、条件に合えば先に申込が入りそう → 申込で抑える候補");
+  // 10/29 2回目: 見積書の後・急ぎは網が広すぎた（内覧 15→9/16・ご査収 6→2/10）→ 新着1件と入居が近い時だけ候補にする
+  const m = i.customerText.match(/([0-9０-９]{1,2})月(?:頭|上旬|中旬|下旬|末|中|から|頃|位|くらい)/);
+  const want = m ? Number(m[1].replace(/[０-９]/g, (d) => String("０１２３４５６７８９".indexOf(d)))) : null;
+  if (want != null && want >= 1 && want <= 12 && ((want - i.nowMonth + 12) % 12) <= 1) out.push(`お客様の入居の希望が${want}月（今月か来月）＝入居が近い → ${i.vacating ? "退去予定でも" : ""}申込で抑える候補`);
+  return out;
 }

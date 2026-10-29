@@ -115,7 +115,7 @@ import { secondMsgMaterialsOn, applySecondFinalChecks, type BrainBundleMeta } fr
 import type { SecondMaterials } from "@/app/lib/second-message-materials-server";
 import { recommendSecondAppealOn, recentAreaText, recentRequestCoversProperty, appendReceiptAfterCta, ensureRentTotalInRecommend } from "@/app/lib/recommend-second-appeal";
 import { buildSecondAppealNote, secondAppealPointsOn } from "@/app/lib/second-appeal-points";
-import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, APPEAL_JUDGE_SYSTEM, countAppeals, overAppealCount, type AppealJudge } from "@/app/lib/second-appeal-judge";
+import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, APPEAL_JUDGE_SYSTEM, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
 export const maxDuration = 60;
@@ -1667,7 +1667,18 @@ export async function POST(req: NextRequest) {
         ...(bm?.key_topics ?? []).map((k) => `要点: ${k}`),
       ].filter(Boolean).join("\n");
       const scene = secondFormScene(pickupType);
-      const { prompt } = appealJudgePrompt({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? null, scene, notViewable: secondNotViewable, materialFacts: secondMaterialNote });
+      // 締めの候補になる状況（網）: 竹内さんが申込で締めた番の型（新着1件・見積書の後・入居が近い・急ぎ）。決めるのはブレイン
+      const recentArr = (Array.isArray(recentMessages) ? recentMessages : []) as Array<{ sender?: string; text?: string | null }>;
+      const custText = recentArr.filter((m) => m?.sender === "customer").slice(-6).map((m) => m?.text ?? "").join("\n");
+      const ledgerFacts = (bm as { action_ledger?: { facts?: { estimateSent?: boolean } } } | null)?.action_ledger?.facts;
+      const closingCandidates = closingCandidatesOf({
+        newListing: secondScene === "new_listing" || /新着/.test(String(pickupType ?? "")),
+        estimateSent: !!ledgerFacts?.estimateSent || recentArr.some((m) => m?.sender !== "customer" && /御見積書/.test(m?.text ?? "")),
+        vacating: secondNotViewable,
+        customerText: custText,
+        nowMonth: Number(new Date(Date.now() + 9 * 3600_000).toISOString().slice(5, 7)),
+      });
+      const { prompt } = appealJudgePrompt({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? null, scene, notViewable: secondNotViewable, materialFacts: secondMaterialNote, closingCandidates: [] }); // 10/29: 締めの候補の網は2回とも締めを崩した（内覧・ご査収が減る）＝今は渡さない（closingCandidates は数えるだけ）
       const key = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST", signal: AbortSignal.timeout(25_000),
@@ -1679,10 +1690,11 @@ export async function POST(req: NextRequest) {
         secondJudge = parseAppealJudge(d.content?.find((b) => b.type === "text")?.text ?? "");
       }
       if (secondJudge) {
-        secondJudgeNote = judgedAppealNote(secondJudge, scene);
+        // 10/29: 「前の決め打ちの申込を残す」形（v7）は ご査収 6→1/10・締め 21→14/30 と悪くなったので入れない（v4 の形＝締めはブレインの判断・スタッフが画面で選んだ時だけそちら）
         if (recCta && !(ctaPreference === "viewing" || ctaPreference === "apply") && recCta.kind !== secondJudge.closing) {
           recCta = { ...recCta, kind: secondJudge.closing, reason: `ブレインの訴求の判断: ${secondJudge.closingWhy}` };
         }
+        secondJudgeNote = judgedAppealNote(secondJudge, scene);
       }
       console.log(JSON.stringify({ tag: "aix-template-generate:second-appeal-judge", ok: !!secondJudge, scene, first: secondJudge?.first.text.slice(0, 40) ?? null, count: secondJudge?.count ?? null, closing: secondJudge?.closing ?? null }));
     } catch (e) { console.warn("[aix-template-generate] appeal judge failed:", e instanceof Error ? e.message : e); }
