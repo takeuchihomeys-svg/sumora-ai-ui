@@ -38,7 +38,8 @@ async function situationText(conversationId: string, asOf: string, convStatus: s
     const { buildActionLedger } = await import("../app/lib/action-ledger");
     const { buildPromiseQueue } = await import("../app/lib/promise-queue");
     const { itemsFromLedger, bindReaction, explainedItemsOf } = await import("../app/lib/sent-ledger-bind");
-    const { buildSituationSummary } = await import("../app/lib/situation-summary");
+    const { buildSituationSummary, withTurnBrought } = await import("../app/lib/situation-summary");
+    const { broughtThisTurnNames } = await import("../app/lib/aix-commander");
     const nowMs = Date.parse(asOf);
     const [msgs, aix, facts, vh, sp, tasks] = await Promise.all([
       sb.from("messages").select("sender, text, created_at, is_aix_generated, line_message_id").eq("conversation_id", conversationId).lte("created_at", asOf).order("created_at", { ascending: false }).limit(300),
@@ -59,7 +60,7 @@ async function situationText(conversationId: string, asOf: string, convStatus: s
     const promises = buildPromiseQueue(messages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt, isAix: m.isAix })), aixRows.map((l: any) => ({ aixType: l.aix_type, checkPattern: l.check_pattern, sentAt: l.sent_at ?? l.created_at, estimateSent: l.estimate_sent, text: l.generated_text })), nowMs);
     const staffItems = messages.filter((m) => m.sender !== "customer" && (m.text ?? "").trim()).slice(-10).flatMap((m) => explainedItemsOf(m.text ?? "", m.createdAt, m.lineMessageId));
     const bind = bindReaction({ customerText: turnText, items: [...itemsFromLedger(ledger.entries as any), ...staffItems], nowMs });
-    const sum = buildSituationSummary({ state, promises, emotion: null, bind, pickupReady: null, nowMs });
+    const sum = withTurnBrought(buildSituationSummary({ state, promises, emotion: null, bind, pickupReady: null, nowMs }), broughtThisTurnNames(turnText));
     const nf = sum.nowFulfillable;
     const j = (a: string[]) => (a.length ? a.slice(0, 6).join("・") : "なし");
     return [

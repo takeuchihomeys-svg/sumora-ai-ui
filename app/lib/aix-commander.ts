@@ -108,3 +108,18 @@ export function actionOfKey(key: string): { action: string; checkPattern: string
   if (/^(?:available|unavailable|alternative|exclusive)$/.test(v)) return { action: b, checkPattern: null };
   return { action: b, checkPattern: v };
 }
+
+/**
+ * 今の番でお客様が持ち込んだ物件の名前（状況のまとめの needCheck に足す・situation-summary.withTurnBrought）。
+ *   「〇〇 2階 https://suumo…」→ URL の前の名前／URL だけ → 「お客様が今送った物件（URL）」／物件の画面・資料の画像 → 「お客様が今送った物件（画像）」
+ */
+export function broughtThisTurnNames(turnText: string): string[] {
+  const out: string[] = [];
+  for (const line of String(turnText ?? "").split(/\n/)) {
+    const m = /^(.{2,40}?)\s*(?:[0-9０-９]{1,2}階)?\s*https?:\/\/\S+/.exec(line.trim());
+    if (m && m[1].trim() && !/お願い|ありがと|こちら|ここ/.test(m[1])) out.push(m[1].trim());
+    else if (/https?:\/\/\S+/.test(line)) out.push("お客様が今送った物件（URL）");
+    if (/【物件の(?:画面|資料)/.test(line)) out.push("お客様が今送った物件（画像）");
+  }
+  return [...new Set(out)].slice(0, 5);
+}
