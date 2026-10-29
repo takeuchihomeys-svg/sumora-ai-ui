@@ -127,6 +127,7 @@ import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
 import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmedAckMaterialLine } from "@/app/lib/viewing-confirmed-ack";
 import { nowFulfillableEnabled, nowFulfillableLine } from "@/app/lib/situation-summary";
+import { aixDeskCommandMode, actionOfKey } from "@/app/lib/aix-commander";
 import { decideBrainDepth } from "@/app/lib/brain-depth";
 import { sentLedgerBindEnabled, explainedItemsOf, itemsFromLedger, bindReaction, bindMaterialLine } from "@/app/lib/sent-ledger-bind";
 import { vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled, vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
@@ -331,6 +332,8 @@ export type SuggestedAixMeta = {
   // 2択UIフラグ: proposing フェーズで条件トレードオフ質問が来た場合に「AIXで物件追加オススメ」か「テキスト返信」かをスタッフが選ぶ
   two_choice_aix?: string;             // 2026-10-28 約束の側から出した2択の左のボタン（TWO_CHOICE_PROMISE_OR_NOW）
   two_choice_check_pattern?: string;
+  /** 2026-10-29 AIX の統括（AIX_DESK_COMMAND）の記録: 候補・選んだ鍵・同じ連投の別の要件・差し戻し・ブレインと違ったか（digest.ad） */
+  aix_desk?: { mode: string; brain: string | null; cands: string[]; pick: string | null; also: string[]; sb: string | null; why: string; changed: boolean; skip?: string };
   two_choice_reply_kind?: string;      // 2026-10-28 その場の側の2択: 右の返信の約束の種類（check/estimate/pickup）
   two_choice_reply_hint?: string;      // 同: 右の返信を押した時に generate-reply に渡す指定
   two_choice_mode?: boolean;           // 2択UI表示フラグ（物件提案中フェーズで条件トレードオフ質問検出時）
@@ -5557,12 +5560,35 @@ ${history}`;
       postApply: isPostApplyStatus(convStatus), alreadyTwo: isTwoChoiceMode, nowSide: twoChoiceNowSideOn(),
     }) : null;
     if (promiseOrNow) console.log(JSON.stringify({ tag: "brain:two-choice-promise-or-now", conversationId, reason: promiseOrNow.reason, aix: promiseOrNow.aix }));
+    // 2026-10-29 AIX の統括（KB P1 03d2bdd2・aix-commander.ts）: ブレインが AIX と決めた番だけ、候補の担当の札を比べてボタン×ピッカーを1つ選ぶ。
+    //   既定 off／shadow＝記録だけ／on＝選んだ鍵に替える。差し戻し（promise・reply）は書き換えず記録だけ（LINE の統括の読み直しは作業員2の入口）。
+    //   同じ連投の別の要件（also）は2つ目の AIX に並べる（1通に詰めない）。別の LLM の呼び出し＝ブレインのプロンプトとキャッシュは変えない
+    let aixDesk: NonNullable<SuggestedAixMeta>["aix_desk"] | undefined;
+    let deskOverride: { action: string; checkPattern: string | null; also: string[] } | null = null;
+    const deskMode = aixDeskCommandMode();
+    if (deskMode !== "off" && replyMode === "aix" && finalAix && !isPostApplyStatus(convStatus) && conversationId) {
+      try {
+        const { runAixCommander } = await import("@/app/lib/aix-commander-server");
+        const msgsDesk = [...typedMessages].reverse().slice(-10);
+        const lastStaff = msgsDesk.map((m) => m.sender !== "customer").lastIndexOf(true);
+        const conv = msgsDesk.map((m, i) => `${m.sender === "customer" && i > lastStaff ? "★" : ""}${m.sender === "customer" ? "お客様" : "こちら"}: ${maskBrain(String(m.text ?? "")).replace(/\s+/g, " ").slice(0, 220)}`).join("\n");
+        const sit = customerState ? nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() }) : "";
+        const run = await runAixCommander(client, { conversationId, brainAction: finalAix, brainCheckPattern: checkKind?.check_pattern || null, altActions: finalAlts ?? [], conversation: conv, situationLine: maskBrain(sit) });
+        const pickBtn = run.pick ? actionOfKey(run.pick) : null;
+        const changed = !!pickBtn && (pickBtn.action !== finalAix || (!!pickBtn.checkPattern && pickBtn.checkPattern !== (checkKind?.check_pattern || null)));
+        aixDesk = { mode: deskMode, brain: run.brainKey, cands: run.cands, pick: run.pick, also: run.also, sb: run.sendBack, why: run.why.slice(0, 120), changed, ...(run.skip ? { skip: run.skip } : {}) };
+        if (deskMode === "on" && run.ran && (changed || run.also.length)) deskOverride = { action: pickBtn?.action ?? finalAix, checkPattern: pickBtn ? pickBtn.checkPattern : (checkKind?.check_pattern || null), also: run.also.map((k) => actionOfKey(k).action) };
+        console.log(JSON.stringify({ tag: "brain:aix-desk", conversationId, mode: deskMode, brain: finalAix, ...aixDesk, ms: run.ms }));
+      } catch (e) {
+        console.warn(JSON.stringify({ tag: "brain:aix-desk", conversationId, error: (e instanceof Error ? e.message : String(e)).slice(0, 160) }));
+      }
+    }
     return {
-      action: finalAix ?? "",
+      action: deskOverride?.action ?? finalAix ?? "",
       parallel_search: parallelOut.parallel,
       note: splitTurn ? `${staffNote}${searchSplitNote({ brainAction: finalAix ?? null, altActions: finalAlts })}${exhaustedNote === SEARCH_SPLIT_EXHAUSTED_NOTE && zenryokuShown({ brainAction: finalAix ?? null, altActions: finalAlts }) ? exhaustedNote : ""}` : `${searchChoice.added ? `${staffNote}${SEARCH_RESULT_CHOICE_NOTE}` : staffNote}${exhaustedNote}`,
       // 2026-09-27: 持ち込み物件の募集状況が先（availabilityFirstKind）は check_pattern が空＝結果はスタッフが選ぶ → null で残す
-      check_pattern: checkKind?.check_pattern || null,
+      check_pattern: deskOverride ? deskOverride.checkPattern : checkKind?.check_pattern || null,
       source,
       enforcement_level: enforcementLevel,
       closing_strategy: parsed.closing_strategy || undefined,
@@ -5590,7 +5616,8 @@ ${history}`;
       // 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（画面のブレインのカードに並べて出す）。連絡待ちの時は物件ピックアップ＋物件オススメ
       // 2026-09-17 慶次事例: 探し続ける約束の後も同じ2つ（物件ピックアップ＋物件オススメ）を並べる
       // 2026-09-26 段3: 並行で探す時は物件ピックアップも並べる（parallelOut に畳んだ）
-      alt_actions: finalAlts,
+      alt_actions: deskOverride ? [...new Set([...deskOverride.also, ...(finalAlts ?? [])].filter((a) => a !== deskOverride!.action))] : finalAlts,
+      aix_desk: aixDesk,
       // Chrome拡張フィードバックループ: 検索フォーム自動入力用の構造化パラメータ（TODO(P2)対応）
       property_search_params: pc ? {
         area: pc.desired_area ?? null,

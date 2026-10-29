@@ -4904,6 +4904,23 @@ ALTER TABLE work_log ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON work_log FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE work_log_id_seq FROM anon, authenticated;
 
+-- 2026-10-29 aix_desk_cards … AIX の担当の札（ボタン×ピッカーごと・竹内さん KB P1 03d2bdd2）。scripts/build-aix-desk-cards.ts が毎週作り直す（upsert）。
+--   中身: 送る中身・使う場面・似たボタンとの線・竹内さんの文に入る物・入力欄・一緒に使われた定型・竹内さんの決定（設計知見の題）・
+--   竹内さんの番（お客様の発言→竹内さんの文・名前・号室・URL・電話等は伏せ、example-pii-guard の sanitizeExampleText も通す）・押し間違いの例。
+--   読むのは brain-core の AIX の統括（AIX_DESK_COMMAND・既定 off）だけ・サーバーの鍵で読む（aix-commander-server.ts）。公開キーでは読めない（RLS 有効・ポリシーなし）
+CREATE TABLE IF NOT EXISTS aix_desk_cards (
+  key TEXT PRIMARY KEY,
+  button TEXT NOT NULL,
+  picker TEXT,
+  card_text TEXT NOT NULL,
+  owner_count INT NOT NULL DEFAULT 0,
+  thin TEXT[] NOT NULL DEFAULT '{}',
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  source TEXT
+);
+ALTER TABLE aix_desk_cards ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON aix_desk_cards FROM anon, authenticated;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
