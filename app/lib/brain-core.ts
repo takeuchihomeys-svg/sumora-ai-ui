@@ -5579,7 +5579,7 @@ ${history}`;
         const changed = !!pickBtn && (pickBtn.action !== finalAix || (!!pickBtn.checkPattern && pickBtn.checkPattern !== (checkKind?.check_pattern || null)));
         aixDesk = { mode: deskMode, brain: run.brainKey, cands: run.cands, pick: run.pick, also: run.also, sb: run.sendBack, why: run.why.slice(0, 120), changed, ...(run.skip ? { skip: run.skip } : {}) };
         if (deskMode === "on" && run.ran && (changed || run.also.length)) deskOverride = { action: pickBtn?.action ?? finalAix, checkPattern: pickBtn ? pickBtn.checkPattern : (checkKind?.check_pattern || null), also: run.also.map((k) => actionOfKey(k).action) };
-        console.log(JSON.stringify({ tag: "brain:aix-desk", conversationId, mode: deskMode, brain: finalAix, ...aixDesk, ms: run.ms }));
+        console.log(JSON.stringify({ tag: "brain:aix-desk", conversationId, brainAix: finalAix, ...aixDesk, ms: run.ms }));
       } catch (e) {
         console.warn(JSON.stringify({ tag: "brain:aix-desk", conversationId, error: (e instanceof Error ? e.message : String(e)).slice(0, 160) }));
       }

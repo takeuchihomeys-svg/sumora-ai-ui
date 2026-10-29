@@ -337,6 +337,10 @@
       "schedule": "40 19 * * 0"
     },
     {
+      "path": "/api/cron/aix-desk-cards",
+      "schedule": "10 20 * * 0"
+    },
+    {
       "path": "/api/cron/viewing-morning-greeting",
       "schedule": "0,30 0-11,21-23 * * *"
     }
