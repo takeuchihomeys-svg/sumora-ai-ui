@@ -1,6 +1,6 @@
 // 統括の②状況のまとめ「今すぐ果たせる物」（2026-10-29）
 // 実行: npx tsx app/lib/__tests__/situation-summary.test.ts
-import { nowFulfillableEnabled, nowFulfillableLine, buildSituationSummary } from "../situation-summary";
+import { nowFulfillableEnabled, nowFulfillableLine, buildSituationSummary, withTurnBrought } from "../situation-summary";
 import type { RoomState } from "../customer-state";
 
 let passed = 0, failed = 0;
@@ -44,6 +44,12 @@ it("状況のまとめの型: 段階・開いている約束（pending だけ）
   eq(s.openPromises.map((p) => p.kind), ["check"]);
   eq(s.nowFulfillable.confirmed, ["Tio Verde 302"]);
   eq([s.stage, s.bind, s.nowFulfillable.pickupReady], ["proposing", null, false]);
+});
+
+it("今の番の持ち込みを needCheck に足す（q197・確認済みなら足さない）", () => {
+  const s0 = buildSituationSummary({ state: { stage: "proposing" as never, stageLabel: "提案中", properties: [room({ name: "Tio Verde 302", events: [{ kind: "sent", at: "2026-10-27T03:00:00Z", source: "x" }] })] }, promises: [], emotion: null, bind: null, pickupReady: null, nowMs: NOW });
+  const s1 = withTurnBrought(s0, ["アーバネックス心斎橋イースト", "Tio Verde 302"]);
+  eq(s1.nowFulfillable.needCheck, ["アーバネックス心斎橋イースト（今の番の持ち込み）"]);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

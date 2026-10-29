@@ -101,3 +101,16 @@ export function appealMaterialsOf(items: ReadonlyArray<{ kind: string; text: str
   if (mindsetState && /刺さ|前向き|気に入/.test(mindsetState)) hooked.unshift(`（気持ち）${mindsetState}`);
   return { wants: pick("core", "flexible"), worries: pick("concern"), lifestyle: pick("people", "circumstance"), hooked: hooked.slice(0, 5) };
 }
+
+/**
+ * 2026-10-29 作業員1の気づき（q197）: 今の番でお客様が持ち込んだ物件（URL・物件名・画像）は、customer-state の rooms に入るのが次の番＝
+ *   needCheck に載らず、物件確認した の担当が「結果がまだ」と分からなかった。今の番の持ち込みを needCheck に足す（確認済みに載っていれば足さない）。
+ *   names は今の番の発言から読んだ物件名（URL だけで名前が無い時は「お客様が今送った物件（URL）」等の短い札でよい）
+ */
+export function withTurnBrought(s: SituationSummary, names: ReadonlyArray<string>): SituationSummary {
+  const norm = (x: string) => x.normalize("NFKC").replace(/\s+/g, "");
+  const have = new Set([...s.nowFulfillable.confirmed, ...s.nowFulfillable.needCheck].map(norm));
+  const add = names.map((n) => n.trim()).filter((n) => n && !have.has(norm(n)));
+  if (!add.length) return s;
+  return { ...s, nowFulfillable: { ...s.nowFulfillable, needCheck: [...s.nowFulfillable.needCheck, ...add.map((n) => `${n}（今の番の持ち込み）`)] } };
+}
