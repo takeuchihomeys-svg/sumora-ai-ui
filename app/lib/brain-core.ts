@@ -1510,7 +1510,9 @@ export async function analyzeConversation(
     /** 2026-10-02: お客様ごと・1日ごとの温めのスイッチ（analyzeAndSaveBrainMeta が decideCacheWarm で決めた値。null＝OFF） */
     cacheWarm?: CacheWarmDecision | null;
     /** 2026-10-21（ec4d5990）2番手で申込中（並行で探す）: 材料に1ブロック足す（呼び出し元が status を物件提案中に読み替えている） */
-    parallelSecond?: boolean },
+    parallelSecond?: boolean;
+    /** 2026-10-29 AIX の統括からの差し戻し（aix-sendback.ts）。ある時だけ材料に1行（読み直しは呼ぶ側が1番につき1回まで） */
+    sendBack?: import("@/app/lib/aix-sendback").AixSendBack | null; sendBackFirstAix?: string | null },
 ): Promise<SuggestedAixMeta> {
   // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
   await ensureLlmFetchChainInDev().catch(() => {});
@@ -2943,6 +2945,12 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     const nf = nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() });
     if (nf) customerStateBlockText += `\n${nf}`;
     console.log(JSON.stringify({ tag: "brain:now-fulfillable", conversationId, chars: nf.length }));
+  }
+  // 2026-10-29 AIX の統括からの差し戻し（opts.sendBack がある時だけ・決めるのはブレイン）
+  if (opts?.sendBack) {
+    const { sendBackMaterialLine } = await import("@/app/lib/aix-sendback");
+    const sbl = sendBackMaterialLine(opts.sendBack, opts.sendBackFirstAix ?? null);
+    if (sbl) { customerStateBlockText += `\n\n${sbl}`; console.log(JSON.stringify({ tag: "brain:aix-sendback", conversationId, kind: opts.sendBack.kind, firstAix: opts.sendBackFirstAix ?? null })); }
   }
   // 2026-10-29 統括の③深さ（brain-depth.ts）: 第1段は記録だけ（判断・費用は変えない）。数えてから軽い番の引き継ぎを入れる
   if (typedMessages[0]?.sender === "customer") {
