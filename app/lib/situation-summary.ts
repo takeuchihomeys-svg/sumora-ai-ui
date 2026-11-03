@@ -9,6 +9,7 @@ import type { RoomState, CustomerState, CustomerStage } from "./customer-state";
 import type { PromiseStep } from "./promise-queue";
 import type { FilledEmotion } from "./customer-emotion-fill";
 import type { BindResult } from "./sent-ledger-bind";
+import type { MessagePlan } from "./message-plan";
 
 type Env = Record<string, string | undefined>;
 export function nowFulfillableEnabled(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -74,8 +75,13 @@ export type SituationSummary = {
   /** 訴求の材料（お客様のメモ）と、ブレインの訴求の判断（無ければ null） */
   appealMaterials: AppealMaterials;
   appeal: AppealDecision | null;
+  /**
+   * 2026-11-03 統括の決定（1通の計画・message-plan.ts の MessagePlan そのまま）。何を言うか・要件の順・いつ・誰が（返信／AIX／電話）・入れる／今は入れない／2通目。
+   *   作業員6の構成（compose・主役・趣旨・主語・添え・締め）はこれを読むだけで、並べ替え・割り直しはしない（役割を分ける）。無い番（BRAIN_MESSAGE_PLAN off・作れなかった）は null
+   */
+  plan: MessagePlan | null;
 };
-export function buildSituationSummary(o: { state: Pick<CustomerState, "stage" | "stageLabel" | "properties">; promises: ReadonlyArray<PromiseStep>; emotion: FilledEmotion; bind: BindResult; pickupReady: boolean | null; nowMs: number; memoItems?: ReadonlyArray<{ kind: string; text: string; retiredAt?: string | null }>; mindsetState?: string | null; appeal?: AppealDecision | null }): SituationSummary {
+export function buildSituationSummary(o: { state: Pick<CustomerState, "stage" | "stageLabel" | "properties">; promises: ReadonlyArray<PromiseStep>; emotion: FilledEmotion; bind: BindResult; pickupReady: boolean | null; nowMs: number; memoItems?: ReadonlyArray<{ kind: string; text: string; retiredAt?: string | null }>; mindsetState?: string | null; appeal?: AppealDecision | null; plan?: MessagePlan | null }): SituationSummary {
   return {
     stage: o.state.stage, stageLabel: o.state.stageLabel,
     openPromises: o.promises.filter((p) => p.status === "pending").map((p) => ({ kind: p.kind, action: p.action, object: p.object, evidence: p.evidence, promisedAt: p.promisedAt })),
@@ -84,6 +90,7 @@ export function buildSituationSummary(o: { state: Pick<CustomerState, "stage" | 
     bind: o.bind ? { kind: o.bind.item.kind, name: o.bind.item.name, topic: o.bind.item.topic, by: o.bind.by } : null,
     appealMaterials: appealMaterialsOf(o.memoItems ?? [], o.mindsetState ?? null),
     appeal: o.appeal ?? null,
+    plan: o.plan ?? null,
   };
 }
 
