@@ -39,4 +39,20 @@ const sinceArg = (process.argv.find((a) => a.startsWith("--since-days=")) ?? "")
   if (apply) for (const f of await writeDigestFiles(join(process.cwd(), "memory"))) console.log("   書きました:", f);
   // 2026-10-07 --write-review: DB に書かずに（dry でも）要確認の一覧を memory/rules_digest_review.md に写す（段の要確認の塊は残す）
   else if (process.argv.includes("--write-review") && r.reviewMd) { const f = join(process.cwd(), "memory", "rules_digest_review.md"); writeFileSync(f, keepPriorityBlock(f, r.reviewMd)); console.log("   書きました:", f); }
+  // 2026-11-03 作業員6 ⑤ 木の見張り（P0 の数・親の無い P1・同じ親の下の重なり・輪）。束ねる案は --tree-out=<scratchpad のファイル> に（DB には書かない）
+  try {
+    const { watchKbTree, kbTreeWatchMarkdown } = await import("../app/lib/kb-tree-watch");
+    const all: Array<{ id: string; title: string; priority: number | null; parent: string | null; embedding: string | number[] | null }> = [];
+    for (let f = 0; ; f += 500) {
+      const { data, error } = await sb.from("system_design_thinking").select("id, title, priority, parent, embedding").eq("is_current", true).order("created_at").range(f, f + 499);
+      if (error) throw new Error(error.message);
+      all.push(...((data ?? []) as typeof all));
+      if (!data || data.length < 500) break;
+    }
+    const tr = all.map((x) => ({ id: x.id, title: x.title, priority: x.priority, parent: x.parent, v: Array.isArray(x.embedding) ? x.embedding : typeof x.embedding === "string" ? (JSON.parse(x.embedding) as number[]) : null }));
+    const w = watchKbTree(tr);
+    console.log(`⑤ 木: P0 ${w.p0}（目安 5${w.p0Over ? "・多い" : ""}）・親の無い P1 ${w.orphanP1.length}・同じ親の下の重なり ${w.overlaps.length}・輪 ${w.cycles.length}`);
+    const out = (process.argv.find((a) => a.startsWith("--tree-out=")) ?? "").slice(11);
+    if (out) { const title = new Map(tr.map((x) => [x.id, x.title])); writeFileSync(out, kbTreeWatchMarkdown(w, (id) => title.get(id) ?? "", new Date().toISOString().slice(0, 10))); console.log("   木の見張りを書きました:", out); }
+  } catch (e) { console.warn("   木の見張りに失敗:", e instanceof Error ? e.message : e); }
 })().catch((e) => { console.error(e); process.exit(1); });

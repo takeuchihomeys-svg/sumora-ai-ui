@@ -70,6 +70,47 @@ async function main() {
   // 2026-10-07 7巡目（竹内「被ったらその時におくってもらったら良い」）: 入れた行と同じ場面・同じ話題の既存の P0/P1/P2 の行で
   //   埋め込みが近い物（0.8 以上）を「被っている可能性」として並べる。**自動では退役しない**（コーディネーターがその場で竹内さんに見せる）
   try { await showOverlaps(ids, rows); } catch (err) { console.warn("  被りの確かめに失敗（INSERT は済み）:", err instanceof Error ? err.message : err); }
+  // 2026-11-03 作業員6 入れる時の統括（竹内さん KB P1「設計知見そのものにも統括を作る」②）: 近さ 0.72 以上の行との関係を DeepSeek で1回ずつ決める。
+  //   子 → 新しい行に parent を付ける（段の線を守る）／上書き → 退役の案（自動では退役しない）／ぶつかる → 確認事項の下書き。止める: KB_INSERT_JUDGE=off
+  if ((process.env.KB_INSERT_JUDGE ?? "on").toLowerCase() !== "off") {
+    try { await judgeNewRows(ids, rows); } catch (err) { console.warn("  入れる時の統括に失敗（INSERT は済み）:", err instanceof Error ? err.message : err); }
+  }
+}
+
+async function judgeNewRows(ids: string[], rows: Array<Record<string, unknown>>) {
+  const { judgeKbRelation, canBeParent, KB_JUDGE_MIN_SIM } = await import("../app/lib/kb-insert-judge");
+  const drafts: string[] = [];
+  let calls = 0;
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i]; const row = rows[i] ?? {};
+    const me = { id, title: String(row.title ?? ""), insight: String(row.insight ?? ""), priority: (row.priority as number | null) ?? 2, created_at: new Date().toISOString() };
+    const nb = (await neighborsOf(sb, id, 6, KB_JUDGE_MIN_SIM)).filter((n) => n.id !== id);
+    if (!nb.length) continue;
+    const { data } = await sb.from("system_design_thinking").select("id, title, insight, priority, created_at, is_current").in("id", nb.map((n) => n.id));
+    const byId = new Map(((data ?? []) as Array<{ id: string; title: string; insight: string; priority: number | null; created_at: string; is_current: boolean | null }>).map((r) => [r.id, r]));
+    let parentSet = false;
+    for (const n of nb) {
+      const old = byId.get(n.id); if (!old || old.is_current === false) continue;
+      const j = await judgeKbRelation(me, old, n.similarity); calls++;
+      if (!j) continue;
+      const tag = `P${old.priority ?? 2} ${old.id.slice(0, 8)}（近さ ${n.similarity.toFixed(2)}）${old.title.slice(0, 60)}`;
+      if (j.rel === "child" && !parentSet && canBeParent(me, old)) {
+        const up = await sb.from("system_design_thinking").update({ parent: old.id, parent_by: `kb-insert:deepseek:${n.similarity.toFixed(2)}`, parent_at: new Date().toISOString() }).eq("id", id);
+        if (!up.error) { parentSet = true; console.log(`  🌳 親を付けた: ${id.slice(0, 8)} → ${tag}（${j.why}）`); }
+      } else if (j.rel === "same") console.log(`  ＝ 同じ: ${tag}（${j.why}）→ どちらかを退役する案: npx tsx --env-file=.env.local scripts/kb-retire.ts --id=${old.id} --by=${id} --reason=同じ`);
+      else if (j.rel === "supersede") console.log(`  ↻ 上書き: ${tag}（${j.why}）→ 退役の案（竹内さんの判断の後）: npx tsx --env-file=.env.local scripts/kb-retire.ts --id=${old.id} --by=${id} --reason=<理由>`);
+      else if (j.rel === "conflict") {
+        console.log(`  ⚡ ぶつかる: ${tag}（${j.why}）解き方: ${j.resolve ?? "―"}`);
+        drafts.push(`- 【設計知見のぶつかり】新しい行 ${id.slice(0, 8)}「${me.title.slice(0, 50)}」と ${old.id.slice(0, 8)}「${old.title.slice(0, 50)}」: ${j.why}。推奨: ${j.resolve ?? "新しい決定を先にする"}`);
+      }
+    }
+  }
+  console.log(`  入れる時の統括: DeepSeek ${calls}回（約 $${(calls * 0.0006).toFixed(4)}）`);
+  if (drafts.length) {
+    const f = "memory/rules_digest_review.md";
+    fs.appendFileSync(f, `\n\n## 竹内さんへの確認事項の下書き（kb-insert・${new Date().toISOString().slice(0, 10)}）\n${drafts.join("\n")}\n`, "utf8");
+    console.log(`  確認事項の下書きを ${f} に足した（${drafts.length}件）`);
+  }
 }
 
 /** 被りの表示の線（近さ・題の並べ方）。迷ったら多めに出す側（見せるだけなので） */
