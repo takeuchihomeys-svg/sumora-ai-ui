@@ -39,10 +39,10 @@ export function runInLane<T, L>(lane: ExamLane<L>, fn: () => T): T {
   return als().run(lane as ExamLane, fn);
 }
 
-/** 並べる数（EXAM_CONCURRENCY・1〜6・読めない値は 1）。会話の数で実際はもっと少ない（テスト専用の会話は4本） */
+/** 並べる数（EXAM_CONCURRENCY・1〜6・無い時は 4・読めない値は 1）。2026-11-04 指揮役: 既定 4（conc-4lane 悪化0・429 0・会話の取り違え0）・=1 で今まで通り。会話の数で実際はもっと少ない（テスト専用の会話は4本） */
 export const EXAM_CONCURRENCY_MAX = 6;
 export function readConcurrency(env: Record<string, string | undefined> = process.env): number {
-  const n = Math.floor(Number(String(env.EXAM_CONCURRENCY ?? "").trim() || "1"));
+  const n = Math.floor(Number(String(env.EXAM_CONCURRENCY ?? "").trim() || "4"));
   return Number.isFinite(n) && n > 1 ? Math.min(EXAM_CONCURRENCY_MAX, n) : 1;
 }
 

@@ -42,7 +42,7 @@
 //   並べ方: 既定でキャッシュが効く順（段 → 前置きの印 → 型）。止める --order=as-is（EXAM_ORDER=as-is）。判定の前置き: --judge-prefix=rubric（EXAM_JUDGE_PREFIX=rubric・既定は旧の順）
 //   --baseline-max-age=<日|off>（EXAM_BASELINE_MAX_AGE_DAYS・既定 7日）… main の取り置きが古ければ流し直す
 //   --kb-rules=show|score|off（既定 show）… 決まりで判定できる知見の違反を出す／--link-kb=<知見 id|id8|title:題>,… … 通った問題を知見に結ぶ
-// 2026-11-04 作業員1・指揮役の了承: EXAM_CONCURRENCY=<2〜6>（既定 1＝今まで通り）… node を増やさずに1つの処理の中で問題を並べる。
+// 2026-11-04 作業員1・指揮役の了承: EXAM_CONCURRENCY=<1〜6>（11/04 から既定 4・=1 で今まで通り）… node を増やさずに1つの処理の中で問題を並べる。
 //   レーン＝テスト専用の会話（YUMA2〜YUMA5）1本・1問ずつ（同じ問題の回は同じレーンで順に）。会話の数で実際は4本まで（YUMA は使わない）。
 //   process.env・録音の札・試験の時計はレーンごと（scripts/lib/exam-lane.ts）。DeepSeek 等の 429 を見たら問題の区切りで並べる数を1つ減らす
 import { createClient } from "@supabase/supabase-js";

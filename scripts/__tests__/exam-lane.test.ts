@@ -11,7 +11,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
   console.log("── ③ EXAM_CONCURRENCY の読み方（1 の時は入れない）");
-  t("無い＝1", readConcurrency({}) === 1);
+  t("2026-11-04 無い＝4（既定）", readConcurrency({}) === 4);
   t("1＝1", readConcurrency({ EXAM_CONCURRENCY: "1" }) === 1);
   t("読めない＝1", readConcurrency({ EXAM_CONCURRENCY: "abc" }) === 1 && readConcurrency({ EXAM_CONCURRENCY: "0" }) === 1 && readConcurrency({ EXAM_CONCURRENCY: "-3" }) === 1);
   t("4＝4", readConcurrency({ EXAM_CONCURRENCY: "4" }) === 4);
