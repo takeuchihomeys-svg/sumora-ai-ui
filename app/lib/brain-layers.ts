@@ -17,6 +17,7 @@
 
 // 2026-09-23: 戦略の項目にも家賃交渉の守りを通す（純関数同士なので依存なしのまま）
 import { needDigest, planAheadDigest, threeLayerDigest, type BrainNeed, type PlanAhead, type ThreeLayer } from "./brain-need";
+import { conductorMetaDigest, type ConductorMeta } from "./conductor-meta";
 import { stripRentNegotiation, stripRentNegotiationFromList } from "./rent-negotiation-guard";
 import { mindsetDigest, type CustomerMindset } from "./customer-mindset";
 
@@ -137,6 +138,10 @@ export type FreshDigest = {
   rl?: string;
   /** 2026-11-03 読み直しの回数/上限:最後の理由（brain-recheck.ts・shadow は s が前） */
   rk?: string;
+  /** 2026-11-04 統括メタの短い形（場面|担当|倉庫の数|自信） */
+  cm?: string;
+  /** 2026-11-04 入口の最初の読み（Sonnet の場面|自信|作り置きの読み|DeepSeek と合ったか） */
+  ci?: string;
   /** 2026-10-13: LLM が出した current_property（ゲートの前） */
   lp?: string | null;
   /** 2026-10-13: 生の本質の道の数（reconcile の前・llm_raw.tc）。tc は規則の後の値 */
@@ -179,6 +184,8 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...((() => { const nd = needDigest(meta.need as BrainNeed | null | undefined); return nd ? { nd } : {}; })()),
     ...((() => { const pa = planAheadDigest(meta.plan_ahead as PlanAhead | null | undefined); return pa ? { pa } : {}; })()),
     ...((() => { const tl = threeLayerDigest(meta.three_layer as ThreeLayer | null | undefined); return tl ? { tl } : {}; })()),
+    ...((() => { const ci = meta.conductor_intake as { answer?: { scene?: string; confidence?: string } | null; cacheRead?: number | null; agree?: { scene: boolean; roles: boolean; need: boolean } | null } | undefined; if (!ci?.answer) return {}; const ag = ci.agree ? `${ci.agree.scene ? "s" : "-"}${ci.agree.roles ? "r" : "-"}${ci.agree.need ? "n" : "-"}` : ""; return { ci: `${ci.answer.scene}|${ci.answer.confidence?.[0] ?? ""}|cr${ci.cacheRead ?? 0}${ag ? `|ds:${ag}` : ""}` }; })()),
+    ...((() => { const cm = conductorMetaDigest(meta.conductor_meta as ConductorMeta | null | undefined); return cm ? { cm } : {}; })()),
     ...(str(meta.recheck_digest, 40) ? { rk: str(meta.recheck_digest, 40)! } : {}),
     ...(str(meta.conductor_roles, 30) ? { rl: str(meta.conductor_roles, 30)! } : {}),
     ...(str(meta.main_point, 30) ? { mp: str(meta.main_point, 30)! } : {}),

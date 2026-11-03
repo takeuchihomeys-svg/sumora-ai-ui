@@ -5093,6 +5093,22 @@ REVOKE ALL ON rollout_overrides FROM anon, authenticated;
 ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS staff_reason TEXT;
 ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS staff_reason_at TIMESTAMPTZ;
 
+-- 2026-11-04 作業員2: ブレインの取扱説明書（KB P1 11/04「統括はそれぞれのブレインの動きを理解する」）。7つのブレイン×7項目＋短い形（summary）。
+--   入口の統括が読む（サーバーの鍵・1時間の控え）。毎週の当たりの数えで ① と ⑦ を書き直す（source=weekly）。中身は設計の言葉だけ（会話の文・お客様の名前は入れない）
+CREATE TABLE IF NOT EXISTS brain_manuals (
+  brain TEXT NOT NULL CHECK (brain IN ('judge','todo','aix','property_search','estimate','viewing','compose')),
+  item TEXT NOT NULL CHECK (item IN ('strengths','materials','returns','failures','cost','conflicts','hit_rate','summary')),
+  body TEXT NOT NULL,
+  short_form TEXT CHECK (short_form IS NULL OR char_length(short_form) <= 120),
+  stats JSONB NOT NULL DEFAULT '{}',
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','weekly')),
+  changed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (brain, item)
+);
+ALTER TABLE brain_manuals ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON brain_manuals FROM anon, authenticated;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

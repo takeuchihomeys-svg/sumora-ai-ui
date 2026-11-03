@@ -28,15 +28,19 @@ export type PendingFactLedger = { propertyCustomerId: string | null; facts: Fact
 const pending = new Map<string, PendingFactLedger>();
 /** 分析の中で作った帳面を、保存の時まで預かる（会話ごとに最新だけ） */
 export function stashFactLedger(conversationId: string, p: PendingFactLedger): void {
-  if (isTestConversation(conversationId)) return; // 試験・テスト用の会話（YUMA・YUMA2〜5）は帳面を作らない（作業員1 11/03）
   pending.set(conversationId, p);
   if (pending.size > 200) { const first = pending.keys().next().value; if (first) pending.delete(first); }
+}
+/** 2026-11-04 ② 同じ番の帳面を他の担当（AIX の統括・文）が読む口。保存の前（同じ番の分析の中）なら読める。担当の分は conductor-meta.materialFor で絞る */
+export function peekFactLedger(conversationId: string): Fact[] | null {
+  return pending.get(conversationId)?.facts ?? null;
 }
 /** ブレインの保存の後に1回だけ呼ぶ（預かった物が無ければ何もしない） */
 export async function flushFactLedger(conversationId: string, timeoutMs = 3000): Promise<boolean> {
   const p = pending.get(conversationId);
   if (!p) return false;
   pending.delete(conversationId);
+  if (isTestConversation(conversationId)) return false; // 試験・テスト用の会話は表に書かない（担当が読む口 peekFactLedger には残す）
   const sb = admin();
   if (!sb) return false;
   const ac = new AbortController();

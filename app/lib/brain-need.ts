@@ -111,10 +111,16 @@ export const conflictDigest = (c: MaterialConflicts | null | undefined) => (c &&
 
 // ── 潜在意識と要点（KB P1「お客様の潜在意識と要点を読む部分を6つで強化」①②・どちらも既定 off・記録だけ）─────────────
 //   ① 3段（表の質問→奥の心配→何が満たされれば安心するか）を判断の前に出す。② key_topics から「一番の要点」を1つ選ぶ（作業員6の ComposeIntent.main が受ける）
-export const threeLayerOn = (env: Env = envOf()) => on(env.BRAIN_THREE_LAYER);
-export const mainPointOn = (env: Env = envOf()) => on(env.BRAIN_MAIN_POINT);
+// 2026-11-04 統括役（試験を組にまとめる・need と同じく「判断の後」の形に揃える）: =after は出力の一番最後の振り返りの欄（判断を引っ張らない）。=on は旧の位置
+const modeOf = (v: string | undefined): "off" | "on" | "after" => { const x = (v ?? "").trim().toLowerCase(); return x === "after" ? "after" : x === "on" ? "on" : "off"; };
+export const threeLayerMode = (env: Env = envOf()) => modeOf(env.BRAIN_THREE_LAYER);
+export const mainPointMode = (env: Env = envOf()) => modeOf(env.BRAIN_MAIN_POINT);
+export const threeLayerOn = (env: Env = envOf()) => threeLayerMode(env) !== "off";
+export const mainPointOn = (env: Env = envOf()) => mainPointMode(env) !== "off";
 export type ThreeLayer = { surface: string; worry: string; relief: string };
 export const BRAIN_THREE_LAYER_RULES = `【3段で考える（three_layer）】判断の前に、お客様の今の番を3段で読む: surface＝表の質問・依頼（お客様の言葉に近く）／worry＝奥の心配（会話・記録から読める物だけ・創作しない）／relief＝何が満たされれば安心するか（こちらが出せる物で）。例: 「初期費用15万くらいの物件ないですか」→ worry「予算が足りるか不安・今の候補が高いと感じている」→ relief「割引で15万に収まる物件と、収まる理由」。読めない段は ""。AIX・返信の判断と key_topics はこの relief に沿わせる。`;
+export const BRAIN_THREE_LAYER_RULES_AFTER = `【振り返り（three_layer・判断の後に書く）】判断を全部書き終えた後で、お客様の今の番を3段で振り返る: surface＝表の質問・依頼／worry＝奥の心配（会話・記録から読める物だけ・創作しない）／relief＝何が満たされれば安心するか（こちらが出せる物で）。読めない段は ""。この振り返りで判断を変えない。`;
+export const BRAIN_MAIN_POINT_RULES_AFTER = `【振り返り（main_point・判断の後に書く）】key_topics を書き終えた後で、その中から一番伝えるべき1つを、そのままの言葉で main_point に書く（返信の主役の1文になる）。key_topics が空なら null。この振り返りで key_topics を変えない。`;
 export const BRAIN_THREE_LAYER_FIELD = `"three_layer": {"surface": "表の質問（30字以内）", "worry": "奥の心配（40字以内）", "relief": "何が満たされれば安心するか（40字以内）"}`;
 export const BRAIN_MAIN_POINT_RULES = `【一番の要点（main_point）】key_topics の中から、この番で一番伝えるべき1つを選び、そのままの言葉で main_point に書く（返信の主役の1文になる）。key_topics が空なら null。`;
 export const BRAIN_MAIN_POINT_FIELD = `"main_point": "key_topics の中の1つ（そのままの言葉）または null"`;
