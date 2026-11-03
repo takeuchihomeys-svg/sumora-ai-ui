@@ -97,7 +97,7 @@ export function updateReleaseOrder(md: string, switchName: string, status: strin
   for (let i = hdr + 2; i < lines.length && lines[i].startsWith("|"); i++) {
     const cells = lines[i].split("|");
     if (cells.length <= Math.max(swCol, stCol)) continue;
-    if (!cells[swCol].includes(switchName)) continue;
+    if (!switchName.split(/[,s]+/).filter(Boolean).some((n) => cells[swCol].includes(n))) continue;
     cells[stCol] = ` ${safe} `;
     lines[i] = cells.join("|");
     changed = true;

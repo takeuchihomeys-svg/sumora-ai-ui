@@ -54,6 +54,7 @@ const md = "# 表\r\n\r\n| 順 | スイッチ | 担当 | 状態 |\r\n|---|---|--
 const u = updateReleaseOrder(md, "BRAIN_MATERIAL_SELF_REPORT", "試験 ms-on1: 悪化0 | 合格 3→3");
 t("スイッチの行の状態だけ置き換える", u.changed && u.md.includes("| 1 | BRAIN_MATERIAL_SELF_REPORT（記録だけ） | 作業員1 | 試験 ms-on1: 悪化0 ／ 合格 3→3 |") && u.md.includes("口の接続待ち") && u.md.endsWith("後ろの文"));
 t("改行の形（CRLF）を保つ", u.md.split("\r\n").length === md.split("\r\n").length);
+t("スイッチが複数（,）ならどれかの名の行", updateReleaseOrder(md, "X_ONE,AIX_DESK_COMMAND", "y").md.includes("| 2 | AIX_DESK_COMMAND=shadow | 作業員1 | y |"));
 t("行が無ければ変えない", !updateReleaseOrder(md, "NO_SUCH", "x").changed);
 
 console.log(`\n${pass} passed, ${fail} failed`);
