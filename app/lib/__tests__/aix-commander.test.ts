@@ -5,7 +5,7 @@ let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, v?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, JSON.stringify(v)); } };
 const keys = ["property_check_result/available", "property_check_result/mgmt_parking", "estimate_sheet/single", "estimate_sheet/multi", "acknowledge_check/daihyo_initial_cost", "meeting_place", "viewing_invite/通常", "viewing_invite/内覧日指定あり", "property_recommendation/新着1件", "property_send/new_arrival", "phone_call", "guarantor_info"];
 
-t("既定は off", aixDeskCommandMode({}) === "off");
+t("既定は shadow（記録だけ・11/03 夜）・off で止まる", aixDeskCommandMode({}) === "shadow" && aixDeskCommandMode({ AIX_DESK_COMMAND: "off" }) === "off");
 t("shadow と on", aixDeskCommandMode({ AIX_DESK_COMMAND: "shadow" }) === "shadow" && aixDeskCommandMode({ AIX_DESK_COMMAND: "on" }) === "on");
 t("鍵: ボタン＋ピッカー", deskKeyOf("property_check_result", "mgmt_parking", keys) === "property_check_result/mgmt_parking");
 t("鍵: ボタンだけ→最初の札", deskKeyOf("estimate_sheet", null, keys) === "estimate_sheet/single");

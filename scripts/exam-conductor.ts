@@ -54,6 +54,7 @@ export type ExamJob = {
   /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc" | "tsc-remote"; cmds?: string[];
   /** 夜だけ流す（JST 22〜9・重い全件の読み等・--night） */ nightOnly?: boolean;
   /** 保留の理由（あれば流さない・手で外す） */ hold?: string;
+  /** この時刻（ISO）より前は流さない（--not-before=2026-11-10T22:00+09:00） */ notBefore?: string;
   /** 終わったら知らせる相手（エージェントの id・--notify=）。無ければ exam-queue/config.json の notify[owner] */ notify?: string;
 };
 
@@ -89,7 +90,8 @@ function gateTsc(): { ok: boolean; why: string } {
 }
 async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
   if (j?.hold) return { ok: false, why: `保留（${j.hold}）` };
-  if (j?.runner === "tsc") return gateTsc();
+  if (j?.notBefore && Date.now() < Date.parse(j.notBefore)) return { ok: false, why: `${j.notBefore} から` };
+  if (j?.runner === "tsc") return process.env.EXAM_TSC_LOCAL === "on" ? gateTsc() : { ok: true, why: "リモート（Vercel のお試しの場所）" };
   // tsc-remote: PC のメモリは使わない（Vercel のお試しの場所で next build）＝門は「流す役が1本ずつ」だけ
   if (j?.runner === "tsc-remote") return { ok: true, why: "リモート（Vercel のお試しの場所）" };
   if (j?.nightOnly) { const h = new Date(Date.now() + 9 * 3600_000).getUTCHours(); if (h >= 9 && h < 22) return { ok: false, why: "夜だけの依頼（JST 22〜9）" }; }
@@ -114,11 +116,12 @@ function addJob(): void {
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
   const cwd = arg("cwd", process.cwd());
   const label = arg("label") || `job-${Date.now()}`;
-  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage", "brain"), env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}) };
+  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage", "brain"), env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
   let job: ExamJob;
-  if (arg("runner") === "tsc-remote") {
+  // 11/03 指揮役: 手元の tsc は使わない＝--runner=tsc も tsc-remote として足す（手元の tsc は --runner=tsc-local の時だけ）
+  if (arg("runner") === "tsc-remote" || arg("runner") === "tsc") {
     job = { ...base, id: `${Date.now()}`, label, only: "", repeat: 1, runner: "tsc-remote" };
-  } else if (arg("runner") === "tsc") {
+  } else if (arg("runner") === "tsc-local") {
     job = { ...base, id: `${Date.now()}`, label, only: "", repeat: 1, runner: "tsc" };
   } else if (arg("runner") === "cmd") {
     const cmds = argsOf("cmd").filter(Boolean);
@@ -314,6 +317,7 @@ async function runTscJob(j: ExamJob & { file: string }): Promise<void> {
 }
 
 async function runJob(j: ExamJob & { file: string }): Promise<void> {
+  if (j.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") return runTscRemoteJob(j); // 古い依頼の tsc も手元でなく Vercel の上で（EXAM_TSC_LOCAL=on の時だけ手元）
   if (j.runner === "tsc") return runTscJob(j);
   if (j.runner === "tsc-remote") return runTscRemoteJob(j);
   const outFile = join(RES, `${j.label}.out.log`);
@@ -390,6 +394,16 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
 // 直に流された時だけ動く（テストが関所の関数だけ読む時は動かない）
 if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
   if (flag("add")) { addJob(); return; }
+  // 11/03 指揮役: 知らせの未配達の見張り。流す役は notify.jsonl に書くだけ（SendMessage を持たない）＝届けた人が --delivered で印を付ける。
+  //   未配達＝results/notify.jsonl の行のうち、id（`${at}|${label}`）が results/delivered.jsonl に無い物。作業員1の再開時と指揮役の見回りで全部届ける
+  if (flag("undelivered") || arg("delivered")) {
+    const nf = join(RES, "notify.jsonl"), df = join(RES, "delivered.jsonl");
+    const done = new Set(existsSync(df) ? readFileSync(df, "utf8").split("\n").filter(Boolean).map((l) => { try { return String((JSON.parse(l) as { id: string }).id); } catch { return ""; } }) : []);
+    if (arg("delivered")) { for (const id of arg("delivered").split(",").filter(Boolean)) appendFileSync(df, JSON.stringify({ id, by: arg("by", "?"), at: new Date().toISOString() }) + "\n"); console.log("印を付けた"); return; }
+    const rows = existsSync(nf) ? readFileSync(nf, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l) as { at: string; to: string; owner: string; label: string; msg: string }; } catch { return null; } }).filter((x): x is { at: string; to: string; owner: string; label: string; msg: string } => !!x) : [];
+    for (const r of rows.filter((x) => !done.has(`${x.at}|${x.label}`))) console.log(JSON.stringify({ id: `${r.at}|${r.label}`, to: r.to, owner: r.owner, msg: r.msg }));
+    return;
+  }
   if (flag("list")) { for (const j of readJobs()) console.log(`- ${j.createdAt.slice(0, 16)} ${j.label}（${j.owner}・${j.switch}・${j.runner === "tsc-remote" ? "tsc-remote" : j.runner === "tsc" ? "tsc" : j.runner === "cmd" ? `${j.cmds?.length}本` : `${j.only || "rag"}・${j.repeat}回`}・試み ${j.tries}）`); return; }
   if (flag("run")) {
     // 流す役は PC で1つだけ（夜の予定のタスクと手で起こした物が重ならない）: run.lock に pid・生きていれば何もしない
@@ -406,7 +420,7 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
       // 先頭から順に関所を見て、通った最初の依頼を流す（試験が安い時間を待つ間も tsc は先に流せる）
       let picked: (typeof jobs)[number] | null = null; const whys: string[] = [];
       let examBlocked = false;
-      for (const j of jobs) { if (j.runner !== "tsc" && j.runner !== "tsc-remote" && examBlocked) continue; const g = await gate(j); if (g.ok) { picked = j; break; } whys.push(`${j.label}: ${g.why}`); if (j.runner !== "tsc" && j.runner !== "tsc-remote" && !j.nightOnly && !j.hold) examBlocked = true; }
+      for (const j of jobs) { if (j.runner !== "tsc" && j.runner !== "tsc-remote" && examBlocked) continue; const g = await gate(j); if (g.ok) { picked = j; break; } whys.push(`${j.label}: ${g.why}`); if (j.runner !== "tsc" && j.runner !== "tsc-remote" && !j.nightOnly && !j.hold && !j.notBefore) examBlocked = true; }
       // tsc の順番待ちが長い（既定 60分・EXAM_TSC_WAIT_ALERT_MIN）時は指揮役に知らせる（依頼ごとに1回）
       for (const j of jobs.filter((x) => x.runner === "tsc" && !tscAlerted.has(x.id))) { const min = (Date.now() - Date.parse(j.createdAt)) / 60_000; if (min >= Number(process.env.EXAM_TSC_WAIT_ALERT_MIN ?? "60")) { tscAlerted.add(j.id); const why = whys.find((w) => w.startsWith(j.label + ":")) ?? ""; appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to: "main", owner: j.owner, label: j.label, msg: `tsc の順番待ちが ${Math.round(min)}分（${why}）` }) + "\n"); log(`  📣 知らせる: to=main tsc の順番待ちが ${Math.round(min)}分（${j.label}・${j.owner}・${why}）`); } }
       if (!picked) { log(`待つ: ${whys.slice(0, 3).join("／")}（${jobs.length}本待ち）`); if (flag("once")) return; await new Promise((r) => setTimeout(r, (jobs.some((x) => x.runner === "tsc") ? 1 : 5) * 60_000)); continue; }

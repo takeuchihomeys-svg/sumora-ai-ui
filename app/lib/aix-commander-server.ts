@@ -7,6 +7,9 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER } from "./llm-usage-recorder";
 import { logLlmUsage } from "./llm-usage-log";
+import { readAltConfig, shouldRouteAlt } from "./llm-alt-provider";
+/** 2026-11-03 夜 指揮役の条件②: 統括・相談の呼び出しは DeepSeek に回る時だけ（名札が別クラウドの設定に入っている時）。回らない時は呼ばない＝Claude に行かない */
+export function deskCallGoesAlt(action: string, env: Record<string, string | undefined> = process.env): boolean { return shouldRouteAlt(readAltConfig(env), action); }
 import { AIX_COMMANDER_SYSTEM, commanderCandidates, commanderUserText, deskKeyOf, parseCommanderAnswer } from "./aix-commander";
 
 export const AIX_DESK_ACTION = "aix_desk_command";
@@ -75,6 +78,7 @@ export async function runAixCommander(client: Anthropic, o: {
   const brainKey = deskKeyOf(o.brainAction, o.brainCheckPattern, keys);
   const cands = commanderCandidates(brainKey, o.altActions, keys);
   if (cands.length < 2) return { ...base, brainKey, cands, skip: "比べる候補が1つ以下", ms: Date.now() - t0 };
+  if (!deskCallGoesAlt(AIX_DESK_ACTION)) return { ...base, brainKey, cands, skip: "DeepSeek に回らない（Claude には送らない）", ms: Date.now() - t0 };
   const user = commanderUserText({ situationLine: o.situationLine, conversation: o.conversation, cards: cands.map((k) => ({ key: k, text: cards.get(k) ?? "" })) });
   const res = await client.messages.create({
     model: MODEL,
@@ -99,6 +103,7 @@ export async function runAixConsult(client: Anthropic, o: { conversationId: stri
   const { consultCandidates, AIX_CONSULT_SYSTEM, parseConsultAnswer } = await import("./aix-commander");
   const cands = consultCandidates(o.sceneButtons, [...cards.keys()]);
   if (!cands.length) return { ran: false, skip: "場面の候補が無い", cands, answer: "keep", key: null, why: "", ms: Date.now() - t0 };
+  if (!deskCallGoesAlt("aix_desk_consult")) return { ran: false, skip: "DeepSeek に回らない（Claude には送らない）", cands, answer: "keep", key: null, why: "", ms: Date.now() - t0 };
   const user = commanderUserText({ situationLine: o.situationLine, conversation: o.conversation, cards: cands.map((k) => ({ key: k, text: cards.get(k) ?? "" })) }).replace("/ reply / promise", "/ promise / keep");
   const res = await client.messages.create({
     model: MODEL, max_tokens: 300, temperature: 0,

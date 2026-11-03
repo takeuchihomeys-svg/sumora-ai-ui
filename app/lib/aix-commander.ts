@@ -13,9 +13,10 @@ import type { BrainRecheck } from "./brain-recheck";
 
 type Env = Record<string, string | undefined>;
 export type AixDeskMode = "off" | "shadow" | "on";
+/** 2026-11-03 夜 指揮役（案A・竹内さんの決定②: 記録だけ・desk-on2 で確かな悪化0）: 既定は shadow（記録だけ・判断も文も変えない）。=off で止まる・=on は読み直しの印まで */
 export function aixDeskCommandMode(env: Env = typeof process !== "undefined" ? process.env : {}): AixDeskMode {
   const v = (env.AIX_DESK_COMMAND ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+  return v === "on" ? "on" : v === "off" ? "off" : "shadow";
 }
 
 /** 取り違えやすい組（②の実データ）: 片方が候補にあれば相手も比べる */
@@ -133,7 +134,7 @@ export function broughtThisTurnNames(turnText: string): string[] {
 //   答え: aix（鍵）／promise（確認の約束）／keep（返信のままで良い）。読み直しは作業員2の口（opts.recheck）で1回だけ。切替: AIX_DESK_CONSULT（既定 off・shadow／on）
 export function aixDeskConsultMode(env: Env = typeof process !== "undefined" ? process.env : {}): AixDeskMode {
   const v = (env.AIX_DESK_CONSULT ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+  return v === "on" ? "on" : v === "off" ? "off" : "shadow"; // 既定 shadow（上と同じ・11/03 夜）
 }
 
 /** スタッフしか分からない気配（お客様の言葉）。会話・資料で答えられる質問も混ざる＝相談のきっかけだけ（決めるのは AIX の統括） */
