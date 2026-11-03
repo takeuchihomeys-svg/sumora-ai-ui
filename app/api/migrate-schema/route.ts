@@ -4921,6 +4921,31 @@ CREATE TABLE IF NOT EXISTS aix_desk_cards (
 ALTER TABLE aix_desk_cards ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON aix_desk_cards FROM anon, authenticated;
 
+-- 2026-10-29 作業員5: 竹内さん本人の AIX の2通目（手本）と場面ごとの型の要約。会話由来の文は倉庫に載せない＝DB に置く。
+--   週1の cron（/api/cron/second-takeuchi-data）がサーバーの鍵で upsert・読むのは aix-template-generate だけ（app/lib/second-takeuchi-data-server.ts）
+CREATE TABLE IF NOT EXISTS second_takeuchi_examples (
+  id BIGSERIAL PRIMARY KEY,
+  src TEXT NOT NULL UNIQUE,
+  scene TEXT NOT NULL,
+  els TEXT[] NOT NULL DEFAULT '{}',
+  first_el TEXT,
+  first_card_els TEXT[] NOT NULL DEFAULT '{}',
+  body TEXT NOT NULL,
+  sent_on DATE NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS second_takeuchi_examples_scene_idx ON second_takeuchi_examples (scene, sent_on DESC);
+CREATE TABLE IF NOT EXISTS second_takeuchi_forms (
+  scene TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE second_takeuchi_examples ENABLE ROW LEVEL SECURITY;
+ALTER TABLE second_takeuchi_forms ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON second_takeuchi_examples FROM anon, authenticated;
+REVOKE ALL ON second_takeuchi_forms FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE second_takeuchi_examples_id_seq FROM anon, authenticated;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

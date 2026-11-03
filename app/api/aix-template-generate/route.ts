@@ -114,6 +114,8 @@ import { buildAixContractNote, type AixContractMeta } from "@/app/lib/aix-brain-
 import { secondMsgMaterialsOn, applySecondFinalChecks, type BrainBundleMeta } from "@/app/lib/second-message-materials";
 import type { SecondMaterials } from "@/app/lib/second-message-materials-server";
 import { recommendSecondAppealOn, recentAreaText, recentRequestCoversProperty, appendReceiptAfterCta, ensureRentTotalInRecommend } from "@/app/lib/recommend-second-appeal";
+import { buildSecondAppealNote, secondAppealPointsOn } from "@/app/lib/second-appeal-points";
+import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, APPEAL_JUDGE_SYSTEM, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
 export const maxDuration = 60;
@@ -1599,6 +1601,21 @@ export async function POST(req: NextRequest) {
         ...(secondTalkedToday !== null ? { greet: !secondTalkedToday } : {}),
       })
     : "";
+  // 2026-10-29 AIX_SECOND_APPEAL_POINTS（既定 off・second-appeal-points.ts）: 統括・ブレインのお客様の要点と1通目のオススメポイントを突き合わせ、
+  //   刺さる順の候補を2通目に渡す（竹内さん KB 9f4f0b48・R の2通目で天王寺・角部屋・ネット無料が落ちた）。場面の形の注記の後・締めの前
+  let secondAppealNote = "";
+  if (isRecSecond && !pickupPushLabel && secondAppealPointsOn()) {
+    const bm = brainMeta as (SuggestedAixMeta & { customer_concern?: { topic?: string; object?: string } | null; turn_contract?: { situation?: string | null; background?: string | null } | null }) | null;
+    const customerPoints = [
+      bm?.latent_intent ?? "",
+      bm?.customer_concern ? `${bm.customer_concern.topic ?? ""} ${bm.customer_concern.object ?? ""}` : "",
+      bm?.customer_emotion ?? "",
+      bm?.turn_contract?.situation ?? "",
+      ...(bm?.key_topics ?? []),
+    ].filter(Boolean).join("\n");
+    secondAppealNote = buildSecondAppealNote({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? bm?.latent_intent ?? null });
+    console.log(JSON.stringify({ tag: "aix-template-generate:second-appeal-points", len: secondAppealNote.length, points: secondAppealNote ? secondAppealNote.split("\n").filter((l) => /^\d\)/.test(l)).length : 0 }));
+  }
   if (isRecSecond) {
     console.log(JSON.stringify({ tag: "aix-template-generate:second-scene", scene: secondScene, pickupPush: pickupPushLabel, scenario: recommendationScenario, vacating: secondNotViewable, viewableSource: secondViewable.source, vacatingLine: secondViewable.line, material: !!secondMaterialNote }));
   }
@@ -1634,6 +1651,55 @@ export async function POST(req: NextRequest) {
         propertyRow: isRecSecond ? ((pickupPush ?? materialRow) as unknown as { property_name?: string | null; room_no?: string | null; recommended?: number | boolean | null; reason_codes?: string[] | null } | null) : null,
       }), new Promise<null>((r) => setTimeout(() => r(null), 8_000))]);
     } catch (e) { console.warn("[aix-template-generate] second-materials failed:", e instanceof Error ? e.message : e); }
+  }
+  // 2026-10-29 AIX_SECOND_APPEAL_JUDGE（既定 off・second-appeal-judge.ts）: ブレインの訴求の判断（一番・2番・数・型・締め）を先に1回決め、
+  //   書き手はそれに従って竹内さんの型と近い手本で書く（竹内さん KB 585ec774）。網（second-appeal-points）は候補を拾うだけ。締めも判断に従う（スタッフが画面で選んだ時はそちら）
+  let secondJudgeNote = "";
+  let secondJudge: AppealJudge | null = null;
+  if (isRecSecond && !pickupPushLabel && secondAppealJudgeOn()) {
+    try {
+      const bm = brainMeta as (SuggestedAixMeta & { customer_concern?: { topic?: string; object?: string } | null; turn_contract?: { situation?: string | null } | null }) | null;
+      const customerPoints = [
+        bm?.latent_intent ? `潜在動機: ${bm.latent_intent}` : "",
+        bm?.customer_concern ? `不安・関心: ${bm.customer_concern.topic ?? ""} ${bm.customer_concern.object ?? ""}` : "",
+        bm?.customer_emotion ? `気持ち: ${bm.customer_emotion}` : "",
+        bm?.hesitancy_pattern ? `迷い: ${bm.hesitancy_pattern}` : "",
+        ...(bm?.key_topics ?? []).map((k) => `要点: ${k}`),
+      ].filter(Boolean).join("\n");
+      const scene = secondFormScene(pickupType);
+      // 竹内さんの手本・型の要約（DB・サーバーの鍵で読む・無ければ手本なしで書く）
+      const secondData = await (await import("@/app/lib/second-takeuchi-data-server")).loadSecondTakeuchiData();
+      // 締めの候補になる状況（網）: 竹内さんが申込で締めた番の型（新着1件・見積書の後・入居が近い・急ぎ）。決めるのはブレイン
+      const recentArr = (Array.isArray(recentMessages) ? recentMessages : []) as Array<{ sender?: string; text?: string | null }>;
+      const custText = recentArr.filter((m) => m?.sender === "customer").slice(-6).map((m) => m?.text ?? "").join("\n");
+      const ledgerFacts = (bm as { action_ledger?: { facts?: { estimateSent?: boolean } } } | null)?.action_ledger?.facts;
+      const closingCandidates = closingCandidatesOf({
+        newListing: secondScene === "new_listing" || /新着/.test(String(pickupType ?? "")),
+        estimateSent: !!ledgerFacts?.estimateSent || recentArr.some((m) => m?.sender !== "customer" && /御見積書/.test(m?.text ?? "")),
+        vacating: secondNotViewable,
+        customerText: custText,
+        nowMonth: Number(new Date(Date.now() + 9 * 3600_000).toISOString().slice(5, 7)),
+      });
+      const { prompt } = appealJudgePrompt({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? null, scene, notViewable: secondNotViewable, materialFacts: secondMaterialNote, closingCandidates: [], data: secondData }); // 10/29: 締めの候補の網は2回とも締めを崩した（内覧・ご査収が減る）＝今は渡さない（closingCandidates は数えるだけ）
+      const key = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST", signal: AbortSignal.timeout(25_000),
+        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", ...sumoraLlmMarks("aix_appeal_judge"), ...(secondMaterials?.headers ?? {}) },
+        body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 500, thinking: { type: "disabled" }, system: APPEAL_JUDGE_SYSTEM, messages: [{ role: "user", content: prompt }] }),
+      });
+      if (r.ok) {
+        const d = await r.json() as { content?: Array<{ type: string; text?: string }> };
+        secondJudge = parseAppealJudge(d.content?.find((b) => b.type === "text")?.text ?? "");
+      }
+      if (secondJudge) {
+        // 10/29: 「前の決め打ちの申込を残す」形（v7）は ご査収 6→1/10・締め 21→14/30 と悪くなったので入れない（v4 の形＝締めはブレインの判断・スタッフが画面で選んだ時だけそちら）
+        if (recCta && !(ctaPreference === "viewing" || ctaPreference === "apply") && recCta.kind !== secondJudge.closing) {
+          recCta = { ...recCta, kind: secondJudge.closing, reason: `ブレインの訴求の判断: ${secondJudge.closingWhy}` };
+        }
+        secondJudgeNote = judgedAppealNote(secondJudge, scene, secondData);
+      }
+      console.log(JSON.stringify({ tag: "aix-template-generate:second-appeal-judge", ok: !!secondJudge, scene, first: secondJudge?.first.text.slice(0, 40) ?? null, count: secondJudge?.count ?? null, closing: secondJudge?.closing ?? null }));
+    } catch (e) { console.warn("[aix-template-generate] appeal judge failed:", e instanceof Error ? e.message : e); }
   }
   // 見積書を2回の AIX で送った時は、この番の見積書全部（材料が読めた時だけ・off なら1通目の見出しのまま）
   const estimateProps = (() => {
@@ -1827,6 +1893,8 @@ export async function POST(req: NextRequest) {
     // 物件オススメの直後の2通目: 資料の事実 → 場面の形（実送信の実物）→ 締め の順で最後に置く
     secondMaterialNote,
     secondSceneNote,
+    // 2026-10-29 このお客様に刺さる点（強い順・AIX_SECOND_APPEAL_POINTS・off なら空）／ブレインの訴求の判断（AIX_SECOND_APPEAL_JUDGE・判断がある時はこちらだけ）
+    secondJudgeNote || secondAppealNote,
     // 竹内さんの2通目の型（希望とのずれ・家賃管理費込・相場の好条件）。場面の形の後・締めの前（締めは下の CTA の指示のまま）
     secondWishGapNote,
     // CTA の有無は**お客様の反応と AIX の種類**で決める（実測・cta-guidance）。最後に置くのは上と同じ理由
@@ -2029,6 +2097,20 @@ export async function POST(req: NextRequest) {
           text = retryText;
         }
         if (still.length > 0) console.warn(JSON.stringify({ tag: "aix-template-generate:second-style-left", hits: still, head: (retryText || text).slice(0, 80) }));
+      }
+      // 2026-10-29 AIX_SECOND_APPEAL_JUDGE: ブレインが決めた訴求の数を超えて並べた時は1回だけ作り直す（本文は書き換えない・数が減った時だけ採る）
+      if (secondJudge && overAppealCount(text, secondJudge)) {
+        const before = countAppeals(text);
+        console.warn(JSON.stringify({ tag: "aix-template-generate:second-appeal-count-retry", n: before, judged: secondJudge.count, head: text.slice(0, 80) }));
+        const retry = await callClaude(
+          userPrompt +
+          `\n\n━━━━━━━━━━━━━━━━━━━━\n【🚨 作り直し（訴求を並べすぎた）】\n━━━━━━━━━━━━━━━━━━━━\n` +
+          `前回の出力:\n${text}\n\n` +
+          `ブレインの判断は「${secondJudge.first.text}」${secondJudge.count === 2 && secondJudge.second ? `と「${secondJudge.second.text}」の2つ` : "の1つ"}を強く言う事。前回は ${before} 個の要素を並べている。\n` +
+          `・判断の訴求だけを、理由を添えて強く言う。駅・築年・帖数・設備を足して並べない。締めは判断のまま。\n出力は本文のみ。`,
+        );
+        const retryText = retry.ok && retry.text ? fixNamePlaceholderAddress(retry.text, resolvedCustomerName).text : "";
+        if (retryText && countAppeals(retryText) < before && !isNotACustomerReply(stripMetaNarration(retryText).text) && foreignRoomsInSecond(retryText, secondFirstForCheck).length === 0) text = retryText;
       }
     }
 

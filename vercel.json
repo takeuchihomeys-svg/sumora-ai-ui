@@ -61,6 +61,10 @@
       "schedule": "40 19 * * *"
     },
     {
+      "path": "/api/cron/second-takeuchi-data",
+      "schedule": "20 20 * * 0"
+    },
+    {
       "path": "/api/cron/pickup-auto-complete",
       "schedule": "*/2 * * * *"
     },

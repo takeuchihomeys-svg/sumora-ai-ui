@@ -64,7 +64,7 @@ const JUDGE_MODEL = process.env.EXAM_AIX_JUDGE_MODEL ?? "deepseek-flash";
 const EST_PER_Q = Number(process.env.EXAM_AIX_EST_USD ?? "0.02"); // 1問の見込み（DeepSeek・生成＋最後の点検）
 let BUDGET = Math.min(Number(arg("budget", "")) || Infinity, runCapUsd(process.env) ?? Infinity, 5);
 const AIX_EXAM_DIR = join(examCacheRoot(), "aix-text-exam");
-const QFILE = join(AIX_EXAM_DIR, "questions.json");
+const QFILE = join(AIX_EXAM_DIR, arg("qfile", "questions.json")); // 2026-10-29 --qfile で別の問題の組
 const BASE_DIR = join(AIX_EXAM_DIR, "baseline"), RES_DIR = join(AIX_EXAM_DIR, "results"), SLOT_DIR = join(AIX_EXAM_DIR, "slots");
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const AIX_ENTRIES = ["app/api/aix/action/route.ts", "app/api/aix-template-generate/route.ts"];

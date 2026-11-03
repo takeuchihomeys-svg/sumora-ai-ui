@@ -17,8 +17,10 @@ import { BUTTON_JA, DEFAULT_QUOTA, goldUnusable, pickQuestions, questionHash, ty
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const SINCE = arg("since", "2026-08-01T00:00:00Z");
 export const AIX_EXAM_DIR = join(examCacheRoot(), "aix-text-exam");
-const RAW1 = join(AIX_EXAM_DIR, "raw-first.json"), RAW2 = join(AIX_EXAM_DIR, "raw-second.json");
-const OUT = join(AIX_EXAM_DIR, "questions.json");
+// 2026-10-29 --raw1/--raw2: 生の番の置き場を分ける（既定の raw-*.json を上書きしない）
+const RAW1 = join(AIX_EXAM_DIR, arg("raw1", "raw-first.json")), RAW2 = join(AIX_EXAM_DIR, arg("raw2", "raw-second.json"));
+// 2026-10-29 --qfile=<名前.json>: 別の問題の組（2通目の訴求の比べ等）を同じ置き場に作る（既定の questions.json は触らない）
+const OUT = join(AIX_EXAM_DIR, arg("qfile", "questions.json"));
 
 type RawCase = { id: string; action: string; route: "aix/action" | "aix-template-generate"; src: string; at: string; body: Record<string, unknown>; sent: string; inputText: string };
 
