@@ -14,6 +14,7 @@
 //   ② 入れる順番の表への書き戻し: --release-order=<md>（一度渡せば exam-queue/config.json に覚える）のスイッチの行の「状態」を結果に置き換える
 //   ③ 問題ごとの揺れ: 揺れの記録（exam-flake）で答えが割れた問題は 4回（EXAM_FLAKY_REPS・3〜6）・それ以外は repeat（既定2）→ --reps-file で渡す
 //   ④ 問題の選び: --pick=types:型@N ／ gold（正解の組）／ map（exam-queue/scene-map.json の場面の地図）／ rag（brain-exam --select=rag）
+//   ＋ 終わったら依頼した人に知らせる: --notify=<エージェントの id>（無ければ exam-queue/config.json の notify[owner]）→ results/notify.jsonl と conductor.log の「📣 知らせる」の行。--run を見張る作業員がその行を SendMessage で届ける
 //   ＋ brain-exam 以外の試験の口: --runner=cmd --cmd="scripts/x.ts --a=1" [--cmd=...]（順に流す・関所と本番の見張りは同じ・採点は依頼者）
 // 実行:
 //   足す:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --add --label=ms-on1 --owner=作業員1 --switch=BRAIN_MATERIAL_SELF_REPORT --cwd=<作業ツリー> --only=q015,q042 --stage=brain [--repeat=2] [--env=K=V,K=V] [--flaky=q091] [--pick=...]
@@ -48,6 +49,7 @@ export type ExamJob = {
   /** 依頼で名指しした揺れる問題（③） */ flaky?: string[];
   /** --pick=rag の時 brain-exam --select=rag に任せる（④） */ selectRag?: boolean;
   /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd"; cmds?: string[];
+  /** 終わったら知らせる相手（エージェントの id・--notify=）。無ければ exam-queue/config.json の notify[owner] */ notify?: string;
 };
 
 // ─── 関所 ───────────────────────────────────────────────────────────────
@@ -93,7 +95,7 @@ function addJob(): void {
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
   const cwd = arg("cwd", process.cwd());
   const label = arg("label") || `job-${Date.now()}`;
-  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage", "brain"), env, createdAt: new Date().toISOString(), tries: 0 };
+  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage", "brain"), env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}) };
   let job: ExamJob;
   if (arg("runner") === "cmd") {
     const cmds = argsOf("cmd").filter(Boolean);
@@ -158,7 +160,7 @@ async function cleanupRun(cwd: string, label: string, outFile: string): Promise<
   const c = await r.done;
   log(`  片付け: ${conv}・label ${label} → ${c === 0 ? "済み" : `失敗（終わりの番号 ${c}）→ 手で同じ片付けを`}`);
 }
-function cfg(): { releaseOrder?: string } { const c = readJson<{ releaseOrder?: string }>(CONFIG, {}); const a = arg("release-order"); if (a && a !== c.releaseOrder) { c.releaseOrder = a; writeFileSync(CONFIG, JSON.stringify(c, null, 1)); } return c; }
+function cfg(): { releaseOrder?: string; notify?: Record<string, string> } { const c = readJson<{ releaseOrder?: string; notify?: Record<string, string> }>(CONFIG, {}); const a = arg("release-order"); if (a && a !== c.releaseOrder) { c.releaseOrder = a; writeFileSync(CONFIG, JSON.stringify(c, null, 1)); } return c; }
 function writeBack(j: ExamJob, status: string): void {
   const f = cfg().releaseOrder;
   if (!f || !j.switch) return;
@@ -172,6 +174,11 @@ function finish(j: ExamJob & { file: string }, result: Record<string, unknown>, 
   appendFileSync(join(RES, "results.md"), line + "\n");
   renameSync(j.file, join(DONE, j.file.split(/[\\/]/).pop()!));
   writeBack(j, status);
+  // 終わったら依頼した人に知らせる: 統括（--run）は SendMessage を持たない → 知らせの行を notify.jsonl と conductor.log に出し、--run を見張る作業員が SendMessage で届ける
+  const to = j.notify ?? cfg().notify?.[j.owner] ?? "";
+  const msg = `${j.label} 終わり・${status}・結果は exam-queue/results/${j.label}.out.log（${j.label}.json）`;
+  appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to, owner: j.owner, label: j.label, msg }) + "\n");
+  log(`  📣 知らせる: to=${to || `(相手なし・owner ${j.owner})`} ${msg}`);
 }
 
 async function runJob(j: ExamJob & { file: string }): Promise<void> {
