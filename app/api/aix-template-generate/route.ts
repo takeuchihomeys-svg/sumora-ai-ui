@@ -115,6 +115,7 @@ import { secondMsgMaterialsOn, applySecondFinalChecks, type BrainBundleMeta } fr
 import type { SecondMaterials } from "@/app/lib/second-message-materials-server";
 import { recommendSecondAppealOn, recentAreaText, recentRequestCoversProperty, appendReceiptAfterCta, ensureRentTotalInRecommend } from "@/app/lib/recommend-second-appeal";
 import { buildSecondAppealNote, secondAppealPointsOn } from "@/app/lib/second-appeal-points";
+import { secondBlueprintOn, secondBlueprintNote } from "@/app/lib/second-blueprint";
 import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, APPEAL_JUDGE_SYSTEM, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
@@ -1696,7 +1697,8 @@ export async function POST(req: NextRequest) {
         if (recCta && !(ctaPreference === "viewing" || ctaPreference === "apply") && recCta.kind !== secondJudge.closing) {
           recCta = { ...recCta, kind: secondJudge.closing, reason: `ブレインの訴求の判断: ${secondJudge.closingWhy}` };
         }
-        secondJudgeNote = judgedAppealNote(secondJudge, scene, secondData);
+        // 2026-11-03 作業員6: 2通目を返信と同じ文の設計図の型に乗せる（AIX_SECOND_BLUEPRINT=on・既定 off＝今の注記のまま）
+        secondJudgeNote = secondBlueprintOn() ? secondBlueprintNote(secondJudge, scene, secondData) : judgedAppealNote(secondJudge, scene, secondData);
       }
       console.log(JSON.stringify({ tag: "aix-template-generate:second-appeal-judge", ok: !!secondJudge, scene, first: secondJudge?.first.text.slice(0, 40) ?? null, count: secondJudge?.count ?? null, closing: secondJudge?.closing ?? null }));
     } catch (e) { console.warn("[aix-template-generate] appeal judge failed:", e instanceof Error ? e.message : e); }

@@ -30,7 +30,7 @@ export const COMPOSE_SUBJECT = ["customer", "property", "us", "process"] as cons
 export type ComposeSubject = typeof COMPOSE_SUBJECT[number];
 export const COMPOSE_ADDS = ["support", "promise", "appeal", "ask"] as const;
 export type ComposeAdd = typeof COMPOSE_ADDS[number];
-export const COMPOSE_CLOSING = ["nanitozo", "receipt", "kigaru", "viewing_cta", "none"] as const;
+export const COMPOSE_CLOSING = ["nanitozo", "receipt", "kigaru", "viewing_cta", "apply_cta", "none"] as const;
 export type ComposeClosing = typeof COMPOSE_CLOSING[number];
 
 /** ブレイン → 構成のブレインに渡す意図（SituationSummary.compose と同じ口） */
@@ -194,7 +194,8 @@ export function fallbackIntent(rs: ReadonlyArray<ComposeRequirement>): ComposeIn
 // ── ② 設計図を作る・④ 設計図の段で確かめる ───────────────────────────────────
 const CLOSING_SAY: Record<ComposeClosing, string> = {
   nanitozo: "何卒よろしくお願い致します！！", receipt: "お手隙の際にご査収ください😌！！", kigaru: "ご不明点等ございましたらいつでもお気軽にご連絡ください😌！！",
-  viewing_cta: "お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！", none: "",
+  viewing_cta: "お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！",
+  apply_cta: "お気に召されましたらお申込しお部屋抑えさせて頂きます！！", none: "",
 };
 const ADD_SAY: Record<ComposeAdd, string> = {
   support: "〇〇さんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます（添え・1文まで）",
@@ -213,8 +214,8 @@ export function buildBlueprint(o: { intent: ComposeIntent; requirements: Compose
   for (const r of rest) parts.push({ role: "add", say: r.item, from: "decision", nets: o.nets?.add });
   const covered = (a: ComposeAdd) => (a === "support" && rest.some((r) => /サポート|ご不安|ご安心/.test(r.item))) || (a === "promise" && rest.some((r) => r.handling === "confirm"));
   for (const a of it.adds) if (!covered(a)) parts.push({ role: "add", say: ADD_SAY[a], from: "form", nets: o.nets?.add });
-  if (it.closing === "viewing_cta") parts.push({ role: "cta", say: CLOSING_SAY.viewing_cta, from: "form", nets: o.nets?.cta });
-  if (it.closing !== "none" && it.closing !== "viewing_cta") parts.push({ role: "close", say: CLOSING_SAY[it.closing], from: "form", nets: o.nets?.close });
+  if (it.closing === "viewing_cta" || it.closing === "apply_cta") parts.push({ role: "cta", say: CLOSING_SAY[it.closing], from: "form", nets: o.nets?.cta });
+  if (it.closing !== "none" && it.closing !== "viewing_cta" && it.closing !== "apply_cta") parts.push({ role: "close", say: CLOSING_SAY[it.closing], from: "form", nets: o.nets?.close });
   const bp: ComposeBlueprint = {
     intent: it, parts, messages: o.planMessages && o.planMessages >= 2 ? 2 : 1,
     lengthBand: TAKEUCHI_PURPOSE_FORMS[it.purpose].lengthBand, evidence: (o.evidence ?? []).slice(0, 5),
