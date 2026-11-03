@@ -40,7 +40,7 @@ type Row = {
   read_beyond: string[]; hidden_worry: string[]; utter_type: string[]; true_want: string[]; true_want_at: string | null; forward_score: number;
 };
 
-export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso?: string | null; limit?: number; budgetMs?: number; pauseMs?: number } = {}): Promise<{ ok: boolean; error?: string; read?: number; rows?: number; stats?: Record<string, number>; next?: string | null; embedTokens?: number; dry?: boolean; stale?: number }> {
+export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso?: string | null; limit?: number; budgetMs?: number; pauseMs?: number } = {}): Promise<{ ok: boolean; error?: string; read?: number; rows?: number; stats?: Record<string, number>; next?: string | null; embedTokens?: number; dry?: boolean; stale?: number; failed?: string[] }> {
   const sb = serviceClient();
   if (!sb) return { ok: false, error: "SUPABASE_SERVICE_ROLE_KEY が無い" };
   const t0 = Date.now();
@@ -106,9 +106,13 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
     const rows: Omit<Row, "embedding">[] = [];
     let next: string | null = null;
     let lastDone: string | null = null;
+    const failedIds: string[] = [];
+    /** 文字を「文字の数」で切る（絵文字の片方だけ残すと DB と埋め込みが断る） */
+    const cut = (t: string, n: number) => Array.from(String(t ?? "")).slice(0, n).join("");
     for (const m of list) {
       if (Date.now() - t0 > budget) { next = lastDone; bump("時間切れで続きへ"); break; }
       lastDone = m.created_at;
+      try {
       const text = String(m.text ?? "").trim();
       if (!text || /^\[(?:画像|スタンプ|動画|ファイル)\]/.test(text) || /^【グループ】/.test(text)) { bump("画像・転送"); continue; }
       const p = purposeOfText(text);
@@ -116,8 +120,8 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
       const at = ms(m.created_at);
       const ap = (deals.get(m.conversation_id) ?? []).map((d) => d.applied).filter((x): x is number => x != null);
       if (ap.some((a) => a <= at)) { bump("申込以降"); continue; }
-      const cut = await cutOf(m.conversation_id);
-      if (cut !== null && cut <= at) { bump("申込以降"); continue; }
+      const docCutAt = await cutOf(m.conversation_id);
+      if (docCutAt !== null && docCutAt <= at) { bump("申込以降"); continue; }
       // 前3日のお客様の発言（この通の前の、こちらの通より後の連投）と、AIX の直後か
       const { data: prev, error: pe } = await sb.from("messages").select("sender, text, created_at, is_aix_generated").eq("conversation_id", m.conversation_id)
         .gte("created_at", new Date(at - 3 * 86400_000).toISOString()).lt("created_at", m.created_at).order("created_at", { ascending: false }).limit(30);
@@ -143,12 +147,12 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
         const r = maskCustomerNames(String(t ?? ""), names.get(m.conversation_id) ?? []);
         return maskPII(r).replace(/https?:\/\/\S+/g, "〈URL〉").replace(/0\d{1,3}-?\d{2,4}-?\d{3,4}/g, "〈電話〉");
       };
-      const body = mask(text).slice(0, 400);
+      const body = cut(mask(text), 400);
       const custText = cust.join("\n");
       if (cust.some((c) => applicationMaterialReason(c)) || piiValueSignal(body) || piiValueSignal(custText)) { bump("書類・個人の値"); continue; }
-      const gist = custText ? mask(custText).slice(0, 200) : null;
+      const gist = custText ? cut(mask(custText), 200) : null;
       const scene = custText ? resolveReplyScene({ customerText: custText }).scene : afterAix ? "after_aix" : "staff_first";
-      const mainLine = p.main ? mask(p.main).slice(0, 160) : sentencesOf(body).find((s) => !["list"].includes(tagSentence(s))) ?? body.slice(0, 80);
+      const mainLine = p.main ? cut(mask(p.main), 160) : sentencesOf(body).find((s) => !["list"].includes(tagSentence(s))) ?? cut(body, 80);
       rows.push({
         message_id: m.id, conversation_key: conversationKey(m.conversation_id), sent_at: m.created_at, scene, purpose: p.purpose, seq: p.seq, main_line: mainLine, body,
         customer_gist: gist, after_aix: afterAix, reply_minutes: replyMinutes, viewing_7d: viewing7d, applied_14d: applied14d,
@@ -161,39 +165,57 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
         forward_score: Math.round((composeExampleWeight({ replyMinutes, viewing7d, applied14d }) - 1) * 100) / 100,
       });
       bump("採用");
+      } catch (e) {
+        // 1通の失敗で回全体を止めない（その通は飛ばして記録・古い行なら次の回にもう一度）
+        bump("読めずに飛ばした"); failedIds.push(m.id);
+        console.warn(JSON.stringify({ tag: "compose-examples:message-failed", messageId: m.id, error: e instanceof Error ? e.message : String(e) }));
+      }
     }
     if (!staleIds.length && next === null && list.length >= Math.min(opts.limit ?? 300, 500)) next = lastDone;   // 1回の上限に達した＝まだ続きがある（作り直しの回は次の回が古い行を選び直す）
     let embedTokens = 0;
     if (!opts.dry && rows.length) {
       for (let i = 0; i < rows.length; i += 64) {
         const part = rows.slice(i, i + 64);
-        const { vectors, tokens } = await embedTexts(part.map((r) => composeEmbedInput({ scene: r.scene, purpose: r.purpose, customerGist: r.customer_gist, intentWhat: r.main_line })));
+        const { vectors, tokens } = await embedTexts(part.map((r) => composeEmbedInput({ scene: r.scene, purpose: r.purpose, customerGist: r.customer_gist, intentWhat: r.main_line })))
+          .catch((e) => { bump("埋め込みに失敗（埋め込みなしで書く）"); console.warn(JSON.stringify({ tag: "compose-examples:embed-failed", error: e instanceof Error ? e.message : String(e) })); return { vectors: part.map(() => null) as Array<number[] | null>, tokens: 0 }; });
         embedTokens += tokens;
         // 作り直し（同じ通をもう一度作る時・?after= で前から）: 本文が前と変わった行は文の解剖を読み直す（anatomy を空に・anatomy_pick は残す）
         const { data: prevRows } = await sb.from("takeuchi_compose_examples").select("message_id, body, anatomy").in("message_id", part.map((r) => r.message_id));
         //   11/03 夜の伏せ直しの失敗（かなの続きを YUMA に置き換えた）は anatomy の文にも入った＝本文が同じでも「かな・漢字の直後の YUMAさん」がある解剖は読み直す
         const prevBody = new Map(((prevRows ?? []) as Array<{ message_id: string; body: string; anatomy: unknown }>).map((r) => [r.message_id, { body: r.body, hasAnatomy: r.anatomy != null, brokenAnatomy: r.anatomy != null && /[ぁ-んァ-ヶ一-龯]YUMAさん/.test(JSON.stringify(r.anatomy)) }]));
-        const up = part.map((r, k) => {
+        const plain: Array<Record<string, unknown>> = [], reread: Array<Record<string, unknown>> = [];
+        part.forEach((r, k) => {
           const pv = prevBody.get(r.message_id);
-          const reread = !!pv && pv.hasAnatomy && (pv.body !== r.body || pv.brokenAnatomy);
-          if (reread) bump("本文が変わって解剖を読み直す");
-          return { ...r, embedding: vectors[k] ? `[${vectors[k]!.join(",")}]` : null, built_at: new Date().toISOString(), ...(reread ? { anatomy: null, anatomy_conflicts: [] as string[], anatomy_at: null } : {}) };
+          const rr = !!pv && pv.hasAnatomy && (pv.body !== r.body || pv.brokenAnatomy);
+          const base = { ...r, embedding: vectors[k] ? `[${vectors[k]!.join(",")}]` : null, built_at: new Date().toISOString() };
+          if (rr) { bump("本文が変わって解剖を読み直す"); reread.push({ ...base, anatomy: null, anatomy_conflicts: [] as string[], anatomy_at: null }); } else plain.push(base);
         });
-        const res = await sb.from("takeuchi_compose_examples").upsert(up, { onConflict: "message_id" });
-        if (res.error) throw new Error(`takeuchi_compose_examples: ${res.error.message}`);
+        // 2026-11-03 作り直しが止まった原因: 1回の upsert に anatomy の欄がある行と無い行が混ざると PostgREST が丸ごと断る（All object keys must match）
+        //   → 欄のそろった2組に分けて送る。1組が断られた時は1行ずつ送り直し、それでも断られた行は飛ばして記録する（1行の失敗で回全体を止めない）
+        for (const grp of [plain, reread]) {
+          if (!grp.length) continue;
+          const res = await sb.from("takeuchi_compose_examples").upsert(grp, { onConflict: "message_id" });
+          if (!res.error) continue;
+          console.warn(JSON.stringify({ tag: "compose-examples:upsert-group-failed", rows: grp.length, error: res.error.message }));
+          for (const one of grp) {
+            const r1 = await sb.from("takeuchi_compose_examples").upsert([one], { onConflict: "message_id" });
+            if (r1.error) { bump("書けずに飛ばした"); failedIds.push(String(one.message_id)); console.warn(JSON.stringify({ tag: "compose-examples:row-failed", messageId: one.message_id, error: r1.error.message })); }
+          }
+        }
       }
     }
     // 作り直しの回で、もう例に入らない（画像・申込以降・個人の値・時間切れの残り以外）古い行は消す（古いまま残すと毎回作り直しの対象になる）
     if (!opts.dry && staleIds.length && next === null) {
       const kept = new Set(rows.map((r) => r.message_id));
-      const drop = staleIds.filter((id) => !kept.has(id));
+      const failed = new Set(failedIds);
+      const drop = staleIds.filter((id) => !kept.has(id) && !failed.has(id));
       if (drop.length) {
         const d = await sb.from("takeuchi_compose_examples").delete().in("message_id", drop).lt("built_at", COMPOSE_MASK_VER_AT);
         if (d.error) throw new Error(d.error.message);
         stats["作り直しで例から外した"] = drop.length;
       }
     }
-    return { ok: true, read: list.length, rows: rows.length, stats, next, embedTokens, dry: !!opts.dry, stale: staleIds.length };
+    return { ok: true, read: list.length, rows: rows.length, stats, next, embedTokens, dry: !!opts.dry, stale: staleIds.length, failed: failedIds.slice(0, 20) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e), stats };
   }
