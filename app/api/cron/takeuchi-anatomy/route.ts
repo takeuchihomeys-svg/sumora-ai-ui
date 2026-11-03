@@ -4,6 +4,7 @@
 //   ?dry=1 … 選ぶ数と残りだけ（書かない・LLM を呼ばない）
 import { NextRequest, NextResponse } from "next/server";
 import { runTakeuchiAnatomy } from "@/app/lib/takeuchi-anatomy-server";
+import { decideBatchRunFromEnv } from "@/app/lib/batch-daytime-guard";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -14,11 +15,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const sp = req.nextUrl.searchParams;
-  const jstHour = (new Date().getUTCHours() + 9) % 24;
-  if (jstHour >= 9 && jstHour < 22 && sp.get("force") !== "1") {
-    return NextResponse.json({ ok: true, skipped: "営業時間（JST 9〜22時）は動かさない。?force=1 で動かす", jstHour });
-  }
+  // 2026-11-03 昼の守り（batch-daytime-guard.ts）: 昼は本番の調子が良い時だけ・量を半分・間を2倍。BATCH_DAYTIME_GUARD=strict で今まで通り（昼は ?force=1 だけ）
+  const guard = await decideBatchRunFromEnv(sp.get("force") === "1");
+  if (!guard.run) return NextResponse.json({ ok: true, skipped: guard.reason, daytime: guard.daytime });
   const limit = Number(sp.get("limit") ?? "50");
-  const report = await runTakeuchiAnatomy({ dry: sp.get("dry") === "1", limit: Number.isFinite(limit) && limit > 0 ? limit : 50, budgetMs: 200_000 });
+  const report = await runTakeuchiAnatomy({ dry: sp.get("dry") === "1", limit: Math.max(1, Math.round((Number.isFinite(limit) && limit > 0 ? limit : 50) * guard.scale)), budgetMs: Math.round(200_000 * guard.scale) });
   return NextResponse.json(report, { status: report.ok ? 200 : 500 });
 }

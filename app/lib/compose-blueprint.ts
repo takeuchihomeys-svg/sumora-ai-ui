@@ -144,7 +144,7 @@ export function composeIntentPrompt(i: ComposeIntentInput): string {
     `## お客様の今の発言\n${i.customerText.slice(0, 500) || "（無し）"}`,
     `## 場面\n${i.scene}`,
     `## 統括が決めたこの1通の要件（この順・この中から主役を選ぶ）\n${req.map((r) => `${r.rank}. ${r.item}${r.handling ? `（${r.handling}）` : ""}`).join("\n") || "（無し＝受けだけの番）"}`,
-    i.situation ? `## 状況のまとめ\n${i.situation.slice(0, 500)}` : "",
+    i.situation ? `## 状況のまとめ・統括の決定（決め直さない）\n${i.situation.slice(0, 1200)}` : "",
     i.emotion ? `## お客様の気持ち\n${i.emotion.slice(0, 200)}` : "",
     i.appeal ? `## 訴求の判断（ブレイン）\n${i.appeal.slice(0, 300)}` : "",
     i.ragHints?.length ? `## 似た場面の竹内さんの構成（根拠・写さない）\n${i.ragHints.slice(0, 3).map((h, k) => `${k + 1}) ${h.slice(0, 160)}`).join("\n")}` : "",
@@ -317,4 +317,20 @@ export function composeEmbedInput(o: { scene: string; purpose: string; customerG
 /** 引いた例を構成の根拠の1行に（本文は写させない＝並びとメインの1文だけ） */
 export function composeRagHint(r: { scene: string; purpose: string; seq: string[]; main_line: string; weight: number }): string {
   return `${r.scene}／${r.purpose}: 並び ${r.seq.join("→")}・メインの1文「${r.main_line.slice(0, 80)}」${r.weight > 1 ? `（その後の反応あり ×${r.weight}）` : ""}`;
+}
+
+// ── 設計図と二重になる注記を外す口（COMPOSE_DROP_DUPLICATES=on・既定 off・設計図が書き手に渡った番だけ） ─────────────────
+// 2026-11-03 作業員6（統括「文に入る物を全部、統括を通す」・一覧は scratchpad の writer-notes-inventory.md）。
+//   外すのは設計図の部品（締め・メイン・長さ・全体の形）と同じ事を言う注記だけ。安全の線・材料（事実・会話・台帳）は外さない。
+//   stanceNote（姿勢の注記）は締め以外の印も持つので、ここでは外さない（締めの行だけ外す形は次の段）。
+export const COMPOSE_DUPLICATE_NOTES = ["closing", "brainGuidance", "direction", "sceneStyle", "writingBlueprint", "ackLength", "sentShape"] as const;
+export type ComposeDuplicateNote = typeof COMPOSE_DUPLICATE_NOTES[number];
+export function composeDropDuplicatesOn(env: Env = envOf()): boolean {
+  return composeBlueprintOn(env) && (env.COMPOSE_DROP_DUPLICATES ?? "").trim().toLowerCase() === "on";
+}
+/** この注記を外すか（設計図が書き手に渡った番・スイッチ on・COMPOSE_DROP_KEEP に書いた名前は残す） */
+export function composeDropsDuplicate(k: ComposeDuplicateNote, composeOn: boolean, env: Env = envOf()): boolean {
+  if (!composeOn || !composeDropDuplicatesOn(env)) return false;
+  const keep = new Set((env.COMPOSE_DROP_KEEP ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+  return !keep.has(k);
 }

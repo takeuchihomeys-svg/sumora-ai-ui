@@ -17,6 +17,7 @@ import { isPersonalDocument } from "./personal-document-guard";
 import { resolveReplyScene } from "./reply-scene";
 import { purposeOfText, composeExampleWeight, composeEmbedInput, sentencesOf, tagSentence } from "./compose-blueprint";
 import { DOC_CANDIDATE_OR } from "./second-takeuchi-data-server";
+import { readBeyondOf, worryCandidatesOf, utterTypesOf } from "./reading-tags";
 import { embedTexts } from "./design-knowledge-rag-server";
 
 function serviceClient(): SupabaseClient | null {
@@ -31,6 +32,7 @@ export const conversationKey = (c: string) => createHash("sha256").update(c).dig
 type Row = {
   message_id: string; conversation_key: string; sent_at: string; scene: string; purpose: string; seq: string[]; main_line: string; body: string;
   customer_gist: string | null; after_aix: boolean; reply_minutes: number | null; viewing_7d: boolean | null; applied_14d: boolean | null; weight: number; embedding: string | null;
+  read_beyond: string[]; hidden_worry: string[]; utter_type: string[]; true_want: string[]; true_want_at: string | null; forward_score: number;
 };
 
 export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso?: string | null; limit?: number; budgetMs?: number; pauseMs?: number } = {}): Promise<{ ok: boolean; error?: string; read?: number; rows?: number; stats?: Record<string, number>; next?: string | null; embedTokens?: number; dry?: boolean }> {
@@ -104,6 +106,10 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
       const pv = (prev ?? []) as Array<{ sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null }>;
       const cust: string[] = [];
       for (const x of pv) { if (x.sender === "staff" && ms(x.created_at) < at - 5 * 60_000) break; if (x.sender !== "staff") cust.unshift(String(x.text ?? "")); }
+      const olderCust = pv.filter((x) => x.sender !== "staff" && !cust.includes(String(x.text ?? ""))).map((x) => String(x.text ?? ""));
+      const prevStaffAt = pv.find((x) => x.sender === "staff" && ms(x.created_at) < at - 5 * 60_000)?.created_at;
+      const firstCustAt = pv.filter((x) => x.sender !== "staff" && (!prevStaffAt || x.created_at > prevStaffAt)).map((x) => x.created_at).sort()[0];
+      const custGap = prevStaffAt && firstCustAt ? Math.round((ms(firstCustAt) - ms(prevStaffAt)) / 60_000) : null;
       const afterAix = pv.some((x) => x.sender === "staff" && x.is_aix_generated && ms(x.created_at) >= at - 20 * 60_000);
       const { data: nx } = await sb.from("messages").select("created_at").eq("conversation_id", m.conversation_id).neq("sender", "staff").gt("created_at", m.created_at).order("created_at").limit(1);
       await sleep(pause);
@@ -131,6 +137,12 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
         message_id: m.id, conversation_key: conversationKey(m.conversation_id), sent_at: m.created_at, scene, purpose: p.purpose, seq: p.seq, main_line: mainLine, body,
         customer_gist: gist, after_aix: afterAix, reply_minutes: replyMinutes, viewing_7d: viewing7d, applied_14d: applied14d,
         weight: composeExampleWeight({ replyMinutes, viewing7d, applied14d }),
+        // 2026-11-03 読み方の候補（決定論の候補の札・決めるのはブレイン）と、その後に分かった事（2つ目の物差しの土台）
+        read_beyond: custText ? readBeyondOf(custText, text) : [], hidden_worry: custText ? worryCandidatesOf(custText) : [],
+        utter_type: custText ? utterTypesOf({ customerText: custText, prevCustomerTexts: olderCust, replyGapMinutes: custGap }) : [],
+        true_want: [...(viewing7d ? ["viewed"] : []), ...(applied14d ? ["applied"] : []), ...(replyMinutes != null && replyMinutes <= 60 ? ["reply_fast"] : [])],
+        true_want_at: viewing7d || applied14d ? new Date(at + 14 * 86400_000).toISOString() : null,
+        forward_score: Math.round((composeExampleWeight({ replyMinutes, viewing7d, applied14d }) - 1) * 100) / 100,
       });
       bump("採用");
     }

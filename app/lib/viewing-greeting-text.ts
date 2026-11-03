@@ -45,3 +45,33 @@ export function buildViewingBeforeGreeting(o: { name: string; greeting: string; 
 export function viewingAfterThankLine(name: string): string {
   return `${name ?? ""}本日お時間頂きありがとうございました！！`;
 }
+
+// 2026-11-03 作業員6（竹内さんの決定 No.18・順番の表 12e）: 内覧前の挨拶に、直前に送った物件名と待ち合わせ場所の1行を足す（AI に書かせない・決まった形）。
+//   元は待ち合わせ場所の AIX の本文（action-ledger の extractViewingAppointment・extractPropertyLabels と同じ読み方）。読めない時は足さない。
+//   スイッチ VIEWING_BEFORE_DETAIL=on（既定 off）。
+export function viewingBeforeDetailOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.VIEWING_BEFORE_DETAIL ?? "").trim().toLowerCase() === "on";
+}
+/** 待ち合わせの本文の住所の行（「住所」「〒」で始まる・番地まで）。無ければ null */
+export function meetingAddressOf(text: string | null | undefined): string | null {
+  const line = String(text ?? "").split(/\n/).map((l) => l.trim()).find((l) => /^(?:住所|〒|所在地)/.test(l) || /[0-9０-９]+丁目[0-9０-９\-－−]+/.test(l));
+  return line ? line.replace(/^(?:住所|所在地)\s*[:：]?\s*/, "").slice(0, 60) : null;
+}
+/** 決まった形の1行（物件も場所も無ければ ""） */
+export function viewingBeforeDetailLine(o: { properties: string[]; place: string | null; address: string | null }): string {
+  const props = [...new Set(o.properties.map((p) => p.trim()).filter(Boolean))].slice(0, 4);
+  const place = (o.place ?? "").trim();
+  if (!props.length && !place) return "";
+  const a = props.length ? `本日ご案内のお部屋は${props.join("・")}` : "";
+  const b = place ? `待ち合わせ場所は${place}${o.address ? `（${o.address}）` : ""}` : "";
+  return `${[a, b].filter(Boolean).join("、")}となります！`;
+}
+/** 内覧前の挨拶に1行を足す（「お部屋ご案内させて頂きます！」の次の行に） */
+export function withViewingBeforeDetail(greeting: string, line: string): string {
+  if (!line) return greeting;
+  const ls = greeting.split("\n");
+  const i = ls.findIndex((l) => /お部屋ご案内させて頂きます/.test(l));
+  if (i < 0) return greeting;
+  ls.splice(i + 1, 0, line);
+  return ls.join("\n");
+}

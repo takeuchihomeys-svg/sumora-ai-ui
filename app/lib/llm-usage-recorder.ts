@@ -53,6 +53,18 @@ export const LLM_CUTOFF_HEADER = "x-sumora-llm-deepseek-cutoff";
  *   ⚠ 名前は "brain" で始めない（llm-test-mode.isBrainCall がブレインと見なして、テスト用の切り替えから外してしまう）。
  *   非 ASCII は encodeURIComponent（extractSumoraMarks が戻す。aix-system-blocks.llmMetaHeaderValue と同じ）
  */
+/**
+ * 2026-11-03 作業員6（返信の Sonnet のキャッシュの調べ・「静かに壊れる」）: 名札の無い呼び出しに、記録の上だけの名札を付ける。
+ *   返信の書き手が Claude で書いた呼び出し（自動返信・申込以降など）は名札が無く、llm_usage_logs で数えにくかった（7日 77回・書き込みの大半）。
+ *   **記録の列だけ**（送る要求の印・別クラウドへの振り分けの名前は変えない＝ここで名札を足すと reply_generate の振り分けが外れるため、要求の側には足さない）。
+ *   止める: LLM_USAGE_FALLBACK_LABEL=off
+ */
+export function fallbackActionLabel(route: string | null, sysHead: string | null | undefined, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string | null {
+  if ((env.LLM_USAGE_FALLBACK_LABEL ?? "").trim().toLowerCase() === "off") return null;
+  if (route === "/api/generate-reply" && /^【指示の優先順位/.test(String(sysHead ?? ""))) return "reply_generate_claude_writer";
+  return null;
+}
+
 export function sumoraLlmMarks(action: string, conversationId?: string | null): Record<string, string> {
   const enc = (v: string) => (/^[\x20-\x7e]*$/.test(v) ? v : encodeURIComponent(v));
   const a = (action ?? "").trim();
@@ -340,7 +352,7 @@ export function wrapFetchWithLlmUsageRecorder(original: FetchLike, deps: Recorde
     let route: string | null = null;
     try { route = deps.route(); } catch { route = null; }
     const req = typeof init?.body === "string" ? parseAnthropicRequest(init.body) : parseAnthropicRequest("");
-    const withMarks = (row: LlmUsageRow): LlmUsageRow => ({ ...row, action: marks.action, conversation_id: marks.conversationId });
+    const withMarks = (row: LlmUsageRow): LlmUsageRow => ({ ...row, action: marks.action ?? fallbackActionLabel(route, row.sys_head), conversation_id: marks.conversationId });
     let res: Response;
     try {
       res = await original(input, init);

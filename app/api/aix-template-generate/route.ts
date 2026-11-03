@@ -116,6 +116,7 @@ import type { SecondMaterials } from "@/app/lib/second-message-materials-server"
 import { recommendSecondAppealOn, recentAreaText, recentRequestCoversProperty, appendReceiptAfterCta, ensureRentTotalInRecommend } from "@/app/lib/recommend-second-appeal";
 import { buildSecondAppealNote, secondAppealPointsOn } from "@/app/lib/second-appeal-points";
 import { secondBlueprintOn, secondBlueprintNote } from "@/app/lib/second-blueprint";
+import { secondKnowledgeOn, secondKnowledgeLines } from "@/app/lib/second-appeal-judge";
 import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, APPEAL_JUDGE_SYSTEM, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
@@ -1699,6 +1700,14 @@ export async function POST(req: NextRequest) {
         }
         // 2026-11-03 作業員6: 2通目を返信と同じ文の設計図の型に乗せる（AIX_SECOND_BLUEPRINT=on・既定 off＝今の注記のまま）
         secondJudgeNote = secondBlueprintOn() ? secondBlueprintNote(secondJudge, scene, secondData) : judgedAppealNote(secondJudge, scene, secondData);
+        // 2026-11-03 竹内さんの決定 No.32（AIX_SECOND_KNOWLEDGE・既定 off）: 人気シリーズ＝人気マンション／暮らし方に合う間取り
+        if (secondKnowledgeOn()) {
+          const kl = secondKnowledgeLines({
+            propertyName: String(sentMessage ?? "").split("\n").find((l) => /号室|[ァ-ヶー]{3,}/.test(l)) ?? null,
+            lifestyle: (Array.isArray(recentMessages) ? recentMessages : []).filter((m) => m?.sender === "customer").map((m) => String(m?.text ?? "")).slice(-20),
+          });
+          if (kl.length) secondJudgeNote = `${secondJudgeNote}\n${kl.join("\n")}`;
+        }
       }
       console.log(JSON.stringify({ tag: "aix-template-generate:second-appeal-judge", ok: !!secondJudge, scene, first: secondJudge?.first.text.slice(0, 40) ?? null, count: secondJudge?.count ?? null, closing: secondJudge?.closing ?? null }));
     } catch (e) { console.warn("[aix-template-generate] appeal judge failed:", e instanceof Error ? e.message : e); }
@@ -1900,7 +1909,10 @@ export async function POST(req: NextRequest) {
     // 竹内さんの2通目の型（希望とのずれ・家賃管理費込・相場の好条件）。場面の形の後・締めの前（締めは下の CTA の指示のまま）
     secondWishGapNote,
     // CTA の有無は**お客様の反応と AIX の種類**で決める（実測・cta-guidance）。最後に置くのは上と同じ理由
-    recCta
+    // 2026-11-03 作業員6（sbp の採点・締めの注記の二重）: 2通目を設計図に乗せた時（AIX_SECOND_BLUEPRINT=on かつ訴求の判断あり）は、締めは設計図の締めに一本化（ここの締めの注記は出さない）
+    secondBlueprintOn() && secondJudge
+      ? ""
+      : recCta
       ? buildSecondMessageCtaNote(recCta, { firstMessage: sentMessage, viewableFrom: isRecSecond ? secondViewableFrom : recommendState.viewableFrom, withReceipt: secondAppeal })
       : isEstimateSecond ? "" : (ctaGuidance?.note ?? ""),
     // 見積書の直後の2通目の形・締め（最後に1か所）

@@ -72,3 +72,8 @@ export function worryCandidateLine(tags: ReadonlyArray<WorryTag>): string {
   if (!tags.length) return "";
   return `【奥の心配の候補（決定論の網・過去の竹内さんの返信で当たりの多い札だけ・当たっているかを決めるのはあなた）】${tags.map((k) => WORRY_JA[k]).join("／")}`;
 }
+
+/** 文がその心配に答えているか（竹内さんの答え方の語・決定論の網＝候補の確かめ用） */
+export function answersWorry(text: string, tag: WorryTag): boolean {
+  return STAFF_ANSWER_RE[tag].test(String(text ?? "").normalize("NFKC"));
+}

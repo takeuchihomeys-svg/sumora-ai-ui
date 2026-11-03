@@ -57,5 +57,18 @@ async function main() {
   writeFileSync(out, L.filter((x) => x !== undefined).join("\n"));
   writeFileSync(out.replace(/\.md$/, "") + ".plan.json", JSON.stringify(plan));
   console.log(`P0 束ね候補 ${pairs.length}・P1→P0 ${linked1.length}/${P1.length}・P2→P1 ${p2Links.length}/${P2.length} → ${out}`);
+  // 2026-11-03 統括「木の parent を今の P0 のままの形で書く（線 0.55）」: --apply の時だけ DB に書く。既に parent がある行（kb-insert・竹内さん・手で付けた物）は上書きしない
+  if (process.argv.includes("--apply")) {
+    const { data: cur } = await sb.from("system_design_thinking").select("id, parent").in("id", plan.map((p) => p.id).slice(0, 2000));
+    const has = new Set(((cur ?? []) as Array<{ id: string; parent: string | null }>).filter((r) => r.parent).map((r) => r.id));
+    let n = 0;
+    for (const p of plan) {
+      if (has.has(p.id)) continue;
+      const { error } = await sb.from("system_design_thinking").update({ parent: p.parent, parent_by: `auto:近さ${p.s}`, parent_at: new Date().toISOString() }).eq("id", p.id).is("parent", null);
+      if (error) { console.error(`書けない: ${p.id} ${error.message}`); break; }
+      n++;
+    }
+    console.log(`parent を書いた: ${n}行（既に親のある ${has.size}行は触らない）`);
+  }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

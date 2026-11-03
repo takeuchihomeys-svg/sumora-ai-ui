@@ -154,3 +154,20 @@ export function closingCandidatesOf(i: { newListing: boolean; estimateSent: bool
   if (want != null && want >= 1 && want <= 12 && ((want - i.nowMonth + 12) % 12) <= 1) out.push(`お客様の入居の希望が${want}月（今月か来月）＝入居が近い → ${i.vacating ? "退去予定でも" : ""}申込で抑える候補`);
   return out;
 }
+
+// 2026-11-03 作業員6（竹内さんの決定 No.32・竹内さんの送信が根拠）: 2通目の文の知識。人気シリーズ（プレジオ等）は「人気マンション」と言う／
+//   お客様の暮らし方（同棲・ご家族・ペット 等）に合う間取りはそう言う（「〇〇さん達の暮らしに最適な間取り」）。スイッチ AIX_SECOND_KNOWLEDGE=on（既定 off）。
+export function secondKnowledgeOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.AIX_SECOND_KNOWLEDGE ?? "").trim().toLowerCase() === "on";
+}
+export const POPULAR_SERIES_RE = /プレジオ|プレサンス|エステムコート|アドバンス|セレニテ|ワールドアイ|ラグゼ|スプランディッド|ファーストフィオーレ|エスリード/;
+/** 物件名と暮らし方の材料から、2通目の知識の行（当てはまる物だけ） */
+export function secondKnowledgeLines(o: { propertyName: string | null | undefined; lifestyle?: ReadonlyArray<string> }): string[] {
+  const out: string[] = [];
+  const name = String(o.propertyName ?? "");
+  const m = name.match(POPULAR_SERIES_RE);
+  if (m) out.push(`・${m[0]}シリーズは人気マンション＝「${m[0]}シリーズは人気マンションとなり」と言ってよい（竹内さんの言い方）`);
+  const life = (o.lifestyle ?? []).join(" ");
+  if (/同棲|お二人|二人暮らし|カップル|ご夫婦|ご家族|お子|ペット|猫|犬/.test(life)) out.push("・お客様の暮らし方（同棲・ご家族・ペット 等）に間取りが合う時は「〇〇さん達の暮らしに最適な間取り」と結ぶ（暮らし方が材料にある時だけ・作らない）");
+  return out.length ? ["【2通目の文の知識（竹内さんの決定 No.32）】", ...out] : [];
+}

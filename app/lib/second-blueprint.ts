@@ -44,9 +44,15 @@ export function secondBlueprintNote(j: AppealJudge, scene: string, data: SecondT
   const bp = secondBlueprint(j);
   const wantEls = [...elementsOf(j.first.text), ...(j.second ? elementsOf(j.second.text) : [])];
   const ex = pickTakeuchiExamples(data.examples, scene, wantEls, 3);
+  // 2026-11-03 sbp の採点: ご査収の番に内覧の誘いが足されていた（締めの注記が二重・設計図に「誘いを足さない」が無かった）→ 締めを1か所で明示
+  const closingLine = ({
+    viewing: "内覧へ（「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」の1文・その後に「お手隙の際にご査収ください😌！！」）",
+    apply: "申込へ（「お気に召されましたらお申込しお部屋抑えさせて頂きます！！」の1文・その後に「お手隙の際にご査収ください😌！！」）",
+    receipt: "ご査収だけ（「お手隙の際にご査収ください😌！！」の1文だけ・内覧や申込の誘いは足さない）",
+  } as const)[j.closing];
   return [
     blueprintNote(bp),
-    `・締めの理由: ${j.closingWhy}`,
+    `・締め（ここだけで決める・他の締めの指示より優先）: ${closingLine}（理由: ${j.closingWhy}）`,
     "・上に無い設備・駅・築年を並べ足さない。事実は1通目・資料にある事だけ。金額・節約額は書かない（初期費用は「敷金礼金なしで初期費用を抑える事ができ」の言い方まで）。",
     takeuchiFormSummary(scene, data.forms),
     ex.length ? `【竹内さんの2通目の手本（設計図の根拠・写さず構成だけ見る）】\n${ex.map((t, k) => `${k + 1}) ${t.replace(/\n+/g, " ")}`).join("\n")}` : "",

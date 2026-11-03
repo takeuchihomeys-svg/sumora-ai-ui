@@ -82,3 +82,33 @@ export async function runComposeChecks(o: {
   }
   return { coverage, coverageMisses, ground, sendBack, reader, digest: c.composeChecksDigest({ coverage, ground, reader, sentBack: !!sendBack }) };
 }
+
+/** 外れたら1回だけ書き直す道のきっかけ（COMPOSE_REWRITE=on・既定 off・BRAIN_COMPOSE_BLUEPRINT の下）。
+ *  2026-11-03 作業員6（統括「文の統括を本物にする」2）。きっかけ: 設計図から外れた（blueprintDeviations）・答え漏れ・読んだ気持ち（要点）・お客様の読み直し（それぞれのスイッチが on の時だけ）。
+ *  根拠の無い文は書き直さない（統括に返す＝compose_sendback）。2回目は無し。 */
+export function composeRewriteOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.BRAIN_COMPOSE_BLUEPRINT ?? "").trim().toLowerCase() === "on" && (env.COMPOSE_REWRITE ?? "").trim().toLowerCase() === "on";
+}
+export async function composeRewriteNeed(o: { draft: string; blueprint: ComposeBlueprint; customerUnits: string[]; mainPoint?: string | null; conversationId: string | null }): Promise<{ reasons: string[]; score: number; note: string }> {
+  const { blueprintDeviations, blueprintNote: bpNote } = await import("./compose-blueprint");
+  const c = await import("./compose-checks");
+  const reasons: string[] = [];
+  const notes: string[] = [];
+  const dev = blueprintDeviations(o.draft, o.blueprint);
+  if (dev.length) { reasons.push(...dev.map((d) => `外れ:${d}`)); notes.push(`・設計図から外れた所: ${dev.join("／")}（設計図の部品の順と役割に戻す）`); }
+  if (c.composeCheckOn("coverage")) {
+    const miss = c.coverageMisses(o.draft, c.assignAsks(o.customerUnits, o.blueprint));
+    if (miss.length) { reasons.push(`漏れ:${miss.length}`); notes.push(c.coverageRewriteNote(miss).trim()); }
+  }
+  if (c.composeCheckWorryOn()) {
+    const w = c.worryCheck(o.draft, { mainPoint: o.mainPoint ?? null, worries: [] });
+    if (w.mainMissed) { reasons.push("要点"); notes.push(w.note.trim()); }
+  }
+  if (c.composeCheckOn("reader")) {
+    const r = await runComposeChecks({ conversationId: o.conversationId, customerUnits: o.customerUnits, draft: o.draft, groundText: "", blueprint: o.blueprint });
+    const rd = r.reader;
+    if (rd && (rd.unclear.length || rd.unanswered.length)) { reasons.push(`読み直し:${rd.unclear.length + rd.unanswered.length}`); notes.push(c.customerReadRewriteNote(rd).trim()); }
+  }
+  const note = reasons.length ? ["【書き直し（1回だけ）】下の文の設計図に沿って、指摘の所だけ直した返信本文を1つ出す（説明は書かない）。", ...notes, bpNote(o.blueprint).trim()].join("\n") : "";
+  return { reasons, score: reasons.length, note };
+}

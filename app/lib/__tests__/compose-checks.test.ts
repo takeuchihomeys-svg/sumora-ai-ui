@@ -27,3 +27,12 @@ t("digest", composeChecksDigest({ coverage: 1, ground: 2, sentBack: true, reader
 
 console.log(`compose-checks: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);
+import { worryCheck, mainPointMissed, composeCheckWorryOn } from "../compose-checks";
+{
+  const okOn = !composeCheckWorryOn({ COMPOSE_CHECK_WORRY: "on" }) && composeCheckWorryOn({ BRAIN_COMPOSE_BLUEPRINT: "on", COMPOSE_CHECK_WORRY: "on" });
+  const w = worryCheck("かしこまりました！！\n募集状況確認させて頂きます！！", { mainPoint: "初期費用を抑えられる物件か", worries: ["screening", "cost"] });
+  const ok = okOn && w.mainMissed && w.worryMissed.join() === "screening,cost" && /奥の心配（審査に通るか）/.test(w.note)
+    && !mainPointMissed("初期費用の御見積書をお送りさせて頂きます", "初期費用の見積") && worryCheck("審査は独立系の保証会社で通過しやすいです", { worries: ["screening"] }).worryMissed.length === 0;
+  console.log(ok ? "compose-check-worry: pass" : "compose-check-worry: FAIL", ok ? "" : JSON.stringify(w));
+  if (!ok) process.exit(1);
+}

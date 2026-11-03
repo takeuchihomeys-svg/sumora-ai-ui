@@ -17,7 +17,7 @@ t("確かめ OK", bp.check.mainOnPurpose && bp.check.addsNotEatingMain, bp.check
 const one = secondBlueprint({ ...j, second: null, count: 1, closing: "receipt" });
 t("1つだけの時は添えなし・ご査収", one.parts.map((p) => p.role).join(">") === "main>close", one.parts);
 const note = secondBlueprintNote(j, "物件オススメ・新規ピックアップ", DATA);
-t("注記に設計図・締めの理由・手本", /文の設計図/.test(note) && /締めの理由: 入居が近い/.test(note) && /2通目の手本/.test(note), note);
+t("注記に設計図・締めの理由・手本", /文の設計図/.test(note) && /理由: 入居が近い/.test(note) && /申込へ/.test(note) && /2通目の手本/.test(note), note);
 
 console.log(`second-blueprint: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);

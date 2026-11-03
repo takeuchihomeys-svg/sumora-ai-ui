@@ -57,3 +57,11 @@ t("意図なしの digest", /意図なし/.test(composeDigestLine({ intent: null
 
 console.log(`compose-blueprint: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);
+import { composeDropsDuplicate } from "../compose-blueprint";
+{
+  const on = { BRAIN_COMPOSE_BLUEPRINT: "on", COMPOSE_DROP_DUPLICATES: "on" };
+  const ok = !composeDropsDuplicate("closing", true, {}) && !composeDropsDuplicate("closing", false, on) && composeDropsDuplicate("closing", true, on)
+    && !composeDropsDuplicate("closing", true, { ...on, COMPOSE_DROP_KEEP: "closing" }) && !composeDropsDuplicate("closing", true, { COMPOSE_DROP_DUPLICATES: "on" });
+  console.log(ok ? "compose-drop: pass" : "compose-drop: FAIL");
+  if (!ok) process.exit(1);
+}

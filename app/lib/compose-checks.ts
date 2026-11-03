@@ -113,3 +113,28 @@ export function composeChecksDigest(o: { coverage?: number | null; ground?: numb
   if (o.rewrote != null) parts.push(`書き直し=${o.rewrote ? "1回" : "なし"}`);
   return parts.length ? `compose-checks: ${parts.join(" ")}` : "";
 }
+
+// ── ⑥ 読んだ気持ちに文が答えたか（COMPOSE_CHECK_WORRY・既定 off） ─────────────────────────────
+// 2026-11-03 作業員6（竹内さん KB P1「お客様の潜在意識と要点を読む部分を6つで強化」⑥）。一番の要点（作業員2の main_point）と
+//   奥の心配（ブレインが決めた物・無ければ候補の札）に、下書きが答えたか。語の網なので「答えていない」は候補（書き直し1回は比べで効いてから）。
+import { answersWorry, WORRY_JA, type WorryTag } from "./reading-tags";
+export function composeCheckWorryOn(env: Env = envOf()): boolean {
+  return composeBlueprintOn(env) && on(env.COMPOSE_CHECK_WORRY);
+}
+/** 要点の語（漢字・カタカナ2文字以上）が下書きに1つも無ければ「要点に答えていない」 */
+export function mainPointMissed(draft: string, mainPoint: string | null | undefined): boolean {
+  const mp = String(mainPoint ?? "").normalize("NFKC");
+  if (!mp.trim()) return false;
+  const words = (mp.match(/[一-龯]{2,}|[ァ-ヶー]{2,}/g) ?? []).filter((w) => !["お客様", "返信", "こちら"].includes(w));
+  if (!words.length) return false;
+  const d = String(draft ?? "").normalize("NFKC");
+  return !words.some((w) => d.includes(w));
+}
+export function worryCheck(draft: string, o: { mainPoint?: string | null; worries: ReadonlyArray<WorryTag> }): { mainMissed: boolean; worryMissed: WorryTag[]; note: string } {
+  const mainMissed = mainPointMissed(draft, o.mainPoint);
+  const worryMissed = o.worries.filter((w) => !answersWorry(draft, w));
+  const note = !mainMissed && !worryMissed.length ? "" : ["", "【読んだ気持ちに答えていない所（1回だけ書き直す・設計図の順と役割は変えない）】",
+    mainMissed ? `・一番の要点「${String(o.mainPoint).slice(0, 60)}」がメインの1文に出ていない` : "",
+    ...worryMissed.map((w) => `・奥の心配（${WORRY_JA[w]}）に一言も答えていない（添えの位置に1文）`)].filter(Boolean).join("\n");
+  return { mainMissed, worryMissed, note };
+}

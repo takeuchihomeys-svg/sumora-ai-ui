@@ -327,7 +327,8 @@ import { isAckOnlyTurn } from "@/app/lib/draft-repeat";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { priorityStepOn, normalizePriorities } from "@/app/lib/brain-priority";
 import { messagePlanOn, normalizeMessagePlan, alignPlanWithPriorities, planHasNextBusinessDay, type MessagePlan } from "@/app/lib/message-plan";
-import { composeBlueprintOn, composeDigestLine } from "@/app/lib/compose-blueprint";
+import { composeBlueprintOn, composeDigestLine, composeDropsDuplicate, type ComposeDuplicateNote } from "@/app/lib/compose-blueprint";
+import { sceneSkillsOn, ruleBookNote } from "@/app/lib/scene-skills";
 import { relativeDatesWriterNote } from "@/app/lib/relative-dates"; // 2026-10-23 送った日と今日の距離（BRAIN_RELATIVE_DATES・既定 off）
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, turnNeedsSupport, SUPPORT_CLOSER_LINE, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
@@ -1025,9 +1026,12 @@ function buildGenerationMessages(
     /** 2026-10-28 1通の計画（BRAIN_MESSAGE_PLAN=on・ブレインの番だけ）。ある時は言葉の網（#27 募集状況の4ステップ・#29 18時以降は明日）を計画に従わせる */
     messagePlan?: MessagePlan | null;
     /** 2026-10-20 文の設計図（writing-blueprint.ts・WRITING_BLUEPRINT 既定 on（10/23）・=off の時は空）。毎回変わる側に入れる＝off の時は1文字も変わらない */
-    blueprintNote?: string } | null = null,
+    blueprintNote?: string;
+    /** 2026-11-03 作業員6 構成の統括の設計図が書き手に渡った番（composeRun あり）。COMPOSE_DROP_DUPLICATES=on の時だけ、設計図と二重になる注記を外す */
+    composeOn?: boolean } | null = null,
 ): [SystemMessage, HumanMessage] {
   const sceneKeep = (k: Parameters<typeof keepMaterial>[1]) => keepMaterial(sceneSel?.scene ?? null, k, !!sceneSel?.on);
+  const composeDrop = (k: ComposeDuplicateNote) => composeDropsDuplicate(k, !!sceneSel?.composeOn);
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
   const effectivePhase: string = phaseGuideKey ?? state;
@@ -1998,7 +2002,7 @@ ${buildAvailabilityCheckNote()}` : buildAvailabilityCheckNote();
   const dynamicBlock =`${replyContentNote}${positiveNoNegativeNote ? `
 ${positiveNoNegativeNote}` : ""}
 ${propertyStatusNote}
-${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") ? closingNote + closingFallback : ""}${brainGuidanceNote}${sceneKeep("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${sceneStyleNoteText}${sceneSel?.blueprintNote ?? ""}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? demoteFixedNote(moveInTimingNote, brainContractOn) : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + demoteFixedNote(newConditionRequestNote, brainContractOn) + conditionExpansionNote + searchAgainNote : ""}${[promiseEchoNote, waitFormAckNote, pickupPromiseAckNote, estimatePromiseAckNote, aixDoneAckNote].map((n) => demoteRepeatNote(n, brainContractOn)).join("")}
+${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") && !composeDrop("closing") ? closingNote + closingFallback : ""}${composeDrop("brainGuidance") ? "" : brainGuidanceNote}${sceneKeep("direction") && !composeDrop("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${composeDrop("sceneStyle") ? "" : sceneStyleNoteText}${composeDrop("writingBlueprint") ? "" : (sceneSel?.blueprintNote ?? "")}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? demoteFixedNote(moveInTimingNote, brainContractOn) : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + demoteFixedNote(newConditionRequestNote, brainContractOn) + conditionExpansionNote + searchAgainNote : ""}${[promiseEchoNote, waitFormAckNote, pickupPromiseAckNote, estimatePromiseAckNote, aixDoneAckNote].map((n) => demoteRepeatNote(n, brainContractOn)).join("")}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${sceneKeep("knowledge") ? knowledgeNote : ""}
@@ -2013,7 +2017,7 @@ ${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${
 ${examples}${examplesInstruction}
 
 ↑${isAixTemplateNote ? "これはお客様への返信ではなく、直前に送った AIX の続きの1通。末尾の【🟣✨ AIXテンプレート最適化モード】に従って、テンプレートを書き直した本文を1つ生成してください。" : isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : `スモラの直前返信の流れを踏まえ、${examples ? "⭐実例の文体・テンポ" : "PHASE_GUIDE の例文の文体・テンポ"}を参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。`}
-長さの目安: ${ackLengthGuide()}、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}${sentShapeNote}${openerNote}${applicationStageNote}`;
+長さの目安: ${composeDrop("ackLength") ? "上の【文の設計図】の長さ" : ackLengthGuide()}、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}${composeDrop("sentShape") ? "" : sentShapeNote}${openerNote}${applicationStageNote}`;
 
   // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
   // 戦略の優先規定（AIX-META一元化）: 指示が競合した場合の解決順を最上位で1行宣言する
@@ -2035,13 +2039,18 @@ ${examples}${examplesInstruction}
   ];
   // DB 由来の準静的な塊（dbRules＋全顧客共通の絶対原則）を1ブロックにしてキャッシュ（キャッシュの区切りは最大4つ＝system×2・human×2 のまま）
   const dbSemiStatic = [dbRules, topPrinciplesNote].filter(Boolean).join("\n\n");
+  // 2026-11-03 作業員6 前置きの並び（REPLY_CACHE_STATIC_FIRST=on・既定 off）: 今は DB の決まり（学習で日に1回ほど変わる）が全顧客共通の静的な決まり
+  //   （約32k字）より前にあり、学習の更新の日は静的な塊も書き直しになる。on の時は静的な塊を system の2つ目に上げ、DB の決まりを3つ目に下げる
+  //   （区切りは system×3＋human×1 の4つのまま・human の先頭は段の案内）。中身は1文字も変えない（置き場所だけ）。調べ: scratchpad の reply-sonnet-cache-findings.md
+  const staticFirst = (process.env.REPLY_CACHE_STATIC_FIRST ?? "").trim().toLowerCase() === "on";
+  if (staticFirst) systemBlocks.push({ type: "text" as const, text: staticBlock, cache_control: { type: "ephemeral", ttl: "1h" } });
   if (dbSemiStatic) systemBlocks.push({ type: "text" as const, text: dbSemiStatic, cache_control: { type: "ephemeral", ttl: "1h" } });
   // humanBlocks 3 分割（2026-08 phaseGuide 分離）:
   // [0] staticBlock（全顧客共通ルール・cache_control あり）
   // [1] phaseGuideBlock（state 5 種類の固定テキスト・cache_control あり・state 単位でキャッシュリード）
   // [2] dynamicBlock（顧客固有データ・cache_control なし）
   const humanBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } }> = [
-    { type: "text" as const, text: staticBlock, cache_control: { type: "ephemeral", ttl: "1h" } },
+    ...(staticFirst ? [] : [{ type: "text" as const, text: staticBlock, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }]),
     { type: "text" as const, text: phaseGuideBlock, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamicBlock },
   ];
@@ -4427,9 +4436,15 @@ async function handleGenerateReply(req: NextRequest) {
           scene: resolveReplyScene({ customerText: message ?? "" }).scene,
           requirements: m.requirementsFromContract({ priorities: turnContract.priorities ?? null, plan: turnContract.messagePlan ?? null }),
           planMessages: turnContract.messagePlan?.messages.length,
-          situation: String((brainMeta as { reply_direction?: string | null } | null)?.reply_direction ?? "") || null,
+          // 2026-11-03 作業員6: 統括の受け渡しの1ブロック（作業員2の conductor-handoff・CONDUCTOR_HANDOFF=on の時だけ）を構成のブレインにも同じ形で渡す
+          situation: [
+            String((brainMeta as { reply_direction?: string | null } | null)?.reply_direction ?? ""),
+            await import("@/app/lib/conductor-handoff").then((h) => (h.conductorHandoffOn() && brainMeta ? h.handoffNote(h.buildHandoff({ to: "compose", meta: brainMeta as unknown as Record<string, unknown> })) : "")).catch(() => ""),
+          ].filter(Boolean).join("\n\n") || null,
         })).catch((e) => { console.warn(JSON.stringify({ tag: "compose:failed", error: e instanceof Error ? e.message : String(e) })); return null; })
       : null;
+    /** 書き直し1回の記録（COMPOSE_REWRITE・digest の compose_rewrite へ） */
+    let composeRewriteLog: { reasons: string[]; after: string[] | null; used: boolean } | null = null;
     if (composeRun) console.info("[compose]", JSON.stringify({ purpose: composeRun.intent.purpose, source: composeRun.intent.source, issues: composeRun.blueprint.check.issues, rag: composeRun.ragIds.length, ms: composeRun.ms }));
 
     // ── 条件提示判定（2026-09-08 監査改修）──
@@ -5685,6 +5700,14 @@ async function handleGenerateReply(req: NextRequest) {
       } : null,
     });
     const replyScene: ReplyScene | null = replySceneResolved?.scene ?? null;
+    // 2026-11-03 作業員6 場面の技能の決まりの本（SCENE_SKILLS=on・既定 off・設計知見の木を場面で切る・1時間の控え）。失敗は ""（返信は止めない）
+    const sceneRuleBookNote = sceneSkillsOn() && replyScene && !isTemplateOptimize
+      ? await import("@/app/lib/scene-skills-server").then(async (m) => {
+          const sk = await m.loadSceneSkill(replyScene);
+          console.log(JSON.stringify({ tag: "gen:scene-skill", conversationId, scene: replyScene, version: sk.version, rules: sk.writer.rules.length }));
+          return `\n\n${ruleBookNote(sk.writer.rules, replyScene)}`;
+        }).catch((e) => { console.warn(JSON.stringify({ tag: "gen:scene-skill-failed", error: e instanceof Error ? e.message : String(e) })); return ""; })
+      : "";
     if (replySceneResolved && replySceneResolved.scene !== replySceneResolved.wordScene) {
       console.log(JSON.stringify({ tag: "gen:scene-brain", conversationId, word: replySceneResolved.wordScene, scene: replySceneResolved.scene, evidence: replySceneResolved.evidence, dragged: replySceneResolved.dragged.length }));
     }
@@ -6132,7 +6155,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       // 3巡目（10/07）: 会社のルールを場面で絞る試し（テストの会話の testFlags.rules_scene=on だけ・最終チェックは全部のまま）
       // 5巡目（10/07）: 学習ルール6本の無効化＋b2d7bf7f の一文の削除を、DB を変えずに試す（testFlags.rules_retire=on・テストの会話だけ）
       ((r: string) => (testFlags.rules_retire === "on" ? previewRetiredRules(r).text : r))(
-        testFlags.rules_scene === "on" && replyScene ? filterRulesTextForScene(dbRules, replyScene) : dbRules),
+        // 2026-11-03 作業員6 場面の技能（SCENE_SKILLS=on・既定 off）: 会社のルールを場面で絞り（rules_scene と同じ関数）、設計知見の木から組んだ決まりの本を後ろに足す
+        ((testFlags.rules_scene === "on" || sceneSkillsOn()) && replyScene ? filterRulesTextForScene(dbRules, replyScene) : dbRules) + sceneRuleBookNote),
       // 4巡目: 物件ごとの台帳は引用の材料の隣（会話履歴の直前）に置く（申込の材料の欄では YUMA 2回中1回で別の物件名を書いた）
       resolvedSummaryJson, [quotedContextNote, propertyThreadReplyNote].filter(Boolean).join("\n\n"), propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
@@ -6174,7 +6198,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       applyReadinessNote,      // 2026-09-20 竹内: 申込が近い合図（hot の時だけ・文面ではなく材料）
       ownProperty && ownProperty.ours > 0 ? { note: ownProperty.note, all: ownProperty.all } : null, // 2026-09-22 こちらが送った物件の送り返し
       { lastStaffBlockOverride: staffBlock.dropped > 0 ? staffBlock.text : undefined, viewingScheduled, viewingAppointment: ledger.facts.viewingAppointment, checkAnsweredFollowUp }, // 2026-09-26 済んだ事（done-state）
-      { scene: replyScene, on: sceneMaterialsOn, brainContract: turnContract?.source === "brain", messagePlan: turnContract?.source === "brain" ? (turnContract.messagePlan ?? null) : null, ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off",
+      { scene: replyScene, on: sceneMaterialsOn, composeOn: !!composeRun?.note, brainContract: turnContract?.source === "brain", messagePlan: turnContract?.source === "brain" ? (turnContract.messagePlan ?? null) : null, ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off",
         // 2026-10-20 文の設計図（竹内さん f5a4b51a「文生成にも軸」）: 既定 off＝"" を渡す（指示は変わらない）。分かれ道は今は他社で内覧の1つだけ（申込までの地図が入ったら地図の分かれ道に替える）
         // on の時に万一投げても返信は止めない（"" に落とす）
         blueprintNote: !isTemplateOptimize && writingBlueprintEnabled() ? (() => { try { return buildWritingBlueprintNote({
@@ -6770,6 +6794,31 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   if (use) { draftBody = genR.body; genStopReason = genR.stopReason ?? genStopReason; }
                 } catch (e) { console.warn("[flash-writer] 書き直しに失敗（1回目のまま）:", e instanceof Error ? e.message : String(e)); }
               }
+            }
+            // 2026-11-03 作業員6 文の統括: 設計図から外れた・確かめで引っかかった時に1回だけ書き直す（COMPOSE_REWRITE=on・既定 off・2回目は無し）。
+            //   前置きは1回目と同じ（genMessages の後ろに下書きと依頼を足すだけ＝キャッシュが効く・flash の書き直しと同じ型）。引っかかりが減った時だけ使う
+            if (composeRun && !isTemplateOptimize && draftBody.trim()) {
+              try {
+                const cs = await import("@/app/lib/compose-blueprint-server");
+                if (cs.composeRewriteOn()) {
+                  const units = customerMsgUnits.length ? customerMsgUnits : [message ?? ""];
+                  const mainPoint = String((brainMeta as { main_point?: string | null } | null)?.main_point ?? "") || null;
+                  const need = await cs.composeRewriteNeed({ draft: draftBody, blueprint: composeRun.blueprint, customerUnits: units, mainPoint, conversationId: conversationId ?? null });
+                  if (need.score > 0) {
+                    const genR = await consumeGeneration(createGenerationModel({ defaultHeaders: autoSendHeaders, maxRetries: 0 }).stream([
+                      ...genMessages,
+                      new AIMessage(replyMasker ? replyMasker.maskBlock(draftBody) : draftBody),
+                      new HumanMessage(replyMasker ? replyMasker.maskBlock(need.note) : need.note),
+                    ]));
+                    const after = genR.body.trim() && String(genR.stopReason ?? "") !== ALT_STREAM_CUT_STOP
+                      ? await cs.composeRewriteNeed({ draft: genR.body, blueprint: composeRun.blueprint, customerUnits: units, mainPoint, conversationId: conversationId ?? null }) : null;
+                    const used = !!after && after.score < need.score;
+                    composeRewriteLog = { reasons: need.reasons, after: after?.reasons ?? null, used };
+                    console.log(JSON.stringify({ tag: "gen:compose-rewrite", conversationId, reasons: need.reasons, after: after?.reasons ?? null, used }));
+                    if (used) { draftBody = genR.body; genStopReason = genR.stopReason ?? genStopReason; }
+                  } else composeRewriteLog = { reasons: [], after: null, used: false };
+                }
+              } catch (e) { console.warn("[compose-rewrite] 書き直しに失敗（1回目のまま）:", e instanceof Error ? e.message : String(e)); }
             }
             // 2026-09-09 Fable5 行動台帳: 生成直後の決定論自動修正（Sonnet 不使用）。台帳に実績が無い「再度／改めて／お送りした〇〇／完了形」を
             //   語の削除・未来形置換で正す（final-check 修正ループと同じ applyLedgerAutoFix）。テンプレ最適化・follow-up は対象外
@@ -7554,6 +7603,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 Object.assign(finalCheck.tpo_debug, {
                   turnContract: turnContract ? { source: turnContract.source, routes: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, misses: tcMiss } : null,
                   ...(composeRun ? { compose: composeDigestLine({ intent: composeRun.intent, blueprint: composeRun.blueprint, writerGotNote: !!composeRun.note, draft: finalDraftText }) } : {}),
+                  ...(composeRewriteLog ? { compose_rewrite: composeRewriteLog.reasons.length ? `書き直し=${composeRewriteLog.used ? "使った" : "元のまま"}（${composeRewriteLog.reasons.join("・")}→${(composeRewriteLog.after ?? []).join("・") || "なし"}）` : "書き直し=不要" } : {}),
                   aixContent: aixC.slice(0, 6),
                 });
               } catch { /* 印だけ */ }

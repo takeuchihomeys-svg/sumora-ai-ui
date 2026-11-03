@@ -133,12 +133,12 @@ export const DOC_CANDIDATE_OR = ["[画像]%", "%記入欄%", "%本人確認%", "
 
 /** 集めて表に置く（cron・script の両方から）。
  *  1回で終わらない時は next（続きの時刻）を返す → ?before=<next> でもう1回。分けて集めた時の型の要約は、表の手本から作り直す */
-export async function runSecondTakeuchiData(opts: { dry?: boolean; sinceDays?: number; beforeIso?: string | null; budgetMs?: number } = {}): Promise<{ ok: boolean; error?: string; cases?: number; examples?: number; scenes?: number; stats?: Record<string, number>; dry?: boolean; next?: string | null; formsFrom?: "cases" | "table" | "skipped" }> {
+export async function runSecondTakeuchiData(opts: { dry?: boolean; sinceDays?: number; beforeIso?: string | null; budgetMs?: number; pauseMs?: number } = {}): Promise<{ ok: boolean; error?: string; cases?: number; examples?: number; scenes?: number; stats?: Record<string, number>; dry?: boolean; next?: string | null; formsFrom?: "cases" | "table" | "skipped" }> {
   const sb = serviceClient();
   if (!sb) return { ok: false, error: "SUPABASE_SERVICE_ROLE_KEY が無い" };
   try {
     const since = new Date(Date.now() - (opts.sinceDays ?? 365) * 86400_000).toISOString();
-    const { cases, stats, next } = await collectTakeuchiSeconds(sb, { sinceIso: since, beforeIso: opts.beforeIso ?? null, budgetMs: opts.budgetMs });
+    const { cases, stats, next } = await collectTakeuchiSeconds(sb, { sinceIso: since, beforeIso: opts.beforeIso ?? null, budgetMs: opts.budgetMs, pauseMs: opts.pauseMs });
     const rows = buildSecondExampleRows(cases);
     if (!opts.dry) {
       for (let i = 0; i < rows.length; i += 200) {

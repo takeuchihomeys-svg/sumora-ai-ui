@@ -76,7 +76,7 @@ import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensure
 import { stripPropertyNameFromPickupLine, PICKUP_LINE_NOTE } from "@/app/lib/pickup-line";
 // 2026-10-01 竹内「全域にする・AIX にもあてる」: ピックアップ行の条件の復唱の手直し（全域・か→または）と入口の一文
 import { polishConditionEcho, CONDITION_ECHO_STYLE_NOTE } from "@/app/lib/condition-echo-polish";
-import { extractPropertyLabels, confirmTopicForCheckPattern } from "@/app/lib/action-ledger";
+import { extractPropertyLabels, confirmTopicForCheckPattern, extractViewingAppointment } from "@/app/lib/action-ledger";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定と除去を返信生成・テンプレートと同じ関数で
 // 2026-09-27 竹内さん決定で上書き: AIX でも「お待たせ致しました」は使わない（許す一覧は空・出口は replaceWaitedOpening・手本は neutralizeWaitedInExample）
 import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentRate, waitedUsedLastTime, replaceWaitedOpening, neutralizeWaitedInExample, isWaitedAllowedForAix, lastExchangeAt } from "@/app/lib/waited-scope";
@@ -104,7 +104,7 @@ import { buildFirstSceneNote, leakedFirstExampleFacts, newArrivalOpening } from 
 import { buildApplicationNote, applicationBulletNote } from "@/app/lib/application-status-note";
 // 2026-09-18 竹内: 見積書に添えるキャンペーンの1文（スタッフの入力をそのまま・骨組みは実送信の形）
 import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
-import { buildViewingBeforeGreeting, viewingAfterThankLine } from "@/app/lib/viewing-greeting-text";
+import { buildViewingBeforeGreeting, viewingAfterThankLine, viewingBeforeDetailOn, viewingBeforeDetailLine, withViewingBeforeDetail, meetingAddressOf } from "@/app/lib/viewing-greeting-text";
 import { PROPERTY_SEARCH_SYSTEM, buildPropertySearchUser, propertySearchFallback, propertySearchTextIssues } from "@/app/lib/property-search-promise";
 import { buildGuarantorInfoText, buildGuarantorMatchedText, guarantorInfoShape, guarantorInfoStructure, GUARANTOR_ANSWER_STAFF_EXAMPLES, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, resolveGuarantorForText, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, normalizeGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, GUARANTOR_TYPE_SCREENING_NOTE, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims, DEADLINE_SUPPORT_LINE, INSERTED_PROMISE_LINES, stripUnkeptConfirmPromiseLines } from "@/app/lib/property-send-match";
@@ -7360,6 +7360,20 @@ ${jstTodayStr}
         //   Haiku は形の記号を漏らす（「…」⏎②「…」）・初回の挨拶にする・物件名を足す で 101回中 21回直されていた（viewing-greeting-text.ts）。
         //   挨拶は「今日こちらが送ったか」だけで決める（内覧の日は初回ではない＝「ご連絡頂きありがとうございます」にしない）
         message_text = buildViewingBeforeGreeting({ name: gvName, greeting: staffMessagedToday ? "" : "お世話になっております！！", time: viewing_time });
+        // 2026-11-03 作業員6（竹内さんの決定 No.18）: 直前に送った待ち合わせ場所の AIX の本文から、物件名と待ち合わせ場所の1行を決まった形で足す（VIEWING_BEFORE_DETAIL・既定 off・読めない時は足さない）
+        if (viewingBeforeDetailOn() && conversationId) {
+          try {
+            const { data: mp } = await supabase.from("aix_usage_logs").select("generated_text, created_at").eq("conversation_id", conversationId).eq("aix_type", "meeting_place")
+              .not("sent_at", "is", null).order("created_at", { ascending: false }).limit(1);
+            const mt = String((mp?.[0] as { generated_text?: string | null } | undefined)?.generated_text ?? "");
+            if (mt) {
+              const ap = extractViewingAppointment(mt, (mp?.[0] as { created_at?: string } | undefined)?.created_at ?? null);
+              const line = viewingBeforeDetailLine({ properties: extractPropertyLabels(mt), place: ap?.place ?? null, address: meetingAddressOf(mt) });
+              message_text = withViewingBeforeDetail(message_text, line);
+              console.log(JSON.stringify({ tag: "aix:greeting-viewing-detail", conversationId, added: !!line }));
+            }
+          } catch (e) { console.warn("[greeting_viewing] 物件名・待ち合わせの1行を足せない（足さずに続ける）:", e instanceof Error ? e.message : e); }
+        }
       } else {
         // 内覧後 4択フロー
         const after_type = body.after_type as string | undefined;
