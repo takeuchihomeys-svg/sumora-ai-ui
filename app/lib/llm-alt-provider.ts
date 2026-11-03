@@ -220,6 +220,19 @@ export function brainDsPartsOn(env: EnvLike = process.env): string[] {
  *   .openai.azure.com と .services.ai.azure.com のどちらのホストでも同じものを指す。
  *   鍵は Authorization: Bearer でも api-key でも通るので、下の callAzure は両方を送っている。
  */
+/**
+ * 2026-11-03 作業員6（統括「env の値を読まずに、夜の一括の読み用の既定の名札をコードで足す」）:
+ *   夜の cron の一括の読み（下読み・解剖）だけを、既定で DeepSeek に回す名札の一覧。env の LLM_ALT_ACTIONS と合わせて使う
+ *   （BRAIN_DS_PARTS と同じ扱い＝主の相手が無ければ DeepSeek 本家）。本番の返信の名札（reply_compose_intent 等）は入れない（比べの後に決める）。
+ *   外す: LLM_ALT_BATCH_DEFAULT=off（全部）／LLM_ALT_BATCH_EXCLUDE=名札,名札（一部）。出口の alt-pii-gate はいつも通り通る。
+ */
+export const BATCH_ALT_DEFAULT_ACTIONS: readonly string[] = ["reply_anatomy"];
+export function batchAltDefaultActions(env: EnvLike = process.env): string[] {
+  if ((env.LLM_ALT_BATCH_DEFAULT ?? "").trim().toLowerCase() === "off") return [];
+  const ex = new Set((env.LLM_ALT_BATCH_EXCLUDE ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+  return BATCH_ALT_DEFAULT_ACTIONS.filter((a) => !ex.has(a));
+}
+
 export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | null {
   // 2026-09-26 テスト用の切り替え（LLM_TEST_MODE=deepseek-all）。本番（Vercel・NODE_ENV=production）では必ず null＝下は今までと同じ
   const testMode = readTestMode(env);
@@ -265,6 +278,9 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   for (const [name, target] of routeTargets) {
     routes.set(name, { ...target, actions: new Set<string>(), fallbackToAnthropic, allowAutoSend, testMode, routes: new Map() });
   }
+  // 2026-11-03 夜の一括の読みの既定の名札（batchAltDefaultActions）は、別クラウドの設定がある時だけ足す（無い時は今までどおり null＝回さない・
+  //   主の相手や null の判定は変えない＝ほかの名札の振り分けは1つも変わらない）
+  for (const a of batchAltDefaultActions(env)) actions.add(a);
   return { ...main, actions, fallbackToAnthropic, allowAutoSend, testMode, routes };
 }
 
