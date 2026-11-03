@@ -62,6 +62,10 @@ export async function buildAixDeskCards(sb: SupabaseClient, o: { days?: number }
   // 鍵ごと: 竹内さんの送信（お客様の直前の発言→竹内さんの文）・テンプレートの使われ方・従業員の押し間違い
   const ownerScenes = new Map<string, Array<{ cust: string; sent: string }>>();
   const ownerCount = new Map<string, number>();
+  // 2026-11-04 竹内さんの決定（改め・KB P1 41dadfe6）: 基準は竹内さんだけ。従業員の番は、竹内さんの番が1件も無い札に限り「印付きの候補」として残すだけ
+  //   （薄いの線・当たりの数えには入れない＝重み 0.5 の数えはやめた）
+  const empScenes = new Map<string, Array<{ cust: string; sent: string }>>();
+  const empCount = new Map<string, number>();
   const tplUse = new Map<string, Map<string, number>>();
   const mis = new Map<string, { n: number; reasons: Map<string, number>; ex: string | null }>();
   for (const u of usages) {
@@ -75,6 +79,16 @@ export async function buildAixDeskCards(sb: SupabaseClient, o: { days?: number }
       v.n++; v.reasons.set(mp.reason, (v.reasons.get(mp.reason) ?? 0) + 1);
       if (!v.ex && !isTestText(sentRaw)) v.ex = safe(sentRaw, addressNamesOf((byConv.get(u.conversation_id) ?? []).filter((x) => x.sender !== "customer").map((x) => x.text ?? "")));
       mis.set(key, v);
+    }
+    if (m && m.staff_writer === "employee" && m.staff_writer_confidence === "sure" && !mp) {
+      empCount.set(key, (empCount.get(key) ?? 0) + 1);
+      const listE = byConv.get(u.conversation_id) ?? [];
+      const atE = Date.parse(m.created_at);
+      const custE = [...listE].reverse().find((x) => x.sender === "customer" && Date.parse(x.created_at) < atE && (x.text ?? "").trim());
+      const scE = empScenes.get(key) ?? [];
+      const namesE = addressNamesOf(listE.filter((x) => x.sender !== "customer").map((x) => x.text ?? ""));
+      if (scE.length < 3 && custE && !isTestText(sentRaw) && !isTestText(custE.text ?? "")) scE.push({ cust: one(safe(custE.text ?? "", namesE, "customer"), 90), sent: one(safe(sentRaw, namesE), 160) });
+      empScenes.set(key, scE);
     }
     if (!(m && m.staff_writer === "takeuchi" && m.staff_writer_confidence === "sure")) continue;
     ownerCount.set(key, (ownerCount.get(key) ?? 0) + 1);
@@ -139,6 +153,7 @@ export async function buildAixDeskCards(sb: SupabaseClient, o: { days?: number }
     if (tpls.length) lines.push(`一緒に使われた定型「${one(tpls[0].label, 30)}」: ${one(maskExemplar(tpls[0].text), 200)}`);
     if (kb.length) lines.push(`竹内さんの決定: ${kb.map((t) => one(t, 70)).join("／")}`);
     for (const s of scenes) lines.push(`竹内さんの番: 客「${s.cust}」→「${s.sent}」`);
+    if (!scenes.length) for (const s of (empScenes.get(e.key) ?? []).slice(0, 2)) lines.push(`【候補・竹内さんの番ではない】従業員の番（竹内さんの番が無い札だけ・基準にしない）: 客「${s.cust}」→「${s.sent}」`);
     if (mp) {
       const why = [...mp.reasons].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
       lines.push(`押し間違いの例（${mp.n}件・${one(why, 60)}）${mp.ex ? `: 「${one(mp.ex, 100)}」` : ""}`);

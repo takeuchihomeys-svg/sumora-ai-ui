@@ -53,6 +53,7 @@ export type ExamJob = {
   /** 依頼で名指しした揺れる問題（③） */ flaky?: string[];
   /** --pick=rag の時 brain-exam --select=rag に任せる（④） */ selectRag?: boolean;
   /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc" | "tsc-remote"; cmds?: string[];
+  /** 2026-11-04 指揮役: AI を呼ばない読むだけの依頼（cmd だけ・--read-only）。2つ目の流す役（--remote）が試験と同時に流す */ readOnly?: boolean;
   /** 夜だけ流す（JST 22〜9・重い全件の読み等・--night） */ nightOnly?: boolean;
   /** 保留の理由（あれば流さない・手で外す） */ hold?: string;
   /** この時刻（ISO）より前は流さない（--not-before=2026-11-10T22:00+09:00） */ notBefore?: string;
@@ -88,6 +89,8 @@ async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
   if (j?.runner === "tsc") return process.env.EXAM_TSC_LOCAL === "on" ? gateTsc() : { ok: true, why: "リモート（Vercel のお試しの場所）" };
   // tsc-remote: PC のメモリは使わない（Vercel のお試しの場所で next build）＝門は「流す役が1本ずつ」だけ
   if (j?.runner === "tsc-remote") return { ok: true, why: "リモート（Vercel のお試しの場所）" };
+  // 2026-11-04 指揮役: AI を呼ばない読むだけの依頼は試験の本数の門に入れない（夜だけの印は守る・DB の窓と上限は依頼の引数のまま）
+  if (j?.runner === "cmd" && j.readOnly) { if (j.nightOnly) { const h = new Date(Date.now() + 9 * 3600_000).getUTCHours(); if (h >= 9 && h < 22) return { ok: false, why: "夜だけの依頼（JST 22〜9）" }; } return { ok: true, why: "読むだけ（AI を呼ばない・試験の門の外）" }; }
   if (j?.nightOnly) { const h = new Date(Date.now() + 9 * 3600_000).getUTCHours(); if (h >= 9 && h < 22) return { ok: false, why: "夜だけの依頼（JST 22〜9）" }; }
   if (!cheapNow()) return { ok: false, why: "DeepSeek の混雑の時間（平日 10〜13・15〜19）" };
   const pc = pcState();
@@ -121,7 +124,7 @@ function addJob(): void {
     const cmds = argsOf("cmd").filter(Boolean);
     if (!cmds.length) throw new Error("--runner=cmd は --cmd=\"scripts/x.ts --a=1\" が要る（何度でも・順に流す）");
     if (cmds.some((c) => !/^scripts\/[\w./-]+\.ts(\s|$)/.test(c))) throw new Error("--cmd は scripts/ の .ts から始める（npx tsx --env-file=.env.local の後ろに付ける）");
-    job = { ...base, id: `${Date.now()}`, label, only: "", repeat: 1, runner: "cmd", cmds };
+    job = { ...base, id: `${Date.now()}`, label, only: "", repeat: 1, runner: "cmd", cmds, ...(flag("read-only") ? { readOnly: true } : {}) };
   } else {
     const spec = readJson<Array<{ id: string; type: string }>>(join(cwd, "scripts/brain-exam/spec.json"), []);
     const golds = readJson<{ golds?: Array<{ id: string }> }>(join(cwd, "scripts/parts-eval/gold-20.json"), {}).golds?.map((g) => g.id) ?? [];
@@ -192,10 +195,21 @@ function writeBack(j: ExamJob, status: string): void {
     if (r.changed) { writeFileSync(f, r.md); log(`  入れる順番の表に書いた: ${j.switch} → ${status}`); } else log(`  入れる順番の表にスイッチ ${j.switch} の行が無い（書かない）`);
   } catch (e) { log(`  入れる順番の表に書けない: ${String(e).slice(0, 120)}`); }
 }
+/** 2026-11-04 依頼の取り合いを防ぐ（流す役が2つ＝試験の列と tsc-remote の列）: 依頼のファイルを .claimed に付け替えられた方だけが流す */
+function claimJob(j: ExamJob & { file: string }): boolean {
+  if (j.file.endsWith(".claimed")) return true;
+  try { renameSync(j.file, j.file + ".claimed"); j.file = j.file + ".claimed"; return true; } catch { return false; }
+}
+/** 順番待ちに戻す（取った印を外して元の名前で書く） */
+function requeueJob(j: ExamJob & { file: string }): void {
+  const orig = j.file.replace(/\.claimed$/, "");
+  writeFileSync(orig, JSON.stringify({ ...j, tries: j.tries + 1, file: undefined }, null, 1));
+  if (orig !== j.file) { try { unlinkSync(j.file); } catch { /* */ } }
+}
 function finish(j: ExamJob & { file: string }, result: Record<string, unknown>, line: string, status: string): void {
   writeFileSync(join(RES, `${j.label}.json`), JSON.stringify(result, null, 1));
   appendFileSync(join(RES, "results.md"), line + "\n");
-  renameSync(j.file, join(DONE, j.file.split(/[\\/]/).pop()!));
+  renameSync(j.file, join(DONE, j.file.split(/[\\/]/).pop()!.replace(/\.claimed$/, "")));
   writeBack(j, status);
   // 終わったら依頼した人に知らせる: 統括（--run）は SendMessage を持たない → 知らせの行を notify.jsonl と conductor.log に出し、--run を見張る作業員が SendMessage で届ける
   const to = j.notify ?? cfg().notify?.[j.owner] ?? "";
@@ -330,7 +344,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         const r = runTsx(j.cwd, c.match(/"[^"]*"|\S+/g)!.map((x) => x.replace(/^"|"$/g, "")), j.env, outFile); cur = r.child;
         codes.push(await r.done);
       }
-      if (stopped) { writeFileSync(j.file, JSON.stringify({ ...j, tries: j.tries + 1, file: undefined }, null, 1)); log(`  順番待ちに戻した（${j.label}・片付けは依頼者の手順で）`); return; }
+      if (stopped) { requeueJob(j); log(`  順番待ちに戻した（${j.label}・片付けは依頼者の手順で）`); return; }
       const s = summarize(readFileSync(outFile, "utf8"));
       const verdict = codes.every((c) => c === 0) ? "流し終えた（採点は依頼者）" : `失敗あり（終わりの番号 ${codes.join(",")}）`;
       finish(j, { label: j.label, owner: j.owner, switch: j.switch, runner: "cmd", cmds: j.cmds, codes, usd: s.usd, verdict, at: at() },
@@ -340,12 +354,13 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     }
     // brain-exam: ③ 問題ごとの回数（揺れる問題は増やす）
     const ids = j.only.split(",").filter(Boolean);
-    const rp = repsPlan(ids, (id) => readObs(id), { normal: j.repeat, flakyReps: Number(process.env.EXAM_FLAKY_REPS ?? "4"), forced: j.flaky, model: "deepseek" });
+    const rp = repsPlan(ids, (id) => readObs(id), { normal: j.repeat, flakyReps: Number(process.env.EXAM_FLAKY_REPS ?? "4"), forced: j.flaky, model: "deepseek", stableReps: process.env.EXAM_STABLE_REPS === "off" ? undefined : Number(process.env.EXAM_STABLE_REPS ?? "1") });
     const maxRep = Math.max(j.repeat, ...Object.values(rp.reps));
     const repsFile = join(RES, `${j.label}.reps.json`);
     writeFileSync(repsFile, JSON.stringify(rp.reps, null, 1));
     log(`流す: ${j.label}（${j.owner}・${j.switch}・${ids.length ? ids.length + "問" : "rag"}・${j.repeat}回${rp.flaky.length ? `・揺れる ${rp.flaky.map((x) => `${x.id}×${rp.reps[x.id]}`).join(",")}` : ""}・${j.cwd}）`);
     for (const f of rp.flaky) log(`  揺れる ${f.id}: ${f.why}`);
+    if (rp.stable?.length) log(`  安定（揺れの記録で独立に3回以上同じ答え）→ 1回: ${rp.stable.join(",")}`);
     const argv = ["scripts/brain-exam.ts", `--label=${j.label}`, "--conv=auto", "--baseline=main", `--repeat=${maxRep}`, `--stage=${j.stage}`];
     if (ids.length) argv.push(`--only=${j.only}`, `--reps-file=${repsFile}`);
     if (j.selectRag) argv.push("--select=rag");
@@ -362,7 +377,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     }, 30_000) : null;
     const code = await r.done;
     if (ew) clearInterval(ew);
-    if (stopped) { await cleanupRun(j.cwd, j.label, outFile); writeFileSync(j.file, JSON.stringify({ ...j, tries: j.tries + 1, file: undefined }, null, 1)); log(`  順番待ちに戻した（${j.label}）`); return; }
+    if (stopped) { await cleanupRun(j.cwd, j.label, outFile); requeueJob(j); log(`  順番待ちに戻した（${j.label}）`); return; }
     if (early) {
       const e = early as { stop: string; why: string; base: string };
       await cleanupRun(j.cwd, j.label, outFile);
@@ -372,12 +387,14 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     }
     const s = summarize(existsSync(outFile) ? readFileSync(outFile, "utf8") : "");
     const tag = early ? "（早めの打ち切り）" : "";
+    // 11/04 竹内さんの決定（使い回せる物は使い回す）: 録音（前の答え）と入力が main と同じだった回の数を結果に出す
+    const reuse = (() => { try { const c = readJson<{ byTag?: Record<string, { real?: number; replayed?: number }> }>(join(resultsDirOf(j.cwd), `${j.label}.cost.json`), {}); const d = readJson<{ items?: Record<string, { same?: boolean }> }>(join(resultsDirOf(j.cwd), `${j.label}.inputdiff.json`), {}); let real = 0, rep = 0; for (const v of Object.values(c.byTag ?? {})) { real += v?.real ?? 0; rep += v?.replayed ?? 0; } const it = Object.values(d.items ?? {}); return `・使い回し: LLM ${rep}/${real + rep}回は録音・入力が main と同じ回 ${it.filter((x) => x.same).length}/${it.length}${rp.stable?.length ? `・安定で1回 ${rp.stable.length}問` : ""}`; } catch { return ""; } })();
     // 11/03 指揮役: 悪化を「確かな悪化」と「揺れの範囲の差」（揺れる問題・合格の差が main の割合で2回未満）に分けて書く
     const blFinal = baseLabelOf(j.cwd, j.label);
     const sw = blFinal ? splitWorse(readRows(rowsFile), readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)), new Set(rp.flaky.map((x) => x.id))) : null;
     const flakeNote = sw?.flake.length ? `・揺れの範囲の差 ${sw.flake.length}（${sw.flake.map((x) => `${x.id} ${x.why}`).join("／")}）` : "";
     const sureN = sw ? sw.sure.length : s.worse;
-    const verdict = (sureN == null ? "結果を読めない" : sureN === 0 ? "確かな悪化0" : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag;
+    const verdict = (sureN == null ? "結果を読めない" : sureN === 0 ? "確かな悪化0" : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse;
     finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
@@ -401,7 +418,9 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
   if (flag("list")) { for (const j of readJobs()) console.log(`- ${j.createdAt.slice(0, 16)} ${j.label}（${j.owner}・${j.switch}・${j.runner === "tsc-remote" ? "tsc-remote" : j.runner === "tsc" ? "tsc" : j.runner === "cmd" ? `${j.cmds?.length}本` : `${j.only || "rag"}・${j.repeat}回`}・試み ${j.tries}）`); return; }
   if (flag("run")) {
     // 流す役は PC で1つだけ（夜の予定のタスクと手で起こした物が重ならない）: run.lock に pid・生きていれば何もしない
-    const RUN_LOCK = join(ROOT, "run.lock");
+    //   2026-11-04: --remote は tsc-remote だけを流す2つ目の流す役（鍵は run-remote.lock・試験が長く流れている間も型の確かめを待たせない）
+    const REMOTE_ONLY = flag("remote");
+    const RUN_LOCK = join(ROOT, REMOTE_ONLY ? "run-remote.lock" : "run.lock");
     const held = readJson<{ pid?: number } | null>(RUN_LOCK, null);
     if (held?.pid && held.pid !== process.pid) { let alive = false; try { process.kill(held.pid, 0); alive = true; } catch { /* 止まっている */ } if (alive) { log(`別の流す役が動いている（pid ${held.pid}）→ 足した依頼はそちらが流す`); return; } }
     ensureDirs(); writeFileSync(RUN_LOCK, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
@@ -409,8 +428,10 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
     cfg();
     const tscAlerted = new Set<string>();
     for (;;) {
-      const jobs = readJobs();
-      if (!jobs.length) { log("順番待ちは空"); return; }
+      const isRemoteJob = (x: ExamJob) => x.runner === "tsc-remote" || (x.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") || (x.runner === "cmd" && !!x.readOnly);
+      // 読むだけの依頼は2つ目の流す役だけが流す（試験の列を止めない・試験の列の先頭の扱いにもしない）
+      const jobs = readJobs().filter((x) => (REMOTE_ONLY ? isRemoteJob(x) : !(x.runner === "cmd" && x.readOnly)));
+      if (!jobs.length) { if (REMOTE_ONLY) { await new Promise((r) => setTimeout(r, 60_000)); continue; } log("順番待ちは空"); return; }
       // 先頭から順に関所を見て、通った最初の依頼を流す（試験が安い時間を待つ間も tsc は先に流せる）
       let picked: (typeof jobs)[number] | null = null; const whys: string[] = [];
       let examBlocked = false;
@@ -418,6 +439,7 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
       // tsc の順番待ちが長い（既定 60分・EXAM_TSC_WAIT_ALERT_MIN）時は指揮役に知らせる（依頼ごとに1回）
       for (const j of jobs.filter((x) => x.runner === "tsc" && !tscAlerted.has(x.id))) { const min = (Date.now() - Date.parse(j.createdAt)) / 60_000; if (min >= Number(process.env.EXAM_TSC_WAIT_ALERT_MIN ?? "60")) { tscAlerted.add(j.id); const why = whys.find((w) => w.startsWith(j.label + ":")) ?? ""; appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to: "main", owner: j.owner, label: j.label, msg: `tsc の順番待ちが ${Math.round(min)}分（${why}）` }) + "\n"); log(`  📣 知らせる: to=main tsc の順番待ちが ${Math.round(min)}分（${j.label}・${j.owner}・${why}）`); } }
       if (!picked) { log(`待つ: ${whys.slice(0, 3).join("／")}（${jobs.length}本待ち）`); if (flag("once")) return; await new Promise((r) => setTimeout(r, (jobs.some((x) => x.runner === "tsc") ? 1 : 5) * 60_000)); continue; }
+      if (!claimJob(picked)) continue; // もう一方の流す役が先に取った
       await runJob(picked);
       if (flag("once")) return;
     }

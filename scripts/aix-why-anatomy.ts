@@ -122,7 +122,11 @@ const ANATOMY_SYS = [
       results.push(...await Promise.all(picked.slice(i, i + 5).map(work)));
       if (i % 25 === 0) console.log(`  ${Math.min(i + 5, picked.length)}/${picked.length} $${cost.usd.toFixed(3)}`);
     }
-    const done = results.filter((r) => !r.skipped && r.anatomy);
+    // 11/04 指揮役: スタッフの続き（お客様の発言への答えではない AIX）は、統括に選ばせる問題にならない＝一致の数え・見てもらう10件・見分けの軸から外す（数だけ出す）
+    const isCont = (r: Res) => /staff_continuation/.test(String(r.anatomy?.answered ?? ""));
+    const all = results.filter((r) => !r.skipped && r.anatomy);
+    const cont = all.filter(isCont);
+    const done = all.filter((r) => !isCont(r));
     const same = done.filter((r) => r.deskSame).length;
     mkdirSync(OUT, { recursive: true });
     const day = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
@@ -134,7 +138,7 @@ const ANATOMY_SYS = [
     const review = [...done].sort((a, b) => Number(!!a.deskSame) - Number(!!b.deskSame) || (cards[a.key]?.owner ?? 0) - (cards[b.key]?.owner ?? 0)).slice(0, 10);
     const md = [
       `# 竹内さんの AIX の読み解き（${day}・DeepSeek の下読み）`, "",
-      `読み解いた ${done.length}件（外した ${results.length - done.length}: 申込の書類より後・個人の値・失敗）・統括の札で選ばせて竹内さんと同じ ${same}/${done.length}`, "",
+      `読み解いた ${all.length}件（外した ${results.length - all.length}: 申込の書類より後・個人の値・失敗）・スタッフの続き ${cont.length}件（数えない・札で同じ ${cont.filter((r) => r.deskSame).length}/${cont.length}）・統括の札で選ばせて竹内さんと同じ ${same}/${done.length}`, "",
       "## 竹内さんに見てもらう10件（札が竹内さんと違った番・札の薄い鍵を先に）", "",
       ...review.flatMap((r, i) => [
         `### ${i + 1}. ${r.key}（${cards[r.key]?.button ?? ""}${cards[r.key]?.picker ? ` → ${cards[r.key]!.picker}` : ""}）・${r.at.slice(0, 10)}・札の答え ${r.deskPick ?? "なし"}${r.deskSame ? "（同じ）" : "（違う）"}`,

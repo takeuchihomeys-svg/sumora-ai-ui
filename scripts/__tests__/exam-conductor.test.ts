@@ -41,6 +41,9 @@ t("同じコードで割れた問題は4回", rp.reps.qa === 4);
 t("割れていない問題は2回", rp.reps.qb === 2);
 t("名指しの揺れる問題は4回", rp.reps.qc === 4 && rp.flaky.length === 2);
 t("揺れの回数は3〜6に収める", repsPlan(["qc"], () => [], { normal: 2, flakyReps: 9, forced: ["qc"] }).reps.qc === 6);
+const st = [O("qs", "A|○", "2026-11-01T00:00:00Z", "k1"), O("qs", "A|○", "2026-11-01T01:00:00Z", "k2"), O("qs", "A|○", "2026-11-01T02:00:00Z", "k3")];
+t("安定（独立に3回同じ答え）は stableReps 回・分からないは normal", (() => { const r = repsPlan(["qs", "qb"], (id) => (id === "qs" ? st : obs[id] ?? []), { normal: 2, flakyReps: 4, stableReps: 1 }); return r.reps.qs === 1 && r.reps.qb === 2 && r.stable?.join() === "qs"; })());
+t("stableReps を渡さなければ今まで通り normal", repsPlan(["qs"], () => st, { normal: 2, flakyReps: 4 }).reps.qs === 2);
 
 // ④ 問題の選び
 const spec = Array.from({ length: 10 }, (_, i) => ({ id: `q${i}`, type: i < 6 ? "AIXの種類" : "初回" }));

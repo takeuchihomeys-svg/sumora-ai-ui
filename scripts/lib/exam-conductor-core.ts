@@ -56,18 +56,21 @@ export function splitWorse(cur: RowLite[], base: RowLite[], flaky: ReadonlySet<s
 // ─── ③ 問題ごとの揺れで回数を決める ─────────────────────────────────────────
 //   試験の揺れの記録（scripts/lib/exam-flake の観測・30日）から、同じ問題・同じモデルで答えが割れた問題を「揺れる」とみて回数を増やす。
 //   揺れる問題は flakyReps（3〜6・既定 4）、それ以外は normal（既定 2）。依頼で名指しした揺れる問題（--flaky）も揺れる扱い。
-export function repsPlan(ids: string[], obsOf: (id: string) => FlakeObs[], o: { normal: number; flakyReps: number; forced?: string[]; model?: string }): { reps: Record<string, number>; flaky: Array<{ id: string; why: string }> } {
+/** 11/04 竹内さんの決定（使い回せる物は使い回す）: 揺れの記録で回数を決める＝安定（独立に3回以上同じ答え）は1回・分からないは normal・揺れるは flakyReps */
+export function repsPlan(ids: string[], obsOf: (id: string) => FlakeObs[], o: { normal: number; flakyReps: number; forced?: string[]; model?: string; stableReps?: number }): { reps: Record<string, number>; flaky: Array<{ id: string; why: string }>; stable?: string[] } {
   const fr = Math.min(6, Math.max(3, o.flakyReps));
-  const reps: Record<string, number> = {}, flaky: Array<{ id: string; why: string }> = [];
+  const reps: Record<string, number> = {}, flaky: Array<{ id: string; why: string }> = [], stable: string[] = [];
   for (const id of ids) {
     if (o.forced?.includes(id)) { reps[id] = fr; flaky.push({ id, why: "依頼で名指し" }); continue; }
     const obs = obsOf(id);
     // 一番新しい観測の問題の版・モデルで見る（問題を直した前の観測は数えない）
     const last = [...obs].filter((x) => !x.legacy && (!o.model || x.model.includes(o.model))).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
     const v = last ? flakeVerdict(obs, { problemHash: last.problemHash, model: last.model }) : null;
-    if (v?.verdict === "flaky") { reps[id] = fr; flaky.push({ id, why: v.why }); } else reps[id] = o.normal;
+    if (v?.verdict === "flaky") { reps[id] = fr; flaky.push({ id, why: v.why }); }
+    else if (v?.verdict === "stable" && o.stableReps != null) { reps[id] = Math.max(1, o.stableReps); stable.push(id); }
+    else reps[id] = o.normal;
   }
-  return { reps, flaky };
+  return { reps, flaky, stable };
 }
 
 // ─── ④ 問題の選び（正解の組・場面の地図） ─────────────────────────────────────
