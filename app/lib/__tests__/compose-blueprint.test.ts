@@ -1,6 +1,6 @@
 // app/lib/__tests__/compose-blueprint.test.ts — 文の指示役（構成のブレイン）の純関数
 //   文例は竹内さんの型を作り物で写した物（実際の会話の文は入れない）
-import { composeBlueprintOn, purposeOfText, tagSentence, parseComposeIntent, fallbackIntent, buildBlueprint, checkBlueprint, blueprintNote, composeDigestLine, replyRequirements, composeIntentPrompt, type ComposeIntent } from "../compose-blueprint";
+import { composeBlueprintOn, purposeOfText, tagSentence, blueprintDeviations, parseComposeIntent, fallbackIntent, buildBlueprint, checkBlueprint, blueprintNote, composeDigestLine, replyRequirements, composeIntentPrompt, type ComposeIntent } from "../compose-blueprint";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean, info?: unknown) => { if (ok) pass++; else { fail++; console.log(`  NG ${n} → ${JSON.stringify(info)}`); } };
 
@@ -50,6 +50,9 @@ t("受けだけ＝中身の部品なし", ackBp.parts.every((p) => p.role !== "m
 // digest
 const line = composeDigestLine({ intent: it, blueprint: bp, writerGotNote: true, draft: "かしこまりました！！\n募集状況確認させて頂きます！！\n何卒よろしくお願い致します！！" });
 t("digest に届いたか・出た文の趣旨", /書き手に届いた=yes/.test(line) && /出た文の趣旨=promise（合う）/.test(line), line);
+t("外れなし", /設計図から外れ=なし/.test(line), line);
+const devs = blueprintDeviations("かしこまりました！！\nこちらのお部屋かなりオススメです！！\nお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！", bp);
+t("頼んでいない訴求・誘い・趣旨の外れを拾う", devs.includes("頼んでいない訴求") && devs.includes("頼んでいない誘い") && devs.some((d) => d.startsWith("趣旨=")), devs);
 t("意図なしの digest", /意図なし/.test(composeDigestLine({ intent: null, blueprint: null, writerGotNote: false })));
 
 console.log(`compose-blueprint: ${pass} pass / ${fail} fail`);

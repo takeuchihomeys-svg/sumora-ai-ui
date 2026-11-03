@@ -267,16 +267,37 @@ export function blueprintNote(bp: ComposeBlueprint): string {
   ].filter(Boolean).join("\n");
 }
 
-/** digest の1行（意図が設計に届いたか・設計が書き手に届いたか・出た文の趣旨が合うか） */
+/** 書き手が設計図から外れたか（決定論の札で見る・記録だけ。統括の決定は決め直さない＝外れは数えて場面ごとに毎晩見る）
+ *  2026-11-03 統括「書き手が設計図から外れたら digest に記録・外れが続く場面は毎晩数える」 */
+export function blueprintDeviations(draft: string, bp: Pick<ComposeBlueprint, "intent" | "parts">): string[] {
+  const out: string[] = [];
+  const p = purposeOfText(draft);
+  const tags = sentencesOf(draft).map(tagSentence);
+  const it = bp.intent;
+  if (p.purpose !== it.purpose && !(it.purpose === "ack" && p.purpose === "material")) out.push(`趣旨=${p.purpose}`);
+  if (it.purpose !== "appeal" && !it.adds.includes("appeal") && tags.includes("appeal")) out.push("頼んでいない訴求");
+  if (it.purpose === "ack" && tags.some((t) => t === "promise" || t === "info" || t === "appeal")) out.push("受けだけの番に中身");
+  const wantCta = bp.parts.some((x) => x.role === "cta");
+  const hasCta = tags.includes("cta_viewing") || tags.includes("cta_apply");
+  if (wantCta && !hasCta) out.push("誘いが無い");
+  if (!wantCta && hasCta) out.push("頼んでいない誘い");
+  const adds = tags.filter((t) => t === "support").length;
+  if (!it.adds.includes("support") && it.purpose !== "support" && adds > 0 && !bp.parts.some((x) => /サポート/.test(x.say))) out.push("頼んでいないサポート");
+  return out;
+}
+
+/** digest の1行（意図が設計に届いたか・設計が書き手に届いたか・出た文の趣旨が合うか・設計図から外れた所） */
 export function composeDigestLine(o: { intent: ComposeIntent | null; blueprint: ComposeBlueprint | null; writerGotNote: boolean; draft?: string | null }): string {
   if (!o.intent) return "compose: 意図なし（ブレインから届かない）";
   const out = o.draft ? purposeOfText(o.draft) : null;
+  const dev = o.draft && o.blueprint ? blueprintDeviations(o.draft, o.blueprint) : [];
   return [
     `compose: 趣旨=${o.intent.purpose}(${o.intent.source}/${o.intent.confidence})`,
     `主語=${o.intent.main.subject}`, `添え=${o.intent.adds.join("+") || "なし"}`, `締め=${o.intent.closing}`,
     `設計図=${o.blueprint ? "yes" : "no"}`, `書き手に届いた=${o.writerGotNote ? "yes" : "no"}`,
     o.blueprint && o.blueprint.check.issues.length ? `確かめ=${o.blueprint.check.issues.join("・")}` : "",
     out ? `出た文の趣旨=${out.purpose}${out.purpose === o.intent.purpose ? "（合う）" : "（ずれ）"}` : "",
+    dev.length ? `設計図から外れ=${dev.join("・")}` : (o.draft && o.blueprint ? "設計図から外れ=なし" : ""),
   ].filter(Boolean).join(" ");
 }
 

@@ -4995,6 +4995,17 @@ END;
 $$;
 REVOKE ALL ON FUNCTION match_takeuchi_compose(vector, TEXT, TEXT, INT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION match_takeuchi_compose(vector, TEXT, TEXT, INT, TEXT) TO service_role;
+-- 2026-11-03 作業員6 ④⑤＋データから要望の読み方: 竹内さんが表の質問に加えて答えた事・隠れた心配の候補の札・お客様の発言の型・後で分かった本当の要望
+--   どれも週1の夜の cron が決定論で埋める「候補」。ブレインに渡す時も候補と書き、決めるのはブレイン（P0）。当たりの低い札は渡さない
+ALTER TABLE takeuchi_compose_examples
+  ADD COLUMN IF NOT EXISTS read_beyond TEXT[] NOT NULL DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS hidden_worry TEXT[] NOT NULL DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS utter_type TEXT[] NOT NULL DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS true_want TEXT[] NOT NULL DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS true_want_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS takeuchi_compose_examples_worry_idx ON takeuchi_compose_examples USING gin (hidden_worry);
+CREATE INDEX IF NOT EXISTS takeuchi_compose_examples_utter_idx ON takeuchi_compose_examples USING gin (utter_type);
+REVOKE ALL ON takeuchi_compose_examples FROM anon, authenticated;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
