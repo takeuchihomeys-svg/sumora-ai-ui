@@ -73,6 +73,10 @@
       "schedule": "0 21 * * 0"
     },
     {
+      "path": "/api/cron/brain-manuals-weekly",
+      "schedule": "20 21 * * 0"
+    },
+    {
       "path": "/api/cron/pickup-auto-complete",
       "schedule": "*/2 * * * *"
     },
