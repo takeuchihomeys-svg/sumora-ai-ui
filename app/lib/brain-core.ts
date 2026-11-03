@@ -3075,6 +3075,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
         guarantorWordingOn() ? guarantorWordingLine(turnTxt) : "",
       ];
       decisions1103 = (["n15", "n17", "n19", "n21", "n20"] as const).filter((_, i) => !!dl[i]);
+      if (decisions1103.length) (await import("@/app/lib/aix-commander")).noteDecisions1103(conversationId, decisions1103); // 作業員1の AIX の統括（No.21 の相談のきっかけ）が受け取る
       if (decisions1103.length) { customerStateBlockText += "\n\n" + dl.filter(Boolean).join("\n"); console.log(JSON.stringify({ tag: "brain:decisions-1103", conversationId, hit: decisions1103 })); }
     } catch (e) { console.warn("[brain-core] decisions-1103 skipped:", e instanceof Error ? e.message : String(e)); }
   }
