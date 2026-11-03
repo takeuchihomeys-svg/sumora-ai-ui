@@ -131,9 +131,9 @@ import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 // 2026-10-21 つなぎのブレイン 段3 司令塔: 次の一手（スタッフしか分からない事は AIX）を1行（LINK_CONDUCTOR_BRAIN=on の時だけ・既定 off＝1文字も変わらない）
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
 import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmedAckMaterialLine } from "@/app/lib/viewing-confirmed-ack";
-import { nowFulfillableEnabled, nowFulfillableLine } from "@/app/lib/situation-summary";
+import { nowFulfillableEnabled, nowFulfillableLine, nowFulfillableOf } from "@/app/lib/situation-summary";
 import { brainLastTurnReviewOn, reviewLastTurn, lastTurnReviewLine, lastTurnReviewDigest, type StaffActAfter } from "@/app/lib/brain-last-turn-review";
-import { aixDeskCommandMode, actionOfKey, broughtThisTurnNames, aixDeskConsultMode, consultTriggers } from "@/app/lib/aix-commander";
+import { aixDeskCommandMode, actionOfKey, broughtThisTurnNames, aixDeskConsultMode, consultTriggers, deskFactConflict, recheckFromDesk, recheckFromConsult } from "@/app/lib/aix-commander";
 import { decideBrainDepth } from "@/app/lib/brain-depth";
 import { sentLedgerBindEnabled, explainedItemsOf, itemsFromLedger, bindReaction, bindMaterialLine } from "@/app/lib/sent-ledger-bind";
 import { vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled, vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
@@ -351,7 +351,9 @@ export type SuggestedAixMeta = {
   /** 2026-10-29 AIX の統括（AIX_DESK_COMMAND）の記録: 候補・選んだ鍵・同じ連投の別の要件・差し戻し・ブレインと違ったか（digest.ad） */
   /** 2026-11-03 逆向きの相談（AIX_DESK_CONSULT）: きっかけ・AIX の統括の答え（aix／promise／keep）・鍵（digest.ac）。on の時は読み直しの口（作業員2）に渡す */
   aix_consult?: { mode: string; why: string[]; answer: string; key: string | null; note: string; cands: string[]; skip?: string };
-  aix_desk?: { mode: string; brain: string | null; cands: string[]; pick: string | null; also: string[]; sb: string | null; why: string; changed: boolean; skip?: string; recheck?: boolean };
+  aix_desk?: { mode: string; brain: string | null; cands: string[]; pick: string | null; also: string[]; sb: string | null; why: string; changed: boolean; skip?: string; recheck?: boolean; cf?: string };
+  /** 2026-11-03 読み直しの口（作業員2 brain-recheck.ts）に渡す1つ（統括の差し戻し・事実の食い違い・相談の答え）。digest.rc に短い形 */
+  aix_recheck?: import("@/app/lib/brain-recheck").BrainRecheck | null;
   material_read_misses?: string[];     // 2026-10-29 DB から読めなかった材料の鍵（brain:material-miss と同じ・digest.mx・数えるため）
   /** 2026-11-03 前回の提案の振り返り（digest.rv）と今の段階（digest.sg＝次の番の「お客様は進んだか」に使う） */
   last_turn_review?: Record<string, unknown>;
@@ -5683,7 +5685,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         const run = await runAixCommander(client, { conversationId, brainAction: finalAix, brainCheckPattern: checkKind?.check_pattern || null, altActions: finalAlts ?? [], conversation: conv, situationLine: maskBrain(sit) });
         const pickBtn = run.pick ? actionOfKey(run.pick) : null;
         const changed = !!pickBtn && (pickBtn.action !== finalAix || (!!pickBtn.checkPattern && pickBtn.checkPattern !== (checkKind?.check_pattern || null)));
-        aixDesk = { mode: deskMode, brain: run.brainKey, cands: run.cands, pick: run.pick, also: run.also, sb: run.sendBack, why: run.why.slice(0, 120), changed, ...(run.skip ? { skip: run.skip } : {}) };
+        // 2026-11-03 竹内さん「統括に6つ足す」②: 下の役（AIX の統括）の答えを確かな事実と照らす。合わなければ差し戻し（読み直しの口・記録は digest.ad.cf）
+        const nfD = customerState ? nowFulfillableOf({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() }) : null;
+        const conflict = run.pick ? deskFactConflict(run.pick, { sentProperties: brainLedger.facts.propertiesSentCount ?? 0, needCheck: !!nfD?.needCheck.length || brought.length > 0, confirmed: !!nfD?.confirmed.length, viewingStage: brainLedger.facts.viewingFlow?.stage ?? null }) : null;
+        aixDesk = { mode: deskMode, brain: run.brainKey, cands: run.cands, pick: run.pick, also: run.also, sb: run.sendBack, why: run.why.slice(0, 120), changed, ...(conflict ? { cf: conflict } : {}), ...(run.skip ? { skip: run.skip } : {}) };
         if (deskMode === "on" && run.ran && (changed || run.also.length || run.sendBack)) aixDesk = { ...aixDesk, recheck: true };
         console.log(JSON.stringify({ tag: "brain:aix-desk", conversationId, brainAix: finalAix, ...aixDesk, ms: run.ms }));
       } catch (e) {
@@ -5755,6 +5760,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       alt_actions: finalAlts,
       aix_desk: aixDesk,
       aix_consult: aixConsult,
+      // 読み直しの口へ（呼ぶのは analyzeAndSaveBrainMeta の1回目の後・作業員2・1番につき1回）
+      aix_recheck: recheckFromDesk(aixDesk ? { ...aixDesk, conflict: aixDesk.cf ?? null } : null) ?? recheckFromConsult(aixConsult ?? null) ?? undefined,
       // Chrome拡張フィードバックループ: 検索フォーム自動入力用の構造化パラメータ（TODO(P2)対応）
       property_search_params: pc ? {
         area: pc.desired_area ?? null,

@@ -41,6 +41,8 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   if (meta.aix_desk && typeof meta.aix_desk === "object") (out as Record<string, unknown>).ad = meta.aix_desk as Record<string, unknown>;
   // 2026-11-03 逆向きの相談（相談した数・AIX と決めた割合・スタッフと合ったかを毎晩数える）
   if (meta.aix_consult && typeof meta.aix_consult === "object") (out as Record<string, unknown>).ac = meta.aix_consult as Record<string, unknown>;
+  // 読み直しの口に渡した物の短い形（"aix:鍵" / "promise" / "not_aix" / "reread" / "keep"）
+  { const rc = meta.aix_recheck as { kind?: string; key?: string | null } | null | undefined; const ans = (meta.aix_consult as { answer?: string } | undefined)?.answer; const v = rc && rc.kind ? (rc.kind === "aix" ? `aix:${rc.key ?? ""}` : rc.kind) : ans === "keep" ? "keep" : null; if (v) (out as Record<string, unknown>).rc = v; }
   // 2026-10-15 追加の調査（brain-deep-check）をかけた番だけ（2回目の呼び出しの割合・変わった率を数える）
   if (meta.deep_check && typeof meta.deep_check === "object") out.dc = meta.deep_check as Record<string, unknown>;
   // 2026-10-22 慣れた事は速く・難しい事はじっくり（BRAIN_FAST_SLOW=on の番だけ・難しさ・戻り道・2回目の割れを数える）

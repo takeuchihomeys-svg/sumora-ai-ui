@@ -9,6 +9,7 @@
 //   切替: AIX_DESK_COMMAND（既定 off・shadow＝比べて記録だけ・on＝記録＋ブレインと違う時は読み直しの口へ）。2026-11-03 竹内さん「統括を束ねる6つの型」: 答えは提案・黙って書き換えない
 import { buttonOfKey } from "./aix-catalog";
 import type { AixVerdict } from "./aix-desk-types";
+import type { BrainRecheck } from "./brain-recheck";
 
 type Env = Record<string, string | undefined>;
 export type AixDeskMode = "off" | "shadow" | "on";
@@ -175,4 +176,48 @@ export function parseConsultAnswer(raw: unknown, cands: readonly string[]): { an
   if (a === "promise") return { answer: "promise", key: null, why };
   if (cands.includes(a)) return { answer: "aix", key: a, why };
   return { answer: "keep", key: null, why };
+}
+
+// ─── 下の役の答えを事実と照らして疑う（2026-11-03 竹内さん「統括に6つ足す」②）・読み直しの口（作業員2 brain-recheck.ts）へ ─────────
+/** 確かな事実（brain-core が記録から作る・決まった計算） */
+export type DeskFacts = {
+  /** 送った物件の数（台帳） */ sentProperties: number;
+  /** 今の番の持ち込み・まだ確認が要る物件がある */ needCheck: boolean;
+  /** 募集中と確認済みの物件がある */ confirmed: boolean;
+  /** 内覧の段階（viewing-flow: none/wished/proposing/date_agreed/confirmed 等） */ viewingStage: string | null;
+};
+
+/** 統括の答え（鍵）が事実と合わない時の理由（合えば null） */
+export function deskFactConflict(key: string, f: DeskFacts): string | null {
+  const b = buttonOfKey(key);
+  if (b === "estimate_sheet" && f.sentProperties === 0 && !f.needCheck && !f.confirmed) return "見積書を選んだが、見積る物件（送った物件・持ち込み・確認済み）の記録が無い";
+  if (b === "meeting_place" && !/^(?:date_agreed|confirmed)$/.test(String(f.viewingStage ?? ""))) return "待ち合わせを選んだが、内覧の日が決まっていない（内覧の段階: " + (f.viewingStage ?? "なし") + "）";
+  if (b === "property_check_result" && /\/(?:available|unavailable|alternative|exclusive)$/.test(key) && !f.needCheck && !f.confirmed && f.sentProperties === 0) return "物件確認した を選んだが、確かめる物件（持ち込み・送った物件）の記録が無い";
+  return null;
+}
+
+/** 読み直しの口の形（作業員2の brain-recheck.ts の BrainRecheck） */
+export type RecheckLike = BrainRecheck;
+
+/** AIX の統括の記録（meta.aix_desk）→ 読み直しの口（ブレインと違う・差し戻し・事実と合わない時だけ） */
+export function recheckFromDesk(d: { pick: string | null; sb: string | null; changed: boolean; why: string; brain: string | null; conflict?: string | null } | null | undefined): RecheckLike | null {
+  if (!d) return null;
+  if (d.conflict) return { from: "aix_desk", kind: "reread", why: d.conflict, firstAix: d.brain };
+  if (d.sb === "promise" || d.sb === "not_aix") return { from: "aix_desk", kind: d.sb, why: d.why, firstAix: d.brain };
+  if (d.changed && d.pick) return { from: "aix_desk", kind: "aix", key: d.pick, why: d.why, firstAix: d.brain };
+  return null;
+}
+
+/** 逆向きの相談の記録（meta.aix_consult）→ 読み直しの口（keep は読み直さない） */
+export function recheckFromConsult(c: { answer: string; key: string | null; note: string } | null | undefined): RecheckLike | null {
+  if (!c || c.answer === "keep") return null;
+  if (c.answer === "aix" && c.key) return { from: "aix_consult", kind: "aix", key: c.key, why: c.note, firstAix: null };
+  if (c.answer === "promise") return { from: "aix_consult", kind: "promise", why: c.note, firstAix: null };
+  return null;
+}
+
+/** digest.rc の短い形（"aix:物件確認した の鍵" / "promise" / "keep" / "not_aix" / "reread"） */
+export function recheckDigest(r: RecheckLike | null, consultAnswer?: string | null): string | null {
+  if (r) return r.kind === "aix" ? `aix:${r.key ?? ""}` : String(r.kind);
+  return consultAnswer === "keep" ? "keep" : null;
 }
