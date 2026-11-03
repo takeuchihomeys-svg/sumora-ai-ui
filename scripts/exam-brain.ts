@@ -958,6 +958,13 @@ async function runQueueItems(due: ReturnType<typeof readQueue>) {
     // 2026-10-17 確かめる人: 予約した作業ツリーが消えていると spawn が error で落ち、後ろの予約も流れない＝飛ばす
     //   10/23 査読: 黙って消していた（cwd の区切りが抜けた手書きの予約もここで消えた）→ 大きく知らせて残す（直せば次の回に流れる）
     if (!existsSync(cwd)) { log(`  ⚠⚠ 予約した作業ツリーが無い（${cwd}）→ 流さず残す（${x.file}）${cwdLooksStripped(cwd) ? "。cwd の区切り（\\）が抜けている＝手書きの JSON。enqueue（JSON.stringify・path.resolve）で書き直す" : "。作業ツリーを戻すか予約を消す"}`); continue; }
+    // 2026-11-04 指揮役（根の直し①）: 作り置きの全問は一番後ろ。試験の統括の列に1本でも試験があれば始めない・夜（JST 22〜9）だけ（予約は残して次の回に）
+    if (whole && !flag("force")) {
+      const ps = await import("./lib/exam-pc-state");
+      const waiting = ps.conductorExamWaiting();
+      if (waiting.length) { log(`  作り置きの全問は後回し: 試験の統括の列に ${waiting.length}本（${waiting.slice(0, 3).join("・")}）→ ${x.label} は残して次の回に`); continue; }
+      if (!ps.wholeWarmHourOk()) { log(`  作り置きの全問は夜（JST 22〜9）だけ → ${x.label} は残して次の回に`); continue; }
+    }
     // 2026-11-03 夜 指揮役: 作り置き・比べも試験の統括と同じ門（安い時間・本数・空きメモリ・tsc）を通る。開かなければ残して次の回に（--force で門を外す）
     if (!flag("force") && !(await (await import("./lib/exam-pc-state")).waitExamGate({ log }))) { log(`  門が開かない（${Number(process.env.EXAM_GATE_WAIT_MIN ?? "60")}分）→ ${x.label} は残して次の回に`); break; }
     dequeue(x.file);
