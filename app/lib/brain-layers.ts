@@ -133,6 +133,8 @@ export type FreshDigest = {
   nd?: string; pa?: string; cf?: string;
   /** 2026-11-03 3段の奥の心配（先頭20字）／一番の要点／流れの合図 */
   tl?: string; mp?: string; fs?: string;
+  /** 2026-11-03 この番に呼ぶ役の候補（ad,cp,wr,ck,fe,dp,s2・conductor-handoff.ts） */
+  rl?: string;
   /** 2026-10-13: LLM が出した current_property（ゲートの前） */
   lp?: string | null;
   /** 2026-10-13: 生の本質の道の数（reconcile の前・llm_raw.tc）。tc は規則の後の値 */
@@ -175,6 +177,7 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...((() => { const nd = needDigest(meta.need as BrainNeed | null | undefined); return nd ? { nd } : {}; })()),
     ...((() => { const pa = planAheadDigest(meta.plan_ahead as PlanAhead | null | undefined); return pa ? { pa } : {}; })()),
     ...((() => { const tl = threeLayerDigest(meta.three_layer as ThreeLayer | null | undefined); return tl ? { tl } : {}; })()),
+    ...(str(meta.conductor_roles, 30) ? { rl: str(meta.conductor_roles, 30)! } : {}),
     ...(str(meta.main_point, 30) ? { mp: str(meta.main_point, 30)! } : {}),
     ...(Array.isArray(meta.flow_signals) && (meta.flow_signals as unknown[]).length ? { fs: (meta.flow_signals as unknown[]).map(String).join(",").slice(0, 40) } : {}),
     ...(Array.isArray(meta.material_conflicts) && (meta.material_conflicts as unknown[]).length ? { cf: (meta.material_conflicts as unknown[]).map(String).join(",").slice(0, 20) } : {}),

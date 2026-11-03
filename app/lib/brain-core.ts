@@ -17,6 +17,7 @@ import { dPlanOn, parseNeedMaterials, recalledBlock, coreOverTwoStage, pickedCom
 import { messagePlanOn, BRAIN_MESSAGE_PLAN_RULES, BRAIN_MESSAGE_PLAN_FIELD, normalizeMessagePlan, alignPlanWithPriorities } from "@/app/lib/message-plan";
 import { needReportOn, planAheadOn, materialProvenanceOn, BRAIN_NEED_RULES, BRAIN_NEED_FIELD, BRAIN_PLAN_AHEAD_RULES, BRAIN_PLAN_AHEAD_FIELD, MATERIAL_PROVENANCE_RULE, normalizeNeed, normalizePlanAhead, prevPlanAheadLine, detectMaterialConflicts, type PlanAhead, type MaterialConflicts, threeLayerOn, mainPointOn, BRAIN_THREE_LAYER_RULES, BRAIN_THREE_LAYER_FIELD, BRAIN_MAIN_POINT_RULES, BRAIN_MAIN_POINT_FIELD, normalizeThreeLayer, normalizeMainPoint } from "@/app/lib/brain-need";
 import { flowSignalsOn, detectFlowSignals, flowSignalsLine, type FlowSignals } from "@/app/lib/flow-signals";
+import { conductorHandoffOn, candidateRoles, rolesDigest } from "@/app/lib/conductor-handoff";
 import { recheckMaterialLine, type BrainRecheck } from "@/app/lib/brain-recheck";
 import { priorityStepOn, priorityRetrievalOn, BRAIN_PRIORITY_RULES, BRAIN_PRIORITIES_FIELD, normalizePriorities, ensureAsksCovered, reconcilePrioritiesWithAix, priorityRecord, renderPulledBlock, type PriorityStepRecord } from "@/app/lib/brain-priority";
 import { logWatchMaterial, noteWatchMaterials } from "@/app/lib/line-watch-materials-server";
@@ -213,6 +214,8 @@ const BRAIN_MATERIAL_PROVENANCE_ON = materialProvenanceOn();
 const BRAIN_THREE_LAYER_ON = threeLayerOn();
 const BRAIN_MAIN_POINT_ON = mainPointOn();
 const BRAIN_FLOW_SIGNALS_ON = flowSignalsOn();
+// 2026-11-03 統括の6つの型・① 番ごとに呼ぶ役の候補（conductor-handoff.ts・CONDUCTOR_HANDOFF=on・既定 off・記録だけ）
+const CONDUCTOR_HANDOFF_ON = conductorHandoffOn();
 import { absolutizeRelativeDays } from "@/app/lib/relative-date";
 // 2026-09-12 同 段2: 場面の証拠（決定論）とスタッフが押した AIX の実績（brain_aix_feedback）をブレインの入力にする
 import {
@@ -408,6 +411,8 @@ export type SuggestedAixMeta = {
   three_layer?: import("@/app/lib/brain-need").ThreeLayer;
   main_point?: string;
   flow_signals?: string[];
+  /** 2026-11-03 この番に呼ぶ役の候補（網・記録だけ）→ digest.rl */
+  conductor_roles?: string;
   /** 同じ段の記録（数・抜けを足した数・AIX とのそろえ・取り寄せた材料）→ digest.pr */
   priority_step?: import("@/app/lib/brain-priority").PriorityStepRecord;
   /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
@@ -5718,6 +5723,7 @@ ${history}`;
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,
       main_point: BRAIN_MAIN_POINT_ON ? (normalizeMainPoint((parsed as { main_point?: unknown }).main_point, rentFirst.applied ? rentFirst.keyTopics : keyTopics) ?? undefined) : undefined,
       flow_signals: flowSignalsRec?.kinds.length ? [...flowSignalsRec.kinds] : undefined,
+      conductor_roles: CONDUCTOR_HANDOFF_ON ? ((nd) => rolesDigest(candidateRoles({ ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""), stampOnly: /^\s*\[(?:スタンプ|画像)\]\s*$/.test(unrepliedTurn.text ?? ""), finalAction: finalAix ?? "reply", confidence: nd?.confidence ?? null, difficulty: nd?.difficulty ?? null, missing: nd?.missing ?? [] })))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
       priority_step: priorityRec,
       // 2026-10-08 本質の仕様（turn-contract.ts）: 今の番の依頼ごとの答え方（返信／約束／AIX／触れない）・閉じる番か・言わない事・気持ち。返信の最上位の決まりになる
       // 10/09 調査の担当: 決定論の規則で finalAix を変えた時は本質も合わせる（AIX が外れて2段の約束になった項目は promise に・食い違いは記録）
