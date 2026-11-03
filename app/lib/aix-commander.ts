@@ -6,7 +6,7 @@
 //   答え: 選んだ鍵（ブレインと違えば AIX の統括の判断）／also（同じ連投に別の要件もある＝1通に詰めず順に出す・feedback_promise_order_split）／
 //         差し戻し（promise＝結果が無く約束で受ける番・reply＝AIX の番ではない）は書き換えず LINE の統括の読み直しへ渡すだけ（作業員2）。
 //   試し（scripts/aix-desk-eval.ts --compare・30日の外れ134＋当たり60）: ブレインが AIX の番で 外れ +11（②種類違い 29→10直る）・当たり −5（43中）。
-//   切替: AIX_DESK_COMMAND（既定 off・shadow＝比べて記録だけ・on＝選んだ鍵に替える）
+//   切替: AIX_DESK_COMMAND（既定 off・shadow＝比べて記録だけ・on＝記録＋ブレインと違う時は読み直しの口へ）。2026-11-03 竹内さん「統括を束ねる6つの型」: 答えは提案・黙って書き換えない
 import { buttonOfKey } from "./aix-catalog";
 import type { AixVerdict } from "./aix-desk-types";
 
@@ -19,7 +19,7 @@ export function aixDeskCommandMode(env: Env = typeof process !== "undefined" ? p
 
 /** 取り違えやすい組（②の実データ）: 片方が候補にあれば相手も比べる */
 export const AIX_PAIRS: Readonly<Record<string, readonly string[]>> = {
-  property_check_result: ["estimate_sheet", "acknowledge_check"], estimate_sheet: ["property_check_result"], acknowledge_check: ["property_check_result"],
+  property_check_result: ["estimate_sheet", "acknowledge_check"], estimate_sheet: ["property_check_result", "cost_explain", "cost_breakdown"], cost_explain: ["estimate_sheet", "cost_breakdown"], cost_breakdown: ["estimate_sheet", "cost_explain"], acknowledge_check: ["property_check_result"],
   property_recommendation: ["property_send"], property_send: ["property_recommendation"],
   viewing_invite: ["meeting_place"], meeting_place: ["viewing_invite"],
   guarantor_info: ["phone_call"], zenryoku_support: ["property_send", "property_recommendation"],
@@ -32,6 +32,8 @@ export const AIX_PAIR_AXES: readonly string[] = [
   "・内覧調整 ↔ 待ち合わせ: お客様が候補から日と時刻を決めた・了承した（「〇日〇時でお願いします」）は待ち合わせ。日時なしの内覧の希望・空きを聞く・日だけで時刻なしは内覧調整。",
   "・確認した（条件・交渉）↔ 物件確認した: 物件を特定する物（URL・画像・物件名＋募集の問い）は物件確認した。礼金・家賃・設備など条件の交渉・確認は確認した。",
   "・保証会社・審査の相談（夜職・無職・ブラック・滞納など本人の事情）は電話も候補（文で言い切らない）。",
+  "・内覧は段階どおり（竹内さんの決定）: 内覧調整（候補日を出す）→ 日にち決定 → 待ち合わせ＝確定。別の質問への答えでは段階を進めない。退去予定（入居中）の部屋は先に内覧開始日の確認。",
+  "・見積書送る ↔ 初期費用を説明 ↔ 初期費用について（竹内さんの決定）: 物件の初期費用の金額は見積書送る。安さを不審に思われた・安い理由を聞かれたら初期費用を説明（仕組み）。初期費用の中身（家賃だけで入れるか・何が含まれるか）の質問は初期費用について（御見積書を貼って会話を合わせる）。",
   "・全力サポートはお客様の返信の後・送った物件が刺さらず送れる物件が無い時だけ。持ち込みの物件や新着がある時は物件の AIX。",
 ];
 

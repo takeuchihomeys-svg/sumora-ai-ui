@@ -351,7 +351,7 @@ export type SuggestedAixMeta = {
   /** 2026-10-29 AIX の統括（AIX_DESK_COMMAND）の記録: 候補・選んだ鍵・同じ連投の別の要件・差し戻し・ブレインと違ったか（digest.ad） */
   /** 2026-11-03 逆向きの相談（AIX_DESK_CONSULT）: きっかけ・AIX の統括の答え（aix／promise／keep）・鍵（digest.ac）。on の時は読み直しの口（作業員2）に渡す */
   aix_consult?: { mode: string; why: string[]; answer: string; key: string | null; note: string; cands: string[]; skip?: string };
-  aix_desk?: { mode: string; brain: string | null; cands: string[]; pick: string | null; also: string[]; sb: string | null; why: string; changed: boolean; skip?: string };
+  aix_desk?: { mode: string; brain: string | null; cands: string[]; pick: string | null; also: string[]; sb: string | null; why: string; changed: boolean; skip?: string; recheck?: boolean };
   material_read_misses?: string[];     // 2026-10-29 DB から読めなかった材料の鍵（brain:material-miss と同じ・digest.mx・数えるため）
   /** 2026-11-03 前回の提案の振り返り（digest.rv）と今の段階（digest.sg＝次の番の「お客様は進んだか」に使う） */
   last_turn_review?: Record<string, unknown>;
@@ -5669,7 +5669,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
     //   既定 off／shadow＝記録だけ／on＝選んだ鍵に替える。差し戻し（promise・reply）は書き換えず記録だけ（LINE の統括の読み直しは作業員2の入口）。
     //   同じ連投の別の要件（also）は2つ目の AIX に並べる（1通に詰めない）。別の LLM の呼び出し＝ブレインのプロンプトとキャッシュは変えない
     let aixDesk: NonNullable<SuggestedAixMeta>["aix_desk"] | undefined;
-    let deskOverride: { action: string; checkPattern: string | null; also: string[] } | null = null;
+    // 2026-11-03 竹内さんの決定（統括を束ねる6つの型・2「1つの正」）: AIX の統括の答えは提案。LINE の統括の決定を黙って書き換えない。
+    //   on でも書き換えず、ブレインと違う答え（changed・also・差し戻し）を recheck に載せる＝読み直しの口（作業員2）が1回だけ決め直す
     const deskMode = aixDeskCommandMode();
     if (deskMode !== "off" && replyMode === "aix" && finalAix && !isPostApplyStatus(convStatus) && conversationId) {
       try {
@@ -5683,7 +5684,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         const pickBtn = run.pick ? actionOfKey(run.pick) : null;
         const changed = !!pickBtn && (pickBtn.action !== finalAix || (!!pickBtn.checkPattern && pickBtn.checkPattern !== (checkKind?.check_pattern || null)));
         aixDesk = { mode: deskMode, brain: run.brainKey, cands: run.cands, pick: run.pick, also: run.also, sb: run.sendBack, why: run.why.slice(0, 120), changed, ...(run.skip ? { skip: run.skip } : {}) };
-        if (deskMode === "on" && run.ran && (changed || run.also.length)) deskOverride = { action: pickBtn?.action ?? finalAix, checkPattern: pickBtn ? pickBtn.checkPattern : (checkKind?.check_pattern || null), also: run.also.map((k) => actionOfKey(k).action) };
+        if (deskMode === "on" && run.ran && (changed || run.also.length || run.sendBack)) aixDesk = { ...aixDesk, recheck: true };
         console.log(JSON.stringify({ tag: "brain:aix-desk", conversationId, brainAix: finalAix, ...aixDesk, ms: run.ms }));
       } catch (e) {
         console.warn(JSON.stringify({ tag: "brain:aix-desk", conversationId, error: (e instanceof Error ? e.message : String(e)).slice(0, 160) }));
@@ -5714,11 +5715,11 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       } catch (e) { console.warn(JSON.stringify({ tag: "brain:aix-consult", conversationId, error: (e instanceof Error ? e.message : String(e)).slice(0, 160) })); }
     }
     return {
-      action: deskOverride?.action ?? finalAix ?? "",
+      action: finalAix ?? "",
       parallel_search: parallelOut.parallel,
       note: splitTurn ? `${staffNote}${searchSplitNote({ brainAction: finalAix ?? null, altActions: finalAlts })}${exhaustedNote === SEARCH_SPLIT_EXHAUSTED_NOTE && zenryokuShown({ brainAction: finalAix ?? null, altActions: finalAlts }) ? exhaustedNote : ""}` : `${searchChoice.added ? `${staffNote}${SEARCH_RESULT_CHOICE_NOTE}` : staffNote}${exhaustedNote}`,
       // 2026-09-27: 持ち込み物件の募集状況が先（availabilityFirstKind）は check_pattern が空＝結果はスタッフが選ぶ → null で残す
-      check_pattern: deskOverride ? deskOverride.checkPattern : checkKind?.check_pattern || null,
+      check_pattern: checkKind?.check_pattern || null,
       source,
       enforcement_level: enforcementLevel,
       closing_strategy: parsed.closing_strategy || undefined,
@@ -5751,7 +5752,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（画面のブレインのカードに並べて出す）。連絡待ちの時は物件ピックアップ＋物件オススメ
       // 2026-09-17 慶次事例: 探し続ける約束の後も同じ2つ（物件ピックアップ＋物件オススメ）を並べる
       // 2026-09-26 段3: 並行で探す時は物件ピックアップも並べる（parallelOut に畳んだ）
-      alt_actions: deskOverride ? [...new Set([...deskOverride.also, ...(finalAlts ?? [])].filter((a) => a !== deskOverride!.action))] : finalAlts,
+      alt_actions: finalAlts,
       aix_desk: aixDesk,
       aix_consult: aixConsult,
       // Chrome拡張フィードバックループ: 検索フォーム自動入力用の構造化パラメータ（TODO(P2)対応）
