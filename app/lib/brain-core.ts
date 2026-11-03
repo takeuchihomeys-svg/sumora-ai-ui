@@ -132,6 +132,7 @@ import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
 import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmedAckMaterialLine } from "@/app/lib/viewing-confirmed-ack";
 import { nowFulfillableEnabled, nowFulfillableLine } from "@/app/lib/situation-summary";
+import { brainLastTurnReviewOn, reviewLastTurn, lastTurnReviewLine, lastTurnReviewDigest, type StaffActAfter } from "@/app/lib/brain-last-turn-review";
 import { aixDeskCommandMode, actionOfKey, broughtThisTurnNames } from "@/app/lib/aix-commander";
 import { decideBrainDepth } from "@/app/lib/brain-depth";
 import { sentLedgerBindEnabled, explainedItemsOf, itemsFromLedger, bindReaction, bindMaterialLine } from "@/app/lib/sent-ledger-bind";
@@ -350,6 +351,9 @@ export type SuggestedAixMeta = {
   /** 2026-10-29 AIX の統括（AIX_DESK_COMMAND）の記録: 候補・選んだ鍵・同じ連投の別の要件・差し戻し・ブレインと違ったか（digest.ad） */
   aix_desk?: { mode: string; brain: string | null; cands: string[]; pick: string | null; also: string[]; sb: string | null; why: string; changed: boolean; skip?: string };
   material_read_misses?: string[];     // 2026-10-29 DB から読めなかった材料の鍵（brain:material-miss と同じ・digest.mx・数えるため）
+  /** 2026-11-03 前回の提案の振り返り（digest.rv）と今の段階（digest.sg＝次の番の「お客様は進んだか」に使う） */
+  last_turn_review?: Record<string, unknown>;
+  customer_stage_now?: string;
   material_missing?: string[];         // 2026-10-29 ブレインの自己申告「判断に要ったのに材料に無かった物」（記録だけ・digest.mm）
   two_choice_reply_kind?: string;      // 2026-10-28 その場の側の2択: 右の返信の約束の種類（check/estimate/pickup）
   two_choice_reply_hint?: string;      // 同: 右の返信を押した時に generate-reply に渡す指定
@@ -2721,6 +2725,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   //   毎回変わる値なので customerSpecificText（キャッシュしない所）にだけ入る（system の前置きは変えない）
   const customerStateRes = await customerStatePromise;
   const customerState = customerStateRes.state;
+  /** 2026-11-03 前回の提案の振り返り（BRAIN_LAST_TURN_REVIEW）。digest.rv に残す */
+  let lastTurnReview: import("@/app/lib/brain-last-turn-review").LastTurnReview | null = null;
   // 2026-10-28 読めなかった材料（error のある読み・今の状況）。ログは off でも出す（数えるため）・ブレインへの1行は on の時だけ
   const materialMisses = [
     ...(customerStateRes.failed ? ["customer_state"] : []),
@@ -2974,6 +2980,33 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       ].filter(Boolean);
       if (lines.length) customerStateBlockText += `\n\n${lines.join("\n")}`;
     } catch (e) { console.warn("[brain-core] week-scene materials skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  // 2026-11-03 竹内さんの決定（ブレインに4つ足す ②⑤・brain-last-turn-review.ts・BRAIN_LAST_TURN_REVIEW 既定 off）: 前回の判断の記録とその後のスタッフの一手から、
+  //   「前回の提案は当たったか／スタッフは何を選んだか（竹内さんか）・お客様は進んだか」を1行で渡す（違った事実として・正解扱いにしない）。読みは前回の判断1行＋書き手の数行だけ
+  if (brainLastTurnReviewOn() && typedMessages[0]?.sender === "customer" && conversationId && !isPostApplyStatus(convStatus)) {
+    try {
+      // 前回の番の判断＝こちらの最後の送信より前の一番新しい判断（今の番の読み直しの行は数えない）
+      const lastStaffAt = typedMessages.find((m) => m.sender !== "customer")?.created_at ?? null;
+      const { data: prevRow } = lastStaffAt ? await supabase.from("brain_decision_logs").select("created_at, suggested_action, suggested_reply_mode, digest").eq("conversation_id", conversationId).lt("created_at", lastStaffAt).order("created_at", { ascending: false }).limit(1).maybeSingle() : { data: null };
+      const pr = prevRow as { created_at: string; suggested_action: string | null; suggested_reply_mode: string | null; digest: { sg?: string | null } | null } | null;
+      if (pr) {
+        const after = (at: string) => Date.parse(at) > Date.parse(pr.created_at);
+        const aixAfter = aixLogs.filter((l) => l.aix_type && after(l.sent_at ?? l.created_at));
+        const lmIds = aixAfter.map((l) => l.line_message_id).filter((x): x is string => !!x).slice(0, 10);
+        const staffTexts = [...typedMessages].reverse().filter((m) => m.sender !== "customer" && !m.is_aix_generated && after(m.created_at) && (m.text ?? "").trim() && !/^\s*\[(?:画像|動画|スタンプ|ファイル)\]/.test(m.text ?? ""));
+        const wIds = [...lmIds, ...staffTexts.map((m) => m.line_message_id).filter((x): x is string => !!x).slice(0, 5)];
+        const writerOf = new Map<string, string | null>();
+        if (wIds.length) { const { data: wr } = await supabase.from("messages").select("line_message_id, staff_writer").in("line_message_id", wIds); for (const w of (wr ?? []) as Array<{ line_message_id: string; staff_writer: string | null }>) writerOf.set(w.line_message_id, w.staff_writer); }
+        const acts: StaffActAfter[] = [
+          ...aixAfter.map((l) => ({ at: l.sent_at ?? l.created_at, kind: "aix" as const, aixType: l.aix_type, writer: l.line_message_id ? writerOf.get(l.line_message_id) ?? null : null })),
+          ...staffTexts.map((m) => ({ at: m.created_at, kind: "text" as const, aixType: null, writer: m.line_message_id ? writerOf.get(m.line_message_id) ?? null : null })),
+        ];
+        lastTurnReview = reviewLastTurn({ prev: { at: pr.created_at, action: pr.suggested_action, replyMode: pr.suggested_reply_mode, stage: pr.digest?.sg ?? null }, actsAfter: acts, stageNow: customerState?.stage ?? null });
+        const line = lastTurnReviewLine(lastTurnReview, (k) => AIX_BUTTON_LABELS[k] ?? k);
+        if (line) customerStateBlockText += `\n\n${line}`;
+        console.log(JSON.stringify({ tag: "brain:last-turn-review", conversationId, ...(lastTurnReviewDigest(lastTurnReview) ?? {}) }));
+      }
+    } catch (e) { console.warn("[brain-core] last-turn-review skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-29 統括の②状況のまとめ「今すぐ果たせる物」（situation-summary.ts・SITUATION_NOW_FULFILLABLE=on・既定 off）: 記録から1行。どう返すかはブレイン
   if (nowFulfillableEnabled() && customerState && !isPostApplyStatus(convStatus)) {
@@ -5679,6 +5712,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-10-28 約束の側から出した2択は action が空＝画面の左のボタンはこの AIX（aix-button-view が cardMeta に写す）
       two_choice_aix: promiseOrNow && !finalAix ? promiseOrNow.aix : undefined,
       two_choice_check_pattern: promiseOrNow && !finalAix ? promiseOrNow.checkPattern ?? undefined : undefined,
+      last_turn_review: lastTurnReviewDigest(lastTurnReview) ?? undefined,
+      customer_stage_now: customerState?.stage ?? undefined,
       // 2026-10-29 材料の自己申告（記録だけ）・読めなかった材料（ログだけだったのを digest にも残す＝毎週数える）
       material_read_misses: materialMisses.length ? [...new Set(materialMisses)] : undefined,
       material_missing: brainMaterialSelfReportOn() ? normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? undefined : undefined,

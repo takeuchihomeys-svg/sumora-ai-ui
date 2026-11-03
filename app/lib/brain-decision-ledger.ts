@@ -29,6 +29,9 @@ export function brainDecisionLedgerCols(meta: Record<string, unknown>, turnText:
 /** digest に足す短い項目（無い物は入れない） */
 export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): { tc?: boolean; pp?: boolean; cp?: string; cs?: string; st?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown>; mm?: string[]; mx?: string[] } {
   const out: { tc?: boolean; pp?: boolean; cp?: string; cs?: string; st?: string; dc?: Record<string, unknown>; fs?: Record<string, unknown>; pr?: Record<string, unknown>; mm?: string[]; mx?: string[] } = {};
+  // 2026-11-03 前回の提案の振り返り（rv）と今の段階（sg・次の番が「進んだか」を見る）
+  if (meta.last_turn_review && typeof meta.last_turn_review === "object") (out as Record<string, unknown>).rv = meta.last_turn_review;
+  if (typeof meta.customer_stage_now === "string" && meta.customer_stage_now) (out as Record<string, unknown>).sg = meta.customer_stage_now;
   if (Array.isArray(meta.material_read_misses) && meta.material_read_misses.length) out.mx = (meta.material_read_misses as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 10);
   // 2026-10-29 材料の自己申告（判断に要ったのに無かった物・記録だけ）。[] も「足りていた」として残す（申告の割合を数える）
   if (Array.isArray(meta.material_missing)) out.mm = (meta.material_missing as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5);

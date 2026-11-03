@@ -137,6 +137,20 @@ async function fetchRows(filter: (q: any) => any): Promise<Row[]> {
   }
   console.log("");
   for (const l of renderMaterialGapChapter(tallyMaterialGaps(dRows, nowMs))) console.log(l);
+  // 2026-11-03 章: 前回の提案の振り返り（digest.rv・BRAIN_LAST_TURN_REVIEW の番だけ）: 当たり・違い・竹内さんの番・お客様は進んだか
+  {
+    const rvs = dRows.filter((r) => Date.parse(r.created_at) > nowMs - 7 * DAY).map((r) => (r.digest as { rv?: { m?: string; w?: string | null; g?: string } } | null)?.rv).filter((x): x is { m?: string; w?: string | null; g?: string } => !!x);
+    const c = (f: (x: { m?: string; w?: string | null; g?: string }) => boolean) => rvs.filter(f).length;
+    console.log("");
+    console.log("## 前回の提案の振り返り（直近7日・ブレインの振り返りがあった番）");
+    if (!rvs.length) console.log("- なし（BRAIN_LAST_TURN_REVIEW が off か、まだ番が無い）");
+    else {
+      const done = c((x) => x.m !== "none");
+      console.log(`- 振り返った番 ${rvs.length}・スタッフが動いた番 ${done}・当たり ${c((x) => x.m === "same" || x.m === "reply_ok")}（${pct(c((x) => x.m === "same" || x.m === "reply_ok"), done)}）・違い ${c((x) => x.m === "diff")}`);
+      console.log(`- 竹内さんの番: 当たり ${c((x) => x.w === "takeuchi" && (x.m === "same" || x.m === "reply_ok"))}・違い ${c((x) => x.w === "takeuchi" && x.m === "diff")}`);
+      console.log(`- お客様は進んだ ${c((x) => x.g === "forward")}・同じ ${c((x) => x.g === "same")}・戻った ${c((x) => x.g === "back")}・分からない ${c((x) => x.g === "unknown")}`);
+    }
+  }
   // 2026-10-29 章: 知識の弱さ（作業員5の拾い出し）
   // 作業員5の knowledge-gap-weekly.ts の出力（GapChapter）なら gapChapterMarkdown・古い形（KnowledgeGapRow の配列）なら旧の書き方
   let kRaw: unknown = null;
