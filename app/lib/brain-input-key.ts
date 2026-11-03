@@ -67,10 +67,14 @@ const jstDay = (ms: number) => Math.floor((ms + JST_MS) / 86_400_000);
 export function decideInputKeyReuse(i: InputKeyReuseInput): { reuse: boolean; reason: string } {
   const env = i.env ?? (typeof process !== "undefined" ? process.env : {});
   if ((env.BRAIN_INPUT_KEY_REUSE ?? "").trim().toLowerCase() === "off") return { reuse: false, reason: "switch_off" };
-  if (i.forced) return { reuse: false, reason: "forced" };
+  // 2026-11-03 作業員2 BRAIN_INPUT_KEY_STRICT（既定 off）: 同じ番の読み直し（14日で170回・下書き・受信・sweep の41回中38回は結果が同じ）を、鍵だけで決める。
+  //   鍵は最後のお客様の通・こちらの送信・AIX の押下の時刻＋今の番の文の指紋（画像の読み取りで文が変わると指紋も変わる）＝「強制」（送った後・合流のやり直し）でも
+  //   材料が同じなら前の判断を使う。前の判断が使い回し（cached）でも同じ鍵なら使う。aix_patch（AIX の押下で書き換えた判断）は使わない
+  const strict = (env.BRAIN_INPUT_KEY_STRICT ?? "").trim().toLowerCase() === "on";
+  if (i.forced && !strict) return { reuse: false, reason: "forced" };
   if (!i.prevKey) return { reuse: false, reason: "no_prev_key" };
   if (i.prevKey !== i.key) return { reuse: false, reason: "key_changed" };
-  if (i.prevSource === "cached" || i.prevSource === "aix_patch") return { reuse: false, reason: "prev_not_reusable" };
+  if ((i.prevSource === "cached" && !strict) || i.prevSource === "aix_patch") return { reuse: false, reason: "prev_not_reusable" };
   const at = i.prevAnalyzedAt ? Date.parse(i.prevAnalyzedAt) : NaN;
   if (!Number.isFinite(at)) return { reuse: false, reason: "no_prev_time" };
   const elapsed = i.nowMs - at;

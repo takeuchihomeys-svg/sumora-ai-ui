@@ -34,6 +34,8 @@ export type BrainStrategy = {
   /** 何回目の戦略か（3回に1回はゼロから作り直す＝前回の判断に引きずられない） */
   strategy_count?: number;
   source?: "combined" | "consolidated" | "scratch" | "seed_last_meta";
+  /** 2026-10-29 作り直しのきっかけ（shift:〜／msgs:N／hours:N・記録だけ） */
+  strategy_reason?: string | null;
 };
 
 /** 戦略の層が持つ項目（今回の発言の層はこれを出力しない） */

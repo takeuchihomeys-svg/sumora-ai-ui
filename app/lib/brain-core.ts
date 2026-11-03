@@ -6079,6 +6079,8 @@ export async function runStrategyRefresh(conversationId: string, kind: "consolid
     } else {
       next = await consolidateStrategy(conversationId, conv as Record<string, unknown>, prev, nowIso);
     }
+    // 2026-10-29 作り直しのきっかけを戦略の記録に残す（記録だけ・shift／msgs／hours の数えに使う・brain_strategy は jsonb＝列は足さない）
+    if (next) next = { ...next, strategy_reason: reason };
     const saved = next ? await saveBrainStrategy(conversationId, next, { patchMeta: true }) : false;
     console.log(JSON.stringify({ tag: "brain:strategy", conversationId, kind, reason, saved, count: next?.strategy_count ?? null, ms: Date.now() - t0 }));
     return saved ? next : null;
