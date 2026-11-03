@@ -18,7 +18,7 @@ import { messagePlanOn, BRAIN_MESSAGE_PLAN_RULES, BRAIN_MESSAGE_PLAN_FIELD, norm
 import { needReportOn, needReportMode, BRAIN_NEED_RULES_AFTER, planAheadOn, materialProvenanceOn, BRAIN_NEED_RULES, BRAIN_NEED_FIELD, BRAIN_PLAN_AHEAD_RULES, BRAIN_PLAN_AHEAD_FIELD, MATERIAL_PROVENANCE_RULE, normalizeNeed, normalizePlanAhead, prevPlanAheadLine, detectMaterialConflicts, type PlanAhead, type MaterialConflicts, threeLayerOn, mainPointOn, threeLayerMode, mainPointMode, BRAIN_THREE_LAYER_RULES_AFTER, BRAIN_MAIN_POINT_RULES_AFTER, BRAIN_THREE_LAYER_RULES, BRAIN_THREE_LAYER_FIELD, BRAIN_MAIN_POINT_RULES, BRAIN_MAIN_POINT_FIELD, normalizeThreeLayer, normalizeMainPoint } from "@/app/lib/brain-need";
 import { flowSignalsOn, detectFlowSignals, flowSignalsLine, type FlowSignals } from "@/app/lib/flow-signals";
 import { conductorHandoffOn, candidateRoles, rolesDigest } from "@/app/lib/conductor-handoff";
-import { conductorMetaMode, buildConductorMeta, withMaterials, carryQueryLine, materialFor } from "@/app/lib/conductor-meta";
+import { conductorMetaMode, buildConductorMeta, withMaterials, withSearchPlan, carryQueryLine, materialFor } from "@/app/lib/conductor-meta";
 import { conductorIntakeMode } from "@/app/lib/conductor-intake";
 import { factLedgerMode, buildFactLedger, factLedgerBlock } from "@/app/lib/customer-fact-ledger";
 import { closedThanksNoReplyOn, layoutAskTemporaryOn, farOtherFirstOn, ackPositiveApplyOn, closedThanksLine, layoutAskLine, farOtherFirstLine, ackPositiveApplyLine, guarantorWordingOn, guarantorWordingLine } from "@/app/lib/decisions-1103";
@@ -5882,13 +5882,13 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       flow_signals: flowSignalsRec?.kinds.length ? [...flowSignalsRec.kinds] : undefined,
       // 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（"n21"＝お礼の番で申込への AIX を候補にした・作業員1の AIX の統括が読む）
       decisions_1103: decisions1103.length ? decisions1103 : undefined,
-      conductor_meta: CONDUCTOR_META_MODE !== "off" ? ((nd) => withMaterials(buildConductorMeta({
+      conductor_meta: CONDUCTOR_META_MODE !== "off" ? ((nd) => withSearchPlan(withMaterials(buildConductorMeta({
         scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, stage: customerState?.stage ?? null,
         turnAt: typedMessages[0]?.sender === "customer" ? typedMessages[0].created_at : null,
         roles: candidateRoles({ ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""), finalAction: finalAix ?? "reply", confidence: nd?.confidence ?? null, difficulty: nd?.difficulty ?? null, missing: nd?.missing ?? [] }),
         need: nd?.missing ?? [], prevMeta: (opts?.prevMeta ?? null) as unknown as Record<string, unknown> | null,
         openPromises: brainLedger.entries.filter((e) => e.status === "promised" && e.fulfilledBy == null).map((e) => String(e.kind)).slice(0, 3),
-      }), factsForConductor))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
+      }), factsForConductor), ["judge_examples", "knowledge"]))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
       // 2026-11-04 入口の最初の読みの記録（shadow・最大4秒だけ待つ）→ digest.ci
       conductor_intake: intakeP ? ((await Promise.race([intakeP, new Promise<null>((r) => setTimeout(() => r(null), 4_000))])) ?? undefined) : undefined,
       conductor_roles: CONDUCTOR_HANDOFF_ON ? ((nd) => rolesDigest(candidateRoles({ ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""), stampOnly: /^\s*\[(?:スタンプ|画像)\]\s*$/.test(unrepliedTurn.text ?? ""), finalAction: finalAix ?? "reply", confidence: nd?.confidence ?? null, difficulty: nd?.difficulty ?? null, missing: nd?.missing ?? [] })))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,

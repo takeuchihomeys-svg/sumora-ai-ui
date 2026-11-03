@@ -44,6 +44,8 @@ export type ConductorMeta = {
   source: "rule";
   /** 2026-11-04 ② 材料の1か所の配り口: 担当ごとに配る事実の数（記録だけ・事実の帳面から materialFor で） */
   materials?: Partial<Record<ConductorRole, number>>;
+  /** 2026-11-04 ⑤ 統括と連携した検索の記録（shadow）: 判断のブレインが今引いている倉庫と、統括メタの計画とのずれ */
+  search?: { plan: MetaStore[]; extra: MetaStore[]; missing: MetaStore[] };
 };
 
 const LIGHT_SCENES: ReadonlySet<ReplyScene> = new Set(["ack"]);
@@ -118,10 +120,17 @@ export function withMaterials<F extends { kind: string }>(m: ConductorMeta, fact
   return facts.length ? { ...m, materials: materialsByRole(m.roles, facts) } : m;
 }
 
+/** 2026-11-04 ⑤ 判断のブレインの検索の計画と、今の引き口（判断の手本・ナレッジを毎回引く）とのずれを足す（記録だけ） */
+export function withSearchPlan(m: ConductorMeta, usedByBrain: ReadonlyArray<MetaStore>): ConductorMeta {
+  const plan = m.stores.line ?? [];
+  return { ...m, search: { plan, extra: usedByBrain.filter((s) => !plan.includes(s)), missing: plan.filter((s) => !usedByBrain.includes(s)) } };
+}
+
 /** digest.cm（短い形）: "場面|担当|倉庫の数|自信" */
 export function conductorMetaDigest(m: ConductorMeta | null | undefined): string | null {
   if (!m) return null;
   const roleShort: Record<string, string> = { line: "ln", aix_desk: "ad", compose: "cp", writer: "wr", check: "ck", fetch: "fe", deep: "dp", second: "s2" };
   const storesN = Object.values(m.stores).reduce((a, s) => a + (s?.length ?? 0), 0);
-  return `${m.scene}|${m.roles.map((r) => roleShort[r] ?? r).join(",")}|st${storesN}|${m.confidence[0]}`;
+  const sx = m.search && (m.search.extra.length || m.search.missing.length) ? `|sx:+${m.search.extra.length}-${m.search.missing.length}` : "";
+  return `${m.scene}|${m.roles.map((r) => roleShort[r] ?? r).join(",")}|st${storesN}|${m.confidence[0]}${sx}`;
 }
