@@ -25,7 +25,7 @@
 //   流す:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --run [--once] [--release-order=<md>]
 //   見る:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --list
 import { spawn, execFileSync } from "node:child_process";
-import { rmdirSync, unlinkSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, openSync, closeSync } from "node:fs";
+import { rmdirSync, unlinkSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, openSync, closeSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
@@ -338,12 +338,20 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     if (j.runner === "cmd") {
       log(`流す: ${j.label}（${j.owner}・${j.switch}・${j.cmds!.length}本・${j.cwd}）`);
       const codes: Array<number | null> = [];
+      // 2026-11-04 作業員6: 組の中の1本でも空きメモリで断られたら（試験は流れていない）「済み」にせず待ちに戻す（11/03 22:27Z の grp-aix-first が断られたまま済みになった）
+      let refused: string | null = null;
       for (const c of j.cmds!) {
-        if (stopped) break;
+        if (stopped || refused) break;
         appendFileSync(outFile, `\n=== ${at()} npx tsx --env-file=.env.local ${c} ===\n`);
+        const before = statSync(outFile).size;
         const r = runTsx(j.cwd, c.match(/"[^"]*"|\S+/g)!.map((x) => x.replace(/^"|"$/g, "")), j.env, outFile); cur = r.child;
         codes.push(await r.done);
+        const tail = readFileSync(outFile).subarray(before).toString("utf8");
+        const m = tail.match(/空きメモリ\s*\d+MB\s*<\s*\d+MB（--force で流す）/);
+        if (m) refused = m[0];
       }
+      // 断られた時は10分後から（同じ空きメモリですぐ取り直して断られ続けないように）
+      if (refused && !stopped) { requeueJob({ ...j, notBefore: new Date(Date.now() + 10 * 60_000).toISOString() }); log(`  断られた（${refused}）→ 済みにせず順番待ちに戻した（${j.label}・10分後から）`); return; }
       if (stopped) { requeueJob(j); log(`  順番待ちに戻した（${j.label}・片付けは依頼者の手順で）`); return; }
       const s = summarize(readFileSync(outFile, "utf8"));
       const verdict = codes.every((c) => c === 0) ? "流し終えた（採点は依頼者）" : `失敗あり（終わりの番号 ${codes.join(",")}）`;
