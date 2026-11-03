@@ -218,9 +218,14 @@ function estimateFromSent(s: string): { property_name: string; room_number: stri
 
   // ── aix-template-generate の番（物件オススメ・文字だけの経路）──
   let nTpl = 0;
+  // 2026-11-03 作業員6（統括「1通目の✨の問題をボタンごとに1〜2問」・AIX_FIRST_BLUEPRINT の比べ）: --tpl-actions=property_send,property_check_result,… で
+  //   物件オススメ以外のボタンの✨（aix-template-generate・1通目の扱い＝sentMessage を渡さない）も、ボタンごとに --tpl-per 問ずつ拾う
+  const TPL_ACTIONS = new Set(arg("tpl-actions", "property_recommendation").split(",").map((s) => s.trim()).filter(Boolean));
+  const TPL_PER = Number(arg("tpl-per", String(PER)));
+  const nTplBy: Record<string, number> = {};
   for (const g of [...gens].reverse()) {
-    if (nTpl >= PER) break;
-    if (g.action_type !== "property_recommendation" || g.status !== "used" || (g.conditions_snapshot?.source ?? "") !== "aix-template-generate") continue;
+    if (nTpl >= PER * Math.max(1, TPL_ACTIONS.size)) break;
+    if (!TPL_ACTIONS.has(g.action_type) || (nTplBy[g.action_type] ?? 0) >= TPL_PER || g.status !== "used" || (g.conditions_snapshot?.source ?? "") !== "aix-template-generate") continue;
     if (isTestConversation(g.conversation_id)) continue;
     const gt = ms(g.generated_at);
     if (appliedAt.has(g.conversation_id) && appliedAt.get(g.conversation_id)! <= gt) continue;
@@ -233,9 +238,9 @@ function estimateFromSent(s: string): { property_name: string; room_number: stri
     const ctx = await contextBefore(g.conversation_id, gt, [conv?.customer_name ?? "", ...staffCallNames(all)]);
     if (!ctx) { bump("rec-template", "書類・個人の値"); continue; }
     const cs = g.conditions_snapshot ?? {};
-    const body = { actionType: "property_recommendation", actionCategory: String(cs.action_category ?? "物件オススメ【AIX】"), conversationId: "YUMA", customerName: "YUMA", conversationState: String(cs.conversation_state ?? "proposing"), recentMessages: ctx.recent, ...(cs.pickup_type ? { pickupType: String(cs.pickup_type) } : {}) };
-    cases.push({ id: `rec-template:${g.generated_at.slice(0, 16)}`, action: "property_recommendation", route: "aix-template-generate", src: `${g.conversation_id.slice(0, 8)}@${g.generated_at}`, at: g.generated_at, body, sent: ctx.mask(best.m.text ?? ""), genThen: ctx.mask(g.generated_text ?? ""), inputText: ctx.recent.map((m) => m.text).join("\n") });
-    nTpl++; bump("rec-template", "採用");
+    const body = { actionType: g.action_type, actionCategory: String(cs.action_category ?? (g.action_type === "property_recommendation" ? "物件オススメ【AIX】" : g.action_type)), conversationId: "YUMA", customerName: "YUMA", conversationState: String(cs.conversation_state ?? "proposing"), recentMessages: ctx.recent, ...(cs.pickup_type ? { pickupType: String(cs.pickup_type) } : {}) };
+    cases.push({ id: `${g.action_type === "property_recommendation" ? "rec" : g.action_type}-template:${g.generated_at.slice(0, 16)}`, action: g.action_type, route: "aix-template-generate", src: `${g.conversation_id.slice(0, 8)}@${g.generated_at}`, at: g.generated_at, body, sent: ctx.mask(best.m.text ?? ""), genThen: ctx.mask(g.generated_text ?? ""), inputText: ctx.recent.map((m) => m.text).join("\n") });
+    nTpl++; nTplBy[g.action_type] = (nTplBy[g.action_type] ?? 0) + 1; bump("rec-template", "採用");
   }
 
   writeFileSync(OUT, JSON.stringify({ since: SINCE, made: new Date().toISOString(), cases }, null, 1));

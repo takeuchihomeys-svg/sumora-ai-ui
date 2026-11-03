@@ -38,7 +38,7 @@ function toQuestion(c: RawCase, from: "first" | "second"): AixQuestion | null {
   let type: string, kind: AixTextKind;
   if (from === "second") { type = c.action.startsWith("estimate") ? "estimate_sheet" : "property_recommendation"; kind = "second"; }
   else if (c.id.startsWith("rec-vision")) return null; // 画像を読む経路（DeepSeek は文字だけ）
-  else if (c.route === "aix-template-generate") { type = "property_recommendation"; kind = "tpl"; }
+  else if (c.route === "aix-template-generate") { type = c.action || "property_recommendation"; kind = "tpl"; }
   else { type = c.action; kind = "aix"; }
   const q: Omit<AixQuestion, "hash"> = { id: `${type}:${kind}:${c.src.replace(/[^0-9a-f]/gi, "").slice(0, 8) || c.id.slice(-8)}`, aixType: type, button: BUTTON_JA[type] ?? type, picker: pickerOf(c, type, kind), kind, route: c.route, body: c.body, gold: c.sent, inputText: c.inputText, at: c.at, src: c.src };
   return { ...q, hash: questionHash(q) };

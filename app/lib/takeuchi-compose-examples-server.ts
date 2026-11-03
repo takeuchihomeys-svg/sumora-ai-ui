@@ -19,11 +19,11 @@ import { purposeOfText, composeExampleWeight, composeEmbedInput, sentencesOf, ta
 import { DOC_CANDIDATE_OR } from "./second-takeuchi-data-server";
 import { readBeyondOf, worryCandidatesOf, utterTypesOf } from "./reading-tags";
 import { embedTexts } from "./design-knowledge-rag-server";
-import { customerNameTokens, maskCustomerNames } from "./compose-name-mask";
+import { customerNameTokens, maskCustomerNames, staffHeadNames } from "./compose-name-mask";
 
 /** 伏せの版（2026-11-03 夜の直し）。この日時より前に作った行は、cron が先に元の送信から作り直す（問いの値なしで直る） */
-export const COMPOSE_MASK_VER = "20261103b";
-export const COMPOSE_MASK_VER_AT = "2026-11-03T14:30:00Z";
+export const COMPOSE_MASK_VER = "20261104a";
+export const COMPOSE_MASK_VER_AT = "2026-11-03T16:00:00Z";   // 版の日時は push より前（11/03 の 14:30Z は push の後だった）
 
 function serviceClient(): SupabaseClient | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -144,7 +144,8 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
       const applied14d = ds.some((d) => d.applied != null && d.applied > at && d.applied <= at + 14 * 86400_000);
       // 伏せ（2026-11-03 直し: その会話のお客様の名前＝表示名・呼び名とその姓・名だけ → YUMA。文の途中の「〇〇さん」を正規表現で置き換えない＝compose-name-mask.ts）＋maskPII・URL・電話
       const mask = (t: string) => {
-        const r = maskCustomerNames(String(t ?? ""), names.get(m.conversation_id) ?? []);
+        // 20261104a: 表示名・呼び名に、こちらの文の頭の「〇〇さん」（この通と前3日のこちらの通）を足す
+        const r = maskCustomerNames(String(t ?? ""), customerNameTokens([...(names.get(m.conversation_id) ?? []), ...staffHeadNames([text, ...pv.filter((x) => x.sender === "staff").map((x) => x.text)])]));
         return maskPII(r).replace(/https?:\/\/\S+/g, "〈URL〉").replace(/0\d{1,3}-?\d{2,4}-?\d{3,4}/g, "〈電話〉");
       };
       const body = cut(mask(text), 400);
