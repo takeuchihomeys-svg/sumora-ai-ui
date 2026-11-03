@@ -327,6 +327,7 @@ import { isAckOnlyTurn } from "@/app/lib/draft-repeat";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { priorityStepOn, normalizePriorities } from "@/app/lib/brain-priority";
 import { messagePlanOn, normalizeMessagePlan, alignPlanWithPriorities, planHasNextBusinessDay, type MessagePlan } from "@/app/lib/message-plan";
+import { composeBlueprintOn, composeDigestLine } from "@/app/lib/compose-blueprint";
 import { relativeDatesWriterNote } from "@/app/lib/relative-dates"; // 2026-10-23 送った日と今日の距離（BRAIN_RELATIVE_DATES・既定 off）
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, turnNeedsSupport, SUPPORT_CLOSER_LINE, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
@@ -4418,6 +4419,18 @@ async function handleGenerateReply(req: NextRequest) {
     if (ackFollowForm) console.info("[ack-form-follow]", JSON.stringify({ conversationId, ackForm: ackFollowForm }));
     if (turnContract) console.info("[turn-contract]", JSON.stringify({ source: turnContract.source, asks: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, said: turnContract.alreadySaid.length, settled: turnContract.settled.length, confirm: `${confirmCtxWord.allowed}->${confirmCtx.allowed}` }));
     console.info("[confirmCtx]", JSON.stringify({ allowed: confirmCtx.allowed, source: confirmCtx.source, object: confirmCtx.object, moveOutSubject }));
+    // 2026-11-03 作業員6 文の指示役（構成のブレイン・BRAIN_COMPOSE_BLUEPRINT=on・既定 off）: 統括の決定（priorities・plan）を受けて、
+    //   趣旨・主語・メインの1文・添え・締めを決め、文の設計図を書き手に渡す（app/lib/compose-blueprint.ts）。失敗しても返信は止めない
+    const composeRun = composeBlueprintOn() && turnContract && !isFollowUp && !isTemplateOptimize && !postApplyConversation
+      ? await import("@/app/lib/compose-blueprint-server").then(async (m) => m.runComposeBlueprint({
+          conversationId: conversationId ?? null, customerText: customerMsgUnits.join("\n") || (message ?? ""),
+          scene: resolveReplyScene({ customerText: message ?? "" }).scene,
+          requirements: m.requirementsFromContract({ priorities: turnContract.priorities ?? null, plan: turnContract.messagePlan ?? null }),
+          planMessages: turnContract.messagePlan?.messages.length,
+          situation: String((brainMeta as { reply_direction?: string | null } | null)?.reply_direction ?? "") || null,
+        })).catch((e) => { console.warn(JSON.stringify({ tag: "compose:failed", error: e instanceof Error ? e.message : String(e) })); return null; })
+      : null;
+    if (composeRun) console.info("[compose]", JSON.stringify({ purpose: composeRun.intent.purpose, source: composeRun.intent.source, issues: composeRun.blueprint.check.issues, rag: composeRun.ragIds.length, ms: composeRun.ms }));
 
     // ── 条件提示判定（2026-09-08 監査改修）──
     // ①エリア語彙拡張＋ひらがな接頭の誤検出排除 ②家賃以外の金額（初期費用/礼金/年収等）をマスク
@@ -5526,6 +5539,7 @@ async function handleGenerateReply(req: NextRequest) {
       // 2026-10-08 この番の本質（turn-contract）を一番上に。本質がブレインの判断の時は、下の方向性は「形」（開口語・字数・締め）だけ（Q1・本質を勝たせる）
       const tcNote = renderTurnContractNote(turnContract);
       if (tcNote) lines.push(tcNote);
+      if (composeRun?.note) lines.push(composeRun.note.trim());
       const tcBrain = turnContract?.source === "brain";
       // 2026-10-09 調査の担当: effectiveReplyDirection はブレインの方向が14番目（早い者勝ちの型が先）。本質がある時はブレインの方向（中身）を型より上に置き、どちらが使われたかを記録する
       const brainDirTop = tcBrain && brainFreshForMessage && !isCachedMeta ? brainDirForGen(brainMeta?.reply_direction) : null;
@@ -7539,6 +7553,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const aixC = classifyAixContent(finalDraftText, groundForFacts).filter((h) => !h.grounded).map((h) => h.catalogKey);
                 Object.assign(finalCheck.tpo_debug, {
                   turnContract: turnContract ? { source: turnContract.source, routes: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, misses: tcMiss } : null,
+                  ...(composeRun ? { compose: composeDigestLine({ intent: composeRun.intent, blueprint: composeRun.blueprint, writerGotNote: !!composeRun.note, draft: finalDraftText }) } : {}),
                   aixContent: aixC.slice(0, 6),
                 });
               } catch { /* 印だけ */ }
