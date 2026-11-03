@@ -5006,6 +5006,18 @@ ALTER TABLE takeuchi_compose_examples
 CREATE INDEX IF NOT EXISTS takeuchi_compose_examples_worry_idx ON takeuchi_compose_examples USING gin (hidden_worry);
 CREATE INDEX IF NOT EXISTS takeuchi_compose_examples_utter_idx ON takeuchi_compose_examples USING gin (utter_type);
 REVOKE ALL ON takeuchi_compose_examples FROM anon, authenticated;
+-- 2026-11-03 作業員6 竹内さんの文の解剖（場面・趣旨・一番の要点・奥の心配への答え・部品の順・なぜこの順か・省いた事）。
+--   夜の cron が場面×趣旨で偏りなく約200通を選び（anatomy_pick）、伏せ済みの body・customer_gist だけを DeepSeek で下読み（名札 reply_anatomy・alt-pii-gate）。
+--   決定論の札と食い違った所は anatomy_conflicts（見直しの対象）。forward_score は2つ目の物差し（お客様が前に進んだか）の土台
+ALTER TABLE takeuchi_compose_examples
+  ADD COLUMN IF NOT EXISTS anatomy JSONB,
+  ADD COLUMN IF NOT EXISTS anatomy_model TEXT,
+  ADD COLUMN IF NOT EXISTS anatomy_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS anatomy_conflicts TEXT[] NOT NULL DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS anatomy_pick BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS forward_score REAL;
+CREATE INDEX IF NOT EXISTS takeuchi_compose_examples_pick_idx ON takeuchi_compose_examples (anatomy_pick) WHERE anatomy_pick;
+REVOKE ALL ON takeuchi_compose_examples FROM anon, authenticated;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

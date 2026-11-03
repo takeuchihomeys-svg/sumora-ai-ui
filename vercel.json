@@ -69,6 +69,10 @@
       "schedule": "40 20 * * 0"
     },
     {
+      "path": "/api/cron/takeuchi-anatomy",
+      "schedule": "0 21 * * 0"
+    },
+    {
       "path": "/api/cron/pickup-auto-complete",
       "schedule": "*/2 * * * *"
     },
