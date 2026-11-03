@@ -11,7 +11,8 @@
 // 実行: LLM_TEST_MODE=deepseek-all npx tsx --env-file=.env.local scripts/aix-why-anatomy.ts [--n=150] [--per-key=6] [--days=180] [--max-usd=2] [--out=<dir>]
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { catalogKeyOfPress, buttonOfKey, topicKey } from "../app/lib/aix-catalog";
+import { catalogKeyOfPress, buttonOfKey, topicKey, AIX_CATALOG } from "../app/lib/aix-catalog";
+import { BRAIN_AIX_LABELS } from "../app/lib/aix-button-view";
 import { AIX_COMMANDER_SYSTEM, AIX_PAIRS, commanderUserText, parseCommanderAnswer } from "../app/lib/aix-commander";
 import { cutBeforeApplicationMaterial, piiValueSignal, applicationMaterialReason } from "../app/lib/test-pii-guard";
 import { isTestConversation } from "../app/lib/test-conversations";
@@ -24,12 +25,23 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
 const N = Number(arg("n", "150")); const PER_KEY = Number(arg("per-key", "6")); const DAYS = Number(arg("days", "180")); const MAX_USD = Number(arg("max-usd", "2"));
 const OUT = arg("out", join(examCacheRoot(), "aix-why"));
 
+/** 11/03 夜 指揮役: 押した鍵の名前と使う場面（札が無い鍵も・下読みが cost_explain を「見積書送る」と読んだ＝名前を渡していなかった） */
+function pressedLabel(key: string): string {
+  const c = cardsForLabel[key];
+  if (c?.button) return `${c.button}${c.picker ? ` → ${c.picker}` : ""}`;
+  const b = buttonOfKey(key), e = AIX_CATALOG.find((x) => x.key === key) ?? AIX_CATALOG.find((x) => buttonOfKey(x.key) === b);
+  return `${(BRAIN_AIX_LABELS as Record<string, string>)[b] ?? b}${e?.when ? `・使う場面: ${e.when}` : ""}`;
+}
+let cardsForLabel: Record<string, { button?: string; picker?: string | null }> = {};
 type Usage = { conversation_id: string; aix_type: string | null; check_pattern: string | null; send_mode: string | null; app_sub_mode: string | null; picker_choices: unknown; generated_text: string | null; line_message_id: string | null; created_at: string; sent_at: string | null };
 
 const ANATOMY_SYS = [
   "あなたは大阪の賃貸仲介（スモラ）の社長・竹内さんの AIX（スタッフが確かめた事・資料を送る道具）の選び方を読み解く係です。",
   "竹内さんがこの番で押したボタン×ピッカーについて、会話・状況のまとめ・担当の札だけを根拠に、なぜそれを選んだかを読み解きます。推測で事実を足さない（根拠の無い所は「分からない」）。",
+  "会話の各行の頭に時刻があります。AIX は、直前のお客様の発言への答えとは限りません（前の質問への答え・スタッフが送り続けていた続き）。まず、どの発言への答えかを決めてから読み解きます。",
+  "返信でなく AIX の理由（why_aix）は、担当の札の「送る中身（スタッフだけが知る事）」に書いてある物だけから書く。札に無い理由（「竹内さんだけでは送れない」等）を作らない。札に無ければ「札に無い」と書く。",
   "出力は JSON だけ: {",
+  '  "answered": "答えた発言（会話の行の時刻 HH:MM）か staff_continuation（スタッフが送り続けていた続き・お客様の発言への答えではない）",',
   '  "scene": "場面（一言）",',
   '  "known": ["その時に分かっていた事（台帳・会話から）"], "unknown": ["分かっていなかった事（スタッフが確かめて初めて分かる事）"],',
   '  "why_this": "なぜこのボタン×ピッカーか（1〜2文）",',
@@ -45,6 +57,7 @@ const ANATOMY_SYS = [
   const h = await setupLlmTest("aix-why-anatomy");
   try {
     const cards: Record<string, AixDeskCard> = (JSON.parse(readFileSync(join(examCacheRoot(), "aix-desk", "cards.json"), "utf8")) as { cards: Record<string, AixDeskCard> }).cards;
+    cardsForLabel = cards as unknown as Record<string, { button?: string; picker?: string | null }>;
     // ① 竹内さんの AIX の送信（ボタン×ピッカーごとに新しい順に PER_KEY 件まで）
     const since = new Date(Date.now() - DAYS * 86_400_000).toISOString();
     const usages: Usage[] = [];
@@ -81,7 +94,15 @@ const ANATOMY_SYS = [
       if (cut.cutAt != null && cut.kept.length < msgs.length) return { key, at, skipped: "申込の書類より後" };
       const names = addressNamesOf(msgs.filter((m) => m.sender !== "customer").map((m) => m.text ?? ""));
       const lastStaff = msgs.map((m) => m.sender !== "customer").lastIndexOf(true);
-      const lines = msgs.map((m, i) => `${m.sender === "customer" && i > lastStaff ? "★" : ""}${m.sender === "customer" ? "お客様" : "こちら"}: ${maskForLlm(m.text ?? "", names).replace(/\s+/g, " ").slice(0, 220)}`);
+      // 11/03 夜 指揮役 (a)(b): 時刻を付ける（#4＝スタッフの続き・#7＝40分前の質問への答えを、直前の発言に結び付けていた）
+      const hm = (iso: string) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(11, 16);
+      const lines = msgs.map((m, i) => `[${hm(m.created_at)}] ${m.sender === "customer" && i > lastStaff ? "★" : ""}${m.sender === "customer" ? "お客様" : "こちら"}: ${maskForLlm(m.text ?? "", names).replace(/\s+/g, " ").slice(0, 220)}`);
+      const lastCust = [...msgs].reverse().find((m) => m.sender === "customer");
+      const prevStaff = lastCust ? [...msgs].reverse().find((m) => m.sender !== "customer" && Date.parse(m.created_at) < Date.parse(lastCust.created_at)) : undefined;
+      const atMs = Date.parse(at);
+      const bindNote = !lastCust ? "" : (atMs - Date.parse(lastCust.created_at) <= 120_000 && prevStaff && Date.parse(lastCust.created_at) - Date.parse(prevStaff.created_at) <= 5 * 60_000)
+        ? "（注: AIX はお客様の直前の発言の2分以内で、その前の5分以内にスタッフが送り続けていた＝スタッフの続きの可能性が高い）"
+        : (atMs - Date.parse(lastCust.created_at) >= 30 * 60_000 ? "（注: 直前のお客様の発言から30分以上たっている＝前の発言への答えの可能性）" : "");
       if (lines.some((l) => applicationMaterialReason(l) || piiValueSignal(l))) return { key, at, skipped: "個人の値" };
       const turnText = msgs.filter((m, i) => m.sender === "customer" && i > lastStaff).map((m) => m.text ?? "").join("\n");
       const sit = maskForLlm(await situationText(u.conversation_id, at, null, turnText), names);
@@ -89,7 +110,7 @@ const ANATOMY_SYS = [
       const pairs = (AIX_PAIRS[buttonOfKey(key)] ?? []).map((b) => Object.keys(cards).find((k) => buttonOfKey(k) === b)).filter((x): x is string => !!x);
       const cands = [key, ...pairs].filter((k) => !!cards[k]);
       // ② 読み解き（竹内さんが押した鍵を伝えて「なぜ」を読む）
-      const anatomy = await deepseekJson(ANATOMY_SYS, `${sit}\n\n【会話（★が今の番のお客様の発言）】\n${conv}\n\n【竹内さんが押した AIX】${key}（${cards[key]?.button ?? ""}${cards[key]?.picker ? ` → ${cards[key]!.picker}` : ""}）\n\n【担当の札】\n${cands.map((k) => cards[k]?.text ?? "").join("\n\n")}`, 900);
+      const anatomy = await deepseekJson(ANATOMY_SYS, `${sit}\n\n【会話（★が今の番のお客様の発言）】\n${conv}\n\n【竹内さんが押した AIX】[${hm(at)}] ${key}（${pressedLabel(key)}）${bindNote}\n\n【担当の札】\n${cands.map((k) => cards[k]?.text ?? "").join("\n\n")}`, 900);
       // ③ 統括の札で選ばせる（答えを伏せて）＝竹内さんと同じか
       const shuffled = [...cands].sort();
       const c = await deepseekJson(AIX_COMMANDER_SYSTEM, commanderUserText({ situationLine: sit.replace(/^【状況のまとめ（この番の時点の記録だけ）】/, ""), conversation: conv, cards: shuffled.map((k) => ({ key: k, text: cards[k]?.text ?? "" })) }));
@@ -117,7 +138,7 @@ const ANATOMY_SYS = [
       "## 竹内さんに見てもらう10件（札が竹内さんと違った番・札の薄い鍵を先に）", "",
       ...review.flatMap((r, i) => [
         `### ${i + 1}. ${r.key}（${cards[r.key]?.button ?? ""}${cards[r.key]?.picker ? ` → ${cards[r.key]!.picker}` : ""}）・${r.at.slice(0, 10)}・札の答え ${r.deskPick ?? "なし"}${r.deskSame ? "（同じ）" : "（違う）"}`,
-        `- 場面: ${String(r.anatomy?.scene ?? "")}`,
+        `- 場面: ${String(r.anatomy?.scene ?? "")}${r.anatomy?.answered ? `（答えた発言: ${String(r.anatomy.answered)}）` : ""}`,
         `- なぜこの AIX か: ${String(r.anatomy?.why_this ?? "")}`,
         `- 選ばなかった候補: ${(Array.isArray(r.anatomy?.why_not) ? (r.anatomy!.why_not as Array<{ key?: string; why?: string }>) : []).map((w) => `${w.key}＝${w.why}`).join("／") || "なし"}`,
         `- 返信でなく AIX の理由: ${String(r.anatomy?.why_aix ?? "")}`,

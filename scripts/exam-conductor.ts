@@ -30,6 +30,7 @@ import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { readObs } from "./lib/exam-flake";
+import { pcState } from "./lib/exam-pc-state";
 import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
@@ -59,13 +60,6 @@ export type ExamJob = {
 };
 
 // ─── 関所 ───────────────────────────────────────────────────────────────
-function pcState(): { free: number; exams: number; tsc: boolean } {
-  try {
-    const ps = `$os=Get-CimInstance Win32_OperatingSystem; $n=@(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'tsx.dist.cli\\.mjs' -and $_.CommandLine -match '(brain-exam|exam-aix-text)\\.ts' }).Count; $t=@(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'tsc' }).Count; Write-Output ("" + [int]($os.FreePhysicalMemory/1024) + " " + $n + " " + $t)`;
-    const out = execFileSync("powershell.exe", ["-NoProfile", "-Command", ps], { encoding: "utf8", timeout: 60_000 }).trim().split(/\s+/);
-    return { free: Number(out[0]), exams: Number(out[1]), tsc: Number(out[2]) > 0 || existsSync(join(process.env.TEMP ?? "", "tsc.lock")) };
-  } catch { return { free: 0, exams: 99, tsc: true }; }
-}
 /** 本番の調子: 直近10分の LLM の失敗（テストの行は除く）と cron の失敗。数えるだけ（行は読まない） */
 async function prodHealthy(): Promise<{ ok: boolean; why: string }> {
   const since = new Date(Date.now() - 10 * 60_000).toISOString();

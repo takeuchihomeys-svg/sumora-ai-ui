@@ -7,7 +7,7 @@
 //   伏せ: 呼び名・URL・電話・号室・【物件名】・個人の値（text-mask-names・aix-meaning-learn.maskExemplar・example-pii-guard.sanitizeExampleText）。テストの会話の文は使わない。
 //   呼ぶ所: 週1の cron（/api/cron/aix-desk-cards・サーバーの鍵）と scripts/build-aix-desk-cards.ts（手元の写し・試し用）。札の本文は git に入れない（表だけ）。
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { AIX_CATALOG, catalogKeyOfPress, MAIN_PICKER_FIELD } from "./aix-catalog";
+import { AIX_CATALOG, catalogKeyOfPress, MAIN_PICKER_FIELD, buttonOfKey as buttonOfKeyLocal } from "./aix-catalog";
 import { AIX_PICKERS } from "./aix-pickers";
 import { AIX_LEARNED } from "./aix-catalog-learned";
 import { maskExemplar, misPressOf } from "./aix-meaning-learn";
@@ -144,6 +144,32 @@ export async function buildAixDeskCards(sb: SupabaseClient, o: { days?: number }
       lines.push(`押し間違いの例（${mp.n}件・${one(why, 60)}）${mp.ex ? `: 「${one(mp.ex, 100)}」` : ""}`);
     }
     cards.push({ key: e.key, button: e.button, picker: e.picker?.label ?? null, text: lines.join("\n"), owner, thin });
+  }
+  // 2026-11-03 夜 指揮役（AIX の読み解きの「札の答え なし」6件＝札の穴）: ピッカーの記録が無い送信（9月まで・condition_hearing・followup_revive・cost_explain 等）は
+  //   catalogKeyOfPress がボタンだけの鍵（例 "condition_hearing"）を返し、その鍵の札が無かった＝竹内さんの送信が札に1件も入らなかった。
+  //   ボタンだけの札を作る（竹内さんの送信が AIX_DESK_OWNER_MIN 以上ある時だけ）。統括は deskKeyOf でピッカーが無い時にこの札を使う
+  const covered = new Set(cards.map((c) => c.key));
+  for (const [bare, owner] of ownerCount) {
+    if (bare.includes("/") || covered.has(bare) || owner < AIX_DESK_OWNER_MIN) continue;
+    const entries = AIX_CATALOG.filter((e) => e.brainSelectable && buttonOfKeyLocal(e.key) === bare);
+    if (!entries.length) continue;
+    const e0 = entries[0];
+    const scenes = ownerScenes.get(bare) ?? [];
+    const tu = [...(tplUse.get(bare) ?? new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1]);
+    const tuAll = tu.reduce((a, [, n]) => a + n, 0);
+    const tpls = tu.filter(([, n]) => n >= 3 && n / Math.max(1, tuAll) >= 0.3).slice(0, 1).map(([id]) => tplText.get(id)).filter(Boolean) as Array<{ label: string; text: string }>;
+    const kb = (await decisionsFor({ ...e0, picker: null })).slice(0, 4);
+    const thin: string[] = [];
+    if (!tpls.length) thin.push("テンプレートの記録なし");
+    if (!kb.length) thin.push("竹内さんの決定なし");
+    const lines: string[] = [];
+    lines.push(`■担当 ${bare}｜${e0.button}（ピッカーの記録が無い送信・${entries.map((x) => x.picker?.label).filter(Boolean).join("／") || "ピッカー無し"} のどれか）`);
+    lines.push(`送る中身（スタッフだけが知る事）: ${[...new Set(entries.map((x) => x.staffOnly).filter(Boolean))].slice(0, 2).join("／") || "なし（定型の資料・フォーム）"}`);
+    lines.push(`使う場面: ${one(entries.map((x) => x.when).filter(Boolean).join("／"), 240)}`);
+    if (tpls.length) lines.push(`一緒に使われた定型「${one(tpls[0].label, 30)}」: ${one(maskExemplar(tpls[0].text), 200)}`);
+    if (kb.length) lines.push(`竹内さんの決定: ${kb.map((t) => one(t, 70)).join("／")}`);
+    for (const s of scenes) lines.push(`竹内さんの番: 客「${s.cust}」→「${s.sent}」`);
+    cards.push({ key: bare, button: e0.button, picker: null, text: lines.join("\n"), owner, thin });
   }
   return { cards, usages: usages.length };
 }
