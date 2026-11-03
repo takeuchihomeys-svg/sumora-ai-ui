@@ -1,6 +1,6 @@
 // scripts/__tests__/exam-conductor.test.ts — 試験の統括の純関数（関所の時間・早めの打ち切り・揺れの回数・問題の選び・表への書き戻し）
 //   実行: npx tsx scripts/__tests__/exam-conductor.test.ts
-import { cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
+import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
 import type { FlakeObs } from "../lib/exam-flake";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -21,6 +21,13 @@ t("前に合格の問題が2回中1回落ちた＝悪化の確定で止める", 
 t("前に不合格の問題が落ちても止めない", earlyVerdict([R("q2", 1, false)], base, plan2).stop === null);
 t("4回の揺れる問題は1回落ちただけでは止めない", earlyVerdict([R("q1", 1, false)], base, { ...plan2, q1: 4 }).stop === null);
 t("4回の揺れる問題が2回落ちたら止める", earlyVerdict([R("q1", 1, false), R("q1", 2, false)], base, { ...plan2, q1: 4 }).stop === "worse");
+t("揺れる問題: main が全部合格でも2回落ちた（2回の差）は止める", earlyVerdict([R("q1", 1, false), R("q1", 2, false)], base, { ...plan2, q1: 4 }, new Set(["q1"])).stop === "worse");
+const b4 = [R("q1", 1, true), R("q1", 2, true), R("q1", 3, true), R("q1", 4, false)];
+t("揺れる問題: main 3/4 で今2回落ちた（1回の差）は止めない", earlyVerdict([R("q1", 1, false), R("q1", 2, false)], b4, { q1: 4 }, new Set(["q1"])).stop !== "worse");
+t("揺れる問題: main より2回以上多く落ちたら止める", earlyVerdict([R("q1", 1, false), R("q1", 2, false), R("q1", 3, false)], b4, { q1: 4 }, new Set(["q1"])).stop === "worse");
+t("結果: 揺れる問題の1回の差は揺れの範囲", (() => { const w = splitWorse([R("q1", 1, true), R("q1", 2, true), R("q1", 3, false), R("q1", 4, false)], b4, new Set(["q1"])); return w.flake.length === 1 && w.sure.length === 0; })());
+t("結果: 普通の問題は確かな悪化", (() => { const w = splitWorse([R("q3", 1, false), R("q3", 2, true)], base, new Set()); return w.sure.length === 1 && w.sure[0].id === "q3"; })());
+t("結果: 揺れる問題でも2回以上の差は確か", splitWorse([R("q1", 1, false), R("q1", 2, false), R("q1", 3, false), R("q1", 4, true)], b4, new Set(["q1"])).sure.length === 1);
 t("途中は止めない", earlyVerdict([R("q1", 1, true), R("q1", 2, true), R("q2", 1, true)], base, plan2).stop === null);
 t("全部の合否が決まったら止める（settled）", earlyVerdict([R("q1", 1, true), R("q1", 2, true), R("q2", 1, false), R("q3", 1, true), R("q3", 2, true)], base, plan2).stop === "settled");
 t("前に無い問題は悪化にしない", earlyVerdict([R("q9", 1, false)], base, { q9: 2, q1: 2 }).stop === null);
@@ -46,6 +53,7 @@ t("正解の組", pickProblems("gold", spec, { golds: ["q1", "q2"] }).ids.join("
 const pm = pickProblems("map", spec, { map: { SW: { types: ["初回"], perType: 1, only: ["q0"], repeat: 3 } }, switchName: "SW" });
 t("場面の地図（only＋型・回数）", pm.ids.join(",") === "q0,q6" && pm.repeat === 3);
 threw = false; try { pickProblems("map", spec, { map: {}, switchName: "X" }); } catch { threw = true; }
+t("複数のスイッチは地図の項目を足し合わせる", (() => { const r = pickProblems("map", spec, { map: { A: { types: ["初回"], perType: 1 }, B: { only: ["q1"], repeat: 3 } }, switchName: "A,B" }); return r.ids.join(",") === "q1,q6" && r.repeat === 3; })());
 t("地図に無いスイッチは止める", threw);
 t("rag は brain-exam に任せる", pickProblems("rag", spec, {}).selectRag);
 

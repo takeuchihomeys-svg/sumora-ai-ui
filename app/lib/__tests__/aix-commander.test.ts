@@ -1,6 +1,6 @@
 // app/lib/__tests__/aix-commander.test.ts — AIX の統括（候補・答えの整え・鍵→ボタン）（2026-10-29）
 //   実行: npx tsx app/lib/__tests__/aix-commander.test.ts
-import { aixDeskCommandMode, deskKeyOf, commanderCandidates, parseCommanderAnswer, actionOfKey, commanderUserText, AIX_COMMANDER_SYSTEM } from "../aix-commander";
+import { noteDecisions1103, takeDecisions1103, aixDeskAckApplyOn, hasAckPositiveApply, consultTriggers, aixDeskCommandMode, deskKeyOf, commanderCandidates, parseCommanderAnswer, actionOfKey, commanderUserText, AIX_COMMANDER_SYSTEM } from "../aix-commander";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, v?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, JSON.stringify(v)); } };
 const keys = ["property_check_result/available", "property_check_result/mgmt_parking", "estimate_sheet/single", "estimate_sheet/multi", "acknowledge_check/daihyo_initial_cost", "meeting_place", "viewing_invite/通常", "viewing_invite/内覧日指定あり", "property_recommendation/新着1件", "property_send/new_arrival", "phone_call", "guarantor_info"];
@@ -25,6 +25,12 @@ t("鍵→ボタン: 結果のピッカーは外す", JSON.stringify(actionOfKey(
 t("鍵→ボタン: 条件のピッカーは残す", actionOfKey("property_check_result/mgmt_parking").checkPattern === "mgmt_parking");
 t("鍵→ボタン: 他のボタンはボタンだけ", JSON.stringify(actionOfKey("viewing_invite/通常")) === '{"action":"viewing_invite","checkPattern":null}');
 t("user に候補の鍵と reply/promise", commanderUserText({ situationLine: "", conversation: "★お客様: x", cards: [{ key: "a", text: "■担当 a" }] }).includes("【候補の鍵】a / reply / promise"));
+t("No.21: 既定 off", !aixDeskAckApplyOn({}) && aixDeskAckApplyOn({ AIX_DESK_ACK_APPLY: "on" }));
+t("No.21: decisions_1103 に n21 がある番だけ", hasAckPositiveApply({ decisions_1103: ["n21", "n3"] }) && !hasAckPositiveApply({ decisions_1103: ["n2"] }) && !hasAckPositiveApply({}) && !hasAckPositiveApply(null));
+noteDecisions1103("c1", ["n21"]);
+t("No.21: 材料を渡した事実を受け取り・1回で消える", takeDecisions1103("c1").join() === "n21" && takeDecisions1103("c1").length === 0 && takeDecisions1103("c2").length === 0);
+t("No.21: 相談のきっかけになる", consultTriggers({ contractAsksAixOrPromise: false, sceneUncertain: false, noGround: false, turnText: "ありがとうございます！", ackPositiveApply: true }).includes("ack_positive_apply"));
+t("No.21: 材料が無ければお礼の番は相談しない", consultTriggers({ contractAsksAixOrPromise: false, sceneUncertain: false, noGround: false, turnText: "ありがとうございます！" }).length === 0);
 t("system に見分けの軸と also", AIX_COMMANDER_SYSTEM.includes("見分けの軸") && AIX_COMMANDER_SYSTEM.includes("also"));
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

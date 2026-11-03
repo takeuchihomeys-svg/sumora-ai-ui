@@ -1,0 +1,13 @@
+# vercel deploy（CLI・tsc-remote のお試しの場所）で上げない物（2026-11-03・秘密と試験の控え）
+.env*
+!.env.example
+.claude
+node_modules
+.next
+.git
+scratchpad
+**/exam-cache
+scripts/.replay-out
+scripts/brain-exam/results
+*.log
+tsconfig.tsbuildinfo

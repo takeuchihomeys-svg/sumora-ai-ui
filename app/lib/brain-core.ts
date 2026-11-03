@@ -5702,7 +5702,11 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
     if (consultMode !== "off" && replyMode !== "aix" && !finalAix && !isPostApplyStatus(convStatus) && conversationId && typedMessages[0]?.sender === "customer") {
       try {
         const tcAsks = normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? [];
-        const triggers = consultTriggers({ contractAsksAixOrPromise: tcAsks.some((a) => a.route === "aix" || a.route === "promise"), sceneUncertain: brainSceneUncertain, noGround: false, turnText: unrepliedTurn.text ?? "" });
+        // 11/03 No.21: お礼の番の前向きな一言（ブレインの decisions_1103 に n21）→ 申込への AIX を相談の候補に（AIX_DESK_ACK_APPLY 既定 off）
+        //   材料を渡した事実は meta.decisions_1103（作業員2）＝作業員2が decisions1103 を作った所で noteDecisions1103(conversationId, decisions1103) を呼ぶ（この番の分を受け取る）
+        const { aixDeskAckApplyOn, hasAckPositiveApply, takeDecisions1103, ACK_APPLY_BUTTON } = await import("@/app/lib/aix-commander");
+        const ackApply = aixDeskAckApplyOn() && hasAckPositiveApply({ decisions_1103: takeDecisions1103(conversationId) });
+        const triggers = consultTriggers({ contractAsksAixOrPromise: tcAsks.some((a) => a.route === "aix" || a.route === "promise"), sceneUncertain: brainSceneUncertain, noGround: false, turnText: unrepliedTurn.text ?? "", ackPositiveApply: ackApply });
         if (triggers.length) {
           const { runAixConsult } = await import("@/app/lib/aix-commander-server");
           const { catalogSceneButtons } = await import("@/app/lib/aix-catalog");
@@ -5712,7 +5716,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           const broughtC = broughtThisTurnNames(unrepliedTurn.text ?? "");
           const sitC = [customerState ? nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() }) : "", broughtC.length ? `今の番の持ち込み（まだ確認が要る）: ${broughtC.join("・")}` : ""].filter(Boolean).join("／");
           const sceneNowC = brainSceneRes?.scene ?? resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene;
-          const sceneButtons = sceneNowC ? catalogSceneButtons(sceneNowC) : [];
+          const sceneButtons = [...(ackApply ? [ACK_APPLY_BUTTON] : []), ...(sceneNowC ? catalogSceneButtons(sceneNowC) : []).filter((b) => !(ackApply && b === ACK_APPLY_BUTTON))];
           const run = await runAixConsult(client, { conversationId, sceneButtons, conversation: convC, situationLine: maskBrain(sitC) });
           aixConsult = { mode: consultMode, why: triggers, answer: run.answer, key: run.key, note: run.why.slice(0, 120), cands: run.cands, ...(run.skip ? { skip: run.skip } : {}) };
           console.log(JSON.stringify({ tag: "brain:aix-consult", conversationId, ...aixConsult, ms: run.ms }));

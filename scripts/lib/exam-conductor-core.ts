@@ -17,21 +17,40 @@ export function maxExamsNow(d = new Date()): number { const { h } = jstHM(d); re
 //   ※ 行の score.pass は試験の中の採点。最後の集計（rescore）で変わる事がまれにある＝打ち切った後に --report で集計し直した数を正とする
 export type RowLite = { id: string; rep: number; error?: string; score?: { pass?: boolean } };
 export type EarlyVerdict = { stop: "worse" | "settled" | null; why: string; worse: string[] };
-export function earlyVerdict(cur: RowLite[], base: RowLite[], planned: Record<string, number>): EarlyVerdict {
+/** flaky: 揺れる問題。11/03 指揮役: n7 で q015 の 3/4→2/4（1回の差）で全体を止めた → 揺れる問題は main の落ちる割合より2回以上多く落ちた時だけ止める（普通の問題は今の線） */
+export function earlyVerdict(cur: RowLite[], base: RowLite[], planned: Record<string, number>, flaky: ReadonlySet<string> = new Set()): EarlyVerdict {
   const tally = (rows: RowLite[]) => { const m = new Map<string, { p: number; f: number }>(); for (const r of rows) { if (r.error) continue; const x = m.get(r.id) ?? { p: 0, f: 0 }; if (r.score?.pass) x.p++; else x.f++; m.set(r.id, x); } return m; };
   const c = tally(cur), b = tally(base);
   const basePass = (id: string) => { const x = b.get(id); return !!x && x.p * 2 > x.p + x.f; };
+  /** main の落ちる割合を今の予定の回数に当てた「いつもの落ちる回数」 */
+  const baseFails = (id: string, n: number) => { const x = b.get(id); return x && x.p + x.f ? (x.f / (x.p + x.f)) * n : 0; };
   const worse: string[] = [];
   let unsettled = 0;
   for (const [id, n] of Object.entries(planned)) {
     const x = c.get(id) ?? { p: 0, f: 0 };
     const failLocked = x.f * 2 >= n, passLocked = x.p * 2 > n;
-    if (failLocked && basePass(id)) worse.push(id);
+    if (failLocked && basePass(id) && (!flaky.has(id) || x.f - baseFails(id, n) >= 2)) worse.push(id);
     if (!failLocked && !passLocked) unsettled++;
   }
   if (worse.length) return { stop: "worse", why: `前に合格していた ${worse.join(",")} が残りの回でも合格に届かない（悪化の確定）`, worse };
   if (Object.keys(planned).length && unsettled === 0) return { stop: "settled", why: "全部の問題の合否が決まった（残りの回は答えを変えない）", worse };
   return { stop: null, why: `決まっていない問題 ${unsettled}`, worse };
+}
+
+/** 最後の結果の悪化を「確かな悪化」と「揺れの範囲の差」に分ける（11/03 指揮役）:
+ *  前に合格（過半数）で今は不合格の問題のうち、揺れる問題で、合格の回数の差が main の割合に当てて2回未満なら「揺れの範囲」 */
+export function splitWorse(cur: RowLite[], base: RowLite[], flaky: ReadonlySet<string>): { sure: Array<{ id: string; why: string }>; flake: Array<{ id: string; why: string }> } {
+  const tally = (rows: RowLite[]) => { const m = new Map<string, { p: number; n: number }>(); for (const r of rows) { if (r.error) continue; const x = m.get(r.id) ?? { p: 0, n: 0 }; x.n++; if (r.score?.pass) x.p++; m.set(r.id, x); } return m; };
+  const c = tally(cur), b = tally(base);
+  const sure: Array<{ id: string; why: string }> = [], flake: Array<{ id: string; why: string }> = [];
+  for (const [id, x] of c) {
+    const y = b.get(id);
+    if (!y || !(y.p * 2 > y.n) || x.p * 2 > x.n) continue;
+    const gap = (y.p / y.n) * x.n - x.p;
+    const why = `合格 前 ${y.p}/${y.n} → 今 ${x.p}/${x.n}`;
+    (flaky.has(id) && gap < 2 ? flake : sure).push({ id, why });
+  }
+  return { sure, flake };
 }
 
 // ─── ③ 問題ごとの揺れで回数を決める ─────────────────────────────────────────
@@ -75,7 +94,10 @@ export function pickProblems(pick: string, spec: SpecLite[], o: { golds?: string
     return { ids: uniq([...only, ...byTypes(types, Number(per || 3))]), selectRag: false, why: `型 ${types.join(",")} を ${Number(per || 3)}問ずつ` };
   }
   if (pick === "map") {
-    const e = o.switchName ? o.map?.[o.switchName] : undefined;
+    // スイッチが複数（,）の依頼は、地図にある名の項目を足し合わせる（型・名指しは和・数と回数は大きい方）
+    const names = String(o.switchName ?? "").split(/[,\s]+/).filter(Boolean);
+    const es = names.map((n) => o.map?.[n]).filter((x): x is NonNullable<typeof x> => !!x);
+    const e = o.switchName && o.map?.[o.switchName] ? o.map[o.switchName] : es.length ? { types: uniq(es.flatMap((x) => x.types ?? [])), only: uniq(es.flatMap((x) => x.only ?? [])), perType: Math.max(1, ...es.filter((x) => x.types?.length).map((x) => x.perType ?? 3)), repeat: es.some((x) => x.repeat) ? Math.max(...es.map((x) => x.repeat ?? 0)) : undefined } : undefined;
     if (!e) throw new Error(`場面の地図にスイッチ ${o.switchName} が無い（exam-queue/scene-map.json に {"${o.switchName}": {"types": [...], "only": [...]}} を足す）`);
     return { ids: uniq([...only, ...(e.only ?? []), ...byTypes(e.types ?? [], e.perType ?? 3)]), selectRag: false, repeat: e.repeat, why: `場面の地図（${(e.types ?? []).join(",") || "-"}・${(e.only ?? []).length}問）` };
   }

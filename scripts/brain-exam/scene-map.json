@@ -1,0 +1,12 @@
+{
+ "_note": "試験の統括の --pick=map の場面の地図（2026-11-03 作業員1・初めの形）。スイッチ → 回す型（spec の type）・名指しの問題・型ごとの数・回数。作った人が直す。手元の上書きは <倉庫の根>/.claude/exam-cache/exam-queue/scene-map.json（同じ名のスイッチはそちらが先）",
+ "BRAIN_MATERIAL_SELF_REPORT": { "types": ["AIXの種類", "約束の返信を先に", "一般的な事を保留しない"], "perType": 2, "only": ["q015", "q042", "q063", "q091"] },
+ "AIX_DESK_COMMAND": { "types": ["AIXの種類", "返信かAIXか"], "perType": 4, "only": ["q197"], "repeat": 2 },
+ "AIX_DESK_CONSULT": { "types": ["AIXの種類", "返信かAIXか", "約束の返信を先に"], "perType": 3, "only": ["q197"], "repeat": 2 },
+ "BRAIN_LAST_TURN_REVIEW": { "types": ["AIXの種類", "返信かAIXか"], "perType": 3, "repeat": 3 },
+ "BRAIN_NEED_REPORT": { "types": ["不安→次の手", "本質のasks取りこぼし", "複数の依頼"], "perType": 2 },
+ "BRAIN_THREE_LAYER": { "types": ["不安→次の手", "お客様の事情", "本質のasks取りこぼし"], "perType": 2 },
+ "BRAIN_MAIN_POINT": { "types": ["複数の依頼", "本質のasks取りこぼし", "具体に答える"], "perType": 2 },
+ "BRAIN_PLAN_AHEAD": { "types": ["約束の返信を先に", "決まった事", "出し切り"], "perType": 2, "repeat": 3 },
+ "BRAIN_MATERIAL_PROVENANCE": { "types": ["決まった事", "何の日か", "本日の圧", "約束の返信を先に"], "perType": 2, "repeat": 3 }
+}

@@ -16,6 +16,8 @@
 //   ④ 問題の選び: --pick=types:型@N ／ gold（正解の組）／ map（exam-queue/scene-map.json の場面の地図）／ rag（brain-exam --select=rag）
 //   ＋ 終わったら依頼した人に知らせる: --notify=<エージェントの id>（無ければ exam-queue/config.json の notify[owner]）→ results/notify.jsonl と conductor.log の「📣 知らせる」の行。--run を見張る作業員がその行を SendMessage で届ける
 //   ＋ tsc の依頼: --runner=tsc --cwd=<作業ツリー>（試験と同時に流さない・1本ずつ・空きメモリ 4500MB 以上（試験も裏の重い作業も動いていない時・空かなければ夜まで待つ）・%TEMP%/tsc.lock を取る・heap は EXAM_TSC_HEAP_MB 既定 8192（4096 では 134 で落ちる）・60分を超えて待つ tsc は指揮役に知らせる）→ 0 か落ちた理由を知らせる
+//   ＋ --night: 夜だけ流す依頼（JST 22〜9・営業時間に大きな表を全部読まない決まり）
+//   ＋ tsc-remote: --runner=tsc-remote --cwd=<作業ツリー>（Vercel のお試しの場所で next build＝型の確かめ・--prod は付けない・PC のメモリを使わない・11/03 竹内さん了承の案A）
 //   ＋ brain-exam 以外の試験の口: --runner=cmd --cmd="scripts/x.ts --a=1" [--cmd=...]（順に流す・関所と本番の見張りは同じ・採点は依頼者）
 // 実行:
 //   足す:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --add --label=ms-on1 --owner=作業員1 --switch=BRAIN_MATERIAL_SELF_REPORT --cwd=<作業ツリー> --only=q015,q042 --stage=brain [--repeat=2] [--env=K=V,K=V] [--flaky=q091] [--pick=...]
@@ -23,12 +25,12 @@
 //   流す:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --run [--once] [--release-order=<md>]
 //   見る:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --list
 import { spawn, execFileSync } from "node:child_process";
-import { rmdirSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, openSync, closeSync } from "node:fs";
+import { rmdirSync, unlinkSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, openSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { readObs } from "./lib/exam-flake";
-import { cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -49,7 +51,9 @@ export type ExamJob = {
   id: string; label: string; owner: string; switch: string; cwd: string; only: string; stage: string; repeat: number; env: Record<string, string>; createdAt: string; tries: number;
   /** 依頼で名指しした揺れる問題（③） */ flaky?: string[];
   /** --pick=rag の時 brain-exam --select=rag に任せる（④） */ selectRag?: boolean;
-  /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc"; cmds?: string[];
+  /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc" | "tsc-remote"; cmds?: string[];
+  /** 夜だけ流す（JST 22〜9・重い全件の読み等・--night） */ nightOnly?: boolean;
+  /** 保留の理由（あれば流さない・手で外す） */ hold?: string;
   /** 終わったら知らせる相手（エージェントの id・--notify=）。無ければ exam-queue/config.json の notify[owner] */ notify?: string;
 };
 
@@ -84,7 +88,11 @@ function gateTsc(): { ok: boolean; why: string } {
   return { ok: true, why: `空き ${pc.free}MB` };
 }
 async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
+  if (j?.hold) return { ok: false, why: `保留（${j.hold}）` };
   if (j?.runner === "tsc") return gateTsc();
+  // tsc-remote: PC のメモリは使わない（Vercel のお試しの場所で next build）＝門は「流す役が1本ずつ」だけ
+  if (j?.runner === "tsc-remote") return { ok: true, why: "リモート（Vercel のお試しの場所）" };
+  if (j?.nightOnly) { const h = new Date(Date.now() + 9 * 3600_000).getUTCHours(); if (h >= 9 && h < 22) return { ok: false, why: "夜だけの依頼（JST 22〜9）" }; }
   if (!cheapNow()) return { ok: false, why: "DeepSeek の混雑の時間（平日 10〜13・15〜19）" };
   const pc = pcState();
   if (pc.tsc) return { ok: false, why: "tsc が動いている" };
@@ -106,9 +114,11 @@ function addJob(): void {
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
   const cwd = arg("cwd", process.cwd());
   const label = arg("label") || `job-${Date.now()}`;
-  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage", "brain"), env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}) };
+  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage", "brain"), env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}) };
   let job: ExamJob;
-  if (arg("runner") === "tsc") {
+  if (arg("runner") === "tsc-remote") {
+    job = { ...base, id: `${Date.now()}`, label, only: "", repeat: 1, runner: "tsc-remote" };
+  } else if (arg("runner") === "tsc") {
     job = { ...base, id: `${Date.now()}`, label, only: "", repeat: 1, runner: "tsc" };
   } else if (arg("runner") === "cmd") {
     const cmds = argsOf("cmd").filter(Boolean);
@@ -118,7 +128,7 @@ function addJob(): void {
   } else {
     const spec = readJson<Array<{ id: string; type: string }>>(join(cwd, "scripts/brain-exam/spec.json"), []);
     const golds = readJson<{ golds?: Array<{ id: string }> }>(join(cwd, "scripts/parts-eval/gold-20.json"), {}).golds?.map((g) => g.id) ?? [];
-    const p = pickProblems(arg("pick"), spec, { golds, map: readJson<SceneMap>(SCENE_MAP, {}), switchName: base.switch, only: arg("only").split(",").filter(Boolean) });
+    const p = pickProblems(arg("pick"), spec, { golds, map: { ...readJson<SceneMap>(join(cwd, "scripts/brain-exam/scene-map.json"), {}), ...readJson<SceneMap>(SCENE_MAP, {}) }, switchName: base.switch, only: arg("only").split(",").filter(Boolean) });
     const flaky = arg("flaky").split(",").filter(Boolean);
     const ids = [...new Set([...p.ids, ...flaky])];
     if (!ids.length && !p.selectRag) throw new Error("問題が無い（--only か --pick を付ける）");
@@ -127,7 +137,7 @@ function addJob(): void {
   }
   const f = join(ROOT, `${job.createdAt.replace(/[:.]/g, "-")}-${job.label}.json`);
   writeFileSync(f, JSON.stringify(job, null, 1));
-  log(`足した: ${job.label}（${job.owner}・${job.switch}・${job.runner === "cmd" ? `${job.cmds!.length}本の試験` : `${job.only || "rag"}・${job.repeat}回${job.flaky?.length ? `・揺れる ${job.flaky.join(",")}` : ""}`}）`);
+  log(`足した: ${job.label}（${job.owner}・${job.switch}・${job.runner === "tsc" ? `tsc（${job.cwd}）` : job.runner === "cmd" ? `${job.cmds!.length}本の試験` : `${job.only || "rag"}・${job.repeat}回${job.flaky?.length ? `・揺れる ${job.flaky.join(",")}` : ""}`}）`);
 }
 
 // ─── 流す・結果を読む ─────────────────────────────────────────────────────
@@ -198,6 +208,92 @@ function finish(j: ExamJob & { file: string }, result: Record<string, unknown>, 
 }
 
 /** tsc の依頼: %TEMP%/tsc.lock を取り（手で回す tsc と同じ鍵）、npx tsc --noEmit を1本流す。結果（0 か落ちた理由）を知らせる */
+/** 2026-11-03 案A（竹内さん了承・指揮役）: 型の確かめを Vercel のお試しの場所（preview・--prod は付けない＝本番には出ない）で行う。
+ *  作業ツリーから `vercel deploy --yes` を流し、next build（tsconfig のとおり scripts も入る）が READY なら「tsc 0（リモート）」、ERROR なら
+ *  ビルドのログから型エラーの先頭3つを知らせる。コミットは要らない（手元のファイルをそのまま送る）。
+ *  送らない物: .vercelignore が無い作業ツリーには、流す間だけ置く（.env* と試験の控え・exam-cache・node_modules を送らない）。お試しの場所は消さない */
+export const REMOTE_IGNORE = [".env*", "!.env.example", ".claude", "node_modules", ".next", ".git", "scratchpad", "**/exam-cache", "scripts/.replay-out", "scripts/brain-exam/results", "*.log", "tsconfig.tsbuildinfo"];
+/** 上げてはいけない物（.env 系・.claude・scratchpad・exam-cache・node_modules） */
+export const REMOTE_FORBIDDEN = (rel: string) => { const p = rel.replace(/\\/g, "/"); const base = p.split("/").pop() ?? ""; return (/^\.env/.test(base) && base !== ".env.example") || /(^|\/)(\.claude|scratchpad|exam-cache|node_modules|\.git)(\/|$)/.test(p); };
+/** 上がるファイルの一覧（.vercelignore と CLI の既定の外し方を gitignore の決まりで当てる）を作り、上げてはいけない物が無いか確かめる */
+export async function remoteUploadCheck(cwd: string): Promise<{ ok: boolean; files: number; bytes: number; bad: string[]; why: string }> {
+  const ig = (await import("ignore")).default();
+  const vi = join(cwd, ".vercelignore");
+  if (!existsSync(vi)) return { ok: false, files: 0, bytes: 0, bad: [], why: ".vercelignore が無い" };
+  const text = readFileSync(vi, "utf8");
+  if (!/^\.env\*\s*$/m.test(text) || !/^\.claude\s*$/m.test(text)) return { ok: false, files: 0, bytes: 0, bad: [], why: ".vercelignore に .env* か .claude が無い" };
+  ig.add(text).add([".git", ".vercel", "node_modules"]);
+  const { readdirSync: rd, statSync: st } = await import("node:fs");
+  const files: string[] = []; let bytes = 0;
+  const walk = (dir: string) => {
+    for (const e of rd(join(cwd, dir), { withFileTypes: true })) {
+      const rel = dir ? `${dir}/${e.name}` : e.name;
+      if (ig.ignores(e.isDirectory() ? `${rel}/` : rel)) continue;
+      if (e.isDirectory()) walk(rel); else if (e.isFile()) { files.push(rel); try { bytes += st(join(cwd, rel)).size; } catch { /* */ } }
+    }
+  };
+  walk("");
+  const bad = files.filter(REMOTE_FORBIDDEN);
+  const why = bad.length ? `上げてはいけない物が残る: ${bad.slice(0, 5).join("・")}` : files.length > 20000 || bytes > 300 * 1024 * 1024 ? `多すぎる（${files.length}件・${Math.round(bytes / 1048576)}MB）` : `上がる ${files.length}件・${Math.round(bytes / 1048576)}MB・.env 系 0`;
+  return { ok: !bad.length && files.length <= 20000 && bytes <= 300 * 1024 * 1024, files: files.length, bytes, bad, why };
+}
+export function remoteTypeErrors(out: string): string[] {
+  const lines = out.split(/\r?\n/);
+  const errs: string[] = [];
+  for (let i = 0; i < lines.length && errs.length < 3; i++) {
+    const l = lines[i];
+    if (/Type error:|error TS\d+/.test(l)) { const prev = /^\S.*\.(ts|tsx):\d+:\d+/.test(lines[i - 1] ?? "") ? `${lines[i - 1].trim()} ` : ""; errs.push((prev + l.trim()).replace(/\s+/g, " ").slice(0, 200)); }
+  }
+  return errs;
+}
+function finishStop(j: ExamJob & { file: string }, verdict: string): void {
+  const at = new Date().toISOString();
+  finish(j, { label: j.label, owner: j.owner, runner: j.runner, cwd: j.cwd, verdict, at }, `| ${at.slice(0, 16)} | ${j.runner} | ${j.owner} | ${j.label} | ${verdict.slice(0, 80)} | - | - | $0 |`, verdict);
+}
+async function runTscRemoteJob(j: ExamJob & { file: string }): Promise<void> {
+  const outFile = join(RES, `${j.label}.out.log`);
+  const at = () => new Date().toISOString();
+  log(`流す: ${j.label}（${j.owner}・tsc-remote・${j.cwd}）`);
+  writeFileSync(outFile, `=== ${at()} vercel deploy --yes（お試しの場所・本番ではない・${j.cwd}）===\n`);
+  // プロジェクトの紐付け（.vercel/project.json の projectId・orgId は鍵ではない）が無ければ倉庫の根から写す
+  const linkDir = join(j.cwd, ".vercel"), rootLink = join(examCacheRoot(), "..", "..", ".vercel", "project.json");
+  if (!existsSync(join(linkDir, "project.json"))) {
+    // 新しいプロジェクトを作らない: 倉庫の根（main の作業ツリー）の紐付け（sumora-ai-ui）だけを写す。無ければ上げずに止める
+    const link = existsSync(rootLink) ? (JSON.parse(readFileSync(rootLink, "utf8")) as { projectName?: string; projectId?: string }) : null;
+    if (!link?.projectId || link.projectName !== "sumora-ai-ui") { log(`  ⛔ 上げない: 紐付け（.vercel/project.json の sumora-ai-ui）が見つからない`); finishStop(j, "紐付けが無い・上げていない"); return; }
+    mkdirSync(linkDir, { recursive: true }); writeFileSync(join(linkDir, "project.json"), readFileSync(rootLink));
+  }
+  const ignoreFile = join(j.cwd, ".vercelignore");
+  const placedIgnore = !existsSync(ignoreFile);
+  if (placedIgnore) writeFileSync(ignoreFile, REMOTE_IGNORE.join("\n") + "\n");
+  // 上げる前の確かめ: 上がる一覧に .env 系・.claude・scratchpad・exam-cache が無いこと。確かめられない時は上げない
+  let chk: Awaited<ReturnType<typeof remoteUploadCheck>>;
+  try { chk = await remoteUploadCheck(j.cwd); } catch (e) { chk = { ok: false, files: 0, bytes: 0, bad: [], why: `確かめられない: ${String(e).slice(0, 100)}` }; }
+  appendFileSync(outFile, `上げる前の確かめ: ${chk.why}\n`);
+  if (!chk.ok) { if (placedIgnore) { try { unlinkSync(ignoreFile); } catch { /* */ } } log(`  ⛔ 上げない: ${chk.why}`); finishStop(j, `上げていない（${chk.why}）`); return; }
+  log(`  上げる前の確かめ: ${chk.why}`);
+  let code: number | null = null;
+  try {
+    const fd = openSync(outFile, "a");
+    const child = spawn(process.platform === "win32" ? "vercel.cmd" : "vercel", ["deploy", "--yes"], { cwd: j.cwd, shell: process.platform === "win32", env: { ...process.env }, stdio: ["ignore", fd, fd] });
+    code = await new Promise<number | null>((res) => child.on("close", (c) => { try { closeSync(fd); } catch { /* */ } res(c); }));
+  } finally { if (placedIgnore) { try { unlinkSync(ignoreFile); } catch { /* */ } } }
+  let out = readFileSync(outFile, "utf8");
+  const url = [...out.matchAll(/https:\/\/[\w.-]+\.vercel\.app/g)].map((m) => m[0]).pop() ?? null;
+  // ビルドのログが deploy の出力に無い時は inspect --logs で取る
+  if (code !== 0 && url && !remoteTypeErrors(out).length) {
+    appendFileSync(outFile, `\n=== ${at()} vercel inspect ${url} --logs ===\n`);
+    const fd = openSync(outFile, "a");
+    const child = spawn(process.platform === "win32" ? "vercel.cmd" : "vercel", ["inspect", url, "--logs"], { cwd: j.cwd, shell: process.platform === "win32", stdio: ["ignore", fd, fd] });
+    await new Promise((res) => child.on("close", () => { try { closeSync(fd); } catch { /* */ } res(null); }));
+    out = readFileSync(outFile, "utf8");
+  }
+  const errs = remoteTypeErrors(out);
+  const verdict = code === 0 ? "tsc 0（リモート）" : errs.length ? `tsc 型エラー（リモート）: ${errs.join(" ／ ")}` : `ビルド失敗（リモート・型以外の可能性・終わりの番号 ${code}）`;
+  finish(j, { label: j.label, owner: j.owner, runner: "tsc-remote", cwd: j.cwd, code, url, errors: errs, verdict, at: at() },
+    `| ${at().slice(0, 16)} | tsc-remote | ${j.owner} | ${j.label} | ${verdict.slice(0, 80)} | - | - | $0 |`, `${verdict}${url ? `（${url}）` : ""}`);
+  log(`  済み: ${j.label} → ${verdict}`);
+}
 async function runTscJob(j: ExamJob & { file: string }): Promise<void> {
   const outFile = join(RES, `${j.label}.out.log`);
   const at = () => new Date().toISOString();
@@ -219,6 +315,7 @@ async function runTscJob(j: ExamJob & { file: string }): Promise<void> {
 
 async function runJob(j: ExamJob & { file: string }): Promise<void> {
   if (j.runner === "tsc") return runTscJob(j);
+  if (j.runner === "tsc-remote") return runTscRemoteJob(j);
   const outFile = join(RES, `${j.label}.out.log`);
   const at = () => new Date().toISOString();
   // 本番の見張り（2分ごと）: 悪ければ止めて片付け・順番待ちに戻す
@@ -262,7 +359,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     const ew = earlyOn ? setInterval(() => {
       if (early || stopped) return;
       const bl = baseLabelOf(j.cwd, j.label); if (!bl) return;
-      const v = earlyVerdict(readRows(rowsFile), readRows(join(resultsDirOf(j.cwd), `${bl}.jsonl`)), rp.reps);
+      const v = earlyVerdict(readRows(rowsFile), readRows(join(resultsDirOf(j.cwd), `${bl}.jsonl`)), rp.reps, new Set(rp.flaky.map((x) => x.id)));
       if (v.stop) { early = { stop: v.stop, why: v.why, base: bl }; log(`  ⏩ 早めの打ち切り: ${v.why}`); killTree(cur?.pid); }
     }, 30_000) : null;
     const code = await r.done;
@@ -277,8 +374,13 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     }
     const s = summarize(existsSync(outFile) ? readFileSync(outFile, "utf8") : "");
     const tag = early ? "（早めの打ち切り）" : "";
-    const verdict = (s.worse === 0 ? "悪化0" : s.worse == null ? "結果を読めない" : `悪化 ${s.worse}`) + tag;
-    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, verdict, at: at() },
+    // 11/03 指揮役: 悪化を「確かな悪化」と「揺れの範囲の差」（揺れる問題・合格の差が main の割合で2回未満）に分けて書く
+    const blFinal = baseLabelOf(j.cwd, j.label);
+    const sw = blFinal ? splitWorse(readRows(rowsFile), readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)), new Set(rp.flaky.map((x) => x.id))) : null;
+    const flakeNote = sw?.flake.length ? `・揺れの範囲の差 ${sw.flake.length}（${sw.flake.map((x) => `${x.id} ${x.why}`).join("／")}）` : "";
+    const sureN = sw ? sw.sure.length : s.worse;
+    const verdict = (sureN == null ? "結果を読めない" : sureN === 0 ? "確かな悪化0" : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag;
+    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
     log(`  済み: ${j.label} → ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・費用 ${s.usd ?? "?"}`);
@@ -288,8 +390,14 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
 // 直に流された時だけ動く（テストが関所の関数だけ読む時は動かない）
 if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
   if (flag("add")) { addJob(); return; }
-  if (flag("list")) { for (const j of readJobs()) console.log(`- ${j.createdAt.slice(0, 16)} ${j.label}（${j.owner}・${j.switch}・${j.runner === "tsc" ? "tsc" : j.runner === "cmd" ? `${j.cmds?.length}本` : `${j.only || "rag"}・${j.repeat}回`}・試み ${j.tries}）`); return; }
+  if (flag("list")) { for (const j of readJobs()) console.log(`- ${j.createdAt.slice(0, 16)} ${j.label}（${j.owner}・${j.switch}・${j.runner === "tsc-remote" ? "tsc-remote" : j.runner === "tsc" ? "tsc" : j.runner === "cmd" ? `${j.cmds?.length}本` : `${j.only || "rag"}・${j.repeat}回`}・試み ${j.tries}）`); return; }
   if (flag("run")) {
+    // 流す役は PC で1つだけ（夜の予定のタスクと手で起こした物が重ならない）: run.lock に pid・生きていれば何もしない
+    const RUN_LOCK = join(ROOT, "run.lock");
+    const held = readJson<{ pid?: number } | null>(RUN_LOCK, null);
+    if (held?.pid && held.pid !== process.pid) { let alive = false; try { process.kill(held.pid, 0); alive = true; } catch { /* 止まっている */ } if (alive) { log(`別の流す役が動いている（pid ${held.pid}）→ 足した依頼はそちらが流す`); return; } }
+    ensureDirs(); writeFileSync(RUN_LOCK, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+    process.on("exit", () => { try { if (readJson<{ pid?: number } | null>(RUN_LOCK, null)?.pid === process.pid) unlinkSync(RUN_LOCK); } catch { /* */ } });
     cfg();
     const tscAlerted = new Set<string>();
     for (;;) {
@@ -298,7 +406,7 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
       // 先頭から順に関所を見て、通った最初の依頼を流す（試験が安い時間を待つ間も tsc は先に流せる）
       let picked: (typeof jobs)[number] | null = null; const whys: string[] = [];
       let examBlocked = false;
-      for (const j of jobs) { if (j.runner !== "tsc" && examBlocked) continue; const g = await gate(j); if (g.ok) { picked = j; break; } whys.push(`${j.label}: ${g.why}`); if (j.runner !== "tsc") examBlocked = true; }
+      for (const j of jobs) { if (j.runner !== "tsc" && j.runner !== "tsc-remote" && examBlocked) continue; const g = await gate(j); if (g.ok) { picked = j; break; } whys.push(`${j.label}: ${g.why}`); if (j.runner !== "tsc" && j.runner !== "tsc-remote" && !j.nightOnly && !j.hold) examBlocked = true; }
       // tsc の順番待ちが長い（既定 60分・EXAM_TSC_WAIT_ALERT_MIN）時は指揮役に知らせる（依頼ごとに1回）
       for (const j of jobs.filter((x) => x.runner === "tsc" && !tscAlerted.has(x.id))) { const min = (Date.now() - Date.parse(j.createdAt)) / 60_000; if (min >= Number(process.env.EXAM_TSC_WAIT_ALERT_MIN ?? "60")) { tscAlerted.add(j.id); const why = whys.find((w) => w.startsWith(j.label + ":")) ?? ""; appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to: "main", owner: j.owner, label: j.label, msg: `tsc の順番待ちが ${Math.round(min)}分（${why}）` }) + "\n"); log(`  📣 知らせる: to=main tsc の順番待ちが ${Math.round(min)}分（${j.label}・${j.owner}・${why}）`); } }
       if (!picked) { log(`待つ: ${whys.slice(0, 3).join("／")}（${jobs.length}本待ち）`); if (flag("once")) return; await new Promise((r) => setTimeout(r, (jobs.some((x) => x.runner === "tsc") ? 1 : 5) * 60_000)); continue; }

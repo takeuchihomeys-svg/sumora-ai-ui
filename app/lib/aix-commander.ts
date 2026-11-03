@@ -139,10 +139,20 @@ export function aixDeskConsultMode(env: Env = typeof process !== "undefined" ? p
 /** スタッフしか分からない気配（お客様の言葉）。会話・資料で答えられる質問も混ざる＝相談のきっかけだけ（決めるのは AIX の統括） */
 export const STAFF_ONLY_CUE_RE = /空(?:い|き)|募集|まだ(?:あり|あります|ある)|初期費用|見積|いくら|内覧|内見|見学|何時|何日|駐車場|ペット|入居(?:日|可能)|退去|審査|交渉|安く(?:なり|でき)|https?:\/\/|【物件の(?:画面|資料)/;
 
-export type ConsultTrigger = "contract_aix" | "scene_uncertain" | "no_ground" | "staff_only_cue";
+export type ConsultTrigger = "contract_aix" | "scene_uncertain" | "no_ground" | "staff_only_cue" | "ack_positive_apply";
+/** 2026-11-03 夜 竹内さんの決定 No.21（順番の表 12d）の AIX 側: お礼だけの番で、内覧後・見積書の後に前向きな一言が付いた時だけ、申込への AIX を相談の候補に出す。
+ *  ブレイン側（作業員2・BRAIN_ACK_POSITIVE_APPLY）がその材料を渡した番＝decisions_1103 に "n21" がある番だけ。止める: AIX_DESK_ACK_APPLY を off（既定 off） */
+export function aixDeskAckApplyOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean { return (env.AIX_DESK_ACK_APPLY ?? "").trim().toLowerCase() === "on"; }
+export function hasAckPositiveApply(meta: unknown): boolean { const d = (meta as { decisions_1103?: unknown } | null)?.decisions_1103; return Array.isArray(d) ? d.includes("n21") : typeof d === "string" ? /\bn21\b/.test(d) : false; }
+export const ACK_APPLY_BUTTON = "application_push";
+/** brain-core が材料を渡した事実（meta.decisions_1103・作業員2）を、AIX の相談の前に受け取る口。同じ処理の中で1会話1回分だけ持つ（呼んだら消す） */
+const decisions1103Of = new Map<string, string[]>();
+export function noteDecisions1103(conversationId: string, d: readonly string[]): void { if (conversationId) decisions1103Of.set(conversationId, [...d]); }
+export function takeDecisions1103(conversationId: string): string[] { const d = decisions1103Of.get(conversationId) ?? []; decisions1103Of.delete(conversationId); return d; }
 /** 相談するきっかけ（無ければ []） */
-export function consultTriggers(o: { contractAsksAixOrPromise: boolean; sceneUncertain: boolean; noGround: boolean; turnText: string }): ConsultTrigger[] {
+export function consultTriggers(o: { contractAsksAixOrPromise: boolean; sceneUncertain: boolean; noGround: boolean; turnText: string; ackPositiveApply?: boolean }): ConsultTrigger[] {
   const out: ConsultTrigger[] = [];
+  if (o.ackPositiveApply) out.push("ack_positive_apply");
   if (o.contractAsksAixOrPromise) out.push("contract_aix");
   if (o.noGround) out.push("no_ground");
   if (STAFF_ONLY_CUE_RE.test(o.turnText ?? "")) out.push("staff_only_cue");
