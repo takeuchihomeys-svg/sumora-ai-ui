@@ -4477,6 +4477,12 @@ $$;
 ALTER TABLE system_design_thinking ADD COLUMN IF NOT EXISTS priority SMALLINT;
 COMMENT ON COLUMN system_design_thinking.priority IS '段: 0=絶対・最優先 1=今の決まり 2=実装の知見 3=事例・経緯（RAG の並び・ダイジェストの順に効く）';
 CREATE INDEX IF NOT EXISTS idx_system_design_thinking_priority ON system_design_thinking(priority) WHERE is_current = true;
+-- 2026-11-03 作業員6 設計知見の木（竹内さん KB P1「設計知見そのものにも統括を作る」）: 上の決まりの id。親は自分より段が上か同じ・P0 の親は無し・輪にしない（kb-insert と週の整理で確かめる）
+ALTER TABLE system_design_thinking
+  ADD COLUMN IF NOT EXISTS parent UUID REFERENCES system_design_thinking(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS parent_by TEXT,
+  ADD COLUMN IF NOT EXISTS parent_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS system_design_thinking_parent_idx ON system_design_thinking (parent) WHERE parent IS NOT NULL;
 -- 売上サポの回を検索した時の条件（2026-10-06 v2.5.81・⑯）: 拡張の案内が「検索」を押した時の意図した条件（intended）と画面に入っていた値（filled）。
 --   AIX の物件ピックアップの文が、時刻の窓で検索の記録を探さずに回から読む（⑰ の測り直し: 12時間以内に記録がある回は60回中15回）
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS search_conditions JSONB;
