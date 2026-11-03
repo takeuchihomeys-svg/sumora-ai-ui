@@ -5019,6 +5019,23 @@ ALTER TABLE takeuchi_compose_examples
 CREATE INDEX IF NOT EXISTS takeuchi_compose_examples_pick_idx ON takeuchi_compose_examples (anatomy_pick) WHERE anatomy_pick;
 REVOKE ALL ON takeuchi_compose_examples FROM anon, authenticated;
 
+-- 2026-11-03 作業員2: お客様ごとの確かな事実の帳面（KB P1「100% に向けて土台の7つ」④）。お客様のメモ・送った事の台帳・状況のまとめ・判断の記録・全体の分析を
+--   決まった計算で束ね、事実ごとに時刻と出所を付ける（1会話1行・毎番ブレインの保存の時に上書き）。書く・読むはサーバーの鍵だけ（CUSTOMER_FACT_LEDGER 既定 off）。
+--   property_customer_id: 同じお客様が2つ以上の会話にまたがる時に他の会話の帳面も引く（memory P1 f9d261d4）
+CREATE TABLE IF NOT EXISTS customer_fact_ledger (
+  conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+  property_customer_id UUID,
+  facts JSONB NOT NULL DEFAULT '[]',
+  version INT NOT NULL DEFAULT 1,
+  built_from JSONB NOT NULL DEFAULT '{}',
+  analyzed_msg_ts TIMESTAMPTZ,
+  built_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS customer_fact_ledger_pc_idx ON customer_fact_ledger (property_customer_id) WHERE property_customer_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS customer_fact_ledger_built_idx ON customer_fact_ledger (built_at DESC);
+ALTER TABLE customer_fact_ledger ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON customer_fact_ledger FROM anon, authenticated;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
