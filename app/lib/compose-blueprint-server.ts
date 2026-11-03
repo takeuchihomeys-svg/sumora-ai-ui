@@ -51,3 +51,34 @@ export async function runComposeBlueprint(o: {
   const blueprint = buildBlueprint({ intent, requirements: o.requirements, planMessages: o.planMessages, evidence: hits.map((h) => h.message_id) });
   return { intent, blueprint, note: blueprintNote(blueprint), ragIds: hits.map((h) => h.message_id), ms: Date.now() - t0 };
 }
+
+/** 設計図の確かめの段の3つ（書いた後・記録だけ。書き直し1回と統括への差し戻しは呼ぶ側の次の段で）。どれも COMPOSE_CHECK_* の on の時だけ */
+export async function runComposeChecks(o: {
+  conversationId: string | null; customerUnits: string[]; draft: string; groundText: string; blueprint: ComposeBlueprint; timeoutMs?: number;
+}): Promise<{ coverage: number | null; coverageMisses: string[]; ground: number | null; sendBack: import("./compose-checks").GroundSendBack | null; reader: import("./compose-checks").CustomerRead | null; digest: string }> {
+  const c = await import("./compose-checks");
+  let coverage: number | null = null, coverageMisses: string[] = [], ground: number | null = null;
+  let sendBack: import("./compose-checks").GroundSendBack | null = null, reader: import("./compose-checks").CustomerRead | null = null;
+  if (c.composeCheckOn("coverage")) {
+    const miss = c.coverageMisses(o.draft, c.assignAsks(o.customerUnits, o.blueprint));
+    coverage = miss.length; coverageMisses = miss.map((m) => m.quote.slice(0, 60));
+  }
+  if (c.composeCheckOn("ground")) {
+    const g = c.groundCheck(o.draft, o.groundText);
+    ground = g.misses.length; sendBack = g.sendBack;
+  }
+  if (c.composeCheckOn("reader")) {
+    const key = process.env.ANTHROPIC_API_KEY ?? "";
+    if (key) {
+      try {
+        const r = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST", signal: AbortSignal.timeout(o.timeoutMs ?? 8_000),
+          headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", ...sumoraLlmMarks("reply_customer_read", o.conversationId) },
+          body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 300, system: c.CUSTOMER_READ_SYSTEM, messages: [{ role: "user", content: c.customerReadPrompt({ customerText: o.customerUnits.join("\n"), draft: o.draft }) }] }),
+        });
+        if (r.ok) { const d = await r.json() as { content?: Array<{ type: string; text?: string }> }; reader = c.parseCustomerRead(d.content?.find((b) => b.type === "text")?.text ?? ""); }
+      } catch (e) { console.warn(JSON.stringify({ tag: "compose:reader-failed", error: e instanceof Error ? e.message : String(e) })); }
+    }
+  }
+  return { coverage, coverageMisses, ground, sendBack, reader, digest: c.composeChecksDigest({ coverage, ground, reader, sentBack: !!sendBack }) };
+}

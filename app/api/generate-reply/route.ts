@@ -7557,6 +7557,21 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   aixContent: aixC.slice(0, 6),
                 });
               } catch { /* 印だけ */ }
+              // 2026-11-03 作業員6 設計図の確かめの段の3つ（COMPOSE_CHECK_COVERAGE／GROUND／READER・どれも既定 off・BRAIN_COMPOSE_BLUEPRINT の下）。
+              //   今は記録だけ（tpo_debug.compose_checks・根拠の無い文は compose_sendback＝統括に返す形 kind:"no_ground"）。書き直し1回と統括の読み直しは次の段
+              if (composeRun) {
+                try {
+                  const { runComposeChecks } = await import("@/app/lib/compose-blueprint-server");
+                  const cc = await runComposeChecks({
+                    conversationId: conversationId ?? null, customerUnits: customerMsgUnits.length ? customerMsgUnits : [message ?? ""], draft: finalDraftText,
+                    groundText: [...recentMessages.map((m) => m.text ?? ""), message ?? "", customerConditions ?? ""].join("\n"), blueprint: composeRun.blueprint,
+                  });
+                  if (cc.digest && finalCheck?.tpo_debug) {
+                    Object.assign(finalCheck.tpo_debug, { compose_checks: { digest: cc.digest, coverageMisses: cc.coverageMisses, reader: cc.reader }, ...(cc.sendBack ? { compose_sendback: cc.sendBack } : {}) });
+                    console.info("[compose-checks]", JSON.stringify({ conversationId, digest: cc.digest }));
+                  }
+                } catch (e) { console.warn(JSON.stringify({ tag: "compose-checks:failed", error: e instanceof Error ? e.message : String(e) })); }
+              }
             }
             // 2026-10-06 ⑫ 竹内「名前間違えているの絶対にいれない」（あ・「森本様」）: 最後の網。呼びかけの名前が固定の呼び名でも
             //   会話・表示名・登録名に出てくる名前でもない時は固定の呼び名に直す（無ければ呼びかけごと外す）。最終チェックの block が影の運用でも必ず効く
