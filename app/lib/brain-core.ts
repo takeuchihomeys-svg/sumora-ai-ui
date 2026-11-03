@@ -134,7 +134,7 @@ import { daySubjectNoteIfEnabled } from "@/app/lib/day-subject-reader";
 import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
 import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmedAckMaterialLine } from "@/app/lib/viewing-confirmed-ack";
 import { nowFulfillableEnabled, nowFulfillableLine, nowFulfillableOf } from "@/app/lib/situation-summary";
-import { brainLastTurnReviewOn, reviewLastTurn, lastTurnReviewLine, lastTurnReviewDigest, type StaffActAfter } from "@/app/lib/brain-last-turn-review";
+import { LAST_TURN_REVIEW_DEFAULT_STAGE, reviewLastTurn, lastTurnReviewLine, lastTurnReviewDigest, type StaffActAfter } from "@/app/lib/brain-last-turn-review";
 import { aixDeskCommandMode, actionOfKey, broughtThisTurnNames, aixDeskConsultMode, consultTriggers, deskFactConflict, recheckFromDesk, recheckFromConsult } from "@/app/lib/aix-commander";
 import { decideBrainDepth } from "@/app/lib/brain-depth";
 import { sentLedgerBindEnabled, explainedItemsOf, itemsFromLedger, bindReaction, bindMaterialLine } from "@/app/lib/sent-ledger-bind";
@@ -2991,7 +2991,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   }
   // 2026-11-03 竹内さんの決定（ブレインに4つ足す ②⑤・brain-last-turn-review.ts・BRAIN_LAST_TURN_REVIEW 既定 off）: 前回の判断の記録とその後のスタッフの一手から、
   //   「前回の提案は当たったか／スタッフは何を選んだか（竹内さんか）・お客様は進んだか」を1行で渡す（違った事実として・正解扱いにしない）。読みは前回の判断1行＋書き手の数行だけ
-  if (brainLastTurnReviewOn() && typedMessages[0]?.sender === "customer" && conversationId && !isPostApplyStatus(convStatus)) {
+  if (conversationId && typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus) && await (await import("@/app/lib/rollout")).stageOnNow("BRAIN_LAST_TURN_REVIEW", conversationId, LAST_TURN_REVIEW_DEFAULT_STAGE)) {
     try {
       // 前回の番の判断＝こちらの最後の送信より前の一番新しい判断（今の番の読み直しの行は数えない）
       const lastStaffAt = typedMessages.find((m) => m.sender !== "customer")?.created_at ?? null;

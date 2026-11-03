@@ -5,12 +5,17 @@
 //      竹内さんの番は重く扱う（竹内基準）。スタッフの押し間違いもあるので正解扱いにせず「違った事実」として渡す。
 //   ⑤ 次の番の最初に前回の提案が当たったか（スタッフが同じ物を押したか）・お客様は進んだか（段階が前に進んだか）を1行で確かめる。外れていれば理由を考えてから判断する。
 //   材料: 前回の判断の記録（brain_decision_logs の suggested_action・suggested_reply_mode・digest.st＝その時の段階）と、その後のスタッフの押下（aix_usage_logs）・手打ち（messages）。
-//   記録: digest.rv（当たり・違い・書き手・進んだか）＝毎晩数える。切替: BRAIN_LAST_TURN_REVIEW（既定 off）
+//   記録: digest.rv（当たり・違い・書き手・進んだか）＝毎晩数える。切替: BRAIN_LAST_TURN_REVIEW
+//   2026-11-03 指揮役: ltr-on1 悪化0 → 段階で入れる。コードの既定は stage=yuma（YUMA・YUMA2〜5 だけで効く・rollout.ts）。
+//     上げる時もコードの既定（LAST_TURN_REVIEW_DEFAULT_STAGE）で上げる。=off で止まる・=on で全部・BRAIN_LAST_TURN_REVIEW_STAGE=pct:N 等も効く
 import { aixContentFamily } from "./line-watch-judge";
+import { stageOn, type Stage } from "./rollout";
 
 type Env = Record<string, string | undefined>;
-export function brainLastTurnReviewOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_LAST_TURN_REVIEW ?? "").trim().toLowerCase() === "on";
+export const LAST_TURN_REVIEW_DEFAULT_STAGE: Stage = { kind: "yuma" };
+/** この会話で効くか（表の上書きは読まない・同期。ブレインは rollout.stageOnNow で表も読む） */
+export function brainLastTurnReviewOn(env: Env = typeof process !== "undefined" ? process.env : {}, conversationId?: string | null): boolean {
+  return stageOn("BRAIN_LAST_TURN_REVIEW", conversationId, env, [], LAST_TURN_REVIEW_DEFAULT_STAGE);
 }
 
 export type PrevDecision = { at: string; action: string | null; replyMode: string | null; stage: string | null };

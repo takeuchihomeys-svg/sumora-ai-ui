@@ -28,16 +28,18 @@ export function stageText(s: Stage): string { return s.kind === "pct" ? `pct:${s
 export function bucketOf(conversationId: string, name: string): number { return parseInt(fnv1a(`${name}:${conversationId}`), 16) % 100; }
 
 /** env と表からスイッチの段を決める（表が優先・_STAGE・互換の =on の順） */
-export function stageOf(name: string, env: Record<string, string | undefined>, overrides: ReadonlyArray<RolloutOverride> = []): Stage {
+/** defaultStage: env にも表にも無い時のコードの既定（11/03 指揮役: 本番の env は書き換えられない＝段階はコードの既定で上げる）。=off と書けば止まる */
+export function stageOf(name: string, env: Record<string, string | undefined>, overrides: ReadonlyArray<RolloutOverride> = [], defaultStage: Stage = { kind: "off" }): Stage {
   const o = overrides.find((x) => x.switch_name === name);
   const fromTable = o ? parseStage(o.stage) : null;
   if (fromTable) return fromTable;
   const st = parseStage(env[`${name}_STAGE`]);
   if (st) return st;
-  return String(env[name] ?? "").trim().toLowerCase() === "on" ? { kind: "all" } : { kind: "off" };
+  const v = String(env[name] ?? "").trim().toLowerCase();
+  return v === "on" ? { kind: "all" } : v === "off" ? { kind: "off" } : defaultStage;
 }
-export function stageOn(name: string, conversationId: string | null | undefined, env: Record<string, string | undefined>, overrides: ReadonlyArray<RolloutOverride> = []): boolean {
-  const s = stageOf(name, env, overrides);
+export function stageOn(name: string, conversationId: string | null | undefined, env: Record<string, string | undefined>, overrides: ReadonlyArray<RolloutOverride> = [], defaultStage: Stage = { kind: "off" }): boolean {
+  const s = stageOf(name, env, overrides, defaultStage);
   if (s.kind === "off") return false;
   if (s.kind === "all") return true;
   const cid = String(conversationId ?? "");
@@ -69,6 +71,6 @@ export async function loadRolloutOverrides(nowMs = Date.now()): Promise<RolloutO
   } catch { cache = { at: nowMs, rows: cache?.rows ?? [] }; }
   return cache.rows;
 }
-export async function stageOnNow(name: string, conversationId: string | null | undefined): Promise<boolean> {
-  return stageOn(name, conversationId, process.env, await loadRolloutOverrides());
+export async function stageOnNow(name: string, conversationId: string | null | undefined, defaultStage: Stage = { kind: "off" }): Promise<boolean> {
+  return stageOn(name, conversationId, process.env, await loadRolloutOverrides(), defaultStage);
 }
