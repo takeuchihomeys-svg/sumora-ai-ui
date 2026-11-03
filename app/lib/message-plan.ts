@@ -54,10 +54,12 @@ priorities を決めた後、1通全体をどう組むかを決めて message_pl
      meaning＝その部品の意味／when＝now（この通で）・next_business_day（管理会社しか答えられない確認・交渉で、営業時間外なので明日確かめる）・after_check（確かめてから）・new_arrival（今の条件は出し切った＝新着が出次第）・closed（もう決まった・もう答えた）・later_turn（後の番で）
      who＝reply（返信の本文）・aix（スタッフだけが知る事を AIX で）・phone（電話で打ち合わせる）／relation＝new・reaction_to_sent（こちらが送った物への反応）・continues_promise（前の約束の続き）・already_sent・already_answered ＋ ref（関係する送った物・約束）
      include＝in（この1通に入れる）・omit（今は入れない）・split（別の通に分ける）／omit_reason＝conflict（ぶつかる）・closed（締まっている）・later_turn（後の番で）・already_said（もう言った）／msg＝何通目か
-  ③ messages: 通ごとに {no, who, aix, ranks, why}。1通目は今の返信（または AIX）。
+  ③ messages: 通ごとに {no, who, aix, ranks, why}。1通目は今の返信（または AIX）。messages の who は parts の who と同じにする（parts が約束＝reply なら1通目も reply）。出力の "aix" の欄は、1通目が who=aix の時のそのキーだけ（1通目が返信＝約束なら aix は null）。
 決め方（人の当たり前）:
   - 同じ流れの事は1通にまとめる（例: 物件のピックアップの約束と、同じ連投で送ってきた物件の募集状況の確認＝同じ物件探しの流れ→1通）。
   - 手段が違う事は通を分け、要件ごとに順番をつける（例: 日にちが決まった内覧の待ち合わせ場所＝AIX と、審査の相談＝電話 → 2通。優先の高い方が1通目）。約束を1通に詰め込まない。
+  - お客様の今の連投に新しい依頼・質問・物件（URL・画像）があれば、その部品は必ず in（こちらが送った直後でも「待つ」「後の番で」にしない＝送った直後に返してきたのは、その返事か新しい頼み事）。omit・later_turn にしてよいのは、こちらが前に言った事・もう果たした事の繰り返しだけ。
+  - その場で果たす（AIX で今送る）か、確かめる・探す約束（返信の2段）かは、【お客様の今の状況】の「今すぐ果たせる物」で決める: 物件を送る部品は「送れる新しい候補: あり」の時だけ AIX（今送る）。なし・書かれていない時は探す約束（handling=confirm・who=reply）。持ち込みの物件の確認は「確認が要る」に載っていれば確かめる約束（同じ通で探す約束と一緒に1通）、「確認済み」なら AIX で今返せる。
   - もう決まった・もう答えた・もう言った事は omit（蒸し返さない・同じ受けを重ねない）。ただしお客様の今のお礼・了承・「わかりました」そのものは、受けの一言で返す部品＝in（omit にしない・priorities の handling も skip にしない）。ぶつかる部品（例: 新着待ちで締めた番に新しいピックアップの約束）は片方を omit にして理由を書く。
   - 営業時間外の「明日確かめる」は管理会社しか答えられない確認・交渉の部品だけ（業者のサイトで分かる空き・募集状況は next_business_day にしない）。
   - 前の日に言った「明日」「本日」は今日から見て言い直す（日をまたいだら、その日の事として扱う）。
@@ -169,7 +171,14 @@ export function alignPlanWithPriorities(plan: MessagePlan | null, items: Readonl
     if (it.handling === "skip" || it.handling === "later") return { ...p, who, include: "omit", omitReason: it.handling === "later" ? "later_turn" : (p.omitReason ?? "already_said"), msg: 1 };
     return { ...p, who };
   });
-  return { ...plan, parts };
+  // 2026-10-29 q197: messages の who を parts の who にそろえる（parts は約束＝reply なのに messages が AIX 物件ピックアップ、と食い違った）
+  const messages = plan.messages.map((m): PlanMessage => {
+    const ps = parts.filter((p) => m.ranks.includes(p.rank) && p.include !== "omit");
+    if (!ps.length) return m;
+    const who: PlanWho = ps.some((p) => p.who === "phone") ? "phone" : ps.every((p) => p.who === "reply") ? "reply" : "aix";
+    return { ...m, who, aix: who === "aix" ? m.aix : null };
+  });
+  return { ...plan, parts, messages };
 }
 
 /** 2通目（messages の no=2 と、その ranks の include=split の部品）。無ければ null（generate-reply の SECOND_MSG が受ける） */
