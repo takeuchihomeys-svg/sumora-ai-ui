@@ -86,6 +86,20 @@ it("ファイルが無い・本番・テスト用でない会話は null", () =>
 it("本番（VERCEL）では読まない", () => {
   eq(currentReplayFloor({ REPLAY_FLOOR_FILE: "x.json", VERCEL: "1" }), null);
 });
+it("2026-11-04 覚える物はファイルごと（試験の同時のレーンで、すぐ後に別の線のファイルを読んでも前の線を返さない）", () => {
+  const dir = mkdtempSync(join(tmpdir(), "floor-lanes-"));
+  const Y2 = "d040f80a-4fae-4fd0-abca-66eb2630906f", Y3 = "f7deb105-f908-41ad-95e7-f13aafdfa032";
+  const a = join(dir, "a.json"), b = join(dir, "b.json");
+  writeFileSync(a, JSON.stringify({ conversationId: Y2, floor: "2026-11-04T01:00:00.000Z" }));
+  writeFileSync(b, JSON.stringify({ conversationId: Y3, floor: "2026-11-04T02:00:00.000Z" }));
+  const env = (f: string) => ({ REPLAY_FLOOR_FILE: f, LLM_TEST_MODE: "deepseek-all" });
+  const ra = currentReplayFloor(env(a)), rb = currentReplayFloor(env(b)), ra2 = currentReplayFloor(env(a));
+  eq([ra?.conversationId ?? null, rb?.conversationId ?? null, ra2?.conversationId ?? null], [ra ? Y2 : null, rb ? Y3 : null, ra2 ? Y2 : null]);
+  if (ra && rb && ra.conversationId === rb.conversationId) throw new Error("別のファイルなのに同じ線を返した");
+});
+it("本番（REPLAY_FLOOR_FILE が無い）では今まで通り null（本番の道に効かない）", () => {
+  eq(currentReplayFloor({}), null);
+});
 
 console.log("classifyAixAutofill（AIX を入力なしで作れるか）");
 it("申込へ・ヒアリング・電話は会話だけで作れる", () => {

@@ -113,13 +113,14 @@ export function blankConversationRow(body: unknown, status = "proposing", keepPr
   return Array.isArray(body) ? body.map(blank) : blank(body);
 }
 
-let cache: { at: number; v: ReplayFloor | null } = { at: 0, v: null };
+let cache: { at: number; v: ReplayFloor | null; file?: string } = { at: 0, v: null };
 /** 線を読む（1秒だけ覚える）。動く条件がそろわなければ null */
 export function currentReplayFloor(env: Record<string, string | undefined> = process.env): ReplayFloor | null {
   const file = env.REPLAY_FLOOR_FILE;
   if (!file || !isTestModeAllowed(env)) return null;
   const now = Date.now();
-  if (now - cache.at < 1000) return cache.v;
+  // 2026-11-04 試験の同時（レーンごとに別の線のファイル）: 覚える物をファイル名で分ける（旧は名前を見ずに1秒覚え、他のレーンの線を返しえた）
+  if (cache.file === file && now - cache.at < 1000) return cache.v;
   let v: ReplayFloor | null = null;
   try {
     const fsm = (globalThis.process as unknown as { getBuiltinModule?: (m: string) => { readFileSync: (p: string, e: string) => string } | undefined })?.getBuiltinModule?.("node:fs");
@@ -129,7 +130,7 @@ export function currentReplayFloor(env: Record<string, string | undefined> = pro
       v = { conversationId: j.conversationId, floor: new Date(Date.parse(j.floor)).toISOString(), ...(j.keepPropertyCustomer === true ? { keepPropertyCustomer: true } : {}), ...(typeof j.status === "string" && /^[a-z_]{2,30}$/.test(j.status) ? { status: j.status } : {}), ...(typeof j.messageIdPrefix === "string" && /^[a-z0-9-]{3,30}$/.test(j.messageIdPrefix) ? { messageIdPrefix: j.messageIdPrefix } : {}) };
     }
   } catch { v = null; }
-  cache = { at: now, v };
+  cache = { at: now, v, file };
   return v;
 }
 
