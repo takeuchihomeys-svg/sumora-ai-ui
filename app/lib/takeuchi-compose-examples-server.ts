@@ -19,6 +19,11 @@ import { purposeOfText, composeExampleWeight, composeEmbedInput, sentencesOf, ta
 import { DOC_CANDIDATE_OR } from "./second-takeuchi-data-server";
 import { readBeyondOf, worryCandidatesOf, utterTypesOf } from "./reading-tags";
 import { embedTexts } from "./design-knowledge-rag-server";
+import { customerNameTokens, maskCustomerNames } from "./compose-name-mask";
+
+/** 伏せの版（2026-11-03 夜の直し）。この日時より前に作った行は、cron が先に元の送信から作り直す（問いの値なしで直る） */
+export const COMPOSE_MASK_VER = "20261103b";
+export const COMPOSE_MASK_VER_AT = "2026-11-03T14:30:00Z";
 
 function serviceClient(): SupabaseClient | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -35,7 +40,7 @@ type Row = {
   read_beyond: string[]; hidden_worry: string[]; utter_type: string[]; true_want: string[]; true_want_at: string | null; forward_score: number;
 };
 
-export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso?: string | null; limit?: number; budgetMs?: number; pauseMs?: number } = {}): Promise<{ ok: boolean; error?: string; read?: number; rows?: number; stats?: Record<string, number>; next?: string | null; embedTokens?: number; dry?: boolean }> {
+export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso?: string | null; limit?: number; budgetMs?: number; pauseMs?: number } = {}): Promise<{ ok: boolean; error?: string; read?: number; rows?: number; stats?: Record<string, number>; next?: string | null; embedTokens?: number; dry?: boolean; stale?: number }> {
   const sb = serviceClient();
   if (!sb) return { ok: false, error: "SUPABASE_SERVICE_ROLE_KEY が無い" };
   const t0 = Date.now();
@@ -45,24 +50,39 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
   const stats: Record<string, number> = {};
   const bump = (k: string) => (stats[k] = (stats[k] ?? 0) + 1);
   try {
-    let after = opts.afterIso ?? null;
-    if (!after) {
-      const { data } = await sb.from("takeuchi_compose_examples").select("sent_at").order("sent_at", { ascending: false }).limit(1);
-      after = (data?.[0] as { sent_at?: string } | undefined)?.sent_at ?? "2026-01-01T00:00:00Z";
+    // 2026-11-03 伏せの版（COMPOSE_MASK_VER_AT）より前に作った行（built_at が古い）を、まず最大 limit 行だけ元の送信から作り直す
+    //   （問いの値が無くても直る作り・週1の cron でも自分で直る）。古い行が無くなってから、今まで通り新しい送信へ進む
+    const lim = Math.min(opts.limit ?? 300, 500);
+    const { data: stale } = opts.afterIso ? { data: [] as Array<{ message_id: string }> } : await sb.from("takeuchi_compose_examples").select("message_id")
+      .lt("built_at", COMPOSE_MASK_VER_AT).order("sent_at").limit(lim);
+    const staleIds = ((stale ?? []) as Array<{ message_id: string }>).map((r) => r.message_id);
+    let msgs: unknown[] | null = null;
+    if (staleIds.length) {
+      bump(`作り直し（伏せの版 ${COMPOSE_MASK_VER}）`);
+      const r = await sb.from("messages").select("id, conversation_id, text, created_at").in("id", staleIds).order("created_at");
+      if (r.error) throw new Error(r.error.message);
+      msgs = r.data ?? [];
+    } else {
+      let after = opts.afterIso ?? null;
+      if (!after) {
+        const { data } = await sb.from("takeuchi_compose_examples").select("sent_at").order("sent_at", { ascending: false }).limit(1);
+        after = (data?.[0] as { sent_at?: string } | undefined)?.sent_at ?? "2026-01-01T00:00:00Z";
+      }
+      // 竹内さん本人の送信（staff_writer の部分 index・古い順・1回 limit 通）
+      const r = await sb.from("messages").select("id, conversation_id, text, created_at")
+        .eq("staff_writer", "takeuchi").eq("staff_writer_confidence", "sure").eq("staff_writer_source", "device").eq("sender", "staff")
+        .or("is_aix_generated.is.null,is_aix_generated.eq.false").gt("created_at", after).order("created_at").limit(lim);
+      if (r.error) throw new Error(r.error.message);
+      msgs = r.data ?? [];
     }
-    // 竹内さん本人の送信（staff_writer の部分 index・古い順・1回 limit 通）
-    const { data: msgs, error } = await sb.from("messages").select("id, conversation_id, text, created_at")
-      .eq("staff_writer", "takeuchi").eq("staff_writer_confidence", "sure").eq("staff_writer_source", "device").eq("sender", "staff")
-      .or("is_aix_generated.is.null,is_aix_generated.eq.false").gt("created_at", after).order("created_at").limit(Math.min(opts.limit ?? 300, 500));
-    if (error) throw new Error(error.message);
     const list = ((msgs ?? []) as Array<{ id: string; conversation_id: string; text: string | null; created_at: string }>).filter((m) => !isTestConversation(m.conversation_id));
     const convIds = [...new Set(list.map((m) => m.conversation_id))];
-    const names = new Map<string, string>();
+    const names = new Map<string, string[]>();
     const deals = new Map<string, Array<{ applied: number | null; viewing: number | null }>>();
     for (let i = 0; i < convIds.length; i += 200) {
       const part = convIds.slice(i, i + 200);
-      const { data: cs } = await sb.from("conversations").select("id, customer_name").in("id", part);
-      for (const c of (cs ?? []) as Array<{ id: string; customer_name: string | null }>) names.set(c.id, c.customer_name ?? "");
+      const { data: cs } = await sb.from("conversations").select("id, customer_name, call_name").in("id", part);
+      for (const c of (cs ?? []) as Array<{ id: string; customer_name: string | null; call_name: string | null }>) names.set(c.id, customerNameTokens([c.customer_name, c.call_name]));
       const { data: ds } = await sb.from("deal_outcomes").select("conversation_id, applied_at, viewing_at, viewing_held_at").in("conversation_id", part);
       for (const d of (ds ?? []) as Array<{ conversation_id: string; applied_at: string | null; viewing_at: string | null; viewing_held_at: string | null }>) {
         const l = deals.get(d.conversation_id) ?? [];
@@ -118,13 +138,9 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
       const ds = deals.get(m.conversation_id) ?? [];
       const viewing7d = ds.some((d) => d.viewing != null && d.viewing > at && d.viewing <= at + 7 * 86400_000);
       const applied14d = ds.some((d) => d.applied != null && d.applied > at && d.applied <= at + 14 * 86400_000);
-      // 伏せ（お客様の表示名・こちらの通の「〇〇さん」→ YUMA・maskPII・URL・電話）
-      const ns = [names.get(m.conversation_id) ?? "", ...(text.match(/^([^\s\n、。！!]{1,8})さん/) ? [text.match(/^([^\s\n、。！!]{1,8})さん/)![1]] : [])]
-        .map((s) => s.trim()).filter((s) => s && s !== "YUMA").sort((a, b) => b.length - a.length);
+      // 伏せ（2026-11-03 直し: その会話のお客様の名前＝表示名・呼び名とその姓・名だけ → YUMA。文の途中の「〇〇さん」を正規表現で置き換えない＝compose-name-mask.ts）＋maskPII・URL・電話
       const mask = (t: string) => {
-        let r = String(t ?? "");
-        for (const n of ns) r = r.split(`${n}さん`).join("YUMAさん");
-        for (const n of ns) if (n.length >= 2) r = r.split(n).join("YUMA");
+        const r = maskCustomerNames(String(t ?? ""), names.get(m.conversation_id) ?? []);
         return maskPII(r).replace(/https?:\/\/\S+/g, "〈URL〉").replace(/0\d{1,3}-?\d{2,4}-?\d{3,4}/g, "〈電話〉");
       };
       const body = mask(text).slice(0, 400);
@@ -146,19 +162,38 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
       });
       bump("採用");
     }
-    if (next === null && list.length >= Math.min(opts.limit ?? 300, 500)) next = lastDone;   // 1回の上限に達した＝まだ続きがある
+    if (!staleIds.length && next === null && list.length >= Math.min(opts.limit ?? 300, 500)) next = lastDone;   // 1回の上限に達した＝まだ続きがある（作り直しの回は次の回が古い行を選び直す）
     let embedTokens = 0;
     if (!opts.dry && rows.length) {
       for (let i = 0; i < rows.length; i += 64) {
         const part = rows.slice(i, i + 64);
         const { vectors, tokens } = await embedTexts(part.map((r) => composeEmbedInput({ scene: r.scene, purpose: r.purpose, customerGist: r.customer_gist, intentWhat: r.main_line })));
         embedTokens += tokens;
-        const up = part.map((r, k) => ({ ...r, embedding: vectors[k] ? `[${vectors[k]!.join(",")}]` : null, built_at: new Date().toISOString() }));
+        // 作り直し（同じ通をもう一度作る時・?after= で前から）: 本文が前と変わった行は文の解剖を読み直す（anatomy を空に・anatomy_pick は残す）
+        const { data: prevRows } = await sb.from("takeuchi_compose_examples").select("message_id, body, anatomy").in("message_id", part.map((r) => r.message_id));
+        //   11/03 夜の伏せ直しの失敗（かなの続きを YUMA に置き換えた）は anatomy の文にも入った＝本文が同じでも「かな・漢字の直後の YUMAさん」がある解剖は読み直す
+        const prevBody = new Map(((prevRows ?? []) as Array<{ message_id: string; body: string; anatomy: unknown }>).map((r) => [r.message_id, { body: r.body, hasAnatomy: r.anatomy != null, brokenAnatomy: r.anatomy != null && /[ぁ-んァ-ヶ一-龯]YUMAさん/.test(JSON.stringify(r.anatomy)) }]));
+        const up = part.map((r, k) => {
+          const pv = prevBody.get(r.message_id);
+          const reread = !!pv && pv.hasAnatomy && (pv.body !== r.body || pv.brokenAnatomy);
+          if (reread) bump("本文が変わって解剖を読み直す");
+          return { ...r, embedding: vectors[k] ? `[${vectors[k]!.join(",")}]` : null, built_at: new Date().toISOString(), ...(reread ? { anatomy: null, anatomy_conflicts: [] as string[], anatomy_at: null } : {}) };
+        });
         const res = await sb.from("takeuchi_compose_examples").upsert(up, { onConflict: "message_id" });
         if (res.error) throw new Error(`takeuchi_compose_examples: ${res.error.message}`);
       }
     }
-    return { ok: true, read: list.length, rows: rows.length, stats, next, embedTokens, dry: !!opts.dry };
+    // 作り直しの回で、もう例に入らない（画像・申込以降・個人の値・時間切れの残り以外）古い行は消す（古いまま残すと毎回作り直しの対象になる）
+    if (!opts.dry && staleIds.length && next === null) {
+      const kept = new Set(rows.map((r) => r.message_id));
+      const drop = staleIds.filter((id) => !kept.has(id));
+      if (drop.length) {
+        const d = await sb.from("takeuchi_compose_examples").delete().in("message_id", drop).lt("built_at", COMPOSE_MASK_VER_AT);
+        if (d.error) throw new Error(d.error.message);
+        stats["作り直しで例から外した"] = drop.length;
+      }
+    }
+    return { ok: true, read: list.length, rows: rows.length, stats, next, embedTokens, dry: !!opts.dry, stale: staleIds.length };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e), stats };
   }
