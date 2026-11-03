@@ -1,6 +1,6 @@
 // scripts/__tests__/desk-shadow.test.ts — 統括・相談（shadow）とスタッフの一致の数え方
 //   実行: npx tsx scripts/__tests__/desk-shadow.test.ts
-import { tallyDeskAgreement, type DeskRow } from "../lib/desk-shadow-core";
+import { tallyDeskAgreement, tallyDeskByWriter, type DeskRow } from "../lib/desk-shadow-core";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const R = (o: Partial<DeskRow>): DeskRow => ({ conversation_id: "c", created_at: "x", suggested_action: null, actual_aix_type: null, actual_at: "y", ...o });
@@ -19,5 +19,8 @@ t("同じ: ブレインと同じボタンを押せば合う・答えが分から
 t("違う札: その札のボタンを押せば合う", get("違う札")?.agree === 1);
 t("skip は数えない", t1.commander.reduce((a, x) => a + x.n, 0) === 5);
 t("相談 keep: 押さなければ合う", t1.consult[0]?.k.startsWith("keep") && t1.consult[0].agree === 1);
+{ const base = { conversation_id: "c", created_at: "2026-11-01T00:00:00Z", suggested_action: "estimate_sheet", actual_aix_type: "estimate_sheet", actual_at: "2026-11-01T00:10:00Z", ad: { brain: "estimate_sheet", pick: "estimate_sheet" } };
+  const w = tallyDeskByWriter([{ ...base, writer: "takeuchi" }, { ...base, writer: "employee", actual_aix_type: null }, { ...base, writer: null }] as DeskRow[]);
+  t("2026-11-04 竹内さんの番だけ基準・従業員は参考に別・書き手不明は数えない", w.takeuchi.commander[0]?.agree === 1 && w.takeuchi.commander[0]?.n === 1 && w.employee.commander[0]?.agree === 0 && w.unknown === 1); }
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
