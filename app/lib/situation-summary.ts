@@ -83,8 +83,10 @@ export type SituationSummary = {
   plan: MessagePlan | null;
   /** 2026-11-03 作業員6 構成のブレインの意図（趣旨・主語・メインの1文・添え・締め・compose-blueprint.ts）。plan の後に埋める。無い番は省く */
   compose?: ComposeIntent | null;
+  /** 2026-11-03 次の数手の計画（brain-need.ts・BRAIN_PLAN_AHEAD=on の時だけ入る・正は last_brain_meta.plan_ahead）。統括・AIX の統括・構成・2通目が同じ物を読む */
+  planAhead?: import("./brain-need").PlanAhead | null;
 };
-export function buildSituationSummary(o: { state: Pick<CustomerState, "stage" | "stageLabel" | "properties">; promises: ReadonlyArray<PromiseStep>; emotion: FilledEmotion; bind: BindResult; pickupReady: boolean | null; nowMs: number; memoItems?: ReadonlyArray<{ kind: string; text: string; retiredAt?: string | null }>; mindsetState?: string | null; appeal?: AppealDecision | null; plan?: MessagePlan | null }): SituationSummary {
+export function buildSituationSummary(o: { state: Pick<CustomerState, "stage" | "stageLabel" | "properties">; promises: ReadonlyArray<PromiseStep>; emotion: FilledEmotion; bind: BindResult; pickupReady: boolean | null; nowMs: number; memoItems?: ReadonlyArray<{ kind: string; text: string; retiredAt?: string | null }>; mindsetState?: string | null; appeal?: AppealDecision | null; plan?: MessagePlan | null; planAhead?: import("./brain-need").PlanAhead | null }): SituationSummary {
   return {
     stage: o.state.stage, stageLabel: o.state.stageLabel,
     openPromises: o.promises.filter((p) => p.status === "pending").map((p) => ({ kind: p.kind, action: p.action, object: p.object, evidence: p.evidence, promisedAt: p.promisedAt })),
@@ -94,6 +96,7 @@ export function buildSituationSummary(o: { state: Pick<CustomerState, "stage" | 
     appealMaterials: appealMaterialsOf(o.memoItems ?? [], o.mindsetState ?? null),
     appeal: o.appeal ?? null,
     plan: o.plan ?? null,
+    planAhead: o.planAhead ?? null,
   };
 }
 

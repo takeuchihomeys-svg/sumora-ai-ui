@@ -16,6 +16,7 @@
 // ここは「どちらの層が作るか」の分類。両者が食い違っても下流の挙動は変えない（作り手だけを分ける）。
 
 // 2026-09-23: 戦略の項目にも家賃交渉の守りを通す（純関数同士なので依存なしのまま）
+import { needDigest, planAheadDigest, type BrainNeed, type PlanAhead } from "./brain-need";
 import { stripRentNegotiation, stripRentNegotiationFromList } from "./rent-negotiation-guard";
 import { mindsetDigest, type CustomerMindset } from "./customer-mindset";
 
@@ -128,6 +129,8 @@ export type FreshDigest = {
   la?: string | null; ds?: string | null;
   /** 2026-11-03: 後ろの決まりの書き換え（"LLMのAIX→最終@出どころ"）と、下げた上書きの数（記録だけ） */
   rw?: string; dm?: number;
+  /** 2026-11-03（brain-need.ts・どれも既定 off）: need（難しさ・自信・足りない材料）／次の数手の計画（goal|先頭の手|変）／材料の食い違い（stage,sent） */
+  nd?: string; pa?: string; cf?: string;
   /** 2026-10-13: LLM が出した current_property（ゲートの前） */
   lp?: string | null;
   /** 2026-10-13: 生の本質の道の数（reconcile の前・llm_raw.tc）。tc は規則の後の値 */
@@ -167,6 +170,9 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     //   下げた上書き（規則は当たったがブレインのまま）の数も残す。毎週の line-watch-miss-causes の「返信か AIX か」の章で a を数える
     ...((() => { const la0 = str(meta.aix_llm, 30) ?? str((meta.llm_raw as { action?: unknown } | undefined)?.action, 30); const fin = str(meta.action, 30); const by = str(meta.decision_source, 40) ?? str(meta.decision_source_no_aix, 40); return la0 !== fin && (la0 || fin) ? { rw: `${la0 ?? "返信"}→${fin ?? "返信"}@${by ?? "-"}` } : {}; })()),
     ...(Array.isArray(meta.demoted_overrides) && (meta.demoted_overrides as unknown[]).length ? { dm: (meta.demoted_overrides as unknown[]).length } : {}),
+    ...((() => { const nd = needDigest(meta.need as BrainNeed | null | undefined); return nd ? { nd } : {}; })()),
+    ...((() => { const pa = planAheadDigest(meta.plan_ahead as PlanAhead | null | undefined); return pa ? { pa } : {}; })()),
+    ...(Array.isArray(meta.material_conflicts) && (meta.material_conflicts as unknown[]).length ? { cf: (meta.material_conflicts as unknown[]).map(String).join(",").slice(0, 20) } : {}),
     // 2026-10-13 棚卸し B-6: LLM が出した current_property（実在ゲートの前）。prop（最終）と比べてゲートで落ちた番を数える
     lp: str((meta.llm_raw as { cp?: unknown } | undefined)?.cp, 40),
     ltc: str((meta.llm_raw as { tc?: unknown } | undefined)?.tc, 20),
