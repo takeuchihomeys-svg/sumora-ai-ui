@@ -15,6 +15,7 @@
 //   ③ 問題ごとの揺れ: 揺れの記録（exam-flake）で答えが割れた問題は 4回（EXAM_FLAKY_REPS・3〜6）・それ以外は repeat（既定2）→ --reps-file で渡す
 //   ④ 問題の選び: --pick=types:型@N ／ gold（正解の組）／ map（exam-queue/scene-map.json の場面の地図）／ rag（brain-exam --select=rag）
 //   ＋ 終わったら依頼した人に知らせる: --notify=<エージェントの id>（無ければ exam-queue/config.json の notify[owner]）→ results/notify.jsonl と conductor.log の「📣 知らせる」の行。--run を見張る作業員がその行を SendMessage で届ける
+//   ＋ tsc の依頼: --runner=tsc --cwd=<作業ツリー>（試験と同時に流さない・1本ずつ・空きメモリ 1500MB 以上・%TEMP%/tsc.lock を取る・heap は EXAM_TSC_HEAP_MB 既定 4096）→ 0 か落ちた理由を知らせる
 //   ＋ brain-exam 以外の試験の口: --runner=cmd --cmd="scripts/x.ts --a=1" [--cmd=...]（順に流す・関所と本番の見張りは同じ・採点は依頼者）
 // 実行:
 //   足す:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --add --label=ms-on1 --owner=作業員1 --switch=BRAIN_MATERIAL_SELF_REPORT --cwd=<作業ツリー> --only=q015,q042 --stage=brain [--repeat=2] [--env=K=V,K=V] [--flaky=q091] [--pick=...]
@@ -22,7 +23,7 @@
 //   流す:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --run [--once] [--release-order=<md>]
 //   見る:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --list
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, openSync, closeSync } from "node:fs";
+import { rmdirSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, openSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
@@ -48,7 +49,7 @@ export type ExamJob = {
   id: string; label: string; owner: string; switch: string; cwd: string; only: string; stage: string; repeat: number; env: Record<string, string>; createdAt: string; tries: number;
   /** 依頼で名指しした揺れる問題（③） */ flaky?: string[];
   /** --pick=rag の時 brain-exam --select=rag に任せる（④） */ selectRag?: boolean;
-  /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd"; cmds?: string[];
+  /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc"; cmds?: string[];
   /** 終わったら知らせる相手（エージェントの id・--notify=）。無ければ exam-queue/config.json の notify[owner] */ notify?: string;
 };
 
@@ -73,7 +74,17 @@ async function prodHealthy(): Promise<{ ok: boolean; why: string }> {
     return nl + nc > max ? { ok: false, why: `本番の失敗 直近10分 LLM ${nl}・cron ${nc}（上限 ${max}）` } : { ok: true, why: `本番の失敗 LLM ${nl}・cron ${nc}` };
   } catch (e) { return { ok: false, why: `本番の調子を読めない: ${String(e).slice(0, 80)}` }; }
 }
-async function gate(): Promise<{ ok: boolean; why: string }> {
+/** tsc の依頼の関所: 試験と同時に流さない・tsc は1本ずつ・空きメモリが十分（既定 1500MB・EXAM_TSC_MIN_FREE_MB）。安い時間・本番の調子は見ない（LLM を呼ばない） */
+function gateTsc(): { ok: boolean; why: string } {
+  const pc = pcState();
+  if (pc.tsc) return { ok: false, why: "tsc が動いている（1本ずつ）" };
+  if (pc.exams > 0) return { ok: false, why: `試験が ${pc.exams}本動いている（tsc と同時に流さない）` };
+  const minFree = Number(process.env.EXAM_TSC_MIN_FREE_MB ?? "1500");
+  if (pc.free < minFree) return { ok: false, why: `空きメモリ ${pc.free}MB（tsc は ${minFree} 以上）` };
+  return { ok: true, why: `空き ${pc.free}MB` };
+}
+async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
+  if (j?.runner === "tsc") return gateTsc();
   if (!cheapNow()) return { ok: false, why: "DeepSeek の混雑の時間（平日 10〜13・15〜19）" };
   const pc = pcState();
   if (pc.tsc) return { ok: false, why: "tsc が動いている" };
@@ -97,7 +108,9 @@ function addJob(): void {
   const label = arg("label") || `job-${Date.now()}`;
   const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage", "brain"), env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}) };
   let job: ExamJob;
-  if (arg("runner") === "cmd") {
+  if (arg("runner") === "tsc") {
+    job = { ...base, id: `${Date.now()}`, label, only: "", repeat: 1, runner: "tsc" };
+  } else if (arg("runner") === "cmd") {
     const cmds = argsOf("cmd").filter(Boolean);
     if (!cmds.length) throw new Error("--runner=cmd は --cmd=\"scripts/x.ts --a=1\" が要る（何度でも・順に流す）");
     if (cmds.some((c) => !/^scripts\/[\w./-]+\.ts(\s|$)/.test(c))) throw new Error("--cmd は scripts/ の .ts から始める（npx tsx --env-file=.env.local の後ろに付ける）");
@@ -144,10 +157,13 @@ const baseLabelOf = (cwd: string, label: string): string | null => {
 function killTree(pid?: number): void { try { if (pid) execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" }); } catch { /* 終わった */ } }
 /** npx tsx を子で動かす（出力は outFile に足す）。終わりを待つ */
 function runTsx(cwd: string, argv: string[], env: Record<string, string>, outFile: string): { child: ReturnType<typeof spawn>; done: Promise<number | null> } {
+  return runNpx(cwd, ["tsx", "--env-file=.env.local", ...argv], { ...env, LLM_TEST_MODE: "deepseek-all", EXAM_DAILY_CAP_USD: process.env.EXAM_DAILY_CAP_USD ?? "30" }, outFile);
+}
+function runNpx(cwd: string, argv: string[], env: Record<string, string>, outFile: string): { child: ReturnType<typeof spawn>; done: Promise<number | null> } {
   const fd = openSync(outFile, "a");
   // Windows は shell 経由で動かす＝空白・日本語のあるパス（C:\Users\竹内 悠馬\…）は引用符で包む
   const q = (a: string) => (process.platform === "win32" && /[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a);
-  const child = spawn(process.platform === "win32" ? "npx.cmd" : "npx", ["tsx", "--env-file=.env.local", ...argv].map(q), { cwd, shell: process.platform === "win32", env: { ...process.env, ...env, LLM_TEST_MODE: "deepseek-all", EXAM_DAILY_CAP_USD: process.env.EXAM_DAILY_CAP_USD ?? "30" }, stdio: ["ignore", fd, fd] });
+  const child = spawn(process.platform === "win32" ? "npx.cmd" : "npx", argv.map(q), { cwd, shell: process.platform === "win32", env: { ...process.env, ...env }, stdio: ["ignore", fd, fd] });
   const done = new Promise<number | null>((res) => child.on("close", (c) => { try { closeSync(fd); } catch { /* */ } res(c); }));
   return { child, done };
 }
@@ -181,7 +197,28 @@ function finish(j: ExamJob & { file: string }, result: Record<string, unknown>, 
   log(`  📣 知らせる: to=${to || `(相手なし・owner ${j.owner})`} ${msg}`);
 }
 
+/** tsc の依頼: %TEMP%/tsc.lock を取り（手で回す tsc と同じ鍵）、npx tsc --noEmit を1本流す。結果（0 か落ちた理由）を知らせる */
+async function runTscJob(j: ExamJob & { file: string }): Promise<void> {
+  const outFile = join(RES, `${j.label}.out.log`);
+  const at = () => new Date().toISOString();
+  const lock = join(process.env.TEMP ?? process.env.TMP ?? ".", "tsc.lock");
+  try { mkdirSync(lock); } catch { log(`  tsc の鍵が取れない（${lock} がある）→ 待つ`); return; }
+  const heap = process.env.EXAM_TSC_HEAP_MB ?? "4096";
+  log(`流す: ${j.label}（${j.owner}・tsc・heap ${heap}MB・${j.cwd}）`);
+  writeFileSync(outFile, `=== ${at()} npx tsc --noEmit（${j.cwd}）===\n`);
+  let code: number | null = null;
+  try { code = await runNpx(j.cwd, ["tsc", "--noEmit"], { NODE_OPTIONS: `--max-old-space-size=${heap}` }, outFile).done; }
+  finally { try { rmdirSync(lock); } catch { /* */ } }
+  const out = readFileSync(outFile, "utf8");
+  const errs = out.split(/\r?\n/).filter((l) => /error TS\d+/.test(l));
+  const verdict = code === 0 ? "tsc 0" : code === 134 || /heap out of memory|JavaScript heap/i.test(out) ? `tsc 落ちた（${code}・メモリ不足）` : errs.length ? `tsc 型エラー ${errs.length}件: ${errs.slice(0, 3).map((l) => l.trim().slice(0, 140)).join(" ／ ")}` : `tsc 落ちた（終わりの番号 ${code}）`;
+  finish(j, { label: j.label, owner: j.owner, runner: "tsc", cwd: j.cwd, code, errors: errs.length, verdict, at: at() },
+    `| ${at().slice(0, 16)} | tsc | ${j.owner} | ${j.label} | ${verdict.slice(0, 80)} | - | - | $0 |`, verdict);
+  log(`  済み: ${j.label} → ${verdict}`);
+}
+
 async function runJob(j: ExamJob & { file: string }): Promise<void> {
+  if (j.runner === "tsc") return runTscJob(j);
   const outFile = join(RES, `${j.label}.out.log`);
   const at = () => new Date().toISOString();
   // 本番の見張り（2分ごと）: 悪ければ止めて片付け・順番待ちに戻す
@@ -251,15 +288,18 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
 // 直に流された時だけ動く（テストが関所の関数だけ読む時は動かない）
 if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
   if (flag("add")) { addJob(); return; }
-  if (flag("list")) { for (const j of readJobs()) console.log(`- ${j.createdAt.slice(0, 16)} ${j.label}（${j.owner}・${j.switch}・${j.runner === "cmd" ? `${j.cmds?.length}本` : `${j.only || "rag"}・${j.repeat}回`}・試み ${j.tries}）`); return; }
+  if (flag("list")) { for (const j of readJobs()) console.log(`- ${j.createdAt.slice(0, 16)} ${j.label}（${j.owner}・${j.switch}・${j.runner === "tsc" ? "tsc" : j.runner === "cmd" ? `${j.cmds?.length}本` : `${j.only || "rag"}・${j.repeat}回`}・試み ${j.tries}）`); return; }
   if (flag("run")) {
     cfg();
     for (;;) {
       const jobs = readJobs();
       if (!jobs.length) { log("順番待ちは空"); return; }
-      const g = await gate();
-      if (!g.ok) { log(`待つ: ${g.why}（${jobs.length}本待ち）`); if (flag("once")) return; await new Promise((r) => setTimeout(r, 5 * 60_000)); continue; }
-      await runJob(jobs[0]);
+      // 先頭から順に関所を見て、通った最初の依頼を流す（試験が安い時間を待つ間も tsc は先に流せる）
+      let picked: (typeof jobs)[number] | null = null; const whys: string[] = [];
+      let examBlocked = false;
+      for (const j of jobs) { if (j.runner !== "tsc" && examBlocked) continue; const g = await gate(j); if (g.ok) { picked = j; break; } whys.push(`${j.label}: ${g.why}`); if (j.runner !== "tsc") examBlocked = true; }
+      if (!picked) { log(`待つ: ${whys.slice(0, 3).join("／")}（${jobs.length}本待ち）`); if (flag("once")) return; await new Promise((r) => setTimeout(r, (jobs.some((x) => x.runner === "tsc") ? 1 : 5) * 60_000)); continue; }
+      await runJob(picked);
       if (flag("once")) return;
     }
   }
