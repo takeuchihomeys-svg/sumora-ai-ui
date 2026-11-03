@@ -18,7 +18,7 @@ import { messagePlanOn, BRAIN_MESSAGE_PLAN_RULES, BRAIN_MESSAGE_PLAN_FIELD, norm
 import { needReportOn, planAheadOn, materialProvenanceOn, BRAIN_NEED_RULES, BRAIN_NEED_FIELD, BRAIN_PLAN_AHEAD_RULES, BRAIN_PLAN_AHEAD_FIELD, MATERIAL_PROVENANCE_RULE, normalizeNeed, normalizePlanAhead, prevPlanAheadLine, detectMaterialConflicts, type PlanAhead, type MaterialConflicts, threeLayerOn, mainPointOn, BRAIN_THREE_LAYER_RULES, BRAIN_THREE_LAYER_FIELD, BRAIN_MAIN_POINT_RULES, BRAIN_MAIN_POINT_FIELD, normalizeThreeLayer, normalizeMainPoint } from "@/app/lib/brain-need";
 import { flowSignalsOn, detectFlowSignals, flowSignalsLine, type FlowSignals } from "@/app/lib/flow-signals";
 import { conductorHandoffOn, candidateRoles, rolesDigest } from "@/app/lib/conductor-handoff";
-import { recheckMaterialLine, type BrainRecheck } from "@/app/lib/brain-recheck";
+import { recheckMaterialLine, recheckMode, recheckLimit, pickRecheck, recheckSig, recheckDigest, type BrainRecheck } from "@/app/lib/brain-recheck";
 import { priorityStepOn, priorityRetrievalOn, BRAIN_PRIORITY_RULES, BRAIN_PRIORITIES_FIELD, normalizePriorities, ensureAsksCovered, reconcilePrioritiesWithAix, priorityRecord, renderPulledBlock, type PriorityStepRecord } from "@/app/lib/brain-priority";
 import { logWatchMaterial, noteWatchMaterials } from "@/app/lib/line-watch-materials-server";
 import { withRelativeDatesRule, relativeDatesBrainNoteFor } from "@/app/lib/relative-dates"; // 2026-10-23 日付の距離（BRAIN_RELATIVE_DATES・既定 off）
@@ -6730,13 +6730,7 @@ async function analyzeAndSaveBrainMetaInner(
   const cacheWarm = useFreshLayer && cacheWarmModeNow !== "off"
     ? await loadCacheWarmDecision(conversationId).catch(() => null)
     : null;
-  const meta = await analyzeConversation(
-    conversationId,
-    isUrgent,
-    brainStatus,
-    (conv.property_customer_id as string | null) ?? null,
-    "brain",
-    {
+  const analyzeOptsMain: NonNullable<Parameters<typeof analyzeConversation>[5]> = {
       autoSendEnabled: conv.auto_send_enabled === false ? false : undefined,
       isHot: (conv.is_hot as boolean | null) ?? false,
       isFlagged: (conv.is_flagged as boolean | null) ?? false,
@@ -6751,8 +6745,25 @@ async function analyzeAndSaveBrainMetaInner(
       totalMsgCount: totalMsgCount ?? 0,
       cacheWarm,
       parallelSecond,
-    },
-  );
+  };
+  let meta = await analyzeConversation(conversationId, isUrgent, brainStatus, (conv.property_customer_id as string | null) ?? null, "brain", analyzeOptsMain);
+  // 2026-11-03 読み直しの継ぎ目（brain-recheck.ts・BRAIN_RECHECK=off 既定／shadow＝記録だけ／on）: 下の役（AIX の統括・相談・確かめ）の食い違いを
+  //   理由つきで opts.recheck に渡し、統括（ブレイン）が決め直す。普通の番は1回・難しい番だけ最大3回・同じ理由が続いたら止める
+  const rcMode = recheckMode();
+  if (rcMode !== "off" && meta) {
+    const limit = recheckLimit(meta as unknown as Record<string, unknown>);
+    let rc = pickRecheck(meta as unknown as Record<string, unknown>);
+    let count = 0; const seen = new Set<string>(); const t0 = Date.now(); let last: BrainRecheck | null = rc;
+    while (rcMode === "on" && rc && count < limit && !seen.has(recheckSig(rc))) {
+      seen.add(recheckSig(rc)); count++;
+      const again = await analyzeConversation(conversationId, isUrgent, brainStatus, (conv.property_customer_id as string | null) ?? null, "brain", { ...analyzeOptsMain, recheck: rc }).catch(() => null);
+      if (!again) break;
+      meta = again; rc = pickRecheck(again as unknown as Record<string, unknown>); if (rc) last = rc;
+    }
+    const rk = recheckDigest({ mode: rcMode, count, limit, last });
+    if (meta && rk) (meta as unknown as Record<string, unknown>).recheck_digest = rk;
+    if (rk) console.log(JSON.stringify({ tag: "brain:recheck-loop", conversationId, rk, ms: Date.now() - t0 }));
+  }
   // 2026-09-30 竹内: 今回の連投で決まった内覧が取りやめになっていたら、カレンダーの予定を消す（LLM の結果に依らない決定論・応答は待たせない）
   runViewingCancelIfPending(conversationId);
   if (!meta) {

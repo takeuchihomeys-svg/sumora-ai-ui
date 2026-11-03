@@ -38,3 +38,34 @@ export function recheckMaterialLine(rc: BrainRecheck | null | undefined): string
   const mat = one(rc.material, 600);
   return `${head}、${rc.from === "no_ground" ? "文の根拠が材料に見つからなかった" : rc.from === "deep" ? "深く読む番と判断された" : "足りない材料を取ってきた"}。理由: ${one(rc.why, 120)}。${mat ? `\n${mat}\n` : ""}${tail}`;
 }
+
+// ── 読み直しの継ぎ目（analyzeAndSaveBrainMeta）・難しい番だけ最大3回（KB P1「100% に向けて土台の7つ」③）──────────
+//   BRAIN_RECHECK: off（既定）／shadow（読み直すはずの番と回数の上限を記録だけ・呼ばない＝費用0）／on（呼ぶ）
+//   普通の番は1回まで。難しい番（need.difficulty=high かつ confidence が low/mid、または confidence=low）だけ最大3回。
+//   次の読み直しは、前の読み直しの答えがまた食い違いを返した時だけ（同じ理由が続いたら止める＝回り続けない）。
+type Env2 = Record<string, string | undefined>;
+export type RecheckMode = "off" | "shadow" | "on";
+export function recheckMode(env: Env2 = typeof process !== "undefined" ? process.env : {}): RecheckMode {
+  const v = (env.BRAIN_RECHECK ?? "").trim().toLowerCase();
+  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+}
+export function recheckLimit(meta: Record<string, unknown> | null | undefined): number {
+  const n = (meta?.need ?? null) as { difficulty?: string; confidence?: string } | null;
+  if (!n) return 1;
+  if (n.confidence === "low" || (n.difficulty === "high" && n.confidence !== "high")) return 3;
+  return 1;
+}
+const KINDS = ["not_aix", "promise", "aix", "reread"] as const;
+const FROMS = ["aix_desk", "aix_consult", "no_ground", "fetch", "deep"] as const;
+/** meta から次の読み直しを1つ取り出す（作業員1の meta.aix_recheck が主・形の崩れた物は捨てる） */
+export function pickRecheck(meta: Record<string, unknown> | null | undefined): BrainRecheck | null {
+  const r = (meta?.aix_recheck ?? null) as Record<string, unknown> | null;
+  if (!r || typeof r !== "object") return null;
+  const kind = String(r.kind ?? ""), from = String(r.from ?? "");
+  if (!(KINDS as readonly string[]).includes(kind) || !(FROMS as readonly string[]).includes(from) || !String(r.why ?? "").trim()) return null;
+  return { from: from as RecheckFrom, kind: kind as BrainRecheck["kind"], key: (r.key as string | null | undefined) ?? null, why: String(r.why), firstAix: (r.firstAix as string | null | undefined) ?? null, material: (r.material as string | null | undefined) ?? null };
+}
+export const recheckSig = (r: BrainRecheck) => `${r.from}:${r.kind}:${r.key ?? ""}`;
+/** digest.rk: "回数/上限:最後の理由の種類"（shadow は s を前に） */
+export const recheckDigest = (o: { mode: RecheckMode; count: number; limit: number; last: BrainRecheck | null }) =>
+  o.mode === "off" || (!o.count && !o.last) ? null : `${o.mode === "shadow" ? "s" : ""}${o.count}/${o.limit}${o.last ? `:${o.last.from}.${o.last.kind}` : ""}`;

@@ -13,7 +13,7 @@ const expect = (v: unknown) => ({
   toContain: (w: string) => { if (!String(v).includes(w)) throw new Error(`${JSON.stringify(v)} does not contain ${w}`); },
   toHaveLength: (n: number) => { if ((v as unknown[] | undefined)?.length !== n) throw new Error(`length ${(v as unknown[] | undefined)?.length} !== ${n}`); },
 });
-import { recheckMaterialLine, recheckFromSendBack } from "../brain-recheck";
+import { recheckMaterialLine, recheckFromSendBack, recheckMode, recheckLimit, pickRecheck, recheckDigest } from "../brain-recheck";
 import { sendBackMaterialLine } from "../aix-sendback";
 
 describe("brain-recheck", () => {
@@ -30,6 +30,14 @@ describe("brain-recheck", () => {
     expect(l).toContain("足りない材料を取ってきた"); expect(l).toContain("室内洗濯機置場あり");
   });
   it("理由が無ければ空", () => { expect(recheckMaterialLine({ from: "deep", kind: "reread", why: " " })).toBe(""); expect(recheckMaterialLine(null)).toBe(""); });
+  it("継ぎ目: 既定 off・上限・取り出し・digest", () => {
+    expect(recheckMode({})).toBe("off"); expect(recheckMode({ BRAIN_RECHECK: "shadow" })).toBe("shadow");
+    expect(recheckLimit({})).toBe(1); expect(recheckLimit({ need: { difficulty: "high", confidence: "mid" } })).toBe(3); expect(recheckLimit({ need: { difficulty: "high", confidence: "high" } })).toBe(1);
+    expect(pickRecheck({ aix_recheck: { from: "aix_desk", kind: "aix", key: "estimate", why: "見積書の番" } })?.key).toBe("estimate");
+    expect(pickRecheck({ aix_recheck: { from: "x", kind: "aix", why: "a" } })).toBeNull(); expect(pickRecheck({})).toBeNull();
+    expect(recheckDigest({ mode: "shadow", count: 0, limit: 3, last: { from: "aix_desk", kind: "aix", why: "a" } })).toBe("s0/3:aix_desk.aix");
+    expect(recheckDigest({ mode: "on", count: 0, limit: 1, last: null })).toBeNull();
+  });
 });
 
 console.log(`
