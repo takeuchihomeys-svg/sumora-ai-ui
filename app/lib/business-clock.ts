@@ -56,3 +56,19 @@ export function fixMdNichi(text: string): string {
   return String(text ?? "").replace(/(?<![0-9０-９])([0-9０-９]{1,2})[\/／]([0-9０-９]{1,2})日/g, "$1/$2");
 }
 export { JST_OFFSET_MS };
+
+// ─── 月の言い方を読む時計（2026-11-03 作業員1・作業員2の調べ）────────────────────────
+//   試験（brain-exam）は問題の会話を今日へずらす（日付の M/D は shiftProblem でずらす）が、「10月入居」のような月だけの言い方はずらさない。
+//   そのまま今日（11/03）で読むと「10月」が来年の10月になり、入居の時期が先の決まり（contact-promise.farMoveInTurn・rule:far_move_in_contact）が
+//   問題の時には出なかった所で出る（188問中、問題の時刻なら1問・今日なら5問）。
+//   試験の時だけ（LLM_TEST_MODE がある時だけ）brain-exam が EXAM_MONTH_SHIFT_DAYS（その問題のずらした日数）を入れ、月の言い方はずらす前の時刻で読む。
+//   本番は env が無い＝今と同じ（Date.now()）。止める: brain-exam 側の EXAM_MONTH_CLOCK=off
+export function monthClockShiftMs(env: Record<string, string | undefined> = process.env): number {
+  if (!String(env.LLM_TEST_MODE ?? "").trim()) return 0;
+  const d = Number(env.EXAM_MONTH_SHIFT_DAYS ?? "");
+  return Number.isFinite(d) && d > 0 ? d * 86400_000 : 0;
+}
+/** 月の言い方（〇月入居・〇月頃）を読む「今」（ISO）。本番は今そのもの */
+export function monthClockNowIso(env: Record<string, string | undefined> = process.env, nowMs: number = Date.now()): string {
+  return new Date(nowMs - monthClockShiftMs(env)).toISOString();
+}

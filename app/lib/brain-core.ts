@@ -3191,7 +3191,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       const turn: Array<{ text: string | null; at: string }> = [];
       for (const m of typedMessages) { if (m.sender !== "customer") break; turn.push({ text: m.text, at: m.created_at }); }
       farMoveInEarly = farMoveInTurn({
-        customerTurn: turn.reverse(), conditionMoveIn: pc?.move_in_time ?? null, nowIso: new Date().toISOString(),
+        customerTurn: turn.reverse(), conditionMoveIn: pc?.move_in_time ?? null, nowIso: (await import("@/app/lib/business-clock")).monthClockNowIso(), // 11/03 月の言い方は試験のずらす前の時刻で読む（本番は今）
         staffHistory: typedMessages.filter((m) => m.sender !== "customer").map((m) => ({ text: m.text, at: m.created_at })),
       });
       if (farMoveInEarly) {

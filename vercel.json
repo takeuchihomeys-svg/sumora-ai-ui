@@ -349,6 +349,14 @@
       "schedule": "40 19 * * 0"
     },
     {
+      "path": "/api/cron/rollout-watch",
+      "schedule": "40 18 * * *"
+    },
+    {
+      "path": "/api/cron/ops-anomaly",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/aix-desk-cards",
       "schedule": "10 20 * * 0"
     },

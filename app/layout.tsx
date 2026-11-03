@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
+import OpsAnomalyBanner from "./components/OpsAnomalyBanner";
 
 export const metadata: Metadata = {
   title: "AIXLINX",
@@ -54,6 +55,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="ja" style={{ backgroundColor: "#ffffff", height: "100%" }}>
       <body style={{ backgroundColor: "#ffffff", margin: 0, padding: 0, overflowY: "hidden", height: "100%" }}>
+        <OpsAnomalyBanner />
         {children}
       </body>
     </html>

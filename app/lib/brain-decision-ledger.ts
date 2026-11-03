@@ -5,6 +5,7 @@
 //   ※ scene_key は brain-scene の場面（reply-scene の ack/question/conditions…）。見張り（line_watch_turns.scene_key）の「AIX:〇〇／返信:〇〇」とは別の分け方
 import { splitPropertyName } from "./customer-state";
 import { resolveReplyScene } from "./reply-scene";
+import { switchFingerprint, digestVerOn } from "./switch-fingerprint";
 
 export type BrainDecisionLedgerCols = { building_key: string | null; room_no: string | null; scene_key: string | null; brain_version: string | null };
 
@@ -47,6 +48,8 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   if (meta.deep_check && typeof meta.deep_check === "object") out.dc = meta.deep_check as Record<string, unknown>;
   // 2026-10-22 慣れた事は速く・難しい事はじっくり（BRAIN_FAST_SLOW=on の番だけ・難しさ・戻り道・2回目の割れを数える）
   if (meta.fast_slow && typeof meta.fast_slow === "object") out.fs = meta.fast_slow as Record<string, unknown>;
+  // 2026-11-03 版の記録: この判断が出た時のスイッチの組の指紋（中身は brain_switch_versions・BRAIN_DIGEST_VER=off で止める）
+  if (digestVerOn(env)) { const fp = switchFingerprint(env); if (fp.n) (out as Record<string, unknown>).ver = { sw: fp.h }; } // 作業員2の設計 §4: ver.sw（他の版 rules・skill・model・ex は作る人が足す） // スイッチが1つも無い環境（テスト）は入れない
   if (meta.two_choice_mode === true) out.tc = true;
   if (meta.pending_pickup === true) out.pp = true;
   if (typeof meta.checkpoint_stage === "string" && meta.checkpoint_stage.trim()) out.cp = meta.checkpoint_stage.trim().slice(0, 20);

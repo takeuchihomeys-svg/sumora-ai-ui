@@ -5042,6 +5042,57 @@ CREATE INDEX IF NOT EXISTS customer_fact_ledger_built_idx ON customer_fact_ledge
 ALTER TABLE customer_fact_ledger ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON customer_fact_ledger FROM anon, authenticated;
 
+-- 2026-11-03 ops_anomalies … 本番の異常の知らせ（土台の8つ ③・案B）。/api/cron/ops-anomaly（5分ごと・OPS_ANOMALY_WATCH=on の時だけ）がサーバーの鍵で書く。
+--   中身は種類・件数・理由の1行だけ（お客様の情報は持たない）。同じ種類が続く間は1行を更新・正常に戻ったら resolved_at。
+--   読むのは /api/ops-anomalies（画面の上の印・NEXT_PUBLIC_OPS_ANOMALY_BANNER=on）と作業員。公開キーでは読めない（RLS 有効・ポリシーなし）
+CREATE TABLE IF NOT EXISTS ops_anomalies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind TEXT NOT NULL,
+  label TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'warn',
+  value NUMERIC,
+  baseline NUMERIC,
+  why TEXT,
+  detail JSONB,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at TIMESTAMPTZ,
+  notified TEXT[] NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS ops_anomalies_open_idx ON ops_anomalies (kind) WHERE resolved_at IS NULL;
+CREATE INDEX IF NOT EXISTS ops_anomalies_first_idx ON ops_anomalies (first_seen_at DESC);
+ALTER TABLE ops_anomalies ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON ops_anomalies FROM anon, authenticated;
+
+-- 2026-11-03 brain_switch_versions … 版の記録（土台の8つ）。brain_decision_logs.digest.ver（スイッチの組の指紋8字）→ 中身（K=V の並び・鍵や URL は入れない）。
+--   5分ごとの /api/cron/ops-anomaly が同じデプロイの環境から upsert（first_seen_at は初めて見た時・last_seen_at は最後に見た時）。読むのは作業員・毎週の表
+CREATE TABLE IF NOT EXISTS brain_switch_versions (
+  hash TEXT PRIMARY KEY,
+  switches TEXT NOT NULL,
+  n INT NOT NULL DEFAULT 0,
+  commit_sha TEXT,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE brain_switch_versions ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON brain_switch_versions FROM anon, authenticated;
+
+-- 2026-11-03 rollout_overrides … スイッチの段の上書き（app/lib/rollout.ts の stageOnNow が env より先に読む・1分の控え）。
+--   夜の見張りが悪化（一致率 −5pt 以上・エラーの増え）を見た時に1段下を書く（env は書き換えない＝統括役の決定は残る）。stage は off|yuma|pct:N|all
+CREATE TABLE IF NOT EXISTS rollout_overrides (
+  switch_name TEXT PRIMARY KEY,
+  stage TEXT NOT NULL,
+  reason TEXT,
+  set_by TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE rollout_overrides ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON rollout_overrides FROM anon, authenticated;
+
+-- 2026-11-03 ⑦ スタッフの理由のワンタップ（app/lib/staff-reason.ts・NEXT_PUBLIC_STAFF_REASON_TAP=on の時だけ画面に出る）: staff_only|material|scene|wording
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS staff_reason TEXT;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS staff_reason_at TIMESTAMPTZ;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

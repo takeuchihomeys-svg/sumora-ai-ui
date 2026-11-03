@@ -18,7 +18,9 @@ import ConditionHistoryBand from "./components/ConditionHistoryBand";
 const CONDITION_HISTORY_UI = (process.env.NEXT_PUBLIC_CONDITION_HISTORY ?? "").toLowerCase() !== "off";
 import { splitDraftBubbles, draftBubblesEnabled } from "./lib/draft-bubbles";
 import CustomerMemoBar from "./components/CustomerMemoBar";
-import StaffDeviceWriterBar from "./components/StaffDeviceWriterBar"; // 2026-10-08 決定11 端末の印（管理者／スタッフ）
+import StaffDeviceWriterBar from "./components/StaffDeviceWriterBar";
+import StaffReasonTap from "./components/StaffReasonTap"; // 2026-11-03 ⑦ スタッフの理由のワンタップ（NEXT_PUBLIC_STAFF_REASON_TAP=on の時だけ）
+import { shouldAskStaffReason, staffReasonTapOn } from "./lib/staff-reason"; // 2026-10-08 決定11 端末の印（管理者／スタッフ）
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage, PRE_APPLY_STATUSES } from "./lib/application-form-detect";
@@ -961,6 +963,9 @@ export default function Home() {
   const [sendRetryable, setSendRetryable] = useState(false);
   // 返事は遅れたが、同じ印で確かめたら届いていた時の知らせ
   const [sendNotice, setSendNotice] = useState("");
+  // 2026-11-03 ⑦ 下書きと違う文を送った直後に理由を1回押してもらう（任意・20秒で消える）
+  const [staffReasonAsk, setStaffReasonAsk] = useState<{ logId: string; cid: string } | null>(null);
+  const closeStaffReason = useCallback(() => setStaffReasonAsk(null), []);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
   const [showAixHotPanel, setShowAixHotPanel] = useState(false);
@@ -5737,6 +5742,7 @@ export default function Home() {
               .from("brain_decision_logs")
               .update({ outcome, outcome_recorded_at: new Date().toISOString() })
               .eq("id", brainLog.id);
+            if (staffReasonTapOn() && shouldAskStaffReason({ outcome, originalDraft: _brainOrigDraft })) setStaffReasonAsk({ logId: String(brainLog.id), cid: _brainCid });
           } catch (e) {
             console.warn("[executeSend] brain_decision_logs outcome update failed:", e);
           }
@@ -9213,6 +9219,8 @@ export default function Home() {
                   <button onClick={() => { void fetchConversationsAndMessages(); }} className="ml-3 shrink-0 font-bold text-[#1565C0] active:opacity-60">再試行</button>
                 )}
               </div>
+            ) : staffReasonAsk && staffReasonAsk.cid === selectedConversation?.id ? (
+              <StaffReasonTap ask={staffReasonAsk} onDone={closeStaffReason} />
             ) : sendNotice ? (
               <div className="mb-2 flex items-center justify-between rounded-xl bg-green-50 px-3 py-2 text-xs text-green-700">
                 <span>✓ {sendNotice}</span>

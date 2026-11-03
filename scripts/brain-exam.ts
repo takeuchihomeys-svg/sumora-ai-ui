@@ -1484,6 +1484,8 @@ async function main() {
       writeFloor(new Date(Date.parse(times[0]) - 1000).toISOString());
       if (USE_LEDGER) row.ledger = reuse ? reuse.ledger : await insertLedger(p, times, yumaPc, shiftDays);
       process.env.TEST_CLOCK_JST_HOUR = String(p.hourJst);
+      // 2026-11-03 月の言い方（〇月入居）はずらす前の時刻で読む（app/lib/business-clock.monthClockNowIso・作業員2の調べ・止める EXAM_MONTH_CLOCK=off）
+      if (process.env.EXAM_MONTH_CLOCK !== "off") process.env.EXAM_MONTH_SHIFT_DAYS = String(shiftDays); else delete process.env.EXAM_MONTH_SHIFT_DAYS;
       if (CONV === YUMA) h.assertYuma(CONV, "brain"); else h.assertTestConversation(CONV, "brain");
       const base = { autoSendEnabled: true, customerName: "YUMA" };
       let meta: Record<string, unknown> | null = null;
@@ -1594,6 +1596,7 @@ async function main() {
     finally {
       if (REUSE_FIXTURE) examClock.setExamClockOffset(0);
       if (savedClock === undefined) delete process.env.TEST_CLOCK_JST_HOUR; else process.env.TEST_CLOCK_JST_HOUR = savedClock;
+      delete process.env.EXAM_MONTH_SHIFT_DAYS;
       // A: 次の回も同じ問題なら写しを持ち越す（失敗・条件の混ざりの回は今まで通り片付ける）。2層の問題の後半の通だけはここで消す
       const keep = REUSE_FIXTURE && fx && !row.error && !row.pcMismatch?.length && rep < REPEAT;
       if (keep && fx) {
