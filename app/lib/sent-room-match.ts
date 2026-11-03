@@ -1,3 +1,4 @@
+import { unifiedRoomOr } from "./property-key";
 // app/lib/sent-room-match.ts（純関数・DB に触れない・画面からも import してよい）
 // 「そのお客様に一度送った部屋か」の判定を1か所に（拡張 chrome-extension/sent-skip.js と同じ決まり・四者同名）。
 //
@@ -39,7 +40,9 @@ export function normRoomNo(raw: string | null | undefined): string {
 }
 
 /** 引く時の号室の鍵: 英字の付く号室（A0205・B101・005B）は英字ごと（sent-skip.js roomKey と同じ） */
-export function roomKeyOf(room: string | null | undefined): string {
+// 2026-11-03 夜 物件の鍵を1つに（property-key.ts・PROPERTY_KEY_UNIFIED 既定 off）: on の時は1つの鍵の号室（英字を落とさない）。読めない時は今まで通り
+export function roomKeyOf(room: string | null | undefined): string { return unifiedRoomOr("sent-room-match.roomKeyOf", room, roomKeyOfLegacy(room)); }
+function roomKeyOfLegacy(room: string | null | undefined): string {
   const s = toHalf(String(room ?? "")).replace(/\s+/g, "").replace(/号室?$/, "").toUpperCase();
   if (!s) return "";
   if (/[A-Z]/.test(s)) return s.replace(/(^|[^0-9])0+(?=\d)/g, "$1");

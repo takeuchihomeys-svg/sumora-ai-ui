@@ -33,6 +33,7 @@
 //   影の運用（既定）では drop も落とさず印だけ＝誤削除の実測が溜まってから PROPERTY_BRAIN_DROP=on にする。
 
 import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
+import { unifiedRoomOr } from "./property-key";
 import { renovationOfText } from "./listing-renovation";
 import { isGenericBuildingName } from "./generic-building-name";
 import { EQUIP_LABELS, conditionalFloorOf, floorFromRoom, parseEquipmentWants, BATH_TOILET_WANT_RE, BATH_TOILET_NOT_REQUIRED_RE, type EquipmentMatch, type EquipKey } from "./listing-equipment";
@@ -1002,7 +1003,9 @@ export function normalizeBuildingName(name: string | null | undefined): string {
 }
 
 /** 部屋番号の表記ゆれをそろえる（「0403」「403号室」「４０３」→ "403"）。読めなければ "" */
-export function normalizeRoomKey(raw: string | null | undefined): string {
+// 2026-11-03 夜 物件の鍵を1つに（property-key.ts・PROPERTY_KEY_UNIFIED 既定 off）: on の時は1つの鍵の号室（英字を落とさない）。読めない時は今まで通り
+export function normalizeRoomKey(raw: string | null | undefined): string { return unifiedRoomOr("property-brain.normalizeRoomKey", raw, normalizeRoomKeyLegacy(raw)); }
+function normalizeRoomKeyLegacy(raw: string | null | undefined): string {
   const m = toHalfWidth(String(raw ?? "")).match(/(\d{1,5})\s*号?室?\s*$/);
   return m ? m[1].replace(/^0+(?=\d)/, "") : "";
 }

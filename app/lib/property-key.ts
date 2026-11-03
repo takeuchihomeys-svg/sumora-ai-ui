@@ -12,8 +12,14 @@
 //   この関数の薄い包みにする（挙動の変わる所は PROPERTY_KEY_UNIFIED・既定 off）。今はまだどこも呼んでいない（読み比べの段）
 import { buildingKeyOf } from "./customer-state";
 
+/** 間取りの形（1K・1LDK・2SLDK・1R・1DK）＝号室ではない（11/03 夜 読み比べで「1LDK」「1K 202」を号室と読んでいた） */
+const LAYOUT_RE = /^\d+(?:S?L?D?K|R)$/;
+const LAYOUT_HEAD_RE = /^\d+(?:S?L?D?K|R)(?=\d{3,4}$)/; // 「1K 202」だけ（「8K1」「5K03」のような型の分からない物は外さない）
 export function unifiedRoomKey(room: string | null | undefined): string | null {
-  const s = String(room ?? "").normalize("NFKC").replace(/\s+/g, "").replace(/号室?$/, "").replace(/^第/, "").toUpperCase().replace(/[‐‑‒–—―ー－]/g, "-");
+  let s = String(room ?? "").normalize("NFKC").replace(/\s+/g, "").replace(/号室?$/, "").replace(/^第/, "").toUpperCase().replace(/[‐‑‒–—―ー－]/g, "-");
+  // 頭の間取り（「1K 202」→「202」）と階（「1階 102」→「102」）を外す。間取りだけ（「1LDK」）は号室にしない
+  s = s.replace(LAYOUT_HEAD_RE, "").replace(/^\d{1,2}階(?=\d)/, "");
+  if (LAYOUT_RE.test(s)) return null;
   if (!s || s.length > 8 || !/\d/.test(s) || !/^[0-9A-Z-]+$/.test(s)) return null;
   return s.replace(/(^|[^0-9])0+(?=\d)/g, "$1");
 }
@@ -26,4 +32,22 @@ export function propertyKey(building: string | null | undefined, room: string | 
   const r = unifiedRoomKey(room);
   return r ? `${b}|${r}` : b;
 }
-export const propertyKeyUnifiedOn = (env: Record<string, string | undefined> = process.env) => String(env.PROPERTY_KEY_UNIFIED ?? "").trim().toLowerCase() === "on";
+/** PROPERTY_KEY_UNIFIED: off／shadow（既定・11/03 夜 指揮役＝今まで通りの鍵で動かし、新しい鍵だと答えが変わる号室だけ記録）／on（新しい鍵） */
+export function propertyKeyMode(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): "off" | "shadow" | "on" {
+  const v = String(env.PROPERTY_KEY_UNIFIED ?? "").trim().toLowerCase();
+  return v === "on" ? "on" : v === "off" ? "off" : "shadow";
+}
+export const propertyKeyUnifiedOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => propertyKeyMode(env) === "on";
+const shadowSeen = new Set<string>();
+/** 古い関数の答え（legacy）と1つの鍵を合わせる口。on＝1つの鍵（読めなければ legacy）／shadow＝legacy のまま・違う時だけ記録（1つの処理で同じ号室は1回・最大50）／off＝legacy */
+export function unifiedRoomOr(fn: string, raw: string | null | undefined, legacy: string): string {
+  const mode = propertyKeyMode();
+  if (mode === "off") return legacy;
+  const u = unifiedRoomKey(raw);
+  if (mode === "on") return u ?? legacy;
+  if (u && u !== legacy) {
+    const k = `${fn}|${String(raw)}`;
+    if (!shadowSeen.has(k) && shadowSeen.size < 50) { shadowSeen.add(k); console.log(JSON.stringify({ tag: "property-key:shadow", fn, raw: String(raw).slice(0, 20), legacy, unified: u })); }
+  }
+  return legacy;
+}

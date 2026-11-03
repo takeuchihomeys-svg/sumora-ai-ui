@@ -19,6 +19,7 @@
 //   物件名の突き合わせは property-name-match の similarity に統一する
 //   （check-property-duplicate は独自の Levenshtein を持っていて線が二重になっていた）。
 import { normalizePropertyName, similarity } from "./property-name-match";
+import { unifiedRoomOr } from "./property-key";
 import { channelFromSource, deliveryFromSource, type Channel, type Delivery } from "./sent-delivery";
 
 /** sent_properties に入れる1件 */
@@ -57,7 +58,9 @@ export function toRecruitmentStatus(propStatus: string | null | undefined): stri
 }
 
 /** 号室の表記ゆれを揃える（「0403」「403号室」「403」→「403"）。空なら "" */
-export function normalizeRoomNo(raw: string | null | undefined): string {
+// 2026-11-03 夜 物件の鍵を1つに（property-key.ts・PROPERTY_KEY_UNIFIED 既定 off）: on の時は1つの鍵の号室（英字を落とさない）。読めない時は今まで通り
+export function normalizeRoomNo(raw: string | null | undefined): string { return unifiedRoomOr("sent-property-record.normalizeRoomNo", raw, normalizeRoomNoLegacy(raw)); }
+function normalizeRoomNoLegacy(raw: string | null | undefined): string {
   const s = (raw ?? "").trim();
   if (!s) return "";
   const m = s.match(/([0-9０-９]{1,5})\s*号?室?\s*$/);
