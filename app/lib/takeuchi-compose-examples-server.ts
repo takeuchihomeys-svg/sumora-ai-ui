@@ -241,3 +241,29 @@ export async function matchTakeuchiCompose(o: { scene: string | null; purpose: s
     return [];
   }
 }
+
+/** 2026-11-04 統括と連携した検索（⑤）: 問いはお客様の発言と状況のまとめだけ。統括メタは絞り込み（場面・趣旨）と並べ替え（心配の札）にだけ使う */
+export async function matchTakeuchiComposeForConductor(o: { customerText: string; situationSummary?: string | null; meta: import("./compose-port").ConductorComposeMeta; purpose?: string | null; conversationId?: string | null; k?: number }): Promise<ComposeExampleHit[]> {
+  const sb = serviceClient();
+  if (!sb) { console.warn(JSON.stringify({ tag: "compose-rag:no-key" })); return []; }
+  try {
+    const { composeRagQuery, rerankComposeHits } = await import("./compose-port");
+    const { vectors } = await embedTexts([composeRagQuery({ customerText: o.customerText, situationSummary: o.situationSummary })]);
+    if (!vectors[0]) return [];
+    const k = o.k ?? 3;
+    const { data, error } = await sb.rpc("match_takeuchi_compose", {
+      query_embedding: `[${vectors[0].join(",")}]`, p_scene: o.meta.scene, p_purpose: o.purpose ?? null, match_count: Math.min(10, k * 3),
+      p_exclude_key: o.conversationId ? conversationKey(o.conversationId) : null,
+    });
+    if (error) { console.warn(JSON.stringify({ tag: "compose-rag:failed", error: error.message })); return []; }
+    const hits = (data ?? []) as ComposeExampleHit[];
+    if (!hits.length) return [];
+    const { data: tags } = await sb.from("takeuchi_compose_examples").select("message_id, hidden_worry, read_beyond").in("message_id", hits.map((h) => h.message_id));
+    const tagOf = new Map(((tags ?? []) as Array<{ message_id: string; hidden_worry: string[] | null; read_beyond: string[] | null }>).map((r) => [r.message_id, r]));
+    const withTags = hits.map((h) => ({ ...h, hidden_worry: tagOf.get(h.message_id)?.hidden_worry ?? [], read_beyond: tagOf.get(h.message_id)?.read_beyond ?? [] }));
+    return rerankComposeHits(withTags, o.meta, k);
+  } catch (e) {
+    console.warn(JSON.stringify({ tag: "compose-rag:failed", error: e instanceof Error ? e.message : String(e) }));
+    return [];
+  }
+}

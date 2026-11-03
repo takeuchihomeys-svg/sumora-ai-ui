@@ -5,7 +5,7 @@
 //   失敗・時間切れは fallbackIntent（低い確かさ・ログに1行）＝返信は止めない。スイッチ BRAIN_COMPOSE_BLUEPRINT（既定 off）は呼ぶ側で見る。
 import { sumoraLlmMarks } from "./llm-usage-recorder";
 import { COMPOSE_INTENT_SYSTEM, composeIntentPrompt, parseComposeIntent, fallbackIntent, buildBlueprint, blueprintNote, composeRagHint, type ComposeIntent, type ComposeBlueprint, type ComposeRequirement } from "./compose-blueprint";
-import { matchTakeuchiCompose } from "./takeuchi-compose-examples-server";
+import { matchTakeuchiCompose, matchTakeuchiComposeForConductor } from "./takeuchi-compose-examples-server";
 
 export type ComposeRun = { intent: ComposeIntent; blueprint: ComposeBlueprint; note: string; ragIds: string[]; ms: number };
 
@@ -24,10 +24,14 @@ export function requirementsFromContract(o: {
 export async function runComposeBlueprint(o: {
   conversationId: string | null; customerText: string; scene: string; requirements: ComposeRequirement[]; planMessages?: number;
   situation?: string | null; emotion?: string | null; appeal?: string | null; timeoutMs?: number;
+  /** 2026-11-04 統括から呼ぶ時（文の受け口）: 統括メタと状況のまとめ。ある時は竹内さんの文の手本を統括と連携した検索で引く（問い＝発言と状況だけ） */
+  conductor?: { meta: import("./compose-port").ConductorComposeMeta; situationSummary?: string | null } | null;
 }): Promise<ComposeRun> {
   const t0 = Date.now();
   // 場面の RAG（場面で絞る・趣旨はまだ決まっていないので絞らない・同じ会話は外す）。失敗は []
-  const hits = await matchTakeuchiCompose({ scene: o.scene, purpose: null, customerGist: o.customerText.slice(0, 200), conversationId: o.conversationId, k: 3 }).catch(() => []);
+  const hits = await (o.conductor
+    ? matchTakeuchiComposeForConductor({ customerText: o.customerText, situationSummary: o.conductor.situationSummary, meta: o.conductor.meta, conversationId: o.conversationId, k: 3 })
+    : matchTakeuchiCompose({ scene: o.scene, purpose: null, customerGist: o.customerText.slice(0, 200), conversationId: o.conversationId, k: 3 })).catch(() => []);
   const ragHints = hits.map((h) => composeRagHint(h));
   let intent: ComposeIntent | null = null;
   const key = process.env.ANTHROPIC_API_KEY ?? "";
@@ -111,4 +115,19 @@ export async function composeRewriteNeed(o: { draft: string; blueprint: ComposeB
   }
   const note = reasons.length ? ["【書き直し（1回だけ）】下の文の設計図に沿って、指摘の所だけ直した返信本文を1つ出す（説明は書かない）。", ...notes, bpNote(o.blueprint).trim()].join("\n") : "";
   return { reasons, score: reasons.length, note };
+}
+
+/** 2026-11-04 文の受け口（統括 → 文）: Handoff（handoffNote）と統括メタを受けて設計図と書き手への注記を作る。
+ *  統括の決定は決め直さない（handoffNote を「状況のまとめ・統括の決定」の口にそのまま入れる）。writer の決まりの本は書き手への注記の後ろに足す。
+ *  返す側（設計図・下書き・外れ・no_ground）は compose-port.ts の composeReturnOf で作る */
+export async function composeFromConductor(o: {
+  conversationId: string | null; customerText: string; scene: string; requirements: ComposeRequirement[]; planMessages?: number;
+  handoffNote: string; meta: import("./compose-port").ConductorComposeMeta; situationSummary?: string | null; writerRuleBookNote?: string | null;
+}): Promise<ComposeRun> {
+  const run = await runComposeBlueprint({
+    conversationId: o.conversationId, customerText: o.customerText, scene: o.scene, requirements: o.requirements, planMessages: o.planMessages,
+    situation: [o.handoffNote, o.situationSummary ?? ""].filter(Boolean).join("\n\n"),
+    conductor: { meta: o.meta, situationSummary: o.situationSummary ?? null },
+  });
+  return o.writerRuleBookNote ? { ...run, note: `${run.note}\n\n${o.writerRuleBookNote}` } : run;
 }
