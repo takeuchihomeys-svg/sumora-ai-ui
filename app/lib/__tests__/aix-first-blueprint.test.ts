@@ -7,10 +7,17 @@ t("既定 off", !aixFirstBlueprintOn({}) && aixFirstBlueprintOn({ AIX_FIRST_BLUE
 const c = readDeskCard(card);
 t("札を読む", c.sends === "管理会社に確認した募集中の結果" && c.purpose === "内覧へつなぐ" && /確認の約束/.test(c.line ?? ""), c);
 const it = aixFirstIntent({ key: "property_check_result/available", cardText: card });
-t("意図（案内・物件が主語・送る中身がメイン）", it.purpose === "inform" && it.main.subject === "property" && it.main.what === c.sends, it);
+t("意図（案内・物件が主語・送る中身がメイン・ご査収）", it.purpose === "inform" && it.main.subject === "property" && it.main.what === c.sends && it.closing === "receipt", it);
 const bp = aixFirstBlueprint({ key: "property_check_result/available", cardText: card, hasFixedBlock: true });
 t("定型の塊はメインの後ろの材料", bp.parts.some((p) => p.from === "material") && bp.parts.findIndex((p) => p.from === "material") > bp.parts.findIndex((p) => p.role === "main"), bp.parts);
 t("似たボタンとの線を見張りに", bp.check.issues.some((x) => x.startsWith("似たボタンとの線")));
 t("知らないボタンでも作れる", aixFirstIntent({ key: "unknown/x" }).confidence === "low");
 console.log(`aix-first-blueprint: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);
+import { aixFirstGreet, aixFirstBlueprint as afb } from "../aix-first-blueprint";
+{
+  const mp = afb({ key: "meeting_place/x", hasFixedBlock: false });
+  const ok = aixFirstGreet("meeting_place/x") === "uke" && aixFirstGreet("property_send/normal") === "name_greet" && mp.parts[0].role === "uke" && mp.parts.some((p) => p.role === "close" && /何卒/.test(p.say))
+    && !afb({ key: "estimate_sheet/single", hasFixedBlock: true }).parts.some((p) => p.role === "close" || p.role === "cta");
+  console.log(ok ? "aix-first-defaults: pass" : "aix-first-defaults: FAIL"); if (!ok) process.exit(1);
+}

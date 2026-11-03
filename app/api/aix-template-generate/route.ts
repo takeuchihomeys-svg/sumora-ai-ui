@@ -117,6 +117,8 @@ import { recommendSecondAppealOn, recentAreaText, recentRequestCoversProperty, a
 import { buildSecondAppealNote, secondAppealPointsOn } from "@/app/lib/second-appeal-points";
 import { secondBlueprintOn, secondBlueprintNote } from "@/app/lib/second-blueprint";
 import { secondKnowledgeOn, secondKnowledgeLines } from "@/app/lib/second-appeal-judge";
+import { aixFirstBlueprintOn, aixFirstBlueprint, AIX_FIRST_FIXED_BLOCK } from "@/app/lib/aix-first-blueprint";
+import { blueprintNote as composeBlueprintNote } from "@/app/lib/compose-blueprint";
 import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, APPEAL_JUDGE_SYSTEM, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
@@ -1764,6 +1766,20 @@ export async function POST(req: NextRequest) {
   }
   // 形を最後に1か所から渡す2通目（物件オススメ・見積書）。この時は1通目用・全種類の平均の指示を渡さない
   const fixedSecond = isRecSecond || isEstimateSecond;
+  // 2026-11-03 作業員6 AIX の1通目を文の設計図の型に（AIX_FIRST_BLUEPRINT・既定 off・2通目でない時だけ）。根拠は作業員1の担当の札（aix_desk_cards）・
+  //   ボタンごとの既定は竹内さんの1通目の数え（aix-first-blueprint.ts）。定型の塊（札・見積・フォーマット）は1文字も変えない。失敗は ""（生成は止めない）
+  let aixFirstNote = "";
+  if (aixFirstBlueprintOn() && !fixedSecond && actionType) {
+    try {
+      const { loadDeskCards } = await import("@/app/lib/aix-commander-server");
+      const { cards } = await loadDeskCards();
+      const exactKey = pickupType ? `${actionType}/${pickupType}` : null;
+      const key = (exactKey && cards.has(exactKey) ? exactKey : [...cards.keys()].find((k) => k.startsWith(`${actionType}/`))) ?? `${actionType}/-`;
+      const bp = aixFirstBlueprint({ key, cardText: cards.get(key) ?? null, hasFixedBlock: AIX_FIRST_FIXED_BLOCK.has(actionType) });
+      aixFirstNote = composeBlueprintNote(bp);
+      console.log(JSON.stringify({ tag: "aix-template-generate:first-blueprint", actionType, key, card: cards.has(key), parts: bp.parts.map((p) => p.role).join(">") }));
+    } catch (e) { console.warn("[aix-template-generate] first blueprint skipped:", e instanceof Error ? e.message : e); }
+  }
 
   const userPrompt = [
     `━━━━━━━━━━━━━━━━━━━━\n【今回生成する橋渡し文】\n━━━━━━━━━━━━━━━━━━━━`,
@@ -1900,6 +1916,7 @@ export async function POST(req: NextRequest) {
     //   設計知見「同じ事実について書くなと書けを別の場所から渡さない」→ 最後に1回だけ明示して上書きする。
     // 2026-10-20 2通目の材料（返信と同じ材料・SECOND_MSG_MATERIALS=off＝空＝並びは旧と同じ）
     secondMaterials?.note ?? "",
+    aixFirstNote,
     aixChainNote,
     // 物件オススメの直後の2通目: 資料の事実 → 場面の形（実送信の実物）→ 締め の順で最後に置く
     secondMaterialNote,

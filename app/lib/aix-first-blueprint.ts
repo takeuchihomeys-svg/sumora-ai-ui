@@ -12,20 +12,23 @@ import { buildBlueprint, type ComposeIntent, type ComposeBlueprint, type Compose
 export function aixFirstBlueprintOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.AIX_FIRST_BLUEPRINT ?? "").trim().toLowerCase() === "on";
 }
-/** ボタン（catalog key の頭）→ 1通目の既定の趣旨・主語・締め・次の手（データの数えで直す前の初期値） */
-const BUTTON_DEFAULTS: Record<string, { purpose: ComposePurpose; subject: ComposeIntent["main"]["subject"]; closing: ComposeClosing; next: ComposeNext }> = {
-  property_recommendation: { purpose: "appeal", subject: "property", closing: "receipt", next: "viewing" },
-  property_send: { purpose: "appeal", subject: "property", closing: "receipt", next: "viewing" },
-  property_check_result: { purpose: "inform", subject: "property", closing: "nanitozo", next: "viewing" },
-  estimate_sheet: { purpose: "inform", subject: "property", closing: "receipt", next: "viewing" },
-  viewing_invite: { purpose: "ask", subject: "us", closing: "nanitozo", next: "viewing" },
-  meeting_place: { purpose: "inform", subject: "process", closing: "nanitozo", next: "viewing" },
-  application_push: { purpose: "inform", subject: "process", closing: "nanitozo", next: "apply" },
-  condition_hearing: { purpose: "ask", subject: "customer", closing: "kigaru", next: "reply" },
-  cost_explain: { purpose: "inform", subject: "process", closing: "kigaru", next: "answer_only" },
-  acknowledge_check: { purpose: "promise", subject: "us", closing: "nanitozo", next: "wait_check" },
-  followup_revive: { purpose: "ask", subject: "customer", closing: "kigaru", next: "reply" },
-  greeting_viewing: { purpose: "ack", subject: "us", closing: "nanitozo", next: "none" },
+/** ボタン（catalog key の頭）→ 1通目の既定（2026-11-03 竹内さんの AIX の1通目 直近120日の数え・ボタンごと）:
+ *   物件オススメ 306（定型の塊 89%・ご査収 11%・挨拶 5%）／見積書送る 203（塊 98%・締めほぼ無し）／物件ピックアップした 135（ご査収 90%・挨拶 42%）／
+ *   物件確認した 101（挨拶 25%・塊 27%・ご査収 20%・何卒 8%）／内覧日調整 60（受け 63%・挨拶 17%）／待ち合わせ 47（受け 96%・何卒 96%）／
+ *   申込へ 35（塊 80%・何卒 11%）／条件ヒアリング 23（塊 96%）。 greet は書き出し（多数派）・closing は多数派の締め（2割未満なら none） */
+const BUTTON_DEFAULTS: Record<string, { purpose: ComposePurpose; subject: ComposeIntent["main"]["subject"]; closing: ComposeClosing; next: ComposeNext; greet: "name_greet" | "uke" | "none" }> = {
+  property_recommendation: { purpose: "appeal", subject: "property", closing: "none", next: "viewing", greet: "none" },
+  estimate_sheet: { purpose: "inform", subject: "property", closing: "none", next: "viewing", greet: "none" },
+  property_send: { purpose: "appeal", subject: "property", closing: "receipt", next: "viewing", greet: "name_greet" },
+  property_check_result: { purpose: "inform", subject: "property", closing: "receipt", next: "viewing", greet: "name_greet" },
+  viewing_invite: { purpose: "ask", subject: "us", closing: "none", next: "viewing", greet: "uke" },
+  meeting_place: { purpose: "inform", subject: "process", closing: "nanitozo", next: "viewing", greet: "uke" },
+  application_push: { purpose: "inform", subject: "process", closing: "none", next: "apply", greet: "none" },
+  condition_hearing: { purpose: "ask", subject: "customer", closing: "none", next: "reply", greet: "none" },
+  cost_explain: { purpose: "inform", subject: "process", closing: "kigaru", next: "answer_only", greet: "uke" },
+  acknowledge_check: { purpose: "promise", subject: "us", closing: "nanitozo", next: "wait_check", greet: "uke" },
+  followup_revive: { purpose: "ask", subject: "customer", closing: "kigaru", next: "reply", greet: "name_greet" },
+  greeting_viewing: { purpose: "ack", subject: "us", closing: "nanitozo", next: "none", greet: "name_greet" },
 };
 /** 担当の札（card_text）から設計図の根拠を抜く */
 export function readDeskCard(cardText: string): { sends: string | null; purpose: string | null; line: string | null } {
@@ -33,9 +36,11 @@ export function readDeskCard(cardText: string): { sends: string | null; purpose:
   const pick = (re: RegExp) => (t.match(re)?.[1] ?? "").trim().slice(0, 120) || null;
   return { sends: pick(/送る中身[^:：]*[:：]\s*([^\n]+)/), purpose: pick(/目的[:：]\s*([^\n]+)/), line: pick(/似たボタンとの線[:：]\s*([^\n]+)/) };
 }
+/** ボタンの書き出し（数えの多数派） */
+export function aixFirstGreet(key: string): "name_greet" | "uke" | "none" { return BUTTON_DEFAULTS[key.split("/")[0]]?.greet ?? "uke"; }
 export function aixFirstIntent(o: { key: string; cardText?: string | null; why?: string | null }): ComposeIntent {
   const head = o.key.split("/")[0];
-  const d = BUTTON_DEFAULTS[head] ?? { purpose: "inform" as ComposePurpose, subject: "us" as const, closing: "nanitozo" as ComposeClosing, next: "none" as ComposeNext };
+  const d = BUTTON_DEFAULTS[head] ?? { purpose: "inform" as ComposePurpose, subject: "us" as const, closing: "nanitozo" as ComposeClosing, next: "none" as ComposeNext, greet: "uke" as const };
   const card = o.cardText ? readDeskCard(o.cardText) : { sends: null, purpose: null, line: null };
   return {
     purpose: d.purpose, why: o.why ?? card.purpose ?? `AIX ${o.key}`, feel: "",
@@ -46,7 +51,7 @@ export function aixFirstIntent(o: { key: string; cardText?: string | null; why?:
 /** 1通目の設計図: 定型の塊（札・見積・フォーマット）は「材料」として固定（書き換えない）、前後の受け・メイン・締めだけ */
 export function aixFirstBlueprint(o: { key: string; cardText?: string | null; hasFixedBlock: boolean; why?: string | null }): ComposeBlueprint {
   const intent = aixFirstIntent(o);
-  const bp = buildBlueprint({ intent, requirements: [], greet: intent.purpose === "appeal" ? "name_greet" : "uke" });
+  const bp = buildBlueprint({ intent, requirements: [], greet: aixFirstGreet(o.key) });
   if (o.hasFixedBlock) {
     const mi = bp.parts.findIndex((p) => p.role === "main");
     bp.parts.splice(mi >= 0 ? mi + 1 : bp.parts.length, 0, { role: "add", say: "（定型の塊: 物件の札・御見積書・申込フォーマット等をそのまま・1文字も変えない）", from: "material" });
@@ -55,3 +60,5 @@ export function aixFirstBlueprint(o: { key: string; cardText?: string | null; ha
   if (card?.line) bp.check.issues.push(`似たボタンとの線: ${card.line.slice(0, 60)}`);
   return bp;
 }
+/** 1通目が定型の塊（札・見積・フォーマット）中心のボタン（11/03 の数えで塊 80% 以上） */
+export const AIX_FIRST_FIXED_BLOCK: ReadonlySet<string> = new Set(["property_recommendation", "estimate_sheet", "application_push", "condition_hearing"]);
