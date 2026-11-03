@@ -50,7 +50,12 @@ export function recheckMode(env: Env2 = typeof process !== "undefined" ? process
   // 2026-11-03 竹内さん（記録だけのスイッチ）: 既定は shadow（読み直すはずの番と回数の上限を記録だけ・呼ばない＝費用0）。on は判断を変えるので段階で
   return v === "on" ? "on" : v === "off" ? "off" : "shadow";
 }
-export function recheckLimit(meta: Record<string, unknown> | null | undefined): number {
+/**
+ * 2026-11-04 竹内さんの決定（統括を人間の脳の形に ④「任せて確かめ、1回だけ戻す」・KB bc174a27）: どの番も戻すのは1回だけ（難しい番の最大3回はやめた）。
+ *   BRAIN_RECHECK_MAX=3 で旧の形（難しい番だけ最大3回）に戻せる
+ */
+export function recheckLimit(meta: Record<string, unknown> | null | undefined, env: Env2 = typeof process !== "undefined" ? process.env : {}): number {
+  if ((env.BRAIN_RECHECK_MAX ?? "").trim() !== "3") return 1;
   const n = (meta?.need ?? null) as { difficulty?: string; confidence?: string } | null;
   if (!n) return 1;
   if (n.confidence === "low" || (n.difficulty === "high" && n.confidence !== "high")) return 3;

@@ -32,7 +32,7 @@ describe("brain-recheck", () => {
   it("理由が無ければ空", () => { expect(recheckMaterialLine({ from: "deep", kind: "reread", why: " " })).toBe(""); expect(recheckMaterialLine(null)).toBe(""); });
   it("継ぎ目: 既定 off・上限・取り出し・digest", () => {
     expect(recheckMode({})).toBe("shadow"); expect(recheckMode({ BRAIN_RECHECK: "off" })).toBe("off"); expect(recheckMode({ BRAIN_RECHECK: "shadow" })).toBe("shadow");
-    expect(recheckLimit({})).toBe(1); expect(recheckLimit({ need: { difficulty: "high", confidence: "mid" } })).toBe(3); expect(recheckLimit({ need: { difficulty: "high", confidence: "high" } })).toBe(1);
+    expect(recheckLimit({})).toBe(1); expect(recheckLimit({ need: { difficulty: "high", confidence: "mid" } })).toBe(1); expect(recheckLimit({ need: { difficulty: "high", confidence: "mid" } }, { BRAIN_RECHECK_MAX: "3" })).toBe(3); expect(recheckLimit({ need: { difficulty: "high", confidence: "high" } })).toBe(1);
     expect(pickRecheck({ aix_recheck: { from: "aix_desk", kind: "aix", key: "estimate", why: "見積書の番" } })?.key).toBe("estimate");
     expect(pickRecheck({ aix_recheck: { from: "x", kind: "aix", why: "a" } })).toBeNull(); expect(pickRecheck({})).toBeNull();
     expect(recheckDigest({ mode: "shadow", count: 0, limit: 3, last: { from: "aix_desk", kind: "aix", why: "a" } })).toBe("s0/3:aix_desk.aix");

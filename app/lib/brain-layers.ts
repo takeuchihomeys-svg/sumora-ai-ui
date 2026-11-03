@@ -140,6 +140,8 @@ export type FreshDigest = {
   rk?: string;
   /** 2026-11-04 統括メタの短い形（場面|担当|倉庫の数|自信） */
   cm?: string;
+  /** 2026-11-04 受け渡しの落ちの確かめ（ax|it|bp|rc|ck・conductor-handoff.handoffChecks） */
+  hc?: string;
   /** 2026-11-04 入口の最初の読み（Sonnet の場面|自信|作り置きの読み|DeepSeek と合ったか） */
   ci?: string;
   /** 2026-10-13: LLM が出した current_property（ゲートの前） */
@@ -185,6 +187,7 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...((() => { const pa = planAheadDigest(meta.plan_ahead as PlanAhead | null | undefined); return pa ? { pa } : {}; })()),
     ...((() => { const tl = threeLayerDigest(meta.three_layer as ThreeLayer | null | undefined); return tl ? { tl } : {}; })()),
     ...((() => { const ci = meta.conductor_intake as { answer?: { scene?: string; confidence?: string } | null; cacheRead?: number | null; agree?: { scene: boolean; roles: boolean; need: boolean } | null } | undefined; if (!ci?.answer) return {}; const ag = ci.agree ? `${ci.agree.scene ? "s" : "-"}${ci.agree.roles ? "r" : "-"}${ci.agree.need ? "n" : "-"}` : ""; return { ci: `${ci.answer.scene}|${ci.answer.confidence?.[0] ?? ""}|cr${ci.cacheRead ?? 0}${ag ? `|ds:${ag}` : ""}` }; })()),
+    ...(str(meta.handoff_check, 40) ? { hc: str(meta.handoff_check, 40)! } : {}),
     ...((() => { const cm = conductorMetaDigest(meta.conductor_meta as ConductorMeta | null | undefined); return cm ? { cm } : {}; })()),
     ...(str(meta.recheck_digest, 40) ? { rk: str(meta.recheck_digest, 40)! } : {}),
     ...(str(meta.conductor_roles, 30) ? { rl: str(meta.conductor_roles, 30)! } : {}),

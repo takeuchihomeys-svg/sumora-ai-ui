@@ -6930,6 +6930,16 @@ async function analyzeAndSaveBrainMetaInner(
     }
     const rk = recheckDigest({ mode: rcMode, count, limit, last });
     if (meta && rk) (meta as unknown as Record<string, unknown>).recheck_digest = rk;
+    // 2026-11-04 ⑥ 確かめ: 受け渡しの落ち（AIX の統括の答えの無視・読み直しの回り）を digest.hc に1行（記録だけ・conductor-handoff.handoffChecks）
+    if (meta && last) {
+      const { handoffChecks } = await import("@/app/lib/conductor-handoff");
+      const fin = (meta as unknown as { action?: string | null; reply_mode?: string | null });
+      const finalAction = fin.action && fin.reply_mode !== "auto_reply" ? String(fin.action) : "reply";
+      const deskAnswer = last.kind === "aix" ? (last.key ?? null) : last.kind === "not_aix" || last.kind === "promise" ? "reply" : null;
+      const hcRes = handoffChecks({ deskAnswer, finalAction, rechecked: count > 0, recheckCount: count });
+      (meta as unknown as Record<string, unknown>).handoff_check = hcRes.digest;
+      if (hcRes.drops.length) console.log(JSON.stringify({ tag: "brain:handoff-drop", conversationId, drops: hcRes.drops, hc: hcRes.digest }));
+    }
     if (rk) console.log(JSON.stringify({ tag: "brain:recheck-loop", conversationId, rk, ms: Date.now() - t0 }));
   }
   // 2026-09-30 竹内: 今回の連投で決まった内覧が取りやめになっていたら、カレンダーの予定を消す（LLM の結果に依らない決定論・応答は待たせない）
