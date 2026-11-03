@@ -13,12 +13,13 @@ const expect = (v: unknown) => ({
   toContain: (w: string) => { if (!String(v).includes(w)) throw new Error(`${JSON.stringify(v)} does not contain ${w}`); },
   toHaveLength: (n: number) => { if ((v as unknown[] | undefined)?.length !== n) throw new Error(`length ${(v as unknown[] | undefined)?.length} !== ${n}`); },
 });
-import { normalizeNeed, normalizePlanAhead, prevPlanAheadLine, needDigest, planAheadDigest, detectMaterialConflicts, conflictDigest, needReportOn, planAheadOn, materialProvenanceOn } from "../brain-need";
+import { needReportMode, normalizeNeed, normalizePlanAhead, prevPlanAheadLine, needDigest, planAheadDigest, detectMaterialConflicts, conflictDigest, needReportOn, planAheadOn, materialProvenanceOn } from "../brain-need";
 
 describe("brain-need", () => {
   it("スイッチは既定 off", () => {
     expect(needReportOn({})).toBe(false); expect(planAheadOn({})).toBe(false); expect(materialProvenanceOn({})).toBe(false);
     expect(needReportOn({ BRAIN_NEED_REPORT: "on" })).toBe(true);
+    expect(needReportMode({ BRAIN_NEED_REPORT: "after" })).toBe("after"); expect(needReportOn({ BRAIN_NEED_REPORT: "after" })).toBe(true); expect(needReportMode({})).toBe("off");
   });
   it("need を整える（知らない道具は落とす）", () => {
     const n = normalizeNeed({ difficulty: "high", confidence: "low", missing: ["sheet_detail", "foo", "sheet_detail", "estimate"], why: "設備の質問" });

@@ -9,7 +9,15 @@
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 const on = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "on";
-export const needReportOn = (env: Env = envOf()) => on(env.BRAIN_NEED_REPORT);
+export const needReportOn = (env: Env = envOf()) => needReportMode(env) !== "off";
+/**
+ * 2026-11-04 統括役の案A（n7a-need で q015 が悪化: 判断と同じ出力で先に自信を書かせると、自信を持って先へ進む AIX に寄った）:
+ *   BRAIN_NEED_REPORT=after は、need を出力の一番最後（判断を全部書き終えた後）の振り返りの欄にする（費用 0・順番だけ変える）。=on は旧の位置（途中）
+ */
+export function needReportMode(env: Env = envOf()): "off" | "on" | "after" {
+  const v = (env.BRAIN_NEED_REPORT ?? "").trim().toLowerCase();
+  return v === "after" ? "after" : v === "on" ? "on" : "off";
+}
 export const planAheadOn = (env: Env = envOf()) => on(env.BRAIN_PLAN_AHEAD);
 
 /** 取りに行ける材料の道具（設計の案 §1） */
@@ -26,6 +34,10 @@ export const BRAIN_NEED_RULES = `【この番の難しさ・自信・足りな�
   missing: 判断に足りない材料を、次の道具の名前から選ぶ（無ければ []）: sheet_detail（物件の資料の中身・設備や契約）／sent_ledger（こちらが送った事の全部）／estimate（送った見積の金額）／company_fact（会社の事実）／examples（竹内さんの近い実例）／past_lines（お客様の古い発言）／property_record（物件ごとの記録）／now_fulfillable（確認済み・見積を作れる・送れる候補）／aix_cards（AIX の担当の札）／customer_memo（お客様のメモ）`;
 export const BRAIN_PLAN_AHEAD_RULES = `【このお客様の次の数手の計画（plan_ahead）】このお客様で目指す事（goal・例「今週中に内覧」）と、次の2〜3手（steps・例「物件オススメ→見積書→内覧調整」）。
   【前の計画】が材料にあれば、それを土台にする: そのまま進む時は果たした手を外して次へ。変える時だけ changedBecause に理由（お客様の言葉・新しい事実）を書く。理由の無い作り直しはしない。`;
+export const BRAIN_NEED_RULES_AFTER = `【振り返り（need・判断の後に書く）】判断（action・aix・turn_contract・key_topics 等）を全部書き終えた後で、最後に振り返りとして書く。この振り返りで判断を変えない。
+  difficulty: high（要件が2つ以上・お断り・不満・交渉・申込の直前・場面が読みにくい）／mid／low（短いお礼・了承・締めの後のスタンプ 等）
+  confidence: 書き終えた判断の自信（high／mid／low）。材料が足りない・会話の読みが2通りある時は low。
+  missing: 判断に足りなかった材料を、次の道具の名前から選ぶ（無ければ []）: sheet_detail／sent_ledger／estimate／company_fact／examples／past_lines／property_record／now_fulfillable／aix_cards／customer_memo`;
 export const BRAIN_NEED_FIELD = `"need": {"difficulty": "high|mid|low", "confidence": "high|mid|low", "missing": ["道具の名前"], "why": "30字以内"}`;
 export const BRAIN_PLAN_AHEAD_FIELD = `"plan_ahead": {"goal": "目指す事（25字以内）", "steps": ["次の手（15字以内）"], "why": "30字以内", "changed_because": "前の計画から変えた理由（変えていなければ null）"}`;
 
