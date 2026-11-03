@@ -14,3 +14,13 @@ t("候補と書く1行", /候補/.test(worryCandidateLine(["cost"])) && /決め�
 
 console.log(`reading-tags: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);
+
+{
+  // 2026-11-04 答えた心配（言われた心配のうち竹内さんの文が答えた物・read_beyond と重ならない）
+  const { answeredWorryOf, readBeyondOf } = require("../reading-tags");
+  const cust = "審査通りますか？初期費用はいくらですか";
+  const staff = "審査面に関しましては通過する可能性十分に御座います！！全力でサポートさせて頂きます！！";
+  const a = answeredWorryOf(cust, staff), b = readBeyondOf(cust, staff);
+  const ok = a.join() === "screening" && !b.includes("screening") && b.includes("support");
+  console.log(ok ? "answered-worry: pass" : "answered-worry: FAIL " + a.join() + " / " + b.join()); if (!ok) process.exit(1);
+}

@@ -65,3 +65,14 @@ import { composeDropsDuplicate } from "../compose-blueprint";
   console.log(ok ? "compose-drop: pass" : "compose-drop: FAIL");
   if (!ok) process.exit(1);
 }
+
+{
+  // 2026-11-04 締めの文の札の直し（COMPOSE_TAG_CLOSE_V2・既定 on）
+  const { tagSentence: tg, purposeOfText: pt } = require("../compose-blueprint");
+  const ok = tg("ごゆっくりご検討頂けますと幸いです！！") === "close" && tg("気になるお部屋が見つかりましたらいつでもお送りください！！") === "close"
+    && tg("ご希望の日時をお送りください！！") === "ask" && pt("はい😊！！\n気になるお部屋が見つかりましたらいつでもお送りください！！\n何卒よろしくお願い致します😌！！").purpose === "ack";
+  process.env.COMPOSE_TAG_CLOSE_V2 = "off";
+  const off = tg("ごゆっくりご検討頂けますと幸いです！！") === "ask";
+  delete process.env.COMPOSE_TAG_CLOSE_V2;
+  console.log(ok && off ? "compose-tag-close-v2: pass" : "compose-tag-close-v2: FAIL"); if (!(ok && off)) process.exit(1);
+}

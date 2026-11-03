@@ -44,6 +44,13 @@ export function readBeyondOf(customerText: string, staffText: string): WorryTag[
   return WORRY_TAGS.filter((k) => STAFF_ANSWER_RE[k].test(s) && !said.has(k));
 }
 
+/** 2026-11-04 お客様の発言に出た心配の候補のうち、竹内さんの文が答えた物（readBeyondOf とは重ならない・夜の集計②の答えた割合はこれで数える） */
+export function answeredWorryOf(customerText: string, staffText: string): WorryTag[] {
+  const said = new Set(worryCandidatesOf(customerText));
+  const s = String(staffText ?? "").normalize("NFKC");
+  return WORRY_TAGS.filter((k) => said.has(k) && STAFF_ANSWER_RE[k].test(s));
+}
+
 /** お客様の発言の型（データから要望の読み方） */
 export const UTTER_TYPES = ["early_cost_ask", "station_near", "new_build", "repeat_ask", "slow_reply", "short_reply", "photo_ask", "many_questions"] as const;
 export type UtterType = typeof UTTER_TYPES[number];

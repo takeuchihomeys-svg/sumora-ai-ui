@@ -5024,6 +5024,10 @@ ALTER TABLE takeuchi_compose_examples
   ADD COLUMN IF NOT EXISTS forward_score REAL;
 CREATE INDEX IF NOT EXISTS takeuchi_compose_examples_pick_idx ON takeuchi_compose_examples (anatomy_pick) WHERE anatomy_pick;
 REVOKE ALL ON takeuchi_compose_examples FROM anon, authenticated;
+-- 2026-11-04 作業員6: 答えた心配（hidden_worry のうち竹内さんの文が答えた物・決定論 reading-tags.ts answeredWorryOf）。read_beyond とは重ならない。夜の集計②の答えた割合はこの列で数える
+ALTER TABLE takeuchi_compose_examples
+  ADD COLUMN IF NOT EXISTS answered_worry TEXT[] NOT NULL DEFAULT '{}';
+REVOKE ALL ON takeuchi_compose_examples FROM anon, authenticated;
 
 -- 2026-11-03 作業員2: お客様ごとの確かな事実の帳面（KB P1「100% に向けて土台の7つ」④）。お客様のメモ・送った事の台帳・状況のまとめ・判断の記録・全体の分析を
 --   決まった計算で束ね、事実ごとに時刻と出所を付ける（1会話1行・毎番ブレインの保存の時に上書き）。書く・読むはサーバーの鍵だけ（CUSTOMER_FACT_LEDGER 既定 off）。

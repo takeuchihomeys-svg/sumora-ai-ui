@@ -17,13 +17,14 @@ import { isPersonalDocument } from "./personal-document-guard";
 import { resolveReplyScene } from "./reply-scene";
 import { purposeOfText, composeExampleWeight, composeEmbedInput, sentencesOf, tagSentence } from "./compose-blueprint";
 import { DOC_CANDIDATE_OR } from "./second-takeuchi-data-server";
-import { readBeyondOf, worryCandidatesOf, utterTypesOf } from "./reading-tags";
+import { readBeyondOf, worryCandidatesOf, utterTypesOf, answeredWorryOf } from "./reading-tags";
 import { embedTexts } from "./design-knowledge-rag-server";
-import { customerNameTokens, maskCustomerNames, staffHeadNames } from "./compose-name-mask";
+import { customerNameTokens, maskCustomerNames, staffHeadNames, leftLatinName } from "./compose-name-mask";
 
 /** 伏せの版（2026-11-03 夜の直し）。この日時より前に作った行は、cron が先に元の送信から作り直す（問いの値なしで直る） */
-export const COMPOSE_MASK_VER = "20261104b";   // 11/04 b: 飾り文字の表示名・英字の表示名の大文字小文字（12行に名前が残っていた・解剖の行には0）
-export const COMPOSE_MASK_VER_AT = "2026-11-03T17:02:00Z";   // 版の日時は push より前（11/03 の 14:30Z は push の後だった）
+export const COMPOSE_MASK_VER = "20261104c";   // 11/04 c: 文の頭の名前を会話全体から・伏せた後に英字の〇〇さんが残る通は例に入れない・締めの文の札の直し（趣旨が変わる）
+// 20261104b   // 11/04 b: 飾り文字の表示名・英字の表示名の大文字小文字（12行に名前が残っていた・解剖の行には0）
+export const COMPOSE_MASK_VER_AT = "2026-11-03T18:11:00Z";   // 版の日時は push より前（11/03 の 14:30Z は push の後だった）
 
 /** 書き手の直しの版（2026-11-04 竹内さんの答え: 事務所の Windows PC の 10/20 JST 以降の送信 213通を takeuchi に直した）。
  *  表の一番新しい送信より前に、後から竹内さんの番に直った通があると、続きから読む作りでは拾えない。
@@ -45,7 +46,7 @@ export const conversationKey = (c: string) => createHash("sha256").update(c).dig
 type Row = {
   message_id: string; conversation_key: string; sent_at: string; scene: string; purpose: string; seq: string[]; main_line: string; body: string;
   customer_gist: string | null; after_aix: boolean; reply_minutes: number | null; viewing_7d: boolean | null; applied_14d: boolean | null; weight: number; embedding: string | null;
-  read_beyond: string[]; hidden_worry: string[]; utter_type: string[]; true_want: string[]; true_want_at: string | null; forward_score: number;
+  read_beyond: string[]; hidden_worry: string[]; answered_worry: string[]; utter_type: string[]; true_want: string[]; true_want_at: string | null; forward_score: number;
 };
 
 export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso?: string | null; limit?: number; budgetMs?: number; pauseMs?: number } = {}): Promise<{ ok: boolean; error?: string; read?: number; rows?: number; stats?: Record<string, number>; next?: string | null; embedTokens?: number; dry?: boolean; stale?: number; staleLeft?: number | null; writerGap?: string | null; failed?: string[] }> {
@@ -138,6 +139,17 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
         deals.set(d.conversation_id, l);
       }
     }
+    // 2026-11-04 版 20261104c: こちらの文の頭の「〇〇さん」を会話全体から拾う（前3日だけでは、前の日の呼び方が拾えず名前が残った）
+    const headNamesCache = new Map<string, string[]>();
+    const headNamesOf = async (c: string): Promise<string[]> => {
+      if (headNamesCache.has(c)) return headNamesCache.get(c)!;
+      const { data, error: e } = await sb.from("messages").select("text").eq("conversation_id", c).eq("sender", "staff").like("text", "%さん%").order("created_at").limit(300);
+      if (e) throw new Error(e.message);
+      const h = staffHeadNames(((data ?? []) as Array<{ text: string | null }>).map((x) => x.text));
+      headNamesCache.set(c, h);
+      await sleep(pause);
+      return h;
+    };
     const docCut = new Map<string, number | null>();
     const cutOf = async (c: string): Promise<number | null> => {
       if (docCut.has(c)) return docCut.get(c)!;
@@ -193,15 +205,18 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
       const viewing7d = ds.some((d) => d.viewing != null && d.viewing > at && d.viewing <= at + 7 * 86400_000);
       const applied14d = ds.some((d) => d.applied != null && d.applied > at && d.applied <= at + 14 * 86400_000);
       // 伏せ（2026-11-03 直し: その会話のお客様の名前＝表示名・呼び名とその姓・名だけ → YUMA。文の途中の「〇〇さん」を正規表現で置き換えない＝compose-name-mask.ts）＋maskPII・URL・電話
+      const convHeads = await headNamesOf(m.conversation_id);
       const mask = (t: string) => {
-        // 20261104a: 表示名・呼び名に、こちらの文の頭の「〇〇さん」（この通と前3日のこちらの通）を足す
-        const r = maskCustomerNames(String(t ?? ""), customerNameTokens([...(names.get(m.conversation_id) ?? []), ...staffHeadNames([text, ...pv.filter((x) => x.sender === "staff").map((x) => x.text)])]));
+        // 20261104a: 表示名・呼び名に、こちらの文の頭の「〇〇さん」（この通と前3日のこちらの通）を足す／20261104c: 会話全体のこちらの文の頭も
+        const r = maskCustomerNames(String(t ?? ""), customerNameTokens([...(names.get(m.conversation_id) ?? []), ...staffHeadNames([text, ...pv.filter((x) => x.sender === "staff").map((x) => x.text)]), ...convHeads]));
         return maskPII(r).replace(/https?:\/\/\S+/g, "〈URL〉").replace(/0\d{1,3}-?\d{2,4}-?\d{3,4}/g, "〈電話〉");
       };
       const body = cut(mask(text), 400);
       const custText = cust.join("\n");
       if (cust.some((c) => applicationMaterialReason(c)) || piiValueSignal(body) || piiValueSignal(custText)) { bump("書類・個人の値"); continue; }
       const gist = custText ? cut(mask(custText), 200) : null;
+      // 20261104c: 伏せた後にも英字の「〇〇さん」（YUMA 以外）が残る通は例に入れない（表示名とつづりの違う呼び方は決まりで当てられない・11/04 に1行）
+      if (leftLatinName(body) || (gist && leftLatinName(gist))) { bump("名前が残る（例に入れない）"); continue; }
       const scene = custText ? resolveReplyScene({ customerText: custText }).scene : afterAix ? "after_aix" : "staff_first";
       const mainLine = p.main ? cut(mask(p.main), 160) : sentencesOf(body).find((s) => !["list"].includes(tagSentence(s))) ?? cut(body, 80);
       rows.push({
@@ -209,7 +224,7 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
         customer_gist: gist, after_aix: afterAix, reply_minutes: replyMinutes, viewing_7d: viewing7d, applied_14d: applied14d,
         weight: composeExampleWeight({ replyMinutes, viewing7d, applied14d }),
         // 2026-11-03 読み方の候補（決定論の候補の札・決めるのはブレイン）と、その後に分かった事（2つ目の物差しの土台）
-        read_beyond: custText ? readBeyondOf(custText, text) : [], hidden_worry: custText ? worryCandidatesOf(custText) : [],
+        read_beyond: custText ? readBeyondOf(custText, text) : [], hidden_worry: custText ? worryCandidatesOf(custText) : [], answered_worry: custText ? answeredWorryOf(custText, text) : [],
         utter_type: custText ? utterTypesOf({ customerText: custText, prevCustomerTexts: olderCust, replyGapMinutes: custGap }) : [],
         true_want: [...(viewing7d ? ["viewed"] : []), ...(applied14d ? ["applied"] : []), ...(replyMinutes != null && replyMinutes <= 60 ? ["reply_fast"] : [])],
         true_want_at: viewing7d || applied14d ? new Date(at + 14 * 86400_000).toISOString() : null,

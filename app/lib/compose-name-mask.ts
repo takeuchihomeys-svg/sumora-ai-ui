@@ -33,6 +33,11 @@ export function maskCustomerNames(text: string, tokens: ReadonlyArray<string>): 
   return r;
 }
 
+/** 2026-11-04 版 20261104c: 伏せた後に英字の「〇〇さん」（YUMA 以外）が残っているか。英字の言葉に「さん」が付くのは、ほぼお客様の名前 */
+export function leftLatinName(text: string): boolean {
+  return /(?<![A-Za-z])[A-Za-z]{2,}さん/.test(String(text ?? "").normalize("NFKC").replace(/YUMAさん/g, ""));
+}
+
 /** 2026-11-04 版 20261104a: こちらが送った文の頭の「〇〇さん」（竹内さん・スタッフのお客様の呼び方）も伏せる名前に足す
  *  （表示名・呼び名と違う呼び方＝ローマ字の表示名をかなで呼ぶ・フルネームの表示名を苗字だけで呼ぶ が29行残っていた）。
  *  拾うのは文の頭だけ（文の途中の「〇〇さん」は拾わない）。こちら・皆・お客・管理会社・大家・業者・スタッフの名前は外す */

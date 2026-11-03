@@ -27,3 +27,9 @@ import { staffHeadNames } from "../compose-name-mask";
   console.log(ok ? "compose-name-mask 20261104b: pass" : "compose-name-mask 20261104b: FAIL " + JSON.stringify({ a1, a2, a3, a4, a5 }));
   if (!ok) process.exit(1);
 }
+{
+  // 2026-11-04 版 20261104c: 伏せた後に英字の「〇〇さん」が残るか
+  const { leftLatinName } = require("../compose-name-mask");
+  const ok = leftLatinName("全域からMATUMOTOさんのご希望") === true && leftLatinName("YUMAさんお世話になっております") === false && leftLatinName("大阪さんの件") === false;
+  console.log(ok ? "left-latin-name: pass" : "left-latin-name: FAIL"); if (!ok) process.exit(1);
+}
