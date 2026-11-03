@@ -75,9 +75,11 @@ export function commanderCandidates(brainKey: string | null, altActions: readonl
 }
 
 /** 統括に渡す user（毎回変わる物だけ・伏せた文） */
-export function commanderUserText(o: { situationLine: string; conversation: string; cards: ReadonlyArray<{ key: string; text: string }> }): string {
+export function commanderUserText(o: { situationLine: string; conversation: string; cards: ReadonlyArray<{ key: string; text: string }>; ledgerBlock?: string }): string {
   return [
     o.situationLine ? `【状況のまとめ】${o.situationLine}` : "",
+    // 2026-11-04 事実の帳面（作業員2の customer-fact-ledger・AIX の分だけ）。「今の番の持ち込み」は帳面より新しい今の番の事として状況のまとめに残す
+    o.ledgerBlock ? o.ledgerBlock : "",
     `【会話（★が今の番のお客様の発言）】\n${o.conversation}`,
     `【候補の担当の札】\n${o.cards.map((c) => c.text).join("\n\n")}`,
     `【候補の鍵】${o.cards.map((c) => c.key).join(" / ")} / reply / promise`,

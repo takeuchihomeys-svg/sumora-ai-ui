@@ -18,7 +18,7 @@ import { messagePlanOn, BRAIN_MESSAGE_PLAN_RULES, BRAIN_MESSAGE_PLAN_FIELD, norm
 import { needReportOn, needReportMode, BRAIN_NEED_RULES_AFTER, planAheadOn, materialProvenanceOn, BRAIN_NEED_RULES, BRAIN_NEED_FIELD, BRAIN_PLAN_AHEAD_RULES, BRAIN_PLAN_AHEAD_FIELD, MATERIAL_PROVENANCE_RULE, normalizeNeed, normalizePlanAhead, prevPlanAheadLine, detectMaterialConflicts, type PlanAhead, type MaterialConflicts, threeLayerOn, mainPointOn, threeLayerMode, mainPointMode, BRAIN_THREE_LAYER_RULES_AFTER, BRAIN_MAIN_POINT_RULES_AFTER, BRAIN_THREE_LAYER_RULES, BRAIN_THREE_LAYER_FIELD, BRAIN_MAIN_POINT_RULES, BRAIN_MAIN_POINT_FIELD, normalizeThreeLayer, normalizeMainPoint } from "@/app/lib/brain-need";
 import { flowSignalsOn, detectFlowSignals, flowSignalsLine, type FlowSignals } from "@/app/lib/flow-signals";
 import { conductorHandoffOn, candidateRoles, rolesDigest } from "@/app/lib/conductor-handoff";
-import { conductorMetaMode, buildConductorMeta, withMaterials, carryQueryLine } from "@/app/lib/conductor-meta";
+import { conductorMetaMode, buildConductorMeta, withMaterials, carryQueryLine, materialFor } from "@/app/lib/conductor-meta";
 import { conductorIntakeMode } from "@/app/lib/conductor-intake";
 import { factLedgerMode, buildFactLedger, factLedgerBlock } from "@/app/lib/customer-fact-ledger";
 import { closedThanksNoReplyOn, layoutAskTemporaryOn, farOtherFirstOn, ackPositiveApplyOn, closedThanksLine, layoutAskLine, farOtherFirstLine, ackPositiveApplyLine, guarantorWordingOn, guarantorWordingLine } from "@/app/lib/decisions-1103";
@@ -3056,6 +3056,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   //   束ねるのは今もブレインが読んでいる物だけ（DB の追加の読みなし）。保存はサーバーの鍵（鍵が無い時は帳面なし＝今まで通り）
   const factMode = factLedgerMode();
   let factsForConductor: Array<{ kind: string }> = [];
+  let factFeedOn = false; // 2026-11-04 帳面を担当に配る段（CUSTOMER_FACT_LEDGER_FEED）が開いた番か＝AIX の統括・相談にも同じ帳面の AIX の分を渡す
   if (factMode !== "off" && !isPostApplyStatus(convStatus)) {
     try {
       const pm = (opts?.prevMeta ?? null) as unknown as Record<string, unknown> | null;
@@ -3068,6 +3069,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       factsForConductor = facts;
       // 2026-11-04 ② 帳面を全部の担当に配る（統括役: 判断を上書きしない材料なので YUMA の後すぐ全部へ）。CUSTOMER_FACT_LEDGER_FEED の段（既定 yuma）で判断のブレインの材料の先頭に入れる
       const feedOn = factMode === "on" || await (await import("@/app/lib/rollout")).stageOnNow("CUSTOMER_FACT_LEDGER_FEED", conversationId, { kind: "yuma" });
+      factFeedOn = feedOn;
       if (feedOn) { const fb = factLedgerBlock(facts, Date.now()); if (fb) customerStateBlockText = fb + "\n\n" + customerStateBlockText; }
       const custTs = typedMessages[0]?.sender === "customer" ? typedMessages[0].created_at : null;
       // 保存はブレインの保存と同じ時に1回の upsert（analyzeAndSaveBrainMeta の flushFactLedger）。ここでは預けるだけ
@@ -5744,6 +5746,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
     // 2026-11-03 竹内さんの決定（統括を束ねる6つの型・2「1つの正」）: AIX の統括の答えは提案。LINE の統括の決定を黙って書き換えない。
     //   on でも書き換えず、ブレインと違う答え（changed・also・差し戻し）を recheck に載せる＝読み直しの口（作業員2）が1回だけ決め直す
     const deskMode = aixDeskCommandMode();
+    // 2026-11-04 帳面の AIX の分（物件・約束・済み・内覧＝conductor-meta.materialFor("aix_desk")）。段が開いた番だけ・伏せてから渡す
+    const deskLedgerBlock = factFeedOn ? (() => { const f = materialFor("aix_desk", factsForConductor); return f.length ? maskBrain(factLedgerBlock(f as unknown as Parameters<typeof factLedgerBlock>[0], Date.now())) : ""; })() : "";
     if (deskMode !== "off" && replyMode === "aix" && finalAix && !isPostApplyStatus(convStatus) && conversationId) {
       try {
         const { runAixCommander } = await import("@/app/lib/aix-commander-server");
@@ -5752,7 +5756,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         const conv = msgsDesk.map((m, i) => `${m.sender === "customer" && i > lastStaff ? "★" : ""}${m.sender === "customer" ? "お客様" : "こちら"}: ${maskBrain(String(m.text ?? "")).replace(/\s+/g, " ").slice(0, 220)}`).join("\n");
         const brought = broughtThisTurnNames(unrepliedTurn.text ?? "");
         const sit = [customerState ? nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() }) : "", brought.length ? `今の番の持ち込み（まだ確認が要る）: ${brought.join("・")}` : ""].filter(Boolean).join("／");
-        const run = await runAixCommander(client, { conversationId, brainAction: finalAix, brainCheckPattern: checkKind?.check_pattern || null, altActions: finalAlts ?? [], conversation: conv, situationLine: maskBrain(sit) });
+        const run = await runAixCommander(client, { conversationId, brainAction: finalAix, brainCheckPattern: checkKind?.check_pattern || null, altActions: finalAlts ?? [], conversation: conv, situationLine: maskBrain(sit), ledgerBlock: deskLedgerBlock });
         const pickBtn = run.pick ? actionOfKey(run.pick) : null;
         const changed = !!pickBtn && (pickBtn.action !== finalAix || (!!pickBtn.checkPattern && pickBtn.checkPattern !== (checkKind?.check_pattern || null)));
         // 2026-11-03 竹内さん「統括に6つ足す」②: 下の役（AIX の統括）の答えを確かな事実と照らす。合わなければ差し戻し（読み直しの口・記録は digest.ad.cf）
@@ -5787,7 +5791,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           const sitC = [customerState ? nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() }) : "", broughtC.length ? `今の番の持ち込み（まだ確認が要る）: ${broughtC.join("・")}` : ""].filter(Boolean).join("／");
           const sceneNowC = brainSceneRes?.scene ?? resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene;
           const sceneButtons = [...(ackApply ? [ACK_APPLY_BUTTON] : []), ...(sceneNowC ? catalogSceneButtons(sceneNowC) : []).filter((b) => !(ackApply && b === ACK_APPLY_BUTTON))];
-          const run = await runAixConsult(client, { conversationId, sceneButtons, conversation: convC, situationLine: maskBrain(sitC) });
+          const run = await runAixConsult(client, { conversationId, sceneButtons, conversation: convC, situationLine: maskBrain(sitC), ledgerBlock: deskLedgerBlock });
           aixConsult = { mode: consultMode, why: triggers, answer: run.answer, key: run.key, note: run.why.slice(0, 120), cands: run.cands, ...(run.skip ? { skip: run.skip } : {}) };
           console.log(JSON.stringify({ tag: "brain:aix-consult", conversationId, ...aixConsult, ms: run.ms }));
         }

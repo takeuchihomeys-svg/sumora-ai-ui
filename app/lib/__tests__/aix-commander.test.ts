@@ -25,6 +25,8 @@ t("鍵→ボタン: 結果のピッカーは外す", JSON.stringify(actionOfKey(
 t("鍵→ボタン: 条件のピッカーは残す", actionOfKey("property_check_result/mgmt_parking").checkPattern === "mgmt_parking");
 t("鍵→ボタン: 他のボタンはボタンだけ", JSON.stringify(actionOfKey("viewing_invite/通常")) === '{"action":"viewing_invite","checkPattern":null}');
 t("user に候補の鍵と reply/promise", commanderUserText({ situationLine: "", conversation: "★お客様: x", cards: [{ key: "a", text: "■担当 a" }] }).includes("【候補の鍵】a / reply / promise"));
+t("2026-11-04 帳面があれば状況のまとめの後・会話の前に入る", (() => { const u = commanderUserText({ situationLine: "S", conversation: "★お客様: x", cards: [{ key: "a", text: "■担当 a" }], ledgerBlock: "【このお客様の確かな事実の帳面（いつ・どこから）】- 物件 A を送った" }); return u.indexOf("【状況のまとめ】") < u.indexOf("事実の帳面") && u.indexOf("事実の帳面") < u.indexOf("【会話"); })());
+t("帳面が無ければ今まで通り（帳面の見出しが出ない）", !commanderUserText({ situationLine: "", conversation: "★お客様: x", cards: [{ key: "a", text: "■担当 a" }] }).includes("帳面"));
 t("No.21: 既定 off", !aixDeskAckApplyOn({}) && aixDeskAckApplyOn({ AIX_DESK_ACK_APPLY: "on" }));
 t("No.21: decisions_1103 に n21 がある番だけ", hasAckPositiveApply({ decisions_1103: ["n21", "n3"] }) && !hasAckPositiveApply({ decisions_1103: ["n2"] }) && !hasAckPositiveApply({}) && !hasAckPositiveApply(null));
 noteDecisions1103("c1", ["n21"]);

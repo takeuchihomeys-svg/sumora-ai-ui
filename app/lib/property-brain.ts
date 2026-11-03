@@ -1003,7 +1003,7 @@ export function normalizeBuildingName(name: string | null | undefined): string {
 }
 
 /** 部屋番号の表記ゆれをそろえる（「0403」「403号室」「４０３」→ "403"）。読めなければ "" */
-// 2026-11-03 夜 物件の鍵を1つに（property-key.ts・PROPERTY_KEY_UNIFIED 既定 off）: on の時は1つの鍵の号室（英字を落とさない）。読めない時は今まで通り
+// 2026-11-03 夜 物件の鍵を1つに（property-key.ts・PROPERTY_KEY_UNIFIED 既定 on・11/04）: on の時は1つの鍵の号室（英字を落とさない）。読めない時は今まで通り
 export function normalizeRoomKey(raw: string | null | undefined): string { return unifiedRoomOr("property-brain.normalizeRoomKey", raw, normalizeRoomKeyLegacy(raw)); }
 function normalizeRoomKeyLegacy(raw: string | null | undefined): string {
   const m = toHalfWidth(String(raw ?? "")).match(/(\d{1,5})\s*号?室?\s*$/);

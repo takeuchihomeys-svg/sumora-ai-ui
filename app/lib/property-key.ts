@@ -9,7 +9,7 @@
 //   建物: customer-state.buildingKeyOf と同じ（NFKC・記号・空白・長音を外し小文字・【N】🌟 を外す）
 //   鍵: `${建物}|${号室}`（号室が無ければ建物だけ）
 // 古い6つは、scripts/audit-property-key.ts で過去の全件に当てて違いを目で読み、誤った寄せが0になってから
-//   この関数の薄い包みにする（挙動の変わる所は PROPERTY_KEY_UNIFIED・既定 off）。今はまだどこも呼んでいない（読み比べの段）
+//   この関数の薄い包みにする（挙動の変わる所は PROPERTY_KEY_UNIFIED・11/04 から既定 on）。今はまだどこも呼んでいない（読み比べの段）
 import { buildingKeyOf } from "./customer-state";
 
 /** 間取りの形（1K・1LDK・2SLDK・1R・1DK）＝号室ではない（11/03 夜 読み比べで「1LDK」「1K 202」を号室と読んでいた） */
@@ -32,10 +32,12 @@ export function propertyKey(building: string | null | undefined, room: string | 
   const r = unifiedRoomKey(room);
   return r ? `${b}|${r}` : b;
 }
-/** PROPERTY_KEY_UNIFIED: off／shadow（既定・11/03 夜 指揮役＝今まで通りの鍵で動かし、新しい鍵だと答えが変わる号室だけ記録）／on（新しい鍵） */
+/** PROPERTY_KEY_UNIFIED: off／shadow（今まで通りの鍵で動かし、新しい鍵だと答えが変わる号室だけ記録）／on（既定・新しい鍵）
+ *  2026-11-04 指揮役: 既定 on（夜の監査 送付済みの線・30日の重複で off/on が全く同じ・英字を落とす誤った寄せ 0＝竹内さんの決定「悪化0なら全部に」）。
+ *  on でも答えが変わった号室は property-key:on で記録する（入れた後3日、毎朝この記録と送り直しの数を見て、増えたらその日に =off） */
 export function propertyKeyMode(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): "off" | "shadow" | "on" {
   const v = String(env.PROPERTY_KEY_UNIFIED ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "off" ? "off" : "shadow";
+  return v === "off" ? "off" : v === "shadow" ? "shadow" : "on";
 }
 export const propertyKeyUnifiedOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => propertyKeyMode(env) === "on";
 const shadowSeen = new Set<string>();
@@ -44,10 +46,9 @@ export function unifiedRoomOr(fn: string, raw: string | null | undefined, legacy
   const mode = propertyKeyMode();
   if (mode === "off") return legacy;
   const u = unifiedRoomKey(raw);
-  if (mode === "on") return u ?? legacy;
   if (u && u !== legacy) {
     const k = `${fn}|${String(raw)}`;
-    if (!shadowSeen.has(k) && shadowSeen.size < 50) { shadowSeen.add(k); console.log(JSON.stringify({ tag: "property-key:shadow", fn, raw: String(raw).slice(0, 20), legacy, unified: u })); }
+    if (!shadowSeen.has(k) && shadowSeen.size < 50) { shadowSeen.add(k); console.log(JSON.stringify({ tag: `property-key:${mode}`, fn, raw: String(raw).slice(0, 20), legacy, unified: u })); }
   }
-  return legacy;
+  return mode === "on" ? u ?? legacy : legacy;
 }

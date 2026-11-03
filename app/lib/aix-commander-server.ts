@@ -68,7 +68,7 @@ export type CommanderRun = {
 /** AIX の統括を1回呼ぶ（呼ぶ側で「ブレインが AIX と決めた番」だけにする） */
 export async function runAixCommander(client: Anthropic, o: {
   conversationId: string; brainAction: string; brainCheckPattern: string | null; altActions: readonly string[];
-  conversation: string; situationLine: string;
+  conversation: string; situationLine: string; ledgerBlock?: string;
 }): Promise<CommanderRun> {
   const t0 = Date.now();
   const base: CommanderRun = { ran: false, brainKey: null, cands: [], pick: null, also: [], sendBack: null, why: "", ms: 0 };
@@ -79,7 +79,7 @@ export async function runAixCommander(client: Anthropic, o: {
   const cands = commanderCandidates(brainKey, o.altActions, keys);
   if (cands.length < 2) return { ...base, brainKey, cands, skip: "比べる候補が1つ以下", ms: Date.now() - t0 };
   if (!deskCallGoesAlt(AIX_DESK_ACTION)) return { ...base, brainKey, cands, skip: "DeepSeek に回らない（Claude には送らない）", ms: Date.now() - t0 };
-  const user = commanderUserText({ situationLine: o.situationLine, conversation: o.conversation, cards: cands.map((k) => ({ key: k, text: cards.get(k) ?? "" })) });
+  const user = commanderUserText({ situationLine: o.situationLine, conversation: o.conversation, cards: cands.map((k) => ({ key: k, text: cards.get(k) ?? "" })), ledgerBlock: o.ledgerBlock });
   const res = await client.messages.create({
     model: MODEL,
     max_tokens: 400,
@@ -96,7 +96,7 @@ export async function runAixCommander(client: Anthropic, o: {
 }
 
 /** 逆向きの相談（ブレインが返信と決めかけた番）。呼ぶ側で「きっかけがある番」だけにする */
-export async function runAixConsult(client: Anthropic, o: { conversationId: string; sceneButtons: readonly string[]; conversation: string; situationLine: string }): Promise<{ ran: boolean; skip?: string; cands: string[]; answer: "aix" | "promise" | "keep"; key: string | null; why: string; ms: number }> {
+export async function runAixConsult(client: Anthropic, o: { conversationId: string; sceneButtons: readonly string[]; conversation: string; situationLine: string; ledgerBlock?: string }): Promise<{ ran: boolean; skip?: string; cands: string[]; answer: "aix" | "promise" | "keep"; key: string | null; why: string; ms: number }> {
   const t0 = Date.now();
   const { cards, error } = await loadDeskCards();
   if (!cards.size) return { ran: false, skip: error ?? "札が無い", cands: [], answer: "keep", key: null, why: "", ms: Date.now() - t0 };
@@ -104,7 +104,7 @@ export async function runAixConsult(client: Anthropic, o: { conversationId: stri
   const cands = consultCandidates(o.sceneButtons, [...cards.keys()]);
   if (!cands.length) return { ran: false, skip: "場面の候補が無い", cands, answer: "keep", key: null, why: "", ms: Date.now() - t0 };
   if (!deskCallGoesAlt("aix_desk_consult")) return { ran: false, skip: "DeepSeek に回らない（Claude には送らない）", cands, answer: "keep", key: null, why: "", ms: Date.now() - t0 };
-  const user = commanderUserText({ situationLine: o.situationLine, conversation: o.conversation, cards: cands.map((k) => ({ key: k, text: cards.get(k) ?? "" })) }).replace("/ reply / promise", "/ promise / keep");
+  const user = commanderUserText({ situationLine: o.situationLine, conversation: o.conversation, cards: cands.map((k) => ({ key: k, text: cards.get(k) ?? "" })), ledgerBlock: o.ledgerBlock }).replace("/ reply / promise", "/ promise / keep");
   const res = await client.messages.create({
     model: MODEL, max_tokens: 300, temperature: 0,
     system: [{ type: "text", text: AIX_CONSULT_SYSTEM, cache_control: { type: "ephemeral" } }],

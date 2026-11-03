@@ -40,7 +40,7 @@ export function normRoomNo(raw: string | null | undefined): string {
 }
 
 /** 引く時の号室の鍵: 英字の付く号室（A0205・B101・005B）は英字ごと（sent-skip.js roomKey と同じ） */
-// 2026-11-03 夜 物件の鍵を1つに（property-key.ts・PROPERTY_KEY_UNIFIED 既定 off）: on の時は1つの鍵の号室（英字を落とさない）。読めない時は今まで通り
+// 2026-11-03 夜 物件の鍵を1つに（property-key.ts・PROPERTY_KEY_UNIFIED 既定 on・11/04）: on の時は1つの鍵の号室（英字を落とさない）。読めない時は今まで通り
 export function roomKeyOf(room: string | null | undefined): string { return unifiedRoomOr("sent-room-match.roomKeyOf", room, roomKeyOfLegacy(room)); }
 function roomKeyOfLegacy(room: string | null | undefined): string {
   const s = toHalf(String(room ?? "")).replace(/\s+/g, "").replace(/号室?$/, "").toUpperCase();
