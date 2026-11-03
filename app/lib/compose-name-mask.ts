@@ -7,18 +7,29 @@
 export function customerNameTokens(names: ReadonlyArray<string | null | undefined>): string[] {
   const out = new Set<string>();
   for (const raw of names) {
-    const n = String(raw ?? "").normalize("NFKC").trim();
+    const orig = String(raw ?? "").trim();
+    const n = orig.normalize("NFKC").trim();
     if (!n || n === "YUMA") continue;
+    // 2026-11-04 版 20261104b: 飾り文字の表示名（𝚂𝚊𝚗𝚊. 等）は NFKC で別の文字になり本文と当たらなかった → 元の形も足す
+    if (orig && orig !== n) { out.add(orig.replace(/\s+/g, "")); out.add(orig); }
     out.add(n.replace(/\s+/g, ""));
     out.add(n);
     for (const part of n.split(/[\s　・･]+/)) if (part && part !== "YUMA") out.add(part);
+    // 英字の表示名の英字の続き（takeo1022 → takeo・Sana. → Sana）も足す（大文字小文字は maskCustomerNames で区別しない・2文字は「さん」付きの時だけ）
+    for (const run of n.match(/[A-Za-z]{2,}/g) ?? []) if (run !== "YUMA") out.add(run);
   }
-  return [...out].filter(Boolean).sort((a, b) => b.length - a.length);
+  return [...out].filter(Boolean).sort((a, b) => Array.from(b).length - Array.from(a).length);
+}
+const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** 英字だけの名前は大文字小文字を区別しない（表示名 satoko を SATOKO さんと呼ぶ・11/04 に7行残っていた）。英字の続きの途中には当てない */
+function replaceName(r: string, n: string, to: string, withSan: boolean): string {
+  if (/^[A-Za-z]+$/.test(n)) return r.replace(new RegExp(`(?<![A-Za-z])${escRe(n)}${withSan ? "さん" : "(?![A-Za-z])"}`, "gi"), withSan ? `${to}さん` : to);
+  return r.split(withSan ? `${n}さん` : n).join(withSan ? `${to}さん` : to);
 }
 export function maskCustomerNames(text: string, tokens: ReadonlyArray<string>): string {
   let r = String(text ?? "");
-  for (const n of tokens) r = r.split(`${n}さん`).join("YUMAさん");
-  for (const n of tokens) if (n.length >= 2) r = r.split(n).join("YUMA");
+  for (const n of tokens) r = replaceName(r, n, "YUMA", true);
+  for (const n of tokens) if (Array.from(n).length >= (/^[A-Za-z]+$/.test(n) ? 3 : 2)) r = replaceName(r, n, "YUMA", false);
   return r;
 }
 

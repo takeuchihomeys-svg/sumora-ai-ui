@@ -27,6 +27,6 @@ export async function GET(req: NextRequest) {
     limit: Math.max(1, Math.round((Number.isFinite(limit) && limit > 0 ? limit : 300) * guard.scale)), budgetMs: Math.round(200_000 * guard.scale), pauseMs: Math.round(80 * guard.pauseScale),
   });
   // 2026-11-03 作り直しが止まった時に原因が見えなかった（500 で本文だけ）→ 毎回1行ログに残す
-  console.log(JSON.stringify({ tag: "cron:takeuchi-compose-examples", ok: report.ok, error: report.error ?? null, read: report.read ?? null, rows: report.rows ?? null, stale: report.stale ?? null, next: report.next ?? null, stats: report.stats ?? null, failed: report.failed ?? null }));
+  console.log(JSON.stringify({ tag: "cron:takeuchi-compose-examples", ok: report.ok, error: report.error ?? null, read: report.read ?? null, rows: report.rows ?? null, stale: report.stale ?? null, staleLeft: report.staleLeft ?? null, writerGap: report.writerGap ?? null, next: report.next ?? null, stats: report.stats ?? null, failed: report.failed ?? null }));
   return NextResponse.json(report, { status: report.ok ? 200 : 500 });
 }

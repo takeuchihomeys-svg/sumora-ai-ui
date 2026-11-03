@@ -22,8 +22,16 @@ import { embedTexts } from "./design-knowledge-rag-server";
 import { customerNameTokens, maskCustomerNames, staffHeadNames } from "./compose-name-mask";
 
 /** 伏せの版（2026-11-03 夜の直し）。この日時より前に作った行は、cron が先に元の送信から作り直す（問いの値なしで直る） */
-export const COMPOSE_MASK_VER = "20261104a";
-export const COMPOSE_MASK_VER_AT = "2026-11-03T16:00:00Z";   // 版の日時は push より前（11/03 の 14:30Z は push の後だった）
+export const COMPOSE_MASK_VER = "20261104b";   // 11/04 b: 飾り文字の表示名・英字の表示名の大文字小文字（12行に名前が残っていた・解剖の行には0）
+export const COMPOSE_MASK_VER_AT = "2026-11-03T17:02:00Z";   // 版の日時は push より前（11/03 の 14:30Z は push の後だった）
+
+/** 書き手の直しの版（2026-11-04 竹内さんの答え: 事務所の Windows PC の 10/20 JST 以降の送信 213通を takeuchi に直した）。
+ *  表の一番新しい送信より前に、後から竹内さんの番に直った通があると、続きから読む作りでは拾えない。
+ *  版が変わったら、FROM から表の一番新しい送信までの竹内さんの送信のうち表に無い通を1回だけ読み直す（問いの値なしで直る・どこまで読んだかは hanbancyo_settings に）。
+ *  また書き手を直した時は、版と FROM を変えて push する。 */
+export const COMPOSE_WRITER_VER = "20261104w";
+export const COMPOSE_WRITER_GAP_FROM = "2026-10-15T00:00:00Z";
+const WRITER_GAP_KEY = "takeuchi_compose_writer_gap";
 
 function serviceClient(): SupabaseClient | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -40,7 +48,7 @@ type Row = {
   read_beyond: string[]; hidden_worry: string[]; utter_type: string[]; true_want: string[]; true_want_at: string | null; forward_score: number;
 };
 
-export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso?: string | null; limit?: number; budgetMs?: number; pauseMs?: number } = {}): Promise<{ ok: boolean; error?: string; read?: number; rows?: number; stats?: Record<string, number>; next?: string | null; embedTokens?: number; dry?: boolean; stale?: number; failed?: string[] }> {
+export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso?: string | null; limit?: number; budgetMs?: number; pauseMs?: number } = {}): Promise<{ ok: boolean; error?: string; read?: number; rows?: number; stats?: Record<string, number>; next?: string | null; embedTokens?: number; dry?: boolean; stale?: number; staleLeft?: number | null; writerGap?: string | null; failed?: string[] }> {
   const sb = serviceClient();
   if (!sb) return { ok: false, error: "SUPABASE_SERVICE_ROLE_KEY が無い" };
   const t0 = Date.now();
@@ -62,7 +70,47 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
       const r = await sb.from("messages").select("id, conversation_id, text, created_at").in("id", staleIds).order("created_at");
       if (r.error) throw new Error(r.error.message);
       msgs = r.data ?? [];
-    } else {
+    }
+    // 2026-11-04 書き手の直しの拾い直し（古い版の行が無くなってから・?after= の時はしない）
+    let gap: { cursor: string; endCursor: string | null; done: boolean; fetched: number } | null = null;
+    if (!staleIds.length && !opts.afterIso) {
+      const st = await sb.from("hanbancyo_settings").select("value").eq("key", WRITER_GAP_KEY).maybeSingle();
+      let gs: { ver?: string; cursor?: string | null } = {};
+      try { gs = JSON.parse(String((st.data as { value?: unknown } | null)?.value ?? "{}")); } catch { gs = {}; }
+      if (gs.ver !== COMPOSE_WRITER_VER || gs.cursor !== "done") {
+        if (gs.ver !== COMPOSE_WRITER_VER) gs = { ver: COMPOSE_WRITER_VER, cursor: null };
+        const { data: nw } = await sb.from("takeuchi_compose_examples").select("sent_at").order("sent_at", { ascending: false }).limit(1);
+        const newest = (nw?.[0] as { sent_at?: string } | undefined)?.sent_at ?? null;
+        let cursor = gs.cursor ?? COMPOSE_WRITER_GAP_FROM;
+        const found: unknown[] = [];
+        let fetched = 0, done = !newest;
+        for (let round = 0; newest && round < 10 && found.length === 0; round++) {
+          const r = await sb.from("messages").select("id, conversation_id, text, created_at")
+            .eq("staff_writer", "takeuchi").eq("staff_writer_confidence", "sure").eq("staff_writer_source", "device").eq("sender", "staff")
+            .or("is_aix_generated.is.null,is_aix_generated.eq.false").gt("created_at", cursor).lte("created_at", newest).order("created_at").limit(lim);
+          if (r.error) throw new Error(r.error.message);
+          const all = (r.data ?? []) as Array<{ id: string; created_at: string }>;
+          fetched += all.length;
+          const have = new Set<string>();
+          for (let i = 0; i < all.length; i += 200) {
+            const h = await sb.from("takeuchi_compose_examples").select("message_id").in("message_id", all.slice(i, i + 200).map((m) => m.id));
+            if (h.error) throw new Error(h.error.message);
+            for (const x of (h.data ?? []) as Array<{ message_id: string }>) have.add(String(x.message_id));
+          }
+          found.push(...all.filter((m) => !have.has(m.id)));
+          if (all.length) cursor = all[all.length - 1].created_at;
+          if (all.length < lim) { done = true; break; }
+          await sleep(pause);
+        }
+        gap = { cursor, endCursor: cursor, done, fetched };
+        if (found.length) { msgs = found; bump(`書き手の直しの拾い直し（${COMPOSE_WRITER_VER}）`); }
+        else if (!opts.dry) {
+          await sb.from("hanbancyo_settings").upsert({ key: WRITER_GAP_KEY, value: JSON.stringify({ ver: COMPOSE_WRITER_VER, cursor: done ? "done" : cursor }) }, { onConflict: "key" });
+          gap = null;
+        }
+      }
+    }
+    if (!staleIds.length && msgs === null) {
       let after = opts.afterIso ?? null;
       if (!after) {
         const { data } = await sb.from("takeuchi_compose_examples").select("sent_at").order("sent_at", { ascending: false }).limit(1);
@@ -107,11 +155,13 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
     let next: string | null = null;
     let lastDone: string | null = null;
     const failedIds: string[] = [];
+    const reachedIds = new Set<string>();   // 2026-11-04 この回で読み終えた通（時間切れの回でも、読み終えて例に入らなかった古い行は消す）
     /** 文字を「文字の数」で切る（絵文字の片方だけ残すと DB と埋め込みが断る） */
     const cut = (t: string, n: number) => Array.from(String(t ?? "")).slice(0, n).join("");
     for (const m of list) {
       if (Date.now() - t0 > budget) { next = lastDone; bump("時間切れで続きへ"); break; }
       lastDone = m.created_at;
+      reachedIds.add(m.id);
       try {
       const text = String(m.text ?? "").trim();
       if (!text || /^\[(?:画像|スタンプ|動画|ファイル)\]/.test(text) || /^【グループ】/.test(text)) { bump("画像・転送"); continue; }
@@ -172,7 +222,7 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
         console.warn(JSON.stringify({ tag: "compose-examples:message-failed", messageId: m.id, error: e instanceof Error ? e.message : String(e) }));
       }
     }
-    if (!staleIds.length && next === null && list.length >= Math.min(opts.limit ?? 300, 500)) next = lastDone;   // 1回の上限に達した＝まだ続きがある（作り直しの回は次の回が古い行を選び直す）
+    if (!staleIds.length && !gap && next === null && list.length >= Math.min(opts.limit ?? 300, 500)) next = lastDone;   // 1回の上限に達した＝まだ続きがある（作り直しの回は次の回が古い行を選び直す）
     let embedTokens = 0;
     if (!opts.dry && rows.length) {
       for (let i = 0; i < rows.length; i += 64) {
@@ -206,17 +256,34 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
       }
     }
     // 作り直しの回で、もう例に入らない（画像・申込以降・個人の値・時間切れの残り以外）古い行は消す（古いまま残すと毎回作り直しの対象になる）
-    if (!opts.dry && staleIds.length && next === null) {
+    //   2026-11-04: 毎回時間切れになると next が null にならず、例に入らない古い行が先頭に残り続ける → 読み終えた通と、元の送信が無い・試しの会話の通は時間切れでも消す
+    if (!opts.dry && staleIds.length) {
       const kept = new Set(rows.map((r) => r.message_id));
       const failed = new Set(failedIds);
-      const drop = staleIds.filter((id) => !kept.has(id) && !failed.has(id));
+      const inList = new Set(list.map((m) => m.id));
+      const drop = staleIds.filter((id) => !kept.has(id) && !failed.has(id) && (next === null || reachedIds.has(id) || !inList.has(id)));
       if (drop.length) {
         const d = await sb.from("takeuchi_compose_examples").delete().in("message_id", drop).lt("built_at", COMPOSE_MASK_VER_AT);
         if (d.error) throw new Error(d.error.message);
         stats["作り直しで例から外した"] = drop.length;
       }
     }
-    return { ok: true, read: list.length, rows: rows.length, stats, next, embedTokens, dry: !!opts.dry, stale: staleIds.length, failed: failedIds.slice(0, 20) };
+    // 2026-11-04 書き手の直しの拾い直し: どこまで読んだかを残す（時間切れなら読み終えた通まで・最後まで読めたら done）。書けた後に残す
+    let writerGap: string | null = null;
+    if (gap) {
+      const timedOut = next !== null;
+      const cur = timedOut ? (lastDone ?? gap.cursor) : gap.endCursor ?? gap.cursor;
+      writerGap = timedOut || !gap.done ? cur : "done";
+      if (!opts.dry) await sb.from("hanbancyo_settings").upsert({ key: WRITER_GAP_KEY, value: JSON.stringify({ ver: COMPOSE_WRITER_VER, cursor: writerGap }) }, { onConflict: "key" });
+      next = null;
+    }
+    // 2026-11-04 残りの古い行の数（stale はこの回に選んだ数で、残りが見えず「止まった」と見えた）
+    let staleLeft: number | null = null;
+    if (staleIds.length) {
+      const c = await sb.from("takeuchi_compose_examples").select("message_id", { count: "exact", head: true }).lt("built_at", COMPOSE_MASK_VER_AT);
+      staleLeft = c.error ? null : (c.count ?? null);
+    }
+    return { ok: true, read: list.length, rows: rows.length, stats, next, embedTokens, dry: !!opts.dry, stale: staleIds.length, staleLeft, writerGap, failed: failedIds.slice(0, 20) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e), stats };
   }
