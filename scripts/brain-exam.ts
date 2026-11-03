@@ -42,6 +42,9 @@
 //   並べ方: 既定でキャッシュが効く順（段 → 前置きの印 → 型）。止める --order=as-is（EXAM_ORDER=as-is）。判定の前置き: --judge-prefix=rubric（EXAM_JUDGE_PREFIX=rubric・既定は旧の順）
 //   --baseline-max-age=<日|off>（EXAM_BASELINE_MAX_AGE_DAYS・既定 7日）… main の取り置きが古ければ流し直す
 //   --kb-rules=show|score|off（既定 show）… 決まりで判定できる知見の違反を出す／--link-kb=<知見 id|id8|title:題>,… … 通った問題を知見に結ぶ
+// 2026-11-04 作業員1・指揮役の了承: EXAM_CONCURRENCY=<2〜6>（既定 1＝今まで通り）… node を増やさずに1つの処理の中で問題を並べる。
+//   レーン＝テスト専用の会話（YUMA2〜YUMA5）1本・1問ずつ（同じ問題の回は同じレーンで順に）。会話の数で実際は4本まで（YUMA は使わない）。
+//   process.env・録音の札・試験の時計はレーンごと（scripts/lib/exam-lane.ts）。DeepSeek 等の 429 を見たら問題の区切りで並べる数を1つ減らす
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, mkdirSync, copyFileSync } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
@@ -65,6 +68,9 @@ import { formatLinks, orderForCache, topLinks, type KbLink } from "./lib/exam-ra
 import { ruleJudge } from "./lib/exam-brain";
 import { checkKbRules, kbRulesMode, type KbRuleHit } from "./lib/exam-kb-rules";
 import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, sigOfRow, pathSigOfRow, type FlakeVerdict } from "./lib/exam-flake";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, type ExamLane } from "./lib/exam-lane";
+import type { ReplayFloor } from "../app/lib/test-replay-floor";
 
 const PROBLEMS_FILE = "scripts/brain-exam/problems.json";
 const SPEC_FILE = "scripts/brain-exam/spec.json";
@@ -107,9 +113,9 @@ const ONLY = arg("only").split(",").filter(Boolean);
 const TYPES = (arg("types") || arg("only-type")).split(",").filter(Boolean);
 // 2026-10-09: テスト用の会話（既定 YUMA・--conv=auto|YUMA2〜YUMA5）。main で鍵を取ってから決まる
 const CONV_ARG = arg("conv");
-let lease: TestConvLease | null = null;
-let CONV: string = YUMA;
-let CONV_TAG = "yuma";
+// 2026-11-04 作業員1・指揮役の了承: EXAM_CONCURRENCY>1 で、1つの処理の中でレーン（テスト専用の会話 YUMA2〜YUMA5 を1本ずつ）に分けて並べる（scripts/lib/exam-lane.ts）。
+//   会話・控え・写しはレーンごとの物（LaneLocal）。S() は今のレーンの物、レーンの外（既定 1）は L0＝今までの1本の物＝今と同じ動き
+const CONCURRENCY = readConcurrency(process.env);
 const PER_TYPE = Number(arg("per-type", "0"));
 // 10/09: --majority＝ブレインも判定も3回の過半数（関所の既定にする。--repeat / --judge-repeat で上書き）
 const MAJORITY = flag("majority");
@@ -207,14 +213,40 @@ function shiftProblem(p: ExamProblem, days: number): ExamProblem {
   };
 }
 const OUT = `${RESULTS_DIR}/${LABEL}.jsonl`;
-// 条件の行の写しの控え（YUMA は今まで通りの名前・テスト専用の会話は会話の名前で分ける＝他の会話の実行を待たない）
-let PC_BACKUP = `scripts/.replay-out/.brain-exam-${LABEL}-yuma-pc-backup.json`;
-const LEDGER_OWN_FILE = `scripts/.replay-out/.brain-exam-${LABEL}-ledger-ids.json`;
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", (process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) ?? "");
 let h: LlmTestHarness | null = null;
-let own: string[] = [];
-let ownLedger: Record<string, string[]> = {};
-let pcRestore: { id: string; row: Record<string, unknown> } | null = null;
+const hNow = (): LlmTestHarness => { if (!h) throw new Error("試験の LLM の包み（setupLlmTest）がまだ無い"); return h; };
+// 2026-10-28 A（--reuse-fixture）: 前の回の写し（同じ問題の次の回で使い回す）
+type HeldFixture = { id: string; shiftDays: number; setupAt: number; times: string[]; lmMap: Map<string, string>; headIds: string[]; ledger: ResultRow["ledger"] };
+/** 2026-11-04 レーンごとの物（1本の時は L0 だけ＝今までの module の変数と同じ値・同じ名前のファイル） */
+type LaneLocal = {
+  conv: string; tag: string; lease: TestConvLease | null;
+  /** 条件の行の写しの控え（YUMA は今まで通りの名前・テスト専用の会話は会話の名前で分ける＝他の会話の実行を待たない） */ pcBackup: string;
+  ledgerOwnFile: string;
+  pcRestore: { id: string; row: Record<string, unknown> } | null;
+  own: string[]; ownLedger: Record<string, string[]>;
+  /** 10/09: 今の問題の線（他の問題の発言の混ざりを数える時に使う） */ curFloor: string | null;
+  /** 今の線（レーンの線の包みが読む・2026-11-04） */ floor: ReplayFloor | null;
+  curPc: Record<string, unknown> | null; held: HeldFixture | null; yumaPc: string;
+  rawBrainOutputs: Array<Record<string, unknown>>; currentProblemId: string;
+};
+const newLaneLocal = (conv: string, tag: string, lease: TestConvLease | null, laneFiles: boolean): LaneLocal => ({
+  conv, tag, lease,
+  pcBackup: `scripts/.replay-out/.brain-exam-${LABEL}-${tag}-pc-backup.json`,
+  // 台帳の控えは1本の時は今まで通り label だけの名前・レーンの時は会話ごと（他のレーンの控えを消さない）
+  ledgerOwnFile: laneFiles ? `scripts/.replay-out/.brain-exam-${LABEL}-${tag}-ledger-ids.json` : `scripts/.replay-out/.brain-exam-${LABEL}-ledger-ids.json`,
+  pcRestore: null, own: [], ownLedger: {}, curFloor: null, floor: null, curPc: null, held: null, yumaPc: "", rawBrainOutputs: [], currentProblemId: "",
+});
+const L0: LaneLocal = newLaneLocal(YUMA, "yuma", null, false);
+/** レーンの物の一覧（片付けで全部を回る）。1本の時は [L0] */
+const LANES: Array<ExamLane<LaneLocal>> = [];
+const S = (): LaneLocal => currentLane<LaneLocal>()?.local ?? L0;
+/** 片付け: レーンの時は各レーンの中で・1本の時はそのまま L0 で */
+async function forEachLane(fn: () => Promise<void>): Promise<void> {
+  if (!LANES.length) { await fn(); return; }
+  for (const ln of LANES) await runInLane(ln, fn);
+}
+const laneLimiter = new LaneLimiter(CONCURRENCY);
 // 2026-10-28 作業員4（試験の書き込みを減らす・作業員1の案③ A・B）: 試験は問題×回ごとに YUMA 系の会話へ通（10〜40行）・台帳の写し（30〜100行）・
 //   条件の行を書いて消す＝DB のディスクの詰まり（一覧が固まる件）の元の1つ。どちらも既定 off（off の時は今と同じ動き）。
 //   A: --reuse-fixture（EXAM_REUSE_FIXTURE=on）… 同じ問題の繰り返しの間は通・台帳・条件の行を消さずに次の回で使い回す
@@ -266,10 +298,12 @@ type ResultRow = {
 
 // ─── YUMA の写し（yuma-r10-brain-replay と同じ線） ─────────────────────────
 function floorFile(): string { return String(process.env.REPLAY_FLOOR_FILE ?? ""); }
-let curFloor: string | null = null; // 10/09: 今の問題の線（他の問題の発言の混ざりを数える時に使う）
 function writeFloor(floor: string | null) {
-  curFloor = floor;
-  writeFileSync(floorFile(), JSON.stringify(floor ? { conversationId: CONV, floor, status: "proposing", messageIdPrefix: PREFIX, keepPropertyCustomer: true } : {}));
+  const L = S();
+  L.curFloor = floor;
+  const f = floor ? { conversationId: L.conv, floor, status: "proposing", messageIdPrefix: PREFIX, keepPropertyCustomer: true } : null;
+  L.floor = f; // 2026-11-04 レーンの線の包み（installLaneFetch）が読む
+  writeFileSync(floorFile(), JSON.stringify(f ?? {}));
 }
 async function waitOtherPcCopies(maxMin = 240) {
   const deadline = Date.now() + maxMin * 60_000;
@@ -279,8 +313,8 @@ async function waitOtherPcCopies(maxMin = 240) {
     //   脇へ寄せる（消さない・<名前>.stale-<時刻>）。10/18 の止まった実行の控えが残って他の実行が待ち続けた
     if (n % 25 === 0) { try { (await import("./lib/exam-night")).sweepStaleBackups(["scripts/.replay-out"]); } catch { /* 寄せられなくても待つだけ */ } }
     // 2026-10-09: 同じ会話の写しだけ待つ（YUMA は今まで通り -yuma-pc-backup・テスト専用の会話は -yuma2-pc-backup 等）
-    const re = CONV_TAG === "yuma" ? /^\..*-yuma-pc-backup\.json$/ : new RegExp(`^\\..*-${CONV_TAG}-pc-backup\\.json$`);
-    const busy = readdirSync("scripts/.replay-out").filter((f) => re.test(f) && `scripts/.replay-out/${f}` !== PC_BACKUP)
+    const re = S().tag === "yuma" ? /^\..*-yuma-pc-backup\.json$/ : new RegExp(`^\\..*-${S().tag}-pc-backup\\.json$`);
+    const busy = readdirSync("scripts/.replay-out").filter((f) => re.test(f) && `scripts/.replay-out/${f}` !== S().pcBackup)
       .filter((f) => { try { return readFileSync(`scripts/.replay-out/${f}`, "utf8").trim().length > 0; } catch { return false; } });
     if (!busy.length) return;
     if (Date.now() > deadline) throw new Error(`他の担当の再生が YUMA の条件の行を写したまま（${busy.join(",")}）`);
@@ -290,22 +324,22 @@ async function waitOtherPcCopies(maxMin = 240) {
   }
 }
 async function yumaPcId(): Promise<string> {
-  const { data } = await sb.from("conversations").select("property_customer_id").eq("id", CONV).maybeSingle();
-  const id = (data?.property_customer_id as string | null) ?? null; if (!id) throw new Error(`${lease?.name ?? "YUMA"} の条件の行が無い${CONV === YUMA ? "" : "（テスト専用の会話の行を SQL で作ってから・memory/test_protocol_brain.md 9.7）"}`); return id;
+  const { data } = await sb.from("conversations").select("property_customer_id").eq("id", S().conv).maybeSingle();
+  const id = (data?.property_customer_id as string | null) ?? null; if (!id) throw new Error(`${S().lease?.name ?? "YUMA"} の条件の行が無い${S().conv === YUMA ? "" : "（テスト専用の会話の行を SQL で作ってから・memory/test_protocol_brain.md 9.7）"}`); return id;
 }
 async function pcFields(): Promise<readonly string[]> { return (await import("./brain-exam-add")).PC_FIELDS; }
 function pcPatchOf(pc: Record<string, unknown> | null): Record<string, unknown> {
-  const blank = Object.fromEntries(Object.keys(pcRestore?.row ?? {}).map((k) => [k, null]));
+  const blank = Object.fromEntries(Object.keys(S().pcRestore?.row ?? {}).map((k) => [k, null]));
   const patch: Record<string, unknown> = { ...blank, ...(pc ?? {}) };
   if (patch.property_send_count === null) patch.property_send_count = 0;
   return patch;
 }
 async function writePc(yumaPc: string, pc: Record<string, unknown> | null) {
-  if (!pcRestore) {
+  if (!S().pcRestore) {
     const { data } = await sb.from("property_customers").select((await pcFields()).join(", ")).eq("id", yumaPc).maybeSingle();
-    pcRestore = { id: yumaPc, row: (data ?? {}) as unknown as Record<string, unknown> };
+    S().pcRestore = { id: yumaPc, row: (data ?? {}) as unknown as Record<string, unknown> };
     // 2026-10-22 持ち主の pid と label も入れる（止まった実行の控えを他の実行が見分けて脇へ寄せる・exam-night.sweepStaleBackups）。戻す側は id・row だけ読む
-    writeFileSync(PC_BACKUP, JSON.stringify({ ...pcRestore, pid: process.pid, label: LABEL }));
+    writeFileSync(S().pcBackup, JSON.stringify({ ...S().pcRestore, pid: process.pid, label: LABEL }));
   }
   const patch = pcPatchOf(pc);
   if (PC_SKIP_SAME && !(await verifyPc(yumaPc, patch)).length) { writeCount.pcSkip++; return; }
@@ -321,29 +355,30 @@ async function verifyPc(yumaPc: string, want: Record<string, unknown>): Promise<
   return Object.keys(want).filter((k) => !same(row[k], want[k]) && !(/_at$/.test(k) && want[k] && row[k] && Date.parse(String(row[k])) === Date.parse(String(want[k]))));
 }
 async function restorePc() {
-  if (!pcRestore) return;
-  if (PC_SKIP_SAME && !(await verifyPc(pcRestore.id, pcRestore.row)).length) writeCount.pcSkip++;
+  const L = S(), pr = L.pcRestore;
+  if (!pr) return;
+  if (PC_SKIP_SAME && !(await verifyPc(pr.id, pr.row)).length) writeCount.pcSkip++;
   else {
-    const r = await sb.from("property_customers").update(pcRestore.row).eq("id", pcRestore.id);
-    if (r.error) { console.error(`⛔ YUMA の条件の行を戻せない（控え ${PC_BACKUP} に残す）: ${r.error.message}`); return; }
+    const r = await sb.from("property_customers").update(pr.row).eq("id", pr.id);
+    if (r.error) { console.error(`⛔ YUMA の条件の行を戻せない（控え ${S().pcBackup} に残す）: ${r.error.message}`); return; }
     writeCount.pcUpd++;
   }
   // 遅れて来る要約の書き戻しで上書きされていないか確かめる
   await new Promise((res) => setTimeout(res, 1500));
-  const diff = await verifyPc(pcRestore.id, pcRestore.row);
-  if (diff.length) { await sb.from("property_customers").update(pcRestore.row).eq("id", pcRestore.id); console.warn(`  条件の行を戻した後に書き戻しがあったので戻し直した（${diff.join(",")}）`); }
-  writeFileSync(PC_BACKUP, ""); pcRestore = null;
+  const diff = await verifyPc(pr.id, pr.row);
+  if (diff.length) { await sb.from("property_customers").update(pr.row).eq("id", pr.id); console.warn(`  条件の行を戻した後に書き戻しがあったので戻し直した（${diff.join(",")}）`); }
+  writeFileSync(S().pcBackup, ""); L.pcRestore = null;
 }
 
 // ─── 10/09 ① 台帳の写し ───────────────────────────────────────────────
 const LEDGER_ORDER = ["aix_usage_logs", "estimate_records", "sent_properties", "property_pickups", "viewings", "viewing_history", "sent_facts"] as const;
-function saveOwnLedger() { try { mkdirSync(dirname(LEDGER_OWN_FILE), { recursive: true }); writeFileSync(LEDGER_OWN_FILE, JSON.stringify(ownLedger)); } catch (e) { console.warn("台帳の控えを書けない:", String(e)); } }
+function saveOwnLedger() { try { mkdirSync(dirname(S().ledgerOwnFile), { recursive: true }); writeFileSync(S().ledgerOwnFile, JSON.stringify(S().ownLedger)); } catch (e) { console.warn("台帳の控えを書けない:", String(e)); } }
 async function deleteOwnLedger() {
-  for (const [t, ids] of Object.entries(ownLedger)) {
+  for (const [t, ids] of Object.entries(S().ownLedger)) {
     if (!ids.length) continue;
     const r = await sb.from(t).delete().in("id", ids);
-    if (r.error) console.error(`⛔ 台帳の写し ${t} を消せない（${ids.length}件・控え ${LEDGER_OWN_FILE}）: ${r.error.message}`);
-    else { writeCount.ledgerDel += ids.length; ownLedger[t] = []; }
+    if (r.error) console.error(`⛔ 台帳の写し ${t} を消せない（${ids.length}件・控え ${S().ledgerOwnFile}）: ${r.error.message}`);
+    else { writeCount.ledgerDel += ids.length; S().ownLedger[t] = []; }
   }
   saveOwnLedger();
 }
@@ -368,7 +403,7 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
     const objs = rows.map((lr, k) => {
       const o: Record<string, unknown> = { ...lr.row };
       const oldId = o.id; delete o.id;
-      o.conversation_id = CONV;
+      o.conversation_id = S().conv;
       if ("property_customer_id" in o) o.property_customer_id = yumaPc;
       for (const col of c.times) {
         const v = o[col];
@@ -384,7 +419,7 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
     const r = await sb.from(t).insert(objs.map((x) => x.o)).select("id");
     if (r.error) { errors.push(`${t}: ${r.error.message.slice(0, 120)}`); continue; }
     const ids = ((r.data ?? []) as Array<{ id: string | number }>).map((x) => String(x.id));
-    ownLedger[t] = [...(ownLedger[t] ?? []), ...ids]; saveOwnLedger(); writeCount.ledgerIns += ids.length;
+    S().ownLedger[t] = [...(S().ownLedger[t] ?? []), ...ids]; saveOwnLedger(); writeCount.ledgerIns += ids.length;
     if (t === "aix_usage_logs") objs.forEach((x, i) => { if (x.oldId != null && ids[i]) aixIdMap.set(String(x.oldId), ids[i]); });
     inserted[t] = ids.length;
   }
@@ -392,20 +427,18 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
 }
 
 // ─── 10/09 ④ LLM が最初に出した答え（決まりで直される前）を控える ─────────────────────
-let rawBrainOutputs: Array<Record<string, unknown>> = [];
 // 10/09 試しの材料（brain-core を直さずに、試験の側でブレインのプロンプトに足す・既定は何もしない）:
 //   BRAIN_EXAM_INJECT_FILE=<json>  … { "*": "全問に足す文", "q001": "その問題だけに足す文" }。ブレインの呼び出し（brain_full/brain_fresh）の最後の user の文に足す
 //   BRAIN_EXAM_THINK=<予算トークン> … ブレインの呼び出しで思考を有効にする（DeepSeek の thinking:enabled・難しい場面だけ深く考えさせる試し）
 //   使った時は label を別にする（基準と混ぜない）。本番に入れる物は案として報告する
-let currentProblemId = "";
 const INJECT: Record<string, string> = (() => { const f = process.env.BRAIN_EXAM_INJECT_FILE; if (!f) return {}; try { return JSON.parse(readFileSync(f, "utf8")) as Record<string, string>; } catch (e) { throw new Error(`BRAIN_EXAM_INJECT_FILE が読めない: ${e instanceof Error ? e.message : e}`); } })();
 const THINK = Number(process.env.BRAIN_EXAM_THINK ?? "0");
 const THINK_IDS = (process.env.BRAIN_EXAM_THINK_ONLY ?? "").split(",").filter(Boolean);
 const injectStats = { calls: 0, chars: 0 };
 function injectBody(init: RequestInit | undefined): RequestInit | undefined {
   if (!init || typeof init.body !== "string") return init;
-  const add = [INJECT["*"], INJECT[currentProblemId]].filter(Boolean).join("\n\n");
-  const think = THINK > 0 && (!THINK_IDS.length || THINK_IDS.includes(currentProblemId));
+  const add = [INJECT["*"], INJECT[S().currentProblemId]].filter(Boolean).join("\n\n");
+  const think = THINK > 0 && (!THINK_IDS.length || THINK_IDS.includes(S().currentProblemId));
   if (!add && !think) return init;
   try {
     const b = JSON.parse(init.body) as { messages?: Array<{ role: string; content: unknown }>; thinking?: unknown; max_tokens?: number };
@@ -435,12 +468,54 @@ async function installRawBrainCapture() {
         const j = await res.clone().json() as { content?: Array<{ type: string; text?: string }> };
         const text = j.content?.find((c) => c.type === "text")?.text ?? "";
         const fb = text.indexOf("{"), lb = text.lastIndexOf("}");
-        if (fb >= 0 && lb > fb) { try { rawBrainOutputs.push({ ...(JSON.parse(text.slice(fb, lb + 1)) as Record<string, unknown>), _call: hv }); } catch { /* 読めない時は控えない */ } }
+        if (fb >= 0 && lb > fb) { try { S().rawBrainOutputs.push({ ...(JSON.parse(text.slice(fb, lb + 1)) as Record<string, unknown>), _call: hv }); } catch { /* 読めない時は控えない */ } }
       }
     } catch { /* 控えるだけ・失敗しても本体は止めない */ }
     return res;
   }));
 }
+// ─── 2026-11-04 レーンの線の包み・429 の見張り（EXAM_CONCURRENCY>1 の時だけ入れる） ─────────────────
+// 作業員1・指揮役の了承: app/lib/test-replay-floor.currentReplayFloor は線を1秒だけ覚える（ファイルの名前を見ない）＝レーンを並べると
+//   他のレーンの線を1秒使い、自分の会話の GET に線が当たらない（YUMA2〜5 の過去の記録が混ざる）。app は触らずに、試験の側で
+//   「ブレインと下書きの間（inFloorScope）」の GET にだけ、そのレーンの線（writeFloor が持つ物）を当て直す（同じ条件が既にあれば足さない）。
+//   試験の自分の DB の読み（条件の行の確かめ・他の発言の数え・waitUntilYumaQuiet）は囲いの外＝今まで通り線を当てない。
+//   同じ包みで DeepSeek の答えの 429 を見て、並べる数を減らす印を付ける（laneLimiter）
+const floorScope = new AsyncLocalStorage<true>();
+function inFloorScope<T>(fn: () => Promise<T>): Promise<T> { return LANES.length ? floorScope.run(true, fn) : fn(); }
+async function installLaneFetch(): Promise<void> {
+  const { wrapGlobalFetch } = await import("./lib/llm-cassette");
+  const tf = await import("../app/lib/test-replay-floor");
+  const urlOf = (input: RequestInfo | URL): string => typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  // 線を当てるのはこのプロジェクトの Supabase だけ（審査の別の Supabase 等には当てない）
+  const supaHost = (() => { try { return new URL(String(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "")).host; } catch { return ""; } })();
+  const isSupa = (url: string) => { try { return !!supaHost && new URL(url).host === supaHost; } catch { return false; } };
+  wrapGlobalFetch((prev) => (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const lane = currentLane<LaneLocal>();
+    let url = "", method = "GET";
+    try { url = urlOf(input); method = (init?.method ?? (input instanceof Request ? input.method : "GET")) || "GET"; } catch { /* 読めない時は触らない */ }
+    const f = lane && floorScope.getStore() && isSupa(url) ? lane.local.floor : null;
+    let next = url;
+    if (f && url) {
+      const re = tf.rewriteRestUrl(url, method, f);
+      if (re !== url) {
+        // 同じ線が既に当たっていれば足さない（app の包みが正しい線を使えた時）
+        let already = false;
+        try { const u = new URL(url), m = u.pathname.match(/\/rest\/v1\/([a-z_]+)$/), col = m ? tf.TABLE_TIME_COLUMN[m[1]] : undefined; already = !!col && u.searchParams.getAll(col).includes(`gte.${f.floor}`); } catch { /* */ }
+        if (!already) next = re;
+      }
+    }
+    const res = await prev((next === url ? input : next) as never, init);
+    // 429 は DeepSeek に限らず（別クラウドの包みの中で DeepSeek に回る呼び出しは外から見ると Anthropic の宛先）・どの宛先でも1つ減らす印
+    if (res.status === 429) laneLimiter.note429(`429 ${url.split("?")[0].slice(0, 80)}（${lane?.name ?? "レーンの外"}）`);
+    if (!f || !res.ok || !tf.isConversationRowRead(url, method, f)) return res;
+    try {
+      const body = tf.blankConversationRow(JSON.parse(await res.clone().text()), f.status, f.keepPropertyCustomer === true);
+      const headers = new Headers(res.headers); headers.delete("content-length"); headers.delete("content-encoding");
+      return new Response(JSON.stringify(body), { status: res.status, statusText: res.statusText, headers });
+    } catch { return res; }
+  }));
+}
+
 // 10/09: ブレインの出力では AIX の種類は aix の欄（action は「スタッフが次にすべき事」の自由文・reply_mode=aix は「人の確認」の意味）。aix を控えないと本質の道が AIX にならなかった
 const RAW_KEYS = ["reply_mode", "aix", "action", "check_pattern", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "reason", "turn_contract", "asks", "zenryoku_candidate"];
 function rawPlanOf(o: Record<string, unknown> | undefined): Record<string, unknown> | null {
@@ -839,7 +914,7 @@ async function selectByRag(): Promise<void> {
 async function floorGaps(): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   for (const t of ["deal_outcomes", "outcome_events", "conversation_stage_history"]) {
-    const { count } = await sb.from(t).select("id", { count: "exact", head: true }).eq("conversation_id", CONV);
+    const { count } = await sb.from(t).select("id", { count: "exact", head: true }).eq("conversation_id", S().conv);
     if (count) out[t] = count;
   }
   return out;
@@ -1279,23 +1354,44 @@ async function main() {
   else if (SELECT && SELECT !== "rag") throw new Error(`--select=${SELECT} は無い（--select=rag だけ）`);
   if (BASELINE_MAIN && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1") { const go = await prepareMainBaseline(); if (!go) return; if (flag("baseline-only")) { console.log("--baseline-only: 前（main）の取り置きだけ作った"); return; } }
   // 2026-10-09: --conv（テスト専用の会話）の時は鍵を取り、線のファイル・条件の写しの控えを会話ごとに分ける（REPLAY_FLOOR_FILE は supabase を読む前に要る＝ここで入れる）
-  if (CONV_ARG) {
-    lease = acquireTestConversation(CONV_ARG, `brain-exam-${LABEL}`);
-    CONV = lease.id; CONV_TAG = lease.tag;
-    if (!lease.isYuma) {
-      PC_BACKUP = `scripts/.replay-out/.brain-exam-${LABEL}-${CONV_TAG}-pc-backup.json`;
-      if (!floorFile()) process.env.REPLAY_FLOOR_FILE = `scripts/.replay-out/brain-exam-floor-${LABEL}-${CONV_TAG}.json`;
+  if (CONCURRENCY > 1) {
+    // 2026-11-04 レーン: テスト専用の会話（YUMA2〜YUMA5）を数だけ取る（YUMA は LINE につながっているので使わない）。--conv=YUMA3 等は1本目に使う。
+    //   取れた数がレーンの数（足りなければ少なく回す・1本も取れなければ止める）。線のファイル・条件の写しの控え・台帳の控えはレーン（会話）ごと
+    installLaneEnvProxy();
+    const want0 = CONV_ARG && CONV_ARG.toLowerCase() !== "auto" && CONV_ARG.toUpperCase() !== "YUMA" && CONV_ARG !== YUMA ? CONV_ARG : "auto";
+    for (let i = 0; i < CONCURRENCY; i++) {
+      let ls: TestConvLease;
+      try { ls = acquireTestConversation(i === 0 ? want0 : "auto", `brain-exam-${LABEL}`); }
+      catch (e) { if (i === 0) throw e; console.warn(`レーン: テスト専用の会話は ${i}本だけ取れた（${String(e instanceof Error ? e.message : e).slice(0, 160)}）`); break; }
+      const loc = newLaneLocal(ls.id, ls.tag, ls, true);
+      LANES.push(makeLane(i, ls.name, loc, { REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${LABEL}-${ls.tag}.json` }));
     }
-    console.log(`テストの会話: ${lease.name}（${CONV}）${lease.lockFile ? `・鍵 ${lease.lockFile}` : ""}・線 ${floorFile()}`);
+    laneLimiter.limit = Math.min(laneLimiter.limit, LANES.length);
+    // supabase（app/lib/supabase.ts）は読んだ時に REPLAY_FLOOR_FILE があるかで線の包みを入れる＝本物の env にも1本目の物を入れておく（線そのものはレーンごとに読む）
+    if (!floorFile()) process.env.REPLAY_FLOOR_FILE = LANES[0].env.REPLAY_FLOOR_FILE;
+    console.log(`レーン（EXAM_CONCURRENCY=${CONCURRENCY}）: ${LANES.length}本 ${LANES.map((l) => `${l.name}（${l.local.conv.slice(0, 8)}・線 ${l.env.REPLAY_FLOOR_FILE}）`).join("・")}`);
+    await forEachLane(async () => { lockFloor(); });
+  } else {
+    if (CONV_ARG) {
+      const lease = acquireTestConversation(CONV_ARG, `brain-exam-${LABEL}`);
+      S().lease = lease;
+      S().conv = lease.id; S().tag = lease.tag;
+      if (!lease.isYuma) {
+        S().pcBackup = `scripts/.replay-out/.brain-exam-${LABEL}-${S().tag}-pc-backup.json`;
+        if (!floorFile()) process.env.REPLAY_FLOOR_FILE = `scripts/.replay-out/brain-exam-floor-${LABEL}-${S().tag}.json`;
+      }
+      console.log(`テストの会話: ${lease.name}（${S().conv}）${lease.lockFile ? `・鍵 ${lease.lockFile}` : ""}・線 ${floorFile()}`);
+    }
+    if (!floorFile()) throw new Error("REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-<label>.json を付けて起動する（YUMA の過去の記録を読まないため・supabase の読み込みより前に要る）");
+    // 10/09: 同じ時間に他の担当も試験を回す → 記録の route と線のファイルを label ごとに分ける（同じ線のファイルを2つの実行で使うと、片方の片付けが線を消して YUMA の過去が混ざる）
+    lockFloor();
   }
-  if (!floorFile()) throw new Error("REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-<label>.json を付けて起動する（YUMA の過去の記録を読まないため・supabase の読み込みより前に要る）");
-  // 10/09: 同じ時間に他の担当も試験を回す → 記録の route と線のファイルを label ごとに分ける（同じ線のファイルを2つの実行で使うと、片方の片付けが線を消して YUMA の過去が混ざる）
-  lockFloor();
   if (CASSETTE_MODE !== "off") process.env.LLM_CASSETTE = CASSETTE_MODE; // 共通の入口が一番外に録音・再生の包みを入れる
   // 2026-10-21 録音の鍵に入れるスイッチの指紋は始めに出した物（途中で試験が足す環境変数を混ぜない）。前（main）の子は "-"＝既定
   if (!process.env.LLM_CASSETTE_ENV_FP?.trim()) process.env.LLM_CASSETTE_ENV_FP = ENV_FP.hash || "-";
   h = await setupLlmTest(`brain-exam-${LABEL}`.slice(0, 60));
   await installRawBrainCapture(); // ← brain-core を読む前に（SDK は読んだ時の fetch を握る）
+  if (LANES.length) await installLaneFetch();
   const { setCassetteTag, setCassettePins, pinsFromRows, hasPinsFor, cassetteCallsOf, inputDiffOf, flushCassette } = await import("./lib/llm-cassette");
   // 2026-10-21 ①入力の差: 前（main）の行の呼び出しの控えを入れる（前の子＝main 自身・録音を止めた回・off の時は入れない）
   let pinsOn = false;
@@ -1329,7 +1425,10 @@ async function main() {
   const POST = DRAFT ? (await import("../app/api/generate-reply/route")).POST : null;
   const callsPer = LAYER === "prod" ? 2 : 1;
   if (h.run === "final-claude" && problems.length * REPEAT * callsPer > 20 && !flag("allow-many-claude")) throw new Error(`最後の Claude は場面ごとに1〜2回（今 ${problems.length * REPEAT * callsPer} 回）。--per-type=1 か --only で絞る（全部回すなら --allow-many-claude・費用は1回 $0.04〜0.2）`);
-  const gaps = await floorGaps();
+  // 2026-11-04 レーンの時は会話ごとに数えて「会話:表」で並べる（1本の時は今まで通り表だけ）
+  let gaps: Record<string, number> = {};
+  if (!LANES.length) gaps = await floorGaps();
+  else await forEachLane(async () => { for (const [t, n] of Object.entries(await floorGaps())) gaps[`${S().tag}:${t}`] = n; });
   if (Object.keys(gaps).length) console.warn(`⚠ 線の表に無い表に YUMA の行がある（ブレインが読むと混ざる）: ${JSON.stringify(gaps)}`);
   let head = ""; try { head = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* */ }
   // 2026-10-21 同じ label の続きを違うスイッチで回さない（on の回の答えに off の回を足して混ぜていた）
@@ -1340,7 +1439,7 @@ async function main() {
     if (prevFp && readResults(LABEL).length && (prevFp.hash ?? "") !== ENV_FP.hash) throw new Error(`label ${LABEL} は別のスイッチの指紋で回した結果がある（前 ${prevFp.hash || "既定"}${prevFp.text ? `＝${prevFp.text}` : ""} ／ 今 ${formatEnvFp(ENV_FP)}）。別の --label で回す`);
   }
   console.log(`スイッチの指紋: ${formatEnvFp(ENV_FP)}`);
-  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ envFp: { hash: ENV_FP.hash, text: ENV_FP.text, pairs: Object.fromEntries(ENV_FP.pairs) }, conv: lease?.name ?? "YUMA", layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, stage: STAGE, cassette: CASSETTE_MODE, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, think: THINK || null,
+  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ envFp: { hash: ENV_FP.hash, text: ENV_FP.text, pairs: Object.fromEntries(ENV_FP.pairs) }, conv: LANES.length ? LANES.map((l) => l.name).join(",") : (L0.lease?.name ?? "YUMA"), ...(LANES.length ? { concurrency: LANES.length } : {}), layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, stage: STAGE, cassette: CASSETTE_MODE, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, think: THINK || null,
     // 10/14 構成のスイッチ（試験の頃の環境変数・BRAIN_*/TWO_STAGE_*/SEARCH_*/TURN_* 等）。答案の比べで「どの構成か」を残す
     switches: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:BRAIN_|TWO_STAGE_|SEARCH_|TURN_|NEXT_PUBLIC_SEARCH_|AIX_|CONFIRM_|REPEAT_|FINAL_CHECK_|PICKUP_|VIEWING_|EXHAUSTED_|ROOM_PHOTO_|CONTRACT_)/.test(k) && !/KEY|SECRET|TOKEN/.test(k)).sort()) }, null, 1));
   console.log(`問題 ${problems.length}・回 ${REPEAT}・${model}・層 ${LAYER}・台帳 ${USE_LEDGER ? "写す" : "写さない"}・下書き ${DRAFT ? `あり（--stage=${STAGE}・${problems.filter((p) => stageOf(p) === "draft").length}問）` : `なし（--stage=${STAGE}）`}・録音 ${CASSETTE_MODE}・判定 ${NO_JUDGE ? "なし" : "DeepSeek"}`);
@@ -1362,32 +1461,35 @@ async function main() {
     console.log(`揺れる問題だけ繰り返す（--repeat-flaky・最大 ${REPEAT}回）: 揺れる ${c.flaky}問（${REPEAT}回）・安定 ${c.stable}問（1回・いつもと違えば足す）・分からない ${c.unknown}問（2回・割れたら足す）`);
     for (const p of problems.filter((x) => flakeOf(x).verdict === "flaky")) console.log(`  揺れる ${p.id}: ${flakeOf(p).why}`);
   }
-  const yumaPc = await yumaPcId();
-  if (existsSync(PC_BACKUP) && readFileSync(PC_BACKUP, "utf8").trim()) {
-    const bk = JSON.parse(readFileSync(PC_BACKUP, "utf8")) as { id: string; row: Record<string, unknown> };
-    const r = await sb.from("property_customers").update(bk.row).eq("id", bk.id);
-    if (r.error) throw new Error(`前回の控えから YUMA の条件の行を戻せない: ${r.error.message}`);
-    writeFileSync(PC_BACKUP, ""); console.warn("=== 前回の控えから YUMA の条件の行を戻した ===");
-  }
-  if (existsSync(LEDGER_OWN_FILE)) { ownLedger = JSON.parse(readFileSync(LEDGER_OWN_FILE, "utf8") || "{}"); await deleteOwnLedger(); }
+  // 2026-11-04 レーンの時は会話（レーン）ごとに条件の行の id・前回の控えの戻し・台帳の控えの片付け（1本の時は L0 で今まで通り）
+  await forEachLane(async () => {
+    S().yumaPc = await yumaPcId();
+    if (existsSync(S().pcBackup) && readFileSync(S().pcBackup, "utf8").trim()) {
+      const bk = JSON.parse(readFileSync(S().pcBackup, "utf8")) as { id: string; row: Record<string, unknown> };
+      const r = await sb.from("property_customers").update(bk.row).eq("id", bk.id);
+      if (r.error) throw new Error(`前回の控えから YUMA の条件の行を戻せない: ${r.error.message}`);
+      writeFileSync(S().pcBackup, ""); console.warn("=== 前回の控えから YUMA の条件の行を戻した ===");
+    }
+    if (existsSync(S().ledgerOwnFile)) { S().ownLedger = JSON.parse(readFileSync(S().ledgerOwnFile, "utf8") || "{}"); await deleteOwnLedger(); }
+  });
   if (!existsSync(OUT)) writeFileSync(OUT, "");
   const done = new Set(readResults(LABEL).filter((r) => !r.error).map((r) => `${r.id}#${r.rep}`));
   const savedClock = process.env.TEST_CLOCK_JST_HOUR;
-  const runBrain = (o: Parameters<typeof analyzeConversation>[5], pcOn: boolean) => runInDeepseekScope(async () => {
-    setDeepseekScope({ conversationId: CONV, mark: { kind: "all" } });
-    return analyzeConversation(CONV, true, "proposing", pcOn ? yumaPc : null, "brain", o);
-  }) as unknown as Promise<Record<string, unknown> | null>;
+  // 2026-11-04 レーンの時はブレインの間だけ線の囲い（inFloorScope）に入れる＝ブレインの読む DB にレーンの線を当てる（1本の時は何もしない）
+  const runBrain = (o: Parameters<typeof analyzeConversation>[5], pcOn: boolean) => inFloorScope(() => runInDeepseekScope(async () => {
+    setDeepseekScope({ conversationId: S().conv, mark: { kind: "all" } });
+    return analyzeConversation(S().conv, true, "proposing", pcOn ? S().yumaPc : null, "brain", o);
+  }) as unknown as Promise<Record<string, unknown> | null>);
   // 10/09（q060 の条件の行の混ざり）: 写した後でも、ブレインを回す間に他の担当が YUMA の条件の行を書き換えることがある。
   //   回す直前に読み直して違えば写し直す（ensurePc）・回した後にも読み直し（要約の書き戻しの列は除く）、違えばその問題を回し直す（最大2回）
   const PC_SELF_WRITE = new Set(["ai_summary", "ai_summary_json", "ai_summary_at", "personality_profile"]);
-  let curPc: Record<string, unknown> | null = null;
-  const pcDiff = async () => (await verifyPc(yumaPc, pcPatchOf(curPc))).filter((k) => !PC_SELF_WRITE.has(k));
-  const ensurePc = async () => { let d = await pcDiff(); for (let k = 0; k < 2 && d.length; k++) { await writePc(yumaPc, curPc); /* 他の担当を待たない（互いに控えを持ったまま待つと詰まる） */ await new Promise((r) => setTimeout(r, 800)); d = await pcDiff(); } return d; };
+  const pcDiff = async () => (await verifyPc(S().yumaPc, pcPatchOf(S().curPc))).filter((k) => !PC_SELF_WRITE.has(k));
+  const ensurePc = async () => { let d = await pcDiff(); for (let k = 0; k < 2 && d.length; k++) { await writePc(S().yumaPc, S().curPc); /* 他の担当を待たない（互いに控えを持ったまま待つと詰まる） */ await new Promise((r) => setTimeout(r, 800)); d = await pcDiff(); } return d; };
   // 10/09（本質の担当の調べ: 同時に回した試験で他の問題の発言が混ざった）: 線より後の会話の行が自分の行だけかを数える
   const foreignMsgs = async (): Promise<number> => {
-    if (!curFloor) return 0;
-    const { data } = await sb.from("messages").select("id").eq("conversation_id", CONV).gte("created_at", curFloor).limit(500);
-    const mine = new Set(own);
+    if (!S().curFloor) return 0;
+    const { data } = await sb.from("messages").select("id").eq("conversation_id", S().conv).gte("created_at", S().curFloor).limit(500);
+    const mine = new Set(S().own);
     return ((data ?? []) as Array<{ id: string }>).filter((m) => !mine.has(m.id)).length;
   };
   const runBrainChecked = async (o: Parameters<typeof analyzeConversation>[5], pcOn: boolean, row: ResultRow) => {
@@ -1404,35 +1506,36 @@ async function main() {
   };
   const pcRetries = new Map<string, number>();
   // 2026-10-28 A（--reuse-fixture）: 前の回の写しを持ったまま（同じ問題の次の回で使い回す）。違う問題に移る時・ループの後に片付ける
-  type HeldFixture = { id: string; shiftDays: number; setupAt: number; times: string[]; lmMap: Map<string, string>; headIds: string[]; ledger: ResultRow["ledger"] };
-  let held: HeldFixture | null = null;
   const examClock = await import("./lib/exam-clock");
   if (REUSE_FIXTURE) examClock.installExamClock();
-  const heldNow = (): HeldFixture | null => held;
+  const heldNow = (): HeldFixture | null => S().held;
   const releaseHeld = async () => {
-    if (!held) return;
-    held = null;
+    if (!S().held) return;
+    S().held = null;
     writeFloor(null);
-    if (own.length) { const del = await sb.from("messages").delete().in("id", own); if (del.error) console.error(`⛔ YUMA の自分の行を消せない: ${del.error.message}`); else writeCount.msgDel += own.length; own = []; }
+    if (S().own.length) { const del = await sb.from("messages").delete().in("id", S().own); if (del.error) console.error(`⛔ YUMA の自分の行を消せない: ${del.error.message}`); else writeCount.msgDel += S().own.length; S().own = []; }
     await deleteOwnLedger();
     await new Promise((r) => setTimeout(r, 2500));
     await restorePc().catch((e) => console.warn("restorePc:", String(e)));
   };
-  problemLoop: for (const p of problems) for (let rep = 1; rep <= REPEAT; rep++) {
+  // 2026-11-04 1問（全部の回）を回す。1本の時は前から順に呼ぶ（今と同じ順）・レーンの時は空いたレーンが次の問題を取る（同じ問題の回は同じレーンで順に）
+  const runProblem = async (p: ExamProblem): Promise<"stop" | void> => {
+    const h = hNow(); // 閉じた関数の中では外の h（null になりうる）の絞り込みが効かない＝ここで1回確かめる
+  for (let rep = 1; rep <= REPEAT; rep++) {
     if (done.has(`${p.id}#${rep}`)) continue;
     // 2026-10-21 ①下見: main の控えの無い回は下見しない（本番の回で呼ぶ）
     if (INPUT_DIFF === "plan" && !hasPinsFor(p.id, rep)) { inputPlan[`${p.id}#${rep}`] = { same: false, firstChanged: null, pinned: 0, calls: 0, why: "main の控えなし" }; continue; }
-    if (STOP_FILE && existsSync(STOP_FILE)) { console.log(`⏹ 止める印（${STOP_FILE}）→ ここで止める（残りの問題は回さない）`); break problemLoop; }
+    if (STOP_FILE && existsSync(STOP_FILE)) { console.log(`⏹ 止める印（${STOP_FILE}）→ ここで止める（残りの問題は回さない）`); return "stop"; }
     // 2026-10-17 試験のブレインが決めた回数（--reps-file）。書いてあれば揺れの決め方より先
     if (REPS_OF) { if (rep > Math.max(1, REPS_OF[p.id] ?? 1)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; } }
     else if (REPEAT_FLAKY && REPEAT > 1 && !shouldRunRep(rep, flakeOf(p), doneSigs.get(p.id) ?? [], REPEAT)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; }
     const realBefore = nonJudgeReal();
     const row: ResultRow = { id: p.id, rep, type: p.type, tags: p.tags ?? [], label: LABEL, model, layer: LAYER, at: new Date().toISOString(), brain: null, path: { code: "", acceptHit: null, mustNotHit: null, ok: false }, asks: null, ng: null, score: { path: false, asks: null, ng: null, pass: false } };
     const acc = acceptOf(p), mn = p.mustNot ?? [];
-    currentProblemId = p.id;
+    S().currentProblemId = p.id;
     setCassetteTag({ problem: p.id, rep: String(rep) });
     process.env.BRAIN_JUDGE_EXAMPLES_EXCLUDE_CONV = p.conv; // 10/13 判断の手本: 問題の元の会話の番は手本に入れない（答えが漏れない）
-    curPc = p.pc;
+    S().curPc = p.pc;
     let fx: HeldFixture | null = null; // この回の写し（A の時に次の回へ持ち越す）
     try {
       const jd = (x: number) => Math.floor((x + 9 * 3600_000) / 86_400_000);
@@ -1448,18 +1551,18 @@ async function main() {
       const h0 = heldNow(); // 持ち越しは閉じた関数と finally で書く＝型の絞り込みで null に見えないように読み直す
       const reuse: HeldFixture | null = REUSE_FIXTURE && h0 && h0.id === p.id && h0.shiftDays === shiftDays ? h0 : null;
       if (h0 && !reuse) await releaseHeld();
-      held = null;
+      S().held = null;
       if (reuse) writeCount.reused++;
       await waitOtherPcCopies();
-      await h.waitUntilYumaQuiet(own, { maxWaitMin: 120, conversationId: CONV });
+      await h.waitUntilYumaQuiet(S().own, { maxWaitMin: 120, conversationId: S().conv });
       await waitOtherPcCopies();
-      if (!reuse) await writePc(yumaPc, p.pc);
-      else if ((await verifyPc(yumaPc, pcPatchOf(p.pc))).length) await writePc(yumaPc, p.pc); // 前の回のブレインの書き戻し（要約等）がある時だけ写し直す
+      if (!reuse) await writePc(S().yumaPc, p.pc);
+      else if ((await verifyPc(S().yumaPc, pcPatchOf(p.pc))).length) await writePc(S().yumaPc, p.pc); // 前の回のブレインの書き戻し（要約等）がある時だけ写し直す
       else writeCount.pcSkip++;
       // 10/09 ③ 読み直して確かめる（前の実行の要約の書き戻しが遅れて来ると混ざる）
       await new Promise((r) => setTimeout(r, 800));
-      let mism = await verifyPc(yumaPc, pcPatchOf(p.pc));
-      if (mism.length) { await writePc(yumaPc, p.pc); await new Promise((r) => setTimeout(r, 800)); mism = await verifyPc(yumaPc, pcPatchOf(p.pc)); }
+      let mism = await verifyPc(S().yumaPc, pcPatchOf(p.pc));
+      if (mism.length) { await writePc(S().yumaPc, p.pc); await new Promise((r) => setTimeout(r, 800)); mism = await verifyPc(S().yumaPc, pcPatchOf(p.pc)); }
       if (mism.length) row.pcMismatch = mism;
       const times: string[] = reuse ? reuse.times : h.sceneTimes(texts.length, { stepSec: 90 });
       // A: 使い回す回は、1回目に写しを作った時からの経過だけ時計を戻す（通の時刻からの経過を毎回写し直した時と同じに・exam-clock）
@@ -1474,36 +1577,36 @@ async function main() {
       const insertMsgs = async (from: number, to: number) => {
         if (to <= from) return;
         const ins = await sb.from("messages").insert(p.context.slice(from, to).map((m, k) => ({
-          conversation_id: CONV, sender: m.s, text: texts[from + k] || "[画像]", is_aix_generated: m.aix,
+          conversation_id: S().conv, sender: m.s, text: texts[from + k] || "[画像]", is_aix_generated: m.aix,
           line_message_id: m.lm ? newLm(m.lm) : `${PREFIX}${randomUUID()}`, created_at: times[from + k],
           ...(m.q ? { quoted_message_id: newLm(m.q) } : {}),
           ...(m.img && m.s === "staff" ? { image_url: m.img } : {}),
         }))).select("id");
         if (ins.error) throw new Error(ins.error.message);
-        own = [...own, ...((ins.data ?? []) as Array<{ id: string }>).map((r) => r.id)];
+        S().own = [...S().own, ...((ins.data ?? []) as Array<{ id: string }>).map((r) => r.id)];
         writeCount.msgIns += (ins.data ?? []).length;
       };
       writeFloor(new Date(Date.parse(times[0]) - 1000).toISOString());
-      if (USE_LEDGER) row.ledger = reuse ? reuse.ledger : await insertLedger(p, times, yumaPc, shiftDays);
+      if (USE_LEDGER) row.ledger = reuse ? reuse.ledger : await insertLedger(p, times, S().yumaPc, shiftDays);
       process.env.TEST_CLOCK_JST_HOUR = String(p.hourJst);
       // 2026-11-03 月の言い方（〇月入居）はずらす前の時刻で読む（app/lib/business-clock.monthClockNowIso・作業員2の調べ・止める EXAM_MONTH_CLOCK=off）
       if (process.env.EXAM_MONTH_CLOCK !== "off") process.env.EXAM_MONTH_SHIFT_DAYS = String(shiftDays); else delete process.env.EXAM_MONTH_SHIFT_DAYS;
-      if (CONV === YUMA) h.assertYuma(CONV, "brain"); else h.assertTestConversation(CONV, "brain");
+      if (S().conv === YUMA) h.assertYuma(S().conv, "brain"); else h.assertTestConversation(S().conv, "brain");
       const base = { autoSendEnabled: true, customerName: "YUMA" };
       let meta: Record<string, unknown> | null = null;
       const prodOk = LAYER === "prod" && burst > 0 && p.context.slice(0, burst).some((m) => m.s === "customer");
       if (prodOk) {
         // ② 本番と同じ2層: その番の前までの会話で全体の分析（戦略の層）→ 今回の発言の層に戦略・前回の AIX・前回の判断を渡す
         if (!reuse) await insertMsgs(0, burst); // A: 前半の通は前の回の物を使う
-        if (REUSE_FIXTURE) fx = { id: p.id, shiftDays, setupAt, times, lmMap, headIds: [...own], ledger: row.ledger };
+        if (REUSE_FIXTURE) fx = { id: p.id, shiftDays, setupAt, times, lmMap, headIds: [...S().own], ledger: row.ledger };
         await new Promise((r) => setTimeout(r, 1300));
-        rawBrainOutputs = [];
+        S().rawBrainOutputs = [];
         const m0 = await runBrainChecked({ ...base, prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }, !!p.pc, row);
         const strategy = m0 ? extractStrategy(m0, "combined", 0, new Date().toISOString()) : null;
         await insertMsgs(burst, p.context.length);
         await new Promise((r) => setTimeout(r, 1300));
         for (let attempt = 0; attempt < 2 && !meta; attempt++) {
-          rawBrainOutputs = [];
+          S().rawBrainOutputs = [];
           meta = await runBrainChecked({
             ...base, prevPhase: (m0?.checkpoint_stage as string | null) ?? null, prevAix: m0 && m0.reply_mode === "aix" ? (m0.action as string | null) ?? null : null,
             prevMeta: (m0 ?? undefined) as never, mode: strategy ? "incremental" : "full", layer: strategy ? "fresh" : "combined", strategy,
@@ -1512,10 +1615,10 @@ async function main() {
         row.trace = { ...(row.trace ?? {}), strategy: strategy ? "あり" : "なし（全体の分析が読めない）" };
       } else {
         if (!reuse) await insertMsgs(0, p.context.length); // A: 通は全部前の回の物を使う
-        if (REUSE_FIXTURE) fx = { id: p.id, shiftDays, setupAt, times, lmMap, headIds: [...own], ledger: row.ledger };
+        if (REUSE_FIXTURE) fx = { id: p.id, shiftDays, setupAt, times, lmMap, headIds: [...S().own], ledger: row.ledger };
         await new Promise((r) => setTimeout(r, 1300));
         for (let attempt = 0; attempt < 2 && !meta; attempt++) {
-          rawBrainOutputs = [];
+          S().rawBrainOutputs = [];
           meta = await runBrainChecked({ ...base, prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }, !!p.pc, row);
         }
         if (LAYER === "prod") row.trace = { strategy: "なし（初回・前の会話が無い）" };
@@ -1523,7 +1626,7 @@ async function main() {
       if (!meta) throw new Error("ブレインが null");
       row.brain = planOf(meta);
       row.trace = { ...(row.trace ?? {}), zc: (meta.llm_raw as { zc?: unknown } | undefined)?.zc ?? null, ...Object.fromEntries(TRACE_KEYS.filter((k) => meta![k] !== undefined && meta![k] !== null).map((k) => [k, meta![k]])) };
-      const rawOut = rawBrainOutputs[rawBrainOutputs.length - 1];
+      const rawOut = S().rawBrainOutputs[S().rawBrainOutputs.length - 1];
       row.raw = rawPlanOf(rawOut);
       const code = brainPathCode(meta as BrainExamOutput);
       const pv = judgePath(code, acc, mn);
@@ -1555,7 +1658,7 @@ async function main() {
           const customer = p.context.slice(burst).map((_, k) => texts[burst + k]);
           const staffEngaged = p.context.some((m) => m.s === "staff" && m.t.trim() && m.t.trim() !== "[画像]");
           const body = {
-            message: customer.join(MSG_SEP), customerMessages: customer, state: staffEngaged ? "proposing" : "first_reply", conversationId: CONV, customerName: "YUMA",
+            message: customer.join(MSG_SEP), customerMessages: customer, state: staffEngaged ? "proposing" : "first_reply", conversationId: S().conv, customerName: "YUMA",
             hasViewed: false, activeTaskTypes: [], hasStaffReplied: staffEngaged,
             recentMessages: p.context.slice(-25).map((m, k, arr) => ({ sender: m.s, text: texts[p.context.length - arr.length + k], createdAt: times[times.length - arr.length + k], isAix: !!m.aix })),
             brainMetaDirect: { meta, customerName: "YUMA", conversationDirection: (meta.conversation_direction as Record<string, unknown> | undefined) ?? null, brainAnalyzedAt: new Date().toISOString() },
@@ -1569,10 +1672,14 @@ async function main() {
           };
           let text: string | null = null, skipped: string | undefined;
           try {
-            const res = await POST(new Request("http://localhost/api/generate-reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) as never) as Response;
-            const ct = res.headers.get("content-type") ?? "";
-            if (ct.includes("application/json")) { const j = await res.json().catch(() => ({})) as Record<string, unknown>; skipped = String(j.reason ?? j.error ?? res.status); }
-            else text = parseStream(await res.text());
+            // 2026-11-04 レーンの時は本文を読み切るまで線の囲いの中（流れの続きで読む DB にもレーンの線を当てる）
+            const got = await inFloorScope(async (): Promise<{ text: string | null; skipped?: string }> => {
+              const res = await POST(new Request("http://localhost/api/generate-reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) as never) as Response;
+              const ct = res.headers.get("content-type") ?? "";
+              if (ct.includes("application/json")) { const j = await res.json().catch(() => ({})) as Record<string, unknown>; return { text: null, skipped: String(j.reason ?? j.error ?? res.status) }; }
+              return { text: parseStream(await res.text()) };
+            });
+            text = got.text; if (got.skipped !== undefined) skipped = got.skipped;
           } catch (e) { skipped = `失敗: ${e instanceof Error ? e.message : String(e)}`.slice(0, 120); }
           // 2026-10-29: 下書きが「生成に失敗」の時（試験の歯止め＝審査の事情・申込以降で Claude が要るのに deepseek-all で止めた 等）は、
           //   下書きの外れに数えない（両側で数えると比べが汚れる・msgplan-draft で main 3回・on 4回）。下書きの段を外し、ブレインの段で採点する
@@ -1602,12 +1709,12 @@ async function main() {
       // A: 次の回も同じ問題なら写しを持ち越す（失敗・条件の混ざりの回は今まで通り片付ける）。2層の問題の後半の通だけはここで消す
       const keep = REUSE_FIXTURE && fx && !row.error && !row.pcMismatch?.length && rep < REPEAT;
       if (keep && fx) {
-        const head = new Set(fx.headIds), tail = own.filter((id) => !head.has(id));
+        const head = new Set(fx.headIds), tail = S().own.filter((id) => !head.has(id));
         if (tail.length) { const del = await sb.from("messages").delete().in("id", tail); if (del.error) console.error(`⛔ YUMA の自分の行を消せない: ${del.error.message}`); else writeCount.msgDel += tail.length; }
-        own = fx.headIds; held = fx;
+        S().own = fx.headIds; S().held = fx;
       } else {
       writeFloor(null);
-      if (own.length) { const del = await sb.from("messages").delete().in("id", own); if (del.error) console.error(`⛔ YUMA の自分の行を消せない: ${del.error.message}`); else writeCount.msgDel += own.length; own = []; }
+      if (S().own.length) { const del = await sb.from("messages").delete().in("id", S().own); if (del.error) console.error(`⛔ YUMA の自分の行を消せない: ${del.error.message}`); else writeCount.msgDel += S().own.length; S().own = []; }
       await deleteOwnLedger();
       // 要約の書き戻し（非同期）を待ってから条件の行を戻す＝次の問題・他の担当に混ぜない
       await new Promise((r) => setTimeout(r, 2500));
@@ -1646,10 +1753,24 @@ async function main() {
       }
     }
     const miss = row.asks?.filter((a) => !a.covered).length ?? 0, vio = row.ng?.filter((g) => g.violated).length ?? 0;
-    console.log(`${row.score.pass ? "○" : "✕"} ${p.id}#${rep}${row.inputSame ? "【入力が同じ】" : row.inputDiff?.pinned ? `【${row.inputDiff.firstChanged} から違う】` : ""} [${p.type}] ${row.essence ? `本質=${row.essence.code} ` : ""}ブレイン=${row.path.code || "-"}${row.draft ? ` 下書き=${row.draft.code}${row.draft.pass ? "○" : "✕"}` : ""} 正解=${acc.join("|")}${row.path.mustNotHit ? ` ⛔${row.path.mustNotHit}` : ""}${miss ? ` 依頼の抜け${miss}` : ""}${vio ? ` 違反${vio}` : ""}${row.ledger?.errors.length ? ` 台帳の失敗 ${row.ledger.errors.join("／")}` : ""}${row.pcMismatch ? ` 条件の混ざり ${row.pcMismatch.join(",")}` : ""}${row.error ? ` 失敗: ${row.error}` : ""}`);
+    // 2026-11-04 レーンの時: 失敗の文に 429 らしい物があれば並べる数を減らす印・行の頭にレーンの名前（1本の時は今と同じ行）
+    if (LANES.length) laneLimiter.noteError(row.error);
+    console.log(`${LANES.length ? `[${currentLane()?.name ?? "?"}] ` : ""}${row.score.pass ? "○" : "✕"} ${p.id}#${rep}${row.inputSame ? "【入力が同じ】" : row.inputDiff?.pinned ? `【${row.inputDiff.firstChanged} から違う】` : ""} [${p.type}] ${row.essence ? `本質=${row.essence.code} ` : ""}ブレイン=${row.path.code || "-"}${row.draft ? ` 下書き=${row.draft.code}${row.draft.pass ? "○" : "✕"}` : ""} 正解=${acc.join("|")}${row.path.mustNotHit ? ` ⛔${row.path.mustNotHit}` : ""}${miss ? ` 依頼の抜け${miss}` : ""}${vio ? ` 違反${vio}` : ""}${row.ledger?.errors.length ? ` 台帳の失敗 ${row.ledger.errors.join("／")}` : ""}${row.pcMismatch ? ` 条件の混ざり ${row.pcMismatch.join(",")}` : ""}${row.error ? ` 失敗: ${row.error}` : ""}`);
     await new Promise((r) => setTimeout(r, GAP_MS));
   }
-  await releaseHeld(); // A: 最後の問題の写しを片付ける
+  };
+  if (!LANES.length) {
+    for (const p of problems) if ((await runProblem(p)) === "stop") break;
+    await releaseHeld(); // A: 最後の問題の写しを片付ける
+  } else {
+    // 2026-11-04 レーン: 問題の列を空いたレーンが前から取る。DeepSeek の 429 を見たら問題の区切りで並べる数を1つ減らす（exam-lane.LaneLimiter）
+    try {
+      await runLanes(problems, LANES, (p) => runProblem(p), { limiter: laneLimiter, onShrink: (a, b) => console.warn(`⚠ DeepSeek の 429 → 並べる数 ${a} → ${b}（次の問題から）`) });
+    } finally {
+      await forEachLane(async () => { await releaseHeld(); });
+    }
+    if (laneLimiter.events.length) console.log(`レーン: 429 で並べる数を減らした ${laneLimiter.events.map((e) => `${e.from}→${e.to}`).join("・")}`);
+  }
   if (COUNT_WRITES) console.log(`書き込み（試験の写し）: 通 +${writeCount.msgIns}／-${writeCount.msgDel}・台帳 +${writeCount.ledgerIns}／-${writeCount.ledgerDel}・条件の行の UPDATE ${writeCount.pcUpd}（同じなので省いた ${writeCount.pcSkip}）・写しを使い回した回 ${writeCount.reused}（--reuse-fixture ${REUSE_FIXTURE ? "on" : "off"}・--pc-skip-same ${PC_SKIP_SAME ? "on" : "off"}）`);
   if (pinsOn) {
     const items = Object.entries(inputPlan);
@@ -1691,11 +1812,20 @@ async function afterRunKb(problems: ExamProblem[]): Promise<void> {
 }
 
 main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; }).finally(async () => {
-  if (floorFile()) { writeFloor(null); unlockFloor(); }
-  lease?.release();
-  if (own.length) await sb.from("messages").delete().in("id", own);
-  await deleteOwnLedger().catch((e) => console.warn("deleteOwnLedger:", String(e)));
-  await restorePc().catch((e) => console.warn("restorePc:", String(e)));
+  // 2026-11-04 レーンの時は全部のレーンを片付ける（1本の時は L0 だけ＝今まで通り）
+  await forEachLane(async () => {
+    try {
+      if (floorFile()) { writeFloor(null); unlockFloor(); }
+      S().lease?.release();
+      if (S().own.length) await sb.from("messages").delete().in("id", S().own);
+      await deleteOwnLedger().catch((e) => console.warn("deleteOwnLedger:", String(e)));
+      await restorePc().catch((e) => console.warn("restorePc:", String(e)));
+    } catch (e) {
+      // レーンの時は1本の片付けの失敗で他のレーンの片付け・後の数え（h.finish）を止めない（1本の時は今まで通り投げる）
+      if (!LANES.length) throw e;
+      console.warn(`片付け（${S().tag}）:`, String(e));
+    }
+  });
   if (h) {
     await h.finish();
     if (judgeCost.tier) console.log(`判定の段（EXAM_JUDGE_TIER=on）: ${judgeCost.tier.problems}件・機械で決めた ${judgeCost.tier.machine}項目・flash 2回で揃った ${judgeCost.tier.flash}項目・割れて pro ${judgeCost.tier.pro}項目${judgeCost.tier.unresolved ? `・決まらない ${judgeCost.tier.unresolved}` : ""}（flash ${judgeCost.tier.flashCalls}回・pro ${judgeCost.tier.proCalls}回）`);

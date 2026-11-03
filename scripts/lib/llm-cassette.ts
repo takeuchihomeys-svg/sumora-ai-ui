@@ -21,6 +21,7 @@ import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { resolveRouteName, testDeepseekModelOverride } from "../../app/lib/llm-alt-provider";
 import { examEnvFingerprint, readDotenvLocal } from "./exam-env-fp";
+import { currentLane } from "./exam-lane";
 
 /** 2026-10-18: LLM_TEST_DS_MODEL_BY_ACTION で替えた名札のモデル（無ければ null）。名札の無い返信生成は system の先頭で見分ける（llm-alt と同じ） */
 function actionModelOverride(env: Record<string, string | undefined>, action: string | null, body: string | null): string | null {
@@ -257,11 +258,14 @@ export function wrapGlobalFetch(make: (prev: FetchLike) => FetchLike): void {
   globalThis.fetch = next as unknown as typeof fetch;
 }
 
-let currentTag: Record<string, string> = {};
+let globalTag: Record<string, string> = {};
+// 2026-11-04 作業員1・指揮役の了承: レーン（scripts/lib/exam-lane.ts・EXAM_CONCURRENCY>1）の中では札をレーンごとに持つ（並べた問題の録音・控えを混ぜない）。レーンの外は今まで通り1つ
+const tagNow = (): Record<string, string> => currentLane()?.cassetteTag ?? globalTag;
 /** 今の問題・回を札にする（数えを問題ごとに分け、変わった所を探す時に同じ問題の録音を先に見る）。札を付け直すとその回の呼び出しの控え・main の答えの使い済みを空にする（回し直しの回） */
 export function setCassetteTag(tag: Record<string, string>): void {
-  currentTag = { ...tag };
-  const k = tagKeyOf(currentTag);
+  const lane = currentLane();
+  if (lane) lane.cassetteTag = { ...tag }; else globalTag = { ...tag };
+  const k = tagKeyOf(tagNow());
   if (k) { callLog.delete(k); pinUsed.delete(k); }
 }
 
@@ -318,10 +322,10 @@ export function pinsFromRows(rows: Array<{ id: string; rep: number; llmCalls?: C
   for (const r of rows) { const k = `${r.id}#${r.rep}`; if (!r.error && r.llmCalls?.length && !out[k]) out[k] = r.llmCalls; }
   return out;
 }
-function logCall(c: CallRef): CallRef { const k = tagKeyOf(currentTag); if (k) { let a = callLog.get(k); if (!a) { a = []; callLog.set(k, a); } a.push(c); } return c; }
+function logCall(c: CallRef): CallRef { const k = tagKeyOf(tagNow()); if (k) { let a = callLog.get(k); if (!a) { a = []; callLog.set(k, a); } a.push(c); } return c; }
 /** 同じ pk の main の答え（まだ使っていない物）を探して返す。録音が消えている・sha が合わない時は null */
 function findPinned(dir: string, pk: string): { ref: CallRef; resp: CassetteResponse } | null {
-  const k = tagKeyOf(currentTag);
+  const k = tagKeyOf(tagNow());
   const list = k ? pins?.get(k) : undefined;
   if (!k || !list?.length) return null;
   let used = pinUsed.get(k); if (!used) { used = new Set(); pinUsed.set(k, used); }
@@ -371,7 +375,7 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
   const tallyOf = (m: Map<string, CassetteTally>, k: string) => { let t = m.get(k); if (!t) { t = emptyTally(); m.set(k, t); } return t; };
   const bump = (action: string | null, f: (t: CassetteTally) => void) => {
     f(o.stats.total); f(tallyOf(o.stats.byAction, action ?? "(名札なし)"));
-    const tg = currentTag.problem ?? "(問題の外)"; f(tallyOf(o.stats.byTag, tg));
+    const tg = tagNow().problem ?? "(問題の外)"; f(tallyOf(o.stats.byTag, tg));
   };
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const u = urlOf(input);
@@ -399,13 +403,13 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
         return new Response(pin.resp.body, { status: pin.resp.status, headers: { "content-type": pin.resp.contentType, [CASSETTE_HEADER]: "replay", "x-llm-cassette-pin": "1" } });
       }
       if (pinOnly) {
-        o.stats.misses.push({ action, tag: { ...currentTag }, hint: "入力が main と違う（下見なので呼ばない）" });
+        o.stats.misses.push({ action, tag: { ...tagNow() }, hint: "入力が main と違う（下見なので呼ばない）" });
         bump(action, (t) => t.missed++);
         logCall({ pk, key: "", sha: "", action, src: "miss" });
         return new Response(JSON.stringify({ type: "error", error: { type: "cassette_miss", message: `llm-cassette plan: 入力が main と違う（${action ?? "名札なし"}）` } }), { status: 400, headers: { "content-type": "application/json", [CASSETTE_HEADER]: "miss" } });
       }
     }
-    const keyFor = (mode: CassetteMode) => cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host, actionModel) + cassetteRunSalt({ envFp: o.envFp, host: u!.host, action, rep: currentTag.rep, mode, env }) });
+    const keyFor = (mode: CassetteMode) => cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + cassetteSalt(env, u!.host, actionModel) + cassetteRunSalt({ envFp: o.envFp, host: u!.host, action, rep: tagNow().rep, mode, env }) });
     // 2026-10-21 確かめる人: strict は旧の鍵（回なし）だが、回を足して録った2回目以降（record/replay で録った物）があればそちらを再生する
     //   （無いと --repeat=2 で録った回を strict で流すと2回目が「録った答えは1個」で止まる）
     let key = keyFor(o.mode);
@@ -420,12 +424,12 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
       return new Response(hit.body, { status: hit.status, headers: { "content-type": hit.contentType, [CASSETTE_HEADER]: "replay" } });
     }
     if (o.mode === "strict") {
-      const near = nearestEntry(o.dir, action, currentTag, normBody);
+      const near = nearestEntry(o.dir, action, tagNow(), normBody);
       const why = entry ? `録った答えは ${entry.responses.length} 個（この回 ${nth + 1} 回目）` : near ? diffHint(near.normBody, normBody) : "同じ名札の録音なし";
-      o.stats.misses.push({ action, tag: { ...currentTag }, hint: why });
+      o.stats.misses.push({ action, tag: { ...tagNow() }, hint: why });
       bump(action, (t) => t.missed++);
       logCall({ pk, key, sha: "", action, src: "miss" });
-      log(`[llm-cassette] ⛔ 録音なし（呼ばない）: ${action ?? "(名札なし)"} ${currentTag.problem ?? ""} — ${why}`);
+      log(`[llm-cassette] ⛔ 録音なし（呼ばない）: ${action ?? "(名札なし)"} ${tagNow().problem ?? ""} — ${why}`);
       const msg = `llm-cassette strict: 要求が録音と違う（${action ?? "名札なし"}）`;
       return new Response(JSON.stringify({ type: "error", error: { type: "cassette_miss", message: msg } }), { status: 400, headers: { "content-type": "application/json", [CASSETTE_HEADER]: "miss" } });
     }
@@ -443,7 +447,7 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
         bump(action, (t) => { t.real++; t.realUsd += usd; });
         const cur = readEntry(o.dir, key);
         let reqModel: string | null = null; try { reqModel = String((JSON.parse(body ?? "{}") as { model?: unknown }).model ?? "") || null; } catch { /* */ }
-        const e: CassetteEntry = cur ?? { key, host: u!.host, path: u!.pathname, action, reqModel, tag: { ...currentTag }, firstAt: at, normBody, responses: [] };
+        const e: CassetteEntry = cur ?? { key, host: u!.host, path: u!.pathname, action, reqModel, tag: { ...tagNow() }, firstAt: at, normBody, responses: [] };
         e.responses.push({ at, status: res.status, contentType: ct, body: text, usage, usd });
         writeEntry(o.dir, e);
       }).catch((err) => log(`[llm-cassette] 録れなかった: ${err instanceof Error ? err.message : err}`));
@@ -478,7 +482,7 @@ async function rpcCassette(
     const done = res.clone().text().then((text) => {
       rpc.recorded++;
       const cur = readEntry(o.dir, key);
-      const e: CassetteEntry = cur ?? { key, host: u.host, path: `${u.pathname}${u.search}`, action, reqModel: null, tag: { ...currentTag }, firstAt: at, normBody, responses: [] };
+      const e: CassetteEntry = cur ?? { key, host: u.host, path: `${u.pathname}${u.search}`, action, reqModel: null, tag: { ...tagNow() }, firstAt: at, normBody, responses: [] };
       if (!cur || o.mode === "record") e.responses.push({ at, status: res.status, contentType: ct, body: text, usage: { model: null, input_uncached: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0, output_tokens: 0 }, usd: 0 });
       writeEntry(o.dir, e);
     }).catch(() => { /* 録れなくても続ける */ });
