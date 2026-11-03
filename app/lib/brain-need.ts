@@ -96,3 +96,26 @@ export function detectMaterialConflicts(input: {
   return { kinds, line, strategyAgeH };
 }
 export const conflictDigest = (c: MaterialConflicts | null | undefined) => (c && c.kinds.length ? c.kinds.join(",") : null);
+
+// ── 潜在意識と要点（KB P1「お客様の潜在意識と要点を読む部分を6つで強化」①②・どちらも既定 off・記録だけ）─────────────
+//   ① 3段（表の質問→奥の心配→何が満たされれば安心するか）を判断の前に出す。② key_topics から「一番の要点」を1つ選ぶ（作業員6の ComposeIntent.main が受ける）
+export const threeLayerOn = (env: Env = envOf()) => on(env.BRAIN_THREE_LAYER);
+export const mainPointOn = (env: Env = envOf()) => on(env.BRAIN_MAIN_POINT);
+export type ThreeLayer = { surface: string; worry: string; relief: string };
+export const BRAIN_THREE_LAYER_RULES = `【3段で考える（three_layer）】判断の前に、お客様の今の番を3段で読む: surface＝表の質問・依頼（お客様の言葉に近く）／worry＝奥の心配（会話・記録から読める物だけ・創作しない）／relief＝何が満たされれば安心するか（こちらが出せる物で）。例: 「初期費用15万くらいの物件ないですか」→ worry「予算が足りるか不安・今の候補が高いと感じている」→ relief「割引で15万に収まる物件と、収まる理由」。読めない段は ""。AIX・返信の判断と key_topics はこの relief に沿わせる。`;
+export const BRAIN_THREE_LAYER_FIELD = `"three_layer": {"surface": "表の質問（30字以内）", "worry": "奥の心配（40字以内）", "relief": "何が満たされれば安心するか（40字以内）"}`;
+export const BRAIN_MAIN_POINT_RULES = `【一番の要点（main_point）】key_topics の中から、この番で一番伝えるべき1つを選び、そのままの言葉で main_point に書く（返信の主役の1文になる）。key_topics が空なら null。`;
+export const BRAIN_MAIN_POINT_FIELD = `"main_point": "key_topics の中の1つ（そのままの言葉）または null"`;
+export function normalizeThreeLayer(raw: unknown): ThreeLayer | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const t = { surface: clip(o.surface, 40), worry: clip(o.worry, 50), relief: clip(o.relief, 50) };
+  return t.surface || t.worry || t.relief ? t : null;
+}
+/** key_topics の中の1つに寄せる（無い言葉は捨てる＝創作の要点を作らない） */
+export function normalizeMainPoint(raw: unknown, keyTopics: ReadonlyArray<string> | null | undefined): string | null {
+  if (nullish(raw)) return null;
+  const v = clip(raw, 60); const kt = (keyTopics ?? []).map((x) => String(x));
+  return kt.find((x) => x === v) ?? kt.find((x) => x.includes(v) || v.includes(x)) ?? null;
+}
+export const threeLayerDigest = (t: ThreeLayer | null | undefined) => (t && t.worry ? t.worry.slice(0, 20) : null);

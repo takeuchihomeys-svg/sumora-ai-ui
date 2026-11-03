@@ -16,7 +16,7 @@
 // ここは「どちらの層が作るか」の分類。両者が食い違っても下流の挙動は変えない（作り手だけを分ける）。
 
 // 2026-09-23: 戦略の項目にも家賃交渉の守りを通す（純関数同士なので依存なしのまま）
-import { needDigest, planAheadDigest, type BrainNeed, type PlanAhead } from "./brain-need";
+import { needDigest, planAheadDigest, threeLayerDigest, type BrainNeed, type PlanAhead, type ThreeLayer } from "./brain-need";
 import { stripRentNegotiation, stripRentNegotiationFromList } from "./rent-negotiation-guard";
 import { mindsetDigest, type CustomerMindset } from "./customer-mindset";
 
@@ -131,6 +131,8 @@ export type FreshDigest = {
   rw?: string; dm?: number;
   /** 2026-11-03（brain-need.ts・どれも既定 off）: need（難しさ・自信・足りない材料）／次の数手の計画（goal|先頭の手|変）／材料の食い違い（stage,sent） */
   nd?: string; pa?: string; cf?: string;
+  /** 2026-11-03 3段の奥の心配（先頭20字）／一番の要点／流れの合図 */
+  tl?: string; mp?: string; fs?: string;
   /** 2026-10-13: LLM が出した current_property（ゲートの前） */
   lp?: string | null;
   /** 2026-10-13: 生の本質の道の数（reconcile の前・llm_raw.tc）。tc は規則の後の値 */
@@ -172,6 +174,9 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...(Array.isArray(meta.demoted_overrides) && (meta.demoted_overrides as unknown[]).length ? { dm: (meta.demoted_overrides as unknown[]).length } : {}),
     ...((() => { const nd = needDigest(meta.need as BrainNeed | null | undefined); return nd ? { nd } : {}; })()),
     ...((() => { const pa = planAheadDigest(meta.plan_ahead as PlanAhead | null | undefined); return pa ? { pa } : {}; })()),
+    ...((() => { const tl = threeLayerDigest(meta.three_layer as ThreeLayer | null | undefined); return tl ? { tl } : {}; })()),
+    ...(str(meta.main_point, 30) ? { mp: str(meta.main_point, 30)! } : {}),
+    ...(Array.isArray(meta.flow_signals) && (meta.flow_signals as unknown[]).length ? { fs: (meta.flow_signals as unknown[]).map(String).join(",").slice(0, 40) } : {}),
     ...(Array.isArray(meta.material_conflicts) && (meta.material_conflicts as unknown[]).length ? { cf: (meta.material_conflicts as unknown[]).map(String).join(",").slice(0, 20) } : {}),
     // 2026-10-13 棚卸し B-6: LLM が出した current_property（実在ゲートの前）。prop（最終）と比べてゲートで落ちた番を数える
     lp: str((meta.llm_raw as { cp?: unknown } | undefined)?.cp, 40),
