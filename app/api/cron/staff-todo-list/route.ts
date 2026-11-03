@@ -8,6 +8,7 @@
 //   組み立ては app/lib/staff-todo-list.ts（決まった計算・LLM なし）。
 //   切替 STAFF_TODO_LIST（既定 on）。off にすると送らず、announce-aix-actions が元の AIX要対応リスト・announce-hot-customers がターゲットを送る。
 //   ?preview=1 … 送らずに文だけ返す（切替に関係なく・読むだけ・片付けもしない）。&at=<ISO> でその時点の一覧
+import { planAheadConsumersOn, customerPriority, rankCustomers, statusToStage, planConsumerHints } from "@/app/lib/conductor-priority";
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { loadStaffTodoList } from "@/app/lib/staff-todo-list-server";
@@ -55,6 +56,19 @@ export async function GET(req: NextRequest) {
   const overdue = aixOverdueRemindEnabled() ? await sendOverdueRemindOnce().catch((e) => { console.warn("[staff-todo] overdue remind:", e); return null; }) : null;
 
   const list = await loadStaffTodoList(supabase, Date.now(), { deadlineAtMs });
+  // 2026-11-03 統括の計画をほかの仕組みに渡す（conductor-priority.ts・PLAN_AHEAD_CONSUMERS=on・既定 off）: 並びは変えず、
+  //   「計画どおりなら誰を先にしたか・次の手」を今の並びと並べて1行に残す（読みは載っている会話の plan_ahead だけ・1回）
+  if (planAheadConsumersOn() && list.customers.length) {
+    try {
+      const ids = list.customers.map((c) => c.conversationId).slice(0, 80);
+      const { data } = await supabase.from("conversations").select("id, status, plan:last_brain_meta->plan_ahead").in("id", ids);
+      const byId = new Map(((data ?? []) as unknown as Array<{ id: string; status: string | null; plan: { goal?: string; steps?: string[] } | null }>).map((r) => [r.id, r]));
+      const now = Date.now();
+      const scored = list.customers.map((c) => { const r = byId.get(c.conversationId); return { id: c.conversationId, plan: r?.plan ?? null, s: customerPriority({ stage: statusToStage(r?.status ?? c.status), planGoal: r?.plan?.goal ?? null, nowMs: now }).score }; });
+      const planned = rankCustomers(scored, (x) => x.s).slice(0, 5).map((x) => ({ id: x.id.slice(0, 8), s: x.s, next: planConsumerHints(x.plan, now).todo?.label ?? null }));
+      console.log(JSON.stringify({ tag: "staff-todo:plan-shadow", n: list.customers.length, withPlan: scored.filter((x) => x.plan).length, actual: list.customers.slice(0, 5).map((c) => c.conversationId.slice(0, 8)), planned }));
+    } catch (e) { console.warn("[staff-todo] plan-shadow skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 長い時は④⑤を入るだけ出して残りは次の便へ（2026-10-21 竹内さん「オススメでおねがい」）。回す順は前の便の控えから
   const post = composeStaffTodoPost(list, { snapshots: await loadTodoSnapshots(supabase) });
   const text = post.text;

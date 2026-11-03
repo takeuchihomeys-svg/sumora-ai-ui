@@ -115,7 +115,10 @@ export function checkResultFormMaterial(o: { pattern: string | null | undefined;
   //   入れる CHECK_FORM_1028=on（既定 off・off は下の旧の行のまま）
   if ((p === "available" || p === "alternative") && checkForm1028On(o.env)) {
     lines.push(o.vacating
-      ? "締め: 退去予定のお部屋はまだご内覧頂けない → ご査収（「お手隙の際にご査収ください！！」）。お客様が申込・抑えたいと言った時は申込の締め"
+      ? (checkFormVacatingHoldOn(o.env)
+        // 2026-11-03 竹内さんの決定 No.16（KB 1cef1a4e）: お部屋抑え（申込で抑える）の締めは申込が入りそうな時だけ（お客様が言った時ではなく）。CHECK_FORM_VACATING_HOLD=on（既定 off・off は下の旧の形）
+        ? "締め: 退去予定のお部屋はまだご内覧頂けない → ご査収（「お手隙の際にご査収ください！！」）。お部屋抑え（申込で抑える）の締めは、申込が入りそうな時（他のお客様の申込・問い合わせが入っている等、資料・確認の結果・会話にその事実がある時）だけ。その事実が無ければ抑えを勧めない"
+        : "締め: 退去予定のお部屋はまだご内覧頂けない → ご査収（「お手隙の際にご査収ください！！」）。お客様が申込・抑えたいと言った時は申込の締め")
       : "締め: 空室のお部屋は内覧のご案内（竹内さんの形「〇〇さんお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！お気軽にお申し付けください😌！！」）");
     lines.push("資料・御見積書の後に続く結果の文はこちらの続きの文 → 「ありがとうございます」等の受け止めの言葉で始めない（「お送り頂きました〈物件名〉、現在募集中のお部屋となります！！」から）");
     lines.push(o.hasEstimate ? "御見積書は「最大限割引しました初期費用の御見積書同封させて頂きました😊！！」" : "今回は御見積書を同封しない。御見積書を作成してお送りする約束も書かない（聞かれていない約束を作らない）");
@@ -135,6 +138,10 @@ export function checkResultFormMaterial(o: { pattern: string | null | undefined;
   return lines.length ? `【竹内さんの文の型（物件確認した・実送信の多数の形）】\n${lines.map((l) => `・${l}`).join("\n")}` : "";
 }
 /** 物件確認した の文の型の 10/28 の追加（空室は内覧のご案内で締める・結果の文を受け止めで始めない・最大限割引・物件なかったは物件名だけで付随の確認を書かない）。既定 off */
+/** 2026-11-03 竹内さんの決定 No.16: 退去予定の締めの「お部屋抑え」は申込が入りそうな時だけ（既定 off） */
+export function checkFormVacatingHoldOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.CHECK_FORM_VACATING_HOLD ?? "").trim().toLowerCase() === "on";
+}
 export function checkForm1028On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.CHECK_FORM_1028 ?? "").trim().toLowerCase() === "on";
 }

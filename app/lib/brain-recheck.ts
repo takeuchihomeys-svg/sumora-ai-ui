@@ -40,14 +40,15 @@ export function recheckMaterialLine(rc: BrainRecheck | null | undefined): string
 }
 
 // ── 読み直しの継ぎ目（analyzeAndSaveBrainMeta）・難しい番だけ最大3回（KB P1「100% に向けて土台の7つ」③）──────────
-//   BRAIN_RECHECK: off（既定）／shadow（読み直すはずの番と回数の上限を記録だけ・呼ばない＝費用0）／on（呼ぶ）
+//   BRAIN_RECHECK: off／shadow（既定・読み直すはずの番と回数の上限を記録だけ・呼ばない＝費用0）／on（呼ぶ）
 //   普通の番は1回まで。難しい番（need.difficulty=high かつ confidence が low/mid、または confidence=low）だけ最大3回。
 //   次の読み直しは、前の読み直しの答えがまた食い違いを返した時だけ（同じ理由が続いたら止める＝回り続けない）。
 type Env2 = Record<string, string | undefined>;
 export type RecheckMode = "off" | "shadow" | "on";
 export function recheckMode(env: Env2 = typeof process !== "undefined" ? process.env : {}): RecheckMode {
   const v = (env.BRAIN_RECHECK ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+  // 2026-11-03 竹内さん（記録だけのスイッチ）: 既定は shadow（読み直すはずの番と回数の上限を記録だけ・呼ばない＝費用0）。on は判断を変えるので段階で
+  return v === "on" ? "on" : v === "off" ? "off" : "shadow";
 }
 export function recheckLimit(meta: Record<string, unknown> | null | undefined): number {
   const n = (meta?.need ?? null) as { difficulty?: string; confidence?: string } | null;

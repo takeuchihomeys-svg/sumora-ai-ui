@@ -187,6 +187,8 @@ const PICKUP_ASK_RE = /(?:物件|お部屋|部屋)[^。\n]{0,10}(?:送って|探
 export function farMoveInTurn(i: {
   customerTurn: ReadonlyArray<{ text: string | null | undefined; at: string }>;
   conditionMoveIn?: string | null;
+  /** 2026-11-03 条件の入居時期を最後に直した時（条件の履歴→property_customers.updated_at→created_at）。CONDITION_MOVE_IN_UNIFIED=on の時だけ使う */
+  conditionSetAt?: string | null;
   staffHistory: ReadonlyArray<{ text: string | null | undefined; at: string }>;
   nowIso: string;
 }): FarMoveInPlan | null {
@@ -197,9 +199,11 @@ export function farMoveInTurn(i: {
     const s = moveInFromCustomerText(m.text, m.at);
     if (s) { plan = farMoveInPlan(s, i.nowIso, "customer_text"); break; }
   }
-  if (!plan && i.conditionMoveIn) {
+  const unified = conditionMoveInUnifiedOn();
+  if (!plan && i.conditionMoveIn && (unified || !(farMoveInStaleConditionOn() && conditionMonthsStale(i.conditionMoveIn, i.nowIso)))) {
     const asks = i.customerTurn.some((m) => CONDITION_FORM_RE.test(String(m.text ?? "")) || PICKUP_ASK_RE.test(normalizeDateText(m.text)));
-    const s = asks ? resolveMoveInStart(i.conditionMoveIn, i.nowIso) : null;
+    const r = asks && unified ? resolveConditionMoveIn(i.conditionMoveIn, { nowIso: i.nowIso, setAtIso: i.conditionSetAt ?? null }) : null;
+    const s = !asks ? null : unified ? (r?.kind === "future" ? r.start : null) : resolveMoveInStart(i.conditionMoveIn, i.nowIso);
     if (s) plan = farMoveInPlan(s, i.nowIso, "condition");
   }
   if (!plan) return null;
@@ -209,6 +213,44 @@ export function farMoveInTurn(i: {
     if (p && daysBetween(today, p.contact) >= -1) return null;
   }
   return plan;
+}
+
+/**
+ * 2026-11-03 作業員2（q197 の調べ）: 登録の条件の入居の時期は「登録した日」に言った物なのに、今日を基準に読むと、過ぎた月が来年に回る
+ *   （例: 9月に登録した「10月・11月」を 11/03 に読むと 2027年10月＝入居の時期が先 → rule:far_move_in_contact が物件の番を連絡の日の約束に書き換えた）。
+ *   条件に並んだ月のどれかが今月か、ここ6ヶ月以内に過ぎた月（年の書き無し）なら、来年の話ではなく「今か過ぎた」＝入居の時期が先の番にしない。
+ *   FAR_MOVE_IN_STALE_CONDITION=on の時だけ（既定 off・統括役が試験の後に決める）
+ */
+export function farMoveInStaleConditionOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.FAR_MOVE_IN_STALE_CONDITION ?? "").trim().toLowerCase() === "on";
+}
+export function conditionMonthsStale(text: string | null | undefined, nowIso: string): boolean {
+  const t = normalizeDateText(text);
+  if (/来年|再来年|\d{4}\s*[年/]/.test(t)) return false;
+  const now = todayOf(nowIso);
+  const months = [...t.matchAll(/(\d{1,2})\s*月/g)].map((m) => Number(m[1])).filter((m) => m >= 1 && m <= 12);
+  return months.some((m) => ((now.m - m + 12) % 12) <= 6);
+}
+
+/**
+ * 2026-11-03 統括役の頼み（作業員1の洗い出し）: 条件の入居時期（年の無い月）の読みを1つに。far_move_in の条件の読みと、支払いの時期の入居の希望（customer-memo-server）が通る。
+ *   基準: 条件の入居時期を最後に直した時（setAtIso＝条件の履歴→updated_at→created_at）から見て読む（move-in-want.parseMoveInWant と同じ考え）。
+ *   基準が無い時: 今月・過去6か月以内の月で年の書きが無い物は過ぎた月（conditionMonthsStale）。
+ *   読んだ始まりが今日より前なら past（far_move_in は先の入居にしない・支払いの時期は入居の希望を無い物とする）。
+ *   CONDITION_MOVE_IN_UNIFIED=on（既定 off）。FAR_MOVE_IN_STALE_CONDITION の考えを含む（unified が on なら stale の切替は見ない）
+ */
+export function conditionMoveInUnifiedOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.CONDITION_MOVE_IN_UNIFIED ?? "").trim().toLowerCase() === "on";
+}
+export type ConditionMoveIn = { kind: "future"; start: MoveInStart } | { kind: "past"; start: MoveInStart | null } | { kind: "none" };
+export function resolveConditionMoveIn(text: string | null | undefined, o: { nowIso: string; setAtIso?: string | null }): ConditionMoveIn {
+  if (!String(text ?? "").trim()) return { kind: "none" };
+  const today = todayOf(o.nowIso);
+  const setAt = o.setAtIso && Number.isFinite(Date.parse(o.setAtIso)) ? o.setAtIso : null;
+  if (!setAt && conditionMonthsStale(text, o.nowIso)) return { kind: "past", start: null };
+  const s = resolveMoveInStart(text, setAt ?? o.nowIso);
+  if (!s) return { kind: "none" };
+  return daysBetween(today, s.ymd) < 0 ? { kind: "past", start: s } : { kind: "future", start: s };
 }
 
 /** ブレインの返信の方向（generate-reply がこの番の下書きを書く方向） */

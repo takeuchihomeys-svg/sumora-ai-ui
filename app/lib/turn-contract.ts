@@ -22,6 +22,7 @@ import { alreadySaidAllowance, ackFormBrainEnabled, normalizeAckForm, ackFormCon
 import { promiseTopics } from "./draft-repeat";
 import { renderPrioritiesNote, type PriorityItem } from "./brain-priority";
 import { renderMessagePlanNote, type MessagePlan } from "./message-plan";
+import { guarantorWordingOn, guarantorWordingLine } from "./decisions-1103";
 import { truncateAtBoundary } from "./brain-strategy-note";
 import { closeOnlyShape } from "./ack-form-takeuchi";
 import { brainDeepCheckGapEnabled, BRAIN_DEEP_CHECK_ASK_FIELD, BRAIN_DEEP_CHECK_RULE } from "./brain-deep-check";
@@ -445,6 +446,8 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance && !c.ackForm ? `\n${allowance}` : ""}`);
   if (c.settled.length) L.push(`- 決まった事（蒸し返さない・日付はこのまま）: ${c.settled.join(" ／ ")}`);
   if (c.mustNot.length) L.push(`- 言わない: ${c.mustNot.join(" ／ ")}`);
+  // 2026-11-03 竹内さんの決定 No.20: 保証会社・審査の依頼がある番は言い方を限る（ブレインと同じ1行・BRAIN_GUARANTOR_WORDING 既定 off）
+  if (guarantorWordingOn()) { const gw = guarantorWordingLine(c.asks.map((a) => `${a.quote} ${a.answer ?? ""}`).join(" ")); if (gw) L.push(`- ${gw}`); }
   // 2026-10-16（事例 f）: 探す約束の続きの待ちの形で締める了承の番は、申込・内覧の提案を添えない（竹内さんの実送信は締め＋新着の約束だけ）
   if (c.proposals.length && !(c.closeOnly && c.ackForm === "wait_line" && c.openSearch)) L.push(`- こちらから添える提案（消さない・確認の約束に置き換えない）: ${c.proposals.join(" ／ ")}`);
   if (c.feeling.acknowledge && c.feeling.kind) L.push(`- 気持ち（${FEELING_JA[c.feeling.kind]}）を本題の前に一言で受ける（お客様が書いた言葉に触れる・新しい言い回しを作らない）`);

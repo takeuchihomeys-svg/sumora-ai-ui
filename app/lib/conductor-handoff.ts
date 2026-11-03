@@ -10,7 +10,8 @@
 //   ① 番ごとに呼ぶ役を選ぶ … candidateRoles は候補の網だけ（決めるのは統括）。呼んだ／呼ばなかった役を digest.rl に1行
 // 切替: CONDUCTOR_HANDOFF（既定 off・記録だけ）。テスト: app/lib/__tests__/conductor-handoff.test.ts
 type Env = Record<string, string | undefined>;
-export const conductorHandoffOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_HANDOFF ?? "").trim().toLowerCase() === "on";
+// 2026-11-03 竹内さん（記録だけのスイッチ）: 今つないでいるのは digest.rl（呼ぶ役の候補の記録）だけ＝既定 on（=off で止める）
+export const conductorHandoffOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_HANDOFF ?? "").trim().toLowerCase() !== "off";
 
 /** 4 ぶつかった時の解き方（この順・1か所） */
 export const CONDUCTOR_PRIORITY_ORDER = [

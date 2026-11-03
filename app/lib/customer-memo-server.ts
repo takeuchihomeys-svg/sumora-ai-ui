@@ -136,10 +136,16 @@ async function loadCustomerSide(conversationId: string, now: number): Promise<{ 
     const { data: conv } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
     const pcid = (conv as { property_customer_id?: string | null } | null)?.property_customer_id;
     if (!pcid) return { desiredMoveInMs: null, summaryStyle: null };
-    const { data: pc } = await supabase.from("property_customers").select("move_in_time, ai_summary_json, ai_summary_at").eq("id", pcid).maybeSingle();
-    const r = pc as { move_in_time?: string | null; ai_summary_json?: { style?: unknown; urgency?: unknown } | null; ai_summary_at?: string | null } | null;
-    const { resolveMoveInStart } = await import("@/app/lib/contact-promise");
-    const mv = r?.move_in_time ? resolveMoveInStart(r.move_in_time, now) : null;
+    const { data: pc } = await supabase.from("property_customers").select("move_in_time, ai_summary_json, ai_summary_at, updated_at, created_at").eq("id", pcid).maybeSingle();
+    const r = pc as { move_in_time?: string | null; ai_summary_json?: { style?: unknown; urgency?: unknown } | null; ai_summary_at?: string | null; updated_at?: string | null; created_at?: string | null } | null;
+    const { resolveMoveInStart, resolveConditionMoveIn, conditionMoveInUnifiedOn } = await import("@/app/lib/contact-promise");
+    // 2026-11-03 CONDITION_MOVE_IN_UNIFIED=on: 条件を最後に直した時から読む・過ぎた月は入居の希望を無い物とする（旧は今日から読む＝過ぎた月が来年に回る）
+    let setAt: string | null = null;
+    if (r?.move_in_time && conditionMoveInUnifiedOn()) {
+      const { data: h } = await supabase.from("property_condition_history").select("created_at").eq("property_customer_id", pcid).eq("changed_field", "move_in_time").order("created_at", { ascending: false }).limit(1).maybeSingle();
+      setAt = ((h as { created_at?: string } | null)?.created_at ?? r.updated_at ?? r.created_at ?? null) as string | null;
+    }
+    const mv = !r?.move_in_time ? null : conditionMoveInUnifiedOn() ? ((c) => (c.kind === "future" ? c.start : null))(resolveConditionMoveIn(r.move_in_time, { nowIso: new Date(now).toISOString(), setAtIso: setAt })) : resolveMoveInStart(r.move_in_time, now);
     const st = typeof r?.ai_summary_json?.style === "string" ? r.ai_summary_json.style : null;
     const ug = typeof r?.ai_summary_json?.urgency === "string" ? r.ai_summary_json.urgency : null;
     const ymdMs = mv ? Date.UTC(mv.ymd.y, mv.ymd.m - 1, mv.ymd.d) - 9 * 3600_000 : null;

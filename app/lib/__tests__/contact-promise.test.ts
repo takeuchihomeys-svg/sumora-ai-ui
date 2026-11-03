@@ -3,7 +3,7 @@
 // 実行: npx tsx app/lib/__tests__/contact-promise.test.ts（文は実際の LINE のまま・名前は伏せ字）
 import {
   parseContactPromise, resolveMoveInStart, moveInFromCustomerText, contactDateFor, farMoveInPlan, farMoveInTurn,
-  contactEventRow, planContactPromiseSync, isContactPromiseNotes, contactDue, ymdStr, farMoveInCoreText, twoMonthMinDays,
+  contactEventRow, planContactPromiseSync, isContactPromiseNotes, contactDue, ymdStr, farMoveInCoreText, twoMonthMinDays, conditionMonthsStale, resolveConditionMoveIn,
 } from "../contact-promise";
 import { isWaitPromiseNotes, waitPromiseBadge } from "../promise-timing";
 import { promiseEventRows } from "../promise-calendar";
@@ -105,6 +105,36 @@ console.log("■ 10/08 遠い先（半年以上）は「2ヶ月前から」・�
   t("本文の連絡の日はカレンダーが読める（parseContactPromise）", (() => { const p = parse(text, "2026-10-06T03:00:00Z"); return !!p && p.contact.y === 2028 && p.contact.m === 1 && p.contact.d === 1; })());
   const near = plan(mv("8月20日頃に入居したいです", "2026-06-07T03:00:00Z")!, "2026-06-07T03:00:00Z", "customer_text");
   t("06-07 きむら（2ヶ月半先）→ 今まで通り1ヶ月半前（twoMonth なし）", !!near && !near.twoMonth && near.contact.m === 7 && near.contact.d === 5, JSON.stringify(near));
+}
+
+// 2026-11-03 作業員2（q197）: 9月に登録した条件「10月・11月」を 11/03 に読むと来年に回って「入居の時期が先」になっていた → 過ぎた月は先にしない
+{
+  const now = "2026-11-03T03:00:00Z";
+  t("条件の月が今月・3ヶ月以内に過ぎた月なら古い", conditionMonthsStale("10月・11月（早い方が希望）", now) && conditionMonthsStale("9月", now));
+  t("来年・年の書き・先の月は古くない", !conditionMonthsStale("来年10月", now) && !conditionMonthsStale("2027年10月", now) && !conditionMonthsStale("2月頃", now) && !conditionMonthsStale("12月末〜1月前半", now));
+  const prev = process.env.FAR_MOVE_IN_STALE_CONDITION;
+  const q197 = () => farMoveInTurn({ customerTurn: [{ text: "みなみの中の物件や島之内等で良い物件ありますか？", at: now }], conditionMoveIn: "10月・11月（早い方が希望）", staffHistory: [], nowIso: now });
+  process.env.FAR_MOVE_IN_STALE_CONDITION = "on"; t("q197: on なら入居の時期が先の番にしない", q197() === null);
+  delete process.env.FAR_MOVE_IN_STALE_CONDITION; t("q197: off（既定）なら今まで通り", q197() !== null);
+  if (prev != null) process.env.FAR_MOVE_IN_STALE_CONDITION = prev;
+}
+
+// 2026-11-03 条件の入居時期の読みを1つに（resolveConditionMoveIn・CONDITION_MOVE_IN_UNIFIED）
+{
+  const now = "2026-11-03T03:00:00Z";
+  t("基準あり: 9月に登録の「10月・11月」は過ぎた", resolveConditionMoveIn("10月・11月（早い方が希望）", { nowIso: now, setAtIso: "2026-09-15T03:00:00Z" }).kind === "past");
+  t("基準あり: 10月に登録の「12月末〜1月前半」は先", resolveConditionMoveIn("12月末〜1月前半", { nowIso: now, setAtIso: "2026-10-10T03:00:00Z" }).kind === "future");
+  t("基準あり: 10月に登録の「2月頃」は来年2月で先", ((r) => r.kind === "future" && r.start.ymd.y === 2027 && r.start.ymd.m === 2)(resolveConditionMoveIn("2月頃", { nowIso: now, setAtIso: "2026-10-10T03:00:00Z" })));
+  t("基準なし: 過去6か月の月は過ぎた", resolveConditionMoveIn("10月", { nowIso: now }).kind === "past");
+  t("基準なし: 先の月は先", resolveConditionMoveIn("2月頃", { nowIso: now }).kind === "future");
+  t("空・読めない", resolveConditionMoveIn("", { nowIso: now }).kind === "none" && resolveConditionMoveIn("未定", { nowIso: now }).kind === "none");
+  const prev = process.env.CONDITION_MOVE_IN_UNIFIED;
+  process.env.CONDITION_MOVE_IN_UNIFIED = "on";
+  const q = (setAt: string | null) => farMoveInTurn({ customerTurn: [{ text: "みなみの中の物件や島之内等で良い物件ありますか？", at: now }], conditionMoveIn: "10月・11月（早い方が希望）", conditionSetAt: setAt, staffHistory: [], nowIso: now });
+  t("unified on: q197 は先の入居にしない（基準あり・なし）", q("2026-09-15T03:00:00Z") === null && q(null) === null);
+  const far = farMoveInTurn({ customerTurn: [{ text: "物件ありますか？", at: now }], conditionMoveIn: "2月頃〜(正確には未定)", conditionSetAt: "2026-10-10T03:00:00Z", staffHistory: [], nowIso: now });
+  t("unified on: q167 型（2月頃）は今まで通り先の入居", far !== null);
+  if (prev == null) delete process.env.CONDITION_MOVE_IN_UNIFIED; else process.env.CONDITION_MOVE_IN_UNIFIED = prev;
 }
 
 console.log(`\n${pass} OK / ${fail} NG`);

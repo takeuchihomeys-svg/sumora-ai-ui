@@ -4,7 +4,7 @@ let passed = 0, failed = 0;
 function it(name: string, fn: () => void) { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { failed++; console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); } }
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
 
-it("既定 off・順は4つ", () => { ok(!conductorHandoffOn({})); ok(CONDUCTOR_PRIORITY_ORDER.length === 4); });
+it("記録だけ＝既定 on・順は4つ", () => { ok(conductorHandoffOn({}) && !conductorHandoffOn({ CONDUCTOR_HANDOFF: "off" })); ok(CONDUCTOR_PRIORITY_ORDER.length === 4); });
 it("渡す形", () => {
   const h = buildHandoff({ to: "compose", meta: { action: null, checkpoint_stage: "proposing", main_point: "割引で15万に収まる物件", three_layer: { relief: "収まる理由" }, plan_ahead: { steps: ["見積書", "内覧調整"] } }, openPromises: ["募集状況の確認"] });
   ok(h.decided.action === "reply" && h.decided.nextStep === "見積書");

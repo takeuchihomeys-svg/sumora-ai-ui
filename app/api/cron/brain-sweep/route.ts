@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
+import { crossCustomerPriorityOn, customerPriority, rankCustomers, statusToStage } from "@/app/lib/conductor-priority";
 import { supabase } from "@/app/lib/supabase-server";
 import {
   runBrainAndNotify, BRAIN_SKIP_STATUSES, BRAIN_MODEL,
@@ -31,6 +32,8 @@ export const maxDuration = 120;
 // 1回の sweep で分析する最大会話数（コスト・レイテンシガード）
 // claude-sonnet-5 extended thinking: 1件最大60s × 並列3 = 1ラウンド最大60s → maxDuration=120s 内に収まるよう3件に制限
 const MAX_SWEEP_PER_RUN = 3;
+// 2026-11-03 統括⑥（conductor-priority.ts）: お客様をまたいだ優先の点を記録だけ（既定 off）
+const CROSS_PRIORITY_ON = crossCustomerPriorityOn();
 // 2026-10-18: 申込以降の関所で止まる会話を飛ばして3件を選ぶため、候補は多めに読む（関所は DB 読みだけ）
 const SWEEP_CANDIDATES = 10;
 
@@ -257,7 +260,7 @@ export async function GET(req: NextRequest) {
     const postApplyPick = !isOffSwitch(process.env.BRAIN_POST_APPLY_RECORDS) && !isOffSwitch(process.env.BRAIN_POST_APPLY_GATE);
     const { data: conversations, error } = await supabase
       .from("conversations")
-      .select("id, status")
+      .select(CROSS_PRIORITY_ON ? "id, status, updated_at, plan_goal:last_brain_meta->plan_ahead->>goal" : "id, status")
       .is("suggested_aix_meta", null)
       // FIX(post-Fable5): sweep の存在意義は「webhook brain が失敗した会話の補填」。
       // webhook は顧客メッセージ受信時のみ brain を起動するため、失敗行は必ず last_sender="customer"。
@@ -306,7 +309,7 @@ export async function GET(req: NextRequest) {
     //   戻す: BRAIN_POST_APPLY_RECORDS=off（候補も3件に戻る）
     let rows: Array<{ id: string; status?: string | null }> = [];
     const gateStopped: Array<{ id: string; reason: string }> = [];
-    for (const c of (conversations ?? []) as Array<{ id: string; status: string | null }>) {
+    for (const c of (conversations ?? []) as unknown as Array<{ id: string; status: string | null }>) {
       if (rows.length >= MAX_SWEEP_PER_RUN) break;
       if (postApplyPick) {
         const gate = await loadPostApplyBrainGate(c.id, c.status ?? null).catch((e) => {
@@ -322,6 +325,18 @@ export async function GET(req: NextRequest) {
       rows.push(c);
     }
     if (gateStopped.length) console.log(JSON.stringify({ tag: "brain-sweep:post-apply-skip", stopped: gateStopped.map((g) => ({ id: g.id.slice(0, 8), reason: g.reason })) }));
+    // 2026-11-03 統括⑥ お客様をまたいだ優先（conductor-priority.ts・CROSS_CUSTOMER_PRIORITY=on でも並びは変えない＝記録だけ）:
+    //   段階（status）×計画の期限×待たせている時間で点を付け、「点の順なら選んだ会話」と今の選びの違いを1行に残す（追加の DB の読みなし）
+    if (CROSS_PRIORITY_ON) {
+      try {
+        const now = Date.now();
+        const cands = (conversations ?? []) as unknown as Array<{ id: string; status: string | null; updated_at?: string | null; plan_goal?: string | null }>;
+        const scored = cands.map((c) => ({ id: c.id, ...customerPriority({ stage: statusToStage(c.status), planGoal: c.plan_goal ?? null, lastCustomerAt: c.updated_at ?? null, nowMs: now }) }));
+        const byScore = rankCustomers(scored, (x) => x.score).slice(0, MAX_SWEEP_PER_RUN).map((x) => x.id.slice(0, 8));
+        const actual = rows.slice(0, MAX_SWEEP_PER_RUN).map((r) => r.id.slice(0, 8));
+        console.log(JSON.stringify({ tag: "brain-sweep:priority-shadow", n: cands.length, actual, byScore, same: byScore.join() === actual.join(), top: scored.sort((a, b) => b.score - a.score).slice(0, 3).map((x) => ({ id: x.id.slice(0, 8), score: x.score, deep: x.deep })) }));
+      } catch (e) { console.warn("[brain-sweep] priority-shadow skipped:", e instanceof Error ? e.message : String(e)); }
+    }
     rows = rows.slice(0, MAX_SWEEP_PER_RUN);
     if (rows.length === 0) {
       console.log("[brain-sweep] 対象なし（0件）— suggested_aix_meta=null の会話はありません");

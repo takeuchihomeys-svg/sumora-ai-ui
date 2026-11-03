@@ -11,6 +11,7 @@
 //       拡張は /api/property-customers も認証なしで読んでいる＝見える物は増えない）
 //   印を消す書き込みはしない（拡張の search-focus.js が「押した後に検索した・送った・24時間」で効いていない印にする）。
 //   表 property_search_focus は migrate-schema に追記（本番に無い間は POST が table-missing を返し、画面は「印の表が未作成」と出す）
+import { planAheadConsumersOn, planConsumerHints } from "@/app/lib/conductor-priority";
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
@@ -93,6 +94,11 @@ export async function POST(req: NextRequest) {
     device: deviceOf(req.headers.get("user-agent")),
   };
   const { error } = await supabase.from("property_search_focus").upsert(row, { onConflict: "property_customer_id" });
+  // 2026-11-03 統括の計画を物件検索に渡す（conductor-priority.ts・PLAN_AHEAD_CONSUMERS=on・既定 off）: 検索の中身は変えず、計画のヒント（内覧できる空室を先に・1件オススメか）を1行に残す
+  if (planAheadConsumersOn()) {
+    void supabase.from("conversations").select("plan:last_brain_meta->plan_ahead").eq("id", conversationId).maybeSingle()
+      .then(({ data }) => { const plan = (data as unknown as { plan?: { goal?: string; steps?: string[] } | null } | null)?.plan ?? null; console.log(JSON.stringify({ tag: "search-focus:plan-shadow", conversationId: conversationId.slice(0, 8), goal: plan?.goal ?? null, hints: planConsumerHints(plan, Date.now()).property })); }, () => {});
+  }
   if (error) {
     const missing = isMissingTable(error.message);
     return NextResponse.json({ ok: false, error: missing ? "table-missing" : error.message }, { status: missing ? 503 : 500 });

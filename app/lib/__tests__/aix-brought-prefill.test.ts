@@ -1,6 +1,6 @@
 // app/lib/__tests__/aix-brought-prefill.test.ts — 物件確認した を開いた時の物件名・件数の初期値（実行: npx tsx app/lib/__tests__/aix-brought-prefill.test.ts）
 //   名前は 90日の監査（10/28）で台帳に混ざっていた実物の形
-import { checkForm1028On, broughtMaxAgeDays, broughtForCheck, cleanBroughtName, broughtMaterialLine, aixBroughtPrefillEnabled, orderByCustomerText, aixEstimatePrefillEnabled, checkResultFormMaterial, aixCheckFormMaterialEnabled } from "../aix-brought-prefill";
+import { checkForm1028On, broughtMaxAgeDays, broughtForCheck, cleanBroughtName, broughtMaterialLine, aixBroughtPrefillEnabled, orderByCustomerText, aixEstimatePrefillEnabled, checkResultFormMaterial, aixCheckFormMaterialEnabled, checkFormVacatingHoldOn } from "../aix-brought-prefill";
 import type { PropertyThreadState } from "../property-thread";
 import { buildSecondMaterialNote } from "../second-message-scene";
 
@@ -106,6 +106,17 @@ t("スイッチ既定 off", aixBroughtPrefillEnabled({}) === false && aixBrought
   const u = checkResultFormMaterial({ pattern: "unavailable", hasEstimate: false, env });
   t("物件なかった: 物件名は入れ号室は書かない・付随の確認は書かない", /号室は書かない/.test(u) && /駐車場/.test(u));
   t("既定 off は旧の行のまま", checkForm1028On({}) === false && /ご査収（/.test(checkResultFormMaterial({ pattern: "available", hasEstimate: true, env: {} })) && !/駐車場/.test(checkResultFormMaterial({ pattern: "unavailable", hasEstimate: false, env: {} })));
+}
+
+// 2026-11-03 竹内さんの決定 No.16: 退去予定の締めのお部屋抑えは申込が入りそうな時だけ（CHECK_FORM_VACATING_HOLD・既定 off・off は旧の形）
+{
+  t("No.16 既定 off", !checkFormVacatingHoldOn({}));
+  const off = checkResultFormMaterial({ pattern: "available", hasEstimate: false, vacating: true, env: { CHECK_FORM_1028: "on" } });
+  const on = checkResultFormMaterial({ pattern: "available", hasEstimate: false, vacating: true, env: { CHECK_FORM_1028: "on", CHECK_FORM_VACATING_HOLD: "on" } });
+  t("No.16 off は旧の形", off.includes("お客様が申込・抑えたいと言った時は申込の締め"), off);
+  t("No.16 on は申込が入りそうな時だけ", on.includes("申込が入りそうな時") && !on.includes("お客様が申込・抑えたいと言った時"), on);
+  const vacant = checkResultFormMaterial({ pattern: "available", hasEstimate: false, vacating: false, env: { CHECK_FORM_1028: "on", CHECK_FORM_VACATING_HOLD: "on" } });
+  t("No.16 空室は内覧のご案内のまま", vacant.includes("内覧のご案内"), vacant);
 }
 
 console.log(`${pass} passed, ${fail} failed`);

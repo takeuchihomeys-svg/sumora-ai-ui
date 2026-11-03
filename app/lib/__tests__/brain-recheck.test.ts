@@ -31,7 +31,7 @@ describe("brain-recheck", () => {
   });
   it("理由が無ければ空", () => { expect(recheckMaterialLine({ from: "deep", kind: "reread", why: " " })).toBe(""); expect(recheckMaterialLine(null)).toBe(""); });
   it("継ぎ目: 既定 off・上限・取り出し・digest", () => {
-    expect(recheckMode({})).toBe("off"); expect(recheckMode({ BRAIN_RECHECK: "shadow" })).toBe("shadow");
+    expect(recheckMode({})).toBe("shadow"); expect(recheckMode({ BRAIN_RECHECK: "off" })).toBe("off"); expect(recheckMode({ BRAIN_RECHECK: "shadow" })).toBe("shadow");
     expect(recheckLimit({})).toBe(1); expect(recheckLimit({ need: { difficulty: "high", confidence: "mid" } })).toBe(3); expect(recheckLimit({ need: { difficulty: "high", confidence: "high" } })).toBe(1);
     expect(pickRecheck({ aix_recheck: { from: "aix_desk", kind: "aix", key: "estimate", why: "見積書の番" } })?.key).toBe("estimate");
     expect(pickRecheck({ aix_recheck: { from: "x", kind: "aix", why: "a" } })).toBeNull(); expect(pickRecheck({})).toBeNull();

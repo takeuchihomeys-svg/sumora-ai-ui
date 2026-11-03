@@ -18,6 +18,8 @@ import { messagePlanOn, BRAIN_MESSAGE_PLAN_RULES, BRAIN_MESSAGE_PLAN_FIELD, norm
 import { needReportOn, planAheadOn, materialProvenanceOn, BRAIN_NEED_RULES, BRAIN_NEED_FIELD, BRAIN_PLAN_AHEAD_RULES, BRAIN_PLAN_AHEAD_FIELD, MATERIAL_PROVENANCE_RULE, normalizeNeed, normalizePlanAhead, prevPlanAheadLine, detectMaterialConflicts, type PlanAhead, type MaterialConflicts, threeLayerOn, mainPointOn, BRAIN_THREE_LAYER_RULES, BRAIN_THREE_LAYER_FIELD, BRAIN_MAIN_POINT_RULES, BRAIN_MAIN_POINT_FIELD, normalizeThreeLayer, normalizeMainPoint } from "@/app/lib/brain-need";
 import { flowSignalsOn, detectFlowSignals, flowSignalsLine, type FlowSignals } from "@/app/lib/flow-signals";
 import { conductorHandoffOn, candidateRoles, rolesDigest } from "@/app/lib/conductor-handoff";
+import { factLedgerMode, buildFactLedger, factLedgerBlock } from "@/app/lib/customer-fact-ledger";
+import { closedThanksNoReplyOn, layoutAskTemporaryOn, farOtherFirstOn, ackPositiveApplyOn, closedThanksLine, layoutAskLine, farOtherFirstLine, ackPositiveApplyLine, guarantorWordingOn, guarantorWordingLine } from "@/app/lib/decisions-1103";
 import { recheckMaterialLine, recheckMode, recheckLimit, pickRecheck, recheckSig, recheckDigest, type BrainRecheck } from "@/app/lib/brain-recheck";
 import { priorityStepOn, priorityRetrievalOn, BRAIN_PRIORITY_RULES, BRAIN_PRIORITIES_FIELD, normalizePriorities, ensureAsksCovered, reconcilePrioritiesWithAix, priorityRecord, renderPulledBlock, type PriorityStepRecord } from "@/app/lib/brain-priority";
 import { logWatchMaterial, noteWatchMaterials } from "@/app/lib/line-watch-materials-server";
@@ -422,6 +424,8 @@ export type SuggestedAixMeta = {
   three_layer?: import("@/app/lib/brain-need").ThreeLayer;
   main_point?: string;
   flow_signals?: string[];
+  /** 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（n15/n17/n19/n21） */
+  decisions_1103?: string[];
   /** 2026-11-03 この番に呼ぶ役の候補（網・記録だけ）→ digest.rl */
   conductor_roles?: string;
   /** 同じ段の記録（数・抜けを足した数・AIX とのそろえ・取り寄せた材料）→ digest.pr */
@@ -1594,7 +1598,7 @@ export async function analyzeConversation(
     propertyCustomerId
       ? supabase
           .from("property_customers")
-          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, ng_points, walk_minutes, last_property_sent_at, property_send_count, ai_summary, ai_summary_json, personality_profile, pet, floor_area_min, floor_area_max, commute_station, commute_minutes, area_mode, initial_cost_limit, building_age, other_requests, occupants")
+          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, ng_points, walk_minutes, last_property_sent_at, property_send_count, ai_summary, ai_summary_json, personality_profile, pet, floor_area_min, floor_area_max, commute_station, commute_minutes, area_mode, initial_cost_limit, building_age, other_requests, occupants, updated_at, created_at")
           .eq("id", propertyCustomerId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -3037,6 +3041,43 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     if (pl) customerStateBlockText += `\n\n${pl}`;
   }
   // 2026-11-03 ③ 材料の時刻と出所・食い違い（決まった計算は候補だけ・どちらを正にするかはブレイン・BRAIN_MATERIAL_PROVENANCE=on・既定 off）
+  // 2026-11-03 ④ お客様ごとの事実の帳面（customer-fact-ledger.ts・CUSTOMER_FACT_LEDGER=off 既定／shadow＝作って保存だけ／on＝材料の先頭に1ブロック）。
+  //   束ねるのは今もブレインが読んでいる物だけ（DB の追加の読みなし）。保存はサーバーの鍵（鍵が無い時は帳面なし＝今まで通り）
+  const factMode = factLedgerMode();
+  if (factMode !== "off" && !isPostApplyStatus(convStatus)) {
+    try {
+      const pm = (opts?.prevMeta ?? null) as unknown as Record<string, unknown> | null;
+      const facts = buildFactLedger({
+        state: customerState ? { stage: customerState.stage, stageLabel: customerState.stageLabel, since: customerState.since, properties: customerState.properties, viewings: customerState.viewings.map((v) => ({ ymd: v.ymd, time: v.time, name: v.name })) } : null,
+        ledger: brainLedger.entries.map((e) => ({ kind: e.kind, status: e.status, at: e.at, evidence: e.evidence, detail: { object: e.detail.object ?? null, propertyNames: e.detail.propertyNames } })),
+        meta: pm ? { plan_ahead: (pm.plan_ahead ?? null) as { goal?: string; steps?: string[] } | null, plan_ahead_at: (pm.plan_ahead_at ?? null) as string | null, three_layer: (pm.three_layer ?? null) as { worry?: string } | null, emotion: ((pm.ai_summary_json as { emotion?: string } | undefined)?.emotion ?? null), analyzed_msg_ts: (pm.analyzed_msg_ts ?? null) as string | null } : null,
+        strategy: opts?.strategy ? { checkpoint_stage: opts.strategy.checkpoint_stage ?? null, strategy_analyzed_at: opts.strategy.strategy_analyzed_at ?? null } : null,
+      });
+      if (factMode === "on") { const fb = factLedgerBlock(facts, Date.now()); if (fb) customerStateBlockText = fb + "\n\n" + customerStateBlockText; }
+      const custTs = typedMessages[0]?.sender === "customer" ? typedMessages[0].created_at : null;
+      // 保存はブレインの保存と同じ時に1回の upsert（analyzeAndSaveBrainMeta の flushFactLedger）。ここでは預けるだけ
+      const { stashFactLedger } = await import("@/app/lib/customer-fact-ledger-server");
+      stashFactLedger(conversationId, { propertyCustomerId, facts, analyzedMsgTs: custTs, builtFrom: { state: customerState?.since ?? null, strategy: opts?.strategy?.strategy_analyzed_at ?? null, meta: (pm?.analyzed_msg_ts ?? null) as string | null } });
+      console.log(JSON.stringify({ tag: "brain:fact-ledger", conversationId, mode: factMode, facts: facts.length }));
+    } catch (e) { console.warn("[brain-core] fact-ledger skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  // 2026-11-03 竹内さんの決定（11/03 夜・KB 1cef1a4e）No.15・17・19・21: 候補の網で材料に1行だけ（決めるのはブレイン・どれも既定 off）
+  let decisions1103: string[] = [];
+  if (typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus)) {
+    try {
+      const turnTxt = unrepliedTurn.text ?? "";
+      const lastStaffTxt = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim())?.text ?? null;
+      const dl = [
+        closedThanksNoReplyOn() ? closedThanksLine(turnTxt, lastStaffTxt) : "",
+        layoutAskTemporaryOn() ? layoutAskLine(turnTxt) : "",
+        farOtherFirstOn() ? farOtherFirstLine(turnTxt) : "",
+        ackPositiveApplyOn() ? ackPositiveApplyLine({ turnText: turnTxt, afterViewing: customerState?.stage === "viewed", afterEstimate: !!customerState?.properties.some((p) => p.estimateSent) }) : "",
+        guarantorWordingOn() ? guarantorWordingLine(turnTxt) : "",
+      ];
+      decisions1103 = (["n15", "n17", "n19", "n21", "n20"] as const).filter((_, i) => !!dl[i]);
+      if (decisions1103.length) { customerStateBlockText += "\n\n" + dl.filter(Boolean).join("\n"); console.log(JSON.stringify({ tag: "brain:decisions-1103", conversationId, hit: decisions1103 })); }
+    } catch (e) { console.warn("[brain-core] decisions-1103 skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-11-03 ③ 会話の流れの合図（flow-signals.ts・決まった計算は候補だけ・読むのはブレイン・BRAIN_FLOW_SIGNALS=on・既定 off）
   let flowSignalsRec: FlowSignals | null = null;
   if (BRAIN_FLOW_SIGNALS_ON && typedMessages[0]?.sender === "customer") {
@@ -3192,6 +3233,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       for (const m of typedMessages) { if (m.sender !== "customer") break; turn.push({ text: m.text, at: m.created_at }); }
       farMoveInEarly = farMoveInTurn({
         customerTurn: turn.reverse(), conditionMoveIn: pc?.move_in_time ?? null, nowIso: (await import("@/app/lib/business-clock")).monthClockNowIso(), // 11/03 月の言い方は試験のずらす前の時刻で読む（本番は今）
+        conditionSetAt: pc?.move_in_time && propertyCustomerId ? await conditionMoveInSetAt(propertyCustomerId, pc as unknown as { updated_at?: string | null; created_at?: string | null }) : null,
         staffHistory: typedMessages.filter((m) => m.sender !== "customer").map((m) => ({ text: m.text, at: m.created_at })),
       });
       if (farMoveInEarly) {
@@ -5806,6 +5848,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,
       main_point: BRAIN_MAIN_POINT_ON ? (normalizeMainPoint((parsed as { main_point?: unknown }).main_point, rentFirst.applied ? rentFirst.keyTopics : keyTopics) ?? undefined) : undefined,
       flow_signals: flowSignalsRec?.kinds.length ? [...flowSignalsRec.kinds] : undefined,
+      // 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（"n21"＝お礼の番で申込への AIX を候補にした・作業員1の AIX の統括が読む）
+      decisions_1103: decisions1103.length ? decisions1103 : undefined,
       conductor_roles: CONDUCTOR_HANDOFF_ON ? ((nd) => rolesDigest(candidateRoles({ ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""), stampOnly: /^\s*\[(?:スタンプ|画像)\]\s*$/.test(unrepliedTurn.text ?? ""), finalAction: finalAix ?? "reply", confidence: nd?.confidence ?? null, difficulty: nd?.difficulty ?? null, missing: nd?.missing ?? [] })))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
       priority_step: priorityRec,
       // 2026-10-08 本質の仕様（turn-contract.ts）: 今の番の依頼ごとの答え方（返信／約束／AIX／触れない）・閉じる番か・言わない事・気持ち。返信の最上位の決まりになる
@@ -6914,6 +6958,8 @@ async function analyzeAndSaveBrainMetaInner(
   // actuallyWritten: 実際に1行以上書き込めた場合のみ true（no-op は false）
   // Supabase は 0行マッチでも error=null を返すため writtenRows?.length で判定する
   const actuallyWritten = !error && (writtenRows?.length ?? 0) > 0;
+  // 2026-11-03 事実の帳面（CUSTOMER_FACT_LEDGER・既定 shadow）: 判断を書けた時だけ、預けた帳面を1回の upsert で保存（待たない・時間切れはその番を飛ばす）
+  if (actuallyWritten) void import("@/app/lib/customer-fact-ledger-server").then(({ flushFactLedger }) => flushFactLedger(conversationId)).catch(() => {});
   if (!actuallyWritten && !error) {
     // 会話の行が見つからなかった（削除等）。sweep の30分バックオフ用に brain_analyzed_at のみ打刻（25分以内の打刻は上書きしない）
     console.warn("[brain-core] analyzeAndSaveBrainMeta: no row written, stamping brain_analyzed_at only:", conversationId);
@@ -7691,3 +7737,13 @@ async function createCalendarEventFromBrainAction(
   }
 }
 
+
+/** 2026-11-03 条件の入居時期を最後に直した時（CONDITION_MOVE_IN_UNIFIED=on の時だけ読む・条件の履歴の1行→updated_at→created_at） */
+async function conditionMoveInSetAt(pcId: string, pcRow: { updated_at?: string | null; created_at?: string | null } | null): Promise<string | null> {
+  const { conditionMoveInUnifiedOn } = await import("@/app/lib/contact-promise");
+  if (!conditionMoveInUnifiedOn()) return null;
+  try {
+    const { data } = await supabase.from("property_condition_history").select("created_at").eq("property_customer_id", pcId).eq("changed_field", "move_in_time").order("created_at", { ascending: false }).limit(1).maybeSingle();
+    return ((data as { created_at?: string } | null)?.created_at ?? pcRow?.updated_at ?? pcRow?.created_at ?? null) as string | null;
+  } catch { return pcRow?.updated_at ?? pcRow?.created_at ?? null; }
+}
