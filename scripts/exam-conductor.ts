@@ -15,7 +15,7 @@
 //   ③ 問題ごとの揺れ: 揺れの記録（exam-flake）で答えが割れた問題は 4回（EXAM_FLAKY_REPS・3〜6）・それ以外は repeat（既定2）→ --reps-file で渡す
 //   ④ 問題の選び: --pick=types:型@N ／ gold（正解の組）／ map（exam-queue/scene-map.json の場面の地図）／ rag（brain-exam --select=rag）
 //   ＋ 終わったら依頼した人に知らせる: --notify=<エージェントの id>（無ければ exam-queue/config.json の notify[owner]）→ results/notify.jsonl と conductor.log の「📣 知らせる」の行。--run を見張る作業員がその行を SendMessage で届ける
-//   ＋ tsc の依頼: --runner=tsc --cwd=<作業ツリー>（試験と同時に流さない・1本ずつ・空きメモリ 1500MB 以上・%TEMP%/tsc.lock を取る・heap は EXAM_TSC_HEAP_MB 既定 4096）→ 0 か落ちた理由を知らせる
+//   ＋ tsc の依頼: --runner=tsc --cwd=<作業ツリー>（試験と同時に流さない・1本ずつ・空きメモリ 4500MB 以上（試験も裏の重い作業も動いていない時・空かなければ夜まで待つ）・%TEMP%/tsc.lock を取る・heap は EXAM_TSC_HEAP_MB 既定 8192（4096 では 134 で落ちる）・60分を超えて待つ tsc は指揮役に知らせる）→ 0 か落ちた理由を知らせる
 //   ＋ brain-exam 以外の試験の口: --runner=cmd --cmd="scripts/x.ts --a=1" [--cmd=...]（順に流す・関所と本番の見張りは同じ・採点は依頼者）
 // 実行:
 //   足す:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --add --label=ms-on1 --owner=作業員1 --switch=BRAIN_MATERIAL_SELF_REPORT --cwd=<作業ツリー> --only=q015,q042 --stage=brain [--repeat=2] [--env=K=V,K=V] [--flaky=q091] [--pick=...]
@@ -74,12 +74,12 @@ async function prodHealthy(): Promise<{ ok: boolean; why: string }> {
     return nl + nc > max ? { ok: false, why: `本番の失敗 直近10分 LLM ${nl}・cron ${nc}（上限 ${max}）` } : { ok: true, why: `本番の失敗 LLM ${nl}・cron ${nc}` };
   } catch (e) { return { ok: false, why: `本番の調子を読めない: ${String(e).slice(0, 80)}` }; }
 }
-/** tsc の依頼の関所: 試験と同時に流さない・tsc は1本ずつ・空きメモリが十分（既定 1500MB・EXAM_TSC_MIN_FREE_MB）。安い時間・本番の調子は見ない（LLM を呼ばない） */
+/** tsc の依頼の関所: 試験と同時に流さない・tsc は1本ずつ・空きメモリが十分（既定 4500MB・EXAM_TSC_MIN_FREE_MB・11/03 指揮役: heap 8192 で流すため）。安い時間・本番の調子は見ない（LLM を呼ばない） */
 function gateTsc(): { ok: boolean; why: string } {
   const pc = pcState();
   if (pc.tsc) return { ok: false, why: "tsc が動いている（1本ずつ）" };
   if (pc.exams > 0) return { ok: false, why: `試験が ${pc.exams}本動いている（tsc と同時に流さない）` };
-  const minFree = Number(process.env.EXAM_TSC_MIN_FREE_MB ?? "1500");
+  const minFree = Number(process.env.EXAM_TSC_MIN_FREE_MB ?? "4500");
   if (pc.free < minFree) return { ok: false, why: `空きメモリ ${pc.free}MB（tsc は ${minFree} 以上）` };
   return { ok: true, why: `空き ${pc.free}MB` };
 }
@@ -203,7 +203,7 @@ async function runTscJob(j: ExamJob & { file: string }): Promise<void> {
   const at = () => new Date().toISOString();
   const lock = join(process.env.TEMP ?? process.env.TMP ?? ".", "tsc.lock");
   try { mkdirSync(lock); } catch { log(`  tsc の鍵が取れない（${lock} がある）→ 待つ`); return; }
-  const heap = process.env.EXAM_TSC_HEAP_MB ?? "4096";
+  const heap = process.env.EXAM_TSC_HEAP_MB ?? "8192";
   log(`流す: ${j.label}（${j.owner}・tsc・heap ${heap}MB・${j.cwd}）`);
   writeFileSync(outFile, `=== ${at()} npx tsc --noEmit（${j.cwd}）===\n`);
   let code: number | null = null;
@@ -291,6 +291,7 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
   if (flag("list")) { for (const j of readJobs()) console.log(`- ${j.createdAt.slice(0, 16)} ${j.label}（${j.owner}・${j.switch}・${j.runner === "tsc" ? "tsc" : j.runner === "cmd" ? `${j.cmds?.length}本` : `${j.only || "rag"}・${j.repeat}回`}・試み ${j.tries}）`); return; }
   if (flag("run")) {
     cfg();
+    const tscAlerted = new Set<string>();
     for (;;) {
       const jobs = readJobs();
       if (!jobs.length) { log("順番待ちは空"); return; }
@@ -298,6 +299,8 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
       let picked: (typeof jobs)[number] | null = null; const whys: string[] = [];
       let examBlocked = false;
       for (const j of jobs) { if (j.runner !== "tsc" && examBlocked) continue; const g = await gate(j); if (g.ok) { picked = j; break; } whys.push(`${j.label}: ${g.why}`); if (j.runner !== "tsc") examBlocked = true; }
+      // tsc の順番待ちが長い（既定 60分・EXAM_TSC_WAIT_ALERT_MIN）時は指揮役に知らせる（依頼ごとに1回）
+      for (const j of jobs.filter((x) => x.runner === "tsc" && !tscAlerted.has(x.id))) { const min = (Date.now() - Date.parse(j.createdAt)) / 60_000; if (min >= Number(process.env.EXAM_TSC_WAIT_ALERT_MIN ?? "60")) { tscAlerted.add(j.id); const why = whys.find((w) => w.startsWith(j.label + ":")) ?? ""; appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to: "main", owner: j.owner, label: j.label, msg: `tsc の順番待ちが ${Math.round(min)}分（${why}）` }) + "\n"); log(`  📣 知らせる: to=main tsc の順番待ちが ${Math.round(min)}分（${j.label}・${j.owner}・${why}）`); } }
       if (!picked) { log(`待つ: ${whys.slice(0, 3).join("／")}（${jobs.length}本待ち）`); if (flag("once")) return; await new Promise((r) => setTimeout(r, (jobs.some((x) => x.runner === "tsc") ? 1 : 5) * 60_000)); continue; }
       await runJob(picked);
       if (flag("once")) return;
