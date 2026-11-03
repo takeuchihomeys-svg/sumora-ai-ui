@@ -15,6 +15,16 @@ export async function GET(req: NextRequest) {
   }
   const sp = req.nextUrl.searchParams;
   const days = Number(sp.get("days") ?? "365");
-  const report = await runSecondTakeuchiData({ dry: sp.get("dry") === "1", sinceDays: Number.isFinite(days) && days > 0 ? days : 365 });
+  // 2026-11-03 作業員6: 押した AIX の前後の窓だけを読む・200秒で止めて next を返す（続きは ?before=<next>）。
+  //   営業時間（JST 9〜22時）は ?force=1 が無いと動かさない（11/03 10:31〜10:45 の DB の混雑）
+  const jstHour = (new Date().getUTCHours() + 9) % 24;
+  if (jstHour >= 9 && jstHour < 22 && sp.get("force") !== "1") {
+    return NextResponse.json({ ok: true, skipped: "営業時間（JST 9〜22時）は動かさない。?force=1 で動かす", jstHour });
+  }
+  const before = sp.get("before");
+  const report = await runSecondTakeuchiData({
+    dry: sp.get("dry") === "1", sinceDays: Number.isFinite(days) && days > 0 ? days : 365,
+    beforeIso: before && Number.isFinite(Date.parse(before)) ? new Date(before).toISOString() : null, budgetMs: 200_000,
+  });
   return NextResponse.json(report, { status: report.ok ? 200 : 500 });
 }

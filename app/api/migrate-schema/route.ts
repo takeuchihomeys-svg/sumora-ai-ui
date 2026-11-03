@@ -4946,6 +4946,56 @@ REVOKE ALL ON second_takeuchi_examples FROM anon, authenticated;
 REVOKE ALL ON second_takeuchi_forms FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE second_takeuchi_examples_id_seq FROM anon, authenticated;
 
+-- 2026-11-03 作業員6: 文の指示役（構成のブレイン）の場面の RAG。竹内さん本人の返信を「場面×趣旨×意図」で引き、設計図の根拠に使う（写す手本ではない）。
+--   会話由来の文は倉庫に載せない＝DB に置く。週1の夜の cron（/api/cron/takeuchi-compose-examples）がサーバーの鍵で upsert。RPC は service_role だけ。
+CREATE TABLE IF NOT EXISTS takeuchi_compose_examples (
+  message_id UUID PRIMARY KEY,
+  conversation_key TEXT NOT NULL,
+  sent_at TIMESTAMPTZ NOT NULL,
+  scene TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  seq TEXT[] NOT NULL DEFAULT '{}',
+  main_line TEXT NOT NULL,
+  body TEXT NOT NULL,
+  customer_gist TEXT,
+  after_aix BOOLEAN NOT NULL DEFAULT false,
+  reply_minutes INT,
+  viewing_7d BOOLEAN,
+  applied_14d BOOLEAN,
+  weight REAL NOT NULL DEFAULT 1,
+  embedding vector(1536),
+  built_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS takeuchi_compose_examples_scene_idx ON takeuchi_compose_examples (scene, purpose, sent_at DESC);
+CREATE INDEX IF NOT EXISTS takeuchi_compose_examples_emb_idx ON takeuchi_compose_examples USING hnsw (embedding vector_cosine_ops);
+ALTER TABLE takeuchi_compose_examples ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON takeuchi_compose_examples FROM anon, authenticated;
+CREATE OR REPLACE FUNCTION match_takeuchi_compose(
+  query_embedding vector(1536),
+  p_scene TEXT DEFAULT NULL,
+  p_purpose TEXT DEFAULT NULL,
+  match_count INT DEFAULT 3,
+  p_exclude_key TEXT DEFAULT NULL
+)
+RETURNS TABLE(message_id UUID, scene TEXT, purpose TEXT, seq TEXT[], main_line TEXT, body TEXT, customer_gist TEXT, weight REAL, similarity FLOAT, score FLOAT)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  RETURN QUERY
+  SELECT e.message_id, e.scene, e.purpose, e.seq, e.main_line, e.body, e.customer_gist, e.weight,
+    (1 - (e.embedding <=> query_embedding))::FLOAT AS similarity,
+    ((1 - (e.embedding <=> query_embedding)) * e.weight)::FLOAT AS score
+  FROM takeuchi_compose_examples e
+  WHERE e.embedding IS NOT NULL
+    AND (p_scene IS NULL OR e.scene = p_scene)
+    AND (p_purpose IS NULL OR e.purpose = p_purpose)
+    AND (p_exclude_key IS NULL OR e.conversation_key <> p_exclude_key)
+  ORDER BY score DESC
+  LIMIT GREATEST(1, LEAST(match_count, 10));
+END;
+$$;
+REVOKE ALL ON FUNCTION match_takeuchi_compose(vector, TEXT, TEXT, INT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION match_takeuchi_compose(vector, TEXT, TEXT, INT, TEXT) TO service_role;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

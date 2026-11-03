@@ -65,6 +65,10 @@
       "schedule": "20 20 * * 0"
     },
     {
+      "path": "/api/cron/takeuchi-compose-examples",
+      "schedule": "40 20 * * 0"
+    },
+    {
       "path": "/api/cron/pickup-auto-complete",
       "schedule": "*/2 * * * *"
     },
