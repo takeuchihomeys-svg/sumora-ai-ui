@@ -126,6 +126,8 @@ export type FreshDigest = {
   tc?: string | null;
   /** 10/09: LLM の最初の AIX（la）と判断の出どころ（ds）＝本質と最終を分けて数える */
   la?: string | null; ds?: string | null;
+  /** 2026-11-03: 後ろの決まりの書き換え（"LLMのAIX→最終@出どころ"）と、下げた上書きの数（記録だけ） */
+  rw?: string; dm?: number;
   /** 2026-10-13: LLM が出した current_property（ゲートの前） */
   lp?: string | null;
   /** 2026-10-13: 生の本質の道の数（reconcile の前・llm_raw.tc）。tc は規則の後の値 */
@@ -161,6 +163,10 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     // 10/09 調査の担当: LLM が選んだ AIX（決定論の規則で変わる前）。最終の aix と比べて「規則が変えた番」を数える
     la: str(meta.aix_llm, 30) ?? str((meta.llm_raw as { action?: unknown } | undefined)?.action, 30),
     ds: str(meta.decision_source, 60) ?? str(meta.decision_source_no_aix, 60),
+    // 2026-11-03 作業員2（指揮役: 後ろの決まりの書き換えを記録・既定 on・記録だけ）: LLM の AIX（la）と最終（aix）が違う番は「何から何へ・どの決まりで」を1つの欄に。
+    //   下げた上書き（規則は当たったがブレインのまま）の数も残す。毎週の line-watch-miss-causes の「返信か AIX か」の章で a を数える
+    ...((() => { const la0 = str(meta.aix_llm, 30) ?? str((meta.llm_raw as { action?: unknown } | undefined)?.action, 30); const fin = str(meta.action, 30); const by = str(meta.decision_source, 40) ?? str(meta.decision_source_no_aix, 40); return la0 !== fin && (la0 || fin) ? { rw: `${la0 ?? "返信"}→${fin ?? "返信"}@${by ?? "-"}` } : {}; })()),
+    ...(Array.isArray(meta.demoted_overrides) && (meta.demoted_overrides as unknown[]).length ? { dm: (meta.demoted_overrides as unknown[]).length } : {}),
     // 2026-10-13 棚卸し B-6: LLM が出した current_property（実在ゲートの前）。prop（最終）と比べてゲートで落ちた番を数える
     lp: str((meta.llm_raw as { cp?: unknown } | undefined)?.cp, 40),
     ltc: str((meta.llm_raw as { tc?: unknown } | undefined)?.tc, 20),

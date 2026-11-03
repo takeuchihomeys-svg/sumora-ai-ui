@@ -98,6 +98,32 @@ async function fetchRows(filter: (q: any) => any): Promise<Row[]> {
   for (const [k, mm] of [...byScene].sort((a, b) => [...b[1].values()].reduce((x, y) => x + y, 0) - [...a[1].values()].reduce((x, y) => x + y, 0))) {
     console.log(`- ${k || "（場面なし）"}: ${[...mm].map(([c, n]) => `${c} ${n}`).join("・")}`);
   }
+  // 2026-11-03 作業員2（指揮役）: 返信か AIX かの外れ（スタッフが同じ返しで AIX を押し、ブレインが同じ系統の AIX でなかった番）をぶつかりの種類で数える。
+  //   読みは2回だけ（見張りの番の一覧1回＋判断の記録の digest を id でまとめて1回）＝営業時間でも DB を叩かない。夜に回す
+  //   a 後ろの決まりの書き換え（digest.rw）／b ブレイン（LLM）自身が返信／c 約束かその場か（下書きが同じ系統の約束）／d 返信と AIX の両方（スタッフが手打ちの文と AIX の両方）
+  {
+    const FAM = (k: string | null | undefined) => ({ property_check_result: "確認", acknowledge_check: "確認", estimate_sheet: "見積", cost_breakdown: "見積", property_send: "物件", property_recommendation: "物件", zenryoku_support: "物件" } as Record<string, string>)[String(k ?? "").split("/")[0]] ?? String(k ?? "");
+    const PROM: Record<string, RegExp> = { 見積: /(?:御見積|お見積|見積書)[^。！\n]{0,20}(?:作成|お送り|させて頂きます)/, 確認: /確認させて頂きます|確認させていただきます|確認(?:出来|でき)次第/, 物件: /ピックアップ[^。！\n]{0,20}(?:お送り|させて頂きます)|出次第[^。！\n]{0,10}お送り/ };
+    const since7 = new Date(Date.now() - 7 * DAY).toISOString();
+    const { data: wt } = await sb.from("line_watch_turns").select("id, brain_action, decision_id, draft_last, staff_texts, staff_aix").gte("customer_turn_at", since7).limit(2000);
+    type W = { id: number; brain_action: string | null; decision_id: string | null; draft_last: string | null; staff_texts: unknown; staff_aix: Array<{ aix_type: string; burst: boolean }> | null };
+    const cand = ((wt ?? []) as W[]).filter((w) => (w.staff_aix ?? []).some((a) => a.burst) && !(w.staff_aix ?? []).some((a) => a.burst && FAM(a.aix_type) === FAM(w.brain_action) && !!w.brain_action));
+    const ids = cand.map((w) => w.decision_id).filter((x): x is string => !!x);
+    const dg = new Map<string, { rw?: string; la?: string | null }>();
+    for (let i = 0; i < ids.length; i += 200) { const { data } = await sb.from("brain_decision_logs").select("id, digest").in("id", ids.slice(i, i + 200)); for (const d of data ?? []) dg.set(d.id as string, (d.digest ?? {}) as { rw?: string; la?: string | null }); }
+    const kinds: Record<string, number> = {};
+    for (const w of cand) {
+      const staffAix = (w.staff_aix ?? []).find((a) => a.burst)!.aix_type;
+      const d = w.decision_id ? dg.get(w.decision_id) : undefined;
+      const hasText = Array.isArray(w.staff_texts) ? (w.staff_texts as unknown[]).some((t) => String(typeof t === "string" ? t : (t as { text?: string })?.text ?? "").trim().length >= 15) : false;
+      const re = PROM[FAM(staffAix)];
+      const k = d?.rw ? "a 後ろの決まりの書き換え" : !w.brain_action && re && re.test(w.draft_last ?? "") ? (hasText ? "d 両方（約束＋AIX）" : "c 約束かその場か") : !w.brain_action ? (hasText ? "d 両方（返信＋AIX）" : "b ブレイン自身が返信") : "その他 AIX の種類違い";
+      kinds[k] = (kinds[k] ?? 0) + 1;
+    }
+    console.log("");
+    console.log(`## 返信か AIX かの外れ（直近7日・スタッフが AIX を押した番でブレインが同じ系統でなかった ${cand.length}番）`);
+    for (const [k, n] of Object.entries(kinds).sort((a, b) => b[1] - a[1])) console.log(`- ${k}: ${n}`);
+  }
   if (LIST) {
     console.log("");
     console.log("## 番ごと（直近7日）");
