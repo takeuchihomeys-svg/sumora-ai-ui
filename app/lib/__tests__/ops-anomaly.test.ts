@@ -1,6 +1,6 @@
 // app/lib/__tests__/ops-anomaly.test.ts — 本番の異常の知らせの判断（純関数）
 //   実行: npx tsx app/lib/__tests__/ops-anomaly.test.ts
-import { evaluateAnomalies, planAnomalyWrites, anomalyDestinations, opsAnomalyWatchOn, anomalyLineTargetFrom, anomalyLineConversation, shouldLineNotify, type AnomalyStats } from "../ops-anomaly";
+import { opsAnomalyWatchMode, evaluateAnomalies, planAnomalyWrites, anomalyDestinations, opsAnomalyWatchOn, anomalyLineTargetFrom, anomalyLineConversation, shouldLineNotify, type AnomalyStats } from "../ops-anomaly";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const base: AnomalyStats = { llmFail15: 0, llmFailBaseline: [0, 0, 0, 0], draftStuck: 0, cronFail30: 0, customerMsgs90: 0, brainLogs90: 0, jstHour: 14 };
@@ -35,7 +35,7 @@ const nowMs = Date.parse("2026-11-03T10:00:00Z");
 t("同じ種類は1時間に1回まで", !shouldLineNotify("llm_fail", { llm_fail: "2026-11-03T09:30:00Z" }, nowMs, ["table", "line"]) && shouldLineNotify("llm_fail", { llm_fail: "2026-11-03T08:59:00Z" }, nowMs, ["table", "line"]) && shouldLineNotify("cron_fail", { llm_fail: "2026-11-03T09:30:00Z" }, nowMs, ["line"]));
 t("宛先に line が無ければ送らない", !shouldLineNotify("llm_fail", {}, nowMs, ["table"]));
 t("知らせ先を足せる", anomalyDestinations({ OPS_ANOMALY_DESTINATIONS: "table, line" }).join(",") === "table,line");
-t("見張りは既定 off", !opsAnomalyWatchOn({}) && opsAnomalyWatchOn({ OPS_ANOMALY_WATCH: "on" }));
+t("見張りは既定 dry（書かない・送らない）", opsAnomalyWatchMode({}) === "dry" && !opsAnomalyWatchOn({}) && opsAnomalyWatchOn({ OPS_ANOMALY_WATCH: "on" }) && opsAnomalyWatchMode({ OPS_ANOMALY_WATCH: "off" }) === "off");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

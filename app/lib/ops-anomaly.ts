@@ -64,8 +64,8 @@ export function anomalyDestinations(env: Record<string, string | undefined> = pr
   const v = String(env.OPS_ANOMALY_DESTINATIONS ?? "table,line").split(",").map((x) => x.trim()).filter(Boolean);
   return v.length ? v : ["table"];
 }
-/** OPS_ANOMALY_WATCH: off（既定）／dry（数えて決めてログに出すだけ・表に書かない＝最初の確かめ用。vercel crons run は query を渡せない）／on */
-export function opsAnomalyWatchMode(env: Record<string, string | undefined> = process.env): "off" | "dry" | "on" { const v = String(env.OPS_ANOMALY_WATCH ?? "").trim().toLowerCase(); return v === "on" ? "on" : v === "dry" ? "dry" : "off"; }
+/** OPS_ANOMALY_WATCH: off／dry（既定・11/03）（数えて決めてログに出すだけ・表に書かない＝最初の確かめ用。vercel crons run は query を渡せない）／on */
+export function opsAnomalyWatchMode(env: Record<string, string | undefined> = process.env): "off" | "dry" | "on" { const v = String(env.OPS_ANOMALY_WATCH ?? "").trim().toLowerCase(); return v === "on" ? "on" : v === "off" ? "off" : "dry"; } // 11/03 指揮役: 既定は dry（数えてログに1行・表に書かない・送らない）
 export function opsAnomalyWatchOn(env: Record<string, string | undefined> = process.env): boolean { return opsAnomalyWatchMode(env) === "on"; }
 
 // ─── 竹内さん個人の LINE（2026-11-03 夕 竹内さんの決定・KB P1）──────────────────────────

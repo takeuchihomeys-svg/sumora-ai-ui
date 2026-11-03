@@ -4,11 +4,12 @@
 //   候補を問題にするのは今まで通り scripts/brain-exam-add.ts（正解は人が決める）。試験の統括の --pick=map の地図を埋める元にもなる
 //   読むだけ・LLM なし・費用 0。重い読み（60日の見張り）なので夜に: exam-conductor.ts --add --runner=cmd --night --label=answer-sets --cmd="scripts/exam-answer-sets.ts"
 //   出力: .claude/exam-cache/answer-sets/<日付>.md / .json
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../app/lib/test-conversations";
 import { examCacheRoot } from "./lib/llm-cassette";
+import { monthWordKinds } from "./lib/exam-month-words";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -52,6 +53,18 @@ type Turn = { id: number; conversation_id: string; customer_turn_at: string; sce
   const L = [`# 正解の組と問題の地図（${day}・見張りの直近 ${DAYS}日）`, "", `問題 ${spec.length}問・場面 ${rows.length}・薄い（問題 ${THIN} 未満）場面 ${rows.filter((r) => r.problems < THIN && r.all > 0).length}`, "",
     "| 場面 | 問題 | 見張りの番 | 竹内さんの番 | 候補（見張りの id・道） |", "|---|---|---|---|---|",
     ...rows.map((r) => `| ${r.scene} | ${r.problems} | ${r.all} | ${r.takeuchi} | ${r.cands.map((c) => `#${c.id}(${c.path}・${c.verdict})`).join(" ") || "-"} |`)];
+  // 11/03 指揮役: 試験の時計の弱さの見張り＝月だけの言い方（入居・支払い）がある問題（共有の問題の置き場の全部の問題を読む）。新しく出たら noDateShift を付けるか決める
+  const probDir = join(examCacheRoot(), "brain-exam-problems");
+  const monthHits: string[] = [];
+  if (existsSync(probDir)) for (const d of readdirSync(probDir)) {
+    const dd = join(probDir, d);
+    let txt = ""; try { for (const f of readdirSync(dd)) txt += readFileSync(join(dd, f), "utf8"); } catch { continue; }
+    const k = monthWordKinds(txt);
+    if (k.length) monthHits.push(`${d}（${k.join("・")}）`);
+  }
+  // 入居の月の言い方は条件（move_in_time）にほぼ全部ある（11/03 実測 136/189）＝数だけ。月の時計（monthClockNowIso）で読むので、同じ読みを通す決まりが増えたら見直す
+  const payHits = monthHits.filter((x) => x.includes("支払い")), moveN = monthHits.filter((x) => x.includes("入居")).length;
+  L.push("", `## 月だけの言い方（試験の時計の弱さ）`, `- 入居: ${moveN}問（条件の入居時期にほぼ全部ある・月の時計で直した＝数だけ）`, `- 支払い: ${payHits.length}問（payment-timing は未対応＝出たら noDateShift を付けるか決める）`, ...payHits.map((x) => `  - ${x}`));
   const out = join(examCacheRoot(), "answer-sets");
   mkdirSync(out, { recursive: true });
   writeFileSync(join(out, `${day}.md`), L.join("\n") + "\n");
