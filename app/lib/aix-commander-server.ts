@@ -90,3 +90,25 @@ export async function runAixCommander(client: Anthropic, o: {
   const a = parseCommanderAnswer(raw, cands);
   return { ran: true, brainKey, cands, pick: a.pick, also: a.also, sendBack: a.sendBack, why: a.why, ms: Date.now() - t0 };
 }
+
+/** 逆向きの相談（ブレインが返信と決めかけた番）。呼ぶ側で「きっかけがある番」だけにする */
+export async function runAixConsult(client: Anthropic, o: { conversationId: string; sceneButtons: readonly string[]; conversation: string; situationLine: string }): Promise<{ ran: boolean; skip?: string; cands: string[]; answer: "aix" | "promise" | "keep"; key: string | null; why: string; ms: number }> {
+  const t0 = Date.now();
+  const { cards, error } = await loadDeskCards();
+  if (!cards.size) return { ran: false, skip: error ?? "札が無い", cands: [], answer: "keep", key: null, why: "", ms: Date.now() - t0 };
+  const { consultCandidates, AIX_CONSULT_SYSTEM, parseConsultAnswer } = await import("./aix-commander");
+  const cands = consultCandidates(o.sceneButtons, [...cards.keys()]);
+  if (!cands.length) return { ran: false, skip: "場面の候補が無い", cands, answer: "keep", key: null, why: "", ms: Date.now() - t0 };
+  const user = commanderUserText({ situationLine: o.situationLine, conversation: o.conversation, cards: cands.map((k) => ({ key: k, text: cards.get(k) ?? "" })) }).replace("/ reply / promise", "/ promise / keep");
+  const res = await client.messages.create({
+    model: MODEL, max_tokens: 300, temperature: 0,
+    system: [{ type: "text", text: AIX_CONSULT_SYSTEM, cache_control: { type: "ephemeral" } }],
+    messages: [{ role: "user", content: user }],
+  }, { headers: { [LLM_ACTION_HEADER]: "aix_desk_consult", [LLM_CONVERSATION_HEADER]: o.conversationId } });
+  logLlmUsage("aix_desk_consult", res.usage, { conversationId: o.conversationId, model: MODEL });
+  const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+  let raw: unknown = null;
+  try { raw = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch { raw = null; }
+  const a = parseConsultAnswer(raw, cands);
+  return { ran: true, cands, ...a, ms: Date.now() - t0 };
+}

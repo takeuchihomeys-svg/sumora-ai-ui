@@ -123,3 +123,54 @@ export function broughtThisTurnNames(turnText: string): string[] {
   }
   return [...new Set(out)].slice(0, 5);
 }
+
+// ─── 逆向きの相談（2026-11-03 竹内さん「AIX かもってなったら AIX のブレインに相談して AIX のブレインが判断する」・KB P1）─────────────────
+//   ブレインが返信と決めた番でも、①自信が低い（本質の依頼に AIX・約束があるのに最後は返信／場面が曖昧）②根拠の無い事実（作業員6の no_ground）
+//   ③スタッフしか分からない気配（募集・空き・初期費用・内覧の日時・持ち込みの物件）の時だけ、返信と決めきる前に AIX の統括に相談する。
+//   答え: aix（鍵）／promise（確認の約束）／keep（返信のままで良い）。読み直しは作業員2の口（opts.recheck）で1回だけ。切替: AIX_DESK_CONSULT（既定 off・shadow／on）
+export function aixDeskConsultMode(env: Env = typeof process !== "undefined" ? process.env : {}): AixDeskMode {
+  const v = (env.AIX_DESK_CONSULT ?? "").trim().toLowerCase();
+  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+}
+
+/** スタッフしか分からない気配（お客様の言葉）。会話・資料で答えられる質問も混ざる＝相談のきっかけだけ（決めるのは AIX の統括） */
+export const STAFF_ONLY_CUE_RE = /空(?:い|き)|募集|まだ(?:あり|あります|ある)|初期費用|見積|いくら|内覧|内見|見学|何時|何日|駐車場|ペット|入居(?:日|可能)|退去|審査|交渉|安く(?:なり|でき)|https?:\/\/|【物件の(?:画面|資料)/;
+
+export type ConsultTrigger = "contract_aix" | "scene_uncertain" | "no_ground" | "staff_only_cue";
+/** 相談するきっかけ（無ければ []） */
+export function consultTriggers(o: { contractAsksAixOrPromise: boolean; sceneUncertain: boolean; noGround: boolean; turnText: string }): ConsultTrigger[] {
+  const out: ConsultTrigger[] = [];
+  if (o.contractAsksAixOrPromise) out.push("contract_aix");
+  if (o.noGround) out.push("no_ground");
+  if (STAFF_ONLY_CUE_RE.test(o.turnText ?? "")) out.push("staff_only_cue");
+  if (o.sceneUncertain && out.length) out.push("scene_uncertain"); // 場面が曖昧なだけでは相談しない（お礼・雑談の番を増やさない）
+  return out;
+}
+
+export const AIX_CONSULT_SYSTEM = [
+  "あなたは大阪の賃貸仲介（スモラ）の「AIX の統括」です。LINE の統括（ブレイン）はこの番を返信で答えると決めかけていますが、AIX の番かもしれないので相談に来ました。",
+  "候補のボタン×ピッカーの担当の札を読み、この番の後にスタッフ（竹内さん＝社長の基準）がする事を1つ選びます。",
+  "選べる答え: 候補の鍵のどれか（スタッフだけが知る事＝管理会社に確認した結果・見積の金額・内覧の空き・撮った写真などを送る番）／promise（スタッフだけが知る事が要るが、まず確認の約束の返信で受ける番）／keep（会話・資料・会社の事実だけで答えられる＝返信のままで良い）。",
+  "迷う時は keep にする（返信の当たりを落とさない）。資料・会話に書いてある事の質問は keep。",
+  "【取り違えやすい組の見分けの軸】",
+  ...AIX_PAIR_AXES,
+  '出力は JSON だけ: {"answer":"鍵 か promise か keep","why":"短く"}',
+].join("\n");
+
+/** 相談の候補: 場面のボタン（catalogSceneButtons）＋組の相手（最大6） */
+export function consultCandidates(sceneButtons: readonly string[], cardKeys: readonly string[]): string[] {
+  const out: string[] = [];
+  const add = (k: string | null) => { if (k && cardKeys.includes(k) && !out.includes(k) && out.length < 6) out.push(k); };
+  for (const b of sceneButtons) add(deskKeyOf(b, null, cardKeys));
+  for (const k of [...out]) for (const pb of AIX_PAIRS[buttonOfKey(k)] ?? []) add(deskKeyOf(pb, null, cardKeys));
+  return out;
+}
+
+export function parseConsultAnswer(raw: unknown, cands: readonly string[]): { answer: "aix" | "promise" | "keep"; key: string | null; why: string } {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const a = String(o.answer ?? "").trim();
+  const why = String(o.why ?? "").slice(0, 200);
+  if (a === "promise") return { answer: "promise", key: null, why };
+  if (cands.includes(a)) return { answer: "aix", key: a, why };
+  return { answer: "keep", key: null, why };
+}

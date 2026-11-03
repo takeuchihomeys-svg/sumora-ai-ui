@@ -133,7 +133,7 @@ import { linkConductorBrainEnabled } from "@/app/lib/link-conductor";
 import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmedAckMaterialLine } from "@/app/lib/viewing-confirmed-ack";
 import { nowFulfillableEnabled, nowFulfillableLine } from "@/app/lib/situation-summary";
 import { brainLastTurnReviewOn, reviewLastTurn, lastTurnReviewLine, lastTurnReviewDigest, type StaffActAfter } from "@/app/lib/brain-last-turn-review";
-import { aixDeskCommandMode, actionOfKey, broughtThisTurnNames } from "@/app/lib/aix-commander";
+import { aixDeskCommandMode, actionOfKey, broughtThisTurnNames, aixDeskConsultMode, consultTriggers } from "@/app/lib/aix-commander";
 import { decideBrainDepth } from "@/app/lib/brain-depth";
 import { sentLedgerBindEnabled, explainedItemsOf, itemsFromLedger, bindReaction, bindMaterialLine } from "@/app/lib/sent-ledger-bind";
 import { vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled, vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
@@ -349,6 +349,8 @@ export type SuggestedAixMeta = {
   two_choice_aix?: string;             // 2026-10-28 約束の側から出した2択の左のボタン（TWO_CHOICE_PROMISE_OR_NOW）
   two_choice_check_pattern?: string;
   /** 2026-10-29 AIX の統括（AIX_DESK_COMMAND）の記録: 候補・選んだ鍵・同じ連投の別の要件・差し戻し・ブレインと違ったか（digest.ad） */
+  /** 2026-11-03 逆向きの相談（AIX_DESK_CONSULT）: きっかけ・AIX の統括の答え（aix／promise／keep）・鍵（digest.ac）。on の時は読み直しの口（作業員2）に渡す */
+  aix_consult?: { mode: string; why: string[]; answer: string; key: string | null; note: string; cands: string[]; skip?: string };
   aix_desk?: { mode: string; brain: string | null; cands: string[]; pick: string | null; also: string[]; sb: string | null; why: string; changed: boolean; skip?: string };
   material_read_misses?: string[];     // 2026-10-29 DB から読めなかった材料の鍵（brain:material-miss と同じ・digest.mx・数えるため）
   /** 2026-11-03 前回の提案の振り返り（digest.rv）と今の段階（digest.sg＝次の番の「お客様は進んだか」に使う） */
@@ -5687,6 +5689,30 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         console.warn(JSON.stringify({ tag: "brain:aix-desk", conversationId, error: (e instanceof Error ? e.message : String(e)).slice(0, 160) }));
       }
     }
+    // 2026-11-03 逆向きの相談（竹内さん「AIX かもってなったら AIX のブレインに相談」・aix-commander.ts）: ブレインが返信と決めかけた番で、きっかけがある時だけ AIX の統括に聞く。
+    //   既定 off／shadow＝答えを記録だけ（digest.ac）／on＝記録＋読み直しの口へ渡す材料（作業員2の opts.recheck が入るまでは記録と同じ）。答えでこの番を書き換えない
+    let aixConsult: NonNullable<SuggestedAixMeta>["aix_consult"] | undefined;
+    const consultMode = aixDeskConsultMode();
+    if (consultMode !== "off" && replyMode !== "aix" && !finalAix && !isPostApplyStatus(convStatus) && conversationId && typedMessages[0]?.sender === "customer") {
+      try {
+        const tcAsks = normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? [];
+        const triggers = consultTriggers({ contractAsksAixOrPromise: tcAsks.some((a) => a.route === "aix" || a.route === "promise"), sceneUncertain: brainSceneUncertain, noGround: false, turnText: unrepliedTurn.text ?? "" });
+        if (triggers.length) {
+          const { runAixConsult } = await import("@/app/lib/aix-commander-server");
+          const { catalogSceneButtons } = await import("@/app/lib/aix-catalog");
+          const msgsC = [...typedMessages].reverse().slice(-10);
+          const lastStaffC = msgsC.map((m) => m.sender !== "customer").lastIndexOf(true);
+          const convC = msgsC.map((m, i) => `${m.sender === "customer" && i > lastStaffC ? "★" : ""}${m.sender === "customer" ? "お客様" : "こちら"}: ${maskBrain(String(m.text ?? "")).replace(/\s+/g, " ").slice(0, 220)}`).join("\n");
+          const broughtC = broughtThisTurnNames(unrepliedTurn.text ?? "");
+          const sitC = [customerState ? nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() }) : "", broughtC.length ? `今の番の持ち込み（まだ確認が要る）: ${broughtC.join("・")}` : ""].filter(Boolean).join("／");
+          const sceneNowC = brainSceneRes?.scene ?? resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene;
+          const sceneButtons = sceneNowC ? catalogSceneButtons(sceneNowC) : [];
+          const run = await runAixConsult(client, { conversationId, sceneButtons, conversation: convC, situationLine: maskBrain(sitC) });
+          aixConsult = { mode: consultMode, why: triggers, answer: run.answer, key: run.key, note: run.why.slice(0, 120), cands: run.cands, ...(run.skip ? { skip: run.skip } : {}) };
+          console.log(JSON.stringify({ tag: "brain:aix-consult", conversationId, ...aixConsult, ms: run.ms }));
+        }
+      } catch (e) { console.warn(JSON.stringify({ tag: "brain:aix-consult", conversationId, error: (e instanceof Error ? e.message : String(e)).slice(0, 160) })); }
+    }
     return {
       action: deskOverride?.action ?? finalAix ?? "",
       parallel_search: parallelOut.parallel,
@@ -5727,6 +5753,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-09-26 段3: 並行で探す時は物件ピックアップも並べる（parallelOut に畳んだ）
       alt_actions: deskOverride ? [...new Set([...deskOverride.also, ...(finalAlts ?? [])].filter((a) => a !== deskOverride!.action))] : finalAlts,
       aix_desk: aixDesk,
+      aix_consult: aixConsult,
       // Chrome拡張フィードバックループ: 検索フォーム自動入力用の構造化パラメータ（TODO(P2)対応）
       property_search_params: pc ? {
         area: pc.desired_area ?? null,
