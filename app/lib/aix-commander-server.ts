@@ -27,6 +27,9 @@ function admin(): { sb: SupabaseClient | null; error: string | null } {
 }
 
 let cache: { at: number; cards: Map<string, string> } | null = null;
+/** 2026-11-04 札ごとの竹内さんの番の数（owner_count）＝⑤(b) 札を SearchHit にする時の書き手。札と同じ時に読む */
+let ownersCache: Map<string, number> = new Map();
+export function deskCardOwners(): ReadonlyMap<string, number> { return ownersCache; }
 /** 札（鍵→本文）。読めない時は空＋理由 */
 export async function loadDeskCards(): Promise<{ cards: Map<string, string>; error: string | null }> {
   if (cache && Date.now() - cache.at < CARD_TTL_MS) return { cards: cache.cards, error: null };
@@ -37,8 +40,9 @@ export async function loadDeskCards(): Promise<{ cards: Map<string, string>; err
     if (file && (process.env.LLM_TEST_MODE || process.env.LLM_TEST_FINAL_CLAUDE)) {
       try {
         const { readFileSync } = await import("node:fs");
-        const j = JSON.parse(readFileSync(file, "utf8")) as { cards: Record<string, { text: string }> };
+        const j = JSON.parse(readFileSync(file, "utf8")) as { cards: Record<string, { text: string; owner?: number }> };
         const cards = new Map(Object.entries(j.cards).map(([k, v]) => [k, v.text]));
+        ownersCache = new Map(Object.entries(j.cards).map(([k, v]) => [k, Number(v.owner ?? 0)]));
         cache = { at: Date.now(), cards };
         return { cards, error: null };
       } catch (e) { return { cards: new Map(), error: `AIX_DESK_CARDS_FILE: ${e instanceof Error ? e.message : e}` }; }
@@ -46,9 +50,11 @@ export async function loadDeskCards(): Promise<{ cards: Map<string, string>; err
     console.warn(JSON.stringify({ tag: "brain:aix-desk-cards", error }));
     return { cards: new Map(), error };
   }
-  const { data, error: e } = await sb.from("aix_desk_cards").select("key, card_text");
+  const { data, error: e } = await sb.from("aix_desk_cards").select("key, card_text, owner_count");
   if (e) return { cards: new Map(), error: `aix_desk_cards: ${e.message}` };
-  const cards = new Map(((data ?? []) as Array<{ key: string; card_text: string }>).map((r) => [r.key, r.card_text]));
+  const rows = (data ?? []) as Array<{ key: string; card_text: string; owner_count: number | null }>;
+  const cards = new Map(rows.map((r) => [r.key, r.card_text]));
+  ownersCache = new Map(rows.map((r) => [r.key, Number(r.owner_count ?? 0)]));
   cache = { at: Date.now(), cards };
   return { cards, error: null };
 }
@@ -63,12 +69,14 @@ export type CommanderRun = {
   sendBack: "promise" | "not_aix" | null;
   why: string;
   ms: number;
+  /** 2026-11-04 ⑤(b) 候補の札を引き分けの口（conductor-search.pickHits）に渡す形（鍵と書き手だけ・記録用・答えは変えない） */
+  hits?: import("./aix-commander").DeskSearchHit[];
 };
 
 /** AIX の統括を1回呼ぶ（呼ぶ側で「ブレインが AIX と決めた番」だけにする） */
 export async function runAixCommander(client: Anthropic, o: {
   conversationId: string; brainAction: string; brainCheckPattern: string | null; altActions: readonly string[];
-  conversation: string; situationLine: string; ledgerBlock?: string;
+  conversation: string; situationLine: string; ledgerBlock?: string; scene?: string | null;
 }): Promise<CommanderRun> {
   const t0 = Date.now();
   const base: CommanderRun = { ran: false, brainKey: null, cands: [], pick: null, also: [], sendBack: null, why: "", ms: 0 };
@@ -77,8 +85,10 @@ export async function runAixCommander(client: Anthropic, o: {
   const keys = [...cards.keys()];
   const brainKey = deskKeyOf(o.brainAction, o.brainCheckPattern, keys);
   const cands = commanderCandidates(brainKey, o.altActions, keys);
-  if (cands.length < 2) return { ...base, brainKey, cands, skip: "比べる候補が1つ以下", ms: Date.now() - t0 };
-  if (!deskCallGoesAlt(AIX_DESK_ACTION)) return { ...base, brainKey, cands, skip: "DeepSeek に回らない（Claude には送らない）", ms: Date.now() - t0 };
+  const { deskCardsAsHits } = await import("./aix-commander");
+  const hits = deskCardsAsHits(cands, cards, ownersCache, o.scene ?? null);
+  if (cands.length < 2) return { ...base, brainKey, cands, hits, skip: "比べる候補が1つ以下", ms: Date.now() - t0 };
+  if (!deskCallGoesAlt(AIX_DESK_ACTION)) return { ...base, brainKey, cands, hits, skip: "DeepSeek に回らない（Claude には送らない）", ms: Date.now() - t0 };
   const user = commanderUserText({ situationLine: o.situationLine, conversation: o.conversation, cards: cands.map((k) => ({ key: k, text: cards.get(k) ?? "" })), ledgerBlock: o.ledgerBlock });
   const res = await client.messages.create({
     model: MODEL,
@@ -92,7 +102,7 @@ export async function runAixCommander(client: Anthropic, o: {
   let raw: unknown = null;
   try { raw = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch { raw = null; }
   const a = parseCommanderAnswer(raw, cands);
-  return { ran: true, brainKey, cands, pick: a.pick, also: a.also, sendBack: a.sendBack, why: a.why, ms: Date.now() - t0 };
+  return { ran: true, brainKey, cands, hits, pick: a.pick, also: a.also, sendBack: a.sendBack, why: a.why, ms: Date.now() - t0 };
 }
 
 /** 逆向きの相談（ブレインが返信と決めかけた番）。呼ぶ側で「きっかけがある番」だけにする */

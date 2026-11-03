@@ -234,3 +234,17 @@ export function recheckDigest(r: RecheckLike | null, consultAnswer?: string | nu
   if (r) return r.kind === "aix" ? `aix:${r.key ?? ""}` : String(r.kind);
   return consultAnswer === "keep" ? "keep" : null;
 }
+
+// ─── 2026-11-04 ⑤(b) 札を統括の引き分けの口（作業員2 conductor-search.ts の SearchHit・pickHits）に渡す形 ─────────────
+//   札は竹内さんの番の手本だけで作る（KB 41dadfe6）。竹内さんの番が0の札は、従業員の候補（【候補・竹内さんの番ではない】）があれば "employee"・無ければ "template"＝pickHits の「補った数」に出る
+//   形は conductor-search.ts の SearchHit と同じ（{ id, store, score?, scene?, stage?, text?, writer? }）。ここでは札の鍵と書き手だけ（本文は渡さない＝引き分けに要らない・伏せた文を広げない）
+export type DeskSearchHit = { id: string; store: "aix_cards"; score?: number; scene?: string; writer: "takeuchi" | "employee" | "template" };
+export const DESK_EMPLOYEE_MARK = "【候補・竹内さんの番ではない】";
+export function deskCardsAsHits(cands: readonly string[], cards: ReadonlyMap<string, string>, owners: ReadonlyMap<string, number>, scene: string | null): DeskSearchHit[] {
+  return cands.filter((k) => cards.has(k)).map((k, i) => {
+    const owner = owners.get(k) ?? 0;
+    const writer = owner > 0 ? "takeuchi" : (cards.get(k) ?? "").includes(DESK_EMPLOYEE_MARK) ? "employee" : "template";
+    // 並び: 統括の候補の順（ブレインの鍵が先頭）＝1, 0.9, 0.8…（pickHits が統括メタで並べ替える）
+    return { id: k, store: "aix_cards" as const, score: Math.max(0.1, 1 - i * 0.1), ...(scene ? { scene } : {}), writer };
+  });
+}

@@ -5756,7 +5756,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         const conv = msgsDesk.map((m, i) => `${m.sender === "customer" && i > lastStaff ? "★" : ""}${m.sender === "customer" ? "お客様" : "こちら"}: ${maskBrain(String(m.text ?? "")).replace(/\s+/g, " ").slice(0, 220)}`).join("\n");
         const brought = broughtThisTurnNames(unrepliedTurn.text ?? "");
         const sit = [customerState ? nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() }) : "", brought.length ? `今の番の持ち込み（まだ確認が要る）: ${brought.join("・")}` : ""].filter(Boolean).join("／");
-        const run = await runAixCommander(client, { conversationId, brainAction: finalAix, brainCheckPattern: checkKind?.check_pattern || null, altActions: finalAlts ?? [], conversation: conv, situationLine: maskBrain(sit), ledgerBlock: deskLedgerBlock });
+        const run = await runAixCommander(client, { conversationId, brainAction: finalAix, brainCheckPattern: checkKind?.check_pattern || null, altActions: finalAlts ?? [], conversation: conv, situationLine: maskBrain(sit), ledgerBlock: deskLedgerBlock, scene: brainSceneRes?.scene ?? null });
         const pickBtn = run.pick ? actionOfKey(run.pick) : null;
         const changed = !!pickBtn && (pickBtn.action !== finalAix || (!!pickBtn.checkPattern && pickBtn.checkPattern !== (checkKind?.check_pattern || null)));
         // 2026-11-03 竹内さん「統括に6つ足す」②: 下の役（AIX の統括）の答えを確かな事実と照らす。合わなければ差し戻し（読み直しの口・記録は digest.ad.cf）

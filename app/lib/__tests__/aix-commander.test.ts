@@ -1,6 +1,6 @@
 // app/lib/__tests__/aix-commander.test.ts — AIX の統括（候補・答えの整え・鍵→ボタン）（2026-10-29）
 //   実行: npx tsx app/lib/__tests__/aix-commander.test.ts
-import { noteDecisions1103, takeDecisions1103, aixDeskAckApplyOn, hasAckPositiveApply, consultTriggers, aixDeskCommandMode, deskKeyOf, commanderCandidates, parseCommanderAnswer, actionOfKey, commanderUserText, AIX_COMMANDER_SYSTEM } from "../aix-commander";
+import { noteDecisions1103, takeDecisions1103, aixDeskAckApplyOn, hasAckPositiveApply, consultTriggers, aixDeskCommandMode, deskKeyOf, commanderCandidates, parseCommanderAnswer, actionOfKey, commanderUserText, AIX_COMMANDER_SYSTEM, deskCardsAsHits, DESK_EMPLOYEE_MARK } from "../aix-commander";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, v?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, JSON.stringify(v)); } };
 const keys = ["property_check_result/available", "property_check_result/mgmt_parking", "estimate_sheet/single", "estimate_sheet/multi", "acknowledge_check/daihyo_initial_cost", "meeting_place", "viewing_invite/通常", "viewing_invite/内覧日指定あり", "property_recommendation/新着1件", "property_send/new_arrival", "phone_call", "guarantor_info"];
@@ -34,5 +34,8 @@ t("No.21: 材料を渡した事実を受け取り・1回で消える", takeDecis
 t("No.21: 相談のきっかけになる", consultTriggers({ contractAsksAixOrPromise: false, sceneUncertain: false, noGround: false, turnText: "ありがとうございます！", ackPositiveApply: true }).includes("ack_positive_apply"));
 t("No.21: 材料が無ければお礼の番は相談しない", consultTriggers({ contractAsksAixOrPromise: false, sceneUncertain: false, noGround: false, turnText: "ありがとうございます！" }).length === 0);
 t("system に見分けの軸と also", AIX_COMMANDER_SYSTEM.includes("見分けの軸") && AIX_COMMANDER_SYSTEM.includes("also"));
+{ const cards = new Map([["a", "■a"], ["b", "■b " + DESK_EMPLOYEE_MARK + "従業員の番"], ["c", "■c"]]); const owners = new Map([["a", 4]]);
+  const h = deskCardsAsHits(["a", "b", "c", "z"], cards, owners, "持ち込み");
+  t("2026-11-04 ⑤(b) 札→SearchHit: 竹内さんの番がある札は takeuchi・従業員の候補だけは employee・無ければ template・札の無い鍵は外す", h.length === 3 && h[0].writer === "takeuchi" && h[1].writer === "employee" && h[2].writer === "template" && h[0].store === "aix_cards" && h[0].scene === "持ち込み" && (h[0].score ?? 0) > (h[1].score ?? 0)); }
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
