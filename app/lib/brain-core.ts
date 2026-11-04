@@ -3068,7 +3068,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       });
       factsForConductor = facts;
       // 2026-11-04 ② 帳面を全部の担当に配る（統括役: 判断を上書きしない材料なので YUMA の後すぐ全部へ）。CUSTOMER_FACT_LEDGER_FEED の段（既定 yuma）で判断のブレインの材料の先頭に入れる
-      const feedOn = factMode === "on" || await (await import("@/app/lib/rollout")).stageOnNow("CUSTOMER_FACT_LEDGER_FEED", conversationId, { kind: "yuma" });
+      const feedOn = factMode === "on" || await (await import("@/app/lib/rollout")).stageOnNow("CUSTOMER_FACT_LEDGER_FEED", conversationId, { kind: "all" }) /* 2026-11-04 統括役・竹内さん「できたら本番に入れて回していく」: YUMA 段（11/03〜）で落ち・混ざり・伏せ漏れ0 → 全員へ。戻す =off */;
       factFeedOn = feedOn;
       if (feedOn) { const fb = factLedgerBlock(facts, Date.now()); if (fb) customerStateBlockText = fb + "\n\n" + customerStateBlockText; }
       const custTs = typedMessages[0]?.sender === "customer" ? typedMessages[0].created_at : null;
