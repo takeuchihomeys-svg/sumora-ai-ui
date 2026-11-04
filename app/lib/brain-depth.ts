@@ -69,6 +69,10 @@ export function deepRecheckMaterial(reason: string): string {
 export type ConductorFocusLite = { focus: string; why?: string | null } | null | undefined;
 export function deepRecheckFor(dep: { depth: BrainDepth; reason: string } | null | undefined, firstAix: string | null, focus?: ConductorFocusLite): { from: "deep"; kind: "reread"; why: string; firstAix: string | null; material: string } | null {
   if (!dep || dep.depth !== "deep" || !(DEEP_RECHECK_REASONS as readonly string[]).includes(dep.reason)) return null;
+  // 2026-11-05 試験 deep-on1 の悪化 q217（申込を見送る了承の番・最初は返信＝正解 → 読み直しで AIX【挨拶（内覧前）】に変わった）:
+  //   外れの寄りは「AIX と読み・竹内さんは返信」が 52/65 で、逆向き（返信と読み・竹内さんは AIX）は 13/65。最初が返信の番を読み直すと、
+  //   依頼の無い番で「何かやる事」を作って AIX に寄せる（場面・決まりの読み違えを読み直しが作る）。→ 最初の判断が AIX（reply_mode=aix の action）の番だけ読み直す（返信・2段の約束の番は読み直さない）。
+  if (!firstAix) return null;
   const f = focus && String(focus.focus ?? "").trim() ? `統括の重点「${String(focus.focus).trim().slice(0, 40)}」${focus.why ? `（${String(focus.why).trim().slice(0, 60)}）` : ""}に沿って決め直す。` : "";
   return { from: "deep", kind: "reread", why: `複雑な番（${dep.reason}）`, firstAix, material: `${f}${deepRecheckMaterial(dep.reason)}` };
 }

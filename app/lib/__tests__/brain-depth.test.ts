@@ -34,24 +34,26 @@ it("深く読み直すのは 複数の依頼・申込・審査 の番だけ（�
   eq(multi.reason, "複数の依頼");
   const rc = deepRecheckFor(multi, "property_check_result");
   eq(rc?.from, "deep"); eq(rc?.kind, "reread"); eq(rc?.firstAix, "property_check_result");
-  eq(deepRecheckFor(decideBrainDepth({ ...base, turnText: "申込したいです" }), null)?.why, "複雑な番（申込）");
+  eq(deepRecheckFor(decideBrainDepth({ ...base, turnText: "申込したいです" }), "application_push")?.why, "複雑な番（申込）");
+  // 最初が返信の番は読み直さない（deep-on1 の悪化 q217: 申込を見送る了承の番が返信→AIX に変わった）
+  eq(deepRecheckFor(decideBrainDepth({ ...base, turnText: "焦って決めたくはないため申し込みはしなくても大丈夫です！" }), null), null);
   eq(deepRecheckFor(decideBrainDepth({ ...base, turnText: "お願いします", openPromises: 1 }), null), null);
   eq(deepRecheckFor(decideBrainDepth({ ...base, turnText: "こんにちは", gapHours: 24 * 30 }), null), null);
   eq(deepRecheckFor(decideBrainDepth({ ...base, turnText: "ありがとうございます", ackOnly: true }), null), null);
   eq(deepRecheckFor(null, null), null);
 });
 it("読み直しの材料の1行に深く読む理由と依頼の分け方が入る（配線: brain-recheck.recheckMaterialLine）", () => {
-  const rc = deepRecheckFor({ depth: "deep", reason: "審査" }, null)!;
+  const rc = deepRecheckFor({ depth: "deep", reason: "審査" }, "estimate_sheet")!;
   const line = recheckMaterialLine(rc);
   eq(line.includes("深く読む番と判断された") && line.includes("複雑な番（審査）") && line.includes("依頼を1つずつ") && line.includes("必要書類"), true, line);
 });
 it("統括の重点（前半）を受け取る口: 重点がある時は材料の先頭に・無い時は今まで通り", () => {
   const dep = { depth: "deep" as const, reason: "複数の依頼" };
-  const a = deepRecheckFor(dep, null), b = deepRecheckFor(dep, null, null), c = deepRecheckFor(dep, null, { focus: "約束を果たす", why: "見積書の約束が開いている" });
+  const a = deepRecheckFor(dep, "x"), b = deepRecheckFor(dep, "x", null), c = deepRecheckFor(dep, "x", { focus: "約束を果たす", why: "見積書の約束が開いている" });
   eq(a?.material, b?.material);
   eq(c!.material.startsWith("統括の重点「約束を果たす」（見積書の約束が開いている）に沿って決め直す。"), true, c!.material);
   eq(c!.material.endsWith(a!.material), true);
-  eq(deepRecheckFor(dep, null, { focus: "  " })?.material, a?.material);
+  eq(deepRecheckFor(dep, "x", { focus: "  " })?.material, a?.material);
 });
 it("digest に dp（深さ）と dr（深く読み直した番）が残る（配線: brain-layers.toFreshDigest）", () => {
   const d = toFreshDigest({ brain_depth: { depth: "deep", reason: "複数の依頼" }, deep_recheck_digest: deepRecheckDigest("複数の依頼", "estimate_sheet", null) }, null) as Record<string, unknown>;
