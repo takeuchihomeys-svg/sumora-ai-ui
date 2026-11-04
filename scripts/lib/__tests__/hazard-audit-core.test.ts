@@ -1,0 +1,64 @@
+// scripts/lib/__tests__/hazard-audit-core.test.ts — 危ない所の見張りの見つけ方（npx tsx scripts/lib/__tests__/hazard-audit-core.test.ts）
+import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc } from "../hazard-audit-core";
+
+let pass = 0, fail = 0;
+const t = (name: string, ok: boolean) => { if (ok) pass++; else { fail++; console.log("FAIL", name); } };
+
+// (a)
+{
+  const files = [
+    { file: "app/lib/x.ts", text: "// 2026-10-28 竹内さんの決定（KB 5d9e56b5）: 募集状況は…\nexport function aOn(env = process.env) {\n  return (env.MGMT_HOURS_SPLIT_1028 ?? \"\").trim().toLowerCase() === \"on\";\n}" },
+    { file: "app/lib/y.ts", text: "export const bOn = () => process.env.SOME_PLAIN_FLAG === \"on\";\nexport const cOn = () => process.env.DEFAULT_ON_FLAG !== \"off\";" },
+    { file: "app/lib/__tests__/z.test.ts", text: "process.env.TEST_ONLY === \"on\"" },
+  ];
+  const r = findOffSwitches(files);
+  t("決定ありのスイッチ", r.find((s) => s.name === "MGMT_HOURS_SPLIT_1028")?.decided === true);
+  t("決定なしのスイッチ", r.find((s) => s.name === "SOME_PLAIN_FLAG")?.decided === false);
+  t("既定 on（!== off）は拾わない", !r.some((s) => s.name === "DEFAULT_ON_FLAG"));
+  t("テストは見ない", !r.some((s) => s.name === "TEST_ONLY"));
+}
+// (b)
+{
+  const files = [{ file: "app/api/a/route.ts", text: [
+    "const { data } = await sb.from(\"messages\").select(\"id, text\").gte(\"created_at\", since);",
+    "const { data: d2 } = await sb.from(\"messages\").select(\"id\").gte(\"created_at\", since).limit(5000);",
+    "const { data: d3 } = await sb.from(\"messages\").select(\"id\").range(f, f + 999);",
+    "const { data: d4 } = await sb.from(\"messages\").select(\"id\").eq(\"conversation_id\", c);",
+    "await sb.from(\"messages\").update({ x: 1 }).eq(\"id\", 1);",
+    "const { data: d5 } = await sb.from(\"small_table\").select(\"*\");",
+  ].join("\n") }];
+  const r = findUnpagedReads(files);
+  t("頁なしを拾う", r.some((u) => u.line === 1 && /頁なし/.test(u.why)));
+  t("limit 5000 を拾う", r.some((u) => u.line === 2 && /limit 5000/.test(u.why)));
+  t("range は拾わない", !r.some((u) => u.line === 3));
+  t("会話ごとは拾わない", !r.some((u) => u.line === 4));
+  t("update は拾わない", !r.some((u) => u.line === 5));
+  t("小さい表は拾わない", !r.some((u) => u.line === 6));
+}
+// (e)
+{
+  const js = "(function (root, factory) { var api = factory(); if (typeof module !== 'undefined' && module.exports) { module.exports = api; } if (typeof document !== 'undefined') { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { api.render(); }); else api.render(); } })(undefined, function () { function evidenceFor(now) { var d = new Date(now.getTime() + 9 * 3600000); return { month: d.getUTCMonth() + 1 }; } return { evidenceFor: evidenceFor, render: function () {} }; });";
+  const now = new Date("2026-11-04T03:00:00Z");
+  t("今月なら ok", lpMonthOk('<span data-lp="month">11月実績</span>', js, now).ok);
+  const bad = js.replace("function () { api.render(); }", "api.render");
+  t("Event で render を呼ぶ形は ×", !lpMonthOk('<span data-lp="month">9月実績</span>', bad, now).ok);
+}
+// (f)
+{
+  const commits = [{ at: "2026-11-04T03:00:00+00:00", subject: "fix: a" }, { at: "2026-11-04T12:00:00+00:00", subject: "fix: b" }, { at: "2026-11-04T12:00:00+00:00", subject: "Merge x" }];
+  const r = commitsWithoutTsc(commits, ["2026-11-04T02:49"]);
+  t("前に tsc 0 があれば ok", !r.some((c) => c.subject === "fix: a"));
+  t("6時間より前の tsc は数えない", r.some((c) => c.subject === "fix: b"));
+  t("Merge は見ない", !r.some((c) => /Merge/.test(c.subject)));
+}
+console.log(`hazard-audit-core: ${pass} pass / ${fail} fail`);
+if (fail) process.exit(1);
+// (d)
+{
+  const { rowFilterMissingCols } = require("../hazard-audit-core");
+  const f = "(id <> ALL (ARRAY['d040f80a'::text, 'f7deb105'::text]))";
+  const ok1 = rowFilterMissingCols(f, "d", ["id"]).length === 0;
+  const ok2 = rowFilterMissingCols("(conversation_id <> 'x'::text)", "d", ["id"]).join() === "conversation_id";
+  const ok3 = rowFilterMissingCols("(conversation_id <> 'x'::text)", "f", []).length === 0;
+  console.log(ok1 && ok2 && ok3 ? "hazard-audit-core (d): pass" : "hazard-audit-core (d): FAIL"); if (!(ok1 && ok2 && ok3)) process.exit(1);
+}

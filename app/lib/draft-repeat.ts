@@ -209,3 +209,31 @@ export function isAckOnlyTurn(customer: ReadonlyArray<string>): boolean {
   if (!ss.length) return true;
   return ss.every((s) => !isQuestionOrStatement(s) && (isCourtesyOnly(s) || normalizeSentence(s).length < 4 || /^(?:はい|了解|承知|OK|ok|わかりました|分かりました|かしこまりました)/i.test(normalizeSentence(s).replace(/^/, "")) && normalizeSentence(s).length < 14));
 }
+
+/**
+ * 2026-11-04 作業員6（文の外れ掘り 11/03 ③・145c2664）: 同じ下書きの中の二度言い（礼儀の定型・挨拶・物件の札・金額の行は見ない）の2つ目を落とす。
+ *   repeatSentences は見つけていたのに、落とす出口がどこにも無かった。出口なので、竹内さん本人の実送信で当たり0・過去の下書きの全件監査（目で読む）を
+ *   確かめるまで、どこにも繋がない（DRAFT_SELF_REPEAT_DROP=on の時だけ・既定 off）。
+ *   落とすのは文だけ（行が空になれば行ごと・前後の空行は1つにまとめる）。
+ */
+export function draftSelfRepeatDropOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.DRAFT_SELF_REPEAT_DROP ?? "").trim().toLowerCase() === "on";
+}
+export function dropSelfRepeats(draft: string): { text: string; dropped: string[] } {
+  const hits = repeatSentences(draft, [], []).filter((h) => h.kind === "self");
+  if (!hits.length) return { text: draft, dropped: [] };
+  const dropped: string[] = [];
+  const lines = String(draft ?? "").split("\n");
+  for (const h of hits) {
+    // 2つ目（後ろに出た方）を落とす: 後ろの行から探す
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const k = lines[i].lastIndexOf(h.sentence);
+      if (k < 0) continue;
+      lines[i] = (lines[i].slice(0, k) + lines[i].slice(k + h.sentence.length)).replace(/^\s+|\s+$/g, "");
+      dropped.push(h.sentence);
+      break;
+    }
+  }
+  const text = lines.filter((l, i, a) => !(l === "" && (i === 0 || a[i - 1] === ""))).join("\n").replace(/\n+$/, "");
+  return { text, dropped };
+}

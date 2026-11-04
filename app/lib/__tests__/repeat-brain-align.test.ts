@@ -116,3 +116,13 @@ t("既定は旧（受けだけ・試しで日付の言い直しが出たため�
 }
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
+
+{
+  // 2026-11-04 文の外れ掘り ③（145c2664 の実物の下書き）: 同じ下書きの中の二度言いの2つ目を落とす（既定 off・まだ繋がない）
+  const { dropSelfRepeats } = require("../draft-repeat");
+  const d = "かしこまりました！！\nお送り頂きました物件の初期費用、最大限割引させて頂いた御見積書を作成しお送りさせて頂きます😊！！\n\n最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！\nご入居日によって別途かかるのは日割家賃のみですので、ご安心ください😌！！";
+  const r = dropSelfRepeats(d);
+  const keep = dropSelfRepeats("かしこまりました！！\n何卒よろしくお願い致します！！\n何卒よろしくお願い致します！！");   // 礼儀の定型は見ない
+  const ok = r.dropped.length === 1 && !/^最大限割引させていただいた/m.test(r.text) && /お送り頂きました物件の初期費用/.test(r.text) && /日割家賃/.test(r.text) && !/\n\n\n/.test(r.text) && keep.dropped.length === 0;
+  console.log(ok ? "drop-self-repeats: pass" : "drop-self-repeats: FAIL " + JSON.stringify(r)); if (!ok) process.exit(1);
+}
