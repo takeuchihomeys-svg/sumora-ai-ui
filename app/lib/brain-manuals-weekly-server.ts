@@ -4,10 +4,11 @@
 //   重い読みは夜だけ（呼ぶ側の cron が JST 22〜9 に動く・営業時間の手動実行はしない）
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { staffFirstMove, aixLogsFromWatch } from "@/app/lib/staff-first-move";
 import { tallyWeekly, weeklyRows, writerOfTurn, brainManualsWeeklyOn, type WeeklyTurn, type ExistingRow, type ManualUpsert, type WeeklyStats } from "@/app/lib/brain-manuals-weekly";
 
-type Turn = { conversation_id: string; customer_turn_at: string; staff_first_at: string | null; brain_reply_mode: string | null; brain_action: string | null; staff_aix: Array<{ aix_type?: string }> | null; verdict: string | null; scene_key: string | null };
-type Msg = { conversation_id: string; created_at: string; staff_writer: string | null; staff_writer_confidence: string | null };
+type Turn = { conversation_id: string; customer_turn_at: string; staff_first_at: string | null; brain_reply_mode: string | null; brain_action: string | null; staff_aix: Array<{ aix_type?: string; at?: string; check_pattern?: string | null }> | null; verdict: string | null; scene_key: string | null };
+type Msg = { conversation_id: string; created_at: string; staff_writer: string | null; staff_writer_confidence: string | null; is_aix_generated: boolean | null };
 
 async function pageAll<T>(sb: SupabaseClient, table: string, cols: string, f: (q: any) => any): Promise<T[]> { // eslint-disable-line @typescript-eslint/no-explicit-any
   const out: T[] = [];
@@ -32,18 +33,19 @@ export async function runBrainManualsWeekly(sb: SupabaseClient, o: { days?: numb
   const byConv = new Map<string, Msg[]>();
   for (let i = 0; i < convs.length; i += 50) {
     const part = convs.slice(i, i + 50);
-    const ms = await pageAll<Msg>(sb, "messages", "conversation_id, created_at, staff_writer, staff_writer_confidence", (q) => q.in("conversation_id", part).neq("sender", "customer").gte("created_at", since).order("created_at"));
+    const ms = await pageAll<Msg>(sb, "messages", "conversation_id, created_at, staff_writer, staff_writer_confidence, is_aix_generated", (q) => q.in("conversation_id", part).neq("sender", "customer").gte("created_at", since).order("created_at"));
     for (const m of ms) { const l = byConv.get(m.conversation_id) ?? []; l.push(m); byConv.set(m.conversation_id, l); }
   }
-  const recs: WeeklyTurn[] = turns.map((t) => ({
+  // 2026-11-04 物差しを揃える: こちらの「最初の一手」で比べる（staff-first-move・後から押した AIX を一手にしない）
+  const recs: WeeklyTurn[] = turns.map((t) => { const fm = staffFirstMove(Date.parse(t.customer_turn_at), (byConv.get(t.conversation_id) ?? []).map((m) => ({ at: Date.parse(m.created_at), isAix: !!m.is_aix_generated, writer: m.staff_writer })), aixLogsFromWatch(t.staff_aix)); return {
     writer: writerOfTurn(t.customer_turn_at, t.staff_first_at, byConv.get(t.conversation_id) ?? []),
     scene: t.scene_key,
     brainMode: t.brain_reply_mode,
     brainAction: t.brain_action || null,
-    staffAix: (t.staff_aix ?? []).map((x) => String(x.aix_type ?? "")).filter(Boolean),
+    staffAix: fm?.kind === "aix" && fm.aix ? [fm.aix] : [],
     verdict: t.verdict,
-    hasStaff: !!t.staff_first_at,
-  }));
+    hasStaff: !!fm,
+  }; });
   const stats = tallyWeekly(recs);
   const { data: ex, error } = await sb.from("brain_manuals").select("brain, item, body, source, stats").in("item", ["hit_rate", "strengths"]);
   if (error) throw new Error(`brain_manuals: ${error.message}`);

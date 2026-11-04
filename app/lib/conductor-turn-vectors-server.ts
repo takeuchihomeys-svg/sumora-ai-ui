@@ -16,12 +16,12 @@ const COLS = "id, conversation_id, sender, text, created_at, is_aix_generated, l
 
 export type FillResult = { candidates: number; built: number; skippedExisting: number; skippedApplyDocs: number; written: number; dry: boolean; samples?: string[] };
 
-export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: number; limit?: number; apply?: boolean; samples?: number } = {}): Promise<FillResult> {
+export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: number; limit?: number; apply?: boolean; samples?: number; before?: string | null } = {}): Promise<FillResult> {
   const days = Math.min(120, Math.max(7, o.days ?? 90)), limit = Math.min(400, Math.max(10, o.limit ?? 200));
   const write = !!o.apply && conductorTurnVectorsOn();
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   const { data: tk, error } = await sb.from("messages").select(COLS).eq("staff_writer", "takeuchi").eq("staff_writer_confidence", "sure").neq("sender", "customer")
-    .gte("created_at", since).order("created_at", { ascending: false }).limit(limit * 4);
+    .gte("created_at", since).lt("created_at", o.before ?? new Date(Date.now() + 60_000).toISOString()).order("created_at", { ascending: false }).limit(limit * 4);
   if (error) throw new Error(`messages: ${error.message}`);
   const sends = ((tk ?? []) as Msg[]).filter((m) => !isTestConversation(m.conversation_id));
   // 表がある時だけ、もう入っている番を外す（dry は表が無くても動く）
@@ -56,16 +56,16 @@ export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: n
     // こちらの一手（AIX の種類・ピッカー）
     let aixType: string | null = null, checkPattern: string | null = null;
     if (s.is_aix_generated && s.line_message_id) {
-      const { data: al } = await sb.from("aix_usage_logs").select("aix_type, check_pattern").eq("line_message_id", s.line_message_id).limit(1).maybeSingle();
-      aixType = (al as { aix_type?: string } | null)?.aix_type ?? "aix_unknown"; checkPattern = (al as { check_pattern?: string | null } | null)?.check_pattern ?? null;
+      const al = await aixLogOf(sb, s.conversation_id, s.created_at, s.line_message_id);
+      aixType = al?.aix_type ?? "aix_unknown"; checkPattern = al?.check_pattern ?? null;
     }
     // 直前のこちらの送信の種類
     const last = pv.find((m) => m.sender !== "customer" && (m.text ?? "").trim());
     let lastKind: string | null = null;
     if (last) {
       if (last.is_aix_generated && last.line_message_id) {
-        const { data: la } = await sb.from("aix_usage_logs").select("aix_type").eq("line_message_id", last.line_message_id).limit(1).maybeSingle();
-        lastKind = `AIX:${(la as { aix_type?: string } | null)?.aix_type ?? "aix_unknown"}`;
+        const la = await aixLogOf(sb, last.conversation_id, last.created_at, last.line_message_id);
+        lastKind = `AIX:${la?.aix_type ?? "aix_unknown"}`;
       } else lastKind = "返信";
     }
     // 見張りの番（場面・ブレインの答え）があれば当たりも
@@ -90,6 +90,21 @@ export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: n
   }
   if (write && rows.length) { const n = rows.length; await flush(sb, rows.splice(0)); res.written += n; }
   return res;
+}
+
+/** 2026-11-04: aix_usage_logs は line_message_id に索引が無い（11/03 の時間切れを繰り返さない）＝会話×時刻の索引で前後数分だけ読んで合わせる */
+async function aixLogOf(sb: SupabaseClient, conv: string, at: string, lineMessageId: string): Promise<{ aix_type: string; check_pattern: string | null } | null> {
+  const t = Date.parse(at);
+  const { data } = await sb.from("aix_usage_logs").select("aix_type, check_pattern, line_message_id").eq("conversation_id", conv)
+    .gte("created_at", new Date(t - 30 * 60_000).toISOString()).lte("created_at", new Date(t + 5 * 60_000).toISOString()).order("created_at", { ascending: false }).limit(20);
+  const rows = (data ?? []) as Array<{ aix_type: string; check_pattern: string | null; line_message_id: string | null }>;
+  return rows.find((x) => x.line_message_id === lineMessageId) ?? null;
+}
+
+/** 一括の埋め（今日だけ・統括役 11/04）: 表で一番古い番より前を、1回 limit 番ずつ。90日に届いたら done */
+export async function backfillCursor(sb: SupabaseClient): Promise<string | null> {
+  const { data } = await sb.from("conductor_turn_vectors").select("turn_at").order("turn_at", { ascending: true }).limit(1);
+  return ((data ?? []) as Array<{ turn_at: string }>)[0]?.turn_at ?? null;
 }
 
 async function flush(sb: SupabaseClient, rows: Array<TurnVectorRow & { embedding: number[] }>): Promise<void> {

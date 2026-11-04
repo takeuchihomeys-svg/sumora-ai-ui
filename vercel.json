@@ -81,6 +81,10 @@
       "schedule": "50 16 * * *"
     },
     {
+      "path": "/api/cron/conductor-turn-vectors?backfill=1",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/pickup-auto-complete",
       "schedule": "*/2 * * * *"
     },
