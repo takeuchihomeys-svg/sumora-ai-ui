@@ -131,3 +131,37 @@ export function updateReleaseOrder(md: string, switchName: string, status: strin
   }
   return { md: lines.join(eol), changed };
 }
+
+// ─── 2026-11-04 統括役（竹内さん「何で詰まるのか原因を調べて改善する」）: 大きい1本が後ろを全部待たせていた（grp-reply 2時間・grpb-after 2時間超×2） ─────
+//   (a) 小さい依頼（問題数×回数）を先に。同じ大きさは先に入った順。4時間以上待った依頼は大きさを見ない（大きい物がずっと後ろにならない）。priority（小さいほど先・既定 5）で上書き
+//   (b) 1本の時間の上限（既定 40分・依頼の maxMin で上書き）＝ exam-conductor.ts で止めて途中までの結果を出し、残りを分けた依頼にする（remainingIds）
+//   (c) 1本の問題数の上限（12問）を超える依頼は足す時に分ける（splitIds）
+export type JobSizeLite = { runner?: string; only?: string; repeat?: number; cmds?: string[]; createdAt: string; priority?: number };
+export function jobSize(j: JobSizeLite): number {
+  if (j.runner === "cmd") return (j.cmds?.length ?? 1) * 10;
+  if (j.runner === "tsc" || j.runner === "tsc-remote") return 0;
+  const n = (j.only ?? "").split(",").filter(Boolean).length || 30;
+  return n * Math.max(1, j.repeat ?? 1);
+}
+export const AGE_NO_SIZE_MS = 4 * 3600_000;
+export function compareJobs(a: JobSizeLite, b: JobSizeLite, nowMs: number = Date.now()): number {
+  const pa = a.priority ?? 5, pb = b.priority ?? 5;
+  if (pa !== pb) return pa - pb;
+  const sa = nowMs - Date.parse(a.createdAt) >= AGE_NO_SIZE_MS ? 0 : jobSize(a);
+  const sb = nowMs - Date.parse(b.createdAt) >= AGE_NO_SIZE_MS ? 0 : jobSize(b);
+  if (sa !== sb) return sa - sb;
+  return a.createdAt.localeCompare(b.createdAt);
+}
+export const JOB_MAX_PROBLEMS = 12;
+/** 問題の id を12問ずつに分ける（揺れる問題は入っている側に付ける） */
+export function splitIds(ids: string[], max: number = JOB_MAX_PROBLEMS): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += max) out.push(ids.slice(i, i + max));
+  return out.length ? out : [[]];
+}
+/** 時間の上限で止めた時に、予定の回数まで流し終わっていない問題 */
+export function remainingIds(planned: Record<string, number>, rows: RowLite[]): string[] {
+  const done = new Map<string, number>();
+  for (const r of rows) if (!r.error) done.set(r.id, (done.get(r.id) ?? 0) + 1);
+  return Object.entries(planned).filter(([id, n]) => (done.get(id) ?? 0) < n).map(([id]) => id);
+}

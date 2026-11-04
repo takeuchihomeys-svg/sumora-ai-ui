@@ -1,6 +1,6 @@
 // scripts/__tests__/exam-conductor.test.ts — 試験の統括の純関数（関所の時間・早めの打ち切り・揺れの回数・問題の選び・表への書き戻し）
 //   実行: npx tsx scripts/__tests__/exam-conductor.test.ts
-import { splitWorse, isMixedRow, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
+import { splitWorse, isMixedRow, jobSize, compareJobs, splitIds, remainingIds, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
 import type { FlakeObs } from "../lib/exam-flake";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -75,5 +75,14 @@ t("行が無ければ変えない", !updateReleaseOrder(md, "NO_SUCH", "x").chan
   t("混ざりの回は earlyVerdict の悪化の確定にもならない", earlyVerdict(cur, base, { qa: 2 }).stop !== "worse");
   t("pcMismatch が「他の問題の発言」だけなら混ざりと見ない・foreignMsgs 0 も", !isMixedRow({ id: "x", rep: 1, pcMismatch: ["他の問題の発言"] }) && !isMixedRow({ id: "x", rep: 1, foreignMsgs: 0 }) && isMixedRow({ id: "x", rep: 1, foreignMsgs: 1 }));
   t("混ざりでない回の悪化は今まで通り", splitWorse([{ id: "qa", rep: 1, score: { pass: false } }, { id: "qa", rep: 2, score: { pass: false } }], base, new Set()).sure.length === 1); }
+{ // 2026-11-04 (a)(b)(c) 詰まりの直し
+  const now = Date.parse("2026-11-04T12:00:00Z");
+  const big = { runner: "brain-exam", only: Array.from({ length: 25 }, (_, k) => "q" + k).join(","), repeat: 2, createdAt: "2026-11-04T11:00:00Z" };
+  const small = { runner: "brain-exam", only: "q1,q2,q3", repeat: 1, createdAt: "2026-11-04T11:30:00Z" };
+  t("(a) 小さい依頼（問題数×回数）が先・後から入っても", compareJobs(small, big, now) < 0 && jobSize(big) === 50 && jobSize(small) === 3);
+  t("(a) 4時間以上待った大きい依頼は大きさを見ない（先に入った順）", compareJobs({ ...big, createdAt: "2026-11-04T07:00:00Z" }, small, now) < 0);
+  t("(a) priority が小さい方が先", compareJobs({ ...big, priority: 1 }, small, now) < 0);
+  t("(c) 12問ずつに分ける", JSON.stringify(splitIds(Array.from({ length: 25 }, (_, k) => "q" + k)).map((x) => x.length)) === "[12,12,1]" && splitIds(["q1"]).length === 1);
+  t("(b) 時間の上限で止めた時の残り＝予定の回数に届いていない問題", JSON.stringify(remainingIds({ q1: 2, q2: 2, q3: 1 }, [{ id: "q1", rep: 1 }, { id: "q1", rep: 2 }, { id: "q2", rep: 1 }, { id: "q3", rep: 1, error: "x" }])) === JSON.stringify(["q2", "q3"])); }
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

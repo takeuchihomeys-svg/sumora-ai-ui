@@ -31,7 +31,7 @@ import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { readObs } from "./lib/exam-flake";
 import { pcState } from "./lib/exam-pc-state";
-import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, remainingIds, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -54,6 +54,7 @@ export type ExamJob = {
   /** --pick=rag の時 brain-exam --select=rag に任せる（④） */ selectRag?: boolean;
   /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc" | "tsc-remote"; cmds?: string[];
   /** 2026-11-04 指揮役: AI を呼ばない読むだけの依頼（cmd だけ・--read-only）。2つ目の流す役（--remote）が試験と同時に流す */ readOnly?: boolean;
+  /** 2026-11-04 (a)(b): 小さいほど先（既定 5）・1本の時間の上限（分・既定 EXAM_JOB_MAX_MIN=40） */ priority?: number; maxMin?: number;
   /** 夜だけ流す（JST 22〜9・重い全件の読み等・--night） */ nightOnly?: boolean;
   /** 保留の理由（あれば流さない・手で外す） */ hold?: string;
   /** この時刻（ISO）より前は流さない（--not-before=2026-11-10T22:00+09:00） */ notBefore?: string;
@@ -106,7 +107,7 @@ async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
 function readJobs(): Array<ExamJob & { file: string }> {
   ensureDirs();
   return readdirSync(ROOT).filter((f) => f.endsWith(".json") && f !== "config.json" && f !== "scene-map.json").map((f) => ({ ...(JSON.parse(readFileSync(join(ROOT, f), "utf8")) as ExamJob), file: join(ROOT, f) }))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    .sort((a, b) => compareJobs(a, b));
 }
 function addJob(): void {
   ensureDirs();
@@ -114,6 +115,9 @@ function addJob(): void {
   const cwd = arg("cwd", process.cwd());
   const label = arg("label") || `job-${Date.now()}`;
   const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage", "brain"), env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
+  // 2026-11-04 (a)(b): --priority=<小さいほど先・既定 5>・--max-min=<1本の時間の上限（分）>
+  if (arg("priority")) (base as Record<string, unknown>).priority = Number(arg("priority"));
+  if (arg("max-min")) (base as Record<string, unknown>).maxMin = Number(arg("max-min"));
   let job: ExamJob;
   // 11/03 指揮役: 手元の tsc は使わない＝--runner=tsc も tsc-remote として足す（手元の tsc は --runner=tsc-local の時だけ）
   if (arg("runner") === "tsc-remote" || arg("runner") === "tsc") {
@@ -134,6 +138,16 @@ function addJob(): void {
     if (!ids.length && !p.selectRag) throw new Error("問題が無い（--only か --pick を付ける）");
     job = { ...base, id: `${Date.now()}`, label, only: ids.join(","), repeat: Number(arg("repeat", String(p.repeat ?? 2))), flaky, selectRag: p.selectRag, runner: "brain-exam" };
     if (arg("pick")) log(`  選び: ${p.why} → ${ids.length}問`);
+  }
+  // 2026-11-04 (c): 12問を超える試験の依頼は、足す時に12問ずつに分ける（揺れる問題は入っている側に付ける）
+  const parts = job.runner === "brain-exam" && job.only ? splitIds(job.only.split(",").filter(Boolean)) : [];
+  if (parts.length > 1) {
+    parts.forEach((ids, k) => {
+      const pj: ExamJob = { ...job, id: `${job.id}-${k + 1}`, label: `${job.label}-p${k + 1}`, only: ids.join(","), flaky: (job.flaky ?? []).filter((x) => ids.includes(x)), createdAt: new Date(Date.parse(job.createdAt) + k).toISOString() };
+      writeFileSync(join(ROOT, `${pj.createdAt.replace(/[:.]/g, "-")}-${pj.label}.json`), JSON.stringify(pj, null, 1));
+    });
+    log(`足した: ${job.label} を ${parts.length}本に分けた（12問ずつ: ${parts.map((x, k) => `${job.label}-p${k + 1}=${x.length}問`).join("・")}）`);
+    return;
   }
   const f = join(ROOT, `${job.createdAt.replace(/[:.]/g, "-")}-${job.label}.json`);
   writeFileSync(f, JSON.stringify(job, null, 1));
@@ -406,8 +420,26 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       const v = earlyVerdict(readRows(rowsFile), readRows(join(resultsDirOf(j.cwd), `${bl}.jsonl`)), rp.reps, new Set(rp.flaky.map((x) => x.id)));
       if (v.stop) { early = { stop: v.stop, why: v.why, base: bl }; log(`  ⏩ 早めの打ち切り: ${v.why}`); killTree(cur?.pid); }
     }, 30_000) : null;
+    // 2026-11-04 (b): 1本の時間の上限（既定 40分・依頼の maxMin・EXAM_JOB_MAX_MIN）。超えたら止めて途中までを集計し、残りの問題を分けた依頼にして後ろへ
+    let timedOut = false as boolean;
+    const maxMin = j.maxMin ?? Number(process.env.EXAM_JOB_MAX_MIN ?? "40");
+    const tl = maxMin > 0 ? setTimeout(() => { if (early || stopped) return; timedOut = true; log(`  ⏱ 1本の時間の上限 ${maxMin}分 → 止めて途中までを集計（${j.label}）`); killTree(cur?.pid); }, maxMin * 60_000) : null;
     const code = await r.done;
+    if (tl) clearTimeout(tl);
     if (ew) clearInterval(ew);
+    if (timedOut && !(early as unknown) && !stopped) {
+      const bl = baseLabelOf(j.cwd, j.label);
+      const tEarly = { stop: "time", why: `1本の時間の上限 ${maxMin}分`, base: bl ?? "" };
+      early = tEarly;
+      const rest = remainingIds(rp.reps, readRows(rowsFile));
+      if (rest.length) {
+        const nj: ExamJob = { ...j, id: `${j.id}-r`, label: `${j.label}-r`, only: rest.join(","), flaky: (j.flaky ?? []).filter((x) => rest.includes(x)), createdAt: new Date().toISOString(), tries: 0 };
+        delete (nj as { file?: string }).file;
+        writeFileSync(join(ROOT, `${nj.createdAt.replace(/[:.]/g, "-")}-${nj.label}.json`), JSON.stringify(nj, null, 1));
+        log(`  残り ${rest.length}問を分けた依頼にした: ${nj.label}`);
+        tEarly.why += `・残り ${rest.length}問は ${nj.label}`;
+      }
+    }
     if (stopped) { await cleanupRun(j.cwd, j.label, outFile); requeueJob(j); log(`  順番待ちに戻した（${j.label}）`); return; }
     if (!early) {
       const runText = existsSync(outFile) ? readFileSync(outFile).subarray(startSize).toString("utf8") : "";
@@ -419,10 +451,10 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       await cleanupRun(j.cwd, j.label, outFile);
       dropPartialLines(rowsFile);
       appendFileSync(outFile, `\n=== ${at()} 早めの打ち切り（${e.why}）→ 集計し直す ===\n`);
-      await runTsx(j.cwd, ["scripts/brain-exam.ts", `--report=${j.label}`, `--baseline=${e.base}`], {}, outFile).done;
+      await runTsx(j.cwd, ["scripts/brain-exam.ts", `--report=${j.label}`, ...(e.base ? [`--baseline=${e.base}`] : [])], {}, outFile).done;
     }
     const s = summarize(existsSync(outFile) ? readFileSync(outFile, "utf8") : "");
-    const tag = early ? "（早めの打ち切り）" : "";
+    const tag = early ? ((early as { stop: string }).stop === "time" ? `（${(early as { why: string }).why}）` : "（早めの打ち切り）") : "";
     // 11/04 竹内さんの決定（使い回せる物は使い回す）: 録音（前の答え）と入力が main と同じだった回の数を結果に出す
     const reuse = (() => { try { const c = readJson<{ byTag?: Record<string, { real?: number; replayed?: number }> }>(join(resultsDirOf(j.cwd), `${j.label}.cost.json`), {}); const d = readJson<{ items?: Record<string, { same?: boolean }> }>(join(resultsDirOf(j.cwd), `${j.label}.inputdiff.json`), {}); let real = 0, rep = 0; for (const v of Object.values(c.byTag ?? {})) { real += v?.real ?? 0; rep += v?.replayed ?? 0; } const it = Object.values(d.items ?? {}); return `・使い回し: LLM ${rep}/${real + rep}回は録音・入力が main と同じ回 ${it.filter((x) => x.same).length}/${it.length}${rp.stable?.length ? `・安定で1回 ${rp.stable.length}問` : ""}`; } catch { return ""; } })();
     // 11/03 指揮役: 悪化を「確かな悪化」と「揺れの範囲の差」（揺れる問題・合格の差が main の割合で2回未満）に分けて書く
@@ -430,7 +462,10 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     const sw = blFinal ? splitWorse(readRows(rowsFile), readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)), new Set(rp.flaky.map((x) => x.id))) : null;
     const flakeNote = sw?.flake.length ? `・揺れの範囲の差 ${sw.flake.length}（${sw.flake.map((x) => `${x.id} ${x.why}`).join("／")}）` : "";
     const sureN = sw ? sw.sure.length : s.worse;
-    const verdict = (sureN == null ? "結果を読めない" : sureN === 0 ? "確かな悪化0" : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse;
+    // 2026-11-04 作業員2（基準を merge-base にした時に読み違えない）: 比べた「前」の main の commit を結果の行に出す
+    const baseCommit = readJson<{ commit?: string } | null>(join(resultsDirOf(j.cwd), `${j.label}.baseline.json`), null)?.commit;
+    const baseNote = baseCommit ? `・基準 ${baseCommit.slice(0, 7)}` : "";
+    const verdict = (sureN == null ? "結果を読めない" : sureN === 0 ? "確かな悪化0" : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote;
     finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
