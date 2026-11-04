@@ -359,7 +359,11 @@ export const NO_CLAUDE_FALLBACK_ACTIONS: ReadonlySet<string> = new Set([
   "property_brain_image", "property_image_detail", "property_image_read",
   // 2026-09-25 検索の点検の見立て（search-audit-diagnose.ts・竹内「DeepSeek の API で行う」）
   "search_audit",
+  // 2026-11-04 AIX の統括・逆向きの相談（設計から DeepSeek だけ・Claude に倒さない）
+  "aix_desk_command", "aix_desk_consult",
 ]);
+/** 2026-11-04 統括役: AIX の統括と逆向きの相談は、DeepSeek が主の相手なら LLM_ALT_ACTIONS に書かなくても DeepSeek に回す（env の LLM_ALT_ACTIONS は Secret で、書き直すと他の回し先が全部消えるため・本番で一度も動いていなかった） */
+export const DESK_DEEPSEEK_ACTIONS: ReadonlySet<string> = new Set(["aix_desk_command", "aix_desk_consult"]);
 
 export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string | null, systemHead: string | null = null): boolean {
   if (!cfg || !routeName) return false;
@@ -368,6 +372,7 @@ export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string 
   if (routeName === WRITER_FLASH_ACTION) return cfg.provider === "deepseek" && cfg.actions.has("reply_generate");
   // 2026-10-22 AIX のブレイン（AIX_BRAIN でそのボタンが入っている時だけ呼ばれる・既定＝内覧日調整だけ）: DeepSeek が主の相手なら flash に回す（入口が申込以降・審査の事情・時刻の線を Claude に固定し、名前を伏せてから呼ぶ）
   if (routeName === AIX_BRAIN_ACTION) return cfg.provider === "deepseek";
+  if (DESK_DEEPSEEK_ACTIONS.has(routeName)) return cfg.provider === "deepseek";
   // 2026-09-29 名前ごとの振り分け（LLM_ALT_ROUTES）に書いた名前
   if (cfg.routes?.has(routeName)) return true;
   // 2026-09-23: ブレインは層で名札を分けた（brain_fresh / brain_full）。設定に古い "brain" と書いてあれば両方を指す

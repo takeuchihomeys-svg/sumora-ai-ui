@@ -6,7 +6,7 @@ import {
   readAltConfig, shouldRouteAlt, resolveRouteName, toOpenAIBody, fromOpenAIResponse, flattenContent, ROUTE_MARKERS,
   isAutoSendCall, isPostApplyCall, isPostApplyStatus, willRouteAlt, createSseConverter,
   DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_FLASH_MODEL,
-  readProviderTarget, readAltRoutes, targetConfigFor, isAltRouteDenied, QWEN_ENDPOINT, QWEN_DEFAULT_MODEL, wellFormedJson,
+  readProviderTarget, readAltRoutes, targetConfigFor, isAltRouteDenied, QWEN_ENDPOINT, QWEN_DEFAULT_MODEL, wellFormedJson, NO_CLAUDE_FALLBACK_ACTIONS,
 } from "../llm-alt-provider";
 import { LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "../llm-usage-recorder";
 import { AIX_SHARED_SYSTEM_PREFIX, buildSystemBlocks } from "../aix-system-blocks";
@@ -502,4 +502,10 @@ console.log("── ★ Qwen（名前ごとの振り分け・2026-09-29「作り
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`);
-if (fail > 0) process.exit(1);
+if (fail > 0) process.exit(1);{ // 2026-11-04 AIX の統括・逆向きの相談は、DeepSeek が主なら LLM_ALT_ACTIONS に無くても DeepSeek（Claude には倒さない）
+  const ds = readAltConfig({ NODE_ENV: "production", LLM_ALT_PROVIDER: "deepseek", LLM_ALT_ACTIONS: "resolve_area", DEEPSEEK_API_KEY: "k" });
+  t("統括・相談: DeepSeek が主なら回す（LLM_ALT_ACTIONS に書かなくても）", shouldRouteAlt(ds, "aix_desk_command") && shouldRouteAlt(ds, "aix_desk_consult"));
+  t("統括・相談: 他の名前は今まで通り（書いた物だけ）", shouldRouteAlt(ds, "resolve_area") && !shouldRouteAlt(ds, "suggest_next_action"));
+  t("統括・相談: Claude に倒さない（失敗しても Claude に戻さない一覧に入る）", NO_CLAUDE_FALLBACK_ACTIONS.has("aix_desk_command") && NO_CLAUDE_FALLBACK_ACTIONS.has("aix_desk_consult"));
+  t("統括・相談: 回し先の設定が無ければ回さない（呼ぶ側は skip＝Claude にも送らない）", !shouldRouteAlt(readAltConfig({ NODE_ENV: "production" }), "aix_desk_command")); }
+
