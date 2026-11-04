@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   //   11/05 0時 JST を過ぎたら動かない（一時の物）・CONDUCTOR_TURN_VECTORS_BACKFILL=off で止める・90日に届いたら done を返すだけ。営業時間でも動く（1回 200番・索引の効く読み）
   const backfill = req.nextUrl.searchParams.get("backfill") === "1";
   if (backfill) {
-    if (Date.now() >= Date.parse("2026-11-05T00:00:00+09:00") || (process.env.CONDUCTOR_TURN_VECTORS_BACKFILL ?? "").trim().toLowerCase() === "off") return NextResponse.json({ ok: true, skipped: "一括の埋めは終わり（期限か off）" });
+    if (Date.now() >= Date.parse("2026-11-05T00:00:00+09:00") || (process.env.CONDUCTOR_TURN_VECTORS_BACKFILL ?? "").trim().toLowerCase() !== "on" /* 2026-11-04 止める用: 既定 off（env で on の時だけ） */) return NextResponse.json({ ok: true, skipped: "一括の埋めは終わり（期限か off）" });
   } else {
     const h = new Date(Date.now() + 9 * 3600_000).getUTCHours();
     if (h >= 9 && h < 22) return NextResponse.json({ ok: true, skipped: "営業時間（JST 9〜22）は動かない" });
