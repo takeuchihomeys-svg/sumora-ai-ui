@@ -84,12 +84,15 @@ t("行が無ければ変えない", !updateReleaseOrder(md, "NO_SUCH", "x").chan
   t("(a) priority が小さい方が先", compareJobs({ ...big, priority: 1 }, small, now) < 0);
   t("(c) 12問ずつに分ける", JSON.stringify(splitIds(Array.from({ length: 25 }, (_, k) => "q" + k)).map((x) => x.length)) === "[12,12,1]" && splitIds(["q1"]).length === 1);
   t("(b) 時間の上限で止めた時の残り＝予定の回数に届いていない問題", JSON.stringify(remainingIds({ q1: 2, q2: 2, q3: 1 }, [{ id: "q1", rep: 1 }, { id: "q1", rep: 2 }, { id: "q2", rep: 1 }, { id: "q3", rep: 1, error: "x" }])) === JSON.stringify(["q2", "q3"])); }
-{ const g1 = staleExamGuard("const stopAsked = () => 1; if (stopAsked()) {}", 0, 40, 120);
-  t("(b) 止める印を見る brain-exam は上限そのまま・古さの印なし", g1.maxMin === 40 && !g1.oldStop && g1.note === "");
+{ const g1 = staleExamGuard("const stopAsked = () => 1; if (stopAsked()) {} acquire({ skip: LANES.map(x=>x) })", 0, 40, 120);
+  t("(b) 止める印を見る brain-exam は上限そのまま・古さの印なし", g1.maxMin === 40 && !g1.oldStop && !g1.laneOld && g1.note === "");
   const g2 = staleExamGuard("const STOP_FILE = ''", 5, 40, 120);
   t("(b) 古い brain-exam は上限を延ばし・何個古いかを出す", g2.maxMin === 120 && g2.oldStop && /上限を延ばした 40→120分/.test(g2.note) && /5個古い/.test(g2.note));
-  const g3 = staleExamGuard("const stopAsked = () => 1; stopAsked()", 3, 90, 120);
+  const g3 = staleExamGuard("const stopAsked = () => 1; stopAsked(); x({ skip: LANES })", 3, 90, 120);
   t("(b) 新しい brain-exam でも origin/main より古ければ印だけ出す", g3.maxMin === 90 && /3個古い/.test(g3.note));
+  { const g4 = staleExamGuard("const stopAsked = () => 1; stopAsked()", 0, 40, 120);
+    t("(i) レーンの直しが無い brain-exam は1レーン（上限はそのまま）", g4.laneOld && g4.maxMin === 40 && /1レーンで回す/.test(g4.note)); }
+  t("(i) 古い brain-exam（止める印もレーンも無い）は両方の印", (() => { const g = staleExamGuard("x", 2, 40, 120); return g.laneOld && g.oldStop && /1レーン/.test(g.note) && /延ばした/.test(g.note); })());
   t("(b) 上限なし（0）は延ばさない", staleExamGuard("", null, 0, 120).maxMin === 0); }
 t("比べた問題: 基準の回が無い＝0（悪化0と言わない）", comparedIds([{ id: "q1", rep: 1, score: { pass: true } }], []).length === 0);
 t("比べた問題: 両方で失敗・混ざりの無い回がある問題だけ", JSON.stringify(comparedIds([{ id: "q1", rep: 1 }, { id: "q2", rep: 1, error: "x" }, { id: "q3", rep: 1, foreignMsgs: 2 }, { id: "q4", rep: 1 }], [{ id: "q1", rep: 1 }, { id: "q2", rep: 1 }, { id: "q3", rep: 1 }])) === JSON.stringify(["q1"]));

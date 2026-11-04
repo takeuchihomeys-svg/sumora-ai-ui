@@ -408,12 +408,17 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     const argv = ["scripts/brain-exam.ts", `--label=${j.label}`, "--conv=auto", "--baseline=main", `--repeat=${maxRep}`, `--stage=${j.stage}`];
     if (ids.length) argv.push(`--only=${j.only}`, `--reps-file=${repsFile}`);
     if (j.selectRag) argv.push("--select=rag");
+    // 2026-11-04 (b): 依頼の作業ツリーの brain-exam.ts が止める印を見ない（origin/main より古い）時は上限を延ばす（EXAM_JOB_OLD_MAX_MIN・既定 120分）。依頼の行と結果にも出す
+    const behind = (() => { try { return Number(execFileSync("git", ["-C", j.cwd, "rev-list", "--count", "HEAD..origin/main"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim()); } catch { return null; } })();
+    const guard = staleExamGuard((() => { try { return readFileSync(join(j.cwd, "scripts", "brain-exam.ts"), "utf8"); } catch { return ""; } })(), Number.isFinite(behind as number) ? behind : null,
+      j.maxMin ?? Number(process.env.EXAM_JOB_MAX_MIN ?? "40"), Number(process.env.EXAM_JOB_OLD_MAX_MIN ?? "120"));
+    if (guard.note) log(`  ⚠ ${guard.note}（${j.label}・${j.cwd}）`);
     const startSize = existsSync(outFile) ? statSync(outFile).size : 0;
     // 2026-11-04 作業員1（統括役の了承 (c)）: 時間の上限では殺さず止める印を置く＝brain-exam が問題の区切りで止まり、
     //   取れた「今」の行と回の揃った「前」（main）を取り置いてから終わる（-r が前を作り直さない）。猶予（EXAM_JOB_STOP_GRACE_MIN・既定 15分）を過ぎたら殺す
     const stopFile = join(ROOT, `.stop-${j.label}`);
     try { unlinkSync(stopFile); } catch { /* 無ければよい */ }
-    const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile }, outFile); cur = r.child;
+    const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile, ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile); cur = r.child;
     // ① 早めの打ち切り（30秒ごと）
     let early: { stop: string; why: string; base: string } | null = null;
     const rowsFile = join(resultsDirOf(j.cwd), `${j.label}.jsonl`);
@@ -426,11 +431,6 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     }, 30_000) : null;
     // 2026-11-04 (b): 1本の時間の上限（既定 40分・依頼の maxMin・EXAM_JOB_MAX_MIN）。超えたら止めて途中までを集計し、残りの問題を分けた依頼にして後ろへ
     let timedOut = false as boolean;
-    // 2026-11-04 (b): 依頼の作業ツリーの brain-exam.ts が止める印を見ない（origin/main より古い）時は上限を延ばす（EXAM_JOB_OLD_MAX_MIN・既定 120分）。依頼の行と結果にも出す
-    const behind = (() => { try { return Number(execFileSync("git", ["-C", j.cwd, "rev-list", "--count", "HEAD..origin/main"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim()); } catch { return null; } })();
-    const guard = staleExamGuard((() => { try { return readFileSync(join(j.cwd, "scripts", "brain-exam.ts"), "utf8"); } catch { return ""; } })(), Number.isFinite(behind as number) ? behind : null,
-      j.maxMin ?? Number(process.env.EXAM_JOB_MAX_MIN ?? "40"), Number(process.env.EXAM_JOB_OLD_MAX_MIN ?? "120"));
-    if (guard.note) log(`  ⚠ ${guard.note}（${j.label}・${j.cwd}）`);
     const maxMin = guard.maxMin;
     const graceMin = Number(process.env.EXAM_JOB_STOP_GRACE_MIN ?? "15");
     let graceT: ReturnType<typeof setTimeout> | null = null;
