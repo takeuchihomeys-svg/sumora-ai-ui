@@ -33,9 +33,9 @@ it("bcfc51dd: 日にちが違う2文（明日9月17日12時／本日12時）は�
 it("ab0008d1: 「本日〇〇時」と「本日13時」は別の文（出口はどちらが正しいかを決めない）", () => same("慶次さんお疲れ様です！！\n本日〇〇時お部屋ご案内させて頂きます！\n本日は何卒よろしくお願い致します！！\n\n慶次さんお疲れ様です！！\n本日13時お部屋ご案内させて頂きます！\n本日は何卒よろしくお願い致します！！"));
 
 // ── スイッチと配線 ──
-it("既定 off は本文を変えない・on で落とす", () => {
+it("既定 on で落とす・off は本文を変えない", () => {
   const d = "御見積書を作成しお送りさせて頂きます！！\n御見積書を作成しお送りさせて頂きます！！";
-  ok(!draftSelfRepeatDropOn({}) && applySelfRepeatExit(d, {}).text === d);
+  ok(draftSelfRepeatDropOn({}) && applySelfRepeatExit(d, { DRAFT_SELF_REPEAT_DROP: "off" }).text === d);
   const r = applySelfRepeatExit(d, { DRAFT_SELF_REPEAT_DROP: "on" });
   ok(r.text === "御見積書を作成しお送りさせて頂きます！！" && r.changes.length === 1 && r.changes[0].startsWith("二度言いを外す: "), JSON.stringify(r));
 });

@@ -217,7 +217,7 @@ export function isAckOnlyTurn(customer: ReadonlyArray<string>): boolean {
  *   落とすのは文だけ（行が空になれば行ごと・前後の空行は1つにまとめる）。
  */
 export function draftSelfRepeatDropOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.DRAFT_SELF_REPEAT_DROP ?? "").trim().toLowerCase() === "on";
+  return (env.DRAFT_SELF_REPEAT_DROP ?? "").trim().toLowerCase() !== "off"; // 2026-11-05 既定 on（竹内さんの送信 60日 当たり0・YUMA sr-yuma 悪化0）・戻す =off
 }
 /**
  * 2026-11-05 作業員3（竹内さんの決定 KB a5a2f6f8 ③）: 出口が落としてよい二度言いの網を狭くした。
@@ -273,7 +273,7 @@ export function dropSelfRepeats(draft: string): { text: string; dropped: string[
   return { text, dropped };
 }
 /**
- * generate-reply の仕上げの出口（wording-1002 の束）が呼ぶ口。DRAFT_SELF_REPEAT_DROP=on の時だけ落とす（2026-11-05 作業員3・既定は監査の後に決める）。
+ * generate-reply の仕上げの出口（wording-1002 の束）が呼ぶ口。既定 on（2026-11-05 作業員3・監査と YUMA の後）・DRAFT_SELF_REPEAT_DROP=off で止める。
  * changes はログ（generate-reply:wording-1002）に出す文。
  */
 export function applySelfRepeatExit(draft: string, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): { text: string; changes: string[] } {
