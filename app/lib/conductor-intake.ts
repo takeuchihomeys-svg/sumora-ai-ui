@@ -88,6 +88,25 @@ export function intakeAgreement(a: IntakeAnswer | null, b: IntakeAnswer | null):
   return { scene: a.scene === b.scene, roles: same(a.roles, b.roles), need: same(a.need, b.need) };
 }
 
+/** 読みが AIX の番と見たか（AIX の担当 aix_desk を呼ぶ・やる事に aix がある）。再生の試験（conductor-intake-replay）の採点と同じ見方 */
+export function intakeSaysAix(a: Pick<IntakeAnswer, "roles" | "todos"> | null | undefined): boolean {
+  return !!a && (a.roles.includes("aix_desk") || a.todos.some((t) => t.kind === "aix"));
+}
+/**
+ * digest.ci の1行（記録だけ）。2026-11-05 作業員4（brain_weaknesses meeting-gap:conductor-intake-digest-thin）:
+ *   前は「場面|自信|cr|ds:一致」だけで、本番の記録から入口の読みの当たり（返信か AIX か・竹内さんの最初の一手と比べる）を数えられなかった。
+ *   後ろに |a0/a1（Sonnet が AIX の番と見たか）、DeepSeek でも読んだ番は |dx:<DeepSeek の場面>:a0/a1 を足す（75da346a ②の比べを本番の記録で）。
+ *   前の形の読み手（audit-prod-as-exam の /\|ds:(.)/）はそのまま読める。
+ */
+export function intakeDigestLine(ci: { answer?: IntakeAnswer | null; ds?: IntakeAnswer | null; cacheRead?: number | null; agree?: { scene: boolean; roles: boolean; need: boolean } | null } | null | undefined): string | null {
+  if (!ci?.answer) return null;
+  const a = ci.answer;
+  const ag = ci.agree ? `${ci.agree.scene ? "s" : "-"}${ci.agree.roles ? "r" : "-"}${ci.agree.need ? "n" : "-"}` : "";
+  const roles = Array.isArray(a.roles) ? a.roles : [], todos = Array.isArray(a.todos) ? a.todos : [];
+  const ds = ci.ds && Array.isArray(ci.ds.roles) && Array.isArray(ci.ds.todos) ? ci.ds : null;
+  return `${a.scene}|${a.confidence?.[0] ?? ""}|cr${ci.cacheRead ?? 0}${ag ? `|ds:${ag}` : ""}|a${intakeSaysAix({ roles, todos }) ? 1 : 0}${ds ? `|dx:${ds.scene}:a${intakeSaysAix(ds) ? 1 : 0}` : ""}`;
+}
+
 /** 1回の費用の見積もり（USD・Sonnet: 入力 $3/M・作り置きの読み $0.3/M・作り置きの書き $3.75/M・出力 $15/M） */
 export function intakeCostUsd(o: { prefixTokens: number; variableTokens: number; outputTokens: number; cacheHit: boolean }): number {
   const pre = o.cacheHit ? o.prefixTokens * 0.3e-6 : o.prefixTokens * 3.75e-6;

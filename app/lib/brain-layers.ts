@@ -18,6 +18,7 @@
 // 2026-09-23: 戦略の項目にも家賃交渉の守りを通す（純関数同士なので依存なしのまま）
 import { needDigest, planAheadDigest, threeLayerDigest, type BrainNeed, type PlanAhead, type ThreeLayer } from "./brain-need";
 import { conductorMetaDigest, type ConductorMeta } from "./conductor-meta";
+import { intakeDigestLine } from "./conductor-intake";
 import { stripRentNegotiation, stripRentNegotiationFromList } from "./rent-negotiation-guard";
 import { mindsetDigest, type CustomerMindset } from "./customer-mindset";
 
@@ -186,10 +187,15 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...((() => { const nd = needDigest(meta.need as BrainNeed | null | undefined); return nd ? { nd } : {}; })()),
     ...((() => { const pa = planAheadDigest(meta.plan_ahead as PlanAhead | null | undefined); return pa ? { pa } : {}; })()),
     ...((() => { const tl = threeLayerDigest(meta.three_layer as ThreeLayer | null | undefined); return tl ? { tl } : {}; })()),
-    ...((() => { const ci = meta.conductor_intake as { answer?: { scene?: string; confidence?: string } | null; cacheRead?: number | null; agree?: { scene: boolean; roles: boolean; need: boolean } | null } | undefined; if (!ci?.answer) return {}; const ag = ci.agree ? `${ci.agree.scene ? "s" : "-"}${ci.agree.roles ? "r" : "-"}${ci.agree.need ? "n" : "-"}` : ""; return { ci: `${ci.answer.scene}|${ci.answer.confidence?.[0] ?? ""}|cr${ci.cacheRead ?? 0}${ag ? `|ds:${ag}` : ""}` }; })()),
+    // 2026-11-05 作業員4: 1行の形は conductor-intake.intakeDigestLine（AIX の印・DeepSeek の場面と AIX の印を足した・前の形の読み手はそのまま読める）
+    ...((() => { const line = intakeDigestLine(meta.conductor_intake as Parameters<typeof intakeDigestLine>[0]); return line ? { ci: line } : {}; })()),
     ...(str(meta.handoff_check, 40) ? { hc: str(meta.handoff_check, 40)! } : {}),
     ...((() => { const cm = conductorMetaDigest(meta.conductor_meta as ConductorMeta | null | undefined); return cm ? { cm } : {}; })()),
     ...(str(meta.recheck_digest, 40) ? { rk: str(meta.recheck_digest, 40)! } : {}),
+    // 2026-11-05 作業員4: 複雑な番だけ深く読み直した番（BRAIN_DEEP_RECHECK・brain-depth.deepRecheckDigest＝理由:最初→最後）
+    ...(str(meta.deep_recheck_digest, 60) ? { dr: str(meta.deep_recheck_digest, 60)! } : {}),
+    // 深さの判定（記録・10/29 から brain:depth のログだけだった＝本番の当たりと突き合わせられなかった）
+    ...((() => { const d = meta.brain_depth as { depth?: string; reason?: string } | undefined; return d?.depth ? { dp: `${d.depth[0]}:${String(d.reason ?? "").slice(0, 12)}` } : {}; })()),
     ...(str(meta.conductor_roles, 30) ? { rl: str(meta.conductor_roles, 30)! } : {}),
     ...(str(meta.main_point, 30) ? { mp: str(meta.main_point, 30)! } : {}),
     ...(Array.isArray(meta.flow_signals) && (meta.flow_signals as unknown[]).length ? { fs: (meta.flow_signals as unknown[]).map(String).join(",").slice(0, 40) } : {}),

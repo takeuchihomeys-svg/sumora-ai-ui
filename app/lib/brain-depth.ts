@@ -42,3 +42,29 @@ export function decideBrainDepth(i: DepthInput): { depth: BrainDepth; reason: st
   if (i.ackOnly && Array.from(t.trim()).length <= 20 && !i.pickupReady) return { depth: "light", reason: "短いお礼・了承" };
   return { depth: "normal", reason: "一般" };
 }
+
+// ── 第2段（2026-11-05 作業員4・竹内さんの決定 KB P1 077d6e18「深く読むのは複雑な番だけ」）──────────────────────
+//   竹内さんの番 680（conductor_turn_vectors・最初の一手）で、判断のブレインの外れが寄っていた理由だけを深く読む:
+//     申込・審査の言葉 41〜42%・複数の依頼 34.5%（普通 24.5%・短いお礼 12.3%・約束の結果待ち 25%・久しぶり 27%＝寄っていない）。
+//     外れの向きは「AIX と読み・竹内さんは返信」が 52/65（brain_weaknesses meeting-gap:brain-apply-multi-ask-over-aix）。
+//   形: 最初の判断の後に1回だけ、読み直しの口（brain-recheck の from=deep・kind=reread）で、依頼を1つずつ分けて決め直させる（決めるのはブレイン・答えは差し替えない）。
+//   切替: BRAIN_DEEP_RECHECK（既定 off・=on で読み直す）。10/22 の「速く・じっくり」を全部の番に一律にした形（効かなかった）は繰り返さない。
+export const DEEP_RECHECK_REASONS = ["複数の依頼", "申込", "審査"] as const;
+export const deepRecheckOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_DEEP_RECHECK ?? "").trim().toLowerCase() === "on";
+
+/** 深く読む材料の1行（理由ごと）。竹内さんの P0（スタッフだけが知る事は AIX・返信は AI が知り得る事だけ）と 9/30 の決定（審査・入居までの流れ・必要書類の質問は返信）に沿う */
+export function deepRecheckMaterial(reason: string): string {
+  const split = "お客様の今の連投の依頼を1つずつ書き出し、それぞれ『会話・送った資料・会社の事実で今答えられる依頼』か『スタッフだけが知る事（管理会社の確認の結果・募集状況・見積の金額・内覧の日程の確定）が要る依頼』かを分けてから、道を決め直す。";
+  const p0 = "全部を今答えられるなら返信。スタッフだけが知る事が要る依頼が残る時だけ、その依頼を AIX か確かめる約束にする（答えられる依頼は返信の中で答える）。";
+  if (reason === "申込" || reason === "審査") return `${split}申込・審査の話のうち、流れ・必要書類・審査の目安・入居までの期間は会社の事実で答えられる（返信）。物件ごとの申込の枠・審査の結果などスタッフだけが知る事だけを AIX にする。${p0}`;
+  return `${split}${p0}`;
+}
+
+/** 深く読む番なら読み直しの材料を返す（深く読む理由が DEEP_RECHECK_REASONS の時だけ・それ以外は null＝普通の番は今まで通り） */
+export function deepRecheckFor(dep: { depth: BrainDepth; reason: string } | null | undefined, firstAix: string | null): { from: "deep"; kind: "reread"; why: string; firstAix: string | null; material: string } | null {
+  if (!dep || dep.depth !== "deep" || !(DEEP_RECHECK_REASONS as readonly string[]).includes(dep.reason)) return null;
+  return { from: "deep", kind: "reread", why: `複雑な番（${dep.reason}）`, firstAix, material: deepRecheckMaterial(dep.reason) };
+}
+
+/** digest.dr: "理由:最初→最後"（AIX の鍵・返信は r） */
+export const deepRecheckDigest = (reason: string, first: string | null, last: string | null) => `${reason}:${first ?? "r"}→${last ?? "r"}`.slice(0, 60);

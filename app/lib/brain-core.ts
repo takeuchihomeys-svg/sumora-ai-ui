@@ -441,6 +441,10 @@ export type SuggestedAixMeta = {
   conductor_meta?: import("@/app/lib/conductor-meta").ConductorMeta;
   /** 2026-11-04 入口の最初の読み（Sonnet・5番に1番は DeepSeek との比べ）→ digest.ci */
   conductor_intake?: import("@/app/lib/conductor-intake-server").IntakeRun;
+  /** 2026-11-05 深さ（brain-depth.decideBrainDepth・記録）。BRAIN_DEEP_RECHECK=on の時、深く読む理由の番だけ1回読み直す（analyzeConversation の包み） */
+  brain_depth?: { depth: import("@/app/lib/brain-depth").BrainDepth; reason: string };
+  /** 2026-11-05 深く読んだ番の「理由:最初→最後」→ digest.dr */
+  deep_recheck_digest?: string;
   /** 同じ段の記録（数・抜けを足した数・AIX とのそろえ・取り寄せた材料）→ digest.pr */
   priority_step?: import("@/app/lib/brain-priority").PriorityStepRecord;
   /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
@@ -1548,7 +1552,32 @@ function runViewingCancelIfPending(conversationId: string): void {
   try { after(task); } catch { void task(); }
 }
 
-export async function analyzeConversation(
+/**
+ * 2026-11-05 作業員4（竹内さんの決定 KB P1 077d6e18「深く読むのは複雑な番だけ」・brain-depth の第2段）: 分析の包み。
+ *   BRAIN_DEEP_RECHECK=on の時だけ、最初の判断の後に、深く読む理由（複数の依頼・申込・審査＝竹内さんの番の外れが寄っていた理由）の番を
+ *   読み直しの口（opts.recheck・from=deep）で1回だけ決め直す。既定 off は最初の判断をそのまま返す（今まで通り）。
+ *   本番（analyzeAndSaveBrainMeta）と試験（brain-exam）が同じ入口を通る＝試験で確かめた形がそのまま本番になる。
+ *   読み直しの中では包みは動かない（opts.recheck がある）・AIX の統括の差し戻しの回し（analyzeAndSaveBrainMeta）はこの後に今まで通り。
+ */
+export async function analyzeConversation(...args: Parameters<typeof analyzeConversationCore>): ReturnType<typeof analyzeConversationCore> {
+  const meta = await analyzeConversationCore(...args);
+  const [conversationId, isUrgent, convStatus, propertyCustomerId, source, opts] = args;
+  if (!meta || opts?.recheck || (source ?? "brain") !== "brain") return meta;
+  const { deepRecheckOn, deepRecheckFor, deepRecheckDigest } = await import("@/app/lib/brain-depth");
+  if (!deepRecheckOn()) return meta;
+  const aixOf = (m: SuggestedAixMeta | null) => (m?.action && m.reply_mode !== "auto_reply" ? String(m.action) : null);
+  const rc = deepRecheckFor(meta.brain_depth ?? null, aixOf(meta));
+  if (!rc) return meta;
+  const t0 = Date.now();
+  const again = await analyzeConversationCore(conversationId, isUrgent, convStatus, propertyCustomerId, source, { ...(opts ?? {}), recheck: rc }).catch(() => null);
+  const dr = deepRecheckDigest(meta.brain_depth!.reason, rc.firstAix, again ? aixOf(again) : rc.firstAix);
+  console.log(JSON.stringify({ tag: "brain:deep-recheck", conversationId, dr, ok: !!again, ms: Date.now() - t0 }));
+  if (!again) { meta.deep_recheck_digest = `${dr}:fail`; return meta; }
+  again.deep_recheck_digest = dr;
+  return again;
+}
+
+async function analyzeConversationCore(
   conversationId: string,
   isUrgent: boolean,
   convStatus: string | null,
@@ -3142,6 +3171,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     } catch (e) { console.warn("[brain-core] material-provenance skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-29 統括の③深さ（brain-depth.ts）: 第1段は記録だけ（判断・費用は変えない）。数えてから軽い番の引き継ぎを入れる
+  let depthRec: { depth: import("@/app/lib/brain-depth").BrainDepth; reason: string } | null = null;
   if (typedMessages[0]?.sender === "customer") {
     try {
       const tTxt = unrepliedTurn.text ?? "";
@@ -3155,6 +3185,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         closedBefore: /ご検討|何卒よろしく|出次第|お待ちしており|ご連絡お待ち/.test(lastStaff), pickupReady: pickupReadyMaterial,
         openPromises: brainLedger.entries.filter((e) => e.status === "promised" && e.fulfilledBy == null).length, gapHours,
       });
+      depthRec = dep;
       console.log(JSON.stringify({ tag: "brain:depth", conversationId, depth: dep.depth, reason: dep.reason }));
     } catch (e) { console.warn("[brain-core] depth skipped:", e instanceof Error ? e.message : String(e)); }
   }
@@ -5924,6 +5955,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       }), factsForConductor), ["judge_examples", "knowledge"]))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
       // 2026-11-04 入口の最初の読みの記録（shadow・最大4秒だけ待つ）→ digest.ci
       conductor_intake: intakeP ? ((await Promise.race([intakeP, new Promise<null>((r) => setTimeout(() => r(null), 4_000))])) ?? undefined) : undefined,
+      brain_depth: depthRec ?? undefined,
       conductor_roles: CONDUCTOR_HANDOFF_ON ? ((nd) => rolesDigest(candidateRoles({ ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""), stampOnly: /^\s*\[(?:スタンプ|画像)\]\s*$/.test(unrepliedTurn.text ?? ""), finalAction: finalAix ?? "reply", confidence: nd?.confidence ?? null, difficulty: nd?.difficulty ?? null, missing: nd?.missing ?? [] })))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
       priority_step: priorityRec,
       // 2026-10-08 本質の仕様（turn-contract.ts）: 今の番の依頼ごとの答え方（返信／約束／AIX／触れない）・閉じる番か・言わない事・気持ち。返信の最上位の決まりになる
