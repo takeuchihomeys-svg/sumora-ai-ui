@@ -51,5 +51,5 @@ export function turnVectorRow(o: {
   };
 }
 
-/** 既定 off（CONDUCTOR_TURN_VECTORS=on の時だけ表に書く・表の了承の後） */
-export const conductorTurnVectorsOn = (env: Record<string, string | undefined> = process.env) => (env.CONDUCTOR_TURN_VECTORS ?? "").trim().toLowerCase() === "on";
+/** 2026-11-04 統括役（竹内さんに「今夜から埋め始める」）: 既定 on（表を埋めるだけ・読む側はまだ無い・夜 01:50 だけ・約 $0.01/日）。=off で止める */
+export const conductorTurnVectorsOn = (env: Record<string, string | undefined> = process.env) => (env.CONDUCTOR_TURN_VECTORS ?? "").trim().toLowerCase() !== "off";

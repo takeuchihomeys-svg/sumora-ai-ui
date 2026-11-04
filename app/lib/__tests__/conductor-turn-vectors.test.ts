@@ -12,6 +12,6 @@ t("当たり: 見張りの番が無ければ空・道と種類", Object.keys(hit
 const r = turnVectorRow({ sendId: "m1", conversationId: "c1", propertyCustomerId: null, scene: null, stage: null, customerMasked: "x", lastStaffKind: null, fp: [], actual: a, hits: {}, writer: "takeuchi", turnAt: "2026-11-01T00:00:00Z" });
 t("行: source_key は msg:<送信の id>・書き手は takeuchi/employee/unknown", r.source_key === "msg:m1" && r.source === "messages" && r.writer === "takeuchi" && turnVectorRow({ ...{ sendId: "m2", conversationId: "c", propertyCustomerId: null, scene: null, stage: null, customerMasked: "x", lastStaffKind: null, fp: [], actual: a, hits: {}, turnAt: "x" }, writer: null }).writer === "unknown");
 t("申込の書類の手前まで（免許証・申込書 等の番は入れない）", APPLY_DOCS_RE.test("免許証の写真送ります") && APPLY_DOCS_RE.test("申込書") && !APPLY_DOCS_RE.test("内覧したいです"));
-t("既定 off", conductorTurnVectorsOn({}) === false && conductorTurnVectorsOn({ CONDUCTOR_TURN_VECTORS: "on" }));
+t("2026-11-04 既定 on・=off で止まる", conductorTurnVectorsOn({}) === true && conductorTurnVectorsOn({ CONDUCTOR_TURN_VECTORS: "off" }) === false);
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

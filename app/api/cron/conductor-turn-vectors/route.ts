@@ -1,5 +1,5 @@
 // app/api/cron/conductor-turn-vectors/route.ts — 近い過去の番の表（conductor_turn_vectors）を夜に埋める（⑤(a)・作業員1・11/04）
-//   既定 off: CONDUCTOR_TURN_VECTORS=on の時だけ書く（表は 11/04 竹内さんの了承で作った・vercel.json は毎晩 JST 01:50）。?dry=1 か off の時は作れる数だけ返す（埋め込みも呼ばない）
+//   11/04 から既定 on（=off で止める）: on の時に書く（表は 11/04 竹内さんの了承で作った・vercel.json は毎晩 JST 01:50）。?dry=1 か off の時は作れる数だけ返す（埋め込みも呼ばない）
 //   夜だけ（JST 22〜9）。営業時間は動かない。基準は竹内さんの番だけ（staff_writer=takeuchi・sure）
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";

@@ -13,9 +13,9 @@ import { APPLY_DOCS_RE, actualOf, hitsOf, turnVectorRow, conductorTurnVectorsOn,
 type Msg = { id: string; conversation_id: string; sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; line_message_id: string | null; staff_writer: string | null; staff_writer_confidence: string | null };
 const COLS = "id, conversation_id, sender, text, created_at, is_aix_generated, line_message_id, staff_writer, staff_writer_confidence";
 
-export type FillResult = { candidates: number; built: number; skippedExisting: number; skippedApplyDocs: number; written: number; dry: boolean };
+export type FillResult = { candidates: number; built: number; skippedExisting: number; skippedApplyDocs: number; written: number; dry: boolean; samples?: string[] };
 
-export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: number; limit?: number; apply?: boolean } = {}): Promise<FillResult> {
+export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: number; limit?: number; apply?: boolean; samples?: number } = {}): Promise<FillResult> {
   const days = Math.min(120, Math.max(7, o.days ?? 90)), limit = Math.min(400, Math.max(10, o.limit ?? 200));
   const write = !!o.apply && conductorTurnVectorsOn();
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
@@ -78,6 +78,8 @@ export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: n
       writer: s.staff_writer, turnAt,
     });
     res.built++;
+    // 手元の確かめだけ: 伏せの効いた状況の文を数行（cron は渡さない＝返さない）
+    if (o.samples && (res.samples ??= []).length < o.samples) res.samples.push(row.situation);
     if (!write) continue; // dry: 埋め込みを呼ばない（費用 0）
     const emb = await generateEmbedding(row.situation);
     if (!emb) continue;
