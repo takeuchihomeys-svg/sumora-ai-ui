@@ -92,3 +92,10 @@ export function rowFilterMissingCols(rowfilter: string, replident: string, idcol
   const have = new Set(idcols.map((c) => c.toLowerCase()));
   return [...cols].filter((c) => !have.has(c));
 }
+
+/** (g) 2026-11-04 作業員1（つなぎの芯・統括役の頼み）: 試験の結果が「悪化0」なのに、前（main）と両方で解いた問題が予定より少ない（0 を含む）物。
+ *  時間の上限で止まり基準の回が書かれない・node_modules が空で落ちた等で、比べていないのに悪化0と出ていた（cbp1・grp-reply-tag）。
+ *  both は brain-exam の集計の「両方で解いた N 問」（読めなければ null＝比べた証拠が無いので拾う） */
+export function hollowNoWorse<T extends { verdict: string; planned: number; both: number | null }>(rows: ReadonlyArray<T>): T[] {
+  return rows.filter((r) => /悪化0/.test(r.verdict) && r.planned > 0 && (r.both == null || r.both < r.planned));
+}

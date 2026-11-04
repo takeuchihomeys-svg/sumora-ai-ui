@@ -62,3 +62,16 @@ if (fail) process.exit(1);
   const ok3 = rowFilterMissingCols("(conversation_id <> 'x'::text)", "f", []).length === 0;
   console.log(ok1 && ok2 && ok3 ? "hazard-audit-core (d): pass" : "hazard-audit-core (d): FAIL"); if (!(ok1 && ok2 && ok3)) process.exit(1);
 }
+{
+  const { hollowNoWorse } = require("../hazard-audit-core");
+  const rows = [
+    { label: "cbp1", verdict: "確かな悪化0（1本の時間の上限 40分）", planned: 10, both: 0 },
+    { label: "desk-on2", verdict: "確かな悪化0（早めの打ち切り）", planned: 13, both: 11 },
+    { label: "grp-reply", verdict: "確かな悪化0", planned: 20, both: 20 },
+    { label: "tag-old", verdict: "確かな悪化0・合格 ?", planned: 20, both: null },
+    { label: "bad", verdict: "確かな悪化 2", planned: 5, both: 0 },
+  ];
+  const got = hollowNoWorse(rows).map((r: { label: string }) => r.label).join(",");
+  const ok = got === "cbp1,desk-on2,tag-old";
+  console.log(ok ? "hazard-audit-core (g): pass" : `hazard-audit-core (g): FAIL ${got}`); if (!ok) process.exit(1);
+}

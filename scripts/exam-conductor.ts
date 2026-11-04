@@ -31,7 +31,7 @@ import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { readObs } from "./lib/exam-flake";
 import { pcState } from "./lib/exam-pc-state";
-import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, remainingIds, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, remainingIds, comparedIds, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -462,10 +462,13 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     const sw = blFinal ? splitWorse(readRows(rowsFile), readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)), new Set(rp.flaky.map((x) => x.id))) : null;
     const flakeNote = sw?.flake.length ? `・揺れの範囲の差 ${sw.flake.length}（${sw.flake.map((x) => `${x.id} ${x.why}`).join("／")}）` : "";
     const sureN = sw ? sw.sure.length : s.worse;
+    // 2026-11-04 つなぎの芯の頼み: 両方で解いた問題が0（基準の回が書かれていない・時間の上限で止まった等）は「確かな悪化0」と書かない
+    const cmpN = blFinal ? comparedIds(readRows(rowsFile), readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`))).length : 0;
+    const noCompare = ids.length > 0 && cmpN === 0;
     // 2026-11-04 作業員2（基準を merge-base にした時に読み違えない）: 比べた「前」の main の commit を結果の行に出す
     const baseCommit = readJson<{ commit?: string } | null>(join(resultsDirOf(j.cwd), `${j.label}.baseline.json`), null)?.commit;
     const baseNote = baseCommit ? `・基準 ${baseCommit.slice(0, 7)}` : "";
-    const verdict = (sureN == null ? "結果を読めない" : sureN === 0 ? "確かな悪化0" : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote;
+    const verdict = (noCompare ? `比べられない（基準の回が無い・両方で解いた 0/${ids.length}問・既定 on の判断に使わない${blFinal ? `・基準 ${blFinal}` : ""}）` : sureN == null ? "結果を読めない" : sureN === 0 ? (cmpN < ids.length ? `比べた問題が少ない（両方で解いた ${cmpN}/${ids.length}問・悪化0とは言わない・既定 on の判断に使わない）` : `確かな悪化0（比べた ${cmpN}/${ids.length}問）`) : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote;
     finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);

@@ -1,6 +1,6 @@
 // scripts/__tests__/exam-conductor.test.ts — 試験の統括の純関数（関所の時間・早めの打ち切り・揺れの回数・問題の選び・表への書き戻し）
 //   実行: npx tsx scripts/__tests__/exam-conductor.test.ts
-import { splitWorse, isMixedRow, jobSize, compareJobs, splitIds, remainingIds, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
+import { splitWorse, isMixedRow, jobSize, compareJobs, splitIds, remainingIds, comparedIds, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
 import type { FlakeObs } from "../lib/exam-flake";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -84,5 +84,7 @@ t("行が無ければ変えない", !updateReleaseOrder(md, "NO_SUCH", "x").chan
   t("(a) priority が小さい方が先", compareJobs({ ...big, priority: 1 }, small, now) < 0);
   t("(c) 12問ずつに分ける", JSON.stringify(splitIds(Array.from({ length: 25 }, (_, k) => "q" + k)).map((x) => x.length)) === "[12,12,1]" && splitIds(["q1"]).length === 1);
   t("(b) 時間の上限で止めた時の残り＝予定の回数に届いていない問題", JSON.stringify(remainingIds({ q1: 2, q2: 2, q3: 1 }, [{ id: "q1", rep: 1 }, { id: "q1", rep: 2 }, { id: "q2", rep: 1 }, { id: "q3", rep: 1, error: "x" }])) === JSON.stringify(["q2", "q3"])); }
+t("比べた問題: 基準の回が無い＝0（悪化0と言わない）", comparedIds([{ id: "q1", rep: 1, score: { pass: true } }], []).length === 0);
+t("比べた問題: 両方で失敗・混ざりの無い回がある問題だけ", JSON.stringify(comparedIds([{ id: "q1", rep: 1 }, { id: "q2", rep: 1, error: "x" }, { id: "q3", rep: 1, foreignMsgs: 2 }, { id: "q4", rep: 1 }], [{ id: "q1", rep: 1 }, { id: "q2", rep: 1 }, { id: "q3", rep: 1 }])) === JSON.stringify(["q1"]));
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

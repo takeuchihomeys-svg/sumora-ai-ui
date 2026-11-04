@@ -8,6 +8,7 @@
 //   (d) publication の行の条件の列が replica identity に入っているか … ⑤（入っていないと本番の UPDATE が断られる）
 //   (e) 本番の LP の「◯月実績」が今月か … ⑦（表示が止まったまま）
 //   (f) main の最近のコミットの前に tsc-remote 0 があるか … ⑥（型の確認の前にコミット）
+//   (g) 48時間の試験の結果で「悪化0」なのに前（main）と両方で解いた問題が予定より少ない（0 含む）物 … ⑨（比べていないのに悪化0）
 // 出力: 1行のまとめ（毎朝の見張りに貼る）＋詳しい所。前日との差分の為の控えは .claude/exam-cache/hazard-audit/（git に入らない）。
 // 実行: npx tsx --env-file=.env.local scripts/hazard-audit.ts [--json] [--no-db] [--no-net] [--save]
 //   --save … 今日の控えを書く（(a)(b) の差分の元）。毎朝の見張りは --save 付きで1回
@@ -16,7 +17,7 @@ import { readdirSync, readFileSync, lstatSync, existsSync, mkdirSync, writeFileS
 import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
-import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
+import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
 
 const flag = (k: string) => process.argv.includes(`--${k}`);
 const git = (args: string[], cwd = process.cwd()) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
@@ -130,6 +131,25 @@ async function main() {
   const noTsc = commitsWithoutTsc(commits.filter((c) => c.ts), tscOk);
   checks.push({ key: "f", ok: noTsc.length === 0, line: `24時間の .ts のコミット ${commits.filter((c) => c.ts).length}（前6時間に tsc-remote 0 が無い ${noTsc.length}）`,
     detail: noTsc.map((c) => `${c.sha.slice(0, 8)} ${c.at} ${c.subject.slice(0, 60)}`) });
+
+  // (g) 試験の結果の「悪化0」が本当に比べた物か（results/*.json の最新・48時間・brain-exam の依頼だけ。両方で解いた数は out.log の集計の最後）
+  {
+    const rdir = join(repoRoot, ".claude", "exam-cache", "exam-queue", "results");
+    const since = new Date(Date.now() - 48 * 3600_000).toISOString();
+    const rows: Array<{ label: string; at: string; verdict: string; planned: number; both: number | null }> = [];
+    if (existsSync(rdir)) for (const f of readdirSync(rdir).filter((x) => x.endsWith(".json") && !x.endsWith(".reps.json"))) {
+      try {
+        const j = JSON.parse(readFileSync(join(rdir, f), "utf8")) as { label?: string; at?: string; verdict?: string; only?: string; runner?: string };
+        if (!j.label || !j.at || j.at < since || (j.runner && j.runner !== "brain-exam")) continue;
+        const lf = join(rdir, `${j.label}.out.log`);
+        const ms = existsSync(lf) ? [...readFileSync(lf, "utf8").matchAll(/両方で解いた (\d+) 問/g)] : [];
+        rows.push({ label: j.label, at: j.at, verdict: j.verdict ?? "", planned: String(j.only ?? "").split(",").filter(Boolean).length, both: ms.length ? Number(ms[ms.length - 1][1]) : null });
+      } catch { /* 読めない結果は飛ばす */ }
+    }
+    const hollow = hollowNoWorse(rows);
+    checks.push({ key: "g", ok: hollow.length === 0, line: `48時間の試験の「悪化0」${rows.filter((r) => /悪化0/.test(r.verdict)).length}本（両方で解いた問題が予定より少ない ${hollow.length}）`,
+      detail: hollow.map((r) => `${r.at.slice(0, 16)} ${r.label} 両方で解いた ${r.both ?? "?"}/${r.planned}問＝既定 on の判断に使わない`) });
+  }
 
   const mark = (c: Check) => c.ok === null ? "?" : c.ok ? "○" : "×";
   const summary = `危ない所の見張り ${new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 16).replace("T", " ")}: ` + checks.map((c) => `(${c.key})${mark(c)} ${c.line}`).join("／");
