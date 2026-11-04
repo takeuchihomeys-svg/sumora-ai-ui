@@ -86,5 +86,16 @@ console.log("── 金額の書き方");
   t("表示用の文字列が金額と一致", e.amountLabel === LP.formatYen(e.amount), `${e.amountLabel} / ${e.amount}`);
 }
 
+console.log("── 日付でない物が渡っても今日で出す（11/04: DOMContentLoaded の Event が渡り 9月実績のまま止まっていた）");
+{
+  const ev = { type: "DOMContentLoaded" } as unknown as Date;
+  let threw = false;
+  let got: ReturnType<typeof LP.evidenceFor> | null = null;
+  try { got = LP.evidenceFor(ev); } catch { threw = true; }
+  const today = LP.evidenceFor(new Date());
+  t("Event を渡しても落ちない", !threw);
+  t("Event を渡すと今日の月", !!got && got.monthLabel === today.monthLabel, got?.monthLabel ?? "null");
+}
+
 console.log(`\n合計: ${pass}/${pass + fail}`);
 if (fail > 0) process.exit(1);

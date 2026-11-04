@@ -23,7 +23,9 @@
   if (root) { root.LpEvidence = api; }
   // ブラウザではそのまま描画まで行う
   if (typeof document !== "undefined") {
-    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", api.render);
+    // 2026-11-04: render をそのまま渡すと DOMContentLoaded の Event が now に入り、getTime で落ちて
+    //   HTML の控え（9月実績）のまま止まっていた（body の最後の script も読み込み中は readyState=loading）→ 引数なしで呼ぶ
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { api.render(); });
     else api.render();
   }
 })(typeof self !== "undefined" ? self : (typeof globalThis !== "undefined" ? globalThis : this), function () {
@@ -35,7 +37,7 @@
 
   /** JST の「今日」（端末の時計が何時間ずれていても日本時間で揃える） */
   function jstParts(now) {
-    var n = now || new Date();
+    var n = now instanceof Date ? now : new Date();
     var jst = new Date(n.getTime() + n.getTimezoneOffset() * 60000 + 9 * 3600000);
     return { y: jst.getFullYear(), m: jst.getMonth() + 1, d: jst.getDate() };
   }
