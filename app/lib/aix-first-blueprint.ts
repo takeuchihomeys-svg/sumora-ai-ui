@@ -54,7 +54,15 @@ export function aixFirstBlueprint(o: { key: string; cardText?: string | null; ha
   const bp = buildBlueprint({ intent, requirements: [], greet: aixFirstGreet(o.key) });
   if (o.hasFixedBlock) {
     const mi = bp.parts.findIndex((p) => p.role === "main");
-    bp.parts.splice(mi >= 0 ? mi + 1 : bp.parts.length, 0, { role: "add", say: "（定型の塊: 物件の札・御見積書・申込フォーマット等をそのまま・1文字も変えない）", from: "material" });
+    // 2026-11-04 grp-aix-first の気になる所①: 条件ヒアリングで「希望の項目」を箇条書きで書き出した（塊は別に付くのに、塊の中身を書き手が作った）
+    //   → 塊は書き手の外で付く・本文で項目を並べない・箇条書きにしない、と書く
+    bp.parts.splice(mi >= 0 ? mi + 1 : bp.parts.length, 0, { role: "add", say: "（定型の塊: 物件の札・御見積書・申込フォーマット・条件の項目は別に付く。本文で項目を書き出さない・箇条書きにしない・付く物は1文字も変えない）", from: "material" });
+  }
+  // 2026-11-04 grp-aix-first の気になる所②: 物件確認した で、材料に無い号室・物件名を書いた（札の「送る中身」の物件名・号室に引っぱられた）
+  //   → 主語が物件の時は、メインの1文の決まりに「物件名・号室・金額・徒歩・広さは材料にある物だけ」を足す
+  if (bp.intent.main.subject === "property") {
+    const main = bp.parts.find((p) => p.role === "main");
+    if (main) main.nets = [...(main.nets ?? []), "物件名・号室・金額・徒歩・広さは材料に書いてある物だけ（無ければ書かない・作らない）"];
   }
   const card = o.cardText ? readDeskCard(o.cardText) : null;
   if (card?.line) bp.check.issues.push(`似たボタンとの線: ${card.line.slice(0, 60)}`);

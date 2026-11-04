@@ -21,3 +21,13 @@ import { aixFirstGreet, aixFirstBlueprint as afb } from "../aix-first-blueprint"
     && !afb({ key: "estimate_sheet/single", hasFixedBlock: true }).parts.some((p) => p.role === "close" || p.role === "cta");
   console.log(ok ? "aix-first-defaults: pass" : "aix-first-defaults: FAIL"); if (!ok) process.exit(1);
 }
+
+{
+  // 2026-11-04 気になる所①②: 塊は本文で書き出さない・物件が主語の時は材料に無い物件名・号室を作らない
+  const { aixFirstBlueprint: bpOf } = require("../aix-first-blueprint");
+  const ch = bpOf({ key: "condition_hearing/-", hasFixedBlock: true });
+  const pc = bpOf({ key: "property_check_result/-", hasFixedBlock: false });
+  const ok = ch.parts.some((p: { say: string }) => /箇条書きにしない/.test(p.say))
+    && (pc.parts.find((p: { role: string }) => p.role === "main")?.nets ?? []).some((n: string) => /材料に書いてある物だけ/.test(n));
+  console.log(ok ? "aix-first-v2: pass" : "aix-first-v2: FAIL"); if (!ok) process.exit(1);
+}
