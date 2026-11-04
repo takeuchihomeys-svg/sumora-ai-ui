@@ -445,6 +445,8 @@ export type SuggestedAixMeta = {
   brain_depth?: { depth: import("@/app/lib/brain-depth").BrainDepth; reason: string };
   /** 2026-11-05 深く読んだ番の「理由:最初→最後」→ digest.dr */
   deep_recheck_digest?: string;
+  /** 2026-11-05 P0 575a7cd5 統括の前半「この番の重点」（作業員5 が入れる・無ければ undefined）。後半の読み直し（深く読む）がこれに沿って決め直す */
+  conductor_focus?: { focus: string; why?: string | null };
   /** 同じ段の記録（数・抜けを足した数・AIX とのそろえ・取り寄せた材料）→ digest.pr */
   priority_step?: import("@/app/lib/brain-priority").PriorityStepRecord;
   /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
@@ -1566,7 +1568,8 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
   const { deepRecheckOn, deepRecheckFor, deepRecheckDigest } = await import("@/app/lib/brain-depth");
   if (!deepRecheckOn()) return meta;
   const aixOf = (m: SuggestedAixMeta | null) => (m?.action && m.reply_mode !== "auto_reply" ? String(m.action) : null);
-  const rc = deepRecheckFor(meta.brain_depth ?? null, aixOf(meta));
+  // 統括の前半の重点（作業員5・meta.conductor_focus＝{ focus, why }）を受け取る口。無い時は今まで通り
+  const rc = deepRecheckFor(meta.brain_depth ?? null, aixOf(meta), meta.conductor_focus ?? null);
   if (!rc) return meta;
   const t0 = Date.now();
   const again = await analyzeConversationCore(conversationId, isUrgent, convStatus, propertyCustomerId, source, { ...(opts ?? {}), recheck: rc }).catch(() => null);

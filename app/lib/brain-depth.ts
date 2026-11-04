@@ -61,9 +61,16 @@ export function deepRecheckMaterial(reason: string): string {
 }
 
 /** 深く読む番なら読み直しの材料を返す（深く読む理由が DEEP_RECHECK_REASONS の時だけ・それ以外は null＝普通の番は今まで通り） */
-export function deepRecheckFor(dep: { depth: BrainDepth; reason: string } | null | undefined, firstAix: string | null): { from: "deep"; kind: "reread"; why: string; firstAix: string | null; material: string } | null {
+/**
+ * 2026-11-05 P0 575a7cd5（統括は重点を先に決め、必要なブレインだけを動かし、返ってきた答えを確かめて1つにまとめる）:
+ *   この読み直しは統括の後半（確かめて決め直す）。前半の「重点」（作業員5・meta.conductor_focus）がある時は、重点に沿って決め直すよう材料の先頭に書く。
+ *   重点が無い時は今まで通り（材料は変えない）。
+ */
+export type ConductorFocusLite = { focus: string; why?: string | null } | null | undefined;
+export function deepRecheckFor(dep: { depth: BrainDepth; reason: string } | null | undefined, firstAix: string | null, focus?: ConductorFocusLite): { from: "deep"; kind: "reread"; why: string; firstAix: string | null; material: string } | null {
   if (!dep || dep.depth !== "deep" || !(DEEP_RECHECK_REASONS as readonly string[]).includes(dep.reason)) return null;
-  return { from: "deep", kind: "reread", why: `複雑な番（${dep.reason}）`, firstAix, material: deepRecheckMaterial(dep.reason) };
+  const f = focus && String(focus.focus ?? "").trim() ? `統括の重点「${String(focus.focus).trim().slice(0, 40)}」${focus.why ? `（${String(focus.why).trim().slice(0, 60)}）` : ""}に沿って決め直す。` : "";
+  return { from: "deep", kind: "reread", why: `複雑な番（${dep.reason}）`, firstAix, material: `${f}${deepRecheckMaterial(dep.reason)}` };
 }
 
 /** digest.dr: "理由:最初→最後"（AIX の鍵・返信は r） */

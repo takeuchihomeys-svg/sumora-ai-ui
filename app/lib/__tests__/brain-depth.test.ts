@@ -45,6 +45,14 @@ it("読み直しの材料の1行に深く読む理由と依頼の分け方が入
   const line = recheckMaterialLine(rc);
   eq(line.includes("深く読む番と判断された") && line.includes("複雑な番（審査）") && line.includes("依頼を1つずつ") && line.includes("必要書類"), true, line);
 });
+it("統括の重点（前半）を受け取る口: 重点がある時は材料の先頭に・無い時は今まで通り", () => {
+  const dep = { depth: "deep" as const, reason: "複数の依頼" };
+  const a = deepRecheckFor(dep, null), b = deepRecheckFor(dep, null, null), c = deepRecheckFor(dep, null, { focus: "約束を果たす", why: "見積書の約束が開いている" });
+  eq(a?.material, b?.material);
+  eq(c!.material.startsWith("統括の重点「約束を果たす」（見積書の約束が開いている）に沿って決め直す。"), true, c!.material);
+  eq(c!.material.endsWith(a!.material), true);
+  eq(deepRecheckFor(dep, null, { focus: "  " })?.material, a?.material);
+});
 it("digest に dp（深さ）と dr（深く読み直した番）が残る（配線: brain-layers.toFreshDigest）", () => {
   const d = toFreshDigest({ brain_depth: { depth: "deep", reason: "複数の依頼" }, deep_recheck_digest: deepRecheckDigest("複数の依頼", "estimate_sheet", null) }, null) as Record<string, unknown>;
   eq(d.dp, "d:複数の依頼"); eq(d.dr, "複数の依頼:estimate_sheet→r");
