@@ -7,12 +7,17 @@
 //   使い道: ①構成のブレインの手本（近い場面で引く）②採点の物差し（趣旨・一番の要点・構成が竹内さんと同じか）。
 // テスト: app/lib/__tests__/takeuchi-anatomy.test.ts
 import { COMPOSE_PURPOSES, purposeOfText, type ComposePurpose, type SentenceTag } from "./compose-blueprint";
+import { FOCUS_KINDS, FOCUS_LABEL, type Focus } from "./conductor-focus";
 
 export type AnatomyPart = "greet" | "uke" | "main" | "add" | "cta" | "close";
 export type Anatomy = {
   scene: string; purpose: ComposePurpose; main_point: string; worry_answer: string | null;
   parts: AnatomyPart[]; why_order: string; omitted: Array<{ what: string; why: string }>;
+  /** 2026-11-05 作業員5（KB P0 575a7cd5・統括役了承）: この番の重点と言葉の背景（TAKEUCHI_ANATOMY_FOCUS=on の時だけ読ませる・無い行は省く） */
+  focus?: Focus | null; background?: string | null;
 };
+/** 解剖に重点と背景も読ませる（既定 off）。on の間は anatomy が無い行と focus が無い行を新しい順に約1,000通まで読む */
+export const anatomyFocusOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.TAKEUCHI_ANATOMY_FOCUS ?? "").trim().toLowerCase() === "on";
 
 /** 場面×趣旨で偏りなく選ぶ（組ごとに上限 cap・新しい順・合計 total まで） */
 export function pickBalanced<T extends { scene: string; purpose: string; sent_at: string }>(rows: ReadonlyArray<T>, total = 200, cap?: number): T[] {
@@ -34,9 +39,17 @@ export const ANATOMY_SYSTEM = [
   "omitted（お客様の発言の中で答えずに省いた事とその理由。無ければ []）。",
   "名前は YUMA、伏せた所は〈〉のまま。推測で事実を足さない。出力は JSON だけ: {\"scene\":\"…\",\"purpose\":\"…\",\"main_point\":\"…\",\"worry_answer\":\"…\"|null,\"parts\":[…],\"why_order\":\"…\",\"omitted\":[{\"what\":\"…\",\"why\":\"…\"}]}",
 ].join("\n");
-/** 下読みに渡すのは伏せ済みの物だけ（body・customer_gist は takeuchi_compose_examples に伏せて置いた物） */
-export function anatomyPrompt(o: { maskedCustomer: string | null; maskedBody: string; scene: string }): string {
-  return `## 場面（決定論の札）\n${o.scene}\n\n## お客様の発言（伏せ済み）\n${(o.maskedCustomer ?? "（こちらから送った番）").slice(0, 300)}\n\n## 竹内さんの返信（伏せ済み）\n${o.maskedBody.slice(0, 500)}`;
+/** 重点と背景も書き出させる時の指示（ANATOMY_SYSTEM の後ろに足すだけ・元の項目は変えない）。種類の境目は 11/05 統括役の決定（竹内さんに確認中） */
+export const ANATOMY_SYSTEM_FOCUS = [
+  ANATOMY_SYSTEM,
+  "追加で書き出す物（JSON に一緒に入れる）: background（言葉の背景＝お客様がなぜ今それを言ったか・言っていない心配や本音・段階と気持ち・前の約束や送った物との関係。40字以内・読める物だけ・無ければ null）・",
+  `focus（竹内さんがこの番で一番大切にした事を次から1つ: ${FOCUS_KINDS.map((k) => `${k}=${FOCUS_LABEL[k]}`).join("／")}）。`,
+  "境目: 内覧の希望に内覧の調整で応える＝close／日程の確定待ちで「確認します」と返す＝promise_make／受けだけの文でも前の約束を果たしている番（結果・物件・見積を送った直後の受け等）＝promise_keep／残念な報告も正直に答える番＝answer。迷ったら優先の段（正直→確認の約束→一つ一つに答える→即答→気持ち→次の一手→形）の上。",
+  "出力は JSON だけ（上の項目に \"background\" と \"focus\" を足す）。",
+].join("\n");
+/** 下読みに渡すのは伏せ済みの物だけ（body・customer_gist は takeuchi_compose_examples に伏せて置いた物）。situation はその番の時点の状況の文 v2（あれば） */
+export function anatomyPrompt(o: { maskedCustomer: string | null; maskedBody: string; scene: string; situation?: string | null }): string {
+  return `## 場面（決定論の札）\n${o.scene}\n\n${o.situation ? `## その番の時点の状況（伏せ済み・決まった計算）\n${o.situation.slice(0, 500)}\n\n` : ""}## お客様の発言（伏せ済み）\n${(o.maskedCustomer ?? "（こちらから送った番）").slice(0, 300)}\n\n## 竹内さんの返信（伏せ済み）\n${o.maskedBody.slice(0, 500)}`;
 }
 const PARTS: readonly AnatomyPart[] = ["greet", "uke", "main", "add", "cta", "close"];
 export function parseAnatomy(text: string): Anatomy | null {
@@ -51,6 +64,8 @@ export function parseAnatomy(text: string): Anatomy | null {
       worry_answer: o.worry_answer == null || String(o.worry_answer) === "null" ? null : clip(o.worry_answer, 120),
       parts: (Array.isArray(o.parts) ? o.parts : []).map(String).filter((p): p is AnatomyPart => (PARTS as readonly string[]).includes(p)).slice(0, 8),
       why_order: clip(o.why_order, 120),
+      ...(o.focus !== undefined ? { focus: (FOCUS_KINDS as readonly string[]).includes(String(o.focus)) ? (String(o.focus) as Focus) : null } : {}),
+      ...(o.background !== undefined ? { background: o.background == null || String(o.background) === "null" ? null : clip(o.background, 60) } : {}),
       omitted: (Array.isArray(o.omitted) ? o.omitted : []).slice(0, 3).map((x) => ({ what: clip((x as { what?: unknown })?.what, 60), why: clip((x as { why?: unknown })?.why, 80) })).filter((x) => x.what),
     };
   } catch { return null; }

@@ -3,7 +3,7 @@
 //   夜だけ（JST 22〜9）。営業時間は動かない。基準は竹内さんの番だけ（staff_writer=takeuchi・sure）
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { fillConductorTurnVectors, backfillCursor } from "@/app/lib/conductor-turn-vectors-server";
+import { fillConductorTurnVectors, backfillCursor, v2BackfillCursor, conductorTurnVectorsV2On } from "@/app/lib/conductor-turn-vectors-server";
 import { conductorTurnVectorsOn } from "@/app/lib/conductor-turn-vectors";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
@@ -38,8 +38,14 @@ export async function GET(req: NextRequest) {
   const logId = await startCronLog(backfill ? "conductor-turn-vectors-backfill" : "conductor-turn-vectors");
   try {
     const r = await fillConductorTurnVectors(sb, { days: 90, limit: 200, apply: !dry, before });
-    await finishCronLog(logId, true, { ...r, before });
-    return NextResponse.json({ ok: true, ...r });
+    // 2026-11-05 作業員5: v2 が on の夜は、新しい番の後に、v2 がまだ無い古い番を同じ回で 200番まで作り直す（約5晩で 1,000番・埋め込み 約 $0.001/晩）
+    let r2: Awaited<ReturnType<typeof fillConductorTurnVectors>> | null = null;
+    if (!backfill && !dry && conductorTurnVectorsV2On() && !r.timeBudgetHit) {
+      const cur = await v2BackfillCursor(sb);
+      if (cur) r2 = await fillConductorTurnVectors(sb, { days: 90, limit: 200, apply: true, before: cur, budgetMs: 60_000 });
+    }
+    await finishCronLog(logId, true, { ...r, before, ...(r2 ? { v2Backfill: r2 } : {}) });
+    return NextResponse.json({ ok: true, ...r, ...(r2 ? { v2Backfill: r2 } : {}) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await finishCronLog(logId, false, undefined, msg);

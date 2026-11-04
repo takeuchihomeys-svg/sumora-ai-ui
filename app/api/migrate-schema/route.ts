@@ -5179,6 +5179,33 @@ $$;
 REVOKE ALL ON FUNCTION match_conductor_turns(vector, TEXT, UUID, INT, FLOAT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION match_conductor_turns(vector, TEXT, UUID, INT, FLOAT, TEXT) TO service_role;
 
+-- 2026-11-05 作業員5（竹内さん承認・KB P0 575a7cd5「重点」・P1 977cbded①「埋め込む形を揃える」）: 状況の文 v2 とその埋め込み・竹内さんの番の重点
+--   situation_v2＝その番の時点で分かる物だけ（場面・進み・直前のこちらの要点・開いている約束・送った物・お客様）＝今の番も同じ関数（conductor-focus.turnSituationTextV2）で作る
+--   focus＝竹内さんの番の重点（answer|promise_make|promise_keep|ease|close|propose|relation・押した AIX と送った文の札から）
+ALTER TABLE conductor_turn_vectors ADD COLUMN IF NOT EXISTS situation_v2 TEXT;
+ALTER TABLE conductor_turn_vectors ADD COLUMN IF NOT EXISTS embedding_v2 vector(1536);
+ALTER TABLE conductor_turn_vectors ADD COLUMN IF NOT EXISTS focus TEXT;
+CREATE INDEX IF NOT EXISTS conductor_turn_vectors_emb_v2_idx ON conductor_turn_vectors USING hnsw (embedding_v2 vector_cosine_ops);
+
+-- 近い番の重点を引く（サーバーの鍵だけ）。時間順で p_before より前・同じ会話／同じお客様を外す・竹内さんの番だけ（既定）
+CREATE OR REPLACE FUNCTION match_conductor_focus(query_embedding vector(1536), p_before TIMESTAMPTZ, p_exclude_conv TEXT, p_exclude_pc UUID, match_count INT DEFAULT 30, max_distance FLOAT DEFAULT 0.25, p_writer TEXT DEFAULT 'takeuchi')
+RETURNS TABLE(source_key TEXT, scene TEXT, focus TEXT, distance FLOAT, actual JSONB, turn_at TIMESTAMPTZ)
+LANGUAGE sql STABLE SET search_path = public, extensions AS $$
+  SELECT source_key, scene, focus, (embedding_v2 <=> query_embedding) AS distance, actual, turn_at
+  FROM conductor_turn_vectors
+  WHERE embedding_v2 IS NOT NULL AND focus IS NOT NULL
+    AND turn_at < p_before
+    AND conversation_id <> p_exclude_conv
+    AND (p_exclude_pc IS NULL OR property_customer_id IS DISTINCT FROM p_exclude_pc)
+    AND (p_writer IS NULL OR writer = p_writer)
+    AND (embedding_v2 <=> query_embedding) <= max_distance
+  ORDER BY embedding_v2 <=> query_embedding LIMIT match_count;
+$$;
+REVOKE ALL ON FUNCTION match_conductor_focus(vector, TIMESTAMPTZ, TEXT, UUID, INT, FLOAT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION match_conductor_focus(vector, TIMESTAMPTZ, TEXT, UUID, INT, FLOAT, TEXT) TO service_role;
+-- 戻す時: DROP FUNCTION IF EXISTS match_conductor_focus(vector, TIMESTAMPTZ, TEXT, UUID, INT, FLOAT, TEXT); DROP INDEX IF EXISTS conductor_turn_vectors_emb_v2_idx;
+--   ALTER TABLE conductor_turn_vectors DROP COLUMN IF EXISTS situation_v2, DROP COLUMN IF EXISTS embedding_v2, DROP COLUMN IF EXISTS focus;
+
 -- 戻す時（了承の後に流して、取りやめる場合）:
 -- DROP FUNCTION IF EXISTS match_conductor_turns(vector, TEXT, UUID, INT, FLOAT, TEXT);
 -- DROP TABLE IF EXISTS conductor_turn_vectors;
