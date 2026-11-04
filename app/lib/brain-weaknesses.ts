@@ -106,6 +106,11 @@ export function weaknessKeyForUnknown(kind: string, key: string): { key: string;
       const link = String(key).split(":")[0].toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 40) || "x";
       return { key: `watch-break:${link}`, title: `つなぎの切れ（${link}）`, area: "conductor" };
     }
+    // 2026-11-05 作業員1（KB 3892c30c）: 抜けていた入口の型を弱い所へ寄せる
+    case "prod_miss": { const en: Record<string, string> = { 返信: "reply", 確認: "check", 見積: "estimate", 物件: "property", 内覧: "viewing", 申込: "apply", サポート: "support" }; const k2 = String(key).replace(/^.*:/, "").split("→").map((x) => en[x] ?? (x.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 20) || "x")).join("-to-"); return { key: `prod-miss:${k2}`, title: `本番の竹内さんの番の外れ（${key}）`, area: "brain" }; }
+    case "material_missing": return { key: "unknown:material-missing", title: "判断に要った材料が無い（ブレインの自己申告・読めなかった材料）", area: "brain" };
+    case "knowledge_gap": return { key: "unknown:knowledge-gap", title: "会社の決まり・手順・仕組みの知識が足りない（ブレインの自己申告）", area: "brain" };
+    case "exam_regression": { const raw = String(key).split(":")[0]; let sw = raw.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 40); if (!/[a-z0-9]/.test(sw)) { let h = 0; for (const ch of raw) h = (h * 31 + ch.codePointAt(0)!) >>> 0; sw = `j${h.toString(36)}`; } /* 日本語だけの名前は短い印に */ return { key: `exam-regression:${sw}`, title: `試験で悪化した直し（${String(key).split(":")[0]}）`, area: "exam" }; }
     default: return null;
   }
 }

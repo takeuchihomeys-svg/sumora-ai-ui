@@ -1,0 +1,85 @@
+// app/lib/unknowns-intake-server.ts — 分からない事の表の抜けていた入口の読み（サーバーの鍵・夜の cron link-brain-watch から・LLM なし・$0）
+//   2026-11-05 作業員1（KB 3892c30c・統括役の指示 ①②）。読みはどれも窓の分だけ・1000行ずつの頁（本番の DB は1回 1000行で切れる）。
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { UnknownHit } from "./brain-unknowns";
+import { prodMissHits, selfReportHits, type ProdTurn, type DigestSelfReport } from "./unknowns-intake";
+import { staffFirstMove, aixLogsFromWatch } from "./staff-first-move";
+import { isTestConversation } from "./test-conversations";
+
+const PAGE = 1000;
+const MAX_ROWS = 20_000;
+
+/** ② ブレインの自己申告（digest.mm・digest.mx）を窓の分だけ */
+export async function loadSelfReportHits(sb: SupabaseClient, fromIso: string, toIso: string): Promise<UnknownHit[]> {
+  const rows: DigestSelfReport[] = [];
+  for (let off = 0; off < MAX_ROWS; off += PAGE) {
+    const { data, error } = await sb.from("brain_decision_logs").select("conversation_id, created_at, mm:digest->mm, mx:digest->mx")
+      .gte("created_at", fromIso).lt("created_at", toIso).order("created_at", { ascending: true }).range(off, off + PAGE - 1);
+    if (error) throw new Error(`brain_decision_logs: ${error.message}`);
+    const pg = (data ?? []) as Array<{ conversation_id: string | null; created_at: string; mm: unknown; mx: unknown }>;
+    for (const r of pg) if (!r.conversation_id || !isTestConversation(r.conversation_id)) rows.push({ conversationId: r.conversation_id, at: r.created_at, mm: r.mm, mx: r.mx });
+    if (pg.length < PAGE) break;
+  }
+  return selfReportHits(rows);
+}
+
+/**
+ * ① 本番の竹内さん本人の番の外れ。番は「窓の1日前」の分（スタッフの返事が出揃ってから数える）＝窓をずらせば二重に数えない。
+ *   一手は staff-first-move（番の後の最初の送信・AIX ならその近くに押した AIX の種類）。2択はどちらかが同じなら外れにしない。
+ */
+export async function loadProdMissHits(sb: SupabaseClient, fromIso: string, toIso: string): Promise<UnknownHit[]> {
+  const lagFrom = new Date(Date.parse(fromIso) - 86_400_000).toISOString(), lagTo = new Date(Date.parse(toIso) - 86_400_000).toISOString();
+  type W = { id: number; conversation_id: string; customer_turn_at: string; brain_action: string | null; decision_id: string | null; staff_aix: unknown };
+  const turns: W[] = [];
+  for (let off = 0; off < MAX_ROWS; off += PAGE) {
+    const { data, error } = await sb.from("line_watch_turns").select("id, conversation_id, customer_turn_at, brain_action, decision_id, staff_aix")
+      .gte("customer_turn_at", lagFrom).lt("customer_turn_at", lagTo).not("decision_id", "is", null).order("id", { ascending: true }).range(off, off + PAGE - 1);
+    if (error) throw new Error(`line_watch_turns: ${error.message}`);
+    const pg = (data ?? []) as W[];
+    turns.push(...pg.filter((w) => !isTestConversation(w.conversation_id)));
+    if (pg.length < PAGE) break;
+  }
+  if (!turns.length) return [];
+  // 2択（digest.tc === true）
+  const tc = new Set<string>();
+  const ids = [...new Set(turns.map((w) => String(w.decision_id)))];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await sb.from("brain_decision_logs").select("id, tc:digest->tc").in("id", ids.slice(i, i + 200));
+    if (error) throw new Error(`brain_decision_logs tc: ${error.message}`);
+    for (const d of (data ?? []) as Array<{ id: string; tc: unknown }>) if (d.tc === true || d.tc === "true") tc.add(String(d.id));
+  }
+  // こちらの送信（書き手・AIX か）。会話100ずつ・1000行ずつの頁
+  const convs = [...new Set(turns.map((w) => w.conversation_id))];
+  const staff = new Map<string, Array<{ at: number; writer: string | null; isAix: boolean }>>();
+  const sendTo = new Date(Date.parse(lagTo) + 86_400_000).toISOString();
+  for (let i = 0; i < convs.length; i += 100) {
+    for (let off = 0; off < MAX_ROWS; off += PAGE) {
+      const { data, error } = await sb.from("messages").select("conversation_id, created_at, staff_writer, is_aix_generated")
+        .in("conversation_id", convs.slice(i, i + 100)).neq("sender", "customer").gte("created_at", lagFrom).lt("created_at", sendTo)
+        .order("created_at", { ascending: true }).range(off, off + PAGE - 1);
+      if (error) throw new Error(`messages: ${error.message}`);
+      const pg = (data ?? []) as Array<{ conversation_id: string; created_at: string; staff_writer: string | null; is_aix_generated: boolean | null }>;
+      for (const m of pg) { const a = staff.get(m.conversation_id) ?? []; a.push({ at: Date.parse(m.created_at), writer: m.staff_writer ?? null, isAix: !!m.is_aix_generated }); staff.set(m.conversation_id, a); }
+      if (pg.length < PAGE) break;
+    }
+  }
+  const prod: ProdTurn[] = turns.map((w) => {
+    const fm = staffFirstMove(Date.parse(w.customer_turn_at), staff.get(w.conversation_id) ?? [], aixLogsFromWatch(w.staff_aix as never));
+    return { turnId: w.id, conversationId: w.conversation_id, at: w.customer_turn_at, brainAction: w.brain_action, twoChoice: tc.has(String(w.decision_id)),
+      staffWriter: fm?.writer ?? null, staffMove: fm ? { kind: fm.kind, aix: fm.aix } : null };
+  });
+  return prodMissHits(prod);
+}
+
+/** 毎朝の見張りの1行の数（開いている数と24時間で新しく増えた数）。cron の結果に残し、手元の hazard-audit が cron_run_logs から読む */
+export async function unknownsOpenCounts(sb: SupabaseClient, nowMs = Date.now()): Promise<{ weak_open: number; weak_new24h: number; unknown_rows: number; unknown_new24h: number; owner_open: number }> {
+  const since = new Date(nowMs - 86_400_000).toISOString();
+  const cnt = async (q: PromiseLike<{ count: number | null; error: { message: string } | null }>) => { const r = await q; if (r.error) throw new Error(r.error.message); return r.count ?? 0; };
+  return {
+    weak_open: await cnt(sb.from("brain_weaknesses").select("id", { count: "exact", head: true }).in("status", ["open", "in_progress"])),
+    weak_new24h: await cnt(sb.from("brain_weaknesses").select("id", { count: "exact", head: true }).gte("first_seen", since)),
+    unknown_rows: await cnt(sb.from("brain_unknowns").select("id", { count: "exact", head: true })),
+    unknown_new24h: await cnt(sb.from("brain_unknowns").select("id", { count: "exact", head: true }).gte("first_at", since)),
+    owner_open: await cnt(sb.from("owner_questions").select("id", { count: "exact", head: true }).eq("status", "open")),
+  };
+}

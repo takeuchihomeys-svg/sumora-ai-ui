@@ -11,13 +11,19 @@
 import { findStaffOnlyFact } from "./staff-confirm-facts";
 import { confidenceFromCheck, CONFIDENCE_CODE_JA, type ConfidenceCode } from "./draft-confidence";
 
-export type UnknownKind = "low_confidence_reason" | "staff_only_fact" | "company_rule_missing" | "watch_break" | "exam_miss_type";
+export type UnknownKind = "low_confidence_reason" | "staff_only_fact" | "company_rule_missing" | "watch_break" | "exam_miss_type"
+  // 2026-11-05 竹内さんの決定（KB 3892c30c）・作業員1: 抜けていた入口（unknowns-intake.ts）
+  | "prod_miss" | "material_missing" | "knowledge_gap" | "exam_regression";
 export const UNKNOWN_KIND_JA: Record<UnknownKind, string> = {
   low_confidence_reason: "自信が低い理由",
   staff_only_fact: "スタッフしか知らない事を書いた",
   company_rule_missing: "会社の決まりが材料に無い",
   watch_break: "つなぎの切れ",
   exam_miss_type: "試験の外れの型",
+  prod_miss: "本番の竹内さんの番の外れ",
+  material_missing: "判断に要った材料が無い",
+  knowledge_gap: "知識が足りない",
+  exam_regression: "試験の悪化",
 };
 
 export type SampleRef = { conversation_id?: string; at?: string; exam_label?: string; qid?: string; turn_id?: number };

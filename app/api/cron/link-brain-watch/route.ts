@@ -18,6 +18,8 @@ import { aixInstantNoticeEnabled } from "@/app/lib/staff-todo-list";
 import { BREAK_JA, LINK_JA } from "@/app/lib/link-brain-watch";
 import { brainUnknownsEnabled, unknownsFromLinkSummary } from "@/app/lib/brain-unknowns";
 import { collectBrainUnknowns } from "@/app/lib/brain-unknowns-server";
+import { loadProdMissHits, loadSelfReportHits, unknownsOpenCounts } from "@/app/lib/unknowns-intake-server";
+import { prodMissIntakeEnabled, selfReportIntakeEnabled } from "@/app/lib/unknowns-intake";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -48,9 +50,14 @@ export async function GET(req: NextRequest) {
         const toIso = new Date(nowMs).toISOString();
         // つなぎの切れは見張りの窓（24時間）ごとの数なので、同じ日にやり直した回（前の回から20時間未満）では足さない
         const linkHits = nowMs - Date.parse(fromIso) >= 20 * 3_600_000 ? unknownsFromLinkSummary(s, BREAK_JA, LINK_JA) : [];
-        const u = await collectBrainUnknowns(supabase, fromIso, toIso, linkHits);
+        // 2026-11-05 作業員1（KB 3892c30c・統括役 ①②）: 本番の竹内さんの番の外れ・ブレインの自己申告（digest.mm・mx）も同じ窓で足す（記録だけ・既定 on・失敗しても他は止めない）
+        const extra = [...linkHits];
+        if (selfReportIntakeEnabled()) { try { const h = await loadSelfReportHits(supabase, fromIso, toIso); extra.push(...h); out.unknowns_self_report = h.length; } catch (e) { out.unknowns_self_report_error = e instanceof Error ? e.message : String(e); } }
+        if (prodMissIntakeEnabled()) { try { const h = await loadProdMissHits(supabase, fromIso, toIso); extra.push(...h); out.unknowns_prod_miss = h.length; } catch (e) { out.unknowns_prod_miss_error = e instanceof Error ? e.message : String(e); } }
+        const u = await collectBrainUnknowns(supabase, fromIso, toIso, extra);
         out.unknowns = { from: fromIso, ...u };
         out.unknowns_to = toIso;
+        try { out.unknowns_open = await unknownsOpenCounts(supabase, nowMs); } catch (e) { out.unknowns_open_error = e instanceof Error ? e.message : String(e); }
       } catch (e) { out.unknowns_error = e instanceof Error ? e.message : String(e); }
     }
     await finishCronLog(logId, true, out);

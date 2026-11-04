@@ -75,3 +75,12 @@ if (fail) process.exit(1);
   const ok = got === "cbp1,desk-on2,tag-old";
   console.log(ok ? "hazard-audit-core (g): pass" : `hazard-audit-core (g): FAIL ${got}`); if (!ok) process.exit(1);
 }
+{
+  const { unknownsOpenLine } = require("../hazard-audit-core");
+  const now = Date.parse("2026-11-05T00:00:00Z");
+  const a = unknownsOpenLine({ weak_open: 40, weak_new24h: 3, unknown_rows: 60, unknown_new24h: 12, owner_open: 20 }, "2026-11-04T18:00:00Z", now);
+  const b = unknownsOpenLine(null, null, now);
+  const c = unknownsOpenLine({ weak_open: 1, weak_new24h: 0, unknown_rows: 1, unknown_new24h: 0, owner_open: 0 }, "2026-11-02T00:00:00Z", now);
+  const ok = a.ok === true && /開いている 40（新\+3）/.test(a.line) && /新\+12/.test(a.line) && b.ok === null && c.ok === null && /古い/.test(c.line);
+  console.log(ok ? "hazard-audit-core (h): pass" : "hazard-audit-core (h): FAIL"); if (!ok) process.exit(1);
+}
