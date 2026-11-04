@@ -1,6 +1,6 @@
 // scripts/__tests__/exam-conductor.test.ts — 試験の統括の純関数（関所の時間・早めの打ち切り・揺れの回数・問題の選び・表への書き戻し）
 //   実行: npx tsx scripts/__tests__/exam-conductor.test.ts
-import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
+import { splitWorse, isMixedRow, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
 import type { FlakeObs } from "../lib/exam-flake";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -68,5 +68,12 @@ t("改行の形（CRLF）を保つ", u.md.split("\r\n").length === md.split("\r\
 t("スイッチが複数（,）ならどれかの名の行", updateReleaseOrder(md, "X_ONE,AIX_DESK_COMMAND", "y").md.includes("| 2 | AIX_DESK_COMMAND=shadow | 作業員1 | y |"));
 t("行が無ければ変えない", !updateReleaseOrder(md, "NO_SUCH", "x").changed);
 
+{ // 2026-11-04 混ざりの回は悪化とも合格とも数えない
+  const base = [{ id: "qa", rep: 1, score: { pass: true } }, { id: "qa", rep: 2, score: { pass: true } }];
+  const cur = [{ id: "qa", rep: 1, score: { pass: false }, foreignMsgs: 2 }, { id: "qa", rep: 2, score: { pass: false }, pcMismatch: ["家賃"] }];
+  t("混ざりの印（他の問題の発言・条件の違い）の回は splitWorse の悪化に入らない", splitWorse(cur, base, new Set()).sure.length === 0);
+  t("混ざりの回は earlyVerdict の悪化の確定にもならない", earlyVerdict(cur, base, { qa: 2 }).stop !== "worse");
+  t("pcMismatch が「他の問題の発言」だけなら混ざりと見ない・foreignMsgs 0 も", !isMixedRow({ id: "x", rep: 1, pcMismatch: ["他の問題の発言"] }) && !isMixedRow({ id: "x", rep: 1, foreignMsgs: 0 }) && isMixedRow({ id: "x", rep: 1, foreignMsgs: 1 }));
+  t("混ざりでない回の悪化は今まで通り", splitWorse([{ id: "qa", rep: 1, score: { pass: false } }, { id: "qa", rep: 2, score: { pass: false } }], base, new Set()).sure.length === 1); }
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

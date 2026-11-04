@@ -15,11 +15,13 @@ export function maxExamsNow(d = new Date()): number { const { h } = jstHM(d); re
 //   前（main）で合格していた問題がそうなったら「悪化が確定」＝残りを回しても判断（悪化0か）は変わらない → 止める。
 //   どの問題も合否が決まった（残りの回で変わらない）時も止める（残りは答えを変えない回＝無駄）。
 //   ※ 行の score.pass は試験の中の採点。最後の集計（rescore）で変わる事がまれにある＝打ち切った後に --report で集計し直した数を正とする
-export type RowLite = { id: string; rep: number; error?: string; score?: { pass?: boolean } };
+export type RowLite = { id: string; rep: number; error?: string; score?: { pass?: boolean }; foreignMsgs?: number; pcMismatch?: string[] };
+/** 2026-11-04 作業員2の頼み: 混ざりの印のある回（他の問題の発言が混ざった・条件の行が回す前に違った）は、悪化とも合格とも数えない（brain-exam の混ざりの印と同じ見方） */
+export function isMixedRow(r: RowLite): boolean { return (r.foreignMsgs ?? 0) > 0 || (r.pcMismatch ?? []).some((k) => k !== "他の問題の発言"); }
 export type EarlyVerdict = { stop: "worse" | "settled" | null; why: string; worse: string[] };
 /** flaky: 揺れる問題。11/03 指揮役: n7 で q015 の 3/4→2/4（1回の差）で全体を止めた → 揺れる問題は main の落ちる割合より2回以上多く落ちた時だけ止める（普通の問題は今の線） */
 export function earlyVerdict(cur: RowLite[], base: RowLite[], planned: Record<string, number>, flaky: ReadonlySet<string> = new Set()): EarlyVerdict {
-  const tally = (rows: RowLite[]) => { const m = new Map<string, { p: number; f: number }>(); for (const r of rows) { if (r.error) continue; const x = m.get(r.id) ?? { p: 0, f: 0 }; if (r.score?.pass) x.p++; else x.f++; m.set(r.id, x); } return m; };
+  const tally = (rows: RowLite[]) => { const m = new Map<string, { p: number; f: number }>(); for (const r of rows) { if (r.error || isMixedRow(r)) continue; const x = m.get(r.id) ?? { p: 0, f: 0 }; if (r.score?.pass) x.p++; else x.f++; m.set(r.id, x); } return m; };
   const c = tally(cur), b = tally(base);
   const basePass = (id: string) => { const x = b.get(id); return !!x && x.p * 2 > x.p + x.f; };
   /** main の落ちる割合を今の予定の回数に当てた「いつもの落ちる回数」 */
@@ -40,7 +42,7 @@ export function earlyVerdict(cur: RowLite[], base: RowLite[], planned: Record<st
 /** 最後の結果の悪化を「確かな悪化」と「揺れの範囲の差」に分ける（11/03 指揮役）:
  *  前に合格（過半数）で今は不合格の問題のうち、揺れる問題で、合格の回数の差が main の割合に当てて2回未満なら「揺れの範囲」 */
 export function splitWorse(cur: RowLite[], base: RowLite[], flaky: ReadonlySet<string>): { sure: Array<{ id: string; why: string }>; flake: Array<{ id: string; why: string }> } {
-  const tally = (rows: RowLite[]) => { const m = new Map<string, { p: number; n: number }>(); for (const r of rows) { if (r.error) continue; const x = m.get(r.id) ?? { p: 0, n: 0 }; x.n++; if (r.score?.pass) x.p++; m.set(r.id, x); } return m; };
+  const tally = (rows: RowLite[]) => { const m = new Map<string, { p: number; n: number }>(); for (const r of rows) { if (r.error || isMixedRow(r)) continue; const x = m.get(r.id) ?? { p: 0, n: 0 }; x.n++; if (r.score?.pass) x.p++; m.set(r.id, x); } return m; };
   const c = tally(cur), b = tally(base);
   const sure: Array<{ id: string; why: string }> = [], flake: Array<{ id: string; why: string }> = [];
   for (const [id, x] of c) {
