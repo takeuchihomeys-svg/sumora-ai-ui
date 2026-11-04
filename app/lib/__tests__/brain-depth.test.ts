@@ -45,7 +45,7 @@ it("深く読み直すのは 複数の依頼・申込・審査 の番だけ（�
 it("読み直しの材料の1行に深く読む理由と依頼の分け方が入る（配線: brain-recheck.recheckMaterialLine）", () => {
   const rc = deepRecheckFor({ depth: "deep", reason: "審査" }, "estimate_sheet")!;
   const line = recheckMaterialLine(rc);
-  eq(line.includes("深く読む番と判断された") && line.includes("複雑な番（審査）") && line.includes("依頼を1つずつ") && line.includes("必要書類"), true, line);
+  eq(line.includes("深く読む番と判断された") && line.includes("複雑な番（審査）") && line.includes("竹内さんの順番で決め直す") && line.includes("必要書類") && line.includes("新しいやる事を作らない"), true, line);
 });
 it("統括の重点（前半）を受け取る口: 重点がある時は材料の先頭に・無い時は今まで通り", () => {
   const dep = { depth: "deep" as const, reason: "複数の依頼" };
