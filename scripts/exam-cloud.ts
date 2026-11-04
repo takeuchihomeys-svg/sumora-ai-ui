@@ -6,8 +6,8 @@
 //   テストの決まり: VM の env は LLM_TEST_MODE=deepseek-all 固定（関数の側で上書きできない）・会話は YUMA 系だけ（--conv=YUMA2〜7）
 // 実行: npx tsx --env-file=.env.local scripts/exam-cloud.ts --cwd=<作業ツリー> --label=<名> --only=q001,q002 [--repeat=1] [--conv=YUMA7] [--env=K=V,…] [--base=https://sumora-ai-ui.vercel.app]
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync, existsSync, mkdtempSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, mkdtempSync, renameSync } from "node:fs";
+import { join, resolve, basename, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { forbiddenPath, CHUNK_MAX, labelOk } from "../app/lib/exam-cloud";
 import { examCacheRoot } from "./lib/llm-cassette";
@@ -26,7 +26,8 @@ async function call(action: string, q: Record<string, string>, body?: Buffer | s
   const u = new URL("/api/exam-cloud", BASE); u.searchParams.set("action", action); for (const [k, v] of Object.entries(q)) u.searchParams.set(k, v);
   for (let t = 0; t < 3; t++) {
     const r = await fetch(u, { method: "POST", headers: { authorization: `Bearer ${SECRET}`, ...(typeof body === "string" ? { "content-type": "application/json" } : {}) }, body: typeof body === "string" || body === undefined ? body : new Uint8Array(body) });
-    if (r.status >= 500 && t < 2) { await new Promise((s) => setTimeout(s, 3000)); continue; }
+    // create は繰り返さない（1回目: 500 で3回作り直し、VM が3台残った）
+    if (r.status >= 500 && t < 2 && action !== "create") { await new Promise((s) => setTimeout(s, 3000)); continue; }
     if (!json) { if (!r.ok) throw new Error(`${action}: ${r.status}`); return Buffer.from(await r.arrayBuffer()); }
     const j = (await r.json()) as { ok: boolean; error?: string };
     if (!j.ok) throw new Error(`${action}: ${j.error ?? r.status}`);
@@ -35,8 +36,9 @@ async function call(action: string, q: Record<string, string>, body?: Buffer | s
   throw new Error(`${action}: 3回失敗`);
 }
 
+// Windows の GNU tar は「C:」を遠くの機械の名と読む＝ファイルは置き場の中の名だけで渡す（cwd をその場所に）
 function tarCheck(file: string): void {
-  const list = execFileSync("tar", ["-tzf", file], { maxBuffer: 256 * 1024 * 1024 }).toString().split(/\r?\n/).filter(Boolean);
+  const list = execFileSync("tar", ["-tzf", basename(file)], { cwd: dirname(file), maxBuffer: 256 * 1024 * 1024 }).toString().split(/\r?\n/).filter(Boolean);
   const bad = list.filter(forbiddenPath);
   if (bad.length) throw new Error(`送ってはいけない物が入っている: ${bad.slice(0, 5).join(", ")}`);
   log(`  確かめ: ${list.length}件・.env／.claude／node_modules／exam-cache／.vercel は 0`);
@@ -62,7 +64,12 @@ async function upload(file: string, kind: "code" | "mat", name: string): Promise
   const root = examCacheRoot();
   const probs = ONLY.filter((id) => existsSync(join(root, "brain-exam-problems", id)));
   const mat = join(tmp, "mat.tgz");
-  if (probs.length) execFileSync("tar", ["-czf", mat, "-C", root, ...probs.map((id) => `brain-exam-problems/${id}`)]);
+  if (probs.length) {
+    // 材料は root の中で作り（「C:」を書かない）、tmp に移す
+    const local = `.exam-cloud-mat-${process.pid}.tgz`;
+    execFileSync("tar", ["-czf", local, ...probs.map((id) => `brain-exam-problems/${id}`)], { cwd: root });
+    renameSync(join(root, local), mat);
+  }
   log(`材料: 問題の共有の置き場 ${probs.length}/${ONLY.length}問`);
   // 3) VM を作って送る
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));

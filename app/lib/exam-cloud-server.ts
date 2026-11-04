@@ -26,7 +26,11 @@ export async function createExamSandbox(extraEnv: Record<string, string>): Promi
     env: vmEnv(supabaseUrl, extraEnv),
     tags: { kind: "exam-cloud" },
   });
-  await sb.mkDir(`${RUN_DIR}/up`);
+  // 作った後の支度で落ちたら、その VM を必ず止める（1回目は止め損ねて3台が残った＝MCP で止めた）
+  try {
+    const mk = await sb.runCommand("mkdir", ["-p", `${RUN_DIR}/up`, `${RUN_DIR}/out`]);
+    if (mk.exitCode !== 0) throw new Error(`mkdir: ${(await mk.stderr()).slice(0, 200)}`);
+  } catch (e) { await sb.stop().catch(() => {}); throw e; }
   return { name: sb.name };
 }
 

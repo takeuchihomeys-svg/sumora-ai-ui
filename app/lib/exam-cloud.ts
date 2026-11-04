@@ -20,7 +20,8 @@ export function forbiddenPath(p: string): boolean {
 }
 
 export const CHUNK_MAX = 4 * 1024 * 1024; // 関数の本文の上限 4.5MB の内側
-export const RUN_DIR = "/vercel/sandbox";
+// 2026-11-04 1回目: node の像では作業の場所が /vercel で、/vercel/sandbox が無く mkDir が断られた＝誰でも書ける /tmp の下に置く
+export const RUN_DIR = "/tmp/exam-cloud";
 export const EXAM_CLOUD_TIMEOUT_MS = 90 * 60_000;
 
 /** VM の中の env（鍵は形だけ＝本物は通信の口で足す）。テストの決まりは固定で上書きできない */
