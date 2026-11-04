@@ -11,7 +11,9 @@
 //     "YUMA3"・id   … その会話を取る（他の生きている実行が持っていたら止まる）
 //   lease.id / lease.name / lease.tag（ファイル名に使う小文字）… 終わると自動で鍵を外す（process の exit）。lease.release() でも外せる
 // 鍵: scripts/.replay-out/.test-conv-<NAME>.lock（{pid, owner, at}）。持ち主の pid が死んでいたら取り直せる（落ちた実行の鍵は残っても詰まらない）
-import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync, unlinkSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
 import { YUMA_CONVERSATION_ID, NO_LINE_TEST_CONVERSATIONS, resolveTestOnlyConversation } from "../../app/lib/test-conversations";
 
 export type TestConvLease = {
@@ -29,6 +31,30 @@ const defaultAlive = (pid: number) => { try { process.kill(pid, 0); return true;
 /** 鍵の中身を読む（壊れた・空のファイルは null） */
 export function readLock(file: string): LockBody | null {
   try { const j = JSON.parse(readFileSync(file, "utf8")) as Partial<LockBody>; return typeof j.pid === "number" ? (j as LockBody) : null; } catch { return null; }
+}
+
+
+// 2026-11-04 作業員2（揺れの3問を Claude で回した時に、別の作業ツリーの試験と YUMA2 を同時に使って会話が混ざった＝他の問題の発言 165・条件の行が全部違う）:
+//   鍵は作業ツリーごとの scripts/.replay-out に置くので、別の作業ツリーの実行の鍵が見えず、同じ会話を2つで取っていた（試験の列は仕事ごとに別の作業ツリーで流す）。
+//   → 鍵の場所を指定しない時は、全部の作業ツリーの scripts/.replay-out に生きている鍵があれば、その会話は使わない（exam-brain-io の liveLeaseOf と同じ見方）
+function allLeaseDirs(): string[] {
+  let root = "";
+  try { root = join(execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(), ".."); } catch { return []; }
+  const dirs = new Set<string>([join(root, "scripts", ".replay-out")]);
+  const wt = join(root, ".claude", "worktrees");
+  try { if (existsSync(wt)) for (const d of readdirSync(wt)) dirs.add(join(wt, d, "scripts", ".replay-out")); } catch { /* */ }
+  return [...dirs];
+}
+/** 他の作業ツリーで生きている鍵（自分の作業ツリーの鍵は tryLock が見る） */
+export function liveLeaseElsewhere(name: string, ownDir: string, alive: (pid: number) => boolean = defaultAlive, dirs: string[] = allLeaseDirs()): LockBody | null {
+  const own = resolve(ownDir).toLowerCase();
+  for (const d of dirs) {
+    if (resolve(d).toLowerCase() === own) continue;
+    const cur = readLock(lockFileOf(name, d));
+    // 12時間より古い鍵は見ない（落ちた実行の鍵の pid が別の処理に使い回されて生きて見える事がある）
+    if (cur && alive(cur.pid) && !(Date.now() - Date.parse(cur.at) > 12 * 3_600_000)) return cur;
+  }
+  return null;
 }
 
 /** 鍵を取る（取れたら true）。生きている他の実行が持っていたら false。死んだ実行の鍵・空の鍵は取り直す */
