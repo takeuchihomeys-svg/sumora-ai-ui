@@ -27,9 +27,9 @@ it("束ねて出所と時刻を付ける・一次が先", () => {
 it("空なら空", () => { ok(factLedgerBlock(buildFactLedger({}), NOW) === ""); });
 
 // 2026-11-05 作業員3: 開いている約束を種類ごとに（FACT_LEDGER_OPEN_PROMISE・既定 off）
-it("開いている約束: 既定 off は今まで通りの英語名", () => {
-  ok(!factLedgerOpenPromiseOn({}) && factLedgerOpenPromiseOn({ FACT_LEDGER_OPEN_PROMISE: "on" }));
-  const f = buildFactLedger({ ledger: [{ kind: "pickup_declared", status: "promised", at: null }] }, {});
+it("開いている約束: 既定 on・off は今まで通りの英語名", () => {
+  ok(factLedgerOpenPromiseOn({}) && !factLedgerOpenPromiseOn({ FACT_LEDGER_OPEN_PROMISE: "off" }));
+  const f = buildFactLedger({ ledger: [{ kind: "pickup_declared", status: "promised", at: null }] }, { FACT_LEDGER_OPEN_PROMISE: "off" });
   ok(f[0].value === "pickup_declared", f[0].value);
 });
 it("開いている約束: 種類ごとに次の一手／結果待ち／果たした", () => {
@@ -62,12 +62,12 @@ it("配線: 8873 型（ピックアップの約束→スタンプ→持ち込み
   ok(led.entries.some((e) => e.kind === "pickup_declared" && e.status === "promised" && e.fulfilledBy == null), JSON.stringify(led.entries.map((e) => [e.kind, e.status, e.fulfilledBy])));
   const on = factLedgerBlock(buildFactLedger({ ledger: ledgerFactsFrom(led.entries) }, { FACT_LEDGER_OPEN_PROMISE: "on" }), Date.parse(T("16:25")));
   ok(on.includes("物件のピックアップ") && on.includes("次の一手で果たす番（物件を送る AIX）"), on);
-  const off = factLedgerBlock(buildFactLedger({ ledger: ledgerFactsFrom(led.entries) }, {}), Date.parse(T("16:25")));
+  const off = factLedgerBlock(buildFactLedger({ ledger: ledgerFactsFrom(led.entries) }, { FACT_LEDGER_OPEN_PROMISE: "off" }), Date.parse(T("16:25")));
   ok(!off.includes("次の一手で果たす番"), off);
   // 物件を送った後は「果たした」
   const led2 = buildActionLedger({ messages: msgs, recentAixRows: [{ aix_type: "property_send", sent_at: T("16:40"), created_at: T("16:39") }] as never, lastCustomerAt: T("16:24"), now: Date.parse(T("16:41")) });
   const on2 = factLedgerBlock(buildFactLedger({ ledger: ledgerFactsFrom(led2.entries) }, { FACT_LEDGER_OPEN_PROMISE: "on" }), Date.parse(T("16:41")));
-  ok(/物件のピックアップ[^）]*）＝果たした/.test(on2) && on2.includes("こちらが送った: 物件送付") && !on2.includes("次の一手で果たす番"), on2);
+  ok(/物件のピックアップ[^）]*）＝果たした/.test(on2) && !on2.includes("次の一手で果たす番"), on2);
 });
 it("配線: brain-core は行動台帳を ledgerFactsFrom で帳面に渡す（果たしたかどうかが落ちない）", () => {
   const src = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");

@@ -22,15 +22,13 @@ export type FactSource = "state" | "ledger" | "memo" | "meta" | "strategy";
  *   ・ピックアップ・見積書の約束 → 次の番で果たす（物件を送る AIX／御見積書の AIX）。お客様がその後に別の事を言っても、約束は残る
  *   ・確認の約束 → 結果待ち（確かめた記録が付くまで結果を書かない）
  *   ・果たした約束 → 「果たした」と書く（もう果たす番ではない）
- *   決めるのはブレイン（P0）。ここで変えるのは帳面の言い方だけ。FACT_LEDGER_OPEN_PROMISE=on の時だけ動く（既定 off）。
+ *   決めるのはブレイン（P0）。ここで変えるのは帳面の言い方だけ。既定 on（11/05 op2-on 15問＋op2-r3 ×3 で main 比 悪化0・q209 は送った事の行の言い方を変えない形で 3/4）。戻す FACT_LEDGER_OPEN_PROMISE=off。
  *   ※ w2-conductor のコミットしていない同じ名前の版（全部の約束を「結果は確かめてから」とする）は、ピックアップの約束で物件を送るのを止める方に働くので採らない（統括役 11/05）
  */
 export function factLedgerOpenPromiseOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FACT_LEDGER_OPEN_PROMISE ?? "").trim().toLowerCase() === "on";
+  return (env.FACT_LEDGER_OPEN_PROMISE ?? "").trim().toLowerCase() !== "off";
 }
 const PROMISE_JA: Record<string, string> = { pickup_declared: "物件のピックアップ", estimate_declared: "御見積書", confirmation_promised: "募集状況などの確認" };
-// 送った事（done）の日本語名（action-ledger の LEDGER_KIND_JA と同じ言い方・重い import を避けて主な物だけ。無い物は英語名のまま）
-const DONE_JA: Record<string, string> = { properties_sent: "物件送付", estimate_sent: "御見積書送付", confirmation_reported: "確認結果の報告", viewing_invited: "内覧打診", meeting_place_sent: "待ち合わせ案内", condition_asked: "条件ヒアリング", application_guided: "申込打診", followup_sent: "フォロー", question_asked: "お客様への質問" };
 /**
  * 古い約束の線（KB 7323e80a・action-ledger.STALE_PROMISE_HOURS と同じ14日＝果たすまでの時間の90%値で一番遅いご連絡 8.2日より長い）。
  * これより古い約束は「流れた」とみなし、果たす番とは書かない（行は消さない＝「もう言った」は届け続ける）
@@ -83,7 +81,7 @@ export function buildFactLedger(i: FactLedgerInput, env?: Env): Fact[] {
   for (const e of (i.ledger ?? []).slice(-30)) {
     const what = clip(e.detail?.object ?? e.detail?.propertyNames?.join("・") ?? e.evidence ?? "", 40);
     if (e.status === "promised") out.push({ key: `promise:${e.kind}:${what}`, kind: "promise", value: openOn ? openPromiseValue(e.kind, what, e.fulfilledBy != null, i.nowMs != null && e.at ? (i.nowMs - Date.parse(e.at)) / 3_600_000 : null) : `${e.kind}${what ? `（${what}）` : ""}`, at: e.at, source: "ledger" });
-    else if (e.status === "done") out.push({ key: `done:${e.kind}:${what}`, kind: "done", value: openOn ? `こちらが送った: ${DONE_JA[e.kind] ?? e.kind}${what ? `（${what}）` : ""}` : `${e.kind}${what ? `（${what}）` : ""}`, at: e.at, source: "ledger" });
+    else if (e.status === "done") out.push({ key: `done:${e.kind}:${what}`, kind: "done", value: `${e.kind}${what ? `（${what}）` : ""}`, at: e.at, source: "ledger" });
   }
   for (const m of (i.memo ?? []).filter((x) => !x.retiredAt).slice(-12)) out.push({ key: `memo:${m.kind}:${clip(m.text, 20)}`, kind: "memo", value: `${m.kind}: ${clip(m.text, 60)}`, at: m.at ?? null, source: "memo" });
   const mt = i.meta;

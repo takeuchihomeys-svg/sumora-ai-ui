@@ -6131,14 +6131,15 @@
   "at": "2026-10-28T07:24:35.766Z",
   "accept": [
    "AIX:property_send",
-   "AIX:property_recommendation"
+   "AIX:property_recommendation",
+   "2段:pickup"
   ],
   "mustNot": [
    "AIX:property_check_result"
   ],
   "asks": [],
   "ng": [],
-  "why": "24秒前にピックアップの約束・竹内さんは物件を送る AIX（prod-miss-ledger #1）",
+  "why": "24秒前にピックアップの約束・竹内さんは物件を送る AIX（prod-miss-ledger #1）。11/05 竹内さん「今のまま」＝お礼でない番は約束の返信（2段）も当たり（KB aca164df・例外は足さない）",
   "addedAt": "2026-11-04",
   "addedBy": "作業員2（統括役の指示・事実の帳面の効き目をブレインの判断で測る）",
   "id": "q204"
