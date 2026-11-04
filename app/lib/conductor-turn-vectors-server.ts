@@ -8,6 +8,7 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 import { maskPII } from "@/app/lib/pii-mask";
 import { customerNameTokens, maskCustomerNames } from "@/app/lib/compose-name-mask";
 import { textFingerprint } from "@/app/lib/brain-judge-examples";
+import { resolveReplyScene } from "@/app/lib/reply-scene";
 import { APPLY_DOCS_RE, actualOf, hitsOf, turnVectorRow, conductorTurnVectorsOn, type TurnVectorRow } from "@/app/lib/conductor-turn-vectors";
 
 type Msg = { id: string; conversation_id: string; sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; line_message_id: string | null; staff_writer: string | null; staff_writer_confidence: string | null };
@@ -73,7 +74,8 @@ export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: n
     const actual = actualOf({ isAix: !!s.is_aix_generated, aixType, checkPattern });
     const row = turnVectorRow({
       sendId: s.id, conversationId: s.conversation_id, propertyCustomerId: c.property_customer_id ?? null,
-      scene: wt?.scene_key ?? null, stage: wt?.conv_status ?? c.status ?? null, customerMasked: mask(custText), lastStaffKind: lastKind,
+      // 2026-11-04 場面は統括メタ・重みの表と同じ言葉（ReplyScene: ack・question・conditions…）。見張りの scene_key（返信:質問 等）は使わない
+      scene: resolveReplyScene({ customerText: custText }).scene, stage: wt?.conv_status ?? c.status ?? null, customerMasked: mask(custText), lastStaffKind: lastKind,
       fp: turn.map((m) => textFingerprint(m.text ?? "")).filter((x): x is string => !!x), actual, hits: hitsOf(actual, wt ? { brainMode: wt.brain_reply_mode, brainAction: wt.brain_action } : null),
       writer: s.staff_writer, turnAt,
     });

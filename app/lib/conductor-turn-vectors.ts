@@ -7,9 +7,20 @@ export const SITUATION_CUSTOMER_MAX = 120;
 /** 申込の書類の手前まで（replay-build と同じ線）。この語が出た番は表に入れない */
 export const APPLY_DOCS_RE = /(申込(?:書|フォーマット)|本人確認書類|免許証|マイナンバー|源泉徴収|給与明細|生年月日|勤務先)/;
 
-/** 状況の文（埋め込む文）。伏せは呼ぶ側で済ませた文を渡す */
+/** 2026-11-04 統括役: 文の解剖の表と同じ決まり＝URL・電話・〒 は残さない（お客様が貼った SUUMO 等の URL は「〔物件のURL〕」） */
+const PORTAL_RE = /(suumo|homes\.co\.jp|athome|chintai|itandi|realpro|reins|canary|smocca|door\.ac|minimini|apamanshop|able\.co\.jp|eheya|goodrooms)/i;
+export function maskContactBits(t: string): string {
+  return t
+    .replace(/https?:\/\/[^\s　「」『』（）()<>]+/gi, (u) => (PORTAL_RE.test(u) ? "〔物件のURL〕" : "〔URL〕"))
+    .replace(/\bwww\.[^\s　]+/gi, (u) => (PORTAL_RE.test(u) ? "〔物件のURL〕" : "〔URL〕"))
+    .replace(/〒\s*\d{3}[-‐ー−－]?\d{4}/g, "〔〒〕")
+    .replace(/(?:\+81[-‐ー−－\s]?|(?<!\d)0)\d{1,4}[-‐ー−－\s]?\d{1,4}[-‐ー−－\s]?\d{3,4}(?!\d)/g, (m) => (m.replace(/\D/g, "").length >= 10 ? "〔電話〕" : m))
+    .replace(/(?<![\d-])\d{3}[-‐ー−－]\d{4}(?![\d-])/g, "〔〒〕");
+}
+
+/** 状況の文（埋め込む文）。伏せは呼ぶ側で済ませた文を渡す（URL・電話・〒 はここでも伏せる） */
 export function turnSituationText(o: { scene: string | null; stage: string | null; customerMasked: string; lastStaffKind: string | null }): string {
-  const cust = o.customerMasked.replace(/\s+/g, " ").trim().slice(0, SITUATION_CUSTOMER_MAX);
+  const cust = maskContactBits(o.customerMasked).replace(/\s+/g, " ").trim().slice(0, SITUATION_CUSTOMER_MAX);
   return [
     `場面: ${o.scene || "不明"}`,
     `段階: ${o.stage || "不明"}`,
