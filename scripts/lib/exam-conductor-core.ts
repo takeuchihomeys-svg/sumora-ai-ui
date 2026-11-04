@@ -210,3 +210,22 @@ export function splitByTime(ids: ReadonlyArray<string>, reps: Readonly<Record<st
   }
   return [ [...ids] ];
 }
+
+/**
+ * 2026-11-05 作業員1（弱い所 id 293・統括役の指示）: 止めた回の片付け先を、この回の出力から全部拾う。
+ *   1本の回は「テストの会話: YUMA3（…）」、レーンの回は「レーン（…）: 4本 YUMA2（…・線 scripts/.replay-out/brain-exam-floor-<label>-yuma2.json）・…」。
+ *   main の子（前を作る・label が main- で始まる）の行も同じ出力に出る＝その label・会話も拾う（子の置き場は brain-exam-main）。
+ *   旧は「テストの会話:」の最後の1本だけを見て、レーンの回は「読めない」で片付けなかった（殺された回の行が残り、次の回が「他の問題の発言」で回し直す）。
+ */
+export function cleanupTargets(outText: string, label: string): Array<{ conv: string; label: string; child: boolean }> {
+  const out = new Map<string, { conv: string; label: string; child: boolean }>();
+  for (const m of outText.matchAll(/(YUMA\d+)（[0-9a-f]{6,}・線 scripts\/\.replay-out\/brain-exam-floor-(.+?)-yuma\d+\.json）/g)) {
+    const lb = m[2];
+    out.set(`${lb}|${m[1]}`, { conv: m[1], label: lb, child: lb !== label && /^main-/.test(lb) });
+  }
+  for (const m of outText.matchAll(/テストの会話: (YUMA\d+)（[^\n]*?線 scripts\/\.replay-out\/brain-exam-floor-(.+?)(?:-yuma\d+)?\.json/g)) {
+    out.set(`${m[2]}|${m[1]}`, { conv: m[1], label: m[2], child: m[2] !== label && /^main-/.test(m[2]) });
+  }
+  if (!out.size) { const c = [...outText.matchAll(/テストの会話: (YUMA\d+)（/g)].pop()?.[1]; if (c) out.set(`${label}|${c}`, { conv: c, label, child: false }); }
+  return [...out.values()];
+}

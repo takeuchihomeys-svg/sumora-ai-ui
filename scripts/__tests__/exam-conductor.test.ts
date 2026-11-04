@@ -1,6 +1,6 @@
 // scripts/__tests__/exam-conductor.test.ts — 試験の統括の純関数（関所の時間・早めの打ち切り・揺れの回数・問題の選び・表への書き戻し）
 //   実行: npx tsx scripts/__tests__/exam-conductor.test.ts
-import { splitWorse, isMixedRow, jobSize, compareJobs, splitIds, splitByTime, estimateJobMin, remainingIds, comparedIds, staleExamGuard, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
+import { splitWorse, isMixedRow, jobSize, compareJobs, splitIds, splitByTime, estimateJobMin, cleanupTargets, remainingIds, comparedIds, staleExamGuard, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
 import type { FlakeObs } from "../lib/exam-flake";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -106,6 +106,14 @@ t("行が無ければ変えない", !updateReleaseOrder(md, "NO_SUCH", "x").chan
   const small = splitByTime(["q1", "q2", "q3"], { q1: 2, q2: 2, q3: 2 }, { lanes: 3, maxMin: 40 });
   t("小さい依頼は分けない", small.length === 1 && small[0].length === 3);
   t("12問の上限は今まで通り", splitByTime(Array.from({ length: 20 }, (_, k) => "x" + k), {}, { lanes: 6, maxMin: 600 }).every((x) => x.length <= 12)); }
+{ // 2026-11-05 止めた回の片付け先（弱い所 id 293）: レーン・main の子の会話を全部
+  const lane = "レーン（EXAM_CONCURRENCY=4）: 4本 YUMA2（d040f80a・線 scripts/.replay-out/brain-exam-floor-off-g1-r-yuma2.json）・YUMA3（f7deb105・線 scripts/.replay-out/brain-exam-floor-off-g1-r-yuma3.json）";
+  const child = "レーン（EXAM_CONCURRENCY=2）: 2本 YUMA4（40f0db25・線 scripts/.replay-out/brain-exam-floor-main-97fe109-7ee4d13f90-rmw2-yuma4.json）・YUMA5（a7ac4c90・線 scripts/.replay-out/brain-exam-floor-main-97fe109-7ee4d13f90-rmw2-yuma5.json）";
+  const ts = cleanupTargets(child + "\n" + lane, "off-g1-r");
+  t("片付け先: レーンの会話を全部（今の回と main の子）", ts.length === 4 && ts.filter((x) => x.child).map((x) => x.conv).join() === "YUMA4,YUMA5" && ts.filter((x) => !x.child).map((x) => x.conv).join() === "YUMA2,YUMA3");
+  const one = cleanupTargets("テストの会話: YUMA2（d040f80a-4fae-4fd0-abca-66eb2630906f）・鍵 scripts/.replay-out/.test-conv-YUMA2.lock・線 scripts/.replay-out/brain-exam-floor-cbp1-yuma2.json", "cbp1");
+  t("片付け先: 1本の回は今まで通りその会話", one.length === 1 && one[0].conv === "YUMA2" && one[0].label === "cbp1" && !one[0].child);
+  t("片付け先: 読めなければ空", cleanupTargets("なにも無い", "x").length === 0); }
 t("比べた問題: 基準の回が無い＝0（悪化0と言わない）", comparedIds([{ id: "q1", rep: 1, score: { pass: true } }], []).length === 0);
 t("比べた問題: 両方で失敗・混ざりの無い回がある問題だけ", JSON.stringify(comparedIds([{ id: "q1", rep: 1 }, { id: "q2", rep: 1, error: "x" }, { id: "q3", rep: 1, foreignMsgs: 2 }, { id: "q4", rep: 1 }], [{ id: "q1", rep: 1 }, { id: "q2", rep: 1 }, { id: "q3", rep: 1 }])) === JSON.stringify(["q1"]));
 console.log(`\n${pass} passed, ${fail} failed`);
