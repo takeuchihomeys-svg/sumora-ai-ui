@@ -6,7 +6,7 @@ const t = (name: string, ok: boolean, v?: unknown) => { if (ok) { pass++; consol
 const ja = (k: string) => ({ property_check_result: "物件確認した", estimate_sheet: "見積書送る", property_send: "物件ピックアップした", property_recommendation: "物件オススメ" } as Record<string, string>)[k] ?? k;
 const prev = { at: "2026-11-01T01:00:00Z", action: "property_check_result", replyMode: "aix", stage: "proposing" };
 
-t("既定は yuma（YUMA だけ）・=on で全部・=off で止まる", brainLastTurnReviewOn({}, "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7") && !brainLastTurnReviewOn({}, "real-conv") && brainLastTurnReviewOn({ BRAIN_LAST_TURN_REVIEW: "on" }, "real-conv") && !brainLastTurnReviewOn({ BRAIN_LAST_TURN_REVIEW: "off" }, "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7"));
+t("2026-11-04 既定は all（全部）・=off で止まる・_STAGE=yuma で YUMA だけ", brainLastTurnReviewOn({}, "real-conv") && !brainLastTurnReviewOn({ BRAIN_LAST_TURN_REVIEW_STAGE: "yuma" }, "real-conv") && brainLastTurnReviewOn({}, "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7") && brainLastTurnReviewOn({ BRAIN_LAST_TURN_REVIEW: "on" }, "real-conv") && !brainLastTurnReviewOn({ BRAIN_LAST_TURN_REVIEW: "off" }, "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7"));
 t("前回が無ければ null", reviewLastTurn({ prev: null, actsAfter: [], stageNow: null }) === null);
 const r1 = reviewLastTurn({ prev, actsAfter: [{ at: "2026-11-01T02:00:00Z", kind: "aix", aixType: "estimate_sheet", writer: "takeuchi" }], stageNow: "estimate_sent" })!;
 t("違う AIX・竹内さん・進んだ", r1.match === "diff" && r1.writer === "takeuchi" && r1.progress === "forward", r1);

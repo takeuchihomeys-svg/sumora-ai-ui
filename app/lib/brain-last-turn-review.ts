@@ -12,7 +12,8 @@ import { aixContentFamily } from "./line-watch-judge";
 import { stageOn, type Stage } from "./rollout";
 
 type Env = Record<string, string | undefined>;
-export const LAST_TURN_REVIEW_DEFAULT_STAGE: Stage = { kind: "yuma" };
+// 2026-11-04 統括役（既定 off の棚卸し・試験 ltr-on1 確かな悪化0）: 段 yuma → all（全部の会話）。=off で止まる・BRAIN_LAST_TURN_REVIEW_STAGE=yuma で YUMA だけに戻す
+export const LAST_TURN_REVIEW_DEFAULT_STAGE: Stage = { kind: "all" };
 /** この会話で効くか（表の上書きは読まない・同期。ブレインは rollout.stageOnNow で表も読む） */
 export function brainLastTurnReviewOn(env: Env = typeof process !== "undefined" ? process.env : {}, conversationId?: string | null): boolean {
   return stageOn("BRAIN_LAST_TURN_REVIEW", conversationId, env, [], LAST_TURN_REVIEW_DEFAULT_STAGE);
