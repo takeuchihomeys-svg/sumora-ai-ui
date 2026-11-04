@@ -77,6 +77,10 @@
       "schedule": "20 21 * * 0"
     },
     {
+      "path": "/api/cron/conductor-turn-vectors",
+      "schedule": "50 16 * * *"
+    },
+    {
       "path": "/api/cron/pickup-auto-complete",
       "schedule": "*/2 * * * *"
     },

@@ -5113,6 +5113,77 @@ CREATE TABLE IF NOT EXISTS brain_manuals (
 ALTER TABLE brain_manuals ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON brain_manuals FROM anon, authenticated;
 
+-- 2026-11-04 ④ 入口の統括の重みの表（作業員1・竹内さん了承「はい」・統括役が MCP で適用済み）
+--   設計: 作業員2 conductor-brain-shape.md ②・追記2（KB P0 910a3a29・P1 641c85f3・3381edd8・線 20件・8割＝75da346a）
+--   基準は竹内さんの番だけ（KB P1 41dadfe6）: 重み・当たり・「決める側」の線は basis='takeuchi' の行だけで数える。従業員の番は basis='employee_ref'（参考の数・重みに使わない）
+--   どちらも RLS 有効・anon／authenticated の権限なし（サーバーの鍵だけ）。中身は鍵と数だけ（会話の文は conductor_turn_vectors.situation の伏せた状況の文だけ・倉庫には載せない）
+
+-- ② 場面 × ブレイン × 答えの種類 の重み（場面の値・ベクトルの重みが薄い時に寄せる先）
+CREATE TABLE IF NOT EXISTS conductor_weights (
+  scene TEXT NOT NULL,                                  -- 場面の鍵（scene_key と同じ言葉）
+  brain TEXT NOT NULL CHECK (brain IN ('judge','todo','aix','property_search','estimate','viewing','compose')),
+  answer_kind TEXT NOT NULL DEFAULT '*',                -- 答えの種類（例: AIX の鍵 property_check_result/unavailable・返信の趣旨）。'*' は場面×ブレイン全体
+  basis TEXT NOT NULL DEFAULT 'takeuchi' CHECK (basis IN ('takeuchi','employee_ref')),
+  weight REAL NOT NULL CHECK (weight >= 0 AND weight <= 1),
+  n INT NOT NULL DEFAULT 0,                             -- 当たりの記録の件数（basis の書き手の番だけ）
+  hit REAL CHECK (hit IS NULL OR (hit >= 0 AND hit <= 1)),
+  source TEXT NOT NULL CHECK (source IN ('p0','p1','evidence','record')),  -- P0 は 1.0 固定・P1 は 0.9 から・根拠 0.7・記録は hit（n が少ない間は 0.5 に寄せる）
+  kb_id TEXT,                                           -- p0／p1 の元の設計知見（id8）
+  decides BOOLEAN NOT NULL DEFAULT false,               -- 統括が決める側か（20件以上・一致8割以上で、統括役が確定した時だけ true）
+  decided_by TEXT,
+  decided_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (scene, brain, answer_kind, basis),
+  CHECK (NOT decides OR (basis = 'takeuchi' AND n >= 20 AND hit >= 0.8)),
+  CHECK (source <> 'p0' OR weight = 1)
+);
+ALTER TABLE conductor_weights ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON conductor_weights FROM anon, authenticated;
+
+-- 追記2 番ごとのベクトルと答え（今の番に近い過去の番の当たりで重みを動かす）
+CREATE TABLE IF NOT EXISTS conductor_turn_vectors (
+  source_key TEXT PRIMARY KEY,                          -- "msg:<こちらの送信の messages.id>" か "watch:<line_watch_turns.id>"（竹内さんの番の多くは見張りの番に無く messages から作る・外部キーは付けない＝片付けで消えない）
+  source TEXT NOT NULL CHECK (source IN ('messages','watch')),
+  conversation_id TEXT NOT NULL,
+  property_customer_id UUID,
+  scene TEXT NOT NULL,
+  stage TEXT,
+  situation TEXT NOT NULL,                              -- 埋め込んだ状況の文（伏せ済み・決まった計算）
+  fp TEXT[] NOT NULL DEFAULT '{}',                      -- 元の会話の発言の指紋（混ざりの歯止め）
+  embedding vector(1536) NOT NULL,
+  actual JSONB NOT NULL,                                -- こちらの一手 {route, aix, picker, outcome}
+  hits JSONB NOT NULL DEFAULT '{}',                     -- ブレインごとに合ったか {judge:bool, aix:bool, compose:bool}
+  writer TEXT NOT NULL CHECK (writer IN ('takeuchi','employee','unknown')),       -- こちらの最初の送信の書き手（staff_writer・sure だけ takeuchi/employee）
+  cluster TEXT,                                         -- ⑤ 夜に束ねた近い番の集まり（束ごとに 20件・8割を数える）
+  turn_at TIMESTAMPTZ NOT NULL,
+  built_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS conductor_turn_vectors_emb_idx ON conductor_turn_vectors USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS conductor_turn_vectors_scene_idx ON conductor_turn_vectors (scene, turn_at DESC);
+CREATE INDEX IF NOT EXISTS conductor_turn_vectors_writer_idx ON conductor_turn_vectors (writer);
+ALTER TABLE conductor_turn_vectors ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON conductor_turn_vectors FROM anon, authenticated;
+
+-- 近い番を引く（サーバーの鍵だけ）。既定は竹内さんの番だけ（p_writer='takeuchi'）・同じ会話／同じお客様を外す・距離の線は引数（既定 0.25・毎晩「線の中の件数」を数えて決め、統括役に知らせる）
+CREATE OR REPLACE FUNCTION match_conductor_turns(query_embedding vector(1536), p_exclude_conv TEXT, p_exclude_pc UUID, match_count INT DEFAULT 40, max_distance FLOAT DEFAULT 0.25, p_writer TEXT DEFAULT 'takeuchi')
+RETURNS TABLE(source_key TEXT, scene TEXT, distance FLOAT, actual JSONB, hits JSONB, writer TEXT, fp TEXT[], cluster TEXT)
+LANGUAGE sql STABLE SET search_path = public, extensions AS $$
+  SELECT source_key, scene, (embedding <=> query_embedding) AS distance, actual, hits, writer, fp, cluster
+  FROM conductor_turn_vectors
+  WHERE conversation_id <> p_exclude_conv
+    AND (p_exclude_pc IS NULL OR property_customer_id IS DISTINCT FROM p_exclude_pc)
+    AND (p_writer IS NULL OR writer = p_writer)
+    AND (embedding <=> query_embedding) <= max_distance
+  ORDER BY embedding <=> query_embedding LIMIT match_count;
+$$;
+REVOKE ALL ON FUNCTION match_conductor_turns(vector, TEXT, UUID, INT, FLOAT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION match_conductor_turns(vector, TEXT, UUID, INT, FLOAT, TEXT) TO service_role;
+
+-- 戻す時（了承の後に流して、取りやめる場合）:
+-- DROP FUNCTION IF EXISTS match_conductor_turns(vector, TEXT, UUID, INT, FLOAT, TEXT);
+-- DROP TABLE IF EXISTS conductor_turn_vectors;
+-- DROP TABLE IF EXISTS conductor_weights;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
