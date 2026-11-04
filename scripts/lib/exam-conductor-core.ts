@@ -183,3 +183,30 @@ export function remainingIds(planned: Record<string, number>, rows: RowLite[]): 
   for (const r of rows) if (!r.error) done.set(r.id, (done.get(r.id) ?? 0) + 1);
   return Object.entries(planned).filter(([id, n]) => (done.get(id) ?? 0) < n).map(([id]) => id);
 }
+
+/**
+ * 2026-11-05 作業員1（統括役の指示・11/04 夜に手で分けた形を係で）: 依頼の大きさから時間を見積もり、上限に収まらない依頼は足す時に分ける。
+ *   見積もり: 回数（問題ごとの reps・揺れる問題は多い）× 前と今の2（前が取り置き済みでも多めに見る）÷（1レーン 1時間に約60回 × レーン）＋ 下見 20分×15問ごと。
+ *   古い作業ツリー（止める印・レーンの直しが無い）は1レーン。分ける時は重い問題から軽い塊へ入れて重さをそろえる（12問は今まで通りの上限）。
+ */
+export function estimateJobMin(ids: ReadonlyArray<string>, reps: Readonly<Record<string, number>>, o: { lanes: number; runsPerHourPerLane?: number; overheadPer15Min?: number }): number {
+  const runs = ids.reduce((s, id) => s + (reps[id] ?? 2), 0) * 2;
+  const rate = (o.runsPerHourPerLane ?? 60) * Math.max(1, o.lanes);
+  return Math.round((runs / rate) * 60 + (o.overheadPer15Min ?? 20) * Math.ceil(ids.length / 15));
+}
+export function splitByTime(ids: ReadonlyArray<string>, reps: Readonly<Record<string, number>>, o: { lanes: number; maxMin: number; targetMin?: number; maxProblems?: number; runsPerHourPerLane?: number }): string[][] {
+  const maxP = o.maxProblems ?? JOB_MAX_PROBLEMS;
+  const target = Math.max(20, Math.min(o.targetMin ?? 70, Math.floor(o.maxMin * 0.8)));
+  const total = estimateJobMin(ids, reps, o);
+  let n = Math.max(Math.ceil(total / target), Math.ceil(ids.length / maxP), 1);
+  for (; n <= ids.length; n++) {
+    const parts: Array<{ ids: string[]; w: number }> = Array.from({ length: n }, () => ({ ids: [], w: 0 }));
+    for (const id of [...ids].sort((a, b) => (reps[b] ?? 2) - (reps[a] ?? 2))) {
+      const p = parts.filter((x) => x.ids.length < maxP).reduce((m, x) => (x.w < m.w ? x : m));
+      p.ids.push(id); p.w += reps[id] ?? 2;
+    }
+    const ok = parts.every((p) => estimateJobMin(p.ids, reps, o) <= target || p.ids.length <= 1);
+    if (ok || n === ids.length) return parts.filter((p) => p.ids.length).map((p) => ids.filter((x) => p.ids.includes(x)));
+  }
+  return [ [...ids] ];
+}

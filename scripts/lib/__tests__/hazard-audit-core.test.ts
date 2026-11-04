@@ -84,3 +84,16 @@ if (fail) process.exit(1);
   const ok = a.ok === true && /開いている 40（新\+3）/.test(a.line) && /新\+12/.test(a.line) && b.ok === null && c.ok === null && /古い/.test(c.line);
   console.log(ok ? "hazard-audit-core (h): pass" : "hazard-audit-core (h): FAIL"); if (!ok) process.exit(1);
 }
+{
+  const { conductorLogHazards, laneDupConvs } = require("../hazard-audit-core");
+  const log = [
+    "2026-11-04T10:56:40.359Z   ⏱ 止める印から 15分で止まらない → 止める（op-on1）",
+    "2026-11-04T11:28:34.734Z   ⚠ 古い brain-exam（止める印を見ない）・上限を延ばした 40→120分・古い brain-exam（レーンが同じ会話になる）・1レーンで回す・作業ツリーが origin/main より 21個古い（fmi-demote1・C:/x/w2-conductor）",
+    "2026-11-03T10:00:00.000Z   ⏱ 止める印から 15分で止まらない → 止める（old-one）",
+  ].join("\n");
+  const h = conductorLogHazards(log, "2026-11-04T00:00:00Z");
+  const dup = laneDupConvs("レーン（EXAM_CONCURRENCY=4）: 4本 YUMA2（d040f80a・線 a）・YUMA2（d040f80a・線 b）・YUMA2（x）・YUMA2（y）");
+  const nodup = laneDupConvs("レーン（EXAM_CONCURRENCY=2）: 2本 YUMA3（f7deb105・線 a）・YUMA4（40f0db25・線 b）");
+  const ok = h.stopKilled.join() === "op-on1" && h.oldWorktree.join() === "fmi-demote1" && dup.join() === "YUMA2" && nodup.length === 0;
+  console.log(ok ? "hazard-audit-core (i)(j): pass" : `hazard-audit-core (i)(j): FAIL ${JSON.stringify({ h, dup, nodup })}`); if (!ok) process.exit(1);
+}

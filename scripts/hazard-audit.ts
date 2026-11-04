@@ -8,6 +8,8 @@
 //   (d) publication の行の条件の列が replica identity に入っているか … ⑤（入っていないと本番の UPDATE が断られる）
 //   (e) 本番の LP の「◯月実績」が今月か … ⑦（表示が止まったまま）
 //   (f) main の最近のコミットの前に tsc-remote 0 があるか … ⑥（型の確認の前にコミット）
+//   (i) 試験の係の記録の24時間: 止める印から猶予の内に止まらず殺した回・古い作業ツリーの依頼（点検表 10・12）
+//   (j) 24時間の試験の出力で、レーンが同じ会話を2本以上取った行（点検表 11）
 //   (h) 分からない事の3つの表（brain_weaknesses・brain_unknowns・owner_questions）の開いている数と新しく増えた数（夜の cron の数・KB 3892c30c）
 //   (g) 48時間の試験の結果で「悪化0」なのに前（main）と両方で解いた問題が予定より少ない（0 含む）物 … ⑨（比べていないのに悪化0）
 // 出力: 1行のまとめ（毎朝の見張りに貼る）＋詳しい所。前日との差分の為の控えは .claude/exam-cache/hazard-audit/（git に入らない）。
@@ -18,7 +20,7 @@ import { readdirSync, readFileSync, lstatSync, existsSync, mkdirSync, writeFileS
 import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
-import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
+import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, conductorLogHazards, laneDupConvs, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
 
 const flag = (k: string) => process.argv.includes(`--${k}`);
 const git = (args: string[], cwd = process.cwd()) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
@@ -150,6 +152,21 @@ async function main() {
     const hollow = hollowNoWorse(rows);
     checks.push({ key: "g", ok: hollow.length === 0, line: `48時間の試験の「悪化0」${rows.filter((r) => /悪化0/.test(r.verdict)).length}本（両方で解いた問題が予定より少ない ${hollow.length}）`,
       detail: hollow.map((r) => `${r.at.slice(0, 16)} ${r.label} 両方で解いた ${r.both ?? "?"}/${r.planned}問＝既定 on の判断に使わない`) });
+  }
+
+  // (i)(j) 試験の係の記録と出力（手元の exam-cache だけを読む）
+  {
+    const q = join(repoRoot, ".claude", "exam-cache", "exam-queue");
+    const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+    const logF = join(q, "conductor.log");
+    const hz = existsSync(logF) ? conductorLogHazards(readFileSync(logF, "utf8").split(/\r?\n/).slice(-20000).join("\n"), since) : { stopKilled: [], oldWorktree: [] };
+    checks.push({ key: "i", ok: hz.stopKilled.length === 0, line: `24時間の試験: 止める印で止まらず殺した ${hz.stopKilled.length}本・古い作業ツリーの依頼 ${hz.oldWorktree.length}本`,
+      detail: [...hz.stopKilled.map((x) => `殺した（前を取り置けない）: ${x}`), ...hz.oldWorktree.map((x) => `古い作業ツリー（origin/main を取り込む）: ${x}`)] });
+    const rdir = join(q, "results"); const dups: string[] = [];
+    if (existsSync(rdir)) for (const f of readdirSync(rdir).filter((x) => x.endsWith(".out.log"))) {
+      try { if (Date.now() - statSync(join(rdir, f)).mtimeMs > 24 * 3600_000) continue; for (const l of readFileSync(join(rdir, f), "utf8").split(/\r?\n/)) { const d = laneDupConvs(l); if (d.length) { dups.push(`${f.replace(/\.out\.log$/, "")}: ${d.join(",")}`); break; } } } catch { /* 読めない出力は飛ばす */ }
+    }
+    checks.push({ key: "j", ok: dups.length === 0, line: `24時間の試験の出力でレーンが同じ会話 ${dups.length}本`, detail: dups });
   }
 
   // (h) 分からない事の3つの表（cron link-brain-watch がサーバーの鍵で数えた数を cron_run_logs から読む）

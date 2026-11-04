@@ -31,7 +31,7 @@ import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { readObs } from "./lib/exam-flake";
 import { pcState } from "./lib/exam-pc-state";
-import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -140,13 +140,26 @@ function addJob(): void {
     if (arg("pick")) log(`  選び: ${p.why} → ${ids.length}問`);
   }
   // 2026-11-04 (c): 12問を超える試験の依頼は、足す時に12問ずつに分ける（揺れる問題は入っている側に付ける）
-  const parts = job.runner === "brain-exam" && job.only ? splitIds(job.only.split(",").filter(Boolean)) : [];
+  // 2026-11-05 作業員1（統括役の指示）: 12問に加えて、見積もりの時間（回数×前と今×レーン・古い作業ツリーは1レーン）が上限に収まらない依頼も分ける（EXAM_ADD_SPLIT_BY_TIME=off で12問だけ）
+  const parts = (() => {
+    if (job.runner !== "brain-exam" || !job.only) return [] as string[][];
+    const ids0 = job.only.split(",").filter(Boolean);
+    if (process.env.EXAM_ADD_SPLIT_BY_TIME === "off") return splitIds(ids0);
+    const rp0 = repsPlan(ids0, (id) => readObs(id), { normal: job.repeat, flakyReps: Number(process.env.EXAM_FLAKY_REPS ?? "4"), forced: job.flaky, model: "deepseek", stableReps: process.env.EXAM_STABLE_REPS === "off" ? undefined : Number(process.env.EXAM_STABLE_REPS ?? "1") });
+    const src = (() => { try { return readFileSync(join(job.cwd, "scripts", "brain-exam.ts"), "utf8"); } catch { return ""; } })();
+    const g = staleExamGuard(src, null, job.maxMin ?? Number(process.env.EXAM_JOB_MAX_MIN ?? "40"), Number(process.env.EXAM_JOB_OLD_MAX_MIN ?? "120"));
+    const lanes = g.laneOld ? 1 : Math.max(1, Math.round(Number(process.env.EXAM_CONCURRENCY ?? "4") * 0.75));
+    const est = estimateJobMin(ids0, rp0.reps, { lanes });
+    const ps = splitByTime(ids0, rp0.reps, { lanes, maxMin: g.maxMin });
+    log(`  見積もり: ${ids0.length}問・回 ${Object.values(rp0.reps).reduce((a, b) => a + b, 0)}×前と今・${lanes}レーン${g.laneOld ? "（古い作業ツリー）" : ""} → 約${est}分（上限 ${g.maxMin}分）${ps.length > 1 ? ` → ${ps.length}本に分ける（1本 約${ps.map((x) => estimateJobMin(x, rp0.reps, { lanes })).join("・")}分）` : ""}`);
+    return ps;
+  })();
   if (parts.length > 1) {
     parts.forEach((ids, k) => {
       const pj: ExamJob = { ...job, id: `${job.id}-${k + 1}`, label: `${job.label}-p${k + 1}`, only: ids.join(","), flaky: (job.flaky ?? []).filter((x) => ids.includes(x)), createdAt: new Date(Date.parse(job.createdAt) + k).toISOString() };
       writeFileSync(join(ROOT, `${pj.createdAt.replace(/[:.]/g, "-")}-${pj.label}.json`), JSON.stringify(pj, null, 1));
     });
-    log(`足した: ${job.label} を ${parts.length}本に分けた（12問ずつ: ${parts.map((x, k) => `${job.label}-p${k + 1}=${x.length}問`).join("・")}）`);
+    log(`足した: ${job.label} を ${parts.length}本に分けた（12問まで・時間の見積もりで: ${parts.map((x, k) => `${job.label}-p${k + 1}=${x.length}問`).join("・")}）`);
     return;
   }
   const f = join(ROOT, `${job.createdAt.replace(/[:.]/g, "-")}-${job.label}.json`);

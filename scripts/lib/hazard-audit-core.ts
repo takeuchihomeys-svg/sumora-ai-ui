@@ -109,3 +109,22 @@ export function unknownsOpenLine(o: UnknownsOpen | null | undefined, at: string 
   if (!(ageH <= 36)) return { ok: null, line: `分からない事の3つの表: 不明（数が ${Math.round(ageH)}時間前で古い）` };
   return { ok: true, line: `分からない事の3つの表: 弱い所 開いている ${o.weak_open}（新+${o.weak_new24h}）・分からない事 ${o.unknown_rows}行（新+${o.unknown_new24h}）・竹内さんへの確認 開いている ${o.owner_open}` };
 }
+
+/** (i) 2026-11-05 作業員1（点検表 10〜12）: 試験の係の記録（conductor.log）から、24時間の
+ *   ①止める印から猶予の内に止まらず殺した回（前を取り置けない）②古い作業ツリーの印（止める印・レーンの直しが無い）を数える */
+export function conductorLogHazards(logText: string, sinceIso: string): { stopKilled: string[]; oldWorktree: string[] } {
+  const stopKilled: string[] = [], oldWorktree: string[] = [];
+  for (const l of logText.split(/\r?\n/)) {
+    const at = l.slice(0, 24);
+    if (!/^\d{4}-\d\d-\d\dT/.test(at) || at < sinceIso) continue;
+    const m1 = l.match(/止める印から \d+分で止まらない → 止める（([^）]+)）/); if (m1) stopKilled.push(m1[1]);
+    const m2 = /⚠ 古い brain-exam/.test(l) ? l.match(/（([^（・）]+)・[^（）]*）s*$/) : null; if (m2) oldWorktree.push(m2[1]);
+  }
+  return { stopKilled: [...new Set(stopKilled)], oldWorktree: [...new Set(oldWorktree)] };
+}
+/** (j) 試験の出力の「レーン（EXAM_CONCURRENCY=N）: N本 YUMA2（…）・YUMA2（…）」で同じ会話を2本以上が取った行 */
+export function laneDupConvs(line: string): string[] {
+  if (!/レーン（EXAM_CONCURRENCY=/.test(line)) return [];
+  const names = [...line.matchAll(/(YUMA\d+)（/g)].map((m) => m[1]);
+  return [...new Set(names.filter((n, i) => names.indexOf(n) !== i))];
+}
