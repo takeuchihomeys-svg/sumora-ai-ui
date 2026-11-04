@@ -29,7 +29,10 @@ t("本文にお客様の文が入らない形（数と設計の言葉だけ）",
 
 const ms = [{ created_at: "2026-11-01T01:00:30Z", staff_writer: "takeuchi", staff_writer_confidence: "sure" }, { created_at: "2026-11-01T01:05:00Z", staff_writer: "employee", staff_writer_confidence: "sure" }];
 t("書き手: 番の後の最初の送信・sure だけ", writerOfTurn("2026-11-01T01:00:00Z", "2026-11-01T01:00:30Z", ms) === "takeuchi" && writerOfTurn("2026-11-01T01:00:00Z", null, ms) === null && writerOfTurn("2026-11-01T01:00:00Z", "2026-11-01T01:00:30Z", [{ ...ms[0], staff_writer_confidence: "guess" }]) === null);
-t("既定 off", brainManualsWeeklyOn({}) === false && brainManualsWeeklyOn({ BRAIN_MANUALS_WEEKLY: "on" }) === true);
+t("2026-11-04 既定 on・=off で止まる", brainManualsWeeklyOn({}) === true && brainManualsWeeklyOn({ BRAIN_MANUALS_WEEKLY: "off" }) === false);
 
+{ const few = tallyWeekly([...Array(5)].map(() => T({ scene: "A" })).concat([...Array(5)].map(() => T({ scene: "B", verdict: "different" }))));
+  const e2 = sceneExtremes(few.compose);
+  t("2026-11-04 場面が少ない時、同じ場面を強いと弱いの両方に出さない", !e2.weak.some((w) => e2.strong.includes(w)) && e2.strong.length === 1 && e2.weak.length === 1 && e2.strong[0].startsWith("A 100%")); }
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

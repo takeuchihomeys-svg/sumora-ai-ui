@@ -1,5 +1,5 @@
 // app/api/cron/brain-manuals-weekly/route.ts — ブレインの取扱説明書の ①強み・⑦当たり を毎週、本番の竹内さんの番で書き直す（③・作業員1・11/04）
-//   既定 off: BRAIN_MANUALS_WEEKLY=on の時だけ brain_manuals に書く（それ以外・?dry=1 は書く行の計画と数だけ返す）。基準は竹内さんの番だけ（KB 41dadfe6）
+//   11/04 から既定 on（=off で計画だけ）: brain_manuals に書く（それ以外・?dry=1 は書く行の計画と数だけ返す）。基準は竹内さんの番だけ（KB 41dadfe6）
 //   夜だけ（vercel.json で 日曜 21:20 UTC＝月曜 06:20 JST）。営業時間（JST 9〜22）は動かない（重い読みをしない）
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";

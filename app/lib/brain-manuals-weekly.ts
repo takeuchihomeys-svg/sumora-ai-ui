@@ -63,13 +63,20 @@ const pct = (x: Tally) => (x.n ? Math.round((100 * x.hit) / x.n) : 0);
 export function sceneExtremes(bt: BrainTally, min = 5): { strong: string[]; weak: string[] } {
   const xs = Object.entries(bt.scenes).filter(([, v]) => v.n >= min).map(([k, v]) => ({ k, p: pct(v), n: v.n }));
   const fmt = (x: { k: string; p: number; n: number }) => `${x.k} ${x.p}%（${x.n}）`;
+  const strongXs = [...xs].sort((a, b) => b.p - a.p || b.n - a.n).slice(0, Math.min(3, Math.ceil(xs.length / 2)));
   return {
-    strong: [...xs].sort((a, b) => b.p - a.p || b.n - a.n).slice(0, 3).map(fmt),
-    weak: [...xs].sort((a, b) => a.p - b.p || b.n - a.n).slice(0, 3).map(fmt),
+    // 2026-11-04 dry で見つけた: 場面が少ないと同じ場面が強いと弱いの両方に出た（AIX:viewing_invite）＝弱い方は強い方に出た場面を除く
+    strong: strongXs.map(fmt),
+    weak: [...xs].filter((x) => !strongXs.includes(x)).sort((a, b) => a.p - b.p || b.n - a.n).slice(0, 3).map(fmt),
   };
 }
 
-const LABEL: Record<"judge" | "aix" | "compose", string> = { judge: "返信か AIX かの道", aix: "AIX の種類", compose: "返信の文（同じ・同じ意味）" };
+// 2026-11-04 統括役: 何を比べた数かを書き添える（audit-prod-as-exam の「AIX の種類の系統まで」の数と読み違えない）
+const LABEL: Record<"judge" | "aix" | "compose", string> = {
+  judge: "返信か AIX かの道（ブレインが AIX か × 竹内さんの最初の一手が AIX か・AIX の種類は見ない）",
+  aix: "AIX の種類（両方が AIX の番で、種類が同じか）",
+  compose: "返信の文（両方が返信の番で、竹内さんの文と同じ・同じ意味か）",
+};
 /** 少ない時の印（竹内さんの番が20件未満＝KB 4d9a0518 の線に届かない） */
 export const THIN_N = 20;
 
@@ -113,5 +120,5 @@ export function writerOfTurn(turnAt: string, staffFirstAt: string | null, staffM
   return m.staff_writer === "takeuchi" ? "takeuchi" : m.staff_writer === "employee" ? "employee" : null;
 }
 
-/** 既定 off（BRAIN_MANUALS_WEEKLY=on の時だけ DB に書く・それ以外は計画だけ） */
-export const brainManualsWeeklyOn = (env: Record<string, string | undefined> = process.env) => (env.BRAIN_MANUALS_WEEKLY ?? "").trim().toLowerCase() === "on";
+/** 2026-11-04 統括役（dry の計画を見て了承）: 既定 on（毎週 月曜 06:20 JST に書く）・=off で計画だけ */
+export const brainManualsWeeklyOn = (env: Record<string, string | undefined> = process.env) => (env.BRAIN_MANUALS_WEEKLY ?? "").trim().toLowerCase() !== "off";

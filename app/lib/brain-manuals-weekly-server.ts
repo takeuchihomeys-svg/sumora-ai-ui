@@ -24,7 +24,7 @@ async function pageAll<T>(sb: SupabaseClient, table: string, cols: string, f: (q
 
 export type WeeklyResult = { turns: number; stats: WeeklyStats; rows: ManualUpsert[]; written: boolean };
 
-export async function runBrainManualsWeekly(sb: SupabaseClient, o: { days?: number; apply?: boolean } = {}): Promise<WeeklyResult> {
+export async function runBrainManualsWeekly(sb: SupabaseClient, o: { days?: number; apply?: boolean; existing?: ExistingRow[] } = {}): Promise<WeeklyResult> {
   const days = o.days ?? 30;
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   const turns = (await pageAll<Turn>(sb, "line_watch_turns", "conversation_id, customer_turn_at, staff_first_at, brain_reply_mode, brain_action, staff_aix, verdict, scene_key", (q) => q.gte("customer_turn_at", since).not("staff_first_at", "is", null).order("customer_turn_at")))
@@ -47,10 +47,16 @@ export async function runBrainManualsWeekly(sb: SupabaseClient, o: { days?: numb
     hasStaff: !!fm,
   }; });
   const stats = tallyWeekly(recs);
-  const { data: ex, error } = await sb.from("brain_manuals").select("brain, item, body, source, stats").in("item", ["hit_rate", "strengths"]);
-  if (error) throw new Error(`brain_manuals: ${error.message}`);
+  // 2026-11-04 手元の確かめ（サーバーの鍵なし・apply=false）だけ: 今の行を外から渡せる（brain_manuals は RLS で公開キーでは読めない）
+  let ex: unknown[] | null = o.existing ?? null;
+  if (!ex) {
+    const r0 = await sb.from("brain_manuals").select("brain, item, body, source, stats").in("item", ["hit_rate", "strengths"]);
+    if (r0.error) throw new Error(`brain_manuals: ${r0.error.message}`);
+    ex = r0.data ?? [];
+  }
   const day = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
   const rows = weeklyRows(stats, (ex ?? []) as ExistingRow[], { days, day });
+  if (o.existing && o.apply) throw new Error("existing は手元の確かめ（apply=false）だけ");
   const write = !!o.apply && brainManualsWeeklyOn();
   if (write && rows.length) {
     const now = new Date().toISOString();
