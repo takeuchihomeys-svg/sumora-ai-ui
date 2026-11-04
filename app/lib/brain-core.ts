@@ -3099,7 +3099,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-04 入口の統括の最初の読み（Sonnet・作り置き・5番に1番は DeepSeek でも読んで比べる・CONDUCTOR_INTAKE: 既定は stage=yuma（YUMA・テスト用の会話だけ）・_STAGE=pct:N|all で広げる・=off で止める・読んだ結果は記録だけ）。
   //   ブレインの呼び出しと同時に流し（待たせない）、返す前に最大4秒だけ待つ。判断・文は変えない
   let intakeP: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
-  if ((conductorIntakeMode() === "shadow" || await (await import("@/app/lib/rollout")).stageOnNow("CONDUCTOR_INTAKE", conversationId, { kind: "yuma" })) && typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus) && conversationId) {
+  if ((conductorIntakeMode() === "shadow" || await (await import("@/app/lib/rollout")).stageOnNow("CONDUCTOR_INTAKE", conversationId, { kind: "all" } /* 2026-11-04 統括役（竹内さん「前倒し」）: yuma → all（記録だけ・判断も文も変えない・約 $9/日）。戻す: CONDUCTOR_INTAKE_STAGE=yuma か CONDUCTOR_INTAKE=off */)) && typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus) && conversationId) {
     const lastStaffTxt = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim())?.text ?? null;
     const pmForCarry = (opts?.prevMeta ?? null) as unknown as { conductor_meta?: import("@/app/lib/conductor-meta").ConductorMeta } | null;
     intakeP = import("@/app/lib/conductor-intake-server").then(({ runConductorIntake }) => runConductorIntake({
