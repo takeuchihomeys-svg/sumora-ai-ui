@@ -1,7 +1,7 @@
 // 2026-09-12 竹内（あや事例）: AI の作業メモは下書き欄に絶対に入れない
 // 実行: npx tsx app/lib/__tests__/meta-narration.test.ts（自己完結ハーネス。全 PASS で exit 0）
 import { readFileSync } from "node:fs";
-import { stripMetaNarration, isMetaNarrationLine, isNotACustomerReply } from "../meta-narration";
+import { stripMetaNarration, isMetaNarrationLine, isNotACustomerReply, stripSelfCorrection } from "../meta-narration";
 import { applySurfaceFixes } from "../validate-reply";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -249,6 +249,13 @@ it("AI の作業メモ（自分の作業の動詞で終わる地の文）は従�
   it("お客様向けの文（！あり）の後の区切り線は触らない", () => {
     const d = "🌟コンフォートマンション 305号室\n家賃37,000円となります！！\n---\nお手隙の際にご査収ください😌！！";
     expect(stripMetaNarration(d).text).toBe(d);
+  });
+  // 2026-11-04 書き直しの作業メモ（下書き ab0008d1 の実物・META_SELF_CORRECTION_STRIP）
+  it("本文 → 区切り線 → 書き直しの作業メモ → 本文 は、書き直した後の本文だけ（物件の札の前の区切り線は触らない）", () => {
+    const d = "慶次さんお疲れ様です！！\n本日〇〇時お部屋ご案内させて頂きます！\n本日は何卒よろしくお願い致します！！\n\n---\n\n申し訳ございません。提示いただいた出力構成に従い修正いたします。\n\n慶次さんお疲れ様です！！\n本日13時お部屋ご案内させて頂きます！\n本日は何卒よろしくお願い致します！！";
+    expect(stripSelfCorrection(d).text).toBe("慶次さんお疲れ様です！！\n本日13時お部屋ご案内させて頂きます！\n本日は何卒よろしくお願い致します！！");
+    const card = "まとめてお送り致します！！\n\n---\n🌟ペディハイツ塚口 103号室\n家賃5万円";
+    expect(stripSelfCorrection(card).text).toBe(card);
   });
 }
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -23,7 +23,7 @@ const table = (rows: number) => {
 
 (async () => {
   console.log("read-all-rows");
-  await it("切替は既定 off", () => { eq(readAllRowsEnabled({}), false); eq(readAllRowsEnabled({ READ_ALL_ROWS: "on" }), true); });
+  await it("切替は既定 on（11/04）", () => { eq(readAllRowsEnabled({}), true); eq(readAllRowsEnabled({ READ_ALL_ROWS: "off" }), false); });
   await it("off は1回だけ（本番は 1000行で切れる＝今まで通り）", async () => {
     const t = table(3455);
     const r = await readRowsUpTo<number>(t.mk, 8000, false);

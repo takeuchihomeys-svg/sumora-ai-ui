@@ -334,9 +334,40 @@ export function stripSeparatorPreamble(text: string): { text: string; removed: s
   return { text: rest, removed: [preText, "---"] };
 }
 
+/**
+ * 2026-11-04 作業員6（統括役の指示・下書き ab0008d1・9/6）: 書き手が1回書いた後に自分で書き直した形
+ *   「本文A ／ --- ／ 申し訳ございません。提示いただいた出力構成に従い修正いたします。 ／ 本文B」＝区切り線の直後の行が出力・構成・指示・修正の作業メモ。
+ *   今の網（区切り線の前置き＝先頭6行以内の指示の文・作業メモの行）は、区切り線の前が本文の時に当たらず、本文A と作業メモが両方残っていた。
+ *   → 区切り線の直後の行が作業メモ（！も絵文字も無く「出力／構成／指示／修正（いた）します」を含む）なら、区切り線までと作業メモの行を落として本文B だけ残す。
+ *   線（誤削除0の確かめ・11/04）: スタッフの実送信 365日で区切り線のある通は 5、そのうち出力・修正の言葉がある通は 0／AI の下書き 180日で区切り線のある通 32 のうち、
+ *   区切り線の直後が作業メモなのは ab0008d1 の1通だけ（他の2通は区切り線の直後が物件の札）。最後に出たのは 9/6（直近7日は 0）。
+ *   切替 META_SELF_CORRECTION_STRIP（11/04 から既定 on・=off で戻す）。
+ */
+const SELF_CORRECTION_META_RE = /出力|構成|指示|修正(?:いた)?します|修正版/;
+export function metaSelfCorrectionOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.META_SELF_CORRECTION_STRIP ?? "").trim().toLowerCase() !== "off";   // 11/04 既定 on（誤削除0を確かめた・=off で戻す）
+}
+export function stripSelfCorrection(text: string): { text: string; removed: string[] } {
+  const lines = String(text ?? "").split("\n");
+  for (let i = 1; i < lines.length; i++) {
+    if (!SEPARATOR_LINE_RE.test(lines[i])) continue;
+    let j = i + 1;
+    while (j < lines.length && !lines[j].trim()) j++;
+    const meta = (lines[j] ?? "").trim();
+    if (!meta || /[！!😊😌✨🌟]/.test(meta) || !SELF_CORRECTION_META_RE.test(meta)) continue;
+    const rest = lines.slice(j + 1).join("\n").replace(/^\s*\n+/, "");
+    if (!rest.trim()) continue;
+    return { text: rest, removed: [lines.slice(0, i).join(" ").trim().slice(0, 80), "---", meta] };
+  }
+  return { text, removed: [] };
+}
+
 /** 作業メモの行を除き、見出しだけの前置きを外す。変わらなければ同じ文字列を返す */
 export function stripMetaNarration(text: string): { text: string; removed: string[] } {
   if (!text) return { text, removed: [] };
+  // 2026-11-04: 本文 → 区切り線 → 書き直しの作業メモ → 本文 の形は、書き直した後の本文だけ（META_SELF_CORRECTION_STRIP・既定 on）
+  const selfFix = metaSelfCorrectionOn() ? stripSelfCorrection(text) : { text, removed: [] as string[] };
+  text = selfFix.text;
   // 2026-10-02 ⑫: 指示の文＋区切り線（---）の前置きを先に落とす
   const sepPre = stripSeparatorPreamble(text);
   const sepRemoved = sepPre.removed;
@@ -344,7 +375,7 @@ export function stripMetaNarration(text: string): { text: string; removed: strin
   const blocks = stripMetaBlocks(text);
   text = blocks.text;
   const lead = stripLeadingNarration(text);
-  const removed: string[] = [...sepRemoved, ...blocks.removed, ...lead.removed];
+  const removed: string[] = [...selfFix.removed, ...sepRemoved, ...blocks.removed, ...lead.removed];
   text = lead.text;
   const lines = text.split("\n");
   const kept: string[] = [];
