@@ -1684,7 +1684,10 @@ export async function POST(req: NextRequest) {
         customerText: custText,
         nowMonth: Number(new Date(Date.now() + 9 * 3600_000).toISOString().slice(5, 7)),
       });
-      const { prompt } = appealJudgePrompt({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? null, scene, notViewable: secondNotViewable, materialFacts: secondMaterialNote, closingCandidates: [], data: secondData }); // 10/29: 締めの候補の網は2回とも締めを崩した（内覧・ご査収が減る）＝今は渡さない（closingCandidates は数えるだけ）
+      // 2026-11-04 grp-aix の悪化（2a95c137）: 設計図（AIX_SECOND_BLUEPRINT=on）は判断の締めを「ここだけで決める」で強く守る。判断は刺さり具合の網（recommend-cta＝竹内さんの形の締め）を
+      //   見ておらず、網の「内覧へ」と違う「ご査収だけ」を選んで外れた（材料が届いていない）→ 設計図の時だけ、網の締めと理由を判断の材料に渡す（決めるのは判断）
+      const ctaHint = secondBlueprintOn() && recCta ? [`刺さり具合の網（竹内さんの形の締め）は「${({ viewing: "内覧へ", apply: "申込へ", receipt: "ご査収" } as Record<string, string>)[recCta.kind] ?? recCta.kind}」（理由: ${String(recCta.reason ?? "").slice(0, 80)}）。違う締めにする時は理由を closingWhy に書く`] : [];
+      const { prompt } = appealJudgePrompt({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? null, scene, notViewable: secondNotViewable, materialFacts: secondMaterialNote, closingCandidates: ctaHint, data: secondData }); // 10/29: 締めの候補の網は2回とも締めを崩した（内覧・ご査収が減る）＝今は渡さない（closingCandidates は数えるだけ）
       const key = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST", signal: AbortSignal.timeout(25_000),

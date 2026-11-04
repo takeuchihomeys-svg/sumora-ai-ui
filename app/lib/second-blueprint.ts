@@ -53,7 +53,8 @@ export function secondBlueprintNote(j: AppealJudge, scene: string, data: SecondT
   return [
     blueprintNote(bp),
     `・締め（ここだけで決める・他の締めの指示より優先）: ${closingLine}（理由: ${j.closingWhy}）`,
-    "・上に無い設備・駅・築年を並べ足さない。事実は1通目・資料にある事だけ。金額・節約額は書かない（初期費用は「敷金礼金なしで初期費用を抑える事ができ」の言い方まで）。",
+    // 2026-11-04 grp-aix の悪化（d13194c8・18aff1b4）: この1行が訴求の点の数字（帖数・徒歩の分）まで止め、竹内さんの文にある数字を落とした → 訴求の点に付く数字は書いてよいと分ける
+    "・上に無い設備・駅・築年を並べ足さない（ただし上の訴求の点に付く数字＝間取りの帖数・駅の徒歩の分・築年月は、1通目・資料のまま書いてよい）。事実は1通目・資料にある事だけ。金額・節約額は書かない（初期費用は「敷金礼金なしで初期費用を抑える事ができ」の言い方まで）。",
     takeuchiFormSummary(scene, data.forms),
     ex.length ? `【竹内さんの2通目の手本（設計図の根拠・写さず構成だけ見る）】\n${ex.map((t, k) => `${k + 1}) ${t.replace(/\n+/g, " ")}`).join("\n")}` : "",
   ].filter(Boolean).join("\n");
