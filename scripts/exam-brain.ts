@@ -152,7 +152,7 @@ function ensureMainWarm(o: { force?: boolean; runNow?: boolean; quiet?: boolean;
   const d = warmDecision({ vk: h?.vk ?? null, log: readWarmLog(), queued: readQueue().map((x) => x.label), force: o.force });
   if (!d.enqueue || !h) { if (!o.quiet) log(`main の取り置き: ${d.why}`); return; }
   const now = new Date(), at = o.runNow ? now : nextNightRun(now);
-  const conv = (process.env.EXAM_WARM_CONV || (/^YUMA[2-5]$/i.test(CONV) ? CONV : "YUMA5")).toUpperCase();
+  const conv = (process.env.EXAM_WARM_CONV || (/^YUMA[2-7]$/i.test(CONV) ? CONV : "YUMA5")).toUpperCase();
   const f = enqueue({ label: d.label, argv: ["--warm-main", "--when=now", `--conv=${conv}`, `--warm-vk=${h.vk}`], cwd: process.cwd(), at: at.toISOString(), createdAt: now.toISOString(), estUsd: 0 });
   log(`main の取り置き: ${d.why} → ${o.runNow ? "今" : `${jst(at)} JST の --run-queue`}で（${f}）`);
   // 10/23 まとめる: 古い版の取り置きの予約は脇へ（.superseded-<JST>・消さない）＝1日に何版来ても流すのは今の版の1本

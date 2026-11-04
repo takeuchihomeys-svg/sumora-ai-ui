@@ -46,6 +46,9 @@ export const NO_LINE_TEST_CONVERSATIONS: ReadonlyArray<NoLineTestConversation> =
   { id: "f7deb105-f908-41ad-95e7-f13aafdfa032", name: "YUMA3", propertyCustomerId: "c4dc3bed-141f-447c-8712-b69e7eb11e7b", lineUserId: `${NO_LINE_TEST_LINE_USER_ID_PREFIX}YUMA3` },
   { id: "40f0db25-5fa9-4b96-bc19-3e1e5aba20c2", name: "YUMA4", propertyCustomerId: "f322abdd-dcc0-4ef2-b67b-bfdec1f8b3ad", lineUserId: `${NO_LINE_TEST_LINE_USER_ID_PREFIX}YUMA4` },
   { id: "a7ac4c90-26f7-4b8d-bd19-81d831fc75e0", name: "YUMA5", propertyCustomerId: "8ec2138a-e733-4fce-872a-1bfceac2eaaa", lineUserId: `${NO_LINE_TEST_LINE_USER_ID_PREFIX}YUMA5` },
+  // 2026-11-04 竹内さん（10/09 の了承の内・統括役）: 試験のレーンを6本に（EXAM_CONCURRENCY=6）＝YUMA6・YUMA7 を足した（LINE に送れない形・Realtime の絞りにも足した）
+  { id: "6a0bd626-10a4-4957-b2d1-91fe385ce65d", name: "YUMA6", propertyCustomerId: "691d45e9-8034-4605-9c35-feaeb9aa0567", lineUserId: `${NO_LINE_TEST_LINE_USER_ID_PREFIX}YUMA6` },
+  { id: "c8e7525a-07ce-400b-a772-188c45fcc092", name: "YUMA7", propertyCustomerId: "8e0ae6c9-666b-4931-af32-b6a6e4167e2a", lineUserId: `${NO_LINE_TEST_LINE_USER_ID_PREFIX}YUMA7` },
 ];
 export const NO_LINE_TEST_CONVERSATION_IDS: readonly string[] = NO_LINE_TEST_CONVERSATIONS.map((c) => c.id);
 const NO_LINE_SET: ReadonlySet<string> = new Set(NO_LINE_TEST_CONVERSATION_IDS);
