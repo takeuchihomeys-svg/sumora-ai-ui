@@ -323,7 +323,7 @@ import { bigramSim, editCore } from "@/app/lib/edit-diff";
 import { resolveReplySceneBrainFirst, replySceneBrainEnabled, questionTurnOverlap } from "@/app/lib/reply-scene-brain";
 import { sceneStyleNote, replyStyleR11Enabled, noRepeatNote, noNewArrivalNote, repeatCandidates } from "@/app/lib/reply-style-r11";
 import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWait, repeatBrainAlignEnabled, confirmAckMaterialFor, pickupAckMaterialFor, ackFormCell, ackFormFollowEnabled, ackFormShapeLine, ackFormCloserLine, ackFormDropTopic } from "@/app/lib/repeat-brain-align";
-import { isAckOnlyTurn } from "@/app/lib/draft-repeat";
+import { isAckOnlyTurn, applySelfRepeatExit } from "@/app/lib/draft-repeat";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { priorityStepOn, normalizePriorities } from "@/app/lib/brain-priority";
 import { messagePlanOn, normalizeMessagePlan, alignPlanWithPriorities, planHasNextBusinessDay, type MessagePlan } from "@/app/lib/message-plan";
@@ -7342,6 +7342,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               const blk = fixBulkCheckWording(draftBody); if (blk.changes.length) { w.push(...blk.changes); draftBody = blk.text; }
               // 2026-10-02 ⑫の再生: 「確認しご連絡…！！確認出来次第ご連絡…！！」の2回目（人 1/13,260＝同じ重なり）・条件を「」で囲む（人 0）を直す
               const dc = dropDoubleConfirmContact(draftBody); if (dc.removed.length) { w.push(...dc.removed.map((x) => `二重の約束を外す: ${x}`)); draftBody = dc.text; }
+              // 2026-11-05 作業員3（KB a5a2f6f8 ③・145c2664）: 同じ下書きの中の同じ約束の二度言いの2つ目を外す（地の文・条件と日時が同じ言い直しだけ・竹内さんの送信 60日 3,235通で当たり0・DRAFT_SELF_REPEAT_DROP）
+              const srp = applySelfRepeatExit(draftBody); if (srp.changes.length) { w.push(...srp.changes); draftBody = srp.text; }
               const uq = unquoteConditions(draftBody); if (uq.removed.length) { w.push(...uq.removed.map((x) => `条件の「」を外す: ${x}`)); draftBody = uq.text; }
               // 2026-10-08 11巡目: 約束の文末の「ね」を取る（竹内さんの手打ち 0通・takeuchi-wording-r11.ts・TAKEUCHI_WORDING_R11=off）
               const tw = fixTakeuchiWording(draftBody); if (tw.changes.length) { w.push(...tw.changes); draftBody = tw.text; }
