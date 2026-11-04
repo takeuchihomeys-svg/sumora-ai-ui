@@ -155,12 +155,16 @@ const LINK_KB = arg("link-kb").split(",").map((s) => s.trim()).filter(Boolean);
 //   --reps-file=<絶対パスの json {id: 回数}> … 問題ごとの回数を試験のブレインが決める（--repeat が上限・--repeat-flaky の決め方の代わり）
 //   --judge=lazy … 道が既に外れ（合格は決まりで✕）・本質の道も決まりで出る時は判定（DeepSeek）を呼ばない（合否・道は同じ・依頼の数は道が合った問題だけ）
 //   --baseline-only … 前（main）の取り置きを作るだけ（本番に入れた版の答えを夜中に取り置く口）
-//   EXAM_STOP_FILE=<path> … このファイルができたら次の問題の前で止める（途中で止める・片付けはいつも通り）。main の子では見ない
+//   EXAM_STOP_FILE=<path> … このファイルができたら次の問題の前で止める（途中で止める・片付けはいつも通り）。
+//     2026-11-04 作業員1（統括役の了承 (c)）: main の子（前を作る）も見る＝子は問題の区切り（次の問題の1回目の前）で止まり、親は全部の回が揃った問題だけ取り置く。
+//     親は前を作る塊の間・他の担当の前を待つ間・main の作業ツリーが空くのを待つ間にも見て、残りは次の回（-r）に回す（取り置いた前は -r が使い回す）
 //   EXAM_JUDGE_MODEL=<model> … 判定のモデル（既定は DEEPSEEK_MODEL か deepseek-v4-pro・ブレインを flash にした時も判定はそろえる）
 const REPS_OF: Record<string, number> | null = (() => { const f = arg("reps-file"); if (!f) return null; try { return JSON.parse(readFileSync(f, "utf8")) as Record<string, number>; } catch (e) { throw new Error(`--reps-file が読めない: ${String(e)}`); } })();
 const JUDGE_LAZY = arg("judge") === "lazy";
 const JUDGE_MODEL = (process.env.EXAM_JUDGE_MODEL ?? "").trim();
-const STOP_FILE = process.env.BRAIN_EXAM_BASELINE_CHILD === "1" ? "" : (process.env.EXAM_STOP_FILE ?? "").trim();
+const STOP_FILE = (process.env.EXAM_STOP_FILE ?? "").trim();
+const IS_BASELINE_CHILD = process.env.BRAIN_EXAM_BASELINE_CHILD === "1";
+const stopAsked = (): boolean => !!STOP_FILE && existsSync(STOP_FILE);
 const judgeSkip = { lazy: 0, rules: 0 };
 // 2026-10-21 ⑤ 決まりで決まる採点を先に（--judge=lazy の時・scripts/lib/exam-brain.ts ruleJudge）。
 //   確かめる人: 取ってある判定（AIX・なしの答案 69件）と照らすと 25件で AI の判定と食い違った（AIX の答案にも返信の本文が付く・AIX の中身の要点で✕にする）
@@ -1125,6 +1129,7 @@ async function prepareMainBaseline(): Promise<boolean> {
       for (let k = 0; ; k++) {
         const r = C.tryClaim(B.BASELINE_DIR, MAIN_WT_CLAIM, LABEL);
         if (r.ok) break;
+        if (stopAsked()) { console.log(`  ⏹ 止める印 → main の作業ツリーを待たない（この塊は次の回）`); return null; }
         if (Date.now() - tw >= wtWait) { console.warn(`  ⚠ main の作業ツリーが ${Math.round(wtWait / 60_000)}分空かない（${r.holder.label}・pid ${r.holder.pid}）→ 今回は前（main）を作らない: ${ids.join(",")}（EXAM_MAIN_WT_WAIT_MIN）`); return null; }
         if (k === 0) console.log(`  main の作業ツリーを他の担当（${r.holder.label}・pid ${r.holder.pid}）が使っている → 空くまで待つ（最大 ${Math.round(wtWait / 60_000)}分）`);
         await new Promise((res) => setTimeout(res, 15_000));
@@ -1147,6 +1152,8 @@ async function prepareMainBaseline(): Promise<boolean> {
         for (const id of okIds) {
           const rs = rows.filter((x) => x.id === id);
           if (!rs.length || rs.some((x) => x.error)) continue; // 失敗した問題は取り置かない（次にまた回す）
+          // 2026-11-04 止める印で途中で止まった子: 回が揃わない問題は取り置かない（足りない前で比べない・次の回で作り直す）
+          if (mode === "run" && stopAsked() && new Set(rs.map((x) => x.rep)).size < repsWant(id)) continue;
           const c = cost.byTag?.[id];
           const src = pinSrc.get(id) ?? null;
           if (src && rs.every((x) => x.inputSame)) { pinnedIds.push(id); pinnedUsd += c?.replayUsd ?? 0; }
@@ -1163,7 +1170,8 @@ async function prepareMainBaseline(): Promise<boolean> {
       const pinSrc = pinsOf(ids);
       const chunks = INCR || budgetMs !== null || flag("baseline-only") ? N.chunksOf(ids, chunkN) : [ids];
       for (let i = 0; i < chunks.length; i++) {
-        const g = N.chunkGate({ startMs: t0Budget, nowMs: Date.now(), budgetMs, limitLeft: PLAN_ONLY ? null : limitLeft, mainMoved: mainMoved() });
+        const g0 = N.chunkGate({ startMs: t0Budget, nowMs: Date.now(), budgetMs, limitLeft: PLAN_ONLY ? null : limitLeft, mainMoved: mainMoved() });
+        const g = !g0.go || !stopAsked() ? g0 : { go: false, why: "stop" as const, text: "止める印" };
         if (!g.go) {
           const rest = chunks.slice(i).flat();
           lateDeferred.push(...rest); stopWhy = stopWhy ?? g.why;
@@ -1188,7 +1196,14 @@ async function prepareMainBaseline(): Promise<boolean> {
         if (limitLeft !== null) { take = changed.slice(0, limitLeft); if (take.length < changed.length) { lateDeferred.push(...changed.slice(take.length)); stopWhy = stopWhy ?? "limit"; } limitLeft -= take.length; }
         if (!take.length) continue;
         const rr = await spawnMain(take, "run", pinSrc);
-        if (!rr) { lateDeferred.push(...take, ...chunks.slice(i + 1).flat()); stopWhy = stopWhy ?? "worktree"; return; }
+        if (!rr) { lateDeferred.push(...take, ...chunks.slice(i + 1).flat()); stopWhy = stopWhy ?? (stopAsked() ? "stop" : "worktree"); return; }
+        // 2026-11-04 止める印で子が途中で止まった: 取り置けた問題だけ「回した」に数え、残りは次の回（-r）へ
+        if (stopAsked()) {
+          const miss = take.filter((id) => !rr.saved.includes(id));
+          realRun.push(...rr.saved);
+          if (miss.length || i + 1 < chunks.length) { lateDeferred.push(...miss, ...chunks.slice(i + 1).flat()); stopWhy = stopWhy ?? "stop"; console.log(`  ⏹ 止める印: 前を取り置いた ${rr.saved.length}問・残り ${miss.length + chunks.slice(i + 1).flat().length}問は次の回`); return; }
+          continue;
+        }
         realRun.push(...take);
       }
     };
@@ -1211,6 +1226,7 @@ async function prepareMainBaseline(): Promise<boolean> {
         finally { const all = [...st.mine, ...st.steal]; C.releaseClaims(dir, all); for (const id of all) held.delete(id); }
       }
       pending = st.wait;
+      if (stopAsked()) stopWhy = stopWhy ?? "stop";
       // 予算・main の進みで止めた時は、他の担当の分を待ち続けない（残りは次の回）
       if ((stopWhy || PLAN_ONLY) && pending.length) { lateDeferred.push(...pending); console.log(`  ⏸ 他の担当が作っている ${pending.length}問も待たない（次の回で使い回す）`); break; }
       if (pending.length) {
@@ -1521,15 +1537,17 @@ async function main() {
   // 2026-11-04 1問（全部の回）を回す。1本の時は前から順に呼ぶ（今と同じ順）・レーンの時は空いたレーンが次の問題を取る（同じ問題の回は同じレーンで順に）
   const runProblem = async (p: ExamProblem): Promise<"stop" | void> => {
     const h = hNow(); // 閉じた関数の中では外の h（null になりうる）の絞り込みが効かない＝ここで1回確かめる
+    let startedReps = false;
   for (let rep = 1; rep <= REPEAT; rep++) {
     if (done.has(`${p.id}#${rep}`)) continue;
     // 2026-10-21 ①下見: main の控えの無い回は下見しない（本番の回で呼ぶ）
     if (INPUT_DIFF === "plan" && !hasPinsFor(p.id, rep)) { inputPlan[`${p.id}#${rep}`] = { same: false, firstChanged: null, pinned: 0, calls: 0, why: "main の控えなし" }; continue; }
-    if (STOP_FILE && existsSync(STOP_FILE)) { console.log(`⏹ 止める印（${STOP_FILE}）→ ここで止める（残りの問題は回さない）`); return "stop"; }
+    // 2026-11-04 main の子は問題の区切り（この問題をまだ1回も回していない時）だけで止める＝回が揃った問題だけ親が取り置ける
+    if (stopAsked() && (!IS_BASELINE_CHILD || !startedReps)) { console.log(`⏹ 止める印（${STOP_FILE}）→ ここで止める（残りの問題は回さない）`); return "stop"; }
     // 2026-10-17 試験のブレインが決めた回数（--reps-file）。書いてあれば揺れの決め方より先
     if (REPS_OF) { if (rep > Math.max(1, REPS_OF[p.id] ?? 1)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; } }
     else if (REPEAT_FLAKY && REPEAT > 1 && !shouldRunRep(rep, flakeOf(p), doneSigs.get(p.id) ?? [], REPEAT)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; }
-    const realBefore = nonJudgeReal();
+    const realBefore = nonJudgeReal(); startedReps = true;
     const row: ResultRow = { id: p.id, rep, type: p.type, tags: p.tags ?? [], label: LABEL, model, layer: LAYER, at: new Date().toISOString(), brain: null, path: { code: "", acceptHit: null, mustNotHit: null, ok: false }, asks: null, ng: null, score: { path: false, asks: null, ng: null, pass: false } };
     const acc = acceptOf(p), mn = p.mustNot ?? [];
     S().currentProblemId = p.id;

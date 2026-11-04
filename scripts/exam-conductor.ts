@@ -409,7 +409,11 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     if (ids.length) argv.push(`--only=${j.only}`, `--reps-file=${repsFile}`);
     if (j.selectRag) argv.push("--select=rag");
     const startSize = existsSync(outFile) ? statSync(outFile).size : 0;
-    const r = runTsx(j.cwd, argv, j.env, outFile); cur = r.child;
+    // 2026-11-04 作業員1（統括役の了承 (c)）: 時間の上限では殺さず止める印を置く＝brain-exam が問題の区切りで止まり、
+    //   取れた「今」の行と回の揃った「前」（main）を取り置いてから終わる（-r が前を作り直さない）。猶予（EXAM_JOB_STOP_GRACE_MIN・既定 15分）を過ぎたら殺す
+    const stopFile = join(ROOT, `.stop-${j.label}`);
+    try { unlinkSync(stopFile); } catch { /* 無ければよい */ }
+    const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile }, outFile); cur = r.child;
     // ① 早めの打ち切り（30秒ごと）
     let early: { stop: string; why: string; base: string } | null = null;
     const rowsFile = join(resultsDirOf(j.cwd), `${j.label}.jsonl`);
@@ -423,9 +427,19 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     // 2026-11-04 (b): 1本の時間の上限（既定 40分・依頼の maxMin・EXAM_JOB_MAX_MIN）。超えたら止めて途中までを集計し、残りの問題を分けた依頼にして後ろへ
     let timedOut = false as boolean;
     const maxMin = j.maxMin ?? Number(process.env.EXAM_JOB_MAX_MIN ?? "40");
-    const tl = maxMin > 0 ? setTimeout(() => { if (early || stopped) return; timedOut = true; log(`  ⏱ 1本の時間の上限 ${maxMin}分 → 止めて途中までを集計（${j.label}）`); killTree(cur?.pid); }, maxMin * 60_000) : null;
+    const graceMin = Number(process.env.EXAM_JOB_STOP_GRACE_MIN ?? "15");
+    let graceT: ReturnType<typeof setTimeout> | null = null;
+    const tl = maxMin > 0 ? setTimeout(() => {
+      if (early || stopped) return;
+      timedOut = true;
+      try { writeFileSync(stopFile, at()); } catch { /* 置けなければ下の猶予で殺す */ }
+      log(`  ⏱ 1本の時間の上限 ${maxMin}分 → 止める印を置いた（問題の区切りで止まり、取れた行と前を取り置く・最大 ${graceMin}分待つ）（${j.label}）`);
+      graceT = setTimeout(() => { log(`  ⏱ 止める印から ${graceMin}分で止まらない → 止める（${j.label}）`); killTree(cur?.pid); }, Math.max(0, graceMin) * 60_000);
+    }, maxMin * 60_000) : null;
     const code = await r.done;
     if (tl) clearTimeout(tl);
+    if (graceT) clearTimeout(graceT);
+    try { unlinkSync(stopFile); } catch { /* */ }
     if (ew) clearInterval(ew);
     if (timedOut && !(early as unknown) && !stopped) {
       const bl = baseLabelOf(j.cwd, j.label);
