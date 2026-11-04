@@ -202,7 +202,7 @@ function claimJob(j: ExamJob & { file: string }): boolean {
 }
 /** 順番待ちに戻す（取った印を外して元の名前で書く） */
 /** 2026-11-04 作業員6（統括役の指示）: 立ち上がりの失敗（モジュールが無い等＝試験が流れていない）を見分ける。11/04 00:30Z の grp-reply-tag は node_modules が空で落ちたのに「確かな悪化0」で済みになった */
-export const START_CRASH_RE = /MODULE_NOT_FOUND|Cannot find (?:module|package) ['"@]|ERR_MODULE_NOT_FOUND/;
+export const START_CRASH_RE = /MODULE_NOT_FOUND|Cannot find (?:module|package) ['"@]|ERR_MODULE_NOT_FOUND|\.env\.local: not found/;   // 11/04 02:39Z: 作業ツリーに .env.local が無く全部の本が 9 で落ちた
 export const CRASH_STOP_AFTER = 3;
 /** 立ち上がりで落ちた時: 済みにせず待ちに戻す。同じ依頼が3回続けて落ちたら止めて知らせる（true＝片付けた） */
 function handleStartCrash(j: ExamJob & { file: string }, text: string, outFile: string): boolean {
