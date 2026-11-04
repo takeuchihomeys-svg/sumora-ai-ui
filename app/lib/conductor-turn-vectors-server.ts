@@ -14,9 +14,11 @@ import { APPLY_DOCS_RE, actualOf, hitsOf, turnVectorRow, conductorTurnVectorsOn,
 type Msg = { id: string; conversation_id: string; sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; line_message_id: string | null; staff_writer: string | null; staff_writer_confidence: string | null };
 const COLS = "id, conversation_id, sender, text, created_at, is_aix_generated, line_message_id, staff_writer, staff_writer_confidence";
 
-export type FillResult = { candidates: number; built: number; skippedExisting: number; skippedApplyDocs: number; written: number; dry: boolean; samples?: string[] };
+export type FillResult = { candidates: number; built: number; skippedExisting: number; skippedApplyDocs: number; written: number; dry: boolean; samples?: string[]; timeBudgetHit?: boolean };
 
-export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: number; limit?: number; apply?: boolean; samples?: number; before?: string | null } = {}): Promise<FillResult> {
+export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: number; limit?: number; apply?: boolean; samples?: number; before?: string | null; budgetMs?: number } = {}): Promise<FillResult> {
+  // 2026-11-04 1回目の一括の埋めが 300秒の上限で切れた（100番を書いた所で時間切れ・番ごとに読みが数回＋埋め込み）＝時間の予算で止めて、それまでの分を必ず書く
+  const t0 = Date.now(), budget = o.budgetMs ?? 220_000;
   const days = Math.min(120, Math.max(7, o.days ?? 90)), limit = Math.min(400, Math.max(10, o.limit ?? 200));
   const write = !!o.apply && conductorTurnVectorsOn();
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
@@ -39,6 +41,7 @@ export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: n
   const { generateEmbedding } = await import("@/app/lib/knowledge-utils");
   for (const s of sends) {
     if (res.built >= limit) break;
+    if (Date.now() - t0 > budget) { res.timeBudgetHit = true; break; }
     if (existing.has(`msg:${s.id}`)) { res.skippedExisting++; continue; }
     const { data: prev } = await sb.from("messages").select(COLS).eq("conversation_id", s.conversation_id).lt("created_at", s.created_at).order("created_at", { ascending: false }).limit(12);
     const pv = (prev ?? []) as Msg[];
