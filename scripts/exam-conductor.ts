@@ -49,7 +49,7 @@ const db = () => (_sb ??= createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "
 const readJson = <T>(f: string, d: T): T => { try { return JSON.parse(readFileSync(f, "utf8")) as T; } catch { return d; } };
 
 export type ExamJob = {
-  id: string; label: string; owner: string; switch: string; cwd: string; only: string; stage: string; repeat: number; env: Record<string, string>; createdAt: string; tries: number;
+  id: string; label: string; owner: string; switch: string; cwd: string; only: string; stage: string; repeat: number; env: Record<string, string>; createdAt: string; tries: number; /** 立ち上がりの失敗が続いた回数（2026-11-04） */ crashes?: number;
   /** 依頼で名指しした揺れる問題（③） */ flaky?: string[];
   /** --pick=rag の時 brain-exam --select=rag に任せる（④） */ selectRag?: boolean;
   /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc" | "tsc-remote"; cmds?: string[];
@@ -201,6 +201,25 @@ function claimJob(j: ExamJob & { file: string }): boolean {
   try { renameSync(j.file, j.file + ".claimed"); j.file = j.file + ".claimed"; return true; } catch { return false; }
 }
 /** 順番待ちに戻す（取った印を外して元の名前で書く） */
+/** 2026-11-04 作業員6（統括役の指示）: 立ち上がりの失敗（モジュールが無い等＝試験が流れていない）を見分ける。11/04 00:30Z の grp-reply-tag は node_modules が空で落ちたのに「確かな悪化0」で済みになった */
+export const START_CRASH_RE = /MODULE_NOT_FOUND|Cannot find (?:module|package) ['"@]|ERR_MODULE_NOT_FOUND/;
+export const CRASH_STOP_AFTER = 3;
+/** 立ち上がりで落ちた時: 済みにせず待ちに戻す。同じ依頼が3回続けて落ちたら止めて知らせる（true＝片付けた） */
+function handleStartCrash(j: ExamJob & { file: string }, text: string, outFile: string): boolean {
+  const m = text.match(START_CRASH_RE);
+  if (!m) return false;
+  const n = (j.crashes ?? 0) + 1;
+  if (n >= CRASH_STOP_AFTER) {
+    const verdict = `立ち上がりで ${n}回続けて落ちた（${m[0]}）→ 止めた・手で直してから足し直す`;
+    finish({ ...j, crashes: n }, { label: j.label, owner: j.owner, switch: j.switch, verdict, crashes: n, at: new Date().toISOString() },
+      `| ${new Date().toISOString().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | - | - | ? |`, `試験 ${j.label}: ${verdict}`);
+    log(`  ⛔ ${j.label}: ${verdict}（${outFile}）`);
+    return true;
+  }
+  requeueJob({ ...j, crashes: n, notBefore: new Date(Date.now() + 10 * 60_000).toISOString() });
+  log(`  立ち上がりで落ちた（${m[0]}・${n}回目）→ 済みにせず順番待ちに戻した（${j.label}・10分後から）`);
+  return true;
+}
 function requeueJob(j: ExamJob & { file: string }): void {
   const orig = j.file.replace(/\.claimed$/, "");
   writeFileSync(orig, JSON.stringify({ ...j, tries: j.tries + 1, file: undefined }, null, 1));
@@ -340,6 +359,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       const codes: Array<number | null> = [];
       // 2026-11-04 作業員6: 組の中の1本でも空きメモリで断られたら（試験は流れていない）「済み」にせず待ちに戻す（11/03 22:27Z の grp-aix-first が断られたまま済みになった）
       let refused: string | null = null;
+      let crashText: string | null = null;
       for (const c of j.cmds!) {
         if (stopped || refused) break;
         appendFileSync(outFile, `\n=== ${at()} npx tsx --env-file=.env.local ${c} ===\n`);
@@ -349,7 +369,9 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         const tail = readFileSync(outFile).subarray(before).toString("utf8");
         const m = tail.match(/空きメモリ\s*\d+MB\s*<\s*\d+MB（--force で流す）/);
         if (m) refused = m[0];
+        if (!m && START_CRASH_RE.test(tail)) { crashText = tail; break; }
       }
+      if (crashText && !stopped && handleStartCrash(j, crashText, outFile)) return;
       // 断られた時は10分後から（同じ空きメモリですぐ取り直して断られ続けないように）
       if (refused && !stopped) { requeueJob({ ...j, notBefore: new Date(Date.now() + 10 * 60_000).toISOString() }); log(`  断られた（${refused}）→ 済みにせず順番待ちに戻した（${j.label}・10分後から）`); return; }
       if (stopped) { requeueJob(j); log(`  順番待ちに戻した（${j.label}・片付けは依頼者の手順で）`); return; }
@@ -372,6 +394,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     const argv = ["scripts/brain-exam.ts", `--label=${j.label}`, "--conv=auto", "--baseline=main", `--repeat=${maxRep}`, `--stage=${j.stage}`];
     if (ids.length) argv.push(`--only=${j.only}`, `--reps-file=${repsFile}`);
     if (j.selectRag) argv.push("--select=rag");
+    const startSize = existsSync(outFile) ? statSync(outFile).size : 0;
     const r = runTsx(j.cwd, argv, j.env, outFile); cur = r.child;
     // ① 早めの打ち切り（30秒ごと）
     let early: { stop: string; why: string; base: string } | null = null;
@@ -386,6 +409,11 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     const code = await r.done;
     if (ew) clearInterval(ew);
     if (stopped) { await cleanupRun(j.cwd, j.label, outFile); requeueJob(j); log(`  順番待ちに戻した（${j.label}）`); return; }
+    if (!early) {
+      const runText = existsSync(outFile) ? readFileSync(outFile).subarray(startSize).toString("utf8") : "";
+      // 前（main）の実行だけが落ちて自分の回は流れた時は済みにしてよい＝合格の数が読めない時だけ落ちとみなす
+      if (summarize(runText).pass == null && handleStartCrash(j, runText, outFile)) { await cleanupRun(j.cwd, j.label, outFile); return; }
+    }
     if (early) {
       const e = early as { stop: string; why: string; base: string };
       await cleanupRun(j.cwd, j.label, outFile);
