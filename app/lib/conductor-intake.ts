@@ -19,21 +19,38 @@ export function conductorIntakeMode(env: Env = typeof process !== "undefined" ? 
 /** 先頭の文の版（中身を変えたら上げる＝作り置きが作り直される） */
 export const INTAKE_PREFIX_VERSION = "ci-v1";
 
+/**
+ * 2026-11-05 作業員4（統括役の指示・P0 575a7cd5「統括は重点を先に決め、必要なブレインだけを動かす」の一部）: 場面ごとの「AIX の番になる合図」（ci-v3）。
+ *   元はつなぎの芯の ci-v2（w2-conductor・未コミット・INTAKE_AIX_CUES）。ci-v2 の再生 ci-ds4（DeepSeek・竹内さんの番185・帳面あり）は
+ *   AIX の番 24〜26→51/70 に上がったが、返信の番が 67〜74→49/115 に下がった（ack 18/30）＝お礼の番の合図が強すぎた。
+ *   v3 はお礼の番の合図を「重点が約束を果たす時だけ」＝帳面に果たしていない『こちらの約束』がある時だけ AIX に絞る（KB 3f67fd3f: お礼の番は返信で完了が基本）。
+ *   内覧の合図は ci-v2 のまま（KB ee24fa7c・1290264c）。どれも竹内さんの決定に根拠がある物だけ（創作の決まりを足さない）。
+ *   切替: CONDUCTOR_INTAKE_CUES=v3（既定 off＝先頭の文は ci-v1 のまま・作り置きも崩さない）。入口の読みは記録だけ＝本番の判断は変わらない。
+ */
+export const INTAKE_AIX_CUES_V3 = [
+  "お礼・了承の番（ack）: 返信で受けて完了させるのが基本（roles は writer だけ・やる事に aix を入れない）。この番の重点が『約束を果たす』時だけ、AIX の担当（aix_desk）とやる事 aix を入れる＝【帳面】に、こちらの約束（ピックアップ・物件確認・見積書 等）があり、その後にその約束を果たした送付の行が無い時。その AIX は約束した物（物件ピックアップ（複数）か物件オススメ（1件）・確認の結果・見積書）。帳面に果たしていない約束が無い時は AIX を入れない",
+  "内覧の番（viewing）: 候補の日時を出す番は AIX【内覧調整】、日にちが決まった番は AIX【待ち合わせ場所】（＝確定）。別の質問の番では段階を進めない",
+] as const;
+export const intakeCuesV3On = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_INTAKE_CUES ?? "").trim().toLowerCase() === "v3";
+export const intakePrefixVersion = (env: Env = typeof process !== "undefined" ? process.env : {}) => (intakeCuesV3On(env) ? "ci-v3" : INTAKE_PREFIX_VERSION);
+
 const SCENES = Object.keys(REPLY_SCENE_JA) as ReplyScene[];
 const ROLES = ["aix_desk", "compose", "writer", "check", "fetch", "deep", "second"] as const;
 
 /** 先頭（作り置き）の固定の文。取扱説明書の短い形は、版が変わる時（毎週の書き直し）だけ変わる */
-export function intakePrefix(manualShortForms: ReadonlyArray<{ brain: string; short: string }>): string {
+export function intakePrefix(manualShortForms: ReadonlyArray<{ brain: string; short: string }>, env: Env = typeof process !== "undefined" ? process.env : {}): string {
+  const v3 = intakeCuesV3On(env);
   const manuals = [...manualShortForms].sort((a, b) => a.brain.localeCompare(b.brain)).map((m) => `- ${m.brain}: ${m.short}`).join("\n");
   return [
-    `あなたは賃貸の仲介会社の LINE 返信の「入口の統括」です（版 ${INTAKE_PREFIX_VERSION}）。お客様の今の番を最初に読み、場面・やる事・動かす担当・要る材料・迷いを決まった形の JSON で書きます。返信の文は書きません。判断（返信か AIX か）は判断のブレインが決めます。あなたは担当の選び方と材料の当たりを付ける役です。`,
+    `あなたは賃貸の仲介会社の LINE 返信の「入口の統括」です（版 ${intakePrefixVersion(env)}）。お客様の今の番を最初に読み、場面・やる事・動かす担当・要る材料・迷いを決まった形の JSON で書きます。返信の文は書きません。判断（返信か AIX か）は判断のブレインが決めます。あなたは担当の選び方と材料の当たりを付ける役です。`,
     `【絶対の決まり（P0）】スタッフだけが知る事（管理会社の確認の結果・募集状況・交渉の結果・撮影した写真・見積の金額・内覧の日程の確定・入居可能日）は AIX で送る番。返信は AI が知り得る事だけ。判断はすべてブレインが決める（決まった計算は候補と安全の線だけ）。`,
     CONDUCTOR_PRIORITY_LINE,
+    ...(v3 ? [`【AIX の番になる合図（場面ごと）】\n${INTAKE_AIX_CUES_V3.map((c) => `- ${c}`).join("\n")}`] : []),
     `【場面（scene はこの中から1つ）】${SCENES.map((s) => `${s}=${REPLY_SCENE_JA[s]}`).join("／")}`,
     `【担当（roles はこの中から）】${ROSTER.filter((r) => (ROLES as readonly string[]).includes(r.id)).map((r) => `${r.id}=${r.does}`).join("／")}`,
     `【要る材料（need はこの中から）】${NEED_TOOLS.join("・")}`,
     `【担当の取扱説明書（短い形）】\n${manuals || "- （まだ無い）"}`,
-    `【書き方】JSON だけを返す: {"scene": "場面", "roles": ["担当"], "need": ["材料"], "todos": [{"kind": "answer|promise|aix|fetch|check", "what": "20字以内"}], "doubt": {"kind": "何の迷いか（20字以内）", "between": ["案A", "案B"]} または null, "confidence": "high|mid|low"}。一覧に無い言葉を作らない。軽い番（お礼・スタンプだけ）は roles を ["writer"] だけにする。`,
+    `【書き方】JSON だけを返す: {"scene": "場面", "roles": ["担当"], "need": ["材料"], "todos": [{"kind": "answer|promise|aix|fetch|check", "what": "20字以内"}], "doubt": {"kind": "何の迷いか（20字以内）", "between": ["案A", "案B"]} または null, "confidence": "high|mid|low"}。一覧に無い言葉を作らない。${v3 ? "軽い番（お礼・スタンプだけ）は、上の合図（帳面に果たしていない約束）に当たらない限り roles を [\"writer\"] だけにする。" : "軽い番（お礼・スタンプだけ）は roles を [\"writer\"] だけにする。"}`,
   ].join("\n\n");
 }
 
