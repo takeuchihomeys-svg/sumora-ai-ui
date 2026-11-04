@@ -67,7 +67,9 @@ export function flakeVerdict(obs: FlakeObs[], want: { problemHash: string; model
   const legacy = obs.filter((o) => o.legacy && o.model === want.model);
   const cur = obs.filter((o) => !o.legacy && o.problemHash === want.problemHash && o.model === want.model);
   const groups = new Map<string, Set<string>>();
-  for (const o of cur) { const k = `c:${o.codeKey}`; groups.set(k, (groups.get(k) ?? new Set()).add(o.sig)); }
+  // 2026-11-04 作業員2（grpb-after で25問中23問が揺れる扱い）: 下書きの段まで回した回と、ブレインの段だけの回は答えの印の形が違う（|下書き=… が付く）。
+  //   同じコードでも段が違うと「割れた」と数えていた → 段（下書きの有無）ごとに分けて比べる
+  for (const o of cur) { const k = `c:${o.codeKey}:${o.sig.includes("|下書き=") ? "d" : "b"}`; groups.set(k, (groups.get(k) ?? new Set()).add(o.sig)); }
   for (const o of legacy) { const k = `l:${o.codeKey}`; groups.set(k, (groups.get(k) ?? new Set()).add(o.pathSig)); }
   const split = [...groups].find(([, s]) => s.size > 1);
   if (split) return { verdict: "flaky", modal: null, why: `同じコードで答えが割れた（${[...split[1]].slice(0, 3).join(" / ")}）`, n: cur.length + legacy.length };
