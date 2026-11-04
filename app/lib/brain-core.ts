@@ -20,7 +20,7 @@ import { flowSignalsOn, detectFlowSignals, flowSignalsLine, type FlowSignals } f
 import { conductorHandoffOn, candidateRoles, rolesDigest } from "@/app/lib/conductor-handoff";
 import { conductorMetaMode, buildConductorMeta, withMaterials, withSearchPlan, carryQueryLine, materialFor } from "@/app/lib/conductor-meta";
 import { conductorIntakeMode } from "@/app/lib/conductor-intake";
-import { factLedgerMode, buildFactLedger, factLedgerBlock } from "@/app/lib/customer-fact-ledger";
+import { factLedgerMode, buildFactLedger, factLedgerBlock, ledgerFactsFrom } from "@/app/lib/customer-fact-ledger";
 import { closedThanksNoReplyOn, layoutAskTemporaryOn, farOtherFirstOn, ackPositiveApplyOn, closedThanksLine, layoutAskLine, farOtherFirstLine, ackPositiveApplyLine, guarantorWordingOn, guarantorWordingLine } from "@/app/lib/decisions-1103";
 import { recheckMaterialLine, recheckMode, recheckLimit, pickRecheck, recheckSig, recheckDigest, type BrainRecheck } from "@/app/lib/brain-recheck";
 import { priorityStepOn, priorityRetrievalOn, BRAIN_PRIORITY_RULES, BRAIN_PRIORITIES_FIELD, normalizePriorities, ensureAsksCovered, reconcilePrioritiesWithAix, priorityRecord, renderPulledBlock, type PriorityStepRecord } from "@/app/lib/brain-priority";
@@ -3102,7 +3102,8 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
       const pm = (opts?.prevMeta ?? null) as unknown as Record<string, unknown> | null;
       const facts = buildFactLedger({
         state: customerState ? { stage: customerState.stage, stageLabel: customerState.stageLabel, since: customerState.since, properties: customerState.properties, viewings: customerState.viewings.map((v) => ({ ymd: v.ymd, time: v.time, name: v.name })) } : null,
-        ledger: brainLedger.entries.map((e) => ({ kind: e.kind, status: e.status, at: e.at, evidence: e.evidence, detail: { object: e.detail.object ?? null, propertyNames: e.detail.propertyNames } })),
+        // 2026-11-05 作業員3: 果たしたかどうか（fulfilledBy）も渡す＝開いている約束を種類ごとに書く（FACT_LEDGER_OPEN_PROMISE）
+        ledger: ledgerFactsFrom(brainLedger.entries), nowMs: Date.now(),
         meta: pm ? { plan_ahead: (pm.plan_ahead ?? null) as { goal?: string; steps?: string[] } | null, plan_ahead_at: (pm.plan_ahead_at ?? null) as string | null, three_layer: (pm.three_layer ?? null) as { worry?: string } | null, emotion: ((pm.ai_summary_json as { emotion?: string } | undefined)?.emotion ?? null), analyzed_msg_ts: (pm.analyzed_msg_ts ?? null) as string | null } : null,
         strategy: opts?.strategy ? { checkpoint_stage: opts.strategy.checkpoint_stage ?? null, strategy_analyzed_at: opts.strategy.strategy_analyzed_at ?? null } : null,
       });
