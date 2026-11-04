@@ -24,6 +24,7 @@ import { upsertKnowledge } from "@/app/lib/knowledge-utils";
 import { normalizeStatus } from "@/app/lib/status-normalize";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { excludeTestConversations } from "@/app/lib/test-conversations";
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 
 export const maxDuration = 60;
 
@@ -125,12 +126,11 @@ async function run() {
   }
 
   // 経路②: AIX直送信ログ（テンプレを構造ソースにしてAI生成→送信。送信済み確定・AI生成=adapted扱い）
-  const { data: aixLogs, error: aixError } = await supabase
-    .from("aix_usage_logs")
-    .select("conversation_status, aix_type, template_id, check_pattern, app_sub_mode, send_mode, conversation_id")
-    .not("template_id", "is", null)
-    .gte("created_at", since90d)
-    .limit(10000);
+  // 2026-11-04 危ない所の見張り (b): 1回 1000行で黙って切れる読み → readRowsUpTo（READ_ALL_ROWS=on で 1000行ずつ・off は今まで通り）（90日で 727行）
+  const { data: aixLogs, error: aixError } = await readRowsUpTo<{ conversation_status: string | null; aix_type: string; template_id: string | null; check_pattern: string | null; app_sub_mode: string | null; send_mode: string | null; conversation_id: string }>((a, b, paged) => {
+    const q = supabase.from("aix_usage_logs").select("conversation_status, aix_type, template_id, check_pattern, app_sub_mode, send_mode, conversation_id").not("template_id", "is", null).gte("created_at", since90d);
+    return (paged ? q.order("id") : q).range(a, b);
+  }, 10000);
   // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
   for (const log of excludeTestConversations(aixLogs)) {
     const tid = log.template_id as string;

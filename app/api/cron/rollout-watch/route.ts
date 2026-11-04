@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { decideRollout, watchedSwitches, isMatchVerdict, isJudgedVerdict, rolloutWatchMode, type GroupRate, type WatchDecision } from "@/app/lib/rollout-watch";
 import { stageOf, stageOn, loadRolloutOverrides } from "@/app/lib/rollout";
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -24,7 +25,11 @@ export async function GET(req: NextRequest) {
     if (!names.length) return NextResponse.json({ ok: true, mode, names: [], note: "pct:N か all の _STAGE が無い" });
     const now = Date.now();
     const overrides = await loadRolloutOverrides(now);
-    const { data: turns, error } = await db.from("line_watch_turns").select("conversation_id, customer_turn_at, verdict").gte("customer_turn_at", new Date(now - 14 * DAY).toISOString()).limit(5000);
+    // 2026-11-04 危ない所の見張り (b): 1回 1000行で黙って切れる読み → readRowsUpTo（READ_ALL_ROWS=on で 1000行ずつ・off は今まで通り）
+  const { data: turns, error } = await readRowsUpTo<{ conversation_id: string; customer_turn_at: string; verdict: string | null }>((a, b, paged) => {
+    const q = db.from("line_watch_turns").select("conversation_id, customer_turn_at, verdict").gte("customer_turn_at", new Date(now - 14 * DAY).toISOString());
+    return (paged ? q.order("id") : q).range(a, b);
+  }, 5000);
     if (error) throw new Error(`line_watch_turns: ${error.message}`);
     const judged = ((turns ?? []) as Array<{ conversation_id: string; customer_turn_at: string; verdict: string | null }>).filter((t) => isJudgedVerdict(t.verdict) && !isTestConversation(t.conversation_id));
     const tally = (rows: typeof judged): GroupRate => ({ n: rows.length, match: rows.filter((r) => isMatchVerdict(r.verdict)).length });

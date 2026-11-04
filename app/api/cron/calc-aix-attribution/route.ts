@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation, excludeTestConversations } from "@/app/lib/test-conversations";
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 
 // P5: 成果アトリビューション週次集計
 // 過去7日間の aix_usage_logs を (aix_type, template_id) でグルーピングし、
@@ -89,11 +90,11 @@ async function run() {
   const periodEnd = jstNow.toISOString().slice(0, 10);
 
   // 1. 過去7日間のAIX使用ログ
-  const { data: logs, error: logsErr } = await supabase
-    .from("aix_usage_logs")
-    .select("conversation_id, aix_type, template_id, template_name, conversation_status, created_at")
-    .gte("created_at", sevenDaysAgo.toISOString())
-    .limit(10000);
+  // 2026-11-04 危ない所の見張り (b): 1回 1000行で黙って切れる読み → readRowsUpTo（READ_ALL_ROWS=on で 1000行ずつ・off は今まで通り）
+  const { data: logs, error: logsErr } = await readRowsUpTo<{ conversation_id: string; aix_type: string; template_id: string | null; template_name: string | null; conversation_status: string | null; created_at: string }>((a, b, paged) => {
+    const q = supabase.from("aix_usage_logs").select("conversation_id, aix_type, template_id, template_name, conversation_status, created_at").gte("created_at", sevenDaysAgo.toISOString());
+    return (paged ? q.order("id") : q).range(a, b);
+  }, 10000);
 
   if (logsErr) {
     console.error("[calc-aix-attribution] logs fetch error:", logsErr.message);

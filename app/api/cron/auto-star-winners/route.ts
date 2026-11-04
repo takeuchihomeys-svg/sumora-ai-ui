@@ -7,6 +7,7 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 import { learningWindow, isRecent } from "@/app/lib/learning-window";
 // 2026-10-08 竹内さん「自動的にする」: 申込に届いた会話にも☆（申込の時刻より前の返信だけ・AUTO_STAR_APPLIED=off で旧）
 import { autoStarAppliedEnabled, firstAppliedAtByConversation, starEligibleByApply } from "@/app/lib/auto-star-applied";
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 
 export const maxDuration = 300;
 
@@ -43,7 +44,11 @@ export async function GET(req: NextRequest) {
   let firstApplied = new Map<string, number>();
   const appliedRecent: Array<{ id: string; at: string }> = [];
   if (applyOn) {
-    const { data: apRows, error: apErr } = await supabase.from("deal_outcomes").select("conversation_id, applied_at").gte("applied_at", since).limit(5000);
+    // 2026-11-04 危ない所の見張り (b): 1回 1000行で黙って切れる読み → readRowsUpTo（READ_ALL_ROWS=on で 1000行ずつ・off は今まで通り）
+    const { data: apRows, error: apErr } = await readRowsUpTo<{ conversation_id: string; applied_at: string | null }>((a, b, paged) => {
+      const q = supabase.from("deal_outcomes").select("conversation_id, applied_at").gte("applied_at", since);
+      return (paged ? q.order("id") : q).range(a, b);
+    }, 5000);
     if (apErr) console.warn("[auto-star-winners] deal_outcomes fetch error (申込の会話は今回スキップ):", apErr.message);
     const apIds = [...new Set(((apRows ?? []) as Array<{ conversation_id: string }>).map((r) => r.conversation_id))];
     if (apIds.length) {

@@ -17,6 +17,7 @@ import { isTestConversation, excludeTestConversations } from "@/app/lib/test-con
 import { writerFromEdit, staffWriterSplitEnabled } from "@/app/lib/staff-writer";
 // 2026-10-08 竹内さんの決定の2: 学習の窓 7日→30日（新しい7日×2・前の23日×1・LEARNING_WINDOW_30D=off で旧）
 import { learningWindow, pickRecentFirst, recencyTag, windowCountsLabel, weightingInstruction, isRecent, type LearningWindow } from "@/app/lib/learning-window";
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 
 /** 2026-10-08 竹内「竹内のLINEか従業員のLINEかで考える方がかなり分析の質が変わる」: 直した所の表記が従業員の差分に印を付ける（STAFF_WRITER_SPLIT=off で付けない） */
 function writerTagOf(draft: string | null, sent: string | null): string {
@@ -514,13 +515,11 @@ function levenshtein(a: string, b: string): number {
 async function runWeeklyMetricsRollup(): Promise<Record<string, unknown>> {
   try {
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
-    const { data: rows, error } = await supabase
-      .from("ai_reply_examples")
-      .select("ai_draft, sent_reply, was_ai_modified, conversation_id")
-      .eq("entry_source", "line_reply")
-      .gte("created_at", sevenDaysAgo.toISOString())
-      .not("sent_reply", "is", null)
-      .limit(2000);
+    // 2026-11-04 危ない所の見張り (b): 1回 1000行で黙って切れる読み → readRowsUpTo（READ_ALL_ROWS=on で 1000行ずつ・off は今まで通り）
+    const { data: rows, error } = await readRowsUpTo<{ ai_draft: string | null; sent_reply: string | null; was_ai_modified: boolean | null; conversation_id: string }>((a, b, paged) => {
+      const q = supabase.from("ai_reply_examples").select("ai_draft, sent_reply, was_ai_modified, conversation_id").eq("entry_source", "line_reply").gte("created_at", sevenDaysAgo.toISOString()).not("sent_reply", "is", null);
+      return (paged ? q.order("id") : q).range(a, b);
+    }, 2000);
     if (error) throw new Error(error.message);
 
     // 2026-09-11 データ衛生: 生成失敗文は KPI の母集団から外す（失敗文の「無修正送信」を未修正率に数えない）

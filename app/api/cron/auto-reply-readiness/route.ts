@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { legacyActionWinRatesEnabled } from "@/app/lib/application-reach";
 import { watchAixMatchRates, WATCH_MATCH_MIN, WATCH_MATCH_MIN_N } from "@/app/lib/watch-aix-match";
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 
 export const maxDuration = 30;
 
@@ -58,12 +59,11 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. aix_usage_logs から直近30日の編集率をaix_type別に集計（was_editedがNULLのものは除外）
-    const { data: usageLogs } = await supabase
-      .from("aix_usage_logs")
-      .select("aix_type, was_edited")
-      .gte("created_at", since30d)
-      .not("was_edited", "is", null)
-      .limit(5000);
+    // 2026-11-04 危ない所の見張り (b): 1回 1000行で黙って切れる読み → readRowsUpTo（READ_ALL_ROWS=on で 1000行ずつ・off は今まで通り）（30日で 800行・もうすぐ 1000 を超える）
+    const { data: usageLogs } = await readRowsUpTo<{ aix_type: string; was_edited: boolean | null }>((a, b, paged) => {
+      const q = supabase.from("aix_usage_logs").select("aix_type, was_edited").gte("created_at", since30d).not("was_edited", "is", null);
+      return (paged ? q.order("id") : q).range(a, b);
+    }, 5000);
 
     const editStats: Record<string, { edited: number; total: number }> = {};
     for (const log of (usageLogs ?? []) as Array<{ aix_type: string; was_edited: boolean | null }>) {
@@ -89,12 +89,14 @@ export async function POST(req: NextRequest) {
     // 見張りの一致率（新の関所）: ブレインが AIX を出した番で、スタッフが同じ AIX を押したか（line-watch-judge の aix_verdict）
     const { data: watchRows } = legacyWin
       ? { data: [] as Array<{ brain_action: string | null; aix_verdict: string | null; backfill: string | null }> }
-      : await supabase
-        .from("line_watch_turns")
-        .select("brain_action, aix_verdict:verdict_detail->>aix_verdict, guard_aix_verdict:verdict_detail->>guard_aix_verdict, backfill:verdict_detail->>backfill") // 埋め戻した過去の番は watchAixMatchRates が外す
-        .gte("created_at", since30d)
-        .not("brain_action", "is", null)
-        .limit(5000);
+      : await readRowsUpTo<{ brain_action: string | null; aix_verdict: string | null; guard_aix_verdict?: string | null; backfill: string | null }>((a, b, paged) => {   // 2026-11-04 危ない所の見張り (b): 1回 1000行で黙って切れる読み → readRowsUpTo（READ_ALL_ROWS=on で 1000行ずつ・off は今まで通り）（30日で 813行）
+        const q = supabase
+          .from("line_watch_turns")
+          .select("brain_action, aix_verdict:verdict_detail->>aix_verdict, guard_aix_verdict:verdict_detail->>guard_aix_verdict, backfill:verdict_detail->>backfill") // 埋め戻した過去の番は watchAixMatchRates が外す
+          .gte("created_at", since30d)
+          .not("brain_action", "is", null);
+        return (paged ? q.order("id") : q).range(a, b);
+      }, 5000);
     const watchRates = watchAixMatchRates((watchRows ?? []) as Array<{ brain_action: string | null; aix_verdict: string | null; guard_aix_verdict?: string | null; backfill: string | null }>);
 
     const winRateAgg: Record<string, { sum: number; n: number }> = {};

@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase-server";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { outcomeApplyBasisEnabled } from "@/app/lib/application-reach";
+import { readRowsUpTo } from "@/app/lib/read-all-rows";
 
 // AI貢献率（アトリビューション）日次計算バッチ
 // 直近30日の closed_won 会話のうち、AIが貢献（was_ai_used=true または was_ai_modified=true）した割合を算出し、
@@ -35,8 +36,11 @@ async function run() {
   let rawIds: string[] = [];
   const wonConfirmedIds = new Set<string>();
   if (outcomeApplyBasisEnabled(process.env)) {
-    const { data: ap, error: apErr } = await supabase.from("deal_outcomes").select("conversation_id, result, result_certainty")
-      .gte("applied_at", since).limit(10000);
+    // 2026-11-04 危ない所の見張り (b): 1回 1000行で黙って切れる読み → readRowsUpTo（READ_ALL_ROWS=on で 1000行ずつ・off は今まで通り）
+    const { data: ap, error: apErr } = await readRowsUpTo<{ conversation_id: string; result: string | null; result_certainty: string | null }>((a, b, paged) => {
+      const q = supabase.from("deal_outcomes").select("conversation_id, result, result_certainty").gte("applied_at", since);
+      return (paged ? q.order("id") : q).range(a, b);
+    }, 10000);
     if (!apErr) {
       basis = "applied";
       for (const r of (ap ?? []) as Array<{ conversation_id: string; result: string | null; result_certainty: string | null }>) {
@@ -46,12 +50,10 @@ async function run() {
     } else console.warn("[calc-ai-attribution] deal_outcomes 読めず旧の数え方:", apErr.message);
   }
   if (basis === "closed_won") {
-    const { data: wonConvs, error: convErr } = await supabase
-      .from("conversations")
-      .select("id")
-      .eq("status", "closed_won")
-      .gte("updated_at", since)
-      .limit(10000);
+    const { data: wonConvs, error: convErr } = await readRowsUpTo<{ id: string }>((a, b, paged) => {   // 2026-11-04 危ない所の見張り (b): 1回 1000行で黙って切れる読み → readRowsUpTo（READ_ALL_ROWS=on で 1000行ずつ・off は今まで通り）
+      const q = supabase.from("conversations").select("id").eq("status", "closed_won").gte("updated_at", since);
+      return (paged ? q.order("id") : q).range(a, b);
+    }, 10000);
     if (convErr) {
       console.error("[calc-ai-attribution] conv fetch error:", convErr.message);
       return NextResponse.json({ ok: false, error: convErr.message }, { status: 500 });
@@ -76,12 +78,10 @@ async function run() {
     const allExamples: Array<{ conversation_id: string | null }> = [];
     for (let i = 0; i < convIds.length; i += CHUNK) {
       const chunk = convIds.slice(i, i + CHUNK);
-      const { data: chunkData, error: chunkErr } = await supabase
-        .from("ai_reply_examples")
-        .select("conversation_id")
-        .in("conversation_id", chunk)
-        .or("was_ai_used.eq.true,was_ai_modified.eq.true")
-        .limit(10000);
+      const { data: chunkData, error: chunkErr } = await readRowsUpTo<{ conversation_id: string }>((a, b, paged) => {   // 2026-11-04 危ない所の見張り (b): 1回 1000行で黙って切れる読み → readRowsUpTo（READ_ALL_ROWS=on で 1000行ずつ・off は今まで通り）
+        const q = supabase.from("ai_reply_examples").select("conversation_id").in("conversation_id", chunk).or("was_ai_used.eq.true,was_ai_modified.eq.true");
+        return (paged ? q.order("id") : q).range(a, b);
+      }, 10000);
       if (chunkErr) {
         console.error("[calc-ai-attribution] examples fetch error:", chunkErr.message);
         return NextResponse.json({ ok: false, error: chunkErr.message }, { status: 500 });
