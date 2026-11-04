@@ -22,7 +22,18 @@ let manualsCache: { at: number; rows: Array<{ brain: string; short: string }> } 
 export async function loadManualShortForms(): Promise<Array<{ brain: string; short: string }>> {
   if (manualsCache && Date.now() - manualsCache.at < 3_600_000) return manualsCache.rows;
   const sb = admin();
-  if (!sb) return [];
+  // 2026-11-04 試験（手元・サーバーの鍵なし）: CONDUCTOR_MANUALS_FILE（取扱説明書の短い形の行「- 名: 本文」の md）から読む
+  if (!sb) {
+    const file = process.env.CONDUCTOR_MANUALS_FILE;
+    if (!file) return [];
+    try {
+      const { readFileSync } = await import("node:fs");
+      const map: Record<string, string> = { 判断: "judge", AIX: "aix", 物件検索: "property_search", 見積書: "estimate", 内覧: "viewing", 文: "compose", やる事: "todo" };
+      const rows = readFileSync(file, "utf8").split(/\r?\n/).map((l) => l.match(/^- (判断|AIX|物件検索|見積書|内覧|文|やる事): (.*)$/)).filter((m): m is RegExpMatchArray => !!m).map((m) => ({ brain: map[m[1]], short: m[2].slice(0, 120) }));
+      manualsCache = { at: Date.now(), rows };
+      return rows;
+    } catch { return []; }
+  }
   try {
     const { data } = await sb.from("brain_manuals").select("brain, short_form").eq("item", "summary");
     const rows = ((data ?? []) as Array<{ brain: string; short_form: string | null }>).filter((r) => r.short_form).map((r) => ({ brain: r.brain, short: r.short_form as string }));
