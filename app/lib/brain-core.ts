@@ -185,7 +185,8 @@ import { staffTalkedToday, greetingOncePerDayEnabled } from "@/app/lib/daily-gre
 import { promiseKindsToday } from "@/app/lib/two-stage";
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
-import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn } from "@/app/lib/two-choice";
+import { turnElapsedOn, turnElapsed, turnElapsedLine, elapsedPreferredSide, type TurnElapsed } from "@/app/lib/turn-elapsed";
+import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn, twoChoiceNarrowOn, narrowKeepsTwoChoice, narrowPromiseOrNow, resayPromiseFirstOn, isResayTurn } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
 import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine, exhaustedTodayNote } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
@@ -370,6 +371,7 @@ export type SuggestedAixMeta = {
   material_missing?: string[];         // 2026-10-29 ブレインの自己申告「判断に要ったのに材料に無かった物」（記録だけ・digest.mm）
   two_choice_reply_kind?: string;      // 2026-10-28 その場の側の2択: 右の返信の約束の種類（check/estimate/pickup）
   two_choice_reply_hint?: string;      // 同: 右の返信を押した時に generate-reply に渡す指定
+  two_choice_preferred?: "reply" | "aix"; // 2026-11-05 2択の先に選んだ側（TWO_CHOICE_NARROW・竹内さんが多く選ぶ側・自動送信はこの側）
   two_choice_mode?: boolean;           // 2択UI表示フラグ（物件提案中フェーズで条件トレードオフ質問検出時）
   alt_actions?: string[];              // 2つ目以降の AIX（action の横に並べて出す。2026-09-15 この事例: 連絡待ちの物件ピックアップ＋物件オススメ）
   /**
@@ -2902,6 +2904,15 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       }
     }
   }
+  // 2026-11-05 竹内さんの指摘（KB P1・遅れの転機）・TURN_ELAPSED_TWO_CHOICE（既定 off）: 今の番からの経過と、その間の確かめの準備を材料に1行（判断はブレイン）
+  let turnElapsedNow: TurnElapsed | null = null;
+  if (turnElapsedOn() && typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus)) {
+    let k0 = 0; while (k0 + 1 < typedMessages.length && typedMessages[k0 + 1].sender === "customer") k0++;
+    turnElapsedNow = turnElapsed(typedMessages[k0]?.created_at ?? null, Date.now(), aixLogs.map((l) => ({ aix_type: l.aix_type ?? "", created_at: l.created_at })));
+    if (turnElapsedNow) { customerStateBlockText += `
+
+${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:turn-elapsed", conversationId, ...turnElapsedNow })); }
+  }
   if (overrideDemoted("two_stage_promise") && !isPostApplyStatus(convStatus)) {
     try {
       const { data: pendNow } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
@@ -4947,6 +4958,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         // 10/14 確かめる人: 材料の1行（「お礼や了承だけの番は直接でよい」）とそろえる。お礼・了承だけの番は two-stage が先に AIX のまま返すが、ここでも明示する
         && (!directPropertyNeedsPromise() || pickupPromisedOpenNow !== false || customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "")))
         && brainContractSaysDirectPropertyAix((parsed as { turn_contract?: unknown }).turn_contract, finalAix)
+        // 2026-11-05 竹内さんの決定（KB 56b662a4・TWO_CHOICE_NARROW）: 条件の言い直し・探し直し（お礼・了承でない番）は約束の返信で決め切る＝直接の AIX に上書きしない
+        && !(twoChoiceNarrowOn() && !(customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""))))
         && !applyOverride(demotedOverrides, "two_stage_promise", twoStage.source, null, finalAix)) {
         twoStage = null;
       }
@@ -5470,7 +5483,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-09-30: 手続きの質問で対象のお部屋の入居時期が資料で分からない → 返信（期間と流れ）か AIX【確認した→入居可能日】かの2択
       procedureMoveInUnknown: procedureDecision === "two_choice",
     });
-    const isTwoChoiceMode: boolean = twoChoiceVerdict.two;
+    // 2026-11-05 TWO_CHOICE_NARROW（KB 56b662a4）: 検討・お礼・探し直しの2択は決め切る（スタッフしか知らない事で決まる番だけ残す）
+    const narrowDrop = twoChoiceVerdict.two && twoChoiceNarrowOn() && !narrowKeepsTwoChoice(twoChoiceVerdict.reason, customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "")));
+    if (narrowDrop) console.log(JSON.stringify({ tag: "brain:two-choice-narrow", conversationId, dropped: twoChoiceVerdict.reason }));
+    const isTwoChoiceMode: boolean = twoChoiceVerdict.two && !narrowDrop;
     // reply_direction_label: 10字以内。LLM出力を優先、なければ customer_intent から補完
     const rawRdLabel = typeof parsed.reply_direction_label === "string" ? parsed.reply_direction_label.trim() : "";
     const replyDirectionLabel: string | undefined = isTwoChoiceMode
@@ -5678,9 +5694,12 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         gate: () => applyOverride(demotedOverrides, "search_exhausted", "rule:search_split(reply_to_aix)", "property_send", twoStagePickupNow ? "two_stage:pickup" : "reply"),
         record: () => addDemoted(demotedOverrides, { family: "search_exhausted", src: "rule:search_split(reply_to_aix,weak)", would: "property_send", brain: twoStagePickupNow ? "two_stage:pickup" : "reply" }),
       }) : false;
-      const split = applySearchSplit({ finalAix: finalAix ?? null, fromReply: replyToAix, llmAix: normalizeAixActionKey(parsed.aix) ?? null, altActions: altForChoice, exhausted: exh.exhausted && !weakOnly, postApply: isPostApplyStatus(convStatus), zenryokuCandidate: zenCandidate });
+      // 2026-11-05 竹内さんの決定（言い直しは約束・RESAY_PROMISE_FIRST・既定 off）: 言い直し・探し直しの番の2段の約束は、出し切りの左右の形・全力サポートで AIX に戻さない
+      const resayKeep = resayPromiseFirstOn() && twoStagePickupNow && isResayTurn(unrepliedTurn.text, conditionChangeType);
+      if (resayKeep) console.log(JSON.stringify({ tag: "brain:resay-promise-first", conversationId, cct: conditionChangeType ?? null, strength: exh.strength ?? null }));
+      const split = resayKeep ? { applies: false, toAix: false, finalAix: finalAix ?? null, altActions: altForChoice } : applySearchSplit({ finalAix: finalAix ?? null, fromReply: replyToAix, llmAix: normalizeAixActionKey(parsed.aix) ?? null, altActions: altForChoice, exhausted: exh.exhausted && !weakOnly, postApply: isPostApplyStatus(convStatus), zenryokuCandidate: zenCandidate });
       // 返信のまま残した番は旧の全力サポートへの書き換えにも落とさない（左右の形が on の時）
-      const keepReply = fromReplyNow && !replyToAix;
+      const keepReply = (fromReplyNow && !replyToAix) || resayKeep;
       if (split.applies) {
         if (split.toAix) { replyMode = "aix"; twoStage = null; splitFromReply = true; }
         console.log(JSON.stringify({ tag: "brain:search-split", conversationId, from: finalAix ?? null, to: split.finalAix, markerAt: exh.markerAt, strength: exh.strength ?? null }));
@@ -5733,12 +5752,25 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       }
     }
     // 2026-10-28 TWO_CHOICE_PROMISE_OR_NOW（two-choice.ts）: 同じ種類の「約束の返信／その場の AIX」を2択で出す（確認・見積・ピックアップ）
-    const promiseOrNow = twoChoicePromiseOrNowOn() ? resolvePromiseOrNow({
+    let promiseOrNow = twoChoicePromiseOrNowOn() ? resolvePromiseOrNow({
       finalAix: replyMode === "aix" ? finalAix ?? null : null, twoStageKind: twoStage?.kind ?? null, decisionSource,
       customerText: unrepliedTurn.text || lastCustomerMsg?.text || "", firstContact: /^guard:first_contact/.test(String(decisionSource ?? "")) || !!(parsed as { first_contact_pickup?: unknown }).first_contact_pickup,
       postApply: isPostApplyStatus(convStatus), alreadyTwo: isTwoChoiceMode, nowSide: twoChoiceNowSideOn(),
     }) : null;
     if (promiseOrNow) console.log(JSON.stringify({ tag: "brain:two-choice-promise-or-now", conversationId, reason: promiseOrNow.reason, aix: promiseOrNow.aix }));
+    // 2026-11-05 TWO_CHOICE_NARROW（KB 56b662a4）: 確認（持ち込み）だけ2択に残して先の側＝約束の返信。見積は AIX 見積書で決め切る・ピックアップはそのまま
+    let twoChoicePreferred: "reply" | "aix" | undefined;
+    // 2026-11-05 遅れの転機（TURN_ELAPSED_TWO_CHOICE）: 確認・見積の2択の先の側を経過時間と確かめの準備で決める（2択を作る所の直前・決め直しはしない）
+    if (promiseOrNow && turnElapsedOn() && (promiseOrNow.kind === "check" || promiseOrNow.kind === "estimate")) twoChoicePreferred = elapsedPreferredSide(turnElapsedNow);
+    if (promiseOrNow && twoChoiceNarrowOn()) {
+      const nv = narrowPromiseOrNow(promiseOrNow, customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "")));
+      console.log(JSON.stringify({ tag: "brain:two-choice-narrow", conversationId, promiseOrNow: promiseOrNow.reason, keep: nv.keep, ...(nv.keep ? { preferred: nv.preferred } : { decide: nv.decide }) }));
+      if (nv.keep) twoChoicePreferred = twoChoicePreferred ?? nv.preferred;
+      else {
+        if (nv.decide === "aix_estimate") { finalAix = "estimate_sheet"; replyMode = "aix"; twoStage = null; decisionSource = `${decisionSource ?? "llm"}+two_choice_narrow(estimate)`; }
+        promiseOrNow = null;
+      }
+    }
     // 2026-10-29 AIX の統括（KB P1 03d2bdd2・aix-commander.ts）: ブレインが AIX と決めた番だけ、候補の担当の札を比べてボタン×ピッカーを1つ選ぶ。
     //   既定 off／shadow＝記録だけ／on＝選んだ鍵に替える。差し戻し（promise・reply）は書き換えず記録だけ（LINE の統括の読み直しは作業員2の入口）。
     //   同じ連投の別の要件（also）は2つ目の AIX に並べる（1通に詰めない）。別の LLM の呼び出し＝ブレインのプロンプトとキャッシュは変えない
@@ -5830,6 +5862,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-10-28 その場の側の2択（TWO_CHOICE_NOW_SIDE）: 右の返信を押した時の約束の種類と指定（画面が replyHint に渡す・採点は 2段:<種類> も道に数える）
       two_choice_reply_kind: promiseOrNow?.side === "now" ? promiseOrNow.kind : undefined,
       two_choice_reply_hint: promiseOrNow?.side === "now" ? promiseOrNow.replyHint ?? undefined : undefined,
+      two_choice_preferred: twoChoicePreferred,
       // 2026-10-15 監査の残り #9: ブレインが決めた書き出し（旧は LLM に決めさせて meta に写さず捨てていた）。BRAIN_OPENER_META=off で旧
       reply_opener: brainOpenerMetaEnabled() ? normalizeBrainOpener(parsed.reply_opener) ?? undefined : undefined,
       // 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（画面のブレインのカードに並べて出す）。連絡待ちの時は物件ピックアップ＋物件オススメ

@@ -1,6 +1,6 @@
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面
 // 実行: npx tsx app/lib/__tests__/two-choice.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { resolveTwoChoice, TRADEOFF_QUESTION_RE, MORE_PROPERTY_REQUEST_RE } from "../two-choice";
+import { resolveTwoChoice, TRADEOFF_QUESTION_RE, MORE_PROPERTY_REQUEST_RE, narrowKeepsTwoChoice, narrowPromiseOrNow, twoChoiceNarrowOn, resayPromiseFirstOn, isResayTurn } from "../two-choice";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -127,6 +127,23 @@ it("送付済み物件なし・確定アクション・お客様が断ってい�
 it("ブレインが決めていない（証拠だけ）なら写真の理由では立てない（所有権はブレイン）", () => {
   expect(resolveTwoChoice({ ...base, customerText: "室内の写真ありますか？", finalAix: "property_send" }).reason).toBe("no_signal");
 });
+
+// 2026-11-05 竹内さんの決定（KB 56b662a4・TWO_CHOICE_NARROW）: 2択は絞る＋先の側（竹内さんの番 32 の解き直しの実物の型）
+it("絞る: 既定 off", () => { expect(twoChoiceNarrowOn({})).toBe(false); expect(twoChoiceNarrowOn({ TWO_CHOICE_NARROW: "on" })).toBe(true); });
+it("絞る: 検討します（9104・10351）・探し直し（8950）・謝って預けた は2択にしない", () => {
+  expect(narrowKeepsTwoChoice("considering", false)).toBe(false); expect(narrowKeepsTwoChoice("more_property_request", false)).toBe(false); expect(narrowKeepsTwoChoice("apology_entrust", false)).toBe(false); });
+it("絞る: お礼だけの番の LLM の2択（8807）は返信・お礼でない番の LLM の2択は残す", () => { expect(narrowKeepsTwoChoice("llm", true)).toBe(false); expect(narrowKeepsTwoChoice("llm", false)).toBe(true); });
+it("絞る: スタッフしか知らない事で決まる番（室内写真・入居時期）は残す", () => { expect(narrowKeepsTwoChoice("room_photo_request", false)).toBe(true); expect(narrowKeepsTwoChoice("procedure_move_in_unknown", false)).toBe(true); });
+const pon = (kind: "check" | "estimate" | "pickup", side: "promise" | "now") => ({ two: true as const, reason: "x", kind, aix: "a", checkPattern: null, label: "l", side, replyHint: null });
+it("約束かその場か: 持ち込みの確認（10360・10368・10415）は残して先の側＝約束の返信", () => { const v = narrowPromiseOrNow(pon("check", "now")); expect(v.keep).toBe(true); expect(v.keep ? v.preferred : "").toBe("reply"); });
+it("約束かその場か: 見積の後の費用の質問（9758・約束の側）は AIX 見積書で決め切る", () => { const v = narrowPromiseOrNow(pon("estimate", "promise")); expect(v.keep).toBe(false); expect(!v.keep ? v.decide : "").toBe("aix_estimate"); });
+it("約束かその場か: ピックアップのその場の側は、お礼の番は2択を外して AIX のまま・お礼でない番（8950・9767）は残して先の側＝約束の返信", () => { expect(narrowPromiseOrNow(pon("pickup", "now"), true).keep).toBe(false); const v = narrowPromiseOrNow(pon("pickup", "now"), false); expect(v.keep ? v.preferred : "").toBe("reply"); });
+it("約束かその場か: 見積のその場の側は2択を外して今の答え（AIX 見積書）のまま", () => { expect(narrowPromiseOrNow(pon("estimate", "now")).keep).toBe(false); });
+// 2026-11-05 言い直しは約束（RESAY_PROMISE_FIRST）: 9767 の実物の文
+it("言い直し: 既定 off", () => { expect(resayPromiseFirstOn({})).toBe(false); expect(resayPromiseFirstOn({ RESAY_PROMISE_FIRST: "on" })).toBe(true); });
+it("言い直し: 探し直し（9767）は言い直しの番", () => { expect(isResayTurn("こんばんは。\n一時家探しをやめていたのですが、もし記録が残っていれば以前ご依頼した条件でもう一度探していただけますか？", null)).toBe(true); });
+it("言い直し: ブレインの条件の変更があれば言い直しの番", () => { expect(isResayTurn("家賃管理費込みで5〜6万でお願いしたいです", "rent_change")).toBe(true); });
+it("言い直し: お礼だけ・内覧の日程は言い直しでない", () => { expect(isResayTurn("ありがとうございます！", null)).toBe(false); expect(isResayTurn("13時でお願いします！", null)).toBe(false); });
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
