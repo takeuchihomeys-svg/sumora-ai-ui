@@ -1377,7 +1377,7 @@ async function main() {
     const want0 = CONV_ARG && CONV_ARG.toLowerCase() !== "auto" && CONV_ARG.toUpperCase() !== "YUMA" && CONV_ARG !== YUMA ? CONV_ARG : "auto";
     for (let i = 0; i < CONCURRENCY; i++) {
       let ls: TestConvLease;
-      try { ls = acquireTestConversation(i === 0 ? want0 : "auto", `brain-exam-${LABEL}`); }
+      try { ls = acquireTestConversation(i === 0 ? want0 : "auto", `brain-exam-${LABEL}`, { skip: LANES.map((l) => l.name) }); } // 2026-11-04: 取った会話は渡す（同じ pid の鍵は取り直せる＝渡さないと4本とも YUMA2 だった）
       catch (e) { if (i === 0) throw e; console.warn(`レーン: テスト専用の会話は ${i}本だけ取れた（${String(e instanceof Error ? e.message : e).slice(0, 160)}）`); break; }
       const loc = newLaneLocal(ls.id, ls.tag, ls, true);
       LANES.push(makeLane(i, ls.name, loc, { REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${LABEL}-${ls.tag}.json` }));

@@ -75,6 +75,12 @@ console.log("── ③ 鍵");
     t("auto は YUMA2 から", a.name === "YUMA2" && a.tag === "yuma2" && !!a.lockFile && existsSync(a.lockFile!));
     const b = acquireTestConversation("auto", "B", { dir, pid: 222, alive, exitHook: false });
     t("2本目の auto は空いている次（YUMA3）", b.name === "YUMA3");
+    // 2026-11-04 レーン: 同じ pid で続けて取ると同じ会話を取り直していた（4本とも YUMA2）→ 持っている会話を skip で渡すと別の会話
+    const a2 = acquireTestConversation("auto", "A", { dir, pid: 111, alive, exitHook: false });
+    t("同じ pid の auto（skip なし）は今まで通り同じ会話を取り直す", a2.name === "YUMA2");
+    const a3 = acquireTestConversation("auto", "A", { dir, pid: 111, alive, exitHook: false, skip: ["YUMA2"] });
+    t("レーン: skip を渡すと同じ処理の2本目は別の空いた会話（YUMA4）", a3.name === "YUMA4");
+    a3.release();
     let threw = "";
     try { acquireTestConversation("YUMA2", "C", { dir, pid: 333, alive, exitHook: false }); } catch (e) { threw = String(e); }
     t("生きている他の実行が持つ会話は取れない", threw.includes("空いていません") && threw.includes("YUMA2"));

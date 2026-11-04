@@ -47,6 +47,15 @@ export function comparedIds(cur: RowLite[], base: RowLite[]): string[] {
   const b = ok(base);
   return [...ok(cur)].filter((id) => b.has(id));
 }
+/** 2026-11-04 作業員1（統括役の了承 (b)）: 依頼の作業ツリーの brain-exam.ts が止める印を見ない（3e9a855 より前）時は、上限で止めても子が止まらず殺されて輪になる。
+ *  その時は上限を延ばす（longMin・既定 120分）。behind＝依頼の作業ツリーの HEAD が origin/main より古い commit の数（分からなければ null） */
+export function staleExamGuard(src: string, behind: number | null, maxMin: number, longMin: number): { maxMin: number; oldStop: boolean; note: string } {
+  const oldStop = !src.includes("stopAsked(");
+  const behindNote = behind != null && behind > 0 ? `作業ツリーが origin/main より ${behind}個古い` : "";
+  if (!oldStop) return { maxMin, oldStop, note: behindNote };
+  const m = maxMin > 0 ? Math.max(maxMin, longMin) : maxMin;
+  return { maxMin: m, oldStop, note: [`古い brain-exam（止める印を見ない）・上限を延ばした ${maxMin}→${m}分`, behindNote].filter(Boolean).join("・") };
+}
 export function splitWorse(cur: RowLite[], base: RowLite[], flaky: ReadonlySet<string>): { sure: Array<{ id: string; why: string }>; flake: Array<{ id: string; why: string }> } {
   const tally = (rows: RowLite[]) => { const m = new Map<string, { p: number; n: number }>(); for (const r of rows) { if (r.error || isMixedRow(r)) continue; const x = m.get(r.id) ?? { p: 0, n: 0 }; x.n++; if (r.score?.pass) x.p++; m.set(r.id, x); } return m; };
   const c = tally(cur), b = tally(base);

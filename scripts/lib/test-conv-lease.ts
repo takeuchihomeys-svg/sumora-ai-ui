@@ -87,7 +87,7 @@ export function unlock(file: string, pid = process.pid): void {
  * 会話を選んで鍵を取る（純粋に近い: 鍵の場所・pid・生死の判定は差し替えられる＝テスト用）。
  * @param want "" | "auto" | "YUMA2" | 会話 id
  */
-export function acquireTestConversation(want: string | null | undefined, owner: string, opts: { dir?: string; pid?: number; alive?: (pid: number) => boolean; exitHook?: boolean; /** テスト用: 見る他の作業ツリーの鍵の場所 */ otherDirs?: string[] } = {}): TestConvLease {
+export function acquireTestConversation(want: string | null | undefined, owner: string, opts: { dir?: string; pid?: number; alive?: (pid: number) => boolean; exitHook?: boolean; /** テスト用: 見る他の作業ツリーの鍵の場所 */ otherDirs?: string[]; /** 2026-11-04 作業員1: この処理が既に持っている会話（レーン）。同じ pid の鍵は取り直せる＝渡さないと4本とも同じ会話になる */ skip?: string[] } = {}): TestConvLease {
   const w = String(want ?? "").trim();
   const dir = opts.dir ?? LEASE_DIR_DEFAULT;
   if (!w || w.toUpperCase() === "YUMA" || w === YUMA_CONVERSATION_ID) {
@@ -98,7 +98,9 @@ export function acquireTestConversation(want: string | null | undefined, owner: 
     ? NO_LINE_TEST_CONVERSATIONS.map((c) => ({ id: c.id, name: c.name }))
     : (() => { const c = resolveTestOnlyConversation(w); if (!c) throw new Error(`--conv=${w} はテスト用の会話ではありません（使えるのは auto・${NO_LINE_TEST_CONVERSATIONS.map((x) => x.name).join("・")}・YUMA）`); return [c]; })();
   const held: string[] = [];
+  const skip = new Set((opts.skip ?? []).map((n) => n.toUpperCase()));
   for (const c of candidates) {
+    if (skip.has(c.name.toUpperCase())) { held.push(`${c.name}（この処理の別のレーン）`); continue; }
     const file = lockFileOf(c.name, dir);
     // 別の作業ツリーで生きている鍵の会話は取らない（鍵の場所を指定した時＝テストは見ない）
     const other = opts.dir && !opts.otherDirs ? null : liveLeaseElsewhere(c.name, dir, opts.alive ?? defaultAlive, opts.otherDirs ?? allLeaseDirs());
