@@ -37,9 +37,15 @@ const RECORD_FIELDS = ["cm", "ci", "nd", "tl", "mp", "fs", "rl", "rk", "vw"] as 
 
 (async () => {
   const since = new Date(Date.now() - DAYS * 86_400_000).toISOString();
-  const { data: wt, error } = await sb.from("line_watch_turns").select("id, conversation_id, customer_turn_at, scene_key, brain_action, decision_id, staff_aix, verdict")
-    .gte("customer_turn_at", since).not("decision_id", "is", null).order("customer_turn_at", { ascending: false }).limit(LIMIT);
-  if (error) throw new Error(error.message);
+  // 2026-11-04 作業員1（作業員2の気付き）: 本番の DB は1回の読みで1000行まで＝1000行ずつの頁で読む（.limit(LIMIT) の1回では 1000 で切れていた）
+  const wt: unknown[] = [];
+  for (let i = 0; wt.length < LIMIT; i += 1000) {
+    const { data, error } = await sb.from("line_watch_turns").select("id, conversation_id, customer_turn_at, scene_key, brain_action, decision_id, staff_aix, verdict")
+      .gte("customer_turn_at", since).not("decision_id", "is", null).order("customer_turn_at", { ascending: false }).range(i, Math.min(i + 999, LIMIT - 1));
+    if (error) throw new Error(error.message);
+    wt.push(...(data ?? []));
+    if ((data ?? []).length < 1000) break;
+  }
   type W = { id: number; conversation_id: string; customer_turn_at: string; scene_key: string | null; brain_action: string | null; decision_id: string; staff_aix: Array<{ aix_type: string; burst?: boolean; at?: string; check_pattern?: string | null }> | null; verdict: string | null };
   const turns = ((wt ?? []) as W[]).filter((w) => !isTestConversation(w.conversation_id) && w.verdict && w.verdict !== "na");
   const ids = turns.map((w) => w.decision_id);
@@ -52,8 +58,15 @@ const RECORD_FIELDS = ["cm", "ci", "nd", "tl", "mp", "fs", "rl", "rk", "vw"] as 
   const convs = [...new Set(turns.map((w) => w.conversation_id))];
   const staffMsgs = new Map<string, Array<{ at: number; writer: string | null; isAix: boolean }>>();
   for (let i = 0; i < convs.length; i += 100) {
-    const { data } = await sb.from("messages").select("conversation_id, created_at, staff_writer, is_aix_generated").in("conversation_id", convs.slice(i, i + 100)).neq("sender", "customer").gte("created_at", since).limit(10000);
-    for (const m of data ?? []) { const a = staffMsgs.get(m.conversation_id as string) ?? []; a.push({ at: Date.parse(m.created_at as string), writer: (m.staff_writer as string | null) ?? null, isAix: !!(m as { is_aix_generated?: boolean | null }).is_aix_generated }); staffMsgs.set(m.conversation_id as string, a); }
+    // 1000行ずつの頁（100会話の30日分は 1000 を超える＝前は切れて書き手が unknown になり、竹内さんの番が少なく数えられていた）
+    const data: Array<Record<string, unknown>> = [];
+    for (let j = 0; ; j += 1000) {
+      const { data: pg, error: e2 } = await sb.from("messages").select("conversation_id, created_at, staff_writer, is_aix_generated").in("conversation_id", convs.slice(i, i + 100)).neq("sender", "customer").gte("created_at", since).order("created_at", { ascending: true }).range(j, j + 999);
+      if (e2) throw new Error(e2.message);
+      data.push(...((pg ?? []) as Array<Record<string, unknown>>));
+      if ((pg ?? []).length < 1000) break;
+    }
+    for (const m of data) { const a = staffMsgs.get(m.conversation_id as string) ?? []; a.push({ at: Date.parse(m.created_at as string), writer: (m.staff_writer as string | null) ?? null, isAix: !!(m as { is_aix_generated?: boolean | null }).is_aix_generated }); staffMsgs.set(m.conversation_id as string, a); }
   }
   const writerOf = (w: W): string => { const t = Date.parse(w.customer_turn_at); const first = (staffMsgs.get(w.conversation_id) ?? []).filter((m) => m.at >= t && m.at - t < 86_400_000).sort((a, b) => a.at - b.at)[0]; return first?.writer ?? "unknown"; };
   const byWriter = new Map<string, { n: number; hit: number }>();
