@@ -87,7 +87,7 @@ export function unlock(file: string, pid = process.pid): void {
  * 会話を選んで鍵を取る（純粋に近い: 鍵の場所・pid・生死の判定は差し替えられる＝テスト用）。
  * @param want "" | "auto" | "YUMA2" | 会話 id
  */
-export function acquireTestConversation(want: string | null | undefined, owner: string, opts: { dir?: string; pid?: number; alive?: (pid: number) => boolean; exitHook?: boolean } = {}): TestConvLease {
+export function acquireTestConversation(want: string | null | undefined, owner: string, opts: { dir?: string; pid?: number; alive?: (pid: number) => boolean; exitHook?: boolean; /** テスト用: 見る他の作業ツリーの鍵の場所 */ otherDirs?: string[] } = {}): TestConvLease {
   const w = String(want ?? "").trim();
   const dir = opts.dir ?? LEASE_DIR_DEFAULT;
   if (!w || w.toUpperCase() === "YUMA" || w === YUMA_CONVERSATION_ID) {
@@ -100,6 +100,9 @@ export function acquireTestConversation(want: string | null | undefined, owner: 
   const held: string[] = [];
   for (const c of candidates) {
     const file = lockFileOf(c.name, dir);
+    // 別の作業ツリーで生きている鍵の会話は取らない（鍵の場所を指定した時＝テストは見ない）
+    const other = opts.dir && !opts.otherDirs ? null : liveLeaseElsewhere(c.name, dir, opts.alive ?? defaultAlive, opts.otherDirs ?? allLeaseDirs());
+    if (other) { held.push(`${c.name}（別の作業ツリー ${other.owner}・pid ${other.pid}）`); continue; }
     if (tryLock(file, owner, opts)) {
       const pid = opts.pid ?? process.pid;
       const release = () => unlock(file, pid);

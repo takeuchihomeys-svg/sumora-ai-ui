@@ -3,7 +3,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { liveLeaseElsewhere, lockFileOf } from "../test-conv-lease";
+import { liveLeaseElsewhere, lockFileOf, acquireTestConversation } from "../test-conv-lease";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean) => { if (ok) pass++; else { fail++; console.log(`  NG  ${n}`); } };
 const base = mkdtempSync(join(tmpdir(), "lease-x-"));
@@ -17,5 +17,12 @@ t("死んだ実行の鍵は見ない", liveLeaseElsewhere("YUMA2", a, () => fals
 writeFileSync(lockFileOf("YUMA3", b), JSON.stringify({ pid: 111, owner: "stale", at: old }));
 t("12時間より古い鍵は見ない（pid の使い回し）", liveLeaseElsewhere("YUMA3", a, () => true, [a, b]) === null);
 t("別の会話の鍵は関係ない", liveLeaseElsewhere("YUMA4", a, () => true, [a, b]) === null);
+// 11/04 2本目: 1本目は関数だけ入って acquireTestConversation に配線されていなかった（改行コードで置き換えが外れた）→ 取る所で効く事を確かめる
+const c = join(base, "wtC"); mkdirSync(c, { recursive: true });
+const l = acquireTestConversation("auto", "me", { dir: c, pid: 222, alive: (p) => p === 111 || p === 222, exitHook: false, otherDirs: [b, c] });
+t("auto は別の作業ツリーが持つ YUMA2 を飛ばして次の会話を取る", l.name === "YUMA3");
+l.release();
+let threw = false; try { acquireTestConversation("YUMA2", "me", { dir: c, pid: 222, alive: (p) => p === 111, exitHook: false, otherDirs: [b, c] }); } catch { threw = true; }
+t("名指しの YUMA2 も別の作業ツリーが持っていたら取らない", threw);
 console.log(`test-conv-lease-cross: ${pass} OK / ${fail} NG`);
 if (fail) process.exitCode = 1;
