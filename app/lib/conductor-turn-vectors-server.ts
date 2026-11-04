@@ -36,73 +36,102 @@ export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: n
     }
   }
   const res: FillResult = { candidates: sends.length, built: 0, skippedExisting: 0, skippedApplyDocs: 0, written: 0, dry: !write };
-  const rows: Array<TurnVectorRow & { embedding: number[] }> = [];
   const seen = new Set<string>();
-  const { generateEmbedding } = await import("@/app/lib/knowledge-utils");
-  for (const s of sends) {
+  // 2026-11-04 統括役「1番ごとの読みを束ねて速く（読みの回数＝DB の負けも減る）」: 送信を CHUNK 件ずつ、会話の行・前後の通・AIX の記録・見張りの番を
+  //   それぞれ1回の問い合わせ（会話×時刻の索引）で読み、手元で合わせる。埋め込みも束ねて1回で呼ぶ（embedding_cache には書かない＝この文は使い回さない）
+  const CHUNK = 40;
+  const todo = sends.filter((s) => { if (existing.has(`msg:${s.id}`)) { res.skippedExisting++; return false; } return true; });
+  for (let ci = 0; ci < todo.length; ci += CHUNK) {
     if (res.built >= limit) break;
     if (Date.now() - t0 > budget) { res.timeBudgetHit = true; break; }
-    if (existing.has(`msg:${s.id}`)) { res.skippedExisting++; continue; }
-    const { data: prev } = await sb.from("messages").select(COLS).eq("conversation_id", s.conversation_id).lt("created_at", s.created_at).order("created_at", { ascending: false }).limit(12);
-    const pv = (prev ?? []) as Msg[];
-    if (!pv.length || pv[0].sender !== "customer") continue; // お客様の発言への一手だけ
-    const turn: Msg[] = []; for (const m of pv) { if (m.sender !== "customer") break; turn.push(m); }
-    const turnAt = turn[turn.length - 1]?.created_at ?? s.created_at;
-    const key = `${s.conversation_id}|${turnAt}`;
-    if (seen.has(key)) continue; seen.add(key);
-    if (APPLY_DOCS_RE.test([...pv.map((m) => m.text ?? ""), s.text ?? ""].join("\n"))) { res.skippedApplyDocs++; continue; }
-    const { data: conv } = await sb.from("conversations").select("customer_name, property_customer_id, status").eq("id", s.conversation_id).maybeSingle();
-    const c = (conv ?? {}) as { customer_name?: string | null; property_customer_id?: string | null; status?: string | null };
-    const tokens = customerNameTokens([c.customer_name ?? null]);
-    const mask = (t: string) => maskPII(maskCustomerNames(t, tokens));
-    const custText = [...turn].reverse().map((m) => m.text ?? "").join("\n");
-    // こちらの一手（AIX の種類・ピッカー）
-    let aixType: string | null = null, checkPattern: string | null = null;
-    if (s.is_aix_generated && s.line_message_id) {
-      const al = await aixLogOf(sb, s.conversation_id, s.created_at, s.line_message_id);
-      aixType = al?.aix_type ?? "aix_unknown"; checkPattern = al?.check_pattern ?? null;
+    const chunk = todo.slice(ci, ci + CHUNK);
+    const convs = [...new Set(chunk.map((s) => s.conversation_id))];
+    const tMin = new Date(Math.min(...chunk.map((s) => Date.parse(s.created_at))) - 3 * 86_400_000).toISOString();
+    const tMax = new Date(Math.max(...chunk.map((s) => Date.parse(s.created_at))) + 5 * 60_000).toISOString();
+    const [convRows, msgRows, aixRows, watchRows] = await Promise.all([
+      sb.from("conversations").select("id, customer_name, property_customer_id, status").in("id", convs),
+      pageIn<Msg>(sb, "messages", COLS, convs, "created_at", tMin, tMax),
+      pageIn<{ conversation_id: string; created_at: string; aix_type: string; check_pattern: string | null; line_message_id: string | null }>(sb, "aix_usage_logs", "conversation_id, created_at, aix_type, check_pattern, line_message_id", convs, "created_at", new Date(Date.parse(tMin) - 30 * 60_000).toISOString(), tMax),
+      pageIn<{ conversation_id: string; customer_turn_at: string; brain_reply_mode: string | null; brain_action: string | null; conv_status: string | null }>(sb, "line_watch_turns", "conversation_id, customer_turn_at, brain_reply_mode, brain_action, conv_status", convs, "customer_turn_at", tMin, tMax),
+    ]);
+    const convOf = new Map(((convRows.data ?? []) as Array<{ id: string; customer_name: string | null; property_customer_id: string | null; status: string | null }>).map((c) => [c.id, c]));
+    const msgsOf = groupBy(msgRows, (m) => m.conversation_id);
+    for (const l of msgsOf.values()) l.sort((x, y) => x.created_at.localeCompare(y.created_at));
+    const aixByLine = new Map(aixRows.filter((a) => a.line_message_id).map((a) => [a.line_message_id as string, a]));
+    const watchOf = new Map(watchRows.map((w) => [`${w.conversation_id}|${new Date(w.customer_turn_at).toISOString()}`, w]));
+    const built: TurnVectorRow[] = [];
+    for (const s of chunk) {
+      if (res.built + built.length >= limit) break;
+      const all = msgsOf.get(s.conversation_id) ?? [];
+      const pv = all.filter((m) => m.created_at < s.created_at).slice(-12).reverse();
+      if (!pv.length || pv[0].sender !== "customer") continue; // お客様の発言への一手だけ
+      const turn: Msg[] = []; for (const m of pv) { if (m.sender !== "customer") break; turn.push(m); }
+      const turnAt = turn[turn.length - 1]?.created_at ?? s.created_at;
+      const key = `${s.conversation_id}|${turnAt}`;
+      if (seen.has(key)) continue; seen.add(key);
+      if (APPLY_DOCS_RE.test([...pv.map((m) => m.text ?? ""), s.text ?? ""].join("\n"))) { res.skippedApplyDocs++; continue; }
+      const c = convOf.get(s.conversation_id);
+      const tokens = customerNameTokens([c?.customer_name ?? null]);
+      const mask = (t: string) => maskPII(maskCustomerNames(t, tokens));
+      const custText = [...turn].reverse().map((m) => m.text ?? "").join("\n");
+      const al = s.is_aix_generated && s.line_message_id ? aixByLine.get(s.line_message_id) : undefined;
+      const last = pv.find((m) => m.sender !== "customer" && (m.text ?? "").trim());
+      const lastKind = !last ? null : last.is_aix_generated && last.line_message_id ? `AIX:${aixByLine.get(last.line_message_id)?.aix_type ?? "aix_unknown"}` : "返信";
+      const wt = watchOf.get(`${s.conversation_id}|${new Date(turnAt).toISOString()}`) ?? null;
+      const actual = actualOf({ isAix: !!s.is_aix_generated, aixType: s.is_aix_generated ? al?.aix_type ?? "aix_unknown" : null, checkPattern: al?.check_pattern ?? null });
+      built.push(turnVectorRow({
+        sendId: s.id, conversationId: s.conversation_id, propertyCustomerId: c?.property_customer_id ?? null,
+        // 2026-11-04 場面は統括メタ・重みの表と同じ言葉（ReplyScene）。見張りの scene_key は使わない
+        scene: resolveReplyScene({ customerText: custText }).scene, stage: wt?.conv_status ?? c?.status ?? null, customerMasked: mask(custText), lastStaffKind: lastKind,
+        fp: turn.map((m) => textFingerprint(m.text ?? "")).filter((x): x is string => !!x), actual, hits: hitsOf(actual, wt ? { brainMode: wt.brain_reply_mode, brainAction: wt.brain_action } : null),
+        writer: s.staff_writer, turnAt,
+      }));
     }
-    // 直前のこちらの送信の種類
-    const last = pv.find((m) => m.sender !== "customer" && (m.text ?? "").trim());
-    let lastKind: string | null = null;
-    if (last) {
-      if (last.is_aix_generated && last.line_message_id) {
-        const la = await aixLogOf(sb, last.conversation_id, last.created_at, last.line_message_id);
-        lastKind = `AIX:${la?.aix_type ?? "aix_unknown"}`;
-      } else lastKind = "返信";
-    }
-    // 見張りの番（場面・ブレインの答え）があれば当たりも
-    const { data: w } = await sb.from("line_watch_turns").select("scene_key, brain_reply_mode, brain_action, conv_status").eq("conversation_id", s.conversation_id).eq("customer_turn_at", turnAt).maybeSingle();
-    const wt = (w ?? null) as { scene_key: string | null; brain_reply_mode: string | null; brain_action: string | null; conv_status: string | null } | null;
-    const actual = actualOf({ isAix: !!s.is_aix_generated, aixType, checkPattern });
-    const row = turnVectorRow({
-      sendId: s.id, conversationId: s.conversation_id, propertyCustomerId: c.property_customer_id ?? null,
-      // 2026-11-04 場面は統括メタ・重みの表と同じ言葉（ReplyScene: ack・question・conditions…）。見張りの scene_key（返信:質問 等）は使わない
-      scene: resolveReplyScene({ customerText: custText }).scene, stage: wt?.conv_status ?? c.status ?? null, customerMasked: mask(custText), lastStaffKind: lastKind,
-      fp: turn.map((m) => textFingerprint(m.text ?? "")).filter((x): x is string => !!x), actual, hits: hitsOf(actual, wt ? { brainMode: wt.brain_reply_mode, brainAction: wt.brain_action } : null),
-      writer: s.staff_writer, turnAt,
-    });
-    res.built++;
+    res.built += built.length;
     // 手元の確かめだけ: 伏せの効いた状況の文を数行（cron は渡さない＝返さない）
-    if (o.samples && (res.samples ??= []).length < o.samples) res.samples.push(row.situation);
-    if (!write) continue; // dry: 埋め込みを呼ばない（費用 0）
-    const emb = await generateEmbedding(row.situation);
-    if (!emb) continue;
-    rows.push({ ...row, embedding: emb });
-    if (rows.length >= 50) { await flush(sb, rows.splice(0)); res.written += 50; }
+    if (o.samples) for (const r of built) if ((res.samples ??= []).length < o.samples) res.samples.push(r.situation);
+    if (!write || !built.length) continue; // dry: 埋め込みを呼ばない（費用 0）
+    const embs = await embedBatch(built.map((r) => r.situation));
+    const rows = built.map((r, i) => (embs[i] ? { ...r, embedding: embs[i] as number[] } : null)).filter((x): x is TurnVectorRow & { embedding: number[] } => !!x);
+    if (rows.length) { await flush(sb, rows); res.written += rows.length; }
   }
-  if (write && rows.length) { const n = rows.length; await flush(sb, rows.splice(0)); res.written += n; }
   return res;
 }
 
-/** 2026-11-04: aix_usage_logs は line_message_id に索引が無い（11/03 の時間切れを繰り返さない）＝会話×時刻の索引で前後数分だけ読んで合わせる */
-async function aixLogOf(sb: SupabaseClient, conv: string, at: string, lineMessageId: string): Promise<{ aix_type: string; check_pattern: string | null } | null> {
-  const t = Date.parse(at);
-  const { data } = await sb.from("aix_usage_logs").select("aix_type, check_pattern, line_message_id").eq("conversation_id", conv)
-    .gte("created_at", new Date(t - 30 * 60_000).toISOString()).lte("created_at", new Date(t + 5 * 60_000).toISOString()).order("created_at", { ascending: false }).limit(20);
-  const rows = (data ?? []) as Array<{ aix_type: string; check_pattern: string | null; line_message_id: string | null }>;
-  return rows.find((x) => x.line_message_id === lineMessageId) ?? null;
+/** 会話の束 × 時刻の範囲で読む（会話×時刻の索引・1000件ずつ） */
+async function pageIn<T>(sb: SupabaseClient, table: string, cols: string, convs: string[], timeCol: string, from: string, to: string): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; ; i += 1000) {
+    const { data, error } = await sb.from(table).select(cols).in("conversation_id", convs).gte(timeCol, from).lte(timeCol, to).order(timeCol, { ascending: true }).range(i, i + 999);
+    if (error) throw new Error(`${table}: ${error.message}`);
+    const rows = (data ?? []) as T[];
+    out.push(...rows);
+    if (rows.length < 1000) break;
+  }
+  return out;
 }
+function groupBy<T>(xs: T[], k: (x: T) => string): Map<string, T[]> { const m = new Map<string, T[]>(); for (const x of xs) { const key = k(x); const l = m.get(key) ?? []; l.push(x); m.set(key, l); } return m; }
+
+/** 埋め込みを束ねて1回で（knowledge-utils.generateEmbedding と同じ型 text-embedding-3-small・同じ伏せ maskForEmbedding・2000字まで）。失敗した物は null */
+async function embedBatch(texts: string[]): Promise<Array<number[] | null>> {
+  const rawKey = process.env.OPENAI_API_KEY ?? "";
+  const apiKey = rawKey.charCodeAt(0) === 0xfeff ? rawKey.slice(1) : rawKey;
+  if (!apiKey || !texts.length) return texts.map(() => null);
+  const { maskForEmbedding } = await import("@/app/lib/pii-mask");
+  try {
+    const r = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: texts.map((t) => maskForEmbedding(t).slice(0, 2000)) }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!r.ok) return texts.map(() => null);
+    const j = (await r.json()) as { data: Array<{ index: number; embedding: number[] }> };
+    const out: Array<number[] | null> = texts.map(() => null);
+    for (const d of j.data ?? []) out[d.index] = d.embedding;
+    return out;
+  } catch { return texts.map(() => null); }
+}
+
 
 /** 一括の埋め（今日だけ・統括役 11/04）: 表で一番古い番より前を、1回 limit 番ずつ。90日に届いたら done */
 export async function backfillCursor(sb: SupabaseClient): Promise<string | null> {
