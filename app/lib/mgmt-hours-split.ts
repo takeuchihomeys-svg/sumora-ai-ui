@@ -57,10 +57,10 @@ export function nightMgmtClosingLine(o: { hour: number; saturday: boolean; allow
  *   （夜の管理会社への確認の送信7通中6通が「明日」）。ブレインの手本（brain-route-type-data）にこの番は「約束の返信（確認）」で入っているのに、
  *   今が管理会社の営業時間外＝結果をまだ持っていない、という事実が材料に無かった。
  *   何を: 18時以降で（曜日は見ない）、お客様の連投に管理会社の話題（MGMT_TOPIC_RE）がある番だけ、事実と竹内さんの決まりを1行で渡す（判断はブレイン・決定論で書き換えない）。
- * 切替: MGMT_NIGHT_BRAIN_NOTE=on の時だけ（既定 off）。
+ * 切替: MGMT_NIGHT_BRAIN_NOTE（11/06 既定 on・=off で止める・H-9 待ち）。
  */
 export function mgmtNightBrainNoteOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.MGMT_NIGHT_BRAIN_NOTE ?? "").trim().toLowerCase() === "on";
+  return (env.MGMT_NIGHT_BRAIN_NOTE ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（試験 night-all4-q136 0/4→3/3・昼 night3-day 悪化0・竹内さんへの確認 H-9 待ち＝「夜も AIX でよい」なら戻す）
 }
 // 曜日は見ない（土日の夜も結果は持っていない＝約束の返信。8/23 の q136 は日曜の夜）
 export function nightMgmtBrainNote(o: { hour: number; customerText: string | null | undefined }): string {
@@ -77,10 +77,10 @@ export function nightMgmtBrainNote(o: { hour: number; customerText: string | nul
  *   なぜ: 事実と決まりの1行（MGMT_NIGHT_BRAIN_NOTE）だけでは q136 が 0/3→1/4 しか動かなかった。ブレインはピッカー（mgmt_parking・mgmt_initial_cost）を
  *   「管理会社に確かめる」の意味で選んでいる見込み＝選ぶ時に見るピッカーの言葉で、今夜は結果が無い事を伝える。
  *   AIX の一覧（aix-catalog の説明・キャッシュの固定部分）は変えない（夜だけの1行は動く材料の側に置く＝キャッシュを壊さない・AIX の改善の決まりの外）。
- * 切替: MGMT_NIGHT_PICKER_NOTE=on（MGMT_NIGHT_BRAIN_NOTE の1行が出る番だけ・既定 off）。
+ * 切替: MGMT_NIGHT_PICKER_NOTE（MGMT_NIGHT_BRAIN_NOTE の1行が出る番だけ・11/06 既定 on・=off で止める・H-9 待ち）。
  */
 export function mgmtNightPickerNoteOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.MGMT_NIGHT_PICKER_NOTE ?? "").trim().toLowerCase() === "on";
+  return (env.MGMT_NIGHT_PICKER_NOTE ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（試験 night-all4-q136 0/4→3/3・昼 night3-day 悪化0・竹内さんへの確認 H-9 待ち＝「夜も AIX でよい」なら戻す）
 }
 const TOPIC_PICKERS: Array<[RegExp, string]> = [
   [/駐車|駐輪|バイク/, "mgmt_parking"],
@@ -98,7 +98,7 @@ export function nightPickerLine(customerText: string | null | undefined): string
   return `\n【今夜はまだ押せないピッカー】AIX【物件確認した】の ${ps.join("・")} は「管理会社に聞いた結果」を送るピッカー。今は管理会社の営業時間外で結果がまだ無い＝今夜はこのピッカーを選ばない（aix にしない）。今夜は two_stage=check の確認の約束の返信、結果が出た翌日にこのピッカー`;
 }
 
-/** 夜の管理会社の話題で、A1 の AIX 直接（two-stage answerableDirectAix）を外す（2026-11-06 作業員9・弱い所 345／350）。MGMT_NIGHT_NO_DIRECT=on の時だけ（既定 off） */
+/** 夜の管理会社の話題で、A1 の AIX 直接（two-stage answerableDirectAix）を外す（2026-11-06 作業員9・弱い所 345／350）。MGMT_NIGHT_NO_DIRECT（11/06 既定 on・=off で止める・H-9 待ち） */
 export function mgmtNightNoDirectOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.MGMT_NIGHT_NO_DIRECT ?? "").trim().toLowerCase() === "on";
+  return (env.MGMT_NIGHT_NO_DIRECT ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（試験 night-all4-q136 0/4→3/3・昼 night3-day 悪化0・竹内さんへの確認 H-9 待ち＝「夜も AIX でよい」なら戻す）
 }

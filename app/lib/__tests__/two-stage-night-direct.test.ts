@@ -6,7 +6,8 @@ const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++
 const v: TwoStageVerdict = { kind: "check", direction: "", keyTopic: "", source: "rule:two_stage_promise(check)" };
 const q136 = "ありがとうございます！\nちなみにこちらの物件礼金を調整することは難しいでしょうか？😣\nこちら駐車場は敷地内まだ空きありますでしょうか？💦";
 const base = { decisionSource: "llm", firstContact: false, asksCost: false };
-t("off（既定）: 夜でも今まで通り AIX 直接", answerableDirectAix(v, { ...base, customerText: q136, hourJst: 20 }, {}) === "property_check_result");
+t("off: 夜でも今まで通り AIX 直接", answerableDirectAix(v, { ...base, customerText: q136, hourJst: 20 }, { MGMT_NIGHT_NO_DIRECT: "off" }) === "property_check_result");
+t("既定 on（11/06）: 夜の q136 は AIX 直接にしない", answerableDirectAix(v, { ...base, customerText: q136, hourJst: 20 }, {}) === null);
 const on = { MGMT_NIGHT_NO_DIRECT: "on" };
 t("on: 20時の礼金と駐車場（q136 の実物）→ AIX 直接にしない", answerableDirectAix(v, { ...base, customerText: q136, hourJst: 20 }, on) === null);
 t("on: 昼（14時）は今まで通り AIX 直接", answerableDirectAix(v, { ...base, customerText: q136, hourJst: 14 }, on) === "property_check_result");

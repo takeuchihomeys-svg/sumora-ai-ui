@@ -152,7 +152,7 @@ export function answerableDirectAix(v: TwoStageVerdict | null, i: Pick<TwoStageI
   if (i.firstContact || /^guard:first_contact/.test(i.decisionSource ?? "")) return null;
   // 2026-11-06 作業員9（弱い所 345・350・統括役の決め・KB P1 9fd703f4）: 夜（18時以降）に管理会社にしか答えられない事（礼金・駐車場 等）を聞かれた番は、
   //   今は確かめられない＝AIX 直接にしない（2段の確認の約束のまま・結果は翌日 AIX【確認した】）。決定論の書き換えを外してブレインと2段に戻す向き。
-  //   試験 q136（8/23 20:38）でブレインが 2段 にした回をこの決定論が AIX に変えていた。A1 と夜の食い違いは竹内さんへの確認 H-9。MGMT_NIGHT_NO_DIRECT=on の時だけ（既定 off）
+  //   試験 q136（8/23 20:38）でブレインが 2段 にした回をこの決定論が AIX に変えていた。A1 と夜の食い違いは竹内さんへの確認 H-9。MGMT_NIGHT_NO_DIRECT（11/06 既定 on・=off で止める・H-9 待ち）
   if (mgmtNightNoDirectOn(env) && (i.hourJst ?? jstParts().hour) >= 18 && MGMT_TOPIC_RE.test(String(i.customerText ?? ""))) return null;
   if (!ANSWERABLE_DIRECT_SOURCES.test(v.source)) return null;
   // 2026-11-05 竹内さん No.42 (c)（KB P1 cf241dbd・10/21 の 5aa28356 を退役）「物件を送ってきた時は、約束（確認します）して AIX から送る」:
