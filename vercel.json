@@ -73,6 +73,10 @@
       "schedule": "0 21 * * 0"
     },
     {
+      "path": "/api/cron/takeuchi-anatomy?limit=300&window=focus",
+      "schedule": "30 13,14,15 * * *"
+    },
+    {
       "path": "/api/cron/brain-manuals-weekly",
       "schedule": "20 21 * * 0"
     },

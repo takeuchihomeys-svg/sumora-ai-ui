@@ -13,6 +13,25 @@ import { pickBalanced, ANATOMY_SYSTEM, ANATOMY_SYSTEM_FOCUS, anatomyFocusOn, ana
 const FOCUS_WIDEN_TOTAL = 1000;
 
 export const ANATOMY_ACTION = "reply_anatomy";
+/** 重点の夜の枠（vercel.json の ?window=focus）の期限と費用の上限（11/05 統括役了承・3重の止め方の①③） */
+export const ANATOMY_FOCUS_WINDOW_UNTIL = Date.parse("2026-11-09T09:00:00+09:00");
+export const ANATOMY_FOCUS_COST_CAP_USD = 1;
+const ANATOMY_FOCUS_COST_SINCE = "2026-11-05T00:00:00+09:00";
+/** 1通の費用の高めの見込み（今朝の DeepSeek 28回 $0.0077 ≒ $0.0003/回の倍）。読んでいる間の上限の見張りに使う */
+const ANATOMY_EST_USD_PER_CALL = 0.0006;
+/** 11/05 JST 0時からの reply_anatomy の費用の合計（llm_usage_logs・1000行ずつ） */
+export async function anatomySpentUsd(sb: SupabaseClient): Promise<number> {
+  const { altUsageUsd } = await import("./llm-price");
+  let usd = 0;
+  for (let i = 0; ; i += 1000) {
+    const { data, error } = await sb.from("llm_usage_logs").select("created_at, model, input_uncached, cache_read, output_tokens").eq("action", ANATOMY_ACTION).gte("created_at", ANATOMY_FOCUS_COST_SINCE).order("created_at", { ascending: true }).range(i, i + 999);
+    if (error) throw new Error(`llm_usage_logs: ${error.message}`);
+    const rows = (data ?? []) as Array<Parameters<typeof altUsageUsd>[0]>;
+    for (const r of rows) usd += altUsageUsd(r);
+    if (rows.length < 1000) break;
+  }
+  return usd;
+}
 function serviceClient(): SupabaseClient | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -20,12 +39,18 @@ function serviceClient(): SupabaseClient | null {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-export async function runTakeuchiAnatomy(opts: { dry?: boolean; limit?: number; total?: number; budgetMs?: number } = {}): Promise<{ ok: boolean; error?: string; picked?: number; read?: number; parsed?: number; conflicts?: number; remaining?: number; dry?: boolean }> {
+export async function runTakeuchiAnatomy(opts: { dry?: boolean; limit?: number; total?: number; budgetMs?: number; costCapUsd?: number } = {}): Promise<{ ok: boolean; error?: string; picked?: number; read?: number; parsed?: number; conflicts?: number; remaining?: number; dry?: boolean; spentUsd?: number; skipped?: string }> {
   const sb = serviceClient();
   if (!sb) return { ok: false, error: "SUPABASE_SERVICE_ROLE_KEY が無い" };
   if (!shouldRouteAlt(readAltConfig(), ANATOMY_ACTION)) return { ok: false, error: `名札 ${ANATOMY_ACTION} が DeepSeek に回る設定に無い（LLM_ALT_ACTIONS に足す）` };
   const t0 = Date.now();
   try {
+    // ③ 費用の門（夜の枠の時だけ）: 11/05 からの合計が上限以上なら読まずに戻る。読んでいる間も見込みで上限に届いたら止める
+    let spentUsd: number | undefined;
+    if (opts.costCapUsd != null) {
+      spentUsd = await anatomySpentUsd(sb);
+      if (spentUsd >= opts.costCapUsd) return { ok: true, skipped: `費用の上限（11/05 から $${spentUsd.toFixed(3)} ≥ $${opts.costCapUsd}）`, spentUsd, read: 0 };
+    }
     let picked = 0;
     const { count } = await sb.from("takeuchi_compose_examples").select("message_id", { count: "exact", head: true }).eq("anatomy_pick", true);
     if (!count) {
@@ -85,12 +110,13 @@ export async function runTakeuchiAnatomy(opts: { dry?: boolean; limit?: number; 
       const par = focusMode ? 5 : 1;
       for (let i = 0; i < list.length; i += par) {
         if (Date.now() - t0 > (opts.budgetMs ?? 200_000)) break;
+        if (opts.costCapUsd != null && (spentUsd ?? 0) + (read + par) * ANATOMY_EST_USD_PER_CALL >= opts.costCapUsd) break;
         const batch = list.slice(i, i + par);
         read += batch.length;
         await Promise.all(batch.map(readOne));
       }
     }
-    return { ok: true, picked, read, parsed, conflicts, remaining: Math.max(0, list.length - read), dry: !!opts.dry };
+    return { ok: true, picked, read, parsed, conflicts, remaining: Math.max(0, list.length - read), dry: !!opts.dry, ...(spentUsd != null ? { spentUsd } : {}) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
