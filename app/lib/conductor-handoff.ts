@@ -8,7 +8,7 @@
 //   5 やる事を持ち越す … plan_ahead・開いている約束を Handoff.decided に入れる
 //   6 同じ事をやり直さない … 入力が同じなら前の決定（BRAIN_INPUT_KEY_STRICT）・読み直しは理由をまとめて1回（brain-recheck）
 //   ① 番ごとに呼ぶ役を選ぶ … candidateRoles は候補の網だけ（決めるのは統括）。呼んだ／呼ばなかった役を digest.rl に1行
-// 切替: CONDUCTOR_HANDOFF（既定 off・記録だけ）。テスト: app/lib/__tests__/conductor-handoff.test.ts
+// 切替: CONDUCTOR_HANDOFF（既定 on・=off で止める。2026-11-05 作業員9 がコメントをコードに合わせた: 本番で効くのは digest.rl の記録と、構成のブレイン（BRAIN_COMPOSE_BLUEPRINT・既定 off）の中の受け渡しだけ）。テスト: app/lib/__tests__/conductor-handoff.test.ts
 type Env = Record<string, string | undefined>;
 // 2026-11-03 竹内さん（記録だけのスイッチ）: 今つないでいるのは digest.rl（呼ぶ役の候補の記録）だけ＝既定 on（=off で止める）
 export const conductorHandoffOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_HANDOFF ?? "").trim().toLowerCase() !== "off";
