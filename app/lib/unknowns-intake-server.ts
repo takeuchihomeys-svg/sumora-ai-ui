@@ -44,9 +44,9 @@ export async function loadProdMissHits(sb: SupabaseClient, fromIso: string, toIs
   const tc = new Set<string>();
   const ids = [...new Set(turns.map((w) => String(w.decision_id)))];
   for (let i = 0; i < ids.length; i += 200) {
-    const { data, error } = await sb.from("brain_decision_logs").select("id, tc:digest->tc").in("id", ids.slice(i, i + 200));
+    const { data, error } = await sb.from("brain_decision_logs").select("id, tc:digest->tc, tw:digest->tw").in("id", ids.slice(i, i + 200));
     if (error) throw new Error(`brain_decision_logs tc: ${error.message}`);
-    for (const d of (data ?? []) as Array<{ id: string; tc: unknown }>) if (d.tc === true || d.tc === "true") tc.add(String(d.id));
+    for (const d of (data ?? []) as Array<{ id: string; tc: unknown; tw?: unknown }>) if (d.tw === true || d.tc === true || d.tc === "true") tc.add(String(d.id)); // 2026-11-06 2択の印は tw（旧の行は tc=true）
   }
   // こちらの送信（書き手・AIX か）。会話100ずつ・1000行ずつの頁
   const convs = [...new Set(turns.map((w) => w.conversation_id))];
