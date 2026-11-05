@@ -129,3 +129,12 @@ if (fail) process.exit(1);
   const ok = deepseekWithoutCutoff(bad) && !deepseekWithoutCutoff(good) && !deepseekWithoutCutoff(comment) && !deepseekWithoutCutoff("const x = 1;");
   console.log(ok ? "hazard-audit-core (o): pass" : "hazard-audit-core (o): FAIL"); if (!ok) process.exit(1);
 }
+
+// (p) 試験の会話の一覧と DB の決まり
+{
+  const { examConvMismatch } = require("../hazard-audit-core") as typeof import("../hazard-audit-core");
+  const a = examConvMismatch(["a", "b"], ["a", "b"]);
+  const b = examConvMismatch(["a", "b", "c"], ["a", "x"]);
+  const ok = !a.missingInDb.length && !a.extraInDb.length && b.missingInDb.join() === "b,c" && b.extraInDb.join() === "x";
+  console.log(ok ? "hazard-audit-core (p): pass" : "hazard-audit-core (p): FAIL"); if (!ok) process.exit(1);
+}
