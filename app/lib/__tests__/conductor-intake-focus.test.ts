@@ -6,9 +6,9 @@ function it(name: string, fn: () => void) { try { fn(); passed++; console.log(` 
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
 const m = [{ brain: "judge", short: "返信か AIX か" }];
 
-it("既定 off: 先頭の文は重点なし・版は ci-v1／ci-v3 のまま", () => {
-  ok(intakePrefixVersion({}) === "ci-v1"); ok(intakePrefixVersion({ CONDUCTOR_INTAKE_CUES: "v3" }) === "ci-v3");
-  ok(!intakePrefix(m, {}).includes(FOCUS_INTAKE_RULES)); ok(!intakePrefix(m, {}).includes("focus_read"));
+it("CONDUCTOR_FOCUS=off: 先頭の文は重点なし・版は ci-v1／ci-v3 のまま（既定は shadow）", () => {
+  ok(intakePrefixVersion({ CONDUCTOR_FOCUS: "off" }) === "ci-v1"); ok(intakePrefixVersion({ CONDUCTOR_INTAKE_CUES: "v3", CONDUCTOR_FOCUS: "off" }) === "ci-v3"); ok(intakePrefixVersion({}) === "ci-v1+f1");
+  ok(!intakePrefix(m, { CONDUCTOR_FOCUS: "off" }).includes(FOCUS_INTAKE_RULES)); ok(!intakePrefix(m, { CONDUCTOR_FOCUS: "off" }).includes("focus_read"));
 });
 it("CONDUCTOR_FOCUS=shadow: 先頭に重点の段・書き方に focus_read・版に +f1（ci-v3 の上にも重なる）", () => {
   const env = { CONDUCTOR_FOCUS: "shadow", CONDUCTOR_INTAKE_CUES: "v3" };

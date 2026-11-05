@@ -345,6 +345,14 @@ export function twoMessageAnnounceVisible(v: string | null | undefined, isTestCo
   if (s === "all") return true;
   return isTestConv;
 }
+/**
+ * 2026-11-06 弱い所 305（作業員7・統括役の決め 案A）: AIX を送った後に返信が残る番で、画面が下書きを1回自動で作るか。
+ *   竹内さんの30日: AIX の後に続けた手打ちの返信 40 のうち 28 が下書きなし。送信はしない（下書き欄に入るだけ・打ち始めていたら作らない）。
+ *   NEXT_PUBLIC_TWO_MESSAGE_AFTER_AIX_AUTO: 既定 off／on＝YUMA・テスト専用の会話だけ（全員に広げるのは竹内さんの確認の後）
+ */
+export function twoMessageAfterAixAutoOn(v: string | null | undefined, isTestConv: boolean): boolean {
+  return (v ?? "").trim().toLowerCase() === "on" && isTestConv;
+}
 
 /** AIX の後の返信の下書きを作る時の指定（generate-reply の replyHint＝スタッフが押した指定）。材料が無ければ "" */
 export function afterAixDraftHint(brief: ReturnType<typeof afterAixReplyBrief>, sentAix: string | null | undefined): string {
