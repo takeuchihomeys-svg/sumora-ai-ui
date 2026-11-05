@@ -4,7 +4,7 @@ let passed = 0, failed = 0;
 function it(name: string, fn: () => void) { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { failed++; console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); } }
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
 
-it("既定 off", () => { ok(!closedThanksNoReplyOn({}) && !layoutAskTemporaryOn({}) && !farOtherFirstOn({}) && !ackPositiveApplyOn({})); });
+it("既定 off", () => { ok(!closedThanksNoReplyOn({}) && !layoutAskTemporaryOn({}) && !farOtherFirstOn({})); ok(ackPositiveApplyOn({}) && !ackPositiveApplyOn({ BRAIN_ACK_POSITIVE_APPLY: "off" }), "No.21 は 11/06 から既定 on"); });
 it("No.15 締めの後のよろしくだけ", () => {
   ok(closedThanksLine("よろしくお願いします🙇‍♀️", "ご都合よろしいお日にちにお部屋ご案内させて頂きます！！何卒よろしくお願い致します！！") !== "");
   ok(closedThanksLine("ありがとうございます！", "お手隙の際にご査収ください！！") !== "");

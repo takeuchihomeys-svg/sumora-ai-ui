@@ -13,7 +13,8 @@ const on = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "on";
 export const closedThanksNoReplyOn = (env: Env = envOf()) => on(env.BRAIN_CLOSED_THANKS_NO_REPLY);
 export const layoutAskTemporaryOn = (env: Env = envOf()) => on(env.BRAIN_LAYOUT_ASK_TEMPORARY);
 export const farOtherFirstOn = (env: Env = envOf()) => on(env.BRAIN_FAR_OTHER_FIRST);
-export const ackPositiveApplyOn = (env: Env = envOf()) => on(env.BRAIN_ACK_POSITIVE_APPLY);
+// 2026-11-06 作業員4（弱い所 112）: 試験 ack-apply-on2（4問・悪化0・$0.177）で既定 on（竹内さんの決定 No.21・KB 3f67fd3f）。止める BRAIN_ACK_POSITIVE_APPLY=off
+export const ackPositiveApplyOn = (env: Env = envOf()) => (env.BRAIN_ACK_POSITIVE_APPLY ?? "").trim().toLowerCase() !== "off";
 export const guarantorWordingOn = (env: Env = envOf()) => on(env.BRAIN_GUARANTOR_WORDING);
 
 const flat = (s: string | null | undefined) => String(s ?? "").normalize("NFKC").replace(/\s+/g, "");
