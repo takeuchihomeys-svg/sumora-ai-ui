@@ -19,6 +19,8 @@ import { splitRequests } from "./request-ledger";
 import { jstParts } from "./jst-date";
 import { routeFix1020 } from "./brain-route-fix-1020";
 export type TwoStageKind = "pickup" | "check" | "estimate";
+/** 2026-11-05 ピックアップの約束の直後のお礼・了承（スタンプも）を2段にしない（ack-topic-scope.twoStageStampAckEnabled と同じスイッチ・既定 off） */
+function twoStageStampAckOn(): boolean { return typeof process !== "undefined" && (process.env?.TWO_STAGE_STAMP_ACK ?? "").trim().toLowerCase() === "on"; }
 export type TwoStageInput = {
   finalAix: string | null;
   decisionSource: string | null;
@@ -34,6 +36,8 @@ export type TwoStageInput = {
   customerText?: string | null;
   /** 今回のお客様の発言がお礼・了承だけで、こちらの最後の発言がまだ果たしていない約束（ピックアップ・確認・見積書）そのもの（3巡目 10/07） */
   ackRightAfterPromise?: boolean;
+  /** 2026-11-05: 開いているピックアップの約束がある（brain-core の promiseAix.kind==="pickup"） */
+  openPickupPromise?: boolean;
   /** 今回のお客様の発言がお礼・了承だけか（10巡目 10/08）。false の時だけ物件の AIX を約束の返信にする（undefined＝今まで通り） */
   ackOnly?: boolean;
   /** こちらが今日（JST）すでにした約束の種類（promiseKindsToday）。同じ日の同じ件の2通目からは約束を挟まず AIX（10巡目 10/08） */
@@ -373,6 +377,11 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   }
   if (a === "property_send" || a === "property_recommendation" || a === "property_search") {
     if (i.pickupReady) return null;
+    // 2026-11-05 作業員1（番 8959・q212）: こちらのピックアップの約束の直後のお礼・了承（スタンプも）は、LLM が物件の AIX を選んだ時もこの汎用の分岐で
+    //   約束の言い直し（2段）にしない＝物件ができたら AIX で送る（上の 317 行の promise:pickup と同じ扱い）。
+    //   線（本番 90日・ピックアップの約束の直後のお客様の番）: スタンプ → 次の一手が AIX 5/5（竹内さん 3/3）・文字のお礼 → 竹内さん AIX 30/35（KB aca164df・2d0f33cf）。
+    //   既定 off（入れる TWO_STAGE_STAMP_ACK=on・スタンプの読みと同じスイッチ）
+    if ((i.ackRightAfterPromise || (i.ackOnly === true && i.openPickupPromise)) && twoStageStampAckOn()) return null;
     return {
       kind: "pickup",
       direction: "新しいご条件（言い直し・追加があればその条件を具体的に）でお部屋をピックアップしてお送りすると約束する返信にする（物件名・家賃は書かない・送るのは後で AIX）。言い方は実際の送信の形「〇〇さんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！」",

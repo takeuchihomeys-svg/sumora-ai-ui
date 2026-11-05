@@ -71,7 +71,7 @@ import { reactionOnlyAfterMgmtPending } from "@/app/lib/staff-only-aix-1020";
 import { routeFix1020, broughtTypedText, contractAixWhenTopEmpty, contractPromiseIsCheck, viewingCheckAlsoVacancy, concernRepickupTarget, concernRepickupAnswer, lastStaffReportedResult, checkAfterResultTurnOk } from "@/app/lib/brain-route-fix-1020";
 import { viewingCheckFirst, VIEWING_CHECK_PROMISE_RE, viewingRoomVacating, threadRoomCheckForTurn, otherRoomSentAfterMoveOut, vacancyDateFromMaterial, vacatingViewingAnswer, type ThreadRoomCheck } from "@/app/lib/viewing-check-first";
 import { propertyThreadEnabled } from "@/app/lib/property-thread";
-import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
+import { isAckOnlyTurn, isAckOnlyForTwoStage } from "@/app/lib/ack-topic-scope";
 import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from "@/app/lib/brain-scene";
 // 10巡目（10/08 竹内「AIXのボタンの種類・ピッカーの種類を分かっていたら簡単に完全にすることできる」）: AIX の全ボタン×主のピッカーの一覧と判断の順番を場面で絞って渡す（BRAIN_AIX_CATALOG=off で外す）
 import { catalogBlockForBrain, isSceneUncertain } from "@/app/lib/aix-catalog";
@@ -4915,6 +4915,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         }
       }
       const twoStageRes = resolveTwoStageOrDirect({
+        // 2026-11-05 作業員1（8959・q212）: 開いているピックアップの約束（台帳の最後の行は物件の送付と読む事がある＝ackRightAfterPromise が false になる）
+        openPickupPromise: promiseAix?.kind === "pickup",
         finalAix: finalAix ?? tcPromiseAix, decisionSource: decisionSource ?? (tcPromiseAix ? "llm" : null), pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
         // 2026-10-21 見直し: 真の初回（下の初回のガードと同じ定義）は A1 の AIX 直接にしない（2段の約束のまま・ガードはこの後で決まる）
         firstContact: !isIncremental && !typedMessages.some((m) => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"),
@@ -4939,9 +4941,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         estimateMaterialAgeDays: focusedEstimateAgeDays,
         customerText: unrepliedTurn.text ?? "",
         // 3巡目（10/07）: 約束の直後のお礼・了承だけ（ZWJ の絵文字 🙇🏻‍♀️ もお礼と読む isAckOnlyTurn）
-        ackRightAfterPromise: (customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""))) && brainLedger.facts.lastStaffEntry?.status === "promised",
+        ackRightAfterPromise: (customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyForTwoStage(unrepliedTurn.text ?? ""))) && brainLedger.facts.lastStaffEntry?.status === "promised",
         // 10巡目（10/08）: お礼・了承だけでない番の物件の AIX は約束の返信（two-stage pickup_unless_ack・TWO_STAGE_PICKUP_UNLESS_ACK=off）
-        ackOnly: customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "")),
+        // 2026-11-05: スタンプだけの番もお礼・了承と読む（TWO_STAGE_STAMP_ACK=on の時だけ・ack-topic-scope.isAckOnlyForTwoStage）
+        ackOnly: customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyForTwoStage(unrepliedTurn.text ?? "")),
         // 10巡目（10/08 竹内さん「1日に何度も送ってきている場合は、2通目から直接」）: 今日すでにした約束の種類（two-stage sameDayDirect・TWO_STAGE_SAME_DAY_DIRECT=off）
         promisedTodayKinds: promiseKindsToday(messagesOldestFirst.filter((m) => m.sender !== "customer" && !m.is_aix_generated).map((m) => ({ text: m.text ?? "", createdAt: m.created_at })), Date.now()),
         // 10/07 竹内さん: 持ち込み（今回の連投の URL・物件の画像）の約束は募集状況＋最大限割引の御見積書の両方（two-stage brought_both）

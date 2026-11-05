@@ -1,6 +1,6 @@
 // app/lib/__tests__/ack-topic-scope.test.ts — 2026-10-07 竹内（uran. 10/05）「どこを読み取る必要があるのか」の実物
 //   実行: npx tsx app/lib/__tests__/ack-topic-scope.test.ts
-import { resolveAckTopicScope, outOfTopicActs, buildAckTopicNote, isAckOnlyTurn, type ScopeMsg } from "../ack-topic-scope";
+import { resolveAckTopicScope, outOfTopicActs, buildAckTopicNote, isAckOnlyTurn, isStampOnlyTurn, isAckOnlyForTwoStage, type ScopeMsg } from "../ack-topic-scope";
 import { judgeTurn, JUDGE_VERSION } from "../line-watch-judge";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -59,5 +59,10 @@ t(`見張り(${JUDGE_VERSION}): uran の番は different・no_staff_out_of_topic
 const j2 = judgeTurn({ draft: "はい😊！！", brainReplyMode: "auto_reply", convStatus: "property_recommendation", hasBrain: true, window: closedWindow, outOfTopicActs: [] });
 t("見張り: 範囲の外が無ければ従来どおり na・no_staff", j2.verdict === "na" && j2.detail.reason === "no_staff");
 
+// 2026-11-05 作業員1（8959）: スタンプだけの番（旧の正規表現は \ が抜けて「ス・タ・ン・プ」の1文字の集合になり当たらなかった）
+t("スタンプだけ", isStampOnlyTurn("[スタンプ]") && isStampOnlyTurn(" [スタンプ]\n[スタンプ] "));
+t("スタンプ＋文字は違う", !isStampOnlyTurn("[スタンプ] ありがとうございます") && !isStampOnlyTurn("ス"));
+t("2段の見分け: off はスタンプをお礼と読まない", !isAckOnlyForTwoStage("[スタンプ]", {}));
+t("2段の見分け: on はスタンプをお礼と読む", isAckOnlyForTwoStage("[スタンプ]", { TWO_STAGE_STAMP_ACK: "on" }));
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
