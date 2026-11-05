@@ -9833,7 +9833,7 @@ export default function Home() {
               const firstContact = !msgs.some((m: Message) => m.sender !== "customer" && String(m.text ?? "").trim() && !/^\[(?:画像|動画)\]$/.test(String(m.text ?? "").trim()));
               const imageOnly = custTurn.length > 0 && custTurn.every((m: Message) => /^\[画像\]/.test(String(m.text ?? "")));
               // 統括が置いた組み立て（meta.two_message_plan・1つの正）が先。無い時だけ画面で作る
-              const plan = planFromMeta(seen) ?? planMessages({ asks, finalAix: seen?.action ?? null, firstContact, imageOnly });
+              const plan = planFromMeta(seen, [...msgs].reverse().find((m: Message) => m.sender === "customer")?.rawCreatedAt ?? null) ?? planMessages({ asks, finalAix: seen?.action ?? null, firstContact, imageOnly });
               const head = planAnnounce(plan);
               if (!head) return null;
               const sentAix = latestAixByConv[id]?.aixType ?? null;

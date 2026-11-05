@@ -165,3 +165,25 @@ export function deepseekWithoutCutoff(src: string): boolean {
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "").split(/\r?\n/).map((l) => l.replace(/(^|[^:])\/\/.*$/, "$1")).join("\n");
   return DS_CALL_RE.test(code) && !DS_GUARD_RE.test(code);
 }
+
+/**
+ * (p) 2026-11-05 作業員1（案A・相場の観測に試験の会話を入れない歯止め）: DB の is_exam_conversation（YUMA＋印 test_no_line／TEST-NOLINE-）が
+ *   app/lib/test-conversations.ts の一覧（YUMA＋NO_LINE_TEST_CONVERSATIONS）と同じ会話を指すか。食い違えば試験の行が相場に入る・本番の行が落ちる。
+ */
+export function examConvMismatch(tsIds: ReadonlyArray<string>, dbIds: ReadonlyArray<string>): { missingInDb: string[]; extraInDb: string[] } {
+  const t = new Set(tsIds), d = new Set(dbIds);
+  return { missingInDb: [...t].filter((x) => !d.has(x)), extraInDb: [...d].filter((x) => !t.has(x)) };
+}
+
+/**
+ * (q) 2026-11-05 作業員4（点検表 19）: 試験の係の cmd の依頼で、引数が空白のあるパスを割られて落ちる形（ci-v1L・ci-v3L が ENOENT・LLM 0回で「失敗あり」）。
+ *   係は cmd を /"[^"]*"|\S+/g で割る＝ `--qfile="C:/Users/竹内 悠馬/…"` のように = の後ろの引用符は1つの引数にならない。割った後に引用符が片方だけ残る引数がある cmd を返す。
+ */
+export function cmdSplitHazards(cmds: ReadonlyArray<string>): string[] {
+  const out: string[] = [];
+  for (const c of cmds) {
+    const parts = c.match(/"[^"]*"|\S+/g) ?? [];
+    if (parts.some((p) => ((p.match(/"/g) ?? []).length % 2 === 1))) out.push(c);
+  }
+  return out;
+}

@@ -53,7 +53,8 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
-import { nightBaseJobDue } from "./lib/exam-base-pin";
+import { nightBaseJobDue, nightBaseAlready, isExamJobShape } from "./lib/exam-base-pin";
+import { planExam, kindSuggest, readExamResult, splitCmdArgs, type CmpLite } from "./lib/exam-plan";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -62,6 +63,8 @@ const argsOf = (k: string) => args.filter((a) => a.startsWith(`--${k}=`)).map((a
 const flag = (k: string) => args.includes(`--${k}`);
 const ROOT = join(examCacheRoot(), "exam-queue");
 const DONE = join(ROOT, "done"), RES = join(ROOT, "results");
+// 2026-11-05 作業員8（21:49 に流す係が落ちた・点検表 18）: 係の印（夜の基準・見張りの「今日はもう回した」）は列のフォルダの外に置く。列の .json は依頼として読まれる
+const MARKS = join(examCacheRoot(), "conductor-marks");
 const CONFIG = join(ROOT, "config.json"), SCENE_MAP = join(ROOT, "scene-map.json");
 const LOG = join(ROOT, "conductor.log");
 const ensureDirs = () => { for (const d of [ROOT, DONE, RES]) mkdirSync(d, { recursive: true }); };
@@ -126,10 +129,17 @@ async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
 }
 
 // ─── 順番待ち ───────────────────────────────────────────────────────────
+const skippedNonJobs = new Set<string>();
 function readJobs(): Array<ExamJob & { file: string }> {
   ensureDirs();
-  return readdirSync(ROOT).filter((f) => f.endsWith(".json") && f !== "config.json" && f !== "scene-map.json").map((f) => ({ ...(JSON.parse(readFileSync(join(ROOT, f), "utf8")) as ExamJob), file: join(ROOT, f) }))
-    .sort((a, b) => compareJobs(a, b));
+  // 2026-11-05 作業員8: 依頼の形でない .json（印・壊れたファイル）は拾わずに飛ばす（落ちない・1回だけ知らせる）
+  const out: Array<ExamJob & { file: string }> = [];
+  for (const f of readdirSync(ROOT).filter((x) => x.endsWith(".json") && x !== "config.json" && x !== "scene-map.json")) {
+    let j: unknown = null; try { j = JSON.parse(readFileSync(join(ROOT, f), "utf8")); } catch { /* 壊れた・書きかけ */ }
+    if (!isExamJobShape(j)) { if (!skippedNonJobs.has(f)) { skippedNonJobs.add(f); log(`  ⚠ 依頼の形でないファイルを飛ばす: ${f}（係の列のフォルダに印を置かない・点検表 18）`); } continue; }
+    out.push({ ...(j as ExamJob), file: join(ROOT, f) });
+  }
+  return out.sort((a, b) => compareJobs(a, b));
 }
 function addJob(): void {
   ensureDirs();
@@ -163,6 +173,20 @@ function addJob(): void {
     if (!ids.length && !p.selectRag) throw new Error("問題が無い（--only か --pick を付ける）");
     job = { ...base, id: `${Date.now()}`, label, only: ids.join(","), repeat: Number(arg("repeat", String(p.repeat ?? 2))), flaky, selectRag: p.selectRag, runner: "brain-exam" };
     if (arg("pick")) log(`  選び: ${p.why} → ${ids.length}問`);
+    // 2026-11-05 作業員8（KB P0 4c91ffd9「試験のブレインが何を・何回・どこまで・いつ」・統括役「1か所が順に決めて1行の計画を出す」）: 試験の統括の計画（scripts/lib/exam-plan.ts）
+    //   --kind=record|prod（記録だけ・本番で動いている直し）は試験を積まず、毎晩の本番の物差し（cron prod-yardstick）で見る。計画は exam-cache/exam-plans.jsonl に残す
+    const kind = (["record", "prod", "exam"].includes(arg("kind")) ? arg("kind") : undefined) as "record" | "prod" | "exam" | undefined;
+    const group = /^grp-reply/.test(label) ? "reply" as const : /^grp-aix/.test(label) ? "aix" as const : /^grp-brain/.test(label) ? "brain" as const : null;
+    const plan = planExam({ label, kind, switchName: base.switch, ids, group, diffStage: base.stage === "brain" || base.stage === "draft" ? base.stage : null, brainText: flag("brain-text"), defaultOn: flag("default-on"), capUsd: Number(arg("cap-usd", "2")) || 2 });
+    log(`  ${plan.line}`);
+    const sug = kindSuggest({ kind, switchName: base.switch, label }); if (sug) log(`  （${sug}）`);
+    try { appendFileSync(join(examCacheRoot(), "exam-plans.jsonl"), JSON.stringify({ at: new Date().toISOString(), label, route: plan.route, ids: plan.ids, usd: Number(plan.cost.usd.toFixed(4)), stage: plan.stage, claude: plan.claude.ids, gate: plan.gate }) + "\n"); } catch { /* 記録できなくても積む */ }
+    if (plan.route === "yardstick") {
+      ensureDirs();
+      writeFileSync(join(RES, `${label}.json`), JSON.stringify({ label, owner: base.owner, switch: base.switch, runner: "yardstick", verdict: plan.line, at: new Date().toISOString() }, null, 1));
+      log(`積まない: ${label}（${plan.gate.go ? "" : plan.gate.why}）`);
+      return;
+    }
   }
   // 2026-11-04 (c): 12問を超える試験の依頼は、足す時に12問ずつに分ける（揺れる問題は入っている側に付ける）
   // 2026-11-05 作業員1（統括役の指示）: 12問に加えて、見積もりの時間（回数×前と今×レーン・古い作業ツリーは1レーン）が上限に収まらない依頼も分ける（EXAM_ADD_SPLIT_BY_TIME=off で12問だけ）
@@ -438,7 +462,8 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         if (stopped || refused) break;
         appendFileSync(outFile, `\n=== ${at()} npx tsx --env-file=.env.local ${c} ===\n`);
         const before = statSync(outFile).size;
-        const r = runTsx(j.cwd, c.match(/"[^"]*"|\S+/g)!.map((x) => x.replace(/^"|"$/g, "")), j.env, outFile); cur = r.child;
+        // 2026-11-05 作業員4の頼み: --qfile="C:/Users/竹内 悠馬/…" が空白で切れていた（ci-v1L・ci-v3L）＝引用符を含む塊は1つの引数に（exam-plan.splitCmdArgs）
+        const r = runTsx(j.cwd, splitCmdArgs(c), j.env, outFile); cur = r.child;
         codes.push(await r.done);
         const tail = readFileSync(outFile).subarray(before).toString("utf8");
         const m = tail.match(/空きメモリ\s*\d+MB\s*<\s*\d+MB（--force で流す）/);
@@ -547,7 +572,22 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     // 2026-11-04 作業員2（基準を merge-base にした時に読み違えない）: 比べた「前」の main の commit を結果の行に出す
     const baseCommit = readJson<{ commit?: string } | null>(join(resultsDirOf(j.cwd), `${j.label}.baseline.json`), null)?.commit;
     const baseNote = (baseCommit ? `・基準 ${baseCommit.slice(0, 7)}` : "") + (guard.note ? `・${guard.note}` : "");
-    const verdict = (noCompare ? `比べられない（基準の回が無い・両方で解いた 0/${ids.length}問・既定 on の判断に使わない${blFinal ? `・基準 ${blFinal}` : ""}）` : sureN == null ? "結果を読めない" : sureN === 0 ? (cmpN < ids.length ? `比べた問題が少ない（両方で解いた ${cmpN}/${ids.length}問・悪化0とは言わない・既定 on の判断に使わない）` : `確かな悪化0（比べた ${cmpN}/${ids.length}問）`) : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote;
+    // 2026-11-05 作業員8（試験の統括の結果の読み方・KB P0 2e164f41「限りなく竹内さんに近づける」）: 悪化なら、その問題の竹内さんの送信と答案の差（前→今の道）を添える
+    const digNote = (() => {
+      if (!sw || (!sw.sure.length && !sw.flake.length)) return "";
+      try {
+        const probs = readJson<Array<{ id: string; staffText?: string | null; staffAix?: string | null }>>(join(j.cwd, "scripts", "brain-exam", "problems.json"), []);
+        const cur = readRows(rowsFile), base = blFinal ? readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)) : [];
+        const pathOf = (rows: RowLite[], id: string) => (rows.find((r) => r.id === id) as { path?: { code?: string } } | undefined)?.path?.code ?? null;
+        const cmps: CmpLite[] = [...sw.sure.map((x) => ({ id: x.id, cmp: "worse" as const, sure: true })), ...sw.flake.map((x) => ({ id: x.id, cmp: "worse" as const, sure: false }))];
+        const mats = cmps.map((c) => { const pr = probs.find((x) => x.id === c.id); return { id: c.id, staffText: pr?.staffText ?? null, staffAix: pr?.staffAix ?? null, brainPath: pathOf(cur, c.id), basePath: pathOf(base, c.id) }; });
+        const r = readExamResult(cmps, mats);
+        const i = r.line.indexOf("・掘りの材料");
+        return i >= 0 ? r.line.slice(i) : "";
+      } catch { return ""; }
+    })();
+    const verdictBase = (noCompare ? `比べられない（基準の回が無い・両方で解いた 0/${ids.length}問・既定 on の判断に使わない${blFinal ? `・基準 ${blFinal}` : ""}）` : sureN == null ? "結果を読めない" : sureN === 0 ? (cmpN < ids.length ? `比べた問題が少ない（両方で解いた ${cmpN}/${ids.length}問・悪化0とは言わない・既定 on の判断に使わない）` : `確かな悪化0（比べた ${cmpN}/${ids.length}問）`) : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote;
+    const verdict = verdictBase + digNote;
     finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
@@ -583,7 +623,8 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
     for (;;) {
       // 2026-11-05 作業員4（竹内さん KB 95f492fc ⑤）: 危ない所の見張りの手元の分を夜1回（2つ目の流す役だけ・止める EXAM_HAZARD_AUDIT=off）。本番の分は Vercel の cron hazard-audit-db
       if (REMOTE_ONLY && (process.env.EXAM_HAZARD_AUDIT ?? "").trim().toLowerCase() !== "off") {
-        const lastFile = join(ROOT, "hazard-audit-last.json");
+        mkdirSync(MARKS, { recursive: true });
+        const lastFile = join(MARKS, "hazard-audit-last.json");
         const ha = hazardAuditDue(readJson<{ day?: string } | null>(lastFile, null)?.day ?? null);
         if (ha.due) {
           writeFileSync(lastFile, JSON.stringify({ day: ha.day, at: new Date().toISOString() }));
@@ -597,9 +638,14 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
       // 2026-11-05 作業員8（統括役の了承の 1「前の答えを本番の commit ごとに1回だけ作って使い回す（夜に1回）」）: 夜の基準を作る依頼を、JST 21時以降に1日1つ積む
       //   （2つ目の流す役だけ・積むだけで流すのは試験の列＝夜だけ・止める EXAM_NIGHT_BASE=off）。終わると brain-exam が nightly-base-<構成>.json を書く
       if (REMOTE_ONLY && (process.env.EXAM_NIGHT_BASE ?? "").trim().toLowerCase() !== "off") {
-        const nbFile = join(ROOT, "night-base-last.json");
+        mkdirSync(MARKS, { recursive: true });
+        const nbFile = join(MARKS, "night-base-last.json");
         const nb = nightBaseJobDue(readJson<{ day?: string } | null>(nbFile, null)?.day ?? null, new Date(), { cwd: process.cwd() });
-        if (nb.due && nb.job) {
+        // 印が無くても、その日の依頼が列・済み・結果にあれば積まない（印を移した日の二重を防ぐ）
+        const names = (d: string) => { try { return readdirSync(d); } catch { return [] as string[]; } };
+        if (nb.due && nb.job && nightBaseAlready(nb.day, [...names(ROOT), ...names(DONE), ...names(RES), ...names(join(ROOT, "withdrawn"))])) {
+          writeFileSync(nbFile, JSON.stringify({ day: nb.day, at: new Date().toISOString(), note: "already" }));
+        } else if (nb.due && nb.job) {
           writeFileSync(nbFile, JSON.stringify({ day: nb.day, at: new Date().toISOString() }));
           writeFileSync(join(ROOT, `${String(nb.job.createdAt).replace(/[:.]/g, "-")}-${nb.job.label}.json`), JSON.stringify(nb.job, null, 1));
           log(`夜の基準の依頼を積んだ: ${nb.job.label}（夜だけ流す）`);

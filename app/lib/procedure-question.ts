@@ -216,13 +216,13 @@ export function readMoveInMaterial(lines: readonly (string | null | undefined)[]
 }
 
 /** 「確認した」系の質問の道（資料の行から）。設備は equipment-question.ts */
-export function routeConfirmTopic(topic: ConfirmTopic, lines: readonly (string | null | undefined)[]): ConfirmRoute {
+export function routeConfirmTopic(topic: ConfirmTopic, lines: readonly (string | null | undefined)[], nowMs: number = Date.now()): ConfirmRoute { // 2026-11-05 退去予定の逆算の「今」（テストで時計を渡す）
   if (topic === "move_in") {
     const m = readMoveInMaterial(lines);
     if (m.kind === "immediate" || m.kind === "date") return { topic, route: "material", lines: m.lines, why: m.kind === "immediate" ? "資料に即入居の記載" : "資料に入居可能日の記載" };
     // 2026-10-15 竹内さんの決定②: 退去予定で退去予定日（日・末）が資料にある → 最短の入居時期の目安を逆算して資料の答えにする（確定は AIX・戻す VACATE_MOVE_IN_ESTIMATE=off）
     if (m.kind === "leaving" && sheetVacancyFieldsEnabled()) {
-      const est = moveInEstimateFromVacate(vacateMonthDay(readSheetVacancy(m.lines.join("\n")).vacate));
+      const est = moveInEstimateFromVacate(vacateMonthDay(readSheetVacancy(m.lines.join("\n")).vacate), nowMs);
       if (est) return { topic, route: "material", lines: [...m.lines, est.fact], why: "資料に退去予定日の記載（最短の入居時期の目安は逆算・確定は退去後）" };
     }
     return { topic, route: "confirm", lines: m.lines, why: m.kind === "leaving" ? "退去予定・居住中で入居可能日の日付が資料に無い" : m.lines.length ? "資料の入居時期が相談・未定" : "資料に入居時期の記載なし" };
@@ -291,8 +291,8 @@ export function resolveProcedurePlan(o: {
 
 /** 事実（実送信・会社の決定）。送る文ではなく事実として渡す（丸写しを促さない） */
 export const PROCEDURE_FACTS = {
-  flow: "申込から入居までの流れ: ①お申込み（お申込フォーマットのご入力＋ご本人確認書類）→ ②保証会社による審査（3日〜10日程）→ ③審査通過後、ご契約のお手続き（ご契約書類の記入・初期費用のご入金で1週間程）→ ④完了次第ご入居。",
-  lead: "空室で即入居できるお部屋なら、お申込から最短で2週間程がご入居の目安。",
+  flow: "申込から入居までの流れ: ①お申込み（お申込フォーマットのご入力＋ご本人確認書類）→ ②保証会社による審査（早ければ2〜3営業日、長くて1週間程）→ ③審査通過後、ご契約のお手続き（ご契約書類の記入・初期費用のご入金で1週間程）→ ④完了次第ご入居。",
+  lead: "空室で即入居できるお部屋なら、お申込から最短で1週間〜2週間程がご入居の目安。",
   call: "審査の過程で保証会社からご本人確認のお電話が入る場合がある。",
   // 2026-10-01 竹内「パスポートの場合はパスポートと現在の住所記載の住民票がいる」（旧「パスポートしか無い時は一度パスポートで進められる」を置き換え）
   idDoc: "ご本人確認書類は運転免許証またはマイナンバーカード（裏表の写真）の**どちらか1点**でお申込みして審査をかけられる。パスポートの場合は**パスポートと現住所記載の住民票の2点**が必要。お客様が運転免許証かマイナンバーカードを持っている時は、そのカードで進められるとだけ答え、**パスポートには触れない**。※この説明文をそのまま写さない。",
@@ -344,10 +344,10 @@ export function buildProcedureAnswerNote(plan: ProcedurePlan): string {
       out.push(plan.moveIn.why.includes("即入居")
         ? `→ 資料に即入居の記載あり。${PROCEDURE_FACTS.lead}`
         : plan.moveIn.why.includes("逆算") ? `→ 退去予定のお部屋。${MOVE_IN_ESTIMATE_HOW}。審査・契約の期間は上の事実のとおり。`
-        : "→ 入居できる日は**資料の入居可能日のとおり**に書く（日付・旬は資料の文字のまま。早めたり「即入居」「最短2週間でご入居」と書かない）。審査・契約の期間は上の事実のとおり。");
+        : "→ 入居できる日は**資料の入居可能日のとおり**に書く（日付・旬は資料の文字のまま。早めたり「即入居」「最短1週間〜2週間でご入居」と書かない）。審査・契約の期間は上の事実のとおり。");
     } else {
       out.push(`- 対象のお部屋（${targetLabel(plan.target)}）の入居時期は資料で分からない（${plan.moveIn?.why ?? "記載なし"}${plan.moveIn?.lines.length ? `: ${plan.moveIn.lines.join("／")}` : ""}）。`);
-      out.push("→ 本文では審査の期間と流れだけ答え、**このお部屋にいつ入居できるか（日付・「即入居」・「最短2週間でご入居」）は断言しない**。入居可能日はスタッフが管理会社に確認して AIX【確認した→入居可能日】で伝える。");
+      out.push("→ 本文では審査の期間と流れだけ答え、**このお部屋にいつ入居できるか（日付・「即入居」・「最短1週間〜2週間でご入居」）は断言しない**。入居可能日はスタッフが管理会社に確認して AIX【確認した→入居可能日】で伝える。");
     }
   }
   out.push("→ 審査に通るかどうか・保証会社の名前や種類は書かない（物件によって変わる）。期間の数字は上の事実にある物だけ使う。");
@@ -357,7 +357,7 @@ export function buildProcedureAnswerNote(plan: ProcedurePlan): string {
 /** ブレインの返信の方向（決定論で手続きの質問を返信に倒した時） */
 export function procedureReplyDirection(plan: ProcedurePlan): string {
   const parts: string[] = [];
-  if (procedureNeedsMoveIn(plan.question)) parts.push("申込→保証会社の審査（3日〜10日程）→契約のお手続き→ご入居の期間と流れを本文で説明する");
+  if (procedureNeedsMoveIn(plan.question)) parts.push("申込→保証会社の審査（2〜3営業日〜1週間程）→契約のお手続き→ご入居の期間と流れを本文で説明する");
   if (plan.question.kinds.includes("id_doc")) {
     const ids = plan.question.ids ?? [];
     const card = ids.includes("my_number") ? "マイナンバーカード" : ids.includes("license") ? "運転免許証" : null;
@@ -371,7 +371,7 @@ export function procedureReplyDirection(plan: ProcedurePlan): string {
   else if (plan.question.kinds.includes("docs")) parts.push("申込に必要な物（フォーマットのご入力・ご本人確認書類）を答える");
   const tail = plan.moveIn?.route === "material" ? (plan.moveIn.why.includes("逆算") ? "入居時期は退去予定日から逆算した目安で書く（確定は退去後）" : "入居時期は資料の記載のとおりに書く")
     : plan.moveIn ? "このお部屋の入居可能日は断言しない" : "";
-  return `${parts.join("・")}（管理会社への確認の宣言はしない${tail ? `・${tail}` : ""}）`.slice(0, plan.question.jointGuarantor ? 200 : 120);
+  return `${parts.join("・")}（管理会社への確認の宣言はしない${tail ? `・${tail}` : ""}）`.slice(0, plan.question.jointGuarantor ? 200 : 130); // 2026-11-05 審査期間の言い方が長くなった分（3日〜10日程→2〜3営業日〜1週間程）で 120→130
 }
 
 /** 2択の時のスタッフ向けの帯 */

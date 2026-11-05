@@ -1275,7 +1275,7 @@ export async function POST(req: NextRequest) {
   //   既定 off（TWO_MESSAGE_PLAN=on で入れる）・古い判断（isStaleMeta）では渡さない
   const twoMsgPlan = twoMessagePlanOn() && !isStaleMeta && actionType
     // 統括が置いた組み立て（meta.two_message_plan・1つの正）が先。無い時だけここで作る
-    ? (planFromMeta(brainMeta) ?? planMessages({ asks: ((brainMeta as { turn_contract?: { asks?: PlanAsk[] } } | null)?.turn_contract?.asks ?? null), finalAix: (brainMeta?.action as string | undefined) ?? null }))
+    ? (planFromMeta(brainMeta, lastCustomerMsg?.rawCreatedAt ?? null) ?? planMessages({ asks: ((brainMeta as { turn_contract?: { asks?: PlanAsk[] } } | null)?.turn_contract?.asks ?? null), finalAix: (brainMeta?.action as string | undefined) ?? null }))
     : null;
   const twoMsgNote = twoMsgPlan ? templateReplyPartNote(twoMsgPlan, actionType) : "";
   const brainMetaSection = buildBrainStrategyNote(brainMeta, {

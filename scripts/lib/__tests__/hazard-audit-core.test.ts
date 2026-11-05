@@ -1,5 +1,5 @@
 // scripts/lib/__tests__/hazard-audit-core.test.ts — 危ない所の見張りの見つけ方（npx tsx scripts/lib/__tests__/hazard-audit-core.test.ts）
-import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc } from "../hazard-audit-core";
+import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, cmdSplitHazards } from "../hazard-audit-core";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) pass++; else { fail++; console.log("FAIL", name); } };
@@ -128,4 +128,22 @@ if (fail) process.exit(1);
   const comment = '// sharedPropertyImageRead( は注記だけ';
   const ok = deepseekWithoutCutoff(bad) && !deepseekWithoutCutoff(good) && !deepseekWithoutCutoff(comment) && !deepseekWithoutCutoff("const x = 1;");
   console.log(ok ? "hazard-audit-core (o): pass" : "hazard-audit-core (o): FAIL"); if (!ok) process.exit(1);
+}
+
+// (p) 試験の会話の一覧と DB の決まり
+{
+  const { examConvMismatch } = require("../hazard-audit-core") as typeof import("../hazard-audit-core");
+  const a = examConvMismatch(["a", "b"], ["a", "b"]);
+  const b = examConvMismatch(["a", "b", "c"], ["a", "x"]);
+  const ok = !a.missingInDb.length && !a.extraInDb.length && b.missingInDb.join() === "b,c" && b.extraInDb.join() === "x";
+  console.log(ok ? "hazard-audit-core (p): pass" : "hazard-audit-core (p): FAIL"); if (!ok) process.exit(1);
+}
+// (q) 2026-11-05 作業員4: 係の cmd の依頼で空白のあるパスが割られる形
+{
+
+  const bad = 'scripts/conductor-intake-replay.ts --qfile="C:/Users/竹内 悠馬/sumora-ai-ui/.claude/exam-cache/x.json" --label=ci-v1L';
+  const ok1 = 'scripts/conductor-intake-replay.ts --qfile=../../exam-cache/x.json --label=ci-v1L';
+  const ok2 = 'scripts/x.ts "C:/Users/竹内 悠馬/a.json" --a=1';
+  const ok = cmdSplitHazards([bad]).length === 1 && cmdSplitHazards([ok1, ok2]).length === 0;
+  console.log(ok ? "hazard-audit-core (q): pass" : "hazard-audit-core (q): FAIL"); if (!ok) process.exit(1);
 }

@@ -1,18 +1,111 @@
 {
  "_about": "竹内さんの組み合わせの型（基準）と、竹内さんの番の抜け（原則で見た抜け）。scripts/two-msg-shape-eval.ts が読む。shapes は許す型（T の通は竹内さんの AIX の訴求の通）。gap があれば竹内さんの番にも抜けがある＝1通の正解としては数えない（11/05 竹内さん「竹内の送り方は基準・絶対の正解ではない」）",
- "q320": { "shapes": ["AR"], "mixed": true },
- "q321": { "shapes": ["A"], "mixed": false, "single": true },
- "q322": { "shapes": ["ATR"], "mixed": true, "canAppeal": true },
- "q323": { "shapes": ["AR", "A", "AT"], "mixed": true },
- "q324": { "shapes": ["RAT"], "mixed": false, "first": true, "canAppeal": true },
- "q325": { "shapes": ["RAT"], "mixed": false, "canAppeal": true },
- "q326": { "shapes": ["R"], "mixed": false, "single": true },
- "q327": { "shapes": ["A"], "mixed": false, "single": true },
- "q330": { "shapes": ["A"], "mixed": false, "single": true },
- "q331": { "shapes": ["A"], "mixed": false, "single": true },
- "q332": { "shapes": ["A"], "mixed": false, "single": true },
- "q333": { "shapes": ["A"], "mixed": false, "single": true },
- "q334": { "shapes": ["A"], "mixed": false, "single": true },
- "q335": { "shapes": ["A"], "mixed": false, "single": true },
- "q336": { "shapes": ["A"], "mixed": true, "gap": "支払い時期をお客様の了承の後の通で答えた（同じ番で答えていない）" }
+ "q320": {
+  "shapes": [
+   "AR"
+  ],
+  "mixed": true
+ },
+ "q321": {
+  "shapes": [
+   "A"
+  ],
+  "mixed": false,
+  "single": true
+ },
+ "q322": {
+  "shapes": [
+   "ATR"
+  ],
+  "mixed": true,
+  "canAppeal": true
+ },
+ "q323": {
+  "shapes": [
+   "AR",
+   "A",
+   "AT"
+  ],
+  "mixed": true
+ },
+ "q324": {
+  "shapes": [
+   "RAT"
+  ],
+  "mixed": false,
+  "first": true,
+  "canAppeal": true
+ },
+ "q325": {
+  "shapes": [
+   "RAT"
+  ],
+  "mixed": false,
+  "canAppeal": true
+ },
+ "q326": {
+  "shapes": [
+   "R"
+  ],
+  "mixed": false,
+  "single": true
+ },
+ "q327": {
+  "shapes": [
+   "A"
+  ],
+  "mixed": false,
+  "single": true
+ },
+ "q330": {
+  "shapes": [
+   "A"
+  ],
+  "mixed": false,
+  "single": true
+ },
+ "q331": {
+  "shapes": [
+   "A"
+  ],
+  "mixed": false,
+  "single": true
+ },
+ "q332": {
+  "shapes": [
+   "A"
+  ],
+  "mixed": false,
+  "single": true
+ },
+ "q333": {
+  "shapes": [
+   "A"
+  ],
+  "mixed": false,
+  "single": true
+ },
+ "q334": {
+  "shapes": [
+   "A",
+   "AT",
+   "RAT"
+  ],
+  "mixed": false,
+  "note": "竹内さんは確かめ済みで AIX 1通。確かめ済みかはスタッフしか知らない＝2択（先の側は約束＝RAT）も正解（統括役 11/05・56b662a4）"
+ },
+ "q335": {
+  "shapes": [
+   "A"
+  ],
+  "mixed": false,
+  "single": true
+ },
+ "q336": {
+  "shapes": [
+   "A"
+  ],
+  "mixed": true,
+  "gap": "支払い時期をお客様の了承の後の通で答えた（同じ番で答えていない）"
+ }
 }

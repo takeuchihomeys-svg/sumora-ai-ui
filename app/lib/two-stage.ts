@@ -134,7 +134,7 @@ function answerableDirectQuestionEnabled(env?: Record<string, string | undefined
 }
 /** 2026-11-05 No.42 (c): 持ち込みの物件は確認の約束 → AIX（既定 off・TWO_STAGE_BROUGHT_PROMISE=on） */
 export function broughtPromiseEnabled(env?: Record<string, string | undefined>): boolean {
-  return ((env ?? (typeof process !== "undefined" ? process.env : {})).TWO_STAGE_BROUGHT_PROMISE ?? "").trim().toLowerCase() === "on";
+  return ((env ?? (typeof process !== "undefined" ? process.env : {})).TWO_STAGE_BROUGHT_PROMISE ?? "").trim().toLowerCase() !== "off"; // 11/05 既定 on（No.42 (c)・止める TWO_STAGE_BROUGHT_PROMISE=off）
 }
 /** 2段の判定（core）が確認・見積の約束を出した番を、AIX 直接にする時の AIX のキー（しない時 null） */
 export function answerableDirectAix(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "decisionSource" | "firstContact" | "asksCost">, env?: Record<string, string | undefined>): string | null {

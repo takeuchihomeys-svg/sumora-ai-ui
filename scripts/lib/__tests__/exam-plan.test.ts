@@ -1,0 +1,57 @@
+// 試験の統括（scripts/lib/exam-plan.ts）の単体テスト（LLM も DB も使わない）
+// 実行: npx tsx scripts/lib/__tests__/exam-plan.test.ts（全 PASS で exit 0）
+import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs } from "../exam-plan";
+
+let fail = 0, pass = 0;
+function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
+const OFF = Date.parse("2026-11-07T12:00:00Z"), PEAK = Date.parse("2026-11-04T02:00:00Z");
+
+ok("種類: 推定で物差しに回さない（_NOTE は判断を変えうる）", guessKind({ switchName: "PROMISE_DUE_NOTE" }) === "exam" && guessKind({ switchName: "BRAIN_DIGEST_X" }) === "exam");
+ok("種類: 記録らしい名前は勧めるだけ", kindSuggest({ switchName: "BRAIN_DIGEST_X" }) !== null && kindSuggest({ switchName: "PROMISE_DUE_NOTE" }) === null);
+ok("種類: 書いた物で決める", guessKind({ kind: "prod", switchName: "X" }) === "prod");
+{
+  const p = planExam({ label: "rec1", kind: "record", switchName: "SENT_CONFIRMED_NOTE", ids: ["q1", "q2"] });
+  ok("記録だけ→物差しで見る・費用0", p.route === "yardstick" && p.cost.usd === 0 && /本番の物差し/.test(p.line));
+}
+{
+  const p = planExam({ label: "a", ids: ["q1", "q2", "q3"], history: { q1: [true, true, true], q2: [true, false, true] }, regression: ["q9"], diffStage: "brain", atMs: OFF, k: 3 });
+  ok("回数: 安定1・揺れ k・分からない k・回帰2", p.reps.q1 === 1 && p.reps.q2 === 3 && p.reps.q3 === 3 && p.reps.q9 === 3 && p.ids.includes("q9"), JSON.stringify(p.reps));
+  ok("段: diff が brain → brain", p.stage === "brain");
+  ok("Claude: 既定 off のままは要らない", p.claude.ids.length === 0);
+  ok("1行の計画", /^計画 a: 問題 4（回帰 1）/.test(p.line) && p.line.includes("段 brain"), p.line);
+  ok("今流す（安い時間・上限の内）", p.gate.go);
+}
+{
+  const p = planExam({ label: "b", ids: Array.from({ length: 30 }, (_, i) => `q${i}`), group: "reply", atMs: PEAK, capUsd: 2 });
+  ok("文の組は draft", p.stage === "draft");
+  ok("倍の時間で上限を超える→夜か分ける", !p.gate.go, p.line);
+}
+{
+  const p = planExam({ label: "c", ids: ["q1"], brainText: true, defaultOn: true, scenes: [{ scene: "見積", problems: ["q1"] }], atMs: OFF });
+  ok("Claude: 指示の文を変えて既定 on → 場面ごとに1問", p.claude.ids.join(",") === "q1");
+}
+{
+  const r0 = readExamResult([{ id: "q1", cmp: "same" }, { id: "q2", cmp: "better" }]);
+  ok("結果: 悪化0", r0.verdict === "悪化0");
+  const r1 = readExamResult([{ id: "q1", cmp: "worse", sure: true }, { id: "q2", cmp: "same" }], [{ id: "q1", staffText: "かしこまりました！！ 確認させて頂きます", brainPath: "AIX:estimate_sheet", basePath: "返信" }]);
+  ok("結果: 確かな悪化＋竹内さんの送信と答案の差", r1.verdict === "確かな悪化" && r1.dig.length === 1 && r1.line.includes("竹内さん「かしこまりました") && r1.line.includes("前 返信 → 今 AIX:estimate_sheet"), r1.line);
+  const r2 = readExamResult([{ id: "q1", cmp: "worse", sure: false }]);
+  ok("結果: 揺れ", r2.verdict === "揺れ");
+  ok("結果: 比べられない", readExamResult([{ id: "q1", cmp: "nobase" }]).verdict === "比べられない");
+}
+{
+  const a = weeklyPlanAudit([
+    { at: "x", label: "e1", route: "exam", ids: ["q1"], usd: 0.5, result: { verdict: "悪化0", worse: [], sameAll: true, ranUsd: 0.4 } },
+    { at: "x", label: "e2", route: "exam", ids: ["q1"], usd: 0.5, result: { verdict: "確かな悪化", worse: ["q1"] } },
+    { at: "x", label: "y1", route: "yardstick", ids: [], usd: 0 },
+    { at: "x", label: "y2", route: "yardstick", ids: [], usd: 0 },
+  ], { y2: 1 });
+  ok("毎週: むだ1（$0.40）・見落とし1", a.wasted === 1 && Math.abs(a.wastedUsd - 0.4) < 1e-9 && a.missed === 1, a.line);
+}
+
+ok("cmd の割り: = の後ろの引用符に空白（作業員4 ci-v1L）", JSON.stringify(splitCmdArgs("scripts/exam-aix-text.ts --label=a --qfile=\"C:/Users/竹内 悠馬/a.json\" --kinds=second")) === JSON.stringify(["scripts/exam-aix-text.ts", "--label=a", "--qfile=C:/Users/竹内 悠馬/a.json", "--kinds=second"]));
+ok("cmd の割り: 丸ごと引用符", JSON.stringify(splitCmdArgs("a \"b c\" d")) === JSON.stringify(["a", "b c", "d"]));
+ok("cmd の割り: 引用符なし", splitCmdArgs("x  y").join("|") === "x|y");
+
+console.log(`${pass} pass / ${fail} fail`);
+process.exit(fail ? 1 : 0);

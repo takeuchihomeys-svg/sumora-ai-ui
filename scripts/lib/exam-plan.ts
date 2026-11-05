@@ -1,0 +1,116 @@
+// scripts/lib/exam-plan.ts — 試験の統括（1か所で順に決めて1行の「計画」を出す・終わった時の結果の読み方も同じ所）。純関数だけ
+//
+// 2026-11-05 作業員8（KB P0 4c91ffd9「試験のブレインが何を・何回・どこまで・いつ流し・途中で止めるかを決める」・統括役の指示「今の部品を作り直さずにつなぐだけ」）:
+//   今まで決める物がばらばらだった（何を＝--only／何回＝揺れの記録／どこまで＝--stage／いつ＝安い時間と費用の門／止める＝早めの打ち切り）。
+//   依頼を積む時にここが順に決める: ①物差しで見るか（記録だけ・本番で動いている直しは試験を流さず毎晩の本番の物差しで見る）→ ②問題（依頼の --only・入力が前と同じ問題は
+//   係が下見で外す＝作業員1 exam-scope-input）→ ③回数（repsFor・安定1・揺れ k・回帰は必須）→ ④段（decideStage）→ ⑤最後の Claude の確かめ（claudeCheckPlan）
+//   → ⑥流す時間と費用（estimateExamCost・costGate）。終わった時は readExamResult が「悪化0／揺れ／確かな悪化」と、悪化なら竹内さんの送信と答案の差を添える。
+//   計画と結果は exam-cache/exam-plans.jsonl に残し、weeklyPlanAudit が外れた計画（見落とした悪化・むだに流した問題）を数える。
+//   KB: 4c91ffd9（P0）・2e164f41（P0 限りなく竹内さんに近づける）・a62a4164・d57f27eb・e9d2303e
+import { estimateExamCost, costGate, repsFor, decideStage, claudeCheckPlan, type CostItem, type GateVerdict } from "./exam-cost-gate";
+
+export type PlanInput = {
+  label: string;
+  /** 直しの種類: exam＝文や判断を変える（試験）／record＝記録だけ（文も判断も変えない）／prod＝もう本番で動いている（既定 on で入った） */
+  kind?: "exam" | "record" | "prod";
+  switchName?: string;
+  ids: string[];
+  /** 問題ごとの前の合否（揺れの記録） */
+  history?: Record<string, boolean[]>;
+  /** 一度直った問題（回帰の必須） */
+  regression?: string[];
+  group?: "brain" | "reply" | "aix" | null;
+  diffStage?: "brain" | "draft" | "none" | null;
+  /** 直しがブレインの指示・材料の文を変えるか（Claude の確かめの (a)）・既定 on にする予定か */
+  brainText?: boolean; defaultOn?: boolean;
+  scenes?: Array<{ scene: string; problems: string[]; splitAgree?: number | null }>;
+  usdPerRep?: Record<string, number>;
+  /** 前（main）の答えが無い問題 */
+  needsBase?: string[];
+  capUsd?: number; urgent?: boolean; atMs?: number; k?: number;
+};
+export type ExamPlan = {
+  label: string; route: "yardstick" | "exam";
+  ids: string[]; reps: Record<string, number>; stage: "brain" | "draft";
+  claude: { ids: string[]; why: string };
+  cost: { usd: number; usdOffPeak: number; calls: number; peakNow: boolean };
+  gate: GateVerdict; line: string;
+};
+
+/**
+ * 直しの種類。書いた物（--kind）だけで決める＝推定で物差しに回さない（_NOTE のスイッチはブレインの材料に注記を足す＝判断を変えうる）。
+ *   名前が記録らしい時は suggest に「--kind=record なら物差しで見られる」と出すだけ
+ */
+export function guessKind(input: { kind?: PlanInput["kind"]; switchName?: string; label?: string }): "exam" | "record" | "prod" {
+  return input.kind ?? "exam";
+}
+export function kindSuggest(input: { kind?: PlanInput["kind"]; switchName?: string; label?: string }): string | null {
+  if (input.kind) return null;
+  const s = `${input.switchName ?? ""} ${input.label ?? ""}`;
+  return /記録だけ|(?:^|[_-])(?:LOG|RECORD|DIGEST)(?:$|[_-])|digest/i.test(s) ? "記録だけの直しなら --kind=record で試験を流さず物差しで見られる" : null;
+}
+
+export function planExam(input: PlanInput): ExamPlan {
+  const kind = guessKind(input);
+  const k = input.k ?? 3;
+  if (kind !== "exam") {
+    const why = kind === "record" ? "記録だけ（文も判断も変えない）" : "本番で動いている";
+    const gate: GateVerdict = { go: false, action: "stop", why: `${why}＝試験を流さず毎晩の本番の物差し（cron prod-yardstick・竹内さんの番の当たり）で下がらないかを見る` };
+    return { label: input.label, route: "yardstick", ids: [], reps: {}, stage: "brain", claude: { ids: [], why: "要らない" }, cost: { usd: 0, usdOffPeak: 0, calls: 0, peakNow: false }, gate,
+      line: `計画 ${input.label}: ${why} → 試験を流さない・本番の物差しで見る（費用 $0）` };
+  }
+  const reg = new Set(input.regression ?? []);
+  const ids = [...new Set([...input.ids, ...reg])];
+  const reps = Object.fromEntries(ids.map((id) => [id, repsFor(input.history?.[id] ?? [], { k, regression: reg.has(id) })]));
+  const stage = decideStage({ group: input.group ?? null, diffStage: input.diffStage ?? null });
+  const claude = claudeCheckPlan({ kind: input.brainText ? "brain-text" : stage === "draft" ? "text-only" : "record-only", defaultOn: !!input.defaultOn, scenes: input.scenes ?? [] });
+  const items: CostItem[] = ids.map((id) => ({ id, reps: reps[id], usdPerRep: input.usdPerRep?.[id] ?? (stage === "draft" ? 0.06 : 0.03), needsBase: (input.needsBase ?? []).includes(id) }));
+  const est = estimateExamCost(items, { at: input.atMs ?? Date.now() });
+  const gate = costGate(items, est, { capUsd: input.capUsd ?? 2, urgent: input.urgent, mustIds: [...reg] });
+  const nFlaky = Object.values(reps).filter((r) => r > 1).length;
+  const when = gate.go ? "今" : gate.action === "night" ? "夜（倍の時間を避ける）" : gate.action === "split" ? `${gate.parts?.length ?? 0}つに分ける` : "止める";
+  const line = `計画 ${input.label}: 問題 ${ids.length}（回帰 ${reg.size}）・回数 安定1×${ids.length - nFlaky}／揺れ${k}×${nFlaky}・段 ${stage}・Claude ${claude.ids.length ? `${claude.ids.length}問（${claude.why}）` : "なし"}・${when}・見込み $${est.usd.total.toFixed(2)}（夜なら $${est.usdOffPeak.toFixed(2)}・前を作る分 $${est.usd.base.toFixed(2)} を含む）・上限 $${(input.capUsd ?? 2).toFixed(2)}・入力が前と同じ問題は LLM を再生・決定論は今の版で作り直す（既定・入力が同じでも決定論の直しは答えを変える）`;
+  return { label: input.label, route: "exam", ids, reps, stage, claude, cost: { usd: est.usd.total, usdOffPeak: est.usdOffPeak, calls: est.calls.request + est.calls.base, peakNow: est.peakNow }, gate, line };
+}
+
+export type CmpLite = { id: string; cmp: "worse" | "better" | "same" | "changed" | "shape" | "nobase" | "nocur"; sure?: boolean };
+export type TakeuchiMaterial = { id: string; staffText?: string | null; staffAix?: string | null; brainPath?: string | null; basePath?: string | null };
+
+/**
+ * 終わった時の結果の読み方（同じ1か所）。悪化なら「竹内さんならどうするか」の掘りの材料（竹内さんの送信・答案の差）を添える。
+ *   sure＝揺れでなく確かな悪化（係の splitWorse の答え）
+ */
+export function readExamResult(cmps: CmpLite[], materials: TakeuchiMaterial[] = []): { verdict: "悪化0" | "揺れ" | "確かな悪化" | "比べられない"; line: string; dig: TakeuchiMaterial[] } {
+  const compared = cmps.filter((c) => c.cmp !== "nobase" && c.cmp !== "nocur");
+  if (!compared.length) return { verdict: "比べられない", line: "比べられない（前と今の両方で解いた問題が 0）", dig: [] };
+  const worse = compared.filter((c) => c.cmp === "worse");
+  const sure = worse.filter((c) => c.sure !== false);
+  if (!worse.length) return { verdict: "悪化0", line: `悪化0（比べた ${compared.length}/${cmps.length}問）`, dig: [] };
+  const dig = materials.filter((m) => worse.some((w) => w.id === m.id));
+  const verdict = sure.length ? "確かな悪化" : "揺れ";
+  const line = `${verdict} ${sure.length ? sure.map((c) => c.id).join(",") : worse.map((c) => c.id).join(",")}（比べた ${compared.length}/${cmps.length}問）${dig.length ? `・掘りの材料: ${dig.map((d) => `${d.id} 竹内さん「${String(d.staffText ?? d.staffAix ?? "（記録なし）").replace(/\s+/g, " ").slice(0, 40)}」／前 ${d.basePath ?? "?"} → 今 ${d.brainPath ?? "?"}`).join("；")}` : ""}`;
+  return { verdict, line, dig };
+}
+
+export type PlanRecord = { at: string; label: string; route: "yardstick" | "exam"; ids: string[]; usd: number; result?: { verdict: string; worse: string[]; sameAll?: boolean; ranUsd?: number } };
+
+/**
+ * 毎週の外れた計画の数え: ①むだに流した（試験を流して全部同じ・悪化も改善も無い）②見落とした（物差しに回した直しで、その後の本番の物差しで場面が下がった）
+ *   droppedScenesAfter＝物差しに回した依頼の label → その後に下がった場面の数（呼ぶ側が prod-yardstick の結果から渡す）
+ */
+export function weeklyPlanAudit(recs: PlanRecord[], droppedScenesAfter: Record<string, number> = {}): { plans: number; wasted: number; wastedUsd: number; missed: number; line: string } {
+  const exam = recs.filter((r) => r.route === "exam" && r.result);
+  const wasted = exam.filter((r) => r.result!.sameAll && !r.result!.worse.length);
+  const missed = recs.filter((r) => r.route === "yardstick" && (droppedScenesAfter[r.label] ?? 0) > 0);
+  const wastedUsd = wasted.reduce((s, r) => s + (r.result!.ranUsd ?? r.usd), 0);
+  return { plans: recs.length, wasted: wasted.length, wastedUsd, missed: missed.length,
+    line: `外れた計画（7日）: むだに流した ${wasted.length}本（約 $${wastedUsd.toFixed(2)}）・物差しに回して下がった ${missed.length}本（計画 ${recs.length}本）` };
+}
+
+/**
+ * 係の cmd の依頼の1行を引数に割る（純関数）。2026-11-05 作業員4の頼み: `--qfile="C:/Users/竹内 悠馬/a.json"` のように = の後ろに引用符があると
+ *   旧の /"[^"]*"|\S+/g が空白で切っていた（ci-v1L・ci-v3L が落ちた）。引用符を含む塊は1つの引数にし、引用符は全部外す
+ */
+export function splitCmdArgs(line: string): string[] {
+  return (line.match(/(?:[^\s"]*"[^"]*")+[^\s"]*|\S+/g) ?? []).map((x) => x.replace(/"/g, ""));
+}

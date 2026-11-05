@@ -5179,10 +5179,121 @@ $$;
 REVOKE ALL ON FUNCTION match_conductor_turns(vector, TEXT, UUID, INT, FLOAT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION match_conductor_turns(vector, TEXT, UUID, INT, FLOAT, TEXT) TO service_role;
 
+-- 2026-11-05 作業員5（竹内さん承認・KB P0 575a7cd5「重点」・P1 977cbded①「埋め込む形を揃える」）: 状況の文 v2 とその埋め込み・竹内さんの番の重点
+--   situation_v2＝その番の時点で分かる物だけ（場面・進み・直前のこちらの要点・開いている約束・送った物・お客様）＝今の番も同じ関数（conductor-focus.turnSituationTextV2）で作る
+--   focus＝竹内さんの番の重点（answer|promise_make|promise_keep|ease|close|propose|relation・押した AIX と送った文の札から）
+ALTER TABLE conductor_turn_vectors ADD COLUMN IF NOT EXISTS situation_v2 TEXT;
+ALTER TABLE conductor_turn_vectors ADD COLUMN IF NOT EXISTS embedding_v2 vector(1536);
+ALTER TABLE conductor_turn_vectors ADD COLUMN IF NOT EXISTS focus TEXT;
+CREATE INDEX IF NOT EXISTS conductor_turn_vectors_emb_v2_idx ON conductor_turn_vectors USING hnsw (embedding_v2 vector_cosine_ops);
+
+-- 近い番の重点を引く（サーバーの鍵だけ）。時間順で p_before より前・同じ会話／同じお客様を外す・竹内さんの番だけ（既定）
+CREATE OR REPLACE FUNCTION match_conductor_focus(query_embedding vector(1536), p_before TIMESTAMPTZ, p_exclude_conv TEXT, p_exclude_pc UUID, match_count INT DEFAULT 30, max_distance FLOAT DEFAULT 0.25, p_writer TEXT DEFAULT 'takeuchi')
+RETURNS TABLE(source_key TEXT, scene TEXT, focus TEXT, distance FLOAT, actual JSONB, turn_at TIMESTAMPTZ)
+LANGUAGE sql STABLE SET search_path = public, extensions AS $$
+  SELECT source_key, scene, focus, (embedding_v2 <=> query_embedding) AS distance, actual, turn_at
+  FROM conductor_turn_vectors
+  WHERE embedding_v2 IS NOT NULL AND focus IS NOT NULL
+    AND turn_at < p_before
+    AND conversation_id <> p_exclude_conv
+    AND (p_exclude_pc IS NULL OR property_customer_id IS DISTINCT FROM p_exclude_pc)
+    AND (p_writer IS NULL OR writer = p_writer)
+    AND (embedding_v2 <=> query_embedding) <= max_distance
+  ORDER BY embedding_v2 <=> query_embedding LIMIT match_count;
+$$;
+REVOKE ALL ON FUNCTION match_conductor_focus(vector, TIMESTAMPTZ, TEXT, UUID, INT, FLOAT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION match_conductor_focus(vector, TIMESTAMPTZ, TEXT, UUID, INT, FLOAT, TEXT) TO service_role;
+-- 戻す時: DROP FUNCTION IF EXISTS match_conductor_focus(vector, TIMESTAMPTZ, TEXT, UUID, INT, FLOAT, TEXT); DROP INDEX IF EXISTS conductor_turn_vectors_emb_v2_idx;
+--   ALTER TABLE conductor_turn_vectors DROP COLUMN IF EXISTS situation_v2, DROP COLUMN IF EXISTS embedding_v2, DROP COLUMN IF EXISTS focus;
+
 -- 戻す時（了承の後に流して、取りやめる場合）:
 -- DROP FUNCTION IF EXISTS match_conductor_turns(vector, TEXT, UUID, INT, FLOAT, TEXT);
 -- DROP TABLE IF EXISTS conductor_turn_vectors;
 -- DROP TABLE IF EXISTS conductor_weights;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 2026-11-05 作業員1（弱い所 303・竹内さん承認の案A）: 試験の会話（YUMA・YUMA2〜7）の売上サポの行は相場の観測（rent_observations）に入れない
+--   brain-exam の写しが property_pickups に入ると trigger で本番の相場の観測に upsert されていた（last_seen_at・usage_rank・pickup_id が動き、伏せで名前が変わった行は新しい部屋として百分位に入る）。
+--   試験の会話の決まりは1か所（is_exam_conversation）: YUMA ＋ LINE につながっていない試験の会話の印（send_blocked_reason = 'test_no_line' か line_user_id が TEST-NOLINE-）。
+--   レーンを足す時は app/lib/test-conversations.ts の決まりどおり印を付けて作るので、ここは変えなくてよい（hazard-audit (p) が TS の一覧 TEST_CONVERSATION_IDS と食い違わないかを毎朝見る）。
+--   rent_observe_pickup_apply は先頭の1行を足しただけで、今の中身はそのまま。
+CREATE OR REPLACE FUNCTION is_exam_conversation(p_conv text) RETURNS boolean
+LANGUAGE sql STABLE AS $$
+  SELECT p_conv IS NOT NULL AND (
+    p_conv = 'dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7'  -- YUMA（app/lib/test-conversations.ts YUMA_CONVERSATION_ID）
+    OR EXISTS (SELECT 1 FROM conversations c WHERE c.id = p_conv AND (c.send_blocked_reason = 'test_no_line' OR c.line_user_id LIKE 'TEST-NOLINE-%'))
+  )
+$$;
+CREATE OR REPLACE FUNCTION rent_observe_pickup_apply(p property_pickups) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+  k text; l2 text; l3 text; v_rent int; v_admin int; v_plan text; v_sqm numeric; v_rank int; v_ward text; v_station text; v_walk int; s text;
+BEGIN
+  IF is_exam_conversation(p.conversation_id) THEN RETURN; END IF;  -- 2026-11-05 試験の会話は相場の観測に入れない（弱い所 303）
+  k := rent_unit_key(p.property_name, p.room_no);
+  IF coalesce(p.property_name, '') = '' THEN RETURN; END IF;
+  l2 := split_part(coalesce(p.summary_text, ''), E'\\n', 2);
+  l3 := split_part(coalesce(p.summary_text, ''), E'\\n', 3);
+  v_rent := nullif(regexp_replace(coalesce((regexp_match(l2, '([0-9][0-9,]{3,})\\s*円'))[1], ''), ',', '', 'g'), '')::int;
+  v_admin := nullif(regexp_replace(coalesce((regexp_match(l2, '円\\s+([0-9][0-9,]{2,})\\s*円'))[1], ''), ',', '', 'g'), '')::int;
+  v_plan := (regexp_match(upper(normalize(l3, NFKC)), '([1-9]S?(?:LDK|DK|K|R))'))[1];
+  v_sqm := nullif((regexp_match(normalize(l3, NFKC), '([0-9]+(?:\\.[0-9]+)?)\\s*(?:㎡|m2|m²)'))[1], '')::numeric;
+  v_rank := CASE WHEN p.status = 'sent' OR p.sent_at IS NOT NULL THEN 3 WHEN coalesce(p.recommended, 0) > 0 THEN 2 ELSE 1 END;
+  v_ward := rent_norm_ward(p.location->>'ward');
+  v_station := p.location->'stations'->0->>'station';
+  v_walk := CASE WHEN (p.location->'stations'->0->>'walk') ~ '^\\d+$' THEN (p.location->'stations'->0->>'walk')::int END;
+  s := p.equipment->'facts'->'pet'->>'s';
+  INSERT INTO rent_observations AS o (branch_id, unit_key, property_name, room_no, site, ward, station, walk_minutes, floor_plan, plan_group, area_sqm,
+      building_age, built_year, floor, total_floors, structure, rent, admin_fee, rent_total, deposit_months, key_money_months, equipment, pet, ad_yen,
+      usage_rank, usage_stage, pickup_id, attrs_at, first_seen_at, last_seen_at)
+  VALUES ('osaka', k, p.property_name, p.room_no, p.site, v_ward, v_station, v_walk, v_plan, rent_plan_group(v_plan), v_sqm,
+      CASE WHEN (p.terms->>'buildingAge') ~ '^\\d+$' THEN (p.terms->>'buildingAge')::int END,
+      CASE WHEN (p.terms->>'builtYear') ~ '^\\d{4}$' THEN (p.terms->>'builtYear')::int END,
+      CASE WHEN (p.equipment->>'floor') ~ '^-?\\d+$' THEN (p.equipment->>'floor')::int END,
+      CASE WHEN (p.equipment->>'totalFloors') ~ '^\\d+$' THEN (p.equipment->>'totalFloors')::int END,
+      p.equipment->'facts'->'structure'->>'d',
+      v_rent, v_admin, CASE WHEN v_rent IS NOT NULL THEN v_rent + coalesce(v_admin, 0) END,
+      CASE WHEN (p.terms->>'deposit') ~ '^\\d+(\\.\\d+)?$' THEN (p.terms->>'deposit')::numeric END,
+      CASE WHEN (p.terms->>'keyMoney') ~ '^\\d+(\\.\\d+)?$' THEN (p.terms->>'keyMoney')::numeric END,
+      rent_equipment_of(p.equipment->'facts'), CASE WHEN s IN ('ok', 'ng') THEN s = 'ok' END, p.ad_yen,
+      v_rank, rent_usage_stage(v_rank), p.id, now(), coalesce(p.created_at, now()), coalesce(p.created_at, now()))
+  ON CONFLICT (branch_id, unit_key) DO UPDATE SET
+    ward = coalesce(o.ward, EXCLUDED.ward), station = coalesce(o.station, EXCLUDED.station), walk_minutes = coalesce(o.walk_minutes, EXCLUDED.walk_minutes),
+    floor_plan = coalesce(o.floor_plan, EXCLUDED.floor_plan), plan_group = coalesce(o.plan_group, EXCLUDED.plan_group), area_sqm = coalesce(o.area_sqm, EXCLUDED.area_sqm),
+    rent = coalesce(o.rent, EXCLUDED.rent), admin_fee = coalesce(o.admin_fee, EXCLUDED.admin_fee), rent_total = coalesce(o.rent_total, EXCLUDED.rent_total),
+    building_age = coalesce(EXCLUDED.building_age, o.building_age), built_year = coalesce(EXCLUDED.built_year, o.built_year),
+    floor = coalesce(EXCLUDED.floor, o.floor), total_floors = coalesce(EXCLUDED.total_floors, o.total_floors), structure = coalesce(EXCLUDED.structure, o.structure),
+    deposit_months = coalesce(EXCLUDED.deposit_months, o.deposit_months), key_money_months = coalesce(EXCLUDED.key_money_months, o.key_money_months),
+    equipment = coalesce(o.equipment, '{}'::jsonb) || coalesce(EXCLUDED.equipment, '{}'::jsonb), pet = coalesce(EXCLUDED.pet, o.pet), ad_yen = coalesce(EXCLUDED.ad_yen, o.ad_yen),
+    usage_rank = greatest(o.usage_rank, EXCLUDED.usage_rank), usage_stage = rent_usage_stage(greatest(o.usage_rank, EXCLUDED.usage_rank)),
+    sent_to_customer = o.sent_to_customer OR EXCLUDED.usage_rank >= 3,
+    pickup_id = coalesce(EXCLUDED.pickup_id, o.pickup_id), attrs_at = now(), last_seen_at = greatest(o.last_seen_at, EXCLUDED.last_seen_at);
+END;
+$$;
+
+
+-- 2026-11-05 竹内さん承認（同じ1行の歯止めを送付の trigger にも）: 試験の会話の送付の行は相場の観測の段（sent_to_customer・usage_rank）を上げない
+CREATE OR REPLACE FUNCTION rent_observe_sent() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE r int;
+BEGIN
+  IF is_exam_conversation(NEW.conversation_id) THEN RETURN NEW; END IF;  -- 2026-11-05 試験の会話は相場の観測に入れない（弱い所 303）
+  IF NEW.delivery = 'customer' AND coalesce(NEW.channel, '') NOT IN ('check', 'estimate')
+     AND coalesce(NEW.source, '') NOT IN ('aix:property_check_result', 'aix:estimate_sheet') THEN
+    r := CASE WHEN NEW.customer_reaction = 'interested' THEN 4 ELSE 3 END;
+    UPDATE rent_observations SET sent_to_customer = true, sent_channel = coalesce(sent_channel, NEW.channel, NEW.source),
+      usage_rank = greatest(usage_rank, r), usage_stage = rent_usage_stage(greatest(usage_rank, r))
+      WHERE branch_id = 'osaka' AND unit_key = rent_unit_key(NEW.property_name, NEW.room_no);
+  END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'rent_observe_sent: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+
+-- 戻す時: rent_observe_pickup_apply・rent_observe_sent の先頭の is_exam_conversation の1行を外して流し直す（DROP FUNCTION IF EXISTS is_exam_conversation(text) はその後）
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

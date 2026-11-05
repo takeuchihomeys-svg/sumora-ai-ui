@@ -16,6 +16,8 @@
 //   (m) 試験の写しの property_pickups を相場の観測（rent_observations）に通さない前提が trigger の定義のままか（弱い所 303）
 //   (n) 24時間の DeepSeek の失敗（402＝残高切れ・alt_failed）を本番と試験に分けて（11/05 残高切れで資料の読み取りが失敗）
 //   (o) scripts/ で DeepSeek を直接呼ぶのに申込の線（loadDeepseekCutoff 等）を通していない台本（11/05 の読み直しの dry-read・点検表 17）
+//   (p) DB の is_exam_conversation（相場の観測の歯止め・11/05 案A）が TS の試験の会話の一覧と同じか
+//   (q) 試験の係の cmd の依頼で、空白のあるパスが = の後ろの引用符で割られる形（11/05 ci-v1L・ci-v3L が ENOENT・LLM 0回・点検表 19）
 //   (g) 48時間の試験の結果で「悪化0」なのに前（main）と両方で解いた問題が予定より少ない（0 含む）物 … ⑨（比べていないのに悪化0）
 // 出力: 1行のまとめ（毎朝の見張りに貼る）＋詳しい所。前日との差分の為の控えは .claude/exam-cache/hazard-audit/（git に入らない）。
 // 実行: npx tsx --env-file=.env.local scripts/hazard-audit.ts [--json] [--no-db] [--no-net] [--save]
@@ -26,7 +28,7 @@ import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import { pickupTriggerStillSkips } from "./lib/exam-pickup-copy";
-import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, conductorLogHazards, laneDupConvs, dupProblemIds, idContentClashes, deepseekFailLine, deepseekWithoutCutoff, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
+import { cmdSplitHazards, findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, conductorLogHazards, laneDupConvs, dupProblemIds, idContentClashes, deepseekFailLine, deepseekWithoutCutoff, examConvMismatch, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
 
 const flag = (k: string) => process.argv.includes(`--${k}`);
 const git = (args: string[], cwd = process.cwd()) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
@@ -156,6 +158,23 @@ async function main() {
     checks.push({ key: "o", ok: bad.length === 0, line: `DeepSeek を呼ぶのに申込の線を通さない台本 ${bad.length}`, detail: bad });
   }
 
+  // (p) 2026-11-05 DB の is_exam_conversation（相場の観測の歯止め）が TS の試験の会話の一覧と同じか
+  if (flag("no-db")) checks.push({ key: "p", ok: null, line: "試験の会話の決まり（DB）: 見ない（--no-db）", detail: [] });
+  else {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) checks.push({ key: "p", ok: null, line: "試験の会話の決まり（DB）: 不明（サーバーの鍵が無い）", detail: [] });
+    else {
+      const { data, error } = await createClient(url, key).rpc("exec_sql", { sql: "select id from conversations where is_exam_conversation(id)" });
+      if (error) checks.push({ key: "p", ok: null, line: `試験の会話の決まり（DB）: 不明（${error.message.slice(0, 60)}）`, detail: [] });
+      else {
+        const { YUMA_CONVERSATION_ID, NO_LINE_TEST_CONVERSATION_IDS } = await import("../app/lib/test-conversations");
+        const m = examConvMismatch([YUMA_CONVERSATION_ID, ...NO_LINE_TEST_CONVERSATION_IDS], ((Array.isArray(data) ? data : []) as Array<{ id: string }>).map((r) => r.id));
+        const n = m.missingInDb.length + m.extraInDb.length;
+        checks.push({ key: "p", ok: n === 0, line: `試験の会話の決まり（DB と TS）${n ? `食い違い ${n}` : "一致"}`, detail: [...m.missingInDb.map((x) => `DB で試験と見ない: ${x}`), ...m.extraInDb.map((x) => `TS に無いのに試験と見る: ${x}`)] });
+      }
+    }
+  }
+
   // (e) 本番の LP の「◯月実績」
   if (flag("no-net")) checks.push({ key: "e", ok: null, line: "LP の月: 見ない（--no-net）", detail: [] });
   else {
@@ -232,6 +251,12 @@ async function main() {
     } catch { /* main の spec が読めない */ }
     checks.push({ key: "l", ok: clashes.length === 0, line: `手元の問題と main の spec で同じ id・違う番 ${clashes.length}作業ツリー`, detail: clashes });
     checks.push({ key: "k", ok: dupW.length === 0, line: `手元の problems.json の同じ id ${dupW.length}作業ツリー`, detail: dupW });
+    // (q) 2026-11-05 作業員4（点検表 19）: 係の cmd の依頼で、空白のあるパスが割られる形（= の後ろの引用符）。順番待ちの依頼の json を読む
+    const splitBad: string[] = [];
+    if (existsSync(q)) for (const f of readdirSync(q).filter((x) => /.json(?:.claimed)?$/.test(x))) {
+      try { const j = JSON.parse(readFileSync(join(q, f), "utf8")) as { label?: string; runner?: string; cmds?: string[] }; if (j.runner === "cmd" && Array.isArray(j.cmds)) for (const c of cmdSplitHazards(j.cmds)) splitBad.push(`${j.label ?? f}: ${c.slice(0, 160)}`); } catch { /* 壊れた依頼は飛ばす */ }
+    }
+    checks.push({ key: "q", ok: splitBad.length === 0, line: `係の cmd の依頼で空白のパスが割られる形 ${splitBad.length}本`, detail: splitBad });
     checks.push({ key: "j", ok: dups.length === 0, line: `24時間の試験の出力でレーンが同じ会話 ${dups.length}本`, detail: dups });
   }
 

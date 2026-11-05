@@ -9,7 +9,7 @@ let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
 
 // スイッチ（既定 off）
-t("既定 off（サーバー）", twoMessagePlanOn({}) === false);
+t("既定 on（サーバー・11/05）", twoMessagePlanOn({}) === true && twoMessagePlanOn({ TWO_MESSAGE_PLAN: "off" }) === false);
 t("on で on", twoMessagePlanOn({ TWO_MESSAGE_PLAN: "on" }) === true);
 t("既定 off（画面）", twoMessagePlanUiOn(undefined) === false && twoMessagePlanUiOn("on") === true);
 
@@ -122,6 +122,12 @@ t("⑨ ピッカー付きのキー", planMessages({ asks: [{ quote: "x", route: 
   const r = planForConductor({ asks: [{ quote: "内覧したい", route: "aix", aix: "viewing_invite" }, { quote: "審査は", route: "reply", kind: "concern" }], focus: "close" });
   t("⑭ 統括の形（{plan,check,digest}）をそのまま読める", planFromMeta({ two_message_plan: r })?.shape === "AR" && planFromMeta({ two_message_plan: r.plan })?.shape === "AR");
   t("⑭ 形が違う＝null", planFromMeta({ two_message_plan: { messages: [{ slot: "x" }] } }) === null && planFromMeta(null) === null);
+  // 作業員5の頼み（KB ea2a9405②）: 統括の計画が見たお客様の発言より新しい発言があれば使わない
+  const mp = { two_message_plan: { ...r, seen_customer_at: "2026-11-05T10:00:00Z" } };
+  t("⑭ 新しい発言が無い＝使う", planFromMeta(mp, "2026-11-05T10:00:00Z")?.shape === "AR");
+  t("⑭ 新しい発言が来た＝null（作り直す）", planFromMeta(mp, "2026-11-05T10:05:00Z") === null);
+  t("⑭ seen が無い計画＋最新の時刻あり＝null", planFromMeta({ two_message_plan: r }, "2026-11-05T10:05:00Z") === null);
+  t("⑭ 2つ目を渡さない＝今まで通り使う", planFromMeta({ two_message_plan: r })?.shape === "AR");
   t("⑭ 重点 close＝訴求あり・ease＝なし", canAppealFromFocus("close") && !canAppealFromFocus("ease"));
 }
 
@@ -129,8 +135,8 @@ t("⑨ ピッカー付きのキー", planMessages({ asks: [{ quote: "x", route: 
 {
   const v = { source: "rule:two_stage_promise(brought_both)", kind: "check" } as unknown as Parameters<typeof answerableDirectAix>[0];
   const i = { decisionSource: "rule:x", firstContact: false, asksCost: false };
-  t("⑮ off＝AIX 直接（今まで通り）", answerableDirectAix(v, i, {}) === "property_check_result");
-  t("⑮ on＝約束のまま（null）", answerableDirectAix(v, i, { TWO_STAGE_BROUGHT_PROMISE: "on" }) === null);
+  t("⑮ 止める（off）＝AIX 直接", answerableDirectAix(v, i, { TWO_STAGE_BROUGHT_PROMISE: "off" }) === "property_check_result");
+  t("⑮ 既定（on）＝約束のまま（null）", answerableDirectAix(v, i, {}) === null);
   const v2 = { source: "rule:two_stage_promise(check)", kind: "check" } as unknown as Parameters<typeof answerableDirectAix>[0];
   t("⑮ 持ち込みでない確認は on でも AIX 直接", answerableDirectAix(v2, i, { TWO_STAGE_BROUGHT_PROMISE: "on" }) === "property_check_result");
 }
@@ -143,6 +149,26 @@ t("⑨ ピッカー付きのキー", planMessages({ asks: [{ quote: "x", route: 
   t("⑯ 不安の受け止めが要る＝AR のまま", c.shape === "AR", c);
   const off = (() => { process.env.TWO_MESSAGE_ONE_IN_TEXT_AIX = "off"; const r = planMessages({ asks: [{ quote: "内覧", route: "aix", aix: "viewing_invite" }, { quote: "x", route: "reply" }] }); delete process.env.TWO_MESSAGE_ONE_IN_TEXT_AIX; return r; })();
   t("⑯ 止める＝AR", off.shape === "AR");
+  // 約束も文を書く AIX の中で（竹内さん: 電話の AIX「審査通過するにあたりまして5分程お電話で」・保証会社の AIX・当日の挨拶の AIX「メジャーをお持ちして」）
+  const ph = planMessages({ asks: [{ quote: "紹介いただくことは可能でしょうか", route: "promise", answer: "審査通過へ電話で打ち合わせ" }], finalAix: "phone_call" });
+  t("⑯ 電話の AIX＋約束＝A（AIX の文の中で）", ph.shape === "A" && ph.messages[0].answers.length === 1, ph);
+  const gv = planMessages({ asks: [{ quote: "メジャー持ってきて貰ってもいいですか", route: "promise", answer: "メジャーを持参する" }], finalAix: "greeting_viewing" });
+  t("⑯ 当日の挨拶＋約束＝A", gv.shape === "A", gv);
+  const lt = planMessages({ asks: [{ quote: "この物件空いてますか", route: "promise", answer: "募集状況を確認する" }], finalAix: "guarantor_info" });
+  t("⑯ 結果が後になる約束（確認）は除く＝RA（内覧調整・待ち合わせ以外）", lt.shape === "RA", lt);
+  // 統括役の決め（q330）: 内覧調整・待ち合わせは確認の約束も AIX の文の中で（TWO_MESSAGE_VIEW_CHECK_IN_AIX=on）
+  process.env.TWO_MESSAGE_VIEW_CHECK_IN_AIX = "on";
+  const vc = planMessages({ asks: [{ quote: "この物件空いてますか", route: "promise", answer: "募集状況を確認する" }], finalAix: "viewing_invite" });
+  const vs = planMessages({ asks: [{ quote: "もっと探して", route: "promise", answer: "新たに探す" }], finalAix: "viewing_invite" });
+  const vp = planMessages({ asks: [{ quote: "この物件空いてますか", route: "promise", answer: "募集状況を確認する" }], finalAix: "phone_call" });
+  delete process.env.TWO_MESSAGE_VIEW_CHECK_IN_AIX;
+  t("⑯ on: 内覧調整＋確認の約束＝A（AIX の文の中で）", vc.shape === "A", vc);
+  t("⑯ on でも探す約束は RA のまま", vs.shape === "RA", vs);
+  t("⑯ on でも内覧調整・待ち合わせ以外は今まで通り（RA）", vp.shape === "RA", vp);
+  const hr = planMessages({ asks: [{ quote: "以前と同じ条件で探して", route: "promise", answer: "条件で探す" }], finalAix: "condition_hearing" });
+  t("⑯ ヒアリングは約束の返信が先（RA）", hr.shape === "RA", hr);
+  const fc = planMessages({ asks: [{ quote: "x", route: "promise", answer: "審査の相談" }], finalAix: "phone_call", firstContact: true });
+  t("⑯ 初回は挨拶と約束の返信が先", fc.messages[0].slot === "reply");
   { const n = nearShapeLine([{ shape: "A", dist: 0.1 }, { shape: "AR", dist: 0.2 }, { shape: "AR", dist: 0.3 }]); t("⑯ 近い番の型の1行と短い形", !!n && /AR 2\/3・A 1\/3/.test(n.line) && n.digest === "AR2,A1" && nearShapeLine([{ shape: "A", dist: 0.1 }]) === null, n); }
   t("⑯ 送信の並びの型（RAT・ATR・まとめ）",
     shapeOfSends([{ isAix: false, text: "かしこまりました" }, { isAix: true }, { isAix: true }, { isAix: false, text: "お気に召されましたらご案内させて頂きます" }]) === "RAT"
@@ -168,7 +194,7 @@ t("⑩ all＝全員・off＝出さない", twoMessageAnnounceVisible("all", fals
 
 // ⑪ ブレインの規則の1行（off は1字も変えない・on だけ足す）
 //   （on の確かめ: TWO_MESSAGE_PLAN=on npx tsx -e で BRAIN_TURN_CONTRACT_RULES に行が入る＝作業員7 11/05 確認済み）
-if ((process.env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() !== "on") {
+if ((process.env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "off") {
   t("⑪ off の規則に2通の行は無い", !/返信で答えられる質問を別の ask/.test(BRAIN_TURN_CONTRACT_RULES));
 }
 
