@@ -216,13 +216,13 @@ export function readMoveInMaterial(lines: readonly (string | null | undefined)[]
 }
 
 /** 「確認した」系の質問の道（資料の行から）。設備は equipment-question.ts */
-export function routeConfirmTopic(topic: ConfirmTopic, lines: readonly (string | null | undefined)[]): ConfirmRoute {
+export function routeConfirmTopic(topic: ConfirmTopic, lines: readonly (string | null | undefined)[], nowMs: number = Date.now()): ConfirmRoute { // 2026-11-05 退去予定の逆算の「今」（テストで時計を渡す）
   if (topic === "move_in") {
     const m = readMoveInMaterial(lines);
     if (m.kind === "immediate" || m.kind === "date") return { topic, route: "material", lines: m.lines, why: m.kind === "immediate" ? "資料に即入居の記載" : "資料に入居可能日の記載" };
     // 2026-10-15 竹内さんの決定②: 退去予定で退去予定日（日・末）が資料にある → 最短の入居時期の目安を逆算して資料の答えにする（確定は AIX・戻す VACATE_MOVE_IN_ESTIMATE=off）
     if (m.kind === "leaving" && sheetVacancyFieldsEnabled()) {
-      const est = moveInEstimateFromVacate(vacateMonthDay(readSheetVacancy(m.lines.join("\n")).vacate));
+      const est = moveInEstimateFromVacate(vacateMonthDay(readSheetVacancy(m.lines.join("\n")).vacate), nowMs);
       if (est) return { topic, route: "material", lines: [...m.lines, est.fact], why: "資料に退去予定日の記載（最短の入居時期の目安は逆算・確定は退去後）" };
     }
     return { topic, route: "confirm", lines: m.lines, why: m.kind === "leaving" ? "退去予定・居住中で入居可能日の日付が資料に無い" : m.lines.length ? "資料の入居時期が相談・未定" : "資料に入居時期の記載なし" };
