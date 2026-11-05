@@ -10,7 +10,7 @@ t("条件のフォームは外す", !isScreeningHistoryWorry("▶︎【お部屋
 t("申込のフォームは外す", !isScreeningHistoryWorry("【お申込者様記入欄】 ・延滞 なし 審査"));
 t("家賃の滞納の一般論は外す", !isScreeningHistoryWorry("家賃を滞納したらどうなりますか？審査に影響しますか"));
 const note = buildScreeningHistoryNote(["カードローンの残りがあるんですが審査通りますか？"]);
-t("1ブロックに竹内さんの一文と言い切らない", note.includes(SCREENING_HISTORY_INDEPENDENT_LINE) && note.includes("言い切らない") && note.includes("AIX【保証会社について】"), note);
+t("1ブロックに竹内さんの一文と言い切らない", note.includes(SCREENING_HISTORY_INDEPENDENT_LINE) && note.includes("言い切らない") && note.includes("AIX【保証会社について】にしない") && note.includes("特定の物件"), note);
 t("関係の無い発言には出さない", buildScreeningHistoryNote("内覧はいつできますか？") === "");
 process.env.SCREENING_HISTORY_INDEPENDENT = "off";
 t("off で出さない", buildScreeningHistoryNote(["カードローンの残りがあるんですが審査通りますか？"]) === "");

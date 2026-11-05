@@ -719,5 +719,5 @@ export function buildScreeningHistoryNote(customerTexts: string | ReadonlyArray<
   if (!screeningHistoryIndependentOn()) return "";
   const arr = Array.isArray(customerTexts) ? customerTexts : [String(customerTexts ?? "")];
   if (!arr.some((x) => isScreeningHistoryWorry(x))) return "";
-  return `\n【🛡 審査の不安（延滞歴・カードローン等）への答え方（竹内さん 11/05）】\n- 返信で言ってよい: 「${SCREENING_HISTORY_INDEPENDENT_LINE}」（通ると言い切らない）\n- 物件ごとの保証会社が独立系かは、資料・表で確かな時だけ言う。確かでない物件の可否・その物件で通るかの結果は、保証会社を確認する約束（AIX【保証会社について】）\n`;
+  return `\n【🛡 審査の不安（延滞歴・カードローン等）への答え方（竹内さん 11/05）】\n- 返信で言ってよい: 「${SCREENING_HISTORY_INDEPENDENT_LINE}」（通ると言い切らない）\n- 物件の話が無い番（初回・これから探す番）は、返信で「審査に通りやすい独立系の保証会社のお部屋を中心にお探しし、全力でサポートさせて頂きます」と次の手を伝える（AIX【保証会社について】にしない・竹内さん q021）\n- 送った・聞かれた特定の物件で通るか・その物件の保証会社が独立系かが確かでない時だけ、保証会社を確認する約束（AIX【保証会社について】）。物件ごとの種類は資料・表で確かな時だけ言う\n`;
 }
