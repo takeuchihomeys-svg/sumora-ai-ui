@@ -207,7 +207,7 @@ type Row = Record<string, unknown> & { miss: boolean; missType: string; sig: Rec
       "長さ:お客様の文が120字超": custPlain.replace(/\[画像\]/g, "").length > 120,
       "長さ:疑問が2つ以上": qCount >= 2,
       "時刻:夜（22〜9時）の発言": night,
-      "2択:ブレインが2択をセット（digest.tc・10/08〜）": dg.tc === true,
+      "2択:ブレインが2択をセット（digest.tc・10/08〜）": dg.tw === true || dg.tc === true,
       "道:ブレインが AIX": b.path === "AIX",
       "道:ブレインが2段の約束": b.path === "2段",
     };

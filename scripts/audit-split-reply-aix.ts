@@ -205,7 +205,7 @@ type Row = {
         const d = seen.length ? seen[seen.length - 1] : ds[ds.length - 1];
         brainLate = !seen.length;
         brainSrc = String(d.decision_source ?? ""); brainDir = String(d.digest?.dir ?? "").slice(0, 70);
-        tc = d.digest?.tc === true; intent = String(d.digest?.intent ?? "");
+        tc = d.digest?.tw === true || d.digest?.tc === true; intent = String(d.digest?.intent ?? "");
         if (d.suggested_reply_mode === "aix" && d.suggested_action) {
           brain = "AIX";
           brainKey = d.suggested_action === "property_check_result" || d.suggested_action === "acknowledge_check" ? topicKey(`property_check_result/${d.suggested_check_pattern ?? ""}`) : d.suggested_action;
