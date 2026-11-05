@@ -164,6 +164,7 @@ import { isUsableExampleText, isCustomerFacingExample, fixExampleWeekdays } from
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（timeZone 抜けの UTC 表示を防ぐ）
 import { jstAgo, jstMD, jstMDHm, jstYmd, jstYmdWeekday, weekdayTable, jstParts } from "@/app/lib/jst-date";
+import { mgmtNightBrainNoteOn, nightMgmtBrainNote } from "@/app/lib/mgmt-hours-split";
 import { isEvaluativePrinciple, principleEvalFilterEnabled } from "@/app/lib/principle-eval";
 import { knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { fixChineseGlyphs } from "@/app/lib/japanese-glyph";
@@ -2118,6 +2119,13 @@ async function analyzeConversationCore(
   //   （判定は daily-greeting.staffTalkedToday＝返信・AIX・画面と同じ関数。手打ち・AIX・予約・グループ経由すべての staff の通）。戻す: GREETING_ONCE_PER_DAY=off
   const greetedTodayFact = greetingOncePerDayEnabled() && staffTalkedToday(typedMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })));
   const timingText = `\n【時間情報】今日: ${todayStr}${BRAIN_HISTORY_TIME_ON ? ` 今 ${jstHmNow()}` : ""}（曜日表: ${weekdayTable(Date.now(), 14)}。日付に曜日を付ける時はこの表を使い、表に無い日付には曜日を付けない） /最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）${greetedTodayFact ? "\n【今日の挨拶】今日こちらは既にこのお客様へ送っている（挨拶はお客様1人につき1日1回）。reply_opener に「お世話になっております」を選ばない" : ""}`;
+  // 2026-11-06 作業員9（弱い所 345・KB P1 9fd703f4・MGMT_NIGHT_BRAIN_NOTE=on・既定 off）: 夜にお客様が管理会社にしか答えられない事（礼金・駐車場 等）を聞いた番は、
+  //   今は結果を持っていない事実と竹内さんの決まり（確認の約束の返信→翌日 AIX【確認した】）を時間情報の後ろに1行（判断はブレイン・app/lib/mgmt-hours-split.ts）
+  const mgmtNightText = mgmtNightBrainNoteOn() ? (() => {
+    const burst: string[] = [];
+    for (const m of typedMessages) { if (m.sender !== "customer") break; if (m.text) burst.push(m.text); }
+    return nightMgmtBrainNote({ hour: jstParts().hour, customerText: burst.reverse().join("\n") });
+  })() : "";
 
   // 2026-09-23 竹内「送信の時間にたいしてどのように返信しているかも学べば…返信したのとAIXも掛け合わせたらより鮮明になる」:
   //   上の【時間情報】は日単位の1行しか無く、「何を送って何時間経ったか」「その種類は普通どれくらいで返るか」が無かった。
@@ -3512,11 +3520,11 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     return isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("templates", templatesText)}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${d("examples", examplesText)}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}
+    ? `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("templates", templatesText)}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${d("examples", examplesText)}${timingText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("contractExamples", contractExamplesPhaseText)}${d("winning", winningPatternsText)}${d("templates", templatesText)}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${d("examples", examplesText)}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}${latestSupersedesRule() ? `
+    : `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("contractExamples", contractExamplesPhaseText)}${d("winning", winningPatternsText)}${d("templates", templatesText)}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${d("examples", examplesText)}${prevMetaText}${timingText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}${latestSupersedesRule() ? `
 
 【今回の発言の読み方】${latestSupersedesRule()}` : ""}
 

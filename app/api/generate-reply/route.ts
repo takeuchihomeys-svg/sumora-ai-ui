@@ -5579,7 +5579,7 @@ async function handleGenerateReply(req: NextRequest) {
       // 2026-11-05 作業員9（弱い所 324・KB P1 9fd703f4）: 2段の確認の方向の結び「確認出来次第ご連絡」が下の【管理会社の状況】の「明日」より勝っていた＝
       //   夜の管理会社への確認だけ、方向のすぐ下で結びの前に「本日管理会社営業時間外の為、明日」を入れさせる（判断・結びの言葉は変えない・MGMT_NIGHT_CLOSING=on・既定 off）
       if (mgmtNightClosingOn() && /確認出来次第ご連絡/.test(`${brainDirTop ?? ""}\n${effectiveReplyDirection ?? ""}`)) {
-        const nightLine = nightMgmtClosingLine({ hour: getJSTHour(), weekend: [0, 6].includes(getJSTDayOfWeek()), allowed: confirmCtx.allowed, object: confirmCtx.object, splitOn: mgmtHoursSplitEnabled(), topicText: customerMsgUnits.join("\n") || (message ?? "") });
+        const nightLine = nightMgmtClosingLine({ hour: getJSTHour(), saturday: getJSTDayOfWeek() === 6, allowed: confirmCtx.allowed, object: confirmCtx.object, splitOn: mgmtHoursSplitEnabled(), topicText: customerMsgUnits.join("\n") || (message ?? "") });
         if (nightLine) { lines.push(nightLine); console.info("[mgmt-night-closing]", JSON.stringify({ conversationId, object: confirmCtx.object })); }
       }
       console.info("[turn-contract:direction]", JSON.stringify({ tc: turnContract?.source ?? null, brainTop: !!brainDirTop, typeWonOverBrain: !!brainDirTop && !!effectiveReplyDirection && effectiveReplyDirection !== brainDirTop }));
