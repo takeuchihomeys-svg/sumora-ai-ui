@@ -20,6 +20,7 @@
 // スイッチ: COMPOSE_CONDUCTOR=on（既定 off＝今と1文字も変わらない）。
 // テスト: npx tsx app/lib/__tests__/reply-compose-conductor.test.ts
 import { planFromMeta, type TwoMessagePlan, type PlannedMessage, type Duty } from "./two-message-plan";
+import { relationKeep } from "./conductor-focus";
 
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
@@ -89,18 +90,16 @@ const FOCUS_MAP: Record<string, MessageFocusKey> = {
 };
 
 /** 案A の線: 継続の約束を添えるか（条件の番は既定で添える・了承と検討は前の流れか頼まれた時だけ・同じ日は1回まで） */
+// 2026-11-06 作業員5 の relationKeep（conductor-focus.ts・統括役の決め）に寄せる＝1つの正。了承・検討の番は「お客様が新着を頼んだ」か
+//   「近い竹内さんの番の過半数（anatomy.keep）」の時だけ添える。「直前に物件を送った・募集終了の報告」は候補だけ（試験 q164 で竹内さんは添えていなかった）
 export function keepPromiseLine(i: FocusInput): { keep: boolean; why: string } {
   if (i.keepSaidToday) return { keep: false, why: "今日すでに継続の約束を言った（同じ日は1回まで）" };
   const k = i.inputs.focus?.keepPromise;
   if (typeof k === "boolean") return { keep: k, why: k ? "統括が継続の約束を添えると決めた" : "統括が添えないと決めた" };
-  if (i.scene === "conditions") return { keep: true, why: "条件の番（竹内さんは59%で添える）" };
-  if (i.scene === "ack" || i.scene === "considering") {
-    if (i.customerAskedNew) return { keep: true, why: "お客様が新着を頼んだ" };
-    if (i.prevStaff === "property_sent" || i.prevStaff === "ended_report") return { keep: true, why: i.prevStaff === "property_sent" ? "物件を送った後のお礼で開いている約束が無い" : "募集終了・申込が入っていた報告の了承" };
-    if (typeof i.nearKeepShare === "number" && i.nearKeepShare > 0.5) return { keep: true, why: `近い竹内さんの番の${Math.round(i.nearKeepShare * 100)}%が添えた` };
-    return { keep: false, why: "了承・検討の番の既定（竹内さんは9〜12%）" };
-  }
-  return { keep: false, why: "" };
+  const keep = relationKeep({ scene: i.scene, customerAskedNew: i.customerAskedNew, nearKeepShare: i.nearKeepShare ?? null, keptToday: i.keepSaidToday,
+    lastStaffSentOrEnded: i.prevStaff === "property_sent" || i.prevStaff === "ended_report", openPromise: i.prevStaff === "promise_open" });
+  if (!keep) return { keep: false, why: i.scene === "ack" || i.scene === "considering" ? "了承・検討の番の既定（竹内さんは9〜12%）" : "" };
+  return { keep: true, why: i.scene === "conditions" ? "条件の番（竹内さんは59%で添える）" : i.customerAskedNew ? "お客様が新着を頼んだ" : `近い竹内さんの番の${Math.round((i.nearKeepShare ?? 0) * 100)}%が添えた` };
 }
 
 /** この通の重点を1つ決める。統括の重点があればそれ（決め直さない）→ 組み合わせのこの通の受け持ち → 場面 の順 */
@@ -135,7 +134,7 @@ export function messageFocusNote(mf: MessageFocus, o: { name?: string | null } =
   const L = [`【✍️ この通の重点（文の統括）】${MESSAGE_FOCUS_JA[mf.key]}（理由: ${mf.why}）`];
   if (mf.duties.length) L.push(`- この通が担う事: ${mf.duties.map((d) => ({ answer: "答える", trust: "信頼", appeal: "訴求" }[d])).join("・")}`);
   if (mf.key === "answer") L.push("- 聞かれた事の答えを最初の中身の文に置く（確認の約束に逃げない・材料に無い事は言い切らない）");
-  if (mf.keep) L.push(`- 締めの前に継続の約束を1つだけ添える（竹内さんの実送信の形: 「引き続き新着で${nm}にオススメ出来るお部屋募集に出次第お送りさせて頂きます！！」か「${nm || "〇〇さん"}がご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます！！」のどちらか1つ）`);
+  if (mf.keep) L.push(`- この通の中身（約束・答え）はそのまま書き、その後・締めの前に継続の約束を1文だけ足す（中身を継続の約束に置き換えない・中身を省かない）。形は竹内さんの実送信: 「引き続き新着で${nm}にオススメ出来るお部屋募集に出次第お送りさせて頂きます！！」か「${nm || "〇〇さん"}がご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます！！」のどちらか1つ）`);
   if (mf.key === "relation_ack") L.push("- 受けて締める。新しい中身（約束・説明・誘い）を足さない");
   if (mf.omit.length) L.push(`- 書かない事: ${mf.omit.map((k) => OMIT_JA[k]).join("・")}`);
   return L.join("\n");
