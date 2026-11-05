@@ -68,3 +68,30 @@ export function nightMgmtBrainNote(o: { hour: number; customerText: string | nul
   if (!hit) return "";
   return `\n【管理会社の営業時間外】今は${o.hour}時台（管理会社の営業時間外）。お客様が聞いた「${hit[0]}」等の管理会社にしか答えられない確認・交渉は、今は結果を持っていない＝AIX【物件確認した】で結果を送る番ではない。竹内さんの決まり（18時以降）: 確認の約束の返信（two_stage=check・「本日管理会社営業時間外の為、明日確認させて頂き、確認出来次第ご連絡」・土曜の夜は月曜）にして、結果は翌日 AIX【確認した】で送る。募集状況だけの確認はこの決まりの外（今すぐ確かめられる）`;
 }
+
+/**
+ * 案A（2026-11-06 統括役の決め・弱い所 345）: 夜の番だけ、お客様の話題に当たるピッカーの意味を材料の1行に足す
+ *   「AIX【物件確認した】のこのピッカーは『管理会社に聞いた結果』を送るボタン＝今夜はまだ押せない（結果が無い）」。
+ *   なぜ: 事実と決まりの1行（MGMT_NIGHT_BRAIN_NOTE）だけでは q136 が 0/3→1/4 しか動かなかった。ブレインはピッカー（mgmt_parking・mgmt_initial_cost）を
+ *   「管理会社に確かめる」の意味で選んでいる見込み＝選ぶ時に見るピッカーの言葉で、今夜は結果が無い事を伝える。
+ *   AIX の一覧（aix-catalog の説明・キャッシュの固定部分）は変えない（夜だけの1行は動く材料の側に置く＝キャッシュを壊さない・AIX の改善の決まりの外）。
+ * 切替: MGMT_NIGHT_PICKER_NOTE=on（MGMT_NIGHT_BRAIN_NOTE の1行が出る番だけ・既定 off）。
+ */
+export function mgmtNightPickerNoteOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.MGMT_NIGHT_PICKER_NOTE ?? "").trim().toLowerCase() === "on";
+}
+const TOPIC_PICKERS: Array<[RegExp, string]> = [
+  [/駐車|駐輪|バイク/, "mgmt_parking"],
+  [/礼金|敷金|交渉|値下|割引|フリーレント|クリーニング|鍵/, "mgmt_initial_cost"],
+  [/代理契約/, "mgmt_proxy"],
+  [/ペット|猫|犬/, "mgmt_pet"],
+  [/設備|洗濯|楽器/, "mgmt_equipment"],
+  [/入居(?:可能)?日/, "mgmt_move_in"],
+  [/二人|法人/, "mgmt_two_person"],
+];
+export function nightPickerLine(customerText: string | null | undefined): string {
+  const t = String(customerText ?? "");
+  const ps = [...new Set(TOPIC_PICKERS.filter(([re]) => re.test(t)).map(([, p]) => p))];
+  if (!ps.length) return "";
+  return `\n【今夜はまだ押せないピッカー】AIX【物件確認した】の ${ps.join("・")} は「管理会社に聞いた結果」を送るピッカー。今は管理会社の営業時間外で結果がまだ無い＝今夜はこのピッカーを選ばない（aix にしない）。今夜は two_stage=check の確認の約束の返信、結果が出た翌日にこのピッカー`;
+}

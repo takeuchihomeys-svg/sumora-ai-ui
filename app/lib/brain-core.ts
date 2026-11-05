@@ -164,7 +164,7 @@ import { isUsableExampleText, isCustomerFacingExample, fixExampleWeekdays } from
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（timeZone 抜けの UTC 表示を防ぐ）
 import { jstAgo, jstMD, jstMDHm, jstYmd, jstYmdWeekday, weekdayTable, jstParts } from "@/app/lib/jst-date";
-import { mgmtNightBrainNoteOn, nightMgmtBrainNote } from "@/app/lib/mgmt-hours-split";
+import { mgmtNightBrainNoteOn, nightMgmtBrainNote, mgmtNightPickerNoteOn, nightPickerLine } from "@/app/lib/mgmt-hours-split";
 import { isEvaluativePrinciple, principleEvalFilterEnabled } from "@/app/lib/principle-eval";
 import { knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { fixChineseGlyphs } from "@/app/lib/japanese-glyph";
@@ -2124,7 +2124,10 @@ async function analyzeConversationCore(
   const mgmtNightText = mgmtNightBrainNoteOn() ? (() => {
     const burst: string[] = [];
     for (const m of typedMessages) { if (m.sender !== "customer") break; if (m.text) burst.push(m.text); }
-    return nightMgmtBrainNote({ hour: jstParts().hour, customerText: burst.reverse().join("\n") });
+    const customerText = burst.reverse().join("\n");
+    const note = nightMgmtBrainNote({ hour: jstParts().hour, customerText });
+    // 案A（MGMT_NIGHT_PICKER_NOTE=on・既定 off）: 1行が出る番だけ、話題に当たるピッカーは「今夜はまだ押せない」を足す
+    return note && mgmtNightPickerNoteOn() ? note + nightPickerLine(customerText) : note;
   })() : "";
 
   // 2026-09-23 竹内「送信の時間にたいしてどのように返信しているかも学べば…返信したのとAIXも掛け合わせたらより鮮明になる」:
