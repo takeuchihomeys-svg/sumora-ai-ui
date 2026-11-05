@@ -25,5 +25,9 @@ t("重点と背景を読む", af?.focus === "promise_keep" && af?.background ===
 t("一覧に無い重点は null", parseAnatomy('{"purpose":"ack","main_point":"a","parts":[],"why_order":"","omitted":[],"focus":"創作"}')?.focus === null);
 t("重点の無い答え（off の時）は focus を持たない", a ? !("focus" in a) : false);
 t("状況の文 v2 があれば指示に入る", /その番の時点の状況/.test(anatomyPrompt({ maskedCustomer: "a", maskedBody: "b", scene: "ack", situation: "進み: 見積書の後" })) && !/その番の時点の状況/.test(anatomyPrompt({ maskedCustomer: "a", maskedBody: "b", scene: "ack" })));
+// 2026-11-05 作業員9の案: 書かなかった型の札と継続の約束
+const as = parseAnatomy('{"purpose":"ack","main_point":"a","parts":[],"why_order":"","omitted":[],"focus":"relation","skipped_types":["hours","創作","hours","keep_promise_absent"],"keep":false}');
+t("書かなかった型の札は一覧の物だけ・重ねない", JSON.stringify(as?.skipped_types) === '["hours","keep_promise_absent"]' && as?.keep === false, as);
+t("札と keep の指示は重点を読む時だけ", /keep_promise_absent/.test(ANATOMY_SYSTEM_FOCUS) && !/keep_promise_absent/.test(ANATOMY_SYSTEM));
 console.log(`takeuchi-anatomy: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);

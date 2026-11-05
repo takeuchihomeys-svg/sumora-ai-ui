@@ -158,7 +158,7 @@ export const FOCUS_INTAKE_RULES = [
 ].join("\n");
 export const FOCUS_INTAKE_FIELD = `"focus_read": {"surface": "表（30字以内）", "background": "背景（40字以内）", "focus": "${FOCUS_KINDS.join("|")}", "why": "理由（30字以内）"}`;
 
-export type FocusRead = { surface: string; background: string; focus: Focus; why: string; near: string | null };
+export type FocusRead = { surface: string; background: string; focus: Focus; why: string; near: string | null; keepPromise?: boolean };
 /** 入口の統括の答えから focus_read を読む（一覧に無い重点は捨てる） */
 export function parseFocusRead(raw: unknown, near: NearFocus | null = null): FocusRead | null {
   const o = (raw && typeof raw === "object" ? (raw as Record<string, unknown>).focus_read ?? raw : null) as Record<string, unknown> | null;
@@ -194,8 +194,23 @@ export const FOCUS_ORDER: Record<Focus, OrderStep[]> = {
 const SCENE_ORDER: Partial<Record<string, Partial<Record<Focus, OrderStep[]>>>> = {
   cost: { answer: [S("rough", "judge", "重点・表と背景", "返信か AIX（初期費用について・説明）か"), S("detail", "estimate", "物件（あれば）", "費用の中身・割引"), S("compose", "combine", "判断の turn_contract＋重点", "何通・どの順・各通の受け持ち（答える／信頼／訴求）"), S("compose", "writer", "判断＋費用の材料", "文"), S("verify", "check_ground", "下書き＋材料", "金額を材料の外で言っていないか")] },
 };
-export function focusOrder(scene: string | null | undefined, focus: Focus): OrderStep[] {
-  return (scene && SCENE_ORDER[scene]?.[focus]) || FOCUS_ORDER[focus];
+/** relation の「継続の約束を添える」1段（案A・11/05 統括役決定・作業員9の数え: 条件 59%／了承 9%／検討 12%・言葉では見分けられない）。KB 1d07b3df: 新着で出次第か全力サポートのどちらか1つ・同じ日に1回まで */
+const KEEP_STEP = S("compose", "compose", "受け＋前の流れ（送った物・報告・開いている約束）", "継続の約束を1つ添える（新着で出次第／全力サポート・同じ日に1回まで）");
+/**
+ * relation の番に継続の約束を添えるか（候補の網・決めるのは統括）。条件の番は既定で添える。了承・検討の番は次のどれかの時だけ:
+ *   (a) 直前のこちらの送信が物件の送付か、募集終了・申込が入っていた報告で、開いている約束が無い (b) お客様が新着を頼んだ (c) 近い竹内さんの番の過半数が添えている
+ *   同じ日に既に添えていたら添えない（KB 1d07b3df）
+ */
+export function relationKeep(o: { scene: string | null | undefined; lastStaffSentOrEnded?: boolean; openPromise?: boolean; customerAskedNew?: boolean; nearKeepShare?: number | null; keptToday?: boolean }): boolean {
+  if (o.keptToday) return false;
+  if (o.scene === "conditions") return true;
+  if (o.scene !== "ack" && o.scene !== "considering") return false;
+  return (!!o.lastStaffSentOrEnded && !o.openPromise) || !!o.customerAskedNew || (o.nearKeepShare ?? 0) > 0.5;
+}
+export function focusOrder(scene: string | null | undefined, focus: Focus, o: { keep?: boolean } = {}): OrderStep[] {
+  const base = (scene && SCENE_ORDER[scene]?.[focus]) || FOCUS_ORDER[focus];
+  if (focus === "relation" && o.keep) return [base[0], KEEP_STEP, ...base.slice(1).map((x) => (x.role === "writer" ? { ...x, decides: "受け→継続の約束→締め" } : x))];
+  return base;
 }
 /** digest の「使った順番」（例 "judge>aix_desk>property_search>second"） */
 export const orderDigest = (steps: ReadonlyArray<OrderStep>) => steps.map((s) => s.role).filter((r, i, a) => a[i - 1] !== r).join(">");
@@ -209,7 +224,7 @@ export function laterOverrode(steps: ReadonlyArray<OrderStep>, decided: Readonly
   return null;
 }
 /** meta.conductor_focus（作業員4の受け口）に入れる形 */
-export const conductorFocusMeta = (r: FocusRead | null) => (r ? { focus: r.focus, why: r.why || null, surface: r.surface || null, background: r.background || null, near: r.near } : null);
+export const conductorFocusMeta = (r: FocusRead | null) => (r ? { focus: r.focus, why: r.why || null, surface: r.surface || null, background: r.background || null, near: r.near, ...(r.keepPromise !== undefined ? { keepPromise: r.keepPromise } : {}) } : null);
 /** digest.cf の1語（表・背景は入れない＝短く） */
 export const focusReadDigest = (r: FocusRead | null | undefined) => (r ? `${r.focus}${r.near ? `|${r.near}` : ""}` : null);
 

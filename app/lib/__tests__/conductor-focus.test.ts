@@ -2,7 +2,7 @@
 import {
   conductorFocusMode, focusOfAix, focusOfReplyText, focusOfTakeuchiTurn, stageAt, openPromiseAt, sentAt, turnSituationTextV2,
   nearestFocus, sceneMajorityFocus, focusDigest, parseFocusRead, nearFocusLine, conductorFocusMeta, focusReadDigest, focusConflict,
-  FOCUS_INTAKE_RULES, FOCUS_INTAKE_FIELD, FOCUS_KINDS, FOCUS_ORDER, focusOrder, orderDigest, laterOverrode, type HistMsg,
+  FOCUS_INTAKE_RULES, FOCUS_INTAKE_FIELD, FOCUS_KINDS, FOCUS_ORDER, focusOrder, orderDigest, laterOverrode, relationKeep, type HistMsg,
 } from "../conductor-focus";
 import { turnSendsForShape, isShapeAttachment } from "../conductor-turn-vectors";
 import { shapeOfSends } from "../two-message-plan";
@@ -102,6 +102,15 @@ it("番の型: 最初の送信から次のお客様の手前まで・付き物�
   eq(shapeOfSends(turnSendsForShape(msgs, 1)), "AT");
   eq(shapeOfSends(turnSendsForShape(msgs, 6)), "R");
   ok(isShapeAttachment("[画像]") && isShapeAttachment("  ") && !isShapeAttachment("はい"));
+});
+it("relation の継続の約束（案A）: 条件の番は既定で添える・了承と検討は (a)(b)(c) の時だけ・同じ日に2回目は添えない", () => {
+  ok(relationKeep({ scene: "conditions" })); ok(!relationKeep({ scene: "conditions", keptToday: true }));
+  ok(!relationKeep({ scene: "ack" }));
+  ok(relationKeep({ scene: "ack", lastStaffSentOrEnded: true })); ok(!relationKeep({ scene: "ack", lastStaffSentOrEnded: true, openPromise: true }));
+  ok(relationKeep({ scene: "considering", customerAskedNew: true })); ok(relationKeep({ scene: "ack", nearKeepShare: 0.6 })); ok(!relationKeep({ scene: "ack", nearKeepShare: 0.5 }));
+  ok(!relationKeep({ scene: "question", customerAskedNew: true }));
+  eq(orderDigest(focusOrder("ack", "relation", { keep: true })), "judge>compose>writer");
+  eq(orderDigest(focusOrder("ack", "relation")), "judge>writer");
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

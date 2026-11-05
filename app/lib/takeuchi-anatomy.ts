@@ -15,7 +15,12 @@ export type Anatomy = {
   parts: AnatomyPart[]; why_order: string; omitted: Array<{ what: string; why: string }>;
   /** 2026-11-05 作業員5（KB P0 575a7cd5・統括役了承）: この番の重点と言葉の背景（TAKEUCHI_ANATOMY_FOCUS=on の時だけ読ませる・無い行は省く） */
   focus?: Focus | null; background?: string | null;
+  /** 2026-11-05 作業員9の案（統括役・作業員5）: 書けたのに書かなかった事の札（決まった一覧から）と、継続の約束を添えたか（重点を読む時だけ） */
+  skipped_types?: SkippedType[]; keep?: boolean | null;
 };
+/** 書けたのに書かなかった事の札（作業員9 14日の24通の型）。採点でそのまま数える */
+export const SKIPPED_TYPES = ["hours", "restate_conditions", "restate_viewing", "cost_assert", "double_apology", "apply_promise", "deadline_promise", "keep_promise_absent"] as const;
+export type SkippedType = typeof SKIPPED_TYPES[number];
 /** 解剖に重点と背景も読ませる（既定 off）。on の間は anatomy が無い行と focus が無い行を新しい順に約1,000通まで読む */
 export const anatomyFocusOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.TAKEUCHI_ANATOMY_FOCUS ?? "").trim().toLowerCase() === "on";
 
@@ -45,7 +50,9 @@ export const ANATOMY_SYSTEM_FOCUS = [
   "追加で書き出す物（JSON に一緒に入れる）: background（言葉の背景＝お客様がなぜ今それを言ったか・言っていない心配や本音・段階と気持ち・前の約束や送った物との関係。40字以内・読める物だけ・無ければ null）・",
   `focus（竹内さんがこの番で一番大切にした事を次から1つ: ${FOCUS_KINDS.map((k) => `${k}=${FOCUS_LABEL[k]}`).join("／")}）。`,
   "境目: 内覧の希望に内覧の調整で応える＝close／日程の確定待ちで「確認します」と返す＝promise_make／受けだけの文でも前の約束を果たしている番（結果・物件・見積を送った直後の受け等）＝promise_keep／残念な報告も正直に答える番＝answer。迷ったら優先の段（正直→確認の約束→一つ一つに答える→即答→気持ち→次の一手→形）の上。",
-  "出力は JSON だけ（上の項目に \"background\" と \"focus\" を足す）。",
+  "skipped_types（書けたのに竹内さんが書かなかった型を次から当てはまる物だけ: hours=営業時間の一言／restate_conditions=条件の全部の復唱／restate_viewing=内覧の詳細の復唱／cost_assert=日割・割引の断言／double_apology=二重の謝罪／apply_promise=根拠の無い申込の約束／deadline_promise=時期の約束（明日中 等）／keep_promise_absent=継続の約束を添えなかった。無ければ []）・",
+  "keep（継続の約束＝「新着で出次第お送り」「見つかるまで全力でサポート」等を添えたか true/false）。",
+  "出力は JSON だけ（上の項目に \"background\"・\"focus\"・\"skipped_types\"・\"keep\" を足す）。",
 ].join("\n");
 /** 下読みに渡すのは伏せ済みの物だけ（body・customer_gist は takeuchi_compose_examples に伏せて置いた物）。situation はその番の時点の状況の文 v2（あれば） */
 export function anatomyPrompt(o: { maskedCustomer: string | null; maskedBody: string; scene: string; situation?: string | null }): string {
@@ -65,6 +72,8 @@ export function parseAnatomy(text: string): Anatomy | null {
       parts: (Array.isArray(o.parts) ? o.parts : []).map(String).filter((p): p is AnatomyPart => (PARTS as readonly string[]).includes(p)).slice(0, 8),
       why_order: clip(o.why_order, 120),
       ...(o.focus !== undefined ? { focus: (FOCUS_KINDS as readonly string[]).includes(String(o.focus)) ? (String(o.focus) as Focus) : null } : {}),
+      ...(o.skipped_types !== undefined ? { skipped_types: (Array.isArray(o.skipped_types) ? o.skipped_types : []).map(String).filter((x): x is SkippedType => (SKIPPED_TYPES as readonly string[]).includes(x)).filter((x, i, a) => a.indexOf(x) === i) } : {}),
+      ...(o.keep !== undefined ? { keep: o.keep === true || o.keep === "true" ? true : o.keep === false || o.keep === "false" ? false : null } : {}),
       ...(o.background !== undefined ? { background: o.background == null || String(o.background) === "null" ? null : clip(o.background, 60) } : {}),
       omitted: (Array.isArray(o.omitted) ? o.omitted : []).slice(0, 3).map((x) => ({ what: clip((x as { what?: unknown })?.what, 60), why: clip((x as { why?: unknown })?.why, 80) })).filter((x) => x.what),
     };
