@@ -1,6 +1,6 @@
 // 夜の基準に固定するか（scripts/lib/exam-base-pin.ts）の単体テスト（LLM も DB も git も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-base-pin.test.ts（全 PASS で exit 0）
-import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects } from "../exam-base-pin";
+import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects, nightBaseJobDue } from "../exam-base-pin";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -48,6 +48,14 @@ ok("題: 既定 off だけ→false", !defaultOnFromSubjects(["feat(組み合わ�
 ok("題: 既定 on が1つ→true", defaultOnFromSubjects(["feat(a): …（既定 off）", "feat(挨拶): …（GREETING_CONTINUATION_SKIP 既定 on）"]));
 ok("題: 書いていない題は安全側で true", defaultOnFromSubjects(["fix(送った資料の読み直し): 読めなかった画像を読み直す"]));
 ok("題: 空→false", !defaultOnFromSubjects([]));
+
+{
+  const day = nightBaseJobDue(null, new Date("2026-11-05T05:00:00Z"), { cwd: "/x" }); // JST 14時
+  ok("夜の基準: 昼は積まない", !day.due && day.job === null);
+  const n = nightBaseJobDue(null, new Date("2026-11-05T13:00:00Z"), { cwd: "/x" }); // JST 22時
+  ok("夜の基準: 夜に1つ積む", n.due && n.day === "2026-11-05" && String((n.job as { cmds: string[] }).cmds[0]).includes("--baseline-only") && (n.job as { nightOnly: boolean }).nightOnly);
+  ok("夜の基準: 同じ日は2回積まない", !nightBaseJobDue("2026-11-05", new Date("2026-11-05T14:00:00Z"), { cwd: "/x" }).due);
+}
 
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

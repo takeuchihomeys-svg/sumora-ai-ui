@@ -53,6 +53,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { nightBaseJobDue } from "./lib/exam-base-pin";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -591,6 +592,17 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
           const code = await runNpx(process.cwd(), ["tsx", "--env-file=.env.local", "scripts/hazard-audit.ts", "--save"], {}, out).done;
           const head = (() => { try { return readFileSync(out, "utf8").split(/\r?\n/).find((l) => l.startsWith("危ない所の見張り")) ?? ""; } catch { return ""; } })();
           log(`  見張り 終わり（${code}）: ${head.slice(0, 300)}`);
+        }
+      }
+      // 2026-11-05 作業員8（統括役の了承の 1「前の答えを本番の commit ごとに1回だけ作って使い回す（夜に1回）」）: 夜の基準を作る依頼を、JST 21時以降に1日1つ積む
+      //   （2つ目の流す役だけ・積むだけで流すのは試験の列＝夜だけ・止める EXAM_NIGHT_BASE=off）。終わると brain-exam が nightly-base-<構成>.json を書く
+      if (REMOTE_ONLY && (process.env.EXAM_NIGHT_BASE ?? "").trim().toLowerCase() !== "off") {
+        const nbFile = join(ROOT, "night-base-last.json");
+        const nb = nightBaseJobDue(readJson<{ day?: string } | null>(nbFile, null)?.day ?? null, new Date(), { cwd: process.cwd() });
+        if (nb.due && nb.job) {
+          writeFileSync(nbFile, JSON.stringify({ day: nb.day, at: new Date().toISOString() }));
+          writeFileSync(join(ROOT, `${String(nb.job.createdAt).replace(/[:.]/g, "-")}-${nb.job.label}.json`), JSON.stringify(nb.job, null, 1));
+          log(`夜の基準の依頼を積んだ: ${nb.job.label}（夜だけ流す）`);
         }
       }
       const isRemoteJob = (x: ExamJob) => x.runner === "tsc-remote" || (x.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") || (x.runner === "cmd" && !!x.readOnly);

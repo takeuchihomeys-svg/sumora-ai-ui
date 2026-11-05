@@ -86,6 +86,27 @@ export function defaultOnFromSubjects(subjects: string[]): boolean {
 /** 夜の基準の控えの形（<置き場>/nightly-base-<構成>.json） */
 export type NightlyRecord = NightlyBase & { cfg: string };
 
+/**
+ * 夜の基準を作る依頼（係の列に毎晩1つ積む・純関数）。夜（JST fromHour 時以降・既定 21時）に、その日の分がまだ積まれていなければ返す。
+ *   中身: brain-exam --baseline=main --baseline-only（取り置きが無い・入力が変わった問題だけ回す＝決まった入力なら下見で済む）・stage=brain・夜だけ流す。
+ *   終わると brain-exam が nightly-base-<構成>.json を書き、次の日の昼の依頼がその commit で比べる。
+ */
+export function nightBaseJobDue(lastJstDay: string | null, now: Date, opts: { fromHour?: number; cwd: string; repeat?: number }): { due: boolean; day: string; job: Record<string, unknown> | null } {
+  const j = new Date(now.getTime() + 9 * 3_600_000);
+  const day = j.toISOString().slice(0, 10), h = j.getUTCHours();
+  const due = lastJstDay !== day && h >= (opts.fromHour ?? 21);
+  if (!due) return { due, day, job: null };
+  const label = `night-base-${day}`;
+  const createdAt = now.toISOString();
+  return {
+    due, day, job: {
+      id: `${now.getTime()}`, label, owner: "夜の基準", switch: "（夜の基準を作る）", cwd: opts.cwd, only: "", stage: "brain", repeat: 1, env: { LLM_TEST_MODE: "deepseek-all" },
+      createdAt, tries: 0, runner: "cmd", nightOnly: true, priority: 9, maxMin: 300,
+      cmds: [`scripts/brain-exam.ts --label=${label} --conv=auto --baseline=main --baseline-only --stage=brain --repeat=${Math.max(1, opts.repeat ?? 2)}`],
+    },
+  };
+}
+
 /** 確かめ直しの対象: 夜の基準と比べて悪化に見えた問題（確かな悪化・揺れの範囲の差の両方）。良くなった・同じは確かめない */
 export function confirmTargets(cmps: Array<{ id: string; cmp: string }>): string[] {
   return cmps.filter((c) => /^worse/.test(c.cmp)).map((c) => c.id);
