@@ -21,6 +21,18 @@ export type RereadMsg = { id: string | number; conversation_id: string; created_
 export type RereadAix = { conversation_id: string; created_at: string; aix_type: string | null };
 export type RereadTarget = { imageUrl: string; conversationId: string; source: string; sentAt: string };
 
+/**
+ * 2026-11-06 弱い所 352: まとめて送った通は messages.image_url に URL の配列（JSON の文字列 '["https://…","https://…"]'）が入る。
+ *   そのまま1つの URL として読ませると DeepSeek が 400「Unsupported image_url format」（11/06 の読み直しで2枚）。配列なら1枚ずつに分ける
+ */
+export function imageUrlsOf(raw: string | null | undefined): string[] {
+  const t = String(raw ?? "").trim();
+  if (!t) return [];
+  if (t.startsWith("[")) {
+    try { const a = JSON.parse(t); return Array.isArray(a) ? a.map((x) => String(x ?? "").trim()).filter((x) => /^https?:\/\//.test(x)) : []; } catch { return []; }
+  }
+  return /^https?:\/\//.test(t) ? [t] : [];
+}
 /** その画像の通の直前10分の AIX の種類（無ければ手で送った画像） */
 export function sourceOfImage(m: RereadMsg, aix: ReadonlyArray<RereadAix>): string {
   if (!m.is_aix_generated) return "staff_image";
@@ -39,15 +51,16 @@ export function pickRereadTargets(
   const seen = new Set<string>();
   const out: RereadTarget[] = [];
   for (const m of [...msgs].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))) {
-    const url = (m.image_url ?? "").trim();
-    if (!url || recorded.has(url) || seen.has(url)) continue;
     if (Date.parse(m.created_at) < since) continue;
     if (o.skipConv?.(m.conversation_id)) continue;
     const source = sourceOfImage(m, aix);
     if (NOT_PROPERTY_AIX.test(source.replace(/^aix:/, ""))) continue;
-    seen.add(url);
-    out.push({ imageUrl: url, conversationId: m.conversation_id, source, sentAt: m.created_at });
-    if (out.length >= (o.limit ?? 40)) break;
+    for (const url of imageUrlsOf(m.image_url)) {
+      if (recorded.has(url) || seen.has(url)) continue;
+      seen.add(url);
+      out.push({ imageUrl: url, conversationId: m.conversation_id, source, sentAt: m.created_at });
+      if (out.length >= (o.limit ?? 40)) return out;
+    }
   }
   return out;
 }

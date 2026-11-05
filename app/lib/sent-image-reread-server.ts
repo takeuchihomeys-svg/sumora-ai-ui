@@ -1,7 +1,7 @@
 // app/lib/sent-image-reread-server.ts — 読み直し待ちの送付の画像を DeepSeek で読み直して記録を埋める（純関数は sent-image-reread.ts）
 //   ⚠ LINE には何も送らない（送信の関数を import しない）。書くのは recordSentImageProperty と ensureImageDetail の記録だけ。
 import { supabase } from "@/app/lib/supabase-server";
-import { pickRereadTargets, sentImageRereadOn, REREAD_WINDOW_HOURS, type RereadMsg, type RereadAix, type RereadTarget } from "@/app/lib/sent-image-reread";
+import { pickRereadTargets, imageUrlsOf, sentImageRereadOn, REREAD_WINDOW_HOURS, type RereadMsg, type RereadAix, type RereadTarget } from "@/app/lib/sent-image-reread";
 import { isTestConversation } from "@/app/lib/test-conversations";
 
 export type RereadReport = { ok: boolean; dry: boolean; off?: boolean; targets: number; conversations: number; results: Array<{ conversationId: string; source: string; sentAt: string; read?: string; sentProperties?: string }>; error?: string };
@@ -17,7 +17,7 @@ export async function findRereadTargets(o: { conversationId?: string; windowHour
   if (error) throw new Error(`messages: ${error.message}`);
   const list = (msgs ?? []) as RereadMsg[];
   if (!list.length) return [];
-  const urls = [...new Set(list.map((m) => m.image_url!).filter(Boolean))];
+  const urls = [...new Set(list.flatMap((m) => imageUrlsOf(m.image_url)))];
   const recorded = new Set<string>(o.excludeUrls ?? []);
   for (let i = 0; i < urls.length; i += 20) { // URL の長さ（画像の URL は長い＝100件だと GET の上限を超えて fetch failed）
     const { data, error: e2 } = await supabase.from("sent_image_properties").select("image_url").in("image_url", urls.slice(i, i + 20));
