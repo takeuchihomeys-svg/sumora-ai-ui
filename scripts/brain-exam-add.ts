@@ -28,7 +28,7 @@ import { resolveReplyScene } from "../app/lib/reply-scene";
 import { subSceneOf } from "../app/lib/reply-subscene";
 import { APPLY_FORM_RE } from "../app/lib/customer-sim-shadow";
 import { STAFF_FAIL_RE } from "../app/lib/post-apply-brain-gate";
-import { addressNamesOf, maskExamText } from "./lib/brain-exam-mask";
+import { addressNamesOf, maskExamText, maskLedgerDeep } from "./lib/brain-exam-mask";
 import { rollbackPcToTurn, type PcAsOf, type PcHist } from "./lib/brain-exam-pc";
 import { publishProblems, readSharedProblem, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 
@@ -90,12 +90,8 @@ export const LEDGER_TABLES: Record<string, { time: string; times: string[]; date
   viewing_history: { time: "created_at", times: ["created_at", "updated_at"], dates: ["scheduled_date", "actual_date"], limit: 10, drop: ["viewing_report", "viewing_report_at"] },
   sent_facts: { time: "created_at", times: ["created_at", "sent_at"], limit: 40, drop: [] },
 };
-function maskDeep(v: unknown, mask: (s: string) => string): unknown {
-  if (typeof v === "string") { const m = mask(v); return m.length > 3000 ? m.slice(0, 3000) : m; }
-  if (Array.isArray(v)) return v.map((x) => maskDeep(x, mask));
-  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, maskDeep(x, mask)]));
-  return v;
-}
+/** 11/05 弱い所 301: id・*_id の欄と ISO 時刻・uuid の値は伏せない（scripts/lib/brain-exam-mask.ts maskLedgerDeep） */
+const maskDeep = (v: unknown, mask: (s: string) => string, key: string | null = null): unknown => maskLedgerDeep(v, mask, key);
 async function ledgerSnapshot(conv: string, pcId: string | null, at: string, mask: (s: string) => string): Promise<Record<string, LedgerRow[]>> {
   const out: Record<string, LedgerRow[]> = {};
   for (const [t, c] of Object.entries(LEDGER_TABLES)) {
@@ -108,7 +104,7 @@ async function ledgerSnapshot(conv: string, pcId: string | null, at: string, mas
       for (const [k, v] of Object.entries(r)) {
         if (c.drop.includes(k)) continue;
         if (c.times.includes(k) && k !== c.time && typeof v === "string" && ms(v) > ms(at)) { row[k] = null; continue; } // その時点では未来
-        row[k] = k === "customer_name" ? "YUMA" : maskDeep(v, mask);
+        row[k] = k === "customer_name" ? "YUMA" : maskDeep(v, mask, k);
       }
       return { ago: Math.round((ms(at) - ms(String(r[c.time]))) / 60_000), row };
     });
