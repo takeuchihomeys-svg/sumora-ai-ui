@@ -24,11 +24,11 @@ t("生成の1文: on は目安を写す・off は旧の禁止", /最短の入居
 
 console.log("■ 材料（契約条件・確認した系）");
 const lines = ["現況: 退去予定(10/31)", "入居時期: 相談"];
-const r = routeContractTerm("move_in", { lines, terms: null, pdfText: null } as never);
+const r = routeContractTerm("move_in", { lines, terms: null, pdfText: null } as never, { nowMs: NOW }); // 2026-11-05 時計を渡す（今日の日付に頼らない）
 t("契約条件の入居時期: 退去予定日＋目安の1行", r.route === "material" && r.facts.some((f) => /最短で\d+月/.test(f)), r);
-const c = routeConfirmTopic("move_in", lines);
+const c = routeConfirmTopic("move_in", lines, NOW);
 t("確認した系の入居: 退去予定日があれば目安で資料の答え", c.route === "material" && /逆算/.test(c.why), c);
-const cOff = (() => { process.env.VACATE_MOVE_IN_ESTIMATE = "off"; try { return routeConfirmTopic("move_in", lines); } finally { delete process.env.VACATE_MOVE_IN_ESTIMATE; } })();
+const cOff = (() => { process.env.VACATE_MOVE_IN_ESTIMATE = "off"; try { return routeConfirmTopic("move_in", lines, NOW); } finally { delete process.env.VACATE_MOVE_IN_ESTIMATE; } })();
 t("off → 確認した系は今まで通り確認", cOff.route === "confirm");
 const facts = r.facts.join("\n");
 t("最終チェックの免除: 目安の旬の文は資料のとおり", materialGroundsAssertion("MOVEIN_DATE_ASSERTION", "最短で11月中旬〜下旬のご入居となります！！", facts));
