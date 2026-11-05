@@ -76,7 +76,7 @@ import { examRealGapsOn, gapSceneTimesByDay } from "./lib/exam-scene-times";
 import { verifyCopy, type CopyVerdict } from "./lib/exam-copy-check";
 import { isNoLineTestConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
-import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, type SnapshotStats } from "./lib/exam-frozen-input";
+import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, type SnapshotStats } from "./lib/exam-frozen-input";
 import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord } from "./lib/exam-base-pin";
 /** 2026-11-05 F2 の確かめ（既定 on・止める EXAM_COPY_CHECK=off） */
 const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
@@ -1069,7 +1069,9 @@ async function prepareMainBaseline(): Promise<boolean> {
       const touched = files.filter(touchesExam);
       const subjects = touched.length ? execFileSync("git", ["log", "--format=%s", `${nb.commit}..${commit}`, "--", ...touched.slice(0, 200)]).toString().split("\n").filter(Boolean) : [];
       const d = decideBasePin({ nightly: nb, nowMs: Date.now(), requestHasNightly: hasNightly, since: { files, defaultOnChange: defaultOnFromSubjects(subjects) }, problems: [] });
-      if (d.ref && !d.confirmOnCurrent) { commit = execFileSync("git", ["rev-parse", "--verify", `${d.ref}^{commit}`]).toString().trim(); pinnedNightly = commit; }
+      if (d.ref && !d.confirmOnCurrent) { commit = execFileSync("git", ["rev-parse", "--verify", `${d.ref}^{commit}`]).toString().trim(); pinnedNightly = commit;
+        // 弱い所 354: 前（夜の基準）と今の回が同じ日の DB の写しを読む
+        if (nb.snapDay && !(process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim()) { process.env.EXAM_DB_SNAPSHOT_DAY = nb.snapDay; console.log(`  DB の材料の写し: 夜の基準の日 ${nb.snapDay} を読む`); } }
       console.log(`  前（main）: ${d.ref && !d.confirmOnCurrent ? "夜の基準で比べる" : "今の main で作る"}（${d.why}）`);
     } catch (e) { console.warn(`  ⚠ 夜の基準が読めない（今の main で作る）: ${String(e).slice(0, 160)}`); }
   }
@@ -1146,6 +1148,8 @@ async function prepareMainBaseline(): Promise<boolean> {
   // main が進んだか（塊の間で見る・5分に1回まで）。進んで試験に効く所の版が変わったら、古い main の答えを作り続けない
   let movedMemo: { at: number; v: string | null } = { at: Date.now(), v: null };
   const mainMoved = (): string | null => {
+    // 2026-11-06 作業員8: 夜の基準（EXAM_BASELINE_IGNORE_MAIN_MOVED=1）は始めに決めた main で最後まで作る（11/05 夜は main が進んで 45/218問で止まり、夜の基準の控えが書かれなかった）
+    if (process.env.EXAM_BASELINE_IGNORE_MAIN_MOVED === "1") return null;
     if (ref !== "main" || !vk || !flag("baseline-only") || Date.now() - movedMemo.at < 5 * 60_000) return movedMemo.v; // 比べの回は決まった main と比べる＝取り置き（--baseline-only）だけ見る
     movedMemo = { at: Date.now(), v: null };
     try {
@@ -1202,7 +1206,7 @@ async function prepareMainBaseline(): Promise<boolean> {
         atomicWriteJson(pinsFile, pins);
         if (mode === "run") console.log(`  前の main の答えの控え: ${mine.size}/${ids.length}問（${[...mine].map(([id, s]) => `${id}←${s.dir ?? "?"}`).slice(0, 6).join(" ")}${mine.size > 6 ? " …" : ""}）＝要求が同じ段は前の答えを使う（呼ばない）`);
       }
-      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
+      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...((process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() ? { EXAM_DB_SNAPSHOT_DAY: process.env.EXAM_DB_SNAPSHOT_DAY } : {}), ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
       // main の作業ツリーは1つ＝1人ずつ（版の違う担当が checkout を取り合わない）
       // 2026-10-21 確かめる人: 待つのは上限まで（EXAM_MAIN_WT_WAIT_MIN・既定 120分）。持ち主が生きたまま止まっていても永遠には待たない。
       //   上限を過ぎても奪わない（生きている持ち主の作業ツリーを checkout -f で壊す）→ この回は作らずに進む（その問題は前との比べに入らない）
@@ -1336,7 +1340,7 @@ async function prepareMainBaseline(): Promise<boolean> {
   baselineReuse = { reused: plan.reuse.length, ran: INCR ? realRun.length : plan.run.length, reusedUsd, commit, dir, carried: carried.length, deferred: deferred.length, childUsd, childRuns, pinned: pinnedNightly };
   // 2026-11-05 作業員8: 夜の取り置き（--baseline-only・今の main・残り無し）を終えたら、夜の基準の控えを書く（昼の依頼がこの commit で比べる）
   if (flag("baseline-only") && ref === "main" && !deferred.length && !pinnedNightly) {
-    try { atomicWriteJson(nightlyFile, { commit, at: new Date().toISOString(), cfg: ch, problems: picked.filter((p) => now.has(p.id)).map((p) => p.id) } satisfies NightlyRecord, true); console.log(`  夜の基準の控えを書いた: ${commit.slice(0, 7)}（${nightlyFile}）`); } catch (e) { console.warn(`  ⚠ 夜の基準の控えを書けない: ${String(e).slice(0, 120)}`); }
+    try { atomicWriteJson(nightlyFile, { commit, at: new Date().toISOString(), cfg: ch, snapDay: (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(Date.now()), problems: picked.filter((p) => now.has(p.id)).map((p) => p.id) } satisfies NightlyRecord, true); console.log(`  夜の基準の控えを書いた: ${commit.slice(0, 7)}（${nightlyFile}）`); } catch (e) { console.warn(`  ⚠ 夜の基準の控えを書けない: ${String(e).slice(0, 120)}`); }
   }
   const missing = picked.filter((p) => !now.has(p.id)).length;
   console.log(`  前の結果: ${baseLabel}（使い回した ${plan.reuse.length}問・新しく回した ${Math.max(0, plan.run.length - missing)}問・取り置きの無い問題 ${missing}）`);

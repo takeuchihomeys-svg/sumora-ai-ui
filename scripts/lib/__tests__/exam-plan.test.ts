@@ -1,5 +1,6 @@
 // 試験の統括（scripts/lib/exam-plan.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-plan.test.ts（全 PASS で exit 0）
+import { flakeCleanSinceMs } from "../exam-flake";
 import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs } from "../exam-plan";
 
 let fail = 0, pass = 0;
@@ -52,6 +53,10 @@ ok("種類: 書いた物で決める", guessKind({ kind: "prod", switchName: "X"
 ok("cmd の割り: = の後ろの引用符に空白（作業員4 ci-v1L）", JSON.stringify(splitCmdArgs("scripts/exam-aix-text.ts --label=a --qfile=\"C:/Users/竹内 悠馬/a.json\" --kinds=second")) === JSON.stringify(["scripts/exam-aix-text.ts", "--label=a", "--qfile=C:/Users/竹内 悠馬/a.json", "--kinds=second"]));
 ok("cmd の割り: 丸ごと引用符", JSON.stringify(splitCmdArgs("a \"b c\" d")) === JSON.stringify(["a", "b c", "d"]));
 ok("cmd の割り: 引用符なし", splitCmdArgs("x  y").join("|") === "x|y");
+
+ok("揺れの記録: 既定は 11/05 の直しの後だけ読む", flakeCleanSinceMs({}) === Date.parse("2026-11-05T05:30:00Z"));
+ok("揺れの記録: off で前の記録も読む", flakeCleanSinceMs({ EXAM_FLAKE_CLEAN_SINCE: "off" }) === 0);
+ok("揺れの記録: 時刻を変えられる", flakeCleanSinceMs({ EXAM_FLAKE_CLEAN_SINCE: "2026-11-06T00:00:00Z" }) === Date.parse("2026-11-06T00:00:00Z"));
 
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

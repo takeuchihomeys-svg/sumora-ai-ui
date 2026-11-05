@@ -79,7 +79,9 @@ export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[
     const body = typeof init?.body === "string" ? init.body : "";
     const table = snapshotTarget(url, method, body, opts.excludeIds());
     if (!table) return inner(input, init);
-    const day = snapshotDay(now());
+    // 2026-11-06 作業員8（弱い所 354・作業員1の気付き）: 夜の基準（22時台＝その日）と翌朝の依頼（4:00 以降＝次の日）で写しの日が分かれていた。
+    //   EXAM_DB_SNAPSHOT_DAY があればその日の写しを読む（夜の基準で比べる依頼と前を作る子に、夜の基準の写しの日を渡す）
+    const day = (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(now());
     const file = join(opts.dir, day, `${snapshotKey(url, method, body)}.json`);
     if (existsSync(file)) {
       try {
