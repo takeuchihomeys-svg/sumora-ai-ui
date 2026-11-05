@@ -197,6 +197,10 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     // 深さの判定（記録・10/29 から brain:depth のログだけだった＝本番の当たりと突き合わせられなかった）
     ...((() => { const d = meta.brain_depth as { depth?: string; reason?: string } | undefined; return d?.depth ? { dp: `${d.depth[0]}:${String(d.reason ?? "").slice(0, 12)}` } : {}; })()),
     ...(str(meta.conductor_roles, 30) ? { rl: str(meta.conductor_roles, 30)! } : {}),
+    // 2026-11-05 作業員5: 統括の重点（fc・meta.conductor_focus）・組み立て（tm・CONDUCTOR_COMBINE）・使った順番（or）。どれも無い番は欄なし
+    ...((() => { const c = meta.conductor_focus as { focus?: unknown; near?: unknown } | null | undefined; const f = str(c?.focus, 14); return f ? { fc: `${f}${str(c?.near, 24) ? `|${str(c?.near, 24)}` : ""}` } : {}; })()),
+    ...(str(meta.two_message_plan_digest, 40) ? { tm: str(meta.two_message_plan_digest, 40)! } : {}),
+    ...(str(meta.conductor_order, 60) ? { or: str(meta.conductor_order, 60)! } : {}),
     ...(str(meta.main_point, 30) ? { mp: str(meta.main_point, 30)! } : {}),
     ...(Array.isArray(meta.flow_signals) && (meta.flow_signals as unknown[]).length ? { fs: (meta.flow_signals as unknown[]).map(String).join(",").slice(0, 40) } : {}),
     ...(Array.isArray(meta.material_conflicts) && (meta.material_conflicts as unknown[]).length ? { cf: (meta.material_conflicts as unknown[]).map(String).join(",").slice(0, 20) } : {}),

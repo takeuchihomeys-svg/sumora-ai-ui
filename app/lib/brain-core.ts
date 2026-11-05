@@ -1564,6 +1564,21 @@ function runViewingCancelIfPending(conversationId: string): void {
  *   読み直しの中では包みは動かない（opts.recheck がある）・AIX の統括の差し戻しの回し（analyzeAndSaveBrainMeta）はこの後に今まで通り。
  */
 export async function analyzeConversation(...args: Parameters<typeof analyzeConversationCore>): ReturnType<typeof analyzeConversationCore> {
+  const meta = await analyzeConversationDeep(...args);
+  // 2026-11-05 作業員5（KB 3701b532・0dbfbc97「後の役は決め直さない」）: 統括の順番の表の combine（何通・どの順・各通の受け持ち）。
+  //   判断と深い読み直しが終わった後に1回だけ。CONDUCTOR_COMBINE=on の時だけ meta.two_message_plan・two_message_plan_digest・conductor_order を足す（既定 off＝何も足さない）。
+  //   返信か AIX か（action）は変えない。読み直しの中（opts.recheck）では作らない
+  if (!meta || args[5]?.recheck) return meta;
+  try {
+    const { conductorCombineOn, combineFromMeta } = await import("@/app/lib/conductor-combine");
+    if (conductorCombineOn()) {
+      const p = combineFromMeta(meta as unknown as Record<string, unknown>);
+      if (p) Object.assign(meta as unknown as Record<string, unknown>, p);
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "conductor:combine-failed", error: e instanceof Error ? e.message : String(e) })); }
+  return meta;
+}
+async function analyzeConversationDeep(...args: Parameters<typeof analyzeConversationCore>): ReturnType<typeof analyzeConversationCore> {
   const meta = await analyzeConversationCore(...args);
   const [conversationId, isUrgent, convStatus, propertyCustomerId, source, opts] = args;
   if (!meta || opts?.recheck || (source ?? "brain") !== "brain") return meta;
