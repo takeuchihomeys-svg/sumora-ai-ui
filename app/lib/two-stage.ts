@@ -17,6 +17,7 @@
 //   見積書: 「最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」・「お部屋の募集状況と最大限割引させて頂いたお見積書お送りさせていただきます！！」
 import { splitRequests } from "./request-ledger";
 import { jstParts } from "./jst-date";
+import { MGMT_TOPIC_RE, mgmtNightNoDirectOn } from "./mgmt-hours-split";
 import { routeFix1020 } from "./brain-route-fix-1020";
 export type TwoStageKind = "pickup" | "check" | "estimate";
 /** 2026-11-05 ピックアップの約束の直後のお礼・了承（スタンプも）を2段にしない（ack-topic-scope.twoStageStampAckEnabled と同じスイッチ・既定 off） */
@@ -146,9 +147,13 @@ export function broughtPromiseEnabled(env?: Record<string, string | undefined>):
   return ((env ?? (typeof process !== "undefined" ? process.env : {})).TWO_STAGE_BROUGHT_PROMISE ?? "").trim().toLowerCase() !== "off"; // 11/05 既定 on（No.42 (c)・止める TWO_STAGE_BROUGHT_PROMISE=off）
 }
 /** 2段の判定（core）が確認・見積の約束を出した番を、AIX 直接にする時の AIX のキー（しない時 null） */
-export function answerableDirectAix(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "decisionSource" | "firstContact" | "asksCost">, env?: Record<string, string | undefined>): string | null {
+export function answerableDirectAix(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "decisionSource" | "firstContact" | "asksCost"> & { customerText?: string | null; hourJst?: number }, env?: Record<string, string | undefined>): string | null {
   if (!v || !answerableDirectEnabled(env)) return null;
   if (i.firstContact || /^guard:first_contact/.test(i.decisionSource ?? "")) return null;
+  // 2026-11-06 作業員9（弱い所 345・350・統括役の決め・KB P1 9fd703f4）: 夜（18時以降）に管理会社にしか答えられない事（礼金・駐車場 等）を聞かれた番は、
+  //   今は確かめられない＝AIX 直接にしない（2段の確認の約束のまま・結果は翌日 AIX【確認した】）。決定論の書き換えを外してブレインと2段に戻す向き。
+  //   試験 q136（8/23 20:38）でブレインが 2段 にした回をこの決定論が AIX に変えていた。A1 と夜の食い違いは竹内さんへの確認 H-9。MGMT_NIGHT_NO_DIRECT=on の時だけ（既定 off）
+  if (mgmtNightNoDirectOn(env) && (i.hourJst ?? jstParts().hour) >= 18 && MGMT_TOPIC_RE.test(String(i.customerText ?? ""))) return null;
   if (!ANSWERABLE_DIRECT_SOURCES.test(v.source)) return null;
   // 2026-11-05 竹内さん No.42 (c)（KB P1 cf241dbd・10/21 の 5aa28356 を退役）「物件を送ってきた時は、約束（確認します）して AIX から送る」:
   //   お客様の持ち込みの物件（brought_both・brought_estimate）は AIX 直接にせず、確認の約束 → AIX（竹内さんの型 RAT）。既定 off（TWO_STAGE_BROUGHT_PROMISE=on）

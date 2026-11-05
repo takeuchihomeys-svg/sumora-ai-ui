@@ -95,3 +95,8 @@ export function nightPickerLine(customerText: string | null | undefined): string
   if (!ps.length) return "";
   return `\n【今夜はまだ押せないピッカー】AIX【物件確認した】の ${ps.join("・")} は「管理会社に聞いた結果」を送るピッカー。今は管理会社の営業時間外で結果がまだ無い＝今夜はこのピッカーを選ばない（aix にしない）。今夜は two_stage=check の確認の約束の返信、結果が出た翌日にこのピッカー`;
 }
+
+/** 夜の管理会社の話題で、A1 の AIX 直接（two-stage answerableDirectAix）を外す（2026-11-06 作業員9・弱い所 345／350）。MGMT_NIGHT_NO_DIRECT=on の時だけ（既定 off） */
+export function mgmtNightNoDirectOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.MGMT_NIGHT_NO_DIRECT ?? "").trim().toLowerCase() === "on";
+}
