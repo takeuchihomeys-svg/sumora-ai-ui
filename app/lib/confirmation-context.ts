@@ -76,7 +76,53 @@ export const CONFIRM_ACTIVE_TASKS: ReadonlySet<string> = new Set(["property_chec
 export const CONFIRM_PROMISE_SENTENCE_RE = /(?<!ご)確認(?:でき|出来|し|後|の上|次第)?[^\n。]{0,20}?ご連絡(?:させて(?:頂|いただ)き|いたし|致し|し)ます/;
 export const CONFIRM_NEXT_RE = /確認(?:でき|出来|し)次第/;
 
-export function findConfirmObject(text: string): string | null {
+/**
+ * 2026-11-06 作業員9（弱い所 346・統括役の決め）: 確認の対象を、当たった物を全部（並びの順）返す。管理会社の話題が他に当たる時は「募集状況」を後ろに回す。
+ *   費用交渉の網に「調整」も足す（「礼金を調整する事は難しいでしょうか」）。
+ *   なぜ: 最初に当たった1つだけを返していて、網の先頭が「募集状況」（空き・まだあり）＝q136「駐車場は敷地内まだ空きありますでしょうか」が「駐車場」まで届かず、
+ *   確認の約束の中身も夜の線（MGMT_HOURS_SPLIT・MGMT_NIGHT_CLOSING）も「募集状況だけの確認」と読んでいた。
+ * 切替: CONFIRM_OBJECT_ALL=on の時だけ（既定 off＝今と1文字も変わらない）。
+ */
+export function confirmObjectAllOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.CONFIRM_OBJECT_ALL ?? "").trim().toLowerCase() === "on";
+}
+const ADJUST_COST_RE = /(?:家賃|賃料|礼金|敷金|初期費用|管理費|共益費|更新料)[^\n]{0,8}調整/;
+// 監査（scripts/audit-confirm-object.ts・90日 474番）: 貼り付けた物件情報（賃料・入居可能日・設備の一覧）や「内見のみさせて頂きます」の言い切りまで拾うと、
+//   聞かれていない対象が5〜7個並んだ＝聞いた文・頼んだ文（質問の形・依頼の形）からだけ拾い、最大3つにする（無ければ全体で見る＝今までの1つ目と同じ物は必ず入る）
+const ASK_UNIT_RE = /[?？]|ですか|ますか|でしょうか|ません?か|教えて|お願い|知りたい|頂け|いただけ|もらえ|可能(?:か|です|でしょう)/;
+export function findConfirmObjects(text: string): string[] {
+  // 画像の読み取り（【物件の画面（ポータル）】以降・広告の「初期費用2,980円」等）と申込の記入欄は対象に使わない（監査 8/26・9/12・9/20・9/25・10/21）
+  const ownText = /【お申込者様記入欄】/.test(String(text ?? "")) ? "" : String(text ?? "").split(/【物件の画面|【物件情報|# 物件情報/)[0];
+  const units = ownText.split(/[\n。！!]/).filter((u) => ASK_UNIT_RE.test(u));
+  const scoped = units.length ? units.join("\n") : ownText;
+  return findConfirmObjectsIn(scoped, text).slice(0, 3);
+}
+function findConfirmObjectsIn(text: string, whole: string): string[] {
+  const out: string[] = [];
+  const first = firstConfirmObject(whole);
+  for (const [re, label] of CONFIRM_OBJECT_LABELS) {
+    const hit = re.test(text) || (label.startsWith("費用・条件交渉") && ADJUST_COST_RE.test(text));
+    if (!hit) continue;
+    if (label === "募集状況" && allVacancyWordsAreSlots(text) && !/空(?:き|室)|募集|埋ま|申込|番手/.test(text)) continue;
+    // 「すでに内覧済みです」は内覧の可否を聞いていない（q136）
+    if (label === "ご内覧可否" && /(?:内覧|内見|見学)(?:済|しました|させて(?:頂|いただ)きました)/.test(text) && !/(?:内覧|内見|見学)[^\n。]{0,8}(?:したい|希望|でき|可能|出来)/.test(text)) continue;
+    if (!out.includes(label)) out.push(label);
+  }
+  if (first && !out.includes(first)) out.unshift(first);
+  const others = out.filter((l) => l !== "募集状況");
+  return others.length && out.includes("募集状況") ? [...others, "募集状況"] : out;
+}
+export function findConfirmObject(text: string, env?: Record<string, string | undefined>): string | null {
+  if (confirmObjectAllOn(env)) {
+    const all = findConfirmObjects(text);
+    if (!all.length) return null;
+    // 管理会社の話題が他にある時の「募集状況」は、駐車場の「空き」等の言い回しに当たった物＝落とす（駐車場の空き状況のラベルが空きを含む）
+    const xs = all.length > 1 && all[all.length - 1] === "募集状況" && /駐車|駐輪|バイク/.test(text) && !/(?:お部屋|物件|部屋)[^\n。]{0,10}(?:空|募集)/.test(text) ? all.slice(0, -1) : all;
+    return xs.join("と");
+  }
+  return firstConfirmObject(text);
+}
+function firstConfirmObject(text: string): string | null {
   for (const [re, label] of CONFIRM_OBJECT_LABELS) {
     if (!re.test(text)) continue;
     // 2026-09-12 竹内方針A-3（82e2d5cf）: 「明日ってまだ空いてますか」の「空いて」は内覧枠（募集状況と誤読しない）。判定は scene-patterns と共有
