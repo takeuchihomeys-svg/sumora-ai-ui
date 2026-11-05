@@ -11,7 +11,8 @@ import { FOCUS_KINDS, focusOrder, orderDigest, type Focus } from "./conductor-fo
 type Env = Record<string, string | undefined>;
 export const conductorCombineOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_COMBINE ?? "").trim().toLowerCase() === "on";
 
-export type CombinePatch = { two_message_plan: TwoMessagePlan; two_message_plan_digest: string | null; conductor_order: string | null; combine_check?: unknown };
+/** seen_customer_at＝この組み立てが見た一番新しいお客様の発言の時刻（meta.analyzed_msg_ts）。読む側はこれより新しい発言があれば使わない（conductor-replan.planIsStale・ea2a9405②） */
+export type CombinePatch = { two_message_plan: TwoMessagePlan & { seen_customer_at?: string | null }; two_message_plan_digest: string | null; conductor_order: string | null; combine_check?: unknown };
 /** 判断の後の meta から、組み立てと使った順番を作る（meta は変えない・呼ぶ側が足す）。返信の番も AIX の番も作る */
 export function combineFromMeta(meta: Record<string, unknown> | null | undefined, o: { scene?: string | null; firstContact?: boolean; imageOnly?: boolean } = {}): CombinePatch | null {
   if (!meta) return null;
@@ -22,5 +23,6 @@ export function combineFromMeta(meta: Record<string, unknown> | null | undefined
   const focus = typeof cf?.focus === "string" && (FOCUS_KINDS as readonly string[]).includes(cf.focus) ? (cf.focus as Focus) : null;
   const r = planForConductor({ asks, finalAix, firstContact: o.firstContact, imageOnly: o.imageOnly, focus });
   const order = focus ? orderDigest(focusOrder(o.scene ?? null, focus, { keep: cf?.keepPromise === true })) : null;
-  return { two_message_plan: r.plan, two_message_plan_digest: r.digest, conductor_order: order, ...(r.check ? { combine_check: r.check } : {}) };
+  const seen = typeof meta.analyzed_msg_ts === "string" ? meta.analyzed_msg_ts : null;
+  return { two_message_plan: { ...r.plan, seen_customer_at: seen }, two_message_plan_digest: r.digest, conductor_order: order, ...(r.check ? { combine_check: r.check } : {}) };
 }

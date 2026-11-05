@@ -19,6 +19,7 @@ it("置いた組み立ては planFromMeta でそのまま読める（1つの正�
   Object.assign(meta, p);
   const back = planFromMeta(meta);
   ok(back && back.messages.length === p.two_message_plan.messages.length);
+  ok(p.two_message_plan.seen_customer_at === null, "見た時刻（analyzed_msg_ts が無ければ null）");
   ok(p.conductor_order === null, "重点が無ければ順番は無い");
 });
 it("形の崩れた asks は捨てる・meta が無ければ null", () => {

@@ -201,6 +201,8 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...((() => { const c = meta.conductor_focus as { focus?: unknown; near?: unknown } | null | undefined; const f = str(c?.focus, 14); return f ? { fc: `${f}${str(c?.near, 24) ? `|${str(c?.near, 24)}` : ""}` } : {}; })()),
     ...(str(meta.two_message_plan_digest, 40) ? { tm: str(meta.two_message_plan_digest, 40)! } : {}),
     ...(str(meta.conductor_order, 60) ? { or: str(meta.conductor_order, 60)! } : {}),
+    // 2026-11-05 作業員5（ea2a9405②）: 途中の新しい通で立て直したか（conductor-replan.replanDigest・CONDUCTOR_REPLAN の時だけ入る）
+    ...(str(meta.replan_digest, 30) ? { rp: str(meta.replan_digest, 30)! } : {}),
     ...(str(meta.main_point, 30) ? { mp: str(meta.main_point, 30)! } : {}),
     ...(Array.isArray(meta.flow_signals) && (meta.flow_signals as unknown[]).length ? { fs: (meta.flow_signals as unknown[]).map(String).join(",").slice(0, 40) } : {}),
     ...(Array.isArray(meta.material_conflicts) && (meta.material_conflicts as unknown[]).length ? { cf: (meta.material_conflicts as unknown[]).map(String).join(",").slice(0, 20) } : {}),
