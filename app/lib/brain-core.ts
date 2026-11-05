@@ -87,7 +87,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { resolveTwoStageOrDirect, screeningNoRewriteEnabled, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
+import { resolveTwoStageOrDirect, screeningNoRewriteEnabled, sentReactionNoRewriteEnabled, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { holdSoftNextMaterial, rule8HoldNote, rule8HoldDirectionSuffix } from "@/app/lib/hold-soft-next";
 import { lastPropertyMoveAllUnavailable } from "@/app/lib/unavailable-ack";
@@ -4961,8 +4961,13 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // ブレイン自身の aix（場面の候補で埋まる前の LLM の出力）が空の番だけ（finalAix は場面の候補で埋まる＝q333 で印が立たなかった）
       const screeningBrainReply = sceneEvidence?.scene === "S3_screening" && /^(?:|null|none)$/i.test(String((parsed as { aix?: unknown }).aix ?? "").trim())
         && ((normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: string }>).some((a) => a.route === "reply");
+      // 2026-11-06 弱い所 351（作業員7・統括役の決め a）: 依頼が全部「送った物件への反応」で、ブレイン自身が aix を空にして返信／なしと決めた番（TWO_STAGE_SENT_REACTION_NO_REWRITE=on）
+      const sentReactionAsks = (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: string; about?: string | null }>;
+      const sentReactionBrainReply = /^(?:|null|none)$/i.test(String((parsed as { aix?: unknown }).aix ?? "").trim())
+        && sentReactionAsks.length > 0 && sentReactionAsks.every((a) => a.about === "reaction_to_sent" && (a.route === "reply" || a.route === "none"));
       const twoStageRes = resolveTwoStageOrDirect({
         screeningBrainReply,
+        sentReactionBrainReply,
         // 2026-11-05 作業員1（8959・q212）: 開いているピックアップの約束（台帳の最後の行は物件の送付と読む事がある＝ackRightAfterPromise が false になる）
         openPickupPromise: promiseAix?.kind === "pickup",
         finalAix: finalAix ?? tcPromiseAix, decisionSource: decisionSource ?? (tcPromiseAix ? "llm" : null), pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
@@ -5012,6 +5017,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       if (screeningBrainReply && screeningNoRewriteEnabled() && !twoStage && !twoStageRes.direct) {
         addDemoted(demotedOverrides, { family: "two_stage_promise", src: "rule:two_stage_promise(check_question)/screening", would: "check", brain: "reply" });
         console.log(JSON.stringify({ tag: "brain:screening-no-rewrite", conversationId, scene: sceneEvidence?.scene ?? null }));
+      }
+      if (sentReactionBrainReply && sentReactionNoRewriteEnabled() && !twoStage && !twoStageRes.direct) {
+        addDemoted(demotedOverrides, { family: "two_stage_promise", src: "rule:two_stage_promise(check_question)/sent_reaction", would: "check", brain: "reply" });
+        console.log(JSON.stringify({ tag: "brain:sent-reaction-no-rewrite", conversationId }));
       }
       // 2026-10-21 竹内さん A1「すぐAIXでかえす」（two-stage answerableDirectAix・TWO_STAGE_ANSWERABLE_DIRECT=off で2段の約束に戻す）:
       //   管理会社に確かめれば分かる問い（空き状況・見積・設備）は約束を挟まず AIX【物件確認した／見積書送る】を直接

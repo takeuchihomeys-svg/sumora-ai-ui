@@ -59,6 +59,8 @@ export type TwoStageInput = {
   firstContact?: boolean;
   /** 2026-11-05 弱い所 349（作業員7・統括役の決め (b)）: 場面が S3_screening（審査の問い）で、ブレインが AIX を空にして返信の依頼を書いた番 */
   screeningBrainReply?: boolean;
+  /** 2026-11-06 弱い所 351（作業員7・統括役の決め a）: こちらが送った物件への反応（about=reaction_to_sent）だけで、ブレインが AIX を空にして返信／なしと決めた番 */
+  sentReactionBrainReply?: boolean;
 };
 /**
  * 2026-11-05 弱い所 349: 審査の問い（S3）でブレインが返信と決めた番を、check_question が決まった計算で確認の約束の2段に書き換えない（ブレイン基準・4-4 と同じ型）。
@@ -66,6 +68,13 @@ export type TwoStageInput = {
  */
 export function screeningNoRewriteEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.TWO_STAGE_SCREENING_NO_REWRITE ?? "").trim().toLowerCase() === "on";
+}
+/**
+ * 2026-11-06 弱い所 351（q055）: 送った束の中の物件への「気になります」だけの番でブレインが返信と決めた番を、check_question で確認の約束の2段に書き換えない（S3 と同じ型）。
+ *   竹内さん本人の90日 6番: 内覧の誘い 5（返信 3・AIX【内覧調整】2）・見積書 AIX 1・確認の約束 0。既定 on（11/06・止める TWO_STAGE_SENT_REACTION_NO_REWRITE=off）
+ */
+export function sentReactionNoRewriteEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_STAGE_SENT_REACTION_NO_REWRITE ?? "").trim().toLowerCase() !== "off"; // 11/06 統括役の決め: 既定 on（止める TWO_STAGE_SENT_REACTION_NO_REWRITE=off）
 }
 /** 2026-10-18 竹内さん 10/16「古い資料（届いて7日以上）の物件の見積依頼は『一度最新の募集状況を確認させて頂きます』旨を伝えてから AIX で送る」。戻す ESTIMATE_STALE_RECHECK=off */
 export const ESTIMATE_STALE_DAYS = 7;
@@ -473,6 +482,8 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
     if (askedOther && !/ack_to_check/.test(i.decisionSource ?? "")) {
       // 2026-11-05 弱い所 349: 審査の問いでブレインが返信と決めた番は書き換えない（ブレインの返信のまま・既定 off）
       if (screeningNoRewriteEnabled() && i.screeningBrainReply === true) return null;
+      // 2026-11-06 弱い所 351: 送った物件への反応だけでブレインが返信と決めた番も書き換えない（既定 off）
+      if (sentReactionNoRewriteEnabled() && i.sentReactionBrainReply === true) return null;
       return {
         kind: "check",
         direction: "お客様に聞かれた事に答える返信にする。会話・物件の資料・会社の事実に答えがあればそれで答える（確認の約束にしない）。無い時だけ聞かれた事そのもの（中身を具体的に・物件の事なら物件名も）を確認すると約束する（聞かれていない募集状況は書かない・誰に確認するかは書かない・結びは「確認出来次第ご連絡させて頂きます！！」）",

@@ -229,14 +229,14 @@ function screeningConsultRule(env: Record<string, string | undefined> = typeof p
  * 2026-11-06 弱い所 351（q055・作業員7・統括役の決め ③）: こちらが送った束・オススメの中の物件への「気になります」だけの反応を、ブレインが確認の約束（promise）・AIX【物件確認した】に寄せる。
  *   竹内さん本人の90日（送った束の中の物件に「気になります」「気に入りました」だけが返ってきた番 6・空き／費用／日時の問いの混ざる番は除く）:
  *   内覧の誘い 5（返信「ご査収頂きありがとうございます…よろしければご都合よろしいお日にちにお部屋ご案内」3・AIX【内覧調整】2）・AIX【見積書送る】1・確認の約束 0。
- *   既定 off（SENT_REACTION_VIEW_INVITE=on の時だけ1行・off は1字も変えない）
+ *   既定 on（11/06・止める SENT_REACTION_VIEW_INVITE=off＝1字も足さない）
  */
 export function sentReactionInviteOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.SENT_REACTION_VIEW_INVITE ?? "").trim().toLowerCase() === "on";
+  return (env.SENT_REACTION_VIEW_INVITE ?? "").trim().toLowerCase() !== "off"; // 11/06 統括役の決め: sr3-both 悪化0・誘いが過半数で既定 on（止める SENT_REACTION_VIEW_INVITE=off）
 }
 export function sentReactionInviteRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if (!sentReactionInviteOn(env)) return "";
-  return "- ★こちらが送った物件（送った束・オススメの中の物件）に「気になります」「ここいいですね」「気に入りました」とだけ返ってきた番（空き・費用・日時の問いが無い）は、管理会社に確かめる事も AIX で送る結果も無い＝確認の約束（route=\"promise\"）にも AIX【物件確認した】にもしない。about=reaction_to_sent・route=\"reply\" で「ご査収頂きありがとうございます」＋その物件を「よろしければご都合よろしいお日にちにお部屋ご案内させて頂きます」と内覧に誘う（竹内さん本人の90日 6番: 内覧の誘い 5・確認の約束 0）。空き・費用・日時を聞かれた時は上の★のまま。\n";
+  return "- ★こちらが送った物件（送った束・オススメの中の物件）に「気になります」「ここいいですね」「気に入りました」とだけ返ってきた番（空き・費用・日時の問いが無い）は、管理会社に確かめる事も AIX で送る結果も無い＝確認の約束・御見積書の約束（route=\"promise\"）にも AIX【物件確認した】にもしない（御見積書はお客様が費用を聞いた時・送ってきた時だけ）。about=reaction_to_sent・route=\"reply\" で「ご査収頂きありがとうございます」＋その物件を「よろしければご都合よろしいお日にちにお部屋ご案内させて頂きます」と内覧に誘う（竹内さん本人の90日 6番: 内覧の誘い 5・見積書 1・確認の約束 0）。空き・費用・日時を聞かれた時は上の★のまま。\n";
 }
 function twoMessageAskRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if ((env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "off") return ""; // 11/05 既定 on（止める TWO_MESSAGE_PLAN=off）

@@ -182,4 +182,14 @@ t("軸: about=vacancy は「空いて」の語が無くても募集状況の約�
   t("on: 印が無い番は今まで通り", resolveTwoStage({ ...v, screeningBrainReply: false })?.source === "rule:two_stage_promise(check_question)");
   t("on: 空き・募集の問いは今まで通り（check）", resolveTwoStage({ ...v, customerText: "ここまだ空いてますか？" })?.kind === "check");
   delete process.env.TWO_STAGE_SCREENING_NO_REWRITE; }
+// 2026-11-06 作業員7（弱い所 351・q055）: 送った物件への「気になります」だけでブレインが返信と決めた番は check_question で書き換えない（TWO_STAGE_SENT_REACTION_NO_REWRITE=on の時だけ）
+{ const v = { ...base, finalAix: "property_check_result", customerText: "ありがとうございます！\nアーバネックス気になります！", askAbout: "reaction_to_sent", sentReactionBrainReply: true };
+  process.env.TWO_STAGE_SENT_REACTION_NO_REWRITE = "off";
+  const off = resolveTwoStage(v);
+  t("off: 送った物件への反応は今まで通り check_question の2段", off?.source === "rule:two_stage_promise(check_question)");
+  process.env.TWO_STAGE_SENT_REACTION_NO_REWRITE = "on";
+  t("on: 送った物件への反応＋ブレインの返信 → 書き換えない（null）", resolveTwoStage(v) === null);
+  t("on: 印が無い番は今まで通り", resolveTwoStage({ ...v, sentReactionBrainReply: false })?.source === "rule:two_stage_promise(check_question)");
+  t("on: 空き・募集の問いは今まで通り（check）", resolveTwoStage({ ...v, askAbout: "vacancy", customerText: "ここまだ空いてますか？" })?.kind === "check");
+  delete process.env.TWO_STAGE_SENT_REACTION_NO_REWRITE; }
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);
