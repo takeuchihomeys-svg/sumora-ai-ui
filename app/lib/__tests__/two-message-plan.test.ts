@@ -1,7 +1,7 @@
 // 1つの番を何通に分けるか（2026-11-05 竹内さん KB b834d9f0・cf241dbd・作業員7）
 // 実行: npx tsx app/lib/__tests__/two-message-plan.test.ts
 // 場面は本番の竹内さんの番（名前は伏せた）。ブレインの依頼の形は turn_contract.asks のまま
-import { planMessages, planAnnounce, remainingAfterAix, templateReplyPartNote, afterAixReplyBrief, planDigest, twoMessagePlanOn, twoMessagePlanUiOn, twoMessageAnnounceVisible, afterAixDraftHint, checkPlan, planForConductor, planFromMeta, canAppealFromFocus, nearShapeLine, shapeOfSends } from "../two-message-plan";
+import { planMessages, planAnnounce, remainingAfterAix, templateReplyPartNote, afterAixReplyBrief, planDigest, twoMessagePlanOn, twoMessagePlanUiOn, twoMessageAnnounceVisible, twoMessageAfterAixAutoOn, afterAixDraftHint, checkPlan, planForConductor, planFromMeta, canAppealFromFocus, nearShapeLine, shapeOfSends } from "../two-message-plan";
 import { BRAIN_TURN_CONTRACT_RULES } from "../turn-contract";
 import { answerableDirectAix } from "../two-stage";
 
@@ -200,6 +200,12 @@ t("⑩ all＝全員・off＝出さない", twoMessageAnnounceVisible("all", fals
 if ((process.env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "off") {
   t("⑪ off の規則に2通の行は無い", !/返信で答えられる質問を別の ask/.test(BRAIN_TURN_CONTRACT_RULES));
 }
+
+// ⑫ 2026-11-06 弱い所 305: AIX の後の自動の下書き（既定 off・on でも YUMA だけ）
+t("⑫ 既定 off", !twoMessageAfterAixAutoOn(undefined, true));
+t("⑫ on でも YUMA 以外は動かない", !twoMessageAfterAixAutoOn("on", false));
+t("⑫ on の YUMA は動く", twoMessageAfterAixAutoOn("on", true));
+t("⑫ all は全員に広げない（竹内さんの確認の後）", !twoMessageAfterAixAutoOn("all", false));
 
 console.log(`\ntwo-message-plan: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
