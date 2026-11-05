@@ -1443,7 +1443,7 @@ async function main() {
   const problems = await orderProblems([...new Map(problems0.map((x) => [x.id, x])).values()]);
   {
     const runsPlanned = problems.reduce((sum, x) => sum + (REPS_OF ? Math.max(1, Math.min(REPEAT, REPS_OF[x.id] ?? 1)) : REPEAT), 0);
-    console.log(`回す前の確かめ: ${problems.length}問・合計 ${runsPlanned}回（ブレイン ${LAYER === "prod" ? 2 : 1}回／回）・見込み 約 ${(runsPlanned * 0.03).toFixed(2)}（DeepSeek・1回 $0.03 の目安）`);
+    console.log(`回す前の確かめ: ${problems.length}問・合計 ${runsPlanned}回（ブレイン ${LAYER === "prod" ? 2 : 1}回／回）・見込み 約 $${(runsPlanned * 0.03).toFixed(2)}（DeepSeek・1回 $0.03 の目安）`);
   }
   const DRAFT = problems.some((p) => stageOf(p) === "draft");
   const POST = DRAFT ? (await import("../app/api/generate-reply/route")).POST : null;

@@ -167,6 +167,18 @@ export async function buildProblem(spec: ExamSpec): Promise<ExamProblem | string
   const mask = (s: string | null) => maskExamText(s, name, names);
   const at = ms(spec.at);
   // 2026-10-16 引用返信を写す（引用した通・引用された通だけ・ExamMsg の lm/q/img の説明）
+  // 2026-11-05 作業員1（弱い所 id 300・番 9758）: 場面より古い引用返信の先（こちらが送った物件の資料の画像）も写す。
+  //   旧は引用した通と引用された通が両方とも場面の中にある時だけ写し、3週間前の資料を引用した「こちらの初期費用は」でどの物件か分からなかった（本番のブレインは読めていた）。
+  //   こちらの画像の通だけ（お客様の画像は書類の恐れ）・最大3通・場面の頭に時刻の順で足す。戻す EXAM_OLD_QUOTE_COPY=off
+  if ((process.env.EXAM_OLD_QUOTE_COPY ?? "").trim().toLowerCase() !== "off") {
+    const inScene = new Set([...ctx, ...cust].map((m) => m.line_message_id).filter(Boolean));
+    const want = [...new Set([...ctx, ...cust].map((m) => m.quoted_message_id).filter((x): x is string => !!x && !inScene.has(x)))].slice(0, 3);
+    if (want.length) {
+      const { data: qd } = await sb.from("messages").select("id, sender, text, created_at, is_aix_generated, staff_writer, line_message_id, quoted_message_id, image_url").eq("conversation_id", spec.conv).in("line_message_id", want);
+      const olds = ((qd ?? []) as Msg[]).filter((m) => m.sender !== "customer" && !!m.image_url && ms(m.created_at) < ms(ctx[0]?.created_at ?? cust[0].created_at)).sort((a, b) => ms(a.created_at) - ms(b.created_at));
+      if (olds.length) ctx = [...olds, ...ctx];
+    }
+  }
   const sceneMsgs = [...ctx, ...cust];
   const quotedIds = new Set(sceneMsgs.map((m) => m.quoted_message_id).filter((x): x is string => !!x && sceneMsgs.some((o) => o.line_message_id === x)));
   const context: ExamMsg[] = sceneMsgs.map((m) => ({

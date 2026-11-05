@@ -102,3 +102,10 @@ if (fail) process.exit(1);
   const ok = dupProblemIds([{ id: "q212" }, { id: "q213" }, { id: "q212" }]).join() === "q212" && dupProblemIds([{ id: "a" }, { id: "b" }]).length === 0;
   console.log(ok ? "hazard-audit-core (k): pass" : "hazard-audit-core (k): FAIL"); if (!ok) process.exit(1);
 }
+{
+  const { idContentClashes } = require("../hazard-audit-core");
+  const h = (o: Record<string, unknown>) => String(o.conv) + "|" + String(o.at);
+  const got = idContentClashes([{ id: "q212", conv: "a", at: "1" }, { id: "q100", conv: "b", at: "2" }, { id: "q999", conv: "c", at: "3" }], [{ id: "q212", conv: "z", at: "9" }, { id: "q100", conv: "b", at: "2" }], h);
+  const ok = got.join() === "q212";
+  console.log(ok ? "hazard-audit-core (l): pass" : `hazard-audit-core (l): FAIL ${got}`); if (!ok) process.exit(1);
+}

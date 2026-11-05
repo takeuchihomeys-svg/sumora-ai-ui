@@ -30,8 +30,29 @@ import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { readObs } from "./lib/exam-flake";
+import { problemHash } from "./lib/brain-exam-baseline";
+/** 2026-11-05 作業員1（作業員4の気付き・問題の id のぶつかり）: 依頼の作業ツリーの手元の problems.json の中身の hash の候補（揺れの記録を id だけで引かない） */
+const hashCache = new Map<string, Map<string, string[]>>();
+function problemHashesOf(cwd: string): (id: string) => string[] | null {
+  const f = join(cwd, "scripts", "brain-exam", "problems.json");
+  const key = `${cwd}|${existsSync(f) ? statSync(f).mtimeMs : 0}`; // 作り直したら読み直す
+  let m = hashCache.get(key);
+  if (!m) {
+    m = new Map();
+    try {
+      for (const p of JSON.parse(readFileSync(join(cwd, "scripts", "brain-exam", "problems.json"), "utf8")) as Array<Record<string, unknown> & { id: string; acceptWhen?: { searchExhaustedAsks?: unknown[] } }>) {
+        const hs = [problemHash(p)];
+        if (p.acceptWhen?.searchExhaustedAsks?.length) hs.push(problemHash({ ...p, asks: p.acceptWhen.searchExhaustedAsks }));
+        m.set(p.id, hs);
+      }
+    } catch { /* 読めなければ前の形 */ }
+    hashCache.set(key, m);
+  }
+  const mm = m;
+  return (id) => (mm.size ? mm.get(id) ?? [] : null);
+}
 import { pcState } from "./lib/exam-pc-state";
-import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -145,7 +166,7 @@ function addJob(): void {
     if (job.runner !== "brain-exam" || !job.only) return [] as string[][];
     const ids0 = job.only.split(",").filter(Boolean);
     if (process.env.EXAM_ADD_SPLIT_BY_TIME === "off") return splitIds(ids0);
-    const rp0 = repsPlan(ids0, (id) => readObs(id), { normal: job.repeat, flakyReps: Number(process.env.EXAM_FLAKY_REPS ?? "4"), forced: job.flaky, model: "deepseek", stableReps: process.env.EXAM_STABLE_REPS === "off" ? undefined : Number(process.env.EXAM_STABLE_REPS ?? "1") });
+    const rp0 = repsPlan(ids0, (id) => readObs(id), { hashesOf: problemHashesOf(job.cwd), normal: job.repeat, flakyReps: Number(process.env.EXAM_FLAKY_REPS ?? "4"), forced: job.flaky, model: "deepseek", stableReps: process.env.EXAM_STABLE_REPS === "off" ? undefined : Number(process.env.EXAM_STABLE_REPS ?? "1") });
     const src = (() => { try { return readFileSync(join(job.cwd, "scripts", "brain-exam.ts"), "utf8"); } catch { return ""; } })();
     const g = staleExamGuard(src, null, job.maxMin ?? Number(process.env.EXAM_JOB_MAX_MIN ?? "40"), Number(process.env.EXAM_JOB_OLD_MAX_MIN ?? "120"));
     const lanes = g.laneOld ? 1 : Math.max(1, Math.round(Number(process.env.EXAM_CONCURRENCY ?? "4") * 0.75));
@@ -351,6 +372,22 @@ async function runTscRemoteJob(j: ExamJob & { file: string }): Promise<void> {
     await new Promise((res) => child.on("close", () => { try { closeSync(fd); } catch { /* */ } res(null); }));
     out = readFileSync(outFile, "utf8");
   }
+  // 2026-11-05 作業員1（作業員3の気付き・op2-on-tsc）: vercel deploy が組み立ての途中で「Not authorized」等で終わっても、組み立ては続いて READY になる事がある。
+  //   型の誤りが出ていないのに失敗で終わった時は、inspect で組み立ての状態を最大15分見て、READY なら tsc 0・ERROR なら失敗にする（EXAM_TSC_REMOTE_WAIT_MIN）
+  let waitedState: string | null = null;
+  if (code !== 0 && url && !remoteTypeErrors(out).length) {
+    const until = Date.now() + Number(process.env.EXAM_TSC_REMOTE_WAIT_MIN ?? "15") * 60_000;
+    while (Date.now() < until) {
+      let txt = ""; try { txt = execFileSync(process.platform === "win32" ? "vercel.cmd" : "vercel", ["inspect", url], { cwd: j.cwd, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 }).toString(); } catch (e) { txt = String((e as { stdout?: Buffer; stderr?: Buffer }).stdout ?? "") + String((e as { stderr?: Buffer }).stderr ?? ""); }
+      const st = remoteDeployState(txt);
+      if (st === "READY" || st === "ERROR" || st === "CANCELED") { waitedState = st; break; }
+      await new Promise((r) => setTimeout(r, 30_000));
+    }
+    appendFileSync(outFile, `
+=== ${at()} 組み立ての状態（inspect）: ${waitedState ?? "分からない（待ちの上限）"} ===
+`);
+    if (waitedState === "READY") code = 0;
+  }
   const errs = remoteTypeErrors(out);
   const verdict = code === 0 ? "tsc 0（リモート）" : errs.length ? `tsc 型エラー（リモート）: ${errs.join(" ／ ")}` : `ビルド失敗（リモート・型以外の可能性・終わりの番号 ${code}）`;
   finish(j, { label: j.label, owner: j.owner, runner: "tsc-remote", cwd: j.cwd, code, url, errors: errs, verdict, at: at() },
@@ -417,7 +454,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     }
     // brain-exam: ③ 問題ごとの回数（揺れる問題は増やす）
     const ids = j.only.split(",").filter(Boolean);
-    const rp = repsPlan(ids, (id) => readObs(id), { normal: j.repeat, flakyReps: Number(process.env.EXAM_FLAKY_REPS ?? "4"), forced: j.flaky, model: "deepseek", stableReps: process.env.EXAM_STABLE_REPS === "off" ? undefined : Number(process.env.EXAM_STABLE_REPS ?? "1") });
+    const rp = repsPlan(ids, (id) => readObs(id), { hashesOf: problemHashesOf(j.cwd), normal: j.repeat, flakyReps: Number(process.env.EXAM_FLAKY_REPS ?? "4"), forced: j.flaky, model: "deepseek", stableReps: process.env.EXAM_STABLE_REPS === "off" ? undefined : Number(process.env.EXAM_STABLE_REPS ?? "1") });
     const maxRep = Math.max(j.repeat, ...Object.values(rp.reps));
     const repsFile = join(RES, `${j.label}.reps.json`);
     writeFileSync(repsFile, JSON.stringify(rp.reps, null, 1));

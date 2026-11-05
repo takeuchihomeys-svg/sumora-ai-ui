@@ -9,6 +9,7 @@
 //   (e) 本番の LP の「◯月実績」が今月か … ⑦（表示が止まったまま）
 //   (f) main の最近のコミットの前に tsc-remote 0 があるか … ⑥（型の確認の前にコミット）
 //   (i) 試験の係の記録の24時間: 止める印から猶予の内に止まらず殺した回・古い作業ツリーの依頼（点検表 10・12）
+//   (l) 手元の problems.json の問題と main の spec の同じ id の正解の中身が違う（id のぶつかり・作業員4の気付き）
 //   (k) 作業ツリーの手元の problems.json に同じ id が2つ以上ある（同じ問題を2回ずつ回す・点検表 13）
 //   (j) 24時間の試験の出力で、レーンが同じ会話を2本以上取った行（点検表 11）
 //   (h) 分からない事の3つの表（brain_weaknesses・brain_unknowns・owner_questions）の開いている数と新しく増えた数（夜の cron の数・KB 3892c30c）
@@ -21,7 +22,7 @@ import { readdirSync, readFileSync, lstatSync, existsSync, mkdirSync, writeFileS
 import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
-import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, conductorLogHazards, laneDupConvs, dupProblemIds, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
+import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, conductorLogHazards, laneDupConvs, dupProblemIds, idContentClashes, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
 
 const flag = (k: string) => process.argv.includes(`--${k}`);
 const git = (args: string[], cwd = process.cwd()) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
@@ -170,6 +171,13 @@ async function main() {
     // (k)
     const wroot = join(repoRoot, ".claude", "worktrees"); const dupW: string[] = [];
     if (existsSync(wroot)) for (const w of readdirSync(wroot)) { const f = join(wroot, w, "scripts", "brain-exam", "problems.json"); if (!existsSync(f)) continue; try { const d = dupProblemIds(JSON.parse(readFileSync(f, "utf8"))); if (d.length) dupW.push(`${w}: ${d.length}問（${d.slice(0, 6).join(",")}）`); } catch { /* 読めない物は飛ばす */ } }
+    // (l)
+    const clashes: string[] = [];
+    try {
+      const mainSpec = JSON.parse(git(["show", "origin/main:scripts/brain-exam/spec.json"], repoRoot)) as Array<Record<string, unknown>>;
+      if (existsSync(wroot)) for (const w of readdirSync(wroot)) { const f = join(wroot, w, "scripts", "brain-exam", "problems.json"); if (!existsSync(f)) continue; try { const c = idContentClashes(JSON.parse(readFileSync(f, "utf8")), mainSpec, (o) => `${String(o.conv ?? "")}|${String(o.at ?? "")}`);/* 正解の直し（spec の書き換え）は数えず、別の番（会話・時刻が違う）だけ */ if (c.length) clashes.push(`${w}: ${c.length}問（${c.slice(0, 6).join(",")}）`); } catch { /* 読めない物は飛ばす */ } }
+    } catch { /* main の spec が読めない */ }
+    checks.push({ key: "l", ok: clashes.length === 0, line: `手元の問題と main の spec で同じ id・違う番 ${clashes.length}作業ツリー`, detail: clashes });
     checks.push({ key: "k", ok: dupW.length === 0, line: `手元の problems.json の同じ id ${dupW.length}作業ツリー`, detail: dupW });
     checks.push({ key: "j", ok: dups.length === 0, line: `24時間の試験の出力でレーンが同じ会話 ${dups.length}本`, detail: dups });
   }
