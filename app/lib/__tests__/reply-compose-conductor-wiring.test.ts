@@ -19,5 +19,8 @@ t("digest は composeConductor がある時だけ（無ければ {}）", /\.\.\.
 t("ログは composeConductor がある時だけ", /if \(composeConductor\) console\.info\("\[compose-conductor\]"/.test(src));
 t("本文を書き換えない（draftBody への代入に使わない）", !/draftBody\s*=\s*[^;\n]*composeConductor/.test(src));
 
+t("近い番の割合を書き手の統括に渡す（nearKeepShare: composeNearKeepShare）", /nearKeepShare: composeNearKeepShare/.test(src));
+t("近い番の割合を引くのは COMPOSE_CONDUCTOR が on で了承・検討の番だけ", /const composeNearKeepShare: number | null = composeConductorOn() && conversationId && (composeConductorScene === "ack" || composeConductorScene === "considering")/.test(src));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

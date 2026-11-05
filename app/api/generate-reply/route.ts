@@ -215,7 +215,7 @@ import { resolveOwnPropertyForTurn } from "@/app/lib/own-property-server";
  * ※ 1回ずつの生成では効果が判定できないので、比べる時は scripts/yuma-repeat-test.ts を REPS=3 以上で回す。
  */
 const AB_OFF = process.env.PREV_SEND_NOTE === "off";
-import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
+import { getCachedPromptRules, getCachedPhrases, lossPatternFetchOn } from "@/app/lib/prompt-cache";
 import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainFetchSpec } from "@/app/lib/brain-fetch-spec";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 // 2026-09-26 段3: 並行で探す（ブレインの判断を材料に）・status=viewing の残りで内覧の手引きを書かない（customer-state）
@@ -2297,7 +2297,8 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // T1動的選択: spec未指定（後方互換）は全クエリ実行＝従来動作（T2/T3のspecも全enabled）
-  const lossEnabled = spec?.lossPatterns.enabled ?? true;
+  // 2026-11-06 作業員9（弱い所 325）: 失注パターンは既定で引かない（prompt-cache.lossPatternFetchOn・LOSS_PATTERN_FETCH=on で戻す・0行を引いて時間切れを出していた）
+  const lossEnabled = (spec?.lossPatterns.enabled ?? true) && lossPatternFetchOn();
   const lossLimit = spec?.lossPatterns.limit ?? 4;
   const applyingEnabled = spec?.applyingPatterns.enabled ?? true;
   const viewingEnabled = spec?.viewingPatterns.enabled ?? true;

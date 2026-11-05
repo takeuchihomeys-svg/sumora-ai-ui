@@ -99,5 +99,17 @@ t("口: 今日もう継続の約束を言った → 添えない", bc2.mf.key ==
 const bc3 = buildComposeConductor({ meta: { conductor_focus: { focus: "answer", why: "床の色" } }, scene: "question", customerText: "床の色白ですか？", ackOnly: false, recent: [], nowMs: now, blueprint: true });
 t("口: 統括の重点を読んだ記録", bc3.read.includes("重点") && bc3.mf.source === "conductor" && bc3.order[0] === "compose");
 
+// 2026-11-06 統括役の決め: 試験では takeuchi_compose_examples が読めず割合が null になる＝(c) の線は配線のテストで実物の割合を入れて確かめる
+{
+  const recent = [{ sender: "staff", text: "🔺3口コンロの物件となります。", createdAt: "2026-10-28T09:00:00Z" }, { sender: "customer", text: "ありがとうございます" }];
+  const run = (share: number | null) => buildComposeConductor({ meta: null, scene: "ack", customerText: "ありがとうございます", ackOnly: true, recent, name: "〇〇", nowMs: now, blueprint: false, nearKeepShare: share });
+  t("割合 0.67（近い竹内さんの番の過半数）→ 継続の約束を添える", run(0.67).mf.keep === true && run(0.67).mf.key === "relation_keep");
+  t("割合 0.2 → 添えない（物件を送った直後でも）", run(0.2).mf.keep === false && run(0.2).mf.key === "relation_ack");
+  t("割合 0.5 ちょうど → 添えない（過半数ではない）", run(0.5).mf.keep === false);
+  t("割合 null（試験で読めない時）→ 添えない", run(null).mf.keep === false);
+  const cond = buildComposeConductor({ meta: null, scene: "conditions", customerText: "家賃もう少し上げてもいいです", ackOnly: false, recent, nowMs: now, blueprint: false, nearKeepShare: 0.2 });
+  t("条件の番は割合に関係なく添える（59%）", cond.mf.keep === true);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
