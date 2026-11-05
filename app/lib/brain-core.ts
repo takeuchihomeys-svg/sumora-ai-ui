@@ -188,7 +188,7 @@ import { promiseKindsToday } from "@/app/lib/two-stage";
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { turnElapsedOn, turnElapsed, turnElapsedLine, elapsedPreferredSide, type TurnElapsed } from "@/app/lib/turn-elapsed";
-import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn, twoChoiceNarrowOn, narrowKeepsTwoChoice, narrowPromiseOrNow, resayPromiseFirstOn, isResayTurn } from "@/app/lib/two-choice";
+import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn, twoChoiceNarrowOn, narrowKeepsTwoChoice, narrowPromiseOrNow, twoChoicePhotoAtHandDirectOn, resayPromiseFirstOn, isResayTurn } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
 import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine, exhaustedTodayNote } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
@@ -4833,6 +4833,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       decisionSource = "brain:contract_promise_pickup";
     }
     let twoStage: TwoStageVerdict | null = null;
+    let roomPhotoAtHandForChoice: boolean | null = null; // 2026-11-06 弱い所 341: 室内写真の依頼で頼まれた物件の室内イメージが手元にあるか（2択の返信の側を外す材料）
     let pickupReadyForChoice: boolean | null = null; // 10/08 検索の結果で選ぶ2択（search-result-choice.ts）に渡す
 
     // 2026-10-16（q133・q150・q157）: 本質が確認・見積の約束で最後の aix が null の番も 2段の判定に入れる（brain-route-keep.promiseAixFromContract・BRAIN_TC_PROMISE_TWO_STAGE=off）
@@ -4910,6 +4911,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
             .map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.created_at, isImage: !!m.image_url }));
           const v = photoMaterialAtHand({ before, requestText: unrepliedTurn.text ?? "", targetRooms: photoTargetsFromThread(pt, reqAt), interiorAixNames });
           roomPhoto = { atHand: v.atHand, why: v.why };
+          roomPhotoAtHandForChoice = v.atHand;
           console.log(JSON.stringify({ tag: "brain:room-photo-material", conversationId, atHand: v.atHand, why: v.why }));
         } catch (e) {
           console.warn("[brain-core] 室内写真の手元の判定に失敗（約束の道）:", e instanceof Error ? e.message : String(e));
@@ -5573,7 +5575,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       llmTwoChoice: llmTwoChoiceMode,
       // 2026-09-23 竹内: 室内の写真の依頼は「AIX【物件確認した→室内写真を確認した】か返信か」の2択（手元に写真があるかはスタッフしか知らない）。
       //   合図は**ブレインの決定**（decision_source）＝証拠だけで立てると、promise:pickup 等で別の AIX になった回に写真と無関係な左ボタンが出る
-      roomPhotoRequest: decisionSource === "signal:scene_S11_room_photo",
+      // 2026-11-06 弱い所 341（q105）: 10/07 の竹内さんの決め（KB dbc345b1「手元にあれば AIX を直接」）に揃え、手元にある時は2択にしない（TWO_CHOICE_PHOTO_AT_HAND_DIRECT・既定 on・戻す =off）
+      roomPhotoRequest: decisionSource === "signal:scene_S11_room_photo" && !(roomPhotoAtHandForChoice === true && twoChoicePhotoAtHandDirectOn()),
       // 2026-09-30: 手続きの質問で対象のお部屋の入居時期が資料で分からない → 返信（期間と流れ）か AIX【確認した→入居可能日】かの2択
       procedureMoveInUnknown: procedureDecision === "two_choice",
     });
