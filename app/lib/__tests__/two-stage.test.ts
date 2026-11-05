@@ -165,4 +165,13 @@ t("軸: about=vacancy は「空いて」の語が無くても募集状況の約�
   t("on: お礼だけ・問いなし → AIX のまま（約束しない）", resolveTwoStage(v0) === null);
   t("on: 問いのある番は今まで通り", resolveTwoStage({ ...v0, customerText: "2件とも猫OKですか？", ackOnly: false })?.kind === "check");
   delete process.env.TWO_STAGE_ACK_NO_CHECK; }
+// 2026-11-05 作業員1（8959・q212）: ピックアップの約束の直後のお礼・スタンプは、LLM の物件の AIX も汎用の分岐で2段にしない（TWO_STAGE_STAMP_ACK=on の時だけ）
+{ const v = { ...base, finalAix: "property_send", ackOnly: true, customerText: "[スタンプ]" };
+  t("off: 約束の直後のスタンプでも今まで通り2段（pickup）", resolveTwoStage({ ...v, openPickupPromise: true })?.kind === "pickup");
+  process.env.TWO_STAGE_STAMP_ACK = "on";
+  t("on: 開いているピックアップの約束＋お礼だけ → AIX のまま", resolveTwoStage({ ...v, openPickupPromise: true }) === null);
+  t("on: 約束の直後（ackRightAfterPromise）→ AIX のまま", resolveTwoStage({ ...v, ackRightAfterPromise: true }) === null);
+  t("on: 約束が無いお礼だけは今まで通り2段", resolveTwoStage(v)?.kind === "pickup");
+  t("on: お礼でない番は今まで通り2段", resolveTwoStage({ ...v, ackOnly: false, openPickupPromise: true, customerText: "もっと広い部屋ありますか" })?.kind === "pickup");
+  delete process.env.TWO_STAGE_STAMP_ACK; }
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

@@ -43,6 +43,21 @@ export function isAckOnlyTurn(text: string | null | undefined): boolean {
   return tokens.every((t) => ACK_TOKEN_RE.test(t));
 }
 
+/**
+ * 2026-11-05 作業員1（竹内さんの35番の解き直し・番 8959）: スタンプだけの番（[スタンプ]）を、2段の見分けでお礼・了承と読む。
+ *   isAckOnlyTurn は「[」を含む番を落とすので、ピックアップの約束の後のスタンプが「お礼・了承でない番」になり、物件の AIX が約束の返信（2段）に戻されていた。
+ *   線（本番 90日・ピックアップの約束の直後のお客様の番）: スタンプ → 次の一手が AIX 5/5（竹内さん 3/3）・文字のお礼 → 竹内さん AIX 30/35。KB aca164df・2d0f33cf
+ *   既定 off（入れる TWO_STAGE_STAMP_ACK=on）。
+ */
+export function twoStageStampAckEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_STAGE_STAMP_ACK ?? "").trim().toLowerCase() === "on";
+}
+export function isStampOnlyTurn(text: string | null | undefined): boolean { return /^(?:\s*\[スタンプ\]\s*)+$/.test(String(text ?? "")); } // 11/05: 旧は書き込みで \ が抜けた /^s*[スタンプ]s*$/（1文字の集合）＝スタンプに当たらず on でも 0/3 だった
+/** 2段の見分けのお礼・了承（スタンプも入れる時だけ広げる） */
+export function isAckOnlyForTwoStage(text: string | null | undefined, env?: Record<string, string | undefined>): boolean {
+  return isAckOnlyTurn(text) || (twoStageStampAckEnabled(env) && isStampOnlyTurn(text));
+}
+
 /** こちらが「これからする事」の宣言（範囲の中にあれば話題はまだ開いている＝約束の受けの番） */
 const PROMISE_ACTS: ReadonlySet<StaffAct> = new Set<StaffAct>(["pickup_promise", "check_promise", "estimate_promise", "phone_promise"]);
 /** 行為の型に無い約束（「撮影出来次第すぐにお送り」「結果が出次第ご連絡」「お送りさせて頂きます」）。監査で 62d01e33 の撮影の約束が閉じた範囲に入っていた */
