@@ -178,7 +178,27 @@ export function resolveTwoStageOrDirect(i: TwoStageInput): { verdict: TwoStageVe
   const core = resolveTwoStageCore(i);
   const direct = answerableDirectAix(core, i);
   if (direct) return { verdict: null, direct, coreSource: core?.source ?? null };
-  return { verdict: resolveTwoStage(i), direct: null, coreSource: null };
+  return { verdict: nightMgmtCheckDirection(resolveTwoStage(i), i), direct: null, coreSource: null };
+}
+
+/**
+ * 2026-11-06 作業員9（弱い所 324・統括役の決め）: 夜（18時以降）でお客様の発言に管理会社の話題（礼金・駐車場 等）がある確認の約束（check）の番は、
+ *   direction の決まった結び「確認出来次第ご連絡させて頂きます！！」を竹内さんの 10/26 の実送信の形「本日管理会社営業時間外の為明日確認させて頂き、確認出来次第ご連絡させて頂きます！！」にする。
+ *   なぜ: 書き手は一番上のブレインの方向の結びに従い、下に足した注記（MGMT_NIGHT_CLOSING）では「明日」を入れなかった（試験 fc-night2 0/3・closing2 1/3）。
+ *   判断（返信か AIX か・2段か）は変えない＝言い方の結びだけ。MGMT_NIGHT_DIRECTION=on の時だけ（既定 off）
+ */
+export function mgmtNightDirectionOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.MGMT_NIGHT_DIRECTION ?? "").trim().toLowerCase() === "on";
+}
+const NIGHT_CLOSE = "本日管理会社営業時間外の為明日確認させて頂き、確認出来次第ご連絡させて頂きます！！";
+export function nightMgmtCheckDirection(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "customerText"> & { hourJst?: number }, env?: Record<string, string | undefined>): TwoStageVerdict | null {
+  if (!v || v.kind !== "check" || !mgmtNightDirectionOn(env)) return v;
+  if ((i.hourJst ?? jstParts().hour) < 18 || !MGMT_TOPIC_RE.test(String(i.customerText ?? ""))) return v;
+  const before = v.direction;
+  let d = before.replace(/「確認出来次第ご連絡させて頂きます！！」/g, `「${NIGHT_CLOSE}」`);
+  if (d === before) d = `${before}（今は管理会社の営業時間外＝確認の約束の文は竹内さんの実送信の形「〇〇につきまして、${NIGHT_CLOSE}」の1文にする）`;
+  else d = `${d}（確認の約束は1文・「管理会社に確認させて頂きます」と「明日確認させて頂き」を別の文に分けない）`;
+  return { ...v, direction: d }; // source は変えない（出所の正規表現が多い）
 }
 
 /**
