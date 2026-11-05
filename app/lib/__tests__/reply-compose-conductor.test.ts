@@ -111,5 +111,16 @@ t("口: 統括の重点を読んだ記録", bc3.read.includes("重点") && bc3.m
   t("条件の番は割合に関係なく添える（59%）", cond.mf.keep === true);
 }
 
+// 2026-11-06 統括の重点が無い番の既定は「受けて締める」（試験 cc2-on の q023・q164）
+{
+  const f23 = decideMessageFocus(base({ scene: "viewing", ackOnly: false }));
+  t("重点なし・内覧の場面（q023 内覧のキャンセル）→ 決めに行かず受けて締める", f23.key === "relation_ack" && f23.source === "scene");
+  const f164 = decideMessageFocus(base({ scene: "question", ackOnly: false }));
+  const n164 = messageFocusNote(f164, { name: "〇〇" });
+  t("重点なし・質問の場面 → 受けて締める・重点の行も「中身を足さない」も出さない（答えを止めない）", f164.key === "relation_ack" && !n164.includes("この通の重点") && !n164.includes("新しい中身"), n164);
+  t("重点なし・条件の番 → 約束（継続の約束つき）", decideMessageFocus(base({ scene: "conditions", ackOnly: false })).key === "promise");
+  t("統括の重点がある番は今まで通り（answer）", decideMessageFocus(base({ scene: "viewing", inputs: { ...empty, focus: { focus: "answer" } } })).key === "answer");
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
