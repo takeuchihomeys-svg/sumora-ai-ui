@@ -361,6 +361,7 @@ import { replyHintBrainEnabled } from "@/app/lib/reply-hint-auto";
 import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/app/lib/opener-rates";
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
+import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -4446,6 +4447,20 @@ async function handleGenerateReply(req: NextRequest) {
     /** 書き直し1回の記録（COMPOSE_REWRITE・digest の compose_rewrite へ） */
     let composeRewriteLog: { reasons: string[]; after: string[] | null; used: boolean } | null = null;
     if (composeRun) console.info("[compose]", JSON.stringify({ purpose: composeRun.intent.purpose, source: composeRun.intent.source, issues: composeRun.blueprint.check.issues, rag: composeRun.ragIds.length, ms: composeRun.ms }));
+    // 2026-11-05 作業員9 返信の文の統括（KB P1 26bfdcbf・COMPOSE_CONDUCTOR=on・既定 off）: 統括の重点・組み合わせ・場面・前の流れを読み、この通の重点を1つ決めて
+    //   書き手に渡す（app/lib/reply-compose-conductor.ts・決定論・LLM なし）。確かめは下書きの後に digest へ（本文は書き換えない・差し戻しは記録だけ）
+    const composeConductor = composeConductorOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation
+      ? (() => {
+          try {
+            return buildComposeConductor({
+              meta: brainMeta ?? null, scene: resolveReplyScene({ customerText: message ?? "" }).scene, customerText: customerMsgUnits.join("\n") || (message ?? ""),
+              ackOnly: isAckOnlyTurn(customerMsgUnits), recent: recentMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt ?? null })),
+              name: typeof customerName === "string" ? customerName : null, nowMs: Date.now(), blueprint: !!composeRun?.note,
+            });
+          } catch (e) { console.warn(JSON.stringify({ tag: "compose-conductor:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
+        })()
+      : null;
+    if (composeConductor) console.info("[compose-conductor]", JSON.stringify({ conversationId, focus: composeConductor.mf.key, source: composeConductor.mf.source, keep: composeConductor.mf.keep, read: composeConductor.read }));
 
     // ── 条件提示判定（2026-09-08 監査改修）──
     // ①エリア語彙拡張＋ひらがな接頭の誤検出排除 ②家賃以外の金額（初期費用/礼金/年収等）をマスク
@@ -5554,6 +5569,7 @@ async function handleGenerateReply(req: NextRequest) {
       // 2026-10-08 この番の本質（turn-contract）を一番上に。本質がブレインの判断の時は、下の方向性は「形」（開口語・字数・締め）だけ（Q1・本質を勝たせる）
       const tcNote = renderTurnContractNote(turnContract);
       if (tcNote) lines.push(tcNote);
+      if (composeConductor?.note) lines.push(composeConductor.note.trim());
       if (composeRun?.note) lines.push(composeRun.note.trim());
       const tcBrain = turnContract?.source === "brain";
       // 2026-10-09 調査の担当: effectiveReplyDirection はブレインの方向が14番目（早い者勝ちの型が先）。本質がある時はブレインの方向（中身）を型より上に置き、どちらが使われたかを記録する
@@ -7605,6 +7621,11 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 Object.assign(finalCheck.tpo_debug, {
                   turnContract: turnContract ? { source: turnContract.source, routes: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, misses: tcMiss } : null,
                   ...(composeRun ? { compose: composeDigestLine({ intent: composeRun.intent, blueprint: composeRun.blueprint, writerGotNote: !!composeRun.note, draft: finalDraftText }) } : {}),
+                  ...(composeConductor ? (() => {
+                    const misses = verifyDraft(finalDraftText ?? "", composeConductor.mf);
+                    const sb = sendBackDecision(misses, { alreadySentBack: false });
+                    return { compose_conductor: composeConductorDigest({ mf: composeConductor.mf, read: composeConductor.read, order: composeConductor.order, misses, action: sb.action === "send_back" ? "差し戻し候補（記録だけ）" : sb.action }) };
+                  })() : {}),
                   ...(composeRewriteLog ? { compose_rewrite: composeRewriteLog.reasons.length ? `書き直し=${composeRewriteLog.used ? "使った" : "元のまま"}（${composeRewriteLog.reasons.join("・")}→${(composeRewriteLog.after ?? []).join("・") || "なし"}）` : "書き直し=不要" } : {}),
                   aixContent: aixC.slice(0, 6),
                 });
