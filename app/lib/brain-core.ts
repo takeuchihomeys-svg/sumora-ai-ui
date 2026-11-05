@@ -149,6 +149,7 @@ import { resolvePendingPickup } from "@/app/lib/pending-pickup";
 // 2026-09-23 竹内「家賃交渉は基本できないものだからいれない」: していない約束を入口（返信の方向）で落とす
 import { stripRentNegotiation, stripRentNegotiationFromList, customerAskedRentNegotiation, RENT_NEGOTIATION_AVOID_TOPICS } from "@/app/lib/rent-negotiation-guard";
 import { resolveOwnPropertyForTurn } from "@/app/lib/own-property-server";
+import { ownPropertyReturnedEstimateOn, OWN_PROPERTY_RETURNED_ESTIMATE_LINE } from "@/app/lib/own-property-match";
 import { customerAsksMoreListings } from "@/app/lib/reply-context";
 import { trackPromises, buildPromiseBrainNote } from "@/app/lib/promise-tracker";
 import { customerSceneOf } from "@/app/lib/sent-shape";
@@ -2580,7 +2581,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const ownProperty = await resolveOwnPropertyForTurn(conversationId, [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })));
   const ownPropertyReturnedAll = ownProperty?.all ?? false;
   const ownPropertyText = ownProperty && ownProperty.ours > 0
-    ? `\n・お客様が今回送ってきた物件${ownProperty.items}件のうち${ownProperty.ours}件は、こちらが前に送った物件（記録で照合済み）。${ownPropertyReturnedAll ? "新しく見つけた物件ではないので、募集状況の確認（property_check_result）の理由にしない。お客様の言葉（気に入った・もっと見たい・内覧したい 等）で判断する。" : "残りはこちらの記録に無い物件。"}`
+    ? `\n・お客様が今回送ってきた物件${ownProperty.items}件のうち${ownProperty.ours}件は、こちらが前に送った物件（記録で照合済み）。${ownPropertyReturnedAll ? "新しく見つけた物件ではないので、募集状況の確認（property_check_result）の理由にしない。お客様の言葉（気に入った・もっと見たい・内覧したい 等）で判断する。" : "残りはこちらの記録に無い物件。"}${ownPropertyReturnedAll && ownPropertyReturnedEstimateOn() ? OWN_PROPERTY_RETURNED_ESTIMATE_LINE : ""}`
     : "";
   const conductorNote = linkConductorBrainEnabled()
     ? await import("@/app/lib/link-conductor-server").then(({ conductorBrainNoteIfEnabled }) => conductorBrainNoteIfEnabled(supabase, conversationId, Date.now())).catch(() => "")
@@ -4709,7 +4710,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         }
       }
       if (finalAix === "estimate_sheet") {
-        const er = estimateToReply({ text: turnTextNoImg, turnHasPropertyMedia: unrepliedTurn.hasImage || /https?:\/\//.test(unrepliedTurn.text ?? "") });
+        const er = estimateToReply({ text: turnTextNoImg, turnHasPropertyMedia: unrepliedTurn.hasImage || /https?:\/\//.test(unrepliedTurn.text ?? ""), ownReturnedEstimate: ownPropertyReturnedAll && ownPropertyReturnedEstimateOn() });
         if (er.yes && applyOverride(demotedOverrides, "turn_route_guards", "guard:estimate_to_reply", null, finalAix)) {
           console.log(JSON.stringify({ tag: "brain:estimate-to-reply", conversationId, why: er.why }));
           finalAix = null; sceneSignalCheckPattern = null;
@@ -4950,6 +4951,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           const props = turnMsgs.filter((t) => /https?:\/\//.test(t) || (/^\s*\[画像\]/.test(t) && isPropertyCandidateImage(t)));
           const n = broughtPropertyCount(props);
           // 2026-10-20 試験の道の外れ①（q183・q184・BRAIN_ROUTE_FIX_1020 brought_text）: 何を聞いたかはお客様が打った文だけで読む（画像の読み取りの「空室／即入」・SUUMO のボタン「最新の空室状況を知りたい」を除く）
+          // 2026-11-05 弱い所 302（8931）: 照合で全部こちらが送った物件と分かった送り返しは持ち込みではない（OWN_PROPERTY_RETURNED_ESTIMATE=on の時だけ）
+          if (ownPropertyReturnedAll && ownPropertyReturnedEstimateOn()) return null;
           return n > 0 ? { ask: broughtPropertyAsk(routeFix1020("brought_text") ? broughtTypedText(turnMsgs) : (unrepliedTurn.text ?? "")), count: n, titleOnly: broughtTitleOnly(props) } : null; // 10/13 titleOnly: SNS・TikTok の題だけ（two-stage）
         })(),
       });

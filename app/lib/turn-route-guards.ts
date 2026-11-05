@@ -111,7 +111,9 @@ export function onlineViewingAck(i: { lastStaffTexts: ReadonlyArray<string>; cus
  */
 const COST_WORD_RE = /初期費用|見積|いくら|費用|お値段|金額/;
 const NOT_YET_SENT_RE = /(?:他にも|別に|ほかにも)[^。\n]{0,12}(?:気になって|ある|あります)[^。\n]{0,20}(?:物件|お部屋|部屋)/;
-export function estimateToReply(i: { text: string; turnHasPropertyMedia: boolean }): { yes: boolean; why: string } {
+export function estimateToReply(i: { text: string; turnHasPropertyMedia: boolean; ownReturnedEstimate?: boolean }): { yes: boolean; why: string } {
+  // 2026-11-05 弱い所 302（8931）: こちらの資料の送り返し（照合で全部こちらの物件）は費用を言っていなくても見積書の番（竹内さん 0/7 確認・全体 見積書 14/21）。OWN_PROPERTY_RETURNED_ESTIMATE=on の時だけ
+  if (i.ownReturnedEstimate && i.turnHasPropertyMedia) return { yes: false, why: "こちらの資料の送り返し" };
   const t = String(i.text ?? "").normalize("NFKC");
   if (!COST_WORD_RE.test(t)) return { yes: true, why: "費用を聞いていない" };
   if (!i.turnHasPropertyMedia && NOT_YET_SENT_RE.test(t)) return { yes: true, why: "まだ送っていない物件の費用" };

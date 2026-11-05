@@ -214,5 +214,16 @@ it("見積: 他のお部屋も見たい時は前向きな反応でも見積書�
   expect(isMisumoriContextAppropriate({ ...base, customerAsksMoreListings: true }).mode).toBe("forbid");
   expect(isMisumoriContextAppropriate({ ...base, customerMessage: "他の物件も見てみたいです。ここの初期費用いくらですか？", customerAsksMoreListings: true }).mode).toBe("declare");
 });
+// 2026-11-05 弱い所 302（8931 の実物・住所は伏せた）: リアプロの資料の「室名：103（1階部分）」を号室と読む（既定 on・OWN_PROPERTY_ROOM_LABEL_WIDE=off で旧）
+it("取り出し: 室名：103（1階部分）を号室と読み、読み違いの1字（南泉/南巽）でも同じ部屋", () => {
+  const t = "[画像] 【物件の資料】\n物件種目：【住居用】マンション\n物件名：サンシエ南泉\n室名：103（1階部分）\n所在地：〒〇〇〇-〇〇〇〇 大阪府大阪市生野区\n賃料：63,000円";
+  const it1 = extractScreenshotProperty(t);
+  expect(JSON.stringify(it1)).toBe(JSON.stringify({ name: "サンシエ南泉", room: "103" }));
+  expect(matchOwnProperty(it1!, [{ name: "サンシエ南巽", room: "103", sentAt: "2026-10-28T09:20:00Z" }]).kind).toBe("same_room");
+  expect(matchOwnProperty(it1!, [{ name: "サンシエ南巽", room: "202", sentAt: "2026-10-28T09:20:00Z" }]).kind).toBe("same_building");
+  process.env.OWN_PROPERTY_ROOM_LABEL_WIDE = "off";
+  expect(JSON.stringify(extractScreenshotProperty(t))).toBe(JSON.stringify({ name: "サンシエ南泉", room: null }));
+  delete process.env.OWN_PROPERTY_ROOM_LABEL_WIDE;
+});
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
