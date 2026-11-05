@@ -14,6 +14,8 @@
 //   (j) 24時間の試験の出力で、レーンが同じ会話を2本以上取った行（点検表 11）
 //   (h) 分からない事の3つの表（brain_weaknesses・brain_unknowns・owner_questions）の開いている数と新しく増えた数（夜の cron の数・KB 3892c30c）
 //   (m) 試験の写しの property_pickups を相場の観測（rent_observations）に通さない前提が trigger の定義のままか（弱い所 303）
+//   (n) 24時間の DeepSeek の失敗（402＝残高切れ・alt_failed）を本番と試験に分けて（11/05 残高切れで資料の読み取りが失敗）
+//   (o) scripts/ で DeepSeek を直接呼ぶのに申込の線（loadDeepseekCutoff 等）を通していない台本（11/05 の読み直しの dry-read・点検表 17）
 //   (g) 48時間の試験の結果で「悪化0」なのに前（main）と両方で解いた問題が予定より少ない（0 含む）物 … ⑨（比べていないのに悪化0）
 // 出力: 1行のまとめ（毎朝の見張りに貼る）＋詳しい所。前日との差分の為の控えは .claude/exam-cache/hazard-audit/（git に入らない）。
 // 実行: npx tsx --env-file=.env.local scripts/hazard-audit.ts [--json] [--no-db] [--no-net] [--save]
@@ -24,7 +26,7 @@ import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import { pickupTriggerStillSkips } from "./lib/exam-pickup-copy";
-import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, conductorLogHazards, laneDupConvs, dupProblemIds, idContentClashes, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
+import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, conductorLogHazards, laneDupConvs, dupProblemIds, idContentClashes, deepseekFailLine, deepseekWithoutCutoff, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
 
 const flag = (k: string) => process.argv.includes(`--${k}`);
 const git = (args: string[], cwd = process.cwd()) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
@@ -122,6 +124,36 @@ async function main() {
         checks.push({ key: "m", ok: v.ok, line: `相場の観測の trigger（試験の写しを通さない前提）${v.ok ? "そのまま" : `崩れた ${v.why.length}`}`, detail: v.why });
       }
     }
+  }
+
+  // (n) 2026-11-05 DeepSeek の失敗（402＝残高切れ）の24時間の数（llm_usage_logs・数えるだけ）
+  if (flag("no-db")) checks.push({ key: "n", ok: null, line: "DeepSeek の失敗: 見ない（--no-db）", detail: [] });
+  else {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !key) checks.push({ key: "n", ok: null, line: "DeepSeek の失敗: 不明（鍵が無い）", detail: [] });
+    else {
+      const db = createClient(url, key);
+      const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+      const cnt = async (prod: boolean, f: "402" | "alt") => {
+        let q = db.from("llm_usage_logs").select("id", { count: "exact", head: true }).gte("created_at", since).like("model", "deepseek%");
+        q = prod ? q.eq("env", "production") : q.neq("env", "production");
+        q = f === "402" ? q.eq("status", 402) : q.eq("error_type", "alt_failed");
+        const { count, error } = await q;
+        if (error) throw new Error(error.message);
+        return count ?? 0;
+      };
+      try {
+        const [prod402, prodAltFailed, test402, testAltFailed] = await Promise.all([cnt(true, "402"), cnt(true, "alt"), cnt(false, "402"), cnt(false, "alt")]);
+        const v = deepseekFailLine({ prod402, prodAltFailed, test402, testAltFailed });
+        checks.push({ key: "n", ok: v.ok, line: v.line, detail: v.ok ? [] : [v.line] });
+      } catch (e) { checks.push({ key: "n", ok: null, line: `DeepSeek の失敗: 不明（${String(e).slice(0, 60)}）`, detail: [] }); }
+    }
+  }
+
+  // (o) 2026-11-05 scripts/ で DeepSeek を直接呼ぶのに申込の線（loadDeepseekCutoff 等）を通していない台本（点検表 17）
+  {
+    const bad = readFiles(["scripts"]).filter((f) => deepseekWithoutCutoff(f.text)).map((f) => f.file);
+    checks.push({ key: "o", ok: bad.length === 0, line: `DeepSeek を呼ぶのに申込の線を通さない台本 ${bad.length}`, detail: bad });
   }
 
   // (e) 本番の LP の「◯月実績」

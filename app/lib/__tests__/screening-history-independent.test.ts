@@ -1,0 +1,20 @@
+// app/lib/__tests__/screening-history-independent.test.ts — 延滞歴・カードローンでも独立系なら通る可能性（竹内さん 11/05 No.10・KB 75120859）
+import { isScreeningHistoryWorry, buildScreeningHistoryNote, SCREENING_HISTORY_INDEPENDENT_LINE } from "../guarantor-companies";
+import { COMPANY_FACTS } from "../company-facts";
+let pass = 0, fail = 0;
+const t = (n: string, ok: boolean, info?: unknown) => { if (ok) pass++; else { fail++; console.log(`  NG ${n} → ${JSON.stringify(info)}`); } };
+t("ブラックで通るか（本番の発言）", isScreeningHistoryWorry("保証人はいてるのですが、信用ブラック状態なのてそこ通るところだと有難いです。"));
+t("カードローンの残り", isScreeningHistoryWorry("カードローンの残りがあるんですが審査通りますか？"));
+t("延滞歴", isScreeningHistoryWorry("昔携帯の延滞があったんですが審査大丈夫ですか"));
+t("条件のフォームは外す", !isScreeningHistoryWorry("▶︎【お部屋お探し中！】 ①【ご入居の時期】⇒11月末 ⑧ブラックでも通る所"));
+t("申込のフォームは外す", !isScreeningHistoryWorry("【お申込者様記入欄】 ・延滞 なし 審査"));
+t("家賃の滞納の一般論は外す", !isScreeningHistoryWorry("家賃を滞納したらどうなりますか？審査に影響しますか"));
+const note = buildScreeningHistoryNote(["カードローンの残りがあるんですが審査通りますか？"]);
+t("1ブロックに竹内さんの一文と言い切らない", note.includes(SCREENING_HISTORY_INDEPENDENT_LINE) && note.includes("言い切らない") && note.includes("AIX【保証会社について】にしない") && note.includes("特定の物件"), note);
+t("関係の無い発言には出さない", buildScreeningHistoryNote("内覧はいつできますか？") === "");
+process.env.SCREENING_HISTORY_INDEPENDENT = "off";
+t("off で出さない", buildScreeningHistoryNote(["カードローンの残りがあるんですが審査通りますか？"]) === "");
+delete process.env.SCREENING_HISTORY_INDEPENDENT;
+t("種類名は会社の事実に入れない（9/26 のマスタ1本）", !COMPANY_FACTS.some((f) => /独立系/.test(f.fact)));
+console.log(`\n${pass} passed, ${fail} failed`);
+if (fail) process.exitCode = 1;

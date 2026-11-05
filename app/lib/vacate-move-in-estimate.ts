@@ -20,7 +20,8 @@ export function vacateMoveInEstimateEnabled(env: Env = typeof process !== "undef
 }
 
 /** 退去後の工事の期間（日）。実送信「2週間〜3週間程」「早ければ2週間後遅くても1ヶ月後」。退去予定日→答えた旬の11組が全部入る幅（14〜21日だと4組で1旬早い＝早めない） */
-export const VACATE_WORK_DAYS = { min: 14, max: 28 } as const;
+// 2026-11-05 竹内さん本人の答え（KB 75120859 No.9）「退去後のクリーニング・鍵交換に2〜3週間程」で 28→21 に改めた（統括役の指示・10/15 の 14〜28 は 4bde71a3 と一緒に退役）。戻す VACATE_WORK_DAYS_MAX=28
+export const VACATE_WORK_DAYS = { min: 14, max: Number(process.env.VACATE_WORK_DAYS_MAX ?? "21") || 21 } as const;
 
 const jun = (d: number) => (d <= 10 ? "上旬" : d <= 20 ? "中旬" : "下旬");
 function ymdPlus(ymd: string, days: number): { y: number; m: number; d: number } {
@@ -58,7 +59,7 @@ export function moveInEstimateFromVacate(vacateRaw: string | null | undefined, n
   const vacate = raw.replace(/^\d{4}\s*年/, "").replace(/\s+/g, "");
   return {
     vacate, label,
-    fact: `最短の入居時期の目安（逆算）: ${vacate}退去予定＋退去後のクリーニング・鍵交換（2〜3週間程・遅くても1ヶ月程）→ 最短で${label}のご入居（目安。確定の日は退去後の室内の状況・業者の手配で決まる）`,
+    fact: `最短の入居時期の目安（逆算）: ${vacate}退去予定＋退去後のクリーニング・鍵交換（2〜3週間程）→ 最短で${label}のご入居（目安。確定の日は退去後の室内の状況・業者の手配で決まる）`,
   };
 }
 

@@ -23,6 +23,7 @@ export async function collectAnomalyStats(db: SupabaseClient, now = new Date()):
   const ago = (min: number) => new Date(now.getTime() - min * 60_000);
   const week = 7 * 24 * 60;
   // 型の組を崩さないよう、過去4週の同じ15分は別の Promise.all に分ける（11/03 tsc-remote で見つかった型エラー）
+  const llmBalance15 = await cnt(db.from("llm_usage_logs").select("id", { count: "exact", head: true }).eq("status", 402).eq("env", "production").gte("created_at", ago(15).toISOString()), "llm_usage_logs(402)");
   const [llmFail15, baseline, draftStuck, cronRows, customerMsgs90, brainLogs90] = await Promise.all([
     llmFailIn(db, ago(15), now),
     Promise.all([1, 2, 3, 4].map((w) => llmFailIn(db, ago(w * week + 15), ago(w * week)))),
@@ -36,18 +37,21 @@ export async function collectAnomalyStats(db: SupabaseClient, now = new Date()):
   return {
     llmFail15, llmFailBaseline: baseline, draftStuck,
     cronFail30: cronRows.length, cronFailNames: [...byCron].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([n, c]) => `${n}×${c}`),
-    customerMsgs90, brainLogs90, jstHour: new Date(now.getTime() + 9 * 3600_000).getUTCHours(),
+    customerMsgs90, brainLogs90, jstHour: new Date(now.getTime() + 9 * 3600_000).getUTCHours(), llmBalance15,
   };
 }
 
 /** 数えて・決めて・書く。dry は書かない */
-export async function runOpsAnomalyWatch(db: SupabaseClient, o: { dry?: boolean; now?: Date } = {}): Promise<{ stats: AnomalyStats; anomalies: Anomaly[]; inserted: number; updated: number; resolved: number }> {
+export async function runOpsAnomalyWatch(db: SupabaseClient, o: { dry?: boolean; now?: Date; balanceLive?: boolean } = {}): Promise<{ stats: AnomalyStats; anomalies: Anomaly[]; inserted: number; updated: number; resolved: number }> {
   const now = o.now ?? new Date();
   const stats = await collectAnomalyStats(db, now);
-  const anomalies = evaluateAnomalies(stats);
-  if (o.dry) return { stats, anomalies, inserted: 0, updated: 0, resolved: 0 };
+  const all = evaluateAnomalies(stats);
+  // 2026-11-05: dry（既定）の間も、残高切れ（llm_balance）だけは表と LINE に出す（route が balanceLive を渡す）
+  const balanceOnly = !!o.dry && !!o.balanceLive;
+  if (o.dry && !balanceOnly) return { stats, anomalies: all, inserted: 0, updated: 0, resolved: 0 };
+  const anomalies = balanceOnly ? all.filter((a) => a.kind === "llm_balance") : all;
   // 見張りの種類の行だけ（rollout_down 等の別の知らせは、ここでは閉じない）
-  const { data: open, error } = await db.from("ops_anomalies").select("id, kind, severity, value").is("resolved_at", null).in("kind", Object.keys(ANOMALY_LABEL));
+  const { data: open, error } = await db.from("ops_anomalies").select("id, kind, severity, value").is("resolved_at", null).in("kind", balanceOnly ? ["llm_balance"] : Object.keys(ANOMALY_LABEL));
   if (error) throw new Error(`ops_anomalies: ${error.message}`);
   const plan = planAnomalyWrites((open ?? []) as Array<{ id: string; kind: string; severity: string; value: number }>, anomalies);
   const iso = now.toISOString();

@@ -17,5 +17,11 @@ t("FNV-1a の既知の値", fnv1a("") === "811c9dc5");
 t("既定 on・off で止める", digestVerOn({}) && !digestVerOn({ BRAIN_DIGEST_VER: "off" }));
 t("digest に ver が入る", JSON.stringify((brainDecisionDigestExtra({}, env) as Record<string, unknown>).ver) === JSON.stringify({ sw: a.h }));
 t("off なら入らない", !("ver" in brainDecisionDigestExtra({}, { ...env, BRAIN_DIGEST_VER: "off" })));
+// 2026-11-05 作業員9（弱い所 323）: 統括・文・夜の線の名前も拾う／鍵らしい名前は拾わない
+{
+  const e = switchEntries({ CONDUCTOR_INTAKE: "shadow", TWO_MESSAGE_PLAN: "on", FLASH_WRITER_ADAPT: "off", WRITER_FLASH_SCENES: "ack", MGMT_HOURS_SPLIT_1028: "on", TAKEUCHI_WORDING_R11: "off", EXAMPLE_WRITER_BOOST: "off", TURN_CONTRACT_LASTMETA: "off", CONDUCTOR_API_KEY: "abc", PATH: "x" }).map(([k]) => k);
+  t("新しい名前の頭を拾う", ["CONDUCTOR_INTAKE", "TWO_MESSAGE_PLAN", "FLASH_WRITER_ADAPT", "WRITER_FLASH_SCENES", "MGMT_HOURS_SPLIT_1028", "TAKEUCHI_WORDING_R11", "EXAMPLE_WRITER_BOOST", "TURN_CONTRACT_LASTMETA"].every((k) => e.includes(k)));
+  t("鍵らしい名前と関係ない名前は拾わない", !e.includes("CONDUCTOR_API_KEY") && !e.includes("PATH"));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

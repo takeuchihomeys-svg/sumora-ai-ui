@@ -109,3 +109,23 @@ if (fail) process.exit(1);
   const ok = got.join() === "q212";
   console.log(ok ? "hazard-audit-core (l): pass" : `hazard-audit-core (l): FAIL ${got}`); if (!ok) process.exit(1);
 }
+
+// (n) DeepSeek の失敗（11/05 の残高切れ）
+{
+  const { deepseekFailLine } = require("../hazard-audit-core") as typeof import("../hazard-audit-core");
+  const a = deepseekFailLine({ prod402: 8, prodAltFailed: 1, test402: 0, testAltFailed: 96 });
+  const b = deepseekFailLine({ prod402: 0, prodAltFailed: 2, test402: 0, testAltFailed: 30 });
+  const c = deepseekFailLine({ prod402: 0, prodAltFailed: 12, test402: 0, testAltFailed: 0 });
+  const ok = a.ok === false && /残高切れ/.test(a.line) && b.ok === true && c.ok === false;
+  console.log(ok ? "hazard-audit-core (n): pass" : `hazard-audit-core (n): FAIL ${JSON.stringify([a, b, c])}`); if (!ok) process.exit(1);
+}
+
+// (o) DeepSeek を呼ぶ台本の申込の線
+{
+  const { deepseekWithoutCutoff } = require("../hazard-audit-core") as typeof import("../hazard-audit-core");
+  const bad = 'const r = await sharedPropertyImageRead(url, {});';
+  const good = 'const c = await loadDeepseekCutoff(sb, conv); if (c !== null) await sharedPropertyImageRead(url, {});';
+  const comment = '// sharedPropertyImageRead( は注記だけ';
+  const ok = deepseekWithoutCutoff(bad) && !deepseekWithoutCutoff(good) && !deepseekWithoutCutoff(comment) && !deepseekWithoutCutoff("const x = 1;");
+  console.log(ok ? "hazard-audit-core (o): pass" : "hazard-audit-core (o): FAIL"); if (!ok) process.exit(1);
+}

@@ -61,6 +61,10 @@
       "schedule": "40 19 * * *"
     },
     {
+      "path": "/api/cron/sent-image-reread",
+      "schedule": "50 19 * * *"
+    },
+    {
       "path": "/api/cron/second-takeuchi-data",
       "schedule": "20 20 * * 0"
     },
@@ -383,6 +387,10 @@
     {
       "path": "/api/cron/hazard-audit-db",
       "schedule": "40 18 * * *"
+    },
+    {
+      "path": "/api/cron/prod-yardstick",
+      "schedule": "10 16 * * *"
     }
   ]
 }

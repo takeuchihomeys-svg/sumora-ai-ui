@@ -14,7 +14,7 @@ const NOW = Date.parse("2026-10-15T03:00:00Z");
 console.log("■ 逆算（竹内さんの実送信の組）");
 t("10月末 → 11月中旬〜下旬（q145・8590144d）", moveInEstimateFromVacate("10月末", NOW)?.label === "11月中旬〜下旬", moveInEstimateFromVacate("10月末", NOW));
 t("10月31日 → 11月中旬〜下旬", moveInEstimateFromVacate("10月31日", NOW)?.label === "11月中旬〜下旬");
-t("10月20日 → 11月上旬〜中旬", moveInEstimateFromVacate("10月20日", NOW)?.label === "11月上旬〜中旬", moveInEstimateFromVacate("10月20日", NOW));
+t("10月20日 → 11月上旬（11/05 竹内さん 2〜3週間程）", moveInEstimateFromVacate("10月20日", NOW)?.label === "11月上旬", moveInEstimateFromVacate("10月20日", NOW));
 t("11月30日 → 12月中旬〜下旬", moveInEstimateFromVacate("11月30日", NOW)?.label === "12月中旬〜下旬");
 t("旬だけ（10月下旬）は逆算しない", moveInEstimateFromVacate("10月下旬", NOW) === null);
 t("もう過ぎた退去日は逆算しない", moveInEstimateFromVacate("10月1日", NOW) === null);

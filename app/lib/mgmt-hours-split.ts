@@ -3,9 +3,9 @@
 // 2026-10-28 竹内さんの決定（KB 5d9e56b5・9fd703f4・今週の LINE #26 Ryoichi・#28 あかり）:
 //   募集状況（空き）の確認は業者の物件サイト（リアプロ・ITANDI・レインズ）で弊社の営業時間中に確かめられる＝18時以降でも「明日」を付けない。
 //   管理会社にしか答えられない確認・交渉（駐車場・鍵交換の免除・ペット 等）だけ、18時以降は「本日管理会社営業時間外の為明日…」。
-// 切替: MGMT_HOURS_SPLIT_1028=on の時だけ（既定 off）。テスト: app/lib/__tests__/mgmt-hours-split.test.ts
+// 切替: MGMT_HOURS_SPLIT_1028（2026-11-05 既定 on・=off で戻す。作業員9 の試験 mgmt-split-on 悪化0・q197 は揺れ＝ブレインの判断に触らない・竹内さんの決定 P1 5d9e56b5／5fe999f8 の2回）。テスト: app/lib/__tests__/mgmt-hours-split.test.ts
 export function mgmtHoursSplitEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.MGMT_HOURS_SPLIT_1028 ?? "").trim().toLowerCase() === "on";
+  return (env.MGMT_HOURS_SPLIT_1028 ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 弊社の営業の終わり（JST の時）。やることリストの最後の便は 20:30・電話は19時まで＝確かめ待ち（竹内さんに答え待ち） */

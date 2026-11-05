@@ -4,7 +4,7 @@
 //   ・異常の知らせ: OPS_ANOMALY_WATCH=on の時だけ数えて書く（既定 off）。=dry は数えて決めて Vercel のログに1行出すだけ（最初の確かめ・vercel crons run は query を渡せない）。?dry=1 も同じ（off でも動く）
 //   判断は app/lib/ops-anomaly.ts・数えと書き込みは app/lib/ops-anomaly-server.ts
 import { NextRequest, NextResponse } from "next/server";
-import { opsAnomalyWatchMode } from "@/app/lib/ops-anomaly";
+import { opsAnomalyWatchMode, opsAnomalyBalanceLive } from "@/app/lib/ops-anomaly";
 import { opsAdminClient, runOpsAnomalyWatch } from "@/app/lib/ops-anomaly-server";
 import { switchFingerprint } from "@/app/lib/switch-fingerprint";
 import { brainVersionOf } from "@/app/lib/brain-decision-ledger";
@@ -29,7 +29,8 @@ export async function GET(req: NextRequest) {
   }
   if (mode === "off" && req.nextUrl.searchParams.get("dry") !== "1") return NextResponse.json({ ok: true, ver, skipped: "OPS_ANOMALY_WATCH が on でない" });
   try {
-    const r = await runOpsAnomalyWatch(db, { dry });
+    // 2026-11-05: 残高切れ（402）だけは dry の間も表と竹内さん個人の LINE（YUMA）に出す（?dry=1 の手の確かめでは出さない）
+    const r = await runOpsAnomalyWatch(db, { dry, balanceLive: mode === "dry" && req.nextUrl.searchParams.get("dry") !== "1" && opsAnomalyBalanceLive() });
     console.log(JSON.stringify({ tag: "ops-anomaly", mode, dry, ver: ver ?? fp.h, stats: r.stats, anomalies: r.anomalies.map((a) => ({ kind: a.kind, severity: a.severity, why: a.why })), inserted: r.inserted, updated: r.updated, resolved: r.resolved }));
     return NextResponse.json({ ok: true, dry, ver: ver ?? fp.h, ...r });
   } catch (e) {

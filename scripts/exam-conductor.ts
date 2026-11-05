@@ -53,6 +53,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { nightBaseJobDue, nightBaseAlready, isExamJobShape } from "./lib/exam-base-pin";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -61,6 +62,8 @@ const argsOf = (k: string) => args.filter((a) => a.startsWith(`--${k}=`)).map((a
 const flag = (k: string) => args.includes(`--${k}`);
 const ROOT = join(examCacheRoot(), "exam-queue");
 const DONE = join(ROOT, "done"), RES = join(ROOT, "results");
+// 2026-11-05 作業員8（21:49 に流す係が落ちた・点検表 18）: 係の印（夜の基準・見張りの「今日はもう回した」）は列のフォルダの外に置く。列の .json は依頼として読まれる
+const MARKS = join(examCacheRoot(), "conductor-marks");
 const CONFIG = join(ROOT, "config.json"), SCENE_MAP = join(ROOT, "scene-map.json");
 const LOG = join(ROOT, "conductor.log");
 const ensureDirs = () => { for (const d of [ROOT, DONE, RES]) mkdirSync(d, { recursive: true }); };
@@ -125,17 +128,27 @@ async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
 }
 
 // ─── 順番待ち ───────────────────────────────────────────────────────────
+const skippedNonJobs = new Set<string>();
 function readJobs(): Array<ExamJob & { file: string }> {
   ensureDirs();
-  return readdirSync(ROOT).filter((f) => f.endsWith(".json") && f !== "config.json" && f !== "scene-map.json").map((f) => ({ ...(JSON.parse(readFileSync(join(ROOT, f), "utf8")) as ExamJob), file: join(ROOT, f) }))
-    .sort((a, b) => compareJobs(a, b));
+  // 2026-11-05 作業員8: 依頼の形でない .json（印・壊れたファイル）は拾わずに飛ばす（落ちない・1回だけ知らせる）
+  const out: Array<ExamJob & { file: string }> = [];
+  for (const f of readdirSync(ROOT).filter((x) => x.endsWith(".json") && x !== "config.json" && x !== "scene-map.json")) {
+    let j: unknown = null; try { j = JSON.parse(readFileSync(join(ROOT, f), "utf8")); } catch { /* 壊れた・書きかけ */ }
+    if (!isExamJobShape(j)) { if (!skippedNonJobs.has(f)) { skippedNonJobs.add(f); log(`  ⚠ 依頼の形でないファイルを飛ばす: ${f}（係の列のフォルダに印を置かない・点検表 18）`); } continue; }
+    out.push({ ...(j as ExamJob), file: join(ROOT, f) });
+  }
+  return out.sort((a, b) => compareJobs(a, b));
 }
 function addJob(): void {
   ensureDirs();
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
   const cwd = arg("cwd", process.cwd());
   const label = arg("label") || `job-${Date.now()}`;
-  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage", "brain"), env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
+  // 2026-11-05 作業員8（統括役の了承「段を最小に: --stage=diff を既定にし、文の組だけ draft」）: 前の子の費用の約15%が下書きの段（final_check・aix_desk 等）。
+  //   --stage を書かない依頼は diff（直したファイルが下書きに届かなければブレインだけ）・文の組（grp-reply・grp-aix）は draft。書いた時はそのまま
+  const stageDefault = /^(?:grp-reply|grp-aix)/.test(label) ? "draft" : "diff";
+  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage") || stageDefault, env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
   // 2026-11-04 (a)(b): --priority=<小さいほど先・既定 5>・--max-min=<1本の時間の上限（分）>
   if (arg("priority")) (base as Record<string, unknown>).priority = Number(arg("priority"));
   if (arg("max-min")) (base as Record<string, unknown>).maxMin = Number(arg("max-min"));
@@ -579,7 +592,8 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
     for (;;) {
       // 2026-11-05 作業員4（竹内さん KB 95f492fc ⑤）: 危ない所の見張りの手元の分を夜1回（2つ目の流す役だけ・止める EXAM_HAZARD_AUDIT=off）。本番の分は Vercel の cron hazard-audit-db
       if (REMOTE_ONLY && (process.env.EXAM_HAZARD_AUDIT ?? "").trim().toLowerCase() !== "off") {
-        const lastFile = join(ROOT, "hazard-audit-last.json");
+        mkdirSync(MARKS, { recursive: true });
+        const lastFile = join(MARKS, "hazard-audit-last.json");
         const ha = hazardAuditDue(readJson<{ day?: string } | null>(lastFile, null)?.day ?? null);
         if (ha.due) {
           writeFileSync(lastFile, JSON.stringify({ day: ha.day, at: new Date().toISOString() }));
@@ -588,6 +602,22 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
           const code = await runNpx(process.cwd(), ["tsx", "--env-file=.env.local", "scripts/hazard-audit.ts", "--save"], {}, out).done;
           const head = (() => { try { return readFileSync(out, "utf8").split(/\r?\n/).find((l) => l.startsWith("危ない所の見張り")) ?? ""; } catch { return ""; } })();
           log(`  見張り 終わり（${code}）: ${head.slice(0, 300)}`);
+        }
+      }
+      // 2026-11-05 作業員8（統括役の了承の 1「前の答えを本番の commit ごとに1回だけ作って使い回す（夜に1回）」）: 夜の基準を作る依頼を、JST 21時以降に1日1つ積む
+      //   （2つ目の流す役だけ・積むだけで流すのは試験の列＝夜だけ・止める EXAM_NIGHT_BASE=off）。終わると brain-exam が nightly-base-<構成>.json を書く
+      if (REMOTE_ONLY && (process.env.EXAM_NIGHT_BASE ?? "").trim().toLowerCase() !== "off") {
+        mkdirSync(MARKS, { recursive: true });
+        const nbFile = join(MARKS, "night-base-last.json");
+        const nb = nightBaseJobDue(readJson<{ day?: string } | null>(nbFile, null)?.day ?? null, new Date(), { cwd: process.cwd() });
+        // 印が無くても、その日の依頼が列・済み・結果にあれば積まない（印を移した日の二重を防ぐ）
+        const names = (d: string) => { try { return readdirSync(d); } catch { return [] as string[]; } };
+        if (nb.due && nb.job && nightBaseAlready(nb.day, [...names(ROOT), ...names(DONE), ...names(RES), ...names(join(ROOT, "withdrawn"))])) {
+          writeFileSync(nbFile, JSON.stringify({ day: nb.day, at: new Date().toISOString(), note: "already" }));
+        } else if (nb.due && nb.job) {
+          writeFileSync(nbFile, JSON.stringify({ day: nb.day, at: new Date().toISOString() }));
+          writeFileSync(join(ROOT, `${String(nb.job.createdAt).replace(/[:.]/g, "-")}-${nb.job.label}.json`), JSON.stringify(nb.job, null, 1));
+          log(`夜の基準の依頼を積んだ: ${nb.job.label}（夜だけ流す）`);
         }
       }
       const isRemoteJob = (x: ExamJob) => x.runner === "tsc-remote" || (x.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") || (x.runner === "cmd" && !!x.readOnly);

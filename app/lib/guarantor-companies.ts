@@ -697,3 +697,27 @@ export function buildGuarantorMatchedText(properties: readonly GuarantorProperty
   const base = shape === "answer" ? buildGuarantorAnswerText(properties) : buildGuarantorRankListText(properties);
   return customerWorriesAboutScreening(latestCustomerMessage) ? `${base}\n${GUARANTOR_SUPPORT_LINE}` : base;
 }
+
+// ─── 2026-11-05 竹内さん本人の答え（KB P1 75120859 No.10）: 延滞歴・カードローンの残りがあっても、独立系の保証会社なら審査が通る可能性がある（返信で言ってよい ○）─────
+//   種類名は会社の事実（company-facts）に入れずこのマスタ1本（9/26 の決まり）。お客様が自分の延滞歴・カードローン・ブラックで審査が通るかを聞いた番だけ、
+//   ブレインと書き手に1ブロックで渡す。どの物件の保証会社が独立系かは物件ごと（資料・表で確かな時だけ言う）＝その物件で通るかの結果は今まで通り橋渡し（AIX【保証会社について】）。
+//   止める SCREENING_HISTORY_INDEPENDENT=off（既定 on）
+export const SCREENING_HISTORY_INDEPENDENT_LINE = "独立系の保証会社であれば、延滞歴やカードローンの残りがあっても審査に通る可能性がございます";
+export function screeningHistoryIndependentOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.SCREENING_HISTORY_INDEPENDENT ?? "").trim().toLowerCase() !== "off";
+}
+/** お客様が自分の延滞歴・カードローン・ブラック等で審査が通るかを聞いている1通か（条件のフォーム・申込のフォーム・画像の書き起こし・家賃の滞納の一般論は外す） */
+export function isScreeningHistoryWorry(text: string | null | undefined): boolean {
+  const t = String(text ?? "").normalize("NFKC");
+  if (!t.trim() || /^\s*\[(?:画像|動画|ファイル)\]|①【|【お部屋お探し|【お申込者様記入欄】/.test(t)) return false;
+  return /延滞|滞納|カードローン|(?:ローン|リボ|借金|借入)[^。\n]{0,8}(?:残|あ(?:る|り)|中)|ブラック|信用情報|債務整理|自己破産/.test(t)
+    && /審査|通(?:る|り|ら|過)|借りれ|借りられ|契約(?:でき|出来)|大丈夫|厳し|無理/.test(t)
+    && !/家賃(?:の|を)?(?:滞納|延滞)(?:した|しない|すると|したら)|退去/.test(t);
+}
+/** ブレインと書き手に渡す1ブロック（当たらなければ ""） */
+export function buildScreeningHistoryNote(customerTexts: string | ReadonlyArray<string> | null | undefined): string {
+  if (!screeningHistoryIndependentOn()) return "";
+  const arr = Array.isArray(customerTexts) ? customerTexts : [String(customerTexts ?? "")];
+  if (!arr.some((x) => isScreeningHistoryWorry(x))) return "";
+  return `\n【🛡 審査の不安（延滞歴・カードローン等）への答え方（竹内さん 11/05）】\n- 返信で言ってよい: 「${SCREENING_HISTORY_INDEPENDENT_LINE}」（通ると言い切らない）\n- 物件の話が無い番（初回・これから探す番）は、返信で「審査に通りやすい独立系の保証会社のお部屋を中心にお探しし、全力でサポートさせて頂きます」と次の手を伝える（AIX【保証会社について】にしない・竹内さん q021）\n- 送った・聞かれた特定の物件で通るか・その物件の保証会社が独立系かが確かでない時だけ、保証会社を確認する約束（AIX【保証会社について】）。物件ごとの種類は資料・表で確かな時だけ言う\n`;
+}
