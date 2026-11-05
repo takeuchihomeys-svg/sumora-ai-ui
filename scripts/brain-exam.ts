@@ -73,6 +73,7 @@ import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy,
 import type { ReplayFloor } from "../app/lib/test-replay-floor";
 import { examPickupNameLateOn, splitPickupNames } from "./lib/exam-pickup-copy";
 import { examRealGapsOn, gapSceneTimesByDay } from "./lib/exam-scene-times";
+import { planFromMeta, planMessages, afterAixReplyBrief, afterAixDraftHint, type PlanAsk } from "../app/lib/two-message-plan";
 import { verifyCopy, type CopyVerdict } from "./lib/exam-copy-check";
 import { isNoLineTestConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
@@ -114,6 +115,9 @@ function loadProblems(): ExamProblem[] {
 }
 const arg = (k: string, d = "") => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const flag = (k: string) => args.includes(`--${k}`);
+// 2026-11-06 弱い所 305（作業員7・統括役の決め ②）: AIX を送った後の返信の下書きの再生。none＝今（指定なし）／hint＝自動の下書き（afterAixDraftHint）。
+//   ブレインが AIX の番でも下書きを作り、竹内さんの送った AIX（staffText の【AIX】の通）を会話の後ろに足す（本番で AIX の後に作る時と同じ並び）
+const AFTER_AIX_DRAFT = ((args.find((a) => a.startsWith("--after-aix-draft="))?.split("=")[1] ?? "") as "" | "none" | "hint");
 // 2026-10-21 確かめる人: 「--report」（= なし）は読まれず、結果を並べるつもりが既定の会話 YUMA で試験を流していた → --report だけなら --label の結果を並べる（label も無ければ止める）
 const REPORT = arg("report") || (flag("report") ? arg("label") : "");
 if (flag("report") && !REPORT) throw new Error("--report は --report=<label>（または --label=<label> と一緒に）で使う（試験は流さない）");
@@ -293,6 +297,8 @@ type ResultRow = {
   brain: Record<string, unknown> | null; path: Verdict;
   asks: Array<{ q: string; covered: boolean; why: string; /** 10/09: 答え方（返信／約束／AIX の区別）だけ合うか（要点は見ない） */ route?: boolean }> | null; ng: Array<{ text: string; violated: boolean; why: string }> | null;
   score: ProblemScore; error?: string;
+  /** 2026-11-06 弱い所 305: --after-aix-draft の時の指定（none／hint）・送った AIX・渡した指定 */
+  afterAix?: { mode: string; sentAix: string | null; hint: string; aixMsgs: number };
   /** 10/09: LLM が最初に出した答え（決まりで直される前）と、その道 */
   raw?: Record<string, unknown> | null; essence?: Verdict | null;
   /** 10/09: 判断の出どころ（決まり・補正・信号）。brain-core の meta にある物だけ */
@@ -1820,15 +1826,24 @@ async function main() {
       row.score = problemScore(pv, jg ? jg.asks : null, jg ? jg.ng : null, { primaryIdx: primaryAskIndex(ps.asks) });
       // ④ 下書き（返信・2段が正解の問題だけ・ブレインの答案を固定して generate-reply を1回）
       // 10/09 --draft-first-only: 下書き（④）は1回目だけ（過半数の回の費用を抑える）
-      if (POST && stageOf(p) === "draft" && acc.some((a) => !a.startsWith("AIX")) && (rep === 1 || !flag("draft-first-only"))) {
-        if (meta.reply_mode === "aix") row.draft = { text: null, skipped: "ブレインが AIX", code: code.label, ok: false, asks: null, ng: null, pass: false };
+      if (POST && stageOf(p) === "draft" && (AFTER_AIX_DRAFT || acc.some((a) => !a.startsWith("AIX"))) && (rep === 1 || !flag("draft-first-only"))) {
+        if (meta.reply_mode === "aix" && !AFTER_AIX_DRAFT) row.draft = { text: null, skipped: "ブレインが AIX", code: code.label, ok: false, asks: null, ng: null, pass: false };
         else {
           const customer = p.context.slice(burst).map((_, k) => texts[burst + k]);
           const staffEngaged = p.context.some((m) => m.s === "staff" && m.t.trim() && m.t.trim() !== "[画像]");
+          // 305: 竹内さんの送った AIX の通（staffText の【AIX】）を会話の後ろに足し、hint の時は自動の下書きの指定を渡す
+          const afterAixSegs = AFTER_AIX_DRAFT ? String(p.staffText ?? "").split(/\n―\n/).filter((x) => x.startsWith("【AIX】")).map((x) => x.replace(/^【AIX】/, "")) : [];
+          const afterAixKey = AFTER_AIX_DRAFT ? String((meta as { aix?: unknown }).aix ?? acc.find((a) => a.startsWith("AIX:"))?.slice(4) ?? "").split(/[|/]/)[0] || null : null;
+          const afterAixAsks = ((meta as { turn_contract?: { asks?: PlanAsk[] } }).turn_contract?.asks ?? []) as PlanAsk[];
+          const afterAixHint = AFTER_AIX_DRAFT === "hint" ? (() => { const plan = planFromMeta(meta as never, null) ?? planMessages({ asks: afterAixAsks, finalAix: afterAixKey }); return afterAixDraftHint(afterAixReplyBrief(plan, afterAixKey, afterAixAsks), afterAixKey); })() : "";
+          if (AFTER_AIX_DRAFT) row.afterAix = { mode: AFTER_AIX_DRAFT, sentAix: afterAixKey, hint: afterAixHint, aixMsgs: afterAixSegs.length };
+          const lastAt = times.length ? Date.parse(times[times.length - 1]) : Date.now();
+          const afterAixRecent = afterAixSegs.map((t, k) => ({ sender: "staff", text: t, createdAt: new Date(lastAt + (k + 1) * 60_000).toISOString(), isAix: true }));
           const body = {
             message: customer.join(MSG_SEP), customerMessages: customer, state: staffEngaged ? "proposing" : "first_reply", conversationId: S().conv, customerName: "YUMA",
             hasViewed: false, activeTaskTypes: [], hasStaffReplied: staffEngaged,
-            recentMessages: p.context.slice(-25).map((m, k, arr) => ({ sender: m.s, text: texts[p.context.length - arr.length + k], createdAt: times[times.length - arr.length + k], isAix: !!m.aix })),
+            recentMessages: [...p.context.slice(-25).map((m, k, arr) => ({ sender: m.s, text: texts[p.context.length - arr.length + k], createdAt: times[times.length - arr.length + k], isAix: !!m.aix })), ...afterAixRecent],
+            ...(afterAixHint ? { replyHint: afterAixHint } : {}),
             brainMetaDirect: { meta, customerName: "YUMA", conversationDirection: (meta.conversation_direction as Record<string, unknown> | undefined) ?? null, brainAnalyzedAt: new Date().toISOString() },
             shadowNoWrite: true, testSceneMaterials: "on", testExcludeReplyText: p.staffText ?? "",
             // 2026-10-15 監査の残り #7: --auto-hint で本番の bg-async と同じ自動の手がかり（replyHint＋replyHintAuto）を渡す（REPLY_HINT_BRAIN=off で旧の上書き）
