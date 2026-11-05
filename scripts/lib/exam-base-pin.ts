@@ -107,6 +107,27 @@ export function nightBaseJobDue(lastJstDay: string | null, now: Date, opts: { fr
   };
 }
 
+/** その日の夜の基準の依頼が、列・済み・結果のどこかに既にあるか（印のファイルが無くても二重に積まない・11/05 21:49 の落ちの後） */
+export function nightBaseAlready(day: string, fileNames: readonly string[]): boolean {
+  const label = `night-base-${day}`;
+  return fileNames.some((f) => f.includes(label));
+}
+
+/**
+ * 係の列のフォルダの .json が依頼の形か（純関数）。11/05 21:49 に夜の基準の印（{day, at}）を列に置いて、流す係が依頼と読み j.only.split で落ちた。
+ *   依頼の形＝id と label が文字列・runner が知っている物か無し・brain-exam の依頼（runner 無し）は only が文字列
+ */
+export function isExamJobShape(x: unknown): boolean {
+  if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+  const j = x as Record<string, unknown>;
+  if (typeof j.id !== "string" || typeof j.label !== "string" || !j.label) return false;
+  const r = j.runner;
+  if (r != null && r !== "brain-exam" && r !== "cmd" && r !== "tsc" && r !== "tsc-remote") return false;
+  if (r === "cmd") return Array.isArray(j.cmds);
+  if (r == null || r === "brain-exam") return typeof j.only === "string";
+  return true;
+}
+
 /** 確かめ直しの対象: 夜の基準と比べて悪化に見えた問題（確かな悪化・揺れの範囲の差の両方）。良くなった・同じは確かめない */
 export function confirmTargets(cmps: Array<{ id: string; cmp: string }>): string[] {
   return cmps.filter((c) => /^worse/.test(c.cmp)).map((c) => c.id);
