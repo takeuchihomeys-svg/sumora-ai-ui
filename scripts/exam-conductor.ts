@@ -55,6 +55,7 @@ import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape } from "./lib/exam-base-pin";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, type CmpLite } from "./lib/exam-plan";
+import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -175,6 +176,17 @@ function addJob(): void {
     if (arg("pick")) log(`  選び: ${p.why} → ${ids.length}問`);
     // 2026-11-05 作業員8（KB P0 4c91ffd9「試験のブレインが何を・何回・どこまで・いつ」・統括役「1か所が順に決めて1行の計画を出す」）: 試験の統括の計画（scripts/lib/exam-plan.ts）
     //   --kind=record|prod（記録だけ・本番で動いている直し）は試験を積まず、毎晩の本番の物差し（cron prod-yardstick）で見る。計画は exam-cache/exam-plans.jsonl に残す
+    // 2026-11-06 作業員8（弱い所 348・作業員9の気付き: spec.json の正解を変えても手元の problems.json が古いまま使われ、night-brain-on-p1 で q136・q099・q137 が古い正解で ○ に数えられた）:
+    //   積む前に、依頼の作業ツリーの problems.json が今の spec と違う（共有の置き場にも新しい物が無い）問題を見つけたら積まずに返す（作り直すコマンド付き）。--allow-stale で今まで通り積む
+    {
+      const local = readJson<Array<Record<string, unknown>>>(join(cwd, "scripts/brain-exam/problems.json"), []);
+      const fr = fillProblemsFromShared(spec as unknown as Array<Record<string, unknown>>, local, { addMissing: (id) => ids.includes(id) });
+      const stale = fr.staleKept.filter((id) => ids.includes(id)), miss = fr.missing.filter((id) => ids.includes(id));
+      if (sharedProblemsEnabled() && (stale.length || miss.length) && !flag("allow-stale")) {
+        const need = [...stale, ...miss];
+        throw new Error(`積まない: 問題 ${need.join(",")} は手元の problems.json が今の正解（spec.json）と違うか無い。作り直す: cd ${cwd} && npx tsx --env-file=.env.local scripts/brain-exam-add.ts --rebuild --only=${need.join(",")}（古いまま流す時だけ --allow-stale）`);
+      }
+    }
     const kind = (["record", "prod", "exam"].includes(arg("kind")) ? arg("kind") : undefined) as "record" | "prod" | "exam" | undefined;
     const group = /^grp-reply/.test(label) ? "reply" as const : /^grp-aix/.test(label) ? "aix" as const : /^grp-brain/.test(label) ? "brain" as const : null;
     const plan = planExam({ label, kind, switchName: base.switch, ids, group, diffStage: base.stage === "brain" || base.stage === "draft" ? base.stage : null, brainText: flag("brain-text"), defaultOn: flag("default-on"), capUsd: Number(arg("cap-usd", "2")) || 2 });
