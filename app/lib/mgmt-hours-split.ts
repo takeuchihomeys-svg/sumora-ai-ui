@@ -29,6 +29,9 @@ export function isVacancyConfirmObject(object: string | null | undefined): boole
  *   何を: ブレインの方向のすぐ下に1行だけ足し、結びの前に「本日管理会社営業時間外の為、明日」を入れさせる（ブレインの判断・結びの言葉は変えない）。
  *   入れない: 確認の約束が無い番・土曜の夜（交渉は月曜の別の注記）・朝（9時前）・募集状況だけの確認で21時より前（10/28 の決定＝今すぐ確かめられる）。
  * 切替: MGMT_NIGHT_CLOSING=on の時だけ（既定 off）。
+ * 【退役 2026-11-06・統括役の決め】off のまま使わない。書き手は下に足したこの注記より、上のブレインの方向（two-stage の check の direction）の結びに従い、
+ *   試験で「明日」を入れたのは 9通中2通だけだった（closing2 1/3・fc-night2 0/3 等）。同じ事は two-stage.nightMgmtCheckDirection（MGMT_NIGHT_DIRECTION）が
+ *   方向の文そのもので行い、q136 で 3/3（night-dir-q136）。二重に言うだけになるので on にしない（消さずに履歴として残す）
  */
 export function mgmtNightClosingOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.MGMT_NIGHT_CLOSING ?? "").trim().toLowerCase() === "on";

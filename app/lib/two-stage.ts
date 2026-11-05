@@ -185,10 +185,10 @@ export function resolveTwoStageOrDirect(i: TwoStageInput): { verdict: TwoStageVe
  * 2026-11-06 作業員9（弱い所 324・統括役の決め）: 夜（18時以降）でお客様の発言に管理会社の話題（礼金・駐車場 等）がある確認の約束（check）の番は、
  *   direction の決まった結び「確認出来次第ご連絡させて頂きます！！」を竹内さんの 10/26 の実送信の形「本日管理会社営業時間外の為明日確認させて頂き、確認出来次第ご連絡させて頂きます！！」にする。
  *   なぜ: 書き手は一番上のブレインの方向の結びに従い、下に足した注記（MGMT_NIGHT_CLOSING）では「明日」を入れなかった（試験 fc-night2 0/3・closing2 1/3）。
- *   判断（返信か AIX か・2段か）は変えない＝言い方の結びだけ。MGMT_NIGHT_DIRECTION=on の時だけ（既定 off）
+ *   判断（返信か AIX か・2段か）は変えない＝言い方の結びだけ。MGMT_NIGHT_DIRECTION（11/06 既定 on・=off で止める）
  */
 export function mgmtNightDirectionOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.MGMT_NIGHT_DIRECTION ?? "").trim().toLowerCase() === "on";
+  return (env.MGMT_NIGHT_DIRECTION ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（night-dir-q136 3/3・昼 day-co-dir 悪化0・統括役の決め）
 }
 const NIGHT_CLOSE = "本日管理会社営業時間外の為明日確認させて頂き、確認出来次第ご連絡させて頂きます！！";
 export function nightMgmtCheckDirection(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "customerText"> & { hourJst?: number }, env?: Record<string, string | undefined>): TwoStageVerdict | null {

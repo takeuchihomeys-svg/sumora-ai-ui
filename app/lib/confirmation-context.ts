@@ -81,10 +81,10 @@ export const CONFIRM_NEXT_RE = /確認(?:でき|出来|し)次第/;
  *   費用交渉の網に「調整」も足す（「礼金を調整する事は難しいでしょうか」）。
  *   なぜ: 最初に当たった1つだけを返していて、網の先頭が「募集状況」（空き・まだあり）＝q136「駐車場は敷地内まだ空きありますでしょうか」が「駐車場」まで届かず、
  *   確認の約束の中身も夜の線（MGMT_HOURS_SPLIT・MGMT_NIGHT_CLOSING）も「募集状況だけの確認」と読んでいた。
- * 切替: CONFIRM_OBJECT_ALL=on の時だけ（既定 off＝今と1文字も変わらない）。
+ * 切替: CONFIRM_OBJECT_ALL（11/06 既定 on・=off で前の1つだけに戻す）。
  */
 export function confirmObjectAllOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.CONFIRM_OBJECT_ALL ?? "").trim().toLowerCase() === "on";
+  return (env.CONFIRM_OBJECT_ALL ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（90日の監査 50/474 を目で読んだ・q136・昼 day-co-dir 悪化0・統括役の決め）
 }
 const ADJUST_COST_RE = /(?:家賃|賃料|礼金|敷金|初期費用|管理費|共益費|更新料)[^\n]{0,8}調整/;
 // 監査（scripts/audit-confirm-object.ts・90日 474番）: 貼り付けた物件情報（賃料・入居可能日・設備の一覧）や「内見のみさせて頂きます」の言い切りまで拾うと、
