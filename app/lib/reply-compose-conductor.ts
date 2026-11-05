@@ -112,11 +112,11 @@ export function decideMessageFocus(i: FocusInput): MessageFocus {
     key = duties.includes("answer") ? "answer" : duties.includes("appeal") ? "close" : i.ackOnly ? "relation_ack" : "promise";
     why = `この通の受け持ち（${duties.join("・")}）`; source = "plan";
   } else {
-    key = i.scene === "ack" || i.scene === "considering" || i.ackOnly ? "relation_ack"
-      : i.scene === "question" || i.scene === "cost" ? "answer"
-      : i.scene === "conditions" || i.scene === "property_share" ? "promise"
-      : i.scene === "viewing" || i.scene === "apply" ? "close" : "answer";
-    why = `場面（${i.scene ?? "不明"}）`; source = "scene";
+    // 2026-11-06 統括役の決め（試験 cc2-on: 場面からの決め直しで q023 内覧のキャンセルを「決めに行く」・q164 お礼を「答える」と読み、竹内さんから外れた）:
+    //   統括の重点も組み合わせも無い番は「受けて締める」を既定にする。条件・物件を送ってきた番だけ約束（竹内さんは59%で継続の約束）。
+    //   この既定の時は、重点の行・「中身を足さない」の行を書き手に出さない（messageFocusNote）＝質問の答えを止めない
+    key = i.scene === "conditions" || i.scene === "property_share" ? "promise" : "relation_ack";
+    why = `統括の重点なし（場面 ${i.scene ?? "不明"}・既定は受けて締める）`; source = "scene";
   }
   const kl = keepPromiseLine(i);
   let keep = false;
@@ -131,6 +131,12 @@ export function decideMessageFocus(i: FocusInput): MessageFocus {
 /** 書き手への注記（設計図の上に置く1ブロック）。言い回しは竹内さんの実送信の形だけ（創作の文を入れない） */
 export function messageFocusNote(mf: MessageFocus, o: { name?: string | null } = {}): string {
   const nm = (o.name ?? "").trim() ? `${o.name!.trim()}さん` : "";
+  // 統括の重点が無い番（source=scene）の既定「受けて締める」は、書き手には継続の約束と書かない事だけを渡す（重点の行は出さない）
+  if (mf.source === "scene" && mf.key === "relation_ack") {
+    const L0: string[] = [];
+    if (mf.omit.length && mf.omit.some((k) => k !== "double_apology" && k !== "apply_promise")) L0.push(`- 書かない事: ${mf.omit.map((k) => OMIT_JA[k]).join("・")}`);
+    return L0.length ? ["【✍️ 文の統括】", ...L0].join("\n") : "";
+  }
   const L = [`【✍️ この通の重点（文の統括）】${MESSAGE_FOCUS_JA[mf.key]}（理由: ${mf.why}）`];
   if (mf.duties.length) L.push(`- この通が担う事: ${mf.duties.map((d) => ({ answer: "答える", trust: "信頼", appeal: "訴求" }[d])).join("・")}`);
   if (mf.key === "answer") L.push("- 聞かれた事の答えを最初の中身の文に置く（確認の約束に逃げない・材料に無い事は言い切らない）");
