@@ -94,7 +94,7 @@ import { decideApplySubMode } from "./lib/apply-sub-mode";
 import { normalizePetWording } from "./lib/pet-wording";
 import { isTestOnlyConversation } from "./lib/test-conversations";
 // 2026-11-05 竹内さん（KB b834d9f0）: この番の組み立て（何通・どの順）の知らせと AIX の後の返信の下書き
-import { planMessages, planFromMeta, planAnnounce, remainingAfterAix, afterAixReplyBrief, afterAixDraftHint, twoMessageAnnounceVisible, type PlanAsk } from "./lib/two-message-plan";
+import { planMessages, planFromMeta, planAnnounce, remainingAfterAix, afterAixReplyBrief, afterAixDraftHint, twoMessageAnnounceVisible, twoMessageAfterAixAutoOn, type PlanAsk } from "./lib/two-message-plan";
 // 2026-10-23 試験の通（入る通の約93%）の Realtime は、その会話を選んでいる時だけ当てる（戻す NEXT_PUBLIC_RT_IGNORE_TEST=off）
 import { RT_IGNORE_TEST, shouldIgnoreTestRealtime, shouldIgnoreTestRealtimeForConvs } from "./lib/realtime-test-ignore";
 /** 会話画面の紐付け（linkedEntryOf）に使う物件顧客の列（一覧の読み込み・テスト専用の会話を選んだ時の読み直しで同じ） */
@@ -1196,6 +1196,9 @@ export default function Home() {
   const [dismissedPostAixTemplateIds, setDismissedPostAixTemplateIds] = useState<Set<string>>(new Set());
   // 2026-10-18 弱い所B-2: ブレインの本質（turn_contract）の控え。下書きを出すと suggested_aix_meta が消えるので、見えた時の物を会話ごとに覚える（鮮度は freshContractAsks が見る）
   const brainContractSeenRef = useRef<Record<string, unknown>>({});
+  // 2026-11-06 弱い所 305（作業員7・統括役の決め 案A）: AIX の後に自動で作った下書きは、スタッフが打ち始めたら書かない（上書きしない）
+  const staffTypedRef = useRef(false);
+  const afterAixAutoFiredRef = useRef<string>("");
   // 2026-09-14 竹内「申込の AIX 押したあとは AIX テンプレートも申込へのところにする」:
   //   会話ごとの最後に送った AIX（DB の aix_usage_logs・72時間以内）。postAixTemplateMap は画面の一時的な状態で、
   //   開き直し・別の端末からの送信では消えるため、テンプレート一覧の初期カテゴリの拠り所をこちらにも持つ
@@ -4331,6 +4334,10 @@ export default function Home() {
   //   onClick={generateReply} はイベントを渡すので、文字列の promiseHint がある時だけ使う
   const generateReply = async (opts?: unknown) => {
     const promiseHint = opts && typeof opts === "object" && typeof (opts as { promiseHint?: unknown }).promiseHint === "string" ? String((opts as { promiseHint: string }).promiseHint) : "";
+    // 2026-11-06 弱い所 305: AIX の後の自動の下書き（auto）は、スタッフが打ち始めたら下書き欄に書かない
+    const autoRun = !!(opts && typeof opts === "object" && (opts as { auto?: unknown }).auto === true);
+    if (autoRun) staffTypedRef.current = false;
+    const putDraft = (v: string) => { if (autoRun && staffTypedRef.current) return; setReplyDraft(v); };
     if (!selectedConversation.id) return;
     const genConvId = selectedConversation.id; // finallyでdraftPreparingをリセットするために保存
 
@@ -4385,7 +4392,7 @@ export default function Home() {
       setGenerating(true);
       setError("");
       genBaseAtRef.current = latestCustomerAtOf(msgs); // 2026-10-20 すれ違い: この生成が見たお客様の最新の発言
-      setReplyDraft("");
+      putDraft("");
       setReplyQuality(null);
       setSuggestedAix(null);
 
@@ -4527,11 +4534,11 @@ export default function Home() {
             else setSuggestedAix(null);
             metaDone = true;
             fullText = buffer.slice(nl + 1);
-            if (fullText) setReplyDraft(fullText);
+            if (fullText) putDraft(fullText);
           }
         } else {
           fullText += chunk;
-          setReplyDraft(fullText);
+          putDraft(fullText);
         }
       }
 
@@ -4565,13 +4572,14 @@ export default function Home() {
       // 2026-10-20 竹内さん（設計知見 P1 d3fe3a9f）: お客様の文と同じ下書きは入力欄に残さない（サーバーの出口でも止める・draft-echo.ts）
       if (DRAFT_ECHO_GUARD && isCustomerEcho(finalDraft, customerTextsForEcho(msgs))) {
         aiDraftRef.current = "";
-        setReplyDraft("");
+        putDraft("");
         setCheckResult(null);
         setError("AI の下書きがお客様の文と同じになったため出しませんでした。もう一度作り直してください。");
         return;
       }
       aiDraftRef.current = finalDraft;
       replyTargetCustomerMsgRef.current = targetMessage;
+      if (autoRun && staffTypedRef.current) return; // スタッフが打ち始めた＝自動の下書きは出さない
       setDisplaySource("ai_draft");
       setReplyDraft(finalDraft);
 
@@ -9839,6 +9847,15 @@ export default function Home() {
               const sentAix = latestAixByConv[id]?.aixType ?? null;
               const afterSent = sentAix && latestAixByConv[id]?.at && Date.parse(latestAixByConv[id].at) >= Date.parse(String((seen as { analyzed_msg_ts?: string | null } | undefined)?.analyzed_msg_ts ?? "")) ? remainingAfterAix(plan, sentAix) : null;
               const brief = afterSent ? afterAixReplyBrief(plan, sentAix, asks) : null;
+              // 2026-11-06 弱い所 305（統括役の決め 案A）: AIX の後に返信が残る番は下書きを1回だけ自動で作る（送信はしない・打ち始めていたら作らない・既定 off・on でも YUMA だけ）
+              if (brief && twoMessageAfterAixAutoOn(process.env.NEXT_PUBLIC_TWO_MESSAGE_AFTER_AIX_AUTO, isTestOnlyConversation(id))) {
+                const autoKey = `${id}:${latestAixByConv[id]?.at ?? ""}`;
+                if (afterAixAutoFiredRef.current !== autoKey && !replyDraft.trim() && !generating) {
+                  afterAixAutoFiredRef.current = autoKey;
+                  const hint = afterAixDraftHint(brief, sentAix);
+                  setTimeout(() => { void generateReply({ promiseHint: hint, auto: true }); }, 0);
+                }
+              }
               return (
                 <div className="mx-1 mb-1 rounded-xl border border-slate-300 bg-slate-50 px-3 py-1.5 text-[11px] text-slate-700 flex flex-wrap items-center gap-2">
                   <span className="flex-1 min-w-0 font-semibold">
@@ -10915,6 +10932,7 @@ export default function Home() {
                   ref={textareaRef}
                   value={replyDraft}
                   onChange={(e) => {
+                    staffTypedRef.current = true;
                     setReplyDraft(e.target.value);
                     setDisplaySource(null); // 編集開始でAI下書きインジケーター解除
                     e.target.style.height = "auto";
