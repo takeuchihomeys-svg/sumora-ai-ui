@@ -138,10 +138,10 @@ const COST_ASK_RE = /初期費用|費用|いくら|見積|割引|安く|スモ�
 /**
  * 2026-11-06 弱い所 358（作業員7・統括役の決め）: お客様が物件を送ってきた番で空きの問いが無い時は、確認の2択の AIX の側を見積書にする。
  *   竹内さん: 持ち込みの物件は募集状況＋御見積書の両方（10/07）・q343（8/26 SUUMO の URL＋「ここみてもらってもいいですか」→見積書の AIX→「8月末退去予定で募集中・御見積書同封」）。
- *   空きの問い（q325「空きありますか」・q334「上記2件の空き」）は今まで通り物件確認した。既定 off（BROUGHT_TWO_CHOICE_ESTIMATE=on）
+ *   空きの問い（q325「空きありますか」・q334「上記2件の空き」）は今まで通り物件確認した。既定 on（11/06・止める BROUGHT_TWO_CHOICE_ESTIMATE=off）
  */
 export function broughtTwoChoiceEstimateOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BROUGHT_TWO_CHOICE_ESTIMATE ?? "").trim().toLowerCase() === "on";
+  return (env.BROUGHT_TWO_CHOICE_ESTIMATE ?? "").trim().toLowerCase() !== "off"; // 11/06 統括役の決め: bte-on 悪化0で既定 on（止める BROUGHT_TWO_CHOICE_ESTIMATE=off）
 }
 const VACANCY_ASK_RE = /空い|空き|空室|募集|まだ(?:あり|残)|埋ま/;
 

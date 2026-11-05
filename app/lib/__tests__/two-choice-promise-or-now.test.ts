@@ -27,18 +27,13 @@ t("その場の側: 初回は出さない", resolvePromiseOrNow({ ...base, final
 t("約束の側は replyHint なし", resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "https://suumo.jp/x", nowSide: true })?.replyHint === null);
 t("指定の文: AIX で送らず約束・確認していない事は書かない", /AIX で送らず/.test(promiseReplyHint("check")) && /確認していない事/.test(promiseReplyHint("check")));
 // 2026-11-06 弱い所 358: 持ち込みで空きの問いが無い番は、確認の2択の AIX の側を見積書に（BROUGHT_TWO_CHOICE_ESTIMATE=on の時だけ）
-{ const q343 = "フォーリアライズ京橋 4階
-https://suumo.jp/chintai/bc_100520738857/
-by S
-ここみてもらってもいいですか";
+{ const q343 = "フォーリアライズ京橋 4階\nhttps://suumo.jp/chintai/bc_100520738857/\nby S\nここみてもらってもいいですか";
+  process.env.BROUGHT_TWO_CHOICE_ESTIMATE = "off";
   t("358 off: 今まで通り物件確認した", resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: q343 })?.aix === "property_check_result");
   process.env.BROUGHT_TWO_CHOICE_ESTIMATE = "on";
   const on = resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: q343 });
   t("358 on: 持ち込み・空きの問いなし → 見積書の AIX と確認の約束の2択", on?.aix === "estimate_sheet" && on?.side === "promise" && on?.checkPattern === null);
-  t("358 on: 空きの問いの番（q325 の形）は物件確認したのまま", resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "堺筋本町 2LDK 7階
-https://suumo.jp/chintai/bc_1/
-by SUUMO
-空きありますか？" })?.aix === "property_check_result");
+  t("358 on: 空きの問いの番（q325 の形）は物件確認したのまま", resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "堺筋本町 2LDK 7階\nhttps://suumo.jp/chintai/bc_1/\nby SUUMO\n空きありますか？" })?.aix === "property_check_result");
   delete process.env.BROUGHT_TWO_CHOICE_ESTIMATE; }
 console.log(`${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
