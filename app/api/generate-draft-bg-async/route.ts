@@ -650,6 +650,16 @@ export async function POST(req: NextRequest) {
               //      残予算が十分（generate-reply 180s + 再brain 45s を 300s 内に収める）なら brain を1回だけ再実行し、
               //      再実行できない／失敗した場合は brainGateDirect を渡さず generate-reply 側の DB フェッチ＋鮮度判定（T2）に委ねる
               const elapsedMs = Date.now() - bgStartedAt;
+              // 2026-11-05 作業員5（KB ea2a9405②・#8）: CONDUCTOR_REPLAN=on の時だけ、後から来た通がスタッフ・お礼・了承だけなら（conductor-replan.replanCandidate=keep）
+              //   ブレインを再実行せず、前の通のブレインの判断（AIX も含めて・KB 2d0f33cf）をそのまま使う。前の判断が無い（stale-snapshot の null）時は今まで通り再実行
+              //   竹内さんの番 227 の数え（11/05）: keep は 3番（お願いします）で誤り0。既定 off
+              const { conductorReplanOn, replanCandidate, replanDigest } = await import("@/app/lib/conductor-replan");
+              const addedTexts = latestUnreplied.map((m) => m.text).filter((t) => !targetMessage.includes(String(t ?? "")));
+              const rp = conductorReplanOn() && brainGateDirect ? replanCandidate({ newTexts: addedTexts, prevAix: (brainGateDirect as { action?: string | null }).action ?? null }) : null;
+              if (rp?.kind === "keep") {
+                console.log(JSON.stringify({ tag: "conductor:replan", conversationId: convId, rp: replanDigest({ kind: "keep", why: rp.why }), keepAix: rp.keepAix, elapsedMs }));
+              } else {
+              if (rp) console.log(JSON.stringify({ tag: "conductor:replan", conversationId: convId, rp: replanDigest({ kind: "reread", why: rp.why }), elapsedMs }));
               // 2026-09-13（名無しの権兵衛事例の YUMA 再現で判明）: 分析中に2通目が届くと、ブレインは「古い発言への判断」として
               //   スナップショットを返さない（null・brain:stale-snapshot）。旧はスナップショットがある時だけ再実行していたため、
               //   2通目を見たブレインが動かないまま生成に進んでいた → 新しい発言がある時はスナップショットの有無に関係なく1回だけ再実行する
@@ -668,6 +678,7 @@ export async function POST(req: NextRequest) {
               } else if (brainGateDirect) {
                 console.log("[bg-async] burst detected but budget exhausted → brainMetaDirect を渡さず T2 に委ねる:", convId, "elapsedMs:", elapsedMs);
                 brainGateDirect = null;
+              }
               }
             }
             effectiveTargetMessage = latestTarget;

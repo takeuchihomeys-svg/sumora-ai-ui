@@ -10,6 +10,7 @@ import { REPLY_SCENE_JA, type ReplyScene } from "./reply-scene";
 import { NEED_TOOLS, type NeedTool } from "./brain-need";
 import { ROSTER } from "./conductor-roles";
 import { CONDUCTOR_PRIORITY_LINE, type ConductorRole } from "./conductor-handoff";
+import { conductorFocusMode, FOCUS_INTAKE_RULES, FOCUS_INTAKE_FIELD, parseFocusRead, type FocusRead } from "./conductor-focus";
 
 type Env = Record<string, string | undefined>;
 export type IntakeMode = "off" | "shadow";
@@ -32,7 +33,8 @@ export const INTAKE_AIX_CUES_V3 = [
   "内覧の番（viewing）: 候補の日時を出す番は AIX【内覧調整】、日にちが決まった番は AIX【待ち合わせ場所】（＝確定）。別の質問の番では段階を進めない",
 ] as const;
 export const intakeCuesV3On = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_INTAKE_CUES ?? "").trim().toLowerCase() === "v3";
-export const intakePrefixVersion = (env: Env = typeof process !== "undefined" ? process.env : {}) => (intakeCuesV3On(env) ? "ci-v3" : INTAKE_PREFIX_VERSION);
+// 2026-11-05 作業員5（KB P0 575a7cd5）: CONDUCTOR_FOCUS=shadow の時だけ、先頭に「表→背景→重点」の段を足す（版に +f1・既定 off は ci-v1／ci-v3 のまま1字も変えない）
+export const intakePrefixVersion = (env: Env = typeof process !== "undefined" ? process.env : {}) => `${intakeCuesV3On(env) ? "ci-v3" : INTAKE_PREFIX_VERSION}${conductorFocusMode(env) !== "off" ? "+f1" : ""}`;
 
 const SCENES = Object.keys(REPLY_SCENE_JA) as ReplyScene[];
 const ROLES = ["aix_desk", "compose", "writer", "check", "fetch", "deep", "second"] as const;
@@ -40,28 +42,31 @@ const ROLES = ["aix_desk", "compose", "writer", "check", "fetch", "deep", "secon
 /** 先頭（作り置き）の固定の文。取扱説明書の短い形は、版が変わる時（毎週の書き直し）だけ変わる */
 export function intakePrefix(manualShortForms: ReadonlyArray<{ brain: string; short: string }>, env: Env = typeof process !== "undefined" ? process.env : {}): string {
   const v3 = intakeCuesV3On(env);
+  const focus = conductorFocusMode(env) !== "off";
   const manuals = [...manualShortForms].sort((a, b) => a.brain.localeCompare(b.brain)).map((m) => `- ${m.brain}: ${m.short}`).join("\n");
   return [
     `あなたは賃貸の仲介会社の LINE 返信の「入口の統括」です（版 ${intakePrefixVersion(env)}）。お客様の今の番を最初に読み、場面・やる事・動かす担当・要る材料・迷いを決まった形の JSON で書きます。返信の文は書きません。判断（返信か AIX か）は判断のブレインが決めます。あなたは担当の選び方と材料の当たりを付ける役です。`,
     `【絶対の決まり（P0）】スタッフだけが知る事（管理会社の確認の結果・募集状況・交渉の結果・撮影した写真・見積の金額・内覧の日程の確定・入居可能日）は AIX で送る番。返信は AI が知り得る事だけ。判断はすべてブレインが決める（決まった計算は候補と安全の線だけ）。`,
     CONDUCTOR_PRIORITY_LINE,
     ...(v3 ? [`【AIX の番になる合図（場面ごと）】\n${INTAKE_AIX_CUES_V3.map((c) => `- ${c}`).join("\n")}`] : []),
+    ...(focus ? [FOCUS_INTAKE_RULES] : []),
     `【場面（scene はこの中から1つ）】${SCENES.map((s) => `${s}=${REPLY_SCENE_JA[s]}`).join("／")}`,
     `【担当（roles はこの中から）】${ROSTER.filter((r) => (ROLES as readonly string[]).includes(r.id)).map((r) => `${r.id}=${r.does}`).join("／")}`,
     `【要る材料（need はこの中から）】${NEED_TOOLS.join("・")}`,
     `【担当の取扱説明書（短い形）】\n${manuals || "- （まだ無い）"}`,
-    `【書き方】JSON だけを返す: {"scene": "場面", "roles": ["担当"], "need": ["材料"], "todos": [{"kind": "answer|promise|aix|fetch|check", "what": "20字以内"}], "doubt": {"kind": "何の迷いか（20字以内）", "between": ["案A", "案B"]} または null, "confidence": "high|mid|low"}。一覧に無い言葉を作らない。${v3 ? "軽い番（お礼・スタンプだけ）は、上の合図（帳面に果たしていない約束）に当たらない限り roles を [\"writer\"] だけにする。" : "軽い番（お礼・スタンプだけ）は roles を [\"writer\"] だけにする。"}`,
+    `【書き方】JSON だけを返す: {"scene": "場面", "roles": ["担当"], "need": ["材料"], "todos": [{"kind": "answer|promise|aix|fetch|check", "what": "20字以内"}], "doubt": {"kind": "何の迷いか（20字以内）", "between": ["案A", "案B"]} または null, "confidence": "high|mid|low"${focus ? `, ${FOCUS_INTAKE_FIELD}` : ""}}。一覧に無い言葉を作らない。${v3 ? "軽い番（お礼・スタンプだけ）は、上の合図（帳面に果たしていない約束）に当たらない限り roles を [\"writer\"] だけにする。" : "軽い番（お礼・スタンプだけ）は roles を [\"writer\"] だけにする。"}`,
   ].join("\n\n");
 }
 
 /** 後ろ（毎回変わる部分）: 会話・帳面・前の番。問いの文はお客様の発言と状況のまとめのまま */
-export function intakeUser(o: { customerTurn: string; lastStaff: string | null; ledgerBlock: string; carryLine: string; ruleMeta: string }): string {
+export function intakeUser(o: { customerTurn: string; lastStaff: string | null; ledgerBlock: string; carryLine: string; ruleMeta: string; nearFocusLine?: string }): string {
   return [
     `【お客様の今の番】\n${o.customerTurn.slice(0, 800)}`,
     o.lastStaff ? `【直前のこちらの送信】\n${o.lastStaff.slice(0, 400)}` : "",
     o.ledgerBlock ? o.ledgerBlock.slice(0, 2500) : "",
     o.carryLine ? `【前の番】${o.carryLine}` : "",
     o.ruleMeta ? `【決まった計算の候補（参考）】${o.ruleMeta}` : "",
+    o.nearFocusLine ? o.nearFocusLine : "",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -70,6 +75,8 @@ export type IntakeAnswer = {
   todos: Array<{ kind: "answer" | "promise" | "aix" | "fetch" | "check"; what: string }>;
   doubt: { kind: string; between: [string, string] } | null;
   confidence: "high" | "mid" | "low";
+  /** 2026-11-05 作業員5: 表→背景→重点（CONDUCTOR_FOCUS=shadow の時だけ・無い番は省く） */
+  focus_read?: FocusRead | null;
 };
 const TODO_KINDS = ["answer", "promise", "aix", "fetch", "check"] as const;
 /** 答えの読み（一覧に無い値は捨てる・造語を入れない） */
@@ -88,7 +95,8 @@ export function parseIntake(raw: string | null | undefined): IntakeAnswer | null
   const d = o.doubt as { kind?: unknown; between?: unknown } | null | undefined;
   const between = Array.isArray(d?.between) ? d!.between.map((x) => String(x).slice(0, 30)) : [];
   const conf = ["high", "mid", "low"].includes(String(o.confidence)) ? (String(o.confidence) as IntakeAnswer["confidence"]) : "mid";
-  return { scene: o.scene as ReplyScene, roles: [...new Set(roles)], need: [...new Set(need)], todos, doubt: d && between.length === 2 ? { kind: String(d.kind ?? "").slice(0, 20), between: [between[0], between[1]] } : null, confidence: conf };
+  const fr = o.focus_read !== undefined ? parseFocusRead(o) : undefined;
+  return { scene: o.scene as ReplyScene, roles: [...new Set(roles)], need: [...new Set(need)], todos, doubt: d && between.length === 2 ? { kind: String(d.kind ?? "").slice(0, 20), between: [between[0], between[1]] } : null, confidence: conf, ...(fr !== undefined ? { focus_read: fr } : {}) };
 }
 
 /** 5番に1番を DeepSeek でも読む（会話と番の時刻の決まった hash・繊細な会話は呼ぶ側で外す） */

@@ -108,9 +108,9 @@ t("⑨ ピッカー付きのキー", planMessages({ asks: [{ quote: "x", route: 
   t("⑬ ATR: A=答える・T=訴求・R=答える＋信頼", p.messages[0].duties.join() === "answer" && p.messages[1].duties.join() === "appeal" && p.messages[2].duties.join() === "answer,trust", p.messages);
   const c = checkPlan(p, { asks, canAppeal: true });
   t("⑬ 全部そろう", c.answered && c.trust && c.appeal === true && c.gaps.length === 0, c);
-  const a = planMessages({ asks: [{ quote: "申込したい", route: "aix", aix: "application_push" }] });
-  const ca = checkPlan(a, { asks: [{ quote: "申込したい", route: "aix" }] });
-  t("⑬ AIX だけ＝信頼の抜けを理由つきで", !ca.trust && /AIX の文の中で/.test(ca.gaps.join()), ca);
+  const a = planMessages({ asks: [{ quote: "他の物件も送って", route: "aix", aix: "property_send" }] });
+  const ca = checkPlan(a, { asks: [{ quote: "他の物件も送って", route: "aix" }] });
+  t("⑬ カードの AIX だけ＝信頼の抜けを理由つきで", !ca.trust && /AIX の文の中で/.test(ca.gaps.join()), ca);
   const r = planMessages({ asks: [{ quote: "分割できますか", route: "reply" }], canAppeal: true });
   t("⑬ 訴求できる場面の返信1通＝通を増やさず最後の通に訴求", r.count === 1 && r.messages[0].duties.includes("appeal"), r);
   const cm = checkPlan(planMessages({ asks: [{ quote: "x", route: "reply" }] }), { asks: [{ quote: "x", route: "reply" }, { quote: "y", route: "reply" }] });
@@ -177,6 +177,9 @@ t("⑨ ピッカー付きのキー", planMessages({ asks: [{ quote: "x", route: 
     && shapeOfSends([{ isAix: true }, { isAix: false, isTemplate: true }]) === "AT"
     && shapeOfSends([]) === "");
 }
+
+// ⑰ 文を書く AIX は文の中で受け止め＝信頼を担う（竹内さん「かしこまりました！！…ご案内させて頂きます」）
+{ const p = planMessages({ asks: [{ quote: "申込したい", route: "aix", aix: "application_push" }] }); t("⑰ 申込へ の AIX だけ＝信頼の抜けなし", checkPlan(p, { asks: [{ quote: "申込したい", route: "aix" }] }).trust === true, p); }
 
 // ⑩ 画面の知らせ（未設定＝YUMA・テストだけ）と AIX の後の下書きの指定
 t("⑩ 未設定＝テストの会話だけ", twoMessageAnnounceVisible(undefined, true) && !twoMessageAnnounceVisible(undefined, false));
