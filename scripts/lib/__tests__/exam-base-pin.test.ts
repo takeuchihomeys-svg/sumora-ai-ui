@@ -1,6 +1,6 @@
 // 夜の基準に固定するか（scripts/lib/exam-base-pin.ts）の単体テスト（LLM も DB も git も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-base-pin.test.ts（全 PASS で exit 0）
-import { decideBasePin, touchesExam, confirmTargets } from "../exam-base-pin";
+import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects } from "../exam-base-pin";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -43,6 +43,11 @@ ok("線: 分からない app は触れる（安全側）", touchesExam("app/api/
   ok("既定 on が分からない→夜＋確かめ直し（安全側）", d.ref === nightly.commit && d.confirmOnCurrent);
 }
 ok("確かめ直しは悪化だけ", confirmTargets([{ id: "q1", cmp: "worse" }, { id: "q2", cmp: "worseFlake" }, { id: "q3", cmp: "better" }, { id: "q4", cmp: "same" }]).join(",") === "q1,q2");
+
+ok("題: 既定 off だけ→false", !defaultOnFromSubjects(["feat(組み合わせ): …（どれも既定 off）", "fix(x): 記録だけ"]));
+ok("題: 既定 on が1つ→true", defaultOnFromSubjects(["feat(a): …（既定 off）", "feat(挨拶): …（GREETING_CONTINUATION_SKIP 既定 on）"]));
+ok("題: 書いていない題は安全側で true", defaultOnFromSubjects(["fix(送った資料の読み直し): 読めなかった画像を読み直す"]));
+ok("題: 空→false", !defaultOnFromSubjects([]));
 
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

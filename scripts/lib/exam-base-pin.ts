@@ -71,6 +71,21 @@ export function decideBasePin(input: {
   return { ref: nightly.commit, confirmOnCurrent: true, missing, why: `夜の基準 ${nightly.commit.slice(0, 7)}＋悪化に見えた問題だけ今の main で確かめ直す（夜の後に試験の線の既定 on の変更・${touched.slice(0, 3).join(",")}${touched.length > 3 ? " …" : ""}）` };
 }
 
+/**
+ * 夜の後の main のコミットの題から「既定 on の変更があるか」（純関数・安全側）: 題に「既定 on」「を on」「default on」があるか、
+ *   「既定 off」も「記録だけ」も無い題が1つでもあれば true。全部が「既定 off」「記録だけ」「テスト」「文書」なら false。
+ */
+export function defaultOnFromSubjects(subjects: string[]): boolean {
+  for (const s of subjects) {
+    if (/既定\s*on|を\s*on\b|default\s*on/i.test(s)) return true;
+    if (!/既定\s*off|記録だけ|^test|^docs|^chore\(試験の列・手元だけ\)/i.test(s)) return true;
+  }
+  return false;
+}
+
+/** 夜の基準の控えの形（<置き場>/nightly-base-<構成>.json） */
+export type NightlyRecord = NightlyBase & { cfg: string };
+
 /** 確かめ直しの対象: 夜の基準と比べて悪化に見えた問題（確かな悪化・揺れの範囲の差の両方）。良くなった・同じは確かめない */
 export function confirmTargets(cmps: Array<{ id: string; cmp: string }>): string[] {
   return cmps.filter((c) => /^worse/.test(c.cmp)).map((c) => c.id);
