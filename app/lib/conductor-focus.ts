@@ -14,9 +14,12 @@
 import { purposeOfText } from "./compose-blueprint";
 
 type Env = Record<string, string | undefined>;
-/** 重点を入口の統括の材料にする（既定 off・記録だけ）。on で digest に重点を残す */
+/**
+ * 重点を入口の統括の材料にする（記録だけ・判断は変えない）。2026-11-06 統括役: 既定を shadow に（作業員9の文の統括が meta.conductor_focus を読む・
+ *   試験 focus-shadow2 で悪化0・入口の出力 300→450 tokens の増えは本番 約100回/日で 約 $0.2/日）。CONDUCTOR_FOCUS=off で止める
+ */
 export const conductorFocusMode = (env: Env = typeof process !== "undefined" ? process.env : {}): "off" | "shadow" =>
-  (env.CONDUCTOR_FOCUS ?? "").trim().toLowerCase() === "shadow" || (env.CONDUCTOR_FOCUS ?? "").trim().toLowerCase() === "on" ? "shadow" : "off";
+  (env.CONDUCTOR_FOCUS ?? "").trim().toLowerCase() === "off" ? "off" : "shadow";
 
 /** 重点の種類（優先順位の段の順に並べる＝同点はこの順で上を採る） */
 export const FOCUS_KINDS = ["answer", "promise_make", "promise_keep", "ease", "close", "propose", "relation"] as const;

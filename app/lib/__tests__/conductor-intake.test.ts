@@ -38,13 +38,14 @@ it("digest.ci の1行: AIX の印・DeepSeek の場面と AIX の印（前の形
   ok(intakeDigestLine({ answer: { scene: "ack", confidence: "high" } as never, cacheRead: 5 }) === "ack|h|cr5|a0");
 });
 it("ci-v3 の合図: 既定 off は先頭の文が ci-v1 のまま（作り置きを崩さない）・v3 の時だけ合図と版 ci-v3", () => {
+  // 2026-11-06 作業員5: CONDUCTOR_FOCUS の既定が shadow になった（重点の段と版の +f1）＝合図の確かめは重点を off にして見る
   const m = [{ brain: "judge", short: "x" }];
-  const off = intakePrefix(m, {}), off2 = intakePrefix(m, { CONDUCTOR_INTAKE_CUES: "v2" }), on = intakePrefix(m, { CONDUCTOR_INTAKE_CUES: "v3" });
+  const off = intakePrefix(m, { CONDUCTOR_FOCUS: "off" }), off2 = intakePrefix(m, { CONDUCTOR_INTAKE_CUES: "v2", CONDUCTOR_FOCUS: "off" }), on = intakePrefix(m, { CONDUCTOR_INTAKE_CUES: "v3", CONDUCTOR_FOCUS: "off" });
   ok(off === off2 && off.includes("（版 ci-v1）") && !off.includes("AIX の番になる合図") && off.includes('軽い番（お礼・スタンプだけ）は roles を ["writer"] だけにする。'), "off");
-  ok(intakePrefixVersion({}) === "ci-v1" && intakePrefixVersion({ CONDUCTOR_INTAKE_CUES: " V3 " }) === "ci-v3", "version");
+  ok(intakePrefixVersion({ CONDUCTOR_FOCUS: "off" }) === "ci-v1" && intakePrefixVersion({ CONDUCTOR_INTAKE_CUES: " V3 ", CONDUCTOR_FOCUS: "off" }) === "ci-v3", "version");
   ok(on.includes("（版 ci-v3）") && on.includes("【AIX の番になる合図（場面ごと）】") && on.includes("果たしていない約束") && on.includes("待ち合わせ場所"), "on");
   ok(on.includes("上の合図（帳面に果たしていない約束）に当たらない限り") && !on.includes('軽い番（お礼・スタンプだけ）は roles を ["writer"] だけにする。'), "on writer line");
-  ok(on === intakePrefix([...m], { CONDUCTOR_INTAKE_CUES: "v3" }) && !/\d{4}-\d{2}-\d{2}/.test(on), "on stable");
+  ok(on === intakePrefix([...m], { CONDUCTOR_INTAKE_CUES: "v3", CONDUCTOR_FOCUS: "off" }) && !/\d{4}-\d{2}-\d{2}/.test(on), "on stable");
   ok(INTAKE_AIX_CUES_V3.every((c) => c.length < 400), "short");
 });
 it("配線: brain-layers.toFreshDigest が meta.conductor_intake を digest.ci に書く", () => {

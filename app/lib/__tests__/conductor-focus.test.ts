@@ -13,7 +13,7 @@ const eq = (a: unknown, b: unknown) => { if (JSON.stringify(a) !== JSON.stringif
 const at = (d: number) => new Date(Date.parse("2026-11-01T00:00:00Z") + d * 86_400_000).toISOString();
 const h = (sender: string, text: string, d: number, aixType: string | null = null): HistMsg => ({ sender, text, created_at: at(d), aixType });
 
-it("既定 off・shadow/on で記録だけ", () => { eq(conductorFocusMode({}), "off"); eq(conductorFocusMode({ CONDUCTOR_FOCUS: "shadow" }), "shadow"); eq(conductorFocusMode({ CONDUCTOR_FOCUS: "on" }), "shadow"); });
+it("既定 shadow（11/06 統括役）・off で止める・shadow/on は記録だけ", () => { eq(conductorFocusMode({}), "shadow"); eq(conductorFocusMode({ CONDUCTOR_FOCUS: "off" }), "off"); eq(conductorFocusMode({ CONDUCTOR_FOCUS: "shadow" }), "shadow"); eq(conductorFocusMode({ CONDUCTOR_FOCUS: "on" }), "shadow"); });
 it("AIX → 重点（確認の結果・見積書は果たす／物件は約束があれば果たす）", () => {
   eq(focusOfAix("property_check_result"), "promise_keep"); eq(focusOfAix("estimate_sheet"), "promise_keep");
   eq(focusOfAix("property_send"), "propose"); eq(focusOfAix("property_send", { openPromise: true }), "promise_keep");
