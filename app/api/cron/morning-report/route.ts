@@ -162,7 +162,7 @@ export async function GET(req: NextRequest) {
     supabase
       .from("ai_reply_knowledge")
       .select("title, importance")
-      .ilike("title", "失注パターン%")
+      .like("title", "失注パターン%")
       .order("importance", { ascending: false })
       .limit(3),
 

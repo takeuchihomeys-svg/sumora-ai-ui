@@ -295,7 +295,9 @@ export async function getCachedLossPatterns(limit?: number): Promise<KnowledgeIt
       const { data, error } = await supabase
         .from("ai_reply_knowledge")
         .select("id, title, content, importance")
-        .ilike("title", "失注パターン%")
+        // 2026-11-05 作業員8（弱い所 325・10/02 から statement timeout）: ilike は title の索引（text_pattern_ops）を使えず 432MB の表を全部読んでいた。
+        //   日本語の頭の一致は大文字小文字が無いので like と同じ行（4つの頭で数が同じ事を確かめた）＝索引で 8 の見積もりになる
+        .like("title", "失注パターン%")
         .neq("hypothesis_status", "rejected")
         .order("importance", { ascending: false })
         .limit(effectiveLimit);
