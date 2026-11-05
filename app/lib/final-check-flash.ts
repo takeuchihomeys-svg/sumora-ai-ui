@@ -93,7 +93,11 @@ export function flashEligibility(p: FlashEligibilityInput): { ok: boolean; reaso
 export function maskForFlash(text: string | null | undefined, names: ReadonlyArray<string | null | undefined>): string {
   const t = String(text ?? "");
   if (!t) return "";
-  return maskApplicationValuesForAlt(maskPII(t, [...names]));
+  return maskApplicationValuesForAlt(maskPII(t, [...names], { keepDates: flashKeepDatesOn() }));
+}
+/** 2026-11-05 竹内さん（KB 95f492fc ③）: FLASH に渡す文の日付は「10月中」に丸めない（既定 on・FLASH_KEEP_DATES=off で旧）。名前・電話・申込の中身は今まで通り伏せる・申込以降と審査の番は入口で Claude だけ */
+export function flashKeepDatesOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.FLASH_KEEP_DATES ?? "").trim().toLowerCase() !== "off";
 }
 
 // ─── ③ 下確かめ（FLASH） ──────────────────────────────────────────────────

@@ -162,7 +162,7 @@ function normalizeMaskedHonorifics(text: string): string {
  *                   スペース区切りの姓・名も個別に置換する。
  * @returns マスク済みテキスト
  */
-export function maskPII(text: string, knownNames?: (string | null | undefined)[]): string {
+export function maskPII(text: string, knownNames?: (string | null | undefined)[], opts?: { keepDates?: boolean }): string {
   if (!text) return text;
 
   let result = text;
@@ -211,7 +211,8 @@ export function maskPII(text: string, knownNames?: (string | null | undefined)[]
   result = result.replace(POSTAL_REGEX, '[郵便番号非表示]');
 
   // --- 6. 入居希望日を月精度に丸める（9月15日 → 9月中） ---
-  result = result.replace(DAY_DATE_REGEX, '$1月中');
+  //   2026-11-05 竹内さん（KB 95f492fc ③）: 最終チェックの FLASH（DeepSeek）に渡す文は日付を丸めずに残す（opts.keepDates・照らす日付が消えると確かめられない）。名前・電話・申込の中身は今まで通り伏せる
+  if (!opts?.keepDates) result = result.replace(DAY_DATE_REGEX, '$1月中');
 
   // --- 7. 敬称パターン（〇〇様/さま/さん → お客様、ただしSAFEワードは除外） ---
   result = result.replace(HONORIFIC_REGEX, (match, offset: number, full: string) => {

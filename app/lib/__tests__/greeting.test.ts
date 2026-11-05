@@ -320,7 +320,9 @@ describe("会話の続きは挨拶なし（continuedSameDay）", () => {
   it("お客様の発言が翌日（JST）→ 続きではない", () => expect(continuedSameDay([staff as never, { sender: "customer", text: "おはようございます", createdAt: "2026-10-05T01:00:00Z" } as never])).toBe(false));
   // 2026-10-08 8巡目 竹内さん「日にちをまたいだら挨拶を入れている。日にち意識」→ 既定は「その日の最初のこちらの会話文か」だけ（続きの線は GREETING_BY_DAY_R8=off で旧）
   const akari = (now: string) => resolveGreeting({ recentMessages: [staff, { sender: "customer", text: "審査通るかだけ試してもらうことって可能でしょうか？", createdAt: "2026-10-04T09:30:00Z" }], now: Date.parse(now), customerName: "朱莉", isFirstEverReply: false, alreadyGreetedToday: computeAlreadyGreetedToday([staff, { sender: "customer", text: "審査通るかだけ試してもらうことって可能でしょうか？", createdAt: "2026-10-04T09:30:00Z" }], Date.parse(now)) ?? false, jstHour: 11, isSubstantive: (x: string) => analyzeSubstance(x).has, customerKind: null } as never);
-  it("8巡目: 日をまたいで送る続きの会話は挨拶の番（standard・必須ではない）", () => expect(akari("2026-10-05T02:00:00Z").kind).toBe("standard"));
+  // 2026-11-05 竹内さん（95f492fc ①）: 続きの番は、日をまたいでその日最初の会話文になっても挨拶なし（GREETING_CONTINUATION_SKIP 既定 on）
+  it("11/05: 日をまたいで送る続きの会話も挨拶なし", () => expect(akari("2026-10-05T02:00:00Z").kind).toBe("none"));
+  it("GREETING_CONTINUATION_SKIP=off で 10/08 の形（日をまたいだ続きは挨拶の番・standard）", () => { process.env.GREETING_CONTINUATION_SKIP = "off"; try { expect(akari("2026-10-05T02:00:00Z").kind).toBe("standard"); } finally { delete process.env.GREETING_CONTINUATION_SKIP; } });
   it("8巡目: 同じ日に返す続きは挨拶なし（当日送信済み）", () => expect(akari("2026-10-04T09:40:00Z").kind).toBe("none"));
   it("GREETING_BY_DAY_R8=off で旧（続きは翌日でも挨拶なし）", () => { process.env.GREETING_BY_DAY_R8 = "off"; try { expect(akari("2026-10-05T02:00:00Z").kind).toBe("none"); } finally { delete process.env.GREETING_BY_DAY_R8; } });
 });
