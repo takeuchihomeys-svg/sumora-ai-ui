@@ -1,7 +1,7 @@
 // 1つの番を何通に分けるか（2026-11-05 竹内さん KB b834d9f0・cf241dbd・作業員7）
 // 実行: npx tsx app/lib/__tests__/two-message-plan.test.ts
 // 場面は本番の竹内さんの番（名前は伏せた）。ブレインの依頼の形は turn_contract.asks のまま
-import { planMessages, planAnnounce, remainingAfterAix, templateReplyPartNote, afterAixReplyBrief, planDigest, twoMessagePlanOn, twoMessagePlanUiOn, twoMessageAnnounceVisible, afterAixDraftHint } from "../two-message-plan";
+import { planMessages, planAnnounce, remainingAfterAix, templateReplyPartNote, afterAixReplyBrief, planDigest, twoMessagePlanOn, twoMessagePlanUiOn, twoMessageAnnounceVisible, afterAixDraftHint, checkPlan, planForConductor, planFromMeta, canAppealFromFocus } from "../two-message-plan";
 import { BRAIN_TURN_CONTRACT_RULES } from "../turn-contract";
 
 let passed = 0, failed = 0;
@@ -86,6 +86,43 @@ t("既定 off（画面）", twoMessagePlanUiOn(undefined) === false && twoMessag
 // ⑨ 壊れた入力
 t("⑨ null の依頼", planMessages({ asks: null }).order === "single");
 t("⑨ ピッカー付きのキー", planMessages({ asks: [{ quote: "x", route: "aix", aix: "property_check_result/available" }, { quote: "y", route: "reply" }] }).messages[0].aix === "property_check_result");
+
+// ⑫ 組み合わせの型と「なぜ」（KB 3701b532）
+{
+  const rat = planMessages({ asks: [{ quote: "見積もりお願い", route: "promise" }], finalAix: "estimate_sheet", firstContact: true });
+  t("⑫ 初回の約束＋見積書＝RAT・なぜ（受け止めてから送る）", rat.shape === "RAT" && /受け止めてから送る/.test(rat.why), rat);
+  const ar = planMessages({ asks: [{ quote: "内覧したい", route: "aix", aix: "viewing_invite" }, { quote: "審査は", route: "reply" }] });
+  t("⑫ AR・なぜ（送る物と答えを混ぜない）", ar.shape === "AR" && /混ぜない/.test(ar.shapeWhy), ar);
+  const atr = planMessages({ asks: [{ quote: "初期費用", route: "aix", aix: "estimate_sheet" }, { quote: "何を妥協したら", route: "reply" }] });
+  t("⑫ ATR", atr.shape === "ATR" && /複雑な番/.test(atr.shapeWhy));
+  const pr = planMessages({ asks: [{ quote: "探して", route: "promise" }, { quote: "繁忙期より安い？", route: "reply" }], finalAix: "property_send" });
+  t("⑫ 約束＋質問＝受けて答える返信が先（RA）", pr.shape === "RA" && pr.messages[0].answers.length === 2, pr);
+  t("⑫ 返信だけ＝R", planMessages({ asks: [{ quote: "x", route: "reply" }] }).shape === "R");
+}
+
+// ⑬ 各通の担う事と全体の確かめ（答える・信頼・訴求）
+{
+  const asks = [{ quote: "初期費用", route: "aix", aix: "estimate_sheet" }, { quote: "何を妥協したら", route: "reply" }];
+  const p = planMessages({ asks, canAppeal: true });
+  t("⑬ ATR: A=答える・T=訴求・R=答える＋信頼", p.messages[0].duties.join() === "answer" && p.messages[1].duties.join() === "appeal" && p.messages[2].duties.join() === "answer,trust", p.messages);
+  const c = checkPlan(p, { asks, canAppeal: true });
+  t("⑬ 全部そろう", c.answered && c.trust && c.appeal === true && c.gaps.length === 0, c);
+  const a = planMessages({ asks: [{ quote: "申込したい", route: "aix", aix: "application_push" }] });
+  const ca = checkPlan(a, { asks: [{ quote: "申込したい", route: "aix" }] });
+  t("⑬ AIX だけ＝信頼の抜けを理由つきで", !ca.trust && /AIX の文の中で/.test(ca.gaps.join()), ca);
+  const r = planMessages({ asks: [{ quote: "分割できますか", route: "reply" }], canAppeal: true });
+  t("⑬ 訴求できる場面の返信1通＝通を増やさず最後の通に訴求", r.count === 1 && r.messages[0].duties.includes("appeal"), r);
+  const cm = checkPlan(planMessages({ asks: [{ quote: "x", route: "reply" }] }), { asks: [{ quote: "x", route: "reply" }, { quote: "y", route: "reply" }] });
+  t("⑬ 答えていない質問を出す", !cm.answered && /「y」/.test(cm.gaps[0]), cm);
+}
+
+// ⑭ 統括の置いた組み立てを読む（meta.two_message_plan が先・形が違えば null）
+{
+  const r = planForConductor({ asks: [{ quote: "内覧したい", route: "aix", aix: "viewing_invite" }, { quote: "審査は", route: "reply" }], focus: "close" });
+  t("⑭ 統括の形（{plan,check,digest}）をそのまま読める", planFromMeta({ two_message_plan: r })?.shape === "AR" && planFromMeta({ two_message_plan: r.plan })?.shape === "AR");
+  t("⑭ 形が違う＝null", planFromMeta({ two_message_plan: { messages: [{ slot: "x" }] } }) === null && planFromMeta(null) === null);
+  t("⑭ 重点 close＝訴求あり・ease＝なし", canAppealFromFocus("close") && !canAppealFromFocus("ease"));
+}
 
 // ⑩ 画面の知らせ（未設定＝YUMA・テストだけ）と AIX の後の下書きの指定
 t("⑩ 未設定＝テストの会話だけ", twoMessageAnnounceVisible(undefined, true) && !twoMessageAnnounceVisible(undefined, false));

@@ -94,7 +94,7 @@ import { decideApplySubMode } from "./lib/apply-sub-mode";
 import { normalizePetWording } from "./lib/pet-wording";
 import { isTestOnlyConversation } from "./lib/test-conversations";
 // 2026-11-05 竹内さん（KB b834d9f0）: この番の組み立て（何通・どの順）の知らせと AIX の後の返信の下書き
-import { planMessages, planAnnounce, remainingAfterAix, afterAixReplyBrief, afterAixDraftHint, twoMessageAnnounceVisible, type PlanAsk } from "./lib/two-message-plan";
+import { planMessages, planFromMeta, planAnnounce, remainingAfterAix, afterAixReplyBrief, afterAixDraftHint, twoMessageAnnounceVisible, type PlanAsk } from "./lib/two-message-plan";
 // 2026-10-23 試験の通（入る通の約93%）の Realtime は、その会話を選んでいる時だけ当てる（戻す NEXT_PUBLIC_RT_IGNORE_TEST=off）
 import { RT_IGNORE_TEST, shouldIgnoreTestRealtime, shouldIgnoreTestRealtimeForConvs } from "./lib/realtime-test-ignore";
 /** 会話画面の紐付け（linkedEntryOf）に使う物件顧客の列（一覧の読み込み・テスト専用の会話を選んだ時の読み直しで同じ） */
@@ -9832,7 +9832,8 @@ export default function Home() {
               const custTurn = msgs.slice((lastStaffIdx.length ? lastStaffIdx[lastStaffIdx.length - 1] : -1) + 1).filter((m: Message) => m.sender === "customer");
               const firstContact = !msgs.some((m: Message) => m.sender !== "customer" && String(m.text ?? "").trim() && !/^\[(?:画像|動画)\]$/.test(String(m.text ?? "").trim()));
               const imageOnly = custTurn.length > 0 && custTurn.every((m: Message) => /^\[画像\]/.test(String(m.text ?? "")));
-              const plan = planMessages({ asks, finalAix: seen?.action ?? null, firstContact, imageOnly });
+              // 統括が置いた組み立て（meta.two_message_plan・1つの正）が先。無い時だけ画面で作る
+              const plan = planFromMeta(seen) ?? planMessages({ asks, finalAix: seen?.action ?? null, firstContact, imageOnly });
               const head = planAnnounce(plan);
               if (!head) return null;
               const sentAix = latestAixByConv[id]?.aixType ?? null;

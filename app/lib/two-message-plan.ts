@@ -43,8 +43,40 @@ export type PlannedMessage = {
   answers: string[];
   /** この通の役目（画面の知らせ・書く役への材料） */
   role: string;
+  /** この通が担う事（竹内さん 11/05「質問に答える・信頼関係を上げる・訴求できるなら訴求する」）: answer＝答える／trust＝信頼（受け止め・サポートの姿勢の約束）／appeal＝訴求（物件の良さ・割引・内覧の誘い） */
+  duties: Duty[];
 };
-export type TwoMessagePlan = { order: PlanOrder; count: number; messages: PlannedMessage[]; why: string };
+export type Duty = "answer" | "trust" | "appeal";
+export const DUTY_JA: Record<Duty, string> = { answer: "答える", trust: "信頼", appeal: "訴求" };
+export type TwoMessagePlan = {
+  order: PlanOrder; count: number; messages: PlannedMessage[]; why: string;
+  /** 竹内さんの組み合わせの型（R=返信・A=AIX・T=AIX テンプレート。例 RAT・AR・ATR）＝KB P1 3701b532 の型 */
+  shape: string;
+  /** 型の「なぜ」（統括と書き手が読む材料） */
+  shapeWhy: string;
+};
+
+/**
+ * 竹内さんの組み合わせの型と「なぜ」（KB P1 3701b532・11/05 竹内さん「AIX と返信の組み合わせ方もちゃんと理解する」）。
+ *   90日の竹内さん本人の番（作業員7）: R 681・A 159・AT 157・RAT 68・AR 56・RA 34・RAR 15・ATR 等 約12
+ *   型の手本（各型2〜3通）は作業員7 の表（scratchpad の two-msg-shapes.md・統括役へ）
+ */
+export const SHAPE_WHY: Record<string, string> = {
+  R: "返信だけ＝AI が知り得る事で答えられる番。答え・受け・約束を1通に",
+  A: "送る物が主＝スタッフだけが知る事（結果・日時・物）を AIX 1通で。答えも AIX の中に",
+  AT: "送る物が主＋2通目で AIX の訴求・中身（次の一手へ）。送る物と訴求を分ける",
+  RA: "受け止めてから送る＝約束の返信（確認・作成・探す）→ AIX で約束を果たす（No.42 (b)(c)）",
+  RAT: "受け止めてから送る＝挨拶・約束の返信 → AIX → 訴求の通（初回の画像だけ・持ち込みの物件・条件）。満足のいくお部屋までサポートする姿勢を先に",
+  AR: "AIX で送る物を先に → 返信で補う（返信で答えられる質問の答え・サポートの約束）。送る物と答えを混ぜない",
+  ATR: "複雑な番＝AIX → AIX の訴求・中身のテンプレート → 返信で質問の答え。テンプレートは AIX 中心・返信は答え",
+  RAR: "約束の返信 → AIX → 返信（条件のお願い・サポートの約束で締める）",
+};
+const shapeOf = (msgs: ReadonlyArray<PlannedMessage>): string => msgs.map((m) => (m.slot === "reply" ? "R" : m.slot === "aix" ? "A" : "T")).join("");
+function withShape(p: Omit<TwoMessagePlan, "shape" | "shapeWhy">): TwoMessagePlan {
+  const shape = shapeOf(p.messages);
+  const shapeWhy = SHAPE_WHY[shape] ?? "";
+  return { ...p, shape, shapeWhy, why: shapeWhy ? `${shape}: ${shapeWhy}（${p.why}）` : p.why };
+}
 
 /** 2通目の AIX テンプレート（同じ AIX の訴求・中身の通）がある AIX。竹内さんの形 AT 157・RAT 68 の AIX */
 const TEMPLATE_AIX = new Set(["estimate_sheet", "property_recommendation", "property_check_result"]);
@@ -75,12 +107,45 @@ const baseKey = (k: unknown): string | null => {
  *   firstContact: この会話で初めての返事か（挨拶が要る）
  *   imageOnly: お客様の連投が画像だけか（初回で画像だけ＝挨拶と約束 → AIX）
  */
-export function planMessages(i: {
+type PlanInput = {
   asks: ReadonlyArray<PlanAsk> | null | undefined;
   finalAix?: string | null;
   firstContact?: boolean;
   imageOnly?: boolean;
-}): TwoMessagePlan {
+  /** 訴求できる場面か（送れる物がある・送った物件が刺さっている）。統括・ブレインが決めて渡す（ここでは決めない） */
+  canAppeal?: boolean;
+};
+export function planMessages(i: PlanInput): TwoMessagePlan {
+  const p = withShape(planCore(i));
+  // 訴求できる場面なのに訴求の通（テンプレート）が無い＝最後の通に訴求の一文を担わせる（通は増やさない＝余計な2通目を作らない）
+  if (i.canAppeal && !p.messages.some((m) => m.duties.includes("appeal")) && p.messages.length) {
+    const last = p.messages[p.messages.length - 1];
+    last.duties = [...last.duties, "appeal"];
+  }
+  return p;
+}
+
+/**
+ * 組み合わせ全体の確かめ（竹内さん 11/05「ちゃんとお客様の質問や疑問に答える・信頼関係を上げる・訴求できるなら訴求する」）。
+ *   ① 質問が全部どこかの通で答えられているか（route=reply|promise|aix の依頼・none は除く）
+ *   ② 信頼の一言（受け止め・サポートの姿勢の約束）を担う通があるか（返信の通が無い＝AIX だけの番は AIX の文の中で担う物として「AIX の中で」と出す）
+ *   ③ 訴求できる場面（canAppeal）で訴求を担う通があるか
+ *   抜けは理由つきで返す（統括・試験の物差し）
+ */
+export function checkPlan(p: TwoMessagePlan | null | undefined, i: { asks?: ReadonlyArray<PlanAsk> | null; canAppeal?: boolean }): { answered: boolean; trust: boolean; appeal: boolean | null; gaps: string[] } {
+  const gaps: string[] = [];
+  if (!p) return { answered: false, trust: false, appeal: null, gaps: ["組み立てが無い"] };
+  const need = (i.asks ?? []).filter((a) => a && a.route !== "none").map((a) => a.quote.slice(0, 40));
+  const covered = new Set(p.messages.flatMap((m) => m.answers));
+  const missing = need.filter((q) => !covered.has(q));
+  if (missing.length) gaps.push(`答えていない質問: ${missing.map((m) => `「${m.slice(0, 20)}」`).join("・")}`);
+  const trust = p.messages.some((m) => m.duties.includes("trust"));
+  if (!trust) gaps.push("信頼の一言を担う通が無い（AIX だけの番＝AIX の文の中で受け止めかサポートの姿勢を入れる）");
+  const appeal = i.canAppeal ? p.messages.some((m) => m.duties.includes("appeal")) : null;
+  if (appeal === false) gaps.push("訴求できる場面で訴求を担う通が無い");
+  return { answered: missing.length === 0, trust, appeal, gaps };
+}
+function planCore(i: PlanInput): Omit<TwoMessagePlan, "shape" | "shapeWhy"> {
   const asks = (i.asks ?? []).filter((a) => a && typeof a.quote === "string");
   const q = (a: PlanAsk) => a.quote.slice(0, 40);
   const replyAsks = asks.filter((a) => a.route === "reply");
@@ -93,14 +158,21 @@ export function planMessages(i: {
 
   // ① AIX が無い番＝返信1通（受け・約束・答えを1通に）
   if (!aixKey) {
-    return { order: "single", count: 1, messages: [{ no: 1, slot: "reply", aix: null, answers: [...replyAsks, ...promiseAsks].map(q), role: "受け・答え・約束" }], why: "AIX の依頼が無い＝返信1通" };
+    const ans = [...replyAsks, ...promiseAsks].map(q);
+    return { order: "single", count: 1, messages: [{ no: 1, slot: "reply", aix: null, answers: ans, role: "受け・答え・約束", duties: ans.length ? ["answer", "trust"] : ["trust"] }], why: "AIX の依頼が無い＝返信1通" };
   }
 
   const msgs: PlannedMessage[] = [];
-  const push = (slot: PlanSlot, answers: string[], role: string, aix: string | null = null) => msgs.push({ no: msgs.length + 1, slot, aix, answers, role });
+  // 担う事: 返信＝答える（答えがあれば）＋信頼（受け止め・サポートの約束）／AIX＝答える（依頼に AIX で）／テンプレート＝訴求（＋その物件の質問の答え）
+  const dutiesOf = (slot: PlanSlot, answers: string[]): Duty[] =>
+    slot === "reply" ? (answers.length ? ["answer", "trust"] : ["trust"])
+      : slot === "aix" ? (answers.length ? ["answer"] : [])
+      : (answers.length ? ["appeal", "answer"] : ["appeal"]);
+  const push = (slot: PlanSlot, answers: string[], role: string, aix: string | null = null) => msgs.push({ no: msgs.length + 1, slot, aix, answers, role, duties: dutiesOf(slot, answers) });
 
   // ② 初回で画像だけ・約束が要る番（条件・持ち込みの物件＝No.42 (b)(c)）＝返信が先（挨拶と約束）→ AIX（→ テンプレート）
-  if ((i.firstContact && i.imageOnly) || (promiseAsks.length > 0 && replyAsks.length === 0)) {
+  //    約束と返信の質問が両方ある番も、受けて答える返信（答え＋約束）→ AIX（KB bed48414: 竹内さんの近い番の順番＝受けて答える返信→2通目に AIX）
+  if ((i.firstContact && i.imageOnly) || promiseAsks.length > 0) {
     const role = i.firstContact ? "挨拶と約束（満足のいくお部屋までサポートする姿勢）" : "受けと約束（確認・作成・探す）";
     push("reply", [...promiseAsks, ...replyAsks].map(q), role);
     push("aix", aixAnswers, "約束を果たす（スタッフが確かめた結果・物）", aixKey);
@@ -165,7 +237,7 @@ export function templateReplyPartNote(p: TwoMessagePlan | null | undefined, sent
   const lines: string[] = [];
   if (tpl && tpl.answers.length) lines.push(`・この通（AIX の2通目）で、AIX の訴求・中身と一緒に次の質問にも答える: ${tpl.answers.map((a) => `「${a}」`).join("・")}（会話・資料・送った AIX の中身にある事だけ・確かめていない事は言い切らない）`);
   if (reply && reply.answers.length) lines.push(`・次の質問は、この通の後に別の返信で答える＝この通には書かない（AIX の訴求・中身を中心に書く）: ${reply.answers.map((a) => `「${a}」`).join("・")}`);
-  return lines.length ? `【この番の組み立て（${p!.count}通・竹内さん 11/05）】\n${lines.join("\n")}` : "";
+  return lines.length ? `【この番の組み立て（${p!.count}通・型 ${p!.shape}・竹内さん 11/05）】${p!.shapeWhy ? `\n・なぜ: ${p!.shapeWhy}` : ""}\n${lines.join("\n")}` : "";
 }
 
 /** AIX の後の返信の下書きの材料（返信の通が残っていれば、その通が答える依頼とブレインの答えの要点）。無ければ null */
@@ -199,4 +271,34 @@ export function afterAixDraftHint(brief: ReturnType<typeof afterAixReplyBrief>, 
   if (!brief || !brief.answers.length) return "";
   const qs = brief.answers.map((a) => `「${a.quote}」${a.answer ? `（要点: ${a.answer}）` : ""}`).join("・");
   return `【AIX の後に続けて送る返信（この番の組み立て・竹内さん 11/05）】先に AIX【${aixLabelOf(sentAix)}】を送った。この返信は次の質問だけに答える: ${qs}。AIX で送った事（物件・金額・日時）は繰り返さない。挨拶は入れない（同じ番の続き）。`;
+}
+
+// ── 統括へのつなぎ（11/05 竹内さん「組み合わせを決めるのは統括」・作業員5の FOCUS_ORDER と合わせる案）───────────────
+//   統括の順番の表の compose の段の先頭に役「combine」（判断の turn_contract＋重点 → 何通・どの順・各通の受け持ち）を置き、統括がこれを呼ぶ。
+//   結果は meta.two_message_plan に1つだけ置き（1つの正）、テンプレート・画面・書き手は読むだけ（無い時だけ自分で作る＝今の形）。
+//   重点（作業員5 conductor-focus の Focus）は「訴求できる場面か」を決める材料にだけ使う（決め直さない）。
+/** 重点から訴求できる場面か（決めに行く・物件を出す・約束を果たす＝送る物がある）。それ以外は呼ぶ側が渡した値 */
+export function canAppealFromFocus(focus: string | null | undefined, fallback = false): boolean {
+  if (focus === "close" || focus === "propose" || focus === "promise_keep") return true;
+  if (focus === "ease" || focus === "relation" || focus === "promise_make") return false;
+  return fallback;
+}
+/** 統括が呼ぶ形（meta.two_message_plan に入れる物・短い） */
+export function planForConductor(i: PlanInput & { focus?: string | null }): { plan: TwoMessagePlan; check: ReturnType<typeof checkPlan>; digest: string | null } {
+  const canAppeal = i.canAppeal ?? canAppealFromFocus(i.focus ?? null);
+  const plan = planMessages({ ...i, canAppeal });
+  return { plan, check: checkPlan(plan, { asks: i.asks, canAppeal }), digest: planDigest(plan) };
+}
+/** 統括が meta.two_message_plan に置いた組み立てを読む（形が合わなければ null＝呼ぶ側が自分で作る） */
+export function planFromMeta(meta: unknown): TwoMessagePlan | null {
+  const v = (meta as { two_message_plan?: unknown } | null | undefined)?.two_message_plan;
+  const p = v && typeof v === "object" && "plan" in (v as object) ? (v as { plan: unknown }).plan : v;
+  if (!p || typeof p !== "object") return null;
+  const o = p as Partial<TwoMessagePlan>;
+  if (!Array.isArray(o.messages) || !o.messages.length || typeof o.order !== "string") return null;
+  const ok = o.messages.every((m) => m && (m.slot === "reply" || m.slot === "aix" || m.slot === "aix_template") && Array.isArray(m.answers));
+  if (!ok) return null;
+  const messages = o.messages.map((m, k) => ({ ...m, no: k + 1, aix: m.aix ?? null, role: String(m.role ?? ""), duties: Array.isArray(m.duties) ? m.duties : [] }));
+  const shape = typeof o.shape === "string" ? o.shape : shapeOf(messages);
+  return { order: o.order as PlanOrder, count: messages.length, messages, why: String(o.why ?? ""), shape, shapeWhy: String(o.shapeWhy ?? SHAPE_WHY[shape] ?? "") };
 }

@@ -2,7 +2,7 @@ import { manYen } from "@/app/lib/man-yen";
 // 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ）
 import { aixBrainEnabledFor } from "@/app/lib/aix-brain";
 // 2026-11-05 竹内さん（KB b834d9f0）: 1つの番を何通に分けるか・各通が答える依頼（既定 off・TWO_MESSAGE_PLAN=on）
-import { twoMessagePlanOn, planMessages, templateReplyPartNote, planDigest, type PlanAsk } from "@/app/lib/two-message-plan";
+import { twoMessagePlanOn, planMessages, planFromMeta, templateReplyPartNote, planDigest, type PlanAsk } from "@/app/lib/two-message-plan";
 import { aixRequestMustUseClaude } from "@/app/lib/aix-new-pickers";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { secondLinesFromCard } from "@/app/lib/estimate-explain";
@@ -1274,7 +1274,8 @@ export async function POST(req: NextRequest) {
   //   10/14 の AIX_BRAIN_CONTRACT_TEMPLATE（依頼を全部渡す）は2通目の形に効かず近さが下がった＝ここは「この通で答える／書かない」の割り振りだけ。
   //   既定 off（TWO_MESSAGE_PLAN=on で入れる）・古い判断（isStaleMeta）では渡さない
   const twoMsgPlan = twoMessagePlanOn() && !isStaleMeta && actionType
-    ? planMessages({ asks: ((brainMeta as { turn_contract?: { asks?: PlanAsk[] } } | null)?.turn_contract?.asks ?? null), finalAix: (brainMeta?.action as string | undefined) ?? null })
+    // 統括が置いた組み立て（meta.two_message_plan・1つの正）が先。無い時だけここで作る
+    ? (planFromMeta(brainMeta) ?? planMessages({ asks: ((brainMeta as { turn_contract?: { asks?: PlanAsk[] } } | null)?.turn_contract?.asks ?? null), finalAix: (brainMeta?.action as string | undefined) ?? null }))
     : null;
   const twoMsgNote = twoMsgPlan ? templateReplyPartNote(twoMsgPlan, actionType) : "";
   const brainMetaSection = buildBrainStrategyNote(brainMeta, {
