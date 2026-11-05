@@ -73,6 +73,10 @@ import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy,
 import type { ReplayFloor } from "../app/lib/test-replay-floor";
 import { examPickupNameLateOn, splitPickupNames } from "./lib/exam-pickup-copy";
 import { examRealGapsOn, gapSceneTimes } from "./lib/exam-scene-times";
+import { verifyCopy, type CopyVerdict } from "./lib/exam-copy-check";
+import { isNoLineTestConversation } from "../app/lib/test-conversations";
+/** 2026-11-05 F2 の確かめ（既定 on・止める EXAM_COPY_CHECK=off） */
+const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
 
 const PROBLEMS_FILE = "scripts/brain-exam/problems.json";
 const SPEC_FILE = "scripts/brain-exam/spec.json";
@@ -387,6 +391,42 @@ async function deleteOwnLedger() {
     else { writeCount.ledgerDel += ids.length; S().ownLedger[t] = []; }
   }
   saveOwnLedger();
+}
+/**
+ * 2026-11-05 弱い所 313（作業員8の見つけ・F1）: 借りたテスト用の会話（YUMA2〜7・鍵は自分だけ）に残った台帳の行を全部消す。
+ *   走り始めの片付けは自分の label の控えしか読まず、前の子（label が毎回新しい）・上限で止めた回の行が残って、線（gte floor）と
+ *   条件の行（property_customer_id）の引きで次の回に混ざっていた（10/13〜・YUMA2 の sent_properties 349行）。
+ *   YUMA（鍵なし・共有）には当てない＝今まで通り自分の id だけを消す。消した数を返す
+ */
+async function purgeLeasedLedger(): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  if (!isNoLineTestConversation(S().conv)) return out;
+  for (const t of ["estimate_records", "aix_usage_logs", "sent_properties", "property_pickups", "viewings", "viewing_history", "sent_facts"]) {
+    const r = await sb.from(t).delete().eq("conversation_id", S().conv).select("id");
+    if (r.error) throw new Error(`借りた会話の台帳 ${t} を消せない: ${r.error.message}`);
+    if ((r.data ?? []).length) out[t] = (r.data ?? []).length;
+  }
+  if (S().yumaPc) {
+    for (const t of ["sent_properties", "property_pickups", "estimate_records"]) {
+      const r = await sb.from(t).delete().eq("property_customer_id", S().yumaPc).select("id");
+      if (r.error) throw new Error(`条件の行に付いた ${t} を消せない: ${r.error.message}`);
+      if ((r.data ?? []).length) out[`${t}(pc)`] = (r.data ?? []).length;
+    }
+  }
+  S().ownLedger = {}; saveOwnLedger();
+  return out;
+}
+/** F2: 入れた後に、借りた会話の表ごとの行の数が問題の写しと同じか（違えばこの回は流さない・exam-copy-check.ts） */
+async function verifyLedgerCopy(p: ExamProblem): Promise<CopyVerdict | null> {
+  if (!isNoLineTestConversation(S().conv) || !examCopyCheckOn()) return null;
+  const expected = Object.fromEntries(LEDGER_ORDER.map((t) => [t, ((p.ledger?.[t] ?? []) as unknown[]).length]));
+  const observed: Record<string, number> = {};
+  for (const t of LEDGER_ORDER) {
+    const { count, error } = await sb.from(t).select("id", { count: "exact", head: true }).eq("conversation_id", S().conv);
+    if (error) throw new Error(`写しの数を読めない ${t}: ${error.message}`);
+    observed[t] = count ?? 0;
+  }
+  return verifyCopy({ expected, observed });
 }
 /** 元の時刻（番の何分前か）→ 場面の時刻。その行より前の最後の通の直後に置く（線より後・会話の順を保つ） */
 function sceneTimeOf(agoMin: number, ctxAgo: number[], times: string[], k: number): string {
@@ -1507,6 +1547,9 @@ async function main() {
       writeFileSync(S().pcBackup, ""); console.warn("=== 前回の控えから YUMA の条件の行を戻した ===");
     }
     if (existsSync(S().ledgerOwnFile)) { S().ownLedger = JSON.parse(readFileSync(S().ledgerOwnFile, "utf8") || "{}"); await deleteOwnLedger(); }
+    // 2026-11-05 F1: 借りたテスト用の会話に残った前の回の台帳を全部消す（YUMA は除く）
+    const pg = await purgeLeasedLedger(); const pgN = Object.values(pg).reduce((a, b) => a + b, 0);
+    if (pgN) console.warn(`=== 借りた会話 ${S().conv.slice(0, 8)} に残っていた台帳 ${pgN}行を消した（${JSON.stringify(pg)}）===`);
   });
   if (!existsSync(OUT)) writeFileSync(OUT, "");
   const done = new Set(readResults(LABEL).filter((r) => !r.error).map((r) => `${r.id}#${r.rep}`));
@@ -1634,7 +1677,17 @@ async function main() {
         writeCount.msgIns += (ins.data ?? []).length;
       };
       writeFloor(new Date(Date.parse(times[0]) - 1000).toISOString());
+      if (USE_LEDGER && !reuse) {
+        // 2026-11-05 F1（問題ごとの歯止め）: 前の問題の片付けが落ちていたら、入れる前に消す
+        const pg = await purgeLeasedLedger(); const pgN = Object.values(pg).reduce((a, b) => a + b, 0);
+        if (pgN) (row as ResultRow & { ledgerLeftover?: Record<string, number> }).ledgerLeftover = pg;
+      }
       if (USE_LEDGER) row.ledger = reuse ? reuse.ledger : await insertLedger(p, times, S().yumaPc, shiftDays);
+      // 2026-11-05 F2: 入れた後に表ごとの数が写しと同じかを確かめ、違えばこの回は流さない（結果は error の行＝数えない）
+      if (USE_LEDGER && !reuse) {
+        const cv = await verifyLedgerCopy(p);
+        if (cv && !cv.ok) throw new Error(`写しのずれ: ${cv.issues.map((x) => x.detail).join("／").slice(0, 300)}`);
+      }
       process.env.TEST_CLOCK_JST_HOUR = String(p.hourJst);
       // 2026-11-03 月の言い方（〇月入居）はずらす前の時刻で読む（app/lib/business-clock.monthClockNowIso・作業員2の調べ・止める EXAM_MONTH_CLOCK=off）
       if (process.env.EXAM_MONTH_CLOCK !== "off") process.env.EXAM_MONTH_SHIFT_DAYS = String(shiftDays); else delete process.env.EXAM_MONTH_SHIFT_DAYS;
@@ -1863,9 +1916,11 @@ main().catch((e) => { console.error(e instanceof Error ? e.message : e); process
   await forEachLane(async () => {
     try {
       if (floorFile()) { writeFloor(null); unlockFloor(); }
-      S().lease?.release();
       if (S().own.length) await sb.from("messages").delete().in("id", S().own);
       await deleteOwnLedger().catch((e) => console.warn("deleteOwnLedger:", String(e)));
+      // 2026-11-05 F3: 鍵を持っている間に、借りたテスト用の会話の台帳を全部消してから鍵を返す（控えに載らなかった行も残さない・YUMA は除く）
+      await purgeLeasedLedger().catch((e) => console.warn("purgeLeasedLedger:", String(e)));
+      S().lease?.release();
       await restorePc().catch((e) => console.warn("restorePc:", String(e)));
     } catch (e) {
       // レーンの時は1本の片付けの失敗で他のレーンの片付け・後の数え（h.finish）を止めない（1本の時は今まで通り投げる）
