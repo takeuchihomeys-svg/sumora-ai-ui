@@ -383,6 +383,10 @@
     {
       "path": "/api/cron/hazard-audit-db",
       "schedule": "40 18 * * *"
+    },
+    {
+      "path": "/api/cron/prod-yardstick",
+      "schedule": "10 16 * * *"
     }
   ]
 }
