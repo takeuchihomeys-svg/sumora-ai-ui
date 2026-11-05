@@ -192,7 +192,8 @@ export async function readPropertyImageDetail(
     });
     if (!res.ok) {
       // 400 の中身まで残す（画像URLが取れない・大きすぎる等を後で数える。設計知見「error を握り潰さない」）
-      const body = await res.text().catch(() => "");
+      const body = sanitizeReadErrorBody(await res.text().catch(() => ""));
+      console.warn(JSON.stringify({ tag: "image-read:http-error", action: "property_image_detail", status: res.status, body }));
       recordImageReadUsage("property_image_detail", model, undefined, res.status, startedAt, "http_error", PROPERTY_IMAGE_DETAIL_MAX_TOKENS);
       return { kind: "other", lines: [], raw: `HTTP ${res.status} ${body.slice(0, 200)}` };
     }
@@ -216,6 +217,19 @@ type DeepSeekUsage = { prompt_tokens?: number; completion_tokens?: number; promp
  *   他の DeepSeek の呼び出しと同じ口（recordAltUsage）で1行残す。キャッシュに当たった分は cache_read に入れる。
  *   記録の失敗で読み取りを止めない。
  */
+/**
+ * 2026-11-05 作業員1（11/04 17:43 JST の 400 が5枚・本文を残していなかった）: 読み取りの HTTP の失敗の本文の先頭200字を Vercel のログに残す。
+ *   本文は DeepSeek の誤りの文（JSON）。画像の URL・メール・7桁以上の数字の並び（電話・番号）は伏せる＝個人情報を出さない。止める IMAGE_READ_ERROR_BODY=off
+ */
+export function sanitizeReadErrorBody(body: string): string {
+  return String(body ?? "").replace(/https?:\/\/[^\s"'\\]+/g, "<url>").replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "<mail>").replace(/\d[\d-]{6,}\d/g, "<num>").replace(/\s+/g, " ").slice(0, 200);
+}
+async function logReadHttpError(action: string, res: Response): Promise<string> {
+  if ((process.env.IMAGE_READ_ERROR_BODY ?? "").trim().toLowerCase() === "off") return "";
+  const body = sanitizeReadErrorBody(await res.text().catch(() => ""));
+  console.warn(JSON.stringify({ tag: "image-read:http-error", action, status: res.status, body }));
+  return body;
+}
 function recordImageReadUsage(action: string, model: string, u: DeepSeekUsage | undefined, status: number, startedAt: number, errorType: string | null, maxTokens: number): void {
   void import("./llm-usage-recorder").then(({ recordAltUsage }) => {
     const hit = u?.prompt_cache_hit_tokens ?? 0;
@@ -345,6 +359,7 @@ export async function readPropertyImage(
     });
     if (!res.ok) {
       recordImageReadUsage("property_image_read", model, undefined, res.status, startedAt, "http_error", maxTokens);
+      await logReadHttpError("property_image_read", res);
       return { items: [], isProperty: false, raw: `HTTP ${res.status}` };
     }
     const j = await res.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: DeepSeekUsage };
@@ -484,6 +499,7 @@ export async function readPropertyImageDetailByTranscript(
       });
       if (!res.ok) {
         recordImageReadUsage("property_image_transcribe", model, undefined, res.status, t1, "http_error", PROPERTY_IMAGE_TRANSCRIBE_MAX_TOKENS);
+        await logReadHttpError("property_image_transcribe", res);
         why = `http_${res.status}`;
         continue;
       }
