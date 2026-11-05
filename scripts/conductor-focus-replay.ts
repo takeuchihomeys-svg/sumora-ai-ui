@@ -22,12 +22,18 @@ const DIR = join(process.cwd(), "..", "..", "exam-cache", "conductor-focus");
     const file = join(DIR, readdirSync(DIR).filter((f) => f.startsWith("turns-")).sort().pop() as string);
     type T = { id: string; conv: string; pc: string | null; at: string; scene: string; route: string; focus: string | null; v2: string; e2: number[] };
     const turns = (JSON.parse(readFileSync(file, "utf8")) as T[]).filter((t) => t.focus);
+    // 2026-11-06: --gold=<id:focus,...のファイル> を渡すと、正解（と近い番の札）を文の解剖の重点に置き換える（決まった札は解剖の無い番の仮の値・弱い所 297）
+    const goldFile = arg("gold");
+    const gold = new Map<string, string>(goldFile ? readFileSync(goldFile, "utf8").trim().split(",").map((x) => x.split(":") as [string, string]) : []);
+    let detAgree = 0, detN = 0;
+    for (const t of turns) { const g = gold.get(t.id); if (g) { detN++; if (g === t.focus) detAgree++; t.focus = g; } }
+    if (goldFile) console.log(`解剖の重点がある番 ${detN}・決まった札と合う ${detAgree}/${detN}`);
     const norm = (v: number[]) => { const n = Math.hypot(...v); return v.map((x) => x / n); };
     for (const t of turns) t.e2 = norm(t.e2);
     const dot = (a: number[], b: number[]) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
     // 重点ごとに偏りなく（前の番が 100 以上ある番から・決まった選び方＝id の順）
     const N = Number(arg("n", "140")), per = Math.ceil(N / F.FOCUS_KINDS.length);
-    const pool = turns.slice(100);
+    const pool = turns.slice(100).filter((t) => !goldFile || gold.has(t.id));
     const pick: T[] = [];
     for (const k of F.FOCUS_KINDS) pick.push(...pool.filter((t) => t.focus === k).sort((a, b) => a.id.localeCompare(b.id)).slice(0, per));
     const system = [

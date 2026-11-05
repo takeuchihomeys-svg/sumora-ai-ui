@@ -8,6 +8,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { sumoraLlmMarks } from "./llm-usage-recorder";
 import { readAltConfig, shouldRouteAlt } from "./llm-alt-provider";
 import { pickBalanced, ANATOMY_SYSTEM, ANATOMY_SYSTEM_FOCUS, anatomyFocusOn, anatomyPrompt, parseAnatomy, anatomyConflicts } from "./takeuchi-anatomy";
+import { COMPOSE_PURPOSES, purposeOfText, type ComposePurpose } from "./compose-blueprint";
 
 /** 重点を読ませる間に広げる通数（新しい順・竹内さんの番 約1,000番・統括役了承 11/05） */
 const FOCUS_WIDEN_TOTAL = 1000;
@@ -72,7 +73,7 @@ export async function runTakeuchiAnatomy(opts: { dry?: boolean; limit?: number; 
     if (focusMode) {
       const { data: edge } = await sb.from("takeuchi_compose_examples").select("sent_at").order("sent_at", { ascending: false }).range(FOCUS_WIDEN_TOTAL - 1, FOCUS_WIDEN_TOTAL - 1);
       const cutoff = ((edge ?? []) as Array<{ sent_at: string }>)[0]?.sent_at ?? null;
-      q = q.or("anatomy.is.null,anatomy->>focus.is.null");
+      q = q.or("anatomy.is.null,anatomy->>focus.is.null").or("anatomy_model.is.null,anatomy_model.not.like.*parse_failed*");
       if (cutoff) q = q.gte("sent_at", cutoff);
     } else q = q.eq("anatomy_pick", true).is("anatomy", null);
     const { data: todo, error } = await q.order("sent_at", { ascending: false }).limit(Math.min(opts.limit ?? 50, cap));
@@ -97,8 +98,18 @@ export async function runTakeuchiAnatomy(opts: { dry?: boolean; limit?: number; 
         });
         if (!res.ok) return;
         const d = await res.json() as { content?: Array<{ type: string; text?: string }>; model?: string };
-        const a = parseAnatomy(d.content?.find((b) => b.type === "text")?.text ?? "");
-        if (!a) return;
+        const rawText = d.content?.find((b) => b.type === "text")?.text ?? "";
+        // 2026-11-06 弱い所 347: 重点を読ませる回は、purpose が一覧の外でも捨てずに本文の決まった札の趣旨にする（元の値は purpose_raw）
+        const fb = focusMode ? purposeOfText(r.body).purpose : null;
+        const a = parseAnatomy(rawText, focusMode ? { fallbackPurpose: (COMPOSE_PURPOSES as readonly string[]).includes(String(fb)) ? (fb as ComposePurpose) : "inform" } : {});
+        if (!a) {
+          // それでも読めない（JSON の崩れ）時は、伏せた答えの頭を残し、次の夜に読み直さない印を付ける（anatomy は触らない）
+          if (focusMode) {
+            const { maskPII } = await import("./pii-mask");
+            await sb.from("takeuchi_compose_examples").update({ anatomy_model: `${ANATOMY_ACTION}:parse_failed`, anatomy_at: new Date().toISOString(), anatomy_conflicts: [`parse_failed:${maskPII(rawText).replace(/\s+/g, " ").slice(0, 300)}`] }).eq("message_id", r.message_id);
+          }
+          return;
+        }
         parsed++;
         const cf = anatomyConflicts(a, r.body);
         if (cf.length) conflicts++;

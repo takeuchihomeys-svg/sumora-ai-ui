@@ -69,14 +69,18 @@ export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: n
     for (const l of msgsOf.values()) l.sort((x, y) => x.created_at.localeCompare(y.created_at));
     const aixByLine = new Map(aixRows.filter((a) => a.line_message_id).map((a) => [a.line_message_id as string, a]));
     // 2026-11-05 穴 291: line_message_id で取れない AIX が 200/323（0件）。同じ会話の送信の15分前〜2分後の記録で取る（199/200 取れた）
+    // 2026-11-06 統括役: aixByTime は同じ通を何度も数えて大きく出ていた（番ごとの hist で毎回呼ぶ）＝通ごとに1回だけ数え、突き合わせも覚えて使い回す
+    const aixMemo = new Map<string, (typeof aixRows)[number] | undefined>();
     const aixOfMsg = (m: Msg) => {
       if (!m.is_aix_generated) return undefined;
+      if (aixMemo.has(m.id)) return aixMemo.get(m.id);
       const byLine = m.line_message_id ? aixByLine.get(m.line_message_id) : undefined;
-      if (byLine) return byLine;
+      if (byLine) { aixMemo.set(m.id, byLine); return byLine; }
       const t = Date.parse(m.created_at);
       const near = aixRows.filter((a) => a.conversation_id === m.conversation_id && Date.parse(a.created_at) >= t - 15 * 60_000 && Date.parse(a.created_at) <= t + 2 * 60_000)
         .sort((x, y) => Math.abs(Date.parse(x.created_at) - t) - Math.abs(Date.parse(y.created_at) - t))[0];
       if (near && res.aixByTime !== undefined) res.aixByTime++;
+      aixMemo.set(m.id, near);
       return near;
     };
     const watchOf = new Map(watchRows.map((w) => [`${w.conversation_id}|${new Date(w.customer_turn_at).toISOString()}`, w]));

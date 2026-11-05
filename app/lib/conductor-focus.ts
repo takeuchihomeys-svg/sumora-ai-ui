@@ -197,15 +197,26 @@ const SCENE_ORDER: Partial<Record<string, Partial<Record<Focus, OrderStep[]>>>> 
 /** relation の「継続の約束を添える」1段（案A・11/05 統括役決定・作業員9の数え: 条件 59%／了承 9%／検討 12%・言葉では見分けられない）。KB 1d07b3df: 新着で出次第か全力サポートのどちらか1つ・同じ日に1回まで */
 const KEEP_STEP = S("compose", "compose", "受け＋前の流れ（送った物・報告・開いている約束）", "継続の約束を1つ添える（新着で出次第／全力サポート・同じ日に1回まで）");
 /**
- * relation の番に継続の約束を添えるか（候補の網・決めるのは統括）。条件の番は既定で添える。了承・検討の番は次のどれかの時だけ:
- *   (a) 直前のこちらの送信が物件の送付か、募集終了・申込が入っていた報告で、開いている約束が無い (b) お客様が新着を頼んだ (c) 近い竹内さんの番の過半数が添えている
- *   同じ日に既に添えていたら添えない（KB 1d07b3df）
+ * relation の番に継続の約束を添えるか（決めるのは統括・ここは線）。条件の番は既定で添える（竹内さん 59%）。同じ日に既に添えていたら添えない（KB 1d07b3df）。
+ *   了承・検討の番で添えるのは (b) お客様が新着を頼んだ か (c) 近い竹内さんの番の過半数（anatomy.keep・nearKeepShareFor）が添えている 時だけ。
+ *   2026-11-06 統括役の決め（作業員9 試験 q164 の外れ・了承の番で竹内さんが添えるのは 9%）: (a)「直前に物件を送った・募集終了の報告で約束が開いていない」は
+ *   単独では添えない（候補だけ）＝ relationKeepCandidate で見て、統括の材料にするだけ
  */
 export function relationKeep(o: { scene: string | null | undefined; lastStaffSentOrEnded?: boolean; openPromise?: boolean; customerAskedNew?: boolean; nearKeepShare?: number | null; keptToday?: boolean }): boolean {
   if (o.keptToday) return false;
   if (o.scene === "conditions") return true;
   if (o.scene !== "ack" && o.scene !== "considering") return false;
-  return (!!o.lastStaffSentOrEnded && !o.openPromise) || !!o.customerAskedNew || (o.nearKeepShare ?? 0) > 0.5;
+  return !!o.customerAskedNew || (o.nearKeepShare ?? 0) > 0.5;
+}
+/** (a) の候補（添えない・統括に見せるだけ）: 了承・検討の番で、直前が物件の送付か募集終了の報告で、開いている約束が無い */
+export function relationKeepCandidate(o: { scene: string | null | undefined; lastStaffSentOrEnded?: boolean; openPromise?: boolean }): boolean {
+  return (o.scene === "ack" || o.scene === "considering") && !!o.lastStaffSentOrEnded && !o.openPromise;
+}
+/** 近い番の「継続の約束を添えたか」（anatomy.keep）の割合。分かる番が minN 未満なら null（添える根拠にしない） */
+export function keepShareOf(keeps: ReadonlyArray<boolean | null | undefined>, minN = 3): number | null {
+  const known = keeps.filter((k): k is boolean => typeof k === "boolean");
+  if (known.length < minN) return null;
+  return Math.round((known.filter(Boolean).length / known.length) * 100) / 100;
 }
 export function focusOrder(scene: string | null | undefined, focus: Focus, o: { keep?: boolean } = {}): OrderStep[] {
   const base = (scene && SCENE_ORDER[scene]?.[focus]) || FOCUS_ORDER[focus];

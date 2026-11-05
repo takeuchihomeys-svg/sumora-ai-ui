@@ -70,3 +70,19 @@ export async function liveNearTurns(sb: SupabaseClient, o: { conversationId: str
     return null;
   }
 }
+
+/**
+ * 近い竹内さんの番（match_conductor_focus の source_key "msg:<id>" か messages.id）の「継続の約束を添えたか」の割合（11/06 統括役・作業員9 が1行で使う）。
+ *   読む物: takeuchi_compose_examples.anatomy.keep（重点を読ませた解剖・11/05 から）。分かる番が minN 未満なら null。失敗も null
+ *   例: const share = await nearKeepShareFor(sb, near?.ids ?? []); relationKeep({ scene, customerAskedNew, nearKeepShare: share, keptToday })
+ */
+export async function nearKeepShareFor(sb: SupabaseClient, ids: ReadonlyArray<string>, minN = 3): Promise<number | null> {
+  const mids = [...new Set(ids.map((k) => (k.startsWith("msg:") ? k.slice(4) : k)).filter(Boolean))].slice(0, 30);
+  if (mids.length < minN) return null;
+  try {
+    const { data, error } = await sb.from("takeuchi_compose_examples").select("message_id, keep:anatomy->keep").in("message_id", mids);
+    if (error) return null;
+    const { keepShareOf } = await import("@/app/lib/conductor-focus");
+    return keepShareOf(((data ?? []) as Array<{ keep: unknown }>).map((r) => (r.keep === true ? true : r.keep === false ? false : null)), minN);
+  } catch { return null; }
+}
