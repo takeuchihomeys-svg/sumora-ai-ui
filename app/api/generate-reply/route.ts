@@ -2,7 +2,7 @@ import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSente
 import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { positiveNoNegativeEnabled, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
-import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR } from "@/app/lib/mgmt-hours-split";
+import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR, mgmtNightClosingOn, nightMgmtClosingLine } from "@/app/lib/mgmt-hours-split";
 import { brainStaffBurstWaitEnabled, staffSendingNow } from "@/app/lib/staff-burst";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
 import { NextRequest, NextResponse, after } from "next/server";
@@ -5576,6 +5576,12 @@ async function handleGenerateReply(req: NextRequest) {
       // 2026-10-09 調査の担当: effectiveReplyDirection はブレインの方向が14番目（早い者勝ちの型が先）。本質がある時はブレインの方向（中身）を型より上に置き、どちらが使われたかを記録する
       const brainDirTop = tcBrain && brainFreshForMessage && !isCachedMeta ? brainDirForGen(brainMeta?.reply_direction) : null;
       if (brainDirTop) lines.push(`- 🧠 ブレインの返信の方向（中身・上の本質と同じ側）: ${brainDirTop.slice(0, 160)}`);
+      // 2026-11-05 作業員9（弱い所 324・KB P1 9fd703f4）: 2段の確認の方向の結び「確認出来次第ご連絡」が下の【管理会社の状況】の「明日」より勝っていた＝
+      //   夜の管理会社への確認だけ、方向のすぐ下で結びの前に「本日管理会社営業時間外の為、明日」を入れさせる（判断・結びの言葉は変えない・MGMT_NIGHT_CLOSING=on・既定 off）
+      if (mgmtNightClosingOn() && /確認出来次第ご連絡/.test(`${brainDirTop ?? ""}\n${effectiveReplyDirection ?? ""}`)) {
+        const nightLine = nightMgmtClosingLine({ hour: getJSTHour(), saturday: getJSTDayOfWeek() === 6, allowed: confirmCtx.allowed, object: confirmCtx.object, splitOn: mgmtHoursSplitEnabled(), topicText: customerMsgUnits.join("\n") || (message ?? "") });
+        if (nightLine) { lines.push(nightLine); console.info("[mgmt-night-closing]", JSON.stringify({ conversationId, object: confirmCtx.object })); }
+      }
       console.info("[turn-contract:direction]", JSON.stringify({ tc: turnContract?.source ?? null, brainTop: !!brainDirTop, typeWonOverBrain: !!brainDirTop && !!effectiveReplyDirection && effectiveReplyDirection !== brainDirTop }));
       lines.push(tcBrain
         ? `- 🎯 返信の形（場面の型）: ${ackShape ?? effectiveReplyDirection ?? fallbackDirection}（※この型は開口語・字数・締めの形だけに使う。何に答える・何を約束するかは上の【🧭 この番の本質】が優先。ぶつかる中身は書かない）`
