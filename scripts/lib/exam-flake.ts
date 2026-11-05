@@ -20,6 +20,18 @@ import { atomicWriteText } from "./exam-shared-file";
 
 export const FLAKE_DIR = join(examCacheRoot(), "brain-exam-flake");
 export const FLAKE_WINDOW_DAYS = 30;
+/**
+ * 2026-11-06 作業員8（統括役「--repeat-flaky が効かない」）: 11/05 夜の前の子 45問のうち 11問が「同じコードで答えが割れた＝揺れる」と見られ、1回で済んだのは 3問だけだった。
+ *   割れの多くは、11/05 の直し（台帳の混ざり fe0f621d・入力の固定 f541555e）の前の記録＝他の回の台帳の行が入った回どうしの違い。
+ *   直しの前の記録は揺れの判定に使わない（この時刻より後だけを読む）。止める・変える: EXAM_FLAKE_CLEAN_SINCE=（ISO・off で前の記録も読む）
+ */
+export const FLAKE_CLEAN_SINCE_DEFAULT = "2026-11-05T05:30:00Z";
+export function flakeCleanSinceMs(env: Record<string, string | undefined> = process.env): number {
+  const v = String(env.EXAM_FLAKE_CLEAN_SINCE ?? "").trim();
+  if (v.toLowerCase() === "off") return 0;
+  const t = Date.parse(v || FLAKE_CLEAN_SINCE_DEFAULT);
+  return Number.isFinite(t) ? t : 0;
+}
 export const STABLE_MIN = 3;
 
 export type FlakeObs = { id: string; problemHash: string; model: string; codeKey: string; label: string; rep: number; at: string; sig: string; pathSig: string; independent: boolean; legacy?: boolean };
@@ -58,7 +70,7 @@ export function readObs(id: string, dir = FLAKE_DIR, now = Date.now(), windowDay
     let txt = ""; try { txt = readFileSync(join(d, f), "utf8"); } catch { continue; }
     for (const l of txt.split("\n")) { if (!l.trim()) continue; try { out.push(JSON.parse(l) as FlakeObs); } catch { /* 書きかけの最後の行 */ } }
   }
-  const since = now - windowDays * 86_400_000;
+  const since = Math.max(now - windowDays * 86_400_000, flakeCleanSinceMs());
   return out.filter((o) => Date.parse(o.at) >= since);
 }
 

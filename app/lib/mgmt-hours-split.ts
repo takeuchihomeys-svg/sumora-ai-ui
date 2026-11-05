@@ -46,7 +46,9 @@ export function nightMgmtClosingLine(o: { hour: number; saturday: boolean; allow
   const vacancy = isVacancyConfirmObject(o.object) && !mgmtTopic;
   if (vacancy && o.splitOn && o.hour < COMPANY_CLOSE_HOUR) return null;
   const obj = mgmtTopic && isVacancyConfirmObject(o.object) ? "" : String(o.object ?? "").trim();
-  return `- 🕘 夜の確認の約束（${o.hour}時台・管理会社の営業時間外）: 上の結び「確認出来次第ご連絡させて頂きます！！」の前に「本日管理会社営業時間外の為、明日${obj ? `${obj}を` : ""}確認させて頂き、」を入れて1文にする（竹内さんの実送信の形・当日中の答えを約束しない・ほかの中身は上のまま）`;
+  // 2026-11-06 試験 night-all4-q136: 「管理会社に確認させて頂きます！！」の後ろに「明日確認させて頂き、確認出来次第…」を別の文で足し、最終チェック（AIX_BOUNDARY_PROMISE＝確認の二重宣言）に文ごと消された
+  //   ＝確認・交渉の約束の文そのものに「明日」を入れる（竹内さんの 10/26 18:45・8/25 23:38 の実送信の形）。別の文に分けない
+  return `- 🕘 夜の確認の約束（${o.hour}時台・管理会社の営業時間外）: 確認・交渉の約束は1文だけにし、その文の中に「明日」を入れる。竹内さんの実送信の形: 「${obj ? `${obj}につきまして、` : "〇〇につきまして、"}本日管理会社営業時間外の為明日確認させて頂き、確認出来次第ご連絡させて頂きます！！」（10/26）か「明日管理会社に〇〇を確認（交渉）させて頂きます！！ 確認出来次第ご連絡させて頂きます！！」（8/25）。「管理会社に確認させて頂きます」と「明日確認させて頂き」を別々の文に書かない（確認の二重の約束になる）。当日中の答えを約束しない・ほかの中身は上のまま`;
 }
 
 /**
@@ -55,10 +57,10 @@ export function nightMgmtClosingLine(o: { hour: number; saturday: boolean; allow
  *   （夜の管理会社への確認の送信7通中6通が「明日」）。ブレインの手本（brain-route-type-data）にこの番は「約束の返信（確認）」で入っているのに、
  *   今が管理会社の営業時間外＝結果をまだ持っていない、という事実が材料に無かった。
  *   何を: 18時以降で（曜日は見ない）、お客様の連投に管理会社の話題（MGMT_TOPIC_RE）がある番だけ、事実と竹内さんの決まりを1行で渡す（判断はブレイン・決定論で書き換えない）。
- * 切替: MGMT_NIGHT_BRAIN_NOTE=on の時だけ（既定 off）。
+ * 切替: MGMT_NIGHT_BRAIN_NOTE（11/06 既定 on・=off で止める・H-9 待ち）。
  */
 export function mgmtNightBrainNoteOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.MGMT_NIGHT_BRAIN_NOTE ?? "").trim().toLowerCase() === "on";
+  return (env.MGMT_NIGHT_BRAIN_NOTE ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（試験 night-all4-q136 0/4→3/3・昼 night3-day 悪化0・竹内さんへの確認 H-9 待ち＝「夜も AIX でよい」なら戻す）
 }
 // 曜日は見ない（土日の夜も結果は持っていない＝約束の返信。8/23 の q136 は日曜の夜）
 export function nightMgmtBrainNote(o: { hour: number; customerText: string | null | undefined }): string {
@@ -67,4 +69,36 @@ export function nightMgmtBrainNote(o: { hour: number; customerText: string | nul
   const hit = t.match(MGMT_TOPIC_RE);
   if (!hit) return "";
   return `\n【管理会社の営業時間外】今は${o.hour}時台（管理会社の営業時間外）。お客様が聞いた「${hit[0]}」等の管理会社にしか答えられない確認・交渉は、今は結果を持っていない＝AIX【物件確認した】で結果を送る番ではない。竹内さんの決まり（18時以降）: 確認の約束の返信（two_stage=check・「本日管理会社営業時間外の為、明日確認させて頂き、確認出来次第ご連絡」・土曜の夜は月曜）にして、結果は翌日 AIX【確認した】で送る。募集状況だけの確認はこの決まりの外（今すぐ確かめられる）`;
+}
+
+/**
+ * 案A（2026-11-06 統括役の決め・弱い所 345）: 夜の番だけ、お客様の話題に当たるピッカーの意味を材料の1行に足す
+ *   「AIX【物件確認した】のこのピッカーは『管理会社に聞いた結果』を送るボタン＝今夜はまだ押せない（結果が無い）」。
+ *   なぜ: 事実と決まりの1行（MGMT_NIGHT_BRAIN_NOTE）だけでは q136 が 0/3→1/4 しか動かなかった。ブレインはピッカー（mgmt_parking・mgmt_initial_cost）を
+ *   「管理会社に確かめる」の意味で選んでいる見込み＝選ぶ時に見るピッカーの言葉で、今夜は結果が無い事を伝える。
+ *   AIX の一覧（aix-catalog の説明・キャッシュの固定部分）は変えない（夜だけの1行は動く材料の側に置く＝キャッシュを壊さない・AIX の改善の決まりの外）。
+ * 切替: MGMT_NIGHT_PICKER_NOTE（MGMT_NIGHT_BRAIN_NOTE の1行が出る番だけ・11/06 既定 on・=off で止める・H-9 待ち）。
+ */
+export function mgmtNightPickerNoteOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.MGMT_NIGHT_PICKER_NOTE ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（試験 night-all4-q136 0/4→3/3・昼 night3-day 悪化0・竹内さんへの確認 H-9 待ち＝「夜も AIX でよい」なら戻す）
+}
+const TOPIC_PICKERS: Array<[RegExp, string]> = [
+  [/駐車|駐輪|バイク/, "mgmt_parking"],
+  [/礼金|敷金|交渉|値下|割引|フリーレント|クリーニング|鍵/, "mgmt_initial_cost"],
+  [/代理契約/, "mgmt_proxy"],
+  [/ペット|猫|犬/, "mgmt_pet"],
+  [/設備|洗濯|楽器/, "mgmt_equipment"],
+  [/入居(?:可能)?日/, "mgmt_move_in"],
+  [/二人|法人/, "mgmt_two_person"],
+];
+export function nightPickerLine(customerText: string | null | undefined): string {
+  const t = String(customerText ?? "");
+  const ps = [...new Set(TOPIC_PICKERS.filter(([re]) => re.test(t)).map(([, p]) => p))];
+  if (!ps.length) return "";
+  return `\n【今夜はまだ押せないピッカー】AIX【物件確認した】の ${ps.join("・")} は「管理会社に聞いた結果」を送るピッカー。今は管理会社の営業時間外で結果がまだ無い＝今夜はこのピッカーを選ばない（aix にしない）。今夜は two_stage=check の確認の約束の返信、結果が出た翌日にこのピッカー`;
+}
+
+/** 夜の管理会社の話題で、A1 の AIX 直接（two-stage answerableDirectAix）を外す（2026-11-06 作業員9・弱い所 345／350）。MGMT_NIGHT_NO_DIRECT（11/06 既定 on・=off で止める・H-9 待ち） */
+export function mgmtNightNoDirectOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.MGMT_NIGHT_NO_DIRECT ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（試験 night-all4-q136 0/4→3/3・昼 night3-day 悪化0・竹内さんへの確認 H-9 待ち＝「夜も AIX でよい」なら戻す）
 }

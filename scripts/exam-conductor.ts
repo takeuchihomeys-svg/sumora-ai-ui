@@ -84,6 +84,7 @@ export type ExamJob = {
   /** 夜だけ流す（JST 22〜9・重い全件の読み等・--night） */ nightOnly?: boolean;
   /** 保留の理由（あれば流さない・手で外す） */ hold?: string;
   /** この時刻（ISO）より前は流さない（--not-before=2026-11-10T22:00+09:00） */ notBefore?: string;
+  /** 急ぎ（--urgent）: 混雑の時間（平日 JST 10〜13・15〜19）でも流す（2026-11-06） */ urgent?: boolean;
   /** 終わったら知らせる相手（エージェントの id・--notify=）。無ければ exam-queue/config.json の notify[owner] */ notify?: string;
 };
 
@@ -119,7 +120,8 @@ async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
   // 2026-11-04 指揮役: AI を呼ばない読むだけの依頼は試験の本数の門に入れない（夜だけの印は守る・DB の窓と上限は依頼の引数のまま）
   if (j?.runner === "cmd" && j.readOnly) { if (j.nightOnly) { const h = new Date(Date.now() + 9 * 3600_000).getUTCHours(); if (h >= 9 && h < 22) return { ok: false, why: "夜だけの依頼（JST 22〜9）" }; } return { ok: true, why: "読むだけ（AI を呼ばない・試験の門の外）" }; }
   if (j?.nightOnly) { const h = new Date(Date.now() + 9 * 3600_000).getUTCHours(); if (h >= 9 && h < 22) return { ok: false, why: "夜だけの依頼（JST 22〜9）" }; }
-  if (!cheapNow()) return { ok: false, why: "DeepSeek の混雑の時間（平日 10〜13・15〜19）" };
+  // 2026-11-06 作業員8（統括役の了承）: 急ぎの依頼（--urgent）だけ混雑の時間でも流す（倍の時間の費用は 11/05 に $23・試験の 30%）
+  if (!cheapNow() && !(j as { urgent?: boolean } | null)?.urgent) return { ok: false, why: "DeepSeek の混雑の時間（平日 10〜13・15〜19・急ぎなら --urgent）" };
   const pc = pcState();
   if (pc.tsc) return { ok: false, why: "tsc が動いている" };
   if (pc.exams >= maxExamsNow()) return { ok: false, why: `試験が ${pc.exams}本（上限 ${maxExamsNow()}）` };
@@ -150,7 +152,7 @@ function addJob(): void {
   // 2026-11-05 作業員8（統括役の了承「段を最小に: --stage=diff を既定にし、文の組だけ draft」）: 前の子の費用の約15%が下書きの段（final_check・aix_desk 等）。
   //   --stage を書かない依頼は diff（直したファイルが下書きに届かなければブレインだけ）・文の組（grp-reply・grp-aix）は draft。書いた時はそのまま
   const stageDefault = /^(?:grp-reply|grp-aix)/.test(label) ? "draft" : "diff";
-  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage") || stageDefault, env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
+  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage") || stageDefault, env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(flag("urgent") ? { urgent: true } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
   // 2026-11-04 (a)(b): --priority=<小さいほど先・既定 5>・--max-min=<1本の時間の上限（分）>
   if (arg("priority")) (base as Record<string, unknown>).priority = Number(arg("priority"));
   if (arg("max-min")) (base as Record<string, unknown>).maxMin = Number(arg("max-min"));
