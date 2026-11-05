@@ -29,6 +29,7 @@
 | 17 | 読み直しの dry-read の台本が申込の線（loadDeepseekCutoff）を見ずに、申込中の会話のこちらの物件資料の画像を約50枚 DeepSeek に送った（作業員1・11/05） | scripts/ の台本は本番の関数の網（sent-image-record 等の線の確かめ）を通らずに DeepSeek の口を直接呼べる | DeepSeek に渡す台本は必ず申込の線を通す（選ぶ所で loadDeepseekCutoff・isAfterCutoff）。hazard-audit (o) が scripts/ で DeepSeek を呼ぶのに線を通さないファイルを毎朝出す（11/05 時点 21本・古い確かめの台本） |
 | 18 | 試験を流す係が 11/05 21:49 に落ちた。--remote の係が夜の基準の印（night-base-last.json・{day, at}）を係の列のフォルダ（exam-queue）に書き、流す係が依頼と読んで j.only.split で TypeError（作業員8の 78347eaf） | 列のフォルダの .json は全部依頼として読む作りで、形を確かめていなかった。印を同じフォルダに置いた（見張りの hazard-audit-last.json も同じ置き方で潜んでいた） | 係: 印は exam-cache/conductor-marks/ に置く・readJobs は依頼の形でない .json を飛ばして1回だけ知らせる（isExamJobShape）・印が無くても同じ日の夜の基準が列・済み・結果にあれば積まない（nightBaseAlready）。人: 係の列のフォルダに依頼でないファイルを置かない |
 | 19 | 試験の係の cmd の依頼（ci-v1L・ci-v3L）が、--qfile="C:/Users/竹内 悠馬/…" の空白で引数を割られ ENOENT で落ちた（LLM 0回で「失敗あり」・作業員4 11/05） | 係は cmd を /"[^"]*"|S+/g で割るので、= の後ろの引用符は1つの引数にならない。依頼は相対パス（../../exam-cache/…）で書く。hazard-audit (q) が順番待ちの依頼の割られる形を見つける。係の側で = の後ろの引用符も1つにまとめる直しは作業員8 |
+| 20 | 「入力（LLM への要求）が前と同じ問題は流さず前の答えを使う」案（11/05 作業員8の案⑤）は、LLM の後の決定論の直し（two-stage・guard・2択の絞り・estimate-to-reply）の悪化を見えなくする所だった（作業員1の気付き） | 決定論の直しは LLM の要求を変えないので、入力が同じでも最終の答えは変わる | 試験の既定は「入力が同じ問題は LLM を再生・決定論は今の版で作り直す」（--input-diff=on）。入力が同じでも問題を外さない。時間は写しと片付けを軽くして削る |
 
 ## 足す時
 - 新しく起きた事は、上の表に1行（番号は続き）。台本で見つけられるなら scripts/hazard-audit.ts に印を足し、scripts/lib/__tests__/hazard-audit-core.test.ts にも1つ。

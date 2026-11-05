@@ -2310,7 +2310,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       ? supabase
           .from("ai_reply_knowledge")
           .select("id, title, content, importance, category")
-          .ilike("title", "失注パターン%")
+          .like("title", "失注パターン%")
           .neq("hypothesis_status", "rejected")
           .order("importance", { ascending: false })
           .order("created_at", { ascending: false })

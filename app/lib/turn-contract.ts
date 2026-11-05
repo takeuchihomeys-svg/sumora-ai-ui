@@ -190,7 +190,7 @@ function answerableDirectRule(env: Record<string, string | undefined> = typeof p
     lines.push("- ★管理会社に確かめれば分かる問い（空き状況・募集状況・見積・初期費用・設備・入居条件・内覧できるか）は、確認の約束（promise）を挟まず route=\"aix\"（空き・設備・条件＝property_check_result／費用・見積＝estimate_sheet）にする。スタッフが確かめてその AIX で結果を送る（竹内さん 10/21・実送信もすぐ AIX が多数）。約束（promise）は探す・交渉する・撮影する・退去予定の内覧開始日など、すぐには結果が出ない事だけ。会話・送った資料・会社の事実で答えられる事は今まで通り reply。");
     // 2026-11-05 竹内さん No.42 (c)（KB cf241dbd）: お客様が送ってきた物件は確認の約束 → AIX（既定 off・TWO_STAGE_BROUGHT_PROMISE=on の時だけ1行・off は1字も変えない）
     if ((env.TWO_STAGE_BROUGHT_PROMISE ?? "").trim().toLowerCase() === "on") {
-      lines.push("- ★ただしお客様が送ってきた（持ち込みの）物件の空き・募集状況・見積は、route=\"promise\"（「お送り頂きました物件の募集状況確認させて頂きます」の確認の約束）にし、結果はその後に AIX【物件確認した／見積書送る】で送る（竹内さん 11/05 No.42 (c)「物件を送ってきた時は約束して AIX から送る」）。こちらが送った物件の空き・見積の問いは上の★のまま route=\"aix\"。");
+      lines.push("- ★ただしお客様が送ってきた（持ち込みの）物件の空き・募集状況・見積は、route=\"promise\"（「お送り頂きました物件の募集状況確認させて頂きます」の確認の約束）にし、結果はその後に AIX【物件確認した／見積書送る】で送る（竹内さん 11/05 No.42 (c)「物件を送ってきた時は約束して AIX から送る」）。こちらが送った物件の空き・見積の問いは上の★のまま route=\"aix\"。持ち込みとは、お客様が今の連投で URL・画像・物件名を自分で送ってきた物件だけ（こちらが送った物件・ピックアップの中の物件への「気になります」「ここいいですね」は持ち込みではなく送った物件への反応＝about=reaction_to_sent・確認の約束にしない）。");
     }
   }
   if ((env.ACK_AFTER_PROMISE_REPLY ?? "").trim().toLowerCase() !== "on") {

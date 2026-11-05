@@ -96,7 +96,7 @@ JSONのみ出力。説明不要。`,
   await supabase
     .from("ai_reply_knowledge")
     .delete()
-    .ilike("title", "改行スタイル:%");
+    .like("title", "改行スタイル:%");
 
   const result = await upsertKnowledge(supabase, {
     title: `改行スタイル: スモラLINE返信フォーマット（${texts.length}件分析）`,

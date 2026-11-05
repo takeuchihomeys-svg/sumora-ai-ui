@@ -19,6 +19,25 @@ type Msg = { id: string; conversation_id: string; sender: string; text: string |
 type Aix = { conversation_id: string; aix_type: string | null; check_pattern: string | null; created_at: string };
 type Dec = { conversation_id: string; suggested_action: string | null; suggested_check_pattern: string | null; analyzed_msg_ts: string | null; created_at: string; scene_evidence: Record<string, unknown> | null };
 
+/** 2026-11-04 作業員1（営業時間に小分けで流す・統括役）: 時刻の続きから1000行ずつ（offset の深い読みをしない）・間を PAGE_PAUSE_MS（既定 300ms）あける・上限で黙って切らない */
+async function allSince<T extends { id?: string; created_at: string }>(table: string, cols: string, since: string): Promise<T[]> {
+  const out: T[] = []; const seen = new Set<string>(); let cur = since;
+  const pause = Number(process.env.PAGE_PAUSE_MS ?? "300");
+  for (let p = 0; ; p++) {
+    const { data, error } = await sb.from(table).select(cols).gte("created_at", cur).order("created_at").limit(1000);
+    if (error) throw new Error(`${table}: ${error.message}`);
+    const rows = (data ?? []) as unknown as T[];
+    let added = 0;
+    for (const r of rows) { const k = r.id ?? `${r.created_at}|${JSON.stringify(r).slice(0, 200)}`; if (seen.has(k)) continue; seen.add(k); out.push(r); added++; }
+    if (rows.length < 1000) break;
+    const last = rows[rows.length - 1].created_at;
+    if (last === cur && added === 0) throw new Error(`${table}: 同じ時刻の行が1000行を超えた（${cur}）`);
+    cur = last;
+    if (pause > 0) await new Promise((res) => setTimeout(res, pause));
+    if (p % 20 === 19) console.error(`  … ${table} ${out.length}行（${cur}）`);
+  }
+  return out;
+}
 async function all<T>(q: (a: number, b: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
   const out: T[] = [];
   for (let p = 0; p < 200; p++) {
@@ -48,9 +67,9 @@ async function main() {
   const days = Number(process.env.DAYS ?? 365);
   const show = (process.env.SHOW ?? "all").toLowerCase();
   const since = new Date(Date.now() - days * 86400_000).toISOString();
-  const msgs = await all<Msg>((a, b) => sb.from("messages").select("id, conversation_id, sender, text, created_at, is_aix_generated, image_url").gte("created_at", since).order("created_at").range(a, b));
-  const aix = await all<Aix>((a, b) => sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, created_at").gte("created_at", since).order("created_at").range(a, b));
-  const decs = await all<Dec>((a, b) => sb.from("brain_decision_logs").select("conversation_id, suggested_action, suggested_check_pattern, analyzed_msg_ts, created_at, scene_evidence").gte("created_at", since).order("created_at").range(a, b));
+  const msgs = await allSince<Msg>("messages", "id, conversation_id, sender, text, created_at, is_aix_generated, image_url", since);
+  const aix = await allSince<Aix & { id?: string }>("aix_usage_logs", "id, conversation_id, aix_type, check_pattern, created_at", since);
+  const decs = await allSince<Dec & { id?: string }>("brain_decision_logs", "id, conversation_id, suggested_action, suggested_check_pattern, analyzed_msg_ts, created_at, scene_evidence", since);
   const byConv = new Map<string, Msg[]>();
   for (const m of msgs) { const arr = byConv.get(m.conversation_id) ?? []; arr.push(m); byConv.set(m.conversation_id, arr); }
   console.log(`直近${days}日: messages ${msgs.length}通（${byConv.size}会話）／aix_usage_logs ${aix.length}／brain_decision_logs ${decs.length}\n`);

@@ -54,6 +54,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape } from "./lib/exam-base-pin";
+import { planExam, kindSuggest, readExamResult, splitCmdArgs, type CmpLite } from "./lib/exam-plan";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -172,6 +173,20 @@ function addJob(): void {
     if (!ids.length && !p.selectRag) throw new Error("問題が無い（--only か --pick を付ける）");
     job = { ...base, id: `${Date.now()}`, label, only: ids.join(","), repeat: Number(arg("repeat", String(p.repeat ?? 2))), flaky, selectRag: p.selectRag, runner: "brain-exam" };
     if (arg("pick")) log(`  選び: ${p.why} → ${ids.length}問`);
+    // 2026-11-05 作業員8（KB P0 4c91ffd9「試験のブレインが何を・何回・どこまで・いつ」・統括役「1か所が順に決めて1行の計画を出す」）: 試験の統括の計画（scripts/lib/exam-plan.ts）
+    //   --kind=record|prod（記録だけ・本番で動いている直し）は試験を積まず、毎晩の本番の物差し（cron prod-yardstick）で見る。計画は exam-cache/exam-plans.jsonl に残す
+    const kind = (["record", "prod", "exam"].includes(arg("kind")) ? arg("kind") : undefined) as "record" | "prod" | "exam" | undefined;
+    const group = /^grp-reply/.test(label) ? "reply" as const : /^grp-aix/.test(label) ? "aix" as const : /^grp-brain/.test(label) ? "brain" as const : null;
+    const plan = planExam({ label, kind, switchName: base.switch, ids, group, diffStage: base.stage === "brain" || base.stage === "draft" ? base.stage : null, brainText: flag("brain-text"), defaultOn: flag("default-on"), capUsd: Number(arg("cap-usd", "2")) || 2 });
+    log(`  ${plan.line}`);
+    const sug = kindSuggest({ kind, switchName: base.switch, label }); if (sug) log(`  （${sug}）`);
+    try { appendFileSync(join(examCacheRoot(), "exam-plans.jsonl"), JSON.stringify({ at: new Date().toISOString(), label, route: plan.route, ids: plan.ids, usd: Number(plan.cost.usd.toFixed(4)), stage: plan.stage, claude: plan.claude.ids, gate: plan.gate }) + "\n"); } catch { /* 記録できなくても積む */ }
+    if (plan.route === "yardstick") {
+      ensureDirs();
+      writeFileSync(join(RES, `${label}.json`), JSON.stringify({ label, owner: base.owner, switch: base.switch, runner: "yardstick", verdict: plan.line, at: new Date().toISOString() }, null, 1));
+      log(`積まない: ${label}（${plan.gate.go ? "" : plan.gate.why}）`);
+      return;
+    }
   }
   // 2026-11-04 (c): 12問を超える試験の依頼は、足す時に12問ずつに分ける（揺れる問題は入っている側に付ける）
   // 2026-11-05 作業員1（統括役の指示）: 12問に加えて、見積もりの時間（回数×前と今×レーン・古い作業ツリーは1レーン）が上限に収まらない依頼も分ける（EXAM_ADD_SPLIT_BY_TIME=off で12問だけ）
@@ -447,7 +462,8 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         if (stopped || refused) break;
         appendFileSync(outFile, `\n=== ${at()} npx tsx --env-file=.env.local ${c} ===\n`);
         const before = statSync(outFile).size;
-        const r = runTsx(j.cwd, c.match(/"[^"]*"|\S+/g)!.map((x) => x.replace(/^"|"$/g, "")), j.env, outFile); cur = r.child;
+        // 2026-11-05 作業員4の頼み: --qfile="C:/Users/竹内 悠馬/…" が空白で切れていた（ci-v1L・ci-v3L）＝引用符を含む塊は1つの引数に（exam-plan.splitCmdArgs）
+        const r = runTsx(j.cwd, splitCmdArgs(c), j.env, outFile); cur = r.child;
         codes.push(await r.done);
         const tail = readFileSync(outFile).subarray(before).toString("utf8");
         const m = tail.match(/空きメモリ\s*\d+MB\s*<\s*\d+MB（--force で流す）/);
@@ -556,7 +572,22 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     // 2026-11-04 作業員2（基準を merge-base にした時に読み違えない）: 比べた「前」の main の commit を結果の行に出す
     const baseCommit = readJson<{ commit?: string } | null>(join(resultsDirOf(j.cwd), `${j.label}.baseline.json`), null)?.commit;
     const baseNote = (baseCommit ? `・基準 ${baseCommit.slice(0, 7)}` : "") + (guard.note ? `・${guard.note}` : "");
-    const verdict = (noCompare ? `比べられない（基準の回が無い・両方で解いた 0/${ids.length}問・既定 on の判断に使わない${blFinal ? `・基準 ${blFinal}` : ""}）` : sureN == null ? "結果を読めない" : sureN === 0 ? (cmpN < ids.length ? `比べた問題が少ない（両方で解いた ${cmpN}/${ids.length}問・悪化0とは言わない・既定 on の判断に使わない）` : `確かな悪化0（比べた ${cmpN}/${ids.length}問）`) : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote;
+    // 2026-11-05 作業員8（試験の統括の結果の読み方・KB P0 2e164f41「限りなく竹内さんに近づける」）: 悪化なら、その問題の竹内さんの送信と答案の差（前→今の道）を添える
+    const digNote = (() => {
+      if (!sw || (!sw.sure.length && !sw.flake.length)) return "";
+      try {
+        const probs = readJson<Array<{ id: string; staffText?: string | null; staffAix?: string | null }>>(join(j.cwd, "scripts", "brain-exam", "problems.json"), []);
+        const cur = readRows(rowsFile), base = blFinal ? readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)) : [];
+        const pathOf = (rows: RowLite[], id: string) => (rows.find((r) => r.id === id) as { path?: { code?: string } } | undefined)?.path?.code ?? null;
+        const cmps: CmpLite[] = [...sw.sure.map((x) => ({ id: x.id, cmp: "worse" as const, sure: true })), ...sw.flake.map((x) => ({ id: x.id, cmp: "worse" as const, sure: false }))];
+        const mats = cmps.map((c) => { const pr = probs.find((x) => x.id === c.id); return { id: c.id, staffText: pr?.staffText ?? null, staffAix: pr?.staffAix ?? null, brainPath: pathOf(cur, c.id), basePath: pathOf(base, c.id) }; });
+        const r = readExamResult(cmps, mats);
+        const i = r.line.indexOf("・掘りの材料");
+        return i >= 0 ? r.line.slice(i) : "";
+      } catch { return ""; }
+    })();
+    const verdictBase = (noCompare ? `比べられない（基準の回が無い・両方で解いた 0/${ids.length}問・既定 on の判断に使わない${blFinal ? `・基準 ${blFinal}` : ""}）` : sureN == null ? "結果を読めない" : sureN === 0 ? (cmpN < ids.length ? `比べた問題が少ない（両方で解いた ${cmpN}/${ids.length}問・悪化0とは言わない・既定 on の判断に使わない）` : `確かな悪化0（比べた ${cmpN}/${ids.length}問）`) : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote;
+    const verdict = verdictBase + digNote;
     finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);

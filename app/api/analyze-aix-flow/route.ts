@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
         .from("ai_reply_knowledge")
         .select("title, content")
         .eq("category", "pattern")
-        .ilike("title", "成約パターン%")
+        .like("title", "成約パターン%")
         .gte("created_at", since)
         .order("created_at", { ascending: false })
         .limit(15),

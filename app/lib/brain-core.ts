@@ -3162,14 +3162,28 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   // 2026-11-04 入口の統括の最初の読み（Sonnet・作り置き・5番に1番は DeepSeek でも読んで比べる・CONDUCTOR_INTAKE: 既定は stage=yuma（YUMA・テスト用の会話だけ）・_STAGE=pct:N|all で広げる・=off で止める・読んだ結果は記録だけ）。
   //   ブレインの呼び出しと同時に流し（待たせない）、返す前に最大4秒だけ待つ。判断・文は変えない
   let intakeP: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
+  // 返す前に最大4秒だけ待つ（待ち始めは meta を組む時・conductor_intake と conductor_focus で同じ待ちを使う）
+  let intakeDoneMemo: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
+  const intakeDoneGet = () => (intakeP ? (intakeDoneMemo ??= Promise.race([intakeP, new Promise<null>((r) => setTimeout(() => r(null), 4_000))])) : null);
   if ((conductorIntakeMode() === "shadow" || await (await import("@/app/lib/rollout")).stageOnNow("CONDUCTOR_INTAKE", conversationId, { kind: "all" } /* 2026-11-04 統括役（竹内さん「前倒し」）: yuma → all（記録だけ・判断も文も変えない・約 $9/日）。戻す: CONDUCTOR_INTAKE_STAGE=yuma か CONDUCTOR_INTAKE=off */)) && typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus) && conversationId) {
     const lastStaffTxt = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim())?.text ?? null;
     const pmForCarry = (opts?.prevMeta ?? null) as unknown as { conductor_meta?: import("@/app/lib/conductor-meta").ConductorMeta } | null;
-    intakeP = import("@/app/lib/conductor-intake-server").then(({ runConductorIntake }) => runConductorIntake({
-      conversationId, turnAt: typedMessages[0]?.created_at ?? null, customerTurn: unrepliedTurn.text ?? "", lastStaff: lastStaffTxt,
-      ledgerBlock: factsForConductor.length ? factLedgerBlock(factsForConductor as unknown as Parameters<typeof factLedgerBlock>[0], Date.now()) : "",
-      carryLine: carryQueryLine(pmForCarry?.conductor_meta ?? null), ruleMeta: "",
-    })).catch(() => null);
+    intakeP = import("@/app/lib/conductor-intake-server").then(async ({ runConductorIntake }) => {
+      // 2026-11-05 作業員5（KB P0 575a7cd5 ④）: CONDUCTOR_FOCUS=shadow の時だけ、竹内さんの近い過去の番の重点を先に引いて入口の統括に添える（1.5秒まで・無ければ添えない）
+      let nearFocus: import("@/app/lib/conductor-focus").NearFocus | null = null;
+      const { conductorFocusMode } = await import("@/app/lib/conductor-focus");
+      const turnAt0 = typedMessages[0]?.created_at ?? null;
+      if (conductorFocusMode() !== "off" && turnAt0) {
+        const { liveNearTurns } = await import("@/app/lib/conductor-focus-server");
+        const near = await Promise.race([liveNearTurns(supabase, { conversationId, propertyCustomerId: propertyCustomerId ?? null, turnAt: turnAt0, scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, customerTurn: unrepliedTurn.text ?? "" }), new Promise<null>((r) => setTimeout(() => r(null), 1_500))]).catch(() => null);
+        nearFocus = near?.near ?? null;
+      }
+      return runConductorIntake({
+        conversationId, turnAt: turnAt0, customerTurn: unrepliedTurn.text ?? "", lastStaff: lastStaffTxt,
+        ledgerBlock: factsForConductor.length ? factLedgerBlock(factsForConductor as unknown as Parameters<typeof factLedgerBlock>[0], Date.now()) : "",
+        carryLine: carryQueryLine(pmForCarry?.conductor_meta ?? null), ruleMeta: "", nearFocus,
+      });
+    }).catch(() => null);
   }
   // 2026-11-03 ③ 会話の流れの合図（flow-signals.ts・決まった計算は候補だけ・読むのはブレイン・BRAIN_FLOW_SIGNALS=on・既定 off）
   let flowSignalsRec: FlowSignals | null = null;
@@ -5982,7 +5996,9 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         openPromises: brainLedger.entries.filter((e) => e.status === "promised" && e.fulfilledBy == null).map((e) => String(e.kind)).slice(0, 3),
       }), factsForConductor), ["judge_examples", "knowledge"]))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
       // 2026-11-04 入口の最初の読みの記録（shadow・最大4秒だけ待つ）→ digest.ci
-      conductor_intake: intakeP ? ((await Promise.race([intakeP, new Promise<null>((r) => setTimeout(() => r(null), 4_000))])) ?? undefined) : undefined,
+      conductor_intake: intakeDoneGet() ? ((await intakeDoneGet()) ?? undefined) : undefined,
+      // 2026-11-05 作業員5（KB P0 575a7cd5）: 入口の統括の重点（表・背景・重点・理由・近い番）を meta.conductor_focus に（CONDUCTOR_FOCUS=shadow の時だけ・記録と深い読み直しの材料・判断は変えない）
+      conductor_focus: intakeDoneGet() ? await (async () => { const { conductorFocusMode, conductorFocusMeta } = await import("@/app/lib/conductor-focus"); if (conductorFocusMode() === "off") return undefined; return (conductorFocusMeta((await intakeDoneGet())?.answer?.focus_read ?? null) ?? undefined) as { focus: string; why?: string | null } | undefined; })() : undefined,
       brain_depth: depthRec ?? undefined,
       conductor_roles: CONDUCTOR_HANDOFF_ON ? ((nd) => rolesDigest(candidateRoles({ ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""), stampOnly: /^\s*\[(?:スタンプ|画像)\]\s*$/.test(unrepliedTurn.text ?? ""), finalAction: finalAix ?? "reply", confidence: nd?.confidence ?? null, difficulty: nd?.difficulty ?? null, missing: nd?.missing ?? [] })))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
       priority_step: priorityRec,
