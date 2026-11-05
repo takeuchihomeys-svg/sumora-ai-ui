@@ -59,15 +59,21 @@ export function anatomyPrompt(o: { maskedCustomer: string | null; maskedBody: st
   return `## 場面（決定論の札）\n${o.scene}\n\n${o.situation ? `## その番の時点の状況（伏せ済み・決まった計算）\n${o.situation.slice(0, 500)}\n\n` : ""}## お客様の発言（伏せ済み）\n${(o.maskedCustomer ?? "（こちらから送った番）").slice(0, 300)}\n\n## 竹内さんの返信（伏せ済み）\n${o.maskedBody.slice(0, 500)}`;
 }
 const PARTS: readonly AnatomyPart[] = ["greet", "uke", "main", "add", "cta", "close"];
-export function parseAnatomy(text: string): Anatomy | null {
+/**
+ * 2026-11-06 作業員5（弱い所 347・統括役）: 重点を読ませた回の 22% が purpose が一覧の外で捨てられ、次の夜にまた読み直していた。
+ *   opts.fallbackPurpose を渡した時だけ、一覧の外の purpose は捨てずに fallbackPurpose にし、元の値を purpose_raw に残す（既定は今まで通り捨てる）
+ */
+export function parseAnatomy(text: string, opts: { fallbackPurpose?: ComposePurpose } = {}): (Anatomy & { purpose_raw?: string }) | null {
   const m = String(text ?? "").match(/\{[\s\S]*\}/);
   if (!m) return null;
   try {
     const o = JSON.parse(m[0]) as Record<string, unknown>;
-    if (!(COMPOSE_PURPOSES as readonly string[]).includes(String(o.purpose))) return null;
+    const known = (COMPOSE_PURPOSES as readonly string[]).includes(String(o.purpose));
+    if (!known && !opts.fallbackPurpose) return null;
     const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
     return {
-      scene: clip(o.scene, 40), purpose: o.purpose as ComposePurpose, main_point: clip(o.main_point, 120),
+      ...(!known ? { purpose_raw: clip(o.purpose, 20) } : {}),
+      scene: clip(o.scene, 40), purpose: (known ? o.purpose : opts.fallbackPurpose) as ComposePurpose, main_point: clip(o.main_point, 120),
       worry_answer: o.worry_answer == null || String(o.worry_answer) === "null" ? null : clip(o.worry_answer, 120),
       parts: (Array.isArray(o.parts) ? o.parts : []).map(String).filter((p): p is AnatomyPart => (PARTS as readonly string[]).includes(p)).slice(0, 8),
       why_order: clip(o.why_order, 120),

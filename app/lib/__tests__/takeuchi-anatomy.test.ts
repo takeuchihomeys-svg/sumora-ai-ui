@@ -29,5 +29,10 @@ t("状況の文 v2 があれば指示に入る", /その番の時点の状況/.t
 const as = parseAnatomy('{"purpose":"ack","main_point":"a","parts":[],"why_order":"","omitted":[],"focus":"relation","skipped_types":["hours","創作","hours","keep_promise_absent"],"keep":false}');
 t("書かなかった型の札は一覧の物だけ・重ねない", JSON.stringify(as?.skipped_types) === '["hours","keep_promise_absent"]' && as?.keep === false, as);
 t("札と keep の指示は重点を読む時だけ", /keep_promise_absent/.test(ANATOMY_SYSTEM_FOCUS) && !/keep_promise_absent/.test(ANATOMY_SYSTEM));
+// 2026-11-06 弱い所 347: 一覧の外の purpose は fallbackPurpose を渡した時だけ捨てずに残す（元の値は purpose_raw）・渡さなければ今まで通り捨てる
+const odd = '{"scene":"x","purpose":"decline","main_point":"募集終了の報告","worry_answer":null,"parts":["main"],"why_order":"a","omitted":[],"focus":"answer"}';
+t("一覧の外の purpose: 既定は捨てる", parseAnatomy(odd) === null);
+const kept = parseAnatomy(odd, { fallbackPurpose: "inform" });
+t("一覧の外の purpose: fallback で残し purpose_raw を持つ", kept?.purpose === "inform" && kept?.purpose_raw === "decline" && kept?.focus === "answer", kept);
 console.log(`takeuchi-anatomy: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);
