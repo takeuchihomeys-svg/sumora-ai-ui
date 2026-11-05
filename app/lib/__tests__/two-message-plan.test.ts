@@ -207,5 +207,16 @@ t("⑫ on でも YUMA 以外は動かない", !twoMessageAfterAixAutoOn("on", fa
 t("⑫ on の YUMA は動く", twoMessageAfterAixAutoOn("on", true));
 t("⑫ all は全員に広げない（竹内さんの確認の後）", !twoMessageAfterAixAutoOn("all", false));
 
+// ⑬ 2026-11-06 343 の続き: カードの AIX の後の続きの通（aix_template の席）も下書きの指定にする（既定 off）
+{ const asks13 = [{ quote: "ここの初期費用知りたいです", route: "aix", aix: "estimate_sheet", answer: null }] as never;
+  const p13 = planMessages({ asks: asks13, finalAix: "estimate_sheet" });
+  t("⑬ 見積書の番は A→T", p13.shape === "AT");
+  t("⑬ off は今と同じ（返信の席が無い＝指定なし）", afterAixReplyBrief(p13, "estimate_sheet", asks13, {}) === null);
+  const b13 = afterAixReplyBrief(p13, "estimate_sheet", asks13, { TWO_MESSAGE_AFTER_AIX_T_DRAFT: "on" });
+  t("⑬ on は続きの通の指定が出る", !!b13 && b13.template === true);
+  const h13 = afterAixDraftHint(b13, "estimate_sheet");
+  t("⑬ 指定は竹内さんの形（御見積書となります・ご案内）で金額を書かせない", /御見積書となります/.test(h13) && /ご案内/.test(h13) && /金額/.test(h13));
+  t("⑬ 返信の席がある番は今まで通り返信の指定", afterAixReplyBrief(planMessages({ asks: [...(asks13 as never[]), { quote: "入居までどれくらいかかりますか", route: "reply", about: "procedure", answer: "審査から2週間程" }] as never, finalAix: "estimate_sheet" }), "estimate_sheet", null, { TWO_MESSAGE_AFTER_AIX_T_DRAFT: "on" })?.template !== true); }
+
 console.log(`\ntwo-message-plan: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

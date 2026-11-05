@@ -321,9 +321,22 @@ export function templateReplyPartNote(p: TwoMessagePlan | null | undefined, sent
 }
 
 /** AIX の後の返信の下書きの材料（返信の通が残っていれば、その通が答える依頼とブレインの答えの要点）。無ければ null */
-export function afterAixReplyBrief(p: TwoMessagePlan | null | undefined, sentAix: string | null | undefined, asks: ReadonlyArray<PlanAsk> | null | undefined): { answers: Array<{ quote: string; answer: string | null }>; role: string } | null {
+/**
+ * 2026-11-06 弱い所 343 の続き（作業員7・統括役の決め）: カードの AIX（物件オススメ・見積書・物件確認した）の後の続きの通（aix_template の席）も下書きにする。
+ *   竹内さん本人の90日: AIX の後に続けた手打ちの通 540 のうち、物件オススメの後 312 の 92%・見積書の後 125 の 94% がテンプレートの言い回し
+ *   （「最大限割引しました初期費用の御見積書となります」「お気に召されましたら…ご案内」＝信頼と訴求）。答える通は 37%。
+ *   既定 off（TWO_MESSAGE_AFTER_AIX_T_DRAFT=on の時だけ・off は今と同じ＝返信の席だけ）
+ */
+export function afterAixTemplateDraftOn(env: Env = envOf()): boolean {
+  return (env.TWO_MESSAGE_AFTER_AIX_T_DRAFT ?? (env.NEXT_PUBLIC_TWO_MESSAGE_AFTER_AIX_T_DRAFT ?? "")).trim().toLowerCase() === "on";
+}
+export function afterAixReplyBrief(p: TwoMessagePlan | null | undefined, sentAix: string | null | undefined, asks: ReadonlyArray<PlanAsk> | null | undefined, env: Env = envOf()): { answers: Array<{ quote: string; answer: string | null }>; role: string; template?: boolean } | null {
   const rest = remainingAfterAix(p, sentAix);
   const reply = rest?.find((m) => m.slot === "reply");
+  if ((!reply || !reply.answers.length) && afterAixTemplateDraftOn(env)) {
+    const t = rest?.find((m) => m.slot === "aix_template");
+    if (t) { const byQ = new Map((asks ?? []).map((a) => [a.quote.slice(0, 40), a.answer ?? null] as const)); return { answers: t.answers.map((qq) => ({ quote: qq, answer: byQ.get(qq) ?? null })), role: t.role, template: true }; }
+  }
   if (!reply || !reply.answers.length) return null;
   const byQuote = new Map((asks ?? []).map((a) => [a.quote.slice(0, 40), a.answer ?? null] as const));
   return { answers: reply.answers.map((qq) => ({ quote: qq, answer: byQuote.get(qq) ?? null })), role: reply.role };
@@ -356,6 +369,10 @@ export function twoMessageAfterAixAutoOn(v: string | null | undefined, isTestCon
 
 /** AIX の後の返信の下書きを作る時の指定（generate-reply の replyHint＝スタッフが押した指定）。材料が無ければ "" */
 export function afterAixDraftHint(brief: ReturnType<typeof afterAixReplyBrief>, sentAix: string | null | undefined): string {
+  if (brief?.template) {
+    const qs0 = brief.answers.map((a) => `「${a.quote}」${a.answer ? `（要点: ${a.answer}）` : ""}`).join("・");
+    return `【AIX の後に続けて送る通（この番の組み立て・竹内さん 11/05）】先に AIX【${aixLabelOf(sentAix)}】を送った。この通は AIX の続き: 送った物の受け止めと信頼（竹内さんの形「〇〇号室最大限割引しました初期費用の御見積書となります！！」「お送りさせて頂きましたお部屋の中でも〇〇号室が…オススメのお部屋となります！！」）と、訴求（「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」）を短く。${qs0 ? `次の質問にも答える: ${qs0}。` : ""}AIX で送った金額・日時・資料に無い事は書かない。挨拶は入れない（同じ番の続き）。`;
+  }
   if (!brief || !brief.answers.length) return "";
   const qs = brief.answers.map((a) => `「${a.quote}」${a.answer ? `（要点: ${a.answer}）` : ""}`).join("・");
   return `【AIX の後に続けて送る返信（この番の組み立て・竹内さん 11/05）】先に AIX【${aixLabelOf(sentAix)}】を送った。この返信は次の質問だけに答える: ${qs}。AIX で送った事（物件・金額・日時）は繰り返さない。挨拶は入れない（同じ番の続き）。`;

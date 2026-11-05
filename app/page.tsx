@@ -9846,7 +9846,7 @@ export default function Home() {
               if (!head) return null;
               const sentAix = latestAixByConv[id]?.aixType ?? null;
               const afterSent = sentAix && latestAixByConv[id]?.at && Date.parse(latestAixByConv[id].at) >= Date.parse(String((seen as { analyzed_msg_ts?: string | null } | undefined)?.analyzed_msg_ts ?? "")) ? remainingAfterAix(plan, sentAix) : null;
-              const brief = afterSent ? afterAixReplyBrief(plan, sentAix, asks) : null;
+              const brief = afterSent ? afterAixReplyBrief(plan, sentAix, asks, { TWO_MESSAGE_AFTER_AIX_T_DRAFT: process.env.NEXT_PUBLIC_TWO_MESSAGE_AFTER_AIX_T_DRAFT }) : null; // 343 の続き: カードの AIX の後の続きの通も（既定 off）
               // 2026-11-06 弱い所 305（統括役の決め 案A）: AIX の後に返信が残る番は下書きを1回だけ自動で作る（送信はしない・打ち始めていたら作らない・既定 off・on でも YUMA だけ）
               if (brief && twoMessageAfterAixAutoOn(process.env.NEXT_PUBLIC_TWO_MESSAGE_AFTER_AIX_AUTO, isTestOnlyConversation(id))) {
                 const autoKey = `${id}:${latestAixByConv[id]?.at ?? ""}`;
