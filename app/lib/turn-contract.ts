@@ -209,10 +209,10 @@ function answerableDirectRule(env: Record<string, string | undefined> = typeof p
  * 2026-11-05 弱い所 343（作業員7・統括役の決め 3）: 文を書く AIX の番に、ブレインが確認の約束（promise）を足して2通にする。
  *   竹内さん本人の送信: 電話の AIX「審査通過するにあたりまして5分程お電話でお打ち合わせ…」（q332）・保証会社の AIX「保証会社は全保連となります…出来る限りのサポート」（q333）・
  *   待ち合わせの AIX「8日2物件ご案内させて頂きます」（q331）＝受け止めと答えを AIX の文の中で済ませた1通。
- *   既定 off（TWO_MESSAGE_TEXT_AIX_ROUTE=on の時だけ1行・off は1字も変えない）
+ *   既定 on（11/05・止める TWO_MESSAGE_TEXT_AIX_ROUTE=off＝1字も足さない）
  */
 function textAixRouteRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
-  if ((env.TWO_MESSAGE_TEXT_AIX_ROUTE ?? "").trim().toLowerCase() !== "on") return "";
+  if ((env.TWO_MESSAGE_TEXT_AIX_ROUTE ?? "").trim().toLowerCase() === "off") return ""; // 11/05 統括役の決め: tm6 悪化0・余計な2通目 35%→27% で既定 on（止める TWO_MESSAGE_TEXT_AIX_ROUTE=off）
   return "- ★文を書く AIX（電話・保証会社・内覧調整・待ち合わせ場所・当日の挨拶）で答えが決まる依頼は、確認の約束（route=\"promise\"）にせず route=\"aix\"（その AIX のキー）にする。その AIX の文の中で受け止めと答えを済ませる（竹内さん: 審査の相談→AIX【電話】「5分程お電話でお打ち合わせ」／審査が通るか→AIX【保証会社】「保証会社は〇〇となります…サポート」／もう1件も行けるか→AIX【待ち合わせ場所】「2物件ご案内」）。確認の約束は、管理会社に確かめないと答えが出ない事（空き・設備・入居日）だけ。\n";
 }
 function twoMessageAskRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
