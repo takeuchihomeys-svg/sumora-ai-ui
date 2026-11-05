@@ -20,6 +20,8 @@
 // スイッチ: TWO_MESSAGE_PLAN=on（サーバー）・NEXT_PUBLIC_TWO_MESSAGE_PLAN=on（画面）— どちらも既定 off＝今と1文字も変わらない。
 // テスト: app/lib/__tests__/two-message-plan.test.ts
 
+import { planIsStale } from "./conductor-replan";
+
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 
@@ -354,17 +356,9 @@ export function planForConductor(i: PlanInput & { focus?: string | null }): { pl
   return { plan, check: checkPlan(plan, { asks: i.asks, canAppeal }), digest: planDigest(plan) };
 }
 /** 統括が meta.two_message_plan に置いた組み立てを読む（形が合わなければ null＝呼ぶ側が自分で作る） */
-/**
- * 計画が古いか（作業員5 conductor-replan.planIsStale と同じ判定・KB ea2a9405②「途中で新しい LINE が来たら計画を立て直す」）:
- *   latest があって、seen が無い・読めない・latest より前なら古い。latest が無ければ古くない（今までと同じ動き）
- *   TODO: conductor-replan.ts が main に入ったら import に置き換える
- */
+/** 計画が古いか（作業員5 conductor-replan.planIsStale をそのまま使う・KB ea2a9405②） */
 export function twoMessagePlanStale(seen: string | null | undefined, latest: string | null | undefined): boolean {
-  if (!latest) return false;
-  const l = Date.parse(String(latest));
-  if (!Number.isFinite(l)) return false;
-  const s = Date.parse(String(seen ?? ""));
-  return !Number.isFinite(s) || l > s;
+  return planIsStale(seen, latest);
 }
 export function planFromMeta(meta: unknown, latestCustomerAt?: string | null): TwoMessagePlan | null {
   const v = (meta as { two_message_plan?: unknown } | null | undefined)?.two_message_plan;
