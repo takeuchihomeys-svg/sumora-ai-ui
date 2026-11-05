@@ -286,7 +286,17 @@ export async function getCachedTopPrinciples(): Promise<KnowledgeItem[]> {
  *
  * DB障害時: 古いキャッシュで fail-open。キャッシュも空なら [] を返して続行。
  */
+/**
+ * 2026-11-06 作業員9（弱い所 325・統括役の決め）: 失注パターンの取得を既定で止める（LOSS_PATTERN_FETCH=on で戻す）。
+ *   書く側の cron（auto-analyze-losers）は LOST_AS_NEGATIVE が既定 off＝「失注は負の正解にしない」で1行も作らない（title like 失注% は0行・loss_analyzed_at も全件 null）。
+ *   それなのに読む側が毎回引いて statement timeout を本番エラーに出していた＝空の行を取りに行くだけ。読む物が0行なので文は変わらない。
+ *   止める所: このキャッシュ（aix-template-generate・prefix-warm）・generate-reply の専用バケット・morning-report の⑥
+ */
+export function lossPatternFetchOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.LOSS_PATTERN_FETCH ?? "").trim().toLowerCase() === "on";
+}
 export async function getCachedLossPatterns(limit?: number): Promise<KnowledgeItem[]> {
+  if (!lossPatternFetchOn()) return [];
   const effectiveLimit = limit ?? 4;
   const cache = getOrCreateCache<KnowledgeItem[]>(
     `knowledge:loss_patterns_${effectiveLimit}`,

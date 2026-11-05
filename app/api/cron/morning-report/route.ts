@@ -14,6 +14,7 @@ import { checkCaptureStalls } from "@/app/lib/line-watch-eval-server";
 import { watchStallAlertEnabled } from "@/app/lib/line-watch-scope";
 import { loadSelfReviewSection } from "@/app/lib/self-review-morning";
 import { staffTodoListEnabled } from "@/app/lib/staff-todo-list";
+import { lossPatternFetchOn } from "@/app/lib/prompt-cache";
 
 export const maxDuration = 60;
 
@@ -158,13 +159,15 @@ export async function GET(req: NextRequest) {
       .gte("created_at", sevenDaysAgo)
       .limit(500),
 
-    // ⑥ 失注パターントップ3
-    supabase
-      .from("ai_reply_knowledge")
-      .select("title, importance")
-      .like("title", "失注パターン%")
-      .order("importance", { ascending: false })
-      .limit(3),
+    // ⑥ 失注パターントップ3（2026-11-06 作業員9・弱い所 325: 既定で引かない＝LOSS_PATTERN_FETCH=on で戻す・行は0）
+    lossPatternFetchOn()
+      ? supabase
+          .from("ai_reply_knowledge")
+          .select("title, importance")
+          .like("title", "失注パターン%")
+          .order("importance", { ascending: false })
+          .limit(3)
+      : Promise.resolve({ data: [] as Array<{ title: string; importance: number }>, error: null }),
 
     // ⑦ テンプレ使用ランキング（上位3件）
     // ※カラム名は label（name ではない）。use_count が NULL の行は末尾に回す
