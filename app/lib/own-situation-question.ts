@@ -5,11 +5,11 @@
 //   竹内さんの実送信: AIX【電話】「審査通過するにあたりまして5分程お電話でお打ち合わせ…」1通（空室の確認はしていない）。
 //   → お客様自身の事情で借りられるか（審査の相談）を聞く問いは、空室の問いにしない（判断はブレインに返す・候補を消すだけ）。
 //   空き・募集状況の言葉（空いて・空き・募集・まだありますか）が同じ文にある時は空室の問いのまま。
-// スイッチ: OWN_SITUATION_NOT_VACANCY=on（既定 off）。テスト: app/lib/__tests__/own-situation-question.test.ts
+// スイッチ: 既定 on（11/05・止める OWN_SITUATION_NOT_VACANCY=off）。テスト: app/lib/__tests__/own-situation-question.test.ts
 
 type Env = Record<string, string | undefined>;
 export function ownSituationNotVacancyOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.OWN_SITUATION_NOT_VACANCY ?? "").trim().toLowerCase() === "on";
+  return (env.OWN_SITUATION_NOT_VACANCY ?? "").trim().toLowerCase() !== "off"; // 11/05 tm7 悪化0 で既定 on（統括役の決め・止める OWN_SITUATION_NOT_VACANCY=off）
 }
 
 /** お客様自身の事情の語（審査に効く状況）。本番90日の監査（作業員7）で、内定の問い（60e6d3ab「内定書などないですが申し込みはできる」）の番にスタッフが同じ番で物件の募集状況確認を約束していた＝内定・転職・退職・派遣・アルバイト・パート・年金は入れない */
