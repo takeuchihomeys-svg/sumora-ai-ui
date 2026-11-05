@@ -38,9 +38,18 @@ export function isViewingConfirmedAck(i: ViewingConfirmedAckInput): boolean {
   return STAFF_VIEWING_CLOSE_RE.test(tail) && !/[?？]\s*[😊😌✨！!]*$/.test(tail);
 }
 
-export function viewingConfirmedAckMaterialLine(lastStaffText: string | null): string {
+/**
+ * 2026-11-05 作業員1（試験 off-g1-r の確かな悪化 q108・竹内さんの番の実物 90日）: 待ち合わせ場所の後のお客様の文字の了承（「よろしくお願いします」）に、
+ *   竹内さんは7番とも短い締めの返信を入れていた（内覧の日を添えた物 5／「何卒よろしくお願い致します」だけ 2・1〜10分）。返さないのはスタンプだけの番（#2 咲・10/28 の決め）。
+ *   旧の材料は文字の了承にも「返信を入れず待つ」と書き、q108 で内覧の日の無い返信・返さない判断が出た（前 3/4 → 今 1/4）。文字の了承は短く締める返信にする。
+ */
+export function viewingConfirmedAckMaterialLine(lastStaffText: string | null, stampOnly = true): string {
   const q = Array.from(String(lastStaffText ?? "").split("\n").map((l) => l.trim()).filter(Boolean).slice(-1)[0] ?? "").slice(0, 40).join("");
-  return `【内覧が決まった後の締め＋お客様のスタンプ・了承だけ（材料）】こちらの最後の送信は内覧が決まった締め（「${q}」）で、お客様の今の発言はスタンプかお礼・了承だけ。` +
+  if (!stampOnly) {
+    return `【内覧が決まった後の締め＋お客様の了承だけ（材料）】こちらの最後の送信は内覧が決まった締め（「${q}」）で、お客様の今の発言は文字のお礼・了承だけ。` +
+      "竹内さんはこの番に短い締めの返信を入れる（確定した内覧の日を添える形が多い: 「はい😊！！\n〇月〇日何卒よろしくお願い致します😌！！」）。審査・費用など、聞かれていない話を足さない。";
+  }
+  return `【内覧が決まった後の締め＋お客様のスタンプだけ（材料）】こちらの最後の送信は内覧が決まった締め（「${q}」）で、お客様の今の発言はスタンプだけ。` +
     "竹内さんの決め（10/28）: 会話は締まっている。返信を入れず、当日の内覧の挨拶（AIX）まで待つ（お客様から新しい連絡が来た時だけ返す）。返さない時は aix null・reply_mode=aix（下書きを作らない）。" +
     "審査・費用など、聞かれていない話を足さない。";
 }

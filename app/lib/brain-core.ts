@@ -3027,7 +3027,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     const lastStaffForVca = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim() && !/^\s*\[(?:画像|動画|スタンプ|ファイル)\]\s*$/.test(m.text ?? ""))?.text ?? null;
     const vcaAck = !unrepliedTurn.hasImage && !!unrepliedTurn.text.trim() && analyzeSubstance(unrepliedTurn.text, [unrepliedTurn.text]).isAckOnly;
     if (isViewingConfirmedAck({ viewingConfirmed: brainLedger.facts.viewingFlow?.stage === "confirmed" || !!brainLedger.facts.viewingAppointment, customerTurnText: unrepliedTurn.text ?? "", customerAckOnly: vcaAck, lastStaffText: lastStaffForVca })) {
-      customerStateBlockText += `\n\n${viewingConfirmedAckMaterialLine(lastStaffForVca)}`;
+      customerStateBlockText += `\n\n${viewingConfirmedAckMaterialLine(lastStaffForVca, /^(?:\s*\[スタンプ\]\s*)+$/.test(unrepliedTurn.text ?? ""))}`;
     }
   }
   // 2026-10-28 竹内さんの今週の指摘 #33 じゅな・#3 #7 KID・#37 れい（材料だけ・決めるのはブレイン・各スイッチ既定 off・app/lib/week-scene-materials.ts）

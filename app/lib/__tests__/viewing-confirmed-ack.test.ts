@@ -25,6 +25,11 @@ it("材料の行: 締まっている・当日の挨拶まで待つ・下書き�
   const t = viewingConfirmedAckMaterialLine(CLOSE_2);
   ok(/会話は締まっている/.test(t) && /当日の内覧の挨拶（AIX）まで待つ/.test(t) && /reply_mode=aix/.test(t) && /聞かれていない話を足さない/.test(t), t);
 });
+it("2026-11-05 q108・竹内さんの実物7番: 文字の了承は返さないのではなく、内覧の日を添えた短い締めの返信", () => {
+  const t = viewingConfirmedAckMaterialLine(CLOSE_2, false);
+  ok(/短い締めの返信を入れる/.test(t) && /内覧の日を添える/.test(t) && !/返信を入れず/.test(t) && /聞かれていない話を足さない/.test(t), t);
+});
+it("スタンプだけは今まで通り待つ（#2 咲）", () => { ok(/返信を入れず/.test(viewingConfirmedAckMaterialLine(CLOSE_2, true))); ok(/返信を入れず/.test(viewingConfirmedAckMaterialLine(CLOSE_2))); });
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;
