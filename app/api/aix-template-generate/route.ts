@@ -1,6 +1,8 @@
 import { manYen } from "@/app/lib/man-yen";
 // 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ）
 import { aixBrainEnabledFor } from "@/app/lib/aix-brain";
+// 2026-11-05 竹内さん（KB b834d9f0）: 1つの番を何通に分けるか・各通が答える依頼（既定 off・TWO_MESSAGE_PLAN=on）
+import { twoMessagePlanOn, planMessages, templateReplyPartNote, planDigest, type PlanAsk } from "@/app/lib/two-message-plan";
 import { aixRequestMustUseClaude } from "@/app/lib/aix-new-pickers";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { secondLinesFromCard } from "@/app/lib/estimate-explain";
@@ -1267,6 +1269,14 @@ export async function POST(req: NextRequest) {
   const tplContractNote = actionType && (process.env.AIX_BRAIN_CONTRACT_TEMPLATE ?? "").trim().toLowerCase() === "on"
     ? buildAixContractNote({ meta: brainMeta as AixContractMeta, action: actionType, checkPattern: actionType === "property_check_result" ? effectiveCheckPattern : null, messages: Array.isArray(recentMessages) ? recentMessages : [] })
     : "";
+  // 2026-11-05 竹内さん（KB P1 b834d9f0＋追記「AIX テンプレートは AIX の事を中心に・複雑な番は AIX → テンプレート → 返信の3通」）:
+  //   この番の組み立て（two-message-plan）から、この2通目で一緒に答える質問／後ろの返信に回す質問だけを渡す（判断はブレインの turn_contract の route のまま）。
+  //   10/14 の AIX_BRAIN_CONTRACT_TEMPLATE（依頼を全部渡す）は2通目の形に効かず近さが下がった＝ここは「この通で答える／書かない」の割り振りだけ。
+  //   既定 off（TWO_MESSAGE_PLAN=on で入れる）・古い判断（isStaleMeta）では渡さない
+  const twoMsgPlan = twoMessagePlanOn() && !isStaleMeta && actionType
+    ? planMessages({ asks: ((brainMeta as { turn_contract?: { asks?: PlanAsk[] } } | null)?.turn_contract?.asks ?? null), finalAix: (brainMeta?.action as string | undefined) ?? null })
+    : null;
+  const twoMsgNote = twoMsgPlan ? templateReplyPartNote(twoMsgPlan, actionType) : "";
   const brainMetaSection = buildBrainStrategyNote(brainMeta, {
     fresh: !isStaleMeta,
     otherActionLabel: actionType && brainMeta?.action && brainMeta.action !== actionType
@@ -1789,6 +1799,7 @@ export async function POST(req: NextRequest) {
     `・AIXボタン種別: ${actionLabel}`,
     fixedSecond ? "" : lengthNote,
     actionGuide && !fixedSecond ? `・この種別の書き方: ${actionGuide}` : "",
+    twoMsgNote,
     // 「1件特にオススメ」の訴求シナリオ（冒頭・比較表現の可否・CTA強度を決定する最優先指示）
     recommendationScenario && !isRecSecond
       ? `・訴求シナリオ（禁止制約はこちらを優先・冒頭フレーズは⭐実例の文体から多様に学ぶこと）:\n${RECOMMENDATION_SCENARIO_GUIDES[recommendationScenario]}${pickupType && PICKUP_TYPE_NOTES[pickupType] ? `\n${PICKUP_TYPE_NOTES[pickupType]}` : ""}`
@@ -2466,6 +2477,8 @@ ${text}
               property_state: describePropertySendState(recommendState),
               action_category: actionCategory ?? null,
               conversation_state: conversationState ?? null,
+              // 2026-11-05 この番の組み立て（two-message-plan・TWO_MESSAGE_PLAN=on の時だけ）
+              ...(twoMsgPlan ? { two_message_plan: planDigest(twoMsgPlan), two_message_note: twoMsgNote ? true : false } : {}),
             },
           });
         } catch (e) {
