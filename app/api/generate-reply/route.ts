@@ -1616,7 +1616,7 @@ ${buildAvailabilityCheckNote()}` : buildAvailabilityCheckNote();
     : isWeekend
       ? `\n【管理会社の状況・必ず守ること】本日は土日。「${confirmCtx.object}」の確認（空室確認）は土日でも可能なので「${confirmCtx.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」と伝えてよい。ただし交渉（フリーレント・値引き・条件変更・審査再挑戦など）は土日不可。交渉が必要な場合は「月曜日一番で管理会社に交渉させて頂きます！！」と伝える。`
       // 2026-10-28 竹内さんの決定（KB 5d9e56b5・9fd703f4・今週の #26 #28）: 募集状況（空き）は業者の物件サイトで弊社の営業時間中に確かめられる＝「明日」を付けない。
-      //   「本日管理会社営業時間外の為明日」は管理会社にしか答えられない確認・交渉（駐車場・鍵交換・ペット 等）だけ。MGMT_HOURS_SPLIT_1028=on の時だけ（既定 off）
+      //   「本日管理会社営業時間外の為明日」は管理会社にしか答えられない確認・交渉（駐車場・鍵交換・ペット 等）だけ。MGMT_HOURS_SPLIT_1028（2026-11-05 既定 on・=off で戻す）
       : jstHour >= 18 && mgmtHoursSplitEnabled() && isVacancyConfirmObject(confirmCtx.object) && jstHour < COMPANY_CLOSE_HOUR
         ? `\n【確認の時間・必ず守ること】現在${jstHour}時台（JST）。「${confirmCtx.object}」（空き・募集状況）は業者の物件サイトで弊社の営業時間中に今すぐ確かめられる（管理会社の営業時間に縛られない）。「${confirmCtx.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」と伝え、「明日一番で」「営業時間外」は書かない。`
       : jstHour >= 18 && mgmtHoursSplitEnabled()
