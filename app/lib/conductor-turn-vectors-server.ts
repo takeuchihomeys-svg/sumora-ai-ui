@@ -9,7 +9,8 @@ import { maskPII } from "@/app/lib/pii-mask";
 import { customerNameTokens, maskCustomerNames } from "@/app/lib/compose-name-mask";
 import { textFingerprint } from "@/app/lib/brain-judge-examples";
 import { resolveReplyScene } from "@/app/lib/reply-scene";
-import { APPLY_DOCS_RE, actualOf, hitsOf, turnVectorRow, conductorTurnVectorsOn, maskContactBits, type TurnVectorRow } from "@/app/lib/conductor-turn-vectors";
+import { APPLY_DOCS_RE, actualOf, hitsOf, turnVectorRow, conductorTurnVectorsOn, maskContactBits, turnSendsForShape, type TurnVectorRow } from "@/app/lib/conductor-turn-vectors";
+import { shapeOfSends } from "@/app/lib/two-message-plan";
 import { focusOfTakeuchiTurn, openPromiseAt, turnSituationTextV2, type HistMsg } from "@/app/lib/conductor-focus";
 
 /** 2026-11-05 作業員5（竹内さん承認・KB P0 575a7cd5・P1 977cbded）: 状況の文 v2・埋め込み v2・竹内さんの番の重点も書く（既定 off・=on で）。列 situation_v2/embedding_v2/focus が要る */
@@ -56,7 +57,7 @@ export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: n
     const convs = [...new Set(chunk.map((s) => s.conversation_id))];
     // v2 は進み・送った物を見るので 30日さかのぼる（v1 は 3日のまま）
     const tMin = new Date(Math.min(...chunk.map((s) => Date.parse(s.created_at))) - (v2 ? 30 : 3) * 86_400_000).toISOString();
-    const tMax = new Date(Math.max(...chunk.map((s) => Date.parse(s.created_at))) + 5 * 60_000).toISOString();
+    const tMax = new Date(Math.max(...chunk.map((s) => Date.parse(s.created_at))) + 6 * 3_600_000).toISOString(); // 11/05: 番の型（続く AIX・テンプレート）まで見るので 6時間先まで（前は 5分）
     const [convRows, msgRows, aixRows, watchRows] = await Promise.all([
       sb.from("conversations").select("id, customer_name, property_customer_id, status").in("id", convs),
       pageIn<Msg>(sb, "messages", COLS, convs, "created_at", tMin, tMax),
@@ -99,6 +100,9 @@ export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: n
       const lastKind = !last ? null : last.is_aix_generated ? `AIX:${aixOfMsg(last)?.aix_type ?? "aix_unknown"}` : "返信";
       const wt = watchOf.get(`${s.conversation_id}|${new Date(turnAt).toISOString()}`) ?? null;
       const actual = actualOf({ isAix: !!s.is_aix_generated, aixType: s.is_aix_generated ? al?.aix_type ?? "aix_unknown" : null, checkPattern: al?.check_pattern ?? null });
+      // 2026-11-05 統括役: この番の竹内さんの組み合わせの型（最初の送信から次のお客様の発言の手前まで・付き物は外す・作業員7 shapeOfSends）
+      const firstIdx = all.findIndex((m) => m.id === s.id);
+      if (firstIdx >= 0) { const sh = shapeOfSends(turnSendsForShape(all, firstIdx)); if (sh) actual.shape = sh; }
       const row: V2Row = turnVectorRow({
         sendId: s.id, conversationId: s.conversation_id, propertyCustomerId: c?.property_customer_id ?? null,
         // 2026-11-04 場面は統括メタ・重みの表と同じ言葉（ReplyScene）。見張りの scene_key は使わない

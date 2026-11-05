@@ -4,6 +4,8 @@ import {
   nearestFocus, sceneMajorityFocus, focusDigest, parseFocusRead, nearFocusLine, conductorFocusMeta, focusReadDigest, focusConflict,
   FOCUS_INTAKE_RULES, FOCUS_INTAKE_FIELD, FOCUS_KINDS, FOCUS_ORDER, focusOrder, orderDigest, laterOverrode, type HistMsg,
 } from "../conductor-focus";
+import { turnSendsForShape, isShapeAttachment } from "../conductor-turn-vectors";
+import { shapeOfSends } from "../two-message-plan";
 let passed = 0, failed = 0;
 function it(name: string, fn: () => void) { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { failed++; console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); } }
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
@@ -86,6 +88,20 @@ it("順番の表: 1番目は大まかな判断・段は後ろに戻らない・�
 it("combine は compose の段の先頭（答える・果たす・不安・決める・出す）・関係と約束だけの番には無い", () => {
   for (const k of ["answer", "promise_keep", "ease", "close", "propose"] as const) eq(FOCUS_ORDER[k].filter((x) => x.stage === "compose")[0]?.role, "combine");
   for (const k of ["relation", "promise_make"] as const) ok(!FOCUS_ORDER[k].some((x) => x.role === "combine"), k);
+});
+it("番の型: 最初の送信から次のお客様の手前まで・付き物（画像・URL だけ）は外す・作業員7 shapeOfSends", () => {
+  const msgs = [
+    { sender: "customer", text: "空いてますか", is_aix_generated: false },
+    { sender: "staff", text: "", is_aix_generated: true },
+    { sender: "staff", text: "[画像]", is_aix_generated: false },
+    { sender: "staff", text: "https://example.com/room", is_aix_generated: false },
+    { sender: "staff", text: "お気に召されましたらご案内させて頂きます", is_aix_generated: false },
+    { sender: "customer", text: "ありがとうございます", is_aix_generated: false },
+    { sender: "staff", text: "はい！！", is_aix_generated: false },
+  ];
+  eq(shapeOfSends(turnSendsForShape(msgs, 1)), "AT");
+  eq(shapeOfSends(turnSendsForShape(msgs, 6)), "R");
+  ok(isShapeAttachment("[画像]") && isShapeAttachment("  ") && !isShapeAttachment("はい"));
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

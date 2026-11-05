@@ -30,9 +30,31 @@ export function turnSituationText(o: { scene: string | null; stage: string | nul
 }
 
 /** こちらの一手（正解）: AIX の種類（あれば）か返信 */
-export type TurnActual = { route: "aix" | "reply"; aix: string | null; picker: string | null };
+/** shape＝この番の竹内さんの組み合わせの型（R・A・AT・AR・RAT…・作業員7 two-message-plan.shapeOfSends・11/05 統括役） */
+export type TurnActual = { route: "aix" | "reply"; aix: string | null; picker: string | null; shape?: string };
 export function actualOf(o: { isAix: boolean; aixType: string | null; checkPattern: string | null }): TurnActual {
   return o.isAix ? { route: "aix", aix: o.aixType ?? "aix_unknown", picker: o.checkPattern ?? null } : { route: "reply", aix: null, picker: null };
+}
+
+/** 型を数えない付き物（画像・スタンプ・URL だけの通・申込フォーマット等の定型）。shapeOfSends の決まり「付き物は呼ぶ側で外す」 */
+const ATTACHMENT_RE = /^\s*(?:\[(?:画像|スタンプ|動画|ファイル)\]\s*)+$/;
+const URL_ONLY_RE = /^\s*(?:https?:\/\/\S+\s*)+$/;
+export function isShapeAttachment(text: string | null | undefined): boolean {
+  const t = String(text ?? "").trim();
+  return !t || ATTACHMENT_RE.test(t) || URL_ONLY_RE.test(t) || APPLY_DOCS_RE.test(t) && /フォーマット|ご記入/.test(t);
+}
+/**
+ * この番のこちらの送信（最初の送信 firstIdx から、次のお客様の発言の手前まで・時刻の順）を、shapeOfSends に渡す形にする。
+ *   msgs は会話の通（古い順）。付き物は外す。AIX は送信の印 is_aix_generated で見分ける
+ */
+export function turnSendsForShape(msgs: ReadonlyArray<{ sender: string; text: string | null; is_aix_generated: boolean | null }>, firstIdx: number): Array<{ isAix: boolean; text: string | null }> {
+  const out: Array<{ isAix: boolean; text: string | null }> = [];
+  for (let i = firstIdx; i < msgs.length && msgs[i].sender !== "customer"; i++) {
+    const m = msgs[i];
+    if (!m.is_aix_generated && isShapeAttachment(m.text)) continue;
+    out.push({ isAix: !!m.is_aix_generated, text: m.text });
+  }
+  return out;
 }
 
 /** ブレインごとに合ったか（見張りの番がある時だけ・無ければ {}）。judge＝道・aix＝AIX の種類 */
