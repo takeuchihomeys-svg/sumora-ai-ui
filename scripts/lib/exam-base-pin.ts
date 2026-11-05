@@ -84,7 +84,7 @@ export function defaultOnFromSubjects(subjects: string[]): boolean {
 }
 
 /** 夜の基準の控えの形（<置き場>/nightly-base-<構成>.json） */
-export type NightlyRecord = NightlyBase & { cfg: string };
+export type NightlyRecord = NightlyBase & { cfg: string; /** 夜の基準が読んだ DB の写しの日（弱い所 354） */ snapDay?: string };
 
 /**
  * 夜の基準を作る依頼（係の列に毎晩1つ積む・純関数）。夜（JST fromHour 時以降・既定 21時）に、その日の分がまだ積まれていなければ返す。
@@ -100,7 +100,9 @@ export function nightBaseJobDue(lastJstDay: string | null, now: Date, opts: { fr
   const createdAt = now.toISOString();
   return {
     due, day, job: {
-      id: `${now.getTime()}`, label, owner: "夜の基準", switch: "（夜の基準を作る）", cwd: opts.cwd, only: "", stage: "brain", repeat: 1, env: { LLM_TEST_MODE: "deepseek-all" },
+      id: `${now.getTime()}`, label, owner: "夜の基準", switch: "（夜の基準を作る）", cwd: opts.cwd, only: "", stage: "brain", repeat: 1,
+      // 2026-11-06: 始めの main で最後まで作る（main が進んでも止めない）・DB の材料はその夜の日の写し
+      env: { LLM_TEST_MODE: "deepseek-all", EXAM_BASELINE_IGNORE_MAIN_MOVED: "1", EXAM_DB_SNAPSHOT_DAY: new Date(now.getTime() + 5 * 3_600_000).toISOString().slice(0, 10) },
       createdAt, tries: 0, runner: "cmd", nightOnly: true, priority: 9, maxMin: 300,
       cmds: [`scripts/brain-exam.ts --label=${label} --conv=auto --baseline=main --baseline-only --stage=brain --repeat=${Math.max(1, opts.repeat ?? 2)}`],
     },
