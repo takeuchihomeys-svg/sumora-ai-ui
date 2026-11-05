@@ -148,6 +148,9 @@ const STAGE_DECISION = STAGE_ARG === "diff" ? decideStageFromDiff(".") : null;
 const STAGE: "brain" | "draft" | "auto" = STAGE_DECISION ? STAGE_DECISION.stage : STAGE_ARG === "draft" ? "draft" : STAGE_ARG === "brain" ? "brain" : "auto";
 // 2026-10-15 ④ --repeat-flaky: --repeat=N（--majority）の時、揺れる問題だけ N 回・安定した問題は1回（1回目がいつもと違えば N 回まで）・分からない問題は2回
 const REPEAT_FLAKY = flag("repeat-flaky");
+// 2026-11-05 作業員8（統括役の了承の 5）: 前（main）を作る子の回数も揺れの記録で決める（安定な問題は1回）。11/04〜05 の子は 1問4回が費用の 77%・4回とも同じ答えが 139以上。
+//   親は子に --repeat-flaky を渡し、回が足りない取り置きも「揃った」（complete）として使う。構成の鍵に repeatFlaky が入る＝1回だけ作り直し。止める: EXAM_BASE_REPEAT_FLAKY=off
+const BASE_FLAKY = process.env.EXAM_BASE_REPEAT_FLAKY !== "off";
 // 2026-10-16 RAG で選ぶ（--select=rag）・キャッシュが効く並べ方（既定・--order=as-is で旧）・判定の前置き（--judge-prefix=rubric）・設計知見の決まりの採点
 const SELECT = arg("select");
 const SELECT_N = Math.max(1, Number(arg("select-n", "12")) || 12);
@@ -1038,7 +1041,7 @@ async function prepareMainBaseline(): Promise<boolean> {
     layer: LAYER, ledger: USE_LEDGER, stage: STAGE, stageByType: existsSync(STAGE_BY_TYPE_FILE) ? B.sha(readFileSync(STAGE_BY_TYPE_FILE, "utf8")).slice(0, 10) : null,
     repeat: REPEAT, judgeRepeat: JUDGE_REPEAT, noJudge: NO_JUDGE, autoHint: flag("auto-hint"), draftFirstOnly: flag("draft-first-only"), exhaustedRule: arg("exhausted-rule") || null,
     // 2026-10-15 ④ 新しいスイッチは「入れた時だけ」構成に足す（入れない時の構成の hash＝今までの取り置きを変えない）
-    ...(REPEAT_FLAKY && REPEAT > 1 ? { repeatFlaky: true } : {}),
+    ...((REPEAT_FLAKY || BASE_FLAKY) && REPEAT > 1 ? { repeatFlaky: true } : {}),
     // 2026-10-16 判定の並び・知見の決まりを合否に入れる時も、入れた時だけ構成に足す
     ...(JUDGE_ORDER !== "as-is" ? { judgePrefix: JUDGE_ORDER } : {}), ...(KB_RULES_MODE === "score" ? { kbRules: "score" } : {}),
     // 2026-10-17 試験のブレインの口も入れた時だけ（判定を省く・判定のモデル）
@@ -1093,7 +1096,7 @@ async function prepareMainBaseline(): Promise<boolean> {
   const cached = flag("baseline-refresh") ? new Map() : loadAll();
   // 2026-10-16 期限: 取り置きの savedAt が N 日（既定 7）より古ければ流し直す（DB の中身・モデル側の変化は鍵に入らない）
   const maxAgeMs = B.baselineMaxAgeMs(arg("baseline-max-age"));
-  const plan = B.planBaseline(picked.map((p) => ({ id: p.id, hash: hashOf.get(p.id)!, alt: altOf.get(p.id) })), cached, REPEAT, { acceptComplete: REPEAT_FLAKY || !!REPS_OF, maxAgeMs, envFp: "" });
+  const plan = B.planBaseline(picked.map((p) => ({ id: p.id, hash: hashOf.get(p.id)!, alt: altOf.get(p.id) })), cached, REPEAT, { acceptComplete: REPEAT_FLAKY || BASE_FLAKY || !!REPS_OF, maxAgeMs, envFp: "" });
   // 2026-10-20 竹内さん「main の答えは版ごとに1回作って使い回す・main が問題に関係ないファイルだけ変わったなら前の main の答えを使う」:
   //   今の置き場に無い問題は、同じ構成の前の main の置き場から「その問題の段（ブレインだけ／下書きまで）に効くファイルの鍵が今の main と同じ」答えを持ち越す。
   //   止める: EXAM_BASELINE_CARRY=off
@@ -1107,7 +1110,7 @@ async function prepareMainBaseline(): Promise<boolean> {
     const keyOf = (b: { stageKeys?: { brain: string; draft: string } | null; commit?: string }) => (b.stageKeys ?? (b.commit ? examStageKeys(b.commit, stageMemo) : null))?.[rel] ?? null;
     for (const id of [...plan.run]) {
       const cands = sibs.flatMap((n) => { const f = join(B.BASELINE_DIR, n, `${id}.json`); if (!existsSync(f)) return []; try { return [{ ...(JSON.parse(readFileSync(f, "utf8")) as import("./lib/brain-exam-baseline").BaselineFile<ResultRow>), dir: n }]; } catch { return []; } });
-      const hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: sk[rel], keyOf, envFp: "" }, REPEAT, { acceptComplete: REPEAT_FLAKY || !!REPS_OF, maxAgeMs });
+      const hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: sk[rel], keyOf, envFp: "" }, REPEAT, { acceptComplete: REPEAT_FLAKY || BASE_FLAKY || !!REPS_OF, maxAgeMs });
       if (!hit) continue;
       const { dir: from, ...rest } = hit;
       B.saveBaseline<ResultRow>(dir, { ...rest, ...(vk ? { versionKey: vk } : {}), stageKeys: rest.stageKeys ?? (rest.commit ? examStageKeys(rest.commit, stageMemo) : null), carriedFrom: from });
@@ -1165,7 +1168,7 @@ async function prepareMainBaseline(): Promise<boolean> {
       const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${baseLabel}-r…`, `--only=${plan.run.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage })];
       console.log(`（--baseline-dry: 回さない）main の作業ツリーで: npx ${cmd.join(" ")}\n  録音の置き場（共有）: ${cassetteDir}`); return false;
     }
-    const opts = { acceptComplete: REPEAT_FLAKY || !!REPS_OF, maxAgeMs, envFp: "" };
+    const opts = { acceptComplete: REPEAT_FLAKY || BASE_FLAKY || !!REPS_OF, maxAgeMs, envFp: "" };
     // --baseline-refresh の時は今から後に書かれた答えだけ「出来た」とみる（前からある答えは使わない）
     const startIso = new Date().toISOString();
     const loadFresh = () => { const m = loadAll(); if (flag("baseline-refresh")) for (const [id, b] of m) if (String(b.savedAt) < startIso) m.delete(id); return m; };
@@ -1188,7 +1191,8 @@ async function prepareMainBaseline(): Promise<boolean> {
     /** main の作業ツリーで子を1回回し、取れた問題を取り置く。plan＝下見（AI を呼ばない・入力が全部同じ問題だけ答案が出る）。取り置いた問題を返す（作業ツリーが空かない時は null） */
     const spawnMain = async (ids: string[], mode: "plan" | "run", pinSrc: Map<string, PinHit>): Promise<{ saved: string[]; rows: ResultRow[] } | null> => {
       const runLabel = `${baseLabel}-${mode === "plan" ? "p" : "r"}${Date.now().toString(36)}`;
-      const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${runLabel}`, `--only=${ids.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage })];
+      const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${runLabel}`, `--only=${ids.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage }),
+        ...(BASE_FLAKY && REPEAT > 1 && !args.includes("--repeat-flaky") ? ["--repeat-flaky"] : [])];
       const mine = new Map([...pinSrc].filter(([id]) => ids.includes(id)));
       let pinsFile = "";
       if (mine.size) {
@@ -1238,7 +1242,7 @@ async function prepareMainBaseline(): Promise<boolean> {
           const src = pinSrc.get(id) ?? null;
           if (src && rs.every((x) => x.inputSame)) { pinnedIds.push(id); pinnedUsd += c?.replayUsd ?? 0; }
           B.saveBaseline<ResultRow>(dir, { id, problemHash: hashOf.get(id)!, commit, config: cfg, savedAt: nowIso, fromLabel: runLabel, rows: rs, cost: c ? { real: c.real, realUsd: c.realUsd, replayed: c.replayed, replayUsd: c.replayUsd } : null,
-            ...(vk ? { versionKey: vk } : {}), ...((REPEAT_FLAKY || REPS_OF) && REPEAT > 1 ? { complete: true } : {}), stageKeys: sk, envFp: "",
+            ...(vk ? { versionKey: vk } : {}), ...((REPEAT_FLAKY || BASE_FLAKY || REPS_OF) && REPEAT > 1 ? { complete: true } : {}), stageKeys: sk, envFp: "",
             answeredAt: C.carriedAnsweredAt(rs, src, nowIso), ...(src?.dir ? { pinnedFrom: src.dir } : {}) });
           saved.push(id);
         }
