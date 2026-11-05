@@ -20,3 +20,41 @@ export function gapSceneTimes(agoMin: ReadonlyArray<number>, endMs: number): str
   }
   return out.map((t) => new Date(t).toISOString());
 }
+
+/**
+ * 2026-11-06 作業員1（弱い所 353・作業員7の見つけ）: 通の時刻を、元の番の「日の区切り」に合わせて作る。
+ *   旧（gapSceneTimes）は今の時刻から間を詰めて逆に並べるだけ＝0時 JST 前後に流すと通が2日に分かれ、【気持ちの流れ】に
+ *   「2日に分けて送った後の返事」の偽の材料が入った（入った回 8/8・04時以降 0/14・q055）。逆に元が数日に分かれていた通は1日に詰まっていた。
+ * 新: 元の通の JST の日（番の日から何日前か）を保つ。番の日の通は end の日に、前の日の通はその日数だけ前の日の 23:58 から逆に並べる。
+ *   同じ日の中の間は今まで通り 90秒〜5分。番の日の通が end の日の 0時を越える時は、間を縮めて（最小 10秒）その日の中に収める。
+ */
+const DAY_MS = 86_400_000, JST_MS = 9 * 3_600_000;
+export const jstDayOf = (ms: number): number => Math.floor((ms + JST_MS) / DAY_MS);
+const jstDayStart = (day: number): number => day * DAY_MS - JST_MS;
+export function gapSceneTimesByDay(agoMin: ReadonlyArray<number>, atMs: number, endMs: number): string[] {
+  const n = agoMin.length;
+  if (!n) return [];
+  const atDay = jstDayOf(atMs);
+  const offs = agoMin.map((a) => atDay - jstDayOf(atMs - Number(a) * 60_000)); // 番の日から何日前か（0＝同じ日）
+  const endDay = jstDayOf(endMs);
+  const out = new Array<number>(n);
+  // 古い順に並んでいる前提。後ろから日ごとのまとまりを作る
+  let i = n - 1;
+  while (i >= 0) {
+    const d = offs[i];
+    let j = i; while (j - 1 >= 0 && offs[j - 1] === d) j--;
+    const sceneDay = endDay - d;
+    const dayStart = jstDayStart(sceneDay);
+    const last = d === 0 ? endMs : Math.min(jstDayStart(sceneDay + 1) - 2 * 60_000, endMs);
+    // まとまりの中の間（今まで通り 90秒〜5分）
+    const steps: number[] = [];
+    for (let k = i - 1; k >= j; k--) steps.push(Math.min(GAP_MAX_SEC, Math.max(GAP_MIN_SEC, Math.max(0, (Number(agoMin[k]) - Number(agoMin[k + 1])) * 60))) * 1000);
+    const need = steps.reduce((a, b) => a + b, 0);
+    const room = Math.max(0, last - dayStart - 60_000);
+    const scale = need > room && need > 0 ? Math.max(room / need, 0) : 1;
+    out[i] = last;
+    for (let k = i - 1, s = 0; k >= j; k--, s++) out[k] = out[k + 1] - Math.max(10_000, Math.round(steps[s] * scale));
+    i = j - 1;
+  }
+  return out.map((t) => new Date(t).toISOString());
+}

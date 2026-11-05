@@ -72,7 +72,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, type ExamLane } from "./lib/exam-lane";
 import type { ReplayFloor } from "../app/lib/test-replay-floor";
 import { examPickupNameLateOn, splitPickupNames } from "./lib/exam-pickup-copy";
-import { examRealGapsOn, gapSceneTimes } from "./lib/exam-scene-times";
+import { examRealGapsOn, gapSceneTimesByDay } from "./lib/exam-scene-times";
 import { verifyCopy, type CopyVerdict } from "./lib/exam-copy-check";
 import { isNoLineTestConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
@@ -1050,7 +1050,7 @@ async function prepareMainBaseline(): Promise<boolean> {
     //   日付は録音の鍵で伏せる＝入力の差でも同じに見える）。既定（ちょうど）の時は足さない＝今までの置き場のまま
     ...(String(process.env.EXAM_DATE_SHIFT ?? "").trim().toLowerCase() === "week" ? { dateShift: "week" } : {}),
     // 2026-11-05 作業員1: 通の時刻を元の間隔（EXAM_REAL_GAPS・既定 on）で置いた回は、90秒おきの前の答えと比べない（取り置きを作り直す）
-    ...(examRealGapsOn(mainEnv as Record<string, string | undefined>) ? { sceneTimes: "gaps" } : {}),
+    ...(examRealGapsOn(mainEnv as Record<string, string | undefined>) ? { sceneTimes: "gaps-day" } : {}),
     // 2026-11-05 作業員8: 時計の固定・DB の材料の写しの回は、今までの前の答えと比べない（取り置きを作り直す・入れた時だけ構成に足す）
     ...(frozenClockOn(mainEnv as Record<string, string | undefined>) ? { clock: "frozen" } : {}),
     ...(dbSnapshotOn(mainEnv as Record<string, string | undefined>) ? { dbSnap: "day" } : {}),
@@ -1667,6 +1667,8 @@ async function main() {
     const realBefore = nonJudgeReal(); startedReps = true;
     const row: ResultRow = { id: p.id, rep, type: p.type, tags: p.tags ?? [], label: LABEL, model, layer: LAYER, at: new Date().toISOString(), brain: null, path: { code: "", acceptHit: null, mustNotHit: null, ok: false }, asks: null, ng: null, score: { path: false, asks: null, ng: null, pass: false } };
     const acc = acceptOf(p), mn = p.mustNot ?? [];
+    // 2026-11-05 作業員1（統括役の (c)・入力が同じ回の写しと片付けを軽くする前に、回ごとの段の時間を測る）: row.timing＝回の始めからの ms
+    const T0 = performance.now(); const tm: Record<string, number> = {}; const mark = (k: string) => { tm[k] = Math.round(performance.now() - T0); }; // Date.now は試験の時計（exam-clock）で動かされる＝本物の経過は performance.now
     S().currentProblemId = p.id;
     setCassetteTag({ problem: p.id, rep: String(rep) });
     process.env.BRAIN_JUDGE_EXAMPLES_EXCLUDE_CONV = p.conv; // 10/13 判断の手本: 問題の元の会話の番は手本に入れない（答えが漏れない）
@@ -1705,7 +1707,7 @@ async function main() {
       if (mism.length) row.pcMismatch = mism;
       // 2026-11-05 作業員1（8959・q212）: 元の間隔（90秒〜5分）を使う（scripts/lib/exam-scene-times.ts・既定 on・EXAM_REAL_GAPS=off で旧の90秒おき）
       const sceneNow = frozen ? frozen.nowMs : Date.now();
-      const times: string[] = reuse ? reuse.times : examRealGapsOn() ? gapSceneTimes(ps.context.map((m) => m.ago), sceneNow + 2 * 60_000)
+      const times: string[] = reuse ? reuse.times : examRealGapsOn() ? gapSceneTimesByDay(ps.context.map((m) => m.ago), Date.parse(p.at), sceneNow + 2 * 60_000) /* 11/06 弱い所 353: 日の区切りを元の番に合わせる */
         : frozen ? h.sceneTimes(texts.length, { stepSec: 90 }).map((t) => new Date(Date.parse(t) - (Date.now() - sceneNow)).toISOString()) : h.sceneTimes(texts.length, { stepSec: 90 });
       // 時計の固定: ブレインの「今」を仮の今へ（場面の通との間は今まで通り＝最後の通の2分前）。元の番の経過（EXAM_REPLAY_ELAPSED）は下で上書きする
       if (frozen) examClock.setExamClockSigned(examClock.realNow() - frozen.nowMs);
@@ -1748,6 +1750,7 @@ async function main() {
         const cv = await verifyLedgerCopy(p);
         if (cv && !cv.ok) throw new Error(`写しのずれ: ${cv.issues.map((x) => x.detail).join("／").slice(0, 300)}`);
       }
+      mark("setup"); // 条件の行・台帳の写しまで（通は下の insertMsgs で入れる）
       process.env.TEST_CLOCK_JST_HOUR = String(p.hourJst);
       // 2026-11-03 月の言い方（〇月入居）はずらす前の時刻で読む（app/lib/business-clock.monthClockNowIso・作業員2の調べ・止める EXAM_MONTH_CLOCK=off）
       if (process.env.EXAM_MONTH_CLOCK !== "off") process.env.EXAM_MONTH_SHIFT_DAYS = String(shiftDays); else delete process.env.EXAM_MONTH_SHIFT_DAYS;
@@ -1783,6 +1786,7 @@ async function main() {
         }
         if (LAYER === "prod") row.trace = { strategy: "なし（初回・前の会話が無い）" };
       }
+      mark("brain"); // 通の写し＋ブレイン（2層なら両方）＋その間の決まった待ち
       if (!meta) throw new Error("ブレインが null");
       row.brain = planOf(meta);
       row.trace = { ...(row.trace ?? {}), zc: (meta.llm_raw as { zc?: unknown } | undefined)?.zc ?? null, ...Object.fromEntries(TRACE_KEYS.filter((k) => meta![k] !== undefined && meta![k] !== null).map((k) => [k, meta![k]])) };
@@ -1861,6 +1865,7 @@ async function main() {
           } else row.draft = { text: null, skipped: skipped ?? "下書きなし", code: "（下書きなし）", ok: false, asks: null, ng: null, pass: false };
         }
       }
+      mark("judged"); // 判定・下書き（--draft）まで
     } catch (e) { row.error = e instanceof Error ? e.message : String(e); }
     finally {
       if (REUSE_FIXTURE || REPLAY_ELAPSED || FROZEN_CLOCK) examClock.setExamClockOffset(0);
@@ -1882,6 +1887,7 @@ async function main() {
       await restorePc().catch((e) => console.warn("restorePc:", String(e)));
       }
     }
+    mark("cleanup"); (row as ResultRow & { timing?: Record<string, number> }).timing = { ...tm, reused: fx && S().held === fx ? 1 : 0 };
     // 10/09: 条件の行が混ざった回は数えずに回し直す（最大2回・それでも混ざったら印を付けて残す）
     if (row.pcMismatch?.length && !row.error) {
       const k = `${p.id}#${rep}`, n = pcRetries.get(k) ?? 0;
