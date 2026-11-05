@@ -620,6 +620,7 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
     process.on("exit", () => { try { if (readJson<{ pid?: number } | null>(RUN_LOCK, null)?.pid === process.pid) unlinkSync(RUN_LOCK); } catch { /* */ } });
     cfg();
     const tscAlerted = new Set<string>();
+    let emptyNoted = false;
     for (;;) {
       // 2026-11-05 作業員4（竹内さん KB 95f492fc ⑤）: 危ない所の見張りの手元の分を夜1回（2つ目の流す役だけ・止める EXAM_HAZARD_AUDIT=off）。本番の分は Vercel の cron hazard-audit-db
       if (REMOTE_ONLY && (process.env.EXAM_HAZARD_AUDIT ?? "").trim().toLowerCase() !== "off") {
@@ -654,7 +655,14 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
       const isRemoteJob = (x: ExamJob) => x.runner === "tsc-remote" || (x.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") || (x.runner === "cmd" && !!x.readOnly);
       // 読むだけの依頼は2つ目の流す役だけが流す（試験の列を止めない・試験の列の先頭の扱いにもしない）
       const jobs = readJobs().filter((x) => (REMOTE_ONLY ? isRemoteJob(x) : !(x.runner === "cmd" && x.readOnly)));
-      if (!jobs.length) { if (REMOTE_ONLY) { await new Promise((r) => setTimeout(r, 60_000)); continue; } log("順番待ちは空"); return; }
+      // 2026-11-06 作業員8（P0 8805bd74・11/05 17:16Z に「順番待ちは空」で終わり、後から積まれた依頼が 02:55 JST まで流れなかった）:
+      //   列が空でも終わらず待つ（--remote と同じ形）。空になった時に1回だけ知らせる。--once の時だけ今まで通り終わる
+      if (!jobs.length) {
+        if (flag("once")) { log("順番待ちは空（--once）"); return; }
+        if (!emptyNoted) { log(`順番待ちは空 → 待ち続ける（${REMOTE_ONLY ? 60 : 120}秒ごとに見る）`); emptyNoted = true; }
+        await new Promise((r) => setTimeout(r, (REMOTE_ONLY ? 60 : 120) * 1000)); continue;
+      }
+      if (emptyNoted) { log(`列に依頼が来た（${jobs.length}本）`); emptyNoted = false; }
       // 先頭から順に関所を見て、通った最初の依頼を流す（試験が安い時間を待つ間も tsc は先に流せる）
       let picked: (typeof jobs)[number] | null = null; const whys: string[] = [];
       let examBlocked = false;
