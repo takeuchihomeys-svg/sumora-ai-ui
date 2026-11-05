@@ -128,3 +128,10 @@ export function laneDupConvs(line: string): string[] {
   const names = [...line.matchAll(/(YUMA\d+)（/g)].map((m) => m[1]);
   return [...new Set(names.filter((n, i) => names.indexOf(n) !== i))];
 }
+
+/** (k) 2026-11-05 作業員1（点検表 13）: 作業ツリーの手元の problems.json に同じ id が2つ以上ある（同じ問題を2回ずつ回し費用が倍になる） */
+export function dupProblemIds(problems: ReadonlyArray<{ id?: unknown }>): string[] {
+  const seen = new Set<string>(), dup = new Set<string>();
+  for (const p of problems) { const id = String(p.id ?? ""); if (!id) continue; if (seen.has(id)) dup.add(id); seen.add(id); }
+  return [...dup];
+}

@@ -1436,7 +1436,15 @@ async function main() {
   const { extractStrategy } = await import("../app/lib/brain-layers");
   const { runInDeepseekScope, setDeepseekScope } = await import("../app/lib/deepseek-scope");
   const { MSG_SEP } = await import("../app/lib/reply-context");
-  const problems = await orderProblems(pick(loadProblems().map(effectiveProblem)));
+  // 2026-11-05 作業員1（点検表 13）: 手元の problems.json に同じ id が2つあると同じ問題を2回ずつ回していた（add-batch を2回・費用が倍）＝id で1つにする
+  const problems0 = pick(loadProblems().map(effectiveProblem));
+  const dupIds = [...new Set(problems0.map((x) => x.id).filter((id, i, a) => a.indexOf(id) !== i))];
+  if (dupIds.length) console.warn(`⚠ 同じ id の問題が2つ以上ある（${dupIds.join(",")}）→ 後の物を1つだけ回す。手元の problems.json を作り直す: scripts/brain-exam-add.ts --rebuild`);
+  const problems = await orderProblems([...new Map(problems0.map((x) => [x.id, x])).values()]);
+  {
+    const runsPlanned = problems.reduce((sum, x) => sum + (REPS_OF ? Math.max(1, Math.min(REPEAT, REPS_OF[x.id] ?? 1)) : REPEAT), 0);
+    console.log(`回す前の確かめ: ${problems.length}問・合計 ${runsPlanned}回（ブレイン ${LAYER === "prod" ? 2 : 1}回／回）・見込み 約 ${(runsPlanned * 0.03).toFixed(2)}（DeepSeek・1回 $0.03 の目安）`);
+  }
   const DRAFT = problems.some((p) => stageOf(p) === "draft");
   const POST = DRAFT ? (await import("../app/api/generate-reply/route")).POST : null;
   const callsPer = LAYER === "prod" ? 2 : 1;
@@ -1523,7 +1531,9 @@ async function main() {
   const pcRetries = new Map<string, number>();
   // 2026-10-28 A（--reuse-fixture）: 前の回の写しを持ったまま（同じ問題の次の回で使い回す）。違う問題に移る時・ループの後に片付ける
   const examClock = await import("./lib/exam-clock");
-  if (REUSE_FIXTURE) examClock.installExamClock();
+  // 2026-11-05 作業員1（弱い所 id 298）: EXAM_REPLAY_ELAPSED=on の時は、元の番の「お客様の通 → 最初の送信」の分だけ時計を進めてブレインを回す（経過だけ・確かめの準備の有無は答えなので入れない）
+  const REPLAY_ELAPSED = (process.env.EXAM_REPLAY_ELAPSED ?? "").trim().toLowerCase() === "on";
+  if (REUSE_FIXTURE || REPLAY_ELAPSED) examClock.installExamClock();
   const heldNow = (): HeldFixture | null => S().held;
   const releaseHeld = async () => {
     if (!S().held) return;
@@ -1586,6 +1596,12 @@ async function main() {
       // A: 使い回す回は、1回目に写しを作った時からの経過だけ時計を戻す（通の時刻からの経過を毎回写し直した時と同じに・exam-clock）
       const setupAt = reuse ? reuse.setupAt : examClock.realNow();
       if (reuse) examClock.setExamClockOffset(examClock.realNow() - reuse.setupAt);
+      const delayMin = (p as { staffDelayMin?: number | null }).staffDelayMin;
+      if (REPLAY_ELAPSED && typeof delayMin === "number" && times.length) {
+        const target = Date.parse(times[times.length - 1]) + delayMin * 60_000;
+        examClock.setExamClockSigned(examClock.realNow() - target);
+        console.log(`  時計: 元の番の経過 ${delayMin}分 を見せる（${p.id}#${rep}）`);
+      }
       // 連投の始まり（最後のお客様の通のまとまり）
       let burst = p.context.length; while (burst - 1 >= 0 && p.context[burst - 1].s === "customer") burst--;
       // 2026-10-16 引用返信（ExamMsg の lm/q/img）: 引用された通と引用した通を同じ新しい id でつなぐ（元の LINE の id は使わない）。
@@ -1721,7 +1737,7 @@ async function main() {
       }
     } catch (e) { row.error = e instanceof Error ? e.message : String(e); }
     finally {
-      if (REUSE_FIXTURE) examClock.setExamClockOffset(0);
+      if (REUSE_FIXTURE || REPLAY_ELAPSED) examClock.setExamClockOffset(0);
       if (savedClock === undefined) delete process.env.TEST_CLOCK_JST_HOUR; else process.env.TEST_CLOCK_JST_HOUR = savedClock;
       delete process.env.EXAM_MONTH_SHIFT_DAYS;
       // A: 次の回も同じ問題なら写しを持ち越す（失敗・条件の混ざりの回は今まで通り片付ける）。2層の問題の後半の通だけはここで消す

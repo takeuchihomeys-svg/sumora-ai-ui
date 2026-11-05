@@ -62,6 +62,8 @@ export type ExamMsg = {
 };
 export type ExamProblem = ExamSpec & {
   sub: string; hourJst: number; customer: string; context: ExamMsg[]; pc: Record<string, unknown> | null;
+  /** 2026-11-05 元の番のお客様の通から竹内さんの最初の送信までの分（再生の時計を進めて経過を見せる・EXAM_REPLAY_ELAPSED）。送信が無ければ null */
+  staffDelayMin?: number | null;
   staffText: string; prodBrain: { action: string | null; mode: string | null; cp: string | null; src: string | null; dir: string } | null;
   builtAt: string;
   /** その番の時点の台帳の行（10/09: 本番のブレインが読む送付・見積・内覧・ピックアップ・AIX の記録。brain-exam.ts が YUMA に写す） */
@@ -204,7 +206,7 @@ export async function buildProblem(spec: ExamSpec): Promise<ExamProblem | string
     sub: subSceneOf({ customerText: custText, prevStaffText: prevStaff?.text ?? null, scene }),
     hourJst: jstHour(spec.at),
     customer: mask(custText).slice(0, 600),
-    context, pc, staffText,
+    context, pc, staffText, staffDelayMin: s0 ? Math.max(0, Math.round((s0 - at) / 60_000)) : null,
     prodBrain: b ? { action: b.suggested_action, mode: b.suggested_reply_mode, cp: b.suggested_check_pattern, src: b.decision_source, dir: String(b.digest?.dir ?? "").slice(0, 160) } : null,
     builtAt: new Date().toISOString(),
     ledger,

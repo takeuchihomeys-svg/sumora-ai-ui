@@ -97,3 +97,8 @@ if (fail) process.exit(1);
   const ok = h.stopKilled.join() === "op-on1" && h.oldWorktree.join() === "fmi-demote1" && dup.join() === "YUMA2" && nodup.length === 0;
   console.log(ok ? "hazard-audit-core (i)(j): pass" : `hazard-audit-core (i)(j): FAIL ${JSON.stringify({ h, dup, nodup })}`); if (!ok) process.exit(1);
 }
+{
+  const { dupProblemIds } = require("../hazard-audit-core");
+  const ok = dupProblemIds([{ id: "q212" }, { id: "q213" }, { id: "q212" }]).join() === "q212" && dupProblemIds([{ id: "a" }, { id: "b" }]).length === 0;
+  console.log(ok ? "hazard-audit-core (k): pass" : "hazard-audit-core (k): FAIL"); if (!ok) process.exit(1);
+}
