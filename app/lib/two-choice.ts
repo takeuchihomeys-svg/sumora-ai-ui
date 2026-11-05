@@ -135,6 +135,15 @@ const NOW_AIX: Record<PromiseOrNowKind, string> = { check: "property_check_resul
 const PON_LABEL: Record<PromiseOrNowKind, string> = { check: "確認の約束", estimate: "見積の約束", pickup: "探す約束" };
 const PROPERTY_SENT_RE = /https?:\/\/|^\s*\[画像\]|【物件の画面|by SUUMO|LIFULL|アットホーム/m;
 const COST_ASK_RE = /初期費用|費用|いくら|見積|割引|安く|スモ割/;
+/**
+ * 2026-11-06 弱い所 358（作業員7・統括役の決め）: お客様が物件を送ってきた番で空きの問いが無い時は、確認の2択の AIX の側を見積書にする。
+ *   竹内さん: 持ち込みの物件は募集状況＋御見積書の両方（10/07）・q343（8/26 SUUMO の URL＋「ここみてもらってもいいですか」→見積書の AIX→「8月末退去予定で募集中・御見積書同封」）。
+ *   空きの問い（q325「空きありますか」・q334「上記2件の空き」）は今まで通り物件確認した。既定 off（BROUGHT_TWO_CHOICE_ESTIMATE=on）
+ */
+export function broughtTwoChoiceEstimateOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BROUGHT_TWO_CHOICE_ESTIMATE ?? "").trim().toLowerCase() === "on";
+}
+const VACANCY_ASK_RE = /空い|空き|空室|募集|まだ(?:あり|残)|埋ま/;
 
 // 2026-10-28 その場の側（TWO_CHOICE_NOW_SIDE・既定 on・戻す: off。試験 w5-tcnow-on 91問で出た 31番を同じ答案で採点し直し ○→✕ 0・✕→○ 5・右の約束が言ってはいけない道 0）: ブレインが AIX（物件確認した・見積書送る・物件ピックアップ／オススメ）を選んだ番に、
 //   右に同じ種類の約束の返信を並べる（竹内さんはピックアップを約束で返した 35・見積を約束 13 ほか＝95 のうち 47）。
@@ -191,7 +200,8 @@ export function resolvePromiseOrNow(o: {
   if (nowKind && (kind === "check" || kind === "estimate") && !(PROPERTY_SENT_RE.test(t) || COST_ASK_RE.test(t))) return null;
   if ((kind === "check" || kind === "estimate") && !(PROPERTY_SENT_RE.test(t) || COST_ASK_RE.test(t) || openPromise)) return null;
   // 物件確認した の結果のピッカー（募集中など）が決まっている番は、ブレインの check_pattern をそのまま。約束の側から出す時は「募集中」を初期値に
-  return { two: true, reason: `promise_or_now:${kind}:${nowKind ? "now" : "promise"}`, kind, aix: nowKind ? a : NOW_AIX[kind], checkPattern: kind === "check" && !nowKind ? "available" : null, label: PON_LABEL[kind],
+  const broughtEstimate = !nowKind && kind === "check" && broughtTwoChoiceEstimateOn() && PROPERTY_SENT_RE.test(t) && !VACANCY_ASK_RE.test(t);
+  return { two: true, reason: `promise_or_now:${kind}:${nowKind ? "now" : "promise"}${broughtEstimate ? ":brought_estimate" : ""}`, kind, aix: nowKind ? a : broughtEstimate ? "estimate_sheet" : NOW_AIX[kind], checkPattern: kind === "check" && !nowKind && !broughtEstimate ? "available" : null, label: PON_LABEL[kind],
     side: nowKind ? "now" : "promise", replyHint: nowKind ? promiseReplyHint(kind) : null };
 }
 
