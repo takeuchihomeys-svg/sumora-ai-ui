@@ -1,4 +1,5 @@
 import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSentences } from "@/app/lib/draft-text";
+import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { positiveNoNegativeEnabled, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR } from "@/app/lib/mgmt-hours-split";
@@ -1835,8 +1836,8 @@ ${buildAvailabilityCheckNote()}` : buildAvailabilityCheckNote();
     ? isSpecificMonthMoveIn
       ? `\n【🏠 特定月への入居可否質問（確定・最優先）】お客様は「〇月末に入居できますか」「〇月に入居は可能ですか」等、特定の月への入居可否について質問しています。
 【✅ 正しい回答方針（必ず守る）】
-・即入居可能物件の場合: 「お申込から最短で2週間程でご入居出来ます！！申込後に保証会社審査（3日〜10日）が完了し、ご契約書類の記入と初期費用のご入金が完了次第ご入居頂けます！！」と直接答える
-・今日の日付（${getJSTDateString()}）を基準に「〇月末入居が現実的かどうか」を判断して回答する。今日から2週間以内が入居希望日なら「最短で2週間かかるため〇月末は難しい状況です。〇月〜〇月のご入居が理想的な流れとなります！！」と伝える
+・即入居可能物件の場合: 「お申込から最短で1週間〜2週間程でご入居出来ます！！申込後に保証会社審査（早ければ2〜3営業日、長くて1週間程）が完了し、ご契約書類の記入と初期費用のご入金が完了次第ご入居頂けます！！」と直接答える
+・今日の日付（${getJSTDateString()}）を基準に「〇月末入居が現実的かどうか」を判断して回答する。今日から2週間以内が入居希望日なら「最短で1週間〜2週間かかるため〇月末は難しい状況です。〇月〜〇月のご入居が理想的な流れとなります！！」と伝える
 ・退去予定物件の場合は${vacatingMoveInPromptLine()}
 【🚫 絶対禁止】「お部屋が決まり次第ご連絡いたします」「詳細は改めてご連絡いたします」等の先送り表現。この質問は今この場で答えられる。`
       : `\n【🏠 入居可能時期の質問（確定・最優先）】お客様は「最長いつまで入居を伸ばせますか」「入居はいつまで可能ですか」等の入居タイミングについて質問しています。
@@ -5008,7 +5009,7 @@ async function handleGenerateReply(req: NextRequest) {
       if (isPostStrongRecommendation) return "強推し直後の了承。開口語は「はい😊！！」一択（「かしこまりました」「承知いたしました」禁止）。①感謝を1行で受け取る②直前に推薦したお部屋（物件名は書かず「先ほどのお部屋」。2026-09-11 竹内方針2）をお手隙の際にごゆっくりご確認いただく旨1文③ご内覧・ご不明点はいつでもお申し付けくださいの開放1文④締め。合計50〜110字。他物件の募集確認・新規ピックアップ宣言・別物件の提案・申込誘導・「ご検討の程よろしくお願いします」の再掲は絶対禁止。顧客が「見てみます」（未来形）なら「ご覧頂きありがとう」等の既読扱いも禁止";
       if (isGratitudeReplyTPO) return `感謝を1行で受け取り、次のアクション文を1つだけ添える: ${gratitudeActionHint}。合計40〜130字。開口語は「はい😊！！」（単独行）一択（「かしこまりました」「承知いたしました」禁止）。締めは「何卒よろしくお願い致します！！」。上記以外のアクション・予告のみの進捗テンプレ・条件の再ヒアリング・情報追加は絶対禁止`;
       // A-13: 不安対応（applying より先に評価。謝罪は「ご不安にさせてしまい申し訳ございません」の1文のみ許可）
-      if (isAnxietyMsg) return "不安対応（100〜150字）。開口語は「はい😊！！」または受け止め1文から。①不安を1文で受け止める（謝罪が必要な場合のみ「ご不安にさせてしまい申し訳ございません」の1文まで）②具体的な安心材料を1つだけ添える（保証会社通過までキャンセル料なし／独立系保証会社で再審査可／審査3〜10日 等・履歴にある事実のみ）③次アクション1文。「大丈夫ですよ」「ご安心ください」の根拠なし安心づけ禁止";
+      if (isAnxietyMsg) return "不安対応（100〜150字）。開口語は「はい😊！！」または受け止め1文から。①不安を1文で受け止める（謝罪が必要な場合のみ「ご不安にさせてしまい申し訳ございません」の1文まで）②具体的な安心材料を1つだけ添える（保証会社通過までキャンセル料なし／独立系保証会社で再審査可／審査2〜3営業日〜1週間程 等・履歴にある事実のみ）③次アクション1文。「大丈夫ですよ」「ご安心ください」の根拠なし安心づけ禁止";
       // 2026-09-09 Fable5 往復文脈: after_wait セル（内覧受諾・検討中・回答受領・了承）は AIX action より先（brain の正しい reply_direction が L3735 で action に負けて捨てられていた）
       if (pairContext.rule && pairDirection) return pairDirection;
       // A-7 / S-3: brain action が有効（fresh）なら顧客向け方向性に変換して採用（スタッフ操作文は注入しない）
@@ -5601,6 +5602,8 @@ async function handleGenerateReply(req: NextRequest) {
       const tcAbouts = turnContract?.source === "brain" ? turnContract.asks.map((a) => a.axis?.about).filter((x): x is NonNullable<typeof x> => !!x) : [];
       const companyFacts = buildCompanyFactsNote(message, { account: convAccount, abouts: tcAbouts }) + brandCostOverrideNote(convAccount);   // 10/08 Q11・Q-C ブランド別
       if (companyFacts) lines.push(companyFacts.trim());
+      // 2026-11-05 竹内さん No.10: 延滞歴・カードローン等の審査の不安への一般の答え（独立系の保証会社の知識・材料は guarantor-companies のマスタ側）
+      { const shn = buildScreeningHistoryNote(message); if (shn) lines.push(shn.trim()); }
       // 2026-10-02 ⑫ 竹内さん「相場の知識は物件検索ブレインからもらう形」: ブレインがこの発言で受けた相場の材料（meta.rent_market・
       //   物件検索のブレインの1つの元 area-rent-server から）。このメッセージについての材料なので fresh の時だけ使う。数字は材料の文の物だけ
       if (brainLocalFresh) {
