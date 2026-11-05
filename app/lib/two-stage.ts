@@ -56,7 +56,16 @@ export type TwoStageInput = {
   estimateMaterialAgeDays?: number | null;
   /** 2026-10-21 見直し: 真の初回（スタッフがまだ何も送っていない・incremental でない）。A1 の AIX 直接の外（初回のガードは2段の後で決まるので decisionSource では見えない） */
   firstContact?: boolean;
+  /** 2026-11-05 弱い所 349（作業員7・統括役の決め (b)）: 場面が S3_screening（審査の問い）で、ブレインが AIX を空にして返信の依頼を書いた番 */
+  screeningBrainReply?: boolean;
 };
+/**
+ * 2026-11-05 弱い所 349: 審査の問い（S3）でブレインが返信と決めた番を、check_question が決まった計算で確認の約束の2段に書き換えない（ブレイン基準・4-4 と同じ型）。
+ *   竹内さん本人の90日（お客様自身の事情＋借りられるか・審査が通るか 8番）で確認の約束 0。既定 off（TWO_STAGE_SCREENING_NO_REWRITE=on）
+ */
+export function screeningNoRewriteEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_STAGE_SCREENING_NO_REWRITE ?? "").trim().toLowerCase() === "on";
+}
 /** 2026-10-18 竹内さん 10/16「古い資料（届いて7日以上）の物件の見積依頼は『一度最新の募集状況を確認させて頂きます』旨を伝えてから AIX で送る」。戻す ESTIMATE_STALE_RECHECK=off */
 export const ESTIMATE_STALE_DAYS = 7;
 export function estimateStaleRecheckEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -457,6 +466,8 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
     const askedOther = (askedOtherByAxis ?? (!i.asksCost && !/空い|空き|募集|まだ(?:あり|残)|埋ま|https?:|\[画像\]/.test(ct) && /[?？]|ですか|ますか|でしょうか|かな/.test(ct)))
       && (typeof process === "undefined" || (process.env?.TWO_STAGE_CHECK_BY_QUESTION ?? "").toLowerCase() !== "off");
     if (askedOther && !/ack_to_check/.test(i.decisionSource ?? "")) {
+      // 2026-11-05 弱い所 349: 審査の問いでブレインが返信と決めた番は書き換えない（ブレインの返信のまま・既定 off）
+      if (screeningNoRewriteEnabled() && i.screeningBrainReply === true) return null;
       return {
         kind: "check",
         direction: "お客様に聞かれた事に答える返信にする。会話・物件の資料・会社の事実に答えがあればそれで答える（確認の約束にしない）。無い時だけ聞かれた事そのもの（中身を具体的に・物件の事なら物件名も）を確認すると約束する（聞かれていない募集状況は書かない・誰に確認するかは書かない・結びは「確認出来次第ご連絡させて頂きます！！」）",
