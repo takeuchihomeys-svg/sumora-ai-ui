@@ -227,7 +227,7 @@ function planCore(i: PlanInput): Omit<TwoMessagePlan, "shape" | "shapeWhy"> {
   // 担う事: 返信＝答える（答えがあれば）＋信頼（受け止め・サポートの約束）／AIX＝答える（依頼に AIX で）／テンプレート＝訴求（＋その物件の質問の答え）
   const dutiesOf = (slot: PlanSlot, answers: string[]): Duty[] =>
     slot === "reply" ? (answers.length ? ["answer", "trust"] : ["trust"])
-      : slot === "aix" ? (answers.length ? ["answer"] : [])
+      : slot === "aix" ? (TEXT_AIX.has(String(aixKey)) ? ["answer", "trust"] : answers.length ? ["answer"] : []) // 文を書く AIX は文の中で受け止め（竹内さん「かしこまりました！！…ご案内させて頂きます」）
       : (answers.length ? ["appeal", "answer"] : ["appeal"]);
   const push = (slot: PlanSlot, answers: string[], role: string, aix: string | null = null) => msgs.push({ no: msgs.length + 1, slot, aix, answers, role, duties: dutiesOf(slot, answers) });
 

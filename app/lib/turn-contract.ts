@@ -205,6 +205,16 @@ function answerableDirectRule(env: Record<string, string | undefined> = typeof p
  *   AIX の番でも、同じ連投の返信で答えられる質問を別の ask に書かせる（後ろの通で答える席＝two-message-plan）。
  *   既定 off（TWO_MESSAGE_PLAN=on の時だけ1行足す・off は1字も変えない・静的な前置きなので on でも並びは崩れない）
  */
+/**
+ * 2026-11-05 弱い所 343（作業員7・統括役の決め 3）: 文を書く AIX の番に、ブレインが確認の約束（promise）を足して2通にする。
+ *   竹内さん本人の送信: 電話の AIX「審査通過するにあたりまして5分程お電話でお打ち合わせ…」（q332）・保証会社の AIX「保証会社は全保連となります…出来る限りのサポート」（q333）・
+ *   待ち合わせの AIX「8日2物件ご案内させて頂きます」（q331）＝受け止めと答えを AIX の文の中で済ませた1通。
+ *   既定 off（TWO_MESSAGE_TEXT_AIX_ROUTE=on の時だけ1行・off は1字も変えない）
+ */
+function textAixRouteRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  if ((env.TWO_MESSAGE_TEXT_AIX_ROUTE ?? "").trim().toLowerCase() !== "on") return "";
+  return "- ★文を書く AIX（電話・保証会社・内覧調整・待ち合わせ場所・当日の挨拶）で答えが決まる依頼は、確認の約束（route=\"promise\"）にせず route=\"aix\"（その AIX のキー）にする。その AIX の文の中で受け止めと答えを済ませる（竹内さん: 審査の相談→AIX【電話】「5分程お電話でお打ち合わせ」／審査が通るか→AIX【保証会社】「保証会社は〇〇となります…サポート」／もう1件も行けるか→AIX【待ち合わせ場所】「2物件ご案内」）。確認の約束は、管理会社に確かめないと答えが出ない事（空き・設備・入居日）だけ。\n";
+}
 function twoMessageAskRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if ((env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "off") return ""; // 11/05 既定 on（止める TWO_MESSAGE_PLAN=off）
   return "- ★1つの連投に AIX の依頼（見積・空き・内覧の日時・申込 等）と、返信で答えられる質問（審査・入居日・手続き・その物件の資料にある設備・会社の事実）が混ざる番は、AIX の依頼に寄せて1つにまとめず、返信で答えられる質問を別の ask（route=\"reply\"・answer に答えの要点）として必ず書く（竹内さん 11/05: 返信で答えられる部分と AIX の部分は分けて答える＝AIX の後の通・返信で答える）。AIX の中身だけで答えが決まる事（その物件の空き・見積の金額）は route=\"aix\" のまま。お客様が自分で「内見の際に」「後で」と先に回した話は、今の番の約束にせず route=\"none\"（竹内さんは内覧調整の AIX の1通だけで、その話は内見の時にした）。\n";
@@ -216,7 +226,7 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - asks: 【お客様の依頼の一覧】があればその項目を1つも落とさない（足すのはよい）。無ければ今の連投から自分で数える。前の番の依頼を書き写さない（まだ答えていない前の依頼は【お客様の依頼の一覧】の「まだ答えていない確認事項」から入る）。
 - route の決め方: スタッフだけが知る事（管理会社に確認した結果・募集状況・見積の金額・割引額・入居日の確定・内覧の日時の確定・撮影した写真・交渉の結果・審査の結果・探した結果）が答えに要る → "aix"（AIX のキーを付ける）。
   まだ結果が無く、これから確認・作成・探す・交渉する → "promise"。会話・送った物件の資料・会社の事実・一般的な事（虫・換気・二人で住める広さ・内覧の所要時間・手続きの流れ）で答えられる → "reply"（確認の約束にしない）。もう答えた・お客様が自分でやる → "none"。
-${answerableDirectRule()}${twoMessageAskRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
+${answerableDirectRule()}${twoMessageAskRule()}${textAixRouteRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
 ${closeOnlyAnswerRule()}
 - close_only=true:返事の要らない番（お礼・了承・あいさつだけ）／お客様が待ってと言った番（「決まったら連絡します」「また連絡します」「確認してから連絡します」）。待っての番は「お決まりになりましたらご連絡ください」の形で閉じ、物件を送り続ける約束・新しい提案をしない。
 - 今の条件の物件を出し切った後（前に「全てピックアップ」・新着待ちの約束・全力サポートを送った後で条件が変わっていない）の「もう少し探して」等は route="aix"・aix="zenryoku_support"。
