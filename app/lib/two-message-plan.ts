@@ -26,7 +26,7 @@ type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 
 export function twoMessagePlanOn(env: Env = envOf()): boolean {
-  return (env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "on";
+  return (env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() !== "off"; // 2026-11-05 統括役の決め: 悪化0（tm2〜tm5）で既定 on・止める TWO_MESSAGE_PLAN=off
 }
 /** 画面（NEXT_PUBLIC_ はビルドで埋まる＝呼ぶ側が値を渡す） */
 /** 文を書く AIX の番は質問も AIX の文の中で1通（既定は TWO_MESSAGE_PLAN に従う・止める TWO_MESSAGE_ONE_IN_TEXT_AIX=off） */
@@ -129,6 +129,20 @@ const TEMPLATE_AIX = new Set(["estimate_sheet", "property_recommendation", "prop
 const TEXT_AIX = new Set(["zenryoku_support", "viewing_invite", "meeting_place", "greeting_viewing", "phone_call", "cost_explain", "cost_breakdown", "guarantor_info", "application_push", "acknowledge_check", "followup_revive"]);
 /** 結果が後になる約束（確認・探す・ピックアップ・交渉・撮影・見積の作成）＝AIX の文の中で果たせない＝約束の返信が先 */
 const resultLaterPromise = (a: PlanAsk): boolean => /確認|探|ピックアップ|交渉|撮影|作成|見積|調べ/.test(`${a.answer ?? ""}${a.quote}`);
+/**
+ * 2026-11-05 統括役の決め（q330・KB P0 2e164f41）: 内覧調整・待ち合わせの AIX は、物件の募集状況の確認の約束も AIX の文の中で（「お送りいただきました物件の募集状況につきましても併せて確認させていただきます」）。
+ *   竹内さん本人の90日: 内覧調整・待ち合わせの番でお客様が物件（URL・画像・空き）を送った 6番＝物件の確認の約束を別の返信にしたのは 0・AIX の文の中で約束 1・同じ番で物件確認した の AIX で結果 1・約束が要らない（見に行く物件そのもの）4。
+ *   別の返信にした番が0＝返信が先（RA）の形は竹内さんに無い。探す・交渉・撮影・見積は今まで通り除く。既定 on（止める TWO_MESSAGE_VIEW_CHECK_IN_AIX=off）
+ */
+export function viewCheckInAixOn(env: Env = envOf()): boolean {
+  return (env.TWO_MESSAGE_VIEW_CHECK_IN_AIX ?? "").trim().toLowerCase() !== "off"; // 11/05 q330〜q335 の答案で組み立てを採り直して余計な2通目 55%→20%・道は変わらない（ブレインに触れない）＝既定 on
+}
+const VIEW_AIX = new Set(["viewing_invite", "meeting_place"]);
+const laterPromiseFor = (aixKey: string) => (a: PlanAsk): boolean => {
+  const t = `${a.answer ?? ""}${a.quote}`;
+  if (VIEW_AIX.has(aixKey) && viewCheckInAixOn()) return /探|ピックアップ|交渉|撮影|作成|見積/.test(t);
+  return resultLaterPromise(a);
+};
 const AIX_CONTENT_ABOUT =/^(?:property_equipment|property_cost|vacancy)$/;
 
 const AIX_LABEL: Record<string, string> = {
@@ -222,7 +236,7 @@ function planCore(i: PlanInput): Omit<TwoMessagePlan, "shape" | "shapeWhy"> {
   // 2026-11-05 tm2 の読み（作業員7）: 文を書く AIX（内覧調整・待ち合わせ・電話・保証会社・当日の挨拶 等）の番は、約束も AIX の文の中で済ませる1通
   //   （竹内さん 7f73dc32「内覧調整の中で…物件の募集状況につきましても併せて確認させていただきます」・電話の AIX の中で審査の相談）。
   //   除く: 初回（挨拶と約束の返信が先）・ヒアリング／全力サポート（約束の返信 → AIX の RAR・RA が竹内さんの形）・不安の受け止めが要る依頼
-  if (!i.firstContact && promiseAsks.length > 0 && TEXT_AIX.has(aixKey) && oneMessageInTextAixOn() && !promiseAsks.some(resultLaterPromise)
+  if (!i.firstContact && promiseAsks.length > 0 && TEXT_AIX.has(aixKey) && oneMessageInTextAixOn() && !promiseAsks.some(laterPromiseFor(aixKey))
     && !replyAsks.some((a) => a.kind === "concern" || a.kind === "feeling")) {
     push("aix", [...aixAnswers, ...promiseAsks.map(q), ...replyAsks.map(q)], "依頼に AIX で答え、約束・質問も AIX の文の中で", aixKey);
     msgs[0].duties = ["answer", "trust"];

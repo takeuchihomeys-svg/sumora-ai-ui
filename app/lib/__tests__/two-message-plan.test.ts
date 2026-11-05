@@ -9,7 +9,7 @@ let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
 
 // スイッチ（既定 off）
-t("既定 off（サーバー）", twoMessagePlanOn({}) === false);
+t("既定 on（サーバー・11/05）", twoMessagePlanOn({}) === true && twoMessagePlanOn({ TWO_MESSAGE_PLAN: "off" }) === false);
 t("on で on", twoMessagePlanOn({ TWO_MESSAGE_PLAN: "on" }) === true);
 t("既定 off（画面）", twoMessagePlanUiOn(undefined) === false && twoMessagePlanUiOn("on") === true);
 
@@ -135,8 +135,8 @@ t("⑨ ピッカー付きのキー", planMessages({ asks: [{ quote: "x", route: 
 {
   const v = { source: "rule:two_stage_promise(brought_both)", kind: "check" } as unknown as Parameters<typeof answerableDirectAix>[0];
   const i = { decisionSource: "rule:x", firstContact: false, asksCost: false };
-  t("⑮ off＝AIX 直接（今まで通り）", answerableDirectAix(v, i, {}) === "property_check_result");
-  t("⑮ on＝約束のまま（null）", answerableDirectAix(v, i, { TWO_STAGE_BROUGHT_PROMISE: "on" }) === null);
+  t("⑮ 止める（off）＝AIX 直接", answerableDirectAix(v, i, { TWO_STAGE_BROUGHT_PROMISE: "off" }) === "property_check_result");
+  t("⑮ 既定（on）＝約束のまま（null）", answerableDirectAix(v, i, {}) === null);
   const v2 = { source: "rule:two_stage_promise(check)", kind: "check" } as unknown as Parameters<typeof answerableDirectAix>[0];
   t("⑮ 持ち込みでない確認は on でも AIX 直接", answerableDirectAix(v2, i, { TWO_STAGE_BROUGHT_PROMISE: "on" }) === "property_check_result");
 }
@@ -154,8 +154,17 @@ t("⑨ ピッカー付きのキー", planMessages({ asks: [{ quote: "x", route: 
   t("⑯ 電話の AIX＋約束＝A（AIX の文の中で）", ph.shape === "A" && ph.messages[0].answers.length === 1, ph);
   const gv = planMessages({ asks: [{ quote: "メジャー持ってきて貰ってもいいですか", route: "promise", answer: "メジャーを持参する" }], finalAix: "greeting_viewing" });
   t("⑯ 当日の挨拶＋約束＝A", gv.shape === "A", gv);
-  const lt = planMessages({ asks: [{ quote: "この物件空いてますか", route: "promise", answer: "募集状況を確認する" }], finalAix: "viewing_invite" });
-  t("⑯ 結果が後になる約束（確認）は除く＝RA", lt.shape === "RA", lt);
+  const lt = planMessages({ asks: [{ quote: "この物件空いてますか", route: "promise", answer: "募集状況を確認する" }], finalAix: "guarantor_info" });
+  t("⑯ 結果が後になる約束（確認）は除く＝RA（内覧調整・待ち合わせ以外）", lt.shape === "RA", lt);
+  // 統括役の決め（q330）: 内覧調整・待ち合わせは確認の約束も AIX の文の中で（TWO_MESSAGE_VIEW_CHECK_IN_AIX=on）
+  process.env.TWO_MESSAGE_VIEW_CHECK_IN_AIX = "on";
+  const vc = planMessages({ asks: [{ quote: "この物件空いてますか", route: "promise", answer: "募集状況を確認する" }], finalAix: "viewing_invite" });
+  const vs = planMessages({ asks: [{ quote: "もっと探して", route: "promise", answer: "新たに探す" }], finalAix: "viewing_invite" });
+  const vp = planMessages({ asks: [{ quote: "この物件空いてますか", route: "promise", answer: "募集状況を確認する" }], finalAix: "phone_call" });
+  delete process.env.TWO_MESSAGE_VIEW_CHECK_IN_AIX;
+  t("⑯ on: 内覧調整＋確認の約束＝A（AIX の文の中で）", vc.shape === "A", vc);
+  t("⑯ on でも探す約束は RA のまま", vs.shape === "RA", vs);
+  t("⑯ on でも内覧調整・待ち合わせ以外は今まで通り（RA）", vp.shape === "RA", vp);
   const hr = planMessages({ asks: [{ quote: "以前と同じ条件で探して", route: "promise", answer: "条件で探す" }], finalAix: "condition_hearing" });
   t("⑯ ヒアリングは約束の返信が先（RA）", hr.shape === "RA", hr);
   const fc = planMessages({ asks: [{ quote: "x", route: "promise", answer: "審査の相談" }], finalAix: "phone_call", firstContact: true });
@@ -185,7 +194,7 @@ t("⑩ all＝全員・off＝出さない", twoMessageAnnounceVisible("all", fals
 
 // ⑪ ブレインの規則の1行（off は1字も変えない・on だけ足す）
 //   （on の確かめ: TWO_MESSAGE_PLAN=on npx tsx -e で BRAIN_TURN_CONTRACT_RULES に行が入る＝作業員7 11/05 確認済み）
-if ((process.env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() !== "on") {
+if ((process.env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "off") {
   t("⑪ off の規則に2通の行は無い", !/返信で答えられる質問を別の ask/.test(BRAIN_TURN_CONTRACT_RULES));
 }
 
