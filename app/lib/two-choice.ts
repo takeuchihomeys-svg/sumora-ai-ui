@@ -194,3 +194,47 @@ export function resolvePromiseOrNow(o: {
   return { two: true, reason: `promise_or_now:${kind}:${nowKind ? "now" : "promise"}`, kind, aix: nowKind ? a : NOW_AIX[kind], checkPattern: kind === "check" && !nowKind ? "available" : null, label: PON_LABEL[kind],
     side: nowKind ? "now" : "promise", replyHint: nowKind ? promiseReplyHint(kind) : null };
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// 2026-11-05 竹内さんの決定（KB P1 56b662a4「2択は絞る＋先の側」）・作業員1: AIX か返信かの2択は、スタッフしか知らない事で決まる番だけに絞る。
+//   決め切る場面: 検討します・お礼 → 返信／条件の言い直し・探し直し → 約束の返信（2段 pickup）／見積の後の費用の質問 → AIX 見積書。
+//   残す番（持ち込みの確認＝電話で先に確かめたかは画面の外・室内写真・入居時期が資料に無い 等）には「先に選んだ側」を付ける（持ち込み → 約束の返信）。
+//   線（竹内さんの番 32 の解き直し・11/05）: 持ち込み 6番＝約束 4／確認の AIX 1／見積 1・検討/お礼 3番＝返信 3・条件 3番＝約束 2／不明 1・見積の後 1番＝見積書。
+//   既定 on（11/05・戻す TWO_CHOICE_NARROW=off）。KB e5c85426（2択は両側の強さを揃える）: 片側に倒す時は場面で分ける＝言葉の網でなくこの番の型で決める。
+export function twoChoiceNarrowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  // 2026-11-05 既定 on（統括役の判断・竹内さんの番32: 厳しい 17→22・先の側 26/32・2択 15→7・ゆるい 28→27 の1番は直しの道を通らない LLM の揺れ 9758）。戻す TWO_CHOICE_NARROW=off
+  return (env.TWO_CHOICE_NARROW ?? "").trim().toLowerCase() !== "off";
+}
+/** resolveTwoChoice の理由のうち、絞った後も2択に残す物（スタッフしか知らない事で決まる番）。ackOnly＝今の番がお礼・了承だけ */
+export function narrowKeepsTwoChoice(reason: string | null | undefined, ackOnly: boolean): boolean {
+  const r = String(reason ?? "");
+  if (r === "considering" || r === "apology_entrust" || r === "more_property_request") return false; // 検討・お礼→返信／探し直し→約束の返信
+  if (r === "llm" && ackOnly) return false; // お礼だけの番に LLM が立てた2択 → 返信
+  return true;
+}
+export type NarrowPromiseOrNow = { keep: true; preferred: "reply" | "aix" } | { keep: false; decide: "keep_final" | "aix_estimate" };
+/** 約束か、その場の AIX かの2択（resolvePromiseOrNow）を絞る。確認（持ち込み）だけ残し、先に選んだ側は約束の返信 */
+export function narrowPromiseOrNow(p: NonNullable<PromiseOrNow>, ackOnly = false): NarrowPromiseOrNow {
+  if (p.kind === "check") return { keep: true, preferred: "reply" };
+  if (p.kind === "estimate") return p.side === "promise" ? { keep: false, decide: "aix_estimate" } : { keep: false, decide: "keep_final" };
+  // pickup のその場の側: お礼・了承の番は AIX のまま（KB 2d0f33cf）。お礼でない番（条件の言い直し・探し直し）は決定では約束の返信だが、
+  //   同じ日の2通目は直接（TWO_STAGE_SAME_DAY_DIRECT・10/08 竹内さん）等の別の決まりで AIX になった番もある＝ここでは書き換えず、2択に残して先の側を約束の返信にする
+  if (!ackOnly) return { keep: true, preferred: "reply" };
+  return { keep: false, decide: "keep_final" }; // pickup: その場の側はお礼の番だけ残る（お礼でない番は2段の約束のまま＝brain-core の 4-3 の上書きを止める）
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 2026-11-05 竹内さんの決定（KB P1「言い直しは約束（推奨）」・同じ日でも）・作業員1: 条件の言い直し・探し直しの番は、約束の返信（2段 pickup）を先にして決め切る。
+//   棚卸し（scratchpad/brain-override-inventory-1105.md）の順番の上で、2段の約束を後の出し切りの左右の形（search_split）・全力サポートの書き換えが AIX に戻さない（KB 0dbfbc97）。
+//   実物: 番 9767（「一時家探しをやめていた…以前ご依頼した条件でもう一度探していただけますか」）＝2段 pickup → 出し切り（送付だけの印 weak）で物件の AIX に戻されていた・竹内さんは約束の返信。
+//   既定 on（11/05・戻す RESAY_PROMISE_FIRST=off）。
+export function resayPromiseFirstOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  // 2026-11-05 既定 on（言い直し6番 2/2・9767 0→4/4）。戻す RESAY_PROMISE_FIRST=off
+  return (env.RESAY_PROMISE_FIRST ?? "").trim().toLowerCase() !== "off";
+}
+export const SEARCH_RESTART_RE = /(?:もう一度|もう1度|再度|改めて|また)[^\n。！!？?]{0,10}(?:探|さが)|探し(?:直|なお)|(?:家|部屋|お部屋)探し[^\n。！!？?]{0,8}(?:再開|始め)/;
+/** 条件の言い直し（ブレインの condition_change_type）か、探し直し・他のお部屋の依頼の番 */
+export function isResayTurn(customerText: string | null | undefined, conditionChangeType: string | null | undefined): boolean {
+  const t = String(customerText ?? "");
+  return !!String(conditionChangeType ?? "").trim() || SEARCH_RESTART_RE.test(t) || MORE_PROPERTY_REQUEST_RE.test(t);
+}

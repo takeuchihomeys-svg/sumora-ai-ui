@@ -217,10 +217,45 @@ export function isAckOnlyTurn(customer: ReadonlyArray<string>): boolean {
  *   落とすのは文だけ（行が空になれば行ごと・前後の空行は1つにまとめる）。
  */
 export function draftSelfRepeatDropOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.DRAFT_SELF_REPEAT_DROP ?? "").trim().toLowerCase() === "on";
+  return (env.DRAFT_SELF_REPEAT_DROP ?? "").trim().toLowerCase() !== "off"; // 2026-11-05 既定 on（竹内さんの送信 60日 当たり0・YUMA sr-yuma 悪化0）・戻す =off
+}
+/**
+ * 2026-11-05 作業員3（竹内さんの決定 KB a5a2f6f8 ③）: 出口が落としてよい二度言いの網を狭くした。
+ *   11/05 の監査（60日・竹内さんの送信 3,235通・下書き 2,664通・scripts/audit-self-repeat.ts）で、旧の網（repeatSentences の self）は
+ *   竹内さんの送信 11通に当たった。中身は申込フォーマットの項目・物件の札（罫線・駅徒歩・㎡）・金額の行・物件ごとの条件の箇条書きと、
+ *   竹内さんが条件を付けて言い直す形（「お申込し審査かけさせて頂きます」→最後に「お送り頂き次第、お部屋お申込し審査かけさせて頂きます」）。
+ *   → 落としてよいのは「地の文（〜ます／です で終わる文）の、条件の付き方も同じ言い直し」だけ。箇条書き・札・項目・金額・駅徒歩・号室・〒の行は見ない。
+ */
+const SELF_EXIT_LIST_LINE_RE = /^\s*(?:[・\-－━─■□●○◆◇▼▽※＊*＞>【\[［]|[①-⑳]|[0-9０-９]+[.．、)）])/;
+const SELF_EXIT_FACT_RE = /[:：]|徒歩|㎡|帖|〒|号室|築|[0-9０-９][0-9０-９,，]*(?:円|万)|https?:\/\/|🌟/;
+const SELF_EXIT_PROSE_END_RE = /(?:ます|ません|です|ください|でしょうか|ございます|幸いです)$/;
+const SELF_EXIT_COND_RE = /次第|(?:れ|け|せ|め|て)ば|たら|の際|後に|上で|場合/;
+export const SELF_EXIT_SIM = REPEAT_SIM;
+// 11/05 監査 bcfc51dd（「明日9月17日12時お部屋ご案内」と「本日12時お部屋ご案内」）・ab0008d1（「本日〇〇時」と「本日13時」）: 日時・数が違う文は言い直しでなく別の文（どちらが正しいかを出口は決めない）
+const whenKey = (s: string) => (String(s ?? "").match(/[0-9０-９〇]+|本日|明日|明後日|今日|今週|来週|午前|午後|月曜|火曜|水曜|木曜|金曜|土曜|日曜/g) ?? []).join(",");
+const proseEnd = (s: string) => SELF_EXIT_PROSE_END_RE.test(String(s ?? "").replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️\s！!。？?〜ー♪]+$/gu, ""));
+/** 同じ下書きの中の二度言いのうち、出口が落としてよい物（後ろに出た方の文・前の文） */
+export function selfRepeatExitHits(draft: string): Array<{ sentence: string; ref: string; sim: number }> {
+  const seen: string[] = [];
+  const out: Array<{ sentence: string; ref: string; sim: number }> = [];
+  for (const line of String(draft ?? "").split(/\n+/)) {
+    // 11/05 監査 b18ac4b8（物件ごとの「・物件名」の下に同じ「小型犬のみ飼育可能なお部屋となります。」）: 箇条書き・札の行で区切りが変わる＝前の文と比べない
+    if (SELF_EXIT_LIST_LINE_RE.test(line) || SELF_EXIT_FACT_RE.test(line)) { seen.length = 0; continue; }
+    for (const s of splitSentencesJa(line)) {
+      // 落とすのは「同じ約束の二度言い」だけ（11/05 監査 9a764026: 「ご不明点等ございましたらいつでもご連絡ください」はお願いで約束でない・通ごと重なった送信）
+      if (skipSentence(s) || !proseEnd(s) || !promiseTopics(s).length) continue;
+      const t0 = repeatTypeOf(s);
+      if (t0 === "定型の締め" || t0 === "挨拶" || isCourtesyOnly(s)) continue;
+      let best: { ref: string; sim: number } | null = null;
+      for (const x of seen) { const sim = sentenceSimilarity(s, x); if (sim >= SELF_EXIT_SIM && (!best || sim > best.sim)) best = { ref: x, sim }; }
+      if (best && SELF_EXIT_COND_RE.test(s) === SELF_EXIT_COND_RE.test(best.ref) && whenKey(s) === whenKey(best.ref)) { out.push({ sentence: s, ...best }); continue; }
+      seen.push(s);
+    }
+  }
+  return out;
 }
 export function dropSelfRepeats(draft: string): { text: string; dropped: string[] } {
-  const hits = repeatSentences(draft, [], []).filter((h) => h.kind === "self");
+  const hits = selfRepeatExitHits(draft);
   if (!hits.length) return { text: draft, dropped: [] };
   const dropped: string[] = [];
   const lines = String(draft ?? "").split("\n");
@@ -236,4 +271,13 @@ export function dropSelfRepeats(draft: string): { text: string; dropped: string[
   }
   const text = lines.filter((l, i, a) => !(l === "" && (i === 0 || a[i - 1] === ""))).join("\n").replace(/\n+$/, "");
   return { text, dropped };
+}
+/**
+ * generate-reply の仕上げの出口（wording-1002 の束）が呼ぶ口。既定 on（2026-11-05 作業員3・監査と YUMA の後）・DRAFT_SELF_REPEAT_DROP=off で止める。
+ * changes はログ（generate-reply:wording-1002）に出す文。
+ */
+export function applySelfRepeatExit(draft: string, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): { text: string; changes: string[] } {
+  if (!draftSelfRepeatDropOn(env)) return { text: draft, changes: [] };
+  const r = dropSelfRepeats(draft);
+  return { text: r.text, changes: r.dropped.map((x) => `二度言いを外す: ${x}`) };
 }

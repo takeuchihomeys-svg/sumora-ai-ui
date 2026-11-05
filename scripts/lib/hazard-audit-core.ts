@@ -128,3 +128,16 @@ export function laneDupConvs(line: string): string[] {
   const names = [...line.matchAll(/(YUMA\d+)（/g)].map((m) => m[1]);
   return [...new Set(names.filter((n, i) => names.indexOf(n) !== i))];
 }
+
+/** (k) 2026-11-05 作業員1（点検表 13）: 作業ツリーの手元の problems.json に同じ id が2つ以上ある（同じ問題を2回ずつ回し費用が倍になる） */
+export function dupProblemIds(problems: ReadonlyArray<{ id?: unknown }>): string[] {
+  const seen = new Set<string>(), dup = new Set<string>();
+  for (const p of problems) { const id = String(p.id ?? ""); if (!id) continue; if (seen.has(id)) dup.add(id); seen.add(id); }
+  return [...dup];
+}
+
+/** (l) 2026-11-05 作業員1（作業員4の気付き）: 手元の problems.json の問題と、main の spec の同じ id の正解の中身（specHash）が違う物（id のぶつかり＝取り置き・揺れの記録の取り違えのおそれ） */
+export function idContentClashes(local: ReadonlyArray<Record<string, unknown>>, mainSpec: ReadonlyArray<Record<string, unknown>>, hashOf: (o: Record<string, unknown>) => string): string[] {
+  const main = new Map(mainSpec.map((s) => [String(s.id), hashOf(s)]));
+  return local.filter((p) => main.has(String(p.id)) && main.get(String(p.id)) !== hashOf(p)).map((p) => String(p.id));
+}

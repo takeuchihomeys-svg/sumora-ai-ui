@@ -28,7 +28,7 @@ import { resolveReplyScene } from "../app/lib/reply-scene";
 import { subSceneOf } from "../app/lib/reply-subscene";
 import { APPLY_FORM_RE } from "../app/lib/customer-sim-shadow";
 import { STAFF_FAIL_RE } from "../app/lib/post-apply-brain-gate";
-import { addressNamesOf, maskExamText } from "./lib/brain-exam-mask";
+import { addressNamesOf, maskExamText, maskLedgerDeep } from "./lib/brain-exam-mask";
 import { rollbackPcToTurn, type PcAsOf, type PcHist } from "./lib/brain-exam-pc";
 import { publishProblems, readSharedProblem, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 
@@ -62,6 +62,8 @@ export type ExamMsg = {
 };
 export type ExamProblem = ExamSpec & {
   sub: string; hourJst: number; customer: string; context: ExamMsg[]; pc: Record<string, unknown> | null;
+  /** 2026-11-05 元の番のお客様の通から竹内さんの最初の送信までの分（再生の時計を進めて経過を見せる・EXAM_REPLAY_ELAPSED）。送信が無ければ null */
+  staffDelayMin?: number | null;
   staffText: string; prodBrain: { action: string | null; mode: string | null; cp: string | null; src: string | null; dir: string } | null;
   builtAt: string;
   /** その番の時点の台帳の行（10/09: 本番のブレインが読む送付・見積・内覧・ピックアップ・AIX の記録。brain-exam.ts が YUMA に写す） */
@@ -88,12 +90,8 @@ export const LEDGER_TABLES: Record<string, { time: string; times: string[]; date
   viewing_history: { time: "created_at", times: ["created_at", "updated_at"], dates: ["scheduled_date", "actual_date"], limit: 10, drop: ["viewing_report", "viewing_report_at"] },
   sent_facts: { time: "created_at", times: ["created_at", "sent_at"], limit: 40, drop: [] },
 };
-function maskDeep(v: unknown, mask: (s: string) => string): unknown {
-  if (typeof v === "string") { const m = mask(v); return m.length > 3000 ? m.slice(0, 3000) : m; }
-  if (Array.isArray(v)) return v.map((x) => maskDeep(x, mask));
-  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, maskDeep(x, mask)]));
-  return v;
-}
+/** 11/05 弱い所 301: id・*_id の欄と ISO 時刻・uuid の値は伏せない（scripts/lib/brain-exam-mask.ts maskLedgerDeep） */
+const maskDeep = (v: unknown, mask: (s: string) => string, key: string | null = null): unknown => maskLedgerDeep(v, mask, key);
 async function ledgerSnapshot(conv: string, pcId: string | null, at: string, mask: (s: string) => string): Promise<Record<string, LedgerRow[]>> {
   const out: Record<string, LedgerRow[]> = {};
   for (const [t, c] of Object.entries(LEDGER_TABLES)) {
@@ -106,7 +104,7 @@ async function ledgerSnapshot(conv: string, pcId: string | null, at: string, mas
       for (const [k, v] of Object.entries(r)) {
         if (c.drop.includes(k)) continue;
         if (c.times.includes(k) && k !== c.time && typeof v === "string" && ms(v) > ms(at)) { row[k] = null; continue; } // その時点では未来
-        row[k] = k === "customer_name" ? "YUMA" : maskDeep(v, mask);
+        row[k] = k === "customer_name" ? "YUMA" : maskDeep(v, mask, k);
       }
       return { ago: Math.round((ms(at) - ms(String(r[c.time]))) / 60_000), row };
     });
@@ -165,6 +163,18 @@ export async function buildProblem(spec: ExamSpec): Promise<ExamProblem | string
   const mask = (s: string | null) => maskExamText(s, name, names);
   const at = ms(spec.at);
   // 2026-10-16 引用返信を写す（引用した通・引用された通だけ・ExamMsg の lm/q/img の説明）
+  // 2026-11-05 作業員1（弱い所 id 300・番 9758）: 場面より古い引用返信の先（こちらが送った物件の資料の画像）も写す。
+  //   旧は引用した通と引用された通が両方とも場面の中にある時だけ写し、3週間前の資料を引用した「こちらの初期費用は」でどの物件か分からなかった（本番のブレインは読めていた）。
+  //   こちらの画像の通だけ（お客様の画像は書類の恐れ）・最大3通・場面の頭に時刻の順で足す。戻す EXAM_OLD_QUOTE_COPY=off
+  if ((process.env.EXAM_OLD_QUOTE_COPY ?? "").trim().toLowerCase() !== "off") {
+    const inScene = new Set([...ctx, ...cust].map((m) => m.line_message_id).filter(Boolean));
+    const want = [...new Set([...ctx, ...cust].map((m) => m.quoted_message_id).filter((x): x is string => !!x && !inScene.has(x)))].slice(0, 3);
+    if (want.length) {
+      const { data: qd } = await sb.from("messages").select("id, sender, text, created_at, is_aix_generated, staff_writer, line_message_id, quoted_message_id, image_url").eq("conversation_id", spec.conv).in("line_message_id", want);
+      const olds = ((qd ?? []) as Msg[]).filter((m) => m.sender !== "customer" && !!m.image_url && ms(m.created_at) < ms(ctx[0]?.created_at ?? cust[0].created_at)).sort((a, b) => ms(a.created_at) - ms(b.created_at));
+      if (olds.length) ctx = [...olds, ...ctx];
+    }
+  }
   const sceneMsgs = [...ctx, ...cust];
   const quotedIds = new Set(sceneMsgs.map((m) => m.quoted_message_id).filter((x): x is string => !!x && sceneMsgs.some((o) => o.line_message_id === x)));
   const context: ExamMsg[] = sceneMsgs.map((m) => ({
@@ -204,7 +214,7 @@ export async function buildProblem(spec: ExamSpec): Promise<ExamProblem | string
     sub: subSceneOf({ customerText: custText, prevStaffText: prevStaff?.text ?? null, scene }),
     hourJst: jstHour(spec.at),
     customer: mask(custText).slice(0, 600),
-    context, pc, staffText,
+    context, pc, staffText, staffDelayMin: s0 ? Math.max(0, Math.round((s0 - at) / 60_000)) : null,
     prodBrain: b ? { action: b.suggested_action, mode: b.suggested_reply_mode, cp: b.suggested_check_pattern, src: b.decision_source, dir: String(b.digest?.dir ?? "").slice(0, 160) } : null,
     builtAt: new Date().toISOString(),
     ledger,

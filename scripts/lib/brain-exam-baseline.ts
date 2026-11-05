@@ -42,6 +42,8 @@ export function configHash(c: ExamConfig): string { return sha(JSON.stringify(c)
 export function problemHash(p: unknown): string {
   if (p && typeof p === "object" && !Array.isArray(p) && "builtAt" in (p as Record<string, unknown>)) {
     const rest = { ...(p as Record<string, unknown>) }; delete rest.builtAt;
+    // 2026-11-05 作業員1: 元の番の経過（staffDelayMin・再生の時計の材料）は問題の中身でない＝足しても前の取り置き・揺れの記録を作り直さない
+    delete rest.staffDelayMin;
     return sha(JSON.stringify(rest)).slice(0, 12);
   }
   return sha(JSON.stringify(p)).slice(0, 12);

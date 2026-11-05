@@ -1,6 +1,9 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-15
+## 🤝 約束の強化 ①③（11/05 作業員3・ブランチ feat/promise-1105・KB a5a2f6f8）
+- **① 開いている約束の帳面（FACT_LEDGER_OPEN_PROMISE・既定 on・戻す =off）**: customer-fact-ledger の約束の行を種類ごとに書く（ピックアップ・見積書＝次の一手で果たす番／確認＝結果待ち／果たした／14日より古い＝流れた）。送った事の行の言い方は変えない（変えると q209 で費用の質問を読み飛ばしてお礼だけと読んだ）。試験は main 比 悪化0（op2-on 15問・op2-r3 ×3）。8873（q204）は竹内さんの「今のまま」（お礼でない番は2段）で、正解に 2段:pickup を足した
+- **③ 二度言いの出口（DRAFT_SELF_REPEAT_DROP・既定 on・戻す =off）**: generate-reply の仕上げの束で、同じ下書きの中の同じ約束の2つ目を外す（地の文の約束・条件と日時が同じ物だけ・箇条書き／札／金額の行で区切る）。監査 `scripts/audit-self-repeat.ts`（竹内さんの手打ち 1,316通・AIX の文 1,919通・スタッフ全員の実送信 2,664通、どれも当たり0・下書きは 145c2664 の1通）
 ## 💰 本番の Claude を質を落とさず減らす（10/15 作る人・ブランチ claude-cost-1015）
 - **ブレインの重複は少ない** 本番7日 brain_fresh 392回 $25.2・会話の番 304。同じ入力（間にお客様の発言・スタッフ送信・AIX 無し）の二重は 22回 $1.5（6%）。内訳: 6時間の再利用（UNCHANGED_REUSE_HOURS）を過ぎた翌日の開き直し 約9回・cron の同じ秒の二重 約4回・画像/消えた発言の端。二重の判断は 20/21 が前と同じ（違った1件は2日空き）。入力が変わった走り直しも action・reply_mode が前と同じ 54%（止めない）。付いて走る物（full・strategy・checkpoint）に二重はほぼ無い（strategy 15分以内 9回 $0.2）
 - **直した** ① brain-sweep は下書きの claim（draft_attempted_at）5分以内の会話を拾わない（pend/bg と同じ秒の二重・週 2〜5回 $0.2〜0.6・BRAIN_SWEEP_SKIP_DRAFT_CLAIM=off） ② aix_template の先頭ブロック 35.5k を prefix-warm で温める（24回の全書き直しは全部 1h 切れ・前置き $7.42→$5.77/週・AIX_TEMPLATE_WARM=off）。先頭の文は app/lib/aix-template-system.ts に1文字も変えず移した（温めと同じ関数）

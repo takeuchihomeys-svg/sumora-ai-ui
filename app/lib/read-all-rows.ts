@@ -4,14 +4,15 @@
 //   例: brain-attention-server.buildTargetInputs のお客様の発言（45日・ターゲット候補の会話）は 1000行で切れ、
 //   最後の発言の時刻が古い会話ほど抜けて「止まっている」と読み違える余地があった。
 //   直し: 読み手が (from, to) と「回して読むか」を受け取る形で問い合わせを作り、この関数が 1000行ずつ最後まで（max まで）読む。
-//   切替 READ_ALL_ROWS=on の時だけ回す（既定 off＝今まで通り1回だけ・上限は max のまま＝本番では 1000行で切れる）。
+//   切替 READ_ALL_ROWS（2026-11-04 から既定 on・=off で1回だけの旧に戻す）。
 //   回して読む時は並びが決まっている必要がある（読み手が paged=true の時に id 等で並びを足す）。
 // テスト: app/lib/__tests__/read-all-rows.test.ts
 
 export const POSTGREST_MAX_ROWS = 1000;
 
 export function readAllRowsEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.READ_ALL_ROWS ?? "").trim().toLowerCase() === "on";
+  // 2026-11-04 既定 on（audit-read-all-rows の前後の比べ: ターゲット 47→47・取り下げ 0→0・切れていた行が戻るだけ＝学習のログ 1000→1776 等・READ_ALL_ROWS=off で戻す）
+  return (env.READ_ALL_ROWS ?? "").trim().toLowerCase() !== "off";
 }
 
 type Res<T> = { data: T[] | null; error: { message: string } | null };

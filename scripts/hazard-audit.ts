@@ -9,8 +9,11 @@
 //   (e) 本番の LP の「◯月実績」が今月か … ⑦（表示が止まったまま）
 //   (f) main の最近のコミットの前に tsc-remote 0 があるか … ⑥（型の確認の前にコミット）
 //   (i) 試験の係の記録の24時間: 止める印から猶予の内に止まらず殺した回・古い作業ツリーの依頼（点検表 10・12）
+//   (l) 手元の problems.json の問題と main の spec の同じ id の正解の中身が違う（id のぶつかり・作業員4の気付き）
+//   (k) 作業ツリーの手元の problems.json に同じ id が2つ以上ある（同じ問題を2回ずつ回す・点検表 13）
 //   (j) 24時間の試験の出力で、レーンが同じ会話を2本以上取った行（点検表 11）
 //   (h) 分からない事の3つの表（brain_weaknesses・brain_unknowns・owner_questions）の開いている数と新しく増えた数（夜の cron の数・KB 3892c30c）
+//   (m) 試験の写しの property_pickups を相場の観測（rent_observations）に通さない前提が trigger の定義のままか（弱い所 303）
 //   (g) 48時間の試験の結果で「悪化0」なのに前（main）と両方で解いた問題が予定より少ない（0 含む）物 … ⑨（比べていないのに悪化0）
 // 出力: 1行のまとめ（毎朝の見張りに貼る）＋詳しい所。前日との差分の為の控えは .claude/exam-cache/hazard-audit/（git に入らない）。
 // 実行: npx tsx --env-file=.env.local scripts/hazard-audit.ts [--json] [--no-db] [--no-net] [--save]
@@ -20,7 +23,8 @@ import { readdirSync, readFileSync, lstatSync, existsSync, mkdirSync, writeFileS
 import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
-import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, conductorLogHazards, laneDupConvs, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
+import { pickupTriggerStillSkips } from "./lib/exam-pickup-copy";
+import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, conductorLogHazards, laneDupConvs, dupProblemIds, idContentClashes, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
 
 const flag = (k: string) => process.argv.includes(`--${k}`);
 const git = (args: string[], cwd = process.cwd()) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
@@ -101,6 +105,25 @@ async function main() {
     }
   }
 
+  // (m) 2026-11-05 弱い所 303: 試験の写しの property_pickups が相場の観測に入らない前提（brain-exam の名前を後で入れる形・exam-pickup-copy.ts）が、trigger の定義のままか
+  //   見る所: trigger の UPDATE OF の列に property_name が無い・関数の先頭の「名前が空なら RETURN」。崩れたら試験の行が rent_observations に入る（静かに壊れる）
+  if (flag("no-db")) checks.push({ key: "m", ok: null, line: "相場の観測の trigger: 見ない（--no-db）", detail: [] });
+  else {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) checks.push({ key: "m", ok: null, line: "相場の観測の trigger: 不明（サーバーの鍵が無い）", detail: [] });
+    else {
+      const sql = `select (select pg_get_triggerdef(t.oid) from pg_trigger t join pg_class c on c.oid = t.tgrelid where c.relname = 'property_pickups' and t.tgname = 'rent_observe_pickup_trg') as trg,
+        (select pg_get_functiondef(p.oid) from pg_proc p where p.proname = 'rent_observe_pickup_apply' limit 1) as fn`;
+      const { data, error } = await createClient(url, key).rpc("exec_sql", { sql });
+      const row = (Array.isArray(data) ? data[0] : null) as { trg: string | null; fn: string | null } | null;
+      if (error || !row) checks.push({ key: "m", ok: null, line: `相場の観測の trigger: 不明（${(error?.message ?? "行なし").slice(0, 60)}）`, detail: [] });
+      else {
+        const v = pickupTriggerStillSkips(row.trg ?? "", row.fn ?? "");
+        checks.push({ key: "m", ok: v.ok, line: `相場の観測の trigger（試験の写しを通さない前提）${v.ok ? "そのまま" : `崩れた ${v.why.length}`}`, detail: v.why });
+      }
+    }
+  }
+
   // (e) 本番の LP の「◯月実績」
   if (flag("no-net")) checks.push({ key: "e", ok: null, line: "LP の月: 見ない（--no-net）", detail: [] });
   else {
@@ -166,6 +189,17 @@ async function main() {
     if (existsSync(rdir)) for (const f of readdirSync(rdir).filter((x) => x.endsWith(".out.log"))) {
       try { if (Date.now() - statSync(join(rdir, f)).mtimeMs > 24 * 3600_000) continue; for (const l of readFileSync(join(rdir, f), "utf8").split(/\r?\n/)) { const d = laneDupConvs(l); if (d.length) { dups.push(`${f.replace(/\.out\.log$/, "")}: ${d.join(",")}`); break; } } } catch { /* 読めない出力は飛ばす */ }
     }
+    // (k)
+    const wroot = join(repoRoot, ".claude", "worktrees"); const dupW: string[] = [];
+    if (existsSync(wroot)) for (const w of readdirSync(wroot)) { const f = join(wroot, w, "scripts", "brain-exam", "problems.json"); if (!existsSync(f)) continue; try { const d = dupProblemIds(JSON.parse(readFileSync(f, "utf8"))); if (d.length) dupW.push(`${w}: ${d.length}問（${d.slice(0, 6).join(",")}）`); } catch { /* 読めない物は飛ばす */ } }
+    // (l)
+    const clashes: string[] = [];
+    try {
+      const mainSpec = JSON.parse(git(["show", "origin/main:scripts/brain-exam/spec.json"], repoRoot)) as Array<Record<string, unknown>>;
+      if (existsSync(wroot)) for (const w of readdirSync(wroot)) { const f = join(wroot, w, "scripts", "brain-exam", "problems.json"); if (!existsSync(f)) continue; try { const c = idContentClashes(JSON.parse(readFileSync(f, "utf8")), mainSpec, (o) => `${String(o.conv ?? "")}|${String(o.at ?? "")}`);/* 正解の直し（spec の書き換え）は数えず、別の番（会話・時刻が違う）だけ */ if (c.length) clashes.push(`${w}: ${c.length}問（${c.slice(0, 6).join(",")}）`); } catch { /* 読めない物は飛ばす */ } }
+    } catch { /* main の spec が読めない */ }
+    checks.push({ key: "l", ok: clashes.length === 0, line: `手元の問題と main の spec で同じ id・違う番 ${clashes.length}作業ツリー`, detail: clashes });
+    checks.push({ key: "k", ok: dupW.length === 0, line: `手元の problems.json の同じ id ${dupW.length}作業ツリー`, detail: dupW });
     checks.push({ key: "j", ok: dups.length === 0, line: `24時間の試験の出力でレーンが同じ会話 ${dups.length}本`, detail: dups });
   }
 

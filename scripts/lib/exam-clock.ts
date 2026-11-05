@@ -33,3 +33,5 @@ export function installExamClock(): void {
 /** この回の間のずらし（ミリ秒・戻す量）。0 で元に戻す */
 export function setExamClockOffset(ms: number): void { const v = Math.max(0, Math.round(ms)); const l = currentLane(); if (l) l.clockOffsetMs = v; else offsetMs = v; }
 export function examClockOffset(): number { return offNow(); }
+/** 2026-11-05 作業員1（弱い所 id 298・EXAM_REPLAY_ELAPSED）: 時計を先に進める（負のずらし）＝再生でも元の番の「お客様の通 → 最初の送信」の経過をブレインに見せる。0 で元に戻す */
+export function setExamClockSigned(ms: number): void { const v = Math.round(ms); const l = currentLane(); if (l) l.clockOffsetMs = v; else offsetMs = v; }

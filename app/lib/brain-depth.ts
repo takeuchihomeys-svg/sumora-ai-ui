@@ -42,3 +42,44 @@ export function decideBrainDepth(i: DepthInput): { depth: BrainDepth; reason: st
   if (i.ackOnly && Array.from(t.trim()).length <= 20 && !i.pickupReady) return { depth: "light", reason: "短いお礼・了承" };
   return { depth: "normal", reason: "一般" };
 }
+
+// ── 第2段（2026-11-05 作業員4・竹内さんの決定 KB P1 077d6e18「深く読むのは複雑な番だけ」）──────────────────────
+//   竹内さんの番 680（conductor_turn_vectors・最初の一手）で、判断のブレインの外れが寄っていた理由だけを深く読む:
+//     申込・審査の言葉 41〜42%・複数の依頼 34.5%（普通 24.5%・短いお礼 12.3%・約束の結果待ち 25%・久しぶり 27%＝寄っていない）。
+//     外れの向きは「AIX と読み・竹内さんは返信」が 52/65（brain_weaknesses meeting-gap:brain-apply-multi-ask-over-aix）。
+//   形: 最初の判断の後に1回だけ、読み直しの口（brain-recheck の from=deep・kind=reread）で、依頼を1つずつ分けて決め直させる（決めるのはブレイン・答えは差し替えない）。
+//   切替: BRAIN_DEEP_RECHECK（既定 off・=on で読み直す）。10/22 の「速く・じっくり」を全部の番に一律にした形（効かなかった）は繰り返さない。
+export const DEEP_RECHECK_REASONS = ["複数の依頼", "申込", "審査"] as const;
+export const deepRecheckOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_DEEP_RECHECK ?? "").trim().toLowerCase() === "on";
+
+/** 深く読む材料の1行（理由ごと）。竹内さんの P0（スタッフだけが知る事は AIX・返信は AI が知り得る事だけ）と 9/30 の決定（審査・入居までの流れ・必要書類の質問は返信）に沿う */
+//   2026-11-05 竹内さんの決定（悪化を掘る時は竹内さんならこの番でどうするかを先に見る）: q217 と近い竹内さんの番5つ（申込・抑える・内見の番・conductor_turn_vectors 距離 0.10〜0.16）は
+//     どれも最初の一手が返信。順番は ①お客様の言葉を受けて答える返信（「かしこまりました！！抑えさせて頂きます」「大丈夫です」「お申込みさせて頂きます」）
+//     → ②その後の2通目に AIX（申込フォーマット・内覧の候補日）。見送り・様子見の番（q217）は返信だけで、新しいやる事を作らない。
+//     前の材料「依頼を1つずつ分けて決め直す」は、依頼の無い番で依頼を作り AIX に寄せた（q217 返信→AIX【挨拶（内覧前）】）＝竹内さんの順番に寄せて言い直す。
+export function deepRecheckMaterial(reason: string): string {
+  const order = "竹内さんの順番で決め直す: ①まずお客様の言葉を受けて、会話・送った資料・会社の事実で答えられる事を返信で答える（了承・抑える・申込を受ける・聞かれた事への答え）。②スタッフだけが知る事（管理会社の確認の結果・募集状況・見積の金額・内覧の日程の確定）や送る物（申込フォーマット・内覧の候補日）は、その後の2通目の AIX か次の番。③見送り・様子見・了承だけの番は返信だけで、新しいやる事を作らない。";
+  const p0 = "今の番の最初の一手が①の返信で受ける番なら返信に、受ける言葉が無く今すぐスタッフだけが知る事を送る番だけ AIX のままにする。";
+  if (reason === "申込" || reason === "審査") return `${order}申込・審査の流れ・必要書類・審査の目安・入居までの期間は会社の事実で答えられる（返信）。${p0}`;
+  return `${order}${p0}`;
+}
+
+/** 深く読む番なら読み直しの材料を返す（深く読む理由が DEEP_RECHECK_REASONS の時だけ・それ以外は null＝普通の番は今まで通り） */
+/**
+ * 2026-11-05 P0 575a7cd5（統括は重点を先に決め、必要なブレインだけを動かし、返ってきた答えを確かめて1つにまとめる）:
+ *   この読み直しは統括の後半（確かめて決め直す）。前半の「重点」（作業員5・meta.conductor_focus）がある時は、重点に沿って決め直すよう材料の先頭に書く。
+ *   重点が無い時は今まで通り（材料は変えない）。
+ */
+export type ConductorFocusLite = { focus: string; why?: string | null } | null | undefined;
+export function deepRecheckFor(dep: { depth: BrainDepth; reason: string } | null | undefined, firstAix: string | null, focus?: ConductorFocusLite): { from: "deep"; kind: "reread"; why: string; firstAix: string | null; material: string } | null {
+  if (!dep || dep.depth !== "deep" || !(DEEP_RECHECK_REASONS as readonly string[]).includes(dep.reason)) return null;
+  // 2026-11-05 試験 deep-on1 の悪化 q217（申込を見送る了承の番・最初は返信＝正解 → 読み直しで AIX【挨拶（内覧前）】に変わった）:
+  //   外れの寄りは「AIX と読み・竹内さんは返信」が 52/65 で、逆向き（返信と読み・竹内さんは AIX）は 13/65。最初が返信の番を読み直すと、
+  //   依頼の無い番で「何かやる事」を作って AIX に寄せる（場面・決まりの読み違えを読み直しが作る）。→ 最初の判断が AIX（reply_mode=aix の action）の番だけ読み直す（返信・2段の約束の番は読み直さない）。
+  if (!firstAix) return null;
+  const f = focus && String(focus.focus ?? "").trim() ? `統括の重点「${String(focus.focus).trim().slice(0, 40)}」${focus.why ? `（${String(focus.why).trim().slice(0, 60)}）` : ""}に沿って決め直す。` : "";
+  return { from: "deep", kind: "reread", why: `複雑な番（${dep.reason}）`, firstAix, material: `${f}${deepRecheckMaterial(dep.reason)}` };
+}
+
+/** digest.dr: "理由:最初→最後"（AIX の鍵・返信は r） */
+export const deepRecheckDigest = (reason: string, first: string | null, last: string | null) => `${reason}:${first ?? "r"}→${last ?? "r"}`.slice(0, 60);

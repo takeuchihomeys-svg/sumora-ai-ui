@@ -77,7 +77,7 @@ export function splitWorse(cur: RowLite[], base: RowLite[], flaky: ReadonlySet<s
 //   試験の揺れの記録（scripts/lib/exam-flake の観測・30日）から、同じ問題・同じモデルで答えが割れた問題を「揺れる」とみて回数を増やす。
 //   揺れる問題は flakyReps（3〜6・既定 4）、それ以外は normal（既定 2）。依頼で名指しした揺れる問題（--flaky）も揺れる扱い。
 /** 11/04 竹内さんの決定（使い回せる物は使い回す）: 揺れの記録で回数を決める＝安定（独立に3回以上同じ答え）は1回・分からないは normal・揺れるは flakyReps */
-export function repsPlan(ids: string[], obsOf: (id: string) => FlakeObs[], o: { normal: number; flakyReps: number; forced?: string[]; model?: string; stableReps?: number }): { reps: Record<string, number>; flaky: Array<{ id: string; why: string }>; stable?: string[] } {
+export function repsPlan(ids: string[], obsOf: (id: string) => FlakeObs[], o: { normal: number; flakyReps: number; forced?: string[]; model?: string; stableReps?: number; /** 2026-11-05 作業員1（作業員4の気付き・id のぶつかり）: 今の問題の中身の hash の候補（手元の problems.json から・出し切りの正解の差し替えの前後）。渡せば候補に当たる観測だけで揺れを決め、当たらなければ観測なし（別の問題の観測で回数を決めない）。渡さなければ前の形（一番新しい観測の hash） */ hashesOf?: (id: string) => string[] | null }): { reps: Record<string, number>; flaky: Array<{ id: string; why: string }>; stable?: string[] } {
   const fr = Math.min(6, Math.max(3, o.flakyReps));
   const reps: Record<string, number> = {}, flaky: Array<{ id: string; why: string }> = [], stable: string[] = [];
   for (const id of ids) {
@@ -85,7 +85,9 @@ export function repsPlan(ids: string[], obsOf: (id: string) => FlakeObs[], o: { 
     const obs = obsOf(id);
     // 一番新しい観測の問題の版・モデルで見る（問題を直した前の観測は数えない）
     const last = [...obs].filter((x) => !x.legacy && (!o.model || x.model.includes(o.model))).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
-    const v = last ? flakeVerdict(obs, { problemHash: last.problemHash, model: last.model }) : null;
+    const cands = o.hashesOf?.(id) ?? null;
+    const want = cands ? cands.find((h) => obs.some((x) => x.problemHash === h)) ?? null : null;
+    const v = last && (!cands || want) ? flakeVerdict(obs, { problemHash: want ?? last.problemHash, model: last.model }) : null;
     if (v?.verdict === "flaky") { reps[id] = fr; flaky.push({ id, why: v.why }); }
     else if (v?.verdict === "stable" && o.stableReps != null) { reps[id] = Math.max(1, o.stableReps); stable.push(id); }
     else reps[id] = o.normal;
@@ -209,4 +211,31 @@ export function splitByTime(ids: ReadonlyArray<string>, reps: Readonly<Record<st
     if (ok || n === ids.length) return parts.filter((p) => p.ids.length).map((p) => ids.filter((x) => p.ids.includes(x)));
   }
   return [ [...ids] ];
+}
+
+/**
+ * 2026-11-05 作業員1（弱い所 id 293・統括役の指示）: 止めた回の片付け先を、この回の出力から全部拾う。
+ *   1本の回は「テストの会話: YUMA3（…）」、レーンの回は「レーン（…）: 4本 YUMA2（…・線 scripts/.replay-out/brain-exam-floor-<label>-yuma2.json）・…」。
+ *   main の子（前を作る・label が main- で始まる）の行も同じ出力に出る＝その label・会話も拾う（子の置き場は brain-exam-main）。
+ *   旧は「テストの会話:」の最後の1本だけを見て、レーンの回は「読めない」で片付けなかった（殺された回の行が残り、次の回が「他の問題の発言」で回し直す）。
+ */
+export function cleanupTargets(outText: string, label: string): Array<{ conv: string; label: string; child: boolean }> {
+  const out = new Map<string, { conv: string; label: string; child: boolean }>();
+  for (const m of outText.matchAll(/(YUMA\d+)（[0-9a-f]{6,}・線 scripts\/\.replay-out\/brain-exam-floor-(.+?)-yuma\d+\.json）/g)) {
+    const lb = m[2];
+    out.set(`${lb}|${m[1]}`, { conv: m[1], label: lb, child: lb !== label && /^main-/.test(lb) });
+  }
+  for (const m of outText.matchAll(/テストの会話: (YUMA\d+)（[^\n]*?線 scripts\/\.replay-out\/brain-exam-floor-(.+?)(?:-yuma\d+)?\.json/g)) {
+    out.set(`${m[2]}|${m[1]}`, { conv: m[1], label: m[2], child: m[2] !== label && /^main-/.test(m[2]) });
+  }
+  if (!out.size) { const c = [...outText.matchAll(/テストの会話: (YUMA\d+)（/g)].pop()?.[1]; if (c) out.set(`${label}|${c}`, { conv: c, label, child: false }); }
+  return [...out.values()];
+}
+
+/** 2026-11-05 作業員1（作業員3の気付き）: vercel inspect の出力から組み立ての状態（READY・ERROR・BUILDING 等）。読めなければ null */
+export function remoteDeployState(text: string): "READY" | "ERROR" | "CANCELED" | "BUILDING" | "QUEUED" | null {
+  const m = String(text ?? "").match(/status\s*[●•]?\s*(Ready|Error|Canceled|Building|Queued|Initializing)/i);
+  if (!m) return null;
+  const v = m[1].toLowerCase();
+  return v === "ready" ? "READY" : v === "error" ? "ERROR" : v === "canceled" ? "CANCELED" : v === "queued" ? "QUEUED" : "BUILDING";
 }

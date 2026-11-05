@@ -49,6 +49,27 @@ function stripBullet(line: string): string {
 const NAME_LABEL_RE = /^[【[]?\s*(?:物件名称|物件名|建物名称|建物名|マンション名|名称)\s*[】\]]?\s*[:：]?\s*(.+)$/;
 /** 号室の見出し */
 const ROOM_LABEL_RE = /^[【[]?\s*(?:号室名|号室|部屋番号)\s*[】\]]?\s*[:：]?\s*(.+)$/;
+/**
+ * 2026-11-05 弱い所 302（8931）: こちらの物件資料（リアプロ）の読み取りは号室が「室名：103（1階部分）」の形で、上の見出しに当たらず号室が null
+ *   → 名前が近くても same_building に倒れ、「こちらが送った物件（確認済み）」の材料が出ず、ブレインが持ち込みとして募集の確認を選んだ。
+ *   取り出し（候補を拾う側）を広げるだけで、言い切り（matchOwnProperty: 名前 0.7・シリーズ番号・号室が同じ）はそのまま（KB 277094fd）。
+ *   既定 on（11/05 統括役: 読み取りの正しさの直し・90日の送り返し21通を目で読み取り違え0・言い切りが増えたのは1通）。戻す OWN_PROPERTY_ROOM_LABEL_WIDE=off
+ */
+const ROOM_LABEL_WIDE_RE = /^[【[]?\s*(?:号室名|号室番号|号室|部屋番号|部屋名|室名|室番号)\s*[】\]]?\s*[:：]?\s*(.+)$/;
+export function ownPropertyRoomLabelWideOn(): boolean { return process.env.OWN_PROPERTY_ROOM_LABEL_WIDE !== "off"; }
+
+/**
+ * 2026-11-05 弱い所 302（8931）: 照合で「全部こちらが送った物件」と分かっても、ブレインは「物件の画像を送って『ここはどうでしょうか』→ 物件確認した」
+ *   の決まり（お客様が自分で見つけた物件の決まり）に当てて募集状況の確認を選んでいた（照合あり＋送った物件は確認済みの材料ありで 0/3）。
+ *   実送信（audit-own-property-returned.ts・90日・こちらの資料の送り返し 21通・取り違え 0）: 竹内さんの7番は 見積書 3・内覧の案内 3・その他 1、募集状況の確認 0。
+ *   スタッフ全体は見積書 14/21。費用を言っていない「ここだとどうですか」にも竹内さんは最大限割引の御見積書で答えている（8931）。
+ *   既定 off（OWN_PROPERTY_RETURNED_ESTIMATE=on で使う）
+ */
+export function ownPropertyReturnedEstimateOn(): boolean { return process.env.OWN_PROPERTY_RETURNED_ESTIMATE === "on"; }
+export const OWN_PROPERTY_RETURNED_ESTIMATE_LINE =
+  "\n  → この番は「お客様が自分で見つけた物件の画像＋『ここはどうでしょうか』＝物件確認した」の決まりに当たらない（こちらが送った物件で募集中は確認済み）。" +
+  "お客様がその物件を見て評価・関心を聞いてきた番＝費用を言っていなくても、最大限割引の御見積書（estimate_sheet）か内覧の案内で答える" +
+  "（実送信: こちらの資料の送り返しで竹内さんが募集状況を確認した番 0/7・スタッフ全体は見積書 14/21）。";
 
 /** 見出しの値から物件名（と、値の中に混ざっている号室）を取り出す */
 function cleanNameValue(raw: string): ScreenshotProperty | null {
@@ -96,7 +117,7 @@ export function extractScreenshotProperty(text: string | null | undefined): Scre
     if (got.room) return got;
     // 号室は別の行（「【号室名】1003（10階部分）」「号室名 0102」）
     for (const r of lines) {
-      const rm = r.match(ROOM_LABEL_RE);
+      const rm = r.match(ownPropertyRoomLabelWideOn() ? ROOM_LABEL_WIDE_RE : ROOM_LABEL_RE);
       if (!rm) continue;
       const room = normalizeRoom((rm[1].match(/[0-9]{2,4}[A-Za-z]?/) ?? [])[0]);
       if (room) return { name: got.name, room };

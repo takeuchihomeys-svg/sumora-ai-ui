@@ -71,6 +71,8 @@ import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldR
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, type ExamLane } from "./lib/exam-lane";
 import type { ReplayFloor } from "../app/lib/test-replay-floor";
+import { examPickupNameLateOn, splitPickupNames } from "./lib/exam-pickup-copy";
+import { examRealGapsOn, gapSceneTimes } from "./lib/exam-scene-times";
 
 const PROBLEMS_FILE = "scripts/brain-exam/problems.json";
 const SPEC_FILE = "scripts/brain-exam/spec.json";
@@ -420,9 +422,17 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
       if (t === "estimate_records") o.aix_usage_log_id = o.aix_usage_log_id ? aixIdMap.get(String(o.aix_usage_log_id)) ?? null : null;
       return { o, oldId };
     });
-    const r = await sb.from(t).insert(objs.map((x) => x.o)).select("id");
+    // 2026-11-05 弱い所 303: property_pickups は名前を空で入れて trigger（相場の観測 rent_observations への upsert）を通さず、あとで名前だけ入れる（scripts/lib/exam-pickup-copy.ts・EXAM_PICKUP_NAME_LATE=off で旧）
+    const lateNames = t === "property_pickups" && examPickupNameLateOn();
+    const split = lateNames ? splitPickupNames(objs.map((x) => x.o)) : null;
+    const r = await sb.from(t).insert(split ? split.insertRows : objs.map((x) => x.o)).select("id");
     if (r.error) { errors.push(`${t}: ${r.error.message.slice(0, 120)}`); continue; }
     const ids = ((r.data ?? []) as Array<{ id: string | number }>).map((x) => String(x.id));
+    if (split) {
+      const ups = await Promise.all(ids.map((id, i) => (split.names[i] ? sb.from(t).update({ property_name: split.names[i] }).eq("id", id).select("id") : Promise.resolve({ error: null }))));
+      const ue = ups.find((u) => u.error);
+      if (ue?.error) errors.push(`${t}(名前): ${ue.error.message.slice(0, 120)}`);
+    }
     S().ownLedger[t] = [...(S().ownLedger[t] ?? []), ...ids]; saveOwnLedger(); writeCount.ledgerIns += ids.length;
     if (t === "aix_usage_logs") objs.forEach((x, i) => { if (x.oldId != null && ids[i]) aixIdMap.set(String(x.oldId), ids[i]); });
     inserted[t] = ids.length;
@@ -991,6 +1001,8 @@ async function prepareMainBaseline(): Promise<boolean> {
     // 2026-10-22 査読: 日付のずらし方を旧（EXAM_DATE_SHIFT=week）に戻した回は、ちょうどずらした main の答えと比べない（場面の日付と時計の関係が違う・
     //   日付は録音の鍵で伏せる＝入力の差でも同じに見える）。既定（ちょうど）の時は足さない＝今までの置き場のまま
     ...(String(process.env.EXAM_DATE_SHIFT ?? "").trim().toLowerCase() === "week" ? { dateShift: "week" } : {}),
+    // 2026-11-05 作業員1: 通の時刻を元の間隔（EXAM_REAL_GAPS・既定 on）で置いた回は、90秒おきの前の答えと比べない（取り置きを作り直す）
+    ...(examRealGapsOn(mainEnv as Record<string, string | undefined>) ? { sceneTimes: "gaps" } : {}),
   });
   const ch = B.configHash(cfg);
   // 2026-10-15 ② 比べる相手の版: main の commit ではなく「試験に効く所の中身」の鍵で置く。main が進んでも試験に効く所が同じなら同じ置き場（使い回す）、
@@ -1436,7 +1448,15 @@ async function main() {
   const { extractStrategy } = await import("../app/lib/brain-layers");
   const { runInDeepseekScope, setDeepseekScope } = await import("../app/lib/deepseek-scope");
   const { MSG_SEP } = await import("../app/lib/reply-context");
-  const problems = await orderProblems(pick(loadProblems().map(effectiveProblem)));
+  // 2026-11-05 作業員1（点検表 13）: 手元の problems.json に同じ id が2つあると同じ問題を2回ずつ回していた（add-batch を2回・費用が倍）＝id で1つにする
+  const problems0 = pick(loadProblems().map(effectiveProblem));
+  const dupIds = [...new Set(problems0.map((x) => x.id).filter((id, i, a) => a.indexOf(id) !== i))];
+  if (dupIds.length) console.warn(`⚠ 同じ id の問題が2つ以上ある（${dupIds.join(",")}）→ 後の物を1つだけ回す。手元の problems.json を作り直す: scripts/brain-exam-add.ts --rebuild`);
+  const problems = await orderProblems([...new Map(problems0.map((x) => [x.id, x])).values()]);
+  {
+    const runsPlanned = problems.reduce((sum, x) => sum + (REPS_OF ? Math.max(1, Math.min(REPEAT, REPS_OF[x.id] ?? 1)) : REPEAT), 0);
+    console.log(`回す前の確かめ: ${problems.length}問・合計 ${runsPlanned}回（ブレイン ${LAYER === "prod" ? 2 : 1}回／回）・見込み 約 $${(runsPlanned * 0.03).toFixed(2)}（DeepSeek・1回 $0.03 の目安）`);
+  }
   const DRAFT = problems.some((p) => stageOf(p) === "draft");
   const POST = DRAFT ? (await import("../app/api/generate-reply/route")).POST : null;
   const callsPer = LAYER === "prod" ? 2 : 1;
@@ -1523,7 +1543,9 @@ async function main() {
   const pcRetries = new Map<string, number>();
   // 2026-10-28 A（--reuse-fixture）: 前の回の写しを持ったまま（同じ問題の次の回で使い回す）。違う問題に移る時・ループの後に片付ける
   const examClock = await import("./lib/exam-clock");
-  if (REUSE_FIXTURE) examClock.installExamClock();
+  // 2026-11-05 作業員1（弱い所 id 298）: EXAM_REPLAY_ELAPSED=on の時は、元の番の「お客様の通 → 最初の送信」の分だけ時計を進めてブレインを回す（経過だけ・確かめの準備の有無は答えなので入れない）
+  const REPLAY_ELAPSED = (process.env.EXAM_REPLAY_ELAPSED ?? "").trim().toLowerCase() === "on";
+  if (REUSE_FIXTURE || REPLAY_ELAPSED) examClock.installExamClock();
   const heldNow = (): HeldFixture | null => S().held;
   const releaseHeld = async () => {
     if (!S().held) return;
@@ -1582,10 +1604,17 @@ async function main() {
       let mism = await verifyPc(S().yumaPc, pcPatchOf(p.pc));
       if (mism.length) { await writePc(S().yumaPc, p.pc); await new Promise((r) => setTimeout(r, 800)); mism = await verifyPc(S().yumaPc, pcPatchOf(p.pc)); }
       if (mism.length) row.pcMismatch = mism;
-      const times: string[] = reuse ? reuse.times : h.sceneTimes(texts.length, { stepSec: 90 });
+      // 2026-11-05 作業員1（8959・q212）: 元の間隔（90秒〜5分）を使う（scripts/lib/exam-scene-times.ts・既定 on・EXAM_REAL_GAPS=off で旧の90秒おき）
+      const times: string[] = reuse ? reuse.times : examRealGapsOn() ? gapSceneTimes(ps.context.map((m) => m.ago), Date.now() + 2 * 60_000) : h.sceneTimes(texts.length, { stepSec: 90 });
       // A: 使い回す回は、1回目に写しを作った時からの経過だけ時計を戻す（通の時刻からの経過を毎回写し直した時と同じに・exam-clock）
       const setupAt = reuse ? reuse.setupAt : examClock.realNow();
       if (reuse) examClock.setExamClockOffset(examClock.realNow() - reuse.setupAt);
+      const delayMin = (p as { staffDelayMin?: number | null }).staffDelayMin;
+      if (REPLAY_ELAPSED && typeof delayMin === "number" && times.length) {
+        const target = Date.parse(times[times.length - 1]) + delayMin * 60_000;
+        examClock.setExamClockSigned(examClock.realNow() - target);
+        console.log(`  時計: 元の番の経過 ${delayMin}分 を見せる（${p.id}#${rep}）`);
+      }
       // 連投の始まり（最後のお客様の通のまとまり）
       let burst = p.context.length; while (burst - 1 >= 0 && p.context[burst - 1].s === "customer") burst--;
       // 2026-10-16 引用返信（ExamMsg の lm/q/img）: 引用された通と引用した通を同じ新しい id でつなぐ（元の LINE の id は使わない）。
@@ -1721,7 +1750,7 @@ async function main() {
       }
     } catch (e) { row.error = e instanceof Error ? e.message : String(e); }
     finally {
-      if (REUSE_FIXTURE) examClock.setExamClockOffset(0);
+      if (REUSE_FIXTURE || REPLAY_ELAPSED) examClock.setExamClockOffset(0);
       if (savedClock === undefined) delete process.env.TEST_CLOCK_JST_HOUR; else process.env.TEST_CLOCK_JST_HOUR = savedClock;
       delete process.env.EXAM_MONTH_SHIFT_DAYS;
       // A: 次の回も同じ問題なら写しを持ち越す（失敗・条件の混ざりの回は今まで通り片付ける）。2層の問題の後半の通だけはここで消す
