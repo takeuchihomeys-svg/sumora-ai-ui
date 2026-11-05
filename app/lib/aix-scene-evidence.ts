@@ -25,6 +25,7 @@ import { customerImageGroup } from "./image-label";
 import { aixMgmtLifelineEnabled, isLifelineQuestion } from "./aix-lifeline";
 import { aixNewPickers1020Enabled, isApplicationStatusQuestion, isRoomVacanciesQuestion } from "./aix-new-pickers";
 import { savedPersonalDocumentLabel } from "./personal-document-guard";
+import { ownSituationNotVacancyOn, isOwnSituationRentQuestion } from "./own-situation-question";
 
 /**
  * お客様の画像の1通が「物件の持ち込みになりうる画像」か（2026-10-01・画像の見出し image-label）。
@@ -332,7 +333,10 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   if (!procedureOnly && SCREENING_Q_RE.test(msg) && specified) {
     return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_guarantor", timing: "after_confirm", chained: null, reasonCode: "screening_question", propertySpecifiedBy: specBy });
   }
+  // 2026-11-05 作業員7（弱い所 343・q332）: お客様自身の事情（無職・夜職 等）で借りられるかの問いは空室の問いにしない（判断はブレインに返す・既定 off OWN_SITUATION_NOT_VACANCY=on）
+  //   竹内さんの実送信は AIX【電話】（審査の打ち合わせ）1通。本番90日の監査は own-situation-question.ts の頭
   if (!slotQuestion && specified && !(procedureOnly && !AVAILABILITY_EXPLICIT_RE.test(msg) && !AVAILABILITY_URL_RE.test(msg))
+    && !(ownSituationNotVacancyOn() && !AVAILABILITY_URL_RE.test(msg) && isOwnSituationRentQuestion(msg))
     && detectAvailabilityCheckContext(ownReturned ? normalizeCustomerText(msg) : msg)) {
     return ev({ scene: "S1_vacancy", candidateAction: "property_check_result", checkPattern: null, timing: "after_confirm", chained: estimateDeclare ? "estimate_sheet" : null, reasonCode: "availability_question", propertySpecifiedBy: specBy });
   }
