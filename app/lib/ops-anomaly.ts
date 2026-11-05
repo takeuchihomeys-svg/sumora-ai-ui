@@ -14,7 +14,7 @@
 //   売上番長グループには送らない（feedback_group_aix_only）
 // 同じ種類が続く間は1行を更新する（開いた行＝resolved_at が null）。正常に戻った回に resolved_at を入れる。
 
-export type AnomalyKind = "llm_fail" | "draft_stuck" | "cron_fail" | "brain_gap";
+export type AnomalyKind = "llm_fail" | "draft_stuck" | "cron_fail" | "brain_gap" | "llm_balance";
 export type AnomalyStats = {
   /** 直近15分の LLM の失敗 */ llmFail15: number;
   /** 過去4週の同じ曜日・同じ15分の LLM の失敗（週ごと） */ llmFailBaseline: number[];
@@ -24,6 +24,7 @@ export type AnomalyStats = {
   /** 直近90分のお客様の発言 */ customerMsgs90: number;
   /** 直近90分のブレインの判断の記録 */ brainLogs90: number;
   /** JST の時（0〜23） */ jstHour: number;
+  /** 2026-11-05 直近15分の本番の 402（残高切れ・DeepSeek 等）。llmFail15 は 500 以上と 0 だけ数えるので別に数える */ llmBalance15?: number;
 };
 export type Anomaly = { kind: AnomalyKind; severity: "warn" | "high"; value: number; baseline: number | null; why: string; detail?: Record<string, unknown> };
 
@@ -32,6 +33,7 @@ export const ANOMALY_LABEL: Record<AnomalyKind, string> = {
   draft_stuck: "下書きが止まっている",
   cron_fail: "定時の処理の失敗が続く",
   brain_gap: "ブレインの判断が止まっている",
+  llm_balance: "AI の残高切れ（DeepSeek 等・402）",
 };
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -48,8 +50,13 @@ export function evaluateAnomalies(s: AnomalyStats): Anomaly[] {
     out.push({ kind: "cron_fail", severity: s.cronFail30 >= 10 ? "high" : "warn", value: s.cronFail30, baseline: null, why: `直近30分の cron の失敗 ${s.cronFail30}件${s.cronFailNames?.length ? `（${s.cronFailNames.join("・")}）` : ""}`, detail: s.cronFailNames?.length ? { crons: s.cronFailNames } : undefined });
   if (s.jstHour >= 10 && s.jstHour < 22 && s.customerMsgs90 >= 4 && s.brainLogs90 === 0)
     out.push({ kind: "brain_gap", severity: s.customerMsgs90 >= 10 ? "high" : "warn", value: s.customerMsgs90, baseline: 0, why: `直近90分にお客様の発言 ${s.customerMsgs90}件・ブレインの判断の記録 0件` });
+  // 2026-11-05 作業員1（11/05 11:40〜 JST の DeepSeek の残高切れ・資料の読み取りが失敗して送った物件の記録が抜けた）: 本番で 402 が1回でもあれば重い
+  if ((s.llmBalance15 ?? 0) >= 1)
+    out.push({ kind: "llm_balance", severity: "high", value: s.llmBalance15 ?? 0, baseline: 0, why: `直近15分に本番で 402（残高切れ）${s.llmBalance15}件。入金を確かめる（読めなかった送付の資料は入金の後に夜の読み直しで埋まる）` });
   return out;
 }
+/** 2026-11-05: 残高切れの知らせは OPS_ANOMALY_WATCH が dry（既定）でも表と LINE に出す（止める OPS_ANOMALY_BALANCE=off） */
+export function opsAnomalyBalanceLive(env: Record<string, string | undefined> = process.env): boolean { return String(env.OPS_ANOMALY_BALANCE ?? "").trim().toLowerCase() !== "off"; }
 
 /** 開いている行と今回の結果から、足す・更新する・閉じる を決める（純関数） */
 export function planAnomalyWrites(open: Array<{ id: string; kind: string; severity: string; value: number }>, now: Anomaly[]): { insert: Anomaly[]; update: Array<{ id: string; a: Anomaly }>; resolve: string[] } {

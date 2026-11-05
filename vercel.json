@@ -61,6 +61,10 @@
       "schedule": "40 19 * * *"
     },
     {
+      "path": "/api/cron/sent-image-reread",
+      "schedule": "50 19 * * *"
+    },
+    {
       "path": "/api/cron/second-takeuchi-data",
       "schedule": "20 20 * * 0"
     },

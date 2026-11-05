@@ -1,6 +1,6 @@
 // app/lib/__tests__/ops-anomaly.test.ts — 本番の異常の知らせの判断（純関数）
 //   実行: npx tsx app/lib/__tests__/ops-anomaly.test.ts
-import { opsAnomalyWatchMode, evaluateAnomalies, planAnomalyWrites, anomalyDestinations, opsAnomalyWatchOn, anomalyLineTargetFrom, anomalyLineConversation, shouldLineNotify, type AnomalyStats } from "../ops-anomaly";
+import { opsAnomalyWatchMode, opsAnomalyBalanceLive, evaluateAnomalies, planAnomalyWrites, anomalyDestinations, opsAnomalyWatchOn, anomalyLineTargetFrom, anomalyLineConversation, shouldLineNotify, type AnomalyStats } from "../ops-anomaly";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const base: AnomalyStats = { llmFail15: 0, llmFailBaseline: [0, 0, 0, 0], draftStuck: 0, cronFail30: 0, customerMsgs90: 0, brainLogs90: 0, jstHour: 14 };
@@ -36,6 +36,10 @@ t("同じ種類は1時間に1回まで", !shouldLineNotify("llm_fail", { llm_fai
 t("宛先に line が無ければ送らない", !shouldLineNotify("llm_fail", {}, nowMs, ["table"]));
 t("知らせ先を足せる", anomalyDestinations({ OPS_ANOMALY_DESTINATIONS: "table, line" }).join(",") === "table,line");
 t("見張りは既定 dry（書かない・送らない）", opsAnomalyWatchMode({}) === "dry" && !opsAnomalyWatchOn({}) && opsAnomalyWatchOn({ OPS_ANOMALY_WATCH: "on" }) && opsAnomalyWatchMode({ OPS_ANOMALY_WATCH: "off" }) === "off");
+// 2026-11-05 残高切れ（402）: 1回でも重い・llmFail15（500 以上と 0）とは別に数える
+t("402 が1回で llm_balance（重い）", (() => { const a = evaluateAnomalies({ ...base, llmBalance15: 1 }).find((x) => x.kind === "llm_balance"); return !!a && a.severity === "high"; })());
+t("402 が無ければ出さない", !evaluateAnomalies({ ...base, llmBalance15: 0 }).some((x) => x.kind === "llm_balance") && !evaluateAnomalies(base).some((x) => x.kind === "llm_balance"));
+t("残高切れの知らせは既定で dry の間も出す・off で止める", opsAnomalyBalanceLive({}) && !opsAnomalyBalanceLive({ OPS_ANOMALY_BALANCE: "off" }));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

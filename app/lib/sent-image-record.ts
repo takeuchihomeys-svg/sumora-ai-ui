@@ -60,6 +60,8 @@ export async function recordSentImageProperty(opts: {
   conversationId: string;
   source: string;
   propertyCustomerId?: string | null;
+  /** 2026-11-05 読み直し（sent-image-reread）: 元の送信の時刻。送った物件の行の sent_at・募集状況を見た時刻に使う（無ければ今） */
+  sentAt?: string | null;
 }): Promise<SentImageRecordResult> {
   const { imageUrl, conversationId, source } = opts;
   // 経路は渡された source から決める（照合できなかった時の 'vision' への落とし込みより前・2026-09-24 竹内「どれ物件ピックアップで送ったか…わかる」）
@@ -91,8 +93,10 @@ export async function recordSentImageProperty(opts: {
     } else {
       // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」:
       //   読み取りは DeepSeek（property_image_read）。申込中の会話で送った画像は読まない（送った直後に呼ばれる＝今の時刻で見る・読めなければ読まない）
-      const { loadDeepseekCutoff } = await import("@/app/lib/post-apply");
-      if ((await loadDeepseekCutoff(supabase, conversationId)) === null) {
+      const { loadDeepseekCutoff, isAfterCutoff } = await import("@/app/lib/post-apply");
+      const cutoff = await loadDeepseekCutoff(supabase, conversationId);
+      // 2026-11-05: 後から読み直す時（sentAt あり）は、送った時刻が渡してよい側（線より後）の時だけ読む
+      if (cutoff === null || (opts.sentAt && !isAfterCutoff(opts.sentAt, cutoff))) {
         console.log(JSON.stringify({ tag: "deepseek-cutoff:skip-image-read", route: "sent-image-record", conversationId }));
         return out;
       }
@@ -231,7 +235,8 @@ export async function recordSentImageProperty(opts: {
       delivery: "customer",
       ...(channel ? { channel } : {}),
       // 読めなかった項目は入れない（0 や "open" に丸めない）
-      ...(item.status ? { recruitment_status: item.status, recruitment_checked_at: new Date().toISOString() } : {}),
+      ...(opts.sentAt ? { sent_at: opts.sentAt } : {}),
+      ...(item.status ? { recruitment_status: item.status, recruitment_checked_at: opts.sentAt ?? new Date().toISOString() } : {}),
       ...(typeof item.rent === "number" ? { rent: item.rent } : {}),
     });
     out.sentProperties = spErr ? `error:${spErr.message}` : "inserted";

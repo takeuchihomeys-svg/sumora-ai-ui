@@ -377,6 +377,18 @@ export async function POST(req: NextRequest) {
       }
     });
   }
+  // 2026-11-05 作業員1（案3'・竹内さんの決まり「読み取りは必ず DeepSeek」の中で）: この会話で前に読めなかった送付の画像（72時間・最大3枚）を DeepSeek で読み直して
+  //   送った物件の記録を埋める（今回送った画像は上で読むので外す）。LINE には何も送らない。止める SENT_IMAGE_REREAD=off
+  if (sentImageList.length > 0 && conversation_id) {
+    after(async () => {
+      try {
+        const { runSentImageReread } = await import("@/app/lib/sent-image-reread-server");
+        await runSentImageReread({ conversationId: conversation_id, limit: 3, excludeUrls: sentImageList });
+      } catch (e) {
+        console.warn("[send-line-message] 前の送付の画像の読み直し失敗:", e instanceof Error ? e.message : e);
+      }
+    });
+  }
 
   // スタッフ送信メッセージに「物件ピックアップ・お送り」フレーズ → 物件出しタスク自動作成 + ステータス変更
   if (message) {

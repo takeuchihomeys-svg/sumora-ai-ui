@@ -141,3 +141,27 @@ export function idContentClashes(local: ReadonlyArray<Record<string, unknown>>, 
   const main = new Map(mainSpec.map((s) => [String(s.id), hashOf(s)]));
   return local.filter((p) => main.has(String(p.id)) && main.get(String(p.id)) !== hashOf(p)).map((p) => String(p.id));
 }
+
+/**
+ * (n) 2026-11-05 作業員1（DeepSeek の残高切れ・11/05 11:40〜 JST に 402 が105回・本番の資料の読み取りが失敗して送った物件の記録が抜けた）:
+ *   24時間の llm_usage_logs の DeepSeek の失敗（402＝残高切れ／alt_failed＝別クラウドに回して失敗）を、本番と試験に分けて1行に。
+ *   402 が1回でもあれば印（ok=false）。alt_failed だけは時間切れ等でも出るので、本番で10回以上の時だけ印。
+ */
+export type DsFailCounts = { prod402: number; prodAltFailed: number; test402: number; testAltFailed: number };
+export function deepseekFailLine(c: DsFailCounts): { ok: boolean; line: string } {
+  const ok = c.prod402 === 0 && c.test402 === 0 && c.prodAltFailed < 10;
+  const line = `DeepSeek の失敗 24時間: 本番 402 ${c.prod402}・失敗 ${c.prodAltFailed}／試験 402 ${c.test402}・失敗 ${c.testAltFailed}${c.prod402 + c.test402 > 0 ? "（残高切れの疑い・入金と資料の読み直し待ちを確かめる）" : ""}`;
+  return { ok, line };
+}
+
+/**
+ * (o) 2026-11-05 作業員1（読み直しの dry-read の台本が申込の線を見ずに約50枚を DeepSeek に送った・竹内さんの決まり 9/26「申込の間の部分は DeepSeek に渡さず」）:
+ *   scripts/ の台本で DeepSeek を直接呼ぶ口（画像の読み・DeepSeek の endpoint）を使うのに、申込の線（loadDeepseekCutoff・isAfterCutoff・
+ *   deepseekSafeCutoff・cutBeforeApplicationMaterial・LLM_TEST の写し）を通していないファイル。注記の行は見ない。
+ */
+const DS_CALL_RE = /\b(?:sharedPropertyImageRead|readPropertyImage(?:Detail)?|callDeepSeekRead|readPropertyImageDetailByTranscript)\s*\(|api\.deepseek\.com/;
+const DS_GUARD_RE = /\b(?:loadDeepseekCutoff|isAfterCutoff|deepseekSafeCutoff|cutBeforeApplicationMaterial|findRereadTargets|runSentImageReread|setupLlmTest)\b/;
+export function deepseekWithoutCutoff(src: string): boolean {
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").split(/\r?\n/).map((l) => l.replace(/(^|[^:])\/\/.*$/, "$1")).join("\n");
+  return DS_CALL_RE.test(code) && !DS_GUARD_RE.test(code);
+}
