@@ -302,7 +302,7 @@ async function run() {
     ([, agg]) => agg.total >= 10 && agg.matched / agg.total < 0.5
   );
   if (mismatchLabels.length > 0) {
-    await supabase.from("ai_reply_knowledge").delete().ilike("title", "テンプレヒント傾向:%");
+    await supabase.from("ai_reply_knowledge").delete().like("title", "テンプレヒント傾向:%");
     for (const [label, agg] of mismatchLabels) {
       const topPicked = Object.entries(agg.topPicked)
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))

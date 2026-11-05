@@ -44,6 +44,14 @@ const BARE_REQUEST_RE = new RegExp(
 const BARE_MAX_LEN = 24;
 /** 「室内の雰囲気って見れたりしますか」「内装見してもらっていいですか」（名詞が無い形） */
 const LOOK_INSIDE_RE = /(?:室内|内装|お部屋の中|部屋の中|中の様子|中の雰囲気)(?:の)?(?:雰囲気|様子)?[^\n。！!？?]{0,6}(?:見れ|見せ|見して|見たい|見ること|見られ)/;
+/**
+ * 2026-11-04 作業員1（本番の外れ 9269・竹内さん 10/29）: 「内装とかはどのような感じでしょうか」＝室内がどう見えるかの問い。
+ *   竹内さんは AIX【物件確認した】→ 室内イメージ（URL）で返した。今の網（見れ・見せ の動詞か 写真の名詞）が拾えず、場面が「聞かれた事の確認」（check_question）になり返信の番にされていた。
+ *   当てるのは 室内・内装・お部屋の中 が主語で「どのような／どんな ＋ 感じ・雰囲気・様子」を聞く形だけ（設備の有無・広さ・家賃の問いは当てない）。決めるのはブレイン（これは候補の網）
+ */
+const INTERIOR_HOW_RE = /(?:室内|内装|お部屋の中|部屋の中)(?:とか|って|は|の)*[^\n。！!？?]{0,4}(?:どのような|どんな|どういった)(?:感じ|雰囲気|様子|イメージ)/;
+/** 既定 on（11/06 統括役: w9269 off 0/3 → on 3/3・写真の依頼の q105 は off/on 同じ・120日で増えた当たりは 9269 の1通・誤当たり 0）・戻す ROOM_PHOTO_INTERIOR_HOW=off */
+export function roomPhotoInteriorHowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean { return (env.ROOM_PHOTO_INTERIOR_HOW ?? "").trim().toLowerCase() !== "off"; }
 
 /**
  * 同じ文にあれば当てない（別の書類・お客様が送る側・写真を指して別の事を聞く・URL が開けない苦情）。実物は上の注記。
@@ -77,9 +85,10 @@ export function isRoomPhotoRequestSentence(sentence: string): boolean {
   const s = (sentence ?? "").normalize("NFKC").trim();
   if (!s) return false;
   const body = s.replace(ACK_RE, "");
-  if (ACK_RE.test(s) && !REQUEST_RE.test(body) && !LOOK_INSIDE_RE.test(body)) return false;
+  if (ACK_RE.test(s) && !REQUEST_RE.test(body) && !LOOK_INSIDE_RE.test(body) && !(roomPhotoInteriorHowOn() && INTERIOR_HOW_RE.test(body))) return false;
   if (EXCLUDE_SENTENCE_RE.test(s)) return false;
   if (LOOK_INSIDE_RE.test(s)) return true;
+  if (roomPhotoInteriorHowOn() && INTERIOR_HOW_RE.test(s)) return true;
   if (REQUEST_RE.test(s) && SUBJECT_RE.test(s)) return true;
   return s.length <= BARE_MAX_LEN && BARE_REQUEST_RE.test(s);
 }

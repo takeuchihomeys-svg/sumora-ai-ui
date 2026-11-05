@@ -53,6 +53,11 @@ describe("当てる: 実物の写真の依頼", () => {
   it("ae3ffecb: URL が開けない苦情の文ではなく、画像の依頼の文で当たる", () =>
     eq(roomPhotoRequestSentence("ありがとうございます。\n承知しました😊\nお部屋が載ってたURLが見れなくて\nお部屋の画像ありますでしょうか？"), "お部屋の画像ありますでしょうか"));
   it("配列（brain-core の3通）でも当たる", () => truthy(isRoomPhotoRequest(["はい", "室内の写真ありますか？"])));
+  // 2026-11-04 本番の外れ 9269（10/29）: 竹内さんは AIX 物件確認した→室内イメージで返した
+  it("off で止めると 9269 の形は当てない", () => { process.env.ROOM_PHOTO_INTERIOR_HOW = "off"; falsy(isRoomPhotoRequest("内装とかはどのような感じでしょうか(?)")); delete process.env.ROOM_PHOTO_INTERIOR_HOW; });
+  it("9269 「内装とかはどのような感じでしょうか(?)」＋次の通", () => truthy(isRoomPhotoRequest("内装とかはどのような感じでしょうか(?)\n⁣\nSUUMOとかで見つけたとこをお送りしても大丈夫なのでしょうか🥺")));
+  it("「お部屋の中はどんな感じですか」「室内の雰囲気どんな感じですか」", () => truthy(isRoomPhotoRequest("お部屋の中はどんな感じですか") && isRoomPhotoRequest("室内の雰囲気どんな感じですか？")));
+  it("内装・室内が主語でない「どんな感じ」（家賃・設備・周りの環境・申込書の欄）は当てない", () => falsy(isRoomPhotoRequest("家賃はどのような感じですか") || isRoomPhotoRequest("エアコンはどんな感じですか") || isRoomPhotoRequest("周りの環境はどんな感じですか") || isRoomPhotoRequest("申込書の内装欄はどのような感じで書けば")));
 });
 
 // ── 当てない（反証で見つかった誤当たり10通＋実物の別の意味）──
