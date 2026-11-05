@@ -71,6 +71,7 @@ import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldR
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, type ExamLane } from "./lib/exam-lane";
 import type { ReplayFloor } from "../app/lib/test-replay-floor";
+import { examPickupNameLateOn, splitPickupNames } from "./lib/exam-pickup-copy";
 
 const PROBLEMS_FILE = "scripts/brain-exam/problems.json";
 const SPEC_FILE = "scripts/brain-exam/spec.json";
@@ -420,9 +421,17 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
       if (t === "estimate_records") o.aix_usage_log_id = o.aix_usage_log_id ? aixIdMap.get(String(o.aix_usage_log_id)) ?? null : null;
       return { o, oldId };
     });
-    const r = await sb.from(t).insert(objs.map((x) => x.o)).select("id");
+    // 2026-11-05 弱い所 303: property_pickups は名前を空で入れて trigger（相場の観測 rent_observations への upsert）を通さず、あとで名前だけ入れる（scripts/lib/exam-pickup-copy.ts・EXAM_PICKUP_NAME_LATE=off で旧）
+    const lateNames = t === "property_pickups" && examPickupNameLateOn();
+    const split = lateNames ? splitPickupNames(objs.map((x) => x.o)) : null;
+    const r = await sb.from(t).insert(split ? split.insertRows : objs.map((x) => x.o)).select("id");
     if (r.error) { errors.push(`${t}: ${r.error.message.slice(0, 120)}`); continue; }
     const ids = ((r.data ?? []) as Array<{ id: string | number }>).map((x) => String(x.id));
+    if (split) {
+      const ups = await Promise.all(ids.map((id, i) => (split.names[i] ? sb.from(t).update({ property_name: split.names[i] }).eq("id", id).select("id") : Promise.resolve({ error: null }))));
+      const ue = ups.find((u) => u.error);
+      if (ue?.error) errors.push(`${t}(名前): ${ue.error.message.slice(0, 120)}`);
+    }
     S().ownLedger[t] = [...(S().ownLedger[t] ?? []), ...ids]; saveOwnLedger(); writeCount.ledgerIns += ids.length;
     if (t === "aix_usage_logs") objs.forEach((x, i) => { if (x.oldId != null && ids[i]) aixIdMap.set(String(x.oldId), ids[i]); });
     inserted[t] = ids.length;
