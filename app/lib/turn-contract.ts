@@ -225,6 +225,19 @@ function screeningConsultRule(env: Record<string, string | undefined> = typeof p
   if ((env.SCREENING_CONSULT_NO_CHECK ?? "").trim().toLowerCase() !== "on") return "";
   return "- ★お客様自身の事情（無職・収入・夜職・学生・ブラック・滞納 等）で借りられるか・審査が通るかの相談は、管理会社に確かめる事ではない＝確認の約束（route=\"promise\"・物件確認した）にしない。route=\"reply\" で答えとサポートの約束（代理契約・保証人・通りやすい保証会社で審査通過できるようサポート）を返す（竹内さん 90日 9番中 返信5・確認の約束0）。詳しい打ち合わせが要る時だけ AIX【電話】（竹内さん「審査通過するにあたりまして5分程お電話でお打ち合わせ」）。\n";
 }
+/**
+ * 2026-11-06 弱い所 351（q055・作業員7・統括役の決め ③）: こちらが送った束・オススメの中の物件への「気になります」だけの反応を、ブレインが確認の約束（promise）・AIX【物件確認した】に寄せる。
+ *   竹内さん本人の90日（送った束の中の物件に「気になります」「気に入りました」だけが返ってきた番 6・空き／費用／日時の問いの混ざる番は除く）:
+ *   内覧の誘い 5（返信「ご査収頂きありがとうございます…よろしければご都合よろしいお日にちにお部屋ご案内」3・AIX【内覧調整】2）・AIX【見積書送る】1・確認の約束 0。
+ *   既定 off（SENT_REACTION_VIEW_INVITE=on の時だけ1行・off は1字も変えない）
+ */
+export function sentReactionInviteOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.SENT_REACTION_VIEW_INVITE ?? "").trim().toLowerCase() === "on";
+}
+export function sentReactionInviteRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  if (!sentReactionInviteOn(env)) return "";
+  return "- ★こちらが送った物件（送った束・オススメの中の物件）に「気になります」「ここいいですね」「気に入りました」とだけ返ってきた番（空き・費用・日時の問いが無い）は、管理会社に確かめる事も AIX で送る結果も無い＝確認の約束（route=\"promise\"）にも AIX【物件確認した】にもしない。about=reaction_to_sent・route=\"reply\" で「ご査収頂きありがとうございます」＋その物件を「よろしければご都合よろしいお日にちにお部屋ご案内させて頂きます」と内覧に誘う（竹内さん本人の90日 6番: 内覧の誘い 5・確認の約束 0）。空き・費用・日時を聞かれた時は上の★のまま。\n";
+}
 function twoMessageAskRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if ((env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "off") return ""; // 11/05 既定 on（止める TWO_MESSAGE_PLAN=off）
   return "- ★1つの連投に AIX の依頼（見積・空き・内覧の日時・申込 等）と、返信で答えられる質問（審査・入居日・手続き・その物件の資料にある設備・会社の事実）が混ざる番は、AIX の依頼に寄せて1つにまとめず、返信で答えられる質問を別の ask（route=\"reply\"・answer に答えの要点）として必ず書く（竹内さん 11/05: 返信で答えられる部分と AIX の部分は分けて答える＝AIX の後の通・返信で答える）。AIX の中身だけで答えが決まる事（その物件の空き・見積の金額）は route=\"aix\" のまま。お客様が自分で「内見の際に」「後で」と先に回した話は、今の番の約束にせず route=\"none\"（竹内さんは内覧調整の AIX の1通だけで、その話は内見の時にした）。\n";
@@ -236,7 +249,7 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - asks: 【お客様の依頼の一覧】があればその項目を1つも落とさない（足すのはよい）。無ければ今の連投から自分で数える。前の番の依頼を書き写さない（まだ答えていない前の依頼は【お客様の依頼の一覧】の「まだ答えていない確認事項」から入る）。
 - route の決め方: スタッフだけが知る事（管理会社に確認した結果・募集状況・見積の金額・割引額・入居日の確定・内覧の日時の確定・撮影した写真・交渉の結果・審査の結果・探した結果）が答えに要る → "aix"（AIX のキーを付ける）。
   まだ結果が無く、これから確認・作成・探す・交渉する → "promise"。会話・送った物件の資料・会社の事実・一般的な事（虫・換気・二人で住める広さ・内覧の所要時間・手続きの流れ）で答えられる → "reply"（確認の約束にしない）。もう答えた・お客様が自分でやる → "none"。
-${answerableDirectRule()}${twoMessageAskRule()}${textAixRouteRule()}${screeningConsultRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
+${answerableDirectRule()}${twoMessageAskRule()}${textAixRouteRule()}${screeningConsultRule()}${sentReactionInviteRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
 ${closeOnlyAnswerRule()}
 - close_only=true:返事の要らない番（お礼・了承・あいさつだけ）／お客様が待ってと言った番（「決まったら連絡します」「また連絡します」「確認してから連絡します」）。待っての番は「お決まりになりましたらご連絡ください」の形で閉じ、物件を送り続ける約束・新しい提案をしない。
 - 今の条件の物件を出し切った後（前に「全てピックアップ」・新着待ちの約束・全力サポートを送った後で条件が変わっていない）の「もう少し探して」等は route="aix"・aix="zenryoku_support"。

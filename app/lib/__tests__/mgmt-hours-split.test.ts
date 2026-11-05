@@ -1,6 +1,6 @@
 // 確認の「いつ」の線（2026-10-28 竹内さん #26 #28）
 // 実行: npx tsx app/lib/__tests__/mgmt-hours-split.test.ts
-import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR, mgmtNightClosingOn, nightMgmtClosingLine, mgmtNightBrainNoteOn, nightMgmtBrainNote, mgmtNightPickerNoteOn, nightPickerLine } from "../mgmt-hours-split";
+import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR, mgmtNightClosingOn, nightMgmtClosingLine, mgmtNightBrainNoteOn, nightMgmtBrainNote, mgmtNightPickerNoteOn, nightPickerLine, mgmtNightFcTomorrowOn, mgmtNightFcTomorrowNote } from "../mgmt-hours-split";
 
 let passed = 0, failed = 0;
 function it(name: string, fn: () => void) {
@@ -33,6 +33,11 @@ it("ブレインの材料: 昼・募集状況だけは出さない・日曜の�
 it("ピッカーの1行: 既定 on・off で止める（11/06）", () => { eq(mgmtNightPickerNoteOn({}), true); eq(mgmtNightPickerNoteOn({ MGMT_NIGHT_PICKER_NOTE: "off" }), false); eq(mgmtNightPickerNoteOn({ MGMT_NIGHT_PICKER_NOTE: "on" }), true); });
 it("ピッカーの1行: q136（礼金と駐車場）→ mgmt_parking・mgmt_initial_cost", () => { const l = nightPickerLine("ちなみにこちらの物件礼金を調整することは難しいでしょうか？ 駐車場は敷地内まだ空きありますでしょうか？"); eq(l.includes("mgmt_parking") && l.includes("mgmt_initial_cost") && l.includes("two_stage=check"), true, l); });
 it("ピッカーの1行: 管理会社の話題が無ければ空", () => eq(nightPickerLine("上記2件の空き状況を教えてください"), ""));
+
+// 2026-11-06 最終チェックの夜の1行
+it("最終チェックの夜の1行: 既定 off", () => { eq(mgmtNightFcTomorrowOn({}), false); eq(mgmtNightFcTomorrowNote({ hour: 20, customerText: "駐車場は空いてますか" }, {}), ""); });
+it("最終チェックの夜の1行: on・20時の礼金と駐車場 → 出す", () => { const n = mgmtNightFcTomorrowNote({ hour: 20, customerText: "ちなみにこちらの物件礼金を調整することは難しいでしょうか？ 駐車場は敷地内まだ空きありますでしょうか？" }, { MGMT_NIGHT_FC_TOMORROW: "on" }); eq(n.includes("AIX_BOUNDARY_PROMISE にしない") && n.includes("礼金"), true, n); });
+it("最終チェックの夜の1行: on でも昼・募集状況だけは出さない", () => { const on = { MGMT_NIGHT_FC_TOMORROW: "on" }; eq(mgmtNightFcTomorrowNote({ hour: 14, customerText: "駐車場は空いてますか" }, on), ""); eq(mgmtNightFcTomorrowNote({ hour: 20, customerText: "上記2件の空き状況を教えてください" }, on), ""); });
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

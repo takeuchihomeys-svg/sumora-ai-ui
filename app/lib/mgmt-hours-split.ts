@@ -102,3 +102,20 @@ export function nightPickerLine(customerText: string | null | undefined): string
 export function mgmtNightNoDirectOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.MGMT_NIGHT_NO_DIRECT ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（試験 night-all4-q136 0/4→3/3・昼 night3-day 悪化0・竹内さんへの確認 H-9 待ち＝「夜も AIX でよい」なら戻す）
 }
+
+/**
+ * 最終チェック（rule_check）に渡す夜の1行（2026-11-06 作業員9・弱い所 324・統括役の決め）。
+ *   試験 closing2-q136 で、書き手の「…明日管理会社に確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」（竹内さんの 8/25 の形）を
+ *   rule_check が AIX_BOUNDARY_PROMISE（AIX の番の約束）×2 と読み、書き直しで「明日」を落とした。
+ *   出すのは 18時以降・お客様の発言に管理会社の話題（MGMT_TOPIC_RE）がある番だけ。守りの他の型（内覧日時・金額・住所 等）には触れない。
+ * 切替: MGMT_NIGHT_FC_TOMORROW=on の時だけ（既定 off）。
+ */
+export function mgmtNightFcTomorrowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.MGMT_NIGHT_FC_TOMORROW ?? "").trim().toLowerCase() === "on";
+}
+export function mgmtNightFcTomorrowNote(o: { hour: number; customerText: string | null | undefined }, env?: Record<string, string | undefined>): string {
+  if (!mgmtNightFcTomorrowOn(env) || !(o.hour >= 18)) return "";
+  const hit = String(o.customerText ?? "").match(MGMT_TOPIC_RE);
+  if (!hit) return "";
+  return `\n【夜の管理会社への確認（竹内さんの決まり）】今は管理会社の営業時間外。お客様が聞いた「${hit[0]}」等の確認・交渉を「明日管理会社に確認（交渉）させて頂きます」「本日管理会社営業時間外の為明日確認させて頂き、確認出来次第ご連絡させて頂きます」と1回約束する文は正しい約束（結果は翌日 AIX で送る）＝AIX_BOUNDARY_PROMISE にしない・「明日」を消さない。同じ確認の約束が2文に重なっている時だけ二重宣言として指摘してよい（その時も「明日」の入った方を残す）\n`;
+}

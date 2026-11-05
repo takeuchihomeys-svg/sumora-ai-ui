@@ -26,14 +26,14 @@ t("組み合わせのこの通を読む", r2.replyMsg?.duties.includes("answer")
 // ② 重点・案A の線
 t("条件の番は継続の約束を添える（59%）", keepPromiseLine(base({ scene: "conditions", ackOnly: false })).keep === true);
 t("了承の番の既定は添えない（9%）", keepPromiseLine(base()).keep === false);
-t("物件を送った後のお礼は添える", keepPromiseLine(base({ prevStaff: "property_sent" })).keep === true);
-t("募集終了の報告の了承は添える", keepPromiseLine(base({ prevStaff: "ended_report" })).keep === true);
+t("物件を送った後のお礼だけでは添えない（候補・試験 q164・relationKeep）", keepPromiseLine(base({ prevStaff: "property_sent" })).keep === false);
+t("募集終了の報告の了承だけでも添えない（候補）", keepPromiseLine(base({ prevStaff: "ended_report" })).keep === false);
 t("新着を頼まれたら添える", keepPromiseLine(base({ scene: "considering", customerAskedNew: true })).keep === true);
 t("近い番の過半数なら添える", keepPromiseLine(base({ nearKeepShare: 0.6 })).keep === true);
 t("今日もう言ったら添えない（1日1回）", keepPromiseLine(base({ scene: "conditions", ackOnly: false, keepSaidToday: true })).keep === false);
 t("統括の keepPromise=false に従う", keepPromiseLine(base({ prevStaff: "property_sent", inputs: { ...empty, focus: { focus: "relation", keepPromise: false } } })).keep === false);
 
-const f1 = decideMessageFocus(base({ prevStaff: "property_sent" }));
+const f1 = decideMessageFocus(base({ prevStaff: "property_sent", nearKeepShare: 0.6 }));
 t("お礼（物件を送った後）→ relation_keep", f1.key === "relation_keep" && f1.keep && f1.source === "scene", f1);
 const f2 = decideMessageFocus(base({ inputs: { ...empty, focus: { focus: "answer", why: "床の色の質問" } }, scene: "question", ackOnly: false }));
 t("統括の重点 answer をそのまま（決め直さない）", f2.key === "answer" && f2.source === "conductor");
@@ -43,7 +43,7 @@ t("了承の番は復唱・言い切り・期日を書かない", ["restate_view
 
 // 注記（竹内さんの実送信の形だけ）
 const n1 = messageFocusNote(f1, { name: "〇〇" });
-t("注記に継続の約束の実送信の形", n1.includes("引き続き新着で〇〇さんにオススメ出来るお部屋募集に出次第お送りさせて頂きます") && n1.includes("1つ"));
+t("注記に継続の約束の実送信の形・中身を省かない", n1.includes("引き続き新着で〇〇さんにオススメ出来るお部屋募集に出次第お送りさせて頂きます") && n1.includes("中身を省かない"));
 t("注記に書かない事", n1.includes("書かない事"));
 t("順番: 設計図 → 書き手 → 確かめ", composeOrder(f2, { blueprint: true }).join(">") === "compose>writer>verify");
 
@@ -92,7 +92,7 @@ t("新着を頼んだ", customerAskedNewOf("また新着でましたらお願い
 
 // route の口（①〜③）
 const now = Date.parse("2026-10-28T09:32:00Z"); // JST 18:32
-const bc1 = buildComposeConductor({ meta: null, scene: "ack", customerText: "ご丁寧に有難うございます", ackOnly: true, recent: [{ sender: "staff", text: "🔺3口コンロの物件となります。", createdAt: "2026-10-28T09:00:00Z" }, { sender: "customer", text: "ご丁寧に有難うございます" }], name: "〇〇", nowMs: now, blueprint: false });
+const bc1 = buildComposeConductor({ meta: null, scene: "ack", customerText: "ご丁寧に有難うございます", ackOnly: true, recent: [{ sender: "staff", text: "🔺3口コンロの物件となります。", createdAt: "2026-10-28T09:00:00Z" }, { sender: "customer", text: "ご丁寧に有難うございます" }], name: "〇〇", nowMs: now, blueprint: false, nearKeepShare: 0.6 });
 t("口: 物件を送った後のお礼 → 継続の約束の注記", bc1.mf.key === "relation_keep" && bc1.note.includes("新着で〇〇さん") && bc1.order.join(">") === "writer(継続の約束を1つ)>verify", bc1);
 const bc2 = buildComposeConductor({ meta: null, scene: "ack", customerText: "ありがとうございます", ackOnly: true, recent: [{ sender: "staff", text: "〇〇さんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます！！", createdAt: "2026-10-28T08:00:00Z" }, { sender: "staff", text: "🔺物件となります。", createdAt: "2026-10-28T09:00:00Z" }], name: "〇〇", nowMs: now, blueprint: true });
 t("口: 今日もう継続の約束を言った → 添えない", bc2.mf.key === "relation_ack" && !bc2.mf.keep);

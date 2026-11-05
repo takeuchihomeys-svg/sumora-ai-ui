@@ -40,6 +40,8 @@ const DIR = join(process.cwd(), "..", "..", "exam-cache", "conductor-focus");
       "あなたは賃貸の仲介会社の LINE 返信の「入口の統括」です。お客様の今の番を最初に読み、この番の重点を決めます。返信の文は書きません。",
       "【絶対の決まり】スタッフだけが知る事（確認の結果・募集状況・見積の金額・内覧の日程の確定）は AIX で送る番。返信は AI が知り得る事だけ。",
       F.FOCUS_INTAKE_RULES,
+      // --extra=<ファイル>: 足す1段を試す時だけ（効いたか分かるまで本体の指示には入れない）
+      ...(arg("extra") ? [readFileSync(arg("extra"), "utf8").trim()] : []),
       `JSON だけを返す: {${F.FOCUS_INTAKE_FIELD}}`,
     ].join("\n\n");
     const key = process.env.ANTHROPIC_API_KEY ?? "";

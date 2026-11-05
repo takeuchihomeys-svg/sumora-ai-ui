@@ -33,6 +33,7 @@ import { detectTypos } from "./typo-check";
 import { HASTY_ADVERB_TEST_RE, findUnanchoredUketamawari } from "./banned-phrasing";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する
 import { jstParts, WEEKDAYS_JA } from "./jst-date";
+import { mgmtNightFcTomorrowNote } from "./mgmt-hours-split";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶（generate-reply / brain-core と四者同名）
 import { moveOutEvidenceText, isMoveOutReleased, moveOutRoomMismatch, moveOutViewingVerdict, moveOutSwitchedToOtherProperty, type MoveOutSubject } from "./move-out-context";
 import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMISE_SENTENCE_RE, CONFIRM_NEXT_RE as SHARED_CONFIRM_NEXT_RE, SEARCH_CONFIRM_RE, type ConfirmationContextVerdict } from "./confirmation-context";
@@ -643,7 +644,11 @@ AIX_BOUNDARY_* にもBANNED_WORDにも分類できないが、[RULES]のルー�
   //   （YUMA で「10月31日退去予定のため、11月1日以降にご内覧可能です」が AIX_BOUNDARY_MOVEIN で消えた）。戻す MATERIAL_FACTS_TO_CHECK=off
   const materialNote = ctx.materialFacts && process.env.MATERIAL_FACTS_TO_CHECK !== "off"
     ? `[MATERIAL_FACTS]（お客様が聞いた物件の資料・こちらの送付に書いてある値。これと同じ値を書いた直接回答は AIX_BOUNDARY_MOVEIN・AIX_BOUNDARY_DB・FABRICATED_* の違反ではない。資料に無い値・日付を足した文は従来どおり）\n${ctx.materialFacts.split("\n").map((l) => `- ${l}`).join("\n")}\n[/MATERIAL_FACTS]\n` : "";
-  const dynamic = `${ngPropertyNote}${brainBaselineNote}${aixNote}${materialNote}
+  // 2026-11-06 作業員9（弱い所 324・KB P1 9fd703f4・MGMT_NIGHT_FC_TOMORROW=on・既定 off）: 夜（18時以降）でお客様が管理会社にしか答えられない事（礼金・駐車場 等）を聞いた番は、
+  //   「明日管理会社に確認（交渉）させて頂きます」は竹内さんの決まりどおりの約束＝AIX_BOUNDARY_PROMISE にしない（試験 closing2-q136 で rule_check がこの約束を消し「明日」が落ちた）。
+  //   竹内さんの決まり「最終チェックをボトルネックにしない・ブレインの判断を落とす書き直しは止める」にも合う
+  const nightTomorrowNote = mgmtNightFcTomorrowNote({ hour: jstParts().hour, customerText: ctx.lastCustomerMessage ?? "" });
+  const dynamic = `${ngPropertyNote}${brainBaselineNote}${aixNote}${nightTomorrowNote}${materialNote}
 [REPLY]
 ${draft}
 [/REPLY]`;

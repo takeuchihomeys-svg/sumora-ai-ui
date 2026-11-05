@@ -4450,18 +4450,29 @@ async function handleGenerateReply(req: NextRequest) {
     if (composeRun) console.info("[compose]", JSON.stringify({ purpose: composeRun.intent.purpose, source: composeRun.intent.source, issues: composeRun.blueprint.check.issues, rag: composeRun.ragIds.length, ms: composeRun.ms }));
     // 2026-11-05 作業員9 返信の文の統括（KB P1 26bfdcbf・COMPOSE_CONDUCTOR=on・既定 off）: 統括の重点・組み合わせ・場面・前の流れを読み、この通の重点を1つ決めて
     //   書き手に渡す（app/lib/reply-compose-conductor.ts・決定論・LLM なし）。確かめは下書きの後に digest へ（本文は書き換えない・差し戻しは記録だけ）
+    const composeConductorScene = resolveReplyScene({ customerText: message ?? "" }).scene;
+    // 2026-11-06 作業員9: 了承・検討の番だけ、近い竹内さんの番で継続の約束を添えた割合（作業員5 liveNearTurns → nearKeepShareFor・anatomy.keep）を引く（1.5秒まで・無ければ null＝添えない）
+    const composeNearKeepShare: number | null = composeConductorOn() && conversationId && (composeConductorScene === "ack" || composeConductorScene === "considering") && !isFollowUp && !isTemplateOptimize
+      ? await Promise.race([
+          import("@/app/lib/conductor-focus-server").then(async (m) => {
+            const near = await m.liveNearTurns(supabase, { conversationId, propertyCustomerId: null, turnAt: lastCustomerMsgAt ?? new Date().toISOString(), scene: composeConductorScene, customerTurn: customerMsgUnits.join("\n") || (message ?? "") });
+            return near?.near?.ids?.length ? m.nearKeepShareFor(supabase, near.near.ids) : null;
+          }),
+          new Promise<null>((r) => setTimeout(() => r(null), 1_500)),
+        ]).catch(() => null)
+      : null;
     const composeConductor = composeConductorOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation
       ? (() => {
           try {
             return buildComposeConductor({
-              meta: brainMeta ?? null, scene: resolveReplyScene({ customerText: message ?? "" }).scene, customerText: customerMsgUnits.join("\n") || (message ?? ""),
+              meta: brainMeta ?? null, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""),
               ackOnly: isAckOnlyTurn(customerMsgUnits), recent: recentMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt ?? null })),
-              name: typeof customerName === "string" ? customerName : null, nowMs: Date.now(), blueprint: !!composeRun?.note,
+              name: typeof customerName === "string" ? customerName : null, nowMs: Date.now(), blueprint: !!composeRun?.note, nearKeepShare: composeNearKeepShare,
             });
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-conductor:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()
       : null;
-    if (composeConductor) console.info("[compose-conductor]", JSON.stringify({ conversationId, focus: composeConductor.mf.key, source: composeConductor.mf.source, keep: composeConductor.mf.keep, read: composeConductor.read }));
+    if (composeConductor) console.info("[compose-conductor]", JSON.stringify({ conversationId, focus: composeConductor.mf.key, source: composeConductor.mf.source, keep: composeConductor.mf.keep, nearKeep: composeNearKeepShare, read: composeConductor.read }));
 
     // ── 条件提示判定（2026-09-08 監査改修）──
     // ①エリア語彙拡張＋ひらがな接頭の誤検出排除 ②家賃以外の金額（初期費用/礼金/年収等）をマスク
