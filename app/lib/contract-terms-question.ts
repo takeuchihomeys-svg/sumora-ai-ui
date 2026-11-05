@@ -200,7 +200,7 @@ const monthsLabel = (n: number) => (n === 0 ? "なし（0円）" : `${n}ヶ月`)
  */
 /** 保証会社の種類・通りやすさを聞いた文か（名前だけの質問と分ける） */
 export const GUARANTOR_TYPE_ASK_RE = /保証会社[^。\n]{0,12}(?:緩|ゆる|甘|厳し|きつ|通りやす|通りにく|何系|種類|独立系|信販系|信用系)|(?:緩|ゆる|甘|厳し|きつ|何系|独立系|信販系|信用系)[^。\n]{0,10}保証会社/;
-export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial, opts: { questionText?: string | null } = {}): ContractRoute {
+export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial, opts: { questionText?: string | null; /** 2026-11-05 退去予定の逆算の「今」（テストで時計を渡す・無ければ今） */ nowMs?: number } = {}): ContractRoute {
   const terms = m.terms ?? null;
   const ev = terms?.evidence ?? {};
   const lines = m.lines ?? [];
@@ -268,7 +268,7 @@ export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial,
       : mv.lines.find((l) => /退去予定[^0-9０-９]{0,4}[(（]?\s*(?:\d{4}年)?\d{1,2}\s*[月/]\s*(?:\d{1,2}|[上中下]旬)/.test(l.normalize("NFKC")));
     if (outDate) {
       // 2026-10-15 竹内さんの決定②「退去予定の最短の入居時期の目安は返信で答えてよい・ちゃんと逆算して入れる」: 退去予定日＋退去後の工事の期間の目安を材料に足す（vacate-move-in-estimate・戻す VACATE_MOVE_IN_ESTIMATE=off）
-      const est = moveInEstimateFromVacate(sheetVacancyFieldsEnabled() ? vacateMonthDay(outDate) : null);
+      const est = moveInEstimateFromVacate(sheetVacancyFieldsEnabled() ? vacateMonthDay(outDate) : null, opts.nowMs ?? Date.now());
       return { topic, route: "material", facts: est ? [...mv.lines, est.fact] : mv.lines, why: est ? "資料に退去予定日の記載（最短の入居時期の目安は逆算）" : "資料に退去予定日の記載" };
     }
     return { topic, route: "confirm", facts: mv.lines, why: mv.kind === "leaving" ? "退去予定・居住中で日付が資料に無い" : mv.lines.length ? "資料の入居時期が相談・未定" : "資料に入居時期の記載なし" };
