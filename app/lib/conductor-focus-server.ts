@@ -32,3 +32,41 @@ export async function nearFocusForTurn(sb: SupabaseClient, o: { conversationId: 
     return null;
   }
 }
+
+/**
+ * 今の番（本番）の状況の文 v2 を、過去の番と同じ作り（conductor-turn-vectors-server の v2）で作って近い番を引く（CONDUCTOR_FOCUS=shadow の時だけ・入口の統括の前）。
+ *   読む物: その会話の直近30日の通（新しい順300件まで）・AIX の記録（同じ窓・送信の15分前〜2分後で突き合わせ）・会話の表示名（伏せ用）。埋め込み1回（約 $0.00001）
+ *   失敗・時間切れは null（入口の統括は近い番の1行なしで読む＝今まで通り）
+ */
+export async function liveNearTurns(sb: SupabaseClient, o: { conversationId: string; propertyCustomerId: string | null; turnAt: string; scene: string; customerTurn: string }): Promise<NearTurns | null> {
+  try {
+    const since = new Date(Date.parse(o.turnAt) - 30 * 86_400_000).toISOString();
+    const [{ data: msgs }, { data: aix }, { data: conv }] = await Promise.all([
+      sb.from("messages").select("sender, text, created_at, is_aix_generated, line_message_id").eq("conversation_id", o.conversationId).gte("created_at", since).lt("created_at", o.turnAt).order("created_at", { ascending: false }).limit(300),
+      sb.from("aix_usage_logs").select("created_at, aix_type, line_message_id").eq("conversation_id", o.conversationId).gte("created_at", since).order("created_at", { ascending: true }).limit(500),
+      sb.from("conversations").select("customer_name").eq("id", o.conversationId).maybeSingle(),
+    ]);
+    const { maskPII } = await import("@/app/lib/pii-mask");
+    const { customerNameTokens, maskCustomerNames } = await import("@/app/lib/compose-name-mask");
+    const { maskContactBits } = await import("@/app/lib/conductor-turn-vectors");
+    const { turnSituationTextV2 } = await import("@/app/lib/conductor-focus");
+    const tokens = customerNameTokens([(conv as { customer_name?: string | null } | null)?.customer_name ?? null]);
+    const mask = (t: string) => maskContactBits(maskPII(maskCustomerNames(t, tokens)));
+    const logs = (aix ?? []) as Array<{ created_at: string; aix_type: string; line_message_id: string | null }>;
+    const byLine = new Map(logs.filter((a) => a.line_message_id).map((a) => [a.line_message_id as string, a.aix_type]));
+    const aixOf = (m: { created_at: string; line_message_id: string | null }) => {
+      if (m.line_message_id && byLine.has(m.line_message_id)) return byLine.get(m.line_message_id)!;
+      const t = Date.parse(m.created_at);
+      const near = logs.filter((a) => Date.parse(a.created_at) >= t - 15 * 60_000 && Date.parse(a.created_at) <= t + 2 * 60_000).sort((x, y) => Math.abs(Date.parse(x.created_at) - t) - Math.abs(Date.parse(y.created_at) - t))[0];
+      return near?.aix_type ?? "aix_unknown";
+    };
+    const hist: Array<{ sender: string; text: string; created_at: string; aixType: string | null }> = ((msgs ?? []) as Array<{ sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; line_message_id: string | null }>).reverse()
+      .map((m) => ({ sender: m.sender, text: mask(m.text ?? ""), created_at: m.created_at, aixType: m.is_aix_generated ? aixOf(m) : null }));
+    // 今の番の連投（最後に続くお客様の通）は hist に入れない＝過去の番の作り（番の始まりより前）と揃える
+    while (hist.length && hist[hist.length - 1].sender === "customer") hist.pop();
+    const situationV2 = turnSituationTextV2({ scene: o.scene, hist, customerMasked: mask(o.customerTurn), nowMs: Date.parse(o.turnAt) });
+    return await nearFocusForTurn(sb, { conversationId: o.conversationId, propertyCustomerId: o.propertyCustomerId, turnAt: o.turnAt, scene: o.scene, situationV2 });
+  } catch {
+    return null;
+  }
+}

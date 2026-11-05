@@ -46,26 +46,37 @@ export type IntakeRun = { answer: IntakeAnswer | null; ds: IntakeAnswer | null; 
 
 export async function runConductorIntake(o: {
   conversationId: string; turnAt: string | null; customerTurn: string; lastStaff: string | null; ledgerBlock: string; carryLine: string; ruleMeta: string; timeoutMs?: number;
+  /** 2026-11-05 作業員5: 竹内さんの近い過去の番の重点（CONDUCTOR_FOCUS=shadow の時だけ呼ぶ側が渡す・参考の1行） */
+  nearFocus?: import("./conductor-focus").NearFocus | null;
 }): Promise<IntakeRun | null> {
   const key = process.env.ANTHROPIC_API_KEY ?? "";
   if (!key) return null;
   const t0 = Date.now();
   const prefix = intakePrefix(await loadManualShortForms());
-  const user = intakeUser(o);
+  const { conductorFocusMode, nearFocusLine } = await import("./conductor-focus");
+  const focusOn = conductorFocusMode() !== "off";
+  const user = intakeUser({ ...o, nearFocusLine: focusOn ? nearFocusLine(o.nearFocus ?? null) : "" });
+  const maxTokens = focusOn ? 450 : 300;
+  /** 近い番の重点を focus_read.near に（統括が添える物・決めるのは統括） */
+  const withNear = (a: IntakeAnswer | null): IntakeAnswer | null => {
+    if (!a?.focus_read || !o.nearFocus) return a;
+    const n = o.nearFocus;
+    return { ...a, focus_read: { ...a.focus_read, near: `${n.inBand ? "束" : "場面"}:${n.focus}${n.inBand ? `(${n.n}件・${Math.round(n.share * 100)}%)` : ""}` } };
+  };
   const sonnet = (async (): Promise<{ answer: IntakeAnswer | null; cacheRead: number | null }> => {
     try {
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST", signal: AbortSignal.timeout(o.timeoutMs ?? 8_000),
         headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", ...sumoraLlmMarks("conductor_intake", o.conversationId) },
         body: JSON.stringify({
-          model: "claude-sonnet-5", max_tokens: 300, thinking: { type: "disabled" },
+          model: "claude-sonnet-5", max_tokens: maxTokens, thinking: { type: "disabled" },
           system: [{ type: "text", text: prefix, cache_control: { type: "ephemeral" } }],
           messages: [{ role: "user", content: user }],
         }),
       });
       if (!r.ok) { console.warn(JSON.stringify({ tag: "conductor:intake-http", status: r.status })); return { answer: null, cacheRead: null }; }
       const d = (await r.json()) as { content?: Array<{ type: string; text?: string }>; usage?: { cache_read_input_tokens?: number } };
-      return { answer: parseIntake(d.content?.find((b) => b.type === "text")?.text ?? ""), cacheRead: d.usage?.cache_read_input_tokens ?? null };
+      return { answer: withNear(parseIntake(d.content?.find((b) => b.type === "text")?.text ?? "")), cacheRead: d.usage?.cache_read_input_tokens ?? null };
     } catch (e) { console.warn(JSON.stringify({ tag: "conductor:intake-failed", error: e instanceof Error ? e.message : String(e) })); return { answer: null, cacheRead: null }; }
   })();
   let skippedDs: string | null = null;
@@ -77,8 +88,8 @@ export async function runConductorIntake(o: {
     if (pii) skippedDs = `pii:${pii}`;
     else {
       const { callDeepSeek } = await import("./vision-alt-provider");
-      dsP = callDeepSeek(prefix, user, { maxTokens: 300, thinking: false, temperature: 0, timeoutMs: o.timeoutMs ?? 8_000 })
-        .then((res) => parseIntake(res?.text ?? ""))
+      dsP = callDeepSeek(prefix, user, { maxTokens, thinking: false, temperature: 0, timeoutMs: o.timeoutMs ?? 8_000 })
+        .then((res) => withNear(parseIntake(res?.text ?? "")))
         .catch(() => null);
     }
   }
