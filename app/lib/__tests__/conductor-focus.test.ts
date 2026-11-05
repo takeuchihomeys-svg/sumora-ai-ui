@@ -77,11 +77,15 @@ it("後半への受け渡し: はっきりした食い違いだけ", () => {
 it("順番の表: 1番目は大まかな判断・段は後ろに戻らない・場面の上書き・digest", () => {
   const rank = { rough: 0, detail: 1, compose: 2, verify: 3 } as const;
   for (const k of FOCUS_KINDS) { const st = FOCUS_ORDER[k].map((s) => rank[s.stage]); ok(st.every((v, i) => i === 0 || v >= st[i - 1]), k); }
-  eq(orderDigest(focusOrder("cost", "answer")), "judge>estimate>writer>check_ground");
-  eq(orderDigest(focusOrder("ack", "promise_keep")), "judge>aix_desk>property_search>estimate>second");
+  eq(orderDigest(focusOrder("cost", "answer")), "judge>estimate>combine>writer>check_ground");
+  eq(orderDigest(focusOrder("ack", "promise_keep")), "judge>aix_desk>property_search>estimate>combine>second");
   eq(orderDigest(focusOrder(null, "promise_make")), "judge>compose>writer");
   ok(laterOverrode(FOCUS_ORDER.promise_keep, [{ role: "judge", value: "aix" }, { role: "aix_desk", value: "reply" }])?.includes("aix_desk"));
   eq(laterOverrode(FOCUS_ORDER.promise_keep, [{ role: "judge", value: "aix" }, { role: "aix_desk", value: "aix" }]), null);
+});
+it("combine は compose の段の先頭（答える・果たす・不安・決める・出す）・関係と約束だけの番には無い", () => {
+  for (const k of ["answer", "promise_keep", "ease", "close", "propose"] as const) eq(FOCUS_ORDER[k].filter((x) => x.stage === "compose")[0]?.role, "combine");
+  for (const k of ["relation", "promise_make"] as const) ok(!FOCUS_ORDER[k].some((x) => x.role === "combine"), k);
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

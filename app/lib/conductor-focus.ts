@@ -177,22 +177,22 @@ export function nearFocusLine(near: NearFocus | null): string {
 // ── 順番の表（KB P1 0dbfbc97「統括は場面×重点ごとにブレインを使う順番を決める」・P0 575a7cd5 の子）─────────────
 //   1番目＝大まかな判断（返信か AIX か・どの系統か）→ 2番目＝細部（どの AIX・ピッカー・約束の種類・物件の選び）→ 3番目＝文の組み立て → 4番目＝確かめ。
 //   後の役は前の役が決めた事を決め直さない。食い違ったら黙って上書きせず、統括に差し戻す（focusConflict → 読み直し）。表はここ1か所・digest に使った順番（orderDigest）。
-//   役の名前は conductor-roles.ts の ROSTER と判断のブレイン judge。重点に関係の無い役は表に無い＝呼ばない。
+//   役の名前は conductor-roles.ts の ROSTER と判断のブレイン judge。combine＝何通・どの順・各通の受け持ち（作業員7 two-message-plan.planForConductor・KB 3701b532・11/05 竹内さん「組み合わせは統括が決める」）。重点に関係の無い役は表に無い＝呼ばない。
 export type OrderStage = "rough" | "detail" | "compose" | "verify";
 export type OrderStep = { stage: OrderStage; role: string; takes: string; decides: string };
 const S = (stage: OrderStage, role: string, takes: string, decides: string): OrderStep => ({ stage, role, takes, decides });
 export const FOCUS_ORDER: Record<Focus, OrderStep[]> = {
-  answer: [S("rough", "judge", "重点・表と背景", "返信か AIX か（答えにスタッフだけが知る事が要るか）"), S("detail", "fetch", "判断・need", "答えの材料（資料・会社の事実）"), S("compose", "compose", "判断・材料", "答えを先に置く構成"), S("compose", "writer", "設計図", "文"), S("verify", "check_ground", "下書き＋材料", "根拠の無い事実が無いか")],
+  answer: [S("rough", "judge", "重点・表と背景", "返信か AIX か（答えにスタッフだけが知る事が要るか）"), S("detail", "fetch", "判断・need", "答えの材料（資料・会社の事実）"), S("compose", "combine", "判断の turn_contract＋重点", "何通・どの順・各通の受け持ち（答える／信頼／訴求）"), S("compose", "compose", "判断・材料", "答えを先に置く構成"), S("compose", "writer", "設計図", "文"), S("verify", "check_ground", "下書き＋材料", "根拠の無い事実が無いか")],
   promise_make: [S("rough", "judge", "重点・開いている約束", "確かめる約束の返信（AIX ではない）"), S("detail", "judge", "約束の種類", "何を・いつまでに確かめるか"), S("compose", "compose", "約束", "受け→約束→締め"), S("compose", "writer", "設計図", "文")],
-  promise_keep: [S("rough", "judge", "重点・開いている約束・送った物", "AIX で果たす番か"), S("detail", "aix_desk", "判断（AIX の系統）", "どの AIX・ピッカー"), S("detail", "property_search", "AIX の種類（物件を送る時）", "送る物件"), S("detail", "estimate", "物件（見積の時）", "見積の下書き"), S("compose", "second", "決まった AIX", "2通目（要る時）")],
-  ease: [S("rough", "judge", "重点・背景（言っていない心配）", "返信か AIX か（電話が要るか）"), S("detail", "deep", "背景・全履歴", "安心する物（relief）"), S("compose", "compose", "relief", "受け→サポート→締め"), S("compose", "writer", "設計図", "文"), S("verify", "check_worry", "下書き＋3段", "奥の心配に応えたか")],
-  close: [S("rough", "judge", "重点・進み", "内覧・申込に進める番か"), S("detail", "viewing_calendar", "物件・期限", "空いている枠"), S("detail", "aix_desk", "判断＋枠", "内覧調整・待ち合わせ・申込のどれか"), S("compose", "compose", "決まった AIX か誘い", "誘いの締め")],
-  propose: [S("rough", "judge", "重点・送った物・条件", "物件を出すか条件を聞くか"), S("detail", "property_search", "条件＋plan_ahead", "出す物件（🌟の選び）"), S("detail", "aix_desk", "物件", "ピックアップかオススメか"), S("compose", "compose", "選んだ物件", "訴求の構成")],
+  promise_keep: [S("rough", "judge", "重点・開いている約束・送った物", "AIX で果たす番か"), S("detail", "aix_desk", "判断（AIX の系統）", "どの AIX・ピッカー"), S("detail", "property_search", "AIX の種類（物件を送る時）", "送る物件"), S("detail", "estimate", "物件（見積の時）", "見積の下書き"), S("compose", "combine", "判断の turn_contract＋重点", "何通・どの順・各通の受け持ち（答える／信頼／訴求）"), S("compose", "second", "決まった AIX", "2通目（要る時）")],
+  ease: [S("rough", "judge", "重点・背景（言っていない心配）", "返信か AIX か（電話が要るか）"), S("detail", "deep", "背景・全履歴", "安心する物（relief）"), S("compose", "combine", "判断の turn_contract＋重点", "何通・どの順・各通の受け持ち（答える／信頼／訴求）"), S("compose", "compose", "relief", "受け→サポート→締め"), S("compose", "writer", "設計図", "文"), S("verify", "check_worry", "下書き＋3段", "奥の心配に応えたか")],
+  close: [S("rough", "judge", "重点・進み", "内覧・申込に進める番か"), S("detail", "viewing_calendar", "物件・期限", "空いている枠"), S("detail", "aix_desk", "判断＋枠", "内覧調整・待ち合わせ・申込のどれか"), S("compose", "combine", "判断の turn_contract＋重点", "何通・どの順・各通の受け持ち（答える／信頼／訴求）"), S("compose", "compose", "決まった AIX か誘い", "誘いの締め")],
+  propose: [S("rough", "judge", "重点・送った物・条件", "物件を出すか条件を聞くか"), S("detail", "property_search", "条件＋plan_ahead", "出す物件（🌟の選び）"), S("detail", "aix_desk", "物件", "ピックアップかオススメか"), S("compose", "combine", "判断の turn_contract＋重点", "何通・どの順・各通の受け持ち（答える／信頼／訴求）"), S("compose", "compose", "選んだ物件", "訴求の構成")],
   relation: [S("rough", "judge", "重点", "受けの返信で足りるか"), S("compose", "writer", "受け", "受け→締め（中身を足さない）")],
 };
 /** 場面ごとの上書き（場面×重点で順番が変わる所だけ）。例: 費用の質問に答える番は見積書の材料を2番目に取る */
 const SCENE_ORDER: Partial<Record<string, Partial<Record<Focus, OrderStep[]>>>> = {
-  cost: { answer: [S("rough", "judge", "重点・表と背景", "返信か AIX（初期費用について・説明）か"), S("detail", "estimate", "物件（あれば）", "費用の中身・割引"), S("compose", "writer", "判断＋費用の材料", "文"), S("verify", "check_ground", "下書き＋材料", "金額を材料の外で言っていないか")] },
+  cost: { answer: [S("rough", "judge", "重点・表と背景", "返信か AIX（初期費用について・説明）か"), S("detail", "estimate", "物件（あれば）", "費用の中身・割引"), S("compose", "combine", "判断の turn_contract＋重点", "何通・どの順・各通の受け持ち（答える／信頼／訴求）"), S("compose", "writer", "判断＋費用の材料", "文"), S("verify", "check_ground", "下書き＋材料", "金額を材料の外で言っていないか")] },
 };
 export function focusOrder(scene: string | null | undefined, focus: Focus): OrderStep[] {
   return (scene && SCENE_ORDER[scene]?.[focus]) || FOCUS_ORDER[focus];
