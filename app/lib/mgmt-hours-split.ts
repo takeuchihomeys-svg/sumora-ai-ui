@@ -46,7 +46,9 @@ export function nightMgmtClosingLine(o: { hour: number; saturday: boolean; allow
   const vacancy = isVacancyConfirmObject(o.object) && !mgmtTopic;
   if (vacancy && o.splitOn && o.hour < COMPANY_CLOSE_HOUR) return null;
   const obj = mgmtTopic && isVacancyConfirmObject(o.object) ? "" : String(o.object ?? "").trim();
-  return `- 🕘 夜の確認の約束（${o.hour}時台・管理会社の営業時間外）: 上の結び「確認出来次第ご連絡させて頂きます！！」の前に「本日管理会社営業時間外の為、明日${obj ? `${obj}を` : ""}確認させて頂き、」を入れて1文にする（竹内さんの実送信の形・当日中の答えを約束しない・ほかの中身は上のまま）`;
+  // 2026-11-06 試験 night-all4-q136: 「管理会社に確認させて頂きます！！」の後ろに「明日確認させて頂き、確認出来次第…」を別の文で足し、最終チェック（AIX_BOUNDARY_PROMISE＝確認の二重宣言）に文ごと消された
+  //   ＝確認・交渉の約束の文そのものに「明日」を入れる（竹内さんの 10/26 18:45・8/25 23:38 の実送信の形）。別の文に分けない
+  return `- 🕘 夜の確認の約束（${o.hour}時台・管理会社の営業時間外）: 確認・交渉の約束は1文だけにし、その文の中に「明日」を入れる。竹内さんの実送信の形: 「${obj ? `${obj}につきまして、` : "〇〇につきまして、"}本日管理会社営業時間外の為明日確認させて頂き、確認出来次第ご連絡させて頂きます！！」（10/26）か「明日管理会社に〇〇を確認（交渉）させて頂きます！！ 確認出来次第ご連絡させて頂きます！！」（8/25）。「管理会社に確認させて頂きます」と「明日確認させて頂き」を別々の文に書かない（確認の二重の約束になる）。当日中の答えを約束しない・ほかの中身は上のまま`;
 }
 
 /**

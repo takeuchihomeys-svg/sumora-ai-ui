@@ -16,12 +16,12 @@ it("弊社の営業の終わりは 21時（確かめ待ち）", () => eq(COMPANY
 
 // 2026-11-05 作業員9（弱い所 324・q136＝8/23 20:38 の番）: 夜の管理会社への確認の結びに「明日」
 it("夜の結び: 既定 off", () => { eq(mgmtNightClosingOn({}), false); eq(mgmtNightClosingOn({ MGMT_NIGHT_CLOSING: "on" }), true); });
-it("夜の結び: 20時の礼金と駐車場（q136）→ 明日を入れる", () => { const l = nightMgmtClosingLine({ hour: 20, saturday: false, allowed: true, object: "礼金の調整と駐車場の空き状況", splitOn: true }); eq(!!l && l.includes("本日管理会社営業時間外の為、明日礼金の調整と駐車場の空き状況を確認させて頂き、"), true, String(l)); });
+it("夜の結び: 20時の礼金と駐車場（q136）→ 明日を入れる", () => { const l = nightMgmtClosingLine({ hour: 20, saturday: false, allowed: true, object: "礼金の調整と駐車場の空き状況", splitOn: true }); eq(!!l && l.includes("礼金の調整と駐車場の空き状況につきまして、本日管理会社営業時間外の為明日確認させて頂き、") && l.includes("別々の文に書かない"), true, String(l)); });
 it("夜の結び: 募集状況だけで21時より前は入れない（10/28）", () => eq(nightMgmtClosingLine({ hour: 19, saturday: false, allowed: true, object: "お送り頂いた物件の募集状況", splitOn: true }), null));
 it("夜の結び: 募集状況でも21時以降は入れる（10/29 22:05 の竹内さん）", () => eq(!!nightMgmtClosingLine({ hour: 22, saturday: false, allowed: true, object: "お送り頂いた物件の募集状況", splitOn: true }), true));
 it("夜の結び: 昼・土日・確認の約束が無い番は入れない", () => { eq(nightMgmtClosingLine({ hour: 14, saturday: false, allowed: true, object: "駐車場", splitOn: true }), null); eq(nightMgmtClosingLine({ hour: 20, saturday: true, allowed: true, object: "駐車場", splitOn: true }), null); eq(nightMgmtClosingLine({ hour: 20, saturday: false, allowed: false, object: "駐車場", splitOn: true }), null); });
 
-it("夜の結び: object が募集状況でもお客様が礼金・駐車場を聞いたら管理会社への確認（試験 q136 の実物）", () => { const l = nightMgmtClosingLine({ hour: 20, saturday: false, allowed: true, object: "募集状況", splitOn: true, topicText: "ちなみにこちらの物件礼金を調整することは難しいでしょうか？ 駐車場は敷地内まだ空きありますでしょうか？" }); eq(!!l && l.includes("本日管理会社営業時間外の為、明日確認させて頂き、"), true, String(l)); });
+it("夜の結び: object が募集状況でもお客様が礼金・駐車場を聞いたら管理会社への確認（試験 q136 の実物）", () => { const l = nightMgmtClosingLine({ hour: 20, saturday: false, allowed: true, object: "募集状況", splitOn: true, topicText: "ちなみにこちらの物件礼金を調整することは難しいでしょうか？ 駐車場は敷地内まだ空きありますでしょうか？" }); eq(!!l && l.includes("〇〇につきまして、本日管理会社営業時間外の為明日確認させて頂き、"), true, String(l)); });
 it("夜の結び: 募集状況だけを聞いた番は21時前は入れない（お客様の発言で見ても）", () => eq(nightMgmtClosingLine({ hour: 19, saturday: false, allowed: true, object: "募集状況", splitOn: true, topicText: "上記2件の空き状況を教えてください" }), null));
 
 // 2026-11-06 弱い所 345: ブレインの材料の1行
