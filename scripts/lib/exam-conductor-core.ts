@@ -239,3 +239,13 @@ export function remoteDeployState(text: string): "READY" | "ERROR" | "CANCELED" 
   const v = m[1].toLowerCase();
   return v === "ready" ? "READY" : v === "error" ? "ERROR" : v === "canceled" ? "CANCELED" : v === "queued" ? "QUEUED" : "BUILDING";
 }
+
+// ─── 2026-11-05 作業員4（竹内さん KB P1 95f492fc ⑤・統括役「2つに分ける」）: 危ない所の見張りの手元の分を夜1回 ─────────────
+//   本番の分（DB・LP）は Vercel の cron /api/cron/hazard-audit-db。手元の分（作業ツリー・node_modules のリンク・試験の係のログ・git・手元の problems.json）は
+//   2つ目の流す役（--run --remote・PC で常に動いている）が、JST の日ごとに1回、夜（既定 JST 3時台以降・9時前）に scripts/hazard-audit.ts --save を回す。
+/** 今夜の見張りを回す時か: その JST の日にまだ回していない・JST の時が from〜to（既定 3〜9時）の間 */
+export function hazardAuditDue(lastJstDay: string | null, now: Date = new Date(), fromHour = 3, toHour = 9): { due: boolean; day: string } {
+  const j = new Date(now.getTime() + 9 * 3600_000);
+  const day = j.toISOString().slice(0, 10), h = j.getUTCHours();
+  return { due: lastJstDay !== day && h >= fromHour && h < toHour, day };
+}

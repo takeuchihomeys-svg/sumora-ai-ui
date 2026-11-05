@@ -52,7 +52,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
   return (id) => (mm.size ? mm.get(id) ?? [] : null);
 }
 import { pcState } from "./lib/exam-pc-state";
-import { splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -577,6 +577,19 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
     cfg();
     const tscAlerted = new Set<string>();
     for (;;) {
+      // 2026-11-05 作業員4（竹内さん KB 95f492fc ⑤）: 危ない所の見張りの手元の分を夜1回（2つ目の流す役だけ・止める EXAM_HAZARD_AUDIT=off）。本番の分は Vercel の cron hazard-audit-db
+      if (REMOTE_ONLY && (process.env.EXAM_HAZARD_AUDIT ?? "").trim().toLowerCase() !== "off") {
+        const lastFile = join(ROOT, "hazard-audit-last.json");
+        const ha = hazardAuditDue(readJson<{ day?: string } | null>(lastFile, null)?.day ?? null);
+        if (ha.due) {
+          writeFileSync(lastFile, JSON.stringify({ day: ha.day, at: new Date().toISOString() }));
+          const out = join(RES, `hazard-audit-${ha.day}.log`);
+          log(`危ない所の見張り（手元の分）を回す → ${out}`);
+          const code = await runNpx(process.cwd(), ["tsx", "--env-file=.env.local", "scripts/hazard-audit.ts", "--save"], {}, out).done;
+          const head = (() => { try { return readFileSync(out, "utf8").split(/\r?\n/).find((l) => l.startsWith("危ない所の見張り")) ?? ""; } catch { return ""; } })();
+          log(`  見張り 終わり（${code}）: ${head.slice(0, 300)}`);
+        }
+      }
       const isRemoteJob = (x: ExamJob) => x.runner === "tsc-remote" || (x.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") || (x.runner === "cmd" && !!x.readOnly);
       // 読むだけの依頼は2つ目の流す役だけが流す（試験の列を止めない・試験の列の先頭の扱いにもしない）
       const jobs = readJobs().filter((x) => (REMOTE_ONLY ? isRemoteJob(x) : !(x.runner === "cmd" && x.readOnly)));

@@ -132,11 +132,18 @@ const ANSWERABLE_DIRECT_SOURCES = /^rule:two_stage_promise\((?:brought_both|brou
 function answerableDirectQuestionEnabled(env?: Record<string, string | undefined>): boolean {
   return ((env ?? (typeof process !== "undefined" ? process.env : {})).TWO_STAGE_ANSWERABLE_DIRECT_QUESTION ?? "").trim().toLowerCase() === "on";
 }
+/** 2026-11-05 No.42 (c): 持ち込みの物件は確認の約束 → AIX（既定 off・TWO_STAGE_BROUGHT_PROMISE=on） */
+export function broughtPromiseEnabled(env?: Record<string, string | undefined>): boolean {
+  return ((env ?? (typeof process !== "undefined" ? process.env : {})).TWO_STAGE_BROUGHT_PROMISE ?? "").trim().toLowerCase() === "on";
+}
 /** 2段の判定（core）が確認・見積の約束を出した番を、AIX 直接にする時の AIX のキー（しない時 null） */
 export function answerableDirectAix(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "decisionSource" | "firstContact" | "asksCost">, env?: Record<string, string | undefined>): string | null {
   if (!v || !answerableDirectEnabled(env)) return null;
   if (i.firstContact || /^guard:first_contact/.test(i.decisionSource ?? "")) return null;
   if (!ANSWERABLE_DIRECT_SOURCES.test(v.source)) return null;
+  // 2026-11-05 竹内さん No.42 (c)（KB P1 cf241dbd・10/21 の 5aa28356 を退役）「物件を送ってきた時は、約束（確認します）して AIX から送る」:
+  //   お客様の持ち込みの物件（brought_both・brought_estimate）は AIX 直接にせず、確認の約束 → AIX（竹内さんの型 RAT）。既定 off（TWO_STAGE_BROUGHT_PROMISE=on）
+  if (broughtPromiseEnabled(env) && /\(brought_(?:both|estimate)\)$/.test(v.source)) return null;
   if (!answerableDirectQuestionEnabled(env)) {
     if (/check_question/.test(v.source)) return null;
     if (/\(check\)$/.test(v.source) && /ack_to_check/.test(i.decisionSource ?? "") && !i.asksCost) return null;

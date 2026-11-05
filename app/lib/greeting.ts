@@ -251,6 +251,10 @@ export function msSinceLastStaff(messages: Msg[], now = Date.now()): number | nu
  * 2026-10-08 8巡目: 挨拶の決定には使わない（GREETING_BY_DAY_R8=off の時だけ）。竹内さん「日にちをまたいだら挨拶を入れている」・
  *   この番は 60字以上で挨拶 59%（scripts/audit-r8-greeting-day.ts）＝お客様の頭が今日の番と同じ形
  */
+/** 2026-11-05 竹内さん: 続きの番は、その日最初の会話文でも挨拶を省く（既定 on・=off で 10/08 の形） */
+export function greetingContinuationSkipOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.GREETING_CONTINUATION_SKIP ?? "").trim().toLowerCase() !== "off";
+}
 export function continuedSameDay(messages: Msg[]): boolean {
   let i = messages.length - 1;
   if (i < 0 || messages[i].sender !== "customer") return false;
@@ -439,6 +443,10 @@ export function resolveGreeting(opts: {
   //   人の手打ち 180日（scripts/audit-r8-greeting-day.ts）: この番 514通で挨拶 47%（60字以上 59%・60字未満 19%）＝
   //   お客様の頭が今日の番（45%・60字以上 50%・未満 21%）と同じ形。standard は「必須ではない」（短い返信には置かない）の注記なので、
   //   60字以上だけ挨拶と見なした一致は 旧 4,584 → 新 4,647 / 5,496。戻す: GREETING_BY_DAY_R8=off（旧＝続きの会話は挨拶なし）
+  // 2026-11-05 竹内さんの答え（KB P1 95f492fc ①・確認事項 a56a67ab「続きの番は省く」）: 続きの番（お客様の発言がこちらの前の発言と同じ JST の日に続けて来た番）は、
+  //   返事がその日最初の会話文になっても「お世話になっております」を付けない（竹内さんの実際の送信: 続きの番で今日まだ会話文が無い11番のうち挨拶は1番）。
+  //   10/08 の「日をまたいだら挨拶」（GREETING_BY_DAY_R8）より新しい決まり。戻す GREETING_CONTINUATION_SKIP=off（10/08 の形）
+  if (greetingContinuationSkipOn() && continuedSameDay(opts.recentMessages)) return mk("none", nightPrefix, !!nightPrefix, "会話の続き（お客様の発言がこちらの前の発言と同じ日）＝その日最初でも挨拶なし（竹内さん 11/05）");
   if (process.env.GREETING_BY_DAY_R8 === "off" && continuedSameDay(opts.recentMessages)) return mk("none", nightPrefix, !!nightPrefix, "会話の続き（お客様の発言がこちらの前の発言と同じ日）＝挨拶なし");
   // 2026-10-08 竹内さん「今日初めての連絡なら『お世話になっております』を付ける。2回目以降なら入れない」:
   //   その JST の日の最初のこちらの会話文（資料文・画像は数えない＝computeAlreadyGreetedToday）なら「〇〇さんお世話になっております！！」を**必ず**置く（enforce=true）。

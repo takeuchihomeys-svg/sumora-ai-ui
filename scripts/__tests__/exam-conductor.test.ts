@@ -1,6 +1,6 @@
 // scripts/__tests__/exam-conductor.test.ts — 試験の統括の純関数（関所の時間・早めの打ち切り・揺れの回数・問題の選び・表への書き戻し）
 //   実行: npx tsx scripts/__tests__/exam-conductor.test.ts
-import { splitWorse, isMixedRow, jobSize, compareJobs, splitIds, splitByTime, estimateJobMin, cleanupTargets, remoteDeployState, remainingIds, comparedIds, staleExamGuard, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
+import { hazardAuditDue, splitWorse, isMixedRow, jobSize, compareJobs, splitIds, splitByTime, estimateJobMin, cleanupTargets, remoteDeployState, remainingIds, comparedIds, staleExamGuard, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
 import type { FlakeObs } from "../lib/exam-flake";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };

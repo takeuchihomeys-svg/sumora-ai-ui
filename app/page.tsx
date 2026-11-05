@@ -93,6 +93,8 @@ import { imageUrlsInRankOrder } from "./lib/sent-image-order";
 import { decideApplySubMode } from "./lib/apply-sub-mode";
 import { normalizePetWording } from "./lib/pet-wording";
 import { isTestOnlyConversation } from "./lib/test-conversations";
+// 2026-11-05 竹内さん（KB b834d9f0）: この番の組み立て（何通・どの順）の知らせと AIX の後の返信の下書き
+import { planMessages, planFromMeta, planAnnounce, remainingAfterAix, afterAixReplyBrief, afterAixDraftHint, twoMessageAnnounceVisible, type PlanAsk } from "./lib/two-message-plan";
 // 2026-10-23 試験の通（入る通の約93%）の Realtime は、その会話を選んでいる時だけ当てる（戻す NEXT_PUBLIC_RT_IGNORE_TEST=off）
 import { RT_IGNORE_TEST, shouldIgnoreTestRealtime, shouldIgnoreTestRealtimeForConvs } from "./lib/realtime-test-ignore";
 /** 会話画面の紐付け（linkedEntryOf）に使う物件顧客の列（一覧の読み込み・テスト専用の会話を選んだ時の読み直しで同じ） */
@@ -9814,6 +9816,42 @@ export default function Home() {
               <input ref={aixFileInputRef} type="file" accept="image/*" onChange={onAixImageSelected} className="hidden" />
               <input ref={aixMultiFileInputRef} type="file" accept="image/*" multiple onChange={onAixMultiImagesSelected} className="hidden" />
             </div>
+
+            {/* ===== 2026-11-05 竹内さん（KB b834d9f0）: この番の組み立て（何通・どの順・各通が答える事）の知らせ。最初は YUMA・テストの会話だけ（NEXT_PUBLIC_TWO_MESSAGE_PLAN=all で全員・off で出さない） ===== */}
+            {!inputFocused && twoMessageAnnounceVisible(process.env.NEXT_PUBLIC_TWO_MESSAGE_PLAN, isTestOnlyConversation(selectedConversation.id)) && (() => {
+              const id = selectedConversation.id;
+              const msgs = selectedConversation.messages || [];
+              const curMeta = selectedConversation.suggestedAixMeta as { turn_contract?: { asks?: PlanAsk[] }; action?: string | null } | null | undefined;
+              if (curMeta?.turn_contract) brainContractSeenRef.current[id] = curMeta;
+              const seen = brainContractSeenRef.current[id] as { turn_contract?: { asks?: PlanAsk[] }; action?: string | null } | undefined;
+              const pmsgs = msgs.map((m: Message) => ({ sender: m.sender, text: m.text, isAix: m.isAix, rawCreatedAt: m.rawCreatedAt ?? null }));
+              const asks = freshContractAsks(seen, pmsgs) as PlanAsk[] | null;
+              if (!asks) return null;
+              // 初回（こちらがまだ会話文を送っていない）・お客様の今の連投が画像だけ
+              const lastStaffIdx = msgs.map((m: Message, k: number) => (m.sender !== "customer" ? k : -1)).filter((k: number) => k >= 0);
+              const custTurn = msgs.slice((lastStaffIdx.length ? lastStaffIdx[lastStaffIdx.length - 1] : -1) + 1).filter((m: Message) => m.sender === "customer");
+              const firstContact = !msgs.some((m: Message) => m.sender !== "customer" && String(m.text ?? "").trim() && !/^\[(?:画像|動画)\]$/.test(String(m.text ?? "").trim()));
+              const imageOnly = custTurn.length > 0 && custTurn.every((m: Message) => /^\[画像\]/.test(String(m.text ?? "")));
+              // 統括が置いた組み立て（meta.two_message_plan・1つの正）が先。無い時だけ画面で作る
+              const plan = planFromMeta(seen) ?? planMessages({ asks, finalAix: seen?.action ?? null, firstContact, imageOnly });
+              const head = planAnnounce(plan);
+              if (!head) return null;
+              const sentAix = latestAixByConv[id]?.aixType ?? null;
+              const afterSent = sentAix && latestAixByConv[id]?.at && Date.parse(latestAixByConv[id].at) >= Date.parse(String((seen as { analyzed_msg_ts?: string | null } | undefined)?.analyzed_msg_ts ?? "")) ? remainingAfterAix(plan, sentAix) : null;
+              const brief = afterSent ? afterAixReplyBrief(plan, sentAix, asks) : null;
+              return (
+                <div className="mx-1 mb-1 rounded-xl border border-slate-300 bg-slate-50 px-3 py-1.5 text-[11px] text-slate-700 flex flex-wrap items-center gap-2">
+                  <span className="flex-1 min-w-0 font-semibold">
+                    {head}
+                    {afterSent && <span className="block text-[10px] font-bold text-slate-600">残り: {afterSent.map((m) => (m.slot === "reply" ? "返信" : "AIX テンプレート")).join(" → ")}</span>}
+                  </span>
+                  {brief && (
+                    <button onClick={() => { void generateReply({ promiseHint: afterAixDraftHint(brief, sentAix) }); }}
+                      className="shrink-0 rounded-full border border-slate-400 bg-white px-3 py-0.5 text-[11px] font-bold text-slate-700">返信の下書きを作る</button>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* ===== アクション誘導バナー（優先度制御：1つだけ表示） — 入力中キーボード表示時は非表示 ===== */}
             {!inputFocused && (() => {
