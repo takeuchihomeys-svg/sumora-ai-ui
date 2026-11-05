@@ -2,7 +2,7 @@
 //   実行: npx tsx app/lib/__tests__/sent-image-reread.test.ts
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { pickRereadTargets, sourceOfImage, sentImageRereadOn, type RereadMsg, type RereadAix } from "../sent-image-reread";
+import { pickRereadTargets, sourceOfImage, sentImageRereadOn, imageUrlsOf, type RereadMsg, type RereadAix } from "../sent-image-reread";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) pass++; else { fail++; console.log(`  NG  ${name}`); } };
@@ -35,6 +35,14 @@ t("72時間より前は外す", !got.some((g) => g.imageUrl === "https://x/old.j
 t("上限", pickRereadTargets(msgs, new Set(), aix, { nowMs: now, limit: 1 }).length === 1);
 t("AIX の印があっても直前10分に AIX が無ければ staff_image", sourceOfImage({ id: 9, conversation_id: "c9", created_at: "2026-11-05T02:00:00Z", image_url: "u", is_aix_generated: true }, aix) === "staff_image");
 t("既定 on", sentImageRereadOn({}) === true && sentImageRereadOn({ SENT_IMAGE_REREAD: "off" }) === false);
+// 2026-11-06 弱い所 352: まとめて送った通の image_url は URL の配列（JSON の文字列）＝1枚ずつに分ける
+t("配列の文字列は1枚ずつ", JSON.stringify(imageUrlsOf('["https://x/1.jpg","https://x/2.png"]')) === JSON.stringify(["https://x/1.jpg", "https://x/2.png"]));
+t("1枚はそのまま・URL でない物は外す", imageUrlsOf("https://x/a.jpg").length === 1 && imageUrlsOf("abc").length === 0 && imageUrlsOf("[broken").length === 0 && imageUrlsOf(null).length === 0);
+{
+  const arr: RereadMsg[] = [{ id: 20, conversation_id: "c7", created_at: "2026-11-05T02:30:00Z", image_url: '["https://x/m1.jpg","https://x/m2.jpg"]', is_aix_generated: false }];
+  const g = pickRereadTargets(arr, new Set(["https://x/m1.jpg"]), [], { nowMs: now });
+  t("配列の中の記録済みは外し、残りだけ読む", JSON.stringify(g.map((x) => x.imageUrl)) === JSON.stringify(["https://x/m2.jpg"]));
+}
 
 // LINE には何も送らない: 読み直しの道のファイルが送信の口を import していない
 const lib = join(__dirname, "..");
