@@ -33,11 +33,17 @@ export function isVacancyConfirmObject(object: string | null | undefined): boole
 export function mgmtNightClosingOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.MGMT_NIGHT_CLOSING ?? "").trim().toLowerCase() === "on";
 }
-export function nightMgmtClosingLine(o: { hour: number; weekend: boolean; allowed: boolean; object: string | null | undefined; splitOn: boolean }): string | null {
+/** 管理会社にしか答えられない話題（isVacancyConfirmObject の外す語と同じ並び） */
+// 保証・審査は入れない（竹内さんの 10/26 19:25・8/23 21:24 の保証会社の交渉の約束は「明日」無し）
+export const MGMT_TOPIC_RE = /駐車|駐輪|バイク|鍵|ペット|猫|犬|交渉|値下|割引|礼金|敷金|フリーレント|設備|入居(?:可能)?日|代理契約|退去|楽器|二人|法人|クリーニング|洗濯/;
+// 2026-11-06 試験 night-closing-on: q136（礼金の調整・駐車場）の confirmCtx.object が「募集状況」になっていて募集状況だけの確認と読み、21時前の線で外していた
+//   ＝話題はお客様の発言（topicText）でも見る。お客様の発言に管理会社の話題があれば管理会社への確認（object の言葉は使わない）
+export function nightMgmtClosingLine(o: { hour: number; weekend: boolean; allowed: boolean; object: string | null | undefined; splitOn: boolean; topicText?: string | null }): string | null {
   if (!o.allowed || o.weekend) return null;
   if (!(o.hour >= 18)) return null;
-  const vacancy = isVacancyConfirmObject(o.object);
+  const mgmtTopic = MGMT_TOPIC_RE.test(String(o.topicText ?? ""));
+  const vacancy = isVacancyConfirmObject(o.object) && !mgmtTopic;
   if (vacancy && o.splitOn && o.hour < COMPANY_CLOSE_HOUR) return null;
-  const obj = String(o.object ?? "").trim();
+  const obj = mgmtTopic && isVacancyConfirmObject(o.object) ? "" : String(o.object ?? "").trim();
   return `- 🕘 夜の確認の約束（${o.hour}時台・管理会社の営業時間外）: 上の結び「確認出来次第ご連絡させて頂きます！！」の前に「本日管理会社営業時間外の為、明日${obj ? `${obj}を` : ""}確認させて頂き、」を入れて1文にする（竹内さんの実送信の形・当日中の答えを約束しない・ほかの中身は上のまま）`;
 }

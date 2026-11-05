@@ -21,5 +21,8 @@ it("夜の結び: 募集状況だけで21時より前は入れない（10/28）"
 it("夜の結び: 募集状況でも21時以降は入れる（10/29 22:05 の竹内さん）", () => eq(!!nightMgmtClosingLine({ hour: 22, weekend: false, allowed: true, object: "お送り頂いた物件の募集状況", splitOn: true }), true));
 it("夜の結び: 昼・土日・確認の約束が無い番は入れない", () => { eq(nightMgmtClosingLine({ hour: 14, weekend: false, allowed: true, object: "駐車場", splitOn: true }), null); eq(nightMgmtClosingLine({ hour: 20, weekend: true, allowed: true, object: "駐車場", splitOn: true }), null); eq(nightMgmtClosingLine({ hour: 20, weekend: false, allowed: false, object: "駐車場", splitOn: true }), null); });
 
+it("夜の結び: object が募集状況でもお客様が礼金・駐車場を聞いたら管理会社への確認（試験 q136 の実物）", () => { const l = nightMgmtClosingLine({ hour: 20, weekend: false, allowed: true, object: "募集状況", splitOn: true, topicText: "ちなみにこちらの物件礼金を調整することは難しいでしょうか？ 駐車場は敷地内まだ空きありますでしょうか？" }); eq(!!l && l.includes("本日管理会社営業時間外の為、明日確認させて頂き、"), true, String(l)); });
+it("夜の結び: 募集状況だけを聞いた番は21時前は入れない（お客様の発言で見ても）", () => eq(nightMgmtClosingLine({ hour: 19, weekend: false, allowed: true, object: "募集状況", splitOn: true, topicText: "上記2件の空き状況を教えてください" }), null));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;
