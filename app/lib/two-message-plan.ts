@@ -27,6 +27,46 @@ export function twoMessagePlanOn(env: Env = envOf()): boolean {
   return (env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "on";
 }
 /** 画面（NEXT_PUBLIC_ はビルドで埋まる＝呼ぶ側が値を渡す） */
+/** 文を書く AIX の番は質問も AIX の文の中で1通（既定は TWO_MESSAGE_PLAN に従う・止める TWO_MESSAGE_ONE_IN_TEXT_AIX=off） */
+export function oneMessageInTextAixOn(env: Env = envOf()): boolean {
+  return (env.TWO_MESSAGE_ONE_IN_TEXT_AIX ?? "").trim().toLowerCase() !== "off";
+}
+/**
+ * 近い竹内さんの番の型（作業員5 conductor_turn_vectors の actual.shape・近い順）から、組み立ての参考の1行。
+ *   決めるのは planMessages（参考を材料に渡すだけ・決め直さない）。近い番が2つ未満なら null
+ */
+export function nearShapeLine(neigh: ReadonlyArray<{ shape?: string | null; dist?: number | null }>, max = 5): { line: string; digest: string } | null {
+  // 近い順（dist が小さい順・無い物は後ろ）に max 件
+  const xs = neigh.filter((n) => typeof n.shape === "string" && n.shape)
+    .slice().sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity)).slice(0, max);
+  if (xs.length < 2) return null;
+  const c = new Map<string, { n: number; best: number }>();
+  for (const x of xs) { const v = c.get(x.shape!) ?? { n: 0, best: Infinity }; v.n++; v.best = Math.min(v.best, x.dist ?? Infinity); c.set(x.shape!, v); }
+  // 数の多い順・同数は一番近い番がある方
+  const ranked = [...c.entries()].sort((a, b) => b[1].n - a[1].n || a[1].best - b[1].best);
+  const parts = ranked.map(([k, v]) => `${k} ${v.n}/${xs.length}`);
+  return { line: `近い竹内さんの番の型: ${parts.join("・")}（${SHAPE_WHY[ranked[0][0]] ?? ""}）`, digest: ranked.map(([k, v]) => `${k}${v.n}`).join(",") };
+}
+
+/** T（AIX テンプレート＝AIX の後の訴求の通）の見分け: 同じ番の AIX の後の手打ちで、訴求の言い回しがある通（作業員7 の90日の数えと同じ決まり） */
+export const TEMPLATE_PHRASE_RE = /お気に召されましたら|ご査収|御見積書となります|オススメ出来る|オススメできる|同封させて頂きました|ご案内させて頂きます|お部屋抑えさせて/;
+/**
+ * 1つの番（お客様の発言の後、次のお客様の発言まで）のこちらの送信を、時刻の順に並べて型にする（R=返信・A=AIX・T=AIX テンプレート）。
+ *   画像・室内イメージの URL・申込フォーマット等の付き物は呼ぶ側で外す。同じ記号が続く通はまとめる（AIX の画像＋本文 → A）。
+ *   isTemplate が無い時は、AIX の後の手打ちで text が TEMPLATE_PHRASE_RE に当たれば T。送信が無ければ ""
+ */
+export function shapeOfSends(sends: ReadonlyArray<{ isAix: boolean; aixType?: string | null; isTemplate?: boolean; text?: string | null }>): string {
+  let seenAix = false;
+  const ks: string[] = [];
+  for (const s of sends) {
+    let k: string;
+    if (s.isAix) { k = "A"; seenAix = true; }
+    else if (s.isTemplate === true || (s.isTemplate === undefined && seenAix && TEMPLATE_PHRASE_RE.test(String(s.text ?? "")))) k = "T";
+    else k = "R";
+    if (ks[ks.length - 1] !== k) ks.push(k);
+  }
+  return ks.join("");
+}
 export function twoMessagePlanUiOn(v: string | null | undefined): boolean {
   return (v ?? "").trim().toLowerCase() === "on";
 }
@@ -190,6 +230,16 @@ function planCore(i: PlanInput): Omit<TwoMessagePlan, "shape" | "shapeWhy"> {
   // ④ 返信で答えられる質問＋AIX が混ざる番＝AIX が先。残りの答えは後ろの通
   //    AIX の中身に寄る質問（その物件・費用・空き）が1つだけで、テンプレートがある AIX なら 2通目のテンプレートで一緒に答える＝(b)
   //    それ以外は AIX → テンプレート（訴求）→ 返信（質問の答え）の3通＝(c)。テンプレートの無い AIX は AIX → 返信の2通
+  // 2026-11-05 竹内さん「1通でよい番に余計な2通目を作らない」（作業員7 の数え・90日の竹内さんの番・質問＋AIX の番）:
+  //   テンプレートの席の無い「文を書く AIX」（内覧調整・待ち合わせ・挨拶・電話・初期費用の説明・保証会社・申込 等）の番は 6〜7割が1通
+  //   （AIX の文の中で答えた: 「お送りいただきました物件の募集状況につきましても併せて確認」「メジャーをお持ちして」「8日2物件ご案内」）。
+  //   カードの AIX（見積書・物件確認・オススメ・ピックアップ）は1通が 1〜3割。
+  //   → 文を書く AIX は、返信で答えられる質問を AIX の文の中で答える（1通）。分けるのは不安・心配の受け止めが要る依頼（kind=concern|feeling）がある時だけ（10/20 夜職の審査の番＝AR）
+  if (!hasTemplate && oneMessageInTextAixOn() && !replyAsks.some((a) => a.kind === "concern" || a.kind === "feeling")) {
+    push("aix", [...aixAnswers, ...replyAsks.map(q)], "依頼に AIX で答え、返信で答えられる質問も AIX の文の中で答える", aixKey);
+    msgs[0].duties = ["answer", "trust"];
+    return { order: "single", count: 1, messages: msgs, why: "文を書く AIX＝質問も AIX の文の中で答える1通（竹内さんは文を書く AIX の番の 6〜7割が1通）" };
+  }
   push("aix", aixAnswers, "依頼に AIX で答える（スタッフだけが知る事）", aixKey);
   const contentAsks = replyAsks.filter((a) => AIX_CONTENT_ABOUT.test(String(a.about ?? "")));
   if (hasTemplate && replyAsks.length === 1 && contentAsks.length === 1) {

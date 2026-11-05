@@ -188,6 +188,10 @@ function answerableDirectRule(env: Record<string, string | undefined> = typeof p
   const lines: string[] = [];
   if ((env.TWO_STAGE_ANSWERABLE_DIRECT ?? "").trim().toLowerCase() !== "off") {
     lines.push("- ★管理会社に確かめれば分かる問い（空き状況・募集状況・見積・初期費用・設備・入居条件・内覧できるか）は、確認の約束（promise）を挟まず route=\"aix\"（空き・設備・条件＝property_check_result／費用・見積＝estimate_sheet）にする。スタッフが確かめてその AIX で結果を送る（竹内さん 10/21・実送信もすぐ AIX が多数）。約束（promise）は探す・交渉する・撮影する・退去予定の内覧開始日など、すぐには結果が出ない事だけ。会話・送った資料・会社の事実で答えられる事は今まで通り reply。");
+    // 2026-11-05 竹内さん No.42 (c)（KB cf241dbd）: お客様が送ってきた物件は確認の約束 → AIX（既定 off・TWO_STAGE_BROUGHT_PROMISE=on の時だけ1行・off は1字も変えない）
+    if ((env.TWO_STAGE_BROUGHT_PROMISE ?? "").trim().toLowerCase() === "on") {
+      lines.push("- ★ただしお客様が送ってきた（持ち込みの）物件の空き・募集状況・見積は、route=\"promise\"（「お送り頂きました物件の募集状況確認させて頂きます」の確認の約束）にし、結果はその後に AIX【物件確認した／見積書送る】で送る（竹内さん 11/05 No.42 (c)「物件を送ってきた時は約束して AIX から送る」）。こちらが送った物件の空き・見積の問いは上の★のまま route=\"aix\"。");
+    }
   }
   if ((env.ACK_AFTER_PROMISE_REPLY ?? "").trim().toLowerCase() !== "on") {
     lines.push("- ★こちらの約束の直後にお客様がお礼・了承（「ありがとうございます」「よろしくお願いします」）だけを言った番は、返信で締めず約束を果たす AIX にする（竹内さん 10/21）: ピックアップの約束の後＝物件ピックアップした（property_send）／物件オススメ（property_recommendation）・確認・交渉の約束の後＝property_check_result・見積の約束の後＝estimate_sheet。close_only の受けの返信にしない。");
@@ -203,7 +207,7 @@ function answerableDirectRule(env: Record<string, string | undefined> = typeof p
  */
 function twoMessageAskRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if ((env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() !== "on") return "";
-  return "- ★1つの連投に AIX の依頼（見積・空き・内覧の日時・申込 等）と、返信で答えられる質問（審査・入居日・手続き・その物件の資料にある設備・会社の事実）が混ざる番は、AIX の依頼に寄せて1つにまとめず、返信で答えられる質問を別の ask（route=\"reply\"・answer に答えの要点）として必ず書く（竹内さん 11/05: 返信で答えられる部分と AIX の部分は分けて答える＝AIX の後の通・返信で答える）。AIX の中身だけで答えが決まる事（その物件の空き・見積の金額）は route=\"aix\" のまま。\n";
+  return "- ★1つの連投に AIX の依頼（見積・空き・内覧の日時・申込 等）と、返信で答えられる質問（審査・入居日・手続き・その物件の資料にある設備・会社の事実）が混ざる番は、AIX の依頼に寄せて1つにまとめず、返信で答えられる質問を別の ask（route=\"reply\"・answer に答えの要点）として必ず書く（竹内さん 11/05: 返信で答えられる部分と AIX の部分は分けて答える＝AIX の後の通・返信で答える）。AIX の中身だけで答えが決まる事（その物件の空き・見積の金額）は route=\"aix\" のまま。お客様が自分で「内見の際に」「後で」と先に回した話は、今の番の約束にせず route=\"none\"（竹内さんは内覧調整の AIX の1通だけで、その話は内見の時にした）。\n";
 }
 
 /** ブレインの判断の仕方（出力の指定の後ろに置く短い規則・竹内さん 10/08 の答え Q1〜Q10 をそのまま） */

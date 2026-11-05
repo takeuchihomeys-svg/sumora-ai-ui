@@ -1,8 +1,9 @@
 // 1つの番を何通に分けるか（2026-11-05 竹内さん KB b834d9f0・cf241dbd・作業員7）
 // 実行: npx tsx app/lib/__tests__/two-message-plan.test.ts
 // 場面は本番の竹内さんの番（名前は伏せた）。ブレインの依頼の形は turn_contract.asks のまま
-import { planMessages, planAnnounce, remainingAfterAix, templateReplyPartNote, afterAixReplyBrief, planDigest, twoMessagePlanOn, twoMessagePlanUiOn, twoMessageAnnounceVisible, afterAixDraftHint, checkPlan, planForConductor, planFromMeta, canAppealFromFocus } from "../two-message-plan";
+import { planMessages, planAnnounce, remainingAfterAix, templateReplyPartNote, afterAixReplyBrief, planDigest, twoMessagePlanOn, twoMessagePlanUiOn, twoMessageAnnounceVisible, afterAixDraftHint, checkPlan, planForConductor, planFromMeta, canAppealFromFocus, nearShapeLine, shapeOfSends } from "../two-message-plan";
 import { BRAIN_TURN_CONTRACT_RULES } from "../turn-contract";
+import { answerableDirectAix } from "../two-stage";
 
 let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
@@ -39,10 +40,10 @@ t("既定 off（画面）", twoMessagePlanUiOn(undefined) === false && twoMessag
 {
   const p = planMessages({ asks: [
     { quote: "301号室の内覧お願いしたいです", route: "aix", aix: "viewing_invite", about: "viewing_day" },
-    { quote: "大学生兼夜職でも借りれますか", route: "reply", answer: "審査通過できるようサポートする", about: "procedure" },
+    { quote: "大学生兼夜職でも借りれますか", route: "reply", kind: "concern", answer: "審査通過できるようサポートする", about: "procedure" },
   ] });
   t("④ テンプレートの無い AIX＝AIX → 返信の2通", p.order === "aix_first" && p.count === 2 && p.messages[0].slot === "aix" && p.messages[1].slot === "reply", p);
-  const b = afterAixReplyBrief(p, "viewing_invite", [{ quote: "大学生兼夜職でも借りれますか", route: "reply", answer: "審査通過できるようサポートする" }]);
+  const b = afterAixReplyBrief(p, "viewing_invite", [{ quote: "大学生兼夜職でも借りれますか", route: "reply", kind: "concern", answer: "審査通過できるようサポートする" }]);
   t("④ 内覧調整を送った後の返信の材料＝審査の質問と答えの要点", b?.answers[0]?.quote.startsWith("大学生") === true && b.answers[0].answer === "審査通過できるようサポートする", b);
   t("④ 知らせ", /この番は2通: ①AIX【内覧調整】.*→ ②返信：「大学生兼夜職/.test(planAnnounce(p) ?? ""), planAnnounce(p));
   t("④ digest", planDigest(p) === "aix_first:A>R");
@@ -71,7 +72,7 @@ t("既定 off（画面）", twoMessagePlanUiOn(undefined) === false && twoMessag
 
 // ⑦ 送った AIX が計画と違う＝残りは出さない
 {
-  const p = planMessages({ asks: [{ quote: "見積", route: "aix", aix: "estimate_sheet" }, { quote: "審査は", route: "reply" }] });
+  const p = planMessages({ asks: [{ quote: "見積", route: "aix", aix: "estimate_sheet" }, { quote: "審査は", route: "reply", kind: "concern" }] });
   t("⑦ 別の AIX を押した＝null", remainingAfterAix(p, "viewing_invite") === null && templateReplyPartNote(p, "viewing_invite") === "");
 }
 
@@ -91,7 +92,7 @@ t("⑨ ピッカー付きのキー", planMessages({ asks: [{ quote: "x", route: 
 {
   const rat = planMessages({ asks: [{ quote: "見積もりお願い", route: "promise" }], finalAix: "estimate_sheet", firstContact: true });
   t("⑫ 初回の約束＋見積書＝RAT・なぜ（受け止めてから送る）", rat.shape === "RAT" && /受け止めてから送る/.test(rat.why), rat);
-  const ar = planMessages({ asks: [{ quote: "内覧したい", route: "aix", aix: "viewing_invite" }, { quote: "審査は", route: "reply" }] });
+  const ar = planMessages({ asks: [{ quote: "内覧したい", route: "aix", aix: "viewing_invite" }, { quote: "審査は", route: "reply", kind: "concern" }] });
   t("⑫ AR・なぜ（送る物と答えを混ぜない）", ar.shape === "AR" && /混ぜない/.test(ar.shapeWhy), ar);
   const atr = planMessages({ asks: [{ quote: "初期費用", route: "aix", aix: "estimate_sheet" }, { quote: "何を妥協したら", route: "reply" }] });
   t("⑫ ATR", atr.shape === "ATR" && /複雑な番/.test(atr.shapeWhy));
@@ -118,10 +119,37 @@ t("⑨ ピッカー付きのキー", planMessages({ asks: [{ quote: "x", route: 
 
 // ⑭ 統括の置いた組み立てを読む（meta.two_message_plan が先・形が違えば null）
 {
-  const r = planForConductor({ asks: [{ quote: "内覧したい", route: "aix", aix: "viewing_invite" }, { quote: "審査は", route: "reply" }], focus: "close" });
+  const r = planForConductor({ asks: [{ quote: "内覧したい", route: "aix", aix: "viewing_invite" }, { quote: "審査は", route: "reply", kind: "concern" }], focus: "close" });
   t("⑭ 統括の形（{plan,check,digest}）をそのまま読める", planFromMeta({ two_message_plan: r })?.shape === "AR" && planFromMeta({ two_message_plan: r.plan })?.shape === "AR");
   t("⑭ 形が違う＝null", planFromMeta({ two_message_plan: { messages: [{ slot: "x" }] } }) === null && planFromMeta(null) === null);
   t("⑭ 重点 close＝訴求あり・ease＝なし", canAppealFromFocus("close") && !canAppealFromFocus("ease"));
+}
+
+// ⑮ No.42 (c) 持ち込みの物件は確認の約束 → AIX（TWO_STAGE_BROUGHT_PROMISE=on の時だけ・off は今まで通り AIX 直接）
+{
+  const v = { source: "rule:two_stage_promise(brought_both)", kind: "check" } as unknown as Parameters<typeof answerableDirectAix>[0];
+  const i = { decisionSource: "rule:x", firstContact: false, asksCost: false };
+  t("⑮ off＝AIX 直接（今まで通り）", answerableDirectAix(v, i, {}) === "property_check_result");
+  t("⑮ on＝約束のまま（null）", answerableDirectAix(v, i, { TWO_STAGE_BROUGHT_PROMISE: "on" }) === null);
+  const v2 = { source: "rule:two_stage_promise(check)", kind: "check" } as unknown as Parameters<typeof answerableDirectAix>[0];
+  t("⑮ 持ち込みでない確認は on でも AIX 直接", answerableDirectAix(v2, i, { TWO_STAGE_BROUGHT_PROMISE: "on" }) === "property_check_result");
+}
+
+// ⑯ 1通でよい番に余計な2通目を作らない（文を書く AIX の中で答える・竹内さん 7f73dc32「1日見に行けますか＋物件3つ」→ 内覧調整の AIX に「物件の募集状況につきましても併せて確認」）
+{
+  const p = planMessages({ asks: [{ quote: "1日見に行けたりしますか", route: "aix", aix: "viewing_invite" }, { quote: "この物件空いてますか", route: "reply", kind: "question" }] });
+  t("⑯ 文を書く AIX＋ふつうの質問＝AIX 1通（A）・答えも AIX に", p.shape === "A" && p.messages[0].answers.length === 2 && p.messages[0].duties.includes("trust"), p);
+  const c = planMessages({ asks: [{ quote: "内覧したい", route: "aix", aix: "viewing_invite" }, { quote: "夜職で審査が不安", route: "reply", kind: "concern" }] });
+  t("⑯ 不安の受け止めが要る＝AR のまま", c.shape === "AR", c);
+  const off = (() => { process.env.TWO_MESSAGE_ONE_IN_TEXT_AIX = "off"; const r = planMessages({ asks: [{ quote: "内覧", route: "aix", aix: "viewing_invite" }, { quote: "x", route: "reply" }] }); delete process.env.TWO_MESSAGE_ONE_IN_TEXT_AIX; return r; })();
+  t("⑯ 止める＝AR", off.shape === "AR");
+  { const n = nearShapeLine([{ shape: "A", dist: 0.1 }, { shape: "AR", dist: 0.2 }, { shape: "AR", dist: 0.3 }]); t("⑯ 近い番の型の1行と短い形", !!n && /AR 2\/3・A 1\/3/.test(n.line) && n.digest === "AR2,A1" && nearShapeLine([{ shape: "A", dist: 0.1 }]) === null, n); }
+  t("⑯ 送信の並びの型（RAT・ATR・まとめ）",
+    shapeOfSends([{ isAix: false, text: "かしこまりました" }, { isAix: true }, { isAix: true }, { isAix: false, text: "お気に召されましたらご案内させて頂きます" }]) === "RAT"
+    && shapeOfSends([{ isAix: true }, { isAix: false, text: "御見積書となります" }, { isAix: false, text: "地域を広げて頂きますと" }]) === "ATR"
+    && shapeOfSends([{ isAix: false, text: "ご案内させて頂きます" }]) === "R"
+    && shapeOfSends([{ isAix: true }, { isAix: false, isTemplate: true }]) === "AT"
+    && shapeOfSends([]) === "");
 }
 
 // ⑩ 画面の知らせ（未設定＝YUMA・テストだけ）と AIX の後の下書きの指定
@@ -130,7 +158,7 @@ t("⑩ all＝全員・off＝出さない", twoMessageAnnounceVisible("all", fals
 {
   const asks = [
     { quote: "301号室の内覧お願いしたいです", route: "aix", aix: "viewing_invite" },
-    { quote: "大学生兼夜職でも借りれますか", route: "reply", answer: "審査通過できるようサポートする" },
+    { quote: "大学生兼夜職でも借りれますか", route: "reply", kind: "concern", answer: "審査通過できるようサポートする" },
   ];
   const p = planMessages({ asks });
   const h = afterAixDraftHint(afterAixReplyBrief(p, "viewing_invite", asks), "viewing_invite");
