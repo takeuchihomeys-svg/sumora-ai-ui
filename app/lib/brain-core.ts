@@ -87,7 +87,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { resolveTwoStageOrDirect, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
+import { resolveTwoStageOrDirect, screeningNoRewriteEnabled, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { holdSoftNextMaterial, rule8HoldNote, rule8HoldDirectionSuffix } from "@/app/lib/hold-soft-next";
 import { lastPropertyMoveAllUnavailable } from "@/app/lib/unavailable-ack";
@@ -4954,7 +4954,12 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           } catch (e) { console.warn("[brain-core] 退去予定日の読み取りに失敗（確認の約束）:", e instanceof Error ? e.message : String(e)); }
         }
       }
+      // 2026-11-05 弱い所 349（作業員7・統括役の決め (b)）: 審査の問い（S3）でブレインが AIX を空にして返信の依頼を書いた番（two-stage の check_question で書き換えない・TWO_STAGE_SCREENING_NO_REWRITE=on）
+      // ブレイン自身の aix（場面の候補で埋まる前の LLM の出力）が空の番だけ（finalAix は場面の候補で埋まる＝q333 で印が立たなかった）
+      const screeningBrainReply = sceneEvidence?.scene === "S3_screening" && /^(?:|null|none)$/i.test(String((parsed as { aix?: unknown }).aix ?? "").trim())
+        && ((normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: string }>).some((a) => a.route === "reply");
       const twoStageRes = resolveTwoStageOrDirect({
+        screeningBrainReply,
         // 2026-11-05 作業員1（8959・q212）: 開いているピックアップの約束（台帳の最後の行は物件の送付と読む事がある＝ackRightAfterPromise が false になる）
         openPickupPromise: promiseAix?.kind === "pickup",
         finalAix: finalAix ?? tcPromiseAix, decisionSource: decisionSource ?? (tcPromiseAix ? "llm" : null), pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
@@ -5000,6 +5005,11 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         })(),
       });
       twoStage = twoStageRes.verdict;
+      // 弱い所 349: 書き換えをやめた番は材料（demoted_overrides）とログに残す（4-4 と同じ形）
+      if (screeningBrainReply && screeningNoRewriteEnabled() && !twoStage && !twoStageRes.direct) {
+        addDemoted(demotedOverrides, { family: "two_stage_promise", src: "rule:two_stage_promise(check_question)/screening", would: "check", brain: "reply" });
+        console.log(JSON.stringify({ tag: "brain:screening-no-rewrite", conversationId, scene: sceneEvidence?.scene ?? null }));
+      }
       // 2026-10-21 竹内さん A1「すぐAIXでかえす」（two-stage answerableDirectAix・TWO_STAGE_ANSWERABLE_DIRECT=off で2段の約束に戻す）:
       //   管理会社に確かめれば分かる問い（空き状況・見積・設備）は約束を挟まず AIX【物件確認した／見積書送る】を直接
       let answerableDirectFrom: string | null = null;

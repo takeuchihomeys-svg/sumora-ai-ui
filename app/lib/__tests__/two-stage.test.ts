@@ -174,4 +174,12 @@ t("軸: about=vacancy は「空いて」の語が無くても募集状況の約�
   t("on: 約束が無いお礼だけは今まで通り2段", resolveTwoStage(v)?.kind === "pickup");
   t("on: お礼でない番は今まで通り2段", resolveTwoStage({ ...v, ackOnly: false, openPickupPromise: true, customerText: "もっと広い部屋ありますか" })?.kind === "pickup");
   delete process.env.TWO_STAGE_STAMP_ACK; }
+// 2026-11-05 作業員7（弱い所 349・q333）: 審査の問い（S3）でブレインが返信と決めた番は check_question で書き換えない（TWO_STAGE_SCREENING_NO_REWRITE=on の時だけ）
+{ const v = { ...base, finalAix: "property_check_result", customerText: "ここって私、審査的には通りそうですかね?！", screeningBrainReply: true };
+  t("off: 今まで通り check_question の2段", resolveTwoStage(v)?.source === "rule:two_stage_promise(check_question)");
+  process.env.TWO_STAGE_SCREENING_NO_REWRITE = "on";
+  t("on: 審査の問い＋ブレインの返信 → 書き換えない（null）", resolveTwoStage(v) === null);
+  t("on: 印が無い番は今まで通り", resolveTwoStage({ ...v, screeningBrainReply: false })?.source === "rule:two_stage_promise(check_question)");
+  t("on: 空き・募集の問いは今まで通り（check）", resolveTwoStage({ ...v, customerText: "ここまだ空いてますか？" })?.kind === "check");
+  delete process.env.TWO_STAGE_SCREENING_NO_REWRITE; }
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);
