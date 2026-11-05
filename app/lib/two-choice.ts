@@ -206,6 +206,15 @@ export function twoChoiceNarrowOn(env: Record<string, string | undefined> = type
   return (env.TWO_CHOICE_NARROW ?? "").trim().toLowerCase() !== "off";
 }
 /** resolveTwoChoice の理由のうち、絞った後も2択に残す物（スタッフしか知らない事で決まる番）。ackOnly＝今の番がお礼・了承だけ */
+/**
+ * 2026-11-06 作業員1（弱い所 341・q105）: 室内写真の依頼の2択（AIX【物件確認した→室内写真】か返信）は 9/23 の決め。
+ *   10/07 の竹内さんの決め（KB dbc345b1）で「頼まれた物件の室内イメージが手元にあれば AIX を直接・無ければ撮影の約束（2段）」に変わった。
+ *   竹内さんの実送信（120日・写真の依頼で手元にある番）: 3/3 が AIX の室内イメージを直接（9faff2ec・ad97cd40・fb8ab8d5）。返信の側は出していない。
+ *   既定 on（試験 DeepSeek: q105 0/3→3/3・q017（手元に無い・2段:photo）は変わらず。q017#3 の外れは S11 の前に viewing_invite を選んだブレインの揺れでこの線は通らない）。戻す TWO_CHOICE_PHOTO_AT_HAND_DIRECT=off
+ */
+export function twoChoicePhotoAtHandDirectOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_CHOICE_PHOTO_AT_HAND_DIRECT ?? "").trim().toLowerCase() !== "off";
+}
 export function narrowKeepsTwoChoice(reason: string | null | undefined, ackOnly: boolean): boolean {
   const r = String(reason ?? "");
   if (r === "considering" || r === "apology_entrust" || r === "more_property_request") return false; // 検討・お礼→返信／探し直し→約束の返信

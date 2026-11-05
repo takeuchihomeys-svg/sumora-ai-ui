@@ -133,6 +133,8 @@ async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
 
 // ─── 順番待ち ───────────────────────────────────────────────────────────
 const skippedNonJobs = new Set<string>();
+/** 営業時間（JST 9〜22時）は試験のレーンを1本に（止める EXAM_BIZ_ONE_LANE=off・弱い所 357） */
+function businessHoursLane(now = new Date()): boolean { if ((process.env.EXAM_BIZ_ONE_LANE ?? "").trim().toLowerCase() === "off") return false; const h = new Date(now.getTime() + 9 * 3600_000).getUTCHours(); return h >= 9 && h < 22; }
 function readJobs(): Array<ExamJob & { file: string }> {
   ensureDirs();
   // 2026-11-05 作業員8: 依頼の形でない .json（印・壊れたファイル）は拾わずに飛ばす（落ちない・1回だけ知らせる）
@@ -477,7 +479,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         appendFileSync(outFile, `\n=== ${at()} npx tsx --env-file=.env.local ${c} ===\n`);
         const before = statSync(outFile).size;
         // 2026-11-05 作業員4の頼み: --qfile="C:/Users/竹内 悠馬/…" が空白で切れていた（ci-v1L・ci-v3L）＝引用符を含む塊は1つの引数に（exam-plan.splitCmdArgs）
-        const r = runTsx(j.cwd, splitCmdArgs(c), j.env, outFile); cur = r.child;
+        const r = runTsx(j.cwd, splitCmdArgs(c), { ...j.env, ...(businessHoursLane() ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile); cur = r.child;
         codes.push(await r.done);
         const tail = readFileSync(outFile).subarray(before).toString("utf8");
         const m = tail.match(/空きメモリ\s*\d+MB\s*<\s*\d+MB（--force で流す）/);
@@ -517,7 +519,10 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     //   取れた「今」の行と回の揃った「前」（main）を取り置いてから終わる（-r が前を作り直さない）。猶予（EXAM_JOB_STOP_GRACE_MIN・既定 15分）を過ぎたら殺す
     const stopFile = join(ROOT, `.stop-${j.label}`);
     try { unlinkSync(stopFile); } catch { /* 無ければよい */ }
-    const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile, ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile); cur = r.child;
+    // 2026-11-06 作業員8（弱い所 357・11/05 の本番の時間切れ20回が昼の試験の呼び出しの山＝10分で 205〜220回・レーン3〜4本と重なった）: 営業時間（JST 9〜22時）はレーン1本（--urgent でも）
+    const bizLane = businessHoursLane();
+    if (bizLane) log(`  営業時間（JST 9〜22時）なのでレーン1本（弱い所 357・feedback_no_heavy_db_business_hours）`);
+    const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile, ...(guard.laneOld || bizLane ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile); cur = r.child;
     // ① 早めの打ち切り（30秒ごと）
     let early: { stop: string; why: string; base: string } | null = null;
     const rowsFile = join(resultsDirOf(j.cwd), `${j.label}.jsonl`);
