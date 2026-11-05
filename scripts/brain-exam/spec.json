@@ -6695,18 +6695,23 @@
   "conv": "a8c55dde-50e6-4a27-b518-6fa449530f17",
   "at": "2026-11-03T14:58:58.33Z",
   "accept": [
-   "AIX:property_check_result"
+   "AIX:property_check_result",
+   "2段:check"
   ],
   "mustNot": [],
   "asks": [
    {
     "q": "上記2件の空き",
     "route": "aix",
-    "point": "空きの結果"
+    "point": "空きの結果（確かめ済みなら AIX・まだなら確認の約束）",
+    "routes": [
+     "aix",
+     "promise"
+    ]
    }
   ],
   "ng": [],
-  "why": "竹内さんは物件確認した の AIX 1通（収納の感想は添えの言葉）",
+  "why": "竹内さんは確かめ終えてから AIX【物件確認した】1通（同じ日の前の番では確認の約束）。確かめ済みかはスタッフしか知らない事＝2択（先の側は約束）が決まり 56b662a4・P0 ca55d42b に合う（統括役 11/05）。2段:check と AIX の両方を正解・依頼も promise と aix の両方",
   "addedBy": "作業員7",
   "id": "q334",
   "addedAt": "2026-11-05"

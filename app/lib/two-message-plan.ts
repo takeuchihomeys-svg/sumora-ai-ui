@@ -122,7 +122,12 @@ function withShape(p: Omit<TwoMessagePlan, "shape" | "shapeWhy">): TwoMessagePla
 const TEMPLATE_AIX = new Set(["estimate_sheet", "property_recommendation", "property_check_result"]);
 /** AIX の中身（訴求）に寄る依頼＝テンプレートの通で答えられる（物件そのもの・費用・空き） */
 //   about の値は request-ledger の RequestAbout（property_equipment・property_cost・vacancy）
-const AIX_CONTENT_ABOUT = /^(?:property_equipment|property_cost|vacancy)$/;
+/** 文を書く AIX（テンプレートの席が無く、スタッフが文を書く AIX）。竹内さん本人の90日（その AIX が番の最初の AIX）: 内覧調整 53番＝返信が先 4・AIX だけ 43／待ち合わせ 39＝3・28／
+ *   全力サポート 3＝0・3／挨拶 3＝0・3／保証会社 2＝0・2／電話 7＝2・3／申込へ 18＝5・6。ヒアリング 16＝返信が先 5・AIX だけ 2（約束の返信 → AIX が多い）なので入れない */
+const TEXT_AIX = new Set(["zenryoku_support", "viewing_invite", "meeting_place", "greeting_viewing", "phone_call", "cost_explain", "cost_breakdown", "guarantor_info", "application_push", "acknowledge_check", "followup_revive"]);
+/** 結果が後になる約束（確認・探す・ピックアップ・交渉・撮影・見積の作成）＝AIX の文の中で果たせない＝約束の返信が先 */
+const resultLaterPromise = (a: PlanAsk): boolean => /確認|探|ピックアップ|交渉|撮影|作成|見積|調べ/.test(`${a.answer ?? ""}${a.quote}`);
+const AIX_CONTENT_ABOUT =/^(?:property_equipment|property_cost|vacancy)$/;
 
 const AIX_LABEL: Record<string, string> = {
   estimate_sheet: "見積書を送る", property_recommendation: "物件オススメ", property_check_result: "物件確認した",
@@ -212,6 +217,15 @@ function planCore(i: PlanInput): Omit<TwoMessagePlan, "shape" | "shapeWhy"> {
 
   // ② 初回で画像だけ・約束が要る番（条件・持ち込みの物件＝No.42 (b)(c)）＝返信が先（挨拶と約束）→ AIX（→ テンプレート）
   //    約束と返信の質問が両方ある番も、受けて答える返信（答え＋約束）→ AIX（KB bed48414: 竹内さんの近い番の順番＝受けて答える返信→2通目に AIX）
+  // 2026-11-05 tm2 の読み（作業員7）: 文を書く AIX（内覧調整・待ち合わせ・電話・保証会社・当日の挨拶 等）の番は、約束も AIX の文の中で済ませる1通
+  //   （竹内さん 7f73dc32「内覧調整の中で…物件の募集状況につきましても併せて確認させていただきます」・電話の AIX の中で審査の相談）。
+  //   除く: 初回（挨拶と約束の返信が先）・ヒアリング／全力サポート（約束の返信 → AIX の RAR・RA が竹内さんの形）・不安の受け止めが要る依頼
+  if (!i.firstContact && promiseAsks.length > 0 && TEXT_AIX.has(aixKey) && oneMessageInTextAixOn() && !promiseAsks.some(resultLaterPromise)
+    && !replyAsks.some((a) => a.kind === "concern" || a.kind === "feeling")) {
+    push("aix", [...aixAnswers, ...promiseAsks.map(q), ...replyAsks.map(q)], "依頼に AIX で答え、約束・質問も AIX の文の中で", aixKey);
+    msgs[0].duties = ["answer", "trust"];
+    return { order: "single", count: 1, messages: msgs, why: "文を書く AIX＝約束も質問も AIX の文の中で1通（竹内さんの内覧調整・電話・保証会社の番）" };
+  }
   if ((i.firstContact && i.imageOnly) || promiseAsks.length > 0) {
     const role = i.firstContact ? "挨拶と約束（満足のいくお部屋までサポートする姿勢）" : "受けと約束（確認・作成・探す）";
     push("reply", [...promiseAsks, ...replyAsks].map(q), role);
@@ -235,7 +249,7 @@ function planCore(i: PlanInput): Omit<TwoMessagePlan, "shape" | "shapeWhy"> {
   //   （AIX の文の中で答えた: 「お送りいただきました物件の募集状況につきましても併せて確認」「メジャーをお持ちして」「8日2物件ご案内」）。
   //   カードの AIX（見積書・物件確認・オススメ・ピックアップ）は1通が 1〜3割。
   //   → 文を書く AIX は、返信で答えられる質問を AIX の文の中で答える（1通）。分けるのは不安・心配の受け止めが要る依頼（kind=concern|feeling）がある時だけ（10/20 夜職の審査の番＝AR）
-  if (!hasTemplate && oneMessageInTextAixOn() && !replyAsks.some((a) => a.kind === "concern" || a.kind === "feeling")) {
+  if (TEXT_AIX.has(aixKey) && oneMessageInTextAixOn() && !replyAsks.some((a) => a.kind === "concern" || a.kind === "feeling")) {
     push("aix", [...aixAnswers, ...replyAsks.map(q)], "依頼に AIX で答え、返信で答えられる質問も AIX の文の中で答える", aixKey);
     msgs[0].duties = ["answer", "trust"];
     return { order: "single", count: 1, messages: msgs, why: "文を書く AIX＝質問も AIX の文の中で答える1通（竹内さんは文を書く AIX の番の 6〜7割が1通）" };
@@ -340,8 +354,25 @@ export function planForConductor(i: PlanInput & { focus?: string | null }): { pl
   return { plan, check: checkPlan(plan, { asks: i.asks, canAppeal }), digest: planDigest(plan) };
 }
 /** 統括が meta.two_message_plan に置いた組み立てを読む（形が合わなければ null＝呼ぶ側が自分で作る） */
-export function planFromMeta(meta: unknown): TwoMessagePlan | null {
+/**
+ * 計画が古いか（作業員5 conductor-replan.planIsStale と同じ判定・KB ea2a9405②「途中で新しい LINE が来たら計画を立て直す」）:
+ *   latest があって、seen が無い・読めない・latest より前なら古い。latest が無ければ古くない（今までと同じ動き）
+ *   TODO: conductor-replan.ts が main に入ったら import に置き換える
+ */
+export function twoMessagePlanStale(seen: string | null | undefined, latest: string | null | undefined): boolean {
+  if (!latest) return false;
+  const l = Date.parse(String(latest));
+  if (!Number.isFinite(l)) return false;
+  const s = Date.parse(String(seen ?? ""));
+  return !Number.isFinite(s) || l > s;
+}
+export function planFromMeta(meta: unknown, latestCustomerAt?: string | null): TwoMessagePlan | null {
   const v = (meta as { two_message_plan?: unknown } | null | undefined)?.two_message_plan;
+  // 統括が置いた seen_customer_at（その組み立てが見た一番新しいお客様の発言の時刻）より新しいお客様の発言があれば使わない＝呼ぶ側が作り直す
+  if (latestCustomerAt !== undefined && v && typeof v === "object") {
+    const seen = (v as { seen_customer_at?: string | null }).seen_customer_at;
+    if (twoMessagePlanStale(seen, latestCustomerAt)) return null;
+  }
   const p = v && typeof v === "object" && "plan" in (v as object) ? (v as { plan: unknown }).plan : v;
   if (!p || typeof p !== "object") return null;
   const o = p as Partial<TwoMessagePlan>;
