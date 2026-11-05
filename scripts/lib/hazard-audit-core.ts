@@ -165,3 +165,12 @@ export function deepseekWithoutCutoff(src: string): boolean {
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "").split(/\r?\n/).map((l) => l.replace(/(^|[^:])\/\/.*$/, "$1")).join("\n");
   return DS_CALL_RE.test(code) && !DS_GUARD_RE.test(code);
 }
+
+/**
+ * (p) 2026-11-05 作業員1（案A・相場の観測に試験の会話を入れない歯止め）: DB の is_exam_conversation（YUMA＋印 test_no_line／TEST-NOLINE-）が
+ *   app/lib/test-conversations.ts の一覧（YUMA＋NO_LINE_TEST_CONVERSATIONS）と同じ会話を指すか。食い違えば試験の行が相場に入る・本番の行が落ちる。
+ */
+export function examConvMismatch(tsIds: ReadonlyArray<string>, dbIds: ReadonlyArray<string>): { missingInDb: string[]; extraInDb: string[] } {
+  const t = new Set(tsIds), d = new Set(dbIds);
+  return { missingInDb: [...t].filter((x) => !d.has(x)), extraInDb: [...d].filter((x) => !t.has(x)) };
+}
