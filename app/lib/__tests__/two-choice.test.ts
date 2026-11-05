@@ -1,6 +1,6 @@
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面
 // 実行: npx tsx app/lib/__tests__/two-choice.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { resolveTwoChoice, TRADEOFF_QUESTION_RE, MORE_PROPERTY_REQUEST_RE, narrowKeepsTwoChoice, narrowPromiseOrNow, twoChoiceNarrowOn, resayPromiseFirstOn, isResayTurn } from "../two-choice";
+import { twoChoicePhotoAtHandDirectOn, resolveTwoChoice, TRADEOFF_QUESTION_RE, MORE_PROPERTY_REQUEST_RE, narrowKeepsTwoChoice, narrowPromiseOrNow, twoChoiceNarrowOn, resayPromiseFirstOn, isResayTurn } from "../two-choice";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -145,5 +145,13 @@ it("言い直し: 探し直し（9767）は言い直しの番", () => { expect(i
 it("言い直し: ブレインの条件の変更があれば言い直しの番", () => { expect(isResayTurn("家賃管理費込みで5〜6万でお願いしたいです", "rent_change")).toBe(true); });
 it("言い直し: お礼だけ・内覧の日程は言い直しでない", () => { expect(isResayTurn("ありがとうございます！", null)).toBe(false); expect(isResayTurn("13時でお願いします！", null)).toBe(false); });
 
+it("11/06 弱い所 341: 手元にある室内写真の2択を外すスイッチは既定 on", () => {
+  expect(twoChoicePhotoAtHandDirectOn({})).toBe(true);
+  expect(twoChoicePhotoAtHandDirectOn({ TWO_CHOICE_PHOTO_AT_HAND_DIRECT: "off" })).toBe(false);
+  // 呼ぶ側（brain-core）が手元にある時は roomPhotoRequest を false にする＝写真の2択の理由では立たない
+  const base = { customerText: "こちらの物件お部屋の写真などありますか？？", checkpointStage: "proposing", sentPropertyCount: 3, finalAix: "property_check_result", conditionChangeType: null, customerIntent: "question", hesitancyPattern: null, llmTwoChoice: false } as unknown as Parameters<typeof resolveTwoChoice>[0];
+  expect(resolveTwoChoice({ ...base, roomPhotoRequest: true }).reason).toBe("room_photo_request");
+  expect(resolveTwoChoice({ ...base, roomPhotoRequest: false }).reason === "room_photo_request").toBe(false);
+});
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

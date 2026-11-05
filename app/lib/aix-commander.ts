@@ -145,7 +145,8 @@ export const STAFF_ONLY_CUE_RE = /空(?:い|き)|募集|まだ(?:あり|あり�
 export type ConsultTrigger = "contract_aix" | "scene_uncertain" | "no_ground" | "staff_only_cue" | "ack_positive_apply";
 /** 2026-11-03 夜 竹内さんの決定 No.21（順番の表 12d）の AIX 側: お礼だけの番で、内覧後・見積書の後に前向きな一言が付いた時だけ、申込への AIX を相談の候補に出す。
  *  ブレイン側（作業員2・BRAIN_ACK_POSITIVE_APPLY）がその材料を渡した番＝decisions_1103 に "n21" がある番だけ。止める: AIX_DESK_ACK_APPLY を off（既定 off） */
-export function aixDeskAckApplyOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean { return (env.AIX_DESK_ACK_APPLY ?? "").trim().toLowerCase() === "on"; }
+// 2026-11-06 作業員4（弱い所 112）: 試験 ack-apply-on2 で悪化0 → 既定 on（止める AIX_DESK_ACK_APPLY=off）
+export function aixDeskAckApplyOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean { return (env.AIX_DESK_ACK_APPLY ?? "").trim().toLowerCase() !== "off"; }
 export function hasAckPositiveApply(meta: unknown): boolean { const d = (meta as { decisions_1103?: unknown } | null)?.decisions_1103; return Array.isArray(d) ? d.includes("n21") : typeof d === "string" ? /\bn21\b/.test(d) : false; }
 export const ACK_APPLY_BUTTON = "application_push";
 /** brain-core が材料を渡した事実（meta.decisions_1103・作業員2）を、AIX の相談の前に受け取る口。同じ処理の中で1会話1回分だけ持つ（呼んだら消す） */
