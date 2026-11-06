@@ -1,7 +1,7 @@
 // GET /api/cron/conductor-reflection（Vercel Cron・毎週月曜 JST 4:10）— 統括の毎週の振り返り（#10・#14・弱い所 277・作業員5・11/07）
 //   1週間の見張りの番（line_watch_turns・スタッフが返した番）から、場面ごとにブレインの道とスタッフの一手の当たりを数え、
 //   当たりの低い場面（5番以上・6割未満・外れの多い順に3つ）を brain_weaknesses と owner_questions（推奨付き）に足す。LLM なし＝費用 0。
-//   CONDUCTOR_REFLECTION=on の時だけ書く（既定 off は数えて返すだけ・?dry=1 も同じ）。営業時間（JST 9〜22時）は動かない。読みは 1000行ずつ・最大 5000行
+//   既定で書く（11/07 から既定 on・CONDUCTOR_REFLECTION=off か ?dry=1 は数えて返すだけ）。営業時間（JST 9〜22時）は動かない。読みは 1000行ずつ・最大 5000行
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { conductorReflectionOn, sceneStats, weakScenes, weekKey, weaknessRow, questionRow, type WatchRow } from "@/app/lib/conductor-reflection";

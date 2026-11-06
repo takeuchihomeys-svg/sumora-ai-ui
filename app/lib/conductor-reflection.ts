@@ -3,8 +3,10 @@
 // 統括役の了承（11/07）: 新しい表は作らない。1週間の見張りの番（line_watch_turns）から、場面ごとにブレインの道（返信か AIX か）とスタッフの一手の当たりを数え、
 //   当たりの低い場面を brain_weaknesses（key=reflect:<週>:<場面>）に、竹内さんに決めてもらう事を owner_questions（dedupe_key=reflect:<週>:<場面>）に推奨付きで足す。
 //   決めるのはブレインと竹内さん（ここは数えて並べるだけ）。KB P0 8805bd74（強化できる所はその場で表に）・P1 ea2a9405③（分からない時は人に正直に渡す）
+import { aixLabelOf } from "./two-message-plan";
 type Env = Record<string, string | undefined>;
-export const conductorReflectionOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_REFLECTION ?? "").trim().toLowerCase() === "on";
+// 11/07 統括役: 既定 on（書かない形で1回流し、出る行を目で読んで重複・対象外の混ざり無しを確かめた）。止める CONDUCTOR_REFLECTION=off
+export const conductorReflectionOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_REFLECTION ?? "").trim().toLowerCase() !== "off";
 
 export type WatchRow = { scene_key: string | null; brain_action: string | null; brain_reply_mode: string | null; staff_aix: unknown; staff_first_at: string | null };
 export type SceneStat = { scene: string; n: number; hit: number; brainAixStaffReply: number; brainReplyStaffAix: number };
@@ -50,15 +52,23 @@ export function weaknessRow(week: string, s: SceneStat) {
     occurrences: s.n - s.hit,
   };
 }
-/** owner_questions の1行（推奨付き）。外れの向きで推奨を変える（決めるのは竹内さん） */
+/** 見張りの場面の札（"AIX:application_push"・"返信:意図:chat"）を竹内さんの読む言葉に（AIX は画面のボタン名） */
+export function sceneLabel(scene: string): string {
+  if (scene.startsWith("AIX:")) return `AIX【${aixLabelOf(scene.slice(4))}】`;
+  if (scene.startsWith("返信:")) { const r = scene.slice(3).replace(/^意図:/, ""); return `返信（${({ chat: "雑談" } as Record<string, string>)[r] ?? r}）`; }
+  return scene;
+}
+/** owner_questions の1行（推奨付き・竹内さんが読む短い文）。推奨は今週のスタッフの実際の一手に合わせる（決めるのは竹内さん） */
 export function questionRow(week: string, s: SceneStat) {
   const aixHeavy = s.brainAixStaffReply >= s.brainReplyStaffAix;
+  const label = sceneLabel(s.scene), staff = aixHeavy ? "返信" : "AIX", brain = aixHeavy ? "AIX" : "返信";
   return {
-    kind: "conductor_reflection", topic: `場面「${s.scene}」の返信か AIX か`,
-    question: `${week}: 場面「${s.scene}」で、ブレインの返信か AIX かが ${s.n}番中 ${s.n - s.hit}番スタッフと違いました（${aixHeavy ? "ブレインが AIX・スタッフは返信" : "ブレインが返信・スタッフは AIX"}が多い）。この場面の正しい一手はどちらが多いですか。`,
-    options: ["返信（約束・答え）が多い", "AIX が多い", "番による（例を見て決める）"],
-    recommended: aixHeavy ? "返信（約束・答え）が多い" : "AIX が多い",
-    why: "スタッフの実際の一手の多い方を推奨にしています（竹内さんの番だけで数え直すと変わる事があります）",
+    kind: "conductor_reflection", topic: `${label}の番`,
+    question: `ブレインが${label}にした番（今週 ${s.n}番）で、スタッフは${staff}で送った番が ${s.n - s.hit}番ありました。この番は${staff}で良いですか？`,
+    options: [`はい、${staff}で良い`, `いいえ、${brain}で良い`, "番による"],
+    // 外れが3分の2以上の時だけ「はい」を推す（半々の時は番による＝例を見て決める）
+    recommended: (s.n - s.hit) / s.n >= 0.66 ? `はい、${staff}で良い` : "番による",
+    why: `今週のスタッフの実際の一手（${s.n - s.hit}/${s.n}番）に合わせています`,
     source_kind: "conductor_reflection", source_ref: `reflect:${week}:${s.scene}`, status: "open", priority: 3, dedupe_key: `reflect:${week}:${s.scene}`,
   };
 }
