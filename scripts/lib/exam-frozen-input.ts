@@ -36,6 +36,42 @@ export const SNAPSHOT_TABLES: ReadonlySet<string> = new Set([
 ]);
 export const SNAPSHOT_RPCS: ReadonlySet<string> = new Set(["match_winning_patterns", "match_templates", "match_reply_knowledge", "match_design_knowledge"]);
 
+// ─── ③ 鍵が要る読み（近い竹内さんの番）── 2026-11-07 統括役の決め B（作業員9・作業員4）────────────────
+//   試験は公開キーで動くので、近い竹内さんの番の読み（RLS・サーバーの鍵だけ）は 42501／空になる。DDL も anon への許可も足さない。
+//   試験の中ではこの読みを「頼み」として置き場の pending に残すだけ（公開キーの答えは控えない）。夜に鍵のある env の小さな台本
+//   （scripts/exam-near-resolve.ts --env-file=<鍵のある env>）が頼みを鍵で読み、決めた欄だけに絞って同じ鍵の控えに書く＝次の試験は控えを返す。
+//   残す欄は近い番の id・場面・重点・距離・時刻・竹内さんの一手（AIX の種類と道）・keep の真偽だけ。本文・要約（situation・text）は残さない
+export const KEYED_RPCS: ReadonlySet<string> = new Set(["match_conductor_focus", "match_conductor_turns"]);
+export const KEYED_TABLES: ReadonlySet<string> = new Set(["takeuchi_compose_examples", "conductor_turn_vectors"]);
+/** 鍵の要る読みか（純関数） */
+export function keyedTarget(url: string, method: string): string | null {
+  let u: URL; try { u = new URL(url); } catch { return null; }
+  const m = u.pathname.match(/\/rest\/v1\/(rpc\/)?([a-z_]+)$/);
+  if (!m) return null;
+  const meth = (method || "GET").toUpperCase();
+  if (m[1]) return meth === "POST" && KEYED_RPCS.has(m[2]) ? m[2] : null;
+  return meth === "GET" && KEYED_TABLES.has(m[2]) ? m[2] : null;
+}
+/** 鍵の要る読みの鍵（純関数）: 借りたテスト用の会話・条件の行の id は伏せる（レーンが違っても同じ問い合わせは同じ鍵） */
+export function keyedKey(url: string, method: string, body: string, excludeIds: readonly string[]): string {
+  const hide = (s: string) => excludeIds.filter(Boolean).reduce((t, id) => t.split(id).join("<x>"), s);
+  return snapshotKey(hide(url), method, hide(body));
+}
+/** 控えに残す欄だけにする（純関数）。分からない形は空の配列（本文を残さない側に倒す） */
+export function reduceKeyedBody(name: string, text: string): string {
+  let rows: unknown; try { rows = JSON.parse(text); } catch { return "[]"; }
+  if (!Array.isArray(rows)) return "[]";
+  const pick = (r: Record<string, unknown>): Record<string, unknown> => {
+    const a = (r.actual ?? null) as Record<string, unknown> | null;
+    const act = a ? { aix: a.aix ?? null, route: a.route ?? null, shape: a.shape ?? null } : null;
+    if (name === "match_conductor_focus" || name === "match_conductor_turns") return { source_key: r.source_key ?? null, scene: r.scene ?? null, focus: r.focus ?? null, distance: r.distance ?? null, turn_at: r.turn_at ?? null, actual: act };
+    if (name === "takeuchi_compose_examples") return { message_id: r.message_id ?? null, keep: r.keep === true ? true : r.keep === false ? false : null };
+    if (name === "conductor_turn_vectors") return { source_key: r.source_key ?? null, turn_at: r.turn_at ?? null, ...(act ? { actual: act } : {}) };
+    return {};
+  };
+  return JSON.stringify(rows.map((r) => pick((r ?? {}) as Record<string, unknown>)));
+}
+
 /** 写しの日（JST 4:00 で区切る＝学習の cron 3:23 の後）。"YYYY-MM-DD" */
 export function snapshotDay(realNowMs: number): string {
   return new Date(realNowMs + 9 * 3_600_000 - 4 * 3_600_000).toISOString().slice(0, 10);
@@ -77,6 +113,23 @@ export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const method = (init?.method ?? (typeof input === "object" && !(input instanceof URL) ? (input as Request).method : "GET")) || "GET";
     const body = typeof init?.body === "string" ? init.body : "";
+    // ③ 鍵が要る読み: 控え（夜の台本が鍵で読んで絞った物）があれば返す。無ければ頼みを pending に残し、公開キーの答え（42501／空）はそのまま返して控えない
+    const keyed = keyedTarget(url, method);
+    if (keyed) {
+      const kday = (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(now());
+      const kkey = keyedKey(url, method, body, opts.excludeIds());
+      const kfile = join(opts.dir, kday, `k-${kkey}.json`);
+      if (existsSync(kfile)) {
+        try { const s = JSON.parse(readFileSync(kfile, "utf8")) as Snap; stats.hit++; const h = new Headers(); h.set("content-type", s.contentType ?? "application/json"); return new Response(s.body, { status: 200, headers: h }); } catch { /* 読み直す */ }
+      }
+      try {
+        const pdir = join(opts.dir, kday, "pending"); mkdirSync(pdir, { recursive: true });
+        const pf = join(pdir, `k-${kkey}.json`);
+        if (!existsSync(pf)) writeFileSync(pf, JSON.stringify({ name: keyed, url, method, body, at: new Date().toISOString() }));
+      } catch { /* 頼みを残せなくても試験は続ける */ }
+      stats.skip++;
+      return inner(input, init);
+    }
     const table = snapshotTarget(url, method, body, opts.excludeIds());
     if (!table) return inner(input, init);
     // 2026-11-06 作業員8（弱い所 354・作業員1の気付き）: 夜の基準（22時台＝その日）と翌朝の依頼（4:00 以降＝次の日）で写しの日が分かれていた。
