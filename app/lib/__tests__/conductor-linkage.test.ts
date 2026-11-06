@@ -21,7 +21,7 @@ it("作業員8の印から持ち主を引く（前方一致・長い一致を先
 it("連携の1行: 重点を読む統括・決め直しの例（q136・q332・q055・q023）が出る", () => {
   const l = linkageLines();
   ok(l.some((x) => x.startsWith("intake → meta.conductor_focus: 読む") && x.includes("compose") && x.includes("two_msg")), "focus readers");
-  for (const q of ["q136", "q332", "q055", "q023", "q174", "closing2-q136", "夜の明日"]) ok(l.some((x) => x.includes(q)), q);
+  for (const q of ["q136", "q332", "q055", "q023", "q174", "closing2-q136", "夜の明日", "q010"]) ok(l.some((x) => x.includes(q)), q);
   ok(l.some((x) => x.startsWith("brain → meta.reply_direction: 読む writer")), "reply_direction");
 });
 it("持ち主は全部決まっている（11/06 統括役の決め）", () => {

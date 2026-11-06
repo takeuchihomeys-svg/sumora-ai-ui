@@ -46,7 +46,11 @@ it("材料の文: 好感の時は内覧を書かない読み方と竹内さん�
   const t = otherCandidatesBrainText({ hit: true, liking: true }, pickOtherCandidatesExamples("x", {}));
   expect(t).toContain("内覧の依頼ではない");
   expect(t).toContain("内覧に誘った 0・AIX【内覧調整】0");
-  expect(t).toContain("竹内さん: 約束の返信（探す）");
+  expect(t).toContain("竹内さん: ピックアップの約束（2段:pickup）");
+  // 11/06 q174-ab: 読み方と一手（ピックアップの約束）を1組で渡す
+  expect(t).toContain("一手: 竹内さんは新たにピックアップしてお送りする約束を返す");
+  expect(t).toContain("route=promise");
+  expect(t).toContain("相づち・お礼だけの返信で終わらせない");
 });
 it("材料の文: 当たらなければ空", () => { expect(otherCandidatesBrainText({ hit: false, liking: false }, [])).toBe(""); });
 
