@@ -65,6 +65,11 @@ export function nearOpinion(rows: ReadonlyArray<NearTurnRow>, o: { band?: number
   return { move, aix, share, n: inside.length, agree, exemplar, replyFocus };
 }
 
+/** 竹内さんの返信の文が約束の形か（11/07 統括役の決め (a)・竹内さんの120日の数えと同じ形: 探してお送り／確認させて頂きます・確認出来次第／作成しお送り）。純関数 */
+export function isPromiseText(t: string): boolean {
+  return /(ピックアップ|お探し)(して|させて|致し|し)?[^。！!\n]{0,30}お送り|確認(させて|致し|いたし)(頂き|ます)|確認(出来|でき)次第|作成し[^。！!\n]{0,10}お送り/.test(t);
+}
+
 /** 状況の文（turnSituationText の形）から、お客様の発言の部分だけを短く（伏せ済みの文だけを渡す） */
 export function situationGist(situation: string | null | undefined, max = 60): string {
   if (!situation) return "";

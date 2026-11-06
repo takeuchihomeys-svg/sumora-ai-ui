@@ -8,7 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { maskContactBits, APPLY_DOCS_RE } from "@/app/lib/conductor-turn-vectors";
 import { liveSituationV2 } from "@/app/lib/conductor-focus-server";
-import { nearOpinion, nearOpinionLine, NEAR_OPINION_BAND, NEAR_OPINION_MIN_SHARE, type NearOpinion, type NearTurnRow } from "@/app/lib/conductor-near-opinion";
+import { nearOpinion, nearOpinionLine, isPromiseText, NEAR_OPINION_BAND, NEAR_OPINION_MIN_SHARE, type NearOpinion, type NearTurnRow } from "@/app/lib/conductor-near-opinion";
 
 export type NearOpinionResult = { op: NearOpinion | null; line: string; inBand: number };
 
@@ -34,6 +34,16 @@ export async function nearOpinionForTurn(sb: SupabaseClient, o: {
     const { data: meta } = rows0.length ? await sb.from("conductor_turn_vectors").select("source_key, situation").in("source_key", rows0.slice(0, 5).map((h) => h.source_key)) : { data: [] };
     const sitOf = new Map(((meta ?? []) as Array<{ source_key: string; situation: string | null }>).map((m) => [m.source_key, m.situation]));
     const rows: NearTurnRow[] = rows0.map((h) => ({ key: h.source_key, distance: h.distance, route: h.actual!.route as "aix" | "reply", aix: h.actual?.aix ?? null, picker: h.actual?.picker ?? null, situation: sitOf.get(h.source_key) ?? null, focus: h.focus ?? null }));
+    // 2026-11-07 統括役の決め (a): 重点（focus）は「ピックアップしてお送り」の約束の文を propose に分けていた（nop4-on）。
+    //   返信の番は、竹内さんの実際の最初の文が約束の形（探してお送り・確認させて頂きます・作成しお送り）なら約束（promise_make）として数える
+    try {
+      const replyIds = rows.filter((r) => r.route === "reply" && r.distance <= NEAR_OPINION_BAND).map((r) => (r.key.startsWith("msg:") ? r.key.slice(4) : r.key)).slice(0, 30);
+      if (replyIds.length) {
+        const { data: tx } = await sb.from("messages").select("id, text").in("id", replyIds);
+        const promiseOf = new Map(((tx ?? []) as Array<{ id: string; text: string | null }>).map((m) => [m.id, isPromiseText(m.text ?? "")]));
+        for (const r of rows) { const id = r.key.startsWith("msg:") ? r.key.slice(4) : r.key; if (r.route === "reply" && promiseOf.get(id)) r.focus = "promise_make"; }
+      }
+    } catch { /* 読めなければ重点のまま */ }
     const op = nearOpinion(rows, { minShare: o.minShare ?? NEAR_OPINION_MIN_SHARE });
     if (!op) return { op: null, line: "", inBand: rows.length };
     // 一番近い同じ一手の番の、竹内さんの実際の最初の文（伏せる: その会話の表示名・連絡先）

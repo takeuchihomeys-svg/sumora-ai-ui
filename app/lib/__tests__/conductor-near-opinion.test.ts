@@ -1,5 +1,5 @@
 // app/lib/__tests__/conductor-near-opinion.test.ts — 入口の意見（近い竹内さんの番の多数の一手・2026-11-07 作業員4）
-import { nearOpinion, nearOpinionLine, nearOpinionOn, situationGist, nearOpinionDigest, type NearTurnRow } from "../conductor-near-opinion";
+import { isPromiseText, nearOpinion, nearOpinionLine, nearOpinionOn, situationGist, nearOpinionDigest, type NearTurnRow } from "../conductor-near-opinion";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean) => { if (ok) pass++; else { fail++; console.log(`  NG ${n}`); } };
 const row = (i: number, route: "aix" | "reply", aix: string | null, d = 0.1): NearTurnRow => ({ key: `msg:${i}`, distance: d, route, aix, situation: `場面: property_share\n段階: proposing\n直前のこちら: 返信\nお客様: 〔物件のURL〕 ここ空いてますか ${i}` });
@@ -26,5 +26,7 @@ const o3 = nearOpinion(rf);
 t("返信の種類: 多数の重点 promise_make・手本は同じ重点の一番近い番", !!o3 && o3.replyFocus === "promise_make" && o3.exemplar.key === "msg:1");
 t("1行: 約束の文と route promise を名前に", nearOpinionLine(o3).includes("約束の文＝2段の約束") && nearOpinionLine(o3).includes("route は promise") && nearOpinionDigest(o3) === "返信/promise_make:5:1");
 t("重点が分からない行だけなら素の「返信」", nearOpinion(r5)?.replyFocus === null && nearOpinionLine(nearOpinion(r5)).includes("竹内さんの最初の一手は 返信。"));
+t("約束の文 (a): ピックアップしてお送り・募集状況確認させて頂きます・御見積書を作成しお送り", isPromiseText("以前ご依頼いただいた条件でお部屋をピックアップしてお送りさせて頂きます😊！！") && isPromiseText("お送り頂きました5件の募集状況確認させて頂きます！！") && isPromiseText("最大限割引させて頂いた御見積書を作成しお送りさせて頂きます"));
+t("約束でない文: 受け止め・答え", !isPromiseText("全然大丈夫です！！ 前にお気に召して頂いたカシミマンションを優先してご案内させて頂きます！！") && !isPromiseText("はい！！ 何卒よろしくお願い致します！！"));
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exitCode = 1;
