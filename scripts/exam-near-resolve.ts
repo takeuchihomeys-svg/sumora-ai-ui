@@ -9,7 +9,7 @@
 //   写しは exam-cache（この PC の中だけ・git にも tsc-remote の上げにも入らない）。
 //
 // 実行（鍵のある env を読む・鍵は写さない・値は出さない・夜に）:
-//   npx tsx --env-file="<鍵のある env のパス>" scripts/exam-near-resolve.ts [--day=YYYY-MM-DD] [--dry]
+//   npx tsx --env-file="<鍵のある env のパス>" scripts/exam-near-resolve.ts [--day=YYYY-MM-DD] [--dry] [--backfill（もう控えた RPC の答えからも後ろの読みを作る）]
 //   --day を省くと pending のある日を全部。LLM は呼ばない（DB を読むだけ・頼み1つにつき1回）
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -78,6 +78,22 @@ async function resolveOne(day: string, fileName: string, req: { name: string; ur
           if (g2) { follow++; rows += g2.length; try { unlinkSync(join(pdir, fname)); } catch { /* 頼みが無ければよい */ } } else fail++;
         }
       } catch (e) { console.warn(`  失敗 ${req.name}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); fail++; }
+    }
+    // --backfill: もう控えてある RPC の答えからも、後ろの読みの控えを作る（新しい台本の前に控えた分・作業員4 11/07）
+    if (argv.includes("--backfill") && !DRY) {
+      const base = new URL(url);
+      for (const f of readdirSync(join(root, day)).filter((x) => /^k-.*\.json$/.test(x))) {
+        try {
+          const s = JSON.parse(readFileSync(join(root, day, f), "utf8")) as { table?: string; body?: string };
+          if (s.table !== "match_conductor_focus" || !s.body) continue;
+          for (const fu of await followupUrls(`${base.protocol}//${base.host}`, s.table, JSON.parse(s.body) as Array<Record<string, unknown>>, Date.now())) {
+            const fname = `k-${keyedKey(fu.url, "GET", "", [])}.json`;
+            if (existsSync(join(root, day, fname))) continue;
+            const g2 = await resolveOne(day, fname, { name: fu.name, url: fu.url, method: "GET", body: "" }, root);
+            if (g2) { follow++; rows += g2.length; } else fail++;
+          }
+        } catch (e) { console.warn(`  後ろの読みを作れない ${f}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); fail++; }
+      }
     }
   }
   console.log(`鍵が要る読みの控え: 書いた ${ok}・後ろの読みを先に ${follow}・行 ${rows}・読めない ${fail}（日 ${days.join(",") || "なし"}）${DRY ? "（dry）" : ""}`);
