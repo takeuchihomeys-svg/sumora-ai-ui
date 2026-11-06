@@ -24,7 +24,7 @@
 //          （brain-exam 以外）--add --label=sbp --owner=作業員6 --switch=AIX_SECOND_BLUEPRINT --cwd=<作業ツリー> --runner=cmd --cmd="scripts/exam-aix-text.ts --label=sbp-off --qfile=second-appeal.json --kinds=second" --cmd="..."
 //   流す:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --run [--once] [--release-order=<md>]
 //   見る:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --list
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { rmdirSync, unlinkSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, openSync, closeSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
@@ -52,7 +52,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
   return (id) => (mm.size ? mm.get(id) ?? [] : null);
 }
 import { pcState } from "./lib/exam-pc-state";
-import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase } from "./lib/exam-base-pin";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, type CmpLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
@@ -462,7 +462,10 @@ async function runTscRemoteJob(j: ExamJob & { file: string }): Promise<void> {
   if (code !== 0 && url && !remoteTypeErrors(out).length) {
     const until = Date.now() + Number(process.env.EXAM_TSC_REMOTE_WAIT_MIN ?? "15") * 60_000;
     while (Date.now() < until) {
-      let txt = ""; try { txt = execFileSync(process.platform === "win32" ? "vercel.cmd" : "vercel", ["inspect", url], { cwd: j.cwd, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 }).toString(); } catch (e) { txt = String((e as { stdout?: Buffer; stderr?: Buffer }).stdout ?? "") + String((e as { stderr?: Buffer }).stderr ?? ""); }
+      // 2026-11-06 作業員1（統括役・作業員7/9 でも出た「Not authorized」の止まり方）: vercel inspect は表を全部 stderr に出す（stdout は空）。
+      //   旧は stdout だけを読んでいた＝READY でも状態が読めず、待ちの上限で「ビルド失敗」になっていた（tsc-ocr-on2: 12:57 に READY・13:11 に失敗）。両方を読む
+      const ir = spawnSync(process.platform === "win32" ? "vercel.cmd" : "vercel", ["inspect", url], { cwd: j.cwd, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
+      const txt = inspectOutputText(ir);
       const st = remoteDeployState(txt);
       if (st === "READY" || st === "ERROR" || st === "CANCELED") { waitedState = st; break; }
       await new Promise((r) => setTimeout(r, 30_000));

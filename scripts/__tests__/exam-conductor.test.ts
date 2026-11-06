@@ -1,6 +1,6 @@
 // scripts/__tests__/exam-conductor.test.ts — 試験の統括の純関数（関所の時間・早めの打ち切り・揺れの回数・問題の選び・表への書き戻し）
 //   実行: npx tsx scripts/__tests__/exam-conductor.test.ts
-import { hazardAuditDue, splitWorse, isMixedRow, jobSize, compareJobs, splitIds, splitByTime, estimateJobMin, cleanupTargets, remoteDeployState, remainingIds, comparedIds, staleExamGuard, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
+import { hazardAuditDue, splitWorse, isMixedRow, jobSize, compareJobs, splitIds, splitByTime, estimateJobMin, cleanupTargets, remoteDeployState, inspectOutputText, remainingIds, comparedIds, staleExamGuard, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
 import type { FlakeObs } from "../lib/exam-flake";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -117,6 +117,7 @@ t("行が無ければ変えない", !updateReleaseOrder(md, "NO_SUCH", "x").chan
   const one = cleanupTargets("テストの会話: YUMA2（d040f80a-4fae-4fd0-abca-66eb2630906f）・鍵 scripts/.replay-out/.test-conv-YUMA2.lock・線 scripts/.replay-out/brain-exam-floor-cbp1-yuma2.json", "cbp1");
   t("片付け先: 1本の回は今まで通りその会話", one.length === 1 && one[0].conv === "YUMA2" && one[0].label === "cbp1" && !one[0].child);
   t("片付け先: 読めなければ空", cleanupTargets("なにも無い", "x").length === 0); }
+t("組み立ての状態: inspect の表が stderr だけに出ても READY を読む（11/06 tsc-ocr-on2）", remoteDeployState(inspectOutputText({ stdout: Buffer.from(""), stderr: Buffer.from("\nVercel CLI 55.0.0\n  General\n\n    id\t\tdpl_7zPK\n    status\t● Ready\n") })) === "READY" && remoteDeployState(inspectOutputText({ stdout: "", stderr: "" })) === null && remoteDeployState(inspectOutputText(null)) === null);
 t("組み立ての状態: inspect の READY・Building・Error を読む（作業員3の気付き）", remoteDeployState("  General\n\n    id\t\tdpl_x\n    status\t● Ready\n") === "READY" && remoteDeployState("status\t● Building") === "BUILDING" && remoteDeployState("status ● Error") === "ERROR" && remoteDeployState("なし") === null);
 t("比べた問題: 基準の回が無い＝0（悪化0と言わない）", comparedIds([{ id: "q1", rep: 1, score: { pass: true } }], []).length === 0);
 t("比べた問題: 両方で失敗・混ざりの無い回がある問題だけ", JSON.stringify(comparedIds([{ id: "q1", rep: 1 }, { id: "q2", rep: 1, error: "x" }, { id: "q3", rep: 1, foreignMsgs: 2 }, { id: "q4", rep: 1 }], [{ id: "q1", rep: 1 }, { id: "q2", rep: 1 }, { id: "q3", rep: 1 }])) === JSON.stringify(["q1"]));
