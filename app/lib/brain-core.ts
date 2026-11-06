@@ -2663,7 +2663,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     : { hit: false, liking: false };
   if (otherCandidatesRead.hit) console.log(JSON.stringify({ tag: "brain:other-candidates-read", conversationId, liking: otherCandidatesRead.liking }));
   // 2026-11-06 作業員1（弱い所 359・q008）: 物件を送った後の「〇〇は住んでいたが不便だった」をエリアを外す条件の言い直しと読む手本（竹内さん 3/3 がピックアップの約束）。
-  //   既定 off・入れる BRAIN_AREA_EXCLUDE_READ=on（app/lib/area-exclude-read.ts）
+  //   既定 on（11/06 試験で q008 2/4→4/4・悪化0）・止める BRAIN_AREA_EXCLUDE_READ=off（app/lib/area-exclude-read.ts）
   const areaExcludeHit = areaExcludeReadOn() && !isPostApplyStatus(convStatus)
     && readAreaExclude({ customerText: unrepliedTurn.text, sentPropertyCount: brainLedger.facts.propertiesSentCount ?? 0 });
   if (areaExcludeHit) console.log(JSON.stringify({ tag: "brain:area-exclude-read", conversationId }));
