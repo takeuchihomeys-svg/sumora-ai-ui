@@ -706,3 +706,28 @@ export function pickupDirectionAdjust(v: TwoStageVerdict | null, i: Pick<TwoStag
   }
   return add.length ? { ...v, direction: `${v.direction}（${add.join("／")}）` } : v;
 }
+
+/**
+ * 2026-11-06 作業員9（統括役の決め・q011・q174）: 2段のピックアップの約束（pickup・pickup_unless_ack）の決まった方向の文が
+ *   ブレイン自身の方向の文（依頼の中身）を置き換えて、要点が落ちる型を直す。
+ *   例 q011 ブレイン「トイレに扉がある・大国町・本町・堺筋本町の条件を復唱し…」→ 2段の文は「新しいご条件（…具体的に）」だけで、
+ *   書き手は条件を書かなかった。q174 ブレイン「桜川駅・芦原橋駅エリアで新着物件を再検索して…」→ 他の候補の約束が落ちた。
+ *   道（2段の約束）は変えず、ブレインの方向の文を「依頼の中身」として方向の文の後ろに足す（KB「書き手は下の注記より方向の文そのものに従う」）。
+ *   内覧・申込の誘いと送る段（AIX）は前の決まり（NO_VIEWING・送るのは後で AIX）が勝つ、と添える。
+ *   既定 off（PICKUP_DIRECTION_BRAIN_ASK=on で入る）。
+ */
+export function pickupDirectionBrainAskOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PICKUP_DIRECTION_BRAIN_ASK ?? "").trim().toLowerCase() === "on";
+}
+export function pickupDirectionWithBrainAsk(
+  v: TwoStageVerdict | null,
+  brainDirection: string | null | undefined,
+  env?: Record<string, string | undefined>,
+): string | null {
+  if (!v) return null;
+  if (v.kind !== "pickup" || !pickupDirectionBrainAskOn(env)) return v.direction;
+  const b = String(brainDirection ?? "").replace(/\s+/g, " ").trim();
+  if (b.length < 6 || v.direction.includes(b)) return v.direction;
+  const clip = b.length <= 140 ? b : `${b.slice(0, 140)}…`;
+  return `${v.direction}【ブレインの読み（依頼の中身）: ${clip}】→ この読みにあるお客様のご条件・エリア・物件・ご質問は省かず具体的に入れる（ピックアップの約束の形・内覧や申込の一文を足さない事・物件を送るのは後で AIX の決まりは上のまま）`;
+}

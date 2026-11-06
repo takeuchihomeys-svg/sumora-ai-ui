@@ -185,7 +185,7 @@ import { resolveViewingDayAck } from "@/app/lib/viewing-day";
 import { furtherDiscountDaihyo, FURTHER_DISCOUNT_SOURCE, negotiationPromisePending, NEGOTIATION_PROMISE_SOURCE } from "@/app/lib/further-discount";
 import { viewingDayGreetingDue, VIEWING_DAY_GREETING_SOURCE } from "@/app/lib/viewing-day-greeting";
 import { staffTalkedToday, greetingOncePerDayEnabled } from "@/app/lib/daily-greeting";
-import { promiseKindsToday } from "@/app/lib/two-stage";
+import { promiseKindsToday, pickupDirectionWithBrainAsk } from "@/app/lib/two-stage";
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { turnElapsedOn, turnElapsed, turnElapsedLine, elapsedPreferredSide, type TurnElapsed } from "@/app/lib/turn-elapsed";
@@ -5336,7 +5336,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       : rentIncludedReply ? "初期費用（御見積書の金額）は翌月分の前家賃込みであることを本文で答える（ご入居日によって別途日割家賃・金額は書かない）"
       : null;
     // 2026-10-14 決定 C をブレイン基準に: ブレイン自身が返信を選んだ番はブレインの方向の文のまま（空の時だけ規則の方向）
-    const replyDirection = ackAfterPromise ? (ackAfterPromise.byBrain && rentGuard.text ? rentGuard.text : ackAfterPromiseDirection(ackAfterPromise.kind, ackAfterPromise.laterAix)) : waitingCustomerInfo ? `お客様の連絡待ち（こちらから「${(waitingInfo.evidence ?? "").slice(0, 40)}」とお伝え済み）。ピックアップ・新しい提案・約束はしない。返信するなら短い受け止めだけ` : twoStage ? twoStage.direction : procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
+    const replyDirection = ackAfterPromise ? (ackAfterPromise.byBrain && rentGuard.text ? rentGuard.text : ackAfterPromiseDirection(ackAfterPromise.kind, ackAfterPromise.laterAix)) : waitingCustomerInfo ? `お客様の連絡待ち（こちらから「${(waitingInfo.evidence ?? "").slice(0, 40)}」とお伝え済み）。ピックアップ・新しい提案・約束はしない。返信するなら短い受け止めだけ` : twoStage ? (pickupDirectionWithBrainAsk(twoStage, rentGuard.text) ?? twoStage.direction) : procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
       ? `${focusedEstimateOverride ? `${focusedEstimateOverride}の` : ""}最大限割引した初期費用の御見積書を作成してお送りする（募集状況の確認の宣言はしない）`
       : rentGuard.text ?? (rentGuard.dropped ? "ご条件に合うお部屋を引き続きピックアップしてお届けする（家賃の交渉には触れない）" : null);
 

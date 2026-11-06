@@ -12,7 +12,7 @@
 //   （CONDUCTOR_ 入口の統括・TWO_ 2通の組み合わせと2段・FLASH_／WRITER_ 書き手・MGMT_ 管理会社の時間の線・TAKEUCHI_ 竹内さんの書き方・EXAMPLE_ 手本・TURN_CONTRACT 本質の帯）。
 //   足すと指紋（ハッシュ）が変わる＝brain_switch_versions に新しい行が1つ増える（前の行は残る）
 export const SWITCH_PREFIXES = ["BRAIN_", "AIX_", "REPLY_", "SENT_", "EXHAUSTED_", "SITUATION_", "SCREENING_", "STALE_", "SEND_", "PROGRESS_", "DATE_", "COMPOSE_", "SECOND_", "LLM_ALT_ACTIONS", "FINAL_CHECK", "DRAFT_", "OPS_ANOMALY_",
-  "CONDUCTOR_", "TWO_", "FLASH_", "WRITER_", "MGMT_", "TAKEUCHI_", "EXAMPLE_", "TURN_CONTRACT"];
+  "CONDUCTOR_", "TWO_", "FLASH_", "WRITER_", "MGMT_", "TAKEUCHI_", "EXAMPLE_", "TURN_CONTRACT", "PICKUP_DIRECTION", "CLOSER_"];
 const SECRET_NAME = /KEY|SECRET|TOKEN|PASSWORD|URL|ENDPOINT|WEBHOOK|DSN/i;
 /** 値がスイッチの形（on/off/shadow・数・語の並び。LLM_ALT_ACTIONS の印の並びは長い＝300字まで・空白なし）だけ */
 const SWITCH_VALUE = /^[\w.,:=@/-]{1,300}$/;

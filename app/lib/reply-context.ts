@@ -2443,7 +2443,9 @@ export function buildTurnPairNote(
     // 2026-09-10 Fable5 あみ事例: example は「ある前提が成立していた場面の実文」。前提が今回成立していないなら文をそのまま渡さない
     // 2026-09-11 統合設計（経路A/B）: 選択は selectPairExample（修正プロンプトと同じ前提ゲート）。顧客名スロットも埋める
     const sel = selectPairExample(pair, customerMessage);
-    const ex = sel.text ?? fillPairPlaceholders(pair.rule.example, pair);
+    const ex0 = sel.text ?? fillPairPlaceholders(pair.rule.example, pair);
+    // 2026-11-06 作業員9: 締めの線（CLOSER_COMMIT_RULE_FIRST_ONLY）と同じ番は、手本の全力サポートの1文も見せない（前の送信がある＝初回でない）
+    const ex = closerCommitRuleFirstOnlyOn() && pair.customer.kind === "condition_change" && (pair.lastStaffText ?? "").trim() ? stripCommitSentence(ex0) : ex0;
     const nameHint = customerName ? `顧客名は「${customerName}さん」` : "顧客名不明: 呼びかけは書かない";
     if (pair.rule.examplePremise && !sel.premiseOk) {
       lines.push(`- 型（⚠ この成約実例は【${pair.rule.examplePremise}】の場面のもので、今回のお客様のメッセージにはその前提が**無い**。骨格（開口語→受け→行動宣言→締めの並びと文体）だけを真似し、文はそのまま使わない。前提に依存する語（ご相談・ご検討・随時ピックアップ等）は1語も持ち込まない）:`);
@@ -2677,6 +2679,21 @@ export function predictCloserSignals(opts: { aixSourceText?: string | null; will
 export interface CloserVerdict { closer: CloserKind; nanisotsu: boolean; text: string; reason: string }
 
 /** 優先順位: 断り > 成果物添付 > 日程確定 > 検討中/後日送付 > 質問回答 > セル指定 > 具体宣言あり節目 > 依頼 > 事務往復 > none */
+/** 2026-11-06 作業員9: 条件の言い直しのセルの全力サポートも初回だけにする（既定 off・=on で入る） */
+export function closerCommitRuleFirstOnlyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.CLOSER_COMMIT_RULE_FIRST_ONLY ?? "").trim().toLowerCase() === "on";
+}
+/** 手本（成約実例）の文から継続の約束の1文を外す（条件の言い直し・2回目以降の番に見せない）。外せない時はそのまま */
+export function stripCommitSentence(ex: string): string {
+  const out = ex.split("\n").map((line) => {
+    if (!COMMIT_CLOSER_RE.test(line)) return line;
+    // 1行の中の文（！！・。で区切る）のうち約束の文だけ外す
+    const parts = line.match(/[^！!。]+(?:[！!。]+[😊😌]?|$)/gu) ?? [line];
+    return parts.filter((x) => !COMMIT_CLOSER_RE.test(x)).join("");
+  }).filter((l) => l.trim());
+  const r = out.join("\n");
+  return r.trim() ? r : ex;
+}
 export function resolveCloser(
   pair: PairContext,
   sig: Pick<CloserSignals, "hasConcreteDeclaration" | "deliverableAttached" | "scheduleFixed">,
@@ -2719,7 +2736,12 @@ export function resolveCloser(
   // 2026-10-09 竹内さん「全部の文に全力サポートを入れると胡散臭い。入れる場面を絞る」: 竹内さんの手打ち（全期間）で「全力でサポート」を入れた率は
   //   初回 73%（67/92）・ピックアップの約束 28%（62/224）・新着待ち 16%・審査 6%・見積 0%・内覧 1%＝初回だけ入れる（節目の条件変更・懸念・フォームの回答は入れない）。
   //   戻す ZENRYOKU_FIRST_ONLY=off（旧＝節目は全部）
-  if (milestone && sig.hasConcreteDeclaration && !opts.isFirstContact && ruleCloser !== "commit_until_found" && (process.env.ZENRYOKU_FIRST_ONLY ?? "").toLowerCase() !== "off") {
+  // 2026-11-06 作業員9（弱い所 322・q010 の書き手への材料の全文の掘り）: 条件の言い直しのセル（ANY/PS/PD_CONDITION_CHANGE）は closer に
+  //   commit_until_found を持つので、上の「初回だけ」の線をすり抜けて 2回目以降でも締めの1行（🔚）に全力サポートを指定していた。
+  //   竹内さんの条件の番（180通・AIX の後でない）は 初回 80%・2回目以降 39%＝2回目以降は入れないのが多数。
+  //   CLOSER_COMMIT_RULE_FIRST_ONLY=on で、条件の言い直しのセルにも初回だけの線を当てる（既定 off・懸念のセルは今のまま）
+  const ruleCommitPass = ruleCloser !== "commit_until_found" || (c === "condition_change" && closerCommitRuleFirstOnlyOn());
+  if (milestone && sig.hasConcreteDeclaration && !opts.isFirstContact && ruleCommitPass && (process.env.ZENRYOKU_FIRST_ONLY ?? "").toLowerCase() !== "off") {
     return mk("none", false, "節目だが初回でない→全力サポートは入れない（竹内さん 初回以外は 28%以下・10/09）");
   }
   if (milestone && sig.hasConcreteDeclaration) {
