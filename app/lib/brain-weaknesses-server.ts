@@ -6,7 +6,7 @@ import { aggregateWeaknessHits, brainWeaknessLedgerEnabled, mergeWeaknessRow, re
 const COLS = "id, key, title, area, symptom, root_cause, status, fix_ref, evidence, occurrences, first_seen, last_seen";
 
 /** 印を台帳に足す（読んでから足して書く＝cron と手の実行・試験だけが書く前提）。同じ回（exam_labels に label がある鍵）は二重に足さない */
-export async function upsertWeaknessHits(sb: SupabaseClient, hits: ReadonlyArray<WeaknessHit>, opts: { nowIso?: string; onceLabel?: string; env?: Record<string, string | undefined> } = {}): Promise<{ rows: number; hits: number; skipped?: string; touched: WeaknessRow[]; nThisRun: Record<string, number> }> {
+export async function upsertWeaknessHits(sb: SupabaseClient, hits: ReadonlyArray<WeaknessHit>, opts: { nowIso?: string; onceLabel?: string; env?: Record<string, string | undefined> } = {}): Promise<{ rows: number; hits: number; skipped?: string; touched: WeaknessRow[]; nThisRun: Record<string, number>; reopened?: string[] }> {
   const aggs = aggregateWeaknessHits(hits);
   const nThisRun: Record<string, number> = Object.fromEntries(aggs.map((a) => [a.key, a.n ?? 1]));
   if (!aggs.length) return { rows: 0, hits: 0, touched: [], nThisRun };
@@ -22,7 +22,9 @@ export async function upsertWeaknessHits(sb: SupabaseClient, hits: ReadonlyArray
   if (e2) throw new Error(`brain_weaknesses 書き: ${e2.message}`);
   const written = new Map(((out ?? []) as WeaknessRow[]).map((r) => [r.key, r]));
   const touched = aggs.map((a) => written.get(a.key) ?? existing.get(a.key)).filter((r): r is WeaknessRow => !!r);
-  return { rows: rows.length, hits: todo.reduce((s, a) => s + (a.n ?? 1), 0), touched, nThisRun };
+  // 直した行に当たって open に戻した key（mergeWeaknessRow が status と evidence.reopened を付ける）
+  const reopened = todo.filter((a) => existing.get(a.key)?.status === "fixed").map((a) => a.key);
+  return { rows: rows.length, hits: todo.reduce((s, a) => s + (a.n ?? 1), 0), touched, nThisRun, reopened };
 }
 
 /** 試験のまとめから呼ぶ: 足して、この回で触った弱い所を文にして返す（失敗しても試験は止めない） */
@@ -34,7 +36,7 @@ export async function recordExamWeaknesses(sb: SupabaseClient, label: string, hi
       return `弱い所の台帳（${opts.dry ? "下見" : "BRAIN_WEAKNESS_LEDGER=off"}・書いていない）: ${keys}`;
     }
     const r = await upsertWeaknessHits(sb, hits, { onceLabel: label });
-    return `${renderTouchedWeaknesses(r.touched, r.nThisRun)}${r.skipped ? `（${r.skipped}）` : `（台帳に ${r.rows}行・${r.hits}件 足した）`}`;
+    return `${renderTouchedWeaknesses(r.touched, r.nThisRun, new Set(r.reopened ?? []))}${r.skipped ? `（${r.skipped}）` : `（台帳に ${r.rows}行・${r.hits}件 足した）`}`;
   } catch (e) {
     return `弱い所の台帳に書けない: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`;
   }
