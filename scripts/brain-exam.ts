@@ -53,6 +53,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { setupLlmTest, YUMA, type LlmTestHarness } from "./lib/llm-test-harness";
 import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lease";
 import { shiftExamText, examShiftDays } from "./lib/brain-exam-dates";
+import { planStopOnDiffOn, planRepDiffers } from "./lib/exam-night";
 import { brainPathCode, judgePath, problemScore, primaryAskIndex, rateByType, aixFamily, judgeCurrentProperty, normalizeDraftCode, type BrainExamOutput, type ProblemScore, type PathCode } from "./lib/brain-exam-score";
 import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
@@ -1527,6 +1528,8 @@ async function main() {
   // 2026-10-21 ①入力の差: 前（main）の行の呼び出しの控えを入れる（前の子＝main 自身・録音を止めた回・off の時は入れない）
   let pinsOn = false;
   const inputPlan: Record<string, { same: boolean; firstChanged: string | null; pinned: number; calls: number; why?: string }> = {};
+  // 2026-11-06 作業員1（(c)）: 下見で入力が違った問題（残りの回は下見しない）・省いた回の数
+  const planDiffered = new Set<string>(); let planSkippedReps = 0;
   if (INPUT_DIFF !== "off" && CASSETTE_MODE !== "off" && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1" && BASELINE && BASELINE !== "main") {
     const pins = pinsFromRows(readResults(BASELINE));
     const n = Object.keys(pins).length;
@@ -1679,6 +1682,8 @@ async function main() {
     if (done.has(`${p.id}#${rep}`)) continue;
     // 2026-10-21 ①下見: main の控えの無い回は下見しない（本番の回で呼ぶ）
     if (INPUT_DIFF === "plan" && !hasPinsFor(p.id, rep)) { inputPlan[`${p.id}#${rep}`] = { same: false, firstChanged: null, pinned: 0, calls: 0, why: "main の控えなし" }; continue; }
+    // 2026-11-06 作業員1（(c) 試験の速さ）: 下見で前の回の入力が違った問題は残りの回を下見しない（splitByPlan の結果は同じ＝changed・止める EXAM_PLAN_STOP_ON_DIFF=off）
+    if (INPUT_DIFF === "plan" && planDiffered.has(p.id)) { inputPlan[`${p.id}#${rep}`] = { same: false, firstChanged: null, pinned: 0, calls: 0, why: "前の回で入力が違った（この問題は本当に回す）" }; planSkippedReps++; continue; }
     // 2026-11-04 main の子は問題の区切り（この問題をまだ1回も回していない時）だけで止める＝回が揃った問題だけ親が取り置ける
     if (stopAsked() && (!IS_BASELINE_CHILD || !startedReps)) { console.log(`⏹ 止める印（${STOP_FILE}）→ ここで止める（残りの問題は回さない）`); return "stop"; }
     // 2026-10-17 試験のブレインが決めた回数（--reps-file）。書いてあれば揺れの決め方より先
@@ -1935,6 +1940,7 @@ async function main() {
     }
     if (INPUT_DIFF === "plan" && !row.inputSame) {
       console.log(`  → ${p.id}#${rep} 入力が main と違う（${row.inputDiff?.firstChanged ?? "?"} から・main の答えで済んだ ${row.inputDiff?.pinned ?? 0}段）→ 本番の回で呼ぶ（下見の答案は書かない）`);
+      if (planStopOnDiffOn() && planRepDiffers(row)) planDiffered.add(p.id);
       continue;
     }
     appendFileSync(OUT, JSON.stringify(row) + "\n");
@@ -1972,6 +1978,7 @@ async function main() {
     const same = items.filter(([, v]) => v.same).map(([k]) => k);
     writeFileSync(`${RESULTS_DIR}/${LABEL}.inputdiff.json`, JSON.stringify({ at: new Date().toISOString(), base: BASELINE, mode: INPUT_DIFF, items: inputPlan }, null, 1));
     console.log(`入力の差: 入力が同じ ${same.length}／${items.length} 問×回（main の答え・呼んでいない）${same.length ? `: ${same.join(",")}` : ""}`);
+    if (planSkippedReps) console.log(`  下見で省いた回 ${planSkippedReps}（前の回で入力が違った ${planDiffered.size}問の残りの回・結果は同じ＝本当に回す・止める EXAM_PLAN_STOP_ON_DIFF=off）`);
     const byStage = new Map<string, string[]>();
     for (const [k, v] of items) if (!v.same && v.firstChanged) byStage.set(v.firstChanged, [...(byStage.get(v.firstChanged) ?? []), k]);
     for (const [st, ks] of byStage) console.log(`  違った段 ${st}: ${ks.join(",")}`);

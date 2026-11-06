@@ -3,7 +3,7 @@
 import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chunksOf, splitByPlan, chunkGate, budgetMsOf, estimateRunUsd, orderQueue, backupOwnerOf, staleVerdict, staleNameOf, sweepStaleBackups, itemHardMs, queueTotalMs, supersededWarms, supersededNameOf, supersedeQueueFile, type QItem } from "../exam-night";
+import { planStopOnDiffOn, planRepDiffers, chunksOf, splitByPlan, chunkGate, budgetMsOf, estimateRunUsd, orderQueue, backupOwnerOf, staleVerdict, staleNameOf, sweepStaleBackups, itemHardMs, queueTotalMs, supersededWarms, supersededNameOf, supersedeQueueFile, type QItem } from "../exam-night";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -111,6 +111,41 @@ ok("脇の名前: .stale-<JST の年月日時分>", staleNameOf("/a/b.json", new
   const moved2 = sweepStaleBackups([d], { live: null, alive: () => false, log: () => {} });
   ok("見回り: 動いている物が読めない時は pid の無い控えを寄せない（安全側）", moved2.length === 0 && existsSync(join(d, ".brain-exam-live-yuma2-pc-backup.json")));
   rmSync(d, { recursive: true, force: true });
+}
+
+// ─── 2026-11-06 下見: 入力が違った問題の残りの回を下見しない（EXAM_PLAN_STOP_ON_DIFF）＝splitByPlan の結果が同じ ───
+{
+  ok("下見の止め: 既定 on", planStopOnDiffOn({}) === true && planStopOnDiffOn({ EXAM_PLAN_STOP_ON_DIFF: "off" }) === false);
+  ok("下見の止め: 入力が違った回（firstChanged あり）だけ", planRepDiffers({ inputSame: false, inputDiff: { firstChanged: "brain_full" } }) === true);
+  ok("下見の止め: 失敗の回では止めない", planRepDiffers({ error: "x", inputSame: false, inputDiff: { firstChanged: "brain_full" } }) === false);
+  ok("下見の止め: 同じ回・控えなしでは止めない", planRepDiffers({ inputSame: true, inputDiff: { firstChanged: null } }) === false && planRepDiffers({ inputSame: false, inputDiff: { firstChanged: null } }) === false);
+  // brain-exam の回のループを写した物で、回の結果の全ての並び（同じ／違う／失敗／控えなし を3回）について止めあり・なしの splitByPlan を比べる
+  type O = "same" | "diff" | "err" | "nopin";
+  const OS: O[] = ["same", "diff", "err", "nopin"];
+  const simulate = (seq: O[], stop: boolean) => {
+    const rows: Array<{ id: string; rep: number; error?: string; inputSame?: boolean }> = [];
+    const items: Record<string, { same: boolean; firstChanged: string | null; pinned: number }> = {};
+    let differed = false;
+    seq.forEach((o, i) => {
+      const rep = i + 1, k = `p#${rep}`;
+      if (o === "nopin") { items[k] = { same: false, firstChanged: null, pinned: 0 }; return; }
+      if (stop && differed) { items[k] = { same: false, firstChanged: null, pinned: 0 }; return; }
+      const row = o === "same" ? { inputSame: true, inputDiff: { firstChanged: null } } : o === "diff" ? { inputSame: false, inputDiff: { firstChanged: "brain_full" } } : { error: "e", inputSame: false, inputDiff: { firstChanged: null } };
+      items[k] = { same: !!row.inputSame, firstChanged: row.inputDiff.firstChanged, pinned: 0 };
+      if (!row.inputSame) { if (stop && planRepDiffers(row)) differed = true; return; }
+      rows.push({ id: "p", rep, inputSame: true });
+    });
+    return JSON.stringify(splitByPlan(["p"], rows, () => seq.length, items));
+  };
+  let bad = 0, total = 0, saved = 0;
+  for (const a of OS) for (const b of OS) for (const c of OS) {
+    const seq = [a, b, c]; total++;
+    if (simulate(seq, true) !== simulate(seq, false)) bad++;
+    const firstDiff = seq.findIndex((o) => o === "diff");
+    if (firstDiff >= 0) saved += seq.slice(firstDiff + 1).filter((o) => o !== "nopin").length;
+  }
+  ok(`下見の止め: 回の結果の全ての並び ${total}通りで取り置く／呼ぶ問題が同じ`, bad === 0, `違った ${bad}`);
+  ok("下見の止め: 省ける回がある", saved > 0);
 }
 
 console.log(`exam-night: ${pass} PASS / ${fail} FAIL`);
