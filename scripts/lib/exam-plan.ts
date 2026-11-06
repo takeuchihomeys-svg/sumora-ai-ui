@@ -186,3 +186,27 @@ export function runBaseCheck(input: { reps: Record<string, number>; needsBase: s
   if (cap != null && cap > 0 && total > cap) return { go: false, baseUsd, curUsd, line: `${head} が上限 $${cap.toFixed(2)} を超える（前の作り直しで上限を使い切り、今の回が0問になる）` };
   return { go: true, baseUsd, curUsd, line: `${head}${cap != null && cap > 0 ? `・上限 $${cap.toFixed(2)} に入る` : "・上限なし"}` };
 }
+
+/**
+ * 道・本質の悪化（純関数・2026-11-07 統括役: proc-line-dig3-1107 で守りの q092 が「2段:check（道は正解・依頼の抜けで✕）→ 返信（道が外れて✕）」でも
+ *   合格が ✕→✕ で同じ＝悪化に数えられなかった）。問題ごとに、前の回の過半数で道（本質）が正解で、今の回の過半数で外れた物を返す。
+ *   回の過半数（同数は外れ側に倒さない＝今の割合が前の割合より 0.5 以上下がった時だけ）
+ */
+export type PathRowLite = { id: string; error?: string; path?: { code?: string; ok?: boolean } | null; essence?: { code?: string; ok?: boolean } | null };
+export function pathRegressions(cur: ReadonlyArray<PathRowLite>, base: ReadonlyArray<PathRowLite>, ids: ReadonlyArray<string>, field: "path" | "essence" = "path"): Array<{ id: string; from: string; to: string; why: string }> {
+  const out: Array<{ id: string; from: string; to: string; why: string }> = [];
+  const stat = (rows: ReadonlyArray<PathRowLite>, id: string) => {
+    const xs = rows.filter((r) => r.id === id && !r.error && r[field]);
+    if (!xs.length) return null;
+    const ok = xs.filter((r) => r[field]!.ok).length;
+    const codes = new Map<string, number>(); for (const r of xs) { const c = String(r[field]!.code ?? "?"); codes.set(c, (codes.get(c) ?? 0) + 1); }
+    const top = [...codes].sort((a, b) => b[1] - a[1])[0][0];
+    return { rate: ok / xs.length, ok, n: xs.length, top };
+  };
+  for (const id of ids) {
+    const b = stat(base, id), c = stat(cur, id);
+    if (!b || !c) continue;
+    if (b.rate > 0.5 && c.rate < 0.5 && b.rate - c.rate >= 0.5) out.push({ id, from: b.top, to: c.top, why: `${b.ok}/${b.n}→${c.ok}/${c.n}` });
+  }
+  return out;
+}
