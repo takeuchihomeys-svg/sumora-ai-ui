@@ -95,6 +95,19 @@ export function procedureEarliestMoveInEnabled(env: Record<string, string | unde
 const EARLIEST_MOVE_IN_RE = new RegExp(`最短(?:で|の)?\s*(?:入居|ご入居|引っ?越)[^。\n]{0,12}(?:${HOW_LONG}|いつ|日)|最短(?:で|の)?\s*いつ(?:から|頃|ごろ)?[^。\n]{0,8}(?:入居|住め|住む|入れ|引っ?越)|(?:いつ|何日)(?:から|頃|ごろ)?[^。\n]{0,6}(?:入居|住め|入れ)[^。\n]{0,6}(?:最短|一番早)`);
 /** 探す条件（「最短入居できる物件」）・内覧の日の話は外す */
 const EARLIEST_NOT_RE = /物件があれば|お部屋があれば|探して|内見|内覧|見学/;
+/**
+ * 2026-11-06 作業員1（統括役・型2・弱い所 82 の 10:17）: 本番の外れ 2番（7f73dc32「8日に内覧したら最短いつから住めますか？」・c024b7b9「最短でどのくらいで入居までいけますか」）は
+ *   手続きの質問と読めず（網が無い・内覧の語で外す）、会社の事実（審査3日〜10日＋契約1週間＝最短2週間程）が材料に届かず、ブレインが確認の約束（check_question）を選んだ。
+ *   竹内さんの手続きの質問（200日・約13番）は会社の事実・資料で返信 77%・確認の約束は物件ごとの日が資料に無い時だけ。
+ *   PROCEDURE_MOVE_IN_WIDE=on: 「最短…入居／住め」を語の順に縛らず拾う・内覧の語は「内覧は／できる／日程」等の内覧そのものの問いの時だけ外す。既定 off
+ */
+export function procedureMoveInWideOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PROCEDURE_MOVE_IN_WIDE ?? "").trim().toLowerCase() === "on";
+}
+export const EARLIEST_MOVE_IN_WIDE_RE = /最短(?:で|の)?[^。\n？?]{0,12}(?:入居|住め|住む|入れ|引っ?越)/;
+// 監査（200日・当たり約28番を目で読んだ）で外した: 費用・見積の依頼（affa98c7「最短入居で初期費用出して欲しい」・ad97cd40「最短入居いくら」＝御見積書の番）・
+//   探す依頼（583171e6「最短入居できる物件教えてください」＝ピックアップの番）
+export const EARLIEST_NOT_WIDE_RE = /物件があれば|お部屋があれば|探して|内[覧見](?:は|って|でき|出来|可能|日|いつ|の日程)|見学(?:は|でき|出来|可能)|初期費用|見積|いくら|費用|(?:できる|出来る|入れる|住める)(?:物件|お部屋|部屋)|物件(?:を)?教え/;
 /** 申込・契約・入居までの流れ */
 const FLOW_RE = /(?:申込|申し込み?|お申込み?|契約|入居|審査)[^。\n]{0,10}(?:流れ|手順|ステップ|段取り)|(?:流れ|手順|段取り)[^。\n]{0,8}(?:教え|知りたい|どう|どんな|ですか|でしょうか)/;
 /** 必要書類 */
@@ -127,7 +140,8 @@ export function detectProcedureQuestion(text: string | null | undefined): Proced
   const t = units.join("\n").normalize("NFKC");
   const kinds: ProcedureKind[] = [];
   if (SCREENING_PERIOD_RE.test(t)) kinds.push("screening_period");
-  if (MOVE_IN_LEAD_RE.test(t) || (procedureEarliestMoveInEnabled() && EARLIEST_MOVE_IN_RE.test(t) && !EARLIEST_NOT_RE.test(t))) kinds.push("move_in_lead");
+  if (MOVE_IN_LEAD_RE.test(t) || (procedureEarliestMoveInEnabled() && EARLIEST_MOVE_IN_RE.test(t) && !EARLIEST_NOT_RE.test(t))
+    || (procedureMoveInWideOn() && EARLIEST_MOVE_IN_WIDE_RE.test(t) && !EARLIEST_NOT_WIDE_RE.test(t))) kinds.push("move_in_lead");
   if (FLOW_RE.test(t)) kinds.push("flow");
   if (DOCS_RE.test(t)) kinds.push("docs");
   if (ID_DOC_RE.test(t)) kinds.push("id_doc");
