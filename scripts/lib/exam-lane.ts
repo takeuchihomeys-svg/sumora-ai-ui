@@ -196,9 +196,9 @@ export async function runLanes<T, L>(items: readonly T[], lanes: ReadonlyArray<E
 //   回の数が先に決まっている問題（--reps-file・揺れる問題・揺れの決め方を使わない時）だけ、回を塊に分けて空いたレーンに配る。
 //   回の数が前の回の答えで決まる問題（安定＝いつもと違えば足す・分からない＝割れたら足す）は今まで通り1つのレーンで順に。
 //   各回は自分のレーンのテスト用の会話・条件の行・台帳の写しで回る（回の答えはそれぞれ別に作る＝比べ方は変わらない）。
-//   営業時間はレーンが1本（係の EXAM_BIZ_ONE_LANE）なので分けない＝夜だけ効く。既定 off（入れる EXAM_SPLIT_REPS=on）
+//   営業時間はレーンが1本（係の EXAM_BIZ_ONE_LANE）なので分けない＝夜だけ効く。既定 on（11/06 夜 split-off/on: 今の回の壁の時間 204秒→98秒・並びの効き 1.84→3.62・前の作り直し 4回で 42秒・回の答えはそれぞれ別に作る＝比べ方は同じ・早めの打ち切りも働いた）。止める EXAM_SPLIT_REPS=off
 export function splitRepsOn(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.EXAM_SPLIT_REPS ?? "").trim().toLowerCase() === "on";
+  return (env.EXAM_SPLIT_REPS ?? "").trim().toLowerCase() !== "off";
 }
 /** レーンに配る1つの仕事: 問題と回す回（null＝全部の回を順に・今まで通り） */
 export type LaneUnit<P> = { p: P; reps: number[] | null };

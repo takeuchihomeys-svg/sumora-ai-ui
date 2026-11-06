@@ -1980,7 +1980,7 @@ async function main() {
   } else {
     // 2026-11-04 レーン: 問題の列を空いたレーンが前から取る。DeepSeek の 429 を見たら問題の区切りで並べる数を1つ減らす（exam-lane.LaneLimiter）
     try {
-      // 2026-11-06 作業員1（(c) 案1）: 問題がレーンより少ない時、回の数が先に決まっている問題の回を空いたレーンに分ける（EXAM_SPLIT_REPS=on・既定 off・下見は分けない）
+      // 2026-11-06 作業員1（(c) 案1）: 問題がレーンより少ない時、回の数が先に決まっている問題の回を空いたレーンに分ける（EXAM_SPLIT_REPS・11/06 から既定 on・止める =off・下見は分けない）
       //   先に決まっている＝--reps-file／揺れる問題（揺れの決め方の時）／揺れの決め方を使わない時。安定・分からない問題は前の回の答えで回が決まる＝分けない
       const fixedRepsOf = (p: ExamProblem): number[] | null => {
         const want = REPS_OF ? Math.max(1, REPS_OF[p.id] ?? 1) : (REPEAT_FLAKY && REPEAT > 1) ? (flakeOf(p).verdict === "flaky" ? REPEAT : 0) : REPEAT;

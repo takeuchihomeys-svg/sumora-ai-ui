@@ -180,7 +180,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   // ─── 2026-11-06 1問の回を空いたレーンに分ける（planLaneUnits・EXAM_SPLIT_REPS） ───
   {
     const r = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
-    t("分ける: 既定 off", splitRepsOn({}) === false && splitRepsOn({ EXAM_SPLIT_REPS: "on" }) === true);
+    t("分ける: 既定 on（=off で止める）", splitRepsOn({}) === true && splitRepsOn({ EXAM_SPLIT_REPS: "off" }) === false);
     const u1 = planLaneUnits(["q174"], 4, () => r(4));
     t("分ける: 1問×4回・4レーン → 1回ずつ4つ", u1.length === 4 && u1.every((u) => u.reps?.length === 1) && JSON.stringify(u1.flatMap((u) => u.reps)) === "[1,2,3,4]");
     const u2 = planLaneUnits(["a", "b"], 4, () => r(4));
