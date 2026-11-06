@@ -1,6 +1,6 @@
 // 夜の基準に固定するか（scripts/lib/exam-base-pin.ts）の単体テスト（LLM も DB も git も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-base-pin.test.ts（全 PASS で exit 0）
-import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects, nightBaseJobDue, isExamJobShape, nightBaseAlready, pinConfirmIds, mergePinnedBase } from "../exam-base-pin";
+import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects, nightBaseJobDue, isExamJobShape, nightBaseAlready, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT } from "../exam-base-pin";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -73,6 +73,16 @@ ok("二重に積まない: 列・済み・結果に同じ日の名前", nightBas
   const m = mergePinnedBase(night, cur, ["q2"]);
   ok("確かめ直した問題は今の main の前・他は夜の基準", m.filter((r) => r.id === "q2").every((r) => r.v === "c") && m.filter((r) => r.id === "q2").length === 2 && m.find((r) => r.id === "q1")?.v === "n");
   ok("今の main の前が作れなかった問題は夜の基準のまま", mergePinnedBase(night, [], ["q2"]).filter((r) => r.id === "q2").every((r) => r.v === "n"));
+}
+
+{
+  // 11/07: 途中までの夜の基準（作れた問題の一覧だけ控えに入る）。控えに無い問題は missing＝昼の依頼が前を作る
+  const nb = { commit: "abc1234", at: new Date(Date.now() - 3_600_000).toISOString(), problems: ["q001", "q002"] };
+  const d = decideBasePin({ nightly: nb, nowMs: Date.now(), requestHasNightly: true, since: { files: [] }, problems: ["q001", "q003"] });
+  ok("途中までの控え: 控えにある問題は夜の基準・無い問題は missing（前を作る）", d.ref === "abc1234" && d.missing.join(",") === "q003");
+  // 夜の基準は昼の依頼と同じ --repeat（構成の鍵）で作る
+  const nj = nightBaseJobDue(null, new Date("2026-11-07T12:30:00Z"), { cwd: "/x" });
+  ok("夜の基準の依頼は --repeat=4（昼の依頼の構成と同じ）・main が進んでも止めない", NIGHT_BASE_REPEAT === 4 && String((nj.job as { cmds: string[] }).cmds[0]).includes("--repeat=4") && (nj.job as { env: Record<string, string> }).env.EXAM_BASELINE_IGNORE_MAIN_MOVED === "1");
 }
 
 console.log(`${pass} pass / ${fail} fail`);

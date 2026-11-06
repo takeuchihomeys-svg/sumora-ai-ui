@@ -54,7 +54,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
-import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase } from "./lib/exam-base-pin";
+import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT } from "./lib/exam-base-pin";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, type CmpLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -568,7 +568,8 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     log(`流す: ${j.label}（${j.owner}・${j.switch}・${ids.length ? ids.length + "問" : "rag"}・${j.repeat}回${rp.flaky.length ? `・揺れる ${rp.flaky.map((x) => `${x.id}×${rp.reps[x.id]}`).join(",")}` : ""}・${j.cwd}）`);
     for (const f of rp.flaky) log(`  揺れる ${f.id}: ${f.why}`);
     if (rp.stable?.length) log(`  安定（揺れの記録で独立に3回以上同じ答え）→ 1回: ${rp.stable.join(",")}`);
-    const argv = ["scripts/brain-exam.ts", `--label=${j.label}`, "--conv=auto", "--baseline=main", `--repeat=${maxRep}`, `--stage=${j.stage}`];
+    // 2026-11-07 作業員8: --repeat は構成（前の答えの置き場・夜の基準の控え）の鍵に入る＝問題ごとの回は --reps-file が決め、--repeat は夜の基準と同じ上限（NIGHT_BASE_REPEAT）にそろえる（回が少ない依頼も同じ置き場の前を使い回す）
+    const argv = ["scripts/brain-exam.ts", `--label=${j.label}`, "--conv=auto", "--baseline=main", `--repeat=${ids.length ? Math.max(maxRep, NIGHT_BASE_REPEAT) : maxRep}`, `--stage=${j.stage}`];
     if (ids.length) argv.push(`--only=${j.only}`, `--reps-file=${repsFile}`);
     if (j.selectRag) argv.push("--select=rag");
     // 2026-11-04 (b): 依頼の作業ツリーの brain-exam.ts が止める印を見ない（origin/main より古い）時は上限を延ばす（EXAM_JOB_OLD_MAX_MIN・既定 120分）。依頼の行と結果にも出す

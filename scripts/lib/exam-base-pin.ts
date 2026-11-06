@@ -91,6 +91,13 @@ export type NightlyRecord = NightlyBase & { cfg: string; /** 夜の基準が読�
  *   中身: brain-exam --baseline=main --baseline-only（取り置きが無い・入力が変わった問題だけ回す＝決まった入力なら下見で済む）・stage=brain・夜だけ流す。
  *   終わると brain-exam が nightly-base-<構成>.json を書き、次の日の昼の依頼がその commit で比べる。
  */
+/**
+ * 2026-11-07 作業員8（夜の基準が一度も効いていなかった原因の2つ目）: 前の答えの置き場と控えは構成（--repeat を含む）ごと。
+ *   夜を --repeat=2 で作ると構成 118f718528、昼の依頼は --repeat=4（揺れる問題の回）で構成 8381e072a8＝夜の控えが昼の依頼から見つからない。
+ *   夜も昼と同じ --repeat=4 で作る（前の子は揺れる問題だけ回を足す＝EXAM_BASE_REPEAT_FLAKY・安定の問題は1回で揃い扱い）
+ */
+export const NIGHT_BASE_REPEAT = 4;
+
 export function nightBaseJobDue(lastJstDay: string | null, now: Date, opts: { fromHour?: number; cwd: string; repeat?: number }): { due: boolean; day: string; job: Record<string, unknown> | null } {
   const j = new Date(now.getTime() + 9 * 3_600_000);
   const day = j.toISOString().slice(0, 10), h = j.getUTCHours();
@@ -104,7 +111,7 @@ export function nightBaseJobDue(lastJstDay: string | null, now: Date, opts: { fr
       // 2026-11-06: 始めの main で最後まで作る（main が進んでも止めない）・DB の材料はその夜の日の写し
       env: { LLM_TEST_MODE: "deepseek-all", EXAM_BASELINE_IGNORE_MAIN_MOVED: "1", EXAM_DB_SNAPSHOT_DAY: new Date(now.getTime() + 5 * 3_600_000).toISOString().slice(0, 10) },
       createdAt, tries: 0, runner: "cmd", nightOnly: true, priority: 9, maxMin: 300,
-      cmds: [`scripts/brain-exam.ts --label=${label} --conv=auto --baseline=main --baseline-only --stage=brain --repeat=${Math.max(1, opts.repeat ?? 2)}`],
+      cmds: [`scripts/brain-exam.ts --label=${label} --conv=auto --baseline=main --baseline-only --stage=brain --repeat=${Math.max(1, opts.repeat ?? NIGHT_BASE_REPEAT)}`],
     },
   };
 }

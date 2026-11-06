@@ -1177,7 +1177,8 @@ async function prepareMainBaseline(): Promise<boolean> {
   let movedMemo: { at: number; v: string | null } = { at: Date.now(), v: null };
   const mainMoved = (): string | null => {
     // 2026-11-06 作業員8: 夜の基準（EXAM_BASELINE_IGNORE_MAIN_MOVED=1）は始めに決めた main で最後まで作る（11/05 夜は main が進んで 45/218問で止まり、夜の基準の控えが書かれなかった）
-    if (process.env.EXAM_BASELINE_IGNORE_MAIN_MOVED === "1") return null;
+    // 2026-11-07: 夜の基準の依頼（label night-base-*）は env に関係なく最後まで作る（11/06 夜は古い係が積んだ依頼で env が無く、main が進んで 158/218問を残して止まった）
+    if (process.env.EXAM_BASELINE_IGNORE_MAIN_MOVED === "1" || /^night-base-/.test(LABEL)) return null;
     if (ref !== "main" || !vk || !flag("baseline-only") || Date.now() - movedMemo.at < 5 * 60_000) return movedMemo.v; // 比べの回は決まった main と比べる＝取り置き（--baseline-only）だけ見る
     movedMemo = { at: Date.now(), v: null };
     try {
@@ -1368,7 +1369,8 @@ async function prepareMainBaseline(): Promise<boolean> {
   baselineReuse = { reused: plan.reuse.length, ran: INCR ? realRun.length : plan.run.length, reusedUsd, commit, dir, carried: carried.length, deferred: deferred.length, childUsd, childRuns, pinned: pinnedNightly };
   // 2026-11-05 作業員8: 夜の取り置き（--baseline-only・今の main・残り無し）を終えたら、夜の基準の控えを書く（昼の依頼がこの commit で比べる）
   // 2026-11-06: 夜の基準の依頼（label night-base-*）の時だけ書く。係の確かめ直し（--baseline-only・少数の問題）が夜の基準を上書きしないため
-  if (flag("baseline-only") && ref === "main" && !deferred.length && !pinnedNightly && /^night-base-/.test(LABEL)) {
+  // 2026-11-07: 残り（時間の予算などで今は回さない問題）があっても、作れた問題だけで控えを書く（problems に入らない問題は昼の依頼が今の main で前を作る＝decideBasePin の missing）
+  if (flag("baseline-only") && ref === "main" && !pinnedNightly && /^night-base-/.test(LABEL) && picked.some((p) => now.has(p.id))) {
     try { atomicWriteJson(nightlyFile, { commit, at: new Date().toISOString(), cfg: ch, snapDay: (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(Date.now()), problems: picked.filter((p) => now.has(p.id)).map((p) => p.id) } satisfies NightlyRecord, true); console.log(`  夜の基準の控えを書いた: ${commit.slice(0, 7)}（${nightlyFile}）`); } catch (e) { console.warn(`  ⚠ 夜の基準の控えを書けない: ${String(e).slice(0, 120)}`); }
   }
   const missing = picked.filter((p) => !now.has(p.id)).length;
