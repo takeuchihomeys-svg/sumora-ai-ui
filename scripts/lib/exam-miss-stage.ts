@@ -1,6 +1,6 @@
 import { ownersOfMarker } from "../../app/lib/conductor-linkage";
 import type { WeaknessHit } from "../../app/lib/brain-weaknesses";
-import { essencePickupPromise } from "./exam-essence";
+import { essenceOverride } from "./exam-essence";
 // scripts/lib/exam-miss-stage.ts — 試験の外れ・悪化の問題で「どの段で道が変わったか」を答案の記録だけで出す（純関数・LLM なし）
 //
 // 2026-11-06 作業員8（竹内さんの決定 KB P1「試験から改善の仕方も強化・統括同士連携」・統括役の頼み「外れの自動の切り分け」）:
@@ -93,7 +93,7 @@ export function parseLogTags(text: string, convName: (id: string) => string | nu
 export function classifyMiss(r: MissRowLite): MissVerdict {
   // 2026-11-06 統括役: 本質の道は試験の採点と同じ数え方（物件の AIX＋該当の route が promise＋候補0件＝2段:pickup・scripts/lib/exam-essence.ts）
   const ess0 = r.essence?.code ?? null;
-  const ess = ess0 && ess0.startsWith("AIX:") && essencePickupPromise(r.raw as Record<string, unknown> | null, (r.trace?.pickup_ready as boolean | null | undefined) ?? null) ? "2段:pickup" : ess0, fin = r.path?.code ?? null, dr = r.draft?.code ?? null;
+  const ess = (ess0 && ess0.startsWith("AIX:") ? essenceOverride(r.raw as Record<string, unknown> | null, (r.trace?.pickup_ready as boolean | null | undefined) ?? null) : null) ?? ess0, fin = r.path?.code ?? null, dr = r.draft?.code ?? null;
   const m = markersOf(r);
   const st: StageHit[] = [];
   // ブレインの生の答えが外れ（読みの材料: customer_questions・proposals の頭）
