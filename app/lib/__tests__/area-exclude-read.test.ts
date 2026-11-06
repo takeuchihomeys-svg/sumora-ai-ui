@@ -10,7 +10,7 @@ function expect<T>(a: T) { return { toBe: (b: T) => { if (a !== b) throw new Err
 
 const Q008 = "神崎川はすんでましたが\n不便だったので汗"; // 実物（9/19 721ff307 竹内さんの番）
 
-it("スイッチは既定 off", () => { expect(areaExcludeReadOn({})).toBe(false); expect(areaExcludeReadOn({ BRAIN_AREA_EXCLUDE_READ: "on" })).toBe(true); });
+it("スイッチは既定 on（止める =off）", () => { expect(areaExcludeReadOn({})).toBe(true); expect(areaExcludeReadOn({ BRAIN_AREA_EXCLUDE_READ: "off" })).toBe(false); });
 it("q008: 物件を送った後なら当たる", () => { expect(readAreaExclude({ customerText: Q008, sentPropertyCount: 2 })).toBe(true); });
 it("物件を送っていない会話は当たらない", () => { expect(readAreaExclude({ customerText: Q008, sentPropertyCount: 0 })).toBe(false); });
 it("住んでいた経験だけ（悪さなし）は当たらない", () => { expect(readAreaExclude({ customerText: "神崎川は前に住んでました！", sentPropertyCount: 2 })).toBe(false); });

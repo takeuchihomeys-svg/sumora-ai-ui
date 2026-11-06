@@ -5,13 +5,13 @@
 //   竹内さん本人の実送信（200日・物件を送った後にエリアを外す言い直し 3番）: そのエリアを除いてピックアップする約束 3・返信だけ 0
 //     （9/19 721ff307 神崎川・9/19 ac34b364 ミナミ方面は避けたい・9/09 f5e92bc6 京都・尼崎はNG）。従業員も 8/10 生野区付近は避けたい → 同じ。
 //   ＝判断の手本（竹内さんの一手）としてブレインの材料に足す。答えを決める規則ではない（P0「判断はすべてブレイン基準」）。
-//   内覧・申込・日程の言葉がある番は出さない。既定 off（入れる BRAIN_AREA_EXCLUDE_READ=on）
+//   内覧・申込・日程の言葉がある番は出さない。既定 on（11/06 試験 area-read-on2-1106: q008 main 2/4 → 4/4・本質 2段:pickup 3/4・q010 1/1・q011 3/3・確かな悪化0）。止める BRAIN_AREA_EXCLUDE_READ=off
 //   監査（scripts/audit-area-exclude-read.ts・200日・物件を送った後・候補 208通）: 当たる 5番＝全部エリアを外す言い直しで、5番ともピックアップの約束で返した（竹内さん 3/3）。誤って当たる番 0（目で読んだ）
 
 import { normalizeCustomerText } from "./reply-context";
 
 export function areaExcludeReadOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_AREA_EXCLUDE_READ ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_AREA_EXCLUDE_READ ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 前に住んだ・行った・通った経験 */
