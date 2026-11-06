@@ -6402,6 +6402,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       } catch (e) { console.warn("[flash-writer] 1段目の決めに失敗（1回で書く）:", e instanceof Error ? e.message : String(e)); return genMessagesBase; }
     })();
     if (replyMasker) console.log(JSON.stringify({ tag: "gen:masked", conversationId, entries: replyMasker.table().length }));
+    // 2026-11-06 作業員9: 試験の時だけ、書き手に渡す材料の全文を exam-cache に残す（EXAM_DUMP_WRITER_PROMPT=on＋試験の印・Vercel では動かない・app/lib/exam-writer-dump.ts）
+    await import("@/app/lib/exam-writer-dump").then(async (d) => { if (d.writerDumpOn()) { const f = await d.dumpWriterPrompt({ conversationId: conversationId ?? null, messages: genMessages as unknown as Parameters<typeof d.dumpWriterPrompt>[0]["messages"] }); if (f) console.log(JSON.stringify({ tag: "exam:writer-dump", conversationId, file: f })); } }).catch(() => undefined);
 
     // テンプレート最適化モードは maxTokens 広めの専用モデル（通常生成は createGenerationModel）
     const genStream = (isTemplateOptimize
