@@ -91,21 +91,29 @@ console.log("── 物件ピックアップに必要な条件（エリア＋家
 {
   t("行にエリアと家賃 → そろった", pickupConditionsReady({ desired_area: "難波", rent_max: 70000 }).ready);
   t("通勤先＋家賃でもそろった", pickupConditionsReady({ commute_station: "梅田", rent_max: 90000 }).ready);
-  const r = pickupConditionsReady({ desired_area: "難波", rent_max: null });
+  const OLD = { PICKUP_READY_AREA_ONLY: "off" }; // 旧の線（エリア＋家賃）の確かめ
+  const r = pickupConditionsReady({ desired_area: "難波", rent_max: null }, [], OLD);
   t("家賃が無い → 足りない（rent）", !r.ready && r.missing.join() === "rent", JSON.stringify(r));
   t("行が無く発言も無い → 足りない（両方）", pickupConditionsReady(null, []).missing.join() === "area,rent");
   // 実物（9/26 みこと）: 行の作成前に記入済みのフォーム（空白で値）
   t("行が無くても記入済みのフォームでそろった",
     pickupConditionsReady(null, ["（みことさんご希望のお部屋探しご条件）\n①ご入居時期 2ヶ月後\n②ご希望家賃（管理費込み） 6～7\n③ご希望間取り 1K\n④ご希望築年数 30年\n⑤ご希望エリア・最寄り駅 淡路駅\n⑥駅からの徒歩分数 10分\n⑦初期費用ご予算 10万\n⑧その他こだわり条件（ペット・保証人・駐車場等） 保証人なし"]).ready);
   // 実物（7/27 cb1a46e3）「環状沿いならどこでもいいんで。…場所より安さで」→ 家賃が分からない
-  const r2 = pickupConditionsReady(null, ["環状沿いならどこでもいいんで。", "安いんがいいので、お願いします", "場所より安さで、お願いします"]);
+  const r2 = pickupConditionsReady(null, ["環状沿いならどこでもいいんで。", "安いんがいいので、お願いします", "場所より安さで、お願いします"], OLD);
   t("「環状沿い・安さで」は家賃が足りない", !r2.ready && r2.missing.join() === "rent", JSON.stringify(r2));
   // 実物（YUMA 8/24 の場面の文）「難波周辺でワンルーム探してます」→ 家賃が無い
   t("「難波周辺でワンルーム」だけは家賃が足りない", pickupConditionsReady(null, ["難波周辺でワンルーム探してます"]).missing.join() === "rent");
   t("「上本町周辺で…家賃は15万前後まで」はそろった", pickupConditionsReady(null, ["上本町周辺で8月前半入居で", "家賃は15万前後まで"]).ready);
   t("フォームの家賃欄の単位なし「6〜8」も家賃", pickupConditionsReady({ desired_area: "東花園" }, ["②【ご希望の家賃（◯万円〜◯万円）】⇒6〜8"]).ready);
-  t("時刻（14:30〜15:00）は家賃と読まない", !pickupConditionsReady({ desired_area: "難波" }, ["14:30〜15:00くらいに掛けても大丈夫でしょうか？"]).ready);
+  t("時刻（14:30〜15:00）は家賃と読まない", pickupConditionsReady({ desired_area: "難波" }, ["14:30〜15:00くらいに掛けても大丈夫でしょうか？"]).missing.includes("rent"));
   t("行が空でも発言でそろえば ready（source=customer_text）", pickupConditionsReady({}, ["梅田周辺で家賃8万まで"]).source === "customer_text");
+  // 2026-11-06 PICKUP_READY_AREA_ONLY（竹内さんの初回 200日: エリアがある番はピックアップの約束・足りない項目は同じ文で聞く）
+  const AO = { PICKUP_READY_AREA_ONLY: "on" };
+  t("エリアだけの線: 既定 on（=off で旧の エリア＋家賃）", pickupConditionsReady(null, ["難波周辺でワンルーム探してます"], {}).ready && !pickupConditionsReady(null, ["難波周辺でワンルーム探してます"], { PICKUP_READY_AREA_ONLY: "off" }).ready);
+  t("エリアだけの線: on で「難波周辺でワンルーム」はそろった・家賃は聞く項目に残る", pickupConditionsReady(null, ["難波周辺でワンルーム探してます"], AO).ready && pickupConditionsReady(null, ["難波周辺でワンルーム探してます"], AO).missing.join() === "rent");
+  t("エリアだけの線: on でも実物「大国町でひとり暮らし…なるべく早く」はそろった（竹内さんはピックアップ＋家賃・間取りを聞いた）", pickupConditionsReady(null, ["大国町でひとり暮らししたくて、なるべく早く引越ししたくて"], AO).ready);
+  t("エリアだけの線: on でもエリアの無い番は足りない", !pickupConditionsReady(null, ["家賃8万までで1LDKがいいです"], AO).ready);
+  t("エリアだけの線: on でも何も無い番は足りない", !pickupConditionsReady(null, [], AO).ready);
 }
 
 console.log("── 顧客の行が無い時はお客様の発言から（お客様の言葉のまま・scripts/audit-hearing-prefill.ts の実物）");

@@ -239,6 +239,13 @@ export function sentReactionInviteOn(env: Record<string, string | undefined> = t
  *   竹内さん本人の6番の分け目＝10/02「こちらから出す候補は直近の空いている日を3つ」の後は空室なら AIX【内覧調整】（10/15・10/18）／それより前は返信（9/04・9/10・9/19＝1件は退去予定）。
  *   on の時は、空室・退去予定とも AIX【内覧調整】で誘う（退去予定は内覧できる時期を AIX の中で・統括役の決め 11/06＝竹内さん 10/09 の新しい方の決め）。既定 on（11/06・止める VIEW_INVITE_ONE_PLACE=off）
  */
+/**
+ * 2026-11-06 統括役の頼み（作業員7）: 送った物件への「気になります」だけの番で、AIX の地図の除外（SENT_REACTION_VIEW_INVITE）があってもブレインが見積書を選ぶ（q055）。
+ *   AIX の地図の estimate_sheet の1行に、読み方と竹内さんの一手（10/15 AIX【内覧調整】）を1組で足す。既定 off（SENT_REACTION_NO_ESTIMATE=on）
+ */
+export function sentReactionNoEstimateOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.SENT_REACTION_NO_ESTIMATE ?? "").trim().toLowerCase() === "on";
+}
 export function viewInviteOnePlaceOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.VIEW_INVITE_ONE_PLACE ?? "").trim().toLowerCase() !== "off"; // 11/06 統括役の決め: vio2-on 悪化0で既定 on（止める VIEW_INVITE_ONE_PLACE=off）
 }
@@ -247,6 +254,32 @@ export function sentReactionInviteRule(env: Record<string, string | undefined> =
   // 2026-11-06 統括役の頼み（q055 のぶつかり）: 誘いを1か所で決める（VIEW_INVITE_ONE_PLACE=on の時だけ・既定 off は今の返信の誘いのまま）
   if (viewInviteOnePlaceOn(env)) return "- ★こちらが送った物件（送った束・オススメの中の物件）に「気になります」「ここいいですね」「気に入りました」とだけ返ってきた番（空き・費用・日時の問いが無い）は、管理会社に確かめる事も AIX で送る結果も無い＝確認の約束・御見積書の約束（route=\"promise\"）にも AIX【物件確認した】にもしない（御見積書はお客様が費用を聞いた時・送ってきた時だけ）。about=reaction_to_sent で内覧に誘う。誘い方はここで1つに決める: 空室・退去予定とも AIX【内覧調整】（route=\"aix\"・aix=viewing_invite）で誘う。空室なら直近の空いている日の候補を出し、退去予定なら内覧できる時期を AIX の中で添える（退去予定の内覧はスタッフだけが知る中身＝竹内さん 10/09）。返信の締めの内覧の訴求は重ねない（竹内さん本人の90日 6番: 10/02 に候補日は直近の3つを出すと決めてからの番は AIX【内覧調整】2／それより前は返信 3・見積書 1・確認の約束 0）。空き・費用・日時を聞かれた時は上の★のまま。\n";
   return "- ★こちらが送った物件（送った束・オススメの中の物件）に「気になります」「ここいいですね」「気に入りました」とだけ返ってきた番（空き・費用・日時の問いが無い）は、管理会社に確かめる事も AIX で送る結果も無い＝確認の約束・御見積書の約束（route=\"promise\"）にも AIX【物件確認した】にもしない（御見積書はお客様が費用を聞いた時・送ってきた時だけ）。about=reaction_to_sent・route=\"reply\" で「ご査収頂きありがとうございます」＋その物件を「よろしければご都合よろしいお日にちにお部屋ご案内させて頂きます」と内覧に誘う（竹内さん本人の90日 6番: 内覧の誘い 5・見積書 1・確認の約束 0）。空き・費用・日時を聞かれた時は上の★のまま。\n";
+}
+/**
+ * 2026-11-06 弱い所 342（q141・作業員7・統括役の頼み）: 内覧の時刻だけ決まり、行き先（物件）が未定の番を AIX【待ち合わせ場所】にする。
+ *   竹内さん本人の90日: こちらが枠を出した後にお客様が時刻を決めた番 24 のうち、AIX【待ち合わせ場所】17（どれも行き先の物件が決まっていた）・返信 5。
+ *   お客様が「行きたい場所決まったら言います」「お気に召されたお部屋」と行き先を決めていない番（10/12 q141・9/17）は返信で受けた（待ち合わせの住所を出せない）。
+ *   内覧の段階（feedback_viewing_flow_stages）: 内覧調整 → 日にち決定 → 待ち合わせ場所＝確定（行き先が要る）。既定 on（11/06・止める VIEWING_TIME_ONLY_NO_MEETING=off）
+ */
+export function viewingTimeOnlyNoMeetingOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.VIEWING_TIME_ONLY_NO_MEETING ?? "").trim().toLowerCase() !== "off"; // 11/06 統括役の決め: vto3-on 悪化0・q141 返信 3/4 で既定 on（止める VIEWING_TIME_ONLY_NO_MEETING=off）
+}
+export function viewingTimeOnlyRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  if (!viewingTimeOnlyNoMeetingOn(env)) return "";
+  return "- ★内覧の時刻だけ決まり、お客様自身が「行きたい場所決まったらまた言います」「どこにするか考えます」と行き先をまだ決めていないと言った番（日にちの変更・時刻の返事だけの番は当てない）。読み方: 「行きたい場所が決まったら言います」は、お客様が先に回した話＝その ask は route=\"none\"（今の番の約束にも AIX にもしない）。時刻の ask だけ route=\"reply\" で受け、aix は空（AIX【待ち合わせ場所】は行き先が決まってからの段＝内覧調整→日にち決定→待ち合わせ場所）。竹内さんの一手（10/12・本日17時の枠を出した後に「17時からお願いします！／行きたい場所決まったらまた言います！」と来た番の実際の返信）: 「かしこまりました😊！！\\n行きたいお部屋が決まりましたら、ご連絡ください！！\\n本日は何卒よろしくお願い致します！！」。行き先が決まっている番は今まで通り AIX【待ち合わせ場所】。\n";
+}
+/**
+ * 2026-11-06 弱い所 299（作業員7・統括役の頼み）: 費用の問いで、どの物件の費用か（送った物件か持ち込みか）が決まらずに見積書の AIX か返信かに揺れる。
+ *   竹内さん本人の90日（費用を聞かれた番）: 送った物件・まだ御見積書なし 60＝見積書の AIX が先 31・見積の約束 14・その他の返信 15／
+ *   お客様が送ってきた物件 87＝見積の約束 43・AIX が先 23・その他 19／物件の指定なし 45＝その他の返信（初期費用を抑える等）28・AIX 10。
+ *   今日の型（q174・q008・q141）: 読み方と竹内さんの一手を1組で渡す。既定 on（11/06・止める SENT_COST_ESTIMATE_AIX=off）
+ */
+export function sentCostEstimateAixOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.SENT_COST_ESTIMATE_AIX ?? "").trim().toLowerCase() !== "off"; // 11/06 統括役の決め: sce-on2 悪化0・q084 上がりで既定 on（止める SENT_COST_ESTIMATE_AIX=off）
+}
+export function sentCostEstimateRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  if (!sentCostEstimateAixOn(env)) return "";
+  return "- ★費用の問い（初期費用・いくら・見積）は、先に「どの物件の費用か」を決める。読み方: 主語が無くても、直前にこちらが送った物件（引用・物件名・送った束の中の1件）を指していれば「送った物件の費用」。送った物件で御見積書をまだ送っていない番は、約束を挟まず route=\"aix\"・aix=estimate_sheet（about=property_cost・property にその物件名）。お客様が今の連投で送ってきた物件なら上の★（見積の約束）のまま。物件の指定が無い費用の問いは返信（初期費用を抑える一言）。竹内さんの一手（8/27・こちらが送った Zeus難波CUBE 1103号室の後の「初期費用119.000円ですか？」）: AIX【見積書送る】→「初期費用176,180円となります！！\\nZeus難波CUBE 1103号室最大限割引しました初期費用の御見積書となります！！」。\n";
 }
 function twoMessageAskRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if ((env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "off") return ""; // 11/05 既定 on（止める TWO_MESSAGE_PLAN=off）
@@ -259,7 +292,7 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - asks: 【お客様の依頼の一覧】があればその項目を1つも落とさない（足すのはよい）。無ければ今の連投から自分で数える。前の番の依頼を書き写さない（まだ答えていない前の依頼は【お客様の依頼の一覧】の「まだ答えていない確認事項」から入る）。
 - route の決め方: スタッフだけが知る事（管理会社に確認した結果・募集状況・見積の金額・割引額・入居日の確定・内覧の日時の確定・撮影した写真・交渉の結果・審査の結果・探した結果）が答えに要る → "aix"（AIX のキーを付ける）。
   まだ結果が無く、これから確認・作成・探す・交渉する → "promise"。会話・送った物件の資料・会社の事実・一般的な事（虫・換気・二人で住める広さ・内覧の所要時間・手続きの流れ）で答えられる → "reply"（確認の約束にしない）。もう答えた・お客様が自分でやる → "none"。
-${answerableDirectRule()}${twoMessageAskRule()}${textAixRouteRule()}${screeningConsultRule()}${sentReactionInviteRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
+${answerableDirectRule()}${twoMessageAskRule()}${textAixRouteRule()}${screeningConsultRule()}${sentReactionInviteRule()}${viewingTimeOnlyRule()}${sentCostEstimateRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
 ${closeOnlyAnswerRule()}
 - close_only=true:返事の要らない番（お礼・了承・あいさつだけ）／お客様が待ってと言った番（「決まったら連絡します」「また連絡します」「確認してから連絡します」）。待っての番は「お決まりになりましたらご連絡ください」の形で閉じ、物件を送り続ける約束・新しい提案をしない。
 - 今の条件の物件を出し切った後（前に「全てピックアップ」・新着待ちの約束・全力サポートを送った後で条件が変わっていない）の「もう少し探して」等は route="aix"・aix="zenryoku_support"。
