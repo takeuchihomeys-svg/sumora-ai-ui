@@ -53,7 +53,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
-import { nightBaseJobDue, nightBaseAlready, isExamJobShape } from "./lib/exam-base-pin";
+import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase } from "./lib/exam-base-pin";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, type CmpLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -227,6 +227,9 @@ function addJob(): void {
     const needsBase = (() => { try {
       const B = join(examCacheRoot(), "brain-exam-baseline");
       const head = execFileSync("git", ["-C", cwd, "rev-parse", "origin/main"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+      // 夜の基準（30時間以内）があれば、昼の依頼の前はそれを使う（外れた問題だけ確かめ直す）＝前を作るのは夜の基準に無い問題だけと見込む
+      const nights = readdirSync(B).filter((f) => /^nightly-base-.*\.json$/.test(f)).map((f) => readJson<{ at?: string; problems?: string[] } | null>(join(B, f), null)).filter((x): x is { at: string; problems: string[] } => !!x?.at && Array.isArray(x.problems) && Date.now() - Date.parse(x.at) < 30 * 3_600_000);
+      if (nights.length) { const have = new Set(nights.flatMap((x) => x.problems)); return ids.filter((id) => !have.has(id)); }
       return needsBaseIds(ids, { mainCommit: head || null, versionKeys: readJson<Record<string, string>>(join(B, "version-keys.json"), {}),
         dirsByKey: (key) => readdirSync(B).filter((d) => d.startsWith(`v-${key}-`)).map((d) => readdirSync(join(B, d)).filter((f) => f.endsWith(".json") && f !== "config.json").map((f) => f.replace(/\.json$/, ""))) });
     } catch { return [] as string[]; } })();
@@ -619,7 +622,30 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     // 11/04 竹内さんの決定（使い回せる物は使い回す）: 録音（前の答え）と入力が main と同じだった回の数を結果に出す
     const reuse = (() => { try { const c = readJson<{ byTag?: Record<string, { real?: number; replayed?: number }> }>(join(resultsDirOf(j.cwd), `${j.label}.cost.json`), {}); const d = readJson<{ items?: Record<string, { same?: boolean }> }>(join(resultsDirOf(j.cwd), `${j.label}.inputdiff.json`), {}); let real = 0, rep = 0; for (const v of Object.values(c.byTag ?? {})) { real += v?.real ?? 0; rep += v?.replayed ?? 0; } const it = Object.values(d.items ?? {}); return `・使い回し: LLM ${rep}/${real + rep}回は録音・入力が main と同じ回 ${it.filter((x) => x.same).length}/${it.length}${rp.stable?.length ? `・安定で1回 ${rp.stable.length}問` : ""}`; } catch { return ""; } })();
     // 11/03 指揮役: 悪化を「確かな悪化」と「揺れの範囲の差」（揺れる問題・合格の差が main の割合で2回未満）に分けて書く
-    const blFinal = baseLabelOf(j.cwd, j.label);
+    // 2026-11-06 統括役（前を作る子が試験の費用の半分）: 前を夜の基準に固定した回（brain-exam が <label>.pin.json を書く）は、この回で外れた問題だけ今の main で前を作り直し、
+    //   その問題は今の main の前と比べる（他は夜の基準のまま）。結果の行に「前は夜の基準（版 xxx）」と出す。止める: EXAM_BASELINE_PIN_CONFIRM=off（brain-exam が固定しない）
+    const pin = readJson<{ pinned?: string; current?: string; confirm?: boolean; snapDay?: string | null } | null>(join(resultsDirOf(j.cwd), `${j.label}.pin.json`), null);
+    let blMerged: string | null = null, pinNote = "";
+    if (pin?.pinned) {
+      pinNote = `・前は夜の基準（版 ${pin.pinned.slice(0, 7)}${pin.current && pin.current !== pin.pinned ? `・今の main ${pin.current.slice(0, 7)}` : ""}）`;
+      const fails = pin.confirm ? pinConfirmIds(readRows(rowsFile) as unknown as Array<{ id: string; score?: { pass?: boolean } }>) : [];
+      if (fails.length) {
+        const cfl = `${j.label}-cf`, cfReps = join(RES, `${cfl}.reps.json`);
+        writeFileSync(cfReps, JSON.stringify(Object.fromEntries(fails.map((id) => [id, rp.reps[id] ?? j.repeat])), null, 1));
+        log(`  確かめ直し: 外れた ${fails.length}問（${fails.join(",")}）だけ今の main で前を作る（${cfl}）`);
+        appendFileSync(outFile, `\n=== ${at()} 確かめ直し: 外れた問題だけ今の main で前を作る（${fails.join(",")}）===\n`);
+        await runTsx(j.cwd, ["scripts/brain-exam.ts", `--label=${cfl}`, "--conv=auto", "--baseline=main", "--baseline-only", `--repeat=${maxRep}`, `--stage=${j.stage}`, `--only=${fails.join(",")}`, `--reps-file=${cfReps}`],
+          { ...j.env, EXAM_BASELINE_NIGHTLY: "off", ...(pin.snapDay ? { EXAM_DB_SNAPSHOT_DAY: pin.snapDay } : {}), ...(guard.laneOld || bizLane ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile).done;
+        const blCf = baseLabelOf(j.cwd, cfl), blN = baseLabelOf(j.cwd, j.label);
+        if (blCf && blN) {
+          const merged = mergePinnedBase(readRows(join(resultsDirOf(j.cwd), `${blN}.jsonl`)) as unknown as Array<{ id: string }>, readRows(join(resultsDirOf(j.cwd), `${blCf}.jsonl`)) as unknown as Array<{ id: string }>, fails);
+          blMerged = `${j.label}.base-merged`;
+          writeFileSync(join(resultsDirOf(j.cwd), `${blMerged}.jsonl`), merged.map((r) => JSON.stringify(r)).join("\n") + "\n");
+          pinNote += `・外れた ${fails.length}問は今の main（${blCf.slice(5, 12)}）の前と比べた`;
+        } else pinNote += "・今の main の前を作れなかった（外れた問題も夜の基準と比べた）";
+      }
+    }
+    const blFinal = blMerged ?? baseLabelOf(j.cwd, j.label);
     const sw = blFinal ? splitWorse(readRows(rowsFile), readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)), new Set(rp.flaky.map((x) => x.id))) : null;
     const flakeNote = sw?.flake.length ? `・揺れの範囲の差 ${sw.flake.length}（${sw.flake.map((x) => `${x.id} ${x.why}`).join("／")}）` : "";
     const sureN = sw ? sw.sure.length : s.worse;
@@ -643,7 +669,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         return i >= 0 ? r.line.slice(i) : "";
       } catch { return ""; }
     })();
-    const verdictBase = (noCompare ? `比べられない（基準の回が無い・両方で解いた 0/${ids.length}問・既定 on の判断に使わない${blFinal ? `・基準 ${blFinal}` : ""}）` : sureN == null ? "結果を読めない" : sureN === 0 ? (cmpN < ids.length ? `比べた問題が少ない（両方で解いた ${cmpN}/${ids.length}問・悪化0とは言わない・既定 on の判断に使わない）` : `確かな悪化0（比べた ${cmpN}/${ids.length}問）`) : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote;
+    const verdictBase = (noCompare ? `比べられない（基準の回が無い・両方で解いた 0/${ids.length}問・既定 on の判断に使わない${blFinal ? `・基準 ${blFinal}` : ""}）` : sureN == null ? "結果を読めない" : sureN === 0 ? (cmpN < ids.length ? `比べた問題が少ない（両方で解いた ${cmpN}/${ids.length}問・悪化0とは言わない・既定 on の判断に使わない）` : `確かな悪化0（比べた ${cmpN}/${ids.length}問）`) : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote + pinNote;
     // 2026-11-06 作業員8（竹内さんの決定「試験から改善の仕方も強化・統括同士連携」・外れの自動の切り分け）: 外れた問題ごとに、どの段で道が変わったか（ブレインの生の答え→2段→場面の網→決まった書き換え→書き手→最終チェック）を記録から出す。
     //   悪化の問題は verdict に、外れの問題は全部 result の missStages に残す（持ち主の統括は連携の表・仮の表で引く）。LLM なし。止める: EXAM_MISS_STAGE=off
     const missStages = (() => {

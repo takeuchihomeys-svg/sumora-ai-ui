@@ -1,6 +1,6 @@
 // 夜の基準に固定するか（scripts/lib/exam-base-pin.ts）の単体テスト（LLM も DB も git も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-base-pin.test.ts（全 PASS で exit 0）
-import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects, nightBaseJobDue, isExamJobShape, nightBaseAlready } from "../exam-base-pin";
+import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects, nightBaseJobDue, isExamJobShape, nightBaseAlready, pinConfirmIds, mergePinnedBase } from "../exam-base-pin";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -64,6 +64,16 @@ ok("依頼の形: cmd は cmds が要る", isExamJobShape({ id: "1", label: "a",
 ok("依頼の形: tsc-remote", isExamJobShape({ id: "1", label: "a", runner: "tsc-remote", only: "" }));
 ok("依頼の形: 知らない runner・配列・null は依頼でない", !isExamJobShape({ id: "1", label: "a", runner: "x" }) && !isExamJobShape([]) && !isExamJobShape(null));
 ok("二重に積まない: 列・済み・結果に同じ日の名前", nightBaseAlready("2026-11-05", ["2026-11-05T12-00-00-000Z-night-base-2026-11-05.json"]) && !nightBaseAlready("2026-11-06", ["x-night-base-2026-11-05.json"]));
+
+{
+  // 11/06 統括役: 夜の基準に固定して、外れた問題だけ今の main で確かめ直す
+  const rows = [{ id: "q1", score: { pass: true } }, { id: "q2", score: { pass: false } }, { id: "q2", score: { pass: true } }, { id: "q3", score: { pass: true } }, { id: "q4", error: "x", score: { pass: false } }];
+  ok("確かめ直しは外れた回のある問題だけ（全部○は悪化になりえない・失敗の行は数えない）", pinConfirmIds(rows).join(",") === "q2");
+  const night = [{ id: "q1", v: "n" }, { id: "q2", v: "n" }, { id: "q2", v: "n" }], cur = [{ id: "q2", v: "c" }, { id: "q2", v: "c" }];
+  const m = mergePinnedBase(night, cur, ["q2"]);
+  ok("確かめ直した問題は今の main の前・他は夜の基準", m.filter((r) => r.id === "q2").every((r) => r.v === "c") && m.filter((r) => r.id === "q2").length === 2 && m.find((r) => r.id === "q1")?.v === "n");
+  ok("今の main の前が作れなかった問題は夜の基準のまま", mergePinnedBase(night, [], ["q2"]).filter((r) => r.id === "q2").every((r) => r.v === "n"));
+}
 
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

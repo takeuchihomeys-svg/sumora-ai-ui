@@ -46,7 +46,7 @@
 //   レーン＝テスト専用の会話（YUMA2〜YUMA5）1本・1問ずつ（同じ問題の回は同じレーンで順に）。会話の数で実際は4本まで（YUMA は使わない）。
 //   process.env・録音の札・試験の時計はレーンごと（scripts/lib/exam-lane.ts）。DeepSeek 等の 429 を見たら問題の区切りで並べる数を1つ減らす
 import { createClient } from "@supabase/supabase-js";
-import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, mkdirSync, copyFileSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, mkdirSync, copyFileSync, unlinkSync } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
 import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
@@ -1077,6 +1077,7 @@ async function prepareMainBaseline(): Promise<boolean> {
   //   昼の依頼（--baseline=main）は、夜に作った前（同じ構成の控え nightly-base-<構成>.json）の commit で比べる。11/04〜05 は main が進むたびに前を作り直し（commit 25個・約 $51）。
   //   夜の後の main の変更が試験の線に触れない・既定 off の足し込みだけの時だけ固定する（既定 on の変更があれば今まで通り今の main）。止める: EXAM_BASELINE_NIGHTLY=off
   let pinnedNightly: string | null = null;
+  try { unlinkSync(`${RESULTS_DIR}/${LABEL}.pin.json`); } catch { /* 前の回の印を残さない */ }
   const nightlyFile = join(B.BASELINE_DIR, `nightly-base-${ch}.json`);
   if (ref === "main" && !flag("baseline-only") && process.env.EXAM_BASELINE_NIGHTLY !== "off" && existsSync(nightlyFile)) {
     try {
@@ -1086,10 +1087,16 @@ async function prepareMainBaseline(): Promise<boolean> {
       const touched = files.filter(touchesExam);
       const subjects = touched.length ? execFileSync("git", ["log", "--format=%s", `${nb.commit}..${commit}`, "--", ...touched.slice(0, 200)]).toString().split("\n").filter(Boolean) : [];
       const d = decideBasePin({ nightly: nb, nowMs: Date.now(), requestHasNightly: hasNightly, since: { files, defaultOnChange: defaultOnFromSubjects(subjects) }, problems: [] });
-      if (d.ref && !d.confirmOnCurrent) { commit = execFileSync("git", ["rev-parse", "--verify", `${d.ref}^{commit}`]).toString().trim(); pinnedNightly = commit;
+      // 2026-11-06 統括役（前を作る子が試験の費用の半分 $9.68/$20.32）: 夜の後の main に試験の線の既定 on の変更があっても、前は夜の基準に固定する。
+      //   その代わり、係が「この回で外れた問題」だけ今の main で前を作り直して比べ直す（悪化は前が○・今が✕の時だけ＝外れていない問題は悪化になりえない）。
+      //   印は <label>.pin.json（係が読む）。止める: EXAM_BASELINE_PIN_CONFIRM=off（今まで通り今の main で前を作る）
+      const pinConfirm = !!d.ref && d.confirmOnCurrent && process.env.EXAM_BASELINE_PIN_CONFIRM !== "off";
+      const curMain = commit;
+      if (d.ref && (!d.confirmOnCurrent || pinConfirm)) { commit = execFileSync("git", ["rev-parse", "--verify", `${d.ref}^{commit}`]).toString().trim(); pinnedNightly = commit;
+        try { writeFileSync(`${RESULTS_DIR}/${LABEL}.pin.json`, JSON.stringify({ pinned: commit, current: curMain, confirm: pinConfirm, snapDay: nb.snapDay ?? null, why: d.why, at: new Date().toISOString() }, null, 1)); } catch { /* 印が無ければ係は確かめ直さない＝夜の基準だけで比べる */ }
         // 弱い所 354: 前（夜の基準）と今の回が同じ日の DB の写しを読む
         if (nb.snapDay && !(process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim()) { process.env.EXAM_DB_SNAPSHOT_DAY = nb.snapDay; console.log(`  DB の材料の写し: 夜の基準の日 ${nb.snapDay} を読む`); } }
-      console.log(`  前（main）: ${d.ref && !d.confirmOnCurrent ? "夜の基準で比べる" : "今の main で作る"}（${d.why}）`);
+      console.log(`  前（main）: ${pinnedNightly ? `夜の基準で比べる${pinConfirm ? "（外れた問題は係が今の main で確かめ直す）" : ""}` : "今の main で作る"}（${d.why}）`);
     } catch (e) { console.warn(`  ⚠ 夜の基準が読めない（今の main で作る）: ${String(e).slice(0, 160)}`); }
   }
   // 2026-10-15 ② 比べる相手の版: main の commit ではなく「試験に効く所の中身」の鍵で置く。main が進んでも試験に効く所が同じなら同じ置き場（使い回す）、
@@ -1356,7 +1363,8 @@ async function prepareMainBaseline(): Promise<boolean> {
   const reusedUsd = plan.reuse.reduce((s, id) => { const c = now.get(id)?.cost; return s + (c ? c.realUsd + c.replayUsd : 0); }, 0);
   baselineReuse = { reused: plan.reuse.length, ran: INCR ? realRun.length : plan.run.length, reusedUsd, commit, dir, carried: carried.length, deferred: deferred.length, childUsd, childRuns, pinned: pinnedNightly };
   // 2026-11-05 作業員8: 夜の取り置き（--baseline-only・今の main・残り無し）を終えたら、夜の基準の控えを書く（昼の依頼がこの commit で比べる）
-  if (flag("baseline-only") && ref === "main" && !deferred.length && !pinnedNightly) {
+  // 2026-11-06: 夜の基準の依頼（label night-base-*）の時だけ書く。係の確かめ直し（--baseline-only・少数の問題）が夜の基準を上書きしないため
+  if (flag("baseline-only") && ref === "main" && !deferred.length && !pinnedNightly && /^night-base-/.test(LABEL)) {
     try { atomicWriteJson(nightlyFile, { commit, at: new Date().toISOString(), cfg: ch, snapDay: (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(Date.now()), problems: picked.filter((p) => now.has(p.id)).map((p) => p.id) } satisfies NightlyRecord, true); console.log(`  夜の基準の控えを書いた: ${commit.slice(0, 7)}（${nightlyFile}）`); } catch (e) { console.warn(`  ⚠ 夜の基準の控えを書けない: ${String(e).slice(0, 120)}`); }
   }
   const missing = picked.filter((p) => !now.has(p.id)).length;
