@@ -1,6 +1,6 @@
 // 夜の管理会社の話題で A1 の AIX 直接を外す（2026-11-06 作業員9・弱い所 345／350・MGMT_NIGHT_NO_DIRECT）
 // 実行: npx tsx app/lib/__tests__/two-stage-night-direct.test.ts
-import { answerableDirectAix, nightMgmtCheckDirection, pickupDirectionAdjust, type TwoStageVerdict } from "../two-stage";
+import { answerableDirectAix, nightMgmtCheckDirection, pickupDirectionAdjust, twoStageAlsoAnswer, TWO_STAGE_ALSO_ANSWER, type TwoStageVerdict } from "../two-stage";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, extra); } };
 const v: TwoStageVerdict = { kind: "check", direction: "", keyTopic: "", source: "rule:two_stage_promise(check)" };
@@ -31,4 +31,7 @@ t("ピックアップ: はっきり内覧を頼んだ時は内覧の線を足さ
 const p2 = pickupDirectionAdjust(pv, { customerText: "ペット可じゃなくてもいいので紹介していただきたいです" }, { PICKUP_DIRECTION_KEEP: "on" });
 t("ピックアップ: 条件の言い直し（q154）→ 竹内さんの形の継続の約束", !!p2 && p2.direction.includes("全力でサポートさせて頂きます"), p2?.direction);
 t("ピックアップ: 確認の約束（check）には触らない", pickupDirectionAdjust(cv, { customerText: q174 }, { PICKUP_DIRECTION_NO_VIEWING: "on", PICKUP_DIRECTION_KEEP: "on" })?.direction === cv.direction);
+// 決まった尾の例（61 (b)・既定 off）
+t("決まった尾: 既定は今まで通り（内覧の日時の例つき）", twoStageAlsoAnswer({}) === TWO_STAGE_ALSO_ANSWER);
+t("決まった尾: on は内覧の例を外し、頼まれていない内覧・申込を足さない", !twoStageAlsoAnswer({ TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE: "on" }).includes("内覧の日時のご希望") && twoStageAlsoAnswer({ TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE: "on" }).includes("頼まれていない内覧"));
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

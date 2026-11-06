@@ -106,6 +106,15 @@ export const TWO_STAGE_WORDING: Record<TwoStageKind, string> = {
 // 2026-10-02 ⑫ 19巡（flow18_t10）: 「こちらも一緒にお願いします。10/7水曜の午前中であれば助かります」に、約束の方向（募集状況の確認）だけを書いて
 //   内覧の日時のご希望に触れなかった。同じ発言の他のご希望・質問にも一言ずつ応える（約束の中身は変えない・答えの事実は作らない）
 export const TWO_STAGE_ALSO_ANSWER = "同じ発言の他のご希望・ご質問（内覧の日時のご希望など）にも一言ずつ応える（例: ご希望の日時でご案内出来るよう合わせて確認する）。";
+/**
+ * 2026-11-06 作業員9（弱い所 61・統括役の決め (b)）: 決まった尾の例「（内覧の日時のご希望など）」が、内覧を頼まれていない番（q174「一旦見てみたい」）でも
+ *   内覧の一文を誘っていた＝例を外し、「お客様がはっきり頼んだ事だけ」に応える形にする（日時の指定があった番は今まで通り応えられる）。
+ *   TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE=on の時だけ（既定 off）
+ */
+export const TWO_STAGE_ALSO_ANSWER_PLAIN = "同じ発言の他のご希望・ご質問にも一言ずつ応える（お客様がはっきり書いた事だけ・頼まれていない内覧・申込の一文は足さない）。";
+export function twoStageAlsoAnswer(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  return (env.TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE ?? "").trim().toLowerCase() === "on" ? TWO_STAGE_ALSO_ANSWER_PLAIN : TWO_STAGE_ALSO_ANSWER;
+}
 export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
   const v = resolveTwoStageCore(i);
   if (v && sameDayDirect(v, i)) return null;
@@ -116,18 +125,18 @@ export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
     if (extra.length) {
       return {
         ...v,
-        direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}${multiPromiseDirection(extra)}`,
+        direction: `${v.direction}${twoStageAlsoAnswer()}${multiPromiseDirection(extra)}`,
         keyTopic: `${v.keyTopic}＋あわせて${extra.map((x) => x.what).join("・")}の約束`,
         extraPromises: extra.map((x) => x.kind),
       };
     }
-    return { ...v, direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}` };
+    return { ...v, direction: `${v.direction}${twoStageAlsoAnswer()}` };
   }
   const plan = planPromiseSequence(v, i);
-  if (!plan) return { ...v, direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}` };
+  if (!plan) return { ...v, direction: `${v.direction}${twoStageAlsoAnswer()}` };
   return {
     ...v,
-    direction: `${v.direction}${plan.later.length ? "同じ発言の他のご質問のうち、会話・資料・会社の事実で答えられる物（例 敷金礼金・初期費用に含まれるか）にだけ一言で答える（下の後に回す依頼は除く）。" : TWO_STAGE_ALSO_ANSWER}${plan.direction}`,
+    direction: `${v.direction}${plan.later.length ? "同じ発言の他のご質問のうち、会話・資料・会社の事実で答えられる物（例 敷金礼金・初期費用に含まれるか）にだけ一言で答える（下の後に回す依頼は除く）。" : twoStageAlsoAnswer()}${plan.direction}`,
     keyTopic: plan.second ? (plan.second.kind === "wish" ? `${v.keyTopic}＋2通目に${plan.second.what}` : `${v.keyTopic}＋2通目にあわせまして${plan.second.what}の約束`) : v.keyTopic,
     ...(plan.second ? { extraPromises: [plan.second.kind] } : {}),
     ...(plan.later.length ? { laterPromises: plan.later.map((x) => x.kind) } : {}),
