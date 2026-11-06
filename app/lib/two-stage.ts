@@ -178,7 +178,7 @@ export function resolveTwoStageOrDirect(i: TwoStageInput): { verdict: TwoStageVe
   const core = resolveTwoStageCore(i);
   const direct = answerableDirectAix(core, i);
   if (direct) return { verdict: null, direct, coreSource: core?.source ?? null };
-  return { verdict: nightMgmtCheckDirection(resolveTwoStage(i), i), direct: null, coreSource: null };
+  return { verdict: pickupDirectionAdjust(nightMgmtCheckDirection(resolveTwoStage(i), i), i), direct: null, coreSource: null };
 }
 
 /**
@@ -662,4 +662,36 @@ export function firstContactCheckTwoStage(propertyMsgs: readonly string[], custo
     customerText, asksCost: /初期費用|見積|いくら|費用/.test(customerText), ackOnly: false,
     brought: { ask: broughtPropertyAsk(customerText), count: n, titleOnly: broughtTitleOnly(propertyMsgs) },
   });
+}
+
+/**
+ * 2026-11-06 作業員9（弱い所 61・322・統括役の決め）: ピックアップの約束（2段 pickup）の方向の文に、言い方を2つ足す（判断・出所は変えない）。
+ *   KB「書き手は下に足した注記より、ブレインの方向の文そのものに従う」の型（夜の「明日」MGMT_NIGHT_DIRECTION で 3/3）。
+ *   ① PICKUP_DIRECTION_NO_VIEWING（61）: お客様の「一旦見てみたい」等は内覧の依頼ではない＝内覧・申込の一文を足さない
+ *      （試験 q174: 3通とも「ご内覧頂く事も可能」「ご内覧のご希望もお受け」等を足した・竹内さんはピックアップの約束だけ）
+ *   ② PICKUP_DIRECTION_KEEP（322）: 継続の約束を竹内さんの実送信の形で1文（条件の言い直しのピックアップの約束＝竹内さん 59%・新着を頼まれた時）。同じ日にもう言っていれば入れない（KB 1d07b3df）
+ *      （試験 cc2-on q154#1: 書き手への注記では書かなかった）
+ * どちらも既定 off（=on で入る）。
+ */
+export function pickupDirectionNoViewingOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PICKUP_DIRECTION_NO_VIEWING ?? "").trim().toLowerCase() === "on";
+}
+export function pickupDirectionKeepOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PICKUP_DIRECTION_KEEP ?? "").trim().toLowerCase() === "on";
+}
+const LOOK_NOT_VIEWING_RE = /一旦見て|見てみたい|見てみます|気になります|気になってます|良さそう|いいですね|綺麗ですね/;
+const EXPLICIT_VIEWING_RE = /(?:内覧|内見|見学)/;
+export function pickupDirectionAdjust(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "customerText">, env?: Record<string, string | undefined>): TwoStageVerdict | null {
+  if (!v || v.kind !== "pickup") return v;
+  const t = String(i.customerText ?? "");
+  const add: string[] = [];
+  if (pickupDirectionNoViewingOn(env) && LOOK_NOT_VIEWING_RE.test(t) && !EXPLICIT_VIEWING_RE.test(t)) {
+    add.push("お客様の「一旦見てみたい」「良さそう」等は物件への感想で内覧の依頼ではない＝内覧・申込・お部屋を押さえる一文を足さない（竹内さんはピックアップの約束だけ）");
+  }
+  // 条件の言い直しのピックアップの約束（rule:two_stage_promise(pickup)）だけ。pickup_unless_ack（物件への感想・質問の番）には入れない＝q174 の竹内さんは入れていない
+  const keepCase = v.source === "rule:two_stage_promise(pickup)";
+  if (pickupDirectionKeepOn(env) && keepCase) {
+    add.push("約束の後・締めの前に、竹内さんの実送信の形の継続の約束を1文だけ入れる「〇〇さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！」（約束の中身は省かない・同じ日にこちらがもう言っていれば入れない）");
+  }
+  return add.length ? { ...v, direction: `${v.direction}（${add.join("／")}）` } : v;
 }
