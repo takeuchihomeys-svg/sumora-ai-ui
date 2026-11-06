@@ -689,7 +689,8 @@ export function pickupDirectionAdjust(v: TwoStageVerdict | null, i: Pick<TwoStag
     add.push("お客様の「一旦見てみたい」「良さそう」等は物件への感想で内覧の依頼ではない＝内覧・申込・お部屋を押さえる一文を足さない（竹内さんはピックアップの約束だけ）");
   }
   // 条件の言い直しのピックアップの約束（rule:two_stage_promise(pickup)）だけ。pickup_unless_ack（物件への感想・質問の番）には入れない＝q174 の竹内さんは入れていない
-  const keepCase = v.source === "rule:two_stage_promise(pickup)";
+  // 2026-11-06 q174#2 のすり抜け: 出所が (pickup) でも、お客様の発言が物件への感想（一旦見てみたい・良さそう）の番は入れない（竹内さんの q174 は入れていない）
+  const keepCase = v.source === "rule:two_stage_promise(pickup)" && !LOOK_NOT_VIEWING_RE.test(t);
   if (pickupDirectionKeepOn(env) && keepCase) {
     add.push("約束の後・締めの前に、竹内さんの実送信の形の継続の約束を1文だけ入れる「〇〇さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！」（約束の中身は省かない・同じ日にこちらがもう言っていれば入れない）");
   }
