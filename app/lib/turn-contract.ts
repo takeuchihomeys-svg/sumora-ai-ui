@@ -239,6 +239,13 @@ export function sentReactionInviteOn(env: Record<string, string | undefined> = t
  *   竹内さん本人の6番の分け目＝10/02「こちらから出す候補は直近の空いている日を3つ」の後は空室なら AIX【内覧調整】（10/15・10/18）／それより前は返信（9/04・9/10・9/19＝1件は退去予定）。
  *   on の時は、空室・退去予定とも AIX【内覧調整】で誘う（退去予定は内覧できる時期を AIX の中で・統括役の決め 11/06＝竹内さん 10/09 の新しい方の決め）。既定 on（11/06・止める VIEW_INVITE_ONE_PLACE=off）
  */
+/**
+ * 2026-11-06 統括役の頼み（作業員7）: 送った物件への「気になります」だけの番で、AIX の地図の除外（SENT_REACTION_VIEW_INVITE）があってもブレインが見積書を選ぶ（q055）。
+ *   AIX の地図の estimate_sheet の1行に、読み方と竹内さんの一手（10/15 AIX【内覧調整】）を1組で足す。既定 off（SENT_REACTION_NO_ESTIMATE=on）
+ */
+export function sentReactionNoEstimateOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.SENT_REACTION_NO_ESTIMATE ?? "").trim().toLowerCase() === "on";
+}
 export function viewInviteOnePlaceOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.VIEW_INVITE_ONE_PLACE ?? "").trim().toLowerCase() !== "off"; // 11/06 統括役の決め: vio2-on 悪化0で既定 on（止める VIEW_INVITE_ONE_PLACE=off）
 }
