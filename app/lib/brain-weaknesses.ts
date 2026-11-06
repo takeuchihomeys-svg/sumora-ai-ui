@@ -16,7 +16,8 @@ export const STATUS_JA: Record<WeaknessStatus, string> = { open: "未着手", in
 export const AREA_JA: Record<WeaknessArea, string> = { brain: "道を選ぶ力", writer: "文を作る力", aix: "AIX", exam: "試験・物差し", conductor: "つなぎ", memory: "記憶・つなぎ" };
 
 /** 印だけ（文は入れない） */
-export type WeaknessEvidence = { exam_qids?: string[]; exam_labels?: string[]; watch_turn_ids?: number[]; unknown_ids?: number[] };
+/** owners＝持ち主（連携の表の id・持ち主）・exam_reps＝「試験の名前 問題#回」（試験の外れの切り分けから・11/06） */
+export type WeaknessEvidence = { exam_qids?: string[]; exam_labels?: string[]; watch_turn_ids?: number[]; unknown_ids?: number[]; owners?: string[]; exam_reps?: string[] };
 export type WeaknessRow = {
   id?: number; key: string; title: string; area: WeaknessArea; symptom: string | null; root_cause: string | null;
   status: WeaknessStatus; fix_ref: string | null; evidence: WeaknessEvidence; occurrences: number;
@@ -142,6 +143,8 @@ export function mergeEvidence(oldEv: WeaknessEvidence | null | undefined, add: W
   const labels = uniqCap([...(add.exam_labels ?? []), ...(o.exam_labels ?? [])]); if (labels.length) out.exam_labels = labels;
   const turns = uniqCap([...(add.watch_turn_ids ?? []), ...(o.watch_turn_ids ?? [])]); if (turns.length) out.watch_turn_ids = turns;
   const uids = uniqCap([...(add.unknown_ids ?? []), ...(o.unknown_ids ?? [])]); if (uids.length) out.unknown_ids = uids;
+  const owners = uniqCap([...(add.owners ?? []), ...(o.owners ?? [])]); if (owners.length) out.owners = owners;
+  const reps = uniqCap([...(add.exam_reps ?? []), ...(o.exam_reps ?? [])]); if (reps.length) out.exam_reps = reps;
   return out;
 }
 

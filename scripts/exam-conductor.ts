@@ -56,7 +56,8 @@ import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPl
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape } from "./lib/exam-base-pin";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, type CmpLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
-import { summarizeMisses, ownerOf, parseLogTags, type MissRowLite } from "./lib/exam-miss-stage";
+import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
+import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
 import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
@@ -641,6 +642,17 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     const worseIds = new Set([...(sw?.sure ?? []), ...(sw?.flake ?? [])].map((x) => x.id));
     const stageNote = missStages.filter((m) => m && worseIds.has(m.id)).map((m) => `${m!.line}${m!.owner ? `・持ち主 ${m!.owner}` : ""}`).join("／");
     const verdict = verdictBase + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
+    // 2026-11-06 統括役（作業員8）: 外れの切り分けを弱い所の台帳（brain_weaknesses）へ。key＝段＋印の頭・同じ key の行があれば evidence に足す（upsertWeaknessHits）・持ち主・試験の名前・問題・回を evidence に・1回の試験で5行まで。
+    //   台帳は RLS（ポリシーなし）＝サーバーの鍵が無い手元では書けない → 足す物を results/weakness-pending.jsonl に残し、鍵のある所で brain-weaknesses.ts --collect-miss-stages が足す（同じ回は二重に足さない）。止める: EXAM_MISS_WEAKNESS=off
+    if ((process.env.EXAM_MISS_WEAKNESS ?? "").trim().toLowerCase() !== "off" && missStages.length) {
+      try {
+        const hits = weaknessHitsFromMisses(j.label, missStages, { max: 5 });
+        if (hits.length) {
+          appendFileSync(join(RES, "weakness-pending.jsonl"), JSON.stringify({ label: j.label, at: at(), hits }) + "\n");
+          log(`  弱い所: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? await recordExamWeaknesses(db() as never, j.label, hits) : `台帳の鍵が無い＝${hits.length}行を weakness-pending.jsonl に残した（${hits.map((h) => h.key).join("・")}）`}`);
+        }
+      } catch (e) { log(`  弱い所の台帳: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`); }
+    }
     finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);

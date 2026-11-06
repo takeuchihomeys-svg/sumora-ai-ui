@@ -1,7 +1,8 @@
 // 試験の外れの自動の切り分け（scripts/lib/exam-miss-stage.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-miss-stage.test.ts（全 PASS で exit 0）
 // 行は 11/05〜06 の実際の答案（brain-exam-main・compose-1105 の結果）を縮めた物。手で見つけた段と同じ段を指すか
-import { classifyMiss, markersOf, summarizeMisses, ownerOf, weaknessDraft, PROVISIONAL_LINKS, parseLogTags, type MissRowLite } from "../exam-miss-stage";
+import { classifyMiss, markersOf, summarizeMisses, ownerOf, weaknessDraft, PROVISIONAL_LINKS, parseLogTags, weaknessHitsFromMisses, weaknessKeyOf, type MissRowLite } from "../exam-miss-stage";
+import { aggregateWeaknessHits, mergeWeaknessRow, isWeaknessKey } from "../../../app/lib/brain-weaknesses";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -73,6 +74,27 @@ ok("印: 場面", markersOf(q136).includes("scene_net:S4_viewing"));
   const v = classifyMiss(r);
   ok("q174 → ブレインの読み（内覧）→ 2段 → 文の中身（方向の文の決まった尾・本質の帯）", v.stages.map((s) => s.stage).join(">") === "brain>two_stage>text>text" && v.line.includes("内覧") && v.line.includes("決まった尾"), v.line);
   ok("q174: 道は正しいが文の中身が変わった段を別に出す", v.stages.some((s) => s.marker === "text:direction_tail"));
+}
+
+{
+  // 弱い所の台帳への自動の登録（統括役 11/06: 同じ key は evidence に足す・持ち主・試験の名前・問題・回・5行まで）
+  ok("key: 大文字・括弧を台帳の形に", weaknessKeyOf("scene_net", ["scene_net:S4_viewing"]) === "exam-stage:scene_net:scene_net:s4_viewing" && weaknessKeyOf("two_stage", ["decision:two_stage_promise(check_question)"]) === "exam-stage:two_stage:decision:two_stage_promise");
+  const own = (mk: string[]) => ownerOf(mk, PROVISIONAL_LINKS);
+  const s55 = summarizeMisses([{ ...q055, rep: 1 }, { ...q055, rep: 3 }])!, s332 = summarizeMisses([{ ...q332, rep: 2 }])!, s136 = summarizeMisses([{ ...q136, rep: 1 }])!;
+  const hits = weaknessHitsFromMisses("tm9", [s332, s55, s136], { owner: own });
+  const h2 = hits.find((h) => h.key === weaknessKeyOf(s55.stage, s55.markers));
+  ok("同じ key（q055・q332）は1行にまとめ、問題と回を evidence に", hits.length === 2 && !!h2 && h2.n === 3 && (h2.evidence.exam_qids ?? []).join(",") === "q055,q332" && (h2.evidence.exam_reps ?? []).includes("tm9 q055#3") && (h2.evidence.exam_reps ?? []).includes("tm9 q332#2"), JSON.stringify(hits));
+  ok("持ち主と試験の名前を evidence に", !!h2 && (h2.evidence.owners ?? [])[0] === "two_stage（（仮））" && (h2.evidence.exam_labels ?? [])[0] === "tm9");
+  ok("key は全部台帳で使える形", hits.every((h) => isWeaknessKey(h.key)));
+  const many = Array.from({ length: 8 }, (_, i) => ({ id: `q${i}`, n: 8 - i, stage: "scene_net" as const, markers: [`scene_net:S${i}`], line: "x", reps: [1] }));
+  const capped = weaknessHitsFromMisses("tmx", many);
+  ok("1回の試験で5行まで（外れの多い順）", capped.length === 5 && capped[0].evidence.exam_qids?.[0] === "q0" && !capped.some((h) => h.evidence.exam_qids?.includes("q7")));
+  ok("段が決められない・依頼だけは入れない", weaknessHitsFromMisses("t", [{ id: "a", n: 1, stage: "none", markers: [], line: "" }, { id: "b", n: 1, stage: "asks", markers: [], line: "" }]).length === 0);
+  // 既存の open の行に足す（新しい行は作らない・持ち主と回は evidence に残る）
+  const agg = aggregateWeaknessHits(hits)[0];
+  const old = { key: agg.key, title: "人が付けた題", area: "exam" as const, symptom: null, root_cause: "人の原因", status: "open" as const, fix_ref: null, evidence: { exam_qids: ["q999"], exam_labels: ["tm1"], owners: ["two_stage（（仮））"] }, occurrences: 4, first_seen: "2026-11-05T00:00:00Z", last_seen: "2026-11-05T00:00:00Z" };
+  const m = mergeWeaknessRow(old, agg, "2026-11-06T00:00:00Z");
+  ok("既存の行に足す: 題・原因・状態は残し、数と evidence を足す", m.title === "人が付けた題" && m.status === "open" && m.occurrences === 4 + (agg.n ?? 0) && (m.evidence.exam_qids ?? []).includes("q999") && (m.evidence.exam_qids ?? []).includes("q055") && (m.evidence.exam_reps ?? []).length === (agg.evidence.exam_reps ?? []).length && (m.evidence.owners ?? []).length === 1, JSON.stringify(m));
 }
 
 console.log(`${pass} pass / ${fail} fail`);
