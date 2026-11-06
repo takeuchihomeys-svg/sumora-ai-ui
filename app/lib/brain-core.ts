@@ -3202,6 +3202,37 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     try { const r = pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")); const fl = firstCondMaterialLine(r); if (fl) { customerStateBlockText += `\n\n${fl}`; console.log(JSON.stringify({ tag: "brain:first-cond", conversationId, ready: r.ready })); } }
     catch (e) { console.warn("[brain-core] first-cond skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-11-07 作業員4（弱い所 270・271・KB dc0d77cf・e786394e）: 入口の意見＝近い竹内さんの番の多数の一手（割合 0.8 以上・5件以上の時だけ）を、
+  //   その番の要約と竹内さんの実際の文と1組でブレインの材料に1行（決めるのはブレイン）。CONDUCTOR_NEAR_OPINION=on（既定 off）・2秒まで待つ・無ければ何も足さない
+  if (typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus) && conversationId && (await import("@/app/lib/conductor-near-opinion")).nearOpinionOn()) {
+    try {
+      const { nearOpinionForTurn } = await import("@/app/lib/conductor-near-opinion-server");
+      const { nearOpinionDigest } = await import("@/app/lib/conductor-near-opinion");
+      const turnAtN = typedMessages[0].created_at;
+      const lastStaffN = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim()) ?? null;
+      let lastKindN: string | null = null;
+      if (lastStaffN) {
+        if (!lastStaffN.is_aix_generated) lastKindN = "返信";
+        else {
+          const t = Date.parse(lastStaffN.created_at);
+          const { data: al } = await supabase.from("aix_usage_logs").select("aix_type, created_at").eq("conversation_id", conversationId)
+            .gte("created_at", new Date(t - 15 * 60_000).toISOString()).lte("created_at", new Date(t + 2 * 60_000).toISOString()).limit(10);
+          const best = ((al ?? []) as Array<{ aix_type: string; created_at: string }>).sort((a, b) => Math.abs(Date.parse(a.created_at) - t) - Math.abs(Date.parse(b.created_at) - t))[0];
+          lastKindN = `AIX:${best?.aix_type ?? "aix_unknown"}`;
+        }
+      }
+      const { maskPII } = await import("@/app/lib/pii-mask");
+      const { customerNameTokens, maskCustomerNames } = await import("@/app/lib/compose-name-mask");
+      const tokensN = customerNameTokens([opts?.customerName ?? null]);
+      const custN = maskPII(maskCustomerNames(unrepliedTurn.text ?? "", tokensN));
+      const r = await Promise.race([
+        nearOpinionForTurn(supabase, { conversationId, propertyCustomerId: propertyCustomerId ?? null, turnAt: turnAtN, scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, stage: convStatus ?? null, customerMasked: custN, lastStaffKind: lastKindN }),
+        new Promise<null>((res) => setTimeout(() => res(null), 2_000)),
+      ]);
+      if (r?.line) customerStateBlockText += `\n\n${r.line}`;
+      console.log(JSON.stringify({ tag: "brain:near-opinion", conversationId, op: nearOpinionDigest(r?.op ?? null), inBand: r?.inBand ?? null, timeout: r === null }));
+    } catch (e) { console.warn("[brain-core] near-opinion skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-11-04 入口の統括の最初の読み（Sonnet・作り置き・5番に1番は DeepSeek でも読んで比べる・CONDUCTOR_INTAKE: 既定は stage=yuma（YUMA・テスト用の会話だけ）・_STAGE=pct:N|all で広げる・=off で止める・読んだ結果は記録だけ）。
   //   ブレインの呼び出しと同時に流し（待たせない）、返す前に最大4秒だけ待つ。判断・文は変えない
   let intakeP: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
