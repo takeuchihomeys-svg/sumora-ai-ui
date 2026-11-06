@@ -231,10 +231,10 @@ function itemsFromText(texts: ReadonlyArray<string>): { area: boolean; rent: boo
  *   エリア・家賃・間取り・入居時期の組み合わせで数えると、エリアがある番はピックアップの約束（足りない項目は同じ文で聞く）:
  *   エ家間時 46/50・エ家間- 17/18・エ家-時 9/10・エ-間時 5/5・エ-間- 4/4・エ家-- 3/3・エ--時 4/4（「ピックアップ…ご希望の家賃や間取りなどお聞かせ頂けましたら」）・エリアだけ 4/4。
  *   エリアが無い番は条件ヒアリング／その他。今の線（エリア＋家賃）では、エリア＋間取り・時期で家賃の無い 13番を条件ヒアリングに戻していた。
- *   PICKUP_READY_AREA_ONLY=on でそろった＝エリアがある（missing は今まで通り家賃も出す＝同じ文で聞く項目）。既定 off。数え方はここ1か所（作業員4の②もこれを使う）
+ *   エリアがあればそろった（missing は今まで通り家賃も出す＝同じ文で聞く項目）。既定 on（11/06 作業員4の cond2-on: q347 条件ヒアリング✕→2段:pickup○・守りの q101 は条件ヒアリング○・悪化0・統括役の決め）。止める PICKUP_READY_AREA_ONLY=off。数え方はここ1か所（作業員4の②もこれを使う）
  */
 export function pickupReadyAreaOnlyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PICKUP_READY_AREA_ONLY ?? "").trim().toLowerCase() === "on";
+  return (env.PICKUP_READY_AREA_ONLY ?? "").trim().toLowerCase() !== "off";
 }
 export function pickupConditionsReady(known: HearingKnown | null | undefined, customerTexts: ReadonlyArray<string> = [], env?: Record<string, string | undefined>): PickupReadiness {
   const rowArea = !!known && (!!s(known.desired_area) || !!s(known.commute_station));
