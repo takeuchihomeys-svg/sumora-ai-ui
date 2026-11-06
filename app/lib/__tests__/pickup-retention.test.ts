@@ -1,6 +1,6 @@
 // 2026-09-25 竹内「3日前の画像は消されるように。保存期間が終了しましたと出る感じで（実際の LINE のように）」— 純関数のテスト
 // 実行: npx tsx app/lib/__tests__/pickup-retention.test.ts
-import { pickupRetention, withPickupRetention, isPickupBlobUrl, planPickupPurge, rowsToMarkExpired, PICKUP_RETENTION_HOURS } from "../pickup-retention";
+import { pickupRetention, withPickupRetention, isPickupBlobUrl, planPickupPurge, rowsToMarkExpired, PICKUP_RETENTION_HOURS, exactLookupTargets, SENT_SWEEP_LIMIT } from "../pickup-retention";
 
 let passed = 0, failed = 0;
 function t(name: string, ok: boolean, extra?: unknown) {
@@ -88,6 +88,13 @@ const SUPA = "https://wfwsmwxakhyxobytszoq.supabase.co/storage/v1/object/public/
   const mark = rowsToMarkExpired(plan, deleted);
   t("削除に失敗した物がある行は印を付けない（次の回にやり直す）", !mark.includes(10) && mark.includes(11) && mark.includes(12) && mark.includes(16), mark);
   t("消す物が無い行（全部送った画像）も印は付ける", rowsToMarkExpired(planPickupPurge({ rows: [rows[1]], protectedUrls: new Set([SUPA, `${BLOB}/pickups/a_2_1.pdf`]), nowMs: NOW }), new Set()).includes(11));
+}
+
+{
+  // 2026-11-07 作業員8: 60秒の時間切れ（約360回の .in）→ 総なめで拾える pickups/ の URL は完全一致で読み直さない
+  const pu = "https://abc.public.blob.vercel-storage.com/pickups/a_1.png", other = "https://x.supabase.co/storage/v1/object/a.png";
+  t("総なめが読めた時は pickups/ を完全一致で読まない（ほかの URL だけ）", exactLookupTargets([pu, other], 21).join(",") === other);
+  t("総なめが上限に届いた・読めない時は全部を完全一致で読む（消さない側）", exactLookupTargets([pu, other], SENT_SWEEP_LIMIT).length === 2 && exactLookupTargets([pu, other], null).length === 2);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -107,3 +107,17 @@ export function planPickupPurge(input: { rows: PurgeRow[]; protectedUrls: Set<st
 export function rowsToMarkExpired(plan: PurgePlan, deleted: Set<string>): number[] {
   return plan.rows.filter((r) => r.deleteUrls.every((u) => deleted.has(u))).map((r) => r.id);
 }
+
+/** 送った行の総なめ（LIKE）の上限。これに届いたら総なめが欠けている＝完全一致の読みを全部の URL に戻す */
+export const SENT_SWEEP_LIMIT = 2000;
+/**
+ * 完全一致（.in）で読む URL（純関数・2026-11-07 作業員8・pickup-retention の 60秒の時間切れ）:
+ *   売上サポの Blob（pickups/）の URL は、送った行の総なめ（LIKE '%.blob.vercel-storage.com/pickups/%'）で全部拾える
+ *   （送った行は 3表あわせて 60行ほど）。総なめが上限に届かず読めた時は、その URL を完全一致で読み直さない。
+ *   旧は 300行×4列＝約1,200 URL を 10件ずつ 3表に .in（messages.image_url は索引なし＝毎回全件）で約360回読み、60秒に届いて印を付けられず
+ *   消す物が溜まり続けた（2,936行）。総なめが読めない・上限に届いた時は旧と同じく全部を完全一致で読む（消さない側）
+ */
+export function exactLookupTargets(urls: ReadonlyArray<string>, sweepRows: number | null): string[] {
+  if (sweepRows === null || sweepRows >= SENT_SWEEP_LIMIT) return [...urls];
+  return urls.filter((u) => !isPickupBlobUrl(u));
+}
