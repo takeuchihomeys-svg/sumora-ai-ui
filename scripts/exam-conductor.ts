@@ -641,7 +641,10 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     })();
     const worseIds = new Set([...(sw?.sure ?? []), ...(sw?.flake ?? [])].map((x) => x.id));
     const stageNote = missStages.filter((m) => m && worseIds.has(m.id)).map((m) => `${m!.line}${m!.owner ? `・持ち主 ${m!.owner}` : ""}`).join("／");
-    const verdict = verdictBase + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
+    // 2026-11-06 作業員4の相談（tk1106: 最終の道 9/9・本質 3/9＝決まった計算が判断を肩代わりしても見えない）: 本質の道（決まった計算の前のブレインの最初の答え）の当たりを毎回出す。問題×回で数える（brain-exam の「3段: 本質の道」と同じ数え方）
+    const essence = (() => { try { const want = new Set(ids); const cnt = (rows: RowLite[]) => { const e = (rows as unknown as Array<{ id: string; essence?: { ok?: boolean } | null }>).filter((r) => want.has(r.id) && r.essence); return { ok: e.filter((r) => r.essence!.ok).length, n: e.length }; }; return { base: blFinal ? cnt(readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`))) : null, cur: cnt(readRows(rowsFile)) }; } catch { return null; } })();
+    const essNote = essence && essence.cur.n ? `・本質 ${essence.base?.n ? `前${essence.base.ok}/${essence.base.n} → ` : ""}今${essence.cur.ok}/${essence.cur.n}` : "";
+    const verdict = verdictBase + essNote + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
     // 2026-11-06 統括役（作業員8）: 外れの切り分けを弱い所の台帳（brain_weaknesses）へ。key＝段＋印の頭・同じ key の行があれば evidence に足す（upsertWeaknessHits）・持ち主・試験の名前・問題・回を evidence に・1回の試験で5行まで。
     //   台帳は RLS（ポリシーなし）＝サーバーの鍵が無い手元では書けない → 足す物を results/weakness-pending.jsonl に残し、鍵のある所で brain-weaknesses.ts --collect-miss-stages が足す（同じ回は二重に足さない）。止める: EXAM_MISS_WEAKNESS=off
     if ((process.env.EXAM_MISS_WEAKNESS ?? "").trim().toLowerCase() !== "off" && missStages.length) {
@@ -653,7 +656,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         }
       } catch (e) { log(`  弱い所の台帳: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`); }
     }
-    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, verdict, at: at() },
+    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, essence, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
     log(`  済み: ${j.label} → ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・費用 ${s.usd ?? "?"}`);
