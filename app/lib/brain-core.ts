@@ -455,6 +455,8 @@ export type SuggestedAixMeta = {
   deep_recheck_digest?: string;
   /** 2026-11-05 P0 575a7cd5 統括の前半「この番の重点」（作業員5 が入れる・無ければ undefined）。後半の読み直し（深く読む）がこれに沿って決め直す */
   conductor_focus?: { focus: string; why?: string | null };
+  /** 2026-11-07 作業員5（弱い所 275）: やる事の一覧と考える力の配分（CONDUCTOR_TODOS=on の時だけ・記録だけ）→ digest.td・tb */
+  conductor_todos?: { td: string | null; tb: string };
   /** 同じ段の記録（数・抜けを足した数・AIX とのそろえ・取り寄せた材料）→ digest.pr */
   priority_step?: import("@/app/lib/brain-priority").PriorityStepRecord;
   /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
@@ -6065,6 +6067,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-05 作業員5（KB P0 575a7cd5）: 入口の統括の重点（表・背景・重点・理由・近い番）を meta.conductor_focus に（CONDUCTOR_FOCUS=shadow の時だけ・記録と深い読み直しの材料・判断は変えない）
       conductor_focus: intakeDoneGet() ? await (async () => { const { conductorFocusMode, conductorFocusMeta } = await import("@/app/lib/conductor-focus"); if (conductorFocusMode() === "off") return undefined; return (conductorFocusMeta((await intakeDoneGet())?.answer?.focus_read ?? null) ?? undefined) as { focus: string; why?: string | null } | undefined; })() : undefined,
       brain_depth: depthRec ?? undefined,
+      // 2026-11-07 作業員5（弱い所 275・KB 4b0d868e ②④）: 番ごとのやる事の一覧と考える力の配分を記録だけ（CONDUCTOR_TODOS=on・既定 off）→ digest.td・digest.tb
+      conductor_todos: await (async () => { const { conductorTodosOn, turnTodosRecord } = await import("@/app/lib/conductor-todos"); return conductorTodosOn() ? turnTodosRecord({ asks: (parsed as { turn_contract?: { asks?: unknown } }).turn_contract?.asks, finalAix: finalAix ?? null, need: normalizeNeed((parsed as { need?: unknown }).need) }) : undefined; })(),
       conductor_roles: CONDUCTOR_HANDOFF_ON ? ((nd) => rolesDigest(candidateRoles({ ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""), stampOnly: /^\s*\[(?:スタンプ|画像)\]\s*$/.test(unrepliedTurn.text ?? ""), finalAction: finalAix ?? "reply", confidence: nd?.confidence ?? null, difficulty: nd?.difficulty ?? null, missing: nd?.missing ?? [] })))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
       priority_step: priorityRec,
       // 2026-10-08 本質の仕様（turn-contract.ts）: 今の番の依頼ごとの答え方（返信／約束／AIX／触れない）・閉じる番か・言わない事・気持ち。返信の最上位の決まりになる
