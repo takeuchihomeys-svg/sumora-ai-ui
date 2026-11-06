@@ -9,7 +9,8 @@
 //     draft-supersede（新しい発言があれば保存しない／保存後に戻す）・generate-reply の T1/T2。足りなかったのは「立て直すかの判断」「計画の見た時刻」「digest の印」。
 // 切替: CONDUCTOR_REPLAN（既定 off＝今と同じ・どの通も再実行）。on にするのは E（竹内さんの番の2通目の数え）で keep の誤り0を確かめてから
 type Env = Record<string, string | undefined>;
-export const conductorReplanOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_REPLAN ?? "").trim().toLowerCase() === "on";
+// 2026-11-06 統括役の決め: 既定 on（keep は合図の無い番＝スタンプ・お礼・了承だけ・竹内さんの番 120 で再実行は 直った1・崩れた3＝損なし・keep の誤り0）。止める CONDUCTOR_REPLAN=off
+export const conductorReplanOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_REPLAN ?? "").trim().toLowerCase() !== "off";
 
 /** お礼・了承・スタンプだけの通（短い・質問や依頼の言葉が無い） */
 const ACK_ONLY_RE = /^(?:\[スタンプ\]|\[絵文字\]|はい|はーい|了解(?:です|しました)?|承知(?:しました|致しました|いたしました)?|かしこまりました|わかりました|分かりました|ありがとうございます|ありがとうございました|有難うございます|よろしくお願い(?:します|致します|いたします)|宜しくお願い(?:します|致します|いたします)|お願いします|OK|ok|オッケー|大丈夫です|助かります|[!！。、〜ー\s‍️]|\p{Extended_Pictographic}|\p{Emoji_Modifier})+$/u;

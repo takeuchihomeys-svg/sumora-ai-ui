@@ -652,12 +652,15 @@ export async function POST(req: NextRequest) {
               const elapsedMs = Date.now() - bgStartedAt;
               // 2026-11-05 作業員5（KB ea2a9405②・#8）: CONDUCTOR_REPLAN=on の時だけ、後から来た通がスタッフ・お礼・了承だけなら（conductor-replan.replanCandidate=keep）
               //   ブレインを再実行せず、前の通のブレインの判断（AIX も含めて・KB 2d0f33cf）をそのまま使う。前の判断が無い（stale-snapshot の null）時は今まで通り再実行
-              //   竹内さんの番 227 の数え（11/05）: keep は 3番（お願いします）で誤り0。既定 off
+              //   竹内さんの番 227 の数え（11/05）: keep は 3番（お願いします）で誤り0。11/06 既定 on（CONDUCTOR_REPLAN=off で止める）
               const { conductorReplanOn, replanCandidate, replanDigest } = await import("@/app/lib/conductor-replan");
               const addedTexts = latestUnreplied.map((m) => m.text).filter((t) => !targetMessage.includes(String(t ?? "")));
               const rp = conductorReplanOn() && brainGateDirect ? replanCandidate({ newTexts: addedTexts, prevAix: (brainGateDirect as { action?: string | null }).action ?? null }) : null;
               if (rp?.kind === "keep") {
-                console.log(JSON.stringify({ tag: "conductor:replan", conversationId: convId, rp: replanDigest({ kind: "keep", why: rp.why }), keepAix: rp.keepAix, elapsedMs }));
+                const rpd = replanDigest({ kind: "keep", why: rp.why });
+                console.log(JSON.stringify({ tag: "conductor:replan", conversationId: convId, rp: rpd, keepAix: rp.keepAix, elapsedMs }));
+                // 2026-11-06 統括役: 毎日の拾い上げで数えられるように、前の判断の記録（brain_decision_logs の同じ analyzed_msg_ts の行）の digest に rp を足す
+                void (await import("@/app/lib/conductor-replan-server")).markReplanDigest(convId, (brainGateDirect as { analyzed_msg_ts?: string | null }).analyzed_msg_ts ?? null, rpd).catch(() => {});
               } else {
               if (rp) console.log(JSON.stringify({ tag: "conductor:replan", conversationId: convId, rp: replanDigest({ kind: "reread", why: rp.why }), elapsedMs }));
               // 2026-09-13（名無しの権兵衛事例の YUMA 再現で判明）: 分析中に2通目が届くと、ブレインは「古い発言への判断」として
