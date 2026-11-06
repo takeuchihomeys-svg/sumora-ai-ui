@@ -79,6 +79,7 @@ import { catalogBlockForBrain, isSceneUncertain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
 import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
+import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
@@ -2661,9 +2662,15 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     ? readOtherCandidates({ customerText: unrepliedTurn.text, sentPropertyCount: brainLedger.facts.propertiesSentCount ?? 0, alreadySeeMore: asksMoreListings })
     : { hit: false, liking: false };
   if (otherCandidatesRead.hit) console.log(JSON.stringify({ tag: "brain:other-candidates-read", conversationId, liking: otherCandidatesRead.liking }));
+  // 2026-11-06 作業員1（弱い所 359・q008）: 物件を送った後の「〇〇は住んでいたが不便だった」をエリアを外す条件の言い直しと読む手本（竹内さん 3/3 がピックアップの約束）。
+  //   既定 off・入れる BRAIN_AREA_EXCLUDE_READ=on（app/lib/area-exclude-read.ts）
+  const areaExcludeHit = areaExcludeReadOn() && !isPostApplyStatus(convStatus)
+    && readAreaExclude({ customerText: unrepliedTurn.text, sentPropertyCount: brainLedger.facts.propertiesSentCount ?? 0 });
+  if (areaExcludeHit) console.log(JSON.stringify({ tag: "brain:area-exclude-read", conversationId }));
   const seeMoreBrainText = (asksMoreListings
     ? "\n【お客様の言葉（確定）】お客様は他のお部屋も見たいと言っている（「もう少し見てみたい」等）。実送信 6/6 がこちらの引き続きの新着物件のご紹介・見積書 0/6。今回の返信の中心は引き続きのご紹介（見積書・募集状況の確認にしない）。"
-    : "") + otherCandidatesBrainText(otherCandidatesRead, otherCandidatesRead.hit ? pickOtherCandidatesExamples(conversationId) : []);
+    : "") + otherCandidatesBrainText(otherCandidatesRead, otherCandidatesRead.hit ? pickOtherCandidatesExamples(conversationId) : [])
+    + areaExcludeBrainText(areaExcludeHit, areaExcludeHit ? pickAreaExcludeExamples(conversationId) : []);
   const sceneEvidence = sceneEvidenceForTurn(unrepliedTurn, {
     sentPropertyCount: brainLedger.facts.propertiesSentCount,
     aixHistory: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null })),
