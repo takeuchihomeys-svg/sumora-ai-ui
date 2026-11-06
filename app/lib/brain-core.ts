@@ -80,6 +80,7 @@ import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
 import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
 import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
+import { sorryDeclineReadOn, readSorryDecline, pickSorryDeclineExamples, sorryDeclineBrainText } from "@/app/lib/sorry-decline-read";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
@@ -2669,10 +2670,17 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const areaExcludeHit = areaExcludeReadOn() && !isPostApplyStatus(convStatus)
     && readAreaExclude({ customerText: unrepliedTurn.text, sentPropertyCount: brainLedger.facts.propertiesSentCount ?? 0 });
   if (areaExcludeHit) console.log(JSON.stringify({ tag: "brain:area-exclude-read", conversationId }));
+  // 2026-11-06 作業員1（型3・q354・q356・q357）: 謝り・断り・締めの後のお礼を動く番と読まない読み方と一手（竹内さん 謝り・断り 約8割が受け止めの返信）。
+  //   既定 off・入れる BRAIN_SORRY_DECLINE_READ=on（app/lib/sorry-decline-read.ts）
+  const sorryDeclineKind = sorryDeclineReadOn() && !isPostApplyStatus(convStatus)
+    ? readSorryDecline({ customerText: unrepliedTurn.text, prevStaffText: typedMessages.find((m) => m.sender !== "customer")?.text ?? "" })
+    : null;
+  if (sorryDeclineKind) console.log(JSON.stringify({ tag: "brain:sorry-decline-read", conversationId, kind: sorryDeclineKind }));
   const seeMoreBrainText = (asksMoreListings
     ? "\n【お客様の言葉（確定）】お客様は他のお部屋も見たいと言っている（「もう少し見てみたい」等）。実送信 6/6 がこちらの引き続きの新着物件のご紹介・見積書 0/6。今回の返信の中心は引き続きのご紹介（見積書・募集状況の確認にしない）。"
     : "") + otherCandidatesBrainText(otherCandidatesRead, otherCandidatesRead.hit ? pickOtherCandidatesExamples(conversationId) : [])
-    + areaExcludeBrainText(areaExcludeHit, areaExcludeHit ? pickAreaExcludeExamples(conversationId) : []);
+    + areaExcludeBrainText(areaExcludeHit, areaExcludeHit ? pickAreaExcludeExamples(conversationId) : [])
+    + sorryDeclineBrainText(sorryDeclineKind, sorryDeclineKind ? pickSorryDeclineExamples(conversationId) : []);
   const sceneEvidence = sceneEvidenceForTurn(unrepliedTurn, {
     sentPropertyCount: brainLedger.facts.propertiesSentCount,
     aixHistory: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null })),
