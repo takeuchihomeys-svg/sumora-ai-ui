@@ -1,7 +1,7 @@
 // 試験の外れの自動の切り分け（scripts/lib/exam-miss-stage.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-miss-stage.test.ts（全 PASS で exit 0）
 // 行は 11/05〜06 の実際の答案（brain-exam-main・compose-1105 の結果）を縮めた物。手で見つけた段と同じ段を指すか
-import { classifyMiss, markersOf, summarizeMisses, ownerOf, weaknessDraft, PROVISIONAL_LINKS, parseLogTags, weaknessHitsFromMisses, weaknessKeyOf, type MissRowLite } from "../exam-miss-stage";
+import { classifyMiss, markersOf, summarizeMisses, ownerOf, weaknessDraft, PROVISIONAL_LINKS, parseLogTags, weaknessHitsFromMisses, weaknessKeyOf, pathSlug, type MissRowLite } from "../exam-miss-stage";
 import { aggregateWeaknessHits, mergeWeaknessRow, isWeaknessKey } from "../../../app/lib/brain-weaknesses";
 
 let fail = 0, pass = 0;
@@ -95,6 +95,17 @@ ok("印: 場面", markersOf(q136).includes("scene_net:S4_viewing"));
   const old = { key: agg.key, title: "人が付けた題", area: "exam" as const, symptom: null, root_cause: "人の原因", status: "open" as const, fix_ref: null, evidence: { exam_qids: ["q999"], exam_labels: ["tm1"], owners: ["two_stage（（仮））"] }, occurrences: 4, first_seen: "2026-11-05T00:00:00Z", last_seen: "2026-11-05T00:00:00Z" };
   const m = mergeWeaknessRow(old, agg, "2026-11-06T00:00:00Z");
   ok("既存の行に足す: 題・原因・状態は残し、数と evidence を足す", m.title === "人が付けた題" && m.status === "open" && m.occurrences === 4 + (agg.n ?? 0) && (m.evidence.exam_qids ?? []).includes("q999") && (m.evidence.exam_qids ?? []).includes("q055") && (m.evidence.exam_reps ?? []).length === (agg.evidence.exam_reps ?? []).length && (m.evidence.owners ?? []).length === 1, JSON.stringify(m));
+}
+
+{
+  // ブレインの段は「本質の道→正解の道」を頭に（11/06 統括役: exam-stage:brain:none は粗い）
+  ok("道の英字", pathSlug("返信") === "reply" && pathSlug("2段:pickup") === "two_stage_pickup" && pathSlug("AIX:property_send（左だけ）") === "aix_property_send" && pathSlug("AIX:property_check_result/mgmt_screening") === "aix_property_check_result_mgmt_screening" && pathSlug(null) === "unknown" && pathSlug("なし") === "none");
+  const a = { id: "qa", n: 1, stage: "brain" as const, markers: [], line: "x", reps: [1], essence: "AIX:property_send（左だけ）" };
+  const b = { ...a, id: "qb", markers: ["decision:llm"], reps: [2] };
+  const hs = weaknessHitsFromMisses("tk", [a, b], { acceptOf: () => "AIX:condition_hearing" });
+  ok("条件の番で本質が物件送付の型が同じ key に", hs.length === 1 && hs[0].key === "exam-stage:brain:ess:aix_property_send-to-aix_condition_hearing" && hs[0].n === 2 && hs[0].title.includes("本質の道が AIX:property_send"), JSON.stringify(hs.map((h) => h.key)));
+  ok("本質が無いブレインの段は今まで通り", weaknessKeyOf("brain", ["decision:llm"]) === "exam-stage:brain:decision:llm");
+  ok("ブレイン以外の段は印の頭のまま", weaknessKeyOf("writer", ["writer"], { essence: "返信", accept: "返信" }) === "exam-stage:writer:writer");
 }
 
 console.log(`${pass} pass / ${fail} fail`);

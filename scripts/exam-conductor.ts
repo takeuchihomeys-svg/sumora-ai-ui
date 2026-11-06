@@ -649,7 +649,9 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     //   台帳は RLS（ポリシーなし）＝サーバーの鍵が無い手元では書けない → 足す物を results/weakness-pending.jsonl に残し、鍵のある所で brain-weaknesses.ts --collect-miss-stages が足す（同じ回は二重に足さない）。止める: EXAM_MISS_WEAKNESS=off
     if ((process.env.EXAM_MISS_WEAKNESS ?? "").trim().toLowerCase() !== "off" && missStages.length) {
       try {
-        const hits = weaknessHitsFromMisses(j.label, missStages, { max: 5 });
+        // ブレインの段の key は「本質の道→正解の道」（正解は問題の accept の1つ目）
+        const probAccept = (() => { try { return new Map(readJson<Array<{ id: string; accept?: string[] }>>(join(j.cwd, "scripts", "brain-exam", "problems.json"), []).map((p) => [p.id, p.accept?.[0] ?? null])); } catch { return new Map<string, string | null>(); } })();
+        const hits = weaknessHitsFromMisses(j.label, missStages, { max: 5, acceptOf: (id) => probAccept.get(id) ?? null });
         if (hits.length) {
           appendFileSync(join(RES, "weakness-pending.jsonl"), JSON.stringify({ label: j.label, at: at(), hits }) + "\n");
           log(`  弱い所: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? await recordExamWeaknesses(db() as never, j.label, hits) : `台帳の鍵が無い＝${hits.length}行を weakness-pending.jsonl に残した（${hits.map((h) => h.key).join("・")}）`}`);
