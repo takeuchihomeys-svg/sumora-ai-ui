@@ -252,14 +252,14 @@ export function sentReactionInviteRule(env: Record<string, string | undefined> =
  * 2026-11-06 弱い所 342（q141・作業員7・統括役の頼み）: 内覧の時刻だけ決まり、行き先（物件）が未定の番を AIX【待ち合わせ場所】にする。
  *   竹内さん本人の90日: こちらが枠を出した後にお客様が時刻を決めた番 24 のうち、AIX【待ち合わせ場所】17（どれも行き先の物件が決まっていた）・返信 5。
  *   お客様が「行きたい場所決まったら言います」「お気に召されたお部屋」と行き先を決めていない番（10/12 q141・9/17）は返信で受けた（待ち合わせの住所を出せない）。
- *   内覧の段階（feedback_viewing_flow_stages）: 内覧調整 → 日にち決定 → 待ち合わせ場所＝確定（行き先が要る）。既定 off（VIEWING_TIME_ONLY_NO_MEETING=on）
+ *   内覧の段階（feedback_viewing_flow_stages）: 内覧調整 → 日にち決定 → 待ち合わせ場所＝確定（行き先が要る）。既定 on（11/06・止める VIEWING_TIME_ONLY_NO_MEETING=off）
  */
 export function viewingTimeOnlyNoMeetingOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.VIEWING_TIME_ONLY_NO_MEETING ?? "").trim().toLowerCase() === "on";
+  return (env.VIEWING_TIME_ONLY_NO_MEETING ?? "").trim().toLowerCase() !== "off"; // 11/06 統括役の決め: vto3-on 悪化0・q141 返信 3/4 で既定 on（止める VIEWING_TIME_ONLY_NO_MEETING=off）
 }
 export function viewingTimeOnlyRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if (!viewingTimeOnlyNoMeetingOn(env)) return "";
-  return "- ★内覧の時刻だけ決まり、行く物件（行き先）がまだ決まっていない番（お客様自身が「行きたい場所決まったら言います」「どこにするか考えます」と、行き先をまだ決めていないと言った番だけ。日にちの変更・時刻の返事だけの番は当てない）は、AIX【待ち合わせ場所】にしない（待ち合わせは行き先が決まってからの段＝内覧調整→日にち決定→待ち合わせ場所）。route=\"reply\" で時刻を受け、「行きたいお部屋が決まりましたらご連絡ください」と返す（竹内さん 10/12）。行き先が決まっている番は今まで通り AIX【待ち合わせ場所】。\n";
+  return "- ★内覧の時刻だけ決まり、お客様自身が「行きたい場所決まったらまた言います」「どこにするか考えます」と行き先をまだ決めていないと言った番（日にちの変更・時刻の返事だけの番は当てない）。読み方: 「行きたい場所が決まったら言います」は、お客様が先に回した話＝その ask は route=\"none\"（今の番の約束にも AIX にもしない）。時刻の ask だけ route=\"reply\" で受け、aix は空（AIX【待ち合わせ場所】は行き先が決まってからの段＝内覧調整→日にち決定→待ち合わせ場所）。竹内さんの一手（10/12・本日17時の枠を出した後に「17時からお願いします！／行きたい場所決まったらまた言います！」と来た番の実際の返信）: 「かしこまりました😊！！\\n行きたいお部屋が決まりましたら、ご連絡ください！！\\n本日は何卒よろしくお願い致します！！」。行き先が決まっている番は今まで通り AIX【待ち合わせ場所】。\n";
 }
 function twoMessageAskRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if ((env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "off") return ""; // 11/05 既定 on（止める TWO_MESSAGE_PLAN=off）
