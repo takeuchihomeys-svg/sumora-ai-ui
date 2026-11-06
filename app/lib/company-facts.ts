@@ -20,7 +20,7 @@
 //   根拠の通数は scripts/audit-company-facts.ts（直近365日・こちらの送信7,929通）。
 
 import { isRoomPhotoRequest } from "./room-photo-request";
-import { detectProcedureQuestion, isProcedureReplyQuestion, PROCEDURE_FACTS } from "./procedure-question";
+import { detectProcedureQuestion, isProcedureReplyQuestion, PROCEDURE_FACTS, procedureMoveInWideOn } from "./procedure-question";
 import { isRentIncludedQuestion, RENT_INCLUDED_FACT } from "./rent-included-question";
 import { customerAsksStaffCallTime } from "./phone-call";
 import { isOtherAgentViewingApplyQuestion, isOtherAgentViewingPlan } from "./other-agent-viewing";
@@ -328,7 +328,10 @@ export const COMPANY_FACTS: CompanyFact[] = [
     //   実送信（scripts/audit-contact-promise.ts・全期間）: 抑えられる期間の説明 16通（1ヶ月・30日 15／40日 1）。竹内さん 06-07「お部屋の抑える事が出来るのが、伸ばす事が出来て30日」・
     //   07-02「入居日を申込日から30日以上に延ばす事は出来ない」／従業員「お申込みから1ヶ月以内で入居日を設定いただく必要がございます」（多数）・08-26「延ばせて40日間」（管理会社の交渉の結果・1通）。
     //   入居の時期が先の時の連絡の日の約束は contact-promise.ts（ブレインが番を決め・送った約束はカレンダーへ）
-    ask: /いつ(?:から|頃から|ごろから)[^。\n]{0,10}(?:探|動|始め|申込|申し込)|何ヶ月前から|何か月前から|(?:抑え|押さえ|キープ)[^。\n]{0,10}(?:期間|いつまで|何日|何ヶ月|何か月)|入居(?:日)?(?:を|は)?[^。\n]{0,4}(?:いつまで|どこまで|どれくらい)[^。\n]{0,4}(?:延ば|伸ば|待)/,
+    // 2026-11-06 作業員1（型2・331b0338「入居日はいつまでのばせますか？」・9/10「入居時期はいつまでまってもらうことできますか？」→ スタッフは「お申込みから1ヶ月間が目安」）:
+    //   ひらがなの「のばせ」「まって」・「入居時期」も拾う（PROCEDURE_MOVE_IN_WIDE=on の時だけ・既定 off）
+    ask: (t: string) => /いつ(?:から|頃から|ごろから)[^。\n]{0,10}(?:探|動|始め|申込|申し込)|何ヶ月前から|何か月前から|(?:抑え|押さえ|キープ)[^。\n]{0,10}(?:期間|いつまで|何日|何ヶ月|何か月)|入居(?:日)?(?:を|は)?[^。\n]{0,4}(?:いつまで|どこまで|どれくらい)[^。\n]{0,4}(?:延ば|伸ば|待)/.test(t)
+      || (procedureMoveInWideOn() && /入居(?:日|時期)?(?:を|は)?[^。\n]{0,6}(?:いつまで|どこまで|どれくらい)[^。\n]{0,6}(?:延ば|伸ば|のば|待|まっ|まて)/.test(t)),
     n: 16,
     fact: "**お部屋を抑えられる（お申込みからご入居日を設定できる）のは基本1ヶ月**（お申込みから1ヶ月以内でご入居日を設定する）。だから入居の時期が先の時は、**入居の1ヶ月半前から本格的にお部屋探しを始めるのが理想の流れ**で、その頃にこちらからご条件に合ったお部屋をピックアップしてお送りする（日付を約束する）。1ヶ月より延ばせるかは物件・管理会社の交渉次第なので、延ばせる日数（40日等）は断言しない。",
   },
