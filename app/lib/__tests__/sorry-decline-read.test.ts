@@ -8,7 +8,7 @@ function it(name: string, fn: () => void) {
 }
 function expect<T>(a: T) { return { toBe: (b: T) => { if (a !== b) throw new Error(`expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`); }, toContain: (s: string) => { if (!String(a).includes(s)) throw new Error(`expected to contain ${s}`); } }; }
 
-it("スイッチは既定 off", () => { expect(sorryDeclineReadOn({})).toBe(false); expect(sorryDeclineReadOn({ BRAIN_SORRY_DECLINE_READ: "on" })).toBe(true); });
+it("スイッチは既定 on（止める =off）", () => { expect(sorryDeclineReadOn({})).toBe(true); expect(sorryDeclineReadOn({ BRAIN_SORRY_DECLINE_READ: "off" })).toBe(false); });
 // 当たる実物
 it("q356 前の方が好き・申し訳ない → 謝り・断り", () => { expect(readSorryDecline({ customerText: "ここも良いんですが、前の方が好きです😥\nせっかくなのに申し訳ございません" })).toBe("sorry_decline"); });
 it("q357 申込はしなくても大丈夫・お手数おかけします → 謝り・断り", () => { expect(readSorryDecline({ customerText: "確認ありがとうございます。\n焦って決めたくはないため申し込みはしなくても大丈夫です！\nお手数おかけします🙇" })).toBe("sorry_decline"); });
