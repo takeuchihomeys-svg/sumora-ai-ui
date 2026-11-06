@@ -8,7 +8,7 @@
 //     従業員も 5番のうち 4番がピックアップ（7/31「部屋見てみたいのですが、他の部屋も紹介してみたい」もピックアップ）・内覧 0。
 //   ＝判断の手本（竹内さんの一手）として材料に足す。答えを決める規則ではなく、ブレインが読む材料（P0「判断はすべてブレイン基準」）。
 //   内覧・内見・見学・日程・日時の言葉がある番は、本当の内覧の依頼なので出さない。
-//   既定 off（入れる BRAIN_OTHER_CANDIDATES_READ=on）。
+//   既定 on（11/06 作業員9の q174-ab2: 4つ on で q174 の内覧の一文が消え道 4/4・守り q174-guard（q087・q129）確かな悪化0・統括役の決め）。止める BRAIN_OTHER_CANDIDATES_READ=off。
 //   試験（DeepSeek・11/06・$0.30）: q174 の道は on 6/6・off 2/2 で両方合格（道は元から外れていない）。読み（内覧の語）は off 2/2 が
 //   key_topics・customer_questions・situation の全部に内覧 → on（この文）3回は customer_questions 3/3 で消え・key_topics 1/3・situation 1/3、
 //   書く欄を名指しした強い文 3回は 0/3（揺れの幅の中）。効きが弱く揺れるので既定 off のまま。q087・q129 はこの材料が当たらない番（入力同じ）で
@@ -17,7 +17,7 @@
 import { normalizeCustomerText } from "./reply-context";
 
 export function otherCandidatesReadOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_OTHER_CANDIDATES_READ ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_OTHER_CANDIDATES_READ ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 他の候補の依頼（他にも候補があれば・他の部屋も紹介して 等） */

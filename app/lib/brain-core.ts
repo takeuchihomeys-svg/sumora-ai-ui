@@ -2659,7 +2659,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }));
   if (promiseTrack.open.some((p) => p.status === "遅れ" || p.status === "遅れ気味")) console.log(JSON.stringify({ tag: "brain:promise-overdue", conversationId, open: promiseTrack.open.map((p) => ({ kind: p.kind, status: p.status, h: Math.round(p.elapsedH) })) }));
   // 2026-11-06 作業員1（弱い所 61・q174）: 物件を送った後の「良さそう・一旦見てみたい＋他にも候補があれば」を内覧の依頼と読まない手本（竹内さん 3/3 がピックアップの約束・内覧 0）。
-  //   上の「もう少し見てみたい」の材料が拾わない言い方だけ（重ねない）。既定 off・入れる BRAIN_OTHER_CANDIDATES_READ=on（app/lib/other-candidates-read.ts）
+  //   上の「もう少し見てみたい」の材料が拾わない言い方だけ（重ねない）。既定 on（11/06 q174-guard 悪化0）・止める BRAIN_OTHER_CANDIDATES_READ=off（app/lib/other-candidates-read.ts）
   const otherCandidatesRead = otherCandidatesReadOn() && !isPostApplyStatus(convStatus)
     ? readOtherCandidates({ customerText: unrepliedTurn.text, sentPropertyCount: brainLedger.facts.propertiesSentCount ?? 0, alreadySeeMore: asksMoreListings })
     : { hit: false, liking: false };
