@@ -265,10 +265,10 @@ export function viewingTimeOnlyRule(env: Record<string, string | undefined> = ty
  * 2026-11-06 弱い所 299（作業員7・統括役の頼み）: 費用の問いで、どの物件の費用か（送った物件か持ち込みか）が決まらずに見積書の AIX か返信かに揺れる。
  *   竹内さん本人の90日（費用を聞かれた番）: 送った物件・まだ御見積書なし 60＝見積書の AIX が先 31・見積の約束 14・その他の返信 15／
  *   お客様が送ってきた物件 87＝見積の約束 43・AIX が先 23・その他 19／物件の指定なし 45＝その他の返信（初期費用を抑える等）28・AIX 10。
- *   今日の型（q174・q008・q141）: 読み方と竹内さんの一手を1組で渡す。既定 off（SENT_COST_ESTIMATE_AIX=on）
+ *   今日の型（q174・q008・q141）: 読み方と竹内さんの一手を1組で渡す。既定 on（11/06・止める SENT_COST_ESTIMATE_AIX=off）
  */
 export function sentCostEstimateAixOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.SENT_COST_ESTIMATE_AIX ?? "").trim().toLowerCase() === "on";
+  return (env.SENT_COST_ESTIMATE_AIX ?? "").trim().toLowerCase() !== "off"; // 11/06 統括役の決め: sce-on2 悪化0・q084 上がりで既定 on（止める SENT_COST_ESTIMATE_AIX=off）
 }
 export function sentCostEstimateRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if (!sentCostEstimateAixOn(env)) return "";
