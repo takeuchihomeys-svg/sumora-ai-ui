@@ -19,6 +19,7 @@
 //   ＋ --night: 夜だけ流す依頼（JST 22〜9・営業時間に大きな表を全部読まない決まり）
 //   ＋ tsc-remote: --runner=tsc-remote --cwd=<作業ツリー>（Vercel のお試しの場所で next build＝型の確かめ・--prod は付けない・PC のメモリを使わない・11/03 竹内さん了承の案A）
 //   ＋ brain-exam 以外の試験の口: --runner=cmd --cmd="scripts/x.ts --a=1" [--cmd=...]（順に流す・関所と本番の見張りは同じ・採点は依頼者）
+//   ＋ 掘り（2026-11-06）: --dig を付けると回数は --repeat のまま（揺れる問題も増やさない）・外れた問題の確かめ直しもしない＝同じ問題を何本も流して原因を掘る時の安い口（既定 on の判断には使わない）
 // 実行:
 //   足す:  npx tsx --env-file=.env.local scripts/exam-conductor.ts --add --label=ms-on1 --owner=作業員1 --switch=BRAIN_MATERIAL_SELF_REPORT --cwd=<作業ツリー> --only=q015,q042 --stage=brain [--repeat=2] [--env=K=V,K=V] [--flaky=q091] [--pick=...]
 //          （brain-exam 以外）--add --label=sbp --owner=作業員6 --switch=AIX_SECOND_BLUEPRINT --cwd=<作業ツリー> --runner=cmd --cmd="scripts/exam-aix-text.ts --label=sbp-off --qfile=second-appeal.json --kinds=second" --cmd="..."
@@ -80,6 +81,7 @@ const readJson = <T>(f: string, d: T): T => { try { return JSON.parse(readFileSy
 export type ExamJob = {
   id: string; label: string; owner: string; switch: string; cwd: string; only: string; stage: string; repeat: number; env: Record<string, string>; createdAt: string; tries: number; /** 立ち上がりの失敗が続いた回数（2026-11-04） */ crashes?: number;
   /** 依頼で名指しした揺れる問題（③） */ flaky?: string[];
+  /** 2026-11-06 統括役（依頼そのものを削る）: 掘りの依頼（--dig）。回数は --repeat のまま（揺れる問題も増やさない）・外れた問題の確かめ直しもしない＝既定 on の判断に使わない */ dig?: boolean;
   /** --pick=rag の時 brain-exam --select=rag に任せる（④） */ selectRag?: boolean;
   /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc" | "tsc-remote"; cmds?: string[];
   /** 2026-11-04 指揮役: AI を呼ばない読むだけの依頼（cmd だけ・--read-only）。2つ目の流す役（--remote）が試験と同時に流す */ readOnly?: boolean;
@@ -154,7 +156,8 @@ function readJobs(): Array<ExamJob & { file: string }> {
  * 回数の計画（実際に流す時と、積む時の見込みの1行で同じ物を使う）。2026-11-06 統括役（P0 8805bd74・作業員9 の EXAM_FLAKY_REPS=1 の依頼が見込み3回分 $0.18 のまま出た）:
  *   EXAM_FLAKY_REPS・EXAM_STABLE_REPS は依頼の --env を先に、無ければ係の env を読む。普通の問題は依頼の --repeat、揺れる問題は揺れの回数、安定は安定の回数
  */
-export function jobRepsPlan(j: Pick<ExamJob, "cwd" | "repeat" | "flaky" | "env">, ids: string[]): ReturnType<typeof repsPlan> {
+export function jobRepsPlan(j: Pick<ExamJob, "cwd" | "repeat" | "flaky" | "env" | "dig">, ids: string[]): ReturnType<typeof repsPlan> {
+  if (j.dig) return { reps: Object.fromEntries(ids.map((id) => [id, Math.max(1, j.repeat)])), flaky: [], stable: [] };
   const ev = (k: string) => (j.env?.[k] ?? process.env[k]);
   const sr = ev("EXAM_STABLE_REPS");
   return repsPlan(ids, (id) => readObs(id), { hashesOf: problemHashesOf(j.cwd), normal: j.repeat, flakyReps: Number(ev("EXAM_FLAKY_REPS") ?? "4"), forced: j.flaky, model: "deepseek", stableReps: sr === "off" ? undefined : Number(sr ?? "1") });
@@ -206,7 +209,7 @@ function addJob(): void {
     const flaky = arg("flaky").split(",").filter(Boolean);
     const ids = [...new Set([...p.ids, ...flaky])];
     if (!ids.length && !p.selectRag) throw new Error("問題が無い（--only か --pick を付ける）");
-    job = { ...base, id: `${Date.now()}`, label, only: ids.join(","), repeat: Number(arg("repeat", String(p.repeat ?? 2))), flaky, selectRag: p.selectRag, runner: "brain-exam" };
+    job = { ...base, id: `${Date.now()}`, label, only: ids.join(","), repeat: Number(arg("repeat", String(p.repeat ?? 2))), flaky, selectRag: p.selectRag, runner: "brain-exam", ...(flag("dig") ? { dig: true } : {}) };
     if (arg("pick")) log(`  選び: ${p.why} → ${ids.length}問`);
     // 2026-11-05 作業員8（KB P0 4c91ffd9「試験のブレインが何を・何回・どこまで・いつ」・統括役「1か所が順に決めて1行の計画を出す」）: 試験の統括の計画（scripts/lib/exam-plan.ts）
     //   --kind=record|prod（記録だけ・本番で動いている直し）は試験を積まず、毎晩の本番の物差し（cron prod-yardstick）で見る。計画は exam-cache/exam-plans.jsonl に残す
@@ -628,7 +631,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     let blMerged: string | null = null, pinNote = "";
     if (pin?.pinned) {
       pinNote = `・前は夜の基準（版 ${pin.pinned.slice(0, 7)}${pin.current && pin.current !== pin.pinned ? `・今の main ${pin.current.slice(0, 7)}` : ""}）`;
-      const fails = pin.confirm ? pinConfirmIds(readRows(rowsFile) as unknown as Array<{ id: string; score?: { pass?: boolean } }>) : [];
+      const fails = pin.confirm && !j.dig ? pinConfirmIds(readRows(rowsFile) as unknown as Array<{ id: string; score?: { pass?: boolean } }>) : [];
       if (fails.length) {
         const cfl = `${j.label}-cf`, cfReps = join(RES, `${cfl}.reps.json`);
         writeFileSync(cfReps, JSON.stringify(Object.fromEntries(fails.map((id) => [id, rp.reps[id] ?? j.repeat])), null, 1));
@@ -669,7 +672,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         return i >= 0 ? r.line.slice(i) : "";
       } catch { return ""; }
     })();
-    const verdictBase = (noCompare ? `比べられない（基準の回が無い・両方で解いた 0/${ids.length}問・既定 on の判断に使わない${blFinal ? `・基準 ${blFinal}` : ""}）` : sureN == null ? "結果を読めない" : sureN === 0 ? (cmpN < ids.length ? `比べた問題が少ない（両方で解いた ${cmpN}/${ids.length}問・悪化0とは言わない・既定 on の判断に使わない）` : `確かな悪化0（比べた ${cmpN}/${ids.length}問）`) : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote + pinNote;
+    const verdictBase = (noCompare ? `比べられない（基準の回が無い・両方で解いた 0/${ids.length}問・既定 on の判断に使わない${blFinal ? `・基準 ${blFinal}` : ""}）` : sureN == null ? "結果を読めない" : sureN === 0 ? (cmpN < ids.length ? `比べた問題が少ない（両方で解いた ${cmpN}/${ids.length}問・悪化0とは言わない・既定 on の判断に使わない）` : `確かな悪化0（比べた ${cmpN}/${ids.length}問）`) : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote + pinNote + (j.dig ? "・掘り（--dig: 回数は --repeat のまま・揺れの切り分けと確かめ直し無し＝既定 on の判断に使わない）" : "");
     // 2026-11-06 作業員8（竹内さんの決定「試験から改善の仕方も強化・統括同士連携」・外れの自動の切り分け）: 外れた問題ごとに、どの段で道が変わったか（ブレインの生の答え→2段→場面の網→決まった書き換え→書き手→最終チェック）を記録から出す。
     //   悪化の問題は verdict に、外れの問題は全部 result の missStages に残す（持ち主の統括は連携の表・仮の表で引く）。LLM なし。止める: EXAM_MISS_STAGE=off
     const missStages = (() => {

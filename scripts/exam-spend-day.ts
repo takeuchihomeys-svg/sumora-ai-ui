@@ -38,27 +38,38 @@ const day = arg("day", yest);
 const from = new Date(Date.parse(`${day}T00:00:00+09:00`)).toISOString(), to = new Date(Date.parse(`${day}T00:00:00+09:00`) + 86_400_000).toISOString();
 /** Claude（Sonnet 5.x）の式（llm_usage_daily と同じ: 入力 $2・読み $0.2・書き 5m $2.5・1h $4・出力 $10 /M） */
 const claudeUsd = (r: Row) => ((r.input_uncached ?? 0) * 2 + (r.cache_read ?? 0) * 0.2 + (r.cache_write_5m ?? 0) * 2.5 + (r.cache_write_1h ?? 0) * 4 + (r.output_tokens ?? 0) * 10) / 1e6;
-type Row = { route: string | null; model: string | null; input_uncached: number | null; cache_read: number | null; cache_write_5m: number | null; cache_write_1h: number | null; output_tokens: number | null; created_at: string; status: number | null };
+type Row = { route: string | null; model: string | null; action?: string | null; input_uncached: number | null; cache_read: number | null; cache_write_5m: number | null; cache_write_1h: number | null; output_tokens: number | null; created_at: string; status: number | null };
 (async () => {
   const rows: Row[] = [];
   for (let i = 0; ; i += 1000) { // 1000行ずつの頁（点検表 3）
-    const { data, error } = await sb.from("llm_usage_logs").select("route, model, input_uncached, cache_read, cache_write_5m, cache_write_1h, output_tokens, created_at, status")
+    const { data, error } = await sb.from("llm_usage_logs").select("route, model, action, input_uncached, cache_read, cache_write_5m, cache_write_1h, output_tokens, created_at, status")
       .gte("created_at", from).lt("created_at", to).like("route", "script:%").order("id", { ascending: true }).range(i, i + 999);
     if (error) throw new Error(error.message);
     rows.push(...((data ?? []) as Row[]));
     if ((data ?? []).length < 1000) break;
   }
   const g = new Map<string, { n: number; usd: number }>();
+  const byLabel = new Map<string, { n: number; usd: number; act: Record<string, { n: number; usd: number }> }>();
   const add = (k: string, usd: number) => { const v = g.get(k) ?? { n: 0, usd: 0 }; v.n++; v.usd += usd; g.set(k, v); };
   for (const r of rows) {
     if (!(r.status != null && r.status >= 1 && r.status < 400)) continue;
     const grp = /^script:brain-exam-main-/.test(r.route ?? "") ? "前を作る子" : /^script:brain-exam/.test(r.route ?? "") ? "依頼" : "他の台本";
     const isClaude = /^claude/.test(r.model ?? "");
-    add(`${grp}|${isClaude ? "Claude" : altPriceOf(r.model) ? "DeepSeek・Jev" : "他"}`, isClaude ? claudeUsd(r) : altUsageUsd(r));
+    const usd = isClaude ? claudeUsd(r) : altUsageUsd(r);
+    add(`${grp}|${isClaude ? "Claude" : altPriceOf(r.model) ? "DeepSeek・Jev" : "他"}`, usd);
+    // 2026-11-06 統括役「依頼そのものも削る所」: 依頼ごと（route=script:brain-exam-<label>）・呼び出しの種類ごと
+    if (grp === "依頼") { const lab = String(r.route).replace(/^script:brain-exam-/, ""); const v = byLabel.get(lab) ?? { n: 0, usd: 0, act: {} as Record<string, { n: number; usd: number }> }; v.n++; v.usd += usd; const k = r.action ?? "-"; const a = v.act[k] ?? { n: 0, usd: 0 }; a.n++; a.usd += usd; v.act[k] = a; byLabel.set(lab, v); }
   }
   const tot = [...g.values()].reduce((s, v) => s + v.usd, 0);
   console.log(`# ${day}（JST）の試験の費用（llm_usage_logs・route=script:*・DeepSeek は表の単価・倍の時間は2倍）: 合計 $${tot.toFixed(2)}（前 11/04〜05 は 約 $39/日）`);
   for (const [k, v] of [...g].sort((a, b) => b[1].usd - a[1].usd)) console.log(`- ${k.replace("|", "・")}: ${v.n}回 $${v.usd.toFixed(2)}`);
+  if (process.argv.includes("--by-label")) {
+    const list = [...byLabel].sort((a, b) => b[1].usd - a[1].usd);
+    console.log(`\n## 依頼ごと（${list.length}本・費用の大きい順・呼び出しの種類の上位3つ）`);
+    const actTot = new Map<string, { n: number; usd: number }>(); for (const [, v] of list) for (const [a, x] of Object.entries(v.act)) { const t = actTot.get(a) ?? { n: 0, usd: 0 }; t.n += x.n; t.usd += x.usd; actTot.set(a, t); }
+    console.log(`- 呼び出しの種類ごと（依頼の合計）: ${[...actTot].sort((a, b) => b[1].usd - a[1].usd).slice(0, 8).map(([a, x]) => `${a} ${x.n}回 $${x.usd.toFixed(2)}`).join("・")}`);
+    for (const [k, v] of list.slice(0, Number(arg("top", "40")))) console.log(`- ${k}: $${v.usd.toFixed(3)}（${v.n}回・${Object.entries(v.act).sort((a, b) => b[1].usd - a[1].usd).slice(0, 3).map(([a, x]) => `${a} ${x.n}回 $${x.usd.toFixed(2)}`).join("・")}）`);
+  }
   // 見込みと実際の比（依頼ごと・段ごと）。比の中央が 0.7〜1.3 を外れた段は exam-plan.ts の単価（BRAIN_USD_PER_REP・DRAFT_USD_PER_REP）を直す
   const pv = planVsActualReport(planVsActualOf(day));
   if (pv.lines.length) {
