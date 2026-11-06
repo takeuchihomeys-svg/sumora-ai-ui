@@ -79,6 +79,7 @@ import { isNoLineTestConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
 import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, type SnapshotStats } from "./lib/exam-frozen-input";
 import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord } from "./lib/exam-base-pin";
+import { overBudget, capUsdOf } from "./lib/exam-plan";
 /** 2026-11-05 F2 の確かめ（既定 on・止める EXAM_COPY_CHECK=off） */
 const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
 
@@ -180,7 +181,16 @@ const JUDGE_LAZY = arg("judge") === "lazy";
 const JUDGE_MODEL = (process.env.EXAM_JUDGE_MODEL ?? "").trim();
 const STOP_FILE = (process.env.EXAM_STOP_FILE ?? "").trim();
 const IS_BASELINE_CHILD = process.env.BRAIN_EXAM_BASELINE_CHILD === "1";
-const stopAsked = (): boolean => !!STOP_FILE && existsSync(STOP_FILE);
+// 2026-11-06 作業員8（--cap-usd が依頼に残らず止まる保証が無かった）: EXAM_MAX_USD（係が依頼の --cap-usd から渡す）に、使った額（呼んだ分＋判定＋前を作った子）が届いたら止める印と同じく次の問題の前で止める
+const MAX_USD = capUsdOf();
+let budgetNoted = false;
+const spentUsdNow = (): number => { const st = cassetteStatsNow(); return (st?.total.realUsd ?? 0) + (typeof judgeCost === "undefined" ? 0 : judgeCost.usd) + (baseChildUsdNow ?? 0); };
+let baseChildUsdNow = 0;
+const stopAsked = (): boolean => {
+  if (!!STOP_FILE && existsSync(STOP_FILE)) return true;
+  if (MAX_USD !== null && overBudget(spentUsdNow(), MAX_USD)) { if (!budgetNoted) { budgetNoted = true; console.warn(`⏹ 費用の上限 $${MAX_USD.toFixed(2)} に届いた（使った額 約 $${spentUsdNow().toFixed(3)}）→ 次の問題の前で止める（EXAM_MAX_USD）`); } return true; }
+  return false;
+};
 const judgeSkip = { lazy: 0, rules: 0 };
 // 2026-10-21 ⑤ 決まりで決まる採点を先に（--judge=lazy の時・scripts/lib/exam-brain.ts ruleJudge）。
 //   確かめる人: 取ってある判定（AIX・なしの答案 69件）と照らすと 25件で AI の判定と食い違った（AIX の答案にも返信の本文が付く・AIX の中身の要点で✕にする）
@@ -1212,7 +1222,7 @@ async function prepareMainBaseline(): Promise<boolean> {
         atomicWriteJson(pinsFile, pins);
         if (mode === "run") console.log(`  前の main の答えの控え: ${mine.size}/${ids.length}問（${[...mine].map(([id, s]) => `${id}←${s.dir ?? "?"}`).slice(0, 6).join(" ")}${mine.size > 6 ? " …" : ""}）＝要求が同じ段は前の答えを使う（呼ばない）`);
       }
-      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...((process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() ? { EXAM_DB_SNAPSHOT_DAY: process.env.EXAM_DB_SNAPSHOT_DAY } : {}), ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
+      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(MAX_USD !== null ? { EXAM_MAX_USD: String(Math.max(0.01, MAX_USD - spentUsdNow())) } : {}), ...((process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() ? { EXAM_DB_SNAPSHOT_DAY: process.env.EXAM_DB_SNAPSHOT_DAY } : {}), ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
       // main の作業ツリーは1つ＝1人ずつ（版の違う担当が checkout を取り合わない）
       // 2026-10-21 確かめる人: 待つのは上限まで（EXAM_MAIN_WT_WAIT_MIN・既定 120分）。持ち主が生きたまま止まっていても永遠には待たない。
       //   上限を過ぎても奪わない（生きている持ち主の作業ツリーを checkout -f で壊す）→ この回は作らずに進む（その問題は前との比べに入らない）
@@ -1237,7 +1247,7 @@ async function prepareMainBaseline(): Promise<boolean> {
         const rows = (() => { const f = join(wt, RESULTS_DIR, `${runLabel}.jsonl`); return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as ResultRow) : []; })();
         const cost = (() => { try { return JSON.parse(readFileSync(join(wt, RESULTS_DIR, `${runLabel}.cost.json`), "utf8")) as { byTag?: Record<string, { real: number; realUsd: number; replayed: number; replayUsd: number }>; total?: { realUsd?: number }; judge?: { usd?: number } }; } catch { return {}; } })();
         // 2026-11-05 作業員8（統括役 11/05「作業員の報告の費用に、前を作る側の分も入るように」）: 子の費用（呼んだ分＋判定）を依頼の報告に足す
-        childUsd += (cost.total?.realUsd ?? 0) + (cost.judge?.usd ?? 0); childRuns.push(runLabel);
+        childUsd += (cost.total?.realUsd ?? 0) + (cost.judge?.usd ?? 0); childRuns.push(runLabel); baseChildUsdNow = childUsd;
         const nowIso = new Date().toISOString();
         // 下見は「全部の回の入力が同じ」問題だけ取り置く（回が足りない・違う回がある問題は本当に回す）
         const items = mode === "plan" ? (() => { try { return (JSON.parse(readFileSync(join(wt, RESULTS_DIR, `${runLabel}.inputdiff.json`), "utf8")) as { items?: Record<string, { same: boolean; firstChanged: string | null; pinned: number }> }).items ?? null; } catch { return null; } })() : null;
