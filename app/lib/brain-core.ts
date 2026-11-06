@@ -265,7 +265,7 @@ import { buildScreeningRoomsBrainText } from "@/app/lib/listing-deal-status";
 import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 // 2026-09-30 手続きの質問（審査・入居までの期間と流れ・必要書類）は返信で答える／「確認した」系は資料に記載あり→資料・無し→AIX【確認した】（みこと事例）
 import { loadProcedureAnswerWithin, loadConfirmTopicRoutesWithin, type ProcedureAnswerMaterial, type ConfirmTopicMaterial } from "@/app/lib/procedure-answer-server";
-import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote } from "@/app/lib/procedure-question";
+import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote, procedureMoveInBrainLine } from "@/app/lib/procedure-question";
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
 import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question";
@@ -455,6 +455,8 @@ export type SuggestedAixMeta = {
   deep_recheck_digest?: string;
   /** 2026-11-05 P0 575a7cd5 統括の前半「この番の重点」（作業員5 が入れる・無ければ undefined）。後半の読み直し（深く読む）がこれに沿って決め直す */
   conductor_focus?: { focus: string; why?: string | null };
+  /** 2026-11-07 作業員5（弱い所 275）: やる事の一覧と考える力の配分（CONDUCTOR_TODOS=on の時だけ・記録だけ）→ digest.td・tb */
+  conductor_todos?: { td: string | null; tb: string };
   /** 同じ段の記録（数・抜けを足した数・AIX とのそろえ・取り寄せた材料）→ digest.pr */
   priority_step?: import("@/app/lib/brain-priority").PriorityStepRecord;
   /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
@@ -2886,6 +2888,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     : await loadProcedureAnswerWithin(8_000, { conversationId, customerText: unrepliedTurn.text, target: focusRoomForMaterial });
   if (procedureAnswer?.note) {
     customerStateBlockText += `\n\n${procedureAnswer.note}`;
+    // 2026-11-06 作業員1（型2・統括役「決め打ちをやめて材料＋ログに」）: 決め打ち（rule:procedure_question_*）を下げる時だけ、物件を指す問いか・資料の入居時期・竹内さんの数を材料に
+    if (overrideDemoted("procedure_move_in")) customerStateBlockText += procedureMoveInBrainLine({ text: unrepliedTurn.text, targetName: procedureAnswer.plan.target?.name ?? null, moveInKnown: procedureAnswer.plan.mode !== "two_choice" });
     console.log(JSON.stringify({ tag: "brain:procedure-answer", conversationId, kinds: procedureAnswer.plan.question.kinds, mode: procedureAnswer.plan.mode, target: procedureAnswer.plan.target?.name ?? null, moveIn: procedureAnswer.plan.moveIn?.why ?? null, source: procedureAnswer.source }));
   }
   //   「確認した」系（入居可能日・ペット・駐車場）の質問: 主のお部屋の資料に記載があれば資料で答える／無ければ AIX【確認した】（設備は上の equipment-answer）
@@ -4562,12 +4566,15 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       //   実送信（365日・手続きの質問24番）: 24時間以内に物件を送ったのは1番だけ・返事は全部本文（scripts/audit-procedure-question.ts）
       && (finalAix === null || finalAix === "property_check_result" || finalAix === "acknowledge_check" || finalAix === "guarantor_info"
         || ((finalAix === "property_send" || finalAix === "property_recommendation") && String(decisionSource ?? "").startsWith("signal:")))) {
+      // 2026-11-06 作業員1（型2）: BRAIN_DEMOTE_PROCEDURE_MOVE_IN=on の時は決め打ちを下げる＝ブレインの答えのまま・食い違いはログ（材料は上の procedureMoveInBrainLine）
       if (procedureAnswer?.plan.mode === "two_choice") {
-        finalAix = "property_check_result";
-        sceneSignalCheckPattern = "mgmt_move_in";
-        decisionSource = "rule:procedure_question_move_in_unknown";
-        procedureDecision = "two_choice";
-      } else {
+        if (applyOverride(demotedOverrides, "procedure_move_in", "rule:procedure_question_move_in_unknown", "property_check_result", finalAix)) {
+          finalAix = "property_check_result";
+          sceneSignalCheckPattern = "mgmt_move_in";
+          decisionSource = "rule:procedure_question_move_in_unknown";
+          procedureDecision = "two_choice";
+        }
+      } else if (applyOverride(demotedOverrides, "procedure_move_in", "rule:procedure_question_reply", null, finalAix)) {
         finalAix = null;
         sceneSignalCheckPattern = null;
         decisionSource = "rule:procedure_question_reply";
@@ -6079,6 +6086,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-05 作業員5（KB P0 575a7cd5）: 入口の統括の重点（表・背景・重点・理由・近い番）を meta.conductor_focus に（CONDUCTOR_FOCUS=shadow の時だけ・記録と深い読み直しの材料・判断は変えない）
       conductor_focus: intakeDoneGet() ? await (async () => { const { conductorFocusMode, conductorFocusMeta } = await import("@/app/lib/conductor-focus"); if (conductorFocusMode() === "off") return undefined; return (conductorFocusMeta((await intakeDoneGet())?.answer?.focus_read ?? null) ?? undefined) as { focus: string; why?: string | null } | undefined; })() : undefined,
       brain_depth: depthRec ?? undefined,
+      // 2026-11-07 作業員5（弱い所 275・KB 4b0d868e ②④）: 番ごとのやる事の一覧と考える力の配分を記録だけ（CONDUCTOR_TODOS=on・既定 off）→ digest.td・digest.tb
+      conductor_todos: await (async () => { const { conductorTodosOn, turnTodosRecord } = await import("@/app/lib/conductor-todos"); return conductorTodosOn() ? turnTodosRecord({ asks: (parsed as { turn_contract?: { asks?: unknown } }).turn_contract?.asks, finalAix: finalAix ?? null, need: normalizeNeed((parsed as { need?: unknown }).need) }) : undefined; })(),
       conductor_roles: CONDUCTOR_HANDOFF_ON ? ((nd) => rolesDigest(candidateRoles({ ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""), stampOnly: /^\s*\[(?:スタンプ|画像)\]\s*$/.test(unrepliedTurn.text ?? ""), finalAction: finalAix ?? "reply", confidence: nd?.confidence ?? null, difficulty: nd?.difficulty ?? null, missing: nd?.missing ?? [] })))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
       priority_step: priorityRec,
       // 2026-10-08 本質の仕様（turn-contract.ts）: 今の番の依頼ごとの答え方（返信／約束／AIX／触れない）・閉じる番か・言わない事・気持ち。返信の最上位の決まりになる

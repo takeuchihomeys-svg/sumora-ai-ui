@@ -216,5 +216,44 @@ describe("連帯保証人の書類の質問（d46290ff）", () => {
   it("保証人なしの条件は印を付けない", () => ok(!detectProcedureQuestion("保証人なしで申込に必要な書類は何ですか？")?.jointGuarantor));
 });
 
-console.log(`\n${passed} passed, ${failed} failed`);
-if (failed) { console.log(failures.join("\n")); process.exit(1); }
+// 2026-11-06 作業員1（型2・PROCEDURE_MOVE_IN_WIDE・既定 off）: 最短の入居の質問と、入居日をいつまで延ばせるかの質問を、会社の事実に届かせる
+describe("PROCEDURE_MOVE_IN_WIDE（実物）", () => {
+  const withWide = <T,>(fn: () => T): T => { const old = process.env.PROCEDURE_MOVE_IN_WIDE; process.env.PROCEDURE_MOVE_IN_WIDE = "on"; try { return fn(); } finally { if (old === undefined) delete process.env.PROCEDURE_MOVE_IN_WIDE; else process.env.PROCEDURE_MOVE_IN_WIDE = old; } };
+  const hits: Array<[string, string, string]> = [
+    ["7f73dc32 11-05", "8日に内覧したら最短いつから住めますか？", "screening_flow"],
+    ["c024b7b9 10-20", "最短でどのくらいで入居までいけますか", "screening_flow"],
+    ["c024b7b9 10-26（弱い所 82 の 10:17）", "最短入居日どのくらいですね", "screening_flow"],
+    ["331b0338 11-02", "入居日はいつまでのばせますか？", "hold_period"],
+    ["331b0338 09-10", "ありがとうございます！\n入居時期はいつまでまってもらうことできますか？", "hold_period"],
+  ];
+  for (const [name, t, fact] of hits) {
+    it(`既定 off では届かない: ${name}`, () => ok(!matchCompanyFacts(t).some((f) => f.id === fact), "off なのに届いた"));
+    it(`on で会社の事実 ${fact} が届く: ${name}`, () => withWide(() => ok(matchCompanyFacts(t).some((f) => f.id === fact), JSON.stringify(matchCompanyFacts(t).map((f) => f.id)))));
+  }
+  const misses: Array<[string, string]> = [
+    ["探す条件（最短入居できる物件があれば）", "最短入居できる物件があれば探してほしいです"],
+    ["内覧そのものの日（内覧は最短でいつ）", "内覧は最短でいつできますか？"],
+    ["内見の日（最短で今週の土曜に内見できますか）", "最短で今週の土曜に内見できますか"],
+    ["1191b1eb 物件ごとの日（q092 の型・確認が正解）", "見てきました。\nここは最短11月中旬でしょうか？\n10月後半くらいに入れるところとかありますか？"],
+    ["affa98c7 最短入居で初期費用（見積の番）", "最短入居で初期費用出して欲しいです！"],
+    ["ad97cd40 最短入居いくら（見積の番）", "1番上のやつ最短入居いくらですか？"],
+    ["583171e6 最短入居できる物件教えて（探す番）", "こちらで最短入居できる物件教えてください"],
+  ];
+  for (const [name, t] of misses) it(`on でも手続きの質問にしない: ${name}`, () => withWide(() => eq(detectProcedureQuestion(t)?.kinds.includes("move_in_lead") ?? false, false)));
+});
+
+// 2026-11-06 作業員1（型2・決め打ちを下げる時の材料）: 物件を指す問いか
+import("../procedure-question").then(({ procedurePointsToProperty, procedureMoveInBrainLine }) => {
+  describe("物件を指す問いか（実物）", () => {
+    for (const [t, want] of [
+      ["最短入居日どのくらいですね", false], ["最短でどのくらいで入居までいけますか", false], ["こんばんは。\nどの物件もそうなんですが、最短でいつ頃入居できますでしょうか？", false],
+      ["ちなみにここは入居可能日いつ頃ですか？", true], ["４階の物件は早くて何日から入居できるかはわからないですよね？", true], ["この物件の最短入居可能日はいつですか？", true],
+      ["ここだと最短でいつ入居可能ですか！？", true], ["1つ目に送らせていただいた物件だと、別の方が契約しない場合いつ入居可能ですか？", true],
+    ] as const) it(`${want ? "指す" : "指さない"}: ${t.slice(0, 20)}`, () => eq(procedurePointsToProperty(t), want));
+    it("対象のお部屋の名前で指す（シーズンフラッツ）", () => eq(procedurePointsToProperty("シーズンフラッツ第一候補なんですけど最短入居日っていつになりますか？", "シーズンフラッツ心斎橋EAST"), true));
+    it("材料: 指さない問いは資料が無くても会社の事実で返信", () => ok(procedureMoveInBrainLine({ text: "最短入居日どのくらいですね", moveInKnown: false }).includes("一般の問いは、資料に入居時期が無くても会社の事実で返信")));
+    it("材料: 指す問いで資料が無い時は確認", () => ok(procedureMoveInBrainLine({ text: "ここは入居可能日いつ頃ですか？", moveInKnown: false }).includes("管理会社に確認")));
+  });
+  console.log(`\n${passed} passed, ${failed} failed`);
+  if (failed) { console.log(failures.join("\n")); process.exit(1); }
+});

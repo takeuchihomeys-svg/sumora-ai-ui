@@ -77,6 +77,10 @@
       "schedule": "0 21 * * 0"
     },
     {
+      "path": "/api/cron/conductor-reflection",
+      "schedule": "10 19 * * 0"
+    },
+    {
       "path": "/api/cron/takeuchi-anatomy?limit=300&window=focus",
       "schedule": "30 13,14,15 * * *"
     },

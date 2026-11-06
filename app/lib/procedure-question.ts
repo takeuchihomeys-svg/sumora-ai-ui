@@ -95,6 +95,19 @@ export function procedureEarliestMoveInEnabled(env: Record<string, string | unde
 const EARLIEST_MOVE_IN_RE = new RegExp(`最短(?:で|の)?\s*(?:入居|ご入居|引っ?越)[^。\n]{0,12}(?:${HOW_LONG}|いつ|日)|最短(?:で|の)?\s*いつ(?:から|頃|ごろ)?[^。\n]{0,8}(?:入居|住め|住む|入れ|引っ?越)|(?:いつ|何日)(?:から|頃|ごろ)?[^。\n]{0,6}(?:入居|住め|入れ)[^。\n]{0,6}(?:最短|一番早)`);
 /** 探す条件（「最短入居できる物件」）・内覧の日の話は外す */
 const EARLIEST_NOT_RE = /物件があれば|お部屋があれば|探して|内見|内覧|見学/;
+/**
+ * 2026-11-06 作業員1（統括役・型2・弱い所 82 の 10:17）: 本番の外れ 2番（7f73dc32「8日に内覧したら最短いつから住めますか？」・c024b7b9「最短でどのくらいで入居までいけますか」）は
+ *   手続きの質問と読めず（網が無い・内覧の語で外す）、会社の事実（審査3日〜10日＋契約1週間＝最短2週間程）が材料に届かず、ブレインが確認の約束（check_question）を選んだ。
+ *   竹内さんの手続きの質問（200日・約13番）は会社の事実・資料で返信 77%・確認の約束は物件ごとの日が資料に無い時だけ。
+ *   PROCEDURE_MOVE_IN_WIDE=on: 「最短…入居／住め」を語の順に縛らず拾う・内覧の語は「内覧は／できる／日程」等の内覧そのものの問いの時だけ外す。既定 off
+ */
+export function procedureMoveInWideOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PROCEDURE_MOVE_IN_WIDE ?? "").trim().toLowerCase() === "on";
+}
+export const EARLIEST_MOVE_IN_WIDE_RE = /最短(?:で|の)?[^。\n？?]{0,12}(?:入居|住め|住む|入れ|引っ?越)/;
+// 監査（200日・当たり約28番を目で読んだ）で外した: 費用・見積の依頼（affa98c7「最短入居で初期費用出して欲しい」・ad97cd40「最短入居いくら」＝御見積書の番）・
+//   探す依頼（583171e6「最短入居できる物件教えてください」＝ピックアップの番）
+export const EARLIEST_NOT_WIDE_RE = /物件があれば|お部屋があれば|探して|内[覧見](?:は|って|でき|出来|可能|日|いつ|の日程)|見学(?:は|でき|出来|可能)|初期費用|見積|いくら|費用|(?:できる|出来る|入れる|住める)(?:物件|お部屋|部屋)|物件(?:を)?教え/;
 /** 申込・契約・入居までの流れ */
 const FLOW_RE = /(?:申込|申し込み?|お申込み?|契約|入居|審査)[^。\n]{0,10}(?:流れ|手順|ステップ|段取り)|(?:流れ|手順|段取り)[^。\n]{0,8}(?:教え|知りたい|どう|どんな|ですか|でしょうか)/;
 /** 必要書類 */
@@ -127,7 +140,8 @@ export function detectProcedureQuestion(text: string | null | undefined): Proced
   const t = units.join("\n").normalize("NFKC");
   const kinds: ProcedureKind[] = [];
   if (SCREENING_PERIOD_RE.test(t)) kinds.push("screening_period");
-  if (MOVE_IN_LEAD_RE.test(t) || (procedureEarliestMoveInEnabled() && EARLIEST_MOVE_IN_RE.test(t) && !EARLIEST_NOT_RE.test(t))) kinds.push("move_in_lead");
+  if (MOVE_IN_LEAD_RE.test(t) || (procedureEarliestMoveInEnabled() && EARLIEST_MOVE_IN_RE.test(t) && !EARLIEST_NOT_RE.test(t))
+    || (procedureMoveInWideOn() && EARLIEST_MOVE_IN_WIDE_RE.test(t) && !EARLIEST_NOT_WIDE_RE.test(t))) kinds.push("move_in_lead");
   if (FLOW_RE.test(t)) kinds.push("flow");
   if (DOCS_RE.test(t)) kinds.push("docs");
   if (ID_DOC_RE.test(t)) kinds.push("id_doc");
@@ -399,4 +413,24 @@ export function buildConfirmTopicNote(target: ProcedureTarget, routes: readonly 
   }
   out.push("→ 「物件確認した」は物件そのもの（空き・募集状況）の報告。設備・入居・ペット・駐車場など管理会社に確認が要る事は「確認した（条件・交渉）」。");
   return out.join("\n");
+}
+
+// ─── 2026-11-06 作業員1（型2・統括役「決め打ちをやめて材料＋ログに」・P0 判断はすべてブレイン基準）───
+//   手続きの質問の決め打ち（rule:procedure_question_reply／move_in_unknown）を下げる時（BRAIN_DEMOTE_PROCEDURE_MOVE_IN=on）に、ブレインへ渡す材料の1行。
+//   竹内さんの実送信（200日・手続きの質問を目で読んだ）: 物件を指さない一般の問い 6番＝全部 会社の事実で返信（1番は AIX【申込へ】の文の中）／
+//   物件を指す問い 9番＝資料で返信 5・管理会社に確認してから答えた 3・AIX 1。
+/** お客様の問いが特定の物件を指しているか（ここ・この物件・〇階・号室・〇つ目・対象のお部屋の名前） */
+export const PROCEDURE_POINTS_RE = /ここ|こちら(?:の物件|のお部屋|の部屋)?|この(?:物件|お部屋|部屋)|その(?:物件|お部屋|部屋)|[0-9０-９]+\s*階|号室|[1-9１-９一二三]\s*つ目|上の(?:物件|お部屋|やつ)/;
+export function procedurePointsToProperty(text: string | null | undefined, targetName?: string | null): boolean {
+  const t = String(text ?? "").normalize("NFKC");
+  if (PROCEDURE_POINTS_RE.test(t)) return true;
+  const name = String(targetName ?? "").normalize("NFKC").replace(/\s+/g, "");
+  const head = name.slice(0, 4);
+  return head.length >= 3 && t.replace(/\s+/g, "").includes(head);
+}
+export function procedureMoveInBrainLine(i: { text: string | null | undefined; targetName?: string | null; moveInKnown: boolean }): string {
+  const points = procedurePointsToProperty(i.text, i.targetName);
+  return `\n\n【手続きの質問の読み方（材料・決めるのはブレイン）】この問いは${points ? "**特定の物件を指す問い**" : "**物件を指さない一般の問い**"}（${points ? "ここ・この物件・〇階・号室・物件名" : "「最短どのくらい」等の一般の流れ・期間"}）。資料の入居時期: ${i.moveInKnown ? "ある" : "無い"}。
+竹内さんの実送信（200日）: 物件を指さない一般の問い 6番＝全部 会社の事実（審査3日〜10日＋契約1週間＝最短2週間程）で返信／物件を指す問い 9番＝資料で返信 5・管理会社に確認してから答えた 3・AIX 1。
+${points ? (i.moveInKnown ? "→ 資料の入居時期で返信するのが竹内さんの形。" : "→ 資料に入居時期が無い物件を指す問いは、管理会社に確認（AIX【確認した→入居可能日】か確認の約束）が竹内さんの形。") : "→ 一般の問いは、資料に入居時期が無くても会社の事実で返信するのが竹内さんの形（確認の約束にしない）。"}`;
 }

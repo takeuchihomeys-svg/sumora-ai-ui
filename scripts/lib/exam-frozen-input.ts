@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { maskPII } from "../../app/lib/pii-mask";
 
 const DAY = 86_400_000, WEEK = 7 * DAY;
 
@@ -58,18 +59,42 @@ export function keyedKey(url: string, method: string, body: string, excludeIds: 
   return snapshotKey(hide(url), method, hide(body));
 }
 /** 控えに残す欄だけにする（純関数）。分からない形は空の配列（本文を残さない側に倒す） */
-export function reduceKeyedBody(name: string, text: string): string {
+/**
+ * situations: 2026-11-07 統括役の決め（作業員4・KB e786394e）: 一番近い番だけ、要約（situation の「お客様:」の部分・伏せた60字）を残してよい。
+ *   入れるかは夜の台本が決める（PII の伏せ・申込の書類以降の番は入れない）。ここでは渡された番の要約だけを残す
+ */
+export function reduceKeyedBody(name: string, text: string, situations: Readonly<Record<string, string>> = {}): string {
   let rows: unknown; try { rows = JSON.parse(text); } catch { return "[]"; }
   if (!Array.isArray(rows)) return "[]";
   const pick = (r: Record<string, unknown>): Record<string, unknown> => {
     const a = (r.actual ?? null) as Record<string, unknown> | null;
-    const act = a ? { aix: a.aix ?? null, route: a.route ?? null, shape: a.shape ?? null } : null;
+    // picker はボタンの細目の名前（available・mgmt_equipment 等の決まった名前）＝本文ではない
+    const act = a ? { aix: a.aix ?? null, route: a.route ?? null, shape: a.shape ?? null, picker: typeof a.picker === "string" && /^[a-z_]{1,40}$/.test(a.picker) ? a.picker : null } : null;
     if (name === "match_conductor_focus" || name === "match_conductor_turns") return { source_key: r.source_key ?? null, scene: r.scene ?? null, focus: r.focus ?? null, distance: r.distance ?? null, turn_at: r.turn_at ?? null, actual: act };
     if (name === "takeuchi_compose_examples") return { message_id: r.message_id ?? null, keep: r.keep === true ? true : r.keep === false ? false : null };
-    if (name === "conductor_turn_vectors") return { source_key: r.source_key ?? null, turn_at: r.turn_at ?? null, ...(act ? { actual: act } : {}) };
+    if (name === "conductor_turn_vectors") { const k = String(r.source_key ?? ""); return { source_key: r.source_key ?? null, turn_at: r.turn_at ?? null, ...(act ? { actual: act } : {}), situation: k && situations[k] ? situations[k] : null }; }
     return {};
   };
   return JSON.stringify(rows.map((r) => pick((r ?? {}) as Record<string, unknown>)));
+}
+
+/**
+ * 一番近い番の要約（2026-11-07 統括役の決め・作業員4）: ① situation の「お客様:」の行を60字まで ② PII の伏せ（maskPII）を通す
+ *   ③ 申込の書類以降の番は入れない（afterCutoff・loadDeepseekCutoff と同じ線・線が読めない時も入れない）
+ */
+export function nearestSummaryOf(situation: string | null | undefined): string | null {
+  const s = String(situation ?? "");
+  const i = s.indexOf("お客様:");
+  if (i < 0) return null;
+  const body = s.slice(i + 4).split("\n")[0].trim();
+  const out = maskPII(body).slice(0, 60).trim();
+  return out || null;
+}
+/** その番が申込の書類以降か（null＝線が読めない→以降とみる・NO_CUTOFF（数）＝申込の記録なし→以前） */
+export function afterCutoff(turnAt: string, cutoff: string | number | null): boolean {
+  if (cutoff === null) return true;
+  if (typeof cutoff === "number") return false;
+  return Date.parse(turnAt) >= Date.parse(cutoff);
 }
 
 /** 写しの日（JST 4:00 で区切る＝学習の cron 3:23 の後）。"YYYY-MM-DD" */

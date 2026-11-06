@@ -10,7 +10,7 @@
 
 type Env = Record<string, string | undefined>;
 
-export type OverrideFamily = "signal" | "signal_decided" | "image_only" | "two_stage_promise" | "closed_ack_wait" | "viewing_day_ack" | "turn_route_guards" | "search_exhausted" | "staff_promise";
+export type OverrideFamily = "signal" | "signal_decided" | "image_only" | "two_stage_promise" | "closed_ack_wait" | "viewing_day_ack" | "turn_route_guards" | "search_exhausted" | "staff_promise" | "procedure_move_in";
 
 /** 家族ごとの戻す環境変数（"off" で旧の上書きに戻す） */
 export const DEMOTE_ENV: Record<OverrideFamily, string> = {
@@ -25,6 +25,8 @@ export const DEMOTE_ENV: Record<OverrideFamily, string> = {
   search_exhausted: "BRAIN_DEMOTE_SEARCH_EXHAUSTED",
   // 2026-10-14 まだ果たしていないこちらの約束（aix-task-link.resolveStaffPromiseAix・promise:*）が LLM の AIX を約束の AIX に差し替える
   staff_promise: "BRAIN_DEMOTE_STAFF_PROMISE",
+  // 2026-11-06 作業員1（型2・統括役「決め打ちをやめて材料＋ログに」）: 手続きの質問の決め打ち（rule:procedure_question_reply／move_in_unknown＝返信か2択に上書き）
+  procedure_move_in: "BRAIN_DEMOTE_PROCEDURE_MOVE_IN",
 };
 
 /** 下げた家族（既定は下げる＝on。家族を足す時はここで既定を決める） */
@@ -45,6 +47,8 @@ const DEFAULT_ON: Record<OverrideFamily, boolean> = {
   // 2026-10-14 30日: promise:check 74・pickup 169・estimate 45番。LLM の生の答えがある番の食い違い check 21（ブレイン正 12／規則正 4）・estimate 5（3／1）・pickup 4（2／2）
   //   ＝ブレインの答えのまま・約束が残っている事は材料（行動台帳の宣言＋staffPromiseMaterialLine）。LLM が同じ族を選んだ番は今まで通り promise:* の出所にする
   staff_promise: true,
+  // 2026-11-06 既定は今まで通り上書き（下げない）。下げる BRAIN_DEMOTE_PROCEDURE_MOVE_IN=on＝ブレインが材料（物件を指す問いか・会社の事実・資料の入居時期）で選び、食い違いはログ
+  procedure_move_in: false,
 };
 
 export function overrideDemoted(f: OverrideFamily, env: Env = process.env): boolean {
