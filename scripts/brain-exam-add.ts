@@ -31,6 +31,12 @@ import { STAFF_FAIL_RE } from "../app/lib/post-apply-brain-gate";
 import { addressNamesOf, maskExamText, maskLedgerDeep } from "./lib/brain-exam-mask";
 import { rollbackPcToTurn, type PcAsOf, type PcHist } from "./lib/brain-exam-pc";
 import { publishProblems, readSharedProblem, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
+import { ensureLedger, nextIdNumber, withSpec, writeLedger } from "./lib/exam-id-ledger";
+import { examCacheRoot } from "./lib/llm-cassette";
+
+/** 2026-11-07 統括役: 番号は spec と使った id の控えの両方の最大＋1（外した id を別の番に使い回さない・exam-id-ledger） */
+function nextNumber(spec: ExamSpec[]): number { try { return nextIdNumber(spec, ensureLedger(examCacheRoot(), process.cwd(), spec)); } catch { return nextIdNumber(spec, null); } }
+function noteIds(spec: ExamSpec[]): void { try { writeLedger(examCacheRoot(), withSpec(ensureLedger(examCacheRoot(), process.cwd(), spec), spec)); } catch { /* 控えを書けなくても足す */ } }
 
 export const EXAM_DIR = "scripts/brain-exam";
 export const SPEC_FILE = `${EXAM_DIR}/spec.json`;
@@ -275,7 +281,7 @@ async function add() {
   const asks: ExamAsk[] = argAll("ask").map((a) => { const [q, route, point] = a.split("|"); if (!/^(reply|promise|aix|none)$/.test(route ?? "")) throw new Error(`--ask の答え方は reply|promise|aix|none: ${a}`); return { q, route: route as ExamAsk["route"], point: point ?? "" }; });
   const spec = readSpec();
   if (spec.some((s) => s.conv === conv && Math.abs(ms(s.at) - ms(at)) < 60_000)) throw new Error("同じ番はもう入っています");
-  const n = spec.reduce((m, s) => Math.max(m, Number(s.id.slice(1)) || 0), 0) + 1;
+  const n = nextNumber(spec);
   const s: ExamSpec = {
     id: `q${String(n).padStart(3, "0")}`, type, tags: arg("tags").split(",").filter(Boolean), source: arg("source", "本番の見張り（brain-exam-add --add）"),
     conv, at, accept, mustNot: arg("must-not").split(",").map((x) => x.trim()).filter(Boolean), asks, ng: argAll("ng"), why,
@@ -284,7 +290,7 @@ async function add() {
   };
   const built = await buildProblem(s);
   if (typeof built === "string") throw new Error(`この番は問題にできません: ${built}`);
-  writeFileSync(SPEC_FILE, JSON.stringify([...spec, s], null, 1));
+  writeFileSync(SPEC_FILE, JSON.stringify([...spec, s], null, 1)); noteIds([...spec, s]);
   writeFileSync(PROBLEMS_FILE, JSON.stringify([...readProblems(), built], null, 1));
   sharePublish([built]);
   console.log(`足した: ${s.id} [${type}] ${built.sub}\n  客「${oneLine(built.customer).slice(0, 120)}」\n  竹内さん「${oneLine(built.staffText).slice(0, 160)}」\n  当時のブレイン: ${JSON.stringify(built.prodBrain)}`);
@@ -397,7 +403,7 @@ async function suggestSends() {
 async function addBatch() {
   const items = JSON.parse(readFileSync(arg("add-batch"), "utf8")) as Array<Omit<ExamSpec, "id">>;
   const spec = readSpec(), probs = readProblems();
-  let n = spec.reduce((m, s) => Math.max(m, Number(s.id.slice(1)) || 0), 0);
+  let n = nextNumber(spec) - 1;
   const skipped: string[] = [];
   for (const it of items) {
     if (!it.conv || !it.at || !it.type || !it.accept?.length || !it.why) { skipped.push(`${it.conv}: 必須が無い`); continue; }
@@ -408,7 +414,7 @@ async function addBatch() {
     n++; spec.push(s); probs.push(built);
     console.log(`足した: ${s.id} [${s.type}] 客「${oneLine(built.customer).slice(0, 60)}」 正解=${s.accept.join("|")}`);
   }
-  writeFileSync(SPEC_FILE, JSON.stringify(spec, null, 1));
+  writeFileSync(SPEC_FILE, JSON.stringify(spec, null, 1)); noteIds(spec);
   writeFileSync(PROBLEMS_FILE, JSON.stringify(probs, null, 1));
   sharePublish(probs);
   console.log(`\n足した ${items.length - skipped.length}・飛ばした ${skipped.length}${skipped.length ? `\n  ${skipped.join("\n  ")}` : ""}`);

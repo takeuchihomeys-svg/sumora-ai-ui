@@ -81,6 +81,7 @@ import { isNoLineTestConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib
 import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, type SnapshotStats } from "./lib/exam-frozen-input";
 import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord } from "./lib/exam-base-pin";
 import { essenceOverride } from "./lib/exam-essence";
+import { readLedger, rowFromReusedId } from "./lib/exam-id-ledger";
 import { overBudget, capUsdOf } from "./lib/exam-plan";
 /** 2026-11-05 F2 の確かめ（既定 on・止める EXAM_COPY_CHECK=off） */
 const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
@@ -806,7 +807,12 @@ function parseStream(raw: string): string {
 // ─── 集計 ─────────────────────────────────────────────────────────────
 function readResults(label: string): ResultRow[] {
   const f = `${RESULTS_DIR}/${label}.jsonl`;
-  return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as ResultRow) : [];
+  const rows = existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as ResultRow) : [];
+  // 2026-11-07 統括役: 使い回した id（q374 等）は、今の番が入る前の答案の行を採点から外す（別の問題の答えを今の正解で採らない・exam-id-ledger）
+  const led = readLedger(examCacheRoot());
+  const keep = rows.filter((r) => !rowFromReusedId(r as unknown as { id: string; at?: string }, led));
+  if (keep.length < rows.length) console.log(`  使い回した id の古い答案を外した: ${rows.length - keep.length}行（${[...new Set(rows.filter((r) => !keep.includes(r)).map((r) => r.id))].join(",")}）`);
+  return keep;
 }
 /** 問題ごとに回を束ねる（合格は全ての回の過半数が合格・道も同じ） */
 function perProblem(rows: ResultRow[]) {

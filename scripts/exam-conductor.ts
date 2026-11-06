@@ -54,8 +54,9 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds } from "./lib/exam-base-pin";
-import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, type CmpLite } from "./lib/exam-plan";
+import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
@@ -238,6 +239,12 @@ function addJob(): void {
     {
       const notInSpec = specMissingIds(ids, spec.map((x) => x.id));
       if (notInSpec.length) throw new Error(`積まない: 問題 ${notInSpec.join(",")}（${notInSpec.length}/${ids.length}問）が依頼の作業ツリーの spec.json に無い（作業ツリーが古い）。作業ツリーを最新の main に合わせる: cd ${cwd} && git fetch origin && git merge origin/main（その後に積み直す）`);
+      // 2026-11-07 統括役: 一度 spec に出た id を別の番に使い回していないか（使った id の控え・exam-id-ledger）。使い回しなら積まない
+      try {
+        const led = ensureLedger(examCacheRoot(), cwd, spec as unknown as Array<{ id: string; conv?: string; at?: string }>);
+        const clash = idClashes((spec as unknown as Array<{ id: string; conv?: string; at?: string }>).filter((x) => ids.includes(x.id)), led);
+        if (clash.length) throw new Error(`積まない: 問題 ${clash.join(",")} は前に別の番で使った id（使い回し）。新しい番は brain-exam-add で新しい番号を取る（spec-ids-used.json の maxN＋1）`);
+      } catch (e) { if (String(e).includes("積まない")) throw e; }
     }
     {
       const local = readJson<Array<Record<string, unknown>>>(join(cwd, "scripts/brain-exam/problems.json"), []);
@@ -719,7 +726,19 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     // 2026-11-06 作業員4の相談（tk1106: 最終の道 9/9・本質 3/9＝決まった計算が判断を肩代わりしても見えない）: 本質の道（決まった計算の前のブレインの最初の答え）の当たりを毎回出す。問題×回で数える（brain-exam の「3段: 本質の道」と同じ数え方）
     const essence = (() => { try { const want = new Set(ids); const cnt = (rows: RowLite[]) => { const e = (rows as unknown as Array<{ id: string; essence?: { ok?: boolean } | null }>).filter((r) => want.has(r.id) && r.essence); return { ok: e.filter((r) => r.essence!.ok).length, n: e.length }; }; return { base: blFinal ? cnt(readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`))) : null, cur: cnt(readRows(rowsFile)) }; } catch { return null; } })();
     const essNote = essence && essence.cur.n ? `・本質 ${essence.base?.n ? `前${essence.base.ok}/${essence.base.n} → ` : ""}今${essence.cur.ok}/${essence.cur.n}` : "";
-    const verdict = verdictBase + essNote + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
+    // 2026-11-07 統括役（proc-line-dig3-1107: 守りの q092 が 2段:check（道は正解）→ 返信（道が外れた）でも合格が ✕→✕ で同じ＝「確かな悪化0」）:
+    //   道（最終の道）と本質の悪化を問題ごとに出し、道の悪化があれば「確かな悪化0」とは言わない（既定 on の判断にこの欄も使う）。止める: EXAM_PATH_WORSE=off
+    const pw = (() => {
+      if ((process.env.EXAM_PATH_WORSE ?? "").trim().toLowerCase() === "off" || !blFinal) return { path: [] as ReturnType<typeof pathRegressions>, ess: [] as ReturnType<typeof pathRegressions> };
+      try {
+        const cur = readRows(rowsFile) as unknown as PathRowLite[], base = readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)) as unknown as PathRowLite[];
+        return { path: pathRegressions(cur, base, ids, "path"), ess: pathRegressions(cur, base, ids, "essence") };
+      } catch { return { path: [] as ReturnType<typeof pathRegressions>, ess: [] as ReturnType<typeof pathRegressions> }; }
+    })();
+    const pwLine = (xs: ReturnType<typeof pathRegressions>) => xs.map((x) => `${x.id} ${x.from}→${x.to}（${x.why}）`).join("／");
+    const pathNote = (pw.path.length ? `・道の悪化 ${pw.path.length}（${pwLine(pw.path)}・既定 on の判断に使わない）` : "") + (pw.ess.length ? `・本質の悪化 ${pw.ess.length}（${pwLine(pw.ess)}）` : "");
+    const verdictHead = pw.path.length ? verdictBase.replace(/^確かな悪化0（/, "合格の確かな悪化0・道の悪化あり（") : verdictBase;
+    const verdict = verdictHead + pathNote + essNote + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
     // 2026-11-06 統括役（作業員8）: 外れの切り分けを弱い所の台帳（brain_weaknesses）へ。key＝段＋印の頭・同じ key の行があれば evidence に足す（upsertWeaknessHits）・持ち主・試験の名前・問題・回を evidence に・1回の試験で5行まで。
     //   台帳は RLS（ポリシーなし）＝サーバーの鍵が無い手元では書けない → 足す物を results/weakness-pending.jsonl に残し、鍵のある所で brain-weaknesses.ts --collect-miss-stages が足す（同じ回は二重に足さない）。止める: EXAM_MISS_WEAKNESS=off
     if ((process.env.EXAM_MISS_WEAKNESS ?? "").trim().toLowerCase() !== "off" && missStages.length) {
@@ -733,7 +752,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         }
       } catch (e) { log(`  弱い所の台帳: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`); }
     }
-    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, essence, verdict, at: at() },
+    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, essence, pathWorse: pw.path, essenceWorse: pw.ess, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
     log(`  済み: ${j.label} → ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・費用 ${s.usd ?? "?"}`);

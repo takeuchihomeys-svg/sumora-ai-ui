@@ -1,7 +1,7 @@
 // 試験の統括（scripts/lib/exam-plan.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-plan.test.ts（全 PASS で exit 0）
 import { flakeCleanSinceMs } from "../exam-flake";
-import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs, overBudget, capUsdOf, needsBaseIds, planVsActualReport, specMissingIds, runBaseCheck } from "../exam-plan";
+import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs, overBudget, capUsdOf, needsBaseIds, planVsActualReport, specMissingIds, runBaseCheck, pathRegressions } from "../exam-plan";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -92,6 +92,16 @@ ok("spec に無い問題（古い作業ツリー・sorry-read-dig-1107 の q354�
   ok("前を作る分で上限を超える → 流さない", !r.go && Math.abs(r.baseUsd - 0.16) < 1e-9 && Math.abs(r.curUsd - 0.16) < 1e-9 && r.line.includes("上限 $0.20 を超える"), r.line);
   ok("前が要らなければ流す", runBaseCheck({ reps: { q1: 2, q2: 2 }, needsBase: [], unitUsd: 0.04, capUsd: 0.2 }).go);
   ok("上限が無ければ流す（見込みは出す）", runBaseCheck({ reps: { q1: 2 }, needsBase: ["q1"], unitUsd: 0.04, capUsd: null }).go);
+}
+
+{
+  // 11/07 統括役（proc-line-dig3-1107: q092 2段:check→返信・合格は ✕→✕）
+  const base = [{ id: "q092", path: { code: "2段:check", ok: true } }, { id: "q374", path: { code: "返信", ok: false } }, { id: "q1", path: { code: "返信", ok: true } }, { id: "q1", path: { code: "返信", ok: true } }];
+  const cur = [{ id: "q092", path: { code: "返信", ok: false } }, { id: "q374", path: { code: "2段:check", ok: true } }, { id: "q1", path: { code: "返信", ok: true } }, { id: "q1", path: { code: "AIX:x", ok: false } }];
+  const r = pathRegressions(cur, base, ["q092", "q374", "q1"]);
+  ok("道の悪化: 正解の道から外れた問題だけ（良くなった・揺れの半分は入れない）", r.length === 1 && r[0].id === "q092" && r[0].from === "2段:check" && r[0].to === "返信" && r[0].why === "1/1→0/1", JSON.stringify(r));
+  ok("本質の悪化も同じ数え方", pathRegressions([{ id: "a", essence: { code: "AIX:x", ok: false } }], [{ id: "a", essence: { code: "返信", ok: true } }], ["a"], "essence").length === 1);
+  ok("前か今が無い問題は数えない", pathRegressions([], base, ["q092"]).length === 0);
 }
 
 console.log(`${pass} pass / ${fail} fail`);

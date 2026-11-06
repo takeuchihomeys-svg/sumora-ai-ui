@@ -434,3 +434,7 @@ export function procedureMoveInBrainLine(i: { text: string | null | undefined; t
 竹内さんの実送信（200日）: 物件を指さない一般の問い 6番＝全部 会社の事実（審査3日〜10日＋契約1週間＝最短2週間程）で返信／物件を指す問い 9番＝資料で返信 5・管理会社に確認してから答えた 3・AIX 1。
 ${points ? (i.moveInKnown ? "→ 資料の入居時期で返信するのが竹内さんの形。" : "→ 資料に入居時期が無い物件を指す問いは、管理会社に確認（AIX【確認した→入居可能日】か確認の約束）が竹内さんの形。") : "→ 一般の問いは、資料に入居時期が無くても会社の事実で返信するのが竹内さんの形（確認の約束にしない）。"}`;
 }
+/** 2026-11-07 作業員1（型2・統括役の②）: 資料に入居時期が無い時の2択／確認を「物件を指す問い」だけにする（既定 off・入れる PROCEDURE_UNKNOWN_POINTS_ONLY=on） */
+export function procedureUnknownPointsOnlyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PROCEDURE_UNKNOWN_POINTS_ONLY ?? "").trim().toLowerCase() === "on";
+}
