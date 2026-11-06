@@ -414,3 +414,23 @@ export function buildConfirmTopicNote(target: ProcedureTarget, routes: readonly 
   out.push("→ 「物件確認した」は物件そのもの（空き・募集状況）の報告。設備・入居・ペット・駐車場など管理会社に確認が要る事は「確認した（条件・交渉）」。");
   return out.join("\n");
 }
+
+// ─── 2026-11-06 作業員1（型2・統括役「決め打ちをやめて材料＋ログに」・P0 判断はすべてブレイン基準）───
+//   手続きの質問の決め打ち（rule:procedure_question_reply／move_in_unknown）を下げる時（BRAIN_DEMOTE_PROCEDURE_MOVE_IN=on）に、ブレインへ渡す材料の1行。
+//   竹内さんの実送信（200日・手続きの質問を目で読んだ）: 物件を指さない一般の問い 6番＝全部 会社の事実で返信（1番は AIX【申込へ】の文の中）／
+//   物件を指す問い 9番＝資料で返信 5・管理会社に確認してから答えた 3・AIX 1。
+/** お客様の問いが特定の物件を指しているか（ここ・この物件・〇階・号室・〇つ目・対象のお部屋の名前） */
+export const PROCEDURE_POINTS_RE = /ここ|こちら(?:の物件|のお部屋|の部屋)?|この(?:物件|お部屋|部屋)|その(?:物件|お部屋|部屋)|[0-9０-９]+\s*階|号室|[1-9１-９一二三]\s*つ目|上の(?:物件|お部屋|やつ)/;
+export function procedurePointsToProperty(text: string | null | undefined, targetName?: string | null): boolean {
+  const t = String(text ?? "").normalize("NFKC");
+  if (PROCEDURE_POINTS_RE.test(t)) return true;
+  const name = String(targetName ?? "").normalize("NFKC").replace(/\s+/g, "");
+  const head = name.slice(0, 4);
+  return head.length >= 3 && t.replace(/\s+/g, "").includes(head);
+}
+export function procedureMoveInBrainLine(i: { text: string | null | undefined; targetName?: string | null; moveInKnown: boolean }): string {
+  const points = procedurePointsToProperty(i.text, i.targetName);
+  return `\n\n【手続きの質問の読み方（材料・決めるのはブレイン）】この問いは${points ? "**特定の物件を指す問い**" : "**物件を指さない一般の問い**"}（${points ? "ここ・この物件・〇階・号室・物件名" : "「最短どのくらい」等の一般の流れ・期間"}）。資料の入居時期: ${i.moveInKnown ? "ある" : "無い"}。
+竹内さんの実送信（200日）: 物件を指さない一般の問い 6番＝全部 会社の事実（審査3日〜10日＋契約1週間＝最短2週間程）で返信／物件を指す問い 9番＝資料で返信 5・管理会社に確認してから答えた 3・AIX 1。
+${points ? (i.moveInKnown ? "→ 資料の入居時期で返信するのが竹内さんの形。" : "→ 資料に入居時期が無い物件を指す問いは、管理会社に確認（AIX【確認した→入居可能日】か確認の約束）が竹内さんの形。") : "→ 一般の問いは、資料に入居時期が無くても会社の事実で返信するのが竹内さんの形（確認の約束にしない）。"}`;
+}
