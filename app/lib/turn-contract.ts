@@ -237,15 +237,15 @@ export function sentReactionInviteOn(env: Record<string, string | undefined> = t
 /**
  * 2026-11-06 統括役の頼み: 送った物件への反応の番で、内覧の誘いを返信（この網）と AIX【内覧調整】（ブレイン・2通の組み立て）が別々に持っていた。
  *   竹内さん本人の6番の分け目＝10/02「こちらから出す候補は直近の空いている日を3つ」の後は空室なら AIX【内覧調整】（10/15・10/18）／それより前は返信（9/04・9/10・9/19＝1件は退去予定）。
- *   on の時は、空室なら AIX【内覧調整】・退去予定なら返信、とこの1行で決める。既定 off（VIEW_INVITE_ONE_PLACE=on）
+ *   on の時は、空室・退去予定とも AIX【内覧調整】で誘う（退去予定は内覧できる時期を AIX の中で・統括役の決め 11/06＝竹内さん 10/09 の新しい方の決め）。既定 on（11/06・止める VIEW_INVITE_ONE_PLACE=off）
  */
 export function viewInviteOnePlaceOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.VIEW_INVITE_ONE_PLACE ?? "").trim().toLowerCase() === "on";
+  return (env.VIEW_INVITE_ONE_PLACE ?? "").trim().toLowerCase() !== "off"; // 11/06 統括役の決め: vio2-on 悪化0で既定 on（止める VIEW_INVITE_ONE_PLACE=off）
 }
 export function sentReactionInviteRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if (!sentReactionInviteOn(env)) return "";
   // 2026-11-06 統括役の頼み（q055 のぶつかり）: 誘いを1か所で決める（VIEW_INVITE_ONE_PLACE=on の時だけ・既定 off は今の返信の誘いのまま）
-  if (viewInviteOnePlaceOn(env)) return "- ★こちらが送った物件（送った束・オススメの中の物件）に「気になります」「ここいいですね」「気に入りました」とだけ返ってきた番（空き・費用・日時の問いが無い）は、管理会社に確かめる事も AIX で送る結果も無い＝確認の約束・御見積書の約束（route=\"promise\"）にも AIX【物件確認した】にもしない（御見積書はお客様が費用を聞いた時・送ってきた時だけ）。about=reaction_to_sent で内覧に誘う。誘い方はここで1つに決める: その物件が今ご内覧頂ける（空室）なら AIX【内覧調整】（route=\"aix\"・aix=viewing_invite＝直近の空いている日の候補を出す）で誘い、返信の締めの内覧の訴求は重ねない。退去予定などで今は内覧できない部屋の時だけ、route=\"reply\" で内覧できる時期を添えて誘う（竹内さん本人の90日 6番: 10/02 に候補日は直近の3つを出すと決めてからの番は AIX【内覧調整】2／それより前は返信 3（1番は退去予定の部屋）・見積書 1・確認の約束 0）。空き・費用・日時を聞かれた時は上の★のまま。\n";
+  if (viewInviteOnePlaceOn(env)) return "- ★こちらが送った物件（送った束・オススメの中の物件）に「気になります」「ここいいですね」「気に入りました」とだけ返ってきた番（空き・費用・日時の問いが無い）は、管理会社に確かめる事も AIX で送る結果も無い＝確認の約束・御見積書の約束（route=\"promise\"）にも AIX【物件確認した】にもしない（御見積書はお客様が費用を聞いた時・送ってきた時だけ）。about=reaction_to_sent で内覧に誘う。誘い方はここで1つに決める: 空室・退去予定とも AIX【内覧調整】（route=\"aix\"・aix=viewing_invite）で誘う。空室なら直近の空いている日の候補を出し、退去予定なら内覧できる時期を AIX の中で添える（退去予定の内覧はスタッフだけが知る中身＝竹内さん 10/09）。返信の締めの内覧の訴求は重ねない（竹内さん本人の90日 6番: 10/02 に候補日は直近の3つを出すと決めてからの番は AIX【内覧調整】2／それより前は返信 3・見積書 1・確認の約束 0）。空き・費用・日時を聞かれた時は上の★のまま。\n";
   return "- ★こちらが送った物件（送った束・オススメの中の物件）に「気になります」「ここいいですね」「気に入りました」とだけ返ってきた番（空き・費用・日時の問いが無い）は、管理会社に確かめる事も AIX で送る結果も無い＝確認の約束・御見積書の約束（route=\"promise\"）にも AIX【物件確認した】にもしない（御見積書はお客様が費用を聞いた時・送ってきた時だけ）。about=reaction_to_sent・route=\"reply\" で「ご査収頂きありがとうございます」＋その物件を「よろしければご都合よろしいお日にちにお部屋ご案内させて頂きます」と内覧に誘う（竹内さん本人の90日 6番: 内覧の誘い 5・見積書 1・確認の約束 0）。空き・費用・日時を聞かれた時は上の★のまま。\n";
 }
 function twoMessageAskRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
