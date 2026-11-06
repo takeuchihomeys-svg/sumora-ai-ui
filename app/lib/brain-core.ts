@@ -79,6 +79,7 @@ import { catalogBlockForBrain, isSceneUncertain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
 import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
+import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
@@ -186,7 +187,7 @@ import { resolveViewingDayAck } from "@/app/lib/viewing-day";
 import { furtherDiscountDaihyo, FURTHER_DISCOUNT_SOURCE, negotiationPromisePending, NEGOTIATION_PROMISE_SOURCE } from "@/app/lib/further-discount";
 import { viewingDayGreetingDue, VIEWING_DAY_GREETING_SOURCE } from "@/app/lib/viewing-day-greeting";
 import { staffTalkedToday, greetingOncePerDayEnabled } from "@/app/lib/daily-greeting";
-import { promiseKindsToday } from "@/app/lib/two-stage";
+import { promiseKindsToday, pickupDirectionWithBrainAsk } from "@/app/lib/two-stage";
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { turnElapsedOn, turnElapsed, turnElapsedLine, elapsedPreferredSide, type TurnElapsed } from "@/app/lib/turn-elapsed";
@@ -196,7 +197,7 @@ import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditi
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
 import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
-import { sentReactionInviteOn, BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract, turnContractAxisEnabled } from "@/app/lib/turn-contract";
+import { sentReactionInviteOn, sentReactionNoEstimateOn, BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract, turnContractAxisEnabled } from "@/app/lib/turn-contract";
 /** 2026-10-08 本質の仕様（turn-contract.ts）をブレインに出させるか。戻す TURN_CONTRACT_BRAIN=off（出力・指示を足さない＝静的 system も旧に戻る） */
 // 2026-10-13 棚卸しの表14: avoid_topics に「来阪」を必ず入れるか。既定は今まで通り入れる（試験で q108 が悪くなり、切り分けられなかった＝案）。BRAIN_RAIHAN_SLOT=off で入れない（返信側の固定の決まりで止める）
 // 2026-10-14 区切り4 #7: 来阪は avoid_topics の枠に固定しない（返信側の固定の決まりで止めている・竹内さんの実送信に来阪 0）。旧に戻す BRAIN_RAIHAN_SLOT=on
@@ -511,6 +512,8 @@ export type SuggestedAixMeta = {
   decision_source?: string | null;
   /** 3巡目（10/07）: AIX を外した番の出どころ（記録用・brain_decision_logs には no_aix: を付けて残す） */
   decision_source_no_aix?: string;
+  /** 2026-11-06（試験の本質の採点・統括役）: 送れる物件の候補があったか（pickupReadyMaterialLine の材料と同じ値・null は見ていない）。記録だけ */
+  pickup_ready?: boolean | null;
   /** 2026-10-13（ブレインの使い残し 4）: 下げた上書き（override-demote.ts）。f=家族・would=規則の答え・brain=ブレインの判断 */
   demoted_overrides?: Array<{ f: string; src: string; would: string | null; brain: string | null }>;
   // 2026-09-12 竹内方針「条件がきたら AIX に連動して自動で物件検索」: 真の初回（スタッフ未返信）でお客様が条件を送ってきた時、
@@ -651,7 +654,7 @@ const AIX_CAPABILITY_MAP = `
 - property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）※顧客が今まさに条件を尋ねてきた場合（「〜はありますか」「広めがいい」等）は property_search ではなく property_send を選ぶこと。※弊社TikTok/Instagram等のSNS動画で見た物件に問い合わせてきた場合、内覧希望があればviewing_invite、物件を探している段階ならproperty_searchを選ぶ（弊社TikTok掲載物件は40㎡以上・家賃15万円以上が中心のため、顧客の予算・条件に合わない場合は別エリア・条件での代替提案をnext_stepsに含める）
 
 【aixキー選択の使いどころ基準（迷ったらここを優先）】
-- estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が物件画像だけを送ってきた（テキストなし・スクショのみ）／顧客が特定物件を気に入った（かつ新条件指定なし${sentReactionInviteOn() ? "・こちらが送った束の中の物件への「気になります」だけの番は除く＝返信で内覧に誘う" : ""}）／初期費用・総額を質問してきた時点で迷わず選ぶ（御見積書がまだ無い時は、コードが「御見積書を作成しお送りさせて頂きます」の約束の返信に変える＝2段。aix は estimate_sheet のままでよい・10/08 点検）
+- estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が物件画像だけを送ってきた（テキストなし・スクショのみ）／顧客が特定物件を気に入った（かつ新条件指定なし${sentReactionInviteOn() ? "・こちらが送った束の中の物件への「気になります」だけの番は除く＝返信で内覧に誘う" : ""}${sentReactionNoEstimateOn() ? "。読み方: 費用の問いが無い「気になります」「気に入りました」は、物件を気に入った表明であって見積の依頼ではない＝見積書を選ばず内覧に誘う（竹内さん本人の6番: AIX【内覧調整】2・返信で誘う 3・見積書 1＝その1番は費用に触れた番）。竹内さんの一手（10/15・送った物件を引用して「こちらの物件気になります」）: AIX【内覧調整】「かしこまりました😊！！〇〇よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます！！直近ですと〇/〇(〇) 〇:〇〜〇:〇にてご案内可能です！！」" : ""}）／初期費用・総額を質問してきた時点で迷わず選ぶ（御見積書がまだ無い時は、コードが「御見積書を作成しお送りさせて頂きます」の約束の返信に変える＝2段。aix は estimate_sheet のままでよい・10/08 点検）
   【重要例外】顧客が同時に路線・駅名・家賃上限・徒歩分数・間取り・広さ等の新しい検索条件を示している場合は、気に入り表現があっても estimate_sheet を選ばない → property_send が正しい（条件変更が主題のサイン）。「家賃は〜万まで」という家賃予算の表明は「初期費用・総額の話題」ではない（家賃予算 ≠ 初期費用）。「○○がいい感じ」+「環状線のみで調べてほしい」「9万以下で探してほしい」等の組み合わせは常に property_send。
 - 【お客様が自分で見つけた物件】顧客がポータルの物件URL（SUUMO 等）・物件の画像を送って「ここはどうでしょうか」「気になってます」「空いてますか」と聞いた時は property_check_result（スタッフが管理会社に募集状況・条件を確認し、その結果を AIX【物件確認した】で送る。最大限割引の御見積書を同封することが多い。確認の結果が出る前の今の番は、コードが「募集状況確認＋最大限割引の御見積書をお送りします」の約束の返信に変える＝2段・10/07 竹内さん）。初期費用・見積を聞かれていれば estimate_sheet。acknowledge_check は管理会社宛ての確認依頼の文を作るボタンで、この場面では押されていない（実送信: URL を送ってきた後の最初の AIX 131回のうち 物件確認した 109・見積書送る 21・確認します 0。2026-10-01 竹内・和樹事例）。以前の「新着をピックアップしてお送りする」約束が未履行でも、お客様の物件の確認が先（同じ場面の31回中30回）
 - acknowledge_check: 管理会社への確認依頼の文を作る（お客様宛てではない）。物件の問い合わせ（お客様の持ち込み物件・URL・物件の画像・物件名＋空き／募集状況の質問）の次の一手には選ばない → いきなり property_check_result（2026-10-01 竹内「確認します あまり使わないので、いきなり物件確認したで大丈夫」。実送信150日: 確認しますの押下は全体で6回・あなたが確認しますを出した後にスタッフが押したのは 物件確認した 14・見積書送る 7・確認します 0）。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと ※スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて結果をまだ報告していない時は acknowledge_check ではなく property_check_result（その後のお客様の返事が了承・スタンプだけでも同じ。2026-09-12 竹内・Sさん事例。確認の約束の後に押された AIX に acknowledge_check は0件）
@@ -2656,14 +2659,20 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }));
   if (promiseTrack.open.some((p) => p.status === "遅れ" || p.status === "遅れ気味")) console.log(JSON.stringify({ tag: "brain:promise-overdue", conversationId, open: promiseTrack.open.map((p) => ({ kind: p.kind, status: p.status, h: Math.round(p.elapsedH) })) }));
   // 2026-11-06 作業員1（弱い所 61・q174）: 物件を送った後の「良さそう・一旦見てみたい＋他にも候補があれば」を内覧の依頼と読まない手本（竹内さん 3/3 がピックアップの約束・内覧 0）。
-  //   上の「もう少し見てみたい」の材料が拾わない言い方だけ（重ねない）。既定 off・入れる BRAIN_OTHER_CANDIDATES_READ=on（app/lib/other-candidates-read.ts）
+  //   上の「もう少し見てみたい」の材料が拾わない言い方だけ（重ねない）。既定 on（11/06 q174-guard 悪化0）・止める BRAIN_OTHER_CANDIDATES_READ=off（app/lib/other-candidates-read.ts）
   const otherCandidatesRead = otherCandidatesReadOn() && !isPostApplyStatus(convStatus)
     ? readOtherCandidates({ customerText: unrepliedTurn.text, sentPropertyCount: brainLedger.facts.propertiesSentCount ?? 0, alreadySeeMore: asksMoreListings })
     : { hit: false, liking: false };
   if (otherCandidatesRead.hit) console.log(JSON.stringify({ tag: "brain:other-candidates-read", conversationId, liking: otherCandidatesRead.liking }));
+  // 2026-11-06 作業員1（弱い所 359・q008）: 物件を送った後の「〇〇は住んでいたが不便だった」をエリアを外す条件の言い直しと読む手本（竹内さん 3/3 がピックアップの約束）。
+  //   既定 on（11/06 試験で q008 2/4→4/4・悪化0）・止める BRAIN_AREA_EXCLUDE_READ=off（app/lib/area-exclude-read.ts）
+  const areaExcludeHit = areaExcludeReadOn() && !isPostApplyStatus(convStatus)
+    && readAreaExclude({ customerText: unrepliedTurn.text, sentPropertyCount: brainLedger.facts.propertiesSentCount ?? 0 });
+  if (areaExcludeHit) console.log(JSON.stringify({ tag: "brain:area-exclude-read", conversationId }));
   const seeMoreBrainText = (asksMoreListings
     ? "\n【お客様の言葉（確定）】お客様は他のお部屋も見たいと言っている（「もう少し見てみたい」等）。実送信 6/6 がこちらの引き続きの新着物件のご紹介・見積書 0/6。今回の返信の中心は引き続きのご紹介（見積書・募集状況の確認にしない）。"
-    : "") + otherCandidatesBrainText(otherCandidatesRead, otherCandidatesRead.hit ? pickOtherCandidatesExamples(conversationId) : []);
+    : "") + otherCandidatesBrainText(otherCandidatesRead, otherCandidatesRead.hit ? pickOtherCandidatesExamples(conversationId) : [])
+    + areaExcludeBrainText(areaExcludeHit, areaExcludeHit ? pickAreaExcludeExamples(conversationId) : []);
   const sceneEvidence = sceneEvidenceForTurn(unrepliedTurn, {
     sentPropertyCount: brainLedger.facts.propertiesSentCount,
     aixHistory: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null })),
@@ -5344,7 +5353,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       : rentIncludedReply ? "初期費用（御見積書の金額）は翌月分の前家賃込みであることを本文で答える（ご入居日によって別途日割家賃・金額は書かない）"
       : null;
     // 2026-10-14 決定 C をブレイン基準に: ブレイン自身が返信を選んだ番はブレインの方向の文のまま（空の時だけ規則の方向）
-    const replyDirection = ackAfterPromise ? (ackAfterPromise.byBrain && rentGuard.text ? rentGuard.text : ackAfterPromiseDirection(ackAfterPromise.kind, ackAfterPromise.laterAix)) : waitingCustomerInfo ? `お客様の連絡待ち（こちらから「${(waitingInfo.evidence ?? "").slice(0, 40)}」とお伝え済み）。ピックアップ・新しい提案・約束はしない。返信するなら短い受け止めだけ` : twoStage ? twoStage.direction : procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
+    const replyDirection = ackAfterPromise ? (ackAfterPromise.byBrain && rentGuard.text ? rentGuard.text : ackAfterPromiseDirection(ackAfterPromise.kind, ackAfterPromise.laterAix)) : waitingCustomerInfo ? `お客様の連絡待ち（こちらから「${(waitingInfo.evidence ?? "").slice(0, 40)}」とお伝え済み）。ピックアップ・新しい提案・約束はしない。返信するなら短い受け止めだけ` : twoStage ? (pickupDirectionWithBrainAsk(twoStage, rentGuard.text) ?? twoStage.direction) : procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
       ? `${focusedEstimateOverride ? `${focusedEstimateOverride}の` : ""}最大限割引した初期費用の御見積書を作成してお送りする（募集状況の確認の宣言はしない）`
       : rentGuard.text ?? (rentGuard.dropped ? "ご条件に合うお部屋を引き続きピックアップしてお届けする（家賃の交渉には触れない）" : null);
 
@@ -6092,6 +6101,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       decision_source: finalAix ? decisionSource : (decisionSource === "guard:viewing" || decisionSource === "guard:first_contact" ? decisionSource : null),
       // 3巡目（10/07・AIX の判断のずれの調査 1468132d）: AIX を外した番（2段の約束・手続きの質問・資料で答える・連絡待ち 等）の出どころを捨てていた → 記録用に別の欄で残す（画面・関所は decision_source だけを見るので挙動は変わらない）
       decision_source_no_aix: !finalAix && decisionSource && decisionSource !== "guard:viewing" && decisionSource !== "guard:first_contact" ? decisionSource : undefined,
+      // 2026-11-06（試験の本質の採点・統括役）: 送れる候補の材料の値（記録だけ・判断は変えない）
+      pickup_ready: pickupReadyMaterial ?? undefined,
       // 2026-10-13（ブレインの使い残し 4）: 下げた上書き（規則の答え would とブレインの判断 brain の食い違い）
       demoted_overrides: compactDemoted(demotedOverrides),
       first_contact_pickup: firstContactPickup,

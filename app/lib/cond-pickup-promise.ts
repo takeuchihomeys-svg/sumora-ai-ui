@@ -6,13 +6,14 @@
 //   決まった計算（2段の網・guard:first_contact）が約束の返信に直して当てていた＝判断を決まった計算が肩代わり。
 //   根: ブレインの「AIX ボタン担当場面マップ」の property_send ①②（ヒアリング完了直後・条件の変更）が、今すぐ送る番のように読める。
 //   竹内さんの送信: 「〜全域から…〇〇さんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！」（その条件で探す約束）。
-//   切替: BRAIN_COND_PICKUP_PROMISE（①・既定 off）・BRAIN_FIRST_COND_PICKUP（②・既定 off）。確かめの物差しは本質の当たり（brain-exam の本質の道）。
+//   切替: BRAIN_COND_PICKUP_PROMISE（①）・BRAIN_FIRST_COND_PICKUP（②）。11/06 から既定 on（=off で止める）。確かめの物差しは本質の当たり（brain-exam の本質の道）。
 // テスト: app/lib/__tests__/cond-pickup-promise.test.ts
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
-const on = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "on";
-export const condPickupPromiseOn = (env: Env = envOf()) => on(env.BRAIN_COND_PICKUP_PROMISE);
-export const firstCondPickupOn = (env: Env = envOf()) => on(env.BRAIN_FIRST_COND_PICKUP);
+// 2026-11-06 統括役の決め（試験 cond1-on・cond2-on: 狙った番の本質 1/5→3/5・q347 ○・守り q351・q107・q101 悪化0）: 既定 on。止める =off
+const notOff = (v: string | undefined) => (v ?? "").trim().toLowerCase() !== "off";
+export const condPickupPromiseOn = (env: Env = envOf()) => notOff(env.BRAIN_COND_PICKUP_PROMISE);
+export const firstCondPickupOn = (env: Env = envOf()) => notOff(env.BRAIN_FIRST_COND_PICKUP);
 
 export const COND_PICKUP_PROMISE_RULE = "【竹内さんの形・条件の番（11/06）】お客様が新しい条件・条件の言い直し・似た物件の依頼・地域や環境の希望を送ってきた番の最初の一手は、その条件で探してお送りする約束の返信（2段:pickup・竹内さんの言い方「〜全域から…〇〇さんにオススメできるお部屋ピックアップしてお送りさせて頂きます」）。AIX【物件送付】（property_send）にするのは、その条件で探した送れる物件が材料（売上サポの送れる候補）に既にある番だけ。上の場面マップの property_send ①②も、送れる物件が材料にある時の話。";
 export const FIRST_COND_PICKUP_RULE = "【竹内さんの形・初回に条件つき（11/06）】初回の番は、材料の【初回の条件】の行に従う: 「そろっている」なら AIX【条件ヒアリング】にしない＝初回の挨拶＋その条件でピックアップしてお送りする約束の返信（2段:pickup）。「まだそろっていない」なら AIX【条件ヒアリング】。そろっているかの数え方は会社の1か所（hearing-form.pickupConditionsReady・作業員1）で、ここでは数えない。";

@@ -134,3 +134,18 @@ export function isExamJobShape(x: unknown): boolean {
 export function confirmTargets(cmps: Array<{ id: string; cmp: string }>): string[] {
   return cmps.filter((c) => /^worse/.test(c.cmp)).map((c) => c.id);
 }
+
+/**
+ * 前を夜の基準に固定した回の確かめ直しの対象（純関数・2026-11-06 統括役）: この回で1回でも外れた問題。
+ *   悪化＝前が○で今が✕＝今が全部○の問題は悪化になりえない＝確かめ直さなくても見落としは増えない。
+ *   夜の基準の後の main の直しで前が○に変わった問題（夜は✕・今の main は○・依頼は✕）も、外れた問題に入るので拾える
+ */
+export function pinConfirmIds(rows: ReadonlyArray<{ id: string; score?: { pass?: boolean } | null; error?: string }>): string[] {
+  return [...new Set(rows.filter((r) => !r.error && r.score && r.score.pass === false).map((r) => r.id))];
+}
+
+/** 比べる前の行を合わせる（純関数）: 確かめ直した問題は今の main の前、それ以外は夜の基準の前 */
+export function mergePinnedBase<R extends { id: string }>(nightly: ReadonlyArray<R>, current: ReadonlyArray<R>, confirmed: ReadonlyArray<string>): R[] {
+  const c = new Set(confirmed), have = new Set(current.map((r) => r.id));
+  return [...nightly.filter((r) => !(c.has(r.id) && have.has(r.id))), ...current.filter((r) => c.has(r.id))];
+}

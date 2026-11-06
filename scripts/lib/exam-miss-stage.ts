@@ -1,5 +1,6 @@
 import { ownersOfMarker } from "../../app/lib/conductor-linkage";
 import type { WeaknessHit } from "../../app/lib/brain-weaknesses";
+import { essencePickupPromise } from "./exam-essence";
 // scripts/lib/exam-miss-stage.ts — 試験の外れ・悪化の問題で「どの段で道が変わったか」を答案の記録だけで出す（純関数・LLM なし）
 //
 // 2026-11-06 作業員8（竹内さんの決定 KB P1「試験から改善の仕方も強化・統括同士連携」・統括役の頼み「外れの自動の切り分け」）:
@@ -18,7 +19,7 @@ export type MissRowLite = {
   draft?: { code?: string | null; ok?: boolean | null; pass?: boolean | null; asks?: boolean[] | null } | null;
   trace?: Record<string, unknown> | null;
   brain?: { demoted_overrides?: unknown; reply_direction?: string | null; turn_contract?: unknown } | null;
-  raw?: { reply_direction?: string | null; customer_questions?: unknown; proposals?: unknown } | null;
+  raw?: { reply_direction?: string | null; customer_questions?: unknown; proposals?: unknown; aix?: unknown; turn_contract?: unknown } | null;
   asks?: Array<{ covered?: boolean; route?: boolean }> | null;
   score?: { pass?: boolean; path?: boolean } | null;
   /** その回の記録の印（brain-exam の出力の {"tag":"brain:…"}・[mgmt-*] の行・parseLogTags で付ける） */
@@ -90,7 +91,9 @@ export function parseLogTags(text: string, convName: (id: string) => string | nu
 
 /** 1つの外れの回の切り分け: 段を順に全部並べる（ブレインの生の答え→2段→場面の網→決まった書き換え→書き手→文の中身→最終チェック） */
 export function classifyMiss(r: MissRowLite): MissVerdict {
-  const ess = r.essence?.code ?? null, fin = r.path?.code ?? null, dr = r.draft?.code ?? null;
+  // 2026-11-06 統括役: 本質の道は試験の採点と同じ数え方（物件の AIX＋該当の route が promise＋候補0件＝2段:pickup・scripts/lib/exam-essence.ts）
+  const ess0 = r.essence?.code ?? null;
+  const ess = ess0 && ess0.startsWith("AIX:") && essencePickupPromise(r.raw as Record<string, unknown> | null, (r.trace?.pickup_ready as boolean | null | undefined) ?? null) ? "2段:pickup" : ess0, fin = r.path?.code ?? null, dr = r.draft?.code ?? null;
   const m = markersOf(r);
   const st: StageHit[] = [];
   // ブレインの生の答えが外れ（読みの材料: customer_questions・proposals の頭）
@@ -133,7 +136,7 @@ export function classifyMiss(r: MissRowLite): MissVerdict {
 export const STAGE_JA: Record<MissStage, string> = { brain: "ブレイン", two_stage: "2段", scene_net: "場面の網と信号", rewrite: "決まった書き換え", writer: "書き手", text: "文の中身", final_check: "最終チェック", asks: "依頼の答え方", none: "（不明）" };
 
 /** 同じ問題の外れの回をまとめる（回ごとの段の並びを数え、一番多い並び＋ほかの並び・回ごとの行も返す） */
-export function summarizeMisses(rows: MissRowLite[]): { id: string; n: number; stage: MissStage; markers: string[]; line: string; perRep: string[]; reps: number[] } | null {
+export function summarizeMisses(rows: MissRowLite[]): { id: string; n: number; stage: MissStage; markers: string[]; line: string; perRep: string[]; reps: number[]; essence: string | null } | null {
   const bad = rows.filter((r) => r.score && r.score.pass === false);
   if (!bad.length) return null;
   const vs = bad.map(classifyMiss);
@@ -142,7 +145,7 @@ export function summarizeMisses(rows: MissRowLite[]): { id: string; n: number; s
   const topKey = [...cnt].sort((a, b) => b[1] - a[1])[0][0];
   const pick = vs.find((v) => key(v) === topKey)!;
   const others = [...cnt].filter(([k]) => k !== topKey).map(([k, n]) => `${k.split(">").map((x) => STAGE_JA[x as MissStage]).join("→")} ${n}回`);
-  return { id: pick.id, n: bad.length, stage: pick.stage, markers: [...new Set(vs.flatMap((v) => v.markers))], perRep: vs.map((v) => v.line), reps: bad.map((r) => r.rep ?? 0),
+  return { id: pick.id, n: bad.length, stage: pick.stage, markers: [...new Set(vs.flatMap((v) => v.markers))], perRep: vs.map((v) => v.line), reps: bad.map((r) => r.rep ?? 0), essence: pick.from,
     line: `${pick.line}・外れ ${cnt.get(topKey)}/${bad.length}回${others.length ? `（ほかの並び: ${others.join("・")}）` : ""}` };
 }
 
@@ -161,11 +164,11 @@ export function ownerOf(markers: string[], table?: LinkRow[]): LinkRow | null {
 }
 
 /** brain_weaknesses に入れる1行の案（key は段＋印の頭＝同じ型の外れは同じ key で重なりを見る） */
-export function weaknessDraft(s: { id: string; stage: MissStage; markers: string[]; line: string }, owner: LinkRow | null): { key: string; title: string; area: "exam" | "brain" | "writer"; root_cause: string; evidence: Record<string, unknown> } {
+export function weaknessDraft(s: { id: string; stage: MissStage; markers: string[]; line: string }, owner: LinkRow | null, ess?: { essence?: string | null; accept?: string | null }): { key: string; title: string; area: "exam" | "brain" | "writer"; root_cause: string; evidence: Record<string, unknown> } {
   const head = (s.markers[0] ?? "none").replace(/\(.*$/, "");
   return {
-    key: weaknessKeyOf(s.stage, s.markers) ?? `exam-stage:${s.stage}:none`,
-    title: `試験の外れ: ${STAGE_JA[s.stage]}で道が変わる（${head}）`,
+    key: weaknessKeyOf(s.stage, s.markers, ess) ?? `exam-stage:${s.stage}:none`,
+    title: s.stage === "brain" && ess?.essence ? `試験の外れ: ブレインの本質の道が ${ess.essence}（正解 ${ess.accept ?? "?"}）` : `試験の外れ: ${STAGE_JA[s.stage]}で道が変わる（${head}）`,
     area: s.stage === "writer" || s.stage === "final_check" ? "writer" : s.stage === "brain" ? "brain" : "exam",
     root_cause: `${s.line}${owner ? `・持ち主 ${owner.id}（${owner.owner}）` : "・持ち主は連携の表に無い"}`,
     evidence: { problem: s.id, markers: s.markers, owner: owner?.owner ?? null },
@@ -173,8 +176,9 @@ export function weaknessDraft(s: { id: string; stage: MissStage; markers: string
 }
 
 /** 印の頭を台帳の key に使える形へ（小文字・英数と : _ - だけ・80字まで）。使えなければ null */
-export function weaknessKeyOf(stage: MissStage, markers: string[]): string | null {
-  const head = (markers[0] ?? "none").replace(/\(.*$/, "");
+export function weaknessKeyOf(stage: MissStage, markers: string[], ess?: { essence?: string | null; accept?: string | null }): string | null {
+  // ブレインの段は、印の代わりに「本質の道→正解の道」の組を頭にする（11/06 統括役「exam-stage:brain:none は粗い」＝条件の番で本質が物件送付、のような型が同じ key にまとまる）
+  const head = stage === "brain" && ess?.essence ? `ess:${pathSlug(ess.essence)}-to-${pathSlug(ess.accept)}` : (markers[0] ?? "none").replace(/\(.*$/, "");
   const k = `exam-stage:${stage}:${head}`.toLowerCase().replace(/[^a-z0-9:_-]+/g, "_").replace(/_+$/, "").slice(0, 80);
   return /^[a-z0-9][a-z0-9:_-]{1,79}$/.test(k) ? k : null;
 }
@@ -184,13 +188,14 @@ export function weaknessKeyOf(stage: MissStage, markers: string[]): string | nul
  *   同じ key は upsertWeaknessHits が既存の行にまとめる（key は一意。直した行に再び当たった時は既存の表示どおり「直したのに再び」に出る）。
  *   段が決められない（none）・依頼の答え方だけ（asks）は入れない。6つ目以降の key は捨てる（外れの多い順に5つ）
  */
-export function weaknessHitsFromMisses(label: string, misses: ReadonlyArray<{ id: string; n: number; stage: MissStage; markers: string[]; line: string; reps?: number[] }>, opts: { max?: number; owner?: (markers: string[]) => LinkRow | null } = {}): WeaknessHit[] {
+export function weaknessHitsFromMisses(label: string, misses: ReadonlyArray<{ id: string; n: number; stage: MissStage; markers: string[]; line: string; reps?: number[]; essence?: string | null }>, opts: { max?: number; owner?: (markers: string[]) => LinkRow | null; acceptOf?: (id: string) => string | null } = {}): WeaknessHit[] {
   const max = opts.max ?? 5, own = opts.owner ?? ((mk: string[]) => ownerOf(mk));
   const byKey = new Map<string, WeaknessHit>();
   const sorted = [...misses].sort((a, b) => b.n - a.n);
   for (const m of sorted) {
     if (m.stage === "none" || m.stage === "asks") continue;
-    const key = weaknessKeyOf(m.stage, m.markers); if (!key) continue;
+    const ess = { essence: m.essence ?? null, accept: opts.acceptOf?.(m.id) ?? null };
+    const key = weaknessKeyOf(m.stage, m.markers, ess); if (!key) continue;
     const o = own(m.markers);
     const reps = (m.reps?.length ? m.reps : [0]).map((r) => `${label} ${m.id}#${r}`);
     const owners = o ? [`${o.id}（${o.owner}）`] : [];
@@ -201,8 +206,20 @@ export function weaknessHitsFromMisses(label: string, misses: ReadonlyArray<{ id
       continue;
     }
     if (byKey.size >= max) continue;
-    const d = weaknessDraft(m, o);
+    const d = weaknessDraft(m, o, ess);
     byKey.set(key, { key, title: d.title, area: d.area, symptom: d.root_cause.slice(0, 500), n: m.n, evidence: { exam_qids: [m.id], exam_labels: [label], exam_reps: reps, owners } });
   }
   return [...byKey.values()];
+}
+
+/** 道の分類（返信・2段:pickup・AIX:property_send（左だけ）等）を key に使える英字へ（括弧の注は落とす）。11/06 統括役 */
+export function pathSlug(code: string | null | undefined): string {
+  const c = String(code ?? "").replace(/（[^）]*）|\([^)]*\)/g, "").trim();
+  if (!c) return "unknown";
+  if (c === "返信") return "reply";
+  if (c === "なし") return "none";
+  const m = c.match(/^(2段|2択|AIX):?(.*)$/);
+  const pre = m ? ({ "2段": "two_stage", "2択": "choice", AIX: "aix" } as Record<string, string>)[m[1]] : "";
+  const rest = (m ? m[2] : c).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return [pre, rest].filter(Boolean).join("_") || "other";
 }

@@ -233,6 +233,10 @@ export function cleanupTargets(outText: string, label: string): Array<{ conv: st
 }
 
 /** 2026-11-05 作業員1（作業員3の気付き）: vercel inspect の出力から組み立ての状態（READY・ERROR・BUILDING 等）。読めなければ null */
+/** 2026-11-06 作業員1: vercel inspect の出力（表は stderr・stdout は空のことがある）を1つの文に。spawnSync の結果をそのまま渡す */
+export function inspectOutputText(r: { stdout?: Buffer | string | null; stderr?: Buffer | string | null } | null | undefined): string {
+  return `${String(r?.stdout ?? "")}\n${String(r?.stderr ?? "")}`;
+}
 export function remoteDeployState(text: string): "READY" | "ERROR" | "CANCELED" | "BUILDING" | "QUEUED" | null {
   const m = String(text ?? "").match(/status\s*[●•]?\s*(Ready|Error|Canceled|Building|Queued|Initializing)/i);
   if (!m) return null;
