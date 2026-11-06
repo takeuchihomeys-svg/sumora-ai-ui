@@ -150,6 +150,16 @@ function readJobs(): Array<ExamJob & { file: string }> {
   }
   return out.sort((a, b) => compareJobs(a, b));
 }
+/**
+ * 回数の計画（実際に流す時と、積む時の見込みの1行で同じ物を使う）。2026-11-06 統括役（P0 8805bd74・作業員9 の EXAM_FLAKY_REPS=1 の依頼が見込み3回分 $0.18 のまま出た）:
+ *   EXAM_FLAKY_REPS・EXAM_STABLE_REPS は依頼の --env を先に、無ければ係の env を読む。普通の問題は依頼の --repeat、揺れる問題は揺れの回数、安定は安定の回数
+ */
+export function jobRepsPlan(j: Pick<ExamJob, "cwd" | "repeat" | "flaky" | "env">, ids: string[]): ReturnType<typeof repsPlan> {
+  const ev = (k: string) => (j.env?.[k] ?? process.env[k]);
+  const sr = ev("EXAM_STABLE_REPS");
+  return repsPlan(ids, (id) => readObs(id), { hashesOf: problemHashesOf(j.cwd), normal: j.repeat, flakyReps: Number(ev("EXAM_FLAKY_REPS") ?? "4"), forced: j.flaky, model: "deepseek", stableReps: sr === "off" ? undefined : Number(sr ?? "1") });
+}
+
 function addJob(): void {
   ensureDirs();
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
@@ -213,7 +223,7 @@ function addJob(): void {
     }
     const kind = (["record", "prod", "exam"].includes(arg("kind")) ? arg("kind") : undefined) as "record" | "prod" | "exam" | undefined;
     const group = /^grp-reply/.test(label) ? "reply" as const : /^grp-aix/.test(label) ? "aix" as const : /^grp-brain/.test(label) ? "brain" as const : null;
-    const plan = planExam({ label, kind, switchName: base.switch, ids, group, diffStage: base.stage === "brain" || base.stage === "draft" ? base.stage : null, brainText: flag("brain-text"), defaultOn: flag("default-on"), capUsd: Number(arg("cap-usd", "2")) || 2 });
+    const plan = planExam({ label, kind, switchName: base.switch, ids, group, repsOverride: job.runner === "brain-exam" ? (() => { try { return jobRepsPlan(job, ids).reps; } catch { return undefined; } })() : undefined, diffStage: base.stage === "brain" || base.stage === "draft" ? base.stage : null, brainText: flag("brain-text"), defaultOn: flag("default-on"), capUsd: Number(arg("cap-usd", "2")) || 2 });
     log(`  ${plan.line}`);
     const sug = kindSuggest({ kind, switchName: base.switch, label }); if (sug) log(`  （${sug}）`);
     try { appendFileSync(join(examCacheRoot(), "exam-plans.jsonl"), JSON.stringify({ at: new Date().toISOString(), label, route: plan.route, ids: plan.ids, usd: Number(plan.cost.usd.toFixed(4)), stage: plan.stage, claude: plan.claude.ids, gate: plan.gate }) + "\n"); } catch { /* 記録できなくても積む */ }
@@ -230,7 +240,7 @@ function addJob(): void {
     if (job.runner !== "brain-exam" || !job.only) return [] as string[][];
     const ids0 = job.only.split(",").filter(Boolean);
     if (process.env.EXAM_ADD_SPLIT_BY_TIME === "off") return splitIds(ids0);
-    const rp0 = repsPlan(ids0, (id) => readObs(id), { hashesOf: problemHashesOf(job.cwd), normal: job.repeat, flakyReps: Number(process.env.EXAM_FLAKY_REPS ?? "4"), forced: job.flaky, model: "deepseek", stableReps: process.env.EXAM_STABLE_REPS === "off" ? undefined : Number(process.env.EXAM_STABLE_REPS ?? "1") });
+    const rp0 = jobRepsPlan(job, ids0);
     const src = (() => { try { return readFileSync(join(job.cwd, "scripts", "brain-exam.ts"), "utf8"); } catch { return ""; } })();
     const g = staleExamGuard(src, null, job.maxMin ?? Number(process.env.EXAM_JOB_MAX_MIN ?? "40"), Number(process.env.EXAM_JOB_OLD_MAX_MIN ?? "120"));
     const lanes = g.laneOld ? 1 : Math.max(1, Math.round(Number(process.env.EXAM_CONCURRENCY ?? "4") * 0.75));
@@ -519,7 +529,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     }
     // brain-exam: ③ 問題ごとの回数（揺れる問題は増やす）
     const ids = j.only.split(",").filter(Boolean);
-    const rp = repsPlan(ids, (id) => readObs(id), { hashesOf: problemHashesOf(j.cwd), normal: j.repeat, flakyReps: Number(process.env.EXAM_FLAKY_REPS ?? "4"), forced: j.flaky, model: "deepseek", stableReps: process.env.EXAM_STABLE_REPS === "off" ? undefined : Number(process.env.EXAM_STABLE_REPS ?? "1") });
+    const rp = jobRepsPlan(j, ids);
     const maxRep = Math.max(j.repeat, ...Object.values(rp.reps));
     const repsFile = join(RES, `${j.label}.reps.json`);
     writeFileSync(repsFile, JSON.stringify(rp.reps, null, 1));

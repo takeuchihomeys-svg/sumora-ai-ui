@@ -62,5 +62,14 @@ ok("上限: 届いたら止める", overBudget(1.0, 1.0) && overBudget(1.2, 1.0)
 ok("上限: 無い・0・変な値は止めない", !overBudget(99, null) && !overBudget(99, 0) && !overBudget(NaN, 1));
 ok("上限の環境変数", capUsdOf({ EXAM_MAX_USD: "0.5" }) === 0.5 && capUsdOf({}) === null && capUsdOf({ EXAM_MAX_USD: "x" }) === null && capUsdOf({ EXAM_MAX_USD: "0" }) === null);
 
+{
+  // 11/06 統括役: 係が実際に流す回数を渡されたら見込みはその回数（作業員9 の q010・1回の依頼が3回分 $0.18 と出た）
+  const before = planExam({ label: "d0", ids: ["q010"], diffStage: "draft", atMs: OFF });
+  const after = planExam({ label: "d1", ids: ["q010"], diffStage: "draft", atMs: OFF, repsOverride: { q010: 1 } });
+  ok("回数の指定で見込みが1回分", before.reps.q010 === 3 && after.reps.q010 === 1 && Math.abs(after.cost.usd * 3 - before.cost.usd) < 1e-9 && after.line.includes("安定1×1"), `${before.cost.usd} ${after.cost.usd} ${after.line}`);
+  const mix = planExam({ label: "d2", ids: ["a", "b"], atMs: OFF, repsOverride: { a: 4 } });
+  ok("渡されない問題は今までの推定", mix.reps.a === 4 && mix.reps.b === 3 && mix.line.includes("揺れ4×2"), mix.line);
+}
+
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
