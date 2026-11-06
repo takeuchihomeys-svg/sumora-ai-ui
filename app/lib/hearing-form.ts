@@ -226,7 +226,17 @@ function itemsFromText(texts: ReadonlyArray<string>): { area: boolean; rent: boo
  * @param known 顧客の行（property_customers）。紐付いていなければ null
  * @param customerTexts お客様の発言
  */
-export function pickupConditionsReady(known: HearingKnown | null | undefined, customerTexts: ReadonlyArray<string> = []): PickupReadiness {
+/**
+ * 2026-11-06 作業員1（統括役の B・作業員4の②とそろえる・P0 2e164f41）: 竹内さん本人の初回の番（200日・物件の持ち込みを除く 117番）を
+ *   エリア・家賃・間取り・入居時期の組み合わせで数えると、エリアがある番はピックアップの約束（足りない項目は同じ文で聞く）:
+ *   エ家間時 46/50・エ家間- 17/18・エ家-時 9/10・エ-間時 5/5・エ-間- 4/4・エ家-- 3/3・エ--時 4/4（「ピックアップ…ご希望の家賃や間取りなどお聞かせ頂けましたら」）・エリアだけ 4/4。
+ *   エリアが無い番は条件ヒアリング／その他。今の線（エリア＋家賃）では、エリア＋間取り・時期で家賃の無い 13番を条件ヒアリングに戻していた。
+ *   PICKUP_READY_AREA_ONLY=on でそろった＝エリアがある（missing は今まで通り家賃も出す＝同じ文で聞く項目）。既定 off。数え方はここ1か所（作業員4の②もこれを使う）
+ */
+export function pickupReadyAreaOnlyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PICKUP_READY_AREA_ONLY ?? "").trim().toLowerCase() === "on";
+}
+export function pickupConditionsReady(known: HearingKnown | null | undefined, customerTexts: ReadonlyArray<string> = [], env?: Record<string, string | undefined>): PickupReadiness {
   const rowArea = !!known && (!!s(known.desired_area) || !!s(known.commute_station));
   const rowRent = !!known && ((known.rent_max ?? 0) > 0 || (known.rent_min ?? 0) > 0);
   const txt = rowArea && rowRent ? { area: true, rent: true } : itemsFromText(customerTexts.filter((t) => !!t && t.trim() !== ""));
@@ -235,7 +245,8 @@ export function pickupConditionsReady(known: HearingKnown | null | undefined, cu
   if (!rowRent && !txt.rent) missing.push("rent");
   const usedText = (!rowArea && txt.area) || (!rowRent && txt.rent);
   const source: PickupReadiness["source"] = usedText ? "customer_text" : known ? "customer_row" : customerTexts.some((t) => t && t.trim()) ? "customer_text" : "none";
-  return { ready: missing.length === 0, missing, source };
+  const ready = pickupReadyAreaOnlyOn(env) ? !missing.includes("area") : missing.length === 0;
+  return { ready, missing, source };
 }
 
 // ── 顧客の行が無い時の書き入れ（お客様の発言から・2026-10-02）──
