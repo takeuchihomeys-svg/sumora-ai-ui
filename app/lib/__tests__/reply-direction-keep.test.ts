@@ -5,7 +5,7 @@ let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, extra); } };
 const on = { REPLY_DIRECTION_KEEP: "on" };
 const dir = "神崎川を外した条件でピックアップしてお送りすると約束する返信にする";
-t("既定 off", !replyDirectionKeepOn({}) && replyDirectionWithKeep({ direction: dir, scene: "conditions", customerText: "神崎川は住んでいたが不便だった", staffToday: [] }, {}) === dir);
+t("既定 on・=off で止める（11/06）", replyDirectionKeepOn({}) && !replyDirectionKeepOn({ REPLY_DIRECTION_KEEP: "off" }) && replyDirectionWithKeep({ direction: dir, scene: "conditions", customerText: "大阪市内で1LDK", staffToday: [], firstContact: true }, { REPLY_DIRECTION_KEEP: "off" }) === dir);
 const a = replyDirectionWithKeep({ direction: dir, scene: "conditions", customerText: "大阪市内か茨木・高槻で1LDK・7万円台", staffToday: [], firstContact: true }, on);
 t("初回の条件の番（q019・竹内さん 80%）→ 竹内さんの形の継続の約束", !!a && a.includes("全力でサポートさせて頂きます"), a);
 t("2回目以降の言い直し（q008・q010・竹内さん 39%）→ 入れない", replyDirectionWithKeep({ direction: dir, scene: "conditions", customerText: "神崎川は住んでいたが不便だった", staffToday: [] }, on) === dir);

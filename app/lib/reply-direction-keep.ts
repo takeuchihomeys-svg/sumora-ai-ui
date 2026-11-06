@@ -4,12 +4,12 @@
 //   2段:pickup の方向の文（two-stage PICKUP_DIRECTION_KEEP）はブレインが「返信」を選ぶ番（試験 q008 の 3/4）に届かない＝返信の番の reply_direction にも同じ1文を足す。
 //   線（竹内さんの送信 1,211通・takeuchi_compose_examples）: 条件の番（AIX の後でない）で継続の約束を入れたのは 106/180＝59%（過半数）。
 //   了承・検討の番（9〜12%）・物件への感想の番（q174）には入れない。同じ日にこちらがもう言っていれば入れない（KB 1d07b3df）。
-// 切替: REPLY_DIRECTION_KEEP=on の時だけ（既定 off）。テスト: app/lib/__tests__/reply-direction-keep.test.ts
+// 切替: REPLY_DIRECTION_KEEP（11/06 既定 on・=off で止める）。テスト: app/lib/__tests__/reply-direction-keep.test.ts
 import { hasKeepPromise } from "./reply-compose-conductor";
 
 type Env = Record<string, string | undefined>;
 export function replyDirectionKeepOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.REPLY_DIRECTION_KEEP ?? "").trim().toLowerCase() === "on";
+  return (env.REPLY_DIRECTION_KEEP ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（keep-line-on: 初回 q019 3/4→4/4・2回目以降は足さない・悪化0・統括役の決め）
 }
 const LOOK_RE = /一旦見て|見てみたい|見てみます|気になります|気になってます|良さそう|いいですね|綺麗ですね/;
 export const KEEP_LINE = "〇〇さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！";

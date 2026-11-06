@@ -680,13 +680,13 @@ export function firstContactCheckTwoStage(propertyMsgs: readonly string[], custo
  *      （試験 q174: 3通とも「ご内覧頂く事も可能」「ご内覧のご希望もお受け」等を足した・竹内さんはピックアップの約束だけ）
  *   ② PICKUP_DIRECTION_KEEP（322）: 継続の約束を竹内さんの実送信の形で1文（条件の言い直しのピックアップの約束＝竹内さん 59%・新着を頼まれた時）。同じ日にもう言っていれば入れない（KB 1d07b3df）
  *      （試験 cc2-on q154#1: 書き手への注記では書かなかった）
- * どちらも既定 off（=on で入る）。
+ * PICKUP_DIRECTION_NO_VIEWING は既定 off（=on で入る）・PICKUP_DIRECTION_KEEP は 11/06 既定 on（=off で止める）。
  */
 export function pickupDirectionNoViewingOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.PICKUP_DIRECTION_NO_VIEWING ?? "").trim().toLowerCase() === "on";
 }
 export function pickupDirectionKeepOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PICKUP_DIRECTION_KEEP ?? "").trim().toLowerCase() === "on";
+  return (env.PICKUP_DIRECTION_KEEP ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（keep-line-on・統括役の決め）
 }
 const LOOK_NOT_VIEWING_RE = /一旦見て|見てみたい|見てみます|気になります|気になってます|良さそう|いいですね|綺麗ですね/;
 const EXPLICIT_VIEWING_RE = /(?:内覧|内見|見学)/;

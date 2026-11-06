@@ -24,7 +24,7 @@ t("夜の結び: on でも募集状況だけは変えない", nightMgmtCheckDire
 const pv: TwoStageVerdict = { kind: "pickup", direction: "新しいご条件でお部屋をピックアップしてお送りすると約束する返信にする", keyTopic: "", source: "rule:two_stage_promise(pickup)" };
 const pvq: TwoStageVerdict = { ...pv, source: "rule:two_stage_promise(pickup_unless_ack)" };
 const q174 = "そうなんですね、、(うるうる) 承知しました！ ありがとうございます！ 広くて綺麗ですね！✨一旦見てみたいです！ 場所が少し遠い気もしてて、もし他にも候補ありましたらお願いしたいです(ぺこり)";
-t("ピックアップ: 既定 off は変えない", pickupDirectionAdjust(pvq, { customerText: q174 }, {})?.direction === pvq.direction);
+t("ピックアップ: 両方 off は変えない", pickupDirectionAdjust(pvq, { customerText: q174 }, { PICKUP_DIRECTION_KEEP: "off" })?.direction === pvq.direction);
 const p1 = pickupDirectionAdjust(pvq, { customerText: q174 }, { PICKUP_DIRECTION_NO_VIEWING: "on", PICKUP_DIRECTION_KEEP: "on" });
 t("ピックアップ: q174（一旦見てみたい）→ 内覧の一文を足さない・継続の約束は入れない（感想の番）", !!p1 && p1.direction.includes("内覧の依頼ではない") && !p1.direction.includes("全力でサポート") && p1.source === pvq.source, p1?.direction);
 t("ピックアップ: はっきり内覧を頼んだ時は内覧の線を足さない", !pickupDirectionAdjust(pvq, { customerText: "一旦見てみたいので内覧お願いします" }, { PICKUP_DIRECTION_NO_VIEWING: "on" })?.direction.includes("内覧の依頼ではない"));
