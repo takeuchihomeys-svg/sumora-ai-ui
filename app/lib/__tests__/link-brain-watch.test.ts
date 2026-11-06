@@ -184,8 +184,9 @@ it("つなぎごとに数え、例の名前を伏せ、まとめに例の文を�
   if (!renderLinkSummary(s, { examples: true }).includes("①約束→ピッカー")) throw new Error("表に名前が無い");
 });
 
-it("ピックアップの約束を物件オススメ（1件）で果たした: off は取り違え・LINK_WATCH_PICKUP_BY_RECOMMEND=on は果たした", () => {
-  eq(isPickupButtonMislabeled(false, "property_recommendation", null, {}), true);
+it("ピックアップの約束を物件オススメ（1件）で果たした: 既定 on は果たした・LINK_WATCH_PICKUP_BY_RECOMMEND=off は取り違え", () => {
+  eq(isPickupButtonMislabeled(false, "property_recommendation", null, {}), false);
+  eq(isPickupButtonMislabeled(false, "property_recommendation", null, { LINK_WATCH_PICKUP_BY_RECOMMEND: "off" }), true);
   eq(isPickupButtonMislabeled(false, "property_recommendation", null, { LINK_WATCH_PICKUP_BY_RECOMMEND: "on" }), false);
   eq(isPickupButtonMislabeled(false, "property_send", null, { LINK_WATCH_PICKUP_BY_RECOMMEND: "on" }), false);
 });
