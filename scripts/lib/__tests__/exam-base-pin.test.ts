@@ -1,6 +1,6 @@
 // 夜の基準に固定するか（scripts/lib/exam-base-pin.ts）の単体テスト（LLM も DB も git も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-base-pin.test.ts（全 PASS で exit 0）
-import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects, nightBaseJobDue, isExamJobShape, nightBaseAlready, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT } from "../exam-base-pin";
+import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects, nightBaseJobDue, isExamJobShape, nightBaseAlready, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseCapUsd } from "../exam-base-pin";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -83,6 +83,7 @@ ok("二重に積まない: 列・済み・結果に同じ日の名前", nightBas
   // 夜の基準は昼の依頼と同じ --repeat（構成の鍵）で作る
   const nj = nightBaseJobDue(null, new Date("2026-11-07T12:30:00Z"), { cwd: "/x" });
   ok("夜の基準の依頼は --repeat=4（昼の依頼の構成と同じ）・main が進んでも止めない", NIGHT_BASE_REPEAT === 4 && String((nj.job as { cmds: string[] }).cmds[0]).includes("--repeat=4") && (nj.job as { env: Record<string, string> }).env.EXAM_BASELINE_IGNORE_MAIN_MOVED === "1");
+  ok("夜の基準の上限 既定 $12（0 で上限なし）", (nj.job as { capUsd?: number }).capUsd === 12 && nightBaseCapUsd({ EXAM_NIGHT_BASE_CAP_USD: "0" }) === 0 && nightBaseCapUsd({}) === 12);
 }
 
 console.log(`${pass} pass / ${fail} fail`);

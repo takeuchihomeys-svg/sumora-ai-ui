@@ -97,6 +97,7 @@ export type NightlyRecord = NightlyBase & { cfg: string; /** 夜の基準が読�
  *   夜も昼と同じ --repeat=4 で作る（前の子は揺れる問題だけ回を足す＝EXAM_BASE_REPEAT_FLAKY・安定の問題は1回で揃い扱い）
  */
 export const NIGHT_BASE_REPEAT = 4;
+export function nightBaseCapUsd(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): number { const v = Number(env.EXAM_NIGHT_BASE_CAP_USD ?? "12"); return Number.isFinite(v) && v > 0 ? v : 0; }
 
 export function nightBaseJobDue(lastJstDay: string | null, now: Date, opts: { fromHour?: number; cwd: string; repeat?: number }): { due: boolean; day: string; job: Record<string, unknown> | null } {
   const j = new Date(now.getTime() + 9 * 3_600_000);
@@ -111,6 +112,8 @@ export function nightBaseJobDue(lastJstDay: string | null, now: Date, opts: { fr
       // 2026-11-06: 始めの main で最後まで作る（main が進んでも止めない）・DB の材料はその夜の日の写し
       env: { LLM_TEST_MODE: "deepseek-all", EXAM_BASELINE_IGNORE_MAIN_MOVED: "1", EXAM_DB_SNAPSHOT_DAY: new Date(now.getTime() + 5 * 3_600_000).toISOString().slice(0, 10) },
       createdAt, tries: 0, runner: "cmd", nightOnly: true, priority: 9, maxMin: 300,
+      // 2026-11-07 統括役: 夜の基準の費用の上限（既定 $12・EXAM_NIGHT_BASE_CAP_USD・0 で上限なし）。届いたら作れた問題の一覧で控えを書く（brain-exam）
+      ...(nightBaseCapUsd() > 0 ? { capUsd: nightBaseCapUsd() } : {}),
       cmds: [`scripts/brain-exam.ts --label=${label} --conv=auto --baseline=main --baseline-only --stage=brain --repeat=${Math.max(1, opts.repeat ?? NIGHT_BASE_REPEAT)}`],
     },
   };
