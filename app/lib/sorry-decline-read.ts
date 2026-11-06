@@ -8,14 +8,14 @@
 //     謝り 59番: 受け止めの返信 29・継続の約束 17（＝78%）・内覧に誘う 5・AIX 5・返さない 3／断り 4番: 全部返信（受け止め 3・継続の約束 1）
 //     こちらの「ごゆっくりご検討・いつでもお気軽に」の締めの後のお礼 7番: 返信 5（継続の約束 3・受け止め 2）・内覧と AIX 0
 //   ＝今日の (a)・359 と同じ形で、読み方（動く依頼ではない）と一手（受け止めの返信＋今の予定・前に気に入った物件を優先／引き続き探す約束）を1組で渡す。
-//   同じ発言で新しい依頼（他お願いします・探して・送って・内覧・申込・質問）をしている番には当てない。既定 off（入れる BRAIN_SORRY_DECLINE_READ=on）
+//   同じ発言で新しい依頼（他お願いします・探して・送って・内覧・申込・質問）をしている番には当てない。既定 on（11/07 試験 sorry-read-on-1107＋on2: q356 前 1/2→2/2（内覧の誘い→返信）・q354 q357 返信のまま・守り q032 q081 q180 q087 q129 悪化0・本質 前15/18→今10/11・前5/5→今6/6）。止める BRAIN_SORRY_DECLINE_READ=off
 //   監査（scripts/audit-sorry-decline-read.ts・90日・候補 1,375通・竹内さんの番を目で読んだ）: 断り 7番＝返信 6（受け止め 2・継続の約束 4）・すぐ探して物件の AIX 1・内覧 0／
 //     締めの後のお礼 6番＝返信 5・返さない 1・内覧と AIX 0。謝りの語だけの網（最初の版）は依頼つきの謝りまで当たった（AIX 16・内覧 4）ので、断りの語を必ず要る形にした
 
 import { normalizeCustomerText } from "./reply-context";
 
 export function sorryDeclineReadOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_SORRY_DECLINE_READ ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_SORRY_DECLINE_READ ?? "").trim().toLowerCase() !== "off";
 }
 
 export const SORRY_RE = /申し訳|すみません|すいません|ごめんなさい|せっかく|お手数おかけ/;

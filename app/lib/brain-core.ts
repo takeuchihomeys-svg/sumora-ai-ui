@@ -2671,7 +2671,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     && readAreaExclude({ customerText: unrepliedTurn.text, sentPropertyCount: brainLedger.facts.propertiesSentCount ?? 0 });
   if (areaExcludeHit) console.log(JSON.stringify({ tag: "brain:area-exclude-read", conversationId }));
   // 2026-11-06 作業員1（型3・q354・q356・q357）: 謝り・断り・締めの後のお礼を動く番と読まない読み方と一手（竹内さん 謝り・断り 約8割が受け止めの返信）。
-  //   既定 off・入れる BRAIN_SORRY_DECLINE_READ=on（app/lib/sorry-decline-read.ts）
+  //   既定 on（11/07 試験で q356 改善・守り悪化0）・止める BRAIN_SORRY_DECLINE_READ=off（app/lib/sorry-decline-read.ts）
   const sorryDeclineKind = sorryDeclineReadOn() && !isPostApplyStatus(convStatus)
     ? readSorryDecline({ customerText: unrepliedTurn.text, prevStaffText: typedMessages.find((m) => m.sender !== "customer")?.text ?? "" })
     : null;
