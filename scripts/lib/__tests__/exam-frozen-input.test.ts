@@ -3,7 +3,8 @@
 import { mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { frozenSceneNow, snapshotDay, snapshotTarget, snapshotKey, installDbSnapshot } from "../exam-frozen-input";
+import { frozenSceneNow, snapshotDay, snapshotTarget, snapshotKey, installDbSnapshot, keyedTarget, keyedKey, reduceKeyedBody } from "../exam-frozen-input";
+import { existsSync, writeFileSync } from "node:fs";
 import { maskVolatile } from "../llm-cassette";
 
 let fail = 0, pass = 0;
@@ -44,6 +45,18 @@ ok("鍵の伏せ: +00 と +0 と +00:00 が同じ", maskVolatile("estimate_sheet
   && maskVolatile("a 2026-11-05 03:57:06+00:00 b", {}) === "a <ts> b");
 ok("鍵の伏せ: 時刻の後の金額は伏せない", maskVolatile("2026-11-05T03:57 -5万", {}).endsWith(" -5万"));
 
+// ─── ③ 鍵が要る読みの欄の絞り（本文・要約を残さない） ───
+ok("鍵の要る読みの対象", keyedTarget(base + "rpc/match_conductor_focus", "POST") === "match_conductor_focus" && keyedTarget(base + "takeuchi_compose_examples?select=message_id", "GET") === "takeuchi_compose_examples" && keyedTarget(base + "rpc/match_templates", "POST") === null && keyedTarget(base + "messages?x=1", "GET") === null);
+{
+  const red = JSON.parse(reduceKeyedBody("match_conductor_focus", JSON.stringify([{ source_key: "msg:1", scene: "S1", focus: "answer", distance: 0.12, turn_at: "2026-10-01T00:00:00Z", actual: { aix: "property_check_result", route: "aix", shape: "x", picker: "空いてる", text: "本文" }, situation: "お客様: 本文" }])));
+  ok("近い番: 決めた欄だけ（本文・要約・ピッカーの文を落とす）", red.length === 1 && red[0].source_key === "msg:1" && red[0].actual.aix === "property_check_result" && !("situation" in red[0]) && !("picker" in red[0].actual) && !("text" in red[0].actual));
+  const k2 = JSON.parse(reduceKeyedBody("takeuchi_compose_examples", JSON.stringify([{ message_id: "m1", keep: true, anatomy: { body: "本文" } }, { message_id: "m2", keep: "x" }])));
+  ok("keep: 真偽だけ（分からないは null）", k2[0].keep === true && k2[1].keep === null && !("anatomy" in k2[0]));
+  const v = JSON.parse(reduceKeyedBody("conductor_turn_vectors", JSON.stringify([{ source_key: "msg:1", turn_at: "t", situation: "お客様: 本文" }])));
+  ok("番のベクトルの表: 要約を落とす", v[0].source_key === "msg:1" && !("situation" in v[0]));
+  ok("分からない形は空", reduceKeyedBody("match_conductor_focus", "not json") === "[]");
+}
+
 // ─── 包み（偽物の fetch） ───
 (async () => {
   const dir = mkdtempSync(join(tmpdir(), "exam-snap-"));
@@ -59,6 +72,16 @@ ok("鍵の伏せ: 時刻の後の金額は伏せない", maskVolatile("2026-11-0
     await fetch(base + "messages?conversation_id=eq." + conv); await fetch(base + "messages?conversation_id=eq." + conv);
     ok("包み: 会話の表は毎回呼ぶ", calls === 3);
     ok("包み: 日ごとの置き場", readdirSync(dir).join(",") === "2026-11-05");
+    // ③ 鍵が要る読み（11/07 統括役の決め B）: 試験では控えず頼みを残す・夜の台本が絞って書いた控えを返す・レーンの会話 id は鍵で伏せる
+    const before = calls;
+    const body1 = JSON.stringify({ query_embedding: "[0.1,0.2]", p_exclude_conv: conv, match_count: 30 });
+    const r1 = await fetch(base + "rpc/match_conductor_focus", { method: "POST", body: body1 });
+    ok("鍵の要る読み: 控えが無い時は公開キーの答えをそのまま返し・頼みを残す", r1.ok && calls === before + 1 && existsSync(join(dir, "2026-11-05", "pending", `k-${keyedKey(base + "rpc/match_conductor_focus", "POST", body1, [conv])}.json`)));
+    const k = keyedKey(base + "rpc/match_conductor_focus", "POST", body1, [conv]);
+    writeFileSync(join(dir, "2026-11-05", `k-${k}.json`), JSON.stringify({ status: 200, contentType: "application/json", contentRange: null, body: JSON.stringify([{ source_key: "msg:1", focus: "answer", distance: 0.1 }]), at: "x", table: "match_conductor_focus" }));
+    const r2 = await (await fetch(base + "rpc/match_conductor_focus", { method: "POST", body: body1 })).json() as Array<{ source_key: string }>;
+    ok("鍵の要る読み: 夜の台本の控えを返す（呼ばない）", r2[0].source_key === "msg:1" && calls === before + 1);
+    ok("鍵の要る読み: 別のレーンの会話 id でも同じ鍵", keyedKey(base + "rpc/match_conductor_focus", "POST", body1.replace(conv, "other-lane"), ["other-lane"]) === k);
   } finally { globalThis.fetch = orig; rmSync(dir, { recursive: true, force: true }); }
   console.log(`${pass} pass / ${fail} fail`);
   process.exit(fail ? 1 : 0);
