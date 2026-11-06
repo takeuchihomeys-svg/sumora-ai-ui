@@ -56,6 +56,9 @@ import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPl
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape } from "./lib/exam-base-pin";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, type CmpLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
+import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
+import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
+import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -85,6 +88,7 @@ export type ExamJob = {
   /** 保留の理由（あれば流さない・手で外す） */ hold?: string;
   /** この時刻（ISO）より前は流さない（--not-before=2026-11-10T22:00+09:00） */ notBefore?: string;
   /** 急ぎ（--urgent）: 混雑の時間（平日 JST 10〜13・15〜19）でも流す（2026-11-06） */ urgent?: boolean;
+  /** 費用の上限（--cap-usd・2026-11-06）: 流す時に EXAM_MAX_USD として渡す＝届いたら次の問題の前で止まる */ capUsd?: number;
   /** 終わったら知らせる相手（エージェントの id・--notify=）。無ければ exam-queue/config.json の notify[owner] */ notify?: string;
 };
 
@@ -154,7 +158,7 @@ function addJob(): void {
   // 2026-11-05 作業員8（統括役の了承「段を最小に: --stage=diff を既定にし、文の組だけ draft」）: 前の子の費用の約15%が下書きの段（final_check・aix_desk 等）。
   //   --stage を書かない依頼は diff（直したファイルが下書きに届かなければブレインだけ）・文の組（grp-reply・grp-aix）は draft。書いた時はそのまま
   const stageDefault = /^(?:grp-reply|grp-aix)/.test(label) ? "draft" : "diff";
-  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage") || stageDefault, env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(flag("urgent") ? { urgent: true } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
+  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage") || stageDefault, env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(flag("urgent") ? { urgent: true } : {}), ...(Number(arg("cap-usd")) > 0 ? { capUsd: Number(arg("cap-usd")) } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
   // 2026-11-04 (a)(b): --priority=<小さいほど先・既定 5>・--max-min=<1本の時間の上限（分）>
   if (arg("priority")) (base as Record<string, unknown>).priority = Number(arg("priority"));
   if (arg("max-min")) (base as Record<string, unknown>).maxMin = Number(arg("max-min"));
@@ -495,7 +499,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         appendFileSync(outFile, `\n=== ${at()} npx tsx --env-file=.env.local ${c} ===\n`);
         const before = statSync(outFile).size;
         // 2026-11-05 作業員4の頼み: --qfile="C:/Users/竹内 悠馬/…" が空白で切れていた（ci-v1L・ci-v3L）＝引用符を含む塊は1つの引数に（exam-plan.splitCmdArgs）
-        const r = runTsx(j.cwd, splitCmdArgs(c), { ...j.env, ...(businessHoursLane() ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile); cur = r.child;
+        const r = runTsx(j.cwd, splitCmdArgs(c), { ...j.env, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(businessHoursLane() ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile); cur = r.child;
         codes.push(await r.done);
         const tail = readFileSync(outFile).subarray(before).toString("utf8");
         const m = tail.match(/空きメモリ\s*\d+MB\s*<\s*\d+MB（--force で流す）/);
@@ -538,7 +542,8 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     // 2026-11-06 作業員8（弱い所 357・11/05 の本番の時間切れ20回が昼の試験の呼び出しの山＝10分で 205〜220回・レーン3〜4本と重なった）: 営業時間（JST 9〜22時）はレーン1本（--urgent でも）
     const bizLane = businessHoursLane();
     if (bizLane) log(`  営業時間（JST 9〜22時）なのでレーン1本（弱い所 357・feedback_no_heavy_db_business_hours）`);
-    const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile, ...(guard.laneOld || bizLane ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile); cur = r.child;
+    if (j.capUsd) log(`  費用の上限 $${j.capUsd.toFixed(2)}（EXAM_MAX_USD・届いたら次の問題の前で止まる）`);
+    const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(guard.laneOld || bizLane ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile); cur = r.child;
     // ① 早めの打ち切り（30秒ごと）
     let early: { stop: string; why: string; base: string } | null = null;
     const rowsFile = join(resultsDirOf(j.cwd), `${j.label}.jsonl`);
@@ -622,8 +627,33 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       } catch { return ""; }
     })();
     const verdictBase = (noCompare ? `比べられない（基準の回が無い・両方で解いた 0/${ids.length}問・既定 on の判断に使わない${blFinal ? `・基準 ${blFinal}` : ""}）` : sureN == null ? "結果を読めない" : sureN === 0 ? (cmpN < ids.length ? `比べた問題が少ない（両方で解いた ${cmpN}/${ids.length}問・悪化0とは言わない・既定 on の判断に使わない）` : `確かな悪化0（比べた ${cmpN}/${ids.length}問）`) : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote;
-    const verdict = verdictBase + digNote;
-    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, verdict, at: at() },
+    // 2026-11-06 作業員8（竹内さんの決定「試験から改善の仕方も強化・統括同士連携」・外れの自動の切り分け）: 外れた問題ごとに、どの段で道が変わったか（ブレインの生の答え→2段→場面の網→決まった書き換え→書き手→最終チェック）を記録から出す。
+    //   悪化の問題は verdict に、外れの問題は全部 result の missStages に残す（持ち主の統括は連携の表・仮の表で引く）。LLM なし。止める: EXAM_MISS_STAGE=off
+    const missStages = (() => {
+      if ((process.env.EXAM_MISS_STAGE ?? "").trim().toLowerCase() === "off") return [] as Array<ReturnType<typeof summarizeMisses> & { owner: string | null }>;
+      try {
+        // 回ごとの記録の印（係の出力の {"tag":"brain:answerable-direct"…}・[mgmt-*]）を、同じテスト用の会話の次の結果の行に付ける
+        const names = new Map(NO_LINE_TEST_CONVERSATIONS.map((c) => [c.id, c.name]));
+        const tags = parseLogTags(existsSync(outFile) ? readFileSync(outFile, "utf8") : "", (id) => names.get(id) ?? null);
+        const cur = (readRows(rowsFile) as unknown as MissRowLite[]).map((r) => ({ ...r, logTags: tags.get(`${r.id}#${r.rep}`) ?? null }));
+        return ids.map((id) => summarizeMisses(cur.filter((r) => r.id === id))).filter((x): x is NonNullable<typeof x> => !!x).map((x) => ({ ...x, owner: ownerOf(x.markers)?.id ?? null }));
+      } catch { return []; }
+    })();
+    const worseIds = new Set([...(sw?.sure ?? []), ...(sw?.flake ?? [])].map((x) => x.id));
+    const stageNote = missStages.filter((m) => m && worseIds.has(m.id)).map((m) => `${m!.line}${m!.owner ? `・持ち主 ${m!.owner}` : ""}`).join("／");
+    const verdict = verdictBase + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
+    // 2026-11-06 統括役（作業員8）: 外れの切り分けを弱い所の台帳（brain_weaknesses）へ。key＝段＋印の頭・同じ key の行があれば evidence に足す（upsertWeaknessHits）・持ち主・試験の名前・問題・回を evidence に・1回の試験で5行まで。
+    //   台帳は RLS（ポリシーなし）＝サーバーの鍵が無い手元では書けない → 足す物を results/weakness-pending.jsonl に残し、鍵のある所で brain-weaknesses.ts --collect-miss-stages が足す（同じ回は二重に足さない）。止める: EXAM_MISS_WEAKNESS=off
+    if ((process.env.EXAM_MISS_WEAKNESS ?? "").trim().toLowerCase() !== "off" && missStages.length) {
+      try {
+        const hits = weaknessHitsFromMisses(j.label, missStages, { max: 5 });
+        if (hits.length) {
+          appendFileSync(join(RES, "weakness-pending.jsonl"), JSON.stringify({ label: j.label, at: at(), hits }) + "\n");
+          log(`  弱い所: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? await recordExamWeaknesses(db() as never, j.label, hits) : `台帳の鍵が無い＝${hits.length}行を weakness-pending.jsonl に残した（${hits.map((h) => h.key).join("・")}）`}`);
+        }
+      } catch (e) { log(`  弱い所の台帳: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`); }
+    }
+    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
     log(`  済み: ${j.label} → ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・費用 ${s.usd ?? "?"}`);

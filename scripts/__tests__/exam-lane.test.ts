@@ -1,7 +1,7 @@
 // scripts/__tests__/exam-lane.test.ts — 試験のレーン（scripts/lib/exam-lane.ts）の確かめ（LLM も DB も使わない）
 //   実行: npx tsx scripts/__tests__/exam-lane.test.ts
 //   2026-11-04 作業員1・指揮役の了承: ①env の Proxy がレーンごとに分かれる ②録音の札・時計のずらしがレーンごと ③EXAM_CONCURRENCY が 1 の時は入れない ④レーンの割り当て
-import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, uninstallLaneEnvProxy, laneEnvProxyInstalled, LaneLimiter, runLanes, RATE_LIMIT_RE } from "../lib/exam-lane";
+import { splitRepsOn, planLaneUnits, currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, uninstallLaneEnvProxy, laneEnvProxyInstalled, LaneLimiter, runLanes, RATE_LIMIT_RE } from "../lib/exam-lane";
 import { installExamClock, setExamClockOffset, examClockOffset, realNow } from "../lib/exam-clock";
 import { setCassetteTag, makeCassetteFetch, flushCassette, type CassetteStats } from "../lib/llm-cassette";
 
@@ -176,6 +176,27 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   uninstallLaneEnvProxy();
   t("戻した", !laneEnvProxyInstalled() && process.env === realRef);
   for (const k of ["EXAM_LANE_T_A", "EXAM_LANE_T_DEL"]) delete process.env[k];
+
+  // ─── 2026-11-06 1問の回を空いたレーンに分ける（planLaneUnits・EXAM_SPLIT_REPS） ───
+  {
+    const r = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+    t("分ける: 既定 off", splitRepsOn({}) === false && splitRepsOn({ EXAM_SPLIT_REPS: "on" }) === true);
+    const u1 = planLaneUnits(["q174"], 4, () => r(4));
+    t("分ける: 1問×4回・4レーン → 1回ずつ4つ", u1.length === 4 && u1.every((u) => u.reps?.length === 1) && JSON.stringify(u1.flatMap((u) => u.reps)) === "[1,2,3,4]");
+    const u2 = planLaneUnits(["a", "b"], 4, () => r(4));
+    t("分ける: 2問×4回・4レーン → 2回ずつ4つ", u2.length === 4 && u2.every((u) => u.reps?.length === 2));
+    const u3 = planLaneUnits(["a", "b", "c", "d"], 4, () => r(4));
+    t("分ける: 問題がレーン以上なら分けない", u3.length === 4 && u3.every((u) => u.reps === null));
+    const u4 = planLaneUnits(["s", "f"], 4, (p) => (p === "s" ? null : r(4)));
+    t("分ける: 回が前の回で決まる問題（安定・分からない）は分けない", u4.filter((u) => u.p === "s").length === 1 && u4.find((u) => u.p === "s")?.reps === null && u4.filter((u) => u.p === "f").length === 3);
+    const u5 = planLaneUnits(["a"], 1, () => r(4));
+    t("分ける: レーン1本（営業時間）は分けない", u5.length === 1 && u5[0].reps === null);
+    // 回の抜け・重なりが無い
+    const u6 = planLaneUnits(["a", "b", "c"], 6, (p) => (p === "a" ? r(4) : p === "b" ? r(3) : r(1)));
+    const byP = (p: string) => u6.filter((u) => u.p === p).flatMap((u) => u.reps ?? []).sort((x, y) => x - y).join(",");
+    t("分ける: 回の抜け・重なりが無い", byP("a") === "1,2,3,4" && byP("b") === "1,2,3" && u6.filter((u) => u.p === "c").length === 1, JSON.stringify(u6));
+    t("分ける: 仕事の数はレーンの数まで", u6.length <= 6);
+  }
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);

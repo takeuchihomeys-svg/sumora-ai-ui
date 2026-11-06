@@ -1,7 +1,7 @@
 // 試験の統括（scripts/lib/exam-plan.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-plan.test.ts（全 PASS で exit 0）
 import { flakeCleanSinceMs } from "../exam-flake";
-import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs } from "../exam-plan";
+import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs, overBudget, capUsdOf } from "../exam-plan";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -57,6 +57,10 @@ ok("cmd の割り: 引用符なし", splitCmdArgs("x  y").join("|") === "x|y");
 ok("揺れの記録: 既定は 11/05 の直しの後だけ読む", flakeCleanSinceMs({}) === Date.parse("2026-11-05T05:30:00Z"));
 ok("揺れの記録: off で前の記録も読む", flakeCleanSinceMs({ EXAM_FLAKE_CLEAN_SINCE: "off" }) === 0);
 ok("揺れの記録: 時刻を変えられる", flakeCleanSinceMs({ EXAM_FLAKE_CLEAN_SINCE: "2026-11-06T00:00:00Z" }) === Date.parse("2026-11-06T00:00:00Z"));
+
+ok("上限: 届いたら止める", overBudget(1.0, 1.0) && overBudget(1.2, 1.0) && !overBudget(0.9, 1.0));
+ok("上限: 無い・0・変な値は止めない", !overBudget(99, null) && !overBudget(99, 0) && !overBudget(NaN, 1));
+ok("上限の環境変数", capUsdOf({ EXAM_MAX_USD: "0.5" }) === 0.5 && capUsdOf({}) === null && capUsdOf({ EXAM_MAX_USD: "x" }) === null && capUsdOf({ EXAM_MAX_USD: "0" }) === null);
 
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

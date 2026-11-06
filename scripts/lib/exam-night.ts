@@ -45,6 +45,19 @@ export function splitByPlan(ids: string[], rows: PlanRow[], repsOf: (id: string)
   return { same, changed };
 }
 /** 次の塊を回してよいか（時間の予算・回す数の上限・main が進んだ） */
+/**
+ * 2026-11-06 作業員1（統括役の (c)・竹内さん「試験の速さ・作業速度をはやく」）: 下見で、ある問題の1つの回の入力が前の main と違った
+ *   （firstChanged あり・失敗ではない）なら、その問題の残りの回は下見しない。splitByPlan は違う回が1つでもあれば changed にする＝
+ *   残りの回を下見しても結果（取り置く問題・呼ぶ問題）は変わらない。失敗・控えなしの回では止めない（同じ結果を保つ）。
+ *   測り（11/05 12:00Z〜・59本）: 下見 2,508秒（平均 114秒/本）・35本中 29本が入力の同じ回 0。止める: EXAM_PLAN_STOP_ON_DIFF=off
+ */
+export function planStopOnDiffOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.EXAM_PLAN_STOP_ON_DIFF ?? "").trim().toLowerCase() !== "off";
+}
+export function planRepDiffers(row: { error?: string | null; inputSame?: boolean | null; inputDiff?: { firstChanged?: string | null } | null }): boolean {
+  return !row.error && row.inputSame !== true && !!row.inputDiff?.firstChanged;
+}
+
 export function chunkGate(o: { startMs: number; nowMs: number; budgetMs: number | null; limitLeft: number | null; mainMoved: string | null }): { go: boolean; why: "budget" | "limit" | "main-moved" | null; text: string } {
   if (o.mainMoved) return { go: false, why: "main-moved", text: `main が進んだ（${o.mainMoved}）→ 古い main の答えを作り続けない` };
   if (o.budgetMs !== null && o.nowMs - o.startMs >= o.budgetMs) return { go: false, why: "budget", text: `時間の予算 ${Math.round(o.budgetMs / 60_000)}分を使い切った → 残りは次の回（間に他の予約を流す）` };

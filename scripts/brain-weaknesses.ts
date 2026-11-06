@@ -7,10 +7,12 @@
 //   npx tsx --env-file=.env.local scripts/brain-weaknesses.ts --add <key> "<題>" --area=brain [--symptom=…] [--root=…] [--status=open] [--ref=…] [--dry]
 //   npx tsx --env-file=.env.local scripts/brain-weaknesses.ts --set-status <key> <open|in_progress|fixed|wont_fix> [--ref=<commit・スイッチ>] [--root=…] [--dry]
 //   npx tsx --env-file=.env.local scripts/brain-weaknesses.ts --collect-exam [--dry]       … 手元の試験の外れの理由（reasons-latest.json）を足す（同じ回は二重に足さない）
+//   npx tsx --env-file=.env.local scripts/brain-weaknesses.ts --collect-miss-stages [--dry] … 試験の係が残した外れの切り分け（exam-queue/results/weakness-pending.jsonl・1回5行まで）を足す（同じ回は二重に足さない）
 //   書くのはサーバーの鍵（RLS 有効・ポリシーなし）。お客様の文・名前は入れない（印＝問題 id・番 id だけ）。LINE には何も送らない。
 import { createClient } from "@supabase/supabase-js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { examCacheRoot } from "./lib/llm-cassette";
 import { SEED_WEAKNESSES, STATUS_JA, AREA_JA, WEAKNESS_STATUSES, WEAKNESS_AREAS, isWeaknessKey, weaknessHitsFromExamReasons, type WeaknessArea, type WeaknessRow, type WeaknessStatus } from "../app/lib/brain-weaknesses";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
 
@@ -87,6 +89,13 @@ async function main() {
     const { error: e2 } = await sb.from("brain_weaknesses").update(patch).eq("key", k);
     if (e2) throw new Error(e2.message);
     console.log(`状態を変えました: ${(data as { title: string }).title}（${k}）${STATUS_JA[(data as { status: WeaknessStatus }).status]}→${STATUS_JA[st as WeaknessStatus]}`);
+    return;
+  }
+  if (has("collect-miss-stages")) {
+    const file = join(examCacheRoot(), "exam-queue", "results", "weakness-pending.jsonl");
+    if (!existsSync(file)) { console.log("足す物が無い（weakness-pending.jsonl）"); return; }
+    const recs = readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l) as { label: string; hits: Parameters<typeof recordExamWeaknesses>[2] }; } catch { return null; } }).filter((x): x is { label: string; hits: Parameters<typeof recordExamWeaknesses>[2] } => !!x && !!x.label && Array.isArray(x.hits));
+    for (const r of recs) console.log(`${r.label}: ${await recordExamWeaknesses(sb, r.label, r.hits, { dry: DRY })}`);
     return;
   }
   if (has("collect-exam")) {

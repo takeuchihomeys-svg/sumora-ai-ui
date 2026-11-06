@@ -190,3 +190,46 @@ export async function runLanes<T, L>(items: readonly T[], lanes: ReadonlyArray<E
   if (bad) throw bad.reason;
   return took;
 }
+
+// ─── 2026-11-06 作業員1（統括役の (c) 案1・竹内さん「試験の速さ・作業速度をはやく」）: 1問の回を空いたレーンに分ける ───
+//   今は「同じ問題の回は同じレーンで順に」。依頼の多くは 1〜4問で、4本のレーンの多くが空いていた（例 1問×4回は1本だけが動く）。
+//   回の数が先に決まっている問題（--reps-file・揺れる問題・揺れの決め方を使わない時）だけ、回を塊に分けて空いたレーンに配る。
+//   回の数が前の回の答えで決まる問題（安定＝いつもと違えば足す・分からない＝割れたら足す）は今まで通り1つのレーンで順に。
+//   各回は自分のレーンのテスト用の会話・条件の行・台帳の写しで回る（回の答えはそれぞれ別に作る＝比べ方は変わらない）。
+//   営業時間はレーンが1本（係の EXAM_BIZ_ONE_LANE）なので分けない＝夜だけ効く。既定 off（入れる EXAM_SPLIT_REPS=on）
+export function splitRepsOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.EXAM_SPLIT_REPS ?? "").trim().toLowerCase() === "on";
+}
+/** レーンに配る1つの仕事: 問題と回す回（null＝全部の回を順に・今まで通り） */
+export type LaneUnit<P> = { p: P; reps: number[] | null };
+/**
+ * 問題の列を仕事の列にする。fixedReps(p)＝先に決まっている回の番号（null＝前の回で決まる＝分けない）。
+ *   問題の数がレーンの数以上なら分けない（今まで通り）。足りない時は、回の多い問題から塊に割って、仕事の数がレーンの数に近くなるようにする。
+ *   塊は続いた回（1,2 と 3,4）＝同じレーンの中では写しの使い回しが効く。
+ */
+export function planLaneUnits<P>(problems: readonly P[], laneCount: number, fixedReps: (p: P) => number[] | null): LaneUnit<P>[] {
+  const whole: LaneUnit<P>[] = problems.map((p) => ({ p, reps: null }));
+  if (laneCount <= 1 || problems.length >= laneCount) return whole;
+  const fixed = problems.map((p) => fixedReps(p));
+  let units = problems.length;
+  const parts = problems.map(() => 1);
+  // 空いたレーンの分だけ、1塊あたりの回が一番多い問題を1つずつ割る
+  for (;;) {
+    if (units >= laneCount) break;
+    let best = -1, bestPer = 1;
+    fixed.forEach((r, i) => { if (!r || r.length <= parts[i]) return; const per = r.length / parts[i]; if (per > bestPer) { bestPer = per; best = i; } });
+    if (best < 0) break;
+    parts[best]++; units++;
+  }
+  const out: LaneUnit<P>[] = [];
+  problems.forEach((p, i) => {
+    const r = fixed[i];
+    if (!r || parts[i] <= 1) { out.push({ p, reps: null }); return; }
+    // k 個のほぼ同じ大きさの塊（前の塊が1つ多い）
+    const k = parts[i], base = Math.floor(r.length / k), extra = r.length % k;
+    for (let j = 0, at = 0; j < k; j++) { const n = base + (j < extra ? 1 : 0); out.push({ p, reps: r.slice(at, at + n) }); at += n; }
+  });
+  // 大きい仕事から先に配る（終わりを揃える）
+  return out.map((u, i) => ({ u, i, n: u.reps ? u.reps.length : (fixed[problems.indexOf(u.p)]?.length ?? 1) }))
+    .sort((a, b) => b.n - a.n || a.i - b.i).map((x) => x.u);
+}

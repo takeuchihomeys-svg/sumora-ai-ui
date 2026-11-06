@@ -16,7 +16,9 @@ export const STATUS_JA: Record<WeaknessStatus, string> = { open: "未着手", in
 export const AREA_JA: Record<WeaknessArea, string> = { brain: "道を選ぶ力", writer: "文を作る力", aix: "AIX", exam: "試験・物差し", conductor: "つなぎ", memory: "記憶・つなぎ" };
 
 /** 印だけ（文は入れない） */
-export type WeaknessEvidence = { exam_qids?: string[]; exam_labels?: string[]; watch_turn_ids?: number[]; unknown_ids?: number[] };
+/** reopened＝再発の印（直した行に同じ key が当たって open に戻した時刻と、その時の直し・新しい順・11/06 統括役）
+ * owners＝持ち主（連携の表の id・持ち主）・exam_reps＝「試験の名前 問題#回」（試験の外れの切り分けから・11/06） */
+export type WeaknessEvidence = { exam_qids?: string[]; exam_labels?: string[]; watch_turn_ids?: number[]; unknown_ids?: number[]; owners?: string[]; exam_reps?: string[]; reopened?: string[] };
 export type WeaknessRow = {
   id?: number; key: string; title: string; area: WeaknessArea; symptom: string | null; root_cause: string | null;
   status: WeaknessStatus; fix_ref: string | null; evidence: WeaknessEvidence; occurrences: number;
@@ -142,6 +144,9 @@ export function mergeEvidence(oldEv: WeaknessEvidence | null | undefined, add: W
   const labels = uniqCap([...(add.exam_labels ?? []), ...(o.exam_labels ?? [])]); if (labels.length) out.exam_labels = labels;
   const turns = uniqCap([...(add.watch_turn_ids ?? []), ...(o.watch_turn_ids ?? [])]); if (turns.length) out.watch_turn_ids = turns;
   const uids = uniqCap([...(add.unknown_ids ?? []), ...(o.unknown_ids ?? [])]); if (uids.length) out.unknown_ids = uids;
+  const owners = uniqCap([...(add.owners ?? []), ...(o.owners ?? [])]); if (owners.length) out.owners = owners;
+  const reps = uniqCap([...(add.exam_reps ?? []), ...(o.exam_reps ?? [])]); if (reps.length) out.exam_reps = reps;
+  const reo = uniqCap([...(add.reopened ?? []), ...(o.reopened ?? [])]); if (reo.length) out.reopened = reo;
   return out;
 }
 
@@ -166,18 +171,22 @@ export function mergeWeaknessRow(existing: WeaknessRow | null, h: WeaknessHit, n
     return { key: h.key, title: h.title, area: h.area, symptom: h.symptom ?? null, root_cause: null, status: "open", fix_ref: null,
       evidence: mergeEvidence(null, h.evidence), occurrences: h.n ?? 1, first_seen: at, last_seen: at };
   }
-  return { ...existing, evidence: mergeEvidence(existing.evidence, h.evidence), occurrences: (existing.occurrences ?? 0) + (h.n ?? 1),
+  // 2026-11-06 統括役: 直した行に同じ key が当たったら同じ行に足し、status を open に戻して再発の印（evidence.reopened）を付ける。見送り（wont_fix）・作業中はそのまま
+  const reopen = existing.status === "fixed";
+  const ev = mergeEvidence(existing.evidence, h.evidence);
+  if (reopen) ev.reopened = [`${at} 直し:${existing.fix_ref ?? "なし"}`, ...(ev.reopened ?? [])].slice(0, 20);
+  return { ...existing, ...(reopen ? { status: "open" as const } : {}), evidence: ev, occurrences: (existing.occurrences ?? 0) + (h.n ?? 1),
     first_seen: existing.first_seen ?? at, last_seen: existing.last_seen && existing.last_seen > at ? existing.last_seen : at };
 }
 
 /** 試験のまとめの表示: この回で触った弱い所（未着手・作業中＝まだ開いている物と、直したのに再び出た物） */
-export function renderTouchedWeaknesses(rows: ReadonlyArray<Pick<WeaknessRow, "key" | "title" | "status" | "occurrences" | "fix_ref">>, nThisRun: Readonly<Record<string, number>>): string {
+export function renderTouchedWeaknesses(rows: ReadonlyArray<Pick<WeaknessRow, "key" | "title" | "status" | "occurrences" | "fix_ref">>, nThisRun: Readonly<Record<string, number>>, reopened: ReadonlySet<string> = new Set()): string {
   const touched = rows.filter((r) => nThisRun[r.key]);
   if (!touched.length) return "弱い所の台帳: この回で触った物なし";
-  const open = touched.filter((r) => r.status === "open" || r.status === "in_progress").sort((a, b) => (nThisRun[b.key] ?? 0) - (nThisRun[a.key] ?? 0));
-  const back = touched.filter((r) => r.status === "fixed");
+  const open = touched.filter((r) => (r.status === "open" || r.status === "in_progress") && !reopened.has(r.key)).sort((a, b) => (nThisRun[b.key] ?? 0) - (nThisRun[a.key] ?? 0));
+  const back = touched.filter((r) => r.status === "fixed" || reopened.has(r.key));
   const lines = [`弱い所の台帳: この回で触った物 ${touched.length}（開いている ${open.length}${back.length ? `・直したのに再び ${back.length}` : ""}）`];
   for (const r of open) lines.push(`  [${STATUS_JA[r.status]}] ${r.title}: この回 ${nThisRun[r.key]}・通算 ${r.occurrences}（${r.key}）${r.fix_ref ? ` → ${r.fix_ref}` : ""}`);
-  for (const r of back) lines.push(`  ⚠ [直した] ${r.title}: この回 ${nThisRun[r.key]}（${r.key}）${r.fix_ref ? ` 直し: ${r.fix_ref}` : ""}`);
+  for (const r of back) lines.push(`  ⚠ [${reopened.has(r.key) ? "再発・open に戻した" : "直した"}] ${r.title}: この回 ${nThisRun[r.key]}（${r.key}）${r.fix_ref ? ` 直し: ${r.fix_ref}` : ""}`);
   return lines.join("\n");
 }

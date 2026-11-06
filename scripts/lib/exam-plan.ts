@@ -114,3 +114,16 @@ export function weeklyPlanAudit(recs: PlanRecord[], droppedScenesAfter: Record<s
 export function splitCmdArgs(line: string): string[] {
   return (line.match(/(?:[^\s"]*"[^"]*")+[^\s"]*|\S+/g) ?? []).map((x) => x.replace(/"/g, ""));
 }
+
+/**
+ * 依頼の費用の上限（純関数・2026-11-06 作業員8・作業員9の --cap-usd が依頼のファイルに残らず止まる保証が無かった）。
+ *   capUsd が正の数で、使った額（呼んだ分＋判定＋前を作った子）が上限に届いたら止める（次の問題の前で・片付けはいつも通り）
+ */
+export function overBudget(spentUsd: number, capUsd: number | null | undefined): boolean {
+  return typeof capUsd === "number" && Number.isFinite(capUsd) && capUsd > 0 && Number.isFinite(spentUsd) && spentUsd >= capUsd;
+}
+/** 上限の環境変数（EXAM_MAX_USD）を読む。無い・数でない・0以下は null */
+export function capUsdOf(env: Record<string, string | undefined> = process.env): number | null {
+  const v = Number(String(env.EXAM_MAX_USD ?? "").trim());
+  return Number.isFinite(v) && v > 0 ? v : null;
+}

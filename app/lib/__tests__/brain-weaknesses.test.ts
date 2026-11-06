@@ -64,6 +64,19 @@ const txt = renderTouchedWeaknesses([
 ], { a: 2, b: 1 });
 ok(txt.includes("開いてる: この回 2") && txt.includes("⚠ [直した] 直した物") && !txt.includes("触ってない"), "この回で触った物だけ出す");
 
+// 7b. 直した行に同じ key が当たった（11/06 統括役）: 同じ行に足し、open に戻して再発の印
+{
+  const fixedRow = { key: "exam-stage:writer:writer", title: "直した題", area: "writer" as const, symptom: null, root_cause: "r", status: "fixed" as const, fix_ref: "abc123", evidence: { exam_qids: ["q1"] }, occurrences: 3, first_seen: "2026-11-01T00:00:00Z", last_seen: "2026-11-02T00:00:00Z" };
+  const re = mergeWeaknessRow(fixedRow, { key: fixedRow.key, title: "t", area: "writer", n: 2, evidence: { exam_qids: ["q2"] } }, now);
+  ok(re.status === "open" && re.title === "直した題" && re.occurrences === 5 && re.fix_ref === "abc123" && (re.evidence.reopened ?? [])[0] === `${now} 直し:abc123` && (re.evidence.exam_qids ?? []).join(",") === "q2,q1", "直した行は open に戻し再発の印");
+  const wf = mergeWeaknessRow({ ...fixedRow, status: "wont_fix" }, { key: fixedRow.key, title: "t", area: "writer", evidence: {} }, now);
+  ok(wf.status === "wont_fix" && !wf.evidence.reopened, "見送りはそのまま");
+  const again = mergeWeaknessRow(re, { key: fixedRow.key, title: "t", area: "writer", evidence: {} }, now);
+  ok(again.status === "open" && (again.evidence.reopened ?? []).length === 1, "開いている行に足しても印は増えない");
+  const t2 = renderTouchedWeaknesses([{ key: fixedRow.key, title: "直した題", status: "open", occurrences: 5, fix_ref: "abc123" }], { [fixedRow.key]: 2 }, new Set([fixedRow.key]));
+  ok(t2.includes("⚠ [再発・open に戻した] 直した題") && t2.includes("直したのに再び 1"), "表示: 再発");
+}
+
 // 8. サーバー: 切替 off は書かない・同じ回は二重に足さない
 (async () => {
   let wrote = 0;

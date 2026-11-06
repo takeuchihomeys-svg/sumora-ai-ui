@@ -53,6 +53,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { setupLlmTest, YUMA, type LlmTestHarness } from "./lib/llm-test-harness";
 import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lease";
 import { shiftExamText, examShiftDays } from "./lib/brain-exam-dates";
+import { planStopOnDiffOn, planRepDiffers } from "./lib/exam-night";
 import { brainPathCode, judgePath, problemScore, primaryAskIndex, rateByType, aixFamily, judgeCurrentProperty, normalizeDraftCode, type BrainExamOutput, type ProblemScore, type PathCode } from "./lib/brain-exam-score";
 import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
@@ -69,7 +70,7 @@ import { ruleJudge } from "./lib/exam-brain";
 import { checkKbRules, kbRulesMode, type KbRuleHit } from "./lib/exam-kb-rules";
 import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, sigOfRow, pathSigOfRow, type FlakeVerdict } from "./lib/exam-flake";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, type ExamLane } from "./lib/exam-lane";
+import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, splitRepsOn, planLaneUnits, type ExamLane } from "./lib/exam-lane";
 import type { ReplayFloor } from "../app/lib/test-replay-floor";
 import { examPickupNameLateOn, splitPickupNames } from "./lib/exam-pickup-copy";
 import { examRealGapsOn, gapSceneTimesByDay } from "./lib/exam-scene-times";
@@ -79,6 +80,7 @@ import { isNoLineTestConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
 import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, type SnapshotStats } from "./lib/exam-frozen-input";
 import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord } from "./lib/exam-base-pin";
+import { overBudget, capUsdOf } from "./lib/exam-plan";
 /** 2026-11-05 F2 の確かめ（既定 on・止める EXAM_COPY_CHECK=off） */
 const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
 
@@ -180,7 +182,16 @@ const JUDGE_LAZY = arg("judge") === "lazy";
 const JUDGE_MODEL = (process.env.EXAM_JUDGE_MODEL ?? "").trim();
 const STOP_FILE = (process.env.EXAM_STOP_FILE ?? "").trim();
 const IS_BASELINE_CHILD = process.env.BRAIN_EXAM_BASELINE_CHILD === "1";
-const stopAsked = (): boolean => !!STOP_FILE && existsSync(STOP_FILE);
+// 2026-11-06 作業員8（--cap-usd が依頼に残らず止まる保証が無かった）: EXAM_MAX_USD（係が依頼の --cap-usd から渡す）に、使った額（呼んだ分＋判定＋前を作った子）が届いたら止める印と同じく次の問題の前で止める
+const MAX_USD = capUsdOf();
+let budgetNoted = false;
+const spentUsdNow = (): number => { const st = cassetteStatsNow(); return (st?.total.realUsd ?? 0) + (typeof judgeCost === "undefined" ? 0 : judgeCost.usd) + (baseChildUsdNow ?? 0); };
+let baseChildUsdNow = 0;
+const stopAsked = (): boolean => {
+  if (!!STOP_FILE && existsSync(STOP_FILE)) return true;
+  if (MAX_USD !== null && overBudget(spentUsdNow(), MAX_USD)) { if (!budgetNoted) { budgetNoted = true; console.warn(`⏹ 費用の上限 $${MAX_USD.toFixed(2)} に届いた（使った額 約 $${spentUsdNow().toFixed(3)}）→ 次の問題の前で止める（EXAM_MAX_USD）`); } return true; }
+  return false;
+};
 const judgeSkip = { lazy: 0, rules: 0 };
 // 2026-10-21 ⑤ 決まりで決まる採点を先に（--judge=lazy の時・scripts/lib/exam-brain.ts ruleJudge）。
 //   確かめる人: 取ってある判定（AIX・なしの答案 69件）と照らすと 25件で AI の判定と食い違った（AIX の答案にも返信の本文が付く・AIX の中身の要点で✕にする）
@@ -1212,7 +1223,7 @@ async function prepareMainBaseline(): Promise<boolean> {
         atomicWriteJson(pinsFile, pins);
         if (mode === "run") console.log(`  前の main の答えの控え: ${mine.size}/${ids.length}問（${[...mine].map(([id, s]) => `${id}←${s.dir ?? "?"}`).slice(0, 6).join(" ")}${mine.size > 6 ? " …" : ""}）＝要求が同じ段は前の答えを使う（呼ばない）`);
       }
-      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...((process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() ? { EXAM_DB_SNAPSHOT_DAY: process.env.EXAM_DB_SNAPSHOT_DAY } : {}), ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
+      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(MAX_USD !== null ? { EXAM_MAX_USD: String(Math.max(0.01, MAX_USD - spentUsdNow())) } : {}), ...((process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() ? { EXAM_DB_SNAPSHOT_DAY: process.env.EXAM_DB_SNAPSHOT_DAY } : {}), ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
       // main の作業ツリーは1つ＝1人ずつ（版の違う担当が checkout を取り合わない）
       // 2026-10-21 確かめる人: 待つのは上限まで（EXAM_MAIN_WT_WAIT_MIN・既定 120分）。持ち主が生きたまま止まっていても永遠には待たない。
       //   上限を過ぎても奪わない（生きている持ち主の作業ツリーを checkout -f で壊す）→ この回は作らずに進む（その問題は前との比べに入らない）
@@ -1237,7 +1248,7 @@ async function prepareMainBaseline(): Promise<boolean> {
         const rows = (() => { const f = join(wt, RESULTS_DIR, `${runLabel}.jsonl`); return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as ResultRow) : []; })();
         const cost = (() => { try { return JSON.parse(readFileSync(join(wt, RESULTS_DIR, `${runLabel}.cost.json`), "utf8")) as { byTag?: Record<string, { real: number; realUsd: number; replayed: number; replayUsd: number }>; total?: { realUsd?: number }; judge?: { usd?: number } }; } catch { return {}; } })();
         // 2026-11-05 作業員8（統括役 11/05「作業員の報告の費用に、前を作る側の分も入るように」）: 子の費用（呼んだ分＋判定）を依頼の報告に足す
-        childUsd += (cost.total?.realUsd ?? 0) + (cost.judge?.usd ?? 0); childRuns.push(runLabel);
+        childUsd += (cost.total?.realUsd ?? 0) + (cost.judge?.usd ?? 0); childRuns.push(runLabel); baseChildUsdNow = childUsd;
         const nowIso = new Date().toISOString();
         // 下見は「全部の回の入力が同じ」問題だけ取り置く（回が足りない・違う回がある問題は本当に回す）
         const items = mode === "plan" ? (() => { try { return (JSON.parse(readFileSync(join(wt, RESULTS_DIR, `${runLabel}.inputdiff.json`), "utf8")) as { items?: Record<string, { same: boolean; firstChanged: string | null; pinned: number }> }).items ?? null; } catch { return null; } })() : null;
@@ -1517,6 +1528,8 @@ async function main() {
   // 2026-10-21 ①入力の差: 前（main）の行の呼び出しの控えを入れる（前の子＝main 自身・録音を止めた回・off の時は入れない）
   let pinsOn = false;
   const inputPlan: Record<string, { same: boolean; firstChanged: string | null; pinned: number; calls: number; why?: string }> = {};
+  // 2026-11-06 作業員1（(c)）: 下見で入力が違った問題（残りの回は下見しない）・省いた回の数
+  const planDiffered = new Set<string>(); let planSkippedReps = 0;
   if (INPUT_DIFF !== "off" && CASSETTE_MODE !== "off" && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1" && BASELINE && BASELINE !== "main") {
     const pins = pinsFromRows(readResults(BASELINE));
     const n = Object.keys(pins).length;
@@ -1662,13 +1675,17 @@ async function main() {
     await restorePc().catch((e) => console.warn("restorePc:", String(e)));
   };
   // 2026-11-04 1問（全部の回）を回す。1本の時は前から順に呼ぶ（今と同じ順）・レーンの時は空いたレーンが次の問題を取る（同じ問題の回は同じレーンで順に）
-  const runProblem = async (p: ExamProblem): Promise<"stop" | void> => {
+  // 2026-11-06 作業員1（(c) 案1）: onlyReps＝この仕事で回す回（空いたレーンに分けた塊・null＝全部の回を順に＝今まで通り）
+  const runProblem = async (p: ExamProblem, onlyReps: number[] | null = null): Promise<"stop" | void> => {
     const h = hNow(); // 閉じた関数の中では外の h（null になりうる）の絞り込みが効かない＝ここで1回確かめる
     let startedReps = false;
   for (let rep = 1; rep <= REPEAT; rep++) {
+    if (onlyReps && !onlyReps.includes(rep)) continue;
     if (done.has(`${p.id}#${rep}`)) continue;
     // 2026-10-21 ①下見: main の控えの無い回は下見しない（本番の回で呼ぶ）
     if (INPUT_DIFF === "plan" && !hasPinsFor(p.id, rep)) { inputPlan[`${p.id}#${rep}`] = { same: false, firstChanged: null, pinned: 0, calls: 0, why: "main の控えなし" }; continue; }
+    // 2026-11-06 作業員1（(c) 試験の速さ）: 下見で前の回の入力が違った問題は残りの回を下見しない（splitByPlan の結果は同じ＝changed・止める EXAM_PLAN_STOP_ON_DIFF=off）
+    if (INPUT_DIFF === "plan" && planDiffered.has(p.id)) { inputPlan[`${p.id}#${rep}`] = { same: false, firstChanged: null, pinned: 0, calls: 0, why: "前の回で入力が違った（この問題は本当に回す）" }; planSkippedReps++; continue; }
     // 2026-11-04 main の子は問題の区切り（この問題をまだ1回も回していない時）だけで止める＝回が揃った問題だけ親が取り置ける
     if (stopAsked() && (!IS_BASELINE_CHILD || !startedReps)) { console.log(`⏹ 止める印（${STOP_FILE}）→ ここで止める（残りの問題は回さない）`); return "stop"; }
     // 2026-10-17 試験のブレインが決めた回数（--reps-file）。書いてあれば揺れの決め方より先
@@ -1925,6 +1942,7 @@ async function main() {
     }
     if (INPUT_DIFF === "plan" && !row.inputSame) {
       console.log(`  → ${p.id}#${rep} 入力が main と違う（${row.inputDiff?.firstChanged ?? "?"} から・main の答えで済んだ ${row.inputDiff?.pinned ?? 0}段）→ 本番の回で呼ぶ（下見の答案は書かない）`);
+      if (planStopOnDiffOn() && planRepDiffers(row)) planDiffered.add(p.id);
       continue;
     }
     appendFileSync(OUT, JSON.stringify(row) + "\n");
@@ -1950,7 +1968,17 @@ async function main() {
   } else {
     // 2026-11-04 レーン: 問題の列を空いたレーンが前から取る。DeepSeek の 429 を見たら問題の区切りで並べる数を1つ減らす（exam-lane.LaneLimiter）
     try {
-      await runLanes(problems, LANES, (p) => runProblem(p), { limiter: laneLimiter, onShrink: (a, b) => console.warn(`⚠ DeepSeek の 429 → 並べる数 ${a} → ${b}（次の問題から）`) });
+      // 2026-11-06 作業員1（(c) 案1）: 問題がレーンより少ない時、回の数が先に決まっている問題の回を空いたレーンに分ける（EXAM_SPLIT_REPS=on・既定 off・下見は分けない）
+      //   先に決まっている＝--reps-file／揺れる問題（揺れの決め方の時）／揺れの決め方を使わない時。安定・分からない問題は前の回の答えで回が決まる＝分けない
+      const fixedRepsOf = (p: ExamProblem): number[] | null => {
+        const want = REPS_OF ? Math.max(1, REPS_OF[p.id] ?? 1) : (REPEAT_FLAKY && REPEAT > 1) ? (flakeOf(p).verdict === "flaky" ? REPEAT : 0) : REPEAT;
+        if (!want) return null;
+        const reps = Array.from({ length: Math.min(want, REPEAT) }, (_, i) => i + 1).filter((r) => !done.has(`${p.id}#${r}`));
+        return reps.length > 1 ? reps : null;
+      };
+      const units = splitRepsOn() && INPUT_DIFF !== "plan" ? planLaneUnits(problems, laneLimiter.limit, fixedRepsOf) : problems.map((p) => ({ p, reps: null as number[] | null }));
+      if (units.some((u) => u.reps)) console.log(`レーン: 回を分けた（EXAM_SPLIT_REPS）: ${units.map((u) => `${u.p.id}${u.reps ? `#${u.reps.join(",")}` : ""}`).join("・")}`);
+      await runLanes(units, LANES, (u) => runProblem(u.p, u.reps), { limiter: laneLimiter, onShrink: (a, b) => console.warn(`⚠ DeepSeek の 429 → 並べる数 ${a} → ${b}（次の問題から）`) });
     } finally {
       await forEachLane(async () => { await releaseHeld(); });
     }
@@ -1962,6 +1990,7 @@ async function main() {
     const same = items.filter(([, v]) => v.same).map(([k]) => k);
     writeFileSync(`${RESULTS_DIR}/${LABEL}.inputdiff.json`, JSON.stringify({ at: new Date().toISOString(), base: BASELINE, mode: INPUT_DIFF, items: inputPlan }, null, 1));
     console.log(`入力の差: 入力が同じ ${same.length}／${items.length} 問×回（main の答え・呼んでいない）${same.length ? `: ${same.join(",")}` : ""}`);
+    if (planSkippedReps) console.log(`  下見で省いた回 ${planSkippedReps}（前の回で入力が違った ${planDiffered.size}問の残りの回・結果は同じ＝本当に回す・止める EXAM_PLAN_STOP_ON_DIFF=off）`);
     const byStage = new Map<string, string[]>();
     for (const [k, v] of items) if (!v.same && v.firstChanged) byStage.set(v.firstChanged, [...(byStage.get(v.firstChanged) ?? []), k]);
     for (const [st, ks] of byStage) console.log(`  違った段 ${st}: ${ks.join(",")}`);
