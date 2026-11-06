@@ -54,8 +54,14 @@ export function splitByPlan(ids: string[], rows: PlanRow[], repsOf: (id: string)
 export function planStopOnDiffOn(env: Record<string, string | undefined> = process.env): boolean {
   return (env.EXAM_PLAN_STOP_ON_DIFF ?? "").trim().toLowerCase() !== "off";
 }
+/**
+ * 2026-11-06 夜 作業員1: 下見では入力が違った段の呼び出しを止める（strict）ので、違った回は「ブレインが null」等の error 付きで終わる。
+ *   旧は error の回では止めなかった＝実物（split-on-1106 の下見）で q174#1 が違ったのに #2〜#4 も下見していた（止めが一度も効いていなかった）。
+ *   splitByPlan は items の firstChanged があれば error の有無に関わらず changed にする＝firstChanged がある回なら error でも止めて結果は同じ。
+ *   firstChanged の無い失敗（本当の失敗・控えなし）は今まで通り止めない。
+ */
 export function planRepDiffers(row: { error?: string | null; inputSame?: boolean | null; inputDiff?: { firstChanged?: string | null } | null }): boolean {
-  return !row.error && row.inputSame !== true && !!row.inputDiff?.firstChanged;
+  return row.inputSame !== true && !!row.inputDiff?.firstChanged;
 }
 
 export function chunkGate(o: { startMs: number; nowMs: number; budgetMs: number | null; limitLeft: number | null; mainMoved: string | null }): { go: boolean; why: "budget" | "limit" | "main-moved" | null; text: string } {

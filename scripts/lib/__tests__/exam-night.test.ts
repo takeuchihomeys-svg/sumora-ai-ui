@@ -117,11 +117,12 @@ ok("脇の名前: .stale-<JST の年月日時分>", staleNameOf("/a/b.json", new
 {
   ok("下見の止め: 既定 on", planStopOnDiffOn({}) === true && planStopOnDiffOn({ EXAM_PLAN_STOP_ON_DIFF: "off" }) === false);
   ok("下見の止め: 入力が違った回（firstChanged あり）だけ", planRepDiffers({ inputSame: false, inputDiff: { firstChanged: "brain_full" } }) === true);
-  ok("下見の止め: 失敗の回では止めない", planRepDiffers({ error: "x", inputSame: false, inputDiff: { firstChanged: "brain_full" } }) === false);
+  ok("下見の止め: 入力が違って止めた呼び出しの失敗（firstChanged あり）でも止める（11/06 夜 split-on の下見の実物）", planRepDiffers({ error: "ブレインが null", inputSame: false, inputDiff: { firstChanged: "brain_fresh" } }) === true);
+  ok("下見の止め: firstChanged の無い失敗では止めない", planRepDiffers({ error: "x", inputSame: false, inputDiff: { firstChanged: null } }) === false);
   ok("下見の止め: 同じ回・控えなしでは止めない", planRepDiffers({ inputSame: true, inputDiff: { firstChanged: null } }) === false && planRepDiffers({ inputSame: false, inputDiff: { firstChanged: null } }) === false);
   // brain-exam の回のループを写した物で、回の結果の全ての並び（同じ／違う／失敗／控えなし を3回）について止めあり・なしの splitByPlan を比べる
-  type O = "same" | "diff" | "err" | "nopin";
-  const OS: O[] = ["same", "diff", "err", "nopin"];
+  type O = "same" | "diff" | "err" | "errdiff" | "nopin";
+  const OS: O[] = ["same", "diff", "err", "errdiff", "nopin"];
   const simulate = (seq: O[], stop: boolean) => {
     const rows: Array<{ id: string; rep: number; error?: string; inputSame?: boolean }> = [];
     const items: Record<string, { same: boolean; firstChanged: string | null; pinned: number }> = {};
@@ -130,7 +131,7 @@ ok("脇の名前: .stale-<JST の年月日時分>", staleNameOf("/a/b.json", new
       const rep = i + 1, k = `p#${rep}`;
       if (o === "nopin") { items[k] = { same: false, firstChanged: null, pinned: 0 }; return; }
       if (stop && differed) { items[k] = { same: false, firstChanged: null, pinned: 0 }; return; }
-      const row = o === "same" ? { inputSame: true, inputDiff: { firstChanged: null } } : o === "diff" ? { inputSame: false, inputDiff: { firstChanged: "brain_full" } } : { error: "e", inputSame: false, inputDiff: { firstChanged: null } };
+      const row = o === "same" ? { inputSame: true, inputDiff: { firstChanged: null } } : o === "diff" ? { inputSame: false, inputDiff: { firstChanged: "brain_full" } } : o === "errdiff" ? { error: "e", inputSame: false, inputDiff: { firstChanged: "brain_fresh" } } : { error: "e", inputSame: false, inputDiff: { firstChanged: null } };
       items[k] = { same: !!row.inputSame, firstChanged: row.inputDiff.firstChanged, pinned: 0 };
       if (!row.inputSame) { if (stop && planRepDiffers(row)) differed = true; return; }
       rows.push({ id: "p", rep, inputSame: true });
@@ -141,7 +142,7 @@ ok("脇の名前: .stale-<JST の年月日時分>", staleNameOf("/a/b.json", new
   for (const a of OS) for (const b of OS) for (const c of OS) {
     const seq = [a, b, c]; total++;
     if (simulate(seq, true) !== simulate(seq, false)) bad++;
-    const firstDiff = seq.findIndex((o) => o === "diff");
+    const firstDiff = seq.findIndex((o) => o === "diff" || o === "errdiff");
     if (firstDiff >= 0) saved += seq.slice(firstDiff + 1).filter((o) => o !== "nopin").length;
   }
   ok(`下見の止め: 回の結果の全ての並び ${total}通りで取り置く／呼ぶ問題が同じ`, bad === 0, `違った ${bad}`);
