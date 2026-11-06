@@ -56,6 +56,8 @@ import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPl
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape } from "./lib/exam-base-pin";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, type CmpLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
+import { summarizeMisses, ownerOf, parseLogTags, type MissRowLite } from "./lib/exam-miss-stage";
+import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -624,8 +626,22 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       } catch { return ""; }
     })();
     const verdictBase = (noCompare ? `比べられない（基準の回が無い・両方で解いた 0/${ids.length}問・既定 on の判断に使わない${blFinal ? `・基準 ${blFinal}` : ""}）` : sureN == null ? "結果を読めない" : sureN === 0 ? (cmpN < ids.length ? `比べた問題が少ない（両方で解いた ${cmpN}/${ids.length}問・悪化0とは言わない・既定 on の判断に使わない）` : `確かな悪化0（比べた ${cmpN}/${ids.length}問）`) : `確かな悪化 ${sureN}${sw ? `（${sw.sure.map((x) => `${x.id} ${x.why}`).join("／")}）` : ""}`) + flakeNote + tag + reuse + baseNote;
-    const verdict = verdictBase + digNote;
-    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, verdict, at: at() },
+    // 2026-11-06 作業員8（竹内さんの決定「試験から改善の仕方も強化・統括同士連携」・外れの自動の切り分け）: 外れた問題ごとに、どの段で道が変わったか（ブレインの生の答え→2段→場面の網→決まった書き換え→書き手→最終チェック）を記録から出す。
+    //   悪化の問題は verdict に、外れの問題は全部 result の missStages に残す（持ち主の統括は連携の表・仮の表で引く）。LLM なし。止める: EXAM_MISS_STAGE=off
+    const missStages = (() => {
+      if ((process.env.EXAM_MISS_STAGE ?? "").trim().toLowerCase() === "off") return [] as Array<ReturnType<typeof summarizeMisses> & { owner: string | null }>;
+      try {
+        // 回ごとの記録の印（係の出力の {"tag":"brain:answerable-direct"…}・[mgmt-*]）を、同じテスト用の会話の次の結果の行に付ける
+        const names = new Map(NO_LINE_TEST_CONVERSATIONS.map((c) => [c.id, c.name]));
+        const tags = parseLogTags(existsSync(outFile) ? readFileSync(outFile, "utf8") : "", (id) => names.get(id) ?? null);
+        const cur = (readRows(rowsFile) as unknown as MissRowLite[]).map((r) => ({ ...r, logTags: tags.get(`${r.id}#${r.rep}`) ?? null }));
+        return ids.map((id) => summarizeMisses(cur.filter((r) => r.id === id))).filter((x): x is NonNullable<typeof x> => !!x).map((x) => ({ ...x, owner: ownerOf(x.markers)?.id ?? null }));
+      } catch { return []; }
+    })();
+    const worseIds = new Set([...(sw?.sure ?? []), ...(sw?.flake ?? [])].map((x) => x.id));
+    const stageNote = missStages.filter((m) => m && worseIds.has(m.id)).map((m) => `${m!.line}${m!.owner ? `・持ち主 ${m!.owner}` : ""}`).join("／");
+    const verdict = verdictBase + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
+    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
     log(`  済み: ${j.label} → ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・費用 ${s.usd ?? "?"}`);
