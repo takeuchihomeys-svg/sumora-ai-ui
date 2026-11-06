@@ -2045,7 +2045,9 @@ ${examples}${examplesInstruction}
   // 2026-11-03 作業員6 前置きの並び（REPLY_CACHE_STATIC_FIRST=on・既定 off）: 今は DB の決まり（学習で日に1回ほど変わる）が全顧客共通の静的な決まり
   //   （約32k字）より前にあり、学習の更新の日は静的な塊も書き直しになる。on の時は静的な塊を system の2つ目に上げ、DB の決まりを3つ目に下げる
   //   （区切りは system×3＋human×1 の4つのまま・human の先頭は段の案内）。中身は1文字も変えない（置き場所だけ）。調べ: scratchpad の reply-sonnet-cache-findings.md
-  const staticFirst = (process.env.REPLY_CACHE_STATIC_FIRST ?? "").trim().toLowerCase() === "on";
+  // 2026-11-06 作業員8（統括役の決め・弱い所 312）: 既定 on。試験 reply-sf-on-1105（2/4問）・reply-sf-on2-1106（4/6問）で返信の正解の問題は全部比べて悪化0（合格の数が同じ）。
+  //   11/04 の書き手 20回のうち途中の 66k の書き直し 3回をなくす見込み（約 $0.8/日）。止める: REPLY_CACHE_STATIC_FIRST=off
+  const staticFirst = (process.env.REPLY_CACHE_STATIC_FIRST ?? "").trim().toLowerCase() !== "off";
   if (staticFirst) systemBlocks.push({ type: "text" as const, text: staticBlock, cache_control: { type: "ephemeral", ttl: "1h" } });
   if (dbSemiStatic) systemBlocks.push({ type: "text" as const, text: dbSemiStatic, cache_control: { type: "ephemeral", ttl: "1h" } });
   // humanBlocks 3 分割（2026-08 phaseGuide 分離）:

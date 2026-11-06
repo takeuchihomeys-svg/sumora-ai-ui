@@ -77,6 +77,7 @@ import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from 
 import { catalogBlockForBrain, isSceneUncertain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
+import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
@@ -2651,9 +2652,15 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   if (fastSlow?.level === "easy" && promiseTrack.open.length > 0) fastSlow = { ...fastSlow, level: "normal", reasons: [`未対応の約束${promiseTrack.open.length}`] };
   const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }));
   if (promiseTrack.open.some((p) => p.status === "遅れ" || p.status === "遅れ気味")) console.log(JSON.stringify({ tag: "brain:promise-overdue", conversationId, open: promiseTrack.open.map((p) => ({ kind: p.kind, status: p.status, h: Math.round(p.elapsedH) })) }));
-  const seeMoreBrainText = asksMoreListings
+  // 2026-11-06 作業員1（弱い所 61・q174）: 物件を送った後の「良さそう・一旦見てみたい＋他にも候補があれば」を内覧の依頼と読まない手本（竹内さん 3/3 がピックアップの約束・内覧 0）。
+  //   上の「もう少し見てみたい」の材料が拾わない言い方だけ（重ねない）。既定 off・入れる BRAIN_OTHER_CANDIDATES_READ=on（app/lib/other-candidates-read.ts）
+  const otherCandidatesRead = otherCandidatesReadOn() && !isPostApplyStatus(convStatus)
+    ? readOtherCandidates({ customerText: unrepliedTurn.text, sentPropertyCount: brainLedger.facts.propertiesSentCount ?? 0, alreadySeeMore: asksMoreListings })
+    : { hit: false, liking: false };
+  if (otherCandidatesRead.hit) console.log(JSON.stringify({ tag: "brain:other-candidates-read", conversationId, liking: otherCandidatesRead.liking }));
+  const seeMoreBrainText = (asksMoreListings
     ? "\n【お客様の言葉（確定）】お客様は他のお部屋も見たいと言っている（「もう少し見てみたい」等）。実送信 6/6 がこちらの引き続きの新着物件のご紹介・見積書 0/6。今回の返信の中心は引き続きのご紹介（見積書・募集状況の確認にしない）。"
-    : "";
+    : "") + otherCandidatesBrainText(otherCandidatesRead, otherCandidatesRead.hit ? pickOtherCandidatesExamples(conversationId) : []);
   const sceneEvidence = sceneEvidenceForTurn(unrepliedTurn, {
     sentPropertyCount: brainLedger.facts.propertiesSentCount,
     aixHistory: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null })),
