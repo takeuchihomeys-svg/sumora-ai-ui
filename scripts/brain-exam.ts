@@ -605,10 +605,12 @@ function rawPlanOf(o: Record<string, unknown> | undefined): Record<string, unkno
 const AIX_KEYS = new Set(["property_recommendation", "property_send", "property_pickup", "property_search", "viewing_invite", "meeting_place", "application_push", "property_check_result", "acknowledge_check", "estimate_sheet", "cost_explain", "cost_breakdown", "condition_hearing", "guarantor_info", "phone_call", "zenryoku_support", "followup_revive"]);
 /** 本質の道: LLM が AIX を選んでいれば決まった計算、そうでなければ判定の分類（rawPathCode） */
 function codeFromString(c: string): PathCode {
-  const s = c.trim();
-  if (s.startsWith("AIX:")) { const a = s.slice(4).split("/")[0]; return { codes: [s, `AIX:${aixFamily(a)}`, "AIX"], hard: [s, `AIX:${aixFamily(a)}`, "AIX"], label: s }; }
-  if (s.startsWith("2段")) return { codes: [s, "2段"], hard: [s, "2段"], label: s };
-  return { codes: [s], hard: [s], label: s };
+  // 2026-11-06 作業員4の見つけ: 保存した本質・下書きの道は表示用のラベル（「AIX:property_send（左だけ）」「（左右）」「（初回）」）＝末尾の全角の括弧の注を落として照らす
+  //   （旧は aixFamily が「property_send（左だけ）」で合わず、採り直し（--report）で本質が✕に倒れた・tk35-ess 11/22→7/22）。ラベルは元のまま
+  const s = c.trim(), k = s.replace(/（[^）]*）$/, "").trim();
+  if (k.startsWith("AIX:")) { const a = k.slice(4).split("/")[0]; return { codes: [k, `AIX:${aixFamily(a)}`, "AIX"], hard: [k, `AIX:${aixFamily(a)}`, "AIX"], label: s }; }
+  if (k.startsWith("2段")) return { codes: [k, "2段"], hard: [k, "2段"], label: s };
+  return { codes: [k], hard: [k], label: s };
 }
 
 // ─── 判定（DeepSeek を直に・記録の外なので費用はここで数える） ─────────────────
