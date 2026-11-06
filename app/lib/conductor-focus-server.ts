@@ -39,6 +39,13 @@ export async function nearFocusForTurn(sb: SupabaseClient, o: { conversationId: 
  *   失敗・時間切れは null（入口の統括は近い番の1行なしで読む＝今まで通り）
  */
 export async function liveNearTurns(sb: SupabaseClient, o: { conversationId: string; propertyCustomerId: string | null; turnAt: string; scene: string; customerTurn: string }): Promise<NearTurns | null> {
+  const situationV2 = await liveSituationV2(sb, o);
+  if (!situationV2) return null;
+  return await nearFocusForTurn(sb, { conversationId: o.conversationId, propertyCustomerId: o.propertyCustomerId, turnAt: o.turnAt, scene: o.scene, situationV2 });
+}
+
+/** 2026-11-07 作業員4（入口の意見 conductor-near-opinion-server も同じ状況の文 v2 で引くため、liveNearTurns から切り出した・中身は同じ）。失敗は null */
+export async function liveSituationV2(sb: SupabaseClient, o: { conversationId: string; turnAt: string; scene: string; customerTurn: string }): Promise<string | null> {
   try {
     const since = new Date(Date.parse(o.turnAt) - 30 * 86_400_000).toISOString();
     const [{ data: msgs }, { data: aix }, { data: conv }] = await Promise.all([
@@ -64,8 +71,7 @@ export async function liveNearTurns(sb: SupabaseClient, o: { conversationId: str
       .map((m) => ({ sender: m.sender, text: mask(m.text ?? ""), created_at: m.created_at, aixType: m.is_aix_generated ? aixOf(m) : null }));
     // 今の番の連投（最後に続くお客様の通）は hist に入れない＝過去の番の作り（番の始まりより前）と揃える
     while (hist.length && hist[hist.length - 1].sender === "customer") hist.pop();
-    const situationV2 = turnSituationTextV2({ scene: o.scene, hist, customerMasked: mask(o.customerTurn), nowMs: Date.parse(o.turnAt) });
-    return await nearFocusForTurn(sb, { conversationId: o.conversationId, propertyCustomerId: o.propertyCustomerId, turnAt: o.turnAt, scene: o.scene, situationV2 });
+    return turnSituationTextV2({ scene: o.scene, hist, customerMasked: mask(o.customerTurn), nowMs: Date.parse(o.turnAt) });
   } catch {
     return null;
   }

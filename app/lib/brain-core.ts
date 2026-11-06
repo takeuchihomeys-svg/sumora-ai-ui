@@ -3212,25 +3212,8 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     try {
       const { nearOpinionForTurn } = await import("@/app/lib/conductor-near-opinion-server");
       const { nearOpinionDigest } = await import("@/app/lib/conductor-near-opinion");
-      const turnAtN = typedMessages[0].created_at;
-      const lastStaffN = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim()) ?? null;
-      let lastKindN: string | null = null;
-      if (lastStaffN) {
-        if (!lastStaffN.is_aix_generated) lastKindN = "返信";
-        else {
-          const t = Date.parse(lastStaffN.created_at);
-          const { data: al } = await supabase.from("aix_usage_logs").select("aix_type, created_at").eq("conversation_id", conversationId)
-            .gte("created_at", new Date(t - 15 * 60_000).toISOString()).lte("created_at", new Date(t + 2 * 60_000).toISOString()).limit(10);
-          const best = ((al ?? []) as Array<{ aix_type: string; created_at: string }>).sort((a, b) => Math.abs(Date.parse(a.created_at) - t) - Math.abs(Date.parse(b.created_at) - t))[0];
-          lastKindN = `AIX:${best?.aix_type ?? "aix_unknown"}`;
-        }
-      }
-      const { maskPII } = await import("@/app/lib/pii-mask");
-      const { customerNameTokens, maskCustomerNames } = await import("@/app/lib/compose-name-mask");
-      const tokensN = customerNameTokens([opts?.customerName ?? null]);
-      const custN = maskPII(maskCustomerNames(unrepliedTurn.text ?? "", tokensN));
       const r = await Promise.race([
-        nearOpinionForTurn(supabase, { conversationId, propertyCustomerId: propertyCustomerId ?? null, turnAt: turnAtN, scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, stage: convStatus ?? null, customerMasked: custN, lastStaffKind: lastKindN }),
+        nearOpinionForTurn(supabase, { conversationId, propertyCustomerId: propertyCustomerId ?? null, turnAt: typedMessages[0].created_at, scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, customerTurn: unrepliedTurn.text ?? "" }),
         new Promise<null>((res) => setTimeout(() => res(null), 2_000)),
       ]);
       if (r?.line) customerStateBlockText += `\n\n${r.line}`;
