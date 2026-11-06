@@ -43,13 +43,13 @@ export type OtherCandidatesExample = { conv: string; at: string; customer: strin
 export const OTHER_CANDIDATES_EXAMPLES: ReadonlyArray<OtherCandidatesExample> = [
   { conv: "c068a6a3-1018-40c6-8224-8388c98f6469", at: "2026-10-16", writer: "takeuchi",
     customer: "広くて綺麗ですね！一旦見てみたいです！場所が少し遠い気もしてて、もし他にも候補ありましたらお願いしたいです",
-    actual: "約束の返信（探す）", staff: "かしこまりました！！駅から近くて〇〇さんにオススメできるお部屋を新たにピックアップしてお送りさせて頂きます！！" },
+    actual: "ピックアップの約束（2段:pickup）", staff: "ご査収頂きありがとうございます😊！！かしこまりました！！駅から近くて〇〇さんにオススメできるお部屋を新たにピックアップしてお送りさせて頂きます！！確認出来次第ご連絡させて頂きます！！" },
   { conv: "b50fd451-2393-4826-b61f-34db7aefa55d", at: "2026-09-19", writer: "takeuchi",
     customer: "その日に他の物件も見たいのでまた出していただけると助かります",
-    actual: "約束の返信（探す）", staff: "かしこまりました！！21日16時のご案内に合わせて、オススメできるお部屋ピックアップしてお送りさせて頂きます😊！！" },
+    actual: "ピックアップの約束（2段:pickup）", staff: "かしこまりました！！21日16時のご案内に合わせて、オススメできるお部屋ピックアップしてお送りさせて頂きます😊！！" },
   { conv: "e9b2c02c", at: "2026-07-31", writer: "employee",
     customer: "部屋見てみたいのですが、他の部屋も紹介してみたいです！",
-    actual: "約束の返信（探す）", staff: "かしこまりました！！エリア広がること可能でしたら追加でオススメ物件お送り可能です！！" },
+    actual: "ピックアップの約束（2段:pickup）", staff: "かしこまりました！！エリア広がること可能でしたら追加でオススメ物件お送り可能です！！" },
 ];
 
 /** 手本の選び（同じ会話・試験の元の会話は外す＝答えが漏れない） */
@@ -62,7 +62,11 @@ export function pickOtherCandidatesExamples(conversationId: string | null | unde
 export function otherCandidatesBrainText(r: OtherCandidatesRead, examples: ReadonlyArray<OtherCandidatesExample>): string {
   if (!r.hit) return "";
   const lines = examples.map((e, i) => `${i + 1}. お客様「${e.customer}」→ ${e.writer === "takeuchi" ? "竹内さん" : "スタッフ"}: ${e.actual}「${e.staff}」`);
-  return `\n\n【読み方の手本（物件を送った後の「他にも候補があれば」）】お客様は送ったお部屋の他の候補を頼んでいる。${r.liking ? "「見てみたい・良さそう・綺麗」は送ったお部屋への好感で、内覧の依頼ではない（内覧・日程・日時の言葉が無い）。customer_questions・proposals・key_topics に内覧を書かない。" : ""}
-竹内さんの実送信（同じ型 3番）: 他の候補をピックアップする約束（または送った）3・内覧に誘った 0・AIX【内覧調整】0。${lines.length ? `\n${lines.join("\n")}` : ""}
+  // 2026-11-06 作業員9の q174-ab: 読み方だけを渡すと、内覧と読む事は減ったが道が 2段:pickup から「返信」に寄った（前 3/4 → 今 0/2）。
+  //   竹内さんの一手（ピックアップの約束＝2段:pickup）を、内覧と読まない事と1組で渡す（統括役 11/06）
+  return `\n\n【読み方と一手の手本（物件を送った後の「他にも候補があれば」）】お客様は送ったお部屋の他の候補を頼んでいる＝物件を探す依頼。
+- 読み方: ${r.liking ? "「見てみたい・良さそう・綺麗」は送ったお部屋への好感で、内覧の依頼ではない（内覧・日程・日時の言葉が無い）。customer_questions・proposals・key_topics に内覧を書かない。" : "内覧・見積・確認の依頼ではない。"}
+- 一手: 竹内さんは新たにピックアップしてお送りする約束を返す（物件の AIX【物件ピックアップした】の番で、送れる物件がまだ無い＝先に約束の返信・2段:pickup。turn_contract のこの依頼の道は約束 route=promise）。相づち・お礼だけの返信で終わらせない。内覧の誘い・AIX【内覧調整】にしない。
+竹内さんの実送信（同じ型 3番）: ピックアップの約束（または送った）3・内覧に誘った 0・AIX【内覧調整】0・相づちだけの返信 0。${lines.length ? `\n${lines.join("\n")}` : ""}
 ※ 決めるのはこの会話の事実。お客様が内覧・日程を言った番はこの手本に当たらない。`;
 }
