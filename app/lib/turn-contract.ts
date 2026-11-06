@@ -248,6 +248,19 @@ export function sentReactionInviteRule(env: Record<string, string | undefined> =
   if (viewInviteOnePlaceOn(env)) return "- ★こちらが送った物件（送った束・オススメの中の物件）に「気になります」「ここいいですね」「気に入りました」とだけ返ってきた番（空き・費用・日時の問いが無い）は、管理会社に確かめる事も AIX で送る結果も無い＝確認の約束・御見積書の約束（route=\"promise\"）にも AIX【物件確認した】にもしない（御見積書はお客様が費用を聞いた時・送ってきた時だけ）。about=reaction_to_sent で内覧に誘う。誘い方はここで1つに決める: 空室・退去予定とも AIX【内覧調整】（route=\"aix\"・aix=viewing_invite）で誘う。空室なら直近の空いている日の候補を出し、退去予定なら内覧できる時期を AIX の中で添える（退去予定の内覧はスタッフだけが知る中身＝竹内さん 10/09）。返信の締めの内覧の訴求は重ねない（竹内さん本人の90日 6番: 10/02 に候補日は直近の3つを出すと決めてからの番は AIX【内覧調整】2／それより前は返信 3・見積書 1・確認の約束 0）。空き・費用・日時を聞かれた時は上の★のまま。\n";
   return "- ★こちらが送った物件（送った束・オススメの中の物件）に「気になります」「ここいいですね」「気に入りました」とだけ返ってきた番（空き・費用・日時の問いが無い）は、管理会社に確かめる事も AIX で送る結果も無い＝確認の約束・御見積書の約束（route=\"promise\"）にも AIX【物件確認した】にもしない（御見積書はお客様が費用を聞いた時・送ってきた時だけ）。about=reaction_to_sent・route=\"reply\" で「ご査収頂きありがとうございます」＋その物件を「よろしければご都合よろしいお日にちにお部屋ご案内させて頂きます」と内覧に誘う（竹内さん本人の90日 6番: 内覧の誘い 5・見積書 1・確認の約束 0）。空き・費用・日時を聞かれた時は上の★のまま。\n";
 }
+/**
+ * 2026-11-06 弱い所 342（q141・作業員7・統括役の頼み）: 内覧の時刻だけ決まり、行き先（物件）が未定の番を AIX【待ち合わせ場所】にする。
+ *   竹内さん本人の90日: こちらが枠を出した後にお客様が時刻を決めた番 24 のうち、AIX【待ち合わせ場所】17（どれも行き先の物件が決まっていた）・返信 5。
+ *   お客様が「行きたい場所決まったら言います」「お気に召されたお部屋」と行き先を決めていない番（10/12 q141・9/17）は返信で受けた（待ち合わせの住所を出せない）。
+ *   内覧の段階（feedback_viewing_flow_stages）: 内覧調整 → 日にち決定 → 待ち合わせ場所＝確定（行き先が要る）。既定 off（VIEWING_TIME_ONLY_NO_MEETING=on）
+ */
+export function viewingTimeOnlyNoMeetingOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.VIEWING_TIME_ONLY_NO_MEETING ?? "").trim().toLowerCase() === "on";
+}
+export function viewingTimeOnlyRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  if (!viewingTimeOnlyNoMeetingOn(env)) return "";
+  return "- ★内覧の時刻だけ決まり、行く物件（行き先）がまだ決まっていない番（お客様自身が「行きたい場所決まったら言います」「どこにするか考えます」と、行き先をまだ決めていないと言った番だけ。日にちの変更・時刻の返事だけの番は当てない）は、AIX【待ち合わせ場所】にしない（待ち合わせは行き先が決まってからの段＝内覧調整→日にち決定→待ち合わせ場所）。route=\"reply\" で時刻を受け、「行きたいお部屋が決まりましたらご連絡ください」と返す（竹内さん 10/12）。行き先が決まっている番は今まで通り AIX【待ち合わせ場所】。\n";
+}
 function twoMessageAskRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if ((env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "off") return ""; // 11/05 既定 on（止める TWO_MESSAGE_PLAN=off）
   return "- ★1つの連投に AIX の依頼（見積・空き・内覧の日時・申込 等）と、返信で答えられる質問（審査・入居日・手続き・その物件の資料にある設備・会社の事実）が混ざる番は、AIX の依頼に寄せて1つにまとめず、返信で答えられる質問を別の ask（route=\"reply\"・answer に答えの要点）として必ず書く（竹内さん 11/05: 返信で答えられる部分と AIX の部分は分けて答える＝AIX の後の通・返信で答える）。AIX の中身だけで答えが決まる事（その物件の空き・見積の金額）は route=\"aix\" のまま。お客様が自分で「内見の際に」「後で」と先に回した話は、今の番の約束にせず route=\"none\"（竹内さんは内覧調整の AIX の1通だけで、その話は内見の時にした）。\n";
@@ -259,7 +272,7 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - asks: 【お客様の依頼の一覧】があればその項目を1つも落とさない（足すのはよい）。無ければ今の連投から自分で数える。前の番の依頼を書き写さない（まだ答えていない前の依頼は【お客様の依頼の一覧】の「まだ答えていない確認事項」から入る）。
 - route の決め方: スタッフだけが知る事（管理会社に確認した結果・募集状況・見積の金額・割引額・入居日の確定・内覧の日時の確定・撮影した写真・交渉の結果・審査の結果・探した結果）が答えに要る → "aix"（AIX のキーを付ける）。
   まだ結果が無く、これから確認・作成・探す・交渉する → "promise"。会話・送った物件の資料・会社の事実・一般的な事（虫・換気・二人で住める広さ・内覧の所要時間・手続きの流れ）で答えられる → "reply"（確認の約束にしない）。もう答えた・お客様が自分でやる → "none"。
-${answerableDirectRule()}${twoMessageAskRule()}${textAixRouteRule()}${screeningConsultRule()}${sentReactionInviteRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
+${answerableDirectRule()}${twoMessageAskRule()}${textAixRouteRule()}${screeningConsultRule()}${sentReactionInviteRule()}${viewingTimeOnlyRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
 ${closeOnlyAnswerRule()}
 - close_only=true:返事の要らない番（お礼・了承・あいさつだけ）／お客様が待ってと言った番（「決まったら連絡します」「また連絡します」「確認してから連絡します」）。待っての番は「お決まりになりましたらご連絡ください」の形で閉じ、物件を送り続ける約束・新しい提案をしない。
 - 今の条件の物件を出し切った後（前に「全てピックアップ」・新着待ちの約束・全力サポートを送った後で条件が変わっていない）の「もう少し探して」等は route="aix"・aix="zenryoku_support"。
