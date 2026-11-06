@@ -54,7 +54,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape } from "./lib/exam-base-pin";
-import { planExam, kindSuggest, readExamResult, splitCmdArgs, type CmpLite } from "./lib/exam-plan";
+import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, type CmpLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
@@ -223,7 +223,14 @@ function addJob(): void {
     }
     const kind = (["record", "prod", "exam"].includes(arg("kind")) ? arg("kind") : undefined) as "record" | "prod" | "exam" | undefined;
     const group = /^grp-reply/.test(label) ? "reply" as const : /^grp-aix/.test(label) ? "aix" as const : /^grp-brain/.test(label) ? "brain" as const : null;
-    const plan = planExam({ label, kind, switchName: base.switch, ids, group, repsOverride: job.runner === "brain-exam" ? (() => { try { return jobRepsPlan(job, ids).reps; } catch { return undefined; } })() : undefined, diffStage: base.stage === "brain" || base.stage === "draft" ? base.stage : null, brainText: flag("brain-text"), defaultOn: flag("default-on"), capUsd: Number(arg("cap-usd", "2")) || 2 });
+    // 2026-11-06 統括役（sce-on2 の見込み $0.24・実際 $0.35＝前を作った子 $0.17 が見込みに入っていなかった）: 今の main の版に前の答えが無い問題は「前を作る分」を見込む
+    const needsBase = (() => { try {
+      const B = join(examCacheRoot(), "brain-exam-baseline");
+      const head = execFileSync("git", ["-C", cwd, "rev-parse", "origin/main"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+      return needsBaseIds(ids, { mainCommit: head || null, versionKeys: readJson<Record<string, string>>(join(B, "version-keys.json"), {}),
+        dirsByKey: (key) => readdirSync(B).filter((d) => d.startsWith(`v-${key}-`)).map((d) => readdirSync(join(B, d)).filter((f) => f.endsWith(".json") && f !== "config.json").map((f) => f.replace(/\.json$/, ""))) });
+    } catch { return [] as string[]; } })();
+    const plan = planExam({ label, kind, switchName: base.switch, ids, group, needsBase, repsOverride: job.runner === "brain-exam" ? (() => { try { return jobRepsPlan(job, ids).reps; } catch { return undefined; } })() : undefined, diffStage: base.stage === "brain" || base.stage === "draft" ? base.stage : null, brainText: flag("brain-text"), defaultOn: flag("default-on"), capUsd: Number(arg("cap-usd", "2")) || 2 });
     log(`  ${plan.line}`);
     const sug = kindSuggest({ kind, switchName: base.switch, label }); if (sug) log(`  （${sug}）`);
     try { appendFileSync(join(examCacheRoot(), "exam-plans.jsonl"), JSON.stringify({ at: new Date().toISOString(), label, route: plan.route, ids: plan.ids, usd: Number(plan.cost.usd.toFixed(4)), stage: plan.stage, claude: plan.claude.ids, gate: plan.gate }) + "\n"); } catch { /* 記録できなくても積む */ }

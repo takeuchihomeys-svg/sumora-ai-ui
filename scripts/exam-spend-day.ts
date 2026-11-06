@@ -3,6 +3,33 @@
 // 実行: npx tsx --env-file=.env.local scripts/exam-spend-day.ts [--day=2026-11-06]（JST の日・既定 昨日）
 import { createClient } from "@supabase/supabase-js";
 import { altUsageUsd, altPriceOf } from "../app/lib/llm-price";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { examCacheRoot } from "./lib/llm-cassette";
+import { planVsActualReport, type PlanVsActual } from "./lib/exam-plan";
+
+/** 2026-11-06 統括役: その日に積んだ依頼の見込み（exam-plans.jsonl）と実際（作業ツリーの results/<label>.cost.json）の比。ファイルを読むだけ（DB を読まない） */
+function planVsActualOf(dayJst: string): PlanVsActual[] {
+  const C = examCacheRoot(), Q = join(C, "exam-queue");
+  const plans = new Map<string, { at: string; usd: number; stage: string; route: string }>();
+  try { for (const l of readFileSync(join(C, "exam-plans.jsonl"), "utf8").split("\n")) { try { const j = JSON.parse(l); plans.set(j.label, j); } catch { /* */ } } } catch { return []; }
+  const jobs = new Map<string, { cwd: string }>();
+  for (const d of [join(Q, "done"), Q]) { try { for (const f of readdirSync(d)) { if (!/\.json$/.test(f)) continue; try { const j = JSON.parse(readFileSync(join(d, f), "utf8")); if (j.label && j.cwd) jobs.set(j.label, j); } catch { /* */ } } } catch { /* */ } }
+  const out: PlanVsActual[] = [];
+  for (const [label, p] of plans) {
+    if (p.route !== "exam" || new Date(Date.parse(p.at) + 9 * 3_600_000).toISOString().slice(0, 10) !== dayJst) continue;
+    const j = jobs.get(label); if (!j) continue;
+    const res = join(j.cwd, "scripts", "brain-exam", "results");
+    const cf = join(res, `${label}.cost.json`); if (!existsSync(cf)) continue;
+    try {
+      const c = JSON.parse(readFileSync(cf, "utf8"));
+      const rf = join(res, `${label}.jsonl`);
+      const reps = existsSync(rf) ? readFileSync(rf, "utf8").split("\n").filter(Boolean).length : 0;
+      out.push({ label, stage: String(c.stage ?? p.stage), planUsd: p.usd, cur: (c.total?.realUsd ?? 0) + (c.total?.replayUsd ?? 0), judge: c.judge?.usd ?? 0, base: c.baseline?.childUsd ?? 0, reps });
+    } catch { /* */ }
+  }
+  return out;
+}
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -32,4 +59,11 @@ type Row = { route: string | null; model: string | null; input_uncached: number 
   const tot = [...g.values()].reduce((s, v) => s + v.usd, 0);
   console.log(`# ${day}（JST）の試験の費用（llm_usage_logs・route=script:*・DeepSeek は表の単価・倍の時間は2倍）: 合計 $${tot.toFixed(2)}（前 11/04〜05 は 約 $39/日）`);
   for (const [k, v] of [...g].sort((a, b) => b[1].usd - a[1].usd)) console.log(`- ${k.replace("|", "・")}: ${v.n}回 $${v.usd.toFixed(2)}`);
+  // 見込みと実際の比（依頼ごと・段ごと）。比の中央が 0.7〜1.3 を外れた段は exam-plan.ts の単価（BRAIN_USD_PER_REP・DRAFT_USD_PER_REP）を直す
+  const pv = planVsActualReport(planVsActualOf(day));
+  if (pv.lines.length) {
+    console.log(`\n## 見込みと実際（${pv.lines.length}本）`);
+    for (const l of pv.lines) console.log(l);
+    for (const [st, v] of Object.entries(pv.byStage)) console.log(`- 段 ${st}: ${v.n}本・1回あたり（今＋判定）${v.perRep.toFixed(3)}・比の中央 ${v.ratioMid.toFixed(2)}${v.ratioMid < 0.7 || v.ratioMid > 1.3 ? " ⚠ 単価を直す" : ""}`);
+  }
 })().catch((e) => { console.error(e); process.exitCode = 1; });

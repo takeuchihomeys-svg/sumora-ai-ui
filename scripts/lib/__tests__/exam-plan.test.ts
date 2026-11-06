@@ -1,7 +1,7 @@
 // 試験の統括（scripts/lib/exam-plan.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-plan.test.ts（全 PASS で exit 0）
 import { flakeCleanSinceMs } from "../exam-flake";
-import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs, overBudget, capUsdOf } from "../exam-plan";
+import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs, overBudget, capUsdOf, needsBaseIds, planVsActualReport } from "../exam-plan";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -69,6 +69,19 @@ ok("上限の環境変数", capUsdOf({ EXAM_MAX_USD: "0.5" }) === 0.5 && capUsdO
   ok("回数の指定で見込みが1回分", before.reps.q010 === 3 && after.reps.q010 === 1 && Math.abs(after.cost.usd * 3 - before.cost.usd) < 1e-9 && after.line.includes("安定1×1"), `${before.cost.usd} ${after.cost.usd} ${after.line}`);
   const mix = planExam({ label: "d2", ids: ["a", "b"], atMs: OFF, repsOverride: { a: 4 } });
   ok("渡されない問題は今までの推定", mix.reps.a === 4 && mix.reps.b === 3 && mix.line.includes("揺れ4×2"), mix.line);
+}
+
+{
+  // 11/06 統括役（sce-on2 見込み $0.24・実際 $0.35＝前を作った子の分が入っていなかった）
+  const vk = { c1: "k1" };
+  const dirs = (k: string) => (k === "k1" ? [["q084", "q079"], ["q008"]] : []);
+  ok("前の答えが今の版にある問題は作らない", needsBaseIds(["q084", "q008", "q999"], { mainCommit: "c1", versionKeys: vk, dirsByKey: dirs }).join(",") === "q999");
+  ok("今の版の鍵が無い（main が動いた）＝全部作る", needsBaseIds(["q084", "q008"], { mainCommit: "c2", versionKeys: vk, dirsByKey: dirs }).length === 2);
+  const a = planExam({ label: "s0", ids: ["q084", "q079"], diffStage: "brain", atMs: OFF, repsOverride: { q084: 4, q079: 4 } });
+  const b = planExam({ label: "s1", ids: ["q084", "q079"], diffStage: "brain", atMs: OFF, repsOverride: { q084: 4, q079: 4 }, needsBase: ["q084", "q079"] });
+  ok("前を作る分を見込みに足す（sce-on2 の形で約2倍）", Math.abs(b.cost.usd - 2 * a.cost.usd) < 1e-9 && b.line.includes("前を作る分 $0.24"), b.line);
+  const r = planVsActualReport([{ label: "x", stage: "brain", planUsd: 0.24, cur: 0.17, judge: 0.01, base: 0.17, reps: 8 }, { label: "y", stage: "draft", planUsd: 0.36, cur: 0.18, judge: 0, base: 0.18, reps: 5 }]);
+  ok("見込みと実際の比の一覧", r.lines.length === 2 && r.lines[0].includes("比 1.46") && Math.abs(r.byStage.brain.perRep - 0.0225) < 1e-9 && r.byStage.draft.ratioMid === 1, JSON.stringify(r));
 }
 
 console.log(`${pass} pass / ${fail} fail`);

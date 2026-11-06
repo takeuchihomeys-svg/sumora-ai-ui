@@ -52,6 +52,9 @@ export function kindSuggest(input: { kind?: PlanInput["kind"]; switchName?: stri
   return /記録だけ|(?:^|[_-])(?:LOG|RECORD|DIGEST)(?:$|[_-])|digest/i.test(s) ? "記録だけの直しなら --kind=record で試験を流さず物差しで見られる" : null;
 }
 
+/** 1回あたりの単価（今の答え＋判定・DeepSeek の安い時間）。11/06 の実際: 頭の段 $0.018〜0.025・下書きの段 $0.033〜0.037（前は 0.06 と見ていた＝見込みが倍） */
+export const BRAIN_USD_PER_REP = 0.03, DRAFT_USD_PER_REP = 0.04;
+
 export function planExam(input: PlanInput): ExamPlan {
   const kind = guessKind(input);
   const k = input.k ?? 3;
@@ -67,7 +70,7 @@ export function planExam(input: PlanInput): ExamPlan {
   const reps = Object.fromEntries(ids.map((id) => [id, input.repsOverride?.[id] ?? repsFor(input.history?.[id] ?? [], { k, regression: reg.has(id) })]));
   const stage = decideStage({ group: input.group ?? null, diffStage: input.diffStage ?? null });
   const claude = claudeCheckPlan({ kind: input.brainText ? "brain-text" : stage === "draft" ? "text-only" : "record-only", defaultOn: !!input.defaultOn, scenes: input.scenes ?? [] });
-  const items: CostItem[] = ids.map((id) => ({ id, reps: reps[id], usdPerRep: input.usdPerRep?.[id] ?? (stage === "draft" ? 0.06 : 0.03), needsBase: (input.needsBase ?? []).includes(id) }));
+  const items: CostItem[] = ids.map((id) => ({ id, reps: reps[id], usdPerRep: input.usdPerRep?.[id] ?? (stage === "draft" ? DRAFT_USD_PER_REP : BRAIN_USD_PER_REP), needsBase: (input.needsBase ?? []).includes(id) }));
   const est = estimateExamCost(items, { at: input.atMs ?? Date.now() });
   const gate = costGate(items, est, { capUsd: input.capUsd ?? 2, urgent: input.urgent, mustIds: [...reg] });
   const nFlaky = Object.values(reps).filter((r) => r > 1).length;
@@ -130,4 +133,34 @@ export function overBudget(spentUsd: number, capUsd: number | null | undefined):
 export function capUsdOf(env: Record<string, string | undefined> = process.env): number | null {
   const v = Number(String(env.EXAM_MAX_USD ?? "").trim());
   return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/**
+ * 前（main の答え）を作り直す問題の見込み（純関数）。2026-11-06 統括役（sce-on2 の見込み $0.24・実際 $0.316〜0.349）:
+ *   ずれの元は1回の単価ではなく「前を作る分 $0.00」＝前を作った子の費用（今と同じくらい）が見込みに入っていなかった。
+ *   今の main の版の鍵（version-keys.json の commit → key）の置き場（v-<key>-*）に、その問題の前の答えがあれば使い回し・無ければ作る。
+ *   前の版からの持ち越し（findCarryOver）は読めない＝見込みは「使い回せなければ」の上の側
+ */
+export function needsBaseIds(ids: string[], o: { mainCommit: string | null; versionKeys: Record<string, string>; dirsByKey: (key: string) => string[][] }): string[] {
+  const key = o.mainCommit ? o.versionKeys[o.mainCommit] ?? null : null;
+  if (!key) return [...ids];
+  const have = new Set(o.dirsByKey(key).flat());
+  return ids.filter((id) => !have.has(id));
+}
+
+/** 毎朝の見込みと実際の比（純関数・統括役 11/06）。行は依頼ごと、段ごとに1回あたりの今の費用と比の中央を出す */
+export type PlanVsActual = { label: string; stage: string; planUsd: number; cur: number; judge: number; base: number; reps: number };
+export function planVsActualReport(rows: PlanVsActual[]): { lines: string[]; byStage: Record<string, { n: number; perRep: number; ratioMid: number }> } {
+  const lines: string[] = [], byStage: Record<string, { n: number; perRep: number; ratioMid: number }> = {};
+  for (const r of rows) {
+    const act = r.cur + r.judge + r.base;
+    lines.push(`- ${r.label}［${r.stage}］見込み $${r.planUsd.toFixed(2)} → 実際 $${act.toFixed(2)}（比 ${r.planUsd ? (act / r.planUsd).toFixed(2) : "-"}・今 $${r.cur.toFixed(2)}／判定 $${r.judge.toFixed(2)}／前を作った $${r.base.toFixed(2)}・${r.reps}回）`);
+  }
+  for (const st of [...new Set(rows.map((r) => r.stage))]) {
+    const xs = rows.filter((r) => r.stage === st && r.reps > 0 && r.planUsd > 0);
+    if (!xs.length) continue;
+    const ratios = xs.map((r) => (r.cur + r.judge + r.base) / r.planUsd).sort((a, b) => a - b);
+    byStage[st] = { n: xs.length, perRep: xs.reduce((s, r) => s + r.cur + r.judge, 0) / xs.reduce((s, r) => s + r.reps, 0), ratioMid: ratios[Math.floor(ratios.length / 2)] };
+  }
+  return { lines, byStage };
 }
