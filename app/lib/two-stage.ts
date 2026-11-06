@@ -113,7 +113,7 @@ export const TWO_STAGE_ALSO_ANSWER = "同じ発言の他のご希望・ご質問
  */
 export const TWO_STAGE_ALSO_ANSWER_PLAIN = "同じ発言の他のご希望・ご質問にも一言ずつ応える（お客様がはっきり書いた事だけ・頼まれていない内覧・申込の一文は足さない）。";
 export function twoStageAlsoAnswer(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
-  return (env.TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE ?? "").trim().toLowerCase() === "on" ? TWO_STAGE_ALSO_ANSWER_PLAIN : TWO_STAGE_ALSO_ANSWER;
+  return (env.TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE ?? "").trim().toLowerCase() !== "off" ? TWO_STAGE_ALSO_ANSWER_PLAIN : TWO_STAGE_ALSO_ANSWER; // 2026-11-06 既定 on（q174-guard 悪化0）
 }
 export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
   const v = resolveTwoStageCore(i);
@@ -680,10 +680,10 @@ export function firstContactCheckTwoStage(propertyMsgs: readonly string[], custo
  *      （試験 q174: 3通とも「ご内覧頂く事も可能」「ご内覧のご希望もお受け」等を足した・竹内さんはピックアップの約束だけ）
  *   ② PICKUP_DIRECTION_KEEP（322）: 継続の約束を竹内さんの実送信の形で1文（条件の言い直しのピックアップの約束＝竹内さん 59%・新着を頼まれた時）。同じ日にもう言っていれば入れない（KB 1d07b3df）
  *      （試験 cc2-on q154#1: 書き手への注記では書かなかった）
- * PICKUP_DIRECTION_NO_VIEWING は既定 off（=on で入る）・PICKUP_DIRECTION_KEEP は 11/06 既定 on（=off で止める）。
+ * PICKUP_DIRECTION_NO_VIEWING も 11/06 既定 on（q174-guard 悪化0・=off で止める）・PICKUP_DIRECTION_KEEP は 11/06 既定 on（=off で止める）。
  */
 export function pickupDirectionNoViewingOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PICKUP_DIRECTION_NO_VIEWING ?? "").trim().toLowerCase() === "on";
+  return (env.PICKUP_DIRECTION_NO_VIEWING ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（q174-guard 悪化0）
 }
 export function pickupDirectionKeepOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.PICKUP_DIRECTION_KEEP ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（keep-line-on・統括役の決め）

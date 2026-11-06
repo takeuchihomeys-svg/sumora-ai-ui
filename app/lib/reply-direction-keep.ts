@@ -32,7 +32,7 @@ export function replyDirectionWithKeep(o: { direction: string | null; scene: str
  * 切替: REPLY_DIRECTION_NO_VIEWING=on の時だけ（既定 off）。
  */
 export function replyDirectionNoViewingOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.REPLY_DIRECTION_NO_VIEWING ?? "").trim().toLowerCase() === "on";
+  return (env.REPLY_DIRECTION_NO_VIEWING ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（q174-guard: q087・q129 確かな悪化0・統括役の決め）
 }
 const EXPLICIT_VIEWING_RE = /内覧|内見|見学/;
 export function replyDirectionWithNoViewing(o: { direction: string | null; customerText: string }, env?: Env): string | null {
