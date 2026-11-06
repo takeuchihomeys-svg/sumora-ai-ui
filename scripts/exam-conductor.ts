@@ -54,6 +54,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds } from "./lib/exam-base-pin";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
@@ -238,6 +239,12 @@ function addJob(): void {
     {
       const notInSpec = specMissingIds(ids, spec.map((x) => x.id));
       if (notInSpec.length) throw new Error(`積まない: 問題 ${notInSpec.join(",")}（${notInSpec.length}/${ids.length}問）が依頼の作業ツリーの spec.json に無い（作業ツリーが古い）。作業ツリーを最新の main に合わせる: cd ${cwd} && git fetch origin && git merge origin/main（その後に積み直す）`);
+      // 2026-11-07 統括役: 一度 spec に出た id を別の番に使い回していないか（使った id の控え・exam-id-ledger）。使い回しなら積まない
+      try {
+        const led = ensureLedger(examCacheRoot(), cwd, spec as unknown as Array<{ id: string; conv?: string; at?: string }>);
+        const clash = idClashes((spec as unknown as Array<{ id: string; conv?: string; at?: string }>).filter((x) => ids.includes(x.id)), led);
+        if (clash.length) throw new Error(`積まない: 問題 ${clash.join(",")} は前に別の番で使った id（使い回し）。新しい番は brain-exam-add で新しい番号を取る（spec-ids-used.json の maxN＋1）`);
+      } catch (e) { if (String(e).includes("積まない")) throw e; }
     }
     {
       const local = readJson<Array<Record<string, unknown>>>(join(cwd, "scripts/brain-exam/problems.json"), []);
