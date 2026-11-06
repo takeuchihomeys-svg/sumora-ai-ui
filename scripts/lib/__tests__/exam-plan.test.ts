@@ -1,7 +1,7 @@
 // 試験の統括（scripts/lib/exam-plan.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-plan.test.ts（全 PASS で exit 0）
 import { flakeCleanSinceMs } from "../exam-flake";
-import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs, overBudget, capUsdOf, needsBaseIds, planVsActualReport, specMissingIds } from "../exam-plan";
+import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs, overBudget, capUsdOf, needsBaseIds, planVsActualReport, specMissingIds, runBaseCheck } from "../exam-plan";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -85,6 +85,14 @@ ok("上限の環境変数", capUsdOf({ EXAM_MAX_USD: "0.5" }) === 0.5 && capUsdO
 }
 
 ok("spec に無い問題（古い作業ツリー・sorry-read-dig-1107 の q354〜q357）", specMissingIds(["q354", "q355", "q010"], ["q010", "q011"]).join(",") === "q354,q355" && specMissingIds(["q010"], ["q010"]).length === 0);
+
+{
+  // 11/07 統括役（on2-brainask-p1: 上限 $0.2・前の作り直しで使い切り今の回0問）
+  const r = runBaseCheck({ reps: { q1: 2, q2: 2 }, needsBase: ["q1", "q2"], unitUsd: 0.04, capUsd: 0.2 });
+  ok("前を作る分で上限を超える → 流さない", !r.go && Math.abs(r.baseUsd - 0.16) < 1e-9 && Math.abs(r.curUsd - 0.16) < 1e-9 && r.line.includes("上限 $0.20 を超える"), r.line);
+  ok("前が要らなければ流す", runBaseCheck({ reps: { q1: 2, q2: 2 }, needsBase: [], unitUsd: 0.04, capUsd: 0.2 }).go);
+  ok("上限が無ければ流す（見込みは出す）", runBaseCheck({ reps: { q1: 2 }, needsBase: ["q1"], unitUsd: 0.04, capUsd: null }).go);
+}
 
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

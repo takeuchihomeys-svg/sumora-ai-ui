@@ -55,7 +55,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase } from "./lib/exam-base-pin";
-import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, type CmpLite } from "./lib/exam-plan";
+import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, type CmpLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
@@ -163,6 +163,25 @@ export function jobRepsPlan(j: Pick<ExamJob, "cwd" | "repeat" | "flaky" | "env" 
   return repsPlan(ids, (id) => readObs(id), { hashesOf: problemHashesOf(j.cwd), normal: j.repeat, flakyReps: Number(ev("EXAM_FLAKY_REPS") ?? "4"), forced: j.flaky, model: "deepseek", stableReps: sr === "off" ? undefined : Number(sr ?? "1") });
 }
 
+/**
+ * 前（main の答え）を作り直す問題の見込み。2026-11-06 統括役（sce-on2・on2-brainask）: 積む時と流す時の両方で使う（流す時は main が進んでいる事がある）。
+ *   夜の基準（30時間以内）があれば夜の基準に無い問題だけ、無ければ今の origin/main の版の置き場に前の答えが無い問題
+ */
+export function predictNeedsBase(cwd: string, ids: string[], o: { fetch?: boolean } = {}): string[] {
+  try {
+    if (o.fetch) { try { execFileSync("git", ["-C", cwd, "fetch", "-q", "origin", "main"], { stdio: "ignore", timeout: 30_000 }); } catch { /* 取れなければ手元の origin/main で見込む */ } }
+    const B = join(examCacheRoot(), "brain-exam-baseline");
+    const head = execFileSync("git", ["-C", cwd, "rev-parse", "origin/main"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    // 夜の基準（30時間以内）があれば、昼の依頼の前はそれを使う（外れた問題だけ確かめ直す）＝前を作るのは夜の基準に無い問題だけと見込む
+    const nights = readdirSync(B).filter((f) => /^nightly-base-.*\.json$/.test(f)).map((f) => readJson<{ at?: string; problems?: string[]; commit?: string } | null>(join(B, f), null)).filter((x): x is { at: string; problems: string[]; commit?: string } => !!x?.at && Array.isArray(x.problems) && Date.now() - Date.parse(x.at) < 30 * 3_600_000)
+      // 依頼の作業ツリーが夜の基準の commit を含まない時は、brain-exam も夜の基準を使わない（decideBasePin）
+      .filter((x) => { if (!x.commit) return true; try { execFileSync("git", ["-C", cwd, "merge-base", "--is-ancestor", x.commit, "HEAD"], { stdio: "ignore" }); return true; } catch { return false; } });
+    if (nights.length) { const have = new Set(nights.flatMap((x) => x.problems)); return ids.filter((id) => !have.has(id)); }
+    return needsBaseIds(ids, { mainCommit: head || null, versionKeys: readJson<Record<string, string>>(join(B, "version-keys.json"), {}),
+      dirsByKey: (key) => readdirSync(B).filter((d) => d.startsWith(`v-${key}-`)).map((d) => readdirSync(join(B, d)).filter((f) => f.endsWith(".json") && f !== "config.json").map((f) => f.replace(/\.json$/, ""))) });
+  } catch { return [] as string[]; }
+}
+
 function addJob(): void {
   ensureDirs();
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
@@ -232,15 +251,7 @@ function addJob(): void {
     const kind = (["record", "prod", "exam"].includes(arg("kind")) ? arg("kind") : undefined) as "record" | "prod" | "exam" | undefined;
     const group = /^grp-reply/.test(label) ? "reply" as const : /^grp-aix/.test(label) ? "aix" as const : /^grp-brain/.test(label) ? "brain" as const : null;
     // 2026-11-06 統括役（sce-on2 の見込み $0.24・実際 $0.35＝前を作った子 $0.17 が見込みに入っていなかった）: 今の main の版に前の答えが無い問題は「前を作る分」を見込む
-    const needsBase = (() => { try {
-      const B = join(examCacheRoot(), "brain-exam-baseline");
-      const head = execFileSync("git", ["-C", cwd, "rev-parse", "origin/main"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-      // 夜の基準（30時間以内）があれば、昼の依頼の前はそれを使う（外れた問題だけ確かめ直す）＝前を作るのは夜の基準に無い問題だけと見込む
-      const nights = readdirSync(B).filter((f) => /^nightly-base-.*\.json$/.test(f)).map((f) => readJson<{ at?: string; problems?: string[] } | null>(join(B, f), null)).filter((x): x is { at: string; problems: string[] } => !!x?.at && Array.isArray(x.problems) && Date.now() - Date.parse(x.at) < 30 * 3_600_000);
-      if (nights.length) { const have = new Set(nights.flatMap((x) => x.problems)); return ids.filter((id) => !have.has(id)); }
-      return needsBaseIds(ids, { mainCommit: head || null, versionKeys: readJson<Record<string, string>>(join(B, "version-keys.json"), {}),
-        dirsByKey: (key) => readdirSync(B).filter((d) => d.startsWith(`v-${key}-`)).map((d) => readdirSync(join(B, d)).filter((f) => f.endsWith(".json") && f !== "config.json").map((f) => f.replace(/\.json$/, ""))) });
-    } catch { return [] as string[]; } })();
+    const needsBase = predictNeedsBase(cwd, ids);
     const plan = planExam({ label, kind, switchName: base.switch, ids, group, needsBase, repsOverride: job.runner === "brain-exam" ? (() => { try { return jobRepsPlan(job, ids).reps; } catch { return undefined; } })() : undefined, diffStage: base.stage === "brain" || base.stage === "draft" ? base.stage : null, brainText: flag("brain-text"), defaultOn: flag("default-on"), capUsd: Number(arg("cap-usd", "2")) || 2 });
     log(`  ${plan.line}`);
     const sug = kindSuggest({ kind, switchName: base.switch, label }); if (sug) log(`  （${sug}）`);
@@ -573,7 +584,16 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     // 2026-11-06 作業員8（弱い所 357・11/05 の本番の時間切れ20回が昼の試験の呼び出しの山＝10分で 205〜220回・レーン3〜4本と重なった）: 営業時間（JST 9〜22時）はレーン1本（--urgent でも）
     const bizLane = businessHoursLane();
     if (bizLane) log(`  営業時間（JST 9〜22時）なのでレーン1本（弱い所 357・feedback_no_heavy_db_business_hours）`);
-    if (j.capUsd) log(`  費用の上限 $${j.capUsd.toFixed(2)}（EXAM_MAX_USD・届いたら次の問題の前で止まる）`);
+    if (j.capUsd) log(`  費用の上限 ${j.capUsd.toFixed(2)}（EXAM_MAX_USD・届いたら次の問題の前で止まる）`);
+    // 2026-11-07 統括役（on2-brainask-p1/p2: 積んだ時は「前を作る分 $0.00」・流す時に main が 8f62950b に進み前を作り直して上限 $0.2 を使い切り、今の回 0問・$0.61 の無駄）:
+    //   流す時の main と夜の基準で前の分を見込み直し、上限に入らなければ流す前に止めて知らせる（今の回が0問のまま費用だけ使う事を無くす）。止める: EXAM_RUN_BASE_CHECK=off
+    if (ids.length && process.env.EXAM_RUN_BASE_CHECK !== "off") {
+      const nb = predictNeedsBase(j.cwd, ids, { fetch: true });
+      const unit = j.stage === "draft" ? DRAFT_USD_PER_REP : BRAIN_USD_PER_REP;
+      const chk = runBaseCheck({ reps: rp.reps, needsBase: nb, unitUsd: unit, capUsd: j.capUsd ?? null, dig: !!j.dig });
+      log(`  流す時の見込み: ${chk.line}`);
+      if (!chk.go) { finishStop(j, `流す前に止めた: ${chk.line}。夜の基準ができた後に流すか、--cap-usd を上げて積み直す`); return; }
+    }
     const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(guard.laneOld || bizLane ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile); cur = r.child;
     // ① 早めの打ち切り（30秒ごと）
     let early: { stop: string; why: string; base: string } | null = null;

@@ -170,3 +170,19 @@ export function specMissingIds(ids: ReadonlyArray<string>, specIds: ReadonlyArra
   const have = new Set(specIds);
   return [...new Set(ids)].filter((id) => !have.has(id));
 }
+
+/**
+ * 流す時の前の分の確かめ（純関数・2026-11-07 統括役: on2-brainask-p1/p2 が前の作り直しだけで上限を使い切り、今の回 0問で $0.61）。
+ *   前を作る分（needsBase の問題×回×単価）＋今の回の見込みが上限を超えるなら流さない（掘り --dig も同じ）。上限が無ければ流す（見込みは出す）
+ */
+export function runBaseCheck(input: { reps: Record<string, number>; needsBase: string[]; unitUsd: number; capUsd: number | null; dig?: boolean }): { go: boolean; baseUsd: number; curUsd: number; line: string } {
+  const repsOf = (id: string) => Math.max(0, input.reps[id] ?? 0);
+  const ids = Object.keys(input.reps);
+  const curUsd = ids.reduce((s, id) => s + repsOf(id) * input.unitUsd, 0);
+  const nb = input.needsBase.filter((id) => id in input.reps);
+  const baseUsd = nb.reduce((s, id) => s + repsOf(id) * input.unitUsd, 0);
+  const total = curUsd + baseUsd, cap = input.capUsd;
+  const head = `今の回 約$${curUsd.toFixed(2)}＋前を作る分 約$${baseUsd.toFixed(2)}（${nb.length}問）＝約$${total.toFixed(2)}`;
+  if (cap != null && cap > 0 && total > cap) return { go: false, baseUsd, curUsd, line: `${head} が上限 $${cap.toFixed(2)} を超える（前の作り直しで上限を使い切り、今の回が0問になる）` };
+  return { go: true, baseUsd, curUsd, line: `${head}${cap != null && cap > 0 ? `・上限 $${cap.toFixed(2)} に入る` : "・上限なし"}` };
+}
