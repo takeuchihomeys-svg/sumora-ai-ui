@@ -105,6 +105,8 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
       // 2026-11-06 作業員9の気付き（統括役）: 書き手は下に足した注記より、ブレインの方向の文（reply_direction・two-stage の direction）に従う
       { of: "rules", field: "下に足した注記（方向の文の外の1行）", where: "generate-reply の下書き（材料の注記 vs reply_direction）", why: "注記は従われにくく、方向の文は従われる", example: "夜の明日の例: 注記は 9通中2通・方向の文は 3/3 で書かれた" },
       { of: "rules", field: "方向の文に足した線", where: "generate-reply（本質の帯 turn_contract の proposals・customer_questions が上位）", why: "本質の帯が方向の文に足した線より勝つ", example: "q174: 方向の文に足した線が本質の帯に負けて書かれなかった" },
+      // 2026-11-06 作業員9: 決まった型の注記が、初回か2回目以降かを見ずに条件の番の締めを決めている（直しは CONDITION_SHAPE_KEEP_FIRST_ONLY・既定 off）
+      { of: "brain", field: "条件の番の締め（「全力でサポートさせて頂きます😌！！で締める」）", where: "generate-reply conditionChangeShapeNote の④・newConditionRequestNote の⑤", why: "初回か2回目以降かを見ない決まった型", example: "q010: 竹内さんがこの締めを使うのは初回 80%・2回目以降 39%" },
     ],
   },
   {
