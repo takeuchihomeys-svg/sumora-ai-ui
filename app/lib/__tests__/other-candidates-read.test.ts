@@ -16,7 +16,7 @@ const J731 = "部屋見てみたいのですが、他の部屋も紹介してみ
 // 実物（10/06 f2967621 本当の内覧の依頼・竹内さんは AIX【内覧調整】）
 const VIEW = "ありがとうございます！！\nここ内覧お願いいたします🙇‍♀️\n他にも気になる物件がありますので含めて行きたいです！\n今週の日曜日等予定空いていますか？\n他の物件も明日までには送ります";
 
-it("スイッチは既定 off", () => { expect(otherCandidatesReadOn({})).toBe(false); expect(otherCandidatesReadOn({ BRAIN_OTHER_CANDIDATES_READ: "on" })).toBe(true); });
+it("スイッチは既定 on（止める =off）", () => { expect(otherCandidatesReadOn({})).toBe(true); expect(otherCandidatesReadOn({ BRAIN_OTHER_CANDIDATES_READ: "off" })).toBe(false); });
 it("q174: 当たる・好感の言葉あり", () => { const r = readOtherCandidates({ customerText: Q174, sentPropertyCount: 8 }); expect(r.hit).toBe(true); expect(r.liking).toBe(true); });
 it("q174: 前からある「もう少し見てみたい」の材料は拾っていない（重ならない）", () => { expect(customerAsksMoreListings(Q174)).toBe(false); });
 it("7/31: 「部屋見てみたい…他の部屋も紹介」も当たる", () => { expect(readOtherCandidates({ customerText: J731, sentPropertyCount: 5 }).hit).toBe(true); });
