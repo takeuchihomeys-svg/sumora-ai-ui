@@ -80,6 +80,7 @@ import { isNoLineTestConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
 import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, type SnapshotStats } from "./lib/exam-frozen-input";
 import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord } from "./lib/exam-base-pin";
+import { essencePickupPromise } from "./lib/exam-essence";
 import { overBudget, capUsdOf } from "./lib/exam-plan";
 /** 2026-11-05 F2 の確かめ（既定 on・止める EXAM_COPY_CHECK=off） */
 const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
@@ -622,7 +623,7 @@ export function planOf(meta: Record<string, unknown> | null): Record<string, unk
   for (const k of PLAN_KEYS) { const v = meta[k]; if (v !== undefined && v !== null && !(Array.isArray(v) && !v.length) && v !== "") out[k] = v; }
   return out;
 }
-const TRACE_KEYS = ["decision_source", "decision_source_no_aix", "two_stage", "dropped_direction", "scene_evidence", "aix_suppressed_by_accept_rate", "signal_aix_result", "checkpoint_stage", "customer_intent"];
+const TRACE_KEYS = ["pickup_ready", "decision_source", "decision_source_no_aix", "two_stage", "dropped_direction", "scene_evidence", "aix_suppressed_by_accept_rate", "signal_aix_result", "checkpoint_stage", "customer_intent"];
 const AIX_JA: Record<string, string> = { property_recommendation: "物件オススメ", property_send: "物件を送る（ピックアップした）", property_pickup: "物件ピックアップ", property_search: "物件検索", viewing_invite: "内覧調整", meeting_place: "待ち合わせ場所（内覧の確定）", application_push: "申込へ", property_check_result: "物件確認した（管理会社に確認した結果）", acknowledge_check: "確認した", estimate_sheet: "見積書送る", cost_explain: "初期費用を説明", cost_breakdown: "初期費用について", condition_hearing: "条件ヒアリング（フォーム）", guarantor_info: "保証会社について", phone_call: "電話をかける", zenryoku_support: "全力サポート", followup_revive: "追客フォロー" };
 const ROUTE_JA: Record<string, string> = { reply: "返信の本文で答える", promise: "後でやると約束する返信（確認・見積・ピックアップ・撮影・交渉）", aix: "AIX（スタッフが確かめた事・検索の結果・見積・内覧の段取りを送る）", none: "答えない" };
 const PATH_CHOICES = ["返信", "2段:pickup", "2段:check", "2段:estimate", "2段:photo", "なし"];
@@ -836,7 +837,8 @@ function rescore(rows: ResultRow[], probs: Map<string, ExamProblem>): ResultRow[
     // 10/13 レビュー（重要3）: 厳しい採点（物件の AIX の種類まで分ける・spec の acceptStrict）も別に持つ
     const pathStrict = judgePath(brainPathCode(r.brain as BrainExamOutput), acceptStrictOf(p), mn, { strict: true }).ok;
     const asks = r.asks ? r.asks.map((a) => a.covered) : null, ng = r.ng ? r.ng.map((g) => g.violated) : null;
-    const essence = r.essence ? (() => { const v = judgePath(codeFromString(r.essence!.code), acc, mn); return { ...r.essence!, acceptHit: v.acceptHit, mustNotHit: v.mustNotHit, ok: v.ok }; })() : r.essence;
+    // 2026-11-06 統括役: 採り直しでも同じ数え方（答案の raw と trace.pickup_ready から・LLM なし）
+    const essence = r.essence ? (() => { const code = r.essence!.code.startsWith("AIX:") && essencePickupPromise(r.raw ?? null, ((r.trace as Record<string, unknown> | undefined)?.pickup_ready as boolean | null | undefined) ?? null) ? "2段:pickup" : r.essence!.code; const v = judgePath(codeFromString(code), acc, mn); return { ...r.essence!, code, acceptHit: v.acceptHit, mustNotHit: v.mustNotHit, ok: v.ok }; })() : r.essence;
     const draft = r.draft ? (() => { const v = judgePath(codeFromString(normalizeDraftCode(r.draft!.code, r.draft!.text, acc)), acc, mn); return { ...r.draft!, ok: v.ok, pass: v.ok && (!r.draft!.asks || r.draft!.asks.every(Boolean)) && (!r.draft!.ng || !r.draft!.ng.some(Boolean)) && !(KB_RULES_MODE === "score" && r.kbRules?.length) }; })() : r.draft;
     return { ...r, path: { ...r.path, acceptHit: pv.acceptHit, mustNotHit: pv.mustNotHit, ok: pv.ok }, pathStrict, score: problemScore(pv, asks, ng, { primaryIdx: primaryAskIndex(p.asks) }), essence, draft };
   });
@@ -1847,7 +1849,9 @@ async function main() {
         row.ng = (p.ng ?? []).map((x, i) => ({ text: x, violated: jg.ng[i], why: jg.ngWhy[i] }));
       }
       const essCode = rawIsAix ? brainPathCode({ reply_mode: "aix", action: rawAction, check_pattern: (row.raw?.check_pattern as string | null) ?? null }) : jg?.rawPath ? codeFromString(jg.rawPath) : null;
-      if (essCode) { const ev = judgePath(essCode, acc, mn); row.essence = { code: essCode.label, acceptHit: ev.acceptHit, mustNotHit: ev.mustNotHit, ok: ev.ok }; }
+      // 2026-11-06 統括役: 物件の AIX＋該当の route が promise＋送れる候補0件 は本質を「2段:pickup」と数える（scripts/lib/exam-essence.ts）
+      const essFinal = essCode && essencePickupPromise(row.raw ?? null, (meta.pickup_ready as boolean | null | undefined) ?? null) ? codeFromString("2段:pickup") : essCode;
+      if (essFinal) { const ev = judgePath(essFinal, acc, mn); row.essence = { code: essFinal.label, acceptHit: ev.acceptHit, mustNotHit: ev.mustNotHit, ok: ev.ok }; }
       row.score = problemScore(pv, jg ? jg.asks : null, jg ? jg.ng : null, { primaryIdx: primaryAskIndex(ps.asks) });
       // ④ 下書き（返信・2段が正解の問題だけ・ブレインの答案を固定して generate-reply を1回）
       // 10/09 --draft-first-only: 下書き（④）は1回目だけ（過半数の回の費用を抑える）

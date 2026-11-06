@@ -512,6 +512,8 @@ export type SuggestedAixMeta = {
   decision_source?: string | null;
   /** 3巡目（10/07）: AIX を外した番の出どころ（記録用・brain_decision_logs には no_aix: を付けて残す） */
   decision_source_no_aix?: string;
+  /** 2026-11-06（試験の本質の採点・統括役）: 送れる物件の候補があったか（pickupReadyMaterialLine の材料と同じ値・null は見ていない）。記録だけ */
+  pickup_ready?: boolean | null;
   /** 2026-10-13（ブレインの使い残し 4）: 下げた上書き（override-demote.ts）。f=家族・would=規則の答え・brain=ブレインの判断 */
   demoted_overrides?: Array<{ f: string; src: string; would: string | null; brain: string | null }>;
   // 2026-09-12 竹内方針「条件がきたら AIX に連動して自動で物件検索」: 真の初回（スタッフ未返信）でお客様が条件を送ってきた時、
@@ -6099,6 +6101,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       decision_source: finalAix ? decisionSource : (decisionSource === "guard:viewing" || decisionSource === "guard:first_contact" ? decisionSource : null),
       // 3巡目（10/07・AIX の判断のずれの調査 1468132d）: AIX を外した番（2段の約束・手続きの質問・資料で答える・連絡待ち 等）の出どころを捨てていた → 記録用に別の欄で残す（画面・関所は decision_source だけを見るので挙動は変わらない）
       decision_source_no_aix: !finalAix && decisionSource && decisionSource !== "guard:viewing" && decisionSource !== "guard:first_contact" ? decisionSource : undefined,
+      // 2026-11-06（試験の本質の採点・統括役）: 送れる候補の材料の値（記録だけ・判断は変えない）
+      pickup_ready: pickupReadyMaterial ?? undefined,
       // 2026-10-13（ブレインの使い残し 4）: 下げた上書き（規則の答え would とブレインの判断 brain の食い違い）
       demoted_overrides: compactDemoted(demotedOverrides),
       first_contact_pickup: firstContactPickup,
