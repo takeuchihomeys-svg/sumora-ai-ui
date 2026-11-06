@@ -1,6 +1,6 @@
 // 夜の基準に固定するか（scripts/lib/exam-base-pin.ts）の単体テスト（LLM も DB も git も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-base-pin.test.ts（全 PASS で exit 0）
-import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects, nightBaseJobDue, isExamJobShape, nightBaseAlready, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseCapUsd } from "../exam-base-pin";
+import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects, nightBaseJobDue, isExamJobShape, nightBaseAlready, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseCapUsd, nightBaseIds } from "../exam-base-pin";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -84,6 +84,24 @@ ok("二重に積まない: 列・済み・結果に同じ日の名前", nightBas
   const nj = nightBaseJobDue(null, new Date("2026-11-07T12:30:00Z"), { cwd: "/x" });
   ok("夜の基準の依頼は --repeat=4（昼の依頼の構成と同じ）・main が進んでも止めない", NIGHT_BASE_REPEAT === 4 && String((nj.job as { cmds: string[] }).cmds[0]).includes("--repeat=4") && (nj.job as { env: Record<string, string> }).env.EXAM_BASELINE_IGNORE_MAIN_MOVED === "1");
   ok("夜の基準の上限 既定 $12（0 で上限なし）", (nj.job as { capUsd?: number }).capUsd === 12 && nightBaseCapUsd({ EXAM_NIGHT_BASE_CAP_USD: "0" }) === 0 && nightBaseCapUsd({}) === 12);
+}
+
+{
+  // 11/07 統括役: 明晩から直近2日の昼の依頼＋積まれている依頼の問題に絞る
+  const now = Date.parse("2026-11-08T12:00:00Z");
+  const jobs = [
+    { label: "a", createdAt: "2026-11-07T05:00:00Z", only: "q001,q002" },
+    { label: "b", createdAt: "2026-11-05T05:00:00Z", only: "q050" },
+    { label: "c", createdAt: "2026-11-08T10:00:00Z", cmds: ["scripts/brain-exam.ts --label=x --only=q003,q001 --repeat=1"] },
+    { label: "night-base-2026-11-07", createdAt: "2026-11-07T12:00:00Z", only: "q099" },
+  ];
+  ok("控えが一度も無い間は全問（--only を付けない）", nightBaseIds(jobs, { nowMs: now, hasNightly: false }).length === 0);
+  ok("直近2日の昼の依頼と積まれた依頼の問題だけ（夜の基準の依頼・3日前は入れない）", nightBaseIds(jobs, { nowMs: now, hasNightly: true }).join(",") === "q001,q002,q003");
+  const nj = nightBaseJobDue(null, new Date("2026-11-08T12:30:00Z"), { cwd: "/x", only: ["q001", "q002"] });
+  ok("絞った時は --only を付ける", String((nj.job as { cmds: string[] }).cmds[0]).includes("--only=q001,q002"));
+  // 絞った外の問題（q050）を昼に使う時は、控えに無い＝missing で前を作る（比べた数に出る）
+  const d = decideBasePin({ nightly: { commit: "abc1234", at: new Date(now - 3_600_000).toISOString(), problems: ["q001", "q002", "q003"] }, nowMs: now, requestHasNightly: true, since: { files: [] }, problems: ["q001", "q050"] });
+  ok("絞った外の問題は missing（昼に前を作る）", d.missing.join(",") === "q050" && d.ref === "abc1234");
 }
 
 console.log(`${pass} pass / ${fail} fail`);

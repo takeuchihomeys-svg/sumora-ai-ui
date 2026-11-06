@@ -99,7 +99,24 @@ export type NightlyRecord = NightlyBase & { cfg: string; /** 夜の基準が読�
 export const NIGHT_BASE_REPEAT = 4;
 export function nightBaseCapUsd(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): number { const v = Number(env.EXAM_NIGHT_BASE_CAP_USD ?? "12"); return Number.isFinite(v) && v > 0 ? v : 0; }
 
-export function nightBaseJobDue(lastJstDay: string | null, now: Date, opts: { fromHour?: number; cwd: string; repeat?: number }): { due: boolean; day: string; job: Record<string, unknown> | null } {
+/**
+ * 夜の基準で作る問題（純関数・2026-11-07 統括役「明晩から直近2日の昼の依頼で使った問題＋積まれている依頼の問題に絞る」）。
+ *   控え（nightly-base-*.json）がまだ一度も書かれていない時は全問（空の配列＝--only を付けない）。絞った外の問題を昼に使う時は、控えに無い＝decideBasePin の missing で今まで通り前を作る
+ */
+export function nightBaseIds(jobs: ReadonlyArray<{ label?: string; createdAt?: string; only?: string; cmds?: string[] }>, o: { nowMs: number; days?: number; hasNightly: boolean }): string[] {
+  if (!o.hasNightly) return [];
+  const since = o.nowMs - (o.days ?? 2) * 86_400_000;
+  const s = new Set<string>();
+  for (const j of jobs) {
+    if (/^night-base-/.test(j.label ?? "")) continue;
+    if (j.createdAt && Date.parse(j.createdAt) < since) continue;
+    for (const id of String(j.only ?? "").split(",")) if (id.trim()) s.add(id.trim());
+    for (const c of j.cmds ?? []) { const m = c.match(/--only=(\S+)/); if (m) for (const id of m[1].split(",")) if (id.trim()) s.add(id.trim()); }
+  }
+  return [...s].sort();
+}
+
+export function nightBaseJobDue(lastJstDay: string | null, now: Date, opts: { fromHour?: number; cwd: string; repeat?: number; only?: string[] }): { due: boolean; day: string; job: Record<string, unknown> | null } {
   const j = new Date(now.getTime() + 9 * 3_600_000);
   const day = j.toISOString().slice(0, 10), h = j.getUTCHours();
   const due = lastJstDay !== day && h >= (opts.fromHour ?? 21);
@@ -114,7 +131,7 @@ export function nightBaseJobDue(lastJstDay: string | null, now: Date, opts: { fr
       createdAt, tries: 0, runner: "cmd", nightOnly: true, priority: 9, maxMin: 300,
       // 2026-11-07 統括役: 夜の基準の費用の上限（既定 $12・EXAM_NIGHT_BASE_CAP_USD・0 で上限なし）。届いたら作れた問題の一覧で控えを書く（brain-exam）
       ...(nightBaseCapUsd() > 0 ? { capUsd: nightBaseCapUsd() } : {}),
-      cmds: [`scripts/brain-exam.ts --label=${label} --conv=auto --baseline=main --baseline-only --stage=brain --repeat=${Math.max(1, opts.repeat ?? NIGHT_BASE_REPEAT)}`],
+      cmds: [`scripts/brain-exam.ts --label=${label} --conv=auto --baseline=main --baseline-only --stage=brain --repeat=${Math.max(1, opts.repeat ?? NIGHT_BASE_REPEAT)}${opts.only?.length ? ` --only=${opts.only.join(",")}` : ""}`],
     },
   };
 }

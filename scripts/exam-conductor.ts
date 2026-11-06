@@ -54,7 +54,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
-import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT } from "./lib/exam-base-pin";
+import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds } from "./lib/exam-base-pin";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, type CmpLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -786,7 +786,18 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
       if (REMOTE_ONLY && (process.env.EXAM_NIGHT_BASE ?? "").trim().toLowerCase() !== "off") {
         mkdirSync(MARKS, { recursive: true });
         const nbFile = join(MARKS, "night-base-last.json");
-        const nb = nightBaseJobDue(readJson<{ day?: string } | null>(nbFile, null)?.day ?? null, new Date(), { cwd: process.cwd() });
+        // 2026-11-07 統括役: 控えが一度書かれた後は、直近2日の昼の依頼で使った問題＋積まれている依頼の問題だけ作る（EXAM_NIGHT_BASE_NARROW=off で全問）
+        const nightOnly = (() => {
+          if ((process.env.EXAM_NIGHT_BASE_NARROW ?? "").trim().toLowerCase() === "off") return [] as string[];
+          try {
+            const B = join(examCacheRoot(), "brain-exam-baseline");
+            const hasNightly = readdirSync(B).some((f) => /^nightly-base-.*\.json$/.test(f));
+            const jobs: Array<{ label?: string; createdAt?: string; only?: string; cmds?: string[] }> = [];
+            for (const d of [ROOT, DONE]) for (const f of readdirSync(d)) { if (!/\.json(\.claimed)?$/.test(f)) continue; const j = readJson<Record<string, unknown> | null>(join(d, f), null); if (j && isExamJobShape(j)) jobs.push(j as never); }
+            return nightBaseIds(jobs, { nowMs: Date.now(), hasNightly });
+          } catch { return [] as string[]; }
+        })();
+        const nb = nightBaseJobDue(readJson<{ day?: string } | null>(nbFile, null)?.day ?? null, new Date(), { cwd: process.cwd(), only: nightOnly });
         // 印が無くても、その日の依頼が列・済み・結果にあれば積まない（印を移した日の二重を防ぐ）
         const names = (d: string) => { try { return readdirSync(d); } catch { return [] as string[]; } };
         if (nb.due && nb.job && nightBaseAlready(nb.day, [...names(ROOT), ...names(DONE), ...names(RES), ...names(join(ROOT, "withdrawn"))])) {
