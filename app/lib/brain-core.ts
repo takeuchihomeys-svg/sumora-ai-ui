@@ -265,7 +265,7 @@ import { buildScreeningRoomsBrainText } from "@/app/lib/listing-deal-status";
 import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 // 2026-09-30 手続きの質問（審査・入居までの期間と流れ・必要書類）は返信で答える／「確認した」系は資料に記載あり→資料・無し→AIX【確認した】（みこと事例）
 import { loadProcedureAnswerWithin, loadConfirmTopicRoutesWithin, type ProcedureAnswerMaterial, type ConfirmTopicMaterial } from "@/app/lib/procedure-answer-server";
-import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote, procedureMoveInBrainLine } from "@/app/lib/procedure-question";
+import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote, procedureMoveInBrainLine, procedurePointsToProperty, procedureUnknownPointsOnlyOn } from "@/app/lib/procedure-question";
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
 import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question";
@@ -4567,7 +4567,13 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       && (finalAix === null || finalAix === "property_check_result" || finalAix === "acknowledge_check" || finalAix === "guarantor_info"
         || ((finalAix === "property_send" || finalAix === "property_recommendation") && String(decisionSource ?? "").startsWith("signal:")))) {
       // 2026-11-06 作業員1（型2）: BRAIN_DEMOTE_PROCEDURE_MOVE_IN=on の時は決め打ちを下げる＝ブレインの答えのまま・食い違いはログ（材料は上の procedureMoveInBrainLine）
-      if (procedureAnswer?.plan.mode === "two_choice") {
+      // 2026-11-07 作業員1（型2・統括役の②）: 資料に入居時期が無い時の2択／確認は「特定の物件を指す問い」の時だけ。物件を指さない一般の問い（最短どのくらい 等）は
+      //   下の返信の決め打ちへ（竹内さん 200日: 指さない問い 6/6 会社の事実で返信・指す問い 9番＝資料 5・確認 3・AIX 1）。材料だけでは動かなかった（11/07 proc-brain／proc-line の掘り）。
+      //   PROCEDURE_UNKNOWN_POINTS_ONLY=on の時だけ（既定 off）
+      const unknownButGeneral = procedureUnknownPointsOnlyOn() && procedureAnswer?.plan.mode === "two_choice"
+        && !procedurePointsToProperty(unrepliedTurn.text, procedureAnswer.plan.target?.name ?? null);
+      if (unknownButGeneral) console.log(JSON.stringify({ tag: "brain:procedure-unknown-general", conversationId }));
+      if (procedureAnswer?.plan.mode === "two_choice" && !unknownButGeneral) {
         if (applyOverride(demotedOverrides, "procedure_move_in", "rule:procedure_question_move_in_unknown", "property_check_result", finalAix)) {
           finalAix = "property_check_result";
           sceneSignalCheckPattern = "mgmt_move_in";
