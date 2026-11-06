@@ -1,7 +1,7 @@
 // 試験の外れの自動の切り分け（scripts/lib/exam-miss-stage.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-miss-stage.test.ts（全 PASS で exit 0）
 // 行は 11/05〜06 の実際の答案（brain-exam-main・compose-1105 の結果）を縮めた物。手で見つけた段と同じ段を指すか
-import { classifyMiss, markersOf, summarizeMisses, ownerOf, weaknessDraft, PROVISIONAL_LINKS, type MissRowLite } from "../exam-miss-stage";
+import { classifyMiss, markersOf, summarizeMisses, ownerOf, weaknessDraft, PROVISIONAL_LINKS, parseLogTags, type MissRowLite } from "../exam-miss-stage";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -47,6 +47,32 @@ ok("印: 場面", markersOf(q136).includes("scene_net:S4_viewing"));
   const w = weaknessDraft(s!, o);
   ok("弱い所の案: 段＋印の頭で key", w.key === "exam-stage:two_stage:decision:two_stage_promise" && w.area === "exam" && w.root_cause.includes("two_stage"), JSON.stringify(w));
   ok("持ち主が仮の表に無い", ownerOf(["zzz:1"], PROVISIONAL_LINKS) === null);
+}
+
+{
+  const log = [
+    '{"tag":"brain:rag","conversationId":"40f0db25-5fa9-4b96-bc19-3e1e5aba20c2","tpo":"x"}',
+    '{"tag":"brain:answerable-direct","conversationId":"40f0db25-5fa9-4b96-bc19-3e1e5aba20c2","from":null,"to":"property_check_result","core":"rule:two_stage_promise(check)"}',
+    '[YUMA3] ○ q149#1 [返信かAIXか] 本質=…',
+    '[YUMA4] ○ q136#1【brain_full から違う】 [複数の依頼] 本質=…',
+    '[YUMA4] ✕ q136#2 [複数の依頼] 本質=…',
+  ].join("\n");
+  const tags = parseLogTags(log, (id) => (id.startsWith("40f0db25") ? "YUMA4" : null));
+  ok("記録の印: 同じ会話の次の結果の行に付く（rag は拾わない）", JSON.stringify(tags.get("q136#1")) === JSON.stringify(["log:answerable-direct(two_stage_promise(check)→property_check_result)"]) && !tags.has("q136#2") && !tags.has("q149#1"), JSON.stringify([...tags]));
+  // q136（night-brain-on-p1 #1）: ブレインは AIX（生の答えも外れ）・2段が確認の約束にした所を answerableDirectAix が AIX に戻した
+  const r: MissRowLite = { id: "q136", rep: 1, essence: { code: "AIX:property_check_result/mgmt_initial_cost", ok: false }, path: { code: "AIX:property_check_result/mgmt_parking", ok: false }, trace: { decision_source: "llm", scene_evidence: { scene: "S4_viewing" } }, logTags: [...(tags.get("q136#1") ?? [])], score: { pass: false } };
+  const v = classifyMiss(r);
+  ok("q136#1 → ブレイン＋決まった書き換え（answerable-direct）を全部並べる", v.stages.map((s) => s.stage).join(">") === "brain>rewrite" && v.line.includes("answerable-direct"), v.line);
+}
+{
+  // q174（手: ブレインの読み＝customer_questions・proposals に「内覧」・2段の方向の文の決まった尾）
+  const r: MissRowLite = { id: "q174", essence: { code: "AIX:viewing_invite", ok: false }, path: { code: "2段:pickup", ok: true }, draft: { code: "2段:pickup", ok: true, pass: false },
+    raw: { reply_direction: "他候補を探す", customer_questions: ["一旦内覧してみたい"], proposals: ["内覧の日程"] },
+    brain: { reply_direction: "他候補を探す。物件のご紹介が要る時だけ…ピックアップしお送りすると約束する返信にする", turn_contract: { route: "promise" } },
+    trace: { decision_source_no_aix: "rule:two_stage_promise(pickup_unless_ack)", two_stage: "pickup" }, score: { pass: false } };
+  const v = classifyMiss(r);
+  ok("q174 → ブレインの読み（内覧）→ 2段 → 文の中身（方向の文の決まった尾・本質の帯）", v.stages.map((s) => s.stage).join(">") === "brain>two_stage>text>text" && v.line.includes("内覧") && v.line.includes("決まった尾"), v.line);
+  ok("q174: 道は正しいが文の中身が変わった段を別に出す", v.stages.some((s) => s.marker === "text:direction_tail"));
 }
 
 console.log(`${pass} pass / ${fail} fail`);
