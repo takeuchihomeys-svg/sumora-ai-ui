@@ -3,7 +3,7 @@
 // 竹内さんの決定（11/06・KB P1「試験から改善の仕方もちゃんと強化し、統括同士連携させていく」）・P0 575a7cd5（統括の芯）・P1 0dbfbc97（順番の表・後の役は決め直さない）。
 //   1行＝1つの統括: 持っている段（FOCUS_ORDER の段）・読む印・書く印・止めるスイッチ・前の統括の決めた事を決め直す所（redecides）。
 //   作業員8の「試験の外れの自動の切り分け」（scripts/lib）が、答案から出した印（decision:・two_stage:・scene_net:・demoted:・writer・final_check・log:）を
-//   writes の前方一致で引いて持ち主を出す（11/06 作業員8と形を合わせた）。表は記録とコードを読んで作った（LLM なし）。持ち主が決まっていない所は "未定"。
+//   writes の前方一致で引いて持ち主を出す（11/06 作業員8と形を合わせた）。表は記録とコードを読んで作った（LLM なし）。持ち主は 11/06 統括役の決め（未定は無し）。
 // 置き場: 統括の名簿（conductor-roles.ts の ROSTER）の近く。roadmap の memory/project_conductor_roadmap.md に1段。
 export type ConductorStage = "read" | "rough" | "detail" | "compose" | "verify" | "exam";
 export type ConductorLink = {
@@ -30,16 +30,16 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     id: "brain", name: "判断のブレイン（返信か AIX か・依頼ごとの道 turn_contract）", owner: "統括役（brain-core は共用）", stage: "rough",
     files: ["app/lib/brain-core.ts", "app/lib/turn-contract.ts", "app/lib/brain-need.ts"],
     reads: ["材料（場面で絞る brain-scene）", "meta.conductor_focus（深く読み直す時だけ・brain-depth）", "meta.aix_recheck（AIX の統括の差し戻し・読み直しの口 brain-recheck）"],
-    writes: ["meta.action", "meta.turn_contract", "meta.key_topics", "meta.reply_mode", "digest.la", "digest.tc", "digest.nd", "digest.tl", "digest.mp", "essence"],
+    writes: ["meta.action", "meta.turn_contract", "meta.key_topics", "meta.reply_direction", "meta.reply_mode", "digest.la", "digest.tc", "digest.nd", "digest.tl", "digest.mp", "essence", "decision:llm", "log:"],
     switch: null,
     // 入口の統括の重点は、判断の時には読まない（shadow・判断を変えない）＝今は並んで走るだけ。深く読み直す時だけ重点に沿わせる
     redecides: [],
   },
   {
-    id: "two_stage", name: "2段（送れる物が無い時は約束の返信・answerable_direct で AIX に戻す）", owner: "未定（作業員1 の書き換えの棚卸しで洗い出し済み）", stage: "detail",
+    id: "two_stage", name: "2段（送れる物が無い時は約束の返信・answerable_direct で AIX に戻す）", owner: "作業員7（11/06 統括役の決め・S3・送った物件への反応・持ち込みの書き換えを持つ）", stage: "detail",
     files: ["app/lib/two-stage.ts", "app/lib/brain-core.ts（answerableDirect・4853〜5060行あたり）"],
     reads: ["meta.action（ブレインの AIX）", "売上サポの送れる物件・確認の結果・御見積書の有無", "turn_contract.asks"],
-    writes: ["two_stage:", "decision:two_stage_promise", "decision:answerable_direct", "demoted:two_stage", "demoted:answerable"],
+    writes: ["two_stage:", "decision:two_stage_promise", "decision:answerable_direct", "demoted:two_stage", "demoted:answerable", "log:answerable-direct", "log:screening", "text:direction_tail"],
     switch: "TWO_STAGE_*・TWO_STAGE_ANSWERABLE_DIRECT・BRAIN_DEMOTE_*",
     redecides: [
       { of: "brain", field: "action（AIX → 約束の返信）", where: "two-stage.resolveTwoStageOrDirect", why: "送れる物が無い時は先に約束（10/02 竹内さん）" },
@@ -47,7 +47,7 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     ],
   },
   {
-    id: "scene_net", name: "場面の網（場面の証拠・場面で AIX の候補を立てる）", owner: "未定", stage: "detail",
+    id: "scene_net", name: "場面の網（場面の証拠・場面で AIX の候補を立てる）", owner: "作業員1（11/06 統括役の決め）", stage: "detail",
     files: ["app/lib/aix-scene-evidence.ts", "app/lib/reply-scene.ts", "app/lib/brain-scene.ts", "app/lib/reply-subscene.ts"],
     reads: ["今の番のお客様の文（決まった計算）", "主のお部屋（customer-state）"],
     writes: ["scene_net:", "meta.scene_evidence", "decision:scene"],
@@ -57,14 +57,14 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     ],
   },
   {
-    id: "rules", name: "決まった計算の上書き（rule:* の道の決め）", owner: "未定（作業員1 の棚卸し 106か所）", stage: "detail",
+    id: "rules", name: "決まった計算の上書き（rule:* の道の決め）", owner: "作業員1（11/06 統括役の決め・書き換えの棚卸し 106か所と brain-core）", stage: "detail",
     files: ["app/lib/brain-core.ts（rule:closed_ack_wait・viewing_day_ack・procedure_question_reply ほか）", "app/lib/turn-contract.ts（SENT_REACTION_VIEW_INVITE）"],
     reads: ["meta.action", "turn_contract", "送った物・帳面"],
-    writes: ["decision:", "demoted:"],
+    writes: ["decision:", "demoted:", "log:sent-reaction"],
     switch: "各 rule のスイッチ・BRAIN_DEMOTE_*",
     redecides: [
       { of: "brain", field: "action と turn_contract（rule:* の道）", where: "brain-core.ts の rule:*（30種）", why: "取りこぼしの網（決まった計算は候補と安全の線だけ・P0）" },
-      { of: "two_msg", field: "返信の受け持ち（内覧の誘いを足す）", where: "turn-contract.ts sentReactionViewInvite（SENT_REACTION_VIEW_INVITE 既定 on）", why: "送った物件に反応した番は返信で内覧の誘い", example: "q055: 正解は 返信 か AIX:viewing_invite のどちらも可。返信に誘いを足す網と、AIX【内覧調整】を選ぶブレイン・2通の組み合わせが同じ「誘い」を別々に持つ" },
+      { of: "two_msg", field: "返信の受け持ち（内覧の誘いを足す）", where: "turn-contract.ts sentReactionViewInvite（SENT_REACTION_VIEW_INVITE 既定 on）", why: "送った物件に反応した番は返信で内覧の誘い", example: "q055: 正解は 返信 か AIX:viewing_invite のどちらも可。返信に誘いを足す網と、AIX【内覧調整】を選ぶブレイン・2通の組み合わせが同じ「誘い」を別々に持つ（11/06 統括役: 作業員7が1つにまとめる）" },
     ],
   },
   {
@@ -88,30 +88,35 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     id: "compose", name: "文の統括（この通の重点・構成→書き手→確かめ）", owner: "作業員9", stage: "compose",
     files: ["app/lib/reply-compose-conductor.ts", "app/api/generate-reply/route.ts（7655行あたりで呼ぶ）"],
     reads: ["meta.conductor_focus", "meta.two_message_plan", "場面", "前の流れ"],
-    writes: ["compose_conductor（generate-reply の記録・composeConductorDigest）"],
+    writes: ["compose_conductor（generate-reply の記録・composeConductorDigest）", "text:turn_contract"],
     switch: "COMPOSE_CONDUCTOR",
     redecides: [
       { of: "intake", field: "重点（meta.conductor_focus が無い時に場面から決め直す）", where: "reply-compose-conductor.ts（read:[] の時）", why: "重点が届いていない時の代わり", example: "q023・q164: 11/06 まで meta.conductor_focus が本番に無く、場面から決め直して読み違えた → CONDUCTOR_FOCUS を既定 shadow に（90ca4b57）" },
     ],
   },
   {
-    id: "writer", name: "書き手（返信の文）", owner: "未定", stage: "compose",
+    id: "writer", name: "書き手（返信の文）", owner: "作業員9（11/06 統括役の決め）", stage: "compose",
     files: ["app/api/generate-reply/route.ts", "app/lib/flash-writer.ts"],
     reads: ["meta.turn_contract", "meta.key_topics", "meta.reply_direction", "meta.two_message_plan（planFromMeta）"],
     writes: ["writer", "draft"],
     switch: null,
     redecides: [
       { of: "brain", field: "道（path.code と draft.code の違い）", where: "generate-reply の下書き", why: "下書きが判断と違う道で書く（AIX の番を返信で書く等）" },
+      // 2026-11-06 作業員9の気付き（統括役）: 書き手は下に足した注記より、ブレインの方向の文（reply_direction・two-stage の direction）に従う
+      { of: "rules", field: "下に足した注記（方向の文の外の1行）", where: "generate-reply の下書き（材料の注記 vs reply_direction）", why: "注記は従われにくく、方向の文は従われる", example: "夜の明日の例: 注記は 9通中2通・方向の文は 3/3 で書かれた" },
+      { of: "rules", field: "方向の文に足した線", where: "generate-reply（本質の帯 turn_contract の proposals・customer_questions が上位）", why: "本質の帯が方向の文に足した線より勝つ", example: "q174: 方向の文に足した線が本質の帯に負けて書かれなかった" },
     ],
   },
   {
-    id: "final_check", name: "最終チェック（送る前の確かめ・書き直し）", owner: "未定", stage: "verify",
+    id: "final_check", name: "最終チェック（送る前の確かめ・書き直し）", owner: "作業員9（11/06 統括役の決め）", stage: "verify",
     files: ["app/lib/final-check.ts", "app/lib/final-check-*.ts"],
     reads: ["draft", "材料（事実の出所）"],
-    writes: ["final_check", "log:"],
+    writes: ["final_check", "log:mgmt-"],
     switch: "FINAL_CHECK_*",
     redecides: [
       { of: "writer", field: "下書きの文（要点が消える書き直し）", where: "final-check.ts の書き直し", why: "安全の線（誤った事実・決まり）。ブレインの判断を落とす書き直しは止める（10/08 竹内さん）" },
+      // 2026-11-06 作業員9の気付き（統括役）
+      { of: "writer", field: "竹内さんの決まりどおりの夜の約束（AIX_BOUNDARY_PROMISE と読んで消す）", where: "final-check.ts rule_check", why: "AIX の境の約束と取り違える", example: "closing2-q136: 夜の約束が rule_check で消えた。方向の文で1文にすると消されない" },
     ],
   },
   {
