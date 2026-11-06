@@ -43,7 +43,11 @@ it("手本: 試験の元の会話も外す", () => { expect(pickAreaExcludeExamp
 it("材料の文: 言い直しと竹内さんの数", () => {
   const t = areaExcludeBrainText(true, pickAreaExcludeExamples("x", {}));
   expect(t).toContain("条件の言い直し（そのエリアを除く）");
-  expect(t).toContain("約束 3・返信だけ 0");
+  expect(t).toContain("約束 3・相づちだけの返信 0");
+  // 11/06 area-read-on-1106: 読み方だけでは q008 が動かない → 一手（ピックアップの約束）を1組で渡す
+  expect(t).toContain("一手: 竹内さんは「〇〇エリアを除いた地域から");
+  expect(t).toContain("route=promise");
+  expect(t).toContain("竹内さん: ピックアップの約束（2段:pickup）");
 });
 it("材料の文: 当たらなければ空", () => { expect(areaExcludeBrainText(false, [])).toBe(""); });
 

@@ -65,8 +65,11 @@ export function pickAreaExcludeExamples(conversationId: string | null | undefine
 /** ブレインの材料の文（当たらなければ空） */
 export function areaExcludeBrainText(hit: boolean, examples: ReadonlyArray<AreaExcludeExample>): string {
   if (!hit) return "";
-  const lines = examples.map((e, i) => `${i + 1}. お客様「${e.customer}」→ 竹内さん: 約束の返信（探す）「${e.staff}」`);
-  return `\n\n【読み方の手本（物件を送った後の「〇〇は住んでいたが不便・〇〇は避けたい・〇〇はNG」）】お客様はそのエリアを外したいと伝えている（「住んでいたが不便だった」のように避けたいと言わない言い方も同じ）＝条件の言い直し（そのエリアを除く）。感想への相づちだけの返信にしない。
-竹内さんの実送信（物件を送った後にエリアを外す言い直し 3番）: そのエリアを除いてピックアップする約束 3・返信だけ 0。${lines.length ? `\n${lines.join("\n")}` : ""}
+  const lines = examples.map((e, i) => `${i + 1}. お客様「${e.customer}」→ 竹内さん: ピックアップの約束（2段:pickup）「${e.staff}」`);
+  // 2026-11-06 試験 area-read-on-1106: 読み方だけでは q008 が main と同じ 1/4（返信 3/4）。(a) と同じく一手（ピックアップの約束）を1組で渡す
+  return `\n\n【読み方と一手の手本（物件を送った後の「〇〇は住んでいたが不便・〇〇は避けたい・〇〇はNG」）】
+- 読み方: お客様はそのエリアを外したいと伝えている（「住んでいたが不便だった」のように避けたいと言わない言い方も同じ）＝条件の言い直し（そのエリアを除く）。感想・事情への相づちではない。
+- 一手: 竹内さんは「〇〇エリアを除いた地域から…新たにピックアップしてお送りさせて頂きます」の約束を返す（物件の AIX【物件ピックアップした】の番で、送れる物件がまだ無い＝先に約束の返信・2段:pickup。turn_contract のこの依頼の道は約束 route=promise）。相づちだけの返信で終わらせない。
+竹内さんの実送信（物件を送った後にエリアを外す言い直し 3番）: そのエリアを除いてピックアップする約束 3・相づちだけの返信 0。${lines.length ? `\n${lines.join("\n")}` : ""}
 ※ 決めるのはこの会話の事実（どのエリアか・送った物件のエリア）。`;
 }
