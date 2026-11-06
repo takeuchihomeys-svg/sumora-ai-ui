@@ -1,7 +1,7 @@
 // 試験の統括（scripts/lib/exam-plan.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-plan.test.ts（全 PASS で exit 0）
 import { flakeCleanSinceMs } from "../exam-flake";
-import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs, overBudget, capUsdOf, needsBaseIds, planVsActualReport } from "../exam-plan";
+import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs, overBudget, capUsdOf, needsBaseIds, planVsActualReport, specMissingIds } from "../exam-plan";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -83,6 +83,8 @@ ok("上限の環境変数", capUsdOf({ EXAM_MAX_USD: "0.5" }) === 0.5 && capUsdO
   const r = planVsActualReport([{ label: "x", stage: "brain", planUsd: 0.24, cur: 0.17, judge: 0.01, base: 0.17, reps: 8 }, { label: "y", stage: "draft", planUsd: 0.36, cur: 0.18, judge: 0, base: 0.18, reps: 5 }]);
   ok("見込みと実際の比の一覧", r.lines.length === 2 && r.lines[0].includes("比 1.46") && Math.abs(r.byStage.brain.perRep - 0.0225) < 1e-9 && r.byStage.draft.ratioMid === 1, JSON.stringify(r));
 }
+
+ok("spec に無い問題（古い作業ツリー・sorry-read-dig-1107 の q354〜q357）", specMissingIds(["q354", "q355", "q010"], ["q010", "q011"]).join(",") === "q354,q355" && specMissingIds(["q010"], ["q010"]).length === 0);
 
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

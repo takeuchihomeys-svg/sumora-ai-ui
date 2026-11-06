@@ -164,3 +164,9 @@ export function planVsActualReport(rows: PlanVsActual[]): { lines: string[]; byS
   }
   return { lines, byStage };
 }
+
+/** 指定した問題のうち、依頼の作業ツリーの spec.json に無い物（純関数・2026-11-07 統括役: 古い作業ツリーで「問題 0」のまま流れた） */
+export function specMissingIds(ids: ReadonlyArray<string>, specIds: ReadonlyArray<string>): string[] {
+  const have = new Set(specIds);
+  return [...new Set(ids)].filter((id) => !have.has(id));
+}

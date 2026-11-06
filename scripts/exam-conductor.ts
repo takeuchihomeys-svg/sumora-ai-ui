@@ -55,7 +55,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase } from "./lib/exam-base-pin";
-import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, type CmpLite } from "./lib/exam-plan";
+import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, type CmpLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
@@ -215,6 +215,11 @@ function addJob(): void {
     //   --kind=record|prod（記録だけ・本番で動いている直し）は試験を積まず、毎晩の本番の物差し（cron prod-yardstick）で見る。計画は exam-cache/exam-plans.jsonl に残す
     // 2026-11-06 作業員8（弱い所 348・作業員9の気付き: spec.json の正解を変えても手元の problems.json が古いまま使われ、night-brain-on-p1 で q136・q099・q137 が古い正解で ○ に数えられた）:
     //   積む前に、依頼の作業ツリーの problems.json が今の spec と違う（共有の置き場にも新しい物が無い）問題を見つけたら積まずに返す（作り直すコマンド付き）。--allow-stale で今まで通り積む
+    // 2026-11-07 統括役（P0 8805bd74・作業員1の sorry-read-dig-1107 が「問題 0」で流れて終わった）: 指定した問題が依頼の作業ツリーの spec.json に無い（古い作業ツリー）なら積まない
+    {
+      const notInSpec = specMissingIds(ids, spec.map((x) => x.id));
+      if (notInSpec.length) throw new Error(`積まない: 問題 ${notInSpec.join(",")}（${notInSpec.length}/${ids.length}問）が依頼の作業ツリーの spec.json に無い（作業ツリーが古い）。作業ツリーを最新の main に合わせる: cd ${cwd} && git fetch origin && git merge origin/main（その後に積み直す）`);
+    }
     {
       const local = readJson<Array<Record<string, unknown>>>(join(cwd, "scripts/brain-exam/problems.json"), []);
       const fr = fillProblemsFromShared(spec as unknown as Array<Record<string, unknown>>, local, { addMissing: (id) => ids.includes(id) });
