@@ -29,9 +29,9 @@ export async function nearOpinionForTurn(sb: SupabaseClient, o: {
     const hits = data as Array<{ source_key: string; distance: number; turn_at?: string | null; focus?: string | null; actual: { route?: string; aix?: string | null; picker?: string | null } | null }>;
     if (!hits.length) return { op: null, line: "", inBand: 0 };
     const tNow = Date.parse(o.turnAt);
-    const rows0 = hits.filter((h) => (h.actual?.route === "aix" || h.actual?.route === "reply") && (!h.turn_at || Date.parse(h.turn_at) < tNow));
+    const rows0 = nearOpinionRows(hits, tNow);
     // 一番近い番の要約（伏せ済みの状況の文）。試験の写しは一番近い番の分だけ入っている（作業員8 82ecdb4e）
-    const { data: meta } = rows0.length ? await sb.from("conductor_turn_vectors").select("source_key, situation").in("source_key", rows0.slice(0, 5).map((h) => h.source_key)) : { data: [] };
+    const { data: meta } = rows0.length ? await turnMetaQuery(sb, rows0.slice(0, 5).map((h) => h.source_key)) : { data: [] };
     const sitOf = new Map(((meta ?? []) as Array<{ source_key: string; situation: string | null }>).map((m) => [m.source_key, m.situation]));
     const rows: NearTurnRow[] = rows0.map((h) => ({ key: h.source_key, distance: h.distance, route: h.actual!.route as "aix" | "reply", aix: h.actual?.aix ?? null, picker: h.actual?.picker ?? null, situation: sitOf.get(h.source_key) ?? null, focus: h.focus ?? null }));
     // 2026-11-07 統括役の決め (a): 重点（focus）は「ピックアップしてお送り」の約束の文を propose に分けていた（nop4-on）。
@@ -69,4 +69,13 @@ export async function nearOpinionForTurn(sb: SupabaseClient, o: {
   } catch {
     return null;
   }
+}
+
+/** 入口の意見で数える近い番（純関数・今の番より前・返信か AIX の番）。2026-11-07 作業員8: 試験の写しの台本が同じ関数で後ろの読みを先に控える */
+export function nearOpinionRows<T extends { turn_at?: string | null; actual: { route?: string } | null }>(hits: ReadonlyArray<T>, tNow: number): T[] {
+  return hits.filter((h) => (h.actual?.route === "aix" || h.actual?.route === "reply") && (!h.turn_at || Date.parse(h.turn_at) < tNow));
+}
+/** 近い番の状況の文の読み（問い合わせの形を1か所に・台本と同じ URL になる） */
+export function turnMetaQuery(sb: SupabaseClient, keys: ReadonlyArray<string>) {
+  return sb.from("conductor_turn_vectors").select("source_key, situation").in("source_key", [...keys]);
 }
