@@ -5,7 +5,7 @@ function it(name: string, fn: () => void) { try { fn(); passed++; console.log(` 
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
 const eq = (a: unknown, b: unknown) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${JSON.stringify(a)} !== ${JSON.stringify(b)}`); };
 
-it("既定 off", () => { ok(!conductorReplanOn({})); ok(conductorReplanOn({ CONDUCTOR_REPLAN: "on" })); });
+it("既定 on（11/06 統括役）・off で止める", () => { ok(conductorReplanOn({})); ok(!conductorReplanOn({ CONDUCTOR_REPLAN: "off" })); });
 it("スタンプ・お礼・了承だけ → keep", () => {
   eq(replanCandidate({ newTexts: ["[スタンプ]"] }).kind, "keep");
   eq(replanCandidate({ newTexts: ["ありがとうございます😊"] }).kind, "keep");
