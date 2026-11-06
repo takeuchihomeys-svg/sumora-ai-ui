@@ -363,7 +363,7 @@ import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
-import { replyDirectionWithKeep } from "@/app/lib/reply-direction-keep";
+import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -936,6 +936,17 @@ type PromptOverrides = {
   aixPropertySendRules?: string;
 };
 
+/**
+ * 2026-11-06 作業員9（弱い所 322・統括役の決め）: 条件の番の決まった型の注記（conditionChangeShapeNote ④・newConditionRequestNote ⑤）の締め
+ *   「全力でサポート…で締める」を、初回の番だけに出す（CONDITION_SHAPE_KEEP_FIRST_ONLY=on・既定 off）。
+ *   竹内さんの条件の番 180通: 初回 80%・2回目以降の言い直し 39%（試験 q010: 2回目以降で竹内さんは添えていないのに、この注記で毎回添えていた）。
+ *   2回目以降の継続の約束は REPLY_DIRECTION_KEEP（近い竹内さんの番の過半数の時だけ）に任せる
+ */
+function conditionKeepShapeLine(no: string, isFirstEverReply: boolean): string {
+  const firstOnly = (process.env.CONDITION_SHAPE_KEEP_FIRST_ONLY ?? "").trim().toLowerCase() === "on";
+  if (!firstOnly || isFirstEverReply) return no === "④" ? "サポート継続宣言 — 「〇〇さんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます😌！！」の方向で締める".replace(/^/, "④ ") : "「〇〇さんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます😌！！」で締める".replace(/^/, "⑤ ");
+  return `${no} 締め — 行動宣言（ピックアップしてお送りする約束）で締める。継続の約束（全力でサポート）は決まりで足さない（竹内さんは2回目以降の言い直しでは6割が入れない・入れる時は上の【🧭】・方向の文に従う）`;
+}
 function buildGenerationMessages(
   customerMessage: string,
   customerName: string,
@@ -1227,7 +1238,7 @@ function buildGenerationMessages(
 ①' 共感（該当する場合のみ・任意）— 【💬 共感フレーズ使い分け】の確定判定に従う。お客様が恐縮している場合のみ「全然大丈夫です！！」を置ける。お客様自身が「わがまま」と書いていない限り『わがまま』を含むフレーズは絶対禁止。判定で許可されていない共感フレーズは入れないこと
 ② 条件を理解した旨 — 「かしこまりました！！」＋ お客様が出した条件を具体的な言葉（エリア名・設備名・家賃・間取り）でそのまま拾う。オウム返しの疑問形（「〇〇をご希望ですね」）は禁止
 ③ 行動宣言 — お部屋をお探しする／お送りする旨（表現は下記のスタイル指定に従う）
-④ サポート継続宣言 — 「〇〇さんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます😌！！」の方向で締める
+${conditionKeepShapeLine("④", isFirstEverReply)}
 ⑤ 禁止 — 実現可能性への言及（難しい・少ない・可能性）・条件緩和・代替案の先回り提案・お客様の自己ヘッジ（難しいと思う・あれば教えて）の復唱（探した後に結果と一緒に報告する）
 【🚫 条件変更文脈での絶対禁止CTA（最優先・フェーズ別パターンより上位）】お客様が新しい条件・追加条件を出した場面では、以下を絶対に出力しない：
 ・申込フォーマット／申込書類の案内／「お申込みでお部屋を先に押さえる」等の申込誘導
@@ -1870,7 +1881,7 @@ ${buildAvailabilityCheckNote()}` : buildAvailabilityCheckNote();
 ②（該当する場合のみ）共感 — 【💬 共感フレーズ使い分け】の判定に従う。許可されていない共感フレーズは入れない
 ③ 条件を理解した旨 — お客様が出した条件を具体的な言葉でそのまま拾う（オウム返しの疑問形は禁止）
 ④ 物件ピックアップの行動宣言
-⑤ 「〇〇さんがご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます😌！！」で締める
+${conditionKeepShapeLine("⑤", isFirstEverReply)}
 ⑥ 禁止：実現可能性への言及（難しい・少ない・可能性）・条件緩和・代替案の先回り提案・お客様の自己ヘッジ（難しいと思う・あれば教えて）の復唱（探した後に結果と一緒に報告する）
 【🚫 解説禁止】条件変更・追加の効果やメリットの解説（「エリアが広がりましたので、より条件に近いお部屋を見つけやすくなるかと思います」等）は絶対に書かない。承諾＋「〇〇さんのご希望のご条件に合ったお部屋を探してお送りする」コミットメントのみ。
 【🚫 絶対禁止CTA（フェーズ別パターンより上位）】申込フォーマット・申込書類の案内・申込誘導／見積書の作成宣言・送付宣言・初期費用の金額提示／条件ヒアリングフォーム（①〜⑧）等のフォーマット送付／内覧日程の提案。CTAは「お部屋をお送りすること」のみ。`
@@ -5590,11 +5601,11 @@ async function handleGenerateReply(req: NextRequest) {
       const tcBrain = turnContract?.source === "brain";
       // 2026-10-09 調査の担当: effectiveReplyDirection はブレインの方向が14番目（早い者勝ちの型が先）。本質がある時はブレインの方向（中身）を型より上に置き、どちらが使われたかを記録する
       // 2026-11-06 作業員9（弱い所 322・REPLY_DIRECTION_KEEP=on・既定 off）: 条件の番は方向の文に竹内さんの形の継続の約束を1文（59%・app/lib/reply-direction-keep.ts）
-      const brainDirTop = tcBrain && brainFreshForMessage && !isCachedMeta ? replyDirectionWithKeep({
+      const brainDirTop = tcBrain && brainFreshForMessage && !isCachedMeta ? replyDirectionWithNoViewing({ customerText: customerMsgUnits.join("\n") || (message ?? ""), direction: replyDirectionWithKeep({
         direction: brainDirForGen(brainMeta?.reply_direction), scene: resolveReplyScene({ customerText: message ?? "" }).scene, customerText: customerMsgUnits.join("\n") || (message ?? ""),
         staffToday: recentMessages.filter((m) => m.sender === "staff" && m.createdAt && jstParts(m.createdAt).d === jstParts().d && jstParts(m.createdAt).m === jstParts().m).map((m) => m.text ?? ""),
         firstContact: isFirstEverReplyFromMsgs === true, nearKeepShare: composeNearKeepShare,
-      }) : null;
+      }) }) : null;
       if (brainDirTop) lines.push(`- 🧠 ブレインの返信の方向（中身・上の本質と同じ側）: ${brainDirTop.slice(0, 160)}`);
       // 2026-11-05 作業員9（弱い所 324・KB P1 9fd703f4）: 2段の確認の方向の結び「確認出来次第ご連絡」が下の【管理会社の状況】の「明日」より勝っていた＝
       //   夜の管理会社への確認だけ、方向のすぐ下で結びの前に「本日管理会社営業時間外の為、明日」を入れさせる（判断・結びの言葉は変えない・MGMT_NIGHT_CLOSING=on・既定 off）
