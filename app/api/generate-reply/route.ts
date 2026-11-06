@@ -5591,6 +5591,7 @@ async function handleGenerateReply(req: NextRequest) {
       const brainDirTop = tcBrain && brainFreshForMessage && !isCachedMeta ? replyDirectionWithKeep({
         direction: brainDirForGen(brainMeta?.reply_direction), scene: resolveReplyScene({ customerText: message ?? "" }).scene, customerText: customerMsgUnits.join("\n") || (message ?? ""),
         staffToday: recentMessages.filter((m) => m.sender === "staff" && m.createdAt && jstParts(m.createdAt).d === jstParts().d && jstParts(m.createdAt).m === jstParts().m).map((m) => m.text ?? ""),
+        firstContact: isFirstEverReplyFromMsgs === true, nearKeepShare: composeNearKeepShare,
       }) : null;
       if (brainDirTop) lines.push(`- 🧠 ブレインの返信の方向（中身・上の本質と同じ側）: ${brainDirTop.slice(0, 160)}`);
       // 2026-11-05 作業員9（弱い所 324・KB P1 9fd703f4）: 2段の確認の方向の結び「確認出来次第ご連絡」が下の【管理会社の状況】の「明日」より勝っていた＝

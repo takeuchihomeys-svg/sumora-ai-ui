@@ -690,7 +690,7 @@ export function pickupDirectionKeepOn(env: Record<string, string | undefined> = 
 }
 const LOOK_NOT_VIEWING_RE = /一旦見て|見てみたい|見てみます|気になります|気になってます|良さそう|いいですね|綺麗ですね/;
 const EXPLICIT_VIEWING_RE = /(?:内覧|内見|見学)/;
-export function pickupDirectionAdjust(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "customerText">, env?: Record<string, string | undefined>): TwoStageVerdict | null {
+export function pickupDirectionAdjust(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "customerText" | "firstContact">, env?: Record<string, string | undefined>): TwoStageVerdict | null {
   if (!v || v.kind !== "pickup") return v;
   const t = String(i.customerText ?? "");
   const add: string[] = [];
@@ -699,7 +699,8 @@ export function pickupDirectionAdjust(v: TwoStageVerdict | null, i: Pick<TwoStag
   }
   // 条件の言い直しのピックアップの約束（rule:two_stage_promise(pickup)）だけ。pickup_unless_ack（物件への感想・質問の番）には入れない＝q174 の竹内さんは入れていない
   // 2026-11-06 q174#2 のすり抜け: 出所が (pickup) でも、お客様の発言が物件への感想（一旦見てみたい・良さそう）の番は入れない（竹内さんの q174 は入れていない）
-  const keepCase = v.source === "rule:two_stage_promise(pickup)" && !LOOK_NOT_VIEWING_RE.test(t);
+  // 2026-11-06 線: 初回だけ（竹内さん 初回 80%・2回目以降 39%）
+  const keepCase = v.source === "rule:two_stage_promise(pickup)" && !LOOK_NOT_VIEWING_RE.test(t) && i.firstContact === true;
   if (pickupDirectionKeepOn(env) && keepCase) {
     add.push("約束の後・締めの前に、竹内さんの実送信の形の継続の約束を1文だけ入れる「〇〇さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！」（約束の中身は省かない・同じ日にこちらがもう言っていれば入れない）");
   }

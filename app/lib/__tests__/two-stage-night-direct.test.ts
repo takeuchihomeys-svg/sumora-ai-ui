@@ -28,8 +28,9 @@ t("ピックアップ: 既定 off は変えない", pickupDirectionAdjust(pvq, {
 const p1 = pickupDirectionAdjust(pvq, { customerText: q174 }, { PICKUP_DIRECTION_NO_VIEWING: "on", PICKUP_DIRECTION_KEEP: "on" });
 t("ピックアップ: q174（一旦見てみたい）→ 内覧の一文を足さない・継続の約束は入れない（感想の番）", !!p1 && p1.direction.includes("内覧の依頼ではない") && !p1.direction.includes("全力でサポート") && p1.source === pvq.source, p1?.direction);
 t("ピックアップ: はっきり内覧を頼んだ時は内覧の線を足さない", !pickupDirectionAdjust(pvq, { customerText: "一旦見てみたいので内覧お願いします" }, { PICKUP_DIRECTION_NO_VIEWING: "on" })?.direction.includes("内覧の依頼ではない"));
-const p2 = pickupDirectionAdjust(pv, { customerText: "ペット可じゃなくてもいいので紹介していただきたいです" }, { PICKUP_DIRECTION_KEEP: "on" });
-t("ピックアップ: 条件の言い直し（q154）→ 竹内さんの形の継続の約束", !!p2 && p2.direction.includes("全力でサポートさせて頂きます"), p2?.direction);
+const p2 = pickupDirectionAdjust(pv, { customerText: "大阪市内か茨木・高槻で1LDK・7万円台", firstContact: true }, { PICKUP_DIRECTION_KEEP: "on" });
+t("ピックアップ: 初回の条件（q019）→ 竹内さんの形の継続の約束", !!p2 && p2.direction.includes("全力でサポートさせて頂きます"), p2?.direction);
+t("ピックアップ: 2回目以降の言い直し（q010）→ 入れない", !pickupDirectionAdjust(pv, { customerText: "職場が本町なのでアクセスしやすい所", firstContact: false }, { PICKUP_DIRECTION_KEEP: "on" })?.direction.includes("全力でサポート"));
 t("ピックアップ: 確認の約束（check）には触らない", pickupDirectionAdjust(cv, { customerText: q174 }, { PICKUP_DIRECTION_NO_VIEWING: "on", PICKUP_DIRECTION_KEEP: "on" })?.direction === cv.direction);
 // 決まった尾の例（61 (b)・既定 off）
 t("決まった尾: 既定は今まで通り（内覧の日時の例つき）", twoStageAlsoAnswer({}) === TWO_STAGE_ALSO_ANSWER);

@@ -13,11 +13,14 @@ export function replyDirectionKeepOn(env: Env = typeof process !== "undefined" ?
 }
 const LOOK_RE = /一旦見て|見てみたい|見てみます|気になります|気になってます|良さそう|いいですね|綺麗ですね/;
 export const KEEP_LINE = "〇〇さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！";
-export function replyDirectionWithKeep(o: { direction: string | null; scene: string | null; customerText: string; staffToday: ReadonlyArray<string> }, env?: Env): string | null {
+// 2026-11-06 線（竹内さんの条件の番 180通・読むだけ）: 初回（はじめまして）は 86通中 80% で添える・2回目以降の言い直しは 94通中 39%（少数＝決まりで足すと誤る）。
+//   2回目以降は近い竹内さんの番の過半数（anatomy.keep・nearKeepShare>0.5）の時だけ。「ピックアップ出来次第お送り」で締めた20通は 0%（締めの言い方の別の形）
+export function replyDirectionWithKeep(o: { direction: string | null; scene: string | null; customerText: string; staffToday: ReadonlyArray<string>; firstContact?: boolean; nearKeepShare?: number | null }, env?: Env): string | null {
   if (!o.direction || !replyDirectionKeepOn(env)) return o.direction;
   if (o.scene !== "conditions") return o.direction;
   if (LOOK_RE.test(o.customerText)) return o.direction;
   if (o.staffToday.some((t) => hasKeepPromise(t))) return o.direction;
   if (hasKeepPromise(o.direction)) return o.direction;
+  if (!o.firstContact && !((o.nearKeepShare ?? 0) > 0.5)) return o.direction;
   return `${o.direction}（約束の後・締めの前に、竹内さんの実送信の形の継続の約束を1文だけ入れる「${KEEP_LINE}」・約束の中身は省かない）`;
 }
