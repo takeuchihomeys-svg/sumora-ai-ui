@@ -4558,6 +4558,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
     //   ・対象のお部屋の入居時期が資料で分からない → 「返信か AIX【確認した→入居可能日】か」の2択（feedback_two_choice_aix）
     //   実送信（365日・当たり22通）: 全部本文で回答・上の AIX を押した回 0（scripts/audit-procedure-question.ts）
     let procedureDecision: "reply" | "two_choice" | null = null;
+    let procedureGeneralReply = false;
     const procedureQ = detectProcedureQuestion(unrepliedTurn.text);
     if (!promiseAix && isProcedureReplyQuestion(procedureQ) && !isPostApplyStatus(convStatus) && !unrepliedTurn.hasImage
       && (!sceneEvidence || sceneEvidence.scene === "S2_move_in")
@@ -4585,6 +4586,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         sceneSignalCheckPattern = null;
         decisionSource = "rule:procedure_question_reply";
         procedureDecision = "reply";
+        // 2026-11-07 作業員1（型2・q374）: 物件を指さない一般の問いで返信に決めた番は、下の約束の依頼からの2段（tcPromiseAix）で確認の約束に戻さない
+        if (unknownButGeneral) procedureGeneralReply = true;
       }
     }
     // 2026-09-30 竹内「確認した＝設備や入居のことや管理会社に確認が必要な部分。物件資料に記載があればそこで答えて大丈夫」:
@@ -4927,7 +4930,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       }
     }
     // 2026-10-20 試験の道の外れ⑤（q177・BRAIN_ROUTE_FIX_1020 promise_check）: 約束の依頼の答えが「確認させて頂きます」だけ（about=設備など）でも確認の約束として2段へ
-    const tcPromiseAix = !finalAix && tcPromiseTwoStageEnabled()
+    const tcPromiseAix = !finalAix && !procedureGeneralReply && tcPromiseTwoStageEnabled()
       ? (promiseAixFromContract((parsed as { turn_contract?: unknown }).turn_contract)
         ?? (routeFix1020("promise_check") && contractPromiseIsCheck((parsed as { turn_contract?: unknown }).turn_contract) ? "property_check_result" : null))
       : null;

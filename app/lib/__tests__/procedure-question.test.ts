@@ -256,6 +256,13 @@ import("../procedure-question").then(({ procedurePointsToProperty, procedureMove
     it("対象のお部屋の名前で指す（シーズンフラッツ）", () => eq(procedurePointsToProperty("シーズンフラッツ第一候補なんですけど最短入居日っていつになりますか？", "シーズンフラッツ心斎橋EAST"), true));
     it("材料: 指さない問いは資料が無くても会社の事実で返信", () => ok(procedureMoveInBrainLine({ text: "最短入居日どのくらいですね", moveInKnown: false }).includes("一般の問いは、資料に入居時期が無くても会社の事実で返信")));
     it("材料: 指す問いで資料が無い時は確認", () => ok(procedureMoveInBrainLine({ text: "ここは入居可能日いつ頃ですか？", moveInKnown: false }).includes("管理会社に確認")));
+    // q374（proc-points-dig-1107）: 一般の問いを返信に決めた後、約束の依頼からの2段（tcPromiseAix→check）で確認の約束に戻っていた
+    it("配線: 一般の問いで返信に決めた番は tcPromiseAix の2段に回さない", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const src: string = require("fs").readFileSync(require("path").join(__dirname, "../brain-core.ts"), "utf8");
+      ok(/if \(unknownButGeneral\) procedureGeneralReply = true;/.test(src));
+      ok(/const tcPromiseAix = !finalAix && !procedureGeneralReply && tcPromiseTwoStageEnabled\(\)/.test(src));
+    });
   });
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed) { console.log(failures.join("\n")); process.exit(1); }
