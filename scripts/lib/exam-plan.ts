@@ -53,7 +53,7 @@ export function kindSuggest(input: { kind?: PlanInput["kind"]; switchName?: stri
 }
 
 /** 1回あたりの単価（今の答え＋判定・DeepSeek の安い時間）。11/06 の実際: 頭の段 $0.018〜0.025・下書きの段 $0.033〜0.037（前は 0.06 と見ていた＝見込みが倍） */
-export const BRAIN_USD_PER_REP = 0.03, DRAFT_USD_PER_REP = 0.04;
+export const BRAIN_USD_PER_REP = 0.03, DRAFT_USD_PER_REP = 0.035; // 11/07: 11/06 の下書きの段は1回 $0.033・比の中央 0.61（0.04 では高すぎ）
 
 export function planExam(input: PlanInput): ExamPlan {
   const kind = guessKind(input);
