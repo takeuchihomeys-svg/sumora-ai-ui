@@ -117,6 +117,8 @@ export interface LedgerEntry {
     propStatuses?: string[];
     /** confirmation_promised: 管理会社の返事待ちを伝えた文から読んだ約束（STAFF_ONLY_AIX_1020 mgmt_pending・staff-only-aix-1020.ts） */
     mgmtPending?: boolean;
+    /** 2026-11-07 弱い所 386（作業員7）: AIX【申込】の本文が申込のフォーマット（記入欄）だった＝フォーマットを送った（LEDGER_APPLY_FORM_LABEL） */
+    applyForm?: boolean;
   };
   /** done 直後（次のスタッフ発言より前）の顧客返答（往復文脈の一般化） */
   customerReactionAfter?: ReactionKind;
@@ -1023,7 +1025,7 @@ export function buildLedgerLinesForBrain(ledger: ActionLedger, max = 8): string 
     return '';
   };
   const lines = rows.map((e) => {
-    const what = e.status === 'promised' ? `${LEDGER_KIND_JA[e.kind]}を宣言（${e.fulfilledBy == null ? 'まだ履行していない' : '履行済み'}）` : `${LEDGER_KIND_JA[e.kind]}を実行`;
+    const what = e.status === 'promised' ? `${ledgerKindJa(e)}を宣言（${e.fulfilledBy == null ? 'まだ履行していない' : '履行済み'}）` : `${ledgerKindJa(e)}を実行`;
     const d = det(e);
     return `・${fmtJst(e.at)} ${what}${d ? `（${d}）` : ''}［${src(e)}］`;
   });
@@ -1107,6 +1109,7 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     };
     if (map.kind === 'properties_sent') { e.detail.propertyNames = names; e.detail.propertyCount = Math.max(1, names.length); }
     if (map.kind === 'estimate_sent') e.detail.estimateFor = names;
+    if (map.kind === 'application_guided' && APPLY_FORM_TEXT_RE.test(String(r.generated_text ?? ''))) e.detail.applyForm = true;
     if (map.kind === 'meeting_place_sent') e.detail.appointment = extractViewingAppointment(r.generated_text, at);
     if (map.kind === 'confirmation_reported' && names.length) {
       e.detail.propertyNames = names;
@@ -1381,7 +1384,7 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     `／見積${facts.estimateSent ? `送付済(${merged.some((e) => e.kind === 'estimate_sent' && e.source === 'aix_log') ? 'AIX' : '本文'})` : facts.estimatePromisedUnfulfilled ? '約束済み・未送付' : '未'}` +
     `／ピックアップ約束${facts.pickupPromisedUnfulfilled ? `未履行×${facts.pickupPromisedCount}` : 'なし'}` +
     `／確認約束${facts.confirmationPromisedUnfulfilled ? '未履行' : facts.confirmationReported ? '報告済' : 'なし'}` +
-    `／直前=${lastStaffEntry ? `${LEDGER_KIND_JA[lastStaffEntry.kind]}(${lastStaffEntry.status}/${lastStaffEntry.source})` : '不明'}` +
+    `／直前=${lastStaffEntry ? `${ledgerKindJa(lastStaffEntry)}(${lastStaffEntry.status}/${lastStaffEntry.source})` : '不明'}` +
     (viewingAppointment ? `／内覧の待ち合わせ=${appointmentLabel(viewingAppointment)}` : '') +
     (viewingDone ? `／内覧=実施済み(${viewingDone.appointment.dateMD ?? ''} ${viewingDone.appointment.time ?? ''})` : '');
   return { entries: merged, facts, summary };
@@ -1464,7 +1467,7 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
       const done = e.status === 'promised'
         ? `を**宣言**${e.fulfilledBy != null ? '（履行済み）' : stale ? '（14日以上前・その後の記録なし）' : '（まだ履行していない）'}`
         : 'を**実行**';
-      lines.push(`・${fmtJst(e.at)} ${LEDGER_KIND_JA[e.kind]}${done}`);
+      lines.push(`・${fmtJst(e.at)} ${ledgerKindJa(e)}${done}`);
     }
     // 設計知見「繰り返しは禁止にできない」: 禁止ではなく、繰り返す時の条件と逃げ道を渡す
     lines.push('→ 同じ内容をもう一度伝える時は、前回から新しくなった具体（日程・時刻・物件の件数・金額・条件）を1つ足す。足せる物が無ければ短く受けるだけでよい。');
@@ -1473,7 +1476,7 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
   else {
     lines.push('これまでに我々がしたこと（古→新）:');
     shown.forEach((e, i) => {
-      const what = e.status === 'promised' ? `${LEDGER_KIND_JA[e.kind]}を**宣言**（未実行）` : `${LEDGER_KIND_JA[e.kind]}を**実行**`;
+      const what = e.status === 'promised' ? `${ledgerKindJa(e)}を**宣言**（未実行）` : `${ledgerKindJa(e)}を**実行**`;
       // 2026-09-11 竹内方針2: 物件名は列挙しない（生成に物件名を持ち込む経路を断つ）
       const det = e.kind === 'properties_sent' ? `${e.detail.propertyCount ?? 1}件`
         : e.kind === 'estimate_sent' && e.detail.estimateFor?.length ? `${e.detail.estimateFor.length}件分`
@@ -1535,8 +1538,8 @@ export function buildLastStaffAnnotation(ledger: ActionLedger): string {
   if (!e) return '';
   // 2026-09-11 統合設計（経路E1）: 「再度」の可否は redoWord(ledger) の1関数だけで書く（旧実装は同じ台帳から buildActionLedgerNote が「再度可」、
   //   ここが「再度不成立」と逆の指示を出していた）。ラウンドの文言は pickupRound(ledger).note
-  if (e.status === 'promised') return `※この発言は「${LEDGER_KIND_JA[e.kind]}」の【宣言のみ】で、まだ履行していない（${pickupRound(ledger).note}）。${redoWord(ledger) ? '送付済み物件は以前のもの。この宣言を「完了した」と書かない。' : '「再度」「改めて」は成立しない（1件も送っていないため二度目は存在しない）。'}`;
-  return `※この発言は「${LEDGER_KIND_JA[e.kind]}」を【実行済み】（根拠: ${e.source}）。同じ行動を未来形で再宣言しない。`;
+  if (e.status === 'promised') return `※この発言は「${ledgerKindJa(e)}」の【宣言のみ】で、まだ履行していない（${pickupRound(ledger).note}）。${redoWord(ledger) ? '送付済み物件は以前のもの。この宣言を「完了した」と書かない。' : '「再度」「改めて」は成立しない（1件も送っていないため二度目は存在しない）。'}`;
+  return `※この発言は「${ledgerKindJa(e)}」を【実行済み】（根拠: ${e.source}）。同じ行動を未来形で再宣言しない。`;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1747,4 +1750,18 @@ export function buildLedgerNote(ledger: ActionLedger, opts: { customerName?: str
   if (gated.length) lines.push(`→ 現在ゲート中の語（実績が無いので本文に書かない）: ${gated.join('／')}`);
   lines.push('→ 判断は上記の確定事実のみ。会話履歴の「ピックアップしてお送りします」は宣言であって実行ではない。');
   return lines.join('\n') + '\n\n';
+}
+
+/**
+ * 2026-11-07 弱い所 386（作業員7・統括役の決め: 台帳の読み手は作業員7が持つ）: AIX【申込】は「申込打診（application_guided）」に畳まれ、
+ *   申込のフォーマットを送った（記入をお願いした）事と、申込を勧めた事が見分けられなかった（本番 10261: 記入済みのフォーマットがある番）。
+ *   on の時だけ、フォーマットを送った行の名前を「申込のフォーマット送付（記入のお願い）」にする。既定 off（LEDGER_APPLY_FORM_LABEL=on）
+ */
+export function ledgerApplyFormLabelOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.LEDGER_APPLY_FORM_LABEL ?? "").trim().toLowerCase() === "on";
+}
+export const APPLY_FORM_TEXT_RE = /お申込者様記入欄|申込(?:書|フォーマット)|緊急連絡先欄/;
+export function ledgerKindJa(e: { kind: LedgerKind; detail?: { applyForm?: boolean } | null }): string {
+  if (e.kind === 'application_guided' && e.detail?.applyForm && ledgerApplyFormLabelOn()) return '申込のフォーマット送付（記入のお願い）';
+  return LEDGER_KIND_JA[e.kind];
 }
