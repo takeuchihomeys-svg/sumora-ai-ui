@@ -26,14 +26,14 @@ export async function nearOpinionForTurn(sb: SupabaseClient, o: {
       match_count: 40, max_distance: NEAR_OPINION_BAND, p_writer: "takeuchi",
     });
     if (error || !data) return null;
-    const hits = data as Array<{ source_key: string; distance: number; turn_at?: string | null; actual: { route?: string; aix?: string | null; picker?: string | null } | null }>;
+    const hits = data as Array<{ source_key: string; distance: number; turn_at?: string | null; focus?: string | null; actual: { route?: string; aix?: string | null; picker?: string | null } | null }>;
     if (!hits.length) return { op: null, line: "", inBand: 0 };
     const tNow = Date.parse(o.turnAt);
     const rows0 = hits.filter((h) => (h.actual?.route === "aix" || h.actual?.route === "reply") && (!h.turn_at || Date.parse(h.turn_at) < tNow));
     // 一番近い番の要約（伏せ済みの状況の文）。試験の写しは一番近い番の分だけ入っている（作業員8 82ecdb4e）
     const { data: meta } = rows0.length ? await sb.from("conductor_turn_vectors").select("source_key, situation").in("source_key", rows0.slice(0, 5).map((h) => h.source_key)) : { data: [] };
     const sitOf = new Map(((meta ?? []) as Array<{ source_key: string; situation: string | null }>).map((m) => [m.source_key, m.situation]));
-    const rows: NearTurnRow[] = rows0.map((h) => ({ key: h.source_key, distance: h.distance, route: h.actual!.route as "aix" | "reply", aix: h.actual?.aix ?? null, picker: h.actual?.picker ?? null, situation: sitOf.get(h.source_key) ?? null }));
+    const rows: NearTurnRow[] = rows0.map((h) => ({ key: h.source_key, distance: h.distance, route: h.actual!.route as "aix" | "reply", aix: h.actual?.aix ?? null, picker: h.actual?.picker ?? null, situation: sitOf.get(h.source_key) ?? null, focus: h.focus ?? null }));
     const op = nearOpinion(rows, { minShare: o.minShare ?? NEAR_OPINION_MIN_SHARE });
     if (!op) return { op: null, line: "", inBand: rows.length };
     // 一番近い同じ一手の番の、竹内さんの実際の最初の文（伏せる: その会話の表示名・連絡先）

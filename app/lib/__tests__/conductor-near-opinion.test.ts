@@ -20,5 +20,11 @@ t("1行: 一手・割合・一番近い番の要約・竹内さんの実際の�
 t("意見なしは空・文なしは文を省く", nearOpinionLine(null) === "" && !nearOpinionLine(o1).includes("実際の文"));
 t("要約は60字で切る", situationGist(`場面: x\nお客様: ${"あ".repeat(80)}`).endsWith("…") && situationGist(null) === "");
 t("digest", nearOpinionDigest(o2) === "AIX:property_check_result:6:0.83" && nearOpinionDigest(o1) === "返信:5:1" && nearOpinionDigest(null) === "-");
+// 11/07 返信の種類（v2 の focus）
+const rf = [1, 2, 3, 4, 5].map((i) => ({ ...row(i, "reply", null, 0.05 + i / 100), focus: i <= 3 ? "promise_make" : "relation" }));
+const o3 = nearOpinion(rf);
+t("返信の種類: 多数の重点 promise_make・手本は同じ重点の一番近い番", !!o3 && o3.replyFocus === "promise_make" && o3.exemplar.key === "msg:1");
+t("1行: 約束の文と route promise を名前に", nearOpinionLine(o3).includes("約束の文＝2段の約束") && nearOpinionLine(o3).includes("route は promise") && nearOpinionDigest(o3) === "返信/promise_make:5:1");
+t("重点が分からない行だけなら素の「返信」", nearOpinion(r5)?.replyFocus === null && nearOpinionLine(nearOpinion(r5)).includes("竹内さんの最初の一手は 返信。"));
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exitCode = 1;
