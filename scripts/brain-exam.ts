@@ -80,7 +80,7 @@ import { isNoLineTestConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
 import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, type SnapshotStats } from "./lib/exam-frozen-input";
 import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord } from "./lib/exam-base-pin";
-import { essencePickupPromise } from "./lib/exam-essence";
+import { essenceOverride } from "./lib/exam-essence";
 import { overBudget, capUsdOf } from "./lib/exam-plan";
 /** 2026-11-05 F2 の確かめ（既定 on・止める EXAM_COPY_CHECK=off） */
 const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
@@ -840,7 +840,7 @@ function rescore(rows: ResultRow[], probs: Map<string, ExamProblem>): ResultRow[
     const pathStrict = judgePath(brainPathCode(r.brain as BrainExamOutput), acceptStrictOf(p), mn, { strict: true }).ok;
     const asks = r.asks ? r.asks.map((a) => a.covered) : null, ng = r.ng ? r.ng.map((g) => g.violated) : null;
     // 2026-11-06 統括役: 採り直しでも同じ数え方（答案の raw と trace.pickup_ready から・LLM なし）
-    const essence = r.essence ? (() => { const code = r.essence!.code.startsWith("AIX:") && essencePickupPromise(r.raw ?? null, ((r.trace as Record<string, unknown> | undefined)?.pickup_ready as boolean | null | undefined) ?? null) ? "2段:pickup" : r.essence!.code; const v = judgePath(codeFromString(code), acc, mn); return { ...r.essence!, code, acceptHit: v.acceptHit, mustNotHit: v.mustNotHit, ok: v.ok }; })() : r.essence;
+    const essence = r.essence ? (() => { const code = (r.essence!.code.startsWith("AIX:") ? essenceOverride(r.raw ?? null, ((r.trace as Record<string, unknown> | undefined)?.pickup_ready as boolean | null | undefined) ?? null) : null) ?? r.essence!.code; const v = judgePath(codeFromString(code), acc, mn); return { ...r.essence!, code, acceptHit: v.acceptHit, mustNotHit: v.mustNotHit, ok: v.ok }; })() : r.essence;
     const draft = r.draft ? (() => { const v = judgePath(codeFromString(normalizeDraftCode(r.draft!.code, r.draft!.text, acc)), acc, mn); return { ...r.draft!, ok: v.ok, pass: v.ok && (!r.draft!.asks || r.draft!.asks.every(Boolean)) && (!r.draft!.ng || !r.draft!.ng.some(Boolean)) && !(KB_RULES_MODE === "score" && r.kbRules?.length) }; })() : r.draft;
     return { ...r, path: { ...r.path, acceptHit: pv.acceptHit, mustNotHit: pv.mustNotHit, ok: pv.ok }, pathStrict, score: problemScore(pv, asks, ng, { primaryIdx: primaryAskIndex(p.asks) }), essence, draft };
   });
@@ -1852,7 +1852,8 @@ async function main() {
       }
       const essCode = rawIsAix ? brainPathCode({ reply_mode: "aix", action: rawAction, check_pattern: (row.raw?.check_pattern as string | null) ?? null }) : jg?.rawPath ? codeFromString(jg.rawPath) : null;
       // 2026-11-06 統括役: 物件の AIX＋該当の route が promise＋送れる候補0件 は本質を「2段:pickup」と数える（scripts/lib/exam-essence.ts）
-      const essFinal = essCode && essencePickupPromise(row.raw ?? null, (meta.pickup_ready as boolean | null | undefined) ?? null) ? codeFromString("2段:pickup") : essCode;
+      const essOv = essCode && essCode.label.startsWith("AIX:") ? essenceOverride(row.raw ?? null, (meta.pickup_ready as boolean | null | undefined) ?? null) : null;
+      const essFinal = essOv ? codeFromString(essOv) : essCode;
       if (essFinal) { const ev = judgePath(essFinal, acc, mn); row.essence = { code: essFinal.label, acceptHit: ev.acceptHit, mustNotHit: ev.mustNotHit, ok: ev.ok }; }
       row.score = problemScore(pv, jg ? jg.asks : null, jg ? jg.ng : null, { primaryIdx: primaryAskIndex(ps.asks) });
       // ④ 下書き（返信・2段が正解の問題だけ・ブレインの答案を固定して generate-reply を1回）

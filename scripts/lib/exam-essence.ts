@@ -23,3 +23,22 @@ export function essencePickupPromise(raw: Record<string, unknown> | null | undef
   const pool = own.length ? own : asks;
   return pool.some((a) => String(a.route ?? "") === "promise");
 }
+
+/**
+ * 2026-11-06 統括役（作業員4の見つけ）: aix が物件確認の結果（property_check_result）で、該当の ask の route が promise の答えは、
+ *   竹内さんの「募集状況確認させて頂きます」（2段:check）と同じ意味＝本質を「2段:check」と数える（tk35 の q366・q370）
+ */
+export function essenceCheckPromise(raw: Record<string, unknown> | null | undefined): boolean {
+  if (!raw || String(raw.aix ?? "").trim() !== "property_check_result") return false;
+  const tc = raw.turn_contract as { asks?: Ask[] } | undefined;
+  const asks = Array.isArray(tc?.asks) ? tc!.asks! : [];
+  const own = asks.filter((a) => String(a.aix ?? "") === "property_check_result");
+  return (own.length ? own : asks).some((a) => String(a.route ?? "") === "promise");
+}
+
+/** 本質の道の数え直し（1か所）: 物件の AIX＋promise＋候補0件 → 2段:pickup／物件確認の結果＋promise → 2段:check／それ以外は null（元の道のまま） */
+export function essenceOverride(raw: Record<string, unknown> | null | undefined, pickupReady: boolean | null | undefined): "2段:pickup" | "2段:check" | null {
+  if (essencePickupPromise(raw, pickupReady)) return "2段:pickup";
+  if (essenceCheckPromise(raw)) return "2段:check";
+  return null;
+}
