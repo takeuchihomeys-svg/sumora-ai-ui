@@ -169,6 +169,22 @@ function addJob(): void {
     if (!cmds.length) throw new Error("--runner=cmd は --cmd=\"scripts/x.ts --a=1\" が要る（何度でも・順に流す）");
     if (cmds.some((c) => !/^scripts\/[\w./-]+\.ts(\s|$)/.test(c))) throw new Error("--cmd は scripts/ の .ts から始める（npx tsx --env-file=.env.local の後ろに付ける）");
     job = { ...base, id: `${Date.now()}`, label, only: "", repeat: 1, runner: "cmd", cmds, ...(flag("read-only") ? { readOnly: true } : {}) };
+    // 2026-11-06 作業員8（作業員7の cmd の依頼が見積もり違いで $0.43）: cmd の依頼にも見込みの1行を出す。brain-exam は --only・--repeat・--stage から試験の統括の計画で、
+    //   他の台本は LLM を呼ぶかを名前と --read-only で見て「見込みが出せない」と出す（--cap-usd を書けば上限として残す）
+    for (const c of cmds) {
+      const a = splitCmdArgs(c), get = (k: string) => a.find((x) => x.startsWith(`--${k}=`))?.slice(k.length + 3) ?? "";
+      if (a[0] === "scripts/brain-exam.ts") {
+        const specIds = readJson<Array<{ id: string }>>(join(cwd, "scripts/brain-exam/spec.json"), []).map((x) => x.id);
+        const ids = get("only") ? get("only").split(",").filter(Boolean) : specIds;
+        const st = get("stage");
+        const pl = planExam({ label: get("label") || label, ids, diffStage: st === "brain" || st === "draft" ? st : null, capUsd: Number(arg("cap-usd", "2")) || 2 });
+        const rep = Math.max(1, Number(get("repeat") || "1") || 1);
+        const usd = pl.cost.usd * rep / 3; // planExam は分からない問題を3回で見積もる＝cmd の --repeat に合わせ直す
+        log(`  見込み（cmd）: ${a.slice(0, 2).join(" ")}… ${ids.length}問×${rep}回・段 ${pl.stage}・約 $${usd.toFixed(2)}${get("baseline").startsWith("main") ? "（前を作る子が要れば同じくらい足す）" : ""}`);
+      } else {
+        log(`  見込み（cmd）: ${a[0]} は見込みを出せない${job.readOnly ? "（--read-only＝LLM を呼ばない）" : "（LLM を呼ぶなら依頼に --cap-usd を書く・終わったら係の費用の行で確かめる）"}`);
+      }
+    }
   } else {
     const spec = readJson<Array<{ id: string; type: string }>>(join(cwd, "scripts/brain-exam/spec.json"), []);
     const golds = readJson<{ golds?: Array<{ id: string }> }>(join(cwd, "scripts/parts-eval/gold-20.json"), {}).golds?.map((g) => g.id) ?? [];
