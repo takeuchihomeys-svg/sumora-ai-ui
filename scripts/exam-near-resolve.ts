@@ -4,7 +4,9 @@
 //   試験は公開キーで動き、match_conductor_focus・match_conductor_turns・takeuchi_compose_examples・conductor_turn_vectors は 42501／空になる。
 //   DDL も anon への許可も足さない。試験の中では頼みを <置き場>/db-snapshot/<日>/pending/ に残すだけ（scripts/lib/exam-frozen-input.ts ③）。
 //   この台本が頼みを鍵で読み、reduceKeyedBody で欄を絞って同じ鍵の控え（k-<鍵>.json）に書く＝次の試験（同じ写しの日）は控えを返す。
-//   残す欄: 近い番の id・場面・重点・距離・時刻・竹内さんの一手（AIX の種類・道・型）・keep の真偽。本文・要約（situation・text）は残さない。
+//   残す欄: 近い番の id・場面・重点・距離・時刻・竹内さんの一手（AIX の種類・道・型・ピッカーの名前）・keep の真偽。本文は残さない。
+//   要約は一番近い番（頼みの in の最初）だけ、お客様の行60字・PII の伏せ・申込の書類以降の番は入れない（11/07 統括役の決め・作業員4）。
+//   写しは exam-cache（この PC の中だけ・git にも tsc-remote の上げにも入らない）。
 //
 // 実行（鍵のある env を読む・鍵は写さない・値は出さない・夜に）:
 //   npx tsx --env-file="<鍵のある env のパス>" scripts/exam-near-resolve.ts [--day=YYYY-MM-DD] [--dry]
@@ -12,7 +14,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { examCacheRoot } from "./lib/llm-cassette";
-import { reduceKeyedBody } from "./lib/exam-frozen-input";
+import { reduceKeyedBody, nearestSummaryOf, afterCutoff } from "./lib/exam-frozen-input";
+import { createClient } from "@supabase/supabase-js";
+import { loadDeepseekCutoff } from "../app/lib/post-apply";
 
 const argv = process.argv.slice(2);
 const arg = (k: string) => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? "";
@@ -37,7 +41,18 @@ if (!url || !key) { console.error("NEXT_PUBLIC_SUPABASE_URL と SUPABASE_SERVICE
       try {
         const res = await fetch(req.url, { method: req.method, headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" }, ...(req.method.toUpperCase() === "POST" ? { body: req.body } : {}) });
         if (!res.ok) { console.warn(`  読めない ${req.name}: ${res.status}`); fail++; continue; }
-        const reduced = reduceKeyedBody(req.name, await res.text());
+        const raw = await res.text();
+        let situations: Record<string, string> = {};
+        if (req.name === "conductor_turn_vectors") {
+          const first = decodeURIComponent(req.url).match(/source_key=in\.\(([^,)]+)/)?.[1]?.replace(/^"|"$/g, "") ?? null;
+          if (first) {
+            const sb = createClient(url, key);
+            const { data } = await sb.from("conductor_turn_vectors").select("source_key, turn_at, situation, conversation_id").eq("source_key", first).maybeSingle();
+            const row = data as { source_key: string; turn_at: string; situation: string | null; conversation_id: string | null } | null;
+            if (row && !afterCutoff(row.turn_at, await loadDeepseekCutoff(sb as never, row.conversation_id))) { const sum = nearestSummaryOf(row.situation); if (sum) situations = { [row.source_key]: sum }; }
+          }
+        }
+        const reduced = reduceKeyedBody(req.name, raw, situations);
         const out = join(root, day, f);
         mkdirSync(join(root, day), { recursive: true });
         const tmp = `${out}.${process.pid}.tmp`;

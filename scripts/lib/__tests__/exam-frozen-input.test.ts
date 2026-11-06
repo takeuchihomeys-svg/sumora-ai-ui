@@ -3,7 +3,7 @@
 import { mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { frozenSceneNow, snapshotDay, snapshotTarget, snapshotKey, installDbSnapshot, keyedTarget, keyedKey, reduceKeyedBody } from "../exam-frozen-input";
+import { frozenSceneNow, snapshotDay, snapshotTarget, snapshotKey, installDbSnapshot, keyedTarget, keyedKey, reduceKeyedBody, nearestSummaryOf, afterCutoff } from "../exam-frozen-input";
 import { existsSync, writeFileSync } from "node:fs";
 import { maskVolatile } from "../llm-cassette";
 
@@ -48,13 +48,20 @@ ok("鍵の伏せ: 時刻の後の金額は伏せない", maskVolatile("2026-11-0
 // ─── ③ 鍵が要る読みの欄の絞り（本文・要約を残さない） ───
 ok("鍵の要る読みの対象", keyedTarget(base + "rpc/match_conductor_focus", "POST") === "match_conductor_focus" && keyedTarget(base + "takeuchi_compose_examples?select=message_id", "GET") === "takeuchi_compose_examples" && keyedTarget(base + "rpc/match_templates", "POST") === null && keyedTarget(base + "messages?x=1", "GET") === null);
 {
-  const red = JSON.parse(reduceKeyedBody("match_conductor_focus", JSON.stringify([{ source_key: "msg:1", scene: "S1", focus: "answer", distance: 0.12, turn_at: "2026-10-01T00:00:00Z", actual: { aix: "property_check_result", route: "aix", shape: "x", picker: "空いてる", text: "本文" }, situation: "お客様: 本文" }])));
-  ok("近い番: 決めた欄だけ（本文・要約・ピッカーの文を落とす）", red.length === 1 && red[0].source_key === "msg:1" && red[0].actual.aix === "property_check_result" && !("situation" in red[0]) && !("picker" in red[0].actual) && !("text" in red[0].actual));
+  const red = JSON.parse(reduceKeyedBody("match_conductor_focus", JSON.stringify([{ source_key: "msg:1", scene: "S1", focus: "answer", distance: 0.12, turn_at: "2026-10-01T00:00:00Z", actual: { aix: "property_check_result", route: "aix", shape: "x", picker: "空いてる", text: "本文" }, situation: "お客様: 本文" }, { source_key: "msg:2", actual: { picker: "mgmt_equipment" } }])));
+  ok("近い番: 決めた欄だけ（本文・要約を落とす・ピッカーは決まった名前だけ）", red.length === 2 && red[0].source_key === "msg:1" && red[0].actual.aix === "property_check_result" && !("situation" in red[0]) && red[0].actual.picker === null && red[1].actual.picker === "mgmt_equipment" && !("text" in red[0].actual));
   const k2 = JSON.parse(reduceKeyedBody("takeuchi_compose_examples", JSON.stringify([{ message_id: "m1", keep: true, anatomy: { body: "本文" } }, { message_id: "m2", keep: "x" }])));
   ok("keep: 真偽だけ（分からないは null）", k2[0].keep === true && k2[1].keep === null && !("anatomy" in k2[0]));
   const v = JSON.parse(reduceKeyedBody("conductor_turn_vectors", JSON.stringify([{ source_key: "msg:1", turn_at: "t", situation: "お客様: 本文" }])));
-  ok("番のベクトルの表: 要約を落とす", v[0].source_key === "msg:1" && !("situation" in v[0]));
+  ok("番のベクトルの表: 要約を落とす（渡されない番）", v[0].source_key === "msg:1" && v[0].situation === null);
+  const v2 = JSON.parse(reduceKeyedBody("conductor_turn_vectors", JSON.stringify([{ source_key: "msg:1", situation: "x" }, { source_key: "msg:2", situation: "y" }]), { "msg:1": "伏せた要約" }));
+  ok("番のベクトルの表: 台本が渡した番（一番近い番）だけ要約を残す", v2[0].situation === "伏せた要約" && v2[1].situation === null);
   ok("分からない形は空", reduceKeyedBody("match_conductor_focus", "not json") === "[]");
+  // 一番近い番の要約: お客様の行だけ・60字まで・PII の伏せ・申込の書類以降は入れない
+  const sum = nearestSummaryOf("場面: S1\n段階: x\n直前のこちら: なし\nお客様: 090-1234-5678 に電話ください" + "あ".repeat(80));
+  ok("要約: お客様の行・電話番号を伏せる・60字まで", !!sum && !sum.includes("090-1234-5678") && sum.length <= 60 && !sum.includes("場面"), String(sum));
+  ok("要約: お客様の行が無ければ入れない", nearestSummaryOf("場面: S1") === null && nearestSummaryOf(null) === null);
+  ok("申込の書類以降は入れない（線が読めない時も入れない・申込の記録が無ければ入れる）", afterCutoff("2026-11-02T00:00:00Z", "2026-11-01T00:00:00Z") && !afterCutoff("2026-10-30T00:00:00Z", "2026-11-01T00:00:00Z") && afterCutoff("2026-10-30T00:00:00Z", null) && !afterCutoff("2026-10-30T00:00:00Z", Number.NEGATIVE_INFINITY));
 }
 
 // ─── 包み（偽物の fetch） ───
