@@ -10,6 +10,8 @@
 import { estimateExamCost, costGate, repsFor, decideStage, claudeCheckPlan, type CostItem, type GateVerdict } from "./exam-cost-gate";
 
 export type PlanInput = {
+  /** 係が実際に流す回数（問題 id → 回・jobRepsPlan）。渡せば見込みはこれで出す（11/06 統括役） */
+  repsOverride?: Record<string, number>;
   label: string;
   /** 直しの種類: exam＝文や判断を変える（試験）／record＝記録だけ（文も判断も変えない）／prod＝もう本番で動いている（既定 on で入った） */
   kind?: "exam" | "record" | "prod";
@@ -61,15 +63,17 @@ export function planExam(input: PlanInput): ExamPlan {
   }
   const reg = new Set(input.regression ?? []);
   const ids = [...new Set([...input.ids, ...reg])];
-  const reps = Object.fromEntries(ids.map((id) => [id, repsFor(input.history?.[id] ?? [], { k, regression: reg.has(id) })]));
+  // 2026-11-06 統括役: 係が実際に流す回数（依頼の --repeat・--env の EXAM_FLAKY_REPS 等・揺れの記録）を渡されたらそれで見込む（無い問題だけ今までの推定）
+  const reps = Object.fromEntries(ids.map((id) => [id, input.repsOverride?.[id] ?? repsFor(input.history?.[id] ?? [], { k, regression: reg.has(id) })]));
   const stage = decideStage({ group: input.group ?? null, diffStage: input.diffStage ?? null });
   const claude = claudeCheckPlan({ kind: input.brainText ? "brain-text" : stage === "draft" ? "text-only" : "record-only", defaultOn: !!input.defaultOn, scenes: input.scenes ?? [] });
   const items: CostItem[] = ids.map((id) => ({ id, reps: reps[id], usdPerRep: input.usdPerRep?.[id] ?? (stage === "draft" ? 0.06 : 0.03), needsBase: (input.needsBase ?? []).includes(id) }));
   const est = estimateExamCost(items, { at: input.atMs ?? Date.now() });
   const gate = costGate(items, est, { capUsd: input.capUsd ?? 2, urgent: input.urgent, mustIds: [...reg] });
   const nFlaky = Object.values(reps).filter((r) => r > 1).length;
+  const kShown = input.repsOverride ? Math.max(1, ...Object.values(reps)) : k;
   const when = gate.go ? "今" : gate.action === "night" ? "夜（倍の時間を避ける）" : gate.action === "split" ? `${gate.parts?.length ?? 0}つに分ける` : "止める";
-  const line = `計画 ${input.label}: 問題 ${ids.length}（回帰 ${reg.size}）・回数 安定1×${ids.length - nFlaky}／揺れ${k}×${nFlaky}・段 ${stage}・Claude ${claude.ids.length ? `${claude.ids.length}問（${claude.why}）` : "なし"}・${when}・見込み $${est.usd.total.toFixed(2)}（夜なら $${est.usdOffPeak.toFixed(2)}・前を作る分 $${est.usd.base.toFixed(2)} を含む）・上限 $${(input.capUsd ?? 2).toFixed(2)}・入力が前と同じ問題は LLM を再生・決定論は今の版で作り直す（既定・入力が同じでも決定論の直しは答えを変える）`;
+  const line = `計画 ${input.label}: 問題 ${ids.length}（回帰 ${reg.size}）・回数 安定1×${ids.length - nFlaky}／揺れ${kShown}×${nFlaky}・段 ${stage}・Claude ${claude.ids.length ? `${claude.ids.length}問（${claude.why}）` : "なし"}・${when}・見込み $${est.usd.total.toFixed(2)}（夜なら $${est.usdOffPeak.toFixed(2)}・前を作る分 $${est.usd.base.toFixed(2)} を含む）・上限 $${(input.capUsd ?? 2).toFixed(2)}・入力が前と同じ問題は LLM を再生・決定論は今の版で作り直す（既定・入力が同じでも決定論の直しは答えを変える）`;
   return { label: input.label, route: "exam", ids, reps, stage, claude, cost: { usd: est.usd.total, usdOffPeak: est.usdOffPeak, calls: est.calls.request + est.calls.base, peakNow: est.peakNow }, gate, line };
 }
 
