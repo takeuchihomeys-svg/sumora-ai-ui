@@ -1535,7 +1535,7 @@ async function main() {
   //   会話ごとの問い合わせ（YUMA・テスト用の会話・その条件の行の id を含む物）は控えない。止める: EXAM_DB_SNAPSHOT=off
   if (dbSnapshotOn()) {
     const ex = [YUMA_CONV_ID_FOR_SNAPSHOT, ...NO_LINE_TEST_CONVERSATIONS.flatMap((c) => [c.id, c.propertyCustomerId])];
-    dbSnap = installDbSnapshot({ dir: join(examCacheRoot(), "db-snapshot"), excludeIds: () => [...ex, S().yumaPc].filter(Boolean) });
+    dbSnap = installDbSnapshot({ dir: join(examCacheRoot(), "db-snapshot"), excludeIds: () => [...ex, S().yumaPc].filter(Boolean), keyHint: () => S().currentProblemId || null });
     console.log(`  本番 DB の育つ材料: その日の写しを使う（${join(examCacheRoot(), "db-snapshot")}・EXAM_DB_SNAPSHOT=off で止める）`);
   }
   const { setCassetteTag, setCassettePins, pinsFromRows, hasPinsFor, cassetteCallsOf, inputDiffOf, flushCassette } = await import("./lib/llm-cassette");

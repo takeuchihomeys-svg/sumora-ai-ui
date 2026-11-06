@@ -88,6 +88,7 @@ ok("鍵の要る読みの対象", keyedTarget(base + "rpc/match_conductor_focus"
     writeFileSync(join(dir, "2026-11-05", `k-${k}.json`), JSON.stringify({ status: 200, contentType: "application/json", contentRange: null, body: JSON.stringify([{ source_key: "msg:1", focus: "answer", distance: 0.1 }]), at: "x", table: "match_conductor_focus" }));
     const r2 = await (await fetch(base + "rpc/match_conductor_focus", { method: "POST", body: body1 })).json() as Array<{ source_key: string }>;
     ok("鍵の要る読み: 夜の台本の控えを返す（呼ばない）", r2[0].source_key === "msg:1" && calls === before + 1);
+    ok("鍵の要る読み: 問題が分かれば埋め込み・今の時刻が違っても同じ鍵（11/07 nop2-on）", keyedKey(base + "rpc/match_conductor_focus", "POST", JSON.stringify({ query_embedding: "[0.1]", p_before: "2026-11-06T18:37:54Z", match_count: 30 }), [], "q010") === keyedKey(base + "rpc/match_conductor_focus", "POST", JSON.stringify({ query_embedding: "[0.2]", p_before: "2026-11-06T19:01:00Z", match_count: 30 }), [], "q010") && keyedKey(base + "rpc/match_conductor_focus", "POST", JSON.stringify({ query_embedding: "[0.1]", match_count: 30 }), [], "q010") !== keyedKey(base + "rpc/match_conductor_focus", "POST", JSON.stringify({ query_embedding: "[0.1]", match_count: 30 }), [], "q011"));
     ok("鍵の要る読み: 別のレーンの会話 id でも同じ鍵", keyedKey(base + "rpc/match_conductor_focus", "POST", body1.replace(conv, "other-lane"), ["other-lane"]) === k);
   } finally { globalThis.fetch = orig; rmSync(dir, { recursive: true, force: true }); }
   console.log(`${pass} pass / ${fail} fail`);

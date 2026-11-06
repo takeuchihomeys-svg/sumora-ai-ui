@@ -54,8 +54,20 @@ export function keyedTarget(url: string, method: string): string | null {
   return meth === "GET" && KEYED_TABLES.has(m[2]) ? m[2] : null;
 }
 /** 鍵の要る読みの鍵（純関数）: 借りたテスト用の会話・条件の行の id は伏せる（レーンが違っても同じ問い合わせは同じ鍵） */
-export function keyedKey(url: string, method: string, body: string, excludeIds: readonly string[]): string {
+export function keyedKey(url: string, method: string, body: string, excludeIds: readonly string[], hint?: string | null): string {
   const hide = (s: string) => excludeIds.filter(Boolean).reduce((t, id) => t.split(id).join("<x>"), s);
+  // 2026-11-07 作業員4の見つけ（nop2-on で控えに当たらず全部 null）: 近い番の RPC の query_embedding は状況の文から作る＝文に「今」からの経過が入り、
+  //   回ごと・時刻ごとに埋め込みが変わる。p_before も本当の今。試験の問題（hint＝今の問題 id）があれば、埋め込みと p_before を鍵から外し問題で鍵にする
+  //   （同じ問題の同じ番は同じ控え・回が違っても同じ）。問題が分からない時は今まで通り body 丸ごと
+  if (hint) {
+    try {
+      const b = JSON.parse(body) as Record<string, unknown>;
+      if (b && typeof b === "object" && "query_embedding" in b) {
+        const { query_embedding: _e, p_before: _p, ...rest } = b; void _e; void _p;
+        return snapshotKey(hide(url), method, JSON.stringify({ problem: hint, ...rest }));
+      }
+    } catch { /* 読めない body は丸ごと */ }
+  }
   return snapshotKey(hide(url), method, hide(body));
 }
 /** 控えに残す欄だけにする（純関数）。分からない形は空の配列（本文を残さない側に倒す） */
@@ -130,7 +142,7 @@ export type SnapshotStats = { hit: number; miss: number; skip: number };
  * globalThis.fetch を包む（brain-exam の setupLlmTest の後に1回）。控えるのは成功（2xx）の答えだけ。
  *   dir＝<置き場>/db-snapshot・excludeIds＝今の会話・条件の行の id（呼ぶたびに読む）
  */
-export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[]; nowMs?: () => number }): SnapshotStats {
+export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[]; nowMs?: () => number; /** 今の問題 id（鍵の要る近い番の読みの鍵・11/07） */ keyHint?: () => string | null }): SnapshotStats {
   const stats: SnapshotStats = { hit: 0, miss: 0, skip: 0 };
   const inner = globalThis.fetch;
   const now = opts.nowMs ?? (() => Date.now());
@@ -142,7 +154,7 @@ export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[
     const keyed = keyedTarget(url, method);
     if (keyed) {
       const kday = (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(now());
-      const kkey = keyedKey(url, method, body, opts.excludeIds());
+      const kkey = keyedKey(url, method, body, opts.excludeIds(), opts.keyHint?.() ?? null);
       const kfile = join(opts.dir, kday, `k-${kkey}.json`);
       if (existsSync(kfile)) {
         try { const s = JSON.parse(readFileSync(kfile, "utf8")) as Snap; stats.hit++; const h = new Headers(); h.set("content-type", s.contentType ?? "application/json"); return new Response(s.body, { status: 200, headers: h }); } catch { /* 読み直す */ }
