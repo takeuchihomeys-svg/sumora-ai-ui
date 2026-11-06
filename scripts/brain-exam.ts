@@ -70,7 +70,7 @@ import { ruleJudge } from "./lib/exam-brain";
 import { checkKbRules, kbRulesMode, type KbRuleHit } from "./lib/exam-kb-rules";
 import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, sigOfRow, pathSigOfRow, type FlakeVerdict } from "./lib/exam-flake";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, type ExamLane } from "./lib/exam-lane";
+import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, splitRepsOn, planLaneUnits, type ExamLane } from "./lib/exam-lane";
 import type { ReplayFloor } from "../app/lib/test-replay-floor";
 import { examPickupNameLateOn, splitPickupNames } from "./lib/exam-pickup-copy";
 import { examRealGapsOn, gapSceneTimesByDay } from "./lib/exam-scene-times";
@@ -1675,10 +1675,12 @@ async function main() {
     await restorePc().catch((e) => console.warn("restorePc:", String(e)));
   };
   // 2026-11-04 1問（全部の回）を回す。1本の時は前から順に呼ぶ（今と同じ順）・レーンの時は空いたレーンが次の問題を取る（同じ問題の回は同じレーンで順に）
-  const runProblem = async (p: ExamProblem): Promise<"stop" | void> => {
+  // 2026-11-06 作業員1（(c) 案1）: onlyReps＝この仕事で回す回（空いたレーンに分けた塊・null＝全部の回を順に＝今まで通り）
+  const runProblem = async (p: ExamProblem, onlyReps: number[] | null = null): Promise<"stop" | void> => {
     const h = hNow(); // 閉じた関数の中では外の h（null になりうる）の絞り込みが効かない＝ここで1回確かめる
     let startedReps = false;
   for (let rep = 1; rep <= REPEAT; rep++) {
+    if (onlyReps && !onlyReps.includes(rep)) continue;
     if (done.has(`${p.id}#${rep}`)) continue;
     // 2026-10-21 ①下見: main の控えの無い回は下見しない（本番の回で呼ぶ）
     if (INPUT_DIFF === "plan" && !hasPinsFor(p.id, rep)) { inputPlan[`${p.id}#${rep}`] = { same: false, firstChanged: null, pinned: 0, calls: 0, why: "main の控えなし" }; continue; }
@@ -1966,7 +1968,17 @@ async function main() {
   } else {
     // 2026-11-04 レーン: 問題の列を空いたレーンが前から取る。DeepSeek の 429 を見たら問題の区切りで並べる数を1つ減らす（exam-lane.LaneLimiter）
     try {
-      await runLanes(problems, LANES, (p) => runProblem(p), { limiter: laneLimiter, onShrink: (a, b) => console.warn(`⚠ DeepSeek の 429 → 並べる数 ${a} → ${b}（次の問題から）`) });
+      // 2026-11-06 作業員1（(c) 案1）: 問題がレーンより少ない時、回の数が先に決まっている問題の回を空いたレーンに分ける（EXAM_SPLIT_REPS=on・既定 off・下見は分けない）
+      //   先に決まっている＝--reps-file／揺れる問題（揺れの決め方の時）／揺れの決め方を使わない時。安定・分からない問題は前の回の答えで回が決まる＝分けない
+      const fixedRepsOf = (p: ExamProblem): number[] | null => {
+        const want = REPS_OF ? Math.max(1, REPS_OF[p.id] ?? 1) : (REPEAT_FLAKY && REPEAT > 1) ? (flakeOf(p).verdict === "flaky" ? REPEAT : 0) : REPEAT;
+        if (!want) return null;
+        const reps = Array.from({ length: Math.min(want, REPEAT) }, (_, i) => i + 1).filter((r) => !done.has(`${p.id}#${r}`));
+        return reps.length > 1 ? reps : null;
+      };
+      const units = splitRepsOn() && INPUT_DIFF !== "plan" ? planLaneUnits(problems, laneLimiter.limit, fixedRepsOf) : problems.map((p) => ({ p, reps: null as number[] | null }));
+      if (units.some((u) => u.reps)) console.log(`レーン: 回を分けた（EXAM_SPLIT_REPS）: ${units.map((u) => `${u.p.id}${u.reps ? `#${u.reps.join(",")}` : ""}`).join("・")}`);
+      await runLanes(units, LANES, (u) => runProblem(u.p, u.reps), { limiter: laneLimiter, onShrink: (a, b) => console.warn(`⚠ DeepSeek の 429 → 並べる数 ${a} → ${b}（次の問題から）`) });
     } finally {
       await forEachLane(async () => { await releaseHeld(); });
     }
