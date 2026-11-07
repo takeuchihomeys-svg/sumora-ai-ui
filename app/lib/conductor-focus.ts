@@ -168,6 +168,9 @@ export const FOCUS_INTAKE_RULES = [
   // 2026-11-06 作業員5（統括役・KB 竹内さんの型「正直に答える／不安を消すは最初の文で見分ける」）: 竹内さんの実送信（解剖の answer 10通・ease 10通）が一番に書いた事から見分けを足す。
   //   同じ46番×3回の多数（DeepSeek・温度は本番の入口と同じ既定）: 近い番あり 22→26（悪化0・良化4）・近い番なし 18→23（悪化2・良化7）
   `answer と ease の見分け（竹内さんの実際の送信から）: answer＝最初の文が聞かれた事実そのもの（床の色・玄関の広さ・分割の可否・代理契約・取扱いの可否・日時と待ち合わせ場所）。会社の決まりや資料で言える事（分割はクレジットカード払いのみ・入居までの目安・系列の取扱い）は確かめる約束にせず answer。ease＝最初の文が、お客様が言っていない心配（審査に通るか・費用・入居の時期・候補日を断った気まずさ・条件を忘れられた不安）を受け止めて安心させる言葉（「大丈夫です」「最大限割引させて頂き費用抑えさせて頂きます」「審査に通りやすい保証会社を意識」「重点的にお調べ」）。物件を送る約束が添えてあっても、心配を受け止める言葉が先なら ease。`,
+  // 2026-11-07 作業員5（統括役・外れの2番目の型 promise_make→close）: 竹内さんは内覧の番を AIX【内覧調整】【待ち合わせ場所】で決めに行く（close 80番の 70番が AIX）。
+  //   狙いの20番（内覧を言った close）近い番あり 7→19・守り15番 11→10／偏りなく34番×2回 16,16→18,19（上がった4・下がった1）。DeepSeek $0.23
+  `close と promise_make の見分け（竹内さんの実際の送信から）: お客様が内覧したい・内覧の日時を言った・内覧できる所を聞いた番は、竹内さんは AIX【内覧調整】で候補日を出すか、決まっていれば【待ち合わせ場所】を送って内覧を決めに行く＝重点は close。内覧の日程が空いているかはスタッフが確かめる事だが、確かめる約束（promise_make）にはしない。promise_make は、物件の募集状況・設備・費用など管理会社に聞く事を約束する番。`,
   `【竹内さんの近い過去の番の重点】があれば参考にする（同じとは限らない・背景が違えば変える）。重点に関係の無い担当は roles に入れない。`,
 ].join("\n");
 export const FOCUS_INTAKE_FIELD = `"focus_read": {"surface": "表（30字以内）", "background": "背景（40字以内）", "focus": "${FOCUS_KINDS.join("|")}", "why": "理由（30字以内）"}`;
@@ -267,4 +270,12 @@ export function focusBrainLine(fr: Pick<FocusRead, "focus" | "surface" | "backgr
   if (!fr || !(FOCUS_KINDS as readonly string[]).includes(fr.focus)) return "";
   const parts = [fr.surface && `表: ${fr.surface}`, fr.background && `背景: ${fr.background}`].filter(Boolean).join("／");
   return `【入口の統括の重点（参考）】この番で一番大切な事は ${fr.focus}（${FOCUS_LABEL[fr.focus]}）${parts ? `。${parts}` : ""}。判断はあなたが材料から決める（スタッフだけが知る事は AIX の決まりが先）。`;
+}
+
+/** 2026-11-07 作業員5（統括役）: 重点の当たりから外して別に数える外れ＝「人だけが知る事で分かれる番」。
+ *   了承・お礼の番の relation と promise_keep の取り違えは、管理会社の回答が来たか（スタッフだけが知る事・送る前の記録が DB に無い）で分かれ、
+ *   AI が知り得る材料では分けられない（11/07 の40＋20番の解き直しで、決まり・約束からの経過のどちらを足しても上がらず）。作業員1の staffMoveExclusion と同じ考え方 */
+export function focusHumanOnlyMiss(pred: string | null | undefined, gold: string | null | undefined): boolean {
+  const pair = new Set(["relation", "promise_keep"]);
+  return !!pred && !!gold && pred !== gold && pair.has(pred) && pair.has(gold);
 }

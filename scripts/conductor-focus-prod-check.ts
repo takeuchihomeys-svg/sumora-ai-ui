@@ -4,7 +4,7 @@
 //   読み: line_watch_turns（直近 --days・最大 1000行）＋brain_decision_logs（decision_id で 200件ずつ）＋解剖（会話ごと 200件ずつ）。
 // 実行: npx tsx --env-file=.env.local scripts/conductor-focus-prod-check.ts [--days=3] [--json]
 import { createClient } from "@supabase/supabase-js";
-import { focusOfTakeuchiTurn, focusOfAix, focusConflict, FOCUS_KINDS, type Focus } from "../app/lib/conductor-focus";
+import { focusOfTakeuchiTurn, focusOfAix, focusConflict, focusHumanOnlyMiss, FOCUS_KINDS, type Focus } from "../app/lib/conductor-focus";
 
 const arg = (k: string, d: string) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split("=").slice(1).join("=");
 const days = Math.max(1, Math.min(14, Number(arg("days", "3")) || 3));
@@ -54,11 +54,13 @@ async function main() {
     const finalAix = (t.brain_reply_mode ?? d?.suggested_reply_mode) === "aix" ? (t.brain_action ?? d?.suggested_action ?? null) : null;
     rows.push({ scene: t.scene_key ?? "(場面なし)", fc: fcRaw, gold, goldBy: a ? "anatomy" : gold ? "rule" : null, conflict: focusConflict(fcRaw, { aix: finalAix }), finalAix });
   }
-  const by = new Map<string, { n: number; hit: number; anat: number; anatHit: number }>();
+  const by = new Map<string, { n: number; hit: number; anat: number; anatHit: number; human: number }>();
   for (const r of rows) {
     if (!r.gold) continue;
     for (const k of ["(全体)", r.scene]) {
-      const s = by.get(k) ?? { n: 0, hit: 0, anat: 0, anatHit: 0 }; by.set(k, s);
+      const s = by.get(k) ?? { n: 0, hit: 0, anat: 0, anatHit: 0, human: 0 }; by.set(k, s);
+      // 人だけが知る事で分かれる外れ（了承の番の relation と promise_keep）は当たりの分母から外して別に数える（focusHumanOnlyMiss・11/07 統括役）
+      if (focusHumanOnlyMiss(r.fc, r.gold)) { s.human++; continue; }
       s.n++; if (r.fc === r.gold) s.hit++;
       if (r.goldBy === "anatomy") { s.anat++; if (r.fc === r.gold) s.anatHit++; }
     }
@@ -75,8 +77,8 @@ async function main() {
     conflicts: conflicts.length, confKinds, aixTurns: aixRows.length, aixDiff, fcDist, missPairs: Object.entries(pairs).sort((a, b) => b[1] - a[1]).slice(0, 8) };
   if (process.argv.includes("--json")) { console.log(JSON.stringify(out)); return; }
   console.log(`直近 ${days}日・スタッフが返した番 ${out.turns}・重点が付いた番 ${out.withFc}（無し ${noFc}）・正解の重点あり ${out.withGold}（うち解剖 ${out.byAnatomy}）`);
-  console.log("| 場面 | 番 | 合った | 割合 | 解剖の番 | 解剖で合った |\n|---|---|---|---|---|---|");
-  for (const s of out.scenes) console.log(`| ${s.scene} | ${s.n} | ${s.hit} | ${s.pct}% | ${s.anat} | ${s.anatHit} |`);
+  console.log("| 場面 | 番（人だけの外れを除く） | 合った | 割合 | 人だけが知る事で分かれた | 解剖の番 | 解剖で合った |\n|---|---|---|---|---|---|---|");
+  for (const s of out.scenes) console.log(`| ${s.scene} | ${s.n} | ${s.hit} | ${s.pct}% | ${s.human} | ${s.anat} | ${s.anatHit} |`);
   console.log(`重点の分かれ: ${JSON.stringify(fcDist)}`);
   console.log(`外れの向き（重点→正解）: ${out.missPairs.map(([k, v]) => `${k} ${v}`).join("・")}`);
   console.log(`② 重点と最終の道の食い違い: ${conflicts.length}番 ${JSON.stringify(confKinds)}・最終が AIX の番 ${aixRows.length}番のうち、その AIX の重点と違う ${aixDiff}番`);

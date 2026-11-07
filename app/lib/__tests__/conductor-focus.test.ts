@@ -2,7 +2,7 @@
 import {
   conductorFocusMode, focusOfAix, focusOfReplyText, focusOfTakeuchiTurn, stageAt, openPromiseAt, sentAt, turnSituationTextV2,
   nearestFocus, sceneMajorityFocus, focusDigest, parseFocusRead, nearFocusLine, conductorFocusMeta, focusReadDigest, focusConflict,
-  FOCUS_INTAKE_RULES, FOCUS_INTAKE_FIELD, FOCUS_KINDS, FOCUS_ORDER, focusOrder, orderDigest, laterOverrode, relationKeep, relationKeepCandidate, keepShareOf, focusOnForScene, focusBrainLine, type HistMsg,
+  FOCUS_INTAKE_RULES, FOCUS_INTAKE_FIELD, FOCUS_KINDS, FOCUS_ORDER, focusOrder, orderDigest, laterOverrode, relationKeep, relationKeepCandidate, keepShareOf, focusOnForScene, focusBrainLine, focusHumanOnlyMiss, type HistMsg,
 } from "../conductor-focus";
 import { turnSendsForShape, isShapeAttachment } from "../conductor-turn-vectors";
 import { shapeOfSends } from "../two-message-plan";
@@ -114,6 +114,10 @@ it("relation の継続の約束（案A・11/06 統括役の決め）: 条件の�
   ok(!relationKeep({ scene: "question", customerAskedNew: true }));
   eq(orderDigest(focusOrder("ack", "relation", { keep: true })), "judge>compose>writer");
   eq(orderDigest(focusOrder("ack", "relation")), "judge>writer");
+});
+it("人だけが知る事で分かれる外れ（relation と promise_keep の取り違えだけ）", () => {
+  ok(focusHumanOnlyMiss("relation", "promise_keep")); ok(focusHumanOnlyMiss("promise_keep", "relation"));
+  ok(!focusHumanOnlyMiss("relation", "relation")); ok(!focusHumanOnlyMiss("promise_make", "close")); ok(!focusHumanOnlyMiss(null, "relation"));
 });
 it("段2: CONDUCTOR_FOCUS_TO_BRAIN=on の時だけブレインに重点の1行・場面で絞る・CONDUCTOR_FOCUS=off なら渡さない", () => {
   ok(!focusOnForScene("ack", {})); ok(!focusOnForScene("ack", { CONDUCTOR_FOCUS: "on" }), "CONDUCTOR_FOCUS=on は今まで通り shadow");

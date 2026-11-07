@@ -83,6 +83,9 @@ const DIR = join(process.cwd(), "..", "..", "exam-cache", "conductor-focus");
     for (const r of rows) { const g = (byGold[r.gold as string] ??= { n: 0, a: 0, b: 0 }); g.n++; if (r.A === r.gold) g.a++; if (r.B === r.gold) g.b++; }
     const label = arg("label", "fr");
     writeFileSync(join(DIR, `replay-${label}.json`), JSON.stringify({ label, n, a, b, nearHit, fail, byGold, rows }, null, 1));
+    // 人だけが知る事で分かれる外れ（relation と promise_keep の取り違え・F.focusHumanOnlyMiss）を外した当たりも出す（11/07 統括役）
+    const hA = rows.filter((r) => F.focusHumanOnlyMiss(r.A as string, r.gold as string)).length, hB = rows.filter((r) => F.focusHumanOnlyMiss(r.B as string, r.gold as string)).length;
+    console.log(`  人だけが知る事で分かれる外れを外すと: 近い番なし ${a}/${n - hA}・近い番あり ${b}/${n - hB}（外した番 なし ${hA}・あり ${hB}）`);
     console.log(`# 重点の解き直し ${label}: ${n}番（読めず ${fail}）・近い番なし ${a}/${n}（${pct(a)}）・近い番あり ${b}/${n}（${pct(b)}）・近い番の重点だけ ${nearHit}/${n}（${pct(nearHit)}）`);
     for (const [k, v] of Object.entries(byGold)) console.log(`  ${k}: なし ${v.a}/${v.n}・あり ${v.b}/${v.n}`);
   } finally { await h.finish(); }
