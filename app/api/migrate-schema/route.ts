@@ -3443,11 +3443,27 @@ SELECT
   SUM(output_tokens) AS output_tokens, SUM(thinking_tokens) AS thinking_tokens,
   SUM(input_uncached + cache_read * 0.1 + cache_write_5m * 1.25 + cache_write_1h * 2.0
       + GREATEST(cache_write - cache_write_5m - cache_write_1h, 0) * 1.25 + output_tokens * 5.0) AS input_equiv,
-  ROUND(SUM((input_uncached + cache_read * 0.1 + cache_write_5m * 1.25 + cache_write_1h * 2.0
-      + GREATEST(cache_write - cache_write_5m - cache_write_1h, 0) * 1.25 + output_tokens * 5.0)
-      * CASE WHEN model ILIKE '%haiku%' THEN 1.0 WHEN model ILIKE '%opus-5-5%' THEN 4.0 WHEN model ILIKE '%opus%' THEN 5.0 WHEN model ILIKE '%sonnet-4%' THEN 3.0 ELSE 2.0 END
-      -- Opus 5.5 だけ読みが入力の 0.05 倍（$0.20）＝上の 0.1 倍から半分を引く
-      - CASE WHEN model ILIKE '%opus-5-5%' THEN cache_read * 0.2 ELSE 0 END) / 1000000.0, 4) AS est_usd
+  -- 2026-11-07 作業員8（統括役・竹内さんの確認の後に当てる）: DeepSeek・Jev の行に Claude（Sonnet）の単価を掛けていた（ELSE 2.0）＝試験の費用が約4倍に出ていた
+  --   （11/06 の script: の DeepSeek: est_usd $100.64・表の単価 $24.56）。単価は app/lib/llm-price.ts の ALT_PRICES と同じ:
+  --   DeepSeek pro 不一致 $0.66・一致 $0.022・出力 $1.98／flash $0.15・$0.003・$0.6（平日 UTC 01〜04・06〜10 時は2倍）／Jev 入力 $0.042・出力 0
+  ROUND(SUM(CASE
+      WHEN model ILIKE '%deepseek-v4-pro%' OR model ILIKE '%deepseek-pro%' THEN
+        (COALESCE(input_uncached, 0) * 0.66 + COALESCE(cache_read, 0) * 0.022 + COALESCE(output_tokens, 0) * 1.98)
+        * CASE WHEN EXTRACT(ISODOW FROM created_at AT TIME ZONE 'UTC') BETWEEN 1 AND 5
+                AND (EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC') BETWEEN 1 AND 3 OR EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC') BETWEEN 6 AND 9) THEN 2 ELSE 1 END
+      WHEN model ILIKE '%deepseek%' THEN
+        (COALESCE(input_uncached, 0) * 0.15 + COALESCE(cache_read, 0) * 0.003 + COALESCE(output_tokens, 0) * 0.6)
+        * CASE WHEN EXTRACT(ISODOW FROM created_at AT TIME ZONE 'UTC') BETWEEN 1 AND 5
+                AND (EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC') BETWEEN 1 AND 3 OR EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC') BETWEEN 6 AND 9) THEN 2 ELSE 1 END
+      WHEN model ILIKE 'jev:%' OR model ILIKE '%jev-%' THEN
+        (COALESCE(input_uncached, 0) + COALESCE(cache_read, 0)) * 0.042
+      ELSE
+        (input_uncached + cache_read * 0.1 + cache_write_5m * 1.25 + cache_write_1h * 2.0
+          + GREATEST(cache_write - cache_write_5m - cache_write_1h, 0) * 1.25 + output_tokens * 5.0)
+        * CASE WHEN model ILIKE '%haiku%' THEN 1.0 WHEN model ILIKE '%opus-5-5%' THEN 4.0 WHEN model ILIKE '%opus%' THEN 5.0 WHEN model ILIKE '%sonnet-4%' THEN 3.0 ELSE 2.0 END
+        -- Opus 5.5 だけ読みが入力の 0.05 倍（$0.20）＝上の 0.1 倍から半分を引く
+        - CASE WHEN model ILIKE '%opus-5-5%' THEN cache_read * 0.2 ELSE 0 END
+    END) / 1000000.0, 4) AS est_usd
 FROM llm_usage_logs
 GROUP BY 1, 2, 3, 4;
 -- 2026-09-29 竹内「Sonnet を Sonnet 5.5 に置き換えたら費用高くなるか」: 単価を公式（platform.claude.com・app/lib/llm-price.ts）に直した。
