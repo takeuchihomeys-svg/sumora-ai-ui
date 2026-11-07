@@ -35,7 +35,10 @@ const DIR = join(process.cwd(), "..", "..", "exam-cache", "conductor-focus");
     const N = Number(arg("n", "140")), per = Math.ceil(N / F.FOCUS_KINDS.length);
     const pool = turns.slice(100).filter((t) => !goldFile || gold.has(t.id));
     const pick: T[] = [];
-    for (const k of F.FOCUS_KINDS) pick.push(...pool.filter((t) => t.focus === k).sort((a, b) => a.id.localeCompare(b.id)).slice(0, per));
+    // 2026-11-07: --ids=<id,... のファイル> を渡すと、その番だけ（狙いの型の番を選んで解き直す・偏りなくの選び方は使わない）
+    const idsFile = arg("ids");
+    if (idsFile) { const want = new Set(readFileSync(idsFile, "utf8").trim().split(",")); pick.push(...turns.filter((t) => want.has(t.id))); }
+    else for (const k of F.FOCUS_KINDS) pick.push(...pool.filter((t) => t.focus === k).sort((a, b) => a.id.localeCompare(b.id)).slice(0, per));
     const system = [
       "あなたは賃貸の仲介会社の LINE 返信の「入口の統括」です。お客様の今の番を最初に読み、この番の重点を決めます。返信の文は書きません。",
       "【絶対の決まり】スタッフだけが知る事（確認の結果・募集状況・見積の金額・内覧の日程の確定）は AIX で送る番。返信は AI が知り得る事だけ。",
