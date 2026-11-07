@@ -7807,5 +7807,169 @@
   ],
   "why": "竹内さんは AIX【申込】（フォーマット）を先に送った",
   "id": "q386"
+ },
+ {
+  "type": "返信かAIXか",
+  "mustNot": [],
+  "ng": [],
+  "addedBy": "作業員7",
+  "addedAt": "2026-11-07",
+  "source": "作業員7 送る物の並び（竹内さんの90日・TWO_MESSAGE_SEQUENCE の確かめ）",
+  "tags": [
+   "送る物の並び",
+   "並び:RAR"
+  ],
+  "conv": "3690ac6d-cde5-4e6e-b11f-5749d1ed7eba",
+  "at": "2026-11-05T06:06:33.544Z",
+  "accept": [
+   "AIX:condition_hearing",
+   "返信"
+  ],
+  "asks": [],
+  "why": "竹内さんの並びは RAR（AIX【condition_hearing】）",
+  "id": "q390"
+ },
+ {
+  "type": "返信かAIXか",
+  "mustNot": [],
+  "ng": [],
+  "addedBy": "作業員7",
+  "addedAt": "2026-11-07",
+  "source": "作業員7 送る物の並び（竹内さんの90日・TWO_MESSAGE_SEQUENCE の確かめ）",
+  "tags": [
+   "送る物の並び",
+   "並び:RAR"
+  ],
+  "conv": "79f97cea-0e2e-40e3-b857-68391fd6360d",
+  "at": "2026-10-24T02:54:58.514Z",
+  "accept": [
+   "AIX:application_push",
+   "返信"
+  ],
+  "asks": [],
+  "why": "竹内さんの並びは RAR（AIX【application_push】）",
+  "id": "q391"
+ },
+ {
+  "type": "返信かAIXか",
+  "mustNot": [],
+  "ng": [],
+  "addedBy": "作業員7",
+  "addedAt": "2026-11-07",
+  "source": "作業員7 送る物の並び（竹内さんの90日・TWO_MESSAGE_SEQUENCE の確かめ）",
+  "tags": [
+   "送る物の並び",
+   "並び:RAR"
+  ],
+  "conv": "9faff2ec-77a8-48c2-9b01-fafddfa5029c",
+  "at": "2026-10-05T07:44:26.355Z",
+  "accept": [
+   "AIX:estimate_sheet",
+   "返信"
+  ],
+  "asks": [],
+  "why": "竹内さんの並びは RAR（AIX【estimate_sheet】）",
+  "id": "q392"
+ },
+ {
+  "type": "返信かAIXか",
+  "mustNot": [],
+  "ng": [],
+  "addedBy": "作業員7",
+  "addedAt": "2026-11-07",
+  "source": "作業員7 送る物の並び（竹内さんの90日・TWO_MESSAGE_SEQUENCE の確かめ）",
+  "tags": [
+   "送る物の並び",
+   "並び:ARR"
+  ],
+  "conv": "25ccb676-b85b-4655-ace7-d3cc342afd83",
+  "at": "2026-10-17T05:32:51.327Z",
+  "accept": [
+   "AIX:property_recommendation",
+   "返信"
+  ],
+  "asks": [],
+  "why": "竹内さんの並びは ARR（AIX【property_recommendation】）",
+  "id": "q393"
+ },
+ {
+  "type": "返信かAIXか",
+  "mustNot": [],
+  "ng": [],
+  "addedBy": "作業員7",
+  "addedAt": "2026-11-07",
+  "source": "作業員7 送る物の並び（竹内さんの90日・TWO_MESSAGE_SEQUENCE の確かめ）",
+  "tags": [
+   "送る物の並び",
+   "並び:RR"
+  ],
+  "conv": "8809fb90-3a91-4e2a-b687-e06ab310d02b",
+  "at": "2026-10-26T22:20:34.798Z",
+  "accept": [
+   "返信"
+  ],
+  "asks": [],
+  "why": "竹内さんの並びは RR（返信のみ）",
+  "id": "q394"
+ },
+ {
+  "type": "返信かAIXか",
+  "mustNot": [],
+  "ng": [],
+  "addedBy": "作業員7",
+  "addedAt": "2026-11-07",
+  "source": "作業員7 送る物の並び（竹内さんの90日・TWO_MESSAGE_SEQUENCE の確かめ）",
+  "tags": [
+   "送る物の並び",
+   "並び:RR"
+  ],
+  "conv": "6e77895d-29cc-4179-b7b3-417a79ba21f0",
+  "at": "2026-10-25T09:28:03.473Z",
+  "accept": [
+   "返信"
+  ],
+  "asks": [],
+  "why": "竹内さんの並びは RR（返信のみ）",
+  "id": "q395"
+ },
+ {
+  "type": "返信かAIXか",
+  "mustNot": [],
+  "ng": [],
+  "addedBy": "作業員7",
+  "addedAt": "2026-11-07",
+  "source": "作業員7 送る物の並び（竹内さんの90日・TWO_MESSAGE_SEQUENCE の確かめ）",
+  "tags": [
+   "送る物の並び",
+   "並び:RR"
+  ],
+  "conv": "c16e9f4a-f072-4a70-9b08-893da0258ddb",
+  "at": "2026-10-20T03:51:30.150Z",
+  "accept": [
+   "返信"
+  ],
+  "asks": [],
+  "why": "竹内さんの並びは RR（返信のみ）",
+  "id": "q396"
+ },
+ {
+  "type": "返信かAIXか",
+  "mustNot": [],
+  "ng": [],
+  "addedBy": "作業員7",
+  "addedAt": "2026-11-07",
+  "source": "作業員7 送る物の並び（竹内さんの90日・TWO_MESSAGE_SEQUENCE の確かめ）",
+  "tags": [
+   "送る物の並び",
+   "並び:RR"
+  ],
+  "conv": "2f352488-0ce2-4584-8d18-c3c44b4cdb6c",
+  "at": "2026-10-16T07:41:24.486Z",
+  "accept": [
+   "返信"
+  ],
+  "asks": [],
+  "why": "竹内さんの並びは RR（返信のみ）",
+  "id": "q397"
  }
 ]
