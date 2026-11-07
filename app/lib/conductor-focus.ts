@@ -20,6 +20,14 @@ type Env = Record<string, string | undefined>;
  */
 export const conductorFocusMode = (env: Env = typeof process !== "undefined" ? process.env : {}): "off" | "shadow" =>
   (env.CONDUCTOR_FOCUS ?? "").trim().toLowerCase() === "off" ? "off" : "shadow";
+// 2026-11-07 作業員5（統括役・段取りの段2）: 重点をブレインの材料に1行渡すのは別のスイッチ CONDUCTOR_FOCUS_TO_BRAIN=on の時だけ（既定 off）。
+//   CONDUCTOR_FOCUS=on は前から shadow と同じ扱い（本番に入っていても判断を変えない）ので、その意味は変えない。CONDUCTOR_FOCUS_ON_SCENES=場面,場面 で場面を絞る（空＝全部）
+/** ブレインに重点を渡すか（この場面＝resolveReplyScene の scene で） */
+export function focusOnForScene(scene: string | null | undefined, env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  if (conductorFocusMode(env) === "off" || (env.CONDUCTOR_FOCUS_TO_BRAIN ?? "").trim().toLowerCase() !== "on") return false;
+  const list = (env.CONDUCTOR_FOCUS_ON_SCENES ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  return !list.length || (!!scene && list.includes(scene));
+}
 
 /** 重点の種類（優先順位の段の順に並べる＝同点はこの順で上を採る） */
 export const FOCUS_KINDS = ["answer", "promise_make", "promise_keep", "ease", "close", "propose", "relation"] as const;
@@ -252,4 +260,11 @@ export function focusConflict(focus: Focus, first: { aix: string | null }): stri
   if (focus === "answer" && first.aix && SEND_AIX.has(first.aix)) return "重点は聞かれた事に答える番なのに、最初の判断は物件を送る";
   if (focus === "ease" && first.aix === "application_push") return "重点は不安を消す番なのに、最初の判断は申込の後押し";
   return null;
+}
+
+/** on の時にブレインの材料に足す1行（参考・決めるのはブレイン。P0 の AIX と返信の分け方より下） */
+export function focusBrainLine(fr: Pick<FocusRead, "focus" | "surface" | "background" | "why"> | null | undefined): string {
+  if (!fr || !(FOCUS_KINDS as readonly string[]).includes(fr.focus)) return "";
+  const parts = [fr.surface && `表: ${fr.surface}`, fr.background && `背景: ${fr.background}`].filter(Boolean).join("／");
+  return `【入口の統括の重点（参考）】この番で一番大切な事は ${fr.focus}（${FOCUS_LABEL[fr.focus]}）${parts ? `。${parts}` : ""}。判断はあなたが材料から決める（スタッフだけが知る事は AIX の決まりが先）。`;
 }

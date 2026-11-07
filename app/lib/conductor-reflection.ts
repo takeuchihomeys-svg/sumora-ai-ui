@@ -72,3 +72,40 @@ export function questionRow(week: string, s: SceneStat) {
     source_kind: "conductor_reflection", source_ref: `reflect:${week}:${s.scene}`, status: "open", priority: 3, dedupe_key: `reflect:${week}:${s.scene}`,
   };
 }
+
+// ── 返信の番だけの文の質（11/07 統括役・作業員9の app/lib/reply-quality-weekly.ts の stats を振り返りに足す） ──
+//   近さの平均・0.6 未満の割合・書き手の外れの数を、終わった週とその前の週で比べる。確認事項（owner_questions）には出さない。
+//   弱い所に1行足すのは 0.6 未満の割合が前の週より上がった時だけ（鍵 reflect:<週>:reply_quality）。
+export type ReplyWeek = { week: string; n: number; avg: number | null; lowPct: number | null; lowBrain: number; lowWriter: number };
+export type ReplyQualityDelta = { week: string; prevWeek: string | null; n: number; avg: number | null; lowPct: number | null; lowWriter: number; lowBrain: number;
+  prevN: number | null; avgDiff: number | null; lowPctDiff: number | null; lowWriterDiff: number | null; rose: boolean };
+const r3 = (v: number) => Math.round(v * 1000) / 1000;
+/** 終わった週（currentWeek より前）の最後の2週を比べる。currentWeek は jstWeekOf(今)（今週の途中の数を混ぜない） */
+export function replyQualityDelta(stats: ReadonlyArray<ReplyWeek>, currentWeek: string, o: { minN?: number } = {}): ReplyQualityDelta | null {
+  const minN = o.minN ?? 5;
+  const done = stats.filter((s) => s.week < currentWeek).sort((a, b) => a.week.localeCompare(b.week));
+  const cur = done[done.length - 1];
+  if (!cur || cur.n === 0) return null;
+  const prev = done.length >= 2 ? done[done.length - 2] : null;
+  const both = !!prev && prev.n >= minN && cur.n >= minN;
+  const lowPctDiff = both && cur.lowPct != null && prev!.lowPct != null ? Math.round((cur.lowPct - prev!.lowPct) * 10) / 10 : null;
+  return {
+    week: cur.week, prevWeek: prev?.week ?? null, n: cur.n, avg: cur.avg, lowPct: cur.lowPct, lowWriter: cur.lowWriter, lowBrain: cur.lowBrain,
+    prevN: prev?.n ?? null,
+    avgDiff: both && cur.avg != null && prev!.avg != null ? r3(cur.avg - prev!.avg) : null,
+    lowPctDiff, lowWriterDiff: both ? cur.lowWriter - prev!.lowWriter : null,
+    // 件数が少ない週どうしは比べない（揺れで弱い所を足さない）
+    rose: lowPctDiff != null && lowPctDiff > 0,
+  };
+}
+/** 0.6 未満が上がった週だけの brain_weaknesses の1行（rose でなければ null） */
+export function replyQualityWeaknessRow(week: string, d: ReplyQualityDelta) {
+  if (!d.rose) return null;
+  return {
+    key: `reflect:${week}:reply_quality`, title: `毎週の振り返り ${week}: 返信の番の文の近さ 0.6 未満が ${d.lowPct}%（前の週より +${d.lowPctDiff}）`, area: "writer",
+    symptom: `返信の番 ${d.n}通（竹内さん・AIX の番を除く・週 ${d.week}）の近さの平均 ${d.avg}（前の週との差 ${d.avgDiff ?? "-"}）・0.6 未満 ${d.lowPct}%・うち書き手 ${d.lowWriter}（差 ${d.lowWriterDiff ?? "-"}）・ブレイン ${d.lowBrain}`,
+    root_cause: null as string | null,
+    evidence: { ...d, source: "ai_reply_examples×messages（reply-quality-weekly）・conductor-reflection" },
+    occurrences: d.lowWriter + d.lowBrain,
+  };
+}

@@ -3246,6 +3246,20 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
       });
     }).catch(() => null);
   }
+  // 2026-11-07 作業員5（統括役・段取りの段2・KB P0 575a7cd5）: CONDUCTOR_FOCUS_TO_BRAIN=on（既定 off）の時だけ、入口の統括の重点をブレインの材料に1行（入口を最大4秒待つ・同じ待ちを meta と共有）。
+  //   CONDUCTOR_FOCUS_ON_SCENES で場面を絞る。読めない・遅い時は何も足さない＝今まで通り
+  if (intakeP && typedMessages[0]?.sender === "customer") {
+    try {
+      const { focusOnForScene, focusBrainLine } = await import("@/app/lib/conductor-focus");
+      const sceneNow = resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene;
+      if (focusOnForScene(sceneNow)) {
+        const fr = (await intakeDoneGet())?.answer?.focus_read ?? null;
+        const fl = focusBrainLine(fr);
+        if (fl) customerStateBlockText += `\n\n${fl}`;
+        console.log(JSON.stringify({ tag: "brain:focus-on", conversationId, scene: sceneNow, focus: fr?.focus ?? null, added: !!fl }));
+      }
+    } catch (e) { console.warn("[brain-core] focus-on skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-11-03 ③ 会話の流れの合図（flow-signals.ts・決まった計算は候補だけ・読むのはブレイン・BRAIN_FLOW_SIGNALS=on・既定 off）
   let flowSignalsRec: FlowSignals | null = null;
   if (BRAIN_FLOW_SIGNALS_ON && typedMessages[0]?.sender === "customer") {
