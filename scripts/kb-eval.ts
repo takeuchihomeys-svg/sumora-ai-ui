@@ -200,7 +200,8 @@ function printSummary(s: EvalSummary, prev?: EvalSummary) {
   if (s.self?.n) { console.log(`--- 題の頭で引く（P0/P1 の全 ${s.self.n}行・自分が上位に出るか）`); line("題の頭", s.self, prev?.self); for (const m of s.self.misses.slice(0, 15)) console.log("  - " + m); }
 }
 
-if (process.argv[1]?.includes("kb-eval")) (async () => {
+// 2026-11-07: /api/cron/kb-eval から import する（関数の道に kb-eval を含む）＝台本として動かした時だけ（scripts/kb-eval.ts）
+if (/kb-eval\.ts$/.test(process.argv[1] ?? "")) (async () => {
   const wArg = arg("weights");
   const weights = wArg ? Object.fromEntries(wArg.split(",").map((p) => { const [k, v] = p.split(":"); return [k, Number(v)]; })) : undefined;
   const s = await runKbEval({ set: (arg("set") || "all") as "all", noScene: flag("no-scene"), weights, sceneWeight: arg("scene-weight") ? Number(arg("scene-weight")) : undefined, stale: !flag("no-stale"), self: !flag("no-self"), reviewPath: join(process.cwd(), "memory", "rules_digest_review.md") });
