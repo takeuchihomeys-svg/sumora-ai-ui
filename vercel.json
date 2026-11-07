@@ -369,6 +369,10 @@
       "schedule": "40 19 * * 0"
     },
     {
+      "path": "/api/cron/kb-eval",
+      "schedule": "10 20 * * 0"
+    },
+    {
       "path": "/api/cron/rollout-watch",
       "schedule": "40 18 * * *"
     },

@@ -113,6 +113,18 @@ async function main() {
     const titleOf = new Map(all.map((s) => [s.row.id, s.row.title]));
     if (pinned.length) console.log(`=== ★ 絶対・最優先（P0・どの場面でも先に守る）${pinned.length}件 ===`);
     await printHits(pinned, replaced, rv, titleOf);
+    // 2026-11-07 P0 の木（竹内さん「親5本の木にする」）: 親 P0 を引いたら、その子（P1）のうち問いに近い物を一緒に出す（並びは同じ問いの点）
+    if (pinned.length) {
+      const { data: kids } = await sb.from("system_design_thinking").select("id, title, priority, parent").eq("is_current", true).in("parent", pinned.map((p) => p.row.id));
+      const rank = new Map(all.map((s, i) => [s.row.id, i]));
+      for (const p of pinned) {
+        const ks = ((kids ?? []) as Array<{ id: string; title: string; priority: number | null; parent: string }>).filter((c) => c.parent === p.row.id && (c.priority ?? 2) <= 1)
+          .sort((a, b) => (rank.get(a.id) ?? 1e9) - (rank.get(b.id) ?? 1e9));
+        if (!ks.length) continue;
+        console.log(`  └ 子の決まり（${p.row.id.slice(0, 8)} の下の P1 ${ks.length}行・問いに近い順）`);
+        for (const c of ks.slice(0, 4)) console.log(`     ・${c.id.slice(0, 8)}「${c.title.slice(0, 60)}」`);
+      }
+    }
     console.log(`${pinned.length ? "\n" : ""}=== 設計知見 ${hits.length}件（自然文: ${q}${tags.length ? "・札 " + tags.join("/") : ""}${scene ? "・" + KB_SCENES[scene].tag : ""}${maxP < 3 ? `・P${maxP} まで` : ""}）===`);
     await printHits(hits, replaced, rv, titleOf);
     if (extra.length) {
@@ -120,6 +132,13 @@ async function main() {
       for (const h of extra) console.log(`\n${formatHit(h)}\n  一節: ${h.phrases.join("・")}`);
     }
     console.log(`\n（細部は --id=<id8> で本文まで読む。言い方を変えて2〜3回引く。見つからなければ「無い」と報告して竹内さんに聞く — --help）`);
+    console.log(`（報告と work_log には引いた KB の id8 を書く: scripts/work-log.ts --kb=${[...pinned, ...hits].slice(0, 3).map((h) => h.row.id.slice(0, 8)).join(",")}）`);
+    // 2026-11-07 引きの軽い記録（竹内さん「設計知見の統括」⑤）: 手元の1行（問い・場面・出した id8）。DB には書かない・失敗しても止めない
+    try {
+      const { appendFileSync, mkdirSync } = await import("node:fs");
+      const dir = join(process.cwd(), ".claude", "exam-cache"); mkdirSync(dir, { recursive: true });
+      appendFileSync(join(dir, "kb-queries.jsonl"), JSON.stringify({ at: new Date().toISOString(), q: q.slice(0, 120), scene, maxP, pinned: pinned.map((h) => h.row.id.slice(0, 8)), hits: hits.map((h) => h.row.id.slice(0, 8)) }) + "\n");
+    } catch { /* 記録は軽く・失敗しても引きは済み */ }
     return;
   }
   let query = sb.from("system_design_thinking")

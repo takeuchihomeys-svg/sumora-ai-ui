@@ -1,7 +1,7 @@
 // 2026-10-07 竹内「設計知見もちゃんと整理して優先順位あげれる環境もつくる　そうすれば質が良くなるから」: 段（P0〜P3）の決まりを固定する
 // 実行: npx tsx app/lib/__tests__/design-knowledge-priority.test.ts（自己完結・env 不要。全 OK で exit 0）
 import {
-  inferPriority, effectivePriority, mergePriority, normalizeTags, priorityWatch, parsePriorityBatch, isP0Relevant, PRIORITY_BOOST, P0_TAG, TAG_MAX,
+  inferPriority, effectivePriority, mergePriority, normalizeTags, priorityWatch, parsePriorityBatch, isP0Relevant, PRIORITY_BOOST, P0_TAG, TAG_MAX, planP0Insert, kbEvalDrops,
 } from "../design-knowledge-priority";
 import { hybridRank, splitPinned, type RagRow } from "../design-knowledge-rag";
 import { buildDigest, planFromRelation, type KbRow } from "../design-knowledge-curation";
@@ -104,13 +104,39 @@ console.log("── 食い違い・重複の判定から計画");
   const old = row({ title: "古い決まり", created_at: "2026-09-01T00:00:00Z", priority: 2 });
   const neu = row({ title: "新しい決定", created_at: "2026-10-05T00:00:00Z", priority: 1 });
   const same = planFromRelation(old, neu, "same", "同じ", 0.96, "embedding");
-  t("確かな同じ（近さ 0.95 以上・埋め込み）は退役の計画", !!same.retire && !same.review);
+  t("確かな同じ（近さ 0.90 以上・埋め込み）は退役の計画", !!same.retire && !same.review);
+  t("近さ 0.89 の same は要確認（11/07 の線 0.90）", !planFromRelation(old, neu, "same", "同じ", 0.89, "embedding").retire);
+  t("近さ 0.91 の same は退役の計画（11/07 の線 0.90）", !!planFromRelation(old, neu, "same", "同じ", 0.91, "embedding").retire);
   t("文字の重なりだけの same は要確認", !planFromRelation(old, neu, "same", "同じ", 0.97, "lexical").retire);
   const sup = planFromRelation(old, neu, "supersedes_a", "Bが変えた", 0.8, "scene");
   t("上書きは退役しない・古い方を退役する案つきで要確認", !sup.retire && sup.review?.kind === "conflict" && sup.review.ids[0] === old.id && sup.review.note.includes(`--id=${old.id} --by=${neu.id}`));
   const con = planFromRelation(neu, old, "conflict", "逆", 0.8, "scene");
   t("食い違いは段が上（P1）の方を残す案", con.review?.ids[1] === neu.id);
   t("related・different は何もしない", !planFromRelation(old, neu, "related", "", 0.8, "embedding").review);
+}
+
+// 2026-11-07 P0 の木（親5本）: 札「絶対・最優先」でも親 P0 を選ばせ、5本以上なら子 P1
+{
+  const tg = ["竹内さんの決定", P0_TAG, "統括"];
+  const a = planP0Insert({ priority: 0, tags: tg }, { p0Count: 5, parentGiven: "575a7cd5-c265-4aec-9c7c-0bdf4c5ba96b" });
+  t("P0 の木: 親を選んだ P0 は親の子 P1・札を外す・確認事項へ", a.priority === 1 && a.parent?.startsWith("575a7cd5") === true && !a.tags.includes(P0_TAG) && a.askOwner && !a.autoParent, a);
+  const b = planP0Insert({ priority: 0, tags: tg }, { p0Count: 5, parentGiven: null });
+  t("P0 の木: 5本の時に親を選ばない P0 は入れた後に一番近い親の子 P1", b.priority === 1 && b.autoParent && b.parent === null && b.askOwner, b);
+  const c = planP0Insert({ priority: 0, tags: tg }, { p0Count: 4, parentGiven: null });
+  t("P0 の木: 5本より少なければ新しい親 P0 のまま", c.priority === 0 && c.tags.includes(P0_TAG) && !c.askOwner, c);
+  const d = planP0Insert({ priority: 1, tags: ["竹内さんの決定"] }, { p0Count: 5, parentGiven: null });
+  t("P0 の木: P1 の行はそのまま", d.priority === 1 && !d.askOwner && !d.autoParent, d);
+  const e = planP0Insert({ priority: 0, tags: tg }, { p0Count: 9, parentGiven: null, env: { KB_P0_TREE: "off" } });
+  t("P0 の木: 止める KB_P0_TREE=off は前の形（P0 のまま）", e.priority === 0, e);
+}
+// 2026-11-07 週の kb-eval の前の週との比べ
+{
+  const a = (r5: number, mrr: number, n = 10) => ({ n, r1: 0.5, r5, r10: 0.9, mrr });
+  const prev = { overall: a(0.9, 0.8), byPriority: { P1: a(0.9, 0.8) }, byScene: { "場面:検討中": a(0.5, 0.4, 2), "場面:内覧": a(1, 0.9) } };
+  const cur = { overall: a(0.89, 0.79), byPriority: { P1: a(0.85, 0.8) }, byScene: { "場面:検討中": a(0, 0.1, 2), "場面:内覧": a(1, 0.94) } };
+  const d = kbEvalDrops(prev, cur);
+  t("kb-eval の比べ: 0.03 以上下がった段だけ・問い3つ未満の場面は見ない", d.length === 1 && d[0].startsWith("P1"), d);
+  t("kb-eval の比べ: 前の週が無ければ空", kbEvalDrops(null, cur).length === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

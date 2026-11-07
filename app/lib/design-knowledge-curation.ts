@@ -214,7 +214,8 @@ export function similarPrompt(a: KbRow, b: KbRow): string {
  *   勝手に退役するのは確かな物だけ: 「same」かつ埋め込みの近さ 0.95 以上（ほぼ同じ文）→ 中身の多い方を残す。
  *   上書き（supersedes）・食い違い（conflict）は新しい決定（段が上・新しい方）を残す案を付けて要確認へ（竹内さんが決める）
  */
-export const CONFLICT_RULE = { autoSameMin: 0.95, sceneNearMin: 0.72 } as const;
+// 2026-11-07 竹内さん（P0 の木・統括役の頼み④）: 自動の退役の線を 0.95→0.90（DeepSeek が same の時だけ・P0 は自動で退役しない＝curation-server）。4週続けて退役0だった
+export const CONFLICT_RULE = { autoSameMin: 0.90, sceneNearMin: 0.72 } as const;
 export function planFromRelation(a: KbRow, b: KbRow, relation: string, reason: string, sim: number, src: "embedding" | "lexical" | "scene"): { retire: RetirePlan | null; review: ReviewItem | null } {
   if (relation === "different" || relation === "related") return { retire: null, review: null };
   const cmd = (oldR: KbRow, newR: KbRow) => `退役の案: scripts/kb-retire.ts --id=${oldR.id} --by=${newR.id}`;

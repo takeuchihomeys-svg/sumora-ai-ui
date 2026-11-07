@@ -10,6 +10,8 @@ import { supabase } from "@/app/lib/supabase-server";
 import { runDesignKnowledgeCycle } from "@/app/lib/design-knowledge-curation-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
+const reviewRank = (k: string) => ({ conflict: 0, decision: 1, similar: 2, priority: 3, tags: 4, mojibake: 5 } as Record<string, number>)[k] ?? 9;
+
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
@@ -27,6 +29,8 @@ export async function GET(req: NextRequest) {
       review: r.review.length, missingDecisionRows: r.missingDecisionRows, llm: r.llm, digests: r.digests, embed: r.embed, candidates: r.candidates,
       // 2026-10-07 段と札の整理（確かな同じの退役・札の正規化・段の見張り）
       retiredSame: r.retiredSame, tags: r.tags ? { planned: r.tags.planned, applied: r.tags.applied } : undefined, priority: r.priority,
+      // 2026-11-07 竹内さん（P0 の木・統括役の頼み④）: 要確認の上位を毎週閉じる番（担当は統括役）。上書き・食い違い → 似ている → 段 の順に5件
+      reviewTop: { owner: "統括役", items: [...r.review].sort((a, b) => reviewRank(a.kind) - reviewRank(b.kind)).slice(0, 5).map((x) => ({ kind: x.kind, ids: x.ids.map((i) => i.slice(0, 8)), note: x.note.slice(0, 200) })) },
     };
     await finishCronLog(logId, true, summary);
     return NextResponse.json({ ok: true, ...summary, plannedDuplicates: r.plannedDuplicates, plannedDecisions: r.plannedDecisions });

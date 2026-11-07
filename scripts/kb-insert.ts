@@ -7,7 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
 import { embedKbRows, neighborsOf } from "../app/lib/design-knowledge-rag-server";
 import { sceneTagsToAdd } from "./kb-scene-tag";
-import { inferPriority, normalizeTags, P0_TAG, PRIORITY_LABEL } from "../app/lib/design-knowledge-priority";
+import { inferPriority, normalizeTags, P0_TAG, PRIORITY_LABEL, planP0Insert, type KbPriority } from "../app/lib/design-knowledge-priority";
 import { mojibakeFields } from "../app/lib/design-knowledge-curation";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -53,6 +53,23 @@ async function main() {
       row.priority = p;
     }
   }
+  // 2026-11-07 P0 の木（竹内さん「親5本の木にする」）: 札「絶対・最優先」でも親 P0 を選ぶ（JSON の "parent": 親の id か先頭8字）。
+  //   P0 が5本以上で親が無い時は、入れた後に一番近い親 P0 の子 P1 にする。新しい親にするかは竹内さんへの確認事項（memory/rules_digest_review.md）
+  const { data: p0rows } = await sb.from("system_design_thinking").select("id, title").eq("is_current", true).eq("priority", 0);
+  const roots = (p0rows ?? []) as Array<{ id: string; title: string }>;
+  const autoParent: boolean[] = [];
+  const ownerDrafts: string[] = [];
+  for (const row of rows) {
+    const pg = String(row.parent ?? "").trim().toLowerCase();
+    const parentGiven = pg ? (roots.find((r) => r.id.startsWith(pg))?.id ?? null) : null;
+    if (pg && !parentGiven) { console.error(`parent が親 P0 にありません: ${pg}（親 P0: ${roots.map((r) => r.id.slice(0, 8)).join("・")}）`); process.exit(1); }
+    const plan = planP0Insert({ priority: row.priority as KbPriority, tags: row.tags as string[] }, { p0Count: roots.length, parentGiven });
+    row.priority = plan.priority; row.tags = plan.tags;
+    if (plan.parent) { row.parent = plan.parent; row.parent_by = "kb-insert:P0の木"; row.parent_at = new Date().toISOString(); } else delete row.parent;
+    autoParent.push(plan.autoParent);
+    if (plan.note) console.log(`  🌳 ${plan.note}: ${String(row.title).slice(0, 50)}`);
+    if (plan.askOwner) ownerDrafts.push(`- 【P0 にするか】「${String(row.title).slice(0, 70)}」を札「${P0_TAG}」で入れようとした。P0 の木（親5本）に合わせて子 P1 で入れた。新しい親（6本目）にするか、どれかの親と入れ替えるかは竹内さんへ。推奨: 子 P1 のまま`);
+  }
   let { data, error } = await sb.from("system_design_thinking").insert(rows).select("id");
   if (error && /priority/.test(error.message)) {
     // 本番に priority 列がまだ無い（ALTER 前）: 段を外して入れる（並びは推定で効く・後で kb-priority.ts が付ける）
@@ -67,6 +84,26 @@ async function main() {
     const e = await embedKbRows(sb, { dry: false, ids });
     console.log(`  埋め込み: ${e.embedded}行（$${e.usd.toFixed(5)}）`);
   } catch (err) { console.warn("  埋め込みに失敗（週の整理で埋める）:", err instanceof Error ? err.message : err); }
+  // P0 の木: 親を選ばなかった「絶対・最優先」の行は、一番近い親 P0 の子にする（埋め込みの近さ・P0 は5行だけ読む）
+  if (autoParent.some(Boolean) && roots.length) {
+    try {
+      const { data: ev } = await sb.from("system_design_thinking").select("id, embedding").in("id", [...roots.map((r) => r.id), ...ids.filter((_, i) => autoParent[i])]);
+      const vec = new Map(((ev ?? []) as Array<{ id: string; embedding: string | number[] | null }>).map((r) => [r.id, typeof r.embedding === "string" ? (JSON.parse(r.embedding) as number[]) : r.embedding]));
+      const cos = (a: number[], b: number[]) => { let s = 0, x = 0, y = 0; for (let i = 0; i < a.length; i++) { s += a[i] * b[i]; x += a[i] * a[i]; y += b[i] * b[i]; } return s / (Math.sqrt(x * y) || 1); };
+      for (let i = 0; i < ids.length; i++) {
+        if (!autoParent[i]) continue;
+        const me = vec.get(ids[i]);
+        const best = me ? roots.map((r) => ({ r, s: vec.get(r.id) ? cos(me, vec.get(r.id)!) : -1 })).sort((a, b) => b.s - a.s)[0] : null;
+        if (!best || best.s < 0) { console.warn(`  🌳 親 P0 を決められない（埋め込みが無い）: ${ids[i].slice(0, 8)} — JSON に "parent" を書いて入れ直すか、手で付ける`); continue; }
+        const up = await sb.from("system_design_thinking").update({ parent: best.r.id, parent_by: `kb-insert:P0の木:${best.s.toFixed(2)}`, parent_at: new Date().toISOString() }).eq("id", ids[i]);
+        if (!up.error) { rows[i].parent = best.r.id; console.log(`  🌳 一番近い親 P0 の子にした: ${ids[i].slice(0, 8)} → ${best.r.id.slice(0, 8)}「${best.r.title.slice(0, 40)}」（近さ ${best.s.toFixed(2)}）`); }
+      }
+    } catch (err) { console.warn("  🌳 親 P0 の付けに失敗（INSERT は済み・手で付ける）:", err instanceof Error ? err.message : err); }
+  }
+  if (ownerDrafts.length) {
+    fs.appendFileSync("memory/rules_digest_review.md", `\n\n## 竹内さんへの確認事項の下書き（P0 の木・kb-insert・${new Date().toISOString().slice(0, 10)}）\n${ownerDrafts.join("\n")}\n`, "utf8");
+    console.log(`  確認事項の下書きを memory/rules_digest_review.md に足した（${ownerDrafts.length}件）`);
+  }
   // 2026-10-07 7巡目（竹内「被ったらその時におくってもらったら良い」）: 入れた行と同じ場面・同じ話題の既存の P0/P1/P2 の行で
   //   埋め込みが近い物（0.8 以上）を「被っている可能性」として並べる。**自動では退役しない**（コーディネーターがその場で竹内さんに見せる）
   try { await showOverlaps(ids, rows); } catch (err) { console.warn("  被りの確かめに失敗（INSERT は済み）:", err instanceof Error ? err.message : err); }
@@ -88,7 +125,7 @@ async function judgeNewRows(ids: string[], rows: Array<Record<string, unknown>>)
     if (!nb.length) continue;
     const { data } = await sb.from("system_design_thinking").select("id, title, insight, priority, created_at, is_current").in("id", nb.map((n) => n.id));
     const byId = new Map(((data ?? []) as Array<{ id: string; title: string; insight: string; priority: number | null; created_at: string; is_current: boolean | null }>).map((r) => [r.id, r]));
-    let parentSet = false;
+    let parentSet = !!row.parent; // P0 の木で親 P0 を付けた行は上書きしない
     for (const n of nb) {
       const old = byId.get(n.id); if (!old || old.is_current === false) continue;
       const j = await judgeKbRelation(me, old, n.similarity); calls++;

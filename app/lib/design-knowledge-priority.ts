@@ -182,3 +182,40 @@ export function normalizeTags(tags: string[] | null | undefined): { tags: string
   const changed = out.length !== src.length || out.some((t, i) => t !== src[i]);
   return { tags: out, changed };
 }
+
+// ── P0 の木（2026-11-07 竹内さん「親5本の木にする」・作業員1）──────────────────────────
+//   P0 は親の5本（A ca55d42b・B 9eb6aa9c・C 2e164f41・D 575a7cd5・E 8805bd74）。札「絶対・最優先」の新しい行も、
+//   親 P0 を選んで（JSON の parent・無ければ入れた後に一番近い親 P0）その子 P1 で入れる。新しい親（6本目）にするかは竹内さんへの確認事項。
+//   P0 が P0_ROOT_MAX 本より少ない時だけ、親を選ばない新しい P0 をそのまま入れる。止める KB_P0_TREE=off（前の形＝札があれば P0）
+export const P0_ROOT_MAX = 5;
+export function kbP0TreeOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.KB_P0_TREE ?? "").trim().toLowerCase() !== "off";
+}
+export type P0InsertPlan = { priority: KbPriority; tags: string[]; parent: string | null; autoParent: boolean; askOwner: boolean; note: string | null };
+/** 入れる行の段・札・親を決める（P0 の木）。p0Count は今の現行の P0 の数、parentGiven は JSON の parent（id か先頭8字）を解いた id */
+export function planP0Insert(row: { priority: KbPriority; tags: string[] }, o: { p0Count: number; parentGiven: string | null; env?: Record<string, string | undefined> }): P0InsertPlan {
+  const base: P0InsertPlan = { priority: row.priority, tags: row.tags, parent: o.parentGiven, autoParent: false, askOwner: false, note: null };
+  if (row.priority !== 0 || !kbP0TreeOn(o.env)) return base;
+  const tags = row.tags.filter((t) => t !== P0_TAG);
+  if (o.parentGiven) return { priority: 1, tags, parent: o.parentGiven, autoParent: false, askOwner: true, note: `札「${P0_TAG}」→ 親 P0 ${o.parentGiven.slice(0, 8)} の子 P1 で入れた（新しい親にするかは竹内さんへ）` };
+  if (o.p0Count < P0_ROOT_MAX) return { ...base, note: `P0 が ${o.p0Count} 本（線 ${P0_ROOT_MAX}）なので新しい親 P0 で入れた` };
+  return { priority: 1, tags, parent: null, autoParent: true, askOwner: true, note: `P0 が ${o.p0Count} 本（線 ${P0_ROOT_MAX}）＝入れた後に一番近い親 P0 の子 P1 にする（新しい親にするかは竹内さんへ）` };
+}
+
+// ── 設計知見の RAG の毎週の物差し（/api/cron/kb-eval）の前の週との比べ ──
+type EvalAgg = { n: number; r1: number; r5: number; r10: number; mrr: number };
+/** 前の週より @5 か MRR が 0.03 以上下がった所（全体・段・場面。問いが3つ未満の場面は見ない） */
+export function kbEvalDrops(prev: { overall?: EvalAgg; byPriority?: Record<string, EvalAgg>; byScene?: Record<string, EvalAgg> } | null | undefined,
+  cur: { overall: EvalAgg; byPriority: Record<string, EvalAgg>; byScene: Record<string, EvalAgg> }, th = 0.03): string[] {
+  if (!prev?.overall) return [];
+  const out: string[] = [];
+  const cmp = (name: string, a?: EvalAgg, b?: EvalAgg) => {
+    if (!a || !b || a.n < 3 || b.n < 3) return;
+    const d5 = a.r5 - b.r5, dm = a.mrr - b.mrr;
+    if (d5 <= -th || dm <= -th) out.push(`${name}: @5 ${b.r5.toFixed(2)}→${a.r5.toFixed(2)}・MRR ${b.mrr.toFixed(3)}→${a.mrr.toFixed(3)}（n=${a.n}）`);
+  };
+  cmp("全体", cur.overall, prev.overall);
+  for (const k of Object.keys(cur.byPriority)) cmp(k, cur.byPriority[k], prev.byPriority?.[k]);
+  for (const k of Object.keys(cur.byScene)) cmp(k, cur.byScene[k], prev.byScene?.[k]);
+  return out;
+}

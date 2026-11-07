@@ -5,11 +5,12 @@
 //
 //   npx tsx --env-file=.env.local scripts/work-log.ts --latest [--days=14]        … 作業ごとの最新の状態（終わった物は除く）＋直近の10行
 //   npx tsx --env-file=.env.local scripts/work-log.ts --task "<作業名>"            … その作業の履歴（古い順）
-//   npx tsx --env-file=.env.local scripts/work-log.ts --add "<作業名>" --status=progress --summary="…" [--next="…"] [--waiting="…"] [--branch=…] [--commit=…] [--actor=session|worker:<名前>] [--dry]
+//   npx tsx --env-file=.env.local scripts/work-log.ts --add "<作業名>" --status=progress --summary="…" [--next="…"] [--waiting="…"] [--branch=…] [--commit=…] [--actor=作業員N] [--kb=<引いた KB の id8,…>|none] [--dry]
 //   status: started（始めた）・progress（区切り）・blocked（詰まった）・waiting_owner（竹内さんの答え待ち）・done（終わった）・stopped（やめた）
 //   書くのはサーバーの鍵（RLS 有効・ポリシーなし）。お客様の文・名前は入れない。LINE には何も送らない。
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync } from "node:fs";
+import { normalizeActor, parseKbIds } from "../app/lib/work-log-fields";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -64,11 +65,16 @@ async function main() {
     const status = arg("status", "progress") as Status;
     if (!task) throw new Error('使い方: --add "<作業名>" --status=progress --summary="…"');
     if (!STATUSES.includes(status)) throw new Error(`status は ${STATUSES.join("/")}`);
+    // 2026-11-07 引いた KB の id8（--kb=a1b2c3d4,… ／引かなかった時は --kb=none）・actor は「作業員N」にそろえる（work-log-fields）
+    const kb = parseKbIds(arg("kb"));
+    if (kb.bad.length) throw new Error(`--kb は id の先頭8字（16進）をカンマ区切り: ${kb.bad.join(",")}`);
+    if (!kb.ids.length && !kb.none) console.warn("  ⚠ 引いた KB の id8 がありません（--kb=<id8,…>。引かなかった時は --kb=none）");
     const row = {
       task, status,
       summary: arg("summary") || null, next_step: arg("next") || null, waiting_on: arg("waiting") || null,
-      branch: arg("branch") || null, commit_ref: arg("commit") || null, actor: arg("actor", "session"),
+      branch: arg("branch") || null, commit_ref: arg("commit") || null, actor: normalizeActor(arg("actor", "session")),
       session_id: process.env.CLAUDE_SESSION_ID || null,
+      evidence: { kb_ids: kb.ids, ...(kb.none ? { kb_none: true } : {}) },
     };
     if (DRY) { console.log("入る行（dry）:", JSON.stringify(row)); return; }
     const { error } = await sb.from("work_log").insert([row]);
