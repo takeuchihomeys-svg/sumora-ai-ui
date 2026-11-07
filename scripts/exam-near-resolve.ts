@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { reduceKeyedBody, nearestSummaryOf, afterCutoff, keyedKey } from "./lib/exam-frozen-input";
 import { followupUrls } from "./lib/exam-near-followups";
+import { loadCards, CARDS_FILE, RAG_DIR } from "./lib/exam-rag-store";
 import { createClient } from "@supabase/supabase-js";
 import { loadDeepseekCutoff } from "../app/lib/post-apply";
 
@@ -95,6 +96,14 @@ async function resolveOne(day: string, fileName: string, req: { name: string; ur
         } catch (e) { console.warn(`  後ろの読みを作れない ${f}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); fail++; }
       }
     }
+  }
+  // 2026-11-07 統括役（守りの問題の自動の足し・弱い所 418）: 試験の問題の札（exam_problem_index・RLS）を鍵で読み、手元の置き場（brain-exam-rag/cards.json）に写す＝係が公開キーのまま守りを選べる
+  if (!DRY && !argv.includes("--no-cards")) {
+    try {
+      const cards = await loadCards(createClient(url, key) as never);
+      const n = Object.keys(cards).length;
+      if (n) { mkdirSync(RAG_DIR, { recursive: true }); const tmp = `${CARDS_FILE}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify({ at: new Date().toISOString(), cards })); renameSync(tmp, CARDS_FILE); console.log(`問題の札を写した: ${n}問（${CARDS_FILE}）`); }
+    } catch (e) { console.warn(`問題の札を写せない: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
   }
   console.log(`鍵が要る読みの控え: 書いた ${ok}・後ろの読みを先に ${follow}・行 ${rows}・読めない ${fail}（日 ${days.join(",") || "なし"}）${DRY ? "（dry）" : ""}`);
 })().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(1); });

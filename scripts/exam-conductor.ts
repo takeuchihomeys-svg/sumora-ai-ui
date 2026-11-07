@@ -56,6 +56,7 @@ import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds } from "./lib/exam-base-pin";
+import { chooseGuards, fitGuardsToCap, guardLine } from "./lib/exam-guards";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -82,6 +83,7 @@ const readJson = <T>(f: string, d: T): T => { try { return JSON.parse(readFileSy
 export type ExamJob = {
   id: string; label: string; owner: string; switch: string; cwd: string; only: string; stage: string; repeat: number; env: Record<string, string>; createdAt: string; tries: number; /** 立ち上がりの失敗が続いた回数（2026-11-04） */ crashes?: number;
   /** 依頼で名指しした揺れる問題（③） */ flaky?: string[];
+  /** 2026-11-07 統括役（弱い所 418・試験の統括ブレインの第1段）: 係が自動で足した守りの問題（1回だけ回す）・狙いの無い依頼の RAG の選びの数 */ guards?: string[]; selectN?: number;
   /** 2026-11-06 統括役（依頼そのものを削る）: 掘りの依頼（--dig）。回数は --repeat のまま（揺れる問題も増やさない）・外れた問題の確かめ直しもしない＝既定 on の判断に使わない */ dig?: boolean;
   /** --pick=rag の時 brain-exam --select=rag に任せる（④） */ selectRag?: boolean;
   /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc" | "tsc-remote"; cmds?: string[];
@@ -157,8 +159,13 @@ function readJobs(): Array<ExamJob & { file: string }> {
  * 回数の計画（実際に流す時と、積む時の見込みの1行で同じ物を使う）。2026-11-06 統括役（P0 8805bd74・作業員9 の EXAM_FLAKY_REPS=1 の依頼が見込み3回分 $0.18 のまま出た）:
  *   EXAM_FLAKY_REPS・EXAM_STABLE_REPS は依頼の --env を先に、無ければ係の env を読む。普通の問題は依頼の --repeat、揺れる問題は揺れの回数、安定は安定の回数
  */
-export function jobRepsPlan(j: Pick<ExamJob, "cwd" | "repeat" | "flaky" | "env" | "dig">, ids: string[]): ReturnType<typeof repsPlan> {
+export function jobRepsPlan(j: Pick<ExamJob, "cwd" | "repeat" | "flaky" | "env" | "dig" | "guards">, ids: string[]): ReturnType<typeof repsPlan> {
   if (j.dig) return { reps: Object.fromEntries(ids.map((id) => [id, Math.max(1, j.repeat)])), flaky: [], stable: [] };
+  // 守りの問題は1回（11/07 統括役）
+  if (j.guards?.length) { const g = new Set(j.guards); const rest = jobRepsPlanCore(j, ids.filter((id) => !g.has(id))); return { ...rest, reps: { ...rest.reps, ...Object.fromEntries(ids.filter((id) => g.has(id)).map((id) => [id, 1])) } }; }
+  return jobRepsPlanCore(j, ids);
+}
+function jobRepsPlanCore(j: Pick<ExamJob, "cwd" | "repeat" | "flaky" | "env">, ids: string[]): ReturnType<typeof repsPlan> {
   const ev = (k: string) => (j.env?.[k] ?? process.env[k]);
   const sr = ev("EXAM_STABLE_REPS");
   return repsPlan(ids, (id) => readObs(id), { hashesOf: problemHashesOf(j.cwd), normal: j.repeat, flakyReps: Number(ev("EXAM_FLAKY_REPS") ?? "4"), forced: j.flaky, model: "deepseek", stableReps: sr === "off" ? undefined : Number(sr ?? "1") });
@@ -228,8 +235,12 @@ function addJob(): void {
     const p = pickProblems(arg("pick"), spec, { golds, map: { ...readJson<SceneMap>(join(cwd, "scripts/brain-exam/scene-map.json"), {}), ...readJson<SceneMap>(SCENE_MAP, {}) }, switchName: base.switch, only: arg("only").split(",").filter(Boolean) });
     const flaky = arg("flaky").split(",").filter(Boolean);
     const ids = [...new Set([...p.ids, ...flaky])];
-    if (!ids.length && !p.selectRag) throw new Error("問題が無い（--only か --pick を付ける）");
-    job = { ...base, id: `${Date.now()}`, label, only: ids.join(","), repeat: Number(arg("repeat", String(p.repeat ?? 2))), flaky, selectRag: p.selectRag, runner: "brain-exam", ...(flag("dig") ? { dig: true } : {}) };
+    // 2026-11-07 統括役: 狙いの無い依頼は RAG（brain-exam --select=rag・差分の言葉と知見・8問）で選ぶのを既定にする（EXAM_AUTO_GUARDS=off で旧の止め方）
+    const autoGuards = (process.env.EXAM_AUTO_GUARDS ?? "").trim().toLowerCase() !== "off";
+    if (!ids.length && !p.selectRag && !autoGuards) throw new Error("問題が無い（--only か --pick を付ける）");
+    const ragDefault = !ids.length && !p.selectRag && autoGuards;
+    job = { ...base, id: `${Date.now()}`, label, only: ids.join(","), repeat: Number(arg("repeat", String(p.repeat ?? 2))), flaky, selectRag: p.selectRag || ragDefault, ...(ragDefault || p.selectRag ? { selectN: Number(arg("select-n", "8")) || 8 } : {}), runner: "brain-exam", ...(flag("dig") ? { dig: true } : {}) };
+    if (ragDefault) log("  狙いの問題が無い → RAG で8問を選ぶ（brain-exam --select=rag --select-n=8・差分の言葉と知見・exam-scope の段）");
     if (arg("pick")) log(`  選び: ${p.why} → ${ids.length}問`);
     // 2026-11-05 作業員8（KB P0 4c91ffd9「試験のブレインが何を・何回・どこまで・いつ」・統括役「1か所が順に決めて1行の計画を出す」）: 試験の統括の計画（scripts/lib/exam-plan.ts）
     //   --kind=record|prod（記録だけ・本番で動いている直し）は試験を積まず、毎晩の本番の物差し（cron prod-yardstick）で見る。計画は exam-cache/exam-plans.jsonl に残す
@@ -258,6 +269,25 @@ function addJob(): void {
     const kind = (["record", "prod", "exam"].includes(arg("kind")) ? arg("kind") : undefined) as "record" | "prod" | "exam" | undefined;
     const group = /^grp-reply/.test(label) ? "reply" as const : /^grp-aix/.test(label) ? "aix" as const : /^grp-brain/.test(label) ? "brain" as const : null;
     // 2026-11-06 統括役（sce-on2 の見込み $0.24・実際 $0.35＝前を作った子 $0.17 が見込みに入っていなかった）: 今の main の版に前の答えが無い問題は「前を作る分」を見込む
+    // 2026-11-07 統括役（弱い所 418・竹内さん「使い回して必要な試験を RAG で」・試験の統括ブレインの第1段）: 狙いの問題に近い守りを2問・1回だけ自動で足す。
+    //   使い回せる（夜の基準あり・安定）を最優先・上限に入らなければ減らす。掘り（--dig）・狙いの無い依頼（RAG で選ぶ）には足さない。止める EXAM_AUTO_GUARDS=off
+    if (job.runner === "brain-exam" && ids.length && !job.dig && autoGuards) {
+      try {
+        const cardsRaw = readJson<{ cards?: Record<string, { id: string; stage: "brain" | "draft"; embedding?: number[] | null }> }>(join(examCacheRoot(), "brain-exam-rag", "cards.json"), {}).cards ?? {};
+        const specIds = new Set(spec.map((x) => x.id));
+        const cards = Object.values(cardsRaw).filter((c) => specIds.has(c.id));
+        const B = join(examCacheRoot(), "brain-exam-baseline");
+        const nightlyIds = new Set(readdirSync(B).filter((f) => /^nightly-base-.*\.json$/.test(f)).flatMap((f) => readJson<{ at?: string; problems?: string[] } | null>(join(B, f), null)?.problems ?? []));
+        const stableIds = new Set(jobRepsPlan({ ...job, guards: [] }, cards.map((c) => c.id)).stable ?? []);
+        const g0 = chooseGuards({ targets: ids, cards, nightlyIds, stableIds, max: 2, stage: job.stage === "draft" ? "draft" : null });
+        const unit = job.stage === "draft" ? DRAFT_USD_PER_REP : BRAIN_USD_PER_REP;
+        const tr = jobRepsPlan(job, ids).reps, nbT = predictNeedsBase(cwd, ids);
+        const baseUsd = ids.reduce((s, id) => s + (tr[id] ?? 1) * unit * (nbT.includes(id) ? 2 : 1), 0);
+        const g = fitGuardsToCap(g0, { capUsd: job.capUsd ?? null, baseUsd, unitUsd: unit });
+        if (g.length) { job.guards = g.map((x) => x.id); ids.push(...job.guards); job.only = ids.join(","); }
+        log(`  ${guardLine(g, unit)}${g.length < g0.length ? `（上限 $${job.capUsd} に合わせて ${g0.length}→${g.length}問）` : ""}${!cards.length ? "（問題の札が無い＝守りを選べない・exam-near-resolve が夜に札を写す）" : ""}`);
+      } catch (e) { log(`  守りを選べない: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
+    }
     const needsBase = predictNeedsBase(cwd, ids);
     const plan = planExam({ label, kind, switchName: base.switch, ids, group, needsBase, repsOverride: job.runner === "brain-exam" ? (() => { try { return jobRepsPlan(job, ids).reps; } catch { return undefined; } })() : undefined, diffStage: base.stage === "brain" || base.stage === "draft" ? base.stage : null, brainText: flag("brain-text"), defaultOn: flag("default-on"), capUsd: Number(arg("cap-usd", "2")) || 2 });
     log(`  ${plan.line}`);
@@ -578,7 +608,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     // 2026-11-07 作業員8: --repeat は構成（前の答えの置き場・夜の基準の控え）の鍵に入る＝問題ごとの回は --reps-file が決め、--repeat は夜の基準と同じ上限（NIGHT_BASE_REPEAT）にそろえる（回が少ない依頼も同じ置き場の前を使い回す）
     const argv = ["scripts/brain-exam.ts", `--label=${j.label}`, "--conv=auto", "--baseline=main", `--repeat=${ids.length ? Math.max(maxRep, NIGHT_BASE_REPEAT) : maxRep}`, `--stage=${j.stage}`];
     if (ids.length) argv.push(`--only=${j.only}`, `--reps-file=${repsFile}`);
-    if (j.selectRag) argv.push("--select=rag");
+    if (j.selectRag) argv.push("--select=rag", ...(j.selectN ? [`--select-n=${j.selectN}`] : []));
     // 2026-11-04 (b): 依頼の作業ツリーの brain-exam.ts が止める印を見ない（origin/main より古い）時は上限を延ばす（EXAM_JOB_OLD_MAX_MIN・既定 120分）。依頼の行と結果にも出す
     const behind = (() => { try { return Number(execFileSync("git", ["-C", j.cwd, "rev-list", "--count", "HEAD..origin/main"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim()); } catch { return null; } })();
     const guard = staleExamGuard((() => { try { return readFileSync(join(j.cwd, "scripts", "brain-exam.ts"), "utf8"); } catch { return ""; } })(), Number.isFinite(behind as number) ? behind : null,
