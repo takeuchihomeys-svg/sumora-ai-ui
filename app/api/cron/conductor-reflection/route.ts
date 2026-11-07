@@ -1,10 +1,12 @@
 // GET /api/cron/conductor-reflection（Vercel Cron・毎週月曜 JST 4:10）— 統括の毎週の振り返り（#10・#14・弱い所 277・作業員5・11/07）
 //   1週間の見張りの番（line_watch_turns・スタッフが返した番）から、場面ごとにブレインの道とスタッフの一手の当たりを数え、
 //   当たりの低い場面（5番以上・6割未満・外れの多い順に3つ）を brain_weaknesses と owner_questions（推奨付き）に足す。LLM なし＝費用 0。
+//   11/07: 返信の番だけの文の質（reply-quality-weekly）も終わった週と前の週で比べて返す（0.6未満が上がった時だけ弱い所に1行・確認事項には出さない）。
 //   既定で書く（11/07 から既定 on・CONDUCTOR_REFLECTION=off か ?dry=1 は数えて返すだけ）。営業時間（JST 9〜22時）は動かない。読みは 1000行ずつ・最大 5000行
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { conductorReflectionOn, sceneStats, weakScenes, weekKey, weaknessRow, questionRow, type WatchRow } from "@/app/lib/conductor-reflection";
+import { conductorReflectionOn, sceneStats, weakScenes, weekKey, weaknessRow, questionRow, replyQualityDelta, replyQualityWeaknessRow, type WatchRow } from "@/app/lib/conductor-reflection";
+import { loadReplyQualityStats } from "@/app/lib/conductor-reflection-server";
 
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
@@ -37,5 +39,21 @@ export async function GET(req: NextRequest) {
     const q = await sb.from("owner_questions").upsert(weak.map((s) => questionRow(week, s)), { onConflict: "dedupe_key", ignoreDuplicates: true });
     if (!q.error) asked = weak.length;
   }
-  return NextResponse.json({ ok: true, write, week, turns: rows.length, scenes: stats.slice(0, 12), weak: weak.map((s) => s.scene), wrote, asked });
+  // 2026-11-07 作業員5（統括役）: 返信の番だけの文の質（作業員9の reply-quality-weekly）を終わった週と前の週で比べて結果に足す。
+  //   確認事項には出さない。0.6 未満の割合が前の週より上がった時だけ brain_weaknesses に1行（鍵 reflect:<週>:reply_quality）
+  let replyQuality: ReturnType<typeof replyQualityDelta> = null, rqWrote = 0, rqError: string | null = null;
+  try {
+    const rq = await loadReplyQualityStats(sb);
+    if (!rq) rqError = "読めない";
+    else {
+      replyQuality = replyQualityDelta(rq.stats, rq.currentWeek);
+      const row = replyQuality ? replyQualityWeaknessRow(week, replyQuality) : null;
+      if (write && row) {
+        const now = new Date().toISOString();
+        const w = await sb.from("brain_weaknesses").upsert([{ ...row, first_seen: now, last_seen: now, updated_at: now }], { onConflict: "key" });
+        if (!w.error) rqWrote = 1; else rqError = w.error.message;
+      }
+    }
+  } catch (e) { rqError = e instanceof Error ? e.message : String(e); }
+  return NextResponse.json({ ok: true, write, week, turns: rows.length, scenes: stats.slice(0, 12), weak: weak.map((s) => s.scene), wrote, asked, replyQuality, rqWrote, rqError });
 }
