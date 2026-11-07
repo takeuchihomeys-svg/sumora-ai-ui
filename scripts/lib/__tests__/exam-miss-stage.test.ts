@@ -72,7 +72,7 @@ ok("印: 場面", markersOf(q136).includes("scene_net:S4_viewing"));
     brain: { reply_direction: "他候補を探す。物件のご紹介が要る時だけ…ピックアップしお送りすると約束する返信にする", turn_contract: { route: "promise" } },
     trace: { decision_source_no_aix: "rule:two_stage_promise(pickup_unless_ack)", two_stage: "pickup" }, score: { pass: false } };
   const v = classifyMiss(r);
-  ok("q174 → ブレインの読み（内覧）→ 2段 → 文の中身（方向の文の決まった尾・本質の帯）", v.stages.map((s) => s.stage).join(">") === "brain>two_stage>text>text" && v.line.includes("内覧") && v.line.includes("決まった尾"), v.line);
+  ok("q174（道は正解）→ 書き手（依頼／下書きの側）→ 文の中身（方向の文の決まった尾・本質の帯）・2段にしない（11/07 統括役）", v.stages.map((s) => s.stage).join(">") === "writer>text>text" && v.stage === "writer" && !v.stages.some((s) => s.stage === "two_stage") && v.line.includes("決まった尾"), v.line);
   ok("q174: 道は正しいが文の中身が変わった段を別に出す", v.stages.some((s) => s.marker === "text:direction_tail"));
 }
 

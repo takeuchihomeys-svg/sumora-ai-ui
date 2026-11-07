@@ -13,6 +13,27 @@ export const FOCUS_MIN_N = 5;
 
 /** 近い番の重点と、近い番の竹内さんの組み合わせの型の参考の1行（作業員7 nearShapeLine・planForConductor の参考だけ・決め直さない） */
 export type NearTurns = { near: NearFocus | null; shape: { line: string; digest: string } | null };
+/** match_conductor_focus の答えの1行 */
+export type FocusRpcRow = { source_key: string; scene: string; focus: string; distance: number; actual: { shape?: string } | null };
+/**
+ * 近い番の重点（純関数・nearFocusForTurn の中身）。2026-11-07 作業員8（統括役: 試験の写しの台本が試験の道と同じ関数で後ろの読みを作る）:
+ *   ids（束の中の近い番・5件まで）は場面に関係なく決まる＝台本は scene=null で呼んでも同じ ids
+ */
+export function nearFromFocusRows(all: ReadonlyArray<FocusRpcRow>, scene: string | null): NearFocus | null {
+  const rows = all.filter((r) => (FOCUS_KINDS as readonly string[]).includes(r.focus));
+  // 束の外は場面の多い重点（引いた近い番のうち同じ場面の物から・無ければ null）
+  const sceneFocus = sceneMajorityFocus(rows.filter((r) => r.scene === scene).map((r) => r.focus as Focus));
+  return nearestFocus(rows.map((r) => ({ id: r.source_key, focus: r.focus as Focus, dist: r.distance })), { band: FOCUS_BAND, minN: FOCUS_MIN_N, sceneFocus });
+}
+/** keep を読む message_id（純関数・nearKeepShareFor と台本で同じ） */
+export function keepMidsOf(ids: ReadonlyArray<string>): string[] {
+  return [...new Set(ids.map((k) => (k.startsWith("msg:") ? k.slice(4) : k)).filter(Boolean))].slice(0, 30);
+}
+/** keep の読み（問い合わせの形を1か所に・nearKeepShareFor と台本で同じ URL になる） */
+export function keepQuery(sb: SupabaseClient, mids: ReadonlyArray<string>) {
+  return sb.from("takeuchi_compose_examples").select("message_id, keep:anatomy->keep").in("message_id", [...mids]);
+}
+
 export async function nearFocusForTurn(sb: SupabaseClient, o: { conversationId: string; propertyCustomerId: string | null; turnAt: string; scene: string; situationV2: string }): Promise<NearTurns | null> {
   try {
     const emb = await generateEmbedding(o.situationV2);
@@ -22,12 +43,9 @@ export async function nearFocusForTurn(sb: SupabaseClient, o: { conversationId: 
       match_count: 30, max_distance: 0.3, p_writer: "takeuchi",
     });
     if (error) return null;
-    const all = ((data ?? []) as Array<{ source_key: string; scene: string; focus: string; distance: number; actual: { shape?: string } | null }>);
+    const all = ((data ?? []) as FocusRpcRow[]);
     const shape = nearShapeLine(all.filter((r) => r.distance <= FOCUS_BAND).map((r) => ({ shape: r.actual?.shape ?? null, dist: r.distance })));
-    const rows = all.filter((r) => (FOCUS_KINDS as readonly string[]).includes(r.focus));
-    // 束の外は場面の多い重点（引いた近い番のうち同じ場面の物から・無ければ null）
-    const sceneFocus = sceneMajorityFocus(rows.filter((r) => r.scene === o.scene).map((r) => r.focus as Focus));
-    return { near: nearestFocus(rows.map((r) => ({ id: r.source_key, focus: r.focus as Focus, dist: r.distance })), { band: FOCUS_BAND, minN: FOCUS_MIN_N, sceneFocus }), shape };
+    return { near: nearFromFocusRows(all, o.scene), shape };
   } catch {
     return null;
   }
@@ -83,10 +101,10 @@ export async function liveSituationV2(sb: SupabaseClient, o: { conversationId: s
  *   例: const share = await nearKeepShareFor(sb, near?.ids ?? []); relationKeep({ scene, customerAskedNew, nearKeepShare: share, keptToday })
  */
 export async function nearKeepShareFor(sb: SupabaseClient, ids: ReadonlyArray<string>, minN = 3): Promise<number | null> {
-  const mids = [...new Set(ids.map((k) => (k.startsWith("msg:") ? k.slice(4) : k)).filter(Boolean))].slice(0, 30);
+  const mids = keepMidsOf(ids);
   if (mids.length < minN) return null;
   try {
-    const { data, error } = await sb.from("takeuchi_compose_examples").select("message_id, keep:anatomy->keep").in("message_id", mids);
+    const { data, error } = await keepQuery(sb, mids);
     if (error) return null;
     const { keepShareOf } = await import("@/app/lib/conductor-focus");
     return keepShareOf(((data ?? []) as Array<{ keep: unknown }>).map((r) => (r.keep === true ? true : r.keep === false ? false : null)), minN);

@@ -7,7 +7,7 @@
 //     指す URL（完全一致＋Blob の pickups/ を指す行の総なめ）と、まだ期限内の行が使っている URL。
 //   失敗時: Blob の削除が失敗した行は印を付けない → 次の日にやり直す。1回の上限 LIMIT 行（残りは次の日）。
 import { supabase } from "@/app/lib/supabase-server";
-import { planPickupPurge, rowsToMarkExpired, PICKUP_RETENTION_HOURS, PICKUP_URL_COLUMNS, type PurgeRow } from "@/app/lib/pickup-retention";
+import { planPickupPurge, rowsToMarkExpired, exactLookupTargets, SENT_SWEEP_LIMIT, PICKUP_RETENTION_HOURS, PICKUP_URL_COLUMNS, type PurgeRow } from "@/app/lib/pickup-retention";
 
 const DEFAULT_LIMIT = 300;
 const DEL_CHUNK = 100;
@@ -27,14 +27,8 @@ async function urlsReferencedBy(urls: string[]): Promise<Set<string>> {
   const hit = new Set<string>();
   const targets: Array<[string, string]> = [["messages", "image_url"], ["sent_properties", "image_url"], ["sent_image_properties", "image_url"]];
   for (const [table, col] of targets) {
-    for (let i = 0; i < urls.length; i += IN_CHUNK) {
-      const { data, error } = await supabase.from(table).select(col).in(col, urls.slice(i, i + IN_CHUNK));
-      // 読めない時は「全部送った物」とみなす（消さない側に倒す）
-      if (error) { console.warn(JSON.stringify({ tag: "pickup-retention:lookup-failed", table, error: error.message })); for (const u of urls.slice(i, i + IN_CHUNK)) hit.add(u); continue; }
-      for (const d of (data ?? []) as unknown as Array<Record<string, string | null>>) if (d[col]) hit.add(d[col] as string);
-    }
-    // 念のため: Blob の pickups/ を指す送信の行を総なめ（URL の後ろに ?… が付いた等で完全一致しない物も拾う）
-    const { data: likeRows, error: likeErr } = await supabase.from(table).select(col).like(col, "%.blob.vercel-storage.com/pickups/%").limit(2000);
+    // Blob の pickups/ を指す送信の行を総なめ（URL の後ろに ?… が付いた等で完全一致しない物も拾う）
+    const { data: likeRows, error: likeErr } = await supabase.from(table).select(col).like(col, "%.blob.vercel-storage.com/pickups/%").limit(SENT_SWEEP_LIMIT);
     if (likeErr) return new Set(urls);
     for (const d of (likeRows ?? []) as unknown as Array<Record<string, string | null>>) {
       const v = d[col];
@@ -42,6 +36,14 @@ async function urlsReferencedBy(urls: string[]): Promise<Set<string>> {
       hit.add(v);
       const base = v.split("?")[0];
       for (const u of urls) if (u.split("?")[0] === base) hit.add(u);
+    }
+    // 2026-11-07 作業員8（60秒の時間切れ）: 総なめで拾える pickups/ の URL は完全一致で読み直さない（総なめが上限に届いた時は旧と同じく全部）
+    const exact = exactLookupTargets(urls, (likeRows ?? []).length);
+    for (let i = 0; i < exact.length; i += IN_CHUNK) {
+      const { data, error } = await supabase.from(table).select(col).in(col, exact.slice(i, i + IN_CHUNK));
+      // 読めない時は「全部送った物」とみなす（消さない側に倒す）
+      if (error) { console.warn(JSON.stringify({ tag: "pickup-retention:lookup-failed", table, error: error.message })); for (const u of exact.slice(i, i + IN_CHUNK)) hit.add(u); continue; }
+      for (const d of (data ?? []) as unknown as Array<Record<string, string | null>>) if (d[col]) hit.add(d[col] as string);
     }
   }
   return hit;

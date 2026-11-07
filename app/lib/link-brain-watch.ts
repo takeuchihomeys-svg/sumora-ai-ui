@@ -321,10 +321,10 @@ const pickupVsWatch: Reader = {
 /**
  * 2026-10-28 竹内さんの決定（owner_questions・「全部いれてよい」）: ピックアップの約束を、見つかったのが1件の時に AIX【物件オススメ】で果たすのは正しい
  *   （1件ならオススメ・複数ならピックアップ＝新着の約束 ef5b7dbe・代わりの物件 5cb4bd2f と同じ考え）。14日の切れ 9件は全部この形の数え違い。
- *   LINK_WATCH_PICKUP_BY_RECOMMEND=on の時は取り違えに数えない（既定 off）
+ *   取り違えに数えない。2026-11-07 作業員1（弱い所 32）: 既定 on（直近10日の切れ 3件も全部この形・on で 0／40）。止める LINK_WATCH_PICKUP_BY_RECOMMEND=off
  */
 export function linkWatchPickupByRecommendEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.LINK_WATCH_PICKUP_BY_RECOMMEND ?? "").trim().toLowerCase() === "on";
+  return (env.LINK_WATCH_PICKUP_BY_RECOMMEND ?? "").trim().toLowerCase() !== "off";
 }
 export function isPickupButtonMislabeled(watch: boolean, aixType: string, sendMode: string | null | undefined, env?: Record<string, string | undefined>): boolean {
   if (!watch) return aixType === "property_recommendation" && !linkWatchPickupByRecommendEnabled(env);

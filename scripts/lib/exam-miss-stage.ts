@@ -96,14 +96,17 @@ export function classifyMiss(r: MissRowLite): MissVerdict {
   const ess = (ess0 && ess0.startsWith("AIX:") ? essenceOverride(r.raw as Record<string, unknown> | null, (r.trace?.pickup_ready as boolean | null | undefined) ?? null) : null) ?? ess0, fin = r.path?.code ?? null, dr = r.draft?.code ?? null;
   const m = markersOf(r);
   const st: StageHit[] = [];
+  // 2026-11-07 統括役（作業員7の確かめ・弱い所 394）: 最終の道が正解の回は、道を変えた段（2段・決まった書き換え・ブレイン）を外れの段にしない。
+  //   2段が道を正解の向きに変えた回（q081・q174・q011）は、外れが依頼／下書きの側＝書き手（持ち主 作業員9）
+  const pathOk = r.path?.ok === true;
   // ブレインの生の答えが外れ（読みの材料: customer_questions・proposals の頭）
-  if (r.essence && r.essence.ok === false) {
+  if (!pathOk && r.essence && r.essence.ok === false) {
     const dirHead = (r.brain?.reply_direction ?? r.raw?.reply_direction ?? "").trim();
     const read = [flat(r.raw?.customer_questions), flat(r.raw?.proposals), TWO_STAGE_DIRECTION_TAIL.test(dirHead) ? "" : dirHead.slice(0, 40)].filter(Boolean).join(" / ").replace(/\s+/g, " ").slice(0, 100);
     st.push({ stage: "brain", marker: "brain:essence", note: `生の答え ${ess}${read ? `（読み: ${read}）` : ""}` });
   }
   // 道を変えた段（印の順。decision:llm は2層目のブレイン）
-  for (const x of m.filter((y) => y !== "decision:llm")) {
+  for (const x of pathOk ? [] : m.filter((y) => y !== "decision:llm")) {
     if (/^(?:decision:two_stage|two_stage:)/.test(x)) { if (!st.some((s) => s.stage === "two_stage")) st.push({ stage: "two_stage", marker: x, note: `2段の決まった書き換え ${x}` }); }
     else if (/^log:answerable-direct/.test(x) || /^decision:(?:guard|answerable|direct)/.test(x)) st.push({ stage: "rewrite", marker: x, note: `決まった書き換え ${x}` });
     else if (/^log:/.test(x)) st.push({ stage: "rewrite", marker: x, note: `記録の印 ${x}` });
@@ -124,7 +127,8 @@ export function classifyMiss(r: MissRowLite): MissVerdict {
     if (r.brain?.turn_contract) st.push({ stage: "text", marker: "text:turn_contract", note: "本質の帯（turn_contract）に沿った文の要点が抜けた" });
     if (!st.some((s) => s.stage === "text")) st.push({ stage: "final_check", marker: "final_check", note: "道は同じで下書きの要点が抜けた（最終チェックの消しか書き手）" });
   }
-  if (!st.length && r.path?.ok && (r.asks ?? []).some((a) => a.covered === false)) st.push({ stage: "asks", marker: "asks", note: "道は正解で依頼の答え方が抜けた" });
+  // 道が正解の回は、外れの段の頭を書き手（依頼／下書きの側）にする（文の中身・最終チェックの段は細目として後ろに残す）
+  if (pathOk && !st.some((x) => x.stage === "writer" || x.stage === "final_check")) st.unshift({ stage: "writer", marker: "writer:asks", note: (r.asks ?? []).some((a) => a.covered === false) ? "道は正解で依頼の答え方が抜けた（依頼／下書きの側）" : "道は正解で依頼／下書きの側で外れた" });
   if (!st.length) st.push({ stage: "none", marker: "none", note: "段が決められない" });
   const cause: MissCause = r.essence?.ok && !r.path?.ok ? (isAix(ess) && isReplyLike(fin) ? "AIX の番を返信にした" : "場面・決まりの読み違い") : "要確認";
   const primary = st.find((s) => s.stage !== "brain") ?? st[0];

@@ -243,16 +243,26 @@ describe("PROCEDURE_MOVE_IN_WIDE（実物）", () => {
 });
 
 // 2026-11-06 作業員1（型2・決め打ちを下げる時の材料）: 物件を指す問いか
-import("../procedure-question").then(({ procedurePointsToProperty, procedureMoveInBrainLine }) => {
+import("../procedure-question").then(({ procedurePointsToProperty, procedureMoveInBrainLine, procedureUnknownPointsOnlyOn }) => {
   describe("物件を指す問いか（実物）", () => {
     for (const [t, want] of [
       ["最短入居日どのくらいですね", false], ["最短でどのくらいで入居までいけますか", false], ["こんばんは。\nどの物件もそうなんですが、最短でいつ頃入居できますでしょうか？", false],
       ["ちなみにここは入居可能日いつ頃ですか？", true], ["４階の物件は早くて何日から入居できるかはわからないですよね？", true], ["この物件の最短入居可能日はいつですか？", true],
       ["ここだと最短でいつ入居可能ですか！？", true], ["1つ目に送らせていただいた物件だと、別の方が契約しない場合いつ入居可能ですか？", true],
     ] as const) it(`${want ? "指す" : "指さない"}: ${t.slice(0, 20)}`, () => eq(procedurePointsToProperty(t), want));
+    it("②のスイッチは既定 off", () => { eq(procedureUnknownPointsOnlyOn({}), false); eq(procedureUnknownPointsOnlyOn({ PROCEDURE_UNKNOWN_POINTS_ONLY: "on" }), true); });
+    it("q092（ここは最短11月中旬・確認が正解）は物件を指す＝2択／確認のまま", () => eq(procedurePointsToProperty("見てきました。\nここは最短11月中旬でしょうか？\n10月後半くらいに入れるところとかありますか？"), true));
+    it("q145（最短でも入居可能日は11月中旬・返信が正解）は指さない＝返信へ", () => eq(procedurePointsToProperty("最短でも入居可能日は11月中旬でしょうか？"), false));
     it("対象のお部屋の名前で指す（シーズンフラッツ）", () => eq(procedurePointsToProperty("シーズンフラッツ第一候補なんですけど最短入居日っていつになりますか？", "シーズンフラッツ心斎橋EAST"), true));
     it("材料: 指さない問いは資料が無くても会社の事実で返信", () => ok(procedureMoveInBrainLine({ text: "最短入居日どのくらいですね", moveInKnown: false }).includes("一般の問いは、資料に入居時期が無くても会社の事実で返信")));
     it("材料: 指す問いで資料が無い時は確認", () => ok(procedureMoveInBrainLine({ text: "ここは入居可能日いつ頃ですか？", moveInKnown: false }).includes("管理会社に確認")));
+    // q374（proc-points-dig-1107）: 一般の問いを返信に決めた後、約束の依頼からの2段（tcPromiseAix→check）で確認の約束に戻っていた
+    it("配線: 一般の問いで返信に決めた番は tcPromiseAix の2段に回さない", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const src: string = require("fs").readFileSync(require("path").join(__dirname, "../brain-core.ts"), "utf8");
+      ok(/if \(unknownButGeneral\) procedureGeneralReply = true;/.test(src));
+      ok(/const tcPromiseAix = !finalAix && !procedureGeneralReply && tcPromiseTwoStageEnabled\(\)/.test(src));
+    });
   });
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed) { console.log(failures.join("\n")); process.exit(1); }
