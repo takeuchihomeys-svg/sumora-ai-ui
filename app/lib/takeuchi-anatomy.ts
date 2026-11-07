@@ -100,3 +100,19 @@ export function anatomyConflicts(a: Anatomy, body: string): string[] {
   if (detCta !== llmCta) out.push(`誘い: 札=${detCta ? "あり" : "なし"}・下読み=${llmCta ? "あり" : "なし"}`);
   return out;
 }
+
+/** 2026-11-07 作業員5（統括役・物差しの側）: 重点の正解の札は読み直すたびに約3割揺れる（81番を3回読んで 3回とも同じ 51・2/3 26・割れる 4）。
+ *   重点だけ何回か読み、多数（半分より多い）を札にする。割れた番は focus を null にして数えない（focus_votes に読んだ札を残す）。
+ *   回数は TAKEUCHI_ANATOMY_FOCUS_VOTES（既定 3・=1 で今まで通りの1回読み） */
+export function anatomyFocusVotes(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): number {
+  const n = Math.round(Number(env.TAKEUCHI_ANATOMY_FOCUS_VOTES ?? "3"));
+  return Number.isFinite(n) && n >= 1 && n <= 5 ? n : 3;
+}
+export function majorityFocus(votes: ReadonlyArray<string | null | undefined>): { focus: string | null; votes: string[]; split: boolean } {
+  const vs = votes.filter((v): v is string => !!v && (FOCUS_KINDS as readonly string[]).includes(v));
+  const c = new Map<string, number>();
+  for (const v of vs) c.set(v, (c.get(v) ?? 0) + 1);
+  const top = [...c.entries()].sort((a, b) => b[1] - a[1])[0];
+  const focus = top && top[1] * 2 > votes.length ? top[0] : null;
+  return { focus, votes: vs, split: !focus && vs.length > 0 };
+}

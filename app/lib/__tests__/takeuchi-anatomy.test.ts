@@ -1,5 +1,5 @@
 // app/lib/__tests__/takeuchi-anatomy.test.ts — 竹内さんの文の解剖（純関数・文は作り物）
-import { pickBalanced, parseAnatomy, anatomyConflicts, anatomyPrompt, ANATOMY_SYSTEM, ANATOMY_SYSTEM_FOCUS, anatomyFocusOn } from "../takeuchi-anatomy";
+import { pickBalanced, parseAnatomy, anatomyConflicts, anatomyPrompt, ANATOMY_SYSTEM, ANATOMY_SYSTEM_FOCUS, anatomyFocusOn, majorityFocus, anatomyFocusVotes } from "../takeuchi-anatomy";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean, info?: unknown) => { if (ok) pass++; else { fail++; console.log(`  NG ${n} → ${JSON.stringify(info)}`); } };
 
@@ -34,5 +34,9 @@ const odd = '{"scene":"x","purpose":"decline","main_point":"募集終了の報�
 t("一覧の外の purpose: 既定は捨てる", parseAnatomy(odd) === null);
 const kept = parseAnatomy(odd, { fallbackPurpose: "inform" });
 t("一覧の外の purpose: fallback で残し purpose_raw を持つ", kept?.purpose === "inform" && kept?.purpose_raw === "decline" && kept?.focus === "answer", kept);
+t("重点の多数: 2/3 は採る", majorityFocus(["ease", "ease", "relation"]).focus === "ease");
+t("重点の多数: 割れたら null・split", (() => { const m = majorityFocus(["ease", "answer", "relation"]); return m.focus === null && m.split && m.votes.length === 3; })());
+t("重点の多数: 読めない回は数に入れて過半を求める", majorityFocus(["ease", null, null]).focus === null);
+t("重点の回数: 既定 3・=1 で1回読み・変な値は 3", anatomyFocusVotes({}) === 3 && anatomyFocusVotes({ TAKEUCHI_ANATOMY_FOCUS_VOTES: "1" }) === 1 && anatomyFocusVotes({ TAKEUCHI_ANATOMY_FOCUS_VOTES: "x" }) === 3);
 console.log(`takeuchi-anatomy: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);

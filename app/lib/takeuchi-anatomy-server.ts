@@ -7,7 +7,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { sumoraLlmMarks } from "./llm-usage-recorder";
 import { readAltConfig, shouldRouteAlt } from "./llm-alt-provider";
-import { pickBalanced, ANATOMY_SYSTEM, ANATOMY_SYSTEM_FOCUS, anatomyFocusOn, anatomyPrompt, parseAnatomy, anatomyConflicts } from "./takeuchi-anatomy";
+import { pickBalanced, ANATOMY_SYSTEM, ANATOMY_SYSTEM_FOCUS, anatomyFocusOn, anatomyPrompt, parseAnatomy, anatomyConflicts, anatomyFocusVotes, majorityFocus } from "./takeuchi-anatomy";
 import { COMPOSE_PURPOSES, purposeOfText, type ComposePurpose } from "./compose-blueprint";
 
 /** 重点を読ませる間に広げる通数（新しい順・竹内さんの番 約1,000番・統括役了承 11/05） */
@@ -73,7 +73,7 @@ export async function runTakeuchiAnatomy(opts: { dry?: boolean; limit?: number; 
     if (focusMode) {
       const { data: edge } = await sb.from("takeuchi_compose_examples").select("sent_at").order("sent_at", { ascending: false }).range(FOCUS_WIDEN_TOTAL - 1, FOCUS_WIDEN_TOTAL - 1);
       const cutoff = ((edge ?? []) as Array<{ sent_at: string }>)[0]?.sent_at ?? null;
-      q = q.or("anatomy.is.null,anatomy->>focus.is.null").or("anatomy_model.is.null,anatomy_model.not.like.*parse_failed*");
+      q = q.or("anatomy.is.null,anatomy->>focus.is.null").or("anatomy_model.is.null,and(anatomy_model.not.like.*parse_failed*,anatomy_model.not.like.*focus_split*)");
       if (cutoff) q = q.gte("sent_at", cutoff);
     } else q = q.eq("anatomy_pick", true).is("anatomy", null);
     const { data: todo, error } = await q.order("sent_at", { ascending: false }).limit(Math.min(opts.limit ?? 50, cap));
@@ -89,6 +89,7 @@ export async function runTakeuchiAnatomy(opts: { dry?: boolean; limit?: number; 
     }
     let read = 0, parsed = 0, conflicts = 0;
     const key = process.env.ANTHROPIC_API_KEY ?? "";
+    const votes = focusMode ? anatomyFocusVotes() : 1;
     const readOne = async (r: (typeof list)[number]) => {
       try {
         const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -113,7 +114,28 @@ export async function runTakeuchiAnatomy(opts: { dry?: boolean; limit?: number; 
         parsed++;
         const cf = anatomyConflicts(a, r.body);
         if (cf.length) conflicts++;
-        const up = await sb.from("takeuchi_compose_examples").update({ anatomy: a, anatomy_model: `${ANATOMY_ACTION}:${d.model ?? "alt"}`, anatomy_at: new Date().toISOString(), anatomy_conflicts: cf }).eq("message_id", r.message_id);
+        // 2026-11-07 作業員5（統括役・物差しの側）: 重点だけ追加で読み、多数を札にする（既定 3回・TAKEUCHI_ANATOMY_FOCUS_VOTES=1 で1回読み）。
+        //   割れた番は focus=null・focus_votes に読んだ札・anatomy_model に :focus_split（次の夜に読み直さない）
+        let modelTag = `${ANATOMY_ACTION}:${d.model ?? "alt"}`;
+        if (focusMode && votes > 1) {
+          const extra = await Promise.all(Array.from({ length: votes - 1 }, async () => {
+            try {
+              const r2 = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST", signal: AbortSignal.timeout(30_000),
+                headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", ...sumoraLlmMarks(ANATOMY_ACTION) },
+                body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 650, system: ANATOMY_SYSTEM_FOCUS, messages: [{ role: "user", content: anatomyPrompt({ maskedCustomer: r.customer_gist, maskedBody: r.body, scene: r.scene, situation: sitOf.get(r.message_id) ?? null }) }] }),
+              });
+              if (!r2.ok) return null;
+              const d2 = await r2.json() as { content?: Array<{ type: string; text?: string }> };
+              return (parseAnatomy(d2.content?.find((b) => b.type === "text")?.text ?? "", { fallbackPurpose: "inform" }) as { focus?: string | null } | null)?.focus ?? null;
+            } catch { return null; }
+          }));
+          const m = majorityFocus([(a as { focus?: string | null }).focus ?? null, ...extra]);
+          (a as { focus?: string | null; focus_votes?: string[] }).focus = m.focus as never;
+          (a as { focus_votes?: string[] }).focus_votes = m.votes;
+          if (m.split) modelTag += ":focus_split";
+        }
+        const up = await sb.from("takeuchi_compose_examples").update({ anatomy: a, anatomy_model: modelTag, anatomy_at: new Date().toISOString(), anatomy_conflicts: cf }).eq("message_id", r.message_id);
         if (up.error) throw new Error(up.error.message);
       } catch (e) { console.warn(JSON.stringify({ tag: "anatomy:failed", error: e instanceof Error ? e.message : String(e) })); }
     };
@@ -121,7 +143,7 @@ export async function runTakeuchiAnatomy(opts: { dry?: boolean; limit?: number; 
       const par = focusMode ? 5 : 1;
       for (let i = 0; i < list.length; i += par) {
         if (Date.now() - t0 > (opts.budgetMs ?? 200_000)) break;
-        if (opts.costCapUsd != null && (spentUsd ?? 0) + (read + par) * ANATOMY_EST_USD_PER_CALL >= opts.costCapUsd) break;
+        if (opts.costCapUsd != null && (spentUsd ?? 0) + (read + par) * votes * ANATOMY_EST_USD_PER_CALL >= opts.costCapUsd) break;
         const batch = list.slice(i, i + par);
         read += batch.length;
         await Promise.all(batch.map(readOne));

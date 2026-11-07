@@ -28,13 +28,15 @@ async function main() {
   }
   // 解剖の重点（その番の最初のスタッフの送信の前後3分）
   const convs = [...new Set(turns.map((t) => t.conversation_id))];
-  const anat = new Map<string, { at: number; focus: Focus }[]>();
+  const anat = new Map<string, { at: number; focus: Focus | null }[]>();
   for (let i = 0; i < convs.length; i += 200) {
     const { data, error: e } = await sb.from("takeuchi_compose_examples").select("conversation_key, sent_at, anatomy").in("conversation_key", convs.slice(i, i + 200)).gte("sent_at", since).range(0, 999);
     if (e) { console.error(`解剖は読めない（${e.message}）→ 決まった札だけで数える`); break; }
-    for (const r of (data ?? []) as { conversation_key: string; sent_at: string; anatomy: { focus?: unknown } | null }[]) {
-      if (!isFocus(r.anatomy?.focus)) continue;
-      (anat.get(r.conversation_key) ?? anat.set(r.conversation_key, []).get(r.conversation_key)!).push({ at: Date.parse(r.sent_at), focus: r.anatomy!.focus as Focus });
+    for (const r of (data ?? []) as { conversation_key: string; sent_at: string; anatomy: { focus?: unknown; focus_votes?: unknown } | null }[]) {
+      // 11/07: 3回読みで割れた番（focus=null・focus_votes あり）は正解なし＝数えない（決まった札にも落とさない）
+      const split = r.anatomy?.focus == null && Array.isArray(r.anatomy?.focus_votes);
+      if (!isFocus(r.anatomy?.focus) && !split) continue;
+      (anat.get(r.conversation_key) ?? anat.set(r.conversation_key, []).get(r.conversation_key)!).push({ at: Date.parse(r.sent_at), focus: split ? null : (r.anatomy!.focus as Focus) });
     }
   }
   type Row = { scene: string; fc: Focus; gold: Focus | null; goldBy: "anatomy" | "rule" | null; conflict: string | null; finalAix: string | null };
@@ -50,7 +52,7 @@ async function main() {
     const route: "aix" | "reply" = aix0 && (!txt0 || aix0.at <= txt0.at) ? "aix" : "reply";
     const a = (anat.get(t.conversation_id) ?? []).filter((x) => Math.abs(x.at - firstAt) <= 3 * 60_000).sort((x, y) => Math.abs(x.at - firstAt) - Math.abs(y.at - firstAt))[0];
     const rule = focusOfTakeuchiTurn({ route, aixType: aix0?.aix_type ?? null, text: txt0?.text ?? "" });
-    const gold = a?.focus ?? rule;
+    const gold = a ? a.focus : rule;
     const finalAix = (t.brain_reply_mode ?? d?.suggested_reply_mode) === "aix" ? (t.brain_action ?? d?.suggested_action ?? null) : null;
     rows.push({ scene: t.scene_key ?? "(場面なし)", fc: fcRaw, gold, goldBy: a ? "anatomy" : gold ? "rule" : null, conflict: focusConflict(fcRaw, { aix: finalAix }), finalAix });
   }
