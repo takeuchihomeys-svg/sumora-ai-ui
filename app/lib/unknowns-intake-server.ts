@@ -3,7 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UnknownHit } from "./brain-unknowns";
 import { prodMissHits, selfReportHits, type ProdTurn, type DigestSelfReport } from "./unknowns-intake";
-import { staffFirstMove, aixLogsFromWatch } from "./staff-first-move";
+import { staffFirstMove, aixLogsFromWatch, staffMoveExclusion, ackSceneOf } from "./staff-first-move";
 import { isTestConversation } from "./test-conversations";
 
 const PAGE = 1000;
@@ -29,10 +29,10 @@ export async function loadSelfReportHits(sb: SupabaseClient, fromIso: string, to
  */
 export async function loadProdMissHits(sb: SupabaseClient, fromIso: string, toIso: string): Promise<UnknownHit[]> {
   const lagFrom = new Date(Date.parse(fromIso) - 86_400_000).toISOString(), lagTo = new Date(Date.parse(toIso) - 86_400_000).toISOString();
-  type W = { id: number; conversation_id: string; customer_turn_at: string; brain_action: string | null; decision_id: string | null; staff_aix: unknown };
+  type W = { id: number; conversation_id: string; customer_turn_at: string; brain_action: string | null; decision_id: string | null; staff_aix: unknown; scene_key?: string | null };
   const turns: W[] = [];
   for (let off = 0; off < MAX_ROWS; off += PAGE) {
-    const { data, error } = await sb.from("line_watch_turns").select("id, conversation_id, customer_turn_at, brain_action, decision_id, staff_aix")
+    const { data, error } = await sb.from("line_watch_turns").select("id, conversation_id, customer_turn_at, brain_action, decision_id, staff_aix, scene_key")
       .gte("customer_turn_at", lagFrom).lt("customer_turn_at", lagTo).not("decision_id", "is", null).order("id", { ascending: true }).range(off, off + PAGE - 1);
     if (error) throw new Error(`line_watch_turns: ${error.message}`);
     const pg = (data ?? []) as W[];
@@ -63,10 +63,12 @@ export async function loadProdMissHits(sb: SupabaseClient, fromIso: string, toIs
       if (pg.length < PAGE) break;
     }
   }
-  const prod: ProdTurn[] = turns.map((w) => {
+  // 2026-11-07 作業員1: 後で送った AIX・お礼の番の約束の果たしはブレインの外れに入れない（staffMoveExclusion・WATCH_COUNT_LATE_AIX=off で前の数え）
+  const prod: ProdTurn[] = turns.flatMap((w) => {
     const fm = staffFirstMove(Date.parse(w.customer_turn_at), staff.get(w.conversation_id) ?? [], aixLogsFromWatch(w.staff_aix as never));
-    return { turnId: w.id, conversationId: w.conversation_id, at: w.customer_turn_at, brainAction: w.brain_action, twoChoice: tc.has(String(w.decision_id)),
-      staffWriter: fm?.writer ?? null, staffMove: fm ? { kind: fm.kind, aix: fm.aix } : null };
+    if (staffMoveExclusion(Date.parse(w.customer_turn_at), fm, { ackOnly: ackSceneOf(w.scene_key) })) return [];
+    return [{ turnId: w.id, conversationId: w.conversation_id, at: w.customer_turn_at, brainAction: w.brain_action, twoChoice: tc.has(String(w.decision_id)),
+      staffWriter: fm?.writer ?? null, staffMove: fm ? { kind: fm.kind, aix: fm.aix } : null }];
   });
   return prodMissHits(prod);
 }

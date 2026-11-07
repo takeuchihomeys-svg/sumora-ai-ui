@@ -4,7 +4,7 @@
 //   重い読みは夜だけ（呼ぶ側の cron が JST 22〜9 に動く・営業時間の手動実行はしない）
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTestConversation } from "@/app/lib/test-conversations";
-import { staffFirstMove, aixLogsFromWatch } from "@/app/lib/staff-first-move";
+import { staffFirstMove, aixLogsFromWatch, staffMoveExclusion, ackSceneOf } from "@/app/lib/staff-first-move";
 import { tallyWeekly, weeklyRows, writerOfTurn, brainManualsWeeklyOn, type WeeklyTurn, type ExistingRow, type ManualUpsert, type WeeklyStats } from "@/app/lib/brain-manuals-weekly";
 
 type Turn = { conversation_id: string; customer_turn_at: string; staff_first_at: string | null; brain_reply_mode: string | null; brain_action: string | null; staff_aix: Array<{ aix_type?: string; at?: string; check_pattern?: string | null }> | null; verdict: string | null; scene_key: string | null };
@@ -37,7 +37,10 @@ export async function runBrainManualsWeekly(sb: SupabaseClient, o: { days?: numb
     for (const m of ms) { const l = byConv.get(m.conversation_id) ?? []; l.push(m); byConv.set(m.conversation_id, l); }
   }
   // 2026-11-04 物差しを揃える: こちらの「最初の一手」で比べる（staff-first-move・後から押した AIX を一手にしない）
-  const recs: WeeklyTurn[] = turns.map((t) => { const fm = staffFirstMove(Date.parse(t.customer_turn_at), (byConv.get(t.conversation_id) ?? []).map((m) => ({ at: Date.parse(m.created_at), isAix: !!m.is_aix_generated, writer: m.staff_writer })), aixLogsFromWatch(t.staff_aix)); return {
+  // 2026-11-07 作業員1: 後で送った AIX（約束の果たし）・お礼の番の約束の果たしは当たり外れに入れない（staffMoveExclusion・WATCH_COUNT_LATE_AIX=off で前の数え）
+  const recs: WeeklyTurn[] = turns.flatMap((t) => { const fm = staffFirstMove(Date.parse(t.customer_turn_at), (byConv.get(t.conversation_id) ?? []).map((m) => ({ at: Date.parse(m.created_at), isAix: !!m.is_aix_generated, writer: m.staff_writer })), aixLogsFromWatch(t.staff_aix));
+    if (staffMoveExclusion(Date.parse(t.customer_turn_at), fm, { ackOnly: ackSceneOf(t.scene_key) })) return [];
+    return [{
     writer: writerOfTurn(t.customer_turn_at, t.staff_first_at, byConv.get(t.conversation_id) ?? []),
     scene: t.scene_key,
     brainMode: t.brain_reply_mode,
@@ -45,7 +48,7 @@ export async function runBrainManualsWeekly(sb: SupabaseClient, o: { days?: numb
     staffAix: fm?.kind === "aix" && fm.aix ? [fm.aix] : [],
     verdict: t.verdict,
     hasStaff: !!fm,
-  }; });
+  }]; });
   const stats = tallyWeekly(recs);
   // 2026-11-04 手元の確かめ（サーバーの鍵なし・apply=false）だけ: 今の行を外から渡せる（brain_manuals は RLS で公開キーでは読めない）
   let ex: unknown[] | null = o.existing ?? null;
