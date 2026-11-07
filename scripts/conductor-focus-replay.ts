@@ -36,6 +36,9 @@ const DIR = join(process.cwd(), "..", "..", "exam-cache", "conductor-focus");
     const pool = turns.slice(100).filter((t) => !goldFile || gold.has(t.id));
     const pick: T[] = [];
     // 2026-11-07: --ids=<id,... のファイル> を渡すと、その番だけ（狙いの型の番を選んで解き直す・偏りなくの選び方は使わない）
+    // 開いている約束からの経過（11/07 の試し: 40＋20番で 近い番あり 35→34＝効かず・本体には入れていない）
+    const elapsedLine = (m: number) => `【開いている約束からの経過】こちらが確認・ピックアップ・御見積書を約束したのは ${m < 60 ? `${m}分前` : m < 1440 ? `${Math.round(m / 60)}時間前` : `${Math.round(m / 1440)}日前`}`;
+    const elapsed = (arg("elapsed") ? JSON.parse(readFileSync(arg("elapsed"), "utf8")) : {}) as Record<string, number>;
     const idsFile = arg("ids");
     if (idsFile) { const want = new Set(readFileSync(idsFile, "utf8").trim().split(",")); pick.push(...turns.filter((t) => want.has(t.id))); }
     else for (const k of F.FOCUS_KINDS) pick.push(...pool.filter((t) => t.focus === k).sort((a, b) => a.id.localeCompare(b.id)).slice(0, per));
@@ -67,7 +70,9 @@ const DIR = join(process.cwd(), "..", "..", "exam-cache", "conductor-focus");
       const sf = F.sceneMajorityFocus(prev.filter((p) => p.scene === t.scene).map((p) => p.focus as never));
       const neigh = prev.map((p) => ({ id: p.id, focus: p.focus as never, dist: 1 - dot(t.e2, p.e2) })).sort((x, y) => x.dist - y.dist).slice(0, 30);
       const near = F.nearestFocus(neigh, { band: 0.2, minN: 5, sceneFocus: sf });
-      const base = `【今の番の状況（伏せた材料）】\n${t.v2}`;
+      // 2026-11-07: --elapsed=<id→分 の json> を渡すと、開いている約束からの経過の1行を足す（入口の材料の試し）
+      const elapsedMin = elapsed[t.id];
+      const base = `【今の番の状況（伏せた材料）】\n${t.v2}${elapsedMin != null ? `\n${elapsedLine(elapsedMin)}` : ""}`;
       const [ra, rb] = await Promise.all([ask(base), ask(`${base}\n\n${F.nearFocusLine(near)}`)]);
       if (!ra || !rb) { fail++; continue; }
       n++; if (ra.focus === t.focus) a++; if (rb.focus === t.focus) b++; if (near?.focus === t.focus) nearHit++;
