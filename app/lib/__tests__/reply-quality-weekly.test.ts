@@ -1,6 +1,6 @@
 // 返信の番だけの文の質の週ごとの物差し（2026-11-07 作業員9）
 // 実行: npx tsx app/lib/__tests__/reply-quality-weekly.test.ts
-import { jstWeekOf, lowKindOf, weeklyReplyQuality, nearestStaffMessage, weeklyTable, type QualityRow } from "../reply-quality-weekly";
+import { jstWeekOf, lowKindOf, weeklyReplyQuality, nearestStaffMessage, weeklyTable, bigramCover, turnRepliesOf, type QualityRow } from "../reply-quality-weekly";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, extra); } };
 
@@ -23,5 +23,21 @@ t("AIX の番と従業員は除く", s[1].n === 2 && s[1].avg === 0.7 && s[1].lo
 t("一番近いスタッフの通（3分以内）", nearestStaffMessage("2026-11-03T01:00:00Z", [{ created_at: "2026-11-03T01:02:00Z", k: 1 }, { created_at: "2026-11-03T00:59:30Z", k: 2 }])?.k === 2);
 t("3分を超えたら無し", nearestStaffMessage("2026-11-03T01:00:00Z", [{ created_at: "2026-11-03T01:04:00Z" }]) === null);
 t("表の形", weeklyTable(s).split("\n").length === 4);
+// 11/07 分けた番の欄（実物の形を伏せた物）
+const conv = [
+  { created_at: "2026-11-03T00:00:00Z", sender: "customer", text: "車で来ているのですが、停めれる場所はありますか?", is_aix_generated: false },
+  { created_at: "2026-11-03T00:05:00Z", sender: "staff", text: "かしこまりました！！", is_aix_generated: false },
+  { created_at: "2026-11-03T00:06:00Z", sender: "staff", text: "[AIX]", is_aix_generated: true },
+  { created_at: "2026-11-03T00:07:00Z", sender: "staff", text: "お近くのコインパーキングに駐車の程よろしくお願いいたします！！", is_aix_generated: false },
+  { created_at: "2026-11-03T01:00:00Z", sender: "staff", text: "遅い通", is_aix_generated: false },
+  { created_at: "2026-11-03T02:00:00Z", sender: "customer", text: "次", is_aix_generated: false },
+];
+const tr = turnRepliesOf("2026-11-03T00:05:10Z", conv);
+t("番の返信: AIX と30分後を除く", tr.length === 2 && tr[1].startsWith("お近く"), tr);
+t("重なり: 全部入れば1・空は null", bigramCover("かしこまりました！！", "かしこまりました！！") === 1 && bigramCover("", "") === null);
+const sp = weeklyReplyQuality([{ sentAt: "2026-11-03T00:05:10Z", similarity: 0.7, draft: "かしこまりました！！", sent: "かしこまりました！！", writer: "takeuchi", aix: false, turnReplies: tr }]);
+t("分けた番の欄: 1通目は全部入り・全部つないだ物は低い", sp[0].split?.n === 1 && sp[0].split?.coverFirst === 1 && (sp[0].split?.coverAll ?? 1) < 0.6, sp[0].split);
+t("表に分けた番の列", weeklyTable(sp).includes("分けた番"));
+t("turnReplies が無い行だけなら列を出さない", !weeklyTable(s).includes("分けた番"));
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

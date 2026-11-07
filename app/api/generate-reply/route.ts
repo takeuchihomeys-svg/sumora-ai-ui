@@ -2,6 +2,7 @@ import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSente
 import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { positiveNoNegativeEnabled, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
+import { replySplitWriterNote, replyCountOf } from "@/app/lib/reply-split";
 import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR, mgmtNightClosingOn, nightMgmtClosingLine } from "@/app/lib/mgmt-hours-split";
 import { brainStaffBurstWaitEnabled, staffSendingNow } from "@/app/lib/staff-burst";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
@@ -5607,6 +5608,13 @@ async function handleGenerateReply(req: NextRequest) {
         firstContact: isFirstEverReplyFromMsgs === true, nearKeepShare: composeNearKeepShare,
       }) }) : null;
       if (brainDirTop) lines.push(`- 🧠 ブレインの返信の方向（中身・上の本質と同じ側）: ${brainDirTop.slice(0, 160)}`);
+      // 2026-11-07 作業員9（竹内さん「下書きを通ごとに分けて出す」・REPLY_SPLIT_WRITER 既定 off）: ブレインが返信を2〜3通に分けると決めた番
+      //   （作業員7の meta.send_sequence_reply_count）だけ、通ごとの役目と分け目の印「---」を1行（app/lib/reply-split.ts）
+      const splitCount = replyCountOf(brainMeta as { send_sequence_reply_count?: unknown } | null);
+      const splitNoteLine = replySplitWriterNote(splitCount,
+        ((brainMeta as { send_sequence?: Array<{ slot?: string; role?: string }> } | null)?.send_sequence ?? [])
+          .filter((x) => x?.slot === "reply" && typeof x.role === "string").map((x) => String(x.role)));
+      if (splitNoteLine) { lines.push(splitNoteLine); console.info("[reply-split]", JSON.stringify({ conversationId, count: splitCount })); }
       // 2026-11-05 作業員9（弱い所 324・KB P1 9fd703f4）: 2段の確認の方向の結び「確認出来次第ご連絡」が下の【管理会社の状況】の「明日」より勝っていた＝
       //   夜の管理会社への確認だけ、方向のすぐ下で結びの前に「本日管理会社営業時間外の為、明日」を入れさせる（判断・結びの言葉は変えない・MGMT_NIGHT_CLOSING=on・既定 off）
       if (mgmtNightClosingOn() && /確認出来次第ご連絡/.test(`${brainDirTop ?? ""}\n${effectiveReplyDirection ?? ""}`)) {

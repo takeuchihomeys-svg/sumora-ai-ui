@@ -2,11 +2,11 @@
 //   返信の番だけの文の質（作業員9の app/lib/reply-quality-weekly.ts の純関数）を、終わった週とその前の週の分だけ読む。
 //   読み方は scripts/reply-quality-weekly.ts と同じ（ai_reply_examples を 1000行の頁・スタッフの通は会話 200件ずつ・前後3分で一番近い通）。LLM なし
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { weeklyReplyQuality, nearestStaffMessage, jstWeekOf, type QualityRow, type WeekStat } from "@/app/lib/reply-quality-weekly";
+import { weeklyReplyQuality, nearestStaffMessage, jstWeekOf, turnRepliesOf, type QualityRow, type WeekStat } from "@/app/lib/reply-quality-weekly";
 
-const PAGE = 1000, MAX_ROWS = 5000;
+const PAGE = 1000, MAX_ROWS = 5000, MSG_MAX_ROWS = 20000;
 type Ex = { conversation_id: string; sent_at: string; ai_similarity: number | null; ai_draft: string | null; sent_reply: string | null };
-type Msg = { conversation_id: string; created_at: string; staff_writer: string | null; is_aix_generated: boolean | null };
+type Msg = { conversation_id: string; created_at: string; sender: string; text: string | null; staff_writer: string | null; is_aix_generated: boolean | null };
 
 /** JST の今週の月曜 0時から weeks 週前（今週は含めて数え、比べる時に外す） */
 export function reflectionSince(now: number, weeks: number): string {
@@ -32,17 +32,20 @@ export async function loadReplyQualityStats(sb: SupabaseClient, o: { now?: numbe
   const msgs = new Map<string, Msg[]>();
   const sinceMsg = new Date(Date.parse(since) - 5 * 60_000).toISOString();
   for (let i = 0; i < convIds.length; i += 200) {
-    for (let from = 0; from < MAX_ROWS; from += PAGE) {
-      const { data, error } = await sb.from("messages").select("conversation_id, created_at, staff_writer, is_aix_generated")
-        .in("conversation_id", convIds.slice(i, i + 200)).neq("sender", "customer").gte("created_at", sinceMsg).order("created_at", { ascending: true }).range(from, from + PAGE - 1);
+    // 2026-11-07 作業員9: お客様の通と本文も読む（番の区切りと、返信を2〜3通に分けた番の中身の入りを見るため）
+    for (let from = 0; from < MSG_MAX_ROWS; from += PAGE) {
+      const { data, error } = await sb.from("messages").select("conversation_id, created_at, sender, text, staff_writer, is_aix_generated")
+        .in("conversation_id", convIds.slice(i, i + 200)).gte("created_at", sinceMsg).order("created_at", { ascending: true }).range(from, from + PAGE - 1);
       if (error) return null;
       for (const m of (data ?? []) as Msg[]) (msgs.get(m.conversation_id) ?? msgs.set(m.conversation_id, []).get(m.conversation_id)!).push(m);
       if ((data ?? []).length < PAGE) break;
     }
   }
   const rows: QualityRow[] = rowsIn.map((e) => {
-    const m = nearestStaffMessage(e.sent_at, msgs.get(e.conversation_id) ?? []);
-    return { sentAt: e.sent_at, similarity: Number(e.ai_similarity), draft: e.ai_draft ?? "", sent: e.sent_reply ?? "", writer: m?.staff_writer ?? null, aix: m?.is_aix_generated ?? null };
+    const conv = msgs.get(e.conversation_id) ?? [];
+    const m = nearestStaffMessage(e.sent_at, conv.filter((x) => x.sender !== "customer"));
+    return { sentAt: e.sent_at, similarity: Number(e.ai_similarity), draft: e.ai_draft ?? "", sent: e.sent_reply ?? "", writer: m?.staff_writer ?? null, aix: m?.is_aix_generated ?? null,
+      turnReplies: turnRepliesOf(e.sent_at, conv) };
   });
   return { since, currentWeek: jstWeekOf(new Date(now).toISOString()), stats: weeklyReplyQuality(rows, o.writer ?? "takeuchi"), read: rowsIn.length };
 }
