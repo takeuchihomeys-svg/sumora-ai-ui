@@ -57,6 +57,7 @@ import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPl
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds } from "./lib/exam-base-pin";
 import { chooseGuards, fitGuardsToCap, guardLine } from "./lib/exam-guards";
+import { bizLanes } from "./lib/exam-plan";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -143,7 +144,8 @@ async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
 // ─── 順番待ち ───────────────────────────────────────────────────────────
 const skippedNonJobs = new Set<string>();
 /** 営業時間（JST 9〜22時）は試験のレーンを1本に（止める EXAM_BIZ_ONE_LANE=off・弱い所 357） */
-function businessHoursLane(now = new Date()): boolean { if ((process.env.EXAM_BIZ_ONE_LANE ?? "").trim().toLowerCase() === "off") return false; const h = new Date(now.getTime() + 9 * 3600_000).getUTCHours(); return h >= 9 && h < 22; }
+/** 営業時間のレーンの数（平日 1・土日 2・営業時間の外 null）。exam-plan.bizLanes */
+function businessHoursLane(now = new Date()): number | null { return bizLanes(now, process.env); }
 function readJobs(): Array<ExamJob & { file: string }> {
   ensureDirs();
   // 2026-11-05 作業員8: 依頼の形でない .json（印・壊れたファイル）は拾わずに飛ばす（落ちない・1回だけ知らせる）
@@ -578,7 +580,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         appendFileSync(outFile, `\n=== ${at()} npx tsx --env-file=.env.local ${c} ===\n`);
         const before = statSync(outFile).size;
         // 2026-11-05 作業員4の頼み: --qfile="C:/Users/竹内 悠馬/…" が空白で切れていた（ci-v1L・ci-v3L）＝引用符を含む塊は1つの引数に（exam-plan.splitCmdArgs）
-        const r = runTsx(j.cwd, splitCmdArgs(c), { ...j.env, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(businessHoursLane() ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile); cur = r.child;
+        const r = runTsx(j.cwd, splitCmdArgs(c), { ...j.env, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(businessHoursLane() ? { EXAM_CONCURRENCY: String(businessHoursLane()) } : {}) }, outFile); cur = r.child;
         codes.push(await r.done);
         const tail = readFileSync(outFile).subarray(before).toString("utf8");
         const m = tail.match(/空きメモリ\s*\d+MB\s*<\s*\d+MB（--force で流す）/);
@@ -621,7 +623,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     try { unlinkSync(stopFile); } catch { /* 無ければよい */ }
     // 2026-11-06 作業員8（弱い所 357・11/05 の本番の時間切れ20回が昼の試験の呼び出しの山＝10分で 205〜220回・レーン3〜4本と重なった）: 営業時間（JST 9〜22時）はレーン1本（--urgent でも）
     const bizLane = businessHoursLane();
-    if (bizLane) log(`  営業時間（JST 9〜22時）なのでレーン1本（弱い所 357・feedback_no_heavy_db_business_hours）`);
+    if (bizLane) log(`  営業時間（JST 9〜22時）なのでレーン${bizLane}本（${bizLane > 1 ? "土日" : "平日"}・弱い所 357・feedback_no_heavy_db_business_hours）`);
     if (j.capUsd) log(`  費用の上限 ${j.capUsd.toFixed(2)}（EXAM_MAX_USD・届いたら次の問題の前で止まる）`);
     // 2026-11-07 統括役（on2-brainask-p1/p2: 積んだ時は「前を作る分 $0.00」・流す時に main が 8f62950b に進み前を作り直して上限 $0.2 を使い切り、今の回 0問・$0.61 の無駄）:
     //   流す時の main と夜の基準で前の分を見込み直し、上限に入らなければ流す前に止めて知らせる（今の回が0問のまま費用だけ使う事を無くす）。止める: EXAM_RUN_BASE_CHECK=off
@@ -632,7 +634,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       log(`  流す時の見込み: ${chk.line}`);
       if (!chk.go) { finishStop(j, `流す前に止めた: ${chk.line}。夜の基準ができた後に流すか、--cap-usd を上げて積み直す`); return; }
     }
-    const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(guard.laneOld || bizLane ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile); cur = r.child;
+    const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile); cur = r.child;
     // ① 早めの打ち切り（30秒ごと）
     let early: { stop: string; why: string; base: string } | null = null;
     const rowsFile = join(resultsDirOf(j.cwd), `${j.label}.jsonl`);
@@ -704,7 +706,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         log(`  確かめ直し: 外れた ${fails.length}問（${fails.join(",")}）だけ今の main で前を作る（${cfl}）`);
         appendFileSync(outFile, `\n=== ${at()} 確かめ直し: 外れた問題だけ今の main で前を作る（${fails.join(",")}）===\n`);
         await runTsx(j.cwd, ["scripts/brain-exam.ts", `--label=${cfl}`, "--conv=auto", "--baseline=main", "--baseline-only", `--repeat=${maxRep}`, `--stage=${j.stage}`, `--only=${fails.join(",")}`, `--reps-file=${cfReps}`],
-          { ...j.env, EXAM_BASELINE_NIGHTLY: "off", ...(pin.snapDay ? { EXAM_DB_SNAPSHOT_DAY: pin.snapDay } : {}), ...(guard.laneOld || bizLane ? { EXAM_CONCURRENCY: "1" } : {}) }, outFile).done;
+          { ...j.env, EXAM_BASELINE_NIGHTLY: "off", ...(pin.snapDay ? { EXAM_DB_SNAPSHOT_DAY: pin.snapDay } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile).done;
         const blCf = baseLabelOf(j.cwd, cfl), blN = baseLabelOf(j.cwd, j.label);
         if (blCf && blN) {
           const merged = mergePinnedBase(readRows(join(resultsDirOf(j.cwd), `${blN}.jsonl`)) as unknown as Array<{ id: string }>, readRows(join(resultsDirOf(j.cwd), `${blCf}.jsonl`)) as unknown as Array<{ id: string }>, fails);

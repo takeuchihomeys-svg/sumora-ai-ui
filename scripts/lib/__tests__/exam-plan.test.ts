@@ -1,7 +1,7 @@
 // 試験の統括（scripts/lib/exam-plan.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-plan.test.ts（全 PASS で exit 0）
 import { flakeCleanSinceMs } from "../exam-flake";
-import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs, overBudget, capUsdOf, needsBaseIds, planVsActualReport, specMissingIds, runBaseCheck, pathRegressions } from "../exam-plan";
+import { planExam, guessKind, kindSuggest, readExamResult, weeklyPlanAudit, splitCmdArgs, overBudget, capUsdOf, needsBaseIds, planVsActualReport, specMissingIds, runBaseCheck, pathRegressions, bizLanes } from "../exam-plan";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -103,6 +103,9 @@ ok("spec に無い問題（古い作業ツリー・sorry-read-dig-1107 の q354�
   ok("本質の悪化も同じ数え方", pathRegressions([{ id: "a", essence: { code: "AIX:x", ok: false } }], [{ id: "a", essence: { code: "返信", ok: true } }], ["a"], "essence").length === 1);
   ok("前か今が無い問題は数えない", pathRegressions([], base, ["q092"]).length === 0);
 }
+
+// 11/07 統括役: 土日の営業時間はレーン2本・平日は1本・営業時間の外は係の既定
+ok("レーン: 土曜 10時は2本・金曜 10時は1本・土曜 23時は既定", bizLanes(new Date("2026-11-07T01:00:00Z")) === 2 && bizLanes(new Date("2026-11-06T01:00:00Z")) === 1 && bizLanes(new Date("2026-11-07T14:00:00Z")) === null && bizLanes(new Date("2026-11-08T01:00:00Z"), { EXAM_WEEKEND_LANES: "1" }) === 1 && bizLanes(new Date("2026-11-06T01:00:00Z"), { EXAM_BIZ_ONE_LANE: "off" }) === null);
 
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
