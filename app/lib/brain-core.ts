@@ -91,6 +91,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
+import { sendSequenceOn, sanitizeSendSequence, replyCountOf } from "@/app/lib/send-sequence";
 import { resolveTwoStageOrDirect, screeningNoRewriteEnabled, sentReactionNoRewriteEnabled, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { holdSoftNextMaterial, rule8HoldNote, rule8HoldDirectionSuffix } from "@/app/lib/hold-soft-next";
@@ -360,6 +361,9 @@ export type SuggestedAixMeta = {
   check_pattern?: string | null;
   closing_strategy?: string;
   template_hint?: string;  // 次に使うべきAIXタブのラベルカテゴリ名（TEMPLATE_HINT_ALLOWED_LABELS の含む判定を通過した値のみ。例: "物件ピックアップした", "1件特にオススメする", "①申込み時フォーマット（連帯保証人）"。トーン説明等の自由記述はゲートで null に落ちる）
+  /** 2026-11-07 送る物の並び（返信 1〜3通と AIX の位置・ブレインが決める・TWO_MESSAGE_SEQUENCE）。画面と書き手は読むだけ */
+  send_sequence?: Array<{ slot: "reply" | "aix"; aix?: string | null; role: string }>;
+  send_sequence_reply_count?: number;
   after_aix_template?: string;  // 2026-10-13: aix を送った直後に続けて送るテンプレの名前（post-aix-template-rec.ts が候補のテンプレに当てる）
   next_steps?: string[];  // ["Step1: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 【AIX】○○テンプレートを送る"]
   reply_mode?: "aix" | "auto_reply";  // 'aix'=スタッフがAIXで手動対応 / 'auto_reply'=AI自動返信OK
@@ -6027,6 +6031,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         : checkKind?.ui_button === "確認した（条件・交渉）" && (templateHint ?? "").includes("物件確認した（募集状況）") ? undefined
         : templateHint,
       // 2026-10-13 竹内さん（ブレインの使い残し 1）: この AIX を送った直後の続きのテンプレ（/api/recommend-templates の Sonnet の代わり・post-aix-template-rec.ts）
+      // 2026-11-07 送る物の並び（TWO_MESSAGE_SEQUENCE・既定 off）: ブレインの send_sequence を形だけ確かめて置く（1通だけ・形の崩れは置かない）
+      ...(sendSequenceOn() ? (() => { const seq = sanitizeSendSequence((parsed as { send_sequence?: unknown }).send_sequence, finalAix ?? null); return seq ? { send_sequence: seq, send_sequence_reply_count: replyCountOf(seq) } : {}; })() : {}),
       after_aix_template: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer || !finalAix ? undefined : sanitizeAfterAixTemplate(parsed.after_aix_template),
       next_steps: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer ? undefined
         : Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,

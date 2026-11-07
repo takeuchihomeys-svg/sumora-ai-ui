@@ -93,6 +93,7 @@ import { imageUrlsInRankOrder } from "./lib/sent-image-order";
 import { decideApplySubMode } from "./lib/apply-sub-mode";
 import { normalizePetWording } from "./lib/pet-wording";
 import { isTestOnlyConversation } from "./lib/test-conversations";
+import { sendSequenceUiOn, sequenceAnnounce, currentStepOf, splitDraftParts, type SendStep } from "./lib/send-sequence";
 // 2026-11-05 竹内さん（KB b834d9f0）: この番の組み立て（何通・どの順）の知らせと AIX の後の返信の下書き
 import { planMessages, planFromMeta, planAnnounce, remainingAfterAix, afterAixReplyBrief, afterAixDraftHint, twoMessageAnnounceVisible, twoMessageAfterAixAutoOn, type PlanAsk } from "./lib/two-message-plan";
 // 2026-10-23 試験の通（入る通の約93%）の Realtime は、その会話を選んでいる時だけ当てる（戻す NEXT_PUBLIC_RT_IGNORE_TEST=off）
@@ -9826,6 +9827,39 @@ export default function Home() {
             </div>
 
             {/* ===== 2026-11-05 竹内さん（KB b834d9f0）: この番の組み立て（何通・どの順・各通が答える事）の知らせ。最初は YUMA・テストの会話だけ（NEXT_PUBLIC_TWO_MESSAGE_PLAN=all で全員・off で出さない） ===== */}
+            {/* 2026-11-07 竹内さん「下書きを通ごとに分けて出す」（作業員7・AI 提案 59c77e93）: この番で送る物の並び（ブレインの meta.send_sequence）を出し、今送る通を太字に。
+                下書きが「---」で分かれていれば通ごとの欄を並べる（スタッフは上から順に送るだけ）。既定 off・on でも YUMA・テスト専用の会話だけ（NEXT_PUBLIC_TWO_MESSAGE_SEQUENCE） */}
+            {!inputFocused && sendSequenceUiOn(process.env.NEXT_PUBLIC_TWO_MESSAGE_SEQUENCE, isTestOnlyConversation(selectedConversation.id)) && (() => {
+              const meta = (selectedConversation.suggestedAixMeta ?? brainContractSeenRef.current[selectedConversation.id]) as { send_sequence?: SendStep[] } | null | undefined;
+              const seq = meta?.send_sequence;
+              if (!seq || !seq.length) return null;
+              const msgs = selectedConversation.messages || [];
+              const lastCust = msgs.map((m: Message, k: number) => (m.sender === "customer" ? k : -1)).filter((k: number) => k >= 0).pop() ?? -1;
+              const sentAfter = msgs.slice(lastCust + 1).filter((m: Message) => m.sender !== "customer" && !/^\[(?:画像|動画)\]$/.test(String(m.text ?? "").trim()));
+              // AIX の通（画像・本文が続く）は1通に数える
+              const sentCount = sentAfter.reduce((n: number, m: Message, k: number) => (m.isAix && k > 0 && sentAfter[k - 1].isAix ? n : n + 1), 0);
+              const cur = currentStepOf(seq, sentCount);
+              const lines = sequenceAnnounce(seq);
+              const parts = splitDraftParts(replyDraft);
+              return (
+                <div className="mx-1 mb-1 rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-[11px] text-indigo-900">
+                  <div className="font-semibold">この番で送る物の並び</div>
+                  <div className="flex flex-wrap gap-x-2">{lines.map((t, i) => <span key={i} className={i === cur ? "font-bold underline" : "opacity-70"}>{t}{i < lines.length - 1 ? " →" : ""}</span>)}</div>
+                  {parts.length > 1 && (
+                    <div className="mt-1 space-y-1">
+                      {parts.map((p, i) => (
+                        <div key={i} className="rounded border border-indigo-200 bg-white px-2 py-1">
+                          <div className="text-[10px] font-bold">返信の{i + 1}通目</div>
+                          <div className="whitespace-pre-wrap text-[11px] text-slate-700">{p}</div>
+                          <button onClick={() => { setReplyDraft(p); }} className="mt-0.5 rounded-full border border-indigo-400 px-2 text-[10px] font-bold">この通を入力欄へ</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {!inputFocused && twoMessageAnnounceVisible(process.env.NEXT_PUBLIC_TWO_MESSAGE_PLAN, isTestOnlyConversation(selectedConversation.id)) && (() => {
               const id = selectedConversation.id;
               const msgs = selectedConversation.messages || [];
