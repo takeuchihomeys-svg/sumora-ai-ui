@@ -210,3 +210,15 @@ export function pathRegressions(cur: ReadonlyArray<PathRowLite>, base: ReadonlyA
   }
   return out;
 }
+
+/**
+ * 営業時間（JST 9〜22時）のレーンの数（純関数）。2026-11-06 弱い所 357: 平日の営業時間は1本。
+ *   2026-11-07 統括役（竹内さん「今日は試験を夜でなく昼で大丈夫・土日なので」）: 土日の営業時間は2本まで。営業時間の外は null（係の既定）
+ */
+export function bizLanes(now: Date, env: Record<string, string | undefined> = {}): number | null {
+  if ((env.EXAM_BIZ_ONE_LANE ?? "").trim().toLowerCase() === "off") return null;
+  const j = new Date(now.getTime() + 9 * 3600_000);
+  const h = j.getUTCHours(), dow = j.getUTCDay();
+  if (h < 9 || h >= 22) return null;
+  return dow === 0 || dow === 6 ? Math.max(1, Number(env.EXAM_WEEKEND_LANES ?? "2") || 2) : 1;
+}
