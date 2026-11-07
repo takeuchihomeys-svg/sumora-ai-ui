@@ -2,7 +2,7 @@
 //   2026-11-05 作業員8（統括役の了承の 2・3）。1000行ずつの頁で読む（点検表 3）
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../../app/lib/test-conversations";
-import { staffFirstMove, aixLogsFromWatch } from "../../app/lib/staff-first-move";
+import { staffFirstMove, aixLogsFromWatch, staffMoveExclusion, ackSceneOf } from "../../app/lib/staff-first-move";
 import { countByScene, sceneDrift, beyondCandidates, type YardTurn, type SceneDrift } from "./prod-yardstick";
 
 /** AIX の系統（audit-prod-as-exam と同じ見方） */
@@ -52,6 +52,8 @@ export async function readStaffMsgs(sb: SupabaseClient, convs: string[], sinceIs
 
 export type YardstickOut = {
   at: string; days: number; turns: { before: number; after: number };
+  /** 今の窓で当たり外れから外した番（後で送った AIX・お礼の番の約束の果たし） */
+  excluded?: { late_aix: number; ack_fulfil_aix: number };
   down: Array<{ scene: string; before: SceneDrift["before"]; after: SceneDrift["after"]; pBefore: number; pAfter: number }>;
   few: number; beyond: number; drift: SceneDrift[];
 };
@@ -63,16 +65,20 @@ export async function runYardstick(sb: SupabaseClient, opts: { days: number; now
   const since = new Date(now - 2 * opts.days * 86_400_000).toISOString();
   const turns = await readWatchTurns(sb, since);
   const msgs = await readStaffMsgs(sb, [...new Set(turns.map((w) => w.conversation_id))], since);
-  const toYard = (w: WatchRow): YardTurn => {
+  // 2026-11-07 作業員1: 後で送った AIX（約束の果たし）・お礼の番の約束の果たしは当たり外れから外して別に数える（staffMoveExclusion・WATCH_COUNT_LATE_AIX=off で前の数え）
+  const excluded = { late_aix: 0, ack_fulfil_aix: 0 };
+  const toYard = (w: WatchRow): YardTurn[] => {
     const fm = staffFirstMove(Date.parse(w.customer_turn_at), msgs.get(w.conversation_id) ?? [], aixLogsFromWatch(w.staff_aix));
-    return { scene: w.scene_key, brain: aixFamily(w.brain_action), staff: aixFamily(fm?.kind === "aix" ? fm.aix : null), writer: fm?.writer ?? "unknown", at: w.customer_turn_at, principleOk: null };
+    const ex = staffMoveExclusion(Date.parse(w.customer_turn_at), fm, { ackOnly: ackSceneOf(w.scene_key) });
+    if (ex) { if (w.customer_turn_at >= cut) excluded[ex]++; return []; }
+    return [{ scene: w.scene_key, brain: aixFamily(w.brain_action), staff: aixFamily(fm?.kind === "aix" ? fm.aix : null), writer: fm?.writer ?? "unknown", at: w.customer_turn_at, principleOk: null }];
   };
-  const before = turns.filter((w) => w.customer_turn_at < cut).map(toYard), after = turns.filter((w) => w.customer_turn_at >= cut).map(toYard);
+  const before = turns.filter((w) => w.customer_turn_at < cut).flatMap(toYard), after = turns.filter((w) => w.customer_turn_at >= cut).flatMap(toYard);
   const drift = sceneDrift(countByScene(before), countByScene(after));
   return {
     turns,
     out: {
-      at: new Date(now).toISOString(), days: opts.days, turns: { before: before.length, after: after.length },
+      at: new Date(now).toISOString(), days: opts.days, turns: { before: before.length, after: after.length }, excluded,
       down: drift.filter((d) => d.verdict === "down").map((d) => ({ scene: d.scene, before: d.before, after: d.after, pBefore: +d.pBefore.toFixed(3), pAfter: +d.pAfter.toFixed(3) })),
       few: drift.filter((d) => d.verdict === "few").length, beyond: beyondCandidates(after).length, drift,
     },

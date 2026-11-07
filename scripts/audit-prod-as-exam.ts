@@ -12,7 +12,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-prod-as-exam.ts [--days=7] [--limit=2000] [--json]
 import { createClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../app/lib/test-conversations";
-import { staffFirstMove, aixLogsFromWatch } from "../app/lib/staff-first-move";
+import { staffFirstMove, aixLogsFromWatch, staffMoveExclusion, ackSceneOf } from "../app/lib/staff-first-move";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const jstHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tokyo", hour: "numeric", hour12: false }).format(new Date()));
@@ -81,6 +81,8 @@ const RECORD_FIELDS = ["cm", "ci", "nd", "tl", "mp", "fs", "rl", "rk", "vw"] as 
     const oldStaff = (w.staff_aix ?? []).find((a) => a.burst !== false)?.aix_type ?? null;
     const oldHit = aixFamily(w.brain_action) === aixFamily(oldStaff);
     const fm = staffFirstMove(Date.parse(w.customer_turn_at), staffMsgs.get(w.conversation_id) ?? [], aixLogsFromWatch(w.staff_aix));
+    // 2026-11-07 作業員1: 後で送った AIX（約束の果たし）・お礼の番の約束の果たしは当たり外れに入れない（WATCH_COUNT_LATE_AIX=off で前の数え）
+    if (staffMoveExclusion(Date.parse(w.customer_turn_at), fm, { ackOnly: ackSceneOf(w.scene_key) })) continue;
     const staff = fm?.kind === "aix" ? fm.aix : null;
     const hit = aixFamily(w.brain_action) === aixFamily(staff);
     if (hit !== oldHit) changed.push(`${w.id}（${writerOf(w)}・${w.scene_key ?? "場面なし"}）: ブレイン ${aixFamily(w.brain_action)}／前の一手 ${aixFamily(oldStaff)}→最初の一手 ${aixFamily(staff)}：${oldHit ? "当たり→外れ" : "外れ→当たり"}`);
