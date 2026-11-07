@@ -16,6 +16,7 @@
 // 戻す: TURN_CONTRACT=off（全部）／TURN_CONTRACT_CONFIRM_GATE=off（確認の約束の関門だけ旧の語判定）／TURN_CONTRACT_FINAL_CHECK=off（最終チェックの書き直しの見送りだけ）
 // テスト: app/lib/__tests__/turn-contract.test.ts
 
+import { sendSequenceRule } from "./send-sequence";
 import type { RequestItem, RequestTopic, RequestAbout } from "./request-ledger";
 import { ABOUT_VALUES, ABOUT_JA, topicOfAbout } from "./request-ledger";
 import { alreadySaidAllowance, ackFormBrainEnabled, normalizeAckForm, ackFormContractLine, isCompactWaitLine, ackFormFollowEnabled, ackFormDropTopic, type AckForm } from "./repeat-brain-align";
@@ -304,7 +305,7 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - asks: 【お客様の依頼の一覧】があればその項目を1つも落とさない（足すのはよい）。無ければ今の連投から自分で数える。前の番の依頼を書き写さない（まだ答えていない前の依頼は【お客様の依頼の一覧】の「まだ答えていない確認事項」から入る）。
 - route の決め方: スタッフだけが知る事（管理会社に確認した結果・募集状況・見積の金額・割引額・入居日の確定・内覧の日時の確定・撮影した写真・交渉の結果・審査の結果・探した結果）が答えに要る → "aix"（AIX のキーを付ける）。
   まだ結果が無く、これから確認・作成・探す・交渉する → "promise"。会話・送った物件の資料・会社の事実・一般的な事（虫・換気・二人で住める広さ・内覧の所要時間・手続きの流れ）で答えられる → "reply"（確認の約束にしない）。もう答えた・お客様が自分でやる → "none"。
-${answerableDirectRule()}${twoMessageAskRule()}${textAixRouteRule()}${screeningConsultRule()}${sentReactionInviteRule()}${viewingTimeOnlyRule()}${sentCostEstimateRule()}${applyIntentReplyFirstRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
+${answerableDirectRule()}${twoMessageAskRule()}${textAixRouteRule()}${screeningConsultRule()}${sentReactionInviteRule()}${viewingTimeOnlyRule()}${sentCostEstimateRule()}${applyIntentReplyFirstRule()}${sendSequenceRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
 ${closeOnlyAnswerRule()}
 - close_only=true:返事の要らない番（お礼・了承・あいさつだけ）／お客様が待ってと言った番（「決まったら連絡します」「また連絡します」「確認してから連絡します」）。待っての番は「お決まりになりましたらご連絡ください」の形で閉じ、物件を送り続ける約束・新しい提案をしない。
 - 今の条件の物件を出し切った後（前に「全てピックアップ」・新着待ちの約束・全力サポートを送った後で条件が変わっていない）の「もう少し探して」等は route="aix"・aix="zenryoku_support"。
