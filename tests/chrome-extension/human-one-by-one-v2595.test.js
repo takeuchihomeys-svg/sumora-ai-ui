@@ -27,8 +27,8 @@ console.log("■ ① 印刷用PDFを押したら、その1件をその場で送�
 ok("押した合図（axlx-pdf-captured）を受けて1件送る", /if \(!msg \|\| msg\.type !== "axlx-pdf-captured"\) return;[\s\S]{0,1200}sendOnePdfNow\(item\);/.test(bdCode));
 ok("押した1件だけをチェック（他の行は外す・_selectOnly）", /function _selectOnly\(item\) \{[\s\S]{0,300}t\.cb !== item\.cb && t\.cb\.checked\) t\.cb\.checked = false;/.test(bdCode));
 ok("その1件だけを組にして送る（urls が1件）", /urls: AxlxSendPairing\.pluck\(send, "url"\)/.test(bdCode));
-ok("同じ行を二度送らない（_onePdfSent・待ちにも二重に積まない）", /_onePdfSent\[next\.url\] = true;/.test(bdCode) && /if \(_onePdfSent\[url\] \|\| _pdfQueued\[url\]\) return;/.test(bdCode));
-ok("押した順に1件ずつ（待ち行列・前の1件が終わってから次）", /_pdfQueue\.push\(\{ url: url, item: item \}\)/.test(bdCode) && /_pdfQueueRunning = false;[\s\S]{0,200}if \(_pdfQueue\.length\) _humanGapThen\(\)\.then\(_pumpPdfQueue\)/.test(bdCode));
+ok("同じ行を二度送らない（_onePdfSent）", /if \(_onePdfSent\[url\]\) return;/.test(bdCode) && /_onePdfSent\[url\] = true;/.test(bdCode));
+ok("1件ずつ（送信中・確認中は次の押下を受け付けない＝溜めない）", /if \(_pdfBusy\) \{[\s\S]{0,300}return;/.test(bdCode) && /_pdfBusy = true;/.test(bdCode));
 ok("押した行を URL で当てる（id だけでも当てる・見つからなければ行を作り直して1回だけ探す）", /function _urlKey\(u\)/.test(bd) && /function _rescanRows\(\)/.test(bd) && /_rescanRows\(\); \} catch \(_\) \{\}\s*item = _findItemByUrl\(msg\.url\)/.test(bd));
 ok("行を作り直しても押した1件のチェックは残す", /cb\.checked = !!keep\[_urlKey\(btn\.href\)\]/.test(bd));
 ok("20秒まとめて送る道はもう使わない（scheduleForward の呼び出しが無い）", !/scheduleForward\(\)/.test(bd));
@@ -69,25 +69,25 @@ console.log("\n■ ⑥ 間は対数正規・たまに一息（機械的な等間
 ok("次の行までの間は対数正規＋12%で一息", /logNormalDelay\(1500, 0\.45\)/.test(bd) && /Math\.random\(\) < 0\.12\) nextGap \+=/.test(bd));
 ok("押してから送るまでの間も対数正規（_humanGapThen）", /function _humanGapThen\(\)[\s\S]{0,400}logNormalDelay\(1000, 0\.4\)/.test(bd));
 
-console.log("\n■ ⑦ 複数を続けて押しても詰まらない（待ち行列で1件ずつ）");
-ok("押した順の待ち行列（_pdfQueue・_pdfQueued で二重に積まない）", /var _pdfQueue = \[\];/.test(bd) && /var _pdfQueued = \{\};/.test(bd) && /if \(_onePdfSent\[url\] \|\| _pdfQueued\[url\]\) return;/.test(bd));
-ok("1件ずつ流す（_pumpPdfQueue は二重に走らない・終わってから次）", /function _pumpPdfQueue\(\)[\s\S]{0,300}if \(_pdfQueueRunning\) return;/.test(bd) && /_pdfQueueRunning = false;[\s\S]{0,200}if \(_pdfQueue\.length\) _humanGapThen\(\)\.then\(_pumpPdfQueue\)/.test(bd));
-ok("組は押した行そのものから作る（他の行にチェックを奪われて no-item にならない）", /function _buildOneItem\(btn\)/.test(bd) && !/function sendOnePdfNow[\s\S]{0,1500}buildSendItemsBrain\(customerId/.test(bd));
+console.log("\n■ ⑦ ひとつずつ押す形（押した分を溜めて自動で続けない）");
+ok("押した分を溜める待ち行列を持たない（押したらその1件だけ）", !/_pdfQueue/.test(bdCode) && !/_pumpPdfQueue/.test(bdCode));
+ok("送信中・確認中は次の押下を受け付けない（_pdfBusy）", /if \(_pdfBusy\) \{/.test(bdCode) && /_pdfBusy = true;/.test(bdCode) && /_pdfBusy = false;/.test(bdCode));
+ok("受け付けない時は枠の1行で知らせる", /_nudge\("⏳ いま1件を送っています。終わってから次を押してください"\)/.test(bdCode));
+ok("1件終わったら押せる状態に戻る（_idleAfterOne）と知らせる", /function _idleAfterOne\(item\)/.test(bdCode) && /✅ 送りました。次の物件を押してください/.test(bdCode));
+ok("組は押した行そのものから作る（他の行にチェックを奪われて no-item にならない）", /function _buildOneItem\(btn\)/.test(bdCode));
 ok("ブレインの判定も1件だけ（全件を毎回呼ばない）", /function _judgeOneBrain\(customerId, one, cb\)/.test(bd) && /items: \[\{ summary: one\.summary, data: jd, url: one\.url/.test(bd));
-ok("1件が失敗しても次の1件へ進む（待ち行列を止めない）", /if \(_pdfQueue\.length\) _humanGapThen\(\)\.then\(_pumpPdfQueue\)/.test(bd));
-ok("札で状態が分かる（⏳送る順番待ち／📤送信中／📤送信済み／⚠送れませんでした）", /⏳ 送る順番待ち/.test(bd) && /📤 送信中…/.test(bd) && /⚠ 送れませんでした/.test(bd));
 
 console.log("\n■ ⑧ 送信の直列（background でも同時に走らせない）");
 ok("送信は1本の待ち行列（_enqueueLineSend）", /function _enqueueLineSend\(job\)/.test(bg2) && /_enqueueLineSend\(async \(\) => \{/.test(bg2));
 ok("1件の送信に 300秒の上限（超えたら次へ）", /300000/.test(bg2) && /1件の送信が 300秒 を超えた/.test(bg2));
 
 console.log("\n■ ⑨ 資料に一度目を通してから次の物件へ（人の動き）");
-ok("送れた1件は「資料を見る間」を置いてから次へ（_lookAtDocThenGo）", /function _lookAtDocThenGo\(item, goNext\)/.test(bd) && /_lookAtDocThenGo\(next\.item, goNext\)/.test(bd));
+ok("送れた1件は「資料を見る間」を置いてから押せる状態に戻る（_lookAtDocThenGo）", /function _lookAtDocThenGo\(item, goNext\)/.test(bd) && /_lookAtDocThenGo\(item, function \(\) \{ _idleAfterOne\(item\); \}\)/.test(bd));
 ok("見る間は人の間（中央値 3.5秒・1.8〜13秒・たまに長く見る）", /logNormalDelay\(3500, 0\.4\)/.test(bd) && /if \(base < 1800\) base = 1800;/.test(bd) && /if \(base > 13000\) base = 13000;/.test(bd));
 ok("見る間は札を「👀 確認中…」にする（画面で分かる）", /👀 確認中…/.test(bd) && /👀 資料を確認中…/.test(bd));
 ok("「👀 見た → 次へ」で人の判断で先へ進める（押さなくても自動で次へ）", /axlx-look-next-btn/.test(bd) && /_lookWait\.skip\("skip"\)/.test(bd));
-ok("見る間が終わったら選択を外して次へ（人がそうする形）", /if \(item\.cb && item\.cb\.checked\) \{ item\.cb\.checked = false; updateBar\(\); \}/.test(bd));
-ok("送れなかった1件は見る物が無いのですぐ次へ", /if \(!ok\) \{ goNext\(\); return; \}/.test(bd));
+ok("見る間が終わったら選択を外して押せる状態に戻る（人がそうする形）", /function _idleAfterOne\(item\)[\s\S]{0,600}item\.cb\.checked = false; updateBar\(\);/.test(bd));
+ok("送れなかった1件は見る物が無いのですぐ押せる状態に戻る", /if \(!ok\) \{ _idleAfterOne\(item\); return; \}/.test(bd));
 ok("点検に残す（look_doc・look_skip）", /_tmark\("look_doc"/.test(bd) && /_tmark\("look_skip"/.test(bd));
 
 console.log(`\n${passed} passed, ${failed} failed`);

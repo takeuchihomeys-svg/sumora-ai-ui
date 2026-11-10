@@ -635,10 +635,8 @@
   //   押した1件だけをチェックし（他の行は外す）、**その1件をその場で売上番長へ送る**（20秒まとめて待たない）。
   //   押す順＝送る順。押した順に1件ずつ流す（前の1件が終わってから次を送る＝人の1件ずつの形）。
   var _onePdfSent = {};          // 送り終わった URL（同じ行を二度送らない）
-  var _pdfQueue = [];            // 押した順の待ち（{ url, item }）
-  var _pdfQueued = {};           // 待ちに入れた URL（同じ行を二重に積まない）
+  var _pdfBusy = false;          // いま1件を送信中・確認中（この間は次の押下を受け付けない＝1件ずつ）
   var _pdfSending = null;        // いま送っている URL
-  var _pdfQueueRunning = false;
   function _onePdfBadge(item, state, extra) {
     var old = item.btn.parentNode && item.btn.parentNode.querySelector(".axlx-pressed-badge");
     if (old) old.remove();
@@ -667,72 +665,76 @@
   }
 
   /**
-   * 2026-11-10 竹内さん「押したらちゃんと送られるようになっている」「複数の物件の場合つまったりしないか」:
-   *   押した1件を **押した順の待ち行列** に入れ、1件ずつ順番に送る（前の1件が終わってから次）。
+   * 2026-11-10 竹内さん「一件ずつ確認するので一気に押すのではなくてひとつずつ押す形」:
+   *   押した分を **溜めて自動で続けるのをやめた**。1回押したらその1件を送り、終わるまで次は受け付けない。
+   *   送り終わったら「👀 確認中…」で資料に目を通す間 → 終わったら **押せる状態に戻る**（次は人が押す）。
    *
-   * 旧の作りで詰まっていた原因（重要）:
+   * 旧の作りで詰まっていた原因（重要・これは残す）:
    *   ・組（url・説明文）を「画面でチェックが入っている行」から作っていた（buildSendItems）＋送る直前に他の行のチェックを外していた
    *     → 素早く2件押すと、後から押した行がチェックを奪い、先に押した1件が「組が作れない（no-item）」で落ちていた
-   *   ・ブレインの判定を毎回 **一覧の全件** で呼んでいた（1件送るのに全件ぶんの判定＝重い・待たされる）
-   *   新: 組は **押した行そのもの** から作る（チェックに頼らない）・判定もその1件だけ・待ち行列で1件ずつ。
+   *   新: 組は **押した行そのもの** から作る（チェックに頼らない）・判定もその1件だけ。
    */
   function sendOnePdfNow(item) {
     if (!item || !item.btn || !item.btn.href) return;
     var url = item.btn.href;
-    if (_onePdfSent[url] || _pdfQueued[url]) return; // 送った・もう待ちに入っている
-    _pdfQueued[url] = true;
-    _pdfQueue.push({ url: url, item: item });
-    _onePdfBadge(item, "wait");
-    _paintPdfProgress();
-    _pumpPdfQueue();
-  }
-
-  /**
-   * 待ち行列を1件ずつ流す（二重に走らせない）。
-   * 2026-11-10 竹内さん「資料保存いっかいスタッフ目を通す形やから人間の場合。それも考えて次の物件にうつっていくようにする」:
-   *   送れた1件は、すぐ次へ行かず **「資料に目を通す間」** を置いてから次へ（人が1件ずつ確認して次へ移る形）。
-   *   人の間の長さは human-wait.js の logNormalDelay（中央値 3.5秒・ばらつく・たまに長く見る）。
-   */
-  function _pumpPdfQueue() {
-    if (_pdfQueueRunning) return;
-    var next = _pdfQueue.shift();
-    if (!next) { _paintPdfProgress(); return; }
-    _pdfQueueRunning = true;
-    _pdfSending = next.url;
+    if (_onePdfSent[url]) return; // 送った行はもう送らない（押し直しても二重に送らない）
+    // 1件ずつ: いま送信中・確認中なら受け付けない（溜めない）。人が「終わってから次」を守れる形にする
+    if (_pdfBusy) {
+      _nudge("⏳ いま1件を送っています。終わってから次を押してください");
+      console.log("[AXLX bulk-dl] 1件ずつの形なので、いまの1件が終わるまで次の押下は受け付けません:", String(url).slice(0, 80));
+      return;
+    }
+    _pdfBusy = true;
+    _pdfSending = url;
     _paintPdfProgress();
     // 送る1件だけを選ぶ（画面を見ている人に「いま何を送っているか」が分かる・他の行は触らない）
-    _selectOnly(next.item);
-    _onePdfBadge(next.item, "sending");
-    _sendOnePdf(next.item, next.url, function (ok, reason) {
-      _pdfQueued[next.url] = false;
+    _selectOnly(item);
+    _onePdfBadge(item, "sending");
+    _sendOnePdf(item, url, function (ok, reason) {
       _pdfSending = null;
       if (ok) {
-        _onePdfSent[next.url] = true;
-        _onePdfBadge(next.item, "sent");
+        _onePdfSent[url] = true;
+        _onePdfBadge(item, "sent");
         _tmark("sent", "pdf 1件");
       } else {
-        _onePdfBadge(next.item, "error");
-        console.warn("[AXLX bulk-dl] 1件送信（印刷用PDF）を送れませんでした:", reason, String(next.url).slice(0, 80));
-        if (_autoModeOn) console.warn("[AXLX bulk-dl] 自動モードなので次の1件へ進みます");
+        _onePdfBadge(item, "error");
+        console.warn("[AXLX bulk-dl] 1件送信（印刷用PDF）を送れませんでした:", reason, String(url).slice(0, 80));
       }
       _paintPdfProgress();
-      var goNext = function () {
-        _pdfQueueRunning = false;
-        if (_pdfQueue.length) _humanGapThen().then(_pumpPdfQueue);
-        else _paintPdfProgress();
-      };
-      if (!ok) { goNext(); return; } // 送れなかった1件は見る物が無い → すぐ次へ（札で知らせる）
-      // 送れた1件は「スタッフが資料に目を通す間」を置いてから次へ
-      _lookAtDocThenGo(next.item, goNext);
+      if (!ok) { _idleAfterOne(item); return; } // 送れなかった1件は見る物が無い → すぐ押せる状態に戻る
+      // 送れた1件は「スタッフが資料に目を通す間」→ 終わったら押せる状態に戻る（次は人が押す）
+      _lookAtDocThenGo(item, function () { _idleAfterOne(item); });
     });
   }
 
+  /** 1件終わったら押せる状態に戻す（次は人が押す・溜めない） */
+  function _idleAfterOne(item) {
+    _pdfBusy = false;
+    if (_lookWait) { clearTimeout(_lookWait.timer); _lookWait = null; }
+    var ln = document.getElementById("axlx-look-next-btn");
+    if (ln) ln.style.display = "none";
+    if (item && item.cb && item.cb.checked) { item.cb.checked = false; updateBar(); }
+    _paintPdfProgress();
+    // 送った行の札を「送信済み」に戻す（確認中の見た目を残さない）
+    if (item && _onePdfSent[item.btn.href]) { try { _onePdfBadge(item, "sent"); } catch (_) {} }
+  }
+
+  /** 短い知らせ（枠の1行に出す・数秒で戻す） */
+  var _nudgeTimer = null;
+  function _nudge(text) {
+    var el = document.getElementById("axlx-count");
+    if (!el) return;
+    el.textContent = text;
+    if (_nudgeTimer) clearTimeout(_nudgeTimer);
+    _nudgeTimer = setTimeout(function () { _nudgeTimer = null; _paintPdfProgress(); }, 3000);
+  }
+
   /**
-   * 送った1件を人が見る間（次の物件へ移る前に、一覧でその行に目を通す）。
+   * 送った1件を人が見る間（資料に目を通してから次を押す）。
    *   ・行を画面の真ん中に置く（資料を見る位置に戻す）
-   *   ・中央値 3.5秒（1.8〜9秒に収める・5%ほどは長く見る＝7〜13秒）
+   *   ・中央値 3.5秒（1.8〜13秒に収める・5%ほどは長く見る＝7〜13秒）
    *   ・待っている間は札を「👀 確認中…」にして、人が「いま見ている」と分かる形にする
-   *   ・止めたい時: 右下の枠の「⏸ 止める」で待ちを打ち切って次へ（人が先へ進みたい時）
+   *   ・「👀 見た → 次へ」を押せば待ちを打ち切って、すぐ次を押せる状態に戻る
    */
   var _lookWait = null;
   function _lookAtDocThenGo(item, goNext) {
@@ -756,8 +758,8 @@
       var _lnBtn = document.getElementById("axlx-look-next-btn");
       if (_lnBtn) _lnBtn.style.display = "none";
       if (why === "skip") { _tmark("look_skip", "人が先へ"); console.log("[AXLX bulk-dl] 資料の確認を打ち切って次の物件へ進みます"); }
-      else console.log("[AXLX bulk-dl] 資料に目を通す間が終わり → 次の1件へ（" + Math.round(base / 1000) + "秒）");
-      if (item.cb && item.cb.checked) { item.cb.checked = false; updateBar(); } // 次へ行く前に選択を外す（人がそうする形）
+      else console.log("[AXLX bulk-dl] 資料に目を通す間が終わり → 次の1件を押せる状態に戻ります（" + Math.round(base / 1000) + "秒）");
+      _nudge("✅ 送りました。次の物件を押してください");
       goNext();
     };
     _lookWait = { timer: setTimeout(function () { _lookWait = null; finish("time"); }, base), skip: finish };
@@ -770,14 +772,15 @@
     updateBar();
   }
 
-  /** 進み具合の1行（待ち・送信中・送信済み） */
+  /** 進み具合の1行（送信中・確認中・送信済み） */
   function _paintPdfProgress() {
     var el = document.getElementById("axlx-count");
     if (!el) return;
+    if (_nudgeTimer) return; // 知らせを出している間は上書きしない
     var done = Object.keys(_onePdfSent).length;
     var parts = [];
     if (_pdfSending) parts.push("📤 送信中");
-    if (_pdfQueue.length) parts.push("⏳ 待ち " + _pdfQueue.length);
+    else if (_pdfBusy) parts.push("👀 確認中");
     if (done) parts.push("✅ " + done + "件");
     el.textContent = parts.length ? parts.join(" / ") : (tracked.filter(function (t) { return t.cb.checked; }).length + "件");
   }
