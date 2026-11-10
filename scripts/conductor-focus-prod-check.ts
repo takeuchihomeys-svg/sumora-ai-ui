@@ -27,16 +27,23 @@ async function main() {
     for (const d of (data ?? []) as Dec[]) decs.set(d.id, d);
   }
   // 解剖の重点（その番の最初のスタッフの送信の前後3分）
-  const convs = [...new Set(turns.map((t) => t.conversation_id))];
+  // 11/10: conversation_key は伏せた鍵（会話の id ではない）→ 解剖の行を期間で読み、message_id から messages の会話の id を引いて結ぶ
   const anat = new Map<string, { at: number; focus: Focus | null }[]>();
-  for (let i = 0; i < convs.length; i += 200) {
-    const { data, error: e } = await sb.from("takeuchi_compose_examples").select("conversation_key, sent_at, anatomy").in("conversation_key", convs.slice(i, i + 200)).gte("sent_at", since).range(0, 999);
-    if (e) { console.error(`解剖は読めない（${e.message}）→ 決まった札だけで数える`); break; }
-    for (const r of (data ?? []) as { conversation_key: string; sent_at: string; anatomy: { focus?: unknown; focus_votes?: unknown } | null }[]) {
+  {
+    const { data, error: e } = await sb.from("takeuchi_compose_examples").select("message_id, sent_at, anatomy").gte("sent_at", since).not("anatomy", "is", null).range(0, 999);
+    if (e) console.error(`解剖は読めない（${e.message}）→ 決まった札だけで数える`);
+    const ar = (data ?? []) as { message_id: string; sent_at: string; anatomy: { focus?: unknown; focus_votes?: unknown } | null }[];
+    const convOf = new Map<string, string>();
+    for (let i = 0; i < ar.length; i += 200) {
+      const { data: ms } = await sb.from("messages").select("id, conversation_id").in("id", ar.slice(i, i + 200).map((r) => r.message_id));
+      for (const m of (ms ?? []) as { id: string; conversation_id: string }[]) convOf.set(String(m.id), String(m.conversation_id));
+    }
+    for (const r of ar) {
       // 11/07: 3回読みで割れた番（focus=null・focus_votes あり）は正解なし＝数えない（決まった札にも落とさない）
       const split = r.anatomy?.focus == null && Array.isArray(r.anatomy?.focus_votes);
-      if (!isFocus(r.anatomy?.focus) && !split) continue;
-      (anat.get(r.conversation_key) ?? anat.set(r.conversation_key, []).get(r.conversation_key)!).push({ at: Date.parse(r.sent_at), focus: split ? null : (r.anatomy!.focus as Focus) });
+      const conv = convOf.get(r.message_id);
+      if (!conv || (!isFocus(r.anatomy?.focus) && !split)) continue;
+      (anat.get(conv) ?? anat.set(conv, []).get(conv)!).push({ at: Date.parse(r.sent_at), focus: split ? null : (r.anatomy!.focus as Focus) });
     }
   }
   type Row = { scene: string; fc: Focus; gold: Focus | null; goldBy: "anatomy" | "rule" | null; conflict: string | null; finalAix: string | null };

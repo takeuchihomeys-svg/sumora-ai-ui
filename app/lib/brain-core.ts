@@ -3250,7 +3250,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
       });
     }).catch(() => null);
   }
-  // 2026-11-07 作業員5（統括役・段取りの段2・KB P0 575a7cd5）: CONDUCTOR_FOCUS_TO_BRAIN=on（既定 off）の時だけ、入口の統括の重点をブレインの材料に1行（入口を最大4秒待つ・同じ待ちを meta と共有）。
+  // 2026-11-07 作業員5（統括役・段取りの段2・KB P0 575a7cd5）: CONDUCTOR_FOCUS_TO_BRAIN（11/10 から既定で内覧の場面だけ・=off で止める）の時、入口の統括の重点をブレインの材料に1行（入口を最大4秒待つ・同じ待ちを meta と共有）。
   //   CONDUCTOR_FOCUS_ON_SCENES で場面を絞る。読めない・遅い時は何も足さない＝今まで通り
   if (intakeP && typedMessages[0]?.sender === "customer") {
     try {

@@ -23,9 +23,15 @@ export const conductorFocusMode = (env: Env = typeof process !== "undefined" ? p
 // 2026-11-07 作業員5（統括役・段取りの段2）: 重点をブレインの材料に1行渡すのは別のスイッチ CONDUCTOR_FOCUS_TO_BRAIN=on の時だけ（既定 off）。
 //   CONDUCTOR_FOCUS=on は前から shadow と同じ扱い（本番に入っていても判断を変えない）ので、その意味は変えない。CONDUCTOR_FOCUS_ON_SCENES=場面,場面 で場面を絞る（空＝全部）
 /** ブレインに重点を渡すか（この場面＝resolveReplyScene の scene で） */
+// 2026-11-10 統括役（KB 6f53ace4・場面ごとに6割以上・悪化0の場面だけ on）: 既定で内覧の場面（viewing）だけ渡す。
+//   focus-viewing-on2（11/07 夜・内覧8問＋守り2問）確かな悪化0。=off で全部止める・=on は CONDUCTOR_FOCUS_ON_SCENES（空＝全部）・未設定は既定の場面だけ
+export const FOCUS_TO_BRAIN_DEFAULT_SCENES: readonly string[] = ["viewing"];
 export function focusOnForScene(scene: string | null | undefined, env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  if (conductorFocusMode(env) === "off" || (env.CONDUCTOR_FOCUS_TO_BRAIN ?? "").trim().toLowerCase() !== "on") return false;
-  const list = (env.CONDUCTOR_FOCUS_ON_SCENES ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  if (conductorFocusMode(env) === "off") return false;
+  const v = (env.CONDUCTOR_FOCUS_TO_BRAIN ?? "").trim().toLowerCase();
+  if (v === "off") return false;
+  const set = (env.CONDUCTOR_FOCUS_ON_SCENES ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  const list: readonly string[] = set.length ? set : v === "on" ? [] : FOCUS_TO_BRAIN_DEFAULT_SCENES;
   return !list.length || (!!scene && list.includes(scene));
 }
 
