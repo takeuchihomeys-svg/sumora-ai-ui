@@ -40,18 +40,18 @@ ok("リアプロ: たまに一息・迷う（8%/15% の抽選）", /Math\.random
 console.log("\n■ ③ 資料は1件ずつ・束の間に人が確認する間");
 ok("既定の束は1件", /var SEND_BATCH_SIZE_DEFAULT = 1;/.test(bd));
 ok("束の大きさを変えられる（axlxSendBatchSize）", /sessionStorage\.getItem\("axlxSendBatchSize"\)/.test(bd));
-ok("束の間は 2〜12秒の対数正規（1件ずつの時）", /_perItem \? 3400 : 3600/.test(bd) && /_perItem \? 12000 : 20000/.test(bd));
-ok("束の間に 12%ほどで一息を足す", /Math\.random\(\) < 0\.12\) _confirmGap \+= 800 \+ Math\.floor\(Math\.random\(\) \* 1500\)/.test(bd));
-ok("「資料を確認中…」と画面に出す（人が見ている形）", /資料を確認中…/.test(bd));
+ok("1件ずつの間は 1.2〜6秒＋次の行まで1.5秒の対数正規", /logNormalDelay\(1600, 0\.45\)/.test(bd) && /if \(gap > 6000\) gap = 6000;/.test(bd) && /logNormalDelay\(1500, 0\.45\)/.test(bd));
+ok("1件ずつ送る間に 12%ほどで一息を足す", /Math\.random\(\) < 0\.12\) nextGap \+= 800 \+ Math\.floor\(Math\.random\(\) \* 1500\)/.test(bd));
+ok("「確認中…」と画面に出す（人が見ている形）", /確認中…/.test(bd));
 
 console.log("\n■ ④ 選び終わってから資料を取りに行くまでに目で追う間");
-ok("_doSend はすぐ送らず、目で追う間のあと1件ずつ選んで送る", /setTimeout\(function \(\) \{[\s\S]{0,400}_oneByOneStart\(state, _list, 0,/.test(bd) && /function _oneByOneStart\(state, list, index, doneCb\)/.test(bd));
+ok("_doSend はすぐ送らず、目で追う間のあと1件ずつ選んで送る", /setTimeout\(function \(\) \{[\s\S]{0,900}_oneByOneStart\(state, _list, 0,/.test(bd) && /function _oneByOneStart\(state, list, index, doneCb\)/.test(bd));
 ok("目で追う間は 1.2〜8秒の対数正規", /logNormalDelay\(2200, 0\.4\)/.test(bd) && /if \(_lookGap > 8000\) _lookGap = 8000;/.test(bd));
 ok("「送る部屋を確認中…」と画面に出す", /送る部屋を確認中…/.test(bd));
 
 console.log("\n■ ⑤ 点検の記録に残す（あとで人と自動を比べる）");
 ok("look_wait を点検に残す", /_tmark\("look_wait"/.test(bd));
-ok("confirm_wait を点検に残す", /_tmark\("confirm_wait"/.test(bd));
+ok("1件ずつ送った時刻を点検に残す", /_tmark\("sent", "P" \+ state\.currentPage \+ " 1件"\)/.test(bd));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -149,7 +149,8 @@ function ok(name, c) { eq(name, !!c, true); }
   for (const f of ["bulk-dl.js", "itandi-bulk-dl.js"]) {
     const src = fs.readFileSync(path.join(root, f), "utf8");
     const n = (src.match(/type: "axlx-batch-customer-done"/g) || []).length;
-    const withAudit = (src.match(/type: "axlx-batch-customer-done"[^\n]*audit:/g) || []).length + (src.match(/\{ type: "axlx-batch-customer-done", customerId: customerId \|\| null, propertyCount: 0, audit:/g) || []).length * 0;
+    // 2026-11-10 v2.6.17: audit が次行以降に書かれている形も数える（1件ずつの送信エラーの所）
+    const withAudit = (src.match(/type: "axlx-batch-customer-done"[\s\S]{0,260}?audit:/g) || []).length;
     ok(`${f}: axlx-batch-customer-done の全部（${n}か所）に audit`, n > 0 && withAudit === n);
   }
 

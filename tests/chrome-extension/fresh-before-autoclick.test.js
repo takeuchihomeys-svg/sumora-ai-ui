@@ -57,7 +57,7 @@ const ok = (name, cond) => { if (cond) { pass++; console.log("  ✓ " + name); }
   ok("1パスの0件の知らせは件数が分かる時だけ", /if \(_propCount === 0 && !_out\.countUnknown && !\(batchDone && batchDone\.timedOut\)/.test(bg));
   ok("2パス（both）の集計も件数の分からないパスがあれば0件と言わない", /_totalPassCount === 0 && _passCountUnknown === 0 && customer\.customer_name/.test(bg) && /_scrapeOutcomeFor\(batchSite\)\.countUnknown\) _passCountUnknown\+\+/.test(bg));
   const bulk = read("bulk-dl.js");
-  ok("bulk-dl の送信エラーは件数を付けない（＝分からない）のまま", /audit: _auditResult\(state, \{ send_error: String\(errMsg2\)/.test(bulk) && !/propertyCount: state\.sentCount \|\| 0, audit: _auditResult\(state, \{ send_error/.test(bulk));
+  ok("bulk-dl の送信エラーは件数を付けない（＝分からない）のまま", /audit: _auditResult\(state, \{ send_error: String\(msg\)/.test(bulk) && !/propertyCount: state\.sentCount \|\| 0, audit: _auditResult\(state, \{ send_error/.test(bulk));
 
   console.log("\n■ ⑤ 版");
   const manifest = JSON.parse(read("manifest.json"));

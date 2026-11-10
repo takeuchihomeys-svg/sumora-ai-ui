@@ -1952,7 +1952,13 @@
       setTimeout(function () {
         // 2026-11-10 v2.6.13 竹内さん「一軒ずつ選択しておくるように」:
         //   ここから **1件選ぶ → 送る → 次を選ぶ** の繰り返しへ（旧は全行にチェックを入れてから1件ずつ送っていた）
-        var _list = tracked.filter(function (t) { return t.cb && t.btn; });
+        // 2026-11-10 v2.6.17 重大な不具合を修正:
+        //   旧は tracked（＝画面の全行）からリストを作っていたため、**送付済み・更新日で止めた行・上限で外した行まで
+        //   選び直して送ってしまう**恐れがあった（選別でチェックを外した意味が消える）。
+        //   いまは「選別を通った行（sendUrls）」だけを対象にする＝送る物が正しく絞られる。
+        var _allowed = {};
+        (sendUrls || []).forEach(function (u) { _allowed[String(u)] = true; });
+        var _list = tracked.filter(function (t) { return t.cb && t.btn && _allowed[String(t.btn.href)]; });
         if (!_list.length) { onDone(true, 0); return; }
         _oneByOneStart(state, _list, 0, function () {
           onDone(true, state.sentCount || 0);
@@ -1977,31 +1983,61 @@
       // 前の行のチェックを外す（1件だけ選ばれている状態を作る）
       tracked.forEach(function (t) { if (t.cb && t.cb !== item.cb && t.cb.checked) t.cb.checked = false; });
       updateBar();
+      var H = self.AxlxHumanWait;
+      var start = function () {
+        // 2026-11-10 v2.6.17 重大な不具合を修正:
+        //   旧は「チェックを積んで 1.6秒待って送る」だけだったので、カーソル移動＋迷いで押すのが遅いと
+        //   **チェックが入る前に送信**していた（送る物が0件になったり、前の行を送ったりする）。
+        //   いまは「実際にチェックが入るまで待つ」（最大8秒）→ 選んでから人が見る間 → 送る。
+        var waitChecked = function (n) {
+          if (item.cb.checked || n >= 16) {
+            var gap = H && H.logNormalDelay ? H.logNormalDelay(1600, 0.45) : (1200 + Math.floor(Math.random() * 2000));
+            if (gap > 6000) gap = 6000;
+            if (countEl) countEl.textContent = "P" + state.currentPage + " " + (index + 1) + "/" + list.length + " 確認中…";
+            setTimeout(function () {
+              _doSendOne(item, state, function () {
+                var nextGap = H && H.logNormalDelay ? H.logNormalDelay(1500, 0.45) : (900 + Math.floor(Math.random() * 1800));
+                if (Math.random() < 0.12) nextGap += 800 + Math.floor(Math.random() * 1500);
+                setTimeout(function () { _oneByOneStart(state, list, index + 1, doneCb); }, nextGap);
+              });
+            }, gap);
+            return;
+          }
+          setTimeout(function () { waitChecked(n + 1); }, (H && H.pollDelay ? H.pollDelay(500) : 500));
+        };
+        waitChecked(0);
+      };
       if (!item.cb.checked) {
         // 人が1件だけ押す（カーソルも動く）
         enqueueHumanClick(item.cb, _clickEl, 400, 900);
+        start();
+      } else {
+        start();
       }
-      // 選んでから送るまでの間（人が「この部屋でいいか」見る）
-      var H = self.AxlxHumanWait;
-      var gap = H && H.logNormalDelay ? H.logNormalDelay(1600, 0.45) : (1200 + Math.floor(Math.random() * 2000));
-      if (gap > 6000) gap = 6000;
-      if (countEl) countEl.textContent = "P" + state.currentPage + " " + (index + 1) + "/" + list.length + " 確認中…";
-      setTimeout(function () {
-        // 1件だけを組にする（buildSendItemsBrain は「チェックの入っている行」から作る）
-        _doSendOne(item, state, function () {
-          // 送り終わったら次の1件へ（間を空ける）
-          var nextGap = H && H.logNormalDelay ? H.logNormalDelay(1500, 0.45) : (900 + Math.floor(Math.random() * 1800));
-          if (Math.random() < 0.12) nextGap += 800 + Math.floor(Math.random() * 1500);
-          setTimeout(function () { _oneByOneStart(state, list, index + 1, doneCb); }, nextGap);
-        });
-      }, gap);
     }
 
     /** 1件だけを組にして送る（判定は1件ずつ・材料は今まで通り） */
     function _doSendOne(item, state, next) {
       var sendItems = [];
-      try { sendItems = buildSendItems().filter(function (it) { return it && it.url && it.url === item.btn.href; }); } catch (_) { sendItems = []; }
-      if (!sendItems.length) { next(); return; }
+      try {
+        // 2026-11-10 v2.6.17: この行だけを組にする。チェックが外れていても対象の行は必ず入れる
+        //   （選別を通った行だけが list に来ているので、ここでの対象は安全）
+        var all = buildSendItems();
+        sendItems = all.filter(function (it) { return it && it.url && it.url === item.btn.href; });
+        if (!sendItems.length) {
+          // 組が作れない（印刷用PDFのリンクが取れない）→ この行は飛ばす
+          console.warn("[AXLX bulk-dl] 1件送信: 組が作れない行 → 飛ばす: " + String(item.btn.href || '').slice(0, 80));
+          next();
+          return;
+        }
+      } catch (_) { next(); return; }
+      // 送る前に「本当にチェックが入っているか」を確かめる（入っていなければ一度だけ入れる）
+      if (item.cb && !item.cb.checked && !item.__axForced) {
+        item.__axForced = true;
+        try { item.cb.checked = true; updateBar(); } catch (_) {}
+        setTimeout(function () { _doSendOne(item, state, next); }, 400);
+        return;
+      }
       // ブレインの判定（1件）
       var judge = function (kept, brain) {
         if (!kept || !kept.length) { next(); return; }
@@ -2023,6 +2059,15 @@
             var msg = chrome.runtime.lastError ? chrome.runtime.lastError.message : (resp && resp.error) || "応答なし";
             console.error("[AXLX bulk-dl] 1件送信のエラー:", msg);
             _tmark("send_err", "1件: " + String(msg).slice(0, 80));
+            // 2026-11-10 v2.6.17: 送信エラーの時は件数を付けない（「分からない」）。0 と書くと「0件」と誤解される
+            try {
+              chrome.runtime.sendMessage({
+                type: "axlx-batch-customer-done",
+                customerId: state.customerId || null,
+                audit: _auditResult(state, { send_error: String(msg).slice(0, 200) }),
+              }, function () { void chrome.runtime.lastError; });
+            } catch (_) {}
+            return; // 次の行へは進まない（エラーの時は止める＝今まで通り）
           } else {
             _tmark("sent", "P" + state.currentPage + " 1件");
             state.sentCount = (state.sentCount || 0) + kept.length;
@@ -2042,100 +2087,7 @@
       }
     }
 
-    function _doSendAfterLook(sendUrls) {
-      // 2026-09-18: urls / 説明文 / 学習用データを別々に作って slice で対応づけるのをやめ、
-      //   1件 = 1つの組にしてから分ける。組のまま切るので、バッチ境界でもズレない。
-      // 2026-09-23: ブレインモードなら送信前に判定（外す物を外す・失敗なら全件）。判定はページ単位（最大4秒＋API 30秒）。
-      buildSendItemsBrain(state.customerId || null, function (sendItems, brain) {
-      state.sendableCount = (state.sendableCount || 0) + sendItems.length; // 検索の点検: 送れる行数（ブレインが外した後）
-      if (!sendItems.length) {
-        console.warn("[AXLX bulk-dl] autoSendOnePage: 送れる物件が0件（" + (brain ? "ブレインが全件を見送り" : "印刷用PDFのリンクなし") + "）→ スキップ");
-        onDone(true, 0);
-        return;
-      }
-      if (!brain && sendItems.length !== sendUrls.length) {
-        console.warn("[AXLX bulk-dl] 送信直前に件数が変化 " + sendUrls.length + "→" + sendItems.length + "（組で作り直した方を送る）");
-      }
 
-      // 10件ずつバッチに分割して順番に送信（一括送信はタイムアウトするため）
-      var batches = AxlxSendPairing.splitBatches(sendItems, _sendBatchSize());
-
-      var batchIndex = 0;
-      function sendNextBatch() {
-        if (batchIndex >= batches.length) {
-          onDone(true, sendItems.length);
-          return;
-        }
-        var batch = batches[batchIndex];
-        _tmark("send", "P" + state.currentPage + " " + (batchIndex + 1) + "/" + batches.length + " n=" + batch.length);
-        if (countEl) {
-          countEl.textContent = "P" + state.currentPage + " 送信中 (" + (batchIndex + 1) + "/" + batches.length + ")";
-        }
-        chrome.runtime.sendMessage({
-          type: "axlx-send-to-line",
-          urls: AxlxSendPairing.pluck(batch, "url"),
-          customer_name: state.customerName || null,
-          property_summaries: AxlxSendPairing.pluck(batch, "summary"),
-          property_pool: poolWithUrl(batch),   // 2026-09-25: 資料の URL も候補の記録に
-          customer_id: state.customerId || null,
-          customer_conditions: state.customerConditions || null,
-          site: "realpro",
-          // 2026-09-29 v2.5.41 このページで送付済みの部屋として選ばなかった数（ページの最初の束だけ・★物件出し★に1行）
-          sent_skipped: batchIndex === 0 ? (state.pageSkipped || 0) : 0,
-        }, function (resp) {
-          if (chrome.runtime.lastError) {
-            clearAutoSendState();
-            var errMsg1 = chrome.runtime.lastError.message || "不明なエラー";
-            if (countEl) countEl.textContent = "送信エラー（次顧客へ）";
-            console.error("[AXLX bulk-dl] 送信エラー:", errMsg1);
-            // エラー詳細をアラートで表示（何が原因か分かるように）
-            alert("LINE送信エラー:\n" + errMsg1 + "\n\n※リアプロにログインし直して再試行してください");
-            _tmark("send_err", "P" + state.currentPage + " " + (batchIndex + 1) + "/" + batches.length);
-            try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, audit: _auditResult(state, { send_error: String(errMsg1).slice(0, 200) }) }, function () { void chrome.runtime.lastError; }); } catch (_) {}
-            return;
-          }
-          if (!resp || !resp.ok) {
-            clearAutoSendState();
-            var errMsg2 = resp ? (resp.error || "サーバーエラー") : "応答なし（タイムアウトの可能性）";
-            if (countEl) countEl.textContent = "送信エラー（次顧客へ）";
-            console.error("[AXLX bulk-dl] 送信エラー:", errMsg2);
-            // エラー詳細をアラートで表示（何が原因か分かるように）
-            alert("LINE送信エラー:\n" + errMsg2 + "\n\n※セッション切れの場合: リアプロに再ログインしてください\n※タイムアウトの場合: 物件数を減らして再試行してください");
-            _tmark("send_err", "P" + state.currentPage + " " + (batchIndex + 1) + "/" + batches.length);
-            try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, audit: _auditResult(state, { send_error: String(errMsg2).slice(0, 200) }) }, function () { void chrome.runtime.lastError; }); } catch (_) {}
-            return;
-          }
-          _tmark("sent", "P" + state.currentPage + " " + (batchIndex + 1) + "/" + batches.length);
-          batchIndex++;
-          // 進捗ハートビート: background の全ページ送信完了待機タイムアウトをリセット。
-          // 多ページ・多物件の送信は5分を超えることがあり、固定5分タイムアウトのままだと
-          // background が次顧客の autofill を開始 → 検索リロードで送信中のページが破壊される。
-          try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
-          // 2026-11-10 v2.5.95 竹内さん「1件ずつのダウンロードとなりそして時間差も人間が確認するように」:
-          //   1件ずつ取りに行くので、間は「人がPDFを開いて中身を見て、次の行へ移る間」にする。
-          //   既定 2〜6秒（対数正規・中央値3.4秒・上は12秒まで）＋ 12%ほどで「少し考えて戻る」一息を足す。
-          //   等間隔にしない。サイトへのアクセスは増えない（次の1件を押すのが遅くなるだけ）
-          if (batchIndex < batches.length) {
-            var _Hc = self.AxlxHumanWait;
-            var _perItem = _sendBatchSize() === 1;
-            var _confirmGap = _Hc && _Hc.logNormalDelay
-              ? _Hc.logNormalDelay(_perItem ? 3400 : 3600, 0.45)
-              : ((_perItem ? 2000 : 3000) + Math.floor(Math.random() * (_perItem ? 4000 : 6000)));
-            var _cap = _perItem ? 12000 : 20000;
-            if (_confirmGap > _cap) _confirmGap = _cap;
-            if (Math.random() < 0.12) _confirmGap += 800 + Math.floor(Math.random() * 1500);
-            _tmark("confirm_wait", "P" + state.currentPage + " " + (batchIndex + 1) + "/" + batches.length + " " + Math.round(_confirmGap) + "ms");
-            if (countEl) countEl.textContent = "P" + state.currentPage + " 送信中 (" + (batchIndex + 1) + "/" + batches.length + ") 資料を確認中…";
-            setTimeout(sendNextBatch, _confirmGap);
-            return;
-          }
-          sendNextBatch();
-        });
-      }
-
-      sendNextBatch();
-      });
-    }
   }
 
   // ── 全ページ自動送信: エントリポイント ────────────────────────────────────
