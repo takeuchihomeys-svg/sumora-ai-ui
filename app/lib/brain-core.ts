@@ -108,6 +108,7 @@ import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { inferTpoHint } from "@/app/lib/tpo-hint";
 import {
   mergeBrainLayers, extractStrategy, sanitizeStrategyFields, strategyForPrompt, detectStrategyShift, decideStrategyRefresh, toFreshDigest, maxSignal,
+  decideStrategyStaleDefer, strategyStaleDeferMode,
   type BrainStrategy,
 } from "@/app/lib/brain-layers";
 // 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
@@ -7324,8 +7325,17 @@ async function analyzeAndSaveBrainMetaInner(
           ]);
           const shiftOrReport = strategyShift ?? ((newerReport ?? []).length > 0 ? "viewing_report" : null);
           const refresh = decideStrategyRefresh({ strategy: brainStrategy, customerMsgsSinceStrategy: sinceCount ?? 0, nowMs: Date.now(), shift: shiftOrReport });
-          console.log(JSON.stringify({ tag: "brain:strategy-decision", conversationId, kind: refresh.kind, reason: refresh.reason, sinceCount: sinceCount ?? 0, shift: shiftOrReport }));
-          if (refresh.kind !== "none") scheduleStrategyRefresh(conversationId, refresh.kind, refresh.reason ?? "");
+          // 2026-11-10 作業員8: この分析より新しいお客様の発言が既にある番は、戦略の分析を次の分析に任せる（brain-layers.decideStrategyStaleDefer・BRAIN_STRATEGY_STALE_DEFER 既定 off）
+          const staleDefer = await decideStrategyStaleDefer({
+            mode: strategyStaleDeferMode(), kind: refresh.kind, analyzedMsgTs: metaToWrite.analyzed_msg_ts ?? null,
+            loadLatestCustomerTs: async () => {
+              const { data } = await supabase.from("messages").select("created_at").eq("conversation_id", conversationId).eq("sender", "customer")
+                .order("created_at", { ascending: false }).limit(1).maybeSingle();
+              return (data?.created_at as string | undefined) ?? null;
+            },
+          });
+          console.log(JSON.stringify({ tag: "brain:strategy-decision", conversationId, kind: refresh.kind, reason: refresh.reason, sinceCount: sinceCount ?? 0, shift: shiftOrReport, ...(staleDefer.stale != null ? { stale: staleDefer.stale, deferred: staleDefer.skip } : {}) }));
+          if (refresh.kind !== "none" && !staleDefer.skip) scheduleStrategyRefresh(conversationId, refresh.kind, refresh.reason ?? "");
         }
       } catch (e) {
         console.warn("[brain-core] strategy layer update failed:", conversationId, e instanceof Error ? e.message : String(e));

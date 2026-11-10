@@ -1,6 +1,6 @@
 // 2026-09-13 2層ブレイン: 今回の発言の層と戦略の層の組み合わせ・戦略が変わる発言・戦略のやり直し判定
 // 実行: npx tsx app/lib/__tests__/brain-layers.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { mergeBrainLayers, extractStrategy, detectStrategyShift, decideStrategyRefresh, maxSignal, toFreshDigest, type BrainStrategy } from "../brain-layers";
+import { mergeBrainLayers, extractStrategy, detectStrategyShift, decideStrategyRefresh, maxSignal, toFreshDigest, strategyRefreshIsStale, strategyStaleDeferMode, decideStrategyStaleDefer, type BrainStrategy } from "../brain-layers";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -80,5 +80,35 @@ it("毎回の分析の要点は短く（質問2件・各40字）", () => {
   expect(d.aix).toBe("estimate_sheet");
 });
 
-console.log(`\n${passed} passed, ${failed} failed`);
-if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
+// 2026-11-10 作業員8: 古くなった番では戦略の分析を起動しない（BRAIN_STRATEGY_STALE_DEFER）
+it("古い番の判定: この分析が見た発言より新しいお客様の発言がある時だけ true", () => {
+  expect(strategyRefreshIsStale({ analyzedMsgTs: "2026-11-10T06:55:02.814Z", latestCustomerTs: "2026-11-10T06:55:35.486Z" })).toBe(true);
+  expect(strategyRefreshIsStale({ analyzedMsgTs: "2026-11-10T06:55:35.486+00:00", latestCustomerTs: "2026-11-10T06:55:35.486Z" })).toBe(false);
+  expect(strategyRefreshIsStale({ analyzedMsgTs: null, latestCustomerTs: "2026-11-10T06:55:35.486Z" })).toBe(false);
+  expect(strategyRefreshIsStale({ analyzedMsgTs: "2026-11-10T06:55:35Z", latestCustomerTs: null })).toBe(false);
+});
+it("スイッチ: 既定 off・shadow・on", () => {
+  expect(strategyStaleDeferMode({})).toBe("off");
+  expect(strategyStaleDeferMode({ BRAIN_STRATEGY_STALE_DEFER: " ON " })).toBe("on");
+  expect(strategyStaleDeferMode({ BRAIN_STRATEGY_STALE_DEFER: "shadow" })).toBe("shadow");
+  expect(strategyStaleDeferMode({ BRAIN_STRATEGY_STALE_DEFER: "x" })).toBe("off");
+});
+
+(async () => {
+  const a = "2026-11-10T06:55:02.814Z";
+  const newer = async () => "2026-11-10T06:55:35.486Z", same = async () => a;
+  let reads = 0; const counted = async () => { reads++; return "2026-11-10T06:55:35.486Z"; };
+  const cases: Array<[string, { skip: boolean; stale: boolean | null }, { skip: boolean; stale: boolean | null }]> = [
+    ["off は DB を読まず起動する", await decideStrategyStaleDefer({ mode: "off", kind: "scratch", analyzedMsgTs: a, loadLatestCustomerTs: counted }), { skip: false, stale: null }],
+    ["kind none は読まない", await decideStrategyStaleDefer({ mode: "on", kind: "none", analyzedMsgTs: a, loadLatestCustomerTs: counted }), { skip: false, stale: null }],
+    ["on・古い番（3d2b1f6a 11/10 の2通目）は起動しない", await decideStrategyStaleDefer({ mode: "on", kind: "consolidate", analyzedMsgTs: a, loadLatestCustomerTs: newer }), { skip: true, stale: true }],
+    ["on・新しい発言が無ければ起動する", await decideStrategyStaleDefer({ mode: "on", kind: "scratch", analyzedMsgTs: a, loadLatestCustomerTs: same }), { skip: false, stale: false }],
+    ["shadow は記録だけ（起動する）", await decideStrategyStaleDefer({ mode: "shadow", kind: "scratch", analyzedMsgTs: a, loadLatestCustomerTs: newer }), { skip: false, stale: true }],
+    ["読めない時は起動する（今まで通り）", await decideStrategyStaleDefer({ mode: "on", kind: "scratch", analyzedMsgTs: a, loadLatestCustomerTs: async () => { throw new Error("db"); } }), { skip: false, stale: null }],
+  ];
+  for (const [name, got, exp] of cases) it(name, () => expect(got).toEqual(exp));
+  it("off と none では DB を1回も読まない", () => expect(reads).toBe(0));
+
+  console.log(`\n${passed} passed, ${failed} failed`);
+  if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
+})();

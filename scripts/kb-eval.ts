@@ -17,6 +17,7 @@ import { KB_EVAL, KB_EVAL_LEGACY, type KbEvalQ } from "./kb-eval-set";
 import { embedTexts, loadRagRows } from "../app/lib/design-knowledge-rag-server";
 import { cosine, hybridRank, splitPinned, KB_SCENES, KB_VEC_FETCH, reviewSupersedePairs, type RagRow, type Scored } from "../app/lib/design-knowledge-rag";
 import { effectivePriority } from "../app/lib/design-knowledge-priority";
+import { prefetchQueries, mapLimit, KB_EVAL_EMBED_BATCH, KB_EVAL_RPC_CONCURRENCY } from "./lib/kb-eval-prefetch";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? "";
@@ -61,6 +62,30 @@ export async function rankForEval(q: string, rows: RagRow[], opts: { scene?: KbE
   if (c.vec) for (const [id, e] of opts.p0Emb) p0Sims.set(id, cosine(c.vec, e));
   const sp = splitPinned(all, K, { p0Sims, scene: !!opts.scene && opts.scene !== "other" });
   return { ...sp, all, qvec: c.vec };
+}
+
+/**
+ * 2026-11-10 作業員8: 週の cron（/api/cron/kb-eval・maxDuration 300s）が 11/08 に終わらず（cron_run_logs の finished_at が空）。
+ *   問い 約400（物差し＋前の物差し＋退役の題 70）を1つずつ「埋め込み1回（0.3〜0.6秒）→ 近さの RPC 1回（0.2〜1.8秒）」で回していた＝300秒を超える。
+ *   先に問いをまとめて埋め込み（1回 96問・50問で 0.2秒）、近さの RPC を同時に数本で引いて vecCache を埋める。
+ *   並べ方（hybridRank・splitPinned）と数え方は変えない＝結果は前と同じ（同じ問い・同じ埋め込み・同じ RPC）
+ */
+async function prefetchVectors(qs: string[], vecCache: Map<string, { vec: number[] | null; sims: Map<string, number> }>): Promise<void> {
+  const todo = prefetchQueries(qs, vecCache);
+  for (let i = 0; i < todo.length; i += KB_EVAL_EMBED_BATCH) {
+    const chunk = todo.slice(i, i + KB_EVAL_EMBED_BATCH);
+    const { vectors } = await embedTexts(chunk);
+    await mapLimit(chunk, KB_EVAL_RPC_CONCURRENCY, async (q, j) => {
+      const vec = vectors[j] ?? null;
+      const sims = new Map<string, number>();
+      if (vec) {
+        const { data, error } = await sb.rpc("match_design_thinking_exact", { query_embedding: vec, match_count: KB_VEC_FETCH });
+        if (error) throw new Error(error.message);
+        for (const r of (data ?? []) as Array<{ id: string; similarity: number }>) sims.set(r.id, r.similarity);
+      }
+      vecCache.set(q, { vec, sims });
+    });
+  }
 }
 
 /** 題の最初の句（— ・：・（ の前・8字未満なら40字まで）＝担当が題を覚えていて短く引く形 */
@@ -109,6 +134,13 @@ export async function runKbEval(opts: { set?: "all" | "dev" | "ho"; noScene?: bo
   const review = existsSync(opts.reviewPath ?? "") ? reviewSupersedePairs(readFileSync(opts.reviewPath!, "utf8")) : [];
   const oldOf = new Map<string, string[]>();
   for (const p of review) if (byId.has(p.oldId) && byId.has(p.newId)) oldOf.set(p.newId, [...(oldOf.get(p.newId) ?? []), p.oldId]);
+
+  // 2026-11-10: 問いの埋め込みと近さを先にまとめて引く（並べ方は同じ・時間だけ短く）
+  await prefetchVectors([
+    ...set.filter((x) => x.gold.some(findGold)).map((x) => x.q),
+    ...(opts.stale !== false ? retired.filter((r) => r.superseded_by && byId.has(r.superseded_by)).map((r) => r.title) : []),
+    ...(opts.self !== false ? rows.filter((x) => effectivePriority(x) <= 1).map((r) => selfQuery(r.title)) : []),
+  ], vecCache);
 
   const overall = agg(), dev = agg(), ho = agg();
   const legacy: Record<string, Agg> = {};

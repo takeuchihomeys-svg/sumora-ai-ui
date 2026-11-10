@@ -243,6 +243,43 @@ export function detectStrategyShift(i: {
   return null;
 }
 
+/**
+ * 2026-11-10 作業員8（本番の Claude の二重走りの整理・竹内さん承認）: 戦略の分析を、古くなった番では起動しない。
+ *   本番7日: 戦略の分析（整理 brain_strategy／ゼロから brain_full）が3分以内に次の戦略の分析で上書きされた回 35（$2.3）。
+ *   多くは「1通目を分析中に2通目が届いた」番＝1通目の分析が古い（stale-snapshot）のに戦略を起動し、2通目を見た分析がもう一度起動する。
+ *   この分析が見たお客様の発言（analyzed_msg_ts）より新しいお客様の発言が既にある時は、次の分析（新しい発言を見る）に任せて起動しない。
+ *   次の分析は同じ戦略の数（strategy_count）から決めるので、整理かゼロからかの順番は変わらない。
+ *   BRAIN_STRATEGY_STALE_DEFER: off（既定・今まで通り）／shadow（見送る番を記録だけ）／on（見送る）
+ */
+export function strategyStaleDeferMode(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): "off" | "shadow" | "on" {
+  const v = (env.BRAIN_STRATEGY_STALE_DEFER ?? "").trim().toLowerCase();
+  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+}
+/** この分析が見た発言より新しいお客様の発言があるか（読めない時は false＝今まで通り起動する） */
+export function strategyRefreshIsStale(i: { analyzedMsgTs: string | null | undefined; latestCustomerTs: string | null | undefined }): boolean {
+  const a = i.analyzedMsgTs ? Date.parse(i.analyzedMsgTs) : NaN;
+  const l = i.latestCustomerTs ? Date.parse(i.latestCustomerTs) : NaN;
+  if (!Number.isFinite(a) || !Number.isFinite(l)) return false;
+  return l > a;
+}
+
+/**
+ * 起動するかの決め（brain-core が戦略の分析を起動する直前に呼ぶ）。off の時は DB を読まない。
+ *   返す skip: true の時だけ起動しない（on かつ古い番）。stale は記録用（shadow でも数える）
+ */
+export async function decideStrategyStaleDefer(i: {
+  mode: "off" | "shadow" | "on";
+  kind: "none" | "consolidate" | "scratch";
+  analyzedMsgTs: string | null | undefined;
+  loadLatestCustomerTs: () => Promise<string | null>;
+}): Promise<{ skip: boolean; stale: boolean | null }> {
+  if (i.mode === "off" || i.kind === "none") return { skip: false, stale: null };
+  let latest: string | null = null;
+  try { latest = await i.loadLatestCustomerTs(); } catch { return { skip: false, stale: null }; }
+  const stale = strategyRefreshIsStale({ analyzedMsgTs: i.analyzedMsgTs, latestCustomerTs: latest });
+  return { skip: i.mode === "on" && stale, stale };
+}
+
 /** 戦略の分析をやり直すか。10件・戦略が変わる発言・しばらく間が空いた時。3回に1回はゼロから */
 export const STRATEGY_REFRESH_EVERY_CUSTOMER_MSGS = 10;
 export const STRATEGY_REFRESH_AFTER_HOURS = 72;
