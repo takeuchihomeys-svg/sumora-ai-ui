@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { materialMissingKey, materialMissingSide, tallyMaterialKeys } from "../material-missing-key";
-import { pickupCandidatesMaterialLine, freshPickupCandidates, focusDocDigestNote, pickupCandidatesListOn, focusDocDigestOn } from "../brain-material-wiring";
+import { pickupCandidatesMaterialLine, freshPickupCandidates, focusDocDigestNote, pickupCandidatesListOn, focusDocDigestOn, threadDocTarget } from "../brain-material-wiring";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) pass++; else { fail++; console.log(`  NG  ${name}`, extra); } };
 const k = (label: string, want: string) => { const got = materialMissingKey(label); t(`${label} → ${want}`, got === want, got); };
@@ -66,5 +66,15 @@ t("資料の行: 項目が無ければ空", focusDocDigestNote({ name: "x", room
 // 配線（brain-core）
 const src = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");
 t("配線: 候補の中身は pickupCandidatesListOn の時だけ列を足して読み、ready の時に行を足す", /const candList = pickupCandidatesListOn\(\);/.test(src) && /if \(candList && readyNow\) \{/.test(src) && /pickupCandidatesMaterialLine\(\(pendNow \?\? \[\]\)/.test(src));
-t("配線: 資料の行は focusDocDigestOn・contract-terms が無い・主のお部屋がある時だけ", /if \(focusDocDigestOn\(\) && !contractTerms && focusRoomForMaterial && !isPostApplyStatus\(convStatus\)\)/.test(src) && /focusDocDigestNote\(/.test(src));
+t("配線: 資料の行は focusDocDigestOn・contract-terms が無い時だけ・主のお部屋→無ければ台帳の今の番の物件", src.includes("if (focusDocDigestOn() && !contractTerms && !isPostApplyStatus(convStatus)) {") && src.includes("docDigestTarget = threadDocTarget(pt);") && /const fr = docDigestTarget;/.test(src) && !src.includes("latestSentTarget("));
+// 11/11 a1-doc-dig2-1111: q404 は「長居東のとこめっちゃいいですね」なのに、直近の送付（サンシエ南巽）を対象にしていた → 台帳の名指しを使う
+const rooms = [
+  { key: "長居東", ref: { building: "長居東レジデンス", room: "203" } },
+  { key: "サンシエ南巽", ref: { building: "サンシエ南巽", room: "501" } },
+  { key: "GrandPaseo", ref: { building: "GrandPaseo south", room: "302" } },
+];
+t("台帳: 名指しの物件が1つ（q404 の形）→ その物件", threadDocTarget({ rooms, turnTargets: [{ roomKey: "長居東" }], turnReferent: { kind: "one", roomKey: "サンシエ南巽" } })?.name === "長居東レジデンス");
+t("台帳: 名指しが無く主語の抜けた番が1件（q403 の形・直前に1件だけ送った）→ その物件", threadDocTarget({ rooms, turnTargets: [], turnReferent: { kind: "one", roomKey: "GrandPaseo" } })?.roomNo === "302");
+t("台帳: 名指しが複数・候補が複数・台帳なし → 出さない", threadDocTarget({ rooms, turnTargets: [{ roomKey: "長居東" }, { roomKey: "GrandPaseo" }] }) === null
+  && threadDocTarget({ rooms, turnTargets: [], turnReferent: { kind: "many" } }) === null && threadDocTarget(null) === null);
 console.log(`material-missing-key: ${pass}/${pass + fail}`); if (fail) process.exit(1);
