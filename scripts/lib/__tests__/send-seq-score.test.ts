@@ -1,6 +1,6 @@
 // 送る物の並びの採点（scripts/lib/send-seq-score.ts）
 // 実行: npx tsx scripts/lib/__tests__/send-seq-score.test.ts（自己完結。全 PASS で exit 0）
-import { seqOfStaffText, wantSeqOf, brainSeqOf, seqMatch, replyCountMatch, draftPartCount, seqStats, sendSeqSummary, type SeqRow } from "../send-seq-score";
+import { seqOfStaffText, wantSeqOf, brainSeqOf, seqMatch, replyCountMatch, draftPartCount, seqStats, sendSeqSummary, rawSeqOf, type SeqRow } from "../send-seq-score";
 
 let fail = 0, pass = 0;
 function eq(name: string, a: unknown, b: unknown) {
@@ -59,5 +59,12 @@ eq("要約の頭", line.startsWith("送る物の並び（回 5・正解は札 2�
 eq("割った問題が出る", line.includes("q2=RR（正解 R）"), true);
 eq("行が無ければ空", sendSeqSummary([], pct), "");
 
+// 本質（LLM の最初）の並び
+eq("raw の send_sequence", rawSeqOf({ send_sequence: [{ slot: "reply" }, { slot: "aix" }] }), "RA");
+eq("raw に並びが無く aix あり", rawSeqOf({ aix: "estimate_sheet" }), "A");
+eq("raw に aix 無し", [rawSeqOf({ aix: null }), rawSeqOf({ aix: "none" }), rawSeqOf(null)], ["R", "R", null]);
+const st2 = seqStats([{ id: "a", want: "RR", from: "札", got: "R", recorded: false, draft: null, raw: "RR" }, { id: "b", want: "RAR", from: "札", got: "R", recorded: false, draft: null, raw: "RA" }, { id: "c", want: "R", from: "実送信", got: "R", recorded: false, draft: null }]);
+eq("本質の一致", [st2.rawN, st2.rawMatch, st2.rawMultiN, st2.rawMultiHit], [2, 1, 2, 1]);
+eq("要約に本質の一致", sendSeqSummary([{ id: "a", want: "RR", from: "札", got: "R", recorded: false, draft: null, raw: "RR" }], pct).includes("本質（LLM の最初の並び）の一致 1/1"), true);
 console.log(`send-seq-score: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

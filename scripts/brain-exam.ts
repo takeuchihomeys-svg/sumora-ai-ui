@@ -83,7 +83,7 @@ import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord }
 import { essenceOverride } from "./lib/exam-essence";
 import { readLedger, rowFromReusedId } from "./lib/exam-id-ledger";
 import { overBudget, capUsdOf } from "./lib/exam-plan";
-import { wantSeqOf, brainSeqOf, sendSeqSummary, type SeqRow, type SeqBrain } from "./lib/send-seq-score";
+import { wantSeqOf, brainSeqOf, rawSeqOf, sendSeqSummary, type SeqRow, type SeqBrain } from "./lib/send-seq-score";
 /** 2026-11-05 F2 の確かめ（既定 on・止める EXAM_COPY_CHECK=off） */
 const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
 
@@ -902,7 +902,7 @@ function summarize(label: string, baseline: string | null): string {
   {
     const seqRows: SeqRow[] = pp.flatMap((p) => {
       const w = wantSeqOf(probs.get(p.id) ?? {});
-      return w ? p.rows.filter((r) => !r.error && r.brain).map((r) => { const g = brainSeqOf(r.brain as SeqBrain); return { id: p.id, want: w.seq, from: w.from, got: g.seq, recorded: g.recorded, draft: (r.draft?.text ?? null) as string | null }; }) : [];
+      return w ? p.rows.filter((r) => !r.error && r.brain).map((r) => { const g = brainSeqOf(r.brain as SeqBrain); return { id: p.id, want: w.seq, from: w.from, got: g.seq, recorded: g.recorded, draft: (r.draft?.text ?? null) as string | null, raw: rawSeqOf((r.raw ?? null) as Parameters<typeof rawSeqOf>[0]) }; }) : [];
     });
     const seqLine = sendSeqSummary(seqRows, pct);
     if (seqLine) L.push(seqLine);

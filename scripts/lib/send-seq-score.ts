@@ -41,6 +41,15 @@ export function brainSeqOf(b: SeqBrain): { seq: string; recorded: boolean } {
   return { seq: b?.reply_mode === "aix" && (b?.action ?? "").trim() ? "A" : "R", recorded: false };
 }
 
+/** LLM の最初の答え（raw）の並び: send_sequence があればそれ・無ければ aix の欄があれば A・他は R（2段の書き換えの前＝本質の並び）。
+ *  11/10 w7-seq-dig3: 最後の答えは2段で AIX が約束に変わると sanitizeSendSequence が AIX の通を外し1通に戻る＝本質は別に数える */
+export function rawSeqOf(raw: { send_sequence?: Array<{ slot?: string }> | null; aix?: string | null } | null | undefined): string | null {
+  if (!raw) return null;
+  const s = raw.send_sequence;
+  if (Array.isArray(s) && s.length) return s.map((x) => (x?.slot === "aix" ? "A" : "R")).join("");
+  return /^(?:|null|none)$/i.test(String(raw.aix ?? "").trim()) ? "R" : "A";
+}
+
 export const seqMatch = (want: string, got: string): boolean => got.split("|").includes(want);
 const replies = (s: string) => s.split("").filter((c) => c === "R").length;
 /** 返信の通数の一致（2択は少ない方で数える＝R でも A でも返信は 0〜1） */
@@ -48,7 +57,7 @@ export const replyCountMatch = (want: string, got: string): boolean => got.split
 /** 下書きの通数（「---」の行で分けた数・無ければ 0） */
 export const draftPartCount = (text: string | null | undefined): number => splitDraftParts(text).length;
 
-export type SeqRow = { id: string; want: string; from: "札" | "実送信"; got: string; recorded: boolean; draft: string | null };
+export type SeqRow = { id: string; want: string; from: "札" | "実送信"; got: string; recorded: boolean; draft: string | null; raw?: string | null };
 
 export function seqStats(rows: SeqRow[]) {
   const n = rows.length;
@@ -64,7 +73,10 @@ export function seqStats(rows: SeqRow[]) {
   const multiReplyWant = rows.filter((x) => replies(x.want) >= 2);
   const draftSplit = multiReplyWant.filter((x) => draftPartCount(x.draft) >= 2).length;
   const draftHave = multiReplyWant.filter((x) => !!x.draft).length;
-  return { n, match, countMatch, multiN: multiWant.length, multiHit, singleN: singleWant.length, overSplit, underSplit, multiReplyN: multiReplyWant.length, draftSplit, draftHave, recorded: rows.filter((x) => x.recorded).length };
+  const rawRows = rows.filter((x) => !!x.raw);
+  const rawMatch = rawRows.filter((x) => x.raw === x.want).length;
+  const rawMultiWant = rawRows.filter((x) => x.want.length >= 2);
+  return { rawN: rawRows.length, rawMatch, rawMultiN: rawMultiWant.length, rawMultiHit: rawMultiWant.filter((x) => x.raw === x.want).length, n, match, countMatch, multiN: multiWant.length, multiHit, singleN: singleWant.length, overSplit, underSplit, multiReplyN: multiReplyWant.length, draftSplit, draftHave, recorded: rows.filter((x) => x.recorded).length };
 }
 
 /** 要約の1行（pct は brain-exam の書き方を受け取る） */
@@ -75,5 +87,6 @@ export function sendSeqSummary(rows: SeqRow[], pct: (a: number, b: number) => st
   const fromTag = rows.filter((x) => x.from === "札").length;
   return `送る物の並び（回 ${s.n}・正解は札 ${fromTag}／実送信 ${s.n - fromTag}・ブレインが send_sequence を出した ${s.recorded}）: 一致 ${pct(s.match, s.n)}｜返信の通数の一致 ${pct(s.countMatch, s.n)}｜2通以上の番の一致 ${pct(s.multiHit, s.multiN)}`
     + `｜1通の番を割った ${s.overSplit.length}/${s.singleN}${list(s.overSplit)}｜2通以上の番を1通に ${s.underSplit.length}/${s.multiN}`
+    + (s.rawN ? `｜本質（LLM の最初の並び）の一致 ${pct(s.rawMatch, s.rawN)}・2通以上の番 ${pct(s.rawMultiHit, s.rawMultiN)}` : "")
     + (s.multiReplyN ? `｜返信2通以上の番の下書き「---」で分かれた ${s.draftSplit}/${s.draftHave}（下書きあり）` : "");
 }
