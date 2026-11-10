@@ -206,14 +206,31 @@
   function _clickEl(el) { el.click(); }
   // 2026-11-10 人間的な動き: 押す前に、その要素が画面に入るまで少しずつ動かす（人が目で探して手を伸ばす形）。
   //   一瞬で飛ばさない（behavior: smooth）。画面に入っているなら何もしない。押す・選ぶの中身は変えない。
+  // 2026-11-10 v2.5.96 竹内さん「画面無駄に上下しまくりすぎている。実際のスタッフはそこまで上下しまくらないし
+  //   その上下の時間もはやすぎる」:
+  //   旧は block:"center" で毎回その要素を画面の真ん中へ寄せていた＝押すたびに画面が大きく上下する（人の動きではない）。
+  //   直し: ①画面に入っていれば何もしない（今まで通り）②画面の外の時だけ、**最小の移動**で見える位置へ寄せる
+  //   （block:"nearest"）③連続して動かさない＝直近 900ms 以内にスクロールしていたら、その時はスクロールせずに待ってから押す
+  //   （人が「少し見てから押す」形・画面が細かく往復しない）④スムーズの時間はブラウザ任せにせず、押す前に少し待つ
+  var _lastScrollAt = 0;
   function _ensureInView(el) {
     try {
-      if (!el || !el.getBoundingClientRect) return;
+      if (!el || !el.getBoundingClientRect) return 0;
       var r = el.getBoundingClientRect();
       var vh = window.innerHeight || 800;
-      if (r.top >= 0 && r.bottom <= vh) return;
-      el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-    } catch (_) {}
+      var margin = 60; // 画面の端から少し内側に入れる（端ぎりぎりで押さない）
+      if (r.top >= margin && r.bottom <= vh - margin) return 0;
+      var now = Date.now();
+      // 直前のスクロールから 900ms 未満なら、動かさずに「見えている所で待つ」時間を返す
+      if (_lastScrollAt && now - _lastScrollAt < 900) return 350 + Math.floor(Math.random() * 450);
+      _lastScrollAt = now;
+      // 最小の移動で見える位置へ（真ん中へは寄せない）
+      el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+      // スムーズの動きが終わるのを待つ（人が目で追う時間・距離に応じて 250〜700ms）
+      var dist = r.top < margin ? -(r.top - margin) : (r.bottom - (vh - margin));
+      var wait = Math.min(700, Math.max(250, Math.round(Math.abs(dist) * 1.2)));
+      return wait;
+    } catch (_) { return 0; }
   }
   // 2026-11-10 人間的な動き: マウスが要素まで「動いて」から押す。人の軌跡（少し曲がる）をなぞって
   //   mousemove / mouseover / mousedown / mouseup / click を順に出す（押すのは最後の1回だけ＝二重に効かせない）。
@@ -307,7 +324,18 @@
         _scheduleClickDrain();
       };
       try {
-        if (item.el) _ensureInView(item.el);
+        // v2.5.96: 画面の外の時だけ最小の移動で見える位置へ寄せ、動かしたら終わるまで待ってから押す
+        var _viewWait = item.el ? _ensureInView(item.el) : 0;
+        if (_viewWait > 0) {
+          setTimeout(function () {
+            try {
+              var ret2 = item.el ? _humanPointerClick(item.el, item.fn) : item.fn();
+              if (ret2 && typeof ret2.then === "function") { ret2.then(done, done); return; }
+            } catch (e2) { console.error('[AX] humanClick 例外（続行）', e2); }
+            done();
+          }, _viewWait);
+          return;
+        }
         // 2026-11-10 人間的な動き: 要素を押す時は、人の軌跡でマウスを動かしてから押す（mousemove〜click）。
         //   item.fn は今まで通り最後の1回だけ呼ぶ（_clickIfUnchecked 等のガードはそのまま効く）
         var ret = item.el ? _humanPointerClick(item.el, item.fn) : item.fn();
@@ -787,9 +815,13 @@
   }
 
   // 2026-09-29 v2.5.39 通勤の到達時間で選んだ多数の駅（cond.commute・60駅超）は 25〜60ms で押す（電車1本の全駅選択と同じ考え・90秒の fill-done に収める）
+  // 2026-11-10 v2.5.96 竹内さん「駅も一気に選択してしまう部分がのこっている」「上下の時間もはやすぎる」:
+  //   25〜60ms は人が駅を1つずつ押す速さではない（一瞬で全部にチェックが付く）。駅は**320〜900ms**にする。
+  //   駅が多い時は 90秒の fill-done を超えうるので、待ちの上限はサーバー側のタイムアウトではなく
+  //   ここで「20駅ごとに一息」を入れつつ、_whenTickIdle で検索前に全部済むのを待つ形で担保する。
   var _stGapFast = false;
-  function _stGapMin() { return _stGapFast ? 25 : 90; }
-  function _stGapMax() { return _stGapFast ? 60 : 200; }
+  function _stGapMin() { return _stGapFast ? 320 : 320; }
+  function _stGapMax() { return _stGapFast ? 700 : 900; }
   // 駅名でボタン/チェックボックスをクリック
   function selectStationsByName(names) {
     if (!names || !names.length) return;
@@ -1039,18 +1071,20 @@
     window._axFillRunning = true;
     window._axStDiagDone = false; // 診断ログフラグをリセット（次回fill時に再診断できるようにする）
     clearClickQueue(); // 前回実行の残留クリックキューを破棄（誤クリック防止）
-    // fill-done 保証: 実行開始時にフラグをリセットし、85秒のフェイルセーフを仕掛ける
-    // （background.js 側のタイムアウト90秒より必ず先に発火させる）
+    // fill-done 保証: 実行開始時にフラグをリセットし、フェイルセーフを仕掛ける
+    // （background.js 側のタイムアウトより必ず先に発火させる）
+    // 2026-11-10 v2.5.96: 駅を1つずつ人の速さ（320〜900ms）で選ぶので、沿線の全駅を選ぶと 40〜110秒かかる。
+    //   85秒だと途中で中止してしまう → 235秒（background の 245秒より10秒先）
     _doneNotified = false;
     _axExpect = null; _axGateRetried = false; // v2.5.50 検索を押す前の関所の材料（このお客様の分を下で置く）
     if (_watchdogTimer) clearTimeout(_watchdogTimer);
     _watchdogTimer = setTimeout(function() {
       // 条件入力が未完了のまま clickSearch すると全件検索→LINE誤送信になるため検索しない。
       // error付きdoneでbackground.jsがスクレイプを中止するので前回結果の誤スクレイプも起きない。
-      console.warn('[AX] フェイルセーフ: 85秒経過 → 検索せず fill-done(error) 送信');
+      console.warn('[AX] フェイルセーフ: 235秒経過 → 検索せず fill-done(error) 送信');
       _auditStall();
-      notifyDone('watchdog-timeout: 85秒以内に条件入力が完了しませんでした（全件検索防止のため中止）');
-    }, 85000);
+      notifyDone('watchdog-timeout: 235秒以内に条件入力が完了しませんでした（全件検索防止のため中止）');
+    }, 235000);
 
     // 検索の点検: popup が載せた run_id（ブレインの時だけ）。無ければ記録しない
     _auditReset(cond && cond._audit_run_id);
@@ -1076,7 +1110,9 @@
         if (_t0 === '検索条件を表示' || _t0 === '▼検索条件を表示' || _t0 === '▶検索条件を表示') { showFormBtn = se0; break; }
       }
       if (showFormBtn) {
-        try { showFormBtn.click(); showFormDelay = 650 + Math.floor(Math.random() * 450); console.log("[AX] 検索条件を表示 クリック → フォーム展開待機"); }
+        // v2.5.96: 人が「検索条件を表示」を押して中身を目で追う間（900〜1800ms・対数正規）
+        var _showWait = humanRand(900, 1500);
+        try { showFormBtn.click(); showFormDelay = _showWait; console.log("[AX] 検索条件を表示 クリック → フォーム展開待機 " + _showWait + "ms"); }
         catch (e) { console.error("[AX] _doReset: 検索条件を表示クリックで例外（続行）", e); }
       }
 
@@ -1939,7 +1975,17 @@
                     return true;
                   }
                   _selAllPrevChecked = checkedCount;
-                  unchecked.forEach(function(inp) { enqueueHumanClick(inp, _clickIfUnchecked, 20, 45); });
+                  // 2026-11-10 v2.5.96 竹内さん「駅も一気に選択してしまう部分がのこっている」:
+                  //   旧は 20〜45ms で全駅を押していた（一瞬で全部にチェックが付く＝機械らしい）。
+                  //   人が駅の一覧を上から見て1つずつ押す速さにする（1駅 320〜900ms・対数正規の裾・たまに一息）。
+                  //   駅数が多い時（40駅超）は 20駅ごとに 1.2〜2.6秒の「一覧を見直す」間を入れる。
+                  //   ⚠ ここは駅の選択だけ。検索を押す前は _whenTickIdle で全部済むのを待つので条件は欠けない
+                  unchecked.forEach(function(inp, idx) {
+                    var _base = 320 + Math.floor(Math.random() * 300); // 320〜620ms
+                    var _gap = humanRand(_base, _base + 280);
+                    if (idx > 0 && idx % 20 === 0) _gap += 1200 + Math.floor(Math.random() * 1400);
+                    enqueueHumanClick(inp, _clickIfUnchecked, _gap, _gap + 60);
+                  });
                   return false;
                 }
                 // STEP D: 駅ページが描画され、かつ指定駅が選択されるまでリトライ

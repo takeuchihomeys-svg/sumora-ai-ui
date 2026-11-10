@@ -173,7 +173,7 @@ function rest() {
       "setInterval 100": [2, "モーダルが消えた・間取りの欄が出たかの見る間隔（3秒で打ち切り）"], "setTimeout 240000": [1, "見張り（fill-done の保証）"],
       "setTimeout 5000": [1, "警告の表示を消す"], "setTimeout 500": [1, "検索を押した後の完了の合図（ページを触らない）"],
     },
-    "page-script.js": { "setTimeout 15000": [1, "警告の表示を消す"], "setTimeout 85000": [1, "見張り（fill-done の保証）"], "setTimeout 0": [1, "同じ流れの続き"] },
+    "page-script.js": { "setTimeout 15000": [1, "警告の表示を消す"], "setTimeout 235000": [1, "見張り（fill-done の保証）"], "setTimeout 0": [1, "同じ流れの続き"] },
     "popup.js": {
       "setTimeout 6000": [1, "取得の期限"], "setTimeout 3000": [4, "取得のやり直し・表示を戻す"], "setTimeout 10000": [1, "取得の期限"],
       "setTimeout 15000": [1, "取得の期限"], "setTimeout 4000": [1, "表示を消す"], "setTimeout 1800": [1, "表示を戻す"], "setTimeout 2000": [1, "表示を戻す"],
@@ -243,7 +243,7 @@ function rest() {
   console.log("\n■ 5大バグの型に当たらない");
   ok("トグル: 並び替えはリンクへの遷移（クリックで切り替えない）", /location\.href = _sortHref/.test(doStart));
   ok("checked の判定・クリックの関数は変えていない（_clickIfUnchecked が残る）", /function _clickIfUnchecked\(el\) \{ if \(!el\.checked\) _clickEl\(el\); \}/.test(read("page-script.js")));
-  ok("見張り（85秒・240秒・90秒）の長さは変えていない", /\}, 85000\);/.test(read("page-script.js")) && /\}, 240000\);/.test(it) && /90000/.test(read("reins-page-script.js")));
+  ok("見張り（235秒・240秒・90秒）の長さを固定している所を確かめる", /\}, 235000\);/.test(read("page-script.js")) && /\}, 240000\);/.test(it) && /90000/.test(read("reins-page-script.js")));
   ok("拡張の再読み込み: 版を上げた（2.5.29 以上）", manifest.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005029);
 
   console.log("\n■ 全ファイル node --check");

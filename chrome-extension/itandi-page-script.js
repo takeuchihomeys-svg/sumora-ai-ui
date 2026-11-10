@@ -67,20 +67,41 @@
     if (Math.random() < 0.08) wait += 300 + Math.floor(Math.random() * 400); // たまに「条件を見直す」一息
     _tickBusy++;
     // 押す直前に、画面に入れてから押す（人が目で探す形）
-    try { if (el.getBoundingClientRect) { var r = el.getBoundingClientRect(); var vh = window.innerHeight || 800; if (!(r.top >= 0 && r.bottom <= vh)) el.scrollIntoView({ behavior: "smooth", block: "center" }); } } catch (_) {}
+    // 2026-11-10 v2.5.96 竹内さん「画面無駄に上下しまくりすぎている・時間もはやすぎる」:
+    //   真ん中へ毎回寄せない。画面の外の時だけ最小の移動で見せ、動かした時はその終わりを待ってから押す
+    var _vw = _ensureInViewSoft(el);
     setTimeout(function () {
       try { if (el.isConnected && !el.checked) el.click(); } catch (_) {}
       _tickBusy--;
-    }, wait);
+    }, wait + _vw);
+  }
+
+  // 画面の外の時だけ、最小の移動で見える位置へ（真ん中へは寄せない）＋連続で動かさない。
+  // 返すのは「動きが終わるまで待つ時間」（動かさなかったら 0）。リアプロの _ensureInView と同じ考え
+  var _lastScrollAt = 0;
+  function _ensureInViewSoft(el) {
+    try {
+      if (!el || !el.getBoundingClientRect) return 0;
+      var r = el.getBoundingClientRect();
+      var vh = window.innerHeight || 800;
+      var margin = 60;
+      if (r.top >= margin && r.bottom <= vh - margin) return 0;
+      var now = Date.now();
+      if (_lastScrollAt && now - _lastScrollAt < 900) return 350 + Math.floor(Math.random() * 450);
+      _lastScrollAt = now;
+      el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+      var dist = r.top < margin ? -(r.top - margin) : (r.bottom - (vh - margin));
+      return Math.min(700, Math.max(250, Math.round(Math.abs(dist) * 1.2)));
+    } catch (_) { return 0; }
   }
 
   // 2026-11-10 人間的な動き: 画面を「見に行く」時のスクロールを、一瞬で飛ばす（instant）のではなく
   //   少しずつ動かす（人が一覧を目で追う形）。要素を画面の中に入れるだけで、押す・選ぶは今まで通り。
-  //   アニメーションの時間は環境に任せる（behavior: smooth）。使えない環境では今まで通り。
+  // 2026-11-10 v2.5.96: 真ん中へ寄せない（最小の移動＝block:"nearest"）
   function smoothScrollTo(el) {
     try {
       if (!el || !el.scrollIntoView) return;
-      el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
     } catch (_) {
       try { el.scrollIntoView(); } catch (__) {}
     }

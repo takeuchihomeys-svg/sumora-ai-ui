@@ -2858,7 +2858,9 @@ function _notifyFillDone(site, customerId, error) {
 // fill-done（自動入力完了の合図）を待つ上限。page-script 側のウォッチドッグより5秒長くする
 // itandi は路線ごとに駅リストが切り替わり、「電車1本」の沿線全駅選択（13路線）で時間がかかるため150秒＋5秒（2026-09-12 竹内）
 // 2026-09-14 竹内「時間かかっても大丈夫」: page-script のウォッチドッグ 240秒＋5秒
-var FILL_DONE_TIMEOUT_MS = { itandi: 245000, realnetpro: 90000 };
+// 2026-11-10 v2.5.96 竹内さん「駅も一気に選択してしまう・上下の時間もはやすぎる」: 駅は1つ 320〜900ms にしたので、
+//   沿線の全駅（40〜120駅）を選ぶと 40〜110秒かかる。リアプロも 90秒では足りないため 240秒にする（itandi と同値）
+var FILL_DONE_TIMEOUT_MS = { itandi: 245000, realnetpro: 245000 };
 function _fillDoneTimeoutMs(site) {
   return FILL_DONE_TIMEOUT_MS[site] || 90000;
 }
