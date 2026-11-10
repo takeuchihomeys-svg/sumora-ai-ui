@@ -1,12 +1,13 @@
 // app/lib/__tests__/conductor-our-side.test.ts — 入口の統括に渡す「こちら側の状態」（純関数）
 // 実行: npx tsx app/lib/__tests__/conductor-our-side.test.ts
-import { ourSideBlock, promiseKindOf, conductorOurSideOn } from "../conductor-our-side";
+import { ourSideBlock, promiseKindOf, conductorOurSideOn, ourSideBrainOn } from "../conductor-our-side";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, info?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name} → ${JSON.stringify(info)}`); } };
 const now = Date.parse("2026-11-03T10:36:00Z");
 
 t("既定 off・on で動く", !conductorOurSideOn({}) && conductorOurSideOn({ CONDUCTOR_OUR_SIDE: "on" }));
+t("ブレインの側も既定 off・別のスイッチ", !ourSideBrainOn({}) && !ourSideBrainOn({ CONDUCTOR_OUR_SIDE: "on" }) && ourSideBrainOn({ CONDUCTOR_OUR_SIDE_BRAIN: "on" }));
 t("約束の種類", promiseKindOf("お送り頂きました新大阪グランドハイツの募集状況確認させて頂きます") === "確認" && promiseKindOf("最大限割引させて頂いた御見積書を作成しお送りさせて頂きます") === "見積"
   && promiseKindOf("浪速区周辺全域からピックアップしてお送りさせて頂きます") === "探す" && promiseKindOf("内覧の候補日お送りさせて頂きます") === "内覧");
 

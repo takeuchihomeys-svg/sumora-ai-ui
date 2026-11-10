@@ -11,6 +11,8 @@
 
 type Env = Record<string, string | undefined>;
 export const conductorOurSideOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_OUR_SIDE ?? "").trim().toLowerCase() === "on";
+// 2026-11-11 統括役（入口では読みが変わらなかった・弱い19番 7→8）: 同じ塊をブレイン本体の材料と AIX の統括（種類を決める所）に渡す。既定 off（=on で入れる）
+export const ourSideBrainOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_OUR_SIDE_BRAIN ?? "").trim().toLowerCase() === "on";
 
 export type OurSideMsg = { sender: string; text: string | null; created_at: string; is_aix_generated?: boolean | null };
 export type OurSideAix = { aix_type: string; check_pattern?: string | null; created_at: string; sent_at?: string | null; property_names?: string[] | null; estimate_sent?: boolean | null };
