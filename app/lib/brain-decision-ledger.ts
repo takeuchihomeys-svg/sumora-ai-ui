@@ -42,13 +42,13 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   if (Array.isArray(meta.material_read_misses) && meta.material_read_misses.length) out.mx = (meta.material_read_misses as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 10);
   // 2026-10-29 材料の自己申告（判断に要ったのに無かった物・記録だけ）。[] も「足りていた」として残す（申告の割合を数える）
   if (Array.isArray(meta.material_missing)) out.mm = (meta.material_missing as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5);
-  // 2026-11-11 作業員1（A1 ③・統括役の OK「記録だけの shadow から」）: 自己申告を決まった鍵に直した印（ms＝鍵の一覧・mss＝staff の鍵がある＝AIX／約束の番の候補）。
+  // 2026-11-11 作業員1（A1 ③・統括役の OK「記録だけの shadow から」）: 自己申告を決まった鍵に直した印（mk＝鍵の一覧・mks＝staff の鍵がある＝AIX／約束の番の候補）。
   //   判断・統括には渡さない（記録だけ）。28日の実測では印の番の AIX か約束 73% ＝印なし 68%・他の申告 75% と差が小さい＝重みに使う前に、正しい鍵で取り直して当たりを数える。
   //   既定 on（2026-11-11・記録だけ・止める BRAIN_MATERIAL_SIDE_SHADOW=off）
   if (out.mm && out.mm.length && materialSideShadowOn(env)) {
     const keys = [...new Set(out.mm.map((l) => materialMissingKey(l)))];
-    (out as Record<string, unknown>).ms = keys;
-    if (keys.some((k) => MATERIAL_KEY_SIDE[k] === "staff")) (out as Record<string, unknown>).mss = true;
+    (out as Record<string, unknown>).mk = keys; // 2026-11-11 作業員14 の指摘: ms は気持ち（brain-layers.toFreshDigest）の欄＝上書きして消していた → mk に分けた
+    if (keys.some((k) => MATERIAL_KEY_SIDE[k] === "staff")) (out as Record<string, unknown>).mks = true;
   }
   // 2026-10-23 優先順位の段（BRAIN_PRIORITY_STEP=on の番だけ・項目の数・依頼の抜けを足した数・AIX とのそろえ・取り寄せた材料の id）
   if (meta.priority_step && typeof meta.priority_step === "object") out.pr = meta.priority_step as Record<string, unknown>;
