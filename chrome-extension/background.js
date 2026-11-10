@@ -1414,6 +1414,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (msg.guide_stations) filled.guide_stations = msg.guide_stations;
         // 2026-11-10 竹内「人間が動いているか確認もできるように」: 人の押した・打った・動かした数（点検の記録に残す）
         if (msg.human && typeof msg.human === "object") filled.human = msg.human;
+        // 2026-11-10 竹内「人と自動の動きの差」: 人の操作の時刻（自動の ops と同じ形・人と自動を比べる材料）
+        if (Array.isArray(msg.ops) && msg.ops.length) filled.ops = msg.ops.slice(-80);
         const body = { phase: "started", brain: true, run_id: runId, site: _site, filled: filled };
         if (msg.intended && typeof msg.intended === "object") body.intended = msg.intended;
         const posted = self.AxlxSearchAudit ? await self.AxlxSearchAudit.post(body) : null;

@@ -467,6 +467,28 @@
     var m = Plan.matchStations(s.names || [], seen);
     return { inputs: inputs, texts: texts, want: m.want, missing: m.missing, via: m.via, seen: seen, onStationPage: onStationPage, missNote: Plan.missNote(m.missing) };
   }
+  // 2026-11-10 竹内「人が押してる動きと差がないように自動での動きの時に人の動きに足りていない部分見つかれば」:
+  //   人の操作の「間」（押した・打った・選んだ時刻）を、自動の filled.ops（拡張の操作ごとの時刻）と同じ形で残す。
+  //   値は入れない（時刻と種類だけ）。最大80件。
+  var _guideOps = [];
+  try {
+    var _opLog = function (k) {
+      _guideOps.push({ t: Date.now(), k: String(k || "op").slice(0, 40), by: "human" });
+      if (_guideOps.length > 80) _guideOps.shift();
+    };
+    document.addEventListener("click", function (e) {
+      if (!e || !e.isTrusted) return;
+      var t = e.target || {};
+      _opLog("click:" + String(t.name || String(t.textContent || "").replace(/\s+/g, "").slice(0, 20) || ""));
+    }, true);
+    document.addEventListener("change", function (e) {
+      if (!e || !e.isTrusted) return;
+      var t = e.target || {};
+      _opLog("change:" + String(t.name || ""));
+    }, true);
+    document.addEventListener("keydown", function (e) { if (e && e.isTrusted) _opLog("key"); }, true);
+  } catch (_) {}
+
   function reportStationMiss(s) {
     try {
       if (!session || session.stationMissReported || !s) return;
@@ -515,6 +537,8 @@
         guide_stations: session._guideStationsRecord || null,
         // 2026-11-10 竹内「人間が動いているか確認もできるように」: 案内の間に人が押した・打った・動かした数（拡張は押さないので人の操作だけが来る）
         human: (function () { try { return window.__axlxHumanSnapshot ? window.__axlxHumanSnapshot() : null; } catch (_) { return null; } })(),
+        // 2026-11-10: 人の操作の時刻（自動の ops と同じ形・人と自動の動きを比べる材料）
+        ops: _guideOps.slice(-80),
       }, function () { void chrome.runtime.lastError; });
     } catch (_) {}
   }

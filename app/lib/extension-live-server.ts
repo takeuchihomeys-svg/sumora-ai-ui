@@ -144,7 +144,8 @@ export async function liveDevices(opts: { install?: string | null } = {}): Promi
   audits.forEach((a) => { if (a.property_customer_id) ids.add(a.property_customer_id); });
   const names: Record<string, string> = {};
   if (ids.size) {
-    const c = await sb.from("property_customers").select("id, customer_name").in("id", [...ids].slice(0, 100));
+    const idList = Array.from(ids).slice(0, 100);
+    const c = await sb.from("property_customers").select("id, customer_name").in("id", idList);
     for (const r of (c.data ?? []) as Array<{ id: string; customer_name: string | null }>) names[r.id] = r.customer_name ?? "";
   }
 
