@@ -40,7 +40,7 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
     const key = process.env.ANTHROPIC_API_KEY ?? "";
     const out: Array<{ id: string; before: string | null; after: string | null; bg: string | null }> = [];
     // 11/10: --votes=N で重点を N 回読み、多数（majorityFocus）を札にする。--apply は多数の札・focus_votes・割れた番の印（:focus_split）を書く。
-    //   --cap-usd で費用の見込み（1回 $0.0007）が上限に届いたら止める
+    //   --cap-usd で費用の見込み（1回 $0.0011・11/10 の実測: 371番×3回で llm_usage_logs は 2,110行 $1.12＝見込み $0.0007 の1.4倍を超えた）が上限に届いたら止める
     const votes = Math.max(1, Math.min(5, Number(arg("votes", "1")) || 1));
     const capUsd = Number(arg("cap-usd", "0")) || 0;
     let calls = 0;
@@ -68,7 +68,7 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
       }
     };
     for (let i = 0; i < rows.length; i += 5) {
-      if (capUsd && (calls + 5 * votes) * 0.0007 > capUsd) { console.log(`費用の上限 $${capUsd} の見込みで止めた（${i}/${rows.length}番）`); break; }
+      if (capUsd && (calls + 5 * votes) * 0.0011 > capUsd) { console.log(`費用の上限 $${capUsd} の見込みで止めた（${i}/${rows.length}番）`); break; }
       await Promise.all(rows.slice(i, i + 5).map(readOne));
     }
     const changed = out.filter((o) => o.before !== o.after);
