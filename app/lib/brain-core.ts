@@ -268,6 +268,7 @@ import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 // 2026-09-30 手続きの質問（審査・入居までの期間と流れ・必要書類）は返信で答える／「確認した」系は資料に記載あり→資料・無し→AIX【確認した】（みこと事例）
 import { loadProcedureAnswerWithin, loadConfirmTopicRoutesWithin, type ProcedureAnswerMaterial, type ConfirmTopicMaterial } from "@/app/lib/procedure-answer-server";
 import { alignProcedureAsks, alignProcedurePriorities, procedureGeneralAskReplyOn } from "@/app/lib/procedure-ask-align"; // 2026-11-10 作業員1 型2 q374
+import { readApplyInfoState, applyInfoBrainLine, applyIntentFormStateOn, isApplyIntentTurn, type ApplyInfoMsg } from "@/app/lib/apply-info-state"; // 2026-11-11 作業員3 A2
 import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote, procedureMoveInBrainLine, procedurePointsToProperty, procedureUnknownPointsOnlyOn } from "@/app/lib/procedure-question";
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
@@ -2904,6 +2905,26 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     // 2026-11-06 作業員1（型2・統括役「決め打ちをやめて材料＋ログに」）: 決め打ち（rule:procedure_question_*）を下げる時だけ、物件を指す問いか・資料の入居時期・竹内さんの数を材料に
     if (overrideDemoted("procedure_move_in")) customerStateBlockText += procedureMoveInBrainLine({ text: unrepliedTurn.text, targetName: procedureAnswer.plan.target?.name ?? null, moveInKnown: procedureAnswer.plan.mode !== "two_choice" });
     console.log(JSON.stringify({ tag: "brain:procedure-answer", conversationId, kinds: procedureAnswer.plan.question.kinds, mode: procedureAnswer.plan.mode, target: procedureAnswer.plan.target?.name ?? null, moveIn: procedureAnswer.plan.moveIn?.why ?? null, source: procedureAnswer.source }));
+  }
+  // 2026-11-11 作業員3（A2・弱い所 280/386/452/473）: 申込の意思の番だけ、お客様の申込の情報（記入・本人確認書類）がもう届いているかを材料に。
+  //   竹内さんの分かれ目は入居希望日でなくここ（まだ→返信＋同じ番にフォーマット／届いた後→返信だけ）。会話の窓（20通）より前の記入も見るため、その会話の該当の通だけ引く（索引: conversation_id）。
+  //   個人の値は渡さない（状態の語と日付だけ）。APPLY_INTENT_FORM_STATE=on の時だけ（既定 off）
+  if (applyIntentFormStateOn() && !isPostApplyStatus(convStatus) && isApplyIntentTurn(unrepliedTurn.text)) {
+    try {
+      const { data: aiRows } = await supabase
+        .from("messages")
+        .select("sender, text, created_at, image_type")
+        .eq("conversation_id", conversationId)
+        .gte("created_at", new Date(Date.now() - 180 * 86_400_000).toISOString())
+        .or("text.ilike.%記入欄】%,text.ilike.%完了%,text.ilike.%否決%,text.ilike.%審査継続%,text.ilike.%審査通過%,text.ilike.%審査承認%,text.ilike.%情報で%,text.ilike.%以前いただきました%,text.ilike.%以前頂きました%,image_type.eq.id_document,image_type.eq.income_document")
+        .order("created_at", { ascending: false })
+        .limit(60);
+      const reading = readApplyInfoState([...((aiRows ?? []) as ApplyInfoMsg[]), ...typedMessages]);
+      customerStateBlockText += applyInfoBrainLine(reading, unrepliedTurn.text);
+      console.log(JSON.stringify({ tag: "brain:apply-info-state", conversationId, state: reading.state, via: reading.via }));
+    } catch (e) {
+      console.warn("[brain-core] apply info state failed:", conversationId, e instanceof Error ? e.message : e);
+    }
   }
   //   「確認した」系（入居可能日・ペット・駐車場）の質問: 主のお部屋の資料に記載があれば資料で答える／無ければ AIX【確認した】（設備は上の equipment-answer）
   // 2026-10-08 8巡目 竹内「資料に書いてある事は返信の本文で答えて良い」: 契約条件（礼金・敷金・フリーレント・保証会社・保証人・入居時期/退去予定・駐車場・管理会社）。
