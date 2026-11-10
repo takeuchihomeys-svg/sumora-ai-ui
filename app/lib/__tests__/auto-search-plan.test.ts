@@ -67,13 +67,13 @@ console.log("── 午後の便（2026-09-30 竹内「午後の便は今日の�
   const afterAm = "2026-09-30T02:10:00Z"; // 今日の午前の検索
   for (const [st, id] of [["new", NEW_HOT.id], ["cond_changed", COND.id], ["active", ACTIVE.id], ["dormant_hot", DORMANT_HOT.id]] as const) {
     const p = planFor(st, "pm", DATE, id, { lastSearchAt: afterAm, nowMs: NOW })!;
-    t(`★ pm ${st}: 更新順・更新日1・午前以降だけ（止める線）・2ページ・広げてなし（新規も AD 順にしない）`, !!p && p.sort === "updated" && p.days === 1 && p.stop_at_last && p.max_pages === 2 && p.widen_chain === false && p.is_wide === false, p);
+    t(`★ pm ${st}: 更新順・更新日1・午前以降だけ（止める線）・2ページ・広げてあり（新規も AD 順にしない）`, !!p && p.sort === "updated" && p.days === 1 && p.stop_at_last && p.max_pages === 2 && p.widen_chain === true && p.is_wide === false, p);
   }
   const noSearchNew = planFor("new", "pm", DATE, NEW_HOT.id, { nowMs: NOW })!;
   t("pm: 前回の検索が無い新規は更新日14（空きで広げる）・並びは更新順", noSearchNew.days === 14 && noSearchNew.sort === "updated", noSearchNew);
   const noSearchAct = planFor("active", "pm", DATE, ACTIVE.id, { lastProposalAt: ACTIVE.last_proposal_at, nowMs: NOW })!;
   t("pm: 前回の検索が無い送った後の人は最後に届けた日から（7日前→7）・更新順", noSearchAct.days === 7 && noSearchAct.sort === "updated");
-  t("pm の表は1か所（PM_PLAN）: 2ページ・広げてなし・止める線あり", PM_PLAN.max_pages === 2 && PM_PLAN.widen_chain === false && PM_PLAN.stop_at_last && PM_PLAN.sort === "updated");
+  t("pm の表は1か所（PM_PLAN）: 2ページ・広げてあり・止める線あり", PM_PLAN.max_pages === 2 && PM_PLAN.widen_chain === true && PM_PLAN.stop_at_last && PM_PLAN.sort === "updated");
   t("午前は広げての続きを許す（widen_chain）", planFor("new", "am", DATE, NEW_HOT.id)!.widen_chain === true);
   t("AUTO_SEARCH_STOP_AT_LAST=off は午後も止める線なし", planFor("active", "pm", DATE, "x", { lastSearchAt: afterAm, stopAtLast: false })!.stop_at_last === false);
   const NOW_PM = Date.parse("2026-09-30T16:00:00+09:00");

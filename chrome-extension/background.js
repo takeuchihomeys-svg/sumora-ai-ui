@@ -2339,7 +2339,7 @@ async function _runScrapeAndCompare(customerId, conditions) {
   var _scAreaMode = (conditions && conditions.area_mode) || null;
   var _scCustName = (conditions && conditions.customerName) || null;
 
-  var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, 90000);
+  var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, _fillDoneTimeoutMs("realnetpro"));
 
   var _scAllTabs = await chrome.tabs.query({});
   var _scRealTab = _scAllTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
@@ -5314,7 +5314,7 @@ async function _scrapeAndCompareForCustomer(customer) {
     is_wide: isWide, area_mode: mergedConditions.area_mode || null,
   });
   if (_scAudit) { mergedConditions._audit_run_id = _scAudit.runId; _auditPostIntended(_scAudit, "realnetpro", mergedConditions); }
-  var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, 90000);
+  var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, _fillDoneTimeoutMs("realnetpro"));
   try {
     await _webappAutofill("realnetpro", mergedConditions);
     await _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, mergedConditions);
