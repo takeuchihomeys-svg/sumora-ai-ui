@@ -81,5 +81,14 @@ console.log("\n■ ⑧ 送信の直列（background でも同時に走らせな�
 ok("送信は1本の待ち行列（_enqueueLineSend）", /function _enqueueLineSend\(job\)/.test(bg2) && /_enqueueLineSend\(async \(\) => \{/.test(bg2));
 ok("1件の送信に 300秒の上限（超えたら次へ）", /300000/.test(bg2) && /1件の送信が 300秒 を超えた/.test(bg2));
 
+console.log("\n■ ⑨ 資料に一度目を通してから次の物件へ（人の動き）");
+ok("送れた1件は「資料を見る間」を置いてから次へ（_lookAtDocThenGo）", /function _lookAtDocThenGo\(item, goNext\)/.test(bd) && /_lookAtDocThenGo\(next\.item, goNext\)/.test(bd));
+ok("見る間は人の間（中央値 3.5秒・1.8〜13秒・たまに長く見る）", /logNormalDelay\(3500, 0\.4\)/.test(bd) && /if \(base < 1800\) base = 1800;/.test(bd) && /if \(base > 13000\) base = 13000;/.test(bd));
+ok("見る間は札を「👀 確認中…」にする（画面で分かる）", /👀 確認中…/.test(bd) && /👀 資料を確認中…/.test(bd));
+ok("「👀 見た → 次へ」で人の判断で先へ進める（押さなくても自動で次へ）", /axlx-look-next-btn/.test(bd) && /_lookWait\.skip\("skip"\)/.test(bd));
+ok("見る間が終わったら選択を外して次へ（人がそうする形）", /if \(item\.cb && item\.cb\.checked\) \{ item\.cb\.checked = false; updateBar\(\); \}/.test(bd));
+ok("送れなかった1件は見る物が無いのですぐ次へ", /if \(!ok\) \{ goNext\(\); return; \}/.test(bd));
+ok("点検に残す（look_doc・look_skip）", /_tmark\("look_doc"/.test(bd) && /_tmark\("look_skip"/.test(bd));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

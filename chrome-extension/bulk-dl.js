@@ -555,6 +555,11 @@
       '  <span style="font-size:16px;">📥</span>',
       '  <span id="axlx-count">0件</span>を選択中',
       "</div>",
+      // 2026-11-10 竹内さん「資料に一度スタッフが目を通す形だから、次の物件に移っていくように」:
+      //   資料を見る間（👀 確認中…）に「もう見た＝次へ」を押せる（人の判断で先へ進む）。押さなければ自動で次へ
+      '<div style="display:flex;gap:6px;">',
+      '  <button id="axlx-look-next-btn" style="flex:1;padding:5px 6px;background:rgba(255,255,255,0.18);border:1px dashed rgba(255,255,255,0.5);border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;display:none;" title="資料に目を通し終えたら押す（押さなくても自動で次の物件へ進みます）">👀 見た → 次へ</button>',
+      "</div>",
       '<div style="display:flex;gap:6px;">',
       '  <button id="axlx-all-btn" style="flex:1;padding:6px 4px;background:rgba(255,255,255,0.18);border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">全選択</button>',
       '  <button id="axlx-dl-btn" style="flex:2;padding:6px 8px;background:#ff9800;border:none;border-radius:8px;color:white;font-size:12px;font-weight:700;cursor:pointer;">一括DL</button>',
@@ -607,6 +612,10 @@
       });
     })();
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
+    // 2026-11-10: 資料を確認している間だけ出る「👀 見た → 次へ」（押すと待たずに次の物件へ）
+    document.getElementById("axlx-look-next-btn").addEventListener("click", function () {
+      if (_lookWait && _lookWait.skip) _lookWait.skip("skip");
+    });
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
     document.getElementById("axlx-line-btn").addEventListener("click", function () { if (_forwardTimer) { clearTimeout(_forwardTimer); _forwardTimer = null; } getCustomerFromPopup(function (customerName, customerConditions, customerId) { mergePdfs(true, customerName, customerConditions, customerId); }); });
@@ -636,17 +645,20 @@
     var b = document.createElement("span");
     b.className = "axlx-pressed-badge";
     var style = state === "sent" ? "background:#e3f2fd;color:#0d47a1;"
+      : state === "look" ? "background:#fff8e1;color:#ef6c00;"
       : state === "wait" ? "background:#ede7f6;color:#4527a0;"
       : state === "sending" ? "background:#e1f5fe;color:#01579b;"
       : state === "error" ? "background:#ffebee;color:#c62828;"
       : extra ? "background:#e8f5e9;color:#2e7d32;" : "background:#fff3e0;color:#e65100;";
     b.style.cssText = "margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;vertical-align:middle;" + style;
     b.textContent = state === "sent" ? "📤 送信済み"
+      : state === "look" ? "👀 確認中…"
       : state === "wait" ? "⏳ 送る順番待ち"
       : state === "sending" ? "📤 送信中…"
       : state === "error" ? "⚠ 送れませんでした"
       : extra ? "✅ 受け取り済み" : "☑ 送る物に入れました";
     b.title = state === "sent" ? "この資料は売上番長へ送りました"
+      : state === "look" ? "送りました。資料に目を通してから次の物件へ進みます"
       : state === "wait" ? "押した順に1件ずつ送ります（前の1件が終わってから）"
       : state === "sending" ? "いま売上番長へ送っています"
       : state === "error" ? "もう一度押すと送り直します"
@@ -675,7 +687,12 @@
     _pumpPdfQueue();
   }
 
-  /** 待ち行列を1件ずつ流す（二重に走らせない） */
+  /**
+   * 待ち行列を1件ずつ流す（二重に走らせない）。
+   * 2026-11-10 竹内さん「資料保存いっかいスタッフ目を通す形やから人間の場合。それも考えて次の物件にうつっていくようにする」:
+   *   送れた1件は、すぐ次へ行かず **「資料に目を通す間」** を置いてから次へ（人が1件ずつ確認して次へ移る形）。
+   *   人の間の長さは human-wait.js の logNormalDelay（中央値 3.5秒・ばらつく・たまに長く見る）。
+   */
   function _pumpPdfQueue() {
     if (_pdfQueueRunning) return;
     var next = _pdfQueue.shift();
@@ -689,20 +706,61 @@
     _sendOnePdf(next.item, next.url, function (ok, reason) {
       _pdfQueued[next.url] = false;
       _pdfSending = null;
-      if (ok) { _onePdfSent[next.url] = true; _onePdfBadge(next.item, "sent"); _tmark("sent", "pdf 1件"); }
-      else {
+      if (ok) {
+        _onePdfSent[next.url] = true;
+        _onePdfBadge(next.item, "sent");
+        _tmark("sent", "pdf 1件");
+      } else {
         _onePdfBadge(next.item, "error");
         console.warn("[AXLX bulk-dl] 1件送信（印刷用PDF）を送れませんでした:", reason, String(next.url).slice(0, 80));
-        if (_autoModeOn) {
-          // 自動モードは止めずに次へ（1件の失敗で後の物件が送れなくなるのを防ぐ）。人が押した時は札で知らせる
-          console.warn("[AXLX bulk-dl] 自動モードなので次の1件へ進みます");
-        }
+        if (_autoModeOn) console.warn("[AXLX bulk-dl] 自動モードなので次の1件へ進みます");
       }
       _paintPdfProgress();
-      _pdfQueueRunning = false;
-      // 次の1件（少し間を置く＝人が1件ずつ送る速さ）
-      if (_pdfQueue.length) _humanGapThen().then(_pumpPdfQueue);
+      var goNext = function () {
+        _pdfQueueRunning = false;
+        if (_pdfQueue.length) _humanGapThen().then(_pumpPdfQueue);
+        else _paintPdfProgress();
+      };
+      if (!ok) { goNext(); return; } // 送れなかった1件は見る物が無い → すぐ次へ（札で知らせる）
+      // 送れた1件は「スタッフが資料に目を通す間」を置いてから次へ
+      _lookAtDocThenGo(next.item, goNext);
     });
+  }
+
+  /**
+   * 送った1件を人が見る間（次の物件へ移る前に、一覧でその行に目を通す）。
+   *   ・行を画面の真ん中に置く（資料を見る位置に戻す）
+   *   ・中央値 3.5秒（1.8〜9秒に収める・5%ほどは長く見る＝7〜13秒）
+   *   ・待っている間は札を「👀 確認中…」にして、人が「いま見ている」と分かる形にする
+   *   ・止めたい時: 右下の枠の「⏸ 止める」で待ちを打ち切って次へ（人が先へ進みたい時）
+   */
+  var _lookWait = null;
+  function _lookAtDocThenGo(item, goNext) {
+    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    var base = H && H.logNormalDelay ? H.logNormalDelay(3500, 0.4) : 3500;
+    if (Math.random() < 0.05) base += 3000 + Math.floor(Math.random() * 3000); // たまに長く見る
+    if (base < 1800) base = 1800;
+    if (base > 13000) base = 13000;
+    try { if (item.btn && item.btn.scrollIntoView) item.btn.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+    _onePdfBadge(item, "look");
+    var el = document.getElementById("axlx-count");
+    if (el) el.textContent = "👀 資料を確認中…（" + Math.round(base / 1000) + "秒ほど）";
+    _tmark("look_doc", Math.round(base) + "ms");
+    var _lnBtn0 = document.getElementById("axlx-look-next-btn");
+    if (_lnBtn0) _lnBtn0.style.display = "block";
+    var finished = false;
+    var finish = function (why) {
+      if (finished) return;
+      finished = true;
+      if (_lookWait) { clearTimeout(_lookWait.timer); _lookWait = null; }
+      var _lnBtn = document.getElementById("axlx-look-next-btn");
+      if (_lnBtn) _lnBtn.style.display = "none";
+      if (why === "skip") { _tmark("look_skip", "人が先へ"); console.log("[AXLX bulk-dl] 資料の確認を打ち切って次の物件へ進みます"); }
+      else console.log("[AXLX bulk-dl] 資料に目を通す間が終わり → 次の1件へ（" + Math.round(base / 1000) + "秒）");
+      if (item.cb && item.cb.checked) { item.cb.checked = false; updateBar(); } // 次へ行く前に選択を外す（人がそうする形）
+      goNext();
+    };
+    _lookWait = { timer: setTimeout(function () { _lookWait = null; finish("time"); }, base), skip: finish };
   }
 
   /** 画面でその1行だけチェックを入れる（他の行のチェックは外す） */
