@@ -135,7 +135,7 @@ async function main(): Promise<void> {
   console.log(`  対数正規の当てはめ: 中央値 ${out.human.logNormal.median}ms・σ ${out.human.logNormal.sigma}`);
   console.log(`  分布: ${JSON.stringify(out.human.buckets)}`);
   console.log(`\n■ 自動（${as.length} 個・比較）`);
-  console.log(`  平均 ${aMean.toFixed(0)}ms・中央値 ${out.autos ? "" : ""}${out.auto.median}ms・ばらつき ${out.auto.cv}`);
+  console.log(`  平均 ${aMean.toFixed(0)}ms・中央値 ${out.auto.median}ms・ばらつき ${out.auto.cv}`);
   console.log(`  対数正規: 中央値 ${out.auto.logNormal.median}ms・σ ${out.auto.logNormal.sigma}`);
   console.log(`  分布: ${JSON.stringify(out.auto.buckets)}`);
 
