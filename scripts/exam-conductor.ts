@@ -58,6 +58,10 @@ import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
 import { findOverlaps, overlapBlocks, overlapLine, weakFor, type OverlapJob, type WeakRow } from "./lib/exam-overlap";
 import { chooseGuards, fitGuardsToCap, guardLine } from "./lib/exam-guards";
+import { reflectionLine, replanLine, type ReflRow } from "./lib/exam-reflection";
+import { reflectAndReplan } from "./lib/exam-reflection-io";
+import { focusOf, focusPool, pickByFocus, focusLine, parseFocusTypes, type Focus, type FocusSpec, type FocusSceneMap } from "./lib/exam-focus";
+import { diffMaterial, callConductorLlm, newTally, FLASH_MODEL } from "./lib/exam-conductor-io";
 import { bizLanes } from "./lib/exam-plan";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
@@ -217,6 +221,26 @@ async function weakRows(): Promise<WeakRow[]> {
   } catch { return []; }
 }
 
+/** 依頼の作業ツリーの重点（差分 → 場面と段）。決められず差分が試験に効く時だけ DeepSeek（flash）で1回読む。読めなければ null（今まで通り） */
+async function focusOfJob(cwd: string, spec: FocusSpec[], switchName: string): Promise<Focus | null> {
+  try {
+    const d = await diffMaterial(null, cwd, { maxChars: 8000 });
+    const sceneMap = { ...readJson<FocusSceneMap>(join(cwd, "scripts/brain-exam/scene-map.json"), {}), ...readJson<FocusSceneMap>(SCENE_MAP, {}) };
+    const stage = d.cls === "brain" || d.cls === "none" ? "brain" as const : "draft" as const;
+    const f = focusOf({ diffText: d.diffText, sceneMap, spec, stage, switchName });
+    if (f.types.length || f.ids.length || d.cls === "none" || !d.diffText.trim() || (process.env.EXAM_FOCUS_LLM ?? "").trim().toLowerCase() === "off") return f;
+    const known = new Set(spec.map((p) => p.type));
+    const tally = newTally();
+    const txt = await callConductorLlm("diff-reader", FLASH_MODEL, "あなたは試験の係。コードの差分を読んで、壊れうる場面（下の型の一覧から最大3つ）を JSON {\"types\":[...]} だけで答える。", `型の一覧: ${[...known].join("、")}
+
+差分（足した行・消した行）:
+${d.diffText}`, tally, { maxTokens: 200 });
+    const types = parseFocusTypes(txt, known);
+    if (types.length) return { ...f, types, why: `DeepSeek が差分を読んだ（$${tally.usd.toFixed(4)}）` };
+    return f;
+  } catch { return null; }
+}
+
 async function addJob(): Promise<void> {
   ensureDirs();
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
@@ -265,6 +289,18 @@ async function addJob(): Promise<void> {
     // 2026-11-07 統括役: 狙いの無い依頼は RAG（brain-exam --select=rag・差分の言葉と知見・8問）で選ぶのを既定にする（EXAM_AUTO_GUARDS=off で旧の止め方）
     const autoGuards = (process.env.EXAM_AUTO_GUARDS ?? "").trim().toLowerCase() !== "off";
     if (!ids.length && !p.selectRag && !autoGuards) throw new Error("問題が無い（--only か --pick を付ける）");
+    // 2026-11-10 作業員8b（統括役・試験の統括ブレインの②「重点を先に決める」）: 依頼の作業ツリーの差分から壊れうる場面と段（exam-focus）を決め、
+    //   狙いの無い依頼は RAG の前に重点の場面から選び、守りは重点の場面の中から選ぶ。決められない時だけ DeepSeek（flash）で1回読む。止める EXAM_FOCUS=off（DeepSeek だけ EXAM_FOCUS_LLM=off）
+    const focusOn = (process.env.EXAM_FOCUS ?? "").trim().toLowerCase() !== "off" && !flag("dig");
+    const focus = focusOn ? await focusOfJob(cwd, spec as unknown as FocusSpec[], base.switch) : null;
+    const nightlyIdsF = (() => { try { const B = join(examCacheRoot(), "brain-exam-baseline"); return new Set(readdirSync(B).filter((f) => /^nightly-base-.*\.json$/.test(f)).flatMap((f) => readJson<{ problems?: string[] } | null>(join(B, f), null)?.problems ?? [])); } catch { return new Set<string>(); } })();
+    if (focus) log(`  ${focusLine(focus, focusPool(focus, spec as unknown as FocusSpec[], ids).length)}`);
+    let focusPicked = false;
+    if (focus && !ids.length && !p.selectRag && autoGuards) {
+      const stableF = new Set(jobRepsPlan({ ...base, id: "x", label, only: "", repeat: 1, runner: "brain-exam" } as ExamJob, spec.map((x) => x.id)).stable ?? []);
+      const picks = pickByFocus(focus, spec as unknown as FocusSpec[], { n: Number(arg("select-n", "8")) || 8, nightlyIds: nightlyIdsF, stableIds: stableF });
+      if (picks.length) { ids.push(...picks); focusPicked = true; log(`  狙いの問題が無い → 重点の場面から ${picks.length}問（${picks.join(",")}・名指し＞夜の基準あり＞安定・RAG は使わない）`); }
+    }
     const ragDefault = !ids.length && !p.selectRag && autoGuards;
     job = { ...base, id: `${Date.now()}`, label, only: ids.join(","), repeat: Number(arg("repeat", String(p.repeat ?? 2))), flaky, selectRag: p.selectRag || ragDefault, ...(ragDefault || p.selectRag ? { selectN: Number(arg("select-n", "8")) || 8 } : {}), runner: "brain-exam", ...(flag("dig") ? { dig: true } : {}) };
     if (ragDefault) log("  狙いの問題が無い → RAG で8問を選ぶ（brain-exam --select=rag --select-n=8・差分の言葉と知見・exam-scope の段）");
@@ -308,7 +344,7 @@ async function addJob(): Promise<void> {
     // 2026-11-06 統括役（sce-on2 の見込み $0.24・実際 $0.35＝前を作った子 $0.17 が見込みに入っていなかった）: 今の main の版に前の答えが無い問題は「前を作る分」を見込む
     // 2026-11-07 統括役（弱い所 418・竹内さん「使い回して必要な試験を RAG で」・試験の統括ブレインの第1段）: 狙いの問題に近い守りを2問・1回だけ自動で足す。
     //   使い回せる（夜の基準あり・安定）を最優先・上限に入らなければ減らす。掘り（--dig）・狙いの無い依頼（RAG で選ぶ）には足さない。止める EXAM_AUTO_GUARDS=off
-    if (job.runner === "brain-exam" && ids.length && !job.dig && autoGuards) {
+    if (job.runner === "brain-exam" && ids.length && !job.dig && autoGuards && !focusPicked) {
       try {
         const cardsRaw = readJson<{ cards?: Record<string, { id: string; stage: "brain" | "draft"; embedding?: number[] | null }> }>(join(examCacheRoot(), "brain-exam-rag", "cards.json"), {}).cards ?? {};
         const specIds = new Set(spec.map((x) => x.id));
@@ -316,7 +352,8 @@ async function addJob(): Promise<void> {
         const B = join(examCacheRoot(), "brain-exam-baseline");
         const nightlyIds = new Set(readdirSync(B).filter((f) => /^nightly-base-.*\.json$/.test(f)).flatMap((f) => readJson<{ at?: string; problems?: string[] } | null>(join(B, f), null)?.problems ?? []));
         const stableIds = new Set(jobRepsPlan({ ...job, guards: [] }, cards.map((c) => c.id)).stable ?? []);
-        const g0 = chooseGuards({ targets: ids, cards, nightlyIds, stableIds, max: 2, stage: job.stage === "draft" ? "draft" : null });
+        const fIds = focus ? new Set(focusPool(focus, spec as unknown as FocusSpec[], ids)) : undefined;
+        const g0 = chooseGuards({ targets: ids, cards, nightlyIds, stableIds, max: 2, stage: job.stage === "draft" ? "draft" : null, ...(fIds?.size ? { focusIds: fIds } : {}) });
         const unit = job.stage === "draft" ? DRAFT_USD_PER_REP : BRAIN_USD_PER_REP;
         const tr = jobRepsPlan(job, ids).reps, nbT = predictNeedsBase(cwd, ids);
         const baseUsd = ids.reduce((s, id) => s + (tr[id] ?? 1) * unit * (nbT.includes(id) ? 2 : 1), 0);
@@ -805,7 +842,20 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     const pwLine = (xs: ReturnType<typeof pathRegressions>) => xs.map((x) => `${x.id} ${x.from}→${x.to}（${x.why}）`).join("／");
     const pathNote = (pw.path.length ? `・道の悪化 ${pw.path.length}（${pwLine(pw.path)}・既定 on の判断に使わない）` : "") + (pw.ess.length ? `・本質の悪化 ${pw.ess.length}（${pwLine(pw.ess)}）` : "");
     const verdictHead = pw.path.length ? verdictBase.replace(/^確かな悪化0（/, "合格の確かな悪化0・道の悪化あり（") : verdictBase;
-    const verdict = verdictHead + pathNote + essNote + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
+    const verdict0 = verdictHead + pathNote + essNote + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
+    // 2026-11-10 作業員8c（KB 7b5ef932 ⑥決め直す・⑦振り返る）: 選んだ問題が何を見つけたか（外れ・合格／道／本質の悪化・揺れ）を result.reflection に、
+    //   狙いが効かず（狙いの合格・本質が前と同じ）悪化0の時は同じ重点（スイッチ・狙いの場面）で足すとよい問題 1〜3問を result.replan に（流さない・積むのは依頼者）。
+    //   週の集計は scripts/exam-reflection-weekly.ts。止める: EXAM_REFLECTION=off
+    const rf = (() => {
+      try {
+        return reflectAndReplan({ label: j.label, owner: j.owner, switchName: j.switch, cwd: j.cwd, stage: j.stage, ids, guards: j.guards ?? [],
+          cur: readRows(rowsFile) as unknown as ReflRow[], base: blFinal && !noCompare ? readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)) as unknown as ReflRow[] : null,
+          result: { reps: rp.reps, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, pathWorse: pw.path, essenceWorse: pw.ess, missStages },
+          worseN: sureN, resDir: RES, dig: !!j.dig, stableOf: (xs) => jobRepsPlan({ ...j, guards: [] }, xs).stable ?? [] });
+      } catch (e) { log(`  振り返り: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); return null; }
+    })();
+    const verdict = verdict0 + (rf ? reflectionLine(rf.reflection) + replanLine(rf.replan) : "");
+    if (rf?.replan?.cmd) log(`  決め直しの案（流さない・積むなら）: ${rf.replan.cmd}`);
     // 2026-11-06 統括役（作業員8）: 外れの切り分けを弱い所の台帳（brain_weaknesses）へ。key＝段＋印の頭・同じ key の行があれば evidence に足す（upsertWeaknessHits）・持ち主・試験の名前・問題・回を evidence に・1回の試験で5行まで。
     //   台帳は RLS（ポリシーなし）＝サーバーの鍵が無い手元では書けない → 足す物を results/weakness-pending.jsonl に残し、鍵のある所で brain-weaknesses.ts --collect-miss-stages が足す（同じ回は二重に足さない）。止める: EXAM_MISS_WEAKNESS=off
     if ((process.env.EXAM_MISS_WEAKNESS ?? "").trim().toLowerCase() !== "off" && missStages.length) {
@@ -819,7 +869,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         }
       } catch (e) { log(`  弱い所の台帳: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`); }
     }
-    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, essence, pathWorse: pw.path, essenceWorse: pw.ess, verdict, at: at() },
+    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, essence, pathWorse: pw.path, essenceWorse: pw.ess, guards: j.guards ?? [], reflection: rf?.reflection ?? null, replan: rf?.replan ?? null, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
     log(`  済み: ${j.label} → ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・費用 ${s.usd ?? "?"}`);
