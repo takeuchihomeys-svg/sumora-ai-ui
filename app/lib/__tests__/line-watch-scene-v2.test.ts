@@ -52,7 +52,13 @@ CASES.push(
   [8890, TPO_RESULT, "ご確認ありがとうございます🙇‍♂️\nお待たせして申し訳ございません。\nあと2分ほどで到着します。", "chat", "返信:内覧調整"],
   [6828, TPO_RESULT, "調べて頂きありがとうございます🙇‍♂️", "chat", "返信:短い了承・お礼"],
 );
-console.log("実物20番＋監査の5番");
+// 2026-11-11 統括役（竹内さんの決まり「申込以降は対象外・申込の意思を言った番までは対象」）: TPO 申込後説明でも申込の手前の言葉だけなら対象
+CASES.push(
+  [10199, TPO_APPLY, "ありがとうございます！\n承知しました！\n\n2件とも希望通りなので、\n明日のラグゼ新大阪5の入居可能日の確認次第、申し込みさせていただきたいと思っております。\n\n返答いただき次第すぐに決めさせていただきますので、引き続きよろしくお願いいたします。", "decision", "返信:意図:decision"],
+  [13260, TPO_APPLY, "かしこまりました、追加します。", "positive", "対象外:申込以降"],
+  [0, TPO_APPLY, "申し込みたいです！書類はどれを送ればいいですか？", "question", "対象外:申込以降"],
+);
+console.log("実物20番＋監査の5番＋申込の手前");
 for (const [id, tpo, text, intent, want] of CASES) {
   it(`${id} → ${want}`, () => eq(sceneKeyOf({ tpoLabel: tpo, intent, customerText: text, watchScenes: true }).key, want));
 }
