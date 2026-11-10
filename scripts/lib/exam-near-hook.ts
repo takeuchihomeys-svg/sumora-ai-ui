@@ -79,3 +79,15 @@ export function isUnsafeNearRequest(req: { name?: string; body?: string; ls?: nu
   try { ex = (JSON.parse(String(req.body ?? "")) as Record<string, unknown>).p_exclude_conv ?? null; } catch { return true; }
   return typeof ex !== "string" || !ex || testConvIds.includes(ex);
 }
+
+/**
+ * 毎晩の取りこぼしの網（scripts/owner-base-nightly.ts・作業員9）を係の前段で1日1回流すか（純・2026-11-11 作業員8・統括役の頼み）。
+ *   JST の日ごとに1回・JST 1:30 以降。前に流した日（lastDay）と同じ日なら流さない。止める: EXAM_OWNER_BASE_NIGHTLY=off
+ */
+export function ownerBaseDue(lastDay: string | null | undefined, nowMs: number, env: Record<string, string | undefined> = {}): { due: boolean; day: string } {
+  const j = new Date(nowMs + 9 * 3_600_000);
+  const day = j.toISOString().slice(0, 10);
+  if ((env.EXAM_OWNER_BASE_NIGHTLY ?? "").trim().toLowerCase() === "off") return { due: false, day };
+  const min = j.getUTCHours() * 60 + j.getUTCMinutes();
+  return { due: min >= 90 && lastDay !== day, day };
+}
