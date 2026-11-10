@@ -87,6 +87,8 @@ export type EvalOptions = {
   nowMs?: number; dry?: boolean; days?: number; backlogDays?: number; limit?: number;
   /** 2026-11-11 監査用（scripts/shadow-gate-table.ts）: 判定済みの番も読み直す（dry と一緒に使う） */
   reevalFinal?: boolean;
+  /** 2026-11-11 付け直し（scripts/line-watch-rejudge.ts --same-as-cron）: 埋め戻しの行（verdict_detail.backfill）は読み直さない（印と材料の無い所の na を残す） */
+  skipBackfill?: boolean;
   /** 2026-11-11 監査用: 書く列（patch）を結果の rows に集める（dry と一緒に使う） */
   collect?: boolean;
 };
@@ -130,6 +132,7 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
   const byId = new Map<number, TurnRow>();
   for (const r of [...recent, ...backlog]) byId.set(r.id, r);
   const turns = [...byId.values()].filter((t) => {
+    if (opt.skipBackfill && (t.verdict_detail as Record<string, unknown> | null)?.backfill) { res.skippedFinal++; return false; }
     const done = !opt.reevalFinal && t.judge_version === JUDGE_VERSION && t.verdict_detail?.final === true && !!t.evaluated_at;
     if (done) res.skippedFinal++;
     return !done;
