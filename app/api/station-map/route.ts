@@ -1,6 +1,7 @@
 import { serverSupabaseKey } from "@/app/lib/supabase-server-key";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { deriveSiteLines } from "@/app/lib/station-line-maps";
 
 function getDb() {
   return createClient(
@@ -40,13 +41,17 @@ export async function POST(req: Request) {
   const db = getDb();
   const { data: prev } = await db.from("station_map").select("realpro_lines, itandi_lines, reins_line, ward").eq("token", token).maybeSingle();
   const p = prev as { realpro_lines?: string[] | null; itandi_lines?: string[] | null; reins_line?: string | null; ward?: string | null } | null;
+  const finalRealpro = realproLines.length ? realproLines : (Array.isArray(p?.realpro_lines) ? p!.realpro_lines! : []);
+  // 2026-11-10: 今まではリアプロの列だけ直し、ITANDI・REINS は古いまま残っていた。
+  //   同じ対応表（popup-maps.js の写し app/lib/station-line-maps.ts）で作り直す。変換できない路線がある列は前の値を残して返す
+  const site = deriveSiteLines(finalRealpro, p, realproLines.length > 0);
   const { error } = await db.from("station_map").upsert(
     {
       token,
       ward: ward ?? p?.ward ?? null,
-      realpro_lines: realproLines.length ? realproLines : (p?.realpro_lines ?? []),
-      itandi_lines: p?.itandi_lines ?? [],
-      reins_line: p?.reins_line ?? null,
+      realpro_lines: finalRealpro,
+      itandi_lines: site.itandi_lines,
+      reins_line: site.reins_line,
       confidence: 100, source: "manual", priority: 100,
     },
     { onConflict: "token" },
@@ -57,7 +62,12 @@ export async function POST(req: Request) {
     db.from("region_map").delete().eq("token", token),
     db.from("token_block").delete().eq("token", token),
   ]);
-  return NextResponse.json({ ok: true, token });
+  const unmapped = Array.from(new Set([...site.unmapped_itandi, ...site.unmapped_reins]));
+  return NextResponse.json({
+    ok: true, token,
+    site_lines: { itandi: site.itandi, reins: site.reins, unmapped_itandi: site.unmapped_itandi, unmapped_reins: site.unmapped_reins },
+    ...(unmapped.length ? { warning: `対応表に無い路線のため前の値を残しました: ${unmapped.join("・")}` } : {}),
+  });
 }
 
 // DELETE /api/station-map?token=XXX → 間違いエントリを削除し、token_blockで再学習を永久ブロック
