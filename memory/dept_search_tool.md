@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-10 一括検索・自動便の payload に ITANDI の更新日（itandi_update_days）を載せた（**サーバーのみ・拡張の変更なし・版は上げていない**・DB の変更なし）
+- DB_STRUCTURE.md の混ざっている所 2: 一括検索・自動便では ITANDI もリアプロの更新日（rp_update_days）を使っていた（v2.5.76 で列を分けたのは popup だけ）。確かめた所: background.js 4330 `_batchAutofill`→4367 `_buildBatchConditions`（4643 `opts.rp_update_days`）・4374 `optsFromPayload`・1712 手の一括の `effectiveRpUpdateDays`・auto-run.js 129 `payloadForCustomer`（site を見ない）→ itandi-page-script.js 165・itandi-guide-plan.js 277 が cond.rp_update_days を打つ。サーバーは cron・trigger とも rp_update_days だけ
+- 直し（サーバー）: payload に `itandi_update_days`（ITANDI の手の指定 → 無ければ自動・リアプロの手の指定は使わない）・計画に `update_days_plan.by_customer[id].itandi_days`（同じ空いた時間で広げる）。`app/lib/rp-update-days.ts` effectiveItandiUpdateDays・`search-update-days.ts` itandiPlanFrom／planPayload・`web-brain-search.ts`・`app/api/automation/trigger`・`app/api/cron/auto-property-search`。テスト `app/lib/__tests__/itandi-update-days-payload.test.ts`（21）
+- **拡張はまだ読んでいない**（竹内さんの方針: 自動検索の拡張の中は Cursor が自動モードとして作る）。読む所・最小の差分は `chrome-extension/AUTO_MODE_HANDOFF.md` の「ITANDI の更新日」の節。キーの無い命令は今まで通り rp_update_days
+- 残り: 点検 `search-audit-check.ts` expectedUpdateDays は rp の値のまま（拡張が ITANDI の値を使い始めたらサーバー側で ITANDI の回を itandi で見る）／条件の変更で rp_update_days だけ null に戻す所（line-webhook-text.ts 1314・1339・1695・generate-draft-bg-async・household-change-server）が itandi_update_days を戻していない（CLEAR_MANUAL_UPDATE_DAYS を使っていない）
+
+## 2026-11-10 サーバーの駅と路線の辞書: 手直しで ITANDI/REINS の列も作り直す・token-resolve の例を表に合わせる（作業員B・サーバーのみ・拡張の変更なし・DB の変更なし）
+- **新しい置き場 `app/lib/station-line-maps.ts`**: サーバー側の ITANDI_LINE_MAP・REINS_LINE_MAP の写し（正本は `chrome-extension/popup-maps.js` の ITANDI_LINE_MAP_FILL・REINS_LINE_MAP）。token-resolve が自前で持っていた写しは正本とずれていた（ITANDI の 大阪環状線→「JR大阪環状線」・能勢電鉄妙見線/日生線・近鉄信貴線・西信貴ケーブル／REINS の 南海電鉄泉北線・能勢電鉄妙見線/日生線・水間鉄道水間線・東海道本線が無かった）→ 消して読み込みに。**正本を直したら写しも直す**（`app/lib/__tests__/station-line-maps.test.ts` が popup-maps.js を読んで1件ずつ比べて落ちる）
+- **`/api/station-map` の POST**: `realpro_lines` が来たら `deriveSiteLines` で ITANDI・REINS も作り直す。1本でも表に無い路線がある列は前の値を残し、`warning` と `site_lines.unmapped_*` で返す。路線の指定が無い時（拡張の「🚉 駅として登録」は token だけ送る）は入っている値を触らず、空の列だけ埋める
+- **token-resolve の AI への例**: 手書きの「阪急電鉄阪急神戸線」（リアプロ）・「阪急電鉄神戸本線」（ITANDI）が表と違っていた → 表から作る（リアプロ「阪急電鉄神戸線」・ITANDI「阪急神戸本線」・REINS「阪急神戸線」）
+- **未決（竹内さんに確認）**: REINS の阪急神戸線（宝塚線・京都線も同じ）は memory の表が「〜本線」・コード・DB（station_map 6行・line_meta）は「阪急神戸線」。search_audits に site=reins の行は0で、画面の実際の表記が分からない。決まるまでどちらも変えない
+- **既存の行（当てていない・統括役に返した）**: `scripts/audit-station-map-site-lines.ts`（読むだけ）で 767行中 344行が表と違う。空の列を埋めるだけ＝317行（ほぼ hardcoded）・上書き＝19行（ITANDI「大阪環状線」→「JR大阪環状線」17行、web_search の誤り 2行＝八尾の南の方・南巽 の谷町線/千日前線の号線の番号違い）・リアプロの列そのものが表に無い名前 8行（JR東海道線・大阪市高速電気軌道〜）
+
 ## 2026-10-27 v2.5.91 ミニボタンから開くと白いまま（v2.5.90 の直しの穴）を直した・v2.5.90 お客様の検索中は AIXLINX の小窓を勝手に開かない（**拡張の再読み込み必須**・DB/サーバーの変更なし）
 - 竹内「拡張ツール 検索中の際に お客さんで検索中は勝手に開かないように おしたら開くようにする形とする 今開きっぱなしになっているので」（リアプロの一覧の page=2 で小窓が開いたまま一覧を覆っていた）
 - 原因: underbar.js が 2026-06-07 の要望（前回たたんでも次は必ず展開）でページを開くたびに展開で起動していた。検索中は一覧のページ送りのたびに開く

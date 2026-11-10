@@ -117,7 +117,7 @@ console.log("── 積む行（payload.search_override）");
 {
   const ov = sanitizeSearchOverride({ location: { mode: "only", stations: ["大正"], lines: [], areas: [] } })!;
   const { rows } = buildWebBrainCommands([{ id: "c1", rp_update_days: 3 }], "realnetpro", false, { searchOverride: ov });
-  eq("web_brain の payload に上書きが入る", rows[0].payload, { source: "web_brain", is_wide: false, rp_update_days: 3, search_override: ov });
+  eq("web_brain の payload に上書きが入る", rows[0].payload, { source: "web_brain", is_wide: false, rp_update_days: 3, itandi_update_days: null, search_override: ov });
   const { rows: r2 } = buildWebBrainCommands([{ id: "c1", rp_update_days: 3 }], "realnetpro", false, {});
   t("上書きが無ければ payload は今まで通り", !("search_override" in r2[0].payload));
   const { rows: r3, skipped } = buildWebBrainCommands([{ id: "c1" }], "realnetpro", false, { searchOverride: ov, queued: new Set(["c1::realnetpro"]) });
