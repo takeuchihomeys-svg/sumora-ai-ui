@@ -58,6 +58,8 @@ import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
 import { findOverlaps, overlapBlocks, overlapLine, weakFor, type OverlapJob, type WeakRow } from "./lib/exam-overlap";
 import { chooseGuards, fitGuardsToCap, guardLine } from "./lib/exam-guards";
+import { reflectionLine, replanLine, type ReflRow } from "./lib/exam-reflection";
+import { reflectAndReplan } from "./lib/exam-reflection-io";
 import { bizLanes } from "./lib/exam-plan";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
@@ -805,7 +807,20 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     const pwLine = (xs: ReturnType<typeof pathRegressions>) => xs.map((x) => `${x.id} ${x.from}→${x.to}（${x.why}）`).join("／");
     const pathNote = (pw.path.length ? `・道の悪化 ${pw.path.length}（${pwLine(pw.path)}・既定 on の判断に使わない）` : "") + (pw.ess.length ? `・本質の悪化 ${pw.ess.length}（${pwLine(pw.ess)}）` : "");
     const verdictHead = pw.path.length ? verdictBase.replace(/^確かな悪化0（/, "合格の確かな悪化0・道の悪化あり（") : verdictBase;
-    const verdict = verdictHead + pathNote + essNote + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
+    const verdict0 = verdictHead + pathNote + essNote + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
+    // 2026-11-10 作業員8c（KB 7b5ef932 ⑥決め直す・⑦振り返る）: 選んだ問題が何を見つけたか（外れ・合格／道／本質の悪化・揺れ）を result.reflection に、
+    //   狙いが効かず（狙いの合格・本質が前と同じ）悪化0の時は同じ重点（スイッチ・狙いの場面）で足すとよい問題 1〜3問を result.replan に（流さない・積むのは依頼者）。
+    //   週の集計は scripts/exam-reflection-weekly.ts。止める: EXAM_REFLECTION=off
+    const rf = (() => {
+      try {
+        return reflectAndReplan({ label: j.label, owner: j.owner, switchName: j.switch, cwd: j.cwd, stage: j.stage, ids, guards: j.guards ?? [],
+          cur: readRows(rowsFile) as unknown as ReflRow[], base: blFinal && !noCompare ? readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)) as unknown as ReflRow[] : null,
+          result: { reps: rp.reps, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, pathWorse: pw.path, essenceWorse: pw.ess, missStages },
+          worseN: sureN, resDir: RES, dig: !!j.dig, stableOf: (xs) => jobRepsPlan({ ...j, guards: [] }, xs).stable ?? [] });
+      } catch (e) { log(`  振り返り: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); return null; }
+    })();
+    const verdict = verdict0 + (rf ? reflectionLine(rf.reflection) + replanLine(rf.replan) : "");
+    if (rf?.replan?.cmd) log(`  決め直しの案（流さない・積むなら）: ${rf.replan.cmd}`);
     // 2026-11-06 統括役（作業員8）: 外れの切り分けを弱い所の台帳（brain_weaknesses）へ。key＝段＋印の頭・同じ key の行があれば evidence に足す（upsertWeaknessHits）・持ち主・試験の名前・問題・回を evidence に・1回の試験で5行まで。
     //   台帳は RLS（ポリシーなし）＝サーバーの鍵が無い手元では書けない → 足す物を results/weakness-pending.jsonl に残し、鍵のある所で brain-weaknesses.ts --collect-miss-stages が足す（同じ回は二重に足さない）。止める: EXAM_MISS_WEAKNESS=off
     if ((process.env.EXAM_MISS_WEAKNESS ?? "").trim().toLowerCase() !== "off" && missStages.length) {
@@ -819,7 +834,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         }
       } catch (e) { log(`  弱い所の台帳: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`); }
     }
-    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, essence, pathWorse: pw.path, essenceWorse: pw.ess, verdict, at: at() },
+    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, essence, pathWorse: pw.path, essenceWorse: pw.ess, guards: j.guards ?? [], reflection: rf?.reflection ?? null, replan: rf?.replan ?? null, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
     log(`  済み: ${j.label} → ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・費用 ${s.usd ?? "?"}`);
