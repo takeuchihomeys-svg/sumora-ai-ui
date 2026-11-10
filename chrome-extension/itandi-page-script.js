@@ -275,16 +275,41 @@
   function textMatch(elText, search) {
     var t = norm(elText);
     var n = norm(search);
-    return t === n || t.includes(n);
+    if (!n) return false;
+    if (t === n || t.includes(n)) return true;
+    // 2026-11-10 v2.6.22 竹内さん「ちゃんと読み取れるか」:
+    //   ITANDI の路線名は「高速電気軌道第6号線(大阪メトロ堺筋線)」のように長い。カッコの中だけ・外だけでも比べる。
+    //   例: 「大阪メトロ堺筋線」で探しても「高速電気軌道第6号線(大阪メトロ堺筋線)」に当たる。
+    var strip = function (s) {
+      return s.replace(/\([^)]*\)/g, "").replace(/\s+/g, "");
+    };
+    var inner = function (s) {
+      var m = s.match(/\(([^)]*)\)/g);
+      return m ? m.map(function (x) { return x.replace(/[()]/g, ""); }).join("") : "";
+    };
+    var nStrip = strip(n), nInner = inner(n);
+    var tStrip = strip(t), tInner = inner(t);
+    if (nStrip && (tStrip === nStrip || tStrip.includes(nStrip) || nStrip.includes(tStrip))) return true;
+    if (nInner && (tInner.includes(nInner) || t.includes(nInner))) return true;
+    // 「堺筋」のような短い検索語で長い路線名に当たる（3文字以上）
+    if (n.length >= 3 && t.includes(n)) return true;
+    return false;
   }
 
   // label内のcheckboxを優先（React対応）
   // container: 検索スコープ（省略時はdocument全体。ダイアログ内操作時は必ず渡す）
   function clickLabel(text, container) {
     var root = container || document;
-    var lbl = [].slice.call(root.querySelectorAll("label")).find(function (l) {
-      return textMatch(l.textContent, text) && isVis(l);
-    });
+    var all = [].slice.call(root.querySelectorAll("label")).filter(isVis);
+    var lbl = all.find(function (l) { return textMatch(l.textContent, text); });
+    // 2026-11-10 v2.6.22: 見つからない時は、路線名の「特徴的な部分」（堺筋・御堂筋など）で探し直す。
+    //   表記ゆれ（カッコの位置・「大阪メトロ」の有無・号線の番号）で落ちるのを減らす。
+    if (!lbl) {
+      var key = norm(String(text || "")).replace(/\([^)]*\)/g, "").replace(/高速電気軌道第\d+号線/g, "").replace(/大阪メトロ|大阪市高速軌道|高速電気軌道/g, "").trim();
+      if (key.length >= 2) {
+        lbl = all.find(function (l) { return norm(l.textContent).replace(/\([^)]*\)/g, "").includes(key) || norm(l.textContent).includes(key); });
+      }
+    }
     if (!lbl) return false;
     var inp = lbl.querySelector("input[type='checkbox']");
     if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
@@ -997,7 +1022,18 @@
         }
         var clicked = clickLabel(lineNames[lineIdx], dlg);
         if (clicked) anyLineClicked = true;
-        else if (_itAudit) _itAudit.lines_missing.push({ name: lineNames[lineIdx], label_count: _itLabelCount(dlg), sample: _itLabelSample(dlg, 6) });
+        else {
+          // 2026-11-10 v2.6.22 竹内さん「ここの部分ちゃんと読み取れるかちゃんと表示できるようにすればこんなミス起きなくなる」:
+          //   路線が見つからなかった時は、**どんなラベルが画面にあったか**を必ず残す（点検が無い回でも console に出す）。
+          //   これで「検索欄に『堺筋』と入れたのに押せない」のような時に、実際のラベルの文字が分かる。
+          var _samples = _itLabelSample(dlg, 12);
+          var _cnt = _itLabelCount(dlg);
+          console.warn('[AX] 路線が見つからない: "' + lineNames[lineIdx] + '" / ラベル ' + _cnt + '個 / 見本: ' + (_samples || []).join(' | '));
+          if (_itAudit) {
+            _itAudit.lines_missing.push({ name: lineNames[lineIdx], label_count: _cnt, sample: _samples });
+            _itStep("line_miss", String(lineNames[lineIdx]).slice(0, 30) + " / ラベル" + _cnt);
+          }
+        }
         lineIdx++;
 
         if (selectAllStations) {
