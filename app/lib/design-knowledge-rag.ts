@@ -188,13 +188,16 @@ export function splitPinned(ranked: Scored[], k: number, opts: { p0Sims?: Map<st
 //   場面（app/lib/reply-scene.ts の9場面）ごとに、①札「場面:〇〇」②題の語の型（札が無い古い行にも当たる）③問いに足す語 を1つの表で持つ。
 //   kb.ts --scene=<場面>／searchKb の scene で使う。札の書き込みは scripts/kb-scene-tag.ts（題の型で候補→人が確かめる）。
 //   ⚠ 語の型は「題」だけに当てる（本文に当てると約2割の行が全部の場面に当たり絞れない＝10/07 実測）
-export type KbScene = "ack" | "considering" | "question" | "conditions" | "property_share" | "cost" | "viewing" | "apply" | "other";
+export type KbScene = "ack" | "considering" | "question" | "conditions" | "property_share" | "property_send" | "cost" | "viewing" | "apply" | "other";
 export const KB_SCENES: Record<KbScene, { tag: string; titleRe: RegExp | null; terms: string }> = {
   ack: { tag: "場面:短いお礼", titleRe: /お礼|了承|短い了承|締めの挨拶|返信不要|連絡待ち|連絡を待つ|よろしくお願い/, terms: "短いお礼・了承だけの番の返信" },
   considering: { tag: "場面:検討中", titleRe: /検討中|検討します|持ち帰|少し考え|考えます|一時保留|保留メッセージ|また連絡|扉の?1文|急かさ/, terms: "検討中・保留のお客様への返信" },
   question: { tag: "場面:質問", titleRe: /質問|聞かれ|相場|確認の約束に|確認に逃げ|家賃込み|設備の/, terms: "お客様の質問に答える返信" },
   conditions: { tag: "場面:条件", titleRe: /条件の(?:提示|変更|言い直し|復唱|発言)|言い直|条件ヒアリング|条件フォーム|希望条件|あと一つ|決め手の条件|探す宣言|他の物件/, terms: "お客様の条件の提示・変更への返信" },
   property_share: { tag: "場面:物件を送ってきた", titleRe: /持ち込|SUUMO|お客様が送ってきた|お客様の画像|送ってきた画像|募集状況/, terms: "お客様が物件（URL・画像）を送ってきた番" },
+  // 2026-11-11 作業員9（統括役 OK・竹内さんの土台の付け直し）: こちらから物件を送る番（AIX【物件ピックアップ】【物件オススメ】の2通目・ピックアップした の文）。
+  //   返信の場面（reply-scene の9場面）には無い＝ブレイン・統括の番の場面からは引かれない（owner-thinking-book は場面の札の無い行と同じ扱い）
+  property_send: { tag: "場面:物件を送る", titleRe: /物件ピックアップ|物件オススメ|ピックアップした|オススメの2通目|2通目（物件/, terms: "こちらから物件を送る番（ピックアップ・オススメ・2通目）" },
   cost: { tag: "場面:初期費用", titleRe: /初期費用|見積|総額|費用の質問|費用の語|安さ|分割/, terms: "初期費用・見積書の返信" },
   viewing: { tag: "場面:内覧", titleRe: /内覧|内見|待ち合わせ/, terms: "内覧・日程の返信" },
   apply: { tag: "場面:申込", titleRe: /申込|申し込|審査|仮押さえ|お部屋を?抑え|必要書類/, terms: "申込・審査の返信" },
