@@ -12,6 +12,7 @@
 //       過去の番も今の番も同じ関数で作る＝形が揃う（v1 は場面の札と直前の種類しか無く、近さが場面の札とほぼ同じになっていた）
 //   (c) 近い番の重点の多数決（狭い束だけ・束の外は場面の多い重点に寄せる）と digest の1語
 import { purposeOfText } from "./compose-blueprint";
+import { stripLoneSurrogates } from "./conductor-turn-vectors";
 
 type Env = Record<string, string | undefined>;
 /**
@@ -130,14 +131,15 @@ export const SITUATION_V2_CUSTOMER_MAX = 120;
 export function turnSituationTextV2(o: { scene: string | null; hist: ReadonlyArray<HistMsg>; customerMasked: string; nowMs: number }): string {
   const lastStaff = [...o.hist].reverse().find((m) => m.sender !== "customer" && ((m.text ?? "").trim() || m.aixType));
   const promise = openPromiseAt(o.hist);
-  return [
+  // 2026-11-11 作業員4: 60字・120字の切り出しで残る絵文字の片割れを外す（夜の表の書き込みが json で落ちていた・埋め込みにも渡っていた）
+  return stripLoneSurrogates([
     `場面: ${o.scene || "不明"}`,
     `進み: ${stageAt(o.hist)}`,
     `直前のこちら: ${lastStaffGist(lastStaff)}`,
     `開いている約束: ${promise ?? "なし"}`,
     `送った物: ${sentAt(o.hist, o.nowMs)}`,
     `お客様: ${o.customerMasked.replace(/\s+/g, " ").trim().slice(0, SITUATION_V2_CUSTOMER_MAX)}`,
-  ].join("\n");
+  ].join("\n"));
 }
 
 // ── (c) 近い番の重点 ─────────────────────────────────────────────────

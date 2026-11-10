@@ -268,6 +268,7 @@ import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 // 2026-09-30 手続きの質問（審査・入居までの期間と流れ・必要書類）は返信で答える／「確認した」系は資料に記載あり→資料・無し→AIX【確認した】（みこと事例）
 import { loadProcedureAnswerWithin, loadConfirmTopicRoutesWithin, type ProcedureAnswerMaterial, type ConfirmTopicMaterial } from "@/app/lib/procedure-answer-server";
 import { alignProcedureAsks, alignProcedurePriorities, procedureGeneralAskReplyOn } from "@/app/lib/procedure-ask-align"; // 2026-11-10 作業員1 型2 q374
+import { pickupCandidatesListOn, pickupCandidatesMaterialLine, focusDocDigestOn, focusDocDigestNote, FOCUS_DOC_TOPICS, type PickupCandidateRow } from "@/app/lib/brain-material-wiring"; // 2026-11-11 作業員1 A1
 import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote, procedureMoveInBrainLine, procedurePointsToProperty, procedureUnknownPointsOnlyOn } from "@/app/lib/procedure-question";
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
@@ -456,6 +457,8 @@ export type SuggestedAixMeta = {
   flow_signals?: string[];
   /** 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（n15/n17/n19/n21） */
   decisions_1103?: string[];
+  /** 2026-11-11 作業員4: 入口の意見の1語（digest.nop・CONDUCTOR_NEAR_OPINION の見張り） */
+  near_opinion?: string;
   /** 2026-11-03 この番に呼ぶ役の候補（網・記録だけ）→ digest.rl */
   conductor_roles?: string;
   /** 2026-11-04 統括メタ（記録だけ・last_brain_meta が正）→ digest.cm */
@@ -2932,6 +2935,20 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     customerStateBlockText += `\n\n${contractTerms.note}`;
     console.log(JSON.stringify({ tag: "brain:contract-terms", conversationId, target: contractTerms.target.name, routes: contractTerms.routes.map((r) => ({ topic: r.topic, route: r.route, why: r.why })), source: contractTerms.source }));
   }
+  // 2026-11-11 作業員1（A1・弱い所 326 の system の側②）: 聞かれていなくても、主のお部屋の資料に書いてある入居時期・保証会社・礼金敷金 等を参考の材料に（BRAIN_FOCUS_DOC_DIGEST=on の時だけ・既定 off）
+  if (focusDocDigestOn() && !contractTerms && focusRoomForMaterial && !isPostApplyStatus(convStatus)) {
+    try {
+      const [{ loadContractMaterial }, { routeContractTerm }] = await Promise.all([import("@/app/lib/contract-terms-answer-server"), import("@/app/lib/contract-terms-question")]);
+      const fr = focusRoomForMaterial;
+      const { material } = await Promise.race([
+        loadContractMaterial({ conversationId, name: fr.name, roomNo: fr.roomNo ?? null }),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 6_000)),
+      ]);
+      const topics = fr.roomNo ? FOCUS_DOC_TOPICS : FOCUS_DOC_TOPICS.filter((t) => t === "parking"); // 号室が分からない時は建物の項目だけ（contract-terms と同じ線）
+      const digest = focusDocDigestNote({ name: fr.name, roomNo: fr.roomNo ?? null }, topics.map((t) => routeContractTerm(t, material, {})));
+      if (digest) { customerStateBlockText += `\n\n${digest}`; console.log(JSON.stringify({ tag: "brain:focus-doc-digest", conversationId, target: fr.name, chars: digest.length })); }
+    } catch (e) { console.warn("[brain-core] focus-doc-digest skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   const confirmTopicsAsked = procedureAnswer || isPostApplyStatus(convStatus) ? []
     : detectConfirmTopics(unrepliedTurn.text, { moveInAsked: sceneEvidence?.scene === "S2_move_in" })
       .filter((t) => !(t === "parking" && contractTerms?.topics.includes("parking")) && !(t === "move_in" && contractTerms?.topics.includes("move_in")));
@@ -3021,12 +3038,18 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   }
   if (overrideDemoted("two_stage_promise") && !isPostApplyStatus(convStatus)) {
     try {
-      const { data: pendNow } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
-      const readyNow = freshPickupReady((pendNow ?? []) as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
+      // 2026-11-11 作業員1（A1・弱い所 326 の system の側①）: 候補の中身も渡す時だけ列を足す（BRAIN_PICKUP_CANDIDATES_LIST=on・既定 off＝今まで通り2列）
+      const candList = pickupCandidatesListOn();
+      const { data: pendNow } = await supabase.from("property_pickups").select(candList ? "created_at, expired_at, property_name, room_no, summary_text, score, rank, verdict" : "created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
+      const readyNow = freshPickupReady((pendNow ?? []) as unknown as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
       pickupReadyMaterial = readyNow;
       // 2026-10-14: この件のピックアップの約束がもうあるか（無ければ竹内さんはまず約束・材料の1行に足す）
       pickupPromisedOpenNow = pickupPromiseOpen(brainLedger.facts, promiseKindsToday(typedMessages.filter((m) => m.sender !== "customer" && !m.is_aix_generated).map((m) => ({ text: m.text ?? "", createdAt: m.created_at })), Date.now()));
       customerStateBlockText += `\n\n${pickupReadyMaterialLine(readyNow, pickupPromisedOpenNow)}`;
+      if (candList && readyNow) {
+        const candLine = pickupCandidatesMaterialLine((pendNow ?? []) as unknown as PickupCandidateRow[], { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
+        if (candLine) { customerStateBlockText += `\n${candLine}`; console.log(JSON.stringify({ tag: "brain:pickup-candidates", conversationId, chars: candLine.length })); }
+      }
     } catch (e) { console.warn("[brain-core] pickup-ready material skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-13 ブレイン基準（棚卸し B-1）: 出し切りの印（いつ・どの文・明示の印か送付だけか）を LLM の前に材料で渡す。
@@ -3198,6 +3221,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   }
   // 2026-11-03 竹内さんの決定（11/03 夜・KB 1cef1a4e）No.15・17・19・21: 候補の網で材料に1行だけ（決めるのはブレイン・どれも既定 off）
   let decisions1103: string[] = [];
+  let nearOpinionNote: string | null = null; // 2026-11-11 作業員4: 入口の意見の1語（meta.near_opinion → digest.nop）
   if (typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus)) {
     try {
       const turnTxt = unrepliedTurn.text ?? "";
@@ -3230,6 +3254,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         new Promise<null>((res) => setTimeout(() => res(null), 2_000)),
       ]);
       if (r?.line) customerStateBlockText += `\n\n${r.line}`;
+      nearOpinionNote = r === null ? "timeout" : `${nearOpinionDigest(r.op)}|${r.inBand}`;
       console.log(JSON.stringify({ tag: "brain:near-opinion", conversationId, op: nearOpinionDigest(r?.op ?? null), inBand: r?.inBand ?? null, timeout: r === null }));
     } catch (e) { console.warn("[brain-core] near-opinion skipped:", e instanceof Error ? e.message : String(e)); }
   }
@@ -6117,6 +6142,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       flow_signals: flowSignalsRec?.kinds.length ? [...flowSignalsRec.kinds] : undefined,
       // 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（"n21"＝お礼の番で申込への AIX を候補にした・作業員1の AIX の統括が読む）
       decisions_1103: decisions1103.length ? decisions1103 : undefined,
+      near_opinion: nearOpinionNote ?? undefined,
       conductor_meta: CONDUCTOR_META_MODE !== "off" ? ((nd) => withSearchPlan(withMaterials(buildConductorMeta({
         scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, stage: customerState?.stage ?? null,
         turnAt: typedMessages[0]?.sender === "customer" ? typedMessages[0].created_at : null,

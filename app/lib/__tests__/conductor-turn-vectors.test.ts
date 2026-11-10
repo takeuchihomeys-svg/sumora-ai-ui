@@ -1,6 +1,7 @@
 // app/lib/__tests__/conductor-turn-vectors.test.ts — 近い過去の番の表の1行（状況の文・一手・当たり・書き手）
 //   実行: npx tsx app/lib/__tests__/conductor-turn-vectors.test.ts
-import { maskContactBits, turnSituationText, actualOf, hitsOf, turnVectorRow, conductorTurnVectorsOn, APPLY_DOCS_RE, SITUATION_CUSTOMER_MAX } from "../conductor-turn-vectors";
+import { maskContactBits, turnSituationText, actualOf, hitsOf, turnVectorRow, conductorTurnVectorsOn, APPLY_DOCS_RE, SITUATION_CUSTOMER_MAX, stripLoneSurrogates } from "../conductor-turn-vectors";
+import { turnSituationTextV2 } from "../conductor-focus";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const s = turnSituationText({ scene: "AIX:property_check_result", stage: "proposing", customerMasked: "あ".repeat(300), lastStaffKind: "AIX:property_send" });
@@ -17,5 +18,15 @@ t("電話（090-1234-5678・0612345678）と〒（〒530-0001・530-0001）", ma
 t("家賃や号室の数字は消さない（6.5万・203号室・10月2日）", maskContactBits("6.5万で203号室、10月2日") === "6.5万で203号室、10月2日");
 t("状況の文にも効く", turnSituationText({ scene: null, stage: null, customerMasked: "https://suumo.jp/x 電話 080-1111-2222", lastStaffKind: null }).includes("お客様: 〔物件のURL〕 電話 〔電話〕"));
 t("2026-11-04 既定 on・=off で止まる", conductorTurnVectorsOn({}) === true && conductorTurnVectorsOn({ CONDUCTOR_TURN_VECTORS: "off" }) === false);
+// 2026-11-11 作業員4: 絵文字の片割れ（11/08 から夜の書き込みが json で落ちていた）
+{
+  const lone = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+  const cut = "あ".repeat(59) + "😊"; // 60字で切ると片割れが残る
+  t("片割れ: 単体で外し、対の絵文字は残す", stripLoneSurrogates(cut.slice(0, 60)) === "あ".repeat(59) && stripLoneSurrogates("ok😊！") === "ok😊！");
+  t("片割れ: 入れ子の値も外す・数はそのまま", JSON.stringify(stripLoneSurrogates({ a: [cut.slice(0, 60), 1], b: { c: "\udc00x" }, n: 3 })) === JSON.stringify({ a: ["あ".repeat(59), 1], b: { c: "x" }, n: 3 }));
+  const v2 = turnSituationTextV2({ scene: "other", hist: [{ sender: "staff", text: "あ".repeat(59) + "😊 続き", created_at: "2026-11-01T00:00:00Z", aixType: null }], customerMasked: "い".repeat(119) + "😊", nowMs: Date.parse("2026-11-02T00:00:00Z") });
+  t("状況の文 v2 に片割れが残らない（直前のこちら60字・お客様120字）", !lone.test(v2));
+  t("状況の文 v1 に片割れが残らない", !lone.test(turnSituationText({ scene: null, stage: null, customerMasked: "う".repeat(SITUATION_CUSTOMER_MAX - 1) + "😊", lastStaffKind: null })));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

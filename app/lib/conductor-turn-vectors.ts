@@ -18,15 +18,28 @@ export function maskContactBits(t: string): string {
     .replace(/(?<![\d-])\d{3}[-‐ー−－]\d{4}(?![\d-])/g, "〔〒〕");
 }
 
+/**
+ * 片割れのサロゲート（絵文字を slice の途中で切った残り）を外す（純関数・2026-11-11 作業員4・弱い所 292 の続き）。
+ *   11/08 から夜の近い番の表の書き込みが「invalid input syntax for type json」で毎晩落ちていた＝状況の文 v2 の 60字・120字の切り出しが
+ *   絵文字の半分で切れ、片割れの \ud83d が JSON に入ると Postgres が束ごと断る（1行で 200行の束が全部書けず、3晩 新しい番が0）。
+ *   入口の意見の今の番の文も同じ切り方＝埋め込みにも片割れが渡っていた。値の中の文字列を深く見て、片割れだけ外す（他は変えない）
+ */
+export function stripLoneSurrogates<T>(v: T): T {
+  if (typeof v === "string") return v.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, "") as unknown as T;
+  if (Array.isArray(v)) return v.map((x) => stripLoneSurrogates(x)) as unknown as T;
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, stripLoneSurrogates(x)])) as T;
+  return v;
+}
+
 /** 状況の文（埋め込む文）。伏せは呼ぶ側で済ませた文を渡す（URL・電話・〒 はここでも伏せる） */
 export function turnSituationText(o: { scene: string | null; stage: string | null; customerMasked: string; lastStaffKind: string | null }): string {
   const cust = maskContactBits(o.customerMasked).replace(/\s+/g, " ").trim().slice(0, SITUATION_CUSTOMER_MAX);
-  return [
+  return stripLoneSurrogates([
     `場面: ${o.scene || "不明"}`,
     `段階: ${o.stage || "不明"}`,
     `直前のこちら: ${o.lastStaffKind || "なし"}`,
     `お客様: ${cust}`,
-  ].join("\n");
+  ].join("\n"));
 }
 
 /** こちらの一手（正解）: AIX の種類（あれば）か返信 */
