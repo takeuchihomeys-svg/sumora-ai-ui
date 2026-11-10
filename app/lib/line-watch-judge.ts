@@ -286,6 +286,8 @@ export const VERDICT_REASON_JA: Record<string, string> = {
   text_but_aix: "AI は返信・スタッフは AIX",
   two_stage_fulfilled: "AI は約束の返信・スタッフはその約束の AIX を直接（決まりどおり）",
   text_plus_aix: "文は同じ・スタッフは AIX も足した",
+  text_same_plus_aix: "文は同じ・スタッフは 2通目に AIX も足した（M1・文の一致に数える）",
+  aix_in_window: "まとまりでは別の AIX・同じ窓でブレインの AIX も押した（M3）",
   no_draft: "下書きが無い（手打ち）",
   sentinel_only: "印だけで下書きの文が無い",
   exact: "中身が同じ",
@@ -351,6 +353,17 @@ const WATCH_EXTRA_FACTS_V9: ReadonlyArray<{ kind: string; key: string; re: RegEx
 ];
 export function watchStaffOnlyV9On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.LINE_WATCH_STAFF_ONLY_V9 ?? "on").trim().toLowerCase() !== "off"; // 2026-10-28 既定 on（直近14日で誤って外す番 0 を目で確かめた）・止める LINE_WATCH_STAFF_ONLY_V9=off
+}
+
+/**
+ * 2026-11-11 作業員6（統括役「物差し自体の誤りは見張り側で直す・既定 off」・直近14日の外れ 118番を1番ずつ読んだ）: 物差しの誤りの3つ。
+ *   M1 文は下書きどおり・スタッフが AIX も足した（text_plus_aix）→ 文の一致（同じ意味）に数える（AIX を足したのは 2通目＝aix_verdict は unexpected のまま・関所は緩めない）
+ *   M2 [返信不要] の合図でも、下書きの文がスタッフの文と同じ → 文で比べる（実物: 文が1字も違わないのに no_reply_needed_but_sent）
+ *   M3 AI は AIX・スタッフは返事のまとまりで別の AIX を押し、同じ窓の中でブレインの AIX も押した → 一致に寄せる（同じ意味・2つの要件を順に押した）
+ * 止める／入れる: LINE_WATCH_MEASURE_V11=on（既定 off）
+ */
+export function watchMeasureV11On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.LINE_WATCH_MEASURE_V11 ?? "").trim().toLowerCase() === "on";
 }
 
 function timeDateTokens(s: string): string[] {
@@ -465,6 +478,10 @@ function judgeTurnRaw(i: JudgeInput): Judgement {
     const aixOf = (list: string[]): VerdictDetail["aix_verdict"] => (list.length ? (!!brainAix && list.includes(brainAix) ? "same" : "other") : "not_pressed");
     if (burstPress.length) {
       const hit = aixOf(burstPress) === "same";
+      // M3（LINE_WATCH_MEASURE_V11=on）: まとまりでは別の AIX・同じ窓の中でブレインの AIX も押した＝2つの要件を順に押した → 同じ意味（関所の aix_verdict は other のまま）
+      if (!hit && watchMeasureV11On() && !!brainAix && allPress.includes(brainAix)) {
+        return { verdict: "same_meaning", detail: withText({ ...base, reason: "aix_in_window", brain_aix: brainAix, staff_aix: allPress, aix_verdict: "other" }) };
+      }
       return { verdict: hit ? "same" : "different", detail: withText({ ...base, reason: hit ? "aix_same" : "aix_other", brain_aix: brainAix, staff_aix: allPress, aix_verdict: hit ? "same" : "other" }) };
     }
     // v7: 手打ちでも AIX の番（AI の AIX と同じ系統の中身・AIX の種類なしは系統を問わない）
@@ -498,9 +515,12 @@ function judgeTurnRaw(i: JudgeInput): Judgement {
     }
     // 文は下書きどおり・スタッフは AIX も足した → 一部違う（AI が AIX を出さなかった）。文も違う・文が無い → 別の事
     const textAgree = !!text && isAgree(text.verdict);
+    // M1（LINE_WATCH_MEASURE_V11=on）: 文は下書きどおり・AIX は 2通目に足した → 文の一致（同じ意味）。aix_verdict は unexpected のまま（関所は緩めない）
+    if (textAgree && watchMeasureV11On()) return { verdict: "same_meaning", detail: withText({ ...base, reason: "text_same_plus_aix", brain_aix: null, staff_aix: burstPress, aix_verdict: "unexpected" }) };
     return { verdict: textAgree ? "partial" : "different", detail: withText({ ...base, reason: textAgree ? "text_plus_aix" : "text_but_aix", brain_aix: null, staff_aix: burstPress, aix_verdict: "unexpected" }) };
   }
-  if (sentinel === "[返信不要]") return { verdict: "different", detail: withText({ ...base, reason: "no_reply_needed_but_sent" }) };
+  // M2（LINE_WATCH_MEASURE_V11=on）: [返信不要] の合図でも、下書きの文がスタッフの文と同じ（一致・同じ意味）なら文で比べる
+  if (sentinel === "[返信不要]" && !(watchMeasureV11On() && text && isAgree(text.verdict))) return { verdict: "different", detail: withText({ ...base, reason: "no_reply_needed_but_sent" }) };
   if (!draft) {
     if (i.hasBrain === false) return { verdict: "na", detail: withText({ ...base, reason: "no_brain" }) };
     return { verdict: "na", detail: withText({ ...base, reason: sentinel ? "sentinel_only" : "no_draft" }) };
