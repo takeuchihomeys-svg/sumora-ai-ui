@@ -1,4 +1,5 @@
-import { sendSequenceRule, sanitizeSendSequence, replyCountOf, sequenceAnnounce, currentStepOf, splitDraftParts, sendSequenceUiOn } from "../send-sequence";
+import * as fs from "node:fs";
+import { sendSequenceRule, sanitizeSendSequence, replyCountOf, sequenceAnnounce, currentStepOf, splitDraftParts, sendSequenceUiOn, SEND_SEQUENCE_FIELD } from "../send-sequence";
 
 let fail = 0;
 const ok = (c: boolean, m: string) => { if (!c) { fail++; console.error("NG", m); } else console.log("ok", m); };
@@ -17,5 +18,8 @@ ok(sequenceAnnounce(seq)[1] === "2通目: AIX【内覧調整】", "アナウン�
 ok(currentStepOf(seq, 1) === 1 && currentStepOf(seq, 3) === null, "送った数から今の通");
 ok(splitDraftParts("1通目\n---\n2通目").length === 2, "下書きを --- で分ける");
 ok(!sendSequenceUiOn("on", false) && sendSequenceUiOn("on", true) && !sendSequenceUiOn(undefined, true), "画面は on でも YUMA だけ");
+ok(SEND_SEQUENCE_FIELD.startsWith("\"send_sequence\": [") && !SEND_SEQUENCE_FIELD.includes("`"), "出力の指定の欄（11/10: 欄が無く DeepSeek が出さなかった）");
+// 配線: brain-core の出力の指定に on の時だけ足す
+ok(fs.readFileSync("app/lib/brain-core.ts", "utf8").includes("sendSequenceOn() ? \", \" + SEND_SEQUENCE_FIELD"), "brain-core の出力の指定に配線");
 if (fail) { console.error(`${fail} 件 NG`); process.exit(1); }
 console.log("send-sequence: 全部 ok");

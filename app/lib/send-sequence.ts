@@ -27,6 +27,11 @@ export function sendSequenceRule(env: Env = envOf()): string {
     + "竹内さんの一手（10/25・入居の見送りの相談）: 1通目「かしこまりました！！\\nお伝え頂きありがとうございます！！\\n明日月曜日は週明けで…新着物件が最もでる曜日となります！！…」→ 2通目「はい！！\\n明日ご連絡させて頂きます！！\\n何卒よろしくお願い致します！！」。\n";
 }
 
+/** 出力の JSON の欄（on の時だけ brain-core の出力の指定に足す）。
+ *  2026-11-10 作業員7: 決まりの1行（sendSequenceRule）は turn_contract の決め方の中にしか無く、出力の指定に欄が無かった＝
+ *  w7-seq-dig2（TWO_MESSAGE_SEQUENCE=on・8問）で DeepSeek が send_sequence を1回も出さなかった（答案の生の出力にも 0/8） */
+export const SEND_SEQUENCE_FIELD = `"send_sequence": [{"slot": "reply か aix", "aix": "slot=aix の時だけ aix の欄と同じキー", "role": "この通の役目（受け止め＋答え・答えの続き・誘い・締め 等・15字以内）"}]（この番で送る物の並び。返信1通だけの番は [{"slot":"reply","role":"受け止め＋答え"}]）`;
+
 /** ブレインの send_sequence を確かめて整える（形が崩れていれば null・1通の返信だけなら null＝今の形のまま） */
 export function sanitizeSendSequence(raw: unknown, finalAix: string | null | undefined): SendStep[] | null {
   if (!Array.isArray(raw) || raw.length === 0 || raw.length > 5) return null;
