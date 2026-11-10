@@ -4498,9 +4498,12 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
       : allTabs.find(function(t) { return t.url && t.url.startsWith(prefix); });
   var tab = existing;
   if (!tab) {
-    tab = await chrome.tabs.create({ url: siteUrls[site], active: false });
-    await _batchWaitForTabComplete(tab.id);
-    await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
+    // 2026-11-10 v2.6.23 竹内さん「リアプロやITANDIを勝手に開くのではなくて、開いている状態のところを確認してそこから行う」:
+    //   旧はタブが無ければ **勝手に新しいタブを開いて検索**していた。
+    //   新は開かない＝このサイトは飛ばす（理由を点検に残す）。人が開いているタブの中でだけ動く。
+    console.warn("[batchAutofill] " + site + " のタブが開いていない → 勝手に開かない（このサイトは飛ばす）");
+    _auditStep(auditRun && auditRun.runId, "no_tab", site + " のタブが開いていないため開かずに飛ばした（人が開いてから再実行）");
+    throw new Error("AXLX_NO_TAB: " + site + " のタブが開いていません（勝手に開かない決まり・人が開いてから実行してください）");
   }
   // 2026-09-27 v2.5.32 竹内「重い順から治す」①: 拡張の読み直し・ログインのし直しの後の動かないタブをそのまま使わない（だめなら開き直す・それでもだめなら検索しない）
   if (site === "realnetpro") tab = await _ensureRealproTab(tab, auditRun, null, customer && customer.id);
