@@ -46,12 +46,16 @@ export function chooseGuards(input: {
     });
 }
 
-/** 上限に合わせて守りを減らす（純関数）: 守りの見込み（今の回＋前を作る分）が残りに入る所まで、後ろから外す */
+/**
+ * 上限に合わせて守りを減らす（純関数）: 守りの見込み（今の回＋前を作る分）が残りに入る所まで、後ろから外す。
+ *   2026-11-10 作業員8b（作業員8c の見つけ: 11/07 以降に守りが付いた依頼 0本・「上限に合わせて 2→0問」が4回＝上限の狭い依頼で毎回消えていた）:
+ *   夜の基準に前がある守り（reusable）は上限の計算に入れない（前を作らない・今の回の1回だけ）。それでも入らない時も1問は必ず残す
+ */
 export function fitGuardsToCap(guards: ReadonlyArray<GuardPick>, o: { capUsd: number | null; baseUsd: number; unitUsd: number }): GuardPick[] {
   if (!o.capUsd || o.capUsd <= 0) return [...guards];
-  const out = [...guards];
-  const costOf = (gs: GuardPick[]) => gs.reduce((s, g) => s + o.unitUsd * (g.reusable ? 1 : 2), 0); // 守りは1回・前を作るならもう1回分
-  while (out.length && o.baseUsd + costOf(out) > o.capUsd) out.pop();
+  const out = [...guards].sort((a, b) => Number(b.reusable) - Number(a.reusable));
+  const costOf = (gs: GuardPick[]) => gs.reduce((s, g) => s + (g.reusable ? 0 : o.unitUsd * 2), 0); // 前を作る守りだけ数える（1回＋前の1回）
+  while (out.length > 1 && costOf(out) > 0 && o.baseUsd + costOf(out) > o.capUsd) out.pop();
   return out;
 }
 
