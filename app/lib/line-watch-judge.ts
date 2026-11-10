@@ -294,6 +294,8 @@ export const VERDICT_REASON_JA: Record<string, string> = {
   text_same_plus_aix: "文は同じ・スタッフは 2通目に AIX も足した（M1・文の一致に数える）",
   aix_in_window: "まとまりでは別の AIX・同じ窓でブレインの AIX も押した（M3）",
   after_viewing_greeting: "内覧の当日の段取りの番に、スタッフは内覧の後のお礼を送った（M4・数えない）",
+  promise_fulfilment_only: "スタッフはこの番に文を書かず、前の約束の結果の AIX だけを送った（M8・数えない）",
+  first_text_same_plus_aix: "1通目は下書きどおり・2通目に AIX のフォーム等を足した（M7・同じ意味）",
   no_draft: "下書きが無い（手打ち）",
   sentinel_only: "印だけで下書きの文が無い",
   exact: "中身が同じ",
@@ -462,7 +464,8 @@ function judgeTurnRaw(i: JudgeInput): Judgement {
 
   if (scene.path === "対象外") return { verdict: "na", detail: { ...base, reason: "out_of_scope" } };
   // M4（LINE_WATCH_MEASURE_V11）: 内覧の当日の段取りの番（到着・入口・駐車）で、スタッフの返事のまとまりが内覧の後のお礼（greeting_viewing）＝お客様の番の答えではない → 数えない
-  if (watchMeasureV11On() && burstPress.includes("greeting_viewing") && VIEWING_DAY_LOGISTICS_RE.test(String(i.customerText ?? "").normalize("NFKC"))) {
+  //   M4b（9916）: 返事のまとまりが内覧の後の申込の案内（application_push）も同じ（窓の外のお礼は見ない＝まとまりで段取りに答えた番は数える）
+  if (watchMeasureV11On() && (burstPress.includes("greeting_viewing") || burstPress.includes("application_push")) && VIEWING_DAY_LOGISTICS_RE.test(String(i.customerText ?? "").normalize("NFKC"))) {
     return { verdict: "na", detail: { ...base, reason: "after_viewing_greeting", brain_aix: brainAix, staff_aix: allPress } };
   }
   if (!sentAnything) {
@@ -524,6 +527,16 @@ function judgeTurnRaw(i: JudgeInput): Judgement {
         || (dActs.has("estimate_promise") && a === "estimate_sheet");
       if (burstPress.some(fulfils)) return { verdict: "same_meaning", detail: withText({ ...base, reason: "two_stage_fulfilled", brain_aix: null, staff_aix: burstPress, aix_verdict: "same" }) };
     }
+    // M8（LINE_WATCH_MEASURE_V11）: スタッフはこの番に文を書かず、前の約束（募集状況の確認・御見積書・ピックアップ）の結果の AIX だけを送った
+    //   ＝お客様の番の答えではなく前の約束を果たした番（実物 11691・11730）→ 数えない（na）。会話に前の約束が無い時は今まで通り数える
+    if (watchMeasureV11On() && !staffText && burstPress.length && burstPress.every((a) => RESULT_AIX_PROMISE[a]?.test(String(i.staffFactGround ?? "")))) {
+      return { verdict: "na", detail: withText({ ...base, reason: "promise_fulfilment_only", brain_aix: null, staff_aix: burstPress, aix_verdict: "unexpected" }) };
+    }
+    // M7（LINE_WATCH_MEASURE_V11）: まとまりに AIX を押し、文が2通以上・1通目が下書きと一致（2通目は AIX のフォーム等）→ 同じ意味（実物 12924）
+    if (watchMeasureV11On() && draft && burstPress.length && burstTexts.length > 1 && !(text && isAgree(text.verdict))) {
+      const first = judgeText(draft, burstTexts[0].text, i.staffFactGround ?? null);
+      if (isAgree(first.verdict)) return { verdict: "same_meaning", detail: withText({ ...base, reason: "first_text_same_plus_aix", brain_aix: null, staff_aix: burstPress, aix_verdict: "unexpected" }) };
+    }
     // 文は下書きどおり・スタッフは AIX も足した → 一部違う（AI が AIX を出さなかった）。文も違う・文が無い → 別の事
     const textAgree = !!text && isAgree(text.verdict);
     // M1（LINE_WATCH_MEASURE_V11=on）: 文は下書きどおり・AIX は 2通目に足した → 文の一致（同じ意味）。aix_verdict は unexpected のまま（関所は緩めない）
@@ -558,6 +571,13 @@ type TextJudgement = { verdict: Verdict; reason: string; extra: Partial<VerdictD
 /** M4: 内覧の当日の段取り（到着・入口・駐車・遅れ・住所の確かめ） */
 export const VIEWING_DAY_LOGISTICS_RE = /到着|(?:着|つ)きました|エントランス|入口|入り口|どこ(?:に|へ|で|です)|向かって|向かいます|遅れ|駐車|停め|ですよね[?？]/;
 const RELATIVE_DAY_RE = /^(?:本日|今日|明日|明後日|あした)$/;
+/** M8: 結果の AIX と、それを約束した前のスタッフの言葉（会話＝staffFactGround にあれば前の約束を果たした番） */
+const RESULT_AIX_PROMISE: Record<string, RegExp> = {
+  property_check_result: /募集状況[^。\n！!]{0,12}確認させて|確認出来次第|確認でき次第/,
+  estimate_sheet: /御?見積(?:書|り書)[^。\n！!]{0,20}(?:お送り|作成)/,
+  property_send: /ピックアップ[^。\n！!]{0,12}(?:お送り|させて)/,
+  property_recommendation: /ピックアップ[^。\n！!]{0,12}(?:お送り|させて)/,
+};
 
 /**
  * M5・M6（LINE_WATCH_MEASURE_V11）: ground を渡した時だけ（=スイッチが on）。
