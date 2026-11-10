@@ -131,7 +131,7 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("itandi-bulk-dl: 上限で止めた時も完了の合図（audit 付き・page_limit）", /_itAuditResult\(\{ page_limit: _itLimit \}\)/.test(ib));
   ok("itandi-bulk-dl: 指定は itandi の物だけ読む", /forCustomer\(_autoRunStored, customerId, "itandi", Date\.now\(\)\)/.test(ib));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.6.20");
+  eq("manifest の版", mf.version, "2.6.21");
   const cs = mf.content_scripts.map((c) => c.js.join(","));
   ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,sent-skip.js,update-order-stop.js,bulk-dl.js"));
   ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
@@ -149,8 +149,9 @@ console.log("\n■ 勤務時間のゲート（2026-11-10 自動モード・JST 9
   eq("平日 12:45 → 休憩のまま", R.workGate(J(2026, 11, 10, 12, 45)).reason, "lunch");
   eq("平日 13:00 → 開く", R.workGate(J(2026, 11, 10, 13, 0)).open, true);
   eq("平日 20:59 → 開く", R.workGate(J(2026, 11, 10, 20, 59)).open, true);
-  eq("平日 21:00 → 終わり（次の日の 9:00）", R.workGate(J(2026, 11, 10, 21, 0)), { open: false, reason: "after_close", resumeAt: J(2026, 11, 11, 9, 0) });
-  eq("金曜 22:00 → 月曜の 9:00", R.workGate(J(2026, 11, 13, 22, 0)), { open: false, reason: "after_close", resumeAt: J(2026, 11, 16, 9, 0) });
+eq("平日 23:00 → 終わり（次の日の 9:00）", R.workGate(J(2026, 11, 10, 23, 0)), { open: false, reason: "after_close", resumeAt: J(2026, 11, 11, 9, 0) });
+eq("平日 21:30 → まだ動く（23時に延ばした）", R.workGate(J(2026, 11, 10, 21, 30)), { open: true, reason: null, resumeAt: null });
+eq("金曜 23:30 → 月曜の 9:00", R.workGate(J(2026, 11, 13, 23, 30)), { open: false, reason: "after_close", resumeAt: J(2026, 11, 16, 9, 0) });
   eq("土曜 10:00 → 動かない", R.workGate(J(2026, 11, 14, 10, 0)), { open: false, reason: "weekend", resumeAt: null });
   eq("日曜 15:00 → 動かない", R.workGate(J(2026, 11, 15, 15, 0)).reason, "weekend");
   eq("月曜 9:01 → 開く", R.workGate(J(2026, 11, 16, 9, 1)).open, true);

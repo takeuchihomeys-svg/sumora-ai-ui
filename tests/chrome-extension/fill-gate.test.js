@@ -14,7 +14,7 @@ const G = require("../../chrome-extension/batch-guard.js");
 
 console.log("\n■ 検索を押す前の関所（page-script.js）");
 {
-  // 2026-11-10 v2.6.20: 関所の判定が増えたので範囲を広げる（4200字）
+  // 2026-11-10 v2.6.21: 関所の判定が増えたので範囲を広げる（4200字）
   const cs = ps.slice(ps.indexOf("function clickSearch()"), ps.indexOf("function clickSearch()") + 4200);
   ok("clickSearch が関所（_axGateCheck）を検索の前に見る", cs.indexOf("_axGateCheck()") > 0 && cs.indexOf("_axGateCheck()") < cs.indexOf("div.go_search"));
   ok("1回だけ入れ直す（gate_retry・間取り・家賃・更新日・築年・徒歩）", /_axGateRetried = true;[\s\S]{0,900}setCheckboxes\("room_layout_id\[\]", _axExpect\.layoutVals\)/.test(cs) && /setSelVal\("rental_cost2", _axExpect\.rentMax\)/.test(cs) && /setSelVal\("update_date", _axExpect\.updateDays\)/.test(cs));
@@ -46,7 +46,7 @@ console.log("\n■ popup: 一覧に居ないお客様は取り直してから探
   ok("見つからなければ loadCustomers(true) で取り直してもう1回探す", /if \(!c && d\.customerId\) \{[\s\S]{0,200}await loadCustomers\(true\)/.test(fn));
   ok("取り直しても居なければ customer-not-found", /reason: "customer-not-found"/.test(fn));
   const mf = JSON.parse(read("manifest.json"));
-  ok("manifest の版 2.5.64", mf.version === "2.6.20");
+  ok("manifest の版 2.5.64", mf.version === "2.6.21");
 }
 
 console.log("\n■ v2.5.58 ITANDI の広げて検索は築年数も＋5年（リアプロと同じ）");
