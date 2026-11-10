@@ -46,6 +46,23 @@ export function pickupCandidatesMaterialLine(rows: ReadonlyArray<PickupCandidate
   return `【送れる物件の候補の中身（売上サポ・今送れる ${c.length}件${c.length > max ? `のうち上位${max}件` : ""}）】\n${lines.join("\n")}\n→ どれを送るか・送る番かはブレインが決める（候補の文をお客様への返信に写さない）。`;
 }
 
+/**
+ * 2026-11-11 作業員1（a1-doc-dig-1111: q403・q404 で資料の行が一度も出なかった）: 主のお部屋（customerState.focusKey）は内覧の予定・申込・
+ *   関心の段階の時しか決まらず、「送ったお部屋に『気になります』『めっちゃいい』」の番では空だった。主のお部屋が無い時は、
+ *   お客様に送った物件（グループ共有だけは外す）のうち一番新しい物（max 日以内）を対象にする。号室が無い物は建物の項目だけになる（呼ぶ側の線）。
+ */
+export function latestSentTarget(rows: ReadonlyArray<{ property_name?: string | null; room_no?: string | null; sent_at?: string | null; shared_only?: boolean }>, o: { nowMs: number; maxDays?: number }): { name: string; roomNo: string | null } | null {
+  const maxMs = (o.maxDays ?? 3) * 86_400_000;
+  let best: { name: string; roomNo: string | null; at: number } | null = null;
+  for (const r of rows) {
+    const name = String(r.property_name ?? "").trim();
+    const at = Date.parse(String(r.sent_at ?? ""));
+    if (!name || r.shared_only || !Number.isFinite(at) || at > o.nowMs || o.nowMs - at > maxMs) continue;
+    if (!best || at > best.at) best = { name, roomNo: String(r.room_no ?? "").trim() || null, at };
+  }
+  return best ? { name: best.name, roomNo: best.roomNo } : null;
+}
+
 /** 資料の写しで渡す項目（お客様が聞いていなくても判断に要る物） */
 export const FOCUS_DOC_TOPICS: readonly ContractTermTopic[] = ["move_in", "guarantor_company", "guarantor_person", "key_money", "deposit", "two_person", "parking"];
 
@@ -55,5 +72,5 @@ export function focusDocDigestNote(target: ContractTarget | null, routes: Readon
   const got = routes.filter((r) => r.route === "material" && !(r.unitUnclear?.length) && r.facts.length);
   if (!got.length) return "";
   const label = `${target.name}${target.roomNo ? ` ${target.roomNo}` : ""}`;
-  return `【📄 主のお部屋の資料（参考・${clip(label, 40)}）— お客様は今これを聞いていない。判断の材料にだけ使い、聞かれていない項目を返信に足さない】\n${got.map((r) => `- ${CONTRACT_TERM_LABEL[r.topic]}: 「${r.facts.map((f) => clip(f, 40)).join("／")}」`).join("\n")}`;
+  return `【📄 対象のお部屋の資料（参考・${clip(label, 40)}）— お客様は今これを聞いていない。判断の材料にだけ使い、聞かれていない項目を返信に足さない】\n${got.map((r) => `- ${CONTRACT_TERM_LABEL[r.topic]}: 「${r.facts.map((f) => clip(f, 40)).join("／")}」`).join("\n")}`;
 }
