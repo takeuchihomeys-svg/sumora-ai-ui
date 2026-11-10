@@ -64,7 +64,7 @@ ok("案内: スクロールは光の位置だけ（1コマに1回）", /window\.
 ok("案内: 同じ中身なら枠と光を書き直さない", /if \(html !== _lastPanelHtml\)/.test(rg) && /if \(sig === _lastHiSig && L\.childNodes\.length\) return;/.test(rg));
 ok("案内: 重さの数え（axlx_perf=1 の時だけ）", /localStorage\.getItem\("axlx_perf"\) === "1"/.test(rg));
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest: own-mutation.js は最初の段（全部の見張りより先）・版 2.5.72 以上", mf.content_scripts[0].js.indexOf("own-mutation.js") >= 1 && mf.content_scripts[0].js.indexOf("own-mutation.js") < mf.content_scripts[0].js.indexOf("search-audit.js") && /^2\.5\.(7[2-9]|[89]\d)$/.test(mf.version));
+ok("manifest: own-mutation.js は最初の段（全部の見張りより先）・版 2.5.72 以上", mf.content_scripts[0].js.indexOf("own-mutation.js") >= 1 && mf.content_scripts[0].js.indexOf("own-mutation.js") < mf.content_scripts[0].js.indexOf("search-audit.js") && /^2\.(5\.(7[2-9]|[89]\d)|[6-9]\.\d+)$/.test(mf.version));
 
 console.log("── ③ 光は控えめ・文は短く");
 ok("リアプロ: 黄色の点滅（axlxGlow のアニメ）をやめた", !/@keyframes axlxGlow/.test(rg) && !/animation:axlxGlow/.test(rg) && /border:2px solid rgba\(30,136,229,\.55\)/.test(rg));

@@ -106,9 +106,45 @@
   }
   function setSelVal(name, val) {
     var el = document.querySelector('select[name="' + name + '"]');
-    if (!el || val == null) return;
+    if (!el || val == null) return Promise.resolve(false);
     el.value = String(val);
     el.dispatchEvent(new Event("change", {bubbles:true}));
+    return Promise.resolve(true);
+  }
+  /**
+   * 2026-11-10 v2.6.1 竹内さん「賃料選択する部分や更新日選択する部分が早すぎる。毎回人間がマウス動かして押していく形とする」
+   *   賃料・更新日・面積・築年数などの **select（プルダウン）** は、旧は enqueueHumanAction（el: null）で
+   *   カーソルが動かず 80〜200ms で値が入っていた（人が選んでいるようには見えない）。
+   *   新は: ①見えるカーソルでその欄まで動く（着くまで待つ）
+   *         ②人が欄を開いて選ぶ間（開く 250〜600ms → 選ぶ 400〜1100ms・対数正規）
+   *         ③値を入れて change を出す（今までと同じ）
+   *   欄が見つからない時は今まで通り（止まらない）。
+   */
+  function _operateWithPointer(el, action, openMs, chooseMs) {
+    if (!el) return Promise.resolve(false);
+    var P = window.AxlxPointerUi;
+    var run = function () {
+      return new Promise(function (resolve) {
+        // ① 欄を開く前の間（人が視線を移して手を伸ばす）
+        var openWait = openMs != null ? openMs : humanRand(250, 550);
+        setTimeout(function () {
+          if (P && P.tap) { try { P.tap(); } catch (_) {} }
+          // ② 選ぶ前の間（人が一覧を見て選ぶ）
+          var chooseWait = chooseMs != null ? chooseMs : humanRand(400, 900);
+          setTimeout(function () { resolve(true); }, chooseWait);
+        }, openWait);
+      });
+    };
+    if (P && P.moveToEl) {
+      try { P.ensure(); } catch (_) {}
+      return P.moveToEl(el).then(run, function () { return run(); }).then(function () { return action(); });
+    }
+    return run().then(function () { return action(); });
+  }
+  function setSelValHuman(name, val) {
+    var el = document.querySelector('select[name="' + name + '"]');
+    if (!el || val == null) return;
+    return _operateWithPointer(el, function () { return setSelVal(name, val); });
   }
   // 2026-11-10 人間的な動き: 値を一瞬で入れると「貼り付けた」動きになる。数字などの短い欄は1文字ずつ打つ
   //   （人の打鍵の間は 60〜220ms・たまに止まる）。長い文字列（40字超）は今まで通り一気に入れる（待ちが長くなりすぎない）。
@@ -159,11 +195,22 @@
     });
   }
   // 基本条件フォームの select/text 入力も1項目ずつ間隔を空けてセットする
+  // 2026-11-10 v2.6.1 竹内さん「賃料選択する部分や更新日選択する部分が早すぎる。毎回人間がマウス動かして押していく形とする」
+  //   旧は enqueueHumanAction（el: null）で **カーソルが動かず 80〜200ms** で値が入っていた。
+  //   新は要素つきで列に積む（カーソルが欄まで動く→着いてから開く→選ぶ）。押す処理は今まで通り値の代入＋change。
+  function _enqueueWithEl(el, fn, minGap, maxGap, label) {
+    _clickQueue.push({ el: el, fn: fn, gap: humanRand(minGap || 80, maxGap || 200), label: label || _opLabel(el) });
+    _scheduleClickDrain();
+  }
   function queueSelVal(name, val) {
-    enqueueHumanAction(function() { setSelVal(name, val); }, 80, 200, 'sel:' + name + '=' + val);
+    var el = document.querySelector('select[name="' + name + '"]');
+    if (!el) { enqueueHumanAction(function () { setSelVal(name, val); }, 80, 200, 'sel:' + name + '=' + val); return; }
+    _enqueueWithEl(el, function () { return _operateWithPointer(el, function () { return setSelVal(name, val); }); }, 900, 1600, 'sel:' + name + '=' + val);
   }
   function queueTxtVal(name, val) {
-    enqueueHumanAction(function() { return setTxtVal(name, val); }, 80, 200, 'txt:' + name + '=' + val);
+    var el = document.querySelector('input[name="' + name + '"]');
+    if (!el) { enqueueHumanAction(function () { setTxtVal(name, val); }, 80, 200, 'txt:' + name + '=' + val); return; }
+    _enqueueWithEl(el, function () { return typeTextLikeHuman(el, val); }, 700, 1200, 'txt:' + name + '=' + val);
   }
 
   function getDirectText(el) {
