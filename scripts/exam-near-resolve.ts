@@ -17,6 +17,7 @@ import { examCacheRoot } from "./lib/llm-cassette";
 import { reduceKeyedBody, nearestSummaryOf, afterCutoff, keyedKey } from "./lib/exam-frozen-input";
 import { followupUrls } from "./lib/exam-near-followups";
 import { loadCards, CARDS_FILE, RAG_DIR } from "./lib/exam-rag-store";
+import { nearLeak, LEAK_STOP_FILE } from "./lib/exam-near-hook";
 import { createClient } from "@supabase/supabase-js";
 import { loadDeepseekCutoff } from "../app/lib/post-apply";
 
@@ -45,6 +46,23 @@ async function resolveOne(day: string, fileName: string, req: { name: string; ur
     }
   }
   const reduced = reduceKeyedBody(req.name, raw, situations);
+  // 2026-11-10 作業員8（D3 漏れの番人）: 近い番の答えに元の番そのもの（距離 0.01 未満）か元の番より後の番があれば、控えを書かずに係を止める印を置く
+  //   （11/10 17:26Z に古い作業ツリーの試験の頼みから q367 の答えの番そのもの〔距離 8e-7〕が控えに入った）。止める: EXAM_NEAR_LEAK_GUARD=off
+  if ((process.env.EXAM_NEAR_LEAK_GUARD ?? "").trim().toLowerCase() !== "off") {
+    let rowsOut: Array<Record<string, unknown>> = []; try { rowsOut = JSON.parse(reduced) as Array<Record<string, unknown>>; } catch { /* */ }
+    const lk = nearLeak(req.name, req.body, rowsOut);
+    if (lk.leak) {
+      const stop = join(examCacheRoot(), "exam-queue", LEAK_STOP_FILE);
+      let cur: { at?: string; hits?: unknown[] } = {}; try { cur = JSON.parse(readFileSync(stop, "utf8")); } catch { /* 初めて */ }
+      const hits = [...(Array.isArray(cur.hits) ? cur.hits : []), { at: new Date().toISOString(), day, file: fileName, table: req.name, close: lk.close, after: lk.after }].slice(-50);
+      writeFileSync(stop, JSON.stringify({ at: cur.at ?? new Date().toISOString(), why: "近い番の答えに元の番（距離 0.01 未満）か元の番より後の番があった＝答えの漏れ。頼みを作った作業ツリーが 8c1b057c より古くないか確かめ、直したらこのファイルを消す", hits }, null, 1));
+      const leakDir = join(root, day, "pending-leaked");
+      mkdirSync(leakDir, { recursive: true });
+      try { renameSync(join(root, day, "pending", fileName), join(leakDir, fileName)); } catch { /* 後ろの読みは頼みのファイルが無い */ }
+      console.warn(`  漏れ: ${req.name} ${fileName}（距離 0.01 未満 ${lk.close}・元の番より後 ${lk.after}）→ 控えを書かず係を止める印（${LEAK_STOP_FILE}）`);
+      return null;
+    }
+  }
   const out = join(root, day, fileName);
   mkdirSync(join(root, day), { recursive: true });
   const tmp = `${out}.${process.pid}.tmp`;
