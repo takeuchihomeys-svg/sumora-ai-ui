@@ -83,7 +83,6 @@ import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord }
 import { essenceOverride } from "./lib/exam-essence";
 import { readLedger, rowFromReusedId } from "./lib/exam-id-ledger";
 import { overBudget, capUsdOf } from "./lib/exam-plan";
-import { examApplyInfoRow } from "./lib/exam-apply-info"; // 2026-11-11 作業員3（A2）
 /** 2026-11-05 F2 の確かめ（既定 on・止める EXAM_COPY_CHECK=off） */
 const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
 
@@ -1807,7 +1806,9 @@ async function main() {
       };
       writeFloor(new Date(Date.parse(times[0]) - 1000).toISOString());
       // 2026-11-11 作業員3（A2）: 申込の意思の番は、本番の会話の【申込の情報】の状態を個人の値の無い1通で見せる（APPLY_INTENT_FORM_STATE=on の時だけ・scripts/lib/exam-apply-info.ts）
-      if (!reuse && times.length) {
+      if (!reuse && times.length && (process.env.APPLY_INTENT_FORM_STATE ?? "").trim().toLowerCase() === "on") {
+        // 動的 import: 前（main）を作る子は main の app/lib で動く＝apply-info-state の無い版でも落ちない（11/11 w3-afs-dig3 で前が作れなかった）
+        const { examApplyInfoRow } = await import("./lib/exam-apply-info");
         const ai = await examApplyInfoRow(sb, { conv: p.conv, at: p.at, customer: p.customer }, times[0], S().conv, `${PREFIX}${randomUUID()}`).catch((e) => { console.warn(`  申込の情報の写しを作れない（${p.id}）: ${String(e)}`); return null; });
         if (ai) {
           const ins = await sb.from("messages").insert(ai.row).select("id");

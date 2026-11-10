@@ -85,10 +85,10 @@ export function applyInfoBrainLine(reading: ApplyInfoReading, customerText: stri
   const day = reading.at ? reading.at.slice(0, 10) : null;
   const head = "【申込の情報（この方の申込に要る記入・本人確認書類が届いているか・会話から決まった事実）】";
   if (reading.state === "received") {
-    return `\n\n${head}\n届いている（${day ?? "日付不明"}・${reading.via === "staff_done" ? "こちらが申込完了／審査の結果を伝えた" : "お客様が記入・書類を送った"}）。前の情報でお申込みできる＝フォーマットは送り直さない。`;
+    return `\n\n${head}\n届いている（${day ?? "日付不明"}・${reading.via === "staff_done" ? "こちらが申込完了／審査の結果を伝えた" : "お客様が記入・書類を送った"}）。前の情報でお申込みできる＝フォーマットは送り直さない。竹内さんはこの状態の申込の意思の番で返信で受けた（3番中 3・全スタッフ 24番中 22）＝AIX【申込】は選ばず aix は空・route=\"reply\"（「かしこまりました！！〇〇号室お申込みさせていただきます！！」＋要る時だけ入居希望日の確認／明日管理会社に確認の約束）。代理契約の親など新しい記入が要る時だけ AIX【申込】。`;
   }
   if (reading.state === "form_sent") {
-    return `\n\n${head}\nフォーマットは送った（${day ?? "日付不明"}）が、記入・本人確認書類はまだ届いていない。`;
+    return `\n\n${head}\nフォーマットは送った（${day ?? "日付不明"}）が、記入・本人確認書類はまだ届いていない。竹内さんは返信でご入力と本人確認書類をお願いした（フォーマットは送り直さない）。`;
   }
-  return `\n\n${head}\nまだ（フォーマットも送っていない）。`;
+  return `\n\n${head}\nまだ（フォーマットも送っていない）。竹内さんはこの状態で 13番中 9 が返信の受け（「かしこまりました！！〇〇号室お申込みさせていただきます！！」）→同じ番に AIX【申込】のフォーマット＝aix=\"application_push\"。`;
 }
