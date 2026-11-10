@@ -20,6 +20,7 @@ import { staffTextFulfillsAixItem, brainPausedCustomer } from "@/app/lib/aix-ite
 import { keepViewingGreetingItem, MAIN_AIX_ITEM_OR, MORNING_GREETING_NOTE_PREFIX } from "@/app/lib/viewing-day-greeting";
 import { keepPromiseQueueItem } from "@/app/lib/promise-queue";
 import { isNoLineTestConversation } from "@/app/lib/test-conversations";
+import { mayEnqueueAutomation } from "@/app/lib/automation-pause-gate";
 import { aixInstantNoticeEnabled } from "@/app/lib/staff-todo-list";
 import { todoFarMoveInEnabled } from "@/app/lib/far-move-in-todo";
 export { aixButtonText, buildAixActionNotice, buildAixActionList, isFreshAixTurn, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "@/app/lib/aix-action-text";
@@ -284,6 +285,8 @@ async function enqueueAixPropertySearch(conversationId: string, action: string, 
     }
     return;
   }
+  // 2026-11-10 止めの印（automation_settings.paused）の間は積まない（記録だけ・今ある指示は変えない）
+  if (!(await mayEnqueueAutomation(supabase, { by: "aix-action-items", customerId, sites: AIX_AUTO_SEARCH_SITES, source: "aix", note: action }))) return;
   const { error } = await supabase.from("automation_commands").insert({
     command_type: "batch_property_search",
     customer_ids: [customerId],

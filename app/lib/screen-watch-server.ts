@@ -808,6 +808,11 @@ export async function reSearchTemp(eventId: number, requestedBy: string | null, 
   const list = (today.data ?? []) as Array<{ customer_ids: string[] | null }>;
   if (list.length >= 5) return { ok: false, error: "今日の見張りの再検索は5回まで" };
   if (list.some((c) => (c.customer_ids ?? []).includes(e.property_customer_id!))) return { ok: false, error: "このお客様は今日もう再検索した（1人1日1回）" };
+  // 2026-11-10 止めの印（automation_settings.paused）の間は積まない（記録だけ）
+  const { mayEnqueueAutomation } = await import("@/app/lib/automation-pause-gate");
+  if (!(await mayEnqueueAutomation(sb, { by: "screen-watch-re-search", customerId: e.property_customer_id, sites: [e.site], source: WEB_BRAIN_SOURCE, note: `event ${eventId}` }))) {
+    return { ok: false, error: "自動の物件検索は一時停止中です（拡張の画面から手で検索してください）" };
+  }
   const ins = await sb.from("automation_commands").insert({
     command_type: "batch_property_search", customer_ids: [e.property_customer_id], sites: [e.site === "realpro" ? "realnetpro" : e.site], status: "pending",
     payload: { source: WEB_BRAIN_SOURCE, is_wide: false, search_override: ov, watch_re_search: "true", watch_event_id: eventId, requested_by: requestedBy ? requestedBy.slice(0, 40) : null },

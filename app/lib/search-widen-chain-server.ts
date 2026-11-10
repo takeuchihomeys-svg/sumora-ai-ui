@@ -15,6 +15,7 @@ import {
 } from "@/app/lib/search-widen-chain";
 import { WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
 import { CHAIN_PICKER_AIX_OR_BRAIN } from "@/app/lib/automation-sources";
+import { mayEnqueueAutomation } from "@/app/lib/automation-pause-gate";
 import { planOfPayload } from "@/app/lib/auto-search-plan";
 import { firstProposalAtFor } from "@/app/lib/auto-search-plan-server";
 
@@ -103,6 +104,11 @@ export async function maybeChainWiden(input: { propertyCustomerId: string; site:
         update_days_plan: { v: 1, by_customer: { [input.propertyCustomerId]: { days: rp, base_days: rp, gap_hours: null, last_search_at: null, widened: false } } } },
       status: "pending",
     };
+    // 2026-11-10 止めの印（automation_settings.paused）の間は積まない（記録だけ）
+    if (!(await mayEnqueueAutomation(supabase, { by: "search-widen-chain", customerId: input.propertyCustomerId, sites: row.sites, source: WEB_BRAIN_SOURCE, note: decision.chain.kind }))) {
+      out.decision = { action: "skip", reason: "paused" };
+      return out;
+    }
     const { data: ins, error } = await supabase.from("automation_commands").insert(row).select("id").single();
     if (error) throw new Error(`コマンドを積めない: ${error.message}`);
     out.commandId = (ins as { id: string } | null)?.id ?? null;

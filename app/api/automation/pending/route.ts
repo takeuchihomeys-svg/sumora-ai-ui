@@ -5,6 +5,7 @@ import {
   pickClaimable, isPickerWaitExpired, pickerActiveAt, deferForRealproNotReady, notForThisInstall,
 } from "@/app/lib/automation-sources";
 import { claimExtVersion, claimInstallId, isMissingColumnError } from "@/app/lib/extension-snapshots";
+import { extVersionGate, cancelPendingWhilePaused } from "@/app/lib/automation-pause-gate";
 
 export async function GET(req: NextRequest) {
   // 修正10: 共有シークレット認証（AUTOMATION_API_KEY 設定時のみ強制。未設定なら従来通り許可）
@@ -26,6 +27,17 @@ export async function GET(req: NextRequest) {
   }
   const supabase = createClient(supabaseUrl, supabaseKey);
 
+  // 2026-11-10 竹内さん「古い版をサーバーで断る＋16件は残す」: 拾いに来た拡張の版（x-ext-version）が最小の版
+  //   （AUTOMATION_MIN_EXT_VERSION・既定 2.5.77＝GUIDE_ONLY の入った版・off で見ない）より古い・無い時は、何もせず指示を渡さない
+  //   （pending のまま・取り消さない・30分の戻しもしない）。2.5.77 より前の拡張は止めの印を外すと昔の自動の動きで拾うため（app/lib/automation-pause-gate.ts）
+  {
+    const vg = extVersionGate(req.headers.get("x-ext-version"));
+    if (!vg.ok) {
+      console.log(JSON.stringify({ tag: "automation-pending:ext-refused", reason: vg.reason, got: vg.got, min: vg.min, install: claimInstallId(req.headers.get("x-ext-install"))?.slice(0, 8) ?? null }));
+      return NextResponse.json({ command: null, refused: vg.reason, min_ext_version: vg.min, ext_version: vg.got, message: vg.message });
+    }
+  }
+
   // 2026-10-01 竹内「いっかい今はとめておく」: 拡張の自動の物件検索を一時停止（automation_settings.paused）。
   //   自動便・AIX・自動の広げて・Web の一括、どこから積まれた指示も拡張はここからしか受け取らない＝ここ1か所で全部止まる。
   //   再開は DB の1行（UPDATE automation_settings SET paused=false）。読めない時（表が無い）は止めない＝今まで通り
@@ -35,6 +47,9 @@ export async function GET(req: NextRequest) {
       // 2026-10-02 v2.5.69: 一時停止の間に積まれた指示（AIX の一括・Web の一括・広げて・見張り 等）は取り消す。
       //   残しておくと再開した瞬間に溜まった分がまとめて走る（10/02 夕方に一時停止中なのに3件たまっていた）。
       //   積む側（trigger・aix-action-items・screen-watch・widen-chain・cron）は何か所もあるので、受け取る口のここ1か所で片付ける
+      // 2026-11-10 竹内さん「16件は残す」: 今は取り消さない（積む側が止めの印の間は積まない＝automation-pause-gate の mayEnqueueAutomation）。
+      //   昔の動き（取り消す）は AUTOMATION_PAUSE_CANCEL_PENDING=on
+      if (!cancelPendingWhilePaused()) return NextResponse.json({ command: null, paused: true, cancelled_while_paused: 0 });
       const { data: dropped } = await supabase.from("automation_commands")
         .update({ status: "cancelled" })
         .eq("status", "pending")
