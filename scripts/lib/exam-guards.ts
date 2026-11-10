@@ -21,24 +21,28 @@ const cos = (a: number[], b: number[]): number => {
 export function chooseGuards(input: {
   targets: ReadonlyArray<string>; cards: ReadonlyArray<GuardCard>; nightlyIds: ReadonlySet<string>; stableIds: ReadonlySet<string>;
   max?: number; stage?: "brain" | "draft" | null; minSim?: number; pool?: number;
+  /** 2026-11-10 作業員8b（試験の統括②）: 重点の場面の問題（exam-focus の focusPool）。あれば守りはこの中から（狙いとの近さは並べる時の後ろの決め手だけ） */
+  focusIds?: ReadonlySet<string>;
 }): GuardPick[] {
   const max = input.max ?? 2, minSim = input.minSim ?? 0.3, pool = input.pool ?? 10;
   const t = new Set(input.targets);
   const tv = input.cards.filter((c) => t.has(c.id) && c.embedding?.length).map((c) => c.embedding as number[]);
-  if (!tv.length || max <= 0) return [];
+  const focus = input.focusIds && input.focusIds.size ? input.focusIds : null;
+  if ((!tv.length && !focus) || max <= 0) return [];
+  const simOf = (c: GuardCard) => (tv.length && c.embedding?.length ? Math.max(...tv.map((v) => cos(v, c.embedding as number[]))) : 0);
   const cands = input.cards
-    .filter((c) => !t.has(c.id) && c.embedding?.length && (input.stage !== "draft" || c.stage === "draft"))
-    .map((c) => ({ id: c.id, sim: Math.max(...tv.map((v) => cos(v, c.embedding as number[]))) }))
-    .filter((c) => c.sim >= minSim)
+    .filter((c) => !t.has(c.id) && (focus ? focus.has(c.id) : !!c.embedding?.length) && (input.stage !== "draft" || c.stage === "draft"))
+    .map((c) => ({ id: c.id, sim: simOf(c) }))
+    .filter((c) => focus || c.sim >= minSim)
     .sort((a, b) => b.sim - a.sim)
-    .slice(0, pool);
+    .slice(0, focus ? Math.max(pool, 40) : pool);
   const score = (c: { id: string; sim: number }) => (input.nightlyIds.has(c.id) ? 2 : 0) + (input.stableIds.has(c.id) ? 1 : 0);
   return cands
     .sort((a, b) => score(b) - score(a) || b.sim - a.sim)
     .slice(0, max)
     .map((c) => {
       const reusable = input.nightlyIds.has(c.id), stable = input.stableIds.has(c.id);
-      return { id: c.id, sim: Math.round(c.sim * 100) / 100, reusable, stable, why: `${reusable ? "夜の基準あり" : "前を作る"}・${stable ? "安定" : "揺れ不明"}・近さ ${c.sim.toFixed(2)}` };
+      return { id: c.id, sim: Math.round(c.sim * 100) / 100, reusable, stable, why: `${focus ? "重点の場面・" : ""}${reusable ? "夜の基準あり" : "前を作る"}・${stable ? "安定" : "揺れ不明"}・近さ ${c.sim.toFixed(2)}` };
     });
 }
 
