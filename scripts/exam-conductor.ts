@@ -30,6 +30,7 @@ import { rmdirSync, unlinkSync, existsSync, mkdirSync, readdirSync, readFileSync
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
+import { pendingCounts, decideNearResolve } from "./lib/exam-near-hook";
 import { readObs } from "./lib/exam-flake";
 import { problemHash } from "./lib/brain-exam-baseline";
 /** 2026-11-05 作業員1（作業員4の気付き・問題の id のぶつかり）: 依頼の作業ツリーの手元の problems.json の中身の hash の候補（揺れの記録を id だけで引かない） */
@@ -630,6 +631,21 @@ async function runTscJob(j: ExamJob & { file: string }): Promise<void> {
   log(`  済み: ${j.label} → ${verdict}`);
 }
 
+let nearNoEnvNoted = false;
+/** 試験の前（同じ日に固定した次の依頼の前）と後（新しい頼みができた直後）に exam-near-resolve を回す。読めなければ試験は止めない */
+function nearResolveHook(j: ExamJob, stage: "before" | "after"): void {
+  const snap = join(examCacheRoot(), "db-snapshot");
+  const d = decideNearResolve({ job: j, counts: pendingCounts(snap), configEnv: readJson<{ nearResolveEnv?: string }>(CONFIG, {}).nearResolveEnv ?? null, env: process.env, envExists: (p) => existsSync(p) });
+  if (!d.run) {
+    if ((d.why === "no_env" || d.why === "env_missing") && !nearNoEnvNoted) { nearNoEnvNoted = true; log(`  鍵が要る読みの頼みが残っている（解かない: ${d.why}・config.json の nearResolveEnv か EXAM_NEAR_RESOLVE_ENV に鍵のある env のパス）`); }
+    return;
+  }
+  const t0 = Date.now();
+  const r = spawnSync("npx", ["tsx", `--env-file=${d.envPath}`, "scripts/exam-near-resolve.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000 });
+  const last = String(r.stdout ?? "").trim().split(/\r?\n/).filter((l) => l.startsWith("鍵が要る読みの控え")).pop() ?? `終わりの番号 ${r.status}${r.error ? `・${r.error.message}` : ""}`;
+  log(`  鍵が要る読みを解いた（${stage}・${j.label}・頼み ${d.total}・日 ${d.days.join(",")}・${Math.round((Date.now() - t0) / 1000)}秒）: ${last.slice(0, 200)}`);
+}
+
 async function runJob(j: ExamJob & { file: string }): Promise<void> {
   if (j.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") return runTscRemoteJob(j); // 古い依頼の tsc も手元でなく Vercel の上で（EXAM_TSC_LOCAL=on の時だけ手元）
   if (j.runner === "tsc") return runTscJob(j);
@@ -976,7 +992,10 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
       for (const j of jobs.filter((x) => x.runner === "tsc" && !tscAlerted.has(x.id))) { const min = (Date.now() - Date.parse(j.createdAt)) / 60_000; if (min >= Number(process.env.EXAM_TSC_WAIT_ALERT_MIN ?? "60")) { tscAlerted.add(j.id); const why = whys.find((w) => w.startsWith(j.label + ":")) ?? ""; appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to: "main", owner: j.owner, label: j.label, msg: `tsc の順番待ちが ${Math.round(min)}分（${why}）` }) + "\n"); log(`  📣 知らせる: to=main tsc の順番待ちが ${Math.round(min)}分（${j.label}・${j.owner}・${why}）`); } }
       if (!picked) { log(`待つ: ${whys.slice(0, 3).join("／")}（${jobs.length}本待ち）`); if (flag("once")) return; await new Promise((r) => setTimeout(r, (jobs.some((x) => x.runner === "tsc") ? 1 : 5) * 60_000)); continue; }
       if (!claimJob(picked)) continue; // もう一方の流す役が先に取った
+      // 2026-11-10 作業員8（統括役の頼み）: 試験の前と後に「鍵が要る読み」の頼みを解く（scripts/lib/exam-near-hook.ts・EXAM_NEAR_RESOLVE_HOOK=off で止める）
+      nearResolveHook(picked, "before");
       await runJob(picked);
+      nearResolveHook(picked, "after");
       if (flag("once")) return;
     }
   }
