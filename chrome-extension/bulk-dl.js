@@ -833,12 +833,43 @@
     if (_staffModeOn) { _nudge("スタッフモードでは自動で押しません"); return { ok: false, reason: "staff" }; }
     if (_autoPdfRun) { _nudge("いま自動で送っています（⏹ で止められます）"); return { ok: false, reason: "running" }; }
     if (_guideBlocksAuto("autoPressPdfs")) return { ok: false, reason: "guide" };
+    /**
+     * 2026-11-10 竹内さん「ADの並びはちゃんと使えるようにする」:
+     *   旧の一括を消した時に AD 高→低の並べ替えも一緒に落ちていた。押す前に戻す。
+     *   ・AD 高い順（返金・広告費の高い部屋から見る）＝物件出しの今までの決まり
+     *   ・自動便で「更新順」を指定している時（_AR().allowAdSort が false）は並べ替えない（午後の便は更新順のまま）
+     *   ・並べ替えるとページが読み直されるので、その時は読み直した後にまた自動で押す（_maybeAutoPressOnLoad）
+     */
+    var _arOpts = _autoRunFor(_pickCustomerIdForAuto());
+    var _allowAd = _AR() ? _AR().allowAdSort(_arOpts) : true;
+    var _params = new URLSearchParams(location.search);
+    var _isAdDesc = _params.get("key") === "ad" && _params.get("odr") === "desc";
+    if (_allowAd && !_isAdDesc) {
+      var _adLink = document.querySelector('a[href*="key=ad&"][href*="odr=desc"]');
+      if (_adLink && _adLink.href) {
+        _tmark("ad_sort", "go");
+        console.log("[AXLX bulk-dl][auto] AD 高い順に並べ替えてから押します");
+        _nudge("🔀 AD 高い順に並べ替えます");
+        // 人が結果を見て並び替えを選ぶ間（0.7〜1.35秒）を置いてから移る
+        var _wait = _hd(900);
+        setTimeout(function () { location.href = _adLink.href; }, _wait);
+        return { ok: true, sorting: true };
+      }
+      _tmark("ad_sort", "no-link");
+      console.warn("[AXLX bulk-dl][auto] AD 高い順のリンクが見つかりません（この並びのまま押します）");
+    } else if (!_allowAd) {
+      console.log("[AXLX bulk-dl][auto] 自動便が更新順の指定 → AD へ並べ替えずに押します");
+    }
     var cand = tracked.filter(function (t) { return t.cb && t.btn && AxlxSendPairing.isHttpUrl(t.btn.href); });
     if (!cand.length) { _nudge("この画面に印刷用PDFが見つかりません"); return { ok: false, reason: "no-rows" }; }
     _autoPdfRun = { total: 0, done: 0, index: 0 };
     _tmark("auto_pdf_start", String(cand.length) + "件");
     _autoPressNext(cand);
     return { ok: true, count: cand.length };
+  }
+  /** 自動便の指定を引く時の顧客 ID（今のお客様・無ければ null） */
+  function _pickCustomerIdForAuto() {
+    try { return _pendingCustomerForAutoSend && _pendingCustomerForAutoSend.customerId ? _pendingCustomerForAutoSend.customerId : null; } catch (_) { return null; }
   }
   function _autoPressNext(list) {
     if (!_autoPdfRun) return;

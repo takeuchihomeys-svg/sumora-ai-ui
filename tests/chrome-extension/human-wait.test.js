@@ -237,7 +237,8 @@ function rest() {
   console.log("\n■ ④ 検索 → 自動の押下（旧の一括は 2026-11-10 に消した）");
   const bulk = read("bulk-dl.js");
   //   いまは「印刷用PDFを1件ずつ押して送る」だけ（自動モードなら自動で押す）。
-  ok("旧の一括の並び替え（_doStart・AD 高→低）は残っていない", !/function _doStart\(/.test(bulk) && !/location\.href = adLink\.href/.test(bulk));
+  ok("旧の一括の並び替え（_doStart）は残っていない（AD は新しい押下の前に戻した）", !/function _doStart\(/.test(bulk) && !/location\.href = adLink\.href/.test(bulk));
+  ok("AD 高い順への並べ替えは自動の押下の前にある", /function autoPressPdfs\(\)[\s\S]{0,2600}location\.href = _adLink\.href/.test(bulk));
   ok("旧の一括の入口は安全弁（呼ばれても全件送らない）", /旧の全ページ送る（autoSendAllPages）は使いません/.test(bulk));
   ok("旧のページ送りの続きは捨てる（二重に送らない）", /clearAutoSendState\(\); \/\/ 旧のページ送りの続きは捨てる/.test(bulk));
   ok("自動の押下は人の間（logNormalDelay）を通す", /logNormalDelay\(3500, 0\.4\)/.test(bulk) && /logNormalDelay\(1000, 0\.4\)/.test(bulk));
