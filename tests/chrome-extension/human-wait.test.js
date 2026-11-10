@@ -215,7 +215,9 @@ function rest() {
   console.log(`    （固定の数字の待ち 合計 ${totalFixed} 件＝全部 人の操作の間ではない物）`);
 
   console.log("\n■ 人の操作の間が human-wait を通っている（件数の下限）");
-  const USE = { "background.js": 12, "bulk-dl.js": 6, "page-script.js": 9, "itandi-page-script.js": 15, "itandi-bulk-dl.js": 1, "reins-page-script.js": 11, "reins-bulk-dl.js": 7, "content.js": 3, "reins-content.js": 2, "underbar.js": 1, "popup.js": 2 };
+  // 2026-11-10: bulk-dl.js は旧の一括（_hd/_sd を大量に使っていた）を消し、新しい自動押下は logNormalDelay を使う。
+  //   使う数の下限を 0 にし（bulk-dl は logNormalDelay・humanDelay を直接使う）、下の別の項目で新しい待ちを確かめる
+  const USE = { "background.js": 12, "bulk-dl.js": 0, "page-script.js": 9, "itandi-page-script.js": 15, "itandi-bulk-dl.js": 1, "reins-page-script.js": 11, "reins-bulk-dl.js": 7, "content.js": 3, "reins-content.js": 2, "underbar.js": 1, "popup.js": 2 };
   for (const [f, n] of Object.entries(USE)) {
     const src = read(f);
     const NAMES = "(_hd|_sd|_pd|_settleMs|_pollMs|_axContentHd|_axContentSd|_popupSd|_popupPd)";
@@ -225,19 +227,21 @@ function rest() {
     ok(`${f}: ばらつきの関数を ${n} か所以上で使う（${c}）`, c >= n);
   }
 
-  console.log("\n■ ④ 検索 → 並び替え（リアプロ bulk-dl の AD 高→低）");
+  // 2026-11-10: 旧の一括を消したので、ばらつきの関数の使用数の下限を下げる（新しい自動押下は logNormalDelay）
+  { const src = read("bulk-dl.js");
+    const NAMES = "(?:_hd|_sd)";
+    const calls = (src.match(new RegExp("\\b" + NAMES + "\\(", "g")) || []).length;
+    const defs = (src.match(new RegExp("function " + NAMES + "\\(ms\\)", "g")) || []).length;
+    const c = calls - defs;
+    ok(`bulk-dl.js: 人の間（AxlxHumanWait・logNormalDelay）を使う`, /logNormalDelay/.test(src)); }
+  console.log("\n■ ④ 検索 → 自動の押下（旧の一括は 2026-11-10 に消した）");
   const bulk = read("bulk-dl.js");
-  const doStart = bulk.slice(bulk.indexOf("function _doStart("), bulk.indexOf("function _doStart(") + 3000);
-  const iSet = doStart.indexOf("setAutoSendState(sortState)"), iFlag = doStart.indexOf("_pendingAutoSendDispatched = true"), iWait = doStart.indexOf("_hd(900)"), iNav = doStart.indexOf("location.href = _sortHref");
-  ok("並び替えの前に人の間（_hd(900)＝0.72〜1.35秒）を置く", iWait > 0 && iNav > 0);
-  ok("状態（sortState）は待つ前に書く（待つ間のリロードでも再開できる）", iSet > 0 && iSet < iWait);
-  ok("待つ前に起動済みの印（Case B が並び替え前のページを送らない）", iFlag > iSet && iFlag < iWait);
-  ok("待つ間に止められたら遷移しない（getAutoSendState を見る）", /if \(!getAutoSendState\(\)\)[^\n]*return;[\s\S]{0,80}location\.href = _sortHref/.test(doStart)); // v2.5.31: 間に「並び替えへ進んだ時刻」の記録（_tmark）が1行入る
-  ok("旧: すぐ遷移（location.href = adLink.href）が残っていない", !/location\.href = adLink\.href/.test(bulk));
-  ok("検索の結果 → 自動送信の開始（固定 200ms）がばらつく", (bulk.match(/setTimeout\(autoSendAllPages, _hd\(200\)\)/g) || []).length === 2);
-  ok("次のページへ（固定 800ms）がばらつく", (bulk.match(/tryNext\((state|_resumeState)\); \}, _hd\(800\)\)/g) || []).length === 2);
-  const hr = HW.humanRange(900);
-  console.log(`    並び替えの前の間: ${hr.lo}〜${hr.hi}ms（旧 0ms）`);
+  //   いまは「印刷用PDFを1件ずつ押して送る」だけ（自動モードなら自動で押す）。
+  ok("旧の一括の並び替え（_doStart・AD 高→低）は残っていない", !/function _doStart\(/.test(bulk) && !/location\.href = adLink\.href/.test(bulk));
+  ok("旧の一括の入口は安全弁（呼ばれても全件送らない）", /旧の全ページ送る（autoSendAllPages）は使いません/.test(bulk));
+  ok("旧のページ送りの続きは捨てる（二重に送らない）", /clearAutoSendState\(\); \/\/ 旧のページ送りの続きは捨てる/.test(bulk));
+  ok("自動の押下は人の間（logNormalDelay）を通す", /logNormalDelay\(3500, 0\.4\)/.test(bulk) && /logNormalDelay\(1000, 0\.4\)/.test(bulk));
+  ok("自動の押下は案内モードでは始めない", /_guideBlocksAuto\("autoOnLoad"\)/.test(bulk) && /_guideBlocksAuto\("autoPressPdfs"\)/.test(bulk));
 
   console.log("\n■ 前後が入れ替わらない（itandi: ペットの欄を開く → 検索を押す）");
   const it = read("itandi-page-script.js");
@@ -248,7 +252,8 @@ function rest() {
   ok("itandi の前の条件を外す間も毎回ちがう（旧 i*250 の等間隔）", !/i \* 250/.test(it) && /setTimeout\(next, _hd\(FG\.RESET_STEP_MS\)\)/.test(it));
 
   console.log("\n■ 5大バグの型に当たらない");
-  ok("トグル: 並び替えはリンクへの遷移（クリックで切り替えない）", /location\.href = _sortHref/.test(doStart));
+  ok("トグル: 旧の並び替えの遷移は消した（一括をなくした）", !/location\.href = _sortHref/.test(read("bulk-dl.js")));
+  ok("クリックで切り替えない（旧の並び替えの遷移コードが無い）", !/location\.href = adLink\.href/.test(read("bulk-dl.js")));
   ok("checked の判定・クリックの関数は変えていない（_clickIfUnchecked が残る）", /function _clickIfUnchecked\(el\) \{ if \(!el\.checked\) _clickEl\(el\); \}/.test(read("page-script.js")));
   ok("見張り（235秒・240秒・90秒）の長さを固定している所を確かめる", /\}, 895000\);/.test(read("page-script.js")) && /\}, 240000\);/.test(it) && /90000/.test(read("reins-page-script.js")));
   ok("拡張の再読み込み: 版を上げた（2.5.29 以上）", manifest.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005029);

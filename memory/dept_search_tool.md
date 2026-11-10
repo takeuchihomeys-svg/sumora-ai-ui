@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-11-10 v2.6.31 古い一括送信をなくす（自動は「印刷用PDFを1件ずつ押す」に1本化）
+
+竹内さん「古い一括のなくした方がよいかも。紛らわしくなる可能性あれば」
+
+### 消したもの（`chrome-extension/bulk-dl.js`）
+- **右下の枠の「📡 全ページ送る」ボタン**（`axlx-auto-btn`）を削除。
+- 旧の一括の起動 5か所（Case A・Case B・2秒フォールバック・autofill のスナップショット後・ページ送りの続き）を撤去。
+  - Case A/B は `_maybeAutoPressOnLoad()`（この画面の行を1件ずつ押す）へ。
+  - ページ送りの続き（`getAutoSendState().active`）は **捨てる**（同じ物件を二重に送らない）。
+- `autoSendAllPages` は **安全弁** にした（古い経路から呼ばれても何もしない・全件送らない）。
+
+### 残した理由（消さずに置いた物）
+- `background.js` の一括検索が **「全ページ送信完了（axlx-batch-customer-done）」を最大5分待つ**。
+  → 完了の合図は新しい流れの `_autoFinish` から送るようにした（送らないと一括検索が5分止まる）。
+- `axlx-scrape-realpro` / `axlx-click-next-page` のメッセージ口は background から使われるので残す。
+
+### テスト
+- `human-one-by-one-v2595`（56 OK）・`audit-timing`・`auto-run`・`guide-only-v2577`・`realpro-guide`・`human-wait` を新しい形に更新
+- 全63ファイル通過
+
+---
+
 ## 2026-11-10 v2.6.30 自動モードの時は自動で押して行われるようにする（旧の「全ページ送る」を止める）
 
 竹内さん「自動モードの時は自動で押しておこなわれるようにする」

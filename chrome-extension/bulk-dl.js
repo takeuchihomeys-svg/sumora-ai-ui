@@ -509,43 +509,22 @@
     brainPreview();
 
     // Case A: fill-done 受信済み かつ スナップショット前にない新しい結果が出た
-    // 2026-11-10 竹内さん「自動モードの時は自動で押しておこなわれるようにする」:
-    //   自動モードの時は **古い「全ページ送る」（autoSendAllPages）ではなく、新しい「印刷用PDFを1件ずつ押して送る」** を使う。
-    //   旧はここで autoSendAllPages が走って _pendingAutoSendDispatched が立ち、下の Case C（自動押下）が動かなかった。
+    // 2026-11-10 竹内さん「古い一括のなくした方がよいかも」: 古い「全ページ送る」（autoSendAllPages）は呼ばない。
+    //   結果が出たら **印刷用PDFを1件ずつ押して送る**（自動モードなら自動で・それ以外は人が押す形のまま）。
     if (_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
       var _hasNewBtn = tracked.some(function(item) { var k = item.btn.href || item.btn.getAttribute('href') || ''; return k && !_preAutofillBtns.has(k); });
-      if (_hasNewBtn && _autoModeOn && !_staffModeOn) {
+      if (_hasNewBtn) {
         _autoSendArmed = false;
         try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
-        console.log("[AXLX bulk-dl][auto] Case A: 新結果検出 → 自動モードなので印刷用PDFを1件ずつ押して送ります");
+        console.log("[AXLX bulk-dl] Case A: 新結果検出（" + (_autoModeOn ? "自動モードなので自動で押します" : "人が押す形で待ちます") + "）");
         _tmark("results", "rows=" + tracked.length);
         _pendingAutoSendDispatched = true;
-        _autoPdfSig = tracked.map(function (t) { return _urlKey(t.btn && t.btn.href); }).join(",").slice(0, 3000);
-        setTimeout(function () { autoPressPdfs(); }, 1200 + Math.floor(Math.random() * 900));
-      } else if (_hasNewBtn) {
-        _autoSendArmed = false;
-        _pendingAutoSendDispatched = true;
-        try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
-        console.log("[AXLX bulk-dl] Case A: 新結果検出 → 自動送信開始");
-        _tmark("results", "rows=" + tracked.length);
-        setTimeout(autoSendAllPages, 600 + Math.floor(Math.random() * 600));
+        _maybeAutoPressOnLoad();
       }
     }
-    // Case B: AJAXページネーション継続（tryNext がページ遷移後に inject() が再実行される）
-    // !_autoSendArmed: fill-done 受信直後（新顧客の新結果待ち中）は Case B を発火させない。
-    // armed 中に発火すると前顧客の state（getAutoSendState）を使って
-    // 次顧客の DOM 結果を前顧客名で誤送信するバグが発生する。
-    else if (!_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched && !(_autoModeOn && !_staffModeOn)) {
-      var _resumeState = getAutoSendState();
-      if (_resumeState && _resumeState.active) {
-        _pendingAutoSendDispatched = true;
-        console.log("[AXLX bulk-dl] Case B: AJAXページネーション継続 P" + _resumeState.currentPage);
-        setTimeout(function () {
-          autoSendOnePage(_resumeState, function (ok, cnt) { _resumeState.sentCount = (_resumeState.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(_resumeState); }, _hd(800)); });
-        }, 700 + Math.floor(Math.random() * 700));
-        return;
-      }
-    }
+    // Case B: AJAXページネーション継続
+    // 2026-11-10 竹内さん「古い一括のなくした方がよいかも」: 旧のページ送りの継続は使わない（上の Case D で捨てる）。
+    //   一覧が新しく出たら、その画面の行を1件ずつ押す（_maybeAutoPressOnLoad）。
     /**
      * 2026-11-10 竹内さん「手動でできた。自動でおこなっちく（自動で行ってほしい）」:
      *   自動モードの時は、**結果が出たら拡張が自分で印刷用PDFを1件ずつ押して送る**（Case C）。
@@ -632,9 +611,6 @@
       '  <button id="axlx-autopdf-stop-btn" style="flex:0 0 74px;padding:6px 4px;background:rgba(255,255,255,0.18);border:1px dashed rgba(255,255,255,0.5);border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;display:none;" title="自動を止める（いまの1件が終わってから）">⏹ 止める</button>',
       "</div>",
       '<div style="display:flex;gap:6px;">',
-      '  <button id="axlx-auto-btn" style="flex:1;padding:6px 8px;background:#e91e63;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">📡 全ページ送る</button>',
-      "</div>",
-      '<div style="display:flex;gap:6px;">',
       '  <button id="axlx-print-btn" style="flex:1;padding:6px 4px;background:rgba(255,255,255,0.18);border:none;border-radius:8px;color:white;font-size:10px;font-weight:700;cursor:pointer;">🖨 印刷プレビュー</button>',
       '  <button id="axlx-img-btn" style="flex:1;padding:6px 4px;background:#7b1fa2;border:none;border-radius:8px;color:white;font-size:10px;font-weight:700;cursor:pointer;">📸 画像保存</button>',
       "</div>",
@@ -683,6 +659,7 @@
       stopAutoPdfs();
       this.style.display = "none";
     });
+    // 2026-11-10 竹内さん「古い一括のなくした方がよいかも」: 旧の「📡 全ページ送る」は無くした（自動は上の「🤖 自動で押して送る」に1本化）
     // 2026-11-10: 資料を確認している間だけ出る「👀 見た → 次へ」（押すと待たずに次の物件へ）
     document.getElementById("axlx-look-next-btn").addEventListener("click", function () {
       if (_lookWait && _lookWait.skip) _lookWait.skip("skip");
@@ -690,9 +667,6 @@
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
     document.getElementById("axlx-line-btn").addEventListener("click", function () { if (_forwardTimer) { clearTimeout(_forwardTimer); _forwardTimer = null; } getCustomerFromPopup(function (customerName, customerConditions, customerId) { mergePdfs(true, customerName, customerConditions, customerId); }); });
-    document.getElementById("axlx-auto-btn").addEventListener("click", function () { autoSendAllPages(true); }); // 手動=スタッフモードでも許可
-    // v2.5.77: 全ページ送る（拡張がページをめくって送る）は光って選択するモードの間は出さない
-    try { document.getElementById("axlx-auto-btn").parentNode.style.display = "none"; } catch (_) {}
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
     document.getElementById("axlx-cache-btn").addEventListener("click", probeCache);
@@ -939,6 +913,24 @@
     var stopBtn = document.getElementById("axlx-autopdf-stop-btn");
     if (stopBtn) stopBtn.style.display = "none";
     _paintPdfProgress();
+    /**
+     * 2026-11-10 竹内さん「古い一括のなくした方がよいかも。紛らわしくなる可能性あれば」:
+     *   古い一括（autoSendAllPages）を消すので、**その代わりに完了の合図をここから送る**。
+     *   background.js の一括検索（AIXツール・自動便）は「全ページ送信完了（axlx-batch-customer-done）」を最大5分待って
+     *   次のお客様へ移る。送らないと5分止まる（＝一括検索が詰まる）。
+     */
+    try {
+      chrome.storage.local.get(["current_customer_id", "current_customer_name"], function (r) {
+        var cid = (r && r.current_customer_id) || null;
+        chrome.runtime.sendMessage({
+          type: "axlx-batch-customer-done",
+          customerId: cid,
+          propertyCount: n,
+          audit: null,
+          auto_pdf: { why: why, sent: n },
+        }, function () { void chrome.runtime.lastError; });
+      });
+    } catch (_) {}
   }
   function stopAutoPdfs() {
     if (!_autoPdfRun) { _nudge("自動は動いていません"); return false; }
@@ -2598,72 +2590,19 @@
   //   popup.js が axlx_pending_auto_send に載せた顧客をそのまま使う。
   //   これが無い時だけ、従来どおり popup / storage の「今の顧客」に頼る。
   function autoSendAllPages(_manual, _flagSnap) {
-    if (_guideBlocksAuto("autoSendAllPages")) return;
-    if (getAutoSendState()) return; // 既に動作中
-    // 自動呼び出し時のみスタッフモードをチェック
-    if (!_manual && _staffModeOn) {
-      console.log("[AXLX bulk-dl] スタッフモード中 → autoSendAllPages をスキップ");
-      return;
-    }
-    // Case A / Case C / 手動ボタン いずれの経路で起動しても再開フラグは必ずここで消費する。
-    // （消し忘れると次顧客・次ページロードで Case C が誤発火して二重送信になる）
+    /**
+     * 2026-11-10 竹内さん「古い一括のなくした方がよいかも。紛らわしくなる可能性あれば」:
+     *   旧の「全ページ送る」（全行にチェックを入れて1ページずつ送る）は **使わない**。
+     *   入口は新しい「印刷用PDFを1件ずつ押して送る」（autoPressPdfs）に1本化した。
+     *   この関数は古い経路（拡張の古いタブ・残った合図）から呼ばれても何もしない（勝手に全件送らないための安全弁）。
+     *   ⚠ 消さずに残している理由: background.js の一括検索が「全ページ送信完了（axlx-batch-customer-done）」を待つため、
+     *     完了の合図は新しい流れ（_autoFinish）から送っている。ここは「呼ばれても動かない」だけの置き場。
+     */
+    console.log("[AXLX bulk-dl] 旧の全ページ送る（autoSendAllPages）は使いません（新しい1件ずつの押下に1本化）");
     try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
-    var _snap = _pendingCustomerForAutoSend;
-    _pendingCustomerForAutoSend = null;
-    // リロードでモジュール変数は消えるので、フラグに載っていた顧客を使う（一括検索はほぼ毎回この経路）
-    if (!_snap && _flagSnap && _flagSnap.customerName) {
-      _snap = { name: _flagSnap.customerName, conditions: _flagSnap.conditions || null, customerId: _flagSnap.customerId || null };
-      console.log("[AXLX bulk-dl] 再開フラグの顧客を使用: " + _snap.name + " (id=" + _snap.customerId + ")");
-    }
-
-    function _doStart(name, conditions, customerId) {
-      // AD高→低ソートが未適用ならソートURLへ遷移し、Case Bがリロード後に再開する
-      var params = new URLSearchParams(location.search);
-      var isAdDesc = params.get("key") === "ad" && params.get("odr") === "desc";
-      _tmark("start", isAdDesc ? "sorted" : "unsorted", customerId);
-      // 2026-09-27 午後の便（更新順）は AD 高い順へ並べ替えない（旧はいつも並べ替え＝17時便も AD 順だった）
-      var _arStart = _autoRunFor(customerId);
-      var _adSortOk = _AR() ? _AR().allowAdSort(_arStart) : true;
-      if (!_adSortOk) _tmark("sort_skip", "updated");
-      if (!isAdDesc && _adSortOk) {
-        var adLink = document.querySelector('a[href*="key=ad&"][href*="odr=desc"]');
-        if (adLink && adLink.href) {
-          console.log("[AXLX bulk-dl] AD高→低ソート適用 → リロード後Case Bで再開");
-          var sortState = { active: true, currentPage: 1, customerName: name, customerConditions: conditions || null, customerId: customerId || null, sentCount: 0, readCount: 0, sendableCount: 0 };
-          setAutoSendState(sortState);
-          // 2026-09-27 竹内「物件検索を押してから並び替えを変える所…全て不規則にする」:
-          //   結果が出てすぐ並び替えを押していた（結果が出る → 0.2秒（固定）または 0.6〜1.2秒 → すぐ遷移）。
-          //   人が結果を見てから並び替えを選ぶ間（約0.9秒を 0.7〜1.35秒でばらつかせる）を置いてから押す。
-          //   状態（sortState）は先に書く＝待つ間にリロードが入っても Case B/C で同じ所から再開できる（今までと同じ順）。
-          //   待つ間に inject() の Case B が同じ sortState で並び替え前のページを送り始めないよう、起動済みの印を先に立てる
-          //   （遷移でページが読み直されると印は初期化され、並び替え後のページで Case B/C が再開する）。
-          _pendingAutoSendDispatched = true;
-          var _sortHref = adLink.href;
-          var _sortWaitMs = _hd(900);
-          _tmark("sort_wait", _sortWaitMs);
-          setTimeout(function () {
-            // 待つ間に止められた（clearAutoSendState）時は並び替えに進まない
-            if (!getAutoSendState()) { console.log("[AXLX bulk-dl] 並び替えの前に止められた → 遷移しない"); return; }
-            _tmark("sort_go", null);
-            location.href = _sortHref;
-          }, _sortWaitMs);
-          return;
-        }
-      }
-      var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions || null, customerId: customerId || null, sentCount: 0, readCount: 0, sendableCount: 0 };
-      setAutoSendState(state);
-      autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(state); }, _hd(800)); });
-    }
-
-    if (_snap && _snap.name) {
-      // autofill開始時点でスナップショット済みのお客さん名を使う（名前ずれ防止）
-      _doStart(_snap.name, _snap.conditions, _snap.customerId);
-    } else {
-      // スナップショットなし（手動操作など）→ 従来通りpopupから取得
-      getCustomerFromPopup(function (name, conditions, customerId) {
-        _doStart(name, conditions, customerId);
-      });
-    }
+    void _manual; void _flagSnap;
+    _maybeAutoPressOnLoad();
+    return;
   }
 
   // ── underbar.js からの全ページ自動送信シグナル受信 ───────────────────────
@@ -2691,7 +2630,8 @@
         if (_hasNBsnap) {
           _autoSendArmed = false;
           _pendingAutoSendDispatched = true;
-          setTimeout(autoSendAllPages, _hd(200));
+          // 2026-11-10: 旧の一括ではなく、1件ずつ押す形（自動モードなら自動で押す）
+          _maybeAutoPressOnLoad();
         }
       }
     });
@@ -2722,8 +2662,9 @@
         }
         _autoSendArmed = false;
         _pendingAutoSendDispatched = true;
-        console.log("[AXLX bulk-dl] 2秒フォールバック: hasNewBtn=true → 自動送信開始");
-        setTimeout(autoSendAllPages, _hd(200));
+        console.log("[AXLX bulk-dl] 2秒フォールバック: hasNewBtn=true → 1件ずつ押す形へ");
+        // 2026-11-10: 旧の一括ではなく、1件ずつ押す形（自動モードなら自動で押す）
+        _maybeAutoPressOnLoad();
       }
     }, 2000);
     // 0件確定ポーリング: 1秒毎にチェック、最大25秒待機して物件なし確定→batch-customer-done送信
@@ -2806,19 +2747,17 @@
     setTimeout(inject, 1200);
     obs.observe(document.body, { childList: true, subtree: true });
 
-    // Case D: ページリロード後の再開（ページ2以降: tryNext がsetAutoSendStateした後）
+    // Case D: ページリロード後の再開（ページ2以降）
+    // 2026-11-10 竹内さん「古い一括のなくした方がよいかも。紛らわしくなる可能性あれば」:
+    //   旧の「全ページ送る」（autoSendAllPages・autoSendOnePage・tryNext）は使わない。ページをめくるのも拡張の自動押下と同じ考えで
+    //   1件ずつ押して送る形にまとめた（ページ送りの続きが残っていても、この画面の行を1件ずつ押すだけ＝二重に送らない）。
     var autoState = getAutoSendState();
     if (autoState && autoState.active) {
-      setTimeout(function () {
-        if (_pendingAutoSendDispatched) return; // inject() Case B が先に処理済み
-        _pendingAutoSendDispatched = true;
-        console.log("[AXLX bulk-dl] Case D: ページリロード後の継続 P" + autoState.currentPage);
-        autoSendOnePage(autoState, function (ok, cnt) { autoState.sentCount = (autoState.sentCount || 0) + (cnt || 0); tryNext(autoState); });
-      }, _sd(2500));
-      return; // Case C は不要（ページ1ではないため）
+      clearAutoSendState(); // 旧のページ送りの続きは捨てる（同じ物件を二重に送らない）
+      console.log("[AXLX bulk-dl][auto] 旧のページ送りの続きがあった → 捨てて、この画面の行を1件ずつ押します");
     }
 
-    // Case C: ページリロード後の初回起動（chrome.storage.session経由 / AJAXでCase Aが動かなかった場合の保険）
+    // Case C: ページリロード後の初回起動（chrome.storage.session経由）
     setTimeout(function () {
       if (_pendingAutoSendDispatched) return;
       try {
@@ -2832,9 +2771,8 @@
               console.warn("[AXLX bulk-dl] Case C: 再開フラグが古い（" + Math.round(_age / 1000) + "秒前・" + (_flag.customerName || "不明") + "）→ 送信しない");
               return;
             }
-            _pendingAutoSendDispatched = true;
-            console.log("[AXLX bulk-dl] Case C: ページリロード初回起動");
-            autoSendAllPages(false, (_flag && typeof _flag === "object") ? _flag : null);
+            console.log("[AXLX bulk-dl][auto] Case C: ページリロード初回起動 → この画面の行を1件ずつ押します");
+            _maybeAutoPressOnLoad();
           }
         });
       } catch (_) {}

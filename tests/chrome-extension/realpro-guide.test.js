@@ -70,10 +70,9 @@ ok("bulk-dl: 行の口（AxlxRealproRows）", /AxlxRealproRows\s*=/.test(read("b
 
 // ── ④ 2026-10-01 竹内「押したら勝手に自動検索始まって自動で物件ダウンロード始まってしまったから防ぐ」──
 const bd = read("bulk-dl.js");
-ok("bulk-dl: 案内モードの間は自動の送信・ページ送りを始めない（3か所）",
-  /function autoSendAllPages\([^)]*\) \{\s*if \(_guideBlocksAuto\("autoSendAllPages"\)\) return;/.test(bd)
-  && /function autoSendOnePage\([^)]*\) \{\s*if \(_guideBlocksAuto\("autoSendOnePage"\)\) return;/.test(bd)
-  && /function tryNext\([^)]*\) \{\s*if \(_guideBlocksAuto\("tryNext"\)\) return;/.test(bd));
+ok("bulk-dl: 案内モードの間は自動の押下を始めない（旧の一括は消した）",
+  /function _maybeAutoPressOnLoad\(\) \{[\s\S]{0,300}_guideBlocksAuto\("autoOnLoad"\)/.test(bd)
+  && /function autoPressPdfs\(\) \{[\s\S]{0,500}_guideBlocksAuto\("autoPressPdfs"\)/.test(bd));
 ok("bulk-dl: 読めない時も止める（明示の OFF＝false の時だけ動く・自動モードを選んだ時だけ開く）", /_guideOff = !_GUIDE_ONLY \|\| _autoModeOn/.test(bd) && /if \(_guideOff\) return false;/.test(bd) && /if \(_autoModeOn\) return false;/.test(bd));
 const pp = read("popup.js");
 ok("popup: 案内モードの間は再開の印（axlx_pending_auto_send）を置かない", /_gm\.guideMode !== false \|\| \(self\.AxlxModeCore && self\.AxlxModeCore\.GUIDE_ONLY\)\) \{ try \{ chrome\.storage\.session\.remove\("axlx_pending_auto_send"\)/.test(pp));

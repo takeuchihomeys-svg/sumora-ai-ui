@@ -77,10 +77,12 @@ ok("見張りの長さは 895秒（v2.6.23: 人が操作する速さに合わせ
   ok("stall: 最後の段・タブが隠れている・列の残り・次の操作", a.stall.stage === "cities" && a.stall.visibility === "hidden" && a.stall.queue_len === 1 && a.stall.queue_next === "city_code[]:27109" && a.stall.has_focus === false && a.stall.hidden_ms >= 0);
   ok("ブレインでない（run_id なし）時は記録しない", vm.runInContext("_auditReset(null); _auditOp('x', 1, 2); _auditStepP('y'); _audit === null", pctx));
 
-  console.log("\n■ ③ bulk-dl: 結果を見た・並び替え・ページ・資料の送信の束の時刻を audit.timings に");
+  console.log("\n■ ③ bulk-dl: 結果を見た・資料の送信の束の時刻を audit.timings に");
   const bd = read("bulk-dl.js");
-  for (const k of ['"armed"', '"results"', '"start"', '"sort_wait"', '"sort_go"', '"page"', '"send"', '"sent"', '"send_err"', '"next"']) ok(`時刻 ${k} を記録する`, bd.includes("_tmark(" + k));
-  ok("並び替えの前の間は記録した値と同じ乱数（_hd(900) を1回だけ引く）", /var _sortWaitMs = _hd\(900\);\s*_tmark\("sort_wait", _sortWaitMs\);[\s\S]*\}, _sortWaitMs\);/.test(bd));
+  // 2026-11-10 竹内さん「古い一括のなくした方がよいかも」: 旧の一括（並び替え・ページ送り）を消したので、
+  //   残っている時刻だけを確かめる（armed・results・page・send・sent・send_err・look_doc・look_skip・auto_pdf_*）
+  for (const k of ["armed", "results", "page", "send", "sent", "send_err", "look_doc", "look_skip", "auto_pdf_start", "auto_pdf_end"]) ok("時刻 " + k + " を記録する", bd.includes("_tmark(\"" + k + "\""), true);
+  ok("旧の並び替えの時刻は無い（一括を消した）", !bd.includes("_tmark(\"sort_wait\""));
   ok("sessionStorage に貯める（ページが読み直されても消えない）", /sessionStorage\.setItem\(AUDIT_T_KEY/.test(bd));
   ok("_auditResult が timings を載せて消す", /var _tl = _ttake\(\);\s*if \(_tl\) r\.timings = _tl;/.test(bd));
   // 動かす
