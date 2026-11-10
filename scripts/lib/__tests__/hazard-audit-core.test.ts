@@ -1,5 +1,5 @@
 // scripts/lib/__tests__/hazard-audit-core.test.ts — 危ない所の見張りの見つけ方（npx tsx scripts/lib/__tests__/hazard-audit-core.test.ts）
-import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, cmdSplitHazards } from "../hazard-audit-core";
+import { findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, cmdSplitHazards, unownedTopWeaknesses } from "../hazard-audit-core";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) pass++; else { fail++; console.log("FAIL", name); } };
@@ -146,4 +146,20 @@ if (fail) process.exit(1);
   const ok2 = 'scripts/x.ts "C:/Users/竹内 悠馬/a.json" --a=1';
   const ok = cmdSplitHazards([bad]).length === 1 && cmdSplitHazards([ok1, ok2]).length === 0;
   console.log(ok ? "hazard-audit-core (q): pass" : "hazard-audit-core (q): FAIL"); if (!ok) process.exit(1);
+}
+// (r) 2026-11-10 作業員8（D4）: 弱い所の上位の持ち主
+{
+
+  const now = Date.parse("2026-11-11T00:00:00Z"), day = 86_400_000, iso = (d: number) => new Date(now - d * day).toISOString();
+  const rows = [
+    { key: "a", status: "in_progress", occurrences: 318, last_seen: iso(1), updated_at: iso(7) },   // 11/04 から動かない＝持ち主なし
+    { key: "b", status: "in_progress", occurrences: 100, last_seen: iso(1), updated_at: iso(1) },   // 持ち主あり
+    { key: "c", status: "open", occurrences: 50, last_seen: iso(0), updated_at: iso(0) },           // open＝持ち主なし
+    { key: "d", status: "open", occurrences: 400, last_seen: iso(60), updated_at: iso(60) },        // 古い＝点が低い
+    { key: "e", status: "fixed", occurrences: 999, last_seen: iso(0), updated_at: iso(0) },         // 直した行は見ない
+    { key: "f", status: "open", occurrences: 1, last_seen: iso(0) }, { key: "g", status: "open", occurrences: 2, last_seen: iso(0) },
+  ];
+  const r = unownedTopWeaknesses(rows, now);
+  const ok = r.top.length === 5 && r.top[0].key === "a" && !r.top.some((w) => w.key === "e") && r.unowned.map((w) => w.key).join() === "a,c,g,d,f".split(",").filter((k) => r.top.some((w) => w.key === k)).join() && !r.unowned.some((w) => w.key === "b");
+  console.log(ok ? "hazard-audit-core (r): pass" : "hazard-audit-core (r): FAIL " + JSON.stringify(r.top.map((w) => [w.key, w.score.toFixed(1), w.owned]))); if (!ok) process.exit(1);
 }

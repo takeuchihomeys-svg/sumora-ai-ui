@@ -25,7 +25,7 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
     if (a === b) same++; else { diff++; console.log("違う:", scene, text, a, "|", b); }
   }
   console.log(`全行 ${all.length}行 ${msAll}ms ／ P0 だけ ${p0.length}行 ${msP0}ms ／ 引いた行 同じ ${same}・違う ${diff}`);
-  const ok = [priorityKbP0OnlyRead({ p1On: false, env: {} }) === false, priorityKbP0OnlyRead({ p1On: false, env: { BRAIN_PRIORITY_KB_P0_ONLY: "on" } }) === true, priorityKbP0OnlyRead({ p1On: true, env: { BRAIN_PRIORITY_KB_P0_ONLY: "on" } }) === false];
-  console.log(`スイッチ: 既定 off・on で P0 だけ・P1 on の時は全行 → ${ok.every(Boolean) ? "OK" : "NG " + JSON.stringify(ok)}`);
+  const ok = [priorityKbP0OnlyRead({ p1On: false, env: {} }) === true, priorityKbP0OnlyRead({ p1On: false, env: { BRAIN_PRIORITY_KB_P0_ONLY: "off" } }) === false, priorityKbP0OnlyRead({ p1On: false, env: { BRAIN_PRIORITY_KB_P0_ONLY: "on" } }) === true, priorityKbP0OnlyRead({ p1On: true, env: { BRAIN_PRIORITY_KB_P0_ONLY: "on" } }) === false];
+  console.log(`スイッチ: 既定 on で P0 だけ・off で全行・P1 on の時は全行 → ${ok.every(Boolean) ? "OK" : "NG " + JSON.stringify(ok)}`);
   process.exit(diff || !ok.every(Boolean) ? 1 : 0);
 })();

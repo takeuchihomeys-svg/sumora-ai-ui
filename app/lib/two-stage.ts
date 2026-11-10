@@ -43,6 +43,8 @@ export type TwoStageInput = {
   ackOnly?: boolean;
   /** こちらが今日（JST）すでにした約束の種類（promiseKindsToday）。同じ日の同じ件の2通目からは約束を挟まず AIX（10巡目 10/08） */
   promisedTodayKinds?: readonly TwoStageKind[];
+  /** 2026-11-11 作業員1（A5）: 今の時刻（JST の時）。無ければ jstParts().hour（本番は渡さない＝今まで通り）。テストで時計を渡すため */
+  hourJst?: number;
   /** 今回お客様が物件を送ってきた（持ち込み・URL／物件の画像）。ask＝お客様の言葉（broughtPropertyAsk）・count＝件数（broughtPropertyCount）。10/07 */
   brought?: { ask: BroughtAsk; count: number; /** 10/13: 送って頂いた物件が SNS・TikTok の画面で物件名が無く題だけ（broughtTitleOnly） */ titleOnly?: boolean } | null;
   /** 室内写真の依頼の番（ブレインの S11）。atHand＝頼まれた物件の室内イメージが手元にある（room-photo-material.photoMaterialAtHand）。5巡目 10/07 */
@@ -320,14 +322,27 @@ function multiPromiseDirection(extra: readonly ExtraPromise[]): string {
  *   （聞かれた事への答え check_question・お仕事面・室内写真の撮影・内覧の確認・ピックアップは対象外＝ピックアップは条件の番で約束が 96%）。
  *   戻す: TWO_STAGE_SAME_DAY_DIRECT=off
  */
+/**
+ * 2026-11-10 作業員1（弱い所 two-stage-same-day-direct-repromise・KB 7fc4bfbf 10/08「2通目から直接 AIX」と cf241dbd 11/05 No.42(c)「物件を送ってきた時は約束して AIX」の食い違い）:
+ *   募集状況の確認（kind=check・持ち込み brought_both を含む）は、同じ日の2通目でも約束の返信のまま（AIX 直接にしない）。見積書（estimate）は数えていないので今のまま。
+ *   実送信（200日・同じ日に募集状況の確認の約束がまだ開いている時に、お客様が物件・空きを聞いた番のこちらの最初の手）:
+ *     全員 9〜17時 約束 28／結果の AIX 14・18〜21時 10／3・21時〜 2／1。竹内さん（書き手の印がある約100日）9〜17時 10／2・18〜21時 7／2・21時〜 1／1＝約束 18／直接 5。
+ *   q371（11/03 19:35・2通目・竹内さんは「合計3物件の募集状況確認させて頂きます」→約1時間後に AIX）も約束が正解。
+ *   2026-11-11 竹内さんの決定（KB 0f475703・7fc4bfbf を退役）で既定 on（止める TWO_STAGE_SAME_DAY_REPROMISE=off）
+ */
+export function sameDayRepromiseKeeps(kind: TwoStageKind | string, env: Record<string, string | undefined> = {}): boolean {
+  // 2026-11-11 既定 on（竹内さんの決定 KB 0f475703「約束に寄せる」・sameday-rp-dig-1111 確かな悪化0・道/本質の悪化0・止める TWO_STAGE_SAME_DAY_REPROMISE=off）
+  return kind === "check" && (env.TWO_STAGE_SAME_DAY_REPROMISE ?? "").trim().toLowerCase() !== "off";
+}
 const SAME_DAY_SOURCES = /^rule:two_stage_promise\((?:check|brought_both|brought_estimate|estimate|estimate_stale)\)$/;
 function sameDayDirect(v: TwoStageVerdict, i: TwoStageInput): boolean {
   if (typeof process !== "undefined" && (process.env?.TWO_STAGE_SAME_DAY_DIRECT ?? "").toLowerCase() === "off") return false;
   if (!SAME_DAY_SOURCES.test(v.source)) return false;
+  if (sameDayRepromiseKeeps(v.kind, typeof process === "undefined" ? {} : process.env)) return false;
   // 2026-10-16 竹内悠馬（10/16 の画面の事例 e・実送信 21:25「本日は管理会社の営業時間が終了しておりますので、明日一番で確認しご連絡させて頂きます」）:
   //   管理会社の営業時間外（18時〜翌9時・日本時間）は今は確認も結果の AIX も送れない＝2通目でも約束の返信のまま（AIX は明日）。戻す TWO_STAGE_SAME_DAY_NIGHT=off
   if ((typeof process === "undefined" || (process.env?.TWO_STAGE_SAME_DAY_NIGHT ?? "").toLowerCase() !== "off")) {
-    const h = jstParts().hour;
+    const h = i.hourJst ?? jstParts().hour; // 2026-11-11 A5: テストは時計を渡す（本番は渡さない＝今まで通り）
     if (h >= 18 || h < 9) return false;
   }
   const kinds = i.promisedTodayKinds ?? [];

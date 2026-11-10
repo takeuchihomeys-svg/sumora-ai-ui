@@ -1168,6 +1168,23 @@ async function prepareMainBaseline(): Promise<boolean> {
     plan.run = plan.run.filter((id) => !carried.includes(id));
     plan.reuse.push(...carried);
   }
+  // 2026-11-10 作業員8（D1）: 同じ版で回数だけが違う構成（repeat が自分以上）の置き場にある答えを、回の部分集合で使う（B.repeatSubsetCompatible・EXAM_BASELINE_REPEAT_SUBSET=off で止める）
+  if (vk && plan.run.length && !flag("baseline-refresh") && process.env.EXAM_BASELINE_REPEAT_SUBSET !== "off") {
+    const names = (() => { try { return readdirSync(B.BASELINE_DIR); } catch { return [] as string[]; } })();
+    const sameV = names.filter((n) => n.startsWith(`v-${vk}-`) && n !== basename(dir)).filter((n) => {
+      try { return B.repeatSubsetCompatible(cfg, (JSON.parse(readFileSync(join(B.BASELINE_DIR, n, "config.json"), "utf8")) as { config: import("./lib/brain-exam-baseline").ExamConfig }).config); } catch { return false; }
+    });
+    const subset: string[] = [];
+    for (const id of [...plan.run]) {
+      const cands = sameV.flatMap((n) => { const f = join(B.BASELINE_DIR, n, `${id}.json`); if (!existsSync(f)) return []; try { const b = JSON.parse(readFileSync(f, "utf8")) as import("./lib/brain-exam-baseline").BaselineFile<ResultRow>; return [{ ...b, rows: B.trimRowsToRepeat(b.rows, REPEAT), dir: n }]; } catch { return []; } });
+      const hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: vk, keyOf: () => vk, envFp: "" }, REPEAT, { acceptComplete: REPEAT_FLAKY || BASE_FLAKY || !!REPS_OF, maxAgeMs });
+      if (!hit) continue;
+      const { dir: from, ...rest } = hit;
+      B.saveBaseline<ResultRow>(dir, { ...rest, versionKey: vk, config: cfg, carriedFrom: `${from}（回の部分集合）` });
+      subset.push(id);
+    }
+    if (subset.length) { console.log(`  回数だけ違う構成の置き場から使う ${subset.length}問（${subset.join(",")}）`); plan.run = plan.run.filter((id) => !subset.includes(id)); plan.reuse.push(...subset); carried.push(...subset); }
+  }
   // 2026-10-20 回す数の上限（--baseline-limit=N・夜中の取り置きを1日の上限の残りに収める）と、今は回さず夜中に回す（--baseline-defer・答案が無い問題は前との比べに入らない）
   // 2026-10-22 差分だけの取り置き（竹内さんの決まり「試験のブレインは見つけたら直す」・10/22 の夜 166問×最大2回・約 $5・約 11時間）:
   //   回す問題を n 問ずつ（EXAM_BASELINE_CHUNK・既定 15）に分け、塊ごとに ①下見（AI を呼ばない・前の main の答えの控えで新しい main の入力を組む）

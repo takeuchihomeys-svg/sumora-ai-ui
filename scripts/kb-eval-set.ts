@@ -64,8 +64,8 @@ export const KB_EVAL: KbEvalQ[] = [
   { q: "全力サポートのAIXをブレインが提案してよいか", gold: ["76212115", "f6af682d"], ho: true },
   { q: "返信かAIXかを決める順番", gold: ["0f4604a9"] },
   { q: "aix-catalogのボタンとピッカーの一覧の使い道", gold: ["0f4604a9"], ho: true },
-  { q: "同じ日に2回目の見積依頼が来たら約束を挟むか", gold: ["7fc4bfbf"], scene: "cost" },
-  { q: "2段の約束の返信を省いてAIXを直接出すのはいつ", gold: ["7fc4bfbf"] },
+  { q: "同じ日に2回目の見積依頼が来たら約束を挟むか", gold: ["0f475703"], scene: "cost" },
+  { q: "2段の約束の返信を省いてAIXを直接出すのはいつ", gold: ["0f475703"] },
   { q: "内覧挨拶を送る理由", gold: ["6c38daca"] },
   { q: "確定した内覧の当日にお客様から連絡が来た番", gold: ["6c38daca", "fca29a19"], scene: "viewing", ho: true },
   { q: "条件を言われた番で売上サポに候補があればピックアップのAIXを出すか", gold: ["aca164df"], scene: "conditions" },
@@ -115,7 +115,7 @@ export const KB_EVAL: KbEvalQ[] = [
   { q: "審査中のお客様にブレインを回すか", gold: ["d23150a0"], scene: "apply" },
   { q: "申込以降のブレインの費用を減らした", gold: ["d23150a0"], ho: true },
   { q: "見積書くださいと言われた時の最初の返信", gold: ["f9e9333d"], scene: "cost" },
-  { q: "見積の依頼にすぐAIX見積書送るを出すか", gold: ["f9e9333d", "7fc4bfbf"], ho: true },
+  { q: "見積の依頼にすぐAIX見積書送るを出すか", gold: ["f9e9333d", "0f475703"], ho: true },
   { q: "ブレインのAPI費用をどこまで削れるか", gold: ["b161e4be"] },
   { q: "お礼だけの番でブレインのLLMを省けるか", gold: ["b161e4be"], ho: true },
   { q: "見張りで2段の約束の後にAIXを押したのを一致と数えるか", gold: ["943dbaa4"] },
@@ -282,6 +282,10 @@ export const KB_EVAL: KbEvalQ[] = [
   { q: "夜の約束の営業時間終了・明日一番はいつ付ける", gold: ["5fe999f8"], ho: true },
   { q: "試験は1日いくらまで・目標に届くまで続ける", gold: ["a7f07cf8"] },
   { q: "返信の芯はお客様のどんな潜在意識を満たす", gold: ["d33e3daf"] },
+  // 2026-11-11 竹内さんの決定（同じ日の2通目の募集状況の確認は約束に寄せる・0f475703・7fc4bfbf を退役）
+  { q: "同じ日にもう1件物件を送ってきたら約束するかAIX直接か", gold: ["0f475703"], scene: "property_share" },
+  { q: "TWO_STAGE_SAME_DAY_REPROMISE は何のスイッチ", gold: ["0f475703", "6aede24e"] },
+  { q: "確認の約束がまだ開いている時の2件目の空きの問い", gold: ["0f475703"], scene: "question", ho: true },
 ];
 
 // ── 前の物差し（10/06 scripts/kb-rag-eval.ts・10/07 scripts/kb-scene-rag-eval.ts の問いをそのまま・下がっていないかを見る）──
@@ -305,7 +309,7 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   {q: "待ち合わせの住所が丁目で終わっている",gold: ["0de29196"],from: "rag"},
   {q: "pgvectorの索引の注意点",gold: ["99e242e4"],from: "rag"},
   {q: "設計知見の古い行を整理する",gold: ["5aced6ad"],from: "rag"},
-  {q: "送れる物件がまだ無い時のブレインの判断",gold: ["7fc4bfbf"],from: "rag"},
+  {q: "送れる物件がまだ無い時のブレインの判断",gold: ["0f475703"],from: "rag"},
   {q: "なんば・梅田に出やすいエリア",gold: ["2cb3be5a"],from: "rag"},
   {q: "見積書の後に申込を勧めるか",gold: ["19935ac1"],from: "rag"},
   {q: "家賃の相場をお客様にどう伝える",gold: ["d71fcffe"],from: "rag"},
@@ -337,7 +341,7 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   {q: "設備があるか聞かれた",gold: ["aa5280ce","bea8152f"],scene: "question",from: "scene"},
   {q: "保証会社について聞かれた",gold: ["00d0d8f4","6ab8f464"],scene: "question",from: "scene"},
   {q: "お客様が条件を言い直した",gold: ["571856cc","8495318d","2176304f"],scene: "conditions",from: "scene"},
-  {q: "条件を受けて探しますと宣言する返信",gold: ["cbaec2af","7fc4bfbf","c9737b16"],scene: "conditions",from: "scene"},
+  {q: "条件を受けて探しますと宣言する返信",gold: ["cbaec2af","0f475703","c9737b16"],scene: "conditions",from: "scene"},
   {q: "条件ヒアリングのフォームの書き方",gold: ["091573b8","1dadbc5d","81692a10"],scene: "conditions",from: "scene"},
   {q: "気に入ったけどあと一つ足りないと言われた",gold: ["0b6d95a0","dc6338d7"],scene: "conditions",from: "scene"},
   {q: "お客様がSUUMOのURLを送ってきた",gold: ["f979a363","c9737b16","40b4a65a"],scene: "property_share",from: "scene"},

@@ -13,11 +13,11 @@ let cache: { at: number; rows: RagRow[]; p0Only: boolean } | null = null;
  * 2026-11-10 作業員8（brain_weaknesses latency:priority-pulled-kb-timeout）: 本番7日のブレイン 470番のうち、この引きに 2〜10秒が 210番・10秒超 5番・
  *   50秒の時間切れ 1番（fff5b6a3 11/09・その間に画面の起動でブレインがもう一度回った）。原因は控え（30分・インスタンスごと）が無い度に
  *   現行の設計知見 約2,000行を本文ごと全部読んでいた事。P1 の決定を引かない既定（BRAIN_PRIORITY_KB_P1 off）では使うのは priority=0 の行（isReplyP0）だけ。
- *   BRAIN_PRIORITY_KB_P0_ONLY=on の時、P1 off なら priority=0 の現行の行だけを読む（選ぶ行は同じ＝isReplyP0 は列の priority===0 を見る）。既定 off
+ *   BRAIN_PRIORITY_KB_P0_ONLY=on の時、P1 off なら priority=0 の現行の行だけを読む（選ぶ行は同じ＝isReplyP0 は列の priority===0 を見る）。既定 on（11/10 統括役の了承・材料 15/15 同じ）・off で全行を読む
  */
 export function priorityKbP0OnlyRead(o: { p1On: boolean; env?: Record<string, string | undefined> }): boolean {
   const env = o.env ?? (typeof process !== "undefined" ? process.env : {});
-  return !o.p1On && (env.BRAIN_PRIORITY_KB_P0_ONLY ?? "").trim().toLowerCase() === "on";
+  return !o.p1On && (env.BRAIN_PRIORITY_KB_P0_ONLY ?? "").trim().toLowerCase() !== "off";
 }
 async function loadP0Rows(sb: SupabaseClient): Promise<RagRow[]> {
   const { data, error } = await sb.from("system_design_thinking").select("id, title, insight, tags, is_current, created_at, priority")

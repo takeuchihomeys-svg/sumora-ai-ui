@@ -75,7 +75,9 @@ const DIR = join(process.cwd(), "..", "..", "exam-cache", "conductor-focus");
       // 2026-11-07: --elapsed=<id→分 の json> を渡すと、開いている約束からの経過の1行を足す（入口の材料の試し）
       const elapsedMin = elapsed[t.id];
       const base = `【今の番の状況（伏せた材料）】\n${t.v2}${elapsedMin != null ? `\n${elapsedLine(elapsedMin)}` : ""}${material[t.id] ? `\n\n${material[t.id]}` : ""}`;
-      const [ra, rb] = await Promise.all([ask(base), ask(`${base}\n\n${F.nearFocusLine(near)}`)]);
+      // 11/10: --b-only は本番と同じ「近い番あり」だけを読む（場面ごとの当たりを数える時に費用を半分に・A には B と同じ値を置く）
+      const bLine = `${base}\n\n${F.nearFocusLine(near)}`;
+      const [ra, rb] = process.argv.includes("--b-only") ? await ask(bLine).then((x) => [x, x] as const) : await Promise.all([ask(base), ask(bLine)]);
       if (!ra || !rb) { fail++; continue; }
       n++; if (ra.focus === t.focus) a++; if (rb.focus === t.focus) b++; if (near?.focus === t.focus) nearHit++;
       rows.push({ id: t.id, gold: t.focus, scene: t.scene, route: t.route, near: near?.focus ?? null, inBand: near?.inBand ?? false, A: ra.focus, B: rb.focus, bg: rb.background, why: rb.why });
