@@ -20,6 +20,8 @@ import { loadLineWatch } from "./line-watch-server";
 import { BRAIN_AIX_LABELS } from "./aix-button-view";
 import { detectOutgoingResidue } from "./outgoing-residue";
 import { draftToSendableText } from "./draft-text";
+import { shadowAutoGate, shadowAutoGateEnabled, watchGroundText, type ShadowGate } from "./shadow-auto-gate";
+import { shadowUnlockTable, type UnlockTurn } from "./shadow-unlock";
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -74,12 +76,22 @@ type TurnRow = {
   draft_last: string | null; draft_last_at: string | null; draft_first: string | null; draft_first_at: string | null; draft_versions: number | null; draft_sentinel: string | null;
   brain_action: string | null; brain_reply_mode: string | null; brain_versions: number | null; tpo_label: string | null;
   verdict: Verdict | null; verdict_detail: VerdictDetail | null; judge_version: string | null; evaluated_at: string | null;
+  /** 2026-11-11 影の関所の材料（読むだけ） */
+  final_check?: unknown; draft_sentinel_at?: string | null;
 };
 type Msg = WindowMsg & { conversation_id: string };
 type Press = WindowPress & { conversation_id: string };
 type Decision = { id: string; conversation_id: string; created_at: string; analyzed_msg_ts: string | null; intent: string | null };
 
-export type EvalOptions = { nowMs?: number; dry?: boolean; days?: number; backlogDays?: number; limit?: number };
+export type EvalOptions = {
+  nowMs?: number; dry?: boolean; days?: number; backlogDays?: number; limit?: number;
+  /** 2026-11-11 監査用（scripts/shadow-gate-table.ts）: 判定済みの番も読み直す（dry と一緒に使う） */
+  reevalFinal?: boolean;
+  /** 2026-11-11 付け直し（scripts/line-watch-rejudge.ts --same-as-cron）: 埋め戻しの行（verdict_detail.backfill）は読み直さない（印と材料の無い所の na を残す） */
+  skipBackfill?: boolean;
+  /** 2026-11-11 監査用: 書く列（patch）を結果の rows に集める（dry と一緒に使う） */
+  collect?: boolean;
+};
 export type EvalResult = {
   ok: boolean; dry: boolean; judgeVersion: string;
   read: number; judged: number; pending: number; skippedFinal: number; updated: number; failed: number; orphans: number;
@@ -87,6 +99,10 @@ export type EvalResult = {
   /** 2026-10-23 v8: 本来の AIX の当てはめ（aix-should-be）。手打ち・押し間違いで一致に直した数・当てたが違った数 */
   mapping: { hand: number; mis_press: number; unmatched: number };
   samples: Array<Record<string, unknown>>;
+  /** 2026-11-11 影の関所（auto_eligible）: 送っていた番・止めた最初の線ごとの数 */
+  shadow: { recorded: number; would_send: number; reasons: Record<string, number> };
+  /** opt.collect の時だけ: 番ごとの書く列 */
+  rows?: Array<{ id: number; conversation_id: string; customer_turn_at: string; final_check: unknown; patch: Record<string, unknown> }>;
   errors: string[];
 };
 
@@ -97,10 +113,10 @@ export type EvalResult = {
 export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOptions = {}): Promise<EvalResult> {
   const nowMs = opt.nowMs ?? Date.now();
   const dry = !!opt.dry;
-  const res: EvalResult = { ok: true, dry, judgeVersion: JUDGE_VERSION, read: 0, judged: 0, pending: 0, skippedFinal: 0, updated: 0, failed: 0, orphans: 0, verdicts: {}, reasons: {}, scenes: {}, mapping: { hand: 0, mis_press: 0, unmatched: 0 }, samples: [], errors: [] };
+  const res: EvalResult = { ok: true, dry, judgeVersion: JUDGE_VERSION, read: 0, judged: 0, pending: 0, skippedFinal: 0, updated: 0, failed: 0, orphans: 0, verdicts: {}, reasons: {}, scenes: {}, mapping: { hand: 0, mis_press: 0, unmatched: 0 }, samples: [], shadow: { recorded: 0, would_send: 0, reasons: {} }, errors: [] };
   // 2段目の SQL（judge_version の列）を流す前でも回る（版の列なしで読み・書く。毎晩やり直すだけで中身は同じ）
   let hasVersionCol = true;
-  const colsOf = (v: boolean) => `id, conversation_id, customer_turn_at, customer_last_at, conv_status, draft_last, draft_last_at, draft_first, draft_first_at, draft_versions, draft_sentinel, brain_action, brain_reply_mode, brain_versions, tpo_label, verdict, verdict_detail, evaluated_at${v ? ", judge_version" : ""}`;
+  const colsOf = (v: boolean) => `id, conversation_id, customer_turn_at, customer_last_at, conv_status, draft_last, draft_last_at, draft_first, draft_first_at, draft_versions, draft_sentinel, brain_action, brain_reply_mode, brain_versions, tpo_label, verdict, verdict_detail, evaluated_at, final_check, draft_sentinel_at${v ? ", judge_version" : ""}`;
   const read = (v: boolean) => Promise.all([
     readAll<TurnRow>((f, t) => sb.from("line_watch_turns").select(colsOf(v)).gte("customer_turn_at", iso(nowMs - (opt.days ?? 4) * DAY)).order("customer_turn_at").order("id").range(f, t), opt.limit ?? 5000),
     readAll<TurnRow>((f, t) => sb.from("line_watch_turns").select(colsOf(v)).is("evaluated_at", null).gte("customer_turn_at", iso(nowMs - (opt.backlogDays ?? 30) * DAY)).order("customer_turn_at").order("id").range(f, t), opt.limit ?? 5000),
@@ -116,7 +132,8 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
   const byId = new Map<number, TurnRow>();
   for (const r of [...recent, ...backlog]) byId.set(r.id, r);
   const turns = [...byId.values()].filter((t) => {
-    const done = t.judge_version === JUDGE_VERSION && t.verdict_detail?.final === true && !!t.evaluated_at;
+    if (opt.skipBackfill && (t.verdict_detail as Record<string, unknown> | null)?.backfill) { res.skippedFinal++; return false; }
+    const done = !opt.reevalFinal && t.judge_version === JUDGE_VERSION && t.verdict_detail?.final === true && !!t.evaluated_at;
     if (done) res.skippedFinal++;
     return !done;
   });
@@ -127,15 +144,27 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
   const since = iso(Math.min(...turns.map((t) => P(t.customer_turn_at))) - HOUR);
   const msgs: Msg[] = [], presses: Press[] = [], decisions: Decision[] = [];
   const existing = new Set<string>();
+  const pcOf = new Map<string, string>();
   for (let i = 0; i < convIds.length; i += 50) {
     const chunk = convIds.slice(i, i + 50);
     // 2026-10-07: お礼・了承の番の読むべき範囲（こちらの直前の返事・72時間以内）を決めるため、番の4日前から読む（窓の判定は番より後だけを見るので変わらない）
     msgs.push(...await readAll<Msg>((f, t) => sb.from("messages").select("conversation_id, sender, created_at, text, is_aix_generated").in("conversation_id", chunk).gte("created_at", iso(P(since) - 4 * DAY)).order("created_at").order("id").range(f, t)));
     presses.push(...await readAll<Press>((f, t) => sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, created_at").in("conversation_id", chunk).gte("created_at", since).not("aix_type", "is", null).order("created_at").order("id").range(f, t)));
     decisions.push(...await readAll<Decision>((f, t) => sb.from("brain_decision_logs").select("id, conversation_id, created_at, analyzed_msg_ts, intent:digest->>intent").in("conversation_id", chunk).gte("created_at", since).order("created_at").order("id").range(f, t)));
-    const cv = await sb.from("conversations").select("id").in("id", chunk);
+    const cv = await sb.from("conversations").select("id, property_customer_id").in("id", chunk);
     if (cv.error) throw new Error(cv.error.message);
-    for (const c of (cv.data ?? []) as Array<{ id: string }>) existing.add(c.id);
+    for (const c of (cv.data ?? []) as Array<{ id: string; property_customer_id?: string | null }>) { existing.add(c.id); if (c.property_customer_id) pcOf.set(c.id, c.property_customer_id); }
+  }
+  // 2026-11-11 影の関所: 金額の根拠の登録の家賃（auto-reply-dispatch と同じ3つ）。読めなくても判定は止めない（根拠が減る＝止める側）
+  const gateOn = shadowAutoGateEnabled();
+  const rentsOf = new Map<string, { rent_min: number | null; rent_max: number | null; initial_cost_limit: number | null }>();
+  if (gateOn && pcOf.size) {
+    const pcIds = [...new Set(pcOf.values())];
+    for (let i = 0; i < pcIds.length; i += 100) {
+      const r = await sb.from("property_customers").select("id, rent_min, rent_max, initial_cost_limit").in("id", pcIds.slice(i, i + 100));
+      if (r.error) { res.errors.push(`shadow_rents: ${r.error.message}`); break; }
+      for (const p of (r.data ?? []) as Array<{ id: string; rent_min: number | null; rent_max: number | null; initial_cost_limit: number | null }>) rentsOf.set(p.id, p);
+    }
   }
   // 2026-10-20 ①: 番の時点の申込以降（下書きの関所と同じ resolvePostApply）。記録は全期間（申込へ押下・書類は番より前の古い物も要る）。
   //   読めない時は status だけ（今まで通り）で判定し、errors に残す。戻す: LINE_WATCH_POSTAPPLY_SCOPE=off
@@ -177,6 +206,26 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
       if (legacy !== (fd.aix_verdict ?? null)) { fd.guard_aix_verdict = legacy ?? "none"; j = { ...j, detail: fd }; }
     }
     const pick = pickJudgeDraft({ ...t, customer_last_at: w.customerLastAt });
+    // 2026-11-11 影の関所（3段目・記録だけ・送信の経路にはつながない）: この会話が自動だったら、この番に何を送ったか／どの線で止めたか。
+    //   重複行は数えない。止める SHADOW_AUTO_GATE=off（shadow-auto-gate.ts）
+    if (gateOn && realId == null) {
+      try {
+        const pc = pcOf.get(t.conversation_id);
+        const gate: ShadowGate = shadowAutoGate({
+          draft: pick.draft, draftSrc: ev.draftSrc, sentinel: t.draft_sentinel, sentinelAt: t.draft_sentinel_at ?? null, draftAt: t.draft_last_at ?? t.draft_first_at,
+          convStatus: t.conv_status, postApply: ev.postApply, brainReplyMode: t.brain_reply_mode, brainAction: t.brain_action,
+          finalCheck: t0.final_check ?? null,
+          groundText: watchGroundText(mBy.get(t.conversation_id) ?? [], w.customerLastAt, pc ? rentsOf.get(pc) ?? null : null),
+          groundExtra: false,
+          outOfTopicActs: (j.detail as { out_of_topic_acts?: string[] }).out_of_topic_acts ?? null,
+          draftReadyBeforeStaff: (patch.draft_ready_before_staff as boolean | null | undefined) ?? null,
+        });
+        patch.auto_eligible = gate;
+        res.shadow.recorded++;
+        if (gate.would_send) res.shadow.would_send++;
+        res.shadow.reasons[gate.reason] = (res.shadow.reasons[gate.reason] ?? 0) + 1;
+      } catch (e) { if (res.errors.length < 5) res.errors.push(`shadow_gate: ${e instanceof Error ? e.message : String(e)}`); }
+    }
     updates.push({ id: t.id, patch });
     if (j.verdict) { res.judged++; res.verdicts[j.verdict] = (res.verdicts[j.verdict] ?? 0) + 1; } else res.pending++;
     res.reasons[j.detail.reason] = (res.reasons[j.detail.reason] ?? 0) + 1;
@@ -187,6 +236,7 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
     }
   }
   res.orphans = orphanIds.length;
+  if (opt.collect) res.rows = updates.map((u) => ({ id: u.id, conversation_id: byId.get(u.id)?.conversation_id ?? "", customer_turn_at: byId.get(u.id)?.customer_turn_at ?? "", final_check: byId.get(u.id)?.final_check ?? null, patch: u.patch }));
   if (dry) return res;
 
   await withConcurrency(updates, 8, async (u) => {
@@ -283,7 +333,7 @@ export async function buildLineWatchDailyReport(sb: SupabaseClient, opt: { nowMs
   let rows: StatRow[] = [];
   const readTurns = (cols: string) => readAll<StatRow>((f, t) => sb.from("line_watch_turns").select(cols)
     .gte("customer_turn_at", iso(nowMs - 35 * DAY)).order("customer_turn_at").order("id").range(f, t), 20_000);
-  const baseCols = "conversation_id, customer_turn_at, scene_key, verdict, verdict_detail, final_check, staff_first_at";
+  const baseCols = "conversation_id, customer_turn_at, scene_key, verdict, verdict_detail, final_check, staff_first_at, auto_eligible";
   try { rows = await readTurns(`${baseCols}, verdict_review, verdict_review_verdict, verdict_review_rule, verdict_reviewed_at`); }
   catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -335,6 +385,12 @@ export async function buildLineWatchDailyReport(sb: SupabaseClient, opt: { nowMs
   }
   const lines = dailyLines(daily, BRAIN_AIX_LABELS);
   if (captureStall?.line) lines.unshift(captureStall.line);
-  return { ok: Object.keys(errors).length === 0, date, daily, lines, captureStall, turnsRead: rows.length, c7Detail: c7, errors };
+  // 2026-11-11 影の関所の当たりの表（直近28日・場面×自信）。記録だけ（cron_run_logs・LINE には送らない）。弱い場面を見つける物差し（自動送信の解禁にはつながない・竹内さん 11/11「まだ今まで通り」）
+  let shadow: { recorded: number; table: ReturnType<typeof shadowUnlockTable> } | null = null;
+  try {
+    const recent = turns.filter((t) => nowMs - P(t.customer_turn_at) < 28 * DAY) as unknown as UnlockTurn[];
+    shadow = { recorded: recent.filter((t) => t.auto_eligible).length, table: shadowUnlockTable(recent).filter((r) => r.n >= 5) };
+  } catch (e) { errors.shadow = e instanceof Error ? e.message : String(e); }
+  return { ok: Object.keys(errors).length === 0, date, daily, lines, captureStall, shadow, turnsRead: rows.length, c7Detail: c7, errors };
 }
 export type LineWatchDailyReport = Awaited<ReturnType<typeof buildLineWatchDailyReport>>;

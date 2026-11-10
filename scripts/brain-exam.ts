@@ -83,6 +83,7 @@ import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord }
 import { essenceOverride } from "./lib/exam-essence";
 import { readLedger, rowFromReusedId } from "./lib/exam-id-ledger";
 import { overBudget, capUsdOf } from "./lib/exam-plan";
+import { wantSeqOf, brainSeqOf, rawSeqOf, sendSeqSummary, type SeqRow, type SeqBrain } from "./lib/send-seq-score";
 /** 2026-11-05 F2 の確かめ（既定 on・止める EXAM_COPY_CHECK=off） */
 const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
 
@@ -599,7 +600,7 @@ async function installLaneFetch(): Promise<void> {
 }
 
 // 10/09: ブレインの出力では AIX の種類は aix の欄（action は「スタッフが次にすべき事」の自由文・reply_mode=aix は「人の確認」の意味）。aix を控えないと本質の道が AIX にならなかった
-const RAW_KEYS = ["reply_mode", "aix", "action", "check_pattern", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "reason", "turn_contract", "asks", "zenryoku_candidate"];
+const RAW_KEYS = ["reply_mode", "aix", "action", "check_pattern", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "reason", "turn_contract", "asks", "zenryoku_candidate", "send_sequence"]; // 11/10 作業員7: send_sequence（LLM の最初の並び）も控える
 function rawPlanOf(o: Record<string, unknown> | undefined): Record<string, unknown> | null {
   if (!o) return null;
   return Object.fromEntries(RAW_KEYS.filter((k) => o[k] !== undefined && o[k] !== null && o[k] !== "").map((k) => [k, o[k]]));
@@ -620,7 +621,9 @@ const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pattern", 
   // 2026-10-28 2択（採点の brainPathCode が読む・保存した行から採点し直す時に落ちていた）
   "two_choice_mode", "two_choice_aix", "two_choice_check_pattern", "two_choice_reply_kind",
   // 2026-11-03 統括の土台（作業員2）: 通しの試験 scripts/exam-handoff.ts が読む欄（どれも既定 off の時は無い）
-  "need", "plan_ahead", "three_layer", "main_point", "flow_signals", "material_conflicts", "conductor_roles", "recheck_digest", "aix_recheck", "aix_desk", "decisions_1103"] as const;
+  "need", "plan_ahead", "three_layer", "main_point", "flow_signals", "material_conflicts", "conductor_roles", "recheck_digest", "aix_recheck", "aix_desk", "decisions_1103",
+  // 2026-11-10 作業員7: 送る物の並び（TWO_MESSAGE_SEQUENCE）。旧は答案に残しておらず seq-dig の10本で並びを1つも数えられなかった（scripts/lib/send-seq-score.ts が読む）
+  "send_sequence", "send_sequence_reply_count"] as const;
 export function planOf(meta: Record<string, unknown> | null): Record<string, unknown> {
   if (!meta) return {};
   const out: Record<string, unknown> = {};
@@ -895,6 +898,15 @@ function summarize(label: string, baseline: string | null): string {
     const ok = propRows.filter((x) => judgeCurrentProperty(x.want, x.have, similarity) === true);
     L.push(`今の番の物件（current_property・正解のある ${propRows.length}問）: ${pct(ok.length, propRows.length)}${propRows.filter((x) => !ok.includes(x)).map((x) => ` ✕${x.p.id}=${x.have ?? "null"}（正解 ${x.want}）`).join("").slice(0, 400)}`);
   }
+  // 2026-11-10 作業員7: 送る物の並び（R=返信・A=AIX）を竹内さんの実送信と比べる（正解は札「並び:XX」か staffText・決まった計算 scripts/lib/send-seq-score.ts）
+  {
+    const seqRows: SeqRow[] = pp.flatMap((p) => {
+      const w = wantSeqOf(probs.get(p.id) ?? {});
+      return w ? p.rows.filter((r) => !r.error && r.brain).map((r) => { const g = brainSeqOf(r.brain as SeqBrain); return { id: p.id, want: w.seq, from: w.from, got: g.seq, recorded: g.recorded, draft: (r.draft?.text ?? null) as string | null, raw: rawSeqOf((r.raw ?? null) as Parameters<typeof rawSeqOf>[0]) }; }) : [];
+    });
+    const seqLine = sendSeqSummary(seqRows, pct);
+    if (seqLine) L.push(seqLine);
+  }
   L.push(`\n## 型ごと（合格／最終の道／依頼${essN ? "／本質の道" : ""}${drN ? "／下書きの合格" : ""}）`);
   const rt = rateByType(pp.map((p) => ({ type: p.type, tags: p.tags, score: { path: p.pathN * 2 > p.n, asks: { hit: p.asksHit, n: p.asksN }, ng: null, pass: p.pass } })));
   for (const t of rt) {
@@ -1155,6 +1167,23 @@ async function prepareMainBaseline(): Promise<boolean> {
     }
     plan.run = plan.run.filter((id) => !carried.includes(id));
     plan.reuse.push(...carried);
+  }
+  // 2026-11-10 作業員8（D1）: 同じ版で回数だけが違う構成（repeat が自分以上）の置き場にある答えを、回の部分集合で使う（B.repeatSubsetCompatible・EXAM_BASELINE_REPEAT_SUBSET=off で止める）
+  if (vk && plan.run.length && !flag("baseline-refresh") && process.env.EXAM_BASELINE_REPEAT_SUBSET !== "off") {
+    const names = (() => { try { return readdirSync(B.BASELINE_DIR); } catch { return [] as string[]; } })();
+    const sameV = names.filter((n) => n.startsWith(`v-${vk}-`) && n !== basename(dir)).filter((n) => {
+      try { return B.repeatSubsetCompatible(cfg, (JSON.parse(readFileSync(join(B.BASELINE_DIR, n, "config.json"), "utf8")) as { config: import("./lib/brain-exam-baseline").ExamConfig }).config); } catch { return false; }
+    });
+    const subset: string[] = [];
+    for (const id of [...plan.run]) {
+      const cands = sameV.flatMap((n) => { const f = join(B.BASELINE_DIR, n, `${id}.json`); if (!existsSync(f)) return []; try { const b = JSON.parse(readFileSync(f, "utf8")) as import("./lib/brain-exam-baseline").BaselineFile<ResultRow>; return [{ ...b, rows: B.trimRowsToRepeat(b.rows, REPEAT), dir: n }]; } catch { return []; } });
+      const hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: vk, keyOf: () => vk, envFp: "" }, REPEAT, { acceptComplete: REPEAT_FLAKY || BASE_FLAKY || !!REPS_OF, maxAgeMs });
+      if (!hit) continue;
+      const { dir: from, ...rest } = hit;
+      B.saveBaseline<ResultRow>(dir, { ...rest, versionKey: vk, config: cfg, carriedFrom: `${from}（回の部分集合）` });
+      subset.push(id);
+    }
+    if (subset.length) { console.log(`  回数だけ違う構成の置き場から使う ${subset.length}問（${subset.join(",")}）`); plan.run = plan.run.filter((id) => !subset.includes(id)); plan.reuse.push(...subset); carried.push(...subset); }
   }
   // 2026-10-20 回す数の上限（--baseline-limit=N・夜中の取り置きを1日の上限の残りに収める）と、今は回さず夜中に回す（--baseline-defer・答案が無い問題は前との比べに入らない）
   // 2026-10-22 差分だけの取り置き（竹内さんの決まり「試験のブレインは見つけたら直す」・10/22 の夜 166問×最大2回・約 $5・約 11時間）:

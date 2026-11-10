@@ -187,3 +187,24 @@ export function cmdSplitHazards(cmds: ReadonlyArray<string>): string[] {
   }
   return out;
 }
+
+// ─── (r) 2026-11-10 作業員8（強化の一覧 D4）: 弱い所の表の「回数×新しさ」の上位で、持ち主の無い行を毎朝知らせる ─────────────
+//   表に持ち主の列は無い。持ち主あり＝in_progress で直近 OWNED_FRESH_DAYS 日に更新がある行（11/04 から in_progress のまま動かない行は持ち主なしに数える）。
+//   点＝回数 ×（最後に見た日からの日数で半分になる重み・半減 7日）。上位 TOP_N のうち持ち主なしを並べる
+export type WeaknessLite = { key: string; title?: string | null; area?: string | null; status: string; occurrences?: number | null; last_seen?: string | null; updated_at?: string | null };
+export const WEAK_TOP_N = 5, OWNED_FRESH_DAYS = 3, WEAK_HALF_LIFE_DAYS = 7;
+export function weaknessScore(w: WeaknessLite, nowMs: number): number {
+  const last = Date.parse(String(w.last_seen ?? w.updated_at ?? ""));
+  const days = Number.isFinite(last) ? Math.max(0, (nowMs - last) / 86_400_000) : 60;
+  return Math.max(1, Number(w.occurrences ?? 1) || 1) * Math.pow(0.5, days / WEAK_HALF_LIFE_DAYS);
+}
+export function weaknessOwned(w: WeaknessLite, nowMs: number): boolean {
+  const u = Date.parse(String(w.updated_at ?? ""));
+  return w.status === "in_progress" && Number.isFinite(u) && nowMs - u <= OWNED_FRESH_DAYS * 86_400_000;
+}
+export function unownedTopWeaknesses(rows: readonly WeaknessLite[], nowMs: number, n = WEAK_TOP_N): { top: Array<WeaknessLite & { score: number; owned: boolean }>; unowned: Array<WeaknessLite & { score: number }> } {
+  const top = rows.filter((w) => w.status === "open" || w.status === "in_progress")
+    .map((w) => ({ ...w, score: weaknessScore(w, nowMs), owned: weaknessOwned(w, nowMs) }))
+    .sort((a, b) => b.score - a.score).slice(0, n);
+  return { top, unowned: top.filter((w) => !w.owned) };
+}

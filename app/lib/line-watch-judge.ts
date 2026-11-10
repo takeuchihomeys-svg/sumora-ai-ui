@@ -41,7 +41,9 @@ import { shouldBeAixOf, shouldBeButtons, type ShouldBeAix } from "./aix-should-b
 //   v8-2026-10-23（竹内さん 10/22 d04ed51b・76c249e0・aad87f41「スタッフは押し間違いが多い」「竹内も AIX で送る所を手打ち」「押すのは竹内基準」）:
 //     AI は AIX の番でスタッフが手打ち・別の AIX を押した時、送った文を本来の AIX（aix-should-be.ts）に当てはめ、ブレインの AIX と同じなら一致（same・same_via_mapping）。
 //     元の判定は raw_verdict・raw_reason に残す。aix_verdict（関所）は変えない。戻す: LINE_WATCH_AIX_MAPPING=off（呼び出し側が渡さない＝v7 と同じ判定）
-export const JUDGE_VERSION = "v9-2026-10-28";
+//   v10-2026-11-11（作業員6・brain_weaknesses 525）: 判定は変えない。見張りの場面（scene_key）だけ、TPO の落ちる型（内見調整・提案後の懸念・前向き反応・
+//     持込予告・申込後説明）とお客様の文（物件の URL・画像・短い礼・時刻の了承）から引く（line-watch-turn.watchSceneFromTpo/Customer）。版を上げて直近の番を付け直す
+export const JUDGE_VERSION = "v10-2026-11-11";
 
 export type Verdict = "same" | "same_meaning" | "partial" | "different" | "na";
 export const VERDICTS: readonly Verdict[] = ["same", "same_meaning", "partial", "different", "na"];

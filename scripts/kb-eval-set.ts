@@ -372,4 +372,10 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   {q: "待ち合わせ場所の住所",gold: ["1290264c","0de29196"],scene: "viewing",ho: true,from: "scene-ho"},
   {q: "申込誘導を書きすぎる",gold: ["69d76722","aef0a1df"],scene: "apply",ho: true,from: "scene-ho"},
   {q: "申込後の審査の進捗を聞かれた",gold: ["06d1bef5","e52ff713"],scene: "apply",ho: true,from: "scene-ho"},
+  // 2026-11-11 作業員9 竹内さんの土台（過去のセッションの指摘を掘り起こして入れた行・KB 60931c54）
+  {q: "時期を聞く質問にご連絡遅くなりのお詫びを付けた",gold: ["06191a54"],scene: "question",from: "owner-base-1111"},
+  {q: "退去予定の部屋の申込でキャンセル無料と言い切る",gold: ["abc56308"],scene: "apply",from: "owner-base-1111"},
+  {q: "日をまたいだ内覧当日に前日の明日の下書きが残っている",gold: ["dade20ce"],scene: "viewing",from: "owner-base-1111"},
+  {q: "物件ピックアップした の文の頭に謝罪を入れた",gold: ["8af5e463"],scene: "property_send",from: "owner-base-1111"},
+  {q: "審査かけてみたいと言ったお客様への申込への2通目の結び",gold: ["02a2866f"],scene: "apply",from: "owner-base-1111"},
 ];
