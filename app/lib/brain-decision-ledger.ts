@@ -51,6 +51,8 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   // 2026-11-03 版の記録: この判断が出た時のスイッチの組の指紋（中身は brain_switch_versions・BRAIN_DIGEST_VER=off で止める）
   if (digestVerOn(env)) { const fp = switchFingerprint(env); if (fp.n) (out as Record<string, unknown>).ver = { sw: fp.h }; } // 作業員2の設計 §4: ver.sw（他の版 rules・skill・model・ex は作る人が足す） // スイッチが1つも無い環境（テスト）は入れない
   // 2026-11-06 作業員4（弱い所 306）: 2択の印は tw（旧は tc=true で、turn_contract の道の数え digest.tc「n:rXpYaZnW」を上書きしていた）。読む側は tw か旧の tc===true
+  // 2026-11-11 作業員4（CONDUCTOR_NEAR_OPINION 既定 on の1週間の見張り）: 入口の意見の1語（"返信/promise_make:30:0.93" / "-"・束の数）。毎朝、意見が出た番の割合とスタッフの一手との当たりを数える
+  if (typeof meta.near_opinion === "string" && meta.near_opinion) (out as Record<string, unknown>).nop = meta.near_opinion.slice(0, 60);
   if (meta.two_choice_mode === true) (out as Record<string, unknown>).tw = true;
   if (meta.pending_pickup === true) out.pp = true;
   if (typeof meta.checkpoint_stage === "string" && meta.checkpoint_stage.trim()) out.cp = meta.checkpoint_stage.trim().slice(0, 20);
