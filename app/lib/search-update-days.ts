@@ -206,3 +206,10 @@ export function agesOutside(days: number | null, ages: UpdateAges | null | undef
  *   → 手の指定は「次に送るまで」。送った・確認した印を付ける所でこの列を null（＝前回物件を出した日から自動）に戻す。
  */
 export const CLEAR_MANUAL_UPDATE_DAYS = { rp_update_days: null, itandi_update_days: null } as const;
+
+/**
+ * 2026-11-10 お客様の条件が変わった時（正式フォーマット・言い直し・世帯の変更）に戻す列。
+ *   旧は rp_update_days だけ null に戻し、ITANDI の手の指定（itandi_update_days・v2.5.76 の列）が古い条件のまま残っていた
+ *   （ITANDI だけ前の「1日以内」等で新しい条件を探す）。前回物件を出した日も消す＝新しい条件で全件から探す
+ */
+export const RESET_ON_CONDITION_CHANGE = { last_property_sent_at: null, ...CLEAR_MANUAL_UPDATE_DAYS } as const;

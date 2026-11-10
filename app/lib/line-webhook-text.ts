@@ -48,6 +48,7 @@ import { detectTaskTypeByKeywords, decideAutoTask } from "@/app/lib/property-che
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 // 2026-09-21 竹内「LINEのグループでも送れるように。個人とLINEのグループ分けて認識」: 宛先と発言者を分ける
 import { lineTargetKind, groupConversationName } from "@/app/lib/line-target";
+import { RESET_ON_CONDITION_CHANGE } from "@/app/lib/search-update-days";
 
 // ── LINE アカウント設定（スモラ・イエヤス・ギガ賃貸） ──────────────────
 export type AccountConfig = {
@@ -1183,8 +1184,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   if (isFormalFormat) {
     parsedFields.additional_conditions = `[${getJSTTimestamp()}|format] 正式条件フォーマット受信 → 物件を検索してください`;
     // 条件が新しくなるため拡張ツールの更新日制約をリセット（新条件で全件検索できるよう）
-    parsedFields.last_property_sent_at = null;
-    parsedFields.rp_update_days = null;
+    Object.assign(parsedFields, RESET_ON_CONDITION_CHANGE); // 2026-11-10 ITANDI の手の指定（itandi_update_days）も戻す
   }
 
   // ── LINEプロフィールから名前を先に取得（名称未設定を防ぐ）────────
@@ -1311,7 +1311,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
       // カジュアル更新 → インテント分類 → スマートマージ（「追加」「除外」「変更」を正しく処理）
       const { mergedConds, intent } = await computeCasualUpdate(existing as Record<string, unknown>);
       await db.from("property_customers")
-        .update({ ...baseFields, ...mergedConds, customer_name: resolvedName, last_property_sent_at: null, rp_update_days: null })
+        .update({ ...baseFields, ...mergedConds, customer_name: resolvedName, ...RESET_ON_CONDITION_CHANGE })
         .eq("id", customerId);
       // 2026-09-27: カジュアル更新も条件の履歴に残す（旧は残していなかった＝未桜さんの 9/27 の言い直しが履歴に無い）
       void recordConditionHistory(db, customerId, existing as Record<string, unknown>, mergedConds as Record<string, unknown>, conditionSourceTag("format", sourceMsgId))
@@ -1336,7 +1336,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
         .maybeSingle();
       const { mergedConds, intent } = await computeCasualUpdate(linkedConds as Record<string, unknown> | null);
       await db.from("property_customers")
-        .update({ ...baseFields, ...mergedConds, line_user_id: userId, customer_name: resolvedName, last_property_sent_at: null, rp_update_days: null })
+        .update({ ...baseFields, ...mergedConds, line_user_id: userId, customer_name: resolvedName, ...RESET_ON_CONDITION_CHANGE })
         .eq("id", customerId);
       void recordConditionHistory(db, customerId, linkedConds as Record<string, unknown> | null, mergedConds as Record<string, unknown>, conditionSourceTag("format", sourceMsgId))
         .catch((e) => console.warn("[condition-history] autoParseFormat:", e));
@@ -1692,7 +1692,7 @@ ${customerText.slice(0, 600)}
 
   const { error: updateErr } = await db
     .from("property_customers")
-    .update({ ...updates, updated_at: new Date().toISOString(), last_property_sent_at: null, rp_update_days: null })
+    .update({ ...updates, updated_at: new Date().toISOString(), ...RESET_ON_CONDITION_CHANGE })
     .eq("id", pcId);
 
   if (updateErr) {

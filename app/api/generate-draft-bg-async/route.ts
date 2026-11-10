@@ -4,6 +4,7 @@ import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
+import { RESET_ON_CONDITION_CHANGE } from "@/app/lib/search-update-days";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
 // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数・入口で止める）
 import { decideNightDeferNow } from "@/app/lib/brain-night-defer";
@@ -248,7 +249,7 @@ async function applyBrainConditionChange(
 
   const conditionActuallyChanged = Object.keys(changedFields).length > 0;
   await db.from("property_customers")
-    .update({ ...updates, updated_at: new Date().toISOString(), ...(conditionActuallyChanged ? { last_property_sent_at: null, rp_update_days: null } : {}) })
+    .update({ ...updates, updated_at: new Date().toISOString(), ...(conditionActuallyChanged ? { ...RESET_ON_CONDITION_CHANGE } : {}) })
     .eq("id", pcId);
   // 2026-09-30: ブレインの橋も条件の履歴に残す（旧は残していなかった）。根拠の発言は今回のお客様の最後の発言
   {

@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
 import { householdChangeOf, smallerOkOf } from "@/app/lib/condition-reading";
 import { planHouseholdConditions } from "@/app/lib/household-change";
+import { RESET_ON_CONDITION_CHANGE } from "@/app/lib/search-update-days";
 
 const jstStamp = () => {
   const j = new Date(Date.now() + 9 * 3600_000);
@@ -38,7 +39,7 @@ export async function applyHouseholdChange(db: SupabaseClient, convId: string, t
   const row: Record<string, unknown> = {
     ...plan.updates,
     ...(prev.includes(plan.banner) ? {} : { additional_conditions: prev ? `${prev}\n${line}` : line }),
-    ...(changedCols ? { updated_at: new Date().toISOString(), last_property_sent_at: null, rp_update_days: null } : {}),
+    ...(changedCols ? { updated_at: new Date().toISOString(), ...RESET_ON_CONDITION_CHANGE } : {}),
   };
   if (!Object.keys(row).length) return { pcId, updates: {}, banner: plan.banner };
   const { error } = await db.from("property_customers").update(row).eq("id", pcId);

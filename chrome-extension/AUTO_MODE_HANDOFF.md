@@ -97,7 +97,18 @@ YUMA（テスト用の会話）: `dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7`（竹内
 - 並んで作業中（読むだけにする所）: 作業員A＝一括検索の ITANDI の更新日（cron と background.js・DB_STRUCTURE.md の「混ざっている所 2」）、作業員B＝station-map・token-resolve
 - 規約の背景（10/01 に止めた理由）: 拡張は欄に直接書き込み・一覧の吸い上げ・資料のまとめて取得をしていた／「規約上問題の方が多そう」。自動モードでも人の速さ・少ない回数を崩さない。
 
-## 9. Cursor に頼む所 — ITANDI の更新日を payload の itandi_update_days で読む（作業員A・2026-11-10・DB_STRUCTURE.md の混ざっている所 2）
+## 9. サーバーでした事（2026-11-10 作業員C・竹内さんの答え「古い版をサーバーで断る＋16件は残す」）
+拡張の中は変えていない（Cursor の担当）。関所は `app/lib/automation-pause-gate.ts` の1か所・テスト `app/lib/__tests__/automation-pause-gate.test.ts`（31件・配線の順も見る）。
+| 何を | 場所 | 既定 | 戻す・変える |
+|---|---|---|---|
+| 拾いに来た拡張の版が最小の版より古い・版の見出し（x-ext-version）が無い時は指示を渡さない。指示は pending のまま（取り消さない・30分の戻しもしない）。返す JSON は `{ command: null, refused: "ext_version_too_old" \| "ext_version_missing", min_ext_version, ext_version, message }`・ログ tag `automation-pending:ext-refused` | `app/api/automation/pending/route.ts` の最初（止めの印より前） | on・最小の版 **2.5.77**（GUIDE_ONLY の入った版） | env `AUTOMATION_MIN_EXT_VERSION=2.6.0` 等で上げる・`off` で版を見ない |
+| 止めの印（paused=true）の間に pending を呼ばれても**取り消さない**（`{ command: null, paused: true, cancelled_while_paused: 0 }`） | 同じ所 | on（残す） | `AUTOMATION_PAUSE_CANCEL_PENDING=on` で昔の動き（全部取り消す） |
+| 止めの印の間は新しい指示を積まない（積もうとした物はログ tag `automation-paused-skip` に by・お客様の id の頭8字・sites だけ残す） | `app/lib/aix-action-items.ts`（AIX の物件ピックアップ等）・`app/lib/search-widen-chain-server.ts`（広げての続き・decision は skip/paused）・`app/lib/screen-watch-server.ts` reSearchTemp（見張りの再検索のボタン・「一時停止中です」を返す） | on | `AUTOMATION_PAUSE_BLOCK_ENQUEUE=off` で昔の動き（積む） |
+- cron（auto-property-search）と trigger（手の一括・409）は前から止めの印を見ている（作業員A の持ち場なので触っていない）。
+- たまっていた16件はそのまま（消していない）。止めの印を外した時の扱い（3時間を過ぎた物は pending が error で閉じる・3時間以内は流れる）は 6. のとおり。
+- **Cursor に頼む事**: 自動モードの拡張は必ず `x-ext-version` を付けて pending を呼ぶ（今の background.js は付けている）。自動モードを入れた版を出したら、最小の版をその版に上げる（env）と、それより前の PC は拾えなくなる。
+
+## 10. Cursor に頼む所 — ITANDI の更新日を payload の itandi_update_days で読む（作業員A・2026-11-10・DB_STRUCTURE.md の混ざっている所 2）
 
 ### サーバー側（済み・main に入った）
 - 一括検索・自動便の命令（automation_commands.payload）に **`itandi_update_days`**（ITANDI の更新日）が入る。
@@ -115,7 +126,8 @@ YUMA（テスト用の会話）: `dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7`（竹内
 ### 最小の直しの案（作業員Aが書いて、コミットしなかった差分）
 - `_batchAutofill` の最初で `if (site === "itandi" && self.AxlxAutoRun && self.AxlxAutoRun.optsForSite) opts = self.AxlxAutoRun.optsForSite(opts, site);`（下の関数・auto-run.js の返す物に `optsForSite` を足す）。手の一括（1712〜1714）は `{ rp_update_days: _bulkRpDays, itandi_update_days: effectiveRpUpdateDays(Object.assign({}, _bc, { rp_update_days: _bc.itandi_update_days }), Date.now()) }` を渡す。
 - 版は manifest の決まりどおり上げる（今 2.5.91 → 次の版）・dept_search_tool.md に記録。
-- 点検（`app/lib/search-audit-check.ts` 401 expectedUpdateDays）は今は rp の値で決まりを出す。拡張が ITANDI の値を使い始めたら、ITANDI の回は `itandi_days`／`itandi_update_days` で見るようにサーバー側で直す（Claude Code 側・拡張の版が入った後に）。
+- **点検（`app/lib/search-audit-check.ts` 401 expectedUpdateDays）は今は rp の値で決まりを出す。拡張が ITANDI の値（itandi_update_days）を使い始めたら、その時サーバーで直す（ITANDI の回は itandi_days／itandi_update_days で見る・Claude Code 側）。**
+- 2026-11-10 追記（サーバー済み）: 条件が変わった時（正式フォーマット・言い直し・世帯の変更）に rp_update_days だけ null に戻していたのを、itandi_update_days も戻すようにした（`app/lib/search-update-days.ts` RESET_ON_CONDITION_CHANGE・line-webhook-text／generate-draft-bg-async／household-change-server）。拡張の変更は要らない。
 
 ```diff
 --- a/chrome-extension/auto-run.js
@@ -150,14 +162,3 @@ YUMA（テスト用の会話）: `dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7`（竹内
 ```
 
 ---
-
-## 9. サーバーでした事（2026-11-10 作業員C・竹内さんの答え「古い版をサーバーで断る＋16件は残す」）
-拡張の中は変えていない（Cursor の担当）。関所は `app/lib/automation-pause-gate.ts` の1か所・テスト `app/lib/__tests__/automation-pause-gate.test.ts`（31件・配線の順も見る）。
-| 何を | 場所 | 既定 | 戻す・変える |
-|---|---|---|---|
-| 拾いに来た拡張の版が最小の版より古い・版の見出し（x-ext-version）が無い時は指示を渡さない。指示は pending のまま（取り消さない・30分の戻しもしない）。返す JSON は `{ command: null, refused: "ext_version_too_old" \| "ext_version_missing", min_ext_version, ext_version, message }`・ログ tag `automation-pending:ext-refused` | `app/api/automation/pending/route.ts` の最初（止めの印より前） | on・最小の版 **2.5.77**（GUIDE_ONLY の入った版） | env `AUTOMATION_MIN_EXT_VERSION=2.6.0` 等で上げる・`off` で版を見ない |
-| 止めの印（paused=true）の間に pending を呼ばれても**取り消さない**（`{ command: null, paused: true, cancelled_while_paused: 0 }`） | 同じ所 | on（残す） | `AUTOMATION_PAUSE_CANCEL_PENDING=on` で昔の動き（全部取り消す） |
-| 止めの印の間は新しい指示を積まない（積もうとした物はログ tag `automation-paused-skip` に by・お客様の id の頭8字・sites だけ残す） | `app/lib/aix-action-items.ts`（AIX の物件ピックアップ等）・`app/lib/search-widen-chain-server.ts`（広げての続き・decision は skip/paused）・`app/lib/screen-watch-server.ts` reSearchTemp（見張りの再検索のボタン・「一時停止中です」を返す） | on | `AUTOMATION_PAUSE_BLOCK_ENQUEUE=off` で昔の動き（積む） |
-- cron（auto-property-search）と trigger（手の一括・409）は前から止めの印を見ている（作業員A の持ち場なので触っていない）。
-- たまっていた16件はそのまま（消していない）。止めの印を外した時の扱い（3時間を過ぎた物は pending が error で閉じる・3時間以内は流れる）は 6. のとおり。
-- **Cursor に頼む事**: 自動モードの拡張は必ず `x-ext-version` を付けて pending を呼ぶ（今の background.js は付けている）。自動モードを入れた版を出したら、最小の版をその版に上げる（env）と、それより前の PC は拾えなくなる。
