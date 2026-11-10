@@ -18,6 +18,7 @@
 //   (o) scripts/ で DeepSeek を直接呼ぶのに申込の線（loadDeepseekCutoff 等）を通していない台本（11/05 の読み直しの dry-read・点検表 17）
 //   (p) DB の is_exam_conversation（相場の観測の歯止め・11/05 案A）が TS の試験の会話の一覧と同じか
 //   (q) 試験の係の cmd の依頼で、空白のあるパスが = の後ろの引用符で割られる形（11/05 ci-v1L・ci-v3L が ENOENT・LLM 0回・点検表 19）
+//   (r) 弱い所の表（brain_weaknesses）の「回数×新しさ」上位5つで持ち主の無い行（3日更新の無い in_progress も持ち主なし・強化の一覧 D4）
 //   (g) 48時間の試験の結果で「悪化0」なのに前（main）と両方で解いた問題が予定より少ない（0 含む）物 … ⑨（比べていないのに悪化0）
 // 出力: 1行のまとめ（毎朝の見張りに貼る）＋詳しい所。前日との差分の為の控えは .claude/exam-cache/hazard-audit/（git に入らない）。
 // 実行: npx tsx --env-file=.env.local scripts/hazard-audit.ts [--json] [--no-db] [--no-net] [--save]
@@ -28,7 +29,7 @@ import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import { pickupTriggerStillSkips } from "./lib/exam-pickup-copy";
-import { cmdSplitHazards, findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, conductorLogHazards, laneDupConvs, dupProblemIds, idContentClashes, deepseekFailLine, deepseekWithoutCutoff, examConvMismatch, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
+import { cmdSplitHazards, findOffSwitches, findUnpagedReads, lpMonthOk, commitsWithoutTsc, rowFilterMissingCols, hollowNoWorse, unknownsOpenLine, conductorLogHazards, laneDupConvs, dupProblemIds, idContentClashes, deepseekFailLine, deepseekWithoutCutoff, examConvMismatch, unownedTopWeaknesses, type WeaknessLite, type OffSwitch, type UnpagedRead } from "./lib/hazard-audit-core";
 
 const flag = (k: string) => process.argv.includes(`--${k}`);
 const git = (args: string[], cwd = process.cwd()) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
@@ -271,6 +272,18 @@ async function main() {
       const r = unknownsOpenLine((row?.result_json?.unknowns_open ?? null) as never, row?.started_at ?? null, Date.now());
       checks.push({ key: "h", ok: r.ok, line: r.line, detail: [] });
     } catch (e) { checks.push({ key: "h", ok: null, line: `分からない事の3つの表: 不明（${String(e).slice(0, 60)}）`, detail: [] }); }
+  }
+
+  // (r) 2026-11-10 作業員8（D4）: 弱い所の表の「回数×新しさ」の上位5つで持ち主の無い行（サーバーの鍵がある時だけ・open と in_progress だけ・1000行まで）
+  if (flag("no-db") || !process.env.SUPABASE_SERVICE_ROLE_KEY) checks.push({ key: "r", ok: null, line: "弱い所の上位の持ち主: 見ない（--no-db かサーバーの鍵なし）", detail: [] });
+  else {
+    try {
+      const { data, error } = await createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY).from("brain_weaknesses")
+        .select("key, title, area, status, occurrences, last_seen, updated_at").in("status", ["open", "in_progress"]).limit(1000);
+      if (error) throw new Error(error.message);
+      const r = unownedTopWeaknesses((data ?? []) as WeaknessLite[], Date.now());
+      checks.push({ key: "r", ok: r.unowned.length === 0, line: `弱い所の上位${r.top.length}つのうち持ち主なし ${r.unowned.length}（3日更新の無い in_progress も含む）`, detail: r.unowned.map((w) => `${w.key}（${w.area ?? "-"}・${w.status}・回数 ${w.occurrences ?? 1}・点 ${w.score.toFixed(1)}）${w.title ? " " + String(w.title).slice(0, 60) : ""}`) });
+    } catch (e) { checks.push({ key: "r", ok: null, line: `弱い所の上位の持ち主: 不明（${String(e).slice(0, 60)}）`, detail: [] }); }
   }
 
   const mark = (c: Check) => c.ok === null ? "?" : c.ok ? "○" : "×";
