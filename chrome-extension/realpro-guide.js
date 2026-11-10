@@ -534,8 +534,15 @@
     try {
       if (!session) return;
       var c = session.conditions || {};
-      var runId = c._audit_run_id || null;
-      if (!runId) return; // ブレインの回でない時は送らない（サーバーも brain!==true は捨てる）
+      // 2026-11-10 v2.6.19 竹内さん「ここ1ヶ月は実際にスタッフが動かしている。そこ参考にできるかな」:
+      //   旧はブレインの回（_audit_run_id がある）だけ送っていたため、**スタッフの普通の検索の人が動いた記録が1件も残らなかった**。
+      //   新は run_id が無くても送る（案内モードで人が押した記録＝学習の材料）。サーバーは human だけの記録として受ける。
+      //   run_id が無い時は、その回のための印を作る（同じ検索で何度も押しても増えないよう、時刻ベース）。
+      var runId = c._audit_run_id || (window.__axlxHumanTraceRun || null);
+      if (!runId) {
+        runId = 'sa_human_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+        window.__axlxHumanTraceRun = runId;
+      }
       var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp;
       chrome.runtime.sendMessage({
         type: "axlx-guide-filled",
@@ -549,6 +556,10 @@
         human: (function () { try { return window.__axlxHumanSnapshot ? window.__axlxHumanSnapshot() : null; } catch (_) { return null; } })(),
         // 2026-11-10: 人の操作の時刻（自動の ops と同じ形・人と自動の動きを比べる材料）
         ops: _guideOps.slice(-80),
+        // 2026-11-10 v2.6.19: ブレインの回でない時は「人の学習用の記録」として送る（点検の判定は走らせない）
+        brain: !!c._audit_run_id,
+        trigger: (c.trigger || 'single'),
+        customerId: session.customerId || null,
       }, function () { void chrome.runtime.lastError; });
     } catch (_) {}
   }

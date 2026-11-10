@@ -40,8 +40,32 @@ export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
   try { body = JSON.parse(raw) as Record<string, unknown>; } catch { return NextResponse.json({ ok: false, error: "bad json" }, { status: 400, headers: CORS }); }
   // ブレインの時だけ（拡張の behavior.searchAudit と同じ線・サーバーでも見る）
-  if (body.brain !== true) return NextResponse.json({ ok: true, skipped: "not_brain" }, { headers: CORS });
+  // 2026-11-10 v2.6.19 竹内さん「ここ1ヶ月は実際にスタッフが動かしている。そこ参考にできるかな」:
+  //   旧は brain!==true を全部捨てていたため、**案内モード（スタッフが押す）の人の操作が1件も残らなかった**
+  //   （90日で filled.human 0件）。人の動きを学ぶ材料が無い状態だった。
+  //   直し: brain でなくても **filled.human / filled.ops（by=human）だけ**は記録する（人の動きの学習用）。
+  //         その時は点検の判定（原因・見立て・広げての判断）は走らせない＝今までのブレインの回の動きは変えない。
+  const humanOnly = body.brain !== true;
+  if (humanOnly) {
+    const hasHuman = !!(body.filled && typeof body.filled === "object" && (body.filled as Record<string, unknown>).human);
+    if (body.phase !== "started" || !hasHuman) return NextResponse.json({ ok: true, skipped: "not_brain" }, { headers: CORS });
+  }
   if (!validRunId(body.run_id)) return NextResponse.json({ ok: false, error: "run_id が要ります" }, { status: 400, headers: CORS });
+
+  if (humanOnly) {
+    // 人の操作の記録だけを足す（行が無ければ人用の run として作る。status は started のまま＝点検の対象にしない）
+    const filled = body.filled as Record<string, unknown>;
+    const ins = await supabase.from("search_audits").upsert({
+      run_id: String(body.run_id),
+      site: typeof body.site === "string" ? body.site : null,
+      mode: "human_trace",
+      trigger: typeof body.trigger === "string" ? body.trigger : "single",
+      property_customer_id: typeof body.property_customer_id === "string" ? body.property_customer_id : null,
+      filled,
+      ext_version: typeof body.ext_version === "string" ? body.ext_version : null,
+    }, { onConflict: "run_id" });
+    return NextResponse.json({ ok: !ins.error, human_only: true, error: ins.error?.message }, { headers: CORS });
+  }
 
   if (body.phase === "started") {
     const r = await recordStarted(body);

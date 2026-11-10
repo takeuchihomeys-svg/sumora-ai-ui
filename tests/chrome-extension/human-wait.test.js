@@ -158,12 +158,12 @@ function rest() {
       "setTimeout 2500": [2, "表示を戻す・Case C の予備の起動（Case A/B の後ろの安全網）"], "setTimeout 800": [1, "popup の応答の期限"],
       "setTimeout 5000": [1, "表示を戻す"], "setTimeout 100": [2, "ダウンロードのリンクを消す"], "setTimeout 4000": [1, "表示を戻す"],
       "setInterval 200": [1, "描画待ちの見る間隔（4秒で打ち切り）"], "setTimeout 50": [1, "fill-done 後の差し込みのやり直し（内部）"],
-      "setTimeout 2000": [2, "新しい結果が出たかの予備の確認・load 後の差し込み"], "setTimeout 400": [2, "MutationObserver の間引き・1件送信前のチェック確認（v2.6.18）"], "setInterval 1000": [1, "0件の確定の見る間隔（25秒で打ち切り）"],
+      "setTimeout 2000": [2, "新しい結果が出たかの予備の確認・load 後の差し込み"], "setTimeout 400": [2, "MutationObserver の間引き・1件送信前のチェック確認（v2.6.19）"], "setInterval 1000": [1, "0件の確定の見る間隔（25秒で打ち切り）"],
       "setTimeout 1200": [1, "起動時の差し込み"],
       "setTimeout 20000": [1, "押した印刷用PDF をまとめて送るまでの待ち（v2.5.62・最後に押してから・サイトは触らない）"],
     },
     "content.js": { "setTimeout 400": [1, "MutationObserver の間引き"], "setInterval 3000": [1, "サイドバーの見張り"], "setTimeout 300": [1, "起動時"] },
-    // 2026-11-10 v2.6.18 見えるカーソル: 90ms は「押した時の見た目の縮みを戻す」だけ（サイトを触らない・固定でよい）
+    // 2026-11-10 v2.6.19 見えるカーソル: 90ms は「押した時の見た目の縮みを戻す」だけ（サイトを触らない・固定でよい）
     "pointer-ui.js": { "setTimeout 90": [1, "押した時にカーソルが縮むのを戻す（見た目だけ）"] },
     "itandi-bulk-dl.js": {
       "setTimeout 60000": [1, "PDF の期限"], "setInterval 500": [1, "モーダルが出たかの見る間隔"], "setTimeout 15000": [1, "モーダルの期限"],
@@ -175,7 +175,7 @@ function rest() {
       "setInterval 100": [2, "モーダルが消えた・間取りの欄が出たかの見る間隔（3秒で打ち切り）"], "setTimeout 240000": [1, "見張り（fill-done の保証）"],
       "setTimeout 5000": [1, "警告の表示を消す"], "setTimeout 500": [1, "検索を押した後の完了の合図（ページを触らない）"],
     },
-    "page-script.js": { "setTimeout 15000": [1, "警告の表示を消す"], "setTimeout 895000": [1, "見張り（fill-done の保証）"], "setInterval 5000": [1, "180秒 操作が進まない時の見張り（v2.6.18）"], "setTimeout 0": [1, "同じ流れの続き"], "setInterval 3000": [1, "クリックの列が20秒固まったかの見張り（v2.6.18）"], "setTimeout 4000": [1, "住居ボタンを押した後に検索の欄が出たかの再確認（v2.6.18）"], "setTimeout 2500": [1, "住居検索を押しても移らない時の href での移動（v2.6.18）"] },
+    "page-script.js": { "setTimeout 15000": [1, "警告の表示を消す"], "setTimeout 895000": [1, "見張り（fill-done の保証）"], "setInterval 5000": [1, "180秒 操作が進まない時の見張り（v2.6.19）"], "setTimeout 0": [1, "同じ流れの続き"], "setInterval 3000": [1, "クリックの列が20秒固まったかの見張り（v2.6.19）"], "setTimeout 4000": [1, "住居ボタンを押した後に検索の欄が出たかの再確認（v2.6.19）"], "setTimeout 2500": [1, "住居検索を押しても移らない時の href での移動（v2.6.19）"] },
     "popup.js": {
       "setTimeout 6000": [1, "取得の期限"], "setTimeout 3000": [4, "取得のやり直し・表示を戻す"], "setTimeout 10000": [1, "取得の期限"],
       "setTimeout 15000": [1, "取得の期限"], "setTimeout 4000": [1, "表示を消す"], "setTimeout 1800": [1, "表示を戻す"], "setTimeout 2000": [1, "表示を戻す"],

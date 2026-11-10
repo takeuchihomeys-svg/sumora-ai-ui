@@ -585,8 +585,14 @@
     try {
       if (!session || !plan) return;
       var c = session.conditions || {};
-      var runId = c._audit_run_id || null;
-      if (!runId) return; // ブレインの回でない時は送らない
+      // 2026-11-10 v2.6.19 竹内さん「ここ1ヶ月は実際にスタッフが動かしている」:
+      //   旧はブレインの回だけ送っていたため、スタッフの普通の検索の人が動いた記録が残らなかった。
+      //   新は run_id が無くても送る（人の学習用）。無い時はその回のための印を作る。
+      var runId = c._audit_run_id || window.__axlxHumanTraceRunIt || null;
+      if (!runId) {
+        runId = 'sa_human_it_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+        window.__axlxHumanTraceRunIt = runId;
+      }
       var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp;
       var form = {};
       try {
@@ -627,6 +633,10 @@
         human: _itHumanSnap(),
         // 2026-11-10: 人の操作の時刻（自動の ops と同じ形・人と自動の動きを比べる材料）
         ops: _itHumanOps(),
+        // 2026-11-10 v2.6.19: ブレインの回でない時は「人の学習用の記録」として送る
+        brain: !!c._audit_run_id,
+        trigger: (c.trigger || 'single'),
+        customerId: session.customerId || null,
       }, function () { void chrome.runtime.lastError; });
     } catch (_) {}
   }

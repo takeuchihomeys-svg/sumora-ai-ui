@@ -1417,6 +1417,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // 2026-11-10 竹内「人と自動の動きの差」: 人の操作の時刻（自動の ops と同じ形・人と自動を比べる材料）
         if (Array.isArray(msg.ops) && msg.ops.length) filled.ops = msg.ops.slice(-80);
         const body = { phase: "started", brain: true, run_id: runId, site: _site, filled: filled };
+        // 2026-11-10 v2.6.19 竹内さん「ここ1ヶ月は実際にスタッフが動かしている」:
+        //   人が動いた記録（filled.human / ops の by=human）は**ブレインでない回でも**残す。
+        //   ブレインの回（点検・判定の対象）は今まで通り brain: true。人だけの記録は brain: false で送り、
+        //   サーバーが「人の学習用の行」として受ける（点検の判定は走らせない）。
+        const _humanOnly = msg.brain === false || msg.humanOnly === true;
+        if (_humanOnly) body.brain = false;
+        if (msg.trigger) body.trigger = msg.trigger;
+        if (msg.customerId) body.property_customer_id = String(msg.customerId);
         if (msg.intended && typeof msg.intended === "object") body.intended = msg.intended;
         const posted = self.AxlxSearchAudit ? await self.AxlxSearchAudit.post(body) : null;
         sendResponse({ ok: !!(posted && posted.ok), posted: posted });
