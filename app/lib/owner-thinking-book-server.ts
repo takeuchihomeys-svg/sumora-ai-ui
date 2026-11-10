@@ -25,13 +25,13 @@ async function loadBookRows(sb: SupabaseClient): Promise<BookRow[]> {
 }
 
 export type OwnerBookPull = { block: string; cards: BookCard[]; ms: number; marks: TurnMarks; err?: string };
-export async function ownerBookForTurn(sb: SupabaseClient, o: { scene: string | null; customerTurn: string; lastStaff: string | null; sentProps: number; promise: boolean }): Promise<OwnerBookPull> {
+export async function ownerBookForTurn(sb: SupabaseClient, o: { scene: string | null; customerTurn: string; lastStaff: string | null; sentProps: number; promise: boolean; forWho?: "brain" | "writer" }): Promise<OwnerBookPull> {
   const t0 = Date.now();
   const marks: TurnMarks = { pointsProperty: pointsProperty(o.customerTurn), sent: o.sentProps > 0, promise: o.promise };
   try {
     const [rows, emb] = await Promise.all([loadBookRows(sb), generateEmbedding(bookAskText(o.customerTurn, o.lastStaff))]);
     if (!emb) return { block: "", cards: [], ms: Date.now() - t0, marks, err: "embedding" };
-    const cards = pickBook(rows, { scene: o.scene, turnEmb: toUnit(emb), turnText: o.customerTurn, marks, onlyTags: ownerBookOnlyBase() ? ["竹内さんの土台"] : undefined });
+    const cards = pickBook(rows, { scene: o.scene, turnEmb: toUnit(emb), turnText: o.customerTurn, marks, onlyTags: ownerBookOnlyBase() ? ["竹内さんの土台"] : undefined, forWho: o.forWho ?? "brain" });
     return { block: bookBlock(cards), cards, ms: Date.now() - t0, marks };
   } catch (e) {
     return { block: "", cards: [], ms: Date.now() - t0, marks, err: (e instanceof Error ? e.message : String(e)).slice(0, 120) };
