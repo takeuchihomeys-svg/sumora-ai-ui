@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { materialMissingKey, materialMissingSide, tallyMaterialKeys } from "../material-missing-key";
-import { pickupCandidatesMaterialLine, freshPickupCandidates, focusDocDigestNote, pickupCandidatesListOn, focusDocDigestOn } from "../brain-material-wiring";
+import { pickupCandidatesMaterialLine, freshPickupCandidates, focusDocDigestNote, pickupCandidatesListOn, focusDocDigestOn, latestSentTarget } from "../brain-material-wiring";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) pass++; else { fail++; console.log(`  NG  ${name}`, extra); } };
 const k = (label: string, want: string) => { const got = materialMissingKey(label); t(`${label} → ${want}`, got === want, got); };
@@ -66,5 +66,14 @@ t("資料の行: 項目が無ければ空", focusDocDigestNote({ name: "x", room
 // 配線（brain-core）
 const src = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");
 t("配線: 候補の中身は pickupCandidatesListOn の時だけ列を足して読み、ready の時に行を足す", /const candList = pickupCandidatesListOn\(\);/.test(src) && /if \(candList && readyNow\) \{/.test(src) && /pickupCandidatesMaterialLine\(\(pendNow \?\? \[\]\)/.test(src));
-t("配線: 資料の行は focusDocDigestOn・contract-terms が無い・主のお部屋がある時だけ", /if \(focusDocDigestOn\(\) && !contractTerms && focusRoomForMaterial && !isPostApplyStatus\(convStatus\)\)/.test(src) && /focusDocDigestNote\(/.test(src));
+t("配線: 資料の行は focusDocDigestOn・contract-terms が無い時だけ・主のお部屋→無ければ一番新しく送った物件", src.includes("const docDigestTarget = focusDocDigestOn() && !contractTerms && !isPostApplyStatus(convStatus)") && src.includes("latestSentTarget(sentProps, { nowMs: Date.now() })") && /const fr = docDigestTarget;/.test(src));
+// 11/11 a1-doc-dig-1111: q403（GrandPaseo south 302 を送った直後の「気になります」）は主のお部屋が空だった
+const sent = [
+  { property_name: "GrandPaseo south", room_no: "302", sent_at: "2026-11-08T08:19:06Z" },
+  { property_name: "古い物件", room_no: "101", sent_at: "2026-11-01T08:00:00Z" },
+  { property_name: "共有だけ", room_no: "201", sent_at: "2026-11-08T08:30:00Z", shared_only: true },
+];
+const tg = latestSentTarget(sent, { nowMs: Date.parse("2026-11-08T08:37:34Z") });
+t("送った物件: 一番新しい物（共有だけ・3日より前・未来は外す）", tg?.name === "GrandPaseo south" && tg?.roomNo === "302", tg);
+t("送った物件: 3日以内が無ければ null", latestSentTarget(sent, { nowMs: Date.parse("2026-11-20T00:00:00Z") }) === null);
 console.log(`material-missing-key: ${pass}/${pass + fail}`); if (fail) process.exit(1);

@@ -6,6 +6,12 @@
 import { splitPropertyName } from "./customer-state";
 import { resolveReplyScene } from "./reply-scene";
 import { switchFingerprint, digestVerOn } from "./switch-fingerprint";
+import { materialMissingKey, MATERIAL_KEY_SIDE } from "./material-missing-key";
+
+/** 2026-11-11 作業員1（A1 ③）: 自己申告の鍵の印を digest に残すか（記録だけ・既定 off） */
+export function materialSideShadowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_MATERIAL_SIDE_SHADOW ?? "").trim().toLowerCase() === "on";
+}
 
 export type BrainDecisionLedgerCols = { building_key: string | null; room_no: string | null; scene_key: string | null; brain_version: string | null };
 
@@ -36,6 +42,14 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   if (Array.isArray(meta.material_read_misses) && meta.material_read_misses.length) out.mx = (meta.material_read_misses as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 10);
   // 2026-10-29 材料の自己申告（判断に要ったのに無かった物・記録だけ）。[] も「足りていた」として残す（申告の割合を数える）
   if (Array.isArray(meta.material_missing)) out.mm = (meta.material_missing as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5);
+  // 2026-11-11 作業員1（A1 ③・統括役の OK「記録だけの shadow から」）: 自己申告を決まった鍵に直した印（ms＝鍵の一覧・mss＝staff の鍵がある＝AIX／約束の番の候補）。
+  //   判断・統括には渡さない（記録だけ）。28日の実測では印の番の AIX か約束 73% ＝印なし 68%・他の申告 75% と差が小さい＝重みに使う前に、正しい鍵で取り直して当たりを数える。
+  //   既定 off（入れる BRAIN_MATERIAL_SIDE_SHADOW=on）
+  if (out.mm && out.mm.length && materialSideShadowOn(env)) {
+    const keys = [...new Set(out.mm.map((l) => materialMissingKey(l)))];
+    (out as Record<string, unknown>).ms = keys;
+    if (keys.some((k) => MATERIAL_KEY_SIDE[k] === "staff")) (out as Record<string, unknown>).mss = true;
+  }
   // 2026-10-23 優先順位の段（BRAIN_PRIORITY_STEP=on の番だけ・項目の数・依頼の抜けを足した数・AIX とのそろえ・取り寄せた材料の id）
   if (meta.priority_step && typeof meta.priority_step === "object") out.pr = meta.priority_step as Record<string, unknown>;
   // 2026-10-29 AIX の統括（AIX_DESK_COMMAND が off でない番だけ）: 候補・選んだ鍵・別の要件・差し戻し・ブレインと違ったか＝毎晩2つの統括の食い違いを数える
