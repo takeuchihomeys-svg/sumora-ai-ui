@@ -529,9 +529,29 @@
         setTimeout(function () {
           autoSendOnePage(_resumeState, function (ok, cnt) { _resumeState.sentCount = (_resumeState.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(_resumeState); }, _hd(800)); });
         }, 700 + Math.floor(Math.random() * 700));
+        return;
+      }
+    }
+    /**
+     * 2026-11-10 竹内さん「手動でできた。自動でおこなっちく（自動で行ってほしい）」:
+     *   自動モードの時は、**結果が出たら拡張が自分で印刷用PDFを1件ずつ押して送る**（Case C）。
+     *   人がやる事と同じ: カーソルで行まで動く → 印刷用PDFを押す → 送る → 👀 資料を見る間 → 次の行。
+     *   押さない/止めたい時は枠の「⏹ 止める」。スタッフモード・自動モードでない時は今まで通り何もしない。
+     */
+    else if (!_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched && _autoModeOn && !_staffModeOn && !_autoPdfRun) {
+      // この一覧でまだ1件も押していない時だけ（同じ一覧の描き直しで二重に始めない）
+      var _sig = tracked.map(function (t) { return _urlKey(t.btn && t.btn.href); }).join(",").slice(0, 3000);
+      if (_sig && _sig !== _autoPdfSig) {
+        _autoPdfSig = _sig;
+        _pendingAutoSendDispatched = true;
+        console.log("[AXLX bulk-dl][auto] 自動モード: 結果が出たので印刷用PDFを1件ずつ押して送ります（" + tracked.length + "行）");
+        _tmark("auto_pdf_arm", "rows=" + tracked.length);
+        setTimeout(function () { autoPressPdfs(); }, 1500 + Math.floor(Math.random() * 1200));
       }
     }
   }
+  // 自動で押し始めた一覧の印（同じ一覧で二度始めない）
+  var _autoPdfSig = "";
 
   // ── フローティングバー ────────────────────────────
   function ensureBar() {
@@ -569,6 +589,11 @@
       "</div>",
       '<div style="display:flex;gap:6px;">',
       '  <button id="axlx-line-btn" style="flex:1;padding:6px 8px;background:#06c755;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">📤 売上番長に送る</button>',
+      "</div>",
+      // 2026-11-10 竹内さん「手動でできた。自動でおこなっちく」: 自動モードの時、印刷用PDFを拡張が1件ずつ押して送る
+      '<div style="display:flex;gap:6px;">',
+      '  <button id="axlx-autopdf-btn" style="flex:1;padding:6px 6px;background:#1976d2;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;" title="自動モードの時、この一覧の印刷用PDFを1件ずつ押して売上番長へ送ります（資料を見る間も入ります）">🤖 自動で押して送る</button>',
+      '  <button id="axlx-autopdf-stop-btn" style="flex:0 0 74px;padding:6px 4px;background:rgba(255,255,255,0.18);border:1px dashed rgba(255,255,255,0.5);border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;display:none;" title="自動を止める（いまの1件が終わってから）">⏹ 止める</button>',
       "</div>",
       '<div style="display:flex;gap:6px;">',
       '  <button id="axlx-auto-btn" style="flex:1;padding:6px 8px;background:#e91e63;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">📡 全ページ送る</button>',
@@ -612,6 +637,16 @@
       });
     })();
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
+    // 2026-11-10 竹内さん「手動でできた。自動でおこなっちく」: 自動モードの時、印刷用PDFを1件ずつ押して送る
+    document.getElementById("axlx-autopdf-btn").addEventListener("click", function () {
+      var r = autoPressPdfs();
+      var stopBtn = document.getElementById("axlx-autopdf-stop-btn");
+      if (stopBtn) stopBtn.style.display = r && r.ok ? "block" : "none";
+    });
+    document.getElementById("axlx-autopdf-stop-btn").addEventListener("click", function () {
+      stopAutoPdfs();
+      this.style.display = "none";
+    });
     // 2026-11-10: 資料を確認している間だけ出る「👀 見た → 次へ」（押すと待たずに次の物件へ）
     document.getElementById("axlx-look-next-btn").addEventListener("click", function () {
       if (_lookWait && _lookWait.skip) _lookWait.skip("skip");
@@ -770,6 +805,110 @@
     tracked.forEach(function (t) { if (t.cb && t.cb !== item.cb && t.cb.checked) t.cb.checked = false; });
     if (item.cb && item.cb.isConnected && !item.cb.checked) item.cb.checked = true;
     updateBar();
+  }
+
+  // ─────────── 2026-11-10 自動モード: 印刷用PDFを拡張が1件ずつ押していく ───────────
+  // 竹内さん「手動でできた。自動でおこなっちく（自動で行ってほしい）」:
+  //   手動の1件ずつの流れ（押す → 送る → 👀 資料を見る → 次）を、**自動モードの時だけ拡張が押して回す**。
+  //   人がやる事と同じ順番・同じ間（カーソルで行まで動く → 押す → 送る → 資料を見る間 → 次）。
+  //   ・対象は一覧の行（tracked）。送付済み・前回の検索より古い行は送らない（今までの選別と同じ物差し）
+  //   ・1件ごとに 送ったら「👀 確認中…」で資料を見る間を置いてから次へ
+  //   ・止める: 右下の枠の「⏹ 自動を止める」。スタッフモード・自動モードでない時は動かない
+  var _autoPdfRun = null;   // { total, done, index, stopped }
+  function autoPressPdfs() {
+    if (!_autoModeOn) {
+      _nudge("自動モードの時だけ自動で押せます（ヘッダーを「自動」に）");
+      return { ok: false, reason: "not-auto" };
+    }
+    if (_staffModeOn) { _nudge("スタッフモードでは自動で押しません"); return { ok: false, reason: "staff" }; }
+    if (_autoPdfRun) { _nudge("いま自動で送っています（⏹ で止められます）"); return { ok: false, reason: "running" }; }
+    if (_guideBlocksAuto("autoPressPdfs")) return { ok: false, reason: "guide" };
+    var cand = tracked.filter(function (t) { return t.cb && t.btn && AxlxSendPairing.isHttpUrl(t.btn.href); });
+    if (!cand.length) { _nudge("この画面に印刷用PDFが見つかりません"); return { ok: false, reason: "no-rows" }; }
+    _autoPdfRun = { total: 0, done: 0, index: 0 };
+    _tmark("auto_pdf_start", String(cand.length) + "件");
+    _autoPressNext(cand);
+    return { ok: true, count: cand.length };
+  }
+  function _autoPressNext(list) {
+    if (!_autoPdfRun) return;
+    if (_autoPdfRun.stopped) { _autoFinish("止めました"); return; }
+    if (!_autoModeOn || _staffModeOn) { _autoFinish("モードが変わったので止めました"); return; }
+    if (_autoPdfRun.index >= list.length) { _autoFinish("全部終わりました"); return; }
+    var item = list[_autoPdfRun.index++];
+    if (!item || !item.cb || !item.btn || !item.btn.isConnected) { _autoPressNext(list); return; }
+    var url = item.btn.href;
+    // 送った行は押さない（送付済み・前回の検索より古い行の判定は、通常の一括の選別 _selectAllowed が state を持つ時に見る）
+    if (_onePdfSent[url]) {
+      console.log("[AXLX bulk-dl][auto] 送った行は押さない:", String(url).slice(0, 70));
+      _autoPressNext(list);
+      return;
+    }
+    _autoPdfRun.total++;
+    var el = document.getElementById("axlx-count");
+    if (el) el.textContent = "🤖 自動 " + _autoPdfRun.total + "件目（" + (_autoPdfRun.done + 1) + "件送信済み）";
+    // 人が押すのと同じ: 行までカーソルが動いて「印刷用PDF」を押す → 押した合図（axlx-pdf-captured）で1件送る
+    _pressPrintPdf(item, function (pressed) {
+      if (!pressed) {
+        console.warn("[AXLX bulk-dl][auto] 印刷用PDFを押せませんでした（次へ）:", String(url).slice(0, 70));
+        setTimeout(function () { _autoPressNext(list); }, 1200);
+        return;
+      }
+      // 押した合図で sendOnePdfNow が走る。終わる（_pdfBusy が false に戻る）のを待ってから次へ
+      _waitPdfIdle(function () {
+        if (_autoPdfRun) _autoPdfRun.done++;
+        setTimeout(function () { _autoPressNext(list); }, 500 + Math.floor(Math.random() * 700));
+      });
+    });
+  }
+  /** 「印刷用PDF」のリンクを人が押す形で押す（カーソル → 押す → 反応を見る） */
+  function _pressPrintPdf(item, cb) {
+    var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+    var btn = item.btn;
+    var fired = false;
+    var fire = function () {
+      if (fired) return;
+      fired = true;
+      try { btn.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+      setTimeout(function () {
+        try { btn.click(); } catch (_) {}
+        console.log("[AXLX bulk-dl][auto] 印刷用PDFを押しました:", String(btn.href || "").slice(0, 80));
+        cb(true);
+      }, 250 + Math.floor(Math.random() * 450));
+    };
+    if (P && P.moveToEl) {
+      try { P.ensure(); } catch (_) {}
+      P.moveToEl(btn).then(function () { if (P.tap) P.tap(); fire(); }, fire);
+      // カーソルが動けない時も必ず押す（止まらない）
+      setTimeout(function () { if (!fired) fire(); }, 3000);
+    } else fire();
+  }
+  /** 1件の処理（送信中・確認中）が終わるまで待つ */
+  function _waitPdfIdle(cb) {
+    var waited = 0;
+    var poll = function () {
+      if (!_pdfBusy) { cb(); return; }
+      waited += 500;
+      if (waited > 120000) { console.warn("[AXLX bulk-dl][auto] 1件が120秒たっても終わらない → 次へ"); cb(); return; }
+      setTimeout(poll, 500);
+    };
+    setTimeout(poll, 800);
+  }
+  function _autoFinish(why) {
+    var n = _autoPdfRun ? _autoPdfRun.done : 0;
+    _autoPdfRun = null;
+    _tmark("auto_pdf_end", why + " " + n + "件");
+    console.log("[AXLX bulk-dl][auto] 自動の印刷用PDF: " + why + "（" + n + "件送信）");
+    _nudge("🤖 自動 " + why + "（" + n + "件）");
+    var stopBtn = document.getElementById("axlx-autopdf-stop-btn");
+    if (stopBtn) stopBtn.style.display = "none";
+    _paintPdfProgress();
+  }
+  function stopAutoPdfs() {
+    if (!_autoPdfRun) { _nudge("自動は動いていません"); return false; }
+    _autoPdfRun.stopped = true;
+    _nudge("⏹ 止めます（いまの1件が終わってから）");
+    return true;
   }
 
   /** 進み具合の1行（送信中・確認中・送信済み） */

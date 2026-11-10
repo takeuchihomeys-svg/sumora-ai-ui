@@ -90,5 +90,15 @@ ok("見る間が終わったら選択を外して押せる状態に戻る（人�
 ok("送れなかった1件は見る物が無いのですぐ押せる状態に戻る", /if \(!ok\) \{ _idleAfterOne\(item\); return; \}/.test(bd));
 ok("点検に残す（look_doc・look_skip）", /_tmark\("look_doc"/.test(bd) && /_tmark\("look_skip"/.test(bd));
 
+console.log("\n■ ⑩ 自動モードは拡張が1件ずつ押していく（手動と同じ流れを自動で）");
+ok("自動モードの時だけ動く（_autoModeOn・スタッフモードでは動かない）", /function autoPressPdfs\(\)[\s\S]{0,500}if \(!_autoModeOn\)/.test(bd) && /if \(_staffModeOn\) \{ _nudge\("スタッフモードでは自動で押しません"\)/.test(bd));
+ok("人が押すのと同じ（行までカーソル → 印刷用PDFを押す → 押した合図で送る）", /function _pressPrintPdf\(item, cb\)/.test(bd) && /P\.moveToEl\(btn\)/.test(bd) && /try \{ btn\.click\(\); \} catch \(_\) \{\}/.test(bd));
+ok("1件ずつ（送信中・確認中が終わるのを待ってから次の行）", /function _waitPdfIdle\(cb\)/.test(bd) && /if \(!_pdfBusy\) \{ cb\(\); return; \}/.test(bd));
+ok("押した合図で送る流れを使う（手動と同じ sendOnePdfNow）", /_pressPrintPdf\(item, function \(pressed\)/.test(bd));
+ok("止められる（⏹ 止める＝いまの1件が終わってから）", /function stopAutoPdfs\(\)/.test(bd) && /_autoPdfRun\.stopped = true;/.test(bd));
+ok("結果が出たら自動で始まる（Case C・同じ一覧で二度始めない）", /_autoPdfSig/.test(bd) && /自動モード: 結果が出たので印刷用PDFを1件ずつ押して送ります/.test(bd));
+ok("120秒たっても1件が終わらない時は次へ（止まらない）", /waited > 120000/.test(bd));
+ok("点検に残す（auto_pdf_start・auto_pdf_end）", /_tmark\("auto_pdf_start"/.test(bd) && /_tmark\("auto_pdf_end"/.test(bd));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
