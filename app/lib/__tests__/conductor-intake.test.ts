@@ -1,5 +1,6 @@
 // 実行: npx tsx app/lib/__tests__/conductor-intake.test.ts
 import { toFreshDigest } from "../brain-layers";
+import { conductorIntakeCacheControl } from "../conductor-intake-server";
 import { conductorIntakeMode, intakePrefix, intakeUser, parseIntake, intakeCompareTurn, intakeAgreement, intakeCostUsd, INTAKE_PREFIX_VERSION, intakeDigestLine, intakeSaysAix, intakePrefixVersion, INTAKE_AIX_CUES_V3 } from "../conductor-intake";
 let passed = 0, failed = 0;
 function it(name: string, fn: () => void) { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { failed++; console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); } }
@@ -53,6 +54,10 @@ it("配線: brain-layers.toFreshDigest が meta.conductor_intake を digest.ci �
   const dg = toFreshDigest({ conductor_intake: { answer: s, ds: null, agree: null, cacheRead: 0 } }, null) as { ci?: string };
   ok(dg.ci === "viewing|h|cr0|a1", String(dg.ci));
   ok(!("ci" in (toFreshDigest({}, null) as object)), "no ci when absent");
+});
+it("作り置きの寿命は既定 1h・CONDUCTOR_INTAKE_CACHE_TTL=5m で旧（2026-11-11 C3）", () => {
+  ok(JSON.stringify(conductorIntakeCacheControl({})) === JSON.stringify({ type: "ephemeral", ttl: "1h" }), "1h");
+  ok(JSON.stringify(conductorIntakeCacheControl({ CONDUCTOR_INTAKE_CACHE_TTL: "5m" })) === JSON.stringify({ type: "ephemeral" }), "5m");
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

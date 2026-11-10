@@ -16,14 +16,15 @@ import { loadCustomerSummaryPrefixInputs } from "./customer-summary-prompt-serve
 import { loadSuggestNextActionPrefixInputs } from "./suggest-next-action-prompt-server";
 import {
   buildPrefixWarmTargets, decidePrefixWarm, classifyPrefixWarmUsage, prefixWarmHash, PREFIX_WARM_DEFAULTS, aixTemplateWarmEnabled,
-  type PrefixWarmInputs, type PrefixWarmTarget, type PrefixWarmUsageKind,
+  replyWriterWarmEnabled, buildReplyWriterWarmTarget, REPLY_WRITER_REAL_ACTION, REPLY_WRITER_WARM_MODEL, PREFIX_WARM_HASH_PREFIX,
+  type PrefixWarmInputs, type PrefixWarmTarget, type PrefixWarmUsageKind, type WarmSystemBlock,
 } from "./prefix-warm";
 import { isOffSwitch } from "./brain-night-defer";
 import { willRouteAlt } from "./llm-alt-provider";
 import { isWarmHourJst, parseHoursJst } from "./reply-warm-prefix";
 import { warmRealCallEnv } from "./brain-warm";
 import { jstDayStartMs } from "./jst-date";
-import { sumoraLlmMarks } from "./llm-usage-recorder";
+import { sumoraLlmMarks, systemFullKey } from "./llm-usage-recorder";
 import { suggestNextActionLlmEnabled } from "./next-action-unify";
 
 export type PrefixWarmResult = {
@@ -186,10 +187,61 @@ export async function tryPrefixWarms(nowMs: number): Promise<PrefixWarmResult[]>
     return [{ name: "*", warmed: false, reason: `outside_hours_jst(${h.start}-${h.end})` }];
   }
   const targets = buildPrefixWarmTargets(await loadPrefixWarmInputs());
+  // 2026-11-11 作業員2（C1）: 返信の書き手の system の温め（既定 off・REPLY_WRITER_WARM=on）。温める番の時だけ本物の前置きを読む
+  const pre: PrefixWarmResult[] = [];
+  if (replyWriterWarmEnabled()) {
+    const rw = await loadReplyWriterWarmTarget(nowMs, hoursJst).catch((e): PrefixWarmResult => ({ name: "reply_writer_warm", warmed: false, reason: "error:" + (e instanceof Error ? e.message : String(e)).slice(0, 200) }));
+    if ("body" in rw) targets.push(rw); else pre.push(rw);
+  }
   const settled = await Promise.allSettled(targets.map((t) => warmOne(t, nowMs, hoursJst)));
-  return settled.map((r, i) => r.status === "fulfilled"
+  return [...pre, ...settled.map((r, i) => r.status === "fulfilled"
     ? r.value
-    : { name: targets[i].name, warmed: false, reason: "error:" + (r.reason instanceof Error ? r.reason.message : String(r.reason)).slice(0, 200), key: targets[i].key });
+    : { name: targets[i].name, warmed: false, reason: "error:" + (r.reason instanceof Error ? r.reason.message : String(r.reason)).slice(0, 200), key: targets[i].key })];
+}
+
+/**
+ * 返信の書き手の温めの対象を作る（2026-11-11 作業員2・C1）。前置きは約10万字＝毎回は読まない:
+ *   ①最後の本物（名札 reply_generate_claude_writer・本番の Claude）の鍵（sys_key_full）と時刻 → ②その鍵の claim 行・今日の回数で温める番か決める（安い読み）
+ *   → ③番の時だけ llm_warm_prefixes から本物が送った system ブロックを読み、鍵が一致した物だけ使う（推測で組み立てない・1文字違えば温めない）。
+ *   温める番でない／見つからない時は理由つきの結果を返す（warmOne は同じ判断をもう一度通る）
+ */
+export async function loadReplyWriterWarmTarget(nowMs: number, hoursJst: string): Promise<PrefixWarmTarget | PrefixWarmResult> {
+  const skip = (reason: string, extra: Partial<PrefixWarmResult> = {}): PrefixWarmResult => ({ name: "reply_writer_warm", warmed: false, reason, ...extra });
+  // 温めの名札・本物の名札が別クラウドに回る設定なら温めない（Claude の蓄えに届かない）
+  if (willRouteAlt("reply_writer_warm") || willRouteAlt(REPLY_WRITER_REAL_ACTION)) return skip("alt_routed");
+  const realEnv = warmRealCallEnv();
+  const lastBase = supabase.from("llm_usage_logs").select("created_at, duration_ms, sys_key_full")
+    .eq("action", REPLY_WRITER_REAL_ACTION).lt("status", 400).like("model", "claude%");
+  const lastQ = await (realEnv ? lastBase.eq("env", realEnv) : lastBase).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (lastQ.error) return skip("error:" + lastQ.error.message.slice(0, 120));
+  const key = (lastQ.data?.sys_key_full as string | null | undefined) ?? null;
+  const lastAt = ms(lastQ.data?.created_at);
+  if (!key || lastAt === null) return skip("no_prior_call");
+  const hash = `${PREFIX_WARM_HASH_PREFIX}reply_writer_warm:${key}`;
+  const dayStartIso = new Date(jstDayStartMs(nowMs)).toISOString();
+  const [warmedToday, claimRow] = await Promise.all([
+    supabase.from("llm_usage_logs").select("*", { count: "exact", head: true }).eq("action", "reply_writer_warm").gte("created_at", dayStartIso),
+    supabase.from("llm_warm_prefixes").select("last_warmed_at, retired_at").eq("hash", hash).maybeSingle(),
+  ]);
+  const row = (claimRow.data ?? null) as { last_warmed_at: string | null; retired_at: string | null } | null;
+  const d = decidePrefixWarm({
+    nowMs, lastRealCallMs: lastAt - Math.max(0, Number(lastQ.data?.duration_ms) || 0), lastWarmedMs: ms(row?.last_warmed_at), retiredMs: ms(row?.retired_at),
+    warmedTodayCount: warmedToday.count ?? 0, hoursJst, enabled: true, altRouted: false, maxPerDay: PREFIX_WARM_DEFAULTS.maxPerDay,
+  });
+  if (!d.warm) return skip(d.reason, { key, gapMinutes: d.gapMinutes });
+  // 本物が送った前置き（返信生成が送った時に記録する・ブレイン等の claim 行は除く）。最後の本物の少し前から後ろだけ・最大4行
+  const sinceIso = new Date(lastAt - 15 * 60_000).toISOString();
+  const rows = await supabase.from("llm_warm_prefixes").select("system_blocks")
+    .eq("model", REPLY_WRITER_WARM_MODEL).not("hash", "like", "brain:%").not("hash", "like", "warm:%").not("hash", "like", "convwarm:%")
+    .gte("last_used_at", sinceIso).order("last_used_at", { ascending: false }).limit(4);
+  if (rows.error) return skip("error:" + rows.error.message.slice(0, 120), { key });
+  for (const r of (rows.data ?? []) as Array<{ system_blocks: WarmSystemBlock[] | null }>) {
+    const sys = Array.isArray(r.system_blocks) ? r.system_blocks : [];
+    if (systemFullKey(sys) !== key) continue;
+    const t = buildReplyWriterWarmTarget(sys);
+    if (t && t.key === key) return t;
+  }
+  return skip("prefix_not_found", { key, gapMinutes: d.gapMinutes });
 }
 
 /** cron_run_logs に残す短い形・console に出す価値の無い理由 */

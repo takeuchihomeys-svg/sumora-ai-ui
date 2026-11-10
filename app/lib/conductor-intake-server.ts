@@ -8,6 +8,15 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { sumoraLlmMarks } from "./llm-usage-recorder";
 import { intakePrefix, intakeUser, parseIntake, intakeCompareTurn, intakeAgreement, type IntakeAnswer } from "./conductor-intake";
 
+/**
+ * 2026-11-11 作業員2（統括役 C3・入口の統括の作り置き 30%）: 前置き（約2.1k トークン・鍵1種類）は 5分の寿命で、本番 6.4日 436回のうち 193回が書き直し
+ *   （次の呼び出しまで 5〜60分が 176回・60分超は 17回）。1時間にすると書き直しは 60分超の時だけ（約18回）＝前置きの費用 約 7割減（約 $0.12/日）。
+ *   寿命は送る文の中身に入らない（答えは1文字も変わらない）。戻す: CONDUCTOR_INTAKE_CACHE_TTL=5m
+ */
+export function conductorIntakeCacheControl(env: Record<string, string | undefined> = process.env): { type: "ephemeral"; ttl?: "1h" } {
+  return (env.CONDUCTOR_INTAKE_CACHE_TTL ?? "").trim().toLowerCase() === "5m" ? { type: "ephemeral" } : { type: "ephemeral", ttl: "1h" };
+}
+
 let _admin: SupabaseClient | null = null;
 function admin(): SupabaseClient | null {
   if (_admin) return _admin;
@@ -67,10 +76,10 @@ export async function runConductorIntake(o: {
     try {
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST", signal: AbortSignal.timeout(o.timeoutMs ?? 8_000),
-        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", ...sumoraLlmMarks("conductor_intake", o.conversationId) },
+        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("conductor_intake", o.conversationId) },
         body: JSON.stringify({
           model: "claude-sonnet-5", max_tokens: maxTokens, thinking: { type: "disabled" },
-          system: [{ type: "text", text: prefix, cache_control: { type: "ephemeral" } }],
+          system: [{ type: "text", text: prefix, cache_control: conductorIntakeCacheControl() }],
           messages: [{ role: "user", content: user }],
         }),
       });
