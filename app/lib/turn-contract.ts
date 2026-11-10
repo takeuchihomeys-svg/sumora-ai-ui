@@ -242,10 +242,10 @@ export function sentReactionInviteOn(env: Record<string, string | undefined> = t
  */
 /**
  * 2026-11-06 統括役の頼み（作業員7）: 送った物件への「気になります」だけの番で、AIX の地図の除外（SENT_REACTION_VIEW_INVITE）があってもブレインが見積書を選ぶ（q055）。
- *   AIX の地図の estimate_sheet の1行に、読み方と竹内さんの一手（10/15 AIX【内覧調整】）を1組で足す。既定 off（SENT_REACTION_NO_ESTIMATE=on）
+ *   AIX の地図の estimate_sheet の1行に、読み方と竹内さんの一手（10/15 AIX【内覧調整】）を1組で足す。11/10 既定 on（止める SENT_REACTION_NO_ESTIMATE=off）・AIX の地図（brain-core の estimate_sheet）の同じ1組は外し、この turn-contract の SENT_REACTION の行だけに
  */
 export function sentReactionNoEstimateOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.SENT_REACTION_NO_ESTIMATE ?? "").trim().toLowerCase() === "on";
+  return (env.SENT_REACTION_NO_ESTIMATE ?? "").trim().toLowerCase() !== "off"; // 11/10 作業員7b: sne2-on 確かな悪化0・道/本質の悪化0（本質 8/12→10/11）で既定 on・AIX の地図の同じ1組は外した（止める SENT_REACTION_NO_ESTIMATE=off）
 }
 export function viewInviteOnePlaceOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.VIEW_INVITE_ONE_PLACE ?? "").trim().toLowerCase() !== "off"; // 11/06 統括役の決め: vio2-on 悪化0で既定 on（止める VIEW_INVITE_ONE_PLACE=off）
@@ -285,10 +285,10 @@ export function sentCostEstimateRule(env: Record<string, string | undefined> = t
 /**
  * 2026-11-07 統括役の頼み（作業員7・P0 8805bd74）: 申込の意思の番で、ブレインが AIX【申込】を先に選ぶ（今週の見張り 11番中 合ったのは 2〜3）。
  *   竹内さん本人の200日 21番: 返信で受けた 16・申込の AIX を先に 4。入居希望日が無ければ返信で聞き、フォーマットは後の番。読み方と竹内さんの一手を1組で渡す。
- *   既定 off（APPLY_INTENT_REPLY_FIRST=on）
+ *   11/10 既定 on（止める APPLY_INTENT_REPLY_FIRST=off）
  */
 export function applyIntentReplyFirstOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.APPLY_INTENT_REPLY_FIRST ?? "").trim().toLowerCase() === "on";
+  return (env.APPLY_INTENT_REPLY_FIRST ?? "").trim().toLowerCase() !== "off"; // 11/10 作業員7b: air-on 確かな悪化0・道/本質の悪化0（本質 4/12→5/12）で既定 on（止める APPLY_INTENT_REPLY_FIRST=off）
 }
 export function applyIntentReplyFirstRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if (!applyIntentReplyFirstOn(env)) return "";
