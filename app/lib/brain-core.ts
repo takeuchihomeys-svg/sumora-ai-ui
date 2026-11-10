@@ -268,7 +268,7 @@ import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 // 2026-09-30 手続きの質問（審査・入居までの期間と流れ・必要書類）は返信で答える／「確認した」系は資料に記載あり→資料・無し→AIX【確認した】（みこと事例）
 import { loadProcedureAnswerWithin, loadConfirmTopicRoutesWithin, type ProcedureAnswerMaterial, type ConfirmTopicMaterial } from "@/app/lib/procedure-answer-server";
 import { alignProcedureAsks, alignProcedurePriorities, procedureGeneralAskReplyOn } from "@/app/lib/procedure-ask-align"; // 2026-11-10 作業員1 型2 q374
-import { pickupCandidatesListOn, pickupCandidatesMaterialLine, focusDocDigestOn, focusDocDigestNote, latestSentTarget, FOCUS_DOC_TOPICS, type PickupCandidateRow } from "@/app/lib/brain-material-wiring"; // 2026-11-11 作業員1 A1
+import { pickupCandidatesListOn, pickupCandidatesMaterialLine, focusDocDigestOn, focusDocDigestNote, threadDocTarget, FOCUS_DOC_TOPICS, type PickupCandidateRow } from "@/app/lib/brain-material-wiring"; // 2026-11-11 作業員1 A1
 import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote, procedureMoveInBrainLine, procedurePointsToProperty, procedureUnknownPointsOnlyOn } from "@/app/lib/procedure-question";
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
@@ -2936,10 +2936,19 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     console.log(JSON.stringify({ tag: "brain:contract-terms", conversationId, target: contractTerms.target.name, routes: contractTerms.routes.map((r) => ({ topic: r.topic, route: r.route, why: r.why })), source: contractTerms.source }));
   }
   // 2026-11-11 作業員1（A1・弱い所 326 の system の側②）: 聞かれていなくても、主のお部屋の資料に書いてある入居時期・保証会社・礼金敷金 等を参考の材料に（BRAIN_FOCUS_DOC_DIGEST=on の時だけ・既定 off）
-  // 11/11 a1-doc-dig-1111: 主のお部屋が無い番（送った直後の「気になります」等）は一番新しく送った物件を対象に（latestSentTarget・3日以内）
-  const docDigestTarget = focusDocDigestOn() && !contractTerms && !isPostApplyStatus(convStatus)
-    ? (focusRoomForMaterial ? { name: focusRoomForMaterial.name, roomNo: focusRoomForMaterial.roomNo ?? null } : latestSentTarget(sentProps, { nowMs: Date.now() }))
-    : null;
+  // 11/11 a1-doc-dig2-1111: 主のお部屋が無い番（送った直後の「気になります」等）は物件ごとの台帳の今の番の物件（引用・名指し／主語の抜けた番の1件）を対象に（threadDocTarget）。
+  //   「一番新しく送った物件」は q404 で取り違えた（お客様の言う長居東でなく直近のサンシエ南巽）ので使わない。複数・不明は出さない
+  let docDigestTarget: { name: string; roomNo: string | null } | null = null;
+  if (focusDocDigestOn() && !contractTerms && !isPostApplyStatus(convStatus)) {
+    if (focusRoomForMaterial) docDigestTarget = { name: focusRoomForMaterial.name, roomNo: focusRoomForMaterial.roomNo ?? null };
+    else {
+      try {
+        const { loadPropertyThreads } = await import("@/app/lib/property-thread-server");
+        const pt = await Promise.race([loadPropertyThreads(conversationId), new Promise<null>((r) => setTimeout(() => r(null), 6_000))]);
+        docDigestTarget = threadDocTarget(pt);
+      } catch (e) { console.warn("[brain-core] focus-doc-digest target skipped:", e instanceof Error ? e.message : String(e)); }
+    }
+  }
   if (docDigestTarget) {
     try {
       const [{ loadContractMaterial }, { routeContractTerm }] = await Promise.all([import("@/app/lib/contract-terms-answer-server"), import("@/app/lib/contract-terms-question")]);
