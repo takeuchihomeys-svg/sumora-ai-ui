@@ -692,11 +692,58 @@
       setTimeout(resolve, g);
     });
   }
+  /** URL の比べ方（?の後ろの並び・#以降の違いで行を見失わない）。スキーム/ホスト/パスと id だけで比べる */
+  function _urlKey(u) {
+    var s = String(u || "");
+    try {
+      var x = new URL(s);
+      var id = (x.search.match(/[?&]id=([^&]+)/) || [])[1] || "";
+      return x.host + x.pathname + "|" + id;
+    } catch (_) { return s; }
+  }
+  /** 押した資料の行を探す（URL の書き方が少し違っても当てる） */
+  function _findItemByUrl(url) {
+    var exact = tracked.find(function (t) { return t.btn && t.btn.href === url; });
+    if (exact) return exact;
+    var k = _urlKey(url);
+    return tracked.find(function (t) { return t.btn && _urlKey(t.btn.href) === k; }) || null;
+  }
+  /**
+   * 一覧の行を作り直す（チェックは足さない・自動送信の続きも起動しない）。
+   * inject() は Case A/B（自動送信の続き）も始めてしまうので、押した1件を探す時はこちらを使う。
+   */
+  function _rescanRows() {
+    var keep = {};
+    tracked.forEach(function (t) { if (t.cb && t.cb.checked && t.btn) keep[_urlKey(t.btn.href)] = true; });
+    document.querySelectorAll(".axlx-cb").forEach(function (el) { el.remove(); });
+    tracked = [];
+    findPrintBtns().forEach(function (btn) {
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "axlx-cb";
+      cb.style.cssText = "width:14px;height:14px;margin-right:3px;cursor:pointer;accent-color:#1565C0;vertical-align:middle;flex-shrink:0;";
+      cb.checked = !!keep[_urlKey(btn.href)]; // 押した1件のチェックは残す
+      cb.addEventListener("change", updateBar);
+      btn.parentNode.insertBefore(cb, btn);
+      tracked.push({ cb: cb, btn: btn });
+    });
+    updateBar();
+  }
   try {
     chrome.runtime.onMessage.addListener(function (msg) {
       if (!msg || msg.type !== "axlx-pdf-captured") return;
-      var item = tracked.find(function (t) { return t.btn && t.btn.href === msg.url; });
-      if (!item) return;
+      var item = _findItemByUrl(msg.url);
+      if (!item) {
+        // 2026-11-10: 一覧が描き直された直後・URL の書き方が少し違う時は、行を作り直してからもう一度探す（取りこぼさない）
+        try { _rescanRows(); } catch (_) {}
+        item = _findItemByUrl(msg.url);
+      }
+      if (!item) {
+        console.warn("[AXLX bulk-dl] 押した資料の行が見つかりません（送れませんでした）:", String(msg.url || "").slice(0, 100));
+        var _c0 = document.getElementById("axlx-count");
+        if (_c0) _c0.textContent = "⚠ 押した行が見つかりません";
+        return;
+      }
       _onePdfBadge(item, msg.ok, false);
       updateBar();
       // 押した1件をその場で送る（まとめて20秒待たない＝1つずつ行ったのと同じ形）

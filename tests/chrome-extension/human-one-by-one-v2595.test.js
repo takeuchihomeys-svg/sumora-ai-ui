@@ -23,11 +23,13 @@ const bdCode = bd.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(
 const H = require(path.join(dir, "human-wait.js"));
 
 console.log("■ ① 印刷用PDFを押したら、その1件をその場で送る");
-ok("押した合図（axlx-pdf-captured）を受けて1件送る", /type !== "axlx-pdf-captured"\) return;[\s\S]{0,600}sendOnePdfNow\(item\)/.test(bd));
+ok("押した合図（axlx-pdf-captured）を受けて1件送る", /if \(!msg \|\| msg\.type !== "axlx-pdf-captured"\) return;[\s\S]{0,1200}sendOnePdfNow\(item\);/.test(bdCode));
 ok("押した1件だけをチェック（他の行は外す）", /function sendOnePdfNow\(item\) \{[\s\S]{0,900}tracked\.forEach\(function \(t\) \{ if \(t\.cb && t\.cb !== item\.cb && t\.cb\.checked\) t\.cb\.checked = false; \}\)/.test(bd));
 ok("その1件だけを組にして送る（urls が1件）", /function sendOnePdfNow[\s\S]{0,2600}urls: AxlxSendPairing\.pluck\(one, "url"\)/.test(bd));
 ok("同じ行を二度送らない（_onePdfSent）", /_onePdfSent\[url\] = true;/.test(bd) && /if \(!url \|\| _onePdfSent\[url\]\) return;/.test(bd));
 ok("押した順に1件ずつ（前の1件が終わってから・Promise の鎖）", /_onePdfChain = _onePdfChain\.then/.test(bd));
+ok("押した行を URL で当てる（id だけでも当てる・見つからなければ行を作り直して1回だけ探す）", /function _urlKey\(u\)/.test(bd) && /function _rescanRows\(\)/.test(bd) && /_rescanRows\(\); \} catch \(_\) \{\}\s*item = _findItemByUrl\(msg\.url\)/.test(bd));
+ok("行を作り直しても押した1件のチェックは残す", /cb\.checked = !!keep\[_urlKey\(btn\.href\)\]/.test(bd));
 ok("20秒まとめて送る道はもう使わない（scheduleForward の呼び出しが無い）", !/scheduleForward\(\)/.test(bd));
 
 console.log("\n■ ② 先に全行チェックをしない");
