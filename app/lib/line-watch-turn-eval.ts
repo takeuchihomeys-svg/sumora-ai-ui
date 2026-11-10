@@ -29,6 +29,8 @@ export type WatchTurnEval = {
   window: StaffWindow;
   draftSrc: JudgeDraftSrc;
   decision: WatchDecision | null;
+  /** 2026-11-11 番の時点で申込以降か（影の関所 shadow-auto-gate が使う） */
+  postApply: boolean;
   /** line_watch_turns の2段目の列（evaluated_at・judge_version を含む） */
   patch: Record<string, unknown>;
 };
@@ -89,5 +91,5 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
     ...(ctx.hasVersionCol !== false ? { judge_version: JUDGE_VERSION } : {}),
     evaluated_at: new Date(nowMs).toISOString(),
   };
-  return { judgement: j, scene, window: w, draftSrc: pick.src, decision: dec, patch };
+  return { judgement: j, scene, window: w, draftSrc: pick.src, decision: dec, postApply, patch };
 }
