@@ -187,7 +187,8 @@
           return;
         }
         // 打鍵の間 60〜220ms（対数正規・右に裾）。5%ほどで「考えて止まる」300〜600ms をはさむ
-        var wait = H.logNormalDelay ? H.logNormalDelay(110, 0.3) : H.humanDelay(110);
+        // 2026-11-10 v2.6.4 竹内さん「早すぎる部分は人間の動きのように」: 中央値 110ms は速い → 165ms（人がキーボードを見て打つ速さ）
+        var wait = H.logNormalDelay ? H.logNormalDelay(165, 0.32) : H.humanDelay(165);
         if (Math.random() < 0.05) wait += 300 + Math.floor(Math.random() * 300);
         setTimeout(step, wait);
       };
@@ -206,7 +207,7 @@
     cbs.forEach(function(cb) {
       var shouldCheck = svals.indexOf(String(cb.value)) >= 0;
       // 一気に連打せず、1件ずつ 60〜150ms のランダム間隔でクリック（人間らしさ）
-      if (cb.checked !== shouldCheck) enqueueHumanClick(cb, _clickEl, 60, 150);
+      if (cb.checked !== shouldCheck) enqueueHumanClick(cb, _clickEl, 420, 980);
     });
   }
   // 基本条件フォームの select/text 入力も1項目ずつ間隔を空けてセットする
@@ -964,8 +965,8 @@
         var lNorm = norm(labels[i].textContent);
         if (lNorm === lineNorm) {
           var cb = labels[i].querySelector('input[type="checkbox"]');
-          if (cb) { if (!cb.checked) enqueueHumanClick(cb, _clickEl, 90, 200); }
-          else { enqueueHumanClick(labels[i], _clickEl, 90, 200); }
+          if (cb) { if (!cb.checked) enqueueHumanClick(cb, _clickEl, 450, 1000); }
+          else { enqueueHumanClick(labels[i], _clickEl, 450, 1000); }
           found = true;
         }
       }
@@ -975,8 +976,8 @@
         var lNorm = norm(labels[i].textContent);
         if (lNorm.length >= 4 && lineNorm.endsWith(lNorm)) {
           var cb = labels[i].querySelector('input[type="checkbox"]');
-          if (cb) { if (!cb.checked) enqueueHumanClick(cb, _clickEl, 90, 200); }
-          else { enqueueHumanClick(labels[i], _clickEl, 90, 200); }
+          if (cb) { if (!cb.checked) enqueueHumanClick(cb, _clickEl, 450, 1000); }
+          else { enqueueHumanClick(labels[i], _clickEl, 450, 1000); }
           found = true;
         }
       }
@@ -994,8 +995,8 @@
   // 2026-11-10 v2.5.97 竹内さん「20駅ごとにというかランダムに人間のように」:
   //   等間隔の一息をやめ、**押すたびに 10% の確率**で 900〜2600ms・**3%** で 2.6〜5.5秒の間を足す
   var _stGapFast = false;
-  function _stGapMin() { return 320; }
-  function _stGapMax() { return 900 + _stationBreath(); }
+  function _stGapMin() { return 420; }
+  function _stGapMax() { return 1100 + _stationBreath(); }
   /** 駅を1つ押した後に足す「人の一息」（何駅目かは決めない・毎回ちがう） */
   function _stationBreath() {
     var add = 0;
@@ -1168,9 +1169,9 @@
       if (!ok) continue;
       var pinp = townLabels[pi].querySelector('input[type="checkbox"]');
       // 複数町字は 90〜200ms 間隔の順次クリック（キュー経由）
-      if (pinp && !pinp.checked) { enqueueHumanClick(pinp, _clickEl, 90, 200); pass0clicked = true; }
+      if (pinp && !pinp.checked) { enqueueHumanClick(pinp, _clickEl, 450, 1000); pass0clicked = true; }
       else if (pinp && pinp.checked) { pass0clicked = true; } // checked済みも成功（再クリック禁止）
-      else if (!pinp) { enqueueHumanClick(townLabels[pi], _clickEl, 90, 200); pass0clicked = true; }
+      else if (!pinp) { enqueueHumanClick(townLabels[pi], _clickEl, 450, 1000); pass0clicked = true; }
     }
     if (pass0clicked) return true;
 
@@ -1313,11 +1314,11 @@
           Array.prototype.slice.call(document.querySelectorAll('label.one_line')).forEach(function(lbl) {
             if (!isVisible(lbl)) return;
             var cb = lbl.querySelector('input[type="checkbox"]');
-            if (cb && cb.checked) enqueueHumanClick(cb, _clickEl, 70, 160);
+            if (cb && cb.checked) enqueueHumanClick(cb, _clickEl, 400, 950);
           });
           Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]:checked'))
             .filter(function(inp) { return inp.parentElement && isVisible(inp.parentElement); })
-            .forEach(function(inp) { enqueueHumanClick(inp, _clickEl, 70, 160); });
+            .forEach(function(inp) { enqueueHumanClick(inp, _clickEl, 400, 950); });
           console.log("[AX] _doReset: モーダル内の路線・駅選択をクリア（順次クリック）");
         } catch (_e) { /* ignore */ }
         // 閉じるボタンはクリア用クリックの完了後にキュー経由で実行（FIFOで順序保証）
@@ -1511,7 +1512,7 @@
     if (cond.area_min) queueSelVal("square_meter_l", nearestDown(AREA_OPTS, cond.area_min));
     if (cond.area_max) queueSelVal("square_meter_h", nearestUp(AREA_OPTS, cond.area_max));
     var feeCb = document.querySelector('input[name="include_common_fee"]');
-    if (feeCb && !feeCb.checked) enqueueHumanClick(feeCb, _clickEl, 80, 180);
+    if (feeCb && !feeCb.checked) enqueueHumanClick(feeCb, _clickEl, 450, 1000);
     if (cond.walk_minutes) {
       // 2026-11-10 v2.6.4 竹内さん「リアプロの徒歩軒数」:
       //   旧は移動手段（transportation_id）と分数（required_time）を続けて積むだけで、選び終わる前に打ち始めていた。
@@ -1643,7 +1644,7 @@
     }
     if (cond.pet_ok) {
       var petCb = document.querySelector('input[name="eq_rm[]"][value="113"]');
-      if (petCb && !petCb.checked) enqueueHumanClick(petCb, _clickEl, 80, 180);
+      if (petCb && !petCb.checked) enqueueHumanClick(petCb, _clickEl, 450, 1000);
     }
     if (cond.shikirei_free) {
       // 敷金・礼金なしチェックボックス: ラベルテキストで検索してクリック
@@ -1652,7 +1653,7 @@
         var sTxt = (sLabels[si].textContent || '').replace(/[\s　]/g, '');
         if (sTxt === '敷金・礼金なし' || sTxt === '敷金礼金なし') {
           var sInp = sLabels[si].querySelector('input[type="checkbox"]');
-          if (sInp && !sInp.checked) { enqueueHumanClick(sInp, _clickEl, 80, 180); console.log('[AX] 敷金・礼金なしをチェック'); }
+          if (sInp && !sInp.checked) { enqueueHumanClick(sInp, _clickEl, 450, 1000); console.log('[AX] 敷金・礼金なしをチェック'); }
           break;
         }
       }
@@ -1976,7 +1977,7 @@
                   console.log('[AX] STEP2: 前顧客のcity_code残留を検出（' + staleInputs.length + '件）→ 解除して選び直し');
                   staleInputs.forEach(function(inp) {
                     var lbl = inp.closest ? inp.closest('label') : null;
-                    if (lbl) enqueueHumanClick(lbl, function(el) { simulateClick(el); }, 120, 260); // トグルで解除（順次）
+                    if (lbl) enqueueHumanClick(lbl, function(el) { simulateClick(el); }, 420, 1000); // トグルで解除（順次）
                   });
                   if (clickWardPrecise([wardFull, wardShort])) { prefClicked = false; return true; }
                   return false; // 市区郡ラベル未描画 → 次ポーリングで再試行
@@ -2104,7 +2105,7 @@
               var keep = wantedLineNorms.some(function(w) {
                 return w === lNorm || (lNorm.length >= 4 && w.endsWith(lNorm));
               });
-              if (!keep) enqueueHumanClick(cb, _clickEl, 90, 200);
+              if (!keep) enqueueHumanClick(cb, _clickEl, 450, 1000);
             });
             if (hasRoutes) clickLineButtons(cond.route_ids);
             return true;
@@ -2137,7 +2138,7 @@
                       // 駅リストが描画されるまで短時間待ってから残留を全解除
                       if (!document.querySelectorAll('input[name="station_id[]"]').length) return false;
                       Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]:checked'))
-                        .forEach(function(inp) { enqueueHumanClick(inp, _unclickIfChecked, 90, 200); });
+                        .forEach(function(inp) { enqueueHumanClick(inp, _unclickIfChecked, 450, 1000); });
                       return true;
                     },
                     _closeAndSearch,
@@ -2236,7 +2237,7 @@
                             (ptxt.length >= 2 && c.length >= 2 && (ptxt.startsWith(c) || c.startsWith(ptxt)));
                         });
                       })
-                      .forEach(function(inp) { enqueueHumanClick(inp, _unclickIfChecked, 90, 200); });
+                      .forEach(function(inp) { enqueueHumanClick(inp, _unclickIfChecked, 450, 1000); });
                     selectStationsByName(cond.station_names);
                     // ★ 修正: 指定駅が「すべて」チェックされたか確認
                     // 旧実装の .some() は1駅（前顧客の残留チェックでも可）で通過してしまい、

@@ -124,7 +124,9 @@
   function tick(el) {
     if (!el || el.checked) return;
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
-    var wait = H && H.logNormalDelay ? H.logNormalDelay(200, 0.32) : (120 + Math.floor(Math.random() * 200));
+    // 2026-11-10 v2.6.4 竹内さん「早すぎる部分は人間の動きのように改善する」:
+    //   中央値 200ms は人のチェックにしては速い → 550ms（おおよそ 350〜900ms）に。たまに長く伸びる
+    var wait = H && H.logNormalDelay ? H.logNormalDelay(550, 0.32) : (400 + Math.floor(Math.random() * 400));
     // 2026-11-10 v2.5.99 竹内さん「ボタン選択する際人間ならたまにまよう」:
     //   チェックを入れる所は人が迷いやすい。15%（±25%）で迷い、長さは3段（一瞬 250〜600／考え込む 700〜1600／かなり 1800〜4500）
     if (Math.random() < 0.15 * (0.75 + Math.random() * 0.5)) {

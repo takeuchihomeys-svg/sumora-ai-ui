@@ -163,7 +163,7 @@ function rest() {
       "setTimeout 20000": [1, "押した印刷用PDF をまとめて送るまでの待ち（v2.5.62・最後に押してから・サイトは触らない）"],
     },
     "content.js": { "setTimeout 400": [1, "MutationObserver の間引き"], "setInterval 3000": [1, "サイドバーの見張り"], "setTimeout 300": [1, "起動時"] },
-    // 2026-11-10 v2.6.4 見えるカーソル: 90ms は「押した時の見た目の縮みを戻す」だけ（サイトを触らない・固定でよい）
+    // 2026-11-10 v2.6.5 見えるカーソル: 90ms は「押した時の見た目の縮みを戻す」だけ（サイトを触らない・固定でよい）
     "pointer-ui.js": { "setTimeout 90": [1, "押した時にカーソルが縮むのを戻す（見た目だけ）"] },
     "itandi-bulk-dl.js": {
       "setTimeout 60000": [1, "PDF の期限"], "setInterval 500": [1, "モーダルが出たかの見る間隔"], "setTimeout 15000": [1, "モーダルの期限"],
@@ -309,7 +309,7 @@ console.log("\n■ ⑦ マウスの軌跡（pointerPath・まっすぐでない�
   const ps = read("page-script.js"), ips = read("itandi-page-script.js");
   ok("リアプロ: 短い欄は1文字ずつ打つ（typeTextLikeHuman）", /function typeTextLikeHuman\(el, value\)/.test(ps) && /setter\.call\(el, s\.slice\(0, i\)\)/.test(ps));
   ok("リアプロ: 長い文字列は一気に入れる（待ちが長くなりすぎない）", /s\.length > TYPE_MAX_CHARS/.test(ps));
-  ok("リアプロ: 打鍵の間は対数正規＋たまに止まる", /H\.logNormalDelay\(110, 0\.3\)/.test(ps) && /Math\.random\(\) < 0\.05/.test(ps));
+  ok("リアプロ: 打鍵の間は対数正規＋たまに止まる", /H\.logNormalDelay\(165, 0\.32\)/.test(ps) && /Math\.random\(\) < 0\.05/.test(ps));
   ok("リアプロ: 押す前に画面へ入れて、人の軌跡でマウスを動かしてから押す", /_ensureInView\(item\.el\)/.test(ps) && /_humanPointerClick\(item\.el, item\.fn\)/.test(ps));
   ok("リアプロ: 軌跡は human-wait.js の pointerPath を使う", /H\.pointerPath\(_pointer, to,/.test(ps));
   ok("リアプロ: 押すのは最後の1回だけ（二重に効かせない）", /try \{ fire\(el\); \}/.test(ps) && (ps.match(/_humanPointerClick\(/g) || []).length >= 2);
