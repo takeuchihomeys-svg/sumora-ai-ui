@@ -112,7 +112,7 @@ ok("watchdog は『途中で止まりました』", /条件の入力が途中で
 
 console.log("\n⑦ 配線");
 const mf = JSON.parse(read("manifest.json"));
-eq("manifest の版", mf.version, "2.6.1");
+eq("manifest の版", mf.version, "2.6.2");
 const main = mf.content_scripts.find((c) => c.world === "MAIN" && c.js.indexOf("itandi-page-script.js") >= 0);
 eq("itandi のページの中の段に form-guard（page-script より前）", main && main.js, ["human-wait.js", "pointer-ui.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
 const ps = read("itandi-page-script.js");
@@ -120,7 +120,7 @@ ok("page-script: 条件削除のボタンがあれば isResetLabel で押す（v
 ok("page-script: リセットは確かめの窓でも止まらない（押す間だけ confirm を はい）", /window\.confirm = function/.test(ps) && /finally \{ window\.confirm = _oc; \}/.test(ps));
 ok("page-script: 家賃の上限は rentText(…, \"max\")", /rentText\(cond\.rent_max, "max"\)/.test(ps));
 ok("page-script: 家賃の下限は rentText(…, \"min\")", /rentText\(cond\.rent_min, "min"\)/.test(ps));
-ok("page-script: 押す前に _itWaitSearchReady", ps.indexOf("_itWaitSearchReady(function (why, btn, texts)") > 0 && ps.indexOf("_itWaitSearchReady(function") < ps.indexOf("btn.click(); _searched = true;"));
+ok("page-script: 押す前に _itWaitSearchReady", ps.indexOf("_itWaitSearchReady(function (why, btn, texts)") > 0 && ps.indexOf("_itWaitSearchReady(function") < ps.indexOf("_humanClick(btn); _searched = true;"));
 ok("page-script: 押せない時は AXLX_SEARCH_BLOCKED で返す（押さない）", /_safeDone\("AXLX_SEARCH_BLOCKED: " \+ why\.ja\)/.test(ps));
 ok("page-script: 残りの条件の例外を捕まえる（黙って240秒待たない）", /try \{ fillRemainingFields\(cond\); \}\s*catch \(errR\)/.test(ps));
 ok("page-script: 失敗は skip:true", /if \(errMsg\) \{ msg\.error = errMsg; msg\.skip = true; \}/.test(ps));

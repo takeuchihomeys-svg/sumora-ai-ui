@@ -72,10 +72,54 @@
     var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
     var click = function () {
       try { if (P && P.tap) P.tap(); } catch (_) {}
-      try { if (el.isConnected && !el.checked) el.click(); } catch (_) {}
+      try { if (el.isConnected && !el.checked) e_humanClick(l); } catch (_) {}
     };
     if (!P || !P.moveToEl) { click(); return Promise.resolve(false); }
     return _pointerMoveTo(el).then(function () { click(); return true; }, function () { click(); return true; });
+  }
+  /**
+   * 2026-11-10 v2.6.2 竹内さん「ここの部分も実際の人間が動かすようにしていく徹底的に」:
+   *   ITANDI の **すべてのクリック**をこの1本に通す。カーソルが要素まで動き、着いてから押す。
+   *   種類で「間」を変える（選ぶ系は迷う・決定系は速い）。押す中身は今まで通り el.click() 1回。
+   *   force=true … 未チェックの時だけ押す（チェックボックスの解除事故防止）。既定はそのまま押す。
+   */
+  function _humanClick(el, opts) {
+    var o = opts || {};
+    if (!el) return Promise.resolve(false);
+    var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    var tag = String(el.tagName || "").toUpperCase();
+    var type = String((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+    var kind = (tag === "SELECT" || tag === "LABEL" || (tag === "INPUT" && (type === "checkbox" || type === "radio"))) ? "choose"
+             : (tag === "BUTTON" || type === "submit" || type === "button" || tag === "A") ? "decide" : "other";
+    var click = function () {
+      try { if (P && P.tap) P.tap(); } catch (_) {}
+      try {
+        if (o.forceUnchecked) { if (el.isConnected && !el.checked) e_humanClick(l); }
+        else if (el.isConnected !== false) e_humanClick(l);
+      } catch (_) {}
+    };
+    var afterMove = function () {
+      // 着いてから「押す前の迷い」（選ぶ系 15%・決定 3%・その他 8%）
+      // 2026-11-10 v2.6.2 竹内さん「人間が迷いながらマウスもまよったりしながら考えながら入力していく」:
+      //   迷う時はカーソルが**その場で漂う**（drift）・たまに狙いを外して戻る（wander）。止まったまま待たない
+      var p = kind === "choose" ? 0.15 : (kind === "decide" ? 0.03 : 0.08);
+      if (Math.random() >= p * (0.8 + Math.random() * 0.45)) { click(); return; }
+      var r = Math.random();
+      var extra = r < 0.65 ? 250 + Math.floor(Math.random() * 350)
+                : r < 0.95 ? 700 + Math.floor(Math.random() * 900)
+                : 1800 + Math.floor(Math.random() * 2700);
+      if (P && P.wander && Math.random() < 0.35) {
+        P.wander(el, extra).then(click, click);
+      } else if (P && P.drift) {
+        P.drift(extra).then(click, click);
+      } else {
+        setTimeout(click, extra);
+      }
+    };
+    if (!P || !P.moveToEl) { afterMove(); return Promise.resolve(false); }
+    try { P.ensure(); } catch (_) {}
+    return _pointerMoveTo(el).then(function () { afterMove(); return true; }, function () { afterMove(); return true; });
   }
   function tick(el) {
     if (!el || el.checked) return;
@@ -186,9 +230,9 @@
     var inp = lbl.querySelector("input[type='checkbox']");
     if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
     if (inp) {
-      if (!inp.checked) inp.click();
+      if (!inp.checked) _humanClick(inp, { forceUnchecked: true });
     } else {
-      lbl.click();
+      _humanClick(lbl);
     }
     return true;
   }
@@ -256,7 +300,7 @@
           if (i === 0 && el.focus) el.focus();
         });
       },
-      click: function (el) { el.click(); },
+      click: function (el) { e_humanClick(l); },
       // ⚠ Escape で閉じない（178行目）。欄を離れて閉じる
       blur: function (el) { if (el.blur) el.blur(); },
       options: function (el) {
@@ -348,8 +392,8 @@
       _pointerMoveTo(b).then(function () {
         var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
         if (P && P.tap) { try { P.tap(); } catch (_) {} }
-        b.click();
-      }, function () { b.click(); });
+        _humanClick(b);
+      }, function () { _humanClick(b); });
     }
     // 完全一致
     var found = btns.find(function (b) { return norm(b.textContent) === n; });
@@ -358,7 +402,7 @@
     found = btns.find(function (b) { return norm(b.textContent).includes(n); });
     if (found) {
       console.log("[AXLX] clickBtn partial match: '" + text + "' → '" + found.textContent.trim() + "'");
-      found.click(); return true;
+      _humanClick(found); return true;
     }
     // デバッグ: 表示中の全ボタンテキストを出力
     console.log("[AXLX] clickBtn not found: '" + text + "'. Visible buttons:", btns.map(function(b){ return "'" + b.textContent.trim().slice(0,40) + "'"; }).join(", "));
@@ -372,12 +416,12 @@
     var els = [].slice.call(document.querySelectorAll("li, button, a, span, label, div[role='button']")).filter(isVis);
     // 完全一致
     var found = els.find(function (el) { return norm(el.textContent) === n; });
-    if (found) { found.click(); return true; }
+    if (found) { _humanClick(found); return true; }
     // 部分一致フォールバック
     found = els.find(function (el) { return norm(el.textContent).includes(n); });
     if (found) {
       console.log("[AXLX] clickNav partial match: '" + text + "' → '" + found.textContent.trim() + "'");
-      found.click(); return true;
+      _humanClick(found); return true;
     }
     return false;
   }
@@ -403,7 +447,7 @@
                     || (dialog.querySelector('button[aria-label="Close"]'))
                     || document.querySelector('button[aria-label="閉じる"]');
         if (closeBtn) {
-          closeBtn.click();
+          _humanClick(closeBtn);
           console.log("[AX] safeConfirm: 閉じるボタンをクリック");
         } else {
           console.warn("[AX] safeConfirm: 閉じるボタン未発見 → 確定を再試行");
@@ -502,7 +546,7 @@
                 }
                 var l = labels[clickIdx++];
                 smoothScrollTo(l);
-                l.click();
+                _humanClick(l);
                 console.log("[AX] batchCity: クリック " + clickIdx + "/" + labels.length + ": " + l.textContent.trim());
                 // 2026-11-10 人間的な動き: 区のクリックの間を一様乱数 → 対数正規（中央値寄り・たまに伸びる）。
                 //   範囲は今までと同じ（500〜900ms・8%ほどで 800〜1500ms の一息）
@@ -552,7 +596,7 @@
       if (!found) return false;
       var inp = found.querySelector("input[type='radio']");
       if (inp && inp.checked) return true;
-      found.click();
+      _humanClick(found);
       return true;
     }
 
@@ -612,7 +656,7 @@
                   });
                   var zenInp = zenLbl && zenLbl.querySelector("input");
                   if (zenInp && zenInp.checked) {
-                    zenLbl.click();
+                    zenLb_humanClick(l);
                     console.log("[AX] 全域チェックを解除");
                   }
                   setTimeout(function () {
@@ -633,7 +677,7 @@
                       }
                       matches.forEach(function (l) {
                         var inp = l.querySelector("input");
-                        if (!inp || !inp.checked) { l.click(); totalSelected++; }
+                        if (!inp || !inp.checked) { _humanClick(l); totalSelected++; }
                       });
                       console.log("[AX] 町域選択: " + town + " → " + matches.length + "件");
                     });
@@ -765,9 +809,9 @@
           _pointerMoveTo(inp || lbl).then(function () {
             var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
             if (P && P.tap) { try { P.tap(); } catch (_) {} }
-            if (inp) { if (!inp.checked) inp.click(); } else { lbl.click(); }
+            if (inp) { if (!inp.checked) _humanClick(inp, { forceUnchecked: true }); } else { _humanClick(lbl); }
           }, function () {
-            if (inp) { if (!inp.checked) inp.click(); } else { lbl.click(); }
+            if (inp) { if (!inp.checked) _humanClick(inp, { forceUnchecked: true }); } else { _humanClick(lbl); }
           });
           console.log("[AX] 駅クリック: " + name + (aliases[ai] !== name ? " (alias→" + aliases[ai] + ")" : ""));
           return true;
@@ -812,7 +856,7 @@
             done(); return;
           }
           var inp = list[i++].querySelector("input[type='checkbox']");
-          if (inp && !inp.checked) inp.click();
+          if (inp && !inp.checked) _humanClick(inp, { forceUnchecked: true });
           setTimeout(clickNext, 40 + Math.floor(Math.random() * 60));
         }
         function collectAndClick() {
@@ -823,7 +867,7 @@
           clickNext();
         }
         var allInp = allLbl && allLbl.querySelector("input[type='checkbox']");
-        if (allInp && !allInp.checked) { allInp.click(); setTimeout(collectAndClick, _hd(400)); }
+        if (allInp && !allInp.checked) { _humanClick(allInp, { forceUnchecked: true }); setTimeout(collectAndClick, _hd(400)); }
         else collectAndClick();
       }
       function clickNextLine() {
@@ -886,7 +930,7 @@
                     var inp = l.querySelector("input[type='checkbox']");
                     return inp && !inp.checked && norm(l.textContent).includes("JR") && isVis(l);
                   });
-                  jrLabels.forEach(function(l) { l.click(); });
+                  jrLabels.forEach(function(l) { _humanClick(l); });
                   if (jrLabels.length && tryClickStation(sn)) { _selectedSt.add(norm(sn)); }
                 }
               });
@@ -1124,7 +1168,7 @@
         });
         if (!lbl) return false;
         var inp = lbl.querySelector("input[type='checkbox']");
-        if (inp) { if (!inp.checked) inp.click(); } else lbl.click();
+        if (inp) { if (!inp.checked) _humanClick(inp, { forceUnchecked: true }); } else _humanClick(lbl);
         console.log("[AX] ペット相談チェック完了");
         return true;
       }
@@ -1134,7 +1178,7 @@
           return el.textContent.includes("入居条件") && el.textContent.includes("その他") && isVis(el);
         });
         if (sectionToggle) {
-          sectionToggle.click();
+          _humanClick(sectionToggle);
           setTimeout(function() {
             petEl = document.querySelector('input[name="option_id:all_in"][id="22010"]');
             if (!tryTickPet()) clickLabel("ペット相談");
@@ -1156,8 +1200,8 @@
       });
       if (skiLabel) {
         var skiInp = skiLabel.querySelector('input[type="checkbox"]');
-        if (skiInp && !skiInp.checked) skiInp.click();
-        else if (!skiInp) skiLabel.click();
+        if (skiInp && !skiInp.checked) _humanClick(skiInp, { forceUnchecked: true });
+        else if (!skiInp) skiLabe_humanClick(l);
         console.log('[AX] 敷金・礼金なし チェック完了(itandi)');
       }
     }
@@ -1167,14 +1211,14 @@
   //   画面の中の確かめ（role=dialog に 削除する/OK/はい）が出たら人と同じくそれを押す（出なければ何もしない）
   function _itClickReset(btn) {
     var _oc = window.confirm;
-    try { window.confirm = function () { _itStep("reset_confirm", "confirm"); return true; }; btn.click(); }
+    try { window.confirm = function () { _itStep("reset_confirm", "confirm"); return true; }; _humanClick(btn); }
     finally { window.confirm = _oc; }
     setTimeout(function () {
       try {
         var dlg = document.querySelector("[role=\"dialog\"]");
         if (!dlg || !isVis(dlg) || dlg.querySelector("input[name=\"regionName\"]")) return;
         var ok = [].slice.call(dlg.querySelectorAll("button")).filter(isVis).find(function (b) { return /^(削除する|削除|OK|はい|実行)$/.test(norm(b.textContent)); });
-        if (ok) { ok.click(); _itStep("reset_confirm", norm(ok.textContent).slice(0, 10)); }
+        if (ok) { _humanClick(ok); _itStep("reset_confirm", norm(ok.textContent).slice(0, 10)); }
       } catch (e) {}
     }, _hd(350));
   }
@@ -1319,9 +1363,9 @@
       var dlg = document.querySelector('[role="dialog"]');
       if (!dlg || !isVis(dlg)) return;
       var ok = [].slice.call(dlg.querySelectorAll("button")).filter(isVis).find(function (b) { return /^(削除する|削除|OK|はい|実行)$/.test(norm(b.textContent)); });
-      if (ok) { ok.click(); return; }
+      if (ok) { _humanClick(ok); return; }
       var cl = dlg.querySelector('button[aria-label="閉じる"], button[aria-label="close"], button[aria-label="Close"]');
-      if (cl) cl.click();
+      if (cl) c_humanClick(l);
     } catch (e) {}
   }
   // 読み戻し（純関数 leftovers に渡す形）
@@ -1382,7 +1426,7 @@
     });
     // ② チェックを外す（label の中の input を押す＝React に届く）
     st.checks.forEach(function (c) {
-      queue.push(function () { if (c.el && c.el.checked) { c.el.click(); ops.push("check:" + (c.name || c.label)); } });
+      queue.push(function () { if (c.el && c.el.checked) { c.e_humanClick(l); ops.push("check:" + (c.name || c.label)); } });
     });
     // ③ チップを1つずつ外す（外すたびに並びが変わるので、押す時に読み直して先頭を外す）
     FG.FILTER_ROWS.forEach(function (r) {
@@ -1647,7 +1691,7 @@
                 // 2026-10-01 入力の途中で案内モードに切り替わった時も、検索は押さない（押すのはスタッフ）
                 if (_guideOn()) { _itStep("guide_mode", "検索はスタッフ"); _safeDone("AXLX_SEARCH_BLOCKED: guide-mode: 検索はスタッフが押す"); return; }
                 var _searched = false;
-                if (btn) { btn.click(); _searched = true; } else _searched = clickBtn("検索");
+                if (btn) { _humanClick(btn); _searched = true; } else _searched = clickBtn("検索");
                 if (_itAudit) {
                   _itAudit.search_clicked = !!_searched;
                   if (!_searched) _itAudit.click_fails.push({ what: "search", text: "検索", sample: [].slice.call(document.querySelectorAll("button")).filter(isVis).map(function (b) { return b.textContent.trim().slice(0, 20); }).slice(0, 8) });

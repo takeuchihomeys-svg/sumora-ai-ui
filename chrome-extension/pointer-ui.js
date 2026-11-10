@@ -154,11 +154,67 @@
 
   function position() { return { x: _pos.x, y: _pos.y }; }
 
+  /**
+   * 2026-11-10 v2.6.2 竹内さん「人間が迷いながらマウスもまよったりしながら考えながら入力していく」:
+   *   迷っている間、カーソルが**その場で小さくうろつく**（人が「これでいいかな」と考えながら手を漂わせる形）。
+   *   ・目標の周りを少し（±8〜26px）ゆっくり往復する。大きくは動かさない（画面が暴れない）
+   *   ・ms の間だけ動いて止まる。最後は元の位置に近い所へ戻る（そのまま押せるように）
+   *   Promise は動き終わったら解決。
+   */
+  function drift(ms, opts) {
+    var o = opts || {};
+    if (!ensure()) return Promise.resolve(false);
+    var total = Math.max(120, Math.min(6000, Number(ms) || 400));
+    var radius = Number(o.radius) || 18;
+    var start = { x: _pos.x, y: _pos.y };
+    var t0 = Date.now();
+    var anim = { cancelled: false };
+    try { if (_anim) _anim.cancelled = true; } catch (_) {}
+    _anim = anim;
+    // 漂う向き（左右上下にゆらぐ）を毎回ちがう位相で
+    var ph = Math.random() * Math.PI * 2;
+    var amp = radius * (0.35 + Math.random() * 0.65);
+    return new Promise(function (resolve) {
+      function step() {
+        if (anim.cancelled) { resolve(false); return; }
+        var el = Date.now() - t0;
+        if (el >= total) {
+          _pos = start;
+          _place(start.x, start.y);
+          resolve(true);
+          return;
+        }
+        var t = el / total;
+        var wobble = Math.sin(t * Math.PI * 2 + ph) * amp * (1 - t * 0.6);
+        var wobble2 = Math.sin(t * Math.PI * 3.3 + ph * 1.7) * amp * 0.45 * (1 - t * 0.6);
+        _pos = { x: start.x + wobble, y: start.y + wobble2 };
+        _place(_pos.x, _pos.y);
+        setTimeout(step, 45 + Math.floor(Math.random() * 45));
+      }
+      step();
+    });
+  }
+
+  /** 迷う時: 目標の少し外へ動いてから戻る（人が狙いを外して直す形） */
+  function wander(el, ms) {
+    var P = this;
+    return moveToEl(el).then(function () {
+      var off = 10 + Math.random() * 22;
+      var ang = Math.random() * Math.PI * 2;
+      var p = _pos;
+      return moveTo(p.x + Math.cos(ang) * off, p.y + Math.sin(ang) * off)
+        .then(function () { return drift(Math.max(200, (Number(ms) || 500) * 0.6)); })
+        .then(function () { return moveToEl(el); });
+    });
+  }
+
   return {
     ensure: ensure,
     moveTo: moveTo,
     moveToEl: moveToEl,
     tap: tap,
+    drift: drift,
+    wander: wander,
     hide: hide,
     position: position,
     ELEMENT_ID: ID,

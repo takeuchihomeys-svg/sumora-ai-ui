@@ -417,12 +417,28 @@
     if (r < 0.95) return 700 + Math.floor(Math.random() * 900);   // 少し考え込む
     return 1800 + Math.floor(Math.random() * 2700);               // かなり迷う
   }
+  /**
+   * 2026-11-10 v2.6.2 竹内さん「人間が迷いながらマウスもまよったりしながら考えながら入力していく」:
+   *   迷っている間はカーソルを**その場で漂わせる**（止まったまま待たない）。35% は狙いを少し外して戻る。
+   *   迷いが終わったら押す。カーソルが無い環境では今まで通り（時間だけ待つ）。
+   */
+  function _hesitateThen(el, ms, done) {
+    var P = window.AxlxPointerUi;
+    if (P && P.wander && Math.random() < 0.35) { P.wander(el, ms).then(done, done); return; }
+    if (P && P.drift) { P.drift(ms).then(done, done); return; }
+    setTimeout(done, ms);
+  }
   function _scheduleClickDrain() {
     if (_clickQueueTimer || !_clickQueue.length) return;
     var item = _clickQueue.shift();
     var hesitate = _hesitateMs(item.el);
     var _planned = item.gap + hesitate, _setAt = Date.now();
     if (hesitate > 0) { try { _tmarkHesitate(item.label, hesitate); } catch (_) {} }
+    // 2026-11-10 v2.6.2 竹内さん「人間が迷いながらマウスもまよったりしながら考えながら入力していく」:
+    //   迷う時は、まず**カーソルをその要素へ動かしてから漂わせる**（迷っている間に手が漂う形）。
+    //   要素が無い（select/text の汎用アクション）時は、その場で漂わせる。迷いが終わってから押す。
+    var _hesitateDrift = hesitate > 0 && item.el && window.AxlxPointerUi && window.AxlxPointerUi.moveToEl;
+    var _startClick = function () {
     _clickQueueTimer = setTimeout(function() {
       _clickQueueTimer = null;
       _auditOp(item.label, _planned, Date.now() - _setAt);
@@ -451,6 +467,17 @@
       } catch (e) { console.error('[AX] humanClick 例外（続行）', e); }
       done();
     }, item.gap + hesitate);
+    };
+    if (_hesitateDrift) {
+      var P = window.AxlxPointerUi;
+      P.moveToEl(item.el).then(function () {
+        return (P.wander && Math.random() < 0.35) ? P.wander(item.el, hesitate) : P.drift(hesitate);
+      }).then(_startClick, _startClick);
+    } else if (hesitate > 0 && window.AxlxPointerUi && window.AxlxPointerUi.drift) {
+      window.AxlxPointerUi.drift(hesitate).then(_startClick, _startClick);
+    } else {
+      _startClick();
+    }
   }
   function isClickQueueBusy() {
     return _clickQueueTimer !== null || _clickQueue.length > 0;
