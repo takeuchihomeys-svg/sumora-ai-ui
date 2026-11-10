@@ -11,7 +11,7 @@ import { planPickupSentWrites, type ExistingSentRow, type PickupForRecord } from
 
 export type PickupSentRecordResult = { inserted: number; updated: number; images: number; skipped: string[]; error?: string };
 
-const EXISTING_COLS = "id, property_name, room_no, image_url, source, delivery, channel, pickup_id, sent_at, ad_yen, rent, ad_months";
+const EXISTING_COLS = "id, property_name, room_no, image_url, source, delivery, channel, pickup_id, sent_at, ad_yen, rent, ad_months, site";
 
 export async function recordPickupSent(opts: {
   pickups: Array<PickupForRecord & { conversation_id: string | null; property_customer_id: string | null }>;

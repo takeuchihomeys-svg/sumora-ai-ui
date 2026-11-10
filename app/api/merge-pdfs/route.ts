@@ -16,6 +16,8 @@ import { groupNoticePlan } from "@/app/lib/pickup-group-announce";
 import { enrichSummariesFromPdf, rankAndAnnotateSummariesDetailed, buildRankMaterials, loadRankConditions, RANK_FAILED_NOTICE } from "@/app/lib/pickup-rank";
 import { isPlaceholderName } from "@/app/lib/listing-text";
 import { checkPickupOwner, type BatchOwner } from "@/app/lib/pickup-owner";
+import { pickupSearchRef } from "@/app/lib/pickup-search-ref";
+import { pickupSiteOf } from "@/app/lib/search-widen-chain";
 
 // 2026-09-24: 応答は今まで通り早く返し、売上サポへの記録（waitUntil）で DeepSeek が資料を読む時間（1枚 27〜40秒・並列）を確保するため 300 に
 export const maxDuration = 300;
@@ -572,6 +574,8 @@ export async function POST(req: NextRequest) {
               // v2.5.81 この回の一覧を検索した時の条件（形が合う時だけ・8KB まで）
               searchConditions: body.search_stamp && typeof body.search_stamp === "object" && (body.search_stamp as { v?: unknown }).v === 1 && JSON.stringify(body.search_stamp).length <= 8000 ? body.search_stamp : null,
               groupNotice: notice.deferred ? "deferred" : null,
+              // 2026-11-10 この PDF を見つけた検索の回・一括の指示（v_search_runs が結ぶ・pickup-search-ref.ts）
+              ...pickupSearchRef(body),
             }))).then(async (rec) => {
               // 印を付けて記録できなかった（失敗・0行・列が無い）＝解析のアナウンスが来ない → 今まで通りグループに送る
               if (notice.deferred && (rec.error || rec.rows === 0 || rec.groupNotice !== "deferred")) await fallbackPush(rec.error ? "record_error" : rec.rows === 0 ? "no_rows" : "no_mark");
@@ -691,6 +695,8 @@ export async function POST(req: NextRequest) {
                 //   読み手の側で delivery を見て分ける（除外系は共有も数えるまま・app/lib/sent-delivery.ts）
                 delivery: "shared",
                 channel: "extension_group",
+                // 2026-11-10 どのサイトから送ったか（realpro/itandi/reins・分からない時は null。DB の trigger でも揃える）
+                site: pickupSiteOf(site),
               }));
             const gotRent = toInsert.filter((r) => r.rent !== null).length;
             if (toInsert.length > 0) {

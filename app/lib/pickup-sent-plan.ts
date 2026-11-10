@@ -20,6 +20,7 @@ import { isCustomerRow, rowChannel } from "./sent-delivery";
 import { parseRentFromSummary } from "./property-summary-parse";
 import { parsePropertyFacts } from "./property-brain";
 import { pickSendImageUrl } from "./pickup-send-image";
+import { pickupSiteOf } from "./search-widen-chain";
 
 /**
  * 2026-09-27 YUMA の E2E（AIXツール → AIX物件ピックアップ 5件）: お客様に送った行（channel=pickup）の家賃・AD の月数が全部 null だった
@@ -44,6 +45,8 @@ export type PickupForRecord = {
   summary_text?: string | null;
   trim_image_url: string | null;
   page_image_url: string | null;
+  /** 2026-11-10 どのサイトの物件か（property_pickups.site）。sent_properties.site に写す（無ければ NULL） */
+  site?: string | null;
 };
 
 export type ExistingSentRow = {
@@ -59,6 +62,7 @@ export type ExistingSentRow = {
   ad_yen?: number | null;
   rent?: number | null;
   ad_months?: number | null;
+  site?: string | null;
 };
 
 export type PickupSentInsert = {
@@ -76,6 +80,8 @@ export type PickupSentInsert = {
   ad_months: number | null;
   sent_at: string;
   property_url: null;
+  /** 2026-11-10 出所のサイト（realpro/itandi/reins）。分からない時は null */
+  site: "realpro" | "itandi" | "reins" | null;
 };
 
 export type PickupSentUpdate = { id: string; pickupId: number; patch: Record<string, unknown> };
@@ -137,6 +143,9 @@ export function planPickupSentWrites(input: {
       if (hitChannel === null) patch.channel = "pickup";
       if (!hit.image_url && img) patch.image_url = img;
       if (hit.ad_yen == null && p.ad_yen != null) patch.ad_yen = p.ad_yen;
+      // 2026-11-10 出所のサイトは空の時だけ補う（画像の読み取りの行は site が無い）
+      const pSite = pickupSiteOf(p.site);
+      if (hit.site == null && pSite) patch.site = pSite;
       const ra = pickupRentAd(p.summary_text);
       if (hit.rent == null && ra.rent != null) patch.rent = ra.rent;
       if (hit.ad_months == null && ra.ad_months != null) patch.ad_months = ra.ad_months;
@@ -157,6 +166,7 @@ export function planPickupSentWrites(input: {
         ...pickupRentAd(p.summary_text),
         sent_at: input.now,
         property_url: null,
+        site: pickupSiteOf(p.site),
       });
     }
     if (img) imageRows.push({ image_url: img, conversation_id: input.conversationId, property_name: p.property_name, room_no: roomNo || null, source: "aix:property_send", channel: "pickup" });

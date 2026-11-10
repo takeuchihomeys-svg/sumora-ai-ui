@@ -5311,6 +5311,191 @@ $$;
 
 -- 戻す時: rent_observe_pickup_apply・rent_observe_sent の先頭の is_exam_conversation の1行を外して流し直す（DROP FUNCTION IF EXISTS is_exam_conversation(text) はその後）
 
+-- ══ 拡張（物件検索）の裏データを分かりやすく（2026-11-10・竹内さん OK・apply_migration ext_db_site_runs_views_1110 と同じ）══
+-- 地図: chrome-extension/DB_STRUCTURE.md。サイトの正の呼び名は realpro / itandi / reins（拡張とやり取りする automation_commands.sites だけ realnetpro のまま）
+-- sent_properties.site の埋め戻し（pickup_id → property_pickups.site）は migrate に入れない（22時以降に1回だけ手で流す）
+-- ── (a1) サイトの呼び名を1つに揃える関数（データは書き換えない）────────────────
+-- 正の呼び名: 'realpro' | 'itandi' | 'reins'。知らない値はそのまま返す（捨てない）。
+CREATE OR REPLACE FUNCTION ext_site_key(v text) RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
+$$
+  SELECT CASE
+    WHEN v IS NULL THEN NULL
+    WHEN lower(btrim(v)) IN ('realpro', 'realnetpro', 'リアプロ', 'rp') THEN 'realpro'
+    WHEN lower(btrim(v)) IN ('itandi', 'itandi bb', 'イタンジ') THEN 'itandi'
+    WHEN lower(btrim(v)) IN ('reins', 'レインズ') THEN 'reins'
+    ELSE v
+  END
+$$;
+COMMENT ON FUNCTION ext_site_key(text) IS '拡張のサイトの呼び名を realpro/itandi/reins に揃える（realnetpro→realpro）。表・view で共通に使う';
+
+-- 数字でない値（「1.5ヶ月」等）で view が落ちないように: 数字だけ numeric に・それ以外は NULL
+CREATE OR REPLACE FUNCTION ext_num(v text) RETURNS numeric
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
+$$
+  SELECT CASE WHEN v ~ '^[[:space:]]*-?[0-9]+([.][0-9]+)?[[:space:]]*$' THEN btrim(v)::numeric END
+$$;
+
+-- ── (a2) 入る時に揃える（拒まない・書き換えるだけ）─────────────────────────────
+-- CHECK 制約で拒むと、古い拡張が 'realnetpro' を送った時に行ごと失う（静かに壊れる）ので、BEFORE INSERT/UPDATE で揃える。
+CREATE OR REPLACE FUNCTION ext_site_normalize_trg() RETURNS trigger
+LANGUAGE plpgsql AS
+$$
+BEGIN
+  NEW.site := ext_site_key(NEW.site);
+  RETURN NEW;
+END
+$$;
+
+-- site の列がある表（11/10 の本番の値: 全部 realpro/itandi/reins/null＝今は揃っている。今後の入口の歯止め）
+DROP TRIGGER IF EXISTS trg_site_norm ON property_pickups;
+CREATE TRIGGER trg_site_norm BEFORE INSERT OR UPDATE OF site ON property_pickups FOR EACH ROW EXECUTE FUNCTION ext_site_normalize_trg();
+DROP TRIGGER IF EXISTS trg_site_norm ON property_candidate_pools;
+CREATE TRIGGER trg_site_norm BEFORE INSERT OR UPDATE OF site ON property_candidate_pools FOR EACH ROW EXECUTE FUNCTION ext_site_normalize_trg();
+DROP TRIGGER IF EXISTS trg_site_norm ON property_brain_judgments;
+CREATE TRIGGER trg_site_norm BEFORE INSERT OR UPDATE OF site ON property_brain_judgments FOR EACH ROW EXECUTE FUNCTION ext_site_normalize_trg();
+DROP TRIGGER IF EXISTS trg_site_norm ON search_audits;
+CREATE TRIGGER trg_site_norm BEFORE INSERT OR UPDATE OF site ON search_audits FOR EACH ROW EXECUTE FUNCTION ext_site_normalize_trg();
+DROP TRIGGER IF EXISTS trg_site_norm ON search_audit_causes;
+CREATE TRIGGER trg_site_norm BEFORE INSERT OR UPDATE OF site ON search_audit_causes FOR EACH ROW EXECUTE FUNCTION ext_site_normalize_trg();
+DROP TRIGGER IF EXISTS trg_site_norm ON screen_watch_events;
+CREATE TRIGGER trg_site_norm BEFORE INSERT OR UPDATE OF site ON screen_watch_events FOR EACH ROW EXECUTE FUNCTION ext_site_normalize_trg();
+DROP TRIGGER IF EXISTS trg_site_norm ON property_sheet_facts;
+CREATE TRIGGER trg_site_norm BEFORE INSERT OR UPDATE OF site ON property_sheet_facts FOR EACH ROW EXECUTE FUNCTION ext_site_normalize_trg();
+DROP TRIGGER IF EXISTS trg_site_norm ON rent_observations;
+CREATE TRIGGER trg_site_norm BEFORE INSERT OR UPDATE OF site ON rent_observations FOR EACH ROW EXECUTE FUNCTION ext_site_normalize_trg();
+DROP TRIGGER IF EXISTS trg_site_norm ON chrome_extension_feedback;
+CREATE TRIGGER trg_site_norm BEFORE INSERT OR UPDATE OF site ON chrome_extension_feedback FOR EACH ROW EXECUTE FUNCTION ext_site_normalize_trg();
+
+-- automation_commands.sites（'realnetpro'）と extension_devices.current_site（'realnetpro'）は **値を変えない**。
+--   拡張の background.js が 'realnetpro' で分岐している（_bulkSite === "realnetpro" 等）・サーバーも 'realnetpro' で積む
+--   （search-widen-chain.ts:56 commandSiteOf・auto-search-schedule.ts:275・web-brain-search.ts:15・search-override.ts:27）。
+--   代わりに読むための揃えた列を足す（生成列＝書く側は何も変えなくてよい）。
+ALTER TABLE automation_commands ADD COLUMN IF NOT EXISTS site_keys text[]
+  GENERATED ALWAYS AS (array_replace(sites, 'realnetpro', 'realpro')) STORED;
+COMMENT ON COLUMN automation_commands.site_keys IS 'sites を realpro/itandi/reins に揃えた写し（生成列・読む用）。拡張とのやり取りは sites（realnetpro）のまま';
+ALTER TABLE extension_devices ADD COLUMN IF NOT EXISTS current_site_key text
+  GENERATED ALWAYS AS (CASE WHEN current_site = 'realnetpro' THEN 'realpro' ELSE current_site END) STORED;
+
+
+-- ── (f) ピックアップ・候補に「どの検索の回か」を持たせる（search_audits.run_id へ結ぶ）──────────────
+-- 11/10 本番: 直近14日の pickups 129 束のうち run_id で結べる物 0・同じお客様×サイト×時刻の突き合わせで 96（74%）だけ。
+-- merge-pdfs は既に batch_owner.run_id を受け取っている（route.ts:277・369）＝サーバーだけで埋められる。
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS search_run_id TEXT;
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS search_command_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_pickups_search_run ON property_pickups(search_run_id) WHERE search_run_id IS NOT NULL;
+COMMENT ON COLUMN property_pickups.search_run_id IS 'この PDF を見つけた検索の1回（search_audits.run_id）。merge-pdfs の batch_owner.run_id／search_stamp から';
+COMMENT ON COLUMN property_pickups.search_command_id IS '一括検索の指示（automation_commands.id）。merge-pdfs の search_command_id';
+ALTER TABLE property_candidate_pools ADD COLUMN IF NOT EXISTS search_run_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_pcp_search_run ON property_candidate_pools(search_run_id) WHERE search_run_id IS NOT NULL;
+COMMENT ON COLUMN property_candidate_pools.search_run_id IS '候補を集めた検索の1回（search_audits.run_id）。拡張の log-property-candidates に run_id を足してもらう（Cursor）';
+
+
+-- ── (b) sent_properties に site（どのサイトから送ったか）────────────────────────
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS site TEXT;
+COMMENT ON COLUMN sent_properties.site IS '送った物件の出所のサイト（realpro/itandi/reins）。NULL＝分からない（LINE の画像の読み取り vision・スタッフの画像・古い行）';
+DROP TRIGGER IF EXISTS trg_site_norm ON sent_properties;
+CREATE TRIGGER trg_site_norm BEFORE INSERT OR UPDATE OF site ON sent_properties FOR EACH ROW EXECUTE FUNCTION ext_site_normalize_trg();
+CREATE INDEX IF NOT EXISTS idx_sent_props_site ON sent_properties(site, sent_at DESC) WHERE site IS NOT NULL;
+-- 埋め戻しは 06_backfill_after22.sql（22時以降に別に流す）
+
+
+-- ── (e) リアプロ用・ITANDI 用の読みやすい view ──────────────────────────────
+-- 1行＝検索の1回（search_audits）＋その回の指示・ピックアップ・送付の数。
+-- 結び方: 指示＝command_id、ピックアップ＝search_run_id（(f) の後）→ 無い古い行は お客様×サイト×時刻（30分＋10分）で突き合わせ。
+CREATE OR REPLACE VIEW v_search_runs WITH (security_invoker = true) AS
+SELECT
+  a.run_id,
+  a.created_at                         AS started_at,
+  a.finished_at,
+  ext_site_key(a.site)                 AS site,
+  a.property_customer_id,
+  a.mode, a.trigger, a.is_wide, a.area_mode, a.pass, a.status, a.severity, a.cause_key,
+  a.ext_version,
+  a.command_id,
+  c.command_type,
+  c.payload ->> 'source'               AS command_source,
+  ext_num(c.payload ->> 'rp_update_days')::int     AS cmd_rp_update_days,
+  ext_num(c.payload ->> 'itandi_update_days')::int AS cmd_itandi_update_days,
+  a.intended,
+  a.filled,
+  a.result,
+  pk.pickup_rows,
+  pk.pickup_sent_rows,
+  pk.pickup_recommended,
+  sp.sent_rows
+FROM search_audits a
+LEFT JOIN automation_commands c ON c.id::text = a.command_id
+LEFT JOIN LATERAL (
+  SELECT count(*)                                   AS pickup_rows,
+         count(*) FILTER (WHERE p.status = 'sent')  AS pickup_sent_rows,
+         count(*) FILTER (WHERE p.recommended > 0)  AS pickup_recommended,
+         array_agg(p.id)                            AS pickup_ids
+  FROM property_pickups p
+  WHERE p.search_run_id = a.run_id
+     OR (p.search_run_id IS NULL
+         AND p.property_customer_id::text = a.property_customer_id
+         AND ext_site_key(p.site) = ext_site_key(a.site)
+         AND p.created_at BETWEEN a.created_at AND coalesce(a.finished_at, a.created_at + interval '30 minutes') + interval '10 minutes')
+) pk ON true
+LEFT JOIN LATERAL (
+  SELECT count(*) AS sent_rows FROM sent_properties s WHERE s.pickup_id = ANY(pk.pickup_ids)
+) sp ON true;
+COMMENT ON VIEW v_search_runs IS '検索の1回＝1行（指示・条件・入った値・結果・ピックアップ・送付）。site は realpro/itandi/reins に揃えてある';
+
+CREATE OR REPLACE VIEW v_search_runs_realpro WITH (security_invoker = true) AS
+SELECT run_id, started_at, finished_at, property_customer_id, mode, trigger, is_wide, area_mode, status, severity, cause_key,
+       command_id, command_source, cmd_rp_update_days AS update_days,
+       intended -> 'route_ids'      AS route_ids,      -- リアプロの路線（route_id）
+       intended -> 'station_names'  AS station_names,
+       intended -> 'city_codes'     AS city_codes,     -- リアプロの区のコード
+       intended -> 'town_names'     AS town_names,     -- リアプロの町字
+       intended -> 'rent_max'       AS rent_max,
+       intended -> 'floor_plan'     AS floor_plan,
+       filled -> 'guide_stations'   AS guide_stations, -- 案内モードで押せなかった駅
+       result, pickup_rows, pickup_sent_rows, pickup_recommended, sent_rows
+FROM v_search_runs WHERE site = 'realpro';
+
+CREATE OR REPLACE VIEW v_search_runs_itandi WITH (security_invoker = true) AS
+SELECT run_id, started_at, finished_at, property_customer_id, mode, trigger, is_wide, area_mode, status, severity, cause_key,
+       command_id, command_source,
+       coalesce(cmd_itandi_update_days, ext_num(intended ->> 'rp_update_days')::int) AS update_days, -- ⚠ 今の拡張は ITANDI でも rp_update_days の鍵で入れる
+       intended -> 'itandi_lines'   AS itandi_lines,   -- ITANDI の路線ラベル（高速電気軌道第1号線(…)）
+       intended -> 'station_names'  AS station_names,
+       intended -> 'ward_names'     AS ward_names,
+       intended -> 'rent_max'       AS rent_max,
+       intended -> 'floor_plan'     AS floor_plan,
+       filled -> 'guide_stations'   AS guide_stations,
+       result, pickup_rows, pickup_sent_rows, pickup_recommended, sent_rows
+FROM v_search_runs WHERE site = 'itandi';
+
+-- 候補（property_candidate_pools.candidates）を1件1行に開いた view。リアプロと ITANDI で鍵の形が違う（00_findings.md の表）ので、
+-- 共通の鍵は列に・サイトだけの鍵は raw に残す。
+CREATE OR REPLACE VIEW v_search_candidates WITH (security_invoker = true) AS
+SELECT
+  p.id                 AS pool_id,
+  ext_site_key(p.site) AS site,
+  p.property_customer_id,
+  p.sent_at,
+  p.search_run_id,
+  ext_num(c ->> 'rank')::int       AS rank,
+  c ->> 'name'               AS property_name,
+  c ->> 'room_no'            AS room_no,        -- リアプロは 30日で 12/642 しか入っていない（ITANDI は全部）
+  ext_num(c ->> 'rent')          AS rent,
+  ext_num(c ->> 'admin_fee_yen') AS admin_fee_yen,
+  c ->> 'floor_plan'         AS floor_plan,
+  ext_num(c ->> 'area_sqm')      AS area_sqm,
+  c ->> 'station'            AS station,
+  ext_num(c ->> 'walk_minutes')  AS walk_minutes,
+  c ->> 'ward'               AS ward,
+  ext_num(c ->> 'ad_months')     AS ad_months,
+  ext_num(c ->> 'ad_yen')        AS ad_yen,
+  c ->> 'pdf_url'            AS pdf_url,
+  c -> 'src'                 AS src,           -- 値の出所（ext＝拡張が読んだ／text:bld_text 等＝生の文字から埋めた）
+  c                          AS raw
+FROM property_candidate_pools p
+CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.candidates) = 'array' THEN p.candidates ELSE '[]'::jsonb END) c;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

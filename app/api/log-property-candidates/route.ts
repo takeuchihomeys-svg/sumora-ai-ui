@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { enrichCandidate, clipRawForStorage, FACTS_VERSION } from "@/app/lib/candidate-facts";
+import { pickupSearchRef } from "@/app/lib/pickup-search-ref";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -42,6 +43,8 @@ export async function POST(req: NextRequest) {
       customer_name: customer_name || null,
       site: site || null,
       candidates: rows,
+      // 2026-11-10 候補を集めた検索の1回（search_audits.run_id）。拡張が search_run_id を送るまでは null（形の合わない値も null）
+      search_run_id: pickupSearchRef(body).searchRunId,
       ...(withVersion ? { facts_version: FACTS_VERSION } : {}),
     });
     let { error } = await insert(true);
