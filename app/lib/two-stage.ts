@@ -746,3 +746,16 @@ export function pickupDirectionWithBrainAsk(
   const clip = b.length <= 140 ? b : `${b.slice(0, 140)}…`;
   return `${v.direction}【ブレインの読み（依頼の中身）: ${clip}】→ この読みにあるお客様のご条件・エリア・物件・ご質問は省かず具体的に入れる（ピックアップの約束の形・内覧や申込の一文を足さない事・物件を送るのは後で AIX の決まりは上のまま）`;
 }
+
+/**
+ * 2026-11-10 作業員1（統括役の頼み・q118）: 初回に条件がそろった番で、ブレインの条件ヒアリングを初回の守りがピックアップ（property_send）に変えた時、
+ *   2段（ピックアップの約束の返信）はこの前で決まり済み（ヒアリングの番として null）＝守りが AIX を消して「返信」だけになっていた（rfp-on-full q118#1）。
+ *   この時だけピックアップの約束の2段を作る（竹内さんは条件を復唱してピックアップの約束・spec q118）。既定 off（FIRST_CONTACT_READY_TWO_STAGE=on）
+ */
+export function firstContactReadyTwoStageOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.FIRST_CONTACT_READY_TWO_STAGE ?? "").trim().toLowerCase() === "on";
+}
+export function firstContactReadyPickupTwoStage(customerText: string, env?: Record<string, string | undefined>): TwoStageVerdict | null {
+  if (!firstContactReadyTwoStageOn(env)) return null;
+  return resolveTwoStage({ finalAix: "property_send", decisionSource: "guard:first_contact", pickupReady: false, postApply: false, customerText, ackOnly: false, firstContact: true });
+}
