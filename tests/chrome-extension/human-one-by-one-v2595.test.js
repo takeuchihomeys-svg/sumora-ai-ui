@@ -99,6 +99,10 @@ ok("止められる（⏹ 止める＝いまの1件が終わってから）", /f
 ok("結果が出たら自動で始まる（Case C・同じ一覧で二度始めない）", /_autoPdfSig/.test(bd) && /自動モード: 結果が出たので印刷用PDFを1件ずつ押して送ります/.test(bd));
 ok("120秒たっても1件が終わらない時は次へ（止まらない）", /waited > 120000/.test(bd));
 ok("点検に残す（auto_pdf_start・auto_pdf_end）", /_tmark\("auto_pdf_start"/.test(bd) && /_tmark\("auto_pdf_end"/.test(bd));
+ok("自動モードでは古い「全ページ送る」を走らせない（Case A が自動押下へ）", /if \(_hasNewBtn && _autoModeOn && !_staffModeOn\)/.test(bd) && /自動モードなので印刷用PDFを1件ずつ押して送ります/.test(bd));
+ok("「自動」に切り替えた時点でも始まる（_maybeAutoPressOnLoad）", /function _maybeAutoPressOnLoad\(\)/.test(bd) && /if \(_autoModeOn\) \{ try \{ setTimeout\(_maybeAutoPressOnLoad, 800\); \}/.test(bd));
+ok("一覧が出た時点でも始まる（検索の完了合図に頼らない）", /_maybeAutoPressOnLoad\(\);\s*\}\s*\/\/ 自動で押し始めた/.test(bd) || /一覧が出た時点で自動で押し始める/.test(bd));
+ok("自動モードでは古いページ送りの継続もしない", /!\(_autoModeOn && !_staffModeOn\)/.test(bd));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

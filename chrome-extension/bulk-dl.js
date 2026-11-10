@@ -312,6 +312,9 @@
     function _applyAutoMode(st) {
       _autoModeOn = _readAutoMode(st);
       _guideOff = !_GUIDE_ONLY || _autoModeOn;
+      // 2026-11-10 竹内さん「自動モードの時は自動で押しておこなわれるようにする」:
+      //   「自動」に切り替えた時点でも、いま出ている一覧で自動押下を始める（切り替え直後に押しに行く）
+      if (_autoModeOn) { try { setTimeout(_maybeAutoPressOnLoad, 800); } catch (_) {} }
     }
     chrome.storage.local.get(["guideMode", "staffMode", "staffModeAt", "aixMode", "autoModeAt"], function (r) { _applyAutoMode(r); });
     chrome.storage.onChanged.addListener(function (ch, area) {
@@ -506,9 +509,20 @@
     brainPreview();
 
     // Case A: fill-done 受信済み かつ スナップショット前にない新しい結果が出た
+    // 2026-11-10 竹内さん「自動モードの時は自動で押しておこなわれるようにする」:
+    //   自動モードの時は **古い「全ページ送る」（autoSendAllPages）ではなく、新しい「印刷用PDFを1件ずつ押して送る」** を使う。
+    //   旧はここで autoSendAllPages が走って _pendingAutoSendDispatched が立ち、下の Case C（自動押下）が動かなかった。
     if (_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
       var _hasNewBtn = tracked.some(function(item) { var k = item.btn.href || item.btn.getAttribute('href') || ''; return k && !_preAutofillBtns.has(k); });
-      if (_hasNewBtn) {
+      if (_hasNewBtn && _autoModeOn && !_staffModeOn) {
+        _autoSendArmed = false;
+        try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
+        console.log("[AXLX bulk-dl][auto] Case A: 新結果検出 → 自動モードなので印刷用PDFを1件ずつ押して送ります");
+        _tmark("results", "rows=" + tracked.length);
+        _pendingAutoSendDispatched = true;
+        _autoPdfSig = tracked.map(function (t) { return _urlKey(t.btn && t.btn.href); }).join(",").slice(0, 3000);
+        setTimeout(function () { autoPressPdfs(); }, 1200 + Math.floor(Math.random() * 900));
+      } else if (_hasNewBtn) {
         _autoSendArmed = false;
         _pendingAutoSendDispatched = true;
         try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
@@ -521,7 +535,7 @@
     // !_autoSendArmed: fill-done 受信直後（新顧客の新結果待ち中）は Case B を発火させない。
     // armed 中に発火すると前顧客の state（getAutoSendState）を使って
     // 次顧客の DOM 結果を前顧客名で誤送信するバグが発生する。
-    else if (!_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched) {
+    else if (!_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched && !(_autoModeOn && !_staffModeOn)) {
       var _resumeState = getAutoSendState();
       if (_resumeState && _resumeState.active) {
         _pendingAutoSendDispatched = true;
@@ -549,9 +563,31 @@
         setTimeout(function () { autoPressPdfs(); }, 1500 + Math.floor(Math.random() * 1200));
       }
     }
+    // 2026-11-10 竹内さん「自動モードの時は自動で押しておこなわれるようにする」: 一覧が出た時点で自動で押し始める（検索の完了合図に頼らない）
+    _maybeAutoPressOnLoad();
   }
   // 自動で押し始めた一覧の印（同じ一覧で二度始めない）
   var _autoPdfSig = "";
+
+  /**
+   * 2026-11-10 竹内さん「自動モードの時は自動で押しておこなわれるようにする」:
+   *   検索の完了合図（fill-done）が来ない経路でも、**自動モードなら一覧が出た時点で自動で押し始める**。
+   *   画面を開いた時・一覧が描き直された時に呼ぶ（同じ一覧で二度始めない・スタッフモードでは動かない）。
+   */
+  function _maybeAutoPressOnLoad() {
+    if (_autoPdfRun || !_autoModeOn || _staffModeOn) return;
+    if (_guideBlocksAuto("autoOnLoad")) return;
+    if (tracked.length === 0) return;
+    var sig = tracked.map(function (t) { return _urlKey(t.btn && t.btn.href); }).join(",").slice(0, 3000);
+    if (!sig || sig === _autoPdfSig) return;
+    // まだ1件も押していない一覧だけ（既に送った行がある一覧の描き直しでは始めない）
+    var fresh = tracked.some(function (t) { return t.btn && !_onePdfSent[t.btn.href]; });
+    if (!fresh) return;
+    _autoPdfSig = sig;
+    console.log("[AXLX bulk-dl][auto] 自動モード: 一覧が出たので印刷用PDFを1件ずつ押して送ります（" + tracked.length + "行）");
+    _tmark("auto_pdf_load", "rows=" + tracked.length);
+    setTimeout(function () { autoPressPdfs(); }, 1500 + Math.floor(Math.random() * 1200));
+  }
 
   // ── フローティングバー ────────────────────────────
   function ensureBar() {
