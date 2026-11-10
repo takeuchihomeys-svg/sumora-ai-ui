@@ -267,6 +267,7 @@ import { buildScreeningRoomsBrainText } from "@/app/lib/listing-deal-status";
 import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 // 2026-09-30 手続きの質問（審査・入居までの期間と流れ・必要書類）は返信で答える／「確認した」系は資料に記載あり→資料・無し→AIX【確認した】（みこと事例）
 import { loadProcedureAnswerWithin, loadConfirmTopicRoutesWithin, type ProcedureAnswerMaterial, type ConfirmTopicMaterial } from "@/app/lib/procedure-answer-server";
+import { alignProcedureAsks, alignProcedurePriorities, procedureGeneralAskReplyOn } from "@/app/lib/procedure-ask-align"; // 2026-11-10 作業員1 型2 q374
 import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote, procedureMoveInBrainLine, procedurePointsToProperty, procedureUnknownPointsOnlyOn } from "@/app/lib/procedure-question";
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
@@ -278,6 +279,13 @@ import { brainOpenerMetaEnabled, normalizeBrainOpener } from "@/app/lib/opener-r
 import { brainFastSlowEnabled, brainSlowSecondEnabled, decideTurnDifficulty, fastDrops, fastEscapeReason, routeFingerprint, pickMajority, BRAIN_FAST_SLOW_VERSION, type FastSlowRecord } from "@/app/lib/brain-fast-slow"; // 2026-10-22 慣れた事は速く・難しい事はじっくり
 // 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
 import { mindsetFreshOutputItem, emotionChoicesText, normalizeMindset, mindsetEmotionLabel, customerMindsetEnabled, type CustomerMindset } from "@/app/lib/customer-mindset";
+
+/** 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番の turn_contract の asks（promise→reply）をそろえる（PROCEDURE_GENERAL_ASK_REPLY・11/11 既定 on・止める =off） */
+function procedureAlignContract<T extends { asks?: unknown }>(raw: T | null, replyTurn: boolean, conversationId: string): T | null {
+  const r = alignProcedureAsks(raw, { on: procedureGeneralAskReplyOn(), replyTurn });
+  if (r.changed) console.log(JSON.stringify({ tag: "brain:procedure-ask-align", conversationId, part: "turn_contract", changed: r.changed }));
+  return r.contract;
+}
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -5933,7 +5941,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       const cov = ensureAsksCovered(items0, asksForCov);
       const rec = reconcilePrioritiesWithAix(cov.items, finalAix ?? null, { ackOnly: !asksForCov.some((a) => a.quote.trim()) });
       priorityItems = rec.items;
-      priorityRec = priorityRecord(rec.items, cov, rec, priorityPulled);
+      // 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番は、その問いの項目の confirm を answer_now に（PROCEDURE_GENERAL_ASK_REPLY・11/11 既定 on・止める =off・procedure-ask-align.ts）
+      const procAlign = alignProcedurePriorities(priorityItems, { on: procedureGeneralAskReplyOn(), replyTurn: procedureDecision === "reply" && !finalAix && !twoStage });
+      if (procAlign.changed && procAlign.items) { priorityItems = procAlign.items; console.log(JSON.stringify({ tag: "brain:procedure-ask-align", conversationId, part: "priorities", changed: procAlign.changed })); }
+      priorityRec = priorityRecord(priorityItems, cov, rec, priorityPulled);
       console.log(JSON.stringify({ tag: "brain:priority", conversationId, raw: items0.length, ...priorityRec, pulled: undefined }));
       if (BRAIN_MESSAGE_PLAN_ON) {
         const mp = alignPlanWithPriorities(normalizeMessagePlan((parsed as { message_plan?: unknown }).message_plan), priorityItems);
@@ -6126,7 +6137,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 10/09 調査の担当: 決定論の規則で finalAix を変えた時は本質も合わせる（AIX が外れて2段の約束になった項目は promise に・食い違いは記録）
       // 2026-10-13 P0: 確認事項の候補ごとの状態（済み／約束済み／まだ／取り下げ・どの手段で）。画面の帯・一覧のバッジがそのまま使う（request-ledger.applyBrainRequestStatus）
       request_status: requestCands.length ? (await import("@/app/lib/request-ledger")).normalizeBrainRequestStatus((parsed as { request_status?: unknown }).request_status, requestCands, requestStatusAt) ?? undefined : undefined,
-      turn_contract: TURN_CONTRACT_BRAIN_ON ? (((tc0) => tc0 && openSearchQuote ? { ...tc0, open_search: openSearchQuote } : tc0)(exhaustContract(reconcileTurnContractWithAix(normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract), finalAix ?? null, conversationId), !!exhaustedNote && exhaustedNote !== SEARCH_SPLIT_EXHAUSTED_NOTE)) ?? undefined) : undefined,
+      turn_contract: TURN_CONTRACT_BRAIN_ON ? (((tc0) => tc0 && openSearchQuote ? { ...tc0, open_search: openSearchQuote } : tc0)(exhaustContract(procedureAlignContract(reconcileTurnContractWithAix(normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract), finalAix ?? null, conversationId), procedureDecision === "reply" && !finalAix && !twoStage, conversationId), !!exhaustedNote && exhaustedNote !== SEARCH_SPLIT_EXHAUSTED_NOTE)) ?? undefined) : undefined,
       aix_llm: normalizeAixActionKey(parsed.aix) ?? undefined,
       // 2026-10-15 追加の調査（brain-deep-check）: かけた番だけ（記録・digest.dc）
       deep_check: deepCheckInfo ?? undefined,
