@@ -3806,7 +3806,7 @@ ${history}`;
         const { ownerBookForTurn } = await import("@/app/lib/owner-thinking-book-server");
         const lastStaffForBook = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim())?.text ?? null;
         const ob = await Promise.race([
-          ownerBookForTurn(supabase, { scene: sceneNow, customerTurn: unrepliedTurn.text ?? "", lastStaff: lastStaffForBook, sentProps: sentProps.length, promise: !!promiseBrainText.trim() }),
+          ownerBookForTurn(supabase, { scene: sceneNow, customerTurn: unrepliedTurn.text ?? "", lastStaff: lastStaffForBook, sentProps: sentProps.length, promise: !!promiseBrainText.trim(), forWho: "brain" }),
           new Promise<null>((r) => setTimeout(() => r(null), 2_500)),
         ]);
         if (ob?.block) priorityPulledText = priorityPulledText ? `${priorityPulledText}\n\n${ob.block}` : ob.block;

@@ -54,6 +54,8 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
   const postApply = pa?.postApply === true;
   // 2026-10-07 uran.: お礼・了承の番で下書きが読むべき範囲の外の行為を書いたか（下書きの欄が __SHOWN__ の時は最初の下書き）
   const upto = ctx.msgs.filter((m) => P(m.created_at) <= P(w.customerLastAt));
+  // この番のお客様の発言（見張りの場面・M4 の物差しが使う）
+  const customerText = ctx.msgs.filter((m) => m.sender === "customer" && P(m.created_at) >= P(t.customer_turn_at) - 1000 && P(m.created_at) <= P(w.customerLastAt) + 1000).map((m) => m.text ?? "").join("\n");
   // 2026-10-07: 下書きの欄が __SHOWN__（画面が表示した印）の番は draft_first で比べる（旧は返信の番の 39% を「印だけ」の na にしていた）
   const pick = pickJudgeDraft({ ...t, customer_last_at: w.customerLastAt });
   // 読むべき範囲の外の行為は前と同じく draft_first まで見る（uran. の見張り・スタッフが返さなかった番の数え方は変えない）
@@ -61,6 +63,7 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
   // 2026-10-08 返事を書いた人（直した所の表記→無ければ送った文全体の「確か」だけ）。STAFF_WRITER_SPLIT=off で渡さない
   const staffWriter = staffWriterSplitEnabled() ? staffWriterOfBurst(cleanDraft(pick.draft).text, w.texts.filter((x) => x.burst).map((x) => x.text).join("\n")) : null;
   const j = judgeTurn({
+    customerText, // 2026-11-11 M4（物差し）: 内覧の当日の段取りの番か
     draft: pick.draft, sentinel: t.draft_sentinel, brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode,
     convStatus: t.conv_status, hasBrain: (t.brain_versions ?? 0) > 0, window: w, outOfTopicActs: topicOut, staffWriter,
     // 2026-10-13 v7「手打ちでも AIX の番」: 引用の照合は番の最後のお客様の発言までの会話（msgs は番の4日前から）。戻す: LINE_WATCH_STAFF_FACT=off
@@ -78,7 +81,6 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
     return inTurn && P(d.created_at) <= until;
   }).pop() ?? null;
   // 2026-11-11 見張り専用の場面（watchScenes・LINE_WATCH_SCENE_V2=off で戻す）: TPO の落ちる型とお客様の文から場面を引く（generate-reply の場面は変えない）
-  const customerText = ctx.msgs.filter((m) => m.sender === "customer" && P(m.created_at) >= P(t.customer_turn_at) - 1000 && P(m.created_at) <= P(w.customerLastAt) + 1000).map((m) => m.text ?? "").join("\n");
   const scene = sceneKeyOf({ brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode, tpoLabel: t.tpo_label, intent: dec?.intent ?? ctx.intentFallback ?? null, convStatus: t.conv_status, postApply, watchScenes: true, customerText });
   const draftAt = t.draft_last_at ?? t.draft_first_at;
   const patch: Record<string, unknown> = {

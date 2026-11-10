@@ -84,7 +84,17 @@ export function rowNeeds(r: Pick<BookRow, "title" | "insight">): Partial<Record<
 export function marksOk(need: Partial<Record<keyof TurnMarks, boolean>>, m: TurnMarks): boolean {
   return (Object.keys(need) as Array<keyof TurnMarks>).every((k) => need[k] === m[k]);
 }
-export type PickOpts = { scene: string | null; turnEmb: ReadonlyArray<number>; turnText: string; max?: number; minSim?: number; minSimNoScene?: number; maxChars?: number; before?: string | null; marks?: TurnMarks | null; onlyTags?: string[] };
+// 11/11 統括役（竹内さん「返信の部分も俺の考え方理解できればより精度高くなる」）: 判断（返信か AIX か）の行はブレインへ、書き方の行は書き手へ分けて渡す
+const WRITER_RE = /(書き方|言い回し|挨拶|かしこまりました|はい😊|締め|ご査収|表記|絵文字|呼び名|呼ぶ|重ねない|繰り返|前置き|お詫び|謝罪|改行|何卒|全力サポートを|新着で|日付|文の|一文|の文は|文に|書く役|書き手)/;
+const JUDGE_RE = /(AIX【|AIX で|AIX から|返信か AIX|返信せず|ピッカー|電話をかける|見積書送る|内覧調整|物件確認した|約束して AIX|2択)/;
+/** その行が書き手向け（書き方）かブレイン向け（判断）か。題で決める（判断の語が題にあればブレイン） */
+export function rowFor(r: Pick<BookRow, "title" | "tags">): "brain" | "writer" {
+  const t = r.title;
+  if (JUDGE_RE.test(t)) return "brain";
+  if (WRITER_RE.test(t) || (r.tags ?? []).some((x) => x === "文" || x === "書く役" || x === "挨拶")) return "writer";
+  return "brain";
+}
+export type PickOpts = { scene: string | null; turnEmb: ReadonlyArray<number>; turnText: string; max?: number; minSim?: number; minSimNoScene?: number; maxChars?: number; before?: string | null; marks?: TurnMarks | null; onlyTags?: string[]; forWho?: "brain" | "writer" };
 export const BOOK_MAX = 3;
 // 下限は 11/11 の解き直し 198番の「お客様の文＋直前のこちら」の埋め込みで決めた（場面の札の行の近さ p90 0.527・札の無い行 p90 0.454）
 export const BOOK_MIN_SIM = 0.52;
@@ -112,6 +122,7 @@ export function pickBook(rows: ReadonlyArray<BookRow>, o: PickOpts): BookCard[] 
     if (leakOverlap(`${r.title}${r.insight ?? ""}${r.rationale ?? ""}`, o.turnText)) continue;
     if (o.marks && !marksOk(rowNeeds(r), o.marks)) continue;
     if (o.onlyTags?.length && !o.onlyTags.some((x) => (r.tags ?? []).includes(x))) continue;
+    if (o.forWho && rowFor(r) !== o.forWho) continue;
     scored.push({ r, sim, inScene });
   }
   scored.sort((a, b) => b.sim + (b.inScene ? 0.03 : 0) - (a.sim + (a.inScene ? 0.03 : 0)));
@@ -144,6 +155,12 @@ type Env = Record<string, string | undefined>;
 export function ownerBookBrainOn(scene: string | null, env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
   if ((env.BRAIN_OWNER_BOOK ?? "").trim().toLowerCase() !== "on") return false;
   const list = (env.BRAIN_OWNER_BOOK_SCENES ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  return !list.length || (!!scene && list.includes(scene));
+}
+/** WRITER_OWNER_BOOK=on（既定 off）の時だけ書き手（下書き）に書き方の行を渡す。WRITER_OWNER_BOOK_SCENES で場面を絞る */
+export function ownerBookWriterOn(scene: string | null, env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  if ((env.WRITER_OWNER_BOOK ?? "").trim().toLowerCase() !== "on") return false;
+  const list = (env.WRITER_OWNER_BOOK_SCENES ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   return !list.length || (!!scene && list.includes(scene));
 }
 export const ownerBookOnlyBase = (env: Env = typeof process !== "undefined" ? process.env : {}): boolean => (env.BRAIN_OWNER_BOOK_ONLY_BASE ?? "").trim().toLowerCase() === "on";

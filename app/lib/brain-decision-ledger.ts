@@ -11,7 +11,7 @@ import { turnReadDigestExtra } from "./turn-read";
 
 /** 2026-11-11 作業員1（A1 ③）: 自己申告の鍵の印を digest に残すか（記録だけ・既定 off） */
 export function materialSideShadowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_MATERIAL_SIDE_SHADOW ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_MATERIAL_SIDE_SHADOW ?? "").trim().toLowerCase() !== "off"; // 2026-11-11 既定 on（記録だけ・判断は変えない・統括役の OK・止める =off）
 }
 
 export type BrainDecisionLedgerCols = { building_key: string | null; room_no: string | null; scene_key: string | null; brain_version: string | null };
@@ -45,7 +45,7 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   if (Array.isArray(meta.material_missing)) out.mm = (meta.material_missing as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5);
   // 2026-11-11 作業員1（A1 ③・統括役の OK「記録だけの shadow から」）: 自己申告を決まった鍵に直した印（ms＝鍵の一覧・mss＝staff の鍵がある＝AIX／約束の番の候補）。
   //   判断・統括には渡さない（記録だけ）。28日の実測では印の番の AIX か約束 73% ＝印なし 68%・他の申告 75% と差が小さい＝重みに使う前に、正しい鍵で取り直して当たりを数える。
-  //   既定 off（入れる BRAIN_MATERIAL_SIDE_SHADOW=on）
+  //   既定 on（2026-11-11・記録だけ・止める BRAIN_MATERIAL_SIDE_SHADOW=off）
   if (out.mm && out.mm.length && materialSideShadowOn(env)) {
     const keys = [...new Set(out.mm.map((l) => materialMissingKey(l)))];
     (out as Record<string, unknown>).ms = keys;
