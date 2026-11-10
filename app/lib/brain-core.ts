@@ -3292,7 +3292,13 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
       }
       return runConductorIntake({
         conversationId, turnAt: turnAt0, customerTurn: unrepliedTurn.text ?? "", lastStaff: lastStaffTxt,
-        ledgerBlock: factsForConductor.length ? factLedgerBlock(factsForConductor as unknown as Parameters<typeof factLedgerBlock>[0], Date.now()) : "",
+        // 2026-11-11 作業員4（弱い所 565・568・KB P1 bfb1d47d）: CONDUCTOR_OUR_SIDE=on（既定 off）の時だけ、こちら側の状態（開いている約束・直前の AIX とピッカー・送った物件）を先頭に
+        ledgerBlock: [
+          (await import("@/app/lib/conductor-our-side")).conductorOurSideOn() && turnAt0
+            ? (await import("@/app/lib/conductor-our-side")).ourSideBlock({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(turnAt0) })
+            : "",
+          factsForConductor.length ? factLedgerBlock(factsForConductor as unknown as Parameters<typeof factLedgerBlock>[0], Date.now()) : "",
+        ].filter(Boolean).join("\n\n"),
         carryLine: carryQueryLine(pmForCarry?.conductor_meta ?? null), ruleMeta: "", nearFocus,
       });
     }).catch(() => null);
