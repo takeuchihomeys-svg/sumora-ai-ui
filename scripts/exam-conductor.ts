@@ -56,6 +56,7 @@ import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
+import { findOverlaps, overlapBlocks, overlapLine, weakFor, type OverlapJob, type WeakRow } from "./lib/exam-overlap";
 import { chooseGuards, fitGuardsToCap, guardLine } from "./lib/exam-guards";
 import { bizLanes } from "./lib/exam-plan";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
@@ -192,7 +193,31 @@ export function predictNeedsBase(cwd: string, ids: string[], o: { fetch?: boolea
   } catch { return [] as string[]; }
 }
 
-function addJob(): void {
+/** 重なりを見る依頼: 列の待ち（.json・.claimed）と、直近 hours 時間に済んだ依頼（done の更新時刻） */
+function overlapJobs(hours: number): OverlapJob[] {
+  const out: OverlapJob[] = [], since = Date.now() - hours * 3_600_000;
+  for (const [d, state] of [[ROOT, "待ち"], [DONE, "済み"]] as const) {
+    let fs: string[] = []; try { fs = readdirSync(d); } catch { continue; }
+    for (const f of fs) {
+      if (!/\.json(\.claimed)?$/.test(f) || f === "config.json") continue;
+      const p = join(d, f);
+      if (state === "済み") { try { if (statSync(p).mtimeMs < since) continue; } catch { continue; } }
+      const j = readJson<Record<string, unknown> | null>(p, null);
+      if (j && isExamJobShape(j)) out.push({ ...(j as OverlapJob), state });
+    }
+  }
+  return out;
+}
+/** 弱い所の行（読むだけ・195行ほど・5秒で諦める＝積むのは止めない） */
+async function weakRows(): Promise<WeakRow[]> {
+  try {
+    const q = db().from("brain_weaknesses").select("id, status, title, symptom, root_cause, evidence").neq("status", "fixed").limit(1000);
+    const r = await Promise.race([q, new Promise<null>((res) => setTimeout(() => res(null), 5000))]);
+    return ((r as { data?: WeakRow[] } | null)?.data ?? []) as WeakRow[];
+  } catch { return []; }
+}
+
+async function addJob(): Promise<void> {
   ensureDirs();
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
   const cwd = arg("cwd", process.cwd());
@@ -258,6 +283,16 @@ function addJob(): void {
         const clash = idClashes((spec as unknown as Array<{ id: string; conv?: string; at?: string }>).filter((x) => ids.includes(x.id)), led);
         if (clash.length) throw new Error(`積まない: 問題 ${clash.join(",")} は前に別の番で使った id（使い回し）。新しい番は brain-exam-add で新しい番号を取る（spec-ids-used.json の maxN＋1）`);
       } catch (e) { if (String(e).includes("積まない")) throw e; }
+    }
+    // 2026-11-10 作業員8b（統括役・試験の統括ブレインの①）: 重なりの知らせ。同じ問題が他の依頼（待ち）・直近24時間に済んだ依頼にあれば1行に出し、
+    //   同じスイッチ・同じ問題なら積まない（--force で積む）。弱い所にその問題があれば id と原因も出す。止める EXAM_OVERLAP=off
+    if (ids.length && (process.env.EXAM_OVERLAP ?? "").trim().toLowerCase() !== "off") {
+      const hits = findOverlaps(ids, { label, switch: base.switch }, overlapJobs(24));
+      const weak = weakFor(ids, await weakRows());
+      const line = overlapLine(hits, weak);
+      if (line) log(`  ${line}`);
+      const blk = overlapBlocks(hits);
+      if (blk.length && !flag("force")) throw new Error(`積まない: 同じスイッチ（${base.switch}）・同じ問題 ${[...new Set(blk.map((h) => h.id))].join(",")} の依頼がある（${[...new Set(blk.map((h) => `${h.owner} ${h.label}・${h.state}`))].join("／")}）。結果を待つか、それでも積む時は --force`);
     }
     {
       const local = readJson<Array<Record<string, unknown>>>(join(cwd, "scripts/brain-exam/problems.json"), []);
@@ -793,7 +828,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
 
 // 直に流された時だけ動く（テストが関所の関数だけ読む時は動かない）
 if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
-  if (flag("add")) { addJob(); return; }
+  if (flag("add")) { await addJob(); return; }
   // 11/03 指揮役: 知らせの未配達の見張り。流す役は notify.jsonl に書くだけ（SendMessage を持たない）＝届けた人が --delivered で印を付ける。
   //   未配達＝results/notify.jsonl の行のうち、id（`${at}|${label}`）が results/delivered.jsonl に無い物。作業員1の再開時と指揮役の見回りで全部届ける
   if (flag("undelivered") || arg("delivered")) {
