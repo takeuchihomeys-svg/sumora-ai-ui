@@ -3,6 +3,12 @@
   "include": [
     "app/lib/extension-live-server.ts",
     "app/api/extension-live/route.ts",
-    "scripts/audit-human-vs-auto.ts"
-  ]
+    "scripts/audit-human-vs-auto.ts",
+    "app/lib/search-audit-check.ts",
+    "app/lib/search-audit-server.ts",
+    "app/api/search-audits/route.ts",
+    "app/api/screen-watch/route.ts",
+    "app/lib/screen-watch-server.ts"
+  ],
+  "exclude": ["node_modules", ".next", ".claude"]
 }
