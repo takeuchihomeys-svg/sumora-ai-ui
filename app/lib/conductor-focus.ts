@@ -25,14 +25,18 @@ export const conductorFocusMode = (env: Env = typeof process !== "undefined" ? p
 /** ブレインに重点を渡すか（この場面＝resolveReplyScene の scene で） */
 // 2026-11-10 統括役（KB 6f53ace4・場面ごとに6割以上・悪化0の場面だけ on）: 既定で内覧の場面（viewing）だけ渡す。
 //   focus-viewing-on2（11/07 夜・内覧8問＋守り2問）確かな悪化0。=off で全部止める・=on は CONDUCTOR_FOCUS_ON_SCENES（空＝全部）・未設定は既定の場面だけ
-export const FOCUS_TO_BRAIN_DEFAULT_SCENES: readonly string[] = ["viewing"];
+// 2026-11-11 統括役 OK（作業員5）: 内覧の既定 on を外す。漏れの直し 8c1b057c の後の off/on 各2回で本質 on 5/6・off 6/6（得なし）・3票の正解の解き直しで内覧 8/24（33%）
+//   （内覧の決まり1段が「内覧できますか・待ち合わせ・時間」を聞く番まで close に寄せる＝竹内さんは先に答える）。既定の場面は空＝未設定は渡さない
+export const FOCUS_TO_BRAIN_DEFAULT_SCENES: readonly string[] = [];
 export function focusOnForScene(scene: string | null | undefined, env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
   if (conductorFocusMode(env) === "off") return false;
   const v = (env.CONDUCTOR_FOCUS_TO_BRAIN ?? "").trim().toLowerCase();
   if (v === "off") return false;
   const set = (env.CONDUCTOR_FOCUS_ON_SCENES ?? "").split(",").map((x) => x.trim()).filter(Boolean);
-  const list: readonly string[] = set.length ? set : v === "on" ? [] : FOCUS_TO_BRAIN_DEFAULT_SCENES;
-  return !list.length || (!!scene && list.includes(scene));
+  if (set.length) return !!scene && set.includes(scene);
+  if (v === "on") return true; // =on で場面の指定が無い＝全部
+  // 未設定は既定の場面だけ（空なら渡さない。前の書き方は空の一覧を「全部」と読んでいた）
+  return !!scene && FOCUS_TO_BRAIN_DEFAULT_SCENES.includes(scene);
 }
 
 /** 重点の種類（優先順位の段の順に並べる＝同点はこの順で上を採る） */
