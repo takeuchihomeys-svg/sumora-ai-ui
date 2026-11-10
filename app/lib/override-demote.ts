@@ -170,6 +170,18 @@ export function brainContractSaysDirectPropertyAix(raw: unknown, finalAix: strin
 }
 
 /**
+ * 2026-11-10 作業員7（弱い所 q367・既定 off・BRAIN_PROMISE_PICKUP_WIDE=on）: ブレインが route=promise・about=探す条件／送った物件への反応と言い、
+ *   約束の中身を「検索」「新着…お送り」の言い方で書いた番も探す約束と読む（旧の網は「ピックアップ・探し・お部屋／物件…お送り」だけ）。
+ *   q367（73日ぶりの「以前の条件でもう一度探して」）: 答え「以前の条件で新着を検索し、お送りする」が網に掛からず two_stage が空＝ただの返信（竹内さんはピックアップの約束）。
+ *   試験の答案の全部（作業ツリーの results）で、旧の網に掛からず新しい網だけに掛かる約束 92 通り: q032・q116・q154・q008・q367 等の正解は 2段:pickup。
+ *   出し切りの後（q006・q007 の正解は返信）は後の exhausted_condition_reply が返信に戻す＝旧の「探し」の網と同じ扱い。見積・確認・資料の約束は今まで通り外す。
+ */
+const PICKUP_PROMISE_WIDE_RE = /検索|新着[^。\n]{0,12}(?:お送り|送り|送る|ご紹介)/;
+export function promisePickupWideOn(env: Env = process.env): boolean {
+  return (env.BRAIN_PROMISE_PICKUP_WIDE ?? "").trim().toLowerCase() === "on";
+}
+
+/**
  * 2026-10-15（q153）: ブレインが AIX の欄を空にしたまま、turn_contract で「お部屋をピックアップしてお送りする」約束（route=promise）を言った番。
  *   探す条件の話（about=search_condition）か送った物件への反応（reaction_to_sent）の依頼で、約束の中身が探す・送る（見積・確認でない）時だけ。
  *   brain-core はこの時、2段（ピックアップの約束の返信→後で物件の AIX）に乗せる＝ブレインの約束を道に通す（語の網ではなくブレインの route と about で決める）。
@@ -178,8 +190,10 @@ export function brainContractSaysDirectPropertyAix(raw: unknown, finalAix: strin
 export function brainContractPromisesPickup(raw: unknown, env: Env = process.env): boolean {
   if ((env.BRAIN_PROMISE_PICKUP ?? "").trim().toLowerCase() === "off") return false;
   const asks = raw && typeof raw === "object" && Array.isArray((raw as { asks?: unknown }).asks) ? (raw as { asks: Array<Record<string, unknown>> }).asks : [];
+  const wide = promisePickupWideOn(env);
   return asks.some((a) => a?.route === "promise" && (a?.about === "search_condition" || a?.about === "reaction_to_sent")
-    && /ピックアップ|探し|探す|(?:お部屋|物件)[^。\n]{0,12}(?:お送り|送り|送る|ご紹介)/.test(String(a?.answer ?? ""))
+    && (/ピックアップ|探し|探す|(?:お部屋|物件)[^。\n]{0,12}(?:お送り|送り|送る|ご紹介)/.test(String(a?.answer ?? ""))
+      || (wide && PICKUP_PROMISE_WIDE_RE.test(String(a?.answer ?? ""))))
     // 10/15 確かめる人: 資料・図面・写真・動画・間取・見積・確認の約束は物件の AIX にしない（「物件資料をお送りします」が網に掛かっていた）
     && !/見積|確認|資料|図面|写真|画像|動画|間取/.test(String(a?.answer ?? "")));
 }
