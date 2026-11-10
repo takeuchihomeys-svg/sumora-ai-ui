@@ -66,3 +66,16 @@ export function decideNearResolve(i: {
   if (!i.envExists(envPath)) return { run: false, why: "env_missing" };
   return { run: true, envPath, days, total: days.reduce((a, d) => a + i.counts[d], 0) };
 }
+
+/**
+ * 解いてはいけない近い番の頼みか（純・2026-11-10 作業員8）: match_conductor_focus／turns で、答えの番を外していない頼み。
+ *   ① 印（ls: 1）があれば解く（この版以降の exam-frozen-input が元の番が分かった時だけ付ける）
+ *   ② 印が無い時は中身で見る: p_exclude_conv が無い・テスト用の会話（YUMA・YUMA2〜）＝8c1b057c より古い作業ツリーの頼み（11/09 k-a9e10def は tc-narrow〔origin/main より23個古い〕が 19:44 JST に作った・p_exclude_conv＝YUMA2・p_before＝本当の今）
+ */
+export function isUnsafeNearRequest(req: { name?: string; body?: string; ls?: number | null }, testConvIds: readonly string[]): boolean {
+  if (req.name !== "match_conductor_focus" && req.name !== "match_conductor_turns") return false;
+  if (req.ls === 1) return false;
+  let ex: unknown = null;
+  try { ex = (JSON.parse(String(req.body ?? "")) as Record<string, unknown>).p_exclude_conv ?? null; } catch { return true; }
+  return typeof ex !== "string" || !ex || testConvIds.includes(ex);
+}
