@@ -574,8 +574,16 @@
   // onFail   : maxTries超過時に呼ぶコールバック
   //            （省略時も静かに停止せず notifyDone を送る — fill-done タイムアウト対策）
   // ────────────────────────────────────────────────────────────────────
-  function waitForClick(tryFn, onDone, maxTries, retryMs, pauseMs, onFail) {
-    maxTries = maxTries !== undefined ? maxTries : 30;
+  // 2026-11-10 v2.6.7 竹内さん「駅モーダルで失敗するの原因なにかな？そのような失敗あれば原因を追いかけていく」
+  //   原因: 沿線・駅モーダルの各段（沿線ボタン→路線一覧→駅ページ→駅の選択→閉じる）が
+  //     **30回×500ms＝15秒**で打ち切られていた。人がモーダルを開いて路線を探して押すには短すぎ、
+  //     ページが重い時・拡大した時・前のお客様の残りを消している時に「路線一覧が表示されませんでした」で止まっていた。
+  //   直し: 75回×800ms（±）≒ 60秒まで待つ。人の速度で操作するので、待ちも人に合わせる。
+  //     打ち切りは今まで通り理由を残して検索しない（全件検索はしない）。
+  var MODAL_TRIES = 75;
+  function _modalTry() { return MODAL_TRIES; }
+  function _modalRetryMs() { return 700 + Math.floor(Math.random() * 300); }
+  function waitForClick(tryFn, onDone, maxTries, retryMs, pauseMs, onFail) {    maxTries = maxTries !== undefined ? maxTries : 30;
     retryMs  = retryMs  !== undefined ? retryMs  : 500;
     pauseMs  = pauseMs  !== undefined ? pauseMs  : _hd(600); // 省略時も毎回ばらつかせる（呼ぶ側の多くは既に乱数）
     var tries = 0;
@@ -2055,6 +2063,27 @@
     // fallbackSearchWithoutArea と同じ方針: エリア条件が解決できない場合は検索しない。
     function fallbackSearchWithoutStation(msg) {
       var errMsg = '沿線・駅モーダル操作失敗（全件検索防止のため中止）: ' + msg;
+      // 2026-11-10 v2.6.7 竹内さん「そのような失敗あれば原因を追いかけていく」:
+      //   失敗した時に「その場の画面がどうだったか」を点検に残す（次に同じ失敗が起きた時に原因を特定できるように）。
+      //   画面には触らない（読むだけ・読み込み直しもしない）
+      try {
+        var _diag = {
+          modal: (function () {
+            var d = document.querySelector('.this_window, .modal, [role="dialog"]');
+            return d ? { visible: isVisible(d), text: String(d.textContent || '').replace(/\s+/g, '').slice(0, 160) } : null;
+          })(),
+          one_line: document.querySelectorAll('label.one_line').length,
+          one_line_vis: Array.prototype.slice.call(document.querySelectorAll('label.one_line')).filter(isVisible).length,
+          station_inputs: document.querySelectorAll('input[name="station_id[]"]').length,
+          station_vis_parents: Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]')).filter(function (i) { return i.parentElement && isVisible(i.parentElement); }).length,
+          buttons: Array.prototype.slice.call(document.querySelectorAll('div,a,button,span'))
+            .filter(function (e) { return isVisible(e) && /絞り込み|駅の設定|確定/.test(String(e.textContent || '')); })
+            .map(function (e) { return String(e.textContent || '').replace(/\s+/g, '').slice(0, 24); }).slice(0, 8),
+          queue: _clickQueue.length,
+          vis: document.visibilityState,
+        };
+        _auditStepP('station_modal_fail_diag', JSON.stringify(_diag).slice(0, 500));
+      } catch (_) {}
       _auditStepP('station_modal_fail', msg);
       showWarnToast(errMsg);
       try { closeStationModal(); } catch (e) { /* ignore */ }
@@ -2329,19 +2358,19 @@
                       setTimeout(clickSearch, 700 + Math.floor(Math.random() * 400));
                     });
                   },
-                  30, 500, (500 + Math.floor(Math.random() * 500)),
+                  _modalTry(), _modalRetryMs(), (600 + Math.floor(Math.random() * 700)),
                   function() { fallbackSearchWithoutStation('指定の駅が選択できませんでした。\n駅: ' + stNamesStr); }
                 );
               },
-              30, 500, (500 + Math.floor(Math.random() * 500)),
+              _modalTry(), _modalRetryMs(), (600 + Math.floor(Math.random() * 700)),
               function() { fallbackSearchWithoutStation('「駅の設定へ進む」ボタンが見つかりませんでした。'); }
             );
           },
-          30, 500, (500 + Math.floor(Math.random() * 500)),
+          _modalTry(), _modalRetryMs(), (600 + Math.floor(Math.random() * 700)),
           function() { fallbackSearchWithoutStation('路線一覧が表示されませんでした。'); }
         );
       },
-      30, 500, (500 + Math.floor(Math.random() * 500)),
+      _modalTry(), _modalRetryMs(), (600 + Math.floor(Math.random() * 700)),
       function() { fallbackSearchWithoutStation('「沿線・駅絞り込み」ボタンが見つかりませんでした。'); }
     );
 
