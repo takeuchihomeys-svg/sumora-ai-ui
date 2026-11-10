@@ -4,6 +4,38 @@
 
 ---
 
+## 2026-11-10 v2.6.24 印刷用PDFを押したら「その1件だけ」を売上番長へ・一気に選択しない（**拡張の再読み込み必須**）
+
+竹内さん「リアプロの一気に選択されてしまうのでなくて1つ1つ行っていく形で。チェックボックスはこの印刷用PDFのところの部分のことだから、
+印刷用PDF押したら、チェックボックスおして物件検索がされるように、印刷用PDFで出た資料をそのまま売り上げ番長におくられるようにすれば
+1つずつおこなったのとおなじかたちにできるようになる」
+
+### 直した所（`chrome-extension/bulk-dl.js`）
+1. **印刷用PDFを押したら、その1件だけをチェックして、その場で売上番長へ送る**（`sendOnePdfNow`）
+   - 押した1件だけチェック（他の行は外す）→ `axlx-send-to-line`（1件）
+   - 旧: 押すたびにチェックを積み、**最後に押してから20秒待って**まとめて送っていた（`scheduleForward` ＝今は使わない）
+   - 同じ行は二度送らない（`_onePdfSent`）。押した順に1件ずつ（`_onePdfChain` で前の1件が終わってから）
+   - 送る前に「送る前の確かめ」（`search-stamp.js`）を通す（今まで通り）
+2. **一気に全行チェックをやめた**
+   - 旧: 全行にチェック → 選別で送付済みを外す（画面で一斉にチェックが付いた）
+   - 新: チェックを触らずに候補を作り（`_selectAllowed`）、**1件ずつ「選ぶ → 送る → 次を選ぶ」**（`_oneByOneStart`）
+   - 送らない行の判定は今までの物差しのまま（`_rowSkipReason`＝送付済み `sent-skip.js`・前回の検索より古い `update-order-stop.js`）
+3. **重大な不具合を修正**: `_oneByOneStart` が `enqueueHumanClick(item.cb, _clickEl, ...)` を呼んでいたが、
+   **この2つは `bulk-dl.js` の中に無い**（`page-script.js` 側の関数）＝ ReferenceError で1件ずつの送信が丸ごと止まっていた。
+   → `_humanClickCb`（見えるカーソル → 15%ほどで迷い 3段 → 押す → 反応を見る）を `bulk-dl.js` の中に作った。
+4. 記録（点検）: 送る1件を送る直前に `_rememberPickedOne`（旧 `_rememberPicked` は使わない）・更新日の経過は `_countRowAges`（チェックを触らない）
+
+### テスト
+- `tests/chrome-extension/human-one-by-one-v2595.test.js` を作り直し（25 OK）
+- `customer-flow` / `sent-skip` / `update-order-stop` / `human-wait` / `human-hesitate-v2599` / `search-stamp-v2580` の古い前提を新しい形に更新
+- **全63ファイル通過**・`npx tsc --noEmit -p tsconfig.cursor-ext.json` エラー0
+
+### 前提（変えない）
+- リアプロの「印刷用PDF」は押すとダウンロードされ、`background.js` の `chrome.downloads.onChanged` / `tabs.onUpdated` が `axlx-pdf-captured` を一覧のタブへ返す（手元に残った物は送る時に取りに行かない）
+- スタッフモードでは送付済みの飛ばしをしない（今まで通り）
+
+---
+
 ## 2026-11-10 v2.6.24 会話の条件が登録より新しい時だけ上書きする（10.5万が正しい場合を拾う）（**サーバー**）
 
 竹内さん「A（DB の条件と違う時は使わない）で行う」→「条件更新されていればそれで行うようにする。お客さんが希望合って言っている場合あるから、その場合だと10.5万円が正しい」

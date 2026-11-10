@@ -390,6 +390,78 @@ export function overrideShortLabel(ov: SearchOverride | null | undefined): strin
   return parts.join("・");
 }
 
+// ─────────────────────────── 条件の組み合わせ（2026-11-10） ───────────────────────────
+
+/**
+ * 2026-11-10 竹内さん「拡張ツールのところも前の条件を入れて、AIXツールも前の条件だと理解できればより使いやすい。
+ *   最新が一番優先される。そこの点も重要」
+ *
+ * 前の条件（base）と新しい条件（next）を**1つにまとめる**。新しい方が優先。
+ *   - 新しい側に値がある欄 → 新しい値で置き換える（最新優先）
+ *   - 新しい側が null の欄 → 前の値をそのまま残す（書いていない条件は消さない）
+ *   - location は mode が同じ時だけ混ぜる（"only" は置き換え・"add" は足す）。mode が違えば新しい方を採る
+ *   - 同じ値なら1つに（重複を作らない）
+ *
+ * @param base 前の条件（null なら空）
+ * @param next 新しい条件（null なら base をそのまま返す）
+ * @param opts.clearNulls 明示的に消したい欄（新しい指示で「〜を外して」と言われた時）。既定は無し
+ * @param opts.carryPerRun site・is_wide（その回の選び方）を前の回から持ち越すか。既定 false＝今回の指定だけ
+ *   （前回リアプロで探したから今回もリアプロ、とはしない。画面で選び直せる物なので持ち越さない）
+ * @returns まとめた条件（両方 null なら null）
+ */
+export function mergeSearchOverride(
+  base: SearchOverride | null | undefined,
+  next: SearchOverride | null | undefined,
+  opts: { clearNulls?: ReadonlyArray<keyof SearchOverride>; carryPerRun?: boolean } = {},
+): SearchOverride | null {
+  const a = base ?? null;
+  const b = next ?? null;
+  if (!a) return b;
+  if (!b) return a;
+  const clear = new Set<string>((opts.clearNulls ?? []).map(String));
+  const out: SearchOverride = { ...a, v: 1 };
+
+  // 掛け算の欄（数値・真偽）: 新しい側にあれば置き換え、無ければ前のまま
+  const nums: Array<keyof SearchOverride> = ["rent_max", "rent_min", "walk_minutes", "building_age", "area_min", "area_max", "floor_min"];
+  for (const k of nums) {
+    const bv = b[k];
+    if (clear.has(String(k))) { (out as unknown as Record<string, unknown>)[String(k)] = null; continue; }
+    if (bv != null) (out as unknown as Record<string, unknown>)[String(k)] = bv;
+  }
+  if (clear.has("pet")) out.pet = null;
+  else if (b.pet) out.pet = true;
+  if (clear.has("floor_plan")) out.floor_plan = null;
+  else if (b.floor_plan) out.floor_plan = b.floor_plan;
+
+  // 場所: mode が同じなら足す（only は置き換え）。違えば新しい方
+  if (clear.has("location")) out.location = null;
+  else if (b.location) {
+    if (!a.location) out.location = b.location;
+    else if (b.location.mode === "only") out.location = b.location;
+    else if (a.location.mode === "only") {
+      // 前が「この場所だけ」で、新しいのが「足す」→ 前の場所に足す（人が言い足した形）
+      out.location = {
+        mode: "only",
+        stations: [...new Set([...a.location.stations, ...b.location.stations])],
+        lines: [...new Set([...a.location.lines, ...b.location.lines])],
+        areas: [...new Set([...a.location.areas, ...b.location.areas])],
+      };
+    } else {
+      out.location = {
+        mode: "add",
+        stations: [...new Set([...a.location.stations, ...b.location.stations])],
+        lines: [...new Set([...a.location.lines, ...b.location.lines])],
+        areas: [...new Set([...a.location.areas, ...b.location.areas])],
+      };
+    }
+  }
+  if (clear.has("site")) out.site = null;
+  else out.site = b.site ?? (opts.carryPerRun ? a.site : null);
+  if (clear.has("is_wide")) out.is_wide = null;
+  else out.is_wide = b.is_wide ?? (opts.carryPerRun ? a.is_wide : null);
+  return out;
+}
+
 /** カードの1行（「この回はメモの条件（大正駅だけ・1LDK）で判定」）。上書きの無い回は "" */
 export function overrideJudgeLine(x: unknown): string {
   const p = readPickupSearchOverride(x);

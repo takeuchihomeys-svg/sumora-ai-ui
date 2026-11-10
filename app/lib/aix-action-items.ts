@@ -16,6 +16,8 @@ import { buildAixActionNotice, isFreshAixTurn } from "@/app/lib/aix-action-text"
 import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 import type { SearchOverride } from "@/app/lib/search-override";
+import { mergeSearchOverride } from "@/app/lib/search-override";
+import { loadPreviousSearchOverride } from "@/app/lib/search-override-history";
 import { staffTextFulfillsAixItem, brainPausedCustomer } from "@/app/lib/aix-item-cleanup";
 import { keepViewingGreetingItem, MAIN_AIX_ITEM_OR, MORNING_GREETING_NOTE_PREFIX } from "@/app/lib/viewing-day-greeting";
 import { keepPromiseQueueItem } from "@/app/lib/promise-queue";
@@ -271,6 +273,14 @@ async function enqueueAixPropertySearch(conversationId: string, action: string, 
     }
   }
   if (!customerId) return;
+  // 2026-11-10 竹内さん「AIXツールも前の条件だと理解できればより使いやすい。最新が一番優先される」
+  //   前の回の条件（30日以内・一番新しい物）に、今回の「今回だけ」の条件を重ねる。書いた欄は今回の値・書いていない欄は前の回のまま。
+  //   prev が無ければ今まで通り（今回の条件だけ・条件が無ければ登録の条件のまま）。読めなくても積む（前の条件が使えないだけ）
+  const prev = await loadPreviousSearchOverride(supabase, customerId).catch(() => null);
+  const eff = mergeSearchOverride(prev?.override ?? null, searchOverride) ?? searchOverride;
+  if (prev || eff) {
+    console.log(JSON.stringify({ tag: "aix-action-items:search-override-merge", conversationId, customerId, prev: prev ? prev.at : null, from: prev?.from ?? null, now: !!searchOverride, merged: !!eff }));
+  }
   const { data: existing } = await supabase
     .from("automation_commands")
     .select("id, status, payload")
@@ -280,8 +290,8 @@ async function enqueueAixPropertySearch(conversationId: string, action: string, 
   if (existing && existing.length > 0) {
     // 2026-09-27 まだ拾われていない AIX の検索があり、今回だけの上書きが決まった → その検索に載せる（拾われた後・他の出どころの検索は変えない）
     const ex = existing[0] as { id: string; status: string; payload: Record<string, unknown> | null };
-    if (searchOverride && ex.status === "pending" && ex.payload?.source === "aix") {
-      await supabase.from("automation_commands").update({ payload: { ...ex.payload, search_override: searchOverride } }).eq("id", ex.id).eq("status", "pending");
+    if (eff && ex.status === "pending" && ex.payload?.source === "aix") {
+      await supabase.from("automation_commands").update({ payload: { ...ex.payload, search_override: eff } }).eq("id", ex.id).eq("status", "pending");
     }
     return;
   }
@@ -291,7 +301,7 @@ async function enqueueAixPropertySearch(conversationId: string, action: string, 
     command_type: "batch_property_search",
     customer_ids: [customerId],
     sites: AIX_AUTO_SEARCH_SITES,
-    payload: { source: "aix", aix_action: action, conversation_id: conversationId, is_wide: false, ...(searchOverride ? { search_override: searchOverride } : {}) },
+    payload: { source: "aix", aix_action: action, conversation_id: conversationId, is_wide: false, ...(eff ? { search_override: eff } : {}) },
     status: "pending",
   });
   if (error) console.warn("[aix-action-items] automation insert failed:", error.message);

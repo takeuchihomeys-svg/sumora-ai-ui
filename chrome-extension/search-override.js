@@ -196,5 +196,41 @@
    */
   function sourceAllows(source) { return source === "web_brain" || source === "aix"; }
 
-  return { sanitize: sanitize, isEmpty: isEmpty, applyToCustomer: applyToCustomer, formValues: formValues, describe: describe, sourceAllows: sourceAllows, floorMin: floorMin, floorLabel: floorLabel, FLOOR_PLAN_RE: FLOOR_PLAN_RE };
+  /**
+   * 2026-11-10 竹内さん「拡張ツールのところも前の条件いれて。最新が一番優先される」
+   *   前の条件（base）と新しい条件（next）を1つにまとめる（サーバーの mergeSearchOverride と同じ決まり）。
+   *   ・新しい側に値がある欄 → 新しい値で置き換える（最新優先）
+   *   ・新しい側が null の欄 → 前の値をそのまま残す（書いていない条件は消さない）
+   *   ・location は新しい側が only なら置き換え、add なら前の場所に足す（重複は作らない）
+   *   ・site / is_wide（その回の選び方）は持ち越さない（今回の指定だけ・無ければ null）
+   *   sanitize 済みの物を渡す（この関数は形を変えない）。両方 null なら null
+   */
+  function merge(base, next) {
+    var a = base || null, b = next || null;
+    if (!a) return b;
+    if (!b) return a;
+    var out = {};
+    for (var k in a) if (Object.prototype.hasOwnProperty.call(a, k)) out[k] = a[k];
+    out.v = 1;
+    ["rent_max", "rent_min", "walk_minutes", "building_age", "area_min", "area_max", "floor_min"].forEach(function (k) {
+      if (b[k] != null) out[k] = b[k];
+    });
+    if (b.pet) out.pet = true;
+    if (b.floor_plan) out.floor_plan = b.floor_plan;
+    if (b.location) {
+      var bl = b.location;
+      if (!a.location || bl.mode === "only") out.location = bl;
+      else out.location = {
+        mode: a.location.mode === "only" ? "only" : "add",
+        stations: uniq(a.location.stations.concat(bl.stations)),
+        lines: uniq(a.location.lines.concat(bl.lines)),
+        areas: uniq(a.location.areas.concat(bl.areas))
+      };
+    }
+    out.site = b.site || null;
+    out.is_wide = b.is_wide === true || b.is_wide === false ? b.is_wide : null;
+    return isEmpty(out) ? null : out;
+  }
+
+  return { sanitize: sanitize, isEmpty: isEmpty, merge: merge, applyToCustomer: applyToCustomer, formValues: formValues, describe: describe, sourceAllows: sourceAllows, floorMin: floorMin, floorLabel: floorLabel, FLOOR_PLAN_RE: FLOOR_PLAN_RE };
 });

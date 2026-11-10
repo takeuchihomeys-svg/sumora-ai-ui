@@ -65,7 +65,7 @@ console.log("\n■ ページの上限 5（拡張とサーバーで同じ・1か�
 console.log("\n■ 選んだ部屋を点検に残す（見張りの C2・C3 が送付済みの部屋と照らす）");
 {
   const bd = read("bulk-dl.js");
-  ok("bulk-dl: 資料を取りに行く直前に一覧のチェックが入っている行を読む（_rememberPicked）", /_rememberPicked\(state\);/.test(bd) && /function _rememberPicked\(state\)/.test(bd));
+  ok("bulk-dl: 送る1件を送る直前に読む（_rememberPickedOne）", /_rememberPickedOne\(state, item\);/.test(bd) && /function _rememberPickedOne\(state, item\)/.test(bd));
   ok("bulk-dl: 建物名と先頭のセルの号室（roomFromRealproCell）・150件まで", /SK\.roomFromRealproCell\(roomCell\)/.test(bd) && /list\.length >= 150/.test(bd));
   ok("bulk-dl: ページをまたいでも残す（setAutoSendState に pickedRooms）", /pickedRooms: state\.pickedRooms \|\| null/.test(bd));
   ok("bulk-dl: 点検の結果に picked_rooms", /r\.picked_rooms = state\.pickedRooms\.slice\(0, 150\)/.test(bd));

@@ -100,11 +100,10 @@ console.log("\n■ 送付済みの飛ばしとは別（送付済みでも新し�
 console.log("\n■ bulk-dl・itandi-bulk-dl の配線（静的に確かめる）");
 {
   const b = read("bulk-dl.js");
-  const iSk = b.indexOf("var _sk0 = _applySentSkip(state, _skCounted);");
-  const iUo = b.indexOf("_applyUpdateOrderStop(state);\n", iSk);
-  ok("bulk-dl: 送付済みの飛ばしの後に止める（同じページで・資料の URL を集める前）", iSk > 0 && iUo > iSk && iUo < b.indexOf("var urls = getSelectedUrls();", iSk));
+  const iUo = b.indexOf("_applyUpdateOrderStop(state);");
+  ok("bulk-dl: 止める線を決めてから送る行を選ぶ（資料の URL を集める前）", iUo > 0 && iUo < b.indexOf("_doSend(allowed.map("));
   ok("bulk-dl: 止めたら次のページは開かない（ページの上限より前に確かめる）", b.indexOf("if (state.updateStop && hasNextPageBtn()) {") > 0 && b.indexOf("if (state.updateStop && hasNextPageBtn()) {") < b.indexOf("if (state.currentPage >= _maxPages && hasNextPageBtn()) {"));
-  ok("bulk-dl: 読み込み直しで選び直しても止めた行から先は選ばない（ポーリングの中）", /_applyUpdateOrderStop\(state\); \/\/ 2026-09-30 v2.5.43 選び直した後も/.test(b));
+  ok("bulk-dl: 止めた行から先は送らない（_rowSkipReason が state.updateStop を見る）", /function _rowSkipReason[\s\S]{0,1400}at >= stop\.index\) return "old"/.test(b));
   ok("bulk-dl: 点検の result に stopped_at_last_search", /if \(state && state\.updateStop\) r\.stopped_at_last_search = state\.updateStop;/.test(b));
   ok("bulk-dl: ページをまたぐ持ち越しを保存", /updateCarry: state\.updateCarry \|\| null \}\);/.test(b));
   ok("bulk-dl: 前回の時刻は background の record（forCustomer の last_search_at）・並びは orderForRealpro・スタッフモードは見ない", /opts\.last_search_at/.test(b) && /U\.orderForRealpro\(location\.href, opts\)/.test(b) && /if \(!U \|\| !state \|\| _staffModeOn \|\| !tracked\.length\) return null;/.test(b));

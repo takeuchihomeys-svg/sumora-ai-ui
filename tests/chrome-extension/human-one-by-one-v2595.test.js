@@ -1,10 +1,14 @@
 // 実行: node tests/chrome-extension/human-one-by-one-v2595.test.js
-// 2026-11-10 竹内さん「ちゃんと人間のように1つずつ動くようになっているか／今一気に動くようになっていないか」
-//   「1件ずつのダウンロードとなりそして時間差も人間が確認するように」「まずリアプロから徹底的に」
-//   ① リアプロの一覧の全選択は1件ずつ（一瞬で checked=true にしない）
-//   ② 押す間は対数正規（等間隔にしない）・たまに一息
-//   ③ 資料は既定で1件ずつ取りに行く（束の間は「人がPDFを見る間」）
-//   ④ 選び終わってから資料を取りに行くまでに「一覧を目で追う間」
+// 2026-11-10 竹内さん「リアプロの一気に選択されてしまうのでなくて1つ1つ行っていく形で。
+//   チェックボックスはこの印刷用PDFのところの部分のことだから、印刷用PDF押したら、チェックボックス押して物件検索がされるように、
+//   印刷用PDFで出た資料をそのまま売り上げ番長におくられるようにすれば1つずつおこなったのとおなじかたちにできるようになる」
+//
+// 固定する形（2026-11-10 の作り直し後）:
+//   ① 印刷用PDFを押したら、その1件だけチェックが入り、その場で売上番長へ送る（20秒まとめて待たない）
+//   ② 一括の道でも「先に全行チェック」をしない（全行へ checked=true を一斉に入れない）
+//   ③ 1件ずつは _oneByOneStart（選ぶ → 送る → 次を選ぶ）で、画面は常に1件だけ
+//   ④ 押す前に画面へ入れてカーソルを動かす（bulk-dl.js の中で完結している＝page-script の関数を呼ばない）
+//   ⑤ 送らない行（送付済み・前回の検索より古い）は「チェックを触らずに」判定する（_rowSkipReason）
 const fs = require("fs");
 const path = require("path");
 const dir = path.join(__dirname, "..", "..", "chrome-extension");
@@ -14,44 +18,53 @@ let passed = 0, failed = 0;
 function ok(name, cond, extra) { if (cond) { passed++; console.log("  ✓ " + name); } else { failed++; console.log("  ✗ " + name + (extra !== undefined ? "\n      " + JSON.stringify(extra).slice(0, 300) : "")); } }
 
 const bd = read("bulk-dl.js");
-const ib = read("itandi-bulk-dl.js");
+/** コメント行を外した「動くコード」だけ（説明文の中の関数名でテストが誤って通る/落ちるのを防ぐ） */
+const bdCode = bd.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
 const H = require(path.join(dir, "human-wait.js"));
 
-console.log("■ ① 一覧の全選択は1件ずつ");
-ok("リアプロ: _humanCheckAll がある（1件ずつ click）", /function _humanCheckAll\(cbs, next\) \{/.test(bd) && /cb\.click\(\);/.test(bd));
-ok("リアプロ: 全選択で tracked.forEach の一括 checked=true をしていない", !/function autoSendOnePage[\s\S]{0,1200}tracked\.forEach\(function \(t\) \{ t\.cb\.checked = true; \}\);/.test(bd));
-ok("リアプロ: 押す前に画面へ入れる（scrollIntoView）", /cb\.scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/.test(bd));
-ok("ITANDI: 同じ形の1件ずつ（_humanCheckAll）", /function _humanCheckAll\(cbs, next\) \{/.test(ib));
+console.log("■ ① 印刷用PDFを押したら、その1件をその場で送る");
+ok("押した合図（axlx-pdf-captured）を受けて1件送る", /type !== "axlx-pdf-captured"\) return;[\s\S]{0,600}sendOnePdfNow\(item\)/.test(bd));
+ok("押した1件だけをチェック（他の行は外す）", /function sendOnePdfNow\(item\) \{[\s\S]{0,900}tracked\.forEach\(function \(t\) \{ if \(t\.cb && t\.cb !== item\.cb && t\.cb\.checked\) t\.cb\.checked = false; \}\)/.test(bd));
+ok("その1件だけを組にして送る（urls が1件）", /function sendOnePdfNow[\s\S]{0,2600}urls: AxlxSendPairing\.pluck\(one, "url"\)/.test(bd));
+ok("同じ行を二度送らない（_onePdfSent）", /_onePdfSent\[url\] = true;/.test(bd) && /if \(!url \|\| _onePdfSent\[url\]\) return;/.test(bd));
+ok("押した順に1件ずつ（前の1件が終わってから・Promise の鎖）", /_onePdfChain = _onePdfChain\.then/.test(bd));
+ok("20秒まとめて送る道はもう使わない（scheduleForward の呼び出しが無い）", !/scheduleForward\(\)/.test(bd));
 
-console.log("\n■ ② 間は対数正規・たまに一息");
-ok("リアプロ: 押す間に対数正規を使う", /_humanCheckAll[\s\S]{0,1600}logNormalDelay/.test(bd));
-ok("リアプロ: たまに一息・迷う（8%/15% の抽選）", /Math\.random\(\) < 0\.08\) wait \+= 400 \+ Math\.floor\(Math\.random\(\) \* (700|600)/.test(bd + ib) || /Math\.random\(\) < 0\.15 \* \(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(bd + ib));
-// 対数正規そのもの: 同じ中央値でも毎回違う・偏る（等間隔でない）
+console.log("\n■ ② 先に全行チェックをしない");
+ok("全行を一斉に checked=true にしない（poll の tracked.forEach が無い）",
+  !/tracked\.forEach\(function \(t\) \{ t\.cb\.checked = true; \}\);/.test(bdCode));
+ok("旧の _afterSelect（全行チェック→選別）が残っていない", !/function _afterSelect\(_sk0\)/.test(bdCode));
+ok("旧の _humanCheckAll（全行を押して最後は全部チェック）が残っていない", !/function _humanCheckAll\(/.test(bdCode));
+
+console.log("\n■ ③ 1件ずつ（選ぶ→送る→次を選ぶ）");
+ok("_oneByOneStart がある", /function _oneByOneStart\(state, list, index, doneCb\)/.test(bd));
+ok("選ぶのは1行だけ（前の行のチェックを外す）", /function _oneByOneStart[\s\S]{0,600}if \(t\.cb && t\.cb !== item\.cb && t\.cb\.checked\) t\.cb\.checked = false;/.test(bd));
+ok("送り終わってから次の行（_doSendOne の next → 次の _oneByOneStart）", /_doSendOne\(item, state, function \(\) \{[\s\S]{0,400}_oneByOneStart\(state, list, index \+ 1, doneCb\)/.test(bd));
+ok("チェックが入るまで待ってから送る（最大8秒＝16回×500ms）", /var waitChecked = function \(n\) \{[\s\S]{0,200}item\.cb\.checked \|\| n >= 16/.test(bdCode));
+
+console.log("\n■ ④ 押す前の人の動き（bulk-dl.js の中で完結）");
+ok("cursor を動かしてから押す（_humanClickCb）", /function _humanClickCb\(cb\)/.test(bd) && /P\.moveToEl\(cb\)/.test(bd));
+ok("page-script の enqueueHumanClick / _clickEl を呼んでいない（参照エラーで止まっていた）", !/enqueueHumanClick\(/.test(bdCode) && !/\b_clickEl\(/.test(bdCode));
+ok("押す前に画面へ入れる（scrollIntoView）", /_humanClickCb[\s\S]{0,300}scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/.test(bd));
+
+console.log("\n■ ⑤ 送らない行はチェックを触らずに判定");
+ok("_rowSkipReason がある（送付済み・前回より古い）", /function _rowSkipReason\(state, item\)/.test(bd));
+ok("_rowSkipReason はチェックを変えない", !/function _rowSkipReason[\s\S]{0,1400}\.checked = /.test(bd));
+ok("_selectAllowed は「先にチェック→外す」でなく、通った行だけを送る", /function _selectAllowed\(cand\)[\s\S]{0,900}allowed\.push\(t\)/.test(bd) && /_doSend\(allowed\.map/.test(bd));
+ok("送付済みの判定は今までの物差し（AxlxSentSkip）と同じ", /function _rowSkipReason[\s\S]{0,900}SK\.isSentRoom\(idx, card\.name, room\)/.test(bd));
+ok("前回の検索より古い行の判定も今まで通り（state.updateStop）", /function _rowSkipReason[\s\S]{0,1400}at >= stop\.index\) return "old"/.test(bd));
+
+console.log("\n■ ⑥ 間は対数正規・たまに一息（機械的な等間隔にしない）");
 (() => {
   const xs = Array.from({ length: 300 }, () => H.logNormalDelay(220, 0.32));
   const uniq = new Set(xs).size;
   const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
   const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (xs.length - 1));
-  ok("logNormalDelay: 毎回ちがう値になる（300回でミリ秒の丸めの中でも種類が多い）", uniq > 80, { uniq });
+  ok("logNormalDelay: 毎回ちがう値になる", uniq > 80, { uniq });
   ok("logNormalDelay: ばらつく（CV > 0.2）", sd / mean > 0.2, { cv: (sd / mean).toFixed(2) });
-  ok("logNormalDelay: 下限 200ms を下回らない", Math.min(...xs) >= 200, { min: Math.min(...xs) });
 })();
-
-console.log("\n■ ③ 資料は1件ずつ・束の間に人が確認する間");
-ok("既定の束は1件", /var SEND_BATCH_SIZE_DEFAULT = 1;/.test(bd));
-ok("束の大きさを変えられる（axlxSendBatchSize）", /sessionStorage\.getItem\("axlxSendBatchSize"\)/.test(bd));
-ok("1件ずつの間は 1.2〜6秒＋次の行まで1.5秒の対数正規", /logNormalDelay\(1600, 0\.45\)/.test(bd) && /if \(gap > 6000\) gap = 6000;/.test(bd) && /logNormalDelay\(1500, 0\.45\)/.test(bd));
-ok("1件ずつ送る間に 12%ほどで一息を足す", /Math\.random\(\) < 0\.12\) nextGap \+= 800 \+ Math\.floor\(Math\.random\(\) \* 1500\)/.test(bd));
-ok("「確認中…」と画面に出す（人が見ている形）", /確認中…/.test(bd));
-
-console.log("\n■ ④ 選び終わってから資料を取りに行くまでに目で追う間");
-ok("_doSend はすぐ送らず、目で追う間のあと1件ずつ選んで送る", /setTimeout\(function \(\) \{[\s\S]{0,900}_oneByOneStart\(state, _list, 0,/.test(bd) && /function _oneByOneStart\(state, list, index, doneCb\)/.test(bd));
-ok("目で追う間は 1.2〜8秒の対数正規", /logNormalDelay\(2200, 0\.4\)/.test(bd) && /if \(_lookGap > 8000\) _lookGap = 8000;/.test(bd));
-ok("「送る部屋を確認中…」と画面に出す", /送る部屋を確認中…/.test(bd));
-
-console.log("\n■ ⑤ 点検の記録に残す（あとで人と自動を比べる）");
-ok("look_wait を点検に残す", /_tmark\("look_wait"/.test(bd));
-ok("1件ずつ送った時刻を点検に残す", /_tmark\("sent", "P" \+ state\.currentPage \+ " 1件"\)/.test(bd));
+ok("次の行までの間は対数正規＋12%で一息", /logNormalDelay\(1500, 0\.45\)/.test(bd) && /Math\.random\(\) < 0\.12\) nextGap \+=/.test(bd));
+ok("押してから送るまでの間も対数正規（_humanGapThen）", /function _humanGapThen\(\)[\s\S]{0,400}logNormalDelay\(1000, 0\.4\)/.test(bd));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

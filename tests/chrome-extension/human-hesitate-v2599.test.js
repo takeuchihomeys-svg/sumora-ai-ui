@@ -40,7 +40,7 @@ ok("どこで迷ったか（最大8件）", /_audit\.hesitate_last\.length < 8/.
 ok("押す前に呼ぶ", /if \(hesitate > 0\) \{ try \{ _tmarkHesitate\(item\.label, hesitate\); \}/.test(ps));
 
 console.log("\n■ ⑤ 一覧の部屋選び・ITANDI のチェックにも迷い");
-ok("リアプロの一覧の選択で迷う（15%・3段）", /function _humanCheckAll[\s\S]{0,1400}Math\.random\(\) < 0\.15 \* \(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(bd));
+ok("リアプロの一覧の選択で迷う（15%・3段）", /function _humanClickCb\(cb\)[\s\S]{0,2200}Math\.random\(\) < 0\.15 \* \(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(bd));
 ok("ITANDI の一覧の選択で迷う（15%・3段）", /function _humanCheckAll[\s\S]{0,1400}Math\.random\(\) < 0\.15 \* \(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(ib));
 ok("ITANDI の条件チェック（tick）でも迷う", /function tick\(el\)[\s\S]{0,900}Math\.random\(\) < 0\.15 \* \(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(ips));
 

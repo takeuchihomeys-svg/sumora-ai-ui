@@ -55,6 +55,22 @@ eq("both の地域の回 → 駅欄を空に", S.formValues(S.sanitize({ locatio
 eq("場所の指示が無ければ場所の欄に触らない（undefined）", Object.keys(S.formValues(S.sanitize({ floor_plan: "1LDK" }), { station: "x" }, null)), ["floor"]);
 eq("数字は文字にして入れる", S.formValues(S.sanitize({ rent_max: 80000, walk_minutes: 10, building_age: 20, area_min: 25 }), {}, null), { rent_max: "80000", walk: "10", age: "20", area_min: "25" });
 
+console.log("\n■ merge（前の条件＋最新・2026-11-10 竹内さん「最新が一番優先される」）");
+{
+  const prev = S.sanitize({ location: { mode: "only", stations: ["大正"], lines: [], areas: [] }, floor_plan: "1LDK" });
+  const next = S.sanitize({ rent_max: 80000 });
+  const m = S.merge(prev, next);
+  eq("前の場所・間取りを残し、家賃は新しい値", [m.location, m.floor_plan, m.rent_max], [prev.location, "1LDK", 80000]);
+  eq("新しい側に値があれば置き換え（最新優先）", S.merge(prev, S.sanitize({ floor_plan: "2LDK" })).floor_plan, "2LDK");
+  eq("両方 null なら null", S.merge(null, null), null);
+  eq("前が null なら新しい方", S.merge(null, next), next);
+  eq("新が null なら前のまま", S.merge(prev, null), prev);
+  const add = S.sanitize({ location: { mode: "add", stations: ["難波"], lines: [], areas: [] } });
+  eq("「だけ」＋「足す」→ 前の場所に足す", [S.merge(prev, add).location.mode, S.merge(prev, add).location.stations], ["only", ["大正", "難波"]]);
+  eq("「だけ」＋「だけ」→ 置き換え", S.merge(prev, S.sanitize({ location: { mode: "only", stations: ["梅田"], lines: [], areas: [] } })).location.stations, ["梅田"]);
+  eq("サイト・広げては持ち越さない", [S.merge(S.sanitize({ site: "itandi", is_wide: true, rent_max: 70000 }), next).site, S.merge(S.sanitize({ site: "itandi", is_wide: true, rent_max: 70000 }), next).is_wide], [null, null]);
+}
+
 console.log("\n■ describe");
 eq("大正駅だけ", S.describe(OV_TAISHO), "大正駅だけ");
 eq("まとめて", S.describe(S.sanitize({ location: { mode: "add", stations: ["難波"], lines: ["御堂筋線"], areas: ["大阪市西区"] }, floor_plan: "1LDK", rent_max: 80000 })), "難波駅・御堂筋線・西区を足す・1LDK・家賃〜8万");
@@ -154,7 +170,7 @@ console.log("\n■ v2.5.47 階（竹内 9/30「一時的に1階も含む場合�
   // サイトの検索は階で絞っていない（登録の「2階以上」も検索では絞らない＝判定で見る）→ 1階を含める回はサイトの欄を触らなくてよい
   const sites = ["page-script.js", "itandi-page-script.js", "reins-page-script.js"].map(read).join("\n");
   ok("サイトの自動入力に階の欄の操作が無い（登録の2階以上も検索では絞っていない＝1階は検索に入る）", !/floor_min|階以上/.test(sites));
-  ok("manifest 2.5.64", JSON.parse(read("manifest.json")).version === "2.6.23");
+  ok("manifest 2.6.24", JSON.parse(read("manifest.json")).version === "2.6.24");
 }
 
 console.log("\n■ 今ある一時調整の項目がその回だけ効く（popup の欄 → 各サイトの組み立て）");

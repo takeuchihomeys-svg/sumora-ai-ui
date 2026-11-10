@@ -24,7 +24,8 @@ const r5 = S.check({ stamp: { cid: "4d51caa5", name: "あ", at: NOW - 60e3, comp
 ok("あさんの検索・手順も終わっている・遠いのは少し → そのまま送る", r5.ok, r5);
 const bd = read("bulk-dl.js");
 ok("リアプロ: 送る時（手で押す・20秒後のまとめて送る）に確かめる", /if \(sendToLine && !_sendGuardOk\(customerName, customerId\)\) return;/.test(bd));
-ok("リアプロ: 20秒後のまとめて送るは、確かめが要る時は送らずボタンに出す", /_autoForwarding = true;/.test(bd) && /確かめが要ります（押して確かめてから送る）/.test(bd));
+ok("リアプロ: 押した1件をその場で送る時にも確かめる（_sendGuardOk）", /function sendOnePdfNow[\s\S]{0,1600}if \(!_sendGuardOk\(customerName, customerId\)\)/.test(bd));
+ok("リアプロ: 押した1件は20秒待たずに送る（1つずつ行ったのと同じ形）", /function sendOnePdfNow/.test(bd) && !/scheduleForward\(\)/.test(bd));
 ok("リアプロ: ブレインの下見の場所（AREA_FAR）を印に", /setAttribute\("data-axlx-area", _codes\.indexOf\("AREA_FAR"\) >= 0 \? "far"/.test(bd));
 ok("ITANDI: 送る時に確かめる", /SS\.check\(\{ stamp: SS\.read\(\), cur: \{ cid: customerId, name: customerName \}/.test(read("itandi-bulk-dl.js")));
 ok("案内（リアプロ）: 検索を押した時にこの一覧を検索したお客様を印（手順が終わっていたかも）", /SS\.write\(\{ cid: String\(session\.customerId\), name: session\.customerName \|\| "", at: Date\.now\(\), site: "realpro", complete: cur\.step\.kind === "search"/.test(read("realpro-guide.js")));

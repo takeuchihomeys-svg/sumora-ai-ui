@@ -83,7 +83,7 @@
       }
       if (!idx) return;
       var room = SK.roomFromRealproCell(c0);
-      if (room && SK.isSentRoom(idx, card.name, room)) { t.cb.checked = false; skipped++; if (names.length < 5) names.push(card.name + " " + room); }
+      if (room && SK.isSentRoom(idx, card.name, room)) { t.cb.checked = false; t.__axSkip = true; skipped++; if (names.length < 5) names.push(card.name + " " + room); }
     });
     if (count) {
       state.updateAges = ages;
@@ -93,6 +93,70 @@
     }
     updateBar();
     return { skipped: skipped };
+  }
+
+  /** 一覧の1行（送る直前に選んだ1件）を pickedRooms に足す（2026-11-10・1件ずつ選ぶ形） */
+  function _rememberPickedOne(state, item) {
+    var SK = _SK();
+    if (!state || !item || !item.btn) return;
+    var list = state.pickedRooms || (state.pickedRooms = []);
+    if (list.length >= 150) return;
+    var card;
+    try { card = extractCard(item.btn); } catch (_) { return; }
+    if (!card || !card.name) return;
+    var labels = card.headerIdx && card.headerIdx.labels;
+    var roomCell = labels && labels.length && !/部屋|号室/.test(String(labels[0] || "")) ? null : (card.cells ? card.cells[0] : null);
+    var room = SK && roomCell ? SK.roomFromRealproCell(roomCell) : null;
+    list.push({ n: String(card.name).slice(0, 60), r: room ? String(room).slice(0, 12) : null });
+  }
+
+  /** 一覧の更新日の経過を数える（点検の C2 用・チェックは触らない）。_applySentSkip(count=true) の数え方と同じ */
+  function _countRowAges(state) {
+    var SK = _SK();
+    if (!SK || !state || _staffModeOn) return;
+    var ages = state.updateAges || { n: 0, max_days: null, sample: [] };
+    tracked.forEach(function (t) {
+      var card;
+      try { card = extractCard(t.btn); } catch (_) { return; }
+      var labels = card && card.headerIdx && card.headerIdx.labels;
+      if (labels && labels.length && !/部屋|号室/.test(String(labels[0] || ""))) return;
+      var c0 = card && card.cells ? card.cells[0] : null;
+      var a = SK.ageDaysOfCell(c0);
+      if (a == null) return;
+      ages.n++;
+      ages.max_days = ages.max_days == null ? a : Math.max(ages.max_days, a);
+      if (ages.sample.length < 150) ages.sample.push(Math.round(a * 100) / 100);
+    });
+    state.updateAges = ages;
+  }
+
+  /**
+   * 2026-11-10 竹内さん「一気に選択されてしまうのでなくて1つ1つ行っていく形で」:
+   *   1件ずつ選ぶ形では「先に全行へチェックを入れてから外す」ことをしない（画面で一気に選択される）。
+   *   この1件が送ってよい行かを、チェックを触らずに判定する（送付済みの部屋・更新日で止める行は送らない）。
+   *   _applySentSkip / _applyUpdateOrderStop と同じ物差し（SS/SK・UO）を使う＝2つの決まりを作らない。
+   */
+  function _rowSkipReason(state, item) {
+    if (!state || !item || !item.btn) return "no-row";
+    if (item.__axSkip) return "sent";            // _applySentSkip が印を付けた行
+    var SK = _SK();
+    if (SK && !_staffModeOn) {
+      var idx = SK.indexFor(_sentRoomsStored, state.customerId, Date.now());
+      if (idx) {
+        var card = null;
+        try { card = extractCard(item.btn); } catch (_) { card = null; }
+        var labels = card && card.headerIdx && card.headerIdx.labels;
+        var okCell = !(labels && labels.length && !/部屋|号室/.test(String(labels[0] || "")));
+        var room = okCell && card && card.cells ? SK.roomFromRealproCell(card.cells[0]) : null;
+        if (card && room && SK.isSentRoom(idx, card.name, room)) return "sent";
+      }
+    }
+    var stop = state.updateStop;
+    if (stop && stop.page === state.currentPage && stop.index != null) {
+      var at = tracked.indexOf(item);
+      if (at >= 0 && at >= stop.index) return "old"; // 前回の検索より古い行
+    }
+    return null;
   }
 
   // ── 2026-09-30 v2.5.43 竹内「更新順で検索していたら、その更新順以降は見なくて大丈夫」（chrome-extension/update-order-stop.js）──
@@ -145,61 +209,12 @@
    * 2026-09-30 v2.5.42 竹内「画面見るところで、前に共有した物件はダウンロードされないようになっているのか読み取って」:
    *   資料を取りに行く直前に、一覧でチェックが入っている行（＝ダウンロードする部屋）の建物名＋号室を読んで残す（150件まで）。
    *   サーバーの点検（search-audit-check SENT_SELECTED）が、そのお客様の送付済みの部屋（/api/automation/sent-rooms と同じ出所）と照らす
+   *   2026-11-10: 1件ずつ選ぶ形になったので、送る直前に _rememberPickedOne で1件ずつ足す（この関数はもう使わない）
    */
-  function _rememberPicked(state) {
-    var SK = _SK();
-    if (!state) return;
-    var list = state.pickedRooms || (state.pickedRooms = []);
-    tracked.forEach(function (t) {
-      if (!t.cb.checked || list.length >= 150) return;
-      var card;
-      try { card = extractCard(t.btn); } catch (_) { return; }
-      if (!card || !card.name) return;
-      var labels = card.headerIdx && card.headerIdx.labels;
-      var roomCell = labels && labels.length && !/部屋|号室/.test(String(labels[0] || "")) ? null : (card.cells ? card.cells[0] : null);
-      var room = SK && roomCell ? SK.roomFromRealproCell(roomCell) : null;
-      list.push({ n: String(card.name).slice(0, 60), r: room ? String(room).slice(0, 12) : null });
-    });
-  }
 
-  // 2026-11-10 v2.5.95 竹内さん「ちゃんと人間のように1つずつ動くようになっているか／今一気に動くようになっていないか」:
-  //   旧は tracked.forEach でチェックを一瞬で全部入れてから資料を取りに行っていた（見た目が一斉に変わる＝機械らしい）。
-  //   ITANDI（_humanCheckAll）と同じ形にし、**1件ずつ画面に入れて押し、間を対数正規で空ける**。押し終わってから選別（送付済み・
-  //   更新日で止める・物件数の上限）と資料の取得へ進む。選別で外す行は待たずにその場で外す（待つと送付済みを取りこぼす）。
-  //   自動モード以外（案内・スタッフ）は _guideBlocksAuto で先に返るので、この待ちは自動の時だけ効く。
-  function _humanCheckAll(cbs, next) {
-    var list = (cbs || []).filter(function (cb) { return cb && !cb.checked; });
-    if (!list.length) { if (next) next(0); return; }
-    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
-    var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
-    var i = 0;
-    function step() {
-      if (i >= list.length) { if (next) next(list.length); return; }
-      var cb = list[i++];
-      try {
-        if (!cb.isConnected || cb.checked) { step(); return; }
-        try { cb.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
-        // 2026-11-10 v2.6.0 竹内さん「ちゃんとマウス動かしてクリックまでつながるようにする」:
-        //   見えるカーソルでその行まで動いてから押す（pointer-events:none＝サイトの操作を邪魔しない）
-        if (P && P.moveToEl) { P.ensure(); P.moveToEl(cb).then(function () { if (P.tap) P.tap(); cb.click(); }, function () { cb.click(); }); }
-        else cb.click();
-      } catch (_) {}
-      // 押す間 180〜320ms（対数正規）。8%ほどで「一覧を目で追う」一息 400〜1100ms
-      // 2026-11-10 v2.5.99 竹内さん「ボタン選択する際人間ならたまにまよう」:
-      //   どの部屋を送るか選ぶ所は人が一番迷う。15%で迷い（3段: 一瞬250〜600／考え込む700〜1600／かなり1800〜4500）
-      var wait = H && H.logNormalDelay ? H.logNormalDelay(220, 0.32) : (180 + Math.floor(Math.random() * 140));
-      if (Math.random() < 0.15 * (0.75 + Math.random() * 0.5)) {
-        var _hr = Math.random();
-        wait += _hr < 0.65 ? 250 + Math.floor(Math.random() * 350)
-              : _hr < 0.95 ? 700 + Math.floor(Math.random() * 900)
-              : 1800 + Math.floor(Math.random() * 2700);
-      } else if (Math.random() < 0.08) {
-        wait += 400 + Math.floor(Math.random() * 700);
-      }
-      setTimeout(step, wait);
-    }
-    step();
-  }
+  // 2026-11-10 竹内さん「一気に選択されてしまうのでなくて1つ1つ行っていく形で」:
+  //   旧の _humanCheckAll（全行を1件ずつ=最後には全部チェック）は使わない。1件ずつ「選ぶ→送る→次を選ぶ」で
+  //   画面は常に1件だけになる（_oneByOneStart・_humanClickCb）。
 
   // 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
@@ -605,29 +620,94 @@
 
   // v2.5.60 竹内「印刷用PDF おしたら転送されれば理想」: スタッフが押して開いた資料が手元に残ったら、その行にチェックを入れて印を付ける
   //   （送る時は手元から読む＝リアプロに届くのは押した1回だけ・background の axlx-pdf-captured）。拡張はリンクを押さない
+  // 2026-11-10 竹内さん「リアプロの一気に選択されてしまうのでなくて1つ1つ行っていく形で。チェックボックスはこの印刷用PDFのところの部分のことだから
+  //   印刷用PDF押したら、チェックボックス押して物件検索がされるように、印刷用PDFで出た資料をそのまま売り上げ番長におくられるようにすれば
+  //   1つずつおこなったのとおなじかたちにできるようになる」:
+  //   押した1件だけをチェックし（他の行は外す）、**その1件をその場で売上番長へ送る**（20秒まとめて待たない）。
+  //   押す順＝送る順。押した順に1件ずつ流す（前の1件が終わってから次を送る＝人の1件ずつの形）。
+  var _onePdfSent = {};          // 送った URL（同じ行を二度送らない）
+  var _onePdfChain = Promise.resolve();
+  function _onePdfBadge(item, ok, sent) {
+    var old = item.btn.parentNode && item.btn.parentNode.querySelector(".axlx-pressed-badge");
+    if (old) old.remove();
+    var b = document.createElement("span");
+    b.className = "axlx-pressed-badge";
+    b.style.cssText = "margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;vertical-align:middle;" +
+      (sent ? "background:#e3f2fd;color:#0d47a1;" : ok ? "background:#e8f5e9;color:#2e7d32;" : "background:#fff3e0;color:#e65100;");
+    b.textContent = sent ? "📤 送信済み" : ok ? "✅ 受け取り済み" : "☑ 送る物に入れました";
+    b.title = sent ? "この資料は売上番長へ送りました" : ok ? "押した資料を受け取りました。送る時はリアプロにもう一度取りに行きません" : "資料が手元に残らなかったので、送る時に取りに行きます";
+    item.btn.parentNode.insertBefore(b, item.btn.nextSibling);
+  }
+  /** 押した1件だけを売上番長へ送る（押した順に1件ずつ・前の1件が終わってから） */
+  function sendOnePdfNow(item) {
+    var url = item && item.btn && item.btn.href;
+    if (!url || _onePdfSent[url]) return;
+    _onePdfSent[url] = true;
+    // 押した1件だけを選ぶ（他の行のチェックは外す＝「一気に選択」にしない）
+    tracked.forEach(function (t) { if (t.cb && t.cb !== item.cb && t.cb.checked) t.cb.checked = false; });
+    if (item.cb && !item.cb.checked) item.cb.checked = true;
+    updateBar();
+    var _cEl = document.getElementById("axlx-count");
+    if (_cEl) _cEl.textContent = "📤 1件 送信中…";
+    var run = function () {
+      return new Promise(function (resolve) {
+        getCustomerFromPopup(function (customerName, customerConditions, customerId) {
+          if (!customerId) { resolve({ ok: false, reason: "no-customer" }); return; }
+          if (!_sendGuardOk(customerName, customerId)) { resolve({ ok: false, reason: "guard" }); return; }
+          buildSendItemsBrain(customerId, function (sendItems, brain) {
+            var one = (sendItems || []).filter(function (it) { return it && it.url === url; });
+            if (!one.length) { resolve({ ok: false, reason: "no-item" }); return; }
+            chrome.runtime.sendMessage({
+              type: "axlx-send-to-line",
+              urls: AxlxSendPairing.pluck(one, "url"),
+              customer_name: customerName || null,
+              property_summaries: AxlxSendPairing.pluck(one, "summary"),
+              property_pool: poolWithUrl(one),
+              customer_id: customerId,
+              customer_conditions: customerConditions || null,
+              site: "realpro",
+              sent_skipped: 0,
+              search_stamp: (function () { var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp; return SS ? SS.forSend(SS.read(), customerId, Date.now()) : null; })(),
+            }, function (resp) {
+              var err = chrome.runtime.lastError ? chrome.runtime.lastError.message : (!resp || !resp.ok ? ((resp && resp.error) || "応答なし") : null);
+              if (err) console.error("[AXLX bulk-dl] 1件送信（印刷用PDF）のエラー:", err);
+              resolve({ ok: !err, reason: err, brain: brain });
+            });
+          });
+        });
+      });
+    };
+    _onePdfChain = _onePdfChain.then(function () { return _humanGapThen(); }).then(run).then(function (r) {
+      if (r && r.ok) { _onePdfBadge(item, true, true); _tmark("sent", "pdf 1件"); }
+      else { _onePdfSent[url] = false; _onePdfBadge(item, false, false); console.warn("[AXLX bulk-dl] 1件送信（印刷用PDF）を送れませんでした:", r && r.reason); }
+      if (_cEl) _cEl.textContent = "📤 " + Object.keys(_onePdfSent).filter(function (k) { return _onePdfSent[k]; }).length + "件 送信済み";
+    });
+  }
+  /** 押してから送るまでの人の間（0.6〜1.8秒・たまに一息） */
+  function _humanGapThen() {
+    return new Promise(function (resolve) {
+      var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+      var g = H && H.logNormalDelay ? H.logNormalDelay(1000, 0.4) : (600 + Math.floor(Math.random() * 1200));
+      if (g > 4000) g = 4000;
+      setTimeout(resolve, g);
+    });
+  }
   try {
     chrome.runtime.onMessage.addListener(function (msg) {
       if (!msg || msg.type !== "axlx-pdf-captured") return;
       var item = tracked.find(function (t) { return t.btn && t.btn.href === msg.url; });
       if (!item) return;
-      item.cb.checked = true;  // 押した＝送る物（手元に残らなかった物も送る時に取りに行く）
-      var old = item.btn.parentNode && item.btn.parentNode.querySelector(".axlx-pressed-badge");
-      if (old) old.remove();
-      var b = document.createElement("span");
-      b.className = "axlx-pressed-badge";
-      b.style.cssText = "margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;vertical-align:middle;" + (msg.ok ? "background:#e8f5e9;color:#2e7d32;" : "background:#fff3e0;color:#e65100;");
-      b.textContent = msg.ok ? "✅ 受け取り済み" : "☑ 送る物に入れました";
-      b.title = msg.ok ? "押した資料を受け取りました。送る時はリアプロにもう一度取りに行きません" : "資料が手元に残らなかったので、送る時に取りに行きます";
-      item.btn.parentNode.insertBefore(b, item.btn.nextSibling);
+      _onePdfBadge(item, msg.ok, false);
       updateBar();
-      scheduleForward();
+      // 押した1件をその場で送る（まとめて20秒待たない＝1つずつ行ったのと同じ形）
+      sendOnePdfNow(item);
     });
   } catch (_) {}
 
   /**
    * v2.5.62 竹内「印刷用PDF おしたら…そのまま AIX ツールに転送されるようにする」:
-   *   押すたびに送ると、押している途中で何回にも分かれて届く → 最後に押してから20秒押さなければ、チェックした物をまとめて送る
-   *   （「📤 売上番長に送る」を押したのと同じ道＝送付済みの除外・ブレイン・AIX ツールへの記録も同じ）。押せばすぐ送る・待ちは押すたびに延びる
+   *   2026-11-10 からは押した1件をその場で送る（sendOnePdfNow）。このまとめて送る道は、
+   *   手で複数にチェックを入れて「📤 売上番長に送る」を押した時（mergePdfs(true)）だけが使う。
    */
   var _forwardTimer = null;
   var _autoForwarding = false;
@@ -646,19 +726,7 @@
     }
     return window.confirm(r.message);
   }
-  function scheduleForward() {
-    var lineBtn = document.getElementById("axlx-line-btn");
-    if (!lineBtn || lineBtn.disabled) return;
-    if (_forwardTimer) clearTimeout(_forwardTimer);
-    var n = tracked.filter(function (t) { return t.cb.checked; }).length;
-    lineBtn.textContent = "⏳ 押した " + n + "件を まもなく送ります（押すと今すぐ）";
-    _forwardTimer = setTimeout(function () {
-      _forwardTimer = null;
-      if (lineBtn.disabled) return;
-      _autoForwarding = true; // v2.5.80: 20秒後のまとめて送るは、確かめが要る時は送らない（手で押してもらう）
-      try { lineBtn.click(); } finally { _autoForwarding = false; }
-    }, 20000);
-  }
+  function scheduleForwardUnused() { /* 2026-11-10 押した1件をその場で送る形にしたので、20秒まとめて送る道は使わない（手で「売上番長に送る」を押した時だけ mergePdfs） */ }
 
   /**
    * v2.5.59 キャッシュ確認: この画面の「印刷用PDF」の資料が、ブラウザの手元に残っているかを確かめる。
@@ -1882,65 +1950,65 @@
     _tmark("page", "P" + state.currentPage, state.customerId || null);
     if (countEl) countEl.textContent = "全ページ送信中 P" + state.currentPage + "...";
 
-    // 2026-11-10 v2.5.95: 全チェックを一瞬で入れず、1件ずつ人の間を空けて押す（ITANDI と同じ）。
-    //   押し終わってから選別（送付済み・更新日・物件数の上限）と資料の取得へ進む
+    // 2026-11-10 竹内さん「リアプロの一気に選択されてしまうのでなくて1つ1つ行っていく形で。チェックボックスはこの印刷用PDFのところの部分のこと」:
+    //   旧は**先に全行へチェックを入れて**から選別して外していた（画面で一斉にチェックが付く＝機械らしい・人が1件ずつ選ぶ形と違う）。
+    //   新は **チェックを一切触らずに候補を作り**（送付済み・更新日で止める行はここで外す）、1件ずつ「選ぶ → 送る → 次を選ぶ」を繰り返す。
+    //   画面は常に1件だけチェックが入る（人が1軒ずつ選んで送るのと同じ形）。
     var _skCounted = tracked.length > 0;
-    _humanCheckAll(tracked.map(function (t) { return t.cb; }), function () {
-      updateBar();
-      // 2026-09-29 v2.5.41 送付済みの部屋は選ばない（数えるのはこのページで1回）
-      var _sk0 = _applySentSkip(state, _skCounted);
-      // 2026-09-30 v2.5.43 更新順の一覧は前回の検索より古い行から先を選ばない（送付済みの飛ばしの後・止めても送付済みの数え方は変えない）
-      _applyUpdateOrderStop(state);
-      _afterSelect(_sk0);
-    });
+    _beginSelect();
     return;
 
-    function _afterSelect(_sk0) {
-      var urls = getSelectedUrls();
-      if (!urls.length && state.updateStop) {
-        console.log("[AXLX bulk-dl] P" + state.currentPage + " は前回の検索より新しい行が無い → 資料を取らずに終える");
-        onDone(true, 0);
-        return;
-      }
-      if (!urls.length && _sk0.skipped > 0) {
-        // このページの行が全部送付済み＝送る物が無い（待たずに次のページへ）
-        console.log("[AXLX bulk-dl] P" + state.currentPage + " は全部送付済みの部屋 → 資料を取らずに次へ");
-        onDone(true, 0);
-        return;
-      }
-      if (!urls.length) {
-        // DOM がまだレンダリング中の可能性があるため最大4秒ポーリングして待つ
-        var _pollWait = 0;
-        var _pollTimer = setInterval(function () {
-          inject();
-          tracked.forEach(function (t) { t.cb.checked = true; });
-          updateBar();
-          _applySentSkip(state, !_skCounted && tracked.length > 0);
-          if (!_skCounted && tracked.length > 0) _skCounted = true;
-          _applyUpdateOrderStop(state); // 2026-09-30 v2.5.43 選び直した後も止めた行から先は選ばない
-          var urls2 = getSelectedUrls();
-          if (!urls2.length && state.updateStop) { clearInterval(_pollTimer); onDone(true, 0); return; }
-          _pollWait += 200;
-          if (urls2.length > 0 || _pollWait >= 4000) {
-            clearInterval(_pollTimer);
-            if (!urls2.length) {
-              console.warn("[AXLX bulk-dl] autoSendOnePage: " + _pollWait + "ms待機後も物件なし → スキップ");
-              state.readCount = (state.readCount || 0) + 0;
-              onDone(true, 0);
-              return;
-            }
-            // ポーリング中に物件が出た → 処理継続
-            _doSend(urls2);
+    function _beginSelect() {
+      var cand = tracked.filter(function (t) { return t.cb && t.btn && AxlxSendPairing.isHttpUrl(t.btn.href); });
+      if (cand.length) { _selectAllowed(cand); return; }
+      // DOM がまだレンダリング中の可能性があるため最大4秒待つ（チェックは触らない）
+      var _pollWait = 0;
+      var _pollTimer = setInterval(function () {
+        inject();
+        var c2 = tracked.filter(function (t) { return t.cb && t.btn && AxlxSendPairing.isHttpUrl(t.btn.href); });
+        _pollWait += 200;
+        if (c2.length || _pollWait >= 4000) {
+          clearInterval(_pollTimer);
+          if (!c2.length) {
+            console.warn("[AXLX bulk-dl] autoSendOnePage: " + _pollWait + "ms待機後も物件なし → スキップ");
+            onDone(true, 0);
+            return;
           }
-        }, 200);
+          _selectAllowed(c2);
+        }
+      }, 200);
+    }
+
+    /** 候補から送らない行（送付済み・前回の検索より古い）を外す。チェックは触らない */
+    function _selectAllowed(cand) {
+      // 更新順で止める線（前回の検索より古い行）を決める＝今までの決まりをそのまま使う
+      _applyUpdateOrderStop(state);
+      _countRowAges(state);
+      var allowed = [], sent = 0, old = 0;
+      cand.forEach(function (t) {
+        var why = _rowSkipReason(state, t);
+        if (why === "sent") { sent++; t.__axSkip = true; return; }
+        if (why === "old") { old++; return; }
+        allowed.push(t);
+      });
+      if (sent) console.log("[AXLX bulk-dl] 送付済みの部屋 " + sent + "件は送らない（資料を取りに行かない）");
+      if (old) console.log("[AXLX bulk-dl] 前回の検索より古い行 " + old + "件は送らない");
+      if (!_skCounted) _skCounted = true;
+      state.pageSkipped = sent;
+      if (!allowed.length) {
+        console.log("[AXLX bulk-dl] P" + state.currentPage + " は送る部屋が無い → 資料を取らずに次へ");
+        onDone(true, 0);
         return;
       }
-      _doSend(urls);
+      _doSend(allowed.map(function (t) { return t.btn.href; }));
     }
+
+    // 2026-11-10: 旧の _afterSelect（先に全行チェック→選別）は _selectAllowed に置き換えた（全行チェックをしない）
 
     function _doSend(sendUrls) {
       state.readCount = (state.readCount || 0) + sendUrls.length; // 検索の点検: 読んだ行数
-      _rememberPicked(state); // 2026-09-30 v2.5.42 一覧で実際にチェックが入っている部屋（見張りの C2・C3）
+      // 2026-11-10: 1件ずつ選ぶ形になったので、ここでは「どの部屋を送るか」をまだチェックしていない。
+      //   送る物の記録（pickedRooms）は1件ずつ送る直前に _rememberPickedOne で足す。
       // 2026-11-10 v2.5.95 竹内さん「人間が確認するように」: 選び終わってから資料を取りに行くまでに
       //   「一覧を上から目で追って、どの部屋を送るか決める間」を置く（1.2〜4秒・対数正規）。
       //   押した直後に一斉に資料を取りに行くと機械らしい。サイトへのアクセスは増えない（待つだけ）
@@ -2008,12 +2076,42 @@
         waitChecked(0);
       };
       if (!item.cb.checked) {
-        // 人が1件だけ押す（カーソルも動く）
-        enqueueHumanClick(item.cb, _clickEl, 400, 900);
+        // 人が1件だけ押す（見えるカーソルでその行まで動いてから押す）
+        // 2026-11-10 重大な不具合を修正: 旧は page-script.js 側の `enqueueHumanClick(item.cb, _clickEl, ...)` を呼んでいたが、
+        //   この2つは bulk-dl.js の中には無い（ReferenceError になり、1件ずつの送信が丸ごと止まっていた）。
+        _humanClickCb(item.cb);
         start();
       } else {
         start();
       }
+    }
+
+    /** 1件のチェックを人が押す形で入れる（見えるカーソル → たまに迷う → 押す → 反応を見る） */
+    function _humanClickCb(cb) {
+      if (!cb) return;
+      var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+      try { cb.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+      var fire = function () { try { if (cb.isConnected && !cb.checked) cb.click(); } catch (_) {} };
+      // 2026-11-10 竹内さん「ボタン選択する際人間ならたまにまよう」: 1件ずつ選ぶ所は人が一番迷う。
+      //   15%ほどで迷い（3段: 一瞬250〜600／考え込む700〜1600／かなり1800〜4500）を足してから押す
+      var hesitate = 0;
+      if (Math.random() < 0.15 * (0.75 + Math.random() * 0.5)) {
+        var _hr = Math.random();
+        hesitate = _hr < 0.65 ? 250 + Math.floor(Math.random() * 350)
+                 : _hr < 0.95 ? 700 + Math.floor(Math.random() * 900)
+                 : 1800 + Math.floor(Math.random() * 2700);
+      } else if (Math.random() < 0.08) {
+        hesitate = 400 + Math.floor(Math.random() * 700);
+      }
+      var tap = function () {
+        if (P && P.tap) P.tap();
+        setTimeout(fire, 90 + Math.floor(Math.random() * 160));
+      };
+      var withHesitate = function (fn) { if (hesitate > 0) setTimeout(fn, hesitate); else fn(); };
+      if (P && P.moveToEl) {
+        P.ensure();
+        P.moveToEl(cb).then(function () { withHesitate(tap); }, function () { withHesitate(fire); });
+      } else withHesitate(fire);
     }
 
     /** 1件だけを組にして送る（判定は1件ずつ・材料は今まで通り） */
@@ -2038,6 +2136,7 @@
         setTimeout(function () { _doSendOne(item, state, next); }, 400);
         return;
       }
+      _rememberPickedOne(state, item); // 2026-11-10: 送る1件を記録（点検の C2・C3 が読む）
       // ブレインの判定（1件）
       var judge = function (kept, brain) {
         if (!kept || !kept.length) { next(); return; }

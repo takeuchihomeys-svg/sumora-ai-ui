@@ -101,7 +101,7 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
 | 段 | どこで | 判断 | 残る物 |
 |---|---|---|---|
 | 登録の条件を検索の形に | background.js:4641 `_buildBatchConditions`（一括）／popup.js:3065・5586・5642（個別） | 🔢 | 🫥（その回の conditions。ブレインの時だけ search_audits.intended に写し） |
-| 一時調整・メモの上書き・決め手の条件を重ねる | popup.js:5136 `computeTempAdjOverride`・search-override.js（applyToCustomer）・background.js:3973・4173 | 🔢 | 🫥 何を重ねたか（search_override はピックアップの search_override に入る時だけ💾） |
+| 一時調整・メモの上書き・決め手の条件を重ねる | popup.js:5136 `computeTempAdjOverride`・search-override.js（applyToCustomer／merge）・background.js:3973・4173 | 🔢 | 🫥 何を重ねたか（search_override はピックアップの search_override に入る時だけ💾） |
 | 地名・駅の解決 | popup.js:340 /api/token-resolve・:511 /api/resolve-area・:4793 /api/itandi-resolve・:573 /api/property-brain/search-params・background.js:2540 /api/resolve-search-conditions | 🔢 辞書（station_map・region_map・line_meta・line_stations）→ 無い語だけ 🧠（Haiku・resolve-area/token-resolve） | 💾 学んだ語は station_map／region_map に upsert（token-resolve:594-620・resolve-area:621）・解決できない語は unknown_tokens |
 | サイトの表記に直す | popup-maps.js（STATION_LINE_MAP → LINE_ROUTE_MAP＝リアプロ／ITANDI_LINE_MAP_FILL＝ITANDI／REINS_LINE_MAP） | 🔢 | 🫥 対応表は拡張の中（DB の line_meta・station_map は写し） |
 | 更新日 | popup.js:3511-3524（個別はサイトごとの列）・background.js:1713（手動の一括は rp の値）・background.js:4643（指示の payload.rp_update_days を両サイトに） | 🔢 | 💾 手で選び直した値は property_customers の rp_update_days／itandi_update_days（上書き・履歴なし） |

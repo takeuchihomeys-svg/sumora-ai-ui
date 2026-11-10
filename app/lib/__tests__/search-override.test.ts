@@ -3,7 +3,7 @@
 //   拡張ツールの一時調整の部分で合わせる形。DeepSeek の物件検索 AI が要約して拡張ツールに渡す」
 // 文は本番のメモ・お客様の条件の書き方（2026-09-27 の点検で DeepSeek に当てた物）と竹内さんの例。
 // 実行: npx tsx app/lib/__tests__/search-override.test.ts（全 PASS で exit 0）
-import { looksLikeSearchInstruction, overrideLine, isEmptyOverride, maskMemoPii, parseModelJson, buildUserContent, SEARCH_OVERRIDE_SYSTEM_PROMPT, type RegisteredConditions } from "../search-override";
+import { looksLikeSearchInstruction, overrideLine, isEmptyOverride, maskMemoPii, parseModelJson, buildUserContent, SEARCH_OVERRIDE_SYSTEM_PROMPT, mergeSearchOverride, type RegisteredConditions } from "../search-override";
 import { parseDeterministic, validateOverride, sanitizeSearchOverride, layoutsInText, moneyInText } from "../search-override-read";
 import { buildWebBrainCommands } from "../web-brain-search";
 
@@ -122,6 +122,39 @@ console.log("── 積む行（payload.search_override）");
   t("上書きが無ければ payload は今まで通り", !("search_override" in r2[0].payload));
   const { rows: r3, skipped } = buildWebBrainCommands([{ id: "c1" }], "realnetpro", false, { searchOverride: ov, queued: new Set(["c1::realnetpro"]) });
   t("同じ回が走っていれば積まない（上書きがあっても）", r3.length === 0 && skipped.length === 1);
+}
+
+console.log("── 前の条件＋最新（2026-11-10 竹内さん「前の条件いれて・最新が一番優先」）");
+{
+  const prev = sanitizeSearchOverride({ location: { mode: "only", stations: ["大正"], lines: [], areas: [] }, floor_plan: "1LDK" })!;
+  const next = sanitizeSearchOverride({ rent_max: 80000 })!;
+  const m = mergeSearchOverride(prev, next)!;
+  eq("前の場所・間取りを残して、家賃だけ新しい値", [m.location, m.floor_plan, m.rent_max], [prev.location, "1LDK", 80000]);
+  eq("新しい側が null の欄は前のまま（消さない）", mergeSearchOverride(prev, next)!.walk_minutes, null);
+  eq("新しい側に値があれば置き換える（最新優先）", mergeSearchOverride(prev, sanitizeSearchOverride({ floor_plan: "2LDK" }))!.floor_plan, "2LDK");
+  eq("両方 null なら null", mergeSearchOverride(null, null), null);
+  eq("前が null なら新しい方", mergeSearchOverride(null, next), next);
+  eq("新が null なら前のまま", mergeSearchOverride(prev, null), prev);
+}
+{
+  const a = sanitizeSearchOverride({ location: { mode: "only", stations: ["大正"], lines: [], areas: [] } })!;
+  const b = sanitizeSearchOverride({ location: { mode: "add", stations: ["難波"], lines: [], areas: [] } })!;
+  const m = mergeSearchOverride(a, b)!;
+  eq("前が「だけ」で新が「足す」→ 前の場所に足す（重複なし）", [m.location?.mode, m.location?.stations], ["only", ["大正", "難波"]]);
+  const c = sanitizeSearchOverride({ location: { mode: "only", stations: ["梅田"], lines: [], areas: [] } })!;
+  const m2 = mergeSearchOverride(a, c)!;
+  eq("新が「だけ」なら置き換え（最新優先）", [m2.location?.mode, m2.location?.stations], ["only", ["梅田"]]);
+}
+{
+  const a = sanitizeSearchOverride({ site: "itandi", is_wide: true, rent_max: 70000 })!;
+  const b = sanitizeSearchOverride({ rent_max: 90000 })!;
+  eq("サイト・広げては持ち越さない（その回の選び方）", [mergeSearchOverride(a, b)!.site, mergeSearchOverride(a, b)!.is_wide], [null, null]);
+  eq("carryPerRun なら持ち越す", [mergeSearchOverride(a, b, { carryPerRun: true })!.site, mergeSearchOverride(a, b, { carryPerRun: true })!.is_wide], ["itandi", true]);
+}
+{
+  const prev = sanitizeSearchOverride({ floor_plan: "1LDK", rent_max: 80000 })!;
+  const m = mergeSearchOverride(prev, sanitizeSearchOverride({ rent_min: 60000 }), { clearNulls: ["floor_plan"] })!;
+  eq("clearNulls で明示的に消せる", [m.floor_plan, m.rent_max, m.rent_min], [null, 80000, 60000]);
 }
 
 console.log(`\n${pass} PASS / ${fail} FAIL`);
