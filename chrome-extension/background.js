@@ -3202,7 +3202,7 @@ async function _snapCanCapture() {
 async function _snapModeKey() {
   try {
     var core = self.AxlxModeCore;
-    var raw = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "brainMode"]);
+    var raw = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode"]);
     var st = core ? (core.effectiveState || core.readState)(raw, Date.now()) : { mode: "normal", brain: !!raw.brainMode };
     return self.AxlxSnapshotCore ? self.AxlxSnapshotCore.modeKey(st) : st.mode;
   } catch (_) { return null; }
@@ -3809,7 +3809,10 @@ async function _pollAndRunBatch() {
     //   AIXモードのPCだけが AIX 由来（source=aix・auto_schedule）を受け取る（?aix=1）。
     //   竹内「チェックした物の一括検索。拡張ツールでブレインモードに選択していたら連動して検索。ブレインモードのみで連動」:
     //   ブレインが ON の PC（スタッフ以外）だけがウェブの AIXツールの一括検索（source=web_brain）を受け取る（?brain=1）
-    var _modeRaw = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "brainMode"]);
+    // 2026-11-10 v2.5.94: autoModeAt（自動モードを選んだ印）も読む。
+    //   旧はここで読んでおらず、effectiveState が「選んだ印が無い」と見て mode=normal に落とし、
+    //   自動モードを選んでいても claimCommands=false で指示を一切拾えなかった（＝自動が来ない原因）
+    var _modeRaw = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode"]);
     var _core = self.AxlxModeCore;
     // v2.5.77: 光って選択するモード（GUIDE_ONLY）の間は effectiveBehavior が受け取りを全部 false にする＝サーバーに取りに行かない
     var _modeSt = _core ? (_core.effectiveState || _core.readState)(_modeRaw, Date.now()) : { mode: "normal", brain: !!_modeRaw.brainMode };

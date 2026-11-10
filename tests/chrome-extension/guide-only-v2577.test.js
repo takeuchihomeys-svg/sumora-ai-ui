@@ -38,10 +38,13 @@ const pp = read("popup.js"), html = read("popup.html");
 ok("popup: モードの選択に3つ（通常・スタッフ・自動）", /<option value="aix">自動<\/option>/.test(html) && /<option value="staff">スタッフ<\/option>/.test(html) && /<option value="normal">通常<\/option>/.test(html));
 ok("popup: 自動モードを通常に落とさない（GUIDE_ONLY でも選べる）", !/if \(core && core\.GUIDE_ONLY && mode === "aix"\) mode = "normal";/.test(pp));
 ok("popup: 一括検索の帯は出さない", /id="bulk-toolbar" class="axlx-guide-only-hidden"/.test(html) && /\.axlx-guide-only-hidden \{ display: none !important; \}/.test(read("styles.css")));
-ok("popup: 案内モードは常に ON・再開の印を置かない", /const _guideIt = \(self\.AxlxModeCore && self\.AxlxModeCore\.GUIDE_ONLY\) \? true :/.test(pp) && /\|\| \(self\.AxlxModeCore && self\.AxlxModeCore\.GUIDE_ONLY\)\) \{ try \{ chrome\.storage\.session\.remove\("axlx_pending_auto_send"\)/.test(pp));
+ok("popup: 案内モードは既定 ON・自動モードの時だけ OFF・再開の印は自動モードの時だけ置く",
+  /const _guideIt = _isAutoModeNow\(\) \? false :/.test(pp)
+  && /const _guideIt = _isAutoModeNow\(\) \? false : \(\(self\.AxlxModeCore && self\.AxlxModeCore\.GUIDE_ONLY\) \? true :/.test(pp)
+  && /_isAutoModeNow\(\)\) \{ \/\* 自動モードは置く \*\/ \}/.test(pp));
 for (const f of ["bulk-dl.js", "itandi-bulk-dl.js"]) {
   const s = read(f);
-  ok(`${f}: 古い OFF の値でも自動の送信・ページ送りを始めない`, /var _GUIDE_ONLY = true;/.test(s) && /_guideOff = !_GUIDE_ONLY && /.test(s));
+  ok(`${f}: 古い OFF の値でも自動の送信・ページ送りを始めない`, /var _GUIDE_ONLY = true;/.test(s) && /_guideOff = !_GUIDE_ONLY && |_guideOff = !_GUIDE_ONLY \|\| /.test(s));
 }
 ok("リアプロ: 全ページ送るのボタンを出さない", /document\.getElementById\("axlx-auto-btn"\)\.parentNode\.style\.display = "none"/.test(read("bulk-dl.js")));
 ok("ITANDI: 全ページ送るのボタンを出さない", /document\.getElementById\("axlx-itandi-all-pages-btn"\)\.style\.display = "none"/.test(read("itandi-bulk-dl.js")));
@@ -61,7 +64,7 @@ for (const f of ["realpro-guide.js", "itandi-guide.js"]) {
 ok("リアプロ: 光の要素は枠だけ（textContent を入れない）", (() => { const s = read("realpro-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 ok("ITANDI: 光の要素は枠だけ", (() => { const s = read("itandi-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest の版 2.5.92（自動モード）", mf.version === "2.5.93");
+ok("manifest の版 2.5.92（自動モード）", mf.version === "2.5.94");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

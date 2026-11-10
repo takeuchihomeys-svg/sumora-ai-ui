@@ -238,14 +238,37 @@
   //   案内モード（storage.local guideMode・既定オン＝realpro-guide.js）の間は、自動の送信・ダウンロード・ページ送りを一切始めない。
   //   ・読み込みが間に合わない時も「案内モード」として止める（明示の OFF＝false の時だけ動く＝安全側）
   //   ・止めた時は再開の印（axlx_pending_auto_send・ページ送りの続き）も消す
+  // 2026-11-10 v2.5.94 竹内「自動を昔のように動くように」:
+  //   自動モード（通常／スタッフ／自動 の「自動」＝storage の aixMode=true ＋ autoModeAt>0）を選んでいる時だけ
+  //   自動の送信・ページ送りを開く（mode-core.js の effectiveBehavior と同じ線。content script からは
+  //   mode-core.js を読まないので、ここに同じ意味の判定を持つ）。通常・スタッフは今まで通り止めたまま。
   var _guideOff = false;
+  var _autoModeOn = false;
   try {
     // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは常に ON（古い OFF の値でも自動を始めない・mode-core.js GUIDE_ONLY）
     var _GUIDE_ONLY = true;
-    chrome.storage.local.get(["guideMode"], function (r) { _guideOff = !_GUIDE_ONLY && !!(r && r.guideMode === false); });
-    chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch.guideMode) _guideOff = !_GUIDE_ONLY && ch.guideMode.newValue === false; });
+    var _AUTO_STAFF_TTL = 2 * 60 * 60 * 1000;
+    function _readAutoMode(st) {
+      var s = st || {};
+      var at = s.staffModeAt || 0;
+      var staffOn = !!s.staffMode && (!at || Date.now() - at <= _AUTO_STAFF_TTL);
+      // 「自動」を選んだ印（autoModeAt）がある時だけ。古い版が書き残した aixMode=true だけでは開かない
+      return !staffOn && !!s.aixMode && Number(s.autoModeAt) > 0;
+    }
+    function _applyAutoMode(st) {
+      _autoModeOn = _readAutoMode(st);
+      _guideOff = !_GUIDE_ONLY || _autoModeOn;
+    }
+    chrome.storage.local.get(["guideMode", "staffMode", "staffModeAt", "aixMode", "autoModeAt"], function (r) { _applyAutoMode(r); });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area !== "local" || !ch) return;
+      if (!("staffMode" in ch) && !("aixMode" in ch) && !("autoModeAt" in ch)) return;
+      // モードと印は別々に書かれるので、どれか1つ変わったら全部を読み直す
+      chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt"], function (r2) { _applyAutoMode(r2); });
+    });
   } catch (_) {}
   function _guideBlocksAuto(where) {
+    if (_autoModeOn) return false; // 自動モードは昔のように拡張が送る・ページをめくる
     if (_guideOff) return false;
     console.warn("[AXLX bulk-dl] 案内モードのため自動の送信・ダウンロード・ページ送りをしない（" + where + "）");
     try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}

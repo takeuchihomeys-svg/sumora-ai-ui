@@ -4597,7 +4597,8 @@ function openInstructions(siteKey) {
       //   受け取った itandi-page-script.js が案内モードなら入力せずに案内（itandi-guide.js）へ渡す＝入力と検索はスタッフ
       const _gmIt = await new Promise((res) => { try { chrome.storage.local.get(["guideMode"], (r) => res(r && r.guideMode)); } catch (_) { res(undefined); } });
       // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは常に ON（古い OFF の値は使わない）
-      const _guideIt = (self.AxlxModeCore && self.AxlxModeCore.GUIDE_ONLY) ? true : _gmIt !== false;
+      // 2026-11-10 v2.5.94: 自動モード（通常／スタッフ／自動 の「自動」）を選んでいる時は案内を OFF にして拡張が入力する（昔の自動と同じ）
+      const _guideIt = _isAutoModeNow() ? false : ((self.AxlxModeCore && self.AxlxModeCore.GUIDE_ONLY) ? true : _gmIt !== false);
       const isAutomated_itandi = !!autofillBtn.dataset.automated;
       const isAutoSendAll_itandi = !!autofillBtn.dataset.auto_send_all;
       const _lockedMode_itandi = autofillBtn.dataset.area_mode_locked || null; // await前に取得
@@ -5614,7 +5615,9 @@ function openInstructions(siteKey) {
       try {
         chrome.storage.local.get(["guideMode"], function (_gm) {
           // v2.5.77: 光って選択するモードの間は再開の印を置かない（自動の送信・ダウンロード・ページ送りを始めない）
-          if (!_gm || _gm.guideMode !== false || (self.AxlxModeCore && self.AxlxModeCore.GUIDE_ONLY)) { try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {} return; }
+          // 2026-11-10 v2.5.94: 自動モードを選んでいる時は今まで通り置く（拡張が一覧を読んで送る）
+          if (_isAutoModeNow()) { /* 自動モードは置く */ }
+          else if (!_gm || _gm.guideMode !== false || (self.AxlxModeCore && self.AxlxModeCore.GUIDE_ONLY)) { try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {} return; }
           chrome.storage.session.set({ axlx_pending_auto_send: {
             customerId:   c.id || null,
             customerName: c.customer_name || null,
@@ -6048,6 +6051,13 @@ function _modeState() {
   var core = self.AxlxModeCore;
   // v2.5.77: 光って選択するモードの間は AIX連動の値が残っていても「通常」で読む（effectiveState）
   return core ? (core.effectiveState || core.readState)(_modeRaw, Date.now()) : { mode: "normal", brain: false, staffExpired: false };
+}
+
+/** 2026-11-10 v2.5.94: 今「自動」モードか（通常／スタッフ／自動 の自動）。案内を OFF にして拡張が動く側 */
+function _isAutoModeNow() {
+  var core = self.AxlxModeCore;
+  if (!core) return false;
+  return _modeState().mode === core.AUTO_MODE;
 }
 
 function _modeBadge() {

@@ -27,10 +27,18 @@
   var PANEL_ID = "axlx-itandi-guide-panel", LAYER_ID = "axlx-itandi-guide-layer";
 
   // ── 案内モードのオン・オフ（既定オン・リアプロと同じ guideMode）。itandi-page-script.js（ページの側）が読めるよう <html> に印を付ける ──
+  //  2026-11-10 v2.5.94: 自動モード（aixMode＋autoModeAt・スタッフでない）を選んだ時だけ案内を OFF（拡張が入力・検索する）
   var guideOn = true;
+  function autoModeOf(st) {
+    var s = st || {};
+    var at = s.staffModeAt || 0;
+    var staffOn = !!s.staffMode && (!at || Date.now() - at <= 2 * 60 * 60 * 1000);
+    return !staffOn && !!s.aixMode && Number(s.autoModeAt) > 0;
+  }
   function applyMode(v) {
-    // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは常に ON
-    guideOn = true;
+    // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは既定 ON
+    // v2.5.94: 自動モードを選んだ時だけ OFF
+    guideOn = !(v === true);
     try { document.documentElement.setAttribute("data-axlx-guide", guideOn ? "1" : "0"); } catch (_) {}
     lockAutoPaging();
     renderPanel();
@@ -954,9 +962,17 @@
   }).observe(document.documentElement, { childList: true, subtree: true });
 
   // 案内モードの設定を読む（変数をすべて用意した後＝ファイルの最後で読む）
+  //  2026-11-10 v2.5.94: 自動モード（aixMode＋autoModeAt）の時は案内を OFF にするので、モードの値も一緒に読む
   try {
-    chrome.storage.local.get([MODE_KEY], function (r) { applyMode(r ? r[MODE_KEY] : undefined); });
-    chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch[MODE_KEY]) applyMode(ch[MODE_KEY].newValue); });
+    var AUTO_KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt"];
+    function _readMode() {
+      chrome.storage.local.get([MODE_KEY].concat(AUTO_KEYS), function (r) { applyMode(autoModeOf(r || {})); });
+    }
+    _readMode();
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area !== "local") return;
+      if (ch[MODE_KEY] || ch.staffMode || ch.aixMode || ch.autoModeAt || ch.staffModeAt) _readMode();
+    });
   } catch (_) { applyMode(true); }
 
   // ページを開いた時: 前の案内の続き

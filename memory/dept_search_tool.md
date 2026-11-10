@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-11-10 v2.5.94 自動モードが「昔のように」動く直し・AIX 優先度順（**拡張の再読み込み必須**・サーバーはデプロイが要る・DB の変更なし）
+
+竹内さん「自動で来てないから自動でできるようにする／自動を昔のように動くように」「ここの自動モード本来のように AIX 優先度順に動いていく形で」「動きは実際のスタッフが行っている人間の動きでお願い」
+
+v2.5.93 で自動モードを選んでも **指示を1件も拾えず、入力も送信も始まらない**状態だった。原因は3つの関所が「自動モード」を見ていなかったこと。
+
+### 1. 指示を拾えなかった（一番大事・background.js）
+- 原因: `_pollAndRunBatch` が `chrome.storage.local.get(["staffMode","staffModeAt","aixMode","brainMode"])` で **`autoModeAt` を読んでいなかった**。`mode-core.effectiveState` は「自動モードを選んだ印（autoModeAt>0）」が無いと `mode=normal` に落とすので、`effectiveBehavior` が `claimCommands=false` → `/api/automation/pending` に取りに行かず、自動モードでも**何も来ない**。
+- 直し: `autoModeAt` も読む（`_pollAndRunBatch` と `_snapModeKey` の2か所）。
+- サーバーは正常だった（確認: `automation_settings.paused=false`・pending 11件＝aix 1件・auto_schedule 10件）。
+
+### 2. 案内（光らせる）が常に ON で拡張が入力しなかった（realpro-guide.js・itandi-guide.js）
+- 原因: `applyMode()` が `guideOn = true` 固定（v2.5.77 の名残）。`<html data-axlx-guide="1">` が付くので `page-script.js` / `itandi-page-script.js` の `_guideOn()` が真になり、**拡張は入力も検索もしない**。
+- 直し: `autoModeOf(st)`（`aixMode=true` かつ `autoModeAt>0` かつスタッフでない）を足し、**自動モードの時だけ `guideOn=false`**（= `data-axlx-guide="0"`）。通常・スタッフは今まで通り案内 ON。読み込みも `guideMode` だけでなく `staffMode/staffModeAt/aixMode/autoModeAt` を見て、どれか変わるたびに読み直す。
+
+### 3. 自動送信・ページ送りが常に止まっていた（bulk-dl.js・itandi-bulk-dl.js）
+- 原因: `_GUIDE_ONLY = true` 固定で `_guideOff` が永久に false → `_guideBlocksAuto()` が常に true。
+- 直し: `_autoModeOn`（同じ判定）を足し、**自動モードの時は `_guideBlocksAuto()` が false**（昔のように送る・ページをめくる）。`autoModeAt`/`aixMode`/`staffMode` の変化を storage.onChanged で拾って読み直す。
+- popup.js: `_isAutoModeNow()` を追加。ITANDI の `_guideIt`（案内で渡すか）と、検索後の再開の印 `axlx_pending_auto_send` を **自動モードの時だけ「拡張が動く側」**に。
+
+### 4. AIX 優先度順（app/lib/automation-sources.ts・サーバー）
+- `pickClaimable` が **`source=aix` の指示を最優先**で返す（AIX を出した順＝`created_at` 昇順）。AIX が無ければ今まで通り「自動便でない物 → 古い順」。広げての続き（web_brain）や自動便（auto_schedule）より AIX が先。
+- テスト: `app/lib/__tests__/automation-sources-priority.test.ts`（8）
+
+### 5. 人間の動き
+- v2.5.93 で入れた人間らしさ（対数正規の間隔・1文字ずつ打つ・マウスの軌跡・少しずつスクロール・ITANDI も1件ずつ）は**そのまま効く**。今回の直しはその手前の関所を開けただけ。自動モードの回は `createPacer`（12操作ごとに小休憩）と `siteGapMs`/`customerGapMs` もそのまま。
+
+### 確かめる手順（1回ずつ・大量に押さない）
+1. 拡張を再読み込み（版 **2.5.94**）→ モードを「自動」にする
+2. 直後に `/api/automation/pending` を取りに行くか（Service Worker のコンソールに `[batch]` の行）
+3. 自動モードで YUMA を1回 → `search_audits.filled.form` に値が入る（案内ではなく拡張が入力）/ `filled.human` は 0（人が触っていない＝正常）
+4. `scripts/audit-human-vs-auto.ts --days=1` で人の回との差を見る
+
+### テスト・型
+- `tests/chrome-extension/` **47本すべて通過**（版固定 20ファイルを 2.5.94 に、popup/案内の期待を新しい形に更新）
+- `npx tsc --noEmit -p tsconfig.cursor-ext.json` エラー 0
+- デスクトップの `chrome-extension`（読み込み先）も 2.5.94 に更新
+
+### 触ったファイル
+`chrome-extension/background.js`・`bulk-dl.js`・`itandi-bulk-dl.js`・`realpro-guide.js`・`itandi-guide.js`・`popup.js`・`manifest.json`／`app/lib/automation-sources.ts`／`app/lib/__tests__/automation-sources-priority.test.ts`（新）／`tests/chrome-extension/*`（20）
+
+---
+
 ## 2026-11-10 一括検索・自動便の payload に ITANDI の更新日（itandi_update_days）を載せた（**サーバーのみ・拡張の変更なし・版は上げていない**・DB の変更なし）
 - DB_STRUCTURE.md の混ざっている所 2: 一括検索・自動便では ITANDI もリアプロの更新日（rp_update_days）を使っていた（v2.5.76 で列を分けたのは popup だけ）。確かめた所: background.js 4330 `_batchAutofill`→4367 `_buildBatchConditions`（4643 `opts.rp_update_days`）・4374 `optsFromPayload`・1712 手の一括の `effectiveRpUpdateDays`・auto-run.js 129 `payloadForCustomer`（site を見ない）→ itandi-page-script.js 165・itandi-guide-plan.js 277 が cond.rp_update_days を打つ。サーバーは cron・trigger とも rp_update_days だけ
 - 直し（サーバー）: payload に `itandi_update_days`（ITANDI の手の指定 → 無ければ自動・リアプロの手の指定は使わない）・計画に `update_days_plan.by_customer[id].itandi_days`（同じ空いた時間で広げる）。`app/lib/rp-update-days.ts` effectiveItandiUpdateDays・`search-update-days.ts` itandiPlanFrom／planPayload・`web-brain-search.ts`・`app/api/automation/trigger`・`app/api/cron/auto-property-search`。テスト `app/lib/__tests__/itandi-update-days-payload.test.ts`（21）

@@ -41,14 +41,32 @@
   //   案内モード（storage.local guideMode・既定オン＝itandi-guide.js）の間は、自動の送信・ページ送り（全ページ自動送信）を始めない（bulk-dl.js と同じ）。
   //   チェックを付ける・「売上番長に送る」（スタッフが押す・このページのチェックした物）は今まで通り。
   //   読み込みが間に合わない時も「案内モード」として止める（明示の OFF＝false の時だけ動く＝安全側）
+  // 2026-11-10 v2.5.94 自動モード（aixMode ＋ autoModeAt）を選んでいる時だけ自動送信を開く（bulk-dl.js と同じ線）
   var _guideOff = false;
+  var _autoModeOn = false;
   try {
     // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは常に ON（古い OFF の値でも自動を始めない・mode-core.js GUIDE_ONLY）
     var _GUIDE_ONLY = true;
-    chrome.storage.local.get(["guideMode"], function (r) { _guideOff = !_GUIDE_ONLY && !!(r && r.guideMode === false); });
-    chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch.guideMode) _guideOff = !_GUIDE_ONLY && ch.guideMode.newValue === false; });
+    var _AUTO_STAFF_TTL = 2 * 60 * 60 * 1000;
+    function _readAutoMode(st) {
+      var s = st || {};
+      var at = s.staffModeAt || 0;
+      var staffOn = !!s.staffMode && (!at || Date.now() - at <= _AUTO_STAFF_TTL);
+      return !staffOn && !!s.aixMode && Number(s.autoModeAt) > 0;
+    }
+    function _applyAutoMode(st) {
+      _autoModeOn = _readAutoMode(st);
+      _guideOff = !_GUIDE_ONLY || _autoModeOn;
+    }
+    chrome.storage.local.get(["guideMode", "staffMode", "staffModeAt", "aixMode", "autoModeAt"], function (r) { _applyAutoMode(r); });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area !== "local" || !ch) return;
+      if (!("staffMode" in ch) && !("aixMode" in ch) && !("autoModeAt" in ch)) return;
+      chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt"], function (r2) { _applyAutoMode(r2); });
+    });
   } catch (_) {}
   function _guideBlocksAuto(where) {
+    if (_autoModeOn) return false; // 自動モードは昔のように拡張が送る・ページをめくる
     if (_guideOff) return false;
     console.warn("[AXLX itandi] 案内モードのため自動の送信・ページ送りをしない（" + where + "）");
     _autoSendArmed = false;
