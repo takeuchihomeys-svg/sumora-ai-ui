@@ -227,7 +227,7 @@ describe("PROCEDURE_MOVE_IN_WIDE（実物）", () => {
     ["331b0338 09-10", "ありがとうございます！\n入居時期はいつまでまってもらうことできますか？", "hold_period"],
   ];
   for (const [name, t, fact] of hits) {
-    it(`既定 off では届かない: ${name}`, () => ok(!matchCompanyFacts(t).some((f) => f.id === fact), "off なのに届いた"));
+    it(`止める（off）と届かない: ${name}`, () => { const o = process.env.PROCEDURE_MOVE_IN_WIDE; process.env.PROCEDURE_MOVE_IN_WIDE = "off"; try { ok(!matchCompanyFacts(t).some((f) => f.id === fact), "off なのに届いた"); } finally { if (o === undefined) delete process.env.PROCEDURE_MOVE_IN_WIDE; else process.env.PROCEDURE_MOVE_IN_WIDE = o; } });
     it(`on で会社の事実 ${fact} が届く: ${name}`, () => withWide(() => ok(matchCompanyFacts(t).some((f) => f.id === fact), JSON.stringify(matchCompanyFacts(t).map((f) => f.id)))));
   }
   const misses: Array<[string, string]> = [
@@ -250,7 +250,7 @@ import("../procedure-question").then(({ procedurePointsToProperty, procedureMove
       ["ちなみにここは入居可能日いつ頃ですか？", true], ["４階の物件は早くて何日から入居できるかはわからないですよね？", true], ["この物件の最短入居可能日はいつですか？", true],
       ["ここだと最短でいつ入居可能ですか！？", true], ["1つ目に送らせていただいた物件だと、別の方が契約しない場合いつ入居可能ですか？", true],
     ] as const) it(`${want ? "指す" : "指さない"}: ${t.slice(0, 20)}`, () => eq(procedurePointsToProperty(t), want));
-    it("②のスイッチは既定 off", () => { eq(procedureUnknownPointsOnlyOn({}), false); eq(procedureUnknownPointsOnlyOn({ PROCEDURE_UNKNOWN_POINTS_ONLY: "on" }), true); });
+    it("②のスイッチは既定 on（11/10）", () => { eq(procedureUnknownPointsOnlyOn({}), true); eq(procedureUnknownPointsOnlyOn({ PROCEDURE_UNKNOWN_POINTS_ONLY: "off" }), false); });
     it("q092（ここは最短11月中旬・確認が正解）は物件を指す＝2択／確認のまま", () => eq(procedurePointsToProperty("見てきました。\nここは最短11月中旬でしょうか？\n10月後半くらいに入れるところとかありますか？"), true));
     it("q145（最短でも入居可能日は11月中旬・返信が正解）は指さない＝返信へ", () => eq(procedurePointsToProperty("最短でも入居可能日は11月中旬でしょうか？"), false));
     it("対象のお部屋の名前で指す（シーズンフラッツ）", () => eq(procedurePointsToProperty("シーズンフラッツ第一候補なんですけど最短入居日っていつになりますか？", "シーズンフラッツ心斎橋EAST"), true));
