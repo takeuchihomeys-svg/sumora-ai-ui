@@ -1,6 +1,6 @@
 // 夜の基準に固定するか（scripts/lib/exam-base-pin.ts）の単体テスト（LLM も DB も git も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-base-pin.test.ts（全 PASS で exit 0）
-import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects, nightBaseJobDue, isExamJobShape, nightBaseAlready, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseCapUsd, nightBaseIds } from "../exam-base-pin";
+import { decideBasePin, touchesExam, confirmTargets, defaultOnFromSubjects, nightBaseJobDue, isExamJobShape, nightBaseAlready, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseCapUsd, nightBaseIds, nightBaseSkip } from "../exam-base-pin";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -104,5 +104,16 @@ ok("二重に積まない: 列・済み・結果に同じ日の名前", nightBas
   ok("絞った外の問題は missing（昼に前を作る）", d.missing.join(",") === "q050" && d.ref === "abc1234");
 }
 
+// 2026-11-10 作業員8b: 夜の基準を積まない夜（11/08・11/09 は依頼 0本で全問 $8.72・$10.08）
+{
+  const nl = [{ commit: "96491c3", problems: ["q001", "q002"] }];
+  ok("積まない: 控えあり・流れる依頼が無い", nightBaseSkip({ hasNightly: true, ids: [], nightlies: nl, mainCommit: "96491c3" }) === "no-jobs");
+  ok("積む: 控えが一度も無い（全問）", nightBaseSkip({ hasNightly: false, ids: [], nightlies: [], mainCommit: "96491c3" }) === null);
+  ok("積まない: 同じ commit で問題が全部控えにある", nightBaseSkip({ hasNightly: true, ids: ["q001"], nightlies: nl, mainCommit: "96491c3" }) === "covered");
+  ok("積む: 同じ commit でも控えに無い問題がある", nightBaseSkip({ hasNightly: true, ids: ["q001", "q009"], nightlies: nl, mainCommit: "96491c3" }) === null);
+  ok("積む: main が進んだ", nightBaseSkip({ hasNightly: true, ids: ["q001"], nightlies: nl, mainCommit: "abcdef0" }) === null);
+  ok("積む: main が分からない", nightBaseSkip({ hasNightly: true, ids: ["q001"], nightlies: nl, mainCommit: null }) === null);
+  ok("積まない: 実物の 11/09 の形（直近2日に昼の依頼なし）", nightBaseSkip({ hasNightly: true, ids: nightBaseIds([{ label: "night-base-2026-11-08", createdAt: "2026-11-08T12:03:41Z", only: "" }], { nowMs: Date.parse("2026-11-09T12:01:51Z"), hasNightly: true }), nightlies: nl, mainCommit: "96491c3" }) === "no-jobs");
+}
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

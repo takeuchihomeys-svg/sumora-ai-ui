@@ -116,6 +116,20 @@ export function nightBaseIds(jobs: ReadonlyArray<{ label?: string; createdAt?: s
   return [...s].sort();
 }
 
+/**
+ * 夜の基準を今夜は積まないか（純関数・2026-11-10 作業員8b・統括役の②）。11/08・11/09 は昼の依頼が 0本なのに、絞った問題が空＝全問の依頼が積まれ、
+ *   同じ commit 96491c3 で 247問を作り直した（$8.72＋$10.08・使った依頼は 0本）。
+ *   - 控えがあり、絞った問題が空（流れる依頼が無い）→ "no-jobs"（全問にしない・積まない）
+ *   - 控えの commit が今の main と同じで、絞った問題が全部その控えにある → "covered"（作っても同じ物）
+ *   控えが一度も無い時（hasNightly=false）は今まで通り積む（全問）。止める: EXAM_NIGHT_BASE_SKIP=off
+ */
+export function nightBaseSkip(o: { hasNightly: boolean; ids: readonly string[]; nightlies: ReadonlyArray<{ commit?: string; problems?: string[] }>; mainCommit: string | null }): "no-jobs" | "covered" | null {
+  if (!o.hasNightly) return null;
+  if (!o.ids.length) return "no-jobs";
+  if (o.mainCommit && o.nightlies.some((n) => n.commit === o.mainCommit && Array.isArray(n.problems) && o.ids.every((id) => n.problems!.includes(id)))) return "covered";
+  return null;
+}
+
 export function nightBaseJobDue(lastJstDay: string | null, now: Date, opts: { fromHour?: number; cwd: string; repeat?: number; only?: string[] }): { due: boolean; day: string; job: Record<string, unknown> | null } {
   const j = new Date(now.getTime() + 9 * 3_600_000);
   const day = j.toISOString().slice(0, 10), h = j.getUTCHours();

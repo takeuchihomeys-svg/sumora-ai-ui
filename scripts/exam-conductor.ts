@@ -55,7 +55,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 import { pcState } from "./lib/exam-pc-state";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
-import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds } from "./lib/exam-base-pin";
+import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
 import { chooseGuards, fitGuardsToCap, guardLine } from "./lib/exam-guards";
 import { bizLanes } from "./lib/exam-plan";
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
@@ -816,7 +816,7 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
     process.on("exit", () => { try { if (readJson<{ pid?: number } | null>(RUN_LOCK, null)?.pid === process.pid) unlinkSync(RUN_LOCK); } catch { /* */ } });
     cfg();
     const tscAlerted = new Set<string>();
-    let emptyNoted = false;
+    let emptyNoted = false; let nightSkipNoted = "";
     for (;;) {
       // 2026-11-05 作業員4（竹内さん KB 95f492fc ⑤）: 危ない所の見張りの手元の分を夜1回（2つ目の流す役だけ・止める EXAM_HAZARD_AUDIT=off）。本番の分は Vercel の cron hazard-audit-db
       if (REMOTE_ONLY && (process.env.EXAM_HAZARD_AUDIT ?? "").trim().toLowerCase() !== "off") {
@@ -838,17 +838,30 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
         mkdirSync(MARKS, { recursive: true });
         const nbFile = join(MARKS, "night-base-last.json");
         // 2026-11-07 統括役: 控えが一度書かれた後は、直近2日の昼の依頼で使った問題＋積まれている依頼の問題だけ作る（EXAM_NIGHT_BASE_NARROW=off で全問）
+        // 2026-11-10 作業員8b（統括役の②）: 絞った問題が空（流れる依頼が無い）・控えの commit が今の main と同じで全部控えにある夜は積まない（nightBaseSkip・止める EXAM_NIGHT_BASE_SKIP=off）。
+        //   印（night-base-last.json）は書かない＝後から依頼が積まれたら、その夜のうちに積む
+        let nightSkip: ReturnType<typeof nightBaseSkip> = null;
         const nightOnly = (() => {
           if ((process.env.EXAM_NIGHT_BASE_NARROW ?? "").trim().toLowerCase() === "off") return [] as string[];
           try {
             const B = join(examCacheRoot(), "brain-exam-baseline");
-            const hasNightly = readdirSync(B).some((f) => /^nightly-base-.*\.json$/.test(f));
+            const nightFiles = readdirSync(B).filter((f) => /^nightly-base-.*\.json$/.test(f));
+            const hasNightly = nightFiles.length > 0;
             const jobs: Array<{ label?: string; createdAt?: string; only?: string; cmds?: string[] }> = [];
             for (const d of [ROOT, DONE]) for (const f of readdirSync(d)) { if (!/\.json(\.claimed)?$/.test(f)) continue; const j = readJson<Record<string, unknown> | null>(join(d, f), null); if (j && isExamJobShape(j)) jobs.push(j as never); }
-            return nightBaseIds(jobs, { nowMs: Date.now(), hasNightly });
+            const ids = nightBaseIds(jobs, { nowMs: Date.now(), hasNightly });
+            if ((process.env.EXAM_NIGHT_BASE_SKIP ?? "").trim().toLowerCase() !== "off") {
+              const rev = (r: string) => { try { return execFileSync("git", ["rev-parse", "--verify", `${r}^{commit}`], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch { return null; } };
+              // brain-exam の resolveMainRef と同じ: origin/main が main に含まれれば main・でなければ origin/main
+              const om = rev("origin/main"), lm = rev("main");
+              const mainCommit = om && lm ? (spawnSync("git", ["merge-base", "--is-ancestor", "origin/main", "main"], { stdio: "ignore" }).status === 0 ? lm : om) : (lm ?? om);
+              nightSkip = nightBaseSkip({ hasNightly, ids, mainCommit, nightlies: nightFiles.map((f) => readJson<{ commit?: string; problems?: string[] } | null>(join(B, f), null) ?? {}) });
+            }
+            return ids;
           } catch { return [] as string[]; }
         })();
-        const nb = nightBaseJobDue(readJson<{ day?: string } | null>(nbFile, null)?.day ?? null, new Date(), { cwd: process.cwd(), only: nightOnly });
+        const nb = nightSkip ? { due: false, day: "", job: null } : nightBaseJobDue(readJson<{ day?: string } | null>(nbFile, null)?.day ?? null, new Date(), { cwd: process.cwd(), only: nightOnly });
+        if (nightSkip) { const k = `${new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10)}:${nightSkip}`; if (nightSkipNoted !== k) { nightSkipNoted = k; log(`夜の基準は積まない（${nightSkip === "no-jobs" ? "流れる依頼が無い" : "控えの commit が今の main と同じで問題が全部ある"}・EXAM_NIGHT_BASE_SKIP=off で今まで通り）`); } }
         // 印が無くても、その日の依頼が列・済み・結果にあれば積まない（印を移した日の二重を防ぐ）
         const names = (d: string) => { try { return readdirSync(d); } catch { return [] as string[]; } };
         if (nb.due && nb.job && nightBaseAlready(nb.day, [...names(ROOT), ...names(DONE), ...names(RES), ...names(join(ROOT, "withdrawn"))])) {
