@@ -26,6 +26,27 @@ export function isExamJob(j: { runner?: string; readOnly?: boolean }): boolean {
   return j.runner !== "tsc" && j.runner !== "tsc-remote" && !(j.runner === "cmd" && j.readOnly);
 }
 
+/**
+ * 漏れの番人（強化の一覧 D3・2026-11-10 作業員8）: 近い番の読み（match_conductor_focus／turns）の答えに、
+ *   距離 0.01 未満（＝元の番そのもの）か、元の番（頼みの p_before）より後の時刻の番が1本でもあれば漏れ（11/10 の 8c1b057c の前は q371 で 0.001・30本以上）。
+ *   exam-near-resolve が控えを書く前に見て、漏れなら控えを書かずに <置き場>/leak-stop.json を置く＝係は試験の依頼を止めて知らせる
+ */
+export const LEAK_DISTANCE = 0.01;
+export function nearLeak(name: string, reqBody: string, rows: ReadonlyArray<Record<string, unknown>>): { leak: boolean; close: number; after: number } {
+  if (name !== "match_conductor_focus" && name !== "match_conductor_turns") return { leak: false, close: 0, after: 0 };
+  let before = NaN;
+  try { const b = JSON.parse(reqBody) as Record<string, unknown>; before = Date.parse(String(b.p_before ?? "")); } catch { /* 頼みの中身が読めない時は時刻を見ない */ }
+  let close = 0, after = 0;
+  for (const r of rows) {
+    const d = typeof r.distance === "number" ? r.distance : Number(r.distance);
+    if (Number.isFinite(d) && d < LEAK_DISTANCE) close++;
+    const t = Date.parse(String(r.turn_at ?? ""));
+    if (Number.isFinite(before) && Number.isFinite(t) && t > before) after++;
+  }
+  return { leak: close + after > 0, close, after };
+}
+export const LEAK_STOP_FILE = "leak-stop.json";
+
 export type NearHookDecision = { run: false; why: string } | { run: true; envPath: string; days: string[]; total: number };
 /** 解くか（純）。stage: before＝依頼を流す前・after＝依頼が終わった後 */
 export function decideNearResolve(i: {

@@ -3,7 +3,7 @@
 //   夜だけ（JST 22〜9）。営業時間は動かない。基準は竹内さんの番だけ（staff_writer=takeuchi・sure）
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { fillConductorTurnVectors, backfillCursor, v2BackfillCursor, conductorTurnVectorsV2On } from "@/app/lib/conductor-turn-vectors-server";
+import { fillConductorTurnVectors, backfillCursor, v2BackfillSendIds, markV2Unbuildable, conductorTurnVectorsV2On } from "@/app/lib/conductor-turn-vectors-server";
 import { conductorTurnVectorsOn } from "@/app/lib/conductor-turn-vectors";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
@@ -40,11 +40,17 @@ export async function GET(req: NextRequest) {
     const r = await fillConductorTurnVectors(sb, { days: 90, limit: 200, apply: !dry, before });
     // 2026-11-05 作業員5: v2 が on の夜は、新しい番の後に、v2 がまだ無い古い番を同じ回で 200番まで作り直す（約5晩で 1,000番・埋め込み 約 $0.001/晩）
     let r2: Awaited<ReturnType<typeof fillConductorTurnVectors>> | null = null;
+    let unbuildable = 0;
     if (!backfill && !dry && conductorTurnVectorsV2On() && !r.timeBudgetHit) {
-      const cur = await v2BackfillCursor(sb);
-      if (cur) r2 = await fillConductorTurnVectors(sb, { days: 90, limit: 200, apply: true, before: cur, budgetMs: 60_000 });
+      // 2026-11-11 作業員4: 前の印（v2BackfillCursor の後ろから送信800通）は窓が全部 v2 済みで 11/06 から built 0 のまま＝表の v2 の無い行の送信 id で直接作る。
+      //   作れなかった行（申込の書類の番 等）は印を付け、次の晩の的を塞がない（時間切れの時は付けない＝まだ見ていない行に付けない）
+      const ids = await v2BackfillSendIds(sb, 200);
+      if (ids.length) {
+        r2 = await fillConductorTurnVectors(sb, { days: 120, limit: 200, apply: true, sendIds: ids, budgetMs: 60_000 });
+        if (!r2.timeBudgetHit) unbuildable = await markV2Unbuildable(sb, ids);
+      }
     }
-    await finishCronLog(logId, true, { ...r, before, ...(r2 ? { v2Backfill: r2 } : {}) });
+    await finishCronLog(logId, true, { ...r, before, ...(r2 ? { v2Backfill: { ...r2, unbuildable } } : {}) });
     return NextResponse.json({ ok: true, ...r, ...(r2 ? { v2Backfill: r2 } : {}) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
