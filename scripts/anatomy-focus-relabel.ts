@@ -2,12 +2,35 @@
 //   統括役（重点の外れの表）: 正解の札の揺れ3つを決まりで直した後、その番を付け直して前後を並べる。既定は書かない（--apply で anatomy.focus と background だけ上書き）。
 //   テストの決まり（memory/test_protocol_brain.md）: setupLlmTest を最初に・LLM_TEST_MODE=deepseek-all。材料は伏せ済みの body・customer_gist と状況の文 v2 だけ。
 // 実行: LLM_TEST_MODE=deepseek-all npx tsx --env-file=<サーバーの鍵のある .env> scripts/anatomy-focus-relabel.ts --ids=<id,... のファイル> [--out=<id:focus,... のファイル>] [--apply]
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { dirname, join, resolve } from "node:path";
 import { setupLlmTest } from "./lib/llm-test-harness";
 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 
+// 2026-11-11 統括役（作業員5）: 同じ表（takeuchi_compose_examples の anatomy）を付け直す台本が2本同時に走らない鍵。
+//   11/10 10:01〜10:12Z に同じ名札の回が2本重なり、費用が倍・3票の行が上書きし合った。倉庫の根の .claude/exam-cache/anatomy-relabel.lock に印を置き、
+//   印の pid が生きていて3時間以内なら止める（死んだ回の印は取り直す）。終わる時に自分の印だけ消す
+const LOCK = (() => {
+  try { return join(dirname(resolve(execSync("git rev-parse --git-common-dir", { encoding: "utf8" }).trim())), ".claude", "exam-cache", "anatomy-relabel.lock"); }
+  catch { return join(process.cwd(), ".claude", "exam-cache", "anatomy-relabel.lock"); }
+})();
+function takeLock(): boolean {
+  mkdirSync(dirname(LOCK), { recursive: true });
+  try {
+    const cur = JSON.parse(readFileSync(LOCK, "utf8")) as { pid?: number; at?: string };
+    let alive = false;
+    try { if (cur.pid) { process.kill(cur.pid, 0); alive = true; } } catch { alive = false; }
+    if (alive && Date.now() - Date.parse(cur.at ?? "") < 3 * 3600_000) { console.error(`止めた: 付け直しの別の回が動いている（pid ${cur.pid}・${cur.at}・${LOCK}）`); return false; }
+  } catch { /* 印なし */ }
+  writeFileSync(LOCK, JSON.stringify({ pid: process.pid, at: new Date().toISOString(), argv: process.argv.slice(2).join(" ") }));
+  return true;
+}
+function dropLock() { try { const cur = JSON.parse(readFileSync(LOCK, "utf8")) as { pid?: number }; if (cur.pid === process.pid) unlinkSync(LOCK); } catch { /* なし */ } }
+
 (async () => {
+  if (!takeLock()) { process.exitCode = 1; return; }
   const h = await setupLlmTest("anatomy-focus-relabel");
   try {
     const { createClient } = await import("@supabase/supabase-js");
@@ -76,5 +99,5 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
     console.log(`# 解剖の重点の付け直し: ${out.length}番・変わった ${changed.length}（${Object.entries(dirs).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("・")}）${process.argv.includes("--apply") ? "・DB に書いた" : "・書いていない"}`);
     if (arg("out")) writeFileSync(arg("out"), out.filter((o) => o.after).map((o) => `${o.id}:${o.after}`).join(","));
     if (arg("json")) writeFileSync(arg("json"), JSON.stringify(out, null, 1));
-  } finally { await h.finish(); }
-})().catch((e) => { console.error(e); process.exitCode = 1; });
+  } finally { dropLock(); await h.finish(); }
+})().catch((e) => { dropLock(); console.error(e); process.exitCode = 1; });
