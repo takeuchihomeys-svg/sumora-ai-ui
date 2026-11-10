@@ -1047,6 +1047,18 @@ function setSearchMode(mode) {
   updateTransferCountLabel();
   if (selectedSite) renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
 }
+// 2026-11-10 v2.6.20 竹内さん「まだエラーある」: popup.html のインライン onclick は CSP でブロックされるため、
+//   ここでイベントを繋ぐ（popup.html に on* 属性を書かない決まり）。
+function _initSearchModeButtons() {
+  try {
+    var bt = document.getElementById('modeTransfer');
+    var bm = document.getElementById('modeTime');
+    if (bt) bt.addEventListener('click', function () { setSearchMode('transfer'); });
+    if (bm) bm.addEventListener('click', function () { setSearchMode('time'); });
+  } catch (_) {}
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _initSearchModeButtons);
+else setTimeout(_initSearchModeButtons, 0);
 
 // ── エリア条件テキスト自動パース ─────────────────────────────────────
 

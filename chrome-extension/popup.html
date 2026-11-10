@@ -176,8 +176,10 @@
         <div id="transfer-options" style="display:none; gap:8px; flex-direction:column;">
           <!-- 検索モード切替 -->
           <div style="display:flex; gap:4px;">
-            <button id="modeTransfer" class="mode-btn active-mode" onclick="setSearchMode('transfer')">🔄 乗り換え回数</button>
-            <button id="modeTime" class="mode-btn" onclick="setSearchMode('time')">⏱ 所要時間</button>
+            <!-- 2026-11-10 v2.6.20 竹内さん「まだエラーある」: インライン onclick は Manifest V3 の CSP で**ブロックされ、押しても動かない**。
+                 イベントは popup.js の _initSearchModeButtons で繋ぐ（popup.html に on* 属性を書かない）。 -->
+            <button id="modeTransfer" class="mode-btn active-mode">🔄 乗り換え回数</button>
+            <button id="modeTime" class="mode-btn">⏱ 所要時間</button>
           </div>
           <!-- 乗り換え回数モード -->
           <div id="transferCountDiv" style="display:flex; align-items:center; gap:6px;">
