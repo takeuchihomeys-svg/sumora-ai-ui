@@ -193,7 +193,7 @@ function rest() {
     "reins-content.js": { "setTimeout 300": [1, "起動時"] },
     "reins-page-script.js": { "setTimeout 90000": [1, "見張り（fill-done の保証）"] },
     "score-overlay.js": { "setTimeout 900": [1, "点数の表示の間引き"], "setTimeout 500": [1, "点数の表示"], "setTimeout 300": [1, "点数の表示"] },
-    "underbar.js": { "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限（v2.5.86・サイトを触らない）"], "setTimeout 80": [1, "パネルの表示"], "setTimeout 1500": [1, "拡張の再読み込み直後のやり直し"], "setTimeout 50": [1, "パネルの動き"] },
+    "underbar.js": { "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限（v2.5.86・サイトを触らない）"], "setTimeout 80": [1, "パネルの表示"], "setTimeout 1500": [2, "拡張の再読み込み直後のやり直し・案内の記録の返事が来ない時の予備（v2.5.90・読むだけでサイトを触らない）"], "setTimeout 50": [1, "パネルの動き"] },
   };
   const found = scanFixed();
   const files = new Set([...Object.keys(found), ...Object.keys(KEEP)]);
@@ -253,8 +253,91 @@ function rest() {
     ok(`node --check ${f}`, good);
   }
 
-  console.log(`\n${pass} passed, ${fail} failed`);
-  if (fail) process.exit(1);
+console.log("\n■ ⑥ 自動モードの間隔（2026-11-10 対数正規・12操作ごとに8秒の休憩）");
+{
+  // 中央値 0.9秒・12操作ごとに 8秒。固定周期でないこと（同じ値が続かない・等間隔でない）を確かめる
+  const rng = seeded(3);
+  const p = HW.createPacer({ baseMs: 900, breakEvery: 12, breakMs: 8000 });
+  const xs = [];
+  for (let i = 0; i < 240; i++) xs.push(p.next(rng));
+  const normal = xs.filter((x) => !x.isBreak).map((x) => x.ms);
+  const breaks = xs.filter((x) => x.isBreak).map((x) => x.ms);
+  ok(`休憩は 12操作ごと（${breaks.length}回／240操作）`, breaks.length === 20);
+  ok("休憩の印は 12・24・36… の所", xs.filter((x) => x.isBreak).map((x) => x.n).slice(0, 3).join(",") === "12,24,36");
+  const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+  ok(`ふだんの間の中央値 ≒ 0.9秒（${med(normal)}ms）`, Math.abs(med(normal) - 900) < 120);
+  ok(`休憩の中央値 ≒ 8秒（${med(breaks)}ms）`, Math.abs(med(breaks) - 8000) < 1200);
+  ok(`ふだんの間がばらつく（${new Set(normal).size}通り／220回）`, new Set(normal).size > 100);
+  ok(`休憩がばらつく（${new Set(breaks).size}通り／20回）`, new Set(breaks).size > 10);
+  ok("下の端は 200ms 以上", normal.every((v) => v >= 200));
+  ok("右に裾が長い（平均 > 中央値）＝人がたまに間を置く形", normal.reduce((a, b) => a + b, 0) / normal.length > med(normal));
+  ok("どの間も 中央値の6倍を超えない（止まらない）", normal.every((v) => v <= 900 * 6) && breaks.every((v) => v <= 8000 * 6));
+  eq("nextMs は next の ms と同じ形", typeof HW.createPacer().nextMs(rng), "number");
+  eq("reset で数え直す", (() => { const q = HW.createPacer(); q.next(rng); q.next(rng); q.reset(); return q.count(); })(), 0);
+  eq("壊れた設定でも落ちない（既定に戻る）", typeof HW.createPacer({ baseMs: 0, breakEvery: -3, breakMs: "x" }).next(rng).ms, "number");
+  eq("logNormalDelay(0) は 0（待たない）", HW.logNormalDelay(0), 0);
+  // 固定周期でないこと（等間隔の検出を避ける）: 連続する2つの間が同じになる確率が低い
+  const same = normal.slice(1).filter((v, i) => v === normal[i]).length;
+  ok(`同じ値が続く回数が少ない（${same}回／219回）`, same < 20);
+}
+
+console.log("\n■ ⑦ マウスの軌跡（pointerPath・まっすぐでない）と打鍵（1文字ずつ）");
+{
+  const rng = seeded(9);
+  const path = HW.pointerPath({ x: 100, y: 100 }, { x: 600, y: 400 }, 14, rng);
+  eq("点の数は steps+1", path.length, 15);
+  eq("出発点から始まる", path[0], { x: 100, y: 100 });
+  eq("終点にぴったり着く", path[path.length - 1], { x: 600, y: 400 });
+  ok("途中は直線上に無い（曲がる）", path.slice(1, -1).some((p) => {
+    // 直線 y = 100 + (x-100)*0.6 から 1px 以上ずれている点がある
+    return Math.abs(p.y - (100 + (p.x - 100) * 0.6)) > 1;
+  }), path.slice(0, 4));
+  ok("点はなめらか（隣り合う点が飛ばない）", path.slice(1).every((p, i) => Math.abs(p.x - path[i].x) <= 120 && Math.abs(p.y - path[i].y) <= 120));
+  eq("同じ所から同じ所なら動かない", HW.pointerPath({ x: 5, y: 5 }, { x: 5, y: 5 }, 6, rng).every((p) => p.x === 5 && p.y === 5), true);
+  eq("壊れた引数でも落ちない", HW.pointerPath(null, undefined, 3).length, 4);
+  eq("steps は 2〜60 に収める", [HW.pointerPath({ x: 0, y: 0 }, { x: 10, y: 0 }, 1).length, HW.pointerPath({ x: 0, y: 0 }, { x: 10, y: 0 }, 999).length], [3, 61]);
+
+  const waits = HW.pointerDelays(12, 400, rng);
+  eq("待ちの数は点の数と同じ", waits.length, 12);
+  ok(`待ちの合計 ≒ 400ms（${waits.reduce((a, b) => a + b, 0)}）`, Math.abs(waits.reduce((a, b) => a + b, 0) - 400) < 90);
+  ok("最初と最後は中ほどよりゆっくり（加速・減速）", waits[0] + waits[11] > waits[5] + waits[6], { first: waits[0], last: waits[11], mid: waits[5] + waits[6] });
+  ok("どの待ちも 8ms 以上", waits.every((v) => v >= 8));
+
+  // 打鍵（page-script.js / itandi-page-script.js に配線されている）
+  const ps = read("page-script.js"), ips = read("itandi-page-script.js");
+  ok("リアプロ: 短い欄は1文字ずつ打つ（typeTextLikeHuman）", /function typeTextLikeHuman\(el, value\)/.test(ps) && /setter\.call\(el, s\.slice\(0, i\)\)/.test(ps));
+  ok("リアプロ: 長い文字列は一気に入れる（待ちが長くなりすぎない）", /s\.length > TYPE_MAX_CHARS/.test(ps));
+  ok("リアプロ: 打鍵の間は対数正規＋たまに止まる", /H\.logNormalDelay\(110, 0\.3\)/.test(ps) && /Math\.random\(\) < 0\.05/.test(ps));
+  ok("リアプロ: 押す前に画面へ入れて、人の軌跡でマウスを動かしてから押す", /_ensureInView\(item\.el\)/.test(ps) && /_humanPointerClick\(item\.el, item\.fn\)/.test(ps));
+  ok("リアプロ: 軌跡は human-wait.js の pointerPath を使う", /H\.pointerPath\(_pointer, to,/.test(ps));
+  ok("リアプロ: 押すのは最後の1回だけ（二重に効かせない）", /try \{ fire\(el\); \}/.test(ps) && (ps.match(/_humanPointerClick\(/g) || []).length >= 2);
+  ok("ITANDI: 短い欄は1文字ずつ打つ（setReactValAsync）", /function setReactValAsync\(el, val\)/.test(ips) && /setter\.call\(el, s\.slice\(0, i\)\)/.test(ips));
+  ok("ITANDI: スクロールは一瞬で飛ばさない（smoothScrollTo）", /function smoothScrollTo\(el\)/.test(ips) && /scrollIntoView\(\{ behavior: "smooth"/.test(ips) && !/behavior: "instant"/.test(ips));
+  ok("一覧の次ページも押す前に画面へ入れる（リアプロ・ITANDI）", /el\.scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/.test(read("bulk-dl.js")) && /nextBtn\.scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/.test(read("itandi-bulk-dl.js")));
+  ok("案内モードの光はスクロールしても位置を直す（既存の仕組みのまま）", /addEventListener\("scroll", repositionSoon, true\)/.test(read("realpro-guide.js")));
+}
+
+console.log("\n■ ⑧ 1件ずつ（2026-11-10 竹内「まとめてチェックではなくて1つずつおこなう」）");
+{
+  const ib = read("itandi-bulk-dl.js");
+  ok("ITANDI の一覧: 全選択は1件ずつ押す（一括代入をやめた）", /function _humanCheckAll\(cbs, next\)/.test(ib) && !/tracked\.forEach\(function\(t\) \{ t\.cb\.checked = true; checkedKeys\.add\(t\.rowKey\); \}\);/.test(ib));
+  ok("ITANDI の一覧: 押す間は対数正規＋たまに一息", /H\.logNormalDelay\(200, 0\.32\)/.test(ib) && /Math\.random\(\) < 0\.08/.test(ib));
+  ok("ITANDI の一覧: 押し終わってから選別・送付へ進む（_afterHumanCheck）", /_humanCheckAll\(tracked\.map\(function \(t\) \{ return t\.cb; \}\), function \(\) \{/.test(ib) && /function _afterHumanCheck\(/.test(ib));
+  ok("ITANDI の一覧: 押す前に画面へ入れる（人が目で探す形）", /cb\.scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/.test(ib));
+  ok("ITANDI の一覧: 送付済みを外す選別はその場で（送り漏れ・送りすぎを防ぐ）", /_toUncheck\.forEach\(function \(t\) \{ try \{ t\.cb\.checked = false; \} catch \(_\) \{\} checkedKeys\.delete\(t\.rowKey\); \}\);/.test(ib));
+
+  const ips = read("itandi-page-script.js");
+  ok("ITANDI の条件: tick は1件ずつ（人の間）", /function tick\(el\) \{[\s\S]{0,400}_tickBusy\+\+/.test(ips));
+  ok("ITANDI の条件: 検索を押す前に全部のチェックが済むのを待つ（_whenTickIdle）", /_whenTickIdle\(function \(\) \{ try \{/.test(ips));
+  ok("ITANDI の条件: 待つ間隔は固定でない（_pd）", /_whenTickIdle\(cb\)\) ?, _pd\(120\)/.test(ips.replace(/\s+/g, " ")) || /_whenTickIdle\(cb\); \}, _pd\(120\)\);/.test(ips));
+
+  const ps = read("page-script.js");
+  ok("リアプロの条件: クリックの列の間は対数正規（humanRand が logNormalDelay）", /H\.logNormalDelay\(med, 0\.3\)/.test(ps));
+  ok("リアプロの条件: 1件ずつの列に名前が付く（点検で1操作ずつ見える）", /label: _opLabel\(el\)/.test(ps));
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
+if (fail) process.exit(1);
 }
 
 function sortObj(o) { return Object.fromEntries(Object.entries(o).sort()); }

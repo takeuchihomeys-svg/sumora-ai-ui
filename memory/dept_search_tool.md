@@ -3324,3 +3324,33 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 ### 2026-10-06 採点（judgeProperty）に「刺さった新着から学んだ特徴」の口（拡張のコードは変えていない・未コミット）
 - 札 `HOOK_LEAN_<特徴>`（+5・2つまで・保留／外す候補には付けない）。週の学び（scoring_learning_runs.hook_learning の kept・proposeUse）を `app/lib/hook-lean-server.ts` hookLeanForJudge が読み、`/api/property-brain/judge` と売上サポ（property-pickups-server）の judgeProperty に `opts.hookLean` で渡す。止める: 環境変数 `HOOK_LEAN_MODE=off`
 - 今は学べる物 0 ＝何も付かない（刺さった新着 v2 の 94回・線 lift 1.25）。基準の作り直しと👑の「オススメの点」は `memory/dept_line_reply.md` の同日の節
+
+## 2026-11-10 v2.5.93 人間のような動きを徹底・ITANDI は1件ずつ（**拡張の再読み込み必須**・DB の追加なし）
+
+竹内さん「人間のように動くのは徹底でおねがい！」「itandi も今一気に☑して送るになってるけど、リアプロのように1つずつにする。まとめてチェックではなくて1つずつおこなう」
+
+### 1. ITANDI の一覧の全選択を1件ずつ（itandi-bulk-dl.js）
+- 旧: tracked.forEach(t => t.cb.checked = true) で一瞬で全部選択（見た目が一斉に変わる＝機械らしい）。
+- 新: _humanCheckAll() が1件ずつ cb.click() する。間は対数正規（中央値200ms・σ0.32）+ 8%で 400〜1100ms の「一覧を目で追う」一息。押す前に scrollIntoView({behavior:"smooth"})。押し終わってから 選別（送付済み・更新日で止める・物件数の上限）と送付に進む（_afterHumanCheck に分けた）。
+- 外す選別（送付済み・更新日・上限）はその場で外す（待たない）。待つと送付済みを取りこぼして資料を取りに行く・古い物件を選ぶ危険があるため。見た目の一斉チェックとは別物。
+
+### 2. ITANDI の検索条件のチェックも1件ずつ（itandi-page-script.js の tick）
+- 旧: tick(el) がその場で el.click()（間取り・構造・ペット・バストイレ別・敷金礼金なしが一瞬で全部入る）。
+- 新: tick() は 120〜320ms（対数正規）+ 8%で一息 を置いてから押す。押す前に画面へ入れる。_tickBusy を数え、検索を押す前に _whenTickIdle で全部済むのを待つ（待たずに押すと条件が欠けたまま検索する）。
+
+### 3. 人の速さを全体に広げた
+- human-wait.js: createPacer（中央値900ms・12操作ごとに8秒）に加えて logNormalDelay（対数正規）・pointerPath（マウスの曲がる軌跡）・pointerDelays（加速・減速）を追加。
+- auto-run.js: siteGapMs・customerGapMs の一息の判定を humanChance（毎回 p が前後±25%で揺れる）に、間を logBetween（対数正規・範囲は今までと同じ）に。範囲（8〜28秒・40〜95秒・15〜60秒・90〜200秒）は変えない＝サイトへの負荷は増やさない。
+- page-script.js: クリックの列の間 humanRand を一様乱数 → 対数正規（中央値=(min+max)/2・上は max×1.6）。「迷い」ポーズの確率も毎回揺らす。押す前に _humanPointerClick で人の軌跡（pointerPath）をなぞって mousemove/mouseover/mousedown/mouseup → 最後に1回だけ本物のクリック（二重に効かせない）。setTxtVal は1文字ずつ打つ（typeTextLikeHuman・110ms 中央値・5%で考えて止まる・40字超は一気）。クリックの列に非同期（打鍵・軌跡）を許すため、Promise を返したら終わるまで次へ進まない。
+- itandi-page-script.js: setReactVal も1文字ずつ（setReactValAsync）。スクロールは instant → smoothScrollTo（少しずつ）。区のクリックの間も対数正規。
+- bulk-dl.js・itandi-bulk-dl.js: 次ページ・物件資料のボタンを押す前に scrollIntoView({behavior:"smooth"})。
+
+### 4. 自動モードと AIX の関係（確認済み・変えていない）
+- 自動モード（mode-core.js の AUTO_MODE = "aix"）はもともとの AIX連動と同じ動き。behavior("aix", brain) が claimAix: true・runAutoSchedule: true・claimCommands: true を返し、background._pollAndRunBatch が pending?aix=1&brain=? を付けて取りに行く。
+- サーバー（app/lib/automation-sources.ts）: AIX_ONLY_SOURCES = ["aix","auto_schedule"] は ?aix=1 の PC だけに渡る。payload.source="aix" は aix-action-items.ts の enqueueAixPropertySearch が AIX（物件ピックアップ・オススメ・物件を探す）を出したお客様に1人1件積む（AIX_AUTO_SEARCH_ACTIONS = property_send / property_recommendation / property_search）。web_brain（AIXツールの一括）は 🧠 の PC（?brain=1）だけ。
+- つまり AIXLINX でお客様を判断して AIX を出した所から自動で検索する形は今まで通り。自動モードはそれを開けるだけ。ブレイン ON の自動モードなら web_brain も受ける。
+
+### 5. 確認した事・まだの事
+- tests/chrome-extension/ 全63本 + 追加分が通過（human-wait.test.js 278件・auto-run.test.js 93件 ほか）。
+- まだ実機で試していない（自動モードで1回・案内モードで YUMA を1回・ITANDI で1件ずつチェックされるか）。試す時は search_audits の steps（操作ごとの時刻）で「間がばらついているか・1件ずつか」を見る。
+- 版: 2.5.93（manifest.json）。テストの版固定も合わせた。

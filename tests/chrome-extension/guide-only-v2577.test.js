@@ -12,15 +12,22 @@ const M = require(path.join(dir, "mode-core.js"));
 let passed = 0, failed = 0;
 function ok(name, cond, extra) { if (cond) { passed++; console.log("  ✓ " + name); } else { failed++; console.log("  ✗ " + name + (extra !== undefined ? "\n      " + JSON.stringify(extra).slice(0, 300) : "")); } }
 
-console.log("── ① 自動の道が開かない");
+console.log("── ① 自動の道が開かない（自動モード以外）");
 ok("GUIDE_ONLY が立っている", M.GUIDE_ONLY === true);
 const AUTO = ["claimCommands", "claimAix", "autoSend", "runAutoSchedule", "claimBrainCommands"];
-const combos = M.MODES.flatMap((m) => [false, true].map((b) => [m, b]));
-ok("6通りの組み合わせすべてで自動の物が false（受け取り・自動送信・自動便・web_brain）", combos.every(([m, b]) => AUTO.every((k) => M.effectiveBehavior(m, b)[k] === false)), combos.map(([m, b]) => [m, b, AUTO.map((k) => M.effectiveBehavior(m, b)[k])]));
+// 2026-11-10 竹内「3つのモードを並べる: 通常／スタッフ（今の人が押す案内）／自動（もともとの自動検索）」:
+//   自動の道が開くのは自動モード（AUTO_MODE = "aix"）を選んだ時だけ。通常・スタッフは今まで通り全部止まったまま。
+const NO_AUTO = M.MODES.filter((m) => m !== M.AUTO_MODE).flatMap((m) => [false, true].map((b) => [m, b]));
+ok("自動モード以外の組み合わせは自動の物が false（受け取り・自動送信・自動便・web_brain）", NO_AUTO.every(([m, b]) => AUTO.every((k) => M.effectiveBehavior(m, b)[k] === false)), NO_AUTO.map(([m, b]) => [m, b, AUTO.map((k) => M.effectiveBehavior(m, b)[k])]));
+ok("自動モードを選んだ時だけ自動の道が開く（受け取り・AIX・自動送信・自動便）", ["claimCommands", "claimAix", "autoSend", "runAutoSchedule"].every((k) => M.effectiveBehavior(M.AUTO_MODE, false)[k] === true));
+ok("自動モード×ブレインは web_brain も受け取る", M.effectiveBehavior(M.AUTO_MODE, true).claimBrainCommands === true);
+ok("自動モードでもスタッフ扱いにはならない（人が選んだ物を減らさない設定はスタッフだけ）", M.effectiveBehavior(M.AUTO_MODE, false).excludeSent === true);
 ok("ブレインの判定・記録・まとめは押して送った物に今まで通り効く", M.effectiveBehavior("normal", true).brainJudge && M.effectiveBehavior("normal", true).recordPickup && M.effectiveBehavior("staff", true).completeGroup);
-ok("古い版の AIX連動の値が残っていても「通常」で読む", M.effectiveState({ aixMode: true, brainMode: true }, Date.now()).mode === "normal");
+ok("選んだ印（autoModeAt）が無い古い AIX連動の値は「通常」で読む（勝手に自動にならない）", M.effectiveState({ aixMode: true, brainMode: true }, Date.now()).mode === "normal");
+ok("自動モードを選んだ印があれば自動のまま読む", M.effectiveState({ aixMode: true, autoModeAt: Date.now(), brainMode: true }, Date.now()).mode === "aix");
 ok("スタッフの2時間が切れて AIX の値が残っていても自動にならない", M.effectiveState({ staffMode: true, staffModeAt: Date.now() - 3 * 3600e3, aixMode: true }, Date.now()).mode === "normal" && !M.effectiveBehavior(M.effectiveState({ staffMode: true, staffModeAt: Date.now() - 3 * 3600e3, aixMode: true }, Date.now()).mode, true).claimCommands);
-ok("更新・起動の時に書き直す値（AIX連動を切る・案内モード ON）", JSON.stringify(M.guideOnlyMigration()) === JSON.stringify({ aixMode: false, guideMode: true }));
+ok("更新・起動の時に書き直す値（選んだ印が無ければ AIX連動を切る・案内モード ON）", JSON.stringify(M.guideOnlyMigration({ aixMode: true })) === JSON.stringify({ aixMode: false, guideMode: true }));
+ok("選んだ自動モードは起動のたびに消さない（案内モード ON だけ書く）", JSON.stringify(M.guideOnlyMigration({ aixMode: true, autoModeAt: 1 })) === JSON.stringify({ guideMode: true }));
 const bg = read("background.js");
 ok("background: 一括検索の受け取りは effectiveBehavior（取りに行かない）", /\(_core\.effectiveBehavior \|\| _core\.behavior\)\(_modeSt\.mode, _modeSt\.brain\)/.test(bg) && /\(_core\.effectiveState \|\| _core\.readState\)\(_modeRaw, Date\.now\(\)\)/.test(bg));
 ok("background: popup の一括検索（axlx-manual-bulk-search）は始めない", /if \(_guideOnly\(\)\) \{ console\.warn\("\[manual-bulk-search\] 光って選択するモードのため一括検索は始めない"\); sendResponse\(\{ ok: false, error: "guide_only" \}\); return true; \}/.test(bg));
@@ -28,7 +35,8 @@ ok("background: 一括検索のコマンドが届いても動かさない（止�
 ok("background: Realtime の検索コマンドも動かさない", /if \(_guideOnly\(\)\) \{ console\.log\("\[SB-RT\] 光って選択するモードのため scrape_command を無視/.test(bg));
 ok("background: 更新・起動のたびに古い値を書き直す", /chrome\.runtime\.onInstalled\.addListener\(_migrateGuideOnly\);/.test(bg) && /chrome\.runtime\.onStartup\.addListener\(_migrateGuideOnly\);/.test(bg));
 const pp = read("popup.js"), html = read("popup.html");
-ok("popup: モードの選択に AIX連動が無い", !/<option value="aix">/.test(html) && /if \(core && core\.GUIDE_ONLY && mode === "aix"\) mode = "normal";/.test(pp));
+ok("popup: モードの選択に3つ（通常・スタッフ・自動）", /<option value="aix">自動<\/option>/.test(html) && /<option value="staff">スタッフ<\/option>/.test(html) && /<option value="normal">通常<\/option>/.test(html));
+ok("popup: 自動モードを通常に落とさない（GUIDE_ONLY でも選べる）", !/if \(core && core\.GUIDE_ONLY && mode === "aix"\) mode = "normal";/.test(pp));
 ok("popup: 一括検索の帯は出さない", /id="bulk-toolbar" class="axlx-guide-only-hidden"/.test(html) && /\.axlx-guide-only-hidden \{ display: none !important; \}/.test(read("styles.css")));
 ok("popup: 案内モードは常に ON・再開の印を置かない", /const _guideIt = \(self\.AxlxModeCore && self\.AxlxModeCore\.GUIDE_ONLY\) \? true :/.test(pp) && /\|\| \(self\.AxlxModeCore && self\.AxlxModeCore\.GUIDE_ONLY\)\) \{ try \{ chrome\.storage\.session\.remove\("axlx_pending_auto_send"\)/.test(pp));
 for (const f of ["bulk-dl.js", "itandi-bulk-dl.js"]) {
@@ -53,7 +61,7 @@ for (const f of ["realpro-guide.js", "itandi-guide.js"]) {
 ok("リアプロ: 光の要素は枠だけ（textContent を入れない）", (() => { const s = read("realpro-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 ok("ITANDI: 光の要素は枠だけ", (() => { const s = read("itandi-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest の版 2.5.82", mf.version === "2.5.82");
+ok("manifest の版 2.5.92（自動モード）", mf.version === "2.5.93");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

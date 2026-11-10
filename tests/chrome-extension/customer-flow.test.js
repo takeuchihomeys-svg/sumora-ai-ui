@@ -32,9 +32,14 @@ console.log("\n■ 回す順（1コマンドの中はお客様 → リアプロ 
 console.log("\n■ 人の間（毎回ちがう・機械的に同じ間隔にしない・サイトへのアクセスは増やさない）");
 {
   ok("同じお客様の次のサイトまでの間は一括の回すべて（自動便だけではない・順の回）", /if \(j > 0 && _AR && !_stopApplies\) \{\s*var _siteGap = _AR\.siteGapMs\(\);/.test(read("background.js")));
-  eq("次のコマンドまでの間はお客様の間と同じ幅（15〜60秒・一息 90〜200秒）", [R.nextCommandGapMs(seq([0.9, 0])), R.nextCommandGapMs(seq([0.9, 0.999999])), R.nextCommandGapMs(seq([0.05, 0])), R.nextCommandGapMs(seq([0.05, 0.999999]))], [15000, 60000, 90000, 200000]);
-  const vals = new Set(); for (let i = 0; i < 12; i++) vals.add(R.nextCommandGapMs(seq([0.5, i / 12])));
-  ok("同じ長さが続かない（12回で12通り）", vals.size === 12);
+  // 2026-11-10 人間的な動き: 一様乱数 → 対数正規（範囲は同じ・中央値寄り・たまに伸びる）。端の値ではなく範囲で見る
+  {
+    const inRange = (v) => (v >= 15000 && v <= 60000) || (v >= 90000 && v <= 200000);
+    const xs = [R.nextCommandGapMs(seq([0.9, 0.5])), R.nextCommandGapMs(seq([0.05, 0.5])), R.nextCommandGapMs(seq([0.9, 0.1])), R.nextCommandGapMs(seq([0.05, 0.9]))];
+    ok("次のコマンドまでの間はお客様の間と同じ幅（15〜60秒・一息 90〜200秒）", xs.every(inRange), xs);
+  }
+  { const rng = (() => { let s = 7; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; })(); const vals = new Set(); for (let i = 0; i < 12; i++) vals.add(R.nextCommandGapMs(rng));
+    ok("同じ長さが続かない（12回で10通り以上）", vals.size >= 10, vals.size); }
   const bg = read("background.js");
   const gapCheck = bg.indexOf('chrome.storage.local.get(["batchNextNotBefore"])'), fetchPending = bg.indexOf('fetch(SUMORA_BATCH_API + "/api/automation/pending"');
   ok("background: 次のコマンドまでの間は pending を取りに行く**前**に見る（取ると running になる）", gapCheck > 0 && fetchPending > gapCheck);

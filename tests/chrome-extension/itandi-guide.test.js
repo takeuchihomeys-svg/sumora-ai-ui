@@ -30,9 +30,19 @@ ok("ペット相談・バストイレ別の id が itandi-page-script.js と同�
 ok("敷金・礼金なしのラベルの文字が itandi-page-script.js と同じ", P.SHIKIREI_TEXTS.every((t) => ps.includes("'" + t + "'")));
 
 // 自動入力の fillRemainingFields をそのまま動かす（document は記録するだけの作り物）
+// 2026-11-10: 旧は「\n  }\n」で切っていたが、新しい main で内側の閉じ括弧が増えて途中で切れた
+//   （ReferenceError: fillRemainingFields is not defined）。波括弧の深さを数えて関数の終わりまで取る
 const frStart = ps.indexOf("  function fillRemainingFields(cond) {");
-const frEnd = ps.indexOf("\n  }\n", frStart) + 4;
-const frSrc = ps.slice(frStart, frEnd);
+let frEnd = -1;
+{
+  let depth = 0, started = false;
+  for (let i = frStart + "  function fillRemainingFields(cond) {".length - 1; frStart >= 0 && i < ps.length; i++) {
+    const c = ps[i];
+    if (c === "{") { depth++; started = true; }
+    else if (c === "}") { depth--; if (started && depth === 0) { frEnd = i + 2; break; } }
+  }
+}
+const frSrc = frStart >= 0 && frEnd > frStart ? ps.slice(frStart, frEnd) : "";
 ok("自動入力の fillRemainingFields を取り出せた", frStart > 0 && /敷金・礼金なし/.test(frSrc));
 function runAutofill(cond) {
   const ticked = [], texts = {}, labels = [];
@@ -174,7 +184,7 @@ const gjs = gi >= 0 ? cs[gi].js : [];
 ok("manifest: ITANDI の案内は一覧の部品（itandi-bulk-dl）の後の段・form-guard → update-days → 手順表 → 案内 の順", bi >= 0 && gi > bi
   && eq(gjs, ["search-stamp.js", "itandi-form-guard.js", "itandi-update-days.js", "itandi-guide-plan.js", "itandi-guide.js"]), { bi, gi, gjs });
 ok("manifest: 案内は ITANDI だけ・ページの中（MAIN）ではない（chrome.storage を使う）", gi >= 0 && eq(cs[gi].matches, ["https://itandibb.com/*"]) && !cs[gi].world);
-ok("manifest の版 2.5.82", mf.version === "2.5.82");
+ok("manifest の版 2.5.82", mf.version === "2.5.93");
 
 // ── 2026-10-02 v2.5.68 竹内「西淀川区選択しているのに選択されたことになっていない」: 確定の後の画面の文字から選ばれた区を読む ──
 {

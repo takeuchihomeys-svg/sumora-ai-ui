@@ -12,7 +12,36 @@
   // v2.5.45 ITANDI のフォームの決まり（itandi-form-guard.js・同じ world:MAIN の段で先に読む）。読めない時は旧の動き
   function _itFG() { return (typeof self !== "undefined" ? self : window).AxlxItandiFormGuard; }
 
+  // 2026-11-10 人間的な動き: 値を一瞬で入れると「貼り付けた」動きになる。短い欄は1文字ずつ打つ（打鍵の間 60〜220ms・たまに止まる）。
+  //   長い文字列（40字超）は一気に入れる。最後は input/change を出して React の state を更新する（今までと同じ）。
+  var _TYPE_MAX_CHARS = 40;
+  function setReactValAsync(el, val) {
+    var s = String(val);
+    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    if (!el || s.length > _TYPE_MAX_CHARS || !H || !H.logNormalDelay) return null;
+    var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    return new Promise(function (resolve) {
+      var i = 0;
+      var step = function () {
+        i++;
+        setter.call(el, s.slice(0, i));
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        if (i >= s.length) {
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          resolve(true);
+          return;
+        }
+        var wait = H.logNormalDelay(110, 0.3);
+        if (Math.random() < 0.05) wait += 300 + Math.floor(Math.random() * 300);
+        setTimeout(step, wait);
+      };
+      if (el.focus) { try { el.focus(); } catch (_) {} }
+      step();
+    });
+  }
   function setReactVal(el, val) {
+    var p = setReactValAsync(el, val);
+    if (p) return p; // 1文字ずつ（短い欄）
     var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
     setter.call(el, String(val));
     el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -22,8 +51,39 @@
   // v2.5.45 人が欄を打ち終えて離れた形（focusout）。ITANDI の入力の確かめ（「5桁以内」等の赤い文）は欄を離れた時に出し直す
   function _itLeave(el) { try { el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); el.dispatchEvent(new FocusEvent("blur")); } catch (e) {} }
 
+  // 2026-11-10 竹内「まとめてチェックではなくて1つずつおこなう」:
+  //   検索条件のチェック（間取り・構造・ペット・バストイレ別・敷金礼金なし）を一瞬でまとめて入れない。
+  //   1件ずつ、人の間（120〜320ms・たまに一息）を空けて押す。押し終わるのを待ちたい所は _whenTickIdle で待つ。
+  //   ただし「検索を押す」前には必ず全部済んでいること（_tickBusy が 0 になるまで検索を押さない）。
+  var _tickBusy = 0;
+  function _whenTickIdle(cb) {
+    if (_tickBusy <= 0) { cb(); return; }
+    setTimeout(function () { _whenTickIdle(cb); }, _pd(120)); // 条件を見る間隔（±15%）
+  }
   function tick(el) {
-    if (el && !el.checked) el.click();
+    if (!el || el.checked) return;
+    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    var wait = H && H.logNormalDelay ? H.logNormalDelay(200, 0.32) : (120 + Math.floor(Math.random() * 200));
+    if (Math.random() < 0.08) wait += 300 + Math.floor(Math.random() * 400); // たまに「条件を見直す」一息
+    _tickBusy++;
+    // 押す直前に、画面に入れてから押す（人が目で探す形）
+    try { if (el.getBoundingClientRect) { var r = el.getBoundingClientRect(); var vh = window.innerHeight || 800; if (!(r.top >= 0 && r.bottom <= vh)) el.scrollIntoView({ behavior: "smooth", block: "center" }); } } catch (_) {}
+    setTimeout(function () {
+      try { if (el.isConnected && !el.checked) el.click(); } catch (_) {}
+      _tickBusy--;
+    }, wait);
+  }
+
+  // 2026-11-10 人間的な動き: 画面を「見に行く」時のスクロールを、一瞬で飛ばす（instant）のではなく
+  //   少しずつ動かす（人が一覧を目で追う形）。要素を画面の中に入れるだけで、押す・選ぶは今まで通り。
+  //   アニメーションの時間は環境に任せる（behavior: smooth）。使えない環境では今まで通り。
+  function smoothScrollTo(el) {
+    try {
+      if (!el || !el.scrollIntoView) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    } catch (_) {
+      try { el.scrollIntoView(); } catch (__) {}
+    }
   }
 
   function norm(s) {
@@ -371,12 +431,15 @@
                   return;
                 }
                 var l = labels[clickIdx++];
+                smoothScrollTo(l);
                 l.click();
                 console.log("[AX] batchCity: クリック " + clickIdx + "/" + labels.length + ": " + l.textContent.trim());
-                // 8%の確率で追加ポーズ（800-1500ms）、それ以外は500-900ms
+                // 2026-11-10 人間的な動き: 区のクリックの間を一様乱数 → 対数正規（中央値寄り・たまに伸びる）。
+                //   範囲は今までと同じ（500〜900ms・8%ほどで 800〜1500ms の一息）
+                var _HW = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
                 var _wardDelay = (Math.random() < 0.08)
-                  ? (800 + Math.floor(Math.random() * 700))
-                  : (500 + Math.floor(Math.random() * 400));
+                  ? (_HW && _HW.logNormalDelay ? _HW.logNormalDelay(1100, 0.3) : (800 + Math.floor(Math.random() * 700)))
+                  : (_HW && _HW.logNormalDelay ? _HW.logNormalDelay(700, 0.25) : (500 + Math.floor(Math.random() * 400)));
                 setTimeout(clickNextWardLabel, _wardDelay);
               }
               clickNextWardLabel();
@@ -625,7 +688,7 @@
           });
         }
         if (lbl) {
-          try { lbl.scrollIntoView({ behavior: "instant", block: "nearest" }); } catch (e) {}
+          smoothScrollTo(lbl);
           var inp = lbl.querySelector("input[type='checkbox']");
           if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
           if (inp) { if (!inp.checked) inp.click(); } else { lbl.click(); }
@@ -1471,6 +1534,8 @@
             catch (errR) { console.error("[AX] 残りの条件の入力で例外", errR); _safeDone("fill-exception(remaining): " + String((errR && errR.message) || errR).slice(0, 100)); return; }
             setTimeout(function () { try {
               if (_dead) return;
+              // 2026-11-10: 検索条件のチェックは1件ずつ（人の間）入れるので、押し終わるのを待ってから検索を押す
+              _whenTickIdle(function () { try {
               // v2.5.45: 押す前にボタンと画面の赤い文を見る（押せない disabled のボタンを click() しても「押せた」になり、一覧は前のお客様の結果のまま5分待っていた）
               _itWaitSearchReady(function (why, btn, texts) { try {
                 if (_dead) return;
@@ -1506,6 +1571,7 @@
                   _safeDone();
                 }, 500);
               } catch (errS) { _safeDone("fill-exception(search): " + String((errS && errS.message) || errS).slice(0, 100)); } });
+              } catch (errW) { _safeDone("fill-exception(search): " + String((errW && errW.message) || errW).slice(0, 100)); } }); // _whenTickIdle
             } catch (errT) { _safeDone("fill-exception(search): " + String((errT && errT.message) || errT).slice(0, 100)); } }, _sd(1000)); // 検索ボタンを押すまで: 1.0〜1.35秒（ペットの欄を開く待ち 0.70〜0.95秒より必ず後）
             }); // _itFillUpdateDays
           }

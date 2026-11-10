@@ -521,13 +521,64 @@
       if (!sm.seen.length) return;
       session.stationMissReported = true; saveSession();
       var c = session.conditions || {};
+      var rec = {
+        v: 1, at: new Date().toISOString(), site: "itandi",
+        planned: (s.stations || []).length, lines: s.lines || [], select_all_line_stations: !!s.selectAll,
+        missing: sm.missing.slice(0, 120), via: sm.via, page_labels: sm.seen.slice(0, 500),
+      };
+      // 2026-11-10: 検索を押した時に「実際に入っていた値」（filled.form）と一緒に1回で送るため、覚えておく
+      session._guideStationsRecord = rec;
       chrome.runtime.sendMessage({
         type: "axlx-guide-station-miss", runId: c._audit_run_id || null, customerId: session.customerId || null,
-        record: {
-          v: 1, at: new Date().toISOString(), site: "itandi",
-          planned: (s.stations || []).length, lines: s.lines || [], select_all_line_stations: !!s.selectAll,
-          missing: sm.missing.slice(0, 120), via: sm.via, page_labels: sm.seen.slice(0, 500),
-        },
+        record: rec,
+      }, function () { void chrome.runtime.lastError; });
+    } catch (_) {}
+  }
+  // ── 2026-11-10 案内モードでも「画面に実際に入った値」を search_audits.filled.form に送る（リアプロと同じ理由）──
+  //   拡張の入力（itandi-page-script.js の fill）の中だけで audit.form を読んでいたため、案内モード（入力しない）では
+  //   filled が null のままだった。スタッフが「検索」を押した時に、案内の側が欄を読んで送る。
+  function reportFilledForm() {
+    try {
+      if (!session || !plan) return;
+      var c = session.conditions || {};
+      var runId = c._audit_run_id || null;
+      if (!runId) return; // ブレインの回でない時は送らない
+      var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp;
+      var form = {};
+      try {
+        // 実際に入っている値だけを読む（サイトを触らない）。点検（app/lib/search-audit-check.ts）が読むキーに合わせる:
+        //   rent_max / rent_min / update_days / stations / lines / wards / layouts（2026-11-10 Claude Code との照合で layouts を追加）
+        form.rent_max = (field("rent:lteq") || {}).value || null;
+        form.rent_min = (field("rent:gteq") || {}).value || null;
+        form.stations = readRow("stations").chips.map(function (x) { return x.name; }).slice(0, 40);
+        form.lines = readRow("lines").chips.map(function (x) { return x.name; }).slice(0, 40);
+        form.wards = readRow("wards").chips.map(function (x) { return x.name; }).slice(0, 40);
+        // 間取り（チェックが付いている物のラベル）。取れなければ入れない（点検は無い欄を比べない）
+        try {
+          var L = FG();
+          var scope = formRoot() || document;
+          var layoutLabels = [];
+          [].slice.call(scope.querySelectorAll('input[type="checkbox"]:checked')).forEach(function (inp) {
+            if (inDialog(inp)) return;
+            var lb = labelOf(inp);
+            var t = lb ? sq(lb.textContent) : "";
+            if (t && /^(1R|1K|1DK|1LDK|2K|2DK|2LDK|3K|3DK|3LDK|4K|4DK|4LDK|5K|5DK|5LDK|メゾネット|ワンルーム)$/.test(t) && layoutLabels.indexOf(t) < 0) layoutLabels.push(t);
+          });
+          if (layoutLabels.length) form.layouts = layoutLabels.slice(0, 20);
+          void L;
+        } catch (_) {}
+        var udEl = updateDaysField();
+        var U = UD();
+        if (udEl && U) form.update_days = udEl.value == null ? null : String(udEl.value);
+      } catch (_) {}
+      chrome.runtime.sendMessage({
+        type: "axlx-guide-filled",
+        runId: String(runId),
+        customerId: session.customerId || null,
+        site: "itandi",
+        form: form,
+        intended: SS && SS.compactIntended ? SS.compactIntended(c) : null,
+        guide_stations: session._guideStationsRecord || null,
       }, function () { void chrome.runtime.lastError; });
     } catch (_) {}
   }
@@ -816,6 +867,8 @@
       // v2.5.80: この一覧を検索したお客様をタブに印（送る前の確かめ search-stamp.js）
       try { var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp; if (SS && session.customerId) SS.write({ cid: String(session.customerId), name: session.customerName || "", at: Date.now(), site: "itandi", complete: true, intended: SS.compactIntended(session.conditions), filled: (function () { try { return { stations: readRow("stations").chips.map(function (c) { return c.name; }).slice(0, 40), wards: readRow("wards").chips.map(function (c) { return c.name; }).slice(0, 40) }; } catch (_) { return null; } })() }); } catch (_) {}
       session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight(); renderPanel(); memoSearchRun(session, "itandi");
+      // 2026-11-10: 案内モードでも「画面に実際に入った値」を search_audits.filled.form に送る
+      reportFilledForm();
     }
   }, true);
 

@@ -161,4 +161,35 @@ YUMA（テスト用の会話）: `dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7`（竹内
 +  }
 ```
 
+## 11. Cursor に頼む所 — 検索の裏データを DB で追えるように（拡張の DB 係・2026-11-10・竹内さん OK）
+
+### DB・サーバー側（済み）
+- migration `ext_db_site_runs_views_1110` を本番に当てた（11/10）。中身は `chrome-extension/DB_STRUCTURE.md` の「表の一覧」と「読みやすい view」に書いた。
+  - 足した列: `automation_commands.site_keys`（生成列）・`extension_devices.current_site_key`（生成列）・`property_pickups.search_run_id`／`search_command_id`・`property_candidate_pools.search_run_id`・`sent_properties.site`
+  - 揃える仕組み: DB の関数 `ext_site_key()` と、site の列がある10表の trigger `trg_site_norm`。入る時に `realnetpro`／`リアプロ` を `realpro` に直す（拒まない）。**拡張が受け取る指示の `sites`（`realnetpro`）は今のままでよい。**
+  - view: `v_search_runs`・`v_search_runs_realpro`・`v_search_runs_itandi`・`v_search_candidates`
+- サーバー（main に入れる・ブランチ ext-db-1110）:
+  - `app/api/merge-pdfs/route.ts`: 拡張が送る `batch_owner.run_id`／`search_command_id` を property_pickups に残す（`app/lib/pickup-search-ref.ts`）。共有の行（line_group）には site を入れる
+  - AIX で送った行（`app/lib/pickup-sent-plan.ts`）にピックアップの site を入れる
+
+### 拡張側（未・Cursor にお願いする事）
+今の拡張のままでも壊れない。送ってくれた所から DB でつながる。上から順に効き目が大きい。
+
+1. **案内モードでも「実際に画面に入った値」を送る**（一番大きい穴）
+   - 本番: `search_audits.filled.form` が 9/28 の週は 293件 → 10/05 の週から両サイトでほぼ 0件（案内モードに変わった時期と同じ）。残っているのはリアプロの `filled.guide_stations` だけで、ITANDI は 0件。
+   - 所: `realpro-guide.js` 457 付近・`itandi-guide.js` 504 付近（検索を押した時に1回記録する所）→ `background.js` 1375〜1390（filled に足す所）
+   - 送ってほしい形: 一括の fill-done の audit と同じ形で、検索を押した直前のフォームの読み戻しを `filled.form` に入れる（guide_stations と一緒に。上書きで消さない）。サーバーの `app/lib/pickup-search-facts.ts` がこの形を読む。
+2. **個別の検索の回でも run_id を merge-pdfs に送る**
+   - 今は一括の回の `batch_owner.run_id` だけが届いている。サーバーは本文の `search_run_id` → `batch_owner.run_id` → `search_stamp.run_id` の順で読む。どれか1つに入れてくれればよい。
+   - 所: popup の `conditions._audit_run_id`（popup.js 430 付近・`_auditTag`）を送信まで持ち、`background.js` 702 付近の `callMergeApi` の body に `search_run_id` で載せる。一番簡単なのは `search-stamp.js` の forSend の戻り値に `run_id` を足す事（`bulk-dl.js` 1386・`itandi-bulk-dl.js` 816 が既に search_stamp を送っている）。
+   - 形の決まり: 英数字と `_ - : .` だけ・80字まで（search_audits の run_id `sa_xxxx_yyyy` はそのまま通る）。
+3. **候補の一覧（log-property-candidates）に run_id を足す**
+   - 所: `background.js` 1186〜1195 の body に `search_run_id`。サーバーの受け口（`app/api/log-property-candidates/route.ts`）はこちらで足す（列はもうある）。
+   - **合わせて確かめてほしい事**: 候補が 10/05 から1行あたり約2件（9月は約8件）で、ピックアップの数とほぼ同じ。全候補ではなく送る物だけを `property_pool` に入れていないか。本来は一覧の全候補を残したい（学習とオススメの比べに使う）。
+4. **ITANDI の案内の駅（filled.guide_stations）が 14日で 0件**
+   - `itandi-guide.js` 504 の記録が background まで届いているかを見てほしい（リアプロは 52件ある）。
+5. **新しく DB に送るサイトの名前は `realpro`**（`search-audit.js` 254 の siteKey と同じ）。指示の `sites` の `realnetpro` は今のままでよい。DB の trigger が揃えるので、間違えても行は落ちない。
+
+- ITANDI の 1件ごとの判定（`/api/property-brain/judge`）は今はリアプロ（bulk-dl.js 760）だけが呼んでいて、`property_brain_judgments` の ITANDI は 0件。拡張の動きが変わるので、入れるかは竹内さんに確認中。今は頼まない。
+
 ---

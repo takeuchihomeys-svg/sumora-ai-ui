@@ -6105,9 +6105,10 @@ function _renderModeUI() {
 function _applyMode(mode) {
   var core = self.AxlxModeCore;
   if (!core || core.MODES.indexOf(mode) < 0) mode = "normal";
-  if (core && core.GUIDE_ONLY && mode === "aix") mode = "normal"; // v2.5.77 AIX連動（自動検索）は選べない
+  // 2026-11-10 竹内「3つのモードを並べる: 通常／スタッフ／自動」: 自動（aix）も選べる。
+  //   自動の道が開くのは「自動モードを選んだ時だけ」（mode-core.effectiveBehavior がモードで決める・GUIDE_ONLY は残す）
   var upd = core ? core.storageUpdateForMode(mode, Date.now())
-                 : { staffMode: false, staffModeAt: null, aixMode: false };
+                 : { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null };
   Object.assign(_modeRaw, upd);
   _renderModeUI(); // 即時反映（storage.onChanged でも同期される）
   try { chrome.storage.local.set(upd); } catch (_) { /* ignore */ }

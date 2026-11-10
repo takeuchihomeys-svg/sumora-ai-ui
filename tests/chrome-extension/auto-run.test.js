@@ -11,23 +11,25 @@ function ok(name, c) { eq(name, !!c, true); }
 const EXT = path.join(__dirname, "../../chrome-extension");
 const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
 function seq(values) { let i = 0; return () => values[i++ % values.length]; }
+// 決まった乱数（再現できるように）
+function seeded(seed) { let s = seed >>> 0; return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 
 console.log("\n■ optsFromPayload（自動便の指定）");
 {
   const pm = { source: "auto_schedule", mode: "pm", rp_update_days: 1, sort: "updated", max_pages: 1, is_wide: false };
   const am = { source: "auto_schedule", mode: "am", rp_update_days: 3, sort: "ad", max_pages: 3, is_wide: true };
-  eq("午後の便: 更新日1・更新順・1ページ", R.optsFromPayload(pm), { mode: "pm", rp_update_days: 1, rp_update_days_none: false, sort: "updated", max_pages: 1 });
-  eq("午前の便: 更新日は上書きしない（popup が手で決めた値→前回出した日から）・AD・3ページ", R.optsFromPayload(am), { mode: "am", rp_update_days: null, rp_update_days_none: false, sort: "ad", max_pages: 3 });
+  eq("午後の便: 更新日1・更新順・1ページ", R.optsFromPayload(pm), { mode: "pm", rp_update_days: 1, rp_update_days_none: false, itandi_update_days: null, sort: "updated", max_pages: 1 });
+  eq("午前の便: 更新日は上書きしない（popup が手で決めた値→前回出した日から）・AD・3ページ", R.optsFromPayload(am), { mode: "am", rp_update_days: null, rp_update_days_none: false, itandi_update_days: null, sort: "ad", max_pages: 3 });
   eq("web_brain は null（今までどおり）", R.optsFromPayload({ source: "web_brain", rp_update_days: 3 }), null);
   eq("手動（payload なし）は null", R.optsFromPayload(null), null);
-  eq("変な値は null に", R.optsFromPayload({ source: "auto_schedule", mode: "pm", rp_update_days: "x", sort: "zzz", max_pages: -1 }), { mode: "pm", rp_update_days: null, rp_update_days_none: false, sort: null, max_pages: null });
+  eq("変な値は null に", R.optsFromPayload({ source: "auto_schedule", mode: "pm", rp_update_days: "x", sort: "zzz", max_pages: -1 }), { mode: "pm", rp_update_days: null, rp_update_days_none: false, itandi_update_days: null, sort: null, max_pages: null });
 }
 
 console.log("\n■ record / forCustomer（storage の印）");
 {
   const o = R.optsFromPayload({ source: "auto_schedule", mode: "pm", rp_update_days: 1, sort: "updated", max_pages: 1 });
   const st = R.record("c1", "itandi", o, 1000);
-  eq("同じお客様・同じサイト → 指定（v2.5.43 前回の検索の時刻 last_search_at も・置いていなければ null）", R.forCustomer(st, "c1", "itandi", 2000), { mode: "pm", rp_update_days: 1, sort: "updated", max_pages: 1, last_search_at: null });
+  eq("同じお客様・同じサイト → 指定（v2.5.43 前回の検索の時刻 last_search_at も・置いていなければ null）", R.forCustomer(st, "c1", "itandi", 2000), { mode: "pm", rp_update_days: 1, itandi_update_days: null, sort: "updated", max_pages: 1, last_search_at: null });
   eq("別のお客様 → null（前のお客様の指定を使わない）", R.forCustomer(st, "c2", "itandi", 2000), null);
   eq("別のサイト → null", R.forCustomer(st, "c1", "realnetpro", 2000), null);
   eq("古い（20分より前）→ null", R.forCustomer(st, "c1", "itandi", 1000 + R.TTL_MS + 1), null);
@@ -62,13 +64,39 @@ console.log("\n■ planSites（ITANDI のタブが無い PC は ITANDI を飛ば
 
 console.log("\n■ siteGapMs / customerGapMs（人の動きのような間）");
 {
-  eq("サイトの間: ふだんの一番短い", R.siteGapMs(seq([0.5, 0])), 8000);
-  eq("サイトの間: ふだんの一番長い", R.siteGapMs(seq([0.5, 0.999999])), 28000);
-  eq("サイトの間: 一息の一番短い", R.siteGapMs(seq([0.01, 0])), 40000);
-  eq("サイトの間: 一息の一番長い", R.siteGapMs(seq([0.01, 0.999999])), 95000);
-  eq("お客様の間: ふだん 15〜60秒", [R.customerGapMs(seq([0.9, 0])), R.customerGapMs(seq([0.9, 0.999999]))], [15000, 60000]);
-  eq("お客様の間: 一息 90〜200秒", [R.customerGapMs(seq([0.05, 0])), R.customerGapMs(seq([0.05, 0.999999]))], [90000, 200000]);
-  ok("旧の 3〜8秒より長い（人が次のお客様を開いて見る間）", R.customerGapMs(seq([0.9, 0])) > 8000);
+  // 2026-11-10 人間的な動き: 一様乱数 → 対数正規（範囲は今までと同じ・中央値寄りに集まる・たまに伸びる）。
+  //   端の値は「範囲の中に必ず収まること」で確かめ、分布は中央値とばらつきで見る
+  const within = (v, lo, hi) => v >= lo && v <= hi;
+  const sampleGap = (fn, n, seed) => { const rng = seeded(seed); const xs = []; for (let i = 0; i < n; i++) xs.push(fn(rng)); return xs; };
+  const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+
+  // humanChance は「揺らし(q=rng())→判定(rng())」の順に2つ使う。seq で一息を引く時は q を小さく（p を下げて起きやすく）する
+  ok("サイトの間: 一息は 40〜95秒の中", within(R.siteGapMs(seq([0.5, 0.5])), 8000, 28000), R.siteGapMs(seq([0.5, 0.5])));
+  ok("サイトの間: 一息の幅（乱数で必ず起きる時）は 40〜95秒の中", within(R.siteGapMs(seq([0.5, 0.0, 0.5])), 40000, 95000), R.siteGapMs(seq([0.5, 0.0, 0.5])));
+  ok("お客様の間: ふだんは 15〜60秒の中", within(R.customerGapMs(seq([0.9, 0.5])), 15000, 60000), R.customerGapMs(seq([0.9, 0.5])));
+  ok("お客様の間: 一息の幅（乱数で必ず起きる時）は 90〜200秒の中", within(R.customerGapMs(seq([0.5, 0.0, 0.5])), 90000, 200000), R.customerGapMs(seq([0.5, 0.0, 0.5])));
+
+  // 500回ずつ: 必ず範囲の中・同じ値が続かない・中央値寄り（右に裾）
+  for (const [name, fn, lo, hi] of [["サイトの間", R.siteGapMs, 8000, 95000], ["お客様の間", R.customerGapMs, 15000, 200000]]) {
+    const xs = sampleGap(fn, 500, lo + hi);
+    ok(`${name}: 500回とも範囲の中（${Math.min(...xs)}〜${Math.max(...xs)}）`, xs.every((v) => within(v, lo, hi)));
+    ok(`${name}: 同じ値が続かない（12回で12通り以上）`, new Set(xs.slice(0, 12)).size >= 10, new Set(xs.slice(0, 12)).size);
+    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+    ok(`${name}: 平均 > 中央値（たまに長く伸びる形）`, mean > med(xs) * 0.98, { mean: Math.round(mean), med: med(xs) });
+  }
+  ok("旧の 3〜8秒より長い（人が次のお客様を開いて見る間）", R.customerGapMs(seq([0.9, 0.5])) > 8000);
+
+  // logBetween / humanChance（純関数）
+  eq("logBetween: 端は必ず範囲の中", [R.logBetween(1000, 2000, () => 0) >= 1000, R.logBetween(1000, 2000, () => 0.999999) <= 2000], [true, true]);
+  eq("logBetween: 同じ幅なら同じ値", R.logBetween(5000, 5000), 5000);
+  eq("humanChance: 乱数 0 は必ず起きる", R.humanChance(() => 0, 0.14), true);
+  eq("humanChance: 乱数 0.999999 は起きない", R.humanChance(() => 0.999999, 0.14), false);
+  {
+    const rng = seeded(5); let hits = 0; const N = 20000;
+    for (let i = 0; i < N; i++) if (R.humanChance(rng, 0.14)) hits++;
+    const rate = hits / N;
+    ok(`humanChance: 0.14 の前後で起きる（${(rate * 100).toFixed(1)}%）`, rate > 0.10 && rate < 0.18, rate);
+  }
 }
 
 console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bulk-dl・manifest）");
@@ -103,11 +131,46 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("itandi-bulk-dl: 上限で止めた時も完了の合図（audit 付き・page_limit）", /_itAuditResult\(\{ page_limit: _itLimit \}\)/.test(ib));
   ok("itandi-bulk-dl: 指定は itandi の物だけ読む", /forCustomer\(_autoRunStored, customerId, "itandi", Date\.now\(\)\)/.test(ib));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.5.64");
+  eq("manifest の版", mf.version, "2.5.93");
   const cs = mf.content_scripts.map((c) => c.js.join(","));
   ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,sent-skip.js,update-order-stop.js,bulk-dl.js"));
   ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
   ok("auto-run.js は _ で始まらない", !fs.readdirSync(EXT).some((f) => f.startsWith("_")));
+}
+
+console.log("\n■ 勤務時間のゲート（2026-11-10 自動モード・JST 9〜21時・12〜13時は休憩・土日なし）");
+{
+  // JST の時刻を作る（UTC+9）。2026-11-10 は火曜
+  const J = (y, m, d, hh, mm) => Date.UTC(y, m - 1, d, hh - 9, mm, 0);
+  eq("平日 9:00 → 開く", R.workGate(J(2026, 11, 10, 9, 0)).open, true);
+  eq("平日 8:59 → まだ（resumeAt は 9:00）", R.workGate(J(2026, 11, 10, 8, 59)), { open: false, reason: "before_open", resumeAt: J(2026, 11, 10, 9, 0) });
+  eq("平日 11:59 → 開く", R.workGate(J(2026, 11, 10, 11, 59)).open, true);
+  eq("平日 12:00 → 昼の休憩（resumeAt は 13:00）", R.workGate(J(2026, 11, 10, 12, 0)), { open: false, reason: "lunch", resumeAt: J(2026, 11, 10, 13, 0) });
+  eq("平日 12:45 → 休憩のまま", R.workGate(J(2026, 11, 10, 12, 45)).reason, "lunch");
+  eq("平日 13:00 → 開く", R.workGate(J(2026, 11, 10, 13, 0)).open, true);
+  eq("平日 20:59 → 開く", R.workGate(J(2026, 11, 10, 20, 59)).open, true);
+  eq("平日 21:00 → 終わり（次の日の 9:00）", R.workGate(J(2026, 11, 10, 21, 0)), { open: false, reason: "after_close", resumeAt: J(2026, 11, 11, 9, 0) });
+  eq("金曜 22:00 → 月曜の 9:00", R.workGate(J(2026, 11, 13, 22, 0)), { open: false, reason: "after_close", resumeAt: J(2026, 11, 16, 9, 0) });
+  eq("土曜 10:00 → 動かない", R.workGate(J(2026, 11, 14, 10, 0)), { open: false, reason: "weekend", resumeAt: null });
+  eq("日曜 15:00 → 動かない", R.workGate(J(2026, 11, 15, 15, 0)).reason, "weekend");
+  eq("月曜 9:01 → 開く", R.workGate(J(2026, 11, 16, 9, 1)).open, true);
+  eq("JST の曜日（火曜=2）", R.jstParts(J(2026, 11, 10, 12, 0)).day, 2);
+  eq("90分続いたら小休憩の合図", R.continuousRestDue(Date.now() - 91 * 60 * 1000, Date.now()), true);
+  eq("89分では小休憩にしない", R.continuousRestDue(Date.now() - 89 * 60 * 1000, Date.now()), false);
+  eq("始めた時刻が無ければ小休憩にしない", R.continuousRestDue(0, Date.now()), false);
+}
+
+console.log("\n■ ITANDI の更新日（payload.itandi_update_days → 読む側の rp_update_days の位置へ）");
+{
+  eq("ITANDI の時は itandi_update_days を rp_update_days に写す", R.optsForSite({ rp_update_days: 7, itandi_update_days: 3 }, "itandi").rp_update_days, 3);
+  eq("リアプロの時は写さない", R.optsForSite({ rp_update_days: 7, itandi_update_days: 3 }, "realnetpro").rp_update_days, 7);
+  eq("itandi_update_days が無ければリアプロの値に落とす（今まで通り）", R.optsForSite({ rp_update_days: 7 }, "itandi").rp_update_days, 7);
+  eq("印を残す（どのサイトの値か）", R.optsForSite({ rp_update_days: 7, itandi_update_days: 3 }, "itandi")._site_update_days, "itandi");
+  eq("計画の itandi_days を _update_days_itandi に写す", R.payloadForCustomer({ update_days_plan: { by_customer: { c1: { days: 7, itandi_days: 3, last_search_at: null } } } }, "c1", 1000).itandi_update_days, 3);
+  eq("計画の itandi_days が無ければ itandi_update_days を消す（ITANDI だけ狭くならないように）", "itandi_update_days" in R.payloadForCustomer({ itandi_update_days: 9, update_days_plan: { by_customer: { c1: { days: 7 } } } }, "c1", 1000), false);
+  eq("自動便の opts に ITANDI の更新日が載る", R.optsFromPayload({ source: "auto_schedule", mode: "am", itandi_update_days: 5 }).itandi_update_days, 5);
+  eq("storage の record に持ち回る", R.forCustomer(R.record("c1", "itandi", { mode: "am", rp_update_days: 7, itandi_update_days: 5 }, 1000), "c1", "itandi", 2000).itandi_update_days, 5);
+  eq("record の値も ITANDI の時は rp の位置へ", R.optsForSiteRecord({ rp_update_days: 7, itandi_update_days: 5 }, "itandi").rp_update_days, 5);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
