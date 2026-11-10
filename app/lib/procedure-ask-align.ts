@@ -8,11 +8,12 @@
 //   （10/26「お申込し早くて1週間〜2週間でご入居可能」・10/20「お申込みからご入居までは最短でも1週間〜2週間ほど」・07/07・06/30）、
 //   「この物件／こちらの物件」と指す問い 2/2 は AIX（確認した結果・09/09・08/31）＝道の規則と同じ線。
 //   ここは道を変えない（返信に決まった後の、依頼の項目の答え方だけを道にそろえる）。turn-contract.reconcileTurnContractWithAix と同じ考え。
-//   既定 off（入れる PROCEDURE_GENERAL_ASK_REPLY=on）
+//   既定 on（2026-11-11・proc-ask-dig-1111 悪化0・止める PROCEDURE_GENERAL_ASK_REPLY=off）
 import { detectProcedureQuestion, isProcedureReplyQuestion } from "@/app/lib/procedure-question";
 
 export function procedureGeneralAskReplyOn(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.PROCEDURE_GENERAL_ASK_REPLY ?? "").trim().toLowerCase() === "on";
+  // 2026-11-11 既定 on（proc-ask-dig-1111 確かな悪化0・道/本質の悪化0・q374 の依頼が○に・止める PROCEDURE_GENERAL_ASK_REPLY=off）
+  return (env.PROCEDURE_GENERAL_ASK_REPLY ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 答えの目安（会社の事実の側・数字は company-facts screening_flow／竹内さん 11/05 No.4 と同じ） */

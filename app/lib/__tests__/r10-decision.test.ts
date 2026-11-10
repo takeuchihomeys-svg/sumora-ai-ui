@@ -33,7 +33,11 @@ t("今日の約束の種類（確認＋見積）", kinds.includes("check") && ki
 t("昨日の約束は数えない", promiseKindsToday([{ ...staffToday[0], createdAt: "2026-10-07T00:10:00Z" }], now).length === 0);
 const base = { decisionSource: "llm", pickupReady: false, postApply: false };
 t("1通目の持ち込み → 約束（brought_both）", resolveTwoStage({ ...base, finalAix: "property_check_result", brought: { ask: "none", count: 1 }, promisedTodayKinds: [] })?.source === "rule:two_stage_promise(brought_both)");
-t("同じ日の2通目の持ち込み → AIX を直接（null）", resolveTwoStage({ ...base, finalAix: "property_check_result", brought: { ask: "none", count: 1 }, promisedTodayKinds: kinds }) === null);
+// 2026-11-11 竹内さんの決定（KB 0f475703・TWO_STAGE_SAME_DAY_REPROMISE 既定 on）: 募集状況の確認は同じ日の2通目でも約束のまま。旧の形は =off の時だけ
+t("同じ日の2通目の持ち込み → 約束のまま（11/11 既定）", resolveTwoStage({ ...base, finalAix: "property_check_result", brought: { ask: "none", count: 1 }, promisedTodayKinds: kinds })?.kind === "check");
+process.env.TWO_STAGE_SAME_DAY_REPROMISE = "off";
+t("=off: 同じ日の2通目の持ち込み → AIX を直接（null・10/08 の旧の形）", resolveTwoStage({ ...base, finalAix: "property_check_result", brought: { ask: "none", count: 1 }, promisedTodayKinds: kinds }) === null);
+delete process.env.TWO_STAGE_SAME_DAY_REPROMISE;
 t("同じ日の2通目の見積の依頼 → AIX を直接", resolveTwoStage({ ...base, finalAix: "estimate_sheet", promisedTodayKinds: ["estimate"] }) === null);
 t("今日の約束がピックアップだけ → 見積の依頼は約束のまま", resolveTwoStage({ ...base, finalAix: "estimate_sheet", promisedTodayKinds: ["pickup"] })?.kind === "estimate");
 t("ピックアップは同じ日でも約束のまま（条件の番 96%）", resolveTwoStage({ ...base, finalAix: "property_send", promisedTodayKinds: ["pickup"] })?.kind === "pickup");

@@ -280,7 +280,7 @@ import { brainFastSlowEnabled, brainSlowSecondEnabled, decideTurnDifficulty, fas
 // 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
 import { mindsetFreshOutputItem, emotionChoicesText, normalizeMindset, mindsetEmotionLabel, customerMindsetEnabled, type CustomerMindset } from "@/app/lib/customer-mindset";
 
-/** 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番の turn_contract の asks（promise→reply）をそろえる（PROCEDURE_GENERAL_ASK_REPLY=on の時だけ） */
+/** 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番の turn_contract の asks（promise→reply）をそろえる（PROCEDURE_GENERAL_ASK_REPLY・11/11 既定 on・止める =off） */
 function procedureAlignContract<T extends { asks?: unknown }>(raw: T | null, replyTurn: boolean, conversationId: string): T | null {
   const r = alignProcedureAsks(raw, { on: procedureGeneralAskReplyOn(), replyTurn });
   if (r.changed) console.log(JSON.stringify({ tag: "brain:procedure-ask-align", conversationId, part: "turn_contract", changed: r.changed }));
@@ -5941,7 +5941,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       const cov = ensureAsksCovered(items0, asksForCov);
       const rec = reconcilePrioritiesWithAix(cov.items, finalAix ?? null, { ackOnly: !asksForCov.some((a) => a.quote.trim()) });
       priorityItems = rec.items;
-      // 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番は、その問いの項目の confirm を answer_now に（PROCEDURE_GENERAL_ASK_REPLY=on の時だけ・procedure-ask-align.ts）
+      // 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番は、その問いの項目の confirm を answer_now に（PROCEDURE_GENERAL_ASK_REPLY・11/11 既定 on・止める =off・procedure-ask-align.ts）
       const procAlign = alignProcedurePriorities(priorityItems, { on: procedureGeneralAskReplyOn(), replyTurn: procedureDecision === "reply" && !finalAix && !twoStage });
       if (procAlign.changed && procAlign.items) { priorityItems = procAlign.items; console.log(JSON.stringify({ tag: "brain:procedure-ask-align", conversationId, part: "priorities", changed: procAlign.changed })); }
       priorityRec = priorityRecord(priorityItems, cov, rec, priorityPulled);

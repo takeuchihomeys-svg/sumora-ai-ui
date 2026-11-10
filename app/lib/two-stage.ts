@@ -326,10 +326,11 @@ function multiPromiseDirection(extra: readonly ExtraPromise[]): string {
  *   実送信（200日・同じ日に募集状況の確認の約束がまだ開いている時に、お客様が物件・空きを聞いた番のこちらの最初の手）:
  *     全員 9〜17時 約束 28／結果の AIX 14・18〜21時 10／3・21時〜 2／1。竹内さん（書き手の印がある約100日）9〜17時 10／2・18〜21時 7／2・21時〜 1／1＝約束 18／直接 5。
  *   q371（11/03 19:35・2通目・竹内さんは「合計3物件の募集状況確認させて頂きます」→約1時間後に AIX）も約束が正解。
- *   既定 off（入れる TWO_STAGE_SAME_DAY_REPROMISE=on）。10/08 の竹内さんの言葉の決定を変えるので、既定 on の前に竹内さんの確認が要る
+ *   2026-11-11 竹内さんの決定（KB 0f475703・7fc4bfbf を退役）で既定 on（止める TWO_STAGE_SAME_DAY_REPROMISE=off）
  */
 export function sameDayRepromiseKeeps(kind: TwoStageKind | string, env: Record<string, string | undefined> = {}): boolean {
-  return kind === "check" && (env.TWO_STAGE_SAME_DAY_REPROMISE ?? "").trim().toLowerCase() === "on";
+  // 2026-11-11 既定 on（竹内さんの決定 KB 0f475703「約束に寄せる」・sameday-rp-dig-1111 確かな悪化0・道/本質の悪化0・止める TWO_STAGE_SAME_DAY_REPROMISE=off）
+  return kind === "check" && (env.TWO_STAGE_SAME_DAY_REPROMISE ?? "").trim().toLowerCase() !== "off";
 }
 const SAME_DAY_SOURCES = /^rule:two_stage_promise\((?:check|brought_both|brought_estimate|estimate|estimate_stale)\)$/;
 function sameDayDirect(v: TwoStageVerdict, i: TwoStageInput): boolean {

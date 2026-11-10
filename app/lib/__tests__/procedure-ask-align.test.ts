@@ -12,7 +12,7 @@ function eq(a: unknown, b: unknown) { if (JSON.stringify(a) !== JSON.stringify(b
 
 process.env.PROCEDURE_MOVE_IN_WIDE = "on";
 
-it("スイッチは既定 off", () => { eq(procedureGeneralAskReplyOn({}), false); eq(procedureGeneralAskReplyOn({ PROCEDURE_GENERAL_ASK_REPLY: "on" }), true); });
+it("スイッチは既定 on（11/11）・=off で止まる", () => { eq(procedureGeneralAskReplyOn({}), true); eq(procedureGeneralAskReplyOn({ PROCEDURE_GENERAL_ASK_REPLY: "off" }), false); });
 it("q374 q375 の文は手続きの問い", () => {
   eq(isProcedureAskText("最短入居日どのくらいですね"), true);
   eq(isProcedureAskText("ありがとうございます😭\n最短でどのくらいで入居までいけますか"), true);

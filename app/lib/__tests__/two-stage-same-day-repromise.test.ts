@@ -12,11 +12,11 @@ const t = (name: string, ok: boolean) => { if (ok) pass++; else { fail++; consol
 const base = { decisionSource: "llm", pickupReady: false, postApply: false };
 const brought2nd = { ...base, finalAix: "property_check_result", brought: { ask: "none" as const, count: 1 }, customerText: "ART TENDOU WEST 1階\nhttps://suumo.jp/chintai/bc_100532288607/\nby SUUMO", promisedTodayKinds: ["check" as const] };
 
-t("純関数: 既定 off", sameDayRepromiseKeeps("check", {}) === false);
+t("純関数: 既定 on（11/11）・=off で止まる", sameDayRepromiseKeeps("check", {}) === true && sameDayRepromiseKeeps("check", { TWO_STAGE_SAME_DAY_REPROMISE: "off" }) === false);
 t("純関数: on は確認だけ", sameDayRepromiseKeeps("check", { TWO_STAGE_SAME_DAY_REPROMISE: "on" }) === true && sameDayRepromiseKeeps("estimate", { TWO_STAGE_SAME_DAY_REPROMISE: "on" }) === false);
 
-delete process.env.TWO_STAGE_SAME_DAY_REPROMISE;
-t("既定（off）: 昼の同じ日の2通目の持ち込み → 今まで通り AIX 直接（null）", resolveTwoStage(brought2nd) === null);
+process.env.TWO_STAGE_SAME_DAY_REPROMISE = "off";
+t("=off: 昼の同じ日の2通目の持ち込み → 旧の形の AIX 直接（null）", resolveTwoStage(brought2nd) === null);
 process.env.TWO_STAGE_SAME_DAY_REPROMISE = "on";
 const v = resolveTwoStage(brought2nd);
 t("on: 昼の同じ日の2通目の持ち込み（q371 の形）→ 確認の約束のまま", v?.kind === "check" && v?.source === "rule:two_stage_promise(brought_both)");
