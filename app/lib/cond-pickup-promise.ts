@@ -22,7 +22,8 @@ export const FIRST_COND_PICKUP_RULE = "【竹内さんの形・初回に条件�
 //   竹内さん本人の送信（messages.staff_writer=takeuchi・120日）: 物件探しの依頼 116番のうち最初が文 99（ピックアップの約束 59・確認の約束 8）・物件の AIX 9。
 //   物件の URL・名前を送ってきた 167番のうち最初が文 125（確認の約束 98）・AIX 42。AIX が先の番は返すまで中央 81〜88分（文は 29〜30分）＝先に確かめてから AIX を送っていた。
 //   ブレインが決める時点では確かめはまだ＝読み方（結果はまだ無い）と竹内さんの一手（約束の文が先・AIX は後）を1組で渡す。既定 off（BRAIN_RESULT_FIRST_PROMISE=on で入れる）。
-export const resultFirstPromiseOn = (env: Env = envOf()) => (env.BRAIN_RESULT_FIRST_PROMISE ?? "").trim().toLowerCase() === "on";
+// 2026-11-10 統括役の決め（rfp-on-full と rfp-off-full の8問×3回: 本質 15→18/24・道 19→20/24・q118 の外れは off でも出る初回の守りの書き換え）: 既定 on。止める =off
+export const resultFirstPromiseOn = (env: Env = envOf()) => notOff(env.BRAIN_RESULT_FIRST_PROMISE);
 export const RESULT_FIRST_PROMISE_RULE = "【読み方と竹内さんの一手・結果がまだ無い依頼（11/06）】お客様が物件を探して・送って・もう一度探して・「〇〇無しだと」等と頼んだ番、物件の URL・名前を送って空きを聞いた番は、その結果（新しい条件で探した物件・その物件の募集状況）はスタッフがこれから確かめる物で、まだ AIX で送れる物は無い。材料の送れる候補が前の条件で探した物なら、新しい条件の結果ではない。竹内さんの一手はまず約束の文（「〇〇のご条件でオススメできるお部屋ピックアップしてお送りさせて頂きます」「お送り頂きました〇〇の募集状況確認させて頂きます」）で、AIX（物件の AIX・物件確認した）は確かめた後（竹内さんの120日: 探す依頼 116番のうち文が先 99・物件を送ってきた 167番のうち文が先 125）。この番は turn_contract の該当の ask の route を promise にする（aix の欄は約束の後の AIX のままでよい）。route を aix にするのは、その依頼の結果（新しい条件で送れる物件・確認済みの募集状況）が材料に既にある時だけ。";
 
 /** ブレインの決まりに足す行（スイッチが on の物だけ・無ければ ""） */
