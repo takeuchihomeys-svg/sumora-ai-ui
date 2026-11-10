@@ -14,12 +14,18 @@ const G = require("../../chrome-extension/batch-guard.js");
 
 console.log("\n■ 検索を押す前の関所（page-script.js）");
 {
-  const cs = ps.slice(ps.indexOf("function clickSearch()"), ps.indexOf("function clickSearch()") + 2600);
-  ok("clickSearch が関所（_axGateMissing）を検索の前に見る", cs.indexOf("_axGateMissing()") > 0 && cs.indexOf("_axGateMissing()") < cs.indexOf("div.go_search"));
-  ok("1回だけ入れ直す（gate_retry・間取りをもう一度入れる）", /_axGateRetried = true;[\s\S]{0,200}setCheckboxes\("room_layout_id\[\]", _axExpect\.layoutVals\)/.test(cs));
+  // 2026-11-10 v2.6.18: 関所の判定が増えたので範囲を広げる（4200字）
+  const cs = ps.slice(ps.indexOf("function clickSearch()"), ps.indexOf("function clickSearch()") + 4200);
+  ok("clickSearch が関所（_axGateCheck）を検索の前に見る", cs.indexOf("_axGateCheck()") > 0 && cs.indexOf("_axGateCheck()") < cs.indexOf("div.go_search"));
+  ok("1回だけ入れ直す（gate_retry・間取り・家賃・更新日・築年・徒歩）", /_axGateRetried = true;[\s\S]{0,900}setCheckboxes\("room_layout_id\[\]", _axExpect\.layoutVals\)/.test(cs) && /setSelVal\("rental_cost2", _axExpect\.rentMax\)/.test(cs) && /setSelVal\("update_date", _axExpect\.updateDays\)/.test(cs));
   ok("だめなら検索せず、gate 付きで fill-done を返す", /notifyDone\('AXLX_FILL_INCOMPLETE: ' \+ gateMiss, true\);\s*return;/.test(cs));
   ok("止めた時は検索のボタンを押さない（return が go_search より前）", cs.indexOf("AXLX_FILL_INCOMPLETE") < cs.indexOf("goDivs[i].click()"));
-  ok("関所の材料は入れるはずの間取りがある時だけ置く", /if \(vals\.length\) \{\s*setCheckboxes\("room_layout_id\[\]", vals\);\s*_axExpect = \{ layoutVals: vals\.slice\(\)/.test(ps));
+  ok("関所の材料は、間取り・家賃・更新日・徒歩・場所を1か所に置く", (() => {
+    const i = ps.indexOf("_axExpect = {");
+    if (i < 0) return false;
+    const body = ps.slice(i, i + 1200);
+    return /rentMax:/.test(body) && /updateDays:/.test(body) && /areaMode:/.test(body) && /walk:/.test(body);
+  })());
   ok("お客様ごとに材料を置き直す（fillRealpro の最初で消す）", /_axExpect = null; _axGateRetried = false;/.test(ps));
   ok("画面でチェックの付いた間取りを数える", /input\[name="room_layout_id\[\]"\]:checked/.test(ps));
   ok("notifyDone が gate を載せる", /function notifyDone\(errMsg, gate\)[\s\S]{0,500}if \(gate\) msg\.gate = true;/.test(ps));
@@ -40,7 +46,7 @@ console.log("\n■ popup: 一覧に居ないお客様は取り直してから探
   ok("見つからなければ loadCustomers(true) で取り直してもう1回探す", /if \(!c && d\.customerId\) \{[\s\S]{0,200}await loadCustomers\(true\)/.test(fn));
   ok("取り直しても居なければ customer-not-found", /reason: "customer-not-found"/.test(fn));
   const mf = JSON.parse(read("manifest.json"));
-  ok("manifest の版 2.5.64", mf.version === "2.6.17");
+  ok("manifest の版 2.5.64", mf.version === "2.6.18");
 }
 
 console.log("\n■ v2.5.58 ITANDI の広げて検索は築年数も＋5年（リアプロと同じ）");

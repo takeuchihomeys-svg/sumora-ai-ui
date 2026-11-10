@@ -1079,17 +1079,92 @@
   // v2.5.50 検索を押す前の関所の材料（fillRealpro が入れるはずの間取りを置く・無ければ見ない）
   var _axExpect = null;
   var _axGateRetried = false;
-  /** 入れるはずの間取りのうち、画面でチェックが付いている物が1つも無ければ理由の文（あれば null） */
-  function _axGateMissing() {
+  /**
+   * 2026-11-10 v2.6.18 竹内さん「ちゃんと画面見て判断できるようになってるのかな場所など」→「なおす」:
+   *   旧は**間取りだけ**を画面で確かめ、家賃・更新日・築年・徒歩・場所（区/駅）は確かめずに検索していた
+   *   （入っていなくても「入れたつもり」で検索に進む）。
+   *   新は入れるはずの値を1か所（_axExpect）に置き、**画面の実際の値を読み戻して1つずつ比べる**。
+   *   比べる物: 家賃の上限・下限／更新日／築年数／徒歩の分数／間取り／場所（区 or 駅のどちらかが入っているか）
+   *   戻り値: { errors: [理由の文...], missingLayout: bool }
+   *     errors    … 画面が「入れるはずの値」になっていない物（人が見て分かる日本語）
+   *     missingLayout … 間取りが0個（これは1回だけ入れ直す対象）
+   *   ⚠ 画面に欄が無い物（サイトにその項目が無い）は比べない（止めない）。
+   *   ⚠ 「−1 / 下限なし」など“指定なし”の値は比べない（入れなくて正しい）。
+   */
+  function _axGateCheck() {
+    var out = { errors: [], missingLayout: false };
     try {
-      if (!_axExpect || !_axExpect.layoutVals || !_axExpect.layoutVals.length) return null;
-      var want = _axExpect.layoutVals.map(String);
-      var checked = Array.prototype.slice.call(document.querySelectorAll('input[name="room_layout_id[]"]:checked'))
-        .filter(function (cb) { return want.indexOf(String(cb.value)) >= 0; });
-      if (checked.length > 0) return null;
-      var total = document.querySelectorAll('input[name="room_layout_id[]"]').length;
-      return '間取り（' + String(_axExpect.floorPlan || '').slice(0, 30) + '）が画面に入っていない（間取りの欄 ' + total + '個・チェック 0）';
-    } catch (e) { return null; }
+      if (!_axExpect) return out;
+      var sel = function (n) { return document.querySelector('select[name="' + n + '"]'); };
+      var same = function (a, b) { return String(a == null ? '' : a) === String(b == null ? '' : b); };
+      var isNone = function (v) { return v == null || v === '' || v === '-1' || v === '0'; };
+
+      // ① 家賃（上限・下限）: 欄がある時だけ比べる
+      if (_axExpect.rentMax != null && !isNone(_axExpect.rentMax)) {
+        var r2 = sel('rental_cost2');
+        if (r2 && !same(r2.value, _axExpect.rentMax)) {
+          out.errors.push('家賃の上限が画面と違う（入れるはず ' + _axExpect.rentMax + '／画面 ' + r2.value + '）');
+        }
+      }
+      if (_axExpect.rentMin != null && !isNone(_axExpect.rentMin)) {
+        var r1 = sel('rental_cost1');
+        if (r1 && !same(r1.value, _axExpect.rentMin)) {
+          out.errors.push('家賃の下限が画面と違う（入れるはず ' + _axExpect.rentMin + '／画面 ' + r1.value + '）');
+        }
+      }
+      // ② 更新日
+      if (_axExpect.updateDays != null) {
+        var up = sel('update_date');
+        if (up && !same(up.value, _axExpect.updateDays)) {
+          out.errors.push('更新日が画面と違う（入れるはず ' + _axExpect.updateDays + '／画面 ' + up.value + '）');
+        }
+      }
+      // ③ 築年数
+      if (_axExpect.age != null && !isNone(_axExpect.age)) {
+        var ag = sel('structured_date');
+        if (ag && !same(ag.value, _axExpect.age)) {
+          out.errors.push('築年数が画面と違う（入れるはず ' + _axExpect.age + '／画面 ' + ag.value + '）');
+        }
+      }
+      // ④ 徒歩の分数
+      if (_axExpect.walk != null && String(_axExpect.walk).trim() !== '') {
+        var wk = document.querySelector('input[name="required_time"]');
+        if (wk && !same(wk.value, _axExpect.walk)) {
+          out.errors.push('駅からの徒歩が画面と違う（入れるはず ' + _axExpect.walk + '／画面 ' + wk.value + '）');
+        }
+      }
+      // ⑤ 間取り（0個なら入れ直す対象）
+      if (_axExpect.layoutVals && _axExpect.layoutVals.length) {
+        var want = _axExpect.layoutVals.map(String);
+        var checked = Array.prototype.slice.call(document.querySelectorAll('input[name="room_layout_id[]"]:checked'))
+          .filter(function (cb) { return want.indexOf(String(cb.value)) >= 0; });
+        if (!checked.length) {
+          out.missingLayout = true;
+          var total = document.querySelectorAll('input[name="room_layout_id[]"]').length;
+          out.errors.push('間取り（' + String(_axExpect.floorPlan || '').slice(0, 30) + '）が画面に入っていない（間取りの欄 ' + total + '個・チェック 0）');
+        }
+      }
+      // ⑥ 場所（区 or 駅）: どちらも0なら場所なし＝大阪府の全件検索になるので止める
+      if (_axExpect.areaMode) {
+        var wardN = document.querySelectorAll('input[name="city_code[]"]:checked').length +
+                    document.querySelectorAll('input[name="town_code[]"]:checked').length;
+        var stN = document.querySelectorAll('input[name="station_id[]"]:checked').length +
+                  document.querySelectorAll('input[name="route_id[]"]:checked').length;
+        var wantArea = _axExpect.areaMode === 'ward';
+        var wantStation = _axExpect.areaMode === 'station';
+        if (wantArea && wardN === 0 && stN === 0) {
+          out.errors.push('場所（' + String(_axExpect.areaText || '').slice(0, 24) + '）が画面に入っていない（区 0・駅 0）');
+        } else if (wantStation && stN === 0 && wardN === 0) {
+          out.errors.push('場所（' + String(_axExpect.areaText || '').slice(0, 24) + '）が画面に入っていない（駅 0・区 0）');
+        }
+      }
+    } catch (e) { /* 読めない時は止めない（今まで通り） */ }
+    return out;
+  }
+  /** 旧: 間取りだけを見る（互換のため残す） */
+  function _axGateMissing() {
+    var g = _axGateCheck();
+    return g.missingLayout ? (g.errors[0] || '間取りが入っていない') : null;
   }
 
   // 検索ボタンをクリック
@@ -1103,18 +1178,30 @@
       if (_audit && !_audit._searchWaitMarked) { _audit._searchWaitMarked = true; _auditStepP('search_wait', 'queue=' + _clickQueue.length); }
       setTimeout(clickSearch, _pd(200)); return;
     }
-    // v2.5.50 検索を押す前の関所: 入れるはずの間取りが画面に1つも入っていなければ検索しない（人の間で1回だけ入れ直す）。
-    //   2026-09-30 c さん（2LDK・14万・中央区／浪速区）: popup が「顧客が見つからない」で代わりの直接入力になり、間取りが1つも入らないまま
-    //   検索 → 179行を読んで 1K・1DK を50件売上サポに出した（点検は後から FLOOR_PLAN_DROPPED を付けただけで止めなかった）。
-    //   止めた時は fill-done に gate:true を付ける（content.js が error として中継＝background はこのお客様のリアプロを理由付きで飛ばす・bulk-dl は構えない）
-    var gateMiss = _axGateMissing();
-    if (gateMiss) {
+    // v2.5.50 検索を押す前の関所。2026-11-10 v2.6.18: 間取りだけでなく**家賃・更新日・築年・徒歩・場所**も画面で確かめる。
+    //   ・間取りが0個 → 1回だけ入れ直す（今まで通り）
+    //   ・家賃・更新日・場所などが画面と違う → **入れ直してから**もう一度確かめる（1回だけ）→ それでも違えば止める
+    //   止めた時は fill-done に gate:true を付ける（content.js が error として中継＝background はこのお客様のリアプロを理由付きで飛ばす）
+    var _gate = _axGateCheck();
+    if (_gate.errors.length) {
       if (!_axGateRetried) {
         _axGateRetried = true;
-        _auditStepP('gate_retry', gateMiss);
-        try { setCheckboxes("room_layout_id[]", _axExpect.layoutVals); } catch (_) {}
-        setTimeout(clickSearch, _pd(800)); return;
+        _auditStepP('gate_retry', _gate.errors.join(' / ').slice(0, 200));
+        // 画面を見て、入れるはずの値になっていない物を入れ直す（間取り・家賃・更新日・築年・徒歩）
+        try {
+          if (_gate.missingLayout && _axExpect.layoutVals.length) setCheckboxes("room_layout_id[]", _axExpect.layoutVals);
+          if (_axExpect.rentMax != null) setSelVal("rental_cost2", _axExpect.rentMax);
+          if (_axExpect.rentMin != null) setSelVal("rental_cost1", _axExpect.rentMin);
+          if (_axExpect.updateDays != null) setSelVal("update_date", _axExpect.updateDays);
+          if (_axExpect.age != null) setSelVal("structured_date", _axExpect.age);
+          if (_axExpect.walk != null) {
+            var _wk = document.querySelector('input[name="required_time"]');
+            if (_wk && String(_wk.value) !== String(_axExpect.walk)) typeTextLikeHuman(_wk, _axExpect.walk);
+          }
+        } catch (_) {}
+        setTimeout(clickSearch, _pd(900)); return;
       }
+      var gateMiss = _gate.errors.join(' / ').slice(0, 240);
       _auditStepP('gate_stop', gateMiss);
       if (_audit) _audit.form = _readRealproForm();
       console.warn('[AX] 検索を押す前の関所で止めた: ' + gateMiss);
@@ -2036,9 +2123,22 @@
       }
       if (vals.length) {
         setCheckboxes("room_layout_id[]", vals);
-        _axExpect = { layoutVals: vals.slice(), floorPlan: String(cond.floor_plan) }; // v2.5.50 検索を押す前に入ったか確かめる
       }
     }
+    // 2026-11-10 v2.6.18 竹内さん「ちゃんと画面見て判断できるようになってるのかな場所など」→「なおす」:
+    //   入れるはずの値を1か所に置く（検索を押す直前に、画面の実際の値と1つずつ比べる）。
+    //   間取りの有無に関わらず置く（家賃・更新日・徒歩・場所も比べるため）。
+    _axExpect = {
+      layoutVals: (cond.floor_plan ? Array.prototype.slice.call(document.querySelectorAll('input[name="room_layout_id[]"]:checked')).map(function (c) { return String(c.value); }) : []),
+      floorPlan: String(cond.floor_plan || ''),
+      rentMax: (cond.rent_max != null ? String(nearestUp(RENT_OPTS, cond.rent_max)) : null),
+      rentMin: (cond.rent_min != null ? String(nearestDown(RENT_OPTS, cond.rent_min)) : null),
+      updateDays: (cond.rp_update_days != null ? String(cond.rp_update_days) : (cond.rp_update_days === '' ? '' : null)),
+      age: (cond.building_age ? String(nearestUp(AGE_OPTS, cond.building_age)) : null),
+      walk: (cond.walk_minutes != null ? String(cond.walk_minutes) : null),
+      areaMode: (cond.area_mode || (cond.station_names && cond.station_names.length ? 'station' : (cond.city_codes && cond.city_codes.length ? 'ward' : null))),
+      areaText: String(cond.detail_ward || (cond.station_names || []).slice(0, 2).join('・') || ((cond.city_codes || []).length + '区')),
+    };
     if (cond.structure_types && cond.structure_types.length > 0) {
       var sVals = cond.structure_types.map(function(s){ return STRUCTURE_MAP[s]; }).filter(Boolean);
       if (sVals.length) setCheckboxes("structured_type[]", sVals);
