@@ -112,6 +112,89 @@
     return Promise.resolve(true);
   }
   /**
+   * 2026-11-10 v2.6.9 竹内さん「家賃のところも押したらいきなり入力されている。押したら家賃の部分を選択する形で動くように」
+   *   旧は select の value を直接代入していた（プルダウンが開いて選ばれる様子が見えない＝貼り付けた動き）。
+   *   新は **人がプルダウンを開いて選ぶ形**にする:
+   *     ① カーソルが欄まで動く → ② 欄を押して開く（mousedown → focus → click）
+   *     ③ 選ぶ候補までカーソルを動かす（キーボードの矢印キーも少し使う＝人の選び方）
+   *     ④ 確定（change）→ ⑤ 閉じたのを見届ける
+   *   ⚠ 画面のプルダウンの一覧（OS が描く部品）は拡張からは掴めないので、
+   *      「開く操作」と「選ぶ動き」を順に出す形で人に近づける（実際の一覧は OS が描く）。
+   *   値の入れ方（value＋change）は今まで通り＝サイトの検知は変えない。
+   */
+  function chooseSelectLikeHuman(el, val) {
+    if (!el || val == null) return Promise.resolve(false);
+    var P = window.AxlxPointerUi;
+    var target = String(val);
+    var fire = function (type, extra) {
+      try {
+        var o = Object.assign({ bubbles: true, cancelable: true, view: window }, extra || {});
+        el.dispatchEvent(new MouseEvent(type, o));
+      } catch (_) {}
+    };
+    var openThenChoose = function () {
+      return new Promise(function (resolve) {
+        // ② 欄を押して開く（人がクリックして一覧を出す）
+        try { if (el.focus) el.focus(); } catch (_) {}
+        fire("mousedown", { buttons: 1 });
+        fire("mouseup");
+        fire("click");
+        // 開いた一覧を見る間
+        setTimeout(function () {
+          // ③ 候補へ移る動き（カーソルを少し下へ＝一覧の中を探す形）
+          var cur = el.selectedIndex >= 0 ? el.selectedIndex : 0;
+          var want = -1;
+          for (var i = 0; i < el.options.length; i++) {
+            if (String(el.options[i].value) === target) { want = i; break; }
+          }
+          if (want < 0) { // 値が見つからない（"-1"＝下限なし等）→ 先頭
+            want = 0;
+          }
+          var dir = want >= cur ? 1 : -1;
+          var steps = Math.min(6, Math.abs(want - cur));
+          var stepMs = _ln(260, 0.35, 150, 450);
+          var i2 = 0;
+          function moveStep() {
+            if (i2 >= steps) {
+              // ④ 確定（人が選んで決める）
+              try {
+                el.value = target;
+                el.dispatchEvent(new Event("input", { bubbles: true }));
+                el.dispatchEvent(new Event("change", { bubbles: true }));
+              } catch (_) {}
+              // ⑤ 閉じたのを見届ける（人が一覧が閉じたのを確認する間）
+              setTimeout(function () { resolve(true); }, _ln(320, 0.4, 180, 600));
+              return;
+            }
+            // キーボードの矢印でも一覧の中を動かす（人と同じ操作）
+            try {
+              var k = dir > 0 ? "ArrowDown" : "ArrowUp";
+              el.dispatchEvent(new KeyboardEvent("keydown", { key: k, keyCode: dir > 0 ? 40 : 38, bubbles: true }));
+            } catch (_) {}
+            // カーソルも一覧の方向へ少し動かす（見た目）
+            if (P && P.moveTo && el.getBoundingClientRect) {
+              try {
+                var r = el.getBoundingClientRect();
+                P.moveTo(r.left + r.width * 0.5, r.top + r.height * 0.5 + dir * (18 + i2 * 6));
+              } catch (_) {}
+            }
+            i2++;
+            setTimeout(moveStep, stepMs);
+          }
+          moveStep();
+        }, _ln(900, 0.4, 500, 1500));
+      });
+    };
+    if (P && P.moveToEl) {
+      try { P.ensure(); } catch (_) {}
+      return P.moveToEl(el).then(function () {
+        if (P.tap) { try { P.tap(); } catch (_) {} }
+        return openThenChoose();
+      }, openThenChoose);
+    }
+    return openThenChoose();
+  }
+  /**
    * 2026-11-10 v2.6.1 竹内さん「賃料選択する部分や更新日選択する部分が早すぎる。毎回人間がマウス動かして押していく形とする」
    *   賃料・更新日・面積・築年数などの **select（プルダウン）** は、旧は enqueueHumanAction（el: null）で
    *   カーソルが動かず 80〜200ms で値が入っていた（人が選んでいるようには見えない）。
@@ -123,6 +206,21 @@
   function _operateWithPointer(el, action, openMs, chooseMs) {
     if (!el) return Promise.resolve(false);
     var P = window.AxlxPointerUi;
+    // 2026-11-10 v2.6.10 竹内さん「ちゃんと画面を見ながら動くようにしていく」:
+    //   動かす前に「その欄が画面に出ているか」を確かめる。見えていなければ少し待って見直す（最大6秒）。
+    //   それでも見えなければ今まで通り触る（止まらない）。
+    var waitVisible = function (attempt) {
+      return new Promise(function (resolve) {
+        var ok = true;
+        try {
+          var r = el.getBoundingClientRect();
+          ok = !!(r && (r.width > 0 || r.height > 0));
+          if (ok) ok = isVisible(el);
+        } catch (_) { ok = true; }
+        if (ok || attempt >= 12) { resolve(true); return; }
+        setTimeout(function () { resolve(waitVisible(attempt + 1)); }, _pd(500));
+      });
+    };
     var run = function () {
       return new Promise(function (resolve) {
         // ① 欄を開く前の間（人が視線を移して手を伸ばす）
@@ -145,9 +243,11 @@
     };
     if (P && P.moveToEl) {
       try { P.ensure(); } catch (_) {}
-      return P.moveToEl(el).then(run, function () { return run(); }).then(function () { return action(); });
+      return waitVisible(0).then(function () {
+        return P.moveToEl(el);
+      }).then(run, run).then(function () { return action(); });
     }
-    return run().then(function () { return action(); });
+    return waitVisible(0).then(run).then(function () { return action(); });
   }
   /** 対数正規の間（中央値・σ・下限・上限）。human-wait が無ければ一様 */
   function _ln(median, sigma, lo, hi) {
@@ -229,7 +329,9 @@
   function queueSelVal(name, val) {
     var el = document.querySelector('select[name="' + name + '"]');
     if (!el) { enqueueHumanAction(function () { setSelVal(name, val); }, 80, 200, 'sel:' + name + '=' + val); return; }
-    _enqueueWithEl(el, function () { return _operateWithPointer(el, function () { return setSelVal(name, val); }); }, 900, 1600, 'sel:' + name + '=' + val);
+    // 2026-11-10 v2.6.9 竹内さん「押したら家賃の部分を選択する形で動くように」:
+    //   値を代入するだけでなく、**押して開いて選ぶ**動きにする（chooseSelectLikeHuman）。
+    _enqueueWithEl(el, function () { return chooseSelectLikeHuman(el, val); }, 900, 1600, 'sel:' + name + '=' + val);
   }
   function queueTxtVal(name, val) {
     var el = document.querySelector('input[name="' + name + '"]');
@@ -370,10 +472,18 @@
     try {
       var cx = Math.round(r.left + r.width * 0.5), cy = Math.round(r.top + r.height * 0.5);
       var base = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
+      // 2026-11-10 v2.6.9 竹内さん「あと選択してちゃんとその画面おすように」:
+      //   カーソルを上に載せる → **少し止まって「ここだ」と確かめる** → 押す（人が狙いを定める間）。
+      //   押した後も少し残って「反応したか」を見る（すぐ次の場所へ飛ばない）。
       ["mousemove", "mouseover"].forEach(function (type) { try { el.dispatchEvent(new MouseEvent(type, base)); } catch (_) {} });
-      try { el.dispatchEvent(new MouseEvent("mousedown", Object.assign({}, base, { buttons: 1 }))); } catch (_) {}
-      try { el.dispatchEvent(new MouseEvent("mouseup", Object.assign({}, base, { buttons: 0 }))); } catch (_) {}
-      fire(el);
+      var aim = 90 + Math.floor(Math.random() * 160);
+      setTimeout(function () {
+        try { el.dispatchEvent(new MouseEvent("mousedown", Object.assign({}, base, { buttons: 1 }))); } catch (_) {}
+        try { el.dispatchEvent(new MouseEvent("mouseup", Object.assign({}, base, { buttons: 0 }))); } catch (_) {}
+        try { fire(el); } catch (e) { console.error('[AX] クリック例外', e); }
+        // 押した後の反応を見る間（この間に次の場所へ飛ばさない）
+        setTimeout(function () {}, 120 + Math.floor(Math.random() * 180));
+      }, aim);
     } catch (e) { console.error('[AX] クリック例外', e); }
   }
   // ★ 修正(Bug2): 選択側クリックの実行時ガード。
@@ -384,6 +494,7 @@
   // 非同期の同名別駅（両方クリック）の双方で正しく動作する
   function _clickIfUnchecked(el) { if (!el.checked) _clickEl(el); }
   var _clickQueue = [];
+  var _clickBusyItem = null; // 2026-11-10 v2.6.8 いま処理中の1件（迷いの漂いの間も「忙しい」）
   var _clickQueueTimer = null;
   // 2026-09-27 v2.5.31: 点検の記録（ブレインの時だけ）に操作ごとの時刻を残すため、列の1件ごとに名前（label）を持つ
   function _opLabel(el) {
@@ -453,8 +564,9 @@
     setTimeout(done, ms);
   }
   function _scheduleClickDrain() {
-    if (_clickQueueTimer || !_clickQueue.length) return;
+    if (_clickQueueTimer || _clickBusyItem || !_clickQueue.length) return;
     var item = _clickQueue.shift();
+    _clickBusyItem = item; // 2026-11-10 v2.6.8: 迷いの漂い中も「忙しい」と分かるように（止まったように見える原因）
     var hesitate = _hesitateMs(item.el);
     var _planned = item.gap + hesitate, _setAt = Date.now();
     if (hesitate > 0) { try { _tmarkHesitate(item.label, hesitate); } catch (_) {} }
@@ -469,7 +581,13 @@
       // 2026-11-10: 中の処理が非同期（1文字ずつの打鍵）でも、終わってから次へ進む（順番が崩れない）
       var done = function () {
         if (item.el) item.el.__axPending = false;
-        _scheduleClickDrain();
+        // 2026-11-10 v2.6.9: 押した後に「反応したか」を見る間を置いてから次へ（連続で飛ばさない）
+        var settle = 140 + Math.floor(Math.random() * 220);
+        setTimeout(function () {
+          _clickBusyItem = null;
+          _clickQueueTimer = null;
+          _scheduleClickDrain();
+        }, settle);
       };
       try {
         // v2.5.96: 画面の外の時だけ最小の移動で見える位置へ寄せ、動かしたら終わるまで待ってから押す
@@ -504,7 +622,12 @@
     }
   }
   function isClickQueueBusy() {
-    return _clickQueueTimer !== null || _clickQueue.length > 0;
+    // 2026-11-10 v2.6.8 竹内さん「途中でマウスとまったりしている・止まったまま動いていないなぜなのか」:
+    //   旧は「タイマーが無い＋列が空」で暇と判定していたが、**迷いの漂い（drift/wander）の間は
+    //   タイマーも列も空に見えた**ため、呼び出し側（waitForClick など）が「済んだ」と誤判定し、
+    //   次の段が迷いと重なって進んだ後、迷いが終わった側が次の列を起こさず止まっていた。
+    //   いま処理中の1件（_clickBusyItem）も「忙しい」に数える。
+    return _clickQueueTimer !== null || _clickQueue.length > 0 || !!_clickBusyItem;
   }
   function whenClickQueueIdle(cb) {
     if (!isClickQueueBusy()) { cb(); return; }
@@ -514,7 +637,30 @@
   function clearClickQueue() {
     _clickQueue.forEach(function(it) { if (it.el) it.el.__axPending = false; });
     _clickQueue.length = 0;
+    _clickBusyItem = null;
+    if (_clickQueueTimer) { clearTimeout(_clickQueueTimer); _clickQueueTimer = null; }
   }
+  // 2026-11-10 v2.6.8 竹内さん「止まったまま動いていないなぜなのか」:
+  //   万一 迷いの漂いや非同期の処理が返ってこなくても、**列が20秒止まったら強制的に次へ進める**安全弁。
+  //   迷いの最長は 4.5秒＋漂い、1文字ずつの打鍵は40字でも約10秒なので、20秒は「明らかに固まった」時だけ。
+  var _lastQueueProgressAt = Date.now();
+  var _lastBusyLabel = null;
+  setInterval(function () {
+    try {
+      // 2026-11-10 v2.6.8: 「忙しい物が変わった時」だけ時計を戻す（同じ物のままなら止まったまま）
+      var cur = _clickBusyItem ? String(_clickBusyItem.label || '?') : null;
+      if (!_clickBusyItem) { _lastQueueProgressAt = Date.now(); _lastBusyLabel = null; return; }
+      if (cur !== _lastBusyLabel) { _lastBusyLabel = cur; _lastQueueProgressAt = Date.now(); return; }
+      if (Date.now() - _lastQueueProgressAt < 20000) return;
+      console.warn('[AX] クリックの列が20秒進まない → 強制的に次へ（固まった所: ' + cur + '）');
+      if (_clickBusyItem.el) _clickBusyItem.el.__axPending = false;
+      if (_clickQueueTimer) { clearTimeout(_clickQueueTimer); _clickQueueTimer = null; }
+      _clickBusyItem = null;
+      _lastBusyLabel = null;
+      _lastQueueProgressAt = Date.now();
+      _scheduleClickDrain();
+    } catch (_) {}
+  }, 3000);
 
   // スペース除去＋全角英数→半角
   function norm(t) {
@@ -726,6 +872,7 @@
         queue_len: _clickQueue.length,
         queue_busy: isClickQueueBusy(),
         queue_next: _clickQueue.length ? _clickQueue[0].label : null,
+        queue_busy_item: (_clickBusyItem && _clickBusyItem.label) || null, // 2026-11-10 v2.6.8 いま漂い/処理中の物
         ops_done: _audit.ops ? _audit.ops.length : 0,
         late_max: _audit.late_max,
         late_over_1s: _audit.late_over_1s,

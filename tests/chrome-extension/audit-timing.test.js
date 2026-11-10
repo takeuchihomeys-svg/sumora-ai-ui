@@ -61,7 +61,7 @@ const grab = (src, name) => { const s = src.indexOf(name); if (s < 0) return "";
   ok("段は60件まで・ops は80件まで", /if \(_audit\.steps\.length > 60\) _audit\.steps\.shift\(\);/.test(ps) && /if \(_audit\.ops\.length > 80\) _audit\.ops\.shift\(\);/.test(ps));
   for (const k of ["'vis'", "'reset'", "'cities'", "'modal'", "'ward'", "'next_step'", "'town'", "'modal_close'", "'search_wait'", "'search'"]) ok(`段 ${k} を記録する`, ps.includes("_auditStepP(" + k));
 ok("見張り（駅を1件ずつ選ぶ速さに合わせて 235秒）で止まる時は stall を残してから fill-done を送る", /_auditStall\(\);\s*notifyDone\('watchdog-timeout/.test(ps));
-ok("見張りの長さは 235秒（v2.6.7: 駅を1つずつ押すので延ばした）", /\}, 235000\);/.test(ps));
+ok("見張りの長さは 235秒（v2.6.10: 駅を1つずつ押すので延ばした）", /\}, 235000\);/.test(ps));
   const stall = grab(ps, "function _auditStall(");
   for (const k of ["stage", "since_stage_ms", "visibility", "has_focus", "hidden_ms", "queue_len", "queue_busy", "queue_next", "late_max", "late_over_1s", "modal_open", "city_checked", "form"]) ok(`stall に ${k}`, new RegExp("\\b" + k + ":").test(stall));
   ok("止まった時の読み戻しは stall.form（点検の比べる form には入れない）", !/_audit\.form = _readRealproForm\(\);[\s\S]{0,40}notifyDone\('watchdog/.test(ps) && /form: _readRealproForm\(\),/.test(stall));
@@ -69,7 +69,7 @@ ok("見張りの長さは 235秒（v2.6.7: 駅を1つずつ押すので延ばし
   // 記録の関数を動かす（段・操作・止まった時）
   const pctx = { Date, document: { visibilityState: "hidden", hasFocus: () => false, addEventListener() {}, querySelector: () => null, querySelectorAll: () => ({ length: 2 }) }, window: {}, isVisible: () => false, isClickQueueBusy: () => true, _readRealproForm: () => ({ rent_max: "85000" }), _clickQueue: [{ label: "city_code[]:27109" }] };
   vm.createContext(pctx);
-  vm.runInContext("var _fillRunId = null, _audit = null;\n" + ps.slice(ps.indexOf("  var _fillStartedAt = 0;"), ps.indexOf("  function _visibleTexts(")), pctx);
+  vm.runInContext("var _fillRunId = null, _audit = null, _clickBusyItem = null;\n" + ps.slice(ps.indexOf("  var _fillStartedAt = 0;"), ps.indexOf("  function _visibleTexts(")), pctx);
   vm.runInContext("_auditReset('sa_x'); _auditStepP('fill_start', 'ward'); _auditStepP('cities', 4); _auditOp('city_code[]:27111', 120, 60120); _auditOp('city_code[]:27128', 90, 95); _auditStall();", pctx);
   const a = pctx._audit;
   ok("ops: {t, k, p, w} で残る", a.ops.length === 2 && a.ops[0].k === "city_code[]:27111" && a.ops[0].p === 120 && a.ops[0].w === 60120);

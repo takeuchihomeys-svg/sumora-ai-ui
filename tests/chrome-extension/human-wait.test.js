@@ -163,7 +163,7 @@ function rest() {
       "setTimeout 20000": [1, "押した印刷用PDF をまとめて送るまでの待ち（v2.5.62・最後に押してから・サイトは触らない）"],
     },
     "content.js": { "setTimeout 400": [1, "MutationObserver の間引き"], "setInterval 3000": [1, "サイドバーの見張り"], "setTimeout 300": [1, "起動時"] },
-    // 2026-11-10 v2.6.7 見えるカーソル: 90ms は「押した時の見た目の縮みを戻す」だけ（サイトを触らない・固定でよい）
+    // 2026-11-10 v2.6.10 見えるカーソル: 90ms は「押した時の見た目の縮みを戻す」だけ（サイトを触らない・固定でよい）
     "pointer-ui.js": { "setTimeout 90": [1, "押した時にカーソルが縮むのを戻す（見た目だけ）"] },
     "itandi-bulk-dl.js": {
       "setTimeout 60000": [1, "PDF の期限"], "setInterval 500": [1, "モーダルが出たかの見る間隔"], "setTimeout 15000": [1, "モーダルの期限"],
@@ -175,7 +175,7 @@ function rest() {
       "setInterval 100": [2, "モーダルが消えた・間取りの欄が出たかの見る間隔（3秒で打ち切り）"], "setTimeout 240000": [1, "見張り（fill-done の保証）"],
       "setTimeout 5000": [1, "警告の表示を消す"], "setTimeout 500": [1, "検索を押した後の完了の合図（ページを触らない）"],
     },
-    "page-script.js": { "setTimeout 15000": [1, "警告の表示を消す"], "setTimeout 235000": [1, "見張り（fill-done の保証）"], "setTimeout 0": [1, "同じ流れの続き"] },
+    "page-script.js": { "setTimeout 15000": [1, "警告の表示を消す"], "setTimeout 235000": [1, "見張り（fill-done の保証）"], "setTimeout 0": [1, "同じ流れの続き"], "setInterval 3000": [1, "クリックの列が20秒固まったかの見張り（v2.6.10）"] },
     "popup.js": {
       "setTimeout 6000": [1, "取得の期限"], "setTimeout 3000": [4, "取得のやり直し・表示を戻す"], "setTimeout 10000": [1, "取得の期限"],
       "setTimeout 15000": [1, "取得の期限"], "setTimeout 4000": [1, "表示を消す"], "setTimeout 1800": [1, "表示を戻す"], "setTimeout 2000": [1, "表示を戻す"],

@@ -51,6 +51,53 @@
   // v2.5.45 人が欄を打ち終えて離れた形（focusout）。ITANDI の入力の確かめ（「5桁以内」等の赤い文）は欄を離れた時に出し直す
   function _itLeave(el) { try { el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); el.dispatchEvent(new FocusEvent("blur")); } catch (e) {} }
 
+  /**
+   * 2026-11-10 v2.6.9 竹内さん「ここの部分リアプロもITANDIもちゃんとできるように徹底していく」:
+   *   ITANDI の入力欄も「カーソルが動く → 少し見る → 押す → 1文字ずつ打つ → 離れる」の順にする。
+   *   setReactVal をそのまま呼ぶ所（賃料・面積・築年数）の置き換え用。値の作り方は変えない。
+   */
+  function _itTypeIntoHuman(el, val) {
+    var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+    var H = _hw();
+    var look = H && H.logNormalDelay ? H.logNormalDelay(700, 0.4) : 500;
+    var type = function () {
+      try {
+        // 欄を押す（人が入力を始める形）
+        ["mousedown", "mouseup", "click"].forEach(function (t) {
+          try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (_) {}
+        });
+        if (el.focus) { try { el.focus(); } catch (_) {} }
+      } catch (_) {}
+      var p = setReactVal(el, val);
+      var finish = function () { _itLeave(el); };
+      if (p && typeof p.then === "function") { p.then(finish, finish); } else { setTimeout(finish, _hd(280)); }
+    };
+    // 2026-11-10 v2.6.10 竹内さん「ちゃんと画面を見ながら動くようにしていく。そうすれば理数の形となっていく」:
+    //   押す前に「その欄が本当に画面に出ているか」を確かめる（人が目で見つけてから触る形）。
+    //   見えていなければ少し待って見直す（最大6秒）。それでも見えなければ今まで通り触る（止まらない）。
+    var waitVisible = function (attempt, done) {
+      var ok = true;
+      try {
+        var r = el.getBoundingClientRect();
+        ok = !!(r && (r.width > 0 || r.height > 0));
+        if (ok && typeof isVis === "function") ok = isVis(el);
+      } catch (_) { ok = true; }
+      if (ok || attempt >= 12) { done(); return; }
+      setTimeout(function () { waitVisible(attempt + 1, done); }, H && H.pollDelay ? H.pollDelay(500) : 500);
+    };
+    var afterLook = function () {
+      if (P && P.moveToEl) {
+        try { P.ensure(); } catch (_) {}
+        return P.moveToEl(el).then(function () {
+          if (P.tap) { try { P.tap(); } catch (_) {} }
+          waitVisible(0, function () { setTimeout(type, look); });
+        }, function () { waitVisible(0, function () { setTimeout(type, look); }); });
+      }
+      waitVisible(0, function () { setTimeout(type, look); });
+    };
+    afterLook();
+  }
+
   // 2026-11-10 竹内「まとめてチェックではなくて1つずつおこなう」:
   //   検索条件のチェック（間取り・構造・ペット・バストイレ別・敷金礼金なし）を一瞬でまとめて入れない。
   //   1件ずつ、人の間（120〜320ms・たまに一息）を空けて押す。押し終わるのを待ちたい所は _whenTickIdle で待つ。
@@ -1022,19 +1069,19 @@
     // 専有面積（フィールド名はfloor_area_amount:gteq / lteq）
     if (cond.area_min) {
       var areaMinEl = document.querySelector('input[name="floor_area_amount:gteq"]');
-      if (areaMinEl) setReactVal(areaMinEl, cond.area_min);
+      if (areaMinEl) _itTypeIntoHuman(areaMinEl, cond.area_min);
     }
     if (cond.area_max) {
       var areaMaxEl = document.querySelector('input[name="floor_area_amount:lteq"]');
-      if (areaMaxEl) setReactVal(areaMaxEl, cond.area_max);
+      if (areaMaxEl) _itTypeIntoHuman(areaMaxEl, cond.area_max);
     }
     if (cond.walk_minutes) {
       var walkEl = document.querySelector('input[name="station_walk_minutes:lteq"]');
-      if (walkEl) setReactVal(walkEl, cond.walk_minutes);
+      if (walkEl) _itTypeIntoHuman(walkEl, cond.walk_minutes);
     }
     if (cond.building_age) {
       var ageEl = document.querySelector('input[name="building_age:lteq"]');
-      if (ageEl) setReactVal(ageEl, cond.building_age);
+      if (ageEl) _itTypeIntoHuman(ageEl, cond.building_age);
     }
     if (cond.floor_plan) {
       var FLOOR_RANK_IT = ["1R","1K","1DK","1LDK","2K","2DK","2LDK","3K","3DK","3LDK","4K","4DK","4LDK","5K_OVER"];
@@ -1630,19 +1677,23 @@
     })();
 
     // ── STEP 1: 賃料（最初に入力）────────────────────────────────────────
+    // 2026-11-10 v2.6.9 竹内さん「ここの部分リアプロもITANDIもちゃんとできるように徹底していく」:
+    //   旧はカーソルを動かさず setReactVal で即入力（貼り付けた動き）。
+    //   新は カーソルを欄へ動かす → 少し見る → 欄を押す → 1文字ずつ打つ → 離れる（人が入力する形）。
+    //   値の作り方（5桁以内への切り下げ）は今まで通り。
     if (cond.rent_max) {
       var rentVal = cond.rent_max > 1000 ? cond.rent_max / 10000 : cond.rent_max;
       // v2.5.45: ITANDI は「5桁以内」。84,999円→「8.4999」は弾かれて検索のボタンが押せなくなる → 5文字以内（8.499）に切り下げ
       if (_itFG()) { var _rt = _itFG().rentText(cond.rent_max, "max"); if (_rt) rentVal = _rt; }
       var rentEl = document.querySelector('input[name="rent:lteq"]');
-      if (rentEl) { setReactVal(rentEl, rentVal); _itLeave(rentEl); }
+      if (rentEl) _itTypeIntoHuman(rentEl, rentVal);
     }
     // 賃料下限（一時調整 v2.5.6）: 面積と同じ命名規則 name:gteq。欄が無ければ何もしない
     if (cond.rent_min) {
       var rentMinVal = cond.rent_min > 1000 ? cond.rent_min / 10000 : cond.rent_min;
       if (_itFG()) { var _rtm = _itFG().rentText(cond.rent_min, "min"); if (_rtm) rentMinVal = _rtm; }
       var rentMinEl = document.querySelector('input[name="rent:gteq"]');
-      if (rentMinEl) { setReactVal(rentMinEl, rentMinVal); _itLeave(rentMinEl); console.log('[AX] itandi 賃料下限:', rentMinVal + '万'); }
+      if (rentMinEl) { _itTypeIntoHuman(rentMinEl, rentMinVal); console.log('[AX] itandi 賃料下限:', rentMinVal + '万'); }
       else console.warn('[AX] itandi 賃料下限の欄(rent:gteq)が見つかりません');
     }
     tick(document.querySelector('input[name="totalRentCheck"]'));

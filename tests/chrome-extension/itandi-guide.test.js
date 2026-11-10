@@ -60,11 +60,12 @@ function runAutofill(cond) {
     querySelectorAll(sel) { return /^label$/.test(sel.trim()) ? [skiLabel] : []; },
   };
   // eslint-disable-next-line no-new-func
-  const fr = Function("document", "setReactVal", "tick", "clickLabel", "isVis", "_sd", "setTimeout", "console", "VALID_LAYOUTS", "STRUCTURE_MAP", "STRUCTURE_LABEL_MAP", "_humanClick", "_shuffle",
+  const fr = Function("document", "setReactVal", "tick", "clickLabel", "isVis", "_sd", "setTimeout", "console", "VALID_LAYOUTS", "STRUCTURE_MAP", "STRUCTURE_LABEL_MAP", "_humanClick", "_shuffle", "_itTypeIntoHuman",
     frSrc + "\nreturn fillRemainingFields;")(
     document, (el, v) => { texts[el.name] = String(v); }, (el) => { if (el && !el.checked) el.click(); }, (t) => { labels.push(t); return true; },
     () => true, (x) => x, () => {}, { log() {}, warn() {} }, tableOf(ps, "VALID_LAYOUTS"), tableOf(ps, "STRUCTURE_MAP"), tableOf(ps, "STRUCTURE_LABEL_MAP"),
-    (el) => { if (el && !el.checked) el.click(); }, (a) => (a || []).slice());
+    (el) => { if (el && !el.checked) el.click(); }, (a) => (a || []).slice(),
+    (el, v) => { texts[el.name] = String(v); });
   fr(JSON.parse(JSON.stringify(cond)));
   return { ticked, texts, labels };
 }
@@ -185,7 +186,7 @@ const gjs = gi >= 0 ? cs[gi].js : [];
 ok("manifest: ITANDI の案内は一覧の部品（itandi-bulk-dl）の後の段・form-guard → update-days → 手順表 → 案内 の順", bi >= 0 && gi > bi
   && eq(gjs, ["search-stamp.js", "itandi-form-guard.js", "itandi-update-days.js", "itandi-guide-plan.js", "itandi-guide.js"]), { bi, gi, gjs });
 ok("manifest: 案内は ITANDI だけ・ページの中（MAIN）ではない（chrome.storage を使う）", gi >= 0 && eq(cs[gi].matches, ["https://itandibb.com/*"]) && !cs[gi].world);
-ok("manifest の版 2.5.82", mf.version === "2.6.7");
+ok("manifest の版 2.5.82", mf.version === "2.6.10");
 
 // ── 2026-10-02 v2.5.68 竹内「西淀川区選択しているのに選択されたことになっていない」: 確定の後の画面の文字から選ばれた区を読む ──
 {
