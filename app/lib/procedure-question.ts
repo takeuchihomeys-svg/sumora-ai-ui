@@ -102,7 +102,7 @@ const EARLIEST_NOT_RE = /物件があれば|お部屋があれば|探して|内�
  *   PROCEDURE_MOVE_IN_WIDE=on: 「最短…入居／住め」を語の順に縛らず拾う・内覧の語は「内覧は／できる／日程」等の内覧そのものの問いの時だけ外す。既定 off
  */
 export function procedureMoveInWideOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PROCEDURE_MOVE_IN_WIDE ?? "").trim().toLowerCase() === "on";
+  return (env.PROCEDURE_MOVE_IN_WIDE ?? "").trim().toLowerCase() !== "off"; // 2026-11-10 既定 on（proc-points-on-1108b 確かな悪化0・道/本質の悪化0・止める PROCEDURE_MOVE_IN_WIDE=off）
 }
 export const EARLIEST_MOVE_IN_WIDE_RE = /最短(?:で|の)?[^。\n？?]{0,12}(?:入居|住め|住む|入れ|引っ?越)/;
 // 監査（200日・当たり約28番を目で読んだ）で外した: 費用・見積の依頼（affa98c7「最短入居で初期費用出して欲しい」・ad97cd40「最短入居いくら」＝御見積書の番）・
@@ -436,5 +436,5 @@ ${points ? (i.moveInKnown ? "→ 資料の入居時期で返信するのが竹�
 }
 /** 2026-11-07 作業員1（型2・統括役の②）: 資料に入居時期が無い時の2択／確認を「物件を指す問い」だけにする（既定 off・入れる PROCEDURE_UNKNOWN_POINTS_ONLY=on） */
 export function procedureUnknownPointsOnlyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PROCEDURE_UNKNOWN_POINTS_ONLY ?? "").trim().toLowerCase() === "on";
+  return (env.PROCEDURE_UNKNOWN_POINTS_ONLY ?? "").trim().toLowerCase() !== "off"; // 2026-11-10 既定 on（proc-points-on-1108b 確かな悪化0・道/本質の悪化0・止める PROCEDURE_UNKNOWN_POINTS_ONLY=off）
 }

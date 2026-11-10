@@ -4592,6 +4592,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       const unknownButGeneral = procedureUnknownPointsOnlyOn() && procedureAnswer?.plan.mode === "two_choice"
         && !procedurePointsToProperty(unrepliedTurn.text, procedureAnswer.plan.target?.name ?? null);
       if (unknownButGeneral) console.log(JSON.stringify({ tag: "brain:procedure-unknown-general", conversationId }));
+      // 2026-11-10 作業員1（proc-points-on-1108b の q374）: 決め打ちが下がった時（applyOverride が false＝coreWins）も、一般の問いは約束の依頼の2段で確認に戻さない
+      if (unknownButGeneral) procedureGeneralReply = true;
       if (procedureAnswer?.plan.mode === "two_choice" && !unknownButGeneral) {
         if (applyOverride(demotedOverrides, "procedure_move_in", "rule:procedure_question_move_in_unknown", "property_check_result", finalAix)) {
           finalAix = "property_check_result";

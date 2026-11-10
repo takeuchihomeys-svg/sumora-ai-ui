@@ -9,6 +9,9 @@ import { readWatchTurns, readStaffMsgs, aixFamily, type WatchRow } from "./lib/p
 import { staffFirstMove, aixLogsFromWatch, staffMoveExclusion, ackSceneOf } from "../app/lib/staff-first-move";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
+// 2026-11-10: 作業ツリーの .env.local にサーバーの鍵が無い時は --env2=<.env.local の道>（値は出さない・読み込むだけ）
+if (arg("env2", "") && !process.env.SUPABASE_SERVICE_ROLE_KEY) process.loadEnvFile(arg("env2", ""));
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY && !(arg("cache", "") && existsSync(arg("cache", "")))) { console.error("サーバーの鍵がありません（--env2=<鍵のある .env.local> か、鍵のある作業ツリーで動かす）"); process.exit(1); }
 const DAYS = Number(arg("days", "90")), WRITER = arg("writer", "takeuchi"), LATE = Number(arg("late", "90")), CACHE = arg("cache", "");
 type Row = WatchRow & { tpo_label?: string | null };
 (async () => {
