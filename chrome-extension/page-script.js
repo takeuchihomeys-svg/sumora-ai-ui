@@ -126,12 +126,20 @@
     var run = function () {
       return new Promise(function (resolve) {
         // ① 欄を開く前の間（人が視線を移して手を伸ばす）
-        var openWait = openMs != null ? openMs : humanRand(250, 550);
+        // 2026-11-10 v2.6.4 竹内さん「ボタン押してから選択するのめちゃくちゃ早い・人間の速度で」:
+        //   旧は開く 250〜550ms → 選ぶ 400〜900ms（合計 0.65〜1.45秒）。人がプルダウンを開いて一覧を見て選ぶには速すぎる。
+        //   新は 開く 450〜1000ms → 一覧を見る 700〜1600ms → 選んだ後に確認 250〜700ms（合計 1.4〜3.3秒）。
+        //   対数正規（毎回ちがう・たまに長い）で、等間隔にしない。
+        var openWait = openMs != null ? openMs : _ln(700, 0.4, 450, 1000);
         setTimeout(function () {
           if (P && P.tap) { try { P.tap(); } catch (_) {} }
           // ② 選ぶ前の間（人が一覧を見て選ぶ）
-          var chooseWait = chooseMs != null ? chooseMs : humanRand(400, 900);
-          setTimeout(function () { resolve(true); }, chooseWait);
+          var chooseWait = chooseMs != null ? chooseMs : _ln(1100, 0.42, 700, 1600);
+          setTimeout(function () {
+            // ③ 選んだ後に「合ってるかな」と見る間
+            var confirmWait = _ln(430, 0.45, 250, 700);
+            setTimeout(function () { resolve(true); }, confirmWait);
+          }, chooseWait);
         }, openWait);
       });
     };
@@ -140,6 +148,13 @@
       return P.moveToEl(el).then(run, function () { return run(); }).then(function () { return action(); });
     }
     return run().then(function () { return action(); });
+  }
+  /** 対数正規の間（中央値・σ・下限・上限）。human-wait が無ければ一様 */
+  function _ln(median, sigma, lo, hi) {
+    var H = window.AxlxHumanWait;
+    if (!H || !H.logNormalDelay) return lo + Math.floor(Math.random() * (hi - lo));
+    var v = H.logNormalDelay(median, sigma);
+    return Math.max(lo, Math.min(hi, v));
   }
   function setSelValHuman(name, val) {
     var el = document.querySelector('select[name="' + name + '"]');
@@ -1498,8 +1513,21 @@
     var feeCb = document.querySelector('input[name="include_common_fee"]');
     if (feeCb && !feeCb.checked) enqueueHumanClick(feeCb, _clickEl, 80, 180);
     if (cond.walk_minutes) {
+      // 2026-11-10 v2.6.4 竹内さん「リアプロの徒歩軒数」:
+      //   旧は移動手段（transportation_id）と分数（required_time）を続けて積むだけで、選び終わる前に打ち始めていた。
+      //   新は 移動手段を選ぶ（カーソル→開く→選ぶ→確認）→ **人が分数を打つ前に一呼吸（600〜1400ms）** → 1文字ずつ打つ。
+      //   同じ列に順番で積むので、前の欄が終わってから次へ進む（同時に触らない）
       queueSelVal("transportation_id", "1");
-      queueTxtVal("required_time", cond.walk_minutes);
+      (function () {
+        var inp = document.querySelector('input[name="required_time"]');
+        if (!inp) return;
+        _enqueueWithEl(inp, function () {
+          return new Promise(function (resolve) {
+            // 移動手段を選んでから「何分にしよう」と考える間
+            setTimeout(function () { resolve(typeTextLikeHuman(inp, cond.walk_minutes)); }, _ln(950, 0.4, 600, 1400));
+          });
+        }, 900, 1500, 'txt:required_time=' + cond.walk_minutes);
+      })();
     }
     if (cond.building_age) queueSelVal("structured_date", nearestUp(AGE_OPTS, cond.building_age));
     if (cond.floor_plan) {
