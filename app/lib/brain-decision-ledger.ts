@@ -7,6 +7,7 @@ import { splitPropertyName } from "./customer-state";
 import { resolveReplyScene } from "./reply-scene";
 import { switchFingerprint, digestVerOn } from "./switch-fingerprint";
 import { materialMissingKey, MATERIAL_KEY_SIDE } from "./material-missing-key";
+import { turnReadDigestExtra } from "./turn-read";
 
 /** 2026-11-11 作業員1（A1 ③）: 自己申告の鍵の印を digest に残すか（記録だけ・既定 off） */
 export function materialSideShadowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -77,6 +78,9 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
     const sit = (meta.turn_contract as { situation?: unknown } | null | undefined)?.situation;
     if (typeof sit === "string" && sit.trim()) out.st = Array.from(sit.trim()).slice(0, 80).join("");
   }
+  // 2026-11-11 作業員14（KB 5cb0dd4c）: 番ごとの「何の事か」の読み（turn_contract の about・property → ta／latent_intent → li／turn_read → tr）を残す。
+  //   今は digest.tc が道の数だけ・cs が締めの方針で、竹内さんの番と対象・意図の当たりを測れなかった。記録だけ（判断は変えない）。TURN_READ=log|on（既定 off）
+  Object.assign(out as Record<string, unknown>, turnReadDigestExtra(meta, env));
   return out;
 }
 
