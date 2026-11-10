@@ -867,8 +867,17 @@
             // 実際に駅を押した時だけ 300〜800ms ランダム待機（人間らしい操作）。
             // 2026-09-14 竹内（SATOKO♪ 事例）「途中で止まって、また動き出す」: 旧は選択済みの駅・この路線に無い駅でも毎回 300〜800ms 待ち、
             //   路線ごとに全駅名を回すため「路線数×駅数×0.55秒」の空回り（何も押さない数十秒）で止まって見え、多い時は 150秒の見張りに掛かっていた。
-            //   押していない時は待たずに次へ（押す操作の間隔は変えない）
-            setTimeout(clickNextStation, _clickedNow ? 300 + Math.floor(Math.random() * 500) : 0);
+            //   押していない時は待たずに次へ押す操作の間隔は変えない）
+            // 2026-11-10 v2.5.97 竹内さん「20駅ごとにというかランダムに人間のように」:
+            //   等間隔にしない。1駅ごとの間は 300〜800ms のまま、**毎回 10%** で「一覧を目で追う」一息 900〜2600ms・
+            //   **3%** で「少し手が止まる」2.6〜5.5秒を足す（何駅目かは決めない）
+            var _stWait = 0;
+            if (_clickedNow) {
+              _stWait = 300 + Math.floor(Math.random() * 500);
+              if (Math.random() < 0.10) _stWait += 900 + Math.floor(Math.random() * 1700);
+              if (Math.random() < 0.03) _stWait += 2600 + Math.floor(Math.random() * 2900);
+            }
+            setTimeout(clickNextStation, _stWait);
           }
           clickNextStation();
         }, 900 + Math.floor(Math.random() * 1300));

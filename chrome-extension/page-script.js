@@ -818,10 +818,19 @@
   // 2026-11-10 v2.5.96 竹内さん「駅も一気に選択してしまう部分がのこっている」「上下の時間もはやすぎる」:
   //   25〜60ms は人が駅を1つずつ押す速さではない（一瞬で全部にチェックが付く）。駅は**320〜900ms**にする。
   //   駅が多い時は 90秒の fill-done を超えうるので、待ちの上限はサーバー側のタイムアウトではなく
-  //   ここで「20駅ごとに一息」を入れつつ、_whenTickIdle で検索前に全部済むのを待つ形で担保する。
+  //   ここで「ランダムに一息」を入れつつ、_whenTickIdle で検索前に全部済むのを待つ形で担保する。
+  // 2026-11-10 v2.5.97 竹内さん「20駅ごとにというかランダムに人間のように」:
+  //   等間隔の一息をやめ、**押すたびに 10% の確率**で 900〜2600ms・**3%** で 2.6〜5.5秒の間を足す
   var _stGapFast = false;
-  function _stGapMin() { return _stGapFast ? 320 : 320; }
-  function _stGapMax() { return _stGapFast ? 700 : 900; }
+  function _stGapMin() { return 320; }
+  function _stGapMax() { return 900 + _stationBreath(); }
+  /** 駅を1つ押した後に足す「人の一息」（何駅目かは決めない・毎回ちがう） */
+  function _stationBreath() {
+    var add = 0;
+    if (Math.random() < 0.10) add += 900 + Math.floor(Math.random() * 1700);
+    if (Math.random() < 0.03) add += 2600 + Math.floor(Math.random() * 2900);
+    return add;
+  }
   // 駅名でボタン/チェックボックスをクリック
   function selectStationsByName(names) {
     if (!names || !names.length) return;
@@ -1975,15 +1984,16 @@
                     return true;
                   }
                   _selAllPrevChecked = checkedCount;
-                  // 2026-11-10 v2.5.96 竹内さん「駅も一気に選択してしまう部分がのこっている」:
-                  //   旧は 20〜45ms で全駅を押していた（一瞬で全部にチェックが付く＝機械らしい）。
-                  //   人が駅の一覧を上から見て1つずつ押す速さにする（1駅 320〜900ms・対数正規の裾・たまに一息）。
-                  //   駅数が多い時（40駅超）は 20駅ごとに 1.2〜2.6秒の「一覧を見直す」間を入れる。
-                  //   ⚠ ここは駅の選択だけ。検索を押す前は _whenTickIdle で全部済むのを待つので条件は欠けない
-                  unchecked.forEach(function(inp, idx) {
+                  // 2026-11-10 v2.5.96 竹内さん「駅も一気に選択してしまう部分がのこっている」
+                  // 2026-11-10 v2.5.97 竹内さん「20駅ごとにというかランダムに人間のように」:
+                  //   旧は 20駅ごとに必ず一息（等間隔＝機械らしい）。人が駅の一覧を上から見て1つずつ押す形にする。
+                  //    ・1駅ごとの間は 320〜900ms（対数正規・毎回ちがう）
+                  //    ・**毎回 10% の確率**で「一覧を目で追う」一息 900〜2600ms（何駅目かは決めない＝ランダム）
+                  //    ・さらに **3%** で「少し手が止まる」長めの間 2.6〜5.5秒（疲れ・考え込み）
+                  //   駅数が増えても一息の位置が偏らないので、サイトへの負荷も読みの速さも人に近い
+                  unchecked.forEach(function(inp) {
                     var _base = 320 + Math.floor(Math.random() * 300); // 320〜620ms
-                    var _gap = humanRand(_base, _base + 280);
-                    if (idx > 0 && idx % 20 === 0) _gap += 1200 + Math.floor(Math.random() * 1400);
+                    var _gap = humanRand(_base, _base + 280) + _stationBreath();
                     enqueueHumanClick(inp, _clickIfUnchecked, _gap, _gap + 60);
                   });
                   return false;

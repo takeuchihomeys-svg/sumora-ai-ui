@@ -36,8 +36,11 @@ ok("ITANDI: tick の待ちにスクロールの時間を足す", /var _vw = _ens
 console.log("\n■ ④ 駅は1つずつ人の速さ（20〜45ms はもう無い）");
 ok("駅の全選択が 20〜45ms ではない", !/enqueueHumanClick\(inp, _clickIfUnchecked, 20, 45\)/.test(ps));
 ok("駅の全選択は 320〜900ms", /var _base = 320 \+ Math\.floor\(Math\.random\(\) \* 300\);/.test(ps) && /humanRand\(_base, _base \+ 280\)/.test(ps));
-ok("20駅ごとに一息（1.2〜2.6秒）", /idx % 20 === 0\) _gap \+= 1200 \+ Math\.floor\(Math\.random\(\) \* 1400\);/.test(ps));
-ok("駅の速い間隔（_stGapMin/_stGapMax）も 320〜900ms", /function _stGapMin\(\) \{ return _stGapFast \? 320 : 320; \}/.test(ps) && /function _stGapMax\(\) \{ return _stGapFast \? 700 : 900; \}/.test(ps));
+ok("ランダムな一息（何駅目かで決めない）", /if \(Math\.random\(\) < 0\.10\) _gap \+= 900 \+ Math\.floor\(Math\.random\(\) \* 1700\);/.test(ps) === false && /function _stationBreath\(\)/.test(ps) && /if \(Math\.random\(\) < 0\.10\) add \+= 900 \+ Math\.floor\(Math\.random\(\) \* 1700\);/.test(ps));
+ok("まれに長めの間（3%・2.6〜5.5秒）", /if \(Math\.random\(\) < 0\.03\) add \+= 2600 \+ Math\.floor\(Math\.random\(\) \* 2900\);/.test(ps));
+ok("20駅ごとの等間隔ではない", !/idx % 20 === 0/.test(ps));
+ok("駅の速い間隔（_stGapMin/_stGapMax）も 320〜900ms＋ランダムな一息", /function _stGapMin\(\) \{ return 320; \}/.test(ps) && /function _stGapMax\(\) \{ return 900 \+ _stationBreath\(\); \}/.test(ps));
+ok("ITANDI の駅もランダムな一息（10%・3%）", /if \(Math\.random\(\) < 0\.10\) _stWait \+= 900 \+ Math\.floor\(Math\.random\(\) \* 1700\);/.test(ips) && /if \(Math\.random\(\) < 0\.03\) _stWait \+= 2600 \+ Math\.floor\(Math\.random\(\) \* 2900\);/.test(ips));
 
 console.log("\n■ ⑤ 見張り（fill-done）の長さが駅を選ぶ時間に足りる");
 ok("ページ側 235秒", /\}, 235000\);/.test(ps));
