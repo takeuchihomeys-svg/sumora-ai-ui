@@ -60,6 +60,15 @@
     if (_tickBusy <= 0) { cb(); return; }
     setTimeout(function () { _whenTickIdle(cb); }, _pd(120)); // 条件を見る間隔（±15%）
   }
+  /** 2026-11-10 v2.6.6 配列を毎回ちがう順に（Fisher-Yates）。選ぶ集合は変えない */
+  function _shuffle(arr) {
+    var a = (arr || []).slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
   /** 2026-11-10 v2.6.0 見えるカーソル（pointer-ui.js・見た目だけ）。読み込めなければ何もしない */
   function _pointerMoveTo(el) {
     var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
@@ -179,8 +188,7 @@
     }
   }
 
-  function norm(s) {
-    return String(s)
+  function norm(s) {    return String(s)
       .replace(/（/g, "(").replace(/）/g, ")")
       .replace(/〜/g, "~").replace(/～/g, "~")
       .replace(/　/g, " ")
@@ -1076,9 +1084,11 @@
         var _FI = (typeof AxlxFloorIjou !== "undefined" ? AxlxFloorIjou : null);
         var _rg = _FI ? _FI.ijouRange(FLOOR_RANK_IT, ijouMatch[1].trim(), function (k) { return FLOOR_TEXT_IT[k] || null; }) : null;
         if (baseIdx >= 0) {
-          for (var ri = baseIdx; ri < (_rg ? _rg[1] + 1 : FLOOR_RANK_IT.length); ri++) {
-            tickFloor(FLOOR_RANK_IT[ri]);
-          }
+          // 2026-11-10 v2.6.6 竹内さん「ほかの部分もちゃんとランダムで選択できるように」:
+          //   間取りを小さい方から順に必ず同じ順で入れていた → **毎回シャッフル**（選ぶ集合は変えない）
+          var _ids = [];
+          for (var ri = baseIdx; ri < (_rg ? _rg[1] + 1 : FLOOR_RANK_IT.length); ri++) _ids.push(FLOOR_RANK_IT[ri]);
+          _shuffle(_ids).forEach(function (k) { tickFloor(k); });
         }
       } else if (rangeMatch) {
         // 「1DK～1LDK」→ 1DKから1LDKまでの範囲を全選択

@@ -203,12 +203,20 @@
   }
   function setCheckboxes(name, vals) {
     var svals = (vals || []).map(String);
-    var cbs = document.querySelectorAll('input[name="' + name + '"]');
-    cbs.forEach(function(cb) {
-      var shouldCheck = svals.indexOf(String(cb.value)) >= 0;
-      // 一気に連打せず、1件ずつ 60〜150ms のランダム間隔でクリック（人間らしさ）
-      if (cb.checked !== shouldCheck) enqueueHumanClick(cb, _clickEl, 420, 980);
+    var cbs = Array.prototype.slice.call(document.querySelectorAll('input[name="' + name + '"]'));
+    // 2026-11-10 v2.6.6 竹内さん「ほかの部分もちゃんとランダムで選択できるように。まだ人間的になっていない部分がある可能性ある」:
+    //   旧は DOM の並び（上から）に必ず同じ順でチェックを入れていた（間取り 1K→1DK→1LDK… が毎回同じ）。
+    //   人が選ぶ時は「気になった所から」「上から順とは限らない」ので、**対象を毎回シャッフル**して積む。
+    //   選ぶ集合は変えない（入れ忘れ・余計に入れない）。順番だけ毎回ちがう。
+    var targets = cbs.filter(function (cb) { return cb.checked !== (svals.indexOf(String(cb.value)) >= 0); });
+    // 上の方から見ていく事が多いので、完全なランダムにせず「前半を少し優先」する揺らぎを混ぜる
+    targets.sort(function (a, b) {
+      var ai = cbs.indexOf(a), bi = cbs.indexOf(b);
+      var aw = ai + Math.random() * cbs.length * 0.9;
+      var bw = bi + Math.random() * cbs.length * 0.9;
+      return aw - bw;
     });
+    targets.forEach(function (cb) { enqueueHumanClick(cb, _clickEl, 420, 980); });
   }
   // 基本条件フォームの select/text 入力も1項目ずつ間隔を空けてセットする
   // 2026-11-10 v2.6.1 竹内さん「賃料選択する部分や更新日選択する部分が早すぎる。毎回人間がマウス動かして押していく形とする」

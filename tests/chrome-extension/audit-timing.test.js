@@ -61,7 +61,7 @@ const grab = (src, name) => { const s = src.indexOf(name); if (s < 0) return "";
   ok("段は60件まで・ops は80件まで", /if \(_audit\.steps\.length > 60\) _audit\.steps\.shift\(\);/.test(ps) && /if \(_audit\.ops\.length > 80\) _audit\.ops\.shift\(\);/.test(ps));
   for (const k of ["'vis'", "'reset'", "'cities'", "'modal'", "'ward'", "'next_step'", "'town'", "'modal_close'", "'search_wait'", "'search'"]) ok(`段 ${k} を記録する`, ps.includes("_auditStepP(" + k));
 ok("見張り（駅を1件ずつ選ぶ速さに合わせて 235秒）で止まる時は stall を残してから fill-done を送る", /_auditStall\(\);\s*notifyDone\('watchdog-timeout/.test(ps));
-ok("見張りの長さは 235秒（v2.6.5: 駅を1つずつ押すので延ばした）", /\}, 235000\);/.test(ps));
+ok("見張りの長さは 235秒（v2.6.6: 駅を1つずつ押すので延ばした）", /\}, 235000\);/.test(ps));
   const stall = grab(ps, "function _auditStall(");
   for (const k of ["stage", "since_stage_ms", "visibility", "has_focus", "hidden_ms", "queue_len", "queue_busy", "queue_next", "late_max", "late_over_1s", "modal_open", "city_checked", "form"]) ok(`stall に ${k}`, new RegExp("\\b" + k + ":").test(stall));
   ok("止まった時の読み戻しは stall.form（点検の比べる form には入れない）", !/_audit\.form = _readRealproForm\(\);[\s\S]{0,40}notifyDone\('watchdog/.test(ps) && /form: _readRealproForm\(\),/.test(stall));
