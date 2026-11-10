@@ -457,6 +457,8 @@ export type SuggestedAixMeta = {
   flow_signals?: string[];
   /** 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（n15/n17/n19/n21） */
   decisions_1103?: string[];
+  /** 2026-11-11 作業員4: 入口の意見の1語（digest.nop・CONDUCTOR_NEAR_OPINION の見張り） */
+  near_opinion?: string;
   /** 2026-11-03 この番に呼ぶ役の候補（網・記録だけ）→ digest.rl */
   conductor_roles?: string;
   /** 2026-11-04 統括メタ（記録だけ・last_brain_meta が正）→ digest.cm */
@@ -3223,6 +3225,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   }
   // 2026-11-03 竹内さんの決定（11/03 夜・KB 1cef1a4e）No.15・17・19・21: 候補の網で材料に1行だけ（決めるのはブレイン・どれも既定 off）
   let decisions1103: string[] = [];
+  let nearOpinionNote: string | null = null; // 2026-11-11 作業員4: 入口の意見の1語（meta.near_opinion → digest.nop）
   if (typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus)) {
     try {
       const turnTxt = unrepliedTurn.text ?? "";
@@ -3255,6 +3258,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         new Promise<null>((res) => setTimeout(() => res(null), 2_000)),
       ]);
       if (r?.line) customerStateBlockText += `\n\n${r.line}`;
+      nearOpinionNote = r === null ? "timeout" : `${nearOpinionDigest(r.op)}|${r.inBand}`;
       console.log(JSON.stringify({ tag: "brain:near-opinion", conversationId, op: nearOpinionDigest(r?.op ?? null), inBand: r?.inBand ?? null, timeout: r === null }));
     } catch (e) { console.warn("[brain-core] near-opinion skipped:", e instanceof Error ? e.message : String(e)); }
   }
@@ -6142,6 +6146,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       flow_signals: flowSignalsRec?.kinds.length ? [...flowSignalsRec.kinds] : undefined,
       // 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（"n21"＝お礼の番で申込への AIX を候補にした・作業員1の AIX の統括が読む）
       decisions_1103: decisions1103.length ? decisions1103 : undefined,
+      near_opinion: nearOpinionNote ?? undefined,
       conductor_meta: CONDUCTOR_META_MODE !== "off" ? ((nd) => withSearchPlan(withMaterials(buildConductorMeta({
         scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, stage: customerState?.stage ?? null,
         turnAt: typedMessages[0]?.sender === "customer" ? typedMessages[0].created_at : null,
