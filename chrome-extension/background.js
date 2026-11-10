@@ -1412,6 +1412,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!runId) { sendResponse({ ok: false, error: "runId なし" }); return; }
         const filled = { v: 1, site: _site, form: msg.form || null };
         if (msg.guide_stations) filled.guide_stations = msg.guide_stations;
+        // 2026-11-10 竹内「人間が動いているか確認もできるように」: 人の押した・打った・動かした数（点検の記録に残す）
+        if (msg.human && typeof msg.human === "object") filled.human = msg.human;
         const body = { phase: "started", brain: true, run_id: runId, site: _site, filled: filled };
         if (msg.intended && typeof msg.intended === "object") body.intended = msg.intended;
         const posted = self.AxlxSearchAudit ? await self.AxlxSearchAudit.post(body) : null;

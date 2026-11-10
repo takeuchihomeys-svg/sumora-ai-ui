@@ -477,9 +477,25 @@
     var late = waited - planned;
     if (late > _audit.late_max) _audit.late_max = late;
     if (late > 1000) _audit.late_over_1s++;
-    _audit.ops.push({ t: Date.now() - _fillStartedAt, k: String(label || '').slice(0, 40), p: planned, w: waited });
+    _audit.ops.push({ t: Date.now() - _fillStartedAt, k: String(label || '').slice(0, 40), p: planned, w: waited, by: 'auto' });
     if (_audit.ops.length > 80) _audit.ops.shift();
   }
+  // ── 2026-11-10 竹内「この画面の見張りの部分もちゃんと人間が動いているか確認もできるように」──
+  //   拡張が出す操作（isTrusted=false）と、人が本当に押した操作（isTrusted=true）を区別して数える（human-trace.js の共通部品）。
+  //   案内モード（スタッフが押す）では人の操作だけが来る＝「人が操作しているか」を点検の記録で確かめられる。
+  //   入力の中身（値）は残さない。数と、最後の操作の種類・欄の名前・間の平均だけ。
+  var _HTr = (function () {
+    try {
+      var HT = (typeof window !== "undefined" ? window : self).AxlxHumanTrace;
+      if (!HT) return null;
+      var tr = HT.create({});
+      tr.attach(document, window);
+      return tr;
+    } catch (_) { return null; }
+  })();
+  function _humanSnapshot() { return _HTr ? _HTr.snapshot() : null; }
+  // 2026-11-10 案内モード（realpro-guide.js）から読めるように外に出す（案内は押さないので、人の操作だけが数えられる）
+  try { window.__axlxHumanSnapshot = _humanSnapshot; } catch (_) {}
   try {
     document.addEventListener('visibilitychange', function () {
       var hidden = document.visibilityState === 'hidden';
@@ -549,6 +565,8 @@
     if (!_audit) return null;
     try {
       delete _audit._searchWaitMarked;
+      // 2026-11-10: 人が動いたか（拡張の操作と区別した数）を点検の記録に載せる
+      _audit.human = _humanSnapshot();
       var a = _audit;
       if (JSON.stringify(a).length > 8000) {
         a = JSON.parse(JSON.stringify(a));

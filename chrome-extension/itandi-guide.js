@@ -514,6 +514,20 @@
     var m = Plan.matchStationsIt(s.stations, seen);
     return { missing: m.missing, via: m.via, seen: seen };
   }
+  // ── 2026-11-10 竹内「この画面の見張りの部分もちゃんと人間が動いているか確認もできるように」──
+  //   案内は別の段（itandi-guide.js は content script・itandi-page-script.js はページの中）なので、
+  //   案内の側でも自分で人の操作を数える（human-trace.js の共通部品。isTrusted だけ数える＝拡張の操作は入らない）。
+  var _itHTrace = (function () {
+    try {
+      var HT = (typeof self !== "undefined" ? self : window).AxlxHumanTrace;
+      if (!HT) return null;
+      var tr = HT.create({});
+      tr.attach(document, window);
+      return tr;
+    } catch (_) { return null; }
+  })();
+  function _itHumanSnap() { return _itHTrace ? _itHTrace.snapshot() : null; }
+
   function reportStationMiss(s) {
     try {
       if (!session || session.stationMissReported || !s) return;
@@ -579,6 +593,8 @@
         form: form,
         intended: SS && SS.compactIntended ? SS.compactIntended(c) : null,
         guide_stations: session._guideStationsRecord || null,
+        // 2026-11-10 竹内「人間が動いているか確認もできるように」: 人の押した・打った・動かした数（案内は拡張が押さない）
+        human: _itHumanSnap(),
       }, function () { void chrome.runtime.lastError; });
     } catch (_) {}
   }

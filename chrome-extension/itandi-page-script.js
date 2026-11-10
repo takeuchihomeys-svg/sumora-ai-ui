@@ -252,9 +252,23 @@
       else next(true);
     }); } catch (e) { onErr(e); }
   }
-  function _itPack() {
+  // ── 2026-11-10 竹内「この画面の見張りの部分もちゃんと人間が動いているか確認もできるように」──
+  //   拡張が出す操作（isTrusted=false）と、人が本当に押した操作（isTrusted=true）を区別して数える（human-trace.js の共通部品）。
+  var _itHT = (function () {
+    try {
+      var HT = (typeof self !== "undefined" ? self : window).AxlxHumanTrace;
+      if (!HT) return null;
+      var tr = HT.create({});
+      tr.attach(document, window);
+      return tr;
+    } catch (_) { return null; }
+  })();
+  function _itHumanSnapshot() { return _itHT ? _itHT.snapshot() : null; }
+  // 2026-11-10 案内モード（itandi-guide.js）から読めるように外に出す（案内は押さないので人の操作だけが数えられる）
+  try { window.__axlxItandiHumanSnapshot = _itHumanSnapshot; } catch (_) {}  function _itPack() {
     if (!_itAudit) return null;
     try {
+      _itAudit.human = _itHumanSnapshot(); // 2026-11-10 人が動いたか（拡張の操作と区別）
       var a = _itAudit;
       if (JSON.stringify(a).length > 8000) {
         a = JSON.parse(JSON.stringify(a));

@@ -513,6 +513,8 @@
         form: readFilledForm(),
         intended: SS && SS.compactIntended ? SS.compactIntended(c) : null,
         guide_stations: session._guideStationsRecord || null,
+        // 2026-11-10 竹内「人間が動いているか確認もできるように」: 案内の間に人が押した・打った・動かした数（拡張は押さないので人の操作だけが来る）
+        human: (function () { try { return window.__axlxHumanSnapshot ? window.__axlxHumanSnapshot() : null; } catch (_) { return null; } })(),
       }, function () { void chrome.runtime.lastError; });
     } catch (_) {}
   }

@@ -3354,3 +3354,30 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - tests/chrome-extension/ 全63本 + 追加分が通過（human-wait.test.js 278件・auto-run.test.js 93件 ほか）。
 - まだ実機で試していない（自動モードで1回・案内モードで YUMA を1回・ITANDI で1件ずつチェックされるか）。試す時は search_audits の steps（操作ごとの時刻）で「間がばらついているか・1件ずつか」を見る。
 - 版: 2.5.93（manifest.json）。テストの版固定も合わせた。
+
+## 2026-11-10 スマホで別の PC の稼働を見る（/api/extension-live）・人が動いているかの記録（human-trace.js）
+
+竹内さん「画面操作を別の PC で行う場合、その操作ちゃんと動いているかスマホで確認できるツールできるかな？」「この画面の見張りの部分もちゃんと人間が動いているか確認もできるように」
+
+### 1. スマホで見る画面（読み取りだけ・新しい表・列は作らない）
+- pp/lib/extension-live-server.ts（新規）: 今ある表を**読むだけ**で「今どうなっているか」を1つの形にする。
+  - extension_devices（1分ごとの心拍）: 版・モード・実行中の命令・今のお客様・サイト・待っている事・最後に進んだ時刻・3分以上来ない＝止まっている・10分以上進まない＝止まった疑い
+  - utomation_commands（6時間・pending/running/error）: たまっている指示・拾った PC・失敗の理由
+  - search_audits（15分）: 直近の検索の1回・ページ数・行数・送信数・最後の段・操作の記録・**人の操作**
+  - screen_watch_events（15分・normal 以外）: 見張りの印
+- pp/api/extension-live/route.ts（新規）: GET ?view=… は JSON・&format=html でスマホ用の画面（20秒ごとに自分で更新）。
+  認証は今の見張りと同じ内部認証（Authorization: Bearer INTERNAL_API_SECRET）＋ スマホのブラウザ用に ?key= も受ける。
+- **書き込みは一切しない**（スマホから止める・動かすはできない）。止めたい時は今まで通りサーバーの止めの印（utomation_settings.paused）。
+- 出る物: PC ごとの「動いている／止まっている／進んでいない」・今のお客様・待っている事・直近の検索（人か自動か）・指示の残り・見張りの印。
+
+### 2. 人が動いているかの記録（chrome-extension/human-trace.js・新規）
+- ブラウザが人が起こしたイベントは isTrusted === true、拡張が dispatchEvent／el.click() で作った物は alse。**これで「拡張の操作」と「人の操作」を分ける**。
+- 数える物: 押した（click）・打った（keydown）・選んだ（change）・スクロール（人のホイールから 400ms に1回）の回数、最後の操作の種類・欄の名前・操作の間の平均（ms）。**入力した中身（値）は残さない**（個人の情報を記録に載せない）。
+- judge(human, guideMode): 人が動いていれば「人が操作している（N回）」／案内モードで 0回なら「**誰も触っていない＝止まっている疑い**」／自動系で 0回は「拡張だけで動いている（正常）」。
+- 配線: manifest の先頭の段（human-wait.js の次）で読む（リアプロ・ITANDI・レインズ全部）。page-script.js・itandi-page-script.js が自分の器を持ち、点検の illed.human に載せる。案内（ealpro-guide.js・itandi-guide.js）は別の段なので自分で数えて xlx-guide-filled の human で送る（background が illed.human に入れる）。
+- 点検の記録（search_audits.filled.human）と、スマホの画面（検索の1行ごとの「👤 …」）の両方で見られる。
+
+### 3. 版と確認
+- 版: **2.5.93**（この回の途中から同じ版にまとめた）。
+- 	ests/chrome-extension/ 全63本 通過（human-wait.test.js 302件。人の操作の記録 22件を追加・manifest の並びを固定している3本を新しい並びに合わせた）。
+- まだ実機で試していない（スマホで https://sumora-ai-ui.vercel.app/api/extension-live?format=html&key=<INTERNAL_API_SECRET> を開く・案内モードで1回検索して「人が操作している」と出るか）。

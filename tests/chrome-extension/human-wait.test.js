@@ -108,7 +108,7 @@ function rest() {
   const cs = manifest.content_scripts;
   const first = cs[0];
   // v2.5.40: 画面の文字の受け口（snapshot-core.js）を後ろに足した（先頭の2つの順は変えない）
-  eq("先頭の段（document_start・3サイト）が human-wait.js → search-audit.js（→ snapshot-core.js）の順", first.js, ["human-wait.js", "own-mutation.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"]);
+  eq("先頭の段（document_start・3サイト）が human-wait.js → human-trace.js → own-mutation.js → search-audit.js（→ snapshot-core.js）の順", first.js, ["human-wait.js", "human-trace.js", "own-mutation.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"]);
   eq("先頭の段は document_start（後の段の content script より先に読む）", first.run_at, "document_start");
   for (const site of ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]) {
     ok(`先頭の段が ${site} を含む`, first.matches.includes(site));
@@ -334,6 +334,57 @@ console.log("\n■ ⑧ 1件ずつ（2026-11-10 竹内「まとめてチェック
   const ps = read("page-script.js");
   ok("リアプロの条件: クリックの列の間は対数正規（humanRand が logNormalDelay）", /H\.logNormalDelay\(med, 0\.3\)/.test(ps));
   ok("リアプロの条件: 1件ずつの列に名前が付く（点検で1操作ずつ見える）", /label: _opLabel\(el\)/.test(ps));
+}
+
+console.log("\n■ ⑨ 人が動いているかの記録（human-trace.js・2026-11-10）");
+{
+  const HT = require(path.join(EXT, "human-trace.js"));
+  let t = 1_000_000;
+  const tr = HT.create({ now: () => t });
+  const handlers = {};
+  const fakeDoc = { addEventListener: (type, fn) => { handlers[type] = fn; }, removeEventListener: () => {} };
+  const fakeWin = { addEventListener: (type, fn) => { handlers["w:" + type] = fn; }, removeEventListener: () => {} };
+  tr.attach(fakeDoc, fakeWin);
+  eq("最初は0", tr.snapshot().n, 0);
+  // 拡張が作ったイベント（isTrusted=false）は数えない
+  handlers.click({ isTrusted: false, target: {} });
+  eq("拡張のクリックは数えない", tr.snapshot().n, 0);
+  // 人が押した（isTrusted=true）は数える
+  t += 800; handlers.click({ isTrusted: true, target: { name: "rental_cost2" } });
+  eq("人のクリックは数える", [tr.snapshot().n, tr.snapshot().clicks, tr.snapshot().last_k], [1, 1, "click"]);
+  eq("最後に触った欄の名前を残す（入力の中身は残さない）", tr.snapshot().last_name, "rental_cost2");
+  t += 1200; handlers.click({ isTrusted: true, target: {} });
+  eq("操作の間の平均（2回目は 1200ms）", tr.snapshot().avg_gap_ms, 1200);
+  t += 100; handlers.keydown({ isTrusted: true, target: {} });
+  eq("打鍵も数える", tr.snapshot().keys, 1);
+  t += 100; handlers.change({ isTrusted: true, target: { name: "x" } });
+  eq("選んだ（change）も数える", tr.snapshot().changes, 1);
+  // スクロール: 人のホイールから 400ms に1回
+  t += 500; handlers["w:wheel"]({ isTrusted: true });
+  eq("人のスクロールは数える", tr.snapshot().scroll, 1);
+  t += 100; handlers["w:wheel"]({ isTrusted: true });
+  eq("400ms 以内の続きのスクロールは1回にまとめる", tr.snapshot().scroll, 1);
+  t += 600; handlers["w:wheel"]({ isTrusted: true });
+  eq("間が空けば数える", tr.snapshot().scroll, 2);
+  eq("最後の操作からの経過", tr.snapshot().last_at, 0);
+  t += 3000;
+  eq("時間が経つと経過が伸びる", tr.snapshot().last_at, 3000);
+
+  // 判定（案内モードで人が0回＝止まっている疑い）
+  eq("人が動いていれば human", HT.judge({ n: 3 }, true).level, "human");
+  eq("案内モードで0回は none（止まっている疑い）", HT.judge({ n: 0 }, true).level, "none");
+  eq("自動系で0回は auto（正常）", HT.judge({ n: 0 }, false).level, "auto");
+  eq("記録が無ければ unknown", HT.judge(null, true).level, "unknown");
+  ok("案内で0回の文が「止まっている疑い」と言う", /止まっている疑い/.test(HT.judge({ n: 0 }, true).ja));
+
+  // 配線（manifest・各ページ・点検）
+  const mf2 = JSON.parse(read("manifest.json"));
+  ok("manifest: 先頭の段で human-trace.js を読む（human-wait の次）", mf2.content_scripts[0].js.indexOf("human-trace.js") === 1);
+  ok("manifest: web_accessible_resources に human-trace.js（ページへ <script> で入れる）", mf2.web_accessible_resources[0].resources.includes("human-trace.js"));
+  ok("リアプロのページ: 人が動いたかを点検の記録に載せる", /AxlxHumanTrace/.test(read("page-script.js")) && /_audit\.human = _humanSnapshot\(\)/.test(read("page-script.js")));
+  ok("ITANDI のページ: 同じ", /AxlxHumanTrace/.test(read("itandi-page-script.js")) && /_itAudit\.human = _itHumanSnapshot\(\)/.test(read("itandi-page-script.js")));
+  ok("案内（リアプロ・ITANDI）: 人の操作を送る", /__axlxHumanSnapshot/.test(read("realpro-guide.js")) && /_itHumanSnap\(\)/.test(read("itandi-guide.js")));
+  ok("background: 案内から来た人の操作を filled.human に入れる", /if \(msg\.human && typeof msg\.human === "object"\) filled\.human = msg\.human;/.test(read("background.js")));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
