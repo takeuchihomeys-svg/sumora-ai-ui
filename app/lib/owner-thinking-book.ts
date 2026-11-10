@@ -63,7 +63,28 @@ export function leakOverlap(rowText: string, turnText: string, win = 14): boolea
 }
 
 export const CROSS_SCENE_TAGS = new Set(["場面:物件を送る", "場面:その他"]);
-export type PickOpts = { scene: string | null; turnEmb: ReadonlyArray<number>; turnText: string; max?: number; minSim?: number; minSimNoScene?: number; maxChars?: number; before?: string | null };
+// ── 状況の印（11/11 統括役: 重点の解き直しで「同じ場面の別の状況」の決まりが当たった＝物件を指すか・もう送ったか・約束済みかで絞る）──
+/** 今の番の状況の印（決まった計算・材料から） */
+export type TurnMarks = { pointsProperty: boolean; sent: boolean; promise: boolean };
+/** お客様の文が物件を指しているか（URL・画像・号室・「ここ/この物件/こちらのお部屋」・物件名らしい語） */
+export function pointsProperty(text: string): boolean {
+  return /https?:\/\/|\[画像\]|号室|こちらの(?:お部屋|物件)|この(?:お部屋|物件|部屋)|そちらの(?:お部屋|物件)|ここ(?:だったら|なら|の|は|って)|(?:マンション|ハイツ|レジデンス|コーポ|メゾン|ハウス|荘)/.test(text);
+}
+/** 行が前提にしている状況（本文と題の言い方から）。null＝その印は問わない */
+export function rowNeeds(r: Pick<BookRow, "title" | "insight">): Partial<Record<keyof TurnMarks, boolean>> {
+  const t = `${r.title}\n${String(r.insight ?? "").slice(0, 300)}`;
+  const need: Partial<Record<keyof TurnMarks, boolean>> = {};
+  if (/物件を指さない|指す物が決まらない|物件の指定(?:が)?(?:なし|無い)|どの物件か(?:分から|わから)/.test(t)) need.pointsProperty = false;
+  if (/送った物件|お送りした物件|送った中から|送った後|送った直後|こちらが送った/.test(t)) need.sent = true;
+  if (/何も送っていない|まだ(?:何も)?送っていない|初回の番|初めての番/.test(t)) need.sent = false;
+  if (/約束の後|約束した後|約束を送った後|約束の続き|確認の約束の後|約束した確認/.test(t)) need.promise = true;
+  return need;
+}
+/** 行の前提と今の番の印が合うか（問わない印は合う扱い） */
+export function marksOk(need: Partial<Record<keyof TurnMarks, boolean>>, m: TurnMarks): boolean {
+  return (Object.keys(need) as Array<keyof TurnMarks>).every((k) => need[k] === m[k]);
+}
+export type PickOpts = { scene: string | null; turnEmb: ReadonlyArray<number>; turnText: string; max?: number; minSim?: number; minSimNoScene?: number; maxChars?: number; before?: string | null; marks?: TurnMarks | null; onlyTags?: string[] };
 export const BOOK_MAX = 3;
 // 下限は 11/11 の解き直し 198番の「お客様の文＋直前のこちら」の埋め込みで決めた（場面の札の行の近さ p90 0.527・札の無い行 p90 0.454）
 export const BOOK_MIN_SIM = 0.52;
@@ -89,6 +110,8 @@ export function pickBook(rows: ReadonlyArray<BookRow>, o: PickOpts): BookCard[] 
     const sim = dot(o.turnEmb, r.embedding);
     if (sim < (inScene ? minS : minN)) continue;
     if (leakOverlap(`${r.title}${r.insight ?? ""}${r.rationale ?? ""}`, o.turnText)) continue;
+    if (o.marks && !marksOk(rowNeeds(r), o.marks)) continue;
+    if (o.onlyTags?.length && !o.onlyTags.some((x) => (r.tags ?? []).includes(x))) continue;
     scored.push({ r, sim, inScene });
   }
   scored.sort((a, b) => b.sim + (b.inScene ? 0.03 : 0) - (a.sim + (a.inScene ? 0.03 : 0)));
@@ -109,4 +132,22 @@ export function bookBlock(cards: ReadonlyArray<BookCard>): string {
   if (!cards.length) return "";
   const lines = cards.map((c, i) => `${i + 1}. 決まり: ${c.rule}${c.why ? `\n   なぜ: ${c.why}` : ""}${c.dont ? `\n   しない: ${c.dont}` : ""}`);
   return `【竹内さんの考え方（この場面に近い過去の指摘・決定。今の番に当てはまる時だけ参考にする・状況が違えば使わない）】\n${lines.join("\n")}`;
+}
+
+// ── スイッチ（既定 off）──────────────────────────────────────────────────
+type Env = Record<string, string | undefined>;
+/**
+ * 2026-11-11 作業員9（統括役: 本はブレインの判断の材料として試す）: BRAIN_OWNER_BOOK=on の時だけ、優先順位の段の材料（brain-priority の取り寄せ）の後ろに本を足す。
+ *   既定 off＝今と1文字も変わらない。BRAIN_OWNER_BOOK_SCENES=場面,場面 で場面を絞る（空＝全部）。BRAIN_OWNER_BOOK_ONLY_BASE=on で札「竹内さんの土台」の行だけ
+ *   入口の統括には渡さない（重点の解き直し 198番で 131→122〜125 に下がった・KB P2）
+ */
+export function ownerBookBrainOn(scene: string | null, env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  if ((env.BRAIN_OWNER_BOOK ?? "").trim().toLowerCase() !== "on") return false;
+  const list = (env.BRAIN_OWNER_BOOK_SCENES ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  return !list.length || (!!scene && list.includes(scene));
+}
+export const ownerBookOnlyBase = (env: Env = typeof process !== "undefined" ? process.env : {}): boolean => (env.BRAIN_OWNER_BOOK_ONLY_BASE ?? "").trim().toLowerCase() === "on";
+/** 埋め込む文（お客様の今の文＋直前のこちら）— 解き直しと同じ作り */
+export function bookAskText(customerTurn: string, lastStaff: string | null): string {
+  return `お客様: ${squash(customerTurn).slice(0, 400)}\n直前のこちら: ${squash(lastStaff).slice(0, 120)}`;
 }
