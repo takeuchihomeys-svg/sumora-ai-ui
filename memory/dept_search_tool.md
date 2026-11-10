@@ -4,6 +4,12 @@
 
 ---
 
+## 2026-11-10 一括検索・自動便の payload に ITANDI の更新日（itandi_update_days）を載せた（**サーバーのみ・拡張の変更なし・版は上げていない**・DB の変更なし）
+- DB_STRUCTURE.md の混ざっている所 2: 一括検索・自動便では ITANDI もリアプロの更新日（rp_update_days）を使っていた（v2.5.76 で列を分けたのは popup だけ）。確かめた所: background.js 4330 `_batchAutofill`→4367 `_buildBatchConditions`（4643 `opts.rp_update_days`）・4374 `optsFromPayload`・1712 手の一括の `effectiveRpUpdateDays`・auto-run.js 129 `payloadForCustomer`（site を見ない）→ itandi-page-script.js 165・itandi-guide-plan.js 277 が cond.rp_update_days を打つ。サーバーは cron・trigger とも rp_update_days だけ
+- 直し（サーバー）: payload に `itandi_update_days`（ITANDI の手の指定 → 無ければ自動・リアプロの手の指定は使わない）・計画に `update_days_plan.by_customer[id].itandi_days`（同じ空いた時間で広げる）。`app/lib/rp-update-days.ts` effectiveItandiUpdateDays・`search-update-days.ts` itandiPlanFrom／planPayload・`web-brain-search.ts`・`app/api/automation/trigger`・`app/api/cron/auto-property-search`。テスト `app/lib/__tests__/itandi-update-days-payload.test.ts`（21）
+- **拡張はまだ読んでいない**（竹内さんの方針: 自動検索の拡張の中は Cursor が自動モードとして作る）。読む所・最小の差分は `chrome-extension/AUTO_MODE_HANDOFF.md` の「ITANDI の更新日」の節。キーの無い命令は今まで通り rp_update_days
+- 残り: 点検 `search-audit-check.ts` expectedUpdateDays は rp の値のまま（拡張が ITANDI の値を使い始めたらサーバー側で ITANDI の回を itandi で見る）／条件の変更で rp_update_days だけ null に戻す所（line-webhook-text.ts 1314・1339・1695・generate-draft-bg-async・household-change-server）が itandi_update_days を戻していない（CLEAR_MANUAL_UPDATE_DAYS を使っていない）
+
 ## 2026-10-27 v2.5.91 ミニボタンから開くと白いまま（v2.5.90 の直しの穴）を直した・v2.5.90 お客様の検索中は AIXLINX の小窓を勝手に開かない（**拡張の再読み込み必須**・DB/サーバーの変更なし）
 - 竹内「拡張ツール 検索中の際に お客さんで検索中は勝手に開かないように おしたら開くようにする形とする 今開きっぱなしになっているので」（リアプロの一覧の page=2 で小窓が開いたまま一覧を覆っていた）
 - 原因: underbar.js が 2026-06-07 の要望（前回たたんでも次は必ず展開）でページを開くたびに展開で起動していた。検索中は一覧のページ送りのたびに開く

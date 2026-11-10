@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { pendingSourceOrFilter } from "@/app/lib/automation-sources";
 import { buildWebBrainCommands, normalizeWebBrainSites, planWebBrainFold, queuedKey, webBrainBlockReason, WEB_BRAIN_SOURCE, type PendingWebBrain } from "@/app/lib/web-brain-search";
 import { sanitizeSearchOverride } from "@/app/lib/search-override-read";
-import { planPayload } from "@/app/lib/search-update-days";
+import { itandiPlanFrom, planPayload } from "@/app/lib/search-update-days";
 import { planUpdateDaysFor } from "@/app/lib/search-update-days-server";
 import { claimInstallId } from "@/app/lib/extension-snapshots";
 
@@ -29,10 +29,11 @@ async function queueWebBrain(
   if (body.search_override != null && ids.length !== 1) return [{ ok: false, error: "一時調整の上書きは1人ずつです" }, { status: 400 }];
   const { data: pcs, error: pcErr } = await supabase
     .from("property_customers")
-    .select("id, rp_update_days, last_property_sent_at, property_viewed_at")
+    // 2026-11-10 ITANDI の手の指定（itandi_update_days・v2.5.76 の列）も読む＝payload.itandi_update_days（ITANDI はリアプロの値を使わない）
+    .select("id, rp_update_days, itandi_update_days, last_property_sent_at, property_viewed_at")
     .in("id", ids);
   if (pcErr) return [{ ok: false, error: pcErr.message }, { status: 500 }];
-  const byId = new Map(((pcs ?? []) as Array<{ id: string; rp_update_days: number | null; last_property_sent_at: string | null; property_viewed_at: string | null }>).map((p) => [String(p.id), p]));
+  const byId = new Map(((pcs ?? []) as Array<{ id: string; rp_update_days: number | null; itandi_update_days: number | null; last_property_sent_at: string | null; property_viewed_at: string | null }>).map((p) => [String(p.id), p]));
   const customers = ids.map((id) => byId.get(id)).filter((p): p is NonNullable<typeof p> => !!p);
   const missing = ids.filter((id) => !byId.has(id));
   // まだ終わっていない同じ検索（直近3時間・pending/running）
@@ -79,8 +80,11 @@ async function queueWebBrain(
       for (const r of rows) {
         const plan = byPlan.get(r.customer_ids[0]);
         if (!plan) continue;
+        // 2026-11-10 ITANDI は自分の元の値（payload.itandi_update_days）から同じ空いた時間で広げる（無い古い形はリアプロと同じ値）
+        const itandiPlan = itandiPlanFrom(plan, r.payload.itandi_update_days !== undefined ? r.payload.itandi_update_days : plan.base_days, Date.now());
         r.payload.rp_update_days = plan.days;
-        (r.payload as Record<string, unknown>).update_days_plan = planPayload([{ id: r.customer_ids[0], plan }]);
+        r.payload.itandi_update_days = itandiPlan.days;
+        (r.payload as Record<string, unknown>).update_days_plan = planPayload([{ id: r.customer_ids[0], plan, itandiPlan }]);
       }
     } catch (e) { console.warn("[automation/trigger] 更新日の計画を作れない（今までの決まり）:", e instanceof Error ? e.message : String(e)); }
   }

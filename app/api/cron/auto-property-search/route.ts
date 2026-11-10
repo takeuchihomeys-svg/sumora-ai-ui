@@ -6,7 +6,7 @@ import {
   AUTO_SEARCH_SITES, autoStartAtMs, notBeforeSchedule, LEGACY_AM_IS_WIDE,
   type AutoSearchMode, type AutoSearchCustomer, type AutoSearchTarget,
 } from "@/app/lib/auto-search-schedule";
-import { planPayload, type UpdateDaysPlan } from "@/app/lib/search-update-days";
+import { itandiPlanFrom, planPayload, type UpdateDaysPlan } from "@/app/lib/search-update-days";
 import { planUpdateDaysFor } from "@/app/lib/search-update-days-server";
 import {
   planEnv, selectPlannedTargets, planByCustomerPayload, STATE_JA,
@@ -39,7 +39,7 @@ export const maxDuration = 60;
 //     より前は /api/automation/pending が渡さない。3時間の期限も not_before から数える
 //   ・?dry_run=1 で積まずに、誰を・何時から（not_before）を返す
 
-type Row = AutoSearchCustomer & { customer_name?: string | null; desired_area?: string | null; area?: string | null; rp_update_days?: number | null };
+type Row = AutoSearchCustomer & { customer_name?: string | null; desired_area?: string | null; area?: string | null; rp_update_days?: number | null; itandi_update_days?: number | null };
 
 export async function GET(req: NextRequest) {
   const mode = (req.nextUrl.searchParams.get("mode") === "pm" ? "pm" : "am") as AutoSearchMode;
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabase
     .from("property_customers")
     // 2026-09-19 竹内「物件出ししたお客さんっていうのは送信じゃなくて確認したお客さんも含む」→ property_viewed_at も取る
-    .select("id, customer_name, status, last_property_sent_at, property_viewed_at, created_at, desired_area, area, rp_update_days")
+    .select("id, customer_name, status, last_property_sent_at, property_viewed_at, created_at, desired_area, area, rp_update_days, itandi_update_days")
     .limit(1000);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -122,10 +122,10 @@ export async function GET(req: NextRequest) {
     for (const id of ((r.customer_ids as string[] | null) ?? [])) openIds.add(String(id));
   }
 
-  const queued: Array<{ id: string; name: string | null; reason: string; rp_update_days: number | null; not_before?: string; update_days?: string; state?: AutoSearchState; sort?: "ad" | "updated"; stop_at_last?: boolean; max_pages?: number; run_reason?: string }> = [];
+  const queued: Array<{ id: string; name: string | null; reason: string; rp_update_days: number | null; not_before?: string; update_days?: string; state?: AutoSearchState; sort?: "ad" | "updated"; stop_at_last?: boolean; max_pages?: number; run_reason?: string; itandi_update_days?: number | null }> = [];
   // v2.5.44 dry_run・報告の明細（並び・止める線・ページ・この便に入れた理由）
   const stateOf = (id: string) => stateById.get(id)?.state;
-  const planCols = (id: string) => ({ state: stateOf(id), sort: planById.get(id)?.sort, stop_at_last: planById.get(id)?.stop_at_last, max_pages: planById.get(id)?.max_pages, run_reason: stateById.get(id)?.runReason });
+  const planCols = (id: string) => ({ state: stateOf(id), sort: planById.get(id)?.sort, stop_at_last: planById.get(id)?.stop_at_last, max_pages: planById.get(id)?.max_pages, run_reason: stateById.get(id)?.runReason, ...itCol(id) });
   const skipped: Array<{ id: string; name: string | null; why: string }> = [];
   const byId = new Map(rows.map((r) => [String(r.id), r]));
 
@@ -141,17 +141,26 @@ export async function GET(req: NextRequest) {
   //   今までの決まり（午後＝1・午前＝手で決めた値→前回物件を出した日から）を、前回の検索（そのお客様×サイトの最後に終わった回）から
   //   空いた時間を覆う所まで広げる（狭めない・14 でも足りなければ指定なし）。拡張は payload.update_days_plan.by_customer[id].days を使う
   const plans = new Map<string, UpdateDaysPlan>();
+  // 2026-11-10 ITANDI の計画（ITANDI の元の値＝手の指定 itandi_update_days → 無ければ同じ決まり・空いた時間はリアプロの計画と同じ）
+  const itandiPlans = new Map<string, UpdateDaysPlan>();
+  const itandiBaseById = new Map<string, number | null>();
   try {
     const entries = toQueue.map((t) => {
       // v2.5.44: 計画のある人は計画の元の値（新規・言い直し 14／前回以降は 1＝前回の検索からの空きで広げる／前回の検索が無ければ最後に届けた日から）
       const p = planById.get(t.id);
-      if (p) return { id: t.id, baseDays: p.days };
-      const manual = byId.get(t.id)?.rp_update_days;
-      const base = mode === "pm" ? buildAutoSearchPayload(mode, null, now).rp_update_days : (typeof manual === "number" && manual > 0 ? manual : t.rpUpdateDays);
-      return { id: t.id, baseDays: base };
+      if (p) { itandiBaseById.set(t.id, p.days); return { id: t.id, baseDays: p.days }; }
+      const pick = (manual: number | null | undefined) =>
+        mode === "pm" ? buildAutoSearchPayload(mode, null, now).rp_update_days : (typeof manual === "number" && manual > 0 ? manual : t.rpUpdateDays);
+      itandiBaseById.set(t.id, pick(byId.get(t.id)?.itandi_update_days));
+      return { id: t.id, baseDays: pick(byId.get(t.id)?.rp_update_days) };
     });
-    for (const e of await planUpdateDaysFor(supabase, entries, AUTO_SEARCH_SITES, now)) plans.set(e.id, e.plan);
+    for (const e of await planUpdateDaysFor(supabase, entries, AUTO_SEARCH_SITES, now)) {
+      plans.set(e.id, e.plan);
+      itandiPlans.set(e.id, itandiPlanFrom(e.plan, itandiBaseById.has(e.id) ? itandiBaseById.get(e.id)! : e.plan.base_days, now));
+    }
   } catch (e) { console.warn("[auto-property-search] 更新日の計画を作れない（今までの決まり）:", e instanceof Error ? e.message : String(e)); }
+  const itCol = (id: string) => (itandiPlans.has(id) ? { itandi_update_days: itandiPlans.get(id)!.days } : {});
+  const planEntry = (id: string) => ({ id, plan: plans.get(id)!, itandiPlan: itandiPlans.get(id) ?? null });
   const planNote = (id: string) => plans.get(id)?.reason;
   // お客様ごとの計画（拡張が読む形）。days は更新日の計画で広げた後の値（計画が作れなければ元の値）
   const planByCustomer = (ts: ReadonlyArray<AutoSearchTarget>) =>
@@ -169,7 +178,7 @@ export async function GET(req: NextRequest) {
     //   v2.5.44: 並び（新規・言い直しは AD 順）・止める線はお客様ごとに plan_by_customer（上の sort=updated は古い拡張の既定）
     const pbc = planByCustomer(toQueue);
     const payload = { ...buildAutoSearchPayload(mode, null, now), not_before: new Date(autoStartAtMs(mode, jstDate)).toISOString(),
-      ...(plans.size ? { update_days_plan: planPayload(toQueue.filter((t) => plans.has(t.id)).map((t) => ({ id: t.id, plan: plans.get(t.id)! }))) } : {}),
+      ...(plans.size ? { update_days_plan: planPayload(toQueue.filter((t) => plans.has(t.id)).map((t) => planEntry(t.id))) } : {}),
       ...(Object.keys(pbc).length ? { plan_by_customer: pbc } : {}) };
     if (toQueue.length > 0 && !dryRun) {
       const { error: insErr } = await supabase.from("automation_commands").insert({
@@ -198,7 +207,7 @@ export async function GET(req: NextRequest) {
       const cp = planById.get(t.id);
       const pbc = planByCustomer([t]);
       const payload = { ...buildAutoSearchPayload(mode, t, now), not_before: new Date(nbById.get(t.id) ?? autoStartAtMs(mode, jstDate)).toISOString(),
-        ...(plan ? { rp_update_days: plan.days, update_days_plan: planPayload([{ id: t.id, plan }]) } : {}),
+        ...(plan ? { rp_update_days: plan.days, ...itCol(t.id), update_days_plan: planPayload([planEntry(t.id)]) } : {}),
         // v2.5.44: 1人1命令なので上の並びもその人の計画に（古い拡張も並びは合う）。legacy は今までの「午前は広げて」
         ...(cp ? { sort: cp.sort, is_wide: false, max_pages: cp.max_pages, plan_by_customer: pbc } : {}),
         ...(legacyAm ? { is_wide: LEGACY_AM_IS_WIDE } : {}) };

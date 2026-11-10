@@ -22,7 +22,7 @@ console.log("── 積む行（1人1コマンド・更新日はお客様ごと�
     { id: "c1" },
   ], "realnetpro", true, { nowMs: NOW });
   t("重複を除いて3人＝3コマンド", rows.length === 3 && skipped.length === 0, JSON.stringify(rows.map((r) => r.customer_ids)));
-  t("★ payload は source=web_brain・広げて・更新日（昨日→1）", JSON.stringify(rows[0].payload) === JSON.stringify({ source: "web_brain", is_wide: true, rp_update_days: 1 }), JSON.stringify(rows[0].payload));
+  t("★ payload は source=web_brain・広げて・更新日（昨日→1）", JSON.stringify(rows[0].payload) === JSON.stringify({ source: "web_brain", is_wide: true, rp_update_days: 1, itandi_update_days: 1 }), JSON.stringify(rows[0].payload));
   t("★ 手で決めた更新日（7）が先", rows[1].payload.rp_update_days === 7);
   t("初めてのお客様は絞らない（null）", rows[2].payload.rp_update_days === null);
   t("サイトは1つ・pending・batch_property_search", rows.every((r) => r.sites.length === 1 && r.sites[0] === "realnetpro" && r.status === "pending" && r.command_type === "batch_property_search"));

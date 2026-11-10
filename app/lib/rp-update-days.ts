@@ -15,6 +15,8 @@ import { lastPropertyTouchAt, rpUpdateDaysFor } from "./auto-search-schedule";
 export type RpUpdateDaysCustomer = {
   /** アプリ・拡張で手で決めた値（1/3/7/14）。null＝自動 */
   rp_update_days?: number | null;
+  /** 2026-10-06 v2.5.76 ITANDI の手の指定（リアプロとは別の列）。null＝自動 */
+  itandi_update_days?: number | null;
   last_property_sent_at?: string | null;
   property_viewed_at?: string | null;
 };
@@ -37,4 +39,13 @@ export function autoRpUpdateDays(c: RpUpdateDaysCustomer | null | undefined, now
 /** 実際に使う更新日: 手で決めた値 → 無ければ自動（拡張の preloadAdjForm と同じ順） */
 export function effectiveRpUpdateDays(c: RpUpdateDaysCustomer | null | undefined, nowMs: number = Date.now()): number | null {
   return manualRpUpdateDays(c) ?? autoRpUpdateDays(c, nowMs);
+}
+
+/**
+ * 2026-11-10 ITANDI で実際に使う更新日: ITANDI の手の指定（itandi_update_days）→ 無ければ自動（リアプロと同じ・前回物件を出した日から）。
+ *   リアプロの手の指定は使わない（拡張 site-update-days.js manualFor と同じ線）。サーバーの一括検索・自動便の payload.itandi_update_days に使う
+ */
+export function effectiveItandiUpdateDays(c: RpUpdateDaysCustomer | null | undefined, nowMs: number = Date.now()): number | null {
+  if (!c) return null;
+  return manualRpUpdateDays({ rp_update_days: c.itandi_update_days ?? null }) ?? autoRpUpdateDays(c, nowMs);
 }

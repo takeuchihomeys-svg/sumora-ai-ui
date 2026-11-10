@@ -135,12 +135,25 @@ export function fmtGap(hours: number | null): string {
   return `${Math.round((hours / 24) * 10) / 10}日`;
 }
 
-/** お客様ごとの計画（payload.update_days_plan の形）。拡張は by_customer[id].days を更新日に使う */
-export type UpdateDaysPlanPayload = { v: 1; by_customer: Record<string, { days: number | null; base_days: number | null; gap_hours: number | null; last_search_at: string | null; last_by_site?: Record<string, string> | null; widened: boolean }> };
+/**
+ * 2026-11-10 ITANDI の計画（DB_STRUCTURE.md の混ざっている所 2）: 一括検索・自動便でも ITANDI はリアプロの更新日（rp_update_days）を使っていた
+ *   （v2.5.76 で手の指定の列を分けたのは popup だけ）。→ ITANDI は自分の元の値（手の指定 itandi_update_days → 無ければ自動）から、
+ *   リアプロの計画と同じ「前回の検索から空いた時間」で広げる（狭めない・線は planUpdateDays と同じ）。拡張は payload.itandi_update_days／
+ *   update_days_plan.by_customer[id].itandi_days を ITANDI の検索だけで読み、無ければ今まで通り rp_update_days に落とす（auto-run.js optsForSite）
+ */
+export function itandiPlanFrom(rpPlan: Pick<UpdateDaysPlan, "last_search_at" | "last_by_site">, itandiBase: number | null, nowMs: number): UpdateDaysPlan {
+  return planUpdateDays({ baseDays: itandiBase, lastSearchAt: rpPlan.last_search_at, nowMs, lastBySite: rpPlan.last_by_site ?? null });
+}
 
-export function planPayload(entries: ReadonlyArray<{ id: string; plan: UpdateDaysPlan }>): UpdateDaysPlanPayload {
+/** お客様ごとの計画（payload.update_days_plan の形）。拡張は by_customer[id].days を更新日に使う（ITANDI は itandi_days があればそれ・2026-11-10） */
+export type UpdateDaysPlanPayload = { v: 1; by_customer: Record<string, { days: number | null; itandi_days?: number | null; base_days: number | null; gap_hours: number | null; last_search_at: string | null; last_by_site?: Record<string, string> | null; widened: boolean }> };
+
+export function planPayload(entries: ReadonlyArray<{ id: string; plan: UpdateDaysPlan; itandiPlan?: UpdateDaysPlan | null }>): UpdateDaysPlanPayload {
   const by: UpdateDaysPlanPayload["by_customer"] = {};
-  for (const e of entries) by[String(e.id)] = { days: e.plan.days, base_days: e.plan.base_days, gap_hours: e.plan.gap_hours, last_search_at: e.plan.last_search_at, last_by_site: e.plan.last_by_site ?? null, widened: e.plan.widened };
+  for (const e of entries) {
+    by[String(e.id)] = { days: e.plan.days, base_days: e.plan.base_days, gap_hours: e.plan.gap_hours, last_search_at: e.plan.last_search_at, last_by_site: e.plan.last_by_site ?? null, widened: e.plan.widened };
+    if (e.itandiPlan) by[String(e.id)].itandi_days = e.itandiPlan.days;
+  }
   return { v: 1, by_customer: by };
 }
 
