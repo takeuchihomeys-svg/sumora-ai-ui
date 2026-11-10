@@ -43,8 +43,8 @@ ok("駅の間隔（_stGapMin/_stGapMax）も 420〜1100ms＋ランダムな一�
 ok("ITANDI の駅もランダムな一息（10%・3%）", /if \(Math\.random\(\) < 0\.10\) _stWait \+= 900 \+ Math\.floor\(Math\.random\(\) \* 1700\);/.test(ips) && /if \(Math\.random\(\) < 0\.03\) _stWait \+= 2600 \+ Math\.floor\(Math\.random\(\) \* 2900\);/.test(ips));
 
 console.log("\n■ ⑤ 見張り（fill-done）の長さが駅を選ぶ時間に足りる");
-ok("ページ側 235秒", /\}, 235000\);/.test(ps));
-ok("background のリアプロも 245秒（旧90秒では足りない）", /realnetpro: 245000/.test(bg));
+ok("ページ側 235秒", /\}, 895000\);/.test(ps));
+ok("background のリアプロも 245秒（旧90秒では足りない）", /realnetpro: 905000/.test(bg));
 
 console.log("\n■ ⑥ 検索を押す前に選び終わるのを待つ（条件が欠けない）");
 ok("ITANDI: _whenTickIdle で待つ", /_whenTickIdle/.test(ips));

@@ -1452,6 +1452,63 @@
     return false;
   }
 
+  /**
+   * 2026-11-10 v2.6.15 竹内さん「ここの画面で検索はできない。リアプロBBと左上に書いている部分の下の住居ボタンから物件検索にうつる」:
+   *   リアプロは main.php を開いても**ホーム（お知らせ・トピックスの画面）**のことがあり、そこには検索の欄が無い。
+   *   検索の画面（method=estate&display=building）へは、左上の「住居」ボタンから移る。
+   *   ・検索の欄（rental_cost2 か city_code[]）が無ければ「住居」を押して検索の画面へ移る
+   *   ・移ったら（URL か欄の出現で確かめる）入力を続ける。移れなければ fill-done(error) で止める（全件検索しない）
+   *   ・押すのは人の形（カーソルが動いてから押す）。読み込み直しはしない（サイトに余計な負担をかけない）
+   */
+  function ensureRealproSearchPage(cond, done) {
+    var hasForm = function () {
+      return !!(document.querySelector('select[name="rental_cost2"]') ||
+                document.querySelector('input[name="city_code[]"]') ||
+                document.querySelector('select[name="update_date"]') ||
+                document.querySelector('div.go_search'));
+    };
+    if (hasForm()) { done(true); return; }
+    var findHomeBtn = function () {
+      // 左上の「住居」（検索の入口）。a/div/span/button の文字が完全一致の物を、見えている順に
+      var els = Array.prototype.slice.call(document.querySelectorAll('a,div,span,button,li,td'));
+      var cands = els.filter(function (e) {
+        if (!isVisible(e)) return false;
+        var t = norm(e.textContent || '');
+        return t === '住居' || t === '住居検索' || t === '住居（賃貸）' || t === '賃貸';
+      });
+      // 一番内側（子に同じ文字を持たない物）を選ぶ
+      cands = cands.filter(function (e) {
+        return !Array.prototype.some.call(e.children || [], function (c) { return norm(c.textContent || '') === norm(e.textContent || ''); });
+      });
+      return cands[0] || null;
+    };
+    var tries = 0;
+    var poll = function () {
+      if (hasForm()) { done(true); return; }
+      if (tries >= 40) {
+        console.warn('[AX] 検索の画面へ移れない（住居ボタンが見つからない・押しても移らない）');
+        _auditStepP('no_search_form', '住居ボタンで検索の画面へ移れず');
+        done(false);
+        return;
+      }
+      tries++;
+      var btn = findHomeBtn();
+      if (btn && !window.__axHomeBtnClicked) {
+        window.__axHomeBtnClicked = true;
+        console.log('[AX] ホームの画面 → 左上の「住居」を押して物件検索へ移る');
+        _auditStepP('go_estate', String(btn.textContent || '').replace(/\s+/g, '').slice(0, 20));
+        // 人の形（カーソルが動いてから押す）
+        try {
+          var P = window.AxlxPointerUi;
+          if (P && P.moveToEl) { P.ensure(); P.moveToEl(btn).then(function () { if (P.tap) P.tap(); btn.click(); }, function () { btn.click(); }); }
+          else btn.click();
+        } catch (_) { try { btn.click(); } catch (__) {} }
+      }
+      setTimeout(poll, _pd(500));
+    };
+    poll();
+  }
+
   function fillRealpro(cond) {
     _stGapFast = !!(cond && cond.commute && cond.station_names && cond.station_names.length > 60);
     // 重複実行防止: popupパス(underbar→postMessage)とbackgroundパス(content.js→postMessage)が
@@ -1463,21 +1520,80 @@
     }
     window._axFillRunning = true;
     window._axStDiagDone = false; // 診断ログフラグをリセット（次回fill時に再診断できるようにする）
+    // 2026-11-10 v2.6.15 竹内さん「ここの画面で検索はできない。住居ボタンから物件検索にうつる」:
+    //   ホームの画面（検索の欄が無い）なら「住居」を押して検索の画面へ移り、**移ってから**入力する。
+    //   移れなければ fill-done(error) で止める（全件検索はしない）。移った後は自動で続きを実行する。
+    if (!document.querySelector('select[name="rental_cost2"]') && !document.querySelector('input[name="city_code[]"]') && !document.querySelector('div.go_search')) {
+      // 「住居」を押すと**ページが移る**ので、この function の続きは走らない（ページが入れ替わる）。
+      //   移った先で background がもう一度送ってくる（fill-done を返さずに待たせる）。
+      ensureRealproSearchPage(cond, function (ok) {
+        if (!ok) {
+          window._axFillRunning = false;
+          notifyDone('no_search_form: リアプロがホームの画面のままで、住居ボタンから物件検索へ移れませんでした');
+        }
+        // ok の時は何もしない（ページが移る。移らなかった時は下の再試行が受ける）
+      });
+      // ページが移らなかった場合に備えて、少し待ってからもう一度確かめる（移っていれば欄がある）
+      setTimeout(function () {
+        if (window._axFillRunning && document.body) {
+          var hasFormNow = !!(document.querySelector('select[name="rental_cost2"]') || document.querySelector('input[name="city_code[]"]') || document.querySelector('div.go_search'));
+          if (hasFormNow) {
+            console.log('[AX] 住居を押した後、同じページで検索の欄が出た → 入力を続ける');
+            window._axFillRunning = false;
+            fillRealpro(cond);
+          }
+        }
+      }, 4000);
+      return;
+    }
     clearClickQueue(); // 前回実行の残留クリックキューを破棄（誤クリック防止）
     // fill-done 保証: 実行開始時にフラグをリセットし、フェイルセーフを仕掛ける
     // （background.js 側のタイムアウトより必ず先に発火させる）
-    // 2026-11-10 v2.5.96: 駅を1つずつ人の速さ（320〜900ms）で選ぶので、沿線の全駅を選ぶと 40〜110秒かかる。
-    //   85秒だと途中で中止してしまう → 235秒（background の 245秒より10秒先）
+    // 2026-11-10 v2.5.96: 駅を1つずつ人の速さ（420〜1100ms）で選ぶので、沿線の全駅を選ぶと 40〜110秒かかる。
+    // 2026-11-10 v2.6.14 竹内さん「人間のように」で全操作が人の速度になったので、総時間の上限を15分に延ばした
+    //   （background の 905秒より10秒先）。ただし**無進捗で止まった時**は下の _stallWatch が先に止める（15分待たない）。
     _doneNotified = false;
     _axExpect = null; _axGateRetried = false; // v2.5.50 検索を押す前の関所の材料（このお客様の分を下で置く）
     if (_watchdogTimer) clearTimeout(_watchdogTimer);
     _watchdogTimer = setTimeout(function() {
       // 条件入力が未完了のまま clickSearch すると全件検索→LINE誤送信になるため検索しない。
       // error付きdoneでbackground.jsがスクレイプを中止するので前回結果の誤スクレイプも起きない。
-      console.warn('[AX] フェイルセーフ: 235秒経過 → 検索せず fill-done(error) 送信');
+      console.warn('[AX] フェイルセーフ: 895秒経過 → 検索せず fill-done(error) 送信');
       _auditStall();
-      notifyDone('watchdog-timeout: 235秒以内に条件入力が完了しませんでした（全件検索防止のため中止）');
-    }, 235000);
+      notifyDone('watchdog-timeout: 895秒以内に条件入力が完了しませんでした（全件検索防止のため中止）');
+    }, 895000);
+    // 2026-11-10 v2.6.15: 「住居」を押してページが移るとこの関数の続きは走らない。
+    //   移った先の新しいページで fill がもう一度来た時に、前のページの見張りが残らないよう、
+    //   ページを離れる時にタイマーを片付ける（見張りが二重に走って早く止まるのを防ぐ）
+    try {
+      if (!window.__axUnloadHooked) {
+        window.__axUnloadHooked = true;
+        window.addEventListener('pagehide', function () {
+          if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
+          if (window.__axStallWatch) { clearInterval(window.__axStallWatch); window.__axStallWatch = null; }
+          window._axFillRunning = false;
+        });
+      }
+    } catch (_) {}
+    // 2026-11-10 v2.6.14 竹内さん「止まった部分ちゃんと解決できるように」:
+    //   **無進捗の見張り**: 操作の列が 180秒 まったく進まなければ、その時点で止まったと判断して中断する
+    //   （総時間15分を待たない）。人が手を止める長い停止（8〜25秒）はこれより短いので誤発火しない。
+    //   点検に「どこで止まったか」を残す。
+    (function () {
+      var _lastCount = -1, _sameSince = Date.now();
+      window.__axStallWatch = setInterval(function () {
+        try {
+          if (_doneNotified) { clearInterval(window.__axStallWatch); return; }
+          var n = _audit && _audit.ops ? _audit.ops.length : 0;
+          if (n !== _lastCount) { _lastCount = n; _sameSince = Date.now(); return; }
+          if (Date.now() - _sameSince < 180000) return;
+          console.warn('[AX] 180秒 操作が進まない → 止まったと判断して中断');
+          _auditStall();
+          clearInterval(window.__axStallWatch);
+          notifyDone('stall-timeout: 180秒 操作が進みませんでした（' + (_clickBusyItem ? _clickBusyItem.label : '待機中') + '）');
+        } catch (_) {}
+      }, 5000);
+    })();
 
     // 検索の点検: popup が載せた run_id（ブレインの時だけ）。無ければ記録しない
     _auditReset(cond && cond._audit_run_id);

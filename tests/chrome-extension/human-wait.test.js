@@ -163,7 +163,7 @@ function rest() {
       "setTimeout 20000": [1, "押した印刷用PDF をまとめて送るまでの待ち（v2.5.62・最後に押してから・サイトは触らない）"],
     },
     "content.js": { "setTimeout 400": [1, "MutationObserver の間引き"], "setInterval 3000": [1, "サイドバーの見張り"], "setTimeout 300": [1, "起動時"] },
-    // 2026-11-10 v2.6.13 見えるカーソル: 90ms は「押した時の見た目の縮みを戻す」だけ（サイトを触らない・固定でよい）
+    // 2026-11-10 v2.6.15 見えるカーソル: 90ms は「押した時の見た目の縮みを戻す」だけ（サイトを触らない・固定でよい）
     "pointer-ui.js": { "setTimeout 90": [1, "押した時にカーソルが縮むのを戻す（見た目だけ）"] },
     "itandi-bulk-dl.js": {
       "setTimeout 60000": [1, "PDF の期限"], "setInterval 500": [1, "モーダルが出たかの見る間隔"], "setTimeout 15000": [1, "モーダルの期限"],
@@ -175,7 +175,7 @@ function rest() {
       "setInterval 100": [2, "モーダルが消えた・間取りの欄が出たかの見る間隔（3秒で打ち切り）"], "setTimeout 240000": [1, "見張り（fill-done の保証）"],
       "setTimeout 5000": [1, "警告の表示を消す"], "setTimeout 500": [1, "検索を押した後の完了の合図（ページを触らない）"],
     },
-    "page-script.js": { "setTimeout 15000": [1, "警告の表示を消す"], "setTimeout 235000": [1, "見張り（fill-done の保証）"], "setTimeout 0": [1, "同じ流れの続き"], "setInterval 3000": [1, "クリックの列が20秒固まったかの見張り（v2.6.13）"] },
+    "page-script.js": { "setTimeout 15000": [1, "警告の表示を消す"], "setTimeout 895000": [1, "見張り（fill-done の保証）"], "setInterval 5000": [1, "180秒 操作が進まない時の見張り（v2.6.15）"], "setTimeout 0": [1, "同じ流れの続き"], "setInterval 3000": [1, "クリックの列が20秒固まったかの見張り（v2.6.15）"], "setTimeout 4000": [1, "住居ボタンを押した後に検索の欄が出たかの再確認（v2.6.15）"] },
     "popup.js": {
       "setTimeout 6000": [1, "取得の期限"], "setTimeout 3000": [4, "取得のやり直し・表示を戻す"], "setTimeout 10000": [1, "取得の期限"],
       "setTimeout 15000": [1, "取得の期限"], "setTimeout 4000": [1, "表示を消す"], "setTimeout 1800": [1, "表示を戻す"], "setTimeout 2000": [1, "表示を戻す"],
@@ -245,7 +245,7 @@ function rest() {
   console.log("\n■ 5大バグの型に当たらない");
   ok("トグル: 並び替えはリンクへの遷移（クリックで切り替えない）", /location\.href = _sortHref/.test(doStart));
   ok("checked の判定・クリックの関数は変えていない（_clickIfUnchecked が残る）", /function _clickIfUnchecked\(el\) \{ if \(!el\.checked\) _clickEl\(el\); \}/.test(read("page-script.js")));
-  ok("見張り（235秒・240秒・90秒）の長さを固定している所を確かめる", /\}, 235000\);/.test(read("page-script.js")) && /\}, 240000\);/.test(it) && /90000/.test(read("reins-page-script.js")));
+  ok("見張り（235秒・240秒・90秒）の長さを固定している所を確かめる", /\}, 895000\);/.test(read("page-script.js")) && /\}, 240000\);/.test(it) && /90000/.test(read("reins-page-script.js")));
   ok("拡張の再読み込み: 版を上げた（2.5.29 以上）", manifest.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005029);
 
   console.log("\n■ 全ファイル node --check");

@@ -2860,7 +2860,10 @@ function _notifyFillDone(site, customerId, error) {
 // 2026-09-14 竹内「時間かかっても大丈夫」: page-script のウォッチドッグ 240秒＋5秒
 // 2026-11-10 v2.5.96 竹内さん「駅も一気に選択してしまう・上下の時間もはやすぎる」: 駅は1つ 320〜900ms にしたので、
 //   沿線の全駅（40〜120駅）を選ぶと 40〜110秒かかる。リアプロも 90秒では足りないため 240秒にする（itandi と同値）
-var FILL_DONE_TIMEOUT_MS = { itandi: 245000, realnetpro: 245000 };
+// 2026-11-10 v2.6.14 竹内さん「人間のように」で全操作を人の速度にした結果、245秒でも足りなくなった
+//   （条件を1つずつ選ぶ・カーソルを動かす・迷う・たまに手が止まる）。**人が作業する時間**に合わせて 15分にする。
+//   ⚠ 止まったまま15分待つのは長いので、page-script 側の見張り（無進捗の検出）で先に止める（下の _stallWatch）
+var FILL_DONE_TIMEOUT_MS = { itandi: 905000, realnetpro: 905000 };
 function _fillDoneTimeoutMs(site) {
   return FILL_DONE_TIMEOUT_MS[site] || 90000;
 }
