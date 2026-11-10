@@ -162,7 +162,33 @@
     });
   }
 
-  // ── 全ページ自動送信: sessionStorage キー ──────────────
+  // 2026-11-10 v2.5.95 竹内さん「ちゃんと人間のように1つずつ動くようになっているか／今一気に動くようになっていないか」:
+  //   旧は tracked.forEach でチェックを一瞬で全部入れてから資料を取りに行っていた（見た目が一斉に変わる＝機械らしい）。
+  //   ITANDI（_humanCheckAll）と同じ形にし、**1件ずつ画面に入れて押し、間を対数正規で空ける**。押し終わってから選別（送付済み・
+  //   更新日で止める・物件数の上限）と資料の取得へ進む。選別で外す行は待たずにその場で外す（待つと送付済みを取りこぼす）。
+  //   自動モード以外（案内・スタッフ）は _guideBlocksAuto で先に返るので、この待ちは自動の時だけ効く。
+  function _humanCheckAll(cbs, next) {
+    var list = (cbs || []).filter(function (cb) { return cb && !cb.checked; });
+    if (!list.length) { if (next) next(0); return; }
+    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    var i = 0;
+    function step() {
+      if (i >= list.length) { if (next) next(list.length); return; }
+      var cb = list[i++];
+      try {
+        if (!cb.isConnected || cb.checked) { step(); return; }
+        try { cb.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+        cb.click();
+      } catch (_) {}
+      // 押す間 180〜320ms（対数正規）。8%ほどで「一覧を目で追う」一息 400〜1100ms
+      var wait = H && H.logNormalDelay ? H.logNormalDelay(220, 0.32) : (180 + Math.floor(Math.random() * 140));
+      if (Math.random() < 0.08) wait += 400 + Math.floor(Math.random() * 700);
+      setTimeout(step, wait);
+    }
+    step();
+  }
+
+  // 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
 
   // ── スタッフモードキャッシュ（chrome.storage.local の非同期値をコンテンツスクリプト内で同期参照）──
@@ -1826,64 +1852,94 @@
   // （コールバック内で onDone を呼ぶため）。
   function autoSendOnePage(state, onDone) {
     if (_guideBlocksAuto("autoSendOnePage")) return; // 終わりの知らせ（onDone）は返さない＝受け手が次のページへ進まない
-    var BATCH_SIZE = 10; // 20→10: merge-pdfs の処理時間削減（PDF10件×並列取得+結合+Blob+AI+LINE+DB）
+    // 2026-11-10 v2.5.95 竹内さん「1件ずつのダウンロードとなりそして時間差も人間が確認するように」＋「まずリアプロから徹底的に」:
+  //   旧は 10件ずつまとめて資料を取りに行っていた（人が1件ずつPDFを開いて見る速さではない）。
+  //   既定を **1件ずつ** にする。人が1件のPDFを開いて中身を見て、次の行へ移る間（2〜6秒・対数正規）を置く。
+  //   束の大きさは storage.local `axlxSendBatchSize` で変えられる（速さ優先の時は 2〜3）。サイトへの負荷は
+  //   「押す回数」ではなく「取りに行く回数」で決まるので、1件ずつでもリクエスト数は同じ（間隔が広がるだけ）。
+  var SEND_BATCH_SIZE_DEFAULT = 1;
+  function _sendBatchSize() {
+    try {
+      var v = Number(sessionStorage.getItem("axlxSendBatchSize"));
+      if (v >= 1 && v <= 20) return Math.floor(v);
+    } catch (_) {}
+    return SEND_BATCH_SIZE_DEFAULT;
+  }
     var countEl = document.getElementById("axlx-count");
     _tmark("page", "P" + state.currentPage, state.customerId || null);
     if (countEl) countEl.textContent = "全ページ送信中 P" + state.currentPage + "...";
 
-    // 全チェックボックス選択
-    tracked.forEach(function (t) { t.cb.checked = true; });
-    updateBar();
-    // 2026-09-29 v2.5.41 送付済みの部屋は選ばない（数えるのはこのページで1回）
+    // 2026-11-10 v2.5.95: 全チェックを一瞬で入れず、1件ずつ人の間を空けて押す（ITANDI と同じ）。
+    //   押し終わってから選別（送付済み・更新日・物件数の上限）と資料の取得へ進む
     var _skCounted = tracked.length > 0;
-    var _sk0 = _applySentSkip(state, _skCounted);
-    // 2026-09-30 v2.5.43 更新順の一覧は前回の検索より古い行から先を選ばない（送付済みの飛ばしの後・止めても送付済みの数え方は変えない）
-    _applyUpdateOrderStop(state);
+    _humanCheckAll(tracked.map(function (t) { return t.cb; }), function () {
+      updateBar();
+      // 2026-09-29 v2.5.41 送付済みの部屋は選ばない（数えるのはこのページで1回）
+      var _sk0 = _applySentSkip(state, _skCounted);
+      // 2026-09-30 v2.5.43 更新順の一覧は前回の検索より古い行から先を選ばない（送付済みの飛ばしの後・止めても送付済みの数え方は変えない）
+      _applyUpdateOrderStop(state);
+      _afterSelect(_sk0);
+    });
+    return;
 
-    var urls = getSelectedUrls();
-    if (!urls.length && state.updateStop) {
-      console.log("[AXLX bulk-dl] P" + state.currentPage + " は前回の検索より新しい行が無い → 資料を取らずに終える");
-      onDone(true, 0);
-      return;
-    }
-    if (!urls.length && _sk0.skipped > 0) {
-      // このページの行が全部送付済み＝送る物が無い（待たずに次のページへ）
-      console.log("[AXLX bulk-dl] P" + state.currentPage + " は全部送付済みの部屋 → 資料を取らずに次へ");
-      onDone(true, 0);
-      return;
-    }
-    if (!urls.length) {
-      // DOM がまだレンダリング中の可能性があるため最大4秒ポーリングして待つ
-      var _pollWait = 0;
-      var _pollTimer = setInterval(function () {
-        inject();
-        tracked.forEach(function (t) { t.cb.checked = true; });
-        updateBar();
-        _applySentSkip(state, !_skCounted && tracked.length > 0);
-        if (!_skCounted && tracked.length > 0) _skCounted = true;
-        _applyUpdateOrderStop(state); // 2026-09-30 v2.5.43 選び直した後も止めた行から先は選ばない
-        var urls2 = getSelectedUrls();
-        if (!urls2.length && state.updateStop) { clearInterval(_pollTimer); onDone(true, 0); return; }
-        _pollWait += 200;
-        if (urls2.length > 0 || _pollWait >= 4000) {
-          clearInterval(_pollTimer);
-          if (!urls2.length) {
-            console.warn("[AXLX bulk-dl] autoSendOnePage: " + _pollWait + "ms待機後も物件なし → スキップ");
-            state.readCount = (state.readCount || 0) + 0;
-            onDone(true, 0);
-            return;
+    function _afterSelect(_sk0) {
+      var urls = getSelectedUrls();
+      if (!urls.length && state.updateStop) {
+        console.log("[AXLX bulk-dl] P" + state.currentPage + " は前回の検索より新しい行が無い → 資料を取らずに終える");
+        onDone(true, 0);
+        return;
+      }
+      if (!urls.length && _sk0.skipped > 0) {
+        // このページの行が全部送付済み＝送る物が無い（待たずに次のページへ）
+        console.log("[AXLX bulk-dl] P" + state.currentPage + " は全部送付済みの部屋 → 資料を取らずに次へ");
+        onDone(true, 0);
+        return;
+      }
+      if (!urls.length) {
+        // DOM がまだレンダリング中の可能性があるため最大4秒ポーリングして待つ
+        var _pollWait = 0;
+        var _pollTimer = setInterval(function () {
+          inject();
+          tracked.forEach(function (t) { t.cb.checked = true; });
+          updateBar();
+          _applySentSkip(state, !_skCounted && tracked.length > 0);
+          if (!_skCounted && tracked.length > 0) _skCounted = true;
+          _applyUpdateOrderStop(state); // 2026-09-30 v2.5.43 選び直した後も止めた行から先は選ばない
+          var urls2 = getSelectedUrls();
+          if (!urls2.length && state.updateStop) { clearInterval(_pollTimer); onDone(true, 0); return; }
+          _pollWait += 200;
+          if (urls2.length > 0 || _pollWait >= 4000) {
+            clearInterval(_pollTimer);
+            if (!urls2.length) {
+              console.warn("[AXLX bulk-dl] autoSendOnePage: " + _pollWait + "ms待機後も物件なし → スキップ");
+              state.readCount = (state.readCount || 0) + 0;
+              onDone(true, 0);
+              return;
+            }
+            // ポーリング中に物件が出た → 処理継続
+            _doSend(urls2);
           }
-          // ポーリング中に物件が出た → 処理継続
-          _doSend(urls2);
-        }
-      }, 200);
-      return;
+        }, 200);
+        return;
+      }
+      _doSend(urls);
     }
-    _doSend(urls);
 
     function _doSend(sendUrls) {
       state.readCount = (state.readCount || 0) + sendUrls.length; // 検索の点検: 読んだ行数
       _rememberPicked(state); // 2026-09-30 v2.5.42 一覧で実際にチェックが入っている部屋（見張りの C2・C3）
+      // 2026-11-10 v2.5.95 竹内さん「人間が確認するように」: 選び終わってから資料を取りに行くまでに
+      //   「一覧を上から目で追って、どの部屋を送るか決める間」を置く（1.2〜4秒・対数正規）。
+      //   押した直後に一斉に資料を取りに行くと機械らしい。サイトへのアクセスは増えない（待つだけ）
+      var _Hp = self.AxlxHumanWait;
+      var _lookGap = _Hp && _Hp.logNormalDelay ? _Hp.logNormalDelay(2200, 0.4) : (1200 + Math.floor(Math.random() * 2800));
+      if (_lookGap > 8000) _lookGap = 8000;
+      _tmark("look_wait", "P" + state.currentPage + " " + Math.round(_lookGap) + "ms");
+      if (countEl) countEl.textContent = "P" + state.currentPage + " 送る部屋を確認中…";
+      setTimeout(function () { _doSendAfterLook(sendUrls); }, _lookGap);
+    }
+
+    function _doSendAfterLook(sendUrls) {
       // 2026-09-18: urls / 説明文 / 学習用データを別々に作って slice で対応づけるのをやめ、
       //   1件 = 1つの組にしてから分ける。組のまま切るので、バッチ境界でもズレない。
       // 2026-09-23: ブレインモードなら送信前に判定（外す物を外す・失敗なら全件）。判定はページ単位（最大4秒＋API 30秒）。
@@ -1899,7 +1955,7 @@
       }
 
       // 10件ずつバッチに分割して順番に送信（一括送信はタイムアウトするため）
-      var batches = AxlxSendPairing.splitBatches(sendItems, BATCH_SIZE);
+      var batches = AxlxSendPairing.splitBatches(sendItems, _sendBatchSize());
 
       var batchIndex = 0;
       function sendNextBatch() {
@@ -1952,6 +2008,24 @@
           // 多ページ・多物件の送信は5分を超えることがあり、固定5分タイムアウトのままだと
           // background が次顧客の autofill を開始 → 検索リロードで送信中のページが破壊される。
           try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+          // 2026-11-10 v2.5.95 竹内さん「1件ずつのダウンロードとなりそして時間差も人間が確認するように」:
+          //   1件ずつ取りに行くので、間は「人がPDFを開いて中身を見て、次の行へ移る間」にする。
+          //   既定 2〜6秒（対数正規・中央値3.4秒・上は12秒まで）＋ 12%ほどで「少し考えて戻る」一息を足す。
+          //   等間隔にしない。サイトへのアクセスは増えない（次の1件を押すのが遅くなるだけ）
+          if (batchIndex < batches.length) {
+            var _Hc = self.AxlxHumanWait;
+            var _perItem = _sendBatchSize() === 1;
+            var _confirmGap = _Hc && _Hc.logNormalDelay
+              ? _Hc.logNormalDelay(_perItem ? 3400 : 3600, 0.45)
+              : ((_perItem ? 2000 : 3000) + Math.floor(Math.random() * (_perItem ? 4000 : 6000)));
+            var _cap = _perItem ? 12000 : 20000;
+            if (_confirmGap > _cap) _confirmGap = _cap;
+            if (Math.random() < 0.12) _confirmGap += 800 + Math.floor(Math.random() * 1500);
+            _tmark("confirm_wait", "P" + state.currentPage + " " + (batchIndex + 1) + "/" + batches.length + " " + Math.round(_confirmGap) + "ms");
+            if (countEl) countEl.textContent = "P" + state.currentPage + " 送信中 (" + (batchIndex + 1) + "/" + batches.length + ") 資料を確認中…";
+            setTimeout(sendNextBatch, _confirmGap);
+            return;
+          }
           sendNextBatch();
         });
       }

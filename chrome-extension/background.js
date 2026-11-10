@@ -4859,13 +4859,41 @@ async function _probeRealproTab(tabId) {
 
 // 背面（hidden）のリアプロのタブを、そのウィンドウの中で前に出す（ウィンドウの前後・最小化は触らない）。
 //   2026-09-27 点検 26: 背面のタブは入力に約10分かかり、fill-done の90秒を過ぎてから物件が届いた
+// 2026-11-10 v2.5.95 竹内さん「検索できなかったと出た」: ウィンドウが最小化・隠れていると、ページの側のタイマーが
+//   止められて入力が進まず、90秒で fill-done が来ない（search_audits cause=error:realpro:fill_timeout / steps=tab_hidden）。
+//   前に出しても見えていない時だけ、そのウィンドウを「元の大きさに戻して前に出す」（人が窓を開くのと同じ）。
+//   元に戻せなければ今まで通り理由を点検に残して先へ進む（検索はしない・止まらない）
+async function _restoreWindowForTab(tabId, runId, siteLabel) {
+  try {
+    var t = await chrome.tabs.get(tabId);
+    if (!t || t.windowId == null) return false;
+    var w = await chrome.windows.get(t.windowId);
+    if (w && w.state === "minimized") {
+      await chrome.windows.update(t.windowId, { state: "normal" });
+      _auditStep(runId, "window_restore", (siteLabel || "") + "最小化されていたウィンドウを元に戻した");
+    }
+    await chrome.windows.update(t.windowId, { focused: true });
+    await new Promise(function (r) { setTimeout(r, _settleMs(700)); });
+    return true;
+  } catch (e) {
+    console.warn("[batchAutofill] ウィンドウを戻せない:", e && e.message);
+    _auditStep(runId, "window_restore_fail", (siteLabel || "") + String((e && e.message) || e).slice(0, 120));
+    return false;
+  }
+}
+
 async function _bringRealproTabFront(tab, runId, vis) {
   try {
     await chrome.tabs.update(tab.id, { active: true });
     _auditStep(runId, "tab_front", "背面のタブ（" + vis + "）を前に出した");
     await new Promise(function (r) { setTimeout(r, _settleMs(600)); });
     var p = await _probeRealproTab(tab.id);
-    if (p.vis === "hidden") _auditStep(runId, "tab_hidden", "前に出しても見えていない（ウィンドウが最小化・隠れている可能性）");
+    if (p.vis === "hidden") {
+      _auditStep(runId, "tab_hidden", "前に出しても見えていない（ウィンドウが最小化・隠れている可能性）");
+      await _restoreWindowForTab(tab.id, runId, "リアプロ: ");
+      var p2 = await _probeRealproTab(tab.id);
+      if (p2.vis && p2.vis !== "hidden") _auditStep(runId, "tab_front", "ウィンドウを戻して見えるようになった（" + p2.vis + "）");
+    }
   } catch (e) { console.warn("[batchAutofill] タブを前に出せない:", e && e.message); }
 }
 
@@ -4932,7 +4960,13 @@ async function _bringItandiTabFront(tab, runId, vis) {
     _auditStep(runId, "tab_front", "ITANDI: 背面のタブ（" + vis + "）を前に出した");
     await new Promise(function (r) { setTimeout(r, _settleMs(600)); });
     var p = await _probeItandiTab(tab.id);
-    if (p.vis === "hidden") _auditStep(runId, "tab_hidden", "ITANDI: 前に出しても見えていない（ウィンドウが最小化・隠れている可能性）");
+    if (p.vis === "hidden") {
+      _auditStep(runId, "tab_hidden", "ITANDI: 前に出しても見えていない（ウィンドウが最小化・隠れている可能性）");
+      // 2026-11-10 v2.5.95: 最小化なら元に戻して前に出す（リアプロと同じ）
+      await _restoreWindowForTab(tab.id, runId, "ITANDI: ");
+      var p2 = await _probeItandiTab(tab.id);
+      if (p2.vis && p2.vis !== "hidden") _auditStep(runId, "tab_front", "ITANDI: ウィンドウを戻して見えるようになった（" + p2.vis + "）");
+    }
   } catch (e) { console.warn("[batchAutofill] ITANDI のタブを前に出せない:", e && e.message); }
 }
 
