@@ -625,63 +625,175 @@
   //   1つずつおこなったのとおなじかたちにできるようになる」:
   //   押した1件だけをチェックし（他の行は外す）、**その1件をその場で売上番長へ送る**（20秒まとめて待たない）。
   //   押す順＝送る順。押した順に1件ずつ流す（前の1件が終わってから次を送る＝人の1件ずつの形）。
-  var _onePdfSent = {};          // 送った URL（同じ行を二度送らない）
-  var _onePdfChain = Promise.resolve();
-  function _onePdfBadge(item, ok, sent) {
+  var _onePdfSent = {};          // 送り終わった URL（同じ行を二度送らない）
+  var _pdfQueue = [];            // 押した順の待ち（{ url, item }）
+  var _pdfQueued = {};           // 待ちに入れた URL（同じ行を二重に積まない）
+  var _pdfSending = null;        // いま送っている URL
+  var _pdfQueueRunning = false;
+  function _onePdfBadge(item, state, extra) {
     var old = item.btn.parentNode && item.btn.parentNode.querySelector(".axlx-pressed-badge");
     if (old) old.remove();
     var b = document.createElement("span");
     b.className = "axlx-pressed-badge";
-    b.style.cssText = "margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;vertical-align:middle;" +
-      (sent ? "background:#e3f2fd;color:#0d47a1;" : ok ? "background:#e8f5e9;color:#2e7d32;" : "background:#fff3e0;color:#e65100;");
-    b.textContent = sent ? "📤 送信済み" : ok ? "✅ 受け取り済み" : "☑ 送る物に入れました";
-    b.title = sent ? "この資料は売上番長へ送りました" : ok ? "押した資料を受け取りました。送る時はリアプロにもう一度取りに行きません" : "資料が手元に残らなかったので、送る時に取りに行きます";
+    var style = state === "sent" ? "background:#e3f2fd;color:#0d47a1;"
+      : state === "wait" ? "background:#ede7f6;color:#4527a0;"
+      : state === "sending" ? "background:#e1f5fe;color:#01579b;"
+      : state === "error" ? "background:#ffebee;color:#c62828;"
+      : extra ? "background:#e8f5e9;color:#2e7d32;" : "background:#fff3e0;color:#e65100;";
+    b.style.cssText = "margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;vertical-align:middle;" + style;
+    b.textContent = state === "sent" ? "📤 送信済み"
+      : state === "wait" ? "⏳ 送る順番待ち"
+      : state === "sending" ? "📤 送信中…"
+      : state === "error" ? "⚠ 送れませんでした"
+      : extra ? "✅ 受け取り済み" : "☑ 送る物に入れました";
+    b.title = state === "sent" ? "この資料は売上番長へ送りました"
+      : state === "wait" ? "押した順に1件ずつ送ります（前の1件が終わってから）"
+      : state === "sending" ? "いま売上番長へ送っています"
+      : state === "error" ? "もう一度押すと送り直します"
+      : extra ? "押した資料を受け取りました。送る時はリアプロにもう一度取りに行きません" : "資料が手元に残らなかったので、送る時に取りに行きます";
     item.btn.parentNode.insertBefore(b, item.btn.nextSibling);
   }
-  /** 押した1件だけを売上番長へ送る（押した順に1件ずつ・前の1件が終わってから） */
+
+  /**
+   * 2026-11-10 竹内さん「押したらちゃんと送られるようになっている」「複数の物件の場合つまったりしないか」:
+   *   押した1件を **押した順の待ち行列** に入れ、1件ずつ順番に送る（前の1件が終わってから次）。
+   *
+   * 旧の作りで詰まっていた原因（重要）:
+   *   ・組（url・説明文）を「画面でチェックが入っている行」から作っていた（buildSendItems）＋送る直前に他の行のチェックを外していた
+   *     → 素早く2件押すと、後から押した行がチェックを奪い、先に押した1件が「組が作れない（no-item）」で落ちていた
+   *   ・ブレインの判定を毎回 **一覧の全件** で呼んでいた（1件送るのに全件ぶんの判定＝重い・待たされる）
+   *   新: 組は **押した行そのもの** から作る（チェックに頼らない）・判定もその1件だけ・待ち行列で1件ずつ。
+   */
   function sendOnePdfNow(item) {
-    var url = item && item.btn && item.btn.href;
-    if (!url || _onePdfSent[url]) return;
-    _onePdfSent[url] = true;
-    // 押した1件だけを選ぶ（他の行のチェックは外す＝「一気に選択」にしない）
-    tracked.forEach(function (t) { if (t.cb && t.cb !== item.cb && t.cb.checked) t.cb.checked = false; });
-    if (item.cb && !item.cb.checked) item.cb.checked = true;
-    updateBar();
-    var _cEl = document.getElementById("axlx-count");
-    if (_cEl) _cEl.textContent = "📤 1件 送信中…";
-    var run = function () {
-      return new Promise(function (resolve) {
-        getCustomerFromPopup(function (customerName, customerConditions, customerId) {
-          if (!customerId) { resolve({ ok: false, reason: "no-customer" }); return; }
-          if (!_sendGuardOk(customerName, customerId)) { resolve({ ok: false, reason: "guard" }); return; }
-          buildSendItemsBrain(customerId, function (sendItems, brain) {
-            var one = (sendItems || []).filter(function (it) { return it && it.url === url; });
-            if (!one.length) { resolve({ ok: false, reason: "no-item" }); return; }
-            chrome.runtime.sendMessage({
-              type: "axlx-send-to-line",
-              urls: AxlxSendPairing.pluck(one, "url"),
-              customer_name: customerName || null,
-              property_summaries: AxlxSendPairing.pluck(one, "summary"),
-              property_pool: poolWithUrl(one),
-              customer_id: customerId,
-              customer_conditions: customerConditions || null,
-              site: "realpro",
-              sent_skipped: 0,
-              search_stamp: (function () { var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp; return SS ? SS.forSend(SS.read(), customerId, Date.now()) : null; })(),
-            }, function (resp) {
-              var err = chrome.runtime.lastError ? chrome.runtime.lastError.message : (!resp || !resp.ok ? ((resp && resp.error) || "応答なし") : null);
-              if (err) console.error("[AXLX bulk-dl] 1件送信（印刷用PDF）のエラー:", err);
-              resolve({ ok: !err, reason: err, brain: brain });
-            });
-          });
-        });
-      });
-    };
-    _onePdfChain = _onePdfChain.then(function () { return _humanGapThen(); }).then(run).then(function (r) {
-      if (r && r.ok) { _onePdfBadge(item, true, true); _tmark("sent", "pdf 1件"); }
-      else { _onePdfSent[url] = false; _onePdfBadge(item, false, false); console.warn("[AXLX bulk-dl] 1件送信（印刷用PDF）を送れませんでした:", r && r.reason); }
-      if (_cEl) _cEl.textContent = "📤 " + Object.keys(_onePdfSent).filter(function (k) { return _onePdfSent[k]; }).length + "件 送信済み";
+    if (!item || !item.btn || !item.btn.href) return;
+    var url = item.btn.href;
+    if (_onePdfSent[url] || _pdfQueued[url]) return; // 送った・もう待ちに入っている
+    _pdfQueued[url] = true;
+    _pdfQueue.push({ url: url, item: item });
+    _onePdfBadge(item, "wait");
+    _paintPdfProgress();
+    _pumpPdfQueue();
+  }
+
+  /** 待ち行列を1件ずつ流す（二重に走らせない） */
+  function _pumpPdfQueue() {
+    if (_pdfQueueRunning) return;
+    var next = _pdfQueue.shift();
+    if (!next) { _paintPdfProgress(); return; }
+    _pdfQueueRunning = true;
+    _pdfSending = next.url;
+    _paintPdfProgress();
+    // 送る1件だけを選ぶ（画面を見ている人に「いま何を送っているか」が分かる・他の行は触らない）
+    _selectOnly(next.item);
+    _onePdfBadge(next.item, "sending");
+    _sendOnePdf(next.item, next.url, function (ok, reason) {
+      _pdfQueued[next.url] = false;
+      _pdfSending = null;
+      if (ok) { _onePdfSent[next.url] = true; _onePdfBadge(next.item, "sent"); _tmark("sent", "pdf 1件"); }
+      else {
+        _onePdfBadge(next.item, "error");
+        console.warn("[AXLX bulk-dl] 1件送信（印刷用PDF）を送れませんでした:", reason, String(next.url).slice(0, 80));
+        if (_autoModeOn) {
+          // 自動モードは止めずに次へ（1件の失敗で後の物件が送れなくなるのを防ぐ）。人が押した時は札で知らせる
+          console.warn("[AXLX bulk-dl] 自動モードなので次の1件へ進みます");
+        }
+      }
+      _paintPdfProgress();
+      _pdfQueueRunning = false;
+      // 次の1件（少し間を置く＝人が1件ずつ送る速さ）
+      if (_pdfQueue.length) _humanGapThen().then(_pumpPdfQueue);
     });
+  }
+
+  /** 画面でその1行だけチェックを入れる（他の行のチェックは外す） */
+  function _selectOnly(item) {
+    tracked.forEach(function (t) { if (t.cb && t.cb !== item.cb && t.cb.checked) t.cb.checked = false; });
+    if (item.cb && item.cb.isConnected && !item.cb.checked) item.cb.checked = true;
+    updateBar();
+  }
+
+  /** 進み具合の1行（待ち・送信中・送信済み） */
+  function _paintPdfProgress() {
+    var el = document.getElementById("axlx-count");
+    if (!el) return;
+    var done = Object.keys(_onePdfSent).length;
+    var parts = [];
+    if (_pdfSending) parts.push("📤 送信中");
+    if (_pdfQueue.length) parts.push("⏳ 待ち " + _pdfQueue.length);
+    if (done) parts.push("✅ " + done + "件");
+    el.textContent = parts.length ? parts.join(" / ") : (tracked.filter(function (t) { return t.cb.checked; }).length + "件");
+  }
+
+  /** 押した1件だけの組を作る（チェックの状態に頼らない＝後から押した行に奪われない） */
+  function _buildOneItem(btn) {
+    if (!btn || !AxlxSendPairing.isHttpUrl(btn.href)) return null;
+    var card;
+    try { card = extractCard(btn); } catch (_) { return null; }
+    if (!card) return null;
+    return { url: btn.href, summary: buildPropertySummary(card, 0), data: buildPropertyData(card, 0), card: card, image_url: card.imageUrl || null };
+  }
+
+  /** 1件だけを送る（判定も1件だけ・失敗したら理由を返す） */
+  function _sendOnePdf(item, url, done) {
+    var one = _buildOneItem(item.btn);
+    if (!one) { done(false, "no-item"); return; }
+    getCustomerFromPopup(function (customerName, customerConditions, customerId) {
+      if (!customerId) { done(false, "no-customer"); return; }
+      if (!_sendGuardOk(customerName, customerId)) { done(false, "guard"); return; }
+      var judged = function (kept, brain) {
+        var send = (kept && kept.length ? kept : [one]).filter(function (it) { return it && it.url === url; });
+        if (!send.length) { done(false, "brain-skip"); return; }
+        try {
+          chrome.runtime.sendMessage({
+            type: "axlx-send-to-line",
+            urls: AxlxSendPairing.pluck(send, "url"),
+            customer_name: customerName || null,
+            property_summaries: AxlxSendPairing.pluck(send, "summary"),
+            property_pool: poolWithUrl(send),
+            customer_id: customerId,
+            customer_conditions: customerConditions || null,
+            site: "realpro",
+            sent_skipped: 0,
+            search_stamp: (function () { var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp; return SS ? SS.forSend(SS.read(), customerId, Date.now()) : null; })(),
+          }, function (resp) {
+            var err = chrome.runtime.lastError ? chrome.runtime.lastError.message : (!resp || !resp.ok ? ((resp && resp.error) || "応答なし") : null);
+            if (err) console.error("[AXLX bulk-dl] 1件送信（印刷用PDF）のエラー:", err);
+            done(!err, err || "");
+          });
+        } catch (e) { done(false, String((e && e.message) || e)); }
+      };
+      // ブレインの時だけ、その1件の判定（全件は呼ばない＝重くしない・待たせない）
+      if (_brainModeOn) _judgeOneBrain(customerId, one, function (kept, brain) { void brain; judged(kept, brain); });
+      else judged([one], null);
+    });
+  }
+
+  /** 1件だけブレインに判定してもらう（外す判定なら送らない・失敗したら送る＝fail-open） */
+  function _judgeOneBrain(customerId, one, cb) {
+    var finished = false;
+    var finish = function (kept, brain) { if (finished) return; finished = true; cb(kept, brain); };
+    var watchdog = setTimeout(function () { console.warn("[AXLX bulk-dl][brain] 1件判定の応答が20秒無い → そのまま送る"); finish([one], null); }, 20000);
+    try {
+      var jd = Object.assign({}, one.data); delete jd.cells; delete jd.head; delete jd.bld_text;
+      chrome.runtime.sendMessage({
+        type: "axlx-brain-judge", property_customer_id: customerId, site: "realpro",
+        items: [{ summary: one.summary, data: jd, url: one.url, image_url: one.image_url || null }],
+      }, function (resp) {
+        clearTimeout(watchdog);
+        if (chrome.runtime.lastError || !resp || !resp.ok || !resp.data || !Array.isArray(resp.data.judgments)) {
+          finish([one], null);
+          return;
+        }
+        var d = resp.data;
+        var j = d.judgments[0];
+        if (d.apply_drop && j && j.verdict === "drop" && !_staffModeOn) {
+          console.log("[AXLX bulk-dl][brain] 1件を外す判定（送りません）:", one.summary && String(one.summary).slice(0, 40));
+          finish([], d);
+          return;
+        }
+        finish([one], d);
+      });
+    } catch (e) { clearTimeout(watchdog); console.warn("[AXLX bulk-dl][brain] 1件判定の呼び出しに失敗 → 送る:", e && e.message); finish([one], null); }
   }
   /** 押してから送るまでの人の間（0.6〜1.8秒・たまに一息） */
   function _humanGapThen() {

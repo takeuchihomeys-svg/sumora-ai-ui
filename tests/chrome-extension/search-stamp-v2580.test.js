@@ -25,7 +25,7 @@ ok("あさんの検索・手順も終わっている・遠いのは少し → �
 const bd = read("bulk-dl.js");
 const ps = read("page-script.js");
 ok("リアプロ: 送る時（手で押す・20秒後のまとめて送る）に確かめる", /if \(sendToLine && !_sendGuardOk\(customerName, customerId\)\) return;/.test(bd));
-ok("押した1件をその場で送る時にも確かめる（_sendGuardOk）", /function sendOnePdfNow[\s\S]{0,1600}if \(!_sendGuardOk\(customerName, customerId\)\)/.test(bd));
+ok("押した1件をその場で送る時にも確かめる（_sendGuardOk）", /function _sendOnePdf\(item, url, done\)[\s\S]{0,1200}if \(!_sendGuardOk\(customerName, customerId\)\)/.test(bd));
 ok("自動モードは確かめの小窓を出さずに送る（押した＝送る）", /if \(_autoModeOn\) \{\s*_tmark\("guard_pass"/.test(bd) && /自動モードなので確かめの小窓は出さずに送ります/.test(bd));
 ok("リアプロ: 押した1件は20秒待たずに送る（1つずつ行ったのと同じ形）", /function sendOnePdfNow/.test(bd) && !/scheduleForward\(\)/.test(bd));
 ok("リアプロ: ブレインの下見の場所（AREA_FAR）を印に", /setAttribute\("data-axlx-area", _codes\.indexOf\("AREA_FAR"\) >= 0 \? "far"/.test(bd));

@@ -680,6 +680,43 @@ async function _searchModeFor(customerId, site) {
   } catch (_) { return null; }
 }
 
+// ── 2026-11-10 送信の直列の待ち行列（竹内さん「複数の物件の場合つまったりしないか」）────────
+//   1件ずつ押して送る時、複数の送信が同時に来ても **1本ずつ順番に** 流す。
+//   中のリアプロのタブ・アップロード・merge-pdfs（サーバー）を取り合わない＝詰まらない。
+//   1件が失敗（throw・時間切れ）しても次は流れる（1件の失敗で後の物件が送れなくなるのを防ぐ）。
+//   ⚠ 応答（sendResponse）は必ず1回だけ。待ち行列の中で finally で呼ぶ。
+var _lineSendQueue = [];
+var _lineSendRunning = false;
+/** 順番に1件流す。job(done) の形で渡す（done は 1回だけ呼ぶ） */
+function _enqueueLineSend(job) {
+  _lineSendQueue.push(job);
+  if (_lineSendRunning) { console.log("[send-queue] 待ちに追加（いま" + _lineSendQueue.length + "件待ち）"); return; }
+  _drainLineSend();
+}
+function _drainLineSend() {
+  if (_lineSendRunning) return;
+  var job = _lineSendQueue.shift();
+  if (!job) return;
+  _lineSendRunning = true;
+  var finished = false;
+  var next = function () {
+    if (finished) return;
+    finished = true;
+    _lineSendRunning = false;
+    // 次の1件（少し置いてから＝サイト・サーバーに続けて当たらない）
+    if (_lineSendQueue.length) setTimeout(_drainLineSend, 600 + Math.floor(Math.random() * 700));
+    else console.log("[send-queue] 送信の待ちは空になりました");
+  };
+  var timer = setTimeout(function () {
+    console.warn("[send-queue] 1件の送信が 300秒 を超えた → 次へ進む（後の物件を止めない）");
+    next();
+  }, 300000);
+  Promise.resolve()
+    .then(function () { return job(); })
+    .catch(function (e) { console.warn("[send-queue] 1件の送信でエラー（次へ進む）:", e && e.message); })
+    .then(function () { clearTimeout(timer); next(); });
+}
+
 // ── ヘルパー: /api/merge-pdfs を background から呼ぶ（CSP/CORS 完全回避）──
 async function callMergeApi(payload) {
   // 送信の3経路（リアプロ・itandi・レインズ）は全部ここを通るので、スタッフモードの判定もここで付ける
@@ -1199,8 +1236,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // ── LINE送信: 全件を1つのPDFに結合してURLで送信 ──────────────────────────
+  // 2026-11-10 竹内さん「複数の物件の場合つまったりしないか」:
+  //   送信（資料の取得→アップロード→merge-pdfs→LINE）を **1本の直列の待ち行列** にした。
+  //   複数の 1件送信が同時に来ても、中のリアプロのタブ・アップロード・サーバーが取り合いにならない（順番に流す）。
+  //   前の1件が失敗しても次は流れる（1件の失敗で後の物件が送れなくなるのを防ぐ）。
   if (msg.type === "axlx-send-to-line") {
-    (async () => {
+    _enqueueLineSend(async () => {
       try {
         const { urls, customer_name, property_summaries, customer_conditions, site, property_pool, customer_id } = msg;
         const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
@@ -1252,7 +1293,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } catch (e) {
         sendResponse({ ok: false, error: e.message });
       }
-    })();
+    });
     return true;
   }
 

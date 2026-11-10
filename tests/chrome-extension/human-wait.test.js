@@ -152,6 +152,7 @@ function rest() {
       "setTimeout 10000": [1, "バッジを消す"], "setTimeout 1500": [2, "タブの応答の確かめの期限（v2.5.32 _probeRealproTab・v2.5.45 _probeItandiTab）"],
       "setTimeout 3000": [1, "画面の文字の応答の期限（v2.5.40 _snapDom・ページを触らない）"],
       "setTimeout 30000": [1, "リアプロの資料1件の取得の期限（v2.5.58 fetchRealproPdfsInTab・タブの中で取る・ログイン情報をサーバーに渡さない）"],
+      "setTimeout 300000": [1, "送信の待ち行列の1件の上限（v2.6.26・超えたら次へ＝後の物件を止めない・サイトを触らない）"],
     },
     "bulk-dl.js": {
       "setTimeout 200": [1, "checkbox の差し込みのやり直し（内部）"], "setTimeout 250": [1, "枠をサイトの固定のボタンに重ねない見直しの間引き（v2.5.74・位置だけ）"], "setTimeout 35000": [1, "判定の応答の期限（fail-open）"],
@@ -160,6 +161,7 @@ function rest() {
       "setInterval 200": [1, "描画待ちの見る間隔（4秒で打ち切り）"], "setTimeout 50": [1, "fill-done 後の差し込みのやり直し（内部）"],
       "setTimeout 2000": [2, "新しい結果が出たかの予備の確認・load 後の差し込み"], "setTimeout 400": [2, "MutationObserver の間引き・1件送信前のチェック確認（v2.6.23）"], "setInterval 1000": [1, "0件の確定の見る間隔（25秒で打ち切り）"],
       "setTimeout 1200": [1, "起動時の差し込み"],
+      "setTimeout 20000": [1, "1件だけのブレイン判定の期限（v2.6.26・超えたら送る＝fail-open）"],
       // 2026-11-10: 「押した印刷用PDFを20秒まとめて送る」はやめた（押した1件をその場で送る・sendOnePdfNow）
     },
     "content.js": { "setTimeout 400": [1, "MutationObserver の間引き"], "setInterval 3000": [1, "サイドバーの見張り"], "setTimeout 300": [1, "起動時"] },

@@ -18,16 +18,17 @@ let passed = 0, failed = 0;
 function ok(name, cond, extra) { if (cond) { passed++; console.log("  ✓ " + name); } else { failed++; console.log("  ✗ " + name + (extra !== undefined ? "\n      " + JSON.stringify(extra).slice(0, 300) : "")); } }
 
 const bd = read("bulk-dl.js");
+const bg2 = read("background.js");
 /** コメント行を外した「動くコード」だけ（説明文の中の関数名でテストが誤って通る/落ちるのを防ぐ） */
 const bdCode = bd.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
 const H = require(path.join(dir, "human-wait.js"));
 
 console.log("■ ① 印刷用PDFを押したら、その1件をその場で送る");
 ok("押した合図（axlx-pdf-captured）を受けて1件送る", /if \(!msg \|\| msg\.type !== "axlx-pdf-captured"\) return;[\s\S]{0,1200}sendOnePdfNow\(item\);/.test(bdCode));
-ok("押した1件だけをチェック（他の行は外す）", /function sendOnePdfNow\(item\) \{[\s\S]{0,900}tracked\.forEach\(function \(t\) \{ if \(t\.cb && t\.cb !== item\.cb && t\.cb\.checked\) t\.cb\.checked = false; \}\)/.test(bd));
-ok("その1件だけを組にして送る（urls が1件）", /function sendOnePdfNow[\s\S]{0,2600}urls: AxlxSendPairing\.pluck\(one, "url"\)/.test(bd));
-ok("同じ行を二度送らない（_onePdfSent）", /_onePdfSent\[url\] = true;/.test(bd) && /if \(!url \|\| _onePdfSent\[url\]\) return;/.test(bd));
-ok("押した順に1件ずつ（前の1件が終わってから・Promise の鎖）", /_onePdfChain = _onePdfChain\.then/.test(bd));
+ok("押した1件だけをチェック（他の行は外す・_selectOnly）", /function _selectOnly\(item\) \{[\s\S]{0,300}t\.cb !== item\.cb && t\.cb\.checked\) t\.cb\.checked = false;/.test(bdCode));
+ok("その1件だけを組にして送る（urls が1件）", /urls: AxlxSendPairing\.pluck\(send, "url"\)/.test(bdCode));
+ok("同じ行を二度送らない（_onePdfSent・待ちにも二重に積まない）", /_onePdfSent\[next\.url\] = true;/.test(bdCode) && /if \(_onePdfSent\[url\] \|\| _pdfQueued\[url\]\) return;/.test(bdCode));
+ok("押した順に1件ずつ（待ち行列・前の1件が終わってから次）", /_pdfQueue\.push\(\{ url: url, item: item \}\)/.test(bdCode) && /_pdfQueueRunning = false;[\s\S]{0,200}if \(_pdfQueue\.length\) _humanGapThen\(\)\.then\(_pumpPdfQueue\)/.test(bdCode));
 ok("押した行を URL で当てる（id だけでも当てる・見つからなければ行を作り直して1回だけ探す）", /function _urlKey\(u\)/.test(bd) && /function _rescanRows\(\)/.test(bd) && /_rescanRows\(\); \} catch \(_\) \{\}\s*item = _findItemByUrl\(msg\.url\)/.test(bd));
 ok("行を作り直しても押した1件のチェックは残す", /cb\.checked = !!keep\[_urlKey\(btn\.href\)\]/.test(bd));
 ok("20秒まとめて送る道はもう使わない（scheduleForward の呼び出しが無い）", !/scheduleForward\(\)/.test(bd));
@@ -67,6 +68,18 @@ console.log("\n■ ⑥ 間は対数正規・たまに一息（機械的な等間
 })();
 ok("次の行までの間は対数正規＋12%で一息", /logNormalDelay\(1500, 0\.45\)/.test(bd) && /Math\.random\(\) < 0\.12\) nextGap \+=/.test(bd));
 ok("押してから送るまでの間も対数正規（_humanGapThen）", /function _humanGapThen\(\)[\s\S]{0,400}logNormalDelay\(1000, 0\.4\)/.test(bd));
+
+console.log("\n■ ⑦ 複数を続けて押しても詰まらない（待ち行列で1件ずつ）");
+ok("押した順の待ち行列（_pdfQueue・_pdfQueued で二重に積まない）", /var _pdfQueue = \[\];/.test(bd) && /var _pdfQueued = \{\};/.test(bd) && /if \(_onePdfSent\[url\] \|\| _pdfQueued\[url\]\) return;/.test(bd));
+ok("1件ずつ流す（_pumpPdfQueue は二重に走らない・終わってから次）", /function _pumpPdfQueue\(\)[\s\S]{0,300}if \(_pdfQueueRunning\) return;/.test(bd) && /_pdfQueueRunning = false;[\s\S]{0,200}if \(_pdfQueue\.length\) _humanGapThen\(\)\.then\(_pumpPdfQueue\)/.test(bd));
+ok("組は押した行そのものから作る（他の行にチェックを奪われて no-item にならない）", /function _buildOneItem\(btn\)/.test(bd) && !/function sendOnePdfNow[\s\S]{0,1500}buildSendItemsBrain\(customerId/.test(bd));
+ok("ブレインの判定も1件だけ（全件を毎回呼ばない）", /function _judgeOneBrain\(customerId, one, cb\)/.test(bd) && /items: \[\{ summary: one\.summary, data: jd, url: one\.url/.test(bd));
+ok("1件が失敗しても次の1件へ進む（待ち行列を止めない）", /if \(_pdfQueue\.length\) _humanGapThen\(\)\.then\(_pumpPdfQueue\)/.test(bd));
+ok("札で状態が分かる（⏳送る順番待ち／📤送信中／📤送信済み／⚠送れませんでした）", /⏳ 送る順番待ち/.test(bd) && /📤 送信中…/.test(bd) && /⚠ 送れませんでした/.test(bd));
+
+console.log("\n■ ⑧ 送信の直列（background でも同時に走らせない）");
+ok("送信は1本の待ち行列（_enqueueLineSend）", /function _enqueueLineSend\(job\)/.test(bg2) && /_enqueueLineSend\(async \(\) => \{/.test(bg2));
+ok("1件の送信に 300秒の上限（超えたら次へ）", /300000/.test(bg2) && /1件の送信が 300秒 を超えた/.test(bg2));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
