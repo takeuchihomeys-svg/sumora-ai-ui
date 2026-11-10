@@ -1,15 +1,13 @@
 // 同じ日の2通目でも募集状況の確認は約束のまま（2026-11-10 作業員1・弱い所 two-stage-same-day-direct-repromise・TWO_STAGE_SAME_DAY_REPROMISE）
 // 実物の形: q371（11/03 19:35・13分前の「新大阪グランドハイツと新大阪ステーションビルの募集状況確認させて頂きます」の後に3件目の SUUMO の URL）
 // 実行: npx tsx app/lib/__tests__/two-stage-same-day-repromise.test.ts
-// 時計: jstParts は TEST_CLOCK_JST_HOUR（テストの印があるときだけ効く）で昼の14時に固定する（LLM は呼ばない）
-process.env.LLM_TEST_MODE = "deepseek-all";
-process.env.TEST_CLOCK_JST_HOUR = "14";
+// 時計: 入力の hourJst で昼の14時を渡す（2026-11-11 A5・本物の時計に頼らない）
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveTwoStage, sameDayRepromiseKeeps } from "../two-stage";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) pass++; else { fail++; console.log(`  NG  ${name}`); } };
-const base = { decisionSource: "llm", pickupReady: false, postApply: false };
+const base = { decisionSource: "llm", pickupReady: false, postApply: false, hourJst: 14 }; // 2026-11-11 A5: 時計を渡す
 const brought2nd = { ...base, finalAix: "property_check_result", brought: { ask: "none" as const, count: 1 }, customerText: "ART TENDOU WEST 1階\nhttps://suumo.jp/chintai/bc_100532288607/\nby SUUMO", promisedTodayKinds: ["check" as const] };
 
 t("純関数: 既定 on（11/11）・=off で止まる", sameDayRepromiseKeeps("check", {}) === true && sameDayRepromiseKeeps("check", { TWO_STAGE_SAME_DAY_REPROMISE: "off" }) === false);
