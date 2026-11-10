@@ -7,11 +7,12 @@
 //   KB P0 575a7cd5 ④: ベクトルは数の重みではなく、竹内さんの近い過去の番で何をしたかを引くために使う。
 //   KB e786394e: 割合（読み）だけの材料はブレインを動かさない（11/06 に3回）。竹内さんの一手（返信／AIX【〇〇】）と、その番の要約・竹内さんの実際の文を1組で渡す。
 //   決めるのはブレイン。この1行は意見で、この番の材料と食い違えば材料を採る（理由は reason に）。
-//   切替: CONDUCTOR_NEAR_OPINION=on（既定 off）。線: 束 0.2・5件以上・過半数の割合 0.8 以上の時だけ（それ未満は何も渡さない）
+//   切替: CONDUCTOR_NEAR_OPINION（11/11 から既定 on・=off で止める）。線: 束 0.2・5件以上・過半数の割合 0.8 以上の時だけ（それ未満は何も渡さない）
 // テスト: app/lib/__tests__/conductor-near-opinion.test.ts
 
 type Env = Record<string, string | undefined>;
-export const nearOpinionOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_NEAR_OPINION ?? "").trim().toLowerCase() === "on";
+// 2026-11-11 統括役の OK（作業員4: 表の作り直し 318→1,122 の後・INJECT 6問×2 で道 9/12 対 off 11/18・本質 8/12 対 7/18・悪化0）: 既定 on。止める =off
+export const nearOpinionOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_NEAR_OPINION ?? "").trim().toLowerCase() !== "off";
 
 export const NEAR_OPINION_BAND = 0.2;
 export const NEAR_OPINION_MIN_N = 5;

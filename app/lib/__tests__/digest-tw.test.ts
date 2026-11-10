@@ -9,5 +9,8 @@ t("tc は道の数えのまま（2択でも上書きされない）", d.tc === "
 t("2択の印は tw", d.tw === true, d.tw);
 const d2 = { ...toFreshDigest({}, null), ...brainDecisionDigestExtra({}) } as Record<string, unknown>;
 t("2択でない番は tw なし", !("tw" in d2));
+// 2026-11-11 作業員4: 入口の意見の1語（meta.near_opinion → digest.nop・1週間の見張り）
+t("入口の意見は nop", (brainDecisionDigestExtra({ near_opinion: "返信/promise_make:30:0.93|30" }) as Record<string, unknown>).nop === "返信/promise_make:30:0.93|30");
+t("意見の無い番は nop なし", !("nop" in (brainDecisionDigestExtra({}) as Record<string, unknown>)));
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exitCode = 1;

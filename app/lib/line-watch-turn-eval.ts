@@ -77,7 +77,9 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
     const inTurn = d.analyzed_msg_ts ? P(d.analyzed_msg_ts) >= P(t.customer_turn_at) - 1000 && P(d.analyzed_msg_ts) <= P(w.customerLastAt) + 1000 : P(d.created_at) >= P(t.customer_turn_at);
     return inTurn && P(d.created_at) <= until;
   }).pop() ?? null;
-  const scene = sceneKeyOf({ brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode, tpoLabel: t.tpo_label, intent: dec?.intent ?? ctx.intentFallback ?? null, convStatus: t.conv_status, postApply });
+  // 2026-11-11 見張り専用の場面（watchScenes・LINE_WATCH_SCENE_V2=off で戻す）: TPO の落ちる型とお客様の文から場面を引く（generate-reply の場面は変えない）
+  const customerText = ctx.msgs.filter((m) => m.sender === "customer" && P(m.created_at) >= P(t.customer_turn_at) - 1000 && P(m.created_at) <= P(w.customerLastAt) + 1000).map((m) => m.text ?? "").join("\n");
+  const scene = sceneKeyOf({ brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode, tpoLabel: t.tpo_label, intent: dec?.intent ?? ctx.intentFallback ?? null, convStatus: t.conv_status, postApply, watchScenes: true, customerText });
   const draftAt = t.draft_last_at ?? t.draft_first_at;
   const patch: Record<string, unknown> = {
     staff_first_at: w.staffFirstAt,
