@@ -151,6 +151,7 @@ console.log("\n■ 勤務時間のゲート（2026-11-10 自動モード・JST 9
   eq("平日 12:45 → 休憩のまま", R.workGate(J(2026, 11, 10, 12, 45)).reason, "lunch");
   eq("平日 13:00 → 開く", R.workGate(J(2026, 11, 10, 13, 0)).open, true);
   eq("平日 20:59 → 開く", R.workGate(J(2026, 11, 10, 20, 59)).open, true);
+  // 2026-11-10 v2.6.33 竹内さん「作業23時でよい」: 終わりは 23時（翌3時まで延ばす案は採らない）
 eq("平日 23:00 → 終わり（次の日の 9:00）", R.workGate(J(2026, 11, 10, 23, 0)), { open: false, reason: "after_close", resumeAt: J(2026, 11, 11, 9, 0) });
 eq("平日 21:30 → まだ動く（23時に延ばした）", R.workGate(J(2026, 11, 10, 21, 30)), { open: true, reason: null, resumeAt: null });
 eq("金曜 23:30 → 月曜の 9:00", R.workGate(J(2026, 11, 13, 23, 30)), { open: false, reason: "after_close", resumeAt: J(2026, 11, 16, 9, 0) });

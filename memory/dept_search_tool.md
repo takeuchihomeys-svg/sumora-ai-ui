@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-11-10 v2.6.33 自動検索を頼む口（スクリプト）と、稼働時間の確認
+
+竹内さん「もともとの拡張ツールの検索を行えばよいだけ。自動での検索。APIで」「時間制限でとまってるかも」「作業23時でよい」
+
+### 追加
+- **`scripts/trigger-brain-search.ts`**（ブレインの自動検索を1件積む）:
+  `npx tsx --env-file=.env.local scripts/trigger-brain-search.ts --name=じゅな`（同名が複数いれば `--customer=<id>`）。
+  `--dry` で積む内容だけ確認。`automation_commands` に `batch_property_search`（source: web_brain・sites: realnetpro + itandi）を1行入れる。
+  止めの印（`automation_settings.paused`）が立っていたら積まない・同じお客様の未実行があれば積まない。鍵は env から（ハードコード無し）。
+- 実際に積んだ: `02a41a91-3e81-4fc7-9b69-0a03d4036c88`（じゅな／堺筋線沿線／リアプロ＋itandi）
+
+### 分かった事（時間制限）
+- 23:36 時点で指示が **pending のまま**（`picked_up_at: null`）＝拡張が拾っていない。
+- 原因: `auto-run.js` の稼働時間が **9〜23時**。23時を過ぎると `after_close` で拾わない。
+- 一度「翌3時まで」に延ばしたが、竹内さんの指示で **23時に戻した**（深夜に動かしたい時だけ `localStorage.axlxWorkEndH` に 27 などを入れる）。
+
+### APIキーについて（確認結果）
+- 拡張の中に **APIキーは持っていない**（`.env` の `INTERNAL_API_SECRET` も `SUPABASE_*` も参照していない）。
+- 拡張は `https://sumora-ai-ui.vercel.app/api/automation/pending?brain=1` などを **拡張の身元（インストール ID）で拾う** 作り。鍵の持ち回りは無い。
+- Vercel の内部API（`/api/automation/trigger` など）は `INTERNAL_API_SECRET`（サーバー側のみ）で守っている。
+
+### 次にやる事（明日）
+- 拡張を再読み込みして、積んだ `02a41a91-…` が拾われて1件ずつ押すかを確認
+- 23時以降に動かしたい時は `axlxWorkEndH` を設定する（既定23時）
+
+---
+
 ## 2026-11-10 v2.6.32 AD の並び（AD 高い順）を自動の押下の前に戻す
 
 竹内さん「ADの並びはちゃんと使えるようにする」

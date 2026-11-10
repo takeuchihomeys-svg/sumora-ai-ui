@@ -375,7 +375,13 @@
   // 2026-11-10 v2.6.21 竹内さん「なんで届かなくなったのかな？」:
   //   21時に閉じていたため、21時を過ぎると `after_close` で指示を拾わなくなり「届かない」状態になった（実際のログで確認）。
   //   実際の業務は21時を過ぎても続くので **23時**までに延ばす（21〜23時は動いてよい・0時からは止める）。
+  // 2026-11-10 v2.6.33 竹内さん「作業23時でよい」: 終わりは **23時**（翌3時まで延ばす案は採らない）。
+  //   23時以降に作業したい時は storage.local `axlxWorkEndH` に 27 などを入れる（既定は 23）。
   var WORK_END_H = 23;         // 終わり（JST・23:00 ちょうどで閉じる）
+  try {
+    var _we = Number(localStorage.getItem("axlxWorkEndH"));
+    if (isFinite(_we) && _we >= 9 && _we <= 27 && (localStorage.getItem("axlxWorkEndH") || "") !== "") WORK_END_H = _we;
+  } catch (_) {}
   var WORK_REST_FROM_H = 12;   // 昼の休憩の始まり（12:00〜13:00）
   var WORK_REST_TO_H = 13;
   var WORK_CONTINUOUS_MS = 90 * 60 * 1000; // 90分続いたら
@@ -401,9 +407,14 @@
     var j = new Date(t + 9 * 3600 * 1000);
     var secOfDay = j.getUTCHours() * 3600 + j.getUTCMinutes() * 60 + j.getUTCSeconds();
     var day0 = t - secOfDay * 1000;
-    if (p.day === 0 || p.day === 6) return { open: false, reason: "weekend", resumeAt: null };
-    if (p.hour < WORK_START_H) return { open: false, reason: "before_open", resumeAt: day0 + WORK_START_H * 3600 * 1000 };
-    if (p.hour >= WORK_END_H) {
+    // 2026-11-10 v2.6.33: 終わりが 24 を超える（翌 3時まで）時は「0〜3時」も開いている日として扱う（前日の営業日の続き）
+    var over = Math.max(0, WORK_END_H - 24);
+    var isEarlyNextDay = p.hour < over;   // 翌日の 0:00〜3:00 など
+    var effDay = isEarlyNextDay ? (p.day + 6) % 7 : p.day; // 前の日の曜日で見る（金曜の深夜は土曜の0〜3時も開く）
+    if (effDay === 0 || effDay === 6) return { open: false, reason: "weekend", resumeAt: null };
+    // 2026-11-10 v2.6.33: 翌 3時まで動く時は、3時〜9時は閉じる（before_open）
+    if (!isEarlyNextDay && p.hour < WORK_START_H) return { open: false, reason: "before_open", resumeAt: day0 + WORK_START_H * 3600 * 1000 };
+    if (!isEarlyNextDay && p.hour >= Math.min(WORK_END_H, 24)) {
       // 次の営業日（月〜金）の 9:00。金曜の夜なら月曜
       var addDays = 1;
       for (var k = 0; k < 8; k++) {
@@ -413,7 +424,7 @@
       }
       return { open: false, reason: "after_close", resumeAt: day0 + addDays * 86400 * 1000 + WORK_START_H * 3600 * 1000 };
     }
-    if (p.hour >= WORK_REST_FROM_H && p.hour < WORK_REST_TO_H) {
+    if (!isEarlyNextDay && p.hour >= WORK_REST_FROM_H && p.hour < WORK_REST_TO_H) {
       return { open: false, reason: "lunch", resumeAt: day0 + WORK_REST_TO_H * 3600 * 1000 };
     }
     return { open: true, reason: null, resumeAt: null };
