@@ -87,6 +87,9 @@ export type RecordPickupInput = {
    *   行（property_pickups.search_conditions）に残し、AIX の物件ピックアップの文が時刻の窓なしで回から読む
    */
   searchConditions?: Record<string, unknown> | null;
+  /** 2026-11-10 この回を見つけた検索の1回（search_audits.run_id）と一括の指示（automation_commands.id）。分からない回は null（列を出さない） */
+  searchRunId?: string | null;
+  searchCommandId?: string | null;
   /**
    * 2026-09-29 竹内「売上番長のグループにアナウンスされるのは、AIX ツールで物件の解析が終わった時にする」:
    *   merge-pdfs がこの回の本文を★物件出し★グループに送らなかった（ブレイン）時は "deferred"。行（property_pickups.group_notice）に残し、
@@ -491,6 +494,9 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       .map((r) => (searchMode ? { ...r, search_mode: searchMode } : r))
       // 2026-10-06 v2.5.81 この回の一覧を検索した時の条件（分からない回は列を出さない）
       .map((r) => (input.searchConditions ? { ...r, search_conditions: input.searchConditions } : r))
+      // 2026-11-10 検索の回・一括の指示（分からない回は列を出さない）
+      .map((r) => (input.searchRunId ? { ...r, search_run_id: input.searchRunId } : r))
+      .map((r) => (input.searchCommandId ? { ...r, search_command_id: input.searchCommandId } : r))
       // 2026-09-29 ブレインの回（★物件出し★グループへは解析の完了で1回知らせる）
       .map((r) => (input.groupNotice === "deferred" ? { ...r, group_notice: "deferred" } : r))
       // 2026-10-28 LISTING_NAME_STRIP=on: 物件名のサイト名・「最新」の付記（ITANDI の「ACT正雀(イタンジ最新)」）を外して記録する（listing-name-strip）

@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   //   上限は 100 回分（「完了」のまとめは最大24時間分で、ページごとの回が20を超えることがある＝20で切ると残りの回の物件が黙って落ちていた）
   const batchIds = body.batch_id.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 100);
   const { data: rowsRaw, error } = await supabase.from("property_pickups")
-    .select("id, batch_id, property_customer_id, conversation_id, page_image_url, trim_image_url, status, rank, property_name, room_no, ad_yen")
+    .select("id, batch_id, property_customer_id, conversation_id, page_image_url, trim_image_url, status, rank, property_name, room_no, ad_yen, site")
     .in("batch_id", batchIds).in("id", ids).order("rank", { ascending: true }).order("id", { ascending: true });
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   const rowsAll = (rowsRaw ?? []) as Array<{ id: number; property_customer_id: string | null; conversation_id: string | null; page_image_url: string | null; trim_image_url: string | null; status: string; rank: number; property_name: string; room_no: string | null; ad_yen: number | null }>;

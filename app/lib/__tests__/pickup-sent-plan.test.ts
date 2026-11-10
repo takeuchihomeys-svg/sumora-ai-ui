@@ -169,5 +169,33 @@ console.log("── 2026-09-27 家賃・AD の月数を説明文から入れる�
   t("page_image_url だけの行は画像ありに数えない（届いた1枚は元の資料の行に結ぶ）", r.skipped.length === 0 && r.inserts.find((x) => x.pickup_id === 902)?.image_url === "sent2.jpg" && r.inserts.find((x) => x.pickup_id === 901)?.image_url === null, r);
 }
 
+console.log("── 2026-11-10 出所のサイト（sent_properties.site）──");
+{
+  const rp: PickupForRecord = { ...P(1001, 1, "サイトテスト", "201", "s1.jpg"), site: "realnetpro" };
+  const it: PickupForRecord = { ...P(1002, 2, "サイトテスト2", "202", "s2.jpg"), site: "itandi" };
+  const none: PickupForRecord = P(1003, 3, "サイトテスト3", "203", "s3.jpg");
+  const r = planPickupSentWrites({ ...base, pickups: [rp, it, none], deliveredImageUrls: ["a.jpg", "b.jpg", "c.jpg"], existing: [] });
+  t("realnetpro は realpro に揃えて入れる", r.inserts.find((x) => x.pickup_id === 1001)?.site === "realpro", r.inserts);
+  t("itandi はそのまま", r.inserts.find((x) => x.pickup_id === 1002)?.site === "itandi");
+  t("site が無いピックアップは null（推測で埋めない）", r.inserts.find((x) => x.pickup_id === 1003)?.site === null);
+  const hit = planPickupSentWrites({ ...base, pickups: [it], deliveredImageUrls: ["v.jpg"], existing: [E({ id: "e1", image_url: "v.jpg", source: "vision", delivery: "customer" })] });
+  t("画像の読み取りの行へ合流する時、site が空なら補う", hit.updates[0]?.patch.site === "itandi", hit);
+  const keep = planPickupSentWrites({ ...base, pickups: [it], deliveredImageUrls: ["v.jpg"], existing: [E({ id: "e2", image_url: "v.jpg", source: "vision", delivery: "customer", site: "realpro" })] });
+  t("既に site がある行は上書きしない", !!keep.updates[0] && !("site" in keep.updates[0].patch), keep);
+}
+{
+  // 配線（呼ぶ所まで）: 読む列・送る API の select・merge-pdfs の共有の行
+  const fs = require("fs") as typeof import("fs");
+  const path = require("path") as typeof import("path");
+  const src = (p: string) => fs.readFileSync(path.join(__dirname, "..", "..", p), "utf8");
+  const rec = src("lib/pickup-sent-record.ts"), send = src("api/property-pickups/send/route.ts"), merge = src("api/merge-pdfs/route.ts");
+  t("配線: 既にある行の読み取りに site の列", /EXISTING_COLS = "[^"]*\bsite\b/.test(rec));
+  t("配線: 送る API がピックアップの site を読む", /\.select\("[^"]*ad_yen, site"\)/.test(send));
+  t("配線: merge-pdfs の共有の行に site: pickupSiteOf(site)", /channel: "extension_group",[\s\S]{0,200}site: pickupSiteOf\(site\)/.test(merge));
+  t("配線: merge-pdfs がピックアップに検索の回を渡す", /\.\.\.pickupSearchRef\(body\)/.test(merge));
+  const srv = src("lib/property-pickups-server.ts");
+  t("配線: property_pickups の行に search_run_id / search_command_id", /search_run_id: input\.searchRunId/.test(srv) && /search_command_id: input\.searchCommandId/.test(srv));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
