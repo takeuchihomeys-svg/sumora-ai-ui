@@ -33,8 +33,12 @@ ok("wander は外へ動いてから drift して目標へ戻る", /function wand
 
 console.log("\n■ ④ ITANDI の全クリックが _humanClick を通る");
 ok("_humanClick がある", /function _humanClick\(el, opts\)/.test(ips));
-ok("_.click() の直呼びが残っていない（コメント除く）", (() => {
-  const lines = ips.split("\n").filter((l) => /\.click\(\)/.test(l) && !/^\s*(\*|\/\/)/.test(l));
+ok("サイト操作の .click() 直呼びが残っていない（内部の押す処理を除く）", (() => {
+  // 内部の押す処理（_tapAndClick / _humanClick の click、click ヘルパー）は el.click() を持つ＝正しい
+  let body = ips.replace(/function _tapAndClick[\s\S]*?\n  \}/, "");
+  body = body.replace(/function _humanClick[\s\S]*?\n  \}/, "");
+  body = body.replace(/click: function \(el\) \{ el\.click\(\); \},/, "");
+  const lines = body.split("\n").filter((l) => /\.click\(\)/.test(l) && !/^\s*(\*|\/\/)/.test(l));
   return lines.length === 0;
 })(), ips.split("\n").filter((l) => /\.click\(\)/.test(l) && !/^\s*(\*|\/\/)/.test(l)));
 ok("_humanClick は種類で迷い率を変える（選ぶ15%・決定3%）", /kind === "choose" \? 0\.15 : \(kind === "decide" \? 0\.03 : 0\.08\)/.test(ips));

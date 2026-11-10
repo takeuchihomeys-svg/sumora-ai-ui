@@ -386,6 +386,7 @@
   //   （block:"nearest"）③連続して動かさない＝直近 900ms 以内にスクロールしていたら、その時はスクロールせずに待ってから押す
   //   （人が「少し見てから押す」形・画面が細かく往復しない）④スムーズの時間はブラウザ任せにせず、押す前に少し待つ
   var _lastScrollAt = 0;
+  var _lastScrollDir = 0; // 2026-11-10 v2.6.12: 直前のスクロールの向き（+下 / -上）
   function _ensureInView(el) {
     try {
       if (!el || !el.getBoundingClientRect) return 0;
@@ -396,7 +397,14 @@
       var now = Date.now();
       // 直前のスクロールから 900ms 未満なら、動かさずに「見えている所で待つ」時間を返す
       if (_lastScrollAt && now - _lastScrollAt < 900) return 350 + Math.floor(Math.random() * 450);
+      var dir = r.top < margin ? -1 : 1;
+      // 2026-11-10 v2.6.12 竹内さん「細部まで徹底した動き」:
+      //   直前に逆方向へ動かした直後なら、すぐ戻さずに少し待つ（人が行ったり来たりしない）。
+      if (_lastScrollDir && dir !== _lastScrollDir && now - _lastScrollAt < 2500) {
+        return 500 + Math.floor(Math.random() * 600);
+      }
       _lastScrollAt = now;
+      _lastScrollDir = dir;
       // 最小の移動で見える位置へ（真ん中へは寄せない）
       el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
       // スムーズの動きが終わるのを待つ（人が目で追う時間・距離に応じて 250〜700ms）
@@ -495,6 +503,8 @@
   function _clickIfUnchecked(el) { if (!el.checked) _clickEl(el); }
   var _clickQueue = [];
   var _clickBusyItem = null; // 2026-11-10 v2.6.8 いま処理中の1件（迷いの漂いの間も「忙しい」）
+  // 2026-11-10 v2.6.11: 人が手を止める長い停止（8〜25秒）は**わざと**なので、その間は安全弁を止める
+  var _holdingPause = false;
   var _clickQueueTimer = null;
   // 2026-09-27 v2.5.31: 点検の記録（ブレインの時だけ）に操作ごとの時刻を残すため、列の1件ごとに名前（label）を持つ
   function _opLabel(el) {
@@ -553,6 +563,25 @@
     return 1800 + Math.floor(Math.random() * 2700);               // かなり迷う
   }
   /**
+   * 2026-11-10 v2.6.11 竹内さん「この止まった部分ちゃんと解決できるように／人間も止まったりするので
+   *   ここの部分を改善ちゃんと行っていく／人間のように」:
+   *   人は時々**手が止まる**（考え込む・画面を読み返す・別の事を考える）。止まること自体は自然。
+   *   大事なのは「止まった後に必ず戻ってくる」こと。ここでは**長めの停止（8〜25秒）を低確率で入れ**、
+   *   その間カーソルは静かに漂わせ、終わったら何事もなく続きへ進む（タイムアウトで失敗にしない）。
+   *   ⚠ 本物のフリーズと区別するため、**止まる前と後に必ず点検へ印**を残す（fill_stall / fill_resume）。
+   *   止まる確率は「同じ画面で操作が続いているほど少し上がる」（人が飽きて手が止まる形）。
+   */
+  var _opsSincePause = 0;
+  function _longPauseDue() {
+    _opsSincePause++;
+    // 25操作に1回くらい（約4%）。連続で操作している時ほど出やすい
+    var p = 0.02 + Math.min(0.03, _opsSincePause / 2000);
+    if (Math.random() >= p) return 0;
+    _opsSincePause = 0;
+    // 8〜25秒（対数正規・たまに長い）
+    return _ln(11000, 0.5, 8000, 25000);
+  }
+  /**
    * 2026-11-10 v2.6.2 竹内さん「人間が迷いながらマウスもまよったりしながら考えながら入力していく」:
    *   迷っている間はカーソルを**その場で漂わせる**（止まったまま待たない）。35% は狙いを少し外して戻る。
    *   迷いが終わったら押す。カーソルが無い環境では今まで通り（時間だけ待つ）。
@@ -567,6 +596,24 @@
     if (_clickQueueTimer || _clickBusyItem || !_clickQueue.length) return;
     var item = _clickQueue.shift();
     _clickBusyItem = item; // 2026-11-10 v2.6.8: 迷いの漂い中も「忙しい」と分かるように（止まったように見える原因）
+    // 2026-11-10 v2.6.11 竹内さん「人間も止まったりするので・人間のように」:
+    //   低確率で**長めの停止（8〜25秒）**を入れる（人が考え込む・画面を読み返す）。
+    //   止まる前と後に必ず点検へ印を残し、止まった後は必ず続きへ戻る（失敗にしない）。
+    var pause = _longPauseDue();
+    if (pause > 0) {
+      try { _auditStepP('fill_pause', Math.round(pause / 1000) + '秒（人が手を止めた）'); } catch (_) {}
+      var _startAfterPause = function () {
+        try { _auditStepP('fill_resume', '止まった後に再開'); } catch (_) {}
+        _scheduleClickDrain();
+      };
+      _clickBusyItem = null;
+      _holdingPause = true;
+      var P0 = window.AxlxPointerUi;
+      var _endPause = function () { _holdingPause = false; _lastQueueProgressAt = Date.now(); _startAfterPause(); };
+      if (P0 && P0.drift) { P0.drift(pause).then(_endPause, _endPause); }
+      else { setTimeout(_endPause, pause); }
+      return;
+    }
     var hesitate = _hesitateMs(item.el);
     var _planned = item.gap + hesitate, _setAt = Date.now();
     if (hesitate > 0) { try { _tmarkHesitate(item.label, hesitate); } catch (_) {} }
@@ -627,7 +674,7 @@
     //   タイマーも列も空に見えた**ため、呼び出し側（waitForClick など）が「済んだ」と誤判定し、
     //   次の段が迷いと重なって進んだ後、迷いが終わった側が次の列を起こさず止まっていた。
     //   いま処理中の1件（_clickBusyItem）も「忙しい」に数える。
-    return _clickQueueTimer !== null || _clickQueue.length > 0 || !!_clickBusyItem;
+    return _clickQueueTimer !== null || _clickQueue.length > 0 || !!_clickBusyItem || _holdingPause;
   }
   function whenClickQueueIdle(cb) {
     if (!isClickQueueBusy()) { cb(); return; }
@@ -649,6 +696,7 @@
     try {
       // 2026-11-10 v2.6.8: 「忙しい物が変わった時」だけ時計を戻す（同じ物のままなら止まったまま）
       var cur = _clickBusyItem ? String(_clickBusyItem.label || '?') : null;
+      if (_holdingPause) { _lastQueueProgressAt = Date.now(); _lastBusyLabel = null; return; }
       if (!_clickBusyItem) { _lastQueueProgressAt = Date.now(); _lastBusyLabel = null; return; }
       if (cur !== _lastBusyLabel) { _lastBusyLabel = cur; _lastQueueProgressAt = Date.now(); return; }
       if (Date.now() - _lastQueueProgressAt < 20000) return;
@@ -1490,7 +1538,7 @@
           try { closeBtn.click(); console.log("[AX] モーダルを閉じました"); }
           catch (err) { console.error("[AX] _doReset: モーダル閉じで例外（続行）", err); }
         }, 200, 400);
-        closeDelay = 320 + Math.floor(Math.random() * 200);
+        closeDelay = _ln(520, 0.4, 320, 950);
       }
 
       setTimeout(function() {
@@ -1556,7 +1604,7 @@
           if (_audit) _audit.reset_fail = 'フォームのクリアで例外: ' + String((err && err.message) || err).slice(0, 120);
         }
         _auditStepP('reset', null);
-        setTimeout(callback, 240 + Math.floor(Math.random() * 150)); // 短い安定待機のみ（ランダム）
+        // 2026-11-10 v2.6.12 竹内さん「細部まで徹底した動き」: リセット後に「条件が消えたのを見届ける」間（人が画面を見る）`r`n        setTimeout(callback, _ln(650, 0.4, 380, 1300));
         }); // whenClickQueueIdle end
       }, closeDelay);
 

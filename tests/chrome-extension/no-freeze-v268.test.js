@@ -19,7 +19,7 @@ console.log("■ ① 処理中の1件も「忙しい」");
 ok("_clickBusyItem を宣言", /var _clickBusyItem = null;/.test(ps));
 ok("列から取り出したら処理中にする", /var item = _clickQueue\.shift\(\);\s*_clickBusyItem = item;/.test(ps));
 ok("終わったら処理中を消す", /_clickBusyItem = null;\s*_clickQueueTimer = null;\s*_scheduleClickDrain\(\);/.test(ps));
-ok("isClickQueueBusy が処理中も数える", /return _clickQueueTimer !== null \|\| _clickQueue\.length > 0 \|\| !!_clickBusyItem;/.test(ps));
+ok("isClickQueueBusy が処理中も数える", /return _clickQueueTimer !== null \|\| _clickQueue\.length > 0 \|\| !!_clickBusyItem \|\| _holdingPause;/.test(ps));
 ok("迷いの漂いの間でも列を二重に起こさない", /if \(_clickQueueTimer \|\| _clickBusyItem \|\| !_clickQueue\.length\) return;/.test(ps));
 
 console.log("\n■ ② 安全弁（20秒進まない時に強制）");

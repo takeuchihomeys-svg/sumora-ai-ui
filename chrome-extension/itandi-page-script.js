@@ -128,7 +128,7 @@
     var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
     var click = function () {
       try { if (P && P.tap) P.tap(); } catch (_) {}
-      try { if (el.isConnected && !el.checked) e_humanClick(l); } catch (_) {}
+      try { if (el.isConnected && !el.checked) el.click(); } catch (_) {}
     };
     if (!P || !P.moveToEl) { click(); return Promise.resolve(false); }
     return _pointerMoveTo(el).then(function () { click(); return true; }, function () { click(); return true; });
@@ -151,8 +151,8 @@
     var click = function () {
       try { if (P && P.tap) P.tap(); } catch (_) {}
       try {
-        if (o.forceUnchecked) { if (el.isConnected && !el.checked) e_humanClick(l); }
-        else if (el.isConnected !== false) e_humanClick(l);
+        if (o.forceUnchecked) { if (el.isConnected && !el.checked) el.click(); }
+        else if (el.isConnected !== false) el.click();
       } catch (_) {}
     };
     var afterMove = function () {
@@ -357,7 +357,7 @@
           if (i === 0 && el.focus) el.focus();
         });
       },
-      click: function (el) { e_humanClick(l); },
+      click: function (el) { el.click(); },
       // ⚠ Escape で閉じない（178行目）。欄を離れて閉じる
       blur: function (el) { if (el.blur) el.blur(); },
       options: function (el) {
@@ -1260,7 +1260,7 @@
       if (skiLabel) {
         var skiInp = skiLabel.querySelector('input[type="checkbox"]');
         if (skiInp && !skiInp.checked) _humanClick(skiInp, { forceUnchecked: true });
-        else if (!skiInp) skiLabe_humanClick(l);
+        else if (!skiInp) _humanClick(skiLabel);
         console.log('[AX] 敷金・礼金なし チェック完了(itandi)');
       }
     }
@@ -1424,7 +1424,7 @@
       var ok = [].slice.call(dlg.querySelectorAll("button")).filter(isVis).find(function (b) { return /^(削除する|削除|OK|はい|実行)$/.test(norm(b.textContent)); });
       if (ok) { _humanClick(ok); return; }
       var cl = dlg.querySelector('button[aria-label="閉じる"], button[aria-label="close"], button[aria-label="Close"]');
-      if (cl) c_humanClick(l);
+      if (cl) _humanClick(cl);
     } catch (e) {}
   }
   // 読み戻し（純関数 leftovers に渡す形）
@@ -1485,7 +1485,7 @@
     });
     // ② チェックを外す（label の中の input を押す＝React に届く）
     st.checks.forEach(function (c) {
-      queue.push(function () { if (c.el && c.el.checked) { c.e_humanClick(l); ops.push("check:" + (c.name || c.label)); } });
+      queue.push(function () { if (c.el && c.el.checked) { _humanClick(c.el); ops.push("check:" + (c.name || c.label)); } });
     });
     // ③ チップを1つずつ外す（外すたびに並びが変わるので、押す時に読み直して先頭を外す）
     FG.FILTER_ROWS.forEach(function (r) {
