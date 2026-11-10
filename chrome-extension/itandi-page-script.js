@@ -64,7 +64,16 @@
     if (!el || el.checked) return;
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
     var wait = H && H.logNormalDelay ? H.logNormalDelay(200, 0.32) : (120 + Math.floor(Math.random() * 200));
-    if (Math.random() < 0.08) wait += 300 + Math.floor(Math.random() * 400); // たまに「条件を見直す」一息
+    // 2026-11-10 v2.5.99 竹内さん「ボタン選択する際人間ならたまにまよう」:
+    //   チェックを入れる所は人が迷いやすい。15%（±25%）で迷い、長さは3段（一瞬 250〜600／考え込む 700〜1600／かなり 1800〜4500）
+    if (Math.random() < 0.15 * (0.75 + Math.random() * 0.5)) {
+      var _hr = Math.random();
+      wait += _hr < 0.65 ? 250 + Math.floor(Math.random() * 350)
+            : _hr < 0.95 ? 700 + Math.floor(Math.random() * 900)
+            : 1800 + Math.floor(Math.random() * 2700);
+    } else if (Math.random() < 0.08) {
+      wait += 300 + Math.floor(Math.random() * 400); // たまに「条件を見直す」一息
+    }
     _tickBusy++;
     // 押す直前に、画面に入れてから押す（人が目で探す形）
     // 2026-11-10 v2.5.96 竹内さん「画面無駄に上下しまくりすぎている・時間もはやすぎる」:

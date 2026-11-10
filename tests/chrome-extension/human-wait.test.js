@@ -327,7 +327,7 @@ console.log("\n■ ⑧ 1件ずつ（2026-11-10 竹内「まとめてチェック
   ok("ITANDI の一覧: 送付済みを外す選別はその場で（送り漏れ・送りすぎを防ぐ）", /_toUncheck\.forEach\(function \(t\) \{ try \{ t\.cb\.checked = false; \} catch \(_\) \{\} checkedKeys\.delete\(t\.rowKey\); \}\);/.test(ib));
 
   const ips = read("itandi-page-script.js");
-  ok("ITANDI の条件: tick は1件ずつ（人の間）", /function tick\(el\) \{[\s\S]{0,400}_tickBusy\+\+/.test(ips));
+  ok("ITANDI の条件: tick は1件ずつ（人の間）", /function tick\(el\) \{[\s\S]{0,900}_tickBusy\+\+/.test(ips));
   ok("ITANDI の条件: 検索を押す前に全部のチェックが済むのを待つ（_whenTickIdle）", /_whenTickIdle\(function \(\) \{ try \{/.test(ips));
   ok("ITANDI の条件: 待つ間隔は固定でない（_pd）", /_whenTickIdle\(cb\)\) ?, _pd\(120\)/.test(ips.replace(/\s+/g, " ")) || /_whenTickIdle\(cb\); \}, _pd\(120\)\);/.test(ips));
 

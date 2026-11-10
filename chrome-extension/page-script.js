@@ -309,12 +309,47 @@
     _clickQueue.push({ el: null, fn: fn, gap: humanRand(minGap || 80, maxGap || 200), label: label || 'action' });
     _scheduleClickDrain();
   }
+  // 2026-11-10 人間的な動き: 「迷い」ポーズ（人が押す前に一瞬止まる）。
+  // 2026-11-10 v2.5.99 竹内さん「ボタン選択する際人間ならたまにまよう」:
+  //   人が迷うのは「迷う余地がある所」＝**選ぶ系（チェック・ラジオ・選択肢）**。送信・検索のような決定のボタンは迷わない。
+  //   旧は全部 8%（±25%）で 300〜700ms 固定幅。新は:
+  //     ・選ぶ系（label・checkbox・radio・select）は **12〜20%**、決定系（button・submit）は **3%**、その他 8%
+  //     ・迷う長さも**3段**（一瞬 250〜600ms 65%／少し考え込む 700〜1600ms 30%／かなり迷う 1800〜4500ms 5%）
+  //     ・同じ種類の操作が続いた時は少し迷いやすい（人が同じ欄を何度も見る形）＝直前の迷いから 5秒以内なら確率 +4pt
+  //   確率も長さも毎回抽選で、等間隔にならない。
+  var _lastHesitateAt = 0;
+  function _hesitateKindOf(el) {
+    try {
+      if (!el) return "other";
+      var tag = String(el.tagName || "").toUpperCase();
+      var type = String((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+      if (tag === "SELECT" || tag === "LABEL") return "choose";
+      if (tag === "INPUT" && (type === "checkbox" || type === "radio")) return "choose";
+      if (tag === "BUTTON" || type === "submit" || type === "button") return "decide";
+      if (tag === "A" || tag === "DIV" || tag === "SPAN") return "other";
+      return "other";
+    } catch (_) { return "other"; }
+  }
+  /** 押す前に迷う時間（0＝迷わない） */
+  function _hesitateMs(el) {
+    var kind = _hesitateKindOf(el);
+    var base = kind === "choose" ? 0.15 : (kind === "decide" ? 0.03 : 0.08);
+    // 直前（5秒以内）に迷っていたら少し迷いやすい（同じ所を見直している形）
+    var boost = (Date.now() - _lastHesitateAt < 5000) ? 0.04 : 0;
+    var p = (base + boost) * (0.8 + Math.random() * 0.45); // ±20〜25% で揺らす
+    if (Math.random() >= p) return 0;
+    _lastHesitateAt = Date.now();
+    var r = Math.random();
+    if (r < 0.65) return 250 + Math.floor(Math.random() * 350);   // 一瞬
+    if (r < 0.95) return 700 + Math.floor(Math.random() * 900);   // 少し考え込む
+    return 1800 + Math.floor(Math.random() * 2700);               // かなり迷う
+  }
   function _scheduleClickDrain() {
     if (_clickQueueTimer || !_clickQueue.length) return;
     var item = _clickQueue.shift();
-    // 2026-11-10 人間的な動き: 「迷い」ポーズを一様の8%から、毎回ちがう確率（前後±25%）にする
-    var hesitate = (Math.random() < (0.08 * (0.75 + Math.random() * 0.5))) ? humanRand(300, 700) : 0;
+    var hesitate = _hesitateMs(item.el);
     var _planned = item.gap + hesitate, _setAt = Date.now();
+    if (hesitate > 0) { try { _tmarkHesitate(item.label, hesitate); } catch (_) {} }
     _clickQueueTimer = setTimeout(function() {
       _clickQueueTimer = null;
       _auditOp(item.label, _planned, Date.now() - _setAt);
@@ -507,6 +542,16 @@
     if (late > 1000) _audit.late_over_1s++;
     _audit.ops.push({ t: Date.now() - _fillStartedAt, k: String(label || '').slice(0, 40), p: planned, w: waited, by: 'auto' });
     if (_audit.ops.length > 80) _audit.ops.shift();
+  }
+  // 2026-11-10 v2.5.99 竹内さん「ボタン選択する際人間ならたまにまよう」:
+  //   迷った操作を点検に残す（数と合計・どこで迷ったか）。あとで人の回と比べる材料になる
+  function _tmarkHesitate(label, ms) {
+    if (!_audit) return;
+    _audit.hesitate_n = (_audit.hesitate_n || 0) + 1;
+    _audit.hesitate_ms = (_audit.hesitate_ms || 0) + ms;
+    if (!_audit.hesitate_last || _audit.hesitate_last.length < 8) {
+      (_audit.hesitate_last = _audit.hesitate_last || []).push({ k: String(label || '').slice(0, 30), ms: ms });
+    }
   }
   // ── 2026-11-10 竹内「この画面の見張りの部分もちゃんと人間が動いているか確認もできるように」──
   //   拡張が出す操作（isTrusted=false）と、人が本当に押した操作（isTrusted=true）を区別して数える（human-trace.js の共通部品）。

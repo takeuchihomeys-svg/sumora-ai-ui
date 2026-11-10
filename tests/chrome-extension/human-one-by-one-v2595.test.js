@@ -25,7 +25,7 @@ ok("ITANDI: 同じ形の1件ずつ（_humanCheckAll）", /function _humanCheckAl
 
 console.log("\n■ ② 間は対数正規・たまに一息");
 ok("リアプロ: 押す間に対数正規を使う", /_humanCheckAll[\s\S]{0,800}logNormalDelay/.test(bd));
-ok("リアプロ: 8%ほどで一息（400〜1100ms）", /Math\.random\(\) < 0\.08\) wait \+= 400 \+ Math\.floor\(Math\.random\(\) \* (700|600)/.test(bd + ib));
+ok("リアプロ: たまに一息・迷う（8%/15% の抽選）", /Math\.random\(\) < 0\.08\) wait \+= 400 \+ Math\.floor\(Math\.random\(\) \* (700|600)/.test(bd + ib) || /Math\.random\(\) < 0\.15 \* \(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(bd + ib));
 // 対数正規そのもの: 同じ中央値でも毎回違う・偏る（等間隔でない）
 (() => {
   const xs = Array.from({ length: 300 }, () => H.logNormalDelay(220, 0.32));

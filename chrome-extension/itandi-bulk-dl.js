@@ -1234,8 +1234,16 @@
         cb.click();
       } catch (_) {}
       // 押す間 120〜320ms（対数正規・右に裾）。8%ほどで「一覧を目で追う」500〜1100ms をはさむ
+      // 2026-11-10 v2.5.99 竹内さん「ボタン選択する際人間ならたまにまよう」: 送る部屋を選ぶ所は 15% で迷う（3段）
       var wait = H && H.logNormalDelay ? H.logNormalDelay(200, 0.32) : (120 + Math.floor(Math.random() * 200));
-      if (Math.random() < 0.08) wait += 400 + Math.floor(Math.random() * 600);
+      if (Math.random() < 0.15 * (0.75 + Math.random() * 0.5)) {
+        var _hr = Math.random();
+        wait += _hr < 0.65 ? 250 + Math.floor(Math.random() * 350)
+              : _hr < 0.95 ? 700 + Math.floor(Math.random() * 900)
+              : 1800 + Math.floor(Math.random() * 2700);
+      } else if (Math.random() < 0.08) {
+        wait += 400 + Math.floor(Math.random() * 600);
+      }
       setTimeout(step, wait);
     }
     step();
