@@ -72,6 +72,14 @@ const PROPERTY_IMAGE_RE = /【物件の(?:写真|画面|資料|間取り図)|物
 const SHORT_ACK_RE = /ありがと|よろしく|宜しく|お願い(?:します|致します|いたします)|かしこまり|了解|承知|わかりました|分かりました|すみません|申し訳|大丈夫です/;
 const ASK_RE = /[?？]|ですか|ますか|でしょうか|ありますか/;
 
+const PRE_APPLY_INTENT_RE = /申し?込み?(?:を)?(?:したい|させて(?:頂|いただ)きたい|させてもら(?:い|え)たい|たい|希望)|申し込みます|申込みます/;
+const POST_APPLY_EVIDENCE_RE = /書類|申込(?:書|フォーム|フォーマット)|審査(?:の)?(?:結果|中|通|落|否決|承認|OK)|否決|承認|保証会社|契約|本人確認|免許|マイナンバー|住民票|入金|振込|鍵(?:の)?(?:受け取|引き渡)|記入|追加します/;
+/** 申込の意思を言っただけ（申込の書類・審査の結果・契約の話が無い）＝申込の手前 */
+export function isPreApplyIntentOnly(text: string | null | undefined): boolean {
+  const s = String(text ?? "").normalize("NFKC");
+  return PRE_APPLY_INTENT_RE.test(s) && !POST_APPLY_EVIDENCE_RE.test(s);
+}
+
 /** TPO で決まらない時、お客様の文から場面を引く（見張り専用）。決まらなければ null */
 export function watchSceneFromCustomer(text: string | null | undefined): string | null {
   const s = String(text ?? "").normalize("NFKC").trim();
@@ -122,7 +130,11 @@ export function sceneKeyOf(i: SceneInput): SceneKey {
   if (i.watchScenes && watchSceneV2Enabled()) {
     //   順番: 申込以降（TPO）→ お客様の文の「持ち込み物件」「内覧調整（時刻の了承）」→ TPO → お客様の文の残り
     //   （実物: TPO「提案後の懸念」でも URL を3件送ってきた番はスタッフが募集状況の確認＝持ち込み物件・TPO「確認結果報告後」でも「16:30大丈夫」は内覧の時刻の了承）
-    const fromTpo = watchSceneFromTpo(i.tpoLabel), fromCust = watchSceneFromCustomer(i.customerText);
+    let fromTpo = watchSceneFromTpo(i.tpoLabel);
+    const fromCust = watchSceneFromCustomer(i.customerText);
+    // 2026-11-11 統括役（竹内さんの決まり「申込以降は対象外・申込の意思を言った番までは対象」）: TPO が申込後説明でも、
+    //   お客様の文が「申し込みたい」の手前の言葉だけ（申込の書類・審査の結果などが無い）なら対象に残す（実物 10199）
+    if (fromTpo === "申込以降" && isPreApplyIntentOnly(i.customerText)) fromTpo = null;
     //   TPO「確認結果報告後・前向き反応」でもお客様の文が短い礼だけ（「調べて頂きありがとうございます」）は短い了承・お礼
     const ws = fromTpo === "申込以降" ? fromTpo
       : (fromCust === "持ち込み物件" || fromCust === "内覧調整") ? fromCust

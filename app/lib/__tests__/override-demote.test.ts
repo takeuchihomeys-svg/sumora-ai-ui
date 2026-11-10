@@ -57,5 +57,15 @@ t("確認・見積の約束・返信・about 無しは false", !brainContractPro
   && !brainContractPromisesPickup({ asks: [{ route: "reply", about: "search_condition", answer: "ピックアップします" }] }, {})
   && !brainContractPromisesPickup({ asks: [{ route: "promise", answer: "ピックアップします" }] }, {}));
 t("BRAIN_PROMISE_PICKUP=off で false", !brainContractPromisesPickup({ asks: [{ route: "promise", about: "search_condition", answer: "ピックアップします" }] }, { BRAIN_PROMISE_PICKUP: "off" }));
+// 2026-11-10 弱い所 q367（BRAIN_PROMISE_PICKUP_WIDE・既定 off）: 試験の答案の実物の答え
+const q367 = { asks: [{ route: "promise", about: "search_condition", answer: "以前の条件で新着を検索し、お送りする" }] };
+const q116 = { asks: [{ route: "promise", about: "search_condition", answer: "追加条件で新着が出次第お送りする" }] };
+t("q367 既定（off）は今まで通り false", !brainContractPromisesPickup(q367, {}) && !brainContractPromisesPickup(q116, {}));
+t("q367 WIDE=on で true（検索・新着…お送り）", brainContractPromisesPickup(q367, { BRAIN_PROMISE_PICKUP_WIDE: "on" }) && brainContractPromisesPickup(q116, { BRAIN_PROMISE_PICKUP_WIDE: "on" }));
+t("WIDE=on でも見積・確認・資料・route=reply・about 無しは false", !brainContractPromisesPickup({ asks: [{ route: "promise", about: "search_condition", answer: "再検索して空室を確認する" }] }, { BRAIN_PROMISE_PICKUP_WIDE: "on" })
+  && !brainContractPromisesPickup({ asks: [{ route: "promise", about: "reaction_to_sent", answer: "新着の御見積書をお送りする" }] }, { BRAIN_PROMISE_PICKUP_WIDE: "on" })
+  && !brainContractPromisesPickup({ asks: [{ route: "reply", about: "search_condition", answer: "新着が出次第お送りする" }] }, { BRAIN_PROMISE_PICKUP_WIDE: "on" })
+  && !brainContractPromisesPickup({ asks: [{ route: "promise", answer: "再検索してお送りする" }] }, { BRAIN_PROMISE_PICKUP_WIDE: "on" }));
+t("WIDE=on でも BRAIN_PROMISE_PICKUP=off が先", !brainContractPromisesPickup(q367, { BRAIN_PROMISE_PICKUP: "off", BRAIN_PROMISE_PICKUP_WIDE: "on" }));
 console.log(`\n${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);
