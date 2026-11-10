@@ -3783,6 +3783,21 @@ ${history}`;
     priorityPulledText = renderPulledBlock(sceneNow, pulled.rows, sit);
     priorityPulled = { kb: pulled.rows.map((r) => r.id.slice(0, 8)), scene: sceneNow, sit, chars: priorityPulledText.length, ms: pulled.ms, ...(pulled.err ? { err: pulled.err } : {}) };
     logWatchMaterial(JSON.stringify({ tag: "brain:priority-pulled", conversationId, ...priorityPulled })); // 2026-10-28 E: 引いた設計知見の id を見張りの行にも控える（ログは今まで通り出る）
+    // 2026-11-11 作業員9（KB cc284695・60931c54 竹内さんの土台・統括役の段取り）: BRAIN_OWNER_BOOK=on（既定 off）の時だけ、竹内さんの考え方の本（決まり＋なぜ＋しない）を
+    //   場面の札・お客様の文との近さ・状況の印（物件を指すか・もう送ったか・約束済みか）で最大3枚引いて同じブロックの後ろに足す。2.5秒まで・無ければ足さない
+    try {
+      const { ownerBookBrainOn } = await import("@/app/lib/owner-thinking-book");
+      if (ownerBookBrainOn(sceneNow)) {
+        const { ownerBookForTurn } = await import("@/app/lib/owner-thinking-book-server");
+        const lastStaffForBook = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim())?.text ?? null;
+        const ob = await Promise.race([
+          ownerBookForTurn(supabase, { scene: sceneNow, customerTurn: unrepliedTurn.text ?? "", lastStaff: lastStaffForBook, sentProps: sentProps.length, promise: !!promiseBrainText.trim() }),
+          new Promise<null>((r) => setTimeout(() => r(null), 2_500)),
+        ]);
+        if (ob?.block) priorityPulledText = priorityPulledText ? `${priorityPulledText}\n\n${ob.block}` : ob.block;
+        logWatchMaterial(JSON.stringify({ tag: "brain:owner-book", conversationId, scene: sceneNow, cards: ob?.cards.map((c) => c.id8) ?? [], marks: ob?.marks ?? null, ms: ob?.ms ?? null, timeout: ob === null, ...(ob?.err ? { err: ob.err } : {}) }));
+      }
+    } catch (e) { console.warn("[brain-core] owner-book skipped:", e instanceof Error ? e.message : String(e)); }
   }
   const sceneBlockText = cacheOrderOn ? maskBrain(`${aixCatalogText}${actionRulesText}`) : "";
   const withScene = <T extends { type: "text"; text: string }>(uc: T[]) => (cacheOrderOn ? withSceneBlock(uc as never, sceneBlockText, sys.blocks.length) : uc);
