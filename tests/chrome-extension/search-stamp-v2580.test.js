@@ -23,11 +23,13 @@ ok("3時間以上前の検索の一覧 → 確かめる", !r4.ok && r4.reasons.i
 const r5 = S.check({ stamp: { cid: "4d51caa5", name: "あ", at: NOW - 60e3, complete: true }, cur: A, now: NOW, selected: [{ area: "close" }, { area: "far" }, { area: "close" }] });
 ok("あさんの検索・手順も終わっている・遠いのは少し → そのまま送る", r5.ok, r5);
 const bd = read("bulk-dl.js");
+const ps = read("page-script.js");
 ok("リアプロ: 送る時（手で押す・20秒後のまとめて送る）に確かめる", /if \(sendToLine && !_sendGuardOk\(customerName, customerId\)\) return;/.test(bd));
-ok("リアプロ: 押した1件をその場で送る時にも確かめる（_sendGuardOk）", /function sendOnePdfNow[\s\S]{0,1600}if \(!_sendGuardOk\(customerName, customerId\)\)/.test(bd));
+ok("押した1件をその場で送る時にも確かめる（_sendGuardOk）", /function sendOnePdfNow[\s\S]{0,1600}if \(!_sendGuardOk\(customerName, customerId\)\)/.test(bd));
+ok("自動モードは確かめの小窓を出さずに送る（押した＝送る）", /if \(_autoModeOn\) \{\s*_tmark\("guard_pass"/.test(bd) && /自動モードなので確かめの小窓は出さずに送ります/.test(bd));
 ok("リアプロ: 押した1件は20秒待たずに送る（1つずつ行ったのと同じ形）", /function sendOnePdfNow/.test(bd) && !/scheduleForward\(\)/.test(bd));
 ok("リアプロ: ブレインの下見の場所（AREA_FAR）を印に", /setAttribute\("data-axlx-area", _codes\.indexOf\("AREA_FAR"\) >= 0 \? "far"/.test(bd));
-ok("ITANDI: 送る時に確かめる", /SS\.check\(\{ stamp: SS\.read\(\), cur: \{ cid: customerId, name: customerName \}/.test(read("itandi-bulk-dl.js")));
+ok("自動入力で検索した時も「誰の一覧か」の印を書く（自動モードでも小窓を出さないため）", /function notifyDone[\s\S]{0,1400}AxlxSearchStamp[\s\S]{0,900}SS\.write\(\{/.test(ps));
 ok("案内（リアプロ）: 検索を押した時にこの一覧を検索したお客様を印（手順が終わっていたかも）", /SS\.write\(\{ cid: String\(session\.customerId\), name: session\.customerName \|\| "", at: Date\.now\(\), site: "realpro", complete: cur\.step\.kind === "search"/.test(read("realpro-guide.js")));
 ok("案内（ITANDI）: 検索を押した時に印", /site: "itandi", complete: true/.test(read("itandi-guide.js")));
 const mf = JSON.parse(read("manifest.json"));

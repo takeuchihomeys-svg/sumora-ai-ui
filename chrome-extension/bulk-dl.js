@@ -766,6 +766,14 @@
     var r = SS.check({ stamp: SS.read(), cur: { cid: customerId, name: customerName }, now: Date.now(), selected: sel });
     if (r.ok) return true;
     console.warn("[AXLX bulk-dl] 送る前の確かめ: " + r.reasons.join(","));
+    // 2026-11-10 竹内さん「押したらちゃんと送られるようになっているから、自動モードの場合押したらちゃんとそのまま売り上げ番長に送られるようにする」:
+    //   自動モード（ヘッダーの「自動」を選んでいる時＝_autoModeOn）は **小窓で止めない**（押した＝送る）。
+    //   止めるのは人が1件ずつ確かめたい時（自動モードでない時）だけ。理由は点検とコンソールに残す（黙って送らない・黙って止めない）。
+    if (_autoModeOn) {
+      _tmark("guard_pass", "auto:" + r.reasons.join(",").slice(0, 60));
+      console.log("[AXLX bulk-dl] 自動モードなので確かめの小窓は出さずに送ります（" + r.reasons.join(",") + "）");
+      return true;
+    }
     if (_autoForwarding) {
       var lb = document.getElementById("axlx-line-btn");
       if (lb) lb.textContent = "⚠ 確かめが要ります（押して確かめてから送る）";

@@ -28,7 +28,7 @@ console.log("\n■ 検索を押す前の関所（page-script.js）");
   })());
   ok("お客様ごとに材料を置き直す（fillRealpro の最初で消す）", /_axExpect = null; _axGateRetried = false;/.test(ps));
   ok("画面でチェックの付いた間取りを数える", /input\[name="room_layout_id\[\]"\]:checked/.test(ps));
-  ok("notifyDone が gate を載せる", /function notifyDone\(errMsg, gate\)[\s\S]{0,500}if \(gate\) msg\.gate = true;/.test(ps));
+  ok("notifyDone が gate を載せる", /function notifyDone\(errMsg, gate\)[\s\S]{0,2000}if \(gate\) msg\.gate = true;/.test(ps));
   ok("全角の間取り（２K）を半角にそろえてから読む", /var fpStr = String\(cond\.floor_plan\)\.replace\(\/\[Ａ-Ｚａ-ｚ０-９\]\/g/.test(ps));
 }
 
@@ -46,7 +46,7 @@ console.log("\n■ popup: 一覧に居ないお客様は取り直してから探
   ok("見つからなければ loadCustomers(true) で取り直してもう1回探す", /if \(!c && d\.customerId\) \{[\s\S]{0,200}await loadCustomers\(true\)/.test(fn));
   ok("取り直しても居なければ customer-not-found", /reason: "customer-not-found"/.test(fn));
   const mf = JSON.parse(read("manifest.json"));
-  ok("manifest の版 2.5.64", mf.version === "2.6.24");
+  ok("manifest の版 2.5.64", mf.version === "2.6.25");
 }
 
 console.log("\n■ v2.5.58 ITANDI の広げて検索は築年数も＋5年（リアプロと同じ）");

@@ -833,6 +833,8 @@
   var _watchdogTimer = null;
   // 2026-09-18 竹内（一括検索の混線）: この自動入力を始めた時の顧客 ID。notifyDone がそのまま返す
   var _fillCustomerId = null;
+  // 2026-11-10 自動入力の検索の印（axlx_search_for）を書く時に使う、この回の検索の条件（notifyDone まで持つ）
+  var _fillCondForStamp = null;
 
   // ── 検索の点検（2026-09-25 竹内「検索がちゃんとされていなかったら原因を見つけられるようにする」）──
   // popup が conditions._audit_run_id を載せた時（＝ブレインの時）だけ、この入力で「押せた・押せなかった駅」「路線」「部品」
@@ -990,6 +992,25 @@
     if (_doneNotified) return;
     _doneNotified = true;
     if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
+    /**
+     * 2026-11-10 竹内さん「押したらちゃんと送られるようになっているから、自動モードの場合押したらちゃんとそのまま売り上げ番長に送られるようにする」:
+     *   自動モードは案内（realpro-guide.js）が OFF なので「この一覧は誰の検索か」の印（axlx_search_for）が書かれず、
+     *   印刷用PDF を押すたびに「違うお客様の物件では？」の小窓が出て止まっていた。
+     *   自動入力で検索を押せた時も、ここで印を書く（＝拡張がその人の条件で検索した一覧）。門で止めた時（gate）は書かない。
+     */
+    try {
+      var SS = (typeof self !== 'undefined' ? self : window).AxlxSearchStamp;
+      if (SS && _fillCustomerId && !gate && !errMsg) {
+        var prev = SS.read ? SS.read() : null;
+        if (!prev || String(prev.cid) !== String(_fillCustomerId) || Date.now() - Number(prev.at || 0) > 60 * 1000) {
+          SS.write({
+            cid: String(_fillCustomerId), name: '', at: Date.now(), site: 'realpro', complete: true,
+            intended: _fillCondForStamp && SS.compactIntended ? SS.compactIntended(_fillCondForStamp) : null, filled: null,
+          });
+          console.log('[AX] 自動入力の検索の印を書きました（この一覧は誰の検索か）:', String(_fillCustomerId).slice(0, 8));
+        }
+      }
+    } catch (_) { /* 印が書けなくても今まで通り */ }
     var msg = { from: 'aixlinx-fill-done' };
     // v2.5.50 検索を押す前の関所で止めた（検索していない）＝この合図で物件を取りに行かせない
     if (gate) msg.gate = true;
@@ -1762,6 +1783,7 @@
     _auditStepP('vis', document.visibilityState);
     // 2026-09-27 v2.5.32 入力を始めた合図（content.js → background）。一括検索はこれが来なければタブを読み直して1回だけやり直す
     try { window.postMessage({ from: 'aixlinx-fill-started', customerId: _fillCustomerId || null, runId: _fillRunId || null }, '*'); } catch (_) {}
+    _fillCondForStamp = cond || null; // 2026-11-10 検索の印（誰の一覧か）を notifyDone で書く時に使う
     if (!cond) { notifyDone(); return; }
 
     // 連続検索対応: モーダルを閉じる → フォームを手動クリア → 条件入力 の順で実行

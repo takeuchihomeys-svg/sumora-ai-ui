@@ -286,6 +286,9 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
 
 // 修正4+CRITICAL1: page-script.js の検索実行完了シグナル（aixlinx-fill-done）を background.js へ中継する
 // customerId を含めることで、別顧客のウェイターを誤解決するバグを防止する
+// 2026-11-10 竹内さん「自動モードの場合押したらちゃんとそのまま売り上げ番長に送られるようにする」:
+//   「この一覧は誰の検索か」の印（axlx_search_for）は page-script.js（ページ側）が書く。
+//   ここは content script（分離した world）なので AxlxSearchStamp を直接は持たない（読める時だけ書く）。
 window.addEventListener("message", function (e) {
   if (e.source !== window || !e.data || e.data.from !== "aixlinx-fill-done") return;
   try {
