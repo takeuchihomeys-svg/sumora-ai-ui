@@ -6,8 +6,8 @@ let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) pass++; else { fail++; console.log(`  NG  ${name}`, extra); } };
 const on = { BRAIN_MATERIAL_SIDE_SHADOW: "on" };
 
-t("既定 off", !materialSideShadowOn({}) && materialSideShadowOn(on));
-const off = brainDecisionDigestExtra({ material_missing: ["シェモワアサヒの募集状況", "送れる物件の候補"] }, {}) as Record<string, unknown>;
+t("既定 on（11/11）・=off で止まる", materialSideShadowOn({}) && !materialSideShadowOn({ BRAIN_MATERIAL_SIDE_SHADOW: "off" }));
+const off = brainDecisionDigestExtra({ material_missing: ["シェモワアサヒの募集状況", "送れる物件の候補"] }, { BRAIN_MATERIAL_SIDE_SHADOW: "off" }) as Record<string, unknown>;
 t("off: mm だけ（ms・mss は付けない）", Array.isArray(off.mm) && off.ms === undefined && off.mss === undefined, off);
 const a = brainDecisionDigestExtra({ material_missing: ["シェモワアサヒの募集状況", "送れる物件の候補", "見積の金額"] }, on) as Record<string, unknown>;
 t("on: 鍵の一覧（重なりなし）と staff の印", JSON.stringify(a.ms) === JSON.stringify(["vacancy_status", "sendable_candidates", "estimate_amount"]) && a.mss === true, a);
