@@ -1462,27 +1462,69 @@
    */
   function ensureRealproSearchPage(cond, done) {
     var hasForm = function () {
-      return !!(document.querySelector('select[name="rental_cost2"]') ||
-                document.querySelector('input[name="city_code[]"]') ||
-                document.querySelector('select[name="update_date"]') ||
-                document.querySelector('div.go_search'));
+      // 2026-11-10 v2.6.16: 検索の画面かどうかの判定。
+      //   確実な印: 家賃の欄（rental_cost2）・エリアの欄（city_code[]）・検索のボタン（go_search）
+      //   補助の印: 「所在地絞り込み」「沿線・駅絞り込み」の文字（ホームには出ない）
+      //   → **確実な印1つ**、または補助の印2つで「検索の画面」とみなす
+      var sure = 0, aux = 0;
+      try {
+        if (document.querySelector('select[name="rental_cost2"]')) sure += 1;
+        if (document.querySelector('input[name="city_code[]"]')) sure += 1;
+        if (document.querySelector('div.go_search, div.go_search_submit')) sure += 1;
+        if (document.querySelector('select[name="update_date"]')) sure += 1;
+        var txt = document.body ? String(document.body.textContent || '') : '';
+        if (txt.indexOf('所在地絞り込み') >= 0) aux += 1;
+        if (txt.indexOf('沿線・駅絞り込み') >= 0) aux += 1;
+        if (txt.indexOf('管理会社絞り込み') >= 0) aux += 1;
+      } catch (_) {}
+      return sure >= 1 || aux >= 2;
     };
     if (hasForm()) { done(true); return; }
+    /**
+     * 2026-11-10 v2.6.16 竹内さん（画像で指定）「この住居の住居検索ボタンから2枚目の物件一覧にうつる」:
+     *   左の細い縦のメニュー（トップページ・住居検索・店舗・事務所…）の**2番目「住居検索」**。
+     *   文字は「住居検索」または「住居」。アイコンだけの時もあるので、次の順で探す:
+     *     ① 文字が「住居検索」に一致（一番内側）
+     *     ② 文字が「住居」に一致
+     *     ③ 左端（x が小さい）の「住居」を含むリンク
+     *   押すのは人の形（カーソルが動いてから押す）。
+     */
     var findHomeBtn = function () {
-      // 左上の「住居」（検索の入口）。a/div/span/button の文字が完全一致の物を、見えている順に
-      var els = Array.prototype.slice.call(document.querySelectorAll('a,div,span,button,li,td'));
-      var cands = els.filter(function (e) {
-        if (!isVisible(e)) return false;
-        var t = norm(e.textContent || '');
-        return t === '住居' || t === '住居検索' || t === '住居（賃貸）' || t === '賃貸';
+      var all = Array.prototype.slice.call(document.querySelectorAll('a,div,span,button,li,td'));
+      var vis = all.filter(function (e) { try { return isVisible(e); } catch (_) { return false; } });
+      var inner = function (e) {
+        return !Array.prototype.some.call(e.children || [], function (c) {
+          return norm(c.textContent || '') === norm(e.textContent || '');
+        });
+      };
+      var exact = function (want) {
+        return vis.filter(function (e) { return norm(e.textContent || '') === want && inner(e); })[0] || null;
+      };
+      var b = exact('住居検索') || exact('住居') || exact('住居（賃貸）') || exact('賃貸');
+      if (b) return b;
+      // ③ 左端のメニュー（x が 220px より左）で「住居」を含む物
+      var left = vis.filter(function (e) {
+        try {
+          var r = e.getBoundingClientRect();
+          if (!r || r.left > 220 || r.width > 160) return false;
+          var t = norm(e.textContent || '');
+          return t.indexOf('住居') === 0 && t.length <= 6;
+        } catch (_) { return false; }
       });
-      // 一番内側（子に同じ文字を持たない物）を選ぶ
-      cands = cands.filter(function (e) {
-        return !Array.prototype.some.call(e.children || [], function (c) { return norm(c.textContent || '') === norm(e.textContent || ''); });
-      });
-      return cands[0] || null;
+      return left[0] || null;
     };
     var tries = 0;
+    // 2026-11-10 v2.6.16: メニューの文字は「a」でなく「div/li/span」のこともある。押せる親をたどって押す
+    var clickable = function (el) {
+      var e = el;
+      for (var i = 0; e && i < 5; i++, e = e.parentElement) {
+        var tag = String(e.tagName || '').toUpperCase();
+        if (tag === 'A' || tag === 'BUTTON' || e.onclick || (e.getAttribute && e.getAttribute('role') === 'button')) return e;
+        // リンクの入れ物（li の onclick など）も拾う
+        if (tag === 'LI' && e.querySelector && e.querySelector('a')) return e.querySelector('a');
+      }
+      return el;
+    };
     var poll = function () {
       if (hasForm()) { done(true); return; }
       if (tries >= 40) {
@@ -1495,13 +1537,30 @@
       var btn = findHomeBtn();
       if (btn && !window.__axHomeBtnClicked) {
         window.__axHomeBtnClicked = true;
-        console.log('[AX] ホームの画面 → 左上の「住居」を押して物件検索へ移る');
-        _auditStepP('go_estate', String(btn.textContent || '').replace(/\s+/g, '').slice(0, 20));
+        var target = clickable(btn);
+        console.log('[AX] ホームの画面 → 左メニューの「住居検索」を押して物件検索へ移る');
+        _auditStepP('go_estate', (String(btn.textContent || '').replace(/\s+/g, '') || '(文字なし)').slice(0, 20) + ' / ' + String(target.tagName || '').toLowerCase());
         // 人の形（カーソルが動いてから押す）
         try {
           var P = window.AxlxPointerUi;
-          if (P && P.moveToEl) { P.ensure(); P.moveToEl(btn).then(function () { if (P.tap) P.tap(); btn.click(); }, function () { btn.click(); }); }
-          else btn.click();
+          var fire = function () {
+            // 押す手段を順に試す（リンクなら href 移動も）
+            try { target.click(); } catch (_) {}
+            if (target !== btn) { try { btn.click(); } catch (_) {} }
+            // それでも移らなければ href を直接開く（同じタブ）
+            setTimeout(function () {
+              try {
+                if (hasForm()) return;
+                var href = (target.getAttribute && target.getAttribute('href')) || (btn.closest && btn.closest('a') && btn.closest('a').getAttribute('href'));
+                if (href && href !== '#' && href.indexOf('javascript') !== 0) {
+                  console.log('[AX] 住居検索へ href で移る: ' + String(href).slice(0, 80));
+                  location.href = href;
+                }
+              } catch (_) {}
+            }, 2500);
+          };
+          if (P && P.moveToEl) { P.ensure(); P.moveToEl(target).then(function () { if (P.tap) P.tap(); fire(); }, fire); }
+          else fire();
         } catch (_) { try { btn.click(); } catch (__) {} }
       }
       setTimeout(poll, _pd(500));
@@ -1520,10 +1579,24 @@
     }
     window._axFillRunning = true;
     window._axStDiagDone = false; // 診断ログフラグをリセット（次回fill時に再診断できるようにする）
-    // 2026-11-10 v2.6.15 竹内さん「ここの画面で検索はできない。住居ボタンから物件検索にうつる」:
-    //   ホームの画面（検索の欄が無い）なら「住居」を押して検索の画面へ移り、**移ってから**入力する。
-    //   移れなければ fill-done(error) で止める（全件検索はしない）。移った後は自動で続きを実行する。
-    if (!document.querySelector('select[name="rental_cost2"]') && !document.querySelector('input[name="city_code[]"]') && !document.querySelector('div.go_search')) {
+    // 2026-11-10 v2.6.16 竹内さん（画像）「この住居の住居検索ボタンから2枚目の物件一覧にうつる」:
+    //   ホームの画面（左メニューの「住居検索」を押す前）なら、まず検索の画面へ移る。
+    //   判定は ensureRealproSearchPage と同じ（確実な印1つ or 補助の印2つ）。
+    var _isSearchPage = (function () {
+      var sure = 0, aux = 0;
+      try {
+        if (document.querySelector('select[name="rental_cost2"]')) sure += 1;
+        if (document.querySelector('input[name="city_code[]"]')) sure += 1;
+        if (document.querySelector('div.go_search, div.go_search_submit')) sure += 1;
+        if (document.querySelector('select[name="update_date"]')) sure += 1;
+        var txt = document.body ? String(document.body.textContent || '') : '';
+        if (txt.indexOf('所在地絞り込み') >= 0) aux += 1;
+        if (txt.indexOf('沿線・駅絞り込み') >= 0) aux += 1;
+        if (txt.indexOf('管理会社絞り込み') >= 0) aux += 1;
+      } catch (_) {}
+      return sure >= 1 || aux >= 2;
+    })();
+    if (!_isSearchPage) {
       // 「住居」を押すと**ページが移る**ので、この function の続きは走らない（ページが入れ替わる）。
       //   移った先で background がもう一度送ってくる（fill-done を返さずに待たせる）。
       ensureRealproSearchPage(cond, function (ok) {
@@ -1536,9 +1609,10 @@
       // ページが移らなかった場合に備えて、少し待ってからもう一度確かめる（移っていれば欄がある）
       setTimeout(function () {
         if (window._axFillRunning && document.body) {
-          var hasFormNow = !!(document.querySelector('select[name="rental_cost2"]') || document.querySelector('input[name="city_code[]"]') || document.querySelector('div.go_search'));
+          var hasFormNow = !!(document.querySelector('select[name="rental_cost2"]') || document.querySelector('input[name="city_code[]"]') || document.querySelector('div.go_search')) ||
+                           (String(document.body.textContent || '').indexOf('所在地絞り込み') >= 0);
           if (hasFormNow) {
-            console.log('[AX] 住居を押した後、同じページで検索の欄が出た → 入力を続ける');
+            console.log('[AX] 住居検索を押した後、同じページで検索の欄が出た → 入力を続ける');
             window._axFillRunning = false;
             fillRealpro(cond);
           }
