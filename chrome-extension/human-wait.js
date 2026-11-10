@@ -202,11 +202,49 @@
     return w.map(function (x) { return Math.max(8, Math.round(total * x / sum)); });
   }
 
+  // ── 2026-11-10 v2.5.98 竹内さん「人間なので休憩するときもある」──
+  //   人は連続で作業し続けない。決まった回数ごとではなく、**作業の続き具合で抽選**して休む。
+  //   ・短い休憩 … 12〜30秒（水分・伸び・画面から目を離す）。だいたい 20〜35分の作業ごとに 1回ほど
+  //   ・長い休憩 … 60〜180秒（昼休みの前後・一区切り）。だいたい 2〜3時間ごとに 1回ほど
+  //   ⚠ サイトへのアクセスは増えない（次の操作を待つだけ）。自動モードの勤務時間のゲート（9〜21時・12〜13時休憩）とは別物で、
+  //     その中で「人のように休む」ための物。抽選なので同じ間隔にならない（等間隔は機械らしい）。
+  var REST_SHORT_MS = 12000, REST_SHORT_MAX_MS = 30000;
+  var REST_LONG_MS = 60000, REST_LONG_MAX_MS = 180000;
+  /** 次の操作までに休むか（作業の経過時間から抽選）。workedSinceMs から今までの時間で確率が上がる */
+  function restDue(workedSinceMs, nowMs, rng) {
+    var s = Number(workedSinceMs) || 0;
+    var t = typeof nowMs === "number" ? nowMs : Date.now();
+    if (!s || t < s) return { rest: false, ms: 0, kind: null };
+    var mins = (t - s) / 60000;
+    // 長い休憩: 120分を超えたら 1回の判定で 18%（およそ 2〜3時間に1回）
+    if (mins >= 120 && _rand(rng) < 0.18) {
+      var longMs = Math.round(REST_LONG_MS + _rand(rng) * (REST_LONG_MAX_MS - REST_LONG_MS));
+      return { rest: true, ms: longMs, kind: "long" };
+    }
+    // 短い休憩: 20分を超えたら 1回の判定で 8%（およそ 20〜35分に1回）
+    if (mins >= 20 && _rand(rng) < 0.08) {
+      var shortMs = Math.round(REST_SHORT_MS + _rand(rng) * (REST_SHORT_MAX_MS - REST_SHORT_MS));
+      return { rest: true, ms: shortMs, kind: "short" };
+    }
+    return { rest: false, ms: 0, kind: null };
+  }
+
+  function restRange(kind) {
+    if (kind === "long") return { lo: REST_LONG_MS, hi: REST_LONG_MAX_MS };
+    return { lo: REST_SHORT_MS, hi: REST_SHORT_MAX_MS };
+  }
+
   return {
     PACER_BASE_MS: PACER_BASE_MS,
     PACER_BREAK_EVERY: PACER_BREAK_EVERY,
     PACER_BREAK_MS: PACER_BREAK_MS,
     PACER_SIGMA: PACER_SIGMA,
+    REST_SHORT_MS: REST_SHORT_MS,
+    REST_SHORT_MAX_MS: REST_SHORT_MAX_MS,
+    REST_LONG_MS: REST_LONG_MS,
+    REST_LONG_MAX_MS: REST_LONG_MAX_MS,
+    restDue: restDue,
+    restRange: restRange,
     logNormalDelay: logNormalDelay,
     createPacer: createPacer,
     pointerPath: pointerPath,

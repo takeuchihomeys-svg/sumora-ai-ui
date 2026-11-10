@@ -4360,6 +4360,19 @@ async function _runBatchSearch(command) {
         _interCustomerDelay = Math.max(_interCustomerDelay, _pcr.ms) + (_pcr.isBreak ? _pcr.ms : 0);
         if (_pcr.isBreak) console.log("[batch] 自動モード: 12操作ごとの小休憩をはさむ");
       }
+      // 2026-11-10 v2.5.98 竹内さん「人間なので休憩するときもある」:
+      //   お客様の区切りで、作業の続き具合から**抽選**して休む（決まった回数ごとではない）。
+      //   短い休憩 12〜30秒（20分以上の作業で 8%）／長い休憩 60〜180秒（120分以上で 18%）。
+      //   休憩の後は数え直す（人と同じで、休んだらまた最初から）。
+      if (_autoModeOn && self.AxlxHumanWait && self.AxlxHumanWait.restDue) {
+        var _rest = self.AxlxHumanWait.restDue(_autoWorkedSince || 0, Date.now());
+        if (_rest.rest) {
+          _interCustomerDelay += _rest.ms;
+          _autoWorkedSince = Date.now() + _rest.ms; // 休憩が終わった時点から数え直す
+          console.log("[batch] 自動モード: 人の休憩（" + (_rest.kind === "long" ? "長め" : "短め") + " " + Math.round(_rest.ms / 1000) + "秒）をはさむ");
+          _watchSet({ waitingFor: "休憩中（" + Math.round(_rest.ms / 1000) + "秒）" });
+        }
+      }
       console.log("[batch] 次顧客まで待機 " + _interCustomerDelay + "ms");
       _watchSet({ waitingFor: "次のお客様までの間（" + Math.round(_interCustomerDelay / 1000) + "秒）" });
       await new Promise(function(r) { setTimeout(r, _interCustomerDelay); });

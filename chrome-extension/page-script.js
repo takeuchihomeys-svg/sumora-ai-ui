@@ -749,7 +749,19 @@
       notifyDone('AXLX_FILL_INCOMPLETE: ' + gateMiss, true);
       return;
     }
-    if (_audit) { delete _audit._searchWaitMarked; _auditStepP('search', null); }
+    if (_audit) { delete _audit._searchWaitMarked; }
+    // 2026-11-10 v2.5.98 竹内さん「細かい部分も実際の人間がするように」:
+    //   条件を入れ終わってから検索を押すまでに「上がって全体を見直す」間を置く（1〜3秒・対数正規）。
+    //   押した瞬間に検索されると人が確認していないように見える。1回だけ待つ（待った後の再入場は待たない）
+    if (!window._axSearchLookedOver) {
+      window._axSearchLookedOver = true;
+      var _lookMs = humanRand(1000, 2200);
+      _auditStepP('search_look', Math.round(_lookMs) + 'ms');
+      setTimeout(function () { try { window._axSearchLookedOver = false; clickSearch(); } catch (_) {} }, _lookMs);
+      return;
+    }
+    window._axSearchLookedOver = false;
+    _auditStepP('search', null);
     // 優先: div.go_search（リアプロのメイン検索ボタン）
     var goDivs = Array.prototype.slice.call(
       document.querySelectorAll('div.go_search, div.go_search_submit')
