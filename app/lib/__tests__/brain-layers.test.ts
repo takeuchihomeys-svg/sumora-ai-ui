@@ -87,11 +87,12 @@ it("古い番の判定: この分析が見た発言より新しいお客様の�
   expect(strategyRefreshIsStale({ analyzedMsgTs: null, latestCustomerTs: "2026-11-10T06:55:35.486Z" })).toBe(false);
   expect(strategyRefreshIsStale({ analyzedMsgTs: "2026-11-10T06:55:35Z", latestCustomerTs: null })).toBe(false);
 });
-it("スイッチ: 既定 off・shadow・on", () => {
-  expect(strategyStaleDeferMode({})).toBe("off");
+it("スイッチ: 既定 shadow・off・on", () => {
+  expect(strategyStaleDeferMode({})).toBe("shadow");
   expect(strategyStaleDeferMode({ BRAIN_STRATEGY_STALE_DEFER: " ON " })).toBe("on");
   expect(strategyStaleDeferMode({ BRAIN_STRATEGY_STALE_DEFER: "shadow" })).toBe("shadow");
-  expect(strategyStaleDeferMode({ BRAIN_STRATEGY_STALE_DEFER: "x" })).toBe("off");
+  expect(strategyStaleDeferMode({ BRAIN_STRATEGY_STALE_DEFER: "off" })).toBe("off");
+  expect(strategyStaleDeferMode({ BRAIN_STRATEGY_STALE_DEFER: "x" })).toBe("shadow");
 });
 
 (async () => {

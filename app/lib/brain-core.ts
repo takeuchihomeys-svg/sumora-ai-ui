@@ -7325,7 +7325,7 @@ async function analyzeAndSaveBrainMetaInner(
           ]);
           const shiftOrReport = strategyShift ?? ((newerReport ?? []).length > 0 ? "viewing_report" : null);
           const refresh = decideStrategyRefresh({ strategy: brainStrategy, customerMsgsSinceStrategy: sinceCount ?? 0, nowMs: Date.now(), shift: shiftOrReport });
-          // 2026-11-10 作業員8: この分析より新しいお客様の発言が既にある番は、戦略の分析を次の分析に任せる（brain-layers.decideStrategyStaleDefer・BRAIN_STRATEGY_STALE_DEFER 既定 off）
+          // 2026-11-10 作業員8: この分析より新しいお客様の発言が既にある番は、戦略の分析を次の分析に任せる（brain-layers.decideStrategyStaleDefer・BRAIN_STRATEGY_STALE_DEFER 既定 shadow＝記録だけ・on で見送る）
           const staleDefer = await decideStrategyStaleDefer({
             mode: strategyStaleDeferMode(), kind: refresh.kind, analyzedMsgTs: metaToWrite.analyzed_msg_ts ?? null,
             loadLatestCustomerTs: async () => {

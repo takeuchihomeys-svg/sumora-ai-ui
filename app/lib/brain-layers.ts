@@ -249,11 +249,11 @@ export function detectStrategyShift(i: {
  *   多くは「1通目を分析中に2通目が届いた」番＝1通目の分析が古い（stale-snapshot）のに戦略を起動し、2通目を見た分析がもう一度起動する。
  *   この分析が見たお客様の発言（analyzed_msg_ts）より新しいお客様の発言が既にある時は、次の分析（新しい発言を見る）に任せて起動しない。
  *   次の分析は同じ戦略の数（strategy_count）から決めるので、整理かゼロからかの順番は変わらない。
- *   BRAIN_STRATEGY_STALE_DEFER: off（既定・今まで通り）／shadow（見送る番を記録だけ）／on（見送る）
+ *   BRAIN_STRATEGY_STALE_DEFER: off（今まで通り・DB を読まない）／shadow（既定・11/10 統括役の了承・見送る番を記録だけ＝起動は今まで通り）／on（見送る）
  */
 export function strategyStaleDeferMode(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): "off" | "shadow" | "on" {
   const v = (env.BRAIN_STRATEGY_STALE_DEFER ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+  return v === "on" ? "on" : v === "off" ? "off" : "shadow";
 }
 /** この分析が見た発言より新しいお客様の発言があるか（読めない時は false＝今まで通り起動する） */
 export function strategyRefreshIsStale(i: { analyzedMsgTs: string | null | undefined; latestCustomerTs: string | null | undefined }): boolean {
