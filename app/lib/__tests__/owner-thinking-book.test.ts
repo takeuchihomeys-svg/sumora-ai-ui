@@ -1,6 +1,6 @@
 // 2026-11-11 作業員9「竹内さんの考え方の本」（owner-thinking-book.ts）: 札・近さの下限・漏れ・理由と逆向きの切り出し
 // 実行: npx tsx app/lib/__tests__/owner-thinking-book.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { pickBook, bookBlock, ruleOf, whyOf, dontOf, isBookCandidate, leakOverlap, toUnit, type BookRow } from "../owner-thinking-book";
+import { pickBook, bookBlock, ruleOf, whyOf, dontOf, isBookCandidate, leakOverlap, toUnit, pointsProperty, rowNeeds, marksOk, ownerBookBrainOn, ownerBookOnlyBase, bookAskText, rowFor, ownerBookWriterOn, type BookRow } from "../owner-thinking-book";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function ok(name: string, cond: boolean, detail = "") { if (cond) passed++; else { failed++; failures.push(`${name} ${detail}`); } }
@@ -52,6 +52,35 @@ ok("無ければ空", bookBlock([]) === "");
 const blk = bookBlock(pickBook([row("jjjj", { sim: 0.7, title: "【決定】本日を返さない — 名前を入れる", rationale: "催促に聞こえるため。", tags: ["竹内さんの決定", "場面:検討中"] })], { scene: "considering", ...turn }));
 ok("見出しに当てはまる時だけ", blk.includes("当てはまる時だけ参考にする・状況が違えば使わない"));
 ok("決まり・なぜ・しないが揃う", blk.includes("決まり: 本日を返さない") && blk.includes("なぜ: 催促に聞こえるため。") && blk.includes("しない: 本日を返さない"), blk);
+
+// ⑥ 状況の印（11/11: 「物件を指さない初期費用」の決まりが物件を指す番に当たった）
+ok("物件を指す: ここだったら", pointsProperty("ここだったら初期費用いくらでしょうか？"));
+ok("物件を指す: URL", pointsProperty("https://suumo.jp/x こちら空いてますか"));
+ok("物件を指さない", !pointsProperty("初期費用いくらになりますか？"));
+ok("行の前提: 物件を指さない", rowNeeds({ title: "物件ピックアップで何件も送った後の、物件を指さない『初期費用いくらですか？』", insight: "" }).pointsProperty === false);
+ok("行の前提: 送った後", rowNeeds({ title: "こちらが送った物件は送った時点で募集状況を確認済み", insight: "" }).sent === true);
+ok("行の前提: 約束の後", rowNeeds({ title: "確認の約束を送った後の『約束の続き』", insight: "" }).promise === true);
+ok("問わない印は合う", marksOk({}, { pointsProperty: true, sent: false, promise: false }));
+ok("前提が違えば外す", !marksOk({ pointsProperty: false }, { pointsProperty: true, sent: true, promise: false }));
+const mrows = [row("kkkk", { sim: 0.7, title: "【決定】物件を指さない『初期費用いくらですか？』は送った中から1件を勧める", tags: ["竹内さんの決定", "場面:初期費用"] })];
+ok("物件を指す番には『物件を指さない』の行を入れない", pickBook(mrows, { scene: "cost", ...turn, marks: { pointsProperty: true, sent: true, promise: false } }).length === 0);
+ok("物件を指さない番には入れる", pickBook(mrows, { scene: "cost", ...turn, marks: { pointsProperty: false, sent: true, promise: false } }).length === 1);
+ok("札で絞る（土台だけ）", pickBook(mrows, { scene: "cost", ...turn, onlyTags: ["竹内さんの土台"] }).length === 0);
+// ⑦ スイッチ（既定 off）
+ok("既定 off", !ownerBookBrainOn("cost", {}));
+ok("on", ownerBookBrainOn("cost", { BRAIN_OWNER_BOOK: "on" }));
+ok("場面で絞る", ownerBookBrainOn("cost", { BRAIN_OWNER_BOOK: "on", BRAIN_OWNER_BOOK_SCENES: "cost,viewing" }) && !ownerBookBrainOn("ack", { BRAIN_OWNER_BOOK: "on", BRAIN_OWNER_BOOK_SCENES: "cost,viewing" }));
+ok("土台だけは既定 off", !ownerBookOnlyBase({}) && ownerBookOnlyBase({ BRAIN_OWNER_BOOK_ONLY_BASE: "on" }));
+ok("埋め込む文", bookAskText("こんにちは", null) === "お客様: こんにちは\n直前のこちら: ");
+
+// ⑧ 書き手とブレインに分ける（11/11）
+ok("書き方の行は書き手", rowFor({ title: "竹内さんの決定（10/20）: お客様が自分で言った期限を締めで繰り返さない — 名前を入れて何時でも", tags: [] }) === "writer");
+ok("AIX の判断の行はブレイン", rowFor({ title: "竹内さんの決定: お客様から審査の相談があった時は AIX【電話をかける】で打ち合わせる", tags: [] }) === "brain");
+ok("どちらとも取れない行はブレイン", rowFor({ title: "【決定】リノベーション物件は築年数が古くても大丈夫", tags: [] }) === "brain");
+const wrows = [row("wwww", { sim: 0.7, title: "【決定】約束だけの番に『ご査収』で締めない", tags: ["竹内さんの決定", "場面:初期費用"] }), row("bbbz", { sim: 0.7, title: "【決定】見積の依頼は AIX【見積書送る】で返す", tags: ["竹内さんの決定", "場面:初期費用"] })];
+ok("書き手には書き方の行だけ", pickBook(wrows, { scene: "cost", ...turn, forWho: "writer" }).map((c) => c.id8.slice(0, 4)).join() === "wwww");
+ok("ブレインには判断の行だけ", pickBook(wrows, { scene: "cost", ...turn, forWho: "brain" }).map((c) => c.id8.slice(0, 4)).join() === "bbbz");
+ok("書き手のスイッチは既定 off", !ownerBookWriterOn("cost", {}) && ownerBookWriterOn("cost", { WRITER_OWNER_BOOK: "on" }) && !ownerBookWriterOn("ack", { WRITER_OWNER_BOOK: "on", WRITER_OWNER_BOOK_SCENES: "cost" }));
 
 console.log(`owner-thinking-book: ${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log("FAIL", f); process.exit(1); }

@@ -5772,6 +5772,23 @@ async function handleGenerateReply(req: NextRequest) {
           return `\n\n${ruleBookNote(sk.writer.rules, replyScene)}`;
         }).catch((e) => { console.warn(JSON.stringify({ tag: "gen:scene-skill-failed", error: e instanceof Error ? e.message : String(e) })); return ""; })
       : "";
+    // 2026-11-11 作業員9（竹内さん「返信の部分も俺の考え方理解できればより精度高くなる」・KB 60931c54）: WRITER_OWNER_BOOK=on（既定 off）の時だけ、
+    //   竹内さんの考え方の本の「書き方」の行（決まり＋なぜ＋しない）を場面・近さ・状況の印で最大3枚、場面の決まりの後ろに足す。2.5秒まで・無ければ足さない
+    let ownerWriterBookNote = "";
+    if (!isTemplateOptimize) {
+      try {
+        const { ownerBookWriterOn } = await import("@/app/lib/owner-thinking-book");
+        if (ownerBookWriterOn(replyScene)) {
+          const { ownerBookForTurn } = await import("@/app/lib/owner-thinking-book-server");
+          const ob = await Promise.race([
+            ownerBookForTurn(supabase, { scene: replyScene, customerTurn: message, lastStaff: lastStaffMsgForSearch ?? null, sentProps: ledger.facts.propertiesSentCount, promise: ledger.facts.pickupPromisedUnfulfilled || /確認させて頂きます|確認出来次第|お送りさせて頂きます/.test(lastStaffMsgForSearch ?? ""), forWho: "writer" }),
+            new Promise<null>((r) => setTimeout(() => r(null), 2_500)),
+          ]);
+          if (ob?.block) ownerWriterBookNote = `\n\n${ob.block}`;
+          logWatchMaterial(JSON.stringify({ tag: "gen:owner-book", conversationId, scene: replyScene, cards: ob?.cards.map((c) => c.id8) ?? [], marks: ob?.marks ?? null, ms: ob?.ms ?? null, timeout: ob === null, ...(ob?.err ? { err: ob.err } : {}) }), null);
+        }
+      } catch (e) { console.warn(JSON.stringify({ tag: "gen:owner-book-failed", error: e instanceof Error ? e.message : String(e) })); }
+    }
     if (replySceneResolved && replySceneResolved.scene !== replySceneResolved.wordScene) {
       console.log(JSON.stringify({ tag: "gen:scene-brain", conversationId, word: replySceneResolved.wordScene, scene: replySceneResolved.scene, evidence: replySceneResolved.evidence, dragged: replySceneResolved.dragged.length }));
     }
@@ -6220,7 +6237,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       // 5巡目（10/07）: 学習ルール6本の無効化＋b2d7bf7f の一文の削除を、DB を変えずに試す（testFlags.rules_retire=on・テストの会話だけ）
       ((r: string) => (testFlags.rules_retire === "on" ? previewRetiredRules(r).text : r))(
         // 2026-11-03 作業員6 場面の技能（SCENE_SKILLS=on・既定 off）: 会社のルールを場面で絞り（rules_scene と同じ関数）、設計知見の木から組んだ決まりの本を後ろに足す
-        ((testFlags.rules_scene === "on" || sceneSkillsOn()) && replyScene ? filterRulesTextForScene(dbRules, replyScene) : dbRules) + sceneRuleBookNote),
+        ((testFlags.rules_scene === "on" || sceneSkillsOn()) && replyScene ? filterRulesTextForScene(dbRules, replyScene) : dbRules) + sceneRuleBookNote + ownerWriterBookNote),
       // 4巡目: 物件ごとの台帳は引用の材料の隣（会話履歴の直前）に置く（申込の材料の欄では YUMA 2回中1回で別の物件名を書いた）
       resolvedSummaryJson, [quotedContextNote, propertyThreadReplyNote].filter(Boolean).join("\n\n"), propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
