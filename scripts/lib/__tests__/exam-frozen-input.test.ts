@@ -3,8 +3,8 @@
 import { mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { frozenSceneNow, snapshotDay, snapshotTarget, snapshotKey, installDbSnapshot, keyedTarget, keyedKey, reduceKeyedBody, nearestSummaryOf, afterCutoff } from "../exam-frozen-input";
-import { existsSync, writeFileSync } from "node:fs";
+import { frozenSceneNow, snapshotDay, snapshotTarget, snapshotKey, installDbSnapshot, keyedTarget, keyedKey, reduceKeyedBody, nearestSummaryOf, afterCutoff, leakSafeKeyedBody } from "../exam-frozen-input";
+import { existsSync, writeFileSync, readFileSync } from "node:fs";
 import { maskVolatile } from "../llm-cassette";
 
 let fail = 0, pass = 0;
@@ -91,6 +91,37 @@ ok("鍵の要る読みの対象", keyedTarget(base + "rpc/match_conductor_focus"
     ok("鍵の要る読み: 問題が分かれば埋め込み・今の時刻が違っても同じ鍵（11/07 nop2-on）", keyedKey(base + "rpc/match_conductor_focus", "POST", JSON.stringify({ query_embedding: "[0.1]", p_before: "2026-11-06T18:37:54Z", match_count: 30 }), [], "q010") === keyedKey(base + "rpc/match_conductor_focus", "POST", JSON.stringify({ query_embedding: "[0.2]", p_before: "2026-11-06T19:01:00Z", match_count: 30 }), [], "q010") && keyedKey(base + "rpc/match_conductor_focus", "POST", JSON.stringify({ query_embedding: "[0.1]", match_count: 30 }), [], "q010") !== keyedKey(base + "rpc/match_conductor_focus", "POST", JSON.stringify({ query_embedding: "[0.1]", match_count: 30 }), [], "q011"));
     ok("鍵の要る読み: 別のレーンの会話 id でも同じ鍵", keyedKey(base + "rpc/match_conductor_focus", "POST", body1.replace(conv, "other-lane"), ["other-lane"]) === k);
   } finally { globalThis.fetch = orig; rmSync(dir, { recursive: true, force: true }); }
+
+  // 2026-11-10 作業員4: 近い番の読みから答えの番を外す（試験の時計で p_before が未来・p_exclude_conv が YUMA だった＝q371 の元の番が距離 0.001 で返っていた）
+  {
+    const turn = { conv: "a8c55dde-orig", at: "2026-11-03T10:35:50.983+00:00" };
+    const fb = JSON.stringify({ query_embedding: "[0.1]", p_before: "2026-11-10T10:35:50.983Z", p_exclude_conv: "yuma3", p_exclude_pc: "pc-yuma", match_count: 40, max_distance: 0.2, p_writer: "takeuchi" });
+    const out = JSON.parse(leakSafeKeyedBody("match_conductor_focus", fb, turn)) as Record<string, unknown>;
+    ok("答えの漏れ: focus は元の会話を外す", out.p_exclude_conv === turn.conv);
+    ok("答えの漏れ: focus は元の番より前だけ（未来の p_before を元の番に）", out.p_before === turn.at);
+    ok("答えの漏れ: 他の欄はそのまま", out.query_embedding === "[0.1]" && out.match_count === 40 && out.p_exclude_pc === "pc-yuma" && out.p_writer === "takeuchi");
+    const early = JSON.parse(leakSafeKeyedBody("match_conductor_focus", fb.replace("2026-11-10T10:35:50.983Z", "2026-10-01T00:00:00Z"), turn)) as Record<string, unknown>;
+    ok("答えの漏れ: p_before が元の番より前ならそのまま", early.p_before === "2026-10-01T00:00:00Z");
+    const tb = JSON.stringify({ query_embedding: "[0.1]", p_exclude_conv: "yuma3", p_exclude_pc: null, match_count: 40 });
+    const ot = JSON.parse(leakSafeKeyedBody("match_conductor_turns", tb, turn)) as Record<string, unknown>;
+    ok("答えの漏れ: turns は元の会話を外し p_before を足さない", ot.p_exclude_conv === turn.conv && !("p_before" in ot));
+    ok("答えの漏れ: 問題が分からない・別の読み・読めない body はそのまま", leakSafeKeyedBody("match_conductor_focus", fb, null) === fb && leakSafeKeyedBody("conductor_turn_vectors", fb, turn) === fb && leakSafeKeyedBody("match_conductor_focus", "not-json", turn) === "not-json");
+    // 配線: installDbSnapshot が頼み（pending）に外した形で残し、問題ごとに同じ鍵
+    const dir2 = mkdtempSync(join(tmpdir(), "efi-leak-"));
+    const orig2 = globalThis.fetch;
+    globalThis.fetch = (async () => new Response("[]", { status: 401 })) as typeof fetch;
+    try {
+      installDbSnapshot({ dir: dir2, excludeIds: () => ["yuma3", "pc-yuma"], nowMs: () => Date.parse("2026-11-10T12:00:00Z"), keyHint: () => "q371", problemTurn: () => turn });
+      await fetch("https://x.supabase.co/rest/v1/rpc/match_conductor_focus", { method: "POST", body: fb });
+      const pdir = join(dir2, snapshotDay(Date.parse("2026-11-10T12:00:00Z")), "pending");
+      const files = readdirSync(pdir);
+      const pend = JSON.parse(readFileSync(join(pdir, files[0]), "utf8")) as { body: string };
+      const pb = JSON.parse(pend.body) as Record<string, unknown>;
+      ok("配線: 頼みは元の会話を外し元の番より前で残る（夜の台本はこの形で読む）", files.length === 1 && pb.p_exclude_conv === turn.conv && pb.p_before === turn.at);
+      const k1 = keyedKey("https://x.supabase.co/rest/v1/rpc/match_conductor_focus", "POST", leakSafeKeyedBody("match_conductor_focus", fb, turn), ["yuma3", "pc-yuma"], "q371");
+      ok("配線: 頼みのファイル名は外した形の鍵（外す前の古い控えには当たらない）", files[0] === `k-${k1}.json` && k1 !== keyedKey("https://x.supabase.co/rest/v1/rpc/match_conductor_focus", "POST", fb, ["yuma3", "pc-yuma"], "q371"));
+    } finally { globalThis.fetch = orig2; rmSync(dir2, { recursive: true, force: true }); }
+  }
   console.log(`${pass} pass / ${fail} fail`);
   process.exit(fail ? 1 : 0);
 })();
