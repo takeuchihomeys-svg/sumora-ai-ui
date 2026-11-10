@@ -1949,7 +1949,97 @@
       if (_lookGap > 8000) _lookGap = 8000;
       _tmark("look_wait", "P" + state.currentPage + " " + Math.round(_lookGap) + "ms");
       if (countEl) countEl.textContent = "P" + state.currentPage + " 送る部屋を確認中…";
-      setTimeout(function () { _doSendAfterLook(sendUrls); }, _lookGap);
+      setTimeout(function () {
+        // 2026-11-10 v2.6.13 竹内さん「一軒ずつ選択しておくるように」:
+        //   ここから **1件選ぶ → 送る → 次を選ぶ** の繰り返しへ（旧は全行にチェックを入れてから1件ずつ送っていた）
+        var _list = tracked.filter(function (t) { return t.cb && t.btn; });
+        if (!_list.length) { onDone(true, 0); return; }
+        _oneByOneStart(state, _list, 0, function () {
+          onDone(true, state.sentCount || 0);
+        });
+      }, _lookGap);
+    }
+
+    /**
+     * 2026-11-10 v2.6.13 竹内さん「一軒ずつ選択しておくるように」:
+     *   旧は先に全行へチェックを入れ、その後に1件ずつ送っていた（画面では全部にチェックが付いてから送信が始まる）。
+     *   新は **1件選ぶ → その1件を送る → 次を選ぶ** の繰り返し（人が1軒ずつ選んで送る形）。
+     *   ・選ぶのは1行だけ（前の行のチェックは外す）
+     *   ・送り終わってから次の行を選ぶ（送信中に次のチェックを付けない）
+     *   ・行の間は人の間（1.5〜4秒・たまに一息）
+     *   ブレインの判定は1件ずつ呼ぶ（材料は同じ）。判定で外す物は選ばずに次へ。
+     *   ⚠ 送付済み・更新日で止める・物件数の上限の選別は今まで通り（選ぶ前に必ず通す）
+     */
+    function _oneByOneStart(state, list, index, doneCb) {
+      if (index >= list.length) { doneCb(); return; }
+      var item = list[index];
+      if (!item || !item.cb || !item.btn) { _oneByOneStart(state, list, index + 1, doneCb); return; }
+      // 前の行のチェックを外す（1件だけ選ばれている状態を作る）
+      tracked.forEach(function (t) { if (t.cb && t.cb !== item.cb && t.cb.checked) t.cb.checked = false; });
+      updateBar();
+      if (!item.cb.checked) {
+        // 人が1件だけ押す（カーソルも動く）
+        enqueueHumanClick(item.cb, _clickEl, 400, 900);
+      }
+      // 選んでから送るまでの間（人が「この部屋でいいか」見る）
+      var H = self.AxlxHumanWait;
+      var gap = H && H.logNormalDelay ? H.logNormalDelay(1600, 0.45) : (1200 + Math.floor(Math.random() * 2000));
+      if (gap > 6000) gap = 6000;
+      if (countEl) countEl.textContent = "P" + state.currentPage + " " + (index + 1) + "/" + list.length + " 確認中…";
+      setTimeout(function () {
+        // 1件だけを組にする（buildSendItemsBrain は「チェックの入っている行」から作る）
+        _doSendOne(item, state, function () {
+          // 送り終わったら次の1件へ（間を空ける）
+          var nextGap = H && H.logNormalDelay ? H.logNormalDelay(1500, 0.45) : (900 + Math.floor(Math.random() * 1800));
+          if (Math.random() < 0.12) nextGap += 800 + Math.floor(Math.random() * 1500);
+          setTimeout(function () { _oneByOneStart(state, list, index + 1, doneCb); }, nextGap);
+        });
+      }, gap);
+    }
+
+    /** 1件だけを組にして送る（判定は1件ずつ・材料は今まで通り） */
+    function _doSendOne(item, state, next) {
+      var sendItems = [];
+      try { sendItems = buildSendItems().filter(function (it) { return it && it.url && it.url === item.btn.href; }); } catch (_) { sendItems = []; }
+      if (!sendItems.length) { next(); return; }
+      // ブレインの判定（1件）
+      var judge = function (kept, brain) {
+        if (!kept || !kept.length) { next(); return; }
+        state.sendableCount = (state.sendableCount || 0) + kept.length;
+        _tmark("send", "P" + state.currentPage + " 1件");
+        if (countEl) countEl.textContent = "P" + state.currentPage + " 送信中…";
+        chrome.runtime.sendMessage({
+          type: "axlx-send-to-line",
+          urls: AxlxSendPairing.pluck(kept, "url"),
+          customer_name: state.customerName || null,
+          property_summaries: AxlxSendPairing.pluck(kept, "summary"),
+          property_pool: poolWithUrl(kept),
+          customer_id: state.customerId || null,
+          customer_conditions: state.customerConditions || null,
+          site: "realpro",
+          sent_skipped: 0,
+        }, function (resp) {
+          if (chrome.runtime.lastError || !resp || !resp.ok) {
+            var msg = chrome.runtime.lastError ? chrome.runtime.lastError.message : (resp && resp.error) || "応答なし";
+            console.error("[AXLX bulk-dl] 1件送信のエラー:", msg);
+            _tmark("send_err", "1件: " + String(msg).slice(0, 80));
+          } else {
+            _tmark("sent", "P" + state.currentPage + " 1件");
+            state.sentCount = (state.sentCount || 0) + kept.length;
+          }
+          try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+          next();
+        });
+      };
+      // ブレインの時だけ判定（1件）。失敗しても送る（fail-open＝今まで通り）
+      if (_brainModeOn && state.customerId) {
+        buildSendItemsBrain(state.customerId, function (keptAll, brain) {
+          var kept = (keptAll || sendItems).filter(function (it) { return it && it.url === item.btn.href; });
+          judge(kept, brain);
+        });
+      } else {
+        judge(sendItems, null);
+      }
     }
 
     function _doSendAfterLook(sendUrls) {

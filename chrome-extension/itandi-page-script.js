@@ -155,27 +155,29 @@
         else if (el.isConnected !== false) el.click();
       } catch (_) {}
     };
-    var afterMove = function () {
-      // 着いてから「押す前の迷い」（選ぶ系 15%・決定 3%・その他 8%）
-      // 2026-11-10 v2.6.2 竹内さん「人間が迷いながらマウスもまよったりしながら考えながら入力していく」:
-      //   迷う時はカーソルが**その場で漂う**（drift）・たまに狙いを外して戻る（wander）。止まったまま待たない
-      var p = kind === "choose" ? 0.15 : (kind === "decide" ? 0.03 : 0.08);
-      if (Math.random() >= p * (0.8 + Math.random() * 0.45)) { click(); return; }
-      var r = Math.random();
-      var extra = r < 0.65 ? 250 + Math.floor(Math.random() * 350)
-                : r < 0.95 ? 700 + Math.floor(Math.random() * 900)
-                : 1800 + Math.floor(Math.random() * 2700);
-      if (P && P.wander && Math.random() < 0.35) {
-        P.wander(el, extra).then(click, click);
-      } else if (P && P.drift) {
-        P.drift(extra).then(click, click);
-      } else {
-        setTimeout(click, extra);
-      }
-    };
-    if (!P || !P.moveToEl) { afterMove(); return Promise.resolve(false); }
-    try { P.ensure(); } catch (_) {}
-    return _pointerMoveTo(el).then(function () { afterMove(); return true; }, function () { afterMove(); return true; });
+    /**
+     * 2026-11-10 v2.6.13 竹内さん「マウスが動いてそこから押す。この人間の流れをちゃんとおこなう」:
+     *   呼び出し側が「押し終わるまで待てる」よう、**押した後に解決する Promise** を返す（カーソルが着いて押すまで）。
+     *   旧は迷いの間だけ待たずに解決していたので、呼び出し側が「もう押した」と誤解して次の駅に進み、
+     *   カーソルが動く前に選択されることがあった。
+     */
+    var clicked = new Promise(function (resolve) {
+      var doneClick = function () { if (P && P.tap) { try { P.tap(); } catch (_) {} } try { click(); } catch (_) {} resolve(true); };
+      if (!P || !P.moveToEl) { doneClick(); return; }
+      try { P.ensure(); } catch (_) {}
+      _pointerMoveTo(el).then(function () {
+        var p = kind === "choose" ? 0.15 : (kind === "decide" ? 0.03 : 0.08);
+        if (Math.random() >= p * (0.8 + Math.random() * 0.45)) { doneClick(); return; }
+        var r = Math.random();
+        var extra = r < 0.65 ? 250 + Math.floor(Math.random() * 350)
+                  : r < 0.95 ? 700 + Math.floor(Math.random() * 900)
+                  : 1800 + Math.floor(Math.random() * 2700);
+        if (P.wander && Math.random() < 0.35) { P.wander(el, extra).then(doneClick, doneClick); }
+        else if (P.drift) { P.drift(extra).then(doneClick, doneClick); }
+        else { setTimeout(doneClick, extra); }
+      }, doneClick);
+    });
+    return clicked;
   }
   function tick(el) {
     if (!el || el.checked) return;
@@ -713,7 +715,7 @@
                   });
                   var zenInp = zenLbl && zenLbl.querySelector("input");
                   if (zenInp && zenInp.checked) {
-                    zenLb_humanClick(l);
+                    _humanClick(zenLbl);
                     console.log("[AX] 全域チェックを解除");
                   }
                   setTimeout(function () {
@@ -721,7 +723,10 @@
                     var allCbLabels = [].slice.call(document.querySelectorAll("label")).filter(function (l) {
                       return l.querySelector("input[type='checkbox']");
                     });
-                    var totalSelected = 0;
+                    // 2026-11-10 v2.6.13 竹内さん「マウスが動く前に選択されてしまう場合がある。マウスが動いてそこから押す」:
+                    //   旧は町域を一斉に _humanClick で積み、800ms 後に確定していた＝カーソルが動く前に確定してしまう。
+                    //   新は**1つずつ「カーソルが着いて押す」のを待って**から次へ行き、全部済んでから確定する。
+                    var _townClicks = [];
                     townsForWard.forEach(function (town) {
                       var tn = norm(town);
                       // スマートマッチ: 完全一致 → 前方一致（〇〇1丁目等）→ 部分一致
@@ -734,14 +739,31 @@
                       }
                       matches.forEach(function (l) {
                         var inp = l.querySelector("input");
-                        if (!inp || !inp.checked) { _humanClick(l); totalSelected++; }
+                        if (!inp || !inp.checked) { _townClicks.push(l); totalSelected++; }
                       });
                       console.log("[AX] 町域選択: " + town + " → " + matches.length + "件");
                     });
                     console.log("[AX] 町域合計: " + totalSelected + "件選択");
-                    setTimeout(function () {
-                      safeConfirm(function () { setTimeout(openNextWardModal, 700 + Math.floor(Math.random() * 400)); });
-                    }, 800 + Math.floor(Math.random() * 400));
+                    // 1つずつ、人の間を空けて押す（カーソルが着いてから押す）
+                    var _tIdx = 0;
+                    function _clickTownNext() {
+                      if (_tIdx >= _townClicks.length) {
+                        console.log("[AX] 町域の選択が全部済み → 確定");
+                        setTimeout(function () {
+                          safeConfirm(function () { setTimeout(openNextWardModal, 700 + Math.floor(Math.random() * 400)); });
+                        }, 600 + Math.floor(Math.random() * 500));
+                        return;
+                      }
+                      var lbl2 = _townClicks[_tIdx++];
+                      var p2 = _humanClick(lbl2);
+                      var _fin = function () {
+                        var g = _hd(500);
+                        if (Math.random() < 0.1) g += 500 + Math.floor(Math.random() * 900);
+                        setTimeout(_clickTownNext, g);
+                      };
+                      if (p2 && typeof p2.then === "function") { p2.then(_fin, _fin); } else { _fin(); }
+                    }
+                    _clickTownNext();
                   }, 700 + Math.floor(Math.random() * 400)); // 全域解除後 → 町域チェック開始まで
                 }, 700 + Math.floor(Math.random() * 400)); // 区ラジオ選択後 → 全域チェック解除まで
               } else {
@@ -913,8 +935,14 @@
             done(); return;
           }
           var inp = list[i++].querySelector("input[type='checkbox']");
-          if (inp && !inp.checked) _humanClick(inp, { forceUnchecked: true });
-          setTimeout(clickNext, 40 + Math.floor(Math.random() * 60));
+          // 2026-11-10 v2.6.13 竹内さん「マウスが動く前に選択されてしまう場合がある。マウスが動いてそこから押す」:
+          //   旧は 40〜100ms で次々押していた＝カーソルが着く前にチェックが入る（画面では一斉に付く）。
+          //   新は **1駅ずつ「カーソルが着いて押す」のを待ち**、その後に人の間（420〜1100ms・たまに一息）を置く。
+          var p = _humanClick(inp, { forceUnchecked: true });
+          var _nextGap = 420 + Math.floor(Math.random() * 680);
+          if (Math.random() < 0.1) _nextGap += 500 + Math.floor(Math.random() * 900);
+          var _fin = function () { setTimeout(clickNext, _nextGap); };
+          if (p && typeof p.then === "function") { p.then(_fin, _fin); } else { _fin(); }
         }
         function collectAndClick() {
           list = stationLabels().filter(function(l) {
@@ -924,7 +952,22 @@
           clickNext();
         }
         var allInp = allLbl && allLbl.querySelector("input[type='checkbox']");
-        if (allInp && !allInp.checked) { _humanClick(allInp, { forceUnchecked: true }); setTimeout(collectAndClick, _hd(400)); }
+        if (allInp && !allInp.checked) {
+          // 2026-11-10 v2.6.13 竹内さん「マウスが動く前に選択されてしまう場合がある。マウスが動いてそこから押す」:
+          //   「全域」を押した後 400ms で次の駅を押し始めていた＝カーソルが動いている途中でクリックしていた。
+          //   ① カーソルが着いて押すまで**待つ**（_humanClick の Promise）② 実際にチェックが入るまで待つ（最大6秒）
+          //   ③ その後に少し見る間を置いてから次の駅へ。
+          var _pAll = _humanClick(allInp, { forceUnchecked: true });
+          var _afterAll = function () {
+            var _waitChecked = function (n) {
+              if (allInp.checked || n >= 12) { setTimeout(collectAndClick, _hd(700)); return; }
+              setTimeout(function () { _waitChecked(n + 1); }, _pd(500));
+            };
+            _waitChecked(0);
+          };
+          if (_pAll && typeof _pAll.then === "function") { _pAll.then(_afterAll, _afterAll); }
+          else { _afterAll(); }
+        }
         else collectAndClick();
       }
       function clickNextLine() {
@@ -988,6 +1031,8 @@
                     return inp && !inp.checked && norm(l.textContent).includes("JR") && isVis(l);
                   });
                   jrLabels.forEach(function(l) { _humanClick(l); });
+                  // 2026-11-10 v2.6.13: 押した直後に次の駅を押すとカーソルが動く前に選択されるので、少し待つ
+                  setTimeout(function () { setTimeout(clickNextLine, 500 + Math.floor(Math.random() * 700)); }, _hd(400));
                   if (jrLabels.length && tryClickStation(sn)) { _selectedSt.add(norm(sn)); }
                 }
               });

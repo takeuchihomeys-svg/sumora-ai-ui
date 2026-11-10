@@ -42,7 +42,7 @@ ok("サイト操作の .click() 直呼びが残っていない（内部の押す
   return lines.length === 0;
 })(), ips.split("\n").filter((l) => /\.click\(\)/.test(l) && !/^\s*(\*|\/\/)/.test(l)));
 ok("_humanClick は種類で迷い率を変える（選ぶ15%・決定3%）", /kind === "choose" \? 0\.15 : \(kind === "decide" \? 0\.03 : 0\.08\)/.test(ips));
-ok("迷う時は drift か wander を使う", /P\.wander\(el, extra\)\.then\(click, click\)/.test(ips) && /P\.drift\(extra\)\.then\(click, click\)/.test(ips));
+ok("迷う時は drift か wander を使う", /P\.wander\(el, extra\)\.then\(doneClick, doneClick\)/.test(ips) && /P\.drift\(extra\)\.then\(doneClick, doneClick\)/.test(ips));
 
 console.log("\n■ ⑤ リアプロの迷いもカーソルを漂わせる");
 ok("_hesitateThen がある", /function _hesitateThen\(el, ms, done\)/.test(ps));

@@ -45,7 +45,7 @@ ok("束の間に 12%ほどで一息を足す", /Math\.random\(\) < 0\.12\) _conf
 ok("「資料を確認中…」と画面に出す（人が見ている形）", /資料を確認中…/.test(bd));
 
 console.log("\n■ ④ 選び終わってから資料を取りに行くまでに目で追う間");
-ok("_doSend はすぐ送らず _doSendAfterLook へ渡す", /setTimeout\(function \(\) \{ _doSendAfterLook\(sendUrls\); \}, _lookGap\);/.test(bd));
+ok("_doSend はすぐ送らず、目で追う間のあと1件ずつ選んで送る", /setTimeout\(function \(\) \{[\s\S]{0,400}_oneByOneStart\(state, _list, 0,/.test(bd) && /function _oneByOneStart\(state, list, index, doneCb\)/.test(bd));
 ok("目で追う間は 1.2〜8秒の対数正規", /logNormalDelay\(2200, 0\.4\)/.test(bd) && /if \(_lookGap > 8000\) _lookGap = 8000;/.test(bd));
 ok("「送る部屋を確認中…」と画面に出す", /送る部屋を確認中…/.test(bd));
 
