@@ -24,6 +24,12 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
       hw.async = false;
       hw.onload = function() { this.remove(); };
       (document.head || document.documentElement).appendChild(hw);
+      // 2026-11-10 v2.6.0 見えるカーソル（pointer-ui.js）も page-script.js より先にページへ
+      const pu = document.createElement("script");
+      pu.src = chrome.runtime.getURL("pointer-ui.js");
+      pu.async = false;
+      pu.onload = function() { this.remove(); };
+      (document.head || document.documentElement).appendChild(pu);
     } catch (_) { /* 予備で動く */ }
     // 2026-10-06 v2.5.82 間取りの「〇〇以上」の広げ方（floor-ijou.js）も page-script.js より先にページへ
     try {

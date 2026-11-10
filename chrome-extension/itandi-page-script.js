@@ -60,6 +60,23 @@
     if (_tickBusy <= 0) { cb(); return; }
     setTimeout(function () { _whenTickIdle(cb); }, _pd(120)); // 条件を見る間隔（±15%）
   }
+  /** 2026-11-10 v2.6.0 見えるカーソル（pointer-ui.js・見た目だけ）。読み込めなければ何もしない */
+  function _pointerMoveTo(el) {
+    var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+    if (!P || !P.moveToEl) return Promise.resolve(false);
+    try { P.ensure(); } catch (_) {}
+    return P.moveToEl(el);
+  }
+  /** 押す時はカーソルが着いてから（動きながら押さない） */
+  function _tapAndClick(el) {
+    var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+    var click = function () {
+      try { if (P && P.tap) P.tap(); } catch (_) {}
+      try { if (el.isConnected && !el.checked) el.click(); } catch (_) {}
+    };
+    if (!P || !P.moveToEl) { click(); return Promise.resolve(false); }
+    return _pointerMoveTo(el).then(function () { click(); return true; }, function () { click(); return true; });
+  }
   function tick(el) {
     if (!el || el.checked) return;
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
@@ -80,8 +97,8 @@
     //   真ん中へ毎回寄せない。画面の外の時だけ最小の移動で見せ、動かした時はその終わりを待ってから押す
     var _vw = _ensureInViewSoft(el);
     setTimeout(function () {
-      try { if (el.isConnected && !el.checked) el.click(); } catch (_) {}
-      _tickBusy--;
+      // 2026-11-10 v2.6.0: 見えるカーソルで移動 → 着いてから押す → 終わってから次へ
+      _tapAndClick(el).then(function () { _tickBusy--; }, function () { _tickBusy--; });
     }, wait + _vw);
   }
 
@@ -325,9 +342,18 @@
   function clickBtn(text) {
     var n = norm(text);
     var btns = [].slice.call(document.querySelectorAll("button")).filter(isVis);
+    // 2026-11-10 v2.6.0 竹内さん「リアプロとITANDI人間のようにマウス動くようにする」:
+    //   押す前に見えるカーソルでそのボタンへ動いてから押す（見た目だけ・押すのは今まで通り1回）
+    function _clickWithPointer(b) {
+      _pointerMoveTo(b).then(function () {
+        var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+        if (P && P.tap) { try { P.tap(); } catch (_) {} }
+        b.click();
+      }, function () { b.click(); });
+    }
     // 完全一致
     var found = btns.find(function (b) { return norm(b.textContent) === n; });
-    if (found) { found.click(); return true; }
+    if (found) { _clickWithPointer(found); return true; }
     // 部分一致フォールバック（ボタンテキストに検索語が含まれる）
     found = btns.find(function (b) { return norm(b.textContent).includes(n); });
     if (found) {
@@ -735,7 +761,14 @@
           smoothScrollTo(lbl);
           var inp = lbl.querySelector("input[type='checkbox']");
           if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
-          if (inp) { if (!inp.checked) inp.click(); } else { lbl.click(); }
+          // 2026-11-10 v2.6.0: 見えるカーソルで駅まで動いてから押す（人の目で追う形）
+          _pointerMoveTo(inp || lbl).then(function () {
+            var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+            if (P && P.tap) { try { P.tap(); } catch (_) {} }
+            if (inp) { if (!inp.checked) inp.click(); } else { lbl.click(); }
+          }, function () {
+            if (inp) { if (!inp.checked) inp.click(); } else { lbl.click(); }
+          });
           console.log("[AX] 駅クリック: " + name + (aliases[ai] !== name ? " (alias→" + aliases[ai] + ")" : ""));
           return true;
         }

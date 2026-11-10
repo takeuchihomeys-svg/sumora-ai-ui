@@ -171,6 +171,7 @@
     var list = (cbs || []).filter(function (cb) { return cb && !cb.checked; });
     if (!list.length) { if (next) next(0); return; }
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
     var i = 0;
     function step() {
       if (i >= list.length) { if (next) next(list.length); return; }
@@ -178,7 +179,10 @@
       try {
         if (!cb.isConnected || cb.checked) { step(); return; }
         try { cb.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
-        cb.click();
+        // 2026-11-10 v2.6.0 竹内さん「ちゃんとマウス動かしてクリックまでつながるようにする」:
+        //   見えるカーソルでその行まで動いてから押す（pointer-events:none＝サイトの操作を邪魔しない）
+        if (P && P.moveToEl) { P.ensure(); P.moveToEl(cb).then(function () { if (P.tap) P.tap(); cb.click(); }, function () { cb.click(); }); }
+        else cb.click();
       } catch (_) {}
       // 押す間 180〜320ms（対数正規）。8%ほどで「一覧を目で追う」一息 400〜1100ms
       // 2026-11-10 v2.5.99 竹内さん「ボタン選択する際人間ならたまにまよう」:

@@ -243,6 +243,18 @@
     var r;
     try { r = el.getBoundingClientRect(); } catch (_) { fire(el); return Promise.resolve(false); }
     if (!r || (r.width <= 0 && r.height <= 0)) { fire(el); return Promise.resolve(false); }
+    // 2026-11-10 v2.6.0 竹内さん「リアプロとITANDI人間のようにマウス動くようにする」:
+    //   画面の上に「見えるカーソル」を出して、押す位置まで人の軌跡で動かす（pointer-ui.js・見た目だけ・pointer-events:none）。
+    //   動きながら押すと不自然なので、**着いてから**押す（本物のクリックは今まで通り1回だけ）。
+    var _P = window.AxlxPointerUi;
+    if (_P && _P.ensure) {
+      try { _P.ensure(); } catch (_) {}
+      return _P.moveToEl(el).then(function () {
+        try { _P.tap(); } catch (_) {}
+        _fireAt(el, fire, r);
+        return true;
+      }, function () { _fireAt(el, fire, r); return true; });
+    }
     var to = { x: r.left + r.width * (0.35 + Math.random() * 0.3), y: r.top + r.height * (0.35 + Math.random() * 0.3) };
     var pts = H.pointerPath(_pointer, to, 10 + Math.floor(Math.random() * 8));
     var waits = H.pointerDelays ? H.pointerDelays(pts.length, 260 + Math.random() * 340) : pts.map(function () { return 30; });
@@ -278,6 +290,20 @@
       try { el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true, view: window })); } catch (_) {}
       step();
     });
+  }
+  /**
+   * 2026-11-10 v2.6.0 カーソルが着いた後に「押す」処理を1か所に（見えるカーソルの経路でも同じ順で出す）。
+   *   mousemove → mouseover → mousedown → mouseup → 本物のクリック（1回だけ）
+   */
+  function _fireAt(el, fire, r) {
+    try {
+      var cx = Math.round(r.left + r.width * 0.5), cy = Math.round(r.top + r.height * 0.5);
+      var base = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
+      ["mousemove", "mouseover"].forEach(function (type) { try { el.dispatchEvent(new MouseEvent(type, base)); } catch (_) {} });
+      try { el.dispatchEvent(new MouseEvent("mousedown", Object.assign({}, base, { buttons: 1 }))); } catch (_) {}
+      try { el.dispatchEvent(new MouseEvent("mouseup", Object.assign({}, base, { buttons: 0 }))); } catch (_) {}
+      fire(el);
+    } catch (e) { console.error('[AX] クリック例外', e); }
   }
   // ★ 修正(Bug2): 選択側クリックの実行時ガード。
   // 同一駅が複数路線に出現するモーダルでは同名inputが2つ描画され、内部状態で同期している場合

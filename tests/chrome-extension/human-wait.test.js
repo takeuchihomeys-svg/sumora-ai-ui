@@ -108,7 +108,7 @@ function rest() {
   const cs = manifest.content_scripts;
   const first = cs[0];
   // v2.5.40: 画面の文字の受け口（snapshot-core.js）を後ろに足した（先頭の2つの順は変えない）
-  eq("先頭の段（document_start・3サイト）が human-wait.js → human-trace.js → own-mutation.js → search-audit.js（→ snapshot-core.js）の順", first.js, ["human-wait.js", "human-trace.js", "own-mutation.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"]);
+  eq("先頭の段（document_start・3サイト）が human-wait.js → human-trace.js → own-mutation.js → search-audit.js（→ snapshot-core.js）の順", first.js, ["human-wait.js", "pointer-ui.js", "human-trace.js", "own-mutation.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"]);
   eq("先頭の段は document_start（後の段の content script より先に読む）", first.run_at, "document_start");
   for (const site of ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]) {
     ok(`先頭の段が ${site} を含む`, first.matches.includes(site));
@@ -121,7 +121,7 @@ function rest() {
   }
   const mainWorld = cs.find((c) => c.world === "MAIN" && c.js.includes("itandi-page-script.js"));
   // v2.5.34: 間に itandi-update-days.js（募集条件更新 N日以内・itandi-update-days.test.js）。human-wait.js が先頭なのは変えない
-  eq("itandi のページの中の段: human-wait.js → itandi-update-days.js → itandi-page-script.js（同じ world:MAIN）", mainWorld && mainWorld.js, ["human-wait.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
+  eq("itandi のページの中の段: human-wait.js → itandi-update-days.js → itandi-page-script.js（同じ world:MAIN）", mainWorld && mainWorld.js, ["human-wait.js", "pointer-ui.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
   const war = manifest.web_accessible_resources[0];
   ok("web_accessible_resources に human-wait.js（リアプロ・レインズのページへ <script> で入れる）", war.resources.includes("human-wait.js"));
   ok("web_accessible_resources の対象にリアプロとレインズ", war.matches.some((m) => /realnetpro/.test(m)) && war.matches.some((m) => /reins/.test(m)));
@@ -163,6 +163,8 @@ function rest() {
       "setTimeout 20000": [1, "押した印刷用PDF をまとめて送るまでの待ち（v2.5.62・最後に押してから・サイトは触らない）"],
     },
     "content.js": { "setTimeout 400": [1, "MutationObserver の間引き"], "setInterval 3000": [1, "サイドバーの見張り"], "setTimeout 300": [1, "起動時"] },
+    // 2026-11-10 v2.6.0 見えるカーソル: 90ms は「押した時の見た目の縮みを戻す」だけ（サイトを触らない・固定でよい）
+    "pointer-ui.js": { "setTimeout 90": [1, "押した時にカーソルが縮むのを戻す（見た目だけ）"] },
     "itandi-bulk-dl.js": {
       "setTimeout 60000": [1, "PDF の期限"], "setInterval 500": [1, "モーダルが出たかの見る間隔"], "setTimeout 15000": [1, "モーダルの期限"],
       "setTimeout 800": [1, "popup の応答の期限"], "setTimeout 5000": [1, "表示を戻す"], "setInterval 1000": [1, "0件の確定の見る間隔"],
@@ -379,7 +381,7 @@ console.log("\n■ ⑨ 人が動いているかの記録（human-trace.js・2026
 
   // 配線（manifest・各ページ・点検）
   const mf2 = JSON.parse(read("manifest.json"));
-  ok("manifest: 先頭の段で human-trace.js を読む（human-wait の次）", mf2.content_scripts[0].js.indexOf("human-trace.js") === 1);
+  ok("manifest: 先頭の段で human-trace.js を読む（human-wait の次）", mf2.content_scripts[0].js.indexOf("human-trace.js") === 2);
   ok("manifest: web_accessible_resources に human-trace.js（ページへ <script> で入れる）", mf2.web_accessible_resources[0].resources.includes("human-trace.js"));
   ok("リアプロのページ: 人が動いたかを点検の記録に載せる", /AxlxHumanTrace/.test(read("page-script.js")) && /_audit\.human = _humanSnapshot\(\)/.test(read("page-script.js")));
   ok("ITANDI のページ: 同じ", /AxlxHumanTrace/.test(read("itandi-page-script.js")) && /_itAudit\.human = _itHumanSnapshot\(\)/.test(read("itandi-page-script.js")));

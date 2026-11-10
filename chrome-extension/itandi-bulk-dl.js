@@ -611,7 +611,10 @@
       setStatusBar("物件資料クリック...");
       // 2026-11-10 人間的な動き: 一瞬で飛ばさず、少しずつ動かす（人が資料のボタンまで目で追う形）
       try { btn.scrollIntoView({ behavior: "smooth", block: "center" }); } catch(e) { try { btn.scrollIntoView(); } catch (__) {} }
-      btn.click();
+      // 2026-11-10 v2.6.0: 見えるカーソルで資料のボタンまで動いてから押す
+      var _PB = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+      if (_PB && _PB.moveToEl) { _PB.ensure(); _PB.moveToEl(btn).then(function () { if (_PB.tap) _PB.tap(); btn.click(); }, function () { btn.click(); }); }
+      else btn.click();
 
       // MutationObserver でモーダルの出現を監視（3段階フォールバック）
       var appeared = false;
@@ -1223,6 +1226,7 @@
     var list = (cbs || []).filter(function (cb) { return cb && !cb.checked; });
     if (!list.length) { if (next) next(0); return; }
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
     var i = 0;
     function step() {
       if (i >= list.length) { if (next) next(list.length); return; }
@@ -1231,7 +1235,9 @@
         if (!cb.isConnected || cb.checked) { step(); return; }
         // 人が目で探して押す形: 画面に入れてから押す（一瞬で飛ばさない）
         try { cb.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
-        cb.click();
+        // 2026-11-10 v2.6.0 竹内さん「ちゃんとマウス動かしてクリックまでつながるようにする」: 見えるカーソルで動いてから押す
+        if (P && P.moveToEl) { P.ensure(); P.moveToEl(cb).then(function () { if (P.tap) P.tap(); cb.click(); }, function () { cb.click(); }); }
+        else cb.click();
       } catch (_) {}
       // 押す間 120〜320ms（対数正規・右に裾）。8%ほどで「一覧を目で追う」500〜1100ms をはさむ
       // 2026-11-10 v2.5.99 竹内さん「ボタン選択する際人間ならたまにまよう」: 送る部屋を選ぶ所は 15% で迷う（3段）

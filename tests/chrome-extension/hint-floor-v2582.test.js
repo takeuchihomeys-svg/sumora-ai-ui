@@ -22,7 +22,7 @@ ok("2LDK以上 → 2LDK・3K・3DK・3LDK", JSON.stringify(IT.layoutIds("2LDK以
 ok("4LDK以上（ITANDI に 5LDK が無い）→ 4LDK・5K以上", JSON.stringify(IT.layoutIds("4LDK以上", false)) === '["4LDK","5K_OVER"]');
 ok("短い書き方「1L以上」も同じ", JSON.stringify(IT.layoutIds("1L以上", false)) === '["1LDK","2K","2DK","2LDK"]');
 ok("上の決まり: nLDK→(n+1)LDK・nK/nDK→nLDK・1R→1K", FI.ijouUpper("1LDK") === "2LDK" && FI.ijouUpper("2DK") === "2LDK" && FI.ijouUpper("1R") === "1K" && FI.ijouUpper("x") === null);
-ok("自動入力（page-script・itandi-page-script）も同じ部品を使う・ページに先に入れる", /_FI\.ijouRange\(FLOOR_RANK, baseFloor\)/.test(read("page-script.js")) && /_FI\.ijouRange\(FLOOR_RANK_IT,/.test(read("itandi-page-script.js")) && /chrome\.runtime\.getURL\("floor-ijou\.js"\)/.test(read("content.js")) && JSON.parse(read("manifest.json")).content_scripts.some((c) => c.world === "MAIN" && c.js.indexOf("floor-ijou.js") === 1));
+ok("自動入力（page-script・itandi-page-script）も同じ部品を使う・ページに先に入れる", /_FI\.ijouRange\(FLOOR_RANK, baseFloor\)/.test(read("page-script.js")) && /_FI\.ijouRange\(FLOOR_RANK_IT,/.test(read("itandi-page-script.js")) && /chrome\.runtime\.getURL\("floor-ijou\.js"\)/.test(read("content.js")) && JSON.parse(read("manifest.json")).content_scripts.some((c) => c.world === "MAIN" && c.js.indexOf("floor-ijou.js") >= 1 && c.js.indexOf("itandi-page-script.js") > c.js.indexOf("floor-ijou.js")));
 
 console.log("── ① ② 値の小さな札（今の手順だけ・光の右に1行）");
 const yuna = { rent_max: 95000, walk_minutes: 15, floor_plan: "1LDK以上", building_age: 30, area_min: 40, rp_update_days: 7, station_names: ["天満"], area_mode: "station" };
@@ -43,6 +43,6 @@ for (const f of ["realpro-guide.js", "itandi-guide.js"]) {
   const s = read(f);
   ok(`${f}: 札は今の手順の値だけ・光の右に小さく1行（灰色）・画面の外の時は出さない`, /highlight\(cur\.ev\.target, cur\.step\.hint \|\| ""\)/.test(s) && /if \(_lastHint && first && !arrow\)/.test(s) && /\.axlx-hint\{position:fixed;pointer-events:none;[^}]*background:#eceff1;/.test(s));
 }
-ok("manifest の版 2.5.82", JSON.parse(read("manifest.json")).version === "2.5.99");
+ok("manifest の版 2.5.82", JSON.parse(read("manifest.json")).version === "2.6.0");
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
