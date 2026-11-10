@@ -43,6 +43,8 @@ export type TwoStageInput = {
   ackOnly?: boolean;
   /** こちらが今日（JST）すでにした約束の種類（promiseKindsToday）。同じ日の同じ件の2通目からは約束を挟まず AIX（10巡目 10/08） */
   promisedTodayKinds?: readonly TwoStageKind[];
+  /** 2026-11-11 作業員1（A5）: 今の時刻（JST の時）。無ければ jstParts().hour（本番は渡さない＝今まで通り）。テストで時計を渡すため */
+  hourJst?: number;
   /** 今回お客様が物件を送ってきた（持ち込み・URL／物件の画像）。ask＝お客様の言葉（broughtPropertyAsk）・count＝件数（broughtPropertyCount）。10/07 */
   brought?: { ask: BroughtAsk; count: number; /** 10/13: 送って頂いた物件が SNS・TikTok の画面で物件名が無く題だけ（broughtTitleOnly） */ titleOnly?: boolean } | null;
   /** 室内写真の依頼の番（ブレインの S11）。atHand＝頼まれた物件の室内イメージが手元にある（room-photo-material.photoMaterialAtHand）。5巡目 10/07 */
@@ -340,7 +342,7 @@ function sameDayDirect(v: TwoStageVerdict, i: TwoStageInput): boolean {
   // 2026-10-16 竹内悠馬（10/16 の画面の事例 e・実送信 21:25「本日は管理会社の営業時間が終了しておりますので、明日一番で確認しご連絡させて頂きます」）:
   //   管理会社の営業時間外（18時〜翌9時・日本時間）は今は確認も結果の AIX も送れない＝2通目でも約束の返信のまま（AIX は明日）。戻す TWO_STAGE_SAME_DAY_NIGHT=off
   if ((typeof process === "undefined" || (process.env?.TWO_STAGE_SAME_DAY_NIGHT ?? "").toLowerCase() !== "off")) {
-    const h = jstParts().hour;
+    const h = i.hourJst ?? jstParts().hour; // 2026-11-11 A5: テストは時計を渡す（本番は渡さない＝今まで通り）
     if (h >= 18 || h < 9) return false;
   }
   const kinds = i.promisedTodayKinds ?? [];

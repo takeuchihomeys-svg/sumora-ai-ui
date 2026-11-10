@@ -9,7 +9,7 @@ import { maskPII } from "@/app/lib/pii-mask";
 import { customerNameTokens, maskCustomerNames } from "@/app/lib/compose-name-mask";
 import { textFingerprint } from "@/app/lib/brain-judge-examples";
 import { resolveReplyScene } from "@/app/lib/reply-scene";
-import { APPLY_DOCS_RE, actualOf, hitsOf, turnVectorRow, conductorTurnVectorsOn, maskContactBits, turnSendsForShape, type TurnVectorRow } from "@/app/lib/conductor-turn-vectors";
+import { APPLY_DOCS_RE, actualOf, hitsOf, turnVectorRow, conductorTurnVectorsOn, maskContactBits, turnSendsForShape, stripLoneSurrogates, type TurnVectorRow } from "@/app/lib/conductor-turn-vectors";
 import { shapeOfSends } from "@/app/lib/two-message-plan";
 import { focusOfTakeuchiTurn, openPromiseAt, turnSituationTextV2, type HistMsg } from "@/app/lib/conductor-focus";
 
@@ -22,17 +22,30 @@ const COLS = "id, conversation_id, sender, text, created_at, is_aix_generated, l
 export type FillResult = { candidates: number; built: number; skippedExisting: number; skippedApplyDocs: number; written: number; dry: boolean; samples?: string[]; timeBudgetHit?: boolean; v2?: boolean; aixByTime?: number };
 type V2Row = TurnVectorRow & { situation_v2?: string; focus?: string | null };
 
-export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: number; limit?: number; apply?: boolean; samples?: number; before?: string | null; budgetMs?: number } = {}): Promise<FillResult> {
+export async function fillConductorTurnVectors(sb: SupabaseClient, o: { days?: number; limit?: number; apply?: boolean; samples?: number; before?: string | null; budgetMs?: number; /** v2 の作り直し: 表の v2 が無い行の送信 id だけを作る（11/11） */ sendIds?: ReadonlyArray<string> } = {}): Promise<FillResult> {
   // 2026-11-04 1回目の一括の埋めが 300秒の上限で切れた（100番を書いた所で時間切れ・番ごとに読みが数回＋埋め込み）＝時間の予算で止めて、それまでの分を必ず書く
   const t0 = Date.now(), budget = o.budgetMs ?? 220_000;
   const days = Math.min(120, Math.max(7, o.days ?? 90)), limit = Math.min(400, Math.max(10, o.limit ?? 200));
   const write = !!o.apply && conductorTurnVectorsOn();
   const v2 = conductorTurnVectorsV2On();
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  const { data: tk, error } = await sb.from("messages").select(COLS).eq("staff_writer", "takeuchi").eq("staff_writer_confidence", "sure").neq("sender", "customer")
-    .gte("created_at", since).lt("created_at", o.before ?? new Date(Date.now() + 60_000).toISOString()).order("created_at", { ascending: false }).limit(limit * 4);
-  if (error) throw new Error(`messages: ${error.message}`);
-  const sends = ((tk ?? []) as Msg[]).filter((m) => !isTestConversation(m.conversation_id));
+  let tk: Msg[] = [];
+  if (o.sendIds) {
+    // 2026-11-11 作業員4（弱い所 291・292 の残り）: 前の作り直しは「v2 の無い一番新しい番」の後ろから送信を800通さかのぼっていたが、
+    //   竹内さんの送信は10日で800通を超え、その窓の番は全部 v2 済み（10/15 以降）＝毎晩 built 0 で止まっていた（11/06・11/07 の記録）。表の行の送信 id で直接引く
+    for (let i = 0; i < o.sendIds.length; i += 100) {
+      const { data, error } = await sb.from("messages").select(COLS).in("id", o.sendIds.slice(i, i + 100));
+      if (error) throw new Error(`messages: ${error.message}`);
+      tk.push(...((data ?? []) as Msg[]));
+    }
+    tk.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  } else {
+    const { data, error } = await sb.from("messages").select(COLS).eq("staff_writer", "takeuchi").eq("staff_writer_confidence", "sure").neq("sender", "customer")
+      .gte("created_at", since).lt("created_at", o.before ?? new Date(Date.now() + 60_000).toISOString()).order("created_at", { ascending: false }).limit(limit * 4);
+    if (error) throw new Error(`messages: ${error.message}`);
+    tk = (data ?? []) as Msg[];
+  }
+  const sends = tk.filter((m) => !isTestConversation(m.conversation_id));
   // 表がある時だけ、もう入っている番を外す（dry は表が無くても動く）
   let existing = new Set<string>();
   if (write) {
@@ -175,6 +188,25 @@ export async function backfillCursor(sb: SupabaseClient): Promise<string | null>
   return ((data ?? []) as Array<{ turn_at: string }>)[0]?.turn_at ?? null;
 }
 
+/**
+ * v2 の作り直しの的（11/11 作業員4）: 表の v2 がまだ無い行（作れないと印を付けた行＝situation_v2 が "" は外す）の送信 id を新しい順に limit 件。
+ *   作った後も v2 が付かなかった行は markV2Unbuildable で印を付ける＝同じ行が毎晩の的を塞がない（前の印 v2BackfillCursor は作れない番で止まっていた）
+ */
+export async function v2BackfillSendIds(sb: SupabaseClient, limit = 200): Promise<string[]> {
+  const { data } = await sb.from("conductor_turn_vectors").select("source_key").is("embedding_v2", null).is("situation_v2", null).order("turn_at", { ascending: false }).limit(limit);
+  return ((data ?? []) as Array<{ source_key: string }>).map((r) => r.source_key).filter((k) => k.startsWith("msg:")).map((k) => k.slice(4));
+}
+/** 作り直しても v2 が付かなかった行に印（situation_v2 = ""・近い番の読みは embedding_v2 が無い行を引かない＝読みは変わらない）。印を付けた数 */
+export async function markV2Unbuildable(sb: SupabaseClient, sendIds: ReadonlyArray<string>): Promise<number> {
+  let n = 0;
+  for (let i = 0; i < sendIds.length; i += 100) {
+    const keys = sendIds.slice(i, i + 100).map((id) => `msg:${id}`);
+    const { data, error } = await sb.from("conductor_turn_vectors").update({ situation_v2: "" }).in("source_key", keys).is("embedding_v2", null).is("situation_v2", null).select("source_key");
+    if (!error) n += (data ?? []).length;
+  }
+  return n;
+}
+
 /** v2 の作り直しの印（11/05 作業員5）: v2 の埋め込みがまだ無い一番新しい番の少し後（送信はお客様の番より後なので2日の余裕）。無ければ null＝全部済み */
 export async function v2BackfillCursor(sb: SupabaseClient): Promise<string | null> {
   const { data } = await sb.from("conductor_turn_vectors").select("turn_at").is("embedding_v2", null).order("turn_at", { ascending: false }).limit(1);
@@ -183,6 +215,7 @@ export async function v2BackfillCursor(sb: SupabaseClient): Promise<string | nul
 }
 
 async function flush(sb: SupabaseClient, rows: Array<V2Row & { embedding: number[]; embedding_v2?: number[] }>): Promise<void> {
-  const { error } = await sb.from("conductor_turn_vectors").upsert(rows.map((r) => ({ ...r, embedding: JSON.stringify(r.embedding), ...(r.embedding_v2 ? { embedding_v2: JSON.stringify(r.embedding_v2) } : {}) })), { onConflict: "source_key" });
+  // 2026-11-11 作業員4: 1行の絵文字の片割れで束ごと json で断られていた（11/08〜）＝書く前に文字列の片割れを外す（埋め込みの数の配列は触らない）
+  const { error } = await sb.from("conductor_turn_vectors").upsert(rows.map((r) => ({ ...stripLoneSurrogates(r), embedding: JSON.stringify(r.embedding), ...(r.embedding_v2 ? { embedding_v2: JSON.stringify(r.embedding_v2) } : {}) })), { onConflict: "source_key" });
   if (error) throw new Error(`conductor_turn_vectors: ${error.message}`);
 }
