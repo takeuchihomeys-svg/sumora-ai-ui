@@ -1,0 +1,40 @@
+---
+description: sumora-ai-ui の絶対ルールと、物件検索ツール（Chrome 拡張）を Claude Code と分担して直す時の決まり
+alwaysApply: true
+---
+
+# sumora-ai-ui で Cursor が守る決まり
+
+返答・コミットの文・コメントは日本語で書く。正本の決まりはリポジトリの `CLAUDE.md`。ここと食い違ったら `CLAUDE.md` が先。
+
+## 絶対ルール（CLAUDE.md と同じ）
+1. **screening-admin のコードは一切触れない**（DB の操作は可・コードは禁止）。
+2. **Supabase は別プロジェクト**（sumora-ai-ui: `wfwsmwxakhyxobytszoq`）。他のプロジェクトに書かない。
+3. **認証情報はハードコード禁止**（必ず環境変数）。`.env*` はどこにも上げない。鍵・合言葉の値をチャット・コード・ログに出さない。
+4. **新しい列・表を足す時は `app/api/migrate-schema/route.ts` も同時に直す**（後回し厳禁）。
+5. **コミットの前に `npx tsc --noEmit` で型エラー 0**（型エラーのある状態でコミットしない）。
+
+## DB の決まり
+- **DB の変更（DDL: CREATE / ALTER / DROP / VIEW の作り直し）は、中身を竹内さんに見せて OK をもらってから当てる。** 当てたら migrate-schema も同じ形に直す。
+- 本番の DB は**まず読むだけ**で使う。行を書き換える・消す時は、件数と中身を先に確かめ、戻し方（控え・戻しの SQL）を用意してから。
+- **営業時間（JST 9〜22時）は DB の全件読み・重い集計をしない**（小分け・索引の範囲なら可）。本番が時間切れになった事がある。
+- PostgREST は1回 1000行まで（limit を大きくしてもエラー無しで切れる）。多い時は頁で読む。
+
+## 物件検索ツール（Chrome 拡張）の分担
+- **Cursor**: リアプロ・ITANDI・REINS の画面での動き方（検索の操作・入力・一覧の読み取り・ピックアップ・ダウンロード）。主なファイル: `chrome-extension/` の `page-script.js`・`realpro-guide*.js`・`itandi-*.js`・`reins-*.js`・`popup.js`・`background.js`。
+- **Claude Code**: 裏のデータ（DB の構造・API `app/api/*`・保管・地図の更新）とブレイン。
+- **両方が同じ地図を見る**: `chrome-extension/DB_STRUCTURE.md`（表・流れ・リアプロと ITANDI の分け方・混ざっている所・拡張の中だけにある物）。
+
+## 拡張を直す前と後
+- 直す前に必ず読む: `memory/dept_search_tool.md`（拡張の部署の記録・前回からの変更と引き継ぎ）、`chrome-extension/DB_STRUCTURE.md`。
+- **リアプロ・ITANDI・REINS の路線名・駅名の表記は完全に別に管理する。混ぜない**（例: 同じ路線でもサイトごとに名前が違う。対応表は `chrome-extension/popup-maps.js` が正本・`resolution-core.js` は写し）。
+- `site` の値は `realpro` / `itandi` / `reins` を使う（`automation_commands.sites` だけ今は `realnetpro` が残っている。揃える作業中）。
+- 拡張を直したら、**すぐ** `memory/dept_search_tool.md` に何を変えたかを足す。DB に送る値や API を変えたら `chrome-extension/DB_STRUCTURE.md` も直す。
+- DB に新しく送る値（今は拡張の中だけにある一時調整・駅の選び直しなど）が要る時は、API と表は Claude Code 側が作るので、先にどの値を送るかを決めて合わせる。
+- 大量の自動の試し（同じ検索を何百回）をしない。人が1回ずつ検索した形で、点検の記録（`search_audits`）を読んで確かめる（リアプロの運営への配慮）。
+
+## してはいけない事
+- screening-admin のコードを変える。
+- 鍵を書く・上げる・表示する。
+- 竹内さんの OK 無しに DB の構造を変える。
+- `git push --force`・他の人の作業ツリーの入れ替え・`git stash` の他人の物を pop する。

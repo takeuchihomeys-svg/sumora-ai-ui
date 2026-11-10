@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "app/lib/extension-live-server.ts",
+    "app/api/extension-live/route.ts",
+    "scripts/audit-human-vs-auto.ts"
+  ]
+}
