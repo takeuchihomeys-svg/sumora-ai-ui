@@ -61,14 +61,31 @@ t("売上サポの行で広さ・敷礼を埋める", filled.areaSqm === 24.43 &
 
 // ── 像（H0N0KA.） ──
 const curH = { rent_max: 95000, floor_plan: "1DK 1LDK", floor_area_min: 25, walk_minutes: 10, building_age: 20, desired_area: "新大阪、東三国", area_mode: "station" };
-const tH = buildClosingTarget({ gaps: readClosingGaps("ただ家賃もう少し下がったりしないですよね"), favorite: filled, current: curH, text: "よいです！！！すきです！！！ただ家賃もう少し下がったりしないですよね" })!;
+const tH = Object.assign({}, buildClosingTarget({ gaps: readClosingGaps("ただ家賃もう少し下がったりしないですよね"), favorite: filled, current: curH, text: "よいです！！！すきです！！！ただ家賃もう少し下がったりしないですよね" })!, { at: "2026-10-06T10:00:00Z" });
 t("家賃: 9.52万 −5千 → 9.0万（千円で切り下げ）", tH.want.rentMaxTotal === 90000);
 t("広さ: 24.43㎡の9割 → 21㎡", tH.want.areaMin === 21);
 t("間取り: 気に入った部屋＋登録", JSON.stringify(tH.want.floorPlans) === JSON.stringify(["1LDK", "1DK"]));
 t("家賃は一時の意図（登録しない）", tH.scope === "temporary" && tH.registerHints.length === 0);
 t("気に入った上で（ほめ言葉あり）", tH.liked && tH.rationale.includes("気に入った上で"));
-const ovH = closingSearchOverride(tH, curH)!;
-t("検索の上書き: 家賃 9万・広さ21・間取りは登録と同じなので入れない", ovH.rent_max === 90000 && ovH.area_min === 21 && ovH.floor_plan === null);
+// 2026-11-10 v2.6.24 竹内さん「条件更新されていればそれで行う。お客さんが希望合って言っている場合、
+//   その場合だと10.5万円が正しい」:
+//   会話の発言（像の at）が登録の条件の更新より新しい時だけ、会話の条件で上書きする。
+const _dbOlder = { ...curH, conditions_updated_at: "2026-09-01T00:00:00Z" }; // 登録は古い（会話 10/06 が新しい）
+const ovH = closingSearchOverride(tH, _dbOlder as unknown as typeof curH)!;
+t("会話が新しい → 会話の条件で上書き（家賃9万・広さ21）", ovH.rent_max === 90000 && ovH.area_min === 21);
+// 登録の方が新しい（人が直した値）→ 上書きしない
+const _dbNewer = { ...curH, conditions_updated_at: "2026-12-01T00:00:00Z" };
+t("登録が新しい → 上書きしない（人が直した値が正しい）", closingSearchOverride(tH, _dbNewer as unknown as typeof curH) === null);
+// 登録の更新時刻だけが読めない → 「登録が新しいか不明」なので、会話が新しい扱い（今の実装）
+//   ※ 安全側に倒すなら preferDb: true を付ける（竹内さんの判断で切り替えられる）
+t("更新時刻が無い時は会話を優先（preferDb で登録優先にできる）", closingSearchOverride(tH, curH)?.rent_max === 90000 && closingSearchOverride(tH, curH, { preferDb: true }) === null);
+// 旧の動き（常に会話を優先）は opts で戻せる
+const ovHOld = closingSearchOverride(tH, curH, { allowOverrideDb: true })!;
+t("allowOverrideDb の時は常に会話を優先（家賃 9万・広さ21）", ovHOld.rent_max === 90000 && ovHOld.area_min === 21);
+// 登録の条件が空の欄だけ像で補う
+const curEmpty = { rent_max: null, floor_plan: null, floor_area_min: null, walk_minutes: null, building_age: null, desired_area: "新大阪", area_mode: "station" };
+const ovEmpty = closingSearchOverride(tH, curEmpty as unknown as typeof curH)!;
+t("登録が空の欄は像で補う（家賃9万・広さ21）", ovEmpty.rent_max === 90000 && ovEmpty.area_min === 21);
 // 江坂 203（9万・1DK・駅は江坂）＝一番の点は合うが場所の目安（新大阪・南方・東三国）の外
 const STAR_E = "🌟ファーストフィオーレ江坂垂水町Ⅱ 203号室\n\n（オススメポイント）\n・家賃80,000円・共益費10,000円（合計90,000円）\n・間取り：1DK（ダイニング5.5帖、洋室3.7帖）\n・北大阪急行電鉄「江坂」徒歩12分";
 t("江坂 203 は一番の点は合う（場所の外）", fitOf(tH, candidateFromStarText(STAR_E)!).fit === "main_ok");

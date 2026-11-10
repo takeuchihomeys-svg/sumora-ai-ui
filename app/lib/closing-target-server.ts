@@ -36,16 +36,24 @@ export async function loadClosingTargetState(
     if (!convId) return null;
     const now = opts.now ?? new Date();
     const since = new Date(now.getTime() - 28 * 86400_000).toISOString();
-    const [{ data: msgs }, { data: pickups }] = await Promise.all([
+    const [{ data: msgs }, { data: pickups }, { data: hist }] = await Promise.all([
       db.from("messages").select("sender, text, created_at").eq("conversation_id", convId).in("sender", ["customer", "staff"]).gte("created_at", since).lte("created_at", now.toISOString())
         .order("created_at", { ascending: true }).limit(600),
       db.from("property_pickups").select("property_name, room_no, summary_text, terms, location, equipment, created_at").eq("property_customer_id", pcId)
         .gte("created_at", new Date(now.getTime() - 45 * 86400_000).toISOString()).order("created_at", { ascending: false }).limit(300),
+      // 2026-11-10 v2.6.24 竹内さん「条件更新されていればそれで行う」:
+      //   登録の条件が**いつ更新されたか**（property_condition_history の一番新しい時刻）を読む。
+      //   会話の発言がこれより新しければ、会話の条件を優先する（お客様が後から言った方が正しい）。
+      db.from("property_condition_history").select("created_at").eq("property_customer_id", pcId)
+        .order("created_at", { ascending: false }).limit(1),
     ]);
+    const _cur = Object.assign({}, pc as CurrentConditions, {
+      conditions_updated_at: ((hist ?? []) as Array<{ created_at?: string | null }>)[0]?.created_at ?? null,
+    });
     const rows = (pickups ?? []) as Array<{ property_name: string | null; room_no: string | null; summary_text: string | null; terms: unknown; location: unknown; equipment: unknown }>;
     return closingTargetFromConversation({
       messages: (msgs ?? []) as ConvMessage[],
-      current: pc as CurrentConditions,
+      current: _cur,
       now,
       enrichFavorite: (fav) => fillFavoriteFromPickup(fav, bestBuildingMatch(fav.name, fav.room, rows, (r) => r.property_name, (r) => r.room_no)),
     });

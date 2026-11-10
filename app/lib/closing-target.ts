@@ -246,6 +246,12 @@ export type CurrentConditions = {
   building_age?: number | null; desired_area?: string | null; preferences?: string | null;
   /** 駅で探している人（station）だけ、物件の駅が場所の目安に1つも無い時を「外れ」と言える（区・市で探す人は駅名で決められない） */
   area_mode?: string | null;
+  /**
+   * 2026-11-10 v2.6.24 竹内さん「条件更新されていればそれで行う。お客さんが希望合って言っている場合、その場合だと10.5万円が正しい」:
+   *   この登録の条件が**いつ更新されたか**（property_condition_history の一番新しい時刻）。
+   *   会話の発言（像の at）がこれより新しければ、会話の条件を優先する（お客様が後から言った方が正しい）。
+   */
+  conditions_updated_at?: string | null;
 };
 
 export type ClosingTarget = {
@@ -522,15 +528,43 @@ export type ClosingSearchOverride = {
   building_age: number | null; area_min: number | null; area_max: null; pet: null; floor_min: number | null; site: null; is_wide: null;
 };
 
-/** 像 → その回だけの検索の上書き。サイトで絞れない物（設備・場所の目安）は入れない。変わる欄が無ければ null */
-export function closingSearchOverride(t: ClosingTarget, cur: CurrentConditions): ClosingSearchOverride | null {
+/**
+ * 像 → その回だけの検索の上書き。サイトで絞れない物（設備・場所の目安）は入れない。変わる欄が無ければ null
+ *
+ * 2026-11-10 v2.6.24 竹内さん「条件更新されていればそれで行う。お客さんが希望合って言っている場合、
+ *   その場合だと10.5万円が正しい」:
+ *   会話から読んだ条件が**登録の条件より新しい**時は、会話の方を優先する（お客様が後から言った方が正しい）。
+ *   比べる材料は「像の at（きっかけの発言の時刻）」と「登録の条件の更新時刻（conditions_updated_at）」。
+ *   ・会話が新しい → 会話の条件で上書きする（10.5万が正しい場合）
+ *   ・登録が新しい／同時刻 → 登録を優先（人が直した値だから）
+ *   ・登録の条件が空の欄 → 会話の値で補う（今まで通り）
+ *   opts.allowOverrideDb=true で「時刻に関係なく会話を優先」、opts.preferDb=true で「常に登録を優先」にできる。
+ */
+export function closingSearchOverride(t: ClosingTarget, cur: CurrentConditions, opts?: { allowOverrideDb?: boolean; preferDb?: boolean }): ClosingSearchOverride | null {
+  const allow = !!(opts && opts.allowOverrideDb);
+  const preferDb = !!(opts && opts.preferDb);
+  // 会話の条件が登録より新しいか（どちらかの時刻が読めない時は「登録を優先」＝安全側）
+  const convAt = t.at ? Date.parse(t.at) : NaN;
+  const dbAt = cur.conditions_updated_at ? Date.parse(cur.conditions_updated_at) : NaN;
+  const convIsNewer = Number.isFinite(convAt) && (!Number.isFinite(dbAt) || convAt > dbAt);
+  const mayOverride = allow || (convIsNewer && !preferDb);
   const w = t.want;
-  const rent = w.rentMaxTotal != null && w.rentMaxTotal !== cur.rent_max ? w.rentMaxTotal : null;
+  // 登録の条件が入っている欄は、会話が新しい時だけ像で上書きする
+  const pick = <T>(dbValue: T | null | undefined, wantValue: T | null | undefined): T | null => {
+    if (wantValue == null) return null;
+    const dbHas = dbValue != null && dbValue !== ("" as unknown as T);
+    if (dbHas && !mayOverride) return null; // 登録済みで会話が古い → 触らない
+    if (dbHas && dbValue === wantValue) return null; // 同じ → 触らない
+    return wantValue;
+  };
+  const rent = pick(cur.rent_max, w.rentMaxTotal);
   const curPlans = plansOf(cur.floor_plan);
-  const plans = w.floorPlans?.length && (w.floorPlans.length !== curPlans.length || w.floorPlans.some((p) => !curPlans.includes(p))) ? w.floorPlans.join("・") : null;
-  const area = w.areaMin != null && w.areaMin !== cur.floor_area_min ? w.areaMin : null;
-  const walk = w.walkMax != null && w.walkMax !== cur.walk_minutes ? w.walkMax : null;
-  const age = w.buildingAgeMax != null && w.buildingAgeMax !== cur.building_age ? w.buildingAgeMax : null;
+  const wantPlans = w.floorPlans?.length ? w.floorPlans : null;
+  const plansChanged = wantPlans && (wantPlans.length !== curPlans.length || wantPlans.some((p) => !curPlans.includes(p)));
+  const plans = plansChanged ? (curPlans.length && !mayOverride ? null : wantPlans.join("・")) : null;
+  const area = pick(cur.floor_area_min, w.areaMin);
+  const walk = pick(cur.walk_minutes, w.walkMax);
+  const age = pick(cur.building_age, w.buildingAgeMax);
   const floor = w.floorMin != null && w.floorMin >= 2 ? w.floorMin : null;
   if (rent == null && plans == null && area == null && walk == null && age == null && floor == null) return null;
   return { v: 1, location: null, floor_plan: plans, rent_max: rent, rent_min: null, walk_minutes: walk, building_age: age, area_min: area, area_max: null, pet: null, floor_min: floor, site: null, is_wide: null };
