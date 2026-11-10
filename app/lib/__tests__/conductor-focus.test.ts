@@ -121,7 +121,7 @@ it("人だけが知る事で分かれる外れ（relation と promise_keep の�
 });
 it("段2: CONDUCTOR_FOCUS_TO_BRAIN=on の時だけブレインに重点の1行・場面で絞る・CONDUCTOR_FOCUS=off なら渡さない", () => {
   ok(!focusOnForScene("ack", {})); ok(!focusOnForScene("ack", { CONDUCTOR_FOCUS: "on" }), "CONDUCTOR_FOCUS=on は今まで通り shadow");
-  ok(focusOnForScene("viewing", {}), "11/10 から既定で内覧の場面だけ"); ok(!focusOnForScene("viewing", { CONDUCTOR_FOCUS_TO_BRAIN: "off" })); ok(!focusOnForScene("viewing", { CONDUCTOR_FOCUS: "off" }));
+  ok(!focusOnForScene("viewing", {}), "11/11 から既定の場面は無し（内覧も外した）"); ok(!focusOnForScene(null, {})); ok(focusOnForScene("viewing", { CONDUCTOR_FOCUS_ON_SCENES: "viewing" }), "場面を書けば渡す"); ok(!focusOnForScene("viewing", { CONDUCTOR_FOCUS_TO_BRAIN: "off" })); ok(!focusOnForScene("viewing", { CONDUCTOR_FOCUS: "off" }));
   ok(focusOnForScene("ack", { CONDUCTOR_FOCUS_TO_BRAIN: "on" })); ok(!focusOnForScene("ack", { CONDUCTOR_FOCUS_TO_BRAIN: "on", CONDUCTOR_FOCUS: "off" }));
   ok(focusOnForScene("question", { CONDUCTOR_FOCUS_TO_BRAIN: "on", CONDUCTOR_FOCUS_ON_SCENES: "question, cost" })); ok(!focusOnForScene("ack", { CONDUCTOR_FOCUS_TO_BRAIN: "on", CONDUCTOR_FOCUS_ON_SCENES: "question" }));
   const l = focusBrainLine({ focus: "promise_keep", surface: "了承", background: "確認の結果待ち", why: "" }); ok(l.includes("promise_keep") && l.includes("背景: 確認の結果待ち") && l.includes("AIX の決まりが先"), l);
