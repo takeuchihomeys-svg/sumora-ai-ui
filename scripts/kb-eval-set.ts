@@ -381,4 +381,9 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   {q: "日をまたいだ内覧当日に前日の明日の下書きが残っている",gold: ["dade20ce"],scene: "viewing",from: "owner-base-1111"},
   {q: "物件ピックアップした の文の頭に謝罪を入れた",gold: ["8af5e463"],scene: "property_send",from: "owner-base-1111"},
   {q: "審査かけてみたいと言ったお客様への申込への2通目の結び",gold: ["02a2866f"],scene: "apply",from: "owner-base-1111"},
+  // 2026-11-11 作業員9 竹内さんの土台の2回目（スクショ・打ち合わせの掘り起こし）
+  {q: "お客様が LINE で取り消した発言に返事をした",gold: ["6ad3a25f"],scene: "question",from: "owner-base-1111b"},
+  {q: "確認結果の文で資料や見積書と違う物件名を書いた",gold: ["a685c629"],scene: "property_share",from: "owner-base-1111b"},
+  {q: "送った物件の上の階が空いているかの確認結果の書き方",gold: ["2482fa26"],scene: "property_share",from: "owner-base-1111b"},
+  {q: "契約させて頂きたいの一言で申込確定として扱った",gold: ["ab1c07e6"],scene: "apply",from: "owner-base-1111b"},
 ];
