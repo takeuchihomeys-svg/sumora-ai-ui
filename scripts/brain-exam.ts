@@ -264,6 +264,7 @@ type LaneLocal = {
   /** 今の線（レーンの線の包みが読む・2026-11-04） */ floor: ReplayFloor | null;
   curPc: Record<string, unknown> | null; held: HeldFixture | null; yumaPc: string;
   rawBrainOutputs: Array<Record<string, unknown>>; currentProblemId: string;
+  /** 今の問題の元の番（近い番の読みから答えの番を外す・11/10 作業員4） */ currentProblemTurn?: { conv: string; at: string } | null;
 };
 const newLaneLocal = (conv: string, tag: string, lease: TestConvLease | null, laneFiles: boolean): LaneLocal => ({
   conv, tag, lease,
@@ -1541,7 +1542,7 @@ async function main() {
   //   会話ごとの問い合わせ（YUMA・テスト用の会話・その条件の行の id を含む物）は控えない。止める: EXAM_DB_SNAPSHOT=off
   if (dbSnapshotOn()) {
     const ex = [YUMA_CONV_ID_FOR_SNAPSHOT, ...NO_LINE_TEST_CONVERSATIONS.flatMap((c) => [c.id, c.propertyCustomerId])];
-    dbSnap = installDbSnapshot({ dir: join(examCacheRoot(), "db-snapshot"), excludeIds: () => [...ex, S().yumaPc].filter(Boolean), keyHint: () => S().currentProblemId || null });
+    dbSnap = installDbSnapshot({ dir: join(examCacheRoot(), "db-snapshot"), excludeIds: () => [...ex, S().yumaPc].filter(Boolean), keyHint: () => S().currentProblemId || null, problemTurn: () => S().currentProblemTurn ?? null });
     console.log(`  本番 DB の育つ材料: その日の写しを使う（${join(examCacheRoot(), "db-snapshot")}・EXAM_DB_SNAPSHOT=off で止める）`);
   }
   const { setCassetteTag, setCassettePins, pinsFromRows, hasPinsFor, cassetteCallsOf, inputDiffOf, flushCassette } = await import("./lib/llm-cassette");
@@ -1717,6 +1718,7 @@ async function main() {
     // 2026-11-05 作業員1（統括役の (c)・入力が同じ回の写しと片付けを軽くする前に、回ごとの段の時間を測る）: row.timing＝回の始めからの ms
     const T0 = performance.now(); const tm: Record<string, number> = {}; const mark = (k: string) => { tm[k] = Math.round(performance.now() - T0); }; // Date.now は試験の時計（exam-clock）で動かされる＝本物の経過は performance.now
     S().currentProblemId = p.id;
+    S().currentProblemTurn = p.conv && p.at ? { conv: p.conv, at: p.at } : null; // 11/10 作業員4: 近い番の読みは元の会話を外し元の番より前だけ（答えの漏れ・leakSafeKeyedBody）
     setCassetteTag({ problem: p.id, rep: String(rep) });
     process.env.BRAIN_JUDGE_EXAMPLES_EXCLUDE_CONV = p.conv; // 10/13 判断の手本: 問題の元の会話の番は手本に入れない（答えが漏れない）
     S().curPc = p.pc;
