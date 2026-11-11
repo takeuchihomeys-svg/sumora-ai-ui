@@ -1222,9 +1222,63 @@
   //   旧: tracked.forEach(function(t){ t.cb.checked = true; }) で全部を一瞬で選択（代入なので見た目が一斉に変わる＝機械らしい）。
   //   新: 1件ずつ、人の間（120〜320ms・たまに一息）を空けて押していく。押すのは cb.click()（change が飛ぶ＝updateBar も動く）。
   //   next(done) は全部押し終わってから1回呼ぶ（押し終わる前に資料を取りに行かない）。
+  /**
+   * 2026-11-11 竹内さん「itandi側ほかの部分リアプロと比べて人間の動きとして弱い部分見つけて改善する」:
+   *   押す順を人のように散らす（リアプロ bulk-dl.js の _humanPickOrder と同じ考え）。
+   *   最初の1〜3件は上から → 近く（±1〜3）／少し飛ぶ（±4〜10）／大きく飛ぶ／10%で1〜2つ前へ戻る。全部1回ずつ。
+   */
+  function _itHumanPickOrder(list) {
+    var n = list.length;
+    if (n <= 1) return list.slice();
+    var picked = {}, out = [];
+    var startCount = Math.min(n, 1 + Math.floor(Math.random() * 3));
+    for (var i = 0; i < startCount; i++) { picked[i] = 1; out.push(list[i]); }
+    var guard = 0;
+    while (out.length < n && guard++ < n * 60) {
+      var cur = out.length - 1;
+      var r = Math.random();
+      var nxt = -1;
+      if (r < 0.10 && out.length >= 3) {
+        var idx = out.length - 1 - (1 + Math.floor(Math.random() * Math.min(2, out.length - 1)));
+        var bk = out[idx];
+        var bki = list.indexOf(bk);
+        if (bki >= 0 && !picked[bki]) nxt = bki;
+      }
+      if (nxt < 0 && n >= 4 && r < 0.60) {
+        var far = cur + 2 + Math.floor(Math.random() * Math.min(5, n - 2));
+        if (far < n && !picked[far]) nxt = far;
+        else if (cur - 2 >= 0 && !picked[cur - 2]) nxt = cur - 2;
+      }
+      if (nxt < 0) {
+        if (r < 0.55) nxt = cur + (1 + Math.floor(Math.random() * 3)) * (Math.random() < 0.82 ? 1 : -1);
+        else if (r < 0.85) nxt = cur + (4 + Math.floor(Math.random() * 7)) * (Math.random() < 0.6 ? 1 : -1);
+        else nxt = Math.floor(Math.random() * n);
+      }
+      if (!(nxt >= 0 && nxt < n) || picked[nxt]) nxt = -1;
+      if (nxt < 0) {
+        for (var k = 1; k <= n && nxt < 0; k++) {
+          if (cur + k < n && !picked[cur + k]) nxt = cur + k;
+          else if (cur - k >= 0 && !picked[cur - k]) nxt = cur - k;
+        }
+      }
+      if (nxt < 0) { for (var j = 0; j < n; j++) if (!picked[j]) { nxt = j; break; } }
+      if (nxt < 0) break;
+      picked[nxt] = 1; out.push(list[nxt]);
+    }
+    // 取りこぼしがあれば足す（必ず全件1回ずつ）
+    for (var m = 0; m < n; m++) if (!picked[m]) out.push(list[m]);
+    return out;
+  }
+
   function _humanCheckAll(cbs, next) {
     var list = (cbs || []).filter(function (cb) { return cb && !cb.checked; });
     if (!list.length) { if (next) next(0); return; }
+    /**
+     * 2026-11-11 竹内さん「itandi側ほかの部分リアプロと比べて人間の動きとして弱い部分見つけて改善する」:
+     *   旧は上から1件ずつ＝機械的。リアプロ（bulk-dl.js の _humanPickOrder）と同じ考えで**人が見て回る順**にする。
+     *   最初の1〜3件は上から → 近く／少し飛ぶ／大きく飛ぶ／たまに戻って見直す。全部1回ずつ（重複なし）。
+     */
+    list = _itHumanPickOrder(list);
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
     var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
     var i = 0;

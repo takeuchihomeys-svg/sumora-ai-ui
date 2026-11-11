@@ -105,6 +105,8 @@
   var _tickBusy = 0;
   // 2026-11-11 竹内さん「最初人間ならここちょっと考える時間あったりする」: このページで最初の入力かどうか
   var _itFillSessionSeen = false;
+  // 2026-11-11: 路線の一覧を最初に目で探す間（このページで1回だけ）
+  var _itLineLookSeen = false;
   function _whenTickIdle(cb) {
     if (_tickBusy <= 0) { cb(); return; }
     setTimeout(function () { _whenTickIdle(cb); }, _pd(120)); // 条件を見る間隔（±15%）
@@ -125,12 +127,29 @@
     try { P.ensure(); } catch (_) {}
     return P.moveToEl(el);
   }
-  /** 押す時はカーソルが着いてから（動きながら押さない） */
+  /**
+   * 押す時はカーソルが着いてから（動きながら押さない）
+   * 2026-11-11 竹内さん「itandi側ほかの部分リアプロと比べて人間の動きとして弱い部分見つけて改善する」:
+   *   旧は着いた瞬間にクリック（0ms）。リアプロ（bulk-dl.js の _pressPrintPdf）と同じく
+   *   **狙いを定める間 90〜350ms → 押す → 反応を見る 70〜200ms** を入れる。
+   *   さらに 12% で「狙いを外して戻る」（人が押し間違えそうになって戻る形）。
+   */
   function _tapAndClick(el) {
     var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    var doClick = function () {
+      var aim = 90 + Math.floor(Math.random() * 260);
+      setTimeout(function () {
+        try { if (P && P.tap) P.tap(); } catch (_) {}
+        setTimeout(function () {
+          try { if (el.isConnected && el.checked !== true) el.click(); } catch (_) {}
+        }, 70 + Math.floor(Math.random() * 130));
+      }, aim);
+    };
     var click = function () {
-      try { if (P && P.tap) P.tap(); } catch (_) {}
-      try { if (el.isConnected && !el.checked) el.click(); } catch (_) {}
+      if (P && P.wander && Math.random() < 0.12) {
+        P.wander(el, 300 + Math.floor(Math.random() * 500)).then(doClick, doClick);
+      } else doClick();
     };
     if (!P || !P.moveToEl) { click(); return Promise.resolve(false); }
     return _pointerMoveTo(el).then(function () { click(); return true; }, function () { click(); return true; });
@@ -876,7 +895,23 @@
         var hasLineLabels = [].slice.call(root.querySelectorAll("label")).some(function(l) {
           return l.querySelector("input[type='checkbox']") && isVis(l);
         });
-        if (hasLineLabels && _dlg) { startClickLines(_dlg); return; }
+        if (hasLineLabels && _dlg) {
+          /**
+           * 2026-11-11 竹内さん「itandi側ほかの部分リアプロと比べて人間の動きとして弱い部分見つけて改善する」:
+           *   路線の一覧が出た直後に**目で探す間**を置く（人がどの路線か探す・最初だけ長め）。
+           *   リアプロの駅の「最初に目で探す間（1.2〜3.4秒）」と同じ考え。
+           */
+          var H0 = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+          var firstLook = !_itLineLookSeen;
+          _itLineLookSeen = true;
+          var look = H0 && H0.logNormalDelay ? H0.logNormalDelay(firstLook ? 1900 : 900, 0.35) : 1900;
+          var lo0 = firstLook ? 1200 : 500, hi0 = firstLook ? 3400 : 1600;
+          if (look < lo0) look = lo0;
+          if (look > hi0) look = hi0;
+          console.log("[AX] ITANDI: 路線の一覧を目で探す間 " + Math.round(look) + "ms（" + (firstLook ? "最初" : "2回目以降") + "）");
+          setTimeout(function () { startClickLines(_dlg); }, look);
+          return;
+        }
         if (hasLineLabels && !_dlg) {
           console.warn('[itandi] pollLineList: dialog not found, aborting');
           _abort(); return;

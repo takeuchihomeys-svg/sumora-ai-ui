@@ -209,6 +209,13 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   const ips4 = fs4.readFileSync(path.join(dir, "itandi-page-script.js"), "utf8");
   ok("ITANDI にも考える間がある（1.8〜5.5秒・2回目以降0.7〜2.2秒）", /_itFillSessionSeen/.test(ips4) && /first \? 2800 : 1300/.test(ips4) && /first \? 1800 : 700, hi = first \? 5500 : 2200/.test(ips4));
   ok("ITANDI も実際に待ってから入力を始める", /setTimeout\(next, ms\)/.test(ips4));
+  // 2026-11-11 竹内さん「itandi側ほかの部分リアプロと比べて人間の動きとして弱い部分見つけて改善する」
+  const ib4 = fs4.readFileSync(path.join(dir, "itandi-bulk-dl.js"), "utf8");
+  ok("ITANDI も押す順を人のように散らす（_itHumanPickOrder）", /function _itHumanPickOrder/.test(ib4) && /list = _itHumanPickOrder\(list\)/.test(ib4));
+  ok("ITANDI の押す順も重複なし・全件1回", /for \(var m = 0; m < n; m\+\+\) if \(!picked\[m\]\) out\.push\(list\[m\]\);/.test(ib4));
+  ok("ITANDI も路線の一覧を最初に目で探す間（1.2〜3.4秒）", /_itLineLookSeen/.test(ips4) && /firstLook \? 1200 : 500, hi0 = firstLook \? 3400 : 1600/.test(ips4));
+  ok("ITANDI も押す直前に狙いを定める間（90〜350ms）", /var aim = 90 \+ Math\.floor\(Math\.random\(\) \* 260\)/.test(ips4));
+  ok("ITANDI もたまに狙いを外して戻る（wander 12%）", /Math\.random\(\) < 0\.12\) \{[\s\S]{0,120}P\.wander/.test(ips4));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
