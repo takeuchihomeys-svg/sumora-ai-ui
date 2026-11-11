@@ -48,7 +48,7 @@ console.log("\n■ ② 実際に動かす（積む → 送る）");
     SUMORA_BATCH_API: "https://example.test",
     _getAutomationKeyHeader: async () => ({}),
     _snapInstallId: async () => "test-install",
-    _extVersion: () => "2.6.87",
+    _extVersion: () => "2.6.88",
     fetch: async (url, opts) => {
       fetchCalls.push({ url, bodyLen: opts && opts.body ? opts.body.length : 0 });
       return { ok: true, status: 200 };

@@ -1847,6 +1847,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 var _shotLastAt = 0;
 var _shotRun = null;
 var _shotSeq = 0;
+/**
+ * 2026-11-11 竹内さん「まだ写真クラウドにおくれていないのか」:
+ *   写真を**送る前に縮める**（長辺 maxSide px・JPEG quality）。
+ *   service worker には DOM が無いので **OffscreenCanvas** を使う（Chrome の MV3 で使える）。
+ *   使えない環境では null を返す（呼ぶ側は元の大きさで送る）。
+ */
+async function _shrinkShot(dataUrl, maxSide, quality) {
+  try {
+    if (typeof OffscreenCanvas === "undefined" || typeof createImageBitmap === "undefined") return null;
+    // data:image/jpeg;base64,... → Blob
+    const comma = String(dataUrl).indexOf(",");
+    if (comma < 0) return null;
+    const b64 = String(dataUrl).slice(comma + 1);
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const blob = new Blob([arr], { type: "image/jpeg" });
+    const bmp = await createImageBitmap(blob);
+    let w = bmp.width, h = bmp.height;
+    const long = Math.max(w, h);
+    if (long > maxSide) {
+      const k = maxSide / long;
+      w = Math.round(w * k); h = Math.round(h * k);
+    }
+    const cv = new OffscreenCanvas(w, h);
+    const ctx = cv.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const out = await cv.convertToBlob({ type: "image/jpeg", quality: quality || 0.45 });
+    const buf = new Uint8Array(await out.arrayBuffer());
+    let s = "";
+    const CH = 0x8000;
+    for (let i = 0; i < buf.length; i += CH) s += String.fromCharCode.apply(null, buf.subarray(i, i + CH));
+    return { dataUrl: "data:image/jpeg;base64," + btoa(s), w: w, h: h };
+  } catch (_) { return null; }
+}
+
 if (msg.type === "axlx-human-shot") {
   (async () => {
     const t0 = Date.now();
@@ -1913,8 +1950,7 @@ if (msg.type === "axlx-human-shot") {
       let dataUrl = null;
       try {
         dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 55 });
-      } catch (e) {
-        /**
+      } catch (e) {        /**
          * 2026-11-11 竹内さん「写真撮ってるかな？」→ 0枚のまま。
          *   `captureVisibleTab` は**その窓のアクティブなタブ**しか撮れない。小窓を開いていると失敗する。
          *   → 一度そのタブをアクティブにして撮り、**すぐ元に戻す**（人の操作を邪魔しない）。
@@ -1934,6 +1970,23 @@ if (msg.type === "axlx-human-shot") {
         }
       }
       if (!dataUrl) { fail("no_image"); return; }
+
+      /**
+       * 2026-11-11 竹内さん「まだ写真クラウドにおくれていないのか」:
+       *   ⚠ フルHD画面のJPEG（quality 55）は **3MB を超える**ことがある。
+       *     サーバーは 3MB 超の写真を**黙って捨てていた**（エラーも出さない）＝「送ったのに届かない」。
+       *   → 送る前に**縮める**（長辺 1280px・JPEG 45%）。1枚あたり 200〜400KB になり確実に通る。
+       */
+      let shotForUpload = dataUrl;
+      let shotW = 0, shotH = 0;
+      try {
+        const shrunk = await _shrinkShot(dataUrl, 1280, 0.45);
+        if (shrunk && shrunk.dataUrl) { shotForUpload = shrunk.dataUrl; shotW = shrunk.w; shotH = shrunk.h; }
+      } catch (e) {
+        console.warn("[human-shot] 縮められませんでした（元の大きさで送ります）:", (e && e.message) || e);
+      }
+      const shotBytes = Math.round(String(shotForUpload).length * 3 / 4);
+      console.log("[human-shot] 撮りました: 元 " + Math.round(dataUrl.length * 3 / 4 / 1024) + "KB → 送る物 " + Math.round(shotBytes / 1024) + "KB（" + shotW + "x" + shotH + "）");
 
       // 名前を「まとまり＋連番」にする（並べ替えると操作の流れになる）
       const key = "shot_" + _shotRun + "_" + String(_shotSeq).padStart(4, "0");
@@ -1968,7 +2021,9 @@ if (msg.type === "axlx-human-shot") {
         try {
           if (typeof _enqueueShotUpload === "function") {
             _enqueueShotUpload({
-              data_url: dataUrl, site: msg.site || null, what: msg.what || null,
+              // 2026-11-11: 送るのは**縮めた物**（大きいとサーバーが捨てる）
+              data_url: shotForUpload, site: msg.site || null, what: msg.what || null,
+              shot_w: shotW, shot_h: shotH,
               kind: msg.kind || null, x: msg.x, y: msg.y,
               mode: null, run_id: _shotRun, seq: _shotSeq,
             });

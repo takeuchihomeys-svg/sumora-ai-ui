@@ -163,8 +163,16 @@ export async function POST(req: NextRequest) {
     try {
       const raw64 = body.shot_b64.replace(/^data:image\/[a-z]+;base64,/, "");
       const buf = Buffer.from(raw64, "base64");
-      // 大きすぎる写真は置かない（Storage と転送を守る）
-      if (buf.length > 0 && buf.length <= 3_000_000) {
+      // 大きすぎる写真は置かない（Storage と転送を守る）が、**理由を返す**（黙って捨てない）
+      if (buf.length === 0) {
+        return NextResponse.json({ ok: false, error: "image_empty" }, { status: 400, headers: CORS });
+      }
+      if (buf.length > 3_000_000) {
+        // 2026-11-11 竹内さん「まだ写真クラウドにおくれていないのか」: 大きくて捨てた時は**理由を返す**
+        console.warn("[human-motion] 写真が大きすぎます:", buf.length, "bytes");
+        return NextResponse.json({ ok: false, error: "image_too_large", bytes: buf.length }, { status: 413, headers: CORS });
+      }
+      {
         const key = `${new Date().toISOString().slice(0, 10)}/${row.install_id || "unknown"}-${Date.now()}.jpg`;
         const up = await supabase.storage.from(BUCKET).upload(key, buf, { contentType: "image/jpeg", upsert: true });
         if (!up.error) {
@@ -172,6 +180,8 @@ export async function POST(req: NextRequest) {
           row.shot_key = key;
         } else {
           console.warn("[human-motion] 写真を置けません:", up.error.message);
+          // 2026-11-11: 置けなかった理由を返す（「送ったのに届かない」を無くす）
+          return NextResponse.json({ ok: false, error: "storage: " + up.error.message }, { status: 500, headers: CORS });
         }
       }
     } catch (e) {
