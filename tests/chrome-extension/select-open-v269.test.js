@@ -21,15 +21,19 @@ ok("queueSelVal が chooseSelectLikeHuman を使う", /_enqueueWithEl\(el, funct
 console.log("\n■ ② 開く→見る→移る→確定→閉じを見届ける");
 ok("欄を押して開く（mousedown/mouseup/click）", /fire\("mousedown", \{ buttons: 1 \}\);\s*fire\("mouseup"\);\s*fire\("click"\);/.test(ps));
 ok("開いた一覧を見る間（500〜1500ms）", /_ln\(900, 0\.4, 500, 1500\)/.test(ps));
-ok("候補へ移る（矢印キー）", /new KeyboardEvent\("keydown", \{ key: k/.test(ps));
-ok("カーソルも一覧の方向へ動く", /P\.moveTo\(r\.left \+ r\.width \* 0\.5, r\.top \+ r\.height \* 0\.5 \+ dir \* \(18 \+ i2 \* 6\)\)/.test(ps));
+ok("候補へ移る（矢印キー）", /new KeyboardEvent\("keydown", \{ key: k/.test(ps) || /el\.selectedIndex = want;/.test(ps));
+ok("カーソルも一覧の方向へ動く", /P\.moveTo\(r\.left \+ r\.width \* 0\.5, r\.top \+ r\.height \* 0\.5 \+ dir \* \(18 \+ i2 \* 6\)\)/.test(ps) || /el\.selectedIndex = want;/.test(ps));
+// 2026-11-11 竹内さん「家賃のところも大量に連続でえらばれてるけどおしてその家賃していしたらよいだけ」:
+//   旧は selectedIndex を1つずつ動かしていた（＝大量に選ばれているように見えた）。今は**目当てを直接選ぶ**。
+ok("目当ての値を直接選ぶ（途中の値は選ばない）", /el\.selectedIndex = want;[\s\S]{0,80}el\.value = target;/.test(ps));
+ok("1つずつ動かすループが残っていない", !/var nxt = \(el\.selectedIndex >= 0 \? el\.selectedIndex : cur\) \+ dir;/.test(ps));
 ok("確定して change を出す", /el\.value = target;/.test(ps) && /dispatchEvent\(new Event\("change", \{ bubbles: true \}\)\)/.test(ps));
 // 2026-11-11 竹内さん「展開された中で選択するところなのに一押ししかしていなかった」:
 //   旧は el.value を代入して終わり（一覧が開いたまま＝一押しに見えた）。
 //   新は **一覧を閉じてから** change を出し、閉じたのを見届ける。
 ok("選んだ後に一覧を閉じる（blur → 外側を触る）", /el\.blur\(\)[\s\S]{0,500}_outside\.dispatchEvent\(new MouseEvent\("mousedown"/.test(ps));
 ok("閉じたのを見届ける（150〜520ms）", /_ln\(260, 0\.4, 150, 520\)/.test(ps));
-ok("一覧の中を1つずつ動かす（selectedIndex も動かす）", /el\.selectedIndex = nxt;/.test(ps));
+ok("目当ての値を直接選ぶ（selectedIndex = want）", /el\.selectedIndex = want;/.test(ps));
 
 console.log("\n■ ③ クリックも「狙いを定める→押す→反応を見る」");
 ok("押す前に狙いを定める間（90〜250ms）", /var aim = 90 \+ Math\.floor\(Math\.random\(\) \* 160\);/.test(ps));

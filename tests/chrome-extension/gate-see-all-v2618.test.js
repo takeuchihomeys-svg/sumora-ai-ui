@@ -35,9 +35,16 @@ ok("関所が _axGateCheck を使う", /var _gate = _axGateCheck\(\);/.test(ps))
 ok("入れ直す（間取り・家賃・更新日・築年・徒歩）", /setCheckboxes\("room_layout_id\[\]", _axExpect\.layoutVals\)/.test(ps) && /setSelVal\("rental_cost2", _axExpect\.rentMax\)/.test(ps) && /setSelVal\("update_date", _axExpect\.updateDays\)/.test(ps) && /setSelVal\("structured_date", _axExpect\.age\)/.test(ps));
 ok("1回だけ（_axGateRetried）", /if \(!_axGateRetried\)/.test(ps));
 
-console.log("\n■ ③ それでも違えば検索しない");
-ok("gate_stop で止める", /_auditStepP\('gate_stop'/.test(ps));
-ok("fill-done に gate:true", /notifyDone\('AXLX_FILL_INCOMPLETE: ' \+ gateMiss, true\)/.test(ps));
+console.log("\n■ ③ それでも違えば（2026-11-11 竹内さん「ちゃんと検索おすように」）");
+// 2026-11-11 竹内さん「自動検索も検索ボタン押す前にとまってしまった。ちゃんと検索おすように」:
+//   旧は止めていた。だが「値は入っているのに比べ方が違う」事が多く、**検索されないまま止まる**のが一番困る。
+//   → 場所（全件検索になる）だけ止める。それ以外は警告を残して検索する。
+ok("場所が入っていない時だけ止める（gate_stop_area）", /_auditStepP\('gate_stop_area'/.test(ps));
+ok("場所の判定（'場所' で始まるエラーだけ）", /indexOf\('場所'\) === 0/.test(ps));
+ok("それ以外は警告を残して検索する（gate_warn）", /_auditStepP\('gate_warn'/.test(ps));
+ok("止めない（gate_stop で止めない）", !/_auditStepP\('gate_stop'/.test(ps));
+ok("fill-done に gate:true（場所の時だけ）", /notifyDone\('AXLX_FILL_INCOMPLETE: ' \+ gateMiss, true\)/.test(ps));
+ok("検索を押すコードが関所より後ろにある（止めなければ押す）", ps.indexOf("_pressSearchBtn = function") > ps.indexOf("gate_warn"));
 
 console.log("\n■ ④ 比べない物（欄が無い・指定なし）");
 ok("「下限なし」（-1）などは比べない", /var isNone = function \(v\) \{ return v == null \|\| v === '' \|\| v === '-1' \|\| v === '0'; \}/.test(gate));

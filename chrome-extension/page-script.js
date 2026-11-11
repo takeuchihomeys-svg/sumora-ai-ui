@@ -158,21 +158,20 @@
            * 2026-11-11 竹内さん「更新日とか賃料や面積の部分は押したら展開されてその展開された中で選択するところなのに一押ししかしていなかった」:
            *   旧は開いた一覧の上を矢印キーで動かす「ふり」をしてから、最後に el.value を代入して終わっていた。
            *   → 画面では**一覧が開いたまま**で、選ばれたことも閉じたことも見えない（＝一押しに見える）。
-           *   新は人が選ぶ形にする:
-           *     ③ 一覧の中を1つずつ上下に動かす（カーソルも一緒に動かす・実際に selectedIndex も動かす）
-           *     ④ 目当ての位置で止める（ここが「展開された中で選択」）
-           *     ⑤ **画面から一度離して一覧を閉じる**（blur＋外側クリック）＝人が選び終えて顔を上げる形
-           *     ⑥ 閉じたのを見届けてから change を出す
-           *   値の入れ方（value＋change）は今まで通り＝サイトの検知は変えない。
+           *
+           * 2026-11-11 竹内さん「家賃のところも大量に連続でえらばれてるけどおしてその家賃していしたらよいだけ」:
+           *   ⚠ **selectedIndex を1つずつ動かしていた**ので、10万円まで行くのに何十回も選択が動いていた
+           *     （＝画面で「大量に連続で選ばれている」ように見えた）。
+           *   → **人がやる形に戻す**: 開く → **目当ての値を直接えらぶ** → 決める → 閉じる。
+           *     途中の値は選ばない（ちらちら動かさない）。
            */
           function stepMove() {
-            if (i2 >= steps) {
-              // ④ 目当てに合わせる（選んだ状態にする）
-              try {
-                el.selectedIndex = want;
-                el.value = target;
-                el.dispatchEvent(new Event("input", { bubbles: true }));
-              } catch (_) {}
+            // ④ 目当ての値を**そのまま**選ぶ（途中の値は選ばない）
+            try {
+              el.selectedIndex = want;
+              el.value = target;
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+            } catch (_) {}
               // ⑤ 一覧を閉じる（人が選び終えて画面から離れる）。閉じないと開いたままで終わる
               /**
                * 2026-11-11 竹内さん「画面検索中なぜかトップページに戻ったりして崩れてしまう」:
@@ -196,26 +195,6 @@
                 try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch (_) {}
                 setTimeout(function () { resolve(true); }, _ln(260, 0.4, 150, 520));
               }, _ln(240, 0.35, 130, 460));
-              return;
-            }
-            // ③ 一覧の中を1つ動かす（キー・selectedIndex・カーソルの3つを同時に）
-            try {
-              var k = dir > 0 ? "ArrowDown" : "ArrowUp";
-              var kc = dir > 0 ? 40 : 38;
-              el.dispatchEvent(new KeyboardEvent("keydown", { key: k, keyCode: kc, bubbles: true }));
-              var nxt = (el.selectedIndex >= 0 ? el.selectedIndex : cur) + dir;
-              if (nxt >= 0 && nxt < el.options.length) el.selectedIndex = nxt;
-              el.dispatchEvent(new KeyboardEvent("keyup", { key: k, keyCode: kc, bubbles: true }));
-            } catch (_) {}
-            // カーソルも一覧の方向へ少し動かす（見た目）
-            if (P && P.moveTo && el.getBoundingClientRect) {
-              try {
-                var r = el.getBoundingClientRect();
-                P.moveTo(r.left + r.width * 0.5, r.top + r.height * 0.5 + dir * (18 + i2 * 6));
-              } catch (_) {}
-            }
-            i2++;
-            setTimeout(stepMove, stepMs);
           }
           stepMove();
         }, _ln(900, 0.4, 500, 1500));
@@ -1506,11 +1485,27 @@
         setTimeout(clickSearch, _pd(900)); return;
       }
       var gateMiss = _gate.errors.join(' / ').slice(0, 240);
-      _auditStepP('gate_stop', gateMiss);
-      if (_audit) _audit.form = _readRealproForm();
-      console.warn('[AX] 検索を押す前の関所で止めた: ' + gateMiss);
-      notifyDone('AXLX_FILL_INCOMPLETE: ' + gateMiss, true);
-      return;
+      /**
+       * 2026-11-11 竹内さん「自動検索も検索ボタン押す前にとまってしまった。ちゃんと検索おすように」:
+       *   ⚠ 旧は1回入れ直して**それでも違えば検索せずに止めていた**。
+       *     だが実際は「値は入っているのに比べ方が違う」事が多く（例: 家賃の丸め）、
+       *     **検索が行われないまま止まる**＝物件が出ない、という一番困る結果になっていた。
+       *   → **場所だけは止める**（全件検索になるとお客様に無関係な物件が飛ぶ）。
+       *     それ以外（家賃・更新日・築年・徒歩・間取り）は**警告を残して検索する**。
+       */
+      var _areaErr = _gate.errors.some(function (m) { return String(m).indexOf('場所') === 0; });
+      if (_areaErr) {
+        _auditStepP('gate_stop_area', gateMiss);
+        if (_audit) _audit.form = _readRealproForm();
+        console.warn('[AX] 場所が入っていないので検索しない（全件検索を防ぐ）: ' + gateMiss);
+        notifyDone('AXLX_FILL_INCOMPLETE: ' + gateMiss, true);
+        return;
+      }
+      _auditStepP('gate_warn', gateMiss);
+      if (_audit) { _audit.form = _readRealproForm(); _audit.gate_warn = gateMiss; }
+      try { showWarnToast('条件が画面と違うまま検索します: ' + gateMiss.slice(0, 80)); } catch (_) {}
+      console.warn('[AX] 検索を押す前の確認で違う所があった（止めずに検索する）: ' + gateMiss);
+      // ← 止めずに下へ進む（検索を押す）
     }
     if (_audit) { delete _audit._searchWaitMarked; }
     // 2026-11-10 v2.5.98 竹内さん「細かい部分も実際の人間がするように」:

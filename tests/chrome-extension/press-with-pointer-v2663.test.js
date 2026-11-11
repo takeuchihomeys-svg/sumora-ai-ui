@@ -19,7 +19,8 @@ const ps = read("page-script.js"), ips = read("itandi-page-script.js");
 console.log("■ ① プルダウンは「開く→中で選ぶ→閉じる」（一押しで終わらない）");
 {
   // 開いた一覧の中を1つずつ動かす（selectedIndex も実際に動かす＝画面で選ばれていく）
-  ok("一覧の中を1つずつ動かす（selectedIndex を動かす）", /el\.selectedIndex = nxt;/.test(ps));
+  // 2026-11-11 竹内さん「家賃も大量に連続でえらばれてる」→ 1つずつ動かすのをやめ、**目当てを直接選ぶ**
+  ok("目当ての値を直接選ぶ（途中の値を選ばない）", /el\.selectedIndex = want;/.test(ps) && !/el\.selectedIndex = nxt;/.test(ps));
   ok("目当ての位置で止める（selectedIndex = want）", /el\.selectedIndex = want;/.test(ps));
   // 選んだ後に一覧を閉じる（blur＋外側の押下）。⚠ Enter は送らない（form が送信されてトップページへ飛ぶ）
   ok("選んだ後に一覧を閉じる（blur）", /if \(el\.blur\) el\.blur\(\);/.test(ps));
