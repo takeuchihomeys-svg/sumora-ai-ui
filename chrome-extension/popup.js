@@ -429,9 +429,19 @@ function _auditTag(site, customer, conditions, ctx) {
     conditions._audit_run_id = runId;
     var ver = null;
     try { ver = chrome.runtime.getManifest().version; } catch (_) {}
+    /**
+     * 2026-11-11 竹内さん「AIXモードだと検索して自動で検索されるようになっているか。
+     *   ピンポイントで検索して物件なかったら広げて検索にするようになっているか」:
+     *   自動（AIXモードでお客さんを選ぶと自動で押す）の検索は、`ctx` が無いので `"single"`（人が押した）になっていた。
+     *   サーバーの「広げて検索」の判定（search-widen-chain の decideWiden）は trigger を見るので、
+     *   **AIXモードの自動の検索は `"aix_customer"`** として記録する（ピンポイント→足りなければ広げて が効く）。
+     *   ⚠ `"scrape_compare"`（比較）だけは広げない決まりなので、それにはしない。
+     */
+    // 2026-11-11: AIXモードかどうかは storage の生の値（_modeState）から見る（_aiCustomerModeOn は後の行で定義されるため）
+    var _trigger = (ctx && ctx.trigger) || (st.mode === "ai" ? "aix_customer" : "single");
     A.post({
       phase: "started", brain: true, run_id: runId, site: A.siteKey(site), mode: A.modeLabel(st),
-      trigger: (ctx && ctx.trigger) || "single", command_id: (ctx && ctx.commandId) || null,
+      trigger: _trigger, command_id: (ctx && ctx.commandId) || null,
       property_customer_id: customer && customer.id != null ? String(customer.id) : null,
       is_wide: !!conditions.is_wide, area_mode: conditions.area_mode || null, ext_version: ver,
       customer_snapshot: A.snapshotCustomer(customer), intended: A.pickIntended(conditions),

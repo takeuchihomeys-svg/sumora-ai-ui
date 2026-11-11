@@ -205,7 +205,12 @@
 
   // 動作モード → mode の札（brain_normal / brain_staff / brain_aix）。ブレインでなければ null
   function modeLabel(state) {
-    if (!state || !state.brain) return null;
+    if (!state) return null;
+    // 2026-11-11 竹内さん「AIXモードだとピンポイントで検索して物件なかったら広げて検索にするようになっているか」:
+    //   AIX（選んだお客さんを自動で検索）はブレイン OFF でも点検を送るので、**AIX の時は brain が無くても札を付ける**
+    //   （`aix_customer`）。広げて検索の判定（decideWiden）は mode が brain_staff の時だけ止める。
+    if (state.mode === "ai") return "brain_aix";
+    if (!state.brain) return null;
     return state.mode === "staff" ? "brain_staff" : state.mode === "aix" ? "brain_aix" : "brain_normal";
   }
 

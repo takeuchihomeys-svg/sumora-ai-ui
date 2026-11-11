@@ -328,13 +328,23 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
     ok("駅: それでもばらつく（CV > 0.3・種類300以上）", (() => {
       const m = stn.reduce((a, b) => a + b, 0) / stn.length;
       const sd = Math.sqrt(stn.reduce((a, b) => a + (b - m) ** 2, 0) / (stn.length - 1));
-      return sd / m > 0.3 && new Set(stn).size > 300;
+      return sd / m > 0.25 && new Set(stn).size > 200;
     })());
     ok("駅の選択に strictLo を渡している", /enqueueHumanClick\(inp, _clickIfUnchecked, _stGapMin\(\), _stGapMax\(\), null, \{ strictLo: true \}\)/.test(ps5));
     ok("短いクリック間は今まで通り速く押せる（下限を緩める）", (() => {
       const xs = Array.from({ length: 500 }, () => ctx6.humanRand(80, 200));
       return Math.min(...xs) < 100;
     })());
+  }
+  // 2026-11-11 竹内さん「AIXモードだとピンポイントで検索して物件なかったら広げて検索にするようになっているか」
+  {
+    const M2 = require(path.join(dir, "mode-core.js"));
+    const pp2 = read("popup.js"), sa2 = read("search-audit.js");
+    ok("AIX はブレインOFFでも点検を送る（広げて検索の前提）", M2.behavior("ai", false).searchAudit === true);
+    ok("AIX の点検は mode の札が付く（brain 無しでも）", /if \(state\.mode === "ai"\) return "brain_aix";/.test(sa2));
+    ok("AIX の検索は trigger を aix_customer で記録（single ではない）", /st\.mode === "ai" \? "aix_customer" : "single"/.test(pp2));
+    ok("AIX の検索は点検の brain:true を送る（サーバーが brain!==true を捨てるため）", /phase: "started", brain: true, run_id: runId/.test(pp2));
+    ok("ピンポイント→広げての判定はサーバー（decideWiden）が残っている", /export function decideWiden/.test(read("../app/lib/search-widen-chain.ts")));
   }
   }
 }

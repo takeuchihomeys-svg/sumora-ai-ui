@@ -196,7 +196,7 @@ const SW = { customerId: "c1", site: "itandi", areaMode: "ward", is_wide: false,
       /if \(_itandiFillRunningAt && Date\.now\(\) - _itandiFillRunningAt < 60000\) \{[\s\S]{0,160}return;\s*\}\s*_itandiFillRunningAt = Date\.now\(\);[\s\S]{0,160}try \{ await _itandiAutofillRun\(_auditCtx_it\); \} finally \{ _itandiFillRunningAt = 0; \}/.test(pp));
     ok("3つの onclick とも点検の文脈を await の前に受け取り _auditTag に渡す",
       /_auditTag\("itandi", selectedCustomer, conditions, _auditCtx_it\)/.test(pp) && /_auditTagWith\(_auditCtx_rp, "realpro", c, \{/.test(pp) && /_auditTag\("reins", c0, conditions, _auditCtx_re\)/.test(pp));
-    ok("_auditTag は渡された文脈を使う（無ければ single）", /function _auditTag\(site, customer, conditions, ctx\) \{/.test(pp) && /trigger: \(ctx && ctx\.trigger\) \|\| "single"/.test(pp));
+    ok("_auditTag は渡された文脈を使う（無ければ single・AIXモードは aix_customer）", /function _auditTag\(site, customer, conditions, ctx\) \{/.test(pp) && /var _trigger = \(ctx && ctx\.trigger\) \|\| \(st\.mode === "ai" \? "aix_customer" : "single"\)/.test(pp));
     ok("background は ok でない答えで代わりの入力へ（ITANDI）", /if \(!batchItandiSwitched\) \{[\s\S]{0,200}popup_fallback/.test(bg));
   }
 

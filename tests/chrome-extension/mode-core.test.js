@@ -81,9 +81,13 @@ eq("帯: 受け取る組み合わせは一括検索を書く", [M.banner("normal
 eq("帯: 名前は AIXツール（売上サポは出さない）", [M.banner("normal", true), M.banner("staff", true), M.banner("aix", true)].every((b) => /AIXツール/.test(b.text) && !/売上サポ/.test(b.text)), true);
 
 console.log("\n■ 検索の点検（2026-09-25 竹内「ブレインモードで…検索がちゃんとされていなかったら原因を見つけられるようにする」）");
-eq("ブレインの時だけ送る（スタッフ×ブレインも）", M.MODES.flatMap((m) => [false, true].map((b) => M.behavior(m, b).searchAudit)), M.MODES.flatMap((m) => [false, true].map((b) => !!b)));
-eq("ブレイン OFF は送らない", M.MODES.map((m) => M.behavior(m, false).searchAudit), M.MODES.map(() => false));
-eq("送る時は必ず判定している（searchAudit ⇒ brainJudge）", M.MODES.flatMap((m) => [false, true].map((b) => !M.behavior(m, b).searchAudit || M.behavior(m, b).brainJudge)).every(Boolean), true);
+// 2026-11-11: AIX（ai）はブレイン OFF でも点検を送る（広げて検索が効くように）
+eq("ブレインの時＋AIX の時は送る（スタッフ×ブレインも）", M.MODES.flatMap((m) => [false, true].map((b) => M.behavior(m, b).searchAudit)), M.MODES.flatMap((m) => [false, true].map((b) => !!b || m === "ai")));
+eq("AIX はブレイン OFF でも点検を送る（広げて検索のため）", M.behavior("ai", false).searchAudit, true);
+eq("通常・スタッフはブレイン OFF なら送らない", [M.behavior("normal", false).searchAudit, M.behavior("staff", false).searchAudit], [false, false]);
+eq("ブレイン OFF で送るのは AIX だけ", M.MODES.map((m) => M.behavior(m, false).searchAudit), M.MODES.map((m) => m === "ai"));
+// 2026-11-11: AIX（ai）はブレイン OFF でも点検を送る（判定はしない＝人が選んだお客さんの検索だから）。それ以外は判定とセット
+eq("点検を送る時は判定もする（AIX は除く）", M.MODES.filter((m) => m !== "ai").flatMap((m) => [false, true].map((b) => !M.behavior(m, b).searchAudit || M.behavior(m, b).brainJudge)).every(Boolean), true);
 
 console.log("\n■ バッジ・帯");
 eq("バッジ（モード×ブレイン）", M.MODES.flatMap((m) => [false, true].map((b) => M.badge(m, b).text)), ["", "脳通", "手動", "手脳", "AIX", "脳", "顧客", "顧客脳"]);
