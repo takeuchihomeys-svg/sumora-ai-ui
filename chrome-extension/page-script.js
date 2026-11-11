@@ -154,22 +154,48 @@
           var steps = Math.min(6, Math.abs(want - cur));
           var stepMs = _ln(260, 0.35, 150, 450);
           var i2 = 0;
-          function moveStep() {
+          /**
+           * 2026-11-11 竹内さん「更新日とか賃料や面積の部分は押したら展開されてその展開された中で選択するところなのに一押ししかしていなかった」:
+           *   旧は開いた一覧の上を矢印キーで動かす「ふり」をしてから、最後に el.value を代入して終わっていた。
+           *   → 画面では**一覧が開いたまま**で、選ばれたことも閉じたことも見えない（＝一押しに見える）。
+           *   新は人が選ぶ形にする:
+           *     ③ 一覧の中を1つずつ上下に動かす（カーソルも一緒に動かす・実際に selectedIndex も動かす）
+           *     ④ 目当ての位置で止める（ここが「展開された中で選択」）
+           *     ⑤ **画面から一度離して一覧を閉じる**（blur＋外側クリック）＝人が選び終えて顔を上げる形
+           *     ⑥ 閉じたのを見届けてから change を出す
+           *   値の入れ方（value＋change）は今まで通り＝サイトの検知は変えない。
+           */
+          function stepMove() {
             if (i2 >= steps) {
-              // ④ 確定（人が選んで決める）
+              // ④ 目当てに合わせる（選んだ状態にする）
               try {
+                el.selectedIndex = want;
                 el.value = target;
                 el.dispatchEvent(new Event("input", { bubbles: true }));
-                el.dispatchEvent(new Event("change", { bubbles: true }));
               } catch (_) {}
-              // ⑤ 閉じたのを見届ける（人が一覧が閉じたのを確認する間）
-              setTimeout(function () { resolve(true); }, _ln(320, 0.4, 180, 600));
+              // ⑤ 一覧を閉じる（人が選び終えて画面から離れる）。閉じないと開いたままで終わる
+              try {
+                if (el.blur) el.blur();
+                el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true }));
+                el.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", keyCode: 13, bubbles: true }));
+                document.body && document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                fire("mouseout", {});
+              } catch (_) {}
+              // ⑥ 閉じたのを見届けてから change（人が確定した形）
+              setTimeout(function () {
+                try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch (_) {}
+                setTimeout(function () { resolve(true); }, _ln(260, 0.4, 150, 520));
+              }, _ln(240, 0.35, 130, 460));
               return;
             }
-            // キーボードの矢印でも一覧の中を動かす（人と同じ操作）
+            // ③ 一覧の中を1つ動かす（キー・selectedIndex・カーソルの3つを同時に）
             try {
               var k = dir > 0 ? "ArrowDown" : "ArrowUp";
-              el.dispatchEvent(new KeyboardEvent("keydown", { key: k, keyCode: dir > 0 ? 40 : 38, bubbles: true }));
+              var kc = dir > 0 ? 40 : 38;
+              el.dispatchEvent(new KeyboardEvent("keydown", { key: k, keyCode: kc, bubbles: true }));
+              var nxt = (el.selectedIndex >= 0 ? el.selectedIndex : cur) + dir;
+              if (nxt >= 0 && nxt < el.options.length) el.selectedIndex = nxt;
+              el.dispatchEvent(new KeyboardEvent("keyup", { key: k, keyCode: kc, bubbles: true }));
             } catch (_) {}
             // カーソルも一覧の方向へ少し動かす（見た目）
             if (P && P.moveTo && el.getBoundingClientRect) {
@@ -179,9 +205,9 @@
               } catch (_) {}
             }
             i2++;
-            setTimeout(moveStep, stepMs);
+            setTimeout(stepMove, stepMs);
           }
-          moveStep();
+          stepMove();
         }, _ln(900, 0.4, 500, 1500));
       });
     };
@@ -189,10 +215,40 @@
       try { P.ensure(); } catch (_) {}
       return P.moveToEl(el).then(function () {
         if (P.tap) { try { P.tap(); } catch (_) {} }
-        return openThenChoose();
-      }, openThenChoose);
+        return openThenChoose().then(function () { return _verifySel(el, target); });
+      }, function () {
+        return openThenChoose().then(function () { return _verifySel(el, target); });
+      });
     }
-    return openThenChoose();
+    return openThenChoose().then(function () { return _verifySel(el, target); });
+  }
+  /**
+   * 2026-11-11 竹内さん「ちゃんと画面確認しながら動く」:
+   *   選んだ後に **画面の欄が本当にその値になったか**を読む（人の「選べたかな」と同じ）。
+   *   違うままなら1回だけ入れ直す。それでも違えば点検（steps/sel_mismatch）に残す（理由を後から追える）。
+   *   ⚠ 直すのは「まだ違う」時だけ。合っていれば何もしない（サイトを余計に触らない）。
+   */
+  function _verifySel(el, target) {
+    if (!el) return false;
+    var got = String(el.value == null ? '' : el.value);
+    if (got === String(target)) return true;
+    try {
+      el.value = String(target);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      if (el.blur) el.blur();
+    } catch (_) {}
+    var now = String(el.value == null ? '' : el.value);
+    if (_audit) {
+      _auditStepP('sel_fix', (el.name || '?') + ' ' + got + '→' + now + '（入れるはず ' + target + '）');
+      if (now !== String(target)) {
+        _audit.sel_mismatch = _audit.sel_mismatch || [];
+        if (_audit.sel_mismatch.length < 10) {
+          _audit.sel_mismatch.push({ name: el.name || '?', want: String(target), got: now });
+        }
+      }
+    }
+    return now === String(target);
   }
   /**
    * 2026-11-10 v2.6.1 竹内さん「賃料選択する部分や更新日選択する部分が早すぎる。毎回人間がマウス動かして押していく形とする」
@@ -863,33 +919,83 @@
 
   // テキストで要素を探してクリック（完全一致→包含の順）
   // DIVのonclickはel.click()の方が確実（診断でgo_search等がDIVと判明）
+  /**
+   * 2026-11-11 竹内さん「地域や駅の検索の際も、押した後検索ボタンにマウス移動させて押していなかった。
+   *   駅の部分も駅の設定へ進むへ画面が移動して押されていなかった」:
+   *   旧は見つけた要素を **その場で el.click()** していた（カーソルは動かない）。
+   *   → 画面では「押した瞬間に次の画面に変わっている」＝人が見て「押していない」と分かる動きだった。
+   *   新は **カーソルをその要素まで動かしてから押す**（_humanPointerClick・見えるカーソル＋人の軌跡）。
+   *     - 押す位置が画面の外なら、まず要素が入る所まで画面を送る（少し余白を残す）
+   *     - 押した後は _afterClickGapMs の間（人が反応を見る間）待つ
+   *     - カーソルが使えない環境では今まで通り click だけ（止まらない）
+   */
+  function _scrollIntoViewSoft(el) {
+    // 2026-11-11: 既にある `_ensureInView` に任せる（スクロールの決定は1か所だけ＝
+    //   scroll-calm-v2596.test.js の「block: nearest 固定・連続で動かさない」を二重に持たない）
+    try { _ensureInView(el); } catch (_) {}
+    return true;
+  }
   function clickByText(candidates) {
     var els = Array.prototype.slice.call(
       document.querySelectorAll('a,button,div,span,td,li,p,label')
     );
-    for (var ci = 0; ci < candidates.length; ci++) {
+    var hit = null;
+    for (var ci = 0; ci < candidates.length && !hit; ci++) {
       var cand = norm(candidates[ci]);
       // 完全一致
       for (var i = 0; i < els.length; i++) {
         if (!isVisible(els[i])) continue;
-        if (norm(els[i].textContent) === cand) {
-          els[i].click(); return true;
+        if (norm(els[i].textContent) === cand) { hit = els[i]; break; }
+      }
+    }
+    if (!hit) {
+      for (var cj = 0; cj < candidates.length && !hit; cj++) {
+        var cand2 = norm(candidates[cj]);
+        // 包含（短すぎる候補は除外）
+        if (cand2.length < 5) continue;
+        for (var j = 0; j < els.length; j++) {
+          if (!isVisible(els[j])) continue;
+          if (norm(els[j].textContent).indexOf(cand2) >= 0) { hit = els[j]; break; }
         }
       }
     }
-    for (var ci = 0; ci < candidates.length; ci++) {
-      var cand = norm(candidates[ci]);
-      // 包含（短すぎる候補は除外）
-      if (cand.length < 5) continue;
-      for (var i = 0; i < els.length; i++) {
-        if (!isVisible(els[i])) continue;
-        if (norm(els[i].textContent).indexOf(cand) >= 0) {
-          els[i].click(); return true;
-        }
-      }
-    }
-    return false;
+    if (!hit) return false;
+    /**
+     * 2026-11-11 竹内さん「ちゃんとマウス移動して押すってところ徹底する」:
+     *   押すのが非同期（カーソル移動を待つ）になったので、waitForClick の再試行と重なると
+     *   **同じボタンを2回押してしまう**。
+     *   ・開閉するボタン（沿線・駅絞り込み・所在地絞り込み）は2回押すと閉じる
+     *   ・進むボタンは2回押すと2画面進む
+     *   → 同じ要素を短い間に続けて押さない（1.6秒）。画面が変われば要素が消えるので自然に解除される。
+     */
+    var now = Date.now();
+    if (_lastPressEl === hit && now - _lastPressAt < 1600) return true;
+    _lastPressEl = hit;
+    _lastPressAt = now;
+    // 画面の外なら先に送る（見えてから押す＝人の順序）
+    _scrollIntoViewSoft(hit);
+    var gap = _afterClickGapMs(hit);
+    _pressBusy++;
+    var _done = function () {
+      _pressBusy = Math.max(0, _pressBusy - 1);
+      _lastPressGapMs = gap;
+    };
+    var _pr = _humanPointerClick(hit, function () { try { hit.click(); } catch (_) {} });
+    if (_pr && typeof _pr.then === "function") { _pr.then(_done, _done); } else { _done(); }
+    return true;
   }
+  var _lastPressGapMs = 0;
+  var _lastPressEl = null;
+  var _lastPressAt = 0;
+  /**
+   * 2026-11-11 竹内さん「押した後検索ボタンにマウス移動させて押していなかった」:
+   *   clickByText / simulateClick は **カーソルが着いてから押す**ので、呼び出した直後はまだ押せていない。
+   *   呼び出し側（waitForClick 等）が「押せた」と見てすぐ次の段へ進むと、
+   *   ・進むボタンを押し切る前に次の段が動く（画面が変わっていない所を触る）
+   *   ・駅の選択が終わる前に検索へ行く
+   *   といったズレになる。→ **押し終わるまで待つ**関数を用意する（最大 ms で諦める）。
+   */
+  var _pressBusy = 0;
 
   // ────────────────────────────────────────────────────────────────────
   // waitForClick: 要素が出るまでリトライして、成功したら onDone を呼ぶ
@@ -994,7 +1100,7 @@
     _fillStartedAt = Date.now();
     _hiddenMs = 0;
     _hiddenSince = (document.visibilityState === 'hidden') ? Date.now() : null;
-    _audit = _fillRunId ? { v: 1, site: 'realpro', search_clicked: null, form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, area_path: null, fallback: null, steps: [], ops: [], late_max: 0, late_over_1s: 0, stall: null } : null;
+    _audit = _fillRunId ? { v: 1, site: 'realpro', search_clicked: null, search_press: null, sel_mismatch: [], form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, area_path: null, fallback: null, steps: [], ops: [], late_max: 0, late_over_1s: 0, stall: null } : null;
   }
   function _auditStepP(k, d) {
     if (!_audit) return;
@@ -1197,12 +1303,41 @@
   // サイト独自のイベントデリゲーションがmousedownを待っている場合に対応
   // 人間の押下時間を再現: mousedown の 40〜90ms 後に mouseup→click を発火
   // （後続処理は waitForClick の pauseMs ≧ 240ms で待機するため間に合う）
+  /**
+   * 2026-11-11 竹内さん「ちゃんとマウス移動して押すってところ徹底する」:
+   *   旧はカーソルを動かさずに mousedown→mouseup→click を出していた（画面のカーソルは別の所に居る）。
+   *   新は **カーソルをその要素まで動かしてから** 押す（見えるカーソル＋人の軌跡）。
+   *   押す順（mousedown→40〜90ms→mouseup→click）と「1回だけ押す」は今まで通り。
+   * ⚠ カーソル移動がいま非同期になったので、waitForClick の再試行と重なると
+   *   **同じボタンを2回押してしまう**（進むボタンなら2画面進む）。押している最中は再入を断る。
+   */
+  var _axPressing = null;
   function simulateClick(el) {
-    el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, view:window}));
-    setTimeout(function() {
-      el.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true, cancelable:true, view:window}));
-      el.dispatchEvent(new MouseEvent('click',     {bubbles:true, cancelable:true, view:window}));
-    }, humanRand(40, 90));
+    if (!el) return;
+    if (_axPressing === el) { return; } // 同じ要素を押している最中（再試行で重ねない）
+    _pressBusy++;
+    var _done = function () { _pressBusy = Math.max(0, _pressBusy - 1); };
+    var press = function () {
+      el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, view:window}));
+      setTimeout(function() {
+        el.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true, cancelable:true, view:window}));
+        el.dispatchEvent(new MouseEvent('click',     {bubbles:true, cancelable:true, view:window}));
+        if (_axPressing === el) _axPressing = null;
+        _done();
+      }, humanRand(40, 90));
+    };
+    var P = window.AxlxPointerUi;
+    if (P && P.ensure && P.moveToEl) {
+      _axPressing = el;
+      _scrollIntoViewSoft(el);
+      try { P.ensure(); } catch (_) {}
+      P.moveToEl(el).then(function () {
+        if (P.tap) { try { P.tap(); } catch (_) {} }
+        press();
+      }, function () { if (_axPressing === el) _axPressing = null; press(); });
+      return;
+    }
+    press();
   }
 
   // 市区郡ラベルを安全にクリック（city_code[]を持つlabel限定・checked済みは再クリックしない）
@@ -1389,8 +1524,50 @@
     );
     // 検索の点検: 押す直前のフォームを読み戻す（入れようとした条件と比べる材料）
     if (_audit) _audit.form = _readRealproForm();
+    /**
+     * 2026-11-11 竹内さん「地域や駅の検索の際も、押した後検索ボタンにマウス移動させて押していなかった」:
+     *   旧は見つけたボタンを **その場で .click()**（カーソルは別の所に居た）。
+     *   新は **検索ボタンまでカーソルを動かしてから押す**。
+     *     ・押す前に画面を検索ボタンの所へ送る（下の方にあって見えていない事がある）
+     *     ・押したあと「反応を見る間」（_afterClickGapMs・decide は 1.2〜3.2秒）は待たずに notifyDone を返す
+     *       （待つと fill-done が遅れて background の見張りに引っかかる。押した事実はすぐ返す）
+     */
+    var _pressSearchBtn = function (btn) {
+      if (!btn) return false;
+      _scrollIntoViewSoft(btn);
+      /**
+       * 2026-11-11 竹内さん「ちゃんと画面確認しながら動くことができていなかった」:
+       *   押した「場所」と「時刻」を点検に残す（実画面で「本当にそのボタンを押したか」を後から確かめられる）。
+       *   ・at      … 押すボタンの文字（先頭20字）
+       *   ・rect    … 押すボタンの画面の位置（見えていたか）
+       *   ・pointer … 押した時にカーソルが居た所（ボタンの上かどうか）
+       */
+      if (_audit) {
+        _audit.search_clicked = true;
+        try {
+          _audit.search_press = {
+            at: String((btn.textContent || btn.value || '').replace(/\s+/g, '')).slice(0, 20),
+            rect: (function () { var r = btn.getBoundingClientRect(); return { t: Math.round(r.top), l: Math.round(r.left), w: Math.round(r.width), h: Math.round(r.height) }; })(),
+            in_view: (function () { var r = btn.getBoundingClientRect(); return r.top >= 0 && r.bottom <= (window.innerHeight || 800); })(),
+            t: Date.now() - (_fillStartedAt || Date.now()),
+          };
+        } catch (_) {}
+      }
+      _humanPointerClick(btn, function () { try { btn.click(); } catch (_) {} });
+      // 押し終わってから（カーソルが着いて押した後）カーソルの居た所を残す
+      setTimeout(function () {
+        try {
+          if (!_audit || !_audit.search_press) return;
+          var P = window.AxlxPointerUi;
+          var ps = P && P.visiblePosition ? P.visiblePosition() : null;
+          if (ps) _audit.search_press.pointer = { x: Math.round(ps.x), y: Math.round(ps.y) };
+        } catch (_) {}
+      }, 500);
+      notifyDone();
+      return true;
+    };
     for (var i = 0; i < goDivs.length; i++) {
-      if (goDivs[i].offsetParent) { if (_audit) _audit.search_clicked = true; goDivs[i].click(); notifyDone(); return; }
+      if (goDivs[i].offsetParent) { _pressSearchBtn(goDivs[i]); return; }
     }
     // フォールバック: button/a テキスト一致
     var SEARCH_TEXTS = ['住居検索', '検索', '物件を検索する', '条件で検索'];
@@ -1402,7 +1579,7 @@
         var b = allBtns[i];
         if (!b.offsetParent) continue;
         var txt = (b.textContent || b.value || '').replace(/\s+/g, '');
-        if (txt === SEARCH_TEXTS[si]) { if (_audit) _audit.search_clicked = true; b.click(); notifyDone(); return; }
+        if (txt === SEARCH_TEXTS[si]) { _pressSearchBtn(b); return; }
       }
     }
     if (_audit) { _audit.search_clicked = false; _audit.click_fails.push({ what: 'search', text: '検索', sample: _visibleTexts('button,input[type="submit"],a', 8) }); }
@@ -2590,21 +2767,34 @@
         // 「詳細な地域の設定へ進む」ボタン
         // 診断確認: class=next_action_town_search_Y のときだけ機能する
         // → Y状態を確認してからクリック・N状態なら市区郡を再クリック
+        /**
+         * 2026-11-11 竹内さん「駅の設定へ進むへ画面が移動して押されていなかった」:
+         *   旧は simulateClick を呼んだ直後に false を返していた（＝まだ押せていないのに「押した」扱い）。
+         *   カーソルを動かしてから押すようになったので、**押し終わって画面が変わるまで**は
+         *   「押した」と返さない（waitForClick が次へ進まない＝ボタンを取りこぼさない）。
+         *   ・押した印（_nextPressedAt）から 900ms は「押し中」として待つ
+         *   ・町字の一覧（label.one_town）が出たら成功
+         */
         var nextBtnAttempts = 0;
+        var _nextPressedAt = 0;
         function clickNextStepBtn() {
           if (document.querySelectorAll('label.one_town').length > 0) {
             console.log('[AX] clickNextStepBtn: 町字ページ表示確認 → 完了');
             return true;
           }
-          if (nextBtnAttempts % 2 === 0) {
-            var btnEl = document.querySelector('div.next_step_button2');
-            var isY = btnEl ? btnEl.classList.contains('town_search_Y') : false;
-            if (isY) {
-              simulateClick(btnEl);
-              console.log('[AX] clickNextStepBtn: Y確認→クリック (試行=' + nextBtnAttempts + ')');
-            } else {
-              console.log('[AX] clickNextStepBtn: N待機 (試行=' + nextBtnAttempts + ')');
-            }
+          // 押した直後は「画面が変わるのを待つ」間（押し直さない・次へ進まない）
+          if (_nextPressedAt && Date.now() - _nextPressedAt < 900) return false;
+          var btnEl = document.querySelector('div.next_step_button2');
+          var isY = btnEl ? btnEl.classList.contains('town_search_Y') : false;
+          // 押し終わるのを待ってから押した印を付ける（カーソル移動の途中で押し直さない）
+          if (isY && _pressBusy > 0) return false;
+          if (nextBtnAttempts % 2 === 0 && isY) {
+            _nextPressedAt = Date.now();
+            simulateClick(btnEl);
+            if (_audit) _auditStepP('ward_next_press', 'next_step_button2');
+            console.log('[AX] clickNextStepBtn: Y確認→カーソル移動してクリック (試行=' + nextBtnAttempts + ')');
+          } else if (!isY) {
+            console.log('[AX] clickNextStepBtn: N待機 (試行=' + nextBtnAttempts + ')');
           }
           nextBtnAttempts++;
           return false;
@@ -2873,6 +3063,8 @@
       function() {
         // STEP B: 路線ボタン（label.one_line）が描画されたらクリック
         var stationPageDirect = false;
+        // 2026-11-11: 「駅の設定へ進む」を押した印（押し直さない・押し終わるまで次へ進まない）
+        var _stationNextPressed = false;
         waitForClick(
           function() {
             var labels = Array.prototype.slice.call(document.querySelectorAll('label.one_line'));
@@ -2916,7 +3108,30 @@
             waitForClick(
               function() {
                 if (stationPageDirect) { console.log('[AX] STEP C: 駅ページ直接表示 → スキップ'); return true; }
-                return clickByText(['駅の設定へ進む', '駅の設定へ進む›', '駅の設定へ進む>']);
+                /**
+                 * 2026-11-11 竹内さん「駅の部分も駅の設定へ進むへ画面が移動して押されていなかった」:
+                 *   旧は clickByText の戻り値（true）だけで「押せた」と見て、すぐ次の段（駅の選択）へ進んでいた。
+                 *   だがカーソルを動かしてから押すので、**押し切る前に次の段が動き**、駅ページへ移る前に
+                 *   駅を探し始めて失敗していた。
+                 *   → 押したら **押し終わるまで待ってから**「押せた」と返す（押し直さない）。
+                 */
+                if (_stationNextPressed) {
+                  if (_pressBusy > 0) return false;      // まだカーソルが動いている／押している最中
+                  // 2026-11-11: 押した直後に「駅ページに移ったか」も見る（移っていなければもう一度押す）
+                  if (document.querySelectorAll('label.one_line').length > 0 &&
+                      document.querySelector('div.this_window_close') &&
+                      !document.querySelectorAll('input[name="station_id[]"]').length) {
+                    _stationNextPressed = false;         // まだ路線の一覧のまま → もう一度押す
+                    return false;
+                  }
+                  return true;                            // 押し終わった → 次の段（駅の選択）へ
+                }
+                if (_pressBusy > 0) return false;
+                if (clickByText(['駅の設定へ進む', '駅の設定へ進む›', '駅の設定へ進む>'])) {
+                  _stationNextPressed = true;
+                  if (_audit) _auditStepP('station_next_press', '駅の設定へ進む');
+                }
+                return false;
               },
               function() {
                 // 残留解除クリック用: 実行時点で checked のときだけクリックする

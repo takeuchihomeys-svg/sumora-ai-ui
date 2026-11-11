@@ -560,30 +560,40 @@
   }
 
   // buttonのみ。完全一致 → 部分一致フォールバック
-  function clickBtn(text) {
+  /**
+   * 2026-11-11 竹内さん「押した後ボタンにマウス移動させて押していなかった」:
+   *   旧はカーソル移動（_pointerMoveTo）→ もう一度 _humanClick（中でもう一度カーソル移動）と
+   *   **二重に動かしていた**うえ、押し終わる前に関数を抜けていた（呼ぶ側が「押した」と誤解する）。
+   *   いまは3つに分ける（`||` で繋ぐ所は真偽が要り、押し終わりを待つ所は Promise が要るため）:
+   *     ・_findBtn(text)     … ボタンを探すだけ（見つからなければ null）
+   *     ・clickBtn(text)     … 探して押す・見つかったか（true/false）を**すぐ**返す（今まで通り）
+   *     ・clickBtnThen(text) … 探して押し、**押し終わってから**解決する Promise を返す
+   */
+  function _findBtn(text) {
     var n = norm(text);
     var btns = [].slice.call(document.querySelectorAll("button")).filter(isVis);
-    // 2026-11-10 v2.6.0 竹内さん「リアプロとITANDI人間のようにマウス動くようにする」:
-    //   押す前に見えるカーソルでそのボタンへ動いてから押す（見た目だけ・押すのは今まで通り1回）
-    function _clickWithPointer(b) {
-      _pointerMoveTo(b).then(function () {
-        var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
-        if (P && P.tap) { try { P.tap(); } catch (_) {} }
-        _humanClick(b);
-      }, function () { _humanClick(b); });
-    }
-    // 完全一致
     var found = btns.find(function (b) { return norm(b.textContent) === n; });
-    if (found) { _clickWithPointer(found); return true; }
+    if (found) return found;
     // 部分一致フォールバック（ボタンテキストに検索語が含まれる）
     found = btns.find(function (b) { return norm(b.textContent).includes(n); });
     if (found) {
       console.log("[AXLX] clickBtn partial match: '" + text + "' → '" + found.textContent.trim() + "'");
-      _humanClick(found); return true;
+      return found;
     }
     // デバッグ: 表示中の全ボタンテキストを出力
     console.log("[AXLX] clickBtn not found: '" + text + "'. Visible buttons:", btns.map(function(b){ return "'" + b.textContent.trim().slice(0,40) + "'"; }).join(", "));
-    return false;
+    return null;
+  }
+  function clickBtn(text) {
+    var el = _findBtn(text);
+    if (!el) return false;
+    _humanClick(el);
+    return true;
+  }
+  function clickBtnThen(text) {
+    var el = _findBtn(text);
+    if (!el) return Promise.resolve(false);
+    return _humanClick(el);
   }
 
   // ナビタブ（li/button/a/span/label）。完全一致 → 部分一致フォールバック
@@ -1152,8 +1162,16 @@
             _itStep("lines_done", "路線" + lineNames.length + "・駅 " + _itAudit.stations_ok.length + "/" + stNames.length);
           }
           setTimeout(function () {
-            clickBtn("確定");
-            setTimeout(onDone, _sd(1500));
+            /**
+             * 2026-11-11 竹内さん「押した後ボタンにマウス移動させて押していなかった」:
+             *   旧は clickBtn("確定") を呼んで **1500ms 後に onDone**（＝押し終わるのを待っていない）。
+             *   カーソルが着く前に次へ進むと、確定の画面で止まったまま次段が動く。
+             *   新は押し終わるのを待ってから onDone（_humanClick の Promise を使う）。
+             */
+            var _c = clickBtnThen("確定");
+            var _afterOk = function () { setTimeout(onDone, _sd(1500)); };
+            if (_c && typeof _c.then === "function") { _c.then(_afterOk, _afterOk); }
+            else { _afterOk(); }
           }, 600 + Math.floor(Math.random() * 300));
           return;
         }
@@ -2011,15 +2029,30 @@
                 if (_preSearchBreath > 0) console.log("[AX] ITANDI: 検索の前に一息 " + Math.round(_preSearchBreath / 1000) + "秒");
                 setTimeout(function () {
                   if (_dead) return;
-                  if (btn) { _humanClick(btn); _searched = true; } else _searched = clickBtn("検索");
+                  /**
+                   * 2026-11-11 竹内さん「押した後検索ボタンにマウス移動させて押していなかった」:
+                   *   旧は _humanClick(btn) を呼んだ **500ms 後に完了**としていた。
+                   *   _humanClick は「カーソルが着いてから押す」ので、移動に 400ms〜1秒かかると
+                   *   **押す前に完了の合図が出る**（画面では検索ボタンに触れていないのに終わる）。
+                   *   新はカーソルが着いて押し終わるまで待つ（_humanClick の Promise を返す）。
+                   */
+                  var _pressP;
+                  if (btn) { _pressP = _humanClick(btn); _searched = true; }
+                  else {
+                    var _sBtn = _findBtn("検索");
+                    if (_sBtn) { _pressP = _humanClick(_sBtn); _searched = true; }
+                    else { _searched = false; _pressP = Promise.resolve(false); }
+                  }
                   if (_itAudit) {
                     _itAudit.search_clicked = !!_searched;
                     if (!_searched) _itAudit.click_fails.push({ what: "search", text: "検索", sample: [].slice.call(document.querySelectorAll("button")).filter(isVis).map(function (b) { return b.textContent.trim().slice(0, 20); }).slice(0, 8) });
                   }
                   if (!_searched) { _safeDone("AXLX_SEARCH_BLOCKED: 検索のボタンが見つからない"); return; }
-                  setTimeout(function () {
-                    _safeDone();
-                  }, 500);
+                  var _afterPress = function () {
+                    setTimeout(function () { _safeDone(); }, 500);
+                  };
+                  if (_pressP && typeof _pressP.then === "function") { _pressP.then(_afterPress, _afterPress); }
+                  else { _afterPress(); }
                 }, _preSearchBreath);
               } catch (errS) { _safeDone("fill-exception(search): " + String((errS && errS.message) || errS).slice(0, 100)); } });
               } catch (errW) { _safeDone("fill-exception(search): " + String((errW && errW.message) || errW).slice(0, 100)); } }); // _whenTickIdle

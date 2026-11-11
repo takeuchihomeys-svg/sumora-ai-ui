@@ -176,7 +176,7 @@ const main = manifest.content_scripts.find((c) => c.world === "MAIN" && c.js.inc
 eq("manifest: human-wait.js → itandi-update-days.js → itandi-page-script.js（同じ world:MAIN）", main && main.js, ["human-wait.js", "pointer-ui.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
 ok("manifest の版 2.5.34 以上", manifest.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005034, manifest.version);
 const ps = read("itandi-page-script.js");
-const iUd = ps.indexOf("_itFillUpdateDays(cond, function (udOk, udErr)"), iRem = ps.indexOf("fillRemainingFields(cond);", iUd), iSearch = ps.indexOf('clickBtn("検索")', iUd);
+const iUd = ps.indexOf("_itFillUpdateDays(cond, function (udOk, udErr)"), iRem = ps.indexOf("fillRemainingFields(cond);", iUd), iSearch = ps.indexOf('_findBtn("検索")', iUd);
 ok("afterModal: 更新日 → 残りの欄 → 検索 の順（検索は更新日を入れ終わってから）", iUd > 0 && iRem > iUd && iSearch > iRem);
 ok("入れられず前の値が残る時（ok=false）は検索を押さずに fill-done(error)", /if \(!udOk\) \{ showItandiWarnToast\(udErr\); _safeDone\(udErr\); return; \}/.test(ps));
 ok("点検: 押す直前の読み戻しに update_days（ラベルで見つけた欄だけ）", /if \(ud && ud\.how === "label"\) f\.update_days = String\(ud\.el\.value/.test(ps));

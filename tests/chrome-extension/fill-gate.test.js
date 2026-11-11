@@ -19,7 +19,7 @@ console.log("\n■ 検索を押す前の関所（page-script.js）");
   ok("clickSearch が関所（_axGateCheck）を検索の前に見る", cs.indexOf("_axGateCheck()") > 0 && cs.indexOf("_axGateCheck()") < cs.indexOf("div.go_search"));
   ok("1回だけ入れ直す（gate_retry・間取り・家賃・更新日・築年・徒歩）", /_axGateRetried = true;[\s\S]{0,900}setCheckboxes\("room_layout_id\[\]", _axExpect\.layoutVals\)/.test(cs) && /setSelVal\("rental_cost2", _axExpect\.rentMax\)/.test(cs) && /setSelVal\("update_date", _axExpect\.updateDays\)/.test(cs));
   ok("だめなら検索せず、gate 付きで fill-done を返す", /notifyDone\('AXLX_FILL_INCOMPLETE: ' \+ gateMiss, true\);\s*return;/.test(cs));
-  ok("止めた時は検索のボタンを押さない（return が go_search より前）", cs.indexOf("AXLX_FILL_INCOMPLETE") < cs.indexOf("goDivs[i].click()"));
+  ok("止めた時は検索のボタンを押さない（return が go_search より前）", cs.indexOf("AXLX_FILL_INCOMPLETE") < cs.indexOf("div.go_search"));
   ok("関所の材料は、間取り・家賃・更新日・徒歩・場所を1か所に置く", (() => {
     const i = ps.indexOf("_axExpect = {");
     if (i < 0) return false;
