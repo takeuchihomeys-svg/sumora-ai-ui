@@ -262,10 +262,10 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
   const ps5 = fs5.readFileSync(path.join(dir, "page-script.js"), "utf8");
   const ips5 = fs5.readFileSync(path.join(dir, "itandi-page-script.js"), "utf8");
   const H5 = require(path.join(dir, "human-wait.js"));
-  ok("リアプロ: 押す点はカーソルが居る位置（_P.position）", /_P\.position\) _pos = _P\.position\(\)/.test(ps5) && /cx = Math\.round\(_pos\.x \+ 3\); cy = Math\.round\(_pos\.y \+ 3\);/.test(ps5));
+  ok("リアプロ: 押す点はカーソルが居る位置（visiblePosition）", /_P\.visiblePosition\) _pos = _P\.visiblePosition\(\)/.test(ps5) && /cx = Math\.round\(_pos\.x\); cy = Math\.round\(_pos\.y\);/.test(ps5));
   ok("リアプロ: カーソルが取れない時だけ 30〜70%", /var fx = 0\.30 \+ Math\.random\(\) \* 0\.40;/.test(ps5));
   ok("リアプロ: 軌跡の途中で elementFromPoint を呼ばない（重い・ずれる）", !/type === "mousemove" && i < pts\.length - 1/.test(ps5));
-  ok("ITANDI: 押す点もカーソルの位置に合わせる", /_P0\.position\) _pos = _P0\.position\(\)/.test(ips5) || /_P0 && _P0\.position \? _P0\.position\(\)/.test(ips5));
+  ok("ITANDI: 押す点もカーソルの位置に合わせる（visiblePosition）", /_P0\.visiblePosition \? _P0\.visiblePosition\(\)/.test(ips5) && /cx = Math\.round\(_ps\.x\); cy = Math\.round\(_ps\.y\);/.test(ips5));
   // 軌跡が曲がる・終点が合う・端が遅い
   const pts = H5.pointerPath({ x: 0, y: 0 }, { x: 800, y: 400 }, 20);
   ok("マウス: 軌跡が曲がる（直線から外れる）", pts.some((p) => Math.abs(p.y - 400 * (p.x / 800)) > 3));
@@ -274,5 +274,11 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
   const w = H5.pointerDelays(24, 600);
   ok("マウス: 端（最初と最後）が中ほどより遅い（加速・減速）", w[0] + w[23] > w[10] + w[11]);
   ok("マウス: 1点ごとの待ちが違う（24点で20種類以上）", new Set(w).size >= 20);
+  // 2026-11-11 竹内さん「マウスちゃんとした場所にうごくようになっているか」: 矢印の先端と座標を一致させる
+  const pu5 = fs5.readFileSync(path.join(dir, "pointer-ui.js"), "utf8");
+  ok("カーソル: 矢印の先端（4, 2.5）の分だけ戻して置く（指す点＝置く点）", /Math\.round\(x - 4\) \+ "px," \+ Math\.round\(y - 2\.5\)/.test(pu5));
+  ok("カーソル: 位置は遅れずに反映（transition 0ms）", /transition:transform 0ms linear/.test(pu5));
+  ok("カーソル: 画面の端でも丸めない（端の要素を正しく指せる）", /function _clamp\(p\) \{\s*return \{ x: Number\(p\.x\) \|\| 0, y: Number\(p\.y\) \|\| 0 \};/.test(pu5) || /return \{ x: Number\(p\.x\) \|\| 0, y: Number\(p\.y\) \|\| 0 \};/.test(pu5));
+  ok("カーソル: 画面の外なら visiblePosition は null（見えていない扱い）", /function visiblePosition\(\)/.test(pu5) && /if \(_pos\.x < 0 \|\| _pos\.y < 0 \|\| _pos\.x > vw \|\| _pos\.y > vh\) return null;/.test(pu5));
 }
 process.exit(fail ? 1 : 0);

@@ -544,11 +544,11 @@
       var cx, cy;
       var _P = window.AxlxPointerUi;
       var _pos = null;
-      try { if (_P && _P.position) _pos = _P.position(); } catch (_) { _pos = null; }
+      try { if (_P && _P.visiblePosition) _pos = _P.visiblePosition(); } catch (_) { _pos = null; }
       var _near = _pos && _pos.x >= r.left - 4 && _pos.x <= r.right + 4 && _pos.y >= r.top - 4 && _pos.y <= r.bottom + 4;
       if (_near) {
-        // カーソルの先（矢印の先端は左上なので +3,+3 くらい）で押す
-        cx = Math.round(_pos.x + 3); cy = Math.round(_pos.y + 3);
+        // カーソルが要素の上に居る → その点で押す（先端の座標がそのまま押す点）
+        cx = Math.round(_pos.x); cy = Math.round(_pos.y);
       } else {
         var fx = 0.30 + Math.random() * 0.40;   // 30〜70%
         var fy = 0.30 + Math.random() * 0.40;

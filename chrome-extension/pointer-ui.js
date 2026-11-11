@@ -49,7 +49,9 @@
     el.style.cssText = [
       "position:fixed", "left:0", "top:0", "width:22px", "height:22px",
       "pointer-events:none", "z-index:2147483647",
-      "transition:transform 60ms ease-out",
+      // 2026-11-11: 60ms の transition は、毎フレーム位置を書く時に**遅れが積もって軌跡がずれる**。
+      //   縮み（押した時）だけ transition を使い、位置は即座に反映する（transform の translate は transition の対象外にする）
+      "transition:transform 0ms linear",
       "will-change:transform", "filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))",
     ].join(";");
     el.innerHTML =
@@ -66,8 +68,13 @@
 
   function _place(x, y) {
     if (!_el) return;
-    // transform は GPU で動くので、毎フレーム left/top を書き換えない（画面が重くならない）
-    _el.style.transform = "translate3d(" + Math.round(x) + "px," + Math.round(y) + "px,0)";
+    /**
+     * 2026-11-11 竹内さん「マウスちゃんとした場所にうごくようになっているか」:
+     *   ① SVG の矢印の**先端は (4,2.5)**（22px の中で左上寄り）。要素の left/top に来た点が「先端」になるよう、
+     *      先端の分だけ戻して置く（旧は要素の左上に点を合わせていたので、**実際に指している場所と 4〜2.5px ずれていた**）。
+     *   ② transition を 60ms → **0ms に近く**（毎フレーム transform を書くので、CSS の遅れが積もると軌跡が遅れて見える）。
+     */
+    _el.style.transform = "translate3d(" + Math.round(x - 4) + "px," + Math.round(y - 2.5) + "px,0)";
   }
 
   function _press(down) {
@@ -76,15 +83,15 @@
     _el.style.transform += down ? " scale(0.86)" : " scale(1)";
   }
 
-  /** 画面の外に出さない（スクロールで要素が外れた時など） */
+  /**
+   * 画面の外に出さない（スクロールで要素が外れた時など）
+   * 2026-11-11 竹内さん「マウスちゃんとした場所にうごくようになっているか」:
+   *   旧は端に寄せていた（x を 2〜vw-24 に丸める）ので、**画面の端の要素を狙うと押す点と 20px 以上ずれた**。
+   *   端の要素（右端のチェックボックス等）を正しく指せるよう、**丸めない**（画面外でもそのまま置く＝見えないだけ）。
+   *   押す点は `position()` が返すので、ずれない。
+   */
   function _clamp(p) {
-    try {
-      var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
-      return {
-        x: Math.min(Math.max(2, p.x), vw - 24),
-        y: Math.min(Math.max(2, p.y), vh - 24),
-      };
-    } catch (_) { return p; }
+    return { x: Number(p.x) || 0, y: Number(p.y) || 0 };
   }
 
   /**
@@ -153,6 +160,18 @@
   }
 
   function position() { return { x: _pos.x, y: _pos.y }; }
+  /**
+   * 2026-11-11: 画面の中に収まっているか（スクロールで要素が画面外へ出た時に「どこを指しているか」を返すため）。
+   *   画面の外なら null。呼ぶ側は「カーソルが見えていない」として扱う。
+   */
+  function visiblePosition() {
+    try {
+      var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+      if (_pos.x < 0 || _pos.y < 0 || _pos.x > vw || _pos.y > vh) return null;
+      if (!_el || !_el.isConnected) return null;
+      return { x: _pos.x, y: _pos.y };
+    } catch (_) { return null; }
+  }
 
   /**
    * 2026-11-10 v2.6.2 竹内さん「人間が迷いながらマウスもまよったりしながら考えながら入力していく」:
@@ -217,6 +236,7 @@
     wander: wander,
     hide: hide,
     position: position,
+    visiblePosition: visiblePosition,
     ELEMENT_ID: ID,
   };
 });

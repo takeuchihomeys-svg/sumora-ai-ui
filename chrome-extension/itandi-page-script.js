@@ -206,10 +206,10 @@
       var cx, cy;
       try {
         var _P0 = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
-        var _ps = _P0 && _P0.position ? _P0.position() : null;
+        var _ps = _P0 && _P0.visiblePosition ? _P0.visiblePosition() : null;
         var _r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
         if (_ps && _r && _ps.x >= _r.left - 4 && _ps.x <= _r.right + 4 && _ps.y >= _r.top - 4 && _ps.y <= _r.bottom + 4) {
-          cx = Math.round(_ps.x + 3); cy = Math.round(_ps.y + 3);
+          cx = Math.round(_ps.x); cy = Math.round(_ps.y);
         } else if (_r) {
           cx = Math.round(_r.left + _r.width * (0.30 + Math.random() * 0.40));
           cy = Math.round(_r.top + _r.height * (0.30 + Math.random() * 0.40));
