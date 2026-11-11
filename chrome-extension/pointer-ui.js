@@ -95,6 +95,24 @@
   }
 
   /**
+   * 2026-11-11 竹内さん「カーソルもちゃんと人間のようにひと息つくときもあるか」:
+   *   人のマウスは**動いて → 止まって → また動く**。ずっと等速で動き続けるのは機械的。
+   *   moveTo の途中に「ひと息」（その場で止まる）を確率的に挟む。
+   *   ・移動が 400ms を超える長い移動の時だけ（短い移動で止まると不自然）
+   *   ・18% で 120〜420ms 止まる（人が「次はどこだ」と一瞬手を止める形）
+   *   ・止まる位置は軌跡の 25〜70% の所（途中で止まる＝人が迷った形）
+   *   ・止まっている間もカーソルは見えている（消さない）
+   */
+  function _pausePointFor(n) {
+    if (n < 8) return -1;                     // 点が少ない＝短い移動は止まらない
+    if (Math.random() >= 0.18) return -1;     // 18%
+    return Math.floor(n * (0.25 + Math.random() * 0.45)); // 25〜70% の所
+  }
+  function _pauseMs() {
+    return 120 + Math.floor(Math.random() * 300); // 120〜420ms
+  }
+
+  /**
    * 今の位置から (x, y) へ人の軌跡で動かす。
    * Promise は「着いたら」解決（待たなくてもよい）。動きながら押すと不自然なので、押す前に await すると良い。
    */
@@ -114,6 +132,9 @@
     var waits = (H && H.pointerDelays) ? H.pointerDelays(pts.length, total) : null;
     var anim = { cancelled: false };
     _anim = anim;
+    // 2026-11-11 竹内さん「カーソルもちゃんと人間のようにひと息つくときもあるか」: 途中で手を止める位置
+    var _pauseAt = total > 400 ? _pausePointFor(pts.length) : -1;
+    var _pauseMsVal = _pauseAt >= 0 ? _pauseMs() : 0;
     return new Promise(function (resolve) {
       var i = 0;
       function step() {
@@ -129,6 +150,11 @@
         _place(p.x, p.y);
         var w = waits ? (waits[Math.min(i, waits.length - 1)] || 20) : Math.round(total / pts.length);
         i++;
+        // ひと息（軌跡の途中で止まる）: 止まっている間はカーソルを動かさない
+        if (i - 1 === _pauseAt && _pauseMsVal > 0) {
+          setTimeout(step, w + _pauseMsVal);
+          return;
+        }
         setTimeout(step, w);
       }
       step();
@@ -152,6 +178,18 @@
     if (!ensure()) return;
     _press(true);
     setTimeout(function () { _press(false); }, 90);
+    /**
+     * 2026-11-11 竹内さん「カーソルもちゃんと人間のようにひと息つくときもあるか」:
+     *   押した直後のカーソルが**完全に静止**すると機械的。
+     *   35% で 2〜5px だけ指先が動く（人が「反応したかな」と手がわずかに動く形）。位置は元に戻す。
+     */
+    if (Math.random() < 0.35) {
+      var base = { x: _pos.x, y: _pos.y };
+      var dx = (Math.random() < 0.5 ? -1 : 1) * (2 + Math.random() * 3);
+      var dy = (Math.random() < 0.5 ? -1 : 1) * (2 + Math.random() * 3);
+      setTimeout(function () { _pos = { x: base.x + dx, y: base.y + dy }; _place(_pos.x, _pos.y); }, 130);
+      setTimeout(function () { _pos = base; _place(base.x, base.y); }, 130 + 90 + Math.floor(Math.random() * 120));
+    }
   }
 
   function hide() {

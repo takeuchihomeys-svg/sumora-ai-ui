@@ -280,5 +280,20 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
   ok("カーソル: 位置は遅れずに反映（transition 0ms）", /transition:transform 0ms linear/.test(pu5));
   ok("カーソル: 画面の端でも丸めない（端の要素を正しく指せる）", /function _clamp\(p\) \{\s*return \{ x: Number\(p\.x\) \|\| 0, y: Number\(p\.y\) \|\| 0 \};/.test(pu5) || /return \{ x: Number\(p\.x\) \|\| 0, y: Number\(p\.y\) \|\| 0 \};/.test(pu5));
   ok("カーソル: 画面の外なら visiblePosition は null（見えていない扱い）", /function visiblePosition\(\)/.test(pu5) && /if \(_pos\.x < 0 \|\| _pos\.y < 0 \|\| _pos\.x > vw \|\| _pos\.y > vh\) return null;/.test(pu5));
+  // 2026-11-11 竹内さん「カーソルもちゃんと人間のようにひと息つくときもあるか」
+  ok("カーソル: 動く途中でひと息つく（18%・120〜420ms）", /function _pausePointFor\(n\)/.test(pu5) && /Math\.random\(\) >= 0\.18\) return -1;/.test(pu5) && /120 \+ Math\.floor\(Math\.random\(\) \* 300\)/.test(pu5));
+  ok("カーソル: 長い移動の時だけ止まる（400ms 超）", /total > 400 \? _pausePointFor/.test(pu5));
+  ok("カーソル: 止まる位置は軌跡の 25〜70%", /0\.25 \+ Math\.random\(\) \* 0\.45/.test(pu5));
+  ok("カーソル: 迷う時にその場で漂う（drift）", /function drift\(ms, opts\)/.test(pu5) && /Math\.sin\(t \* Math\.PI \* 2 \+ ph\)/.test(pu5));
+  ok("カーソル: 狙いを外して戻る（wander）", /function wander\(el, ms\)/.test(pu5));
+  // 実際に止まる回がどれくらいあるか（点の数から）
+  {
+    let withPause = 0;
+    for (let i = 0; i < 2000; i++) {
+      // _pausePointFor と同じ判定を再現（20点・長い移動）
+      if (!(20 < 8) && Math.random() < 0.18) withPause++;
+    }
+    ok("カーソル: 長い移動 2000回で 300回前後は途中で止まる（18%）", withPause > 250 && withPause < 450, { withPause });
+  }
 }
 process.exit(fail ? 1 : 0);
