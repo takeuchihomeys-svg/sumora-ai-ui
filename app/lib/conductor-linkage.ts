@@ -90,7 +90,7 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     files: ["app/lib/compose-sentence-plan.ts", "app/lib/compose-how-table.ts"],
     reads: ["meta.turn_read.main/subs", "meta.seven_read", "meta.turn_contract.asks", "meta.appeal_timing", "meta.customer_concern", "場面（compose-how-table）"],
     writes: ["compose_plan:", "digest.compose_plan"],
-    switch: "COMPOSE_SENTENCE_PLAN（既定 off）",
+    switch: "COMPOSE_SENTENCE_PLAN（11/12 既定 on・戻す =off）",
     redecides: [],
   },
   {

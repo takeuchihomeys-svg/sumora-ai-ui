@@ -8,8 +8,8 @@ import {
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
 
-t("スイッチは既定 off", () => {
-  assert.equal(composeSentencePlanOn({}), false);
+t("スイッチは既定 on（11/12・戻す =off）", () => {
+  assert.equal(composeSentencePlanOn({}), true);
   assert.equal(composeSentencePlanOn({ COMPOSE_SENTENCE_PLAN: "on" }), true);
   assert.equal(composeSentencePlanOn({ COMPOSE_SENTENCE_PLAN: "off" }), false);
 });

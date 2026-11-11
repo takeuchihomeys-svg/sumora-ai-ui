@@ -14,7 +14,7 @@
 //       {key_point, bridge, lead_to, appeal:{property, points[]}, latent_cover:{kind, what}, key_how[], trust_how[]}（camelCase も読む）
 //   - 今ある材料（無い時の代わり）: turn_contract（situation・asks[].about/property/route/quote・lead_with）・turn_read（target・intent・mood・feeling）・
 //       main_point・latent_intent・customer_concern・appeal_timing・current_property
-// スイッチ: COMPOSE_SENTENCE_PLAN=on（既定 off＝今と1文字も変わらない）。
+// スイッチ: COMPOSE_SENTENCE_PLAN（2026-11-12 統括役: 既定 on・6問の前後比べで pathWorse 0・essenceWorse 0・確かな悪化 0（w10-csp-maj6-p2・maj6c）。戻す =off）。
 // テスト: npx tsx app/lib/__tests__/compose-sentence-plan.test.ts
 import type { SentenceRole } from "./takeuchi-anatomy-roles";
 import { ROLE_LABEL } from "./takeuchi-anatomy-roles";
@@ -25,7 +25,7 @@ import { POINT_METHODS, TRUST_METHODS, type PointMethod, type TrustMethod, type 
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 export function composeSentencePlanOn(env: Env = envOf()): boolean {
-  return (env.COMPOSE_SENTENCE_PLAN ?? "").trim().toLowerCase() === "on";
+  return (env.COMPOSE_SENTENCE_PLAN ?? "").trim().toLowerCase() !== "off";
 }
 
 // ── 欄の値（竹内さんの7つの欄の細かい型・KB 1f5bd301 の例から） ─────────────────────
