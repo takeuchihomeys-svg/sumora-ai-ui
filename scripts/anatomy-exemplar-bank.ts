@@ -24,9 +24,9 @@ const tsv = join(CACHE, "anatomy-seven", "seven-claude-43.tsv");
 if (existsSync(tsv)) { const L = readFileSync(tsv, "utf8").trim().split("\n").map((l) => l.split("\t")); const li = L[0].indexOf("誘導先"); for (const r of L.slice(1)) if ((LEAD_TO as readonly string[]).includes(r[li])) hand.set(r[0], r[li] as LeadTo); }
 
 // 割れた文（3回読みで多数が無い 41文）は Claude Code の読み（split-r1-claude.json）で埋める
-const splitFix = new Map<string, SentenceRole>();
+const splitFix = new Map<string, { role: SentenceRole; why: string }>();
 const sp = join(CACHE, "anatomy-roles", "split-r1-claude.json");
-if (existsSync(sp)) for (const x of JSON.parse(readFileSync(sp, "utf8")) as Array<{ id: string; i: number; role: SentenceRole }>) splitFix.set(`${x.id}#${x.i}`, x.role);
+if (existsSync(sp)) for (const x of JSON.parse(readFileSync(sp, "utf8")) as Array<{ id: string; i: number; role: SentenceRole; why: string }>) splitFix.set(`${x.id}#${x.i}`, { role: x.role, why: x.why });
 // gold の番そのもの（試験の問題と同じ送信）は束に入れない＝答えを見て当てない
 const goldIds = new Set((existsSync(resolve(arg("gold", "../compose-1105/scripts/compose-understanding/gold-1111.json"))) ? (JSON.parse(readFileSync(resolve(arg("gold", "../compose-1105/scripts/compose-understanding/gold-1111.json")), "utf8")) as { turns: Array<{ id: string }> }).turns : []).map((t) => t.id));
 const goldStaff = (JSON.parse(readFileSync(join(process.cwd(), "scripts/brain-exam/problems.json"), "utf8")) as Array<{ id: string; staffText?: string }>).filter((p) => goldIds.has(p.id)).map((p) => String(p.staffText ?? "").replace(/s+/g, ""));
@@ -43,7 +43,7 @@ for (const o of r1) {
   bank.push({
     id: o.id, scene: o.scene, latent: latentKeyOf(o.customer), lead, hand: hand.has(o.id.slice(0, 8)),
     customer: (sm.customer ?? "").slice(0, 200),
-    sentences: sents.map((text, k) => { const role = o.roles[k]?.role ?? splitFix.get(`${o.id}#${k + 1}`) ?? null; return { text, role, why: (o.roles[k]?.why ?? "").slice(0, 40), brainField: brainFieldOf(role) }; }),
+    sentences: sents.map((text, k) => { const fx = splitFix.get(`${o.id}#${k + 1}`); const role = o.roles[k]?.role ?? fx?.role ?? null; return { text, role, why: (o.roles[k]?.why ?? fx?.why ?? "").slice(0, 40), brainField: brainFieldOf(role) }; }),
     latentFour: f4?.feeling && f4.want ? { trigger: f4.trigger?.text ?? "", part: `${f4.part?.property ?? ""}${f4.part?.point ?? ""}`, feeling: `${f4.feeling.what}（${f4.feeling.strength}）`, want: f4.want } : null,
     fact: f4?.fact ?? s7?.latent?.fact ?? null,
   });
