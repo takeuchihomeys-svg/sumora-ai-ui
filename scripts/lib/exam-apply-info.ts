@@ -4,9 +4,9 @@
 //     received → 「お申込み完了しております！！」（申込が動いた事実だけ）／ form_sent → 空の申込フォーマットの見出し（スタッフが送る形＝個人の値なし）
 //   APPLY_INTENT_FORM_STATE=on の時だけ（off の回・前の基準は今まで通り何も入れない）。止める EXAM_APPLY_INFO_COPY=off
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { readApplyInfoState, isApplyIntentTurn, applyIntentFormStateOn, type ApplyInfoMsg, type ApplyInfoReading } from "../../app/lib/apply-info-state";
+import { APPLY_INFO_OR_FILTER, readApplyInfoState, isApplyIntentTurn, applyIntentFormStateOn, type ApplyInfoMsg, type ApplyInfoReading } from "../../app/lib/apply-info-state";
 
-export const APPLY_INFO_OR_FILTER = "text.ilike.%記入欄】%,text.ilike.%完了%,text.ilike.%否決%,text.ilike.%審査継続%,text.ilike.%審査通過%,text.ilike.%審査承認%,text.ilike.%情報で%,text.ilike.%以前いただきました%,text.ilike.%以前頂きました%,image_type.eq.id_document,image_type.eq.income_document";
+export { APPLY_INFO_OR_FILTER };
 
 export function examApplyInfoCopyOn(env: Record<string, string | undefined> = process.env): boolean {
   return applyIntentFormStateOn(env) && (env.EXAM_APPLY_INFO_COPY ?? "").trim().toLowerCase() !== "off";

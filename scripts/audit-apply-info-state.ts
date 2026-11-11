@@ -3,7 +3,7 @@
 //   npx tsx --env-file=<.env.local> scripts/audit-apply-info-state.ts [--days=200] [--writer=takeuchi|all] [--list]
 // 個人の値は出さない（お客様の発言は先頭 40 字・数字は伏せる）
 import { createClient } from "@supabase/supabase-js";
-import { readApplyInfoState, isApplyIntentTurn, type ApplyInfoMsg } from "../app/lib/apply-info-state";
+import { APPLY_INFO_OR_FILTER, readApplyInfoState, isApplyIntentTurn, type ApplyInfoMsg } from "../app/lib/apply-info-state";
 import { isTestConversation } from "../app/lib/test-conversations";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
@@ -17,7 +17,7 @@ const mask = (s: string | null) => String(s ?? "").replace(/[0-9０-９]{3,}/g, 
 async function priorReading(conv: string, at: string) {
   const { data: prior } = await sb.from("messages").select("sender, text, created_at, image_type")
     .eq("conversation_id", conv).lt("created_at", at).gte("created_at", new Date(Date.parse(at) - 180 * 86_400_000).toISOString())
-    .or("text.ilike.%記入欄】%,text.ilike.%完了%,text.ilike.%否決%,text.ilike.%審査継続%,text.ilike.%審査通過%,text.ilike.%審査承認%,text.ilike.%情報で%,text.ilike.%以前いただきました%,text.ilike.%以前頂きました%,image_type.eq.id_document,image_type.eq.income_document")
+    .or(APPLY_INFO_OR_FILTER)
     .order("created_at", { ascending: false }).limit(60);
   return readApplyInfoState((prior ?? []) as ApplyInfoMsg[]);
 }
@@ -47,7 +47,7 @@ async function main() {
   for (const t of turns) {
     const { data: prior } = await sb.from("messages").select("sender, text, created_at, image_type")
       .eq("conversation_id", t.conversation_id).lt("created_at", t.created_at).gte("created_at", new Date(Date.parse(t.created_at) - 180 * 86_400_000).toISOString())
-      .or("text.ilike.%記入欄】%,text.ilike.%完了%,text.ilike.%否決%,text.ilike.%審査継続%,text.ilike.%審査通過%,text.ilike.%審査承認%,text.ilike.%情報で%,text.ilike.%以前いただきました%,text.ilike.%以前頂きました%,image_type.eq.id_document,image_type.eq.income_document")
+      .or(APPLY_INFO_OR_FILTER)
       .order("created_at", { ascending: false }).limit(60);
     const reading = readApplyInfoState((prior ?? []) as ApplyInfoMsg[]);
     // その番のスタッフの一手: 次の（25字を超える）お客様の発言まで・6時間まで
