@@ -70,6 +70,8 @@ export type TurnUnderstanding = {
   situation: string | null;
   mainPoint: string | null;
   src: { main: "turn_read" | "turn_contract" | "intent" | null; subs: "turn_read" | "turn_contract" | null };
+  /** 作業員14 の turn_focus: 主に対してこの番でする事・後で答える/触れない従・話題ごとの並び（turn_topics） */
+  mainMove: string | null; later: string[]; topics: string[];
 };
 /** 竹内さんの7つの欄（KB 1f5bd301）。src＝takeuchi_fields（作業員5）か今ある材料か */
 export type SevenFields = {
@@ -139,7 +141,7 @@ export function readTurnUnderstanding(meta: unknown): TurnUnderstanding {
   const m = obj(meta) ?? {};
   const tr = obj(m.turn_read);
   const tc = obj(m.turn_contract);
-  const out: TurnUnderstanding = { main: null, subs: [], situation: str(tc?.situation, 80), mainPoint: str(m.main_point, 80), src: { main: null, subs: null } };
+  const out: TurnUnderstanding = { main: null, subs: [], situation: str(tc?.situation, 80), mainPoint: str(m.main_point, 80), src: { main: null, subs: null }, mainMove: null, later: [], topics: [] };
   // 作業員14 の主と従（来れば従う・決め直さない）
   const trMain = itemOf(obj(g(tr, "main")));
   if (trMain) {
@@ -171,6 +173,28 @@ export function readTurnUnderstanding(meta: unknown): TurnUnderstanding {
     out.main = { what: null, about: null, property: null, part: null, route: null, role: "uke" };
     out.src.main = "turn_contract";
   }
+  // 2026-11-12 作業員14 の組み合わせた理解（meta.turn_focus・TURN_READ_FOCUS）: 主の役目とこの番でする事・従の扱い（後で答える・触れないは行にしない）
+  const tf = obj(m.turn_focus);
+  const tfMain = obj(tf?.main), tfSub = obj(tf?.sub);
+  if (tfMain) {
+    const r = typeof tfMain.intent === "string" ? INTENT_ROLE[tfMain.intent] : undefined;
+    const move = str(tfMain.move, 30);
+    if (!out.main) { out.main = { what: str(tfMain.intent, 30), about: null, property: str(m.current_property, 40), part: null, route: null, role: r ?? null }; out.src.main = "turn_read"; }
+    else if (r && out.main.route !== "aix") out.main.role = r;
+    if (move) out.mainMove = move;
+  }
+  if (tfSub) {
+    const mv = str(tfSub.move, 10);
+    const what = join([str(tfSub.about, 20), str(tfSub.intent, 30)], "・");
+    if (mv === "後で答える" || mv === "触れない") out.later.push(`${what}（${mv}）`);
+    else if (what) out.subs.push({ what, about: null, property: null, part: `${what}${mv === "一言添える" ? "（一言だけ）" : ""}`, route: "reply", role: (typeof tfSub.intent === "string" ? INTENT_ROLE[tfSub.intent] : undefined) ?? "answer" });
+  }
+  // 話題ごと（meta.turn_topics・TURN_READ_TOPICS）: 従の話題も従の行に・前の話の持ち出し（ref）は結び付けて答える
+  const tps = Array.isArray(m.turn_topics) ? (m.turn_topics as unknown[]).map((x) => obj(x)).filter((x): x is Record<string, unknown> => !!x) : [];
+  for (const tp of tps) {
+    const q = str(tp.quote, 30); const ref = str(tp.ref, 40);
+    out.topics.push(`${tp.role === "主" ? "主" : "従"}: ${q ?? str(tp.about, 20) ?? "?"}${ref ? `（前の話: ${ref}）` : ""}`);
+  }
   // 2026-11-12 turn_read の2番目の意図も従に（主と違う役目になる時だけ）
   const i2 = typeof tr?.intent2 === "string" ? INTENT_ROLE[tr.intent2] : undefined;
   if (i2 && out.main && i2 !== out.main.role && !out.subs.some((x) => x.role === i2)) out.subs.push({ what: str(tr!.intent2, 40), about: null, property: null, part: null, route: null, role: i2 });
@@ -190,6 +214,7 @@ export type ComposeContext = {
   omitted: string[]; skipped: string | null; nextIntent: string | null;
   latentIntent: string | null; concern: string | null; appealTiming: string | null; hesitancy: string | null;
   emotion: string | null; mindset: string | null; stance: string | null; dirLead: string | null;
+  later: string[]; topics: string[];
 };
 export function readComposeContext(meta: unknown, extra: { nextIntent?: string | null } = {}): ComposeContext {
   const m = obj(meta) ?? {};
@@ -218,6 +243,7 @@ export function readComposeContext(meta: unknown, extra: { nextIntent?: string |
     appealTiming: (() => { const at = obj(m.appeal_timing); return at && typeof at.kind === "string" ? join([`${at.kind}/${String(at.level ?? "")}`, str(at.reason, 50)], "＝") : null; })(),
     hesitancy: str(m.hesitancy_pattern, 20),
     emotion: str(m.customer_emotion, 30),
+    later: readTurnUnderstanding(m).later ?? [], topics: readTurnUnderstanding(m).topics ?? [],
     dirLead: (() => { const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? LEAD_TO_JA[d] : null; })(),
     mindset: (() => { const cm = obj(m.customer_mindset); if (!cm || typeof cm.state !== "string") return null; const ax = obj(cm.anxiety); return join([cm.state, ax ? join([str(ax.target, 20), str(ax.direction, 6)], "・") : null, str(cm.hesitation, 20)], "／"); })(),
     stance: join([str(m.engagement_stance, 6), str(m.purchase_signal_level, 6) ? `買う合図 ${str(m.purchase_signal_level, 6)}` : null], "・"),
@@ -241,7 +267,8 @@ export function composeContextLines(c: ComposeContext): string[] {
   if (c.lead) L.push(`- 直前のこちらの誘導（${c.lead.kind}）への答え: ${c.lead.answer}${c.lead.answer === "応じた" ? "＝同じ誘導を繰り返さず一段進める" : ""}`);
   const nx = join([c.goal ? `目指す事 ${c.goal}` : null, c.nextIntent ? `次にしてほしい事 ${c.nextIntent}` : null], "・");
   if (nx) L.push(`- ${nx}`);
-  const om = [...c.omitted, ...(c.skipped ? [c.skipped] : [])];
+  if (c.topics.length) L.push(`- 話題（出てきた順）: ${c.topics.join("／")}`);
+  const om = [...c.omitted, ...c.later, ...(c.skipped ? [c.skipped] : [])];
   if (om.length) L.push(`- 今回は入れない・後に回す: ${om.join("／")}`);
   return L;
 }
@@ -400,7 +427,7 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { sce
   // 主: 一通の読みの主（AIX の番の主は返信では受けるだけ＝行にしない）
   const mainRole = u.main?.role ?? null;
   if (u.main && mainRole && !aixMain) {
-    rows.push({ rank: "main", role: mainRole, part: join([partOf(u.main), s.keyPoint ? `要点: ${s.keyPoint}` : null], "／"), how: join(keyHowEff.map((k) => KEY_HOW_JA[k])), next: nextJa, from: u.src.main ?? "?" });
+    rows.push({ rank: "main", role: mainRole, part: join([partOf(u.main), s.keyPoint ? `要点: ${s.keyPoint}` : null, u.mainMove ? `この番でする事: ${u.mainMove}` : null], "／"), how: join(keyHowEff.map((k) => KEY_HOW_JA[k])), next: nextJa, from: u.src.main ?? "?" });
   } else empty.push(aixMain ? "主（AIX の番＝返信は受けるだけ）" : "主");
   // 従①: 脇の心配（潜在意識のカバー）＝主の答えの後。具体の中身と先回りに使う事実をそのまま渡す
   const lc = s.latentCover;
@@ -592,6 +619,8 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
   { key: "turn_read.mood", label: "気持ちの型・何に・強さ", carried: "plan", values: (m) => { const md = obj(obj(m.turn_read)?.mood); return md ? [...sv(md.base, 20), ...sv(md.object, 20)] : []; } },
   { key: "turn_read.latent", label: "潜在の4欄（きっかけ・部分・気持ち・したい事）", carried: "plan", values: (m) => { const lt = obj(obj(m.turn_read)?.latent) ?? obj(m.latent_read); return lt ? ["trigger", "part", "feeling", "want"].flatMap((k) => sv(lt[k], 40)) : []; } },
   { key: "turn_read.main/subs", label: "主と従", carried: "plan", values: (m) => { const tr = obj(m.turn_read); const xs = [obj(tr?.main), ...((Array.isArray(tr?.subs) ? tr!.subs : []) as unknown[]).map((x) => obj(x))]; return xs.flatMap((x) => [...sv(x?.part, 40), ...sv(x?.property, 40)]); } },
+  { key: "turn_focus", label: "組み合わせた理解（主にする事・従の扱い）", carried: "plan", values: (m) => { const t = obj(m.turn_focus); return t ? [...sv(obj(t.main)?.move, 30), ...sv(obj(t.sub)?.intent, 30)] : []; } },
+  { key: "turn_topics", label: "話題ごと（言葉・前の話）", carried: "plan", values: (m) => (Array.isArray(m.turn_topics) ? (m.turn_topics as unknown[]).map((x) => obj(x)).flatMap((x) => [...sv(x?.quote, 30), ...sv(x?.ref, 40)]) : []) },
   { key: "main_point", label: "要点", carried: "plan", values: (m) => sv(m.main_point, 80) },
   { key: "three_layer", label: "表の問い・奥の心配・安心の条件", carried: "plan", values: (m) => { const t = obj(m.three_layer); return t ? [...sv(t.surface, 40), ...sv(t.worry, 50), ...sv(t.relief, 50)] : []; } },
   { key: "latent_intent", label: "送ってきた動機", carried: "plan", values: (m) => sv(m.latent_intent, 60) },
@@ -617,7 +646,7 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
  */
 export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none">> = {
   // 文の統括の設計図が運ぶ
-  turn_contract: "plan", turn_read: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
+  turn_contract: "plan", turn_read: "plan", turn_focus: "plan", turn_topics: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
   conductor_focus: "plan", plan_ahead: "plan", future_timeline: "plan", hesitancy_pattern: "plan", message_plan: "plan", current_property: "plan",
   customer_emotion: "plan", customer_mindset: "plan", engagement_stance: "plan", purchase_signal_level: "plan", reply_direction: "plan",
   // 別の注記・役が運ぶ（本質の帯・方向・姿勢・締め・2通・AIX）

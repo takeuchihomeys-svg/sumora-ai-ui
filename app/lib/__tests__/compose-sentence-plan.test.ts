@@ -230,4 +230,16 @@ t("方向の文から誘導先を写す（作業員5 の外れの束 10番）・
   const s = readSevenFields({ customer_concern: { topic: "時期", object: "埋まる" }, turn_read: { mood: { base: "安くしたい" } } });
   assert.equal(s.latentCover?.kind, "先に取られる");
 });
+
+t("作業員14 の turn_focus・turn_topics（main に入った新しい欄）も設計図に届く・後で答える従は行にせず「後に回す」へ（主が AIX の番は今まで通り注記なし）", () => {
+  const meta = {
+    turn_contract: { asks: [{ quote: "土曜日でお願いします", route: "reply", about: "viewing_day" }, { quote: "審査って通りますか", route: "reply", about: "procedure", answer: "通過の見込み" }] },
+    turn_focus: { main: { about: "内覧の日・場所", intent: "日程の調整・連絡", move: "日の確定" }, sub: { about: "手続き・審査", intent: "手続き・審査の質問", move: "後で答える" } },
+    turn_topics: [{ n: 1, about: "内覧の日・場所", intent: "日程の調整・連絡", quote: "土曜日でお願いします", ref: null, role: "主" }, { n: 2, about: "手続き・審査", intent: "手続き・審査の質問", quote: "審査って通りますか", ref: "前に送った見積書", role: "従" }],
+  };
+  const note = planNoteOf(meta);
+  assert.deepEqual(handoffLeaks(meta, note), []);
+  assert.match(note, /話題（出てきた順）: 主: 土曜日でお願いします／従: 審査って通りますか（前の話: 前に送った見積書）/);
+  assert.match(note, /今回は入れない・後に回す: 手続き・審査・手続き・審査の質問（後で答える）/);
+});
 console.log(`${n} pass`);
