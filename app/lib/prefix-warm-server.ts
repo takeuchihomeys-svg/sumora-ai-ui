@@ -187,7 +187,7 @@ export async function tryPrefixWarms(nowMs: number): Promise<PrefixWarmResult[]>
     return [{ name: "*", warmed: false, reason: `outside_hours_jst(${h.start}-${h.end})` }];
   }
   const targets = buildPrefixWarmTargets(await loadPrefixWarmInputs());
-  // 2026-11-11 作業員2（C1）: 返信の書き手の system の温め（既定 off・REPLY_WRITER_WARM=on）。温める番の時だけ本物の前置きを読む
+  // 2026-11-11 作業員2（C1）: 返信の書き手の system の温め（11/11 竹内さんの OK で既定 on・止める REPLY_WRITER_WARM=off）。温める番の時だけ本物の前置きを読む
   const pre: PrefixWarmResult[] = [];
   if (replyWriterWarmEnabled()) {
     const rw = await loadReplyWriterWarmTarget(nowMs, hoursJst).catch((e): PrefixWarmResult => ({ name: "reply_writer_warm", warmed: false, reason: "error:" + (e instanceof Error ? e.message : String(e)).slice(0, 200) }));

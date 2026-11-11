@@ -202,7 +202,7 @@ console.log("── 2026-10-15 キャッシュの見直し: AIX の温めを共�
   t("buildPrefixWarmTargets が aixTemplateShared を渡す", buildPrefixWarmTargets({ ...base, aixTemplate: true, aixTemplateShared: shared }).at(-1)!.body.system.length === 3);
 }
 
-console.log("── 2026-11-11 C1 返信の書き手の system の温め（REPLY_WRITER_WARM・既定 off）— 本物が送った system と鍵が同じ・印の無いブロックは温めない");
+console.log("── 2026-11-11 C1 返信の書き手の system の温め（REPLY_WRITER_WARM・11/11 から既定 on）— 本物が送った system と鍵が同じ・印の無いブロックは温めない");
 {
   const cc = { type: "ephemeral" as const, ttl: "1h" as const };
   const sys = [
@@ -218,7 +218,7 @@ console.log("── 2026-11-11 C1 返信の書き手の system の温め（REPLY
   t("名札は brain で始まらない", !isBrainCall(w!.name, w!.body.system[0].text) && !w!.name.startsWith("brain"));
   t("返信生成と同じキャッシュの組（Sonnet 5.5 の置き換えも揃う）", cacheGroupOf("reply_writer_warm").includes("reply_generate") && cacheGroupOf("reply_generate").includes("reply_writer_warm"));
   t("印の無いブロックがあれば作らない（鍵が本物と合わない）", buildReplyWriterWarmTarget([sys[0], { type: "text", text: "動的" }]) === null && buildReplyWriterWarmTarget([]) === null);
-  t("既定 off・on の一語だけで開く", !replyWriterWarmEnabled({}) && !replyWriterWarmEnabled({ REPLY_WRITER_WARM: "1" }) && replyWriterWarmEnabled({ REPLY_WRITER_WARM: "on" }));
+  t("既定 on（11/11 竹内さんの OK）・REPLY_WRITER_WARM=off で止まる", replyWriterWarmEnabled({}) && !replyWriterWarmEnabled({ REPLY_WRITER_WARM: "off" }) && replyWriterWarmEnabled({ REPLY_WRITER_WARM: "on" }));
   t("先頭が読めて DB の決まりだけ書いた → dynamic_rewrite／丸ごと書いた → cold", classifyPrefixWarmUsage({ cache_read: 90_000, cache_write_1h: 6_000, cache_write_5m: 0 }, w!.staticHitMinRead) === "dynamic_rewrite"
     && classifyPrefixWarmUsage({ cache_read: 0, cache_write_1h: 96_956, cache_write_5m: 0 }, w!.staticHitMinRead) === "cold"
     && classifyPrefixWarmUsage({ cache_read: 96_956, cache_write_1h: 0, cache_write_5m: 0 }, w!.staticHitMinRead) === "hit");

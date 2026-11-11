@@ -175,7 +175,8 @@ export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[
     const keyed = keyedTarget(url, method);
     if (keyed) {
       // 2026-11-10 作業員4: 鍵と頼みは答えの番を外した形で（夜の台本はこの形のまま鍵で読む）。前の控え（外す前の鍵）には当たらない＝漏れた控えは使われない
-      const kbody = leakSafeKeyedBody(keyed, body, opts.problemTurn?.() ?? null);
+      const pturn = opts.problemTurn?.() ?? null;
+      const kbody = leakSafeKeyedBody(keyed, body, pturn);
       const kday = (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(now());
       const kkey = keyedKey(url, method, kbody, opts.excludeIds(), opts.keyHint?.() ?? null);
       const kfile = join(opts.dir, kday, `k-${kkey}.json`);
@@ -185,7 +186,8 @@ export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[
       try {
         const pdir = join(opts.dir, kday, "pending"); mkdirSync(pdir, { recursive: true });
         const pf = join(pdir, `k-${kkey}.json`);
-        if (!existsSync(pf)) writeFileSync(pf, JSON.stringify({ name: keyed, url, method, body: kbody, at: new Date().toISOString() }));
+        // 2026-11-10 作業員8: 答えの番を外した頼みの印（ls: 1）。夜の台本は近い番の読みで印の無い頼み（8c1b057c より古い作業ツリー・元の番が分からない頼み）を解かない
+        if (!existsSync(pf)) writeFileSync(pf, JSON.stringify({ name: keyed, url, method, body: kbody, at: new Date().toISOString(), ls: pturn?.conv && pturn.at ? 1 : 0 }));
       } catch { /* 頼みを残せなくても試験は続ける */ }
       stats.skip++;
       return inner(input, init);

@@ -3,7 +3,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { pendingCounts, decideNearResolve, isExamJob } from "../exam-near-hook";
+import { pendingCounts, decideNearResolve, isExamJob, ownerBaseDue } from "../exam-near-hook";
 
 let passed = 0, failed = 0;
 function t(name: string, cond: boolean, extra?: unknown) {
@@ -36,6 +36,16 @@ t("env のファイルが無ければ解かない（env_missing）", (() => { co
 t("頼みが無ければ解かない", (() => { const d = decideNearResolve({ job: {}, counts: {}, configEnv: "C:/x", env: {}, envExists: has }); return !d.run && d.why === "no_pending"; })());
 t("tsc-remote の依頼では解かない", (() => { const d = decideNearResolve({ job: { runner: "tsc-remote" }, counts, configEnv: "C:/x", env: {}, envExists: has }); return !d.run && d.why === "not_exam"; })());
 t("EXAM_NEAR_RESOLVE_HOOK=off で止まる", (() => { const d = decideNearResolve({ job: {}, counts, configEnv: "C:/x", env: { EXAM_NEAR_RESOLVE_HOOK: "OFF" }, envExists: has }); return !d.run && d.why === "switch_off"; })());
+
+// 2026-11-11 作業員8: 取りこぼしの網を1日1回・JST 1:30 以降
+{
+  const at = (jst: string) => Date.parse(`${jst}+09:00`);
+  t("JST 1:29 は流さない", !ownerBaseDue(null, at("2026-11-12T01:29:00")).due);
+  t("JST 1:30 は流す（日は JST）", (() => { const d = ownerBaseDue("2026-11-11", at("2026-11-12T01:30:00")); return d.due && d.day === "2026-11-12"; })());
+  t("同じ日に2回は流さない", !ownerBaseDue("2026-11-12", at("2026-11-12T10:00:00")).due);
+  t("係が 1:30 に止まっていても、その日のうちに立ち上がれば流す", ownerBaseDue("2026-11-11", at("2026-11-12T09:00:00")).due);
+  t("EXAM_OWNER_BASE_NIGHTLY=off で流さない", !ownerBaseDue(null, at("2026-11-12T02:00:00"), { EXAM_OWNER_BASE_NIGHTLY: "off" }).due);
+}
 
 console.log(`\n${passed} OK / ${failed} NG`);
 process.exit(failed ? 1 : 0);

@@ -66,3 +66,28 @@ export function decideNearResolve(i: {
   if (!i.envExists(envPath)) return { run: false, why: "env_missing" };
   return { run: true, envPath, days, total: days.reduce((a, d) => a + i.counts[d], 0) };
 }
+
+/**
+ * 解いてはいけない近い番の頼みか（純・2026-11-10 作業員8）: match_conductor_focus／turns で、答えの番を外していない頼み。
+ *   ① 印（ls: 1）があれば解く（この版以降の exam-frozen-input が元の番が分かった時だけ付ける）
+ *   ② 印が無い時は中身で見る: p_exclude_conv が無い・テスト用の会話（YUMA・YUMA2〜）＝8c1b057c より古い作業ツリーの頼み（11/09 k-a9e10def は tc-narrow〔origin/main より23個古い〕が 19:44 JST に作った・p_exclude_conv＝YUMA2・p_before＝本当の今）
+ */
+export function isUnsafeNearRequest(req: { name?: string; body?: string; ls?: number | null }, testConvIds: readonly string[]): boolean {
+  if (req.name !== "match_conductor_focus" && req.name !== "match_conductor_turns") return false;
+  if (req.ls === 1) return false;
+  let ex: unknown = null;
+  try { ex = (JSON.parse(String(req.body ?? "")) as Record<string, unknown>).p_exclude_conv ?? null; } catch { return true; }
+  return typeof ex !== "string" || !ex || testConvIds.includes(ex);
+}
+
+/**
+ * 毎晩の取りこぼしの網（scripts/owner-base-nightly.ts・作業員9）を係の前段で1日1回流すか（純・2026-11-11 作業員8・統括役の頼み）。
+ *   JST の日ごとに1回・JST 1:30 以降。前に流した日（lastDay）と同じ日なら流さない。止める: EXAM_OWNER_BASE_NIGHTLY=off
+ */
+export function ownerBaseDue(lastDay: string | null | undefined, nowMs: number, env: Record<string, string | undefined> = {}): { due: boolean; day: string } {
+  const j = new Date(nowMs + 9 * 3_600_000);
+  const day = j.toISOString().slice(0, 10);
+  if ((env.EXAM_OWNER_BASE_NIGHTLY ?? "").trim().toLowerCase() === "off") return { due: false, day };
+  const min = j.getUTCHours() * 60 + j.getUTCMinutes();
+  return { due: min >= 90 && lastDay !== day, day };
+}

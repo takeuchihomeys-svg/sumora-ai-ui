@@ -170,13 +170,14 @@ export function classifyPrefixWarmUsage(u: { cache_read: number; cache_write_1h:
 //   → ブレイン・AIX の文作りと同じ温め（50〜58分の窓・営業時間・1日20回）を system 3ブロックだけに掛ける（段の案内は状態で変わる＝今まで通り本物が書く）。
 //   実物の時刻で前置きの費用 $1.64→$0.80/日（温め 約7回/日の読み込み込み）。中身は1文字も変えない: system は本物が送った物（llm_warm_prefixes）を
 //   本物の鍵（llm_usage_logs.sys_key_full）と一致した時だけ使う。モデルは返信生成と同じ（claude-model-map の組 reply_generate）。
-// 9/19 竹内さんは keep-warm（10分毎・全変種）を止めた（固定費が取り戻す額を上回った）。これは別の形（窓つき・鍵1つ）なので既定 off。開く: REPLY_WRITER_WARM=on
+// 9/19 竹内さんは keep-warm（10分毎・全変種）を止めた（固定費が取り戻す額を上回った）。これは別の形（窓つき・鍵1つ）。
+// 2026-11-11 竹内さんの OK（「温めを on にする」）で既定 on。止める: REPLY_WRITER_WARM=off
 /** reply-generation-model.REPLY_GENERATION_MODEL と同じ（langchain を読まない純関数のために写す。テストで一致を固定） */
 export const REPLY_WRITER_WARM_MODEL = "claude-sonnet-5";
 export const REPLY_WRITER_REAL_ACTION = "reply_generate_claude_writer";
 
 export function replyWriterWarmEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.REPLY_WRITER_WARM ?? "").trim().toLowerCase() === "on";
+  return !isOffSwitch(env.REPLY_WRITER_WARM);
 }
 
 /** 本物が送った system ブロック（cache_control 付き・順のまま）から温めの対象を作る。空・印の無いブロックがあれば null（鍵が本物と合わない） */

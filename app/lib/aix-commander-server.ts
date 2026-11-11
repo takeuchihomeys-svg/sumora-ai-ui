@@ -8,7 +8,13 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER } from "./llm-usage-recorder";
 import { logLlmUsage } from "./llm-usage-log";
 import { readAltConfig, shouldRouteAlt } from "./llm-alt-provider";
-/** 2026-11-03 夜 指揮役の条件②: 統括・相談の呼び出しは DeepSeek に回る時だけ（名札が別クラウドの設定に入っている時）。回らない時は呼ばない＝Claude に行かない */
+/**
+ * 2026-11-03 夜 指揮役の条件②: 統括・相談の呼び出しは DeepSeek に回る時だけ（名札が別クラウドの設定に入っている時）。回らない時は呼ばない。
+ * ⚠ 2026-11-11 作業員2（brain_weaknesses 526）: これは**名札の設定**しか見ていない。本番ではこの呼び出しに時刻の線の印（x-sumora-llm-deepseek-cutoff）が無く、
+ *   ブレインも Claude で deepseek-scope の箱も無いので、出口（llm-alt-provider.cutoffGateDecision）が claude:no_mark で **毎回 Claude（AIX_DESK_MODEL・既定 Haiku 4.5）に送る**
+ *   （11/08〜11/10 本番 132回すべて Haiku・DeepSeek は試験の YUMA 系だけ）。「Claude に行かない」は試験の時だけの事実。
+ *   直すには入口で線を引いた印を渡す（材料を線で切ってから）。印を付けるだけの直しは個人情報の線を破るのでしない
+ */
 export function deskCallGoesAlt(action: string, env: Record<string, string | undefined> = process.env): boolean { return shouldRouteAlt(readAltConfig(env), action); }
 import { AIX_COMMANDER_SYSTEM, commanderCandidates, commanderUserText, deskKeyOf, parseCommanderAnswer } from "./aix-commander";
 
