@@ -2814,7 +2814,7 @@
     var hasStation   = cond.station_names && cond.station_names.length > 0;
     var hasRoutes    = cond.route_ids && cond.route_ids.length > 0;
     var hasCities    = cond.city_codes && cond.city_codes.length > 0;
-    var hasModalWard = !!(cond.detail_ward);   // 所在地モーダルを使う（ピンポイント・広げて両方）
+    var hasModalWard = !!(cond.detail_ward) || (hasCities && locationMode === "area");
     var hasDetailArea = !!(cond.detail_area) || !!(cond.town_names && cond.town_names.length > 0);  // 町字まで選択
     // town_names: 複数町字配列（Supabase property_customers.town_names から）。detail_area と共存可。
     var townNamesList = (cond.town_names && cond.town_names.length > 0)
@@ -3382,7 +3382,12 @@
                   var staleInputs = checkedInputs.filter(function(inp) { return wantCodes.indexOf(String(inp.value)) === -1; });
                   if (wantCodes.length === 0 || checkedInputs.length === 0 || staleInputs.length === 0) {
                     // 検証不能（期待コードなし/チェックボックス未描画）または一致 → 従来通りスキップ
-                    prefClicked = false; console.log('[AX] STEP2: city_code[]選択済みを検出 → 再クリックスキップ'); return true;
+                    // ⚠ 2026-11-11 竹内さん「1 所在地絞り込み 2 該当する地域 3 確定してリストへ の順番におす」:
+                    //   既にチェック済みでも**確定してリストへ は押す**（押さないとサイトに反映されない事がある）。
+                    checkedInputs.forEach(function (inp) { _noteWardPicked(inp.value, ""); });
+                    prefClicked = false;
+                    console.log('[AX] STEP2: city_code[]選択済み → 選び直さず「確定してリストへ」まで進みます');
+                    return true;
                   }
                   console.log('[AX] STEP2: 前顧客のcity_code残留を検出（' + staleInputs.length + '件）→ 解除して選び直し');
                   staleInputs.forEach(function(inp) {

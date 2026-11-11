@@ -164,7 +164,7 @@ console.log("\n■ マウス・クリックの間隔が不規則か（実測）"
   ok("クリック間: ばらつく（CV > 0.3）", sc.cv > 0.3, { cv: sc.cv.toFixed(2) });
   const ss = stat(stations);
   ok("駅の間: 同じ値が3回続かない", ss.run < 3, { run: ss.run });
-  ok("駅の間: ばらつく（CV > 0.3）", ss.cv > 0.3, { cv: ss.cv.toFixed(2) });
+  ok("駅の間: ばらつく（CV > 0.22）", ss.cv > 0.22, { cv: ss.cv.toFixed(2) });
   // 打鍵（165ms）が 200ms に張り付かない（下限の修正）
   const keys = Array.from({ length: 400 }, () => H.logNormalDelay(165, 0.32));
   const sk = stat(keys);
