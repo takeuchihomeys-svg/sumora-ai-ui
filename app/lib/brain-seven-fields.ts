@@ -18,7 +18,9 @@ export const BRAIN_LATENT_FIELD = `"latent_read"（お客様の潜在を4つに�
 
 /** ブレインの「今回の発言」の出力に足す項目（off なら空文字） */
 export function brainSevenOutputItem(env?: Env): string {
-  return brainSevenOn(env) ? `、${BRAIN_SEVEN_FIELD}、${BRAIN_LATENT_FIELD}` : "";
+  // 2026-11-12 試験 w10-seven-on1: 欄を判断と並べて出させると q022（検討します）の道が返信→AIX【内覧調整】に動いた（lead=viewing を書いた勢いで道を変えた疑い）。
+  //   main_point の振り返りと同じ形で、判断を全部書き終えた後に JSON の最後に書かせ、ここで道・AIX・reply_mode を変えないと明記する
+  return brainSevenOn(env) ? `、（以下の2つは振り返り＝aix・action・reply_mode・reply_direction・turn_contract を全部書き終えた後で JSON の一番最後に書く。この2つを書くために道・AIX・返信の方向を変えない。lead は判断した道に合わせ、判断に無い誘導を作らない）${BRAIN_SEVEN_FIELD}、${BRAIN_LATENT_FIELD}` : "";
 }
 
 /** 生の欄 → 型（作業員5 の読み取りをそのまま使う・壊れていれば null） */
