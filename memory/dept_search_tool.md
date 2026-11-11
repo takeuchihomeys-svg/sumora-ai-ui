@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-11-11 v2.6.91 AIXモードも同じ修正が効くか確認した（同じ道を通るので効く）
+
+竹内さん「**AIXもーどもなっているかな**」
+
+### 確認した事：AIX は「手で押すのと同じ道」を通る
+
+```
+AIX（お客さんを選ぶ）
+ → autofill-btn.click()          ← 手で押すのと同じ onclick
+ → postMessage（aixlinx-underbar / autofill）
+ → content.js が page-script へ渡す（aixlinx-fill）
+ → page-script.js の fillRealpro
+```
+
+つまり v2.6.89 / 2.6.90 の修正（探し方・展開・止まったら検索・検索ボタン2か所の区別・区はコードで探す）は
+**AIX にもそのまま効く**。専用の直しは要らなかった。
+
+| 修正 | AIX でも効く理由 |
+|---|---|
+| 文字のノードからたどる探し方 | `fillRealpro` の中の共通の関数 |
+| 閉じた欄を開く（`_ensureFieldVisible`） | 同上 |
+| 止まったら検索を押す（`stall_recover_search`） | 同じ見張り（`__axStallWatch`・`_watchdogTimer`） |
+| 検索ボタン2か所の区別（`which`） | `clickSearch` は1か所 |
+| 区はコードで探す（`ward_by_code`） | `clickWardPrecise` は1か所 |
+
+AIX 特有の部分も確認:
+- 自動押下（1件ずつ）は `aiMode` でも開く（`chosen && (!!s.aixMode || !!s.aiMode)`）
+- 案内は OFF（光らせず自動で押す）
+- 点検は `searchAudit: b || aiMode` で送る（ブレイン OFF でも AIX なら残る＝原因を追える）
+
+### テスト
+- **新規 `aix-same-fix-v2691.test.js`（16件）** … AIX が同じ道を通る事・修正がその道に入っている事を固定
+- **全83ファイル通過・`npx tsc --noEmit` 0**
+
+---
+
 ## 2026-11-11 v2.6.90 案内モードとの差を埋める（展開・止まらない・検索ボタン2か所）
 
 竹内さん「**案内モードで光る部分のところのことを理解して技術力に差があれば改善するようにする。
