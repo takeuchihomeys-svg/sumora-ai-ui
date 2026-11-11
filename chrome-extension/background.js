@@ -1810,6 +1810,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         };
         for (var _bi = 0; _bi < _bulkTargets.length; _bi++) {
           var _bc = _bulkTargets[_bi];
+          /**
+           * 2026-11-11 竹内さん「休憩の間もちゃんといれる。90分働いたら休憩があるのが普通なので休憩の間もいれるように。人間がおこなっているから」:
+           *   一括検索でも、働き続けたら休む（自動モードと同じ決まり）。
+           *   ・短い休憩 12〜30秒（作業20分以上で 8%）
+           *   ・長い休憩 60〜180秒（作業120分以上で 18%）
+           *   ・**90分続けて動いたら必ず休む**（この時は 60〜180秒・人と同じ「一区切り」）
+           *   休憩の後は数え直す。
+           */
+          if (self.AxlxHumanWait) {
+            var _worked = _manualBulkWorkedSince || Date.now();
+            if (!_manualBulkWorkedSince) _manualBulkWorkedSince = _worked;
+            var _restMs = 0, _restKind = null;
+            try {
+              if (self.AxlxAutoRun && self.AxlxAutoRun.continuousRestDue && self.AxlxAutoRun.continuousRestDue(_worked, Date.now())) {
+                _restMs = 60000 + Math.floor(Math.random() * 120000); // 90分続いた → 1〜3分
+                _restKind = "90分の一区切り";
+              } else if (self.AxlxHumanWait.restDue) {
+                var _rd = self.AxlxHumanWait.restDue(_worked, Date.now());
+                if (_rd.rest) { _restMs = _rd.ms; _restKind = _rd.kind === "long" ? "長め" : "短め"; }
+              }
+            } catch (_) {}
+            if (_restMs > 0) {
+              console.log("[manual-bulk-search] 休憩（" + _restKind + " " + Math.round(_restMs / 1000) + "秒）をはさみます");
+              await new Promise(function (r) { setTimeout(r, _restMs); });
+              _manualBulkWorkedSince = Date.now(); // 休んだら数え直す
+              if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（休憩の後） → 中断"); break; }
+            }
+          }
           // 2人目からは「前のお客様の結果を見てから次を開く」間を置く
           if (_bi > 0) {
             var _gap = _bulkGapMs(_bi);
@@ -3862,6 +3890,8 @@ var _pollClaimInFlight = false;
 var _autoPacer = null;
 // 自動モードで回している時の「続けて動き始めた時刻」（90分で小休憩）。0＝回していない
 var _autoWorkedSince = 0;
+// 2026-11-11 竹内さん「90分働いたら休憩があるのが普通」: 手の一括検索（AIXモードの帯）で働き続けた時間（休憩で数え直す）
+var _manualBulkWorkedSince = 0;
 var _autoModeOn = false;
 
 /**

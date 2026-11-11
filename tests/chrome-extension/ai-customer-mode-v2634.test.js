@@ -198,6 +198,7 @@ console.log("\n■ 押す順（資料を上から全部順にしていない）�
 console.log("\n■ 「考える時間」のバランス（最初は長く・2回目以降は短い）");
 {
   const fs4 = require("fs");
+  const bg = read("background.js");
   const ps4 = fs4.readFileSync(path.join(dir, "page-script.js"), "utf8");
   ok("最初にどこから手を付けるか考える間がある（_thinkBeforeFill）", /_thinkBeforeFill = ms;/.test(ps4) && /function _waitThinkThenFill/.test(ps4));
   ok("最初は 2.0〜6.5秒・2回目以降は 0.8〜2.4秒", /_first \? 2000 : 800/.test(ps4) && /_first \? 6500 : 2400/.test(ps4));
@@ -234,6 +235,13 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("ITANDI: 駅の一息も2段に揃えた（10%で900〜2600ms・3%で2.6〜5.5秒）", /Math\.random\(\) < 0\.10\) _nextGap \+= 900/.test(ips4) && /Math\.random\(\) < 0\.03\) _nextGap \+= 2600/.test(ips4));
   ok("ITANDI: 駅の間も対数正規（_itHumanRand）", /function _itHumanRand\(lo, hi\)/.test(ips4) && /_itHumanRand\(420, _itHumanRand\(760, 1100\)\)/.test(ips4));
   ok("ITANDI: 全選択の後にも一息（10%で900〜2600ms）", /allInp\.checked \|\| n >= 12\) \{[\s\S]{0,300}Math\.random\(\) < 0\.10 \? 900/.test(ips4));
+  // 2026-11-11 竹内さん「休憩の間もちゃんといれる。90分働いたら休憩があるのが普通」
+  { const fsn = require("fs"); const bgn = fsn.readFileSync(path.join(dir, "background.js"), "utf8"); const hwn = fsn.readFileSync(path.join(dir, "human-wait.js"), "utf8");
+  ok("一括検索でも休憩を入れる（短12〜30秒・長60〜180秒・90分で必ず）", /_manualBulkWorkedSince/.test(bg) && /continuousRestDue\(_worked, Date\.now\(\)\)/.test(bg) && /休憩（" \+ _restKind/.test(bg));
+  ok("90分続いたら 1〜3分の一区切り", /_restMs = 60000 \+ Math\.floor\(Math\.random\(\) \* 120000\)/.test(bg));
+  ok("休んだら数え直す", /_manualBulkWorkedSince = Date\.now\(\); \/\/ 休んだら数え直す/.test(bg));
+  ok("自動モードも休憩（短12〜30秒・長60〜180秒・90分で小休憩）", /restDue\(_autoWorkedSince/.test(bgn) && /continuousRestDue\(_autoWorkedSince/.test(bgn));
+  ok("休憩の長さ（short 12〜30秒・long 60〜180秒）", /REST_SHORT_MS = 12000, REST_SHORT_MAX_MS = 30000/.test(hwn) && /REST_LONG_MS = 60000, REST_LONG_MAX_MS = 180000/.test(hwn)); }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
