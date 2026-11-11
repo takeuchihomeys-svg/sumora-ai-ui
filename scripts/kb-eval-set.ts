@@ -66,6 +66,9 @@ export const KB_EVAL: KbEvalQ[] = [
   { q: "aix-catalogのボタンとピッカーの一覧の使い道", gold: ["0f4604a9"], ho: true },
   { q: "同じ日に2回目の見積依頼が来たら約束を挟むか", gold: ["0f475703"], scene: "cost" },
   { q: "2段の約束の返信を省いてAIXを直接出すのはいつ", gold: ["0f475703"] },
+  { q: "返信の書き手のClaudeのキャッシュを温めてよいか", gold: ["94cefd80"] },
+  { q: "keep-warmを止めた決定と今の温めの違い", gold: ["94cefd80"] },
+  { q: "書き手の前置きが1時間空いて丸ごと書き直しになる", gold: ["94cefd80"] },
   // 2026-11-11 作業員3（A2・竹内さんの決定 2385202c）
   { q: "申込したいと言われたら返信で受けるかAIX申込を出すか", gold: ["2385202c"], scene: "apply" },
   { q: "審査落ちの後に別の部屋で申し込みたいと言われた時にフォーマットを送り直すか", gold: ["2385202c"], scene: "apply" },
@@ -376,4 +379,15 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   {q: "待ち合わせ場所の住所",gold: ["1290264c","0de29196"],scene: "viewing",ho: true,from: "scene-ho"},
   {q: "申込誘導を書きすぎる",gold: ["69d76722","aef0a1df"],scene: "apply",ho: true,from: "scene-ho"},
   {q: "申込後の審査の進捗を聞かれた",gold: ["06d1bef5","e52ff713"],scene: "apply",ho: true,from: "scene-ho"},
+  // 2026-11-11 作業員9 竹内さんの土台（過去のセッションの指摘を掘り起こして入れた行・KB 60931c54）
+  {q: "時期を聞く質問にご連絡遅くなりのお詫びを付けた",gold: ["06191a54"],scene: "question",from: "owner-base-1111"},
+  {q: "退去予定の部屋の申込でキャンセル無料と言い切る",gold: ["abc56308"],scene: "apply",from: "owner-base-1111"},
+  {q: "日をまたいだ内覧当日に前日の明日の下書きが残っている",gold: ["dade20ce"],scene: "viewing",from: "owner-base-1111"},
+  {q: "物件ピックアップした の文の頭に謝罪を入れた",gold: ["8af5e463"],scene: "property_send",from: "owner-base-1111"},
+  {q: "審査かけてみたいと言ったお客様への申込への2通目の結び",gold: ["02a2866f"],scene: "apply",from: "owner-base-1111"},
+  // 2026-11-11 作業員9 竹内さんの土台の2回目（スクショ・打ち合わせの掘り起こし）
+  {q: "お客様が LINE で取り消した発言に返事をした",gold: ["6ad3a25f"],scene: "question",from: "owner-base-1111b"},
+  {q: "確認結果の文で資料や見積書と違う物件名を書いた",gold: ["a685c629"],scene: "property_share",from: "owner-base-1111b"},
+  {q: "送った物件の上の階が空いているかの確認結果の書き方",gold: ["2482fa26"],scene: "property_share",from: "owner-base-1111b"},
+  {q: "契約させて頂きたいの一言で申込確定として扱った",gold: ["ab1c07e6"],scene: "apply",from: "owner-base-1111b"},
 ];
