@@ -1,6 +1,6 @@
 // 2026-11-11 作業員9「竹内さんの考え方の本」（owner-thinking-book.ts）: 札・近さの下限・漏れ・理由と逆向きの切り出し
 // 実行: npx tsx app/lib/__tests__/owner-thinking-book.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { pickBook, bookBlock, ruleOf, whyOf, dontOf, isBookCandidate, leakOverlap, toUnit, pointsProperty, rowNeeds, marksOk, ownerBookBrainOn, ownerBookOnlyBase, bookAskText, rowFor, ownerBookWriterOn, type BookRow } from "../owner-thinking-book";
+import { pickBook, bookBlock, ruleOf, whyOf, dontOf, isBookCandidate, leakOverlap, toUnit, pointsProperty, rowNeeds, marksOk, ownerBookBrainOn, ownerBookOnlyBase, bookAskText, rowFor, ownerBookWriterOn, anchorCover, type BookRow } from "../owner-thinking-book";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function ok(name: string, cond: boolean, detail = "") { if (cond) passed++; else { failed++; failures.push(`${name} ${detail}`); } }
@@ -11,7 +11,7 @@ const row = (id: string, o: Partial<BookRow> & { sim: number }): BookRow => ({
   id: `${id}0000-0000`, title: o.title ?? `竹内さんの決定: ${id}`, insight: o.insight ?? "お客様への返信の決まり。", rationale: o.rationale ?? null,
   tags: o.tags ?? ["竹内さんの決定"], priority: o.priority ?? 1, created_at: o.created_at ?? "2026-10-20T00:00:00Z", embedding: vec(o.sim),
 });
-const turn = { turnEmb: [1, 0], turnText: "全部見て今日中にまた連絡します！家族とも相談してみます" };
+const turn = { turnEmb: [1, 0], turnText: "全部見て今日中にまた連絡します！家族とも相談してみます", minAnchor: 0 };
 
 // ① 題・理由・逆向き
 ok("題の頭を外す", ruleOf("竹内さんの決定（11/05・No.40）: 物件を指した費用の不満は気に入り具合で分ける") === "物件を指した費用の不満は気に入り具合で分ける");
@@ -81,6 +81,13 @@ const wrows = [row("wwww", { sim: 0.7, title: "【決定】約束だけの番に
 ok("書き手には書き方の行だけ", pickBook(wrows, { scene: "cost", ...turn, forWho: "writer" }).map((c) => c.id8.slice(0, 4)).join() === "wwww");
 ok("ブレインには判断の行だけ", pickBook(wrows, { scene: "cost", ...turn, forWho: "brain" }).map((c) => c.id8.slice(0, 4)).join() === "bbbz");
 ok("書き手のスイッチは既定 off", !ownerBookWriterOn("cost", {}) && ownerBookWriterOn("cost", { WRITER_OWNER_BOOK: "on" }) && !ownerBookWriterOn("ack", { WRITER_OWNER_BOOK: "on", WRITER_OWNER_BOOK_SCENES: "cost" }));
+
+// ⑨ 11/11 試験 w9-book-on2 の q097（内覧の日程の変更に室内写真・退去予定の行が当たった）
+ok("語の手がかり: 重なる", anchorCover("内覧の日時を変更したい", "【決定】内覧の日時の指定・変更に確認を挟まない") > 0.12);
+ok("語の手がかり: 重ならない", anchorCover("明日はキャンセルで19日(土)で内見したい", "室内写真の依頼の約束は撮影出来次第お送り") < 0.12);
+ok("退去予定の行は退去予定の番だけ", !marksOk(rowNeeds({ title: "退去予定のお部屋で内覧のアポを組んだ時は先に抑える", insight: "" }), { pointsProperty: false, sent: true, promise: false }) && marksOk(rowNeeds({ title: "退去予定のお部屋で内覧のアポを組んだ時は先に抑える", insight: "" }), { pointsProperty: false, sent: true, promise: false, vacate: true }));
+const other = [row("oooo", { sim: 0.8, tags: ["竹内さんの決定", "場面:その他"] })];
+ok("場面:その他 の行は他の場面に入れない", pickBook(other, { scene: "viewing", ...turn }).length === 0);
 
 console.log(`owner-thinking-book: ${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log("FAIL", f); process.exit(1); }

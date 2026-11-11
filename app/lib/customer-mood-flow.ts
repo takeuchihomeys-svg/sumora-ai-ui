@@ -225,7 +225,10 @@ export function moodFlowEnabled(env: Record<string, string | undefined> = typeof
  * ブレインへの短い注記（材料だけ・判断はブレイン）。言う事が無ければ空文字。
  * prevEmotions: 前回までのブレインの気持ちの判断（古い→新しい・最大4）
  */
-export function buildMoodFlowNote(f: MoodFlow | null, o: { prevEmotions?: ReadonlyArray<string | null | undefined> } = {}): string {
+export function buildMoodFlowNote(f: MoodFlow | null, o: { prevEmotions?: ReadonlyArray<string | null | undefined>; ackOnly?: boolean } = {}): string {
+  // 2026-11-11 作業員14（KB 542e92c9・e9aa9ebd）: こちらの送信・約束へのお礼・了承だけの一通では、前回までの気持ちを並べない＝持ち越さない。
+  //   竹内さんの番100: 普通の依頼の番を別の気持ちと読んだ41のうち26が前の判断と同じ状態・お礼了承の番26のうち19。呼ぶ側が TURN_READ=on の時だけ ackOnly を渡す（既定は今まで通り）
+  if (o.ackOnly) return "\n【気持ちの流れ（決まった計算・材料）】\n- 今回の一通は、こちらの直前の送信・約束へのお礼・了承だけ\n→ 前回までの気持ち（刺さっている・安くしたい・審査の不安 等）は引き継がない。mindset は 普通の依頼（了承・お礼）。新しい気持ちの言葉がある時だけ別の状態にする";
   if (!f) return "";
   const lines: string[] = [];
   if (f.changes.length) lines.push(`- このお客様のいつもとの違い: ${f.changes.join("／")}`);
