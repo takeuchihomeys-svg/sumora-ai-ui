@@ -784,8 +784,13 @@
   var _lookWait = null;
   function _lookAtDocThenGo(item, goNext) {
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
-    var base = H && H.logNormalDelay ? H.logNormalDelay(3500, 0.4) : 3500;
-    if (Math.random() < 0.05) base += 3000 + Math.floor(Math.random() * 3000); // たまに長く見る
+    // 2026-11-11 竹内さん「また時間はランダム性をちゃんと徹底する人間のうごきを」:
+    //   長さの決まりは auto-run.js の lookAtDocMs 1か所（一括検索の background と同じ関数を使う＝2か所で別々に乱数を作らない）
+    var base = 3500;
+    try {
+      if (self.AxlxAutoRun && self.AxlxAutoRun.lookAtDocMs) base = self.AxlxAutoRun.lookAtDocMs();
+      else if (H && H.logNormalDelay) base = H.logNormalDelay(3500, 0.4);
+    } catch (_) { base = 3500; }
     if (base < 1800) base = 1800;
     if (base > 13000) base = 13000;
     try { if (item.btn && item.btn.scrollIntoView) item.btn.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}

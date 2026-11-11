@@ -357,6 +357,32 @@
     return customerGapMs(rng);
   }
 
+  /**
+   * 2026-11-11 竹内さん「また時間はランダム性をちゃんと徹底する人間のうごきを」:
+   *   手で選んだ一括検索（AIXモードの帯）で、お客様から次のお客様へ移る間。
+   *   自動便（customerGapMs＝15〜60秒）は「1コマンドで何人も回す」用に長いので、手で選んだ回は少し短くする。
+   *   ・多くは 8〜25秒（対数正規・中央値14秒）
+   *   ・6回に1回ほど 40〜95秒の一息（一様乱数にしない＝そろわない）
+   *   ⚠ ここ1か所で持つ（background・popup で別々に乱数を作らない＝「人によって違う」を作らない）
+   */
+  function bulkCustomerGapMs(rng) {
+    if (humanChance(rng, 0.16)) return logBetween(40000, 95000, rng);
+    return logBetween(8000, 25000, rng);
+  }
+
+  /**
+   * 2026-11-11: 送った資料を人が見る間（ミリ秒）。自動モードの1件ずつ（bulk-dl）と一括検索（background）で同じ長さにする。
+   *   中央値3.5秒・1.8〜13秒に丸める・5%は＋3〜6秒（たまに長く見る）
+   */
+  function lookAtDocMs(rng) {
+    var v = logBetween(1800, 13000, rng);
+    // たまに長く見る（5%）
+    if (humanChance(rng, 0.05)) v = Math.min(13000, v + 3000 + Math.floor(_rand(rng) * 3000));
+    if (v < 1800) v = 1800;
+    if (v > 13000) v = 13000;
+    return Math.round(v);
+  }
+
   /** 1コマンドの中でサイトを並べる（同じお客様はリアプロ → ITANDI の順・無いサイトは足さない・重複は1つ・レインズは最後） */
   function orderSites(sites) {
     var list = Array.isArray(sites) ? sites : [];
@@ -452,6 +478,7 @@
     pageLimit: pageLimit, allowAdSort: allowAdSort, DEFAULT_MAX_PAGES: DEFAULT_MAX_PAGES,
     planSites: planSites, hasItandiTab: hasItandiTab, orderSites: orderSites,
     siteGapMs: siteGapMs, customerGapMs: customerGapMs, nextCommandGapMs: nextCommandGapMs, skippedNote: skippedNote,
+    bulkCustomerGapMs: bulkCustomerGapMs, lookAtDocMs: lookAtDocMs,
     logBetween: logBetween, humanChance: humanChance,
     // 2026-11-10 自動モードの勤務時間のゲート（JST 9〜21時・12〜13時は休憩・土日なし・90分で小休憩）
     jstParts: jstParts, workGate: workGate, continuousRestDue: continuousRestDue,

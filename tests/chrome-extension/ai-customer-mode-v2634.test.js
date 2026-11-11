@@ -87,12 +87,34 @@ console.log("\n■ 一括検索の帯（もともとのAIX）は自動・AIXモ�
   ok("ピンポイント／広げての2択がある", /data-bulk-mode="pinpoint"/.test(html) && /data-bulk-mode="wide"/.test(html));
   ok("チェックボックスも自動・AIXモードの時だけ出す", /body:not\(\.mode-aix\):not\(\.mode-ai\) \.bulk-check-wrap \{ display: none !important; \}/.test(css));
   ok("一括検索は次のお客様まで人の間を置く（連続で開かない）", /次のお客様まで .*秒（人の間）/.test(bg) && /_bulkGapMs = function \(\)/.test(bg));
-  ok("間の長さは logNormalDelay（8〜25秒・6回に1回ほど一息40〜90秒）", /logNormalDelay\(14000, 0\.45\)/.test(bg) && /humanChance\(null, 0\.16\)/.test(bg) && /if \(g < 8000\) g = 8000;/.test(bg) && /if \(g > 25000\) g = 25000;/.test(bg));
+  ok("間の長さの決まりは auto-run.js の1か所（bulkCustomerGapMs）", /bulkCustomerGapMs: bulkCustomerGapMs/.test(read("auto-run.js")) && /self\.AxlxAutoRun\.bulkCustomerGapMs/.test(bg));
+  ok("見る間の長さの決まりも1か所（lookAtDocMs）", /lookAtDocMs: lookAtDocMs/.test(read("auto-run.js")) && /self\.AxlxAutoRun\.lookAtDocMs/.test(bg));
   ok("間の途中でストップ要求が来たら止まる", /if \(_batchShouldStop\) \{ console\.log\("\[manual-bulk-search\] ストップ要求（間の間） → 中断"\); break; \}/.test(bg));
   // 2026-11-11 竹内さん「（資料を見る間も）いれる」: 自動モードと同じ 👀 資料を見る間を一括検索にも入れる
-  ok("一括検索も送った後に資料を見る間を置く（自動モードと同じ）", /👀 資料を見る間/.test(bg) && /_H\.logNormalDelay\(3500, 0\.4\)/.test(bg));
-  ok("見る間は 1.8〜13秒・たまに長く見る", /if \(_lookMs < 1800\) _lookMs = 1800;/.test(bg) && /if \(_lookMs > 13000\) _lookMs = 13000;/.test(bg) && /Math\.random\(\) < 0\.05\) _lookMs \+= 3000/.test(bg));
+  ok("一括検索も送った後に資料を見る間を置く（自動モードと同じ）", /👀 資料を見る間/.test(bg) && /lookAtDocMs/.test(bg));
+  ok("見る間の範囲（1.8〜13秒）は呼ぶ側でも守る", /if \(_lookMs < 1800\) _lookMs = 1800;/.test(bg) && /if \(_lookMs > 13000\) _lookMs = 13000;/.test(bg));
   ok("見る間の途中でもストップできる", /ストップ要求（資料を見る間） → 中断/.test(bg));
+}
+
+console.log("\n■ ランダム性（同じ間隔が続かない・一様乱数を使わない）");
+{
+  const A = require(path.join(dir, "auto-run.js"));
+  const gaps = Array.from({ length: 300 }, () => A.bulkCustomerGapMs());
+  const looks = Array.from({ length: 300 }, () => A.lookAtDocMs());
+  const uniq = (xs) => new Set(xs).size;
+  const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const sd = (xs) => Math.sqrt(xs.reduce((a, b) => a + (b - mean(xs)) ** 2, 0) / (xs.length - 1));
+  ok("次のお客様までの間: 種類が多い（300回で150以上）", uniq(gaps) > 150, { uniq: uniq(gaps) });
+  ok("次のお客様までの間: ばらつく（CV > 0.4）", sd(gaps) / mean(gaps) > 0.4, { cv: (sd(gaps) / mean(gaps)).toFixed(2) });
+  ok("次のお客様までの間: 8秒を下回らない", Math.min(...gaps) >= 8000, { min: Math.min(...gaps) });
+  ok("次のお客様までの間: 250秒を超えない", Math.max(...gaps) <= 200000, { max: Math.max(...gaps) });
+  ok("資料を見る間: 1.8〜13秒に収まる", Math.min(...looks) >= 1800 && Math.max(...looks) <= 13000, { min: Math.min(...looks), max: Math.max(...looks) });
+  ok("資料を見る間: 毎回ちがう（300回で100種類以上）", uniq(looks) > 100, { uniq: uniq(looks) });
+  ok("資料を見る間: 中央値が3〜7秒あたり", (() => { const s = [...looks].sort((a, b) => a - b); const med = s[Math.floor(s.length / 2)]; return med >= 3000 && med <= 7000; })());
+  // 一定の間隔が続かない（同じ値が3回続いたら機械的）
+  let run = 1, maxRun = 1;
+  for (let i = 1; i < gaps.length; i++) { if (gaps[i] === gaps[i - 1]) { run++; maxRun = Math.max(maxRun, run); } else run = 1; }
+  ok("同じ間隔が3回続かない", maxRun < 3, { maxRun });
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
