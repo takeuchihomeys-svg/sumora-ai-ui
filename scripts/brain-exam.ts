@@ -139,9 +139,6 @@ const PER_TYPE = Number(arg("per-type", "0"));
 const MAJORITY = flag("majority");
 const REPEAT = Math.max(1, Number(arg("repeat", MAJORITY ? "3" : "1")));
 const JUDGE_REPEAT = Math.max(1, Number(arg("judge-repeat", MAJORITY ? "3" : "1")));
-// 2026-11-11 作業員8: 2回目以降の回は1回目の全体の分析（戦略の層）の答えを使う（既定 off・本文は m0 の所）
-const REUSE_LAYER1 = String(process.env.EXAM_REUSE_LAYER1 ?? "").trim().toLowerCase() === "on";
-const layer1Memo = new Map<string, Record<string, unknown> | null>();
 const NO_JUDGE = flag("no-judge");
 // 比べる「前」の label。--baseline=main の時は main の版の取り置きから組み立てた label に置き換える（prepareMainBaseline）
 let BASELINE = arg("baseline");
@@ -715,14 +712,17 @@ async function judge(p: ExamProblem, meta: Record<string, unknown> | null, raw: 
 // 2026-11-11 作業員8（採点の揺れ・道は同じで合否だけ割れた 56問の読み）: 判定の決まりのあいまいさ3つを足した版（EXAM_JUDGE_RUBRIC=v2・既定 off＝今の文と1文字も同じ）。
 //   ① AIX の番の reply の依頼（q045・q047・q055・q320・q322・q374 等 10件）: 「返信の本文で答える指示が無い」で✕にしていた＝AIX に添える文で答えていれば○
 //   ② 答え方が2つある依頼（q177 の aix または promise 等）: 片方だけを正解として読んで✕にしていた
-//   ③ 返信の道のお礼・了承・締め（q164 26○29✕・q024・q109 等）: reply_direction の「待つ」を「返信しない」と読んで✕にしていた
+//   （③ 返信の道のお礼・締め（q164 26○29✕ 等）を○に寄せる行は甘すぎて外した＝下の 13時の比べ）
 //   ⚠ 合否が変わる＝前（main）と比べる時は前も同じ版で判定し直す（--judge-compare=… --judge-compare-variants=v2 で保存した答案を判定し直して比べる・ブレインは回さない）
 export function judgeRubricOf(env: Record<string, string | undefined> = process.env): "v1" | "v2" { return String(env.EXAM_JUDGE_RUBRIC ?? "").trim().toLowerCase() === "v2" ? "v2" : "v1"; }
 export const JUDGE_RUBRIC_V2_LINES = [
   "④ 答え方が『〇〇 または △△』と2つ書かれた依頼は、答案がどちらかの答え方で扱っていれば route=true（covered はその答え方で要点を見る）。片方だけを正解として読まない。",
   "⑤ 答案が AIX の番（reply_mode=aix で action が AIX）の時、答え方 reply の依頼は、AIX に添える文の方向（reply_direction・key_topics）でその依頼に答える指示があれば covered=true・route=true。『返信の本文が無い』『AIX で応える』だけを理由に false にしない（その依頼に触れていなければ false）。",
-  "⑥ 答案の道が返信で、reply_direction がお客様のお礼・了承・『確認します／また連絡します』を受け止めて締める（または受け止めてお客様の連絡を待つ）指示なら、そのお礼・了承・締めの依頼は covered=true（『待つ』と書いてあっても返信はする番）。要点に決まった言い回しがあっても、言い回しまでは見ない（言ってはいけない事は②で見る）。",
 ];
+// 11/11 13時の比べ（保存した答案 107・56問）: ⑥（返信の道のお礼・締めは待つと書いてあっても○）も入れた版は ✕→○ 28・○→✕ 2 で、
+//   「顧客の返信を待ち…」だけの答案（q144・q108）まで○にした＝甘すぎる。⑥は外した（締めの依頼の揺れは正解の書き方の側で直す）
+//   ④⑤だけの版も ✕→○ 24・○→✕ 2・締めの問題（q109・q111・q164）まで○に寄った＝決まりの文を足すと判定役が全体に甘くなる。既定 off のまま（人の○✕で較正するまで入れない）
+//   同じ比べで分かった事: 同じ答案を同じ指示（v1）で判定し直すだけで、問題×回の合否が 86〜91%しか揃わない（項目 90〜93%）＝判定役そのものの揺れが約1割
 async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean, o: { model?: string; rubricFirst?: boolean; order?: "as-is" | "rubric" | "stable"; rep?: number; rubric?: "v1" | "v2" } = {}): Promise<JudgeOut | null> {
   const asks = p.asks ?? [], ng = p.ng ?? [];
   if (!asks.length && !ng.length && !needRawPath) return { asks: [], asksWhy: [], ng: [], ngWhy: [], rawPath: null, route: [] };
@@ -1119,8 +1119,6 @@ async function prepareMainBaseline(): Promise<boolean> {
     // 2026-11-05 作業員8: 時計の固定・DB の材料の写しの回は、今までの前の答えと比べない（取り置きを作り直す・入れた時だけ構成に足す）
     ...(frozenClockOn(mainEnv as Record<string, string | undefined>) ? { clock: "frozen" } : {}),
     ...(dbSnapshotOn(mainEnv as Record<string, string | undefined>) ? { dbSnap: "day" } : {}),
-    // 2026-11-11 作業員8: 戦略の層を回ごとに回さない回は、回ごとに回した前の答えと比べない（入れた時だけ構成に足す）
-    ...(REUSE_LAYER1 ? { reuseLayer1: true } : {}),
     // 判定の決まりを v2 にした回は、v1 で判定した前の答えと比べない（合否の物差しが違う）
     ...(judgeRubricOf() === "v2" ? { judgeRubric: "v2" } : {}),
   });
@@ -1542,7 +1540,8 @@ async function judgeCompare(): Promise<void> {
 const MAIN_WT_CLAIM = `_main-worktree${process.env.EXAM_MAIN_WORKTREE?.trim() ? `-${basename(resolve(process.env.EXAM_MAIN_WORKTREE.trim()))}` : ""}`;
 
 async function main() {
-  if (JUDGE_COMPARE.length) { await judgeCompare(); return; }
+  // 2026-11-11 作業員8: 判定の比べも共通の入口を通す（旧は入口なしで LLM_TEST_MODE の歯止めに全部止められ、0回・失敗 N と出ていた）
+  if (JUDGE_COMPARE.length) { const hj = await setupLlmTest(`brain-exam-jc-${LABEL || "judge-compare"}`.slice(0, 60)); try { await judgeCompare(); } finally { await hj.finish(); } return; }
   if (!LABEL) throw new Error("--label=<名前> が要る（結果のファイル名・続きからの印）");
   mkdirSync(RESULTS_DIR, { recursive: true });
   if (REPORT) { await loadKbLinksForReport(); const s = summarize(LABEL, BASELINE || null); console.log(s); writeFileSync(`${RESULTS_DIR}/${LABEL}.summary.txt`, s); return; }
@@ -1878,15 +1877,9 @@ async function main() {
         if (REUSE_FIXTURE) fx = { id: p.id, shiftDays, setupAt, times, lmMap, headIds: [...S().own], ledger: row.ledger };
         await new Promise((r) => setTimeout(r, 1300));
         S().rawBrainOutputs = [];
-        // 2026-11-11 作業員8（EXAM_REUSE_LAYER1=on・既定 off）: 2回目以降の回は、同じ実行の1回目の全体の分析（戦略の層）の答えを使う（呼ばない）。
-        //   全体の分析の入力は回ごとに同じ＝回し直すのは戦略の層の揺れを測るためだけ。今回の発言の層の揺れだけを見たい直し（今回の層の決まり・材料）の確かめで使う。
-        //   費用: 2回目以降の回は全体の分析 約$0.008 が0・今回の層は入力の先頭が1回目と同じになりキャッシュが当たる（約$0.009 → 約$0.002 の見込み）。
-        //   ⚠ 回の過半数に戦略の層の揺れが入らなくなる＝前（main）と比べる時は前も同じスイッチで（スイッチの指紋に入る）
-        const l1Key = `${p.id}`;
-        const l1Hit = REUSE_LAYER1 && rep > 1 ? layer1Memo.get(l1Key) : undefined;
-        const m0 = l1Hit !== undefined ? l1Hit : await runBrainChecked({ ...base, prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }, !!p.pc, row);
-        if (REUSE_LAYER1 && l1Hit === undefined && m0) layer1Memo.set(l1Key, m0);
-        if (l1Hit !== undefined) row.trace = { ...(row.trace ?? {}), layer1: "1回目の全体の分析を使った（EXAM_REUSE_LAYER1）" };
+        // 2026-11-11 作業員8: 2回目以降の回で全体の分析（m0）を使い回す案（EXAM_REUSE_LAYER1）は試して外した＝m0 の呼び出しが
+        //   条件の行に ai_summary を書き、今回の層はそれを【顧客プロファイル】として先頭に読む。m0 を呼ばない回はプロファイルが消え、材料が変わった（q164 で確かめた）
+        const m0 = await runBrainChecked({ ...base, prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }, !!p.pc, row);
         const strategy = m0 ? extractStrategy(m0, "combined", 0, new Date().toISOString()) : null;
         await insertMsgs(burst, p.context.length);
         await new Promise((r) => setTimeout(r, 1300));
