@@ -127,12 +127,95 @@ export function buildPrevLeadNote(msgs: ReadonlyArray<LeadMsg>): string {
 }
 
 // ─── ブレインの出力の欄 ─────────────────────────────────────
-export const TURN_READ_BRAIN_FIELD = `"turn_read"（お客様の今の一通を細かく読む。{"target": {"kind": "${TURN_TARGET_KINDS.join("|")}", "property": "物件の事なら物件名と号室（会話・送った束の表記のまま）・無ければ null", "detail": "細かい対象 25字（どの設備・どの費用の項目・どの日の内覧・どの約束）", "how": "言った|文脈から"}, "intent": "${TURN_INTENTS.join("|")} から一番の意図", "intent2": "2番目か null", "lead": 直前のこちらの誘導があれば {"kind": "${LEAD_KINDS.join("|")}", "answer": "${LEAD_ANSWERS.join("|")}"}・無ければ null, "feeling": "気持ちの中身 25字（どの程度気に入っているか・何が不安か・迷いの中身）", ${MOOD_FIELD_TEXT}}。mood.base は "mindset" の state と同じ値にする。読み方: 対象を言っていない時は直前のこちらの送信・開いている約束・今の番の物件から決める（「ここ」「予算オーバー」「駐車場は？」の主語）。物件を送った後の「よろしくお願いします」「拝見します」は物件への感想ではなく直前の送信への了承（kind=こちらの約束の結果・intent=お礼・了承）。URL・資料の画像だけの持ち込みは kind=持ち込み物件。お礼・了承だけの番に、前の番の気持ち（刺さっている・安くしたい・審査の不安）を持ち越さない＝"mindset" の state も今の一通で決め、了承だけなら 普通の依頼）。mood は読みとして出すだけ: lead.answer=応じた（例 内覧の候補日への日の答え）の番は、その誘導を一段進める事（日の確定＝待ち合わせ場所）を一番にし、付いてきた気持ち・相談（審査の不安 等）で道を変えない（竹内さんは日を先に確定し、相談はその通では答えない・KB d4da3919）`;
-// 2026-11-11 作業員14: 上の「mood は読みとして出すだけ」は q406 の悪化（mood を足すと meeting_place→phone_call が 4/6）の直し。試験で確かめる前（次の安い時間に q406 --repeat=3）
+export const TURN_READ_BRAIN_FIELD = `"turn_read"（お客様の今の一通を細かく読む。{"target": {"kind": "${TURN_TARGET_KINDS.join("|")}", "property": "物件の事なら物件名と号室（会話・送った束の表記のまま）・無ければ null", "detail": "細かい対象 25字（どの設備・どの費用の項目・どの日の内覧・どの約束）", "how": "言った|文脈から"}, "intent": "${TURN_INTENTS.join("|")} から一番の意図", "intent2": "2番目か null", "lead": 直前のこちらの誘導があれば {"kind": "${LEAD_KINDS.join("|")}", "answer": "${LEAD_ANSWERS.join("|")}"}・無ければ null, "feeling": "気持ちの中身 25字（どの程度気に入っているか・何が不安か・迷いの中身）"}。読み方: 対象を言っていない時は直前のこちらの送信・開いている約束・今の番の物件から決める（「ここ」「予算オーバー」「駐車場は？」の主語）。物件を送った後の「よろしくお願いします」「拝見します」は物件への感想ではなく直前の送信への了承（kind=こちらの約束の結果・intent=お礼・了承）。URL・資料の画像だけの持ち込みは kind=持ち込み物件。お礼・了承だけの番に、前の番の気持ち（刺さっている・安くしたい・審査の不安）を持ち越さない＝"mindset" の state も今の一通で決め、了承だけなら 普通の依頼）。条件フォーム（ご希望のお部屋探しご条件）では、お客様が⑧その他の欄などに自分で書いた気持ちの言葉（ブラック・夜職・借入あり・急ぎ 等）だけを拾い、フォームに初めから印刷されている「※審査に不安な事がある方お気軽にお伝えください」等の定型の文はお客様の言葉ではないので拾わない。lead.answer=応じた（例 内覧の候補日への日の答え）の番は、その誘導を一段進める事（日の確定＝待ち合わせ場所）を一番にし、付いてきた気持ち・相談（審査の不安 等）で道を変えない（竹内さんは日を先に確定し、審査の相談はその後の AIX【電話をかける】で受ける・KB 030882c3）`;
+// 2026-11-11 作業員14: mood（細かい型）はブレインに読ませる欄から外した＝統括役の決定。mood を欄に入れると q406 で重点が審査の相談に移り
+//   meeting_place→phone_call（直しの1文を足しても待ち合わせ場所 2/4）。mood は道が決まった後の記録だけの読み（別の軽い読み・夜の監査）で付ける。MOOD_FIELD_TEXT・normalizeMoodRead はその用。
+// 2026-11-11 作業員14: フォームの1文は「⑧の欄にお客様が書いた言葉だけ・印刷の定型文は拾わない」に絞った（前の after2 は定型文「※審査に不安な事がある方…」を拾って読みすぎた）
 // 2026-11-11 作業員14: 「条件フォーム・URL の持ち込みの中の気持ちの一言を拾う」1文を足して試した（部品の試し after2）が、
 //   フォームの決まった欄や了承の番まで「審査の不安」と読ませ、当たり 71→70・了承 25→23（得4・失5）で差し引き良くならなかった＝足さない（scripts/audit-turn-read-1111.ts --phase=mood-probe）
+// ─── 組み合わせた理解（主・従）: 竹内さんの決定 11/11（KB P1 ee7ddf07・親 ecd7b961）「何のことについて言っているかを細かく読み、それを組み合わせて理解できればズレは起きない」
+//   対象（こちらのどの送信・誘いへの答えか）×意図×気持ち×こちら側 を合わせ、一番の要点（主）と脇の話（従）に分ける。道と重点は主で決める。
+//   例 q406: 主＝誘った内覧の日を決める（内覧の日・場所×日程の調整→日の確定が先）／従＝審査の不安（手続き・審査→後で答える）
+//   切替: TURN_READ_FOCUS=on（TURN_READ=on の時だけ効く・既定 off）
+export const FOCUS_SUB_MOVES = ["後で答える", "一言添える", "この番で答える", "触れない"] as const;
+export type TurnFocus = { main: { about: TurnTargetKind; intent: TurnIntent; move: string | null }; sub: { about: TurnTargetKind; intent: TurnIntent; move: (typeof FOCUS_SUB_MOVES)[number] } | null };
+export function turnReadFocusOn(env?: Env): boolean { return turnReadMode(env) === "on" && (envOf(env).TURN_READ_FOCUS ?? "").trim().toLowerCase() === "on"; }
+export const TURN_READ_FOCUS_FIELD = `"turn_focus"（上の読みを組み合わせた理解を1行で: {"main": {"about": "${TURN_TARGET_KINDS.join("|")}", "intent": "${TURN_INTENTS.join("|")}", "move": "主に対してこの番でする事 20字（主の事だけ。従の相談への扱いはここに書かず sub.move にだけ書く）"}, "sub": 脇の話があれば {"about": 同じ選択肢, "intent": 同じ選択肢, "move": "${FOCUS_SUB_MOVES.join("|")}"}・無ければ null}。主の決め方: 直前のこちらの送信・誘いへの答え（lead.answer=応じた）があればそれが主、付いてきた気持ち・相談は従。答えでなければ、お客様が一番してほしい事が主。道（返信か AIX か・AIX の種類）と重点は主だけで決める: 主が誘導への答えなら、その誘導を一段進める AIX にする（内覧の候補日への日の答え＝待ち合わせ場所・物件を送ってと誘った後の持ち込み＝募集確認の約束）。従の相談（審査・費用・持ち物 等）を理由に別の AIX（電話・保証会社の説明 等）へ道を変えない。従は move のとおりに扱う（例: 内覧の候補日への「土曜日で＋審査の相談」＝主 内覧の日・場所×日程の調整→日の確定／従 手続き・審査×手続き・審査の質問→後で答える）)`;
+export function normalizeTurnFocus(raw: unknown): TurnFocus | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const m = (o.main && typeof o.main === "object" ? o.main : null) as Record<string, unknown> | null;
+  const ma = m ? pickOf(TURN_TARGET_KINDS, m.about) : null, mi = m ? pickOf(TURN_INTENTS, m.intent) : null;
+  if (!ma || !mi) return null;
+  const s = (o.sub && typeof o.sub === "object" ? o.sub : null) as Record<string, unknown> | null;
+  const sa = s ? pickOf(TURN_TARGET_KINDS, s.about) : null, si = s ? pickOf(TURN_INTENTS, s.intent) : null, sm = s ? pickOf(FOCUS_SUB_MOVES, s.move) : null;
+  return { main: { about: ma, intent: mi, move: short(m!.move, 30) }, sub: sa && si ? { about: sa, intent: si, move: sm ?? "後で答える" } : null };
+}
+/** digest.tf: "主の種類×意図>従の種類×意図:扱い" */
+export function turnFocusDigest(f: TurnFocus | null | undefined): string | null {
+  if (!f) return null;
+  return `${f.main.about}×${f.main.intent}${f.sub ? `>${f.sub.about}×${f.sub.intent}:${f.sub.move}` : ""}`.slice(0, 120);
+}
+
+// ─── 気持ちの4欄（竹内さんの指示 KB d72ad06b・P1）: 何で（きっかけ）・何の部分を・どんな気持ちで（強さ）・本当はどうしたいのか
+//   記録だけの欄（夜の監査の読みで付ける・ブレインの道の判断には入れない＝q406 で mood を欄に入れると道が揺れたため）。
+//   型の中身（kind の並び）は作業員5 が竹内さんの198通から作る＝ここは形と正規化だけ。kind は今は MOOD_OBJECTS の base を仮に使う。
+//   trigger.ref: きっかけになったこちらの送信（直前の束・新着1件・見積書・候補日 等）か、お客様の持ち込み・前の話の持ち出し
+export const MOOD_TRIGGERS = ["こちらの送信", "こちらの約束・結果", "お客様の持ち込み", "前の話の持ち出し", "お客様の事情", "その他"] as const;
+export type MoodFour = {
+  trigger: { kind: (typeof MOOD_TRIGGERS)[number]; ref: string | null };  // 何で
+  part: string | null;                                                     // 何の部分を（物件の広さ・駅・家賃・初期費用の項目・審査・日程 等）
+  feeling: { kind: string; degree: (typeof MOOD_DEGREES)[number] };        // どんな気持ちで（強さ）
+  want: string | null;                                                     // 本当はどうしたいのか
+};
+export function normalizeMoodFour(raw: unknown, kinds: ReadonlyArray<string> = Object.keys(MOOD_OBJECTS)): MoodFour | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const t = (o.trigger && typeof o.trigger === "object" ? o.trigger : {}) as Record<string, unknown>;
+  const f = (o.feeling && typeof o.feeling === "object" ? o.feeling : {}) as Record<string, unknown>;
+  const fk = typeof f.kind === "string" ? f.kind.trim() : "";
+  if (!kinds.includes(fk)) return null;
+  const tk = pickOf(MOOD_TRIGGERS, t.kind) ?? "その他";
+  const deg = (MOOD_DEGREES as readonly string[]).includes(String(f.degree)) ? (f.degree as MoodFour["feeling"]["degree"]) : "中";
+  return { trigger: { kind: tk, ref: short(t.ref, 40) }, part: short(o.part, 30), feeling: { kind: fk, degree: deg }, want: short(o.want, 40) };
+}
+/** 当たりの測り方（案）: 4欄それぞれを別に数える。trigger.kind・feeling.kind・feeling.degree は完全一致、
+ *  part・want は自由記述なので「同じ物を指すか」を判定の役（DeepSeek 1回・伏せた文）か Claude Code の目で。物件の部分は語の重なりでも可 */
+export function moodFourExact(a: MoodFour | null, b: MoodFour | null): { trigger: boolean; feeling: boolean; degree: boolean } {
+  return { trigger: !!a && !!b && a.trigger.kind === b.trigger.kind, feeling: !!a && !!b && a.feeling.kind === b.feeling.kind, degree: !!a && !!b && a.feeling.kind === b.feeling.kind && a.feeling.degree === b.feeling.degree };
+}
+
+// ─── 話題ごとに分ける（弱い所 578: 1通に話題が3つ以上・何通も前の話を急に持ち出す番）
+//   竹内さんの番100のうち該当12番（scripts/.replay-out/topics-578-claude.json）の答え方:
+//   ・お礼・了承の話題は省くことが多い（9/12 で省いた）・主の話題から答え、要件ごとに通を分ける（2cb0feb7）
+//   ・前の話の持ち出し（数通前の条件・前の見積書・前に送った物件）は、その送信に結び付けて主として答える（83391dda・f11b7b1a・22b2511e）
+//   ・気に入った・考えたい の話題には触れず押さない番がある（83391dda）／内覧の答え＋別の質問は日の確定だけ（c16e9f4a）
+//   切替: TURN_READ_TOPICS=on（TURN_READ=on の時だけ・既定 off）。試験はまだ。
+export const TOPIC_ROLES = ["主", "従"] as const;
+export type TurnTopic = { n: number; about: TurnTargetKind; intent: TurnIntent; quote: string | null; ref: string | null; role: (typeof TOPIC_ROLES)[number] };
+export function turnReadTopicsOn(env?: Env): boolean { return turnReadMode(env) === "on" && (envOf(env).TURN_READ_TOPICS ?? "").trim().toLowerCase() === "on"; }
+export const TURN_READ_TOPICS_FIELD = `"turn_topics"（1通に話題が2つ以上ある時だけ・出てきた順に最大5: [{"n": 1, "about": "${TURN_TARGET_KINDS.join("|")}", "intent": "${TURN_INTENTS.join("|")}", "quote": "その話題の言葉 25字", "ref": 前の話の持ち出しなら「どの送信のどの話か」（例: 数通前にお客様が言った地域の条件／前にこちらが送った〇〇の見積書）・直前の流れの続きなら null, "role": "主|従"}]・話題が1つなら null。答える順は主から。お礼・了承の話題は省いてよい。前の話の持ち出しはその送信に結び付けて答える）`;
+export function normalizeTurnTopics(raw: unknown): TurnTopic[] | null {
+  if (!Array.isArray(raw) || raw.length < 2) return null;
+  const out: TurnTopic[] = [];
+  for (const [i, x] of raw.slice(0, 5).entries()) {
+    const o = (x ?? {}) as Record<string, unknown>;
+    const about = pickOf(TURN_TARGET_KINDS, o.about), intent = pickOf(TURN_INTENTS, o.intent);
+    if (!about || !intent) continue;
+    const ref = short(o.ref, 40);
+    out.push({ n: Number.isFinite(Number(o.n)) ? Number(o.n) : i + 1, about, intent, quote: short(o.quote, 30), ref: ref && !/^(null|なし)$/i.test(ref) ? ref : null, role: o.role === "主" ? "主" : "従" });
+  }
+  return out.length >= 2 ? out : null;
+}
+/** digest.tt: "数|主の数|前の話の持ち出しの数" */
+export function turnTopicsDigest(ts: TurnTopic[] | null | undefined): string | null {
+  if (!ts || !ts.length) return null;
+  return `${ts.length}|${ts.filter((t) => t.role === "主").length}|${ts.filter((t) => t.ref).length}`;
+}
+
 export function turnReadOutputItem(env?: Env): string {
-  return turnReadMode(env) === "on" ? `、${TURN_READ_BRAIN_FIELD}` : "";
+  if (turnReadMode(env) !== "on") return "";
+  return `、${TURN_READ_BRAIN_FIELD}${turnReadFocusOn(env) ? `、${TURN_READ_FOCUS_FIELD}` : ""}${turnReadTopicsOn(env) ? `、${TURN_READ_TOPICS_FIELD}` : ""}`;
 }
 
 const pickOf = <T extends string>(list: ReadonlyArray<T>, v: unknown): T | null => (typeof v === "string" && (list as ReadonlyArray<string>).includes(v.trim()) ? (v.trim() as T) : null);
@@ -183,5 +266,7 @@ export function turnReadDigestExtra(meta: Record<string, unknown>, env?: Env): {
   const ta = askAboutDigest(meta.turn_contract); if (ta) out.ta = ta;
   const li = short(meta.latent_intent, 50); if (li) out.li = li;
   const tr = turnReadDigest(normalizeTurnRead(meta.turn_read)); if (tr) out.tr = tr;
+  const tf = turnFocusDigest(normalizeTurnFocus(meta.turn_focus)); if (tf) (out as Record<string, unknown>).tf = tf;
+  const tt = turnTopicsDigest(normalizeTurnTopics(meta.turn_topics)); if (tt) (out as Record<string, unknown>).tt = tt;
   return out;
 }

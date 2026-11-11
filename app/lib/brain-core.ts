@@ -282,7 +282,7 @@ import { brainOpenerMetaEnabled, normalizeBrainOpener } from "@/app/lib/opener-r
 import { brainFastSlowEnabled, brainSlowSecondEnabled, decideTurnDifficulty, fastDrops, fastEscapeReason, routeFingerprint, pickMajority, BRAIN_FAST_SLOW_VERSION, type FastSlowRecord } from "@/app/lib/brain-fast-slow"; // 2026-10-22 慣れた事は速く・難しい事はじっくり
 // 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
 import { mindsetFreshOutputItem, emotionChoicesText, normalizeMindset, mindsetEmotionLabel, customerMindsetEnabled, type CustomerMindset } from "@/app/lib/customer-mindset";
-import { turnReadMode, turnReadOutputItem, normalizeTurnRead, type TurnRead } from "@/app/lib/turn-read";
+import { turnReadMode, turnReadOutputItem, normalizeTurnRead, turnReadFocusOn, normalizeTurnFocus, turnReadTopicsOn, normalizeTurnTopics, type TurnRead, type TurnFocus, type TurnTopic } from "@/app/lib/turn-read";
 
 /** 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番の turn_contract の asks（promise→reply）をそろえる（PROCEDURE_GENERAL_ASK_REPLY・11/11 既定 on・止める =off） */
 function procedureAlignContract<T extends { asks?: unknown }>(raw: T | null, replyTurn: boolean, conversationId: string): T | null {
@@ -499,6 +499,8 @@ export type SuggestedAixMeta = {
   /** 2026-09-27: customer-state で段階を補正した時だけ LLM の元の値（null は "null"）。補正の件数と前後を数えるため（brain-stage.ts） */
   checkpoint_stage_llm?: string;
   customer_intent?: "question" | "consultation" | "desire" | "decision" | "positive" | "negative" | "chat" | null;  // 顧客の今回の問い合わせ意図
+  turn_topics?: TurnTopic[];             // 2026-11-11 作業員14: 話題ごと（弱い所 578）・TURN_READ_TOPICS=on の時だけ
+  turn_focus?: TurnFocus;                // 2026-11-11 作業員14: 組み合わせた理解（主・従）・TURN_READ_FOCUS=on の時だけ
   turn_read?: TurnRead;                  // 2026-11-11 作業員14: 対象×意図×気持ち×直前の誘導への答え（TURN_READ=on の時だけ・app/lib/turn-read.ts）
   latent_intent?: string | null;         // 送信動機・潜在意識の自由記述（なぜ今送ってきたか・表面の裏の不安/期待。20〜50字・根拠なければnull）
   // 2026-09-09 Fable5 往復文脈: 最新メッセージで顧客が提案物件に述べた懸念（topic=階数/広さ/費用/審査 等・object=顧客の語）。
@@ -3280,6 +3282,19 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     try { const r = pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")); const fl = firstCondMaterialLine(r); if (fl) { customerStateBlockText += `\n\n${fl}`; console.log(JSON.stringify({ tag: "brain:first-cond", conversationId, ready: r.ready })); } }
     catch (e) { console.warn("[brain-core] first-cond skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-11-11 作業員4（弱い所 565・568・KB bfb1d47d と竹内さんの土台の数）: こちら側の状態（開いている約束・直前の AIX とピッカー・送った物件）をブレインの材料に1塊。
+  //   CONDUCTOR_OUR_SIDE_BRAIN（11/12 から既定 on・=off で止める）。決めるのはブレイン（状態を渡すだけ・決まりにしない）
+  let ourSideBlockText = "";
+  if (typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus)) {
+    try {
+      const os = await import("@/app/lib/conductor-our-side");
+      if (os.ourSideBrainOn()) {
+        // maskBrain はこの後で作る（ここでは名前と連絡先だけ先に伏せる）
+        ourSideBlockText = maskPII(maskHonorificNames(os.ourSideBlock({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(typedMessages[0].created_at) }), [opts?.customerName]));
+        if (ourSideBlockText) { customerStateBlockText += "\n\n" + ourSideBlockText; console.log(JSON.stringify({ tag: "brain:our-side", conversationId, chars: ourSideBlockText.length })); }
+      }
+    } catch (e) { console.warn("[brain-core] our-side skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-11-07 作業員4（弱い所 270・271・KB dc0d77cf・e786394e）: 入口の意見＝近い竹内さんの番の多数の一手（割合 0.8 以上・5件以上の時だけ）を、
   //   その番の要約と竹内さんの実際の文と1組でブレインの材料に1行（決めるのはブレイン）。CONDUCTOR_NEAR_OPINION=on（既定 off）・2秒まで待つ・無ければ何も足さない
   if (typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus) && conversationId && (await import("@/app/lib/conductor-near-opinion")).nearOpinionOn()) {
@@ -3316,7 +3331,13 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
       }
       return runConductorIntake({
         conversationId, turnAt: turnAt0, customerTurn: unrepliedTurn.text ?? "", lastStaff: lastStaffTxt,
-        ledgerBlock: factsForConductor.length ? factLedgerBlock(factsForConductor as unknown as Parameters<typeof factLedgerBlock>[0], Date.now()) : "",
+        // 2026-11-11 作業員4（弱い所 565・568・KB P1 bfb1d47d）: CONDUCTOR_OUR_SIDE=on（既定 off）の時だけ、こちら側の状態（開いている約束・直前の AIX とピッカー・送った物件）を先頭に
+        ledgerBlock: [
+          (await import("@/app/lib/conductor-our-side")).conductorOurSideOn() && turnAt0
+            ? (await import("@/app/lib/conductor-our-side")).ourSideBlock({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(turnAt0) })
+            : "",
+          factsForConductor.length ? factLedgerBlock(factsForConductor as unknown as Parameters<typeof factLedgerBlock>[0], Date.now()) : "",
+        ].filter(Boolean).join("\n\n"),
         carryLine: carryQueryLine(pmForCarry?.conductor_meta ?? null), ruleMeta: "", nearFocus,
       });
     }).catch(() => null);
@@ -6084,7 +6105,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         const conv = msgsDesk.map((m, i) => `${m.sender === "customer" && i > lastStaff ? "★" : ""}${m.sender === "customer" ? "お客様" : "こちら"}: ${maskBrain(String(m.text ?? "")).replace(/\s+/g, " ").slice(0, 220)}`).join("\n");
         const brought = broughtThisTurnNames(unrepliedTurn.text ?? "");
         const sit = [customerState ? nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() }) : "", brought.length ? `今の番の持ち込み（まだ確認が要る）: ${brought.join("・")}` : ""].filter(Boolean).join("／");
-        const run = await runAixCommander(client, { conversationId, brainAction: finalAix, brainCheckPattern: checkKind?.check_pattern || null, altActions: finalAlts ?? [], conversation: conv, situationLine: maskBrain(sit), ledgerBlock: deskLedgerBlock, scene: brainSceneRes?.scene ?? null });
+        const run = await runAixCommander(client, { conversationId, brainAction: finalAix, brainCheckPattern: checkKind?.check_pattern || null, altActions: finalAlts ?? [], conversation: conv, situationLine: maskBrain(sit), ledgerBlock: [ourSideBlockText, deskLedgerBlock].filter(Boolean).join("\n\n") /* 11/11 作業員4: CONDUCTOR_OUR_SIDE_BRAIN=on の時だけ先頭にこちら側の状態 */, scene: brainSceneRes?.scene ?? null });
         const pickBtn = run.pick ? actionOfKey(run.pick) : null;
         const changed = !!pickBtn && (pickBtn.action !== finalAix || (!!pickBtn.checkPattern && pickBtn.checkPattern !== (checkKind?.check_pattern || null)));
         // 2026-11-03 竹内さん「統括に6つ足す」②: 下の役（AIX の統括）の答えを確かな事実と照らす。合わなければ差し戻し（読み直しの口・記録は digest.ad.cf）
@@ -6264,6 +6285,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       latent_intent: latentIntent,
       // 2026-11-11 作業員14（KB 5cb0dd4c・P0 ecd7b961 の子）: お客様の一通の対象×意図×気持ち×直前の誘導への答え（TURN_READ=on の時だけ出させる・記録は digest.tr）
       turn_read: turnReadMode() === "on" ? (normalizeTurnRead((parsed as { turn_read?: unknown }).turn_read) ?? undefined) : undefined,
+      // 2026-11-11 作業員14（KB ee7ddf07）: 組み合わせた理解（主・従）。TURN_READ=on かつ TURN_READ_FOCUS=on の時だけ（記録は digest.tf）
+      turn_focus: turnReadFocusOn() ? (normalizeTurnFocus((parsed as { turn_focus?: unknown }).turn_focus) ?? undefined) : undefined,
+      // 2026-11-11 作業員14（弱い所 578）: 1通の中の話題ごとの読み。TURN_READ=on かつ TURN_READ_TOPICS=on の時だけ（記録は digest.tt）
+      turn_topics: turnReadTopicsOn() ? (normalizeTurnTopics((parsed as { turn_topics?: unknown }).turn_topics) ?? undefined) : undefined,
       customer_concern: customerConcern,
       // 内部伝搬: SOURCE_ACCEPT_RATE ゲート抑制の事実と、1回目の signalAix 結果の持ち回り
       // （analyzeAndSaveBrainMeta の direction 更新でのバイパス防止＋二重実行回避に使用）
