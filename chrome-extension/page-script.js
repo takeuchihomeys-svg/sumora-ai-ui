@@ -629,6 +629,49 @@
       return "other";
     } catch (_) { return "other"; }
   }
+  /**
+   * 2026-11-11 竹内さん「ちゃんとボタン押してからの動きも人間のようにやっていく。ボタン押して次のボタンおすところも。
+   *   ここの部分はボタンすぐに押せるところや、この部分は少し考えながら押すから時間必要など。
+   *   どのようにボタンをおしていくか。また一息一瞬つくかなど、そのように人間のように」
+   *
+   * 押した「後」に次の所へ移るまでの間を、**ボタンの意味で変える**（人がそうしているから）:
+   *   input  … 入力欄。打ち終わって次の欄へ移るのは速い（0.5〜1.2秒）
+   *   next   … 「次へ」「続き」のような進む操作。行き先を確かめるので少し間（0.8〜2.0秒）
+   *   choose … 選択肢を選ぶ（チェック・ラジオ・プルダウン）。選んだ結果を目で見る（0.35〜1.0秒）
+   *   decide … 決定のボタン（検索・送信）。押した後に**画面が変わったかを見る**ので長め（1.2〜3.2秒）
+   *   other  … その他（0.5〜1.4秒）
+   * ⚠ 迷い（_hesitateMs）とは別物。迷いは「押す前」、これは「押した後」。
+   */
+  function _afterClickGapMs(el) {
+    var H = window.AxlxHumanWait;
+    var kind = "other";
+    try {
+      if (!el) kind = "other";
+      else {
+        var tag = String(el.tagName || "").toUpperCase();
+        var type = String((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+        var txt = String((el.textContent || "").replace(/\s+/g, "")).slice(0, 12);
+        if (tag === "INPUT" && !/checkbox|radio|button|submit/.test(type)) kind = "input";
+        else if (/^(次へ|次|続き|もっと見る|次ページ|次のページ)/.test(txt)) kind = "next";
+        else if (tag === "SELECT" || tag === "LABEL" || ((tag === "INPUT") && /checkbox|radio/.test(type))) kind = "choose";
+        else if (tag === "BUTTON" || /submit|button/.test(type) || /^(検索|送信|決定|実行|保存|登録|送る)/.test(txt)) kind = "decide";
+        else kind = "other";
+      }
+    } catch (_) { kind = "other"; }
+    var r = {
+      input:  [500, 1200],
+      next:   [800, 2000],
+      choose: [350, 1000],
+      decide: [1200, 3200],
+      other:  [500, 1400],
+    }[kind] || [500, 1400];
+    var base = H && H.logNormalDelay ? H.logNormalDelay((r[0] + r[1]) / 2, 0.32) : (r[0] + r[1]) / 2;
+    // 決定のボタンの後は「画面が変わったか」を見るので、たまに長く見る（12%で+0.6〜1.8秒）
+    if (kind === "decide" && Math.random() < 0.12) base += 600 + Math.floor(Math.random() * 1200);
+    // 一瞬つく（8%で+0.3〜0.9秒）＝人が「お、変わったな」と手を止める形
+    else if (Math.random() < 0.08) base += 300 + Math.floor(Math.random() * 600);
+    return Math.min(r[1] * 2.4, Math.max(r[0] * 0.6, Math.round(base)));
+  }
   /** 押す前に迷う時間（0＝迷わない） */
   function _hesitateMs(el) {
     var kind = _hesitateKindOf(el);
@@ -709,8 +752,14 @@
       // 2026-11-10: 中の処理が非同期（1文字ずつの打鍵）でも、終わってから次へ進む（順番が崩れない）
       var done = function () {
         if (item.el) item.el.__axPending = false;
-        // 2026-11-10 v2.6.9: 押した後に「反応したか」を見る間を置いてから次へ（連続で飛ばさない）
-        var settle = 140 + Math.floor(Math.random() * 220);
+        /**
+         * 2026-11-11 竹内さん「ボタン押して次のボタンおすところも。ここの部分はボタンすぐに押せるところや、
+         *   この部分は少し考えながら押すから時間必要など」:
+         *   旧は 140〜360ms の固定レンジ（どのボタンでも同じ）。
+         *   新は**ボタンの意味で変える**（_afterClickGapMs・1か所）:
+         *     入力欄は速い／選択肢は結果を見る／「次へ」は行き先を確かめる／決定は画面が変わったか見る（長め）
+         */
+        var settle = _afterClickGapMs(item.el);
         setTimeout(function () {
           _clickBusyItem = null;
           _clickQueueTimer = null;

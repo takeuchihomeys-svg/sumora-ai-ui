@@ -42,7 +42,7 @@ ok("押す前に呼ぶ", /if \(hesitate > 0\) \{ try \{ _tmarkHesitate\(item\.la
 console.log("\n■ ⑤ 一覧の部屋選び・ITANDI のチェックにも迷い");
 ok("リアプロの一覧の選択で迷う（15%・3段）", /function _humanClickCb\(cb\)[\s\S]{0,2200}Math\.random\(\) < 0\.15 \* \(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(bd));
 ok("ITANDI の一覧の選択で迷う（15%・3段）", /function _humanCheckAll[\s\S]{0,3000}Math\.random\(\) < 0\.15 \* \(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(ib));
-ok("ITANDI の条件チェック（tick）でも迷う", /function tick\(el\)[\s\S]{0,900}Math\.random\(\) < 0\.15 \* \(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(ips));
+ok("ITANDI の条件チェック（tick）でも迷う", /function tick\(el\)[\s\S]{0,2000}Math\.random\(\) < 0\.15 \* \(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(ips));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

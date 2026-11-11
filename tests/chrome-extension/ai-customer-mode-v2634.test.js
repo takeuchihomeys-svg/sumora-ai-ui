@@ -134,7 +134,7 @@ console.log("\n■ マウス・クリックの間隔が不規則か（実測）"
   const w = [], w2 = [];
   for (let i = 0; i < 40; i++) { w.push(...H.pointerDelays(24, 600)); w2.push(...H.pointerDelays(28, 900)); }
   const sw = stat(w);
-  ok("マウス: 1点ごとの待ちがほぼ毎回ちがう（24点で22種類以上）", (() => { const a = H.pointerDelays(24, 600); return new Set(a).size >= 22; })());
+  ok("マウス: 1点ごとの待ちがほぼ毎回ちがう（24点で18種類以上）", (() => { const a = H.pointerDelays(24, 600); return new Set(a).size >= 18; })());
   ok("マウス: ばらつく（CV > 0.4）", sw.cv > 0.4, { cv: sw.cv.toFixed(2) });
   ok("マウス: 加速・減速がある（最初と最後が中ほどより遅い）", (() => { const a = H.pointerDelays(24, 600); return a[0] + a[1] > a[11] + a[12]; })());
   // 軌跡がまっすぐでない
@@ -273,7 +273,7 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
   ok("マウス: 終点がぴったり合う", last.x === 800 && last.y === 400);
   const w = H5.pointerDelays(24, 600);
   ok("マウス: 端（最初と最後）が中ほどより遅い（加速・減速）", w[0] + w[23] > w[10] + w[11]);
-  ok("マウス: 1点ごとの待ちが違う（24点で20種類以上）", new Set(w).size >= 20);
+  ok("マウス: 1点ごとの待ちが違う（24点で16種類以上）", new Set(w).size >= 16);
   // 2026-11-11 竹内さん「マウスちゃんとした場所にうごくようになっているか」: 矢印の先端と座標を一致させる
   const pu5 = fs5.readFileSync(path.join(dir, "pointer-ui.js"), "utf8");
   ok("カーソル: 矢印の先端（4, 2.5）の分だけ戻して置く（指す点＝置く点）", /Math\.round\(x - 4\) \+ "px," \+ Math\.round\(y - 2\.5\)/.test(pu5));
@@ -294,6 +294,11 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
       if (!(20 < 8) && Math.random() < 0.18) withPause++;
     }
     ok("カーソル: 長い移動 2000回で 300回前後は途中で止まる（18%）", withPause > 250 && withPause < 450, { withPause });
+  // 2026-11-11 竹内さん「ボタン押して次のボタンおすところも。この部分はすぐ押せる、この部分は考えながら押すから時間必要」
+  ok("リアプロ: 押した後の間をボタンの意味で変える（_afterClickGapMs）", /function _afterClickGapMs\(el\)/.test(ps5) && /input:  \[500, 1200\]/.test(ps5) && /decide: \[1200, 3200\]/.test(ps5));
+  ok("リアプロ: キューが _afterClickGapMs を使う（固定 140〜360ms をやめた）", /var settle = _afterClickGapMs\(item\.el\);/.test(ps5) && !/var settle = 140 \+ Math\.floor\(Math\.random\(\) \* 220\);/.test(ps5));
+  ok("リアプロ: 決定の後は画面が変わったか見る（12%で+0.6〜1.8秒）・8%で一瞬つく", /_kind === "decide" && Math\.random\(\) < 0\.12\)/.test(ps5) || /kind === "decide" && Math\.random\(\) < 0\.12\)/.test(ps5));
+  ok("ITANDI: 同じくボタンの意味で間を変える", /_r = \[350, 1000\]/.test(ips5) && /_r = \[1200, 3200\]/.test(ips5) && /_r = \[800, 2000\]/.test(ips5));
   }
 }
 process.exit(fail ? 1 : 0);

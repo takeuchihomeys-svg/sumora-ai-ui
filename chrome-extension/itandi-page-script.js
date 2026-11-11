@@ -248,19 +248,31 @@
   function tick(el) {
     if (!el || el.checked) return;
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
-    // 2026-11-10 v2.6.4 竹内さん「早すぎる部分は人間の動きのように改善する」:
-    //   中央値 200ms は人のチェックにしては速い → 550ms（おおよそ 350〜900ms）に。たまに長く伸びる
-    var wait = H && H.logNormalDelay ? H.logNormalDelay(550, 0.32) : (400 + Math.floor(Math.random() * 400));
-    // 2026-11-10 v2.5.99 竹内さん「ボタン選択する際人間ならたまにまよう」:
-    //   チェックを入れる所は人が迷いやすい。15%（±25%）で迷い、長さは3段（一瞬 250〜600／考え込む 700〜1600／かなり 1800〜4500）
+    /**
+     * 2026-11-11 竹内さん「ボタン押して次のボタンおすところも。ここの部分はボタンすぐに押せるところや、
+     *   この部分は少し考えながら押すから時間必要など」:
+     *   ITANDI も**ボタンの意味で間を変える**。リアプロ（_afterClickGapMs）と同じ考え。
+     *     入力欄 0.5〜1.2秒 ／ チェック 0.35〜1.0秒（選んだ結果を見る）／ 次へ 0.8〜2.0秒 ／ 決定 1.2〜3.2秒
+     */
+    var _kind = "choose", _r = [350, 1000];
+    try {
+      var _tag = String(el.tagName || "").toUpperCase();
+      var _type = String((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+      var _txt = String((el.textContent || "").replace(/\s+/g, "")).slice(0, 12);
+      if (_tag === "INPUT" && !/checkbox|radio|button|submit/.test(_type)) { _kind = "input"; _r = [500, 1200]; }
+      else if (/^(次へ|次|続き|もっと見る)/.test(_txt)) { _kind = "next"; _r = [800, 2000]; }
+      else if (_tag === "BUTTON" || /submit|button/.test(_type) || /^(検索|送信|決定|実行|保存|登録)/.test(_txt)) { _kind = "decide"; _r = [1200, 3200]; }
+    } catch (_) {}
+    var wait = H && H.logNormalDelay ? H.logNormalDelay((_r[0] + _r[1]) / 2, 0.32) : ((_r[0] + _r[1]) / 2);
+    // 2026-11-11: 押す前の迷い（リアプロと同じ3段・チェックを入れる所は15%）
     if (Math.random() < 0.15 * (0.75 + Math.random() * 0.5)) {
       var _hr = Math.random();
       wait += _hr < 0.65 ? 250 + Math.floor(Math.random() * 350)
             : _hr < 0.95 ? 700 + Math.floor(Math.random() * 900)
             : 1800 + Math.floor(Math.random() * 2700);
-    } else if (Math.random() < 0.08) {
-      wait += 300 + Math.floor(Math.random() * 400); // たまに「条件を見直す」一息
     }
+    if (_kind === "decide" && Math.random() < 0.12) wait += 600 + Math.floor(Math.random() * 1200);
+    else if (Math.random() < 0.08) wait += 300 + Math.floor(Math.random() * 600);
     _tickBusy++;
     // 押す直前に、画面に入れてから押す（人が目で探す形）
     // 2026-11-10 v2.5.96 竹内さん「画面無駄に上下しまくりすぎている・時間もはやすぎる」:

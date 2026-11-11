@@ -38,7 +38,7 @@ for (const [name, src] of [["page-script.js", ps], ["itandi-page-script.js", ips
 }
 ok("enqueueHumanClick の下限が 300ms 未満の物が無い", tooFast.length === 0, tooFast.slice(0, 5));
 ok("リアプロの打鍵は 165ms/文字", /logNormalDelay\(165, 0\.32\)/.test(ps));
-ok("ITANDI のチェックは中央値 550ms", /logNormalDelay\(550, 0\.32\)/.test(ips));
+ok("ITANDI のチェックはボタンの意味で間を変える（選択350〜1000ms・決定1200〜3200ms）", /_r = \[350, 1000\]/.test(ips) && /_r = \[1200, 3200\]/.test(ips) && /logNormalDelay\(\(_r\[0\] \+ _r\[1\]\) \/ 2, 0\.32\)/.test(ips));
 ok("プルダウンは開く450〜1000・見る700〜1600・確認250〜700", /_ln\(700, 0\.4, 450, 1000\)/.test(ps) && /_ln\(1100, 0\.42, 700, 1600\)/.test(ps) && /_ln\(430, 0\.45, 250, 700\)/.test(ps));
 
 console.log(`\n${passed} passed, ${failed} failed`);
