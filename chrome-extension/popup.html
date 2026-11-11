@@ -25,7 +25,7 @@
         <!-- 2026-11-11 竹内さん「でていない。ブレインの左側にわかりやすいようにだす」:
              画面の録画の許可（<all_urls>）が**未許可の時だけ**、ブレインのすぐ左に**オレンジのボタン**を出す。
              許可すると消える（許可済みなら何も出ない＝邪魔しない）。 -->
-        <button type="button" id="perm-rec-btn" style="display:inline-block;background:#f59e0b;border:none;border-radius:14px;padding:5px 8px;color:#fff;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap;box-shadow:0 2px 8px rgba(245,158,11,.55);animation:axlxPermPulse 1.6s ease-in-out infinite" title="画面の録画を許可する（操作のたびに画面の写真を残す・PCごとに1回）">🎬 録画</button>
+        <button type="button" id="perm-rec-btn" style="display:inline-block;background:#f59e0b;border:none;border-radius:14px;padding:5px 8px;color:#fff;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap;box-shadow:0 2px 8px rgba(245,158,11,.55);animation:axlxPermPulse 1.6s ease-in-out infinite" title="押すと画面の録画を許可できます（操作のたびに画面の写真を残す・PCごとに1回）">🎬 許可する</button>
         <button type="button" id="brain-toggle" class="brain-toggle" aria-pressed="false" title="ブレイン：送る物件をお客様の条件・過去の物件出し・利益（AD−割引）で判定し、AIXツールに記録する。AIXツールの一括検索も受け取る（スタッフの時は受け取らない）（通常／スタッフ／AIX連動のどれとも組み合わせられる）">🧠 ブレイン</button>
         <!-- 2026-10-06 v2.5.75 竹内「拡張ツールのここのアナウンス不要 目に悪いのと、情報量多くて紛らわしいため」:
              モードの帯（青い帯）をやめ、今の動きの説明はここの小さな灰色の印にマウスを乗せた時だけ出す（一時停止中は ⏸） -->
@@ -70,17 +70,19 @@
       <button type="button" id="snap-perm-btn" style="display:none;padding:0 6px;font-size:10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;cursor:pointer">画面の共有を許可</button>
     </div>
 
-    <!-- 2026-11-11 竹内さん「録画の許可のボタン表示されていないので表示されるようにする」:
-         許可が無い時だけ**目立つ帯**を出す（黄色・大きなボタン・何のための許可かを書く）。
-         許可すると消える。押した時に Chrome のダイアログが出ない環境（小窓の iframe）では手順を出す。 -->
-    <div id="snap-perm-banner" style="display:none;align-items:flex-start;gap:8px;margin:0 8px 6px;padding:8px 10px;background:#fffbeb;border:2px solid #f59e0b;border-radius:10px;font-size:11px;line-height:1.5;color:#78350f">
-      <div style="flex:1;min-width:0">
+    <!-- 2026-11-11 竹内さん「許可の部分出てないからそこも改善する」:
+         旧は横並び（説明｜許可する｜出ない時）で、狭い小窓だと**右の「許可する」が押し出されて切れていた**。
+         → **縦積み**にして、ボタンを**説明の下**に置く（幅が狭くても必ず見える）。 -->
+    <div id="snap-perm-banner" style="display:none;flex-direction:column;gap:6px;margin:0 8px 6px;padding:8px 10px;background:#fffbeb;border:2px solid #f59e0b;border-radius:10px;font-size:11px;line-height:1.5;color:#78350f;flex:0 0 auto">
+      <div style="min-width:0">
         <div style="font-weight:800;margin-bottom:2px">🎬 画面の録画を許可してください</div>
         <div style="font-size:10px;color:#92400e">許可すると、操作のたびに画面の写真が残り「検索を押せたか」を後から確かめられます。PCごとに1回だけです。</div>
         <div id="snap-perm-hint" style="display:none;font-size:10px;color:#b91c1c;margin-top:4px;white-space:pre-line"></div>
       </div>
-      <button type="button" id="snap-perm-banner-btn" style="flex:none;padding:6px 12px;font-size:12px;font-weight:800;border:none;border-radius:8px;background:#f59e0b;color:#fff;cursor:pointer;box-shadow:0 2px 6px rgba(245,158,11,.4)">許可する</button>
-      <button type="button" id="snap-perm-open-ext" style="flex:none;padding:4px 8px;font-size:10px;border:1px solid #f59e0b;border-radius:8px;background:#fff;color:#b45309;cursor:pointer" title="許可の画面が出ない時に、拡張の管理画面を開いて許可する">出ない時</button>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button type="button" id="snap-perm-banner-btn" style="flex:1 1 auto;min-width:110px;padding:8px 14px;font-size:13px;font-weight:800;border:none;border-radius:8px;background:#f59e0b;color:#fff;cursor:pointer;box-shadow:0 2px 6px rgba(245,158,11,.4)">許可する</button>
+        <button type="button" id="snap-perm-open-ext" style="flex:0 0 auto;padding:8px 10px;font-size:11px;border:1px solid #f59e0b;border-radius:8px;background:#fff;color:#b45309;cursor:pointer" title="許可の画面が出ない時に、拡張の管理画面を開いて許可する">出ない時</button>
+      </div>
     </div>
 
     <!-- ▼ VIEW 1: お客さん一覧 -->

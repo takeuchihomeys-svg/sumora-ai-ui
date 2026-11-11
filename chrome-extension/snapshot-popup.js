@@ -53,11 +53,11 @@
         recBtn.style.animation = "none";
         recBtn.title = "画面の録画は許可済みです（操作のたびに画面の写真が残ります）";
       } else {
-        recBtn.textContent = "🎬 録画";
+        recBtn.textContent = "🎬 許可する";
         recBtn.style.background = "#f59e0b";
         recBtn.style.boxShadow = "0 2px 8px rgba(245,158,11,.55)";
         recBtn.style.animation = "axlxPermPulse 1.6s ease-in-out infinite";
-        recBtn.title = "画面の録画を許可する（操作のたびに画面の写真を残す・PCごとに1回）";
+        recBtn.title = "押すと画面の録画を許可できます（操作のたびに画面の写真を残す・PCごとに1回）";
       }
     }
     // 帯（説明）は未許可の時だけ（許可済みなら邪魔しない）
