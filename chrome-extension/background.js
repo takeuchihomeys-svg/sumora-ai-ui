@@ -1955,19 +1955,21 @@ if (msg.type === "axlx-human-shot") {
        *   ・表には名前（shot_key）だけ。中身は Storage。
        */
       if (msg.upload !== false) {
-        setTimeout(function () {
-          try {
-            chrome.runtime.sendMessage({
-              type: "axlx-human-shot-upload",
-              site: msg.site || null,
-              what: msg.what || null,
-              kind: msg.kind || null,
-              x: msg.x, y: msg.y,
-              run_id: _shotRun, seq: _shotSeq,
-              data_url: dataUrl,
-            }, function () { void chrome.runtime.lastError; });
-          } catch (_) {}
-        }, 120);
+        /**
+         * 2026-11-11 竹内さん「しゃしんとれたかな」→ 0枚。
+         *   ⚠ 旧は `chrome.runtime.sendMessage({type:"axlx-human-shot-upload"})` で**自分自身に**送っていた。
+         *     送信元が自分だと `onMessage` は発火しないので、**アップロードが一度も動いていなかった**。
+         *   → キューの関数を**直接**呼ぶ（メッセージを通さない）。
+         */
+        try {
+          if (_shotUploadQueue.length > 40) _shotUploadQueue.shift();
+          _shotUploadQueue.push({
+            data_url: dataUrl, site: msg.site || null, what: msg.what || null,
+            kind: msg.kind || null, x: msg.x, y: msg.y,
+            mode: null, run_id: _shotRun, seq: _shotSeq,
+          });
+          _pumpShotUpload();
+        } catch (_) {}
       }
 
       // 古い物から消す（全体の上限）
@@ -2027,9 +2029,15 @@ function _pumpShotUpload() {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(20000),
       });
-      if (!res.ok) console.warn("[human-shot] 上げられませんでした:", res.status);
+      if (!res.ok) {
+        console.warn("[human-shot] 上げられませんでした:", res.status);
+        try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: false, status: res.status, at: Date.now() } }); } catch (_) {}
+      } else {
+        try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: true, status: 200, at: Date.now(), key: job.run_id } }); } catch (_) {}
+      }
     } catch (e) {
       console.warn("[human-shot] 上げる時のエラー:", (e && e.message) || e);
+      try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: false, error: String((e && e.message) || e), at: Date.now() } }); } catch (_) {}
     } finally {
       _shotUploading = false;
       if (_shotUploadQueue.length) _pumpShotUpload();
