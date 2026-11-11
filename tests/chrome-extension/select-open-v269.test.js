@@ -15,8 +15,11 @@ function ok(name, cond, extra) { if (cond) { passed++; console.log("  ✓ " + na
 const ps = read("page-script.js");
 
 console.log("■ ① プルダウンは押して開いて選ぶ");
-ok("chooseSelectLikeHuman がある", /function chooseSelectLikeHuman\(el, val\)/.test(ps));
-ok("queueSelVal が chooseSelectLikeHuman を使う", /_enqueueWithEl\(el, function \(\) \{ return chooseSelectLikeHuman\(el, val\); \}/.test(ps));
+ok("chooseSelectLikeHuman がある", /function chooseSelectLikeHuman\(el, val, opts\)/.test(ps));
+ok("queueSelVal が chooseSelectLikeHuman を使う", /_enqueueWithEl\(el, function \(\) \{ return chooseSelectLikeHuman\(el, val, \{ forceOpen: true \}\); \}/.test(ps));
+// 2026-11-11 竹内さん「徒歩の部分もまずおして展開された中の徒歩をおすながれ。時間差も人間が押すように」
+ok("徒歩（移動手段）は待ちを長くする", /_isTransport \? 1400 : 900/.test(ps) && /_isTransport \? 2600 : 1600/.test(ps));
+ok("値で見つからなければ文字（徒歩）でも探す", /_ot === _wantText \|\| \(_wantText\.length >= 1 && _ot\.indexOf\(_wantText\) === 0\)/.test(ps));
 
 console.log("\n■ ② 開く→見る→移る→確定→閉じを見届ける");
 ok("欄を押して開く（mousedown/mouseup/click）", /fire\("mousedown", \{ buttons: 1 \}\);\s*fire\("mouseup"\);\s*fire\("click"\);/.test(ps));

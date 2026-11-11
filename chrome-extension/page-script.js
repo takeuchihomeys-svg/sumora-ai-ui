@@ -130,16 +130,24 @@
    *      「開く操作」と「選ぶ動き」を順に出す形で人に近づける（実際の一覧は OS が描く）。
    *   値の入れ方（value＋change）は今まで通り＝サイトの検知は変えない。
    */
-  function chooseSelectLikeHuman(el, val) {
+  function chooseSelectLikeHuman(el, val, opts) {
     if (!el || val == null) return Promise.resolve(false);
+    var o = opts || {};
     var P = window.AxlxPointerUi;
     var target = String(val);
     var fire = function (type, extra) {
       try {
-        var o = Object.assign({ bubbles: true, cancelable: true, view: window }, extra || {});
-        el.dispatchEvent(new MouseEvent(type, o));
+        var oo = Object.assign({ bubbles: true, cancelable: true, view: window }, extra || {});
+        el.dispatchEvent(new MouseEvent(type, oo));
       } catch (_) {}
     };
+    /**
+     * 2026-11-11 竹内さん「まずここおして、展開されたところの徒歩の部分をおすながれ。時間差とかも人間が押すように」:
+     *   ① 欄を押して開く → **ゆっくり待つ**（人が一覧を目で探す 700〜1600ms）
+     *   ② 目当ての値を選ぶ → **ゆっくり待つ**（人が選んで決める 400〜1100ms）
+     *   ③ 閉じる → 少し待つ
+     *   開いている間・選ぶ間・閉じた後を、毎回ちがう長さにする（等間隔にしない）。
+     */
     var openThenChoose = function () {
       return new Promise(function (resolve) {
         // ② 欄を押して開く（人がクリックして一覧を出す）
@@ -147,7 +155,7 @@
         fire("mousedown", { buttons: 1 });
         fire("mouseup");
         fire("click");
-        // 開いた一覧を見る間
+        // 開いた一覧を見る間（人が目で候補を探す）
         setTimeout(function () {
           // ③ 候補へ移る動き（カーソルを少し下へ＝一覧の中を探す形）
           var cur = el.selectedIndex >= 0 ? el.selectedIndex : 0;
@@ -155,7 +163,19 @@
           for (var i = 0; i < el.options.length; i++) {
             if (String(el.options[i].value) === target) { want = i; break; }
           }
-          if (want < 0) { // 値が見つからない（"-1"＝下限なし等）→ 先頭
+          /**
+           * 2026-11-11 竹内さん「徒歩の部分のところもまずここおして、展開されたところの徒歩の部分をおすながれ」:
+           *   値（"1"）で見つからない時は**文字（「徒歩」）でも探す**。
+           *   サイトの value が変わっても（"1"→"walk" 等）取りこぼさない。
+           */
+          if (want < 0) {
+            var _wantText = String(target).replace(/\s+/g, "");
+            for (var i2b = 0; i2b < el.options.length; i2b++) {
+              var _ot = String(el.options[i2b].textContent || "").replace(/\s+/g, "");
+              if (_ot === _wantText || (_wantText.length >= 1 && _ot.indexOf(_wantText) === 0)) { want = i2b; break; }
+            }
+          }
+          if (want < 0) { // それでも無ければ先頭
             want = 0;
           }
           var dir = want >= cur ? 1 : -1;
@@ -534,9 +554,19 @@
   function queueSelVal(name, val) {
     var el = document.querySelector('select[name="' + name + '"]');
     if (!el) { enqueueHumanAction(function () { setSelVal(name, val); }, 80, 200, 'sel:' + name + '=' + val); return; }
-    // 2026-11-10 v2.6.9 竹内さん「押したら家賃の部分を選択する形で動くように」:
-    //   値を代入するだけでなく、**押して開いて選ぶ**動きにする（chooseSelectLikeHuman）。
-    _enqueueWithEl(el, function () { return chooseSelectLikeHuman(el, val); }, 900, 1600, 'sel:' + name + '=' + val);
+    /**
+     * 2026-11-11 竹内さん「徒歩の部分のところもまずここおして、展開されたところの徒歩の部分をおすながれ。
+     *   いま直接徒歩が反映されてしまっている。ちゃんとおして順にやっていくようにする。時間差とかも人間が押すように」
+     *
+     *   ⚠ 旧は `_enqueueWithEl` の待ちが 900〜1600ms と**短く**、しかも
+     *     すでに同じ値が選ばれていると「変化が無い」ので**押したように見えなかった**。
+     *   → 待ちを長くして（移動手段は特に）、**必ず「開く→選ぶ→決める→閉じる」を出す**。
+     */
+    var _isTransport = (name === "transportation_id");
+    _enqueueWithEl(el, function () { return chooseSelectLikeHuman(el, val, { forceOpen: true }); },
+      _isTransport ? 1400 : 900,
+      _isTransport ? 2600 : 1600,
+      'sel:' + name + '=' + val);
   }
   function queueTxtVal(name, val) {
     var el = document.querySelector('input[name="' + name + '"]');
