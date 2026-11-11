@@ -2962,6 +2962,15 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-11 作業員1（A1・弱い所 326 の system の側②）: 聞かれていなくても、主のお部屋の資料に書いてある入居時期・保証会社・礼金敷金 等を参考の材料に（BRAIN_FOCUS_DOC_DIGEST=on の時だけ・既定 off）
   // 11/11 a1-doc-dig2-1111: 主のお部屋が無い番（送った直後の「気になります」等）は物件ごとの台帳の今の番の物件（引用・名指し／主語の抜けた番の1件）を対象に（threadDocTarget）。
   //   「一番新しく送った物件」は q404 で取り違えた（お客様の言う長居東でなく直近のサンシエ南巽）ので使わない。複数・不明は出さない
+  // 2026-11-11 作業員1（弱い所 573・574）: 電話の後・内覧の後のスタッフの手打ちのお礼の1通から、決まった日程・新しい条件・確認の約束・申込する部屋を材料に
+  //   （保存の欄は使われていない: 電話終了後 AIX 0回・内覧の記録 3/135）。OFFLINE_RESULT_MATERIAL=on の時だけ（既定 off）
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const { loadOfflineResultLineWithin } = await import("@/app/lib/offline-result-server");
+      const offlineLine = await loadOfflineResultLineWithin(5_000, conversationId);
+      if (offlineLine) customerStateBlockText += `\n\n${offlineLine}`;
+    } catch (e) { console.warn("[brain-core] offline-result skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-11-11 作業員1（KB 決定 親 P0 ecd7b961・対象の一致 12/30）: お客様が URL・物件の画像だけを送り本文に物件名が無い番は、今の番の物件が空だった。
   //   既にある読み取り（画像の書き起こし・共有文・SUUMO のページ）と、こちらが送った部屋の指紋（㎡・間取り・家賃）から物件名・号室を決め、
   //   材料の1行と資料の写しの対象（threadDocTarget の前段）に入れる。TURN_SHARED_PROPERTY_TARGET=on の時だけ（既定 off）
