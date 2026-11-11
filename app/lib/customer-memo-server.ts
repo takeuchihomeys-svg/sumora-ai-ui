@@ -22,6 +22,7 @@ import {
 } from "@/app/lib/customer-memo";
 import { buildMoodFlowNote, moodFlowEnabled, resolveMoodFlow, type MoodFlow } from "@/app/lib/customer-mood-flow";
 import { buildPrevLeadNote, turnReadMode } from "@/app/lib/turn-read";
+import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
 import { buildPaymentTimingNote, extractMoneyReady, paymentTimingEnabled, planApplyTiming, paymentTimingCoreText, type MoneyReady, type ApplyPlan } from "@/app/lib/payment-timing";
 // 2026-10-09 竹内さん「決め手の残りはメモとブレインの両方に同じ値で置く」: 決まった計算（customer-mindset.readDecideGaps）を保存せず毎回組み立てる（鮮度は常に今）
 import { readDecideGaps, buildDecideGapNote, buildMindsetReplyLinesNote, decideGapEnabled, decideGapLine, hesitationKindOf, type DecideGap, type BrainGap } from "@/app/lib/customer-mindset";
@@ -189,7 +190,9 @@ export async function customerMemoNoteFor(conversationId: string, o: { scene?: s
   // 2026-10-28 台帳から写した行（ledger:）はブレインには台帳の結び付けで渡す＝メモの注記では省く（二重にしない・SENT_LEDGER_BIND が on の時）
   const noteMemo = sentLedgerBindEnabled() ? { ...forNote(b.memo), items: forNote(b.memo).items.filter((x) => !isLedgerMemoItem(x)) } : forNote(b.memo);
   const memoNote = customerMemoEnabled() ? buildCustomerMemoNote({ memo: noteMemo, told: b.told, scene: o.scene, nowMs: now }) : "";
-  const moodNote = moodFlowEnabled() ? buildMoodFlowNote(b.mood, { prevEmotions: b.prevEmotions }).trim() : "";
+  // 2026-11-11 作業員14: TURN_READ=on の時、お礼・了承だけの一通では前回までの気持ちを渡さない（持ち越しの直し・KB 542e92c9）
+  const ackNoCarry = turnReadMode() === "on" && isAckOnlyTurn(b.lastCustomerTurn);
+  const moodNote = moodFlowEnabled() ? buildMoodFlowNote(b.mood, { prevEmotions: b.prevEmotions, ackOnly: ackNoCarry }).trim() : "";
   const payNote = buildPaymentTimingNote(b.money, { nowMs: now, desiredMoveInMs: b.desiredMoveInMs, scene: o.scene, customerName: o.customerName });
   // 10/08 A/B の判断（ブレインが B の時に申込へを外す・返信の方向に使う）。条件の場面では出さない（注記と同じ）
   const plan = payNote && b.money ? planApplyTiming({ moneyDayMs: b.money.fromDayMs, nowMs: now, desiredMoveInMs: b.desiredMoveInMs }) : null;

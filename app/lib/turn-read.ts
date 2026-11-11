@@ -8,15 +8,16 @@
 //   - お客様が直前のこちらの誘導に応じた番 19/30 のうち、ブレインが答えとして読んだのは 15。誘導を読む材料が無い（cta-guidance・appeal-timing は締めを決めるだけ）
 //   - お礼・了承の番を「刺さっている」「安くしたい」と読む（前の番の気持ちの持ち越し）10/30
 // 決め打ちにしない（P0「判断はすべてブレイン基準」）: ここは候補の網（直前の誘導の語）と、ブレインの出力の欄の形・記録の短い形だけ。
-// 切替: TURN_READ = off（既定）| log（ブレインの今ある読み＝turn_contract の about/property・latent_intent を digest に残すだけ）| on（log ＋ ブレインに欄と【直前のこちらの誘導】を渡す）
+// 切替: TURN_READ = off | log（既定・11/11〜）（ブレインの今ある読み＝turn_contract の about/property・latent_intent を digest に残すだけ）| on（log ＋ ブレインに欄と【直前のこちらの誘導】を渡す）
 // テスト: app/lib/__tests__/turn-read.test.ts
 
 type Env = Record<string, string | undefined>;
 const envOf = (env?: Env): Env => env ?? (typeof process !== "undefined" ? process.env : {});
 export type TurnReadMode = "off" | "log" | "on";
+// 2026-11-11 統括役の OK（記録だけなので判断は変えない）: 既定は log。止める TURN_READ=off・ブレインに渡す TURN_READ=on
 export function turnReadMode(env?: Env): TurnReadMode {
   const v = (envOf(env).TURN_READ ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "log" ? "log" : "off";
+  return v === "on" ? "on" : v === "off" ? "off" : "log";
 }
 
 // ─── 欄の値 ─────────────────────────────────────────────
@@ -33,12 +34,43 @@ export type LeadKind = typeof LEAD_KINDS[number];
 export const LEAD_ANSWERS = ["応じた", "断った・先送り", "別の話", "関係なし"] as const;
 export type LeadAnswer = typeof LEAD_ANSWERS[number];
 
+// ─── 気持ちの細かい型（11/11 竹内さん KB 542e92c9「気持ちも実際のやり取りから細かく細分化しておく。質低いのは細分化できていないから」）
+//   元の状態（customer-mindset の12種）×何に対してか（object）×どれくらいか（degree）。object の並びは KB の例と竹内さんの番389の多数決（scripts/audit-turn-read-1111.ts --phase=mood-gold）から。
+export const MOOD_OBJECTS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  刺さっている: ["家賃", "広さ・間取り", "駅・場所", "新しさ・綺麗さ", "設備", "初期費用", "写真・見た目", "物件全体"],
+  興味が薄い: ["予算が合わない", "場所が合わない", "広さ・間取りが合わない", "設備が合わない", "築年・古さ", "提案全体がまだ"],
+  急いでいる: ["退去日・今の家", "転勤・就職・入学", "他社と同時進行", "理由は言っていない"],
+  審査の不安: ["職業・収入", "勤続・転職", "保証人・保証会社", "過去の滞納・信用", "年齢・その他"],
+  先に取られる不安: ["人気の物件", "入居日が先", "迷っている間"],
+  抑えたい: ["申込したい", "仮押さえ・審査だけ先に", "決めたいが条件付き"],
+  安くしたい: ["初期費用", "家賃", "礼金・敷金", "仲介手数料", "総額の確かめ"],
+  内覧したい: ["日を出してきた", "見られるか聞いた", "複数まとめて見たい"],
+  時間が無い: ["仕事で都合がつかない", "遠方", "先の日になる"],
+  迷い: ["複数の物件で", "他社・他の物件と", "家族・同居人と相談", "時期・入居日で", "条件の優先で"],
+  "不満・離れかけ": ["返事・対応", "物件が無い・合わない", "費用が高い", "他で決めた・見送り"],
+  普通の依頼: ["了承・お礼（こちらの送信への受け）", "条件の提示・言い直し", "物件・設備の質問", "費用・手続きの質問", "日程の連絡", "持ち込み物件の確認"],
+};
+export const MOOD_DEGREES = ["弱い", "中", "強い"] as const;
+export type MoodRead = { base: string; object: string; degree: (typeof MOOD_DEGREES)[number] };
+
 export type TurnRead = {
   target: { kind: TurnTargetKind; property: string | null; detail: string | null; how: "言った" | "文脈から" | null };
   intent: TurnIntent; intent2: TurnIntent | null;
   lead: { kind: LeadKind; answer: LeadAnswer } | null;
   feeling: string | null;
+  mood: MoodRead | null;
 };
+/** 生の mood を型に直す（base が12種に無ければ null・object が表に無ければ「その他」） */
+export function normalizeMoodRead(raw: unknown): MoodRead | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const base = typeof o.base === "string" ? o.base.trim() : "";
+  const objs = MOOD_OBJECTS[base]; if (!objs) return null;
+  const ob = typeof o.object === "string" ? o.object.trim() : "";
+  const degree = (MOOD_DEGREES as readonly string[]).includes(String(o.degree)) ? (o.degree as MoodRead["degree"]) : "中";
+  return { base, object: objs.includes(ob) ? ob : "その他", degree };
+}
+export const MOOD_FIELD_TEXT = `"mood": {"base": "${Object.keys(MOOD_OBJECTS).join("|")}", "object": base ごとの何に対してか（${Object.entries(MOOD_OBJECTS).map(([b, os]) => `${b}＝${os.join("/")}`).join("；")}）, "degree": "${MOOD_DEGREES.join("|")}（気になる程度＝弱い・かなり＝中・決めたい／強く困っている＝強い）"}`;
 
 // ─── 直前のこちらの誘導（候補の網・語だけ。どれが効いているかはブレインが決める） ───────────
 const LEAD_RES: ReadonlyArray<[LeadKind, RegExp]> = [
@@ -95,7 +127,7 @@ export function buildPrevLeadNote(msgs: ReadonlyArray<LeadMsg>): string {
 }
 
 // ─── ブレインの出力の欄 ─────────────────────────────────────
-export const TURN_READ_BRAIN_FIELD = `"turn_read"（お客様の今の一通を細かく読む。{"target": {"kind": "${TURN_TARGET_KINDS.join("|")}", "property": "物件の事なら物件名と号室（会話・送った束の表記のまま）・無ければ null", "detail": "細かい対象 25字（どの設備・どの費用の項目・どの日の内覧・どの約束）", "how": "言った|文脈から"}, "intent": "${TURN_INTENTS.join("|")} から一番の意図", "intent2": "2番目か null", "lead": 直前のこちらの誘導があれば {"kind": "${LEAD_KINDS.join("|")}", "answer": "${LEAD_ANSWERS.join("|")}"}・無ければ null, "feeling": "気持ちの中身 25字（どの程度気に入っているか・何が不安か・迷いの中身）"}。読み方: 対象を言っていない時は直前のこちらの送信・開いている約束・今の番の物件から決める（「ここ」「予算オーバー」「駐車場は？」の主語）。物件を送った後の「よろしくお願いします」「拝見します」は物件への感想ではなく直前の送信への了承（kind=こちらの約束の結果・intent=お礼・了承）。URL・資料の画像だけの持ち込みは kind=持ち込み物件。お礼・了承だけの番に、前の番の気持ち（刺さっている・安くしたい・審査の不安）を持ち越さない＝"mindset" の state も今の一通で決め、了承だけなら 普通の依頼）`;
+export const TURN_READ_BRAIN_FIELD = `"turn_read"（お客様の今の一通を細かく読む。{"target": {"kind": "${TURN_TARGET_KINDS.join("|")}", "property": "物件の事なら物件名と号室（会話・送った束の表記のまま）・無ければ null", "detail": "細かい対象 25字（どの設備・どの費用の項目・どの日の内覧・どの約束）", "how": "言った|文脈から"}, "intent": "${TURN_INTENTS.join("|")} から一番の意図", "intent2": "2番目か null", "lead": 直前のこちらの誘導があれば {"kind": "${LEAD_KINDS.join("|")}", "answer": "${LEAD_ANSWERS.join("|")}"}・無ければ null, "feeling": "気持ちの中身 25字（どの程度気に入っているか・何が不安か・迷いの中身）", ${MOOD_FIELD_TEXT}}。mood.base は "mindset" の state と同じ値にする。読み方: 対象を言っていない時は直前のこちらの送信・開いている約束・今の番の物件から決める（「ここ」「予算オーバー」「駐車場は？」の主語）。物件を送った後の「よろしくお願いします」「拝見します」は物件への感想ではなく直前の送信への了承（kind=こちらの約束の結果・intent=お礼・了承）。URL・資料の画像だけの持ち込みは kind=持ち込み物件。お礼・了承だけの番に、前の番の気持ち（刺さっている・安くしたい・審査の不安）を持ち越さない＝"mindset" の state も今の一通で決め、了承だけなら 普通の依頼）`;
 export function turnReadOutputItem(env?: Env): string {
   return turnReadMode(env) === "on" ? `、${TURN_READ_BRAIN_FIELD}` : "";
 }
@@ -119,6 +151,7 @@ export function normalizeTurnRead(raw: unknown): TurnRead | null {
     intent, intent2: pickOf(TURN_INTENTS, o.intent2),
     lead: lk && la ? { kind: lk, answer: la } : null,
     feeling: short(o.feeling, 30),
+    mood: normalizeMoodRead(o.mood),
   };
 }
 
@@ -126,7 +159,7 @@ export function normalizeTurnRead(raw: unknown): TurnRead | null {
 /** turn_read → "種類|物件|意図|誘導:答え"（digest.tr） */
 export function turnReadDigest(tr: TurnRead | null | undefined): string | null {
   if (!tr) return null;
-  return [tr.target.kind, tr.target.property ?? "", tr.intent, tr.lead ? `${tr.lead.kind}:${tr.lead.answer}` : ""].join("|").slice(0, 120);
+  return [tr.target.kind, tr.target.property ?? "", tr.intent, tr.lead ? `${tr.lead.kind}:${tr.lead.answer}` : "", tr.mood ? `${tr.mood.base}/${tr.mood.object}/${tr.mood.degree}` : ""].join("|").slice(0, 160);
 }
 /** 今ある読み（turn_contract.asks の about・property）→ ["about:物件", …]（digest.ta・最大4） */
 export function askAboutDigest(turnContract: unknown): string[] | null {

@@ -2,11 +2,14 @@
 // 本文は竹内さんの番（scripts/audit-turn-read-1111.ts の 79f97cea・2cb0feb7・eb4e5d3b・伏せた物）から
 import { turnReadMode, leadCandidatesOf, lastStaffBurst, buildPrevLeadNote, normalizeTurnRead, turnReadDigest, askAboutDigest, turnReadDigestExtra, turnReadOutputItem } from "../turn-read";
 import { brainDecisionDigestExtra } from "../brain-decision-ledger";
+import { normalizeMoodRead, MOOD_OBJECTS } from "../turn-read";
+import { buildMoodFlowNote } from "../customer-mood-flow";
+import { isAckOnlyTurn } from "../ack-topic-scope";
 let passed = 0, failed = 0;
 function ok(cond: unknown, name: string) { if (cond) passed++; else { failed++; console.error(`✗ ${name}`); } }
 
 // 切替
-ok(turnReadMode({}) === "off", "既定 off");
+ok(turnReadMode({}) === "log" && turnReadMode({ TURN_READ: "off" }) === "off", "既定 log（記録だけ）・off で止める");
 ok(turnReadMode({ TURN_READ: "log" }) === "log" && turnReadMode({ TURN_READ: "ON" }) === "on", "log・on");
 ok(turnReadOutputItem({}) === "" && turnReadOutputItem({ TURN_READ: "log" }) === "", "off・log はプロンプトを1字も変えない");
 ok(turnReadOutputItem({ TURN_READ: "on" }).includes('"turn_read"'), "on は欄を足す");
@@ -42,16 +45,29 @@ ok(tr?.target.kind === "内覧の日・場所" && tr.lead?.answer === "応じた
 ok(normalizeTurnRead({ target: { kind: "物件" }, intent: "内覧したい" }) === null, "型の外れた種類は落とす");
 ok(normalizeTurnRead({ target: { kind: "送った物件", property: "null" }, intent: "お礼・了承", lead: { kind: "内覧", answer: "たぶん" } })?.target.property === null, "property の null 文字・答えの外れ");
 ok(normalizeTurnRead("x") === null && normalizeTurnRead(null) === null, "形の外れ");
-ok(turnReadDigest(tr) === "内覧の日・場所|レオンコンフォート難波南 1301|日程の調整・連絡|内覧:応じた", "digest.tr の形");
+ok(turnReadDigest(tr) === "内覧の日・場所|レオンコンフォート難波南 1301|日程の調整・連絡|内覧:応じた|", "digest.tr の形（mood なし）");
+// 気持ちの細かい型（KB 542e92c9）
+const trM = normalizeTurnRead({ target: { kind: "送った物件" }, intent: "もっと良い部屋・別の物件も見たい", mood: { base: "興味が薄い", object: "予算が合わない", degree: "強い" } });
+ok(trM?.mood?.object === "予算が合わない" && trM.mood.degree === "強い", "mood は型どおり残す");
+ok(turnReadDigest(trM)!.endsWith("|興味が薄い/予算が合わない/強い"), "digest.tr に mood");
+ok(normalizeMoodRead({ base: "刺さっている", object: "眺望", degree: "最高" })?.object === "その他" && normalizeMoodRead({ base: "刺さっている", object: "眺望", degree: "最高" })?.degree === "中", "表に無い object・degree");
+ok(normalizeMoodRead({ base: "嬉しい" }) === null, "12種に無い base は落とす");
+ok(Object.keys(MOOD_OBJECTS).length === 12 && turnReadOutputItem({ TURN_READ: "on" }).includes('"mood"'), "12種すべてに object・on の欄に mood");
+// 持ち越しの直し: お礼・了承だけの一通は前回までの気持ちを並べない
+const flowAck = buildMoodFlowNote({ changes: ["返事が早い"], signals: {}, reaction: null } as never, { prevEmotions: ["安くしたい", "刺さっている"], ackOnly: true });
+ok(flowAck.includes("引き継がない") && !flowAck.includes("安くしたい→"), "ackOnly は前回の気持ちを並べない");
+ok(buildMoodFlowNote({ changes: ["返事が早い"], signals: {}, reaction: null } as never, { prevEmotions: ["安くしたい"] }).includes("前回までの気持ち"), "既定は今まで通り");
+ok(isAckOnlyTurn("よろしくお願いいたします") && !isAckOnlyTurn("プレサンス立売堀アーバンスタイルが場所的にちょっと高いかと"), "お礼・了承の見分け（実物）");
 ok(JSON.stringify(askAboutDigest({ asks: [{ about: "viewing_day", property: "レオンコンフォート難波南 1301" }, { topic: "審査の相談" }] })) === JSON.stringify(["viewing_day:レオンコンフォート難波南 1301", "t:審査の相談"]), "digest.ta の形");
 ok(askAboutDigest({ asks: [] }) === null && askAboutDigest(null) === null, "asks が無ければ null");
 
 // 記録: off は何も足さない・log は今ある読み・on は turn_read も
 const meta = { turn_contract: { asks: [{ about: "viewing_day", property: "X 101" }] }, latent_intent: "内覧は楽しみだが審査が不安", turn_read: { target: { kind: "内覧の日・場所" }, intent: "日程の調整・連絡" } };
-ok(Object.keys(turnReadDigestExtra(meta, {})).length === 0, "off は digest を変えない");
+ok(Object.keys(turnReadDigestExtra(meta, { TURN_READ: "off" })).length === 0, "off は digest を変えない");
+ok(turnReadDigestExtra(meta, {}).ta?.[0] === "viewing_day:X 101" && !("tr" in turnReadDigestExtra({ ...meta, turn_read: undefined }, {})), "既定（log）は記録だけ");
 const lg = turnReadDigestExtra(meta, { TURN_READ: "log" });
 ok(lg.ta?.[0] === "viewing_day:X 101" && lg.li === "内覧は楽しみだが審査が不安", "log は ta・li");
-ok(!("tr" in brainDecisionDigestExtra(meta, {})) && !("ta" in brainDecisionDigestExtra(meta, {})), "配線: 既定 off の digest に足さない");
+ok(!("tr" in brainDecisionDigestExtra(meta, { TURN_READ: "off" })) && !("ta" in brainDecisionDigestExtra(meta, { TURN_READ: "off" })), "配線: off の digest に足さない");
 ok(brainDecisionDigestExtra(meta, { TURN_READ: "log" }).hasOwnProperty("ta"), "配線: log で digest.ta");
 
 console.log(`turn-read: ${passed} 通過・${failed} 失敗`);

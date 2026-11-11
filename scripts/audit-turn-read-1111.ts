@@ -137,6 +137,84 @@ async function build() {
   console.log(`  AIX あり ${turns.filter((x) => x.aix.length).length}・手の返信あり ${turns.filter((x) => x.takeuchi.length).length}・下書きあり ${turns.filter((x) => x.draft).length}・ブレインの記録あり ${turns.filter((x) => x.brain).length}`);
 }
 
+// ── 気持ちの細分化の材料（11/11 竹内さん KB 542e92c9「気持ちも実際のやり取りから細かく細分化しておく」）──────────
+// 入力: --cands=<json>（[{conversation_id, created_at＝お客様の束の最後の通}]・SQL で竹内さんの番を選んだ物）。会話ごとに最大 --per=2・--n 番まで。
+// ブレインの記録は古い番には無いので持たない。その後の進み（14日以内の内覧・30日以内の申込・7日以内の返事）だけ持つ（申込の中身は使わない）。
+export type MoodTurn = Turn & { after: { viewing14: boolean; applied30: boolean; replied7: boolean } };
+async function buildMood() {
+  const N = Number(arg("n", "300")); const PER = Number(arg("per", "2"));
+  const cands: Array<{ conversation_id: string; created_at: string }> = JSON.parse(fs.readFileSync(arg("cands", path.join(OUT, "mood-cands.json")), "utf8"));
+  const per = new Map<string, number>(); const picked: typeof cands = [];
+  for (const c of cands) { if (isTestConversation(c.conversation_id)) continue; const k = per.get(c.conversation_id) ?? 0; if (k >= PER) continue; per.set(c.conversation_id, k + 1); picked.push(c); }
+  const cids = [...new Set(picked.map((c) => c.conversation_id))];
+  const convs: Array<{ id: string; line_source_type: string | null; customer_name: string | null }> = [];
+  const outs: Array<{ conversation_id: string; applied_at: string | null; viewing_at: string | null }> = [];
+  const aix: Array<{ conversation_id: string; aix_type: string | null; check_pattern: string | null; sent_at: string | null }> = [];
+  const views: Array<{ conversation_id: string; created_at: string }> = [];
+  const msgs: M[] = [];
+  for (let i = 0; i < cids.length; i += 15) {
+    const ids = cids.slice(i, i + 15);
+    const [c, o, a, v, vh] = await Promise.all([
+      sb.from("conversations").select("id, line_source_type, customer_name").in("id", ids),
+      sb.from("deal_outcomes").select("conversation_id, applied_at, viewing_at").in("conversation_id", ids),
+      sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, sent_at").in("conversation_id", ids).not("sent_at", "is", null),
+      sb.from("viewings").select("conversation_id, created_at").in("conversation_id", ids),
+      sb.from("viewing_history").select("conversation_id, created_at").in("conversation_id", ids),
+    ]);
+    convs.push(...(c.data ?? [])); outs.push(...(o.data ?? [])); aix.push(...(a.data ?? [])); views.push(...(v.data ?? []), ...(vh.data ?? []));
+    msgs.push(...await all<M>((f) => sb.from("messages").select("id, conversation_id, sender, created_at, text, is_aix_generated, staff_writer").in("conversation_id", ids).gte("created_at", new Date(Date.now() - 215 * 86_400_000).toISOString()).order("created_at").order("id").range(f, f + 999)));
+    process.stdout.write(`\r  会話 ${Math.min(i + 15, cids.length)}/${cids.length}・通 ${msgs.length}`);
+  }
+  console.log("");
+  const convBy = new Map(convs.map((c) => [c.id, c]));
+  const appliedAt = new Map<string, number>(); for (const o of outs) if (o.applied_at) { const t = Date.parse(o.applied_at); const p = appliedAt.get(o.conversation_id); if (p == null || t < p) appliedAt.set(o.conversation_id, t); }
+  const viewBy = new Map<string, number[]>(); for (const v of views) (viewBy.get(v.conversation_id) ?? viewBy.set(v.conversation_id, []).get(v.conversation_id)!).push(Date.parse(v.created_at));
+  for (const o of outs) if (o.viewing_at) (viewBy.get(o.conversation_id) ?? viewBy.set(o.conversation_id, []).get(o.conversation_id)!).push(Date.parse(o.viewing_at));
+  const msgBy = new Map<string, M[]>(); for (const m of msgs) (msgBy.get(m.conversation_id) ?? msgBy.set(m.conversation_id, []).get(m.conversation_id)!).push(m);
+  const turns: MoodTurn[] = []; const skip: Record<string, number> = {}; const sk = (k: string) => { skip[k] = (skip[k] ?? 0) + 1; };
+  for (const c of picked) {
+    if (turns.length >= N) break;
+    const conv = convBy.get(c.conversation_id);
+    if (conv?.line_source_type === "group") { sk("グループ"); continue; }
+    const list0 = msgBy.get(c.conversation_id) ?? [];
+    const ap = appliedAt.get(c.conversation_id) ?? Infinity;
+    let cut = list0.length;
+    for (let i = 0; i < list0.length; i++) { const m = list0[i]; if (Date.parse(m.created_at) >= ap || (m.sender === "customer" && (applicationMaterialReason(m.text) || piiValueSignal(m.text)))) { cut = i; break; } }
+    const list = list0.slice(0, cut);
+    const j = list.findIndex((m) => m.sender === "customer" && Math.abs(Date.parse(m.created_at) - Date.parse(c.created_at)) < 2000);
+    if (j < 0) { sk("切った後・通が無い"); continue; }
+    let i0 = j; while (i0 - 1 >= 0 && list[i0 - 1].sender === "customer") i0--;
+    const k = j + 1;
+    if (k >= list.length || list[k].sender === "customer" || list[k].staff_writer !== "takeuchi") { sk("竹内さんの返事が無い"); continue; }
+    let e = k; while (e + 1 < list.length && list[e + 1].sender !== "customer") e++;
+    const resp = list.slice(k, e + 1);
+    const names = addressNamesOf(list.filter((m) => m.sender !== "customer").map((m) => m.text ?? ""));
+    const mask = (s: string | null) => maskExamText(s, conv?.customer_name ?? null, names);
+    const customer = list.slice(i0, j + 1).map((m) => mask(m.text)).filter(Boolean).join("\n").slice(0, 600);
+    if (!customer.trim() || /^\s*\[(?:スタンプ)\]\s*$/.test(customer)) { sk("空・スタンプ"); continue; }
+    const context = list.slice(Math.max(0, i0 - 6), i0).map((m) => `${m.sender === "customer" ? "【お客様】" : m.is_aix_generated ? "【こちら・AIX】" : "【こちら】"}${mask(m.text).replace(/\s+/g, " ").slice(0, 220)}`);
+    const takeuchi = resp.filter((m) => !m.is_aix_generated && (m.text ?? "").trim()).map((m) => mask(m.text).slice(0, 600));
+    const bEnd = Date.parse(list[j].created_at), respEnd = Date.parse(resp[resp.length - 1].created_at) + 60_000;
+    const ax = aix.filter((a) => a.conversation_id === c.conversation_id && Date.parse(a.sent_at!) >= bEnd - 60_000 && Date.parse(a.sent_at!) <= respEnd).map((a) => `${a.aix_type ?? "?"}${a.check_pattern ? `（${a.check_pattern}）` : ""}`);
+    const aixTexts = resp.filter((m) => m.is_aix_generated && !/^\s*\[画像\]\s*$/.test(m.text ?? "")).map((m) => `AIX文: ${mask(m.text).replace(/\s+/g, " ").slice(0, 180)}`);
+    if (!takeuchi.length && !ax.length && !aixTexts.length) { sk("中身なし"); continue; }
+    const respLast = respEnd - 60_000;
+    const nextCust = list0.slice(e + 1).find((m) => m.sender === "customer");
+    turns.push({
+      id: `${c.conversation_id.slice(0, 8)}-${list[i0].created_at.slice(0, 16)}`, cid: c.conversation_id, at: list[i0].created_at, scene: null,
+      context, customer, takeuchi, aix: [...ax, ...aixTexts], draft: null, blocks: null, brain: null,
+      after: {
+        viewing14: (viewBy.get(c.conversation_id) ?? []).some((v) => v > respLast && v - respLast <= 14 * 86_400_000),
+        applied30: ap !== Infinity && ap > respLast && ap - respLast <= 30 * 86_400_000,
+        replied7: !!nextCust && Date.parse(nextCust.created_at) - respLast <= 7 * 86_400_000,
+      },
+    });
+  }
+  fs.writeFileSync(path.join(OUT, "turnread-turns-mood.json"), JSON.stringify(turns, null, 1));
+  console.log(`竹内さんの番 ${turns.length}（会話 ${new Set(turns.map((x) => x.cid)).size}）・外した ${JSON.stringify(skip)}`);
+  console.log(`  14日以内の内覧 ${turns.filter((x) => x.after.viewing14).length}・30日以内の申込 ${turns.filter((x) => x.after.applied30).length}・7日以内の返事 ${turns.filter((x) => x.after.replied7).length}`);
+}
+
 // ── LLM（DeepSeek・伏せた文だけ） ─────────────────────────────
 const cost = { usd: 0, calls: 0, fail: 0 };
 async function deepseekJson(sys: string, user: string, temperature: number): Promise<Record<string, unknown> | null> {
@@ -319,6 +397,66 @@ async function lead() {
   console.log(`\nDeepSeek ${cost.calls} 回・$${cost.usd.toFixed(4)}・失敗 ${cost.fail}`);
 }
 
+// ── 気持ちの細かい型（KB 542e92c9 の例をそのまま軸に・3票の多数決は base と object） ─────────────
+export const MOOD_OBJECTS: Record<string, string[]> = {
+  刺さっている: ["家賃", "広さ・間取り", "駅・場所", "新しさ・綺麗さ", "設備", "初期費用", "写真・見た目", "物件全体"],
+  興味が薄い: ["予算が合わない", "場所が合わない", "広さ・間取りが合わない", "設備が合わない", "築年・古さ", "提案全体がまだ"],
+  急いでいる: ["退去日・今の家", "転勤・就職・入学", "他社と同時進行", "理由は言っていない"],
+  審査の不安: ["職業・収入", "勤続・転職", "保証人・保証会社", "過去の滞納・信用", "年齢・その他"],
+  先に取られる不安: ["人気の物件", "入居日が先", "迷っている間"],
+  抑えたい: ["申込したい", "仮押さえ・審査だけ先に", "決めたいが条件付き"],
+  安くしたい: ["初期費用", "家賃", "礼金・敷金", "仲介手数料", "総額の確かめ"],
+  内覧したい: ["日を出してきた", "見られるか聞いた", "複数まとめて見たい"],
+  時間が無い: ["仕事で都合がつかない", "遠方", "先の日になる"],
+  迷い: ["複数の物件で", "他社・他の物件と", "家族・同居人と相談", "時期・入居日で", "条件の優先で"],
+  "不満・離れかけ": ["返事・対応", "物件が無い・合わない", "費用が高い", "他で決めた・見送り"],
+  普通の依頼: ["了承・お礼（こちらの送信への受け）", "条件の提示・言い直し", "物件・設備の質問", "費用・手続きの質問", "日程の連絡", "持ち込み物件の確認"],
+};
+export const MOOD_DEGREES = ["弱い", "中", "強い"] as const;
+const ROLES_T = ["受け止め・お礼", "共感", "安心させる", "障壁を下げる", "情報を答える", "約束する", "内覧へ", "申込・抑えへ", "物件を送る・探す", "関係をつなぐ"] as const;
+const MOOD_SYS = [
+  "あなたは大阪の賃貸仲介の LINE を読む担当。お客様の今の一通の気持ちを、お部屋探しに特化した細かい型で読む。竹内さん（スタッフ）の実際の返信・AIX も手掛かり（竹内さんがどう受けたかで気持ちを逆に読む）。",
+  "★今の一通と直前のこちらの送信だけから読む。前の番の気持ちを持ち越さない（こちらの送信・約束への「よろしくお願いします」「ありがとうございます」だけなら 普通の依頼／了承・お礼）。",
+  "base と object の組（base→選べる object）:",
+  ...Object.entries(MOOD_OBJECTS).map(([b, os]) => `- ${b}: ${os.join("|")}`),
+  "出す JSON:",
+  `{"base":"上の base から1つ","object":"その base の object から1つ（どれにも当たらなければ 'その他:10字'）","degree":"${MOOD_DEGREES.join("|")}（気になる程度＝弱い・かなり＝中・決めたい／強く困っている＝強い）","quote":"気持ちが出ている言葉 20字",`,
+  ` "roles":["竹内さんの返信・AIX の役目を順に（${ROLES_T.join("|")}）最大4"], "lead":"竹内さんの誘導先（${LEADS.join("|")}）"}`,
+  "出力は JSON だけ。",
+].join("\n");
+type MoodLabel = { base: string; object: string; degree: string; quote: string; roles: string[]; lead: string };
+function normMood(o: Record<string, unknown> | null): MoodLabel | null {
+  if (!o) return null;
+  const base = String(o.base ?? ""); if (!MOOD_OBJECTS[base]) return null;
+  let object = String(o.object ?? ""); if (!MOOD_OBJECTS[base].includes(object) && !object.startsWith("その他")) object = "その他";
+  return { base, object, degree: (MOOD_DEGREES as readonly string[]).includes(String(o.degree)) ? String(o.degree) : "中", quote: String(o.quote ?? "").slice(0, 30),
+    roles: Array.isArray(o.roles) ? (o.roles as unknown[]).map(String).filter((r) => (ROLES_T as readonly string[]).includes(r)).slice(0, 4) : [], lead: String(o.lead ?? "") };
+}
+async function moodGold() {
+  const file = arg("file", "turnread-turns-mood.json"); const outFile = path.join(OUT, `mood-gold-${file.replace(/^turnread-turns-?|\.json$/g, "") || "base"}.json`);
+  const turns: Turn[] = JSON.parse(fs.readFileSync(path.join(OUT, file), "utf8"));
+  const maxUsd = Number(arg("max-usd", "0.4"));
+  const done: Record<string, { votes: MoodLabel[]; type: string; typeVotes: number; base: string; degree: string; pick: MoodLabel }> = fs.existsSync(outFile) ? JSON.parse(fs.readFileSync(outFile, "utf8")) : {};
+  const todo = turns.filter((t) => !done[t.id]);
+  console.log(`${path.basename(outFile)}: 済み ${Object.keys(done).length}・残り ${todo.length}`);
+  for (let c = 0; c < todo.length; c += 6) {
+    if (cost.usd > maxUsd) { console.log(`上限 $${maxUsd} で止める`); break; }
+    await Promise.all(todo.slice(c, c + 6).map(async (t) => {
+      const user = turnText(t);
+      const full = normMood(await deepseekJson(MOOD_SYS, user, 0));
+      const votes: MoodLabel[] = full ? [full] : [];
+      for (let v = 1; v < 3; v++) { const g = normMood(await deepseekJson(MOOD_SYS, `${user}\n\n【今回は {"base":…,"object":…,"degree":…} の3つだけを JSON で出す】`, 0.7)); if (g) votes.push(full ? { ...full, base: g.base, object: g.object, degree: g.degree } : g); }
+      if (!votes.length) return;
+      const [type, tv] = major(votes.map((x) => `${x.base}／${x.object}`));
+      const pick = votes.find((x) => `${x.base}／${x.object}` === type) ?? votes[0];
+      done[t.id] = { votes, type, typeVotes: tv, base: major(votes.map((x) => x.base))[0], degree: major(votes.map((x) => x.degree))[0], pick };
+    }));
+    fs.writeFileSync(outFile, JSON.stringify(done, null, 1));
+    process.stdout.write(`\r  ${Math.min(c + 6, todo.length)}/${todo.length}・$${cost.usd.toFixed(3)}`);
+  }
+  console.log(`\nDeepSeek ${cost.calls} 回・$${cost.usd.toFixed(4)}・失敗 ${cost.fail}`);
+}
+
 function report() {
   const turns: Turn[] = JSON.parse(fs.readFileSync(TURNS_FILE, "utf8"));
   const golds: Record<string, GoldRec> = JSON.parse(fs.readFileSync(GOLD_FILE, "utf8"));
@@ -359,12 +497,67 @@ function report() {
   }
 }
 
+// ── 気持ちの当たりの前後（部品の試し: 本物のブレインは回さず、ブレインの気持ちの欄の指示と、本番と同じ形の前回の気持ちを渡して読ませる）
+//   before: MINDSET_BRAIN_FIELD＋プロファイルの温度感（前回）＋【気持ちの流れ】の前回までの気持ち
+//   after : 同じ＋turn_read の欄（mood の細かい型・持ち越さない一文）・お礼了承だけの一通は ackOnly の注記（customer-memo-server と同じ分け方）
+async function moodProbe() {
+  const variant = arg("variant", "before");
+  const { MINDSET_BRAIN_FIELD } = await import("../app/lib/customer-mindset");
+  const { TURN_READ_BRAIN_FIELD } = await import("../app/lib/turn-read");
+  const { buildMoodFlowNote } = await import("../app/lib/customer-mood-flow");
+  const { isAckOnlyTurn } = await import("../app/lib/ack-topic-scope");
+  const turns: Turn[] = JSON.parse(fs.readFileSync(TURNS_FILE, "utf8"));
+  const prev: Record<string, { now: string | null; prev: string[] }> = JSON.parse(fs.readFileSync(path.join(OUT, "turnread-prevms.json"), "utf8"));
+  const outFile = path.join(OUT, `mood-probe-${variant}.json`);
+  const done: Record<string, { state: string; base: string | null; object: string | null }> = fs.existsSync(outFile) ? JSON.parse(fs.readFileSync(outFile, "utf8")) : {};
+  const sys = [
+    "あなたは賃貸仲介のブレイン（今回の発言の層）。お客様の今の一通の気持ちを読み、JSON だけを出す。",
+    `出す項目: ${MINDSET_BRAIN_FIELD}${variant === "after" ? `、${TURN_READ_BRAIN_FIELD}` : ""}`,
+  ].join("\n");
+  const todo = turns.filter((t) => !done[t.id]);
+  for (let c = 0; c < todo.length; c += 8) {
+    if (cost.usd > Number(arg("max-usd", "0.08"))) break;
+    await Promise.all(todo.slice(c, c + 8).map(async (t) => {
+      const p = prev[t.id]?.prev ?? [];
+      const ack = variant === "after" && isAckOnlyTurn(t.customer);
+      const flow = buildMoodFlowNote({ changes: [], signals: {}, reaction: null } as never, { prevEmotions: p, ackOnly: ack });
+      const flowAlways = flow || (p.length ? `\n【気持ちの流れ（決まった計算・材料）】\n- 前回までの気持ち（ブレインの判断・古い→新しい）: ${p.join("→")}\n→ 今回の emotion は言葉だけでなくこの流れ（前回からの変化）も見て決める` : "");
+      const user = [p.length ? `【顧客プロファイル】\n- 温度感: ${p[p.length - 1]}` : "", `【直前の流れ】\n${t.context.join("\n")}`, ack ? flow : flowAlways, `【今回の発言】\n${t.customer}`].filter(Boolean).join("\n\n");
+      const o = await deepseekJson(sys, user, 0);
+      if (!o) return;
+      const ms = (o.mindset ?? {}) as Record<string, unknown>; const tr = (o.turn_read ?? {}) as Record<string, unknown>; const md = (tr.mood ?? {}) as Record<string, unknown>;
+      done[t.id] = { state: String(ms.state ?? ""), base: md.base ? String(md.base) : null, object: md.object ? String(md.object) : null };
+    }));
+    fs.writeFileSync(outFile, JSON.stringify(done, null, 1));
+  }
+  console.log(`${variant}: ${Object.keys(done).length} 番・DeepSeek ${cost.calls} 回・$${cost.usd.toFixed(4)}`);
+}
+
+// 100番それぞれの「前回までのブレインの気持ち」（その番の判断より前の判断の digest.ms の状態・古い→新しい・最大3）→ turnread-prevms.json
+async function prevMs() {
+  const turns: Turn[] = JSON.parse(fs.readFileSync(TURNS_FILE, "utf8"));
+  const out: Record<string, { now: string | null; prev: string[] }> = {};
+  for (const t of turns) {
+    const { data: lw } = await sb.from("line_watch_turns").select("decision_id").eq("conversation_id", t.cid).eq("customer_turn_at", t.at).limit(1);
+    const did = lw?.[0]?.decision_id; if (!did) continue;
+    const { data: d } = await sb.from("brain_decision_logs").select("created_at, digest").eq("id", did).limit(1);
+    if (!d?.[0]) continue;
+    const { data: p } = await sb.from("brain_decision_logs").select("digest").eq("conversation_id", t.cid).lt("created_at", d[0].created_at).order("created_at", { ascending: false }).limit(3);
+    const st = (g: unknown) => { const v = (g as Record<string, unknown> | null)?.ms; return typeof v === "string" ? v.split("|")[0] : ""; };
+    out[t.id] = { now: st(d[0].digest) || null, prev: (p ?? []).map((x) => st(x.digest)).filter(Boolean).reverse() };
+  }
+  fs.writeFileSync(path.join(OUT, "turnread-prevms.json"), JSON.stringify(out, null, 1));
+  console.log(`前回の気持ち ${Object.keys(out).length} 番・前回ありが ${Object.values(out).filter((x) => x.prev.length).length}`);
+}
+
 async function main() {
+  if (PHASE === "prevms") return prevMs();
   if (PHASE === "build") return build();
+  if (PHASE === "mood-build") return buildMood();
   if (PHASE === "report") return report();
   // LLM を呼ぶ段は共通の入口を通す（test_protocol_brain.md 5）。会話 id は付けない＝伏せた文だけを DeepSeek に送る読み取りの監査
   const { setupLlmTest } = await import("./lib/llm-test-harness");
   const h = await setupLlmTest(`audit-turn-read-${PHASE}`);
-  try { if (PHASE === "gold") await gold(); else if (PHASE === "judge") await judge(); else if (PHASE === "lead") await lead(); } finally { await h.finish(); }
+  try { if (PHASE === "gold") await gold(); else if (PHASE === "judge") await judge(); else if (PHASE === "lead") await lead(); else if (PHASE === "mood-gold") await moodGold(); else if (PHASE === "mood-probe") await moodProbe(); } finally { await h.finish(); }
 }
 main().catch((e) => { console.error(e); process.exitCode = 1; }).finally(() => setTimeout(() => process.exit(process.exitCode ?? 0), 500));
