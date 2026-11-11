@@ -337,6 +337,19 @@
   function _enqueueWithEl(el, fn, minGap, maxGap, label) {
     _clickQueue.push({ el: el, fn: fn, gap: humanRand(minGap || 80, maxGap || 200), label: label || _opLabel(el) });
     _scheduleClickDrain();
+    /**
+     * 2026-11-11 竹内さん「一連のうごきからちゃんと一息の部分入るようになっているか。人間のように一息もランダムにはいる」:
+     *   条件を1つ入れた後に、たまに手を止める（人が「次はどこだ」と画面を見る形）。
+     *   ・10% で 900〜2600ms ・さらに 3% で 2.6〜5.5秒
+     *   次の項目の前に「何もしない」段を1つ挟む（順番は変わらない・待つだけ）。
+     */
+    if (Math.random() < 0.10) {
+      var _b1 = 900 + Math.floor(Math.random() * 1700);
+      enqueueHumanAction(function () {}, _b1, _b1 + 200, "息");
+    } else if (Math.random() < 0.03) {
+      var _b2 = 2600 + Math.floor(Math.random() * 2900);
+      enqueueHumanAction(function () {}, _b2, _b2 + 200, "考え");
+    }
   }
   function queueSelVal(name, val) {
     var el = document.querySelector('select[name="' + name + '"]');
@@ -1294,6 +1307,9 @@
     if (!window._axSearchLookedOver) {
       window._axSearchLookedOver = true;
       var _lookMs = humanRand(1000, 2200);
+      // 2026-11-11 竹内さん「一息もランダムにはいる」: 見直す間に、10%で一息 900〜2600ms・3%で2.6〜5.5秒を足す
+      if (Math.random() < 0.10) _lookMs += 900 + Math.floor(Math.random() * 1700);
+      else if (Math.random() < 0.03) _lookMs += 2600 + Math.floor(Math.random() * 2900);
       _auditStepP('search_look', Math.round(_lookMs) + 'ms');
       setTimeout(function () { try { window._axSearchLookedOver = false; clickSearch(); } catch (_) {} }, _lookMs);
       return;
@@ -1992,30 +2008,52 @@
 
         // セレクト系をリセット（structured_date=築年数 / square_meter=面積 も select要素）
         // update_date: 前顧客の更新日フィルターが残留すると次顧客の検索が絞られるバグの修正
+        /**
+         * 2026-11-11 竹内さん「一連のうごきからちゃんと一息の部分入るようになっているか。人間のように一息もランダムにはいる」:
+         *   旧はセレクト・テキストのクリアも**一斉**（forEach で即）。
+         *   1つずつ、90〜260ms 空けて消す（チェックボックスと同じ速さ）。8%で一息 300〜800ms。
+         *   最後の1つが終わったら次へ進む。
+         */
         var selectNames = ["rental_cost1", "rental_cost2", "transportation_id",
                            "structured_date", "square_meter_l", "square_meter_h",
                            "update_date"];
-        selectNames.forEach(function(name) {
-          var el = document.querySelector("select[name='" + name + "']");
-          if (el) { el.selectedIndex = 0; el.dispatchEvent(new Event("change", {bubbles:true})); }
-        });
-
-        // テキスト・数値入力をクリア
         var textNames = ["required_time", "keyword", "free_word", "freeword", "building_name", "search_word"];
-        textNames.forEach(function(name) {
-          var el = document.querySelector("input[name='" + name + "']");
-          if (el && el.value) { el.value = ""; el.dispatchEvent(new Event("change", {bubbles:true})); }
+        var _clearTargets = [];
+        selectNames.forEach(function (name) {
+          var el = document.querySelector("select[name='" + name + "']");
+          if (el && el.selectedIndex !== 0) _clearTargets.push({ kind: "select", el: el });
         });
-        // type="search" 形式のフリーワード欄も念のためクリア
-        ;(function() {
+        textNames.forEach(function (name) {
+          var el = document.querySelector("input[name='" + name + "']");
+          if (el && el.value) _clearTargets.push({ kind: "text", el: el });
+        });
+        (function () {
           var sw = document.querySelector('input[type="search"]');
-          if (sw && sw.value) { sw.value = ""; sw.dispatchEvent(new Event("change", {bubbles:true})); }
+          if (sw && sw.value) _clearTargets.push({ kind: "text", el: sw });
         })();
-
-        console.log("[AX] フォーム手動クリア完了 → 条件入力開始");
-        _auditStepP('reset', null);
-        // 2026-11-10 v2.6.12 竹内さん「細部まで徹底した動き」: リセット後に「条件が消えたのを見届ける」間（人が画面を見る）
-        setTimeout(callback, _ln(650, 0.4, 380, 1300));
+        var _clearIdx = 0;
+        var _clearNext = function () {
+          if (_clearIdx >= _clearTargets.length) { _finishReset(); return; }
+          var t = _clearTargets[_clearIdx++];
+          try {
+            if (t.kind === "select") { t.el.selectedIndex = 0; t.el.dispatchEvent(new Event("change", { bubbles: true })); }
+            else { t.el.value = ""; t.el.dispatchEvent(new Event("change", { bubbles: true })); }
+          } catch (_) {}
+          var gap = _H0 && _H0.logNormalDelay ? _H0.logNormalDelay(160, 0.35) : 160;
+          if (gap < 90) gap = 90; if (gap > 260) gap = 260;
+          if (Math.random() < 0.08) gap += 300 + Math.floor(Math.random() * 500);
+          setTimeout(_clearNext, gap);
+        };
+        var _finishReset = function () {
+          console.log("[AX] フォーム手動クリア完了 → 条件入力開始");
+          _auditStepP('reset', null);
+          // 2026-11-10 v2.6.12 竹内さん「細部まで徹底した動き」: リセット後に「条件が消えたのを見届ける」間（人が画面を見る）
+          // 2026-11-11: ここにも一息（人が「全部消えたか」を見る・10%で900〜2600ms）
+          var _look = _ln(650, 0.4, 380, 1300);
+          if (Math.random() < 0.10) _look += 900 + Math.floor(Math.random() * 1700);
+          setTimeout(callback, _look);
+        };
+        _clearNext();
         }; // _resetRest end
         } catch (err) {
           // クリア失敗でも条件入力は続行する（静かに停止すると fill-done が来なくなる）

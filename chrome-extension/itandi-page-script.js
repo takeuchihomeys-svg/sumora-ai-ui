@@ -1970,15 +1970,27 @@
                 // 2026-10-01 入力の途中で案内モードに切り替わった時も、検索は押さない（押すのはスタッフ）
                 if (_guideOn()) { _itStep("guide_mode", "検索はスタッフ"); _safeDone("AXLX_SEARCH_BLOCKED: guide-mode: 検索はスタッフが押す"); return; }
                 var _searched = false;
-                if (btn) { _humanClick(btn); _searched = true; } else _searched = clickBtn("検索");
-                if (_itAudit) {
-                  _itAudit.search_clicked = !!_searched;
-                  if (!_searched) _itAudit.click_fails.push({ what: "search", text: "検索", sample: [].slice.call(document.querySelectorAll("button")).filter(isVis).map(function (b) { return b.textContent.trim().slice(0, 20); }).slice(0, 8) });
-                }
-                if (!_searched) { _safeDone("AXLX_SEARCH_BLOCKED: 検索のボタンが見つからない"); return; }
+                /**
+                 * 2026-11-11 竹内さん「一連のうごきからちゃんと一息の部分入るようになっているか」:
+                 *   検索を押す前に、人が最後に条件を見直す間を入れる（10%で900〜2600ms・3%で2.6〜5.5秒）。
+                 *   押すのは今まで通り（人のクリックの形）。
+                 */
+                var _preSearchBreath = 0;
+                if (Math.random() < 0.10) _preSearchBreath = 900 + Math.floor(Math.random() * 1700);
+                else if (Math.random() < 0.03) _preSearchBreath = 2600 + Math.floor(Math.random() * 2900);
+                if (_preSearchBreath > 0) console.log("[AX] ITANDI: 検索の前に一息 " + Math.round(_preSearchBreath / 1000) + "秒");
                 setTimeout(function () {
-                  _safeDone();
-                }, 500);
+                  if (_dead) return;
+                  if (btn) { _humanClick(btn); _searched = true; } else _searched = clickBtn("検索");
+                  if (_itAudit) {
+                    _itAudit.search_clicked = !!_searched;
+                    if (!_searched) _itAudit.click_fails.push({ what: "search", text: "検索", sample: [].slice.call(document.querySelectorAll("button")).filter(isVis).map(function (b) { return b.textContent.trim().slice(0, 20); }).slice(0, 8) });
+                  }
+                  if (!_searched) { _safeDone("AXLX_SEARCH_BLOCKED: 検索のボタンが見つからない"); return; }
+                  setTimeout(function () {
+                    _safeDone();
+                  }, 500);
+                }, _preSearchBreath);
               } catch (errS) { _safeDone("fill-exception(search): " + String((errS && errS.message) || errS).slice(0, 100)); } });
               } catch (errW) { _safeDone("fill-exception(search): " + String((errW && errW.message) || errW).slice(0, 100)); } }); // _whenTickIdle
             } catch (errT) { _safeDone("fill-exception(search): " + String((errT && errT.message) || errT).slice(0, 100)); } }, _sd(1000)); // 検索ボタンを押すまで: 1.0〜1.35秒（ペットの欄を開く待ち 0.70〜0.95秒より必ず後）

@@ -242,6 +242,12 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("休んだら数え直す", /_manualBulkWorkedSince = Date\.now\(\); \/\/ 休んだら数え直す/.test(bg));
   ok("自動モードも休憩（短12〜30秒・長60〜180秒・90分で小休憩）", /restDue\(_autoWorkedSince/.test(bgn) && /continuousRestDue\(_autoWorkedSince/.test(bgn));
   ok("休憩の長さ（short 12〜30秒・long 60〜180秒）", /REST_SHORT_MS = 12000, REST_SHORT_MAX_MS = 30000/.test(hwn) && /REST_LONG_MS = 60000, REST_LONG_MAX_MS = 180000/.test(hwn)); }
+  // 2026-11-11 竹内さん「一連のうごきからちゃんと一息の部分入るようになっているか。人間のように一息もランダムにはいる」
+  ok("リセット: セレクト・テキストも1つずつ消す（一斉に消さない）", /_clearTargets\.push\(\{ kind: "select"/.test(ps4) && /setTimeout\(_clearNext, gap\)/.test(ps4));
+  ok("リセット: 全部消えたのを見届ける間にも一息（10%）", /var _look = _ln\(650, 0\.4, 380, 1300\);[\s\S]{0,200}Math\.random\(\) < 0\.10\) _look \+= 900/.test(ps4));
+  ok("条件の入力: 1項目入れた後に一息（10%で900〜2600ms・3%で2.6〜5.5秒）", /function _enqueueWithEl[\s\S]{0,900}Math\.random\(\) < 0\.10\) \{[\s\S]{0,200}"息"/.test(ps4));
+  ok("リアプロ: 検索を押す前の見直しにも一息（10%・3%）", /window\._axSearchLookedOver[\s\S]{0,400}Math\.random\(\) < 0\.10\) _lookMs \+= 900/.test(ps4));
+  ok("ITANDI: 検索を押す前にも一息（10%・3%）", /_preSearchBreath[\s\S]{0,400}Math\.random\(\) < 0\.10\) _preSearchBreath = 900/.test(ips4));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
