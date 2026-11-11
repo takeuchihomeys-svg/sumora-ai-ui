@@ -6,6 +6,7 @@
 //   判定は cron と同じ関数（line-watch-turn-eval.evalWatchTurn）・読み方も cron と同じ（メッセージは番の4日前から・押下とブレインの判断は番の1時間前から）
 //
 // 実行: npx tsx --env-file=.env.local scripts/line-watch-rejudge.ts [--days=30] [--apply] [--samples=12] [--reason=aix_by_text_staff_fact]
+//   場面・判定を毎晩の cron と同じに付け直す: --same-as-cron [--days=28] [--apply]（2026-11-11）
 //   既定は dry（書かない・前後の判定の移り変わりと一致率を出す）。--apply で書く（本番 DB への書き戻しは親／竹内さんが流す）
 import { createClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../app/lib/test-conversations";
@@ -13,6 +14,7 @@ import { evalWatchTurn, type WatchTurnInput } from "../app/lib/line-watch-turn-e
 import { guardBackfillJudgement, BACKFILL_KEY } from "../app/lib/line-watch-backfill";
 import { JUDGE_VERSION, isAgree, type Verdict, type WindowMsg, type WindowPress } from "../app/lib/line-watch-judge";
 import { maskPII } from "../app/lib/pii-mask";
+import { evaluateLineWatchTurns } from "../app/lib/line-watch-eval-server";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -36,6 +38,16 @@ type Press = WindowPress & { conversation_id: string };
 type Dec = { id: string; conversation_id: string; created_at: string; analyzed_msg_ts: string | null; intent: string | null };
 
 (async () => {
+  // 2026-11-11 作業員6（統括役「古い場面名と新しい場面名の混ざりは 28日分を夜に付け直してよい」）: --same-as-cron は毎晩の cron と同じ関数（evaluateLineWatchTurns）で付け直す
+  //   ＝申込の記録（番の時点の申込以降）・重複の行の寄せ・関所用の guard_aix_verdict・影の関所（auto_eligible）も cron と同じに書く。埋め戻しの行は読み直さない（印を残す）。
+  //   下の旧の道は申込の記録・重複・guard を持たない（cron と判定がずれる）ので、場面の付け直しにはこちらを使う。営業時間（JST 9〜22時）は流さない
+  if (process.argv.includes("--same-as-cron")) {
+    const h = new Date(Date.now() + 9 * 3600_000).getUTCHours();
+    if (APPLY && h >= 9 && h < 22) { console.log(`営業時間（JST ${h}時）なので書かない（22〜9時に流す）`); return; }
+    const r = await evaluateLineWatchTurns(sb, { dry: !APPLY, days: DAYS, backlogDays: DAYS, limit: 20_000, reevalFinal: true, skipBackfill: true });
+    console.log(JSON.stringify({ mode: APPLY ? "書く" : "dry", days: DAYS, judgeVersion: r.judgeVersion, read: r.read, judged: r.judged, pending: r.pending, skipped: r.skippedFinal, updated: r.updated, failed: r.failed, orphans: r.orphans, verdicts: r.verdicts, scenes: r.scenes, shadow: { recorded: r.shadow.recorded, would_send: r.shadow.would_send }, errors: r.errors }, null, 1));
+    return;
+  }
   const nowMs = Date.now();
   const rows = await readAll<Row>((f, t) => sb.from("line_watch_turns").select("id, conversation_id, customer_turn_at, conv_status, draft_last, draft_last_at, draft_first, draft_first_at, draft_versions, draft_sentinel, brain_action, brain_reply_mode, brain_versions, tpo_label, verdict, verdict_detail, judge_version, evaluated_at")
     .gte("customer_turn_at", iso(nowMs - DAYS * DAY)).order("customer_turn_at").order("id").range(f, t));

@@ -82,6 +82,7 @@ export const SCENE_SKILL_DEFAULTS: Record<KbScene, { tools: NeedTool[]; checks: 
   question: { tools: ["sheet_detail", "company_fact", "sent_ledger"], checks: ["coverage", "ground", "deviation"], brainBudget: 3500, writerBudget: 2500 },
   conditions: { tools: ["customer_memo", "now_fulfillable", "sent_ledger"], checks: ["coverage", "deviation"], brainBudget: 3000, writerBudget: 2000 },
   property_share: { tools: ["property_record", "sheet_detail", "sent_ledger"], checks: ["coverage", "ground", "deviation"], brainBudget: 3000, writerBudget: 2000 },
+  property_send: { tools: ["property_record", "sent_ledger", "customer_memo"], checks: ["coverage", "ground", "deviation"], brainBudget: 3000, writerBudget: 2000 },
   cost: { tools: ["estimate", "company_fact", "sent_ledger"], checks: ["coverage", "ground", "deviation"], brainBudget: 3500, writerBudget: 2500 },
   viewing: { tools: ["sent_ledger", "now_fulfillable"], checks: ["coverage", "ground", "deviation"], brainBudget: 3000, writerBudget: 2000 },
   apply: { tools: ["company_fact", "sent_ledger"], checks: ["coverage", "ground", "deviation"], brainBudget: 3000, writerBudget: 2000 },

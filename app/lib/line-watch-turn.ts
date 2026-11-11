@@ -37,7 +37,71 @@ export type SceneInput = {
    *   true の時だけ効く（status が申込前でも対象外）。渡さない・null・false は今まで通り status だけで決める
    */
   postApply?: boolean | null;
+  /**
+   * 2026-11-11 見張り専用の場面（watchSceneOf）を使うか。見張りの2段目（evalWatchTurn）だけが true を渡す。
+   *   generate-reply など他の呼び手は渡さない＝今まで通り（生成側の場面は変えない）。戻す LINE_WATCH_SCENE_V2=off
+   */
+  watchScenes?: boolean | null;
+  /** watchScenes の時だけ: この番のお客様の発言（連投をつないだ物）。TPO で決まらない時に場面を引く */
+  customerText?: string | null;
 };
+
+export function watchSceneV2Enabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.LINE_WATCH_SCENE_V2 ?? "").trim().toLowerCase() !== "off";
+}
+
+/**
+ * 2026-11-11 作業員6（brain_weaknesses 525 scene-key:tpo-labels-unmapped）: 見張りの番の 10%（28日 81/797）が「返信:意図:〜」に落ちていた。
+ *   sceneFromTpo（opener-rates・生成の書き出しの場面）は6つの場面しか知らず、TPO の次の型が null だった。見張りの中だけで足す（生成側は変えない）。
+ *   実物20番（app/lib/__tests__/line-watch-scene-v2.test.ts）で線を引いた。
+ *   戻り: 場面の名前／"申込以降"（対象外にする）／null（決まらない＝今まで通り意図へ）
+ */
+export function watchSceneFromTpo(tpo: string | null | undefined): string | null {
+  const t = tpo ?? "";
+  if (!t) return null;
+  if (/申込後説明|申込・審査・契約手続き中/.test(t)) return "申込以降";
+  if (/内見調整|内覧調整|内覧日程/.test(t)) return "内覧調整";
+  if (/持込予告|持ち込み|物件持込/.test(t)) return "持ち込み物件";
+  if (/提案後の懸念|物件への懸念|前向き反応|確認結果報告後/.test(t)) return "物件への反応";
+  if (/不安対応/.test(t)) return "質問";
+  return null;
+}
+
+const PORTAL_URL_RE = /https?:\/\/(?:[\w-]+\.)*(?:suumo\.jp|homes\.co\.jp|athome\.co\.jp|chintai\.net|apamanshop\.com|able\.co\.jp|minimini\.jp|eheya\.net|door\.ac|smocca\.jp|realpro\.jp|itandi)/i;
+const PROPERTY_IMAGE_RE = /【物件の(?:写真|画面|資料|間取り図)|物件の画面（ポータル）|【空き部屋あり】/;
+const SHORT_ACK_RE = /ありがと|よろしく|宜しく|お願い(?:します|致します|いたします)|かしこまり|了解|承知|わかりました|分かりました|すみません|申し訳|大丈夫です/;
+const ASK_RE = /[?？]|ですか|ますか|でしょうか|ありますか/;
+
+const PRE_APPLY_INTENT_RE = /申し?込み?(?:を)?(?:したい|させて(?:頂|いただ)きたい|させてもら(?:い|え)たい|たい|希望)|申し込みます|申込みます/;
+const POST_APPLY_EVIDENCE_RE = /書類|申込(?:書|フォーム|フォーマット)|審査(?:の)?(?:結果|中|通|落|否決|承認|OK)|否決|承認|保証会社|契約|本人確認|免許|マイナンバー|住民票|入金|振込|鍵(?:の)?(?:受け取|引き渡)|記入|追加します/;
+/** 申込の意思を言っただけ（申込の書類・審査の結果・契約の話が無い）＝申込の手前 */
+export function isPreApplyIntentOnly(text: string | null | undefined): boolean {
+  const s = String(text ?? "").normalize("NFKC");
+  return PRE_APPLY_INTENT_RE.test(s) && !POST_APPLY_EVIDENCE_RE.test(s);
+}
+
+/** TPO で決まらない時、お客様の文から場面を引く（見張り専用）。決まらなければ null */
+export function watchSceneFromCustomer(text: string | null | undefined): string | null {
+  const s = String(text ?? "").normalize("NFKC").trim();
+  if (!s) return null;
+  // 物件の URL・物件の画像を送ってきた＝持ち込み物件（質問の形でも「この物件ありますか」が中心）
+  if (PORTAL_URL_RE.test(s) || PROPERTY_IMAGE_RE.test(s)) return "持ち込み物件";
+  // 内覧の当日の到着・遅れ（「あと2分ほどで到着します」「つきました」「10分ほど遅れます」）
+  if (/到着(?:します|しました)|(?:着|つ)きました|向かいます|遅れます|ちゃくです/.test(s)) return "内覧調整";
+  const body = s.replace(/[\s😊😌🙇‍♀️🙇🙏✨🌟🙆‍♀️🙆!！。、…・〜~]/gu, "");
+  // 短い礼・了承（質問が無い・40字まで）
+  // 頼み（「開けといてほしい」「〜してください」）がある文は短い礼にしない（「お願いしたいです」は了承）
+  //   監査（scripts/audit-watch-scene-v2.ts・28日）で外した型: 物件の不満・断り（狭い・遠い・高い）／審査の不安（滞納・審査）／別の物件の頼み（「〇〇もよろしく」）
+  const notAck = /ほしい|欲しい|て(?:下さい|ください)|狭い|遠い|高い|無理|難しい|見送|やめ|滞納|審査|不安|大変|も(?:よろしく|宜しく|お願い)/.test(s);
+  if (!ASK_RE.test(s) && !notAck && Array.from(body).length <= 40 && SHORT_ACK_RE.test(s)) {
+    // 時刻の了承（「16:30大丈夫」）は内覧の日時の返事
+    if (/\d{1,2}[:：]\d{2}|\d{1,2}時/.test(s)) return "内覧調整";
+    return "短い了承・お礼";
+  }
+  if (!ASK_RE.test(s) && /\d{1,2}[:：]\d{2}|\d{1,2}時(?:から|に|で|半)/.test(s) && /大丈夫|OK|オッケー|お願い|可能|行けます|いけます/i.test(s)) return "内覧調整";
+  if (/似た(?:ような)?(?:物件|お部屋)|場所は問いません|条件(?:を|は)?(?:変え|広げ)/.test(s)) return "条件提示";
+  return null;
+}
 export type SceneKey = { key: string; path: "AIX" | "返信" | "対象外"; label: string };
 
 /** AIX の種類として読める action（古い行の自由文の action は AIX にしない） */
@@ -62,6 +126,23 @@ export function sceneKeyOf(i: SceneInput): SceneKey {
   }
   const scene = sceneFromTpo(i.tpoLabel);
   if (scene && scene !== "その他") return { key: `返信:${scene}`, path: "返信", label: scene };
+  // 2026-11-11 見張り専用（watchScenes の時だけ）: TPO の落ちる型 → お客様の文 → 今まで通り意図
+  if (i.watchScenes && watchSceneV2Enabled()) {
+    //   順番: 申込以降（TPO）→ お客様の文の「持ち込み物件」「内覧調整（時刻の了承）」→ TPO → お客様の文の残り
+    //   （実物: TPO「提案後の懸念」でも URL を3件送ってきた番はスタッフが募集状況の確認＝持ち込み物件・TPO「確認結果報告後」でも「16:30大丈夫」は内覧の時刻の了承）
+    let fromTpo = watchSceneFromTpo(i.tpoLabel);
+    const fromCust = watchSceneFromCustomer(i.customerText);
+    // 2026-11-11 統括役（竹内さんの決まり「申込以降は対象外・申込の意思を言った番までは対象」）: TPO が申込後説明でも、
+    //   お客様の文が「申し込みたい」の手前の言葉だけ（申込の書類・審査の結果などが無い）なら対象に残す（実物 10199）
+    if (fromTpo === "申込以降" && isPreApplyIntentOnly(i.customerText)) fromTpo = null;
+    //   TPO「確認結果報告後・前向き反応」でもお客様の文が短い礼だけ（「調べて頂きありがとうございます」）は短い了承・お礼
+    const ws = fromTpo === "申込以降" ? fromTpo
+      : (fromCust === "持ち込み物件" || fromCust === "内覧調整") ? fromCust
+      : (fromTpo === "物件への反応" && fromCust === "短い了承・お礼") ? fromCust
+      : (fromTpo ?? fromCust);
+    if (ws === "申込以降") return { key: "対象外:申込以降", path: "対象外", label: "申込以降（対象外）" };
+    if (ws) return { key: `返信:${ws}`, path: "返信", label: ws };
+  }
   const intent = (i.intent ?? "").trim();
   if (intent) return { key: `返信:意図:${intent}`, path: "返信", label: `意図: ${intent}` };
   return { key: "返信:その他", path: "返信", label: "その他" };

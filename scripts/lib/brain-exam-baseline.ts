@@ -98,6 +98,21 @@ export function findCarryOver<R extends { rep: number; error?: string }>(cands: 
   });
   return ok.sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)))[0] ?? null;
 }
+/**
+ * 2026-11-10 作業員8（強化の一覧 D1・11/10 の前を作る子 $6.90）: 同じ版の鍵で、回数（repeat・repeatFlaky）だけが違う構成の置き場から使えるか。
+ *   11/10 の版 7b1474e7dcdc は構成が4つ（repeat 4／1／3＋judgeLazy／下書きの段）で、repeat=1 の5問は repeat=4 の置き場に全部あった（$0.13 を作り直していた）。
+ *   相手の回数が自分以上なら、回 1..自分の回数の行だけを写して使う（答えの中身は同じ＝回の部分集合）。段・判定の口・スイッチが違えば使わない。
+ *   止める: EXAM_BASELINE_REPEAT_SUBSET=off
+ */
+export function repeatSubsetCompatible(want: ExamConfig, have: ExamConfig): boolean {
+  const strip = (c: ExamConfig) => { const a = { ...c.args }; delete a.repeat; delete a.repeatFlaky; return JSON.stringify({ args: Object.keys(a).sort().map((k) => [k, a[k]]), env: Object.keys(c.env).sort().map((k) => [k, c.env[k]]) }); };
+  const wr = Number(want.args.repeat ?? 1), hr = Number(have.args.repeat ?? 1);
+  if (!Number.isFinite(wr) || !Number.isFinite(hr) || hr < wr) return false;
+  return strip(want) === strip(have);
+}
+/** 回 1..repeat の行だけにする（相手の回数が多い時） */
+export function trimRowsToRepeat<R extends { rep: number }>(rows: R[], repeat: number): R[] { return rows.filter((r) => r.rep >= 1 && r.rep <= repeat); }
+
 /** 同じ構成（-<構成の hash>）の他の置き場の名前（今の置き場は除く） */
 export function siblingDirs(names: string[], cfgHash: string, cur: string): string[] { return names.filter((n) => n.endsWith(`-${cfgHash}`) && n !== cur); }
 

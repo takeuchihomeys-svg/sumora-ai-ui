@@ -13,6 +13,9 @@ import { aixTemplateStaticSystemText } from "../aix-template-system";
 import { aixTemplateSharedParts, aixTemplateDbKnowledgeParts } from "../aix-template-cache";
 import { systemFullKey, parseAnthropicRequest } from "../llm-usage-recorder";
 import { isBrainCall } from "../llm-test-mode";
+import { buildReplyWriterWarmTarget, replyWriterWarmEnabled, REPLY_WRITER_WARM_MODEL } from "../prefix-warm";
+import { REPLY_GENERATION_MODEL } from "../reply-generation-model";
+import { cacheGroupOf } from "../claude-model-map";
 
 let passed = 0, failed = 0;
 function t(name: string, ok: boolean, extra?: unknown) {
@@ -197,6 +200,28 @@ console.log("── 2026-10-15 キャッシュの見直し: AIX の温めを共�
   t("共通部分なし → 旧（先頭だけ・1ブロック）", buildAixTemplateWarmTarget([]).body.system.length === 1);
   const base = { finalCheck: { dbRules, finalCheckRules }, summary: { systemPrompt: CUSTOMER_SUMMARY_SYSTEM, nextActionRuleContents: ["ルールA"] }, nextAction: null };
   t("buildPrefixWarmTargets が aixTemplateShared を渡す", buildPrefixWarmTargets({ ...base, aixTemplate: true, aixTemplateShared: shared }).at(-1)!.body.system.length === 3);
+}
+
+console.log("── 2026-11-11 C1 返信の書き手の system の温め（REPLY_WRITER_WARM・11/11 から既定 on）— 本物が送った system と鍵が同じ・印の無いブロックは温めない");
+{
+  const cc = { type: "ephemeral" as const, ttl: "1h" as const };
+  const sys = [
+    { type: "text" as const, text: "【指示の優先順位（競合時はこの順で解決すること）】ハードゲート（内覧日時）> …\n\nあなたはスモラの返信担当", cache_control: cc },
+    { type: "text" as const, text: "【静的な決まり】".repeat(50), cache_control: cc },
+    { type: "text" as const, text: "【DB の決まり】・少々お待ちくださいは使わない", cache_control: cc },
+  ];
+  const w = buildReplyWriterWarmTarget(sys);
+  t("対象が作れる・system は本物と JSON で同じ", !!w && JSON.stringify(w.body.system) === JSON.stringify(sys));
+  t("鍵は本物の sys_key_full と同じ計算（system 全文）", !!w && w.key === systemFullKey(sys) && w.key === parseAnthropicRequest(JSON.stringify(w.body)).sys_key_full);
+  t("モデルは返信生成と同じ（reply-generation-model の写し）", REPLY_WRITER_WARM_MODEL === REPLY_GENERATION_MODEL && w!.body.model === REPLY_GENERATION_MODEL);
+  t("thinking は本物と同じ disabled・max_tokens 1・user「.」", JSON.stringify(w!.body.thinking) === JSON.stringify({ type: "disabled" }) && w!.body.max_tokens === 1);
+  t("名札は brain で始まらない", !isBrainCall(w!.name, w!.body.system[0].text) && !w!.name.startsWith("brain"));
+  t("返信生成と同じキャッシュの組（Sonnet 5.5 の置き換えも揃う）", cacheGroupOf("reply_writer_warm").includes("reply_generate") && cacheGroupOf("reply_generate").includes("reply_writer_warm"));
+  t("印の無いブロックがあれば作らない（鍵が本物と合わない）", buildReplyWriterWarmTarget([sys[0], { type: "text", text: "動的" }]) === null && buildReplyWriterWarmTarget([]) === null);
+  t("既定 on（11/11 竹内さんの OK）・REPLY_WRITER_WARM=off で止まる", replyWriterWarmEnabled({}) && !replyWriterWarmEnabled({ REPLY_WRITER_WARM: "off" }) && replyWriterWarmEnabled({ REPLY_WRITER_WARM: "on" }));
+  t("先頭が読めて DB の決まりだけ書いた → dynamic_rewrite／丸ごと書いた → cold", classifyPrefixWarmUsage({ cache_read: 90_000, cache_write_1h: 6_000, cache_write_5m: 0 }, w!.staticHitMinRead) === "dynamic_rewrite"
+    && classifyPrefixWarmUsage({ cache_read: 0, cache_write_1h: 96_956, cache_write_5m: 0 }, w!.staticHitMinRead) === "cold"
+    && classifyPrefixWarmUsage({ cache_read: 96_956, cache_write_1h: 0, cache_write_5m: 0 }, w!.staticHitMinRead) === "hit");
 }
 
 console.log(`\n${passed} OK / ${failed} NG`);

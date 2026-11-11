@@ -17,6 +17,10 @@ import { examCacheRoot } from "./lib/llm-cassette";
 import { reduceKeyedBody, nearestSummaryOf, afterCutoff, keyedKey } from "./lib/exam-frozen-input";
 import { followupUrls } from "./lib/exam-near-followups";
 import { loadCards, CARDS_FILE, RAG_DIR } from "./lib/exam-rag-store";
+import { nearLeak, LEAK_STOP_FILE, isUnsafeNearRequest } from "./lib/exam-near-hook";
+import { YUMA_CONVERSATION_ID, NO_LINE_TEST_CONVERSATION_IDS } from "../app/lib/test-conversations";
+const TEST_CONV_IDS = [YUMA_CONVERSATION_ID, ...NO_LINE_TEST_CONVERSATION_IDS];
+const stalePendingAllowed = () => (process.env.EXAM_NEAR_STALE_PENDING ?? "").trim().toLowerCase() === "allow";
 import { createClient } from "@supabase/supabase-js";
 import { loadDeepseekCutoff } from "../app/lib/post-apply";
 
@@ -45,6 +49,23 @@ async function resolveOne(day: string, fileName: string, req: { name: string; ur
     }
   }
   const reduced = reduceKeyedBody(req.name, raw, situations);
+  // 2026-11-10 作業員8（D3 漏れの番人）: 近い番の答えに元の番そのもの（距離 0.01 未満）か元の番より後の番があれば、控えを書かずに係を止める印を置く
+  //   （11/10 17:26Z に古い作業ツリーの試験の頼みから q367 の答えの番そのもの〔距離 8e-7〕が控えに入った）。止める: EXAM_NEAR_LEAK_GUARD=off
+  if ((process.env.EXAM_NEAR_LEAK_GUARD ?? "").trim().toLowerCase() !== "off") {
+    let rowsOut: Array<Record<string, unknown>> = []; try { rowsOut = JSON.parse(reduced) as Array<Record<string, unknown>>; } catch { /* */ }
+    const lk = nearLeak(req.name, req.body, rowsOut);
+    if (lk.leak) {
+      const stop = join(examCacheRoot(), "exam-queue", LEAK_STOP_FILE);
+      let cur: { at?: string; hits?: unknown[] } = {}; try { cur = JSON.parse(readFileSync(stop, "utf8")); } catch { /* 初めて */ }
+      const hits = [...(Array.isArray(cur.hits) ? cur.hits : []), { at: new Date().toISOString(), day, file: fileName, table: req.name, close: lk.close, after: lk.after }].slice(-50);
+      writeFileSync(stop, JSON.stringify({ at: cur.at ?? new Date().toISOString(), why: "近い番の答えに元の番（距離 0.01 未満）か元の番より後の番があった＝答えの漏れ。頼みを作った作業ツリーが 8c1b057c より古くないか確かめ、直したらこのファイルを消す", hits }, null, 1));
+      const leakDir = join(root, day, "pending-leaked");
+      mkdirSync(leakDir, { recursive: true });
+      try { renameSync(join(root, day, "pending", fileName), join(leakDir, fileName)); } catch { /* 後ろの読みは頼みのファイルが無い */ }
+      console.warn(`  漏れ: ${req.name} ${fileName}（距離 0.01 未満 ${lk.close}・元の番より後 ${lk.after}）→ 控えを書かず係を止める印（${LEAK_STOP_FILE}）`);
+      return null;
+    }
+  }
   const out = join(root, day, fileName);
   mkdirSync(join(root, day), { recursive: true });
   const tmp = `${out}.${process.pid}.tmp`;
@@ -56,12 +77,14 @@ async function resolveOne(day: string, fileName: string, req: { name: string; ur
 (async () => {
   const root = join(examCacheRoot(), "db-snapshot");
   const days = arg("day") ? [arg("day")] : (existsSync(root) ? readdirSync(root).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && existsSync(join(root, d, "pending"))) : []);
-  let ok = 0, fail = 0, rows = 0, follow = 0;
+  let ok = 0, fail = 0, rows = 0, follow = 0, stale = 0;
   for (const day of days) {
     const pdir = join(root, day, "pending");
     if (!existsSync(pdir)) continue;
     for (const f of readdirSync(pdir).filter((x) => x.endsWith(".json"))) {
-      const req = JSON.parse(readFileSync(join(pdir, f), "utf8")) as { name: string; url: string; method: string; body: string };
+      const req = JSON.parse(readFileSync(join(pdir, f), "utf8")) as { name: string; url: string; method: string; body: string; ls?: number };
+      // 2026-11-10 作業員8（漏れの番人の後）: 近い番の読みで答えの番を外した印（ls: 1）の無い頼みは解かずに pending-stale へ（11/09 の k-a9e10def は 8c1b057c より 23個古い作業ツリー tc-narrow の試験が 19:44 JST に作った・p_exclude_conv が YUMA2・p_before が本当の今）
+      if (!stalePendingAllowed() && isUnsafeNearRequest(req, TEST_CONV_IDS)) { if (!DRY) { mkdirSync(join(root, day, "pending-stale"), { recursive: true }); renameSync(join(pdir, f), join(root, day, "pending-stale", f)); } console.warn(`  解かない（答えの番を外した印が無い＝古い作業ツリーの頼み）: ${day} ${f}`); stale++; continue; }
       // 頼みの URL は試験の env の DB（同じ DB）。鍵だけ差し替える（公開キーの印は送らない）
       const target = new URL(req.url); const base = new URL(url);
       if (target.host !== base.host) { console.warn(`  別の DB の頼みは読まない: ${f}`); fail++; continue; }
@@ -105,5 +128,5 @@ async function resolveOne(day: string, fileName: string, req: { name: string; ur
       if (n) { mkdirSync(RAG_DIR, { recursive: true }); const tmp = `${CARDS_FILE}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify({ at: new Date().toISOString(), cards })); renameSync(tmp, CARDS_FILE); console.log(`問題の札を写した: ${n}問（${CARDS_FILE}）`); }
     } catch (e) { console.warn(`問題の札を写せない: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
   }
-  console.log(`鍵が要る読みの控え: 書いた ${ok}・後ろの読みを先に ${follow}・行 ${rows}・読めない ${fail}（日 ${days.join(",") || "なし"}）${DRY ? "（dry）" : ""}`);
+  console.log(`鍵が要る読みの控え: 書いた ${ok}・後ろの読みを先に ${follow}・行 ${rows}・読めない ${fail}・古い頼み ${stale}（日 ${days.join(",") || "なし"}）${DRY ? "（dry）" : ""}`);
 })().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(1); });

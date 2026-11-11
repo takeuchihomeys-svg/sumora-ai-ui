@@ -53,6 +53,27 @@ export function keyedTarget(url: string, method: string): string | null {
   if (m[1]) return meth === "POST" && KEYED_RPCS.has(m[2]) ? m[2] : null;
   return meth === "GET" && KEYED_TABLES.has(m[2]) ? m[2] : null;
 }
+export type ProblemTurn = { conv: string; at: string };
+/**
+ * 近い番の読みから答えの番を外す（純関数・2026-11-10 作業員4 の見つけ）。
+ *   試験の時計は元の番の時刻を7日の倍数だけ進める（frozenSceneNow）＝本番の p_before（今の番の時刻）が未来になり、p_exclude_conv は借りた YUMA の会話。
+ *   そのままだと match_conductor_focus／turns が、問題の元の会話の竹内さんの答えの番そのもの（距離 0.00〜0.02）を近い番に返していた
+ *   （11/06・11/07 の控えの近い番の読み 317本のうち、一番近い番が距離 0.01 未満が 30本以上・q371 の元の番 11/03 10:35 が 0.001）
+ *   ＝入口の意見・重点の近い番を使う試験が、答えを見ていた。
+ *   本番と同じにする: p_exclude_conv を元の会話に、p_before を元の番の時刻（今の値がそれより後なら）に置き換える。他の読み・形の分からない body はそのまま
+ */
+export function leakSafeKeyedBody(name: string, body: string, turn: ProblemTurn | null): string {
+  if (!turn?.conv || !turn.at || !(name === "match_conductor_focus" || name === "match_conductor_turns")) return body;
+  let b: Record<string, unknown>;
+  try { b = JSON.parse(body) as Record<string, unknown>; } catch { return body; }
+  if (!b || typeof b !== "object" || Array.isArray(b)) return body;
+  const out: Record<string, unknown> = { ...b, p_exclude_conv: turn.conv };
+  if ("p_before" in b) {
+    const cur = Date.parse(String(b.p_before ?? "")), orig = Date.parse(turn.at);
+    if (Number.isFinite(orig) && (!Number.isFinite(cur) || cur > orig)) out.p_before = turn.at;
+  }
+  return JSON.stringify(out);
+}
 /** 鍵の要る読みの鍵（純関数）: 借りたテスト用の会話・条件の行の id は伏せる（レーンが違っても同じ問い合わせは同じ鍵） */
 export function keyedKey(url: string, method: string, body: string, excludeIds: readonly string[], hint?: string | null): string {
   const hide = (s: string) => excludeIds.filter(Boolean).reduce((t, id) => t.split(id).join("<x>"), s);
@@ -142,7 +163,7 @@ export type SnapshotStats = { hit: number; miss: number; skip: number };
  * globalThis.fetch を包む（brain-exam の setupLlmTest の後に1回）。控えるのは成功（2xx）の答えだけ。
  *   dir＝<置き場>/db-snapshot・excludeIds＝今の会話・条件の行の id（呼ぶたびに読む）
  */
-export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[]; nowMs?: () => number; /** 今の問題 id（鍵の要る近い番の読みの鍵・11/07） */ keyHint?: () => string | null }): SnapshotStats {
+export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[]; nowMs?: () => number; /** 今の問題 id（鍵の要る近い番の読みの鍵・11/07） */ keyHint?: () => string | null; /** 今の問題の元の番（会話・時刻）＝近い番の読みから答えの番を外す（11/10・leakSafeKeyedBody） */ problemTurn?: () => ProblemTurn | null }): SnapshotStats {
   const stats: SnapshotStats = { hit: 0, miss: 0, skip: 0 };
   const inner = globalThis.fetch;
   const now = opts.nowMs ?? (() => Date.now());
@@ -153,8 +174,11 @@ export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[
     // ③ 鍵が要る読み: 控え（夜の台本が鍵で読んで絞った物）があれば返す。無ければ頼みを pending に残し、公開キーの答え（42501／空）はそのまま返して控えない
     const keyed = keyedTarget(url, method);
     if (keyed) {
+      // 2026-11-10 作業員4: 鍵と頼みは答えの番を外した形で（夜の台本はこの形のまま鍵で読む）。前の控え（外す前の鍵）には当たらない＝漏れた控えは使われない
+      const pturn = opts.problemTurn?.() ?? null;
+      const kbody = leakSafeKeyedBody(keyed, body, pturn);
       const kday = (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(now());
-      const kkey = keyedKey(url, method, body, opts.excludeIds(), opts.keyHint?.() ?? null);
+      const kkey = keyedKey(url, method, kbody, opts.excludeIds(), opts.keyHint?.() ?? null);
       const kfile = join(opts.dir, kday, `k-${kkey}.json`);
       if (existsSync(kfile)) {
         try { const s = JSON.parse(readFileSync(kfile, "utf8")) as Snap; stats.hit++; const h = new Headers(); h.set("content-type", s.contentType ?? "application/json"); return new Response(s.body, { status: 200, headers: h }); } catch { /* 読み直す */ }
@@ -162,7 +186,8 @@ export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[
       try {
         const pdir = join(opts.dir, kday, "pending"); mkdirSync(pdir, { recursive: true });
         const pf = join(pdir, `k-${kkey}.json`);
-        if (!existsSync(pf)) writeFileSync(pf, JSON.stringify({ name: keyed, url, method, body, at: new Date().toISOString() }));
+        // 2026-11-10 作業員8: 答えの番を外した頼みの印（ls: 1）。夜の台本は近い番の読みで印の無い頼み（8c1b057c より古い作業ツリー・元の番が分からない頼み）を解かない
+        if (!existsSync(pf)) writeFileSync(pf, JSON.stringify({ name: keyed, url, method, body: kbody, at: new Date().toISOString(), ls: pturn?.conv && pturn.at ? 1 : 0 }));
       } catch { /* 頼みを残せなくても試験は続ける */ }
       stats.skip++;
       return inner(input, init);

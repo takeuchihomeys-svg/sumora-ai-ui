@@ -38,7 +38,7 @@ export function sceneTagsToAdd(r: { title: string; tags: string[] | null }): str
 }
 
 // ── DeepSeek で場面を聞く（P0/P1） ──
-export const SCENE_KEYS: KbScene[] = ["ack", "considering", "question", "conditions", "property_share", "cost", "viewing", "apply"];
+export const SCENE_KEYS: KbScene[] = ["ack", "considering", "question", "conditions", "property_share", "property_send", "cost", "viewing", "apply"];
 export const SCENE_TAG_SYSTEM = [
   "あなたは不動産仲介の LINE 返信 AI の開発メモ（設計の決まり）の整理係です。担当者は、お客様の今の発言の『場面』を決めてから、その場面の決まりを引いて返信・AIX（スタッフが確認した事を送るボタン）を作ります。",
   "各メモについて『担当がどの場面の返信・AIX を作る時に、このメモを確かめるべきか』を、次の場面の記号から選んでください（複数可・最大3・本当に関係する物だけ）:",
@@ -75,6 +75,7 @@ export const SCENE_EVIDENCE_RE: Record<Exclude<KbScene, "other">, RegExp> = {
   question: /質問|聞かれ|聞いた|問い合わせ|ですか[？?」]/,
   conditions: /条件|希望の|言い直|あと一つ|世帯/,
   property_share: /持ち込|SUUMO|URL|お客様が送|送ってきた|お客様の画像|物件の画像|募集状況/,
+  property_send: /物件ピックアップ|物件オススメ|ピックアップした|2通目|新着で/,
   cost: /初期費用|見積|費用の|割引|安く|分割|値下|減額|総額|敷礼|礼金|フリーレント/,
   viewing: /内覧|内見|待ち合わせ|候補日/,
   apply: /申込|申し込|審査|必要書類|仮押さえ|お部屋を?抑え|保証会社/,

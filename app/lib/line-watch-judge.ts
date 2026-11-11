@@ -41,7 +41,10 @@ import { shouldBeAixOf, shouldBeButtons, type ShouldBeAix } from "./aix-should-b
 //   v8-2026-10-23（竹内さん 10/22 d04ed51b・76c249e0・aad87f41「スタッフは押し間違いが多い」「竹内も AIX で送る所を手打ち」「押すのは竹内基準」）:
 //     AI は AIX の番でスタッフが手打ち・別の AIX を押した時、送った文を本来の AIX（aix-should-be.ts）に当てはめ、ブレインの AIX と同じなら一致（same・same_via_mapping）。
 //     元の判定は raw_verdict・raw_reason に残す。aix_verdict（関所）は変えない。戻す: LINE_WATCH_AIX_MAPPING=off（呼び出し側が渡さない＝v7 と同じ判定）
-export const JUDGE_VERSION = "v9-2026-10-28";
+//   v10-2026-11-11（作業員6・brain_weaknesses 525）: 判定は変えない。見張りの場面（scene_key）だけ、TPO の落ちる型（内見調整・提案後の懸念・前向き反応・
+//     持込予告・申込後説明）とお客様の文（物件の URL・画像・短い礼・時刻の了承）から引く（line-watch-turn.watchSceneFromTpo/Customer）。版を上げて直近の番を付け直す
+//   v11-2026-11-11（作業員6・統括役の OK）: 物差しの誤り M1〜M3（watchMeasureV11On・既定 on）と M4〜（下）を入れた。版を上げて付け直す（夜に line-watch-rejudge --same-as-cron）
+export const JUDGE_VERSION = "v11-2026-11-11";
 
 export type Verdict = "same" | "same_meaning" | "partial" | "different" | "na";
 export const VERDICTS: readonly Verdict[] = ["same", "same_meaning", "partial", "different", "na"];
@@ -213,6 +216,8 @@ export type JudgeInput = {
    *   渡した時だけ「手打ちでも AIX の番」を見る（null／未指定は v6 と同じ）。戻す: LINE_WATCH_STAFF_FACT=off（呼び出し側が渡さない）
    */
   staffFactGround?: string | null;
+  /** 2026-11-11 M4（物差し）: この番のお客様の発言（連投をつないだ物）。内覧の当日の段取りの番かを見る。渡さない時は M4 を当てない */
+  customerText?: string | null;
   /** 2026-10-20: 番の時点の記録で申込以降（line-watch-scope.postApplyAtTurn）。true なら対象外（sceneKeyOf.postApply） */
   postApply?: boolean | null;
   /**
@@ -222,6 +227,8 @@ export type JudgeInput = {
   aixMapping?: boolean;
 };
 export type VerdictDetail = {
+  /** 2026-11-11 M5・M6（物差し）で事実の比べを緩めた印（relative_day_only・draft_named_property） */
+  measure_notes?: string[];
   v: string;
   path: "AIX" | "返信" | "対象外";
   reason: string;
@@ -284,6 +291,11 @@ export const VERDICT_REASON_JA: Record<string, string> = {
   text_but_aix: "AI は返信・スタッフは AIX",
   two_stage_fulfilled: "AI は約束の返信・スタッフはその約束の AIX を直接（決まりどおり）",
   text_plus_aix: "文は同じ・スタッフは AIX も足した",
+  text_same_plus_aix: "文は同じ・スタッフは 2通目に AIX も足した（M1・文の一致に数える）",
+  aix_in_window: "まとまりでは別の AIX・同じ窓でブレインの AIX も押した（M3）",
+  after_viewing_greeting: "内覧の当日の段取りの番に、スタッフは内覧の後のお礼を送った（M4・数えない）",
+  promise_fulfilment_only: "スタッフはこの番に文を書かず、前の約束の結果の AIX だけを送った（M8・数えない）",
+  first_text_same_plus_aix: "1通目は下書きどおり・2通目に AIX のフォーム等を足した（M7・同じ意味）",
   no_draft: "下書きが無い（手打ち）",
   sentinel_only: "印だけで下書きの文が無い",
   exact: "中身が同じ",
@@ -349,6 +361,18 @@ const WATCH_EXTRA_FACTS_V9: ReadonlyArray<{ kind: string; key: string; re: RegEx
 ];
 export function watchStaffOnlyV9On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.LINE_WATCH_STAFF_ONLY_V9 ?? "on").trim().toLowerCase() !== "off"; // 2026-10-28 既定 on（直近14日で誤って外す番 0 を目で確かめた）・止める LINE_WATCH_STAFF_ONLY_V9=off
+}
+
+/**
+ * 2026-11-11 作業員6（統括役「物差し自体の誤りは見張り側で直す・既定 off」・直近14日の外れ 118番を1番ずつ読んだ）: 物差しの誤りの3つ。
+ *   M1 文は下書きどおり・スタッフが AIX も足した（text_plus_aix）→ 文の一致（同じ意味）に数える（AIX を足したのは 2通目＝aix_verdict は unexpected のまま・関所は緩めない）
+ *   M2 [返信不要] の合図でも、下書きの文がスタッフの文と同じ → 文で比べる（実物: 文が1字も違わないのに no_reply_needed_but_sent）
+ *   M3 AI は AIX・スタッフは返事のまとまりで別の AIX を押し、同じ窓の中でブレインの AIX も押した → 一致に寄せる（同じ意味・2つの要件を順に押した）
+ * 既定 on（2026-11-11 統括役）・止める LINE_WATCH_MEASURE_V11=off
+ */
+export function watchMeasureV11On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  // 2026-11-11 統括役「誤って一致にする番0なので既定 on」→ 既定 on・止める LINE_WATCH_MEASURE_V11=off
+  return (env.LINE_WATCH_MEASURE_V11 ?? "").trim().toLowerCase() !== "off";
 }
 
 function timeDateTokens(s: string): string[] {
@@ -439,6 +463,11 @@ function judgeTurnRaw(i: JudgeInput): Judgement {
   const sfacts = staffFactsOf(staffText, i.staffFactGround);
 
   if (scene.path === "対象外") return { verdict: "na", detail: { ...base, reason: "out_of_scope" } };
+  // M4（LINE_WATCH_MEASURE_V11）: 内覧の当日の段取りの番（到着・入口・駐車）で、スタッフの返事のまとまりが内覧の後のお礼（greeting_viewing）＝お客様の番の答えではない → 数えない
+  //   M4b（9916）: 返事のまとまりが内覧の後の申込の案内（application_push）も同じ（窓の外のお礼は見ない＝まとまりで段取りに答えた番は数える）
+  if (watchMeasureV11On() && (burstPress.includes("greeting_viewing") || burstPress.includes("application_push")) && VIEWING_DAY_LOGISTICS_RE.test(String(i.customerText ?? "").normalize("NFKC"))) {
+    return { verdict: "na", detail: { ...base, reason: "after_viewing_greeting", brain_aix: brainAix, staff_aix: allPress } };
+  }
   if (!sentAnything) {
     if (!final) return { verdict: null, detail: { ...base, reason: "pending" } };
     if (sentinel === "[返信不要]") return { verdict: "same", detail: { ...base, reason: "no_reply_needed_same" } };
@@ -446,7 +475,7 @@ function judgeTurnRaw(i: JudgeInput): Judgement {
     return { verdict: "na", detail: { ...base, reason: "no_staff", brain_aix: brainAix } };
   }
   // 文の判定（下書きと返事のまとまりの両方がある時だけ）
-  let text = draft && staffText ? judgeText(draft, staffText) : null;
+  let text = draft && staffText ? judgeText(draft, staffText, watchMeasureV11On() ? (i.staffFactGround ?? null) : undefined) : null;
   // 従業員の文: 言い回しが遠いだけ（行為・事実・聞き返しは同じ）は一致に数える（書き方の基準は竹内さん）
   const sw = i.staffWriter;
   if (text && text.reason === "wording_far" && sw?.writer === "employee" && sw.confidence !== "unknown") {
@@ -463,6 +492,10 @@ function judgeTurnRaw(i: JudgeInput): Judgement {
     const aixOf = (list: string[]): VerdictDetail["aix_verdict"] => (list.length ? (!!brainAix && list.includes(brainAix) ? "same" : "other") : "not_pressed");
     if (burstPress.length) {
       const hit = aixOf(burstPress) === "same";
+      // M3（LINE_WATCH_MEASURE_V11=on）: まとまりでは別の AIX・同じ窓の中でブレインの AIX も押した＝2つの要件を順に押した → 同じ意味（関所の aix_verdict は other のまま）
+      if (!hit && watchMeasureV11On() && !!brainAix && allPress.includes(brainAix)) {
+        return { verdict: "same_meaning", detail: withText({ ...base, reason: "aix_in_window", brain_aix: brainAix, staff_aix: allPress, aix_verdict: "other" }) };
+      }
       return { verdict: hit ? "same" : "different", detail: withText({ ...base, reason: hit ? "aix_same" : "aix_other", brain_aix: brainAix, staff_aix: allPress, aix_verdict: hit ? "same" : "other" }) };
     }
     // v7: 手打ちでも AIX の番（AI の AIX と同じ系統の中身・AIX の種類なしは系統を問わない）
@@ -494,11 +527,24 @@ function judgeTurnRaw(i: JudgeInput): Judgement {
         || (dActs.has("estimate_promise") && a === "estimate_sheet");
       if (burstPress.some(fulfils)) return { verdict: "same_meaning", detail: withText({ ...base, reason: "two_stage_fulfilled", brain_aix: null, staff_aix: burstPress, aix_verdict: "same" }) };
     }
+    // M8（LINE_WATCH_MEASURE_V11）: スタッフはこの番に文を書かず、前の約束（募集状況の確認・御見積書・ピックアップ）の結果の AIX だけを送った
+    //   ＝お客様の番の答えではなく前の約束を果たした番（実物 11691・11730）→ 数えない（na）。会話に前の約束が無い時は今まで通り数える
+    if (watchMeasureV11On() && !staffText && burstPress.length && burstPress.every((a) => RESULT_AIX_PROMISE[a]?.test(String(i.staffFactGround ?? "")))) {
+      return { verdict: "na", detail: withText({ ...base, reason: "promise_fulfilment_only", brain_aix: null, staff_aix: burstPress, aix_verdict: "unexpected" }) };
+    }
+    // M7（LINE_WATCH_MEASURE_V11）: まとまりに AIX を押し、文が2通以上・1通目が下書きと一致（2通目は AIX のフォーム等）→ 同じ意味（実物 12924）
+    if (watchMeasureV11On() && draft && burstPress.length && burstTexts.length > 1 && !(text && isAgree(text.verdict))) {
+      const first = judgeText(draft, burstTexts[0].text, i.staffFactGround ?? null);
+      if (isAgree(first.verdict)) return { verdict: "same_meaning", detail: withText({ ...base, reason: "first_text_same_plus_aix", brain_aix: null, staff_aix: burstPress, aix_verdict: "unexpected" }) };
+    }
     // 文は下書きどおり・スタッフは AIX も足した → 一部違う（AI が AIX を出さなかった）。文も違う・文が無い → 別の事
     const textAgree = !!text && isAgree(text.verdict);
+    // M1（LINE_WATCH_MEASURE_V11=on）: 文は下書きどおり・AIX は 2通目に足した → 文の一致（同じ意味）。aix_verdict は unexpected のまま（関所は緩めない）
+    if (textAgree && watchMeasureV11On()) return { verdict: "same_meaning", detail: withText({ ...base, reason: "text_same_plus_aix", brain_aix: null, staff_aix: burstPress, aix_verdict: "unexpected" }) };
     return { verdict: textAgree ? "partial" : "different", detail: withText({ ...base, reason: textAgree ? "text_plus_aix" : "text_but_aix", brain_aix: null, staff_aix: burstPress, aix_verdict: "unexpected" }) };
   }
-  if (sentinel === "[返信不要]") return { verdict: "different", detail: withText({ ...base, reason: "no_reply_needed_but_sent" }) };
+  // M2（LINE_WATCH_MEASURE_V11=on）: [返信不要] の合図でも、下書きの文がスタッフの文と同じ（一致・同じ意味）なら文で比べる
+  if (sentinel === "[返信不要]" && !(watchMeasureV11On() && text && isAgree(text.verdict))) return { verdict: "different", detail: withText({ ...base, reason: "no_reply_needed_but_sent" }) };
   if (!draft) {
     if (i.hasBrain === false) return { verdict: "na", detail: withText({ ...base, reason: "no_brain" }) };
     return { verdict: "na", detail: withText({ ...base, reason: sentinel ? "sentinel_only" : "no_draft" }) };
@@ -522,14 +568,51 @@ function judgeTurnRaw(i: JudgeInput): Judgement {
 }
 
 type TextJudgement = { verdict: Verdict; reason: string; extra: Partial<VerdictDetail> };
-function judgeText(draft: string, staff: string): TextJudgement {
+/** M4: 内覧の当日の段取り（到着・入口・駐車・遅れ・住所の確かめ） */
+export const VIEWING_DAY_LOGISTICS_RE = /到着|(?:着|つ)きました|エントランス|入口|入り口|どこ(?:に|へ|で|です)|向かって|向かいます|遅れ|駐車|停め|ですよね[?？]/;
+const RELATIVE_DAY_RE = /^(?:本日|今日|明日|明後日|あした)$/;
+/** M8: 結果の AIX と、それを約束した前のスタッフの言葉（会話＝staffFactGround にあれば前の約束を果たした番） */
+const RESULT_AIX_PROMISE: Record<string, RegExp> = {
+  property_check_result: /募集状況[^。\n！!]{0,12}確認させて|確認出来次第|確認でき次第/,
+  estimate_sheet: /御?見積(?:書|り書)[^。\n！!]{0,20}(?:お送り|作成)/,
+  property_send: /ピックアップ[^。\n！!]{0,12}(?:お送り|させて)/,
+  property_recommendation: /ピックアップ[^。\n！!]{0,12}(?:お送り|させて)/,
+};
+
+/**
+ * M5・M6（LINE_WATCH_MEASURE_V11）: ground を渡した時だけ（=スイッチが on）。
+ *   M6 日時の食い違いが「今日・本日・明日」の言い方だけ（他の日時の言葉は食い違わない）→ 日時の食い違いにしない
+ *      （実物: 夜中の 0時をまたいでスタッフが送ると下書きの「明日」が「本日」になる・下書きが「今日」を足しただけ）
+ *   M5 片側の違いが「下書きが物件名を足しただけ」で、その名前が全部会話（ground）にある → 片側にしない
+ */
+function relaxFacts(draft: string, staff: string, facts: FactDiff, ground: string | null | undefined): { facts: FactDiff; notes: string[] } {
+  if (ground === undefined) return { facts, notes: [] };
+  const notes: string[] = [];
+  let out: FactDiff = { conflict: [...facts.conflict], draftOnly: [...facts.draftOnly], staffOnly: [...facts.staffOnly] };
+  if (out.conflict.includes("datetime")) {
+    const a = [...factTokensOf(draft).datetime].filter((x) => !RELATIVE_DAY_RE.test(x));
+    const b = new Set([...factTokensOf(staff).datetime].filter((x) => !RELATIVE_DAY_RE.test(x)));
+    if (a.every((x) => b.has(x))) { out = { ...out, conflict: out.conflict.filter((k) => k !== "datetime") }; notes.push("relative_day_only"); }
+  }
+  if (out.draftOnly.includes("property") && !out.staffOnly.length && !out.conflict.some((k) => k !== "name")) {
+    const g = String(ground ?? "").normalize("NFKC").replace(/\s/g, "");
+    const props = [...factTokensOf(draft).property];
+    if (g && props.length && props.every((p) => g.includes(String(p).normalize("NFKC").replace(/\s/g, "")))) {
+      out = { ...out, draftOnly: out.draftOnly.filter((k) => k !== "property") }; notes.push("draft_named_property");
+    }
+  }
+  return { facts: out, notes };
+}
+
+function judgeText(draft: string, staff: string, ground?: string | null): TextJudgement {
   if (editCore(draft) === editCore(staff)) return { verdict: "same", reason: "exact", extra: { sim: 1, fact_diff: false } };
   const diff = classifyEdit(draft, staff);
   const sim = Math.round(diff.sim * 100) / 100;
   const A = staffActsOf(draft), B = staffActsOf(staff);
   const missing = [...B].filter((x) => !A.has(x));
   const extra = [...A].filter((x) => !B.has(x));
-  const facts = factDiffOf(draft, staff);
+  const relaxed = relaxFacts(draft, staff, factDiffOf(draft, staff), ground);
+  const facts = relaxed.facts;
   const ask: [boolean, boolean] = [asksCustomer(draft), asksCustomer(staff)];
   const units = draftUnitCount(draft);
   const kept = Math.round((Math.max(0, units - diff.deleted - diff.rephrased) / Math.max(1, units)) * 100) / 100;
@@ -538,7 +621,7 @@ function judgeText(draft: string, staff: string): TextJudgement {
   const factHard = facts.conflict.some((k) => k !== "name");
   // 言い回しがとても遠い（似ている度 0.25 未満・下書きの文の残り 1/3 以下）は決まった規則で割り切れない物の印（LLM を足すかの物差し）
   const far = sim < 0.25 && kept <= 0.34;
-  const x: Partial<VerdictDetail> = { sim, draft_acts: [...A], staff_acts: [...B], missing_acts: missing, extra_acts: extra, facts, fact_diff: factHard, ask, kept };
+  const x: Partial<VerdictDetail> = { sim, draft_acts: [...A], staff_acts: [...B], missing_acts: missing, extra_acts: extra, facts, fact_diff: factHard, ask, kept, ...(relaxed.notes.length ? { measure_notes: relaxed.notes } : {}) };
   const partial = (reason: string): TextJudgement => ({ verdict: "partial", reason, extra: far ? { ...x, uncertain: true } : x });
   if (factHard) return { verdict: "different", reason: "fact_conflict", extra: x };
   if (missing.length && extra.length) return { verdict: "different", reason: "acts_conflict", extra: x };

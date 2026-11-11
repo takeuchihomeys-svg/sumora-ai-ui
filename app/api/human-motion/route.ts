@@ -54,10 +54,10 @@ function strArr(v: unknown, cap: number): string[] | null {
   }
   return out.length ? out : null;
 }
-/** 点の形（[[x,y],...]）を整える。数だけ・0〜1に丸める */
-function shapesOf(v: unknown): number[][] | null {
+/** 点の形（[[[x,y],[x,y],...], ...]）を整える。数だけ・0〜1に丸める */
+function shapesOf(v: unknown): number[][][] | null {
   if (!Array.isArray(v)) return null;
-  const out: number[][] = [];
+  const out: number[][][] = [];
   for (const row of v.slice(0, 6)) {
     if (!Array.isArray(row)) continue;
     const pts: number[][] = [];

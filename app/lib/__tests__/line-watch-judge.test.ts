@@ -108,10 +108,13 @@ it("窓が閉じて何も送っていない → 比べられない（no_staff）
 it("申込以降（screening）は数えない", () => {
   eq(judgeTurn({ draft: "はい", brainReplyMode: "auto_reply", convStatus: "screening", hasBrain: true, window: win("はい") }).detail.reason, "out_of_scope");
 });
-it("返信の案・スタッフは文を下書きどおり＋条件のフォームの AIX → 一部違う（AIX も足した）", () => {
+it("返信の案・スタッフは文を下書きどおり＋条件のフォームの AIX → LINE_WATCH_MEASURE_V11=off は一部違う・既定（on）は同じ意味（M1）", () => {
   const draft = "はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！";
-  const j = judgeTurn({ draft, brainAction: "", brainReplyMode: "auto_reply", hasBrain: true, window: win(draft, [{ aix_type: "condition_hearing", check_pattern: null, at: at(6), burst: true }]) });
-  eq([j.verdict, j.detail.reason, j.detail.aix_verdict], ["partial", "text_plus_aix", "unexpected"]);
+  const run = () => judgeTurn({ draft, brainAction: "", brainReplyMode: "auto_reply", hasBrain: true, window: win(draft, [{ aix_type: "condition_hearing", check_pattern: null, at: at(6), burst: true }]) });
+  process.env.LINE_WATCH_MEASURE_V11 = "off";
+  try { const j = run(); eq([j.verdict, j.detail.reason, j.detail.aix_verdict], ["partial", "text_plus_aix", "unexpected"]); } finally { delete process.env.LINE_WATCH_MEASURE_V11; }
+  const j2 = run();
+  eq([j2.verdict, j2.detail.reason, j2.detail.aix_verdict], ["same_meaning", "text_same_plus_aix", "unexpected"]);
 });
 it("返信の案・スタッフは最初に AIX だけ → 別の事", () => {
   const j = judgeTurn({ draft: "はい", brainReplyMode: "auto_reply", hasBrain: true, window: win("", [{ aix_type: "property_send", check_pattern: null, at: at(5), burst: true }]) });

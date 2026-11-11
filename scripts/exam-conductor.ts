@@ -30,6 +30,10 @@ import { rmdirSync, unlinkSync, existsSync, mkdirSync, readdirSync, readFileSync
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
+import { pendingCounts, decideNearResolve, LEAK_STOP_FILE, isExamJob, ownerBaseDue } from "./lib/exam-near-hook";
+import { pathCheck } from "./lib/exam-path-check";
+import { markersOf } from "./lib/exam-miss-stage";
+import { CONDUCTOR_LINKS } from "../app/lib/conductor-linkage";
 import { readObs } from "./lib/exam-flake";
 import { problemHash } from "./lib/brain-exam-baseline";
 /** 2026-11-05 作業員1（作業員4の気付き・問題の id のぶつかり）: 依頼の作業ツリーの手元の problems.json の中身の hash の候補（揺れの記録を id だけで引かない） */
@@ -135,6 +139,11 @@ async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
   // 2026-11-04 指揮役: AI を呼ばない読むだけの依頼は試験の本数の門に入れない（夜だけの印は守る・DB の窓と上限は依頼の引数のまま）
   if (j?.runner === "cmd" && j.readOnly) { if (j.nightOnly) { const h = new Date(Date.now() + 9 * 3600_000).getUTCHours(); if (h >= 9 && h < 22) return { ok: false, why: "夜だけの依頼（JST 22〜9）" }; } return { ok: true, why: "読むだけ（AI を呼ばない・試験の門の外）" }; }
   if (j?.nightOnly) { const h = new Date(Date.now() + 9 * 3600_000).getUTCHours(); if (h >= 9 && h < 22) return { ok: false, why: "夜だけの依頼（JST 22〜9）" }; }
+  // 2026-11-10 作業員8（D3 漏れの番人）: 近い番の答えの漏れの印があれば試験を止める（exam-near-resolve が置く・確かめて消すまで）
+  if (existsSync(join(ROOT, LEAK_STOP_FILE)) && (process.env.EXAM_NEAR_LEAK_GUARD ?? "").trim().toLowerCase() !== "off") {
+    if (!leakNoted) { leakNoted = true; appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to: "main", owner: j?.owner ?? "?", label: j?.label ?? "", msg: `漏れの番人: exam-queue/${LEAK_STOP_FILE} がある＝試験を止めた（近い番の答えに元の番）` }) + "\n"); log(`  📣 知らせる: to=main 漏れの番人で試験を止めた（exam-queue/${LEAK_STOP_FILE}）`); }
+    return { ok: false, why: `漏れの番人（exam-queue/${LEAK_STOP_FILE} を確かめて消す）` };
+  }
   // 2026-11-06 作業員8（統括役の了承）: 急ぎの依頼（--urgent）だけ混雑の時間でも流す（倍の時間の費用は 11/05 に $23・試験の 30%）
   if (!cheapNow() && !(j as { urgent?: boolean } | null)?.urgent) return { ok: false, why: "DeepSeek の混雑の時間（平日 10〜13・15〜19・急ぎなら --urgent）" };
   const pc = pcState();
@@ -630,6 +639,62 @@ async function runTscJob(j: ExamJob & { file: string }): Promise<void> {
   log(`  済み: ${j.label} → ${verdict}`);
 }
 
+let nearNoEnvNoted = false;
+let leakNoted = false;
+/** 試験の前（同じ日に固定した次の依頼の前）と後（新しい頼みができた直後）に exam-near-resolve を回す。読めなければ試験は止めない */
+function nearResolveHook(j: ExamJob, stage: "before" | "after"): void {
+  const snap = join(examCacheRoot(), "db-snapshot");
+  const d = decideNearResolve({ job: j, counts: pendingCounts(snap), configEnv: readJson<{ nearResolveEnv?: string }>(CONFIG, {}).nearResolveEnv ?? null, env: process.env, envExists: (p) => existsSync(p) });
+  if (!d.run) {
+    if ((d.why === "no_env" || d.why === "env_missing") && !nearNoEnvNoted) { nearNoEnvNoted = true; log(`  鍵が要る読みの頼みが残っている（解かない: ${d.why}・config.json の nearResolveEnv か EXAM_NEAR_RESOLVE_ENV に鍵のある env のパス）`); }
+    return;
+  }
+  const t0 = Date.now();
+  // shell: true は引数を空白でつなぐ＝パスの空白（竹内 悠馬）を引用符で包む
+  const r = spawnSync("npx", ["tsx", `"--env-file=${d.envPath}"`, "scripts/exam-near-resolve.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000 });
+  const out = String(r.stdout ?? "");
+  const last = out.trim().split(/\r?\n/).filter((l) => l.startsWith("鍵が要る読みの控え")).pop() ?? `終わりの番号 ${r.status}${r.error ? `・${r.error.message}` : ""}`;
+  log(`  鍵が要る読みを解いた（${stage}・${j.label}・頼み ${d.total}・日 ${d.days.join(",")}・${Math.round((Date.now() - t0) / 1000)}秒）: ${last.slice(0, 200)}`);
+}
+
+/**
+ * 2026-11-10 作業員8（D2）: 流す前に、問題が直した所（連携の表の行）の道を通るかを前の答えの印で確かめる（LLM なし・止めない・知らせるだけ）。
+ *   止める: EXAM_PATH_CHECK=off
+ */
+function pathCheckHook(j: ExamJob): void {
+  if ((process.env.EXAM_PATH_CHECK ?? "").trim().toLowerCase() === "off" || !isExamJob(j)) return;
+  const ids = String(j.only ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!ids.length) return;
+  try {
+    const base = spawnSync("git", ["merge-base", "origin/main", "HEAD"], { cwd: j.cwd, encoding: "utf8" }).stdout?.trim();
+    if (!base) return;
+    const changed = [
+      ...String(spawnSync("git", ["diff", "--name-only", base, "HEAD"], { cwd: j.cwd, encoding: "utf8" }).stdout ?? "").split(/\r?\n/),
+      ...String(spawnSync("git", ["diff", "--name-only"], { cwd: j.cwd, encoding: "utf8" }).stdout ?? "").split(/\r?\n/),
+    ].map((s) => s.trim()).filter(Boolean);
+    const B = join(examCacheRoot(), "brain-exam-baseline");
+    const dirs = readdirSync(B).filter((n) => n.startsWith("v-")).map((n) => ({ n, t: statSync(join(B, n)).mtimeMs })).sort((a, b) => b.t - a.t).map((x) => x.n);
+    const markersById: Record<string, string[] | null> = {};
+    for (const id of ids) {
+      markersById[id] = null;
+      for (const n of dirs) {
+        const f = join(B, n, `${id}.json`);
+        if (!existsSync(f)) continue;
+        const b = readJson<{ rows?: Array<Record<string, unknown>> } | null>(f, null);
+        if (b?.rows?.length) { markersById[id] = [...new Set(b.rows.flatMap((r) => markersOf({ id, ...(r as object) } as never)))]; break; }
+      }
+    }
+    const pc = pathCheck({ changed, links: CONDUCTOR_LINKS, markersById });
+    if (pc.verdict === "unknown") return;
+    log(`  道の確かめ（${j.label}）: 直した所 ${pc.links.join("・")}・通る ${pc.passing.length}問${pc.passing.length ? `（${pc.passing.join(",")}）` : ""}・通らない ${pc.notPassing.length}問${pc.noAnswer.length ? `・前の答え無し ${pc.noAnswer.length}問` : ""}`);
+    if (pc.verdict === "none") {
+      const msg = `道の確かめ: ${j.label} の問題 ${pc.notPassing.join(",")} はどれも直した所（${pc.links.join("・")}）の道を通っていない（前の答えの印）＝効き目を測れない。本番の記録から通る問題を足すか確かめて`;
+      appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to: j.notify ?? cfg().notify?.[j.owner] ?? j.owner, owner: j.owner, label: j.label, msg }) + "\n");
+      log(`  📣 知らせる: to=${j.owner} ${msg}`);
+    }
+  } catch (e) { log(`  道の確かめを飛ばす（${String(e instanceof Error ? e.message : e).slice(0, 120)}）`); }
+}
+
 async function runJob(j: ExamJob & { file: string }): Promise<void> {
   if (j.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") return runTscRemoteJob(j); // 古い依頼の tsc も手元でなく Vercel の上で（EXAM_TSC_LOCAL=on の時だけ手元）
   if (j.runner === "tsc") return runTscJob(j);
@@ -933,7 +998,11 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
             const nightFiles = readdirSync(B).filter((f) => /^nightly-base-.*\.json$/.test(f));
             const hasNightly = nightFiles.length > 0;
             const jobs: Array<{ label?: string; createdAt?: string; only?: string; cmds?: string[] }> = [];
-            for (const d of [ROOT, DONE]) for (const f of readdirSync(d)) { if (!/\.json(\.claimed)?$/.test(f)) continue; const j = readJson<Record<string, unknown> | null>(join(d, f), null); if (j && isExamJobShape(j)) jobs.push(j as never); }
+            // 2026-11-10 作業員8（D1③）: 11/10 の夜の基準は直近2日の依頼（済みを含む）から 56問を作り、その夜の依頼が使ったのは 22問（39%）。
+            //   昼に済んだ依頼の問題は昼の前の答えがもうある。列に積まれている（まだ流れていない）依頼の問題だけにする＝空なら積まず（no-jobs）、
+            //   夜に依頼が積まれた時にその依頼の問題で積む（印は書かないので同じ夜のうちに積める）。止める: EXAM_NIGHT_BASE_QUEUED_ONLY=off
+            const queuedOnly = (process.env.EXAM_NIGHT_BASE_QUEUED_ONLY ?? "").trim().toLowerCase() !== "off";
+            for (const d of queuedOnly ? [ROOT] : [ROOT, DONE]) for (const f of readdirSync(d)) { if (!/\.json(\.claimed)?$/.test(f)) continue; const j = readJson<Record<string, unknown> | null>(join(d, f), null); if (j && isExamJobShape(j)) jobs.push(j as never); }
             const ids = nightBaseIds(jobs, { nowMs: Date.now(), hasNightly });
             if ((process.env.EXAM_NIGHT_BASE_SKIP ?? "").trim().toLowerCase() !== "off") {
               const rev = (r: string) => { try { return execFileSync("git", ["rev-parse", "--verify", `${r}^{commit}`], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch { return null; } };
@@ -957,6 +1026,19 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
           log(`夜の基準の依頼を積んだ: ${nb.job.label}（夜だけ流す）`);
         }
       }
+      // 2026-11-11 作業員8（統括役の頼み）: 作業員9 の毎晩の取りこぼしの網（owner-base-nightly・LLM なし・数十秒）を JST 1:30 以降に1日1回。失敗しても試験は止めない
+      if (!REMOTE_ONLY) {
+        const obFile = join(MARKS, "owner-base-last.json");
+        const ob = ownerBaseDue(readJson<{ day?: string } | null>(obFile, null)?.day ?? null, Date.now(), process.env);
+        if (ob.due) {
+          mkdirSync(MARKS, { recursive: true });
+          writeFileSync(obFile, JSON.stringify({ day: ob.day, at: new Date().toISOString() })); // 先に印＝失敗しても同じ日に繰り返さない
+          const t0 = Date.now();
+          const r = spawnSync("npx", ["tsx", "--env-file=.env.local", "scripts/owner-base-nightly.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000 });
+          const tail = String(r.stdout ?? "").trim().split(/\r?\n/).filter(Boolean).pop() ?? "";
+          log(`取りこぼしの網（owner-base-nightly）: ${r.status === 0 ? "済み" : `落ちた（終わりの番号 ${r.status}${r.error ? "・" + r.error.message : ""}）`}・${Math.round((Date.now() - t0) / 1000)}秒・${tail.slice(0, 160)}`);
+        }
+      }
       const isRemoteJob = (x: ExamJob) => x.runner === "tsc-remote" || (x.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") || (x.runner === "cmd" && !!x.readOnly);
       // 読むだけの依頼は2つ目の流す役だけが流す（試験の列を止めない・試験の列の先頭の扱いにもしない）
       const jobs = readJobs().filter((x) => (REMOTE_ONLY ? isRemoteJob(x) : !(x.runner === "cmd" && x.readOnly)));
@@ -976,7 +1058,11 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
       for (const j of jobs.filter((x) => x.runner === "tsc" && !tscAlerted.has(x.id))) { const min = (Date.now() - Date.parse(j.createdAt)) / 60_000; if (min >= Number(process.env.EXAM_TSC_WAIT_ALERT_MIN ?? "60")) { tscAlerted.add(j.id); const why = whys.find((w) => w.startsWith(j.label + ":")) ?? ""; appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to: "main", owner: j.owner, label: j.label, msg: `tsc の順番待ちが ${Math.round(min)}分（${why}）` }) + "\n"); log(`  📣 知らせる: to=main tsc の順番待ちが ${Math.round(min)}分（${j.label}・${j.owner}・${why}）`); } }
       if (!picked) { log(`待つ: ${whys.slice(0, 3).join("／")}（${jobs.length}本待ち）`); if (flag("once")) return; await new Promise((r) => setTimeout(r, (jobs.some((x) => x.runner === "tsc") ? 1 : 5) * 60_000)); continue; }
       if (!claimJob(picked)) continue; // もう一方の流す役が先に取った
+      // 2026-11-10 作業員8（統括役の頼み）: 試験の前と後に「鍵が要る読み」の頼みを解く（scripts/lib/exam-near-hook.ts・EXAM_NEAR_RESOLVE_HOOK=off で止める）
+      nearResolveHook(picked, "before");
+      pathCheckHook(picked);
       await runJob(picked);
+      nearResolveHook(picked, "after");
       if (flag("once")) return;
     }
   }

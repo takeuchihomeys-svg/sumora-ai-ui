@@ -4,7 +4,7 @@ let pass = 0, fail = 0;
 const t = (n: string, ok: boolean) => { if (ok) pass++; else { fail++; console.log(`  NG ${n}`); } };
 const row = (i: number, route: "aix" | "reply", aix: string | null, d = 0.1): NearTurnRow => ({ key: `msg:${i}`, distance: d, route, aix, situation: `場面: property_share\n段階: proposing\n直前のこちら: 返信\nお客様: 〔物件のURL〕 ここ空いてますか ${i}` });
 
-t("既定 off・on で動く", !nearOpinionOn({}) && nearOpinionOn({ CONDUCTOR_NEAR_OPINION: "on" }) && !nearOpinionOn({ CONDUCTOR_NEAR_OPINION: "shadow" }));
+t("11/11 既定 on・=off で止まる", nearOpinionOn({}) && nearOpinionOn({ CONDUCTOR_NEAR_OPINION: "on" }) && !nearOpinionOn({ CONDUCTOR_NEAR_OPINION: "off" }));
 t("束の中が5件未満は意見なし", nearOpinion([row(1, "reply", null), row(2, "reply", null), row(3, "reply", null), row(4, "reply", null)]) === null);
 t("束の外（0.2 超）は数えない", nearOpinion([...[1, 2, 3, 4].map((i) => row(i, "reply", null)), row(5, "reply", null, 0.25)]) === null);
 const r5 = [1, 2, 3, 4, 5].map((i) => row(i, "reply", null));

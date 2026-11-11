@@ -30,7 +30,7 @@ export const PREFIX_WARM_HASH_PREFIX = "warm:";
 
 export type PrefixWarmName =
   | "final_check_warm_rule_check" | "final_check_warm_anomaly_scan" | "final_check_warm_context_check" | "final_check_warm_revision"
-  | "customer_summary_warm" | "suggest_next_action_warm" | "aix_template_warm";
+  | "customer_summary_warm" | "suggest_next_action_warm" | "aix_template_warm" | "reply_writer_warm";
 
 export type WarmSystemBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } };
 
@@ -161,4 +161,36 @@ export function classifyPrefixWarmUsage(u: { cache_read: number; cache_write_1h:
   if (write > 0 && read >= staticHitMinRead) return "dynamic_rewrite";
   if (write > 0) return "cold";
   return "no_cache";
+}
+
+// ── 返信の書き手（Claude）の system 3ブロックの温め（2026-11-11 作業員2・統括役 C1）──
+// 本番（11/03〜11/10・名札 reply_generate_claude_writer）: 91回・1日 12.7回。前置き 約10.4万トークン（system 3ブロック 約9.7万＋段の案内 約0.7万）の
+//   1h 書き直しが 30回（うち 23回は同じ鍵のまま 60分以上空いた寿命切れ・6回は鍵の変わり＝デプロイ／DB の決まり）。1回 約 $0.42。
+//   区切りの前に番ごとに変わる文は無い（当たりの回の読みは毎回 約9.7万で揃う）＝並べ替えでは減らない。5分にする・付けないは今より高い（実物の時刻で $1.64→$2.56／$2.47/日）。
+//   → ブレイン・AIX の文作りと同じ温め（50〜58分の窓・営業時間・1日20回）を system 3ブロックだけに掛ける（段の案内は状態で変わる＝今まで通り本物が書く）。
+//   実物の時刻で前置きの費用 $1.64→$0.80/日（温め 約7回/日の読み込み込み）。中身は1文字も変えない: system は本物が送った物（llm_warm_prefixes）を
+//   本物の鍵（llm_usage_logs.sys_key_full）と一致した時だけ使う。モデルは返信生成と同じ（claude-model-map の組 reply_generate）。
+// 9/19 竹内さんは keep-warm（10分毎・全変種）を止めた（固定費が取り戻す額を上回った）。これは別の形（窓つき・鍵1つ）。
+// 2026-11-11 竹内さんの OK（「温めを on にする」）で既定 on。止める: REPLY_WRITER_WARM=off
+/** reply-generation-model.REPLY_GENERATION_MODEL と同じ（langchain を読まない純関数のために写す。テストで一致を固定） */
+export const REPLY_WRITER_WARM_MODEL = "claude-sonnet-5";
+export const REPLY_WRITER_REAL_ACTION = "reply_generate_claude_writer";
+
+export function replyWriterWarmEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return !isOffSwitch(env.REPLY_WRITER_WARM);
+}
+
+/** 本物が送った system ブロック（cache_control 付き・順のまま）から温めの対象を作る。空・印の無いブロックがあれば null（鍵が本物と合わない） */
+export function buildReplyWriterWarmTarget(system: readonly WarmSystemBlock[]): PrefixWarmTarget | null {
+  if (!Array.isArray(system) || system.length === 0) return null;
+  if (system.some((b) => !b || b.type !== "text" || typeof b.text !== "string" || !b.text || !b.cache_control)) return null;
+  const blocks: WarmSystemBlock[] = system.map((b) => ({ type: "text", text: b.text, cache_control: b.cache_control?.ttl ? { type: "ephemeral", ttl: b.cache_control.ttl } : { type: "ephemeral" } }));
+  return {
+    name: "reply_writer_warm", realActions: [REPLY_WRITER_REAL_ACTION], model: REPLY_WRITER_WARM_MODEL,
+    key: systemFullKey(blocks) ?? "",
+    // 本物（reply-generation-model.createGenerationModel）と同じ model・thinking。max_tokens は鍵に入らない
+    body: { model: REPLY_WRITER_WARM_MODEL, max_tokens: 1, thinking: { type: "disabled" }, system: blocks, messages: [{ role: "user", content: "." }] },
+    // 先頭（指示の優先順位＋返信の決まり）と静的な決まりが読めて DB の決まりだけ書いた＝学習の更新の前払い
+    staticHitMinRead: blocks.length >= 2 ? 20_000 : Infinity, chars: chars(blocks),
+  };
 }
