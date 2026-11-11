@@ -1704,8 +1704,39 @@
   // リアプロは DIV.go_search が実際の検索ボタン（診断で確認済み）
   // 2026-10-01 竹内「押したら勝手に自動検索始まって…防ぐ」: 案内モード（<html data-axlx-guide> が "0" 以外）の間は拡張が検索を押さない（どの道から来ても）
   function _guideOn() { return document.documentElement.getAttribute("data-axlx-guide") !== "0"; }
+  /**
+   * 2026-11-11 竹内さん「まだ自動モード検索されない。なんで改善したはずが改善されていないのか」
+   *
+   *   何度直しても動かないので、**推測をやめて実際の値を残す**。
+   *   検索を押す所で「なぜ押した／押さなかった」かを storage に残し、
+   *   画面の帯から読めるようにする（`axlx_search_why`）。
+   */
+  function _noteSearchWhy(why, extra) {
+    try {
+      var o = {
+        why: String(why || "").slice(0, 80),
+        at: Date.now(),
+        guide: (function () { try { return document.documentElement.getAttribute("data-axlx-guide"); } catch (_) { return null; } })(),
+        fillRunning: !!window._axFillRunning,
+        queueBusy: (function () { try { return isClickQueueBusy(); } catch (_) { return null; } })(),
+        goSearch: document.querySelectorAll('div.go_search, div.go_search_submit').length,
+        area_mode: _axExpect ? _axExpect.areaMode : null,
+        extra: extra || null,
+      };
+      chrome.storage.local.set({ axlx_search_why: o });
+      console.log('[AX] 検索の判断:', why, o);
+    } catch (_) {}
+  }
   function clickSearch() {
-    if (_guideOn()) { console.warn("[AX] 案内モードのため検索を押さない（スタッフが押す）"); notifyDone("guide-mode: 検索はスタッフが押す"); return; }
+    if (_guideOn()) {
+      // 案内モード（data-axlx-guide が "0" 以外）＝拡張は押さない。
+      //   ⚠ 自動モードなのにここに来るなら、realpro-guide.js が "0" を書けていない（＝原因が分かる）
+      var _g = null;
+      try { _g = document.documentElement.getAttribute("data-axlx-guide"); } catch (_) {}
+      _noteSearchWhy('guide_on: data-axlx-guide=' + String(_g), { guideAttr: _g });
+      console.warn("[AX] 案内モードのため検索を押さない（スタッフが押す） data-axlx-guide=" + String(_g));
+      notifyDone("guide-mode: 検索はスタッフが押す"); return;
+    }
     // クリックキュー消化中は検索しない（条件クリックが全て反映される前の検索送信を防止）
     if (isClickQueueBusy()) {
       if (_audit && !_audit._searchWaitMarked) { _audit._searchWaitMarked = true; _auditStepP('search_wait', 'queue=' + _clickQueue.length); }
@@ -2346,6 +2377,24 @@
 
   function fillRealpro(cond) {
     _stGapFast = !!(cond && cond.commute && cond.station_names && cond.station_names.length > 60);
+    /**
+     * 2026-11-11 竹内さん「まだ自動モード検索されない。なんで改善したはずが改善されていないのか」:
+     *   推測で直すのをやめ、**入口で何が来たか**を残す（`axlx_fill_entry`）。
+     */
+    try {
+      chrome.storage.local.set({ axlx_fill_entry: {
+        at: Date.now(),
+        hasCond: !!cond,
+        keys: cond ? Object.keys(cond).slice(0, 30) : [],
+        area_mode: cond ? (cond.area_mode || null) : null,
+        city_codes: cond && cond.city_codes ? cond.city_codes.length : 0,
+        station_names: cond && cond.station_names ? cond.station_names.length : 0,
+        route_ids: cond && cond.route_ids ? cond.route_ids.length : 0,
+        fillRunning: !!window._axFillRunning,
+        guide: (function () { try { return document.documentElement.getAttribute("data-axlx-guide"); } catch (_) { return null; } })(),
+        url: String(location.href).slice(0, 200),
+      } });
+    } catch (_) {}
     // 重複実行防止: popupパス(underbar→postMessage)とbackgroundパス(content.js→postMessage)が
     // 同時に aixlinx-fill を送ると fillRealpro が2回呼ばれてDOMレースが起きる
     if (window._axFillRunning) {
