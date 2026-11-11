@@ -126,6 +126,13 @@ describe("複数・個人情報", () => {
     ] });
     eq([r.reason, r.target], ["partial", null]);
   });
+  it("q202 の実物: URL は1件でも本文が「合計3つの物件」→ 決めない", () => {
+    const r = sharedPropertyOfTurn({ turn: [
+      cust("ART TENDOU WEST 1階\nhttps://suumo.jp/chintai/bc_100532288607/\nby SUUMO", "2026-11-03T10:36:00Z"),
+      cust("ありがとうございます。\n上記の物件も合わせてお調べ頂きますと幸いです。\n\n合計3つの物件の空き情報についてご教示下さい。\n・新大阪グランドハイツ 2階\n・新大阪ステーションビル 4階\n・ART TENDOU WEST 1階", "2026-11-03T10:37:31Z"),
+    ] });
+    eq([r.reason, r.target], ["multiple", null]);
+  });
   it("読めていない画像（「[画像]」だけ）が混ざる → 決めない", () => {
     eq(sharedPropertyOfTurn({ turn: [cust(Q119_IMG, "2026-09-06T12:59:19Z", "property_photo"), cust("[画像]", "2026-09-06T12:59:20Z")] }).reason, "partial");
   });

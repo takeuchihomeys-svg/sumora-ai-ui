@@ -86,6 +86,8 @@ export function fingerprintKnownRoom(f: Pick<CustomerSentFacts, "areaSqm" | "mad
   return sameBuilding && withRoom.length === 1 ? withRoom[0] : null;
 }
 
+/** 本文が複数の物件を指す言い方（「合計3つの物件」「2件とも」「どちらも」「両方」「それぞれ」） */
+const MANY_PROPERTIES_RE = /合計\s*[2-9]|(?<![\d,.])[2-9]\s*(?:件|物件|つの(?:物件|お部屋|部屋))|どちらも|両方|それぞれ|全部の物件|全ての物件|すべての物件/;
 const PLAIN_NAME_RE = /^(?:賃貸|分譲)?\s*(?:マンション|アパート|一戸建て?|戸建て?|物件)$/;
 const sumOf = (f: Pick<CustomerSentFacts, "areaSqm" | "madori" | "rentYen">) =>
   [f.madori, f.areaSqm != null ? `${f.areaSqm}㎡` : null, f.rentYen != null ? `${Math.round(f.rentYen / 100) / 100}万円` : null].filter(Boolean).join("・");
@@ -171,6 +173,9 @@ export function sharedPropertyOfTurn(o: { turn: ReadonlyArray<TsMsg>; pages?: Re
     }
   }
   if (!shared) return { target: null, reason: "none", found: 0 };
+  // q202（URL は1件・本文で「合計3つの物件の空き情報」と3件を挙げた）: 本文が複数の物件を指す番は1件に決めない
+  const words = o.turn.filter((m) => !/^\s*\[画像\]/.test(String(m.text ?? ""))).map((m) => String(m.text ?? "").normalize("NFKC")).join("\n");
+  if (MANY_PROPERTIES_RE.test(words)) return { target: null, reason: "multiple", found: found.size };
   if (found.size === 0) return { target: null, reason: "unresolved", found: 0 };
   if (found.size > 1) return { target: null, reason: "multiple", found: found.size };
   if (unresolved > 0) return { target: null, reason: "partial", found: found.size };
