@@ -248,6 +248,12 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("条件の入力: 1項目入れた後に一息（10%で900〜2600ms・3%で2.6〜5.5秒）", /function _enqueueWithEl[\s\S]{0,900}Math\.random\(\) < 0\.10\) \{[\s\S]{0,200}"息"/.test(ps4));
   ok("リアプロ: 検索を押す前の見直しにも一息（10%・3%）", /window\._axSearchLookedOver[\s\S]{0,400}Math\.random\(\) < 0\.10\) _lookMs \+= 900/.test(ps4));
   ok("ITANDI: 検索を押す前にも一息（10%・3%）", /_preSearchBreath[\s\S]{0,400}Math\.random\(\) < 0\.10\) _preSearchBreath = 900/.test(ips4));
+  // 2026-11-11 竹内さん「AIXの部分に休憩時間等もちゃんと書いといて。昼休みなら昼休みと人間のように」
+  ok("枠に「いま何をしているか」を出す（_axlxWorkNote）", /function _axlxWorkNote\(text, untilMs\)/.test(read("bulk-dl.js")) && /_axlxWorkNote\("👀 資料を見る"/.test(read("bulk-dl.js")));
+  ok("残り秒を毎秒更新して、過ぎたら戻す", /el\.textContent = text \+ \(left > 0 \? "（あと" \+ left \+ "秒）" : ""\)/.test(read("bulk-dl.js")) && /_workNoteTimer = setInterval\(paint, 1000\)/.test(read("bulk-dl.js")));
+  ok("昼休み（12:00〜13:00）を判定して「🍱 昼休み（13:00まで）」と出す", /_lunchRestMs|12 \* 60 && _mins < 13 \* 60/.test(read("background.js")) && /🍱 昼休み（13:00まで/.test(bg));
+  ok("休憩・次のお客様までの間も枠に出す", /☕ 休憩中/.test(read("background.js")) && /⏳ 次のお客様まで/.test(read("background.js")));
+  ok("ITANDI の枠にも同じ表示", /axlx-work-note/.test(ib4) && /axlx-itandi-count/.test(ib4));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

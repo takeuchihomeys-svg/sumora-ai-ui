@@ -159,7 +159,7 @@ function rest() {
       "setTimeout 2500": [2, "表示を戻す・Case C の予備の起動（Case A/B の後ろの安全網）"], "setTimeout 800": [1, "popup の応答の期限"],
       "setTimeout 5000": [1, "表示を戻す"], "setTimeout 100": [2, "ダウンロードのリンクを消す"], "setTimeout 4000": [1, "表示を戻す"],
       "setInterval 200": [1, "描画待ちの見る間隔（4秒で打ち切り）"], "setTimeout 50": [1, "fill-done 後の差し込みのやり直し（内部）"],
-      "setTimeout 2000": [2, "新しい結果が出たかの予備の確認・load 後の差し込み"], "setTimeout 400": [2, "MutationObserver の間引き・1件送信前のチェック確認（v2.6.23）"], "setInterval 1000": [1, "0件の確定の見る間隔（25秒で打ち切り）"],
+      "setTimeout 2000": [2, "新しい結果が出たかの予備の確認・load 後の差し込み"], "setTimeout 400": [2, "MutationObserver の間引き・1件送信前のチェック確認（v2.6.23）"], "setInterval 1000": [2, "0件の確定の見る間隔（25秒で打ち切り）・休憩等の「あと何秒」の表示更新（v2.6.52）"],
       "setTimeout 1200": [2, "起動時の差し込み・自動押下で押せない行を飛ばす待ち（v2.6.29）"],
       "setTimeout 20000": [1, "1件だけのブレイン判定の期限（v2.6.26・超えたら送る＝fail-open）"],
       "setTimeout 3000": [2, "「終わってから次を押してください」の知らせ（v2.6.28）・自動押下のカーソルが動けない時の予備の押下（v2.6.29）・サイトを触らない"],
@@ -172,7 +172,7 @@ function rest() {
     "pointer-ui.js": { "setTimeout 90": [1, "押した時にカーソルが縮むのを戻す（見た目だけ）"] },
     "itandi-bulk-dl.js": {
       "setTimeout 60000": [1, "PDF の期限"], "setInterval 500": [1, "モーダルが出たかの見る間隔"], "setTimeout 15000": [1, "モーダルの期限"],
-      "setTimeout 800": [1, "popup の応答の期限"], "setTimeout 5000": [1, "表示を戻す"], "setInterval 1000": [1, "0件の確定の見る間隔"],
+      "setTimeout 800": [1, "popup の応答の期限"], "setTimeout 5000": [1, "表示を戻す"], "setInterval 1000": [2, "0件の確定の見る間隔・休憩等の「あと何秒」の表示更新（v2.6.52）"],
       "setTimeout 300": [1, "見えないタブから戻った時にボタンを1回探す（v2.5.73・読むだけ）"], "setTimeout 250": [1, "枠をサイトの固定のボタンに重ねない見直しの間引き（v2.5.74・位置だけ）"], "setInterval 10000": [1, "重さの数え（localStorage axlx_perf=1 の時だけ・v2.5.73）"],
     },
     "itandi-content.js": { "setTimeout 300": [1, "起動時"] },

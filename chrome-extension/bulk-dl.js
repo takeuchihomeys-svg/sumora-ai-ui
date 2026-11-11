@@ -797,6 +797,8 @@
     _onePdfBadge(item, "look");
     var el = document.getElementById("axlx-count");
     if (el) el.textContent = "👀 資料を確認中…（" + Math.round(base / 1000) + "秒ほど）";
+    // 2026-11-11: 枠にも「あと何秒」を出す（人が見て人間の動きだと分かる形）
+    _axlxWorkNote("👀 資料を見る", Date.now() + base);
     _tmark("look_doc", Math.round(base) + "ms");
     var _lnBtn0 = document.getElementById("axlx-look-next-btn");
     if (_lnBtn0) _lnBtn0.style.display = "block";
@@ -805,6 +807,7 @@
       if (finished) return;
       finished = true;
       if (_lookWait) { clearTimeout(_lookWait.timer); _lookWait = null; }
+      _axlxClearWorkNote(); // 2026-11-11: 資料を見る間の表示を消す
       var _lnBtn = document.getElementById("axlx-look-next-btn");
       if (_lnBtn) _lnBtn.style.display = "none";
       if (why === "skip") { _tmark("look_skip", "人が先へ"); console.log("[AXLX bulk-dl] 資料の確認を打ち切って次の物件へ進みます"); }
@@ -1087,11 +1090,56 @@
     return true;
   }
 
+  /**
+   * 2026-11-11 竹内さん「AIXの部分に休憩時間等もちゃんと書いといて。人間が動いているように見たらわかるように。昼休みなら昼休みと」:
+   *   右下の枠に「いま何をしているか」を人が読める形で出す（画面を見た人が人間の動きだと分かるように）。
+   *   例: ☕ 休憩中（あと42秒）／🍱 昼休み（13:00まで）／👀 資料を見る（あと3秒）／⏳ 次のお客様まで（あと18秒）／🤖 1件ずつ押しています
+   *   ・_axlxWorkNote(text, untilMs) で出し、untilMs を過ぎたら自動で戻す（残り秒も毎秒更新）
+   *   ・_axlxClearWorkNote() で消す
+   */
+  var _workNoteTimer = null;
+  var _workNoteUntil = 0;
+  function _axlxClearWorkNote() {
+    if (_workNoteTimer) { clearInterval(_workNoteTimer); _workNoteTimer = null; }
+    _workNoteUntil = 0;
+  }
+  function _axlxWorkNote(text, untilMs) {
+    var el = document.getElementById("axlx-count");
+    if (!el) return;
+    _axlxClearWorkNote();
+    _workNoteUntil = typeof untilMs === "number" ? untilMs : 0;
+    var paint = function () {
+      var left = _workNoteUntil ? Math.max(0, Math.round((_workNoteUntil - Date.now()) / 1000)) : 0;
+      el.textContent = text + (left > 0 ? "（あと" + left + "秒）" : "");
+      if (_workNoteUntil && Date.now() >= _workNoteUntil) { _axlxClearWorkNote(); _paintPdfProgress(); }
+    };
+    paint();
+    if (_workNoteUntil) _workNoteTimer = setInterval(paint, 1000);
+  }
+
+  /**
+   * いまの時刻が昼休み（JST 12:00〜13:00）なら残り時間を返す（ミリ秒）。違えば 0。
+   * 竹内さん「昼休みなら昼休みと人間のようにするかたちで」: 自動便の勤務時間のゲートと同じ区切り（12〜13時）。
+   */
+  function _lunchRestMs() {
+    try {
+      var now = Date.now();
+      var j = new Date(now + 9 * 3600 * 1000);
+      var h = j.getUTCHours(), m = j.getUTCMinutes();
+      var mins = h * 60 + m;
+      if (mins >= 12 * 60 && mins < 13 * 60) {
+        return (13 * 60 - mins) * 60 * 1000 - j.getUTCSeconds() * 1000;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
   /** 進み具合の1行（送信中・確認中・送信済み） */
   function _paintPdfProgress() {
     var el = document.getElementById("axlx-count");
     if (!el) return;
     if (_nudgeTimer) return; // 知らせを出している間は上書きしない
+    if (_workNoteTimer) return; // 休憩などの表示中は上書きしない
     var done = Object.keys(_onePdfSent).length;
     var parts = [];
     if (_pdfSending) parts.push("📤 送信中");
@@ -1219,6 +1267,16 @@
   }
   try {
     chrome.runtime.onMessage.addListener(function (msg) {
+      // 2026-11-11 竹内さん「AIXの部分に休憩時間等もちゃんと書いといて」: 休憩・昼休み・次のお客様までの間を枠に出す
+      if (msg && msg.type === "axlx-work-note") {
+        _axlxWorkNote(String(msg.text || ""), Number(msg.untilMs) || 0);
+        return;
+      }
+      if (msg && msg.type === "axlx-work-note-clear") {
+        _axlxClearWorkNote();
+        _paintPdfProgress();
+        return;
+      }
       if (!msg || msg.type !== "axlx-pdf-captured") return;
       var item = _findItemByUrl(msg.url);
       if (!item) {

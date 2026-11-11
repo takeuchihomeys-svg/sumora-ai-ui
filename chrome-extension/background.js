@@ -1833,15 +1833,58 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             } catch (_) {}
             if (_restMs > 0) {
               console.log("[manual-bulk-search] 休憩（" + _restKind + " " + Math.round(_restMs / 1000) + "秒）をはさみます");
+              /**
+               * 2026-11-11 竹内さん「AIXの部分に休憩時間等もちゃんと書いといて。人間が動いているように見たらわかるように」:
+               *   休憩の間は、リアプロ／ITANDI の画面の枠に「☕ 休憩中（あとN秒）」と出す（黙って止まらない）。
+               */
+              try {
+                var _tabsForNote = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+                _tabsForNote.forEach(function (t) {
+                  try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "☕ 休憩中（" + _restKind + "）", untilMs: Date.now() + _restMs }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+                });
+              } catch (_) {}
               await new Promise(function (r) { setTimeout(r, _restMs); });
               _manualBulkWorkedSince = Date.now(); // 休んだら数え直す
+              try {
+                var _tabsEnd = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+                _tabsEnd.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note-clear" }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+              } catch (_) {}
               if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（休憩の後） → 中断"); break; }
             }
           }
           // 2人目からは「前のお客様の結果を見てから次を開く」間を置く
           if (_bi > 0) {
             var _gap = _bulkGapMs(_bi);
+            /**
+             * 2026-11-11 竹内さん「昼休みなら昼休みと人間のようにするかたちで」:
+             *   昼（JST 12:00〜13:00）に当たったら、その間は動かずに「🍱 昼休み（13:00まで）」と枠に出す。
+             *   昼休みの後は、次のお客様までの間も改めて取る。
+             */
+            var _lunchMs = 0;
+            try {
+              var _j = new Date(Date.now() + 9 * 3600 * 1000);
+              var _mins = _j.getUTCHours() * 60 + _j.getUTCMinutes();
+              if (_mins >= 12 * 60 && _mins < 13 * 60) _lunchMs = (13 * 60 - _mins) * 60 * 1000 - _j.getUTCSeconds() * 1000;
+            } catch (_) {}
+            if (_lunchMs > 0) {
+              console.log("[manual-bulk-search] 🍱 昼休み（13:00まで " + Math.round(_lunchMs / 60000) + "分）");
+              try {
+                var _tabsLunch = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+                _tabsLunch.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "🍱 昼休み（13:00まで）", untilMs: Date.now() + _lunchMs }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+              } catch (_) {}
+              await new Promise(function (r) { setTimeout(r, _lunchMs); });
+              _manualBulkWorkedSince = Date.now();
+              try {
+                var _tabsLunchEnd = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+                _tabsLunchEnd.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note-clear" }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+              } catch (_) {}
+              if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（昼休みの後） → 中断"); break; }
+            }
             console.log("[manual-bulk-search] 次のお客様まで " + Math.round(_gap / 1000) + "秒（人の間）");
+            try {
+              var _tabsGap = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+              _tabsGap.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "⏳ 次のお客様まで", untilMs: Date.now() + _gap }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+            } catch (_) {}
             await new Promise(function (r) { setTimeout(r, _gap); });
             if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（間の間） → 中断"); break; }
           }

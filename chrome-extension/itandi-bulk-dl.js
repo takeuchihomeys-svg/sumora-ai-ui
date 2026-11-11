@@ -722,6 +722,26 @@
   var _itCustomerFix = null; // 取り違えを直した回（点検の result に残す）
   try {
     chrome.runtime.onMessage.addListener(function (msg) {
+      // 2026-11-11 竹内さん「AIXの部分に休憩時間等もちゃんと書いといて」: 休憩・昼休み・次のお客様までの間を枠に出す
+      if (msg && msg.type === "axlx-work-note") {
+        var _el = document.getElementById("axlx-itandi-count");
+        if (_el) {
+          var _t = String(msg.text || "");
+          var _u = Number(msg.untilMs) || 0;
+          var _paint = function () {
+            var left = _u ? Math.max(0, Math.round((_u - Date.now()) / 1000)) : 0;
+            _el.textContent = _t + (left > 0 ? "（あと" + left + "秒）" : "");
+            if (_u && Date.now() >= _u) { clearInterval(_iv); _el.textContent = "0件"; }
+          };
+          var _iv = setInterval(_paint, 1000); _paint();
+        }
+        return;
+      }
+      if (msg && msg.type === "axlx-work-note-clear") {
+        var _el2 = document.getElementById("axlx-itandi-count");
+        if (_el2) _el2.textContent = "0件";
+        return;
+      }
       if (!msg || msg.type !== "axlx-set-fill-customer") return;
       _itFillCtx = msg.customerId ? { id: String(msg.customerId), name: msg.customerName || null, at: Date.now() } : null;
       // 答えは itandi-content.js が返す（ここは受けるだけ）
