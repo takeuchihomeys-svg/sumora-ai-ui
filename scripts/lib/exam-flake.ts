@@ -159,6 +159,34 @@ export function judgeMajoritySettled(outs: ReadonlyArray<{ asks: boolean[]; rout
 }
 
 /**
+ * 2026-11-11 作業員8（統括役の③）: 「悪くなった」と出た問題の外れた回だけ、判定を3回（元の判定＋足した判定）の過半数で確かめ直す。
+ *   判定役は同じ答案でも約1割揺れる（11/11 の --judge-compare: 判定し直しで合否が揃うのは 86〜91%）＝1回の✕で悪化にしない。
+ *   直す向きは「悪化の確かさが上がる」側だけ: 依頼の covered・route は ✕→○ だけ、言ってはいけない事の violated は 違反→守った だけ
+ *   （○を✕に・守ったを違反に変える事は無い＝新しい悪化は作らない）。過半数が✕のままなら✕のまま（＝悪化が判定3回で確かめられた）。
+ *   votes は元の判定を含めた全部の判定（元が1つ目）。
+ */
+export type JudgeVote = { asks: boolean[]; route: boolean[]; ng: boolean[] };
+export function confirmJudgeMerge(stored: JudgeVote, votes: readonly JudgeVote[]): { merged: JudgeVote; changed: number } {
+  const maj = (xs: boolean[]) => xs.filter(Boolean).length * 2 > xs.length;
+  let changed = 0;
+  const up = (cur: boolean[], pick: (v: JudgeVote) => boolean[]) => cur.map((x, i) => {
+    if (x) return true;
+    const m = maj(votes.map((v) => pick(v)[i] === true));
+    if (m) changed++;
+    return m;
+  });
+  const asks = up(stored.asks, (v) => v.asks);
+  const route = up(stored.route, (v) => v.route);
+  const ng = stored.ng.map((x, i) => {
+    if (!x) return false;
+    const stillViolated = maj(votes.map((v) => v.ng[i] === true));
+    if (!stillViolated) changed++;
+    return stillViolated;
+  });
+  return { merged: { asks, route, ng }, changed };
+}
+
+/**
  * 旧の結果（results/<label>.jsonl）から揺れを取り込む（道だけ・同じ実行（label）の中で割れたか）。
  * <id>/legacy-<label>.jsonl を丸ごと書き直す＝何度取り込んでも増えない。返り値は取り込んだ行の数
  */

@@ -1,7 +1,7 @@
 // 過半数が決まった後の回・判定を呼ばない（2026-11-11 作業員8・exam-flake.majoritySettled / judgeMajoritySettled / majoritySigOfRow）
 // 実行: npx tsx scripts/lib/__tests__/exam-majority-stop.test.ts（自己完結・LLM も DB も使わない。全 PASS で exit 0）
 // 確かめる事: 決まったと言った時点で止めても、全部の回を回した時と過半数（perProblem の数え方＝回の数を分母にした過半数）が1つも変わらない
-import { majoritySettled, judgeMajoritySettled, majoritySigOfRow, majorityEarlyStopOn } from "../exam-flake";
+import { majoritySettled, judgeMajoritySettled, majoritySigOfRow, majorityEarlyStopOn, confirmJudgeMerge } from "../exam-flake";
 
 let fail = 0, pass = 0;
 const ok = (c: boolean, m: string) => { if (c) pass++; else { fail++; console.error(`FAIL ${m}`); } };
@@ -74,6 +74,31 @@ ok(!majorityEarlyStopOn({ EXAM_MAJORITY_EARLY_STOP: "off" }), "off で止まら�
 ok(majoritySigOfRow({ score: { path: true, pass: true }, draft: { pass: true } }) !== majoritySigOfRow({ score: { path: true, pass: true }, draft: { pass: false } }), "下書きの合否が印に入っていない");
 ok(majoritySigOfRow({ score: { path: true, pass: true }, pathStrict: false }) !== majoritySigOfRow({ score: { path: true, pass: true }, pathStrict: true }), "厳しい道が印に入っていない");
 ok(majoritySigOfRow({ score: { path: true, pass: true, primary: true } }) !== majoritySigOfRow({ score: { path: true, pass: true, primary: false } }), "主な依頼が印に入っていない");
+
+// ⑥ 悪化の確かめ（confirmJudgeMerge）: 直す向きは ✕→○（依頼）・違反→守った（言ってはいけない事）だけ。全部の組み合わせで確かめる
+{
+  const bits = (n: number, k: number) => Array.from({ length: k }, (_, i) => !!(n & (1 << i)));
+  let cases = 0, flips = 0;
+  for (let s = 0; s < 8; s++) for (let v1 = 0; v1 < 8; v1++) for (let v2 = 0; v2 < 8; v2++) for (const nv of [1, 2, 3]) {
+    const stored = { asks: bits(s, 1), route: bits(s >> 1, 1), ng: bits(s >> 2, 1) };
+    const extra = [{ asks: bits(v1, 1), route: bits(v1 >> 1, 1), ng: bits(v1 >> 2, 1) }, { asks: bits(v2, 1), route: bits(v2 >> 1, 1), ng: bits(v2 >> 2, 1) }].slice(0, nv - 1);
+    const votes = [stored, ...extra];
+    const { merged, changed } = confirmJudgeMerge(stored, votes);
+    cases++; if (changed) flips++;
+    // ○は○のまま・守ったは守ったのまま（新しい悪化を作らない）
+    ok(!(stored.asks[0] && !merged.asks[0]), "依頼の○を✕に変えた");
+    ok(!(stored.route[0] && !merged.route[0]), "答え方の○を✕に変えた");
+    ok(!(!stored.ng[0] && merged.ng[0]), "守ったを違反に変えた");
+    // 変えたのは過半数が言った時だけ
+    const maj = (xs: boolean[]) => xs.filter(Boolean).length * 2 > xs.length;
+    if (!stored.asks[0] && merged.asks[0]) ok(maj(votes.map((v) => v.asks[0])), "過半数でないのに依頼を○にした");
+    if (stored.ng[0] && !merged.ng[0]) ok(!maj(votes.map((v) => v.ng[0])), "過半数が違反なのに守ったにした");
+    // 1回だけ（足した判定が無い）なら変えない
+    if (nv === 1) ok(changed === 0, "判定を足していないのに変えた");
+  }
+  ok(flips > 0, "一度も直らない");
+  console.log(`  悪化の確かめ: ${cases}通り・直した ${flips}`);
+}
 
 console.log(`${fail ? "FAIL" : "PASS"} ${pass} / ${pass + fail}`);
 process.exit(fail ? 1 : 0);
