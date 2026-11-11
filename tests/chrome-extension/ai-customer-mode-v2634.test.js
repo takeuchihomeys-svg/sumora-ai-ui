@@ -216,6 +216,8 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("ITANDI も路線の一覧を最初に目で探す間（1.2〜3.4秒）", /_itLineLookSeen/.test(ips4) && /firstLook \? 1200 : 500, hi0 = firstLook \? 3400 : 1600/.test(ips4));
   ok("ITANDI も押す直前に狙いを定める間（90〜350ms）", /var aim = 90 \+ Math\.floor\(Math\.random\(\) \* 260\)/.test(ips4));
   ok("ITANDI もたまに狙いを外して戻る（wander 12%）", /Math\.random\(\) < 0\.12\) \{[\s\S]{0,120}P\.wander/.test(ips4));
+  ok("ITANDI も駅の一覧を最初に目で探す間（1.2〜3.4秒）", /_itStationLookSeen/.test(ips4) && /_lo1 = _firstStLook \? 1200 : 500, _hi1 = _firstStLook \? 3400 : 1600/.test(ips4));
+  ok("ITANDI も入力の前に迷ってカーソルが漂う（drift 12%）", /P\.drift && Math\.random\(\) < 0\.12\)/.test(ips4));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

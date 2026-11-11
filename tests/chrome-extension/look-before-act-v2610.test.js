@@ -19,7 +19,8 @@ console.log("■ ① 見えているかを確かめてから操作");
 ok("リアプロ: waitVisible が最大12回（6秒）見直す", /if \(ok \|\| attempt >= 12\) \{ resolve\(true\); return; \}/.test(ps));
 ok("リアプロ: 動かす前に waitVisible を通る", /return waitVisible\(0\)\.then\(function \(\) \{\s*return P\.moveToEl\(el\);/.test(ps));
 ok("ITANDI: waitVisible が最大12回見直す", /if \(ok \|\| attempt >= 12\) \{ done\(\); return; \}/.test(ips));
-ok("ITANDI: カーソルを動かしてから waitVisible", /P\.moveToEl\(el\)\.then\(function \(\) \{[\s\S]{0,200}waitVisible\(0, function \(\) \{ setTimeout\(type, look\); \}\)/.test(ips));
+ok("ITANDI: カーソルを動かしてから waitVisible", /P\.moveToEl\(el\)\.then\(function \(\) \{[\s\S]{0,900}waitVisible\(0, function \(\) \{ setTimeout\(type, look\); \}\)/.test(ips));
+ok("ITANDI: 入力の前に迷ってカーソルが漂う（drift 12%）", /P\.drift && Math\.random\(\) < 0\.12\)/.test(ips) && /withDrift\(function \(\) \{ waitVisible/.test(ips));
 ok("見えなくても止まらない（最後は触る）", /if \(ok \|\| attempt >= 12\)/.test(ps) && /if \(ok \|\| attempt >= 12\)/.test(ips));
 
 console.log("\n■ ② ITANDI の入力欄も人らしく");

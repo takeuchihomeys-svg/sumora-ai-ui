@@ -90,7 +90,17 @@
         try { P.ensure(); } catch (_) {}
         return P.moveToEl(el).then(function () {
           if (P.tap) { try { P.tap(); } catch (_) {} }
-          waitVisible(0, function () { setTimeout(type, look); });
+          /**
+           * 2026-11-11 竹内さん「2つともそろえる」:
+           *   リアプロは入力の前に「迷ってカーソルが漂う」動きが入っている（pointer-ui の drift）。
+           *   ITANDI も同じく、12%で欄の周りを小さく漂わせてから入力を始める（人が「ここでいいかな」と思う形）。
+           */
+          var withDrift = function (next) {
+            if (P && P.drift && Math.random() < 0.12) {
+              P.drift(400 + Math.floor(Math.random() * 900), { radius: 8 + Math.random() * 14 }).then(next, next);
+            } else next();
+          };
+          withDrift(function () { waitVisible(0, function () { setTimeout(type, look); }); });
         }, function () { waitVisible(0, function () { setTimeout(type, look); }); });
       }
       waitVisible(0, function () { setTimeout(type, look); });
@@ -107,6 +117,8 @@
   var _itFillSessionSeen = false;
   // 2026-11-11: 路線の一覧を最初に目で探す間（このページで1回だけ）
   var _itLineLookSeen = false;
+  // 2026-11-11: 駅の一覧を最初に目で探す間（このページで1回だけ）
+  var _itStationLookSeen = false;
   function _whenTickIdle(cb) {
     if (_tickBusy <= 0) { cb(); return; }
     setTimeout(function () { _whenTickIdle(cb); }, _pd(120)); // 条件を見る間隔（±15%）
@@ -986,6 +998,20 @@
         }
         var labels = stationLabels();
         if (!labels.length) { console.log("[AX] 電車1本: 駅リストなし（路線のみ選択）"); done(); return; }
+        /**
+         * 2026-11-11 竹内さん「2つともそろえる」:
+         *   駅の一覧が出た直後に**最初だけ目で探す間**を置く（リアプロの 1.2〜3.4秒と同じ）。
+         *   2本目以降の路線は要領が分かっているので短い（0.5〜1.6秒）。
+         */
+        var _HL = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+        var _firstStLook = !_itStationLookSeen;
+        _itStationLookSeen = true;
+        var _stLook = _HL && _HL.logNormalDelay ? _HL.logNormalDelay(_firstStLook ? 1900 : 900, 0.35) : 1900;
+        var _lo1 = _firstStLook ? 1200 : 500, _hi1 = _firstStLook ? 3400 : 1600;
+        if (_stLook < _lo1) _stLook = _lo1;
+        if (_stLook > _hi1) _stLook = _hi1;
+        console.log("[AX] ITANDI: 駅の一覧を目で探す間 " + Math.round(_stLook) + "ms（" + (_firstStLook ? "最初" : "2本目以降") + "）");
+        setTimeout(function () {
         // 「すべて選択」系があれば先に押し、残った未選択だけを1件ずつ押す（全選択後に個別を押してトグル解除しない）
         var allLbl = labels.find(function(l) { return /^(?:全て|すべて|全駅)(?:選択)?$|全選択/.test(norm(l.textContent.replace(/\s+/g, ""))); });
         var i = 0, list = [];
@@ -1031,6 +1057,7 @@
           else { _afterAll(); }
         }
         else collectAndClick();
+        }, _stLook); // 駅の一覧を目で探す間
       }
       function clickNextLine() {
         if (lineIdx >= lineNames.length) {
