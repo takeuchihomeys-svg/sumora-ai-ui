@@ -505,7 +505,15 @@
    */
   function _fireAt(el, fire, r) {
     try {
-      var cx = Math.round(r.left + r.width * 0.5), cy = Math.round(r.top + r.height * 0.5);
+      /**
+       * 2026-11-11 竹内さん「リアプロ側はどうか」:
+       *   旧は **常に要素の真ん中**を狙っていた（毎回同じ点＝機械的）。
+       *   人は真ん中ではなく少しずれた所を押す（30〜70%の位置・毎回ちがう）。
+       *   見えるカーソル（pointer-ui の moveToEl）は既に 40〜60% でずらしているので、押す座標も合わせる。
+       */
+      var fx = 0.30 + Math.random() * 0.40;   // 30〜70%
+      var fy = 0.30 + Math.random() * 0.40;
+      var cx = Math.round(r.left + r.width * fx), cy = Math.round(r.top + r.height * fy);
       var base = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
       // 2026-11-10 v2.6.9 竹内さん「あと選択してちゃんとその画面おすように」:
       //   カーソルを上に載せる → **少し止まって「ここだ」と確かめる** → 押す（人が狙いを定める間）。
@@ -516,8 +524,14 @@
         try { el.dispatchEvent(new MouseEvent("mousedown", Object.assign({}, base, { buttons: 1 }))); } catch (_) {}
         try { el.dispatchEvent(new MouseEvent("mouseup", Object.assign({}, base, { buttons: 0 }))); } catch (_) {}
         try { fire(el); } catch (e) { console.error('[AX] クリック例外', e); }
-        // 押した後の反応を見る間（この間に次の場所へ飛ばさない）
-        setTimeout(function () {}, 120 + Math.floor(Math.random() * 180));
+        // 2026-11-11 竹内さん「リアプロ側はどうか」: 押した後の「反応を見る間」が空の関数で意味が無かった
+        //   （次の場所へすぐ飛ぶのを止める意図だったが、実際には何も待っていなかった）。
+        //   次のクリックは元々キュー（enqueueHumanClick の gap）が間を空けるので、ここは
+        //   「押した瞬間にカーソルを縮めて戻す」だけにする（見た目の反応・二重に待たない）。
+        try {
+          var P = window.AxlxPointerUi;
+          if (P && P.tap) P.tap();
+        } catch (_) {}
       }, aim);
     } catch (e) { console.error('[AX] クリック例外', e); }
   }

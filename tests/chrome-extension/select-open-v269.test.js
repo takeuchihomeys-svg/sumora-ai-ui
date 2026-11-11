@@ -28,7 +28,10 @@ ok("閉じたのを見届ける（180〜600ms）", /_ln\(320, 0\.4, 180, 600\)/.
 
 console.log("\n■ ③ クリックも「狙いを定める→押す→反応を見る」");
 ok("押す前に狙いを定める間（90〜250ms）", /var aim = 90 \+ Math\.floor\(Math\.random\(\) \* 160\);/.test(ps));
-ok("押した後に反応を見る間", /setTimeout\(function \(\) \{\}, 120 \+ Math\.floor\(Math\.random\(\) \* 180\)\)/.test(ps));
+// 2026-11-11: 押した後の「反応を見る間」は空の関数（何も待っていなかった）だったので、
+//   押した瞬間にカーソルを縮めて戻す（見た目の反応）に変えた。次の間はキューが空ける。
+ok("押した後に反応を見せる（カーソルの縮み・二重に待たない）", /if \(P && P\.tap\) P\.tap\(\);/.test(ps) && !/setTimeout\(function \(\) \{\}, 120/.test(ps));
+ok("押す座標は真ん中固定でない（30〜70%）", /var fx = 0\.30 \+ Math\.random\(\) \* 0\.40;/.test(ps) && /var fy = 0\.30 \+ Math\.random\(\) \* 0\.40;/.test(ps));
 ok("キューも押した後に間を置いてから次へ", /var settle = 140 \+ Math\.floor\(Math\.random\(\) \* 220\);/.test(ps));
 
 console.log(`\n${passed} passed, ${failed} failed`);
