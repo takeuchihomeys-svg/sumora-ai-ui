@@ -3,6 +3,8 @@ import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { positiveNoNegativeEnabled, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { replySplitWriterNote, replyCountOf, replySplitSelfNote } from "@/app/lib/reply-split";
+// 2026-11-12 作業員7（TURN_AIMS_AFTER・既定 off）: 道が決まった後に目的・中期・仕込みを作り、文の統括への受け渡しにだけ渡す
+import { metaWithTurnAimsAfter } from "@/app/lib/turn-aims-after";
 import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR, mgmtNightClosingOn, nightMgmtClosingLine } from "@/app/lib/mgmt-hours-split";
 import { brainStaffBurstWaitEnabled, staffSendingNow } from "@/app/lib/staff-burst";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
@@ -4459,7 +4461,7 @@ async function handleGenerateReply(req: NextRequest) {
           // 2026-11-03 作業員6: 統括の受け渡しの1ブロック（作業員2の conductor-handoff・CONDUCTOR_HANDOFF=on の時だけ）を構成のブレインにも同じ形で渡す
           situation: [
             String((brainMeta as { reply_direction?: string | null } | null)?.reply_direction ?? ""),
-            await import("@/app/lib/conductor-handoff").then((h) => (h.conductorHandoffOn() && brainMeta ? h.handoffNote(h.buildHandoff({ to: "compose", meta: brainMeta as unknown as Record<string, unknown> })) : "")).catch(() => ""),
+            await import("@/app/lib/conductor-handoff").then((h) => (h.conductorHandoffOn() && brainMeta ? h.handoffNote(h.buildHandoff({ to: "compose", meta: metaWithTurnAimsAfter(brainMeta as unknown as Record<string, unknown>, customerMsgUnits.join("\n") || (message ?? "")) })) : "")).catch(() => ""),
           ].filter(Boolean).join("\n\n") || null,
           // 2026-11-12 作業員10（受け渡しの漏れ・COMPOSE_SENTENCE_PLAN=on の時だけ）: 構成のブレインに受け口はあるが渡していなかった気持ちと訴求の判断を渡す
           ...(composeSentencePlanOn() && brainMeta ? (() => { const c = readComposeContext(brainMeta); return { emotion: [c.three?.worry, c.latent4 ? [c.latent4.feeling, c.latent4.want].filter(Boolean).join("・") : null, c.mood ? c.mood.base : null, c.concern].filter(Boolean).join("／").slice(0, 200) || null, appeal: c.appealTiming }; })() : {}),
