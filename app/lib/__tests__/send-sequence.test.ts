@@ -24,6 +24,6 @@ ok(fs.readFileSync("app/lib/brain-core.ts", "utf8").includes("sendSequenceOn() ?
 // 11/11 分け方 v2（TWO_MESSAGE_SEQUENCE_SPLIT_V2）
 ok(sendSequenceRule({ TWO_MESSAGE_SPLIT_V2: "on" } as Record<string, string>) === "" && sendSequenceRule({ TWO_MESSAGE_SEQUENCE_SPLIT_V2: "on" }) === "", "v2 も TWO_MESSAGE_SEQUENCE が off なら1字も足さない");
 ok(sendSequenceRule({ TWO_MESSAGE_SEQUENCE: "on" }).includes("迷ったら1通") && !sendSequenceRule({ TWO_MESSAGE_SEQUENCE: "on", TWO_MESSAGE_SEQUENCE_SPLIT_V2: "on" }).includes("迷ったら1通"), "v2 は迷ったら1通を言わない・既定は今まで通り");
-ok(["次の一歩", "1通に詰めない", "(RAR)", "(ARR)", "74%"].every((w) => sendSequenceRule({ TWO_MESSAGE_SEQUENCE: "on", TWO_MESSAGE_SEQUENCE_SPLIT_V2: "on" }).includes(w)), "v2 は分ける番と竹内さんの実物");
+ok(["次の一歩", "1通に詰めない", "(RAR)", "(ARR)", "74%", "2通目が別の要件", "2通目が次の一歩"].every((w) => sendSequenceRule({ TWO_MESSAGE_SEQUENCE: "on", TWO_MESSAGE_SEQUENCE_SPLIT_V2: "on" }).includes(w)), "v2 は分ける番と竹内さんの実物");
 if (fail) { console.error(`${fail} 件 NG`); process.exit(1); }
 console.log("send-sequence: 全部 ok");
