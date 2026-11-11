@@ -2941,6 +2941,18 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-11 作業員1（A1・弱い所 326 の system の側②）: 聞かれていなくても、主のお部屋の資料に書いてある入居時期・保証会社・礼金敷金 等を参考の材料に（BRAIN_FOCUS_DOC_DIGEST=on の時だけ・既定 off）
   // 11/11 a1-doc-dig2-1111: 主のお部屋が無い番（送った直後の「気になります」等）は物件ごとの台帳の今の番の物件（引用・名指し／主語の抜けた番の1件）を対象に（threadDocTarget）。
   //   「一番新しく送った物件」は q404 で取り違えた（お客様の言う長居東でなく直近のサンシエ南巽）ので使わない。複数・不明は出さない
+  // 2026-11-11 作業員1（KB 決定 親 P0 ecd7b961・対象の一致 12/30）: お客様が URL・物件の画像だけを送り本文に物件名が無い番は、今の番の物件が空だった。
+  //   既にある読み取り（画像の書き起こし・共有文・SUUMO のページ）と、こちらが送った部屋の指紋（㎡・間取り・家賃）から物件名・号室を決め、
+  //   材料の1行と資料の写しの対象（threadDocTarget の前段）に入れる。TURN_SHARED_PROPERTY_TARGET=on の時だけ（既定 off）
+  let sharedTurnTarget: import("@/app/lib/turn-shared-property").SharedTarget | null = null;
+  if (!isPostApplyStatus(convStatus) && (unrepliedTurn.hasImage || /https?:\/\//.test(unrepliedTurn.text ?? ""))) {
+    try {
+      const [{ loadTurnSharedPropertyWithin }, { sharedTargetMaterialLine }] = await Promise.all([import("@/app/lib/turn-shared-property-server"), import("@/app/lib/turn-shared-property")]);
+      sharedTurnTarget = await loadTurnSharedPropertyWithin(6_000, conversationId);
+      const line = sharedTargetMaterialLine(sharedTurnTarget);
+      if (line) customerStateBlockText += `\n\n${line}`;
+    } catch (e) { console.warn("[brain-core] turn-shared-property skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   let docDigestTarget: { name: string; roomNo: string | null } | null = null;
   if (focusDocDigestOn() && !contractTerms && !isPostApplyStatus(convStatus)) {
     if (focusRoomForMaterial) docDigestTarget = { name: focusRoomForMaterial.name, roomNo: focusRoomForMaterial.roomNo ?? null };
@@ -2948,7 +2960,10 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       try {
         const { loadPropertyThreads } = await import("@/app/lib/property-thread-server");
         const pt = await Promise.race([loadPropertyThreads(conversationId), new Promise<null>((r) => setTimeout(() => r(null), 6_000))]);
-        docDigestTarget = threadDocTarget(pt);
+        if (sharedTurnTarget) {
+          const { turnDocTargetWithShared } = await import("@/app/lib/turn-shared-property");
+          docDigestTarget = turnDocTargetWithShared(pt, sharedTurnTarget);
+        } else docDigestTarget = threadDocTarget(pt);
       } catch (e) { console.warn("[brain-core] focus-doc-digest target skipped:", e instanceof Error ? e.message : String(e)); }
     }
   }
@@ -2967,7 +2982,9 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   }
   const confirmTopicsAsked = procedureAnswer || isPostApplyStatus(convStatus) ? []
     : detectConfirmTopics(unrepliedTurn.text, { moveInAsked: sceneEvidence?.scene === "S2_move_in" })
-      .filter((t) => !(t === "parking" && contractTerms?.topics.includes("parking")) && !(t === "move_in" && contractTerms?.topics.includes("move_in")));
+      .filter((t) => !(t === "parking" && contractTerms?.topics.includes("parking")) && !(t === "move_in" && contractTerms?.topics.includes("move_in"))
+        // 2026-11-11 作業員1（弱い所 564）: ペットを契約条件の網が受け持った時（CONTRACT_TERMS_PET_CLEANING=on）は外す
+        && !(t === "pet" && contractTerms?.topics.includes("pet")));
   const confirmTopic: ConfirmTopicMaterial | null = await loadConfirmTopicRoutesWithin(8_000, { conversationId, topics: confirmTopicsAsked, target: focusRoomForMaterial });
   if (confirmTopic?.note) {
     customerStateBlockText += `\n\n${confirmTopic.note}`;
@@ -4695,7 +4712,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       && process.env.CONTRACT_TERMS_REPLY !== "off"
       && (!sceneEvidence || sceneEvidence.scene === "S2_move_in" || sceneEvidence.scene === "S3_screening"
         // 礼金・敷金・フリーレントだけを聞いた番（初期費用の中身・総額は聞いていない）は S9 でも資料で答える（YUMA「礼金はかかりますか？」が AIX【初期費用について】になった）
-        || (sceneEvidence.scene === "S9_cost_breakdown" && contractTerms.topics.every((t) => t === "key_money" || t === "deposit" || t === "free_rent")
+        // 2026-11-11 作業員1（弱い所 564・実物 10597「室内清掃費ってつけないんですかね？」）: 清掃費（CONTRACT_TERMS_PET_CLEANING=on の時だけ拾う）も同じ
+        || (sceneEvidence.scene === "S9_cost_breakdown" && contractTerms.topics.every((t) => t === "key_money" || t === "deposit" || t === "free_rent" || t === "cleaning_fee")
           && !/初期費用|内訳|総額|合計|全部で|トータル/.test(unrepliedTurn.text ?? "")))
       && (finalAix === "property_check_result" || finalAix === "acknowledge_check" || (finalAix === "cost_breakdown" && sceneEvidence?.scene === "S9_cost_breakdown")
         || (finalAix === "guarantor_info" && contractTerms.topics.every((t) => t === "guarantor_company") && contractTerms.routes.every((r) => !/複数/.test(r.why))))) {
