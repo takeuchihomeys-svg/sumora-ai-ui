@@ -1110,7 +1110,7 @@
     _fillStartedAt = Date.now();
     _hiddenMs = 0;
     _hiddenSince = (document.visibilityState === 'hidden') ? Date.now() : null;
-    _audit = _fillRunId ? { v: 1, site: 'realpro', search_clicked: null, search_press: null, sel_mismatch: [], form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, area_path: null, fallback: null, steps: [], ops: [], late_max: 0, late_over_1s: 0, stall: null } : null;
+    _audit = _fillRunId ? { v: 1, site: 'realpro', search_clicked: null, search_press: null, search_buttons: null, sel_mismatch: [], form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, area_path: null, fallback: null, steps: [], ops: [], late_max: 0, late_over_1s: 0, stall: null } : null;
   }
   function _auditStepP(k, d) {
     if (!_audit) return;
@@ -1528,10 +1528,61 @@
     }
     window._axSearchLookedOver = false;
     _auditStepP('search', null);
-    // 優先: div.go_search（リアプロのメイン検索ボタン）
+    /**
+     * 2026-11-11 竹内さん「検索のボタンはこのように2か所ある。その点をちゃんと理解すればより質上がる」:
+     *   リアプロの「検索」は**2か所**にある。
+     *     ① **左のサイドバー**（条件を入れた後に押す・メインの検索）  ← これを押すのが正しい
+     *     ② **小窓（市区郡・沿線の設定）の中の下**（モーダルの中の「検索」） ← ここを押すと条件が中途半端
+     *
+     *   旧: `div.go_search` を**最初に見つかった1つ**だけ押していた（どちらか分からない）。
+     *   新: **2つを取り違えない**ように、
+     *     ・小窓（.this_window）の中にあるボタンは**候補から外す**（モーダルの中の検索は押さない）
+     *     ・左のサイドバー側（`.one_slide_search_box`・`#search_area`・画面の左半分）を優先する
+     *     ・どちらを押したかを点検に残す（`which`: sidebar／modal／unknown）
+     */
     var goDivs = Array.prototype.slice.call(
       document.querySelectorAll('div.go_search, div.go_search_submit')
     );
+    // 小窓の中のボタンか（＝モーダル内の検索）を見分ける
+    var _inModal = function (el) {
+      try {
+        return !!(el.closest && el.closest('.this_window, [role="dialog"], .modal, #modal, .modal_wrap'));
+      } catch (_) { return false; }
+    };
+    // 左のサイドバー側かどうか（人が条件を入れている所）
+    var _isSidebar = function (el) {
+      try {
+        if (el.closest && el.closest('.one_slide_search_box, #search_area, .search_box, #left, .left_area, .side')) return true;
+        var r = el.getBoundingClientRect();
+        var vw = window.innerWidth || 1200;
+        return r.left < vw * 0.45; // 画面の左半分にあればサイドバー扱い
+      } catch (_) { return false; }
+    };
+    var _visible = function (el) { try { return !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; } };
+    // ① 小窓の中は外す → ② 見えている物だけ → ③ 左のサイドバーを優先
+    var _modalBtns = goDivs.filter(function (d) { return _inModal(d); });
+    var _outside = goDivs.filter(function (d) { return !_inModal(d) && _visible(d); });
+    var _sidebar = _outside.filter(_isSidebar);
+    var goOrder = _sidebar.length ? _sidebar.concat(_outside.filter(function (d) { return _sidebar.indexOf(d) < 0; })) : _outside;
+    if (_audit) {
+      _audit.search_buttons = {
+        total: goDivs.length,
+        in_modal: _modalBtns.length,
+        sidebar: _sidebar.length,
+        outside: _outside.length,
+        sample: goDivs.slice(0, 6).map(function (d) {
+          var r = null; try { r = d.getBoundingClientRect(); } catch (_) {}
+          return {
+            cls: String(d.className || "").slice(0, 40),
+            txt: String(d.textContent || "").replace(/\s+/g, "").slice(0, 12),
+            modal: _inModal(d),
+            left: r ? Math.round(r.left) : null,
+            top: r ? Math.round(r.top) : null,
+            visible: _visible(d),
+          };
+        }),
+      };
+    }
     // 検索の点検: 押す直前のフォームを読み戻す（入れようとした条件と比べる材料）
     if (_audit) _audit.form = _readRealproForm();
     /**
@@ -1555,11 +1606,15 @@
       if (_audit) {
         _audit.search_clicked = true;
         try {
+          var _rr = btn.getBoundingClientRect();
           _audit.search_press = {
             at: String((btn.textContent || btn.value || '').replace(/\s+/g, '')).slice(0, 20),
-            rect: (function () { var r = btn.getBoundingClientRect(); return { t: Math.round(r.top), l: Math.round(r.left), w: Math.round(r.width), h: Math.round(r.height) }; })(),
-            in_view: (function () { var r = btn.getBoundingClientRect(); return r.top >= 0 && r.bottom <= (window.innerHeight || 800); })(),
+            rect: { t: Math.round(_rr.top), l: Math.round(_rr.left), w: Math.round(_rr.width), h: Math.round(_rr.height) },
+            in_view: (_rr.top >= 0 && _rr.bottom <= (window.innerHeight || 800)),
             t: Date.now() - (_fillStartedAt || Date.now()),
+            // 2026-11-11: 2か所ある検索ボタンのどちらを押したか（左のサイドバー側か・小窓の中か）
+            which: _inModal(btn) ? "modal" : (_isSidebar(btn) ? "sidebar" : "unknown"),
+            cls: String(btn.className || "").slice(0, 40),
           };
         } catch (_) {}
       }
@@ -1576,17 +1631,21 @@
       notifyDone();
       return true;
     };
-    for (var i = 0; i < goDivs.length; i++) {
-      if (goDivs[i].offsetParent) { _pressSearchBtn(goDivs[i]); return; }
+    // 「検索」ボタンは2か所ある（左のサイドバー／小窓の中）。**左のサイドバーを優先**する
+    for (var i = 0; i < goOrder.length; i++) {
+      _pressSearchBtn(goOrder[i]); return;
     }
-    // フォールバック: button/a テキスト一致
+    // フォールバック: button/a テキスト一致（小窓の中の「検索」は押さない）
     var SEARCH_TEXTS = ['住居検索', '検索', '物件を検索する', '条件で検索'];
     var allBtns = Array.prototype.slice.call(
       document.querySelectorAll('button,input[type="submit"],a')
     );
+    var _fbOutside = allBtns.filter(function (b) { return !_inModal(b); });
+    var _fbSide = _fbOutside.filter(_isSidebar);
+    var _fbOrder = _fbSide.concat(_fbOutside.filter(function (b) { return _fbSide.indexOf(b) < 0; }));
     for (var si = 0; si < SEARCH_TEXTS.length; si++) {
-      for (var i = 0; i < allBtns.length; i++) {
-        var b = allBtns[i];
+      for (var i = 0; i < _fbOrder.length; i++) {
+        var b = _fbOrder[i];
         if (!b.offsetParent) continue;
         var txt = (b.textContent || b.value || '').replace(/\s+/g, '');
         if (txt === SEARCH_TEXTS[si]) { _pressSearchBtn(b); return; }
@@ -3425,11 +3484,17 @@
 
     // ── 検索ボタンをクリック（page-script.js 既存の clickSearch セレクターを流用）──
     // div.go_search は DevTools 診断済みの確定セレクター
+    // 2026-11-11 竹内さん「検索のボタンはこのように2か所ある」: 小窓の中の「検索」は押さない（左のサイドバーを優先）
+    var _fwInModal = function (el) {
+      try { return !!(el.closest && el.closest('.this_window, [role="dialog"], .modal, #modal, .modal_wrap')); } catch (_) { return false; }
+    };
+    var _fwCand = Array.prototype.slice.call(document.querySelectorAll("div.go_search, div.go_search_submit"))
+      .filter(function (d) { return !_fwInModal(d); });
     var _fwBtn =
-      document.querySelector("div.go_search") ||
-      document.querySelector("div.go_search_submit") ||
+      _fwCand[0] ||
       (function() {
-        var candidates = Array.from(document.querySelectorAll("button, input[type='submit'], div[onclick], a"));
+        var candidates = Array.from(document.querySelectorAll("button, input[type='submit'], div[onclick], a"))
+          .filter(function (el) { return !_fwInModal(el); });
         return candidates.find(function(el) {
           var t = (el.textContent || el.value || "").trim();
           return ["住居検索", "検索", "物件を検索する", "条件で検索"].some(function(kw) { return t.includes(kw); });

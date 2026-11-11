@@ -58,7 +58,7 @@ console.log("\n■ ② 地域・駅の「進む」はカーソルを動かして
 
 console.log("\n■ ③ 検索ボタンもカーソルを動かして押す");
 {
-  const cs = ps.slice(ps.indexOf("function clickSearch()"), ps.indexOf("function clickSearch()") + 6000);
+  const cs = ps.slice(ps.indexOf("function clickSearch()"), ps.indexOf("function clickSearch()") + 14000);
   ok("検索はカーソルを動かして押す（_humanPointerClick）", /_humanPointerClick\(btn, function \(\) \{ try \{ btn\.click\(\); \}/.test(cs) || /_pressSearchBtn = function \(btn\)[\s\S]{0,1200}_humanPointerClick/.test(cs));
   ok("その場で .click() しない（goDivs[i].click() が無い）", !/goDivs\[i\]\.click\(\)/.test(cs));
   ok("押す前に画面を送る（見えてから押す）", /_scrollIntoViewSoft\(btn\)/.test(cs));

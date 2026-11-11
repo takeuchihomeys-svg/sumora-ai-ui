@@ -66,9 +66,29 @@
       // ② 表示の文字（人が「何を押したか」分かる形）＋ class（サイト側の目印）
       var cls = (el.className && typeof el.className === "string") ? el.className.trim().split(/\s+/)[0] : "";
       var mark = tag.toLowerCase() + (cls ? "." + cls : "");
+      /**
+       * 2026-11-11 竹内さん「検索のボタンはこのように2か所ある。その点をちゃんと理解すればより質上がる」:
+       *   リアプロの「検索」は**2か所**（左のサイドバー／小窓の中）。どちらも `検索｜div.go_search` になるので
+       *   **名前だけでは区別できない** → 場所を名前の頭に付ける。
+       *     "小窓の検索｜…"  … 小窓（市区郡・沿線の設定）の中の検索
+       *     "左の検索｜…"    … 左のサイドバーの検索（メイン・これを押すのが正しい）
+       */
+      var placePrefix = "";
+      try {
+        if (el.closest) {
+          if (el.closest('.this_window, [role="dialog"], .modal, #modal, .modal_wrap')) placePrefix = "小窓の";
+          else {
+            var _r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+            var _vw = 0;
+            try { _vw = (typeof window !== "undefined" && window.innerWidth) || 1200; } catch (_) { _vw = 1200; }
+            if ((el.closest('.one_slide_search_box, #search_area, .search_box, #left, .left_area, .side')) ||
+                (_r && _r.left < _vw * 0.45)) placePrefix = "左の";
+          }
+        }
+      } catch (_) {}
       if (TEXT_TAGS.test(tag)) {
         var txt = directText(el).slice(0, 20);
-        if (txt) return (txt + "｜" + mark).slice(0, 30);
+        if (txt) return (placePrefix + txt + "｜" + mark).slice(0, 30);
       }
       // ③ id
       var id = el.id;
