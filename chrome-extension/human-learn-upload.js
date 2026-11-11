@@ -83,4 +83,21 @@
 
   // 外から手で送れるように（点検・確かめ用）
   window.__axlxHumanMotionUpload = function () { maybeUpload(); return true; };
+  /**
+   * 2026-11-11: 貯めた直後に**その場で**送る（human-learn-record.js が貯めた後に呼ぶ）。
+   *   記録側から渡された集計をそのまま送る（storage の変化待ちに頼らない＝確実・速い）。
+   *   ⚠ 送りすぎないよう、ここでも5分の間隔は守る。
+   */
+  window.__axlxHumanMotionUploadNow = function (agg) {
+    try {
+      if (!agg || !agg.n) { maybeUpload(); return; }
+      chrome.storage.local.get([SENT_KEY], function (r) {
+        var last = Number(r && r[SENT_KEY]) || 0;
+        if (last && Date.now() - last < MIN_GAP_MS) { void chrome.runtime.lastError; return; }
+        var o = {}; o[SENT_KEY] = Date.now();
+        try { chrome.storage.local.set(o); } catch (_) {}
+        upload(agg, { site: agg.site });
+      });
+    } catch (_) {}
+  };
 })();

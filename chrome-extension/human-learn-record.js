@@ -124,6 +124,7 @@
     var ops = rec.list();
     if (!ops.length) return;
     if (!force && ops.length < MIN_OPS_TO_SAVE) return;
+    _saving = true;
     var add = L.summarize(ops);
     // 2026-11-11 竹内さん「マウスの動かし方やボタンのどこ押すか、画面のうごかしかたも」:
     //   動き・押した場所・スクロールも一緒に集計して貯める（detail() が締め忘れを締めてから返す）
@@ -171,6 +172,18 @@
             try { void chrome.runtime.lastError; } catch (_) {}
             // 2026-11-11: 理解した内容をその場で見せる（反映されていることが分かる）
             try { if (o[PROFILE_KEY]) paintLearned(o[PROFILE_KEY]); else paintBadge(); } catch (_) {}
+            /**
+             * 2026-11-11 竹内さん「今このお客さんを普通モードでやったんやけど動き理解できているかな」:
+             *   貯めた直後に**その場で**DB へ送る（別のスクリプトの変化待ちに頼らない＝確実に届く）。
+             *   送る係（human-learn-upload.js）が居れば、それに頼む。居なければ何もしない（貯まるだけ）。
+             */
+            try {
+              var U = (typeof self !== "undefined" ? self : window).__axlxHumanMotionUploadNow;
+              if (typeof U === "function") U(next);
+            } catch (_) {}
+            console.log("[AX] 人の動きを貯めました:", "操作" + next.n + "・マウス" + (next.moves ? next.moves.n : 0)
+              + "・押した所" + (next.points ? next.points.n : 0) + "・スクロール" + (next.scrolls ? next.scrolls.n : 0)
+              + (o[PROFILE_KEY] ? "／理解した動き: 速さ" + o[PROFILE_KEY].speed_px_s : "（まだ材料不足）"));
           });
         } catch (_) { _saving = false; }
       });
@@ -204,7 +217,7 @@
   window.addEventListener("pagehide", function () { save(true); });
   document.addEventListener("visibilitychange", function () { if (document.hidden) save(false); else paintBadge(); });
 
-  // 外から集計を読めるように（点検・画面用）
+  // 外から集計を読めるように（点検・確かめ用）
   window.__axlxHumanLearnReport = function () {
     var det = { moves: [], points: [], scrolls: [] };
     try { det = rec.detail(); } catch (_) {}
@@ -214,5 +227,36 @@
       detail: det,          // 中身（何をどう覚えたか）も見られるように
       summarizeMotion: function () { try { return L.summarizeMotion(det); } catch (_) { return null; } },
     };
+  };
+  /**
+   * 2026-11-11 竹内さん「動き理解できているかな」:
+   *   いま貯まっている物と、DB に貯まっている物を**その場で**確かめられるようにする。
+   *   コンソールで `__axlxLearnNow()` と打つと全部出る。
+   */
+  window.__axlxLearnNow = function (cb) {
+    var out = { この画面: window.__axlxHumanLearnReport() };
+    try {
+      chrome.storage.local.get([KEY, PROFILE_KEY, "axlx_human_learn_uploaded_at"], function (r) {
+        out.貯まった合計 = r && r[KEY] ? { 操作: r[KEY].n, マウス: r[KEY].moves && r[KEY].moves.n, 押した所: r[KEY].points && r[KEY].points.n, スクロール: r[KEY].scrolls && r[KEY].scrolls.n } : null;
+        out.理解した動き = (r && r[PROFILE_KEY]) || null;
+        out.最後に送った時刻 = r && r.axlx_human_learn_uploaded_at ? new Date(r.axlx_human_learn_uploaded_at).toLocaleString("ja-JP") : "まだ";
+        console.log("[AX] 学習の状態:", out);
+        if (typeof cb === "function") cb(out);
+      });
+    } catch (_) { console.log("[AX] 学習の状態:", out); if (typeof cb === "function") cb(out); }
+    return out;
+  };
+  /** いま貯まっている物を、その場で DB へ送る（確かめたい時） */
+  window.__axlxLearnSendNow = function () {
+    try {
+      chrome.storage.local.get([KEY], function (r) {
+        var agg = r && r[KEY];
+        if (!agg || !agg.n) { console.warn("[AX] 送る物がありません（まだ貯まっていない）"); return; }
+        var U = (typeof self !== "undefined" ? self : window).__axlxHumanMotionUploadNow;
+        if (typeof U !== "function") { console.warn("[AX] 送る係（human-learn-upload.js）が居ません"); return; }
+        U(agg);
+        console.log("[AX] DB へ送りました:", agg.n + "回分");
+      });
+    } catch (_) {}
   };
 })();
