@@ -2890,8 +2890,8 @@ export const KNOWN_FACT_ANSWERS: Array<{ key: string; ask: RegExp; answer: strin
   // 2026-10-18 竹内さん 10/16「支払いは一括の振込だけ」（company-facts paymentLumpTransferOnly と同じ線・依存を増やさないためここで読む）。戻す COMPANY_FACT_PAYMENT_LUMP=off
   // 2026-11-12 作業員15: ↑の判定は「off でなければ一括のみ」＝env 無し（本番の既定）で一括のみになり、company-facts.paymentLumpTransferOnly（on の時だけ一括のみ・10/18 竹内さん「カード払いなら分割可・3.24%」）と逆だった。
   //   生成の【姿勢】の「即答」と最終チェック FACT_DEFERRED_ANSWER の修正案にこの文が入り、11/10 の書き直しが「お振込での一括のみ」を書いた（61845054・スタッフはカード可で送った）。
-  //   KNOWN_FACT_CARD_FIX=on の時は company-facts と同じ向き（on の時だけ一括のみ）・カードの答えは竹内さん側の実送信の形（手数料 3.24% まで）。既定 off（送り方が変わるので竹内さんの確認の後）
-  { key: "card_pay", ask: /クレジット|カード払い|カードで/, get answer() { if ((process.env.KNOWN_FACT_CARD_FIX ?? "").trim().toLowerCase() === "on") return (process.env.COMPANY_FACT_PAYMENT_LUMP ?? "").trim().toLowerCase() === "on" ? "初期費用のお支払い方法はお振込での一括のみでの対応となります！！" : "初期費用のお支払い方法カードでの決済も可能です！！カード取扱手数料として支払額の3.24%が決済手数料として追加で発生いたします！！"; return (process.env.COMPANY_FACT_PAYMENT_LUMP ?? "").trim().toLowerCase() !== "off" ?"初期費用のお支払い方法はお振込での一括のみでの対応となります！！" : "初期費用のクレジットカード払い対応しております！！"; }, next: "" },
+  //   既定（KNOWN_FACT_CARD_FIX が off でない）は company-facts と同じ向き（LUMP=on の時だけ一括のみ）・カードの答えは竹内さん側の実送信の形（手数料 3.24% まで）。11/12 統括役: 竹内さんの 10/18 の決まりに反する不具合なので既定 on・KNOWN_FACT_CARD_FIX=off で旧
+  { key: "card_pay", ask: /クレジット|カード払い|カードで/, get answer() { if ((process.env.KNOWN_FACT_CARD_FIX ?? "").trim().toLowerCase() !== "off") return (process.env.COMPANY_FACT_PAYMENT_LUMP ?? "").trim().toLowerCase() === "on" ? "初期費用のお支払い方法はお振込での一括のみでの対応となります！！" : "初期費用のお支払い方法カードでの決済も可能です！！カード取扱手数料として支払額の3.24%が決済手数料として追加で発生いたします！！"; return (process.env.COMPANY_FACT_PAYMENT_LUMP ?? "").trim().toLowerCase() !== "off" ?"初期費用のお支払い方法はお振込での一括のみでの対応となります！！" : "初期費用のクレジットカード払い対応しております！！"; }, next: "" },
   { key: "second_apply", ask: /(?:申込|申し込み)(?:入って|済み|が入って)[^\n]{0,12}(?:でも|も)?(?:申込|申し込め|可能)/, answer: "2番手以降でのお申込みが可能です！！", next: "" },
 ];
 export const DEFERRED_ANSWER_RE = /(?:社内|上司|担当|管理会社)?(?:で|に)?(?:確認|お調べ)(?:させて(?:頂|いただ)き|いたし|致し)ます/;

@@ -163,13 +163,15 @@ import("../reply-context").then(async ({ resolveAnswerability }) => {
   const save = { ...process.env };
   try {
     delete process.env.KNOWN_FACT_CARD_FIX; delete process.env.COMPANY_FACT_PAYMENT_LUMP; delete process.env.COMPANY_FACT_CARD_KESSAI;
-    it("③既定（本番の今）は一括のみ＝逆向きの再現", () => eq(/一括のみ/.test(resolveAnswerability(q)?.answer ?? ""), true));
-    it("③既定は「カードで決済」を支払いの質問と拾わない（再現）", () => eq(isPaymentMethodQuestion(q), false));
-    process.env.KNOWN_FACT_CARD_FIX = "on"; process.env.COMPANY_FACT_CARD_KESSAI = "on";
-    it("③on はカード可・3.24%（竹内さん側の実送信の形）", () => eq(/カードでの決済も可能.*3\.24%/.test(resolveAnswerability(q)?.answer ?? ""), true));
-    it("③on で「カードで決済」を拾う・マイナンバーカードは拾わない", () => { eq(isPaymentMethodQuestion(q), true); eq(isPaymentMethodQuestion("マイナンバーカードで決済"), false); });
+    // 11/12 統括役: 竹内さんの 10/18 の決まりに反する不具合なので既定 on（off で旧）
+    it("③既定はカード可・3.24%（竹内さん側の実送信の形）", () => eq(/カードでの決済も可能.*3\.24%/.test(resolveAnswerability(q)?.answer ?? ""), true));
+    it("③既定で「カードで決済」を拾う・マイナンバーカードは拾わない", () => { eq(isPaymentMethodQuestion(q), true); eq(isPaymentMethodQuestion("マイナンバーカードで決済"), false); });
     process.env.COMPANY_FACT_PAYMENT_LUMP = "on";
-    it("③on＋一括の決まり on は一括のみ（company-facts と同じ向き）", () => eq(/一括のみ/.test(resolveAnswerability(q)?.answer ?? ""), true));
+    it("③一括の決まり on は一括のみ（company-facts と同じ向き）", () => eq(/一括のみ/.test(resolveAnswerability(q)?.answer ?? ""), true));
+    delete process.env.COMPANY_FACT_PAYMENT_LUMP;
+    process.env.KNOWN_FACT_CARD_FIX = "off"; process.env.COMPANY_FACT_CARD_KESSAI = "off";
+    it("③off は旧（一括のみ＝11/10 の不具合の再現）", () => eq(/一括のみ/.test(resolveAnswerability(q)?.answer ?? ""), true));
+    it("③off は「カードで決済」を拾わない（旧）", () => eq(isPaymentMethodQuestion(q), false));
   } finally { process.env = save; }
   console.log(`\n(③込み) ${passed} passed, ${failed} failed`);
   if (failed) process.exit(1);
