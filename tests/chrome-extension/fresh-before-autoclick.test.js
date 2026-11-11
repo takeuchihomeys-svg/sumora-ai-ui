@@ -27,7 +27,9 @@ const ok = (name, cond) => { if (cond) { pass++; console.log("  ✓ " + name); }
   const waits = popup.match(/if \(!\(await _awaitFreshPreload\(6000\)\)\) console\.warn/g) || [];
   // v2.5.31: ウェブアプリの自動入力（pendingPopupCmd）の2経路も _runPendingPopupCmd の1か所で待つ（→ 3か所）
   // v2.5.48: 3つの受け口の写しを1本（_openAndClickAutofill）にした → 待つ所も1か所
-  ok("受け口の芯（_openAndClickAutofill・background の切替とウェブアプリの自動入力の両方が通る）で待つ", waits.length === 1 && /function _runSwitchCustomer\(d\) \{\s*return _openAndClickAutofill\(/.test(popup) && /function _runPendingPopupCmd\(cmd, via\) \{\s*return _openAndClickAutofill\(/.test(popup));
+  ok("受け口の芯（_openAndClickAutofill・background の切替とウェブアプリの自動入力の両方が通る）で待つ", waits.length === 1 && /function _runSwitchCustomer\(d\) \{[\s\S]{0,500}?return _openAndClickAutofill\(/.test(popup) && /function _runPendingPopupCmd\(cmd, via\) \{[\s\S]{0,600}?return _openAndClickAutofill\(/.test(popup));
+  // 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする」: どちらの受け口もモードの関所を先に見る
+  ok("両方の受け口が通常・スタッフモードでは押さない（_isAutoModeAllowed）", /function _runSwitchCustomer\(d\) \{[\s\S]{0,300}?_isAutoModeAllowed\(\)/.test(popup) && /function _runPendingPopupCmd\(cmd, via\) \{[\s\S]{0,400}?_isAutoModeAllowed\(\)/.test(popup));
   for (const [label, open] of [["受け口の芯", "try { openInstructions(d.site); }"]]) {
     const i = popup.indexOf(open), w = popup.indexOf("await _awaitFreshPreload(6000)", i), click = popup.indexOf("aBtn.click()", i);
     ok(`${label}: 開く → 待つ → 押す の順`, i > 0 && w > i && click > w);

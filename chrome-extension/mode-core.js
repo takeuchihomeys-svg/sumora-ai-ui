@@ -297,6 +297,16 @@
   /** モードの表示名（通常／スタッフ／自動） */
   function modeLabel(mode) { return MODE_LABELS[mode] || MODE_LABELS.normal; }
 
+  /**
+   * 2026-11-11 竹内さん「デフォルトが普通モードにして。選択で自動モードやAIXにこちらでしてから自動検索されるように」:
+   *   ブラウザを起動した時に、前の日の「自動」「AIX」「スタッフ」を引きずらない（必ず標準＝通常から始める）。
+   *   拡張の入れ直し・更新では消さない（作業の途中で勝手に戻ると困る）＝呼ぶのは起動時（onStartup）だけ。
+   *   ブレイン（brainMode）は触らない（判定の好みは残す）。
+   */
+  function startupReset() {
+    return { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null, aiMode: false };
+  }
+
   return {
     GUIDE_ONLY: GUIDE_ONLY,
     AUTO_MODE: AUTO_MODE,
@@ -304,6 +314,7 @@
     MODE_LABELS: MODE_LABELS,
     modeLabel: modeLabel,
     autoModeStamp: autoModeStamp,
+    startupReset: startupReset,
     effectiveState: effectiveState,
     effectiveBehavior: effectiveBehavior,
     guideOnlyMigration: guideOnlyMigration,

@@ -21,10 +21,10 @@ console.log("■ ① プルダウンは「開く→中で選ぶ→閉じる」�
   // 開いた一覧の中を1つずつ動かす（selectedIndex も実際に動かす＝画面で選ばれていく）
   ok("一覧の中を1つずつ動かす（selectedIndex を動かす）", /el\.selectedIndex = nxt;/.test(ps));
   ok("目当ての位置で止める（selectedIndex = want）", /el\.selectedIndex = want;/.test(ps));
-  // 選んだ後に一覧を閉じる（blur＋外側の押下＋Enter）
+  // 選んだ後に一覧を閉じる（blur＋外側の押下）。⚠ Enter は送らない（form が送信されてトップページへ飛ぶ）
   ok("選んだ後に一覧を閉じる（blur）", /if \(el\.blur\) el\.blur\(\);/.test(ps));
-  ok("外側を押して閉じる（body の mousedown）", /document\.body && document\.body\.dispatchEvent\(new MouseEvent\("mousedown"/.test(ps));
-  ok("Enter で確定する（人が選んで決める形）", /key: "Enter", keyCode: 13/.test(ps));
+  ok("外側を触って閉じる（mousedown→mouseup・click は出さない）", /_outside\.dispatchEvent\(new MouseEvent\("mousedown"/.test(ps) && /_outside\.dispatchEvent\(new MouseEvent\("mouseup"/.test(ps));
+  ok("Enter を送らない（form 送信でトップへ飛ぶのを防ぐ）", !/key: "Enter", keyCode: 13/.test(ps) && /Enter は送らない/.test(ps));
   // 閉じたのを見届けてから change（順序が大事：change → 値の確定だと開いたまま終わる）
   const iClose = ps.indexOf("if (el.blur) el.blur();");
   const iChange = ps.indexOf('dispatchEvent(new Event("change", { bubbles: true }))', iClose);

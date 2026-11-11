@@ -2945,6 +2945,15 @@ function startGuideFor(c, site, mode) {
   // 2026-10-01 竹内「ITANDIも画面表示光らせるようにする」: ITANDI もリアプロと同じく、その検索の条件で案内を始める
   //   （ITANDI のタブで押す。条件は「🔍 itandiで自動検索」と同じ組み立て → itandi-page-script.js が案内モードなら入力せずに itandi-guide.js へ）
   if (site !== "realpro" && site !== "itandi") { _pickupCompleteToast("今日は両サイトとも検索済みです", "info"); return; }
+  /**
+   * 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする。今勝手に自動検索が普通モードでもおきてしまったり」:
+   *   自動の道を開いているモード（自動・AIX）の時だけ押す。通常・スタッフは押さない（何もしない）。
+   */
+  if (!_isAutoModeAllowed()) {
+    console.warn("[popup] 通常／スタッフモードのため自動の検索をしません（startGuideFor・自動モードかAIXを選ぶと動きます）");
+    _pickupCompleteToast("通常モードのため自動検索しません（モードを「自動」か「AIX」にすると動きます）", "info");
+    return;
+  }
   openSiteView(c);
   searchMode = mode === "wide" ? "wide" : "pinpoint";
   syncModeButtons();
@@ -3983,11 +3992,36 @@ async function _openAndClickAutofill(d, o) {
   }
 }
 // ウェブアプリの自動入力（pendingPopupCmd・開いた時／開いている時）
+/**
+ * 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする。今勝手に自動検索が普通モードでもおきてしまったり」:
+ *   pendingPopupCmd（ウェブアプリ・スマホ・一括の指示）は **モードを見ずに押していた**。
+ *   → 自動の道を開いているモード（自動・AIX）の時だけ開く。通常・スタッフは何もしない（指示は捨てない・理由を返す）。
+ */
 function _runPendingPopupCmd(cmd, via) {
+  if (!_isAutoModeAllowed()) {
+    console.warn("[popup] 通常／スタッフモードのため自動の検索をしません（pendingPopupCmd/" + via + "・自動モードかAIXを選ぶと動きます）");
+    return Promise.resolve({ ok: false, reason: "guide_only" });
+  }
   return _openAndClickAutofill(cmd, { via: "pendingPopupCmd/" + via, suppressRestore: true, noOverride: true, allowBoth: true, requireVisible: true, lockAreaMode: true });
 }
+/** 自動の道を開いているモードか（自動・AIX）。通常・スタッフは false */
+function _isAutoModeAllowed() {
+  var core = self.AxlxModeCore;
+  if (!core) return false;
+  var m = _modeState().mode;
+  return m === core.AUTO_MODE || (!!core.AI_MODE && m === core.AI_MODE);
+}
 // background の一括検索・個別の検索（axlx-switch-customer → underbar の中継）。受け口はここ1本
+/**
+ * 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする」:
+ *   ここも**モードを見ていなかった**（background の関所を抜けて届くと押してしまう）。
+ *   受け口でも同じ関所を見る（二重の歯止め・片方の抜けで勝手に検索しない）。
+ */
 function _runSwitchCustomer(d) {
+  if (!_isAutoModeAllowed()) {
+    console.warn("[popup] 通常／スタッフモードのため自動の検索をしません（switch-customer・自動モードかAIXを選ぶと動きます）");
+    return Promise.resolve({ ok: false, reason: "guide_only" });
+  }
   return _openAndClickAutofill(d, { via: "switch-customer", waitCustomersMs: 5000, areaSource: "db", autoRun: true, dedupe: true, deadlineMs: SWITCH_CLICK_DEADLINE_MS });
 }
 // ==AXLX-SWITCH-CORE-END==

@@ -27,7 +27,7 @@ ok("確定して change を出す", /el\.value = target;/.test(ps) && /dispatchE
 // 2026-11-11 竹内さん「展開された中で選択するところなのに一押ししかしていなかった」:
 //   旧は el.value を代入して終わり（一覧が開いたまま＝一押しに見えた）。
 //   新は **一覧を閉じてから** change を出し、閉じたのを見届ける。
-ok("選んだ後に一覧を閉じる（blur → 外側クリック）", /el\.blur\(\)[\s\S]{0,400}document\.body\.dispatchEvent\(new MouseEvent\("mousedown"/.test(ps));
+ok("選んだ後に一覧を閉じる（blur → 外側を触る）", /el\.blur\(\)[\s\S]{0,500}_outside\.dispatchEvent\(new MouseEvent\("mousedown"/.test(ps));
 ok("閉じたのを見届ける（150〜520ms）", /_ln\(260, 0\.4, 150, 520\)/.test(ps));
 ok("一覧の中を1つずつ動かす（selectedIndex も動かす）", /el\.selectedIndex = nxt;/.test(ps));
 

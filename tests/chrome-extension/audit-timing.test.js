@@ -18,7 +18,9 @@ const grab = (src, name) => { const s = src.indexOf(name); if (s < 0) return "";
   // v2.5.48: 芯は _openAndClickAutofill（background の切替と同じ1本）。_runPendingPopupCmd はそれを呼ぶだけ
   const core = grab(popup, "async function _openAndClickAutofill(");
   const fn = core + "\n" + grab(popup, "function _runPendingPopupCmd(");
-  ok("共通の関数 _runPendingPopupCmd がある（芯は _openAndClickAutofill）", core.length > 0 && /function _runPendingPopupCmd\(cmd, via\) \{\s*return _openAndClickAutofill\(cmd, \{[^}]*suppressRestore: true[^}]*requireVisible: true, lockAreaMode: true \}\);/.test(popup));
+  ok("共通の関数 _runPendingPopupCmd がある（芯は _openAndClickAutofill）", core.length > 0 && /function _runPendingPopupCmd\(cmd, via\) \{[\s\S]{0,600}?return _openAndClickAutofill\(cmd, \{ via: "pendingPopupCmd\/" \+ via, suppressRestore: true[^}]*requireVisible: true, lockAreaMode: true \}\);/.test(popup));
+  // 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする」: モードの関所が先にある
+  ok("通常・スタッフモードでは自動の検索をしない関所がある（_isAutoModeAllowed）", /function _runPendingPopupCmd\(cmd, via\) \{[\s\S]{0,300}?if \(!_isAutoModeAllowed\(\)\)/.test(popup) && /function _isAutoModeAllowed\(\)/.test(popup));
   ok("開いた時（loadCustomers の後）と開いている時（storage.onChanged）の両方がこの関数を呼ぶ",
     /_runPendingPopupCmd\(cmd, "load"\)/.test(popup) && /_runPendingPopupCmd\(cmd, "changed"\)/.test(popup));
   ok("旧: 読み直しを待たずに 0.8〜1.2秒で押す setTimeout（_autoClickDelay）が残っていない", !/_autoClickDelay/.test(popup));
@@ -39,6 +41,9 @@ const grab = (src, name) => { const s = src.indexOf(name); if (s < 0) return "";
     document: { getElementById: (id) => els[id] || null, querySelector: (s) => ({ click() { log.push("mode:" + s); } }) },
     openSiteView: () => log.push("openSiteView"),
     openInstructions: (site) => { log.push("open:" + site + ":sup=" + ctx._adjRestoreSuppressed); ctx._freshPreloadPromise = new Promise((r) => { resolveFresh = () => { log.push("fresh"); ctx.currentAreaMode = "ward"; r(); }; }); },
+    // 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする」:
+    //   受け口はモードも見る（自動・AIX の時だけ押す）。ここは押す前の待ちを見たいので自動モードにする
+    _isAutoModeAllowed: () => true,
   };
   vm.createContext(ctx);
   vm.runInContext(grab(popup, "async function _awaitFreshPreload(") + "\n" + fn, ctx);

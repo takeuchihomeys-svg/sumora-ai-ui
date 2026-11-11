@@ -174,11 +174,21 @@
                 el.dispatchEvent(new Event("input", { bubbles: true }));
               } catch (_) {}
               // ⑤ 一覧を閉じる（人が選び終えて画面から離れる）。閉じないと開いたままで終わる
+              /**
+               * 2026-11-11 竹内さん「画面検索中なぜかトップページに戻ったりして崩れてしまう」:
+               *   ⚠ 旧（v2.6.63 の直前）はここで **Enter キーを dispatch していた**。
+               *   リアプロの検索フォームは Enter で **form が送信される**ので、
+               *   プルダウンを選ぶたびに検索が走り、トップページ（main.php）へ飛んで崩れていた。
+               *   → Enter は送らない。閉じるのは **blur と、欄の外を軽く触るだけ**（送信を起こさない操作）。
+               */
               try {
                 if (el.blur) el.blur();
-                el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true }));
-                el.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", keyCode: 13, bubbles: true }));
-                document.body && document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                // 欄の外を「触る」だけ（click は出さない＝form を送らない・ボタンを押さない）
+                var _outside = document.querySelector('#main, #container, .contents, main') || document.body;
+                if (_outside) {
+                  _outside.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+                  _outside.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+                }
                 fire("mouseout", {});
               } catch (_) {}
               // ⑥ 閉じたのを見届けてから change（人が確定した形）

@@ -56,12 +56,15 @@ function makePopup(opts) {
     _afterSearchOverrideClick() { log.push("afterOv"); },
     _applyAutoRunToForm: () => ({}),
     _restoreAutoRun() { log.push("restoreAr"); },
+    // 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする」:
+    //   受け口はモードも見る（自動・AIX の時だけ押す）。ここは押す側の回数を測りたいので自動モードにする
+    _modeState: () => ({ mode: opts.mode || "aix", brain: false, staffExpired: false }),
     document: {
       querySelector: () => modeBtn,
       getElementById: (id) => (id === "autofill-btn" ? (opts.noBtn ? null : aBtn) : areaBtn),
     },
   };
-  sandbox.self = { AxlxSearchAudit: SA, AxlxSearchOverride: { sanitize: (o) => o } };
+  sandbox.self = { AxlxSearchAudit: SA, AxlxSearchOverride: { sanitize: (o) => o }, AxlxModeCore: { AUTO_MODE: "aix", AI_MODE: "ai" } };
   vm.createContext(sandbox);
   vm.runInContext(
     "var _lastSwitchSeen = null;\n" + fnSrc(pp, "function _isDupSwitch(d)") + "\n" + fnSrc(pp, "function _clickAuditCtx(btn)") + "\n" +

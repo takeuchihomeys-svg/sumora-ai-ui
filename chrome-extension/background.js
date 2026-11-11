@@ -365,6 +365,21 @@ function _migrateGuideOnly() {
 }
 chrome.runtime.onInstalled.addListener(_migrateGuideOnly);
 chrome.runtime.onStartup.addListener(_migrateGuideOnly);
+/**
+ * 2026-11-11 竹内さん「デフォルトが普通モードにして。選択で自動モードやAIXにこちらでしてから自動検索されるように」:
+ *   ブラウザを起動した時は必ず通常モードから始める（前日の「自動」「AIX」「スタッフ」を引きずらない）。
+ *   拡張の更新（onInstalled）では消さない（作業の途中で勝手に戻ると困る）。
+ */
+function _resetModeOnStartup() {
+  try {
+    var core = self.AxlxModeCore;
+    if (!core || !core.startupReset) return;
+    chrome.storage.local.set(core.startupReset(), function () {
+      console.log("[mode] ブラウザの起動 → モードを通常に戻しました（自動で検索しません）");
+    });
+  } catch (_) {}
+}
+chrome.runtime.onStartup.addListener(_resetModeOnStartup);
 _migrateGuideOnly();
 /** 自動の物を始めてよいか。
  *  2026-10-06 v2.5.77: 「光って選択するモード」の間は常に false（自動の道を閉じる）。
@@ -1566,6 +1581,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "axlx-webapp-search") {
     const { site, conditions } = msg;
     console.log("[webapp-search] ▶ 受信 site=" + site + " customerId=" + (conditions && conditions.customerId));
+    /**
+     * 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする。今勝手に自動検索が普通モードでもおきてしまったり」:
+     *   ここには**モードの関所が無かった**。ウェブアプリ・スマホからの検索の指示は、
+     *   モードが 通常／スタッフ でも届いて、勝手に検索が走っていた。
+     *   → 自動の道を開いているモード（自動・AIX）を選んでいる時だけ受ける。
+     *     それ以外は受け取らない（指示はサーバーに残る＝他の PC が拾える）。
+     */
+    if (_guideOnly()) {
+      console.warn("[webapp-search] 通常／スタッフモードのため検索しない（自動モード・AIXを選ぶと動きます）");
+      sendResponse({ ok: false, error: "guide_only" });
+      return true;
+    }
 
     // ─── リアプロ: popup.js直接メッセージ経由（Dijkstra展開含む完全な条件組み立てを使う）──
     if (site === "realnetpro" || site === "realpro") {
@@ -1612,8 +1639,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           console.log("[webapp-search] ✗ popup未応答 → フォールバック: ページ更新経由");
 
           // フォールバック: main.phpへナビゲート + pendingPopupCmd
-          // _realTab は上で取得済み（null の場合は新規タブ作成）
-          if (_realTab) {
+          //   _realTab は上で取得済み（null の場合は新規タブ作成）
+          /**
+           * 2026-11-11 竹内さん「画面検索中なぜかトップページに戻ったりして崩れてしまう」:
+           *   すでに検索の画面なら main.php へ移らない（トップへ戻ると崩れる）。URL だけで判定する。
+           */
+          var _wu = _realTab ? String(_realTab.url || "") : "";
+          var _wLooksSearch = /[?&]display=building/.test(_wu) || /[?&]method=estate/.test(_wu);
+          if (_realTab && _wLooksSearch) {
+            console.log("[webapp-search] すでに検索の画面 → main.php へ移らない");
+          } else if (_realTab) {
             await chrome.tabs.update(_realTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
             await _batchWaitForTabComplete(_realTab.id);
             await new Promise(function(r) { setTimeout(r, _settleMs(1500)); });
@@ -2499,6 +2534,17 @@ async function _runScrapeAndCompare(customerId, conditions) {
   var _scAreaMode = (conditions && conditions.area_mode) || null;
   var _scCustName = (conditions && conditions.customerName) || null;
 
+  /**
+   * 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする。今勝手に自動検索が普通モードでもおきてしまったり」:
+   *   ここにもモードの関所が無く、通常モードでも main.php へ飛ばして検索を始めていた
+   *   （＝「なぜかトップページに戻る」の原因の1つ）。
+   *   自動の道を開いているモード（自動・AIX）の時だけ動く。
+   */
+  if (_guideOnly()) {
+    console.warn("[scrape-compare] 通常／スタッフモードのため検索しない（自動モードかAIXを選ぶと動きます）");
+    return { ok: false, error: "guide_only" };
+  }
+
   var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, _fillDoneTimeoutMs("realnetpro"));
 
   var _scAllTabs = await chrome.tabs.query({});
@@ -2532,10 +2578,23 @@ async function _runScrapeAndCompare(customerId, conditions) {
 
   if (!_directOk) {
     if (_scRealTab) {
-      console.log("[scrape-compare] フォールバック → main.phpへ:", _scRealTab.id);
-      await chrome.tabs.update(_scRealTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
-      await _batchWaitForTabComplete(_scRealTab.id);
-      await new Promise(function(r) { setTimeout(r, _settleMs(1500)); });
+      /**
+       * 2026-11-11 竹内さん「画面検索中なぜかトップページに戻ったりして崩れてしまう」:
+       *   旧は **必ず main.php（ホーム）へ飛ばして**から pendingPopupCmd で検索し直していた。
+       *   検索の画面（method=estate）を開いている最中にこれが走ると、トップへ戻って崩れる。
+       *   → すでに検索の画面らしいタブなら **移らない**（そのタブのまま pendingPopupCmd に任せる）。
+       *   判定は URL だけで見る（サイトは触らない・読み込みもしない）。
+       */
+      var _u = String(_scRealTab.url || "");
+      var _looksSearch = /[?&]display=building/.test(_u) || /[?&]method=estate/.test(_u);
+      if (_looksSearch) {
+        console.log("[scrape-compare] すでに検索の画面 → main.php へ移らない（そのまま引き継ぐ）");
+      } else {
+        console.log("[scrape-compare] フォールバック → main.phpへ:", _scRealTab.id);
+        await chrome.tabs.update(_scRealTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
+        await _batchWaitForTabComplete(_scRealTab.id);
+        await new Promise(function(r) { setTimeout(r, _settleMs(1500)); });
+      }
     } else {
       console.log("[scrape-compare] リアプロタブなし → 新規作成");
       _scRealTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
