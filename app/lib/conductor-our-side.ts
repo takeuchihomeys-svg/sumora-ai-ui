@@ -45,12 +45,40 @@ const ago = (nowMs: number, iso: string) => {
 };
 
 /**
+ * 確かめ済みの事実（純関数・決まった計算の網・2026-11-11 作業員4・弱い所 575）。
+ *   竹内さんの 60日: 管理会社等に確かめた結果を伝えた文 62通のうち AIX の文 48・AIX でない返信 14（募集状況6・条件6・交渉2）。
+ *   AIX の入力（ピッカー）には「募集中か」しか残らず、「11月中旬入居」「クリーニング必須」「代理契約可能」「2番手」等の中身は文の中だけ＝
+ *   帳面（customer-fact-ledger）にも無い。こちらの文（AIX でも返信でも）から「確認させて頂きましたところ／管理会社確認しましたところ／交渉させて頂きましたが」の
+ *   1文を拾い、①募集状況 ②条件 ③交渉 に分けて渡す（読むのはブレイン）。30日・新しい順に5つまで
+ */
+const RESULT_RE = /(確認|交渉)(させて頂き|させていただき|致し|いたし|し)ました(ところ|が)|管理会社(様)?(に|へ)?(確認|交渉|問い合わせ)[^。！!\n]{0,20}(ところ|結果)/;
+export type CheckedFact = { kind: "①募集状況" | "②条件" | "③交渉"; gist: string; at: string };
+export function checkedFacts(o: { msgs: ReadonlyArray<OurSideMsg>; nowMs: number; days?: number; max?: number }): CheckedFact[] {
+  const out: CheckedFact[] = [];
+  const minT = o.nowMs - (o.days ?? 30) * 86_400_000;
+  for (const m of [...o.msgs].sort((a, b) => b.created_at.localeCompare(a.created_at))) {
+    if (m.sender === "customer" || Date.parse(m.created_at) > o.nowMs || Date.parse(m.created_at) < minT) continue;
+    const text = String(m.text ?? "");
+    if (!RESULT_RE.test(text)) continue;
+    const sents = text.replace(/\s+/g, " ").split(/(?<=[！!。])\s*/u);
+    const i = sents.findIndex((s) => RESULT_RE.test(s));
+    const gist = [sents[i], /ところ\s*$|が\s*$/.test(sents[i] ?? "") ? sents[i + 1] : ""].filter(Boolean).join("").slice(0, 80);
+    const kind: CheckedFact["kind"] = /交渉|値下げ|割引|フリーレント|免除|外す|下げ/.test(gist) ? "③交渉" : /募集|空|申込(が|み)?(入|はい)|満室|終了|埋ま|番手/.test(gist) ? "①募集状況" : "②条件";
+    out.push({ kind, gist, at: m.created_at });
+    if (out.length >= (o.max ?? 5)) break;
+  }
+  return out;
+}
+
+/**
  * こちら側の状態の1塊（無ければ ""）。msgs は今の番より前の通（順は問わない）、aix は AIX の記録（順は問わない）。
  *   ① 開いている約束（こちらの最後の約束の文の後に、果たす AIX がまだ無い）: 種類・その文の要点・いつ
  *   ② 直前の AIX（種類の意味・ピッカーの値・物件名2件まで・見積書の同封・いつ）
  *   ③ 送った物件（束／1件の回数・最後はいつ）
  */
-export function ourSideBlock(o: { msgs: ReadonlyArray<OurSideMsg>; aix: ReadonlyArray<OurSideAix>; nowMs: number }): string {
+/** 確かめ済みの事実の欄（弱い所 575）は別のスイッチ: OUR_SIDE_CHECKED=on（既定 off）。塊そのもの（CONDUCTOR_OUR_SIDE_BRAIN）の測りと混ぜない */
+export const ourSideCheckedOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.OUR_SIDE_CHECKED ?? "").trim().toLowerCase() === "on";
+export function ourSideBlock(o: { msgs: ReadonlyArray<OurSideMsg>; aix: ReadonlyArray<OurSideAix>; nowMs: number; withChecked?: boolean }): string {
   const msgs = [...o.msgs].filter((m) => Date.parse(m.created_at) <= o.nowMs).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const aix = [...o.aix].filter((a) => Date.parse(a.sent_at ?? a.created_at) <= o.nowMs).sort((a, b) => (a.sent_at ?? a.created_at).localeCompare(b.sent_at ?? b.created_at));
   const lines: string[] = [];
@@ -75,6 +103,9 @@ export function ourSideBlock(o: { msgs: ReadonlyArray<OurSideMsg>; aix: Readonly
   const sends = aix.filter((a) => a.aix_type === "property_send"), recs = aix.filter((a) => a.aix_type === "property_recommendation");
   const lastSend = [...sends, ...recs].sort((a, b) => (a.sent_at ?? a.created_at).localeCompare(b.sent_at ?? b.created_at)).pop();
   lines.push(sends.length || recs.length ? `・送った物件: 束 ${sends.length}回・1件のオススメ ${recs.length}回（最後 ${ago(o.nowMs, lastSend!.sent_at ?? lastSend!.created_at)}）` : "・送った物件: まだ無い");
+  // ④ 確かめ済みの事実（弱い所 575）
+  const checked = (o.withChecked ?? ourSideCheckedOn()) ? checkedFacts({ msgs, nowMs: o.nowMs }) : [];
+  if (checked.length) lines.push(`・確かめ済みの事実（こちらが管理会社等に確かめて伝えた事・同じ確認の約束を繰り返さない）:\n${checked.map((f) => `  - ${f.kind}「${f.gist}」（${ago(o.nowMs, f.at)}）`).join("\n")}`);
   return [
     "【こちら側の状態（11/11・読むのは統括）】",
     ...lines,

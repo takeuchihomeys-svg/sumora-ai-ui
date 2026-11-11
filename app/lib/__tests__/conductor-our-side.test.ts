@@ -1,6 +1,6 @@
 // app/lib/__tests__/conductor-our-side.test.ts — 入口の統括に渡す「こちら側の状態」（純関数）
 // 実行: npx tsx app/lib/__tests__/conductor-our-side.test.ts
-import { ourSideBlock, promiseKindOf, conductorOurSideOn, ourSideBrainOn } from "../conductor-our-side";
+import { ourSideBlock, promiseKindOf, conductorOurSideOn, ourSideBrainOn, checkedFacts, ourSideCheckedOn } from "../conductor-our-side";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, info?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name} → ${JSON.stringify(info)}`); } };
@@ -41,6 +41,21 @@ t("約束の種類", promiseKindOf("お送り頂きました新大阪グラン�
 {
   const b = ourSideBlock({ nowMs: now, msgs: [{ sender: "staff", text: "確認させて頂きます", created_at: "2026-11-03T11:00:00Z" }], aix: [{ aix_type: "estimate_sheet", created_at: "2026-11-03T11:30:00Z" }] });
   t("今より後は見ない", /開いている約束: なし/.test(b) && /直前の AIX: なし/.test(b) && /まだ無い/.test(b), b);
+}
+// 2026-11-11 弱い所 575: 確かめ済みの事実（竹内さんの実物の言い方）
+{
+  const msgs = [
+    { sender: "staff", text: "BLANCOSTA SQUARE管理会社に確認しましたところ、11月2日からご内覧が出来そこからクリーニング工事がはいりますので、最短で11月中旬でのご入居となります！！", created_at: "2026-11-01T06:40:00Z" },
+    { sender: "staff", text: "エスリード中之島クロスゲート募集状況確認させて頂きましたところ、現在お部屋お申込が入っており、2番手以降でのお申込となります！！", created_at: "2026-11-02T14:12:00Z", is_aix_generated: true },
+    { sender: "staff", text: "管理会社に交渉させて頂きましたがこちらクリーニング費用必須となります。", created_at: "2026-11-03T09:01:00Z" },
+    { sender: "staff", text: "お送り頂きました物件の募集状況確認させて頂きます！！", created_at: "2026-11-03T09:30:00Z" },
+    { sender: "customer", text: "確認しましたところ大丈夫でした", created_at: "2026-11-03T09:40:00Z" },
+  ];
+  const f = checkedFacts({ msgs, nowMs: now });
+  t("575: 結果の文だけ拾う（約束の文・お客様の文は拾わない）・新しい順", f.length === 3 && f[0].kind === "③交渉" && f[1].kind === "①募集状況" && f[2].kind === "②条件", f);
+  t("575: 結果の1文を要点に（ところ の後の文も）", /2番手以降でのお申込/.test(f[1].gist) && /11月中旬/.test(f[2].gist), f);
+  t("575: 既定 off（塊に出ない）・on で出る", !/確かめ済み/.test(ourSideBlock({ msgs, aix: [], nowMs: now })) && /確かめ済みの事実/.test(ourSideBlock({ msgs, aix: [], nowMs: now, withChecked: true })) && !ourSideCheckedOn({}) && ourSideCheckedOn({ OUR_SIDE_CHECKED: "on" }));
+  t("575: 30日より古い・今より後は拾わない", checkedFacts({ msgs, nowMs: Date.parse("2026-12-20T00:00:00Z") }).length === 0 && checkedFacts({ msgs, nowMs: Date.parse("2026-11-01T00:00:00Z") }).length === 0);
 }
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
