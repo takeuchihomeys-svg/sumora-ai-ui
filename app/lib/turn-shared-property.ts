@@ -105,10 +105,13 @@ function fillRoom(name: string, f: Pick<CustomerSentFacts, "areaSqm" | "madori" 
  * @param pages URL ごとの SUUMO のページの読み（readPortalPage の結果・無くてよい）
  * @param known この会話でこちらが送った部屋（指紋・号室の埋め）
  */
-export function sharedPropertyOfTurn(o: { turn: ReadonlyArray<TsMsg>; pages?: ReadonlyMap<string, PortalPage>; known?: ReadonlyArray<KnownRoom> }): { target: SharedTarget | null; reason: "none" | "multiple" | "unresolved" | "ok"; found: number } {
+export function sharedPropertyOfTurn(o: { turn: ReadonlyArray<TsMsg>; pages?: ReadonlyMap<string, PortalPage>; known?: ReadonlyArray<KnownRoom> }): { target: SharedTarget | null; reason: "none" | "multiple" | "unresolved" | "partial" | "ok"; found: number } {
   const known = o.known ?? [];
   const found = new Map<string, SharedTarget>();
   let shared = 0;
+  // 2026-11-11 試験 w1-tsp-on3（q202「合計3物件」）: 3件の持ち込みのうち共有文の1件だけ名前が取れ、その1件を今の番の物件と言い切った
+  //   → 名前が決まらない持ち込みが1つでもあれば、今の番の物件は決めない（partial）
+  let unresolved = 0;
   const put = (t: SharedTarget) => {
     const ref = splitPropertyName(t.name, t.roomNo);
     if (!ref) return;
@@ -125,7 +128,8 @@ export function sharedPropertyOfTurn(o: { turn: ReadonlyArray<TsMsg>; pages?: Re
     const text = String(m.text ?? "");
     if (/^\s*\[画像\]/.test(text)) {
       const g = customerImagePropertyGate(text, m.image_type ?? null);
-      if (!g.ok) continue; // 個人情報・物件以外・読めていない画像は見ない（fail-closed）
+      // 個人情報・物件以外は見ない（fail-closed）。読めていない画像（「[画像]」だけ）は物件かもしれない＝決まらない物として数える
+      if (!g.ok) { if (g.reason === "unread") { shared++; unresolved++; } continue; }
       shared++;
       const f = factsFromPropertyText(g.body);
       const sp = extractScreenshotProperty(`[画像] ${g.body}`);
@@ -137,6 +141,7 @@ export function sharedPropertyOfTurn(o: { turn: ReadonlyArray<TsMsg>; pages?: Re
       }
       const k = fingerprintKnownRoom(f, known);
       if (k) put({ name: k.name, roomNo: k.roomNo, by: "fingerprint", evidence: `名前の無い物件の画像の値（${sumOf(f)}）がこちらが送った部屋と同じ` });
+      else unresolved++;
       continue;
     }
     const urls = propertyUrlsIn(text);
@@ -162,11 +167,13 @@ export function sharedPropertyOfTurn(o: { turn: ReadonlyArray<TsMsg>; pages?: Re
       const f = p?.status === "ok" ? { areaSqm: p.areaSqm ?? share.areaSqm, madori: p.madori ?? share.madori, rentYen: p.rentYen ?? share.rentYen } : share;
       const k = fingerprintKnownRoom(f, known);
       if (k) put({ name: k.name, roomNo: k.roomNo, by: "fingerprint", evidence: `名前の無い URL の値（${sumOf(f)}）がこちらが送った部屋と同じ` });
+      else unresolved++;
     }
   }
   if (!shared) return { target: null, reason: "none", found: 0 };
   if (found.size === 0) return { target: null, reason: "unresolved", found: 0 };
   if (found.size > 1) return { target: null, reason: "multiple", found: found.size };
+  if (unresolved > 0) return { target: null, reason: "partial", found: found.size };
   return { target: [...found.values()][0], reason: "ok", found: 1 };
 }
 

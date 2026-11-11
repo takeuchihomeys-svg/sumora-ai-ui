@@ -117,6 +117,18 @@ describe("複数・個人情報", () => {
     const r = sharedPropertyOfTurn({ turn: [cust("[画像] 【物件の資料】\n物件名 グラン寝屋川\n専有面積 31.5㎡", "2026-11-04T02:49:00Z", "property_material"), cust(GRAN_DOC_IMG, "2026-11-04T02:50:00Z", "property_material")] });
     eq([r.reason, r.target?.roomNo], ["ok", "101"]);
   });
+  // 2026-11-11 試験 w1-tsp-on3 の q202（持ち込み「合計3物件」・共有文の1件だけ名前が取れた）で1件と言い切った → 決めない
+  it("持ち込みの1件だけ名前が取れ、残りが決まらない → 決めない（partial）", () => {
+    const r = sharedPropertyOfTurn({ turn: [
+      cust("https://suumo.jp/chintai/bc_100000000001/", "2026-11-03T10:36:00Z"),
+      cust("ART TENDOU WEST 5階\nhttps://suumo.jp/chintai/bc_100000000002/\nby SUUMO", "2026-11-03T10:36:20Z"),
+      cust(Q199_IMG, "2026-11-03T10:37:00Z", "property_photo"),
+    ] });
+    eq([r.reason, r.target], ["partial", null]);
+  });
+  it("読めていない画像（「[画像]」だけ）が混ざる → 決めない", () => {
+    eq(sharedPropertyOfTurn({ turn: [cust(Q119_IMG, "2026-09-06T12:59:19Z", "property_photo"), cust("[画像]", "2026-09-06T12:59:20Z")] }).reason, "partial");
+  });
   it("本人確認書類の画像は見ない（種類だけの行）", () => {
     eq(sharedPropertyOfTurn({ turn: [cust("[画像] 本人確認書類", "2026-11-04T02:50:00Z", "id_document")], known: [GRAN] }).reason, "none");
   });
