@@ -1796,8 +1796,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           .map(function(id) { return _bulkAll.find(function(c) { return String(c.id) === String(id); }); })
           .filter(Boolean);
         console.log("[manual-bulk-search] ▶ site=" + _bulkSite + " mode=" + (_bulkIsWide ? "wide" : "pinpoint") + " 対象=" + _bulkTargets.length + "人");
+        /**
+         * 2026-11-11 竹内さん「また人間の間で動くようにもできれば動くように徹底」:
+         *   一括検索でお客様から次のお客様へ移る間が無かった（連続で開いていた＝機械らしい・サイトにも続けて当たる）。
+         *   人が「この人の結果を少し見て、次を開く」間を入れる（多くは 8〜25秒・6回に1回ほど 40〜90秒の一息）。
+         *   ⚠ 自動便の customerGapMs（15〜60秒・一息90〜200秒）は「1コマンドで何人も回す」用に長いので、手で選んだ一括は少し短くする。
+         */
+        var _bulkGapMs = function () {
+          var H = self.AxlxHumanWait;
+          var A = self.AxlxAutoRun;
+          // 6回に1回ほど「一息」（40〜90秒）
+          var breath = A && A.humanChance ? A.humanChance(null, 0.16) : Math.random() < 0.16;
+          if (breath) return 40000 + Math.floor(Math.random() * 50000);
+          if (H && H.logNormalDelay) {
+            var g = H.logNormalDelay(14000, 0.45);
+            if (g < 8000) g = 8000;
+            if (g > 25000) g = 25000;
+            return g;
+          }
+          return 8000 + Math.floor(Math.random() * 17000);
+        };
         for (var _bi = 0; _bi < _bulkTargets.length; _bi++) {
           var _bc = _bulkTargets[_bi];
+          // 2人目からは「前のお客様の結果を見てから次を開く」間を置く
+          if (_bi > 0) {
+            var _gap = _bulkGapMs(_bi);
+            console.log("[manual-bulk-search] 次のお客様まで " + Math.round(_gap / 1000) + "秒（人の間）");
+            await new Promise(function (r) { setTimeout(r, _gap); });
+            if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（間の間） → 中断"); break; }
+          }
           // 2026-09-29 見張り: ログイン切れ・サイトのエラーで見張りが止めたら、次のお客様から見送る（知らせはサーバーの1通だけ）
           if (_watchSkipSite(_bc, _bulkSite)) continue;
           console.log("[manual-bulk-search] (" + (_bi+1) + "/" + _bulkTargets.length + ") " + _bc.customer_name);

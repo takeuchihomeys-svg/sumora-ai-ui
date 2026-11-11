@@ -85,6 +85,10 @@ console.log("\n■ 一括検索の帯（もともとのAIX）は自動・AIXモ�
   ok("background: aiMode の変化でも読み直す", /ch\.staffModeAt \|\| ch\.aiMode\) _refreshAutoModeChosen/.test(bg));
   ok("3サイトのボタンがある（リアプロ・itandi・レインズ）", /data-bulk-site="realnetpro"/.test(html) && /data-bulk-site="itandi"/.test(html) && /data-bulk-site="reins"/.test(html));
   ok("ピンポイント／広げての2択がある", /data-bulk-mode="pinpoint"/.test(html) && /data-bulk-mode="wide"/.test(html));
+  ok("チェックボックスも自動・AIXモードの時だけ出す", /body:not\(\.mode-aix\):not\(\.mode-ai\) \.bulk-check-wrap \{ display: none !important; \}/.test(css));
+  ok("一括検索は次のお客様まで人の間を置く（連続で開かない）", /次のお客様まで .*秒（人の間）/.test(bg) && /_bulkGapMs = function \(\)/.test(bg));
+  ok("間の長さは logNormalDelay（8〜25秒・6回に1回ほど一息40〜90秒）", /logNormalDelay\(14000, 0\.45\)/.test(bg) && /humanChance\(null, 0\.16\)/.test(bg) && /if \(g < 8000\) g = 8000;/.test(bg) && /if \(g > 25000\) g = 25000;/.test(bg));
+  ok("間の途中でストップ要求が来たら止まる", /if \(_batchShouldStop\) \{ console\.log\("\[manual-bulk-search\] ストップ要求（間の間） → 中断"\); break; \}/.test(bg));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
