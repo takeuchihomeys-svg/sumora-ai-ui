@@ -21,6 +21,8 @@ import {
   memoLlmMessages, mdOf, parseMemoLlmOutput, resolveOpSources, summarizeTold, toldRuleId, type MemoKind, type MemoMsg, type MemoOp, type MemoViewRow, type StoredMemo,
 } from "@/app/lib/customer-memo";
 import { buildMoodFlowNote, moodFlowEnabled, resolveMoodFlow, type MoodFlow } from "@/app/lib/customer-mood-flow";
+import { buildPrevLeadNote, turnReadMode } from "@/app/lib/turn-read";
+import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
 import { buildPaymentTimingNote, extractMoneyReady, paymentTimingEnabled, planApplyTiming, paymentTimingCoreText, type MoneyReady, type ApplyPlan } from "@/app/lib/payment-timing";
 // 2026-10-09 竹内さん「決め手の残りはメモとブレインの両方に同じ値で置く」: 決まった計算（customer-mindset.readDecideGaps）を保存せず毎回組み立てる（鮮度は常に今）
 import { readDecideGaps, buildDecideGapNote, buildMindsetReplyLinesNote, decideGapEnabled, decideGapLine, hesitationKindOf, type DecideGap, type BrainGap } from "@/app/lib/customer-mindset";
@@ -127,6 +129,8 @@ export type MemoBundle = {
   /** 決め手の残り（決まった計算・新しい順）・前回のブレインが読んだ決め手の残りと状態（2026-10-09） */
   gaps: DecideGap[];
   prevBrain: { state: string | null; hesitation: string | null; gap: BrainGap | null };
+  /** 2026-11-11 作業員14: 【直前のこちらの誘導】の注記（TURN_READ=on の時だけ・候補の語だけ・判断はブレイン）。それ以外は空文字 */
+  prevLead?: string;
   /** 今のお客様の連投（最後の束）の文 */
   lastCustomerTurn: string;
 };
@@ -175,7 +179,8 @@ export async function loadMemoBundle(conversationId: string, o: { nowMs?: number
   const lastCustomerTurn = msgs.slice(k).map((m) => String(m.text ?? "")).join("\n");
   const money = paymentTimingEnabled() ? extractMoneyReady(msgs.filter((m) => m.sender === "customer").map((m) => ({ text: m.text, createdAt: m.createdAt })), now) : null;
   // 今の番（お客様の連投）より前のこちらの送信だけを「もう伝えた」に数える＝今の番の後に作る下書きは含めない
-  return { memo, told: summarizeTold(msgs), mood: moodFlowEnabled() ? resolveMoodFlow(msgs) : null, prevEmotions, money, desiredMoveInMs: side.desiredMoveInMs, summaryStyle: side.summaryStyle, gaps, prevBrain: { state: prev.state, hesitation: prev.hesitation, gap: prev.gap }, lastCustomerTurn };
+  const prevLead = turnReadMode() === "on" ? buildPrevLeadNote(msgs.filter((m) => !applicationMaterialReasonSafe(m.text))) : "";
+  return { prevLead, memo, told: summarizeTold(msgs), mood: moodFlowEnabled() ? resolveMoodFlow(msgs) : null, prevEmotions, money, desiredMoveInMs: side.desiredMoveInMs, summaryStyle: side.summaryStyle, gaps, prevBrain: { state: prev.state, hesitation: prev.hesitation, gap: prev.gap }, lastCustomerTurn };
 }
 
 /** ブレインの毎回変わる並びに足す注記（メモ＋気持ちの流れ）。何も無ければ空文字 */
@@ -185,7 +190,9 @@ export async function customerMemoNoteFor(conversationId: string, o: { scene?: s
   // 2026-10-28 台帳から写した行（ledger:）はブレインには台帳の結び付けで渡す＝メモの注記では省く（二重にしない・SENT_LEDGER_BIND が on の時）
   const noteMemo = sentLedgerBindEnabled() ? { ...forNote(b.memo), items: forNote(b.memo).items.filter((x) => !isLedgerMemoItem(x)) } : forNote(b.memo);
   const memoNote = customerMemoEnabled() ? buildCustomerMemoNote({ memo: noteMemo, told: b.told, scene: o.scene, nowMs: now }) : "";
-  const moodNote = moodFlowEnabled() ? buildMoodFlowNote(b.mood, { prevEmotions: b.prevEmotions }).trim() : "";
+  // 2026-11-11 作業員14: TURN_READ=on の時、お礼・了承だけの一通では前回までの気持ちを渡さない（持ち越しの直し・KB 542e92c9）
+  const ackNoCarry = turnReadMode() === "on" && isAckOnlyTurn(b.lastCustomerTurn);
+  const moodNote = moodFlowEnabled() ? buildMoodFlowNote(b.mood, { prevEmotions: b.prevEmotions, ackOnly: ackNoCarry }).trim() : "";
   const payNote = buildPaymentTimingNote(b.money, { nowMs: now, desiredMoveInMs: b.desiredMoveInMs, scene: o.scene, customerName: o.customerName });
   // 10/08 A/B の判断（ブレインが B の時に申込へを外す・返信の方向に使う）。条件の場面では出さない（注記と同じ）
   const plan = payNote && b.money ? planApplyTiming({ moneyDayMs: b.money.fromDayMs, nowMs: now, desiredMoveInMs: b.desiredMoveInMs }) : null;
@@ -196,7 +203,7 @@ export async function customerMemoNoteFor(conversationId: string, o: { scene?: s
   const moveNote = mode !== "off" ? buildMoveTableNote(b.prevBrain.state) : "";
   if (moveNote) console.log(JSON.stringify({ tag: "brain:mindset-move-table", conversationId, mode, state: b.prevBrain.state, chars: moveNote.length }));
   if (gapNote) console.log(JSON.stringify({ tag: "brain:decide-gap", conversationId, gaps: b.gaps.slice(0, 3).map((g) => `${g.point}:${g.solve}${g.conditional ? ":cond" : ""}`), brainGap: b.prevBrain.gap ? `${b.prevBrain.gap.point}:${b.prevBrain.gap.solve}` : null }));
-  return { note: [memoNote, moodNote, payNote, gapNote, mode === "on" ? moveNote : ""].filter(Boolean).join("\n\n"), memoChars: memoNote.length, moodChars: moodNote.length + payNote.length, items: b.memo.items.filter((x) => !x.retiredAt).length, pay };
+  return { note: [memoNote, moodNote, payNote, gapNote, mode === "on" ? moveNote : "", b.prevLead ?? ""].filter(Boolean).join("\n\n"), memoChars: memoNote.length, moodChars: moodNote.length + payNote.length, items: b.memo.items.filter((x) => !x.retiredAt).length, pay };
 }
 
 /** 画面用（行・気持ちの見立て） */

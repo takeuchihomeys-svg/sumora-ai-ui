@@ -62,10 +62,11 @@ export function leakOverlap(rowText: string, turnText: string, win = 14): boolea
   return false;
 }
 
-export const CROSS_SCENE_TAGS = new Set(["場面:物件を送る", "場面:その他"]);
+// 11/11 試験 w9-book-on2（q097 内覧の日程の変更に「室内写真の約束」場面:その他 の行が当たり悪化）: その他は横断にしない
+export const CROSS_SCENE_TAGS = new Set(["場面:物件を送る"]);
 // ── 状況の印（11/11 統括役: 重点の解き直しで「同じ場面の別の状況」の決まりが当たった＝物件を指すか・もう送ったか・約束済みかで絞る）──
 /** 今の番の状況の印（決まった計算・材料から） */
-export type TurnMarks = { pointsProperty: boolean; sent: boolean; promise: boolean };
+export type TurnMarks = { pointsProperty: boolean; sent: boolean; promise: boolean; vacate?: boolean };
 /** お客様の文が物件を指しているか（URL・画像・号室・「ここ/この物件/こちらのお部屋」・物件名らしい語） */
 export function pointsProperty(text: string): boolean {
   return /https?:\/\/|\[画像\]|号室|こちらの(?:お部屋|物件)|この(?:お部屋|物件|部屋)|そちらの(?:お部屋|物件)|ここ(?:だったら|なら|の|は|って)|(?:マンション|ハイツ|レジデンス|コーポ|メゾン|ハウス|荘)/.test(text);
@@ -78,11 +79,13 @@ export function rowNeeds(r: Pick<BookRow, "title" | "insight">): Partial<Record<
   if (/送った物件|お送りした物件|送った中から|送った後|送った直後|こちらが送った/.test(t)) need.sent = true;
   if (/何も送っていない|まだ(?:何も)?送っていない|初回の番|初めての番/.test(t)) need.sent = false;
   if (/約束の後|約束した後|約束を送った後|約束の続き|確認の約束の後|約束した確認/.test(t)) need.promise = true;
+  // 退去予定の部屋の決まり（先に抑える・キャンセル料）は、今の番か直前のこちらに退去予定の言葉がある時だけ（q097 で内覧の日程の変更に当たった）
+  if (/退去予定/.test(r.title)) need.vacate = true;
   return need;
 }
 /** 行の前提と今の番の印が合うか（問わない印は合う扱い） */
 export function marksOk(need: Partial<Record<keyof TurnMarks, boolean>>, m: TurnMarks): boolean {
-  return (Object.keys(need) as Array<keyof TurnMarks>).every((k) => need[k] === m[k]);
+  return (Object.keys(need) as Array<keyof TurnMarks>).every((k) => need[k] === (m[k] ?? false));
 }
 // 11/11 統括役（竹内さん「返信の部分も俺の考え方理解できればより精度高くなる」）: 判断（返信か AIX か）の行はブレインへ、書き方の行は書き手へ分けて渡す
 const WRITER_RE = /(書き方|言い回し|挨拶|かしこまりました|はい😊|締め|ご査収|表記|絵文字|呼び名|呼ぶ|重ねない|繰り返|前置き|お詫び|謝罪|改行|何卒|全力サポートを|新着で|日付|文の|一文|の文は|文に|書く役|書き手)/;
@@ -94,7 +97,16 @@ export function rowFor(r: Pick<BookRow, "title" | "tags">): "brain" | "writer" {
   if (WRITER_RE.test(t) || (r.tags ?? []).some((x) => x === "文" || x === "書く役" || x === "挨拶")) return "writer";
   return "brain";
 }
-export type PickOpts = { scene: string | null; turnEmb: ReadonlyArray<number>; turnText: string; max?: number; minSim?: number; minSimNoScene?: number; maxChars?: number; before?: string | null; marks?: TurnMarks | null; onlyTags?: string[]; forWho?: "brain" | "writer" };
+export type PickOpts = { scene: string | null; turnEmb: ReadonlyArray<number>; turnText: string; max?: number; minSim?: number; minSimNoScene?: number; maxChars?: number; before?: string | null; marks?: TurnMarks | null; onlyTags?: string[]; forWho?: "brain" | "writer"; minAnchor?: number };
+/** 今の番の文の2文字のうち題に入っている割合（語の手がかり・埋め込みだけだと話題が同じで状況の違う行が当たった） */
+export function anchorCover(turnText: string, title: string): number {
+  const c = (x: string) => squash(x).replace(/[s　、。・！!？?「」『』（）()＝=-—…,.:：〇]+/g, "");
+  const a = c(turnText), b = c(ruleOf(title));
+  const bg = new Set<string>(); for (let i = 0; i < a.length - 1; i++) bg.add(a.slice(i, i + 2));
+  if (!bg.size) return 0; let h = 0; for (const g of bg) if (b.includes(g)) h++; return h / bg.size;
+}
+// 11/11 q097 で測ると語の手がかりは正しい行（0.06〜0.11）より違う行（退去予定 0.17）の方が高かった＝分けられない。既定は 0（使わない）
+export const BOOK_MIN_ANCHOR = 0;
 export const BOOK_MAX = 3;
 // 下限は 11/11 の解き直し 198番の「お客様の文＋直前のこちら」の埋め込みで決めた（場面の札の行の近さ p90 0.527・札の無い行 p90 0.454）
 export const BOOK_MIN_SIM = 0.52;
@@ -123,6 +135,7 @@ export function pickBook(rows: ReadonlyArray<BookRow>, o: PickOpts): BookCard[] 
     if (o.marks && !marksOk(rowNeeds(r), o.marks)) continue;
     if (o.onlyTags?.length && !o.onlyTags.some((x) => (r.tags ?? []).includes(x))) continue;
     if (o.forWho && rowFor(r) !== o.forWho) continue;
+    if (anchorCover(o.turnText, r.title) < (o.minAnchor ?? BOOK_MIN_ANCHOR)) continue;
     scored.push({ r, sim, inScene });
   }
   scored.sort((a, b) => b.sim + (b.inScene ? 0.03 : 0) - (a.sim + (a.inScene ? 0.03 : 0)));
