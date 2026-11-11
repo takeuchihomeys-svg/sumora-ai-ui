@@ -54,7 +54,9 @@
     <!-- 2026-10-06 v2.5.75: モードの帯（mode-banner）は出さない（説明はヘッダーの小さな印 #mode-dot にマウスを乗せた時だけ）。
          スタッフモードの消し忘れは、モードの選択（スタッフ）の色とバッジで分かる -->
     <!-- 2026-09-29 v2.5.40 拡張の版と「画面の写真」の許可（snapshot-popup.js）。版が古いまま動いていないかを小窓で見分ける
-         v2.5.75: 小さな灰色の文字だけ（帯の色なし）。許可済みの時は版だけ、未許可の時だけ許可のボタン -->
+         v2.5.75: 小さな灰色の文字だけ（帯の色なし）。許可済みの時は版だけ、未許可の時だけ許可のボタン
+         2026-11-11 竹内さん「録画の許可のボタン表示されていないので表示されるようにする」:
+           小さすぎて見えなかった → 未許可の時は**目立つ帯**にする（黄色・大きいボタン・説明つき） -->
     <div id="snap-perm" style="display:none;align-items:center;gap:6px;padding:1px 10px;font-size:10px;color:#94a3b8;justify-content:flex-end">
       <!-- 2026-11-11 竹内さん「普通モードでのマウスの動かし方やボタンのどこ押すかもちゃんとたまるんかな」:
            通常モードで覚えた人の動き（マウスの速さ・曲がり・押した所・スクロール）を押すと見られる -->
@@ -62,6 +64,19 @@
       <span id="snap-ver"></span>
       <span id="snap-perm-state"></span>
       <button type="button" id="snap-perm-btn" style="display:none;padding:0 6px;font-size:10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;cursor:pointer">画面の共有を許可</button>
+    </div>
+
+    <!-- 2026-11-11 竹内さん「録画の許可のボタン表示されていないので表示されるようにする」:
+         許可が無い時だけ**目立つ帯**を出す（黄色・大きなボタン・何のための許可かを書く）。
+         許可すると消える。押した時に Chrome のダイアログが出ない環境（小窓の iframe）では手順を出す。 -->
+    <div id="snap-perm-banner" style="display:none;align-items:flex-start;gap:8px;margin:0 8px 6px;padding:8px 10px;background:#fffbeb;border:2px solid #f59e0b;border-radius:10px;font-size:11px;line-height:1.5;color:#78350f">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:800;margin-bottom:2px">🎬 画面の録画を許可してください</div>
+        <div style="font-size:10px;color:#92400e">許可すると、操作のたびに画面の写真が残り「検索を押せたか」を後から確かめられます。PCごとに1回だけです。</div>
+        <div id="snap-perm-hint" style="display:none;font-size:10px;color:#b91c1c;margin-top:4px;white-space:pre-line"></div>
+      </div>
+      <button type="button" id="snap-perm-banner-btn" style="flex:none;padding:6px 12px;font-size:12px;font-weight:800;border:none;border-radius:8px;background:#f59e0b;color:#fff;cursor:pointer;box-shadow:0 2px 6px rgba(245,158,11,.4)">許可する</button>
+      <button type="button" id="snap-perm-open-ext" style="flex:none;padding:4px 8px;font-size:10px;border:1px solid #f59e0b;border-radius:8px;background:#fff;color:#b45309;cursor:pointer" title="許可の画面が出ない時に、拡張の管理画面を開いて許可する">出ない時</button>
     </div>
 
     <!-- ▼ VIEW 1: お客さん一覧 -->
