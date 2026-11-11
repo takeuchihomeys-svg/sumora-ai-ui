@@ -19,6 +19,8 @@ const CORS = {
 };
 
 const MAX_BODY_CHARS = 48_000;
+/** 写真を付ける時は大きい（base64 で約1.3倍）。写真ありの時だけ上限を上げる */
+const MAX_BODY_CHARS_WITH_SHOT = 4_500_000;
 /** 1行に入れてよい数の上限（おかしな値で表が汚れないように） */
 const LIMIT = {
   ops: 10_000, sessions: 10_000, gap_ms: 600_000,
@@ -84,7 +86,9 @@ export async function POST(req: NextRequest) {
   if (!ok) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401, headers: CORS });
 
   const raw = await req.text().catch(() => "");
-  if (raw.length > MAX_BODY_CHARS) return NextResponse.json({ ok: false, error: "too large" }, { status: 413, headers: CORS });
+  if (raw.length > MAX_BODY_CHARS_WITH_SHOT) {
+    return NextResponse.json({ ok: false, error: "too large" }, { status: 413, headers: CORS });
+  }
   let body: Record<string, unknown>;
   try { body = JSON.parse(raw) as Record<string, unknown>; } catch { return NextResponse.json({ ok: false, error: "bad json" }, { status: 400, headers: CORS }); }
 
@@ -93,12 +97,14 @@ export async function POST(req: NextRequest) {
   const pt = (m.points && typeof m.points === "object" ? m.points : {}) as Record<string, unknown>;
   const sc = (m.scrolls && typeof m.scrolls === "object" ? m.scrolls : {}) as Record<string, unknown>;
 
-  // 何も無い（操作0・動き0）行は入れない（空行で表を埋めない）
+  // 何も無い（操作0・動き0）行は入れない（空行で表を埋めない）。
+  //   ⚠ 2026-11-11: 写真だけの回（操作0でも写真がある）は入れる（写真を見て確かめるため）
   const opsN = num(m.ops ?? m.n, LIMIT.ops) ?? 0;
   const movesN = num(mv.n, LIMIT.moves_n) ?? 0;
   const pointsN = num(pt.n, LIMIT.points_n) ?? 0;
   const scrollsN = num(sc.n, LIMIT.scrolls_n) ?? 0;
-  if (opsN === 0 && movesN === 0 && pointsN === 0 && scrollsN === 0) {
+  const hasShot = typeof body.shot_b64 === "string" && body.shot_b64.length > 100;
+  if (opsN === 0 && movesN === 0 && pointsN === 0 && scrollsN === 0 && !hasShot) {
     return NextResponse.json({ ok: true, skipped: "empty" }, { headers: CORS });
   }
 
@@ -148,7 +154,30 @@ export async function POST(req: NextRequest) {
     shot_h: num(body.shot_h, 10000),
   };
 
-  // 写真の**中身**（base64 の画像）は受け取らない（表を重くしない）。送られてきても捨てる
+  // 写真の**中身**（base64 の画像）は**表には入れない**（1行が数百KBになり集計が重くなる）。
+  //   2026-11-11 竹内さん「画面画像みればわかるのでは。画像みてボタンどこおしたかみればちゃんと検索おしてることわかる」:
+  //   → 受け取った画像は **Storage に置き**、表には置いた場所の名前（shot_key）だけ持つ。
+  //     表が軽いまま、竹内さんも私も写真を見て「検索を押せているか」を確かめられる。
+  const BUCKET = "human-motion-shots";
+  if (typeof body.shot_b64 === "string" && body.shot_b64.length > 100) {
+    try {
+      const raw64 = body.shot_b64.replace(/^data:image\/[a-z]+;base64,/, "");
+      const buf = Buffer.from(raw64, "base64");
+      // 大きすぎる写真は置かない（Storage と転送を守る）
+      if (buf.length > 0 && buf.length <= 3_000_000) {
+        const key = `${new Date().toISOString().slice(0, 10)}/${row.install_id || "unknown"}-${Date.now()}.jpg`;
+        const up = await supabase.storage.from(BUCKET).upload(key, buf, { contentType: "image/jpeg", upsert: true });
+        if (!up.error) {
+          row.shot_taken = true;
+          row.shot_key = key;
+        } else {
+          console.warn("[human-motion] 写真を置けません:", up.error.message);
+        }
+      }
+    } catch (e) {
+      console.warn("[human-motion] 写真の処理に失敗:", e instanceof Error ? e.message : String(e));
+    }
+  }
   delete row.shot_b64;
 
   const ins = await supabase.from("human_motion_learn").insert(row);
@@ -161,12 +190,32 @@ export async function GET(req: NextRequest) {
   const from = new Date(Date.now() - days * 86400_000).toISOString();
   const limit = Math.min(Math.max(Number(sp.get("limit") ?? 200) || 200, 1), 2000);
 
+  // 写真の一覧（どこに置いたか・見るための URL）
   if (sp.get("shots") === "1") {
     const r = await supabase.from("human_motion_learn")
-      .select("id, created_at, install_id, device_label, site, mode, shot_key, shot_w, shot_h")
+      .select("id, created_at, install_id, device_label, site, mode, shot_key, shot_w, shot_h, ops, points_n, point_fields")
       .gte("created_at", from).eq("shot_taken", true)
       .order("created_at", { ascending: false }).limit(limit);
-    return NextResponse.json({ ok: !r.error, days, rows: r.data ?? [], error: r.error?.message }, { status: r.error ? 500 : 200, headers: CORS });
+    if (r.error) return NextResponse.json({ ok: false, error: r.error.message }, { status: 500, headers: CORS });
+    // 写真を見る URL を付ける（Storage の公開 URL・無ければ署名付き）
+    const rows = await Promise.all(((r.data ?? []) as Record<string, unknown>[]).map(async (row) => {
+      const key = typeof row.shot_key === "string" ? row.shot_key : "";
+      let url: string | null = null;
+      if (key) {
+        try {
+          const pub = supabase.storage.from("human-motion-shots").getPublicUrl(key);
+          url = pub?.data?.publicUrl ?? null;
+        } catch { url = null; }
+        if (!url) {
+          try {
+            const signed = await supabase.storage.from("human-motion-shots").createSignedUrl(key, 3600);
+            url = signed?.data?.signedUrl ?? null;
+          } catch { url = null; }
+        }
+      }
+      return { ...row, shot_url: url };
+    }));
+    return NextResponse.json({ ok: true, days, rows }, { headers: CORS });
   }
 
   if (sp.get("summary") === "1") {
