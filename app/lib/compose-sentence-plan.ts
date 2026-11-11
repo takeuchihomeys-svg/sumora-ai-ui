@@ -202,6 +202,18 @@ export function readTurnUnderstanding(meta: unknown): TurnUnderstanding {
 }
 
 // ── ①b 番の文脈（設計図の上に置く「受け取った読み」・2026-11-12 竹内さん「細分化された判断が文の構成に届くように」） ─────────────
+/** 潜在の4欄の入れ子（作業員5 の LatentFour: trigger{kind,text}・part{property,point}・feeling{what,strength}・want・fact）も平らな形も同じ形に */
+function flatLatent(lt: Record<string, unknown>): LatentFour {
+  const t = g(lt, "trigger", "why", "cause"), p = g(lt, "part", "object"), fe = g(lt, "feeling", "mood");
+  const to = obj(t), po = obj(p), fo = obj(fe);
+  return {
+    trigger: to ? str(to.text, 40) : str(t, 40),
+    part: po ? join([str(po.property, 30), str(po.point, 30)], "の ") : str(p, 40),
+    feeling: fo ? str(fo.what, 40) : str(fe, 40),
+    strength: fo ? str(fo.strength, 10) : str(g(lt, "strength", "degree"), 10),
+    want: str(g(lt, "want", "wants", "goal"), 40),
+  };
+}
 /** 作業員14 の潜在の4欄（KB d72ad06b: きっかけ・何の部分・どんな気持ちと強さ・本当はどうしたいか）。鍵は turn_read.latent か latent_read */
 export type LatentFour = { trigger: string | null; part: string | null; feeling: string | null; strength: string | null; want: string | null };
 export type ComposeContext = {
@@ -220,7 +232,7 @@ export function readComposeContext(meta: unknown, extra: { nextIntent?: string |
   const m = obj(meta) ?? {};
   const tc = obj(m.turn_contract), tr = obj(m.turn_read), mp = obj(m.message_plan), cf = obj(m.conductor_focus), tl = obj(m.three_layer), pa = obj(m.plan_ahead), sr = obj(m.seven_read) ?? obj(m.takeuchi_seven);
   const lt = obj(g(tr, "latent")) ?? obj(m.latent_read);
-  const latent4: LatentFour | null = lt ? { trigger: str(g(lt, "trigger", "why", "cause"), 40), part: str(g(lt, "part", "object"), 40), feeling: str(g(lt, "feeling", "mood"), 40), strength: str(g(lt, "strength", "degree"), 10), want: str(g(lt, "want", "wants", "goal"), 40) } : null;
+  const latent4: LatentFour | null = lt ? flatLatent(lt) : null;
   const ld = obj(g(tr, "lead"));
   const md = obj(g(tr, "mood"));
   const parts = Array.isArray(mp?.parts) ? (mp!.parts as unknown[]).map((p) => obj(p)).filter((p): p is Record<string, unknown> => !!p) : [];
@@ -360,7 +372,8 @@ export function readSevenFields(meta: unknown): SevenFields {
     // 2026-11-12 作業員14 の潜在の4欄（KB d72ad06b）・3段の奥の心配（three_layer.worry）を先に
     const tr0 = obj(m.turn_read);
     const lt = obj(g(tr0, "latent")) ?? obj(m.latent_read);
-    const ltWhat = lt ? join([str(g(lt, "part", "object"), 40), str(g(lt, "feeling", "mood"), 40)], "で ") : null;
+    const ltf = lt ? flatLatent(lt) : null;
+    const ltWhat = ltf ? join([ltf.part, ltf.feeling], "で ") : null;
     const tlWorry = str(obj(m.three_layer)?.worry, 50);
     const w0 = ltWhat ?? tlWorry;
     if (w0) { out.latentCover = { kind: latentKindOf(w0), what: w0, how: str(obj(m.three_layer)?.relief, 50) ? `安心の条件: ${str(obj(m.three_layer)?.relief, 50)}` : null }; out.src.latentCover = "material"; }
@@ -617,7 +630,8 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
   { key: "turn_read.lead", label: "前の誘導への答え", carried: "plan", values: (m) => { const l = obj(obj(m.turn_read)?.lead); return l && typeof l.answer === "string" ? [l.answer] : []; } },
   { key: "turn_read.feeling", label: "気持ちの中身", carried: "plan", values: (m) => sv(obj(m.turn_read)?.feeling, 30) },
   { key: "turn_read.mood", label: "気持ちの型・何に・強さ", carried: "plan", values: (m) => { const md = obj(obj(m.turn_read)?.mood); return md ? [...sv(md.base, 20), ...sv(md.object, 20)] : []; } },
-  { key: "turn_read.latent", label: "潜在の4欄（きっかけ・部分・気持ち・したい事）", carried: "plan", values: (m) => { const lt = obj(obj(m.turn_read)?.latent) ?? obj(m.latent_read); return lt ? ["trigger", "part", "feeling", "want"].flatMap((k) => sv(lt[k], 40)) : []; } },
+  { key: "turn_read.latent", label: "潜在の4欄（きっかけ・部分・気持ち・したい事）", carried: "plan", values: (m) => { const lt = obj(obj(m.turn_read)?.latent); if (!lt) return []; const f = flatLatent(lt); return [f.trigger, f.part, f.feeling, f.want].filter((x): x is string => !!x); } },
+  { key: "latent_read", label: "潜在の4欄（ブレインの本番の番・案A）", carried: "plan", values: (m) => { const lt = obj(m.latent_read); if (!lt || obj(obj(m.turn_read)?.latent)) return []; const f = flatLatent(lt); return [f.trigger, f.part, f.feeling, f.want].filter((x): x is string => !!x); } },
   { key: "turn_read.main/subs", label: "主と従", carried: "plan", values: (m) => { const tr = obj(m.turn_read); const xs = [obj(tr?.main), ...((Array.isArray(tr?.subs) ? tr!.subs : []) as unknown[]).map((x) => obj(x))]; return xs.flatMap((x) => [...sv(x?.part, 40), ...sv(x?.property, 40)]); } },
   { key: "turn_focus", label: "組み合わせた理解（主にする事・従の扱い）", carried: "plan", values: (m) => { const t = obj(m.turn_focus); return t ? [...sv(obj(t.main)?.move, 30), ...sv(obj(t.sub)?.intent, 30)] : []; } },
   { key: "turn_topics", label: "話題ごと（言葉・前の話）", carried: "plan", values: (m) => (Array.isArray(m.turn_topics) ? (m.turn_topics as unknown[]).map((x) => obj(x)).flatMap((x) => [...sv(x?.quote, 30), ...sv(x?.ref, 40)]) : []) },
@@ -647,7 +661,7 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
  */
 export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none">> = {
   // 文の統括の設計図が運ぶ
-  turn_contract: "plan", turn_read: "plan", turn_focus: "plan", turn_topics: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
+  turn_contract: "plan", turn_read: "plan", turn_focus: "plan", turn_topics: "plan", seven_read: "plan", latent_read: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
   conductor_focus: "plan", plan_ahead: "plan", future_timeline: "plan", hesitancy_pattern: "plan", message_plan: "plan", current_property: "plan",
   customer_emotion: "plan", customer_mindset: "plan", engagement_stance: "plan", purchase_signal_level: "plan", reply_direction: "plan",
   // 2026-11-12 作業員7: この番の目的・中期の狙い・仕込み（BRAIN_TURN_AIMS・TURN_AIMS_AFTER）は受け渡し（conductor-handoff の decided）が運ぶ

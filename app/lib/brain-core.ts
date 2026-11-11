@@ -285,6 +285,7 @@ import { brainOpenerMetaEnabled, normalizeBrainOpener } from "@/app/lib/opener-r
 import { brainFastSlowEnabled, brainSlowSecondEnabled, decideTurnDifficulty, fastDrops, fastEscapeReason, routeFingerprint, pickMajority, BRAIN_FAST_SLOW_VERSION, type FastSlowRecord } from "@/app/lib/brain-fast-slow"; // 2026-10-22 慣れた事は速く・難しい事はじっくり
 // 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
 import { mindsetFreshOutputItem, emotionChoicesText, normalizeMindset, mindsetEmotionLabel, customerMindsetEnabled, type CustomerMindset } from "@/app/lib/customer-mindset";
+import { brainSevenOn, brainSevenOutputItem, normalizeBrainSeven, normalizeBrainLatent } from "@/app/lib/brain-seven-fields";
 import { turnReadMode, turnReadOutputItem, normalizeTurnRead, turnReadFocusOn, normalizeTurnFocus, turnReadTopicsOn, normalizeTurnTopics, type TurnRead, type TurnFocus, type TurnTopic } from "@/app/lib/turn-read";
 
 /** 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番の turn_contract の asks（promise→reply）をそろえる（PROCEDURE_GENERAL_ASK_REPLY・11/11 既定 on・止める =off） */
@@ -326,7 +327,7 @@ const FRESH_LAYER_OUTPUT_RULES = `【今回の発言の分析モード（2層ブ
 - 「今回の発言」は最後の1通ではなく、まだスタッフが応えていない連投の全体。連投の中に複数の依頼がある時は全体で判断し、同じ依頼を繰り返している（前にも聞いてまだ応えてもらっていない）時はその依頼を優先する。
 - 前回の全体分析の next_steps・closing_strategy は作成時点のもの。その後に会話履歴・直近AIXアクション・行動台帳で実行済みになった手順は完了扱いにする。スタッフがすでに送った AIX（例: 御見積書を送付済み）を、お客様の新しい依頼が無いのに再提案しない（送った直後でお客様の反応待ちなら aix は null）。
 - 出力しない項目: ai_summary / ai_summary_json / closing_strategy / next_steps（前回の全体分析の値をコード側で使う）。システムの「JSONは常に全フィールド完全出力」はこのモードでは適用しない。
-- 追加で出力する項目: ${mindsetFreshOutputItem()}${turnReadOutputItem()}、"purchase_signal_event"（今回の発言だけで見た購買シグナル none/soft/strong/peak。基準は ai_summary_json.purchase_signal_level の説明と同じ。会話全体の蓄積はコード側で前回と合わせる）。
+- 追加で出力する項目: ${mindsetFreshOutputItem()}${turnReadOutputItem()}${brainSevenOutputItem()}、"purchase_signal_event"（今回の発言だけで見た購買シグナル none/soft/strong/peak。基準は ai_summary_json.purchase_signal_level の説明と同じ。会話全体の蓄積はコード側で前回と合わせる）。
 - それ以外の項目（aix・${brainCheckPatternEnabled() ? "check_pattern・" : ""}action・reason・template_hint・${AFTER_AIX_TEMPLATE_SCHEMA ? "after_aix_template・" : ""}reply_mode・reply_direction・reply_opener・key_topics・avoid_topics・customer_questions・turn_contract・customer_concern・condition_change_type・condition_change_scope・hesitancy_pattern・customer_intent・latent_intent・current_property・repeated_concern・future_timeline・checkpoint_stage・engagement_stance・urgency_appropriate・recommended_tone・two_choice_mode・reply_direction_label）はいつも通り出力する。${turnAimsOn() ? "\n- 2026-11-12（BRAIN_TURN_AIMS）: このモードでも出力の最後に turn_aims を書く（判断を全部書いた後の振り返り・判断は変えない）。" : ""}`;
 /**
  * 2026-10-08 11巡目（竹内「場面の読み取りを、ブレインの判断に寄せる」）: 今回の発言がお礼・了承だけの時に、前の発言の質問・条件変更・迷いを書き写さない。
@@ -503,7 +504,11 @@ export type SuggestedAixMeta = {
   /** 2026-09-27: customer-state で段階を補正した時だけ LLM の元の値（null は "null"）。補正の件数と前後を数えるため（brain-stage.ts） */
   checkpoint_stage_llm?: string;
   customer_intent?: "question" | "consultation" | "desire" | "decision" | "positive" | "negative" | "chat" | null;  // 顧客の今回の問い合わせ意図
-  turn_topics?: TurnTopic[];             // 2026-11-11 作業員14: 話題ごと（弱い所 578）・TURN_READ_TOPICS=on の時だけ
+  turn_topics?: TurnTopic[];
+  /** 2026-11-12 作業員10（案A）: 竹内さんの7つの欄（takeuchi-seven-read の SevenRead）・BRAIN_SEVEN_FIELDS=on の時だけ */
+  seven_read?: import("@/app/lib/takeuchi-seven-read").SevenRead;
+  /** 2026-11-12 作業員10（案A）: 潜在の4欄（takeuchi-seven-read の LatentFour）・BRAIN_SEVEN_FIELDS=on の時だけ */
+  latent_read?: import("@/app/lib/takeuchi-seven-read").LatentFour;             // 2026-11-11 作業員14: 話題ごと（弱い所 578）・TURN_READ_TOPICS=on の時だけ
   turn_focus?: TurnFocus;                // 2026-11-11 作業員14: 組み合わせた理解（主・従）・TURN_READ_FOCUS=on の時だけ
   turn_read?: TurnRead;                  // 2026-11-11 作業員14: 対象×意図×気持ち×直前の誘導への答え（TURN_READ=on の時だけ・app/lib/turn-read.ts）
   latent_intent?: string | null;         // 送信動機・潜在意識の自由記述（なぜ今送ってきたか・表面の裏の不安/期待。20〜50字・根拠なければnull）
@@ -6296,6 +6301,9 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       turn_focus: turnReadFocusOn() ? (normalizeTurnFocus((parsed as { turn_focus?: unknown }).turn_focus) ?? undefined) : undefined,
       // 2026-11-11 作業員14（弱い所 578）: 1通の中の話題ごとの読み。TURN_READ=on かつ TURN_READ_TOPICS=on の時だけ（記録は digest.tt）
       turn_topics: turnReadTopicsOn() ? (normalizeTurnTopics((parsed as { turn_topics?: unknown }).turn_topics) ?? undefined) : undefined,
+      // 2026-11-12 作業員10（案A・BRAIN_SEVEN_FIELDS=on の時だけ）: 竹内さんの7つの欄・潜在の4欄を本番の番で（文の統括の設計図が読む・判断は変えない）
+      seven_read: brainSevenOn() ? (normalizeBrainSeven((parsed as { seven_read?: unknown }).seven_read) ?? undefined) : undefined,
+      latent_read: brainSevenOn() ? (normalizeBrainLatent((parsed as { latent_read?: unknown }).latent_read) ?? undefined) : undefined,
       customer_concern: customerConcern,
       // 内部伝搬: SOURCE_ACCEPT_RATE ゲート抑制の事実と、1回目の signalAix 結果の持ち回り
       // （analyzeAndSaveBrainMeta の direction 更新でのバイパス防止＋二重実行回避に使用）
