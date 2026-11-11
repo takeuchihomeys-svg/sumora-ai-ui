@@ -575,12 +575,37 @@
     if (_adSortJustHappened()) {
       var _okSearch = _looksLikeSearchResult();
       if (!_okSearch) {
+        /**
+         * 2026-11-11 v2.7.2 竹内さん「並べ替えした後物件選択するところでとまってしまった」:
+         *   並べ替えの後は読み直しの直後で**条件の欄がまだ描かれていない**事がある。
+         *   旧はここで即あきらめて**静かに止まった**（0件を選択中のまま動かない＝バグに見える）。
+         *   → ① 少し待って**何度か見直す**（描かれてから判定する・25秒まで）
+         *     ② それでも読めない時は**枠に理由と「もう一度ためす」**を出す（黙って止まらない）
+         *     ③ 押すのは「条件が効いている」と分かった時だけ（全物件は送らない）
+         */
+        var _pv = null;
+        try { _pv = window.__axlxAdSortPending; } catch (_) {}
+        var _elapsed = _pv ? Date.now() - Number(_pv.at || 0) : 0;
+        if (_elapsed < _AD_SORT_GRACE_MS && !_adSortChecking) {
+          _adSortChecking = true;
+          console.warn("[AXLX bulk-dl][auto] AD順の直後・条件がまだ読めない → 少し待って見直します（" + Math.round(_elapsed / 1000) + "秒）");
+          _tmark("auto_pdf_load", "retry_after_sort");
+          _nudge("👀 並べ替えの後に条件を確かめています");
+          setTimeout(function () {
+            _adSortChecking = false;
+            try { _maybeAutoPressOnLoad(); } catch (_) {}
+          }, 1400);
+          return;
+        }
+        if (_elapsed < _AD_SORT_GRACE_MS) return; // 見直しの待ちが既に入っている（二重に積まない）
+        _adSortBlocked = true;
         console.warn("[AXLX bulk-dl][auto] AD順に移った直後だが、検索の条件が効いているか確かめられない → **押さない**（全物件を送らないため）");
         _tmark("auto_pdf_load", "blocked_after_sort");
-        _nudge("⚠ 並べ替えの後に条件が消えている可能性 → 自動で押しません");
+        _blockedAfterSortNote();
         return;
       }
       console.log("[AXLX bulk-dl][auto] AD順に移った直後・条件が効いている一覧 → 押します");
+      _adSortDone = true; // 判定おわり（この一覧ではもう聞かない）
     }
     var sig = tracked.map(function (t) { return _urlKey(t.btn && t.btn.href); }).join(",").slice(0, 3000);
     if (!sig || sig === _autoPdfSig) return;
@@ -595,27 +620,76 @@
 
   /**
    * 2026-11-11 竹内さん「AD順などするときにページ更新してしまっている」:
-   *   直近20秒以内に「AD順へ移った」印があるか（＝この読み込みは並び替えのための物）
+   *   直近の「AD順へ移った」印があるか（＝この読み込みは並び替えのための物）
+   *
+   * 2026-11-11 v2.7.2 竹内さん「並べ替えした後物件選択するところでとまってしまった」:
+   *   旧は `_adSortChecked` で **1回だけ** 判定して、だめなら**そのまま永久に止まっていた**
+   *   （ページが読み直された直後は条件の欄がまだ描かれていない事があり、1回目だけ見ると必ず外れる）。
+   *   → **時間で区切って何度か見直す**（`_AD_SORT_GRACE_MS` の間）。
+   *     ⚠ 回数で数えると、一覧の描き直しのたびに減って**すぐ尽きる**（＝結局1回で止まる）。
+   *     だから「並べ替えから何秒たったか」で見る。
    */
-  var _adSortChecked = false;
+  var _adSortDone = false;      // この一覧では判定が済んだ（押すと決まった）
+  var _adSortBlocked = false;   // 見直しても読めなかった（人が「もう一度ためす」を押すまで押さない）
+  var _adSortChecking = false;  // いま見直しの待ちを入れている（二重に積まない）
+  var _AD_SORT_GRACE_MS = 25000;
   function _adSortJustHappened() {
-    if (_adSortChecked) return false;   // 1回だけ見る（毎回ブロックしない）
-    _adSortChecked = true;
+    if (_adSortDone || _adSortBlocked) return false;
     try {
-      // 同期では読めないので、印は起動時に読んでおく（下の _readAdSortPending）
-      return !!window.__axlxAdSortPending && (Date.now() - Number(window.__axlxAdSortPending.at || 0) < 20000);
+      var pv = window.__axlxAdSortPending;
+      return !!pv && (Date.now() - Number(pv.at || 0) < 120000);
     } catch (_) { return false; }
   }
-  /** 検索の条件が効いている一覧に見えるか（全物件ではないか）を、URLと画面の印で見る */
+  /**
+   * 検索の条件が効いている一覧に見えるか（全物件ではないか）を、URL・フォーム・**結果の見出しの文字**で見る。
+   *
+   * 2026-11-11 v2.7.2 竹内さん「並べ替えした後物件選択するところでとまってしまった。ここ何かバグが起きているのではないか」
+   *
+   *   原因: 並べ替えの後は**ページが読み直される**ので、
+   *     ① URL に条件が載っていない（`key=ad&odr=desc` だけ）
+   *     ② 検索の欄は**畳まれている**（`検索条件を表示`）＝入力欄の値が既定に戻っている
+   *     ③ 区・駅の小窓は閉じている＝チェックが1つも無い
+   *   → 旧の判定は ①②③ だけ見ていたので **必ず false**。すると
+   *     「並べ替えの後に条件が消えている可能性 → 自動で押しません」で**そのまま止まる**（画面は 0件を選択中）。
+   *   ⚠ 止まる事自体は安全側（全物件を送らない）だが、**本当は条件が効いている**ので押すべきだった。
+   *
+   *   → 画面の一番上に出ている**効いている条件の文字**（例:「家賃 ～10.5万 / 徒歩15分 / 2LDK-3LDK / 更新1日内」）と、
+   *     検索した時の印（`AxlxSearchStamp`・案内で「検索」を押した時に残る）も見る。
+   *     **全件（16338棟など）と分かる時は必ず false**（押さない）。
+   */
   function _looksLikeSearchResult() {
     try {
+      // ⓪ いちばん強い印: 全件の数が出ている一覧は「条件なし」と決めつける（押さない）
+      var _head = String(document.body ? document.body.textContent.slice(0, 3000) : "");
+      if (/全件/.test(_head) && !/条件/.test(_head)) return false;
+
       var p = new URLSearchParams(location.search);
       // URL に条件が載っている（所在地・駅・賃料など）
       var keys = ["city_code", "station_id", "route_id", "rental_cost1", "rental_cost2", "update_date", "room_layout", "square_meter"];
       for (var i = 0; i < keys.length; i++) {
         if (p.has(keys[i]) || (p.has(keys[i] + "[]") && p.get(keys[i] + "[]"))) return true;
       }
-      // URL に無くても、フォームに条件が入っていれば「条件つきの検索」の結果
+
+      // ① 検索した時の印（案内で「検索」を押した時にタブへ残る）。今のお客様の物で新しいなら条件つきの一覧
+      try {
+        var st = window.AxlxSearchStamp && window.AxlxSearchStamp.read ? window.AxlxSearchStamp.read() : null;
+        if (st && st.cid && Date.now() - Number(st.at || 0) < 3 * 60 * 60 * 1000) return true;
+      } catch (_) {}
+
+      // ② 結果の上に出ている「効いている条件」の文字（畳まれた欄の値より確か）
+      //    例: 「家賃 ～10.5万」「徒歩15分」「2LDK-3LDK」「更新1日内」「築20年以内」「〇〇区」
+      try {
+        var _top = String(document.body ? document.body.innerText || document.body.textContent : "").slice(0, 2500);
+        var _cond = 0;
+        if (/(家賃|賃料)\s*[:：]?\s*[^/\n]{0,14}(万|円|下限なし|上限なし)/.test(_top)) _cond++;
+        if (/徒歩\s*[0-9]{1,3}\s*分/.test(_top)) _cond++;
+        if (/[0-9SLDK]+\s*[-〜~]\s*[0-9SLDK]+/.test(_top)) _cond++;
+        if (/更新\s*[0-9]{1,3}\s*日以内/.test(_top)) _cond++;
+        if (/築\s*[0-9]{1,3}\s*年(以内|未満)/.test(_top)) _cond++;
+        if (_cond >= 2) return true;
+      } catch (_) {}
+
+      // ③ フォームに条件が入っていれば「条件つきの検索」の結果
       var formOk = 0;
       if (document.querySelector('select[name="rental_cost2"]')) {
         var r2 = document.querySelector('select[name="rental_cost2"]');
@@ -624,11 +698,42 @@
       var checkedWard = document.querySelectorAll('input[name="city_code[]"]:checked').length;
       var checkedSt = document.querySelectorAll('input[name="station_id[]"]:checked').length;
       if (checkedWard || checkedSt) formOk++;
-      // 画面の上に「大阪 16338棟」のような全件の数が出ている時は条件なしとみなす
-      var totalAll = /（?全件）?|\b163\d\d\b/.test(String(document.body ? document.body.textContent.slice(0, 3000) : ""));
       if (formOk > 0) return true;
       return false;
     } catch (_) { return false; }
+  }
+  /**
+   * 2026-11-11 v2.7.2 竹内さん「並べ替えした後物件選択するところでとまってしまった」:
+   *   条件が確かめられなくて止まる時、**黙って止まらない**。
+   *   枠に理由を出し、**人が押せる「もう一度ためす」**を出す（拡張を読み直さなくても進められる）。
+   */
+  function _blockedAfterSortNote() {
+    var el = document.getElementById("axlx-count");
+    if (el) el.textContent = "⚠ 並べ替えの後に条件が読めない → 自動では押しません";
+    var box = document.getElementById("axlx-blocked-note");
+    if (box) { box.style.display = "block"; return; }
+    var bar = document.getElementById("axlx-bar");
+    if (!bar) return;
+    box = document.createElement("div");
+    box.id = "axlx-blocked-note";
+    box.style.cssText = "margin-top:6px;font-size:10px;line-height:1.5;background:rgba(0,0,0,0.25);border:1px dashed rgba(255,255,255,0.5);border-radius:8px;padding:6px 8px;color:#fff;";
+    box.innerHTML = [
+      '<div>並べ替えの後、検索の条件が画面から読めませんでした（全物件を送らないため止めました）。</div>',
+      '<div style="margin-top:4px;opacity:.9">左の条件（家賃・間取り・徒歩など）が入っているのを確かめてから押してください。</div>',
+      '<div style="display:flex;gap:6px;margin-top:6px">',
+      '  <button id="axlx-blocked-retry" style="flex:1;padding:5px 6px;background:#1976d2;border:none;border-radius:6px;color:#fff;font-size:11px;font-weight:700;cursor:pointer;">もう一度ためす</button>',
+      "</div>",
+    ].join("");
+    bar.appendChild(box);
+    var rb = document.getElementById("axlx-blocked-retry");
+    if (rb) rb.addEventListener("click", function () {
+      box.style.display = "none";
+      _adSortBlocked = false;
+      _adSortDone = false;
+      _adSortChecking = false;
+      try { window.__axlxAdSortPending = null; } catch (_) {}
+      try { _maybeAutoPressOnLoad(); } catch (_) {}
+    });
   }
   // 起動時に「AD順へ移った印」を読む（読み込み直しても分かるように）
   try {
@@ -957,6 +1062,8 @@
      */
     var _arOpts = _autoRunFor(_pickCustomerIdForAuto());
     var _allowAd = _AR() ? _AR().allowAdSort(_arOpts) : true;
+    // 2026-11-11 v2.7.2: この画面ではもう並べ替えた（見直しのたびに何度も並べ替えない）
+    if (_adSortDone) _allowAd = false;
     var _params = new URLSearchParams(location.search);
     var _isAdDesc = _params.get("key") === "ad" && _params.get("odr") === "desc";
     if (_allowAd && !_isAdDesc) {
@@ -988,7 +1095,17 @@
           });
         } catch (_) {}
         // メニュー操作の後に、続き（押す）を始める
-        _autoPdfRunPending = function () { _startAutoPressRun(); };
+        /**
+         * 2026-11-11 v2.7.2 竹内さん「並べ替えした後物件選択するところでとまってしまった」:
+         *   ⚠ 並べ替えると一覧の行が**作り直される**事がある。その時 `tracked` に入っている古い要素は
+         *     画面から外れ（`isConnected=false`）、`_autoPressNext` が**全部飛ばして 0件で終わる**
+         *     （＝「物件を選ぶところで止まった」ように見える）。
+         *   → 押し始める**直前に一覧を作り直して**、いま画面にある行で始める。
+         */
+        _autoPdfRunPending = function () {
+          try { _rescanRows(); } catch (_) {}
+          _startAutoPressRun();
+        };
         _sortByAdLikeHuman(function (okSort) {
           var go = _autoPdfRunPending;
           _autoPdfRunPending = null;
@@ -1115,8 +1232,26 @@
 
   /** 押す所（候補を集めて、人の順で1件ずつ押し始める） */
   function _startAutoPressRun() {
-    var cand = tracked.filter(function (t) { return t.cb && t.btn && AxlxSendPairing.isHttpUrl(t.btn.href); });
-    if (!cand.length) { _nudge("この画面に印刷用PDFが見つかりません"); return { ok: false, reason: "no-rows" }; }
+    var pick = function () {
+      return tracked.filter(function (t) { return t.cb && t.btn && t.btn.isConnected && AxlxSendPairing.isHttpUrl(t.btn.href); });
+    };
+    var cand = pick();
+    /**
+     * 2026-11-11 v2.7.2 竹内さん「並べ替えした後物件選択するところでとまってしまった」:
+     *   並べ替えで一覧が描き直されると、`tracked` の要素は画面から外れる。
+     *   そのまま進むと **1件も押せずに終わる**（止まったように見える）→ 一度だけ作り直す。
+     */
+    if (!cand.length && tracked.length > 0) {
+      console.warn("[AXLX bulk-dl][auto] 行が画面から入れ替わった → 一覧を作り直します");
+      try { _rescanRows(); } catch (_) {}
+      cand = pick();
+    }
+    if (!cand.length) {
+      // 行が0件の時は黙って止めない（理由を出す）
+      _nudge("⚠ 押せる行が見つかりません（条件を確かめてください）");
+      _tmark("auto_pdf_start", "no-rows");
+      return { ok: false, reason: "no-rows" };
+    }
     // 2026-11-11 竹内さん「資料を全部上から順にやるようになっていないか。完全に人間の動きを再現していく」:
     //   旧は必ず上から1件ずつ＝機械的。人が一覧を見て「気になった所から」押す形にする。
     //   ① 最初の数件は上から（ふつうは上から見る）② 途中で "目にとまった所へ飛ぶ" を混ぜる

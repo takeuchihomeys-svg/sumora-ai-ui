@@ -50,7 +50,7 @@ console.log("\n■ ③ 条件が効いていない一覧では押さない（全
   ok("押さない時は理由を出す（blocked_after_sort）", /blocked_after_sort/.test(bd));
   ok("押さない時は枠に警告を出す", /並べ替えの後に条件が消えている可能性/.test(bd));
   ok("条件が効いていれば押す（正常な流れは止めない）", /条件が効いている一覧 → 押します/.test(bd));
-  ok("この判定は1回だけ（毎回ブロックしない）", /if \(_adSortChecked\) return false;/.test(bd));
+  ok("この判定は1回で終わる（毎回ブロックしない）", /if \(_adSortDone \|\| _adSortBlocked\) return false;/.test(bd) && /_adSortDone = true;/.test(bd));
 }
 
 console.log("\n■ ④ 既存の安全弁は残っている");
