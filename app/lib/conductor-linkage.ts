@@ -30,7 +30,7 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     id: "brain", name: "判断のブレイン（返信か AIX か・依頼ごとの道 turn_contract）", owner: "統括役（brain-core は共用）", stage: "rough",
     files: ["app/lib/brain-core.ts", "app/lib/turn-contract.ts", "app/lib/brain-need.ts"],
     reads: ["材料（場面で絞る brain-scene）", "meta.conductor_focus（深く読み直す時だけ・brain-depth）", "meta.aix_recheck（AIX の統括の差し戻し・読み直しの口 brain-recheck）"],
-    writes: ["meta.action", "meta.turn_contract", "meta.key_topics", "meta.reply_direction", "meta.reply_mode", "digest.la", "digest.tc", "digest.nd", "digest.tl", "digest.mp", "essence", "decision:llm", "log:"],
+    writes: ["meta.action", "meta.turn_contract", "meta.key_topics", "meta.reply_direction", "meta.reply_mode", "digest.la", "digest.tc", "digest.nd", "digest.tl", "digest.mp", "essence", "decision:llm", "log:", "brain:asks"],
     switch: null,
     // 入口の統括の重点は、判断の時には読まない（shadow・判断を変えない）＝今は並んで走るだけ。深く読み直す時だけ重点に沿わせる
     redecides: [],

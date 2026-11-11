@@ -108,5 +108,20 @@ ok("印: 場面", markersOf(q136).includes("scene_net:S4_viewing"));
   ok("ブレイン以外の段は印の頭のまま", weaknessKeyOf("writer", ["writer"], { essence: "返信", accept: "返信" }) === "exam-stage:writer:writer");
 }
 
+// 2026-11-12 作業員10（持ち主の付け違い）: 下書きの無い回（--stage=brain）の依頼の外れはブレイン（brain:asks）・下書きのある回は今まで通り書き手（writer:asks）
+{
+  // q065（w7-q065-on4・ブレインの段）: 道は正解・答案（ブレインの答え）が「最短2週間」で正解の「10日程」と食い違う・下書きなし
+  const q065b: MissRowLite = { id: "q065", essence: { code: "返信", ok: true }, path: { code: "返信", ok: true }, asks: [{ covered: false, route: true }], brain: { reply_direction: "最速入居時期の質問に対し、申込から最短2週間程度で入居可能と答える", turn_contract: {} }, trace: { decision_source_no_aix: "llm" }, score: { pass: false } };
+  const v = classifyMiss(q065b);
+  ok("下書きなし → ブレイン（brain:asks）", v.stage === "brain" && v.markers.includes("brain:asks") && !v.markers.includes("writer:asks"), v.line);
+  ok("下書きなし → 持ち主はブレイン", ownerOf(v.markers)?.id === "brain", String(ownerOf(v.markers)?.id));
+  // q145（ブレインの段）: 方向の文の決まった尾の印があっても頭はブレイン
+  const q145b: MissRowLite = { id: "q145", essence: { code: "返信", ok: true }, path: { code: "返信", ok: true }, asks: [{ covered: false, route: true }], brain: { reply_direction: "お客様の今の発言に先に一言で応え、物件のご紹介が要る時だけピックアップしてお送りすると約束する返信にする", turn_contract: {} }, raw: { reply_direction: "入居日を答える" }, score: { pass: false } };
+  ok("下書きなし＋文の尾の印 → 頭はブレイン", classifyMiss(q145b).stage === "brain", classifyMiss(q145b).line);
+  // q072（w10-csp-maj6-p2・下書きの段）: 下書きがあって要点が抜けた → 今まで通り書き手の側（brain:asks にしない）
+  const q072d: MissRowLite = { id: "q072", essence: { code: "返信", ok: true }, path: { code: "返信", ok: true }, draft: { code: "返信", ok: true, pass: false, asks: [false, true] }, asks: [{ covered: true, route: true }, { covered: true, route: true }], brain: { reply_direction: "埋まる可能性を答える", turn_contract: {} }, score: { pass: false } };
+  const vd = classifyMiss(q072d);
+  ok("下書きあり → brain:asks にしない", !vd.markers.includes("brain:asks") && vd.stage !== "brain", vd.line);
+}
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
