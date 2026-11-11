@@ -155,3 +155,22 @@ it("物件名 実物 f60ee58d: 全角空白・号室の有無だけの違いは�
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(" -", f); process.exit(1); }
+
+// ─── 11/12 ③ カードの即答の向き（reply-context card_pay）・「カードで決済」の拾い（company-facts）───
+import("../reply-context").then(async ({ resolveAnswerability }) => {
+  const { isPaymentMethodQuestion } = await import("../company-facts");
+  const q = "返事が遅くなりすいません！\n初期費用はカードで決済できますか？";
+  const save = { ...process.env };
+  try {
+    delete process.env.KNOWN_FACT_CARD_FIX; delete process.env.COMPANY_FACT_PAYMENT_LUMP; delete process.env.COMPANY_FACT_CARD_KESSAI;
+    it("③既定（本番の今）は一括のみ＝逆向きの再現", () => eq(/一括のみ/.test(resolveAnswerability(q)?.answer ?? ""), true));
+    it("③既定は「カードで決済」を支払いの質問と拾わない（再現）", () => eq(isPaymentMethodQuestion(q), false));
+    process.env.KNOWN_FACT_CARD_FIX = "on"; process.env.COMPANY_FACT_CARD_KESSAI = "on";
+    it("③on はカード可・3.24%（竹内さん側の実送信の形）", () => eq(/カードでの決済も可能.*3\.24%/.test(resolveAnswerability(q)?.answer ?? ""), true));
+    it("③on で「カードで決済」を拾う・マイナンバーカードは拾わない", () => { eq(isPaymentMethodQuestion(q), true); eq(isPaymentMethodQuestion("マイナンバーカードで決済"), false); });
+    process.env.COMPANY_FACT_PAYMENT_LUMP = "on";
+    it("③on＋一括の決まり on は一括のみ（company-facts と同じ向き）", () => eq(/一括のみ/.test(resolveAnswerability(q)?.answer ?? ""), true));
+  } finally { process.env = save; }
+  console.log(`\n(③込み) ${passed} passed, ${failed} failed`);
+  if (failed) process.exit(1);
+});
