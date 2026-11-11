@@ -68,7 +68,7 @@ function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return
 import { formatLinks, orderForCache, topLinks, type KbLink } from "./lib/exam-rag";
 import { ruleJudge } from "./lib/exam-brain";
 import { checkKbRules, kbRulesMode, type KbRuleHit } from "./lib/exam-kb-rules";
-import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, sigOfRow, pathSigOfRow, type FlakeVerdict } from "./lib/exam-flake";
+import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, sigOfRow, pathSigOfRow, majoritySigOfRow, majoritySettled, majorityEarlyStopOn, judgeMajoritySettled, type FlakeVerdict } from "./lib/exam-flake";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, splitRepsOn, planLaneUnits, type ExamLane } from "./lib/exam-lane";
 import type { ReplayFloor } from "../app/lib/test-replay-floor";
@@ -139,6 +139,9 @@ const PER_TYPE = Number(arg("per-type", "0"));
 const MAJORITY = flag("majority");
 const REPEAT = Math.max(1, Number(arg("repeat", MAJORITY ? "3" : "1")));
 const JUDGE_REPEAT = Math.max(1, Number(arg("judge-repeat", MAJORITY ? "3" : "1")));
+// 2026-11-11 作業員8: 2回目以降の回は1回目の全体の分析（戦略の層）の答えを使う（既定 off・本文は m0 の所）
+const REUSE_LAYER1 = String(process.env.EXAM_REUSE_LAYER1 ?? "").trim().toLowerCase() === "on";
+const layer1Memo = new Map<string, Record<string, unknown> | null>();
 const NO_JUDGE = flag("no-judge");
 // 比べる「前」の label。--baseline=main の時は main の版の取り置きから組み立てた label に置き換える（prepareMainBaseline）
 let BASELINE = arg("baseline");
@@ -296,7 +299,7 @@ const PC_SKIP_SAME = args.includes("--pc-skip-same") || (process.env.EXAM_PC_SKI
 const COUNT_WRITES = PC_SKIP_SAME || args.includes("--count-writes") || args.includes("--reuse-fixture") || REUSE_FIXTURE;
 const writeCount = { msgIns: 0, msgDel: 0, ledgerIns: 0, ledgerDel: 0, pcUpd: 0, pcSkip: 0, reused: 0 };
 // 10/20 COST④: 判定の入力のキャッシュの当たり（DeepSeek の prompt_cache_hit_tokens／miss・出力）も数える（cost.json の judge.tokens）
-const judgeCost = { calls: 0, usd: 0, fail: 0, replayed: 0, cached: 0, tokens: { hit: 0, miss: 0, out: 0 }, tier: undefined as undefined | { machine: number; flash: number; pro: number; unresolved: number; flashCalls: number; proCalls: number; problems: number } };
+const judgeCost = { calls: 0, usd: 0, fail: 0, replayed: 0, cached: 0, earlyStop: 0, tokens: { hit: 0, miss: 0, out: 0 }, tier: undefined as undefined | { machine: number; flash: number; pro: number; unresolved: number; flashCalls: number; proCalls: number; problems: number } };
 // 2026-10-20 判定の段（設計知見 487b8921「判定は機械の照らし→flash→割れた時だけ pro」）: EXAM_JUDGE_TIER=on で、
 //   ① 機械の照らし（決まりで確実に決まる項目だけ・0円）→ ② flash を並びを変えて2回（旧の並び＋rubric の並び）→ 揃った項目は確定 → ③ 割れた項目がある時だけ pro を1回。
 //   既定 off（今まで通り pro 1回）。試験のブレインの司令塔の計画（--run-plan）が judge=tier の時に付ける。比べは scripts/exam-brain.ts --judge-check
@@ -698,18 +701,34 @@ const modeOf = <T,>(xs: T[]): T | null => { const c = new Map<T, number>(); for 
 async function judge(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean): Promise<JudgeOut | null> {
   if (JUDGE_TIER) return judgeTiered(p, meta, raw, needRawPath);
   const outs: JudgeOut[] = [];
-  for (let k = 0; k < JUDGE_REPEAT; k++) { const o = await judgeOnce(p, meta, raw, needRawPath, { rep: k }); if (o) outs.push(o); }
+  for (let k = 0; k < JUDGE_REPEAT; k++) {
+    // 2026-11-11 作業員8: 過半数が決まったら残りの判定を呼ばない（過半数は同じ・exam-flake.judgeMajoritySettled・止める EXAM_MAJORITY_EARLY_STOP=off）
+    if (majorityEarlyStopOn() && judgeMajoritySettled(outs, JUDGE_REPEAT)) { judgeCost.earlyStop++; break; }
+    const o = await judgeOnce(p, meta, raw, needRawPath, { rep: k }); if (o) outs.push(o);
+  }
   if (!outs.length) return null;
   if (outs.length === 1) return outs[0];
   const col = (f: (o: JudgeOut) => boolean[], n: number) => Array.from({ length: n }, (_, i) => maj(outs.map((o) => f(o)[i])));
   const na = (p.asks ?? []).length, nn = (p.ng ?? []).length;
   return { asks: col((o) => o.asks, na), route: col((o) => o.route, na), ng: col((o) => o.ng, nn), asksWhy: outs[0].asksWhy.map((w, i) => `${w}（判定 ${outs.filter((o) => o.asks[i]).length}/${outs.length}）`), ngWhy: outs[0].ngWhy, rawPath: modeOf(outs.map((o) => o.rawPath)) };
 }
-async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean, o: { model?: string; rubricFirst?: boolean; order?: "as-is" | "rubric" | "stable"; rep?: number } = {}): Promise<JudgeOut | null> {
+// 2026-11-11 作業員8（採点の揺れ・道は同じで合否だけ割れた 56問の読み）: 判定の決まりのあいまいさ3つを足した版（EXAM_JUDGE_RUBRIC=v2・既定 off＝今の文と1文字も同じ）。
+//   ① AIX の番の reply の依頼（q045・q047・q055・q320・q322・q374 等 10件）: 「返信の本文で答える指示が無い」で✕にしていた＝AIX に添える文で答えていれば○
+//   ② 答え方が2つある依頼（q177 の aix または promise 等）: 片方だけを正解として読んで✕にしていた
+//   ③ 返信の道のお礼・了承・締め（q164 26○29✕・q024・q109 等）: reply_direction の「待つ」を「返信しない」と読んで✕にしていた
+//   ⚠ 合否が変わる＝前（main）と比べる時は前も同じ版で判定し直す（--judge-compare=… --judge-compare-variants=v2 で保存した答案を判定し直して比べる・ブレインは回さない）
+export function judgeRubricOf(env: Record<string, string | undefined> = process.env): "v1" | "v2" { return String(env.EXAM_JUDGE_RUBRIC ?? "").trim().toLowerCase() === "v2" ? "v2" : "v1"; }
+export const JUDGE_RUBRIC_V2_LINES = [
+  "④ 答え方が『〇〇 または △△』と2つ書かれた依頼は、答案がどちらかの答え方で扱っていれば route=true（covered はその答え方で要点を見る）。片方だけを正解として読まない。",
+  "⑤ 答案が AIX の番（reply_mode=aix で action が AIX）の時、答え方 reply の依頼は、AIX に添える文の方向（reply_direction・key_topics）でその依頼に答える指示があれば covered=true・route=true。『返信の本文が無い』『AIX で応える』だけを理由に false にしない（その依頼に触れていなければ false）。",
+  "⑥ 答案の道が返信で、reply_direction がお客様のお礼・了承・『確認します／また連絡します』を受け止めて締める（または受け止めてお客様の連絡を待つ）指示なら、そのお礼・了承・締めの依頼は covered=true（『待つ』と書いてあっても返信はする番）。要点に決まった言い回しがあっても、言い回しまでは見ない（言ってはいけない事は②で見る）。",
+];
+async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean, o: { model?: string; rubricFirst?: boolean; order?: "as-is" | "rubric" | "stable"; rep?: number; rubric?: "v1" | "v2" } = {}): Promise<JudgeOut | null> {
   const asks = p.asks ?? [], ng = p.ng ?? [];
   if (!asks.length && !ng.length && !needRawPath) return { asks: [], asksWhy: [], ng: [], ngWhy: [], rawPath: null, route: [] };
   const plan = planOf(meta);
   const act = String(plan.action ?? "");
+  const rubricV2 = (o.rubric ?? judgeRubricOf()) === "v2";
   const sys = [
     "あなたは賃貸仲介の LINE 接客で『次の一手を決める AI（ブレイン）』の答案を採点する係です。",
     "ブレインの答案は JSON（reply_mode=aix なら action の AIX をスタッフが送る番／two_stage は約束の返信の種類／reply_direction は返信の方向／key_topics は返信に必ず入れる事／avoid_topics は言わない事／customer_questions はお客様の質問の一覧／turn_contract・asks があればこの番の依頼の一覧と答え方）。",
@@ -722,6 +741,7 @@ async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, r
     "  - route: 要点の中身は見ずに、答え方（reply＝返信の本文で答える／promise＝後でやると約束する／aix＝AIX で応える／none＝触れない）の区別だけが正解と同じか。",
     "② ng: 正解の『言ってはいけない事』ごとに、答案がそれを言う／する指示になっているか（violated）。はっきり指示している時だけ true。",
     `③ raw_path: 【LLM の最初の答え】（決まりで直される前）が、この番の返信をどの道にしようとしていたかを1つ選ぶ: ${PATH_CHOICES.join(" / ")}（返信＝約束なしで答える／2段:〇＝後で送る・確認する約束の返信／なし＝お客様の連絡待ちで送らない）。【LLM の最初の答え】が無ければ null。`,
+    ...(rubricV2 ? JUDGE_RUBRIC_V2_LINES : []),
     '出力は JSON だけ: {"asks":[{"i":1,"route":true,"covered":true,"why":"20字"}],"ng":[{"i":1,"violated":false,"why":"20字"}],"raw_path":"返信"}',
   ].join("\n");
   const answer = [
@@ -784,7 +804,10 @@ async function judgeDraftTiered(p: ExamProblem, draft: string): Promise<{ code: 
 async function judgeDraft(p: ExamProblem, draft: string): Promise<{ code: string; asks: boolean[]; ng: boolean[] } | null> {
   if (JUDGE_TIER) return judgeDraftTiered(p, draft);
   const outs: Array<{ code: string; asks: boolean[]; ng: boolean[] }> = [];
-  for (let k = 0; k < JUDGE_REPEAT; k++) { const o = await judgeDraftOnce(p, draft, { rep: k }); if (o) outs.push(o); }
+  for (let k = 0; k < JUDGE_REPEAT; k++) {
+    if (majorityEarlyStopOn() && judgeMajoritySettled(outs.map((o) => ({ asks: o.asks, route: [], ng: o.ng, rawPath: o.code })), JUDGE_REPEAT)) { judgeCost.earlyStop++; break; }
+    const o = await judgeDraftOnce(p, draft, { rep: k }); if (o) outs.push(o);
+  }
   if (outs.length <= 1) return outs[0] ?? null;
   return { code: modeOf(outs.map((o) => o.code)) ?? "返信", asks: (p.asks ?? []).map((_, i) => maj(outs.map((o) => o.asks[i]))), ng: (p.ng ?? []).map((_, i) => maj(outs.map((o) => o.ng[i]))) };
 }
@@ -1096,6 +1119,10 @@ async function prepareMainBaseline(): Promise<boolean> {
     // 2026-11-05 作業員8: 時計の固定・DB の材料の写しの回は、今までの前の答えと比べない（取り置きを作り直す・入れた時だけ構成に足す）
     ...(frozenClockOn(mainEnv as Record<string, string | undefined>) ? { clock: "frozen" } : {}),
     ...(dbSnapshotOn(mainEnv as Record<string, string | undefined>) ? { dbSnap: "day" } : {}),
+    // 2026-11-11 作業員8: 戦略の層を回ごとに回さない回は、回ごとに回した前の答えと比べない（入れた時だけ構成に足す）
+    ...(REUSE_LAYER1 ? { reuseLayer1: true } : {}),
+    // 判定の決まりを v2 にした回は、v1 で判定した前の答えと比べない（合否の物差しが違う）
+    ...(judgeRubricOf() === "v2" ? { judgeRubric: "v2" } : {}),
   });
   const ch = B.configHash(cfg);
   // 2026-11-05 作業員8（統括役の了承の 1「前の答えを本番の commit ごとに1回だけ作って使い回す（夜に1回）」・scripts/lib/exam-base-pin.ts）:
@@ -1478,7 +1505,9 @@ async function judgeCompare(): Promise<void> {
       let o: JudgeOut | null = null;
       try {
         if (vname === "tier") o = await judgeTiered(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw);
-        else o = await judgeOnce(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw, { order: vname === "pro" ? "as-is" : (vname as "stable" | "rubric") });
+        // 2026-11-11 作業員8: v2＝判定の決まりのあいまいさを直した版（並びは今まで通り as-is）・pro は今の版（v1）に固定
+        else if (vname === "v2") o = await judgeOnce(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw, { order: "as-is", rubric: "v2" });
+        else o = await judgeOnce(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw, { order: vname === "pro" ? "as-is" : (vname as "stable" | "rubric"), rubric: "v1" });
       } catch (e) { console.warn(`  ${c.row.id} ${vname}: ${String(e).slice(0, 120)}`); }
       tally(vname, b, second, !!o);
       const m = res.get(c.key) ?? {}; m[vname] = o ? { asks: o.asks, route: o.route, ng: o.ng, rawPath: c.needRaw ? o.rawPath : null } : null; res.set(c.key, m);
@@ -1647,8 +1676,11 @@ async function main() {
     return v;
   };
   const doneSigs = new Map<string, string[]>();
-  for (const r of readResults(LABEL).filter((r) => !r.error).sort((a, b) => a.rep - b.rep)) doneSigs.set(r.id, [...(doneSigs.get(r.id) ?? []), sigOfRow(r)]);
-  const skippedReps = { n: 0, byVerdict: { stable: 0, unknown: 0, flaky: 0 } as Record<string, number> };
+  // 2026-11-11 作業員8: 過半数の印（exam-flake.majoritySigOfRow）。過半数が決まった問題の残りの回を呼ばない（--repeat-flaky／--reps-file の時だけ＝取り置きは回が揃わなくても使える形）
+  const doneMaj = new Map<string, string[]>();
+  for (const r of readResults(LABEL).filter((r) => !r.error).sort((a, b) => a.rep - b.rep)) { doneSigs.set(r.id, [...(doneSigs.get(r.id) ?? []), sigOfRow(r)]); doneMaj.set(r.id, [...(doneMaj.get(r.id) ?? []), majoritySigOfRow(r)]); }
+  const skippedReps = { n: 0, byVerdict: { stable: 0, unknown: 0, flaky: 0 } as Record<string, number>, settled: 0 };
+  const EARLY_STOP = majorityEarlyStopOn() && (REPEAT_FLAKY || !!REPS_OF) && REPEAT > 1;
   if (REPEAT_FLAKY && REPEAT > 1) {
     const c = { flaky: 0, stable: 0, unknown: 0 } as Record<string, number>;
     for (const p of problems) c[flakeOf(p).verdict]++;
@@ -1743,6 +1775,8 @@ async function main() {
     // 2026-10-17 試験のブレインが決めた回数（--reps-file）。書いてあれば揺れの決め方より先
     if (REPS_OF) { if (rep > Math.max(1, REPS_OF[p.id] ?? 1)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; } }
     else if (REPEAT_FLAKY && REPEAT > 1 && !shouldRunRep(rep, flakeOf(p), doneSigs.get(p.id) ?? [], REPEAT)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; }
+    // 2026-11-11 作業員8: 済んだ回で過半数が決まった（同じ過半数の印が回の数の半分より多い）→ 残りの回は過半数を変えられない＝呼ばない（止める EXAM_MAJORITY_EARLY_STOP=off）
+    if (EARLY_STOP && rep > 1 && majoritySettled(doneMaj.get(p.id) ?? [], REPS_OF ? Math.max(1, Math.min(REPEAT, REPS_OF[p.id] ?? 1)) : REPEAT)) { skippedReps.n++; skippedReps.settled++; continue; }
     const realBefore = nonJudgeReal(); startedReps = true;
     const row: ResultRow = { id: p.id, rep, type: p.type, tags: p.tags ?? [], label: LABEL, model, layer: LAYER, at: new Date().toISOString(), brain: null, path: { code: "", acceptHit: null, mustNotHit: null, ok: false }, asks: null, ng: null, score: { path: false, asks: null, ng: null, pass: false } };
     const acc = acceptOf(p), mn = p.mustNot ?? [];
@@ -1844,7 +1878,15 @@ async function main() {
         if (REUSE_FIXTURE) fx = { id: p.id, shiftDays, setupAt, times, lmMap, headIds: [...S().own], ledger: row.ledger };
         await new Promise((r) => setTimeout(r, 1300));
         S().rawBrainOutputs = [];
-        const m0 = await runBrainChecked({ ...base, prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }, !!p.pc, row);
+        // 2026-11-11 作業員8（EXAM_REUSE_LAYER1=on・既定 off）: 2回目以降の回は、同じ実行の1回目の全体の分析（戦略の層）の答えを使う（呼ばない）。
+        //   全体の分析の入力は回ごとに同じ＝回し直すのは戦略の層の揺れを測るためだけ。今回の発言の層の揺れだけを見たい直し（今回の層の決まり・材料）の確かめで使う。
+        //   費用: 2回目以降の回は全体の分析 約$0.008 が0・今回の層は入力の先頭が1回目と同じになりキャッシュが当たる（約$0.009 → 約$0.002 の見込み）。
+        //   ⚠ 回の過半数に戦略の層の揺れが入らなくなる＝前（main）と比べる時は前も同じスイッチで（スイッチの指紋に入る）
+        const l1Key = `${p.id}`;
+        const l1Hit = REUSE_LAYER1 && rep > 1 ? layer1Memo.get(l1Key) : undefined;
+        const m0 = l1Hit !== undefined ? l1Hit : await runBrainChecked({ ...base, prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }, !!p.pc, row);
+        if (REUSE_LAYER1 && l1Hit === undefined && m0) layer1Memo.set(l1Key, m0);
+        if (l1Hit !== undefined) row.trace = { ...(row.trace ?? {}), layer1: "1回目の全体の分析を使った（EXAM_REUSE_LAYER1）" };
         const strategy = m0 ? extractStrategy(m0, "combined", 0, new Date().toISOString()) : null;
         await insertMsgs(burst, p.context.length);
         await new Promise((r) => setTimeout(r, 1300));
@@ -2004,6 +2046,7 @@ async function main() {
     appendFileSync(OUT, JSON.stringify(row) + "\n");
     if (!row.error) {
       doneSigs.set(p.id, [...(doneSigs.get(p.id) ?? []), sigOfRow(row)]);
+      doneMaj.set(p.id, [...(doneMaj.get(p.id) ?? []), majoritySigOfRow(row)]);
       // 揺れの記録（共有）。録音の再生だけで出た回は前の答えの写し＝independent=false（安定の証拠に数えない）
       if (flakeEnabled()) {
         const st = cassetteStatsNow();
@@ -2053,7 +2096,7 @@ async function main() {
   }
   if ((REPEAT_FLAKY || REPS_OF) && REPEAT > 1) {
     flakeSkip = skippedReps;
-    console.log(`揺れる問題だけ繰り返した: 省いた回 ${skippedReps.n}（安定 ${skippedReps.byVerdict.stable}・分からない ${skippedReps.byVerdict.unknown}）＝ブレイン${LAYER === "prod" ? "2" : "1"}回＋判定${NO_JUDGE ? 0 : JUDGE_REPEAT}回／回 の分を呼んでいない`);
+    console.log(`揺れる問題だけ繰り返した: 省いた回 ${skippedReps.n}（安定 ${skippedReps.byVerdict.stable}・分からない ${skippedReps.byVerdict.unknown}${skippedReps.settled ? `・過半数が決まった ${skippedReps.settled}` : ""}）＝ブレイン${LAYER === "prod" ? "2" : "1"}回＋判定${NO_JUDGE ? 0 : JUDGE_REPEAT}回／回 の分を呼んでいない`);
   }
   await loadKbLinksForReport();
   const s = summarize(LABEL, BASELINE || null);
@@ -2101,7 +2144,7 @@ main().catch((e) => { console.error(e instanceof Error ? e.message : e); process
   if (h) {
     await h.finish();
     if (judgeCost.tier) console.log(`判定の段（EXAM_JUDGE_TIER=on）: ${judgeCost.tier.problems}件・機械で決めた ${judgeCost.tier.machine}項目・flash 2回で揃った ${judgeCost.tier.flash}項目・割れて pro ${judgeCost.tier.pro}項目${judgeCost.tier.unresolved ? `・決まらない ${judgeCost.tier.unresolved}` : ""}（flash ${judgeCost.tier.flashCalls}回・pro ${judgeCost.tier.proCalls}回）`);
-    console.log(`判定（DeepSeek 直・記録の外）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.calls ? `（入力のキャッシュ ${Math.round((100 * judgeCost.tokens.hit) / Math.max(1, judgeCost.tokens.hit + judgeCost.tokens.miss))}%＝当たり ${judgeCost.tokens.hit}・外れ ${judgeCost.tokens.miss}トークン・並び ${JUDGE_ORDER}）` : ""}${judgeCost.replayed ? `（うち再生 ${judgeCost.replayed}回・費用0）` : ""}${judgeCost.cached ? `・判定のキャッシュで呼ばなかった ${judgeCost.cached}回` : ""}${judgeSkip.lazy ? `・決まりで済んで呼ばなかった ${judgeSkip.lazy}問回（--judge=lazy）` : ""}${judgeSkip.rules ? `・項目を決まりで採点した ${judgeSkip.rules}問回（AIX・送らない答案）` : ""}${injectStats.calls ? `・試しの材料を足した呼び出し ${injectStats.calls}回` : ""}`);
+    console.log(`判定（DeepSeek 直・記録の外）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.calls ? `（入力のキャッシュ ${Math.round((100 * judgeCost.tokens.hit) / Math.max(1, judgeCost.tokens.hit + judgeCost.tokens.miss))}%＝当たり ${judgeCost.tokens.hit}・外れ ${judgeCost.tokens.miss}トークン・並び ${JUDGE_ORDER}）` : ""}${judgeCost.replayed ? `（うち再生 ${judgeCost.replayed}回・費用0）` : ""}${judgeCost.cached ? `・判定のキャッシュで呼ばなかった ${judgeCost.cached}回` : ""}${judgeCost.earlyStop ? `・過半数が決まって呼ばなかった判定 ${judgeCost.earlyStop}問回（EXAM_MAJORITY_EARLY_STOP）` : ""}${judgeSkip.lazy ? `・決まりで済んで呼ばなかった ${judgeSkip.lazy}問回（--judge=lazy）` : ""}${judgeSkip.rules ? `・項目を決まりで採点した ${judgeSkip.rules}問回（AIX・送らない答案）` : ""}${injectStats.calls ? `・試しの材料を足した呼び出し ${injectStats.calls}回` : ""}`);
     // 2026-10-15 ④ 1回の試験の数え（新しく呼んだ・再生・使い回した）。問題ごとの数えは <label>.cost.json（前の取り置きの「呼んでいたら」に使う）
     const cas = await import("./lib/llm-cassette");
     const cst = cas.cassetteStats();

@@ -116,6 +116,49 @@ export function shouldRunRep(rep: number, v: FlakeVerdict, doneSigs: string[], r
 }
 
 /**
+ * 2026-11-11 作業員8（竹内さん「試験の API 節約と質上げ」・試験の無駄を最優先）: 過半数が決まった後の回を呼ばない。
+ *   --repeat=N の過半数（perProblem の pathMaj・pass・routeMaj・strictMaj・strictPass・drMaj・主な依頼）は回ごとの○✕の過半数。
+ *   済んだ回のうち同じ「過半数の印」が N/2 より多ければ、残りの回がどう出ても過半数は全部同じ（数学的に変わらない）＝残りは呼ばない。
+ *   実測（11/04〜11/11 の答案 11,116回）: 省ける回 898（8%）・省いても過半数が変わった問題 0（重複して書かれた行の1件を除く）。
+ *   変わる物: 回ごとの割合（道 x/y の y・重みの平均）と「揺れの記録」の数が減る（揺れる問題の判定は割れた1回で決まる＝影響なし）。
+ *   止める: EXAM_MAJORITY_EARLY_STOP=off
+ */
+type MajRowLike = RowLike & { score?: { pass?: boolean; path?: boolean; primary?: boolean | null }; asks?: Array<{ covered?: boolean; route?: boolean }> | null; ng?: Array<{ violated?: boolean }> | null; pathStrict?: boolean };
+export function majoritySigOfRow(r: MajRowLike): string {
+  const path = !!r.score?.path, pass = !!r.score?.pass;
+  const routeOk = path && (!r.asks || r.asks.every((a) => a.route ?? a.covered)) && (!r.ng || !r.ng.some((g) => g.violated));
+  const strict = r.pathStrict ?? path;
+  return [path, pass, routeOk, strict, pass && (r.pathStrict ?? true), r.draft ? !!r.draft.pass : "-", r.score?.primary ?? "-"].map(String).join(",");
+}
+export function majorityEarlyStopOn(env: Record<string, string | undefined> = process.env): boolean {
+  return String(env.EXAM_MAJORITY_EARLY_STOP ?? "").trim().toLowerCase() !== "off";
+}
+/** 済んだ回の印（sigs）で、repeat 回の過半数がもう決まっているか（同じ印が repeat/2 より多い） */
+export function majoritySettled(sigs: readonly string[], repeat: number): boolean {
+  if (repeat <= 1 || sigs.length < 2) return false;
+  const c = new Map<string, number>();
+  for (const s of sigs) c.set(s, (c.get(s) ?? 0) + 1);
+  return Math.max(...c.values()) * 2 > repeat;
+}
+/**
+ * 判定（依頼・言ってはいけない事・本質の道）の過半数（repeat 回）が、済んだ判定でもう決まっているか。
+ *   項目ごとに ○✕ の多い方が repeat/2 より多く、本質の道の一番多い答えも repeat/2 より多ければ決まり（残りの判定がどう出ても過半数は同じ）。
+ */
+export function judgeMajoritySettled(outs: ReadonlyArray<{ asks: boolean[]; route: boolean[]; ng: boolean[]; rawPath: string | null }>, repeat: number): boolean {
+  if (repeat <= 1 || outs.length < 2) return false;
+  const half = repeat / 2;
+  const col = (f: (o: (typeof outs)[number]) => boolean[]) => {
+    const n = Math.max(...outs.map((o) => f(o).length));
+    for (let i = 0; i < n; i++) { const t = outs.filter((o) => f(o)[i] === true).length, fl = outs.filter((o) => f(o)[i] === false).length; if (Math.max(t, fl) <= half) return false; }
+    return true;
+  };
+  if (!col((o) => o.asks) || !col((o) => o.route) || !col((o) => o.ng)) return false;
+  const c = new Map<string, number>();
+  for (const o of outs) c.set(String(o.rawPath), (c.get(String(o.rawPath)) ?? 0) + 1);
+  return Math.max(...c.values()) > half;
+}
+
+/**
  * 旧の結果（results/<label>.jsonl）から揺れを取り込む（道だけ・同じ実行（label）の中で割れたか）。
  * <id>/legacy-<label>.jsonl を丸ごと書き直す＝何度取り込んでも増えない。返り値は取り込んだ行の数
  */
