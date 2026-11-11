@@ -8,6 +8,31 @@
   var injectTimer = null;
   var _pendingAutoSendDispatched = false; // inject() から autoSendAllPages を起動済みか
   var _autoSendArmed = false;            // fill-done 受信後、新結果待ちフラグ
+  /**
+   * 2026-11-12 竹内さん「自動で検索したら検索も条件入れる前にいま出ている物件のダウンロードを始めてしまう」
+   *   原因: 自動入力が始まった瞬間（`axlx-autofill-initiated`）から、**画面に残っている前の一覧**を
+   *     そのまま「検索結果」とみなして押し始めていた（`inject()` の末尾と `_maybeAutoPressOnLoad`）。
+   *     条件を入れて検索を押す前なので、**別のお客様の・条件の違う一覧**を送ってしまう（一番まずい）。
+   *   → **自動入力の間（initiated から fill-done まで）は自動で押さない**。
+   *     押してよいのは「検索を押した合図（fill-done）が来て、**その後に出た新しい行**」だけ。
+   *   ⚠ ページが読み直されるとこの変数は作り直される（＝新しい結果ページでは false から始まる）ので、
+   *     検索後の一覧は今まで通り押せる。
+   */
+  var _autofillInProgress = false;       // 自動入力の最中（条件入力中・検索を押す前）＝押さない
+  var _autofillStartedAt = 0;
+  var _autofillStuckMs = 20 * 60 * 1000; // 念のため20分で解く（合図が来ないまま固まっても永久に押せなくしない）
+  /**
+   * 2026-11-12 竹内さん「自動で検索したら検索も条件入れる前にいま出ている物件のダウンロードを始めてしまう」:
+   *   ⚠ この印は **sessionStorage に残さない**（わざと）。
+   *     残すと、検索を押してページが読み直された後に「まだ入力中」と誤解し、
+   *     せっかく出た検索結果を**20分間押せなくなる**（別のバグになる）。
+   *     ページが読み直された＝検索を押した後なので、**押してよい**のが正しい。
+   *   → 同じページの中でだけ効かせる（＋「新しい行か」の判定を併用する）。
+   */
+  function _setFillInProgress(on) {
+    _autofillInProgress = !!on;
+    _autofillStartedAt = on ? Date.now() : 0;
+  }
   var _autofillInitiated = false;        // 手動autofillボタン押下フラグ（fill-done到着前）
   var _preAutofillBtns = new Set();      // autofill前の 印刷用PDF ボタンスナップショット
   var _pendingCustomerForAutoSend = null; // autofill開始時点の顧客スナップショット（名前ずれ防止）
@@ -537,7 +562,23 @@
      *   人がやる事と同じ: カーソルで行まで動く → 印刷用PDFを押す → 送る → 👀 資料を見る間 → 次の行。
      *   押さない/止めたい時は枠の「⏹ 止める」。スタッフモード・自動モードでない時は今まで通り何もしない。
      */
-    else if (!_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched && _autoModeOn && !_staffModeOn && !_autoPdfRun) {
+    else if (!_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched && _autoModeOn && !_staffModeOn && !_autoPdfRun && !_autofillInProgress) {
+      /**
+       * 2026-11-12 竹内さん「自動で検索したら検索も条件入れる前にいま出ている物件のダウンロードを始めてしまう」:
+       *   ここも同じ穴だった。`_sig !== _autoPdfSig`（＝まだ押していない一覧）だけで押し始めていたので、
+       *   **検索を押した直後（画面はまだ前の一覧）**でも条件がそろえば押してしまう。
+       *   → 自動入力のスナップショット（`_preAutofillBtns`）を取り、**新しい行が1つも無ければ押さない**。
+       *     新しい行＝今のお客様の検索で出た行。
+       */
+      var _hasNewForAuto = tracked.some(function (t) {
+        var k = t.btn && (t.btn.href || t.btn.getAttribute("href") || "");
+        return k && !_preAutofillBtns.has(k);
+      });
+      if (_preAutofillBtns.size > 0 && !_hasNewForAuto) {
+        console.log("[AXLX bulk-dl][auto] 画面の一覧は自動入力の前からある行 → 押しません（今のお客様の検索結果ではない）");
+        _tmark("auto_pdf_arm", "blocked_not_new_rows");
+        return;
+      }
       // この一覧でまだ1件も押していない時だけ（同じ一覧の描き直しで二重に始めない）
       var _sig = tracked.map(function (t) { return _urlKey(t.btn && t.btn.href); }).join(",").slice(0, 3000);
       if (_sig && _sig !== _autoPdfSig) {
@@ -562,6 +603,23 @@
   function _maybeAutoPressOnLoad() {
     if (_autoPdfRun || !_autoModeOn || _staffModeOn) return;
     if (_guideBlocksAuto("autoOnLoad")) return;
+    /**
+     * 2026-11-12 竹内さん「自動で検索したら検索も条件入れる前にいま出ている物件のダウンロードを始めてしまう」:
+     *   自動入力の最中（条件を入れて検索を押す前）は**押さない**。
+     *   ここで押すと、画面に残っている**前の一覧（別のお客様・条件違い）**を送ってしまう。
+     *   押してよいのは「検索を押した合図（fill-done）の後に出た新しい行」だけ。
+     */
+    if (_autofillInProgress) {
+      // 合図が来ないまま固まった時は解く（永久に押せなくしない・20分）
+      if (_autofillStartedAt && Date.now() - _autofillStartedAt > _autofillStuckMs) {
+        _autofillInProgress = false;
+        console.warn("[AXLX bulk-dl][auto] 自動入力の合図が来ないまま20分 → 念のため解きます");
+      } else {
+        console.log("[AXLX bulk-dl][auto] 自動入力の最中（条件を入れる前）→ いま出ている一覧は押しません");
+        _tmark("auto_pdf_load", "blocked_during_fill");
+        return;
+      }
+    }
     if (tracked.length === 0) return;
     /**
      * 2026-11-11 竹内さん「AD順などするときにページ更新してしまっている。ページ更新すると拡張ツールの検索のところが
@@ -1052,6 +1110,17 @@
     }
     if (_staffModeOn) { _nudge("スタッフモードでは自動で押しません"); return { ok: false, reason: "staff" }; }
     if (_autoPdfRun) { _nudge("いま自動で送っています（⏹ で止められます）"); return { ok: false, reason: "running" }; }
+    /**
+     * 2026-11-12 竹内さん「自動で検索したら検索も条件入れる前にいま出ている物件のダウンロードを始めてしまう」:
+     *   自動入力の最中（条件を入れて検索を押す前）は、画面に残っている前の一覧しかない。
+     *   ここで押すと**別のお客様・条件違いの一覧**を送ってしまう → 押さない。
+     */
+    if (_autofillInProgress && !(Date.now() - _autofillStartedAt > _autofillStuckMs)) {
+      _nudge("⏳ いま条件を入れています（検索の後で押します）");
+      console.warn("[AXLX bulk-dl][auto] 条件の入力中なので押しません（前の一覧を送らないため）");
+      _tmark("auto_pdf_start", "blocked_during_fill");
+      return { ok: false, reason: "filling" };
+    }
     if (_guideBlocksAuto("autoPressPdfs")) return { ok: false, reason: "guide" };
     /**
      * 2026-11-10 竹内さん「ADの並びはちゃんと使えるようにする」:
@@ -3217,6 +3286,28 @@
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "axlx-autofill-initiated") return;
     _autofillInitiated = true;
+    /**
+     * 2026-11-12 竹内さん「自動で検索したら検索も条件入れる前にいま出ている物件のダウンロードを始めてしまう」:
+     *   ここから**条件の入力が始まる**（検索を押すのはまだ先）。この間は画面の一覧（＝前のお客様の結果）を押さない。
+     *   解除するのは `aixlinx-fill-done`（検索を押した合図）が来た時。
+     */
+    _autofillInProgress = true;
+    _autofillStartedAt = Date.now();
+    _setFillInProgress(true);
+    console.log("[AXLX bulk-dl] 自動入力の開始 → 検索を押すまでは画面の一覧を押しません");
+    /**
+     * 2026-11-12: 前の一覧で自動押下が**まだ回っている**時は止める。
+     *   止めないと、条件を入れ始めた横で前の一覧を押し続けてしまう。
+     */
+    if (_autoPdfRun) {
+      _autoPdfRun.stopped = true;
+      console.warn("[AXLX bulk-dl][auto] 条件の入力が始まった → 前の一覧の自動押下を止めます");
+      _tmark("auto_pdf_end", "stopped_by_autofill");
+      _autoPdfRun = null;
+      var _sb = document.getElementById("axlx-autopdf-stop-btn");
+      if (_sb) _sb.style.display = "none";
+    }
+    _pendingAutoSendDispatched = false; // 新しい検索なので、押し始めの印を戻す
     // 前バッチ中断で残留したsessionStorage状態をクリア（Case Aの!getAutoSendState()チェックがブロックされるバグ対策）
     try { sessionStorage.removeItem(AUTO_SEND_KEY); } catch (_) {}
     // 前顧客の0件ポーリングが残っていれば即座に停止（次顧客の窓で誤発火を防ぐ）
@@ -3247,7 +3338,12 @@
   // Step2: fill-done 受信 → arm（スナップショット外の新結果が出たら Case A で発動）
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "aixlinx-fill-done") return;
-    // v2.5.50 検索を押す前の関所で止めた合図（検索していない）→ 構えない（画面に残っている前の一覧を取りに行かない）
+    /**
+     * 2026-11-12 竹内さん「自動で検索したら検索も条件入れる前にいま出ている物件のダウンロードを始めてしまう」:
+     *   検索を押した合図が来た＝**ここから先の一覧は今のお客様の検索結果**。押してよい。
+     */
+    _autofillInProgress = false;
+    _setFillInProgress(false);
     if (e.data.gate) { _autofillInitiated = false; console.warn("[AXLX bulk-dl] fill-done（関所で止めた）→ 自動送信は構えない: " + (e.data.error || "")); return; }
     if (!_autofillInitiated) return;
     _autoSendArmed = true;
