@@ -105,10 +105,10 @@ export function fcPropertyNameNormalizeEnabled(env?: Env): boolean { return (env
 
 /** 承りましたの目的語 → ブレインの項目の種類 */
 const OBJECT_TOPIC: Array<{ re: RegExp; topics: ReadonlyArray<string> }> = [
-  { re: /内覧|内見|ご案内|見学/, topics: ["viewing"] },
-  { re: /費用|見積|金額|家賃/, topics: ["cost"] },
-  { re: /条件|ピックアップ|お部屋探し|エリア/, topics: ["pickup"] },
-  { re: /申込|契約|審査|入居/, topics: ["contract", "screening", "move_in"] },
+  { re: /内覧|内見|ご案内|見学/, topics: ["viewing", "viewing_day"] },
+  { re: /費用|見積|金額|家賃/, topics: ["cost", "property_cost"] },
+  { re: /条件|ピックアップ|お部屋探し|エリア/, topics: ["pickup", "search_condition"] },
+  { re: /申込|契約|審査|入居/, topics: ["contract", "screening", "move_in", "procedure"] },
 ];
 /** UKETAMAWARI の指摘の目的語が、ブレインが今の番で扱うと決めた項目（route が none 以外）の種類に当たるか */
 export function uketamawariKeeps(issue: AnswerKeepIssue, o: { contract: TurnContract | null | undefined; env?: Env }): boolean {
@@ -128,7 +128,7 @@ export function gochougoRescheduleKeeps(issue: AnswerKeepIssue, o: { contract: T
   if (!fcGochougoRescheduleEnabled(o.env) || issue.code !== "GOCHOUGO_AFTER_FIXED") return false;
   if (!RESCHEDULE_RE.test(String(o.customerText ?? "").normalize("NFKC"))) return false;
   const c = o.contract;
-  if (c && c.source === "brain") return c.asks.some((a) => a.route !== "none" && (a.topic === "viewing" || a.axis?.about === "viewing"));
+  if (c && c.source === "brain") return c.asks.some((a) => a.route !== "none" && (a.topic === "viewing" || a.axis?.about === "viewing_day"));
   return true;
 }
 
