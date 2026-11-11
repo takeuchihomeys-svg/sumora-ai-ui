@@ -299,6 +299,15 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
   ok("リアプロ: キューが _afterClickGapMs を使う（固定 140〜360ms をやめた）", /var settle = _afterClickGapMs\(item\.el\);/.test(ps5) && !/var settle = 140 \+ Math\.floor\(Math\.random\(\) \* 220\);/.test(ps5));
   ok("リアプロ: 決定の後は画面が変わったか見る（12%で+0.6〜1.8秒）・8%で一瞬つく", /_kind === "decide" && Math\.random\(\) < 0\.12\)/.test(ps5) || /kind === "decide" && Math\.random\(\) < 0\.12\)/.test(ps5));
   ok("ITANDI: 同じくボタンの意味で間を変える", /_r = \[350, 1000\]/.test(ips5) && /_r = \[1200, 3200\]/.test(ips5) && /_r = \[800, 2000\]/.test(ips5));
+  // 2026-11-11 竹内さん「検索して決定おしたら検索結果の部分で一息つくなど。ずっとひたすら動き続けたら人間らしくない」
+  {
+    const bd6 = fs5.readFileSync(path.join(dir, "bulk-dl.js"), "utf8");
+    ok("検索結果が出たら一覧を見渡す間を必ず取る（_resultsLookMs）", /function _resultsLookMs\(n\)/.test(bd6) && /function _startAutoPressAfterLook\(n\)/.test(bd6));
+    ok("押し始めるのは見渡した後（2.5〜6秒・25%で長く・8%でかなり長い）", /if \(base < 2500\) base = 2500;/.test(bd6) && /if \(base > 6000\) base = 6000;/.test(bd6) && /if \(r < 0\.08\) base \+= 6000/.test(bd6) && /else if \(r < 0\.33\) base \+= 2000/.test(bd6));
+    ok("件数が多いほど少し長い（20件超で+0.5〜2秒）", /if \(n > 20\) base \+= 500 \+ Math\.floor\(Math\.random\(\) \* 1500\);/.test(bd6));
+    ok("見ている間は枠に出す（👀 検索結果を見ています）", /👀 検索結果を見ています/.test(bd6));
+    ok("即押さない（固定の 1.5〜2.7秒をやめた）", !/setTimeout\(function \(\) \{ autoPressPdfs\(\); \}, 1500/.test(bd6) && /_startAutoPressAfterLook\(tracked\.length\);/.test(bd6));
+  }
   }
 }
 process.exit(fail ? 1 : 0);

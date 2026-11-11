@@ -539,7 +539,7 @@
         _pendingAutoSendDispatched = true;
         console.log("[AXLX bulk-dl][auto] 自動モード: 結果が出たので印刷用PDFを1件ずつ押して送ります（" + tracked.length + "行）");
         _tmark("auto_pdf_arm", "rows=" + tracked.length);
-        setTimeout(function () { autoPressPdfs(); }, 1500 + Math.floor(Math.random() * 1200));
+        _startAutoPressAfterLook(tracked.length);
       }
     }
     // 2026-11-10 竹内さん「自動モードの時は自動で押しておこなわれるようにする」: 一覧が出た時点で自動で押し始める（検索の完了合図に頼らない）
@@ -565,7 +565,41 @@
     _autoPdfSig = sig;
     console.log("[AXLX bulk-dl][auto] 自動モード: 一覧が出たので印刷用PDFを1件ずつ押して送ります（" + tracked.length + "行）");
     _tmark("auto_pdf_load", "rows=" + tracked.length);
-    setTimeout(function () { autoPressPdfs(); }, 1500 + Math.floor(Math.random() * 1200));
+    _startAutoPressAfterLook(tracked.length);
+  }
+
+  /**
+   * 2026-11-11 竹内さん「検索して決定おしたら検索結果の部分で一息つくなど。人間のように区切って一息つく部分。
+   *   ずっとひたすら動き続けたら人間らしくない。一瞬の一息が重要となる」
+   *
+   *   検索結果が出た直後に、人が**一覧を見渡す間**を必ず取る（押し始めるまでの間）。
+   *   ・ふつう 2.5〜6秒（対数正規・中央値3.5秒）… 上から下まで目で追う
+   *   ・25% で長く見る（+2〜5秒）… 気になる物件を少し見る
+   *   ・8% でかなり長い（+6〜12秒）… 「お、いいのがある」と手が止まる
+   *   ・件数が多いほど少し長い（20件超で+0.5〜2秒）
+   *   枠には「👀 検索結果を見ています（あとN秒）」と出す（黙って止まらない）。
+   */
+  function _resultsLookMs(n) {
+    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    var base = H && H.logNormalDelay ? H.logNormalDelay(3500, 0.35) : 3500;
+    if (base < 2500) base = 2500;
+    if (base > 6000) base = 6000;
+    var r = Math.random();
+    if (r < 0.08) base += 6000 + Math.floor(Math.random() * 6000);
+    else if (r < 0.33) base += 2000 + Math.floor(Math.random() * 3000);
+    if (n > 20) base += 500 + Math.floor(Math.random() * 1500);
+    return Math.round(base);
+  }
+  /** 検索結果を見る間に入ってから押し始める（自動モードのときだけ） */
+  function _startAutoPressAfterLook(n) {
+    var look = _resultsLookMs(n);
+    console.log("[AXLX bulk-dl][auto] 検索結果を一覧で見る間 " + (look / 1000).toFixed(1) + "秒（" + n + "行）");
+    _tmark("results_look", Math.round(look) + "ms");
+    _axlxWorkNote("👀 検索結果を見ています", Date.now() + look);
+    setTimeout(function () {
+      _axlxClearWorkNote();
+      autoPressPdfs();
+    }, look);
   }
 
   // ── フローティングバー ────────────────────────────
