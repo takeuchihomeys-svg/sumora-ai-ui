@@ -2,7 +2,9 @@ import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSente
 import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { positiveNoNegativeEnabled, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
-import { replySplitWriterNote, replyCountOf } from "@/app/lib/reply-split";
+import { replySplitWriterNote, replyCountOf, replySplitSelfNote } from "@/app/lib/reply-split";
+// 2026-11-12 作業員7（TURN_AIMS_AFTER・既定 off）: 道が決まった後に目的・中期・仕込みを作り、文の統括への受け渡しにだけ渡す
+import { metaWithTurnAimsAfter } from "@/app/lib/turn-aims-after";
 import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR, mgmtNightClosingOn, nightMgmtClosingLine } from "@/app/lib/mgmt-hours-split";
 import { brainStaffBurstWaitEnabled, staffSendingNow } from "@/app/lib/staff-burst";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
@@ -140,6 +142,7 @@ import { resolveAddressNameForConversation } from "@/app/lib/address-name-server
 import { createExitRecorder } from "@/app/lib/exit-edits";
 import { isEvaluativePrinciple, principleEvalFilterEnabled } from "@/app/lib/principle-eval";
 import { estimateRedeclareArmed, vacancyRedeclareArmed, brainKeepsRedeclare, logMatchesCurrent, ESTIMATE_REDECLARE_WINDOW_MS } from "@/app/lib/redeclare-gate";
+import { fcKeepsBrainSentence } from "@/app/lib/final-check-answer-keep";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
 import { runFinalCheckGated, type FinalCheckGateLog } from "@/app/lib/final-check-gated";
@@ -4459,7 +4462,7 @@ async function handleGenerateReply(req: NextRequest) {
           // 2026-11-03 作業員6: 統括の受け渡しの1ブロック（作業員2の conductor-handoff・CONDUCTOR_HANDOFF=on の時だけ）を構成のブレインにも同じ形で渡す
           situation: [
             String((brainMeta as { reply_direction?: string | null } | null)?.reply_direction ?? ""),
-            await import("@/app/lib/conductor-handoff").then((h) => (h.conductorHandoffOn() && brainMeta ? h.handoffNote(h.buildHandoff({ to: "compose", meta: brainMeta as unknown as Record<string, unknown> })) : "")).catch(() => ""),
+            await import("@/app/lib/conductor-handoff").then((h) => (h.conductorHandoffOn() && brainMeta ? h.handoffNote(h.buildHandoff({ to: "compose", meta: metaWithTurnAimsAfter(brainMeta as unknown as Record<string, unknown>, customerMsgUnits.join("\n") || (message ?? "")) })) : "")).catch(() => ""),
           ].filter(Boolean).join("\n\n") || null,
           // 2026-11-12 作業員10（受け渡しの漏れ・COMPOSE_SENTENCE_PLAN=on の時だけ）: 構成のブレインに受け口はあるが渡していなかった気持ちと訴求の判断を渡す
           ...(composeSentencePlanOn() && brainMeta ? (() => { const c = readComposeContext(brainMeta); return { emotion: [c.three?.worry, c.latent4 ? [c.latent4.feeling, c.latent4.want].filter(Boolean).join("・") : null, c.mood ? c.mood.base : null, c.concern].filter(Boolean).join("／").slice(0, 200) || null, appeal: c.appealTiming }; })() : {}),
@@ -5635,6 +5638,9 @@ async function handleGenerateReply(req: NextRequest) {
         ((brainMeta as { send_sequence?: Array<{ slot?: string; role?: string }> } | null)?.send_sequence ?? [])
           .filter((x) => x?.slot === "reply" && typeof x.role === "string").map((x) => String(x.role)));
       if (splitNoteLine) { lines.push(splitNoteLine); console.info("[reply-split]", JSON.stringify({ conversationId, count: splitCount })); }
+      // 2026-11-12 作業員7（REPLY_SPLIT_WRITER_SELF・既定 off）: ブレインが通数を決めていない番は、書き手が竹内さんの2つの分け方（別の要件／次の一歩）で自分で決める
+      const splitSelfLine = replySplitSelfNote(splitCount);
+      if (splitSelfLine) { lines.push(splitSelfLine); console.info("[reply-split-self]", JSON.stringify({ conversationId })); }
       // 2026-11-05 作業員9（弱い所 324・KB P1 9fd703f4）: 2段の確認の方向の結び「確認出来次第ご連絡」が下の【管理会社の状況】の「明日」より勝っていた＝
       //   夜の管理会社への確認だけ、方向のすぐ下で結びの前に「本日管理会社営業時間外の為、明日」を入れさせる（判断・結びの言葉は変えない・MGMT_NIGHT_CLOSING=on・既定 off）
       if (mgmtNightClosingOn() && /確認出来次第ご連絡/.test(`${brainDirTop ?? ""}\n${effectiveReplyDirection ?? ""}`)) {
@@ -7100,6 +7106,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const retryIssues = finalCheck.issues.filter(
                   // 2026-10-09: 本質（ブレイン）に反する中身を足させる・消させる指摘はフィードバック再生成に渡さない（turn-contract.issueContradictsContract）
                   (it) => it.severity === "block" && it.code !== "UNCHECKED_AUTO_SEND" && !issueContradictsContract(it, turnContract)
+                    // 2026-11-12 作業員15: 段階の語の網（審査・契約・鍵）が今の質問・ブレインの答え／約束の文を作り直しに渡さない（既定 on・FC_ANSWER_KEEP=off で止める）
+                    && !fcKeepsBrainSentence(it, { contract: turnContract, draft: draftBody, customerText: message })
                 );
                 // 2026-09-11 統合設計（D1）: 再生成すると finalCheck が loop2 で丸ごと置換されるため、1回目生成のチェック結果を別に残す
                 const firstPass = { issues: finalCheck.pre_revision_issues ?? finalCheck.issues.map((i) => `${i.code}:${i.severity}`), head: draftBody.slice(0, 80) };
@@ -7167,6 +7175,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     if (gen2.body.trim()) {
                       // 2026-09-11 統合設計: gen2 にも gen1 と同じ台帳の決定論自動修正を掛ける（旧実装は gen1 のみ＝非対称）
                       const gen2Body = applyLedgerFixToDraft(gen2.body);
+                      // 2026-11-12 作業員15: 作り直し（1回目の文→2回目の文）も出口の記録に残す（旧は作り直しの前の文が先頭80字しか残らず、作り直しで消えた文を数えられなかった・記録だけ）
+                      exitRec.record(2, "final_check_regen", draftBody, gen2Body, retryIssuesDedup.map((it) => `${it.code}:${it.severity}`));
                       // 再生成ドラフトにも最終チェック＋接地修正ループを適用（未チェック文は絶対に出さない）
                       // 予算はループ単位ではなく「check1開始からの総経過時間」から逆算（regen込みで最悪2〜3分に膨らむのを防止。
                       // 全体上限150s − 経過時間、下限20s）

@@ -637,6 +637,7 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
   { key: "engagement_stance・purchase_signal_level", label: "押す・待つ・買う合図", carried: "plan", values: (m) => [...sv(m.engagement_stance, 6), ...sv(m.purchase_signal_level, 6)] },
   { key: "reply_direction(誘導先)", label: "方向の文の誘導先", carried: "plan", values: (m) => { const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? [LEAD_TO_JA[d]] : []; } },
   { key: "compose.intent.next", label: "次にしてほしい事（構成の意図）", carried: "plan", values: () => [] },
+  { key: "turn_aims", label: "この番の目的・次の2〜3番の狙い・入れる仕込み", carried: "other", by: "受け渡し（conductor-handoff の handoffNote・TURN_AIMS_AFTER）", values: () => [] },
 ];
 
 /**
@@ -649,6 +650,8 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   turn_contract: "plan", turn_read: "plan", turn_focus: "plan", turn_topics: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
   conductor_focus: "plan", plan_ahead: "plan", future_timeline: "plan", hesitancy_pattern: "plan", message_plan: "plan", current_property: "plan",
   customer_emotion: "plan", customer_mindset: "plan", engagement_stance: "plan", purchase_signal_level: "plan", reply_direction: "plan",
+  // 2026-11-12 作業員7: この番の目的・中期の狙い・仕込み（BRAIN_TURN_AIMS・TURN_AIMS_AFTER）は受け渡し（conductor-handoff の decided）が運ぶ
+  turn_aims: "other",
   // 別の注記・役が運ぶ（本質の帯・方向・姿勢・締め・2通・AIX）
   key_topics: "other", avoid_topics: "other", customer_questions: "other", priorities: "other", reply_mode: "other", two_stage: "other", reply_opener: "other",
   recommended_tone: "other", urgency_appropriate: "other", closing_strategy: "other", payment_timing: "other", far_move_in: "other", property_state: "other",
