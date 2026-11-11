@@ -77,7 +77,7 @@ for (const g of gold) {
   const b = brainOf.get(g.id);
   const brain = b?.brain ?? {};
   if (!b) noBrain++;
-  const u = readTurnUnderstanding(brain), s = readSevenFields(brain), plan = buildSentencePlan(u, s);
+  const u = readTurnUnderstanding(brain), s = readSevenFields(brain), plan = buildSentencePlan(u, s, { scene: resolveReplyScene({ customerText: String(probs.get(g.id)?.customer ?? "") }).scene });
   const nf = planFieldsOf(u, s, plan), cf = currentFields(brain, probs.get(g.id));
   const sNew = scoreFields(g, nf), sNow = scoreFields(g, cf);
   newRows.push(sNew); nowRows.push(sNow);

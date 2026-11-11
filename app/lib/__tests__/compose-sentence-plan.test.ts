@@ -147,4 +147,25 @@ t("主が確かめる約束の時は、確かめる中身を言い切らせな�
   assert.match(note, /確かめる中身（最短の日・できる\/できない・日付・金額）を本文で言い切らない/);
   assert.doesNotMatch(note, /足さない/);
 });
+
+t("案B: 番の材料に「どうやって」が無い時は場面×誘導先の傾向表で埋める・行は増やさない・了承の番にサポートの姿勢を足さない", () => {
+  const u = readTurnUnderstanding(q088), s = readSevenFields(q088);
+  const p0 = buildSentencePlan(u, s);
+  const p = buildSentencePlan(u, s, { scene: "question" });
+  assert.equal(p.rows.length, p0.rows.length);
+  assert.equal(p.how?.src, "table");
+  assert.equal(p.how?.tableKey, "question");
+  assert.match(p.rows[0].how ?? "", /結論を先に/);
+  assert.doesNotMatch(p.rows[0].how ?? "", /サポートの姿勢/); // 継続・信頼の行が無い番
+  assert.match(p.rows[0].how ?? "", /信頼: お客様の立場の言葉/);
+  // 条件の番の keep（探す約束）はサポートの姿勢を添えてよい
+  const kc = { turn_contract: { asks: [{ quote: "家賃6万までで", route: "promise", about: "search_condition" }] } };
+  const pk = buildSentencePlan(readTurnUnderstanding(kc), readSevenFields(kc), { scene: "conditions" });
+  assert.equal(pk.rows[0].role, "keep");
+  assert.equal(pk.how?.tableKey, "conditions|keep");
+  assert.match(pk.rows[0].how ?? "", /お客様の言葉・条件を拾う・結論を先に／信頼: サポートの姿勢・こちらの手間を見せる/);
+  // 番の材料（作業員5 の形）があれば表を使わない
+  const meta = { seven_read: sevenQ072, turn_contract: { asks: [{ quote: "埋まりますか", route: "reply", about: "vacancy" }] } };
+  assert.equal(buildSentencePlan(readTurnUnderstanding(meta), readSevenFields(meta), { scene: "viewing" }).how?.src, "turn");
+});
 console.log(`${n} pass`);

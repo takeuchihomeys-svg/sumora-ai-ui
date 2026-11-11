@@ -4496,7 +4496,7 @@ async function handleGenerateReply(req: NextRequest) {
       ? (() => {
           try {
             const u = readTurnUnderstanding(brainMeta), s7 = readSevenFields(brainMeta);
-            const plan = buildSentencePlan(u, s7);
+            const plan = buildSentencePlan(u, s7, { scene: composeConductorScene });
             return { plan, note: sentencePlanNote(plan), digest: sentencePlanDigest(plan) };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()

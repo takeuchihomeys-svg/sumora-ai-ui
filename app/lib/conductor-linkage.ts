@@ -85,6 +85,15 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     redecides: [],
   },
   {
+    // 2026-11-12 作業員10（KB P1 c3673fba・80586f34）: 一通の読みと竹内さんの7つの欄から1文ずつの設計図。道の確かめは前の答えの brain から設計図の主の行が出るかで見る（exam-path-check.composePlanMarkers）
+    id: "compose_plan", name: "文の統括の1文ずつの設計図（役目・何を・どうやって・次へ・主/従）", owner: "作業員10", stage: "compose",
+    files: ["app/lib/compose-sentence-plan.ts", "app/lib/compose-how-table.ts"],
+    reads: ["meta.turn_read.main/subs", "meta.seven_read", "meta.turn_contract.asks", "meta.appeal_timing", "meta.customer_concern", "場面（compose-how-table）"],
+    writes: ["compose_plan:", "digest.compose_plan"],
+    switch: "COMPOSE_SENTENCE_PLAN（既定 off）",
+    redecides: [],
+  },
+  {
     id: "compose", name: "文の統括（この通の重点・構成→書き手→確かめ）", owner: "作業員9", stage: "compose",
     files: ["app/lib/reply-compose-conductor.ts", "app/api/generate-reply/route.ts（7655行あたりで呼ぶ）"],
     reads: ["meta.conductor_focus", "meta.two_message_plan", "場面", "前の流れ"],

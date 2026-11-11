@@ -19,6 +19,7 @@
 import type { SentenceRole } from "./takeuchi-anatomy-roles";
 import { ROLE_LABEL } from "./takeuchi-anatomy-roles";
 import { ABOUT_VALUES, ABOUT_JA, type RequestAbout } from "./request-ledger";
+import { takeuchiHowFor } from "./compose-how-table";
 import { POINT_METHODS, TRUST_METHODS, type PointMethod, type TrustMethod, type PushStrength } from "./takeuchi-seven-read";
 
 type Env = Record<string, string | undefined>;
@@ -245,7 +246,8 @@ export type PlanRow = {
   /** どの材料から（記録） */
   from: string;
 };
-export type SentencePlan = { rows: PlanRow[]; aixMain: boolean; empty: string[] };
+/** how＝設計図が使った押さえ方・信頼の作り方（src: 番の材料 turn／場面の傾向表 table・tableKey＝引いた表の行） */
+export type SentencePlan = { rows: PlanRow[]; aixMain: boolean; empty: string[]; how?: { key: KeyHow[]; trust: TrustHow[]; src: "turn" | "table" | null; tableKey?: string | null } };
 
 const join = (xs: Array<string | null | undefined>, sep = "・") => { const v = xs.filter((x): x is string => !!x && !!x.trim()); return v.length ? v.join(sep) : null; };
 const partOf = (it: UnderstandingItem | null): string | null => {
@@ -257,7 +259,7 @@ const LEAD_ROLE: Partial<Record<LeadToV, SentenceRole>> = { viewing: "viewing", 
 
 /** 理解（一通の読み＋7つの欄）→ 1文ずつの設計図。主を先・従は後。材料の無い欄は行にしない（empty に名前を残す） */
 /** 理解（一通の読み＋7つの欄）→ 1文ずつの設計図。主を先・従は後。材料の無い欄は行にしない（empty に名前を残す） */
-export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields): SentencePlan {
+export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { scene?: string | null } = {}): SentencePlan {
   const rows: PlanRow[] = [];
   const empty: string[] = [];
   const aixMain = u.main?.route === "aix";
@@ -265,10 +267,17 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields): Sentenc
   const nextJa = s.bridge?.what ?? (s.bridge?.role ? ROLE_LABEL[s.bridge.role] : null) ?? (s.leadTo && s.leadTo !== "none" ? LEAD_TO_JA[s.leadTo] : null);
   const appealText = s.appeal ? `訴求: ${join([s.appeal.property ?? u.main?.property ?? null, s.appeal.what ?? join(s.appeal.points)], "の ")}${s.appeal.how ? `（${s.appeal.how}）` : ""}` : null;
   const worryHow: TrustHow[] = ["preempt", "fact"];
+  // 2026-11-12 案B: 番の材料に「どうやって」が無い時だけ、場面×誘導先の竹内さんの傾向表（compose-how-table・198通）で埋める。行は増やさない
+  const mainRole0 = u.main?.role ?? null;
+  const leadKey = s.leadTo ?? (mainRole0 === "keep" ? "keep" : mainRole0 === "viewing" ? "viewing" : mainRole0 === "apply" ? "apply" : mainRole0 === "estimate" ? "estimate" : mainRole0 === "answer" ? "answer_only" : null);
+  const tbl = !s.keyHow.length || !s.trustHow.length ? takeuchiHowFor(o.scene ?? null, leadKey) : null;
+  // 先に受ける（accept_first）は受けの文の型＝受けが主の番だけ主の行に置く（受け・挨拶・締めは今まで通り）
+  const keyHowEff: KeyHow[] = s.keyHow.length ? s.keyHow : (tbl?.key ?? []).filter((k) => mainRole0 === "uke" || k !== "accept_first");
+  const trustTbl: TrustHow[] = s.trustHow.length ? [] : (tbl?.trust ?? []);
   // 主: 一通の読みの主（AIX の番の主は返信では受けるだけ＝行にしない）
   const mainRole = u.main?.role ?? null;
   if (u.main && mainRole && !aixMain) {
-    rows.push({ rank: "main", role: mainRole, part: join([partOf(u.main), s.keyPoint && s.keyPoint !== u.main.what ? `要点: ${s.keyPoint}` : null], "／"), how: join(s.keyHow.map((k) => KEY_HOW_JA[k])), next: nextJa, from: u.src.main ?? "?" });
+    rows.push({ rank: "main", role: mainRole, part: join([partOf(u.main), s.keyPoint && s.keyPoint !== u.main.what ? `要点: ${s.keyPoint}` : null], "／"), how: join(keyHowEff.map((k) => KEY_HOW_JA[k])), next: nextJa, from: u.src.main ?? "?" });
   } else empty.push(aixMain ? "主（AIX の番＝返信は受けるだけ）" : "主");
   // 従①: 脇の心配（潜在意識のカバー）＝主の答えの後。具体の中身と先回りに使う事実をそのまま渡す
   const lc = s.latentCover;
@@ -289,7 +298,7 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields): Sentenc
   const hasWorry = rows.some((r) => r.role === "worry");
   const trustRest = s.trustHow.filter((t) => !(hasWorry && worryHow.includes(t)));
   if (trustRest.length) rows.push({ rank: "sub", role: "trust", part: appealText && !leadRole ? appealText : null, how: join(trustRest.map((t) => TRUST_HOW_JA[t])), next: null, from: s.src.trustHow ?? "?" });
-  else if (!s.trustHow.length) empty.push("信頼の作り方");
+  else if (!s.trustHow.length && !trustTbl.length) empty.push("信頼の作り方");
   // 従④: 次の一歩（誘導先）。訴求はここに付ける（竹内さんの文の G: 推しは導く先の役目）。押す強さと理由（作業員5 の push）も
   const pushHow = s.push ? (s.push.push ? `押す強さ: ${({ strong: "強（推奨・抑えましょうまで）", mid: "中（如何でしょうか・時間枠）", weak: "弱（お気に召されましたら）" } as const)[s.push.strength ?? "weak"]}${s.push.reason ? `・理由: ${s.push.reason}` : ""}` : `押さない（待つ）${s.push.reason ? `・理由: ${s.push.reason}` : ""}`) : null;
   if (leadRole && leadRole !== mainRole) {
@@ -297,9 +306,14 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields): Sentenc
   } else if (!s.leadTo) empty.push("誘導先");
   if (appealText && !leadRole && !trustRest.length) rows.push({ rank: "sub", role: "trust", part: appealText, how: null, next: null, from: s.src.appeal ?? "?" });
   if (!s.appeal) empty.push("訴求");
-  if (!s.keyHow.length) empty.push("要点の押さえ方");
+  if (!keyHowEff.length) empty.push("要点の押さえ方");
   if (!s.bridge) empty.push("次へのつなぎ");
-  return { rows, aixMain, empty };
+  // 表の信頼の作り方は主の行の「どうやって」に添える（新しい文は作らない）。サポートの姿勢は継続・信頼の行がある番だけ（了承・検討の番に全力サポートを足させない）
+  const mr = rows.find((r) => r.rank === "main");
+  const trustAdd = trustTbl.filter((t) => t !== "support" || rows.some((r) => r.role === "keep" || r.role === "trust"));
+  if (mr && trustAdd.length) mr.how = join([mr.how, `信頼: ${trustAdd.map((t) => TRUST_HOW_JA[t]).join("・")}`], "／");
+  const howSrc = s.keyHow.length || s.trustHow.length ? "turn" : tbl ? "table" : null;
+  return { rows, aixMain, empty, how: { key: keyHowEff, trust: s.trustHow.length ? s.trustHow : trustAdd, src: howSrc, tableKey: tbl?.keyUsed ?? null } };
 }
 
 
@@ -347,8 +361,8 @@ export function understandingCoverage(u: TurnUnderstanding, s: SevenFields, p: S
     誘導先: { got: has(s.leadTo), inPlan: !!main?.next || p.rows.some((r) => r.rank === "sub" && !!s.leadTo && r.role === LEAD_ROLE[s.leadTo]) },
     訴求: { got: has(s.appeal), inPlan: p.rows.some((r) => !!r.part?.startsWith("訴求:")) },
     潜在意識のカバー: { got: has(s.latentCover), inPlan: p.rows.some((r) => r.role === "worry") },
-    要点の押さえ方: { got: s.keyHow.length > 0, inPlan: !!main?.how },
-    信頼の作り方: { got: s.trustHow.length > 0, inPlan: p.rows.some((r) => !!r.how && s.trustHow.some((t) => r.how!.includes(TRUST_HOW_JA[t]))) },
+    要点の押さえ方: { got: s.keyHow.length > 0 || !!p.how?.key.length, inPlan: !!main?.how && !!p.how?.key.some((k) => main.how!.includes(KEY_HOW_JA[k])) },
+    信頼の作り方: { got: s.trustHow.length > 0 || !!p.how?.trust.length, inPlan: p.rows.some((r) => !!r.how && (p.how?.trust ?? s.trustHow).some((t) => r.how!.includes(TRUST_HOW_JA[t]))) },
   };
 }
 
@@ -377,7 +391,7 @@ export function planFieldsOf(u: TurnUnderstanding, s: SevenFields, p: SentencePl
     roles: p.rows.map((r) => r.role), mainRole: main?.role ?? (p.aixMain ? null : u.main?.role ?? null),
     property: u.main?.property ?? null, about: u.main?.about ?? null, part: u.main?.part ?? null,
     leadTo: s.leadTo, bridgeRole: s.bridge?.role ?? lead,
-    appeal: s.appeal?.points ?? [], latent: s.latentCover?.kind ?? null, keyHow: s.keyHow, trustHow: s.trustHow,
+    appeal: s.appeal?.points ?? [], latent: s.latentCover?.kind ?? null, keyHow: s.keyHow.length ? s.keyHow : p.how?.key ?? [], trustHow: s.trustHow.length ? s.trustHow : p.how?.trust ?? [],
   };
 }
 const words = (t: string | null | undefined) => [...new Set(String(t ?? "").normalize("NFKC").match(/[一-龯ァ-ヶーA-Za-z0-9]{2,}/gu) ?? [])];
