@@ -7,7 +7,7 @@
 // 置き場: 統括の名簿（conductor-roles.ts の ROSTER）の近く。roadmap の memory/project_conductor_roadmap.md に1段。
 export type ConductorStage = "read" | "rough" | "detail" | "compose" | "verify" | "exam";
 export type ConductorLink = {
-  id: "intake" | "brain" | "two_stage" | "scene_net" | "rules" | "aix_desk" | "two_msg" | "compose" | "writer" | "final_check" | "exam";
+  id: "intake" | "brain" | "two_stage" | "scene_net" | "rules" | "aix_desk" | "two_msg" | "compose_plan" | "compose" | "writer" | "final_check" | "exam";
   name: string; owner: string; files: string[]; stage: ConductorStage;
   /** 読む印（meta.* / digest.* / trace.*） */
   reads: string[];
@@ -82,6 +82,15 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     reads: ["meta.turn_contract.asks", "meta.action", "meta.conductor_focus（訴求できる場面か）", "meta.analyzed_msg_ts"],
     writes: ["meta.two_message_plan", "digest.tm", "digest.or"],
     switch: "CONDUCTOR_COMBINE（既定 off）・TWO_MESSAGE_PLAN",
+    redecides: [],
+  },
+  {
+    // 2026-11-12 作業員10（KB P1 c3673fba・80586f34）: 一通の読みと竹内さんの7つの欄から1文ずつの設計図。道の確かめは前の答えの brain から設計図の主の行が出るかで見る（exam-path-check.composePlanMarkers）
+    id: "compose_plan", name: "文の統括の1文ずつの設計図（役目・何を・どうやって・次へ・主/従）", owner: "作業員10", stage: "compose",
+    files: ["app/lib/compose-sentence-plan.ts", "app/lib/compose-how-table.ts"],
+    reads: ["meta.turn_read.main/subs", "meta.seven_read", "meta.turn_contract.asks", "meta.appeal_timing", "meta.customer_concern", "場面（compose-how-table）"],
+    writes: ["compose_plan:", "digest.compose_plan"],
+    switch: "COMPOSE_SENTENCE_PLAN（既定 off）",
     redecides: [],
   },
   {

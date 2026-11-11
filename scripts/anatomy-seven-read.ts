@@ -4,7 +4,7 @@
 //   申込以降の番は turn-application-gate で外す・名乗った本名は sevenPrompt の中で伏せる。DB に書かない。
 //   費用の見込み（11/11 の reply_anatomy の実測: 1回 入力約900・出力約210 トークン）: この指示は約2倍＝1回 約 $0.002。
 //     43通×1回 ≈ $0.09（まず Claude Code の 43通の読みと合うかを見る）→ 198通×1回 ≈ $0.4 → 割れを見るなら ×3回 ≈ $1.2。
-// 実行: LLM_TEST_MODE=deepseek-all npx tsx --env-file=<サーバーの鍵のある .env> scripts/anatomy-seven-read.ts [--only=claude43] [--votes=1] [--cap-usd=0.5] [--label=s1]
+// 実行: LLM_TEST_MODE=deepseek-all npx tsx --env-file=<サーバーの鍵のある .env> scripts/anatomy-seven-read.ts [--only=claude43] [--votes=1] [--cap-usd=0.5] [--label=s1] [--mode=latent4]
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { setupLlmTest } from "./lib/llm-test-harness";
@@ -57,15 +57,20 @@ const CACHE = join(process.cwd(), "..", "..", "exam-cache");
       calls++;
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", ...sumoraLlmMarks("reply_anatomy", YUMA_CONVERSATION_ID) },
-        body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 900, system: S.SEVEN_SYSTEM, messages: [{ role: "user", content: user }] }),
+        body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 900, system: latent4 ? S.LATENT_FOUR_SYSTEM : S.SEVEN_SYSTEM, messages: [{ role: "user", content: user }] }),
       });
       if (!res.ok) return null;
       const d = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
-      return S.parseSevenRead(d.content?.find((b) => b.type === "text")?.text ?? "");
+      const txt = d.content?.find((b) => b.type === "text")?.text ?? "";
+      return latent4 ? (S.parseLatentFour(txt) ?? { none: /"none"\s*:\s*true/.test(txt) }) : S.parseSevenRead(txt);
     };
+    // 2026-11-12 --mode=latent4: 潜在だけを4つ（きっかけ・部分・気持ちと強さ・したい事）＋事実・言い方・誘導先で読む（KB d72ad06b）
+    const latent4 = arg("mode") === "latent4";
     const out: Array<Record<string, unknown>> = [];
-    for (let i = 0; i < pick.length; i += 5) {
-      if ((calls + 5 * votes) * 0.002 > capUsd) { console.log(`費用の上限 $${capUsd} の見込みで止めた（${i}/${pick.length}通）`); break; }
+    // 1回の見込み（--est・既定 $0.002）と始める番（--from・途中で止めた続き）。11/12 の実測は夜の安い時間で 1回 約 $0.0005
+    const est = Number(arg("est", "0.002")) || 0.002;
+    for (let i = Number(arg("from", "0")) || 0; i < pick.length; i += 5) {
+      if ((calls + 5 * votes) * est > capUsd) { console.log(`費用の上限 $${capUsd} の見込みで止めた（${i}/${pick.length}通）`); break; }
       await Promise.all(pick.slice(i, i + 5).map(async (id) => {
         const t = turns.get(id)!, r = rows.get(id)!;
         const user = S.sevenPrompt({ maskedCustomer: r.customer_gist, maskedBody: r.body, scene: roles.find((x) => x.id === id)?.scene ?? "", situation: t.v2 });
@@ -77,6 +82,7 @@ const CACHE = join(process.cwd(), "..", "..", "exam-cache");
     const label = arg("label", "s1");
     writeFileSync(join(dir, `seven-${label}.json`), JSON.stringify(out, null, 1));
     // 場面ごとの傾向（1回目の読み）: 押す・強さ・訴求あり・潜在が具体・押さえ方と信頼の作り方の多い順
+    if (latent4) { console.log(`# 潜在の4つ ${arg("label", "s1")}: ${out.length}通・呼び出し ${calls}回`); return; }
     const agg = new Map<string, { n: number; push: number; strong: number; appeal: number; concrete: number; how: Map<string, number>; trust: Map<string, number> }>();
     const inc = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
     for (const o of out) {
