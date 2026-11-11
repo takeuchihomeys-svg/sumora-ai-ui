@@ -6152,6 +6152,14 @@ function _renderModeUI() {
     sel.classList.toggle("on-staff", s.mode === "staff");
     sel.classList.toggle("on-aix", s.mode === "aix");
   }
+  // 2026-11-11: モードを body のクラスに写す（CSS が「自動・AIXモードの時だけ一括検索の帯を出す」のに使う）
+  try {
+    var _b = document.body;
+    if (_b) {
+      _b.classList.remove("mode-normal", "mode-staff", "mode-aix", "mode-ai");
+      _b.classList.add("mode-" + s.mode);
+    }
+  } catch (_) { /* ignore */ }
   var bt = document.getElementById("brain-toggle");
   if (bt) {
     bt.classList.toggle("on", s.brain);

@@ -75,5 +75,17 @@ console.log("\n■ ⑥ 自動（aix）は一覧の行を1件ずつ押す（AIX �
   ok("自動モードの判定は aixMode＋autoModeAt", /return !staffOn && !!s\.aixMode && Number\(s\.autoModeAt\) > 0;/.test(bd));
 }
 
+console.log("\n■ 一括検索の帯（もともとのAIX）は自動・AIXモードの時だけ出る");
+{
+  const html = read("popup.html"), css = read("styles.css"), pj = read("popup.js"), bg = read("background.js");
+  ok("帯のクラスは aklx-auto-only", /id="bulk-toolbar" class="axlx-auto-only"/.test(html));
+  ok("CSS: 自動・AIXモード以外は隠す", /body:not\(\.mode-aix\):not\(\.mode-ai\) \.axlx-auto-only \{ display: none !important; \}/.test(css));
+  ok("popup: モードを body のクラスに写す", /classList\.remove\("mode-normal", "mode-staff", "mode-aix", "mode-ai"\)/.test(pj) && /classList\.add\("mode-" \+ s\.mode\)/.test(pj));
+  ok("background: AIX（ai）も自動の道を開く（一括検索の関所を通す）", /core\.AI_MODE && _m === core\.AI_MODE/.test(bg));
+  ok("background: aiMode の変化でも読み直す", /ch\.staffModeAt \|\| ch\.aiMode\) _refreshAutoModeChosen/.test(bg));
+  ok("3サイトのボタンがある（リアプロ・itandi・レインズ）", /data-bulk-site="realnetpro"/.test(html) && /data-bulk-site="itandi"/.test(html) && /data-bulk-site="reins"/.test(html));
+  ok("ピンポイント／広げての2択がある", /data-bulk-mode="pinpoint"/.test(html) && /data-bulk-mode="wide"/.test(html));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

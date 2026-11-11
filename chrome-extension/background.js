@@ -376,15 +376,18 @@ async function _refreshAutoModeChosen() {
   try {
     var core = self.AxlxModeCore;
     if (!core || !core.GUIDE_ONLY) { _autoModeChosen = true; return; }
-    var st = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode"]);
-    _autoModeChosen = core.effectiveState(st || {}, Date.now()).mode === core.AUTO_MODE;
+    // 2026-11-11 竹内さん「もともとのAIXのようにチェックしたお客さんをリアプロとitandiで一括検索」:
+    //   AIX（ai）も自動の道を開くモードなので、ここで一緒に見る（画面の一括検索の帯も自動・AIXの時に出す）
+    var st = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode", "aiMode"]);
+    var _m = core.effectiveState(st || {}, Date.now()).mode;
+    _autoModeChosen = _m === core.AUTO_MODE || (!!core.AI_MODE && _m === core.AI_MODE);
   } catch (_) { _autoModeChosen = false; }
 }
 try {
   _refreshAutoModeChosen();
   chrome.storage.onChanged.addListener(function (ch, area) {
     if (area !== "local" || !ch) return;
-    if (ch.aixMode || ch.autoModeAt || ch.staffMode || ch.staffModeAt) _refreshAutoModeChosen();
+    if (ch.aixMode || ch.autoModeAt || ch.staffMode || ch.staffModeAt || ch.aiMode) _refreshAutoModeChosen();
   });
 } catch (_) {}
 function _guideOnly() {

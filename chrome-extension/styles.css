@@ -121,6 +121,10 @@ body {
 }
 /* v2.5.77 光って選択するモード: 自動の物（一括検索の帯）は出さない */
 .axlx-guide-only-hidden { display: none !important; }
+/* 2026-11-11 竹内さん「もともとのAIXのようにチェックしたお客さんをリアプロとitandiでそれぞれ検索一括でできる機能」:
+   一括検索の帯は**自動／AIXモードの時だけ**出す（通常・スタッフでは今まで通り隠す）。
+   body のクラス（mode-normal／mode-staff／mode-aix／mode-ai）は popup.js の _renderModeUI が付ける。 */
+body:not(.mode-aix):not(.mode-ai) .axlx-auto-only { display: none !important; }
 /* v2.5.75: ヘッダーの小さな灰色の印（モードの説明はマウスを乗せた時だけ・帯は出さない） */
 .mode-dot { font-size: 12px; color: #94a3b8; cursor: help; padding: 0 2px; user-select: none; }
 .mode-banner {

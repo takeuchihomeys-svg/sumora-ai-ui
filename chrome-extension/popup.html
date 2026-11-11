@@ -83,8 +83,10 @@
       <!-- v2.5.75: 今日対応の絞り込み（押す物なので残す）。色の帯をやめ、小さな灰色の1行 -->
       <div id="today-banner" style="display:none;border-bottom:1px solid #e2e8f0;padding:3px 12px;font-size:11px;color:#475569;cursor:pointer;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
       <div id="customer-list"></div>
-      <!-- v2.5.77: 一括検索（拡張がお客様を順に開いて検索・送る）は光って選択するモードの間は出さない（background も止める） -->
-      <div id="bulk-toolbar" class="axlx-guide-only-hidden" style="display:none">
+      <!-- 2026-11-11 竹内さん「もともとのAIXのようにチェックしたお客さんをリアプロとitandiでそれぞれ検索一括でできる機能はあるかな？」
+           ある（もともとのAIX）。v2.5.77 から .axlx-guide-only-hidden で隠していたが、自動・AIXモードを選べるようにしたので
+           **自動／AIXモードの時だけ出す**（通常・スタッフは今まで通り隠す＝勝手に自動で走らせない） -->
+      <div id="bulk-toolbar" class="axlx-auto-only" style="display:none">
         <span class="bulk-toolbar-count" id="bulk-count-label">0人選択中</span>
         <!-- 2026-09-18 竹内: 一括検索も「広げて検索」でできるようにする（個別検索と同じ2択） -->
         <div class="bulk-mode-toggle" id="bulk-mode-toggle">

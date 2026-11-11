@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-11-11 v2.6.35 チェックしたお客さんをリアプロ・itandi で一括検索（もともとのAIX）を自動・AIXモードで出せるようにする
+
+竹内さん「もともとのAIXのようにチェックしたお客さんをリアプロとItandiでそれぞれ検索一括でできる機能はあるかな？」
+
+### あった（隠していただけ）
+- `popup.html` の `#bulk-toolbar`: チェックした人数・**ピンポイント／広げて**・**リアプロ／itandi／レインズ**・✕。
+- `executeBulkSearch(site)` → `background.js` の `axlx-manual-bulk-search` → お客様を順に開いて検索 → 1件ずつ送る。
+- 2026-10-06「光って選択するモード」の時に `styles.css` の `.axlx-guide-only-hidden { display:none !important; }` で**強制的に隠していた**。
+
+### 直し
+- `#bulk-toolbar` のクラスを `axlx-guide-only-hidden` → **`axlx-auto-only`**。
+- CSS: `body:not(.mode-aix):not(.mode-ai) .axlx-auto-only { display:none !important; }`
+  → **自動／AIXモードの時だけ出す**（通常・スタッフは今まで通り隠す＝勝手に自動で走らせない）。
+- `popup.js` `_renderModeUI`: モードを body のクラス（`mode-normal` / `mode-staff` / `mode-aix` / `mode-ai`）に写す。
+- `background.js` `_refreshAutoModeChosen`: **AIX（ai）も自動の道を開くモード**として見る（一括検索の関所 `_guideOnly()` を通す）。`aiMode` の変化でも読み直す。
+
+### 使い方
+1. モードを **自動** か **AIX（選んだお客さん）** にする
+2. お客さんに**チェック**を入れる → 帯が出る
+3. ピンポイント／広げて を選び、**リアプロ** か **itandi**（レインズも）を押す
+4. お客さんを順に開いて検索し、1件ずつ印刷用PDFを押して売上番長へ送る
+
+### テスト
+- `guide-only-v2577`: 「一括検索の帯は自動・AIXモードの時だけ出す」に更新
+- `ai-customer-mode-v2634`: 帯・3サイト・2択・background の関所を追加（38 OK）
+- 全64ファイル通過
+
+---
+
 ## 2026-11-11 v2.6.34 4つ目に AIX モード（選んだお客さんを自動で検索）
 
 竹内さん「ここの自動で検索の場合、お客さんを押したらできない形かな。それなら4つ目にAIXをつけて、AIXの場合選択したお客さんが自動検索できるようにする。もともとあったの。新着で条件きたりしたらそれもAIXで対応できる形とする」

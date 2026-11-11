@@ -40,7 +40,9 @@ ok("background: 更新・起動のたびに古い値を書き直す", /chrome\.r
 const pp = read("popup.js"), html = read("popup.html");
 ok("popup: モードの選択に3つ（通常・スタッフ・自動）", /<option value="aix">自動<\/option>/.test(html) && /<option value="staff">スタッフ<\/option>/.test(html) && /<option value="normal">通常<\/option>/.test(html));
 ok("popup: 自動モードを通常に落とさない（GUIDE_ONLY でも選べる）", !/if \(core && core\.GUIDE_ONLY && mode === "aix"\) mode = "normal";/.test(pp));
-ok("popup: 一括検索の帯は出さない", /id="bulk-toolbar" class="axlx-guide-only-hidden"/.test(html) && /\.axlx-guide-only-hidden \{ display: none !important; \}/.test(read("styles.css")));
+// 2026-11-11 竹内さん「もともとのAIXのようにチェックしたお客さんをリアプロとitandiで一括検索できる機能はあるかな？」→
+//   ある（もともとのAIX）。v2.5.77 から隠していたのを、**自動・AIXモードの時だけ出す**に変えた（通常・スタッフでは今まで通り隠す）
+ok("popup: 一括検索の帯は自動・AIXモードの時だけ出す", /id="bulk-toolbar" class="axlx-auto-only"/.test(html) && /body:not\(\.mode-aix\):not\(\.mode-ai\) \.axlx-auto-only \{ display: none !important; \}/.test(read("styles.css")) && /_b\.classList\.add\("mode-" \+ s\.mode\)/.test(pp));
 ok("popup: 案内モードは既定 ON・自動モードの時だけ OFF・再開の印は自動モードの時だけ置く",
   /const _guideIt = _isAutoModeNow\(\) \? false :/.test(pp)
   && /const _guideIt = _isAutoModeNow\(\) \? false : \(\(self\.AxlxModeCore && self\.AxlxModeCore\.GUIDE_ONLY\) \? true :/.test(pp)
@@ -67,7 +69,7 @@ for (const f of ["realpro-guide.js", "itandi-guide.js"]) {
 ok("リアプロ: 光の要素は枠だけ（textContent を入れない）", (() => { const s = read("realpro-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 ok("ITANDI: 光の要素は枠だけ", (() => { const s = read("itandi-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest の版 2.5.92（自動モード）", mf.version === "2.6.34");
+ok("manifest の版 2.5.92（自動モード）", mf.version === "2.6.35");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
