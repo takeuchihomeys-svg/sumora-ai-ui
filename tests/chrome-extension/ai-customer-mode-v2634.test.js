@@ -89,6 +89,10 @@ console.log("\n■ 一括検索の帯（もともとのAIX）は自動・AIXモ�
   ok("一括検索は次のお客様まで人の間を置く（連続で開かない）", /次のお客様まで .*秒（人の間）/.test(bg) && /_bulkGapMs = function \(\)/.test(bg));
   ok("間の長さは logNormalDelay（8〜25秒・6回に1回ほど一息40〜90秒）", /logNormalDelay\(14000, 0\.45\)/.test(bg) && /humanChance\(null, 0\.16\)/.test(bg) && /if \(g < 8000\) g = 8000;/.test(bg) && /if \(g > 25000\) g = 25000;/.test(bg));
   ok("間の途中でストップ要求が来たら止まる", /if \(_batchShouldStop\) \{ console\.log\("\[manual-bulk-search\] ストップ要求（間の間） → 中断"\); break; \}/.test(bg));
+  // 2026-11-11 竹内さん「（資料を見る間も）いれる」: 自動モードと同じ 👀 資料を見る間を一括検索にも入れる
+  ok("一括検索も送った後に資料を見る間を置く（自動モードと同じ）", /👀 資料を見る間/.test(bg) && /_H\.logNormalDelay\(3500, 0\.4\)/.test(bg));
+  ok("見る間は 1.8〜13秒・たまに長く見る", /if \(_lookMs < 1800\) _lookMs = 1800;/.test(bg) && /if \(_lookMs > 13000\) _lookMs = 13000;/.test(bg) && /Math\.random\(\) < 0\.05\) _lookMs \+= 3000/.test(bg));
+  ok("見る間の途中でもストップできる", /ストップ要求（資料を見る間） → 中断/.test(bg));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -1864,6 +1864,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 _bulkConds || {},
                 _bulkSite === "itandi" ? "itandi" : "リアプロ"
               );
+              /**
+               * 2026-11-11 竹内さん「ちゃんと自動検索のときのように人間の動き徹底されるか確認おねがい」→「（資料を見る間も）いれる」:
+               *   自動モード（bulk-dl.js の _lookAtDocThenGo）は送った後に 👀 資料を見る間（中央値3.5秒・1.8〜13秒・たまに長く）を置く。
+               *   一括検索（この経路）は送ったらすぐ次のお客様へ移っていたので、同じ間をここにも入れる（送った資料を人が見る形）。
+               */
+              var _lookMs = 3500;
+              try {
+                var _H = self.AxlxHumanWait;
+                if (_H && _H.logNormalDelay) {
+                  _lookMs = _H.logNormalDelay(3500, 0.4);
+                  if (Math.random() < 0.05) _lookMs += 3000 + Math.floor(Math.random() * 3000); // たまに長く見る
+                }
+              } catch (_) { _lookMs = 3500; }
+              if (_lookMs < 1800) _lookMs = 1800;
+              if (_lookMs > 13000) _lookMs = 13000;
+              console.log("[manual-bulk-search] 👀 資料を見る間 " + Math.round(_lookMs / 1000) + "秒（" + (_bc.customer_name || "") + "）");
+              await new Promise(function (r) { setTimeout(r, _lookMs); });
+              if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（資料を見る間） → 中断"); break; }
             }
             // 2026-09-27 v2.5.32: 記録は検索を押せた後（失敗して投げた回は記録しない）
             _recordBulkSearch(_bc, _bulkSite, _bulkIsWide);
