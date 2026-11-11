@@ -763,7 +763,26 @@
   // 選択が消える（解除側 _unclickIfChecked と対称のガードが選択側に無かった欠陥）。
   // 実行時点で未checkedのときだけクリックすることで、同期input（2回目スキップ）と
   // 非同期の同名別駅（両方クリック）の双方で正しく動作する
-  function _clickIfUnchecked(el) { if (!el.checked) _clickEl(el); }
+  function _clickIfUnchecked(el) {
+    if (!el.checked) {
+      _clickEl(el);
+      // 2026-11-11 竹内さん「地域か駅どちらか入っていればそれで場所は選択されている」:
+      //   モーダルを閉じると DOM から消える事があるので、押した駅を覚えておく
+      try {
+        var nm = el.getAttribute && el.getAttribute("name");
+        if (nm === "station_id[]") {
+          var lb = (el.closest && el.closest("label")) || el.parentElement;
+          _noteStationPicked(el.value, lb ? lb.textContent : "");
+        } else if (nm === "route_id[]") {
+          var lb2 = (el.closest && el.closest("label")) || el.parentElement;
+          _noteStationPicked(el.value, lb2 ? lb2.textContent : "");
+        } else if (nm === "city_code[]" || nm === "town_code[]") {
+          var lb3 = (el.closest && el.closest("label")) || el.parentElement;
+          _noteWardPicked(el.value, lb3 ? lb3.textContent : "");
+        }
+      } catch (_) {}
+    }
+  }
   var _clickQueue = [];
   var _clickBusyItem = null; // 2026-11-10 v2.6.8 いま処理中の1件（迷いの漂いの間も「忙しい」）
   // 2026-11-10 v2.6.11: 人が手を止める長い停止（8〜25秒）は**わざと**なので、その間は安全弁を止める
@@ -1306,6 +1325,39 @@
         .map(function (el) { return (el.textContent || el.value || '').replace(/\s+/g, '').slice(0, 20); }).filter(Boolean).slice(0, n || 8);
     } catch (e) { return []; }
   }
+  /**
+   * 2026-11-11 竹内さん「所在地の部分も選択しているのに把握できていない可能性ある。
+   *   ここ選択して入れば場所は選択されているから大丈夫。地域か駅どちらか入っていればそれで場所は選択されている」
+   *
+   * ⚠ リアプロは**モーダルを閉じると区のチェックボックスが DOM から消える**（または隠れる）。
+   *   閉じた後に `input[name="city_code[]"]:checked` を数えると **0 件**になり、
+   *   「場所が入っていない」と誤解して止まる（＝実際は選べているのに止まる）。
+   *   → **自分で選んだ区を覚えておく**（`_axWardPicked`）。DOM に無くても、
+   *     一度も選んでいなければ「無い」、選んだ事があれば「ある」と判定する。
+   *   → 駅・沿線も同じ（`_axStationPicked`）。
+   */
+  var _axWardPicked = {};      // value -> { at, text }
+  var _axStationPicked = {};   // value -> { at, text }
+  var _axPickedAt = 0;
+  function _noteWardPicked(code, text) {
+    try {
+      if (code == null || String(code) === "") return;
+      _axWardPicked[String(code)] = { at: Date.now(), text: String(text || "").slice(0, 24) };
+      _axPickedAt = Date.now();
+    } catch (_) {}
+  }
+  function _noteStationPicked(code, text) {
+    try {
+      if (code == null || String(code) === "") return;
+      _axStationPicked[String(code)] = { at: Date.now(), text: String(text || "").slice(0, 24) };
+      _axPickedAt = Date.now();
+    } catch (_) {}
+  }
+  function _resetPicked() { _axWardPicked = {}; _axStationPicked = {}; _axPickedAt = 0; }
+  /** 覚えている（選んだ）数 */
+  function _pickedCounts() {
+    return { ward: Object.keys(_axWardPicked).length, station: Object.keys(_axStationPicked).length };
+  }
   function _checkedLabelTexts(name) {
     try {
       return Array.prototype.slice.call(document.querySelectorAll('input[name="' + name + '"]:checked')).map(function (inp) {
@@ -1328,6 +1380,13 @@
       f.stations = _checkedLabelTexts('station_id[]');
       f.lines = _checkedLabelTexts('route_id[]');
       f.wards = _checkedLabelTexts('city_code[]').concat(_checkedLabelTexts('town_code[]')).slice(0, 80);
+      // 2026-11-11 竹内さん「地域か駅どちらか入っていればそれで場所は選択されている」:
+      //   モーダルを閉じると DOM から消えるので、**覚えている分**も読み戻しに載せる（点検で「入っている」と分かる）
+      try {
+        var _pk = _pickedCounts();
+        if (!f.wards.length && _pk.ward > 0) f.wards_remembered = Object.keys(_axWardPicked).slice(0, 20);
+        if (!f.stations.length && _pk.station > 0) f.stations_remembered = Object.keys(_axStationPicked).slice(0, 20);
+      } catch (_) {}
     } catch (e) { f.read_error = String((e && e.message) || e).slice(0, 100); }
     return f;
   }
@@ -1480,8 +1539,8 @@
         var c2 = document.querySelector('input[name="city_code[]"][value="' + String(codes[ci2]) + '"]');
         if (!c2) continue;
         var lb2 = (c2.closest && c2.closest('label')) || c2.parentElement || c2;
-        if (c2.checked) { hitByCode++; continue; }
-        if (isVisible(lb2)) { simulateClick(lb2); hitByCode++; }
+        if (c2.checked) { hitByCode++; _noteWardPicked(codes[ci2], lb2.textContent); continue; }
+        if (isVisible(lb2)) { simulateClick(lb2); hitByCode++; _noteWardPicked(codes[ci2], lb2.textContent); }
       }
       if (hitByCode > 0) {
         _auditStepP('ward_by_code', hitByCode + '区（コードで選択）');
@@ -1499,14 +1558,16 @@
         var ltxt = norm(wardLabels[i].textContent);
         if (ltxt !== t && !ltxt.includes(t) && !t.includes(ltxt)) continue;
         var inp = wardLabels[i].querySelector('input[name="city_code[]"]');
-        if (inp && inp.checked && isWardButtonY()) { return true; } // 選択済みかつボタンY → 成功
+        if (inp && inp.checked && isWardButtonY()) { _noteWardPicked(inp.value, wardLabels[i].textContent); return true; } // 選択済みかつボタンY → 成功
         if (inp && inp.checked) {
           // DOM上はcheckedだがボタンがN → サイト内部状態が未反映 → 再クリックで登録し直す
           simulateClick(wardLabels[i]);
+          _noteWardPicked(inp.value, wardLabels[i].textContent);
           return true;
         }
         // 未選択 → フルイベントシーケンスでクリック
         simulateClick(wardLabels[i]);
+        if (inp) _noteWardPicked(inp.value, wardLabels[i].textContent);
         return true;
       }
     }
@@ -1601,6 +1662,18 @@
                     document.querySelectorAll('input[name="town_code[]"]:checked').length;
         var stN = document.querySelectorAll('input[name="station_id[]"]:checked').length +
                   document.querySelectorAll('input[name="route_id[]"]:checked').length;
+        /**
+         * 2026-11-11 竹内さん「所在地の部分も選択しているのに把握できていない可能性ある。
+         *   ここ選択して入れば場所は選択されているから大丈夫。地域か駅どちらか入っていればそれで場所は選択されている」
+         *
+         * ⚠ モーダルを閉じると区・駅のチェックボックスが DOM から消える/隠れるので、
+         *   ここで数えると **0 件**になる（＝選べているのに「場所なし」と誤解して止まる）。
+         * → **自分で選んだ物を覚えている分**も数える（`_pickedCounts`）。
+         */
+        var _picked = _pickedCounts();
+        // 画面に残っている数と、覚えている数の大きい方を使う
+        var wardEff = Math.max(wardN, _picked.ward);
+        var stEff = Math.max(stN, _picked.station);
         // 画面の読み取りに失敗していても、URL に条件が載っていれば場所ありとみなす
         var urlHasArea = false;
         try {
@@ -1609,12 +1682,13 @@
             if (_q.has(k) && String(_q.get(k) || "") !== "") urlHasArea = true;
           });
         } catch (_) {}
-        var hasArea = (wardN > 0) || (stN > 0) || urlHasArea;
+        var hasArea = (wardEff > 0) || (stEff > 0) || urlHasArea;
         if (!hasArea) {
           out.errors.push('場所（' + String(_axExpect.areaText || '').slice(0, 24) + '）が画面に入っていない（区 ' + wardN + '・駅 ' + stN + '）');
         } else {
           // どちらか入っていれば通す。点検に「どちらで入ったか」を残す（誤解の追跡用）
-          out.area_ok_by = (wardN > 0 && stN > 0) ? 'both' : (wardN > 0 ? 'ward' : 'station');
+          out.area_ok_by = (wardEff > 0 && stEff > 0) ? 'both' : (wardEff > 0 ? 'ward' : 'station');
+          out.area_counts = { dom_ward: wardN, dom_station: stN, remembered_ward: _picked.ward, remembered_station: _picked.station };
         }
       }
     } catch (e) { /* 読めない時は止めない（今まで通り） */ }
@@ -2330,6 +2404,8 @@
     //   （background の 905秒より10秒先）。ただし**無進捗で止まった時**は下の _stallWatch が先に止める（15分待たない）。
     _doneNotified = false;
     _axExpect = null; _axGateRetried = false; // v2.5.50 検索を押す前の関所の材料（このお客様の分を下で置く）
+    // 2026-11-11: 前のお客様で選んだ区・駅の覚えを消す（このお客様の分だけを見る）
+    _resetPicked();
     if (_watchdogTimer) clearTimeout(_watchdogTimer);
     _watchdogTimer = setTimeout(function() {
       // 条件入力が未完了のまま clickSearch すると全件検索→LINE誤送信になるため検索しない。

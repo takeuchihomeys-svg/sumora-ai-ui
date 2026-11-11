@@ -57,7 +57,12 @@ console.log("\n■ ③ 2つの判定（batch-guard と page-script）が同じ�
   ok("page-script は「ward の希望でも駅・沿線なら通す」", /c\.area_mode === "ward"\) \{[\s\S]{0,320}if \(_hasStation\(c\)\) return "station";[\s\S]{0,120}if \(_hasRoutes\(c\)\) return "route";/.test(ps));
   ok("page-script は「station の希望でも区なら通す」", /c\.area_mode === "station"\) \{[\s\S]{0,320}if \(_hasWard\(c\)\) return "area";/.test(ps));
   ok("page-script は 'none' を返す前に3つの軸を全部見る", /_hasWard\(c\)\) return "area";\s*return "none";/.test(ps));
-  ok("関所は「区・駅のどちらか入っていれば通す」", /var hasArea = \(wardN > 0\) \|\| \(stN > 0\) \|\| urlHasArea/.test(ps));
+  ok("関所は「区・駅のどちらか入っていれば通す」（覚えている分も数える）", /var hasArea = \(wardEff > 0\) \|\| \(stEff > 0\) \|\| urlHasArea/.test(ps) && /_pickedCounts\(\)/.test(ps));
+  // 2026-11-11 竹内さん「所在地の部分も選択しているのに把握できていない可能性ある」
+  ok("選んだ区・駅を覚えておく（モーダルを閉じると DOM から消えるため）", /function _noteWardPicked/.test(ps) && /function _noteStationPicked/.test(ps));
+  ok("覚えている分と画面の数の大きい方を使う", /Math\.max\(wardN, _picked\.ward\)/.test(ps) && /Math\.max\(stN, _picked\.station\)/.test(ps));
+  ok("お客様ごとに覚えを消す", /_resetPicked\(\);/.test(ps));
+  ok("押した時に覚える（_clickIfUnchecked）", /if \(nm === "station_id\[\]"\)/.test(ps) && /_noteStationPicked\(el\.value/.test(ps));
   ok("URL に条件が載っていても場所ありとみなす（読み取り失敗の保険）", /urlHasArea/.test(ps));
   ok("どちらで入ったかを点検に残す（area_ok_by）", /out\.area_ok_by =/.test(ps));
   ok("控える areaMode は**実際に入れた軸**（希望ではない）", /areaMode: \(function \(\) \{[\s\S]{0,300}if \(lm === 'area'\) return 'ward';/.test(ps));

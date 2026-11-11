@@ -28,7 +28,7 @@ ok("更新日（update_date）を比べる", /update_date/.test(gate) && /更新
 ok("築年数（structured_date）を比べる", /structured_date/.test(gate) && /築年数が画面と違う/.test(gate));
 ok("徒歩（required_time）を比べる", /required_time/.test(gate) && /駅からの徒歩が画面と違う/.test(gate));
 ok("間取り（room_layout_id[]）を数える", /room_layout_id\[\]"\]/.test(gate) && /out\.missingLayout = true/.test(gate) && /間取り（/.test(gate));
-  ok("場所（区・駅）が**どちらも0件**なら止める（片方入っていれば通す）", /場所（/.test(gate) && /city_code\[\]"\]/.test(gate) && /station_id\[\]"\]/.test(gate) && /var hasArea = \(wardN > 0\) \|\| \(stN > 0\) \|\| urlHasArea/.test(gate));
+  ok("場所（区・駅）が**どちらも0件**なら止める（片方入っていれば通す・覚えている分も数える）", /場所（/.test(gate) && /city_code\[\]"\]/.test(gate) && /station_id\[\]"\]/.test(gate) && /var hasArea = \(wardEff > 0\) \|\| \(stEff > 0\) \|\| urlHasArea/.test(gate) && /_pickedCounts\(\)/.test(gate));
 
 console.log("\n■ ② 違えば入れ直してから確かめ直す");
 ok("関所が _axGateCheck を使う", /var _gate = _axGateCheck\(\);/.test(ps));
