@@ -889,7 +889,24 @@
               body: JSON.stringify({ customer_id: customerId }),
             }).catch(function () {});
           }
-          if (onComplete) onComplete(true, sendItems.length);
+          /**
+           * 2026-11-11 竹内さん「リアプロとitandiちゃんと人間の動きになっているか最終確認」:
+           *   リアプロ（bulk-dl.js の _lookAtDocThenGo）は送った後に👀資料を見る間（3.5秒ほど・たまに長く）を置くが、
+           *   ITANDI は送ったらすぐ次へ行っていた。**同じ間を ITANDI にも入れる**。
+           *   長さは auto-run.js の lookAtDocMs（1か所）＝1.8〜13秒・5%で＋3〜6秒。
+           */
+          var _lookMs = 3500;
+          try {
+            if (self.AxlxAutoRun && self.AxlxAutoRun.lookAtDocMs) _lookMs = self.AxlxAutoRun.lookAtDocMs();
+          } catch (_) { _lookMs = 3500; }
+          if (_lookMs < 1800) _lookMs = 1800;
+          if (_lookMs > 13000) _lookMs = 13000;
+          console.log("[AXLX itandi] 👀 資料を見る間 " + Math.round(_lookMs / 1000) + "秒");
+          try {
+            var _cnt = document.getElementById("axlx-itandi-count");
+            if (_cnt) _cnt.textContent = "👀 資料を見る（あと" + Math.round(_lookMs / 1000) + "秒）";
+          } catch (_) {}
+          setTimeout(function () { if (onComplete) onComplete(true, sendItems.length); }, _lookMs);
         });
         return;
       }
