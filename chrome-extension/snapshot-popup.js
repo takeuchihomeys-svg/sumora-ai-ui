@@ -93,6 +93,22 @@
         render(!!ok);
       });
     } catch (_) { render(false); }
+    // 2026-11-11 竹内さん「許可済みになっているはず」: 許可済みなのに写真が撮れない時の理由を出す
+    try {
+      chrome.storage.local.get(["axlx_human_shot_error"], function (r) {
+        var e = r && r.axlx_human_shot_error;
+        var hint = el("snap-perm-hint");
+        if (!e || !hint) return;
+        // 5分以内の失敗だけ出す（古い物は出さない）
+        if (Date.now() - (Number(e.at) || 0) > 5 * 60 * 1000) return;
+        var ja = e.error === "no_permission" ? "許可がまだ効いていません（Chrome を再起動すると効くことがあります）"
+               : e.error === "no_tab" ? "撮るタブが見つかりません"
+               : String(e.error || "").indexOf("capture_error") === 0 ? "画面を撮れませんでした（" + e.error + "）"
+               : "写真を撮れませんでした（" + e.error + "）";
+        hint.style.display = "block";
+        hint.textContent = "⚠ " + ja;
+      });
+    } catch (_) {}
   }
 
   /** 許可を頼む（人のクリックの中で呼ぶ）。だめなら手順を出す */

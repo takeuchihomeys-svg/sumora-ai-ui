@@ -1847,6 +1847,18 @@ var _shotSeq = 0;
 if (msg.type === "axlx-human-shot") {
   (async () => {
     const t0 = Date.now();
+    /**
+     * 2026-11-11 竹内さん「許可済みになっているはず」→ 学習は入るが写真が0枚だった。
+     *   何で失敗したのか分からないと直せないので、**失敗の理由を残す**（コンソール＋最後の理由を storage に）。
+     */
+    const fail = function (error) {
+      try {
+        var o = { axlx_human_shot_error: { error: error, at: Date.now() } };
+        chrome.storage.local.set(o);
+      } catch (_) {}
+      console.warn("[human-shot] 撮れません:", error);
+      sendResponse({ ok: false, error: error, ms: Date.now() - t0 });
+    };
     try {
       const SHOT_TOTAL = 600;      // 全体で残す枚数（1検索 30〜80枚 × 数回分）
       const MIN_GAP_MS = 350;      // これより短い間隔では撮らない（連打対策）
@@ -1856,9 +1868,26 @@ if (msg.type === "axlx-human-shot") {
         return;
       }
       const has = await chrome.permissions.contains({ origins: ["<all_urls>"] }).catch(function () { return false; });
-      if (!has) { sendResponse({ ok: false, error: "no_permission", ms: Date.now() - t0 }); return; }
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab || !tab.windowId) { sendResponse({ ok: false, error: "no_tab", ms: Date.now() - t0 }); return; }
+      if (!has) { fail("no_permission"); return; }
+      /**
+       * 2026-11-11 竹内さん「許可済みになっているはず」:
+       *   `active: true, currentWindow: true` は**サイドパネルが前面の時**に別の窓を指す事がある
+       *   → ① まず今の窓のアクティブなタブ ② 無ければ**リアプロのタブ** ③ それも無ければ今のタブ
+       */
+      let tab = null;
+      try {
+        const act = await chrome.tabs.query({ active: true, currentWindow: true });
+        tab = act && act[0] ? act[0] : null;
+      } catch (_) { tab = null; }
+      if (!tab) {
+        try {
+          const rp = (await chrome.tabs.query({})).filter(function (t) {
+            return t.url && /realnetpro\.com|itandibb\.com|reins\.jp/.test(t.url);
+          });
+          tab = rp.length ? rp[0] : null;
+        } catch (_) { tab = null; }
+      }
+      if (!tab || !tab.windowId) { fail("no_tab"); return; }
       // まとまり（1つの検索の流れ）ごとに番号を振る。10分あいたら新しいまとまり
       if (!_shotRun || t0 - _shotLastAt > 10 * 60 * 1000) {
         _shotRun = t0.toString(36) + "_" + Math.random().toString(36).slice(2, 6);
@@ -1867,8 +1896,15 @@ if (msg.type === "axlx-human-shot") {
       _shotSeq++;
       _shotLastAt = t0;
 
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 55 });
-      if (!dataUrl) { sendResponse({ ok: false, error: "no_image", ms: Date.now() - t0 }); return; }
+      let dataUrl = null;
+      try {
+        dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 55 });
+      } catch (e) {
+        // 2026-11-11: 小窓（サイドパネル・iframe）から呼ぶと失敗する事がある → 理由を残す
+        fail("capture_error: " + String((e && e.message) || e));
+        return;
+      }
+      if (!dataUrl) { fail("no_image"); return; }
 
       // 名前を「まとまり＋連番」にする（並べ替えると操作の流れになる）
       const key = "shot_" + _shotRun + "_" + String(_shotSeq).padStart(4, "0");
