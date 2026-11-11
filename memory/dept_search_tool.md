@@ -61,10 +61,16 @@ v2.6.65 までは「貯めるだけ」だった（`human-learn.js` の頭にも�
 - manifest の順の確認 5ファイルを更新
 - **5回連続で全69ファイル通過・`npx tsc --noEmit` 0**
 
+### ✅ 表を作った（2026-11-11 18:50 竹内さんが Supabase にログイン → SQL エディタで実行）
+`human_motion_learn` を**本番DBに作成済み**（35列・索引3本・RLS 有効）。
+- 作成の確認: `information_schema.columns` で **35列**を確認
+- 書き込みの確認: テストで1行入れて値が正しく入ることを確認 → **その行は削除済み**（現在 0行・`count` で確認）
+- ⚠ ローカルの `.env.local` には `SUPABASE_SERVICE_ROLE_KEY` が無い（anon キーだけ）ため、
+  `scripts/apply-*.ts`（`exec_sql`）は**権限で失敗する**。当てる時は Supabase の SQL エディタで流すか、鍵を入れる
+
 ### ⚠ まだ必要な事（竹内さんの OK 待ち）
-**DB の表 `human_motion_learn` はまだ作っていない**（DDL を `memory/ddl_human_motion_learn.sql` に用意した）。
-決まり「DB の変更は中身を見せて OK をもらってから当てる」に従い、当てる前に確認をもらう。
-表が無い間は、送信が 500 で失敗するだけで**学習・反映は今まで通り PC の中で動く**（止まらない）。
+~~DB の表 `human_motion_learn` はまだ作っていない~~ → **作成済み**（上記）。
+残り: 拡張（v2.6.66）を再読み込みして、通常モードで操作 → 5分後に `/api/human-motion` に届くかを確かめる。
 
 ---
 
