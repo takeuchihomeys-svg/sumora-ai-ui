@@ -12,7 +12,7 @@
 //   週の振り返りの 25%（W45）の外れ 9 のうち 8 は届いた後の番（84b560f4・969f0162・b50fd451）＝ブレインが AIX【申込】・スタッフは返信。
 //   → 判断はブレイン（P0 9eb6aa9c）。ここは事実（届いているか）だけを決め、材料の1行にする。
 //
-// 戻す: APPLY_INTENT_FORM_STATE=off（既定 off・試験の後に統括役が決める）
+// 戻す: APPLY_INTENT_FORM_STATE=off（11/11 既定 on・竹内さんの決定 KB 2385202c）
 
 export type ApplyInfoState = "none" | "form_sent" | "received";
 export type ApplyInfoMsg = { sender: string; text: string | null; created_at: string; image_type?: string | null };
@@ -83,7 +83,7 @@ export function isApplyIntentTurn(customerText: string | null | undefined): bool
 }
 
 export function applyIntentFormStateOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.APPLY_INTENT_FORM_STATE ?? "").trim().toLowerCase() === "on";
+  return (env.APPLY_INTENT_FORM_STATE ?? "").trim().toLowerCase() !== "off"; // 11/11 既定 on（w3-afs-on・on2 確かな悪化0・道/本質の悪化0・竹内さんの決定 2385202c）
 }
 
 /** ブレインに渡す1行（事実だけ・中身の個人の値は書かない）。申込の意思の番でなければ空 */

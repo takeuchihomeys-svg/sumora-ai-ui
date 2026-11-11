@@ -61,8 +61,8 @@ ok(applyInfoBrainLine({ state: "none", at: null, via: null }, "申し込みし�
 ok(applyInfoBrainLine({ state: "received", at: "2026-07-02T17:38:58Z", via: "staff_done" }, "ありがとうございます！") === "", "申込の意思でない番は1字も足さない");
 
 // ── スイッチ・決まりの文 ──
-ok(!applyIntentFormStateOn({}) && applyIntentFormStateOn({ APPLY_INTENT_FORM_STATE: "on" }), "既定 off");
-const oldRule = applyIntentReplyFirstRule({});
+ok(applyIntentFormStateOn({}) && !applyIntentFormStateOn({ APPLY_INTENT_FORM_STATE: "off" }), "既定 on（11/11）・off で止まる");
+const oldRule = applyIntentReplyFirstRule({ APPLY_INTENT_FORM_STATE: "off" });
 const newRule = applyIntentReplyFirstRule({ APPLY_INTENT_FORM_STATE: "on" });
 ok(oldRule.includes("ご入居希望日は何日") && !oldRule.includes("【申込の情報】"), "off の時は今の決まりの文のまま");
 ok(newRule.includes("【申込の情報】") && newRule.includes("aix=\"application_push\"") && newRule.includes("route=\"reply\"") && newRule.endsWith("\n") && !newRule.slice(0, -1).includes("\n"), "on の時は状態ごとの1行");

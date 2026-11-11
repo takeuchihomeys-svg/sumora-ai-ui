@@ -2914,7 +2914,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   }
   // 2026-11-11 作業員3（A2・弱い所 280/386/452/473）: 申込の意思の番だけ、お客様の申込の情報（記入・本人確認書類）がもう届いているかを材料に。
   //   竹内さんの分かれ目は入居希望日でなくここ（まだ→返信＋同じ番にフォーマット／届いた後→返信だけ）。会話の窓（20通）より前の記入も見るため、その会話の該当の通だけ引く（索引: conversation_id）。
-  //   個人の値は渡さない（状態の語と日付だけ）。APPLY_INTENT_FORM_STATE=on の時だけ（既定 off）
+  //   個人の値は渡さない（状態の語と日付だけ）。11/11 既定 on（止める APPLY_INTENT_FORM_STATE=off）
   if (applyIntentFormStateOn() && !isPostApplyStatus(convStatus) && isApplyIntentTurn(unrepliedTurn.text)) {
     try {
       const { data: aiRows } = await supabase

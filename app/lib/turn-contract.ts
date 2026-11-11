@@ -293,7 +293,7 @@ export function applyIntentReplyFirstOn(env: Record<string, string | undefined> 
 export function applyIntentReplyFirstRule(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
   if (!applyIntentReplyFirstOn(env)) return "";
   // 2026-11-11 作業員3（A2・弱い所 280/386/452/473）: 分かれ目は入居希望日でなく【申込の情報】が届いているか（apply-info-state.ts の数）。APPLY_INTENT_FORM_STATE=on の時だけ
-  if ((env.APPLY_INTENT_FORM_STATE ?? "").trim().toLowerCase() === "on") return APPLY_INTENT_FORM_STATE_RULE;
+  if ((env.APPLY_INTENT_FORM_STATE ?? "").trim().toLowerCase() !== "off") return APPLY_INTENT_FORM_STATE_RULE;
   return "- ★お客様が「申込したい」「ここ押さえられますか」と申込の意思を言った番。読み方: 先に返信で受ける番（竹内さん本人の200日 21番: 返信で受けた 16・申込の AIX を先に 4／返信で受けた番で同じ番にフォーマットを続けたのは 3/14）。route=\"reply\"・aix は空にして「かしこまりました！！〇〇号室お申込みさせていただきます！！」で受け、ご入居希望日がまだ会話に無ければ聞く。申込のフォーマット（AIX【申込】）は入居希望日が分かった後の番で送る。既にフォーマットを送り記入済みの時は「以前いただきましたご情報でお申し込み可能ですので追加で必要な書類は現時点でございません」と返す（竹内さん 11/03）。入居希望日も分かっていて「ここで審査通してください」と今すぐ審査を頼まれた番は今まで通り AIX【申込】（竹内さん 11/06）。竹内さんの一手（11/05・「この部屋でお申し込みさせていただきたいです！」）: 「かしこまりました！！\\nお部屋お申込みさせていただきます😊！！\\n\\n即日ご入居可能となり、審査通過次第ご入居可能となりますが、ご入居希望日は何日となりますでしょうか！！」。\n";
 }
 /** 2026-11-11 作業員3: 申込の意思の番の読み方（【申込の情報】の3つの状態ごとの竹内さんの一手・1行） */
