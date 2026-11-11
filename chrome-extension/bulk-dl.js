@@ -563,6 +563,25 @@
     if (_autoPdfRun || !_autoModeOn || _staffModeOn) return;
     if (_guideBlocksAuto("autoOnLoad")) return;
     if (tracked.length === 0) return;
+    /**
+     * 2026-11-11 竹内さん「AD順などするときにページ更新してしまっている。ページ更新すると拡張ツールの検索のところが
+     *   閉じてしまうのにそのまま物件取得にうつってしまうので全物件が対象となってしまう」
+     *
+     *   ⚠ AD順へ移った直後は**条件が効いていない一覧（全物件）**の事がある。
+     *     そこで押し始めると**全物件を送ってしまう**（一番まずい）。
+     *   → 並び替えで飛んだ直後（`axlx_ad_sort_pending` が新しい）は、
+     *     **本当にその検索の一覧か**を確かめてから押す。確かめられなければ**押さない**。
+     */
+    if (_adSortJustHappened()) {
+      var _okSearch = _looksLikeSearchResult();
+      if (!_okSearch) {
+        console.warn("[AXLX bulk-dl][auto] AD順に移った直後だが、検索の条件が効いているか確かめられない → **押さない**（全物件を送らないため）");
+        _tmark("auto_pdf_load", "blocked_after_sort");
+        _nudge("⚠ 並べ替えの後に条件が消えている可能性 → 自動で押しません");
+        return;
+      }
+      console.log("[AXLX bulk-dl][auto] AD順に移った直後・条件が効いている一覧 → 押します");
+    }
     var sig = tracked.map(function (t) { return _urlKey(t.btn && t.btn.href); }).join(",").slice(0, 3000);
     if (!sig || sig === _autoPdfSig) return;
     // まだ1件も押していない一覧だけ（既に送った行がある一覧の描き直しでは始めない）
@@ -573,6 +592,51 @@
     _tmark("auto_pdf_load", "rows=" + tracked.length);
     _startAutoPressAfterLook(tracked.length);
   }
+
+  /**
+   * 2026-11-11 竹内さん「AD順などするときにページ更新してしまっている」:
+   *   直近20秒以内に「AD順へ移った」印があるか（＝この読み込みは並び替えのための物）
+   */
+  var _adSortChecked = false;
+  function _adSortJustHappened() {
+    if (_adSortChecked) return false;   // 1回だけ見る（毎回ブロックしない）
+    _adSortChecked = true;
+    try {
+      // 同期では読めないので、印は起動時に読んでおく（下の _readAdSortPending）
+      return !!window.__axlxAdSortPending && (Date.now() - Number(window.__axlxAdSortPending.at || 0) < 20000);
+    } catch (_) { return false; }
+  }
+  /** 検索の条件が効いている一覧に見えるか（全物件ではないか）を、URLと画面の印で見る */
+  function _looksLikeSearchResult() {
+    try {
+      var p = new URLSearchParams(location.search);
+      // URL に条件が載っている（所在地・駅・賃料など）
+      var keys = ["city_code", "station_id", "route_id", "rental_cost1", "rental_cost2", "update_date", "room_layout", "square_meter"];
+      for (var i = 0; i < keys.length; i++) {
+        if (p.has(keys[i]) || (p.has(keys[i] + "[]") && p.get(keys[i] + "[]"))) return true;
+      }
+      // URL に無くても、フォームに条件が入っていれば「条件つきの検索」の結果
+      var formOk = 0;
+      if (document.querySelector('select[name="rental_cost2"]')) {
+        var r2 = document.querySelector('select[name="rental_cost2"]');
+        if (r2 && r2.value && r2.value !== "-1") formOk++;
+      }
+      var checkedWard = document.querySelectorAll('input[name="city_code[]"]:checked').length;
+      var checkedSt = document.querySelectorAll('input[name="station_id[]"]:checked').length;
+      if (checkedWard || checkedSt) formOk++;
+      // 画面の上に「大阪 16338棟」のような全件の数が出ている時は条件なしとみなす
+      var totalAll = /（?全件）?|\b163\d\d\b/.test(String(document.body ? document.body.textContent.slice(0, 3000) : ""));
+      if (formOk > 0) return true;
+      return false;
+    } catch (_) { return false; }
+  }
+  // 起動時に「AD順へ移った印」を読む（読み込み直しても分かるように）
+  try {
+    chrome.storage.session.get(["axlx_ad_sort_pending"], function (r) {
+      var v = r && r.axlx_ad_sort_pending;
+      if (v && Date.now() - Number(v.at || 0) < 60000) window.__axlxAdSortPending = v;
+    });
+  } catch (_) {}
 
   /**
    * 2026-11-11 竹内さん「検索して決定おしたら検索結果の部分で一息つくなど。人間のように区切って一息つく部分。
@@ -898,13 +962,51 @@
     if (_allowAd && !_isAdDesc) {
       var _adLink = document.querySelector('a[href*="key=ad&"][href*="odr=desc"]');
       if (_adLink && _adLink.href) {
-        _tmark("ad_sort", "go");
-        console.log("[AXLX bulk-dl][auto] AD 高い順に並べ替えてから押します");
+        /**
+         * 2026-11-11 竹内さん「自動検索でお客さん指定したときページが更新されて条件検索されずに
+         *   そのまま物件をダウンロードしてしまうバグ。おそらくAD順などするときにページ更新してしまっている。
+         *   ページ更新すると拡張ツールの検索のところが閉じてしまうのにそのまま物件取得にうつってしまうので
+         *   全物件が対象となってしまう」
+         *
+         * 原因: `location.href = _adLink.href` で**ページ全体を読み込み直していた**。
+         *   AD順のリンクは**検索条件をURLに載せていない**（`key=ad&odr=desc` だけ）ので、
+         *   飛んだ先は**条件なし＝全物件**の一覧になる。しかも読み込み直すと拡張の検索の状態が消え、
+         *   `_maybeAutoPressOnLoad`（一覧が出たら自動で押す）が**全物件を対象に押し始める**。
+         *
+         * 直し: **条件を保ったまま並び替える**。
+         *   ① いまの検索条件（URLのクエリ）を残したまま `key=ad&odr=desc` を足して移動する
+         *      → 飛んだ先も同じ条件の一覧になる（全物件にならない）
+         *   ② 移動する前に「どのお客様の検索だったか」を storage に残す（読み込み直しても分かるように）
+         *   ③ 飛んだ先で**条件が効いているか**を確かめてから押す（効いていなければ押さない）
+         */
+        _tmark("ad_sort", "go-keep-conditions");
+        console.log("[AXLX bulk-dl][auto] AD 高い順に並べ替えます（検索条件は保ったまま）");
         _nudge("🔀 AD 高い順に並べ替えます");
-        // 人が結果を見て並び替えを選ぶ間（0.7〜1.35秒）を置いてから移る
+        // ② 誰の検索だったかを残す（読み込み直しても続きが分かる）
+        try {
+          chrome.storage.session.set({
+            axlx_ad_sort_pending: {
+              at: Date.now(),
+              customerId: _pickCustomerIdForAuto() || null,
+              from: location.href,
+              // 条件の指紋（同じ条件の一覧かどうかを後で見分ける）
+              sig: tracked.length + ":" + String(document.body ? document.body.textContent.length : 0),
+            },
+          });
+        } catch (_) {}
+        // ① 条件を残したまま並び替えのクエリだけ足す
+        var _u = new URL(_adLink.href, location.href);
+        var _cur = new URLSearchParams(location.search);
+        _cur.forEach(function (v, k) {
+          // 並び替えのキーは上書きする（二重に足さない）
+          if (k === "key" || k === "odr") return;
+          if (!_u.searchParams.has(k)) _u.searchParams.set(k, v);
+        });
+        _u.searchParams.set("key", "ad");
+        _u.searchParams.set("odr", "desc");
         var _wait = _hd(900);
-        setTimeout(function () { location.href = _adLink.href; }, _wait);
-        return { ok: true, sorting: true };
+        setTimeout(function () { location.href = _u.toString(); }, _wait);
+        return { ok: true, sorting: true, kept: true };
       }
       _tmark("ad_sort", "no-link");
       console.warn("[AXLX bulk-dl][auto] AD 高い順のリンクが見つかりません（この並びのまま押します）");

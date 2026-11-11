@@ -4,6 +4,66 @@
 
 ---
 
+## 2026-11-11 v2.6.86 AD順へ並べ替える時に**検索条件が消えて全物件になる**バグ（最重要）
+
+竹内さん「**自動検索でお客さん指定したときページが更新されて条件検索されずにそのまま物件をダウンロードしてしまうバグが起きるときある**。
+おそらく**AD順などするときにページ更新してしまっている**可能性ある。ページ更新すると飛んでしまうので
+拡張ツールの検索のところが閉じてしまうのにそのまま物件取得にうつってしまうので**全物件が対象となってしまう**」
+
+### 原因（竹内さんの推測どおりだった）
+
+`bulk-dl.js` の `autoPressPdfs()`:
+
+```js
+var _adLink = document.querySelector('a[href*="key=ad&"][href*="odr=desc"]');
+setTimeout(function () { location.href = _adLink.href; }, _wait);   // ← ここ
+```
+
+**`_adLink.href` は検索条件をURLに載せていない**（`key=ad&odr=desc` だけ）。
+つまり:
+
+1. 検索して一覧が出る（条件が効いている）
+2. AD順へ移るため `location.href = ...` で**ページ全体を読み込み直す**
+3. 飛んだ先は**条件なし＝全物件の一覧**（16338棟）
+4. 読み込み直したので拡張の検索の状態は消える
+5. しかし `_maybeAutoPressOnLoad()`（一覧が出たら自動で押す）が動き、**全物件を押し始める**
+
+### 直し（3つ）
+
+**① 条件を残したまま並び替える**
+
+```js
+var _u = new URL(_adLink.href, location.href);
+var _cur = new URLSearchParams(location.search);
+_cur.forEach(function (v, k) {
+  if (k === "key" || k === "odr") return;      // 並び替えのキーは上書き
+  if (!_u.searchParams.has(k)) _u.searchParams.set(k, v);
+});
+_u.searchParams.set("key", "ad");
+_u.searchParams.set("odr", "desc");
+location.href = _u.toString();                  // ← 条件つきのURL
+```
+
+**② 読み込み直しても「誰の検索だったか」が分かる**
+
+移る前に `chrome.storage.session` の `axlx_ad_sort_pending` に `{at, customerId, from, sig}` を残す。起動時に読む。
+
+**③ 条件が効いていない一覧では押さない**（一番大事）
+
+- `_adSortJustHappened()` … 直近20秒以内にAD順へ移った印があるか（**1回だけ**判定＝毎回ブロックしない）
+- `_looksLikeSearchResult()` … URLの条件（`city_code` / `station_id` / `rental_cost1/2` / `update_date` / `room_layout` / `square_meter`）と、
+  フォームの状態（区・駅のチェック、賃料の選択値）を見る
+- 確かめられなければ **押さない**（`blocked_after_sort`・枠に「⚠ 並べ替えの後に条件が消えている可能性 → 自動で押しません」）
+
+**全物件を送ってしまうのが一番まずい**ので、疑わしければ**送らない**側に倒した。
+
+### テスト
+- **新規 `ad-sort-keeps-conditions-v2686.test.js`（22件）**
+- 既存の `auto-run.test.js` の1件は**古い（危険な）動きを正としていた**ので新しい動きに更新
+- **3回連続で全77ファイル通過・`npx tsc --noEmit` 0**
+
+---
+
 ## 2026-11-11 v2.6.82 「通常モード（案内）は押す場所を分かっているのに、自動モードでは分かっていない」の原因
 
 竹内さん「もともとの通常モードでのアナウンスとかでも押す場所や賃料等の条件理解しているから、

@@ -122,7 +122,11 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("popup: ITANDI の条件に sort_order・max_pages", /sort_order: _autoSort_it,\s*max_pages: _autoMaxPages_it,/.test(pp));
   ok("popup: dataset は await より前に読む", /const _autoSort = autofillBtn\.dataset\.auto_sort \|\| null;/.test(pp) && /const _autoSort_it = autofillBtn\.dataset\.auto_sort \|\| null;/.test(pp));
   const bd = read("bulk-dl.js");
-  ok("bulk-dl: 自動の押下の前に AD 高い順へ並べ替える", /function autoPressPdfs\(\)[\s\S]{0,2600}location\.href = _adLink\.href/.test(bd) && /AD 高い順に並べ替えてから押します/.test(bd));
+  // 2026-11-11 竹内さん「AD順などするときにページ更新してしまっている。ページ更新すると拡張ツールの検索のところが
+//   閉じてしまうのにそのまま物件取得にうつってしまうので全物件が対象となってしまう」:
+//   旧は `location.href = _adLink.href`（条件が消える）だった。今は**条件を残したまま**並び替える。
+ok("bulk-dl: 自動の押下の前に AD 高い順へ並べ替える（検索条件は保つ）", /function autoPressPdfs\(\)[\s\S]{0,3000}AD 高い順に並べ替えます（検索条件は保ったまま）/.test(bd) && /_u\.searchParams\.set\("key", "ad"\)/.test(bd));
+ok("bulk-dl: 元の href にそのまま飛ばない（全物件にならない）", !/location\.href = _adLink\.href;/.test(bd));
   ok("bulk-dl: 午後の便（更新順）は並べ替えない（allowAdSort）", /_AR\(\)\.allowAdSort\(_arOpts\)/.test(bd) && /更新順の指定 → AD へ並べ替えずに押します/.test(bd));
   ok("bulk-dl: 既に AD 高い順なら並べ替えない", /_isAdDesc/.test(bd));
   // 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」: 既定は auto-run.js DEFAULT_MAX_PAGES（5）・読めない時も 5
@@ -133,7 +137,7 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("itandi-bulk-dl: 上限で止めた時も完了の合図（audit 付き・page_limit）", /_itAuditResult\(\{ page_limit: _itLimit \}\)/.test(ib));
   ok("itandi-bulk-dl: 指定は itandi の物だけ読む", /forCustomer\(_autoRunStored, customerId, "itandi", Date\.now\(\)\)/.test(ib));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.6.85");
+  eq("manifest の版", mf.version, "2.6.86");
   const cs = mf.content_scripts.map((c) => c.js.join(","));
   ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,autorun-note.js,sent-skip.js,update-order-stop.js,bulk-dl.js"));
   ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,autorun-note.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
