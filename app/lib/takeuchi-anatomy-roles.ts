@@ -7,6 +7,8 @@
 //   書き手の設計図・採点にはまだ使わない（型が見えてから・既定 off・試験で悪化0）。
 // テスト: app/lib/__tests__/takeuchi-anatomy-roles.test.ts
 
+import { maskSelfNamesPair } from "./self-name-mask";
+
 /** 文の役目（竹内さんの言葉: 要点・信頼・障壁・内覧へ・申込へ 等） */
 export const SENTENCE_ROLES = [
   "greet",    // 名前と挨拶（お世話になっております）
@@ -78,7 +80,10 @@ export const ROLES_SYSTEM = [
 ].join("\n");
 
 /** 下読みに渡すのは伏せ済みの物だけ（申込の書類以降は呼ぶ側で外す） */
-export function rolesPrompt(o: { maskedCustomer: string | null; sentences: string[]; scene: string; situation?: string | null }): string {
+export function rolesPrompt(o0: { maskedCustomer: string | null; sentences: string[]; scene: string; situation?: string | null }): string {
+  // 2026-11-11 作業員5: 外の LLM の直前に、お客様が名乗った本名を伏せ、その名前を竹内さんの文からも伏せる（self-name-mask・既定 on・止める SELF_NAME_MASK=off）
+  const sm = maskSelfNamesPair(o0.maskedCustomer, o0.sentences.join("\u0000"));
+  const o = { ...o0, maskedCustomer: sm.customer, sentences: sm.staff.split("\u0000") };
   return `## 場面\n${o.scene}\n\n${o.situation ? `## その番の時点の状況（伏せ済み）\n${o.situation.slice(0, 500)}\n\n` : ""}## お客様の発言（伏せ済み）\n${(o.maskedCustomer ?? "（こちらから送った番）").slice(0, 300)}\n\n## 竹内さんの返信（文の番号つき・伏せ済み）\n${o.sentences.slice(0, 20).map((s, i) => `${i + 1}. ${s.slice(0, 160)}`).join("\n")}`;
 }
 
