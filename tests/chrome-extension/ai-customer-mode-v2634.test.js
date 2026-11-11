@@ -189,6 +189,10 @@ console.log("\n■ 押す順（資料を上から全部順にしていない）�
   ok("押す直前に狙いを定める間（90〜350ms）", /var gap = 90 \+ Math\.floor\(Math\.random\(\) \* 260\)/.test(src));
   ok("たまに狙いを外して戻る（wander 10%）", /Math\.random\(\) < 0\.10 && P && P\.wander/.test(src));
   ok("迷いは最大5.2秒で打ち切る（止まって見せない）", /if \(hesitate > 5200\) hesitate = 5200;/.test(src));
+  // 2026-11-11 スクロール待ちの揺らぎ（同じ距離でも毎回ちがう・page-script.js の _ensureInView）
+  const psrc = fs3.readFileSync(path.join(dir, "page-script.js"), "utf8");
+  ok("スクロール待ちが距離だけで決まらない（logNormalDelay で揺らす）", /H\.logNormalDelay\(base, 0\.3\)/.test(psrc) && /遠い時は目で追う/.test(psrc));
+  ok("スクロール位置は最小移動のまま（真ん中へ寄せて往復しない）", /block: "nearest", inline: "nearest"/.test(psrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

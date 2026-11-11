@@ -793,7 +793,7 @@
     } catch (_) { base = 3500; }
     if (base < 1800) base = 1800;
     if (base > 13000) base = 13000;
-    try { if (item.btn && item.btn.scrollIntoView) item.btn.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+    _humanScrollToEl(item.btn);
     _onePdfBadge(item, "look");
     var el = document.getElementById("axlx-count");
     if (el) el.textContent = "👀 資料を確認中…（" + Math.round(base / 1000) + "秒ほど）";
@@ -975,7 +975,7 @@
     var fire = function () {
       if (fired) return;
       fired = true;
-      try { btn.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+      _humanScrollToEl(btn);
       /**
        * 2026-11-11 竹内さん「ボタンを押す際のたまにある迷いや選択の部分も人間のように動くよう」:
        *   押す前に「ためらい」を入れる（人が『これでいいかな』と手を止める形）。
@@ -1029,6 +1029,17 @@
       // カーソルが動けない時も必ず押す（止まらない）
       setTimeout(function () { if (!fired) fire(); }, 3000);
     } else fire();
+  }
+  /**
+   * 2026-11-11 竹内さん「弱い部分あれば人間の動きになるように強化する」:
+   *   その行を画面に入れる。⚠ 2026-10-06 v2.6.12 の決定「真ん中へ寄せて細かく往復しない」は今も守る
+   *   （block を center/start に散らすと、行が上下して画面が暴れる）。人の揺らぎは待ち時間の方で出す。
+   */
+  function _humanScrollToEl(el) {
+    if (!el || !el.scrollIntoView) return;
+    try { el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" }); } catch (_) {
+      try { el.scrollIntoView(); } catch (__) {}
+    }
   }
   /** 1件の処理（送信中・確認中）が終わるまで待つ */
   function _waitPdfIdle(cb) {
@@ -2362,7 +2373,7 @@
     var el = _findNextPageEl();
     if (!el) return false;
     // 2026-11-10 人間的な動き: 押す前に、ボタンが画面に入るまで少しずつ動かす（人が一覧の下まで目で追う形）
-    try { el.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) { try { el.scrollIntoView(); } catch (__) {} }
+    _humanScrollToEl(el);
     el.click();
     console.log("[AXLX bulk-dl] clickNextPageBtn: クリック完了 tag=" + el.tagName);
     return true;
@@ -2622,7 +2633,7 @@
     function _humanClickCb(cb) {
       if (!cb) return;
       var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
-      try { cb.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+      _humanScrollToEl(cb);
       var fire = function () { try { if (cb.isConnected && !cb.checked) cb.click(); } catch (_) {} };
       // 2026-11-10 竹内さん「ボタン選択する際人間ならたまにまよう」: 1件ずつ選ぶ所は人が一番迷う。
       //   15%ほどで迷い（3段: 一瞬250〜600／考え込む700〜1600／かなり1800〜4500）を足してから押す

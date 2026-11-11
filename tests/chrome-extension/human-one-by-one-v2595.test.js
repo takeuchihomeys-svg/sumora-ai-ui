@@ -48,7 +48,7 @@ ok("チェックが入るまで待ってから送る（最大8秒＝16回×500ms
 console.log("\n■ ④ 押す前の人の動き（bulk-dl.js の中で完結）");
 ok("cursor を動かしてから押す（_humanClickCb）", /function _humanClickCb\(cb\)/.test(bd) && /P\.moveToEl\(cb\)/.test(bd));
 ok("page-script の enqueueHumanClick / _clickEl を呼んでいない（参照エラーで止まっていた）", !/enqueueHumanClick\(/.test(bdCode) && !/\b_clickEl\(/.test(bdCode));
-ok("押す前に画面へ入れる（scrollIntoView）", /_humanClickCb[\s\S]{0,300}scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/.test(bd));
+ok("押す前に画面へ入れる（_humanScrollToEl・最小移動で真ん中へ寄せない）", /_humanClickCb[\s\S]{0,300}_humanScrollToEl\(cb\)/.test(bd) && /function _humanScrollToEl[\s\S]{0,300}block: "nearest"/.test(bd));
 
 console.log("\n■ ⑤ 送らない行はチェックを触らずに判定");
 ok("_rowSkipReason がある（送付済み・前回より古い）", /function _rowSkipReason\(state, item\)/.test(bd));

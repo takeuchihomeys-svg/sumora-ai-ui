@@ -416,11 +416,28 @@
       _lastScrollAt = now;
       _lastScrollDir = dir;
       // 最小の移動で見える位置へ（真ん中へは寄せない）
+      // ⚠ 2026-10-06 v2.6.12 の決定「細かく往復しない」は今も守る（block を center/start に散らすと行ったり来たりする）。
+      //   人の揺らぎは「スクロール位置」ではなく**待ち時間**で出す（下の wait）。
       el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
       // スムーズの動きが終わるのを待つ（人が目で追う時間・距離に応じて 250〜700ms）
+      /**
+       * 2026-11-11 竹内さん「弱い部分あれば人間の動きになるように強化する」:
+       *   旧は `距離×1.2` を 250〜700ms に丸めるだけ＝**同じ距離なら必ず同じ待ち**（決定的・機械的）。
+       *   新: 距離の比例を「下限」にして、その上に **人の揺らぎ**（0.8〜1.6倍・たまに長く見る）を足す。
+       *   遠くへ動いた時は「目で追って少し確認する」時間も足す（距離200px超で 1〜3割増し）。
+       */
       var dist = r.top < margin ? -(r.top - margin) : (r.bottom - (vh - margin));
-      var wait = Math.min(700, Math.max(250, Math.round(Math.abs(dist) * 1.2)));
-      return wait;
+      var base = Math.min(700, Math.max(250, Math.round(Math.abs(dist) * 1.2)));
+      var H = window.AxlxHumanWait;
+      var wait;
+      if (H && H.logNormalDelay) {
+        wait = H.logNormalDelay(base, 0.3);           // 同じ距離でも毎回ちがう
+        if (Math.abs(dist) > 200 && Math.random() < 0.3) wait += 200 + Math.floor(Math.random() * 500); // 遠い時は目で追う
+        if (Math.random() < 0.06) wait += 400 + Math.floor(Math.random() * 900); // たまに長く見る
+      } else {
+        wait = base * (0.8 + Math.random() * 0.8);
+      }
+      return Math.min(2200, Math.max(180, Math.round(wait)));
     } catch (_) { return 0; }
   }
   // 2026-11-10 人間的な動き: マウスが要素まで「動いて」から押す。人の軌跡（少し曲がる）をなぞって

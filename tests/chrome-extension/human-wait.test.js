@@ -326,7 +326,7 @@ console.log("\n■ ⑦ マウスの軌跡（pointerPath・まっすぐでない�
   ok("リアプロ: 押すのは最後の1回だけ（二重に効かせない）", /try \{ fire\(el\); \}/.test(ps) && (ps.match(/_humanPointerClick\(/g) || []).length >= 2);
   ok("ITANDI: 短い欄は1文字ずつ打つ（setReactValAsync）", /function setReactValAsync\(el, val\)/.test(ips) && /setter\.call\(el, s\.slice\(0, i\)\)/.test(ips));
   ok("ITANDI: スクロールは一瞬で飛ばさない（smoothScrollTo）", /function smoothScrollTo\(el\)/.test(ips) && /scrollIntoView\(\{ behavior: "smooth"/.test(ips) && !/behavior: "instant"/.test(ips));
-  ok("一覧の次ページも押す前に画面へ入れる（リアプロ・ITANDI）", /el\.scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/.test(read("bulk-dl.js")) && /nextBtn\.scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/.test(read("itandi-bulk-dl.js")));
+  ok("一覧の次ページも押す前に画面へ入れる（リアプロ・ITANDI）", /_humanScrollToEl\(el\)/.test(read("bulk-dl.js")) && /nextBtn\.scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/.test(read("itandi-bulk-dl.js")));
   ok("案内モードの光はスクロールしても位置を直す（既存の仕組みのまま）", /addEventListener\("scroll", repositionSoon, true\)/.test(read("realpro-guide.js")));
 }
 
