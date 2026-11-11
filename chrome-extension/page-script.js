@@ -2344,6 +2344,20 @@
           var n = _audit && _audit.ops ? _audit.ops.length : 0;
           if (n !== _lastCount) { _lastCount = n; _sameSince = Date.now(); return; }
           if (Date.now() - _sameSince < 180000) return;
+          /**
+           * 2026-11-11 竹内さん「あと検索もとまらないように」:
+           *   ⚠ 旧は止まったら**検索を押さずに中断**していた（＝物件が出ないまま終わる）。
+           *   → 止まる直前に**条件が入っているか**を見て、入っていれば**検索を押して**から終わる。
+           *     入っていなければ今まで通り止める（全件検索はしない）。
+           */
+          var _gateNow = _axGateCheck();
+          var _areaMissing = _gateNow.errors.some(function (m) { return String(m).indexOf('場所') === 0; });
+          if (!_areaMissing) {
+            console.warn('[AX] 180秒 操作が進まない → 条件は入っているので**検索を押してから**終わります');
+            _auditStepP('stall_recover_search', '条件あり → 検索を押す');
+            try { clickSearch(); } catch (_) {}
+            return;   // clickSearch が notifyDone を呼ぶ（ここでは止めない）
+          }
           console.warn('[AX] 180秒 操作が進まない → 止まったと判断して中断');
           _auditStall();
           clearInterval(window.__axStallWatch);
@@ -2964,8 +2978,17 @@
 
         function closeAreaModal() {
           var d = document.querySelector('div.this_window_close');
-          if (d && isVisible(d)) { d.click(); return true; }
-          return clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
+          if (d && isVisible(d)) { _humanPointerClick(d, function () { try { d.click(); } catch (_) {} }); return true; }
+          // 2026-11-11 竹内さん「検索のボタンの場所2か所あることもちゃんと理解する」:
+          //   所在地モーダルの中の「確定してリストへ」は**小窓の中のボタン**。左のサイドバーの検索とは別物。
+          //   ここでは小窓の中の「確定してリストへ」を押すのが正しい（押した事を点検に残す）。
+          var conf = _findByText(['確定してリストへ', 'この条件で絞り込む', '決定']);
+          if (conf) {
+            if (_audit) _auditStepP('modal_confirm', '確定してリストへ');
+            _humanPointerClick(conf, function () { try { conf.click(); } catch (_) {} });
+            return true;
+          }
+          return clickByText(['×とじる', '× とじる', 'とじる', '閉じる']);
         }
 
         // 所在地モーダル操作がタイムアウトした場合のフォールバック:
@@ -3252,8 +3275,15 @@
     // 沿線・駅モーダル：waitForClick方式（必ず駅が選択されるまでリトライ）
     function closeStationModal() {
       var d = document.querySelector('div.this_window_close');
-      if (d && isVisible(d)) { d.click(); return true; }
-      return clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる']);
+      if (d && isVisible(d)) { _humanPointerClick(d, function () { try { d.click(); } catch (_) {} }); return true; }
+      // 2026-11-11: 小窓の中の「確定してリストへ」（左のサイドバーの検索とは別物）
+      var conf = _findByText(['確定してリストへ', 'この条件で絞り込む', '決定']);
+      if (conf) {
+        if (_audit) _auditStepP('station_confirm', '確定してリストへ');
+        _humanPointerClick(conf, function () { try { conf.click(); } catch (_) {} });
+        return true;
+      }
+      return clickByText(['×とじる', '× とじる', 'とじる']);
     }
 
     // 沿線・駅モーダル操作がタイムアウトした場合のフォールバック:
