@@ -103,6 +103,8 @@
   //   1件ずつ、人の間（120〜320ms・たまに一息）を空けて押す。押し終わるのを待ちたい所は _whenTickIdle で待つ。
   //   ただし「検索を押す」前には必ず全部済んでいること（_tickBusy が 0 になるまで検索を押さない）。
   var _tickBusy = 0;
+  // 2026-11-11 竹内さん「最初人間ならここちょっと考える時間あったりする」: このページで最初の入力かどうか
+  var _itFillSessionSeen = false;
   function _whenTickIdle(cb) {
     if (_tickBusy <= 0) { cb(); return; }
     setTimeout(function () { _whenTickIdle(cb); }, _pd(120)); // 条件を見る間隔（±15%）
@@ -1757,6 +1759,25 @@
       cond.station_names = remaining;
     })();
 
+    /**
+     * 2026-11-11 竹内さん「地域や駅の部分最初だけ間隔かかるなど。人間ならどこに間隔あいてどこはすぐに決めれるか。そのバランスもちゃんと考える」:
+     *   ITANDI も同じく、**空のフォームの前に座った人はまず全体を見て、どこから手を付けるか決める**。
+     *   最初の1回だけ 1.8〜5.5秒（中央値2.8秒）待ってから入力を始める。2人目以降は 0.7〜2.2秒。
+     *   ⚠ リアプロ（page-script.js の _waitThinkThenFill）と同じ考え・同じ形。
+     */
+    (function _waitThinkThenFill(next) {
+      var H = self.AxlxHumanWait;
+      var first = !_itFillSessionSeen;
+      _itFillSessionSeen = true;
+      var ms = H && H.logNormalDelay ? H.logNormalDelay(first ? 2800 : 1300, 0.35) : 2800;
+      var lo = first ? 1800 : 700, hi = first ? 5500 : 2200;
+      if (ms < lo) ms = lo;
+      if (ms > hi) ms = hi;
+      if (Math.random() < 0.08) ms += 700 + Math.floor(Math.random() * 1300);
+      console.log("[AX] ITANDI: どこから手を付けるか考える間 " + (ms / 1000).toFixed(1) + "秒（" + (first ? "最初" : "2回目以降") + "）");
+      setTimeout(next, ms);
+    })(function () {
+
     // ── STEP 1: 賃料（最初に入力）────────────────────────────────────────
     // 2026-11-10 v2.6.9 竹内さん「ここの部分リアプロもITANDIもちゃんとできるように徹底していく」:
     //   旧はカーソルを動かさず setReactVal で即入力（貼り付けた動き）。
@@ -1882,6 +1903,7 @@
       }
 
     }, _hd(800));
+    }); // 考える間（_waitThinkThenFill）end
 
     } catch(err) {
       console.error('[AX] fill exception', err);

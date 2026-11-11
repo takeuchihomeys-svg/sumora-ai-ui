@@ -205,6 +205,10 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("駅は最初だけ一覧を目で探す間（1.2〜3.4秒）が入る", /_stationPickSeen/.test(ps4) && /if \(look < 1200\) look = 1200; if \(look > 3400\) look = 3400;/.test(ps4));
   ok("駅の2つ目以降は速い（既存の 420〜1100ms＋一息）", /_stGapMin\(\) \{ return 420; \}/.test(ps4) && /_stationBreath/.test(ps4));
   ok("考える間を点検に残す（think_first・station_first_look）", /think_first/.test(ps4) && /station_first_look/.test(ps4));
+  // ITANDI も同じ形（1.8〜5.5秒・2回目以降0.7〜2.2秒）
+  const ips4 = fs4.readFileSync(path.join(dir, "itandi-page-script.js"), "utf8");
+  ok("ITANDI にも考える間がある（1.8〜5.5秒・2回目以降0.7〜2.2秒）", /_itFillSessionSeen/.test(ips4) && /first \? 2800 : 1300/.test(ips4) && /first \? 1800 : 700, hi = first \? 5500 : 2200/.test(ips4));
+  ok("ITANDI も実際に待ってから入力を始める", /setTimeout\(next, ms\)/.test(ips4));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -47,7 +47,7 @@ ok("見つからない駅は「確定」の所でだけ枠に出す（途中＝�
 ok("駅の手順が済んだ・検索を押した時に1回だけ記録（site=itandi）", (g.match(/reportStationMiss\(/g) || []).length >= 3 && /stationMissReported/.test(g) && /site: "itandi"/.test(g));
 ok("background は record.site で search_audits の site を決める", /msg\.record\.site === "itandi"/.test(bg));
 ok("集計のスクリプトに --site=itandi", /--site=itandi/.test(fs.readFileSync(path.join(__dirname, "..", "..", "scripts", "audit-guide-station-miss.ts"), "utf8")));
-ok("manifest の版 2.5.85", JSON.parse(read("manifest.json")).version === "2.6.42");
+ok("manifest の版 2.5.85", JSON.parse(read("manifest.json")).version === "2.6.43");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
