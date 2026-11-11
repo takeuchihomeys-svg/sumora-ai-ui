@@ -630,6 +630,9 @@
       '  <span style="font-size:16px;">📥</span>',
       '  <span id="axlx-count">0件</span>を選択中',
       "</div>",
+      // 2026-11-11 竹内さん「自動検索日によって何時にスタートされるかもUIに表示されていたらわかりやすい」:
+      //   次回の自動便（10:15〜11:15 / 16:15〜17:15）を出す。計算は autorun-note.js（サーバーと同じ式）
+      '<div id="axlx-autorun-note" style="font-size:10px;font-weight:600;line-height:1.45;color:#cbd5e1;background:rgba(255,255,255,0.10);border-radius:6px;padding:4px 6px;white-space:normal;"></div>',
       // 2026-11-10 竹内さん「資料に一度スタッフが目を通す形だから、次の物件に移っていくように」:
       //   資料を見る間（👀 確認中…）に「もう見た＝次へ」を押せる（人の判断で先へ進む）。押さなければ自動で次へ
       '<div style="display:flex;gap:6px;">',
@@ -1419,6 +1422,24 @@
   }
   window.addEventListener("resize", dockRpBarSoon);
 
+  /**
+   * 2026-11-11 竹内さん「自動検索日によって何時にスタートされるかもUIに表示されていたらわかりやすい」:
+   *   枠に「次回の自動便は 16:23 ごろ（午後の便）」を出す。1分ごとに描き直す（時刻が進むため）。
+   */
+  function _paintAutoRunNote() {
+    var el = document.getElementById("axlx-autorun-note");
+    if (!el) return;
+    var N = (typeof self !== "undefined" ? self : window).AxlxAutoRunNote;
+    if (!N || !N.noteLine) { el.textContent = ""; return; }
+    try { el.textContent = N.noteLine(Date.now()); } catch (_) { el.textContent = ""; }
+  }
+  var _autoRunNoteTimer = null;
+  function _startAutoRunNote() {
+    _paintAutoRunNote();
+    if (_autoRunNoteTimer) return;
+    _autoRunNoteTimer = setInterval(_paintAutoRunNote, 60000);
+  }
+
   function updateBar() {
     ensureBar();
     var bar = document.getElementById("axlx-bar");
@@ -1428,6 +1449,7 @@
     document.getElementById("axlx-count").textContent = checked.length + "件";
     var allBtn = document.getElementById("axlx-all-btn");
     if (allBtn) allBtn.textContent = checked.length === tracked.length && tracked.length > 0 ? "全解除" : "全選択";
+    _startAutoRunNote(); // 2026-11-11: 次回の自動便の時刻を出す（1分ごとに描き直す）
   }
 
   function toggleAll() {

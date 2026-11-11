@@ -346,6 +346,32 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
     ok("AIX の検索は点検の brain:true を送る（サーバーが brain!==true を捨てるため）", /phase: "started", brain: true, run_id: runId/.test(pp2));
     ok("ピンポイント→広げての判定はサーバー（decideWiden）が残っている", /export function decideWiden/.test(read("../app/lib/search-widen-chain.ts")));
   }
+  // 2026-11-11 竹内さん「自動検索日によって何時にスタートされるかもUIに表示されていたらわかりやすい」
+  {
+    const N = require(path.join(dir, "autorun-note.js"));
+    const html7 = read("popup.html"), bd7 = read("bulk-dl.js"), pj7 = read("popup.js");
+    ok("一括検索の帯の近くに「次回の自動便」を出す（popup・枠の両方）", /id="bulk-autorun-note"/.test(html7) && /id="axlx-autorun-note"/.test(bd7));
+    ok("読み込み（popup.html・manifest の content script）", /src="autorun-note\.js"/.test(html7) && /"autorun-note\.js"/.test(read("manifest.json")));
+    // 計算がサーバーと同じ（サーバーの式を写した物・値が一致する事を直接確かめる）
+    ok("開始時刻の計算が決まった値になる（2026-11-11 午前）", N.hhmm(N.autoStartAtMs("am", "2026-11-11")) === "10:47", { got: N.hhmm(N.autoStartAtMs("am", "2026-11-11")) });
+    ok("午後は 16時台に始まる", /^16:/.test(N.hhmm(N.autoStartAtMs("pm", "2026-11-11"))));
+    ok("同じ日は何度計算しても同じ（cron を再実行しても変わらない）", N.autoStartAtMs("am", "2026-11-11") === N.autoStartAtMs("am", "2026-11-11"));
+    ok("日が変われば時刻も変わる", N.autoStartAtMs("am", "2026-11-11") !== N.autoStartAtMs("am", "2026-11-12"));
+    ok("前の日と7分以上ずれる", (() => {
+      for (let d = 1; d <= 20; d++) {
+        const a = new Date(Date.parse("2026-11-01T00:00:00+09:00") + (d - 1) * 86400000);
+        const b = new Date(Date.parse("2026-11-01T00:00:00+09:00") + d * 86400000);
+        const da = N.jstDateOf(a.getTime() + 12 * 3600 * 1000), db = N.jstDateOf(b.getTime() + 12 * 3600 * 1000);
+        if (Math.abs(N.autoStartAtMs("am", da) - N.autoStartAtMs("am", db)) < 7 * 60000) return false;
+      }
+      return true;
+    })());
+    const note = N.noteLine(Date.parse("2026-11-11T12:30:00+09:00"));
+    ok("表示に「次は」「午後の便」「昼休み」が入る", note.indexOf("次は") >= 0 && note.indexOf("午後の便") >= 0 && note.indexOf("昼休み") >= 0, { note });
+    const fri = N.noteLine(Date.parse("2026-11-13T20:00:00+09:00"));
+    ok("金曜の夜は次の月曜を出す（土日は止まる）", fri.indexOf("11/16") >= 0, { fri });
+    ok("1分ごとに描き直す（popup と枠）", /setInterval\(_paintAutoRunNotePopup, 60000\)/.test(pj7) && /setInterval\(_paintAutoRunNote, 60000\)/.test(bd7));
+  }
   }
 }
 process.exit(fail ? 1 : 0);

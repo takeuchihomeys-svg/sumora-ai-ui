@@ -88,6 +88,10 @@
            **自動／AIXモードの時だけ出す**（通常・スタッフは今まで通り隠す＝勝手に自動で走らせない） -->
       <div id="bulk-toolbar" class="axlx-auto-only" style="display:none">
         <span class="bulk-toolbar-count" id="bulk-count-label">0人選択中</span>
+        <!-- 2026-11-11 竹内さん「自動検索日によって何時にスタートされるかもUIに表示されていたらわかりやすい」:
+             次回の自動便（10:15〜11:15 / 16:15〜17:15 の窓）の開始予定をここに出す。
+             今日ぶんの開始時刻は日付で決まる（毎日ばらつく＝人が動く形）。土日・昼休み・夜間は止まるのも書く -->
+        <div id="bulk-autorun-note" style="display:block;margin:2px 0 6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.10);font-size:10px;font-weight:600;line-height:1.45;color:#e2e8f0;white-space:normal;"></div>
         <!-- 2026-09-18 竹内: 一括検索も「広げて検索」でできるようにする（個別検索と同じ2択） -->
         <div class="bulk-mode-toggle" id="bulk-mode-toggle">
           <button class="bulk-mode-btn active" data-bulk-mode="pinpoint">🎯 ピンポイント</button>
@@ -375,6 +379,8 @@
   <script src="search-history.js"></script>
   <script src="search-focus.js"></script>
   <script src="mode-core.js"></script>
+  <!-- 2026-11-11: 次回の自動便の時刻を帯に出す（サーバーの auto-search-schedule.ts と同じ式） -->
+  <script src="autorun-note.js"></script>
   <script src="area-token.js"></script>
   <script src="site-update-days.js"></script>
   <script src="wide-rent.js"></script>

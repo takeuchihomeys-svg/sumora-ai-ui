@@ -6049,7 +6049,26 @@ function updateBulkToolbar() {
     toolbar.style.display = "flex";
     if (label) label.textContent = n + "人選択中";
   }
+  _paintAutoRunNotePopup();
 }
+
+/**
+ * 2026-11-11 竹内さん「自動検索日によって何時にスタートされるかもUIに表示されていたらわかりやすい」:
+ *   一括検索の帯の近くに「次回の自動便は 16:23 ごろ（午後の便）」を出す。
+ *   計算は autorun-note.js（サーバーの auto-search-schedule.ts と同じ式・照合済み）。
+ */
+function _paintAutoRunNotePopup() {
+  var el = document.getElementById("bulk-autorun-note");
+  if (!el) return;
+  var N = (typeof self !== "undefined" && self.AxlxAutoRunNote) || null;
+  if (!N || !N.noteLine) { el.textContent = ""; return; }
+  try { el.textContent = N.noteLine(Date.now()); } catch (_) { el.textContent = ""; }
+}
+try {
+  // 1分ごとに描き直す（時刻が進むため）・画面が開いた時にも1回
+  setInterval(_paintAutoRunNotePopup, 60000);
+  _paintAutoRunNotePopup();
+} catch (_) {}
 
 /**
  * 2026-09-18 竹内: 個別検索の検索日の記録。一括検索（background.js）と**同じ関数**（search-history.js）を使う。
