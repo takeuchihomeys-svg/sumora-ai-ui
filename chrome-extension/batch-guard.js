@@ -109,15 +109,29 @@
    *   ward（地域）: city_codes か detail_ward／station（駅）: station_names か route_ids／指定なし: どれか1つ
    *   none ＝ 場所なし＝リアプロでは大阪府の全件検索になる → 検索しない
    */
+  /**
+   * 2026-11-11 竹内さん「場所あるのに場所ないと誤解している場合おおいのでは。
+   *   所在地か沿線駅のどちらかで選択していれば場所は指定している。そこの部分誤解されていないか」
+   *
+   * ⚠ 旧: `area_mode === "ward"` の時、区が無ければ**他の軸を見ずに "none"**（＝検索しない）にしていた。
+   *   area_mode は「どちらを使うか」の**希望**であって、実際に駅・沿線で入っている事がある。
+   *   → **どちらか1つでも条件があれば場所あり**。
+   *     両方とも空の時だけ "none"（大阪府の全件検索を防ぐ）。
+   *   ※ page-script.js の decideLocationMode と同じ決まり（tests/chrome-extension/location-gate-parity.test.js が固定）
+   */
   function locationGate(c) {
     c = c || {};
     var nonEmpty = function (a) { return Array.isArray(a) && a.length > 0; };
     var hasArea = nonEmpty(c.city_codes) || !!c.detail_ward;
     var hasStation = nonEmpty(c.station_names), hasRoute = nonEmpty(c.route_ids);
     var mode;
-    if (c.area_mode === "ward") mode = hasArea ? "area" : "none";
-    else if (c.area_mode === "station") mode = hasStation ? "station" : hasRoute ? "route" : "none";
-    else mode = hasStation ? "station" : hasRoute ? "route" : hasArea ? "area" : "none";
+    if (c.area_mode === "ward") {
+      mode = hasArea ? "area" : hasStation ? "station" : hasRoute ? "route" : "none";
+    } else if (c.area_mode === "station") {
+      mode = hasStation ? "station" : hasRoute ? "route" : hasArea ? "area" : "none";
+    } else {
+      mode = hasStation ? "station" : hasRoute ? "route" : hasArea ? "area" : "none";
+    }
     return { ok: mode !== "none", mode: mode };
   }
 

@@ -45,18 +45,25 @@ console.log("\n■ realproTabPlan（使うか・開き直すか）");
 
 console.log("\n■ locationGate（page-script の decideLocationMode と同じ・none は検索しない）");
 {
-  eq("点検 24 の形: 区のお客様で city_codes が無い（地域を決める前）→ 検索しない", G.locationGate({ area_mode: "ward", areas: ["大阪市北区", "大阪市福島区"] }), { ok: false, mode: "none" });
+  eq("点検 24 の形: 区のお客様で city_codes も駅も無い（地域を決める前）→ 検索しない", G.locationGate({ area_mode: "ward", areas: ["大阪市北区", "大阪市福島区"] }), { ok: false, mode: "none" });
+  // 2026-11-11 竹内さん「所在地か沿線駅のどちらかで選択していれば場所は指定している」
+  eq("区の希望でも**駅が入っていれば場所あり**（誤解して止めない）", G.locationGate({ area_mode: "ward", station_names: ["梅田"] }), { ok: true, mode: "station" });
+  eq("区の希望でも**沿線が入っていれば場所あり**", G.locationGate({ area_mode: "ward", route_ids: ["6701"] }), { ok: true, mode: "route" });
+  eq("駅の希望でも**区が入っていれば場所あり**", G.locationGate({ area_mode: "station", city_codes: ["27127"] }), { ok: true, mode: "area" });
   eq("地域を決めた後（北区 27127・福島区 27103）→ 検索する", G.locationGate({ area_mode: "ward", city_codes: ["27127", "27103"] }), { ok: true, mode: "area" });
-  eq("区のお客様は駅があっても地域が無ければ検索しない", G.locationGate({ area_mode: "ward", station_names: ["福島"] }).ok, false);
+  eq("区の希望でも駅が入っていれば場所あり（誤解して止めない）", G.locationGate({ area_mode: "ward", station_names: ["福島"] }).ok, true);
   eq("詳細の区だけでも地域あり", G.locationGate({ area_mode: "ward", detail_ward: "大阪市北区" }).mode, "area");
   eq("駅のお客様: 駅", G.locationGate({ area_mode: "station", station_names: ["梅田"] }).mode, "station");
   eq("駅のお客様: 路線だけ", G.locationGate({ area_mode: "station", route_ids: ["r1"] }).mode, "route");
-  eq("駅のお客様で駅も路線も無い → 検索しない", G.locationGate({ area_mode: "station", city_codes: ["27127"] }).ok, false);
+  eq("駅の希望でも区が入っていれば場所あり（誤解して止めない）", G.locationGate({ area_mode: "station", city_codes: ["27127"] }).ok, true);
   eq("指定なし: 駅 > 路線 > 地域", [G.locationGate({ station_names: ["a"], city_codes: ["1"] }).mode, G.locationGate({ route_ids: ["r"], city_codes: ["1"] }).mode, G.locationGate({ city_codes: ["1"] }).mode], ["station", "route", "area"]);
   eq("何も無い → 検索しない（全件検索の防止）", G.locationGate({}).ok, false);
-  // page-script.js の decideLocationMode と決まりが揃っているか（ward は city_codes か detail_ward だけ）
+  // page-script.js の decideLocationMode と決まりが揃っているか
+  // 2026-11-11 竹内さん「所在地か沿線駅のどちらかで選択していれば場所は指定している」:
+  //   ward の希望でも駅・沿線が入っていれば「場所あり」で通す（誤解して止めない）。
   const ps = read("page-script.js");
-  ok("page-script の decideLocationMode（ward: city_codes か detail_ward）と同じ", /c\.area_mode === "ward"\) \{\s*return \(\(c\.city_codes && c\.city_codes\.length > 0\) \|\| c\.detail_ward\) \? "area" : "none";/.test(ps));
+  ok("page-script の decideLocationMode も「どちらか入っていれば場所あり」", /c\.area_mode === "ward"\) \{[\s\S]{0,300}if \(_hasStation\(c\)\) return "station";/.test(ps) && /if \(_hasWard\(c\)\) return "area";/.test(ps));
+  ok("page-script も駅の希望で区だけ入っていれば通す", /c\.area_mode === "station"\) \{[\s\S]{0,300}if \(_hasWard\(c\)\) return "area";/.test(ps));
 }
 
 console.log("\n■ failureNotice（ピックアップ用グループに1回・0件と言わない）");

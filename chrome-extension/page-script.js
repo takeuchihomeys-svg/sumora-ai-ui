@@ -1584,18 +1584,37 @@
           out.errors.push('間取り（' + String(_axExpect.floorPlan || '').slice(0, 30) + '）が画面に入っていない（間取りの欄 ' + total + '個・チェック 0）');
         }
       }
-      // ⑥ 場所（区 or 駅）: どちらも0なら場所なし＝大阪府の全件検索になるので止める
+      /**
+       * ⑥ 場所: **所在地（区・町）か沿線・駅のどちらかが入っていれば「場所あり」**として通す。
+       *
+       * 2026-11-11 竹内さん「場所あるのに場所ないと誤解している場合おおいのでは。
+       *   所在地か沿線駅のどちらかで選択していれば場所は指定している。そこの部分誤解されていないか」
+       *
+       * ⚠ 旧は `_axExpect.areaMode`（'ward' か 'station'）で**どちらを求めるか**を決めて、
+       *   その軸だけを見て「入っていない」と判定していた。
+       *   → area_mode が 'ward' でも実際は沿線で検索する事があり、**場所があるのに「無い」と誤解**していた。
+       * 新: **どちらか1つでも入っていれば場所あり**（＝全件検索にならない）。
+       *   両方0の時だけ止める（大阪府の全件検索を防ぐ）。
+       */
       if (_axExpect.areaMode) {
         var wardN = document.querySelectorAll('input[name="city_code[]"]:checked').length +
                     document.querySelectorAll('input[name="town_code[]"]:checked').length;
         var stN = document.querySelectorAll('input[name="station_id[]"]:checked').length +
                   document.querySelectorAll('input[name="route_id[]"]:checked').length;
-        var wantArea = _axExpect.areaMode === 'ward';
-        var wantStation = _axExpect.areaMode === 'station';
-        if (wantArea && wardN === 0 && stN === 0) {
-          out.errors.push('場所（' + String(_axExpect.areaText || '').slice(0, 24) + '）が画面に入っていない（区 0・駅 0）');
-        } else if (wantStation && stN === 0 && wardN === 0) {
-          out.errors.push('場所（' + String(_axExpect.areaText || '').slice(0, 24) + '）が画面に入っていない（駅 0・区 0）');
+        // 画面の読み取りに失敗していても、URL に条件が載っていれば場所ありとみなす
+        var urlHasArea = false;
+        try {
+          var _q = new URLSearchParams(location.search);
+          ["city_code", "city_code[]", "town_code", "town_code[]", "station_id", "station_id[]", "route_id", "route_id[]"].forEach(function (k) {
+            if (_q.has(k) && String(_q.get(k) || "") !== "") urlHasArea = true;
+          });
+        } catch (_) {}
+        var hasArea = (wardN > 0) || (stN > 0) || urlHasArea;
+        if (!hasArea) {
+          out.errors.push('場所（' + String(_axExpect.areaText || '').slice(0, 24) + '）が画面に入っていない（区 ' + wardN + '・駅 ' + stN + '）');
+        } else {
+          // どちらか入っていれば通す。点検に「どちらで入ったか」を残す（誤解の追跡用）
+          out.area_ok_by = (wardN > 0 && stN > 0) ? 'both' : (wardN > 0 ? 'ward' : 'station');
         }
       }
     } catch (e) { /* 読めない時は止めない（今まで通り） */ }
@@ -2679,19 +2698,38 @@
     // ── 場所モード判定の一元化（優先順位: station > route > area > none）──────
     // リアプロは駅×所在地がAND条件になるため、駅/沿線がある場合は地域を使わない
     // area_mode が明示指定されている場合はユーザー意図を最優先する
+    /**
+     * 2026-11-11 竹内さん「場所あるのに場所ないと誤解している場合おおいのでは。
+     *   所在地か沿線駅のどちらかで選択していれば場所は指定している。そこの部分誤解されていないか」
+     *
+     * ⚠ 旧: `area_mode === "ward"` の時、区が無ければ**他の軸を見ずに "none"**（＝場所なし）を返していた。
+     *   だが area_mode は「どちらを使うか」の希望であって、**実際には駅・沿線で入っている事がある**
+     *   （サーバーが両方の軸を埋める・area_mode が古い・resolve の結果が片方だけ等）。
+     *   → **どちらか1つでも条件があれば場所あり**として扱う（"none" を返さない＝中止しない）。
+     *     両方とも空の時だけ "none"。
+     */
+    var _hasWard = (c) => !!((c.city_codes && c.city_codes.length > 0) || c.detail_ward);
+    var _hasStation = (c) => !!(c.station_names && c.station_names.length > 0);
+    var _hasRoutes = (c) => !!(c.route_ids && c.route_ids.length > 0);
     function decideLocationMode(c) {
       if (c.area_mode === "ward") {
-        return ((c.city_codes && c.city_codes.length > 0) || c.detail_ward) ? "area" : "none";
+        // 希望は所在地。だが駅・沿線が入っていればそちらで場所は指定できている（誤解して止めない）
+        if (_hasWard(c)) return "area";
+        if (_hasStation(c)) return "station";
+        if (_hasRoutes(c)) return "route";
+        return "none";
       }
       if (c.area_mode === "station") {
-        if (c.station_names && c.station_names.length > 0) return "station";
-        if (c.route_ids && c.route_ids.length > 0)         return "route";
+        if (_hasStation(c)) return "station";
+        if (_hasRoutes(c)) return "route";
+        // 希望は駅。だが所在地が入っていればそちらで場所は指定できている
+        if (_hasWard(c)) return "area";
         return "none";
       }
       // auto（従来: station > route > area > none）
-      if (c.station_names && c.station_names.length > 0) return "station";
-      if (c.route_ids && c.route_ids.length > 0)         return "route";
-      if ((c.city_codes && c.city_codes.length > 0) || c.detail_ward) return "area";
+      if (_hasStation(c)) return "station";
+      if (_hasRoutes(c)) return "route";
+      if (_hasWard(c)) return "area";
       return "none";
     }
     var locationMode = decideLocationMode(cond);
@@ -2843,7 +2881,17 @@
       updateDays: (cond.rp_update_days != null ? String(cond.rp_update_days) : (cond.rp_update_days === '' ? '' : null)),
       age: (cond.building_age ? String(nearestUp(AGE_OPTS, cond.building_age)) : null),
       walk: (cond.walk_minutes != null ? String(cond.walk_minutes) : null),
-      areaMode: (cond.area_mode || (cond.station_names && cond.station_names.length ? 'station' : (cond.city_codes && cond.city_codes.length ? 'ward' : null))),
+      /**
+       * 2026-11-11 竹内さん「所在地か沿線駅のどちらかで選択していれば場所は指定している」:
+       *   **実際にどちらで入れるか**（locationMode）を控える。
+       *   area_mode（希望）だけを見ると、駅で入れたのに「区が無い＝場所なし」と誤解する。
+       */
+      areaMode: (function () {
+        var lm = (typeof locationMode !== 'undefined' && locationMode) ? locationMode : null;
+        if (lm === 'area') return 'ward';
+        if (lm === 'station' || lm === 'route') return 'station';
+        return (cond.area_mode || (cond.station_names && cond.station_names.length ? 'station' : (cond.city_codes && cond.city_codes.length ? 'ward' : null)));
+      })(),
       areaText: String(cond.detail_ward || (cond.station_names || []).slice(0, 2).join('・') || ((cond.city_codes || []).length + '区')),
     };
     /**
