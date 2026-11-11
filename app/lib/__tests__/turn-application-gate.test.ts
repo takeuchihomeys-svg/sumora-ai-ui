@@ -18,5 +18,7 @@ t("戻した後にまた申込の記録があれば、その前の戻しでは�
 t("時刻が読めない記録は外す", turnApplicationReason(base({ records: [rec("申込へ押下", "x")] }), "2026-10-01T00:00:00Z") !== null);
 
 t("記録が無く戻した印だけ: 戻す前の番は外す・後は残す（8590144d の形）", turnApplicationReason(base({ status: "proposing", backAt: "2026-09-26T08:04:57Z" }), "2026-09-22T13:12:39Z") !== null && turnApplicationReason(base({ status: "proposing", backAt: "2026-09-26T08:04:57Z" }), "2026-10-01T00:00:00Z") === null);
+t("戻しの後にだけ記録がある時も、戻す前の番は外す（8590144d の実物の形）", turnApplicationReason(base({ status: "applying", backAt: "2026-09-26T08:04:57Z", records: [rec("書類の印の通", "2026-10-05T00:00:00Z")] }), "2026-09-23T13:47:33Z") !== null);
+t("戻しの前に記録があれば今まで通り（最初の記録より前の番は残す）", turnApplicationReason(base({ status: "proposing", backAt: "2026-09-28T04:28:44Z", records: [rec("申込へ押下", "2026-09-05T02:02:05Z", "2026-09-14T04:17:31Z")] }), "2026-09-04T08:08:51Z") === null);
 console.log(`turn-application-gate: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);
