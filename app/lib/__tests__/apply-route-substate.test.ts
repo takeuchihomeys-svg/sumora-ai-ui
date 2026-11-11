@@ -37,6 +37,7 @@ t("受け渡しに目的・狙い・仕込み", h.includes("この番の目的: 
 t("turn_aims が無ければ今まで通り", !handoffNote(buildHandoff({ to: "compose", meta: { action: "reply" } })).includes("この番の目的"));
 // 配線
 const core = readFileSync("app/lib/brain-core.ts", "utf8");
+t("今回の発言の層（fresh）でも turn_aims を書く（11/12: q425・q426 で欄が出なかった原因）", core.includes("このモードでも出力の最後に turn_aims"));
 t("brain-core に配線（材料・出力の欄・決まり・meta）", core.includes("ar.text + substateBrainTextIfEnabled(ar.loc)") && core.includes('BRAIN_TURN_AIMS_ON ? ", " + BRAIN_TURN_AIMS_FIELD') && core.includes("BRAIN_TURN_AIMS_ON ? BRAIN_TURN_AIMS_RULES") && core.includes("turn_aims: BRAIN_TURN_AIMS_ON ? (normalizeTurnAims("));
 
 console.log(`apply-route-substate: ${pass} pass / ${fail} fail`);
