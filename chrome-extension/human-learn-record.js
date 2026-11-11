@@ -23,7 +23,11 @@
   var L = (typeof self !== "undefined" ? self : window).AxlxHumanLearn;
   if (!L) return;
 
-  var rec = L.create({ doc: document, win: window });
+  var rec = L.create({
+    doc: document, win: window,
+    // 2026-11-11 竹内さん「録画のような形で」: 操作のたびに画面の写真を1枚撮る
+    onOp: function (kind, el, pt) { shootAfter(kind, el, pt); },
+  });
   var detach = null;
   var watching = false;
   var timer = null;
@@ -133,22 +137,50 @@
       var motion = L.summarizeMotion(det);
       add.moves = motion.moves; add.points = motion.points; add.scrolls = motion.scrolls;
     } catch (_) {}
-    /**
-     * 2026-11-11 竹内さん「画面の映像も要る」→「要る」:
-     *   書き出す時に**画面の写真を1枚**撮る（見えているタブだけ・許可がある時だけ）。
-     *   撮れたら storage の印（axlx_human_shot）に「撮った・キー」を残す（DB には写真の中身を入れない）。
-     */
+  /**
+   * 2026-11-11 竹内さん「画面の動き方もちゃんと把握できているのかな録画のような形で」→「操作のたびに1枚」
+   *
+   *   操作の**たびに**画面の写真を1枚撮って Storage に置く（1検索で30〜80枚）。
+   *   並べると操作の流れ（録画に近い物）になる。
+   *   ・撮るのは人が操作した時だけ（拡張の動きは撮らない）
+   *   ・撮りすぎない（最短 350ms はあける・background 側でも間引く）
+   *   ・写真の中身は DB に送らない（Storage 内・名前だけ DB へ）
+   */
+  var _shotPending = false;
+  var _shotLast = 0;
+  var _shotCount = 0;
+  var SHOT_MIN_GAP_MS = 400;   // これより短い間隔では撮らない
+  var SHOT_MAX_PER_SESSION = 300; // 1ページで撮る上限（暴走しないように）
+  function shootAfter(kind, el, pt) {
     try {
-      chrome.runtime.sendMessage({ type: "axlx-human-shot", site: site }, function (res) {
+      if (!watching) return;
+      var now = Date.now();
+      if (now - _shotLast < SHOT_MIN_GAP_MS) return;
+      if (_shotCount >= SHOT_MAX_PER_SESSION) return;
+      if (_shotPending) return;   // 撮っている最中は重ねない
+      _shotLast = now;
+      _shotCount++;
+      _shotPending = true;
+      chrome.runtime.sendMessage({
+        type: "axlx-human-shot",
+        site: site,
+        kind: kind,
+        what: el ? (L.fieldName ? L.fieldName(el) : null) : null,
+        x: pt && typeof pt.x === "number" ? pt.x : null,
+        y: pt && typeof pt.y === "number" ? pt.y : null,
+      }, function (res) {
         void chrome.runtime.lastError;
+        _shotPending = false;
         if (res && res.ok) {
           try {
-            var so = {}; so.axlx_human_shot = { key: res.shot_key, at: Date.now() };
+            var so = {};
+            so.axlx_human_shot = { key: res.shot_key, at: Date.now(), seq: res.seq, run_id: res.run_id };
             chrome.storage.local.set(so);
           } catch (_) {}
         }
       });
-    } catch (_) {}
+    } catch (_) { _shotPending = false; }
+  }
     try {
       chrome.storage.local.get([KEY], function (r) {
         try {

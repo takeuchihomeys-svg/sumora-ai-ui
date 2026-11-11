@@ -1828,42 +1828,115 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  /**
-   * 2026-11-11 竹内さん「画面の映像も要る？（操作のたびに画面の写真を残す）」→「要る」
-   *   操作の区切り（1分ごと・タブを離れる時）に**画面の写真を1枚**撮って Storage に置く。
-   *   ・写真の**中身は DB の表に入れない**（1行が数百KBになり集計が重くなる）。Storage に置き、名前だけ DB に送る
-   *   ・撮るのは見えているタブだけ（裏のタブは撮れない・撮ると画面が切り替わって邪魔になる）
-   *   ・`<all_urls>` の許可が要る（無ければ撮らずに「撮れなかった」を返す＝止まらない）
-   *   ・保存は最大 SHOT_KEEP 枚（古い物から消す＝Storage を溢れさせない）
-   */
-  if (msg.type === "axlx-human-shot") {
-    (async () => {
-      try {
-        const SHOT_KEEP = 30;
-        const has = await chrome.permissions.contains({ origins: ["<all_urls>"] }).catch(function () { return false; });
-        if (!has) { sendResponse({ ok: false, error: "no_permission" }); return; }
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab || !tab.windowId) { sendResponse({ ok: false, error: "no_tab" }); return; }
-        const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 60 });
-        if (!dataUrl) { sendResponse({ ok: false, error: "no_image" }); return; }
-        const key = "shot_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
-        const o = {}; o[key] = { at: Date.now(), site: msg.site || null, url: String(tab.url || "").slice(0, 300), data: dataUrl };
-        await chrome.storage.local.set(o);
-        // 古い物から消す
-        const all = await chrome.storage.local.get(null);
-        const keys = Object.keys(all).filter(function (k) { return k.indexOf("shot_") === 0; });
-        if (keys.length > SHOT_KEEP) {
-          keys.sort(function (a, b) { return (Number(all[a] && all[a].at) || 0) - (Number(all[b] && all[b].at) || 0); });
-          const del = keys.slice(0, keys.length - SHOT_KEEP);
-          try { await chrome.storage.local.remove(del); } catch (_) {}
-        }
-        sendResponse({ ok: true, shot_key: key });
-      } catch (e) {
-        sendResponse({ ok: false, error: String((e && e.message) || e) });
+/**
+ * 2026-11-11 竹内さん「画面の動き方もちゃんと把握できているのかな録画のような形で」→「操作のたびに1枚」
+ *
+ *   **操作のたびに画面の写真を1枚**撮って Storage に置く（1検索で30〜80枚）。
+ *   ・撮るのは**見えているタブだけ**（裏のタブは撮れない・撮ると画面が切り替わって邪魔になる）
+ *   ・`<all_urls>` の許可が要る（無ければ撮らずに「撮れなかった」を返す＝止まらない）
+ *   ・**間引く**: 最短 MIN_GAP_MS（350ms）はあける（連打で何十枚も撮らない）
+ *   ・**まとまり（run）ごと**に番号を振る（`shot_run_id` + 連番）＝並べると操作の流れになる
+ *   ・保存は最大 SHOT_TOTAL 枚（古い物から消す＝Storage を溢れさせない）
+ *   ・写真の**中身は DB の表に入れない**（1行が数百KBになり集計が重くなる）。Storage に置き、名前だけ DB に送る
+ *
+ * 返す物: { ok, shot_key, run_id, seq, ms }（ms は撮るのにかかった時間）
+ */
+var _shotLastAt = 0;
+var _shotRun = null;
+var _shotSeq = 0;
+if (msg.type === "axlx-human-shot") {
+  (async () => {
+    const t0 = Date.now();
+    try {
+      const SHOT_TOTAL = 600;      // 全体で残す枚数（1検索 30〜80枚 × 数回分）
+      const MIN_GAP_MS = 350;      // これより短い間隔では撮らない（連打対策）
+      // 間引き（最後に撮ってから短すぎる時は理由を返す＝呼ぶ側は諦める）
+      if (_shotLastAt && t0 - _shotLastAt < MIN_GAP_MS) {
+        sendResponse({ ok: false, error: "too_soon", ms: Date.now() - t0 });
+        return;
       }
-    })();
-    return true;
-  }
+      const has = await chrome.permissions.contains({ origins: ["<all_urls>"] }).catch(function () { return false; });
+      if (!has) { sendResponse({ ok: false, error: "no_permission", ms: Date.now() - t0 }); return; }
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !tab.windowId) { sendResponse({ ok: false, error: "no_tab", ms: Date.now() - t0 }); return; }
+      // まとまり（1つの検索の流れ）ごとに番号を振る。10分あいたら新しいまとまり
+      if (!_shotRun || t0 - _shotLastAt > 10 * 60 * 1000) {
+        _shotRun = t0.toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+        _shotSeq = 0;
+      }
+      _shotSeq++;
+      _shotLastAt = t0;
+
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 55 });
+      if (!dataUrl) { sendResponse({ ok: false, error: "no_image", ms: Date.now() - t0 }); return; }
+
+      // 名前を「まとまり＋連番」にする（並べ替えると操作の流れになる）
+      const key = "shot_" + _shotRun + "_" + String(_shotSeq).padStart(4, "0");
+      const o = {};
+      o[key] = {
+        at: t0, seq: _shotSeq, run_id: _shotRun,
+        site: msg.site || null,
+        kind: typeof msg.kind === "string" ? msg.kind.slice(0, 20) : null, // 何の操作の直後か（click/change/key/scroll）
+        what: typeof msg.what === "string" ? msg.what.slice(0, 40) : null, // どの欄か
+        x: typeof msg.x === "number" ? Math.round(msg.x) : null,           // 押した所（画面の座標）
+        y: typeof msg.y === "number" ? Math.round(msg.y) : null,
+        url: String(tab.url || "").slice(0, 300),
+        data: dataUrl,
+      };
+      await chrome.storage.local.set(o);
+
+      // 古い物から消す（全体の上限）
+      const all = await chrome.storage.local.get(null);
+      const keys = Object.keys(all).filter(function (k) { return k.indexOf("shot_") === 0; });
+      if (keys.length > SHOT_TOTAL) {
+        keys.sort(function (a, b) { return (Number(all[a] && all[a].at) || 0) - (Number(all[b] && all[b].at) || 0); });
+        const del = keys.slice(0, keys.length - SHOT_TOTAL);
+        try { await chrome.storage.local.remove(del); } catch (_) {}
+      }
+      sendResponse({ ok: true, shot_key: key, run_id: _shotRun, seq: _shotSeq, ms: Date.now() - t0 });
+    } catch (e) {
+      sendResponse({ ok: false, error: String((e && e.message) || e), ms: Date.now() - t0 });
+    }
+  })();
+  return true;
+}
+
+/**
+ * 2026-11-11: 撮った写真の一覧（何枚・どのまとまり・どの操作の後か）。中身（画像）は含めない＝軽い。
+ *   ?run_id= で1つのまとまりだけ。?with_data=1 で画像も返す（確認用・重い）。
+ */
+if (msg.type === "axlx-human-shots-list") {
+  (async () => {
+    try {
+      const all = await chrome.storage.local.get(null);
+      const keys = Object.keys(all).filter(function (k) { return k.indexOf("shot_") === 0; }).sort();
+      const wantRun = typeof msg.run_id === "string" ? msg.run_id : null;
+      const list = [];
+      for (const k of keys) {
+        const v = all[k];
+        if (!v) continue;
+        if (wantRun && v.run_id !== wantRun) continue;
+        const item = { key: k, at: v.at, seq: v.seq, run_id: v.run_id, site: v.site, kind: v.kind, what: v.what, x: v.x, y: v.y, w: v.w, h: v.h };
+        if (msg.with_data) item.data = v.data;
+        list.push(item);
+      }
+      // まとまりごとの要約
+      const runs = {};
+      list.forEach(function (it) {
+        const r = it.run_id || "?";
+        runs[r] = runs[r] || { run_id: r, n: 0, from: it.at, to: it.at, kinds: {} };
+        runs[r].n++;
+        runs[r].from = Math.min(runs[r].from, it.at);
+        runs[r].to = Math.max(runs[r].to, it.at);
+        if (it.kind) runs[r].kinds[it.kind] = (runs[r].kinds[it.kind] || 0) + 1;
+      });
+      sendResponse({ ok: true, total: list.length, runs: Object.keys(runs).map(function (k) { return runs[k]; }), shots: msg.with_data ? list : list.slice(0, 200) });
+    } catch (e) {
+      sendResponse({ ok: false, error: String((e && e.message) || e) });
+    }
+  })();
+  return true;
+}
 
   if (msg.type === "axlx-fetch-customer") {    (async () => {
       try {

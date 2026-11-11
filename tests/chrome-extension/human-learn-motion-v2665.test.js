@@ -183,7 +183,7 @@ console.log("\n■ ④ 集計して貯める形にできる（傾向＋見本）
 console.log("\n■ ⑤ 記録する側（録る・貯める・見える）");
 {
   const rec = read("human-learn-record.js");
-  ok("記録する器に document と window を渡す（大きさ・位置を測るため）", /L\.create\(\{ doc: document, win: window \}\)/.test(rec));
+  ok("記録する器に document と window を渡す（大きさ・位置を測るため）", /L\.create\(\{[\s\S]{0,200}doc: document, win: window/.test(rec));
   ok("動き・押した場所・スクロールも集計して貯める", /summarizeMotion\(det\)/.test(rec) && /add\.moves = motion\.moves/.test(rec));
   ok("貯めたら操作と動きをまとめて空にする", /rec\.reset\(\); \/\/ 操作・動き・押した場所・スクロールをまとめて空にする/.test(rec));
   ok("画面の印に貯まっている数を出す（増えるのが見える）", /👀 学習中 操作/.test(rec) && /マウス" \+ \(det\.moves \|\| \[\]\)\.length/.test(rec));

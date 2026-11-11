@@ -208,12 +208,30 @@
       var d = doc || D;
       var w = win || W;
       if (!d || !d.addEventListener) return function () {};
+      /**
+       * 2026-11-11 竹内さん「画面の動き方もちゃんと把握できているのかな録画のような形で」:
+       *   操作のたびに**画面の写真を1枚**撮れるよう、`onOp(kind, el, pt)` を呼ぶ口を作った。
+       *   呼ぶ側（human-learn-record.js）が写真を撮る。無ければ何もしない（学習だけ続く）。
+       */
+      var onOp = typeof o.onOp === "function" ? o.onOp : null;
+      var pointOf = function (e) {
+        try {
+          var el = e && e.target;
+          if (!el || !el.getBoundingClientRect) return null;
+          var r = el.getBoundingClientRect();
+          if (!(r.width > 0 && r.height > 0)) return null;
+          return { x: e.clientX, y: e.clientY, fx: (e.clientX - r.left) / r.width, fy: (e.clientY - r.top) / r.height };
+        } catch (_) { return null; }
+      };
       var guarded = function (type) {
         return function (e) {
           // 人が起こした物だけ（拡張が dispatch した物は数えない＝学習を汚さない）
           if (!e || !e.isTrusted) return;
-          record(type, e.target);
-          if (type === "click") recordPoint(e); // ボタンのどこを押したか
+          var added = record(type, e.target);
+          var pt = null;
+          if (type === "click") { recordPoint(e); pt = pointOf(e); } // ボタンのどこを押したか
+          // 間引かれた操作では撮らない（同じ所を連打しても写真は増やさない）
+          if (added && onOp) { try { onOp(type, e.target, pt); } catch (_) {} }
         };
       };
       var hClick = guarded("click");
@@ -221,7 +239,7 @@
       var hChange = guarded("change");
       var hWheel = function (e) {
         if (!e || !e.isTrusted) return;
-        record("wheel", null);
+        var added = record("wheel", null);
         // 画面の動かし方（1回の量と、その時のページ内の位置）
         try {
           var p = (w && w.pageYOffset) || 0;
@@ -229,6 +247,8 @@
           var vhh = (w && w.innerHeight) || 800;
           recordScroll(e.deltaY, p, ph, vhh);
         } catch (_) {}
+        // 2026-11-11: スクロールも「画面の動き方」なので、その後の画面を1枚撮る
+        if (added && onOp) { try { onOp("wheel", null, null); } catch (_) {} }
       };
       var hMove = function (e) {
         if (!e || !e.isTrusted) return;

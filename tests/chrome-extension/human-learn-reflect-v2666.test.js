@@ -107,7 +107,7 @@ console.log("\n■ ⑤ 画面の写真は Storage に置き、表には名前だ
   ok("写真を撮る受け口（axlx-human-shot）", /type === "axlx-human-shot"/.test(bg) && /captureVisibleTab/.test(bg));
   ok("<all_urls> の許可が無ければ撮らない（止まらない）", /permissions\.contains\(\{ origins: \["<all_urls>"\] \}\)/.test(bg) && /no_permission/.test(bg));
   ok("見えているタブだけ撮る", /chrome\.tabs\.query\(\{ active: true, currentWindow: true \}\)/.test(bg));
-  ok("古い写真から消す（Storage を溢れさせない）", /SHOT_KEEP = 30/.test(bg) && /keys\.slice\(0, keys\.length - SHOT_KEEP\)/.test(bg));
+  ok("古い写真から消す（Storage を溢れさせない）", /SHOT_TOTAL = 600/.test(bg) && /keys\.slice\(0, keys\.length - SHOT_TOTAL\)/.test(bg));
   ok("写真の中身は表に入れない（名前と大きさだけ）", /shot_key/.test(rec) && /delete row\.shot_b64/.test(fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "human-motion", "route.ts"), "utf8")));
   ok("記録する側が写真を撮って印を残す", /type: "axlx-human-shot"/.test(rec) && /axlx_human_shot/.test(rec));
 }
