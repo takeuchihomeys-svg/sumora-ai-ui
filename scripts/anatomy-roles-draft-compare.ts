@@ -19,7 +19,9 @@ const NG = /申込(フォーマット|書)|本人確認|免許証|マイナン�
     const R = await import("../app/lib/takeuchi-anatomy-roles");
     const { maskPII } = await import("../app/lib/pii-mask");
     const { maskCustomerNames, customerNameTokens, staffHeadNames, leftLatinName } = await import("../app/lib/compose-name-mask");
-    const { piiValueSignal } = await import("../app/lib/test-pii-guard");
+    const { piiValueSignal, applicationMaterialReason } = await import("../app/lib/test-pii-guard");
+    const { loadTurnApplicationRecords } = await import("../app/lib/turn-application-gate-server");
+    const { turnApplicationReason } = await import("../app/lib/turn-application-gate");
     h.assertYuma(YUMA_CONVERSATION_ID, "下書きの文ごとの役目");
     const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
     const days = Math.max(1, Math.min(30, Number(arg("days", "14")) || 14));
@@ -46,18 +48,22 @@ const NG = /申込(フォーマット|書)|本人確認|免許証|マイナン�
       for (const c of (data ?? []) as Array<{ id: string; customer_name: string | null; call_name: string | null }>) names.set(c.id, customerNameTokens([c.customer_name, c.call_name]));
     }
     const pairs: Array<{ ex: (typeof exs)[number]; draft: string }> = [];
-    let skipped = 0;
+    let skipped = 0, gated = 0;
+    const recs = new Map<string, Awaited<ReturnType<typeof loadTurnApplicationRecords>>>();
     for (const e of exs) {
       const conv = convOf.get(e.message_id); if (!conv) continue;
       const t = turns.filter((x) => x.conversation_id === conv && x.staff_first_at && Math.abs(Date.parse(x.staff_first_at) - Date.parse(e.sent_at)) <= 3 * 60_000)[0];
       if (!t?.draft_first) continue;
+      // 2026-11-11 申込の手前の番だけ（turn-application-gate・その番の時刻で申込の記録を引き直す・読めなければ外す）。1会話ずつ間を空けて引く
+      if (!recs.has(conv)) { recs.set(conv, await loadTurnApplicationRecords(sb, conv)); await new Promise((res) => setTimeout(res, 100)); }
+      if (turnApplicationReason(recs.get(conv), e.sent_at) || applicationMaterialReason(e.customer_gist) || applicationMaterialReason(e.body)) { gated++; continue; }
       const raw = String(t.draft_first);
       const masked = maskPII(maskCustomerNames(raw, customerNameTokens([...(names.get(conv) ?? []), ...staffHeadNames([raw])]))).replace(/https?:\/\/\S+/g, "〈URL〉").replace(/0\d{1,3}-?\d{2,4}-?\d{3,4}/g, "〈電話〉");
       if (NG.test(`${masked}\n${e.body}\n${e.customer_gist ?? ""}`) || piiValueSignal(masked) || leftLatinName(masked) || R.splitSentences(e.body).length < 2) { skipped++; continue; }
       pairs.push({ ex: e, draft: masked.slice(0, 600) });
       if (pairs.length >= Number(arg("limit", "40"))) break;
     }
-    console.log(`比べる番 ${pairs.length}（外した ${skipped}）`);
+    console.log(`比べる番 ${pairs.length}（外した ${skipped}・申込以降の疑いで外した ${gated}）`);
     const votes = Math.max(1, Math.min(5, Number(arg("votes", "3")) || 3));
     const capUsd = Number(arg("cap-usd", "0.15")) || 0.15;
     const key = process.env.ANTHROPIC_API_KEY ?? "";

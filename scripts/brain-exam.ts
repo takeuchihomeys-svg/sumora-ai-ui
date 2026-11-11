@@ -1870,6 +1870,18 @@ async function main() {
         writeCount.msgIns += (ins.data ?? []).length;
       };
       writeFloor(new Date(Date.parse(times[0]) - 1000).toISOString());
+      // 2026-11-11 作業員3（A2）: 申込の意思の番は、本番の会話の【申込の情報】の状態を個人の値の無い1通で見せる（APPLY_INTENT_FORM_STATE=on の時だけ・scripts/lib/exam-apply-info.ts）
+      if (!reuse && times.length && (process.env.APPLY_INTENT_FORM_STATE ?? "").trim().toLowerCase() !== "off") {
+        // 動的 import: 前（main）を作る子は main の app/lib で動く＝apply-info-state の無い版でも落ちない（11/11 w3-afs-dig3 で前が作れなかった）
+        const { examApplyInfoRow } = await import("./lib/exam-apply-info");
+        const ai = await examApplyInfoRow(sb, { conv: p.conv, at: p.at, customer: p.customer }, times[0], S().conv, `${PREFIX}${randomUUID()}`).catch((e) => { console.warn(`  申込の情報の写しを作れない（${p.id}）: ${String(e)}`); return null; });
+        if (ai) {
+          const ins = await sb.from("messages").insert(ai.row).select("id");
+          if (ins.error) throw new Error(ins.error.message);
+          S().own = [...S().own, ...((ins.data ?? []) as Array<{ id: string }>).map((r) => r.id)]; writeCount.msgIns += (ins.data ?? []).length;
+          console.log(`  申込の情報: ${ai.reading.state}（${ai.reading.via}・${p.id}#${rep}）を1通で見せる`);
+        }
+      }
       if (USE_LEDGER && !reuse) {
         // 2026-11-05 F1（問題ごとの歯止め）: 前の問題の片付けが落ちていたら、入れる前に消す
         const pg = await purgeLeasedLedger(); const pgN = Object.values(pg).reduce((a, b) => a + b, 0);

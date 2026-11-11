@@ -18,6 +18,9 @@ const NG = /申込(フォーマット|書)|本人確認|免許証|マイナン�
     const { YUMA_CONVERSATION_ID } = await import("../app/lib/test-conversations");
     const { sumoraLlmMarks } = await import("../app/lib/llm-usage-recorder");
     const R = await import("../app/lib/takeuchi-anatomy-roles");
+    const { loadTurnApplicationRecords } = await import("../app/lib/turn-application-gate-server");
+    const { turnApplicationReason } = await import("../app/lib/turn-application-gate");
+    const { applicationMaterialReason } = await import("../app/lib/test-pii-guard");
     h.assertYuma(YUMA_CONVERSATION_ID, "文ごとの役目の解剖");
     const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
     // 写しの番（場面は resolveReplyScene・状況の文 v2）から場面ごとに偏りなく
@@ -34,20 +37,30 @@ const NG = /申込(フォーマット|書)|本人確認|免許証|マイナン�
     const byScene = new Map<string, typeof turns>();
     for (const t of turns) {
       const r = rows.get(t.id);
-      if (!r || !r.body || NG.test(`${r.body}\n${r.customer_gist ?? ""}\n${t.v2}`)) continue;
+      if (!r || !r.body || NG.test(`${r.body}\n${r.customer_gist ?? ""}\n${t.v2}`) || applicationMaterialReason(r.customer_gist) || applicationMaterialReason(r.body)) continue;
       if (R.splitSentences(r.body).length < 2) continue; // 1文だけの番は組み合わせが無い
       (byScene.get(t.scene) ?? byScene.set(t.scene, []).get(t.scene)!).push(t);
     }
+    // 2026-11-11 申込の手前の番だけ（言葉の NG だけでは、申込へ押下・申込中の status・記入済みフォーム・申込から戻す前の番を落とせなかった
+    //   ＝r1 の 198通に会話 8590144d の 7通が入っていた）。門は turn-application-gate（その番の時刻で申込の記録を引き直す・読めなければ外す）。1会話ずつ間を空けて引く
+    const recs = new Map<string, Awaited<ReturnType<typeof loadTurnApplicationRecords>>>();
+    let gated = 0;
+    const postApplyOf = async (t: { conv: string; at: string }): Promise<boolean> => {
+      if (!recs.has(t.conv)) { recs.set(t.conv, await loadTurnApplicationRecords(sb, t.conv)); await new Promise((res) => setTimeout(res, 100)); }
+      const why = turnApplicationReason(recs.get(t.conv), t.at);
+      if (why) gated++;
+      return !!why;
+    };
     // 重点（3票の解剖の focus）が偏らないように、場面の中で重点ごとに順に取る
     const pick: typeof turns = [];
     for (const [, l] of byScene) {
       const g = new Map<string, typeof turns>();
       for (const t of l.sort((a, b) => b.at.localeCompare(a.at))) { const f = String(rows.get(t.id)?.anatomy?.focus ?? "?"); (g.get(f) ?? g.set(f, []).get(f)!).push(t); }
       const lists = [...g.values()]; let k = 0; const got: typeof turns = [];
-      while (got.length < per && lists.some((x) => x[k])) { for (const x of lists) if (x[k] && got.length < per) got.push(x[k]); k++; }
+      while (got.length < per && lists.some((x) => x[k])) { for (const x of lists) if (x[k] && got.length < per && !(await postApplyOf(x[k]))) got.push(x[k]); k++; }
       pick.push(...got);
     }
-    console.log(`選んだ ${pick.length}通（場面 ${byScene.size}・場面ごとに最大 ${per}）`);
+    console.log(`選んだ ${pick.length}通（場面 ${byScene.size}・場面ごとに最大 ${per}・申込以降の疑いで外した ${gated}通）`);
     const votes = Math.max(1, Math.min(5, Number(arg("votes", "3")) || 3));
     const capUsd = Number(arg("cap-usd", "1")) || 1;
     const key = process.env.ANTHROPIC_API_KEY ?? "";
@@ -107,7 +120,7 @@ const NG = /申込(フォーマット|書)|本人確認|免許証|マイナン�
       a.n++; inc(a.pat, String(o.pattern).replace(/^greet>/, "")); inc(a.lead, String(o.lead_to)); inc(a.after, String(o.after));
     }
     const top = (m: Map<string, number>, n = 3) => [...m.entries()].sort((x, y) => y[1] - x[1]).slice(0, n).map(([k, v]) => `${k} ${v}`).join("・");
-    console.log(`# 文ごとの役目 ${label}: ${out.length}通・割れた文 ${out.reduce((s, o) => s + Number(o.splitSentences), 0)}/${out.reduce((s, o) => s + (o.sentences as string[]).length, 0)}${process.argv.includes("--apply") ? "・DB に書いた" : "・書いていない"}`);
+    console.log(`# 文ごとの役目 ${label}: ${out.length}通・割れた文 ${out.reduce((s, o) => s + Number(o.splitSentences), 0)}/${out.reduce((s, o) => s + (o.sentences as string[]).length, 0)}（うち2回以上読めなかった通の文 ${out.filter((o) => Number(o.failedReads) >= 2).reduce((s, o) => s + Number(o.splitSentences), 0)}）${process.argv.includes("--apply") ? "・DB に書いた" : "・書いていない"}`);
     for (const [k, a] of [...agg.entries()].sort((x, y) => y[1].n - x[1].n)) console.log(`  ${k} ${a.n}通: 型 ${top(a.pat)}｜誘導 ${top(a.lead)}｜その後 ${top(a.after)}`);
   } finally { await h.finish(); }
 })().catch((e) => { console.error(e); process.exitCode = 1; });
