@@ -75,13 +75,15 @@
          → **縦積み**にして、ボタンを**説明の下**に置く（幅が狭くても必ず見える）。 -->
     <div id="snap-perm-banner" style="display:none;flex-direction:column;gap:6px;margin:0 8px 6px;padding:8px 10px;background:#fffbeb;border:2px solid #f59e0b;border-radius:10px;font-size:11px;line-height:1.5;color:#78350f;flex:0 0 auto">
       <div style="min-width:0">
-        <div style="font-weight:800;margin-bottom:2px">🎬 画面の録画を許可してください</div>
-        <div style="font-size:10px;color:#92400e">許可すると、操作のたびに画面の写真が残り「検索を押せたか」を後から確かめられます。PCごとに1回だけです。</div>
+        <div style="font-weight:800;margin-bottom:2px" id="snap-perm-title">🎬 画面の録画を許可してください</div>
+        <div style="font-size:10px;color:#92400e" id="snap-perm-desc">許可すると、操作のたびに画面の写真が残り「検索を押せたか」を後から確かめられます。PCごとに1回だけです。</div>
         <div id="snap-perm-hint" style="display:none;font-size:10px;color:#b91c1c;margin-top:4px;white-space:pre-line"></div>
       </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button type="button" id="snap-perm-banner-btn" style="flex:1 1 auto;min-width:110px;padding:8px 14px;font-size:13px;font-weight:800;border:none;border-radius:8px;background:#f59e0b;color:#fff;cursor:pointer;box-shadow:0 2px 6px rgba(245,158,11,.4)">許可する</button>
-        <button type="button" id="snap-perm-open-ext" style="flex:0 0 auto;padding:8px 10px;font-size:11px;border:1px solid #f59e0b;border-radius:8px;background:#fff;color:#b45309;cursor:pointer" title="許可の画面が出ない時に、拡張の管理画面を開いて許可する">出ない時</button>
+      <div style="display:flex;gap:6px;flex-wrap:nowrap;align-items:stretch">
+        <!-- 2026-11-11 竹内さん「でないときの右側に許可するぼたんつける」:
+             並びを「出ない時」→「許可する」の順にした（許可するが右）。 -->
+        <button type="button" id="snap-perm-open-ext" style="flex:0 0 auto;padding:8px 10px;font-size:11px;border:1px solid #f59e0b;border-radius:8px;background:#fff;color:#b45309;cursor:pointer;white-space:nowrap" title="許可の画面が出ない時に、拡張の管理画面を開いて許可する">出ない時</button>
+        <button type="button" id="snap-perm-banner-btn" style="flex:1 1 auto;min-width:96px;padding:8px 14px;font-size:13px;font-weight:800;border:none;border-radius:8px;background:#f59e0b;color:#fff;cursor:pointer;box-shadow:0 2px 6px rgba(245,158,11,.4);white-space:nowrap">許可する</button>
       </div>
     </div>
 

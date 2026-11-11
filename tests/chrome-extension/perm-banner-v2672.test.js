@@ -28,7 +28,7 @@ console.log("■ ① 許可が無い時に目立つボタンが出る（ブレ�
   //   帯は横並びだったので**右の「許可する」が押し出されて切れていた**（「出ない時」だけ見えていた）
   ok("帯は**縦積み**（説明の下にボタン）", /id="snap-perm-banner"[^>]*flex-direction:column/.test(html));
   ok("帯は縮まない（flex:0 0 auto）", /id="snap-perm-banner"[^>]*flex:0 0 auto/.test(html));
-  ok("「許可する」は行いっぱいに広がる（flex:1 1 auto・min-width:110px）", /id="snap-perm-banner-btn"[\s\S]{0,200}flex:1 1 auto;min-width:110px/.test(html));
+  ok("「許可する」は行いっぱいに広がる（flex:1 1 auto・min-width:96px）", /id="snap-perm-banner-btn"[\s\S]{0,200}flex:1 1 auto;min-width:96px/.test(html));
   ok("「許可する」を大きくした（13px・太字800・余白8px 14px）", /padding:8px 14px;font-size:13px;font-weight:800/.test(html));
   ok("「出ない時」は小さく横に並ぶ（flex:0 0 auto）", /id="snap-perm-open-ext"[\s\S]{0,120}flex:0 0 auto/.test(html));
   ok("**ブレインより前**にある（左側）", (() => {
@@ -61,6 +61,21 @@ console.log("■ ① 許可が無い時に目立つボタンが出る（ブレ�
 console.log("\n■ ② 押すと許可を頼む");
 {
   ok("「許可する」ボタンがある", /id="snap-perm-banner-btn"/.test(html) && />許可する</.test(html));
+
+  // 2026-11-11 竹内さん「でないときの右側に許可するぼたんつける」
+  ok("並びは「出ない時」→「許可する」（許可するが右）", (() => {
+    const iOpen = html.indexOf('id="snap-perm-open-ext"');
+    const iAllow = html.indexOf('id="snap-perm-banner-btn"');
+    return iOpen > 0 && iAllow > 0 && iAllow > iOpen;
+  })());
+  ok("1行に並べる（折り返さない）", /display:flex;gap:6px;flex-wrap:nowrap/.test(html));
+  ok("「許可する」は右側で広がる（flex:1 1 auto）", /id="snap-perm-banner-btn"[\s\S]{0,200}flex:1 1 auto/.test(html));
+  ok("許可済みでも帯を出す（状態が分かる）", /if \(banner\) \{[\s\S]{0,80}banner\.style\.display = "flex"/.test(sp));
+  ok("許可済みなら見出しが「✅ 画面の録画は許可済みです」", /✅ 画面の録画は許可済みです/.test(sp));
+  ok("許可済みならボタンは「もう一度確認」", /bBtn\.textContent = "もう一度確認"/.test(sp));
+  ok("未許可ならボタンは「許可する」", /bBtn\.textContent = "許可する"/.test(sp));
+  ok("許可済みでもボタンを消さない", !/bb\.style\.display = "none"/.test(sp));
+  ok("見出しと説明にIDがある（書き換えられる）", /id="snap-perm-title"/.test(html) && /id="snap-perm-desc"/.test(html));
   ok("押すと ask を呼ぶ（帯）", /snap-perm-banner-btn[\s\S]{0,200}addEventListener\("click", ask\)/.test(sp));
   ok("押すと ask を呼ぶ（ヘッダーのボタン）", /perm-rec-btn[\s\S]{0,200}addEventListener\("click", ask\)/.test(sp));
   ok("ask が chrome.permissions.request を呼ぶ（doAsk 経由）", /function doAsk\(\)[\s\S]{0,1100}chrome\.permissions\.request\(ORIGINS/.test(sp) && /doAsk\(\);/.test(sp.slice(sp.indexOf("function ask"), sp.indexOf("function doAsk"))));

@@ -60,10 +60,27 @@
         recBtn.title = "押すと画面の録画を許可できます（操作のたびに画面の写真を残す・PCごとに1回）";
       }
     }
-    // 帯（説明）は未許可の時だけ（許可済みなら邪魔しない）
-    if (banner) banner.style.display = granted ? "none" : "flex";
-    var hint = el("snap-perm-hint");
-    if (hint && granted) { hint.style.display = "none"; hint.textContent = ""; }
+    /**
+     * 2026-11-11 竹内さん「でないときの右側に許可するぼたんつける」:
+     *   帯は**許可済みでも出す**（出ていれば「許可済み」と分かる・押せば再確認できる）。
+     *   許可済みの時は「✅ 許可済み」の1行にして、ボタンは「もう一度確認」にする。
+     */
+    if (banner) {
+      banner.style.display = "flex";
+      var title = el("snap-perm-title");
+      var desc = el("snap-perm-desc");
+      var bBtn = el("snap-perm-banner-btn");
+      if (granted) {
+        if (title) title.textContent = "✅ 画面の録画は許可済みです";
+        if (desc) desc.textContent = "操作のたびに画面の写真が残ります（PCごとに1回の設定は済んでいます）。";
+        if (bBtn) { bBtn.textContent = "もう一度確認"; bBtn.style.background = "#16a34a"; bBtn.style.boxShadow = "0 2px 6px rgba(22,163,74,.4)"; }
+        if (hint) { hint.style.display = "none"; hint.textContent = ""; }
+      } else {
+        if (title) title.textContent = "🎬 画面の録画を許可してください";
+        if (desc) desc.textContent = "許可すると、操作のたびに画面の写真が残り「検索を押せたか」を後から確かめられます。PCごとに1回だけです。";
+        if (bBtn) { bBtn.textContent = "許可する"; bBtn.style.background = "#f59e0b"; bBtn.style.boxShadow = "0 2px 6px rgba(245,158,11,.4)"; }
+      }
+    }
   }
 
   function refresh() {
@@ -93,9 +110,8 @@
           if (!chrome.runtime.lastError && already) {
             var b = el("snap-perm-banner");
             if (b) b.style.display = "flex";
-            showHint("✅ 画面の録画は許可済みです。操作すると自動で写真が残ります（この帯は閉じて大丈夫です）。");
-            var bb = el("snap-perm-banner-btn");
-            if (bb) bb.style.display = "none";
+            showHint("✅ 画面の録画は許可済みです。操作すると自動で写真が残ります。");
+            // 2026-11-11 竹内さん「でないときの右側に許可するぼたんつける」: ボタンは消さない（右に置いたまま残す）
             return;
           }
           doAsk();
