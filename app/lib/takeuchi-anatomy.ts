@@ -8,6 +8,7 @@
 // テスト: app/lib/__tests__/takeuchi-anatomy.test.ts
 import { COMPOSE_PURPOSES, purposeOfText, type ComposePurpose, type SentenceTag } from "./compose-blueprint";
 import { FOCUS_KINDS, FOCUS_LABEL, type Focus } from "./conductor-focus";
+import { maskSelfNamesPair } from "./self-name-mask";
 
 export type AnatomyPart = "greet" | "uke" | "main" | "add" | "cta" | "close";
 export type Anatomy = {
@@ -57,7 +58,10 @@ export const ANATOMY_SYSTEM_FOCUS = [
   "出力は JSON だけ（上の項目に \"background\"・\"focus\"・\"skipped_types\"・\"keep\" を足す）。",
 ].join("\n");
 /** 下読みに渡すのは伏せ済みの物だけ（body・customer_gist は takeuchi_compose_examples に伏せて置いた物）。situation はその番の時点の状況の文 v2（あれば） */
-export function anatomyPrompt(o: { maskedCustomer: string | null; maskedBody: string; scene: string; situation?: string | null }): string {
+export function anatomyPrompt(o0: { maskedCustomer: string | null; maskedBody: string; scene: string; situation?: string | null }): string {
+  // 2026-11-11 作業員5: 外の LLM の直前に、お客様が名乗った本名（表示名と違う名前）を伏せ、その名前をこちらの文からも伏せる（self-name-mask・既定 on・止める SELF_NAME_MASK=off）
+  const sm = maskSelfNamesPair(o0.maskedCustomer, o0.maskedBody);
+  const o = { ...o0, maskedCustomer: sm.customer, maskedBody: sm.staff };
   return `## 場面（決定論の札）\n${o.scene}\n\n${o.situation ? `## その番の時点の状況（伏せ済み・決まった計算）\n${o.situation.slice(0, 500)}\n\n` : ""}## お客様の発言（伏せ済み）\n${(o.maskedCustomer ?? "（こちらから送った番）").slice(0, 300)}\n\n## 竹内さんの返信（伏せ済み）\n${o.maskedBody.slice(0, 500)}`;
 }
 const PARTS: readonly AnatomyPart[] = ["greet", "uke", "main", "add", "cta", "close"];
