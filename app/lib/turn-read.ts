@@ -157,6 +157,34 @@ export function turnFocusDigest(f: TurnFocus | null | undefined): string | null 
   return `${f.main.about}×${f.main.intent}${f.sub ? `>${f.sub.about}×${f.sub.intent}:${f.sub.move}` : ""}`.slice(0, 120);
 }
 
+// ─── 気持ちの4欄（竹内さんの指示 KB d72ad06b・P1）: 何で（きっかけ）・何の部分を・どんな気持ちで（強さ）・本当はどうしたいのか
+//   記録だけの欄（夜の監査の読みで付ける・ブレインの道の判断には入れない＝q406 で mood を欄に入れると道が揺れたため）。
+//   型の中身（kind の並び）は作業員5 が竹内さんの198通から作る＝ここは形と正規化だけ。kind は今は MOOD_OBJECTS の base を仮に使う。
+//   trigger.ref: きっかけになったこちらの送信（直前の束・新着1件・見積書・候補日 等）か、お客様の持ち込み・前の話の持ち出し
+export const MOOD_TRIGGERS = ["こちらの送信", "こちらの約束・結果", "お客様の持ち込み", "前の話の持ち出し", "お客様の事情", "その他"] as const;
+export type MoodFour = {
+  trigger: { kind: (typeof MOOD_TRIGGERS)[number]; ref: string | null };  // 何で
+  part: string | null;                                                     // 何の部分を（物件の広さ・駅・家賃・初期費用の項目・審査・日程 等）
+  feeling: { kind: string; degree: (typeof MOOD_DEGREES)[number] };        // どんな気持ちで（強さ）
+  want: string | null;                                                     // 本当はどうしたいのか
+};
+export function normalizeMoodFour(raw: unknown, kinds: ReadonlyArray<string> = Object.keys(MOOD_OBJECTS)): MoodFour | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const t = (o.trigger && typeof o.trigger === "object" ? o.trigger : {}) as Record<string, unknown>;
+  const f = (o.feeling && typeof o.feeling === "object" ? o.feeling : {}) as Record<string, unknown>;
+  const fk = typeof f.kind === "string" ? f.kind.trim() : "";
+  if (!kinds.includes(fk)) return null;
+  const tk = pickOf(MOOD_TRIGGERS, t.kind) ?? "その他";
+  const deg = (MOOD_DEGREES as readonly string[]).includes(String(f.degree)) ? (f.degree as MoodFour["feeling"]["degree"]) : "中";
+  return { trigger: { kind: tk, ref: short(t.ref, 40) }, part: short(o.part, 30), feeling: { kind: fk, degree: deg }, want: short(o.want, 40) };
+}
+/** 当たりの測り方（案）: 4欄それぞれを別に数える。trigger.kind・feeling.kind・feeling.degree は完全一致、
+ *  part・want は自由記述なので「同じ物を指すか」を判定の役（DeepSeek 1回・伏せた文）か Claude Code の目で。物件の部分は語の重なりでも可 */
+export function moodFourExact(a: MoodFour | null, b: MoodFour | null): { trigger: boolean; feeling: boolean; degree: boolean } {
+  return { trigger: !!a && !!b && a.trigger.kind === b.trigger.kind, feeling: !!a && !!b && a.feeling.kind === b.feeling.kind, degree: !!a && !!b && a.feeling.kind === b.feeling.kind && a.feeling.degree === b.feeling.degree };
+}
+
 // ─── 話題ごとに分ける（弱い所 578: 1通に話題が3つ以上・何通も前の話を急に持ち出す番）
 //   竹内さんの番100のうち該当12番（scripts/.replay-out/topics-578-claude.json）の答え方:
 //   ・お礼・了承の話題は省くことが多い（9/12 で省いた）・主の話題から答え、要件ごとに通を分ける（2cb0feb7）

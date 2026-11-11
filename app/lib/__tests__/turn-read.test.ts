@@ -2,7 +2,7 @@
 // 本文は竹内さんの番（scripts/audit-turn-read-1111.ts の 79f97cea・2cb0feb7・eb4e5d3b・伏せた物）から
 import { turnReadMode, leadCandidatesOf, lastStaffBurst, buildPrevLeadNote, normalizeTurnRead, turnReadDigest, askAboutDigest, turnReadDigestExtra, turnReadOutputItem } from "../turn-read";
 import { brainDecisionDigestExtra } from "../brain-decision-ledger";
-import { normalizeMoodRead, MOOD_OBJECTS, turnReadFocusOn, normalizeTurnFocus, turnFocusDigest, normalizeTurnTopics, turnTopicsDigest } from "../turn-read";
+import { normalizeMoodRead, MOOD_OBJECTS, turnReadFocusOn, normalizeTurnFocus, turnFocusDigest, normalizeTurnTopics, turnTopicsDigest, normalizeMoodFour, moodFourExact } from "../turn-read";
 import { buildMoodFlowNote } from "../customer-mood-flow";
 import { isAckOnlyTurn } from "../ack-topic-scope";
 let passed = 0, failed = 0;
@@ -89,6 +89,14 @@ const tt = normalizeTurnTopics([
 ]);
 ok(tt?.length === 3 && tt[1].ref === null && tt[2].ref !== null && turnTopicsDigest(tt) === "3|1|1", "話題の数・主・持ち出し");
 ok(normalizeTurnTopics([{ about: "探す条件", intent: "条件を伝える・言い直す" }]) === null && normalizeTurnTopics(null) === null, "話題が1つ・形の外れは null");
+
+// 気持ちの4欄（KB d72ad06b）: 83391dda の実物（新着に「すごくいい・駅から遠い」）
+const m4 = normalizeMoodFour({ trigger: { kind: "こちらの送信", ref: "新着1件 グランダム桃谷306" }, part: "駅からの距離", feeling: { kind: "刺さっている", degree: "強い" }, want: "決めたいが駅の近さだけ確かめたい・地域を広げて比べたい" });
+ok(m4?.trigger.kind === "こちらの送信" && m4.feeling.degree === "強い" && m4.part === "駅からの距離", "4欄を型どおり残す");
+ok(normalizeMoodFour({ feeling: { kind: "嬉しい" } }) === null && normalizeMoodFour({ trigger: { kind: "?" }, feeling: { kind: "迷い", degree: "最大" } })?.trigger.kind === "その他", "気持ちの種類の外れは落とす・きっかけと強さの外れは既定");
+const m4b = normalizeMoodFour({ trigger: { kind: "こちらの送信" }, feeling: { kind: "刺さっている", degree: "中" } });
+ok(JSON.stringify(moodFourExact(m4, m4b)) === JSON.stringify({ trigger: true, feeling: true, degree: false }), "当たりは欄ごとに数える");
+ok(!turnReadOutputItem({ TURN_READ: "on", TURN_READ_FOCUS: "on", TURN_READ_TOPICS: "on" }).includes("want"), "4欄はブレインの欄に入れない（記録だけ）");
 
 console.log(`turn-read: ${passed} 通過・${failed} 失敗`);
 if (failed) process.exit(1);
