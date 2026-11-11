@@ -364,6 +364,7 @@ import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
+import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
@@ -4489,6 +4490,18 @@ async function handleGenerateReply(req: NextRequest) {
         })()
       : null;
     if (composeConductor) console.info("[compose-conductor]", JSON.stringify({ conversationId, focus: composeConductor.mf.key, source: composeConductor.mf.source, keep: composeConductor.mf.keep, nearKeep: composeNearKeepShare, read: composeConductor.read }));
+    // 2026-11-11 作業員10 文の統括の1文ずつの設計図（KB P1 c3673fba・COMPOSE_SENTENCE_PLAN=on・既定 off）: 一通の読み（主と従）と竹内さんの7つの欄を受け取り、
+    //   役目・どの部分の何・どうやって・次へ・主か従かを1文ずつ書き手に渡す（app/lib/compose-sentence-plan.ts・決定論・材料の無い欄は空のまま）
+    const composeSentencePlan = composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation && brainMeta && brainLocalFresh
+      ? (() => {
+          try {
+            const u = readTurnUnderstanding(brainMeta), s7 = readSevenFields(brainMeta);
+            const plan = buildSentencePlan(u, s7);
+            return { plan, note: sentencePlanNote(plan), digest: sentencePlanDigest(plan) };
+          } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
+        })()
+      : null;
+    if (composeSentencePlan) console.info("[compose-sentence-plan]", JSON.stringify({ conversationId, plan: composeSentencePlan.digest }));
 
     // ── 条件提示判定（2026-09-08 監査改修）──
     // ①エリア語彙拡張＋ひらがな接頭の誤検出排除 ②家賃以外の金額（初期費用/礼金/年収等）をマスク
@@ -5598,6 +5611,7 @@ async function handleGenerateReply(req: NextRequest) {
       const tcNote = renderTurnContractNote(turnContract);
       if (tcNote) lines.push(tcNote);
       if (composeConductor?.note) lines.push(composeConductor.note.trim());
+      if (composeSentencePlan?.note) lines.push(composeSentencePlan.note.trim());
       if (composeRun?.note) lines.push(composeRun.note.trim());
       const tcBrain = turnContract?.source === "brain";
       // 2026-10-09 調査の担当: effectiveReplyDirection はブレインの方向が14番目（早い者勝ちの型が先）。本質がある時はブレインの方向（中身）を型より上に置き、どちらが使われたかを記録する
@@ -7688,6 +7702,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 Object.assign(finalCheck.tpo_debug, {
                   turnContract: turnContract ? { source: turnContract.source, routes: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, misses: tcMiss } : null,
                   ...(composeRun ? { compose: composeDigestLine({ intent: composeRun.intent, blueprint: composeRun.blueprint, writerGotNote: !!composeRun.note, draft: finalDraftText }) } : {}),
+                  ...(composeSentencePlan ? { compose_plan: composeSentencePlan.digest } : {}),
                   ...(composeConductor ? (() => {
                     const misses = verifyDraft(finalDraftText ?? "", composeConductor.mf);
                     const sb = sendBackDecision(misses, { alreadySentBack: false });
