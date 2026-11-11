@@ -496,11 +496,14 @@
       try {
         var t = el;
         var o = { bubbles: true, cancelable: true, view: window, clientX: Math.round(p.x), clientY: Math.round(p.y), button: 0, buttons: type === "mousedown" ? 1 : 0 };
-        // 軌跡の途中は「その点の下にある要素」へ、最後の点だけ狙った要素へ（人が上を通る形）
-        if (type === "mousemove" && i < pts.length - 1) {
-          var under = document.elementFromPoint(Math.round(p.x), Math.round(p.y));
-          t = under || el;
-        }
+        /**
+         * 2026-11-11 竹内さん「マウスの動かし方とクリックの部分もちゃんとできるように」:
+         *   旧は軌跡の途中で `elementFromPoint` を呼んで「その点の下の要素」へ mousemove を出していた。
+         *   これは重い（レイアウトを毎点で計算する）うえ、**見えるカーソル（pointer-ui）は狙った要素の上を滑っている**のに
+         *   途中の点が別の要素へ飛ぶ＝人が見ると「カーソルと反応がずれる」。
+         *   途中は狙った要素へ（人がその要素の上をなぞる形）、最後の点だけ本物のクリック。
+         *   ⚠ pointer-ui が使える時はそちらが軌跡を描くので、ここは「本物のクリック1回」だけでよい。
+         */
         t.dispatchEvent(new MouseEvent(type, o));
       } catch (_) {}
     }
@@ -531,14 +534,26 @@
   function _fireAt(el, fire, r) {
     try {
       /**
-       * 2026-11-11 竹内さん「リアプロ側はどうか」:
+       * 2026-11-11 竹内さん「マウスの動かし方とクリックの部分もちゃんとできるように」:
        *   旧は **常に要素の真ん中**を狙っていた（毎回同じ点＝機械的）。
-       *   人は真ん中ではなく少しずれた所を押す（30〜70%の位置・毎回ちがう）。
-       *   見えるカーソル（pointer-ui の moveToEl）は既に 40〜60% でずらしているので、押す座標も合わせる。
+       *   いまは 30〜70%の位置で毎回ちがう。
+       *   ⚠ さらに 2026-11-11: **見えるカーソルが居る位置**で押す（カーソルの先と押す点を一致させる）。
+       *     ずれていると「カーソルはAを指しているのにBが押される」＝人が見て不自然。
+       *     カーソルの位置が取れない時だけ 30〜70% で決める。
        */
-      var fx = 0.30 + Math.random() * 0.40;   // 30〜70%
-      var fy = 0.30 + Math.random() * 0.40;
-      var cx = Math.round(r.left + r.width * fx), cy = Math.round(r.top + r.height * fy);
+      var cx, cy;
+      var _P = window.AxlxPointerUi;
+      var _pos = null;
+      try { if (_P && _P.position) _pos = _P.position(); } catch (_) { _pos = null; }
+      var _near = _pos && _pos.x >= r.left - 4 && _pos.x <= r.right + 4 && _pos.y >= r.top - 4 && _pos.y <= r.bottom + 4;
+      if (_near) {
+        // カーソルの先（矢印の先端は左上なので +3,+3 くらい）で押す
+        cx = Math.round(_pos.x + 3); cy = Math.round(_pos.y + 3);
+      } else {
+        var fx = 0.30 + Math.random() * 0.40;   // 30〜70%
+        var fy = 0.30 + Math.random() * 0.40;
+        cx = Math.round(r.left + r.width * fx); cy = Math.round(r.top + r.height * fy);
+      }
       var base = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
       // 2026-11-10 v2.6.9 竹内さん「あと選択してちゃんとその画面おすように」:
       //   カーソルを上に載せる → **少し止まって「ここだ」と確かめる** → 押す（人が狙いを定める間）。

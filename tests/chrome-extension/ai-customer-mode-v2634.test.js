@@ -256,5 +256,23 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("ITANDI の枠にも同じ表示", /axlx-work-note/.test(ib4) && /axlx-itandi-count/.test(ib4));
 }
 
-console.log(`\n${pass} passed, ${fail} failed`);
+console.log("\n■ マウスとクリック（押す点とカーソルの位置が合っているか）");
+{
+  const fs5 = require("fs");
+  const ps5 = fs5.readFileSync(path.join(dir, "page-script.js"), "utf8");
+  const ips5 = fs5.readFileSync(path.join(dir, "itandi-page-script.js"), "utf8");
+  const H5 = require(path.join(dir, "human-wait.js"));
+  ok("リアプロ: 押す点はカーソルが居る位置（_P.position）", /_P\.position\) _pos = _P\.position\(\)/.test(ps5) && /cx = Math\.round\(_pos\.x \+ 3\); cy = Math\.round\(_pos\.y \+ 3\);/.test(ps5));
+  ok("リアプロ: カーソルが取れない時だけ 30〜70%", /var fx = 0\.30 \+ Math\.random\(\) \* 0\.40;/.test(ps5));
+  ok("リアプロ: 軌跡の途中で elementFromPoint を呼ばない（重い・ずれる）", !/type === "mousemove" && i < pts\.length - 1/.test(ps5));
+  ok("ITANDI: 押す点もカーソルの位置に合わせる", /_P0\.position\) _pos = _P0\.position\(\)/.test(ips5) || /_P0 && _P0\.position \? _P0\.position\(\)/.test(ips5));
+  // 軌跡が曲がる・終点が合う・端が遅い
+  const pts = H5.pointerPath({ x: 0, y: 0 }, { x: 800, y: 400 }, 20);
+  ok("マウス: 軌跡が曲がる（直線から外れる）", pts.some((p) => Math.abs(p.y - 400 * (p.x / 800)) > 3));
+  const last = pts[pts.length - 1];
+  ok("マウス: 終点がぴったり合う", last.x === 800 && last.y === 400);
+  const w = H5.pointerDelays(24, 600);
+  ok("マウス: 端（最初と最後）が中ほどより遅い（加速・減速）", w[0] + w[23] > w[10] + w[11]);
+  ok("マウス: 1点ごとの待ちが違う（24点で20種類以上）", new Set(w).size >= 20);
+}
 process.exit(fail ? 1 : 0);

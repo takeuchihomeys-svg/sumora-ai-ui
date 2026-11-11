@@ -197,6 +197,24 @@
     var kind = (tag === "SELECT" || tag === "LABEL" || (tag === "INPUT" && (type === "checkbox" || type === "radio"))) ? "choose"
              : (tag === "BUTTON" || type === "submit" || type === "button" || tag === "A") ? "decide" : "other";
     var click = function () {
+      /**
+       * 2026-11-11 竹内さん「マウスの動かし方とクリックの部分もちゃんとできるように」:
+       *   見えるカーソルが居る位置でマウスの出来事を出す（カーソルの先と押す点を一致させる）。
+       *   ずれていると「カーソルはAを指しているのにBが押される」＝人が見て不自然。
+       *   ⚠ 実際の押下は今まで通り el.click()（React のハンドラを確実に呼ぶ）。座標は見た目と `isTrusted` の材料だけ。
+       */
+      var cx, cy;
+      try {
+        var _P0 = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+        var _ps = _P0 && _P0.position ? _P0.position() : null;
+        var _r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+        if (_ps && _r && _ps.x >= _r.left - 4 && _ps.x <= _r.right + 4 && _ps.y >= _r.top - 4 && _ps.y <= _r.bottom + 4) {
+          cx = Math.round(_ps.x + 3); cy = Math.round(_ps.y + 3);
+        } else if (_r) {
+          cx = Math.round(_r.left + _r.width * (0.30 + Math.random() * 0.40));
+          cy = Math.round(_r.top + _r.height * (0.30 + Math.random() * 0.40));
+        }
+      } catch (_) {}
       try { if (P && P.tap) P.tap(); } catch (_) {}
       try {
         if (o.forceUnchecked) { if (el.isConnected && !el.checked) el.click(); }
