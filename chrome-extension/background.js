@@ -1848,6 +1848,17 @@ if (msg.type === "axlx-human-shot") {
   (async () => {
     const t0 = Date.now();
     /**
+     * 2026-11-11: 呼ばれた回数も残す（記録側の "tried" と一致するかで、どこで止まっているか分かる）
+     */
+    try {
+      chrome.storage.local.get(["axlx_human_shot_bg"], function (r) {
+        var b = (r && r.axlx_human_shot_bg) || { called: 0, ok: 0 };
+        b.called = (Number(b.called) || 0) + 1;
+        b.last_at = Date.now();
+        try { chrome.storage.local.set({ axlx_human_shot_bg: b }); } catch (_) {}
+      });
+    } catch (_) {}
+    /**
      * 2026-11-11 竹内さん「許可済みになっているはず」→ 学習は入るが写真が0枚だった。
      *   何で失敗したのか分からないと直せないので、**失敗の理由を残す**（コンソール＋最後の理由を storage に）。
      */
@@ -1900,7 +1911,12 @@ if (msg.type === "axlx-human-shot") {
       try {
         dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 55 });
       } catch (e) {
-        // 2026-11-11: 小窓（サイドパネル・iframe）から呼ぶと失敗する事がある → 理由を残す
+        /**
+         * 2026-11-11 竹内さん「許可済みになっているはず」:
+         *   サイドパネル・小窓から呼ぶと `captureVisibleTab` が失敗する事がある
+         *   （"Either the '<all_urls>' or 'activeTab' permission is required" 等）。
+         *   → **撮れなくても学習は続ける**。理由を残して次の手を打てるようにする。
+         */
         fail("capture_error: " + String((e && e.message) || e));
         return;
       }

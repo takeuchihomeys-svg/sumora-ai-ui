@@ -95,18 +95,28 @@
     } catch (_) { render(false); }
     // 2026-11-11 竹内さん「許可済みになっているはず」: 許可済みなのに写真が撮れない時の理由を出す
     try {
-      chrome.storage.local.get(["axlx_human_shot_error"], function (r) {
+      chrome.storage.local.get(["axlx_human_shot_error", "axlx_human_shot_diag"], function (r) {
         var e = r && r.axlx_human_shot_error;
+        var d = r && r.axlx_human_shot_diag;
         var hint = el("snap-perm-hint");
-        if (!e || !hint) return;
-        // 5分以内の失敗だけ出す（古い物は出さない）
-        if (Date.now() - (Number(e.at) || 0) > 5 * 60 * 1000) return;
-        var ja = e.error === "no_permission" ? "許可がまだ効いていません（Chrome を再起動すると効くことがあります）"
-               : e.error === "no_tab" ? "撮るタブが見つかりません"
-               : String(e.error || "").indexOf("capture_error") === 0 ? "画面を撮れませんでした（" + e.error + "）"
-               : "写真を撮れませんでした（" + e.error + "）";
-        hint.style.display = "block";
-        hint.textContent = "⚠ " + ja;
+        if (!hint) return;
+        var lines = [];
+        // 試した回数（0なら「試していない」＝操作が記録されていない）
+        if (d && typeof d.tried === "number") {
+          lines.push("写真: 試した " + d.tried + "回・成功 " + (Number(d.ok) || 0) + "回"
+            + (d.last_error ? "・最後の理由: " + d.last_error : ""));
+        }
+        if (e && Date.now() - (Number(e.at) || 0) < 10 * 60 * 1000) {
+          var ja = e.error === "no_permission" ? "許可がまだ効いていません（Chromeを再起動すると効くことがあります）"
+                 : e.error === "no_tab" ? "撮るタブが見つかりません"
+                 : String(e.error || "").indexOf("capture_error") === 0 ? "画面を撮れませんでした"
+                 : String(e.error || "");
+          lines.push("⚠ " + ja + (ja.indexOf("（") < 0 ? "（" + e.error + "）" : ""));
+        }
+        if (lines.length) {
+          hint.style.display = "block";
+          hint.textContent = lines.join("\n");
+        }
       });
     } catch (_) {}
   }

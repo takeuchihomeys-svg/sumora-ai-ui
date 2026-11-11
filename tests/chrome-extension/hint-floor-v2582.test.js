@@ -43,6 +43,6 @@ for (const f of ["realpro-guide.js", "itandi-guide.js"]) {
   const s = read(f);
   ok(`${f}: 札は今の手順の値だけ・光の右に小さく1行（灰色）・画面の外の時は出さない`, /highlight\(cur\.ev\.target, cur\.step\.hint \|\| ""\)/.test(s) && /if \(_lastHint && first && !arrow\)/.test(s) && /\.axlx-hint\{position:fixed;pointer-events:none;[^}]*background:#eceff1;/.test(s));
 }
-ok("manifest の版 2.5.82", JSON.parse(read("manifest.json")).version === "2.6.77");
+ok("manifest の版 2.5.82", JSON.parse(read("manifest.json")).version === "2.6.78");
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

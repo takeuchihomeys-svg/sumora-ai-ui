@@ -153,11 +153,29 @@
   var SHOT_MAX_PER_SESSION = 300; // 1ページで撮る上限（暴走しないように）
   function shootAfter(kind, el, pt) {
     try {
-      if (!watching) return;
+      /**
+       * 2026-11-11 竹内さん「このお客さんちゃんと保存されてたかな？」→ 学習は入るが写真が0枚。
+       *   どこで止まっているか分からないと直せないので、**試した回数と結果**を残す。
+       *   storage: axlx_human_shot_diag = { tried, ok, last_error, last_at }
+       */
+      var diag = function (ok, err) {
+        try {
+          chrome.storage.local.get(["axlx_human_shot_diag"], function (r) {
+            var d = (r && r.axlx_human_shot_diag) || { tried: 0, ok: 0 };
+            d.tried = (Number(d.tried) || 0) + 1;
+            if (ok) d.ok = (Number(d.ok) || 0) + 1;
+            d.last_error = ok ? null : String(err || "?");
+            d.last_at = Date.now();
+            var o = {}; o.axlx_human_shot_diag = d;
+            try { chrome.storage.local.set(o); } catch (_) {}
+          });
+        } catch (_) {}
+      };
+      if (!watching) { diag(false, "not_watching"); return; }
       var now = Date.now();
-      if (now - _shotLast < SHOT_MIN_GAP_MS) return;
-      if (_shotCount >= SHOT_MAX_PER_SESSION) return;
-      if (_shotPending) return;   // 撮っている最中は重ねない
+      if (now - _shotLast < SHOT_MIN_GAP_MS) return;   // 間引きは「失敗」ではない（数えない）
+      if (_shotCount >= SHOT_MAX_PER_SESSION) { diag(false, "max_reached"); return; }
+      if (_shotPending) return;   // 撮っている最中（数えない）
       _shotLast = now;
       _shotCount++;
       _shotPending = true;
@@ -172,11 +190,14 @@
         void chrome.runtime.lastError;
         _shotPending = false;
         if (res && res.ok) {
+          diag(true, null);
           try {
             var so = {};
             so.axlx_human_shot = { key: res.shot_key, at: Date.now(), seq: res.seq, run_id: res.run_id };
             chrome.storage.local.set(so);
           } catch (_) {}
+        } else {
+          diag(false, (res && res.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || "no_response");
         }
       });
     } catch (_) { _shotPending = false; }
