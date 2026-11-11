@@ -385,20 +385,22 @@
   // 2026-11-10 人間的な動き: クリックの列の間隔を対数正規にする（旧は一様乱数 min〜max で、間隔の分布が平ら＝機械らしい）。
   //   人の操作の間は「短い事が多く、たまに大きく伸びる」形（右に裾が長い）。中央値を (min+max)/2 にして同じ範囲に収める。
   //   下の端は min・上の端は max×1.6（たまに大きく伸びる分）。human-wait.js が無ければ今まで通り一様。
-  function humanRand(min, max) {
+  function humanRand(min, max, opts) {
     var lo = Number(min), hi = Number(max);
     if (!(isFinite(lo) && isFinite(hi)) || hi <= lo) return lo || 0;
     var H = window.AxlxHumanWait;
+    var strict = !!(opts && opts.strictLo);
     if (H && H.logNormalDelay) {
       /**
-       * 2026-11-11 竹内さん「間隔もちゃんとばらばらで不規則にちゃんと押しているか」:
+       * 2026-11-11 竹内さん「ひとつずつおすかたち」→「駅の下限を守る」:
        *   旧は Math.round + `Math.max(lo, ...)` で **lo に張り付いて同じ値が連続**していた。
        *   対策: ① 対数正規の中央値を lo と hi の間で決める（lo に張り付かせない）
        *        ② 0.1ms 単位で残す ③ 10%で「ためらい」を足す ④ たまに速く押す（下の端を lo*0.55 まで許す）
+       *   strictLo: 駅のように「これより速く押さない」下限を守りたい時（lo を下回らせない）
        */
       var med = (lo + hi) / 2;
       var v = H.logNormalDelay(med, 0.32);
-      var floor = Math.max(20, lo * 0.55);
+      var floor = strict ? lo : Math.max(20, lo * 0.55);
       var ceil = hi * 1.8;
       var out = Math.min(ceil, Math.max(floor, v));
       if (Math.random() < 0.10) out += 80 + Math.floor(Math.random() * 260); // ためらい
@@ -596,10 +598,11 @@
       return ('click:' + String(el.textContent || '').replace(/\s+/g, '')).slice(0, 40);
     } catch (e) { return 'click'; }
   }
-  function enqueueHumanClick(el, clickFn, minGap, maxGap) {
+  function enqueueHumanClick(el, clickFn, minGap, maxGap, _unused, opts) {
     if (!el || el.__axPending) return false;
     el.__axPending = true;
-    _clickQueue.push({ el: el, fn: clickFn || _clickEl, gap: humanRand(minGap || 80, maxGap || 200), label: _opLabel(el) });
+    // 2026-11-11: opts.strictLo（駅のように下限を下回らせない）を humanRand に渡す
+    _clickQueue.push({ el: el, fn: clickFn || _clickEl, gap: humanRand(minGap || 80, maxGap || 200, opts), label: _opLabel(el) });
     _scheduleClickDrain();
     return true;
   }
@@ -1513,7 +1516,7 @@
             if (_stKey && _seenStValues[_stKey]) { found = true; continue; }
             if (_stKey) _seenStValues[_stKey] = true;
             // ★ 修正(Bug2): _clickEl → _clickIfUnchecked（実行時checkedガード）
-            if (!inp.checked) enqueueHumanClick(inp, _clickIfUnchecked, _stGapMin(), _stGapMax());
+            if (!inp.checked) enqueueHumanClick(inp, _clickIfUnchecked, _stGapMin(), _stGapMax(), null, { strictLo: true });
             found = true;
           }
         }
@@ -1593,7 +1596,7 @@
           if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
           if (inp) {
             // ★ 修正(Bug2): _clickEl → _clickIfUnchecked（実行時checkedガード）
-            if (!inp.checked) enqueueHumanClick(inp, _clickIfUnchecked, _stGapMin(), _stGapMax());
+            if (!inp.checked) enqueueHumanClick(inp, _clickIfUnchecked, _stGapMin(), _stGapMax(), null, { strictLo: true });
             found = true;
           }
         }

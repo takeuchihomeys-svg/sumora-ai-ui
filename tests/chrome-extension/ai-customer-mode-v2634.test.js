@@ -308,6 +308,26 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
     ok("見ている間は枠に出す（👀 検索結果を見ています）", /👀 検索結果を見ています/.test(bd6));
     ok("即押さない（固定の 1.5〜2.7秒をやめた）", !/setTimeout\(function \(\) \{ autoPressPdfs\(\); \}, 1500/.test(bd6) && /_startAutoPressAfterLook\(tracked\.length\);/.test(bd6));
   }
+  // 2026-11-11 竹内さん「駅の下限を守る」
+  {
+    const vm6 = require("vm");
+    const ctx6 = { window: { AxlxHumanWait: H5 }, Math, isFinite, Number };
+    vm6.createContext(ctx6);
+    const st6 = ps5.indexOf("function humanRand("), en6 = ps5.indexOf("// 2026-09-27 竹内", st6);
+    vm6.runInContext(ps5.slice(st6, en6), ctx6);
+    const stn = Array.from({ length: 500 }, () => ctx6.humanRand(420, 1100, { strictLo: true }));
+    ok("駅: 下限 420ms を下回らない", Math.min(...stn) >= 420, { min: Math.min(...stn) });
+    ok("駅: それでもばらつく（CV > 0.3・種類300以上）", (() => {
+      const m = stn.reduce((a, b) => a + b, 0) / stn.length;
+      const sd = Math.sqrt(stn.reduce((a, b) => a + (b - m) ** 2, 0) / (stn.length - 1));
+      return sd / m > 0.3 && new Set(stn).size > 300;
+    })());
+    ok("駅の選択に strictLo を渡している", /enqueueHumanClick\(inp, _clickIfUnchecked, _stGapMin\(\), _stGapMax\(\), null, \{ strictLo: true \}\)/.test(ps5));
+    ok("短いクリック間は今まで通り速く押せる（下限を緩める）", (() => {
+      const xs = Array.from({ length: 500 }, () => ctx6.humanRand(80, 200));
+      return Math.min(...xs) < 100;
+    })());
+  }
   }
 }
 process.exit(fail ? 1 : 0);
