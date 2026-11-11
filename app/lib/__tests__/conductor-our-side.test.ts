@@ -30,12 +30,12 @@ t("約束の種類", promiseKindOf("お送り頂きました新大阪グラン�
     { sender: "staff", text: "こちら2件現在募集中となります！！", created_at: "2026-11-01T02:44:00Z", is_aix_generated: true },
   ], aix: [{ aix_type: "property_check_result", check_pattern: "available", created_at: "2026-11-01T02:44:00Z", property_names: ["アーバネックス四ツ橋 1308", "アーバネックス四ツ橋 203", "X"], estimate_sent: true }] });
   t("9758: 約束は AIX で果たした＝なし", /開いている約束: なし/.test(b), b);
-  t("9758: 直前の AIX の意味・ピッカー・物件名2件・見積書", /物件確認した（物件そのもの＝空き・募集）＝募集中（アーバネックス四ツ橋 1308・アーバネックス四ツ橋 203）・御見積書を同封（4時間前）/.test(b), b);
+  t("9758: 直前の AIX の意味・ピッカー・物件名2件・見積書", b.includes("物件確認した（確かめた結果を送る＝空き・募集・入居日・室内写真／管理会社に確かめた条件・設備・交渉の結果は mgmt_* のピッカー）＝募集中（アーバネックス四ツ橋 1308・アーバネックス四ツ橋 203）・御見積書を同封（4時間前）"), b);
 }
 // 11932 型: 確認した（管理会社の設備）の意味・mgmt_ のピッカー
 {
   const b = ourSideBlock({ nowMs: now, msgs: [], aix: [{ aix_type: "acknowledge_check", check_pattern: "mgmt_equipment", created_at: "2026-11-03T08:00:00Z" }] });
-  t("確認した＝設備・mgmt_ は管理会社に確認した", /確認した（設備・条件＝管理会社に確認）＝管理会社に確認した（equipment）/.test(b), b);
+  t("確認します＝約束・mgmt_ は管理会社に確かめた結果", /確認します（これから確かめる・交渉する約束を AIX で送る）＝管理会社に確かめた結果（設備）/.test(b), b);
 }
 // 今より後の通・AIX は見ない（答えの漏れ）
 {
