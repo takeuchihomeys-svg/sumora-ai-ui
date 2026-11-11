@@ -860,6 +860,11 @@
   var _watchdogTimer = null;
   // 2026-09-18 竹内（一括検索の混線）: この自動入力を始めた時の顧客 ID。notifyDone がそのまま返す
   var _fillCustomerId = null;
+  // 2026-11-11 竹内さん「最初人間ならここちょっと考える時間あったりする」: 最初にどこから手を付けるか考える間（このページでの1回目か）
+  var _fillSessionSeen = false;
+  var _thinkBeforeFill = 0;
+  // 2026-11-11 竹内さん「地域や駅の部分最初だけ間隔かかる」: 駅の一覧を最初に目で探す間（このページで1回だけ）
+  var _stationPickSeen = false;
   // 2026-11-10 自動入力の検索の印（axlx_search_for）を書く時に使う、この回の検索の条件（notifyDone まで持つ）
   var _fillCondForStamp = null;
 
@@ -1353,6 +1358,26 @@
   // 駅名でボタン/チェックボックスをクリック
   function selectStationsByName(names) {
     if (!names || !names.length) return;
+    /**
+     * 2026-11-11 竹内さん「地域や駅の部分最初だけ間隔かかるなど。人間ならどこに間隔あいてどこはすぐに決めれるか。そのバランスもちゃんと考える」:
+     *   人が駅を選ぶ時、**最初の1つは一覧を目で探すので時間がかかる**（1.2〜3.4秒）。
+     *   2つ目以降は位置が分かっているので速い（0.4〜1.1秒＋たまに一息）。
+     *   さらに「似た名前の駅を探し直す」時（前の駅と文字が似ていない）は少し長く見る。
+     */
+    var _isFirstStation = !_stationPickSeen;
+    _stationPickSeen = true;
+    if (_isFirstStation) {
+      var H0 = window.AxlxHumanWait;
+      var look = H0 && H0.logNormalDelay ? H0.logNormalDelay(1900, 0.35) : 1900;
+      if (look < 1200) look = 1200; if (look > 3400) look = 3400;
+      console.log("[AX] 駅の一覧を最初に目で探す間 " + Math.round(look) + "ms");
+      _auditStepP("station_first_look", Math.round(look) + "ms");
+      setTimeout(function () { _selectStationsByNameCore(names); }, look);
+      return;
+    }
+    _selectStationsByNameCore(names);
+  }
+  function _selectStationsByNameCore(names) {
     names.forEach(function(name) {
       var clean = name.replace(/駅$/, '').trim();
       if (!clean) return;
@@ -1938,9 +1963,42 @@
     }
 
     _doReset(function() {
+    /**
+     * 2026-11-11 竹内さん「最初人間ならここちょっと考える時間あったりする」:
+     *   空のフォームの前に座った人は、いきなり駅を押さない。**まず全体をざっと見て、どこから手を付けるか決める**。
+     *   この「最初に考える間」を1回だけ待ってから入力に入る（2.0〜6.5秒・たまに長く／2人目以降は0.8〜2.4秒）。
+     *   ⚠ 待っている間も fill-done は出さない（呼び出し元は「入力中」として待つ）。
+     */
+    (function _waitThinkThenFill(next) {
+      if (!(_thinkBeforeFill > 0)) { next(); return; }
+      var ms = _thinkBeforeFill;
+      _thinkBeforeFill = 0;
+      _auditStepP('think_first', Math.round(ms) + 'ms');
+      console.log("[AX] どこから手を付けるか考える間 " + (ms / 1000).toFixed(1) + "秒 待ってから入力を始めます");
+      setTimeout(next, ms);
+    })(function () {
 
     setTimeout(function() {
     try { // fill-done 保証: 本体で例外が起きても必ず notifyDone する
+
+    /**
+     * 2026-11-11 竹内さん「検索おしてからの駅や地域選択する間隔とかも最初人間ならここちょっと考える時間あったりするので。
+     *   地域や駅の部分最初だけ間隔かかるなど。人間ならどこに間隔あいてどこはすぐに決めれるか。そのバランスもちゃんと考える」:
+     *   空のフォームの前に座った人は、いきなり駅を押さない。**まず全体をざっと見て、どこから手を付けるか決める**。
+     *   この「最初に考える間」を1回だけ入れる（2.0〜6.5秒・中央値3.2秒・たまに長く考える）。
+     *   ⚠ 2人目以降・同じお客様の2パス目は、要領が分かっているので短くする（0.8〜2.4秒）。
+     */
+    (function () {
+      var H = window.AxlxHumanWait;
+      var _first = !_fillSessionSeen;              // このページで最初の入力か
+      _fillSessionSeen = true;
+      var lo = _first ? 2000 : 800, hi = _first ? 6500 : 2400;
+      var ms = H && H.logNormalDelay ? H.logNormalDelay(_first ? 3200 : 1400, 0.35) : ((lo + hi) / 2);
+      if (ms < lo) ms = lo; if (ms > hi) ms = hi;
+      if (Math.random() < 0.08) ms += 800 + Math.floor(Math.random() * 1500); // たまに長く考える
+      console.log("[AX] 条件を見て「どこから手を付けるか」考える間 " + Math.round(ms / 1000) + "秒（" + (_first ? "最初" : "2回目以降") + "）");
+      _thinkBeforeFill = ms;
+    })();
 
     // 未登録地名の警告（NEIGHBORHOOD_WARD_MAPに未登録のトークン）
     if (cond.unknown_tokens && cond.unknown_tokens.length) {
@@ -2914,6 +2972,7 @@
       notifyDone('fillRealpro: ' + ((err && err.message) || String(err)));
     }
     }, 0); // _doReset内で待機済みのため即時実行
+    }); // 考える間（_waitThinkThenFill）end
     }); // _doReset end
   }
 

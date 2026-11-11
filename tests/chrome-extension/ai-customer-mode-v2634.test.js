@@ -195,5 +195,17 @@ console.log("\n■ 押す順（資料を上から全部順にしていない）�
   ok("スクロール位置は最小移動のまま（真ん中へ寄せて往復しない）", /block: "nearest", inline: "nearest"/.test(psrc));
 }
 
+console.log("\n■ 「考える時間」のバランス（最初は長く・2回目以降は短い）");
+{
+  const fs4 = require("fs");
+  const ps4 = fs4.readFileSync(path.join(dir, "page-script.js"), "utf8");
+  ok("最初にどこから手を付けるか考える間がある（_thinkBeforeFill）", /_thinkBeforeFill = ms;/.test(ps4) && /function _waitThinkThenFill/.test(ps4));
+  ok("最初は 2.0〜6.5秒・2回目以降は 0.8〜2.4秒", /_first \? 2000 : 800/.test(ps4) && /_first \? 6500 : 2400/.test(ps4));
+  ok("考える間は実際に待ってから入力を始める（setTimeout(next, ms)）", /setTimeout\(next, ms\)/.test(ps4));
+  ok("駅は最初だけ一覧を目で探す間（1.2〜3.4秒）が入る", /_stationPickSeen/.test(ps4) && /if \(look < 1200\) look = 1200; if \(look > 3400\) look = 3400;/.test(ps4));
+  ok("駅の2つ目以降は速い（既存の 420〜1100ms＋一息）", /_stGapMin\(\) \{ return 420; \}/.test(ps4) && /_stationBreath/.test(ps4));
+  ok("考える間を点検に残す（think_first・station_first_look）", /think_first/.test(ps4) && /station_first_look/.test(ps4));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
