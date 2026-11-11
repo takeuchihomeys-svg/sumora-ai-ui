@@ -7,7 +7,7 @@ const t = (name: string, ok: boolean, info?: unknown) => { if (ok) { pass++; con
 const now = Date.parse("2026-11-03T10:36:00Z");
 
 t("既定 off・on で動く", !conductorOurSideOn({}) && conductorOurSideOn({ CONDUCTOR_OUR_SIDE: "on" }));
-t("ブレインの側は 11/12 から既定 on・=off で止まる・入口のスイッチとは別", ourSideBrainOn({}) && ourSideBrainOn({ CONDUCTOR_OUR_SIDE: "off" }) && !ourSideBrainOn({ CONDUCTOR_OUR_SIDE_BRAIN: "off" }));
+t("ブレインの側は 11/12 朝から既定 off・=on で入る・入口のスイッチとは別", !ourSideBrainOn({}) && !ourSideBrainOn({ CONDUCTOR_OUR_SIDE: "on" }) && ourSideBrainOn({ CONDUCTOR_OUR_SIDE_BRAIN: "on" }));
 t("約束の種類", promiseKindOf("お送り頂きました新大阪グランドハイツの募集状況確認させて頂きます") === "確認" && promiseKindOf("最大限割引させて頂いた御見積書を作成しお送りさせて頂きます") === "見積"
   && promiseKindOf("浪速区周辺全域からピックアップしてお送りさせて頂きます") === "探す" && promiseKindOf("内覧の候補日お送りさせて頂きます") === "内覧");
 
