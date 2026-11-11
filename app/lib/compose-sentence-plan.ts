@@ -311,7 +311,11 @@ export function sentencePlanNote(p: SentencePlan): string {
     const bits = [r.part ? `何を: ${r.part}` : "何を: （材料に無い＝中身を作らない）", r.how ? `どうやって: ${r.how}` : null, r.next ? `次へ: ${r.next}` : null].filter(Boolean);
     L.push(`${k + 1}. 【${r.rank === "main" ? "主" : "従"}】${ROLE_LABEL[r.role]}｜${bits.join("｜")}`);
   });
-  L.push("- この設計図の行に無い役目の文（確かめる約束・誘い・継続の約束・訴求）は足さない（受け・挨拶・締めは除く）。材料に無い事実・数字は書かない。");
+  // 2026-11-11 統括役（試験 w10-csp-on2 の q145）: 「設計図に無い役目は足さない」の行は外した（答えを狭めた疑い）。
+  //   代わりに、主が確かめる約束の時は、確かめる中身の事実（最短・可否・日付・金額）を言い切らせない（材料に無い事実は書かない）
+  const mainRow = p.rows.find((r) => r.rank === "main");
+  if (mainRow?.role === "promise") L.push("- 主は確かめる約束: 確かめる中身（最短の日・できる/できない・日付・金額）を本文で言い切らない（「難しい」「〜となります」と先に答えない）。材料（会話・資料・会社の事実）にある事だけ書く。");
+  else L.push("- 材料（会話・資料・会社の事実）に無い事実・数字は書かない。");
   return L.join("\n");
 }
 

@@ -90,7 +90,7 @@ t("7つの欄（作業員5 の形）: 主→心配→信頼→誘導の順・訴
   assert.match(p.rows[3].how ?? "", /押す強さ: 強.*物件の残り/);
   const note = sentencePlanNote(p);
   assert.match(note, /2\. 【従】奥の心配への答え/);
-  assert.match(note, /足さない/);
+  assert.match(note, /材料（会話・資料・会社の事実）に無い事実/);
 });
 
 t("材料の網: 気持ちの型（不安の型だけ）と appeal_timing の suggest", () => {
@@ -140,4 +140,11 @@ t("受けが主の番（検討します）: 主の役目と順は受け同士で
   assert.equal(f["訴求"], "both_empty");
 });
 
+
+
+t("主が確かめる約束の時は、確かめる中身を言い切らせない行（q145 の悪化の直し）", () => {
+  const note = sentencePlanNote(buildSentencePlan(readTurnUnderstanding(q088), readSevenFields(q088)));
+  assert.match(note, /確かめる中身（最短の日・できる\/できない・日付・金額）を本文で言い切らない/);
+  assert.doesNotMatch(note, /足さない/);
+});
 console.log(`${n} pass`);
