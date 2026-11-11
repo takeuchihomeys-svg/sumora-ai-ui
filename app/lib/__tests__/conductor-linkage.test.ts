@@ -5,7 +5,8 @@ function it(name: string, fn: () => void) { try { fn(); passed++; console.log(` 
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
 const ids = (m: string) => ownersOfMarker(m).map((c) => c.id).join(",");
 
-it("統括は10＋決まった計算の上書き・id は重ならない", () => { ok(CONDUCTOR_LINKS.length === 11); ok(new Set(CONDUCTOR_LINKS.map((c) => c.id)).size === 11); });
+// 2026-11-12 作業員10: 文の統括の設計図（compose_plan）の行を足して 12
+it("統括は10＋決まった計算の上書き＋設計図・id は重ならない", () => { ok(CONDUCTOR_LINKS.length === 12); ok(new Set(CONDUCTOR_LINKS.map((c) => c.id)).size === 12); ok(ids("compose_plan:promise") === "compose_plan"); });
 it("作業員8の印から持ち主を引く（前方一致・長い一致を先）", () => {
   ok(ids("decision:two_stage_promise(check)") === "two_stage", ids("decision:two_stage_promise(check)"));
   ok(ids("decision:answerable_direct") === "two_stage");
