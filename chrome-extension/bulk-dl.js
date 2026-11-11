@@ -867,10 +867,69 @@
     }
     var cand = tracked.filter(function (t) { return t.cb && t.btn && AxlxSendPairing.isHttpUrl(t.btn.href); });
     if (!cand.length) { _nudge("この画面に印刷用PDFが見つかりません"); return { ok: false, reason: "no-rows" }; }
-    _autoPdfRun = { total: 0, done: 0, index: 0 };
+    // 2026-11-11 竹内さん「資料を全部上から順にやるようになっていないか。完全に人間の動きを再現していく」:
+    //   旧は必ず上から1件ずつ＝機械的。人が一覧を見て「気になった所から」押す形にする。
+    //   ① 最初の数件は上から（ふつうは上から見る）② 途中で "目にとまった所へ飛ぶ" を混ぜる
+    //   ③ たまに "さっきの所へ戻る"（見直し）も入れる。押す順が毎回ちがう。
+    var order = _humanPickOrder(cand.length);
+    var ordered = order.map(function (i) { return cand[i]; }).filter(Boolean);
+    _autoPdfRun = { total: 0, done: 0, index: 0, order: order };
     _tmark("auto_pdf_start", String(cand.length) + "件");
-    _autoPressNext(cand);
+    console.log("[AXLX bulk-dl][auto] 押す順（人が見て回る順）: " + order.slice(0, 12).join("→") + (order.length > 12 ? "…" : ""));
+    _autoPressNext(ordered);
     return { ok: true, count: cand.length };
+  }
+  /**
+   * 2026-11-11 押す順を人のように決める（上から順に全部ではない）。
+   *   ・最初の 1〜3件は上から（人が一覧の上から見始める）
+   *   ・その後は「今の位置の近く（±3行）」「少し飛ぶ（±4〜10行）」「たまに大きく飛ぶ（下の方へ）」を混ぜる
+   *   ・6〜9件に1回ほど「1つ前・2つ前に戻って見直す」
+   *   ・全部を1回ずつ（重複なし）。残りが少なくなったら残りを近い順に
+   */
+  function _humanPickOrder(n) {
+    if (n <= 1) return [0];
+    var picked = {};
+    var out = [];
+    var startCount = Math.min(n, 1 + Math.floor(Math.random() * 3)); // 1〜3件は上から
+    for (var i = 0; i < startCount; i++) { picked[i] = 1; out.push(i); }
+    var guard = 0;
+    while (out.length < n && guard++ < n * 60) {
+      var cur = out[out.length - 1];
+      var r = Math.random();
+      var next = -1;
+      if (r < 0.10 && out.length >= 3) {
+        // 戻って見直す（1つ前・2つ前）
+        var idx = out.length - 1 - (1 + Math.floor(Math.random() * Math.min(2, out.length - 1)));
+        var bk = out[idx];
+        if (bk != null && !picked[bk]) next = bk;
+      }
+      if (next < 0) {
+        // 少ない件数でも「上から順」にしない: まず 1つ飛ばし以上を狙う
+        if (n >= 4 && r < 0.6) {
+          var far = cur + 2 + Math.floor(Math.random() * Math.min(5, n - 2));
+          if (far < n && !picked[far]) next = far;
+          else if (cur - 2 >= 0 && !picked[cur - 2]) next = cur - 2;
+        }
+        if (next < 0) {
+          if (r < 0.55) next = cur + (1 + Math.floor(Math.random() * 3)) * (Math.random() < 0.82 ? 1 : -1); // 近く
+          else if (r < 0.85) next = cur + (4 + Math.floor(Math.random() * 7)) * (Math.random() < 0.6 ? 1 : -1); // 少し飛ぶ
+          else next = Math.floor(Math.random() * n); // 大きく飛ぶ（目にとまった所）
+        }
+      }
+      // 範囲外・もう押した所なら捨てる（必ず空いている所を選ぶ）
+      if (!(next >= 0 && next < n) || picked[next]) next = -1;
+      if (next < 0) {
+        // 前後で空いている所を探す（近い順）
+        for (var k = 1; k <= n && next < 0; k++) {
+          if (cur + k < n && !picked[cur + k]) next = cur + k;
+          else if (cur - k >= 0 && !picked[cur - k]) next = cur - k;
+        }
+      }
+      if (next < 0) { for (var j = 0; j < n; j++) if (!picked[j]) { next = j; break; } }
+      if (next < 0) break;
+      picked[next] = 1; out.push(next);
+    }
+    return out;
   }
   /** 自動便の指定を引く時の顧客 ID（今のお客様・無ければ null） */
   function _pickCustomerIdForAuto() {
@@ -910,21 +969,63 @@
   /** 「印刷用PDF」のリンクを人が押す形で押す（カーソル → 押す → 反応を見る） */
   function _pressPrintPdf(item, cb) {
     var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
     var btn = item.btn;
     var fired = false;
     var fire = function () {
       if (fired) return;
       fired = true;
       try { btn.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
-      setTimeout(function () {
-        try { btn.click(); } catch (_) {}
-        console.log("[AXLX bulk-dl][auto] 印刷用PDFを押しました:", String(btn.href || "").slice(0, 80));
-        cb(true);
-      }, 250 + Math.floor(Math.random() * 450));
+      /**
+       * 2026-11-11 竹内さん「ボタンを押す際のたまにある迷いや選択の部分も人間のように動くよう」:
+       *   押す前に「ためらい」を入れる（人が『これでいいかな』と手を止める形）。
+       *   ・15% … 迷い（3段: 250〜650ms／700〜1600ms／1800〜4500ms）
+       *   ・その間、カーソルが目標の周りで小さく漂う（pointer-ui の drift）
+       *   ・押す直前に狙いを少し外して戻す（wander）こともある
+       *   ⚠ 合計は最大 5.2秒まで（止まったように見せない）
+       */
+      var hesitate = 0;
+      if (Math.random() < 0.15 * (0.75 + Math.random() * 0.5)) {
+        var hr = Math.random();
+        hesitate = hr < 0.65 ? 250 + Math.floor(Math.random() * 400)
+          : hr < 0.95 ? 700 + Math.floor(Math.random() * 900)
+          : 1800 + Math.floor(Math.random() * 2700);
+      } else if (Math.random() < 0.10) {
+        hesitate = 300 + Math.floor(Math.random() * 600); // 軽い一息
+      }
+      if (hesitate > 5200) hesitate = 5200;
+      var doClick = function () {
+        // 押す前の狙い直し（10%で少し外して戻る）
+        var pre = function (next) {
+          if (Math.random() < 0.10 && P && P.wander) {
+            P.wander(btn, 300 + Math.floor(Math.random() * 500)).then(next, next);
+          } else next();
+        };
+        pre(function () {
+          var gap = 90 + Math.floor(Math.random() * 260); // 押す直前の「狙いを定める」間
+          setTimeout(function () {
+            try { if (P && P.tap) P.tap(); } catch (_) {}
+            setTimeout(function () {
+              try { btn.click(); } catch (_) {}
+              console.log("[AXLX bulk-dl][auto] 印刷用PDFを押しました:", String(btn.href || "").slice(0, 80));
+              cb(true);
+            }, 70 + Math.floor(Math.random() * 130));
+          }, gap);
+        });
+      };
+      if (hesitate > 0 && P && P.drift) {
+        // 迷いの間、カーソルがその場で小さく漂う（人が考えながら手を漂わせる形）
+        P.drift(Math.min(hesitate, 1500), { radius: 10 + Math.random() * 16 }).then(doClick, doClick);
+        if (hesitate > 1500) setTimeout(doClick, hesitate); // 長い迷いは後半は止まって考える
+      } else if (hesitate > 0) {
+        setTimeout(doClick, hesitate);
+      } else {
+        doClick();
+      }
     };
     if (P && P.moveToEl) {
       try { P.ensure(); } catch (_) {}
-      P.moveToEl(btn).then(function () { if (P.tap) P.tap(); fire(); }, fire);
+      P.moveToEl(btn).then(fire, fire);
       // カーソルが動けない時も必ず押す（止まらない）
       setTimeout(function () { if (!fired) fire(); }, 3000);
     } else fire();

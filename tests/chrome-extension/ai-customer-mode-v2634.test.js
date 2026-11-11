@@ -163,5 +163,33 @@ console.log("\n■ マウス・クリックの間隔が不規則か（実測）"
   ok("打鍵: 200ms に張り付かない（種類が多い）", sk.uniq > 300, { uniq: sk.uniq, min: sk.min, max: sk.max });
 }
 
+console.log("\n■ 押す順（資料を上から全部順にしていない）と押す前の迷い");
+{
+  const fs3 = require("fs"), vm2 = require("vm");
+  const src = fs3.readFileSync(path.join(dir, "bulk-dl.js"), "utf8");
+  const st = src.indexOf("function _humanPickOrder(");
+  const en = src.indexOf("  /** 自動便の指定を引く時の顧客 ID", st);
+  const ctx2 = { Math };
+  vm2.createContext(ctx2);
+  vm2.runInContext(src.slice(st, en), ctx2);
+  const order = (n) => ctx2._humanPickOrder(n);
+  // 20件: 200回で全部ちがう順・重複なし・完全に上から順が0
+  const n = 20;
+  const os = Array.from({ length: 200 }, () => order(n).join(","));
+  ok("20件: 押す順が毎回ちがう（200回で180通り以上）", new Set(os).size > 180, { uniq: new Set(os).size });
+  ok("20件: 全部を1回ずつ（重複なし・件数一致）", os.every((x) => { const a = x.split(","); return new Set(a).size === n && a.length === n; }));
+  ok("20件: 完全に上から順の回が無い", !os.includes(Array.from({ length: n }, (_, i) => i).join(",")));
+  // 5件でも上から順ばかりにならない
+  const os5 = Array.from({ length: 200 }, () => order(5).join(","));
+  ok("5件: 上から順が半分より少ない", os5.filter((x) => x === "0,1,2,3,4").length < 100, { straight: os5.filter((x) => x === "0,1,2,3,4").length });
+  ok("5件: 重複なし", os5.every((x) => { const a = x.split(","); return new Set(a).size === 5 && a.length === 5; }));
+  // 押す前の迷い
+  ok("押す前に 15%ほどの迷い（3段）を入れる", /Math\.random\(\) < 0\.15 \* \(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(src));
+  ok("迷いの間カーソルが漂う（drift）", /P\.drift\(Math\.min\(hesitate, 1500\)/.test(src));
+  ok("押す直前に狙いを定める間（90〜350ms）", /var gap = 90 \+ Math\.floor\(Math\.random\(\) \* 260\)/.test(src));
+  ok("たまに狙いを外して戻る（wander 10%）", /Math\.random\(\) < 0\.10 && P && P\.wander/.test(src));
+  ok("迷いは最大5.2秒で打ち切る（止まって見せない）", /if \(hesitate > 5200\) hesitate = 5200;/.test(src));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
