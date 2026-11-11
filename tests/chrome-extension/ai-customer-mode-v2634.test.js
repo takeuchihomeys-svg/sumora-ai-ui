@@ -218,6 +218,10 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("ITANDI もたまに狙いを外して戻る（wander 12%）", /Math\.random\(\) < 0\.12\) \{[\s\S]{0,120}P\.wander/.test(ips4));
   ok("ITANDI も駅の一覧を最初に目で探す間（1.2〜3.4秒）", /_itStationLookSeen/.test(ips4) && /_lo1 = _firstStLook \? 1200 : 500, _hi1 = _firstStLook \? 3400 : 1600/.test(ips4));
   ok("ITANDI も入力の前に迷ってカーソルが漂う（drift 12%）", /P\.drift && Math\.random\(\) < 0\.12\)/.test(ips4));
+  // 2026-11-11 竹内さん「ほかに機械的な部分あるか？」で見つけた3つ
+  ok("ITANDI: モーダルは見えている1つだけ押す（一斉クリックしない）", /for \(var i = 0; i < cands\.length; i\+\+\) \{[\s\S]{0,200}cands\[i\]\.click\(\); return;/.test(ib4) && !/\.concat\(findBtnByText\("閉じる"\)\)\.forEach/.test(ib4));
+  ok("ITANDI: スクロール待ちも距離だけで決まらない（logNormalDelay）", /w = H\.logNormalDelay\(base, 0\.3\)/.test(ips4) && /遠い|Math\.abs\(dist\) > 200/.test(ips4));
+  ok("ITANDI: 間取りを上から順に選ばない（順番をシャッフル）", /_range\.sort\(function \(a, b\) \{ return \(0\.5 - Math\.random\(\)\); \}\)/.test(ips4) && /_subs\.sort\(function \(\) \{ return 0\.5 - Math\.random\(\); \}\)/.test(ips4));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

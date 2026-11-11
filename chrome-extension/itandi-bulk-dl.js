@@ -662,13 +662,19 @@
   }
 
   // ── モーダルを閉じる ─────────────────────────────────────────────────
+  /**
+   * 2026-11-11 竹内さん「ほかに機械的な部分あるか？」:
+   *   旧は「キャンセル」「閉じる」の**見えているボタンを一斉に**押していた（forEach で即 click）。
+   *   人は1つ押して閉じたら終わり。→ 見えている最初の1つだけ押す（1回で閉じる）。
+   */
   function closeModal() {
     var closeBtn = document.querySelector("button[aria-label='閉じる']");
     if (closeBtn) { closeBtn.click(); return; }
-    findBtnByText("キャンセル").concat(findBtnByText("閉じる")).forEach(function (b) {
-      var r = b.getBoundingClientRect();
-      if (r.width > 0) b.click(); // 可視ボタンのみクリック（b.parentElementは常にtruthyなので除外）
-    });
+    var cands = findBtnByText("キャンセル").concat(findBtnByText("閉じる"));
+    for (var i = 0; i < cands.length; i++) {
+      var r = cands[i].getBoundingClientRect();
+      if (r.width > 0) { cands[i].click(); return; } // 見えている最初の1つだけ
+    }
   }
 
   // ── popup.js からお客さん名＋IDを取得 ────────────────────────────────

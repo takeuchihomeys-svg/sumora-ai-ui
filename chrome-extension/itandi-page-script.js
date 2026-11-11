@@ -254,7 +254,22 @@
       _lastScrollAt = now;
       el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
       var dist = r.top < margin ? -(r.top - margin) : (r.bottom - (vh - margin));
-      return Math.min(700, Math.max(250, Math.round(Math.abs(dist) * 1.2)));
+      /**
+       * 2026-11-11 竹内さん「ほかに機械的な部分あるか？」:
+       *   旧は `距離×1.2` を 250〜700ms に丸めるだけ＝**同じ距離なら必ず同じ待ち**（決定的）。
+       *   リアプロ（page-script.js の _ensureInView）と同じく、距離の比例を下限にして**人の揺らぎ**を足す。
+       */
+      var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+      var base = Math.min(700, Math.max(250, Math.round(Math.abs(dist) * 1.2)));
+      var w;
+      if (H && H.logNormalDelay) {
+        w = H.logNormalDelay(base, 0.3);
+        if (Math.abs(dist) > 200 && Math.random() < 0.3) w += 200 + Math.floor(Math.random() * 500);
+        if (Math.random() < 0.06) w += 400 + Math.floor(Math.random() * 900);
+      } else {
+        w = base * (0.8 + Math.random() * 0.8);
+      }
+      return Math.min(2200, Math.max(180, Math.round(w)));
     } catch (_) { return 0; }
   }
 
@@ -1287,16 +1302,19 @@
         var fromRaw = rangeMatch[1].trim();
         var toRaw   = rangeMatch[2].trim();
         if (SLDK_SUBSTITUTE_IT[fromRaw]) {
-          // 1SLDK〜2LDK → 1LDK + 2DK + 2LDK
-          SLDK_SUBSTITUTE_IT[fromRaw].forEach(function(id) { tickFloor(id); });
+          // 1SLDK〜2LDK → 1LDK + 2DK + 2LDK（順番は毎回ちがう）
+          var _subs = SLDK_SUBSTITUTE_IT[fromRaw].slice();
+          _subs.sort(function () { return 0.5 - Math.random(); });
+          _subs.forEach(function (id) { tickFloor(id); });
           // toFloorが展開上限より上なら残り範囲も追加
           var upperKey = SLDK_UPPER_IT[fromRaw];
           var upperIdx = FLOOR_RANK_IT.indexOf(upperKey);
           var toIdx = FLOOR_RANK_IT.indexOf(FLOOR_TEXT_IT[toRaw] || toRaw);
           if (upperIdx >= 0 && toIdx > upperIdx) {
-            for (var ri = upperIdx + 1; ri <= toIdx; ri++) {
-              tickFloor(FLOOR_RANK_IT[ri]);
-            }
+            var _rest = [];
+            for (var ri = upperIdx + 1; ri <= toIdx; ri++) _rest.push(FLOOR_RANK_IT[ri]);
+            _rest.sort(function () { return 0.5 - Math.random(); });
+            _rest.forEach(function (k) { tickFloor(k); });
           }
         } else {
           var fromKey = FLOOR_TEXT_IT[fromRaw] || fromRaw;
@@ -1307,9 +1325,15 @@
             console.warn("[AX] itandi rangeMatch: unknown floor plan, skipping", fromKey, toKey);
           } else {
             if (fromIdx > toIdx) { var tmp = fromIdx; fromIdx = toIdx; toIdx = tmp; }
-            for (var ri = fromIdx; ri <= toIdx; ri++) {
-              tickFloor(FLOOR_RANK_IT[ri]);
-            }
+            /**
+             * 2026-11-11 竹内さん「ほかに機械的な部分あるか？」:
+             *   旧は必ず「1K→1DK→1LDK」の上から順。人が選ぶ時は気になった所から。
+             *   選ぶ集合は変えず**順番だけ**毎回ちがう（リアプロの _toggleCheckboxes と同じ考え）。
+             */
+            var _range = [];
+            for (var ri = fromIdx; ri <= toIdx; ri++) _range.push(FLOOR_RANK_IT[ri]);
+            _range.sort(function (a, b) { return (0.5 - Math.random()); });
+            _range.forEach(function (k) { tickFloor(k); });
           }
         }
       } else {
