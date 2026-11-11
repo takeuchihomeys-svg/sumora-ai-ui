@@ -364,6 +364,7 @@ import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
+import { exemplarNoteFor } from "@/app/lib/takeuchi-exemplar-server";
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
@@ -4499,7 +4500,10 @@ async function handleGenerateReply(req: NextRequest) {
           try {
             const u = readTurnUnderstanding(brainMeta), s7 = readSevenFields(brainMeta);
             const plan = buildSentencePlan(u, s7, { scene: composeConductorScene, ctx: readComposeContext(brainMeta, { nextIntent: composeRun?.intent.next && composeRun.intent.next !== "none" ? composeRun.intent.next : null }) });
-            return { plan, note: sentencePlanNote(plan), digest: sentencePlanDigest(plan) };
+            // 2026-11-12 作業員10: 作業員5 の竹内さんの手本（場面×潜在×誘導先・TAKEUCHI_EXEMPLAR=on の時だけ）を設計図の注記の後ろに（文は写させない）
+            const ex = (() => { try { return exemplarNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta }); } catch { return null; } })();
+            const note0 = sentencePlanNote(plan);
+            return { plan, note: note0 && ex ? `${note0}\n${ex.note}` : note0, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}` };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()
       : null;
