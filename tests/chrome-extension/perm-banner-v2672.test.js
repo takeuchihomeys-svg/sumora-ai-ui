@@ -19,24 +19,41 @@ function ok(name, cond, extra) {
 
 const html = read("popup.html"), sp = read("snapshot-popup.js"), mf = JSON.parse(read("manifest.json"));
 
-console.log("■ ① 許可が無い時に目立つ帯が出る");
+console.log("■ ① 許可が無い時に目立つボタンが出る（ブレインの左）");
 {
-  ok("帯がある（#snap-perm-banner）", /id="snap-perm-banner"/.test(html));
+  ok("ボタンがある（#perm-rec-btn）", /id="perm-rec-btn"/.test(html));
+  ok("文字が「🎬 録画を許可」", /🎬 録画を許可/.test(html));
+  ok("**ブレインより前**にある（左側）", (() => {
+    const iBtn = html.indexOf('id="perm-rec-btn"');
+    const iBrain = html.indexOf('id="brain-toggle"');
+    return iBtn > 0 && iBrain > 0 && iBtn < iBrain;
+  })());
+  ok("同じ入れ物（mode-group）の中", (() => {
+    const iGroup = html.indexOf('class="mode-group"');
+    const iBtn = html.indexOf('id="perm-rec-btn"');
+    const iNextDiv = html.indexOf('</div>', iGroup);
+    const iGroupEnd = html.indexOf('<button class="icon-btn"', iGroup);
+    return iBtn > iGroup && iBtn < iGroupEnd;
+  })());
+  ok("最初から出ている（display:inline-block・JSを待たない）", /id="perm-rec-btn" style="display:inline-block/.test(html));
+  ok("目立つ（オレンジ#f59e0b・太字800・白文字）", /background:#f59e0b;border:none;border-radius:14px;padding:5px 10px;color:#fff;font-size:11px;font-weight:800/.test(html));
+  ok("脈打つ（animation:axlxPermPulse）", /animation:axlxPermPulse/.test(html) && /@keyframes axlxPermPulse/.test(read("styles.css")));
+  ok("何のための許可かツールチップに書いてある", /title="画面の録画を許可する/.test(html));
+  ok("帯もある（#snap-perm-banner・説明用）", /id="snap-perm-banner"/.test(html));
   ok("中身に「画面の録画を許可してください」と書いてある", /画面の録画を許可してください/.test(html));
-  ok("何のための許可か書いてある（写真が残る・検索を押せたか確かめられる）", /操作のたびに画面の写真が残り/.test(html) && /検索を押せたか/.test(html));
-  ok("PCごとに1回だけと書いてある", /PCごとに1回だけ/.test(html));
-  ok("目立つ大きさ（12px・太字・黄色）", /padding:6px 12px;font-size:12px;font-weight:800/.test(html) && /background:#f59e0b/.test(html));
-  ok("帯の背景が黄色で目立つ（#fffbeb＋#f59e0b の枠）", /background:#fffbeb;border:2px solid #f59e0b/.test(html));
-  ok("初期は隠れている（許可が無い時に出す）", /id="snap-perm-banner" style="display:none/.test(html));
 }
 
 console.log("\n■ ② 押すと許可を頼む");
 {
   ok("「許可する」ボタンがある", /id="snap-perm-banner-btn"[\s\S]{0,200}許可する/.test(html));
-  ok("押すと ask を呼ぶ", /snap-perm-banner-btn[\s\S]{0,200}addEventListener\("click", ask\)/.test(sp));
-  ok("ask が chrome.permissions.request を呼ぶ", /function ask\(\)[\s\S]{0,800}chrome\.permissions\.request\(ORIGINS/.test(sp));
-  ok("許可されたら帯を消す（render(true)）", /if \(ok\) \{ render\(true\); return; \}/.test(sp));
-  ok("許可の状態で帯の出し入れをする", /banner\.style\.display = granted \? "none" : "flex"/.test(sp));
+  ok("押すと ask を呼ぶ（帯）", /snap-perm-banner-btn[\s\S]{0,200}addEventListener\("click", ask\)/.test(sp));
+  ok("押すと ask を呼ぶ（ヘッダーのボタン）", /perm-rec-btn[\s\S]{0,200}addEventListener\("click", ask\)/.test(sp));
+  ok("ask が chrome.permissions.request を呼ぶ", /function ask\(\)[\s\S]{0,900}chrome\.permissions\.request\(ORIGINS/.test(sp));
+  ok("許可されたらボタンと帯を消す（render(true)）", /if \(ok\) \{ render\(true\); return; \}/.test(sp));
+  ok("許可の状態でボタンの出し入れをする", /recBtn\.style\.display = granted \? "none" : "inline-block"/.test(sp));
+  ok("許可の状態で帯も出し入れする", /banner\.style\.display = granted \? "none" : "flex"/.test(sp));
+  ok("最初はボタンを出しておく（確認を待たない）", /var recBtn0 = el\("perm-rec-btn"\);[\s\S]{0,120}style\.display = "inline-block"/.test(sp));
+  ok("chrome.permissions が無い時もボタンを出す（render(false)）", /if \(!chrome\.permissions \|\| !chrome\.permissions\.contains\) \{ render\(false\); return; \}/.test(sp));
 }
 
 console.log("\n■ ③ ダイアログが出ない時の逃げ道");

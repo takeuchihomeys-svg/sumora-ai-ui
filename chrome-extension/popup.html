@@ -22,6 +22,10 @@
            組み合わせごとの動き・帯・バッジは mode-core.js の1か所（behavior / banner / badge）。
            右の「∨」（#collapse-btn）はモードとは別物: サイドパネルでは「お客さん一覧に戻る」、下のバーでは「折りたたむ」 -->
       <div class="mode-group">
+        <!-- 2026-11-11 竹内さん「でていない。ブレインの左側にわかりやすいようにだす」:
+             画面の録画の許可（<all_urls>）が**未許可の時だけ**、ブレインのすぐ左に**オレンジのボタン**を出す。
+             許可すると消える（許可済みなら何も出ない＝邪魔しない）。 -->
+        <button type="button" id="perm-rec-btn" style="display:inline-block;background:#f59e0b;border:none;border-radius:14px;padding:5px 10px;color:#fff;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap;box-shadow:0 2px 8px rgba(245,158,11,.55);animation:axlxPermPulse 1.6s ease-in-out infinite" title="画面の録画を許可する（操作のたびに画面の写真を残す・PCごとに1回）">🎬 録画を許可</button>
         <button type="button" id="brain-toggle" class="brain-toggle" aria-pressed="false" title="ブレイン：送る物件をお客様の条件・過去の物件出し・利益（AD−割引）で判定し、AIXツールに記録する。AIXツールの一括検索も受け取る（スタッフの時は受け取らない）（通常／スタッフ／AIX連動のどれとも組み合わせられる）">🧠 ブレイン</button>
         <!-- 2026-10-06 v2.5.75 竹内「拡張ツールのここのアナウンス不要 目に悪いのと、情報量多くて紛らわしいため」:
              モードの帯（青い帯）をやめ、今の動きの説明はここの小さな灰色の印にマウスを乗せた時だけ出す（一時停止中は ⏸） -->

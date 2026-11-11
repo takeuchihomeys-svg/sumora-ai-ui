@@ -24,9 +24,10 @@
   function render(granted) {
     var box = el("snap-perm");
     var banner = el("snap-perm-banner");
+    var recBtn = el("perm-rec-btn");
     var ver = "";
     try { ver = chrome.runtime.getManifest().version; } catch (_) {}
-    // 版は小さく「v2.6.71」だけ（問い合わせの時に見る）。許可済みなら許可の表示は出さない
+    // 版は小さく「v2.6.72」だけ（問い合わせの時に見る）。許可済みなら許可の表示は出さない
     if (el("snap-ver")) {
       el("snap-ver").textContent = "v" + (ver || "?");
       el("snap-ver").title = "拡張 v" + (ver || "?") + (granted ? "／画面の写真: 許可済み" : "");
@@ -34,7 +35,12 @@
     if (el("snap-perm-state")) el("snap-perm-state").textContent = granted ? "" : "画面の写真: 未許可";
     if (el("snap-perm-btn")) el("snap-perm-btn").style.display = granted ? "none" : "inline-block";
     if (box) box.style.display = "flex";
-    // 2026-11-11: 許可が無い時だけ**目立つ帯**を出す（押せば許可・だめなら手順）
+    /**
+     * 2026-11-11 竹内さん「でていない。ブレインの左側にわかりやすいようにだす」:
+     *   未許可の時だけ **ブレインのすぐ左**にオレンジのボタン（#perm-rec-btn）を出す。
+     *   帯（#snap-perm-banner）は補助（下に説明を出す）として残す。
+     */
+    if (recBtn) recBtn.style.display = granted ? "none" : "inline-block";
     if (banner) banner.style.display = granted ? "none" : "flex";
     var hint = el("snap-perm-hint");
     if (hint && granted) { hint.style.display = "none"; hint.textContent = ""; }
@@ -42,7 +48,13 @@
 
   function refresh() {
     try {
-      chrome.permissions.contains(ORIGINS, function (ok) { render(!!ok); });
+      if (!chrome.permissions || !chrome.permissions.contains) { render(false); return; }
+      chrome.permissions.contains(ORIGINS, function (ok) {
+        // 2026-11-11: 小窓（iframe）では chrome.permissions が使えない事がある
+        //   → エラーでも「未許可」として**ボタンを出す**（押した時に手順を出す）
+        if (chrome.runtime.lastError) { render(false); return; }
+        render(!!ok);
+      });
     } catch (_) { render(false); }
   }
 
@@ -97,11 +109,24 @@
   }
 
   function init() {
+    /**
+     * 2026-11-11 竹内さん「でていない。ブレインの左側にわかりやすいようにだす」:
+     *   許可の確認（contains）が返るまで**何も出ない**時間があり、iframe ではそもそも返らない事もある。
+     *   → まず**ボタンを出しておく**（未許可の見た目）→ 確認できたら許可済みなら消す。
+     *     これで「出ない」が無くなる（許可済みなら一瞬光るだけで消える）。
+     */
+    var recBtn0 = el("perm-rec-btn");
+    if (recBtn0) recBtn0.style.display = "inline-block";
+    var banner0 = el("snap-perm-banner");
+    if (banner0) banner0.style.display = "flex";
     refresh();
     var btn = el("snap-perm-btn");
     if (btn) btn.addEventListener("click", ask);
     var bannerBtn = el("snap-perm-banner-btn");
     if (bannerBtn) bannerBtn.addEventListener("click", ask);
+    // 2026-11-11 竹内さん「ブレインの左側にわかりやすいようにだす」: ヘッダーのオレンジのボタン
+    var recBtn = el("perm-rec-btn");
+    if (recBtn) recBtn.addEventListener("click", ask);
     // 2026-11-11: ダイアログが出ない時の逃げ道（拡張の管理画面を開く）
     var openBtn = el("snap-perm-open-ext");
     if (openBtn) openBtn.addEventListener("click", openExtensionsPage);
