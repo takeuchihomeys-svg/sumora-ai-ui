@@ -348,16 +348,62 @@
     return _findByText(['絞り込み条件＋', '絞り込み条件+', '絞り込み条件', '検索条件を表示']);
   }
   /** 文字で押せる要素を探す（見えている物だけ） */
-  function _findByText(list) {
-    var els = Array.prototype.slice.call(document.querySelectorAll('a,button,div,span,p,dt,h3,h4,li,td'));
-    for (var i = 0; i < list.length; i++) {
-      var t = norm(list[i]);
-      for (var j = 0; j < els.length; j++) {
-        if (!isVisible(els[j])) continue;
-        if (norm(els[j].textContent) === t) return els[j];
+  /**
+   * 2026-11-11 竹内さん「ちゃんと通常モードのアナウンスのところ参考に改善していくように。あの動きが分かればできるはず。
+   *   所在地も通常モードならちゃんと光るのに自動モードやAIXモードでできていない」
+   *
+   * 原因: 案内モード（realpro-guide.js）の `textMatches` は**文字のノードから上へたどって**探す。
+   *   欲しい文字の一部になっている文字のノードだけを見て、その上の要素（6段まで）の文字が
+   *   欲しい文字と同じかを比べ、長くなったら止める。→ **入れ子が深くても・他の文字が混ざっていても取れる**。
+   *   自動モードの旧 `_findByText` は `querySelectorAll` で**要素の全体の文字**を比べるだけだったので、
+   *   「所在地絞り込み ＋」のように**中の要素に分かれている**物を取りこぼしていた（＝押せない・光らない）。
+   *   → 案内モードと同じ探し方を自動モードにも入れる。
+   */
+  var TEXT_SEL = "a,button,div,span,td,th,p,label,li,input[type=button],input[type=submit]";
+  function _textMatches(texts, sel) {
+    var want = texts.map(norm).filter(Boolean);
+    var maxLen = 0; want.forEach(function (w) { if (w.length > maxLen) maxLen = w.length; });
+    var cand = [];
+    var add = function (el) { if (el && cand.indexOf(el) < 0) cand.push(el); };
+    try {
+      if (!sel || /input/.test(sel)) {
+        Array.prototype.forEach.call(document.querySelectorAll("input[type=button],input[type=submit]"), function (el) {
+          if (want.indexOf(norm(el.value)) >= 0) add(el);
+        });
       }
-    }
-    return null;
+      if (document.body && maxLen) {
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        var n;
+        while ((n = walker.nextNode())) {
+          var raw = n.nodeValue;
+          if (!raw || raw.length > maxLen * 4 + 40) continue;
+          var nt = norm(raw);
+          if (!nt || !want.some(function (w) { return w.indexOf(nt) >= 0; })) continue;
+          for (var el = n.parentElement, k = 0; el && el !== document.body && k < 6; el = el.parentElement, k++) {
+            if (!el.matches || !el.matches(sel || TEXT_SEL)) continue;
+            var et = norm(el.textContent);
+            if (et.length > maxLen) break;
+            if (want.indexOf(et) >= 0) add(el);
+          }
+        }
+      }
+    } catch (_) {}
+    var hits = cand.filter(function (el) {
+      try { return !(el.closest && el.closest("#axlx-guide-panel,#axlx-guide-layer")) && isVisible(el); } catch (_) { return false; }
+    });
+    // 一番内側だけ（中に同じ文字の要素を持つ外側の箱は外す）
+    return hits.filter(function (el) {
+      return !hits.some(function (o) { return o !== el && el.contains(o); });
+    });
+  }
+  function _findByText(list) {
+    var hits = _textMatches(list);
+    if (!hits.length) return null;
+    // 画面に見えている物を優先
+    var inv = hits.filter(function (el) {
+      try { var r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= (window.innerHeight || 800); } catch (_) { return false; }
+    });
+    return (inv.length ? inv : hits)[0] || null;
   }
   /**
    * 欄が見えるようにする（見えていれば何もしない）。閉じていれば「＋」を押して開く。
@@ -1420,6 +1466,28 @@
 
   // 市区郡ラベルを安全にクリック（city_code[]を持つlabel限定・checked済みは再クリックしない）
   function clickWardPrecise(texts) {
+    /**
+     * 2026-11-11 竹内さん「所在地も通常モードならちゃんと光るのに自動モードやAIXモードでできていない」:
+     *   案内モード（realpro-guide.js）は **`input[name="city_code[]"][value="<コード>"]` をコードで直接**探す。
+     *   自動モードは**文字で照合**していたので、「大阪市北区」と「北区」の違い・
+     *   `・`や全角の揺れ・ラベルの入れ子の違いで取りこぼしていた（＝区が押せない＝所在地が入らない）。
+     *   → **コードがあればコードで先に探す**（一番確実）。無ければ今まで通り文字で探す。
+     */
+    var codes = (window.__axlxWardCodes && window.__axlxWardCodes.length) ? window.__axlxWardCodes : null;
+    if (codes && codes.length) {
+      var hitByCode = 0;
+      for (var ci2 = 0; ci2 < codes.length; ci2++) {
+        var c2 = document.querySelector('input[name="city_code[]"][value="' + String(codes[ci2]) + '"]');
+        if (!c2) continue;
+        var lb2 = (c2.closest && c2.closest('label')) || c2.parentElement || c2;
+        if (c2.checked) { hitByCode++; continue; }
+        if (isVisible(lb2)) { simulateClick(lb2); hitByCode++; }
+      }
+      if (hitByCode > 0) {
+        _auditStepP('ward_by_code', hitByCode + '区（コードで選択）');
+        return true;
+      }
+    }
     var allLabels = Array.prototype.slice.call(document.querySelectorAll('label'));
     var wardLabels = allLabels.filter(function(l) {
       return !!l.querySelector('input[name="city_code[]"]');
@@ -1722,7 +1790,7 @@
     // フォールバック: button/a テキスト一致（小窓の中の「検索」は押さない）
     var SEARCH_TEXTS = ['住居検索', '検索', '物件を検索する', '条件で検索'];
     var allBtns = Array.prototype.slice.call(
-      document.querySelectorAll('button,input[type="submit"],a')
+      document.querySelectorAll('button,input[type="submit"],a,input[type="button"]')
     );
     var _fbOutside = allBtns.filter(function (b) { return !_inModal(b); });
     var _fbSide = _fbOutside.filter(_isSidebar);
@@ -1734,6 +1802,22 @@
         var txt = (b.textContent || b.value || '').replace(/\s+/g, '');
         if (txt === SEARCH_TEXTS[si]) { _pressSearchBtn(b); return; }
       }
+    }
+    /**
+     * 2026-11-11 竹内さん「まだ検索もおせていない。ちゃんと通常モードのアナウンスのところ参考に改善していく」:
+     *   上の2つで見つからない時、**案内モードと同じ探し方（文字のノードから上へたどる）**でも探す。
+     *   リアプロの検索ボタンは `div.go_search` の事が多いが、画面の作りが変わると
+     *   「検索」の文字が**中の span に分かれている**ことがあり、要素の全体文字を比べる旧の探し方では取れない。
+     */
+    var _byTextBtn = _findByText(['住居検索', '検索', '物件を検索する', '条件で検索']);
+    if (_byTextBtn && !_inModal(_byTextBtn)) {
+      console.log('[AX] 検索ボタンを文字から見つけました（案内モードと同じ探し方）');
+      _pressSearchBtn(_byTextBtn); return;
+    }
+    // 小窓の中しか無い場合でも、最後の手段として押す（全件検索より「検索しない」方が困るため）
+    if (_byTextBtn) {
+      console.warn('[AX] 検索ボタンが小窓の中にしかありません（押します）');
+      _pressSearchBtn(_byTextBtn); return;
     }
     if (_audit) { _audit.search_clicked = false; _audit.click_fails.push({ what: 'search', text: '検索', sample: _visibleTexts('button,input[type="submit"],a', 8) }); }
     notifyDone('clickSearch: 検索ボタンが見つかりません（フォーム折りたたみ/モーダル遮蔽の可能性）');
@@ -2748,6 +2832,13 @@
       areaMode: (cond.area_mode || (cond.station_names && cond.station_names.length ? 'station' : (cond.city_codes && cond.city_codes.length ? 'ward' : null))),
       areaText: String(cond.detail_ward || (cond.station_names || []).slice(0, 2).join('・') || ((cond.city_codes || []).length + '区')),
     };
+    /**
+     * 2026-11-11 竹内さん「所在地も通常モードならちゃんと光るのに自動モードやAIXモードでできていない」:
+     *   区は**コードで探す**のが一番確実（案内モードと同じ）。ここで控えを置き、clickWardPrecise が使う。
+     */
+    try {
+      window.__axlxWardCodes = (cond.city_codes || []).map(String);
+    } catch (_) { window.__axlxWardCodes = null; }
     if (cond.structure_types && cond.structure_types.length > 0) {
       var sVals = cond.structure_types.map(function(s){ return STRUCTURE_MAP[s]; }).filter(Boolean);
       if (sVals.length) setCheckboxes("structured_type[]", sVals);
