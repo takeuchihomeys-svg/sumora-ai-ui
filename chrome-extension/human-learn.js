@@ -289,8 +289,7 @@
     }
 
     /** 画面（document）に付ける。戻り値は外す関数 */
-    function attach(doc, win) {
-      var d = doc || D;
+    function attach(doc, win) {      var d = doc || D;
       var w = win || W;
       if (!d || !d.addEventListener) return function () {};
       /**

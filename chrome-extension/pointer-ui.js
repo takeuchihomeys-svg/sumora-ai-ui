@@ -26,6 +26,7 @@
   var _el = null;
   var _ready = false;
   var _anim = null;
+  var _tapEl = null;   // 2026-11-11: 直前に狙った要素（押した場所を記録するため）
   // 2026-11-11 竹内さん「通常モードの動きから学ぶのか」: 通常モードで覚えた実測から作った「動きの癖」
   var _prof = null;
   var _profLoaded = false;
@@ -223,6 +224,7 @@
   function moveToEl(el) {
     try {
       if (!el || !el.getBoundingClientRect) return Promise.resolve(false);
+      _tapEl = el;  // 2026-11-11: 押す時に「どの要素か」を記録側へ渡せるように覚える
       var r = el.getBoundingClientRect();
       if (!r || (r.width <= 0 && r.height <= 0)) return Promise.resolve(false);
       /**
@@ -273,6 +275,15 @@
     if (!ensure()) return;
     _press(true);
     setTimeout(function () { _press(false); }, 90);
+    /**
+     * 2026-11-11 竹内さん「動きも学習させたい」:
+     *   拡張が押すたびに、**どこを押したか・どれくらい間が空いたか**を記録側へ知らせる。
+     *   ⚠ これは**人の実測とは別の入れ物**（`axlx_auto_motion`）に貯まる（人の速さを汚さない）。
+     */
+    try {
+      var _n = (typeof self !== "undefined" ? self : window).__axlxNoteAutoOp;
+      if (typeof _n === "function") _n("tap", _tapEl, null);
+    } catch (_) {}
     /**
      * 2026-11-11 竹内さん「カーソルもちゃんと人間のようにひと息つくときもあるか」:
      *   押した直後のカーソルが**完全に静止**すると機械的。

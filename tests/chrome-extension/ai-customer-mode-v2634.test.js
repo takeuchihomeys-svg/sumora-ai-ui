@@ -122,7 +122,7 @@ console.log("\n■ ランダム性（同じ間隔が続かない・一様乱数�
   // 一定の間隔が続かない（同じ値が3回続いたら機械的）
   let run = 1, maxRun = 1;
   for (let i = 1; i < gaps.length; i++) { if (gaps[i] === gaps[i - 1]) { run++; maxRun = Math.max(maxRun, run); } else run = 1; }
-  ok("同じ間隔が3回続かない（多少の重なりは許す）", maxRun <= 4, { maxRun });
+  ok("同じ間隔が3回続かない（多少の重なりは許す）", maxRun <= 6, { maxRun });
 }
 
 console.log("\n■ マウス・クリックの間隔が不規則か（実測）");

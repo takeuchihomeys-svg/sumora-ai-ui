@@ -273,6 +273,82 @@
     } catch (_) { _saving = false; }
   }
 
+  /**
+   * 2026-11-11 竹内さん「動きも学習させたい」:
+   *   自動モードでも**拡張自身の動き**（見えるカーソルの移動・押した位置・間隔）を覚える。
+   *   ⚠ 人の動きとは**別の入れ物**に入れる（混ぜると「人の速さ」の実測が壊れる）。
+   *   ・`axlx_auto_motion` に集計（速さ・曲がり・押した位置・スクロール・間隔）
+   *   ・自動モードで動いた時だけ書く。通常・スタッフでは今まで通り `axlx_human_learn`（人の実測）
+   */
+  var AUTO_KEY = "axlx_auto_motion";
+  var _autoOps = [];
+  var _autoLastAt = 0;
+  var _autoLastEl = null;
+  var _autoSaving = false;
+  /** 拡張が押す直前に呼ぶ（pointer-ui の位置と要素を残す） */
+  function noteAutoOp(kind, el, extra) {
+    try {
+      var t = Date.now();
+      var gap = _autoLastAt ? Math.min(120000, t - _autoLastAt) : null;
+      _autoLastAt = t;
+      var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+      var pos = (P && P.visiblePosition) ? P.visiblePosition() : null;
+      var r = null, fx = null, fy = null;
+      try {
+        if (el && el.getBoundingClientRect) {
+          r = el.getBoundingClientRect();
+          // 押す位置は「カーソルが居た所」を要素の中の割合にする（人が見た点）
+          if (pos && r.width > 0 && r.height > 0) {
+            fx = Math.round(Math.max(0, Math.min(1, (pos.x - r.left) / r.width)) * 100) / 100;
+            fy = Math.round(Math.max(0, Math.min(1, (pos.y - r.top) / r.height)) * 100) / 100;
+          }
+        }
+      } catch (_) {}
+      _autoOps.push({
+        t: t, k: String(kind || "click").slice(0, 12),
+        f: (L && L.fieldName) ? L.fieldName(el) : null,
+        gap: gap, x: fx, y: fy,
+        scroll: (extra && typeof extra.dy === "number") ? Math.round(extra.dy) : null,
+      });
+      if (_autoOps.length > 200) _autoOps.shift();
+      if (_autoOps.length >= 20 && !_autoSaving) {
+        _autoSaving = true;
+        flushAuto();
+      }
+    } catch (_) {}
+  }
+  /** 自動モードの動きを集計して貯める */
+  function flushAuto() {
+    try {
+      if (!_autoOps.length) { _autoSaving = false; return; }
+      var adds = L.summarize(_autoOps);
+      var det = { moves: [], points: [], scrolls: [] };
+      // 押した位置（拡張が狙った点）
+      _autoOps.forEach(function (o) {
+        if (o.x != null && o.y != null) det.points.push({ f: o.f || "?", x: o.x, y: o.y, s: "auto" });
+        if (o.scroll != null) det.scrolls.push({ dy: o.scroll, dir: o.scroll > 0 ? "down" : "up", y: 0 });
+      });
+      var motion = L.summarizeMotion(det);
+      adds.moves = motion.moves; adds.points = motion.points; adds.scrolls = motion.scrolls;
+      chrome.storage.local.get([AUTO_KEY], function (r) {
+        try {
+          var prev = r && r[AUTO_KEY];
+          var next = L.mergeAggregate(prev, adds);
+          next.at = Date.now();
+          next.site = site;
+          next.source = "extension_auto";   // ← 人の実測と区別する印
+          var o = {}; o[AUTO_KEY] = next;
+          chrome.storage.local.set(o, function () {
+            _autoOps = [];
+            _autoSaving = false;
+            try { void chrome.runtime.lastError; } catch (_) {}
+          });
+        } catch (_) { _autoSaving = false; }
+      });
+    } catch (_) { _autoSaving = false; }
+  }
+  try { window.__axlxNoteAutoOp = noteAutoOp; } catch (_) {}
+
   // ── モードを見る（学習は通常・スタッフの時だけ／写真はどのモードでも）──
   var KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode", "axlxShotOff"];
   var _shooting = false;

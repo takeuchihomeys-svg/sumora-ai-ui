@@ -1978,13 +1978,14 @@ if (msg.type === "axlx-human-shot") {
        *   → 送る前に**縮める**（長辺 1280px・JPEG 45%）。1枚あたり 200〜400KB になり確実に通る。
        */
       /**
-       * 2026-11-11 竹内さん「写真の容量も小さく」:
-       *   長辺 **1000px・JPEG 40%**（100〜250KB 目安）。これで 3MB 超で捨てられる事が無くなる。
+       * 2026-11-11 竹内さん「画像もっと容量落としても大丈夫」:
+       *   長辺 **800px・JPEG 32%**（40〜90KB 目安）。物件名・賃料・ボタンの位置は読める。
+       *   1検索で 30〜80枚たまるので、1枚を小さくするのが効く。
        */
       let shotForUpload = dataUrl;
       let shotW = 0, shotH = 0;
       try {
-        const shrunk = await _shrinkShot(dataUrl, 1000, 0.40);
+        const shrunk = await _shrinkShot(dataUrl, 800, 0.32);
         if (shrunk && shrunk.dataUrl) { shotForUpload = shrunk.dataUrl; shotW = shrunk.w; shotH = shrunk.h; }
       } catch (e) {
         console.warn("[human-shot] 縮められませんでした（元の大きさで送ります）:", (e && e.message) || e);

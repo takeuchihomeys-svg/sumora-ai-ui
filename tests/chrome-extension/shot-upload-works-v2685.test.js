@@ -1,7 +1,7 @@
 // 実行: node tests/chrome-extension/shot-upload-works-v2685.test.js
 // 2026-11-11 竹内さん「こうでた」（写真テストが「アップロードの結果はまだ」）
 //
-//   この版（v2.6.99）で **キュー方式は廃止**し、`_sendShotNow` で**その場で送る**形になった。
+//   この版（v2.7.0）で **キュー方式は廃止**し、`_sendShotNow` で**その場で送る**形になった。
 //   ここでは「送信が fetch まで行くこと」「理由を必ず残すこと」だけを固定する
 //   （縮小・長辺・並列の細部は shot-send-direct-v2696.test.js が見る）。
 const fs = require("fs");
@@ -49,7 +49,7 @@ console.log("\n■ 実際に動かす（送信まで行く）");
     chrome: { storage: { local: { get: async () => ({}), set: () => {} } } },
     _getAutomationKeyHeader: async () => ({}),
     _snapInstallId: async () => "t",
-    _extVersion: () => "2.6.99",
+    _extVersion: () => "2.7.0",
     fetch: async (url, opts) => { fetchCalls.push({ url, len: opts.body.length }); return { ok: true, status: 200, text: async () => '{"ok":true}' }; },
   };
   vm.createContext(sandbox);
