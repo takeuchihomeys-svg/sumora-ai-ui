@@ -539,17 +539,93 @@
     return out;
   }
 
+  /**
+   * 2026-11-11 竹内さん「通常モードの動きから学ぶのか」「これで画面から動き把握できるようになったてことかな？」
+   *   貯めた実測（`axlx_human_learn`）から、**自動モードの動きに使う値**を作る（純関数）。
+   *
+   *   何を学ぶか:
+   *     ・速さ（px/秒）        → カーソルを動かす時間を実測に合わせる
+   *     ・曲がり具合（1.0〜）  → 軌跡の曲げ方を実測に合わせる
+   *     ・押した位置（0〜1）   → ボタンのどこを狙うかを実測に合わせる
+   *     ・スクロール量（px）   → 一度に送る量を実測に合わせる
+   *
+   *   ⚠ 実測が無い・少なすぎる時は **null を返す**（呼ぶ側は今まで通りの値を使う＝急に動きが変わらない）。
+   *   ⚠ 極端な値は丸める（速すぎ・遅すぎ・端すぎで不自然にならないように）。
+   *
+   * @param {Object} agg  axlx_human_learn の中身
+   * @param {{minMoves?:number, minPoints?:number, minScrolls?:number}} opt
+   * @returns {{speed_px_s:number, curve:number, aim:{x:number,y:number}, scroll_dy:number|null,
+   *            sample:{moves:number, points:number, scrolls:number}, at:number}|null}
+   */
+  function profileFrom(agg, opt) {
+    var o = opt || {};
+    var minMoves = o.minMoves == null ? 3 : o.minMoves;
+    var minPoints = o.minPoints == null ? 3 : o.minPoints;
+    var minScrolls = o.minScrolls == null ? 2 : o.minScrolls;
+    if (!agg || typeof agg !== "object") return null;
+    var mv = agg.moves || {}, pt = agg.points || {}, sc = agg.scrolls || {};
+
+    // 速さ: 100〜4000px/秒の範囲に丸める（人が見て自然な範囲）
+    var sp = typeof mv.speed_px_s === "number" && mv.speed_px_s > 0 ? mv.speed_px_s : null;
+    if (sp != null) sp = Math.max(100, Math.min(4000, Math.round(sp)));
+    // 曲がり: 1.0〜2.0（1.0＝まっすぐ）。実測が 1.0 未満（誤差）は 1.0 に
+    var cv = typeof mv.curve === "number" && mv.curve >= 1 ? mv.curve : null;
+    if (cv != null) cv = Math.round(Math.max(1, Math.min(2, cv)) * 100) / 100;
+    // 押す位置: 0.5〜0.5 を中心に 0.2〜0.8 に丸める（端すぎる所は押さない＝押し間違いを防ぐ）
+    var ax = typeof pt.x === "number" ? Math.max(0.2, Math.min(0.8, pt.x)) : null;
+    var ay = typeof pt.y === "number" ? Math.max(0.2, Math.min(0.8, pt.y)) : null;
+    // スクロール量: 50〜1500px に丸める
+    var sd = typeof sc.dy === "number" && sc.dy > 0 ? Math.max(50, Math.min(1500, Math.round(sc.dy))) : null;
+
+    var enoughMoves = (Number(mv.n) || 0) >= minMoves;
+    var enoughPoints = (Number(pt.n) || 0) >= minPoints;
+    var enoughScrolls = (Number(sc.n) || 0) >= minScrolls;
+
+    if (!enoughMoves && !enoughPoints && !enoughScrolls) return null; // 材料が足りない＝今まで通り
+    return {
+      speed_px_s: enoughMoves ? sp : null,
+      curve: enoughMoves ? cv : null,
+      aim: (enoughPoints && ax != null && ay != null) ? { x: Math.round(ax * 100) / 100, y: Math.round(ay * 100) / 100 } : null,
+      scroll_dy: enoughScrolls ? sd : null,
+      sample: { moves: Number(mv.n) || 0, points: Number(pt.n) || 0, scrolls: Number(sc.n) || 0 },
+      at: Number(agg.at) || 0,
+    };
+  }
+
+  /** プロファイルから「この距離を動く時間」を出す（実測の速さ・無ければ null） */
+  function moveMsFor(profile, dist) {
+    if (!profile || typeof profile.speed_px_s !== "number" || !(dist > 0)) return null;
+    var ms = (dist / profile.speed_px_s) * 1000;
+    // 速さから出した時間を 120〜1600ms に丸める（0ms で飛ばない・長すぎて止まらない）
+    return Math.max(120, Math.min(1600, Math.round(ms)));
+  }
+
+  /** 集計から「何を学んだか」を1行ずつ（画面に出す用） */
+  function learnedLines(profile) {
+    if (!profile) return ["まだ学べていません（通常モードでもう少し操作すると学び始めます）"];
+    var out = [];
+    out.push("速さ: " + (profile.speed_px_s != null ? "約" + profile.speed_px_s + "px/秒（カーソルの動きに使います）" : "まだ"));
+    out.push("曲がり: " + (profile.curve != null ? profile.curve + "（1.00＝まっすぐ）" : "まだ"));
+    out.push("押す位置: " + (profile.aim ? "横" + profile.aim.x + "・縦" + profile.aim.y + "（ボタンのどこを狙うか）" : "まだ"));
+    out.push("スクロール: " + (profile.scroll_dy != null ? "1回 約" + profile.scroll_dy + "px" : "まだ"));
+    return out;
+  }
+
   return {
     create: create,
     summarize: summarize,
     summarizeMotion: summarizeMotion,
     mergeAggregate: mergeAggregate,
     mergeMotion: mergeMotion,
+    profileFrom: profileFrom,
+    moveMsFor: moveMsFor,
+    learnedLines: learnedLines,
     reportLine: reportLine,
     describe: describe,
     fieldName: fieldName,
     kindOf: kindOf,
     median: median,
+    medianF: medianF,
     MAX_OPS: MAX_OPS,
     MAX_GAPS: MAX_GAPS,
     SAME_KIND_MIN_MS: SAME_KIND_MIN_MS,

@@ -112,9 +112,9 @@ ok("watchdog は『途中で止まりました』", /条件の入力が途中で
 
 console.log("\n⑦ 配線");
 const mf = JSON.parse(read("manifest.json"));
-eq("manifest の版", mf.version, "2.6.65");
+eq("manifest の版", mf.version, "2.6.66");
 const main = mf.content_scripts.find((c) => c.world === "MAIN" && c.js.indexOf("itandi-page-script.js") >= 0);
-eq("itandi のページの中の段に form-guard（page-script より前）", main && main.js, ["human-wait.js", "pointer-ui.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
+eq("itandi のページの中の段に form-guard（page-script より前）", main && main.js, ["human-wait.js", "human-learn.js", "pointer-ui.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
 const ps = read("itandi-page-script.js");
 ok("page-script: 条件削除のボタンがあれば isResetLabel で押す（v2.5.46 は無くても1つずつ外す）", /FG\.isResetLabel\(b\.textContent\)/.test(ps) && /_itResetForm\(function \(res\)/.test(ps));
 ok("page-script: リセットは確かめの窓でも止まらない（押す間だけ confirm を はい）", /window\.confirm = function/.test(ps) && /finally \{ window\.confirm = _oc; \}/.test(ps));

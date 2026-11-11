@@ -26,6 +26,51 @@
   var _el = null;
   var _ready = false;
   var _anim = null;
+  // 2026-11-11 竹内さん「通常モードの動きから学ぶのか」: 通常モードで覚えた実測から作った「動きの癖」
+  var _prof = null;
+  var _profLoaded = false;
+  var PROF_KEY = "axlx_human_learn";
+  // 2026-11-11 竹内さん「データたまって理解するたび反映」: 貯まるたびに作り直された癖（こちらを優先して読む）
+  var PROF_LIVE_KEY = "axlx_human_profile";
+  var L = null;
+  // ⚠ pointer-ui.js は human-learn.js より**先**に読み込まれる。
+  //   読み込み時の1回だけ見ると undefined になるので、**使う時に読む**（ensure / reloadProfile の中）。
+  function _learn() {
+    if (L) return L;
+    try { L = (typeof self !== "undefined" ? self : window).AxlxHumanLearn || null; } catch (_) { L = null; }
+    return L;
+  }
+  /** 覚えた癖（無ければ null＝今まで通りの動き） */
+  function _profile() { return _prof; }
+  /** storage から読み直す（モードや貯まり方が変わった時） */
+  function reloadProfile() {
+    try {
+      var LL = _learn();
+      if (!LL || !LL.profileFrom) return;
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+      /**
+       * 2026-11-11 竹内さん「データたまって理解するたび反映」:
+       *   ① 貯まるたびに作り直された癖（axlx_human_profile）があれば**それをそのまま使う**（一番新しい理解）
+       *   ② 無ければ、貯まった実測（axlx_human_learn）から今この場で作る
+       */
+      chrome.storage.local.get([PROF_LIVE_KEY, PROF_KEY], function (r) {
+        try {
+          var live = r && r[PROF_LIVE_KEY];
+          if (live && typeof live === "object") { _prof = live; return; }
+          _prof = LL.profileFrom(r && r[PROF_KEY]);
+        } catch (_) { _prof = null; }
+      });
+    } catch (_) {}
+  }
+  // 貯まり方が変わったら読み直す（通常モードで操作して増えた時に、次の動きから効く）
+  try {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
+      chrome.storage.onChanged.addListener(function (ch, area) {
+        if (area !== "local" || !ch) return;
+        if (ch[PROF_LIVE_KEY] || ch[PROF_KEY]) reloadProfile();
+      });
+    }
+  } catch (_) {}
 
   function _doc() {
     try { return document; } catch (_) { return null; }
@@ -42,6 +87,8 @@
     if (!d || !d.body) return null;
     if (_el && _el.isConnected) return _el;
     if (_el && _el.parentNode) _el.parentNode.removeChild(_el);
+    // 2026-11-11: 最初に使う時に、通常モードで覚えた動きの癖を読む（読めなければ今まで通り）
+    if (!_profLoaded) { _profLoaded = true; reloadProfile(); }
     var el = d.createElement("div");
     el.id = ID;
     el.setAttribute("aria-hidden", "true");
@@ -125,10 +172,21 @@
     var dist = Math.sqrt(Math.pow(t.x - from.x, 2) + Math.pow(t.y - from.y, 2));
     // 近すぎる時は動かさない（同じ場所を押すたびに震えない）
     if (dist < 4) { _place(t.x, t.y); _pos = t; return Promise.resolve(true); }
-    // 距離で時間を変える（近い 220ms・遠い 900ms・人より少し速い）
-    var total = Math.min(900, Math.max(220, Math.round(dist * 1.6)));
+    /**
+     * 2026-11-11 竹内さん「通常モードの動きから学ぶのか」:
+     *   通常モードで覚えた**実測の速さ**があれば、その速さで動く（人が実際に動かしていた速さ）。
+     *   無ければ今まで通り「近い 220ms・遠い 900ms」。
+     */
+    var prof = _profile();
+    var _LL = _learn();
+    var _learned = (prof && _LL && _LL.moveMsFor) ? _LL.moveMsFor(prof, dist) : null;
+    var total = _learned != null ? _learned : Math.min(900, Math.max(220, Math.round(dist * 1.6)));
     var steps = Math.min(28, Math.max(6, Math.round(dist / 26)));
     var pts = (H && H.pointerPath) ? H.pointerPath(from, t, steps) : [{ x: from.x, y: from.y }, t];
+    // 2026-11-11: 覚えた**曲がり具合**に寄せる（1.0＝まっすぐ・大きいほど曲げる）
+    if (prof && prof.curve > 1 && pts.length > 3) {
+      try { pts = _bendLike(pts, from, t, prof.curve); } catch (_) {}
+    }
     var waits = (H && H.pointerDelays) ? H.pointerDelays(pts.length, total) : null;
     var anim = { cancelled: false };
     _anim = anim;
@@ -167,10 +225,47 @@
       if (!el || !el.getBoundingClientRect) return Promise.resolve(false);
       var r = el.getBoundingClientRect();
       if (!r || (r.width <= 0 && r.height <= 0)) return Promise.resolve(false);
-      var x = r.left + r.width * (0.4 + Math.random() * 0.2);
-      var y = r.top + r.height * (0.4 + Math.random() * 0.2);
+      /**
+       * 2026-11-11 竹内さん「ボタンのどこ押すかもちゃんとたまるんかな」:
+       *   通常モードで覚えた**押す位置の癖**（真ん中ではなく左寄り等）があれば、その割合で狙う。
+       *   無ければ今まで通り 40〜60%（ほぼ真ん中）。
+       */
+      var prof = _profile();
+      var fx = 0.4 + Math.random() * 0.2;
+      var fy = 0.4 + Math.random() * 0.2;
+      if (prof && prof.aim) {
+        // 実測の割合のまわりに少しだけ揺らす（毎回同じ点だと機械的）
+        fx = Math.max(0.15, Math.min(0.85, prof.aim.x + (Math.random() - 0.5) * 0.16));
+        fy = Math.max(0.15, Math.min(0.85, prof.aim.y + (Math.random() - 0.5) * 0.16));
+      }
+      var x = r.left + r.width * fx;
+      var y = r.top + r.height * fy;
       return moveTo(x, y);
     } catch (_) { return Promise.resolve(false); }
+  }
+
+  /**
+   * 覚えた曲がり具合に寄せて軌跡を曲げる（純関数に近い・その場で点をずらす）。
+   *   curve 1.0＝まっすぐ / 1.2＝少し曲がる。軌跡の真ん中を垂直方向へずらす。
+   *   ⚠ ずらす量は距離の 12% まで（大きく曲げると画面が暴れる）。
+   */
+  function _bendLike(pts, from, to, curve) {
+    if (!pts || pts.length < 3) return pts;
+    var dx = to.x - from.x, dy = to.y - from.y;
+    var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    // 垂直方向の単位ベクトル
+    var nx = -dy / len, ny = dx / len;
+    // curve 1.0 → 0px / 1.5 → 距離の約 7%（控えめに）
+    var amount = Math.min(len * 0.12, Math.max(0, (curve - 1) * len * 0.14));
+    if (!(amount > 0.5)) return pts;
+    var sign = Math.random() < 0.5 ? -1 : 1;  // どちら側へ曲がるかは毎回ちがう
+    var mid = (pts.length - 1) / 2;
+    return pts.map(function (p, i) {
+      if (i === 0 || i === pts.length - 1) return p;
+      // 真ん中が一番ずれる（sin の山）
+      var k = Math.sin((i / (pts.length - 1)) * Math.PI);
+      return { x: p.x + nx * amount * k * sign, y: p.y + ny * amount * k * sign };
+    });
   }
 
   /** 押した時の見た目（少し縮む→戻る）。本物のクリックの代わりではない */
@@ -275,6 +370,9 @@
     hide: hide,
     position: position,
     visiblePosition: visiblePosition,
+    // 2026-11-11: 通常モードで覚えた動きの癖（速さ・曲がり・押す位置）
+    reloadProfile: reloadProfile,
+    profile: _profile,
     ELEMENT_ID: ID,
   };
 });

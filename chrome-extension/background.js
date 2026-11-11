@@ -1788,8 +1788,84 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // ── CSP回避: content.jsに代わってproperty-customersをfetch ─────────────────
-  if (msg.type === "axlx-fetch-customer") {
+  /**
+   * 2026-11-11 竹内さん「データベース等にはいっているのか」:
+   *   通常モードで覚えた人の動きを DB（human_motion_learn）に残す。
+   *   ・画面側（human-learn-upload.js）は**鍵を持たない**ので、ここで付けて送る（認証情報をページに出さない）
+   *   ・送るのは数と傾向だけ。入力した中身・名前・電話は送らない
+   *   ・送れなくても学習は止めない（失敗は console だけ）
+   */
+  if (msg.type === "axlx-human-motion") {
     (async () => {
+      try {
+        const hdr = await _getAutomationKeyHeader();
+        const body = {
+          motion: msg.motion || null,
+          site: msg.site || null,
+          mode: msg.mode || null,
+          shot_taken: !!msg.shot_taken,
+          shot_key: msg.shot_key || null,
+          shot_w: msg.shot_w || null,
+          shot_h: msg.shot_h || null,
+          install_id: await _snapInstallId(),
+          device_label: (await chrome.storage.local.get("deviceLabel").catch(function () { return {}; })).deviceLabel || null,
+          ext_version: _extVersion(),
+          at: Date.now(),
+        };
+        const res = await fetch(SUMORA_BATCH_API + "/api/human-motion", {
+          method: "POST",
+          headers: Object.assign({ "Content-Type": "application/json" }, hdr),
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) console.warn("[human-motion] 送れませんでした:", res.status);
+        sendResponse({ ok: res.ok, status: res.status });
+      } catch (e) {
+        console.warn("[human-motion] 送信エラー:", (e && e.message) || e);
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+    })();
+    return true;
+  }
+
+  /**
+   * 2026-11-11 竹内さん「画面の映像も要る？（操作のたびに画面の写真を残す）」→「要る」
+   *   操作の区切り（1分ごと・タブを離れる時）に**画面の写真を1枚**撮って Storage に置く。
+   *   ・写真の**中身は DB の表に入れない**（1行が数百KBになり集計が重くなる）。Storage に置き、名前だけ DB に送る
+   *   ・撮るのは見えているタブだけ（裏のタブは撮れない・撮ると画面が切り替わって邪魔になる）
+   *   ・`<all_urls>` の許可が要る（無ければ撮らずに「撮れなかった」を返す＝止まらない）
+   *   ・保存は最大 SHOT_KEEP 枚（古い物から消す＝Storage を溢れさせない）
+   */
+  if (msg.type === "axlx-human-shot") {
+    (async () => {
+      try {
+        const SHOT_KEEP = 30;
+        const has = await chrome.permissions.contains({ origins: ["<all_urls>"] }).catch(function () { return false; });
+        if (!has) { sendResponse({ ok: false, error: "no_permission" }); return; }
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab || !tab.windowId) { sendResponse({ ok: false, error: "no_tab" }); return; }
+        const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 60 });
+        if (!dataUrl) { sendResponse({ ok: false, error: "no_image" }); return; }
+        const key = "shot_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+        const o = {}; o[key] = { at: Date.now(), site: msg.site || null, url: String(tab.url || "").slice(0, 300), data: dataUrl };
+        await chrome.storage.local.set(o);
+        // 古い物から消す
+        const all = await chrome.storage.local.get(null);
+        const keys = Object.keys(all).filter(function (k) { return k.indexOf("shot_") === 0; });
+        if (keys.length > SHOT_KEEP) {
+          keys.sort(function (a, b) { return (Number(all[a] && all[a].at) || 0) - (Number(all[b] && all[b].at) || 0); });
+          const del = keys.slice(0, keys.length - SHOT_KEEP);
+          try { await chrome.storage.local.remove(del); } catch (_) {}
+        }
+        sendResponse({ ok: true, shot_key: key });
+      } catch (e) {
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.type === "axlx-fetch-customer") {    (async () => {
       try {
         const res = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
         const list = await res.json();

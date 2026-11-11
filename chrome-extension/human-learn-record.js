@@ -14,6 +14,8 @@
   window.__axlxHumanLearnRecord = true;
 
   var KEY = "axlx_human_learn";
+  // 2026-11-11 竹内さん「データたまって理解するたび反映」: 貯まるたびに作り直す「動きの癖」（カーソルがこれを見て動く）
+  var PROFILE_KEY = "axlx_human_profile";
   var SAVE_EVERY_MS = 60000;   // 1分ごとに書き出す（操作のたびに書かない）
   var MIN_OPS_TO_SAVE = 5;     // 5回未満は書かない（誤操作・一瞬のクリックだけを貯めない）
   var LEARN_LOCK = "human-learn-record.js";
@@ -94,6 +96,24 @@
         + "・押した所" + (det.points || []).length + "・スクロール" + (det.scrolls || []).length;
     } catch (_) {}
   }
+  /**
+   * 2026-11-11 竹内さん「データたまって理解するたび反映」:
+   *   貯まるたびに「こう理解した（速さ・曲がり・押す位置）」を**画面の印に出す**。
+   *   → 反映されていることが目で分かる（数字が動く）。
+   */
+  function paintLearned(prof) {
+    try {
+      var d = document.getElementById("axlx-learn-badge");
+      if (!d || !prof) return;
+      var parts = [];
+      if (prof.speed_px_s != null) parts.push("速さ" + prof.speed_px_s);
+      if (prof.curve != null) parts.push("曲がり" + prof.curve);
+      if (prof.aim) parts.push("押す所" + prof.aim.x + "/" + prof.aim.y);
+      if (!parts.length) return;
+      d.textContent = "👀 学習中｜理解した動き: " + parts.join("・");
+      d.style.background = "rgba(21,128,61,.95)";
+    } catch (_) {}
+  }
   function removeBadge() {
     try { var d = document.getElementById("axlx-learn-badge"); if (d) d.remove(); } catch (_) {}
   }
@@ -112,6 +132,22 @@
       var motion = L.summarizeMotion(det);
       add.moves = motion.moves; add.points = motion.points; add.scrolls = motion.scrolls;
     } catch (_) {}
+    /**
+     * 2026-11-11 竹内さん「画面の映像も要る」→「要る」:
+     *   書き出す時に**画面の写真を1枚**撮る（見えているタブだけ・許可がある時だけ）。
+     *   撮れたら storage の印（axlx_human_shot）に「撮った・キー」を残す（DB には写真の中身を入れない）。
+     */
+    try {
+      chrome.runtime.sendMessage({ type: "axlx-human-shot", site: site }, function (res) {
+        void chrome.runtime.lastError;
+        if (res && res.ok) {
+          try {
+            var so = {}; so.axlx_human_shot = { key: res.shot_key, at: Date.now() };
+            chrome.storage.local.set(so);
+          } catch (_) {}
+        }
+      });
+    } catch (_) {}
     try {
       chrome.storage.local.get([KEY], function (r) {
         try {
@@ -119,10 +155,22 @@
           next.at = Date.now();
           next.site = site;
           var o = {}; o[KEY] = next;
+          /**
+           * 2026-11-11 竹内さん「データたまって理解するたび反映」:
+           *   貯まった**その場で**「動きの癖」を作り直して別のキー（axlx_human_profile）に置く。
+           *   → 見えるカーソル（pointer-ui.js）がこのキーの変化を見て、**次の動きから**新しい癖で動く。
+           *     ページを開き直さなくても、操作するほど動きが人の実測に寄っていく。
+           */
+          try {
+            var prof = L.profileFrom(next);
+            if (prof) o[PROFILE_KEY] = prof;
+          } catch (_) {}
           chrome.storage.local.set(o, function () {
             _saving = false;
             rec.reset(); // 操作・動き・押した場所・スクロールをまとめて空にする
             try { void chrome.runtime.lastError; } catch (_) {}
+            // 2026-11-11: 理解した内容をその場で見せる（反映されていることが分かる）
+            try { if (o[PROFILE_KEY]) paintLearned(o[PROFILE_KEY]); else paintBadge(); } catch (_) {}
           });
         } catch (_) { _saving = false; }
       });

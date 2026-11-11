@@ -24,6 +24,12 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
       hw.async = false;
       hw.onload = function() { this.remove(); };
       (document.head || document.documentElement).appendChild(hw);
+      // 2026-11-11 竹内さん「通常モードの動きから学ぶのか」: 覚えた動きの癖を読む純関数（human-wait の後・pointer-ui の前）
+      const hl = document.createElement("script");
+      hl.src = chrome.runtime.getURL("human-learn.js");
+      hl.async = false;
+      hl.onload = function() { this.remove(); };
+      (document.head || document.documentElement).appendChild(hl);
       // 2026-11-10 v2.6.0 見えるカーソル（pointer-ui.js）も page-script.js より先にページへ
       const pu = document.createElement("script");
       pu.src = chrome.runtime.getURL("pointer-ui.js");

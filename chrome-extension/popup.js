@@ -6392,6 +6392,13 @@ document.addEventListener("DOMContentLoaded", () => {
     btn.addEventListener("click", function () {
       var agg = btn._axlxAgg;
       var lines = (L && L.describe) ? L.describe(agg) : ["覚えた物を読めませんでした"];
+      // 2026-11-11 竹内さん「データたまって理解するたび反映」: 実際に自動モードの動きに使っている値を出す
+      try {
+        var prof = (L && L.profileFrom) ? L.profileFrom(agg) : null;
+        if (prof && L.learnedLines) {
+          lines = lines.concat([""], ["▼ この値が自動モードの動きに使われます"], L.learnedLines(prof));
+        }
+      } catch (_) {}
       // 見やすい小窓（閉じるボタン付き・サイトは触らない）
       try {
         var old = document.getElementById("learn-report-card");
