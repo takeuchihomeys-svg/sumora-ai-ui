@@ -3281,7 +3281,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     catch (e) { console.warn("[brain-core] first-cond skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-11-11 作業員4（弱い所 565・568・KB bfb1d47d と竹内さんの土台の数）: こちら側の状態（開いている約束・直前の AIX とピッカー・送った物件）をブレインの材料に1塊。
-  //   CONDUCTOR_OUR_SIDE_BRAIN=on（既定 off）。決めるのはブレイン（状態を渡すだけ・決まりにしない）
+  //   CONDUCTOR_OUR_SIDE_BRAIN（11/12 から既定 on・=off で止める）。決めるのはブレイン（状態を渡すだけ・決まりにしない）
   let ourSideBlockText = "";
   if (typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus)) {
     try {
