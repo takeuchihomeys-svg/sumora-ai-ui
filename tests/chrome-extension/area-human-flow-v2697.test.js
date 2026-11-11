@@ -29,12 +29,20 @@ console.log("\n■ ② 人の順番: 所在地絞り込み → 該当の地域 �
   // 1
   ok("① 所在地絞り込み を押す（waitForClick）", /STEP1: 「所在地絞り込み＋」が出るまで待ってクリック/.test(ps) && /clickByText\(\['所在地絞り込み＋', '所在地絞り込み\+', '所在地絞り込み'\]\)/.test(ps));
   // 2
-  ok("② 該当の地域を押す（コードで探す）", /clickWardPrecise\(\[wardFull, wardShort\]\)/.test(ps));
+  ok("③ 該当の区を押す（コードで探す）", /clickWardPrecise\(\[wardFull, wardShort\]\)/.test(ps));
   ok("  区を押した事を覚える（_noteWardPicked）", /_noteWardPicked\(codes\[ci2\]/.test(ps));
   // 3
   ok("③ 「確定してリストへ」を押す", /_findByText\(\['確定してリストへ', 'この条件で絞り込む', '決定'\]\)/.test(ps));
   ok("  押した事を点検に残す（modal_confirm）", /_auditStepP\('modal_confirm', '確定してリストへ'\)/.test(ps));
   ok("  カーソルを動かしてから押す（人の形）", /_humanPointerClick\(conf, function \(\) \{ try \{ conf\.click\(\); \} catch \(_\) \{\} \}\)/.test(ps));
+  // 2026-11-11 竹内さん「確定してリストへ」: ×（とじる）より**確定を先に**押す
+  ok("×より「確定してリストへ」を先に探す", (() => {
+    const iFn = ps.indexOf("function closeAreaModal()");
+    const seg = ps.slice(iFn, iFn + 1400);
+    const iConf = seg.indexOf("確定してリストへ");
+    const iX = seg.indexOf("this_window_close");
+    return iConf > 0 && iX > 0 && iConf < iX;
+  })());
 }
 
 console.log("\n■ ③ 既にチェック済みでも「確定してリストへ」まで進む");
@@ -43,11 +51,23 @@ console.log("\n■ ③ 既にチェック済みでも「確定してリストへ
   ok("チェック済みの区も覚える（モーダルが閉じても場所ありと分かる）", /checkedInputs\.forEach\(function \(inp\) \{ _noteWardPicked\(inp\.value, ""\); \}\)/.test(ps));
 }
 
-console.log("\n■ ④ 詳細地域（町字）へ進む場合も同じ順番");
+console.log("\n■ ④ 駅も同じ5段階（沿線・駅絞り込み → 沿線 → 駅の設定へ進む → 駅 → 確定してリストへ）");
 {
-  ok("「詳細な地域の設定へ進む」を押す", /clickNextStepBtn/.test(ps));
-  ok("町字を押す（clickDetailArea）", /clickDetailArea\(townNamesForStep5\[ti\]\)/.test(ps));
-  ok("最後に「確定してリストへ」で閉じる", /closeAreaModal/.test(ps) && /確定してリストへ/.test(ps));
+  // 2026-11-11 竹内さん「駅の場合は 1沿線・駅絞り込み 2該当する沿線 3駅の設定へ進む 4該当する駅 5確定してリストへ」
+  ok("① 沿線・駅絞り込み を押す", /clickByText\(\['沿線・駅絞り込み＋', '沿線・駅絞り込み\+', '沿線・駅絞り込み'\]\)/.test(ps));
+  ok("② 該当の沿線を押す（clickLineButtons）", /if \(hasRoutes\) clickLineButtons\(cond\.route_ids\)/.test(ps));
+  ok("③ 「駅の設定へ進む」を押す", /clickByText\(\['駅の設定へ進む', '駅の設定へ進む›', '駅の設定へ進む>'\]\)/.test(ps));
+  ok("④ 該当の駅を押す（selectStationsByName）", /selectStationsByName\(cond\.station_names\)/.test(ps));
+  ok("⑤ 「確定してリストへ」を押す（駅モーダル）", /function closeStationModal\(\)/.test(ps) && /station_confirm/.test(ps));
+  ok("⑤ は ×（とじる）より**確定を先に**押す", (() => {
+    const iFn = ps.indexOf("function closeStationModal()");
+    const seg = ps.slice(iFn, iFn + 1200);
+    const iConf = seg.indexOf("確定してリストへ");
+    const iX = seg.indexOf("this_window_close");
+    return iConf > 0 && iX > 0 && iConf < iX;
+  })());
+  ok("「駅の設定へ進む」は押し終わるまで次へ進まない（_stationNextPressed）", /if \(_stationNextPressed\) \{/.test(ps));
+  ok("駅ページに移ったかを確かめる（移っていなければ押し直す）", /まだ路線の一覧のまま/.test(ps));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -3150,15 +3150,21 @@
           ? cond.town_names : (detailAreaName ? [detailAreaName] : []);
 
         function closeAreaModal() {
-          var d = document.querySelector('div.this_window_close');
-          if (d && isVisible(d)) { _humanPointerClick(d, function () { try { d.click(); } catch (_) {} }); return true; }
-          // 2026-11-11 竹内さん「検索のボタンの場所2か所あることもちゃんと理解する」:
-          //   所在地モーダルの中の「確定してリストへ」は**小窓の中のボタン**。左のサイドバーの検索とは別物。
-          //   ここでは小窓の中の「確定してリストへ」を押すのが正しい（押した事を点検に残す）。
+          /**
+           * 2026-11-11 竹内さん「地域の場合は 1所在地絞り込み 2該当する地域 3確定してリストへ」:
+           *   ⚠ 旧は `div.this_window_close`（×とじる）を**先に**押していた。×は閉じるだけで反映されない事がある。
+           *   → **まず「確定してリストへ」**。無い時だけ ×／とじる。
+           */
           var conf = _findByText(['確定してリストへ', 'この条件で絞り込む', '決定']);
           if (conf) {
             if (_audit) _auditStepP('modal_confirm', '確定してリストへ');
             _humanPointerClick(conf, function () { try { conf.click(); } catch (_) {} });
+            return true;
+          }
+          var d = document.querySelector('div.this_window_close');
+          if (d && isVisible(d)) {
+            if (_audit) _auditStepP('modal_confirm', '×とじる（確定が見つからない）');
+            _humanPointerClick(d, function () { try { d.click(); } catch (_) {} });
             return true;
           }
           return clickByText(['×とじる', '× とじる', 'とじる', '閉じる']);
@@ -3452,13 +3458,24 @@
 
     // 沿線・駅モーダル：waitForClick方式（必ず駅が選択されるまでリトライ）
     function closeStationModal() {
-      var d = document.querySelector('div.this_window_close');
-      if (d && isVisible(d)) { _humanPointerClick(d, function () { try { d.click(); } catch (_) {} }); return true; }
-      // 2026-11-11: 小窓の中の「確定してリストへ」（左のサイドバーの検索とは別物）
+      /**
+       * 2026-11-11 竹内さん「駅の場合は 1沿線・駅絞り込み 2該当する沿線 3駅の設定へ進む 4該当する駅 5確定してリストへ」
+       *
+       * ⚠ 旧は `div.this_window_close`（×とじる）を**先に**押していた。
+       *   画像の画面には「×とじる」と「確定してリストへ」の**両方**がある。
+       *   **×は閉じるだけ**で、選んだ駅がサイトに反映されない事がある。押すべきは**確定してリストへ**。
+       * → 順番を逆にして、**まず「確定してリストへ」**を押す。無い時だけ ×／とじる。
+       */
       var conf = _findByText(['確定してリストへ', 'この条件で絞り込む', '決定']);
       if (conf) {
         if (_audit) _auditStepP('station_confirm', '確定してリストへ');
         _humanPointerClick(conf, function () { try { conf.click(); } catch (_) {} });
+        return true;
+      }
+      var d = document.querySelector('div.this_window_close');
+      if (d && isVisible(d)) {
+        if (_audit) _auditStepP('station_confirm', '×とじる（確定が見つからない）');
+        _humanPointerClick(d, function () { try { d.click(); } catch (_) {} });
         return true;
       }
       return clickByText(['×とじる', '× とじる', 'とじる']);
