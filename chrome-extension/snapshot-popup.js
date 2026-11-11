@@ -229,11 +229,27 @@
       var hint = el("snap-perm-hint");
       var show = function (msg) { if (hint) { hint.style.display = "block"; hint.textContent = msg; } };
       show("📷 撮っています…");
+      /**
+       * 2026-11-11 竹内さん「写真ちゃんと取れているか」:
+       *   旧は「撮れた」だけで判定していた（クラウドに上がったかは見ていなかった）。
+       *   → 撮影 → **アップロードの結果まで**見て出す。
+       */
       try {
         chrome.runtime.sendMessage({ type: "axlx-human-shot", site: "manual_test" }, function (res) {
           if (chrome.runtime.lastError) { show("✖ 撮れません: " + chrome.runtime.lastError.message); return; }
-          if (res && res.ok) show("✅ 撮れました（" + res.shot_key + "）。写真はクラウドに上がります。");
-          else show("✖ 撮れません: " + ((res && res.error) || "理由なし"));
+          if (!res || !res.ok) { show("✖ 撮れません: " + ((res && res.error) || "理由なし")); return; }
+          show("✅ 撮れました（" + res.shot_key + "）。クラウドへ送っています…");
+          // 2.5秒後にアップロードの結果を見る
+          setTimeout(function () {
+            try {
+              chrome.storage.local.get(["axlx_human_shot_upload"], function (r) {
+                var u = r && r.axlx_human_shot_upload;
+                if (!u) { show("✅ 撮れました。" + res.shot_key + "\n（アップロードの結果はまだ）"); return; }
+                if (u.ok) show("✅ 撮って、クラウドに上がりました\nkey: " + res.shot_key);
+                else show("⚠ 撮れましたが、クラウドに上がりませんでした\n理由: " + (u.error || ("status " + u.status)));
+              });
+            } catch (_) {}
+          }, 2500);
         });
       } catch (e) { show("✖ 撮れません: " + ((e && e.message) || e)); }
     });

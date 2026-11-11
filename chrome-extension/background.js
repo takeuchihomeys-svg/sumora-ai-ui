@@ -2001,11 +2001,22 @@ if (msg.type === "axlx-human-shot") {
  */
 var _shotUploadQueue = [];
 var _shotUploading = false;
+var _shotUploadStartedAt = 0;
 function _pumpShotUpload() {
-  if (_shotUploading) return;
+  /**
+   * 2026-11-11 竹内さん「写真はスクショとるだけなのになぜできないのか」:
+   *   ⚠ `_shotUploading` は応答が返らないと**永久に true** になり、以降アップロードされない。
+   *   → 30秒たったら解く（諦めて次を送る）。
+   */
+  if (_shotUploading && Date.now() - _shotUploadStartedAt < 30000) return;
+  if (_shotUploading) {
+    console.warn("[human-shot] アップロードが30秒返らない → 解いて次へ");
+    _shotUploading = false;
+  }
   var job = _shotUploadQueue.shift();
   if (!job) return;
   _shotUploading = true;
+  _shotUploadStartedAt = Date.now();
   (async () => {
     try {
       const hdr = await _getAutomationKeyHeader();
