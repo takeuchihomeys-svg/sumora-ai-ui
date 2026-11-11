@@ -29,11 +29,17 @@
   // ── 案内モードのオン・オフ（既定オン・リアプロと同じ guideMode）。itandi-page-script.js（ページの側）が読めるよう <html> に印を付ける ──
   //  2026-11-10 v2.5.94: 自動モード（aixMode＋autoModeAt・スタッフでない）を選んだ時だけ案内を OFF（拡張が入力・検索する）
   var guideOn = true;
+  /**
+   * 2026-11-11 竹内さん「AIXの場合光るのではなくて自動で押していく形となる」:
+   *   自動（aixMode）に加えて **AIXモード（aiMode）も案内 OFF**（拡張が自動で押す＝光らせない）。
+   */
   function autoModeOf(st) {
     var s = st || {};
     var at = s.staffModeAt || 0;
     var staffOn = !!s.staffMode && (!at || Date.now() - at <= 2 * 60 * 60 * 1000);
-    return !staffOn && !!s.aixMode && Number(s.autoModeAt) > 0;
+    if (staffOn) return false;
+    var chosen = Number(s.autoModeAt) > 0;
+    return chosen && (!!s.aixMode || !!s.aiMode);
   }
   function applyMode(v) {
     // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは既定 ON
@@ -974,14 +980,14 @@
   // 案内モードの設定を読む（変数をすべて用意した後＝ファイルの最後で読む）
   //  2026-11-10 v2.5.94: 自動モード（aixMode＋autoModeAt）の時は案内を OFF にするので、モードの値も一緒に読む
   try {
-    var AUTO_KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt"];
+    var AUTO_KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode"];
     function _readMode() {
       chrome.storage.local.get([MODE_KEY].concat(AUTO_KEYS), function (r) { applyMode(autoModeOf(r || {})); });
     }
     _readMode();
     chrome.storage.onChanged.addListener(function (ch, area) {
       if (area !== "local") return;
-      if (ch[MODE_KEY] || ch.staffMode || ch.aixMode || ch.autoModeAt || ch.staffModeAt) _readMode();
+      if (ch[MODE_KEY] || ch.staffMode || ch.aixMode || ch.autoModeAt || ch.staffModeAt || ch.aiMode) _readMode();
     });
   } catch (_) { applyMode(true); }
 

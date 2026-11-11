@@ -52,17 +52,19 @@
       var s = st || {};
       var at = s.staffModeAt || 0;
       var staffOn = !!s.staffMode && (!at || Date.now() - at <= _AUTO_STAFF_TTL);
-      return !staffOn && !!s.aixMode && Number(s.autoModeAt) > 0;
+      // 2026-11-11 竹内さん「AIXの場合光るのではなくて自動で押していく形となる」: AIX（aiMode）でも自動送信を開く
+      var chosen = Number(s.autoModeAt) > 0;
+      return !staffOn && chosen && (!!s.aixMode || !!s.aiMode);
     }
     function _applyAutoMode(st) {
       _autoModeOn = _readAutoMode(st);
       _guideOff = !_GUIDE_ONLY || _autoModeOn;
     }
-    chrome.storage.local.get(["guideMode", "staffMode", "staffModeAt", "aixMode", "autoModeAt"], function (r) { _applyAutoMode(r); });
+    chrome.storage.local.get(["guideMode", "staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode"], function (r) { _applyAutoMode(r); });
     chrome.storage.onChanged.addListener(function (ch, area) {
       if (area !== "local" || !ch) return;
-      if (!("staffMode" in ch) && !("aixMode" in ch) && !("autoModeAt" in ch)) return;
-      chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt"], function (r2) { _applyAutoMode(r2); });
+      if (!("staffMode" in ch) && !("aixMode" in ch) && !("autoModeAt" in ch) && !("aiMode" in ch)) return;
+      chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode"], function (r2) { _applyAutoMode(r2); });
     });
   } catch (_) {}
   function _guideBlocksAuto(where) {

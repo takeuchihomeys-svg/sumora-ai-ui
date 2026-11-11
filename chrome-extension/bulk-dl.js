@@ -306,8 +306,14 @@
       var s = st || {};
       var at = s.staffModeAt || 0;
       var staffOn = !!s.staffMode && (!at || Date.now() - at <= _AUTO_STAFF_TTL);
-      // 「自動」を選んだ印（autoModeAt）がある時だけ。古い版が書き残した aixMode=true だけでは開かない
-      return !staffOn && !!s.aixMode && Number(s.autoModeAt) > 0;
+      /**
+       * 2026-11-11 竹内さん「AIXの場合光るのではなくて自動で押していく形となる」:
+       *   旧は「自動（aixMode＋autoModeAt）」だけで自動押下を開いていた。
+       *   → **AIXモード（aiMode＋autoModeAt）も自動押下を開く**（AIXは「選んだお客さんを自動で検索して1件ずつ押す」モード）。
+       *   「選んだ印」（autoModeAt）がある時だけ・スタッフでは開かない（古い書き残しでは自動にならない）。
+       */
+      var chosen = Number(s.autoModeAt) > 0;
+      return !staffOn && chosen && (!!s.aixMode || !!s.aiMode);
     }
     function _applyAutoMode(st) {
       _autoModeOn = _readAutoMode(st);
@@ -316,12 +322,12 @@
       //   「自動」に切り替えた時点でも、いま出ている一覧で自動押下を始める（切り替え直後に押しに行く）
       if (_autoModeOn) { try { setTimeout(_maybeAutoPressOnLoad, 800); } catch (_) {} }
     }
-    chrome.storage.local.get(["guideMode", "staffMode", "staffModeAt", "aixMode", "autoModeAt"], function (r) { _applyAutoMode(r); });
+    chrome.storage.local.get(["guideMode", "staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode"], function (r) { _applyAutoMode(r); });
     chrome.storage.onChanged.addListener(function (ch, area) {
       if (area !== "local" || !ch) return;
-      if (!("staffMode" in ch) && !("aixMode" in ch) && !("autoModeAt" in ch)) return;
+      if (!("staffMode" in ch) && !("aixMode" in ch) && !("autoModeAt" in ch) && !("aiMode" in ch)) return;
       // モードと印は別々に書かれるので、どれか1つ変わったら全部を読み直す
-      chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt"], function (r2) { _applyAutoMode(r2); });
+      chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode"], function (r2) { _applyAutoMode(r2); });
     });
   } catch (_) {}
   function _guideBlocksAuto(where) {

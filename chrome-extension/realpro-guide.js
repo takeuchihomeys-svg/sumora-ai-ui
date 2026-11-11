@@ -26,11 +26,19 @@
   //  選んだ印 autoModeAt>0、スタッフでない）を選んでいる時だけ案内を OFF にする（拡張が入力する＝昔の自動と同じ）。
   //  通常・スタッフは今まで通り案内 ON（光らせるだけ）。
   var guideOn = true;
+  /**
+   * 2026-11-11 竹内さん「AIXの場合光るのではなくて自動で押していく形となる」:
+   *   旧は「自動（aixMode＋autoModeAt）」の時だけ案内を OFF にしていた。
+   *   → **AIXモード（aiMode＋autoModeAt）も案内 OFF**（拡張が自動で押す＝光らせない）。
+   *   mode-core.js の `aiCustomerSearch`（AIX＝選んだお客さんを自動で検索）と同じ線。
+   */
   function autoModeOf(st) {
     var s = st || {};
     var at = s.staffModeAt || 0;
     var staffOn = !!s.staffMode && (!at || Date.now() - at <= 2 * 60 * 60 * 1000);
-    return !staffOn && !!s.aixMode && Number(s.autoModeAt) > 0;
+    if (staffOn) return false;
+    var chosen = Number(s.autoModeAt) > 0;
+    return chosen && (!!s.aixMode || !!s.aiMode);
   }
   function applyMode(v) {
     // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは既定 ON
@@ -867,7 +875,8 @@
   // 案内モードの設定を読む（変数をすべて用意した後＝ファイルの最後で読む。先に読むと案内の枠が2つできる）
   //  2026-11-10 v2.5.94: 自動モード（aixMode＋autoModeAt）の時は案内を OFF にするので、モードの値も一緒に読む
   try {
-    var AUTO_KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt"];
+    // 2026-11-11: AIX（aiMode）も読む（AIXモードの時も案内を OFF＝光らせず自動で押す）
+    var AUTO_KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode"];
     function _readMode() {
       chrome.storage.local.get([MODE_KEY].concat(AUTO_KEYS), function (r) {
         applyMode(autoModeOf(r || {}));
@@ -876,7 +885,7 @@
     _readMode();
     chrome.storage.onChanged.addListener(function (ch, area) {
       if (area !== "local") return;
-      if (ch[MODE_KEY] || ch.staffMode || ch.aixMode || ch.autoModeAt || ch.staffModeAt) _readMode();
+      if (ch[MODE_KEY] || ch.staffMode || ch.aixMode || ch.autoModeAt || ch.staffModeAt || ch.aiMode) _readMode();
       // 拡張で別のお客様を選んだ: 一覧の画面ならそのお客様の送付済み・光に合わせ直す（v2.5.71・お客様の元は1つ）
       if (area === "local" && ch.current_customer_id && session && session.stage === "results") syncResults();
     });

@@ -72,7 +72,15 @@ console.log("\n■ ⑥ 自動（aix）は一覧の行を1件ずつ押す（AIX �
 {
   const bd = read("bulk-dl.js");
   ok("自動モードの時だけ一覧を押す（_autoModeOn）", /function autoPressPdfs\(\)[\s\S]{0,400}if \(!_autoModeOn\)/.test(bd));
-  ok("自動モードの判定は aixMode＋autoModeAt", /return !staffOn && !!s\.aixMode && Number\(s\.autoModeAt\) > 0;/.test(bd));
+  ok("自動押下の判定は 自動(aixMode) と AIX(aiMode) の両方＋autoModeAt", /var chosen = Number\(s\.autoModeAt\) > 0;/.test(bd) && /return !staffOn && chosen && \(!!s\.aixMode \|\| !!s\.aiMode\);/.test(bd));
+  // 2026-11-11 竹内さん「AIXの場合光るのではなくて自動で押していく形となる」
+  {
+    const rg = read("realpro-guide.js");
+    const ig = read("itandi-guide.js");
+    const ib2 = read("itandi-bulk-dl.js");
+    ok("リアプロの案内: AIXモードでも案内 OFF（光らせない）", /chosen && \(!!s\.aixMode \|\| !!s\.aiMode\)/.test(rg) && /"aiMode"\]/.test(rg));
+    ok("ITANDI の案内: AIXモードでも案内 OFF", /chosen && \(!!s\.aixMode \|\| !!s\.aiMode\)/.test(ig) && /chosen && \(!!s\.aixMode \|\| !!s\.aiMode\)/.test(ib2));
+  }
 }
 
 console.log("\n■ 一括検索の帯（もともとのAIX）は自動・AIXモードの時だけ出る");
