@@ -23,8 +23,8 @@ ok("旧の afterMove（迷いの間だけ待たない）が残っていない", 
 
 console.log("\n■ ② 駅は1つずつ「着いて押す」のを待つ");
 ok("40〜100ms の連打が無い", !/setTimeout\(clickNext, 40 \+ Math\.floor\(Math\.random\(\) \* 60\)\)/.test(ips));
-ok("clickNext は Promise の後に人の間（420〜1100ms）", /var p = _humanClick\(inp, \{ forceUnchecked: true \}\);[\s\S]{0,400}var _nextGap = 420 \+ Math\.floor\(Math\.random\(\) \* 680\);/.test(ips));
-ok("たまに一息（10%）", /if \(Math\.random\(\) < 0\.1\) _nextGap \+= 500 \+ Math\.floor\(Math\.random\(\) \* 900\);/.test(ips));
+ok("clickNext は Promise の後に人の間（420〜1100ms）", /var p = _humanClick\(inp, \{ forceUnchecked: true \}\);[\s\S]{0,600}var _nextGap = _itHumanRand\(420, _itHumanRand\(760, 1100\)\);/.test(ips));
+ok("たまに一息（10%で900〜2600ms・3%で2.6〜5.5秒）", /Math\.random\(\) < 0\.10\) _nextGap \+= 900 \+ Math\.floor\(Math\.random\(\) \* 1700\)/.test(ips) && /Math\.random\(\) < 0\.03\) _nextGap \+= 2600 \+ Math\.floor\(Math\.random\(\) \* 2900\)/.test(ips));
 
 console.log("\n■ ③ 全域の後はチェックが入るのを待つ");
 ok("_humanClick の Promise を待つ", /var _pAll = _humanClick\(allInp, \{ forceUnchecked: true \}\);/.test(ips));

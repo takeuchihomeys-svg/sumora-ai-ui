@@ -316,7 +316,19 @@
       var bw = bi + Math.random() * cbs.length * 0.9;
       return aw - bw;
     });
-    targets.forEach(function (cb) { enqueueHumanClick(cb, _clickEl, 420, 980); });
+    // 2026-11-11 竹内さん「この＋一息の考え方かなり重要。人間はその発想があるから。ほかでもちゃんと確認おねがい」:
+    //   間取り・設備のチェックにも一息を入れる（駅と同じ2段）。
+    //   ・10% で「項目を見比べる」一息 900〜2600ms ・さらに 3% で 2.6〜5.5秒（考え込む）
+    targets.forEach(function (cb) {
+      enqueueHumanClick(cb, _clickEl, 420, 980);
+      if (Math.random() < 0.10) {
+        var _b1 = 900 + Math.floor(Math.random() * 1700);
+        enqueueHumanAction(function () {}, _b1, _b1 + 200, "息");
+      } else if (Math.random() < 0.03) {
+        var _b2 = 2600 + Math.floor(Math.random() * 2900);
+        enqueueHumanAction(function () {}, _b2, _b2 + 200, "考え");
+      }
+    });
   }
   // 基本条件フォームの select/text 入力も1項目ずつ間隔を空けてセットする
   // 2026-11-10 v2.6.1 竹内さん「賃料選択する部分や更新日選択する部分が早すぎる。毎回人間がマウス動かして押していく形とする」

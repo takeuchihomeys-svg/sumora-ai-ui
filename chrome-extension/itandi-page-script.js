@@ -15,6 +15,21 @@
   // 2026-11-10 人間的な動き: 値を一瞬で入れると「貼り付けた」動きになる。短い欄は1文字ずつ打つ（打鍵の間 60〜220ms・たまに止まる）。
   //   長い文字列（40字超）は一気に入れる。最後は input/change を出して React の state を更新する（今までと同じ）。
   var _TYPE_MAX_CHARS = 40;
+  /**
+   * 2026-11-11 竹内さん「この＋一息の考え方かなり重要」:
+   *   lo〜hi の間を対数正規で返す（リアプロ page-script の humanRand と同じ考え）。
+   *   同じ範囲でも毎回ちがい、たまに上に伸びる（人が「少し間を置く」形）。
+   */
+  function _itHumanRand(lo, hi) {
+    var a = Number(lo), b = Number(hi);
+    if (!(isFinite(a) && isFinite(b)) || b <= a) return a || 0;
+    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    if (H && H.logNormalDelay) {
+      var v = H.logNormalDelay((a + b) / 2, 0.32);
+      return Math.round(Math.min(b * 1.6, Math.max(a * 0.55, v)) * 10) / 10;
+    }
+    return a + Math.floor(Math.random() * (b - a + 1));
+  }
   function setReactValAsync(el, val) {
     var s = String(val);
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
@@ -1042,8 +1057,16 @@
           //   旧は 40〜100ms で次々押していた＝カーソルが着く前にチェックが入る（画面では一斉に付く）。
           //   新は **1駅ずつ「カーソルが着いて押す」のを待ち**、その後に人の間（420〜1100ms・たまに一息）を置く。
           var p = _humanClick(inp, { forceUnchecked: true });
-          var _nextGap = 420 + Math.floor(Math.random() * 680);
-          if (Math.random() < 0.1) _nextGap += 500 + Math.floor(Math.random() * 900);
+          /**
+           * 2026-11-11 竹内さん「この＋一息の考え方かなり重要。人間はその発想があるから。ほかでもちゃんと確認おねがい。リアプロもitandiも」:
+           *   リアプロ（page-script の _stationBreath）と同じ2段にする:
+           *   ・毎回 10% で「一覧を目で追う」一息 900〜2600ms（何駅目かは決めない＝等間隔にしない）
+           *   ・さらに 3% で「少し手が止まる」2.6〜5.5秒（疲れ・考え込み）
+           *   駅数が増えても一息の位置が偏らない。
+           */
+          var _nextGap = _itHumanRand(420, _itHumanRand(760, 1100));
+          if (Math.random() < 0.10) _nextGap += 900 + Math.floor(Math.random() * 1700);
+          if (Math.random() < 0.03) _nextGap += 2600 + Math.floor(Math.random() * 2900);
           var _fin = function () { setTimeout(clickNext, _nextGap); };
           if (p && typeof p.then === "function") { p.then(_fin, _fin); } else { _fin(); }
         }
@@ -1063,7 +1086,12 @@
           var _pAll = _humanClick(allInp, { forceUnchecked: true });
           var _afterAll = function () {
             var _waitChecked = function (n) {
-              if (allInp.checked || n >= 12) { setTimeout(collectAndClick, _hd(700)); return; }
+              // 2026-11-11 竹内さん「＋一息の考え方かなり重要」: 全選択が入った後も一息（人が「全部入ったか」を見る）
+              if (allInp.checked || n >= 12) {
+                var _breath = Math.random() < 0.10 ? 900 + Math.floor(Math.random() * 1700) : 0;
+                setTimeout(collectAndClick, _hd(700) + _breath);
+                return;
+              }
               setTimeout(function () { _waitChecked(n + 1); }, _pd(500));
             };
             _waitChecked(0);

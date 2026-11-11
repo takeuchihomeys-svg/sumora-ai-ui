@@ -228,6 +228,12 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("リアプロ: 多い時（20件超）は5件ずつまとめて外す", /if \(_toUncheck\.length > 20\)/.test(ps4) && /slice\(_chunk, _chunk \+ 5\)/.test(ps4));
   ok("リアプロ: 全部消えてから次へ進む（_resetRest）", /var _afterUncheck = function \(\) \{ _resetRest\(\); \}/.test(ps4) && /_chunk >= _toUncheck\.length\) \{ _afterUncheck\(\); return; \}/.test(ps4));
   ok("次のお客様まで 15〜60秒＋一息（nextCommandGapMs）", /function nextCommandGapMs\(rng\) \{\s*return customerGapMs\(rng\);/.test(fs4.readFileSync(path.join(dir, "auto-run.js"), "utf8")));
+  // 2026-11-11 竹内さん「この＋一息の考え方かなり重要。人間はその発想があるから。ほかでもちゃんと確認おねがい。リアプロもitandiも」
+  ok("リアプロ: 駅の一息は2段（10%で900〜2600ms・3%で2.6〜5.5秒）", /_stationBreath/.test(ps4) && /Math\.random\(\) < 0\.10\) add \+= 900/.test(ps4) && /Math\.random\(\) < 0\.03\) add \+= 2600/.test(ps4));
+  ok("リアプロ: 間取り・設備のチェックにも一息（10%・3%）", /enqueueHumanClick\(cb, _clickEl, 420, 980\);[\s\S]{0,600}Math\.random\(\) < 0\.10\)/.test(ps4));
+  ok("ITANDI: 駅の一息も2段に揃えた（10%で900〜2600ms・3%で2.6〜5.5秒）", /Math\.random\(\) < 0\.10\) _nextGap \+= 900/.test(ips4) && /Math\.random\(\) < 0\.03\) _nextGap \+= 2600/.test(ips4));
+  ok("ITANDI: 駅の間も対数正規（_itHumanRand）", /function _itHumanRand\(lo, hi\)/.test(ips4) && /_itHumanRand\(420, _itHumanRand\(760, 1100\)\)/.test(ips4));
+  ok("ITANDI: 全選択の後にも一息（10%で900〜2600ms）", /allInp\.checked \|\| n >= 12\) \{[\s\S]{0,300}Math\.random\(\) < 0\.10 \? 900/.test(ips4));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
