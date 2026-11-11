@@ -17,8 +17,11 @@ ok("GUIDE_ONLY が立っている", M.GUIDE_ONLY === true);
 const AUTO = ["claimCommands", "claimAix", "autoSend", "runAutoSchedule", "claimBrainCommands"];
 // 2026-11-10 竹内「3つのモードを並べる: 通常／スタッフ（今の人が押す案内）／自動（もともとの自動検索）」:
 //   自動の道が開くのは自動モード（AUTO_MODE = "aix"）を選んだ時だけ。通常・スタッフは今まで通り全部止まったまま。
-const NO_AUTO = M.MODES.filter((m) => m !== M.AUTO_MODE).flatMap((m) => [false, true].map((b) => [m, b]));
-ok("自動モード以外の組み合わせは自動の物が false（受け取り・自動送信・自動便・web_brain）", NO_AUTO.every(([m, b]) => AUTO.every((k) => M.effectiveBehavior(m, b)[k] === false)), NO_AUTO.map(([m, b]) => [m, b, AUTO.map((k) => M.effectiveBehavior(m, b)[k])]));
+// 2026-11-11 竹内さん「4つ目にAIXをつけて、AIXの場合選択したお客さんが自動検索できるようにする」→ AIX（AI_MODE）も自動の道を開く
+const AUTO_MODES = [M.AUTO_MODE, M.AI_MODE];
+const NO_AUTO = M.MODES.filter((m) => AUTO_MODES.indexOf(m) < 0).flatMap((m) => [false, true].map((b) => [m, b]));
+ok("自動・AIXモード以外の組み合わせは自動の物が false（受け取り・自動送信・自動便・web_brain）", NO_AUTO.every(([m, b]) => AUTO.every((k) => M.effectiveBehavior(m, b)[k] === false)), NO_AUTO.map(([m, b]) => [m, b, AUTO.map((k) => M.effectiveBehavior(m, b)[k])]));
+ok("AIXモードも自動の道が開く（選んだお客さんを自動で検索）", ["claimCommands", "claimAix", "autoSend", "runAutoSchedule"].every((k) => M.effectiveBehavior(M.AI_MODE, false)[k] === true) && M.effectiveBehavior(M.AI_MODE, false).aiCustomerSearch === true);
 ok("自動モードを選んだ時だけ自動の道が開く（受け取り・AIX・自動送信・自動便）", ["claimCommands", "claimAix", "autoSend", "runAutoSchedule"].every((k) => M.effectiveBehavior(M.AUTO_MODE, false)[k] === true));
 ok("自動モード×ブレインは web_brain も受け取る", M.effectiveBehavior(M.AUTO_MODE, true).claimBrainCommands === true);
 ok("自動モードでもスタッフ扱いにはならない（人が選んだ物を減らさない設定はスタッフだけ）", M.effectiveBehavior(M.AUTO_MODE, false).excludeSent === true);
@@ -64,7 +67,7 @@ for (const f of ["realpro-guide.js", "itandi-guide.js"]) {
 ok("リアプロ: 光の要素は枠だけ（textContent を入れない）", (() => { const s = read("realpro-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 ok("ITANDI: 光の要素は枠だけ", (() => { const s = read("itandi-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest の版 2.5.92（自動モード）", mf.version === "2.6.33");
+ok("manifest の版 2.5.92（自動モード）", mf.version === "2.6.34");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

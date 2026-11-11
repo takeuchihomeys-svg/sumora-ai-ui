@@ -3449,6 +3449,49 @@ function setupAreaModeSelector(c, siteKey) {
   }
 }
 
+// ── 2026-11-11 竹内さん「4つ目にAIXをつけて、AIXの場合選択したお客さんが自動検索できるようにする。
+//    もともとあったの。新着で条件きたりしたらそれもAIXで対応できる形とする」──
+// AIXモード（mode-core の "ai"）の時、**お客さんを選んだら自動で検索を押す**（手で押すのとまったく同じ道を通る）。
+//  ・画面を開いて条件の読み直し（fetchFreshCustomer → preloadAdjForm）が終わってから押す（古い条件で押さない）
+//  ・同じお客様×サイトで続けては押さない（同じ一覧を二重に検索しない・AIX_RESEARCH_GAP_MS）
+//  ・AIXモードでない・スタッフモード・案内の一時停止中は押さない
+//  ・押した合図（fill-done）から先は今まで通り（ブレインなら判定、bulk-dl が1件ずつ印刷用PDFを押して送る）
+var AIX_RESEARCH_GAP_MS = 10 * 60 * 1000;
+var _aiAutoSearchMemo = {};   // "customerId|site" → 押した時刻
+function _maybeAiCustomerAutoSearch(btn, customer, site) {
+  try {
+    if (!_aiCustomerModeOn || _staffModeOn) return false;
+    if (!btn || !customer || !customer.id) return false;
+    if (btn.style.display === "none") return false;      // 検索ボタンが無い画面（一覧など）
+    if (btn.dataset.automated) return false;             // 自動の一括の回はそちらの道に任せる
+    var key = String(customer.id) + "|" + String(site || "realpro");
+    var now = Date.now();
+    var last = Number(_aiAutoSearchMemo[key] || 0);
+    if (last && now - last < AIX_RESEARCH_GAP_MS) {
+      console.log("[AX] AIXモード: 同じお客様を続けて検索しない（" + Math.round((AIX_RESEARCH_GAP_MS - (now - last)) / 1000) + "秒待ち）");
+      return false;
+    }
+    _aiAutoSearchMemo[key] = now;
+    // 人が押すのと同じ間（0.9〜2.6秒）を置いてから押す
+    var H = (typeof self !== "undefined" && self.AxlxHumanWait) || null;
+    var gap = H && H.logNormalDelay ? H.logNormalDelay(1500, 0.35) : (900 + Math.floor(Math.random() * 1700));
+    if (gap > 4000) gap = 4000;
+    console.log("[AX] AIXモード: 選んだお客様（" + (customer.customer_name || customer.id) + "）を " + Math.round(gap) + "ms 後に自動で検索します（" + site + "）");
+    setTimeout(function () {
+      if (!_aiCustomerModeOn) return;                    // 途中でモードが変わったら押さない
+      if (selectedCustomer && String(selectedCustomer.id) !== String(customer.id)) return; // 別のお客様に切り替わった
+      try {
+        btn.dataset.ai_customer = "1";                   // 点検で「AIXモードの自動」と分かる印
+        btn.click();
+      } catch (e) { console.warn("[AX] AIXモードの自動検索でエラー:", e && e.message); }
+    }, gap);
+    return true;
+  } catch (e) {
+    console.warn("[AX] AIXモードの自動検索を始められません:", e && e.message);
+    return false;
+  }
+}
+
 function preloadAdjForm(c) {
   const _rawArea  = c.desired_area || c.area || "";
   const _areaMode = c.area_mode || "auto";
@@ -4583,6 +4626,9 @@ function openInstructions(siteKey) {
         preloadAdjForm(selectedCustomer);
         wireAdjSaveBtn(selectedCustomer);
         setupAreaModeSelector(selectedCustomer, "itandi");
+        // 2026-11-11: AIXモードなら、選んだお客様を自動で検索する（itandi）
+        const _itBtn = document.getElementById("autofill-btn");
+        if (_aiCustomerModeOn && _itBtn) _maybeAiCustomerAutoSearch(_itBtn, selectedCustomer, "itandi");
       });
     });
     autofillBtn.style.display = "block";
@@ -5128,6 +5174,9 @@ function openInstructions(siteKey) {
         preloadAdjForm(c0);
         wireAdjSaveBtn(c0);
         setupAreaModeSelector(c0, "realpro");
+        // 2026-11-11 竹内さん「AIXの場合選択したお客さんが自動検索できるようにする」:
+        //   条件の読み直しが終わってから検索を押す（古い条件で押さない）。autofillBtn.onclick をそのまま使う＝手で押すのと同じ道
+        if (_aiCustomerModeOn) _maybeAiCustomerAutoSearch(autofillBtn, c0, "realpro");
       });
     });
 
@@ -6056,6 +6105,8 @@ function executeBulkSearch(site) {
 var _modeRaw = {};          // storage の生の値（staffMode / staffModeAt / aixMode / brainMode）
 var _staffModeOn = false;   // 以下3つは読み取り専用の写し（バッジ等で使う）
 var _aixModeOn = false;
+// 2026-11-11 竹内さん「4つ目にAIXをつけて、AIXの場合選択したお客さんが自動検索できるようにする」: AIXモード（選んだお客さんを自動検索）
+var _aiCustomerModeOn = false;
 var _brainModeOn = false;
 var _brainToggleLastAt = 0; // ブレインの切り替えの二重押し（ダブルクリック）で ON→OFF に戻らないように
 
@@ -6091,6 +6142,8 @@ function _renderModeUI() {
   var s = _modeState();
   _staffModeOn = s.mode === "staff";
   _aixModeOn = s.mode === "aix";
+  // 2026-11-11 竹内さん「AIXの場合選択したお客さんが自動検索できるようにする」: AIXモード（ai）は別の印で持つ
+  _aiCustomerModeOn = s.mode === "ai";
   _brainModeOn = s.brain;
   var sel = document.getElementById("mode-select");
   if (sel) {

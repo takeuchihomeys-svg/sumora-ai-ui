@@ -27,10 +27,11 @@ eq("スタッフとAIXが両方 true → スタッフ優先（自動化を止め
 eq("スタッフが切れて aixMode が残っていれば AIX", M.readState({ staffMode: true, staffModeAt: NOW - 3 * H, aixMode: true }, NOW).mode, "aix");
 
 console.log("\n■ 書き込み — モードとブレインは互いに触らない");
-eq("スタッフを選ぶ", M.storageUpdateForMode("staff", NOW), { staffMode: true, staffModeAt: NOW, aixMode: false, autoModeAt: null });
-eq("AIXを選ぶ", M.storageUpdateForMode("aix", NOW), { staffMode: false, staffModeAt: null, aixMode: true, autoModeAt: NOW });
-eq("通常を選ぶ", M.storageUpdateForMode("normal", NOW), { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null });
-eq("知らない値（旧 'brain' 等）→ 通常", M.storageUpdateForMode("brain", NOW), { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null });
+eq("スタッフを選ぶ", M.storageUpdateForMode("staff", NOW), { staffMode: true, staffModeAt: NOW, aixMode: false, autoModeAt: null, aiMode: false });
+eq("自動を選ぶ", M.storageUpdateForMode("aix", NOW), { staffMode: false, staffModeAt: null, aixMode: true, autoModeAt: NOW, aiMode: false });
+eq("AIX（選んだお客さん）を選ぶ", M.storageUpdateForMode("ai", NOW), { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: NOW, aiMode: true });
+eq("通常を選ぶ", M.storageUpdateForMode("normal", NOW), { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null, aiMode: false });
+eq("知らない値（旧 'brain' 等）→ 通常", M.storageUpdateForMode("brain", NOW), { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null, aiMode: false });
 eq("モードの書き込みに brainMode が入っていない", ["normal", "staff", "aix"].every((m) => !("brainMode" in M.storageUpdateForMode(m, NOW))), true);
 eq("ブレインON", M.storageUpdateForBrain(true), { brainMode: true });
 eq("ブレインOFF", M.storageUpdateForBrain(false), { brainMode: false });
@@ -68,11 +69,11 @@ console.log("\n■ 完了で売上サポの回をまとめる（2026-09-25 竹�
 eq("ブレイン×スタッフ は必ずまとめる", M.behavior("staff", true).completeGroup, true);
 eq("ブレイン×通常 も押した時はまとめる", M.behavior("normal", true).completeGroup, true);
 eq("ブレイン×AIX も押した時はまとめる", M.behavior("aix", true).completeGroup, true);
-eq("ブレイン OFF は3つとも呼ばない（売上サポに届いていない）", M.MODES.map((m) => M.behavior(m, false).completeGroup), [false, false, false]);
+eq("ブレイン OFF は呼ばない（売上サポに届いていない）", M.MODES.map((m) => M.behavior(m, false).completeGroup), M.MODES.map(() => false));
 eq("まとめる時は必ず売上サポに記録している（completeGroup ⇒ recordPickup）", M.MODES.flatMap((m) => [false, true].map((b) => !M.behavior(m, b).completeGroup || M.behavior(m, b).recordPickup)).every(Boolean), true);
 
 console.log("\n■ ウェブの AIXツールの一括検索（web_brain）を受け取る PC（2026-09-25 竹内「ブレインモードのみで連動」）");
-eq("6通り: ブレイン×通常・ブレイン×AIX だけ受け取る", M.MODES.flatMap((m) => [false, true].map((b) => M.behavior(m, b).claimBrainCommands)), [false, true, false, false, false, true]);
+eq("ブレイン×通常・ブレイン×AIX・ブレイン×AIX(顧客) が受け取る", M.MODES.flatMap((m) => [false, true].map((b) => M.behavior(m, b).claimBrainCommands)), M.MODES.flatMap((m) => [false, true].map((b) => !!b && m !== "staff")));
 eq("🧠×スタッフは受け取らない（スタッフは自動化を無視）", M.behavior("staff", true).claimBrainCommands, false);
 eq("受け取る PC は必ずコマンドを claim する PC（claimBrainCommands ⇒ claimCommands）", M.MODES.flatMap((m) => [false, true].map((b) => !M.behavior(m, b).claimBrainCommands || M.behavior(m, b).claimCommands)).every(Boolean), true);
 eq("受け取る PC は必ず AIXツールに記録する（claimBrainCommands ⇒ recordPickup）", M.MODES.flatMap((m) => [false, true].map((b) => !M.behavior(m, b).claimBrainCommands || M.behavior(m, b).recordPickup)).every(Boolean), true);
@@ -80,12 +81,31 @@ eq("帯: 受け取る組み合わせは一括検索を書く", [M.banner("normal
 eq("帯: 名前は AIXツール（売上サポは出さない）", [M.banner("normal", true), M.banner("staff", true), M.banner("aix", true)].every((b) => /AIXツール/.test(b.text) && !/売上サポ/.test(b.text)), true);
 
 console.log("\n■ 検索の点検（2026-09-25 竹内「ブレインモードで…検索がちゃんとされていなかったら原因を見つけられるようにする」）");
-eq("6通り: ブレインの時だけ送る（スタッフ×ブレインも）", M.MODES.flatMap((m) => [false, true].map((b) => M.behavior(m, b).searchAudit)), [false, true, false, true, false, true]);
-eq("ブレイン OFF は3つとも送らない", M.MODES.map((m) => M.behavior(m, false).searchAudit), [false, false, false]);
+eq("ブレインの時だけ送る（スタッフ×ブレインも）", M.MODES.flatMap((m) => [false, true].map((b) => M.behavior(m, b).searchAudit)), M.MODES.flatMap((m) => [false, true].map((b) => !!b)));
+eq("ブレイン OFF は送らない", M.MODES.map((m) => M.behavior(m, false).searchAudit), M.MODES.map(() => false));
 eq("送る時は必ず判定している（searchAudit ⇒ brainJudge）", M.MODES.flatMap((m) => [false, true].map((b) => !M.behavior(m, b).searchAudit || M.behavior(m, b).brainJudge)).every(Boolean), true);
 
 console.log("\n■ バッジ・帯");
-eq("バッジ 6通り", M.MODES.flatMap((m) => [false, true].map((b) => M.badge(m, b).text)), ["", "脳通", "手動", "手脳", "AIX", "脳"]);
+eq("バッジ（モード×ブレイン）", M.MODES.flatMap((m) => [false, true].map((b) => M.badge(m, b).text)), ["", "脳通", "手動", "手脳", "AIX", "脳", "顧客", "顧客脳"]);
+
+console.log("\n■ 2026-11-11 AIX（選んだお客さんを自動で検索）");
+{
+  const ai = M.behavior("ai", false);
+  eq("AIX は選んだお客さんの自動検索を開く", ai.aiCustomerSearch, true);
+  eq("AIX は AIX 由来・自動便も受け取る", [ai.claimAix, ai.runAutoSchedule], [true, true]);
+  eq("AIX は一括検索も受け取る（ブレイン OFF でも）", ai.claimCommands, true);
+  eq("AIX は判定しない（人が選んだお客さん＝ブレイン OFF なら判定なし）", ai.brainJudge, false);
+  eq("AIX × ブレイン は判定する", M.behavior("ai", true).brainJudge, true);
+  eq("自動（aix）は aiCustomerSearch を開かない", M.behavior("aix", false).aiCustomerSearch, false);
+  eq("通常・スタッフは開かない", [M.behavior("normal", false).aiCustomerSearch, M.behavior("staff", false).aiCustomerSearch], [false, false]);
+  eq("書き戻し: AIX は aiMode=true・aixMode=false", M.storageUpdateForMode("ai", 1), { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: 1, aiMode: true });
+  eq("読み戻し: aiMode=true → mode=ai", M.readState({ aiMode: true, autoModeAt: 1 }).mode, "ai");
+  eq("スタッフが最優先（aiMode=true でも staff）", M.readState({ staffMode: true, staffModeAt: Date.now(), aiMode: true }).mode, "staff");
+  eq("AIX も実効の動きで開く（GUIDE_ONLY 中でも）", M.effectiveBehavior("ai", false).aiCustomerSearch, true);
+  eq("通常は実効で閉じる", M.effectiveBehavior("normal", true).aiCustomerSearch, false);
+  eq("帯: AIX（ブレイン OFF）", M.banner("ai", false).cls, "aix");
+  eq("帯: AIX×ブレイン", M.banner("ai", true).cls, "brain");
+}
 eq("帯: 通常×なし は出さない", M.banner("normal", false), null);
 eq("帯: スタッフ", M.banner("staff", false).cls, "staff");
 eq("帯: ブレイン×スタッフ", M.banner("staff", true).cls, "brain-staff");

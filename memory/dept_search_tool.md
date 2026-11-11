@@ -4,6 +4,38 @@
 
 ---
 
+## 2026-11-11 v2.6.34 4つ目に AIX モード（選んだお客さんを自動で検索）
+
+竹内さん「ここの自動で検索の場合、お客さんを押したらできない形かな。それなら4つ目にAIXをつけて、AIXの場合選択したお客さんが自動検索できるようにする。もともとあったの。新着で条件きたりしたらそれもAIXで対応できる形とする」
+
+### モードが4つに（`mode-core.js`）
+| モード | storage | 何が起きるか |
+|---|---|---|
+| 通常 | — | 何もしない（人が押す） |
+| スタッフ | staffMode | 自動化を止める（人の手動のみ・2時間） |
+| **自動**（aix） | aixMode + autoModeAt | **一覧の行を1件ずつ押して送る**（今日作った形） |
+| **AIX**（ai・新規） | aiMode + autoModeAt | **選んだお客さんを自動で検索**して1件ずつ送る |
+
+- `MODES` に `"ai"` を追加・`MODE_LABELS.ai = "AIX"`・`AI_MODE` を書き出し。
+- `behavior("ai")`: `aiCustomerSearch=true`・`claimAix`/`runAutoSchedule`/`claimCommands` true（もともとあった AIX の受け取り）・`claimBrainCommands` はブレインの時だけ。
+- `effectiveBehavior`: 自動（aix）と AIX（ai）の両方が自動の道を開く。
+- バッジ: AIX（顧客／顧客脳）・帯: 「選んだお客さんを自動で検索…新着・条件の言い直しも受け取ります」。
+
+### お客さんを選んだら自動で検索（`popup.js`）
+- `_maybeAiCustomerAutoSearch(btn, customer, site)`: AIXモードの時、**条件の読み直し（fetchFreshCustomer→preloadAdjForm）が終わってから** 検索ボタンを押す（`btn.click()`＝人が押すのと同じ道）。
+- 詰まらない決まり: 同じお客様×サイトは **10分** 続けて押さない・別のお客様に切り替わったら押さない・スタッフは押さない・自動の一括の回は任せる・人の間（0.9〜4秒）。
+- リアプロ・itandi の両方に入れた。
+
+### 新着・条件の言い直し
+`claimAix`（AIX由来の指示）・`claimBrainCommands`（web_brain）・`runAutoSchedule`（11時/17時の便）を AIX も受け取る＝**もともとあった AIX の動きがそのまま効く**。
+
+### テスト
+- 新規 `ai-customer-mode-v2634.test.js`（31 OK）
+- `mode-core` 97 OK・`guide-only-v2577` を4モードに更新
+- 全64ファイル通過
+
+---
+
 ## 2026-11-10 v2.6.33 自動検索を頼む口（スクリプト）と、稼働時間の確認
 
 竹内さん「もともとの拡張ツールの検索を行えばよいだけ。自動での検索。APIで」「時間制限でとまってるかも」「作業23時でよい」

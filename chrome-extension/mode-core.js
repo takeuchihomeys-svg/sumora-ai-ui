@@ -24,8 +24,8 @@
   "use strict";
 
   var STAFF_MODE_TTL_MS = 2 * 60 * 60 * 1000; // 2時間で自動OFF（background.js・bulk-dl.js・itandi-bulk-dl.js と同じ）
-  var MODES = ["normal", "staff", "aix"];
-  var STORAGE_KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode"];
+  var MODES = ["normal", "staff", "aix", "ai"];
+  var STORAGE_KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode", "aiMode", "aiModeAt"];
 
   // storage の生の値 → { mode, brain, staffExpired }
   //   スタッフとAIXが両方 true（旧版の書き込み途中など）はスタッフを優先（旧 _modeFromFlags と同じ・自動化を止める側に倒す）。
@@ -36,7 +36,10 @@
     var at = st.staffModeAt || 0;
     var staffExpired = !!st.staffMode && !!at && t - at > STAFF_MODE_TTL_MS;
     var staff = !!st.staffMode && !staffExpired;
-    var mode = staff ? "staff" : (st.aixMode ? "aix" : "normal");
+    // 2026-11-11 竹内さん「4つ目にAIXをつけて、AIXの場合選択したお客さんが自動検索できるようにする」:
+    //   ai（AIX）は「選んだお客さんを自動で検索して送る」モード。スタッフ > ai > aix（自動）> 通常 の優先で読む
+    var ai = !!st.aiMode;
+    var mode = staff ? "staff" : (ai ? "ai" : (st.aixMode ? "aix" : "normal"));
     return { mode: mode, brain: !!st.brainMode, staffExpired: staffExpired };
   }
 
@@ -45,9 +48,11 @@
   //     （古い版が書き残した aixMode=true で勝手に自動にならないため）。スタッフ・通常にしたら印は消す
   function storageUpdateForMode(mode, now) {
     var t = typeof now === "number" ? now : Date.now();
-    if (mode === "staff") return { staffMode: true, staffModeAt: t, aixMode: false, autoModeAt: null };
-    if (mode === "aix") return { staffMode: false, staffModeAt: null, aixMode: true, autoModeAt: t };
-    return { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null };
+    if (mode === "staff") return { staffMode: true, staffModeAt: t, aixMode: false, autoModeAt: null, aiMode: false };
+    if (mode === "aix") return { staffMode: false, staffModeAt: null, aixMode: true, autoModeAt: t, aiMode: false };
+    // 2026-11-11: AIX（選んだお客さんを自動で検索）. 自動（aix）と同じく autoModeAt の印も入れる（古い書き残しと区別する）
+    if (mode === "ai") return { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: t, aiMode: true };
+    return { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null, aiMode: false };
   }
 
   // ブレインの切り替えで書く値（モードには触らない）
@@ -70,11 +75,14 @@
     var m = MODES.indexOf(mode) >= 0 ? mode : "normal";
     var b = !!brain;
     var staff = m === "staff";
+    // 2026-11-11 竹内さん「AIXの場合選択したお客さんが自動検索できるようにする。新着で条件きたりしたらそれもAIXで対応できる形とする」:
+    //   ai（AIX）＝選んだお客さんを自動で検索して1件ずつ送る。/ 新着・条件の言い直し（aix・web_brain）も受け取る
+    var aiMode = m === "ai";
     return {
       mode: m,
       brain: b,
       claimCommands: !staff,
-      claimAix: m === "aix",
+      claimAix: m === "aix" || aiMode,
       autoSend: !staff,
       excludeSent: !staff,
       brainJudge: b,
@@ -95,11 +103,13 @@
       //   → 竹内さんに確認: ブレイン×AIX を選んだ時は自動便も走らせるか（今は旧「ブレイン」と同じ＝見送り）
       // 2026-09-29 竹内「ブレインの AIX モードで午前11時頃と午後17時頃の一括検索が行われていない」→ ブレイン×AIX でも自動便を走らせる（9/24 の「ブレイン中は見送り」をやめる）。
       //   ブレインの回として売上サポに記録し、★物件出し★へは解析後に1回アナウンス（pickup-group-announce）
-      runAutoSchedule: m === "aix",
+      runAutoSchedule: m === "aix" || aiMode,
       // 2026-09-25 竹内「チェックした物の一括検索。拡張ツールでブレインモードに選択していたら連動して検索。ブレインモードのみで連動」:
       //   ウェブの AIXツールの一括検索（automation_commands.payload.source="web_brain"）を受け取るか（pending?brain=1）。
       //   ブレインの PC だけ。🧠×スタッフは受け取らない（スタッフは自動化を無視する＝claimCommands と同じ線・別のブレインの PC が拾う）
       claimBrainCommands: b && !staff,
+      // 2026-11-11: AIX（選んだお客さんを自動で検索）はブレイン OFF でも動かす（人が選んだお客さんの検索なので判定は要らない）
+      aiCustomerSearch: aiMode,
       // 2026-09-25 竹内「ブレインモードで物件自動検索や一括検索した際に、検索がちゃんとされていなかったら原因を見つけられるようにする」:
       //   検索の1回ごとに「入れようとした条件・実際に入った値・結果」を /api/search-audits に送るか（search-audit.js）。
       //   ブレインの時だけ（スタッフ×ブレインの手の検索も含む）。ブレイン OFF は送らない（サーバーも brain!==true なら何もしない）
@@ -112,6 +122,7 @@
   function badge(mode, brain) {
     var b = !!brain;
     if (mode === "staff") return { text: b ? "手脳" : "手動", color: "#16a34a" };
+    if (mode === "ai") return b ? { text: "顧客脳", color: "#0ea5e9" } : { text: "顧客", color: "#db2777" };
     if (mode === "aix") return b ? { text: "脳", color: "#0ea5e9" } : { text: "AIX", color: "#7c3aed" };
     return b ? { text: "脳通", color: "#0ea5e9" } : { text: "", color: "#7c3aed" };
   }
@@ -132,6 +143,11 @@
       return b
         ? { cls: "brain-staff", text: "🧠 ブレイン × スタッフモード — 自動化は停止中（手動のみ・2時間で自動OFF）。手で送る物件もブレインが判定しAIXツールに記録します（物件は外しません）。ウェブの一括検索は拾いません（別のブレインのPCが拾う）" }
         : { cls: "staff", text: "スタッフモード中 — 自動化は停止しています（手動操作のみ・2時間で自動OFF）" };
+    }
+    if (mode === "ai") {
+      return b
+        ? { cls: "brain", text: "🧠 AIX × ブレイン — 選んだお客さんを自動で検索し、判定してから売上番長グループへ1件ずつ送ります。新着・条件の言い直し（AIXツールの指示）も受け取ります" }
+        : { cls: "aix", text: "AIXモード — 選んだお客さんを自動で検索して、売上番長グループへ1件ずつ送ります。新着・条件の言い直し（AIXツールの指示）も受け取ります" };
     }
     if (mode === "aix") {
       return b
@@ -226,13 +242,15 @@
   var GUIDE_ONLY = true;
   /** 自動の道を開くモード（このモードを選んだ時だけ claim・自動送信・自動便を許す） */
   var AUTO_MODE = "aix";
+  /** 2026-11-11 竹内さん「4つ目にAIXをつけて、AIXの場合選択したお客さんが自動検索できるようにする」: AIX も自動の道を開く */
+  var AI_MODE = "ai";
   /** モードの表示名（竹内さんの呼び方に合わせる） */
-  var MODE_LABELS = { normal: "通常", staff: "スタッフ", aix: "自動" };
+  var MODE_LABELS = { normal: "通常", staff: "スタッフ", aix: "自動", ai: "AIX" };
   /** 自動の物（AIX連動）は今のモードにしない: 自動以外の値が残っていても読む形はそのまま（aix だけ通す） */
   function effectiveState(raw, now) {
     var s = readState(raw, now);
-    if (GUIDE_ONLY && s.mode === "aix") {
-      // GUIDE_ONLY の間でも自動モードを選んでいれば aix のまま（自動の道を開く）。
+    if (GUIDE_ONLY && (s.mode === "aix" || s.mode === "ai")) {
+      // GUIDE_ONLY の間でも自動モード・AIXモードを選んでいればそのまま（自動の道を開く）。
       // ただし「古い版が書き残した aixMode=true」で勝手に自動にならないよう、明示の選択の印（autoModeAt）が要る
       var st = raw || {};
       var chosen = Number(st.autoModeAt) > 0;
@@ -240,15 +258,16 @@
     }
     return s;
   }
-  /** 今の動き（自動モード以外は自動の物が全部 false） */
+  /** 今の動き（自動モード・AIXモード以外は自動の物が全部 false） */
   function effectiveBehavior(mode, brain) {
     var b = behavior(mode, brain);
     if (!GUIDE_ONLY) return b;
-    // 自動モード（aix）を選んでいる時だけ開く
-    if (mode === AUTO_MODE) return b;
+    // 自動モード（aix）・AIXモード（ai）を選んでいる時だけ開く
+    if (mode === AUTO_MODE || mode === AI_MODE) return b;
     var o = {};
     for (var k in b) o[k] = b[k];
     o.claimCommands = false; o.claimAix = false; o.autoSend = false; o.runAutoSchedule = false; o.claimBrainCommands = false;
+    o.aiCustomerSearch = false;
     o.guideOnly = true;
     return o;
   }
@@ -277,6 +296,7 @@
   return {
     GUIDE_ONLY: GUIDE_ONLY,
     AUTO_MODE: AUTO_MODE,
+    AI_MODE: AI_MODE,
     MODE_LABELS: MODE_LABELS,
     modeLabel: modeLabel,
     autoModeStamp: autoModeStamp,
