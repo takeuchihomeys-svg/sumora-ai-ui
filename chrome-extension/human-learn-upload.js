@@ -48,6 +48,21 @@
     } catch (_) { _sending = false; }
   }
 
+  /**
+   * 2026-11-11: 今のモード（通常／スタッフ）を読む。DB の `mode` が空だったのを直す。
+   *   自動・AIX では覚えないので、ここに来るのは通常かスタッフ。
+   */
+  function _modeNow(cb) {
+    try {
+      chrome.storage.local.get(["staffMode", "staffModeAt"], function (r) {
+        var s = r || {};
+        var at = s.staffModeAt || 0;
+        var staffOn = !!s.staffMode && (!at || Date.now() - at <= 2 * 60 * 60 * 1000);
+        cb(staffOn ? "staff" : "normal");
+      });
+    } catch (_) { cb("normal"); }
+  }
+
   /** 貯まった物を読んで、必要なら送る */
   function maybeUpload() {
     try {
@@ -59,7 +74,7 @@
         // 送った印は先に置く（同じ分を2回送らない）
         var o = {}; o[SENT_KEY] = Date.now();
         try { chrome.storage.local.set(o); } catch (_) {}
-        upload(agg, { site: agg.site });
+        _modeNow(function (m) { upload(agg, { site: agg.site, mode: m }); });
       });
     } catch (_) {}
   }

@@ -3784,6 +3784,11 @@ CREATE TABLE IF NOT EXISTS human_motion_learn (
 CREATE INDEX IF NOT EXISTS idx_human_motion_created ON human_motion_learn(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_human_motion_install ON human_motion_learn(install_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_human_motion_site ON human_motion_learn(site, mode, created_at DESC);
+-- 画面の写真の置き場（2026-11-11 竹内さん「画面画像みればわかるのでは」）。
+--   写真の中身は表に入れない（1行が数百KBになり集計が重くなる）→ Storage に置き、表には名前だけ。
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('human-motion-shots', 'human-motion-shots', true, 5242880, ARRAY['image/jpeg','image/png'])
+ON CONFLICT (id) DO NOTHING;
 -- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）
 ALTER TABLE human_motion_learn ENABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE human_motion_learn IS '通常・スタッフモードで人がどう動いたか（速さ・曲がり・押した位置・スクロール）。入力した中身・名前・電話は入れない。2026-11-11 竹内さん承認';

@@ -6398,6 +6398,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (prof && L.learnedLines) {
           lines = lines.concat([""], ["▼ この値が自動モードの動きに使われます"], L.learnedLines(prof));
         }
+        // 2026-11-11 竹内さん「ボタン物件検索でおすばしょ理解できたかな」: どのボタンをどこで押したかを出す
+        if (L && L.buttonReport) lines = lines.concat([""], L.buttonReport(agg));
       } catch (_) {}
       // 見やすい小窓（閉じるボタン付き・サイトは触らない）
       try {

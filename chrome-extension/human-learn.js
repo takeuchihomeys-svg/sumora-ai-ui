@@ -42,24 +42,61 @@
   var MAX_POINTS = 40;        // 押した場所の上限
   var MAX_SCROLLS = 40;       // 画面の動かし方の上限
 
-  /** その要素を「どの欄か」の短い名前にする（値は入れない・個人の情報を残さない） */
+  /**
+   * 2026-11-11 竹内さん「これでボタン物件検索でおすばしょ理解できたかな？」→
+   *   「押した場所は分かるが、**何というボタンか**が分からない」（リアプロの検索ボタンは名前の無い DIV）:
+   *   旧は name → id → 文字（BUTTON/A/LABEL/OPTION だけ）→ class → タグ の順。
+   *   → **DIV/SPAN/TD の文字も拾う**（「検索」「駅の設定へ進む」など）。加えて class も必ず残す。
+   *
+   *   名前の作り方（人が読んで分かる形にする）:
+   *     "検索｜div.go_search"      … 文字が取れた時（文字｜タグ.クラス）
+   *     "go_search"               … 文字が無くて class がある時（その class）
+   *     "rental_cost2"            … name がある時（欄の名前を最優先）
+   *     "#btn-mode-ward"          … id がある時
+   *   ⚠ 入力した中身（値）は入れない。文字は**ボタンや見出しの表示文言**だけ（30字まで）。
+   */
+  var TEXT_TAGS = /^(BUTTON|A|LABEL|OPTION|LI|SPAN|DIV|TD|TH|P|H1|H2|H3|H4)$/;
   function fieldName(el) {
     if (!el) return null;
     try {
       var tag = String(el.tagName || "").toUpperCase();
+      // ① 欄の名前（input/select はこれが一番確実）
       var name = el.getAttribute && el.getAttribute("name");
       if (name) return String(name).slice(0, 30);
-      var id = el.id;
-      if (id) return ("#" + id).slice(0, 30);
-      // 文字が取れる物（ボタン・リンク）は先頭12字まで（人が何を押したか分かるように）
-      if (tag === "BUTTON" || tag === "A" || tag === "LABEL" || tag === "OPTION") {
-        var t = String(el.textContent || "").replace(/\s+/g, "").slice(0, 12);
-        if (t) return t;
+      // ② 表示の文字（人が「何を押したか」分かる形）＋ class（サイト側の目印）
+      var cls = (el.className && typeof el.className === "string") ? el.className.trim().split(/\s+/)[0] : "";
+      var mark = tag.toLowerCase() + (cls ? "." + cls : "");
+      if (TEXT_TAGS.test(tag)) {
+        var txt = directText(el).slice(0, 20);
+        if (txt) return (txt + "｜" + mark).slice(0, 30);
       }
-      var cls = el.className && typeof el.className === "string" ? el.className.split(/\s+/)[0] : "";
-      if (cls) return (tag.toLowerCase() + "." + cls).slice(0, 30);
+      // ③ id
+      var id = el.id;
+      if (id) return ("#" + id + (cls ? "｜" + mark : "")).slice(0, 30);
+      // ④ class だけ
+      if (cls) return mark.slice(0, 24);
+      // ⑤ タグだけ
       return tag.toLowerCase();
     } catch (_) { return null; }
+  }
+  /**
+   * その要素**自身**の文字（子の文字は混ぜない）。ボタンの中の入れ子で
+   * 「検索」ではなく「検索条件をすべてクリア」のような長い文字になるのを防ぐ。
+   */
+  function directText(el) {
+    try {
+      var t = "";
+      var kids = el.childNodes || [];
+      for (var i = 0; i < kids.length; i++) {
+        if (kids[i].nodeType === 3) t += kids[i].nodeValue || "";
+        if (t.replace(/\s+/g, "").length >= 12) break;
+      }
+      t = t.replace(/[\s\u3000]+/g, "");
+      if (t) return t;
+      // 自身の直下に文字が無ければ、全体の文字（短い時だけ）
+      var all = String(el.textContent || "").replace(/[\s\u3000]+/g, "");
+      return all.length <= 16 ? all : all.slice(0, 12);
+    } catch (_) { return ""; }
   }
 
   /** 操作の種類（click / key / change / scroll） */
@@ -90,12 +127,39 @@
     var vw = function () { try { return (W && W.innerWidth) || 1200; } catch (_) { return 1200; } };
     var vh = function () { try { return (W && W.innerHeight) || 800; } catch (_) { return 800; } };
 
+    /**
+     * 2026-11-11 竹内さん「ボタン物件検索でおすばしょ理解できたかな」:
+     *   押した場所と要素の名前だけでは「**どの段階で**押したか」が分からない。
+     *   例）「検索」ボタンは条件入力の最後に押す。物件の行は検索結果で押す。駅はモーダルの中で押す。
+     *   → 記録の1件ごとに**段階**を付ける（見た目で分かる印だけを見る・サイトは触らない）。
+     *     form   … 条件を入れている画面（検索の欄がある）
+     *     modal  … 小窓（所在地・沿線の選択）が開いている
+     *     result … 検索結果の一覧（物件の行がある）
+     *     other  … どれでもない
+     */
+    function stageOf() {
+      try {
+        var d = D;
+        if (!d || !d.querySelector) return "other";
+        // 小窓が開いているか（リアプロは .this_window、ITANDI は role=dialog）
+        if (d.querySelector(".this_window, [role='dialog'], .modal")) {
+          var w = d.querySelector(".this_window, [role='dialog'], .modal");
+          if (w && w.offsetParent !== null) return "modal";
+        }
+        // 検索結果の一覧か（物件の行がある）
+        if (d.querySelector(".building_tr, .building_list, .property_list, [class*='building_tr']")) return "result";
+        // 条件の欄があるか
+        if (d.querySelector("select[name='rental_cost2'], input[name='city_code[]'], div.go_search, div.go_search_submit")) return "form";
+        return "other";
+      } catch (_) { return "other"; }
+    }
+
     /** 1件覚える。間引きで捨てたら false */
     function record(type, el) {
       var k = kindOf(type);
       var t = now();
       if (k === lastKind && t - lastAt < SAME_KIND_MIN_MS) { lastAt = t; return false; }
-      ops.push({ t: t, k: k, f: fieldName(el) });
+      ops.push({ t: t, k: k, f: fieldName(el), s: stageOf() });
       if (ops.length > MAX_OPS) ops.shift();
       lastKind = k; lastAt = t;
       return true;
@@ -119,6 +183,7 @@
           x: Math.round(Math.max(0, Math.min(1, fx)) * 100) / 100,
           y: Math.round(Math.max(0, Math.min(1, fy)) * 100) / 100,
           w: Math.round(r.width), h: Math.round(r.height),
+          s: stageOf(),   // 2026-11-11: どの段階で押したか（form/modal/result）
         });
         if (points.length > MAX_POINTS) points.shift();
       } catch (_) {}
@@ -394,13 +459,20 @@
       if (!p || typeof p.x !== "number" || typeof p.y !== "number") return;
       xs.push(p.x); ys.push(p.y);
       var f = p.f || "?";
-      if (!byField[f]) byField[f] = { n: 0, xs: [], ys: [] };
+      if (!byField[f]) byField[f] = { n: 0, xs: [], ys: [], stages: {} };
       byField[f].n++;
+      // 2026-11-11: どの段階で押したかも数える（form/modal/result）
+      var sg = p.s || "other";
+      byField[f].stages[sg] = (byField[f].stages[sg] || 0) + 1;
       if (byField[f].xs.length < 20) { byField[f].xs.push(p.x); byField[f].ys.push(p.y); }
     });
     var fieldSpread = {};
     Object.keys(byField).slice(0, 20).forEach(function (f) {
       fieldSpread[f] = { n: byField[f].n, x: medianF(byField[f].xs), y: medianF(byField[f].ys) };
+      // 一番多かった段階（この要素をどの場面で押すか）
+      var st = byField[f].stages, best = null, bestN = -1;
+      Object.keys(st).forEach(function (k) { if (st[k] > bestN) { best = k; bestN = st[k]; } });
+      if (best) fieldSpread[f].stage = best;
     });
     var points = {
       n: pt.length,
@@ -620,6 +692,38 @@
     return Math.max(120, Math.min(1600, Math.round(ms)));
   }
 
+  /** 段階の日本語名（画面に出す用） */
+  var STAGE_JA = { form: "条件の入力", modal: "小窓（選択）", result: "検索結果", other: "その他" };
+  function stageJa(s) { return STAGE_JA[s] || STAGE_JA.other; }
+
+  /**
+   * 2026-11-11 竹内さん「これでボタン物件検索でおすばしょ理解できたかな？ある程度は」:
+   *   押した場所を**人が読める形**にする（記録の全体像から）。
+   *   「物件検索のボタンは条件の入力の最後に、横62%・縦78%で押した」のように出す。
+   *
+   * @param {Object} agg  axlx_human_learn の中身
+   * @returns {string[]} 1行ずつ（多すぎないように上位8件まで）
+   */
+  function buttonReport(agg) {
+    var out = [];
+    var pt = (agg && agg.points) || {};
+    var fields = pt.fields || {};
+    var names = Object.keys(fields);
+    if (!names.length) return ["押した場所の記録がまだありません（通常モードで操作すると貯まります）"];
+    // 押した回数の多い順
+    names.sort(function (a, b) { return (Number(fields[b].n) || 0) - (Number(fields[a].n) || 0); });
+    out.push("押した場所（多い順・" + (pt.n || 0) + "回分）:");
+    names.slice(0, 8).forEach(function (f) {
+      var v = fields[f] || {};
+      var pct = function (x) { return x == null ? "?" : Math.round(x * 100) + "%"; };
+      var st = v.stage ? "／" + stageJa(v.stage) : "";
+      // 名前は "検索｜div.go_search" の形。長い時はそのまま（30字まで）
+      out.push("  ・" + f + " … " + (v.n || 0) + "回・横" + pct(v.x) + "・縦" + pct(v.y) + st);
+    });
+    if (names.length > 8) out.push("  （ほか " + (names.length - 8) + "件）");
+    return out;
+  }
+
   /** 集計から「何を学んだか」を1行ずつ（画面に出す用） */
   function learnedLines(profile) {
     if (!profile) return ["まだ学べていません（通常モードでもう少し操作すると学び始めます）"];
@@ -640,6 +744,8 @@
     profileFrom: profileFrom,
     moveMsFor: moveMsFor,
     learnedLines: learnedLines,
+    buttonReport: buttonReport,
+    stageJa: stageJa,
     reportLine: reportLine,
     describe: describe,
     fieldName: fieldName,

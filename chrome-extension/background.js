@@ -1885,6 +1885,29 @@ if (msg.type === "axlx-human-shot") {
       };
       await chrome.storage.local.set(o);
 
+      /**
+       * 2026-11-11 竹内さん「画面画像みればわかるのでは。画像みてボタンどこおしたかみればちゃんと検索おしてることわかる」:
+       *   写真を **Supabase Storage にも上げる**（Chrome の中だけだと、竹内さんも私も見られない）。
+       *   ・上げるのは非同期（写真を撮る動きを止めない）
+       *   ・失敗しても止めない（Chrome の中には残る）
+       *   ・表には名前（shot_key）だけ。中身は Storage。
+       */
+      if (msg.upload !== false) {
+        setTimeout(function () {
+          try {
+            chrome.runtime.sendMessage({
+              type: "axlx-human-shot-upload",
+              site: msg.site || null,
+              what: msg.what || null,
+              kind: msg.kind || null,
+              x: msg.x, y: msg.y,
+              run_id: _shotRun, seq: _shotSeq,
+              data_url: dataUrl,
+            }, function () { void chrome.runtime.lastError; });
+          } catch (_) {}
+        }, 120);
+      }
+
       // 古い物から消す（全体の上限）
       const all = await chrome.storage.local.get(null);
       const keys = Object.keys(all).filter(function (k) { return k.indexOf("shot_") === 0; });
@@ -1905,8 +1928,65 @@ if (msg.type === "axlx-human-shot") {
  * 2026-11-11: 撮った写真の一覧（何枚・どのまとまり・どの操作の後か）。中身（画像）は含めない＝軽い。
  *   ?run_id= で1つのまとまりだけ。?with_data=1 で画像も返す（確認用・重い）。
  */
-if (msg.type === "axlx-human-shots-list") {
+/**
+ * 2026-11-11 竹内さん「画面画像みればわかるのでは」:
+ *   撮った写真を **Supabase Storage に上げる**（Chrome の中だけだと外から見られない）。
+ *   `/api/human-motion` に画像を付けて送る → サーバーが Storage に置き、表には名前だけ残す。
+ *   ・上げるのは1枚ずつ・直列（サーバーを叩きすぎない・順番が崩れない）
+ *   ・失敗しても止めない（写真は Chrome の中に残る）
+ */
+var _shotUploadQueue = [];
+var _shotUploading = false;
+function _pumpShotUpload() {
+  if (_shotUploading) return;
+  var job = _shotUploadQueue.shift();
+  if (!job) return;
+  _shotUploading = true;
   (async () => {
+    try {
+      const hdr = await _getAutomationKeyHeader();
+      const body = {
+        shot_b64: job.data_url,
+        motion: { n: 0, kinds: {}, gaps: [], gap_ms: null, fields: [], order: [],
+                  moves: { n: 0 }, points: { n: 0 }, scrolls: { n: 0 } },
+        site: job.site || null,
+        mode: job.mode || null,
+        shot_taken: true,
+        shot_key: null,
+        install_id: await _snapInstallId(),
+        device_label: (await chrome.storage.local.get("deviceLabel").catch(function () { return {}; })).deviceLabel || null,
+        ext_version: _extVersion(),
+        at: Date.now(),
+        shot_meta: { what: job.what, kind: job.kind, x: job.x, y: job.y, run_id: job.run_id, seq: job.seq },
+      };
+      const res = await fetch(SUMORA_BATCH_API + "/api/human-motion", {
+        method: "POST",
+        headers: Object.assign({ "Content-Type": "application/json" }, hdr),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!res.ok) console.warn("[human-shot] 上げられませんでした:", res.status);
+    } catch (e) {
+      console.warn("[human-shot] 上げる時のエラー:", (e && e.message) || e);
+    } finally {
+      _shotUploading = false;
+      if (_shotUploadQueue.length) _pumpShotUpload();
+    }
+  })();
+}
+if (msg.type === "axlx-human-shot-upload") {
+  // 溜めすぎない（古い物から捨てる）
+  if (_shotUploadQueue.length > 40) _shotUploadQueue.shift();
+  _shotUploadQueue.push({
+    data_url: msg.data_url, site: msg.site, what: msg.what, kind: msg.kind,
+    x: msg.x, y: msg.y, run_id: msg.run_id, seq: msg.seq,
+  });
+  _pumpShotUpload();
+  sendResponse({ ok: true, queued: _shotUploadQueue.length });
+  return true;
+}
+
+if (msg.type === "axlx-human-shots-list") {  (async () => {
     try {
       const all = await chrome.storage.local.get(null);
       const keys = Object.keys(all).filter(function (k) { return k.indexOf("shot_") === 0; }).sort();
