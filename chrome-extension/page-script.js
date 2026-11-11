@@ -1921,13 +1921,51 @@
           "route_id[]", "station_id[]",
           "room_layout_id[]", "structured_type[]", "eq_rm[]",
         ];
-        checkboxNames.forEach(function(name) {
-          [].slice.call(document.querySelectorAll("input[name='" + name + "']:checked"))
-            .forEach(function(cb) { cb.checked = false; cb.dispatchEvent(new Event("change", {bubbles:true})); });
+        /**
+         * 2026-11-11 竹内さん「物件検索した後に次のお客さんにうつるためにリセットする間隔などその点は人間的になっているか」:
+         *   旧は **一瞬で全部 checked=false**（人が条件を消す速さではない・画面が一斉に変わる）。
+         *   人が前のお客様の条件を消す時は、上から順に1つずつ「カチッ」と外していく（たまにまとめて外す事もある）。
+         *   ・対象を集めて **上から順**（消す時は順番が大事＝住所の階層があるため）に1つずつ外す
+         *   ・間は 90〜260ms（対数正規）・8%で一息 300〜800ms
+         *   ・件数が多い時（20件超）は 5件ずつにまとめる（人が「だいたいこの辺」とまとめて外す形）
+         *   ⚠ 同期で消せないと後段（入力）が狂うので、全部消し終わってから次へ進む
+         */
+        var _toUncheck = [];
+        checkboxNames.forEach(function (name) {
+          [].slice.call(document.querySelectorAll("input[name='" + name + "']:checked")).forEach(function (cb) { _toUncheck.push(cb); });
         });
+        var _H0 = window.AxlxHumanWait;
+        // 全部外し終わったら次（select・text のクリア）へ進む（非同期なので順番を守る）
+        var _afterUncheck = function () { _resetRest(); };
+        var _unchk = function (i) {
+          if (i >= _toUncheck.length) { _afterUncheck(); return; }
+          var cb = _toUncheck[i];
+          try { if (cb.isConnected && cb.checked) { cb.checked = false; cb.dispatchEvent(new Event("change", { bubbles: true })); } } catch (_) {}
+          var gap = _H0 && _H0.logNormalDelay ? _H0.logNormalDelay(160, 0.35) : 160;
+          if (gap < 90) gap = 90; if (gap > 260) gap = 260;
+          if (Math.random() < 0.08) gap += 300 + Math.floor(Math.random() * 500);
+          setTimeout(function () { _unchk(i + 1); }, gap);
+        };
+        if (_toUncheck.length > 20) {
+          // 多い時は5件ずつまとめて外す（人が「この辺をまとめて」とやる形）
+          var _chunk = 0;
+          var _unchunk = function () {
+            if (_chunk >= _toUncheck.length) { _afterUncheck(); return; }
+            _toUncheck.slice(_chunk, _chunk + 5).forEach(function (cb) {
+              try { if (cb.isConnected && cb.checked) { cb.checked = false; cb.dispatchEvent(new Event("change", { bubbles: true })); } } catch (_) {}
+            });
+            _chunk += 5;
+            setTimeout(_unchunk, 260 + Math.floor(Math.random() * 380));
+          };
+          _unchunk();
+        } else {
+          _unchk(0);
+        }
 
         // 敷金・礼金なし チェックボックスをリセット（ラベルテキストで特定するため name リストに含められない）
         // 前顧客が敷礼なし希望 → 次顧客が希望なし のとき残留するバグの修正
+        // 2026-11-11: チェックボックスを人と同じ速さで外すので、残り（敷礼・select・text）はその後に回す
+        var _resetRest = function () {
         ;(function() {
           var sLabels = document.querySelectorAll('label');
           for (var si = 0; si < sLabels.length; si++) {
@@ -1963,13 +2001,16 @@
         })();
 
         console.log("[AX] フォーム手動クリア完了 → 条件入力開始");
+        _auditStepP('reset', null);
+        // 2026-11-10 v2.6.12 竹内さん「細部まで徹底した動き」: リセット後に「条件が消えたのを見届ける」間（人が画面を見る）
+        setTimeout(callback, _ln(650, 0.4, 380, 1300));
+        }; // _resetRest end
         } catch (err) {
           // クリア失敗でも条件入力は続行する（静かに停止すると fill-done が来なくなる）
           console.error("[AX] _doReset クリア中の例外（続行）", err);
           if (_audit) _audit.reset_fail = 'フォームのクリアで例外: ' + String((err && err.message) || err).slice(0, 120);
+          setTimeout(callback, _ln(650, 0.4, 380, 1300));
         }
-        _auditStepP('reset', null);
-        // 2026-11-10 v2.6.12 竹内さん「細部まで徹底した動き」: リセット後に「条件が消えたのを見届ける」間（人が画面を見る）`r`n        setTimeout(callback, _ln(650, 0.4, 380, 1300));
         }); // whenClickQueueIdle end
       }, closeDelay);
 

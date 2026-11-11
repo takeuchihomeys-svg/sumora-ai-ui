@@ -222,6 +222,12 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("ITANDI: モーダルは見えている1つだけ押す（一斉クリックしない）", /for \(var i = 0; i < cands\.length; i\+\+\) \{[\s\S]{0,200}cands\[i\]\.click\(\); return;/.test(ib4) && !/\.concat\(findBtnByText\("閉じる"\)\)\.forEach/.test(ib4));
   ok("ITANDI: スクロール待ちも距離だけで決まらない（logNormalDelay）", /w = H\.logNormalDelay\(base, 0\.3\)/.test(ips4) && /遠い|Math\.abs\(dist\) > 200/.test(ips4));
   ok("ITANDI: 間取りを上から順に選ばない（順番をシャッフル）", /_range\.sort\(function \(a, b\) \{ return \(0\.5 - Math\.random\(\)\); \}\)/.test(ips4) && /_subs\.sort\(function \(\) \{ return 0\.5 - Math\.random\(\); \}\)/.test(ips4));
+  // 2026-11-11 竹内さん「物件検索した後に次のお客さんにうつるためにリセットする間隔など人間的になっているか」
+  ok("リアプロ: 前のお客様の条件を一瞬で全部外さない（1つずつ人の間で外す）", /_toUncheck\.push\(cb\)/.test(ps4) && /setTimeout\(function \(\) \{ _unchk\(i \+ 1\); \}, gap\)/.test(ps4));
+  ok("リアプロ: 外す間は 90〜260ms・8%で一息 300〜800ms", /if \(gap < 90\) gap = 90; if \(gap > 260\) gap = 260;/.test(ps4) && /Math\.random\(\) < 0\.08\) gap \+= 300/.test(ps4));
+  ok("リアプロ: 多い時（20件超）は5件ずつまとめて外す", /if \(_toUncheck\.length > 20\)/.test(ps4) && /slice\(_chunk, _chunk \+ 5\)/.test(ps4));
+  ok("リアプロ: 全部消えてから次へ進む（_resetRest）", /var _afterUncheck = function \(\) \{ _resetRest\(\); \}/.test(ps4) && /_chunk >= _toUncheck\.length\) \{ _afterUncheck\(\); return; \}/.test(ps4));
+  ok("次のお客様まで 15〜60秒＋一息（nextCommandGapMs）", /function nextCommandGapMs\(rng\) \{\s*return customerGapMs\(rng\);/.test(fs4.readFileSync(path.join(dir, "auto-run.js"), "utf8")));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
