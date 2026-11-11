@@ -4,6 +4,72 @@
 
 ---
 
+## 2026-11-11 v2.7.1 賃料は「プルダウンに見える一覧」で選ぶ・沿線が入るまで次へ進まない
+
+竹内さん「**これ3枚目じゃなくてそれぞれの課題。賃料のところプルダウンなのに直接入力になってしまっている**」
+（同時に「h.r さんが沿線選択されずに止まる」「なぜこのお客さんで止まったか」の3件を別々の課題として指摘）
+
+### ① 賃料・徒歩などの `<select>` が「直接入力」に見える → 拡張が見える一覧を描く
+
+**原因**: ネイティブの `<select>` は**拡張の擬似クリック（`dispatchEvent`）では一覧が開かない**（Chrome の仕様）。
+これまでは「値を代入して change」だけだったので、**数字が勝手に入ったように見えた**（＝直接入力）。
+さらに**本物のクリック**（`browser_click` 相当）を送ると OS が一覧を描き、**閉じられずに後続のクリックを全部ブロック**する（写真3枚目の状態）。
+
+**直した**: 値を入れる前に、**拡張が欄の下へ見える一覧を描く**（`_showFakeOptions`）。
+
+```
+① focus（クリックは送らない＝OS の一覧を開かせない）
+② _showFakeOptions(el) で見える一覧を出す（最大12行・欄のすぐ下・z-index 最上位）
+③ 1100〜1600ms 待つ（人が一覧を目で探す間）
+④ 目当ての行へカーソルが動く（P.moveToEl）→ _markFakeRow で青く光る → 220ms → 行を押す
+⑤ 値・selectedIndex を入れて input → 200ms → change → _hideFakeOptions → 220ms → blur
+```
+
+| 守る事 | 中身 |
+|---|---|
+| 画面を塞がない | 拡張が描いた一覧は `pointer-events:none`（押しても何も起きない） |
+| 残らない | 出してから **8秒** で必ず消す（`_armFakeDdSafety` の安全弁） |
+| サイトを触らない | 見た目だけ。値の入れ方（value＋input＋change）は今まで通り |
+| 見えれば分かる | 選んだ行が青く光るので「プルダウンから選んだ」ことが目で分かる |
+
+関数: `_showFakeOptions` / `_hideFakeOptions` / `_armFakeDdSafety` / `_markFakeRow`（すべて `page-script.js`・`chooseSelectLikeHuman` の直前）
+
+### ② h.r さんで沿線が選ばれずに止まる → 路線が入るまで次の段へ進まない
+
+**原因**: `clickLineButtons(cond.route_ids)` は**クリックの列に積むだけ（非同期）**なのに、
+その直後に `return true`（＝この段は済み）を返していた。
+→ **路線がまだ押されていないのに「駅の設定へ進む」へ進んでいた**（＝沿線が入らないまま止まる）。
+
+**直した**: 路線が**実際にチェックされたか**を確かめてから次へ進む。
+
+```js
+if (hasRoutes) clickLineButtons(cond.route_ids);
+var _lineOk = !hasRoutes ? true : (function () {
+  var want = (cond.route_ids || []).map(id => ROUTE_LINE_MAP[id]).filter(Boolean).map(norm);
+  if (!want.length) return true;
+  var nowChecked = [...document.querySelectorAll("label.one_line")]
+    .filter(isVisible)
+    .filter(l => { var c = l.querySelector('input[type="checkbox"]'); return c && c.checked; })
+    .map(l => norm(l.textContent));
+  return nowChecked.some(n => want.some(w => w === n || (n.length >= 4 && w.endsWith(n))));
+})();
+if (!_lineOk) return false;   // まだ入っていない → この段をもう一度
+return true;
+```
+
+### テスト
+
+`tests/chrome-extension/select-native-close-v2701.test.js`（23項目）+ 既存 87 本 = **88本**、5回連続 0 失敗。
+`npx tsc --noEmit -p tsconfig.cursor-ext.json` → 0。
+`human-wait.test.js` の KEEP 許可リストに `setTimeout 8000`（安全弁・見た目だけ）を理由付きで追加。
+
+### 確認してもらう事
+
+拡張を**再読み込み（2.7.1）** → h.r さんを**自動モード**で検索 →
+賃料の欄で**一覧が出て、カーソルが行へ動いて選ぶ**様子が見えるか。沿線が入ってから駅へ進むか。
+
+---
+
 ## 2026-11-11 v2.7.0 自動モードでも動きを覚える（人の実測とは分ける）・写真をもっと小さく
 
 竹内さん「**動きも学習させたい**」「**画像もっと容量落としても大丈夫**」（写真が初めてクラウドに上がった直後）

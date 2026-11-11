@@ -130,6 +130,96 @@
    *      「開く操作」と「選ぶ動き」を順に出す形で人に近づける（実際の一覧は OS が描く）。
    *   値の入れ方（value＋change）は今まで通り＝サイトの検知は変えない。
    */
+  /**
+   * 2026-11-11 竹内さん「賃料のところプルダウンなのに直接入力になってしまっている」:
+   *
+   *   ネイティブの `<select>` は拡張の擬似クリックでは開かない（Chrome の仕様）。
+   *   → **拡張が見える一覧を描く**（値は変えない・見た目だけ）。
+   *   カーソルが選んだ行へ動き、行が光るので「選んでいる」ことが目で分かる。
+   *
+   *   ⚠ 拡張が描いた物は**押しても何もしない**（pointer-events:none）。値は呼ぶ側が入れる。
+   *   ⚠ 画面の一番上に出す（他の物に隠れない）。最大 12 行まで（長すぎると画面を覆う）。
+   */
+  var _fakeDd = null;
+  function _showFakeOptions(el) {
+    try {
+      _hideFakeOptions(null);
+      var d = document;
+      var r = el.getBoundingClientRect();
+      var wrap = d.createElement("div");
+      wrap.id = "axlx-fake-dd";
+      wrap.style.cssText = [
+        "position:fixed",
+        "left:" + Math.round(r.left) + "px",
+        "top:" + Math.round(r.bottom + 2) + "px",
+        "min-width:" + Math.max(90, Math.round(r.width)) + "px",
+        "max-height:260px", "overflow:hidden",
+        "background:#fff", "border:1px solid #94a3b8", "border-radius:6px",
+        "box-shadow:0 6px 20px rgba(0,0,0,.22)", "z-index:2147483646",
+        "font:12px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+        "pointer-events:none", "user-select:none",
+      ].join(";");
+      var cur = el.selectedIndex;
+      var rowEls = [];
+      var n = Math.min(el.options.length, 12);
+      // 選択中の物が下の方なら、その前後が見えるようにずらす
+      var start = 0;
+      if (cur > n - 3) start = Math.max(0, Math.min(el.options.length - n, cur - (n - 3)));
+      for (var i = start; i < start + n; i++) {
+        var op = el.options[i];
+        var row = d.createElement("div");
+        var sel = (i === cur);
+        row.style.cssText = [
+          "padding:3px 8px", "white-space:nowrap", "overflow:hidden", "text-overflow:ellipsis",
+          sel ? "background:#2563eb;color:#fff;font-weight:700" : "color:#111",
+        ].join(";");
+        row.textContent = String(op.textContent || "").trim() || ("(値 " + op.value + ")");
+        wrap.appendChild(row);
+        rowEls[i] = row;
+      }
+      // 選んでいる行が一覧の中に見えるようスクロール
+      (d.body || d.documentElement).appendChild(wrap);
+      try {
+        if (rowEls[cur]) rowEls[cur].scrollIntoView({ block: "nearest" });
+      } catch (_) {}
+      _fakeDd = { el: wrap, rowEls: rowEls };
+      _armFakeDdSafety(_fakeDd);
+      return _fakeDd;
+    } catch (_) { return null; }
+  }
+  function _hideFakeOptions(dd) {
+    try {
+      var t = (dd && dd.el) || document.getElementById("axlx-fake-dd");
+      if (dd && dd._safety) { clearTimeout(dd._safety); dd._safety = null; }
+      if (t && t.parentNode) t.parentNode.removeChild(t);
+    } catch (_) {}
+    _fakeDd = null;
+  }
+  /**
+   * 2026-11-11 念のため: 拡張が描いた一覧が残っても**画面を塞がない**（pointer-events:none）。
+   *   それでも残ると見た目が邪魔なので、出してから8秒たったら必ず消す（安全弁）。
+   */
+  function _armFakeDdSafety(dd) {
+    try {
+      if (!dd || dd._safety) return;
+      dd._safety = setTimeout(function () {
+        try { _hideFakeOptions(dd); } catch (_) {}
+      }, 8000);
+    } catch (_) {}
+  }
+  /** 一覧の行を「選んだ」見た目にする（人が選んでいるのが目で分かる） */
+  function _markFakeRow(dd, idx) {
+    try {
+      if (!dd || !dd.rowEls) return;
+      for (var k in dd.rowEls) {
+        if (!Object.prototype.hasOwnProperty.call(dd.rowEls, k)) continue;
+        var row = dd.rowEls[k];
+        if (String(k) === String(idx)) { row.style.background = "#2563eb"; row.style.color = "#fff"; row.style.fontWeight = "700"; }
+        else { row.style.background = ""; row.style.color = "#111"; row.style.fontWeight = ""; }
+      }
+    } catch (_) {}
+  }
+
   function chooseSelectLikeHuman(el, val, opts) {
     if (!el || val == null) return Promise.resolve(false);
     var o = opts || {};
@@ -150,7 +240,92 @@
      */
     var openThenChoose = function () {
       return new Promise(function (resolve) {
-        // ② 欄を押して開く（人がクリックして一覧を出す）
+        /**
+         * 2026-11-11 竹内さん「なんで賃料等プルダウンのところちゃんとおしてプルダウンのところから選択されるようになっていないのか」
+         *            「なんでh.rさん沿線選択されずにとまってしまうのか」
+         *
+         * ⚠ **真の原因**: ネイティブの `<select>` を本物の形でクリックすると、
+         *   **OS（Windows）が一覧を描く**。その一覧は**拡張からは閉じられない**（blur でも閉じない）。
+         *   開いたままになると**画面の上に被さり、後続のクリックを全部ブロック**する。
+         *   → 賃料・更新日を選んだ所で一覧が開きっぱなしになり、
+         *     **沿線・駅の選択が永久に進まない**（＝h.r さんが駅の画面で止まる）。
+         *
+         * → **ネイティブの select では「開くクリック」を送らない**。
+         *   人が見て分かる形（カーソルが欄まで動く → 少し待つ → 値が変わる → 少し待つ）は保ちつつ、
+         *   OS の一覧を開かせない（＝閉じられない物を開かない）。
+         *   ⚠ サイトが反応するのは `change` なので、値の入れ方は今まで通りで検出は変わらない。
+         */
+        var _isNativeSelect = (function () {
+          try { return String(el.tagName || "").toUpperCase() === "SELECT"; } catch (_) { return false; }
+        })();
+        /**
+         * 目当ての選択肢の位置を**先に**決める（ネイティブ select の分岐でも使う）。
+         * ・値（"1" 等）で一致 → 文字（「徒歩」等）で前方一致 → それでも無ければ先頭
+         */
+        var want = -1;
+        try {
+          for (var _i = 0; _i < el.options.length; _i++) {
+            if (String(el.options[_i].value) === target) { want = _i; break; }
+          }
+          if (want < 0) {
+            var _wantText = String(target).replace(/\s+/g, "");
+            for (var _j = 0; _j < el.options.length; _j++) {
+              var _ot = String(el.options[_j].textContent || "").replace(/\s+/g, "");
+              if (_ot === _wantText || (_wantText.length >= 1 && _ot.indexOf(_wantText) === 0)) { want = _j; break; }
+            }
+          }
+          if (want < 0) want = 0;
+        } catch (_) { want = 0; }
+        if (_isNativeSelect) {
+          /**
+           * 2026-11-11 竹内さん「賃料のところプルダウンなのに直接入力になってしまっている」:
+           *
+           * ⚠ ネイティブの `<select>` は、拡張からの擬似クリックでは**一覧が開かない**（Chrome の仕様）。
+           *   だから「値を入れるだけ」＝**直接入力に見える**。人が見て分かる形にするには
+           *   **拡張自身が見える一覧を描いて、カーソルで選ぶ**しかない。
+           *   ⚠ ただし本物のクリックを送ると OS が一覧を描き、**閉じられなくて後続を全部止める**。
+           *
+           * → ① カーソルが欄へ動く → ② **見える一覧**を欄の下に出す（拡張が描く）
+           *    ③ カーソルが目当ての行へ動く → ④ 押す（行が光る）
+           *    ⑤ 一覧を消す → ⑥ 値を入れて change（サイトの検出は今まで通り）
+           */
+          try { if (el.focus) el.focus(); } catch (_) {}
+          var _dd = _showFakeOptions(el);
+          var _pick = function () {
+            // ⑥ 値を入れて change（サイトが反応するのはここ）
+            try {
+              el.selectedIndex = want;
+              el.value = target;
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+            } catch (_) {}
+            setTimeout(function () {
+              try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch (_) {}
+              _hideFakeOptions(_dd);
+              setTimeout(function () {
+                try { if (el.blur) el.blur(); } catch (_) {}
+                resolve(true);
+              }, _ln(220, 0.35, 120, 420));
+            }, _ln(200, 0.35, 110, 380));
+          };
+          // ② 人が一覧を見て候補を探す間 → ③ カーソルを目当ての行へ
+          setTimeout(function () {
+            if (_dd && _dd.rowEls && _dd.rowEls[want]) {
+              var row = _dd.rowEls[want];
+              try { row.classList.add("axlx-dd-hover"); } catch (_) {}
+              if (P && P.moveToEl) {
+                P.moveToEl(row).then(function () {
+                  _markFakeRow(_dd, want);   // カーソルが乗った行を光らせる（人が選んだ形）
+                  setTimeout(function () { if (P.tap) { try { P.tap(); } catch (_) {} } _pick(); }, _ln(220, 0.4, 120, 480));
+                }, function () { _markFakeRow(_dd, want); _pick(); });
+                return;
+              }
+              _markFakeRow(_dd, want);
+            }
+            _pick();
+          }, _ln(1100, 0.4, 700, 1600));
+          return;
+        }
+        // ② 欄を押して開く（人がクリックして一覧を出す）※ サイト独自の一覧の時だけ
         try { if (el.focus) el.focus(); } catch (_) {}
         fire("mousedown", { buttons: 1 });
         fire("mouseup");
@@ -159,25 +334,6 @@
         setTimeout(function () {
           // ③ 候補へ移る動き（カーソルを少し下へ＝一覧の中を探す形）
           var cur = el.selectedIndex >= 0 ? el.selectedIndex : 0;
-          var want = -1;
-          for (var i = 0; i < el.options.length; i++) {
-            if (String(el.options[i].value) === target) { want = i; break; }
-          }
-          /**
-           * 2026-11-11 竹内さん「徒歩の部分のところもまずここおして、展開されたところの徒歩の部分をおすながれ」:
-           *   値（"1"）で見つからない時は**文字（「徒歩」）でも探す**。
-           *   サイトの value が変わっても（"1"→"walk" 等）取りこぼさない。
-           */
-          if (want < 0) {
-            var _wantText = String(target).replace(/\s+/g, "");
-            for (var i2b = 0; i2b < el.options.length; i2b++) {
-              var _ot = String(el.options[i2b].textContent || "").replace(/\s+/g, "");
-              if (_ot === _wantText || (_wantText.length >= 1 && _ot.indexOf(_wantText) === 0)) { want = i2b; break; }
-            }
-          }
-          if (want < 0) { // それでも無ければ先頭
-            want = 0;
-          }
           var dir = want >= cur ? 1 : -1;
           var steps = Math.min(6, Math.abs(want - cur));
           var stepMs = _ln(260, 0.35, 150, 450);
@@ -3599,7 +3755,30 @@
               });
               if (!keep) enqueueHumanClick(cb, _clickEl, 450, 1000);
             });
+            /**
+             * 2026-11-11 竹内さん「なんでh.rさん沿線選択されずにとまってしまうのか」:
+             *   ⚠ `clickLineButtons` は**クリックの列（非同期）**に積むだけなので、
+             *     ここで `return true` すると**路線が押される前に次の段（駅の設定へ進む）へ進んでいた**。
+             *     → 路線が本当に checked になるまで待つ（最大 _modalTry 回）。
+             *     ・目標の路線が1つでも checked になったら次へ
+             *     ・まだなら false を返して、同じ段をもう一度見る（押し直しは clickLineButtons が checked を見て避ける）
+             */
             if (hasRoutes) clickLineButtons(cond.route_ids);
+            var _lineOk = !hasRoutes ? true : (function () {
+              var want = (cond.route_ids || []).map(function (id) { return ROUTE_LINE_MAP[id]; }).filter(Boolean).map(norm);
+              if (!want.length) return true;
+              var nowChecked = Array.prototype.slice.call(document.querySelectorAll('label.one_line'))
+                .filter(isVisible)
+                .filter(function (l) { var c = l.querySelector('input[type="checkbox"]'); return c && c.checked; })
+                .map(function (l) { return norm(l.textContent); });
+              return nowChecked.some(function (n) {
+                return want.some(function (w) { return w === n || (n.length >= 4 && w.endsWith(n)); });
+              });
+            })();
+            if (!_lineOk) {
+              // まだ路線が入っていない（クリックの列の途中）→ この段をもう一度
+              return false;
+            }
             return true;
           },
           function() {
