@@ -41,7 +41,18 @@
     return "unknown";
   })();
 
-  /** 通常・スタッフの時だけ覚える（自動・AIX は覚えない） */
+  /**
+   * 2026-11-11 竹内さん「写真ちゃんと送られたかな？」→ 0枚のまま。
+   *
+   * ⚠ 原因: `shouldLearn` は**通常・スタッフの時だけ true**（自動・AIX は false）。
+   *   写真は学習（`onOp`）の中から撮っているので、**自動モード・AIXモードでは一度も撮られていなかった**。
+   *   だが竹内さんが写真で確かめたいのは**まさに自動モードで「検索を押せたか」**。
+   *
+   * → 分ける:
+   *   ・**学習（人の動きを覚える）** … 今まで通り 通常・スタッフの時だけ（拡張の動きを混ぜない）
+   *   ・**写真（画面の記録）**       … どのモードでも撮る（自動で押した画面こそ残したい）
+   *   写真は `onOp` ではなく**自前の見張り**（人が押した時＋拡張が押した時）から撮る。
+   */
   function shouldLearn(st) {
     var s = st || {};
     var at = s.staffModeAt || 0;
@@ -50,6 +61,12 @@
     var chosen = Number(s.autoModeAt) > 0;
     var autoOn = chosen && (!!s.aixMode || !!s.aiMode);
     return !autoOn; // 自動の印が無ければ通常
+  }
+  /** 写真を撮るモードか（＝どのモードでも撮る。止める設定がある時だけ止める） */
+  function shouldShoot(st) {
+    var s = st || {};
+    try { if (s.axlxShotOff === true) return false; } catch (_) {}
+    return true;
   }
 
   /** 覚えている最中の印（同じページで二重に見張らない・他の部品からも分かる） */
@@ -172,7 +189,9 @@
           });
         } catch (_) {}
       };
-      if (!watching) { diag(false, "not_watching"); return; }
+      // 2026-11-11 竹内さん「写真ちゃんと送られたかな？」:
+      //   旧は `if (!watching)` で弾いていた（＝自動・AIX では撮らない）。写真はモードに関係なく撮る。
+      if (!_shooting && !watching) { diag(false, "not_shooting"); return; }
       var now = Date.now();
       /**
        * 2026-11-11 竹内さん「写真撮ってるかな？」→ 0枚のまま。
@@ -254,17 +273,68 @@
     } catch (_) { _saving = false; }
   }
 
-  // ── モードを見る（通常・スタッフの時だけ覚える）──
-  var KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode"];
+  // ── モードを見る（学習は通常・スタッフの時だけ／写真はどのモードでも）──
+  var KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode", "axlxShotOff"];
+  var _shooting = false;
   function apply(st) {
     if (shouldLearn(st)) { startWatching(); ensureBadge(); }
     else { stopWatching(); removeBadge(); }
+    /**
+     * 2026-11-11 竹内さん「写真ちゃんと送られたかな？」→ 0枚。
+     *   写真は学習（onOp）の中から撮っていたので、**自動・AIX では一度も撮られなかった**。
+     *   → 写真は**どのモードでも**撮る（自前の見張り）。学習とは別にする。
+     */
+    if (shouldShoot(st)) startShooting();
+    else stopShooting();
+  }
+
+  /** 写真を撮る見張り（モードに関係なく動く。人も拡張も押したら撮る） */
+  function startShooting() {
+    if (_shooting) return;
+    _shooting = true;
+    try {
+      var h = function (e) {
+        if (!e || !e.isTrusted) return;   // 人が押した時（拡張の dispatch は対象外）
+        _noteShotDiag("trusted_" + (e.type || "?"));
+        shootAfter(e.type, e.target, null);
+      };
+      // 人が押した時・打った時・選んだ時（拡張の自動操作はここに入らない）
+      document.addEventListener("click", h, true);
+      document.addEventListener("change", h, true);
+      window.addEventListener("wheel", function (e) {
+        if (e && e.isTrusted) { _noteShotDiag("trusted_wheel"); shootAfter("wheel", null, null); }
+      }, { passive: true, capture: true });
+      _shootDetach = function () {
+        try { document.removeEventListener("click", h, true); document.removeEventListener("change", h, true); } catch (_) {}
+      };
+      console.log("[AX] 画面の写真: どのモードでも撮ります（" + site + "）");
+      // 起動直後に1枚（「撮れるか」を確かめられるように）
+      try { setTimeout(function () { shootAfter("startup", null, null); }, 1500); } catch (_) {}
+    } catch (_) {}
+  }
+  var _shootDetach = null;
+  function stopShooting() {
+    if (!_shooting) return;
+    _shooting = false;
+    try { if (_shootDetach) _shootDetach(); } catch (_) {}
+    _shootDetach = null;
+  }
+  /** 写真の通り道を残す（どこで止まるか分かるように） */
+  function _noteShotDiag(why) {
+    try {
+      chrome.storage.local.get(["axlx_human_shot_diag"], function (r) {
+        var d = (r && r.axlx_human_shot_diag) || { tried: 0, ok: 0 };
+        d.last_why = why;
+        d.last_why_at = Date.now();
+        try { chrome.storage.local.set({ axlx_human_shot_diag: d }); } catch (_) {}
+      });
+    } catch (_) {}
   }
   try {
     chrome.storage.local.get(KEYS, function (r) { apply(r || {}); });
     chrome.storage.onChanged.addListener(function (ch, area) {
       if (area !== "local" || !ch) return;
-      if (!("staffMode" in ch) && !("aixMode" in ch) && !("autoModeAt" in ch) && !("aiMode" in ch)) return;
+      if (!("staffMode" in ch) && !("aixMode" in ch) && !("autoModeAt" in ch) && !("aiMode" in ch) && !("axlxShotOff" in ch)) return;
       chrome.storage.local.get(KEYS, function (r) { apply(r || {}); });
     });
   } catch (_) {}
@@ -287,6 +357,7 @@
     try { det = rec.detail(); } catch (_) {}
     return {
       watching: watching, site: site, ops: rec.count(), lock: LEARN_LOCK,
+      shooting: _shooting,   // 2026-11-11: 写真を撮る見張りが動いているか（モードに関係なく動く）
       moves: (det.moves || []).length, points: (det.points || []).length, scrolls: (det.scrolls || []).length,
       detail: det,          // 中身（何をどう覚えたか）も見られるように
       summarizeMotion: function () { try { return L.summarizeMotion(det); } catch (_) { return null; } },
