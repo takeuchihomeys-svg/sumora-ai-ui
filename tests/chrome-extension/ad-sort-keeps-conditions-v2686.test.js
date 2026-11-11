@@ -19,14 +19,18 @@ function ok(name, cond, extra) {
 
 const bd = read("bulk-dl.js");
 
-console.log("■ ① 並び替えで検索条件を捨てない（全物件にしない）");
+console.log("■ ① 並べ替えは「メニューを人の順に操作」（ページを読み込み直さない）");
 {
-  ok("AD順へ移る時に**条件を残して**URLを組み立てる", /var _u = new URL\(_adLink\.href, location\.href\)/.test(bd));
-  ok("いまのクエリを写す", /_cur\.forEach\(function \(v, k\)/.test(bd));
-  ok("key/odr だけ上書き（二重に足さない）", /if \(k === "key" \|\| k === "odr"\) return;/.test(bd));
-  ok("key=ad・odr=desc をセット", /_u\.searchParams\.set\("key", "ad"\)/.test(bd) && /_u\.searchParams\.set\("odr", "desc"\)/.test(bd));
-  ok("**元の href にそのまま飛ばない**（条件が消える）", !/location\.href = _adLink\.href;/.test(bd));
-  ok("条件を保った事を点検に残す（kept）", /sorting: true, kept: true/.test(bd));
+  // 2026-11-11 竹内さん「並べ替えのところでほんの少し待機、そしてADのところでみぎに移動して 高→低 をおすながれ」
+  ok("メニュー操作の関数がある（_sortByAdLikeHuman）", /function _sortByAdLikeHuman\(done\)/.test(bd));
+  ok("① 「並べ替え」を押す", /byText\(\["並び替え", "並べ替え", "並び順", "ソート"\]\)/.test(bd));
+  ok("①の後は**少し待つ**（押さない）", /step\(700, function \(\)/.test(bd));
+  ok("② AD の上へ**カーソルを移す**（押さない）", /hover\(adItem\)/.test(bd) && /② AD の上へ移します（押さない・待つ）/.test(bd));
+  ok("②の後も**少し待つ**", /step\(650, function \(\)/.test(bd));
+  ok("③ 右へ移して「高→低」を押す", /byText\(\["高→低", "高い順"/.test(bd) && /③ 高→低 を押します/.test(bd));
+  ok("  AD の親の中も探す（小メニューが入れ子の時）", /var p = adItem\.parentElement/.test(bd));
+  ok("**ページを読み込み直さない**", !/location\.href = _u\.toString\(\)/.test(bd) && !/location\.href = _adLink\.href;/.test(bd));
+  ok("行けなければ false（押さない＝全物件を送らない）", /done\(false\)/.test(bd));
 }
 
 console.log("\n■ ② 読み込み直しても「誰の検索だったか」が分かる");

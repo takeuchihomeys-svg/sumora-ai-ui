@@ -963,56 +963,158 @@
       var _adLink = document.querySelector('a[href*="key=ad&"][href*="odr=desc"]');
       if (_adLink && _adLink.href) {
         /**
-         * 2026-11-11 竹内さん「自動検索でお客さん指定したときページが更新されて条件検索されずに
-         *   そのまま物件をダウンロードしてしまうバグ。おそらくAD順などするときにページ更新してしまっている。
-         *   ページ更新すると拡張ツールの検索のところが閉じてしまうのにそのまま物件取得にうつってしまうので
-         *   全物件が対象となってしまう」
+         * 2026-11-11 竹内さん「ここがADの場所ちゃんとADで検索する際はここを順にせんたくするように
+         *   この高い低いのところをおすが、それ以外の場所は押すのではなくて待機したら展開される
+         *   並べ替えのところでほんの少し待機、そしてADのところでみぎに移動して 高→低 をおすながれ」
          *
-         * 原因: `location.href = _adLink.href` で**ページ全体を読み込み直していた**。
-         *   AD順のリンクは**検索条件をURLに載せていない**（`key=ad&odr=desc` だけ）ので、
-         *   飛んだ先は**条件なし＝全物件**の一覧になる。しかも読み込み直すと拡張の検索の状態が消え、
-         *   `_maybeAutoPressOnLoad`（一覧が出たら自動で押す）が**全物件を対象に押し始める**。
-         *
-         * 直し: **条件を保ったまま並び替える**。
-         *   ① いまの検索条件（URLのクエリ）を残したまま `key=ad&odr=desc` を足して移動する
-         *      → 飛んだ先も同じ条件の一覧になる（全物件にならない）
-         *   ② 移動する前に「どのお客様の検索だったか」を storage に残す（読み込み直しても分かるように）
-         *   ③ 飛んだ先で**条件が効いているか**を確かめてから押す（効いていなければ押さない）
+         * 旧: `location.href = _adLink.href` で**ページ全体を読み込み直していた**（条件が消えて全物件になった）。
+         * 新: **画面のメニューを人が押す順に操作する**（ページは読み込み直さない＝検索の状態が消えない）。
+         *   ① 「並べ替え」を押す → **少し待つ**（展開されるのを待つ・押さない）
+         *   ② 「AD」の上にカーソルを移す → **少し待つ**（右の小メニューが開くのを待つ・押さない）
+         *   ③ 右へ移って「高→低」を押す
+         *   ※ どの段でも「まだ開いていない」だけなら**押さずに待つ**（＝「それ以外の場所は押さない」）
          */
-        _tmark("ad_sort", "go-keep-conditions");
-        console.log("[AXLX bulk-dl][auto] AD 高い順に並べ替えます（検索条件は保ったまま）");
+        _tmark("ad_sort", "menu");
+        console.log("[AXLX bulk-dl][auto] AD 高い順に並べ替えます（メニューを人の順に操作・ページは読み込み直さない）");
         _nudge("🔀 AD 高い順に並べ替えます");
-        // ② 誰の検索だったかを残す（読み込み直しても続きが分かる）
         try {
           chrome.storage.session.set({
             axlx_ad_sort_pending: {
               at: Date.now(),
               customerId: _pickCustomerIdForAuto() || null,
               from: location.href,
-              // 条件の指紋（同じ条件の一覧かどうかを後で見分ける）
               sig: tracked.length + ":" + String(document.body ? document.body.textContent.length : 0),
             },
           });
         } catch (_) {}
-        // ① 条件を残したまま並び替えのクエリだけ足す
-        var _u = new URL(_adLink.href, location.href);
-        var _cur = new URLSearchParams(location.search);
-        _cur.forEach(function (v, k) {
-          // 並び替えのキーは上書きする（二重に足さない）
-          if (k === "key" || k === "odr") return;
-          if (!_u.searchParams.has(k)) _u.searchParams.set(k, v);
+        // メニュー操作の後に、続き（押す）を始める
+        _autoPdfRunPending = function () { _startAutoPressRun(); };
+        _sortByAdLikeHuman(function (okSort) {
+          var go = _autoPdfRunPending;
+          _autoPdfRunPending = null;
+          if (!okSort) {
+            console.warn("[AXLX bulk-dl][auto] メニューで並べ替えられない → **押さずに待つ**（全物件を送らないため）");
+            _nudge("⚠ 並べ替えができませんでした。自動では押しません");
+            _tmark("ad_sort", "failed");
+            return;
+          }
+          _tmark("ad_sort", "done");
+          if (typeof go === "function") go();
         });
-        _u.searchParams.set("key", "ad");
-        _u.searchParams.set("odr", "desc");
-        var _wait = _hd(900);
-        setTimeout(function () { location.href = _u.toString(); }, _wait);
-        return { ok: true, sorting: true, kept: true };
+        return { ok: true, sorting: true, menu: true };
       }
       _tmark("ad_sort", "no-link");
       console.warn("[AXLX bulk-dl][auto] AD 高い順のリンクが見つかりません（この並びのまま押します）");
     } else if (!_allowAd) {
       console.log("[AXLX bulk-dl][auto] 自動便が更新順の指定 → AD へ並べ替えずに押します");
     }
+    // 並べ替えが要らない時は、そのまま押し始める
+    return _startAutoPressRun();
+  }
+
+  /** 並べ替えの後に実行する物（無ければ null） */
+  var _autoPdfRunPending = null;
+
+  /**
+   * 2026-11-11 竹内さん「この高い低いのところをおすが、それ以外の場所は押すのではなくて待機したら展開される
+   *   並べ替えのところでほんの少し待機、そしてADのところでみぎに移動して 高→低 をおすながれ」
+   *
+   *   AD順のメニューを**人が押す順**に操作する。ページは読み込み直さない。
+   *
+   *   ① 「並べ替え」を押す → **少し待つ**（メニューが展開されるのを待つ・他の項目は押さない）
+   *   ② 「AD」の上にカーソルを移す → **少し待つ**（右の小メニューが開くのを待つ・押さない）
+   *   ③ 右へ移って「高→低」を押す
+   *
+   *   ⚠ 途中で「まだ開いていない」だけなら**押さずに待つ**（押すのは①の並べ替えと③の高→低の2回だけ）。
+   *   ⚠ 最後まで行けなければ false（呼ぶ側は押さない＝全物件を送らない）。
+   */
+  function _sortByAdLikeHuman(done) {
+    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
+    var wait = function (ms) { return H && H.logNormalDelay ? H.logNormalDelay(ms, 0.35) : ms; };
+    var step = function (ms, fn) { setTimeout(fn, Math.max(60, Math.round(wait(ms)))); };
+    var visible = function (el) { try { return !!el && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; } };
+    var norm = function (t) { return String(t == null ? "" : t).replace(/[\s\u3000]+/g, ""); };
+    /** 文字で探す（見えている物だけ・小さい物から） */
+    var byText = function (list, root) {
+      var r = root || document;
+      var els = Array.prototype.slice.call(r.querySelectorAll("a,button,div,span,td,th,li,p,label"));
+      for (var i = 0; i < list.length; i++) {
+        var t = norm(list[i]);
+        var hit = null;
+        for (var j = 0; j < els.length; j++) {
+          if (!visible(els[j])) continue;
+          if (norm(els[j].textContent) === t) { if (!hit || els[j].textContent.length <= hit.textContent.length) hit = els[j]; }
+        }
+        if (hit) return hit;
+      }
+      return null;
+    };
+    /** 押さずに「カーソルをその上へ移す」（展開を待つだけ） */
+    var hover = function (el) {
+      try {
+        if (!el || !el.getBoundingClientRect) return;
+        var r = el.getBoundingClientRect();
+        if (P && P.moveTo) { P.moveTo(r.left + r.width * 0.5, r.top + r.height * 0.5); return; }
+        ["mouseover", "mouseenter", "mousemove"].forEach(function (t) {
+          el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+        });
+      } catch (_) {}
+    };
+    /** 押す（人が押す形: カーソルを動かしてから） */
+    var press = function (el, cb) {
+      if (!el) { cb(false); return; }
+      try {
+        if (P && P.moveToEl) {
+          P.moveToEl(el).then(function () { try { el.click(); } catch (_) {} cb(true); }, function () { try { el.click(); } catch (_) {} cb(true); });
+          return;
+        }
+      } catch (_) {}
+      try { el.click(); } catch (_) {}
+      cb(true);
+    };
+
+    // ① 「並べ替え」を押す
+    var sortHead = byText(["並び替え", "並べ替え", "並び順", "ソート"]);
+    if (!sortHead) { console.warn("[AXLX bulk-dl][sort] 「並べ替え」が見つかりません"); done(false); return; }
+    console.log("[AXLX bulk-dl][sort] ① 並べ替えを押します");
+    press(sortHead, function () {
+      // ①の後は**少し待つだけ**（他の項目は押さない＝展開されるのを待つ）
+      step(700, function () {
+        // ② 「AD」の上へ移す（押さない・右の小メニューが開くのを待つ）
+        var adItem = byText(["AD", "AD順", "AD（広告費）", "広告費"], null);
+        if (!adItem) { console.warn("[AXLX bulk-dl][sort] AD の項目が見つかりません"); done(false); return; }
+        console.log("[AXLX bulk-dl][sort] ② AD の上へ移します（押さない・待つ）");
+        hover(adItem);
+        step(650, function () {
+          // ③ 右へ移って「高→低」を押す
+          var hiToLo = byText(["高→低", "高い順", "高→低（高い順）", "高い→低い", "降順"]);
+          if (!hiToLo) {
+            // AD の親（li など）の中に小メニューがある事もある
+            try {
+              var p = adItem.parentElement;
+              for (var up = 0; up < 3 && p && !hiToLo; up++, p = p.parentElement) {
+                hiToLo = byText(["高→低", "高い順", "高い→低い", "降順"], p);
+              }
+            } catch (_) {}
+          }
+          if (!hiToLo) { console.warn("[AXLX bulk-dl][sort] 「高→低」が見つかりません（小メニューが開いていない）"); done(false); return; }
+          // 右へ移す（人が小メニューへ手を動かす）
+          hover(adItem);
+          step(320, function () {
+            console.log("[AXLX bulk-dl][sort] ③ 高→低 を押します");
+            press(hiToLo, function () {
+              // 並び替えの反映を待つ（少し長め・読み込み直さない）
+              step(1200, function () { done(true); });
+            });
+          });
+        });
+      });
+    });
+  }
+
+  /** 押す所（候補を集めて、人の順で1件ずつ押し始める） */
+  function _startAutoPressRun() {
     var cand = tracked.filter(function (t) { return t.cb && t.btn && AxlxSendPairing.isHttpUrl(t.btn.href); });
     if (!cand.length) { _nudge("この画面に印刷用PDFが見つかりません"); return { ok: false, reason: "no-rows" }; }
     // 2026-11-11 竹内さん「資料を全部上から順にやるようになっていないか。完全に人間の動きを再現していく」:
