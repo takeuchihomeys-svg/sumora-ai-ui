@@ -14,6 +14,12 @@
 // 実行:
 //   npx tsx --env-file=.env.local scripts/audit-turn-read-1111.ts --phase=build --n=100 [--since=2026-10-12]
 //   LLM_TEST_MODE=deepseek-all npx tsx --env-file=.env.local scripts/audit-turn-read-1111.ts --phase=gold --limit=30 --max-usd=0.15
+// 毎朝の数え（TURN_READ=log の本番の記録・前の日の竹内さんの番・11/12〜1週間）: 安い時間（〜10時）に
+//   D=前の日; T=今日（JST の日付の 00:00 を UTC で: 例 2026-11-11T15:00Z〜2026-11-12T15:00Z）
+//   npx tsx --env-file=.env.local scripts/audit-turn-read-1111.ts --phase=build --since=<D> --until=<T> --n=60 --tag=daily-<日付>
+//   LLM_TEST_MODE=deepseek-all npx tsx --env-file=.env.local scripts/audit-turn-read-1111.ts --phase=gold --tag=daily-<日付> --max-usd=0.1
+//   LLM_TEST_MODE=deepseek-all npx tsx --env-file=.env.local scripts/audit-turn-read-1111.ts --phase=judge --tag=daily-<日付> --max-usd=0.05
+//   npx tsx --env-file=.env.local scripts/audit-turn-read-1111.ts --phase=report --tag=daily-<日付>   … ①対象（digest.ta の about）・③意図（判定）
 import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
 import * as path from "path";
@@ -40,7 +46,7 @@ export type Turn = {
   aix: string[];              // その番に送った AIX（種類・ピッカー）
   draft: string | null;       // AI の最初の下書き（伏せた）
   blocks: Record<string, number> | null; // ブレインに届いた材料の欄と字数（line_watch_turns.materials.brain.blocks.chars）
-  brain: { action: string | null; prop: string | null; ms: string | null; intent: string | null; cs: string | null; q: string[]; la: string | null; concern: string | null; cp: string | null } | null;
+  brain: { action: string | null; prop: string | null; ms: string | null; intent: string | null; cs: string | null; q: string[]; la: string | null; concern: string | null; cp: string | null; ta?: string[] | null; li?: string | null } | null;
 };
 
 async function all<T>(q: (from: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
@@ -53,9 +59,9 @@ function hash(s: string) { let h = 2166136261; for (let i = 0; i < s.length; i++
 
 async function build() {
   const N = Number(arg("n", "100"));
-  const since = arg("since", "2026-10-12");   // digest.ms（気持ち）が全部の番に付いた週から
+  const since = arg("since", "2026-10-12"); const until = arg("until", "2099-01-01");   // 毎朝の数え: --since=前の日 --until=今日 --tag=daily-YYYYMMDD   // digest.ms（気持ち）が全部の番に付いた週から
   type LW = { conversation_id: string; customer_turn_at: string; customer_last_at: string | null; draft_first: string | null; scene_key: string | null; conv_status: string | null; decision_id: string | null; materials: { brain?: { blocks?: { chars?: Record<string, number> } } } | null };
-  const lw = await all<LW>((i) => sb.from("line_watch_turns").select("conversation_id, customer_turn_at, customer_last_at, draft_first, scene_key, conv_status, decision_id, materials").gte("customer_turn_at", since).not("decision_id", "is", null).order("customer_turn_at").range(i, i + 999));
+  const lw = await all<LW>((i) => sb.from("line_watch_turns").select("conversation_id, customer_turn_at, customer_last_at, draft_first, scene_key, conv_status, decision_id, materials").gte("customer_turn_at", since).lt("customer_turn_at", until).not("decision_id", "is", null).order("customer_turn_at").range(i, i + 999));
   const cand = lw.filter((t) => !isTestConversation(t.conversation_id) && !(t.scene_key ?? "").startsWith("対象外"));
   // 会話ごとに最大3番・決まった順で 4倍まで候補に
   const byConv = new Map<string, LW[]>(); for (const t of cand) (byConv.get(t.conversation_id) ?? byConv.set(t.conversation_id, []).get(t.conversation_id)!).push(t);
@@ -127,7 +133,7 @@ async function build() {
     turns.push({
       id: `${t.conversation_id.slice(0, 8)}-${t.customer_turn_at.slice(0, 16)}`, cid: t.conversation_id, at: t.customer_turn_at, scene: t.scene_key,
       context, customer, takeuchi, aix: [...ax, ...aixTexts], draft: t.draft_first ? mask(t.draft_first).slice(0, 700) : null, blocks: t.materials?.brain?.blocks?.chars ?? null,
-      brain: d ? { action: d.suggested_action, prop: str(g.prop), ms: str(g.ms), intent: str(g.intent), cs: str(g.cs), q: Array.isArray(g.q) ? (g.q as unknown[]).map((x) => mask(String(x))) : [], la: str(g.la), concern: str(g.concern), cp: str(g.cp) } : null,
+      brain: d ? { action: d.suggested_action, prop: str(g.prop), ms: str(g.ms), intent: str(g.intent), cs: str(g.cs), q: Array.isArray(g.q) ? (g.q as unknown[]).map((x) => mask(String(x))) : [], la: str(g.la), concern: str(g.concern), cp: str(g.cp), ta: Array.isArray(g.ta) ? (g.ta as unknown[]).map((x) => mask(String(x))) : null, li: str(g.li) } : null,
     });
   }
   fs.mkdirSync(OUT, { recursive: true });
@@ -318,6 +324,7 @@ async function gold() {
 const JUDGE_SYS = [
   "あなたは賃貸仲介の LINE の採点係。お客様の一通について、正解の読み（竹内さんの実際の返信から逆に読んだ物）と、AI（ブレイン）の読み・AI の下書きを比べる。",
   "ブレインに届いた材料の欄（字数）: sentProps＝送った物件・promise＝開いている約束・aixHistory＝AIX の履歴・ledger＝行動台帳・history＝会話。0 や欄が無い＝届いていない。",
+  "ta＝番ごとの『何について』の読み（about:物件・TURN_READ=log の記録・あれば cs より先にこれで対象を見る）、li＝潜在の読み（latent_intent）。",
   "ブレインの読みの欄: prop＝今の番の物件、ms＝気持ち|不安|迷い|決め手の残り、cs＝次の一手の方針（何について・何をするか）、q＝お客様の問い、action＝AIX の判断（null は返信）。",
   "出す JSON:",
   '{"target":"一致|一部|外れ|材料なし（ブレインが今の番の対象＝どの物件・どの話題をどう読んだか。物件の取り違え・送った物件と持ち込みの取り違え・話題の取り違えは外れ。号室だけ欠けは一部）",',
@@ -486,6 +493,18 @@ function report() {
     console.log(`  お客様の一通は: ${lc("answer")}／ブレインが答えとして読んだ: ${lc("brain_reads_answer")}`);
     console.log(`  竹内さんの次: ${lc("next_step")}／下書きの誘導＝竹内さんと同じ ${lr.filter((r) => r.draft && L[r.id].m.draft_lead === L[r.id].m.next_lead).length}/${lr.filter((r) => r.draft).length}・下書きが同じ誘導を繰り返した ${lr.filter((r) => L[r.id].m.draft_repeat === "はい").length}`);
   }
+  // 2026-11-11 TURN_READ=log（既定）の記録 digest.ta（turn_contract の about）と正解の対象の種類を決まった計算で比べる（毎朝の数え）
+  const ABOUT_KIND: Record<string, string[]> = {
+    property_equipment: ["送った物件", "持ち込み物件", "新着の1件"], property_cost: ["費用・見積", "送った物件", "持ち込み物件"], vacancy: ["送った物件", "持ち込み物件", "新着の1件"],
+    viewing_day: ["内覧の日・場所"], procedure: ["手続き・審査"], company: ["会社・店"], search_condition: ["探す条件"], reaction_to_sent: ["送った物件", "新着の1件", "こちらの約束の結果"],
+    other_party: ["その他"], self: ["その他", "こちらの約束の結果"], other: ["その他", "こちらの約束の結果"],
+  };
+  const withTa = rows.filter((r) => r.brain?.ta?.length);
+  if (withTa.length) {
+    const hit = withTa.filter((r) => (r.brain!.ta ?? []).some((a) => (ABOUT_KIND[a.split(":")[0]] ?? []).includes(golds[r.id].kind)));
+    console.log(`①対象（digest.ta の about＝正解の種類・決まった計算）: ${hit.length}/${withTa.length}（ta のある番）・ta の無い番 ${rows.length - withTa.length}`);
+    console.log(`  外れの組（正解→about）: ${cnt((r) => (withTa.includes(r) && !hit.includes(r)) ? `${golds[r.id].kind}→${(r.brain!.ta ?? []).map((a) => a.split(":")[0]).join("+")}` : "-")}`);
+  }
   console.log(`外れの型: ${cnt((r) => String(judges[r.id].miss_type))}`);
   console.log(`原因: ${cnt((r) => String(judges[r.id].cause))}`);
   console.log(`正解の対象の種類: ${cnt((r) => golds[r.id].kind)}`);
@@ -512,14 +531,14 @@ async function moodProbe() {
   const done: Record<string, { state: string; base: string | null; object: string | null }> = fs.existsSync(outFile) ? JSON.parse(fs.readFileSync(outFile, "utf8")) : {};
   const sys = [
     "あなたは賃貸仲介のブレイン（今回の発言の層）。お客様の今の一通の気持ちを読み、JSON だけを出す。",
-    `出す項目: ${MINDSET_BRAIN_FIELD}${variant === "after" ? `、${TURN_READ_BRAIN_FIELD}` : ""}`,
+    `出す項目: ${MINDSET_BRAIN_FIELD}${variant.startsWith("after") ? `、${TURN_READ_BRAIN_FIELD}` : ""}`,
   ].join("\n");
   const todo = turns.filter((t) => !done[t.id]);
   for (let c = 0; c < todo.length; c += 8) {
     if (cost.usd > Number(arg("max-usd", "0.08"))) break;
     await Promise.all(todo.slice(c, c + 8).map(async (t) => {
       const p = prev[t.id]?.prev ?? [];
-      const ack = variant === "after" && isAckOnlyTurn(t.customer);
+      const ack = variant.startsWith("after") && isAckOnlyTurn(t.customer);
       const flow = buildMoodFlowNote({ changes: [], signals: {}, reaction: null } as never, { prevEmotions: p, ackOnly: ack });
       const flowAlways = flow || (p.length ? `\n【気持ちの流れ（決まった計算・材料）】\n- 前回までの気持ち（ブレインの判断・古い→新しい）: ${p.join("→")}\n→ 今回の emotion は言葉だけでなくこの流れ（前回からの変化）も見て決める` : "");
       const user = [p.length ? `【顧客プロファイル】\n- 温度感: ${p[p.length - 1]}` : "", `【直前の流れ】\n${t.context.join("\n")}`, ack ? flow : flowAlways, `【今回の発言】\n${t.customer}`].filter(Boolean).join("\n\n");

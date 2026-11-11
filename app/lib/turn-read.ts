@@ -127,7 +127,10 @@ export function buildPrevLeadNote(msgs: ReadonlyArray<LeadMsg>): string {
 }
 
 // ─── ブレインの出力の欄 ─────────────────────────────────────
-export const TURN_READ_BRAIN_FIELD = `"turn_read"（お客様の今の一通を細かく読む。{"target": {"kind": "${TURN_TARGET_KINDS.join("|")}", "property": "物件の事なら物件名と号室（会話・送った束の表記のまま）・無ければ null", "detail": "細かい対象 25字（どの設備・どの費用の項目・どの日の内覧・どの約束）", "how": "言った|文脈から"}, "intent": "${TURN_INTENTS.join("|")} から一番の意図", "intent2": "2番目か null", "lead": 直前のこちらの誘導があれば {"kind": "${LEAD_KINDS.join("|")}", "answer": "${LEAD_ANSWERS.join("|")}"}・無ければ null, "feeling": "気持ちの中身 25字（どの程度気に入っているか・何が不安か・迷いの中身）", ${MOOD_FIELD_TEXT}}。mood.base は "mindset" の state と同じ値にする。読み方: 対象を言っていない時は直前のこちらの送信・開いている約束・今の番の物件から決める（「ここ」「予算オーバー」「駐車場は？」の主語）。物件を送った後の「よろしくお願いします」「拝見します」は物件への感想ではなく直前の送信への了承（kind=こちらの約束の結果・intent=お礼・了承）。URL・資料の画像だけの持ち込みは kind=持ち込み物件。お礼・了承だけの番に、前の番の気持ち（刺さっている・安くしたい・審査の不安）を持ち越さない＝"mindset" の state も今の一通で決め、了承だけなら 普通の依頼）`;
+export const TURN_READ_BRAIN_FIELD = `"turn_read"（お客様の今の一通を細かく読む。{"target": {"kind": "${TURN_TARGET_KINDS.join("|")}", "property": "物件の事なら物件名と号室（会話・送った束の表記のまま）・無ければ null", "detail": "細かい対象 25字（どの設備・どの費用の項目・どの日の内覧・どの約束）", "how": "言った|文脈から"}, "intent": "${TURN_INTENTS.join("|")} から一番の意図", "intent2": "2番目か null", "lead": 直前のこちらの誘導があれば {"kind": "${LEAD_KINDS.join("|")}", "answer": "${LEAD_ANSWERS.join("|")}"}・無ければ null, "feeling": "気持ちの中身 25字（どの程度気に入っているか・何が不安か・迷いの中身）", ${MOOD_FIELD_TEXT}}。mood.base は "mindset" の state と同じ値にする。読み方: 対象を言っていない時は直前のこちらの送信・開いている約束・今の番の物件から決める（「ここ」「予算オーバー」「駐車場は？」の主語）。物件を送った後の「よろしくお願いします」「拝見します」は物件への感想ではなく直前の送信への了承（kind=こちらの約束の結果・intent=お礼・了承）。URL・資料の画像だけの持ち込みは kind=持ち込み物件。お礼・了承だけの番に、前の番の気持ち（刺さっている・安くしたい・審査の不安）を持ち越さない＝"mindset" の state も今の一通で決め、了承だけなら 普通の依頼）。mood は読みとして出すだけ: lead.answer=応じた（例 内覧の候補日への日の答え）の番は、その誘導を一段進める事（日の確定＝待ち合わせ場所）を一番にし、付いてきた気持ち・相談（審査の不安 等）で道を変えない（竹内さんは日を先に確定し、相談はその通では答えない・KB d4da3919）`;
+// 2026-11-11 作業員14: 上の「mood は読みとして出すだけ」は q406 の悪化（mood を足すと meeting_place→phone_call が 4/6）の直し。試験で確かめる前（次の安い時間に q406 --repeat=3）
+// 2026-11-11 作業員14: 「条件フォーム・URL の持ち込みの中の気持ちの一言を拾う」1文を足して試した（部品の試し after2）が、
+//   フォームの決まった欄や了承の番まで「審査の不安」と読ませ、当たり 71→70・了承 25→23（得4・失5）で差し引き良くならなかった＝足さない（scripts/audit-turn-read-1111.ts --phase=mood-probe）
 export function turnReadOutputItem(env?: Env): string {
   return turnReadMode(env) === "on" ? `、${TURN_READ_BRAIN_FIELD}` : "";
 }
