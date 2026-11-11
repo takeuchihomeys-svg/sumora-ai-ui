@@ -105,11 +105,19 @@
     return best;
   }
   function setSelVal(name, val) {
+    /**
+     * 2026-11-11 竹内さん「通常モードなら押す場所理解しているのに自動モードでは理解できていない」:
+     *   欄が**閉じている（畳まれている）**時は「＋」を押して開いてから入れる（案内モードと同じ）。
+     */
     var el = document.querySelector('select[name="' + name + '"]');
     if (!el || val == null) return Promise.resolve(false);
-    el.value = String(val);
-    el.dispatchEvent(new Event("change", {bubbles:true}));
-    return Promise.resolve(true);
+    return _ensureFieldVisible(el, name, 2500).then(function () {
+      try {
+        el.value = String(val);
+        el.dispatchEvent(new Event("change", {bubbles:true}));
+      } catch (_) {}
+      return true;
+    });
   }
   /**
    * 2026-11-10 v2.6.9 竹内さん「家賃のところも押したらいきなり入力されている。押したら家賃の部分を選択する形で動くように」
@@ -263,6 +271,14 @@
           if (ok) ok = isVisible(el);
         } catch (_) { ok = true; }
         if (ok || attempt >= 12) { resolve(true); return; }
+        // 2026-11-11 竹内さん「通常モードなら押す場所理解しているのに自動モードでは理解できていない」:
+        //   ただ待つだけでは**閉じている欄は永久に開かない** → 案内モードと同じ「＋を押して開く」を1回だけ試す
+        if (attempt === 1) {
+          _ensureFieldVisible(el, el.getAttribute && el.getAttribute("name"), 3000).then(function () {
+            setTimeout(function () { resolve(waitVisible(attempt + 1)); }, 150);
+          }, function () { resolve(waitVisible(attempt + 1)); });
+          return;
+        }
         setTimeout(function () { resolve(waitVisible(attempt + 1)); }, _pd(500));
       });
     };
@@ -293,6 +309,79 @@
       }).then(run, run).then(function () { return action(); });
     }
     return waitVisible(0).then(run).then(function () { return action(); });
+  }
+  /**
+   * 2026-11-11 竹内さん「もともとの通常モードでのアナウンスとかでも押す場所や賃料等の条件理解しているから
+   *   ちゃんとそれを押すことができればよいのになぜできていないのか。場所とかも通常モードなら押す場所理解しているのに
+   *   なぜ自動モードやAIXモードでは理解できていないのか。ここの部分改善する」
+   *
+   * 原因: **案内モード（realpro-guide.js）には「閉じている欄を開く」段取り（openerFor）がある**のに、
+   *   自動モード（この page-script.js）には**無かった**。だから条件の欄が「絞り込み条件＋」の中に
+   *   畳まれている時・「所在地絞り込み＋」を開く前の時は、欄が**見えないまま触れず**、
+   *   値が入らない → 検索前の確認で「違う」→ 止まる（＝押せていない）。
+   *   → 案内モードと同じ「開く」考え方を**自動モードにも入れる**（同じ画面・同じ手順で探す）。
+   *
+   * 探し方（案内モード realpro-guide.js と同じ考え）:
+   *   ① その欄から上へたどり、すぐ前の兄弟か箱の中に「…＋」の見出しがあればそれを押す
+   *   ② 無ければ名前で探す（所在地絞り込み＋／沿線・駅絞り込み＋／絞り込み条件＋／検索条件を表示）
+   */
+  var PLUS_HEAD_RE = /[＋+]$/;
+  function _openerFor(el) {
+    try {
+      for (var n = el, depth = 0; n && n !== document.body && depth < 8; n = n.parentElement, depth++) {
+        for (var sib = n.previousElementSibling, k = 0; sib && k < 3; sib = sib.previousElementSibling, k++) {
+          if (isVisible(sib) && PLUS_HEAD_RE.test(norm(sib.textContent)) && norm(sib.textContent).length <= 20) return sib;
+          var inner = sib.querySelector ? Array.prototype.filter.call(sib.querySelectorAll("a,button,div,span,p,dt,h3,h4"),
+            function (x) { return isVisible(x) && PLUS_HEAD_RE.test(norm(x.textContent)) && norm(x.textContent).length <= 20; }) : [];
+          if (inner.length) return inner[inner.length - 1];
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+  /** 閉じている欄を開く（見つからなければ null） */
+  function _openerForKind(name, el) {
+    var near = el ? _openerFor(el) : null;
+    if (near) return near;
+    if (name === "city_code[]" || name === "town_code[]") return _findByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']);
+    if (name === "station_id[]" || name === "route_id[]") return _findByText(['沿線・駅絞り込み＋', '沿線・駅絞り込み+', '沿線・駅絞り込み']);
+    return _findByText(['絞り込み条件＋', '絞り込み条件+', '絞り込み条件', '検索条件を表示']);
+  }
+  /** 文字で押せる要素を探す（見えている物だけ） */
+  function _findByText(list) {
+    var els = Array.prototype.slice.call(document.querySelectorAll('a,button,div,span,p,dt,h3,h4,li,td'));
+    for (var i = 0; i < list.length; i++) {
+      var t = norm(list[i]);
+      for (var j = 0; j < els.length; j++) {
+        if (!isVisible(els[j])) continue;
+        if (norm(els[j].textContent) === t) return els[j];
+      }
+    }
+    return null;
+  }
+  /**
+   * 欄が見えるようにする（見えていれば何もしない）。閉じていれば「＋」を押して開く。
+   * 開いたら最大 maxMs まで見えるのを待つ。戻り値は「見えるようになったか」。
+   */
+  function _ensureFieldVisible(el, name, maxMs) {
+    return new Promise(function (resolve) {
+      if (!el) { resolve(false); return; }
+      var vis = function () { try { return isVisible(el) && !!(el.getBoundingClientRect().width || el.getBoundingClientRect().height); } catch (_) { return true; } };
+      if (vis()) { resolve(true); return; }
+      var op = _openerForKind(name, el);
+      if (!op) { resolve(false); return; }
+      // 人が「＋」を押して開く形（カーソルを動かしてから押す）
+      console.log('[AX] 閉じている欄を開きます: ' + String(name || '') + ' → ' + String((op.textContent || '')).replace(/\s+/g, '').slice(0, 16));
+      if (_audit) _auditStepP('open_field', String(name || '') + ' / ' + String((op.textContent || '')).replace(/\s+/g, '').slice(0, 16));
+      _humanPointerClick(op, function () { try { op.click(); } catch (_) {} });
+      var t0 = Date.now();
+      var limit = maxMs || 3000;
+      (function poll() {
+        if (vis()) { resolve(true); return; }
+        if (Date.now() - t0 > limit) { resolve(false); return; }
+        setTimeout(poll, 200);
+      })();
+    });
   }
   /** 対数正規の間（中央値・σ・下限・上限）。human-wait が無ければ一様 */
   function _ln(median, sigma, lo, hi) {
