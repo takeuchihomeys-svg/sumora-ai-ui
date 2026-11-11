@@ -13,7 +13,9 @@ function it(name: string, fn: () => void) {
 function eq<T>(a: T, b: T, label = "") { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${label} expected ${JSON.stringify(b)} but got ${JSON.stringify(a)}`); }
 
 const ON = { FC_ANSWER_KEEP: "on", FC_REVISION_NO_NEW_FACT: "on" };
-const OFF = {};
+// 11/12 統括役の決め: ANSWER_KEEP・REVISION_NO_NEW_FACT・GOCHOUGO_RESCHEDULE・PROMISE_KEEP は既定 on（=off で止める）・UKETAMAWARI_BRAIN・PROPERTY_NAME_NORMALIZE は既定 off
+const OFF = { FC_ANSWER_KEEP: "off", FC_REVISION_NO_NEW_FACT: "off", FC_GOCHOUGO_RESCHEDULE: "off", FC_PROMISE_KEEP: "off", FC_UKETAMAWARI_BRAIN: "off", FC_PROPERTY_NAME_NORMALIZE: "off" };
+const DEFAULT = {};
 const ask = (o: Partial<ContractAsk>): ContractAsk => ({ quote: "", topic: "other", kind: "question", route: "reply", answer: null, basis: null, aixKey: null, ...o });
 const contract = (asks: ContractAsk[]): TurnContract => ({
   asks, leadWith: null, closeOnly: false, mustNot: [], proposals: [], alreadySaid: [], settled: [],
@@ -30,7 +32,7 @@ it("①実物: 入居までの期間の質問への流れの説明は書き直�
   eq(phaseBanKeepsAnswer(SCREEN_ISSUE, { contract: null, draft: D_PROC, customerText: C_PROC, env: ON }), true);
   eq(phaseBanKeepsAnswer(CONTRACT_ISSUE, { contract: null, draft: D_PROC, customerText: C_PROC, env: ON }), true);
 });
-it("①既定 off は今までどおり渡す", () => {
+it("①off は今までどおり渡す", () => {
   eq(phaseBanKeepsAnswer(SCREEN_ISSUE, { contract: null, draft: D_PROC, customerText: C_PROC, env: OFF }), false);
 });
 it("①決定論の段が本当にこの2つを出す（proposing の段・配線の確かめ）", () => {
@@ -90,7 +92,7 @@ it("②実物: 書き直しが足した会社の事実に反する断定を見�
   const hit = revisionAddedFactContradiction(D_CARD, R_CARD, ON);
   eq(!!hit && /一括のみ/.test(hit), true, String(hit));
 });
-it("②既定 off は見ない", () => { eq(revisionAddedFactContradiction(D_CARD, R_CARD, OFF), null); });
+it("②off は見ない", () => { eq(revisionAddedFactContradiction(D_CARD, R_CARD, OFF), null); });
 it("②元の下書きにあった文は見ない（1回目の検査の役目）", () => {
   eq(revisionAddedFactContradiction(R_CARD, R_CARD.replace("全然大丈夫です😊\n", ""), ON), null);
 });
@@ -175,4 +177,17 @@ import("../reply-context").then(async ({ resolveAnswerability }) => {
   } finally { process.env = save; }
   console.log(`\n(③込み) ${passed} passed, ${failed} failed`);
   if (failed) process.exit(1);
+});
+
+// 11/12 既定の向き（env 無し）: 試した4つは on・試していない2つは off
+it("既定: env 無しで ANSWER_KEEP・REVISION_NO_NEW_FACT・GOCHOUGO_RESCHEDULE・PROMISE_KEEP は効く／UKETAMAWARI・物件名は効かない", () => {
+  eq(phaseBanKeepsAnswer(SCREEN_ISSUE, { contract: null, draft: D_PROC, customerText: C_PROC, env: DEFAULT }), true, "ANSWER_KEEP");
+  eq(!!revisionAddedFactContradiction(D_CARD, R_CARD, DEFAULT), true, "NO_NEW_FACT");
+  const g = { code: "GOCHOUGO_AFTER_FIXED", message: "", evidence: "ご都合よろしいお時間" };
+  eq(fcKeepsBrainSentence(g, { contract: null, draft: g.evidence, customerText: "仕事が入ってしまって明日でもよろしいでしょうか", env: DEFAULT }), true, "GOCHOUGO");
+  const c = contract([ask({ quote: "引き続き", topic: "pickup", route: "promise", answer: "探して送る" })]);
+  eq(promiseKeeps({ code: "DOUBLE_DECLARATION", evidence: "ピックアップしてお送りさせて頂きます" }, { contract: c, draft: "ピックアップしてお送りさせて頂きます！！", env: DEFAULT }), true, "PROMISE_KEEP");
+  const cv = contract([ask({ quote: "6時半", topic: "viewing", route: "aix" })]);
+  eq(uketamawariKeeps({ code: "UKETAMAWARI_OBJECT_UNANCHORED", message: "「ご内覧のご希望」…", evidence: "ご内覧のご希望、承りました" }, { contract: cv, env: DEFAULT }), false, "UKETAMAWARI は既定 off");
+  eq(propertyNameVariantGrounded("FABRICATED_PROPERTY", "メゾン ソレイユ 202号室", ["メゾン　ソレイユ 202"], DEFAULT), false, "物件名は既定 off");
 });

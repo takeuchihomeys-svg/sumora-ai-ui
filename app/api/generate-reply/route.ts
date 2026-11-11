@@ -7102,7 +7102,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const retryIssues = finalCheck.issues.filter(
                   // 2026-10-09: 本質（ブレイン）に反する中身を足させる・消させる指摘はフィードバック再生成に渡さない（turn-contract.issueContradictsContract）
                   (it) => it.severity === "block" && it.code !== "UNCHECKED_AUTO_SEND" && !issueContradictsContract(it, turnContract)
-                    // 2026-11-12 作業員15: 段階の語の網（審査・契約・鍵）が今の質問・ブレインの答え／約束の文を作り直しに渡さない（FC_ANSWER_KEEP=on の時だけ）
+                    // 2026-11-12 作業員15: 段階の語の網（審査・契約・鍵）が今の質問・ブレインの答え／約束の文を作り直しに渡さない（既定 on・FC_ANSWER_KEEP=off で止める）
                     && !fcKeepsBrainSentence(it, { contract: turnContract, draft: draftBody, customerText: message })
                 );
                 // 2026-09-11 統合設計（D1）: 再生成すると finalCheck が loop2 で丸ごと置換されるため、1回目生成のチェック結果を別に残す

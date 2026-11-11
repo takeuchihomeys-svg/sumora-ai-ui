@@ -15,7 +15,7 @@
 //    ＝カード払い可・3.24% の会社の事実と逆。スタッフはカード可で送った）。再検査の V16 は「お客様がその事実を聞いた」窓の中だけを見るので通った。
 //    → 書き直しで新しく足された文だけに、聞かれたかを問わない会社の事実の検査を当て、当たれば書き直しを採らない（元の下書きに戻す＝本文を削らない）。
 //
-// 戻す: FC_ANSWER_KEEP（既定 off・on で①）／FC_REVISION_NO_NEW_FACT（既定 off・on で②）
+// 戻す: FC_ANSWER_KEEP=off（①）／FC_REVISION_NO_NEW_FACT=off（②）。11/12 統括役の決め（試験で悪化0・作り話の素通り0）で既定 on。FC_GOCHOUGO_RESCHEDULE・FC_PROMISE_KEEP も既定 on（=off で止める）。FC_UKETAMAWARI_BRAIN・FC_PROPERTY_NAME_NORMALIZE は試していないので既定 off
 
 import { findCompanyFactContradictionsUngated } from "./company-fact-guard";
 import { contractProtectsSentence, type TurnContract } from "./turn-contract";
@@ -25,10 +25,10 @@ type Env = Record<string, string | undefined>;
 const envOf = (env?: Env): Env => env ?? (typeof process !== "undefined" ? process.env : {});
 
 export function fcAnswerKeepEnabled(env?: Env): boolean {
-  return (envOf(env).FC_ANSWER_KEEP ?? "").trim().toLowerCase() === "on";
+  return (envOf(env).FC_ANSWER_KEEP ?? "").trim().toLowerCase() !== "off";
 }
 export function fcRevisionNoNewFactEnabled(env?: Env): boolean {
-  return (envOf(env).FC_REVISION_NO_NEW_FACT ?? "").trim().toLowerCase() === "on";
+  return (envOf(env).FC_REVISION_NO_NEW_FACT ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 段階の語の ban のうち、答えの文を消しうる3つ（審査・保証会社／契約の手続き／鍵）。message の why で見分ける（line-reply-prompts の PHASE_PROHIBITIONS） */
@@ -99,8 +99,8 @@ export function phaseBanKeepsAnswer(
 // 安全の線（FABRICATED_*・BANNED_WORD・NG_PROPERTY_MENTION・AIX_BOUNDARY_*・COMPANY_FACT_*・NAME_*）は対象にしない（コードで限る）。
 
 export function fcUketamawariBrainEnabled(env?: Env): boolean { return (envOf(env).FC_UKETAMAWARI_BRAIN ?? "").trim().toLowerCase() === "on"; }
-export function fcGochougoRescheduleEnabled(env?: Env): boolean { return (envOf(env).FC_GOCHOUGO_RESCHEDULE ?? "").trim().toLowerCase() === "on"; }
-export function fcPromiseKeepEnabled(env?: Env): boolean { return (envOf(env).FC_PROMISE_KEEP ?? "").trim().toLowerCase() === "on"; }
+export function fcGochougoRescheduleEnabled(env?: Env): boolean { return (envOf(env).FC_GOCHOUGO_RESCHEDULE ?? "").trim().toLowerCase() !== "off"; }
+export function fcPromiseKeepEnabled(env?: Env): boolean { return (envOf(env).FC_PROMISE_KEEP ?? "").trim().toLowerCase() !== "off"; }
 export function fcPropertyNameNormalizeEnabled(env?: Env): boolean { return (envOf(env).FC_PROPERTY_NAME_NORMALIZE ?? "").trim().toLowerCase() === "on"; }
 
 /** 承りましたの目的語 → ブレインの項目の種類 */
