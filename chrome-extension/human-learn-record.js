@@ -21,7 +21,7 @@
   var L = (typeof self !== "undefined" ? self : window).AxlxHumanLearn;
   if (!L) return;
 
-  var rec = L.create({});
+  var rec = L.create({ doc: document, win: window });
   var detach = null;
   var watching = false;
   var timer = null;
@@ -79,6 +79,21 @@
       (document.body || document.documentElement).appendChild(d);
     } catch (_) {}
   }
+  /**
+   * 2026-11-11 竹内さん「普通モードでのマウスの動かし方やボタンのどこ押すかもちゃんとたまるんかな」:
+   *   貯まっているかを**その場で見える**ようにする（数が増えていくのが分かる）。
+   *   印に「マウス◯回・押した所◯・スクロール◯」を出す。
+   */
+  function paintBadge() {
+    try {
+      var d = document.getElementById("axlx-learn-badge");
+      if (!d) return;
+      var det = rec.detail();
+      var n = rec.count();
+      d.textContent = "👀 学習中 操作" + n + "・マウス" + (det.moves || []).length
+        + "・押した所" + (det.points || []).length + "・スクロール" + (det.scrolls || []).length;
+    } catch (_) {}
+  }
   function removeBadge() {
     try { var d = document.getElementById("axlx-learn-badge"); if (d) d.remove(); } catch (_) {}
   }
@@ -89,8 +104,14 @@
     var ops = rec.list();
     if (!ops.length) return;
     if (!force && ops.length < MIN_OPS_TO_SAVE) return;
-    _saving = true;
     var add = L.summarize(ops);
+    // 2026-11-11 竹内さん「マウスの動かし方やボタンのどこ押すか、画面のうごかしかたも」:
+    //   動き・押した場所・スクロールも一緒に集計して貯める（detail() が締め忘れを締めてから返す）
+    try {
+      var det = rec.detail();
+      var motion = L.summarizeMotion(det);
+      add.moves = motion.moves; add.points = motion.points; add.scrolls = motion.scrolls;
+    } catch (_) {}
     try {
       chrome.storage.local.get([KEY], function (r) {
         try {
@@ -100,7 +121,7 @@
           var o = {}; o[KEY] = next;
           chrome.storage.local.set(o, function () {
             _saving = false;
-            rec.reset();
+            rec.reset(); // 操作・動き・押した場所・スクロールをまとめて空にする
             try { void chrome.runtime.lastError; } catch (_) {}
           });
         } catch (_) { _saving = false; }
@@ -126,15 +147,24 @@
   // 1分ごとに書き出す（見えていないタブでは書き出さない＝裏のタブを止めない）
   timer = setInterval(function () {
     if (document.hidden) return;
-    if (watching) save(false);
+    if (!watching) return;
+    paintBadge();   // 貯まっている数を更新（増えていくのが見える）
+    save(false);
   }, SAVE_EVERY_MS);
 
   // タブを閉じる・離れる時に書き出す
   window.addEventListener("pagehide", function () { save(true); });
-  document.addEventListener("visibilitychange", function () { if (document.hidden) save(false); });
+  document.addEventListener("visibilitychange", function () { if (document.hidden) save(false); else paintBadge(); });
 
   // 外から集計を読めるように（点検・画面用）
   window.__axlxHumanLearnReport = function () {
-    return { watching: watching, site: site, ops: rec.count(), lock: LEARN_LOCK };
+    var det = { moves: [], points: [], scrolls: [] };
+    try { det = rec.detail(); } catch (_) {}
+    return {
+      watching: watching, site: site, ops: rec.count(), lock: LEARN_LOCK,
+      moves: (det.moves || []).length, points: (det.points || []).length, scrolls: (det.scrolls || []).length,
+      detail: det,          // 中身（何をどう覚えたか）も見られるように
+      summarizeMotion: function () { try { return L.summarizeMotion(det); } catch (_) { return null; } },
+    };
   };
 })();

@@ -6363,6 +6363,61 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (_) {}
     _pollSearchFocus();
   })();
+  /**
+   * 2026-11-11 竹内さん「普通モードでのマウスの動かし方やボタンのどこ押すかもちゃんとたまるんかな。画面のうごかしかたも」
+   *   通常モードで覚えた物を**押すと見られる**ようにする（貯まっているか確かめられる）。
+   *   ヘッダーの小さな「👀 学習 N」を押すと、マウスの速さ・曲がり・押した所・スクロールの傾向を出す。
+   */
+  (function initLearnReport() {
+    var btn = document.getElementById("learn-report-btn");
+    if (!btn) return;
+    var L = self.AxlxHumanLearn;
+    function paint() {
+      try {
+        chrome.storage.local.get("axlx_human_learn", function (r) {
+          var agg = r && r.axlx_human_learn;
+          var n = agg && agg.n ? agg.n : 0;
+          btn.style.display = n > 0 ? "inline-block" : "none";
+          btn.textContent = "👀 学習 " + n;
+          btn._axlxAgg = agg || null;
+        });
+      } catch (_) {}
+    }
+    paint();
+    try {
+      chrome.storage.onChanged.addListener(function (ch, area) {
+        if (area === "local" && ch.axlx_human_learn) paint();
+      });
+    } catch (_) {}
+    btn.addEventListener("click", function () {
+      var agg = btn._axlxAgg;
+      var lines = (L && L.describe) ? L.describe(agg) : ["覚えた物を読めませんでした"];
+      // 見やすい小窓（閉じるボタン付き・サイトは触らない）
+      try {
+        var old = document.getElementById("learn-report-card");
+        if (old) { old.remove(); return; } // 2回目で閉じる
+        var card = document.createElement("div");
+        card.id = "learn-report-card";
+        card.style.cssText = "position:fixed;left:8px;right:8px;bottom:44px;z-index:2147483001;background:#fff;border:1px solid #bbf7d0;"
+          + "border-radius:12px;padding:10px 12px;font-size:11px;line-height:1.6;color:#14532d;box-shadow:0 6px 22px rgba(0,0,0,.18);max-height:46vh;overflow:auto";
+        var title = document.createElement("div");
+        title.style.cssText = "font-weight:800;font-size:12px;margin-bottom:4px";
+        title.textContent = "👀 通常モードで覚えた人の動き";
+        card.appendChild(title);
+        lines.forEach(function (t) {
+          var p = document.createElement("div");
+          p.textContent = t;
+          card.appendChild(p);
+        });
+        var note = document.createElement("div");
+        note.style.cssText = "margin-top:6px;color:#64748b;font-size:10px";
+        note.textContent = "※ 入力した中身（文字・数字）は覚えていません。欄の名前・動き方・間だけです。押すと閉じます。";
+        card.appendChild(note);
+        card.addEventListener("click", function () { card.remove(); });
+        document.body.appendChild(card);
+      } catch (_) {}
+    });
+  })();
   setInterval(function () { if (document.visibilityState === "visible") _pollSearchFocus(); }, 45000);
   try {
     chrome.storage.onChanged.addListener(function (ch, area) {

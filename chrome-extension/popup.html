@@ -56,6 +56,9 @@
     <!-- 2026-09-29 v2.5.40 拡張の版と「画面の写真」の許可（snapshot-popup.js）。版が古いまま動いていないかを小窓で見分ける
          v2.5.75: 小さな灰色の文字だけ（帯の色なし）。許可済みの時は版だけ、未許可の時だけ許可のボタン -->
     <div id="snap-perm" style="display:none;align-items:center;gap:6px;padding:1px 10px;font-size:10px;color:#94a3b8;justify-content:flex-end">
+      <!-- 2026-11-11 竹内さん「普通モードでのマウスの動かし方やボタンのどこ押すかもちゃんとたまるんかな」:
+           通常モードで覚えた人の動き（マウスの速さ・曲がり・押した所・スクロール）を押すと見られる -->
+      <button type="button" id="learn-report-btn" title="通常モードで覚えた人の動きを見る" style="display:none;padding:0 6px;font-size:10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#166534;cursor:pointer">👀 学習 0</button>
       <span id="snap-ver"></span>
       <span id="snap-perm-state"></span>
       <button type="button" id="snap-perm-btn" style="display:none;padding:0 6px;font-size:10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;cursor:pointer">画面の共有を許可</button>
@@ -389,6 +392,9 @@
   <!-- 2026-09-27 AIXツールのメモの検索の指示（その回だけの一時調整・background.js と同じ物） -->
   <script src="search-override.js"></script>
   <script src="temp-adj-base.js"></script>
+  <!-- 2026-11-11 竹内さん「普通モードでのマウスの動かし方やボタンのどこ押すかもちゃんとたまるんかな」:
+       通常モードで覚えた人の動きを「👀 学習 N」で見られるようにする（純関数・popup.js より前） -->
+  <script src="human-learn.js"></script>
   <script src="popup.js"></script>
   <!-- 2026-09-29 v2.5.40 拡張の版と画面の写真の許可（popup.js とは別の小さなファイル・popup.js を触らない） -->
   <script src="snapshot-popup.js"></script>
