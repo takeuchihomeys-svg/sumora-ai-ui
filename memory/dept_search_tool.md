@@ -4,6 +4,63 @@
 
 ---
 
+## 2026-11-11 v2.6.70 押した「ボタンの名前」を分かる形に・画面の写真を Storage に上げて見られるように
+
+竹内さん「これでボタン物件検索でおすばしょ理解できたかな？ある程度は」→
+「**画面画像みればわかるのでは。画像みてボタンどこおしたかみればちゃんと検索おしてることわかる**」
+
+### 分かった事（v2.6.69 の記録を見て）
+
+てんさんの検索（2件・操作127回）は入っていた。だが:
+
+| 取れていた | 取れていなかった |
+|---|---|
+| 押した位置（`div.building_tr` は横66%・縦44% など） | **何というボタンか**（検索ボタンは名前の無い DIV なので `td`・`img` になった） |
+| マウスの速さ・曲がり・軌跡 | **どの段階か**（条件入力／小窓／検索結果） |
+| ドラッグ7回 | **画面の写真**（`shot_taken=false`・許可が無く撮れていなかった） |
+| | `mode`（空だった） |
+
+### 直し
+
+**① 押した要素の名前に「文字」と「クラス」を両方入れる**（`human-learn.js` の `fieldName`）
+- 旧: name → id → 文字（BUTTON/A/LABEL/OPTION だけ）→ class → タグ
+- 新: **DIV/SPAN/TD/TH/P/H1-4 の文字も拾う**。`"検索｜div.go_search"` の形（文字｜タグ.クラス）
+- `directText()` … その要素**自身**の文字だけ（子の長い文字と混ざらない）
+- 値（入力した中身）は入れない
+
+**② 段階（stage）を付ける**
+`form`（条件の入力）／`modal`（小窓）／`result`（検索結果）／`other`。押した1件ごとに残し、要素ごとの「一番多い段階」も集計（`stage`）。
+
+**③ 画面の写真を Supabase Storage に上げる**
+- `axlx-human-shot`（撮る）→ `axlx-human-shot-upload`（上げる）の2段。**直列・1枚ずつ**（サーバーを叩きすぎない）
+- `/api/human-motion` が `shot_b64` を受けて **Storage の `human-motion-shots`** に置き、表には `shot_key` だけ
+- バケット作成済み（public・5MB・jpeg/png）＋読み取りポリシー `human-motion-shots read`
+- 写真だけの回（操作0）も受け取る（`hasShot` で判定）
+
+**④ `mode` を記録**（`human-learn-upload.js` の `_modeNow`）。通常／スタッフを読んで送る。
+
+**⑤ 人が読める報告**（`buttonReport`）… 小窓の「👀 学習」に
+```
+押した場所（多い順・109回分）:
+  ・検索｜div.go_search … 12回・横62%・縦78%／条件の入力
+  ・img.room_layout_image … 13回・横54%・縦46%／検索結果
+```
+
+### 通しで確かめた
+```
+POST /api/human-motion（shot_b64 付き）→ 200 {"ok":true}
+GET  ?shots=1 → rows:1
+  shot_key: 2026-11-11/shot-test-...jpg
+  shot_url: https://wfwsmwxakhyxobytszoq.supabase.co/storage/v1/object/public/human-motion-shots/...
+画像を取得 → 200 / image/jpeg / 160 bytes
+```
+**撮る → Storage に置く → URL で見られる**まで通った。テスト行は削除済み。
+
+### ⚠ 竹内さんに必要な操作
+拡張の小窓の右上「**画面の共有を許可**」を1回押す（`<all_urls>`）。押さないと写真は撮れない（`no_permission` で止まるだけ）。
+
+---
+
 ## 2026-11-11 v2.6.69 本番に /api/human-motion を出した（本番にコードが届いていなかった）＋学習が貯まらない不具合
 
 竹内さん「**今このお客さんを普通モードでやったんやけど動き理解できているかな**」→ DB を見たら **0行**だった。
