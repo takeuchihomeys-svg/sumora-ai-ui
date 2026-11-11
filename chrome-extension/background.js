@@ -1977,10 +1977,14 @@ if (msg.type === "axlx-human-shot") {
        *     サーバーは 3MB 超の写真を**黙って捨てていた**（エラーも出さない）＝「送ったのに届かない」。
        *   → 送る前に**縮める**（長辺 1280px・JPEG 45%）。1枚あたり 200〜400KB になり確実に通る。
        */
+      /**
+       * 2026-11-11 竹内さん「写真の容量も小さく」:
+       *   長辺 **1000px・JPEG 40%**（100〜250KB 目安）。これで 3MB 超で捨てられる事が無くなる。
+       */
       let shotForUpload = dataUrl;
       let shotW = 0, shotH = 0;
       try {
-        const shrunk = await _shrinkShot(dataUrl, 1280, 0.45);
+        const shrunk = await _shrinkShot(dataUrl, 1000, 0.40);
         if (shrunk && shrunk.dataUrl) { shotForUpload = shrunk.dataUrl; shotW = shrunk.w; shotH = shrunk.h; }
       } catch (e) {
         console.warn("[human-shot] 縮められませんでした（元の大きさで送ります）:", (e && e.message) || e);
@@ -2012,25 +2016,19 @@ if (msg.type === "axlx-human-shot") {
        */
       if (msg.upload !== false) {
         /**
-         * 2026-11-11 竹内さん「写真はスクショとるだけのになぜできないのか」→「こうでた」:
-         *   ⚠ ここは**ファイルの上の方**（`_shotUploadQueue` の宣言より前）にある。
-         *     `var` は巻き上げられるが**中身は undefined** なので `_shotUploadQueue.push` で例外 →
-         *     下の try/catch が握りつぶして**何も起きない**（＝送信が一度も走らない）。
-         *   → 直接キューを触らず、**下で定義した関数に渡す**（`_enqueueShotUpload`）。
+         * 2026-11-11 竹内さん「写真もまだとれていない真の原因をちゃんとみつける」:
+         *   キュー（`_enqueueShotUpload`）を通していたが、キューは**この巨大な listener の中**に
+         *   置いてあり、メッセージのたびに作り直される。積んだ物が消える事があった。
+         *   → **その場で送る**（`_sendShotNow` を直接呼ぶ。共有の変数に頼らない）。
          */
-        try {
-          if (typeof _enqueueShotUpload === "function") {
-            _enqueueShotUpload({
-              // 2026-11-11: 送るのは**縮めた物**（大きいとサーバーが捨てる）
-              data_url: shotForUpload, site: msg.site || null, what: msg.what || null,
-              shot_w: shotW, shot_h: shotH,
-              kind: msg.kind || null, x: msg.x, y: msg.y,
-              mode: null, run_id: _shotRun, seq: _shotSeq,
-            });
-          }
-        } catch (e) {
-          console.warn("[human-shot] 送信の列に積めません:", (e && e.message) || e);
-        }
+        _sendShotNow({
+          data_url: shotForUpload, site: msg.site || null, what: msg.what || null,
+          shot_w: shotW, shot_h: shotH,
+          kind: msg.kind || null, x: msg.x, y: msg.y,
+          mode: null, run_id: _shotRun, seq: _shotSeq,
+        }).catch(function (e) {
+          console.warn("[human-shot] 送信で例外:", (e && e.message) || e);
+        });
       }
 
       // 古い物から消す（全体の上限）
@@ -2060,92 +2058,84 @@ if (msg.type === "axlx-human-shot") {
  *   ・上げるのは1枚ずつ・直列（サーバーを叩きすぎない・順番が崩れない）
  *   ・失敗しても止めない（写真は Chrome の中に残る）
  */
-var _shotUploadQueue = [];
-var _shotUploading = false;
-var _shotUploadStartedAt = 0;
-/** 写真の送信を列に積む（宣言より前から呼ばれるので、この形にまとめる） */
-function _enqueueShotUpload(job) {
+/**
+ * 2026-11-11 竹内さん「写真もまだとれていない真の原因をちゃんとみつける。写真の容量も小さく」
+ *
+ * ⚠ 0枚が続いた本当の理由:
+ *   ① 写真は「学習」の中から撮っていた → 自動・AIX では学習しないので**撮られもしない**
+ *   ② 送信は**キュー**（`_shotUploadQueue`）を通していた → 大きな `if (msg.type === ...)` の
+ *      中に置いてあり、**メッセージのたびに作り直される**。積んだ物が消える事があった
+ *   ③ 送る前に縮めていなかった → フルHD の JPEG は 3MB を超え、サーバーが**黙って捨てた**
+ *
+ * → **キューをやめて、撮ったらその場で縮めて送る**（1本の関数・共有の変数に頼らない）。
+ *   縮める: **長辺 1000px・JPEG 40%**（100〜250KB 目安）。
+ *   失敗したら**理由を必ず残す**（`axlx_human_shot_upload`）。
+ */
+var _shotSending = 0;
+async function _sendShotNow(job) {
+  if (!job || !job.data_url) return { ok: false, error: "no_data" };
+  if (_shotSending >= 3) {
+    try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: false, error: "busy", at: Date.now() } }); } catch (_) {}
+    return { ok: false, error: "busy" };
+  }
+  _shotSending++;
+  try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: null, phase: "sending", at: Date.now() } }); } catch (_) {}
   try {
-    if (!job || !job.data_url) return;
-    if (_shotUploadQueue.length > 40) _shotUploadQueue.shift();
-    _shotUploadQueue.push(job);
-    _pumpShotUpload();
+    const hdr = await _getAutomationKeyHeader();
+    let devLabel = null;
+    try { const r0 = await chrome.storage.local.get("deviceLabel"); devLabel = (r0 && r0.deviceLabel) || null; } catch (_) {}
+    const body = {
+      shot_b64: job.data_url,
+      motion: { n: 0, kinds: {}, gaps: [], gap_ms: null, fields: [], order: [],
+                moves: { n: 0 }, points: { n: 0 }, scrolls: { n: 0 } },
+      site: job.site || null,
+      mode: job.mode || null,
+      shot_taken: true,
+      shot_key: null,
+      shot_w: job.shot_w || null,
+      shot_h: job.shot_h || null,
+      install_id: await _snapInstallId(),
+      device_label: devLabel,
+      ext_version: _extVersion(),
+      at: Date.now(),
+      shot_meta: { what: job.what, kind: job.kind, x: job.x, y: job.y, run_id: job.run_id, seq: job.seq },
+    };
+    const res = await fetch(SUMORA_BATCH_API + "/api/human-motion", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, hdr),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(25000),
+    });
+    let txt = "";
+    try { txt = await res.text(); } catch (_) {}
+    if (!res.ok) {
+      console.warn("[human-shot] 上げられませんでした:", res.status, String(txt).slice(0, 200));
+      try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: false, status: res.status, error: String(txt).slice(0, 200), at: Date.now() } }); } catch (_) {}
+      return { ok: false, status: res.status, error: String(txt).slice(0, 200) };
+    }
+    console.log("[human-shot] クラウドに上がりました:", String(txt).slice(0, 120));
+    try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: true, status: 200, at: Date.now() } }); } catch (_) {}
+    return { ok: true, status: 200 };
   } catch (e) {
-    console.warn("[human-shot] 積めません:", (e && e.message) || e);
+    const msg = String((e && e.message) || e).slice(0, 200);
+    console.warn("[human-shot] 上げる時のエラー:", msg);
+    try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: false, error: msg, at: Date.now() } }); } catch (_) {}
+    return { ok: false, error: msg };
+  } finally {
+    _shotSending = Math.max(0, _shotSending - 1);
   }
 }
 function _pumpShotUpload() {
-  /**
-   * 2026-11-11 竹内さん「写真はスクショとるだけなのになぜできないのか」:
-   *   ⚠ `_shotUploading` は応答が返らないと**永久に true** になり、以降アップロードされない。
-   *   → 30秒たったら解く（諦めて次を送る）。
-   */
-  if (_shotUploading && Date.now() - _shotUploadStartedAt < 30000) return;
-  if (_shotUploading) {
-    console.warn("[human-shot] アップロードが30秒返らない → 解いて次へ");
-    _shotUploading = false;
-  }
-  var job = _shotUploadQueue.shift();
-  if (!job) return;
-  _shotUploading = true;
-  _shotUploadStartedAt = Date.now();
-  // 2026-11-11: 「まだ」と「失敗」を区別できるよう、**始めた印**を先に置く
-  try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: null, phase: "sending", at: Date.now() } }); } catch (_) {}
-  (async () => {
-    try {
-      const hdr = await _getAutomationKeyHeader();
-      const body = {
-        shot_b64: job.data_url,
-        motion: { n: 0, kinds: {}, gaps: [], gap_ms: null, fields: [], order: [],
-                  moves: { n: 0 }, points: { n: 0 }, scrolls: { n: 0 } },
-        site: job.site || null,
-        mode: job.mode || null,
-        shot_taken: true,
-        shot_key: null,
-        install_id: await _snapInstallId(),
-        /**
-         * 2026-11-11 竹内さん「こうでた」→ 送信が毎回失敗していた。
-         *   ⚠ `chrome.storage.local.get(...)` は**Promise を返さない**（コールバック式）ので
-         *     `.catch()` を呼ぶと `Cannot read properties of undefined (reading 'catch')` で落ちていた。
-         *   → await で受ける（Chrome の Manifest V3 は await でも使える）。
-         */
-        device_label: await (async function () {
-          try { const r = await chrome.storage.local.get("deviceLabel"); return (r && r.deviceLabel) || null; } catch (_) { return null; }
-        })(),
-        ext_version: _extVersion(),
-        at: Date.now(),
-        shot_meta: { what: job.what, kind: job.kind, x: job.x, y: job.y, run_id: job.run_id, seq: job.seq },
-      };
-      const res = await fetch(SUMORA_BATCH_API + "/api/human-motion", {
-        method: "POST",
-        headers: Object.assign({ "Content-Type": "application/json" }, hdr),
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(20000),
-      });
-      if (!res.ok) {
-        console.warn("[human-shot] 上げられませんでした:", res.status);
-        try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: false, status: res.status, at: Date.now() } }); } catch (_) {}
-      } else {
-        try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: true, status: 200, at: Date.now(), key: job.run_id } }); } catch (_) {}
-      }
-    } catch (e) {
-      console.warn("[human-shot] 上げる時のエラー:", (e && e.message) || e);
-      try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: false, error: String((e && e.message) || e), at: Date.now() } }); } catch (_) {}
-    } finally {
-      _shotUploading = false;
-      if (_shotUploadQueue.length) _pumpShotUpload();
-    }
-  })();
+  /* 旧のキュー方式は廃止（_sendShotNow を直接呼ぶ）。互換のため空で残す */
 }
 if (msg.type === "axlx-human-shot-upload") {
-  // 溜めすぎない（古い物から捨てる）
-  if (_shotUploadQueue.length > 40) _shotUploadQueue.shift();
-  _shotUploadQueue.push({
+  // 2026-11-11: キューをやめて**その場で送る**（共有の変数に頼らない）
+  _sendShotNow({
     data_url: msg.data_url, site: msg.site, what: msg.what, kind: msg.kind,
     x: msg.x, y: msg.y, run_id: msg.run_id, seq: msg.seq,
+  }).then(function (r) {
+    try { sendResponse({ ok: !!(r && r.ok), error: r && r.error }); } catch (_) {}
   });
-  _pumpShotUpload();
-  sendResponse({ ok: true, queued: _shotUploadQueue.length });
   return true;
 }
 
