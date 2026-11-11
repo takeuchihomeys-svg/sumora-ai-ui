@@ -1,8 +1,8 @@
 // app/lib/__tests__/apply-route-substate.test.ts — 地図の2段目（細かい状態）・この番の目的と仕込み（turn_aims）・受け渡し
 //   実行: npx tsx app/lib/__tests__/apply-route-substate.test.ts
 import { readFileSync } from "node:fs";
-import { SUBSTATES, substatesFor, buildSubstateBrainText, substateBrainTextIfEnabled, applyRouteSubstateOn } from "../apply-route-substate";
-import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD, turnAimsDigest } from "../brain-turn-aims";
+import { SUBSTATES, substatesFor, buildSubstateBrainText, substateBrainTextIfEnabled, applyRouteSubstateOn, SUBSTATE_SKIP_MOVE_IN_RE } from "../apply-route-substate";
+import { PLANT_NOT_PROMISE_RE, turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD, turnAimsDigest } from "../brain-turn-aims";
 import { buildHandoff, handoffNote } from "../conductor-handoff";
 import { ROUTE_NODES, ROUTE_BRANCHES } from "../apply-route-map";
 
@@ -38,7 +38,13 @@ t("turn_aims が無ければ今まで通り", !handoffNote(buildHandoff({ to: "c
 // 配線
 const core = readFileSync("app/lib/brain-core.ts", "utf8");
 t("今回の発言の層（fresh）でも turn_aims を書く（11/12: q425・q426 で欄が出なかった原因）", core.includes("このモードでも出力の最後に turn_aims"));
-t("brain-core に配線（材料・出力の欄・決まり・meta）", core.includes("ar.text + substateBrainTextIfEnabled(ar.loc)") && core.includes('BRAIN_TURN_AIMS_ON ? ", " + BRAIN_TURN_AIMS_FIELD') && core.includes("BRAIN_TURN_AIMS_ON ? BRAIN_TURN_AIMS_RULES") && core.includes("turn_aims: BRAIN_TURN_AIMS_ON ? (normalizeTurnAims("));
+t("brain-core に配線（材料・出力の欄・決まり・meta）", core.includes("ar.text + substateBrainTextIfEnabled(ar.loc, undefined, { procedureTurn: isProcedureReplyQuestion(detectProcedureQuestion(unrepliedTurn.text ?? \"\")) || SUBSTATE_SKIP_MOVE_IN_RE.test(") && core.includes('BRAIN_TURN_AIMS_ON ? ", " + BRAIN_TURN_AIMS_FIELD') && core.includes("BRAIN_TURN_AIMS_ON ? BRAIN_TURN_AIMS_RULES") && core.includes("turn_aims: BRAIN_TURN_AIMS_ON ? (normalizeTurnAims("));
 
+// 11/12 統括役の決め ①②（q065: on 0/4・off 4/4）
+t("① 手続きの問いの番は状態の候補を出さない", substateBrainTextIfEnabled({ node: "pickup", branch: null }, { APPLY_ROUTE_SUBSTATE: "on" }, { procedureTurn: true }) === "");
+t("① q065 の文（最速で入居）は網に当たる・q057 の文は当たらない", SUBSTATE_SKIP_MOVE_IN_RE.test("ありがとうございます\n最速で入居できるとしていつくらいになりそうですか？") && SUBSTATE_SKIP_MOVE_IN_RE.test("最短でも入居可能日は11月中旬でしょうか？") && !SUBSTATE_SKIP_MOVE_IN_RE.test("内見はできない感じってことですかね？"));
+t("② 仕込みに確認・約束を入れない（q065 の実物）", normalizeTurnAims({ turn_aim: "a", plant: "最速入居日は管理会社に確認してすぐ連絡する" })?.plant === "" && PLANT_NOT_PROMISE_RE.test("入居時期は確認させて頂きご連絡"));
+t("② 事実・線の仕込みは残す", normalizeTurnAims({ turn_aim: "a", plant: "1部屋のみの募集" })?.plant === "1部屋のみの募集" && normalizeTurnAims({ turn_aim: "a", plant: "即入居可のお部屋を優先" })?.plant === "即入居可のお部屋を優先");
+t("② 決まりの文に確認・約束は書かない", BRAIN_TURN_AIMS_RULES.includes("確認・約束（管理会社に確認・確認してご連絡 等）は書かない"));
 console.log(`apply-route-substate: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

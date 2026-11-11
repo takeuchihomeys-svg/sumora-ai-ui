@@ -11,9 +11,11 @@ export type TurnAims = { state: string; depth: 1 | 2 | 3 | null; depthWhy: strin
 
 export const BRAIN_TURN_AIMS_RULES = `【振り返り（turn_aims・判断を全部書き終えた後に書く）】aix・two_stage・turn_contract・reply_direction を決め終えた後で、竹内さんのように先を見てこの番を書き留める。この欄で判断を変えない。`
   + `state＝【この駅の細かい状態の候補】から選んだ名前（無ければ ""）／depth＝何番先まで見てこの一手を選んだか（1＝この番だけ・2＝1〜2番先の内覧・申込・見積・3＝申込までの長い道で信用と仕込み）／depth_why＝その深さを決めた合図（お客様の温度・入居時期・物件の残り・段階）／`
-  + `turn_aim＝この番の目的（今の1手）／mid_aim＝次の2〜3番の狙い／plant＝この番の文に入れる先の番のための一言（1部屋のみ・申込で抑えてから内覧・入居の時期・審査のサポート・費用を抑える・全力サポート。無ければ ""）。`;
+  + `turn_aim＝この番の目的（今の1手）／mid_aim＝次の2〜3番の狙い／plant＝この番の文に入れる先の番のための一言（1部屋のみ・申込で抑えてから内覧・入居の時期・審査のサポート・費用を抑える・全力サポート。無ければ ""）。plant は先の番のための事実・線だけで、確認・約束（管理会社に確認・確認してご連絡 等）は書かない（それは道＝turn_contract の事）。`;
 export const BRAIN_TURN_AIMS_FIELD = `"turn_aims": {"state": "細かい状態の名前", "depth": 1, "depth_why": "30字以内", "turn_aim": "25字以内", "mid_aim": "30字以内", "plant": "25字以内"}`;
 
+/** 2026-11-12 作業員7（統括役の決め ②）: 仕込みに確認・約束を入れない（q065: plant「最速入居日は管理会社に確認してすぐ連絡する」） */
+export const PLANT_NOT_PROMISE_RE = /確認|確かめ|管理会社|ご?連絡(?:し|させ|いた)|約束|お調べ/;
 const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const blank = (v: unknown) => v == null || ["", "null", "none"].includes(String(v).trim().toLowerCase());
 
@@ -23,7 +25,7 @@ export function normalizeTurnAims(raw: unknown): TurnAims | null {
   const d = Number(o.depth);
   const out: TurnAims = {
     state: blank(o.state) ? "" : clip(o.state, 30), depth: d === 1 || d === 2 || d === 3 ? d : null, depthWhy: blank(o.depth_why) ? "" : clip(o.depth_why, 40),
-    turnAim: blank(o.turn_aim) ? "" : clip(o.turn_aim, 30), midAim: blank(o.mid_aim) ? "" : clip(o.mid_aim, 40), plant: blank(o.plant) ? "" : clip(o.plant, 30),
+    turnAim: blank(o.turn_aim) ? "" : clip(o.turn_aim, 30), midAim: blank(o.mid_aim) ? "" : clip(o.mid_aim, 40), plant: blank(o.plant) || PLANT_NOT_PROMISE_RE.test(String(o.plant)) ? "" : clip(o.plant, 30),
   };
   return out.turnAim || out.midAim || out.plant || out.state ? out : null;
 }

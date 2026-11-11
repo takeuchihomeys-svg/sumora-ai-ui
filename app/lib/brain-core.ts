@@ -127,7 +127,7 @@ import { legacyActionWinRatesEnabled, applicationReachEnabled, winningOutcomeTag
 // 2026-09-27 竹内「この問題直して大丈夫」: ブレインの段階を customer-state の事実で補正（viewing に上げる）・会話の方向の段階を段階から決める（穴:G1）
 import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from "@/app/lib/brain-stage";
 import { applyRouteMapEnabled, applyRouteBrainTextIfEnabled } from "@/app/lib/apply-route-map";
-import { substateBrainTextIfEnabled } from "@/app/lib/apply-route-substate";
+import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE } from "@/app/lib/apply-route-substate";
 import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD } from "@/app/lib/brain-turn-aims";
 import { resolveParallelSearchScene, parallelSearchInputsFromMessages, buildParallelSearchBrainNote, resolveParallelSearchOutput, type ParallelSearchOutput } from "@/app/lib/parallel-search";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）は1つの型・1つの関数に集約（AIX / テンプレート / 返信生成が同じ物を読む）
@@ -3607,7 +3607,8 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         farMoveIn: !!farMoveInEarly,
         lastStaffAtIfStaffLast: lastMsgAR && lastMsgAR.sender !== "customer" ? lastMsgAR.created_at : null,
       });
-      applyRouteText = ar.text + substateBrainTextIfEnabled(ar.loc); // 2026-11-12 作業員7: 駅の中の細かい状態（APPLY_ROUTE_SUBSTATE・既定 off）
+      // 2026-11-12 作業員7: 駅の中の細かい状態（APPLY_ROUTE_SUBSTATE・既定 off）。一般の手続きの問い（PROCEDURE の網）では出さない（q065）
+      applyRouteText = ar.text + substateBrainTextIfEnabled(ar.loc, undefined, { procedureTurn: isProcedureReplyQuestion(detectProcedureQuestion(unrepliedTurn.text ?? "")) || SUBSTATE_SKIP_MOVE_IN_RE.test(unrepliedTurn.text ?? "") });
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
   }

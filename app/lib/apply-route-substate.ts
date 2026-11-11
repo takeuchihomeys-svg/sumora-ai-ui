@@ -102,6 +102,11 @@ export function buildSubstateBrainText(loc: Pick<ApplyRouteLocation, "node" | "b
 }
 
 /** brain-core から呼ぶ入口。off の時は必ず空文字 */
-export function substateBrainTextIfEnabled(loc: Pick<ApplyRouteLocation, "node" | "branch"> | null | undefined, env?: Env): string {
+/** 2026-11-12 作業員7（統括役の決め ①）: 一般の手続き・会社の事実で答えられる問い（PROCEDURE の網に当たる番）では状態の候補を出さない。
+ *  q065（最速の入居）で候補「物件ピックアップ」と仕込みが、返信で答える問いを確認の約束へ引いた（on 0/4・off 4/4） */
+/** 手続きの網（procedure-question・最短）に当たらない「最速で入居」「いつ頃入居」も、状態の候補を出さない番に数える（q065 は網に当たらなかった・網そのものは変えない） */
+export const SUBSTATE_SKIP_MOVE_IN_RE = /(?:最短|最速|いつ(?:頃|ごろ|くらい))[^。\n？?]{0,14}(?:入居|住め|入れ|引っ?越)/;
+export function substateBrainTextIfEnabled(loc: Pick<ApplyRouteLocation, "node" | "branch"> | null | undefined, env?: Env, opts: { procedureTurn?: boolean } = {}): string {
+  if (opts.procedureTurn) return "";
   return applyRouteSubstateOn(env) ? buildSubstateBrainText(loc) : "";
 }
