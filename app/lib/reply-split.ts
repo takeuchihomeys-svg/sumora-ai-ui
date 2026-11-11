@@ -36,6 +36,23 @@ export function replySplitWriterNote(count: number, roles?: ReadonlyArray<string
   return `- ✂️ この返信は${count}通に分けて送る（竹内さんの分け方）: ${parts}。通と通の間は「${SPLIT_MARK}」だけの行で区切る。受け止め（かしこまりました等）は1通目だけ・1通は 76〜94字ほど・2通目は中身からそのまま始める（「また」「なお」で始めない）。同じ事を2つの通で繰り返さない`;
 }
 
+/**
+ * 2026-11-12 作業員7（統括役の決め・提案①）: 2通に分けるかを書き手が自分で決める（REPLY_SPLIT_WRITER_SELF=on・既定 off）。
+ *   ブレインの send_sequence で分けさせる形（TWO_MESSAGE_SEQUENCE・v2）は試験で竹内さんの2通以上の番 0/6（ブレインは RR の番を2段・AIX・1通で出す）。
+ *   竹内さん本人の200日（手打ち・従業員の混ざらない番 約970）: 返信1通 74%・返信2通 9%。2通目の役は「別の要件」か「次の一歩」。
+ *   ブレインが通数を決めた番（count≥2）は上の replySplitWriterNote が先＝この1行は出さない。
+ */
+export function replySplitSelfOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.REPLY_SPLIT_WRITER_SELF ?? "").trim().toLowerCase() === "on";
+}
+export function replySplitSelfNote(brainCount: number, env?: Record<string, string | undefined>): string | null {
+  if (!replySplitSelfOn(env) || brainCount >= 2) return null;
+  return `- ✂️ 基本は返信1通（竹内さんの番の74%）。次の2つの時だけ竹内さんは返信を2通に分ける（通と通の間は「${SPLIT_MARK}」だけの行）: `
+    + "①答える要件が2つあり話題が別の時＝1通に1つ（実物: 1通目「かしこまりました！！\\nお送り頂きましたお部屋の募集状況確認させて頂きます！！」／2通目「あわせて〇〇周辺全域から管理費込み10万以下でオススメ出来るお部屋新たにピックアップしてお送りさせて頂きます😊！！」）"
+    + "②答えの後に次の一歩（別の手段・希望を聞く・内覧の誘い）を足す時＝次の一歩は2通目（実物: 1通目「かしこまりました！！\\nお部屋ご案内させて頂きます😊！\\n日曜日のみお休みとなります！！\\n別日如何でしょうか！！」／2通目「オンライン内見させて頂くことも可能となります！！」）。"
+    + "お礼・了承への返し・答えが1つだけの番は分けない。受け止めは1通目だけ・2通目は中身からそのまま始める・同じ事を繰り返さない";
+}
+
 /** 下書きを通に分ける（「---」だけの行で区切る）。空の通は捨てる。印が無ければ1通のまま */
 export function splitReplyDraft(text: string | null | undefined): string[] {
   const lines = String(text ?? "").split(/\r?\n/);
