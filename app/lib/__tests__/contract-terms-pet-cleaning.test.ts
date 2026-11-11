@@ -58,6 +58,9 @@ describe("検出（on）", () => withEnv("on", () => {
   it("退去時の費用の問い", () => {
     eq(detectContractTermTopics("退去時の費用ってかかりますか？"), ["cleaning_fee"]);
     eq(detectContractTermTopics("クリーニング費用はいくらですか？"), ["cleaning_fee"]);
+    // 実物（60e6d3ab 08/10・08/24）
+    eq(detectContractTermTopics("ありがとございます。 これは退去時の必要金額知りたいです。"), ["cleaning_fee"]);
+    eq(detectContractTermTopics("わかりました。 退去時にも同様の費用はかかりますか？ 退去時の費用等教えてください。"), ["cleaning_fee"]);
   });
   it("物件を指した問いは送った物件の契約条件の問い", () => {
     ok(isTermsInquiryOnSentProperty("ここは犬のみですか？"));
