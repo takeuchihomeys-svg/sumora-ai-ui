@@ -22,7 +22,7 @@ const html = read("popup.html"), sp = read("snapshot-popup.js"), mf = JSON.parse
 console.log("■ ① 許可が無い時に目立つボタンが出る（ブレインの左）");
 {
   ok("ボタンがある（#perm-rec-btn）", /id="perm-rec-btn"/.test(html));
-  ok("文字が「🎬 録画を許可」", /🎬 録画を許可/.test(html));
+  ok("文字が「🎬 録画」", /🎬 録画</.test(html));
   ok("**ブレインより前**にある（左側）", (() => {
     const iBtn = html.indexOf('id="perm-rec-btn"');
     const iBrain = html.indexOf('id="brain-toggle"');
@@ -36,11 +36,18 @@ console.log("■ ① 許可が無い時に目立つボタンが出る（ブレ�
     return iBtn > iGroup && iBtn < iGroupEnd;
   })());
   ok("最初から出ている（display:inline-block・JSを待たない）", /id="perm-rec-btn" style="display:inline-block/.test(html));
-  ok("目立つ（オレンジ#f59e0b・太字800・白文字）", /background:#f59e0b;border:none;border-radius:14px;padding:5px 10px;color:#fff;font-size:11px;font-weight:800/.test(html));
+  ok("目立つ（オレンジ#f59e0b・太字800・白文字）", /background:#f59e0b;border:none;border-radius:14px;padding:5px 8px;color:#fff;font-size:11px;font-weight:800/.test(html));
   ok("脈打つ（animation:axlxPermPulse）", /animation:axlxPermPulse/.test(html) && /@keyframes axlxPermPulse/.test(read("styles.css")));
   ok("何のための許可かツールチップに書いてある", /title="画面の録画を許可する/.test(html));
   ok("帯もある（#snap-perm-banner・説明用）", /id="snap-perm-banner"/.test(html));
   ok("中身に「画面の録画を許可してください」と書いてある", /画面の録画を許可してください/.test(html));
+
+  // 2026-11-11 竹内さん「まだでていない」: 狭い小窓で**右に切れていた**のが原因
+  const css = read("styles.css");
+  ok("ヘッダーは折り返す（切らない）", /\.header \{[\s\S]{0,600}flex-wrap: wrap/.test(css));
+  ok("mode-group も折り返す・縮められる", /\.mode-group \{[\s\S]{0,400}flex-shrink: 1/.test(css) && /\.mode-group \{[\s\S]{0,400}flex-wrap: wrap/.test(css));
+  ok("狭い小窓（520px以下）では副題を隠して場所を作る", /@media \(max-width: 520px\) \{[\s\S]{0,120}\.header-sub, \.header-sep \{ display: none; \}/.test(css));
+  ok("ボタンの文字を短くした（🎬 録画）", /🎬 録画</.test(html));
 }
 
 console.log("\n■ ② 押すと許可を頼む");
@@ -48,10 +55,12 @@ console.log("\n■ ② 押すと許可を頼む");
   ok("「許可する」ボタンがある", /id="snap-perm-banner-btn"[\s\S]{0,200}許可する/.test(html));
   ok("押すと ask を呼ぶ（帯）", /snap-perm-banner-btn[\s\S]{0,200}addEventListener\("click", ask\)/.test(sp));
   ok("押すと ask を呼ぶ（ヘッダーのボタン）", /perm-rec-btn[\s\S]{0,200}addEventListener\("click", ask\)/.test(sp));
-  ok("ask が chrome.permissions.request を呼ぶ", /function ask\(\)[\s\S]{0,900}chrome\.permissions\.request\(ORIGINS/.test(sp));
+  ok("ask が chrome.permissions.request を呼ぶ（doAsk 経由）", /function doAsk\(\)[\s\S]{0,1100}chrome\.permissions\.request\(ORIGINS/.test(sp) && /doAsk\(\);/.test(sp.slice(sp.indexOf("function ask"), sp.indexOf("function doAsk"))));
   ok("許可されたらボタンと帯を消す（render(true)）", /if \(ok\) \{ render\(true\); return; \}/.test(sp));
-  ok("許可の状態でボタンの出し入れをする", /recBtn\.style\.display = granted \? "none" : "inline-block"/.test(sp));
-  ok("許可の状態で帯も出し入れする", /banner\.style\.display = granted \? "none" : "flex"/.test(sp));
+  ok("許可の状態でボタンを**いつも出す**（許可済みでも出る＝「でない」が無い）", /if \(recBtn\) \{[\s\S]{0,200}recBtn\.style\.display = "inline-block"/.test(sp));
+  ok("許可済みなら緑の「🎬 OK」・脈打たない", /recBtn\.textContent = "🎬 OK"/.test(sp) && /recBtn\.style\.animation = "none"/.test(sp));
+  ok("未許可ならオレンジの「🎬 録画」・脈打つ", /recBtn\.textContent = "🎬 録画"/.test(sp) && /axlxPermPulse 1\.6s/.test(sp));
+  ok("許可済みで押したら「もう許可済み」と出す", /画面の録画は許可済みです/.test(sp));
   ok("最初はボタンを出しておく（確認を待たない）", /var recBtn0 = el\("perm-rec-btn"\);[\s\S]{0,120}style\.display = "inline-block"/.test(sp));
   ok("chrome.permissions が無い時もボタンを出す（render(false)）", /if \(!chrome\.permissions \|\| !chrome\.permissions\.contains\) \{ render\(false\); return; \}/.test(sp));
 }

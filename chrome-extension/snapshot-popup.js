@@ -36,11 +36,31 @@
     if (el("snap-perm-btn")) el("snap-perm-btn").style.display = granted ? "none" : "inline-block";
     if (box) box.style.display = "flex";
     /**
-     * 2026-11-11 竹内さん「でていない。ブレインの左側にわかりやすいようにだす」:
-     *   未許可の時だけ **ブレインのすぐ左**にオレンジのボタン（#perm-rec-btn）を出す。
-     *   帯（#snap-perm-banner）は補助（下に説明を出す）として残す。
+     * 2026-11-11 竹内さん「まだでていない。ちゃんとでるようにする」:
+     *   ⚠ 旧は「未許可の時だけ出す」作りだったので、**すでに許可済みだと何も出なかった**
+     *     （＝「でていない」に見える）。しかも小窓が狭いと右に切れて見えない事もあった。
+     *   → **いつも出す**。状態で見た目だけ変える:
+     *     未許可 … 🎬 録画を許可（オレンジ・脈打つ・押すと許可を頼む）
+     *     許可済み … 🎬 録画OK（緑・小さい・押すと「許可済み」と出る）
+     *   これで「出ない」が無くなる（押せば今どちらの状態かも分かる）。
      */
-    if (recBtn) recBtn.style.display = granted ? "none" : "inline-block";
+    if (recBtn) {
+      recBtn.style.display = "inline-block";
+      if (granted) {
+        recBtn.textContent = "🎬 OK";
+        recBtn.style.background = "#16a34a";
+        recBtn.style.boxShadow = "0 2px 6px rgba(22,163,74,.45)";
+        recBtn.style.animation = "none";
+        recBtn.title = "画面の録画は許可済みです（操作のたびに画面の写真が残ります）";
+      } else {
+        recBtn.textContent = "🎬 録画";
+        recBtn.style.background = "#f59e0b";
+        recBtn.style.boxShadow = "0 2px 8px rgba(245,158,11,.55)";
+        recBtn.style.animation = "axlxPermPulse 1.6s ease-in-out infinite";
+        recBtn.title = "画面の録画を許可する（操作のたびに画面の写真を残す・PCごとに1回）";
+      }
+    }
+    // 帯（説明）は未許可の時だけ（許可済みなら邪魔しない）
     if (banner) banner.style.display = granted ? "none" : "flex";
     var hint = el("snap-perm-hint");
     if (hint && granted) { hint.style.display = "none"; hint.textContent = ""; }
@@ -60,6 +80,33 @@
 
   /** 許可を頼む（人のクリックの中で呼ぶ）。だめなら手順を出す */
   function ask() {
+    var hint = el("snap-perm-hint");
+    var showHint = function (msg) {
+      if (!hint) return;
+      hint.style.display = "block";
+      hint.textContent = msg;
+    };
+    // 2026-11-11: すでに許可済みなら、押した時に「もう許可済み」と出す（状態が分かるように）
+    try {
+      if (chrome.permissions && chrome.permissions.contains) {
+        chrome.permissions.contains(ORIGINS, function (already) {
+          if (!chrome.runtime.lastError && already) {
+            var b = el("snap-perm-banner");
+            if (b) b.style.display = "flex";
+            showHint("✅ 画面の録画は許可済みです。操作すると自動で写真が残ります（この帯は閉じて大丈夫です）。");
+            var bb = el("snap-perm-banner-btn");
+            if (bb) bb.style.display = "none";
+            return;
+          }
+          doAsk();
+        });
+        return;
+      }
+    } catch (_) {}
+    doAsk();
+  }
+
+  function doAsk() {
     var hint = el("snap-perm-hint");
     var showHint = function (msg) {
       if (!hint) return;
