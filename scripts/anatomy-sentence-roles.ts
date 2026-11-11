@@ -107,7 +107,7 @@ const NG = /申込(フォーマット|書)|本人確認|免許証|マイナン�
       a.n++; inc(a.pat, String(o.pattern).replace(/^greet>/, "")); inc(a.lead, String(o.lead_to)); inc(a.after, String(o.after));
     }
     const top = (m: Map<string, number>, n = 3) => [...m.entries()].sort((x, y) => y[1] - x[1]).slice(0, n).map(([k, v]) => `${k} ${v}`).join("・");
-    console.log(`# 文ごとの役目 ${label}: ${out.length}通・割れた文 ${out.reduce((s, o) => s + Number(o.splitSentences), 0)}/${out.reduce((s, o) => s + (o.sentences as string[]).length, 0)}${process.argv.includes("--apply") ? "・DB に書いた" : "・書いていない"}`);
+    console.log(`# 文ごとの役目 ${label}: ${out.length}通・割れた文 ${out.reduce((s, o) => s + Number(o.splitSentences), 0)}/${out.reduce((s, o) => s + (o.sentences as string[]).length, 0)}（うち2回以上読めなかった通の文 ${out.filter((o) => Number(o.failedReads) >= 2).reduce((s, o) => s + Number(o.splitSentences), 0)}）${process.argv.includes("--apply") ? "・DB に書いた" : "・書いていない"}`);
     for (const [k, a] of [...agg.entries()].sort((x, y) => y[1].n - x[1].n)) console.log(`  ${k} ${a.n}通: 型 ${top(a.pat)}｜誘導 ${top(a.lead)}｜その後 ${top(a.after)}`);
   } finally { await h.finish(); }
 })().catch((e) => { console.error(e); process.exitCode = 1; });

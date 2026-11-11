@@ -19,7 +19,7 @@ export const SENTENCE_ROLES = [
   "apply",    // 申込・抑えるにつなげる
   "estimate", // 見積につなげる
   "ask_send", // 物件を送ってもらう
-  "keep",     // 新着の約束・関係をつなぐ（ピックアップしてお送り・全力でサポート）
+  "keep",     // 新着の約束・関係をつなぐ（ピックアップしてお送り・気になる点はいつでも）。全力でサポートは trust（竹内さん e94d6d27「信頼を得る＝サポートの姿勢」）
   "promise",  // 確かめる約束（募集状況・設備を確認させて頂きます）
   "close",    // 締め（何卒よろしくお願い致します・お気軽にお申し付けください）
 ] as const;
@@ -58,7 +58,17 @@ export function splitSentences(body: string): string[] {
 export const ROLES_SYSTEM = [
   "あなたは賃貸仲介会社の社長（竹内さん）の LINE の返信を、1文ずつ読み解く担当です（文は直さない）。竹内さんの1通は、役目の違う文の組み合わせです。",
   `文の番号ごとに役目を1つ選ぶ: ${SENTENCE_ROLES.map((r) => `${r}=${ROLE_LABEL[r]}`).join("／")}。`,
-  "境目: お客様の問いに直接答えた文＝answer（1通に無いこともある）／問われていない不安（先に取られる・審査・費用・入居日）に答えた文＝worry／弊社がする手間・事実の裏付け・サポートの姿勢で安心させる文＝trust／申込や内覧の心理的・費用的な壁を低くする文（1部屋だけの募集・キャンセル料がかからない・割引・抑えてから内覧できる）＝barrier／内覧の誘い・日程を聞く＝viewing／申込・お部屋を抑える誘い＝apply／御見積の誘い・送る約束＝estimate／気になる物件を送ってほしい＝ask_send／ピックアップ・新着を送る約束・全力でサポート＝keep／管理会社に確かめる約束＝promise。",
+  "境目: お客様の問いに直接答えた文＝answer（1通に無いこともある）／問われていない不安（先に取られる・審査・費用・入居日）に答えた文＝worry／弊社がする手間・事実の裏付け・サポートの姿勢で安心させる文＝trust／申込や内覧の心理的・費用的な壁を低くする文（1部屋だけの募集・キャンセル料がかからない・割引・抑えてから内覧できる）＝barrier／内覧の誘い・日程を聞く＝viewing／申込・お部屋を抑える誘い＝apply／御見積の誘い・送る約束＝estimate／気になる物件を送ってほしい＝ask_send／ピックアップ・新着を送る約束・条件を広げて探す約束・気になる点はいつでもご連絡を＝keep／管理会社に確かめる約束（確認出来次第ご連絡も同じ）＝promise。",
+  // 2026-11-11 作業員5: 3回読みで割れた 41/743 文を Claude が読み直して足した境目（割れ方の型 A〜H）
+  "境目の決まり（割れやすい所）:",
+  "A 文の途中で切れた行（終わりの記号が無い行・物件名だけの行・「・〇〇」の箇条書き・「〜にて」「〜ですので」で終わる行）は、続く文（無ければ前の文）と同じ役目。",
+  "B 「全力でサポートさせて頂きます」「最善のサポート」はサポートの姿勢＝trust（keep ではない）。ピックアップ・新着を送る約束が入っていれば keep。",
+  "C 「ごゆっくりご検討ください」「ごゆっくりご確認頂けますと幸いです」のように急かさず待つ文、「〜とのこと、かしこまりました」「ご連絡頂きありがとうございます」は uke。",
+  "D 答えた事の続き（内訳・例外・手数料・仕組みの説明）は answer。barrier は、申込・内覧の壁を自分から下げに行く文だけ（キャンセル料がかからない・割引・1部屋だけの募集・問い合わせが多く埋まる可能性＝先に抑える理由）。",
+  "E 1つの文に壁を下げる言葉と誘い（推奨・如何でしょうか・抑えさせて頂きます）が両方あれば、誘いの役目（apply・viewing）を取る。",
+  "F 「お気軽にお申し付けください／ご連絡ください」は、何を（ご内覧・お申込・気になる点）と付いていればその役目（viewing・apply・keep）、何も付いていなければ close。1通の途中の「何卒よろしくお願い致します」も close。",
+  "G 頼まれていない物件の推し・事実（初期費用をかなり抑えられる・好条件・〇月退去予定・号室の名前）は、その文が次に導く役目（退去予定→内覧の時期なら viewing／抑えるなら apply）、導く先が無ければ trust（事実の裏付け）。",
+  "H 条件・ご都合・限度額をお客様に聞く文は ask_send（お客様から材料をもらう）。電話の打合せの時間を聞く文も ask_send。promise は管理会社・オーナーに確かめる約束だけ。",
   "書き出す物: roles（文の番号順に {\"i\":番号,\"role\":\"…\",\"why\":\"なぜこの言い方か（25字以内）\"}）・main_role（この1通で一番大事な文の役目）・lead_to（次に何へつなげたか: viewing 内覧／apply 申込・抑える／estimate 見積／ask_send 物件を送ってもらう／keep 新着・関係をつなぐ／answer_only 答えて終わり／none）・background（1通全体の背景＝何を一番にして、どこへ進めたいか・50字以内）。",
   "名前は YUMA、伏せた所は〈〉のまま。推測で事実を足さない。出力は JSON だけ: {\"roles\":[{\"i\":1,\"role\":\"…\",\"why\":\"…\"}],\"main_role\":\"…\",\"lead_to\":\"…\",\"background\":\"…\"}",
 ].join("\n");
@@ -90,8 +100,9 @@ const majority = <T extends string>(xs: ReadonlyArray<T | null | undefined>): { 
   const need = Math.floor(xs.length / 2) + 1;
   return top[0][1] >= need ? { v: top[0][0], split: false } : { v: null, split: true };
 };
-/** 3回読みの多数（文ごと・main_role・lead_to）。割れた文は role=null。背景は多数の役目と同じ回の why を採る */
-export function majorityRoles(reads: ReadonlyArray<RoleRead | null>, n: number): { roles: Array<{ i: number; role: SentenceRole | null; why: string | null }>; main_role: SentenceRole | null; lead_to: LeadTo | null; background: string | null; splitSentences: number } {
+/** 3回読みの多数（文ごと・main_role・lead_to）。割れた文は role=null。背景は多数の役目と同じ回の why を採る。
+ *  failedReads＝壊れて読めなかった回の数（11/11: 3回中2回壊れると全文が「割れた」に入ってしまう＝割れと読めないを分けて数える） */
+export function majorityRoles(reads: ReadonlyArray<RoleRead | null>, n: number): { roles: Array<{ i: number; role: SentenceRole | null; why: string | null }>; main_role: SentenceRole | null; lead_to: LeadTo | null; background: string | null; splitSentences: number; failedReads: number } {
   const ok = reads.filter(Boolean) as RoleRead[];
   const roles = Array.from({ length: n }, (_, k) => {
     const i = k + 1;
@@ -105,6 +116,7 @@ export function majorityRoles(reads: ReadonlyArray<RoleRead | null>, n: number):
     roles, main_role: majority(reads.map((r) => r?.main_role ?? null)).v, lead_to: lead,
     background: ok.find((r) => r.lead_to === lead)?.background ?? ok[0]?.background ?? null,
     splitSentences: roles.filter((r) => !r.role).length,
+    failedReads: reads.length - ok.length,
   };
 }
 
