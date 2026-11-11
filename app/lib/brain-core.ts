@@ -281,7 +281,7 @@ import { brainOpenerMetaEnabled, normalizeBrainOpener } from "@/app/lib/opener-r
 import { brainFastSlowEnabled, brainSlowSecondEnabled, decideTurnDifficulty, fastDrops, fastEscapeReason, routeFingerprint, pickMajority, BRAIN_FAST_SLOW_VERSION, type FastSlowRecord } from "@/app/lib/brain-fast-slow"; // 2026-10-22 慣れた事は速く・難しい事はじっくり
 // 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
 import { mindsetFreshOutputItem, emotionChoicesText, normalizeMindset, mindsetEmotionLabel, customerMindsetEnabled, type CustomerMindset } from "@/app/lib/customer-mindset";
-import { turnReadMode, turnReadOutputItem, normalizeTurnRead, type TurnRead } from "@/app/lib/turn-read";
+import { turnReadMode, turnReadOutputItem, normalizeTurnRead, turnReadFocusOn, normalizeTurnFocus, type TurnRead, type TurnFocus } from "@/app/lib/turn-read";
 
 /** 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番の turn_contract の asks（promise→reply）をそろえる（PROCEDURE_GENERAL_ASK_REPLY・11/11 既定 on・止める =off） */
 function procedureAlignContract<T extends { asks?: unknown }>(raw: T | null, replyTurn: boolean, conversationId: string): T | null {
@@ -498,6 +498,7 @@ export type SuggestedAixMeta = {
   /** 2026-09-27: customer-state で段階を補正した時だけ LLM の元の値（null は "null"）。補正の件数と前後を数えるため（brain-stage.ts） */
   checkpoint_stage_llm?: string;
   customer_intent?: "question" | "consultation" | "desire" | "decision" | "positive" | "negative" | "chat" | null;  // 顧客の今回の問い合わせ意図
+  turn_focus?: TurnFocus;                // 2026-11-11 作業員14: 組み合わせた理解（主・従）・TURN_READ_FOCUS=on の時だけ
   turn_read?: TurnRead;                  // 2026-11-11 作業員14: 対象×意図×気持ち×直前の誘導への答え（TURN_READ=on の時だけ・app/lib/turn-read.ts）
   latent_intent?: string | null;         // 送信動機・潜在意識の自由記述（なぜ今送ってきたか・表面の裏の不安/期待。20〜50字・根拠なければnull）
   // 2026-09-09 Fable5 往復文脈: 最新メッセージで顧客が提案物件に述べた懸念（topic=階数/広さ/費用/審査 等・object=顧客の語）。
@@ -6243,6 +6244,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       latent_intent: latentIntent,
       // 2026-11-11 作業員14（KB 5cb0dd4c・P0 ecd7b961 の子）: お客様の一通の対象×意図×気持ち×直前の誘導への答え（TURN_READ=on の時だけ出させる・記録は digest.tr）
       turn_read: turnReadMode() === "on" ? (normalizeTurnRead((parsed as { turn_read?: unknown }).turn_read) ?? undefined) : undefined,
+      // 2026-11-11 作業員14（KB ee7ddf07）: 組み合わせた理解（主・従）。TURN_READ=on かつ TURN_READ_FOCUS=on の時だけ（記録は digest.tf）
+      turn_focus: turnReadFocusOn() ? (normalizeTurnFocus((parsed as { turn_focus?: unknown }).turn_focus) ?? undefined) : undefined,
       customer_concern: customerConcern,
       // 内部伝搬: SOURCE_ACCEPT_RATE ゲート抑制の事実と、1回目の signalAix 結果の持ち回り
       // （analyzeAndSaveBrainMeta の direction 更新でのバイパス防止＋二重実行回避に使用）

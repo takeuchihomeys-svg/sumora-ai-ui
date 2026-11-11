@@ -2,7 +2,7 @@
 // 本文は竹内さんの番（scripts/audit-turn-read-1111.ts の 79f97cea・2cb0feb7・eb4e5d3b・伏せた物）から
 import { turnReadMode, leadCandidatesOf, lastStaffBurst, buildPrevLeadNote, normalizeTurnRead, turnReadDigest, askAboutDigest, turnReadDigestExtra, turnReadOutputItem } from "../turn-read";
 import { brainDecisionDigestExtra } from "../brain-decision-ledger";
-import { normalizeMoodRead, MOOD_OBJECTS } from "../turn-read";
+import { normalizeMoodRead, MOOD_OBJECTS, turnReadFocusOn, normalizeTurnFocus, turnFocusDigest } from "../turn-read";
 import { buildMoodFlowNote } from "../customer-mood-flow";
 import { isAckOnlyTurn } from "../ack-topic-scope";
 let passed = 0, failed = 0;
@@ -52,7 +52,8 @@ ok(trM?.mood?.object === "予算が合わない" && trM.mood.degree === "強い"
 ok(turnReadDigest(trM)!.endsWith("|興味が薄い/予算が合わない/強い"), "digest.tr に mood");
 ok(normalizeMoodRead({ base: "刺さっている", object: "眺望", degree: "最高" })?.object === "その他" && normalizeMoodRead({ base: "刺さっている", object: "眺望", degree: "最高" })?.degree === "中", "表に無い object・degree");
 ok(normalizeMoodRead({ base: "嬉しい" }) === null, "12種に無い base は落とす");
-ok(Object.keys(MOOD_OBJECTS).length === 12 && turnReadOutputItem({ TURN_READ: "on" }).includes('"mood"'), "12種すべてに object・on の欄に mood");
+ok(Object.keys(MOOD_OBJECTS).length === 12 && !turnReadOutputItem({ TURN_READ: "on" }).includes('"mood"'), "12種すべてに object・mood はブレインの欄に入れない（q406・記録だけの読みで付ける）");
+ok(turnReadOutputItem({ TURN_READ: "on" }).includes("印刷されている") && turnReadOutputItem({ TURN_READ: "on" }).includes("⑧"), "フォームは⑧の欄の言葉だけ・印刷の定型文は拾わない");
 // 持ち越しの直し: お礼・了承だけの一通は前回までの気持ちを並べない
 const flowAck = buildMoodFlowNote({ changes: ["返事が早い"], signals: {}, reaction: null } as never, { prevEmotions: ["安くしたい", "刺さっている"], ackOnly: true });
 ok(flowAck.includes("引き継がない") && !flowAck.includes("安くしたい→"), "ackOnly は前回の気持ちを並べない");
@@ -69,6 +70,15 @@ const lg = turnReadDigestExtra(meta, { TURN_READ: "log" });
 ok(lg.ta?.[0] === "viewing_day:X 101" && lg.li === "内覧は楽しみだが審査が不安", "log は ta・li");
 ok(!("tr" in brainDecisionDigestExtra(meta, { TURN_READ: "off" })) && !("ta" in brainDecisionDigestExtra(meta, { TURN_READ: "off" })), "配線: off の digest に足さない");
 ok(brainDecisionDigestExtra(meta, { TURN_READ: "log" }).hasOwnProperty("ta"), "配線: log で digest.ta");
+
+// 組み合わせた理解（主・従・KB ee7ddf07）: q406 の実物の形
+ok(!turnReadFocusOn({ TURN_READ: "on" }) && !turnReadFocusOn({ TURN_READ_FOCUS: "on" }) && turnReadFocusOn({ TURN_READ: "on", TURN_READ_FOCUS: "on" }), "主・従は TURN_READ=on と TURN_READ_FOCUS=on の両方の時だけ");
+ok(!turnReadOutputItem({ TURN_READ: "on" }).includes("turn_focus") && turnReadOutputItem({ TURN_READ: "on", TURN_READ_FOCUS: "on" }).includes('"turn_focus"'), "欄は FOCUS の時だけ");
+const tf = normalizeTurnFocus({ main: { about: "内覧の日・場所", intent: "日程の調整・連絡", move: "10/24 12:00 を確定" }, sub: { about: "手続き・審査", intent: "手続き・審査の質問", move: "後で答える" } });
+ok(turnFocusDigest(tf) === "内覧の日・場所×日程の調整・連絡>手続き・審査×手続き・審査の質問:後で答える", "digest.tf の形");
+ok(normalizeTurnFocus({ main: { about: "内覧", intent: "x" } }) === null && normalizeTurnFocus({ main: { about: "探す条件", intent: "条件を伝える・言い直す" }, sub: { about: "?" } })?.sub === null, "外れた値は落とす");
+ok(normalizeTurnFocus({ main: { about: "探す条件", intent: "条件を伝える・言い直す" }, sub: { about: "手続き・審査", intent: "手続き・審査の質問", move: "あとで" } })?.sub?.move === "後で答える", "扱いの外れは既定の後で答える");
+ok(turnReadDigestExtra({ turn_focus: { main: { about: "探す条件", intent: "条件を伝える・言い直す" } } }, { TURN_READ: "log" }) && (turnReadDigestExtra({ turn_focus: { main: { about: "探す条件", intent: "条件を伝える・言い直す" } } }, { TURN_READ: "log" }) as Record<string, unknown>).tf === "探す条件×条件を伝える・言い直す", "digest に tf");
 
 console.log(`turn-read: ${passed} 通過・${failed} 失敗`);
 if (failed) process.exit(1);
