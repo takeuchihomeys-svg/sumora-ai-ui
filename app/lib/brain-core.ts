@@ -92,6 +92,7 @@ import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
 import { sendSequenceOn, sanitizeSendSequence, replyCountOf, SEND_SEQUENCE_FIELD } from "@/app/lib/send-sequence";
+import { checkQuestionBrainFirstOn, checkQuestionBrainRoute } from "@/app/lib/check-question-brain-first";
 import { resolveTwoStageOrDirect, screeningNoRewriteEnabled, sentReactionNoRewriteEnabled, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { holdSoftNextMaterial, rule8HoldNote, rule8HoldDirectionSuffix } from "@/app/lib/hold-soft-next";
@@ -5113,7 +5114,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       const sentReactionAsks = (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: string; about?: string | null }>;
       const sentReactionBrainReply = /^(?:|null|none)$/i.test(String((parsed as { aix?: unknown }).aix ?? "").trim())
         && sentReactionAsks.length > 0 && sentReactionAsks.every((a) => a.about === "reaction_to_sent" && (a.route === "reply" || a.route === "none"));
-      const twoStageRes = resolveTwoStageOrDirect({
+      const twoStageArgs: Parameters<typeof resolveTwoStageOrDirect>[0] = {
         screeningBrainReply,
         sentReactionBrainReply,
         // 2026-11-05 作業員1（8959・q212）: 開いているピックアップの約束（台帳の最後の行は物件の送付と読む事がある＝ackRightAfterPromise が false になる）
@@ -5159,8 +5160,27 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           if (ownPropertyReturnedAll && ownPropertyReturnedEstimateOn()) return null;
           return n > 0 ? { ask: broughtPropertyAsk(routeFix1020("brought_text") ? broughtTypedText(turnMsgs) : (unrepliedTurn.text ?? "")), count: n, titleOnly: broughtTitleOnly(props) } : null; // 10/13 titleOnly: SNS・TikTok の題だけ（two-stage）
         })(),
-      });
+      };
+      let twoStageRes = resolveTwoStageOrDirect(twoStageArgs);
       twoStage = twoStageRes.verdict;
+      // 2026-11-11 作業員7（TWO_STAGE_CHECK_QUESTION_BRAIN_FIRST・既定 off・P0 9eb6aa9c）: 聞かれた事の確認の約束（check_question）は、ブレイン自身の aix が空で
+      //   依頼に確認の約束が無い番には当てない＝ブレインの道（ピックアップの約束→2段:pickup／依頼が全部 reply・none→返信）を取る（app/lib/check-question-brain-first.ts）
+      if (checkQuestionBrainFirstOn() && twoStage && /check_question/.test(twoStage.source) && !twoStageRes.direct && !isPostApplyStatus(convStatus)) {
+        const tcCq = (parsed as { turn_contract?: unknown }).turn_contract;
+        const cqRoute = checkQuestionBrainRoute({ rawAix: (parsed as { aix?: unknown }).aix, contract: normalizeBrainTurnContract(tcCq), promisesPickup: brainContractPromisesPickup(tcCq) });
+        if (cqRoute) {
+          addDemoted(demotedOverrides, { family: "two_stage_promise", src: "rule:two_stage_promise(check_question)/brain_first", would: "check", brain: cqRoute === "pickup" ? "two_stage:pickup" : "reply" });
+          console.log(JSON.stringify({ tag: "brain:check-question-brain-first", conversationId, route: cqRoute, from: finalAix }));
+          if (cqRoute === "pickup") {
+            twoStageRes = resolveTwoStageOrDirect({ ...twoStageArgs, finalAix: "property_send", decisionSource: "brain:contract_promise_pickup" });
+            twoStage = twoStageRes.verdict;
+            finalAix = "property_send";
+            decisionSource = "brain:contract_promise_pickup";
+          } else {
+            twoStage = null; finalAix = null; sceneSignalCheckPattern = null; decisionSource = "brain:check_question_brain_first";
+          }
+        }
+      }
       // 弱い所 349: 書き換えをやめた番は材料（demoted_overrides）とログに残す（4-4 と同じ形）
       if (screeningBrainReply && screeningNoRewriteEnabled() && !twoStage && !twoStageRes.direct) {
         addDemoted(demotedOverrides, { family: "two_stage_promise", src: "rule:two_stage_promise(check_question)/screening", would: "check", brain: "reply" });
