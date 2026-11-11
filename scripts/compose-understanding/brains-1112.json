@@ -1,0 +1,1661 @@
+[
+ {
+  "id": "q022",
+  "at": "2026-11-11T10:04:59.232Z",
+  "brain": {
+   "current_property": "カーサピエント 203号室",
+   "reply_mode": "auto_reply",
+   "reply_direction": "エアコン確認のお礼を受け止め、検討を見守る待ちの姿勢で締める。物件が刺さっているため、扉の文にお申込みでお部屋を抑える柔らかい1文を添える",
+   "avoid_topics": [
+    "見積書",
+    "初期費用"
+   ],
+   "reply_opener": "はい",
+   "appeal_timing": {
+    "kind": "apply",
+    "level": "suggest",
+    "reason": "検討します・御見積書を送った後の検討（R 10/05 の形）"
+   },
+   "hesitancy_pattern": "thinking",
+   "turn_contract": {
+    "situation": "見積書とエアコン確認結果を報告済み。お客様は検討すると返答",
+    "background": "カーサピエント203号室の見積書送付とエアコン確認結果を報告した直後。お客様は確認への感謝と「検討します」と保留の姿勢を示した",
+    "asks": [
+     {
+      "quote": "確認していただきありがとうございます！検討します！",
+      "kind": "feeling",
+      "route": "reply",
+      "answer": "お礼を受け取り、検討を見守る形で締める",
+      "basis": "conversation",
+      "aix": null,
+      "about": "reaction_to_sent",
+      "property": "カーサピエント 203号室",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": true,
+    "must_not": [],
+    "proposals": [],
+    "feeling": {
+     "kind": "positive",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "普通の依頼",
+    "anxiety": null,
+    "hesitation": "費用で迷う",
+    "decideGap": {
+     "point": "初期費用",
+     "solve": "b",
+     "property": "カーサピエント 203号室",
+     "quote": "28万くらいやったんですけどもっと安くなる"
+    }
+   }
+  }
+ },
+ {
+  "id": "q023",
+  "at": "2026-11-11T13:31:31.982Z",
+  "brain": {
+   "current_property": "S-RESIDENCE難波大国町domina 207号室",
+   "reply_mode": "auto_reply",
+   "reply_direction": "内覧キャンセルの申し出を受け止め、会社の移動先が決まったらお部屋探しを再開できるよう再開の連絡を待つ",
+   "key_topics": [
+    "内覧キャンセルの了承",
+    "会社の移動先が確定後の再開案内",
+    "再開を待つ姿勢"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "内覧日程の再調整",
+    "新規物件ピックアップ",
+    "申込誘導",
+    "キャンセルへの問い詰め"
+   ],
+   "customer_questions": [
+    "15日の内覧をキャンセルしてもいいですか？"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "申込の手続きに入った後"
+   },
+   "hesitancy_pattern": "timeline",
+   "turn_contract": {
+    "situation": "内覧確定後のキャンセル依頼を了承し、再開連絡を待つ段階",
+    "background": "11/15(日)17:00にS-RESIDENCE難波大国町domina 207号室の内覧を確定していたが、会社の移動先が変わる可能性が出たため内覧キャンセルを申し出た。",
+    "asks": [
+     {
+      "quote": "15日内見予約させてもらっていたのですが、会社の移動先が変わるかもしれなくて一旦",
+      "kind": "request",
+      "route": "reply",
+      "answer": "キャンセルを了承し、移動先確定後に再開できるよう伝える",
+      "basis": "conversation",
+      "aix": null,
+      "about": "viewing_day",
+      "property": "S-RESIDENCE難波大国町domina 207号室",
+      "when": "viewing_day",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "キャンセル理由のしつこい確認",
+     "内覧日の再提案",
+     "新規物件送付"
+    ],
+    "proposals": [],
+    "feeling": {
+     "kind": "apologetic",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q025",
+  "at": "2026-11-11T10:06:11.073Z",
+  "brain": {
+   "current_property": "グランパシフィック難波元町 5C",
+   "reply_mode": "auto_reply",
+   "reply_direction": "最新送付物件への反応が「検討してみます」の保留のため、押さずに感謝を認めて新着待ちの姿勢で1通締める。アイスタッフからは検討を見守り、新着が出次第連絡する旨を添える",
+   "key_topics": [
+    "新着物件が出次第お送りする旨"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "物件の再推奨",
+    "内覧日の催促",
+    "申込誘導"
+   ],
+   "next_steps": [
+    "Step1（今すぐ）: 返信で「検討します」の意向を穏やかに受け止める",
+    "Step2: 新着が募集に出次第お送りする旨を添えて、押さずに閉じる",
+    "Step3: 顧客からの次アクションを待つ（催促しない）"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "viewing",
+    "level": "suggest",
+    "reason": "検討します・今ご内覧頂ける部屋"
+   },
+   "hesitancy_pattern": "thinking",
+   "turn_contract": {
+    "situation": "グランパシフィック難波元町5Cをオススメした直後にお客様が検討を表明。内覧誘導済みでボールは相手側",
+    "background": "11/11にグランパシフィック難波元町5Cをオススメ送信した直後、顧客が「検討してみます」と返した。直近スタッフ受信は内覧誘導メントが既に送付済みで、顧客はその回答として保留の意向",
+    "asks": [
+     {
+      "quote": "検討してみます",
+      "kind": "feeling",
+      "route": "reply",
+      "answer": "受け止めと新着連絡の約束",
+      "basis": "conversation",
+      "aix": null,
+      "about": "reaction_to_sent",
+      "property": "グランパシフィック難波元町 5C",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": true,
+    "must_not": [
+     "内覧の再度の打診",
+     "申込を促す表現",
+     "物件の再説明"
+    ],
+    "proposals": [],
+    "feeling": null
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "迷い",
+    "anxiety": null,
+    "hesitation": "急がない・保留",
+    "decideGap": null
+   }
+  }
+ },
+ {
+  "id": "q041",
+  "at": "2026-11-10T19:22:38.267Z",
+  "brain": {
+   "reply_mode": "auto_reply",
+   "two_stage": "check",
+   "reply_direction": "お客様に聞かれた事に答える返信にする。会話・物件の資料・会社の事実に答えがあればそれで答える（確認の約束にしない）。無い時だけ聞かれた事そのもの（中身を具体的に・物件の事なら物件名も）を確認すると約束する（聞かれていない募集状況は書かない・誰に確認するかは書かない・結びは「確認出来次第ご連絡させて頂きます！！」）同じ発言の他のご希望・ご質問にも一言ずつ応える（お客様がはっきり書いた事だけ・頼まれていない内覧・申込の一文は足さない）。",
+   "key_topics": [
+    "聞かれた事への答え（無ければその事の確認の約束）"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "家賃交渉",
+    "他物件の提案",
+    "内覧日程の調整"
+   ],
+   "customer_questions": [
+    "4階の物件は早くて何日から入居できるか？"
+   ],
+   "next_steps": [
+    "Step1: Luxe難波WEST 403号室の退去予定日と入居可能日を管理会社に電話で確認する",
+    "Step2: AIXボタン【確認した（条件・交渉）→入居日について】を押す",
+    "Step3: 確認結果をAIXで送信し、12/19入居可能なら申込誘導を行う"
+   ],
+   "appeal_timing": {
+    "kind": "none",
+    "level": "suggest",
+    "reason": "その他"
+   },
+   "turn_contract": {
+    "situation": "403号室の入居可能日未確認、顧客は申込意思あり",
+    "background": "顧客がLuxe難波WEST 403号室に強い興味を示し「抑えて欲しい」と申込意思を表明。12/19入居を希望しているが、403号室の正確な入居可能日が未確認。",
+    "asks": [
+     {
+      "quote": "4階の物件は早くて何日から入居できるか？",
+      "kind": "question",
+      "route": "promise",
+      "answer": "確認しご連絡",
+      "basis": "conversation",
+      "aix": "property_check_result",
+      "about": "property_equipment",
+      "property": "Luxe難波WEST 403号室",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "入居可能日の断定",
+     "未確認情報の提示"
+    ],
+    "proposals": [],
+    "feeling": null
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q055",
+  "at": "2026-11-10T19:27:43.379Z",
+  "brain": {
+   "current_property": "アーバネックス堺筋本町 501号室",
+   "reply_mode": "aix",
+   "action": "viewing_invite",
+   "reply_direction": "「アーバネックス堺筋本町501号室気になります」への返信として、お礼を伝え、このお部屋を内覧へ進めるために候補日を出します。締めに内覧の訴求「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」を1文入れる（お客様は前向き・今ご内覧頂けるお部屋）",
+   "key_topics": [
+    "内覧の候補日を出す",
+    "空室のお部屋であることを伝える"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用"
+   ],
+   "next_steps": [
+    "Step1（今すぐ）: Vinoプレジオ本町501号室を勧めた返信に、アーバネックス堺筋本町501号室への興味を優先して応える",
+    "Step2: AIXボタン内覧日調整を押す",
+    "Step3: 内覧日時が決まったら会話を進める"
+   ],
+   "appeal_timing": {
+    "kind": "viewing",
+    "level": "must",
+    "reason": "前向きな反応（評価）・前向きな反応・今ご内覧頂ける部屋"
+   },
+   "turn_contract": {
+    "situation": "お客様がアーバネックス堺筋本町501号室に興味を示した",
+    "background": "7件の物件を送り、1件をオススメした直後、お客様が別の物件「アーバネックス堺筋本町」に興味を示した",
+    "asks": [
+     {
+      "quote": "アーバネックス気になります！",
+      "kind": "feeling",
+      "route": "aix",
+      "answer": null,
+      "basis": "conversation",
+      "aix": "viewing_invite",
+      "about": "reaction_to_sent",
+      "property": "アーバネックス堺筋本町 501号室",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [],
+    "proposals": [],
+    "feeling": {
+     "kind": "positive",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "ad,cp,wr,ck,s2",
+   "aix_desk": {
+    "mode": "shadow",
+    "brain": "viewing_invite/通常",
+    "cands": [
+     "viewing_invite/通常",
+     "meeting_place"
+    ],
+    "pick": "viewing_invite/通常",
+    "also": [],
+    "sb": null,
+    "why": "お客様は「アーバネックス気になります」と物件への興味を示したが、内覧の日時指定はまだ無い。内覧希望（日時なし）なので、候補日を出す内覧調整が先。物件は送付済みで募集中の確認も済んでいるため、物件確認したや見積書送るではない。",
+    "changed": false
+   }
+  }
+ },
+ {
+  "id": "q057",
+  "at": "2026-11-11T12:08:50.817Z",
+  "brain": {
+   "current_property": "BLANCOSTA SQUARE 204号室",
+   "reply_mode": "auto_reply",
+   "two_stage": "check",
+   "reply_direction": "お客様が内覧を希望しているが、そのお部屋は退去予定（入居中）でまだ内覧できるか分からない。候補日はまだ出さず、管理会社に内覧開始日（ご内覧可能日）を確認すると約束する返信にする（実際の送信の形「かしこまりました😊！！〇〇（物件名）退去予定のお部屋となりますので、管理会社に内覧開始日確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」・物件名は会話から分かる時だけ・退去予定日や内覧開始日・候補日は書かない（確認の後で AIX【内覧調整】））同じ発言の他のご希望・ご質問にも一言ずつ応える（お客様がはっきり書いた事だけ・頼まれていない内覧・申込の一文は足さない）。",
+   "key_topics": [
+    "ご内覧可能か確認する約束",
+    "候補日の提案",
+    "一週間以内の期限を意識した日程調整"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "募集終了物件の再提案",
+    "御見積書の再送",
+    "日時の断定"
+   ],
+   "customer_questions": [
+    "内見はできない感じってことですかね？"
+   ],
+   "next_steps": [
+    "Step1（今すぐ）: 管理会社にBLANCOSTA SQUARE 204号室の内覧可能時期を確認する",
+    "Step2: AIXボタン内覧日調整を押す",
+    "Step3: 内覧可能な候補日を提示しお客様の都合を確認する"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "viewing",
+    "level": "suggest",
+    "reason": "内覧の希望（今ご内覧頂ける部屋）＝受ける"
+   },
+   "turn_contract": {
+    "situation": "BLANCOSTA SQUARE 204号室は退去予定で募集中。内覧可能時期が未確認",
+    "background": "BLANCOSTA SQUARE 204号室が退去予定で募集中と伝え、御見積書を送った直後。お客様は一週間以内に決めたいと急いでおり、内見の可否を質問している",
+    "asks": [
+     {
+      "quote": "内見はできない感じってことですかね？",
+      "kind": "question",
+      "route": "promise",
+      "answer": null,
+      "basis": null,
+      "aix": "viewing_invite",
+      "about": "viewing_day",
+      "property": "BLANCOSTA SQUARE 204号室",
+      "when": "viewing_day",
+      "whose": "company",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "内見不可と断定する",
+     "募集終了物件の再提案",
+     "御見積書の再送"
+    ],
+    "proposals": [
+     "内覧候補日を提示し日程を調整する"
+    ],
+    "feeling": {
+     "kind": "hurried",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "急いでいる",
+    "anxiety": null,
+    "hesitation": null,
+    "decideGap": {
+     "point": "入居日・時期",
+     "solve": "a",
+     "property": "BLANCOSTA SQUARE 204号室",
+     "quote": "内見はできない感じってことですかね？"
+    }
+   }
+  }
+ },
+ {
+  "id": "q063",
+  "at": "2026-11-11T10:09:38.210Z",
+  "brain": {
+   "current_property": "CRESTTAPP野田 204号室",
+   "reply_mode": "auto_reply",
+   "reply_direction": "204号室は2階のため、虫が気になる場合は7階以上のお部屋がオススメと即答し、高層階の新着も並行して探す旨を伝えて反応を待つ。",
+   "key_topics": [
+    "虫の質問に7階以上が有効と即答",
+    "高層階の新着を並行して探す提案"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "内覧の催促",
+    "申込の催促",
+    "敷礼なしの話"
+   ],
+   "customer_questions": [
+    "2階の部屋は虫が入ってくるか（204号室を念頭に）"
+   ],
+   "next_steps": [
+    "虫の質問に7階以上が少ないと即答し、高層階の物件も探すと伝える",
+    "204号室・1001号室の反応を待つ",
+    "新着の高層階物件が出次第ピックアップする"
+   ],
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "質問＝答えるだけ"
+   },
+   "customer_concern": {
+    "topic": "階数",
+    "object": "2階だと虫とかって入ってきますかね？😭"
+   },
+   "turn_contract": {
+    "situation": "204号室・1001号室を拝見中で、204号室の2階という条件に虫の心配を示している",
+    "background": "オンライン内覧済みで、11/9に送ったCRESTTAPP野田の204号室・1001号室を拝見すると返信した直後。204号室が2階のため、虫の侵入を心配して質問している。",
+    "asks": [
+     {
+      "quote": "2階だと虫とかって入ってきますかね？😭",
+      "kind": "question",
+      "route": "reply",
+      "answer": "7階以上ならほぼ入らないが、2階は入る可能性がある",
+      "basis": "company_fact",
+      "aix": null,
+      "about": "property_equipment",
+      "property": "CRESTTAPP野田 204号室",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "2階は虫が入らないと断言する",
+     "確認させて頂きますと保留にする"
+    ],
+    "proposals": [
+     "高層階の新着も並行して探す"
+    ],
+    "feeling": {
+     "kind": "apologetic",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "普通の依頼",
+    "anxiety": {
+     "target": "物件の中身",
+     "direction": "前向き"
+    },
+    "hesitation": null,
+    "decideGap": null
+   }
+  }
+ },
+ {
+  "id": "q064",
+  "at": "2026-11-10T19:29:27.913Z",
+  "brain": {
+   "current_property": "CRESTTAPP野田 1001",
+   "reply_mode": "auto_reply",
+   "reply_direction": "窓を開けなければ虫の侵入は大幅に防げるが、2階でも夏場は換気時に侵入の可能性があることを伝え、7階以上の1001号室が虫対策には最適と案内する。早めの引越し希望なら11月中旬入居可の1001号室が良いことを伝える。",
+   "key_topics": [
+    "窓を閉めていれば侵入はほぼ無いが換気時は可能性が残る",
+    "7階以上の1001号室が虫対策に最適",
+    "早めの引越しなら11月中旬入居可の1001号室"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "内覧候補日の提示",
+    "申込の強い催促",
+    "LINEのID交換"
+   ],
+   "customer_questions": [
+    "窓開けなかったら虫は入ってこないですかね？",
+    "早めの引越し希望だが2階は虫が心配で、7階以上とどちらが良いか"
+   ],
+   "next_steps": [
+    "Step1（今すぐ）: 虫と窓開けの質問に本文で答える（7階以上なら虫の可能性が低いこと、2階でも換気フィルター清掃や防虫フィルター設置で対策できること）",
+    "Step2: お客様の反応を待つ",
+    "Step3: 反応に応じて1001号室の内覧か申込へ進める"
+   ],
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "質問＝答えるだけ"
+   },
+   "turn_contract": {
+    "situation": "2階と7階以上のどちらにするか、虫と入居時期の両面で迷っている",
+    "background": "内覧後のお客様が2室（204号室と1001号室）の提案を受け、虫のリスクを気にして2階にするか7階以上にするか悩んでいる。早く引っ越したいので2階を考えていたが、虫の不安が残り再質",
+    "asks": [
+     {
+      "quote": "窓開けなかったら入ってこないですかね？💦",
+      "kind": "question",
+      "route": "reply",
+      "answer": "窓を閉めていれば虫の侵入はほぼ防げるが、換気時など開けると侵入の可能性が残る",
+      "basis": "general",
+      "aix": null,
+      "about": "property_equipment",
+      "property": "CRESTTAPP野田",
+      "when": "future",
+      "whose": "customer",
+      "polarity": null
+     },
+     {
+      "quote": "早めの引越しがいいので2階にしようかな？って思ってるけど虫関係で悩んでて",
+      "kind": "concern",
+      "route": "reply",
+      "answer": "7階以上の1001号室は虫リスク低く、11月中旬入居可なので早めの引越しにも対応",
+      "basis": "general",
+      "aix": null,
+      "about": "property_equipment",
+      "property": "CRESTTAPP野田 1001",
+      "when": "future",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "2階でも虫は入らないと断言する",
+     "内覧日程を勝手に提示する",
+     "申込を強く急かす"
+    ],
+    "proposals": [
+     "虫対策なら7階以上の1001号室がおすすめ",
+     "換気時は防虫フィルターや換気口清掃で対策可能"
+    ],
+    "feeling": {
+     "kind": "anxious",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q065",
+  "at": "2026-11-10T19:29:50.192Z",
+  "brain": {
+   "reply_mode": "auto_reply",
+   "reply_direction": "最速入居時期の質問には、送付前に確定回答できない旨を正直に伝え、物件をピックアップしてお送りする約束を果たす行動宣言で応える",
+   "key_topics": [
+    "最速入居時期は物件ごとに異なる旨",
+    "ピックアップ物件を送付する約束",
+    "9月中のご入居を優先する姿勢"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "内覧の日程",
+    "具体的な入居可能日",
+    "申込誘導"
+   ],
+   "customer_questions": [
+    "最速で入居できるのはいつくらいですか"
+   ],
+   "reply_opener": "〇〇頂きありがとうございます",
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "質問＝答えるだけ"
+   },
+   "turn_contract": {
+    "situation": "ピックアップ未履行のまま最速入居時期を質問されている",
+    "background": "実家を追い出され9月中に入居したい顧客が、物件送付前に最速入居時期を確認してきた。こちらはピックアップを2回宣言したがまだ送付していない。",
+    "asks": [
+     {
+      "quote": "最速で入居できるとしていつくらいになりそうですか？",
+      "kind": "question",
+      "route": "reply",
+      "answer": "物件ごとに異なり送付時にご案内する",
+      "basis": "company_fact",
+      "aix": null,
+      "about": "viewing_day",
+      "property": null,
+      "when": "future",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "具体的な入居可能日を断言する",
+     "ピックアップ物件の送付を後回しにする"
+    ],
+    "proposals": [],
+    "feeling": {
+     "kind": "hurried",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q069",
+  "at": "2026-11-10T19:30:08.584Z",
+  "brain": {
+   "reply_mode": "aix",
+   "action": "property_check_result",
+   "reply_direction": "確認済みの3件以外の持ち込み物件の募集状況を管理会社に確認し、結果を報告する",
+   "key_topics": [
+    "他6件の募集状況確認結果の報告"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "確認済み3件の再案内",
+    "内覧誘導"
+   ],
+   "customer_questions": [
+    "他の物件は掲載されているが募集は無いのか"
+   ],
+   "next_steps": [
+    "Step1（今すぐ）: ミライハイム・ハビテ深江橋・Luxe玉造南以外の6件の募集状況を管理会社に確認する",
+    "Step2: AIXボタン物件確認した（募集状況）を押す",
+    "Step3: 確認結果をAIX【物件確認した】で報告する"
+   ],
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "質問＝答えるだけ"
+   },
+   "turn_contract": {
+    "situation": "持ち込み9件中3件のみ募集中と報告済みで、顧客から残りの物件について確認を求められている",
+    "background": "11/9に顧客が持ち込んだ9件のうち3件のみ募集中と報告済みで、残りの6件について顧客が追加で確認を求めている",
+    "asks": [
+     {
+      "quote": "他のとこは掲載してるけど募集無しですか？",
+      "kind": "question",
+      "route": "aix",
+      "answer": null,
+      "basis": "judgement",
+      "aix": "property_check_result",
+      "about": "vacancy",
+      "property": null,
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "確認済み3件の再案内",
+     "内覧誘導"
+    ],
+    "proposals": [],
+    "feeling": null
+   },
+   "conductor_roles": "ad,cp,wr,ck,s2",
+   "aix_recheck": {
+    "from": "aix_desk",
+    "kind": "not_aix",
+    "why": "お客様の質問は「他の物件は掲載しているが募集無しか」という、既に送った確認結果の内容確認。会話の事実（3件募集中と伝えた）で答えられるため、AIXの鍵ではなく返信で答える番。",
+    "firstAix": "property_check_result/unavailable"
+   },
+   "aix_desk": {
+    "mode": "shadow",
+    "brain": "property_check_result/unavailable",
+    "cands": [
+     "property_check_result/unavailable",
+     "estimate_sheet/single",
+     "acknowledge_check/daihyo_initial_cost"
+    ],
+    "pick": null,
+    "also": [],
+    "sb": "not_aix",
+    "why": "お客様の質問は「他の物件は掲載しているが募集無しか」という、既に送った確認結果の内容確認。会話の事実（3件募集中と伝えた）で答えられるため、AIXの鍵ではなく返信で答える番。",
+    "changed": false
+   }
+  }
+ },
+ {
+  "id": "q072",
+  "at": "2026-11-11T10:10:57.444Z",
+  "brain": {
+   "reply_mode": "auto_reply",
+   "reply_direction": "内覧希望を受け、11/25以降で内覧の候補日を提示するとともに、空室のため先にお申込みでお部屋を抑える選択肢も案内する",
+   "key_topics": [
+    "11/25以降の内覧候補日提示"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "募集状況の再確認",
+    "物件名の決め打ち"
+   ],
+   "customer_questions": [
+    "内覧したいが11月中以降しか都合がつかない",
+    "今見ている物件が埋まる可能性は高いか"
+   ],
+   "reply_opener": "〇〇頂きありがとうございます",
+   "appeal_timing": {
+    "kind": "apply",
+    "level": "suggest",
+    "reason": "内覧の希望・すぐ来られない"
+   },
+   "hesitancy_pattern": "timeline",
+   "customer_concern": {
+    "topic": "時期",
+    "object": "今見てる物件埋まる可能性高いですかね"
+   },
+   "turn_contract": {
+    "situation": "内覧希望だが来られるのは11/25以降。空室確認済みの物件が複数ある",
+    "background": "11/10に持ち込み物件4件の募集状況を確認し、空室の物件に見積書を送付済み。顧客は内覧を希望しているが都合が11/25以降。埋まるリスクを懸念",
+    "asks": [
+     {
+      "quote": "内覧したいんですが都合つくのが11月中以降の予定",
+      "kind": "request",
+      "route": "promise",
+      "answer": null,
+      "basis": "judgement",
+      "aix": "viewing_invite",
+      "about": "viewing_day",
+      "property": null,
+      "when": "viewing_day",
+      "whose": "customer",
+      "polarity": null
+     },
+     {
+      "quote": "今見てる物件埋まる可能性高いですかね",
+      "kind": "question",
+      "route": "reply",
+      "answer": "物件は埋まる可能性がありますが、お申込みでお部屋を抑えることもできます",
+      "basis": "company_fact",
+      "aix": null,
+      "about": "reaction_to_sent",
+      "property": null,
+      "when": "now",
+      "whose": "other_applicant",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "埋まる可能性を断定"
+    ],
+    "proposals": [
+     "先にお申込みでお部屋を抑える",
+     "オンライン内見"
+    ],
+    "feeling": {
+     "kind": "anxious",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "内覧したい",
+    "anxiety": {
+     "target": "先に取られる",
+     "direction": "前向き"
+    },
+    "hesitation": "時期・入居日で迷う",
+    "decideGap": null
+   }
+  }
+ },
+ {
+  "id": "q073",
+  "at": "2026-11-10T19:35:16.479Z",
+  "brain": {
+   "current_property": "メロディーハイム九条 203",
+   "reply_mode": "auto_reply",
+   "reply_direction": "10月末入居で問題ない旨を受け止め、お部屋探しの進め方について確認する。",
+   "key_topics": [
+    "10月末入居希望の確認",
+    "お部屋探し継続の意向確認"
+   ],
+   "avoid_topics": [
+    "内覧誘導",
+    "申込誘導",
+    "見積の再送"
+   ],
+   "customer_questions": [
+    "初期費用の用意が最短でも10月末と伝えている"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "none",
+    "level": "suggest",
+    "reason": "その他"
+   },
+   "turn_contract": {
+    "situation": "顧客は送付済み11件の物件情報を確認し、10月末に初期費用を用意できると伝えた。スタッフはその意向を受け止め、お部屋探し",
+    "background": "顧客は11/9に送られた11件の物件と、直後にオススメ・見積を送られたメロディーハイム九条203号室を見て、大量の物件を送ってもらったことに感謝している。その上で、初期費用を用意で",
+    "asks": [],
+    "lead_with": null,
+    "close_only": false,
+    "must_not": [
+     "物件の再送",
+     "空室確認",
+     "退去予定日の断言"
+    ],
+    "proposals": [],
+    "feeling": {
+     "kind": "positive",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q078",
+  "at": "2026-11-10T19:37:26.834Z",
+  "brain": {
+   "reply_mode": "auto_reply",
+   "reply_direction": "LIVIAZ NAMBA KRASS 1201号室の最大限割引した初期費用の御見積書を作成してお送りする（募集状況の確認の宣言はしない）",
+   "key_topics": [
+    "物件の送付依頼",
+    "届き次第見積書を作成する約束"
+   ],
+   "avoid_topics": [
+    "内覧日程の提案",
+    "申込誘導",
+    "物件ピックアップ"
+   ],
+   "customer_questions": [
+    "他にも気になっている物件があるので初期費用を教えてほしい"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "none",
+    "level": "suggest",
+    "reason": "その他"
+   },
+   "turn_contract": {
+    "situation": "LIVIAZの見積を送付済み。お客様は前向きだが、他物件の初期費用も比較したい意向。",
+    "background": "LIVIAZの見積書を送った直後、お客様は金額に前向きな反応を示しつつ、他にも気になる物件があるためその初期費用も知りたいと依頼してきた。",
+    "asks": [
+     {
+      "quote": "他にも気になっている物件があるのでそちらも初期費用教えていただきです🙇🏻‍♀",
+      "kind": "request",
+      "route": "reply",
+      "answer": "物件を送って頂ければ見積書を作成して送る",
+      "basis": "conversation",
+      "aix": null,
+      "about": "property_cost",
+      "property": null,
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     },
+     {
+      "quote": "よろしいでしょうか？",
+      "kind": "question",
+      "route": "reply",
+      "answer": "もちろん可能と答える",
+      "basis": "conversation",
+      "aix": null,
+      "about": "self",
+      "property": null,
+      "when": "now",
+      "whose": "company",
+      "polarity": null
+     }
+    ],
+    "lead_with": 1,
+    "close_only": false,
+    "must_not": [
+     "内覧を急かす",
+     "LIVIAZへの申込を急ぐ"
+    ],
+    "proposals": [],
+    "feeling": {
+     "kind": "positive",
+     "acknowledge": false
+    }
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q109",
+  "at": "2026-11-10T19:49:57.518Z",
+  "brain": {
+   "current_property": "デザイナーズ8マンション 302",
+   "reply_mode": "auto_reply",
+   "reply_direction": "『帰ってからゆっくり見て返信します』の保留を受け止め、気になるお部屋があればご案内する旨を添えて締める",
+   "key_topics": [
+    "内覧可能な旨の伝達"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "申込誘導",
+    "日時指定",
+    "新規物件ピックアップ",
+    "費用見積"
+   ],
+   "reply_opener": "はい",
+   "appeal_timing": {
+    "kind": "viewing",
+    "level": "suggest",
+    "reason": "検討します・今ご内覧頂ける部屋"
+   },
+   "hesitancy_pattern": "timeline",
+   "turn_contract": {
+    "situation": "ピックアップ10件を送付、お客様は帰宅後に確認すると保留",
+    "background": "10件の物件を送った直後に、お客様が帰宅後に確認する旨を伝えてきた",
+    "asks": [
+     {
+      "quote": "また帰ってからゆっくり見て返信します",
+      "kind": "report",
+      "route": "none",
+      "answer": null,
+      "basis": "conversation",
+      "aix": null,
+      "about": "reaction_to_sent",
+      "property": null,
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": null,
+    "close_only": true,
+    "must_not": [
+     "申込の催促",
+     "内覧日時の指定"
+    ],
+    "proposals": [],
+    "feeling": null
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q145",
+  "at": "2026-11-11T10:07:34.405Z",
+  "brain": {
+   "current_property": "エスリード中之島クロスゲート302号室",
+   "reply_mode": "auto_reply",
+   "reply_direction": "申込→保証会社の審査（2〜3営業日〜1週間程）→契約のお手続き→ご入居の期間と流れを本文で説明する（管理会社への確認の宣言はしない・このお部屋の入居可能日は断言しない）",
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "入居可能日を断言する",
+    "内覧日程の提案",
+    "見積書の再送"
+   ],
+   "customer_questions": [
+    "最短でも入居可能日は11月中旬でしょうか？"
+   ],
+   "reply_opener": "はい",
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "質問＝答えるだけ"
+   },
+   "turn_contract": {
+    "situation": "確認結果と御見積書を送った直後、入居可能日を質問された",
+    "background": "エスリード中之島クロスゲート302号室の確認結果（募集中・退去予定・12月中以降内覧可）と御見積書を送った直後、顧客が最短入居可能日を質問してきた。",
+    "asks": [
+     {
+      "quote": "最短でも入居可能日は11月中旬でしょうか？",
+      "kind": "question",
+      "route": "reply",
+      "answer": "会社の事実で本文で答える（お申込みから審査・契約のお手続きを経て最短1〜2週間程でご入居の目安・管理会社への確認の約束にしない）",
+      "basis": "company_fact",
+      "aix": null,
+      "about": "property_cost",
+      "property": "エスリード中之島クロスゲート302号室",
+      "when": "future",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "入居可能日を断言する",
+     "退去予定日を推測する",
+     "見積書の再送",
+     "内覧の日程を書く"
+    ],
+    "proposals": [],
+    "feeling": null
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "普通の依頼",
+    "anxiety": {
+     "target": "日程",
+     "direction": "前向き"
+    },
+    "hesitation": "時期・入居日で迷う",
+    "decideGap": {
+     "point": "入居日・時期",
+     "solve": "a",
+     "property": "エスリード中之島クロスゲート302号室",
+     "quote": "最短でも入居可能日は11月中旬でしょうか？"
+    }
+   }
+  }
+ },
+ {
+  "id": "q160",
+  "at": "2026-11-09T14:56:26.661Z",
+  "brain": {
+   "current_property": "LIVIAZ NAMBA KRASS 1201号室",
+   "reply_mode": "auto_reply",
+   "reply_direction": "日割家賃は抜きの199,500円（猫の敷金別）で高くならない事を答え、猫がいる場合はプラス67,000円（敷金1ヶ月分）で合計266,500円になる事を説明する",
+   "key_topics": [
+    "199,500円から高くならない旨",
+    "猫の敷金67,000円が別途かかる旨"
+   ],
+   "avoid_topics": [
+    "内覧の誘い",
+    "申込誘導"
+   ],
+   "customer_questions": [
+    "先程の初期費用から日割り家賃抜きで高くなることはないのか",
+    "猫がいるのでプラス67000円になるか"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "質問＝答えるだけ"
+   },
+   "customer_concern": {
+    "topic": "費用",
+    "object": "高くなること"
+   },
+   "turn_contract": {
+    "situation": "見積書送付済み。お客様が追加費用（日割家賃・猫の敷金）について確認中。",
+    "background": "LIVIAZ NAMBA KRASS 1201号室の見積書（199,500円）を送り、仲介手数料無しの理由を説明してお客様が納得した。追加費用の不安を解消するための質問。",
+    "asks": [
+     {
+      "quote": "先程の初期費用から日割り家賃抜きで高くなることはないのでしょうか？",
+      "kind": "question",
+      "route": "reply",
+      "answer": "199,500円から高くならない",
+      "basis": "conversation",
+      "aix": null,
+      "about": "property_cost",
+      "property": "LIVIAZ NAMBA KRASS 1201号室",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     },
+     {
+      "quote": "猫がいるのでプラス67000になりますか？",
+      "kind": "question",
+      "route": "reply",
+      "answer": "猫の敷金1ヶ月分67,000円が別途かかり合計266,500円",
+      "basis": "conversation",
+      "aix": null,
+      "about": "property_cost",
+      "property": "LIVIAZ NAMBA KRASS 1201号室",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "家賃や初期費用の新しい金額",
+     "内覧の日時の提案"
+    ],
+    "proposals": [
+     "1日入居なら日割家賃が発生しない"
+    ],
+    "feeling": {
+     "kind": "anxious",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q166",
+  "at": "2026-11-09T14:56:01.322Z",
+  "brain": {
+   "current_property": "アーバネックス難波WEST 903号室",
+   "reply_mode": "auto_reply",
+   "reply_direction": "他社で内覧予定であることを否定せず受け止め、弊社でも申込・内覧できることを即答し、気に入ればスモラでお部屋を抑えられる旨を伝えて弊社での内覧も提案する。内覧の日時は書かない",
+   "key_topics": [
+    "弊社でお申込可能な旨の即答",
+    "弊社でもご内覧できる旨の案内"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "内覧日時の指定",
+    "申込の後押し",
+    "他社内覧の否定"
+   ],
+   "customer_questions": [
+    "他社で内覧予定の物件を気に入ればスモラで申込可能か？"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "viewing",
+    "level": "suggest",
+    "reason": "他社で内覧する予定＝弊社での内覧に誘う"
+   },
+   "turn_contract": {
+    "situation": "他社で内覧予定の物件について、気に入ればスモラで申し込めるかを確認中",
+    "background": "お客様が持ち込んだ物件に見積書を送付した直後。明日スーモ経由で他社に内覧予定があり、気に入ればスモラで申し込めるかを確認している。",
+    "asks": [
+     {
+      "quote": "気に入ればそのままこちらでお願いとかもできますか？",
+      "kind": "question",
+      "route": "reply",
+      "answer": "スモラで申込・内覧ともに可能と答える",
+      "basis": "company_fact",
+      "aix": null,
+      "about": "company",
+      "property": null,
+      "when": "now",
+      "whose": "company",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "内覧日程を指定",
+     "他社内覧を否定",
+     "申込を急かす"
+    ],
+    "proposals": [],
+    "feeling": null
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q173",
+  "at": "2026-11-09T14:57:45.495Z",
+  "brain": {
+   "current_property": "ブランシュール 2階",
+   "reply_mode": "auto_reply",
+   "reply_direction": "別居の事情を丁寧に受け止め、一人住まいになる場合の希望条件を確認して、改めてお部屋をピックアップしてお送りする旨を伝える",
+   "key_topics": [
+    "一人住まいの場合の条件確認",
+    "別居の事情への配慮",
+    "新条件でのピックアップ約束"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "二人入居可の条件",
+    "エリシオン大物町301号室の提案",
+    "申込誘導"
+   ],
+   "next_steps": [
+    "Step1（今すぐ）: 一人住まいになる場合の条件（家賃・間取り・エリア）を確認する",
+    "Step2: 条件に合う物件を再検索し、ピックアップしてお送りする約束をする",
+    "Step3: 新着で条件に合う物件が募集に出次第お送りする旨を伝える"
+   ],
+   "appeal_timing": {
+    "kind": "none",
+    "level": "suggest",
+    "reason": "その他"
+   },
+   "turn_contract": {
+    "situation": "同棲予定が別居に変わり、一人住まいの可能性が出た。二人入居可前提だったエリシオン大物町301号室の条件が変わる。",
+    "background": "同棲予定だったが別れることになり、一人住まいになる可能性が出た。エリシオン大物町301号室は二人入居可の物件で、一人住まいでは条件が変わる可能性がある。",
+    "asks": [
+     {
+      "quote": "別れることになって私一人になるかもです",
+      "kind": "report",
+      "route": "reply",
+      "answer": "事情を受け止め、一人住まいの場合の条件を確認する",
+      "basis": "conversation",
+      "aix": null,
+      "about": "self",
+      "property": null,
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "二人入居可の物件を前提にした話",
+     "事情の深掘り",
+     "早急な申込誘導"
+    ],
+    "proposals": [],
+    "feeling": null
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q200",
+  "at": "2026-11-09T15:20:30.863Z",
+  "brain": {
+   "reply_mode": "auto_reply",
+   "reply_direction": "見送りの意向を受け止め、来年再開時に新着物件をお送りする旨を伝えつつ、現状の新着確認は継続する旨を添えて締める。内覧・申込の誘いはしない。",
+   "key_topics": [
+    "見送りの意向への受容",
+    "再開時のサポート約束"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "内覧の誘い",
+    "申込の誘い",
+    "物件提案",
+    "見積提案"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "お客様が断った"
+   },
+   "hesitancy_pattern": "timeline",
+   "turn_contract": {
+    "situation": "顧客が年末引越回避のため一旦見送りを表明。こちらは新着送付を約束済み。",
+    "background": "退去予定のため抑え不可と伝え、6畳の代替案も断られた後、新着で送る約束をした直後。顧客は年末の引越を避けたいため来年まで見送る意向を示した。",
+    "asks": [
+     {
+      "quote": "来年まで見送ろうと思っているのでいったん紹介は大丈夫です",
+      "kind": "report",
+      "route": "reply",
+      "answer": "受け止め、来年再開時のサポートを約束",
+      "basis": "conversation",
+      "aix": null,
+      "about": "self",
+      "property": null,
+      "when": "future",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": true,
+    "must_not": [
+     "内覧の誘い",
+     "申込の誘い",
+     "物件提案",
+     "引き止め"
+    ],
+    "proposals": [],
+    "feeling": null,
+    "ack_form": "receive_only"
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q206",
+  "at": "2026-11-11T10:12:10.380Z",
+  "brain": {
+   "reply_mode": "auto_reply",
+   "two_stage": "check",
+   "reply_direction": "お客様に聞かれた事に答える返信にする。会話・物件の資料・会社の事実に答えがあればそれで答える（確認の約束にしない）。無い時だけ聞かれた事そのもの（中身を具体的に・物件の事なら物件名も）を確認すると約束する（聞かれていない募集状況は書かない・誰に確認するかは書かない・結びは「確認出来次第ご連絡させて頂きます！！」）同じ発言の他のご希望・ご質問にも一言ずつ応える（お客様がはっきり書いた事だけ・頼まれていない内覧・申込の一文は足さない）。",
+   "key_topics": [
+    "聞かれた事への答え（無ければその事の確認の約束）"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "内覧日程",
+    "申込誘導",
+    "初期費用の説明"
+   ],
+   "customer_questions": [
+    "もう少し広い部屋ないでしょうか"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "質問＝答えるだけ"
+   },
+   "customer_concern": {
+    "topic": "広さ",
+    "object": "もう少し広い部屋"
+   },
+   "turn_contract": {
+    "situation": "6件送付済みだが広さが不十分。12月中旬入居希望で、広さを最優先に再探索が必要",
+    "background": "13万以内・1LDK・築7年以内の条件で6件ピックアップ済みだが、オススメした1104号室は28.2㎡で、顧客は初回から「できるだけ広い部屋」を最優先にしていた",
+    "asks": [
+     {
+      "quote": "もう少し広い部屋ないでしょうか🥹",
+      "kind": "request",
+      "route": "promise",
+      "answer": "北浜周辺でより広い1LDKをピックアップする",
+      "basis": "judgement",
+      "aix": null,
+      "about": "search_condition",
+      "property": null,
+      "when": "now",
+      "whose": "customer",
+      "polarity": "add"
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "申込誘導",
+     "内覧日程の提案",
+     "見積書の話題"
+    ],
+    "proposals": [],
+    "feeling": null
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "迷い",
+    "anxiety": null,
+    "hesitation": "設備・広さの1点で迷う",
+    "decideGap": {
+     "point": "広さ",
+     "solve": "c",
+     "property": null,
+     "quote": "もう少し広い部屋"
+    }
+   }
+  }
+ },
+ {
+  "id": "q207",
+  "at": "2026-11-09T15:31:11.847Z",
+  "brain": {
+   "reply_mode": "auto_reply",
+   "reply_direction": "今の条件のお部屋は出し切った後にお客様が条件を足した・言い直した番＝返信で締める: 足した条件を受け止め（お詫びには一言）、その条件も含めて新着状況を随時確認し、募集に出次第お送りする約束で閉じる（改めてピックアップとは言わない・物件の AIX や全力サポートのボタンにしない）",
+   "key_topics": [
+    "家賃管理費込み5〜6万円の条件を理解した旨",
+    "条件変更を受け止め、該当物件を再確認する旨"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "家賃6.5万円の物件",
+    "申込誘導"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "条件の変更"
+   },
+   "customer_concern": {
+    "topic": "費用",
+    "object": "家賃管理費込みで5〜6万"
+   },
+   "turn_contract": {
+    "situation": "条件変更（家賃管理費込み5〜6万円）を申し出た直後。スタッフは既に8件送付済み。",
+    "background": "11/10 00:00に来年2月入居・5〜6万円・心斎橋なんばミナミの条件を提示。スタッフが8件送付し、ティックランド南船場505号室（家賃管理費込6.5万円）をオススメとして紹介",
+    "asks": [
+     {
+      "quote": "家賃管理費込みで5〜6万でお願いしたいです",
+      "kind": "request",
+      "route": "reply",
+      "answer": "管理費込み5〜6万円の条件で再確認し、該当があれば出次第お送りする",
+      "basis": "judgement",
+      "aix": null,
+      "about": "search_condition",
+      "property": null,
+      "when": "now",
+      "whose": "customer",
+      "polarity": "add"
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "管理費込み6万円超の物件を推す",
+     "内覧日程の打診",
+     "初期費用の話"
+    ],
+    "proposals": [],
+    "feeling": {
+     "kind": "apologetic",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q208",
+  "at": "2026-11-09T15:28:41.796Z",
+  "brain": {
+   "current_property": "ロイヤルミナミ",
+   "reply_mode": "auto_reply",
+   "two_stage": "check",
+   "reply_direction": "お客様が送ってきた物件の募集状況を確認し、最大限割引した初期費用の御見積書と両方お送りすると約束する返信にする（結果・金額は書かない・送るのは後で AIX【物件確認した】＝御見積書同封）。件数は「5件」（それぞれ）と書く。言い方は実際の送信の形「お送り頂きました5件の募集状況確認させて頂きます😊！！確認出来次第、最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！」同じ発言の他のご希望・ご質問にも一言ずつ応える（お客様がはっきり書いた事だけ・頼まれていない内覧・申込の一文は足さない）。送って頂いた物件は5件。件数を書く（「お送り頂きました5件の物件の募集状況確認させて頂きます」）。",
+   "key_topics": [
+    "5件の募集状況と御見積書をお送りする約束"
+   ],
+   "avoid_topics": [
+    "内覧日程の提案",
+    "申込誘導"
+   ],
+   "customer_questions": [
+    "SUUMOで見つけた物件5件の募集状況を確認してほしい",
+    "最大限割引した初期費用の御見積書を見たい"
+   ],
+   "next_steps": [
+    "Step1（今すぐ）: お客様から送られてきたSUUMO物件5件（ロイヤルミナミ3階・日本橋1K9階・グランカリテ日本橋2階・プレサンス上町台東平3階・松屋町1K6階）の募集状況を管理会社に確認する",
+    "Step2: AIXボタン物件確認した（募集状況）で確認結果を報告し、募集中の物件には最大限割引した御見積書を同封する"
+   ],
+   "appeal_timing": {
+    "kind": "none",
+    "level": "suggest",
+    "reason": "その他"
+   },
+   "turn_contract": {
+    "situation": "お客様がSUUMOで見つけた物件5件を送ってきた",
+    "background": "お客様がSUUMOで気になる物件を5件見つけて送ってきた。前回スタッフが「SUUMOなどで気になるお部屋を見つけられましたら、お気軽にお送りください」と案内していた。",
+    "asks": [
+     {
+      "quote": "ロイヤルミナミ 3階の募集状況と初期費用を確認してほしい",
+      "kind": "request",
+      "route": "promise",
+      "answer": "確認しご連絡",
+      "basis": "conversation",
+      "aix": "property_check_result",
+      "about": "vacancy",
+      "property": "ロイヤルミナミ",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     },
+     {
+      "quote": "日本橋 1K 9階の募集状況と初期費用を確認してほしい",
+      "kind": "request",
+      "route": "promise",
+      "answer": "確認しご連絡",
+      "basis": "conversation",
+      "aix": "property_check_result",
+      "about": "vacancy",
+      "property": "日本橋 1K 9階",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     },
+     {
+      "quote": "グランカリテ日本橋 2階の募集状況と初期費用を確認してほしい",
+      "kind": "request",
+      "route": "promise",
+      "answer": "確認しご連絡",
+      "basis": "conversation",
+      "aix": "property_check_result",
+      "about": "vacancy",
+      "property": "グランカリテ日本橋",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     },
+     {
+      "quote": "プレサンス上町台東平 3階の募集状況と初期費用を確認してほしい",
+      "kind": "request",
+      "route": "promise",
+      "answer": "確認しご連絡",
+      "basis": "conversation",
+      "aix": "property_check_result",
+      "about": "vacancy",
+      "property": "プレサンス上町台東平",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     },
+     {
+      "quote": "松屋町 1K 6階の募集状況と初期費用を確認してほしい",
+      "kind": "request",
+      "route": "promise",
+      "answer": "確認しご連絡",
+      "basis": "conversation",
+      "aix": "property_check_result",
+      "about": "vacancy",
+      "property": "松屋町 1K 6階",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "募集状況を推測で答える",
+     "初期費用の金額を推測で答える",
+     "内覧を提案する",
+     "申込を提案する"
+    ],
+    "proposals": [],
+    "feeling": null
+   },
+   "two_choice_mode": true,
+   "two_choice_aix": "estimate_sheet",
+   "conductor_roles": "cp,wr,ck"
+  }
+ },
+ {
+  "id": "q214",
+  "at": "2026-11-11T10:13:31.363Z",
+  "brain": {
+   "reply_mode": "auto_reply",
+   "two_stage": "pickup",
+   "reply_direction": "お客様の今の発言（質問・ご希望・ご事情）に先に一言で応え、物件のご紹介が要る時だけ、新しいご条件（言い直し・追加があればその条件を具体的に）でお部屋をピックアップしてお送りすると約束する返信にする（物件名・家賃は書かない・送るのは後で AIX）。言い方は実際の送信の形「〇〇さんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！」同じ発言の他のご希望・ご質問にも一言ずつ応える（お客様がはっきり書いた事だけ・頼まれていない内覧・申込の一文は足さない）。",
+   "key_topics": [
+    "お客様の発言への答え（物件のご紹介が要る時はピックアップしお送りする約束）",
+    "お客様の質問「？」への答え（会話・資料にある事実で。無ければ確認の約束）"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "提案済み物件の再提案",
+    "内覧日時の提示",
+    "見積金額の提示"
+   ],
+   "customer_questions": [
+    "御堂筋の新金岡駅、なかもず駅辺りでいい物件はありますか？"
+   ],
+   "next_steps": [
+    "Step1（今すぐ）: 新金岡駅・なかもず駅周辺で御堂筋線沿線1LDK以上・家賃9万以下・駅徒歩15分以内・カウンターキッチン希望の物件をChrome拡張で再検索する",
+    "Step2: AIXボタン物件ピックアップしたを押す",
+    "Step3: 【AIX】物件ピックアップ紹介（後続）をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "質問＝答えるだけ"
+   },
+   "turn_contract": {
+    "situation": "送付済み17件だが新金岡・なかもず駅周辺は未提案。お客様が新エリアを希望し、売上サポに送れる物件候補が無い",
+    "background": "17件送付済みでお客様が新金岡・なかもず駅周辺の物件を新たに質問してきた。送れる物件候補は売上サポに無いため、まずピックアップする約束を返す場面",
+    "asks": [
+     {
+      "quote": "御堂筋の新金岡駅、なかもず駅辺りでいい物件はありますか？",
+      "kind": "request",
+      "route": "promise",
+      "answer": "新金岡・なかもず周辺の物件をピックアップしてお送りする",
+      "basis": "judgement",
+      "aix": "property_send",
+      "about": "search_condition",
+      "property": null,
+      "when": "now",
+      "whose": "customer",
+      "polarity": "add"
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [],
+    "proposals": [],
+    "feeling": null
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "普通の依頼",
+    "anxiety": null,
+    "hesitation": null,
+    "decideGap": null
+   }
+  }
+ },
+ {
+  "id": "q326",
+  "at": "2026-11-09T15:36:28.431Z",
+  "brain": {
+   "current_property": "フジパレス式内町I番館 103号室",
+   "reply_mode": "auto_reply",
+   "reply_direction": "初期費用はクレジットカード払いで分割可能であることと、カード手数料3.24%が別途必要になることを伝え、カード会社で分割設定する旨を案内する",
+   "key_topics": [
+    "クレジットカード払いで分割可能",
+    "カード手数料3.24%が別途必要",
+    "分割回数はカード会社で設定"
+   ],
+   "avoid_topics": [
+    "賃料の値下げ",
+    "申込催促",
+    "内覧日程の提案"
+   ],
+   "customer_questions": [
+    "初期費用の分割払いに対応可能か"
+   ],
+   "next_steps": [
+    "Step1（今すぐ）: クレジットカード払いで分割可能なこととカード手数料3.24%を返信で伝える",
+    "Step2: 分割の回数は顧客自身のカード会社で設定することを説明する",
+    "Step3: 返信後は内覧・申込への反応を待つ"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "none",
+    "level": "avoid",
+    "reason": "質問＝答えるだけ"
+   },
+   "customer_concern": {
+    "topic": "費用",
+    "object": "初期費用がネック"
+   },
+   "turn_contract": {
+    "situation": "フジパレス式内町I番館103号室を気に入り、初期費用の分割払い可否を確認中",
+    "background": "フジパレス式内町I番館103号室の見積書を送付済みで、顧客は気に入っているが初期費用10万円超が支払いのネックになっている。分割払いの可否を確認している。",
+    "asks": [
+     {
+      "quote": "初期費用の分割払いとか対応可能でしょうか？",
+      "kind": "question",
+      "route": "reply",
+      "answer": "クレジットカード払いなら分割可。手数料3.24%別途",
+      "basis": "company_fact",
+      "aix": null,
+      "about": "property_cost",
+      "property": "フジパレス式内町I番館 103号室",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "分割不可と断言",
+     "カード手数料を省略",
+     "申込を催促"
+    ],
+    "proposals": [],
+    "feeling": {
+     "kind": "anxious",
+     "acknowledge": false
+    }
+   },
+   "conductor_roles": "cp,wr,ck"
+  }
+ }
+]

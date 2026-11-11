@@ -364,7 +364,7 @@ import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
-import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest } from "@/app/lib/compose-sentence-plan";
+import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
@@ -4460,6 +4460,8 @@ async function handleGenerateReply(req: NextRequest) {
             String((brainMeta as { reply_direction?: string | null } | null)?.reply_direction ?? ""),
             await import("@/app/lib/conductor-handoff").then((h) => (h.conductorHandoffOn() && brainMeta ? h.handoffNote(h.buildHandoff({ to: "compose", meta: brainMeta as unknown as Record<string, unknown> })) : "")).catch(() => ""),
           ].filter(Boolean).join("\n\n") || null,
+          // 2026-11-12 作業員10（受け渡しの漏れ・COMPOSE_SENTENCE_PLAN=on の時だけ）: 構成のブレインに受け口はあるが渡していなかった気持ちと訴求の判断を渡す
+          ...(composeSentencePlanOn() && brainMeta ? (() => { const c = readComposeContext(brainMeta); return { emotion: [c.three?.worry, c.latent4 ? [c.latent4.feeling, c.latent4.want].filter(Boolean).join("・") : null, c.mood ? c.mood.base : null, c.concern].filter(Boolean).join("／").slice(0, 200) || null, appeal: c.appealTiming }; })() : {}),
         })).catch((e) => { console.warn(JSON.stringify({ tag: "compose:failed", error: e instanceof Error ? e.message : String(e) })); return null; })
       : null;
     /** 書き直し1回の記録（COMPOSE_REWRITE・digest の compose_rewrite へ） */
@@ -4496,7 +4498,7 @@ async function handleGenerateReply(req: NextRequest) {
       ? (() => {
           try {
             const u = readTurnUnderstanding(brainMeta), s7 = readSevenFields(brainMeta);
-            const plan = buildSentencePlan(u, s7, { scene: composeConductorScene });
+            const plan = buildSentencePlan(u, s7, { scene: composeConductorScene, ctx: readComposeContext(brainMeta, { nextIntent: composeRun?.intent.next && composeRun.intent.next !== "none" ? composeRun.intent.next : null }) });
             return { plan, note: sentencePlanNote(plan), digest: sentencePlanDigest(plan) };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()

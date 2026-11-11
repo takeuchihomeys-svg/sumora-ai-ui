@@ -61,7 +61,8 @@ const isRole = (v: unknown): v is SentenceRole => typeof v === "string" && (ROLE
 
 // ── ① 受け取る ──────────────────────────────────────────────────────────────
 export type Route = "reply" | "promise" | "aix";
-export type UnderstandingItem = { what: string | null; about: RequestAbout | null; property: string | null; part: string | null; route: Route | null; role: SentenceRole | null };
+/** answer＝ブレインが決めた答えの中身（asks[].answer）・when/whose＝いつの事・誰の事（既定の now・customer 以外だけ） */
+export type UnderstandingItem = { what: string | null; about: RequestAbout | null; property: string | null; part: string | null; route: Route | null; role: SentenceRole | null; answer?: string | null; when?: string | null; whose?: string | null };
 /** 一通の読み（KB d0b25520・ee7ddf07）。src＝どの材料から読んだか（記録・表に使う） */
 export type TurnUnderstanding = {
   main: UnderstandingItem | null;
@@ -126,6 +127,8 @@ function itemOf(o: Record<string, unknown> | null): UnderstandingItem | null {
   const it: UnderstandingItem = {
     what, about, property: str(g(o, "property"), 40),
     part: str(g(o, "part", "detail"), 40), route, role: isRole(g(o, "role")) ? (g(o, "role") as SentenceRole) : roleOfItem(about, route, str(g(o, "quote"), 120) ?? what),
+    // 2026-11-12 受け渡しの漏れ（竹内さん「細分化された判断が文の構成に届くように」）: 答えの中身・いつ・誰の事も運ぶ
+    answer: str(g(o, "answer"), 60), when: (() => { const w = str(g(o, "when"), 20); return w && w !== "now" ? w : null; })(), whose: (() => { const w = str(g(o, "whose"), 20); return w && w !== "customer" ? w : null; })(),
   };
   if (!it.role && typeof o.intent === "string" && INTENT_ROLE[o.intent]) it.role = INTENT_ROLE[o.intent];
   return it.what || it.about || it.property || it.part || it.role ? it : null;
@@ -151,7 +154,7 @@ export function readTurnUnderstanding(meta: unknown): TurnUnderstanding {
   if (!out.main && asks.length) {
     const li = typeof tc?.lead_with === "number" && tc.lead_with >= 0 && tc.lead_with < asks.length ? tc.lead_with : 0;
     out.main = itemOf(asks[li]); if (out.main) out.src.main = "turn_contract";
-    out.subs = asks.filter((_, k) => k !== li).map((a) => itemOf(a)).filter((x): x is UnderstandingItem => !!x && x.route !== "aix").slice(0, 3);
+    out.subs = asks.filter((_, k) => k !== li).map((a) => itemOf(a)).filter((x): x is UnderstandingItem => !!x && x.route !== "aix").slice(0, 8);
     if (out.subs.length) out.src.subs = "turn_contract";
   }
   // 今ある材料: turn_read の対象・意図（TURN_READ=on の時だけある）
@@ -168,12 +171,113 @@ export function readTurnUnderstanding(meta: unknown): TurnUnderstanding {
     out.main = { what: null, about: null, property: null, part: null, route: null, role: "uke" };
     out.src.main = "turn_contract";
   }
+  // 2026-11-12 turn_read の2番目の意図も従に（主と違う役目になる時だけ）
+  const i2 = typeof tr?.intent2 === "string" ? INTENT_ROLE[tr.intent2] : undefined;
+  if (i2 && out.main && i2 !== out.main.role && !out.subs.some((x) => x.role === i2)) out.subs.push({ what: str(tr!.intent2, 40), about: null, property: null, part: null, route: null, role: i2 });
   return out;
 }
 
+// ── ①b 番の文脈（設計図の上に置く「受け取った読み」・2026-11-12 竹内さん「細分化された判断が文の構成に届くように」） ─────────────
+/** 作業員14 の潜在の4欄（KB d72ad06b: きっかけ・何の部分・どんな気持ちと強さ・本当はどうしたいか）。鍵は turn_read.latent か latent_read */
+export type LatentFour = { trigger: string | null; part: string | null; feeling: string | null; strength: string | null; want: string | null };
+export type ComposeContext = {
+  situation: string | null; background: string | null; focus: string | null; timeline: string | null; goal: string | null;
+  three: { surface: string | null; worry: string | null; relief: string | null } | null;
+  lead: { kind: string; answer: string } | null;
+  latent4: LatentFour | null;
+  mood: { base: string; object: string | null; degree: string | null } | null;
+  feeling: string | null;
+  omitted: string[]; skipped: string | null; nextIntent: string | null;
+  latentIntent: string | null; concern: string | null; appealTiming: string | null; hesitancy: string | null;
+  emotion: string | null; mindset: string | null; stance: string | null; dirLead: string | null;
+};
+export function readComposeContext(meta: unknown, extra: { nextIntent?: string | null } = {}): ComposeContext {
+  const m = obj(meta) ?? {};
+  const tc = obj(m.turn_contract), tr = obj(m.turn_read), mp = obj(m.message_plan), cf = obj(m.conductor_focus), tl = obj(m.three_layer), pa = obj(m.plan_ahead), sr = obj(m.seven_read) ?? obj(m.takeuchi_seven);
+  const lt = obj(g(tr, "latent")) ?? obj(m.latent_read);
+  const latent4: LatentFour | null = lt ? { trigger: str(g(lt, "trigger", "why", "cause"), 40), part: str(g(lt, "part", "object"), 40), feeling: str(g(lt, "feeling", "mood"), 40), strength: str(g(lt, "strength", "degree"), 10), want: str(g(lt, "want", "wants", "goal"), 40) } : null;
+  const ld = obj(g(tr, "lead"));
+  const md = obj(g(tr, "mood"));
+  const parts = Array.isArray(mp?.parts) ? (mp!.parts as unknown[]).map((p) => obj(p)).filter((p): p is Record<string, unknown> => !!p) : [];
+  return {
+    situation: str(tc?.situation, 80),
+    background: str(tc?.background, 100) ?? str(mp?.background, 80),
+    focus: cf && typeof cf.focus === "string" ? join([cf.focus, str(cf.why, 40)], "＝") : null,
+    timeline: str(m.future_timeline, 30),
+    goal: str(pa?.goal, 40),
+    three: tl && (str(tl.surface) || str(tl.worry) || str(tl.relief)) ? { surface: str(tl.surface, 40), worry: str(tl.worry, 50), relief: str(tl.relief, 50) } : null,
+    lead: ld && typeof ld.kind === "string" && typeof ld.answer === "string" ? { kind: ld.kind, answer: ld.answer } : null,
+    latent4: latent4 && Object.values(latent4).some(Boolean) ? latent4 : null,
+    mood: md && typeof md.base === "string" ? { base: md.base, object: str(md.object, 20), degree: str(md.degree, 6) } : null,
+    feeling: str(tr?.feeling, 30) ?? str(tc?.feeling, 30),
+    omitted: parts.filter((p) => p.include === "omit").map((p) => str(p.meaning, 40)).filter((x): x is string => !!x).slice(0, 3),
+    skipped: str(g(obj(sr?.point), "skipped"), 50),
+    nextIntent: str(extra.nextIntent, 30),
+    latentIntent: str(m.latent_intent, 60),
+    concern: (() => { const cc = obj(m.customer_concern); return cc ? join([str(cc.topic, 20), str(cc.object, 30)], "・") : null; })(),
+    appealTiming: (() => { const at = obj(m.appeal_timing); return at && typeof at.kind === "string" ? join([`${at.kind}/${String(at.level ?? "")}`, str(at.reason, 50)], "＝") : null; })(),
+    hesitancy: str(m.hesitancy_pattern, 20),
+    emotion: str(m.customer_emotion, 30),
+    dirLead: (() => { const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? LEAD_TO_JA[d] : null; })(),
+    mindset: (() => { const cm = obj(m.customer_mindset); if (!cm || typeof cm.state !== "string") return null; const ax = obj(cm.anxiety); return join([cm.state, ax ? join([str(ax.target, 20), str(ax.direction, 6)], "・") : null, str(cm.hesitation, 20)], "／"); })(),
+    stance: join([str(m.engagement_stance, 6), str(m.purchase_signal_level, 6) ? `買う合図 ${str(m.purchase_signal_level, 6)}` : null], "・"),
+  };
+}
+/** 文脈の行（あれば）。材料の無い行は出さない */
+export function composeContextLines(c: ComposeContext): string[] {
+  const L: string[] = [];
+  const st = join([c.situation ? `今の状況: ${c.situation}` : null, c.background ? `背景: ${c.background}` : null, c.timeline ? `時期: ${c.timeline}` : null], "／");
+  if (st) L.push(`- ${st}`);
+  if (c.focus) L.push(`- 統括の重点: ${c.focus}`);
+  if (c.three) L.push(`- 表の問い→奥の心配→安心の条件: ${[c.three.surface, c.three.worry, c.three.relief].map((x) => x ?? "－").join(" → ")}`);
+  if (c.latent4) L.push(`- 潜在: ${join([c.latent4.trigger ? `きっかけ ${c.latent4.trigger}` : null, c.latent4.part ? `何の部分 ${c.latent4.part}` : null, c.latent4.feeling ? `気持ち ${c.latent4.feeling}${c.latent4.strength ? `（${c.latent4.strength}）` : ""}` : null, c.latent4.want ? `本当はしたい事 ${c.latent4.want}` : null], "・")}`);
+  const fe = join([c.mood ? join([c.mood.base, c.mood.object, c.mood.degree], "・") : null, c.feeling, c.mindset, c.emotion], "／");
+  if (fe) L.push(`- 気持ち: ${fe}`);
+  const li = join([c.latentIntent ? `送ってきた動機 ${c.latentIntent}` : null, c.concern ? `気にしている事 ${c.concern}` : null, c.hesitancy ? `迷いの型 ${c.hesitancy}` : null], "・");
+  if (li) L.push(`- ${li}`);
+  if (c.appealTiming) L.push(`- 訴求のタイミング（ブレイン）: ${c.appealTiming}`);
+  if (c.dirLead) L.push(`- 方向の文の誘導先（ブレイン）: ${c.dirLead}`);
+  if (c.stance) L.push(`- 押す・待つ（ブレイン）: ${c.stance}`);
+  if (c.lead) L.push(`- 直前のこちらの誘導（${c.lead.kind}）への答え: ${c.lead.answer}${c.lead.answer === "応じた" ? "＝同じ誘導を繰り返さず一段進める" : ""}`);
+  const nx = join([c.goal ? `目指す事 ${c.goal}` : null, c.nextIntent ? `次にしてほしい事 ${c.nextIntent}` : null], "・");
+  if (nx) L.push(`- ${nx}`);
+  const om = [...c.omitted, ...(c.skipped ? [c.skipped] : [])];
+  if (om.length) L.push(`- 今回は入れない・後に回す: ${om.join("／")}`);
+  return L;
+}
+
+
 /** 気持ちの型（turn_read.mood.base・customer-mindset の12種）→ 潜在意識の種類（不安の型だけ。刺さっている・普通の依頼は潜在の心配にしない） */
 const MOOD_LATENT: Record<string, LatentKind> = { 審査の不安: "審査", 先に取られる不安: "先に取られる", 安くしたい: "費用", 急いでいる: "入居日・時期", "不満・離れかけ": "対応・信頼" };
-const CONCERN_LATENT: Array<[RegExp, LatentKind]> = [[/審査|保証/, "審査"], [/費用|家賃|初期|お金|高/, "費用"], [/入居|時期|退去|いつ/, "入居日・時期"], [/虫|騒音|周り|環境|治安|日当/, "住み心地・周り"], [/埋ま|先に|取られ/, "先に取られる"], [/内覧|内見/, "内覧できない"]];
+// 2026-11-12 作業員5 の外れの束（q072: concern「時期:埋まる」を費用・時期に読んだ）: 先に取られるを先に・騒音治安も住み心地
+const CONCERN_LATENT: Array<[RegExp, LatentKind]> = [[/埋ま|先に|取られ|逃/, "先に取られる"], [/審査|保証/, "審査"], [/虫|騒音|周り|環境|治安|日当|音/, "住み心地・周り"], [/費用|家賃|初期|お金|高/, "費用"], [/入居|時期|退去|いつ/, "入居日・時期"], [/内覧|内見/, "内覧できない"]];
+
+/**
+ * ブレインの方向の文（reply_direction）の言葉 → 誘導先（2026-11-12 作業員5 の外れの束・統括役の対応表: 答える→answer_only／ピックアップ…お送り→keep／
+ *   伺う・お送り頂ければ→ask_send／抑え→apply）。ブレインが書いた方向を写すだけ（決め直さない）。決まった型の文（「お客様に聞かれた事に答える返信にする」）の
+ *   頭は答えるだけとして読む。順: 抑え → 見積 → 関係を続ける・探す → 送ってもらう・伺う → 内覧へ → 答える
+ */
+const DIR_LEAD: Array<[RegExp, LeadToV]> = [
+  [/抑え|押さえ|お申込(?:み)?(?:へ|を|で|し)|申込(?:へ|を勧|で抑)/, "apply"],
+  [/見積/, "estimate"],
+  [/ピックアップ|新着|探し(?:を)?(?:続|再開)|再開|関係を(?:切らず|つな|続)|全力で/, "keep"],
+  [/伺う|伺い|お送り頂け|送ってもら|教えて(?:頂|いただ|もら)|お聞かせ|聞く|ヒアリング/, "ask_send"],
+  [/内覧(?:に|へ|を)(?:誘|勧|ご案内)|ご案内(?:する|を)|内見(?:に|を)誘/, "viewing"],
+  [/答え|伝え|説明|正直に/, "answer_only"],
+];
+export function leadFromDirection(dir: unknown): LeadToV | null {
+  const t = typeof dir === "string" ? dir.replace(/頼まれていない[^。]*?(?:足さない|書かない)/g, "") : "";
+  if (!t.trim()) return null;
+  return DIR_LEAD.find(([re]) => re.test(t))?.[1] ?? null;
+}
+/** 潜在の種類 → 竹内さんが先回りに使った事実の型（作業員5 の latent4-types-198: 型に入る156通の多い順・弱い参考） */
+export const LATENT_FACT_TYPES: Partial<Record<LatentKind, string>> = {
+  費用: "最大限割引・御見積／敷金礼金なし・フリーレント／分割（カード）",
+  先に取られる: "抑えてから内覧・申込で抑える／キャンセル料の線",
+  審査: "保証会社（通りやすい・別の保証会社）",
+  物件が見つからない: "ピックアップ・新着",
+  内覧できない: "抑えてから内覧・申込で抑える",
+};
 
 /** 竹内さんの7つの欄（作業員5 の takeuchi_fields が来れば従う → 無い欄は今ある材料 → それも無ければ空） */
 export function readSevenFields(meta: unknown): SevenFields {
@@ -221,12 +325,27 @@ export function readSevenFields(meta: unknown): SevenFields {
     const at = obj(m.appeal_timing);
     const kind = at?.kind; const level = at?.level;
     if ((kind === "viewing" || kind === "apply") && (level === "must" || level === "suggest")) { out.leadTo = kind; out.src.leadTo = "material"; }
+    // 2026-11-12 受け渡しの漏れ: 訴求のタイミングの理由（appeal_timing.reason）も押す・待つの理由として運ぶ（強さは決めない）
+    if (!out.push && at && typeof at.reason === "string" && (kind === "viewing" || kind === "apply" || level === "avoid")) { out.push = { push: level === "must" || level === "suggest", strength: null, reason: str(at.reason, 50) }; out.src.push = "material"; }
+  }
+  if (!out.leadTo) { const d = leadFromDirection(m.reply_direction); if (d) { out.leadTo = d; out.src.leadTo = "material"; } }
+  if (!out.latentCover) {
+    // 2026-11-12 作業員14 の潜在の4欄（KB d72ad06b）・3段の奥の心配（three_layer.worry）を先に
+    const tr0 = obj(m.turn_read);
+    const lt = obj(g(tr0, "latent")) ?? obj(m.latent_read);
+    const ltWhat = lt ? join([str(g(lt, "part", "object"), 40), str(g(lt, "feeling", "mood"), 40)], "で ") : null;
+    const tlWorry = str(obj(m.three_layer)?.worry, 50);
+    const w0 = ltWhat ?? tlWorry;
+    if (w0) { out.latentCover = { kind: latentKindOf(w0), what: w0, how: str(obj(m.three_layer)?.relief, 50) ? `安心の条件: ${str(obj(m.three_layer)?.relief, 50)}` : null }; out.src.latentCover = "material"; }
   }
   if (!out.latentCover) {
     const tr = obj(m.turn_read); const mood = obj(tr?.mood);
-    const kind = (typeof mood?.base === "string" ? MOOD_LATENT[mood.base] : undefined)
-      ?? (() => { const cc = obj(m.customer_concern); const t = `${cc?.topic ?? ""}${cc?.object ?? ""}`; return t ? CONCERN_LATENT.find(([re]) => re.test(t))?.[1] : undefined; })();
-    const what = str(m.latent_intent, 60) ?? (kind ? str(tr?.feeling, 40) : null);
+    // 2026-11-12: ブレインの customer_concern（何を気にしているか）を気持ちの型より先に（作業員5 の外れの束 q072・q064）
+    const cc = obj(m.customer_concern);
+    const ccText = cc ? join([str(cc.topic, 20), str(cc.object, 30)], ":") : null;
+    const kind = (ccText ? CONCERN_LATENT.find(([re]) => re.test(ccText))?.[1] : undefined)
+      ?? (typeof mood?.base === "string" ? MOOD_LATENT[mood.base] : undefined);
+    const what = str(m.latent_intent, 60) ?? ccText ?? (kind ? str(tr?.feeling, 40) : null);
     const k2 = kind ?? latentKindOf(what);
     if (k2) { out.latentCover = { kind: k2, what }; out.src.latentCover = "material"; }
   }
@@ -247,24 +366,28 @@ export type PlanRow = {
   from: string;
 };
 /** how＝設計図が使った押さえ方・信頼の作り方（src: 番の材料 turn／場面の傾向表 table・tableKey＝引いた表の行） */
-export type SentencePlan = { rows: PlanRow[]; aixMain: boolean; empty: string[]; how?: { key: KeyHow[]; trust: TrustHow[]; src: "turn" | "table" | null; tableKey?: string | null } };
+export type SentencePlan = { rows: PlanRow[]; aixMain: boolean; empty: string[]; ctx?: ComposeContext | null; how?: { key: KeyHow[]; trust: TrustHow[]; src: "turn" | "table" | null; tableKey?: string | null } };
 
 const join = (xs: Array<string | null | undefined>, sep = "・") => { const v = xs.filter((x): x is string => !!x && !!x.trim()); return v.length ? v.join(sep) : null; };
 const partOf = (it: UnderstandingItem | null): string | null => {
   if (!it) return null;
   const about = it.about && it.about !== "other" ? ABOUT_JA[it.about] : null;
-  return join([it.property, it.part ?? about, it.part ? null : it.what && !it.property ? it.what : null], "の ");
+  const base = join([it.property, about, it.part, it.part ? null : it.what && !it.property ? it.what : null], "の ");
+  return join([base, it.answer ? `答え: ${it.answer}` : null, it.when ? `いつ: ${it.when}` : null, it.whose ? `誰の事: ${it.whose}` : null], "／");
 };
 const LEAD_ROLE: Partial<Record<LeadToV, SentenceRole>> = { viewing: "viewing", apply: "apply", estimate: "estimate", ask_send: "ask_send", keep: "keep" };
 
 /** 理解（一通の読み＋7つの欄）→ 1文ずつの設計図。主を先・従は後。材料の無い欄は行にしない（empty に名前を残す） */
 /** 理解（一通の読み＋7つの欄）→ 1文ずつの設計図。主を先・従は後。材料の無い欄は行にしない（empty に名前を残す） */
-export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { scene?: string | null } = {}): SentencePlan {
+export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { scene?: string | null; ctx?: ComposeContext | null } = {}): SentencePlan {
+  const ctx = o.ctx ?? null;
   const rows: PlanRow[] = [];
   const empty: string[] = [];
   const aixMain = u.main?.route === "aix";
   const leadRole = s.leadTo ? LEAD_ROLE[s.leadTo] ?? null : null;
-  const nextJa = s.bridge?.what ?? (s.bridge?.role ? ROLE_LABEL[s.bridge.role] : null) ?? (s.leadTo && s.leadTo !== "none" ? LEAD_TO_JA[s.leadTo] : null);
+  // 次へ: つなぎ → 誘導先 → 前の誘導に応じた番は一段進める → 潜在の本当はしたい事 → 次にしてほしい事（構成の意図）→ 目指す事（次の数手）
+  const nextJa = s.bridge?.what ?? (s.bridge?.role ? ROLE_LABEL[s.bridge.role] : null) ?? (s.leadTo && s.leadTo !== "none" ? LEAD_TO_JA[s.leadTo] : null)
+    ?? (ctx?.lead?.answer === "応じた" ? `${ctx.lead.kind}を一段進める` : null) ?? (ctx?.latent4?.want ? `本当はしたい事: ${ctx.latent4.want}` : null) ?? ctx?.nextIntent ?? (ctx?.goal ? `目指す事: ${ctx.goal}` : null);
   const appealText = s.appeal ? `訴求: ${join([s.appeal.property ?? u.main?.property ?? null, s.appeal.what ?? join(s.appeal.points)], "の ")}${s.appeal.how ? `（${s.appeal.how}）` : ""}` : null;
   const worryHow: TrustHow[] = ["preempt", "fact"];
   // 2026-11-12 案B: 番の材料に「どうやって」が無い時だけ、場面×誘導先の竹内さんの傾向表（compose-how-table・198通）で埋める。行は増やさない
@@ -277,12 +400,13 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { sce
   // 主: 一通の読みの主（AIX の番の主は返信では受けるだけ＝行にしない）
   const mainRole = u.main?.role ?? null;
   if (u.main && mainRole && !aixMain) {
-    rows.push({ rank: "main", role: mainRole, part: join([partOf(u.main), s.keyPoint && s.keyPoint !== u.main.what ? `要点: ${s.keyPoint}` : null], "／"), how: join(keyHowEff.map((k) => KEY_HOW_JA[k])), next: nextJa, from: u.src.main ?? "?" });
+    rows.push({ rank: "main", role: mainRole, part: join([partOf(u.main), s.keyPoint ? `要点: ${s.keyPoint}` : null], "／"), how: join(keyHowEff.map((k) => KEY_HOW_JA[k])), next: nextJa, from: u.src.main ?? "?" });
   } else empty.push(aixMain ? "主（AIX の番＝返信は受けるだけ）" : "主");
   // 従①: 脇の心配（潜在意識のカバー）＝主の答えの後。具体の中身と先回りに使う事実をそのまま渡す
   const lc = s.latentCover;
   if (lc && (lc.kind || lc.what)) {
-    const how = join([lc.how ?? null, ...s.trustHow.filter((t) => worryHow.includes(t)).map((t) => TRUST_HOW_JA[t])]);
+    const factType = !lc.fact && lc.kind ? LATENT_FACT_TYPES[lc.kind] ?? null : null;
+    const how = join([lc.how ?? null, ...s.trustHow.filter((t) => worryHow.includes(t)).map((t) => TRUST_HOW_JA[t]), factType ? `先回りの事実の型（竹内さん）: ${factType}` : null]);
     rows.push({ rank: "sub", role: "worry", part: join([lc.what ?? lc.kind, lc.fact ? `使う事実: ${lc.fact}` : null], "／"), how, next: null, from: s.src.latentCover ?? "?" });
   } else empty.push("潜在意識のカバー");
   // 従②: 同じ一通の別の依頼（主と同じ役目でも別の部分）
@@ -290,8 +414,9 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { sce
     const role = it.role ?? roleOfRoute(it.route);
     if (!role) continue;
     // 主と同じ役目・同じ事の依頼は1つの文にまとめる（竹内さん q208「お送り頂きました5件の募集状況確認させて頂きます」）
-    if (u.main && role === mainRole && it.about === u.main.about) continue;
-    if (rows.some((r) => r.rank === "sub" && r.role === role && r.from === (u.src.subs ?? "?") && it.about && r.part?.includes(ABOUT_JA[it.about]))) continue;
+    // 2026-11-12 まとめても中身（物件・答え）は落とさない＝主の行に足す（受け渡しの漏れ q064）
+    if (u.main && role === mainRole && it.about === u.main.about) { const mr0 = rows.find((r) => r.rank === "main"); const add = partOf({ ...it, about: null }); if (mr0 && add) mr0.part = join([mr0.part, `＋ ${add}`], "／"); continue; }
+    { const same = rows.find((r) => r.rank === "sub" && r.role === role && r.from === (u.src.subs ?? "?") && !!it.about && !!r.part?.includes(ABOUT_JA[it.about])); if (same) { const add = partOf({ ...it, about: null }); if (add) same.part = join([same.part, `＋ ${add}`], "／"); continue; } }
     rows.push({ rank: "sub", role, part: partOf(it), how: null, next: null, from: u.src.subs ?? "?" });
   }
   // 従③: 信頼の作り方（先回り・事実の裏付けは心配の行で使った）
@@ -313,7 +438,7 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { sce
   const trustAdd = trustTbl.filter((t) => t !== "support" || rows.some((r) => r.role === "keep" || r.role === "trust"));
   if (mr && trustAdd.length) mr.how = join([mr.how, `信頼: ${trustAdd.map((t) => TRUST_HOW_JA[t]).join("・")}`], "／");
   const howSrc = s.keyHow.length || s.trustHow.length ? "turn" : tbl ? "table" : null;
-  return { rows, aixMain, empty, how: { key: keyHowEff, trust: s.trustHow.length ? s.trustHow : trustAdd, src: howSrc, tableKey: tbl?.keyUsed ?? null } };
+  return { rows, aixMain, empty, how: { key: keyHowEff, trust: s.trustHow.length ? s.trustHow : trustAdd, src: howSrc, tableKey: tbl?.keyUsed ?? null }, ctx };
 }
 
 
@@ -321,6 +446,9 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { sce
 export function sentencePlanNote(p: SentencePlan): string {
   if (!p.rows.some((r) => r.rank === "main")) return "";
   const L = ["【✍️ 文の設計図（1文ずつ・文の統括）】主を先に、従はその後に。1行＝1〜2文。受け・挨拶・締めは今まで通り。"];
+  // 2026-11-12 竹内さん「細分化された判断が文の構成に届くように」: 文の統括が受け取ったブレインの読みを設計図の上に（材料の無い行は出さない）
+  const cl = p.ctx ? composeContextLines(p.ctx) : [];
+  if (cl.length) L.push("（受け取ったブレインの読み）", ...cl, "（1文ずつ）");
   p.rows.forEach((r, k) => {
     const bits = [r.part ? `何を: ${r.part}` : "何を: （材料に無い＝中身を作らない）", r.how ? `どうやって: ${r.how}` : null, r.next ? `次へ: ${r.next}` : null].filter(Boolean);
     L.push(`${k + 1}. 【${r.rank === "main" ? "主" : "従"}】${ROLE_LABEL[r.role]}｜${bits.join("｜")}`);
@@ -438,6 +566,87 @@ export function tallyFields(rows: ReadonlyArray<Record<ScoreField, FieldHit>>): 
   for (const f of SCORE_FIELDS) {
     const xs = rows.map((r) => r[f]);
     out[f] = { goldHas: xs.filter((x) => x === "hit" || x === "miss").length, hit: xs.filter((x) => x === "hit").length, extra: xs.filter((x) => x === "extra").length, bothEmpty: xs.filter((x) => x === "both_empty").length };
+  }
+  return out;
+}
+
+// ── ⑥ 受け渡しの漏れ（2026-11-12 竹内さん「細分化された判断が文の構成に届くように・ボトルネックをなくす」） ─────────────
+/** 文の統括に届くべきブレインの欄。carried="plan"＝この設計図の注記に出す／"other"＝別の注記が運ぶ（重ねない・どこが運ぶかを書く） */
+export type HandoffField = { key: string; label: string; carried: "plan" | "other"; by?: string; values: (m: Record<string, unknown>) => string[] };
+const sv = (v: unknown, n = 60): string[] => { const x = str(v, n); return x ? [x] : []; };
+const asksOf = (m: Record<string, unknown>) => { const tc = obj(m.turn_contract); return Array.isArray(tc?.asks) ? (tc!.asks as unknown[]).map((a) => obj(a)).filter((a): a is Record<string, unknown> => !!a) : []; };
+export const HANDOFF_FIELDS: readonly HandoffField[] = [
+  { key: "turn_contract.situation", label: "今の状況", carried: "plan", values: (m) => sv(obj(m.turn_contract)?.situation, 80) },
+  { key: "turn_contract.background", label: "背景", carried: "plan", values: (m) => sv(obj(m.turn_contract)?.background, 100) },
+  { key: "turn_contract.asks.property", label: "何の物件", carried: "plan", values: (m) => asksOf(m).filter((a) => a.route !== "aix").flatMap((a) => sv(a.property, 40)) },
+  { key: "turn_contract.asks.about", label: "何の事", carried: "plan", values: (m) => asksOf(m).filter((a) => a.route !== "aix").map((a) => aboutOf(a.about)).filter((x): x is RequestAbout => !!x && x !== "other").map((x) => ABOUT_JA[x]) },
+  { key: "turn_contract.asks.answer", label: "答えの中身", carried: "plan", values: (m) => asksOf(m).filter((a) => a.route !== "aix").flatMap((a) => sv(a.answer, 60)) },
+  { key: "turn_contract.must_not", label: "言ってはいけない事", carried: "other", by: "本質の帯（renderTurnContractNote）", values: () => [] },
+  { key: "key_topics・avoid_topics・reply_direction・customer_questions", label: "要点の候補・避ける話・方向の文・質問", carried: "other", by: "本質の帯・ブレインの方向の行（generate-reply の tpoGuidanceNote）", values: () => [] },
+  { key: "priorities・message_plan.messages", label: "要件の順・通の割り振り", carried: "other", by: "文の統括の重点（reply-compose-conductor）・構成のブレイン（compose-blueprint の requirements）", values: () => [] },
+  { key: "message_plan.background", label: "背景（1通の計画）", carried: "plan", values: (m) => (str(obj(m.turn_contract)?.background) ? [] : sv(obj(m.message_plan)?.background, 80)) },
+  { key: "message_plan.parts(omit)", label: "今回入れない", carried: "plan", values: (m) => { const mp = obj(m.message_plan); return Array.isArray(mp?.parts) ? (mp!.parts as unknown[]).map((p) => obj(p)).filter((p) => p?.include === "omit").flatMap((p) => sv(p!.meaning, 40)).slice(0, 3) : []; } },
+  { key: "turn_read.target", label: "対象（物件・部分）", carried: "plan", values: (m) => { const t = obj(obj(m.turn_read)?.target); return [...sv(t?.property, 40), ...sv(t?.detail, 40)]; } },
+  { key: "turn_read.lead", label: "前の誘導への答え", carried: "plan", values: (m) => { const l = obj(obj(m.turn_read)?.lead); return l && typeof l.answer === "string" ? [l.answer] : []; } },
+  { key: "turn_read.feeling", label: "気持ちの中身", carried: "plan", values: (m) => sv(obj(m.turn_read)?.feeling, 30) },
+  { key: "turn_read.mood", label: "気持ちの型・何に・強さ", carried: "plan", values: (m) => { const md = obj(obj(m.turn_read)?.mood); return md ? [...sv(md.base, 20), ...sv(md.object, 20)] : []; } },
+  { key: "turn_read.latent", label: "潜在の4欄（きっかけ・部分・気持ち・したい事）", carried: "plan", values: (m) => { const lt = obj(obj(m.turn_read)?.latent) ?? obj(m.latent_read); return lt ? ["trigger", "part", "feeling", "want"].flatMap((k) => sv(lt[k], 40)) : []; } },
+  { key: "turn_read.main/subs", label: "主と従", carried: "plan", values: (m) => { const tr = obj(m.turn_read); const xs = [obj(tr?.main), ...((Array.isArray(tr?.subs) ? tr!.subs : []) as unknown[]).map((x) => obj(x))]; return xs.flatMap((x) => [...sv(x?.part, 40), ...sv(x?.property, 40)]); } },
+  { key: "main_point", label: "要点", carried: "plan", values: (m) => sv(m.main_point, 80) },
+  { key: "three_layer", label: "表の問い・奥の心配・安心の条件", carried: "plan", values: (m) => { const t = obj(m.three_layer); return t ? [...sv(t.surface, 40), ...sv(t.worry, 50), ...sv(t.relief, 50)] : []; } },
+  { key: "latent_intent", label: "送ってきた動機", carried: "plan", values: (m) => sv(m.latent_intent, 60) },
+  { key: "customer_concern", label: "気にしている事", carried: "plan", values: (m) => { const c = obj(m.customer_concern); return c ? [...sv(c.topic, 20), ...sv(c.object, 30)] : []; } },
+  { key: "appeal_timing", label: "訴求のタイミング", carried: "plan", values: (m) => { const a = obj(m.appeal_timing); return a ? [...sv(a.reason, 50)] : []; } },
+  { key: "conductor_focus", label: "統括の重点", carried: "plan", values: (m) => { const c = obj(m.conductor_focus); return c ? sv(c.focus, 20) : []; } },
+  { key: "plan_ahead.goal", label: "目指す事", carried: "plan", values: (m) => sv(obj(m.plan_ahead)?.goal, 40) },
+  { key: "future_timeline", label: "時期", carried: "plan", values: (m) => sv(m.future_timeline, 30) },
+  { key: "hesitancy_pattern", label: "迷いの型", carried: "plan", values: (m) => sv(m.hesitancy_pattern, 20) },
+  { key: "seven_read", label: "竹内さんの7つの欄", carried: "plan", values: (m) => { const r = obj(m.seven_read) ?? obj(m.takeuchi_seven); if (!r) return []; return [...sv(obj(r.point)?.what, 80), ...sv(obj(r.bridge)?.what, 60), ...sv(obj(r.appeal)?.point, 60), ...sv(obj(r.latent)?.what, 60), ...sv(obj(r.latent)?.fact, 60), ...sv(obj(r.point)?.skipped, 50), ...sv(obj(r.push)?.reason, 50)]; } },
+  { key: "current_property", label: "話題の中心の物件", carried: "plan", values: (m) => (asksOf(m).some((a) => a.route !== "aix" && str(a.property)) || str(obj(obj(m.turn_read)?.target)?.property) ? [] : asksOf(m).some((a) => a.route !== "aix") ? sv(m.current_property, 40) : []) },
+  { key: "customer_emotion", label: "気持ち（ブレインの一言）", carried: "plan", values: (m) => sv(m.customer_emotion, 30) },
+  { key: "customer_mindset", label: "気持ちの状態・不安の対象", carried: "plan", values: (m) => { const cm = obj(m.customer_mindset); return cm ? sv(cm.state, 20) : []; } },
+  { key: "engagement_stance・purchase_signal_level", label: "押す・待つ・買う合図", carried: "plan", values: (m) => [...sv(m.engagement_stance, 6), ...sv(m.purchase_signal_level, 6)] },
+  { key: "reply_direction(誘導先)", label: "方向の文の誘導先", carried: "plan", values: (m) => { const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? [LEAD_TO_JA[d]] : []; } },
+  { key: "compose.intent.next", label: "次にしてほしい事（構成の意図）", carried: "plan", values: () => [] },
+];
+
+/**
+ * ブレインの出力の全部の欄（brain-core.ts の SuggestedAixMeta）→ 文の側の受け口。新しい欄を足したらここに行が無いとテストが落ちる
+ *   （app/lib/__tests__/compose-sentence-plan.test.ts「ブレインの欄は全部、文の側の受け口が決まっている」）。2026-11-12 竹内さん「文生成の部分もブレインの進化にともなってちゃんとできるように」
+ *   plan＝文の統括の設計図が運ぶ（HANDOFF_FIELDS に行がある）／other＝別の注記・役が運ぶ（by に書く）／none＝文に関係しない（判断・AIX・記録・内部の受け渡し）
+ */
+export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none">> = {
+  // 文の統括の設計図が運ぶ
+  turn_contract: "plan", turn_read: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
+  conductor_focus: "plan", plan_ahead: "plan", future_timeline: "plan", hesitancy_pattern: "plan", message_plan: "plan", current_property: "plan",
+  customer_emotion: "plan", customer_mindset: "plan", engagement_stance: "plan", purchase_signal_level: "plan", reply_direction: "plan",
+  // 別の注記・役が運ぶ（本質の帯・方向・姿勢・締め・2通・AIX）
+  key_topics: "other", avoid_topics: "other", customer_questions: "other", priorities: "other", reply_mode: "other", two_stage: "other", reply_opener: "other",
+  recommended_tone: "other", urgency_appropriate: "other", closing_strategy: "other", payment_timing: "other", far_move_in: "other", property_state: "other",
+  action_ledger: "other", request_status: "other", winning_pattern: "other", repeated_concern: "other", condition_change_type: "other", condition_change_scope: "other",
+  checkpoint_stage: "other", customer_intent: "other", two_choice_mode: "other", two_choice_reply_kind: "other", two_choice_reply_hint: "other", two_choice_preferred: "other",
+  reply_direction_label: "other", current_properties: "other", send_sequence: "other", send_sequence_reply_count: "other", after_aix_template: "other", template_hint: "other",
+  first_reply: "other", rent_market: "other", pending_pickup: "other", pickup_ready: "other", material_missing: "other", customer_stage_now: "other",
+  // 文に関係しない（判断・AIX・記録・内部の受け渡し）
+  action: "none", input_key: "none", note: "none", source: "none", enforcement_level: "none", check_pattern: "none", next_steps: "none", two_choice_aix: "none",
+  two_choice_check_pattern: "none", aix_consult: "none", aix_desk: "none", aix_recheck: "none", material_read_misses: "none", last_turn_review: "none", alt_actions: "none",
+  parallel_search: "none", property_search_params: "none", aix_llm: "none", deep_check: "none", fast_slow: "none", need: "none", plan_ahead_at: "none",
+  material_conflicts: "none", flow_signals: "none", decisions_1103: "none", near_opinion: "none", conductor_roles: "none", conductor_meta: "none", conductor_intake: "none",
+  brain_depth: "none", deep_recheck_digest: "none", conductor_todos: "none", priority_step: "none", llm_raw: "none", checkpoint_stage_llm: "none", analyzed_msg_ts: "none",
+  last_aix_history: "none", aix_suppressed_by_accept_rate: "none", signal_aix_ran: "none", signal_aix_result: "none", decision_source: "none", decision_source_no_aix: "none",
+  demoted_overrides: "none", first_contact_pickup: "none", dropped_direction: "none", scene_evidence: "none", reason: "none", human_type_label: "none",
+};
+const nz = (t: string) => t.normalize("NFKC").replace(/\s+/g, "");
+/** ブレインに値があるのに設計図の注記に出ない欄（AIX の主の番・注記が空の番は数えない） */
+export function handoffLeaks(meta: unknown, note: string): Array<{ key: string; label: string; missing: string[] }> {
+  const m = obj(meta) ?? {};
+  if (!note.trim()) return [];
+  const n = nz(note);
+  const out: Array<{ key: string; label: string; missing: string[] }> = [];
+  for (const fd of HANDOFF_FIELDS) {
+    if (fd.carried !== "plan") continue;
+    const missing = fd.values(m).filter((v) => !n.includes(nz(v)));
+    if (missing.length) out.push({ key: fd.key, label: fd.label, missing });
   }
   return out;
 }

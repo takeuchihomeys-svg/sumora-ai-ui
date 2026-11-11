@@ -168,4 +168,66 @@ t("案B: 番の材料に「どうやって」が無い時は場面×誘導先の
   const meta = { seven_read: sevenQ072, turn_contract: { asks: [{ quote: "埋まりますか", route: "reply", about: "vacancy" }] } };
   assert.equal(buildSentencePlan(readTurnUnderstanding(meta), readSevenFields(meta), { scene: "viewing" }).how?.src, "turn");
 });
+
+// ── 2026-11-12 受け渡しの漏れ0（竹内さん「細分化された判断が文の構成に届くように」「ブレインの進化にともなって」） ──
+import { readFileSync as rf } from "node:fs";
+import { join as pj } from "node:path";
+import { readComposeContext, handoffLeaks, HANDOFF_FIELDS, BRAIN_FIELD_ROUTE, leadFromDirection } from "../compose-sentence-plan";
+const ROOT = pj(__dirname, "..", "..", "..");
+const planNoteOf = (meta: unknown, scene: string | null = null) => sentencePlanNote(buildSentencePlan(readTurnUnderstanding(meta), readSevenFields(meta), { scene, ctx: readComposeContext(meta) }));
+
+t("ブレインの欄は全部、文の側の受け口が決まっている（新しい欄を足したらここが落ちる）", () => {
+  const src = rf(pj(ROOT, "app/lib/brain-core.ts"), "utf8").split(/\r?\n/);
+  const start = src.findIndex((l) => l.startsWith("export type SuggestedAixMeta = {"));
+  assert.ok(start >= 0);
+  const keys: string[] = [];
+  for (let i = start + 1; i < src.length && !src[i].startsWith("}"); i++) { const m = src[i].match(/^ {2}([A-Za-z_][A-Za-z0-9_]*)\??:/); if (m) keys.push(m[1]); }
+  assert.ok(keys.length > 80, String(keys.length));
+  const missing = keys.filter((k) => !(k in BRAIN_FIELD_ROUTE));
+  assert.deepEqual(missing, [], `受け口の無いブレインの欄: ${missing.join(",")}（compose-sentence-plan.ts の BRAIN_FIELD_ROUTE に plan/other/none を書き、plan なら HANDOFF_FIELDS にも行を足す）`);
+  const planKeys = Object.entries(BRAIN_FIELD_ROUTE).filter(([, v]) => v === "plan").map(([k]) => k);
+  const noRow = planKeys.filter((k) => !HANDOFF_FIELDS.some((h) => h.key === k || h.key.startsWith(`${k}.`) || h.key.startsWith(`${k}(`) || h.key.split("・").includes(k)));
+  assert.deepEqual(noRow, [], `plan なのに受け渡しの表に行が無い: ${noRow.join(",")}`);
+});
+
+t("実物の meta（試験の答案の brain 24番）で、ブレインに値があるのに設計図に出ない欄は0", () => {
+  const brains = JSON.parse(rf(pj(ROOT, "scripts/compose-understanding/brains-1112.json"), "utf8")) as Array<{ id: string; brain: Record<string, unknown> }>;
+  let checked = 0;
+  for (const b of brains) {
+    const note = planNoteOf(b.brain);
+    if (!note) continue;
+    checked++;
+    assert.deepEqual(handoffLeaks(b.brain, note), [], b.id);
+  }
+  assert.ok(checked >= 15, String(checked));
+});
+
+t("全部の欄が入った meta でも漏れ0（作業員14 の潜在の4欄・主と従・作業員5 の7つの欄の受け口）", () => {
+  const full = {
+    reply_direction: "移動先が確定したらお部屋探しを再開できる旨を伝え、関係を切らずに待つ", current_property: "スプランディッド難波WESTⅡ 604号室",
+    turn_contract: { situation: "内覧の日程の相談中", background: "9/13以降しか行けない", asks: [{ quote: "埋まる可能性高いですかね", route: "reply", about: "vacancy", property: "スプランディッド難波WESTⅡ", answer: "好条件で埋まる可能性が高い", when: "viewing_day" }, { quote: "審査は", route: "reply", about: "procedure", answer: "通過の見込み" }], lead_with: 0, must_not: ["空いていると断言"] },
+    turn_read: { target: { kind: "送った物件", property: "スプランディッド難波WESTⅡ", detail: "9/13まで空いているか" }, intent: "内覧したい", intent2: "申込したい・抑えたい", lead: { kind: "内覧", answer: "応じた" }, feeling: "埋まらないか心配", mood: { base: "先に取られる不安", object: "人気の物件", degree: "中" },
+      latent: { trigger: "内覧が9/13以降", part: "待つ間の空き", feeling: "取られたくない", strength: "中", want: "内覧まで部屋を確保したい" } },
+    main_point: "埋まる可能性が高い", three_layer: { surface: "埋まるか", worry: "待つ間に取られる", relief: "抑えておける事" }, latent_intent: "第一候補を逃したくない",
+    customer_concern: { topic: "時期", object: "埋まる" }, appeal_timing: { kind: "apply", level: "suggest", reason: "好条件で残りが少ない" }, conductor_focus: { focus: "answer", why: "埋まるかへの答え" },
+    plan_ahead: { goal: "今週中に申込" }, future_timeline: "9月13日以降", hesitancy_pattern: "timeline", customer_emotion: "焦り", customer_mindset: { state: "先に取られる不安", anxiety: { target: "空き", direction: "前向き" }, hesitation: null },
+    engagement_stance: "push", purchase_signal_level: "soft",
+    message_plan: { background: "内覧が先になるので空きが心配", parts: [{ rank: 1, meaning: "審査の詳しい説明", include: "omit" }], messages: [] },
+    seven_read: { point: { what: "9/13まで空いているか", how: "言い切る", skipped: "審査の詳しい話" }, bridge: { what: "撮影・オンライン内見で抑える", how: "時間枠" }, lead: "apply", appeal: { property: "スプランディッド難波WESTⅡ", point: "好条件", how: "同じ条件の方も申込む" }, latent: { what: "9/13まで待つ間に埋まる", fact: "同じ条件の方も申込む", how: "先に抑える" }, point_how: ["assert"], trust_how: ["preempt"], push: { push: true, strength: "strong", reason: "物件の残り×日程" } },
+  };
+  const note = planNoteOf(full, "viewing");
+  assert.deepEqual(handoffLeaks(full, note), []);
+  assert.match(note, /潜在: きっかけ 内覧が9\/13以降・何の部分 待つ間の空き・気持ち 取られたくない（中）・本当はしたい事 内覧まで部屋を確保したい/);
+  assert.match(note, /今回は入れない・後に回す: 審査の詳しい説明／審査の詳しい話/);
+});
+
+t("方向の文から誘導先を写す（作業員5 の外れの束 10番）・customer_concern を潜在で先に（q072）", () => {
+  assert.equal(leadFromDirection("内覧キャンセルの申し出を快く受け止め、移動先が確定したらまたお部屋探しを再開できる旨を伝える。再開時期の伺いも添え、関係を切らずに待つ姿勢を示す。"), "keep");
+  assert.equal(leadFromDirection("2階は上階に比べ虫が入りやすいと正直に答え、7階以上が虫対策に良い旨を伝えて不安を解消する"), "answer_only");
+  assert.equal(leadFromDirection("ご希望の条件を伺い、お送り頂ければ探す"), "ask_send");
+  assert.equal(leadFromDirection("好条件なので申込で抑える事を勧める"), "apply");
+  assert.equal(leadFromDirection("同じ発言の他のご希望にも一言ずつ応える（頼まれていない内覧・申込の一文は足さない）。"), null);
+  const s = readSevenFields({ customer_concern: { topic: "時期", object: "埋まる" }, turn_read: { mood: { base: "安くしたい" } } });
+  assert.equal(s.latentCover?.kind, "先に取られる");
+});
 console.log(`${n} pass`);

@@ -7,7 +7,7 @@
 // 置き場: 統括の名簿（conductor-roles.ts の ROSTER）の近く。roadmap の memory/project_conductor_roadmap.md に1段。
 export type ConductorStage = "read" | "rough" | "detail" | "compose" | "verify" | "exam";
 export type ConductorLink = {
-  id: "intake" | "brain" | "two_stage" | "scene_net" | "rules" | "aix_desk" | "two_msg" | "compose" | "writer" | "final_check" | "exam";
+  id: "intake" | "brain" | "two_stage" | "scene_net" | "rules" | "aix_desk" | "two_msg" | "compose_plan" | "compose" | "writer" | "final_check" | "exam";
   name: string; owner: string; files: string[]; stage: ConductorStage;
   /** 読む印（meta.* / digest.* / trace.*） */
   reads: string[];

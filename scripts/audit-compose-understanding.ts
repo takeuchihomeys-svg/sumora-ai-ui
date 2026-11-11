@@ -12,7 +12,7 @@
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
-  readTurnUnderstanding, readSevenFields, buildSentencePlan, planFieldsOf, scoreFields, tallyFields, understandingCoverage, sentencePlanNote,
+  readTurnUnderstanding, readSevenFields, buildSentencePlan, readComposeContext, planFieldsOf, scoreFields, tallyFields, understandingCoverage, sentencePlanNote,
   SCORE_FIELDS, UNDERSTANDING_FIELDS, type TakeuchiGold, type PlanFields, type ScoreField, type FieldHit,
 } from "../app/lib/compose-sentence-plan";
 import { decideMessageFocus, readComposeInputs, prevStaffKindOf, customerAskedNewOf, type MessageFocusKey } from "../app/lib/reply-compose-conductor";
@@ -45,7 +45,9 @@ function resultFiles(): string[] {
   return out;
 }
 const brainOf = new Map<string, { at: string; brain: Record<string, unknown>; file: string }>();
-for (const f of resultFiles()) {
+// --brains=<json>: 固定した答案の brain（scripts/compose-understanding/brains-1112.json の形 [{id, at, brain}]）だけで測る（答案が新しくなっても前後で同じ材料）
+if (arg("brains")) for (const r of JSON.parse(readFileSync(resolve(ROOT, arg("brains")), "utf8")) as Array<{ id: string; at?: string; brain: Record<string, unknown> }>) brainOf.set(r.id, { at: r.at ?? "", brain: r.brain, file: arg("brains") });
+for (const f of arg("brains") ? [] : resultFiles()) {
   let txt = ""; try { txt = readFileSync(f, "utf8"); } catch { continue; }
   for (const line of txt.split("\n")) {
     if (!line.includes('"brain"')) continue;
@@ -77,7 +79,7 @@ for (const g of gold) {
   const b = brainOf.get(g.id);
   const brain = b?.brain ?? {};
   if (!b) noBrain++;
-  const u = readTurnUnderstanding(brain), s = readSevenFields(brain), plan = buildSentencePlan(u, s, { scene: resolveReplyScene({ customerText: String(probs.get(g.id)?.customer ?? "") }).scene });
+  const u = readTurnUnderstanding(brain), s = readSevenFields(brain), plan = buildSentencePlan(u, s, { scene: resolveReplyScene({ customerText: String(probs.get(g.id)?.customer ?? "") }).scene, ctx: readComposeContext(brain) });
   const nf = planFieldsOf(u, s, plan), cf = currentFields(brain, probs.get(g.id));
   const sNew = scoreFields(g, nf), sNow = scoreFields(g, cf);
   newRows.push(sNew); nowRows.push(sNow);
