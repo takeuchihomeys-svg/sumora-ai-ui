@@ -1808,7 +1808,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           shot_w: msg.shot_w || null,
           shot_h: msg.shot_h || null,
           install_id: await _snapInstallId(),
-          device_label: (await chrome.storage.local.get("deviceLabel").catch(function () { return {}; })).deviceLabel || null,
+          // 2026-11-11: `chrome.storage.local.get(...)` は Promise を返さない → `.catch` で落ちる。await で受ける
+          device_label: await (async function () {
+            try { const r = await chrome.storage.local.get("deviceLabel"); return (r && r.deviceLabel) || null; } catch (_) { return null; }
+          })(),
           ext_version: _extVersion(),
           at: Date.now(),
         };
@@ -1956,20 +1959,23 @@ if (msg.type === "axlx-human-shot") {
        */
       if (msg.upload !== false) {
         /**
-         * 2026-11-11 竹内さん「しゃしんとれたかな」→ 0枚。
-         *   ⚠ 旧は `chrome.runtime.sendMessage({type:"axlx-human-shot-upload"})` で**自分自身に**送っていた。
-         *     送信元が自分だと `onMessage` は発火しないので、**アップロードが一度も動いていなかった**。
-         *   → キューの関数を**直接**呼ぶ（メッセージを通さない）。
+         * 2026-11-11 竹内さん「写真はスクショとるだけのになぜできないのか」→「こうでた」:
+         *   ⚠ ここは**ファイルの上の方**（`_shotUploadQueue` の宣言より前）にある。
+         *     `var` は巻き上げられるが**中身は undefined** なので `_shotUploadQueue.push` で例外 →
+         *     下の try/catch が握りつぶして**何も起きない**（＝送信が一度も走らない）。
+         *   → 直接キューを触らず、**下で定義した関数に渡す**（`_enqueueShotUpload`）。
          */
         try {
-          if (_shotUploadQueue.length > 40) _shotUploadQueue.shift();
-          _shotUploadQueue.push({
-            data_url: dataUrl, site: msg.site || null, what: msg.what || null,
-            kind: msg.kind || null, x: msg.x, y: msg.y,
-            mode: null, run_id: _shotRun, seq: _shotSeq,
-          });
-          _pumpShotUpload();
-        } catch (_) {}
+          if (typeof _enqueueShotUpload === "function") {
+            _enqueueShotUpload({
+              data_url: dataUrl, site: msg.site || null, what: msg.what || null,
+              kind: msg.kind || null, x: msg.x, y: msg.y,
+              mode: null, run_id: _shotRun, seq: _shotSeq,
+            });
+          }
+        } catch (e) {
+          console.warn("[human-shot] 送信の列に積めません:", (e && e.message) || e);
+        }
       }
 
       // 古い物から消す（全体の上限）
@@ -2002,6 +2008,17 @@ if (msg.type === "axlx-human-shot") {
 var _shotUploadQueue = [];
 var _shotUploading = false;
 var _shotUploadStartedAt = 0;
+/** 写真の送信を列に積む（宣言より前から呼ばれるので、この形にまとめる） */
+function _enqueueShotUpload(job) {
+  try {
+    if (!job || !job.data_url) return;
+    if (_shotUploadQueue.length > 40) _shotUploadQueue.shift();
+    _shotUploadQueue.push(job);
+    _pumpShotUpload();
+  } catch (e) {
+    console.warn("[human-shot] 積めません:", (e && e.message) || e);
+  }
+}
 function _pumpShotUpload() {
   /**
    * 2026-11-11 竹内さん「写真はスクショとるだけなのになぜできないのか」:
@@ -2017,6 +2034,8 @@ function _pumpShotUpload() {
   if (!job) return;
   _shotUploading = true;
   _shotUploadStartedAt = Date.now();
+  // 2026-11-11: 「まだ」と「失敗」を区別できるよう、**始めた印**を先に置く
+  try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: null, phase: "sending", at: Date.now() } }); } catch (_) {}
   (async () => {
     try {
       const hdr = await _getAutomationKeyHeader();
@@ -2029,7 +2048,15 @@ function _pumpShotUpload() {
         shot_taken: true,
         shot_key: null,
         install_id: await _snapInstallId(),
-        device_label: (await chrome.storage.local.get("deviceLabel").catch(function () { return {}; })).deviceLabel || null,
+        /**
+         * 2026-11-11 竹内さん「こうでた」→ 送信が毎回失敗していた。
+         *   ⚠ `chrome.storage.local.get(...)` は**Promise を返さない**（コールバック式）ので
+         *     `.catch()` を呼ぶと `Cannot read properties of undefined (reading 'catch')` で落ちていた。
+         *   → await で受ける（Chrome の Manifest V3 は await でも使える）。
+         */
+        device_label: await (async function () {
+          try { const r = await chrome.storage.local.get("deviceLabel"); return (r && r.deviceLabel) || null; } catch (_) { return null; }
+        })(),
         ext_version: _extVersion(),
         at: Date.now(),
         shot_meta: { what: job.what, kind: job.kind, x: job.x, y: job.y, run_id: job.run_id, seq: job.seq },
