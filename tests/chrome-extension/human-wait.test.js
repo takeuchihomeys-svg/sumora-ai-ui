@@ -314,7 +314,7 @@ console.log("\n■ ⑦ マウスの軌跡（pointerPath・まっすぐでない�
   eq("待ちの数は点の数と同じ", waits.length, 12);
   ok(`待ちの合計 ≒ 400ms（${waits.reduce((a, b) => a + b, 0)}）`, Math.abs(waits.reduce((a, b) => a + b, 0) - 400) < 90);
   ok("最初と最後は中ほどよりゆっくり（加速・減速）", waits[0] + waits[11] > waits[5] + waits[6], { first: waits[0], last: waits[11], mid: waits[5] + waits[6] });
-  ok("どの待ちも 8ms 以上", waits.every((v) => v >= 8));
+  ok("どの待ちも 4ms 以上（2026-11-11: 0.1ms 単位にしたので下限を下げた）", waits.every((v) => v >= 4));
 
   // 打鍵（page-script.js / itandi-page-script.js に配線されている）
   const ps = read("page-script.js"), ips = read("itandi-page-script.js");
@@ -345,7 +345,7 @@ console.log("\n■ ⑧ 1件ずつ（2026-11-10 竹内「まとめてチェック
   ok("ITANDI の条件: 待つ間隔は固定でない（_pd）", /_whenTickIdle\(cb\)\) ?, _pd\(120\)/.test(ips.replace(/\s+/g, " ")) || /_whenTickIdle\(cb\); \}, _pd\(120\)\);/.test(ips));
 
   const ps = read("page-script.js");
-  ok("リアプロの条件: クリックの列の間は対数正規（humanRand が logNormalDelay）", /H\.logNormalDelay\(med, 0\.3\)/.test(ps));
+  ok("リアプロの条件: クリックの列の間は対数正規（humanRand が logNormalDelay）", /H\.logNormalDelay\(med, 0\.32\)/.test(ps) && /0\.1ms 単位/.test(ps));
   ok("リアプロの条件: 1件ずつの列に名前が付く（点検で1操作ずつ見える）", /label: _opLabel\(el\)/.test(ps));
 }
 

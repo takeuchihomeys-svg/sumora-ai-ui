@@ -365,9 +365,19 @@
     if (!(isFinite(lo) && isFinite(hi)) || hi <= lo) return lo || 0;
     var H = window.AxlxHumanWait;
     if (H && H.logNormalDelay) {
+      /**
+       * 2026-11-11 竹内さん「間隔もちゃんとばらばらで不規則にちゃんと押しているか」:
+       *   旧は Math.round + `Math.max(lo, ...)` で **lo に張り付いて同じ値が連続**していた。
+       *   対策: ① 対数正規の中央値を lo と hi の間で決める（lo に張り付かせない）
+       *        ② 0.1ms 単位で残す ③ 10%で「ためらい」を足す ④ たまに速く押す（下の端を lo*0.55 まで許す）
+       */
       var med = (lo + hi) / 2;
-      var v = H.logNormalDelay(med, 0.3);
-      return Math.max(lo, Math.min(Math.round(hi * 1.6), v));
+      var v = H.logNormalDelay(med, 0.32);
+      var floor = Math.max(20, lo * 0.55);
+      var ceil = hi * 1.8;
+      var out = Math.min(ceil, Math.max(floor, v));
+      if (Math.random() < 0.10) out += 80 + Math.floor(Math.random() * 260); // ためらい
+      return Math.round(Math.min(hi * 2.2, out) * 10) / 10; // 0.1ms 単位
     }
     return lo + Math.floor(Math.random() * (hi - lo + 1));
   }

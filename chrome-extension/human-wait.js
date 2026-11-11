@@ -121,8 +121,15 @@
     if (!m) return 0;
     var s = (typeof sigma === "number" && isFinite(sigma) && sigma > 0) ? sigma : PACER_SIGMA;
     var v = m * Math.exp(s * _gauss(rng));
-    var lo = Math.max(200, m * 0.25), hi = m * 6;
-    return Math.round(Math.min(hi, Math.max(lo, v)));
+    /**
+     * 2026-11-11 竹内さん「間隔もちゃんとばらばらで不規則に」:
+     *   旧の下の端は `Math.max(200, m*0.25)` ＝**中央値が200ms未満だと全部200msに張り付いていた**
+     *   （クリックの間 80〜200ms で 400回中64種類・同じ値が20回連続）。
+     *   対策: 下の端を `max(20, m*0.3)` にする（短い間隔でも潰れない）。上の端は今まで通り m*6。
+     *   ⚠ 200ms を下回らせたくない所（ページの読み込み待ち等）は、呼ぶ側で Math.max(200, ...) する。
+     */
+    var lo = Math.max(20, m * 0.3), hi = m * 6;
+    return Math.round(Math.min(hi, Math.max(lo, v)) * 10) / 10;
   }
 
   /**
@@ -190,16 +197,30 @@
   function pointerDelays(n, totalMs, rng) {
     var N = Math.max(2, Math.floor(Number(n) || 12));
     var total = _num(totalMs) || 400;
+    /**
+     * 2026-11-11 竹内さん「マウスとクリックと選択の間隔等も人間のようになっているのか。間隔もちゃんとばらばらで不規則に」:
+     *   旧は Math.round で ms に丸めていたため、**24点で18種類**しか無く「ほぼ等速」に見えていた。
+     *   対策: ① 1ms まで残す（丸めを減らす）② 点ごとに ±40% の揺らぎを足す ③ たまに「止まって見る」（2%で+120〜400ms）
+     *   合計は total にそろえる（サイトへの負荷・所要時間は変えない）。
+     */
     var w = [];
     var sum = 0;
     for (var i = 0; i < N; i++) {
       var t = (i + 1) / N;
       // 端（0 と 1 の近く）ほど重い＝ゆっくり。中ほどは速い
       var v = 0.35 + 2.6 * Math.pow(Math.abs(t - 0.5) * 2, 2);
-      v *= 0.8 + _rand(rng) * 0.4;
+      v *= 0.6 + _rand(rng) * 0.8;   // ±40%の揺らぎ（旧は 0.8〜1.2 ＝ ±20%）
       w.push(v); sum += v;
     }
-    return w.map(function (x) { return Math.max(8, Math.round(total * x / sum)); });
+    // 合計を total にそろえ、1ms 単位で残す（丸めで同じ値が並ばないように）
+    var out = w.map(function (x) { return Math.max(4, (total * x) / sum); });
+    // たまに「途中で少し止まる」（人が一瞬ためらう）: 2点ほどに足して、他から少しずつ引く
+    if (_rand(rng) < 0.02) {
+      var k = 1 + Math.floor(_rand(rng) * (N - 2));
+      out[k] += 120 + Math.floor(_rand(rng) * 280);
+    }
+    var back = out.reduce(function (a, b) { return a + b; }, 0) / total;
+    return out.map(function (x) { return Math.max(4, Math.round((x / back) * 10) / 10); });
   }
 
   // ── 2026-11-10 v2.5.98 竹内さん「人間なので休憩するときもある」──
