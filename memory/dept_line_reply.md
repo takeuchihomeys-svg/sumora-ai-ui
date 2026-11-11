@@ -9522,3 +9522,4 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 今の文の統括（reply-compose-conductor）が持つ欄: 重点1つ（7種）・継続の約束・書かない事。compose-blueprint: 趣旨・主語・メインの1文・添え・締め（next は持つが設計図に出ない・emotion/appeal は受け口があるが route が渡していない）
 - 11/11 夜の直し（ebe9bf7f）: 注記の「設計図に無い役目は足さない」を外し、主が確かめる約束の時は確かめる中身（最短・可否・日付・金額）を言い切らせない行に。試験（DeepSeek・draft・--baseline=main・--dig）: q145×3 合格 1→1・悪化0（$0.142）／q057・q136・q060・q036×1 合格 2→2・本質 3/4→3/4・pathWorse 0・essenceWorse 0・確かな悪化 0（$0.301）。試験の統括の「道の確かめ」は compose_plan の印を知らず「通る 0問」と出る（新しい digest の欄のため）
 - 本番で7つの欄を埋める所はまだ無い（seven_read は夜の読みだけ）。案は報告に（ブレインの出力に一部の欄を足す＋場面ごとの傾向表）
+- 11/12 受け渡し（37e38ee1・COMPOSE_SENTENCE_PLAN の下）: 受け渡しの表 HANDOFF_FIELDS・漏れの検出 handoffLeaks・ブレインの全欄→受け口 BRAIN_FIELD_ROUTE（新しい欄に受け口が無いとテストが落ちる）。案B（fbe6853b）: 場面×誘導先の押さえ方・信頼の作り方の表 compose-how-table（198通）。道の確かめに compose_plan（exam-path-check.composePlanMarkers・連携の表の行）。物差し（固定 brain brains-1112.json）: 誘導先 12/23・つなぎ 8/18・潜在 4/16・押さえ方 10/24・信頼 9/23
