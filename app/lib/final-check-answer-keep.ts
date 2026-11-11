@@ -91,6 +91,94 @@ export function phaseBanKeepsAnswer(
   return false;
 }
 
+// ─── 2026-11-12 統括役の続き（②の型を広げる・各スイッチ既定 off）────────────────────────────────
+// 実物（10/29〜11/11 の書き直し 35件のうち「落とした」12件）から、語の網の block／LLM の指摘がブレインの決めた文を消した型:
+//   UKETAMAWARI_OBJECT_UNANCHORED（f6bcf7c4「本日18:30のご内覧のご希望、承りました」・お客様「本日の6時半は空いてないでしょうか」＝語が一致しないだけ・スタッフは内覧の確定で返した）
+//   GOCHOUGO_AFTER_FIXED（23837532 お客様「仕事が入って明日でもよろしいでしょうか」＝確定日が変わる番に「ご都合よろしいお時間」を聞くのは正しい・スタッフも時間を聞いた）
+//   DOUBLE_DECLARATION／RULE_VIOLATION／GOCHOUGO_NO_CONDITION（7d8086d1 探す約束・ece1900f 写真と動画を送る約束が消えた・スタッフは両方送った）
+// 安全の線（FABRICATED_*・BANNED_WORD・NG_PROPERTY_MENTION・AIX_BOUNDARY_*・COMPANY_FACT_*・NAME_*）は対象にしない（コードで限る）。
+
+export function fcUketamawariBrainEnabled(env?: Env): boolean { return (envOf(env).FC_UKETAMAWARI_BRAIN ?? "").trim().toLowerCase() === "on"; }
+export function fcGochougoRescheduleEnabled(env?: Env): boolean { return (envOf(env).FC_GOCHOUGO_RESCHEDULE ?? "").trim().toLowerCase() === "on"; }
+export function fcPromiseKeepEnabled(env?: Env): boolean { return (envOf(env).FC_PROMISE_KEEP ?? "").trim().toLowerCase() === "on"; }
+export function fcPropertyNameNormalizeEnabled(env?: Env): boolean { return (envOf(env).FC_PROPERTY_NAME_NORMALIZE ?? "").trim().toLowerCase() === "on"; }
+
+/** 承りましたの目的語 → ブレインの項目の種類 */
+const OBJECT_TOPIC: Array<{ re: RegExp; topics: ReadonlyArray<string> }> = [
+  { re: /内覧|内見|ご案内|見学/, topics: ["viewing"] },
+  { re: /費用|見積|金額|家賃/, topics: ["cost"] },
+  { re: /条件|ピックアップ|お部屋探し|エリア/, topics: ["pickup"] },
+  { re: /申込|契約|審査|入居/, topics: ["contract", "screening", "move_in"] },
+];
+/** UKETAMAWARI の指摘の目的語が、ブレインが今の番で扱うと決めた項目（route が none 以外）の種類に当たるか */
+export function uketamawariKeeps(issue: AnswerKeepIssue, o: { contract: TurnContract | null | undefined; env?: Env }): boolean {
+  if (!fcUketamawariBrainEnabled(o.env) || issue.code !== "UKETAMAWARI_OBJECT_UNANCHORED") return false;
+  const c = o.contract;
+  if (!c || c.source !== "brain") return false;
+  const obj = `${(issue.message ?? "").match(/「([^」]+)」/)?.[1] ?? ""} ${issue.evidence ?? ""}`;
+  const hit = OBJECT_TOPIC.find((t) => t.re.test(obj));
+  if (!hit) return false;
+  return c.asks.some((a) => a.route !== "none" && (hit.topics.includes(a.topic) || hit.topics.includes(String(a.axis?.about ?? ""))));
+}
+
+/** お客様が内覧の日を変えたい・別の日を頼んでいる（確定日がもう確定でない） */
+export const RESCHEDULE_RE = /(?:変更|ずら|別の日|他の日|明日(?:で|に)?(?:も|は)|後日|延期|行けなく|行けません|難しく|仕事が入|予定が入|都合が悪|キャンセル(?:して|させ))/;
+/** GOCHOUGO_AFTER_FIXED の指摘を、お客様が日の変更を頼んだ番では書き直しに渡さない（ブレインがいる時は内覧の項目を扱う番だけ） */
+export function gochougoRescheduleKeeps(issue: AnswerKeepIssue, o: { contract: TurnContract | null | undefined; customerText: string | null | undefined; env?: Env }): boolean {
+  if (!fcGochougoRescheduleEnabled(o.env) || issue.code !== "GOCHOUGO_AFTER_FIXED") return false;
+  if (!RESCHEDULE_RE.test(String(o.customerText ?? "").normalize("NFKC"))) return false;
+  const c = o.contract;
+  if (c && c.source === "brain") return c.asks.some((a) => a.route !== "none" && (a.topic === "viewing" || a.axis?.about === "viewing"));
+  return true;
+}
+
+const PROMISE_KEEP_CODES = /^(?:DOUBLE_DECLARATION|RULE_VIOLATION|GOCHOUGO_NO_CONDITION)$/;
+const PHOTO_PROMISE_RE = /(?:写真|動画)[^\n。！!]{0,16}(?:撮影|お送り)[^\n。！!]{0,12}(?:させて|して)?(?:頂|いただ)?きます/;
+/** ブレインが決めた約束・提案の文を、重複・学習ルール・条件節の指摘で書き直しに渡さない（ブレインが「もう言った」とした文は除く） */
+export function promiseKeeps(issue: AnswerKeepIssue, o: { contract: TurnContract | null | undefined; draft: string; env?: Env }): boolean {
+  if (!fcPromiseKeepEnabled(o.env) || !PROMISE_KEEP_CODES.test(issue.code)) return false;
+  const c = o.contract;
+  if (!c || c.source !== "brain") return false;
+  const sent = sentenceAround(o.draft, issue.evidence ?? "");
+  if (!sent || !PROMISE_SENT_LIKE_RE.test(sent)) return false;
+  const key = sent.replace(/[\s！!。😊😌🌟✨]/g, "").slice(0, 14);
+  if (c.alreadySaid.some((x) => String(x ?? "").replace(/[\s！!。😊😌🌟✨]/g, "").includes(key.slice(0, 10)))) return false;
+  if (contractProtectsSentence(c, sent, envOf(o.env))) return true;
+  if (brainPromisesSearch(c) && SEARCH_PROMISE_RE.test(sent)) return true;
+  if (PHOTO_PROMISE_RE.test(sent) && c.proposals.some((p) => /撮影|写真|動画/.test(p))) return true;
+  return false;
+}
+const PROMISE_SENT_LIKE_RE = /(?:させて|して)(?:頂|いただ)きます|お送り(?:させて|して)?(?:頂|いただ)?きます|ご連絡(?:させて)?(?:頂|いただ)?きます/;
+
+/** ①と上の3つをまとめた入口（書き直し・作り直しに渡さない指摘か） */
+export function fcKeepsBrainSentence(
+  issue: AnswerKeepIssue,
+  o: { contract: TurnContract | null | undefined; draft: string; customerText: string | null | undefined; env?: Env },
+): boolean {
+  return phaseBanKeepsAnswer(issue, o) || uketamawariKeeps(issue, o) || gochougoRescheduleKeeps(issue, o) || promiseKeeps(issue, o);
+}
+
+/** 物件名の表記ゆれ（全角空白・中黒・号室の有無）を外して比べる形 */
+export function normalizePropertyText(s: string): string {
+  return String(s ?? "").normalize("NFKC").replace(/[\s　・･\-－ー―‐]/g, "").replace(/号室/g, "").replace(/(?:様|さん)$/g, "");
+}
+/**
+ * FABRICATED_PROPERTY の引用が、表記ゆれを外すと会話（お客様・こちら・資料の値）にそのまま在るか。在れば作り話でない（指摘を外す）。
+ *   引用から物件名らしい部分（カタカナ・英字の名前＋号室の数）を取り、全部が在る時だけ。1つでも無ければ外さない（本当の写し間違いは残る）。
+ */
+export function propertyNameVariantGrounded(code: string, evidence: string | null | undefined, groundTexts: ReadonlyArray<string | null | undefined>, env?: Env): boolean {
+  if (!fcPropertyNameNormalizeEnabled(env) || code !== "FABRICATED_PROPERTY") return false;
+  const ev = String(evidence ?? "").normalize("NFKC");
+  const ground = normalizePropertyText(groundTexts.map((x) => String(x ?? "")).join("\n"));
+  if (!ev.trim() || !ground) return false;
+  const parts: string[] = [];
+  for (const m of ev.matchAll(/[ァ-ヶー][ァ-ヶー\s　・]{2,}[ァ-ヶー]|[A-Za-z][A-Za-z\s　・.\-]{2,}[A-Za-z]/g)) parts.push(normalizePropertyText(m[0]));
+  for (const m of ev.matchAll(/(\d{2,4})\s*号室/g)) parts.push(m[1]);
+  const named = parts.filter((p) => p.length >= 3);
+  if (!named.length) return false;
+  return parts.every((p) => /^\d+$/.test(p) ? new RegExp(`(?<!\\d)${p}(?!\\d)`).test(ground) : ground.includes(p));
+}
+
 /**
  * ② 書き直しが新しく足した文（元の下書きに無い文）に、会社の事実に反する断定があるか。あれば最初の1文を返す（書き直しを採らない）。
  *   聞かれたかは問わない（書き直しが自分で足した断定なので）。元の下書きにあった文は見ない（1回目の検査の役目）。

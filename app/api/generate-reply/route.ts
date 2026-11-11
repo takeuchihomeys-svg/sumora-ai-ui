@@ -140,7 +140,7 @@ import { resolveAddressNameForConversation } from "@/app/lib/address-name-server
 import { createExitRecorder } from "@/app/lib/exit-edits";
 import { isEvaluativePrinciple, principleEvalFilterEnabled } from "@/app/lib/principle-eval";
 import { estimateRedeclareArmed, vacancyRedeclareArmed, brainKeepsRedeclare, logMatchesCurrent, ESTIMATE_REDECLARE_WINDOW_MS } from "@/app/lib/redeclare-gate";
-import { phaseBanKeepsAnswer } from "@/app/lib/final-check-answer-keep";
+import { fcKeepsBrainSentence } from "@/app/lib/final-check-answer-keep";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
 import { runFinalCheckGated, type FinalCheckGateLog } from "@/app/lib/final-check-gated";
@@ -7101,7 +7101,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   // 2026-10-09: 本質（ブレイン）に反する中身を足させる・消させる指摘はフィードバック再生成に渡さない（turn-contract.issueContradictsContract）
                   (it) => it.severity === "block" && it.code !== "UNCHECKED_AUTO_SEND" && !issueContradictsContract(it, turnContract)
                     // 2026-11-12 作業員15: 段階の語の網（審査・契約・鍵）が今の質問・ブレインの答え／約束の文を作り直しに渡さない（FC_ANSWER_KEEP=on の時だけ）
-                    && !phaseBanKeepsAnswer(it, { contract: turnContract, draft: draftBody, customerText: message })
+                    && !fcKeepsBrainSentence(it, { contract: turnContract, draft: draftBody, customerText: message })
                 );
                 // 2026-09-11 統合設計（D1）: 再生成すると finalCheck が loop2 で丸ごと置換されるため、1回目生成のチェック結果を別に残す
                 const firstPass = { issues: finalCheck.pre_revision_issues ?? finalCheck.issues.map((i) => `${i.code}:${i.severity}`), head: draftBody.slice(0, 80) };

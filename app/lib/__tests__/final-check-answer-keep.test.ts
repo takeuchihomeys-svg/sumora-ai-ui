@@ -1,7 +1,7 @@
 // 2026-11-12 作業員15 最終チェックの書き直しがブレインの答え・約束を消さない関所（final-check-answer-keep.ts）
 // 文は本番の下書き・書き直しの実物（ai_reply_examples の exitEdits・10/29〜11/11）。名前は YUMA に伏せた
 // 実行: npx tsx app/lib/__tests__/final-check-answer-keep.test.ts
-import { phaseBanKeepsAnswer, revisionAddedFactContradiction, MOVE_IN_TIMING_QUESTION_RE } from "../final-check-answer-keep";
+import { phaseBanKeepsAnswer, revisionAddedFactContradiction, MOVE_IN_TIMING_QUESTION_RE, fcKeepsBrainSentence, uketamawariKeeps, promiseKeeps, propertyNameVariantGrounded } from "../final-check-answer-keep";
 import { runDeterministicChecks } from "../final-check";
 import type { TurnContract, ContractAsk } from "../turn-contract";
 
@@ -107,6 +107,50 @@ const GOOD: Array<[string, string]> = [
 ];
 it("②正しかった書き直し 7件は捨てない（誤って捨てる 0）", () => {
   for (const [b, a] of GOOD) eq(revisionAddedFactContradiction(b, a, ON), null, a.slice(0, 30));
+});
+
+// ─── 11/12 統括役の続き: 承り・ご都合・約束・物件名の表記ゆれ ───
+const ON2 = { FC_UKETAMAWARI_BRAIN: "on", FC_GOCHOUGO_RESCHEDULE: "on", FC_PROMISE_KEEP: "on", FC_PROPERTY_NAME_NORMALIZE: "on" };
+it("承り 実物 f6bcf7c4: ブレインが内覧を扱う番の「ご内覧のご希望、承りました」は渡さない", () => {
+  const c = contract([ask({ quote: "本日の6時半は空いてないでしょうか", topic: "viewing", route: "aix" })]);
+  const i = { code: "UKETAMAWARI_OBJECT_UNANCHORED", message: "「ご内覧のご希望」をお客様は伝えていないのに「本日18:30のご内覧のご希望、承りました」", evidence: "本日18:30のご内覧のご希望、承りました" };
+  eq(fcKeepsBrainSentence(i, { contract: c, draft: "本日18:30のご内覧のご希望、承りました😊！！", customerText: "本日の6時半は空いてないでしょうか？", env: ON2 }), true);
+  eq(fcKeepsBrainSentence(i, { contract: c, draft: "本日18:30のご内覧のご希望、承りました😊！！", customerText: "", env: OFF }), false, "off");
+});
+it("承り 対照: ブレインの項目に無い目的語（キャンセル料）は渡す・ブレインなしも渡す", () => {
+  const c = contract([ask({ quote: "本日の6時半は空いてないでしょうか", topic: "viewing", route: "aix" })]);
+  const i = { code: "UKETAMAWARI_OBJECT_UNANCHORED", message: "「家賃の値下げ」をお客様は伝えていないのに「家賃の値下げのご希望承りました」", evidence: "家賃の値下げのご希望承りました" };
+  eq(uketamawariKeeps(i, { contract: c, env: ON2 }), false);
+  eq(uketamawariKeeps({ ...i, message: "「ご内覧」…" }, { contract: null, env: ON2 }), false);
+});
+it("ご都合 実物 23837532: お客様が日の変更を頼んだ番の GOCHOUGO_AFTER_FIXED は渡さない", () => {
+  const i = { code: "GOCHOUGO_AFTER_FIXED", message: "内覧日時が確定済みなのに再度「ご都合よろしいお日にち」を尋ねています", evidence: "11/11（水）でYUMAさんのご都合よろしいお時間をお知らせ頂けますでしょうか！！" };
+  const cust = "お世話になっております\n本日の内見なんですが仕事が入ってしまって明日休みなので明日でもよろしいでしょうか？";
+  eq(fcKeepsBrainSentence(i, { contract: contract([ask({ quote: "明日でもよろしいでしょうか", topic: "viewing", route: "reply" })]), draft: i.evidence, customerText: cust, env: ON2 }), true);
+  eq(fcKeepsBrainSentence(i, { contract: null, draft: i.evidence, customerText: "本日よろしくお願いします", env: ON2 }), false, "変更なし");
+});
+it("約束 実物 7d8086d1: ブレインの探す約束の文を DOUBLE_DECLARATION で消さない", () => {
+  const c = contract([ask({ quote: "引き続きどうぞよろしくお願いいたします", topic: "pickup", route: "promise", answer: "2LDKのお部屋を引き続き探して送る" })]);
+  const s = "引き続きオススメできる2LDKのお部屋をピックアップしてお送りさせて頂きますので、何卒よろしくお願い致します😌！！";
+  eq(fcKeepsBrainSentence({ code: "DOUBLE_DECLARATION", message: "直前と同じ約束", evidence: "ピックアップしてお送りさせて頂きます" }, { contract: c, draft: s, customerText: "", env: ON2 }), true);
+  eq(promiseKeeps({ code: "DOUBLE_DECLARATION", evidence: "ピックアップしてお送りさせて頂きます" }, { contract: { ...c, alreadySaid: ["引き続きオススメできる2LDKのお部屋をピックアップしてお送り"] }, draft: s, env: ON2 }), false, "ブレインがもう言ったとした");
+});
+it("約束 実物 ece1900f: ブレインの提案（撮影）の写真と動画の約束を消さない", () => {
+  const c = { ...contract([ask({ quote: "忘れていました", topic: "other", route: "reply" })]), proposals: ["室内の写真と動画を撮影して送る"] };
+  eq(promiseKeeps({ code: "DOUBLE_DECLARATION", evidence: "室内写真と動画撮影出来次第お送りさせて頂きます" }, { contract: c, draft: "室内写真と動画撮影出来次第お送りさせて頂きます！！", env: ON2 }), true);
+});
+it("約束 対照: 安全の線のコードは対象外", () => {
+  const c = contract([ask({ quote: "他は", topic: "pickup", route: "promise" })]);
+  for (const code of ["FABRICATED_PROPERTY", "BANNED_WORD", "NG_PROPERTY_MENTION", "AIX_BOUNDARY_PROPERTY", "COMPANY_FACT_CONTRADICTION"])
+    eq(fcKeepsBrainSentence({ code, message: "審査面・保証会社", evidence: "ピックアップしてお送りさせて頂きます" }, { contract: c, draft: "ピックアップしてお送りさせて頂きます！！", customerText: "いつ住めますか", env: { ...ON, ...ON2 } }), false, code);
+});
+it("物件名 実物 f60ee58d: 全角空白・号室の有無だけの違いは作り話でない", () => {
+  const ground = ["[画像]【物件の資料】物件名：メゾン　ソレイユ 202 所在地：大阪市"];
+  eq(propertyNameVariantGrounded("FABRICATED_PROPERTY", "メゾン ソレイユ 202号室", ground, ON2), true);
+  eq(propertyNameVariantGrounded("FABRICATED_PROPERTY", "メゾン ソレイユ 203号室", ground, ON2), false, "号室が違う");
+  eq(propertyNameVariantGrounded("FABRICATED_PROPERTY", "メゾン ルミエール 202号室", ground, ON2), false, "名前が違う");
+  eq(propertyNameVariantGrounded("FABRICATED_AMOUNT", "メゾン ソレイユ 202号室", ground, ON2), false, "金額は対象外");
+  eq(propertyNameVariantGrounded("FABRICATED_PROPERTY", "メゾン ソレイユ 202号室", ground, OFF), false, "off");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
