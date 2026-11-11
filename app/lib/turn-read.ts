@@ -157,9 +157,37 @@ export function turnFocusDigest(f: TurnFocus | null | undefined): string | null 
   return `${f.main.about}×${f.main.intent}${f.sub ? `>${f.sub.about}×${f.sub.intent}:${f.sub.move}` : ""}`.slice(0, 120);
 }
 
+// ─── 話題ごとに分ける（弱い所 578: 1通に話題が3つ以上・何通も前の話を急に持ち出す番）
+//   竹内さんの番100のうち該当12番（scripts/.replay-out/topics-578-claude.json）の答え方:
+//   ・お礼・了承の話題は省くことが多い（9/12 で省いた）・主の話題から答え、要件ごとに通を分ける（2cb0feb7）
+//   ・前の話の持ち出し（数通前の条件・前の見積書・前に送った物件）は、その送信に結び付けて主として答える（83391dda・f11b7b1a・22b2511e）
+//   ・気に入った・考えたい の話題には触れず押さない番がある（83391dda）／内覧の答え＋別の質問は日の確定だけ（c16e9f4a）
+//   切替: TURN_READ_TOPICS=on（TURN_READ=on の時だけ・既定 off）。試験はまだ。
+export const TOPIC_ROLES = ["主", "従"] as const;
+export type TurnTopic = { n: number; about: TurnTargetKind; intent: TurnIntent; quote: string | null; ref: string | null; role: (typeof TOPIC_ROLES)[number] };
+export function turnReadTopicsOn(env?: Env): boolean { return turnReadMode(env) === "on" && (envOf(env).TURN_READ_TOPICS ?? "").trim().toLowerCase() === "on"; }
+export const TURN_READ_TOPICS_FIELD = `"turn_topics"（1通に話題が2つ以上ある時だけ・出てきた順に最大5: [{"n": 1, "about": "${TURN_TARGET_KINDS.join("|")}", "intent": "${TURN_INTENTS.join("|")}", "quote": "その話題の言葉 25字", "ref": 前の話の持ち出しなら「どの送信のどの話か」（例: 数通前にお客様が言った地域の条件／前にこちらが送った〇〇の見積書）・直前の流れの続きなら null, "role": "主|従"}]・話題が1つなら null。答える順は主から。お礼・了承の話題は省いてよい。前の話の持ち出しはその送信に結び付けて答える）`;
+export function normalizeTurnTopics(raw: unknown): TurnTopic[] | null {
+  if (!Array.isArray(raw) || raw.length < 2) return null;
+  const out: TurnTopic[] = [];
+  for (const [i, x] of raw.slice(0, 5).entries()) {
+    const o = (x ?? {}) as Record<string, unknown>;
+    const about = pickOf(TURN_TARGET_KINDS, o.about), intent = pickOf(TURN_INTENTS, o.intent);
+    if (!about || !intent) continue;
+    const ref = short(o.ref, 40);
+    out.push({ n: Number.isFinite(Number(o.n)) ? Number(o.n) : i + 1, about, intent, quote: short(o.quote, 30), ref: ref && !/^(null|なし)$/i.test(ref) ? ref : null, role: o.role === "主" ? "主" : "従" });
+  }
+  return out.length >= 2 ? out : null;
+}
+/** digest.tt: "数|主の数|前の話の持ち出しの数" */
+export function turnTopicsDigest(ts: TurnTopic[] | null | undefined): string | null {
+  if (!ts || !ts.length) return null;
+  return `${ts.length}|${ts.filter((t) => t.role === "主").length}|${ts.filter((t) => t.ref).length}`;
+}
+
 export function turnReadOutputItem(env?: Env): string {
   if (turnReadMode(env) !== "on") return "";
-  return `、${TURN_READ_BRAIN_FIELD}${turnReadFocusOn(env) ? `、${TURN_READ_FOCUS_FIELD}` : ""}`;
+  return `、${TURN_READ_BRAIN_FIELD}${turnReadFocusOn(env) ? `、${TURN_READ_FOCUS_FIELD}` : ""}${turnReadTopicsOn(env) ? `、${TURN_READ_TOPICS_FIELD}` : ""}`;
 }
 
 const pickOf = <T extends string>(list: ReadonlyArray<T>, v: unknown): T | null => (typeof v === "string" && (list as ReadonlyArray<string>).includes(v.trim()) ? (v.trim() as T) : null);
@@ -211,5 +239,6 @@ export function turnReadDigestExtra(meta: Record<string, unknown>, env?: Env): {
   const li = short(meta.latent_intent, 50); if (li) out.li = li;
   const tr = turnReadDigest(normalizeTurnRead(meta.turn_read)); if (tr) out.tr = tr;
   const tf = turnFocusDigest(normalizeTurnFocus(meta.turn_focus)); if (tf) (out as Record<string, unknown>).tf = tf;
+  const tt = turnTopicsDigest(normalizeTurnTopics(meta.turn_topics)); if (tt) (out as Record<string, unknown>).tt = tt;
   return out;
 }

@@ -2,7 +2,7 @@
 // 本文は竹内さんの番（scripts/audit-turn-read-1111.ts の 79f97cea・2cb0feb7・eb4e5d3b・伏せた物）から
 import { turnReadMode, leadCandidatesOf, lastStaffBurst, buildPrevLeadNote, normalizeTurnRead, turnReadDigest, askAboutDigest, turnReadDigestExtra, turnReadOutputItem } from "../turn-read";
 import { brainDecisionDigestExtra } from "../brain-decision-ledger";
-import { normalizeMoodRead, MOOD_OBJECTS, turnReadFocusOn, normalizeTurnFocus, turnFocusDigest } from "../turn-read";
+import { normalizeMoodRead, MOOD_OBJECTS, turnReadFocusOn, normalizeTurnFocus, turnFocusDigest, normalizeTurnTopics, turnTopicsDigest } from "../turn-read";
 import { buildMoodFlowNote } from "../customer-mood-flow";
 import { isAckOnlyTurn } from "../ack-topic-scope";
 let passed = 0, failed = 0;
@@ -79,6 +79,16 @@ ok(turnFocusDigest(tf) === "内覧の日・場所×日程の調整・連絡>手�
 ok(normalizeTurnFocus({ main: { about: "内覧", intent: "x" } }) === null && normalizeTurnFocus({ main: { about: "探す条件", intent: "条件を伝える・言い直す" }, sub: { about: "?" } })?.sub === null, "外れた値は落とす");
 ok(normalizeTurnFocus({ main: { about: "探す条件", intent: "条件を伝える・言い直す" }, sub: { about: "手続き・審査", intent: "手続き・審査の質問", move: "あとで" } })?.sub?.move === "後で答える", "扱いの外れは既定の後で答える");
 ok(turnReadDigestExtra({ turn_focus: { main: { about: "探す条件", intent: "条件を伝える・言い直す" } } }, { TURN_READ: "log" }) && (turnReadDigestExtra({ turn_focus: { main: { about: "探す条件", intent: "条件を伝える・言い直す" } } }, { TURN_READ: "log" }) as Record<string, unknown>).tf === "探す条件×条件を伝える・言い直す", "digest に tf");
+
+// 話題ごと（弱い所 578）: 83391dda の実物の形（前の話の持ち出し）
+ok(!turnReadOutputItem({ TURN_READ: "on" }).includes("turn_topics") && turnReadOutputItem({ TURN_READ: "on", TURN_READ_TOPICS: "on" }).includes('"turn_topics"'), "話題の欄は TURN_READ_TOPICS=on の時だけ");
+const tt = normalizeTurnTopics([
+  { n: 1, about: "新着の1件", intent: "気に入った・感想", quote: "すごくすごくいいんですが", ref: null, role: "従" },
+  { n: 2, about: "新着の1件", intent: "検討する・保留・相談", quote: "少しだけ考えさせて", ref: "null", role: "従" },
+  { n: 3, about: "探す条件", intent: "条件を伝える・言い直す", quote: "若江岩田・八戸の里まで広げても", ref: "数通前にお客様が言った地域の条件", role: "主" },
+]);
+ok(tt?.length === 3 && tt[1].ref === null && tt[2].ref !== null && turnTopicsDigest(tt) === "3|1|1", "話題の数・主・持ち出し");
+ok(normalizeTurnTopics([{ about: "探す条件", intent: "条件を伝える・言い直す" }]) === null && normalizeTurnTopics(null) === null, "話題が1つ・形の外れは null");
 
 console.log(`turn-read: ${passed} 通過・${failed} 失敗`);
 if (failed) process.exit(1);
