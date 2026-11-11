@@ -3784,6 +3784,8 @@ CREATE TABLE IF NOT EXISTS human_motion_learn (
 CREATE INDEX IF NOT EXISTS idx_human_motion_created ON human_motion_learn(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_human_motion_install ON human_motion_learn(install_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_human_motion_site ON human_motion_learn(site, mode, created_at DESC);
+-- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）
+ALTER TABLE human_motion_learn ENABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE human_motion_learn IS '通常・スタッフモードで人がどう動いたか（速さ・曲がり・押した位置・スクロール）。入力した中身・名前・電話は入れない。2026-11-11 竹内さん承認';
 
 -- conversations.deepseek_cutoff_at: 申込以降→申込前に切り替えた時刻（2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、

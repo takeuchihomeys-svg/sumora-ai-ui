@@ -68,6 +68,10 @@ CREATE INDEX IF NOT EXISTS idx_human_motion_created ON human_motion_learn(create
 CREATE INDEX IF NOT EXISTS idx_human_motion_install ON human_motion_learn(install_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_human_motion_site ON human_motion_learn(site, mode, created_at DESC);
 
+-- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）。
+--   既定で RLS 有効・ポリシー無し＝サービスロール（サーバー）以外は触れない。
+ALTER TABLE human_motion_learn ENABLE ROW LEVEL SECURITY;
+
 COMMENT ON TABLE human_motion_learn IS
   '通常モード・スタッフモードで人がどう動いたか（マウスの速さ・曲がり・押した位置・スクロール）を1回分ずつ。入力した中身・名前・電話は入れない。2026-11-11 竹内さん承認';
 COMMENT ON COLUMN human_motion_learn.move_shapes IS 'どう曲がったかの見本（画面の％の点・最大6本）。値ではなく軌跡の形だけ';

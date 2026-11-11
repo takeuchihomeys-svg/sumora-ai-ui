@@ -122,6 +122,9 @@ console.log("\n■ ⑥ DB の表（migrate-schema と DDL が同じ形）");
   ok("migrate-schema に必要な列が揃っている", cols.every((c) => new RegExp("\\b" + c + "\\b").test(ms)), cols.filter((c) => !new RegExp("\\b" + c + "\\b").test(ms)));
   ok("DDL にも同じ列が揃っている", cols.every((c) => new RegExp("\\b" + c + "\\b").test(ddl)));
   ok("索引がある（新しい順）", /idx_human_motion_created/.test(ms) && /idx_human_motion_install/.test(ms));
+  ok("RLS を有効にする（サーバーだけの表・DISABLE しない決まり）", /ALTER TABLE human_motion_learn ENABLE ROW LEVEL SECURITY/.test(ms) && /ALTER TABLE human_motion_learn ENABLE ROW LEVEL SECURITY/.test(ddl));
+  ok("RLS を DISABLE していない", !/DISABLE ROW LEVEL SECURITY[\s\S]{0,40}human_motion_learn/.test(ms) && !/human_motion_learn[\s\S]{0,40}DISABLE ROW LEVEL SECURITY/.test(ms));
+  ok("当てるスクリプトがある（apply-human-motion-learn.ts）", /human_motion_learn/.test(fs.readFileSync(path.join(__dirname, "..", "..", "scripts", "apply-human-motion-learn.ts"), "utf8")));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
