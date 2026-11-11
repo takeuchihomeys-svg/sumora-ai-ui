@@ -61,7 +61,8 @@ console.log("■ ① 操作のたびに撮る（onOp の口）");
 console.log("\n■ ② 間引く（撮りすぎない）");
 {
   ok("最短 400ms はあける（記録側）", /SHOT_MIN_GAP_MS = 400/.test(rec));
-  ok("撮っている最中は重ねない", /if \(_shotPending\) return;/.test(rec) && /_shotPending = true;/.test(rec));
+  ok("撮っている最中は重ねない（3秒で解く）", /if \(_shotPending && now - _shotPendingAt < 3000\) return;/.test(rec) && /_shotPending = true;/.test(rec));
+  ok("応答が返らない時に張り付かない（タイムアウトで解く）", /if \(_shotPending\) \{ _shotPending = false; diag\(false, "timeout_stuck"\); \}/.test(rec));
   ok("1ページの上限がある（暴走しない）", /SHOT_MAX_PER_SESSION = 300/.test(rec) && /_shotCount >= SHOT_MAX_PER_SESSION/.test(rec));
   ok("background でも 350ms はあける（二重の歯止め）", /MIN_GAP_MS = 350/.test(bg) && /too_soon/.test(bg));
   ok("間引かれた操作では写真を撮らない", /if \(added && onOp\)/.test(hl));

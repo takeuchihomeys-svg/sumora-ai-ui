@@ -1912,13 +1912,23 @@ if (msg.type === "axlx-human-shot") {
         dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 55 });
       } catch (e) {
         /**
-         * 2026-11-11 竹内さん「許可済みになっているはず」:
-         *   サイドパネル・小窓から呼ぶと `captureVisibleTab` が失敗する事がある
-         *   （"Either the '<all_urls>' or 'activeTab' permission is required" 等）。
-         *   → **撮れなくても学習は続ける**。理由を残して次の手を打てるようにする。
+         * 2026-11-11 竹内さん「写真撮ってるかな？」→ 0枚のまま。
+         *   `captureVisibleTab` は**その窓のアクティブなタブ**しか撮れない。小窓を開いていると失敗する。
+         *   → 一度そのタブをアクティブにして撮り、**すぐ元に戻す**（人の操作を邪魔しない）。
          */
-        fail("capture_error: " + String((e && e.message) || e));
-        return;
+        try {
+          const prev = await chrome.tabs.query({ active: true, windowId: tab.windowId }).catch(function () { return []; });
+          const prevId = prev && prev[0] ? prev[0].id : null;
+          await chrome.tabs.update(tab.id, { active: true });
+          await new Promise(function (r) { setTimeout(r, 220); });   // 描画が変わるのを待つ
+          dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 55 });
+          if (prevId != null && prevId !== tab.id) {
+            try { await chrome.tabs.update(prevId, { active: true }); } catch (_) {}
+          }
+        } catch (e2) {
+          fail("capture_error: " + String((e && e.message) || e) + " / retry: " + String((e2 && e2.message) || e2));
+          return;
+        }
       }
       if (!dataUrl) { fail("no_image"); return; }
 

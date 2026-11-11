@@ -147,6 +147,7 @@
    *   ・写真の中身は DB に送らない（Storage 内・名前だけ DB へ）
    */
   var _shotPending = false;
+  var _shotPendingAt = 0;
   var _shotLast = 0;
   var _shotCount = 0;
   var SHOT_MIN_GAP_MS = 400;   // これより短い間隔では撮らない
@@ -173,12 +174,19 @@
       };
       if (!watching) { diag(false, "not_watching"); return; }
       var now = Date.now();
+      /**
+       * 2026-11-11 竹内さん「写真撮ってるかな？」→ 0枚のまま。
+       *   `_shotPending` は応答が返らないと**永久に true**になり、以降すべて弾かれていた
+       *   （＝1回失敗すると二度と撮らない）。3秒たったら諦めて次を撮る。
+       */
+      if (_shotPending && now - _shotPendingAt < 3000) return;   // 撮っている最中（3秒まで）
+      if (_shotPending) { _shotPending = false; diag(false, "timeout_stuck"); }  // 張り付きを解く
       if (now - _shotLast < SHOT_MIN_GAP_MS) return;   // 間引きは「失敗」ではない（数えない）
       if (_shotCount >= SHOT_MAX_PER_SESSION) { diag(false, "max_reached"); return; }
-      if (_shotPending) return;   // 撮っている最中（数えない）
       _shotLast = now;
       _shotCount++;
       _shotPending = true;
+      _shotPendingAt = now;
       chrome.runtime.sendMessage({
         type: "axlx-human-shot",
         site: site,
@@ -200,7 +208,10 @@
           diag(false, (res && res.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || "no_response");
         }
       });
-    } catch (_) { _shotPending = false; }
+    } catch (e) {
+      _shotPending = false;
+      diag(false, "send_error: " + String((e && e.message) || e));
+    }
   }
     try {
       chrome.storage.local.get([KEY], function (r) {

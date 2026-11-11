@@ -219,6 +219,24 @@
     // 2026-11-11: ダイアログが出ない時の逃げ道（拡張の管理画面を開く）
     var openBtn = el("snap-perm-open-ext");
     if (openBtn) openBtn.addEventListener("click", openExtensionsPage);
+    /**
+     * 2026-11-11 竹内さん「写真撮ってるかな？」:
+     *   検索を待たずに**その場で1枚撮って**確かめられるボタン。
+     *   結果（撮れた・撮れない＋理由）を黄色の帯に出す。
+     */
+    var testBtn = el("snap-perm-test");
+    if (testBtn) testBtn.addEventListener("click", function () {
+      var hint = el("snap-perm-hint");
+      var show = function (msg) { if (hint) { hint.style.display = "block"; hint.textContent = msg; } };
+      show("📷 撮っています…");
+      try {
+        chrome.runtime.sendMessage({ type: "axlx-human-shot", site: "manual_test" }, function (res) {
+          if (chrome.runtime.lastError) { show("✖ 撮れません: " + chrome.runtime.lastError.message); return; }
+          if (res && res.ok) show("✅ 撮れました（" + res.shot_key + "）。写真はクラウドに上がります。");
+          else show("✖ 撮れません: " + ((res && res.error) || "理由なし"));
+        });
+      } catch (e) { show("✖ 撮れません: " + ((e && e.message) || e)); }
+    });
   }
 
   document.addEventListener("DOMContentLoaded", init);
