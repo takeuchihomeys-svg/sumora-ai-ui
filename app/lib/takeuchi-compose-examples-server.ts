@@ -20,6 +20,7 @@ import { DOC_CANDIDATE_OR } from "./second-takeuchi-data-server";
 import { readBeyondOf, worryCandidatesOf, utterTypesOf, answeredWorryOf } from "./reading-tags";
 import { embedTexts } from "./design-knowledge-rag-server";
 import { customerNameTokens, maskCustomerNames, staffHeadNames, leftLatinName } from "./compose-name-mask";
+import { maskSelfIntroducedNames, selfIntroducedNames, selfNameMaskOn } from "./self-name-mask";
 
 /** 伏せの版（2026-11-03 夜の直し）。この日時より前に作った行は、cron が先に元の送信から作り直す（問いの値なしで直る） */
 export const COMPOSE_MASK_VER = "20261104c";   // 11/04 c: 文の頭の名前を会話全体から・伏せた後に英字の〇〇さんが残る通は例に入れない・締めの文の札の直し（趣旨が変わる）
@@ -206,15 +207,17 @@ export async function runTakeuchiComposeExamples(opts: { dry?: boolean; afterIso
       const applied14d = ds.some((d) => d.applied != null && d.applied > at && d.applied <= at + 14 * 86400_000);
       // 伏せ（2026-11-03 直し: その会話のお客様の名前＝表示名・呼び名とその姓・名だけ → YUMA。文の途中の「〇〇さん」を正規表現で置き換えない＝compose-name-mask.ts）＋maskPII・URL・電話
       const convHeads = await headNamesOf(m.conversation_id);
+      // 2026-11-11 作業員5: お客様が名乗った本名（表示名と違う名前・前3日のお客様の発言から）も伏せる（self-name-mask・既定 on・止める SELF_NAME_MASK=off）
+      const selfNames = selfNameMaskOn() ? selfIntroducedNames(pv.filter((x) => x.sender !== "staff").map((x) => String(x.text ?? "")).join("\n")) : [];
       const mask = (t: string) => {
         // 20261104a: 表示名・呼び名に、こちらの文の頭の「〇〇さん」（この通と前3日のこちらの通）を足す／20261104c: 会話全体のこちらの文の頭も
-        const r = maskCustomerNames(String(t ?? ""), customerNameTokens([...(names.get(m.conversation_id) ?? []), ...staffHeadNames([text, ...pv.filter((x) => x.sender === "staff").map((x) => x.text)]), ...convHeads]));
+        const r = maskCustomerNames(String(t ?? ""), customerNameTokens([...(names.get(m.conversation_id) ?? []), ...staffHeadNames([text, ...pv.filter((x) => x.sender === "staff").map((x) => x.text)]), ...convHeads, ...selfNames]));
         return maskPII(r).replace(/https?:\/\/\S+/g, "〈URL〉").replace(/0\d{1,3}-?\d{2,4}-?\d{3,4}/g, "〈電話〉");
       };
       const body = cut(mask(text), 400);
       const custText = cust.join("\n");
       if (cust.some((c) => applicationMaterialReason(c)) || piiValueSignal(body) || piiValueSignal(custText)) { bump("書類・個人の値"); continue; }
-      const gist = custText ? cut(mask(custText), 200) : null;
+      const gist = custText ? cut(mask(selfNameMaskOn() ? maskSelfIntroducedNames(custText) : custText), 200) : null;
       // 20261104c: 伏せた後にも英字の「〇〇さん」（YUMA 以外）が残る通は例に入れない（表示名とつづりの違う呼び方は決まりで当てられない・11/04 に1行）
       if (leftLatinName(body) || (gist && leftLatinName(gist))) { bump("名前が残る（例に入れない）"); continue; }
       const scene = custText ? resolveReplyScene({ customerText: custText }).scene : afterAix ? "after_aix" : "staff_first";
