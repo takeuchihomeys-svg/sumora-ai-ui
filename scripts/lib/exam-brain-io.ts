@@ -3,6 +3,7 @@
 // 2026-10-17 竹内さん 10/16「判断する所はブレインにまとめて、質を高く節約する」。決め方は scripts/lib/exam-brain.ts（純関数）、ここは手元のファイル・git・DB。
 // 置き場（全部の作業ツリーで共有・.gitignore・答案に伏せた会話が入る）: <倉庫の根>/.claude/exam-cache/exam-brain/
 //   results/<問題>/<鍵>.json … 問題ごとの今の結果（使い回し）／ledger.jsonl … 試験の台帳（問題×実行×版×前との比べ）／queue/<label>.json … 予約
+import { pidAliveAsNode, staleLeaseReason } from "./lease-stale";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
@@ -295,7 +296,8 @@ export type CleanupPlan = {
   leaseLock: { file: string; pid: number | null; alive: boolean } | null;
   runAlive: boolean; runPid: number | null;
 };
-const alive = (pid: number | null) => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException)?.code === "EPERM"; } };
+// 2026-11-12 作業員10: pid の使い回し（Windows）を node の処理かで見分ける（lease-stale.ts）
+const alive = (pid: number | null) => pidAliveAsNode(pid);
 /** 試験の会話（YUMA2〜YUMA5・--allow-yuma の時だけ YUMA）を名前か id で */
 export function resolveExamConversation(name: string, o: { allowYuma?: boolean } = {}): { id: string; name: string; propertyCustomerId: string } | null {
   const n = name.trim().toUpperCase();
@@ -319,8 +321,9 @@ export function liveLeaseOf(name: string, extraDir?: string): { file: string; pi
     const f = join(d, `.test-conv-${name.toUpperCase()}.lock`);
     let t = ""; try { t = readFileSync(f, "utf8").trim(); } catch { continue; }
     if (!t) continue;
-    let pid: number | null = null; try { pid = (JSON.parse(t) as { pid?: number }).pid ?? null; } catch { /* */ }
-    const a = alive(pid);
+    let pid: number | null = null; let at: string | undefined; try { const j = JSON.parse(t) as { pid?: number; at?: string }; pid = j.pid ?? null; at = j.at; } catch { /* */ }
+    // 2026-11-12 作業員10: 生きていても node の処理でない（pid の使い回し）・6時間より古い鍵は生きていない扱い（lease-stale.ts）
+    const a = alive(pid) && !staleLeaseReason({ pid: pid ?? undefined, at }, { alive: () => true });
     if (a) return { file: f, pid, alive: true };
     seen = seen ?? { file: f, pid, alive: false };
   }

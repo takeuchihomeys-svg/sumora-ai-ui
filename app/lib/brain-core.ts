@@ -253,7 +253,7 @@ import {
 import { resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 import { customerPointsAtProperty } from "@/app/lib/cost-question-scope";
 // 2026-09-23 課題③: 真の初回の「最初の一手」（first_contact_pickup）の許可リスト（純関数）
-import { resolveFirstContactPickup, firstContactSuggestedAction, type FirstContactPickup } from "@/app/lib/first-contact-pickup";
+import { resolveFirstContactPickup, firstContactSuggestedAction, customerOffersToSendProperties, firstContactSelfSendReplyOn, type FirstContactPickup } from "@/app/lib/first-contact-pickup";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-27 竹内: 主のお部屋（こちらが送ったお部屋）への見積もりの依頼は 見積書送る
@@ -471,6 +471,8 @@ export type SuggestedAixMeta = {
   decisions_1103?: string[];
   /** 2026-11-11 作業員4: 入口の意見の1語（digest.nop・CONDUCTOR_NEAR_OPINION の見張り） */
   near_opinion?: string;
+  /** 2026-11-12 作業員4（OUR_SIDE_TO_COMPOSE）: こちら側の状態の文の材料（ブレインの判断には渡さない・文の統括と AIX の文だけ） */
+  our_side_note?: string;
   /** 2026-11-03 この番に呼ぶ役の候補（網・記録だけ）→ digest.rl */
   conductor_roles?: string;
   /** 2026-11-04 統括メタ（記録だけ・last_brain_meta が正）→ digest.cm */
@@ -2889,6 +2891,15 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   let customerStateBlockText = customerState ? buildCustomerStateBrainBlock(customerState) : "";
   const customerStateText = customerStateBlockText;
   if (materialMissOn && materialMisses.length) customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${materialMissNote(materialMisses)}`;
+  // 2026-11-12 作業員4: やり取りの照らし合わせの残り（事実の一覧・道の言葉なし）をブレインにも。道に触る所なので入口とは別スイッチ（既定 off CONDUCTOR_EXCHANGE_LEDGER_BRAIN=on）。毎回変わる並び（3）
+  try {
+    const el = await import("@/app/lib/exchange-ledger");
+    if (el.exchangeLedgerBrainOn()) {
+      const turnAtEL = typedMessages[0]?.created_at ?? null;
+      const lineEL = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAtEL ? Date.parse(turnAtEL) + 1 : Date.now() }));
+      if (lineEL) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【${lineEL}】`; console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "brain", len: lineEL.length })); }
+    }
+  } catch (e) { console.warn("[brain-core] exchange-ledger skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-09-27 竹内「審査中は審査中としておく」③: お送りしたピックアップのうち資料の現況が「審査中」のお部屋（該当が無ければ何も足さない）。
   //   毎回変わる並び（3）の中・今の状況の後ろに置く（system の前置き＝1時間キャッシュは変えない）
   try {
@@ -3354,7 +3365,10 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
             : "",
           factsForConductor.length ? factLedgerBlock(factsForConductor as unknown as Parameters<typeof factLedgerBlock>[0], Date.now()) : "",
         ].filter(Boolean).join("\n\n"),
-        carryLine: carryQueryLine(pmForCarry?.conductor_meta ?? null), ruleMeta: "", nearFocus,
+        // 2026-11-12 作業員4（CONDUCTOR_INTAKE_STAFF_REFRESH・既定 off・LLM なし）: 前のお客様の番の後にこちらがした事（AIX・約束・前の読みのやる事が果たされたか）を「前の番」の行に足す
+        carryLine: [carryQueryLine(pmForCarry?.conductor_meta ?? null), await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.intakeStaffRefreshOn() || !turnAt0) return ""; const prevTodos = ((opts?.prevMeta as { conductor_intake?: { answer?: { todos?: Array<{ kind?: string; what?: string }> } | null } } | null | undefined)?.conductor_intake?.answer?.todos) ?? null; return os.staffSinceLine({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(turnAt0) + 1, prevTodos }); } catch { return ""; } })(),
+          // 2026-11-12 作業員4（竹内さん「こちらから送った部分と相手が送ってきた部分を照らし合わせられるように」）: ここ数番の照らし合わせの残り（事実だけ・既定 off CONDUCTOR_EXCHANGE_LEDGER=on）
+          await (async () => { try { const el = await import("@/app/lib/exchange-ledger"); if (!el.exchangeLedgerOn()) return ""; const line = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAt0 ? Date.parse(turnAt0) + 1 : Date.now() })); if (line) console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "intake", len: line.length })); return line; } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
       });
     }).catch(() => null);
   }
@@ -5429,14 +5443,18 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-10-09 同じ竹内さんの答え（試験 q021「ブラックなど審査は通らないですか」・友だち追加の直後の最初の発言）: 条件がまだ無い初回に LLM が返信（AIX なし）を
       //   選んだ番も AIX【条件ヒアリング】（審査の不安への答えはヒアリングの AIX の文に添える）。物件の画像・URL の初回（募集状況の確認）は触らない。戻す FIRST_CONTACT_HEARING_FROM_REPLY=off
       // 会社の事実の質問（「不動産屋の会社名教えてください」試験 q066＝竹内さんは会社名を答えた返信）は返信のまま
-      if (finalAix === null && !twoStage && !custSentConditionForm && (process.env.FIRST_CONTACT_HEARING_FROM_REPLY ?? "").toLowerCase() !== "off"
+      // 2026-11-12 作業員4（弱い所 brain:question-first-then-condition-hearing）: お客様が自分で物件を送る申し出（「随時お送りさせて頂いてもよろしいでしょうか」）の
+      //   初回は AIX【条件ヒアリング】を残さず返信（竹内さん q432・フォームはお客様の次の番）。既定 off FIRST_CONTACT_SELF_SEND_REPLY=on
+      const selfSendReply = firstContactSelfSendReplyOn() && customerOffersToSendProperties(typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? ""));
+      if (selfSendReply) console.log(JSON.stringify({ tag: "brain:first-contact-self-send-reply", conversationId, finalAix }));
+      if (finalAix === null && !selfSendReply && !twoStage && !custSentConditionForm && (process.env.FIRST_CONTACT_HEARING_FROM_REPLY ?? "").toLowerCase() !== "off"
         && matchCompanyFacts(typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "").join(" ")).length === 0
         && !typedMessages.some((m) => m.sender === "customer" && (!!m.image_type || /https?:\/\/|^\[画像\]|^\[動画\]/.test(m.text ?? "")))
         && !pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready) {
         console.log(JSON.stringify({ tag: "brain:first-contact-hearing-from-reply", conversationId }));
         finalAix = "condition_hearing"; replyMode = "aix";
       }
-      const keepHearing = finalAix === "condition_hearing" && !custSentConditionForm && (process.env.FIRST_CONTACT_KEEP_HEARING ?? "").toLowerCase() !== "off"
+      const keepHearing = finalAix === "condition_hearing" && !custSentConditionForm && !selfSendReply && (process.env.FIRST_CONTACT_KEEP_HEARING ?? "").toLowerCase() !== "off"
         && !pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready;
       if (keepHearing) {
         console.log(JSON.stringify({ tag: "brain:first-contact-keep-hearing", conversationId }));
@@ -6257,6 +6275,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（"n21"＝お礼の番で申込への AIX を候補にした・作業員1の AIX の統括が読む）
       decisions_1103: decisions1103.length ? decisions1103 : undefined,
       near_opinion: nearOpinionNote ?? undefined,
+      // 2026-11-12 作業員4: OUR_SIDE_TO_COMPOSE=on（既定 off）の時だけ、こちら側の状態を文の材料として残す（判断の材料には足さない）
+      our_side_note: await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.ourSideToComposeOn() || !typedMessages[0]) return undefined; const n = os.ourSideComposeNote({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(typedMessages[0].created_at) }); return n ? maskBrain(n) : undefined; } catch { return undefined; } })(),
       conductor_meta: CONDUCTOR_META_MODE !== "off" ? ((nd) => withSearchPlan(withMaterials(buildConductorMeta({
         scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, stage: customerState?.stage ?? null,
         turnAt: typedMessages[0]?.sender === "customer" ? typedMessages[0].created_at : null,

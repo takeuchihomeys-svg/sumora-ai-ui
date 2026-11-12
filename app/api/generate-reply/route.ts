@@ -143,7 +143,7 @@ import { createExitRecorder } from "@/app/lib/exit-edits";
 import { isEvaluativePrinciple, principleEvalFilterEnabled } from "@/app/lib/principle-eval";
 import { estimateRedeclareArmed, vacancyRedeclareArmed, brainKeepsRedeclare, logMatchesCurrent, ESTIMATE_REDECLARE_WINDOW_MS } from "@/app/lib/redeclare-gate";
 import { fcKeepsBrainSentence } from "@/app/lib/final-check-answer-keep";
-import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
+import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, safetyLineIssues, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
 import { runFinalCheckGated, type FinalCheckGateLog } from "@/app/lib/final-check-gated";
 import { scoreDraftConfidence, draftConfidenceEnabled } from "@/app/lib/draft-confidence";
@@ -367,7 +367,8 @@ import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
-import { exemplarNoteFor } from "@/app/lib/takeuchi-exemplar-server";
+import { exemplarNoteFor, warmExemplarTable } from "@/app/lib/takeuchi-exemplar-server";
+import { exemplarOn } from "@/app/lib/takeuchi-exemplar";
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
@@ -4498,6 +4499,8 @@ async function handleGenerateReply(req: NextRequest) {
     if (composeConductor) console.info("[compose-conductor]", JSON.stringify({ conversationId, focus: composeConductor.mf.key, source: composeConductor.mf.source, keep: composeConductor.mf.keep, nearKeep: composeNearKeepShare, read: composeConductor.read }));
     // 2026-11-11 作業員10 文の統括の1文ずつの設計図（KB P1 c3673fba・COMPOSE_SENTENCE_PLAN=on・既定 off）: 一通の読み（主と従）と竹内さんの7つの欄を受け取り、
     //   役目・どの部分の何・どうやって・次へ・主か従かを1文ずつ書き手に渡す（app/lib/compose-sentence-plan.ts・決定論・材料の無い欄は空のまま）
+    // 2026-11-12 作業員23: 手本の表 takeuchi_exemplars を読んでおく（TAKEUCHI_EXEMPLAR=on・設計図 on の時だけ・10分の取り置き・1.5秒で諦める・表が無ければ注記なし＝今と同じ）
+    if (exemplarOn() && composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation) { try { await warmExemplarTable(supabase); } catch { /* 表が無くても今と同じ */ } }
     const composeSentencePlan = composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation && brainMeta && brainLocalFresh
       ? (() => {
           try {
@@ -6944,6 +6947,15 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             let finalCheckGateLog: FinalCheckGateLog | null = null; // 2026-10-02 要否の判定（作り直しで finalCheck が置き換わっても tpo_debug に残す）
             if (isTemplateOptimize && draftBody.trim()) {
               console.log(JSON.stringify({tag:"degradation:fail-open",path:"template-bypass",conversationId}));
+              // 2026-11-12 作業員20: テンプレ最適化でも BANNED_WORD の安全の線（ブランド名・プレースホルダ・システム語・作業メモ）だけは最終チェックと同じ語の一覧で見る
+              //   （本文は変えない・当たった時だけ block の結果を載せて画面の指摘と自動送信の関所に届ける・passes_completed が空なので関所は完走の証拠にしない・戻す TEMPLATE_SAFETY_LINE=off）
+              if ((process.env.TEMPLATE_SAFETY_LINE ?? "").trim().toLowerCase() !== "off") {
+                const safetyHits = safetyLineIssues(draftBody);
+                if (safetyHits.length) {
+                  console.warn(JSON.stringify({ tag: "template-optimize:safety-line", conversationId, codes: safetyHits.map((i) => `${i.code}:${i.evidence.slice(0, 20)}`) }));
+                  finalCheck = { ok: false, issues: safetyHits, passes_completed: [], elapsed_ms: 0, checked_text_hash: await sha1(draftBody.trim()), revision_count: 0 };
+                }
+              }
             }
             if (!isTemplateOptimize && draftBody.trim()) {
               try {
