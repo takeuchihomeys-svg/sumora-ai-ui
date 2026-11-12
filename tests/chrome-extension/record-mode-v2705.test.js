@@ -66,7 +66,7 @@ console.log("\n■ ⑤ 写真の仕組み自体は壊していない");
 {
   ok("1枚撮る関数が残っている（_takeShot）", /async function _takeShot\(msg, done\)/.test(bg));
   ok("メッセージの受け口は今まで通り", /if \(msg\.type === "axlx-human-shot"\) \{[\s\S]{0,120}_takeShot\(msg/.test(bg));
-  ok("縮小（800px・32%）は今まで通り", /_shrinkShot\(dataUrl, 800, 0\.32\)/.test(bg));
+  ok("縮小は今まで通り（もっと小さく 640px・25%）", /_shrinkShot\(dataUrl, SHOT_SEND_SIDE, SHOT_SEND_Q\)/.test(bg));
   ok("撮る前に窓を前に出す（v2.7.4）", /chrome\.windows\.update\(tab\.windowId, \{ focused: true \}\)/.test(bg));
 }
 
@@ -79,7 +79,26 @@ console.log("\n■ ⑥ 「撮れた枚数」は**本当に保存できた枚数*
   ok("  送れなかったら failed と理由を残す", /_recFailed\+\+;/.test(bg) && /last_error: _recLastErr \|\| null/.test(bg));
   ok("止めた時に「保存◯枚・失敗◯回・理由」を返す", /saved: _recSaved, failed: _recFailed, last_error: _recLastErr/.test(bg));
   ok("小窓に保存枚数と失敗理由を出す", /保存 /.test(snap) && /失敗 /.test(snap));
-  ok("⚠ 待つ時は撮った直後に返す（二重に sendResponse しない）", /if \(msg\.wait_upload\) \{[\s\S]{0,400}return;/.test(bg));
+  ok("⚠ 待つ時も必ず1回だけ返す（二重に sendResponse しない）", (bg.match(/sendResponse\(\{ ok: true, shot_key: key/g) || []).length === 1);
+}
+
+console.log("\n■ ⑦ 容量オーバー（ResourceExceeded）で保存0枚にならない（2026-11-12）");
+{
+  ok("Chrome にフルサイズ画像を入れない（data: dataUrl を書かない）", !/\n\s*data: dataUrl,/.test(bg));
+  ok("送る画像を 480px・20% に（かなり小さく）", /SHOT_SEND_SIDE = 480/.test(bg) && /SHOT_SEND_Q = 0\.20/.test(bg));
+  ok("  ⚠ 1枚あたりの目安を 10〜25KB と記録", /10〜25KB/.test(bg));
+  ok("Chrome に残すのは 320px・15% の小さい物だけ", /SHOT_LOCAL_SIDE = 320/.test(bg) && /SHOT_LOCAL_Q = 0\.15/.test(bg));
+  ok("上げられたら**目印だけ**残す（_keepShotMeta）", /async function _keepShotMeta/.test(bg) && /cloud: true/.test(bg));
+  ok("上げられなかった時だけ小さい画像を残す（_keepShotLocal）", /async function _keepShotLocal/.test(bg));
+  ok("  残せない時は目印だけにする（例外で止めない）", /画像を残せません（目印だけにします）/.test(bg));
+  ok("容量で守る（合計1.5MB・15枚・目印は200件）", /SHOT_LOCAL_MAX_BYTES = 1\.5 \* 1000 \* 1000/.test(bg) && /SHOT_LOCAL_MAX_COUNT = 15/.test(bg) && /SHOT_META_MAX_COUNT = 200/.test(bg));
+  ok("古い順に消す（_trimShots）", /async function _trimShots/.test(bg) && /b\.at - a\.at/.test(bg));
+  ok("起動した時にも掃除する（旧版が溜めた分を空ける）", /起動時: 古い写真を/.test(bg));
+  ok("小窓の「写真を片付ける」で今すぐ空けられる", /axlx-shot-trim/.test(bg) && /snap-shot-trim/.test(html) && /photo|片付ける/.test(snap));
+  ok("  ⚠ クラウドの写真は消さない", /クラウドの写真は消していません/.test(snap));
+  ok("DBに画像を入れる受け皿がある（2026-11-12 竹内さん「データベースに画像入るように」）", /shot_b64/.test(fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "human-motion", "route.ts"), "utf8")));
+  ok("  migrate-schema にも同じ列を足してある", /ADD COLUMN IF NOT EXISTS shot_b64/.test(fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "migrate-schema", "route.ts"), "utf8")));
+  ok("  列が無い環境でも壊れない（42703 で列を外して入れ直す）", /42703/.test(fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "human-motion", "route.ts"), "utf8")));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

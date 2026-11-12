@@ -3780,10 +3780,16 @@ CREATE TABLE IF NOT EXISTS human_motion_learn (
   shot_key TEXT,
   shot_w INTEGER,
   shot_h INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_human_motion_created ON human_motion_learn(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_human_motion_install ON human_motion_learn(install_id, created_at DESC);
+);CREATE INDEX IF NOT EXISTS idx_human_motion_created ON human_motion_learn(created_at DESC);CREATE INDEX IF NOT EXISTS idx_human_motion_install ON human_motion_learn(install_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_human_motion_site ON human_motion_learn(site, mode, created_at DESC);
+-- 2026-11-12 竹内さん「データベースに画像入るようにしたらよいのでは。データベースにテーブルをつくって
+--   そこにはいるようにする形にすればできるのではないかな」:
+--   Storage に置けなかった時の**受け皿**。写真そのもの（data:image/jpeg;base64,...）を1列に入れる。
+--   ⚠ 通常は Storage（shot_key）を使う。ここは「消えないため」の最後の受け皿（1行が数百KBになる）。
+ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_b64 TEXT;
+ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_in_db BOOLEAN NOT NULL DEFAULT false;
+COMMENT ON COLUMN human_motion_learn.shot_b64 IS 'Storage に置けなかった時の写真そのもの（data:image/jpeg;base64,...）。通常は NULL で shot_key を使う。2026-11-12 竹内さん承認';
+COMMENT ON COLUMN human_motion_learn.shot_in_db IS '写真を表に入れたか（true＝Storage ではなくこの行に画像がある）';
 -- 画面の写真の置き場（2026-11-11 竹内さん「画面画像みればわかるのでは」）。
 --   写真の中身は表に入れない（1行が数百KBになり集計が重くなる）→ Storage に置き、表には名前だけ。
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)

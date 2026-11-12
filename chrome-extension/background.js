@@ -1853,6 +1853,84 @@ var _shotSeq = 0;
  *   service worker には DOM が無いので **OffscreenCanvas** を使う（Chrome の MV3 で使える）。
  *   使えない環境では null を返す（呼ぶ側は元の大きさで送る）。
  */
+/**
+ * 2026-11-12 竹内さん「もっと画像の容量おとしてもよい」→「容量かなり落とすようにする」:
+ *   送る写真を**長辺 480px・JPEG 20%**（**10〜25KB** 目安）まで落とす。
+ *   物件名・賃料・どのボタンを押したかは読める。1回の録画で170枚でも合計 **2〜4MB**（旧: 1枚40〜90KB＝7〜15MB）。
+ */
+var SHOT_SEND_SIDE = 480;
+var SHOT_SEND_Q = 0.20;
+var SHOT_LOCAL_SIDE = 320;   // Chrome の中に残す時の長辺（上げられなかった時だけ）
+var SHOT_LOCAL_Q = 0.15;
+/**
+ * Chrome に残す写真の上限（**枚数ではなく容量**で守る）。
+ *   ⚠ 2026-11-12 `ResourceExceeded`（保存0枚）の原因は、フルサイズ画像を Chrome に貯めて 10MB を超えた事。
+ *   → 画像を持つ物は**合計 1.5MB まで・15枚まで**に絞る（超えたら古い物から消す）。
+ */
+var SHOT_LOCAL_MAX_BYTES = 1.5 * 1000 * 1000;
+var SHOT_LOCAL_MAX_COUNT = 15;
+var SHOT_META_MAX_COUNT = 200;   // 目印だけの物（軽い）は多めに残す
+
+/** 写真の「目印だけ」を残す（画像は持たない・数十バイト） */
+async function _keepShotMeta(key, meta) {
+  try {
+    const o = {};
+    o[key] = Object.assign({}, meta, { cloud: true });
+    await chrome.storage.local.set(o);
+  } catch (e) {
+    console.warn("[human-shot] 目印を残せません:", (e && e.message) || e);
+  }
+}
+/** 上げられなかった時だけ、**小さくした画像**を Chrome に残す（無いよりまし・容量は _trimShots で守る） */
+async function _keepShotLocal(key, meta, shrunkDataUrl) {
+  try {
+    let small = shrunkDataUrl;
+    try {
+      const s2 = await _shrinkShot(shrunkDataUrl, SHOT_LOCAL_SIDE, SHOT_LOCAL_Q);
+      if (s2 && s2.dataUrl) small = s2.dataUrl;
+    } catch (_) {}
+    const o = {};
+    o[key] = Object.assign({}, meta, { cloud: false, data: small });
+    await chrome.storage.local.set(o);
+  } catch (e) {
+    // 容量が足りない時は目印だけにする（写真は Cloud に上がっている前提）
+    console.warn("[human-shot] 画像を残せません（目印だけにします）:", (e && e.message) || e);
+    try { const o = {}; o[key] = Object.assign({}, meta, { cloud: false }); await chrome.storage.local.set(o); } catch (_) {}
+  }
+}
+/**
+ * Chrome に残した写真を整理する（**容量**で守る）。
+ *   ① 画像を持つ物（`data` あり）は合計 3MB・24枚まで。超えたら古い順に消す
+ *   ② 目印だけの物は 200件まで
+ *   ⚠ 消すのは Chrome の中だけ。Cloud（Storage）の写真は消さない。
+ */
+async function _trimShots() {
+  try {
+    const all = await chrome.storage.local.get(null);
+    const withImg = [], metaOnly = [];
+    for (const k of Object.keys(all)) {
+      if (k.indexOf("shot_") !== 0) continue;
+      const v = all[k] || {};
+      if (typeof v.data === "string" && v.data.length > 100) withImg.push({ k, at: Number(v.at) || 0, bytes: v.data.length });
+      else metaOnly.push({ k, at: Number(v.at) || 0 });
+    }
+    const del = [];
+    withImg.sort(function (a, b) { return b.at - a.at; }); // 新しい順
+    let total = 0;
+    for (let i = 0; i < withImg.length; i++) {
+      total += withImg[i].bytes;
+      if (i >= SHOT_LOCAL_MAX_COUNT || total > SHOT_LOCAL_MAX_BYTES) del.push(withImg[i].k);
+    }
+    metaOnly.sort(function (a, b) { return b.at - a.at; });
+    for (let j = SHOT_META_MAX_COUNT; j < metaOnly.length; j++) del.push(metaOnly[j].k);
+    if (del.length) {
+      try { await chrome.storage.local.remove(del); } catch (_) {}
+      console.log("[human-shot] Chrome の中の写真を整理しました（消した " + del.length + "件・画像は合計 " + Math.round(total / 1024) + "KB）");
+    }
+    return del.length;
+  } catch (_) { return 0; }
+}
+
 async function _shrinkShot(dataUrl, maxSide, quality) {
   try {
     if (typeof OffscreenCanvas === "undefined" || typeof createImageBitmap === "undefined") return null;
@@ -1998,7 +2076,12 @@ async function _takeShot(msg, done) {
       let shotForUpload = dataUrl;
       let shotW = 0, shotH = 0;
       try {
-        const shrunk = await _shrinkShot(dataUrl, 800, 0.32);
+        /**
+         * 2026-11-12 竹内さん「もっと画像の容量おとしてもよい」:
+         *   800px・32%（40〜90KB）→ **640px・25%（25〜50KB）**。
+         *   物件名・賃料・押したボタンの位置は読める範囲で、枚数が多くても容量が増えにくい。
+         */
+        const shrunk = await _shrinkShot(dataUrl, SHOT_SEND_SIDE, SHOT_SEND_Q);
         if (shrunk && shrunk.dataUrl) { shotForUpload = shrunk.dataUrl; shotW = shrunk.w; shotH = shrunk.h; }
       } catch (e) {
         console.warn("[human-shot] 縮められませんでした（元の大きさで送ります）:", (e && e.message) || e);
@@ -2008,8 +2091,7 @@ async function _takeShot(msg, done) {
 
       // 名前を「まとまり＋連番」にする（並べ替えると操作の流れになる）
       const key = "shot_" + _shotRun + "_" + String(_shotSeq).padStart(4, "0");
-      const o = {};
-      o[key] = {
+      const meta = {
         at: t0, seq: _shotSeq, run_id: _shotRun,
         site: msg.site || null,
         kind: typeof msg.kind === "string" ? msg.kind.slice(0, 20) : null, // 何の操作の直後か（click/change/key/scroll）
@@ -2017,59 +2099,50 @@ async function _takeShot(msg, done) {
         x: typeof msg.x === "number" ? Math.round(msg.x) : null,           // 押した所（画面の座標）
         y: typeof msg.y === "number" ? Math.round(msg.y) : null,
         url: String(tab.url || "").slice(0, 300),
-        data: dataUrl,
       };
-      await chrome.storage.local.set(o);
-
       /**
-       * 2026-11-11 竹内さん「画面画像みればわかるのでは。画像みてボタンどこおしたかみればちゃんと検索おしてることわかる」:
-       *   写真を **Supabase Storage にも上げる**（Chrome の中だけだと、竹内さんも私も見られない）。
-       *   ・上げるのは非同期（写真を撮る動きを止めない）
-       *   ・失敗しても止めない（Chrome の中には残る）
-       *   ・表には名前（shot_key）だけ。中身は Storage。
+       * 2026-11-12 竹内さん「いまちゃんとろくがされてたかな？」→ **保存0枚・失敗6回・ResourceExceeded**。
+       *
+       * ⚠ 本当の原因: Chrome の `storage.local` は **10MB まで**（`unlimitedStorage` 無し）。
+       *   旧はここに **縮小前のフルサイズ画像（dataUrl・1枚 2〜3MB）** を入れていた。
+       *   → 3〜4枚で 10MB を超え、**それ以降の保存が全部 `ResourceExceeded` で失敗**（＝1枚も保存されない）。
+       *   ⚠ Cloud（Storage）には上げていたが、ここの `set` が先に例外になって
+       *     送信まで届かない事もあった（`await chrome.storage.local.set(o)` の後ろで送っている）。
+       *
+       * → **画像は Chrome の中に貯めない**。Cloud に上げて、Chrome には**小さな目印だけ**残す。
+       *   上げられなかった時だけ、**縮小した画像（40〜90KB）** を残す（無いよりまし・上限は下で掃除）。
        */
-      if (msg.upload !== false) {
-        /**
-         * 2026-11-11 竹内さん「写真もまだとれていない真の原因をちゃんとみつける」:
-         *   キュー（`_enqueueShotUpload`）を通していたが、キューは**この巨大な listener の中**に
-         *   置いてあり、メッセージのたびに作り直される。積んだ物が消える事があった。
-         *   → **その場で送る**（`_sendShotNow` を直接呼ぶ。共有の変数に頼らない）。
-         *
-         * 2026-11-12 竹内さん「ちゃんと撮影されてたかな？」（録画モードで「22枚」と出たのに
-         *   クラウドには**1枚も入っていなかった**）:
-         *   ⚠ 旧は待たずに投げっぱなしで、送れなかった理由も画面に出なかった。
-         *     → 録画モード（`msg.wait_upload`）の時は**送り終わるまで待ち、結果を返す**
-         *       （＝「撮れた枚数」が本当に保存できた枚数になる）。
-         */
-        const up = _sendShotNow({
-          data_url: shotForUpload, site: msg.site || null, what: msg.what || null,
-          shot_w: shotW, shot_h: shotH,
-          kind: msg.kind || null, x: msg.x, y: msg.y,
-          mode: null, run_id: _shotRun, seq: _shotSeq,
-        });
+      const uploadOn = msg.upload !== false;
+      const up = uploadOn ? _sendShotNow({
+        data_url: shotForUpload, site: msg.site || null, what: msg.what || null,
+        shot_w: shotW, shot_h: shotH,
+        kind: msg.kind || null, x: msg.x, y: msg.y,
+        mode: null, run_id: _shotRun, seq: _shotSeq,
+      }) : null;
+
+      let ur = null;
+      if (up) {
         if (msg.wait_upload) {
-          var ur = null;
           try { ur = await up; } catch (e) { ur = { ok: false, error: String((e && e.message) || e) }; }
-          sendResponse({
-            ok: !!(ur && ur.ok), shot_key: key, run_id: _shotRun, seq: _shotSeq,
-            upload: ur || null, ms: Date.now() - t0,
-          });
-          return;
+        } else {
+          // 待たない時も、失敗したら小さく残す（あとで見られるように）
+          up.then(function (r) { if (!r || !r.ok) _keepShotLocal(key, meta, shotForUpload); return r; })
+            .catch(function (e) { void e; _keepShotLocal(key, meta, shotForUpload); });
         }
-        up.catch(function (e) {
-          console.warn("[human-shot] 送信で例外:", (e && e.message) || e);
-        });
+      }
+      // Cloud に上がった（or 送らない設定）＝Chrome には**目印だけ**。上がらなかった時は縮小画像を残す
+      if (!msg.wait_upload) {
+        if (!uploadOn) await _keepShotLocal(key, meta, shotForUpload);
+        else { /* 送信の結果で決める（上の then の中） */ }
+      } else if (!(ur && ur.ok)) {
+        await _keepShotLocal(key, meta, shotForUpload);
+      } else {
+        await _keepShotMeta(key, meta);
       }
 
-      // 古い物から消す（全体の上限）
-      const all = await chrome.storage.local.get(null);
-      const keys = Object.keys(all).filter(function (k) { return k.indexOf("shot_") === 0; });
-      if (keys.length > SHOT_TOTAL) {
-        keys.sort(function (a, b) { return (Number(all[a] && all[a].at) || 0) - (Number(all[b] && all[b].at) || 0); });
-        const del = keys.slice(0, keys.length - SHOT_TOTAL);
-        try { await chrome.storage.local.remove(del); } catch (_) {}
-      }
-      sendResponse({ ok: true, shot_key: key, run_id: _shotRun, seq: _shotSeq, ms: Date.now() - t0 });
+      // 古い物から消す（全体の上限）。画像を持つ物は少なめに残す（容量を守る）
+      await _trimShots();
+      sendResponse({ ok: true, shot_key: key, run_id: _shotRun, seq: _shotSeq, upload: ur || null, ms: Date.now() - t0 });
     } catch (e) {
       sendResponse({ ok: false, error: String((e && e.message) || e), ms: Date.now() - t0 });
     }
@@ -2203,6 +2276,15 @@ try {
     if (!msg) return;
     if (msg.type === "axlx-rec-start") { _recStart().then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
     if (msg.type === "axlx-rec-stop") { _recStop("手で止めた").then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
+    /**
+     * 2026-11-12 竹内さん「いまちゃんとろくがされてたかな？」→ ResourceExceeded で保存0枚:
+     *   溜まった写真を今すぐ片付ける口（小窓の「写真を片付ける」から呼ぶ）。
+     *   ⚠ 消すのは **Chrome の中だけ**。Cloud（Storage）の写真は消さない。
+     */
+    if (msg.type === "axlx-shot-trim") {
+      _trimShots().then(function (n) { try { sendResponse({ ok: true, removed: n }); } catch (_) {} });
+      return true;
+    }
     if (msg.type !== "axlx-rec-status") return;
     (async function () {
       var st = await chrome.storage.local.get(["axlx_rec_stat", "axlx_rec_mode"]);
@@ -2239,6 +2321,16 @@ try {
   }).catch(function () {});
 } catch (_) {}
 
+/**
+ * 2026-11-12 竹内さん「いまちゃんとろくがされてたかな？」→ ResourceExceeded（保存0枚）:
+ *   起動した時に**溜まりすぎた写真を掃除する**（旧版がフルサイズで貯めた物が 10MB を埋めている）。
+ *   これをしないと、直した版でも**空きが無いまま**で保存が失敗し続ける。
+ */
+try {
+  _trimShots().then(function (n) {
+    if (n) console.log("[human-shot] 起動時: 古い写真を " + n + "件 整理しました");
+  }).catch(function () {});
+} catch (_) {}
 /**
  * 2026-11-11: 撮った写真の一覧（何枚・どのまとまり・どの操作の後か）。中身（画像）は含めない＝軽い。
  *   ?run_id= で1つのまとまりだけ。?with_data=1 で画像も返す（確認用・重い）。

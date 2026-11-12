@@ -4,6 +4,68 @@
 
 ---
 
+## 2026-11-12 v2.7.8 容量をかなり下げる（480px・20%）＋ Storage に置けなければ**表に入れる**
+
+竹内さん「**容量かなり落とすようにするのと、データベースに画像入るようにしたらよいのでは。
+データベースにテーブルをつくってそこにはいるようにする形にすればできるのではないかな**」
+（その前の画面で「**録画中（保存 0枚・失敗 6回・ResourceExceeded）**」＝容量オーバーで1枚も保存できていなかった）
+
+### ① 容量をかなり下げた
+
+| | 旧（v2.7.7） | 新（v2.7.8） |
+|---|---|---|
+| クラウドに送る写真 | 800px・32%（40〜90KB） | **480px・20%（10〜25KB）** |
+| Chrome に残す写真 | フル（2〜3MB）→ 後から縮小 | **320px・15%**（上げられなかった時だけ） |
+| Chrome の上限 | 600枚（**枚数だけ**） | **合計 1.5MB・15枚**（容量で守る）＋目印だけの物は200件 |
+| 1回の録画（170枚）の合計 | 約7〜15MB | **約1.7〜4MB** |
+
+物件名・賃料・押したボタンの位置は読める範囲。
+
+### ② 本当の原因は `ResourceExceeded`（Chrome の中の容量オーバー）
+
+写真を **Chrome の storage にフルサイズで貯めていた**ので、3〜4枚で 10MB を超え、
+**それ以降の保存が全部失敗**していた。さらに `set` が例外になって**送信まで届かない**ことがあった。
+→ **Chrome には目印（数十バイト）だけ**残し、画像はクラウドへ。上げられなかった時だけ**小さい画像**を残す。
+
+### ③ ご提案どおり「DB に画像が入る受け皿」を作った
+
+`human_motion_learn` に2列を足す（**migrate-schema も同時に更新済み**）:
+
+```sql
+ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_b64 TEXT;
+ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_in_db BOOLEAN NOT NULL DEFAULT false;
+```
+
+- Storage に置けなかった時は **`shot_b64` に画像そのもの（data:image/jpeg;base64,...）を入れる**（捨てない）
+- `GET /api/human-motion?shots=1` は、Storage でも表でも**どちらでも見られる URL** を返す
+- ⚠ 表に入れるのは**最後の受け皿だけ**（1行が数百KBになり集計が重くなる）
+- ⚠ **列がまだ無い環境でも壊れない**: insert が 42703（列が無い）で落ちたら**列を外して入れ直す**
+  （＝写真も動きの記録も消えない・画像は Storage の shot_key で残る）
+
+### ④ 溜まった分を今すぐ空ける口
+
+小窓に **「🧹 写真を片付ける」** を足した（Chrome の中だけ消す・クラウドの写真は消さない）。
+起動時にも自動で整理する（旧版が溜めた分を空ける）。
+
+### テスト
+- `record-mode-v2705.test.js` を新しい決まりに更新（**52件**）
+- 既存4本（shot-shrink・shot-send-direct・human-learn-shots・human-learn-reflect・auto-motion-learn）の
+  「800px・32%」「SHOT_TOTAL=600」の期待値を新しい決まりに更新
+- **92ファイルを5回連続 0失敗**・`tsc` → 0
+
+### ⚠ 竹内さんにやってもらう事（DBの列追加）
+`shot_b64` / `shot_in_db` の列を足す SQL を当ててください（**マイグレーション経由でも可**）。
+当てなくても動きます（列が無ければ自動で外して入れる）が、**表に画像を残す**のは列を足した後から。
+
+```sql
+ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_b64 TEXT;
+ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_in_db BOOLEAN NOT NULL DEFAULT false;
+COMMENT ON COLUMN human_motion_learn.shot_b64 IS 'Storage に置けなかった時の写真そのもの。通常は NULL で shot_key を使う。2026-11-12 竹内さん承認';
+COMMENT ON COLUMN human_motion_learn.shot_in_db IS '写真を表に入れたか';
+```
+
+---
+
 ## 2026-11-12 v2.7.7 録画の「22枚」は数えただけだった（実際は0枚）→ 保存できた枚数だけ数える
 
 竹内さん「**ちゃんと撮影されてたかな？ 撮影されてたらまなぶ**」（録画を止めたら「22枚」と出た）

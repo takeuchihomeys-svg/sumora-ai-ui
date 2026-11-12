@@ -57,7 +57,7 @@ console.log("\n■ ② キューをやめて「その場で送る」");
 
 console.log("\n■ ③ 容量を小さくする（長辺1000px・JPEG40%）");
 {
-  ok("縮小は 800px・32%", /_shrinkShot\(dataUrl, 800, 0\.32\)/.test(src));
+  ok("縮小は 480px・20%（2026-11-12 もっと小さく）", /_shrinkShot\(dataUrl, SHOT_SEND_SIDE, SHOT_SEND_Q\)/.test(src) && /SHOT_SEND_SIDE = 480/.test(src));
   ok("縮めた物を送る（元の大きさではない）", /data_url: shotForUpload/.test(src));
   ok("元と送る物の大きさをログに出す", /撮りました: 元 /.test(src));
   ok("OffscreenCanvas を使う（service worker に DOM が無い）", /OffscreenCanvas/.test(src) && /createImageBitmap/.test(src));
@@ -76,7 +76,7 @@ console.log("\n■ ④ 実際に動かす（縮小→送信）");
     chrome: { storage: { local: { get: async () => ({}), set: (o) => sets.push(o) } } },
     _getAutomationKeyHeader: async () => ({}),
     _snapInstallId: async () => "test",
-    _extVersion: () => "2.7.7",
+    _extVersion: () => "2.7.8",
     fetch: async (url, opts) => { fetchCalls.push({ url, len: opts.body.length }); return { ok: true, status: 200, text: async () => '{"ok":true}' }; },
   };
   vm.createContext(sandbox);

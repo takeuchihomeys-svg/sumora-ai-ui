@@ -75,7 +75,7 @@ console.log("\n■ ③ まとまり（run_id）＋連番で並べる");
   ok("10分あいたら新しいまとまり", /t0 - _shotLastAt > 10 \* 60 \* 1000/.test(bg));
   ok("写真に seq・run_id・kind・what・x・y を持たせる", /seq: _shotSeq, run_id: _shotRun/.test(bg) && /kind: typeof msg\.kind/.test(bg) && /what: typeof msg\.what/.test(bg));
   ok("撮った物を Storage に置く（DB ではない）", /await chrome\.storage\.local\.set\(o\)/.test(bg));
-  ok("全体の上限で古い物から消す", /SHOT_TOTAL = 600/.test(bg) && /keys\.slice\(0, keys\.length - SHOT_TOTAL\)/.test(bg));
+  ok("全体の上限で古い物から消す（2026-11-12: 枚数ではなく**容量**で守る）", /SHOT_LOCAL_MAX_BYTES/.test(bg) && /SHOT_LOCAL_MAX_COUNT/.test(bg) && /b\.at - a\.at/.test(bg));
 }
 
 console.log("\n■ ④ 写真の中身は DB に送らない");

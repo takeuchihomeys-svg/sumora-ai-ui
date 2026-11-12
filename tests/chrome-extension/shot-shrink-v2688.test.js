@@ -26,7 +26,7 @@ console.log("■ ① 送る前に縮める");
 {
   ok("縮める関数がある（_shrinkShot）", /async function _shrinkShot\(dataUrl, maxSide, quality\)/.test(bg));
   ok("OffscreenCanvas を使う（service worker に DOM は無い）", /OffscreenCanvas/.test(bg) && /createImageBitmap/.test(bg));
-  ok("長辺 800px に縮める", /_shrinkShot\(dataUrl, 800, 0\.32\)/.test(bg));
+  ok("長辺 480px に縮める（2026-11-12 もっと小さく）", /_shrinkShot\(dataUrl, SHOT_SEND_SIDE, SHOT_SEND_Q\)/.test(bg) && /SHOT_SEND_SIDE = 480/.test(bg));
   ok("JPEG 32% で保存", /quality: quality \|\| 0\.45/.test(bg) || /0\.32/.test(bg));
   ok("使えない環境では null（＝元の大きさで送る・止まらない）", /if \(typeof OffscreenCanvas === "undefined"/.test(bg));
   ok("送るのは縮めた物（shotForUpload）", /data_url: shotForUpload/.test(bg));
@@ -39,7 +39,7 @@ console.log("\n■ ② サーバーは黙って捨てない（理由を返す）
   ok("空の画像は理由を返す", /error: "image_empty"/.test(api));
   ok("大きすぎる時は 413 と理由", /error: "image_too_large"/.test(api) && /413/.test(api));
   ok("大きさ（bytes）も返す", /bytes: buf\.length/.test(api));
-  ok("Storage に置けなかった時も理由を返す", /error: "storage: " \+ up\.error\.message/.test(api));
+  ok("Storage に置けなかった時は**表に入れる**（2026-11-12 竹内さん「データベースに画像入るように」）", /row\.shot_b64 = "data:image\/jpeg;base64," \+ raw64/.test(api) && /shot_in_db = true/.test(api));
   ok("3MB の上限は残す（Storage を守る）", /3_000_000/.test(api));
 }
 

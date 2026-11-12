@@ -42,6 +42,9 @@ const STMTS = [
   shot_w INTEGER,
   shot_h INTEGER
 );`,
+  // 2026-11-12 竹内さん「データベースに画像入るようにしたらよいのでは」: Storage に置けなかった時の受け皿
+  `ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_b64 TEXT;`,
+  `ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_in_db BOOLEAN NOT NULL DEFAULT false;`,
   `CREATE INDEX IF NOT EXISTS idx_human_motion_created ON human_motion_learn(created_at DESC);`,
   `CREATE INDEX IF NOT EXISTS idx_human_motion_install ON human_motion_learn(install_id, created_at DESC);`,
   `CREATE INDEX IF NOT EXISTS idx_human_motion_site ON human_motion_learn(site, mode, created_at DESC);`,

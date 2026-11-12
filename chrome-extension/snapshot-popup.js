@@ -362,6 +362,23 @@
     });
     refreshRecMode();
     setInterval(refreshRecMode, 5000);
+
+    /**
+     * 2026-11-12: 「写真を片付ける」ボタン（容量がいっぱいで撮れない時の逃げ道）
+     */
+    var trimBtn = el("snap-shot-trim");
+    if (trimBtn) trimBtn.addEventListener("click", function () {
+      var hint = el("snap-perm-hint");
+      var show = function (msg, color) { if (hint) { hint.style.display = "block"; hint.textContent = msg; hint.style.color = color || "#b91c1c"; } };
+      show("🧹 片付けています…", "#475569");
+      try {
+        chrome.runtime.sendMessage({ type: "axlx-shot-trim" }, function (res) {
+          void chrome.runtime.lastError;
+          if (!res || !res.ok) { show("✖ 片付けられませんでした: " + ((res && res.error) || "理由なし")); return; }
+          show("✅ 片付けました（" + (Number(res.removed) || 0) + "件）。クラウドの写真は消していません。もう一度「⏺ 録画」を押してください。", "#047857");
+        });
+      } catch (e) { show("✖ できませんでした: " + ((e && e.message) || e)); }
+    });
   }
 
   document.addEventListener("DOMContentLoaded", init);

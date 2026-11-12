@@ -158,7 +158,14 @@ export async function POST(req: NextRequest) {
   //   2026-11-11 竹内さん「画面画像みればわかるのでは。画像みてボタンどこおしたかみればちゃんと検索おしてることわかる」:
   //   → 受け取った画像は **Storage に置き**、表には置いた場所の名前（shot_key）だけ持つ。
   //     表が軽いまま、竹内さんも私も写真を見て「検索を押せているか」を確かめられる。
+  //
+  // 2026-11-12 竹内さん「データベースに画像入るようにしたらよいのでは。データベースにテーブルをつくって
+  //   そこにはいるようにする形にすればできるのではないかな」:
+  //   → **Storage に置けなかった時は、表（`human_motion_learn.shot_b64`）に画像そのものを入れる**（受け皿）。
+  //     Storage が落ちていても・バケットの権限が変わっても、写真が**消えない**。
+  //     ⚠ 表に画像を入れるのは**最後の受け皿だけ**（1行が数百KBになり集計が重くなるため、通常は Storage）。
   const BUCKET = "human-motion-shots";
+  let shotBytes: Buffer | null = null;
   if (typeof body.shot_b64 === "string" && body.shot_b64.length > 100) {
     try {
       const raw64 = body.shot_b64.replace(/^data:image\/[a-z]+;base64,/, "");
@@ -172,6 +179,7 @@ export async function POST(req: NextRequest) {
         console.warn("[human-motion] 写真が大きすぎます:", buf.length, "bytes");
         return NextResponse.json({ ok: false, error: "image_too_large", bytes: buf.length }, { status: 413, headers: CORS });
       }
+      shotBytes = buf;
       {
         const key = `${new Date().toISOString().slice(0, 10)}/${row.install_id || "unknown"}-${Date.now()}.jpg`;
         const up = await supabase.storage.from(BUCKET).upload(key, buf, { contentType: "image/jpeg", upsert: true });
@@ -179,18 +187,42 @@ export async function POST(req: NextRequest) {
           row.shot_taken = true;
           row.shot_key = key;
         } else {
-          console.warn("[human-motion] 写真を置けません:", up.error.message);
-          // 2026-11-11: 置けなかった理由を返す（「送ったのに届かない」を無くす）
-          return NextResponse.json({ ok: false, error: "storage: " + up.error.message }, { status: 500, headers: CORS });
+          /**
+           * 2026-11-12 竹内さん「データベースに画像入るようにしたらよいのでは」:
+           *   Storage に置けなくても**捨てない**。表の `shot_b64` に入れて、写真を残す
+           *   （GET ?shots=1 が `data:` の URL として返す＝そのまま見られる）。
+           */
+          console.warn("[human-motion] 写真を置けません → 表に入れます:", up.error.message);
+          row.shot_b64 = "data:image/jpeg;base64," + raw64.slice(0, 2_900_000);
+          row.shot_in_db = true;
         }
       }
     } catch (e) {
       console.warn("[human-motion] 写真の処理に失敗:", e instanceof Error ? e.message : String(e));
+      // 例外でも捨てない（表に入れられるなら入れる）
+      try {
+        const raw64 = String(body.shot_b64).replace(/^data:image\/[a-z]+;base64,/, "").slice(0, 2_900_000);
+        if (raw64.length > 100) { row.shot_b64 = "data:image/jpeg;base64," + raw64; row.shot_in_db = true; row.shot_taken = true; }
+      } catch (_) {}
     }
   }
-  delete row.shot_b64;
+  delete row.shot_b64_pending;
+    void shotBytes;
 
-  const ins = await supabase.from("human_motion_learn").insert(row);
+  /**
+   * 2026-11-12: `shot_b64` / `shot_in_db` の列が**まだ無い**環境でも壊れないようにする。
+   *   列が無いと insert が 42703（column does not exist）で落ち、**写真も動きの記録も消える**。
+   *   → 落ちたら列を外してもう一度入れる（画像は Storage の shot_key で残っている）。
+   */
+  let ins = await supabase.from("human_motion_learn").insert(row);
+  const _missingCol = ins.error && (ins.error.code === "42703" || ins.error.code === "PGRST204");
+  if (_missingCol) {
+    console.warn("[human-motion] shot_b64 列がありません → 列を外して入れ直します（写真は Storage に残っています）:", ins.error?.message);
+    const r2 = { ...row } as Record<string, unknown>;
+    delete r2.shot_b64;
+    delete r2.shot_in_db;
+    ins = await supabase.from("human_motion_learn").insert(r2);
+  }
   /**
    * 2026-11-12 竹内さん「くれさん通常モードで検索したけどちゃんと画面録画はできるようになっているかな」:
    *   写真は Storage に上がったのに**表に1行も入っていなかった**（今日 0件）。
@@ -202,7 +234,11 @@ export async function POST(req: NextRequest) {
     console.warn("[human-motion] 表に入れられません:", ins.error.message, "／ 写真:", row.shot_key || "(なし)");
   }
   return NextResponse.json(
-    { ok: !ins.error, error: ins.error?.message, code: ins.error?.code ?? null, shot_key: row.shot_taken ? row.shot_key : null },
+    {
+      ok: !ins.error, error: ins.error?.message, code: ins.error?.code ?? null,
+      shot_key: row.shot_taken ? (row.shot_key ?? "(表)") : null,
+      shot_in_db: !!row.shot_in_db,
+    },
     { status: ins.error ? 500 : 200, headers: CORS },
   );
 }
@@ -215,20 +251,25 @@ export async function GET(req: NextRequest) {
 
   // 写真の一覧（どこに置いたか・見るための URL）
   if (sp.get("shots") === "1") {
+    /**
+     * 2026-11-12 竹内さん「データベースに画像入るようにしたらよいのでは」:
+     *   Storage に置けなかった写真は**表に入っている**（`shot_b64`）。それも一覧に出す。
+     */
     const r = await supabase.from("human_motion_learn")
-      .select("id, created_at, install_id, device_label, site, mode, shot_key, shot_w, shot_h, ops, points_n, point_fields")
+      .select("id, created_at, install_id, device_label, site, mode, shot_key, shot_w, shot_h, ops, points_n, point_fields, shot_in_db, shot_b64")
       .gte("created_at", from).eq("shot_taken", true)
       .order("created_at", { ascending: false }).limit(limit);
     if (r.error) return NextResponse.json({ ok: false, error: r.error.message }, { status: 500, headers: CORS });
-    // 写真を見る URL を付ける（Storage の公開 URL・無ければ署名付き）
+    // 写真を見る URL を付ける（Storage の公開 URL・無ければ署名付き・無ければ表の画像）
     const rows = await Promise.all(((r.data ?? []) as Record<string, unknown>[]).map(async (row) => {
       const key = typeof row.shot_key === "string" ? row.shot_key : "";
-      let url: string | null = null;
-      if (key) {
+      const inDb = typeof row.shot_b64 === "string" && row.shot_b64.length > 100;
+      let url: string | null = inDb ? (row.shot_b64 as string) : null;   // 表に入っていればそれをそのまま使う
+      if (!url && key) {
         try {
           const pub = supabase.storage.from("human-motion-shots").getPublicUrl(key);
           url = pub?.data?.publicUrl ?? null;
-        } catch { url = null; }
+    } catch { url = null; }
         if (!url) {
           try {
             const signed = await supabase.storage.from("human-motion-shots").createSignedUrl(key, 3600);
@@ -236,7 +277,10 @@ export async function GET(req: NextRequest) {
           } catch { url = null; }
         }
       }
-      return { ...row, shot_url: url };
+      // 一覧では画像の中身を返さない（重い）。URL で見る
+      const out = { ...row } as Record<string, unknown>;
+      delete out.shot_b64;
+      return { ...out, shot_in_db: inDb, shot_url: url };
     }));
     return NextResponse.json({ ok: true, days, rows }, { headers: CORS });
   }
