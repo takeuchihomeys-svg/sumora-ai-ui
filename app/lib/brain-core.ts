@@ -251,7 +251,7 @@ import {
 import { resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 import { customerPointsAtProperty } from "@/app/lib/cost-question-scope";
 // 2026-09-23 課題③: 真の初回の「最初の一手」（first_contact_pickup）の許可リスト（純関数）
-import { resolveFirstContactPickup, firstContactSuggestedAction, type FirstContactPickup } from "@/app/lib/first-contact-pickup";
+import { resolveFirstContactPickup, firstContactSuggestedAction, customerOffersToSendProperties, firstContactSelfSendReplyOn, type FirstContactPickup } from "@/app/lib/first-contact-pickup";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-27 竹内: 主のお部屋（こちらが送ったお部屋）への見積もりの依頼は 見積書送る
@@ -5430,14 +5430,18 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-10-09 同じ竹内さんの答え（試験 q021「ブラックなど審査は通らないですか」・友だち追加の直後の最初の発言）: 条件がまだ無い初回に LLM が返信（AIX なし）を
       //   選んだ番も AIX【条件ヒアリング】（審査の不安への答えはヒアリングの AIX の文に添える）。物件の画像・URL の初回（募集状況の確認）は触らない。戻す FIRST_CONTACT_HEARING_FROM_REPLY=off
       // 会社の事実の質問（「不動産屋の会社名教えてください」試験 q066＝竹内さんは会社名を答えた返信）は返信のまま
-      if (finalAix === null && !twoStage && !custSentConditionForm && (process.env.FIRST_CONTACT_HEARING_FROM_REPLY ?? "").toLowerCase() !== "off"
+      // 2026-11-12 作業員4（弱い所 brain:question-first-then-condition-hearing）: お客様が自分で物件を送る申し出（「随時お送りさせて頂いてもよろしいでしょうか」）の
+      //   初回は AIX【条件ヒアリング】を残さず返信（竹内さん q432・フォームはお客様の次の番）。既定 off FIRST_CONTACT_SELF_SEND_REPLY=on
+      const selfSendReply = firstContactSelfSendReplyOn() && customerOffersToSendProperties(typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? ""));
+      if (selfSendReply) console.log(JSON.stringify({ tag: "brain:first-contact-self-send-reply", conversationId, finalAix }));
+      if (finalAix === null && !selfSendReply && !twoStage && !custSentConditionForm && (process.env.FIRST_CONTACT_HEARING_FROM_REPLY ?? "").toLowerCase() !== "off"
         && matchCompanyFacts(typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "").join(" ")).length === 0
         && !typedMessages.some((m) => m.sender === "customer" && (!!m.image_type || /https?:\/\/|^\[画像\]|^\[動画\]/.test(m.text ?? "")))
         && !pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready) {
         console.log(JSON.stringify({ tag: "brain:first-contact-hearing-from-reply", conversationId }));
         finalAix = "condition_hearing"; replyMode = "aix";
       }
-      const keepHearing = finalAix === "condition_hearing" && !custSentConditionForm && (process.env.FIRST_CONTACT_KEEP_HEARING ?? "").toLowerCase() !== "off"
+      const keepHearing = finalAix === "condition_hearing" && !custSentConditionForm && !selfSendReply && (process.env.FIRST_CONTACT_KEEP_HEARING ?? "").toLowerCase() !== "off"
         && !pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready;
       if (keepHearing) {
         console.log(JSON.stringify({ tag: "brain:first-contact-keep-hearing", conversationId }));
