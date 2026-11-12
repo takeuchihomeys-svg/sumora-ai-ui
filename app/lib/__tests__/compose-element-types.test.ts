@@ -94,4 +94,33 @@ t("物差し: 下書きで同じ核が何回出たか", () => {
   assert.equal(r[0].drafts, 2);
   assert.ok(r.some((x) => x.key === "確認出来次第" && x.drafts === 1));
 });
+import { readOurSendUptake, infoKindsOf } from "../compose-order-table";
+t("作業員16 の our_send_uptake の形（hook・degree・point・cue）: 決めたい＝抑える・刺さらない＝探す約束・漏れ0", () => {
+  const meta = { our_send_uptake: [{ part: "スプランディッド難波WESTⅡ 604号室", kind: "property", uptake: "answered", hook: "hooked", degree: "decide", point: "広さ・間取り", cue: "ここにしたいです" }], turn_contract: { asks: [{ quote: "ここにしたい", route: "reply", about: "reaction_to_sent" }] } };
+  const u = readOurSendUptake(meta);
+  assert.equal(u[0].strength, "strong"); assert.equal(u[0].hook, "hooked");
+  const p = uptakePlan(meta)!;
+  assert.equal(p.rule, "decide"); assert.equal(p.lead, "apply");
+  const nh = uptakePlan({ our_send_uptake: [{ part: "〇〇", kind: "property", uptake: "answered", hook: "not_hooked", degree: null, point: "駅・場所", cue: "遠いですね" }] })!;
+  assert.equal(nh.lead, "keep_send"); assert.deepEqual(nh.axis, []);
+  const note = spn(bsp(readTurnUnderstanding(meta), rsf(meta), { ctx: rcc(meta) }));
+  assert.deepEqual(hl(meta, note), []);
+  assert.match(note, /送った部分の刺さり（ブレイン）: スプランディッド難波WESTⅡ 604号室の広さ・間取り:answered\/hooked\/decide\/「ここにしたいです」/);
+});
+t("作業員21 の情報の種類（K1〜K16）: K8 会社の事実→会社の事実の信頼・K14→信頼をつなぐ番・K15→先に抑える", () => {
+  assert.deepEqual(infoKindsOf({ info_kind: [{ kind: "K8" }, "k14", { kind: "X" }] }), ["K8", "K14"]);
+  const p = pickElementTypes({ info_kind: ["K8", "K15"] });
+  assert.ok(p.trust.includes("R_company_fact")); assert.ok(p.push_line.includes("P_hold_first"));
+  assert.equal(trustTurnOf({ scene: "question", customerText: "分割できますか", firstContact: false, meta: { info_kind: ["K14"] } })?.id, "anxious");
+  const meta = { info_kind: ["K8"], turn_contract: { asks: [{ quote: "分割できますか", route: "reply", about: "procedure", answer: "カード払いのみ" }] } };
+  assert.deepEqual(hl(meta, spn(bsp(readTurnUnderstanding(meta), rsf(meta), { ctx: rcc(meta) }))), []);
+});
+t("潜在の受け渡し（gold の外れの束）: 条件の番の concern は潜在にしない（q207）・気持ちの読みの不安の対象を潜在に（anxiety.target）", () => {
+  const q207 = { customer_concern: { topic: "費用", object: "家賃管理費込みで5〜6万" }, turn_contract: { asks: [{ quote: "家賃管理費込みで5〜6万", route: "promise", about: "search_condition" }] } };
+  assert.equal(rsf(q207).latentCover, null);
+  const anx = { customer_mindset: { state: "迷い", anxiety: { target: "先に取られる", direction: "前向き" } }, turn_contract: { asks: [{ quote: "最短でも11月中旬ですか", route: "reply", about: "vacancy" }] } };
+  assert.equal(rsf(anx).latentCover?.kind, "先に取られる");
+  const note = spn(bsp(readTurnUnderstanding(anx), rsf(anx), { ctx: rcc(anx) }));
+  assert.deepEqual(hl(anx, note), []);
+});
 console.log(`compose-element-types: ${n} pass`);

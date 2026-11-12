@@ -640,7 +640,9 @@ const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pattern", 
   // 2026-11-12 作業員10（案A・BRAIN_SEVEN_FIELDS）: 竹内さんの7つの欄・潜在の4欄（文の統括の物差し scripts/audit-compose-understanding.ts が答案から読む）
   "seven_read", "latent_read",
   // 2026-11-12 作業員17（BRAIN_JUDGE_BASIS）: 判断の根拠のメモ（scripts/judge-basis-score.ts が読む）。conductor_focus は judge_basis が無い答案でも重点を数える元
-  "judge_basis", "conductor_focus"] as const;
+  "judge_basis", "conductor_focus",
+  // 2026-11-12 作業員10: 潜在の外れの束で、答案に送ってきた動機・気持ち・今の番と後の番 等が無く、文の統括への受け渡しを測れなかった
+  "latent_intent", "customer_emotion", "now_vs_later", "info_kind", "our_send_uptake"] as const;
 export function planOf(meta: Record<string, unknown> | null): Record<string, unknown> {
   if (!meta) return {};
   const out: Record<string, unknown> = {};
