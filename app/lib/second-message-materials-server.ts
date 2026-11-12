@@ -46,7 +46,7 @@ export async function loadSecondMaterials(o: {
   const { before, turnStaff } = splitTurn(o.recent, o.sentMessage);
   const sent = sentThisTurn({ actionType: o.actionType, turnStaff });
   const asks = outstandingAsks(o.recent, turnStaff, nowMs, o.brainRequestStatus);
-  const promises = openPromises(o.recent, turnStaff, nowMs);
+  const promises = openPromises(o.recent, turnStaff, nowMs, { actionType: o.actionType ?? null, sentMessage: o.sentMessage ?? null });
   const bundle = lastCustomerBundle(before);
   const costKind = askedCostKind(bundle);
 

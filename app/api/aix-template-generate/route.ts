@@ -98,6 +98,8 @@ import { resolveTemplateSentMessage } from "@/app/lib/aix-template-source";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
 import { examTestSnapshot, snapshotRows } from "@/app/lib/exam-test-snapshot";
 import { aixSecondLeanOn } from "@/app/lib/aix-second-lean";
+// 2026-11-12 作業員25: 2通目にブレインの決め手の残り（customer_mindset.decideGap）を渡す（AIX_SECOND_LINK=on・既定 off）
+import { aixSecondLinkOn, decideGapOfMeta, secondDecideGapLine } from "@/app/lib/aix-second-link";
 import { applyWording1028On, applyPushWordingLine } from "@/app/lib/aix-brain-contract";
 // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 見積書の直後の2通目の形・締め・検査（スタッフが書いた2通目 132通から）
 import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
@@ -1618,6 +1620,9 @@ export async function POST(req: NextRequest) {
     : "";
   // 2026-10-29 AIX_SECOND_APPEAL_POINTS（既定 off・second-appeal-points.ts）: 統括・ブレインのお客様の要点と1通目のオススメポイントを突き合わせ、
   //   刺さる順の候補を2通目に渡す（竹内さん KB 9f4f0b48・R の2通目で天王寺・角部屋・ネット無料が落ちた）。場面の形の注記の後・締めの前
+  // 2026-11-12 作業員25（AIX_SECOND_LINK=on・既定 off）: ブレインの決め手の残り（お客様の言葉・点）を2通目の材料に。1通目のお部屋にその言葉があれば推す軸の一番に（竹内さん #28）。
+  //   古い判断（isStaleMeta）では渡さない・道は変えない（材料だけ）
+  const secondGapLine = aixSecondLinkOn() && !isStaleMeta ? secondDecideGapLine(decideGapOfMeta(brainMeta), sentMessage) : null;
   let secondAppealNote = "";
   if (isRecSecond && !pickupPushLabel && secondAppealPointsOn()) {
     const bm = brainMeta as (SuggestedAixMeta & { customer_concern?: { topic?: string; object?: string } | null; turn_contract?: { situation?: string | null; background?: string | null } | null }) | null;
@@ -1627,6 +1632,7 @@ export async function POST(req: NextRequest) {
       bm?.customer_emotion ?? "",
       bm?.turn_contract?.situation ?? "",
       ...(bm?.key_topics ?? []),
+      secondGapLine ?? "",
     ].filter(Boolean).join("\n");
     secondAppealNote = buildSecondAppealNote({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? bm?.latent_intent ?? null });
     console.log(JSON.stringify({ tag: "aix-template-generate:second-appeal-points", len: secondAppealNote.length, points: secondAppealNote ? secondAppealNote.split("\n").filter((l) => /^\d\)/.test(l)).length : 0 }));
@@ -1680,6 +1686,7 @@ export async function POST(req: NextRequest) {
         bm?.customer_emotion ? `気持ち: ${bm.customer_emotion}` : "",
         bm?.hesitancy_pattern ? `迷い: ${bm.hesitancy_pattern}` : "",
         ...(bm?.key_topics ?? []).map((k) => `要点: ${k}`),
+        secondGapLine ?? "",
       ].filter(Boolean).join("\n");
       const scene = secondFormScene(pickupType);
       // 竹内さんの手本・型の要約（DB・サーバーの鍵で読む・無ければ手本なしで書く）
@@ -1931,6 +1938,8 @@ export async function POST(req: NextRequest) {
     //   設計知見「同じ事実について書くなと書けを別の場所から渡さない」→ 最後に1回だけ明示して上書きする。
     // 2026-10-20 2通目の材料（返信と同じ材料・SECOND_MSG_MATERIALS=off＝空＝並びは旧と同じ）
     secondMaterials?.note ?? "",
+    // 2026-11-12 作業員25: 決め手の残り（訴求の判断・網が読んだ時はその注記に入っている＝ここでは重ねない）
+    secondGapLine && !secondJudge && !secondAppealNote ? `【決め手の残り（ブレインの読み・材料だけ。分析の言葉は本文に書かない）】\n・${secondGapLine}` : "",
     aixFirstNote,
     aixChainNote,
     // 物件オススメの直後の2通目: 資料の事実 → 場面の形（実送信の実物）→ 締め の順で最後に置く
