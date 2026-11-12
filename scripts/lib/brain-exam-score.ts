@@ -22,6 +22,8 @@ export type BrainExamOutput = {
   two_choice_aix?: string | null;
   two_choice_check_pattern?: string | null;
   two_choice_reply_kind?: string | null;
+  /** 2026-11-05 2択の先に選んだ側（TWO_CHOICE_NARROW・KB 56b662a4）。EXAM_TWO_CHOICE_PREFERRED=on の時だけ採点に使う */
+  two_choice_preferred?: "reply" | "aix" | null;
 };
 export type PathCode = {
   /** 正解の accept に当てる符号（1つ目が主）。曖昧な書き出しは複数 */
@@ -45,6 +47,16 @@ const SPLIT_PROP = new Set(["property_send", "property_recommendation", "propert
 function splitScoringOn(): boolean {
   const off = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "off";
   return typeof process === "undefined" || !(off(process.env.SEARCH_SPLIT_CHOICE) || off(process.env.NEXT_PUBLIC_SEARCH_SPLIT_CHOICE));
+}
+
+/**
+ * 2026-11-12 作業員7（q202・A 型8行）: 2択の採点を「先に選んだ側」で見る（既定 off・EXAM_TWO_CHOICE_PREFERRED=on）。
+ *   持ち込みの確認の2択は竹内さんの決定（KB 56b662a4）で2択に残して先の側＝約束の返信（画面は先の側を強く出す）。
+ *   旧の採点はどちらかのボタンが言ってはいけない道なら外れ（10/29）＝先の側が正解でも q202（正解 2段:check・言ってはいけない AIX:物件確認した）が外れていた。
+ *   on の時: 先の側がある2択は、先の側の符号だけで当てる（もう片方は道にも言ってはいけない道にも数えない）。先の側が無い2択は今まで通り
+ */
+export function twoChoicePreferredScoringOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_TWO_CHOICE_PREFERRED ?? "").trim().toLowerCase() === "on";
 }
 
 const PROP = /^property_(?:send|recommendation|pickup|search)$/;
@@ -84,6 +96,10 @@ export function brainPathCode(b: BrainExamOutput | null | undefined): PathCode {
     // 2026-10-29 直し: 2択でも、どちらかのボタンがその問題の「言ってはいけない道」なら外す（押せば間違いのボタンを出した）。
     //   10/28 は hard: [] で、約束の側のピックアップの2択が「今は物件の AIX を送らない」問題で合格に数えられていた
     const hard = [...new Set([...(aixSide?.hard ?? []), ...replyHard])];
+    if (twoChoicePreferredScoringOn() && (b.two_choice_preferred === "reply" || (b.two_choice_preferred === "aix" && aixSide))) {
+      const pr = b.two_choice_preferred === "reply" ? { codes: replyCodes, hard: replyHard, label: rk ? `2段:${rk}` : replySide.label } : aixSide!;
+      return { codes: pr.codes, hard: pr.hard, label: `2択の先の側（${pr.label}）` };
+    }
     return { codes, hard, label: `2択（${aixSide?.label ?? "AIX"}｜${rk ? `2段:${rk}` : replySide.label}）` };
   }
   const action = (b.action ?? "").trim();

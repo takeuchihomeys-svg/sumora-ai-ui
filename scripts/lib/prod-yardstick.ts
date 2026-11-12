@@ -98,3 +98,57 @@ export function beyondCandidates(turns: YardTurn[], opts: { writers?: string[] }
   const ws = new Set(opts.writers ?? ["takeuchi"]);
   return turns.filter((t) => ws.has(t.writer) && judgeTurn(t) === "beyond");
 }
+
+// ─── 今の通／後の通の2枠（2026-11-12 作業員1・弱い所 268「本番の物差しに2段が残らない」・作業員16 の 11447・12189）──────────────
+//   ブレインが2段（今は約束の返信・後で AIX）を選んだ番を、見張りの brain_action（後の AIX）とスタッフの最初の一手（今の返信）で比べると外れに数えていた。
+//   逆に、スタッフが今は約束の返信・後で AIX を送った番で、後の AIX を今の番の外れに数えていた（後で送った AIX は 11/07 から外すだけ＝数えから消えていた）。
+//   2枠: 今の通（ブレインの今の一手 ↔ スタッフの最初の一手）と後の通（ブレインが約束した後の AIX ↔ スタッフが24時間以内に送った最初の AIX）を別に数える。
+//   当たり外れ（場面ごとの率・下がった場面）は今の通で決め、後の通は別の欄（約束を果たしたか）に出す。既定 off（入れる YARDSTICK_TWO_FRAMES=on）。
+export function yardstickTwoFramesOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.YARDSTICK_TWO_FRAMES ?? "").trim().toLowerCase() === "on";
+}
+/** decision_source の2段（rule:two_stage_promise(pickup) 等）の種類 → 後で送る AIX の系統 */
+const TWO_STAGE_LATER: Record<string, string> = { pickup: "物件", pickup_unless_ack: "物件", check: "確認", check_question: "確認", brought_both: "確認", brought_estimate: "見積", estimate: "見積", estimate_stale: "見積", photo: "確認", room_photo_shoot: "確認", viewing_check: "内覧", work_support: "サポート" };
+export function twoStageKindOf(decisionSource: string | null | undefined): string | null {
+  const m = String(decisionSource ?? "").match(/two_stage_promise\(([a-z_]+)\)/);
+  return m ? m[1] : null;
+}
+export type BrainFrames = { now: string; later: string | null };
+/** ブレインの2枠: 2段なら 今=返信・後=約束の AIX の系統／それ以外は 今=道の系統・後=なし */
+export function brainFrames(brainFamily: string, decisionSource?: string | null): BrainFrames {
+  const k = twoStageKindOf(decisionSource);
+  if (k) return { now: "返信", later: TWO_STAGE_LATER[k] ?? (brainFamily !== "返信" ? brainFamily : null) };
+  return { now: brainFamily, later: null };
+}
+export type StaffMoveLite = { at: number; family: string };
+/** スタッフの2枠: 今=最初の一手の系統／後=最初の一手が返信の時、その後 laterHours 以内に送った最初の AIX の系統 */
+export function staffFrames(turnAtMs: number, moves: ReadonlyArray<StaffMoveLite>, opts: { laterHours?: number } = {}): { now: string | null; later: string | null } {
+  const lim = (opts.laterHours ?? 24) * 3_600_000;
+  const ms = moves.filter((m) => m.at >= turnAtMs && m.at - turnAtMs < lim).sort((a, b) => a.at - b.at);
+  if (!ms.length) return { now: null, later: null };
+  const now = ms[0].family;
+  if (now !== "返信") return { now, later: null };
+  return { now, later: ms.find((m) => m.family !== "返信")?.family ?? null };
+}
+export type TwoFrameJudge = { now: "hit" | "miss"; later: "hit" | "miss" | "brain_only" | "staff_only" | "na" };
+/** 2枠の判定。後の通は、両方に後の AIX がある時だけ当たり外れ・片方だけは brain_only（約束したが果たしていない）/ staff_only（スタッフだけ後で送った） */
+export function judgeTwoFrames(b: BrainFrames, s: { now: string | null; later: string | null }): TwoFrameJudge {
+  const now = b.now === (s.now ?? "返信") ? "hit" : "miss";
+  let later: TwoFrameJudge["later"] = "na";
+  if (b.later && s.later) later = b.later === s.later ? "hit" : "miss";
+  else if (b.later) later = "brain_only";
+  else if (s.later) later = "staff_only";
+  return { now, later };
+}
+export type TwoFrameCount = { n: number; nowHit: number; laterHit: number; laterMiss: number; brainOnly: number; staffOnly: number };
+export function countTwoFrames(rows: ReadonlyArray<{ scene: string | null; judge: TwoFrameJudge }>): Map<string, TwoFrameCount> {
+  const m = new Map<string, TwoFrameCount>();
+  for (const r of rows) {
+    const k = r.scene ?? "（場面なし）";
+    const v = m.get(k) ?? { n: 0, nowHit: 0, laterHit: 0, laterMiss: 0, brainOnly: 0, staffOnly: 0 };
+    v.n++; if (r.judge.now === "hit") v.nowHit++;
+    if (r.judge.later === "hit") v.laterHit++; else if (r.judge.later === "miss") v.laterMiss++; else if (r.judge.later === "brain_only") v.brainOnly++; else if (r.judge.later === "staff_only") v.staffOnly++;
+    m.set(k, v);
+  }
+  return m;
+}

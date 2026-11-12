@@ -16,6 +16,7 @@
 //                              （スタッフが編集した文はスタッフの判断が正解。チェックはAI生成時のみ＝ハルシネーション防止）
 
 import { buildContextCheckAnswerList, contextCheckAnalysisLimit } from "@/app/lib/context-check-answer-list";
+import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 切った字数のログ（MATERIAL_CUT_LOG=on・切り方は同じ）
 import { ungroundedFreeRentSentence, type StaffFreeRentFact } from "./staff-free-rent";
 import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, materialGroundsAssertion,PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 // 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」: 文に間違いの無い文体だけの warning では書き直さない
@@ -104,6 +105,8 @@ import { contractAlreadySaidRepeat } from "./repeat-brain-align";
 import { fcKeepsBrainSentence, revisionAddedFactContradiction, propertyNameVariantGrounded } from "./final-check-answer-keep";
 // 2026-11-12 作業員20（根の直し・各スイッチ既定 off）: 穴1 FC_APPLICATION_ANSWER／穴2 FC_REVISION_PASSIVE_STAFF／穴4 FC_SUGGESTION_ALIGN（final-check-roots.ts）
 import { applicationBoundaryKept, revisionStaticFor, fcSuggestionAlignEnabled, guidePossibleIsAnswer } from "./final-check-roots";
+// 2026-11-12 作業員20（残りの穴・各スイッチ既定 off）: FC_TIME_INVALID_TARGET／FC_BANNED_MATERIAL／FC_RULES_SLICE_ALIGN（final-check-roots2.ts）
+import { sameDayPromiseBlocked, sentenceAtIndex, bannedWordMaterialGrounded, finalCheckRulesLimit } from "./final-check-roots2";
 import { isAckOnlyTurn } from "./draft-repeat";
 // 2026-10-23 竹内さん 10/22（KB a6dff652）: 最終チェックも指揮官 Claude＋FLASH の下確かめ（FINAL_CHECK_FLASH=on の時だけ・既定 off）
 import {
@@ -740,7 +743,7 @@ code は次から選ぶこと:
 FABRICATED_AMOUNT（金額の捏造）/ FABRICATED_AVAILABILITY（空室確認結果の捏造）/
 FABRICATED_PROPERTY（物件名・号室・駅名の捏造/写し間違い）/ FABRICATED_DATE（日付・曜日・時刻の捏造）/
 FABRICATED_NAME（名前の誤り）/ FABRICATED_POLICY（会社制度の誤説明）
-${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]\n` : ""}
+${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${clipMaterialLogged(ctx.finalCheckRules, finalCheckRulesLimit(), "final_check:rules")}\n[/FINAL_CHECK_RULES]\n` : ""}
 【出力例1 - 問題なし】
 ご希望の1LDKで家賃7万円以内の物件をお探ししております。
 → issues: []
@@ -826,7 +829,7 @@ FABRICATED_POLICY: 仲介手数料・日割家賃・AD還元など会社固有�
   // 2026-09-23 竹内: 会社の事実（company-facts）を検査にも渡す。お客様が今それを聞いている時だけ載る（生成と同じ matchCompanyFacts）
   const companyFactsNote = companyFactsForCheck(ctx) + companyFactsInDraftForCheck(draft, ctx);
   const dynamic = `${brainBaselineNote}${clearedFactsNote}[CHECKPOINTS]
-${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+${clipMaterialLogged(ctx.checkpointFacts || "なし", 2000, "final_check:checkpoint_facts")}
 [/CHECKPOINTS]
 [CUSTOMER_CONDITIONS]
 ${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
@@ -975,7 +978,7 @@ STAGE_SKIP（段階の前倒し）/ STAFF_REQUEST_OMITTED（スタッフ依頼�
 WE_DO_MISSING（行動宣言なし）/ FILLER_GREETING（フィラー挨拶）/
 SUBJECT_CONFUSION（主語混乱・PatternF4）/ PASSIVE_ONLY（受け身文体のみ）/
 CONDITION_ADD_MISROUTED（条件追加なのに管理会社確認で返している）
-${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]\n` : ""}
+${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${clipMaterialLogged(ctx.finalCheckRules, finalCheckRulesLimit(), "final_check:rules")}\n[/FINAL_CHECK_RULES]\n` : ""}
 【出力例1 - 問題なし（質問に適切に回答）】
 （顧客メッセージ:「ペット可の物件はありますか？」→ 返信:「ペット可の物件もございます。条件に合う物件をお探しします。」）
 → issues: []
@@ -1703,6 +1706,30 @@ export function runUnanchoredConditionChecks(text: string, ctx: FinalCheckContex
     evidence: hits[0], suggestion: `「${hits.join("・")}」を削除する（お客様が書いた語だけを復唱する）` }];
 }
 
+/**
+ * 2026-11-12 作業員20（全読みの穴・テンプレ最適化が最終チェックを完全に通らない）: 安全の線だけの決定論スキャン（LLM なし・本文は変えない）。
+ * テンプレ最適化の分岐（route・isTemplateOptimize）でも、BANNED_WORD の安全の線（ブランド名・プレースホルダ・システム語・AI の作業メモ）だけは
+ * runDeterministicChecks の ① と同じ語の一覧（BANNED_WORDS_DETERMINISTIC）・同じ正規表現で見る。文体の語（承知いたしました 等）は見ない。
+ */
+const SAFETY_BANNED_WORDS: ReadonlySet<string> = new Set([
+  "スモラ", "名称未設定", "**", "〇〇", "○○", "アカウント名", "<<<", ">>>", "[REPLY]", "【AIX-META", "名無し", "権兵衛", "未設定さん", "未設定様", "ゲストさん", "ゲスト様",
+]);
+export function safetyLineIssues(text: string): CheckIssue[] {
+  const issues: CheckIssue[] = [];
+  for (const word of BANNED_WORDS_DETERMINISTIC) {
+    if (SAFETY_BANNED_WORDS.has(word) && text.includes(word)) {
+      issues.push({ pass: "rule_check", severity: "block", code: "BANNED_WORD", message: `禁止語彙「${word}」が含まれています`, evidence: word, suggestion: `「${word}」を削除してください` });
+    }
+  }
+  const ph = text.match(PLACEHOLDER_ADDRESS_DET_RE);
+  if (ph) issues.push({ pass: "rule_check", severity: "block", code: "NAME_PLACEHOLDER", message: `プレースホルダ名の呼びかけ「${ph[0]}」が含まれています`, evidence: ph[0], suggestion: `「${ph[0]}」と直後の助詞を削除し、名前なしで書く` });
+  const marker = text.match(/<<<[^\n]{0,20}|>>>|\[AIX誘導中\]|__SHOWN__|\{\s*"[a-z_]+"\s*:/);
+  if (marker) issues.push({ pass: "rule_check", severity: "block", code: "SYSTEM_MARKER_LEAK", message: "システム用マーカー・JSONが本文に混入しています", evidence: marker[0], suggestion: "マーカー以降を削除" });
+  const meta = text.match(META_NARRATION_LINE_RE);
+  if (meta) issues.push({ pass: "rule_check", severity: "block", code: "SYSTEM_MARKER_LEAK", message: "AIへの内部指示（場面の説明）が本文に混入しています", evidence: meta[0].trim(), suggestion: "この行を削除" });
+  return issues;
+}
+
 export function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   const issues: CheckIssue[] = [];
   const tpo = ctx.tpoLabel ?? "";
@@ -1721,6 +1748,7 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   const thanksAllowed = /ご査収(?:頂|いただ)きありがとう/.test(text) && !!ctx.lastCustomerMessage && resolveReplyContext(ctx).pair.materials.thanksAllowed;
   for (const word of BANNED_WORDS_DETERMINISTIC) {
     if (thanksAllowed && /ご査収(?:頂|いただ)きありがとう/.test(word)) continue;
+    if (bannedWordMaterialGrounded(word, text, ctx.materialFacts)) continue; // 2026-11-12 作業員20（FC_BANNED_MATERIAL・既定 off）: 資料に同じ項目・同じ数がある説明
     if (text.includes(word)) {
       issues.push({ pass: "rule_check", severity: "block", code: "BANNED_WORD", message: `禁止語彙「${word}」が含まれています`, evidence: word, suggestion: BANNED_WORD_SUGGESTION[word] ?? `「${word}」を削除してください` });
     }
@@ -1735,7 +1763,7 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
     if (/頂けます|いただけます|ください|お願い/.test(after)) continue;
     const { hour: jstHour, dow: jstDay } = jstParts(ctx.now ?? Date.now());
     const isWeekend = jstDay === 0 || jstDay === 6;
-    if (jstHour >= 18 || isWeekend) {
+    if (sameDayPromiseBlocked({ sentence: sentenceAtIndex(text, idx), hour: jstHour, isWeekend })) { // 2026-11-12 作業員20（FC_TIME_INVALID_TARGET・既定 off）: 約束の相手を見る
       issues.push({
         pass: "context_check",
         severity: ctx.isAutoSend ? "block" : "warning",
@@ -3369,7 +3397,7 @@ ${issuesForPrompt.map((i) => `- [${i.code}] ${i.message}（該当箇所:「${i.e
 [/ISSUES]
 ${nameNote}${customerMsgNote}${pairNote}${ledgerNote}${historyNote}${brainNote}
 [CHECKPOINT]（確認済み事実・最高権威）
-${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+${clipMaterialLogged(ctx.checkpointFacts || "なし", 2000, "final_check:checkpoint_facts")}
 [/CHECKPOINT]
 
 [CONDITIONS]（DB保存の顧客条件）
@@ -3559,7 +3587,7 @@ async function verifyFabricatedIssues(
   // 2026-09-23 竹内: 会社の事実に反する記述は「一般知識」として has_basis=true にしない（[COMPANY_FACTS] を情報源に足す）
   const dynamicPrompt = `情報源:
 [CHECKPOINTS]
-${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+${clipMaterialLogged(ctx.checkpointFacts || "なし", 2000, "final_check:checkpoint_facts")}
 [/CHECKPOINTS]
 [CUSTOMER_CONDITIONS]
 ${(ctx.customerConditionsDb || "なし").slice(0, 1500)}

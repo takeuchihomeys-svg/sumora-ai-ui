@@ -206,7 +206,7 @@ import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoi
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
 import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine, exhaustedTodayNote } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
-import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
+import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled, areaAllExhaustUpgrade, exhaustedPickupReadyOn } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
 import { sentReactionInviteOn, BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract, turnContractAxisEnabled } from "@/app/lib/turn-contract";
 /** 2026-10-08 本質の仕様（turn-contract.ts）をブレインに出させるか。戻す TURN_CONTRACT_BRAIN=off（出力・指示を足さない＝静的 system も旧に戻る） */
@@ -260,7 +260,7 @@ import {
 import { resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 import { customerPointsAtProperty } from "@/app/lib/cost-question-scope";
 // 2026-09-23 課題③: 真の初回の「最初の一手」（first_contact_pickup）の許可リスト（純関数）
-import { resolveFirstContactPickup, firstContactSuggestedAction, type FirstContactPickup } from "@/app/lib/first-contact-pickup";
+import { resolveFirstContactPickup, firstContactSuggestedAction, customerOffersToSendProperties, firstContactSelfSendReplyOn, type FirstContactPickup } from "@/app/lib/first-contact-pickup";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-27 竹内: 主のお部屋（こちらが送ったお部屋）への見積もりの依頼は 見積書送る
@@ -287,6 +287,8 @@ import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics,
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
 import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question";
+import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
+import { materialTurnMustOn, WIDE_LIMIT, turnMustKeys, selectNewestWithMust, rowHitsKeys } from "@/app/lib/material-turn-must"; // 2026-11-12 作業員1: 材料の上限を今の番に要る物で（MATERIAL_TURN_MUST=on） // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
 import { brainMsgWindow } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
 // 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
 import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL } from "@/app/lib/contact-promise";
@@ -477,6 +479,8 @@ export type SuggestedAixMeta = {
   decisions_1103?: string[];
   /** 2026-11-11 作業員4: 入口の意見の1語（digest.nop・CONDUCTOR_NEAR_OPINION の見張り） */
   near_opinion?: string;
+  /** 2026-11-12 作業員4（OUR_SIDE_TO_COMPOSE）: こちら側の状態の文の材料（ブレインの判断には渡さない・文の統括と AIX の文だけ） */
+  our_side_note?: string;
   /** 2026-11-03 この番に呼ぶ役の候補（網・記録だけ）→ digest.rl */
   conductor_roles?: string;
   /** 2026-11-04 統括メタ（記録だけ・last_brain_meta が正）→ digest.cm */
@@ -1793,7 +1797,7 @@ async function analyzeConversationCore(
           .or(linkOr)
           .or("source.is.null,source.neq.line_group")
           .order("sent_at", { ascending: false })
-          .limit(20),
+          .limit(materialTurnMustOn() ? WIDE_LIMIT.sentProps : 20),
         supabase
           .from("sent_properties")
           .select("property_name, room_no, sent_at, rent")
@@ -1814,7 +1818,7 @@ async function analyzeConversationCore(
       .select("property_name, room_no, created_at, source, channel")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(20),
+      .limit(materialTurnMustOn() ? WIDE_LIMIT.sentImages : 20),
     // templates: match_templates RAGに移行済み。バルクフェッチ廃止。
     // 旧: won_count 上位5件を全会話共通で注入 → キャッシュ破棄の原因かつ文脈無関係。
     // 新: 会話コンテキスト（フェーズ・戦略・人間性）に近いテンプレを match_templates RAGで取得。
@@ -1851,7 +1855,7 @@ async function analyzeConversationCore(
       .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern, property_names, prop_statuses, estimate_sent, prop_cost_notes, generated_text")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(30),
+      .limit(materialTurnMustOn() ? WIDE_LIMIT.aixLogs : 30),
     // H6(Fable5): 予約送信済みメッセージ（pending）— 追客提案が予約済み送信と重複するのを防ぐ
     supabase
       .from("scheduled_messages")
@@ -1883,7 +1887,7 @@ async function analyzeConversationCore(
       .select("scheduled_date, scheduled_time, status, property_name, property_address, actual_date, viewing_report, viewing_report_at")
       .eq("conversation_id", conversationId)
       .order("scheduled_date", { ascending: false })
-      .limit(3),
+      .limit(materialTurnMustOn() ? WIDE_LIMIT.viewingHistory : 3),
     // applying_pattern: RAG化により match_reply_knowledge に統合済み。
     // ai_reply_knowledge category='applying_pattern' は match_reply_knowledge RPC が
     // 全カテゴリ対象でベクトル検索するため、バルクフェッチは不要。プレースホルダーで置き換え。
@@ -1923,6 +1927,27 @@ async function analyzeConversationCore(
   if (error || !messages || messages.length === 0) {
     console.warn("[brain-core] analyzeConversation abort: msgs fetch failed or empty", conversationId, "error:", error?.message ?? "none");
     return null;
+  }
+  // 2026-11-12 作業員1（材料の受け取る側・MATERIAL_TURN_MUST=on）: 広げて読んだ送付・資料の画像・AIX の記録・内覧の記録を、
+  //   今の番にお客様が名前で呼んだ物件の行は件数の外で残し、残りは元の件数（20・20・30・3）に戻す。今の番の物件が無ければ今と同じ
+  if (materialTurnMustOn()) {
+    try {
+      const turnText = (() => { const out: string[] = []; for (const m of messages as Array<{ sender: string; text: string | null }>) { if (m.sender !== "customer") break; out.push(String(m.text ?? "")); } return out.join("\n"); })();
+      type NameRow = { property_name?: string | null; property_names?: string[] | null };
+      const allNames = [
+        ...((sentPropsResult.data ?? []) as NameRow[]).map((r) => r.property_name),
+        ...((sentImagePropsResult.data ?? []) as NameRow[]).map((r) => r.property_name),
+        ...((viewingHistoryResult.data ?? []) as NameRow[]).map((r) => r.property_name),
+        ...((aixLogsResult.data ?? []) as NameRow[]).flatMap((r) => r.property_names ?? []),
+      ];
+      const keys = turnMustKeys(turnText, allNames);
+      const cut = (res: { data?: unknown }, n: number, label: string) => {
+        const r = selectNewestWithMust((res.data ?? []) as NameRow[], n, (x) => rowHitsKeys(x.property_names ?? x.property_name ?? null, keys));
+        (res as { data: unknown }).data = r.rows;
+        if (r.beyondLimit) console.log(JSON.stringify({ tag: "brain:material-turn-must", conversationId, label, kept: r.beyondLimit }));
+      };
+      cut(sentPropsResult, 20, "sent_properties"); cut(sentImagePropsResult, 20, "sent_image_properties"); cut(aixLogsResult, 30, "aix_usage_logs"); cut(viewingHistoryResult, 3, "viewing_history");
+    } catch (e) { console.warn("[brain-core] material-turn-must skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // H5(Fable5): 全メッセージが画像/添付のみ（テキスト0件）の場合は分析しない。
   // 「（画像/添付）×N」だけを読んだHaikuの当てずっぽう提案がキャッシュされるのを防ぐ
@@ -2309,7 +2334,8 @@ async function analyzeConversationCore(
   // 【顧客の会話ストーリー】ai_summary全文（テキスト版）。プロファイル(JSON由来)とは別に、
   // 顧客の全文脈（経緯・今の状況・次の必須対応）を戦略決定の材料として注入する
   const aiSummaryFullRaw = (pc?.ai_summary ?? "").trim();
-  const aiSummaryFullText = aiSummaryFullRaw.length > 1500 ? aiSummaryFullRaw.slice(0, 1500) : aiSummaryFullRaw;
+  // 2026-11-12 作業員1: 切った時は MATERIAL_CUT_LOG=on でログ（切り方は同じ）
+  const aiSummaryFullText = clipMaterialLogged(aiSummaryFullRaw, 1500, "brain:ai_summary", conversationId);
   const aiSummaryNote = aiSummaryFullText
     ? `\n【顧客の会話ストーリー（ai_summary全文・必ず読むこと）】\n${aiSummaryFullText}\n→ この顧客の全文脈を踏まえてclosing_strategy・next_stepsを決定すること\n`
     : "";
@@ -3018,6 +3044,27 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-11 作業員1（A1・弱い所 326 の system の側②）: 聞かれていなくても、主のお部屋の資料に書いてある入居時期・保証会社・礼金敷金 等を参考の材料に（BRAIN_FOCUS_DOC_DIGEST=on の時だけ・既定 off）
   // 11/11 a1-doc-dig2-1111: 主のお部屋が無い番（送った直後の「気になります」等）は物件ごとの台帳の今の番の物件（引用・名指し／主語の抜けた番の1件）を対象に（threadDocTarget）。
   //   「一番新しく送った物件」は q404 で取り違えた（お客様の言う長居東でなく直近のサンシエ南巽）ので使わない。複数・不明は出さない
+  // 2026-11-11 作業員1（弱い所 573・574）: 電話の後・内覧の後のスタッフの手打ちのお礼の1通から、決まった日程・新しい条件・確認の約束・申込する部屋を材料に
+  //   （保存の欄は使われていない: 電話終了後 AIX 0回・内覧の記録 3/135）。OFFLINE_RESULT_MATERIAL=on の時だけ（既定 off）
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const { loadOfflineResultLineWithin } = await import("@/app/lib/offline-result-server");
+      const offlineLine = await loadOfflineResultLineWithin(5_000, conversationId);
+      if (offlineLine) customerStateBlockText += `\n\n${offlineLine}`;
+    } catch (e) { console.warn("[brain-core] offline-result skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  // 2026-11-11 作業員1（KB 決定 親 P0 ecd7b961・対象の一致 12/30）: お客様が URL・物件の画像だけを送り本文に物件名が無い番は、今の番の物件が空だった。
+  //   既にある読み取り（画像の書き起こし・共有文・SUUMO のページ）と、こちらが送った部屋の指紋（㎡・間取り・家賃）から物件名・号室を決め、
+  //   材料の1行と資料の写しの対象（threadDocTarget の前段）に入れる。TURN_SHARED_PROPERTY_TARGET=on の時だけ（既定 off）
+  let sharedTurnTarget: import("@/app/lib/turn-shared-property").SharedTarget | null = null;
+  if (!isPostApplyStatus(convStatus) && (unrepliedTurn.hasImage || /https?:\/\//.test(unrepliedTurn.text ?? ""))) {
+    try {
+      const [{ loadTurnSharedPropertyWithin }, { sharedTargetMaterialLine }] = await Promise.all([import("@/app/lib/turn-shared-property-server"), import("@/app/lib/turn-shared-property")]);
+      sharedTurnTarget = await loadTurnSharedPropertyWithin(6_000, conversationId);
+      const line = sharedTargetMaterialLine(sharedTurnTarget);
+      if (line) customerStateBlockText += `\n\n${line}`;
+    } catch (e) { console.warn("[brain-core] turn-shared-property skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   let docDigestTarget: { name: string; roomNo: string | null } | null = null;
   if (focusDocDigestOn() && !contractTerms && !isPostApplyStatus(convStatus)) {
     if (focusRoomForMaterial) docDigestTarget = { name: focusRoomForMaterial.name, roomNo: focusRoomForMaterial.roomNo ?? null };
@@ -3025,7 +3072,10 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       try {
         const { loadPropertyThreads } = await import("@/app/lib/property-thread-server");
         const pt = await Promise.race([loadPropertyThreads(conversationId), new Promise<null>((r) => setTimeout(() => r(null), 6_000))]);
-        docDigestTarget = threadDocTarget(pt);
+        if (sharedTurnTarget) {
+          const { turnDocTargetWithShared } = await import("@/app/lib/turn-shared-property");
+          docDigestTarget = turnDocTargetWithShared(pt, sharedTurnTarget);
+        } else docDigestTarget = threadDocTarget(pt);
       } catch (e) { console.warn("[brain-core] focus-doc-digest target skipped:", e instanceof Error ? e.message : String(e)); }
     }
   }
@@ -3044,7 +3094,9 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   }
   const confirmTopicsAsked = procedureAnswer || isPostApplyStatus(convStatus) ? []
     : detectConfirmTopics(unrepliedTurn.text, { moveInAsked: sceneEvidence?.scene === "S2_move_in" })
-      .filter((t) => !(t === "parking" && contractTerms?.topics.includes("parking")) && !(t === "move_in" && contractTerms?.topics.includes("move_in")));
+      .filter((t) => !(t === "parking" && contractTerms?.topics.includes("parking")) && !(t === "move_in" && contractTerms?.topics.includes("move_in"))
+        // 2026-11-11 作業員1（弱い所 564）: ペットを契約条件の網が受け持った時（CONTRACT_TERMS_PET_CLEANING=on）は外す
+        && !(t === "pet" && contractTerms?.topics.includes("pet")));
   const confirmTopic: ConfirmTopicMaterial | null = await loadConfirmTopicRoutesWithin(8_000, { conversationId, topics: confirmTopicsAsked, target: focusRoomForMaterial });
   if (confirmTopic?.note) {
     customerStateBlockText += `\n\n${confirmTopic.note}`;
@@ -3152,14 +3204,19 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   let splitExhaustLine = "";
   if ((weakExhaustDemoted() || searchSplitServerEnabled()) && searchExhaustedEnabled() && !isPostApplyStatus(convStatus)) {
     try {
-      const exNow = searchExhausted(
-        brainLedgerInput.messages.filter((m) => !!m.createdAt).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt as string, isAix: m.isAix ?? null })),
+      // 2026-11-12 作業員1（q001・q002）: 送れる候補があるか（pickupReadyMaterial）を判定に渡す（EXHAUSTED_PICKUP_READY=on）／「〇〇周辺全域から…ピックアップさせて頂きました」の後の
+      //   新しい条件の無い「もう少し」の番は材料の強さを strong に（EXHAUSTED_AREA_ALL_STRONG=on・後の規則には使わない）。どちらも既定 off
+      const exMsgs = brainLedgerInput.messages.filter((m) => !!m.createdAt).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt as string, isAix: m.isAix ?? null }));
+      const exNow0 = searchExhausted(
+        exMsgs,
         {
-          conditionChangedThisTurn: false, pickupReady: null,
+          conditionChangedThisTurn: false, pickupReady: exhaustedPickupReadyOn() ? pickupReadyMaterial : null,
           deliveredAixAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => (r.aix_type === "property_send" || r.aix_type === "property_recommendation") && r.sent_at).map((r) => r.sent_at as string),
           zenryokuSentAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => r.aix_type === "zenryoku_support" && r.sent_at).map((r) => r.sent_at as string),
         },
       );
+      const exNow = areaAllExhaustUpgrade(exNow0, unrepliedTurn.text ?? "", undefined, exMsgs);
+      if (exNow.upgraded) console.log(JSON.stringify({ tag: "brain:exhausted-area-all", conversationId, markerAt: exNow.markerAt }));
       const line = searchSplitServerEnabled() ? splitMaterialLine(exNow) : exhaustedMaterialLine(exNow);
       // 2026-10-28 #24: 出し切りの材料が届いたかをログで見られるように（静かに壊れる所）
       console.log(JSON.stringify({ tag: "brain:exhausted", conversationId, exhausted: exNow.exhausted, strength: exNow.strength ?? null, markerAt: exNow.markerAt, reason: exNow.reason }));
@@ -3392,7 +3449,8 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
             : "",
           factsForConductor.length ? factLedgerBlock(factsForConductor as unknown as Parameters<typeof factLedgerBlock>[0], Date.now()) : "",
         ].filter(Boolean).join("\n\n"),
-        carryLine: carryQueryLine(pmForCarry?.conductor_meta ?? null), ruleMeta: "", nearFocus,
+        // 2026-11-12 作業員4（CONDUCTOR_INTAKE_STAFF_REFRESH・既定 off・LLM なし）: 前のお客様の番の後にこちらがした事（AIX・約束・前の読みのやる事が果たされたか）を「前の番」の行に足す
+        carryLine: [carryQueryLine(pmForCarry?.conductor_meta ?? null), await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.intakeStaffRefreshOn() || !turnAt0) return ""; const prevTodos = ((opts?.prevMeta as { conductor_intake?: { answer?: { todos?: Array<{ kind?: string; what?: string }> } | null } } | null | undefined)?.conductor_intake?.answer?.todos) ?? null; return os.staffSinceLine({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(turnAt0) + 1, prevTodos }); } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
       });
     }).catch(() => null);
   }
@@ -3633,6 +3691,31 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   // 2026-10-20 竹内さん（55bf37b6「申込までの地図」）: 本線＋分かれ道の上の今の位置・申込へ向けた次の一手・本線への戻り方（app/lib/apply-route-map.ts・決定論・LLM なし）。
   //   合図は作り直さない（customer-state・行動台帳・発言の型・場面の証拠・お客様の事情）。毎回変わる並び＝キャッシュの印の外。
   //   既定 off（APPLY_ROUTE_MAP=on で入れる）。off の時は空文字＝プロンプトは1バイトも変わらない
+  // 2026-11-12 作業員1（竹内さん「何の情報が足りていないから」の土台・INFO_FILL_MAP=on・既定 off）: 申込までの地図の今の駅から次へ進むのに要る情報を、
+  //   分かっている／分かっていない／古い／材料が届いていない で埋めた事実の一覧（道の言葉なし・判断はブレイン）
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const { infoFillMapOn, infoFillForNode, infoFillMaterialLine } = await import("@/app/lib/info-fill-map");
+      if (infoFillMapOn()) {
+        const { resolveRouteNode, ROUTE_NODES, SCREENING_WORRY_RE } = await import("@/app/lib/apply-route-map");
+        const { rowHitsKeys, turnMustKeys } = await import("@/app/lib/material-turn-must");
+        const nodeIF = resolveRouteNode({ stage: customerState?.stage ?? null, searching: customerState?.searching ?? null, ledger: brainLedger.facts, routeType: routeTypeNow ?? null }).node;
+        const focusIF = (() => { const r = customerState?.focusKey ? customerState.properties.find((x) => x.key === customerState.focusKey) ?? null : null; return r ? `${r.building}${r.room ? ` ${r.room}` : ""}` : null; })();
+        const keysIF = focusIF ? turnMustKeys(focusIF, [focusIF]) : new Set<string>();
+        const checkIF = (aixLogs as Array<{ aix_type: string | null; sent_at: string | null; property_names?: string[] | null }>).filter((l) => l.aix_type === "property_check_result" && l.sent_at && (!focusIF || rowHitsKeys(l.property_names ?? null, keysIF))).map((l) => l.sent_at as string).sort().pop() ?? null;
+        const screeningIF = typedMessages.filter((m) => m.sender === "customer").map((m) => String(m.text ?? "")).find((t) => SCREENING_WORRY_RE.test(t)) ?? null;
+        const cellsIF = infoFillForNode(nodeIF, {
+          nowMs: Date.now(), pc: (pc ?? null) as never, focusProperty: focusIF, vacancyCheckedAt: checkIF,
+          estimateSent: focusIF ? brainLedger.facts.estimateSentFor.some((n) => rowHitsKeys(n, keysIF)) : brainLedger.facts.estimateSent,
+          viewingDate: brainLedger.facts.viewingAppointment ? "決まっている" : null, viewingDone: !!brainLedger.facts.viewingDone,
+          screeningInfo: screeningIF ? screeningIF.slice(0, 30) : null,
+        });
+        const lineIF = infoFillMaterialLine(nodeIF, cellsIF, nodeIF ? ROUTE_NODES[nodeIF].name : null);
+        if (lineIF) customerStateBlockText += `\n\n${lineIF}`;
+        console.log(JSON.stringify({ tag: "brain:info-fill", conversationId, node: nodeIF, cells: cellsIF.map((c) => `${c.key}:${c.state}`) }));
+      }
+    } catch (e) { console.warn("[brain-core] info-fill skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   let applyRouteText = "";
   if (applyRouteMapEnabled()) {
     try {
@@ -4792,7 +4875,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       && process.env.CONTRACT_TERMS_REPLY !== "off"
       && (!sceneEvidence || sceneEvidence.scene === "S2_move_in" || sceneEvidence.scene === "S3_screening"
         // 礼金・敷金・フリーレントだけを聞いた番（初期費用の中身・総額は聞いていない）は S9 でも資料で答える（YUMA「礼金はかかりますか？」が AIX【初期費用について】になった）
-        || (sceneEvidence.scene === "S9_cost_breakdown" && contractTerms.topics.every((t) => t === "key_money" || t === "deposit" || t === "free_rent")
+        // 2026-11-11 作業員1（弱い所 564・実物 10597「室内清掃費ってつけないんですかね？」）: 清掃費（CONTRACT_TERMS_PET_CLEANING=on の時だけ拾う）も同じ
+        || (sceneEvidence.scene === "S9_cost_breakdown" && contractTerms.topics.every((t) => t === "key_money" || t === "deposit" || t === "free_rent" || t === "cleaning_fee")
           && !/初期費用|内訳|総額|合計|全部で|トータル/.test(unrepliedTurn.text ?? "")))
       && (finalAix === "property_check_result" || finalAix === "acknowledge_check" || (finalAix === "cost_breakdown" && sceneEvidence?.scene === "S9_cost_breakdown")
         || (finalAix === "guarantor_info" && contractTerms.topics.every((t) => t === "guarantor_company") && contractTerms.routes.every((r) => !/複数/.test(r.why))))) {
@@ -5467,14 +5551,18 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-10-09 同じ竹内さんの答え（試験 q021「ブラックなど審査は通らないですか」・友だち追加の直後の最初の発言）: 条件がまだ無い初回に LLM が返信（AIX なし）を
       //   選んだ番も AIX【条件ヒアリング】（審査の不安への答えはヒアリングの AIX の文に添える）。物件の画像・URL の初回（募集状況の確認）は触らない。戻す FIRST_CONTACT_HEARING_FROM_REPLY=off
       // 会社の事実の質問（「不動産屋の会社名教えてください」試験 q066＝竹内さんは会社名を答えた返信）は返信のまま
-      if (finalAix === null && !twoStage && !custSentConditionForm && (process.env.FIRST_CONTACT_HEARING_FROM_REPLY ?? "").toLowerCase() !== "off"
+      // 2026-11-12 作業員4（弱い所 brain:question-first-then-condition-hearing）: お客様が自分で物件を送る申し出（「随時お送りさせて頂いてもよろしいでしょうか」）の
+      //   初回は AIX【条件ヒアリング】を残さず返信（竹内さん q432・フォームはお客様の次の番）。既定 off FIRST_CONTACT_SELF_SEND_REPLY=on
+      const selfSendReply = firstContactSelfSendReplyOn() && customerOffersToSendProperties(typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? ""));
+      if (selfSendReply) console.log(JSON.stringify({ tag: "brain:first-contact-self-send-reply", conversationId, finalAix }));
+      if (finalAix === null && !selfSendReply && !twoStage && !custSentConditionForm && (process.env.FIRST_CONTACT_HEARING_FROM_REPLY ?? "").toLowerCase() !== "off"
         && matchCompanyFacts(typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "").join(" ")).length === 0
         && !typedMessages.some((m) => m.sender === "customer" && (!!m.image_type || /https?:\/\/|^\[画像\]|^\[動画\]/.test(m.text ?? "")))
         && !pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready) {
         console.log(JSON.stringify({ tag: "brain:first-contact-hearing-from-reply", conversationId }));
         finalAix = "condition_hearing"; replyMode = "aix";
       }
-      const keepHearing = finalAix === "condition_hearing" && !custSentConditionForm && (process.env.FIRST_CONTACT_KEEP_HEARING ?? "").toLowerCase() !== "off"
+      const keepHearing = finalAix === "condition_hearing" && !custSentConditionForm && !selfSendReply && (process.env.FIRST_CONTACT_KEEP_HEARING ?? "").toLowerCase() !== "off"
         && !pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready;
       if (keepHearing) {
         console.log(JSON.stringify({ tag: "brain:first-contact-keep-hearing", conversationId }));
@@ -6302,6 +6390,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（"n21"＝お礼の番で申込への AIX を候補にした・作業員1の AIX の統括が読む）
       decisions_1103: decisions1103.length ? decisions1103 : undefined,
       near_opinion: nearOpinionNote ?? undefined,
+      // 2026-11-12 作業員4: OUR_SIDE_TO_COMPOSE=on（既定 off）の時だけ、こちら側の状態を文の材料として残す（判断の材料には足さない）
+      our_side_note: await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.ourSideToComposeOn() || !typedMessages[0]) return undefined; const n = os.ourSideComposeNote({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(typedMessages[0].created_at) }); return n ? maskBrain(n) : undefined; } catch { return undefined; } })(),
       conductor_meta: CONDUCTOR_META_MODE !== "off" ? ((nd) => withSearchPlan(withMaterials(buildConductorMeta({
         scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, stage: customerState?.stage ?? null,
         turnAt: typedMessages[0]?.sender === "customer" ? typedMessages[0].created_at : null,
