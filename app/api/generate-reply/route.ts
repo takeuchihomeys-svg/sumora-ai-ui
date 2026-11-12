@@ -143,7 +143,7 @@ import { createExitRecorder } from "@/app/lib/exit-edits";
 import { isEvaluativePrinciple, principleEvalFilterEnabled } from "@/app/lib/principle-eval";
 import { estimateRedeclareArmed, vacancyRedeclareArmed, brainKeepsRedeclare, logMatchesCurrent, ESTIMATE_REDECLARE_WINDOW_MS } from "@/app/lib/redeclare-gate";
 import { fcKeepsBrainSentence } from "@/app/lib/final-check-answer-keep";
-import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
+import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, safetyLineIssues, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
 import { runFinalCheckGated, type FinalCheckGateLog } from "@/app/lib/final-check-gated";
 import { scoreDraftConfidence, draftConfidenceEnabled } from "@/app/lib/draft-confidence";
@@ -6944,6 +6944,15 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             let finalCheckGateLog: FinalCheckGateLog | null = null; // 2026-10-02 要否の判定（作り直しで finalCheck が置き換わっても tpo_debug に残す）
             if (isTemplateOptimize && draftBody.trim()) {
               console.log(JSON.stringify({tag:"degradation:fail-open",path:"template-bypass",conversationId}));
+              // 2026-11-12 作業員20: テンプレ最適化でも BANNED_WORD の安全の線（ブランド名・プレースホルダ・システム語・作業メモ）だけは最終チェックと同じ語の一覧で見る
+              //   （本文は変えない・当たった時だけ block の結果を載せて画面の指摘と自動送信の関所に届ける・passes_completed が空なので関所は完走の証拠にしない・戻す TEMPLATE_SAFETY_LINE=off）
+              if ((process.env.TEMPLATE_SAFETY_LINE ?? "").trim().toLowerCase() !== "off") {
+                const safetyHits = safetyLineIssues(draftBody);
+                if (safetyHits.length) {
+                  console.warn(JSON.stringify({ tag: "template-optimize:safety-line", conversationId, codes: safetyHits.map((i) => `${i.code}:${i.evidence.slice(0, 20)}`) }));
+                  finalCheck = { ok: false, issues: safetyHits, passes_completed: [], elapsed_ms: 0, checked_text_hash: await sha1(draftBody.trim()), revision_count: 0 };
+                }
+              }
             }
             if (!isTemplateOptimize && draftBody.trim()) {
               try {

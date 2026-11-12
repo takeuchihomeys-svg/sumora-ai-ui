@@ -1704,6 +1704,30 @@ export function runUnanchoredConditionChecks(text: string, ctx: FinalCheckContex
     evidence: hits[0], suggestion: `「${hits.join("・")}」を削除する（お客様が書いた語だけを復唱する）` }];
 }
 
+/**
+ * 2026-11-12 作業員20（全読みの穴・テンプレ最適化が最終チェックを完全に通らない）: 安全の線だけの決定論スキャン（LLM なし・本文は変えない）。
+ * テンプレ最適化の分岐（route・isTemplateOptimize）でも、BANNED_WORD の安全の線（ブランド名・プレースホルダ・システム語・AI の作業メモ）だけは
+ * runDeterministicChecks の ① と同じ語の一覧（BANNED_WORDS_DETERMINISTIC）・同じ正規表現で見る。文体の語（承知いたしました 等）は見ない。
+ */
+const SAFETY_BANNED_WORDS: ReadonlySet<string> = new Set([
+  "スモラ", "名称未設定", "**", "〇〇", "○○", "アカウント名", "<<<", ">>>", "[REPLY]", "【AIX-META", "名無し", "権兵衛", "未設定さん", "未設定様", "ゲストさん", "ゲスト様",
+]);
+export function safetyLineIssues(text: string): CheckIssue[] {
+  const issues: CheckIssue[] = [];
+  for (const word of BANNED_WORDS_DETERMINISTIC) {
+    if (SAFETY_BANNED_WORDS.has(word) && text.includes(word)) {
+      issues.push({ pass: "rule_check", severity: "block", code: "BANNED_WORD", message: `禁止語彙「${word}」が含まれています`, evidence: word, suggestion: `「${word}」を削除してください` });
+    }
+  }
+  const ph = text.match(PLACEHOLDER_ADDRESS_DET_RE);
+  if (ph) issues.push({ pass: "rule_check", severity: "block", code: "NAME_PLACEHOLDER", message: `プレースホルダ名の呼びかけ「${ph[0]}」が含まれています`, evidence: ph[0], suggestion: `「${ph[0]}」と直後の助詞を削除し、名前なしで書く` });
+  const marker = text.match(/<<<[^\n]{0,20}|>>>|\[AIX誘導中\]|__SHOWN__|\{\s*"[a-z_]+"\s*:/);
+  if (marker) issues.push({ pass: "rule_check", severity: "block", code: "SYSTEM_MARKER_LEAK", message: "システム用マーカー・JSONが本文に混入しています", evidence: marker[0], suggestion: "マーカー以降を削除" });
+  const meta = text.match(META_NARRATION_LINE_RE);
+  if (meta) issues.push({ pass: "rule_check", severity: "block", code: "SYSTEM_MARKER_LEAK", message: "AIへの内部指示（場面の説明）が本文に混入しています", evidence: meta[0].trim(), suggestion: "この行を削除" });
+  return issues;
+}
+
 export function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   const issues: CheckIssue[] = [];
   const tpo = ctx.tpoLabel ?? "";
