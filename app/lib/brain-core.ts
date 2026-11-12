@@ -81,6 +81,7 @@ import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from 
 import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
 import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
 import { sorryDeclineReadOn, readSorryDecline, pickSorryDeclineExamples, sorryDeclineBrainText } from "@/app/lib/sorry-decline-read";
+import { applyPromptRules1112 } from "@/app/lib/brain-prompt-rules-1112";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
@@ -670,7 +671,7 @@ const STATUS_TO_PHASE: Record<string, string> = {
 };
 
 // Concise AIX capability summary injected into Haiku prompts for action/template reasoning
-const AIX_CAPABILITY_MAP = `
+const AIX_CAPABILITY_MAP = applyPromptRules1112(`
 【AIXボタン能力マップ】
 - viewing_invite: 内覧日程の候補をLINEで提案するメッセージを生成（顧客メッセージに内覧・内見・見学・見に行く等の希望表現があれば選ぶ）
 - property_send: 物件ピックアップのカバーメッセージを生成（物件URL送信時）→ 複数件ピックアップ後は必ず1〜2分以内（実測38秒／58秒）に「物件ピックアップ紹介（後続）」を、駅指定・条件外れ告知ありなら「駅周辺物件ピックアップ（後続）」（実測1分33秒）をAI最適化して自発送信する
@@ -709,14 +710,14 @@ const AIX_CAPABILITY_MAP = `
 - viewing_invite（内覧日調整を送った後）: 顧客が「それ以外だと何日」「土日は可能ですか」「他の日程は」等、別の日程を尋ねたら viewing_invite（候補日時は AIX で送る。本文で日程を手打ちしない）。具体的な日時を指定して依頼したら meeting_place（2026-09-12 竹内）
 - viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 日と開始時刻が決まった（待ち合わせ場所は未送信）→meeting_place / 待ち合わせ場所を送信済み（＝内覧確定・未来）→もう一度は選ばない（日時・場所の変更を頼まれた時だけ）/ 当日・完了後→greeting_viewing。【内覧の流れ】の段がある時はその段階を正とする ※viewing_invite は顧客メッセージに内覧希望が示された場合に選ぶ。「内覧行きたいらしいですが」「内覧可能ですか」「見に行きたい」等の間接・伝聞・打診表現も内覧希望として viewing_invite を選ぶこと。スタッフが物件を送った後に顧客が内覧・内見・見学・見に行く等のキーワードで反応した場合も viewing_invite。ただしスタッフが送った物件情報内の「〇月〇日以降内覧可能」「内覧可」等の文言をトリガーにしない（顧客メッセージ内のキーワードのみ対象）。物件送付直後で顧客がまだ反応していない場合は aix:null（何も提案しない）が正解
 - 成約の典型順（黄金フロー）: condition_hearing → property_send → property_recommendation → estimate_sheet → viewing_invite → meeting_place → application_push（property_check_result は顧客が物件URLを送ってきた時の割り込みアクションであり順序フローに含めない）
-`.trim();
+`.trim());
 
 // AIX遷移マップはaix_transition_statsテーブルから動的取得（brain関数内で構築）。
 // 旧ハードコード AIX_NEXT_ACTION_MAP は2026-08-27にDB化。
 
 // 返信文体・共感フレーズ・条件変更文脈の恒久ルール（generate-reply の同名ルールと同一の単一基準）
 // closing_strategy / next_steps / template_hint がこのルールに反する提案を出さないようにするための静的ブロック。
-const REPLY_STYLE_RULES = `
+const REPLY_STYLE_RULES = applyPromptRules1112(`
 【返信スタイルの恒久ルール（closing_strategy・next_steps の内容もこれに従うこと）】
 ${BRAIN_OPENER_FREE_ON ? `■ 冒頭（書き出し）
 - 書き出しは下の【reply_opener】で決める（竹内さんの実送信の形・場面ごとの率）。挨拶（〇〇さん、お世話になっております！！）はお客様1人につき1日1回（今日こちらが既に送っていれば挨拶なし）
@@ -805,7 +806,7 @@ ${BRAIN_OPENER_FREE_ON ? `■ 冒頭（書き出し）
 ② ベンチマーク物件と同じマンションの別号室が新規募集されたとき → 最優先で提案し即申込訴求（内覧スキップ可能・建物を把握済みのため）
 ③ ベンチマーク物件を超えない物件・顧客持ち込み物件 → estimate_sheet（最大割引見積）+ viewing_invite で内覧接点を再構築
 ④ 「また別の物件を探しています」という発言は、通常顧客ではhearingのシグナルだが、申込経験者では依然proposingのホット状態として扱う
-`.trim();
+`.trim());
 
 // 実態ベースのフェーズ別推奨テンプレートマップ
 // 母集団: closed_won 13会話 / うちAIX使用5会話 / 検出された自発送信14件（顧客返信ゼロでのstaff手動送信）の実測。
