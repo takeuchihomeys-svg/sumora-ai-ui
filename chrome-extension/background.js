@@ -2070,11 +2070,13 @@ if (msg.type === "axlx-human-shot") {
  *   画面録画モード押しているときは連続でさつえいされていればちゃんと記録されるので、
  *   それで動かすことができればさらに質が高くなる」
  *
- *   押している間、**2〜4秒ごとに続けて撮る**（操作の時だけ撮るのでは、画面の移り変わりが残らない）。
- *   ・撮る中身は今までと同じ道（`axlx-human-shot` を自分宛に送る）＝縮小・Storage 送信・上限の掃除も同じ
- *   ・間隔は毎回ばらつかせる（等間隔で撮ると機械らしい・2〜4秒）
- *   ・上限（1回の録画で 400枚）と期限（60分）で必ず止まる（暴走しない）
- *   ・止める: もう一度ボタンを押す／タブを離れる／`axlx-rec-mode` の値が消える
+ *   押している間、**1.5〜3.5秒ごと（平均2.5秒）に続けて撮る**（操作の時だけ撮るのでは、画面の移り変わりが残らない）。
+ *   ・撮る中身は今までと同じ道（`_takeShot`）＝縮小・Storage 送信・上限の掃除も同じ
+ *   ・間隔は毎回ばらつかせる（等間隔で撮ると機械らしい）
+ *   ・**最大 7分**（竹内さん「最大時間も7分とかでくひりいれといた方が良い」）。
+ *     7分 × 平均2.5秒 ＝ およそ **170枚**。1検索（30秒〜3分）は十分収まる。
+ *   ・枚数の上限（400枚）も残す（二重の歯止め）
+ *   ・止める: もう一度ボタンを押す／7分たつ／400枚たまる／`axlx_rec_mode` が消える
  *   ⚠ Service Worker は30秒で眠る事があるので、**chrome.alarms**（1分より短くは作れない）ではなく
  *     storage の値を見張る＋短い setTimeout の連鎖で回す（動いている間は眠らない）。
  */
@@ -2082,14 +2084,24 @@ var _recTimer = null;
 var _recCount = 0;
 var _recStartedAt = 0;
 var _REC_MAX_SHOTS = 400;
-var _REC_MAX_MS = 60 * 60 * 1000;
+/**
+ * 2026-11-12 竹内さん「最大時間も7分とかでくひりいれといた方が良い」: 60分 → **7分**。
+ *   7分を過ぎたら自動で止める（撮りっぱなしで容量とStorageを圧迫しない）。
+ */
+var _REC_MAX_MS = 7 * 60 * 1000;
+/** 撮る間隔（ミリ秒）。1.5〜3.5秒＝平均2.5秒。7分で約170枚 */
+var _REC_GAP_MIN = 1500;
+var _REC_GAP_MAX = 3500;
+function _recRemainMs() {
+  return Math.max(0, _REC_MAX_MS - (Date.now() - _recStartedAt));
+}
 function _recIsOn() {
   return !!_recTimer;
 }
 async function _recTick() {
   if (!_recIsOn()) return;
   if (_recCount >= _REC_MAX_SHOTS || Date.now() - _recStartedAt > _REC_MAX_MS) {
-    await _recStop(_recCount >= _REC_MAX_SHOTS ? "上限" : "60分");
+    await _recStop(_recCount >= _REC_MAX_SHOTS ? "上限" : "7分");
     return;
   }
   // 途中で止められたか（別の窓で止めた時も効く）
@@ -2102,9 +2114,11 @@ async function _recTick() {
   try {
     await chrome.storage.local.set({ axlx_rec_stat: { on: true, count: _recCount, started_at: _recStartedAt, last_at: Date.now() } });
   } catch (_) {}
-  // 2〜4秒（毎回ちがう・機械的に見せない）
-  var gap = 2000 + Math.floor(Math.random() * 2000);
-  _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, gap);
+  // 1.5〜3.5秒（毎回ちがう・機械的に見せない）。7分の残りが少なければそこで止める
+  var gap = _REC_GAP_MIN + Math.floor(Math.random() * (_REC_GAP_MAX - _REC_GAP_MIN));
+  var left = _recRemainMs();
+  if (left > 0 && gap > left) gap = left;
+  _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, Math.max(200, gap));
 }
 /** 1枚撮る（今までの撮影の道をそのまま使う・自分宛のメッセージは送らない） */
 async function _recordOneShot() {
@@ -2147,6 +2161,10 @@ try {
           on: _recIsOn(),
           count: _recCount,
           started_at: _recStartedAt,
+          max_ms: _REC_MAX_MS,
+          remain_ms: _recIsOn() ? _recRemainMs() : 0,
+          gap_ms: [_REC_GAP_MIN, _REC_GAP_MAX],
+          max_shots: _REC_MAX_SHOTS,
           stat: (st && st.axlx_rec_stat) || null,
           mode: (st && st.axlx_rec_mode) || null,
         });
@@ -2160,7 +2178,7 @@ try {
   chrome.storage.local.get(["axlx_rec_mode"]).then(function (st) {
     var m = st && st.axlx_rec_mode;
     if (!m || !m.on) return;
-    if (Date.now() - Number(m.started_at || 0) > _REC_MAX_MS) { _recStop("60分"); return; }
+    if (Date.now() - Number(m.started_at || 0) > _REC_MAX_MS) { _recStop("7分"); return; }
     _recStartedAt = Number(m.started_at) || Date.now();
     console.log("[rec] 画面録画モード: SW の起き直し → 続けます");
     _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, 500);

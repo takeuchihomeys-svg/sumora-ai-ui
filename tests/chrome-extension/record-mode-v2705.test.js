@@ -23,7 +23,7 @@ const html = read("popup.html");
 console.log("■ ① ボタンがある");
 {
   ok("小窓に「⏺ 録画」ボタン", /id="snap-rec-mode"/.test(html) && /⏺ 録画/.test(html));
-  ok("押すと録画モード（説明に「2〜4秒ごと」）", /2〜4秒ごと/.test(html));
+  ok("押すと録画モード（説明に「1.5〜3.5秒ごと」「最長7分」）", /1\.5〜3\.5秒ごと/.test(html) && /最長7分/.test(html));
 }
 
 console.log("\n■ ② 押している間は連続で撮る");
@@ -31,18 +31,24 @@ console.log("\n■ ② 押している間は連続で撮る");
   ok("録画の状態を持つ（_recTimer / _recCount）", /var _recTimer = null;/.test(bg) && /var _recCount = 0;/.test(bg));
   ok("始める（_recStart）", /async function _recStart\(\)/.test(bg));
   ok("止める（_recStop）", /async function _recStop\(why\)/.test(bg));
-  ok("2〜4秒ごとに次を撮る（毎回ちがう間隔）", /var gap = 2000 \+ Math\.floor\(Math\.random\(\) \* 2000\);/.test(bg));
+  ok("1.5〜3.5秒ごとに次を撮る（毎回ちがう間隔）", /var gap = _REC_GAP_MIN \+ Math\.floor\(Math\.random\(\) \* \(_REC_GAP_MAX - _REC_GAP_MIN\)\);/.test(bg));
+  ok("  間隔の値が 1500〜3500ms", /_REC_GAP_MIN = 1500/.test(bg) && /_REC_GAP_MAX = 3500/.test(bg));
+  const gapAvg = (1500 + 3500) / 2;
+  ok("  平均 " + gapAvg + "ms → 7分で 約" + Math.floor(7 * 60 * 1000 / gapAvg) + "枚", Math.floor(7 * 60 * 1000 / gapAvg) > 100);
   ok("撮る中身は今までと同じ道（_takeShot を直接呼ぶ）", /_takeShot\(\{ type: "axlx-human-shot", site: "record", kind: "rec" \}/.test(bg));
   ok("  ⚠ 自分宛の sendMessage をしない（届かないため）", !/_recordOneShot[\s\S]{0,200}chrome\.runtime\.sendMessage/.test(bg));
 }
 
-console.log("\n■ ③ 暴走しない（必ず止まる）");
+console.log("\n■ ③ 最大 7分で必ず止まる（竹内さん 2026-11-12「最大時間も7分とかでくひりいれといた方が良い」）");
 {
-  ok("1回の録画で 400枚まで", /_REC_MAX_SHOTS = 400/.test(bg));
-  ok("60分で必ず止まる", /_REC_MAX_MS = 60 \* 60 \* 1000/.test(bg));
-  ok("上限・期限で自動停止", /_recStop\(_recCount >= _REC_MAX_SHOTS \? "上限" : "60分"\)/.test(bg));
+  ok("上限時間が 7分（旧 60分）", /_REC_MAX_MS = 7 \* 60 \* 1000/.test(bg));
+  ok("  1回の録画で 400枚まで（二重の歯止め）", /_REC_MAX_SHOTS = 400/.test(bg));
+  ok("期限で自動停止（理由を「7分」と出す）", /_recStop\(_recCount >= _REC_MAX_SHOTS \? "上限" : "7分"\)/.test(bg));
+  ok("残り時間を数える（_recRemainMs）", /function _recRemainMs\(\)/.test(bg));
+  ok("残りが少なくなったらそこで止める（7分を超えない）", /if \(left > 0 && gap > left\) gap = left;/.test(bg));
   ok("止められたら次の周で止まる（storage の値を見る）", /axlx_rec_mode/.test(bg) && /on: false/.test(bg));
   ok("SW が起き直しても続く（止まったまま残らない）", /SW の起き直し → 続けます/.test(bg));
+  ok("  起き直しの時も7分を超えていたら止める", /if \(Date\.now\(\) - Number\(m\.started_at \|\| 0\) > _REC_MAX_MS\) \{ _recStop\("7分"\)/.test(bg));
 }
 
 console.log("\n■ ④ 小窓から操作できる");
@@ -51,6 +57,8 @@ console.log("\n■ ④ 小窓から操作できる");
   ok("状態を聞く（axlx-rec-status）", /type: "axlx-rec-status"/.test(snap));
   ok("録画中はボタンが赤く脈打つ", /⏹ 録画中/.test(snap) && /axlxPermPulse/.test(snap));
   ok("撮れた枚数を出す", /Number\(res\.count\) \|\| 0/.test(snap));
+  ok("残り時間を出す（あと何分）", /あと/.test(snap) && /remain_ms/.test(snap));
+  ok("録画中の見出しにも残り時間", /あと" \+ Math\.floor\(left2 \/ 60\)/.test(snap));
   ok("5秒ごとに状態を取り直す（別の窓で止めても追いつく）", /setInterval\(refreshRecMode, 5000\)/.test(snap));
 }
 
