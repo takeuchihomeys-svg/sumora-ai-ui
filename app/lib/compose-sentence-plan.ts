@@ -24,6 +24,14 @@ import { POINT_METHODS, TRUST_METHODS, type PointMethod, type TrustMethod, type 
 
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
+/**
+ * 2026-11-12 作業員10（統括役）: 誘導先が食い違う時は判断の側を先にする（既定 off）。
+ *   ブレインの7つの欄（seven_read.lead・案A の振り返りの欄）と、判断の側（訴求のタイミング appeal_timing の must/suggest → 方向の文の誘導先）が違う時に判断の側を使う。
+ *   手元の答案 w10-seven-on3: q022（竹内さん＝申込へ）で seven_read.lead が keep／answer_only・appeal_timing は apply／q072（竹内さん＝申込へ）で lead viewing・方向の文 apply
+ */
+export function composeLeadJudgeFirstOn(env: Env = envOf()): boolean {
+  return (env.COMPOSE_LEAD_JUDGE_FIRST ?? "").trim().toLowerCase() === "on";
+}
 export function composeSentencePlanOn(env: Env = envOf()): boolean {
   return (env.COMPOSE_SENTENCE_PLAN ?? "").trim().toLowerCase() !== "off";
 }
@@ -82,6 +90,8 @@ export type SevenFields = {
   latentCover: { kind: LatentKind | null; what: string | null; fact?: string | null; how?: string | null } | null;
   keyHow: KeyHow[];
   trustHow: TrustHow[];
+  /** 判断の側を先にした時の、7つの欄の誘導先（設計図の誘導の行に添える） */
+  leadAlt?: LeadToV | null;
   /** 押す／待つ（作業員5 の push・強く押すのは『物件の残り×決める合図』が重なった番だけ） */
   push: { push: boolean; strength: PushStrength | null; reason: string | null } | null;
   src: Partial<Record<"keyPoint" | "bridge" | "leadTo" | "appeal" | "latentCover" | "keyHow" | "trustHow" | "push", "takeuchi_fields" | "seven_read" | "material">>;
@@ -368,6 +378,12 @@ export function readSevenFields(meta: unknown): SevenFields {
     if (!out.push && at && typeof at.reason === "string" && (kind === "viewing" || kind === "apply" || level === "avoid")) { out.push = { push: level === "must" || level === "suggest", strength: null, reason: str(at.reason, 50) }; out.src.push = "material"; }
   }
   if (!out.leadTo) { const d = leadFromDirection(m.reply_direction); if (d) { out.leadTo = d; out.src.leadTo = "material"; } }
+  if (composeLeadJudgeFirstOn() && out.src.leadTo === "seven_read") {
+    const at = obj(m.appeal_timing);
+    const atLead = at && (at.kind === "viewing" || at.kind === "apply") && (at.level === "must" || at.level === "suggest") ? (at.kind as LeadToV) : null;
+    const judged = atLead ?? leadFromDirection(m.reply_direction);
+    if (judged && judged !== "none" && judged !== out.leadTo) { out.leadAlt = out.leadTo; out.leadTo = judged; out.src.leadTo = "material"; }
+  }
   if (!out.latentCover) {
     // 2026-11-12 作業員14 の潜在の4欄（KB d72ad06b）・3段の奥の心配（three_layer.worry）を先に
     const tr0 = obj(m.turn_read);
@@ -467,7 +483,7 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { sce
   // 従④: 次の一歩（誘導先）。訴求はここに付ける（竹内さんの文の G: 推しは導く先の役目）。押す強さと理由（作業員5 の push）も
   const pushHow = s.push ? (s.push.push ? `押す強さ: ${({ strong: "強（推奨・抑えましょうまで）", mid: "中（如何でしょうか・時間枠）", weak: "弱（お気に召されましたら）" } as const)[s.push.strength ?? "weak"]}${s.push.reason ? `・理由: ${s.push.reason}` : ""}` : `押さない（待つ）${s.push.reason ? `・理由: ${s.push.reason}` : ""}`) : null;
   if (leadRole && leadRole !== mainRole) {
-    rows.push({ rank: "sub", role: leadRole, part: appealText, how: pushHow, next: null, from: s.src.leadTo ?? "?" });
+    rows.push({ rank: "sub", role: leadRole, part: appealText, how: join([pushHow, s.leadAlt ? `7つの欄の読みは${LEAD_TO_JA[s.leadAlt]}（判断の側を先にした）` : null], "／"), next: null, from: s.src.leadTo ?? "?" });
   } else if (!s.leadTo) empty.push("誘導先");
   if (appealText && !leadRole && !trustRest.length) rows.push({ rank: "sub", role: "trust", part: appealText, how: null, next: null, from: s.src.appeal ?? "?" });
   if (!s.appeal) empty.push("訴求");
