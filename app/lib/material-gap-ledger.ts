@@ -119,3 +119,47 @@ export function tallyGaps(gaps: ReadonlyArray<MaterialGap>): { why: Record<GapWh
   for (const g of gaps) { why[g.why]++; role[g.forRole] = (role[g.forRole] ?? 0) + 1; effect[g.effect] = (effect[g.effect] ?? 0) + 1; }
   return { why, role, effect };
 }
+
+// ─── 材料の帳面の6つ（2026-11-13 作業員1・弱い所 G1 親 680・竹内さん「足りていない土台の強化と具体的な細分化」・KB P0 d16cfe1b）──────
+//   分からない事（ブレインの自己申告）を、どの帳面が空かで6つに分け、番ごとに「入口で取りに行く物（fetch）」と
+//   「スタッフしか知らない＝AIX の物（staff）」の印を付ける（CLAUDE.md の絶対的な考え方: スタッフだけが知る情報は AIX）。
+//   既定 off（MATERIAL_GAP_BOOKS=shadow で meta に記録だけ・道は変えない）
+export const MATERIAL_BOOKS = ["phone", "viewing_place", "mgmt_result", "company_fact", "property_doc", "our_side"] as const;
+export type MaterialBook = typeof MATERIAL_BOOKS[number];
+export const MATERIAL_BOOK_LABEL: Record<MaterialBook, string> = {
+  phone: "電話", viewing_place: "内覧の場", mgmt_result: "管理会社の結果", company_fact: "会社の事実", property_doc: "物件の資料", our_side: "こちら側",
+};
+export type BookMark = "fetch" | "staff";
+export function materialGapBooksMode(env?: Env): "off" | "shadow" {
+  const v = ((env ?? (typeof process !== "undefined" ? process.env : {})).MATERIAL_GAP_BOOKS ?? "").trim().toLowerCase();
+  return v === "shadow" || v === "on" ? "shadow" : "off";
+}
+/** 鍵 → 帳面と印（言葉で先に決まる物は下の BOOK_WORDS が先） */
+const KEY_BOOK: Record<MaterialKey, { book: MaterialBook; mark: BookMark }> = {
+  screening_status: { book: "mgmt_result", mark: "staff" }, mgmt_answer: { book: "mgmt_result", mark: "staff" }, vacancy_status: { book: "mgmt_result", mark: "staff" },
+  estimate_amount: { book: "our_side", mark: "staff" }, viewing_slot: { book: "our_side", mark: "staff" }, room_photos: { book: "viewing_place", mark: "staff" },
+  customer_feedback: { book: "viewing_place", mark: "staff" },
+  sendable_candidates: { book: "our_side", mark: "fetch" }, conversation_context: { book: "our_side", mark: "fetch" }, customer_conditions: { book: "our_side", mark: "fetch" },
+  sent_property_status: { book: "property_doc", mark: "fetch" }, guarantor_company: { book: "property_doc", mark: "fetch" }, brought_property_detail: { book: "property_doc", mark: "fetch" },
+  move_in_date: { book: "property_doc", mark: "fetch" }, property_doc: { book: "property_doc", mark: "fetch" }, viewing_record: { book: "viewing_place", mark: "fetch" },
+  company_knowledge: { book: "company_fact", mark: "fetch" }, other: { book: "our_side", mark: "fetch" },
+};
+/** 言葉で決まる帳面（電話・内覧の場で話した事・交渉・代表の確認はスタッフしか知らない） */
+const BOOK_WORDS: Array<{ re: RegExp; book: MaterialBook; mark: BookMark }> = [
+  { re: /電話/, book: "phone", mark: "staff" },
+  { re: /内覧(?:の場|で話|中|当日|時)|見た(?:部屋|お部屋)|内覧の感想/, book: "viewing_place", mark: "staff" },
+  { re: /交渉|代表(?:の)?(?:確認|割引|判断)|割引(?:の)?可否|スライド/, book: "mgmt_result", mark: "staff" },
+  { re: /会社の(?:方針|決まり|事実)|探し始め|手順/, book: "company_fact", mark: "fetch" },
+  { re: /提携先/, book: "our_side", mark: "staff" },
+];
+export function materialBookOf(label: string): { book: MaterialBook; mark: BookMark; key: MaterialKey } {
+  const key = materialMissingKey(label);
+  for (const w of BOOK_WORDS) if (w.re.test(label)) return { book: w.book, mark: w.mark, key };
+  return { ...KEY_BOOK[key], key };
+}
+/** meta に入れる形: 「帳面|印|鍵」（同じ組は1つ）。無ければ undefined */
+export function materialBooksDigest(labels: ReadonlyArray<string>, max = 12): string[] | undefined {
+  const seen = new Set<string>(); const out: string[] = [];
+  for (const l of labels) { const b = materialBookOf(l); const s = `${b.book}|${b.mark}|${b.key}`; if (!seen.has(s)) { seen.add(s); out.push(s); } }
+  return out.length ? out.slice(0, max) : undefined;
+}

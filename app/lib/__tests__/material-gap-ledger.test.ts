@@ -1,6 +1,6 @@
 // 材料の抜けの台帳（app/lib/material-gap-ledger.ts）と人が直した番の数え（scripts/lib/material-gap-count.ts）のテスト
 // 実行: npx tsx app/lib/__tests__/material-gap-ledger.test.ts
-import { materialGapsDigest, materialGapLedgerMode, gapsFromInfoCells, gapsFromCutRecords, gapsFromSelfReport, gapsFromTurnMust, buildGapLedger, gapLedgerDigest, tallyGaps, GAP_EFFECTS } from "../material-gap-ledger";
+import { materialBookOf, materialBooksDigest, materialGapBooksMode, materialGapsDigest, materialGapLedgerMode, gapsFromInfoCells, gapsFromCutRecords, gapsFromSelfReport, gapsFromTurnMust, buildGapLedger, gapLedgerDigest, tallyGaps, GAP_EFFECTS } from "../material-gap-ledger";
 import { classifySentContent, gapsFromSpot, countSpots, SPOT_EFFECT } from "../../../scripts/lib/material-gap-count";
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, d = "") => { if (c) pass++; else { fail++; console.log(`✗ ${n} ${d}`); } };
@@ -36,5 +36,24 @@ ok("長さ・挨拶の型は材料の抜けではない", gapsFromSpot({ key: "k
   ]);
   ok("数え: 合計と a〜e", r.total === 6 && r.why.a === 2 && r.why.c === 2 && r.why.b === 2, JSON.stringify(r));
   ok("数え: 効き目", r.effect.fact_missed === 4 && r.effect.held_answerable === 2, JSON.stringify(r.effect));
+}
+// 2026-11-13 帳面の6つ×印（G1 親 680）: 実物は 11/12〜13 のブレインの自己申告（digest.mm）の名前
+{
+
+  ok("帳面: 既定 off", materialGapBooksMode({}) === "off" && materialGapBooksMode({ MATERIAL_GAP_BOOKS: "shadow" }) === "shadow");
+  const B = (l: string) => { const b = materialBookOf(l); return `${b.book}|${b.mark}`; };
+  ok("電話で話した内容＝電話・スタッフ", B("お電話で話した内容") === "phone|staff");
+  ok("スライド交渉の結果＝管理会社の結果・スタッフ", B("8階スライド交渉の結果") === "mgmt_result|staff");
+  ok("代表の割引可否＝管理会社の結果・スタッフ", B("代表の割引可否") === "mgmt_result|staff");
+  ok("募集状況＝管理会社の結果・スタッフ", B("603号室の最新の募集状況") === "mgmt_result|staff");
+  ok("送れる物件候補＝こちら側・取りに行く", B("107,000円以内の送れる物件候補") === "our_side|fetch");
+  ok("資料の寸法＝物件の資料・取りに行く", B("クローゼットの広さ(資料の寸法)") === "property_doc|fetch");
+  ok("探し始めの時期（会社の方針）＝会社の事実・取りに行く", B("入居時期から逆算した探し始めの時期(会社の方針)") === "company_fact|fetch");
+  ok("スタッフの空き時間＝こちら側・スタッフ", B("15日のスタッフの空き時間") === "our_side|staff");
+  ok("内覧する物件の順番と住所＝内覧の場・取りに行く（予定の記録）", B("内覧する物件の順番と1件目の住所") === "viewing_place|fetch");
+  ok("提携先との進捗＝こちら側・スタッフ", B("提携先(大福不動産)との進捗") === "our_side|staff");
+  const d = materialBooksDigest(["お電話で話した内容", "お電話で話した内容", "603号室の最新の募集状況"]);
+  ok("digest: 同じ組は1つ・帳面|印|鍵", JSON.stringify(d) === JSON.stringify(["phone|staff|other", "mgmt_result|staff|vacancy_status"]), JSON.stringify(d));
+  ok("digest: 空は undefined", materialBooksDigest([]) === undefined);
 }
 console.log(`material-gap-ledger: ${pass} passed, ${fail} failed`); if (fail) process.exit(1);

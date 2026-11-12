@@ -295,7 +295,7 @@ import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app
 import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question";
 import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
 import { materialTurnMustOn, WIDE_LIMIT, turnMustKeys, selectNewestWithMust, rowHitsKeys } from "@/app/lib/material-turn-must"; // 2026-11-12 作業員1: 材料の上限を今の番に要る物で（MATERIAL_TURN_MUST=on） // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
-import { materialGapLedgerMode, materialGapsDigest } from "@/app/lib/material-gap-ledger"; // 2026-11-12 作業員1: 材料の抜けの台帳
+import { materialGapLedgerMode, materialGapsDigest, materialGapBooksMode, materialBooksDigest } from "@/app/lib/material-gap-ledger"; // 2026-11-12 作業員1: 材料の抜けの台帳
 import { brainMsgWindow } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
 // 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
 import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL, resolveConditionMoveIn } from "@/app/lib/contact-promise";
@@ -418,6 +418,7 @@ export type SuggestedAixMeta = {
   /** 2026-11-03 前回の提案の書き終えた後のメモ（digest.rv）と今の段階（digest.sg＝次の番の「お客様は進んだか」に使う） */
   last_turn_review?: Record<string, unknown>;
   customer_stage_now?: string;
+  material_books?: string[];           // 2026-11-13 作業員1: 帳面の6つ×印（帳面|fetch/staff|鍵・MATERIAL_GAP_BOOKS=shadow）
   material_gaps?: string[];            // 2026-11-12 作業員1: 材料の抜けの台帳（何が|何のために|どこから|なぜ a〜e|何が起きる・MATERIAL_GAP_LEDGER=shadow の時だけ・記録だけ）
   material_missing?: string[];         // 2026-10-29 ブレインの自己申告「判断に要ったのに材料に無かった物」（記録だけ・digest.mm）
   two_choice_reply_kind?: string;      // 2026-10-28 その場の側の2択: 右の返信の約束の種類（check/estimate/pickup）
@@ -6423,7 +6424,9 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       material_read_misses: materialMisses.length ? [...new Set(materialMisses)] : undefined,
       material_missing: brainMaterialSelfReportOn() ? normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? undefined : undefined,
       // 2026-11-12 作業員1（竹内さん「何が何で何なのか把握できるように」）: 材料の抜けの台帳（記録だけ・道は変えない・MATERIAL_GAP_LEDGER=shadow）
-      material_gaps: materialGapLedgerMode() === "shadow" ? materialGapsDigest(normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? [], [...new Set(materialMisses)]) : undefined,
+      // 2026-11-13 作業員1（G1 親 680）: 分からない事を帳面の6つ（電話・内覧の場・管理会社の結果・会社の事実・物件の資料・こちら側）×入口で取りに行く／スタッフしか知らない（AIX）で記録（MATERIAL_GAP_BOOKS=shadow）
+      material_books: materialGapBooksMode() === "shadow" ? materialBooksDigest(normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? []) : undefined,
+      material_gaps: materialGapLedgerMode() === "shadow" ?materialGapsDigest(normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? [], [...new Set(materialMisses)]) : undefined,
       // 2026-10-28 その場の側の2択（TWO_CHOICE_NOW_SIDE）: 右の返信を押した時の約束の種類と指定（画面が replyHint に渡す・採点は 2段:<種類> も道に数える）
       two_choice_reply_kind: promiseOrNow?.side === "now" ? promiseOrNow.kind : undefined,
       two_choice_reply_hint: promiseOrNow?.side === "now" ? promiseOrNow.replyHint ?? undefined : undefined,
