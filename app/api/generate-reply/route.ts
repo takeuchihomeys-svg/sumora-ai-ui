@@ -369,6 +369,7 @@ import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
 import { exemplarNoteFor, warmExemplarTable } from "@/app/lib/takeuchi-exemplar-server";
 import { patternCatalogNoteFor } from "@/app/lib/sentence-pattern-catalog-server";
+import { composeElementsNoteFor } from "@/app/lib/compose-elements-server";
 import { exemplarOn } from "@/app/lib/takeuchi-exemplar";
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
@@ -4513,7 +4514,10 @@ async function handleGenerateReply(req: NextRequest) {
             const pc = (() => { try { return patternCatalogNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta, keepKind: composeConductor?.mf.keep ? "new_listing" : null }); } catch { return null; } })();
             const note0 = sentencePlanNote(plan);
             const note1 = note0 && ex ? `${note0}\n${ex.note}` : note0;
-            return { plan, note: note1 && pc ? `${note1}\n${pc.note}` : note1, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${pc ? `｜文型=${pc.key}` : ""}` };
+            // 2026-11-12 作業員23（KB 2301dbf1）: 文の要素の型（つなぎ・押さえ方・信頼・潜在の過半数の形だけ・COMPOSE_ELEMENTS=on の時だけ・既定 off・道は決め直さない）
+            const ce = (() => { try { return composeElementsNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta }); } catch { return null; } })();
+            const note2 = note1 && pc ? `${note1}\n${pc.note}` : note1;
+            return { plan, note: note2 && ce ? `${note2}\n${ce.note}` : note2, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${pc ? `｜文型=${pc.key}` : ""}${ce ? `｜要素=${ce.key}` : ""}` };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()
       : null;

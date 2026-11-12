@@ -17,7 +17,9 @@
 //   ＝ 約束が要る番（条件・持ち込みの物件＝No.42 (b)(c)）は返信が先、返信で答えられる質問と AIX が混ざる番は AIX が先で、残りの答えは後ろの通。
 //   No.41 の9番（見積書の AIX の後に空き・手数料を手で補った通）＝3通目（AIX テンプレート／返信）の席が無かった所。
 //
-// スイッチ: TWO_MESSAGE_PLAN=on（サーバー）・NEXT_PUBLIC_TWO_MESSAGE_PLAN=on（画面）— どちらも既定 off＝今と1文字も変わらない。
+// スイッチ: TWO_MESSAGE_PLAN（サーバー）＝既定 on（2026-11-05 統括役の決め・悪化0 tm2〜tm5・止める TWO_MESSAGE_PLAN=off・twoMessagePlanOn）。
+//   NEXT_PUBLIC_TWO_MESSAGE_PLAN（画面）＝未設定は YUMA・テスト専用の会話だけ／all＝全員／off＝出さない（下の画面の関数）。
+//   2026-11-12 作業員7（作業員25 の点検）: ここの「どちらも既定 off」はコードとずれていたので直した（コメントだけ・動きは同じ）。
 // テスト: app/lib/__tests__/two-message-plan.test.ts
 
 import { planIsStale } from "./conductor-replan";

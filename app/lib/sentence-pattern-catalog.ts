@@ -58,14 +58,22 @@ export function skeletonize(text: string, propertyNames: ReadonlyArray<string> =
     t = flatT;
     for (const n of propertyNames) if (n && t.includes(n)) t = t.split(n).join("{物件名}");
   }
+  // 人でない「〇〇さん・様」（不動産屋さん・オーナー様・管理会社様）は名前にしない（11/12 文の要素の実物で「一般的な不{名前}さん」になった）→ 先に印に替えて戻す
+  const KEEP: string[] = [];
+  // 束を作った時の伏せ字の崩れ（「一般的な不お客様より」＝元は不動産の何か）は値の分からない欄にする
+  t = t.replace(/不お客様/g, "{不明}");
+  t = t.replace(/(不動産屋|不動産会社|業者|管理会社|保証会社|オーナー|大家|会社|皆)(さん|様)/g, (m) => { KEEP.push(m); return `\u0000${KEEP.length - 1}\u0000`; });
   // maskPII は「田中さん」を「お客様」に伏せる＝竹内さんの文では相手の名前の所（竹内さんは「お客様」と書かない）→ {名前}さん
   t = maskPII(t, undefined, { keepDates: true }).replace(/お客様(?:さん|様)?/g, "{名前}さん");
   t = t.replace(NAME_HONORIFIC, (m) => (/^(?:皆|奥|神|様)/.test(m) ? m : "{名前}"));
+  t = t.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => KEEP[Number(i)] ?? "");
+  // 一覧で伏せた物件名に続く名前の残り（「{物件名}神戸元町JPは」）と、英字で始まる建物名（「ArtizA南船場が」）
+  t = t.replace(/[A-Za-zⅠ-Ⅻ・\-]+\{物件名\}/g, "{物件名}").replace(/\{物件名\}[^\sはのがをもへにで、。!！{}()（）]{1,20}/g, "{物件名}").replace(/(?<![A-Za-z{])(?!(?:LINE|WiFi|SUUMO|HOMES|Google|Instagram|Zoom|TikTok)(?![A-Za-z]))[A-Z][A-Za-z]{3,}[一-龯]{0,4}(?=が|は|の|も)/g, "{物件名}");
   t = t.replace(STATION, "{駅}").replace(/[一-龯ァ-ヴーA-Za-z]{1,6}と申します/g, "{担当者名}と申します").replace(/(?<![0-9])[0-9]{1,2}\/[0-9]{1,2}(?![0-9])/g, "{日付}");
   for (const [slot, re] of SLOT_RULES) t = t.replace(re, slot);
   t = t.replace(PROPERTY_BEFORE_ROOM, "{物件名}").replace(/\{物件名\}\s?[0-9]{3,4}(?![0-9])/g, "{物件名}{号室}");
   t = t.replace(WARD, "{区}").replace(/(?<![{A-Za-z])[0-9]+(?:\.[0-9]+)?(?![}])/g, "{数}");
-  t = slotAreaConditions(t);
+  t = slotAreaConditions(t).replace(/[A-Za-zⅠ-Ⅻ・\-]+\s?\{物件名\}/g, "{物件名}");
   t = t.replace(/(\{[^}]+\})(?:[・、,]?\1)+/g, "$1").replace(/\s+/g, " ").trim();
   const slots = [...new Set(t.match(/\{[^}]+\}/g) ?? [])];
   return { skeleton: t, slots };
