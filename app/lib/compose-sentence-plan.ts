@@ -423,7 +423,7 @@ export function readSevenFields(meta: unknown): SevenFields {
     const anx = str(obj(obj(m.customer_mindset)?.anxiety)?.target, 30);
     const anxKind = anx ? ((LATENT_KINDS as readonly string[]).includes(anx) ? (anx as LatentKind) : latentKindOf(anx)) : null;
     const kind = (ccText ? CONCERN_LATENT.find(([re]) => re.test(ccText))?.[1] : undefined)
-      ?? anxKind ?? undefined
+      ?? anxKind
       ?? (typeof mood?.base === "string" ? MOOD_LATENT[mood.base] : undefined);
     const what = str(m.latent_intent, 60) ?? ccText ?? (kind ? str(tr?.feeling, 40) : null);
     const k2 = kind ?? latentKindOf(what);
