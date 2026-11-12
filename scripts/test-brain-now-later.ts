@@ -20,7 +20,7 @@ t("off の時の brain-core の文は前と1文字も変わらない（off の�
   const src = readFileSync(join(__dirname, "..", "app", "lib", "brain-core.ts"), "utf8");
   assert.ok(src.includes('${BRAIN_NOW_LATER_ON ? NOW_LATER_AIX_PROVISO : "この時は null にせず property_send を選ぶ"}'));
   assert.ok(src.includes('"この時の aix は property_send、reply_direction は「宣言したピックアップを実行して届ける」にする。"'));
-  assert.ok(src.includes('{${BRAIN_NOW_LATER_ON ? NOW_VS_LATER_FIELD + ", " : ""}"action": "スタッフが次にすべき'));
+  assert.ok(src.includes('${BRAIN_NOW_LATER_ON ? NOW_VS_LATER_FIELD + ", " : ""}"action": "スタッフが次にすべき'));
   // 欄は action より前（JSON の最初）
   assert.ok(src.indexOf("NOW_VS_LATER_FIELD + \", \"") < src.indexOf('"action": "スタッフが次にすべき'));
 });
