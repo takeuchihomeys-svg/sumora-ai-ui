@@ -3649,6 +3649,31 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   // 2026-10-20 竹内さん（55bf37b6「申込までの地図」）: 本線＋分かれ道の上の今の位置・申込へ向けた次の一手・本線への戻り方（app/lib/apply-route-map.ts・決定論・LLM なし）。
   //   合図は作り直さない（customer-state・行動台帳・発言の型・場面の証拠・お客様の事情）。毎回変わる並び＝キャッシュの印の外。
   //   既定 off（APPLY_ROUTE_MAP=on で入れる）。off の時は空文字＝プロンプトは1バイトも変わらない
+  // 2026-11-12 作業員1（竹内さん「何の情報が足りていないから」の土台・INFO_FILL_MAP=on・既定 off）: 申込までの地図の今の駅から次へ進むのに要る情報を、
+  //   分かっている／分かっていない／古い／材料が届いていない で埋めた事実の一覧（道の言葉なし・判断はブレイン）
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const { infoFillMapOn, infoFillForNode, infoFillMaterialLine } = await import("@/app/lib/info-fill-map");
+      if (infoFillMapOn()) {
+        const { resolveRouteNode, ROUTE_NODES, SCREENING_WORRY_RE } = await import("@/app/lib/apply-route-map");
+        const { rowHitsKeys, turnMustKeys } = await import("@/app/lib/material-turn-must");
+        const nodeIF = resolveRouteNode({ stage: customerState?.stage ?? null, searching: customerState?.searching ?? null, ledger: brainLedger.facts, routeType: routeTypeNow ?? null }).node;
+        const focusIF = (() => { const r = customerState?.focusKey ? customerState.properties.find((x) => x.key === customerState.focusKey) ?? null : null; return r ? `${r.building}${r.room ? ` ${r.room}` : ""}` : null; })();
+        const keysIF = focusIF ? turnMustKeys(focusIF, [focusIF]) : new Set<string>();
+        const checkIF = (aixLogs as Array<{ aix_type: string | null; sent_at: string | null; property_names?: string[] | null }>).filter((l) => l.aix_type === "property_check_result" && l.sent_at && (!focusIF || rowHitsKeys(l.property_names ?? null, keysIF))).map((l) => l.sent_at as string).sort().pop() ?? null;
+        const screeningIF = typedMessages.filter((m) => m.sender === "customer").map((m) => String(m.text ?? "")).find((t) => SCREENING_WORRY_RE.test(t)) ?? null;
+        const cellsIF = infoFillForNode(nodeIF, {
+          nowMs: Date.now(), pc: (pc ?? null) as never, focusProperty: focusIF, vacancyCheckedAt: checkIF,
+          estimateSent: focusIF ? brainLedger.facts.estimateSentFor.some((n) => rowHitsKeys(n, keysIF)) : brainLedger.facts.estimateSent,
+          viewingDate: brainLedger.facts.viewingAppointment ? "決まっている" : null, viewingDone: !!brainLedger.facts.viewingDone,
+          screeningInfo: screeningIF ? screeningIF.slice(0, 30) : null,
+        });
+        const lineIF = infoFillMaterialLine(nodeIF, cellsIF, nodeIF ? ROUTE_NODES[nodeIF].name : null);
+        if (lineIF) customerStateBlockText += `\n\n${lineIF}`;
+        console.log(JSON.stringify({ tag: "brain:info-fill", conversationId, node: nodeIF, cells: cellsIF.map((c) => `${c.key}:${c.state}`) }));
+      }
+    } catch (e) { console.warn("[brain-core] info-fill skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   let applyRouteText = "";
   if (applyRouteMapEnabled()) {
     try {
