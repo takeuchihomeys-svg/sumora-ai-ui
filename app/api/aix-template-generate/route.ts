@@ -1688,6 +1688,8 @@ export async function POST(req: NextRequest) {
         // 2026-10-22 竹内さん「AIX は LINE のブレイン（統括）が管轄」: 統括の判断の束（ボタン・ピッカー・なぜ・この AIX で受ける依頼）。
         //   1通目を送ると画面が suggested_aix_meta を消すが、brainMeta は resolveBrainMetaForGeneration（afterStaffSend）が last_brain_meta から戻した物
         brainMeta: brainMeta as BrainBundleMeta,
+        // 2026-11-12 作業員1: 試験の写しの AIX の履歴（テスト専用の会話の時だけ・本番は null）＝AIX_CHECK_VALUE_PREFILL の値をその番の時点で
+        snapshotAixUsage: examSnap?.aixUsage ?? null,
         pickerValue: actionType === "property_check_result" ? (effectiveCheckPattern ?? null)
           : actionType === "property_send" ? (/新着/.test(pickupType ?? "") ? "new_arrival" : /広げ/.test(pickupType ?? "") ? "widen" : /代替/.test(pickupType ?? "") ? "alternative" : "normal")
           // 2026-10-23: 物件オススメのピッカー（継続ピックアップ・新着1件…）の意味（竹内基準）を渡す（無いと「初回・1件訴求」の意味が出ていた）

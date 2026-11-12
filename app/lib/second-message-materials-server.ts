@@ -39,6 +39,8 @@ export async function loadSecondMaterials(o: {
   /** 押した AIX のピッカー（物件確認した＝check_pattern・物件オススメ＝pickup_type） */
   pickerValue?: string | null;
   /** 2通目が推す物件の売上サポの行（物件オススメ・ピックアップの後） */
+  /** 2026-11-12 作業員1: 試験（exam-aix-text）の写しの AIX の履歴（テスト専用の会話の時だけ route が渡す）。有れば確認の結果の値はここから・その番の時刻で窓を切る */
+  snapshotAixUsage?: ReadonlyArray<Record<string, unknown>> | null;
   propertyRow?: { property_name?: string | null; room_no?: string | null; recommended?: number | boolean | null; reason_codes?: string[] | null } | null;
 }): Promise<SecondMaterials> {
   const nowMs = Date.now();
@@ -74,7 +76,14 @@ export async function loadSecondMaterials(o: {
       account = c?.account ?? null;
       pcId = c?.property_customer_id ?? null;
       answers = confirmAnswersOf((checks.data ?? []) as Array<{ generated_text?: string | null; created_at?: string | null }>, { nowMs });
-      if (aixCheckValuePrefillOn()) checkValues = checkValueLines((checks.data ?? []) as CheckValueRow[], nowMs);
+      if (aixCheckValuePrefillOn()) {
+        if (o.snapshotAixUsage) {
+          // 試験の写し: その番の時刻（会話の最後の通）を今として、写しの 物件確認した の行から
+          const turnMs = Math.max(0, ...o.recent.map((m) => Date.parse(String(m.rawCreatedAt ?? "")) || 0));
+          const rows = o.snapshotAixUsage.filter((r) => r.aix_type === "property_check_result") as CheckValueRow[];
+          checkValues = checkValueLines(rows, turnMs || nowMs);
+        } else checkValues = checkValueLines((checks.data ?? []) as CheckValueRow[], nowMs);
+      }
       if (!ngPoints && c?.property_customer_id) {
         const { data: pc } = await supabase.from("property_customers").select("ng_points").eq("id", c.property_customer_id).maybeSingle();
         ngPoints = ((pc as { ng_points?: string | null } | null)?.ng_points ?? "").trim() || null;
