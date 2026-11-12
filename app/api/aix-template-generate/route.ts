@@ -1,7 +1,7 @@
 import { manYen } from "@/app/lib/man-yen";
 // 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ）
 import { aixBrainEnabledFor } from "@/app/lib/aix-brain";
-// 2026-11-05 竹内さん（KB b834d9f0）: 1つの番を何通に分けるか・各通が答える依頼（既定 off・TWO_MESSAGE_PLAN=on）
+// 2026-11-05 竹内さん（KB b834d9f0）: 1つの番を何通に分けるか・各通が答える依頼（既定 on・止める TWO_MESSAGE_PLAN=off）
 import { twoMessagePlanOn, planMessages, planFromMeta, templateReplyPartNote, planDigest, type PlanAsk } from "@/app/lib/two-message-plan";
 import { aixRequestMustUseClaude } from "@/app/lib/aix-new-pickers";
 import { enforceCallName } from "@/app/lib/call-name-guard";
@@ -98,6 +98,8 @@ import { resolveTemplateSentMessage } from "@/app/lib/aix-template-source";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
 import { examTestSnapshot, snapshotRows } from "@/app/lib/exam-test-snapshot";
 import { aixSecondLeanOn } from "@/app/lib/aix-second-lean";
+// 2026-11-12 作業員25: 2通目にブレインの決め手の残り（customer_mindset.decideGap）を渡す（AIX_SECOND_LINK=on・既定 off）
+import { aixSecondLinkOn, decideGapOfMeta, secondDecideGapLine } from "@/app/lib/aix-second-link";
 import { applyWording1028On, applyPushWordingLine } from "@/app/lib/aix-brain-contract";
 // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 見積書の直後の2通目の形・締め・検査（スタッフが書いた2通目 132通から）
 import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
@@ -1272,7 +1274,7 @@ export async function POST(req: NextRequest) {
   // 2026-11-05 竹内さん（KB P1 b834d9f0＋追記「AIX テンプレートは AIX の事を中心に・複雑な番は AIX → テンプレート → 返信の3通」）:
   //   この番の組み立て（two-message-plan）から、この2通目で一緒に答える質問／後ろの返信に回す質問だけを渡す（判断はブレインの turn_contract の route のまま）。
   //   10/14 の AIX_BRAIN_CONTRACT_TEMPLATE（依頼を全部渡す）は2通目の形に効かず近さが下がった＝ここは「この通で答える／書かない」の割り振りだけ。
-  //   既定 off（TWO_MESSAGE_PLAN=on で入れる）・古い判断（isStaleMeta）では渡さない
+  //   既定 on（11/05 統括役の決め・止める TWO_MESSAGE_PLAN=off・two-message-plan.twoMessagePlanOn）・古い判断（isStaleMeta）では渡さない
   const twoMsgPlan = twoMessagePlanOn() && !isStaleMeta && actionType
     // 統括が置いた組み立て（meta.two_message_plan・1つの正）が先。無い時だけここで作る
     ? (planFromMeta(brainMeta, lastCustomerMsg?.rawCreatedAt ?? null) ?? planMessages({ asks: ((brainMeta as { turn_contract?: { asks?: PlanAsk[] } } | null)?.turn_contract?.asks ?? null), finalAix: (brainMeta?.action as string | undefined) ?? null }))
@@ -1618,6 +1620,9 @@ export async function POST(req: NextRequest) {
     : "";
   // 2026-10-29 AIX_SECOND_APPEAL_POINTS（既定 off・second-appeal-points.ts）: 統括・ブレインのお客様の要点と1通目のオススメポイントを突き合わせ、
   //   刺さる順の候補を2通目に渡す（竹内さん KB 9f4f0b48・R の2通目で天王寺・角部屋・ネット無料が落ちた）。場面の形の注記の後・締めの前
+  // 2026-11-12 作業員25（AIX_SECOND_LINK=on・既定 off）: ブレインの決め手の残り（お客様の言葉・点）を2通目の材料に。1通目のお部屋にその言葉があれば推す軸の一番に（竹内さん #28）。
+  //   古い判断（isStaleMeta）では渡さない・道は変えない（材料だけ）
+  const secondGapLine = aixSecondLinkOn() && !isStaleMeta ? secondDecideGapLine(decideGapOfMeta(brainMeta), sentMessage) : null;
   let secondAppealNote = "";
   if (isRecSecond && !pickupPushLabel && secondAppealPointsOn()) {
     const bm = brainMeta as (SuggestedAixMeta & { customer_concern?: { topic?: string; object?: string } | null; turn_contract?: { situation?: string | null; background?: string | null } | null }) | null;
@@ -1627,6 +1632,7 @@ export async function POST(req: NextRequest) {
       bm?.customer_emotion ?? "",
       bm?.turn_contract?.situation ?? "",
       ...(bm?.key_topics ?? []),
+      secondGapLine ?? "",
     ].filter(Boolean).join("\n");
     secondAppealNote = buildSecondAppealNote({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? bm?.latent_intent ?? null });
     console.log(JSON.stringify({ tag: "aix-template-generate:second-appeal-points", len: secondAppealNote.length, points: secondAppealNote ? secondAppealNote.split("\n").filter((l) => /^\d\)/.test(l)).length : 0 }));
@@ -1680,6 +1686,7 @@ export async function POST(req: NextRequest) {
         bm?.customer_emotion ? `気持ち: ${bm.customer_emotion}` : "",
         bm?.hesitancy_pattern ? `迷い: ${bm.hesitancy_pattern}` : "",
         ...(bm?.key_topics ?? []).map((k) => `要点: ${k}`),
+        secondGapLine ?? "",
       ].filter(Boolean).join("\n");
       const scene = secondFormScene(pickupType);
       // 竹内さんの手本・型の要約（DB・サーバーの鍵で読む・無ければ手本なしで書く）
@@ -1931,6 +1938,8 @@ export async function POST(req: NextRequest) {
     //   設計知見「同じ事実について書くなと書けを別の場所から渡さない」→ 最後に1回だけ明示して上書きする。
     // 2026-10-20 2通目の材料（返信と同じ材料・SECOND_MSG_MATERIALS=off＝空＝並びは旧と同じ）
     secondMaterials?.note ?? "",
+    // 2026-11-12 作業員25: 決め手の残り（訴求の判断・網が読んだ時はその注記に入っている＝ここでは重ねない）
+    secondGapLine && !secondJudge && !secondAppealNote ? `【決め手の残り（ブレインの読み・材料だけ。分析の言葉は本文に書かない）】\n・${secondGapLine}` : "",
     aixFirstNote,
     aixChainNote,
     // 物件オススメの直後の2通目: 資料の事実 → 場面の形（実送信の実物）→ 締め の順で最後に置く
@@ -2478,7 +2487,7 @@ ${text}
               property_state: describePropertySendState(recommendState),
               action_category: actionCategory ?? null,
               conversation_state: conversationState ?? null,
-              // 2026-11-05 この番の組み立て（two-message-plan・TWO_MESSAGE_PLAN=on の時だけ）
+              // 2026-11-05 この番の組み立て（two-message-plan・既定 on・TWO_MESSAGE_PLAN=off の時は無し）
               ...(twoMsgPlan ? { two_message_plan: planDigest(twoMsgPlan), two_message_note: twoMsgNote ? true : false } : {}),
             },
           });

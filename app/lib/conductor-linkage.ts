@@ -7,7 +7,7 @@
 // 置き場: 統括の名簿（conductor-roles.ts の ROSTER）の近く。roadmap の memory/project_conductor_roadmap.md に1段。
 export type ConductorStage = "read" | "rough" | "detail" | "compose" | "verify" | "exam";
 export type ConductorLink = {
-  id: "intake" | "brain" | "two_stage" | "scene_net" | "rules" | "aix_desk" | "two_msg" | "compose_plan" | "compose" | "writer" | "final_check" | "exam";
+  id: "intake" | "brain" | "two_stage" | "scene_net" | "rules" | "conductor_record" | "aix_desk" | "aix_second" | "two_msg" | "compose_plan" | "compose" | "writer" | "final_check" | "exam";
   name: string; owner: string; files: string[]; stage: ConductorStage;
   /** 読む印（meta.* / digest.* / trace.*） */
   reads: string[];
@@ -30,7 +30,11 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     id: "brain", name: "判断のブレイン（返信か AIX か・依頼ごとの道 turn_contract）", owner: "統括役（brain-core は共用）", stage: "rough",
     files: ["app/lib/brain-core.ts", "app/lib/turn-contract.ts", "app/lib/brain-need.ts"],
     reads: ["材料（場面で絞る brain-scene）", "meta.conductor_focus（深く読み直す時だけ・brain-depth）", "meta.aix_recheck（AIX の統括の差し戻し・読み直しの口 brain-recheck）"],
-    writes: ["meta.action", "meta.turn_contract", "meta.key_topics", "meta.reply_direction", "meta.reply_mode", "digest.la", "digest.tc", "digest.nd", "digest.tl", "digest.mp", "essence", "decision:llm", "log:", "brain:asks"],
+    writes: ["meta.action", "meta.turn_contract", "meta.key_topics", "meta.reply_direction", "meta.reply_mode", "digest.la", "digest.tc", "digest.nd", "digest.tl", "digest.mp", "essence", "decision:llm", "log:", "brain:asks",
+      // 2026-11-12 作業員7（作業員22 の欄ごとの連携の表 conductor-field-links の作り手どおり）: ブレインの JSON の欄（どれも既定 off のスイッチの時だけ出る・ここは表だけ）
+      //   道の前の事実: now_vs_later・read_candidates・our_send_uptake（作業員16）・customer_mindset（作業員21）／道の後: judge_basis（作業員22）・seven_read・latent_read（作業員10）
+      //   aix_now は brain-core の aixNowOf（now_vs_later から・作業員16）
+      "meta.now_vs_later", "meta.aix_now", "meta.read_candidates", "meta.our_send_uptake", "meta.customer_mindset", "meta.judge_basis", "meta.seven_read", "meta.latent_read"],
     switch: null,
     // 入口の統括の重点は、判断の時には読まない（shadow・判断を変えない）＝今は並んで走るだけ。深く読み直す時だけ重点に沿わせる
     redecides: [],
@@ -68,6 +72,16 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     ],
   },
   {
+    // 2026-11-12 作業員7（作業員22 の欄ごとの連携の表 conductor-field-links の作り手どおり）: ブレインの後の決まった計算が meta に足す統括の記録。
+    //   道は変えない（記録・指示書だけ）。field-links の受け取る所「conductor」（統括の記録）はこの行の外の読み手で、ここは書く側。
+    id: "conductor_record", name: "統括の記録（判断の順番の型・統括の指示書）", owner: "作業員22（配線・指示書）・作業員16（順番の型の表）", stage: "detail",
+    files: ["app/lib/check-order-wire.ts", "app/lib/conductor-brief.ts", "app/lib/conductor-doubt.ts"],
+    reads: ["meta.turn_contract", "meta.read_candidates", "meta.our_send_uptake", "meta.customer_mindset", "meta.judge_basis", "facts ledger"],
+    writes: ["meta.check_order", "meta.conductor_brief"],
+    switch: "CHECK_ORDER_TABLE・CONDUCTOR_BRIEF（既定 off）",
+    redecides: [],
+  },
+  {
     id: "aix_desk", name: "AIX の統括（ボタン×ピッカー・差し戻し）", owner: "作業員1", stage: "detail",
     files: ["app/lib/aix-commander.ts", "app/lib/aix-commander-server.ts"],
     reads: ["meta.action", "meta.check_pattern", "aix_desk_cards", "facts ledger（AIX の分）"],
@@ -75,6 +89,19 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     switch: "AIX_DESK_COMMAND・AIX_DESK_CONSULT",
     // 黙って書き換えない: 違う時は読み直しの口へ（brain-recheck）。決め直しはブレインが行う
     redecides: [],
+  },
+  {
+    // 2026-11-12 作業員7（作業員25 の点検・b861eb78 aix-second-link）: AIX の2通目（✨）の書き手。1通目（AIX のテンプレート）の後に続く文を書く。
+    //   順: 材料（second-message-materials・既定 on）→ 訴求の判断（second-appeal-judge・LLM・既定 on）→ 書き手 → 締めを揃える（recommend-cta.setRecommendClosing）。
+    //   道（返信か AIX か）は決めない（aix-second-link も材料だけ）。
+    id: "aix_second", name: "AIX の2通目の書き手（✨・材料→訴求の判断→書き手→締めを揃える）", owner: "作業員25（点検）・作業員5（訴求の判断）", stage: "compose",
+    files: ["app/api/aix-template-generate/route.ts", "app/lib/second-appeal-judge.ts", "app/lib/second-message-materials.ts", "app/lib/aix-second-link.ts", "app/lib/recommend-cta.ts"],
+    reads: ["meta.action（AIX の種類）", "AIX の1通目（sentMessage・second-message-materials.sentThisTurn）", "meta.customer_mindset（決め手の残り decideGap・AIX_SECOND_LINK）", "meta.two_message_plan（この通で答える質問）", "meta.engagement_stance", "recommend-cta の刺さり具合の網（締め）"],
+    writes: ["aix_second_writer", "log:aix-template-generate:second-appeal-judge", "log:aix-template-generate:recommend-cta"],
+    switch: "SECOND_MSG_MATERIALS（既定 on）・AIX_SECOND_APPEAL_JUDGE（既定 on）・AIX_SECOND_LINK・PROMISE_READ_UNIFIED（既定 off）",
+    redecides: [
+      { of: "aix_second", field: "2通目の締め（recommend-cta の刺さり具合の網が決めた 内覧へ／申込へ／ご査収）", where: "aix-template-generate second-appeal-judge の締め（recCta.kind の上書き）", why: "訴求の判断（LLM）が網と違う締めを選ぶと recCta.kind を closingWhy で書き換える。スタッフが画面で内覧／申込を選んだ時は書き換えない", example: "10/29 同じ30番2回: 締めが竹内さんと同じ 10→21・申込の締め 2/4→0/4（11/04 grp-aix の悪化 2a95c137 は網と違うご査収だけを選んだ）" },
+    ],
   },
   {
     id: "two_msg", name: "2通の組み合わせ（何通・どの順・各通の受け持ち）", owner: "作業員7（中身）・作業員5（combine の配線）", stage: "compose",
@@ -184,5 +211,7 @@ export const REDECIDE_RULES: readonly RedecideRule[] = [
   { where: "generate-reply の下書き（材料の注記 vs reply_direction）", by: "writer", of: "rules", winner: "rules", count: "答案に印が無い", allowWhen: "注記は従・方向の文が主", mark: "text:", sendBackTo: "rules", mustNotRedecide: true },
   { where: "generate-reply conditionChangeShapeNote の④・newConditionRequestNote の⑤", by: "writer", of: "brain", winner: "brain", count: "答案に印が無い", allowWhen: "初回か出し切りの後だけ（10/13 竹内さん）", mark: "conditionChangeShapeNote", sendBackTo: "brain", mustNotRedecide: true },
   { where: "final-check.ts の書き直し", by: "final_check", of: "writer", winner: "final_check", count: "答案に印が無い（試験は最終チェックの前の下書きで採点）", allowWhen: "誤った事実・決まりの線だけ（判断を落とす書き直しは止める）", mark: "final_check", sendBackTo: "writer" },
+  // 2026-11-12 作業員7（作業員25 の点検）: AIX の2通目の締め。勝つのは訴求の判断（網＝recommend-cta は材料・設計図の時は網の締めと理由を判断に渡す）。スタッフが画面で選んだ締めは書き換えない
+  { where: "aix-template-generate second-appeal-judge の締め（recCta.kind の上書き）", by: "aix_second", of: "aix_second", winner: "aix_second", count: "答案に印が無い（試験は返信の段・AIX の2通目は採点外）。10/29 同じ30番2回で締めが竹内さんと同じ 10→21・申込の締め 2/4→0/4", allowWhen: "スタッフが画面で内覧／申込を選んでいない時だけ（ctaPreference が先）・engagement_stance=wait の時はご査収のまま", mark: "log:aix-template-generate:second-appeal-judge・recommend-cta-closing", sendBackTo: null },
   { where: "final-check.ts rule_check", by: "final_check", of: "writer", winner: "writer", count: "答案に印が無い", allowWhen: "夜の約束（竹内さんの決まりどおり）は消さない", mark: "final_check:rule_check", sendBackTo: "writer" },
 ];
