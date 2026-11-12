@@ -4,6 +4,8 @@
 import { classifyMiss, markersOf, summarizeMisses, ownerOf, weaknessDraft, PROVISIONAL_LINKS, parseLogTags, weaknessHitsFromMisses, weaknessKeyOf, pathSlug, missStageV2On, twoStageKindOfAix, type MissRowLite } from "../exam-miss-stage";
 import { aggregateWeaknessHits, mergeWeaknessRow, isWeaknessKey } from "../../../app/lib/brain-weaknesses";
 
+// 2026-11-13: EXAM_MISS_STAGE_V2 は既定 on。下の旧の数えのテストは =off（env を渡さない呼び方は process.env を読む）。V2 のテストは V2 の env を明示で渡す
+process.env.EXAM_MISS_STAGE_V2 = "off";
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
 
@@ -127,7 +129,7 @@ ok("印: 場面", markersOf(q136).includes("scene_net:S4_viewing"));
 // 2026-11-13 作業員7b: EXAM_MISS_STAGE_V2（既定 off）。実際の答案 w16-nl-on3b・w19-replymode-p0-on（11/13 朝）を縮めた物
 {
   const V2 = { EXAM_MISS_STAGE_V2: "on" };
-  ok("V2 既定 off", !missStageV2On({}) && missStageV2On(V2));
+  ok("V2 既定 on・off で止まる", missStageV2On({}) && missStageV2On(V2) && !missStageV2On({ EXAM_MISS_STAGE_V2: "off" }));
   ok("AIX の系 → 2段の種類", twoStageKindOfAix("AIX:property_check_result/mgmt_move_in") === "check" && twoStageKindOfAix("AIX:viewing_invite") === "check" && twoStageKindOfAix("AIX:property_send（左だけ）") === "pickup" && twoStageKindOfAix("AIX:estimate_sheet") === "estimate" && twoStageKindOfAix("返信") === null);
   // (d) q057 w19#1: ブレインが自分で AIX【物件確認した】→ 2段 check_question が確認の約束に言い換えただけ（正解は返信）
   const q057: MissRowLite = { id: "q057", rep: 1, essence: { code: "AIX:property_check_result/mgmt_move_in", ok: false }, path: { code: "2段:check", ok: false }, trace: { decision_source_no_aix: "rule:two_stage_promise(check_question)", two_stage: "check" }, logTags: ["log:two-stage"], score: { pass: false } };

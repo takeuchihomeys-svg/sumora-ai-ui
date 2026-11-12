@@ -61,14 +61,14 @@ export function markersOf(r: MissRowLite): string[] {
 export const DECIDING_TAGS = /^(?:answerable-direct|two-stage|guard|screening|sent-reaction|resay|mgmt|night|turn-route|demote|override|rewrite|direct-aix|closing)/;
 type Env = Record<string, string | undefined>;
 /**
- * 2026-11-13 作業員7b（統括役の頼み・朝の拾い上げ「2段・書き手の外れが増えた」）: 切り分けの数え直し。既定 off（EXAM_MISS_STAGE_V2=on）。試験の数えだけ（本番は変わらない）
+ * 2026-11-13 作業員7b（統括役の頼み・朝の拾い上げ「2段・書き手の外れが増えた」）: 切り分けの数え直し。11/13 から既定 on（止める EXAM_MISS_STAGE_V2=off）。試験の数えだけ（本番は変わらない）
  *   (b) summarizeMisses の印を、選んだ並び（多数の並び）の回だけから取る（旧: 全部の回の和＝別の回の 2段の印が書き手の段の key の頭になった・q057 w16 の exam-stage:writer:decision:two_stage_promise）
  *   (c) parseLogTags の印を、試験の名前（=== テスト「brain-exam-<label>」）の回だけに付ける（旧: 同じ out.log の「前（main）」の回の印が同じ qNNN#k に混ざった・q088 w16 の log:two-stage）
  *   (d) ブレインの本質が既に外れていて、2段・決まった計算がその AIX を同じ系の約束（AIX:property_check_result → 2段:check 等）に言い換えただけ、
  *       または記録の印があっても道が変わっていない回は、2段・決まった書き換えの段にしない（持ち主はブレイン）
  */
 export function missStageV2On(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.EXAM_MISS_STAGE_V2 ?? "").trim().toLowerCase() === "on";
+  return (env.EXAM_MISS_STAGE_V2 ?? "").trim().toLowerCase() !== "off"; // 11/13 統括役の了承（案A）: 既定 on（121本で旧と新を並べ済み・試験の数えだけ）。止める EXAM_MISS_STAGE_V2=off
 }
 /** AIX の鍵 → 2段の約束の種類（two-stage.ts が言い換える向き）。当たらなければ null */
 export function twoStageKindOfAix(code: string | null | undefined): "pickup" | "check" | "estimate" | null {
