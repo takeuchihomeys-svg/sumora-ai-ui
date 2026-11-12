@@ -3354,7 +3354,8 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
             : "",
           factsForConductor.length ? factLedgerBlock(factsForConductor as unknown as Parameters<typeof factLedgerBlock>[0], Date.now()) : "",
         ].filter(Boolean).join("\n\n"),
-        carryLine: carryQueryLine(pmForCarry?.conductor_meta ?? null), ruleMeta: "", nearFocus,
+        // 2026-11-12 作業員4（CONDUCTOR_INTAKE_STAFF_REFRESH・既定 off・LLM なし）: 前のお客様の番の後にこちらがした事（AIX・約束・前の読みのやる事が果たされたか）を「前の番」の行に足す
+        carryLine: [carryQueryLine(pmForCarry?.conductor_meta ?? null), await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.intakeStaffRefreshOn() || !turnAt0) return ""; const prevTodos = ((opts?.prevMeta as { conductor_intake?: { answer?: { todos?: Array<{ kind?: string; what?: string }> } | null } } | null | undefined)?.conductor_intake?.answer?.todos) ?? null; return os.staffSinceLine({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(turnAt0) + 1, prevTodos }); } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
       });
     }).catch(() => null);
   }

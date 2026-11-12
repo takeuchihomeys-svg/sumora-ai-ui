@@ -153,3 +153,34 @@ export function ourSideComposeNote(o: { msgs: ReadonlyArray<OurSideMsg>; aix: Re
   const il = (o.intakeLine ?? "").replace(/^【[^】]*】/, "").trim();
   return [...lines, ...tail, ...(il ? [`・入口の統括の読み: ${il.slice(0, 160)}`] : [])].join("\n").slice(0, 900);
 }
+
+// ─── スタッフの送信の後の入口の読み直し（2026-11-12 作業員4・meeting-gap:conductor-intake-staff-entry・統括役の決め 候補B） ──────────
+//   入口の統括はお客様の番でしか動かず、スタッフの送信・AIX・電話の後に読み直さない。送信の口には触らず、次のお客様の番の入口の前に
+//   「前のお客様の番の後にこちらがした事」（AIX の種類とピッカー・文の約束・前の入口のやる事が果たされたか）をその場で作り、入口の「前の番」の行に足す。
+//   LLM なし・費用0。切替: CONDUCTOR_INTAKE_STAFF_REFRESH=on（既定 off）
+export const intakeStaffRefreshOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_INTAKE_STAFF_REFRESH ?? "").trim().toLowerCase() === "on";
+/**
+ * 前のお客様の番（今の番の前のお客様の塊）より後で、今の番より前のこちらの動き。prevTodos は前の番の入口の統括のやる事（無ければ空）。
+ *   今の番より後の通・AIX は見ない。何も無ければ ""
+ */
+export function staffSinceLine(o: { msgs: ReadonlyArray<OurSideMsg>; aix: ReadonlyArray<OurSideAix>; nowMs: number; prevTodos?: ReadonlyArray<{ kind?: string; what?: string }> | null }): string {
+  const msgs = [...o.msgs].filter((m) => Date.parse(m.created_at) < o.nowMs).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  // 今の番のお客様の塊の前の、最後のお客様の通（＝前の番）
+  let i = msgs.length - 1;
+  while (i >= 0 && msgs[i].sender === "customer") i--; // 今の番の塊（今より前に来ていた分）を飛ばす
+  let j = i; while (j >= 0 && msgs[j].sender !== "customer") j--;
+  if (j < 0 || i < 0 || i === j) return "";
+  const sinceIso = msgs[j].created_at, untilIso = msgs[i].created_at;
+  const staff = msgs.slice(j + 1, i + 1).filter((m) => m.sender !== "customer");
+  const ax = o.aix.filter((a) => { const t = a.sent_at ?? a.created_at; return t > sinceIso && Date.parse(t) <= Date.parse(untilIso) + 3 * 60_000; });
+  const parts: string[] = [];
+  for (const a of ax.slice(0, 3)) parts.push(`AIX ${AIX_JA[a.aix_type] ?? a.aix_type}${a.check_pattern ? `＝${pickJa(a.check_pattern)}` : ""}`);
+  const promise = staff.filter((m) => !m.is_aix_generated).map((m) => (m.text ?? "").split(/\n+|(?<=[！!。])/u).find((x) => PROMISE_RE.test(x))).find(Boolean);
+  if (promise) parts.push(`文で約束「${promise.replace(/\s+/g, " ").trim().slice(0, 40)}」`);
+  const plain = staff.filter((m) => !m.is_aix_generated).length;
+  if (!parts.length && plain) parts.push(`返信 ${plain}通`);
+  if (!parts.length) return "";
+  const todo = (o.prevTodos ?? []).find((t) => t.kind === "aix" || t.kind === "promise" || t.kind === "check");
+  const done = todo ? (todo.kind === "aix" ? ax.length > 0 : !!promise || ax.length > 0) : null;
+  return `前のお客様の番の後にこちらがした事: ${parts.join("・")}${todo ? `（前の読みのやる事「${String(todo.what ?? "").slice(0, 24)}」は${done ? "果たした" : "まだ"}）` : ""}`;
+}

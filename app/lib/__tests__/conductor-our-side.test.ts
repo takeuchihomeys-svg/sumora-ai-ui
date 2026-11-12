@@ -1,6 +1,6 @@
 // app/lib/__tests__/conductor-our-side.test.ts — 入口の統括に渡す「こちら側の状態」（純関数）
 // 実行: npx tsx app/lib/__tests__/conductor-our-side.test.ts
-import { ourSideBlock, promiseKindOf, conductorOurSideOn, ourSideBrainOn, checkedFacts, ourSideCheckedOn, vacatingRoomsOf, ourSideComposeNote, ourSideToComposeOn } from "../conductor-our-side";
+import { ourSideBlock, promiseKindOf, conductorOurSideOn, ourSideBrainOn, checkedFacts, ourSideCheckedOn, vacatingRoomsOf, ourSideComposeNote, ourSideToComposeOn, staffSinceLine, intakeStaffRefreshOn } from "../conductor-our-side";
 import { readComposeContext, composeContextLines, handoffLeaks } from "../compose-sentence-plan";
 import { secondPlanNote } from "../aix-second-brain-plan";
 
@@ -84,6 +84,21 @@ t("約束の種類", promiseKindOf("お送り頂きました新大阪グラン�
   t("compose: 文の統括の文脈の行に出る", cl.some((l) => l.includes("こちら側の状態")) && cl.some((l) => l.includes("室内を今は内覧できない")), cl);
   t("compose: 受け渡しの表で漏れにならない（設計図の注記に出れば漏れ0）", handoffLeaks({ our_side_note: n }, cl.join("\n")).filter((x) => x.key === "our_side_note").length === 0 && handoffLeaks({ our_side_note: n }, "【✍️】何も無い").some((x) => x.key === "our_side_note"));
   t("compose: AIX の2通目の組み立てにも出る（道は変えない）", (secondPlanNote({ opening: "plain", openingNote: "-", axis: [], barrier: [], closing: "receipt", closingNote: "-", rules: [], ourSide: n.split("\n") }) ?? "").includes("室内を今は内覧できない"));
+}
+// 2026-11-12 CONDUCTOR_INTAKE_STAFF_REFRESH: 前のお客様の番の後にこちらがした事（q371 の元の会話の形）
+{
+  const nowS = Date.parse("2026-11-03T10:35:51Z");
+  const msgs = [
+    { sender: "customer", text: "新大阪ステーションビル 4階 こちらも物件に空きがあるか教えて欲しいです。", created_at: "2026-11-03T10:16:00Z" },
+    { sender: "staff", text: "お送り頂きました新大阪グランドハイツと新大阪ステーションビルの募集状況確認させて頂きます！！\n確認出来次第ご連絡させて頂きます😌！！", created_at: "2026-11-03T10:22:00Z" },
+    { sender: "customer", text: "ART TENDOU WEST 1階", created_at: "2026-11-03T10:35:50Z" },
+  ];
+  const l = staffSinceLine({ msgs, aix: [], nowMs: nowS, prevTodos: [{ kind: "check", what: "2物件の募集状況を確認" }] });
+  t("staff-refresh: 既定 off", !intakeStaffRefreshOn({}) && intakeStaffRefreshOn({ CONDUCTOR_INTAKE_STAFF_REFRESH: "on" }));
+  t("staff-refresh: 前の番の後の文の約束と、前の読みのやる事が果たされたか", l.includes("文で約束「お送り頂きました新大阪グランドハイツと新大阪ステーションビルの募集状況") && l.includes("（前の読みのやる事「2物件の募集状況を確認」は果たした）"), l);
+  const l2 = staffSinceLine({ msgs: [...msgs.slice(0, 2), { sender: "staff", text: "[画像]", created_at: "2026-11-03T10:30:00Z", is_aix_generated: true }, msgs[2]], aix: [{ aix_type: "property_check_result", check_pattern: "unavailable", created_at: "2026-11-03T10:30:00Z" }], nowMs: nowS, prevTodos: [{ kind: "aix", what: "結果を AIX で" }] });
+  t("staff-refresh: AIX の種類とピッカー・AIX のやる事は果たした", l2.includes("AIX 物件確認した") && l2.includes("募集終了") && l2.includes("は果たした"), l2);
+  t("staff-refresh: こちらの動きが無ければ空・今より後は見ない", staffSinceLine({ msgs: [msgs[0], msgs[2]], aix: [], nowMs: nowS }) === "" && staffSinceLine({ msgs, aix: [], nowMs: Date.parse("2026-11-03T10:20:00Z") }) === "");
 }
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
