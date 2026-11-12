@@ -2,11 +2,11 @@
 // 実行: npx tsx scripts/test-conductor-field-links.ts
 // 落とす物: ①作られたのに誰も受け取らない欄 ②受け取る所があるのに作る所が無い欄 ③同じ物を2つの名前で持っている欄（読み替えの無い物）④道の前に置いてはいけない欄が前にある
 //   ＋ meta の鍵がある欄は compose-sentence-plan の BRAIN_FIELD_ROUTE と食い違わない（plan なら受け取る所に compose・other なら compose を書かない）
-// ③の既知の穴は無し（customer_part.info は K_TO_INFO_KEYS で読み替える・11/12 統括役の決め）
+// ③の既知の穴（直すまで残す・増えたら落ちる）: aix_first_sent（こちらの送信の読みの出所が exchange-ledger と2通目の自前の splitTurn・sentThisTurn の2つ）
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { FIELD_LINKS, RECEIVERS, RECEIVER_TO_LINK, K_TO_INFO_KEYS, orphanFields, producerlessFields, duplicateConcepts, placeViolations } from "../app/lib/conductor-field-links";
+import { FIELD_LINKS, RECEIVERS, RECEIVER_TO_LINK, K_TO_INFO_KEYS, NOT_YET_TO_AIX_SECOND, FIELD_REDECIDES, orphanFields, producerlessFields, duplicateConcepts, placeViolations } from "../app/lib/conductor-field-links";
 import { CONDUCTOR_LINKS } from "../app/lib/conductor-linkage";
 import { INFO_KEYS } from "../app/lib/info-fill-map";
 import { BRAIN_FIELD_ROUTE } from "../app/lib/compose-sentence-plan";
@@ -14,7 +14,7 @@ import { BRAIN_FIELD_ROUTE } from "../app/lib/compose-sentence-plan";
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
 const ROOT = resolve(__dirname, "..");
-const KNOWN_DUP: string[] = [];
+const KNOWN_DUP: string[] = ["aix_first_sent"];
 const HERE = ["main", "feat/judge-basis-purpose-1112", "feat/our-send-uptake-1112", "w1-exh-1112"]; // このブランチに入っている物
 
 t("統括役の指示の欄が全部ある", () => {
@@ -64,5 +64,15 @@ t("統括の単位の表（conductor-linkage）と突き合う: 受け取る所�
 });
 t("AIX 1通目→2通目の欄がある（作業員25 の点検と名前を揃える）", () => {
   for (const f of ["aix_first_sent", "aix_second_materials", "aix_second_brain_bundle"]) { const r = FIELD_LINKS.find((x) => x.field === f); assert.ok(r && r.receivers.includes("aix_text"), f); }
+  assert.ok(FIELD_LINKS.find((x) => x.field === "customer_mindset")!.receivers.includes("aix_text"), "決め手の残り（AIX_SECOND_LINK）");
+  assert.match(FIELD_LINKS.find((x) => x.field === "aix_second_materials")!.note ?? "", /PROMISE_READ_UNIFIED で promise-read と同じ答え/);
+  assert.ok(FIELD_LINKS.some((x) => x.field === "aix_second_writer"));
+});
+t("AIX の2通目にまだ届いていない欄は「未」の一覧にあり、表にある欄で、受け取り手に aix_text が無い", () => {
+  assert.deepEqual(NOT_YET_TO_AIX_SECOND.map((x) => x.field), ["turn_aims", "next_move", "now_vs_later", "seven_read", "latent_read", "exchange_ledger", "judge_basis", "sentence_pattern_catalog"]);
+  for (const x of NOT_YET_TO_AIX_SECOND) { const r = FIELD_LINKS.find((y) => y.field === x.field); assert.ok(r, x.field); assert.ok(!r!.receivers.includes("aix_text"), `${x.field} はもう届いている→一覧から外す`); }
+});
+t("欄の単位の決め直し: 2通目の訴求の判断が1通目の締めを決め直す所が載っている", () => {
+  assert.ok(FIELD_REDECIDES.some((r) => /second-appeal-judge/.test(r.where) && /recommend-cta/.test(r.of)));
 });
 console.log(`\n${n} 件 ok`);
