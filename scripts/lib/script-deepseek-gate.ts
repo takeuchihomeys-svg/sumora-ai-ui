@@ -1,14 +1,15 @@
 // scripts/lib/script-deepseek-gate.ts — 台本から DeepSeek へ送る画像の申込の門（import するだけで効く）
 //
 // 2026-11-13 作業員8b（統括役・危ない所の見張り (o)「DeepSeek を呼ぶのに申込の門を通っていない台本 21本」）:
-//   竹内さんの決まり（9/26）「申込の間の部分は DeepSeek に渡さず」。台本の画像の読み（readPropertyImage・readPropertyImageDetail・
-//   api.deepseek.com を直に）は会話の画像の URL をそのまま送る形で、申込の線（conversations.deepseek_cutoff_at）を見ていなかった
-//   （image_details で数えると 9/21 と 10/13 の台本のまとめ読みで、申込の線より後のスタッフの送った画像 約60枚・12会話が DeepSeek で読まれていた）。
-//   台本ごとに行の絞りを足す代わりに、共通の入口＝fetch の出口に1か所で門を置く:
-//     - DeepSeek（api.deepseek.com・/chat/completions）宛ての本文の画像の URL が「申込の線より後のメッセージの画像」なら送らずに止める
-//     - base64 の画像（data:）は出所が分からないので止める（EXAM_ALLOW_DS_BASE64=on の時だけ通す・手元の資料の確かめ用）
-//   止める物の一覧は最初の DeepSeek 宛ての呼び出しの時に1回だけ読む（線のある会話だけ・頁で読む）。読めない時は全部止める（安全側）。
+//   竹内さんの決まり（9/26）「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」。
+//   台本の画像の読み（readPropertyImage・readPropertyImageDetail・api.deepseek.com を直に）は会話の画像の URL をそのまま送り、線を見ていなかった。
+//   台本ごとに行の絞りを足す代わりに、共通の入口＝fetch の出口に1か所で門を置く。判定は本番（image-detail-store の ensureImageDetail）と同じ:
+//     画像の URL が会話のメッセージなら、その会話の線（loadDeepseekCutoff）より後に送った物だけ通す（isAfterCutoff・申込中＝線なしは通さない）
+//     会話のメッセージに無い画像（物件ピックアップの資料・手元の資料）は通す。DB が読めない時は止める（fail-closed）
+//     base64 の画像（data:）は出所が分からないので止める（EXAM_ALLOW_DS_BASE64=on の時だけ通す）
+//   ※ 11/13 の最初の版（a79ed1d7）は線の向きを逆に読んでいた（線より後を止めていた）。この版で本番と同じ向きに直した
 import { createClient } from "@supabase/supabase-js";
+import { loadDeepseekCutoff, isAfterCutoff } from "../../app/lib/post-apply";
 
 const DS_HOST_RE = /(^|\.)deepseek\.com$/;
 
@@ -31,39 +32,39 @@ export function imagesInBody(body: string): { urls: string[]; base64: number } {
   return { urls: [...new Set(urls)], base64 };
 }
 
-/** 送ってよいか（純関数）。blocked が null＝一覧が読めなかった → 画像つきは全部止める */
-export function gateVerdict(body: string, blocked: ReadonlySet<string> | null, allowBase64: boolean): { ok: boolean; why: string } {
+export type UrlVerdict = "ok" | "block" | "unknown";
+/** 送ってよいか（純関数）。urlVerdicts: 画像ごとの判定（unknown＝DB が読めない → 止める） */
+export function gateVerdict(body: string, urlVerdicts: ReadonlyMap<string, UrlVerdict>, allowBase64: boolean): { ok: boolean; why: string } {
   const im = imagesInBody(body);
   if (!im.urls.length && !im.base64) return { ok: true, why: "" };
   if (im.base64 && !allowBase64) return { ok: false, why: `base64 の画像 ${im.base64}枚（出所が分からない・EXAM_ALLOW_DS_BASE64=on で通す）` };
-  if (!blocked) return { ok: false, why: "申込の線の一覧が読めない（安全側で止める）" };
-  const hit = im.urls.filter((u) => blocked.has(u));
-  return hit.length ? { ok: false, why: `申込の線より後の会話の画像 ${hit.length}枚` } : { ok: true, why: "" };
+  const blk = im.urls.filter((u) => urlVerdicts.get(u) === "block"), unk = im.urls.filter((u) => (urlVerdicts.get(u) ?? "unknown") === "unknown");
+  if (blk.length) return { ok: false, why: `申込の間（線より前・申込中）の会話の画像 ${blk.length}枚` };
+  if (unk.length) return { ok: false, why: `申込の線が読めない画像 ${unk.length}枚（安全側で止める）` };
+  return { ok: true, why: "" };
 }
 
-/** 申込の線より後のメッセージの画像の URL（線のある会話だけ・頁で読む） */
-async function loadBlocked(): Promise<Set<string> | null> {
+/** 画像1枚の判定（純関数）: 会話のメッセージでなければ ok・あれば線より後だけ ok */
+export function urlVerdictOf(msgs: ReadonlyArray<{ conversation_id: string; created_at: string }>, cutOf: (conv: string) => Parameters<typeof isAfterCutoff>[1]): UrlVerdict {
+  if (!msgs.length) return "ok";
+  return msgs.every((m) => isAfterCutoff(m.created_at, cutOf(m.conversation_id))) ? "ok" : "block";
+}
+
+let sb: ReturnType<typeof createClient> | null = null;
+const cutCache = new Map<string, Awaited<ReturnType<typeof loadDeepseekCutoff>>>();
+async function verdictsFor(urls: string[]): Promise<Map<string, UrlVerdict>> {
+  const out = new Map<string, UrlVerdict>();
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
-  const sb = createClient(url, key, { auth: { persistSession: false } });
+  if (!url || !key || !urls.length) { for (const u of urls) out.set(u, "unknown"); return out; }
+  sb ??= createClient(url, key, { auth: { persistSession: false } });
   try {
-    const cuts: Array<{ id: string; deepseek_cutoff_at: string }> = [];
-    for (let from = 0; ; from += 1000) {
-      const { data, error } = await sb.from("conversations").select("id, deepseek_cutoff_at").not("deepseek_cutoff_at", "is", null).range(from, from + 999);
-      if (error) return null;
-      cuts.push(...((data ?? []) as typeof cuts)); if ((data ?? []).length < 1000) break;
-    }
-    const out = new Set<string>();
-    for (const c of cuts) {
-      for (let from = 0; ; from += 1000) {
-        const { data, error } = await sb.from("messages").select("image_url").eq("conversation_id", c.id).gt("created_at", c.deepseek_cutoff_at).not("image_url", "is", null).range(from, from + 999);
-        if (error) return null;
-        for (const r of (data ?? []) as Array<{ image_url: string | null }>) if (r.image_url) out.add(r.image_url);
-        if ((data ?? []).length < 1000) break;
-      }
-    }
-    return out;
-  } catch { return null; }
+    const { data, error } = await sb.from("messages").select("image_url, conversation_id, created_at").in("image_url", urls).limit(1000);
+    if (error) throw error;
+    const rows = (data ?? []) as Array<{ image_url: string; conversation_id: string; created_at: string }>;
+    for (const c of new Set(rows.map((r) => r.conversation_id))) if (!cutCache.has(c)) cutCache.set(c, await loadDeepseekCutoff(sb, c));
+    for (const u of urls) out.set(u, urlVerdictOf(rows.filter((r) => r.image_url === u), (c) => cutCache.get(c)));
+  } catch { for (const u of urls) out.set(u, "unknown"); }
+  return out;
 }
 
 const KEY = Symbol.for("sumora.scriptDeepseekGate");
@@ -73,13 +74,12 @@ export function installScriptDeepseekGate(): void {
   if (g[KEY]) return;
   g[KEY] = true;
   const inner = g.fetch.bind(globalThis);
-  let blockedP: Promise<Set<string> | null> | null = null;
   g.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     let u: URL | null = null;
     try { u = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url); } catch { u = null; }
     if (u && (DS_HOST_RE.test(u.hostname) || /\/chat\/completions$/.test(u.pathname)) && typeof init?.body === "string") {
-      blockedP ??= loadBlocked();
-      const v = gateVerdict(init.body, await blockedP, String(process.env.EXAM_ALLOW_DS_BASE64 ?? "").trim().toLowerCase() === "on");
+      const im = imagesInBody(init.body);
+      const v = gateVerdict(init.body, await verdictsFor(im.urls), String(process.env.EXAM_ALLOW_DS_BASE64 ?? "").trim().toLowerCase() === "on");
       if (!v.ok) {
         console.warn(`[script-deepseek-gate] ⛔ DeepSeek に送らない: ${v.why}`);
         return new Response(JSON.stringify({ error: { type: "application_gate", message: `申込の門: ${v.why}` } }), { status: 403, headers: { "content-type": "application/json" } });
