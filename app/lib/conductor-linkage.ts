@@ -34,7 +34,7 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
       // 2026-11-12 作業員7（作業員22 の欄ごとの連携の表 conductor-field-links の作り手どおり）: ブレインの JSON の欄（どれも既定 off のスイッチの時だけ出る・ここは表だけ）
       //   道の前の事実: now_vs_later・read_candidates・our_send_uptake（作業員16）・customer_mindset（作業員21）／道の後: judge_basis（作業員22）・seven_read・latent_read（作業員10）
       //   aix_now は brain-core の aixNowOf（now_vs_later から・作業員16）
-      "meta.now_vs_later", "meta.aix_now", "meta.read_candidates", "meta.our_send_uptake", "meta.customer_mindset", "meta.judge_basis", "meta.seven_read", "meta.latent_read"],
+      "meta.now_vs_later", "meta.aix_now", "meta.read_candidates", "meta.our_send_uptake", "meta.customer_mindset", "meta.judge_basis", "meta.judge_next", "meta.seven_read", "meta.latent_read"],
     switch: null,
     // 入口の統括の重点は、判断の時には読まない（shadow・判断を変えない）＝今は並んで走るだけ。深く読み直す時だけ重点に沿わせる
     redecides: [],

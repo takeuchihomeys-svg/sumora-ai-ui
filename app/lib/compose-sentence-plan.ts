@@ -31,6 +31,9 @@ export function composeSentencePlanOn(env: Env = envOf()): boolean {
 // ── 欄の値（竹内さんの7つの欄の細かい型・KB 1f5bd301 の例から） ─────────────────────
 export const LEAD_TOS = ["viewing", "apply", "estimate", "ask_send", "keep", "answer_only", "none"] as const;
 export type LeadToV = typeof LEAD_TOS[number];
+/** 作業員16 の NEXT_DEST（判断の根拠のメモ judge_next.dest）→ 誘導先（無い行き先は誘導先にしない） */
+export const JUDGE_DEST_TO_LEAD: Readonly<Record<string, LeadToV>> = { viewing: "viewing", apply: "apply", estimate: "estimate", ask_send: "ask_send", keep_send: "keep", door: "keep", answer_only: "answer_only", none: "none" };
+export const JUDGE_DEST_JA: Readonly<Record<string, string>> = { viewing: "内覧", apply: "申込・抑える", estimate: "見積", ask_send: "物件・条件を送ってもらう", ask_condition: "条件を聞く", keep_send: "ピックアップ・新着を送る約束", wait_check: "確認の結果を待ってもらう", answer_only: "答えて終わり", door: "扉だけ（関係をつなぐ）", none: "無し" };
 export const LEAD_TO_JA: Record<LeadToV, string> = { viewing: "内覧", apply: "申込・抑える", estimate: "見積", ask_send: "物件を送ってもらう", keep: "新着・関係をつなぐ", answer_only: "答えて終わり", none: "無し" };
 export const APPEAL_POINTS = ["家賃", "広さ・間取り", "駅・場所", "新しさ", "設備", "初期費用", "空き・入居", "条件の合い方"] as const;
 export type AppealPoint = typeof APPEAL_POINTS[number];
@@ -84,7 +87,7 @@ export type SevenFields = {
   trustHow: TrustHow[];
   /** 押す／待つ（作業員5 の push・強く押すのは『物件の残り×決める合図』が重なった番だけ） */
   push: { push: boolean; strength: PushStrength | null; reason: string | null } | null;
-  src: Partial<Record<"keyPoint" | "bridge" | "leadTo" | "appeal" | "latentCover" | "keyHow" | "trustHow" | "push", "takeuchi_fields" | "seven_read" | "material">>;
+  src: Partial<Record<"keyPoint" | "bridge" | "leadTo" | "appeal" | "latentCover" | "keyHow" | "trustHow" | "push", "takeuchi_fields" | "seven_read" | "material" | "judge_next">>;
 };
 
 const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
@@ -229,6 +232,9 @@ export type ComposeContext = {
   later: string[]; topics: string[];
   /** 2026-11-12 作業員4（OUR_SIDE_TO_COMPOSE）: こちら側の状態（開いている約束・直前の AIX・送った物件・退去予定・確かめ済みの事実）の行。道は決まった後の文の材料だけ */
   ourSide?: string[];
+  /** 2026-11-12 作業員22（BRAIN_JUDGE_BASIS_NEXT）: ブレインの次の行き先（道の後）と、答えられるのに約束にしかけた問い */
+  judgeNext?: string | null;
+  held?: string | null;
 };
 export function readComposeContext(meta: unknown, extra: { nextIntent?: string | null } = {}): ComposeContext {
   const m = obj(meta) ?? {};
@@ -261,6 +267,8 @@ export function readComposeContext(meta: unknown, extra: { nextIntent?: string |
     ourSide: typeof m.our_side_note === "string" ? m.our_side_note.split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 8) : [],
     dirLead: (() => { const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? LEAD_TO_JA[d] : null; })(),
     mindset: (() => { const cm = obj(m.customer_mindset); if (!cm || typeof cm.state !== "string") return null; const ax = obj(cm.anxiety); return join([cm.state, ax ? join([str(ax.target, 20), str(ax.direction, 6)], "・") : null, str(cm.hesitation, 20)], "／"); })(),
+    judgeNext: (() => { const j = obj(m.judge_next); const d = typeof j?.dest === "string" ? (JUDGE_DEST_JA[j.dest] ?? null) : null; return d; })(),
+    held: (() => { const j = obj(m.judge_next); return j?.held === true ? (str(j.quote, 30) ?? "（問いの言葉なし）") : null; })(),
     stance: join([str(m.engagement_stance, 6), str(m.purchase_signal_level, 6) ? `買う合図 ${str(m.purchase_signal_level, 6)}` : null], "・"),
   };
 }
@@ -279,6 +287,8 @@ export function composeContextLines(c: ComposeContext): string[] {
   if (c.appealTiming) L.push(`- 訴求のタイミング（ブレイン）: ${c.appealTiming}`);
   if (c.dirLead) L.push(`- 方向の文の誘導先（ブレイン）: ${c.dirLead}`);
   if (c.stance) L.push(`- 押す・待つ（ブレイン）: ${c.stance}`);
+  if (c.judgeNext) L.push(`- 次の行き先（ブレイン・道の後）: ${c.judgeNext}`);
+  if (c.held) L.push(`- 答えられるのに確かめる約束にしかけた問い（材料で答える）: ${c.held}`);
   if (c.lead) L.push(`- 直前のこちらの誘導（${c.lead.kind}）への答え: ${c.lead.answer}${c.lead.answer === "応じた" ? "＝同じ誘導を繰り返さず一段進める" : ""}`);
   const nx = join([c.goal ? `目指す事 ${c.goal}` : null, c.nextIntent ? `次にしてほしい事 ${c.nextIntent}` : null], "・");
   if (nx) L.push(`- ${nx}`);
@@ -364,6 +374,8 @@ export function readSevenFields(meta: unknown): SevenFields {
   }
   // 今ある材料（ブレインの判断・読み）。言い回しの型（keyHow・trustHow）は今の材料に無い＝空のまま
   if (!out.keyPoint) { const k = str(m.main_point, 80); if (k) { out.keyPoint = k; out.src.keyPoint = "material"; } }
+  // 2026-11-12 作業員22（作業員10 の測り・BRAIN_JUDGE_BASIS_NEXT）: ブレインが道の後に書いた次の行き先を、訴求のタイミングより先に（値がある時だけ）
+  if (!out.leadTo) { const j = obj(m.judge_next); const d = typeof j?.dest === "string" ? JUDGE_DEST_TO_LEAD[j.dest] ?? null : null; if (d) { out.leadTo = d; out.src.leadTo = "judge_next"; } }
   if (!out.leadTo) {
     const at = obj(m.appeal_timing);
     const kind = at?.kind; const level = at?.level;
@@ -657,6 +669,8 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
   { key: "engagement_stance・purchase_signal_level", label: "押す・待つ・買う合図", carried: "plan", values: (m) => [...sv(m.engagement_stance, 6), ...sv(m.purchase_signal_level, 6)] },
   { key: "reply_direction(誘導先)", label: "方向の文の誘導先", carried: "plan", values: (m) => { const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? [LEAD_TO_JA[d]] : []; } },
   { key: "compose.intent.next", label: "次にしてほしい事（構成の意図）", carried: "plan", values: () => [] },
+  // 2026-11-12 作業員22（BRAIN_JUDGE_BASIS_NEXT・既定 off）: 判断の根拠のメモの次の行き先・答えられるのに約束にしかけた問い
+  { key: "judge_next", label: "ブレインの次の行き先・答えられるのに約束にしかけた問い", carried: "plan", values: (m) => { const j = obj(m.judge_next); if (!j) return []; const d = typeof j.dest === "string" ? JUDGE_DEST_JA[j.dest] : null; return [...(d ? [d] : []), ...(j.held === true ? sv(j.quote, 30) : [])]; } },
   { key: "turn_aims", label: "この番の目的・次の2〜3番の狙い・入れる仕込み", carried: "other", by: "受け渡し（conductor-handoff の handoffNote・TURN_AIMS_AFTER）", values: () => [] },
 ];
 
@@ -674,6 +688,14 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   turn_aims: "other",
   // 2026-11-12 統括役: 作業員17 の判断の根拠のメモ（BRAIN_JUDGE_BASIS・既定 off）は物差しと記録のための欄＝文の統括には渡さない（作業員10 の受け口は feat/compose-1105 で別に入る）
   judge_basis: "other",
+  // 2026-11-12 作業員22: judge_basis から写した次の行き先・答えられるのに約束にしかけた印（BRAIN_JUDGE_BASIS_NEXT=on の時だけ値がある）は設計図が運ぶ
+  judge_next: "plan",
+  // 2026-11-12 作業員22: 作業員16 の今と後・読みの候補・受け取られ方（どれも既定 off・道の前の事実の欄＝判断のブレインが読む）と、
+  //   判断の順番の型の記録（CHECK_ORDER_TABLE・配分が読む）は記録の欄＝文の統括には渡さない（作業員10 の文の型の表が型の id を読む時に plan にする）
+  now_vs_later: "other", read_candidates: "other", our_send_uptake: "other", aix_now: "other",
+  check_order_scene: "other", check_order_type: "other", check_order: "other",
+  // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF・記録だけ）とその入力
+  conductor_brief_inputs: "other", conductor_brief: "other",
   // 別の注記・役が運ぶ（本質の帯・方向・姿勢・締め・2通・AIX）
   key_topics: "other", avoid_topics: "other", customer_questions: "other", priorities: "other", reply_mode: "other", two_stage: "other", reply_opener: "other",
   recommended_tone: "other", urgency_appropriate: "other", closing_strategy: "other", payment_timing: "other", far_move_in: "other", property_state: "other",

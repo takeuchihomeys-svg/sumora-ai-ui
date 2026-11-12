@@ -5,15 +5,18 @@
 //   ブレインの側: 答案の行の brain.judge_basis（BRAIN_JUDGE_BASIS=on）の重点・深さ・優先・順番・読み。
 //     judge_basis が無い行（off で回した答案）でも、重点は brain.conductor_focus.focus（conductor-focus の shadow）があればそれで数える。
 //   出す物: 場面ごとの重点の当たり／深さ別の当たり／外れた段（読み・選び・深さ・優先・重点・順番・道）／選んだ順番が竹内さんと合ったか。
-import { FOCUS_ORDER, focusOfAix, orderDigest, type Focus } from "../../app/lib/conductor-focus";
-import { normalizeJudgeBasis, type JudgeBasis } from "../../app/lib/brain-judge-basis";
-import { DEPTH_KINDS, FOCUS_KINDS, FOCUS_TOP_PRIORITY, MISS_STAGES, type BasisGold, type BasisMissStage, type BasisDepth } from "../../app/lib/judge-basis-types";
+import { focusOfAix, type Focus } from "../../app/lib/conductor-focus";
+import { normalizeJudgeBasis, BASIS_ROUTE_WORD_RE, type JudgeBasis } from "../../app/lib/brain-judge-basis";
+import { checkOrderById, CHECK_DEPTH } from "../../app/lib/check-order";
+import { DEPTH_KINDS, FOCUS_KINDS, FOCUS_TOP_PRIORITY, MISS_STAGES, PURPOSE_KINDS, MISSING_KINDS, type Purpose, type MissingKind, type BasisGold, type BasisMissStage, type BasisDepth } from "../../app/lib/judge-basis-types";
 
 export type SpecLite = { id: string; type?: string; tags?: string[]; accept?: string[]; basis?: BasisGold | null; scene?: string | null };
 export type AnswerRow = { id: string; rep?: number; brain?: Record<string, unknown> | null; path?: { ok?: boolean | null } | null; score?: { path?: boolean | null; pass?: boolean | null } | null };
 
 /** 正解の重点・優先・順番・深さ（source: human＝spec の basis／inferred＝accept の AIX 型から推定・重点だけ） */
-export type GoldBasis = { focus: Focus | null; priority: string[]; order: string[]; depth: BasisDepth | null; source: "human" | "inferred" | "none" };
+export type GoldBasis = { focus: Focus | null; priority: string[]; order: string[]; depth: BasisDepth | null; source: "human" | "inferred" | "none"; typeId: string | null;
+  /** 2026-11-12 作業員22: 目的（人が付けた物か、型の表の priority の先頭）・足りない情報（人が付けた物だけ・[] は無い）・押さえる要点（人が付けた物だけ） */
+  purpose: Purpose | null; missing: MissingKind[] | null; keyPoint: string | null };
 
 /** accept の符号（"AIX:property_send" 等）から重点を推す。「AIX:左右」等の系統名・返信・2段は決めない（null） */
 export function inferFocusFromAccept(accept: ReadonlyArray<string> | undefined): Focus | null {
@@ -26,18 +29,46 @@ export function inferFocusFromAccept(accept: ReadonlyArray<string> | undefined):
   return found.size === 1 ? [...found][0] : null;
 }
 
-const orderOfFocus = (f: Focus | null): string[] => (f ? FOCUS_ORDER[f].map((s) => s.role).filter((r, i, a) => a[i - 1] !== r) : []);
 const dedupeRuns = (xs: ReadonlyArray<string>): string[] => xs.filter((r, i, a) => a[i - 1] !== r);
 
+/**
+ * 正解を出す（作業員17 の 10377bb0 を作業員16 の今の形の上に載せ直し・作業員22）。spec.basis の優先・順番・深さが無ければ、type（16 の型の表の id）の表の値から出す（人が書いた物が先）。
+ * type も無く重点だけの問題は、優先の最初だけ重点から推す・順番と深さは持たない（表の型が無いと決まらない）。
+ */
 export function goldOf(spec: SpecLite): GoldBasis {
   const g = spec.basis;
-  if (g && (g.focus || g.priority?.length || g.order?.length || g.depth)) {
+  const why = whyGoldOf(g);
+  if (g && (g.focus || g.priority?.length || g.order?.length || g.depth || g.type || why.purpose || why.missing || why.keyPoint)) {
     const focus = g.focus && FOCUS_KINDS.includes(g.focus) ? g.focus : null;
-    return { focus, priority: g.priority?.length ? [...g.priority] : focus ? [FOCUS_TOP_PRIORITY[focus]] : [], order: g.order?.length ? dedupeRuns(g.order) : orderOfFocus(focus), depth: g.depth && DEPTH_KINDS.includes(g.depth) ? g.depth : null, source: "human" };
+    const t = g.type ? checkOrderById(g.type) : null;
+    const depthT = t ? CHECK_DEPTH[t.id]?.base ?? null : null;
+    return {
+      focus,
+      priority: g.priority?.length ? [...g.priority] : t ? [...t.priority] : focus ? [FOCUS_TOP_PRIORITY[focus]] : [],
+      order: g.order?.length ? dedupeRuns(g.order) : t ? dedupeRuns(t.check) : [],
+      depth: g.depth && DEPTH_KINDS.includes(g.depth) ? g.depth : depthT,
+      source: "human", typeId: t?.id ?? null, ...why,
+    };
   }
   const f = inferFocusFromAccept(spec.accept);
-  return f ? { focus: f, priority: [FOCUS_TOP_PRIORITY[f]], order: orderOfFocus(f), depth: null, source: "inferred" } : { focus: null, priority: [], order: [], depth: null, source: "none" };
+  return f ? { focus: f, priority: [FOCUS_TOP_PRIORITY[f]], order: [], depth: null, source: "inferred", typeId: null, ...why } : { focus: null, priority: [], order: [], depth: null, source: "none", typeId: null, ...why };
 }
+/** 目的・足りない情報・要点の正解（人が付けた物だけ。目的は無ければ型の表の priority の先頭＝作業員16 の Need の名前のまま） */
+function whyGoldOf(g: BasisGold | null | undefined): { purpose: Purpose | null; missing: MissingKind[] | null; keyPoint: string | null } {
+  const purpose = g?.purpose && (PURPOSE_KINDS as readonly string[]).includes(g.purpose) ? g.purpose : g?.type ? (checkOrderById(g.type)?.priority[0] ?? null) : null;
+  const missing = Array.isArray(g?.missing) ? g!.missing.filter((k): k is MissingKind => (MISSING_KINDS as readonly string[]).includes(k)) : null;
+  return { purpose, missing, keyPoint: g?.keyPoint?.trim() ? g.keyPoint.trim() : null };
+}
+/** 要点の近さ（文字の2つ組の重なり・0〜1）。言い回しが違っても同じ所を押さえていれば近い */
+export function keyPointOverlap(a: string, b: string): number {
+  const bi = (s: string) => { const t = s.replace(/[\s、。・「」『』（）()]/g, ""); const out = new Set<string>(); for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2)); return out; };
+  const x = bi(a), y = bi(b);
+  if (!x.size || !y.size) return 0;
+  let n = 0; for (const k of x) if (y.has(k)) n++;
+  return n / Math.min(x.size, y.size);
+}
+export const KEY_POINT_HIT = 0.4;
+const sameSet = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) => a.length === b.length && a.every((x) => b.includes(x));
 
 export type BrainBasis = { log: JudgeBasis | null; focus: Focus | null; focusFrom: "judge_basis" | "conductor_focus" | null; hasLog: boolean };
 export function brainBasisOf(row: AnswerRow): BrainBasis {
@@ -52,6 +83,8 @@ export function brainBasisOf(row: AnswerRow): BrainBasis {
 export type TurnVerdict = {
   id: string; rep: number; goldSource: GoldBasis["source"]; depth: BasisDepth | "none";
   focusHit: boolean | null; priorityHit: boolean | null; depthHit: boolean | null;
+  /** 目的が合ったか／足りない情報の組が同じか／要点が近いか（keyPointOverlap ≥ KEY_POINT_HIT）／目的・足りない情報・要点に道の言葉が入ったか */
+  purposeHit: boolean | null; missingHit: boolean | null; keyPointHit: boolean | null; routeWord: boolean | null;
   /** 選んだ順番が竹内さん（正解の順番）と合ったか。exact＝役の並びが同じ／head＝最初の2役が同じ */
   orderExact: boolean | null; orderHead: boolean | null;
   readRaised: boolean | null; readChosen: boolean | null;
@@ -72,25 +105,37 @@ export function scoreTurn(spec: SpecLite, row: AnswerRow): TurnVerdict {
   const orderHead = gold.order.length && orderBrain ? eq(orderBrain.slice(0, 2), gold.order.slice(0, 2)) : null;
   const readRaised = gold.focus && log?.readings.length ? log.readings.some((r) => r.focus === gold.focus) : null;
   const readChosen = gold.focus && log && log.chosen != null && log.readings[log.chosen] ? log.readings[log.chosen].focus === gold.focus : null;
+  // 2026-11-12 作業員22: 目的（なぜ）・足りない情報（何が無いから）・押さえる要点（どこを）
+  const purposeHit = gold.purpose && log?.purpose ? log.purpose === gold.purpose : null;
+  const missingHit = gold.missing && log && log.missing ? sameSet(log.missing.map((m) => m.kind), gold.missing) : null;
+  const keyPointHit = gold.keyPoint && log?.keyPoint ? keyPointOverlap(log.keyPoint, gold.keyPoint) >= KEY_POINT_HIT : null;
+  // 道の言葉は目的のなぜと要点だけで数える（足りない情報は「申込の意思」「内覧の日時」等の情報の名前そのものに道の語が入るので数えない）
+  const routeWord = log && (log.purposeWhy || log.keyPoint) ? BASIS_ROUTE_WORD_RE.test([log.purposeWhy, log.keyPoint].join(" ")) : null;
   // 外れた段: 左（読み）から先に外れた段を1つだけ
   let miss: BasisMissStage | null = null;
   if (readRaised === false) miss = "read";
   else if (readRaised === true && readChosen === false) miss = "pick";
   else if (depthHit === false) miss = "depth";
+  else if (purposeHit === false) miss = "purpose";
+  else if (missingHit === false) miss = "missing";
   else if (priorityHit === false) miss = "priority";
   else if (focusHit === false) miss = "focus";
   else if (orderExact === false && orderHead === false) miss = "order";
   else if (pathOk === false) miss = "path";
-  return { id: spec.id, rep: row.rep ?? 0, goldSource: gold.source, depth: log?.depth ?? "none", focusHit, priorityHit, depthHit, orderExact, orderHead, readRaised, readChosen, pathOk, missStage: miss };
+  return { id: spec.id, rep: row.rep ?? 0, goldSource: gold.source, depth: log?.depth ?? "none", focusHit, priorityHit, depthHit, purposeHit, missingHit, keyPointHit, routeWord, orderExact, orderHead, readRaised, readChosen, pathOk, missStage: miss };
 }
 
-export type Tally = { n: number; focusN: number; focusHit: number; priN: number; priHit: number; depthN: number; depthHit: number; ordN: number; ordExact: number; ordHead: number; pathN: number; pathOk: number; miss: Record<string, number> };
-const emptyTally = (): Tally => ({ n: 0, focusN: 0, focusHit: 0, priN: 0, priHit: 0, depthN: 0, depthHit: 0, ordN: 0, ordExact: 0, ordHead: 0, pathN: 0, pathOk: 0, miss: {} });
+export type Tally = { n: number; purN: number; purHit: number; misN: number; misHit: number; keyN: number; keyHit: number; routeN: number; routeWord: number; focusN: number; focusHit: number; priN: number; priHit: number; depthN: number; depthHit: number; ordN: number; ordExact: number; ordHead: number; pathN: number; pathOk: number; miss: Record<string, number> };
+const emptyTally = (): Tally => ({ n: 0, purN: 0, purHit: 0, misN: 0, misHit: 0, keyN: 0, keyHit: 0, routeN: 0, routeWord: 0, focusN: 0, focusHit: 0, priN: 0, priHit: 0, depthN: 0, depthHit: 0, ordN: 0, ordExact: 0, ordHead: 0, pathN: 0, pathOk: 0, miss: {} });
 export function addTo(t: Tally, v: TurnVerdict) {
   t.n++;
   if (v.focusHit !== null) { t.focusN++; if (v.focusHit) t.focusHit++; }
   if (v.priorityHit !== null) { t.priN++; if (v.priorityHit) t.priHit++; }
   if (v.depthHit !== null) { t.depthN++; if (v.depthHit) t.depthHit++; }
+  if (v.purposeHit !== null) { t.purN++; if (v.purposeHit) t.purHit++; }
+  if (v.missingHit !== null) { t.misN++; if (v.missingHit) t.misHit++; }
+  if (v.keyPointHit !== null) { t.keyN++; if (v.keyPointHit) t.keyHit++; }
+  if (v.routeWord !== null) { t.routeN++; if (v.routeWord) t.routeWord++; }
   if (v.orderExact !== null) { t.ordN++; if (v.orderExact) t.ordExact++; if (v.orderHead) t.ordHead++; }
   if (v.pathOk !== null) { t.pathN++; if (v.pathOk) t.pathOk++; }
   if (v.missStage) t.miss[v.missStage] = (t.miss[v.missStage] ?? 0) + 1;
@@ -118,7 +163,7 @@ export function buildReport(specs: ReadonlyArray<SpecLite>, rows: ReadonlyArray<
 const pct = (a: number, n: number) => (n ? `${a}/${n} ${Math.round((100 * a) / n)}%` : "-");
 export function tallyLine(name: string, t: Tally): string {
   const miss = MISS_STAGES.filter((k) => t.miss[k]).map((k) => `${k}:${t.miss[k]}`).join(" ") || "-";
-  return `${name.padEnd(14)} n=${String(t.n).padStart(3)}  重点 ${pct(t.focusHit, t.focusN).padEnd(10)} 優先 ${pct(t.priHit, t.priN).padEnd(10)} 深さ ${pct(t.depthHit, t.depthN).padEnd(10)} 順番(同じ) ${pct(t.ordExact, t.ordN).padEnd(10)} 順番(頭2) ${pct(t.ordHead, t.ordN).padEnd(10)} 道 ${pct(t.pathOk, t.pathN).padEnd(10)} 外れた段 ${miss}`;
+  return `${name.padEnd(14)} n=${String(t.n).padStart(3)}  目的 ${pct(t.purHit, t.purN).padEnd(10)} 足りない ${pct(t.misHit, t.misN).padEnd(10)} 要点 ${pct(t.keyHit, t.keyN).padEnd(10)} 道の言葉 ${pct(t.routeWord, t.routeN).padEnd(10)} 重点 ${pct(t.focusHit, t.focusN).padEnd(10)} 優先 ${pct(t.priHit, t.priN).padEnd(10)} 深さ ${pct(t.depthHit, t.depthN).padEnd(10)} 順番(同じ) ${pct(t.ordExact, t.ordN).padEnd(10)} 順番(頭2) ${pct(t.ordHead, t.ordN).padEnd(10)} 道 ${pct(t.pathOk, t.pathN).padEnd(10)} 外れた段 ${miss}`;
 }
 export function formatReport(r: Report): string {
   const out = [`# 重点・判断の根拠の物差し（問題の spec に無い行 ${r.noSpec}・正解の重点が決まらない行 ${r.noGold}）`, tallyLine("全体", r.total), "", "## 場面ごと"];
