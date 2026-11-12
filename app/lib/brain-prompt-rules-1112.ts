@@ -38,3 +38,29 @@ export function applyPromptRules1112(text: string, env: Record<string, string | 
   for (const e of PROMPT_RULE_EDITS_1112) if (out.includes(e.from)) out = out.replace(e.from, () => e.to);
   return out;
 }
+
+// ── 2026-11-12 作業員19（統括役の追加）: reply_mode の「判断に迷う時は必ず aix」を P0 の問いに ──
+//   旧: 「線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply」
+//   P0 ca55d42b: スタッフだけが知る情報（管理会社に確認して分かった事・募集状況・交渉の結果・撮影した写真・見積の金額・内覧日の確定）は AIX。返信は AI が知り得る材料だけで書ける番で、スタッフの文と100%一致できる対象（目標100%）。
+//   「迷ったら aix」は、書ける番まで AIX に倒す向き（P0 と逆）。迷いの原因は材料が届いていない／場面の読み違い／返信か AIX かの判断の誤り（P0 の外れの見方）なので、問いに戻って決める。
+//   残す物: 線引きルール該当時は aix（コード側の reply_mode のフェイルクローズ・自動送信の関所は変えない）。
+// 入れる: BRAIN_REPLY_MODE_P0=on（既定 off＝今と1文字も変わらない）。コード側（brain-core の replyMode の強制）は変えていない＝この変更は LLM の出力の向きだけ
+export function replyModeP0Enabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_REPLY_MODE_P0 ?? "").trim().toLowerCase() === "on";
+}
+
+export const REPLY_MODE_P0_EDITS: PromptRuleEdit[] = [
+  {
+    id: "reply_mode_p0",
+    from: "線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply",
+    to: "返信か AIX かは「お客様の発言に答えるのに、スタッフだけが知る情報（管理会社に確認して分かる事・募集状況・交渉の結果・見積の金額・内覧日の確定）が要るか」で決める。要らない（会話・資料・会社の事実・物件の記録だけで答えられる）番は auto_reply、要る番と線引きルール該当時は aix（手元に無い間は約束の返信）。迷う時は「迷ったら aix」とせず、材料が届いているか・場面を読み違えていないかに戻って決める",
+  },
+];
+
+/** reply_mode の指示だけを差し替える。off の時は text をそのまま返す */
+export function applyReplyModeP0(text: string, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  if (!replyModeP0Enabled(env)) return text;
+  let out = text;
+  for (const e of REPLY_MODE_P0_EDITS) if (out.includes(e.from)) out = out.replace(e.from, () => e.to);
+  return out;
+}

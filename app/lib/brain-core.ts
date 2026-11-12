@@ -81,7 +81,7 @@ import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from 
 import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
 import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
 import { sorryDeclineReadOn, readSorryDecline, pickSorryDeclineExamples, sorryDeclineBrainText } from "@/app/lib/sorry-decline-read";
-import { applyPromptRules1112 } from "@/app/lib/brain-prompt-rules-1112";
+import { applyPromptRules1112, applyReplyModeP0 } from "@/app/lib/brain-prompt-rules-1112";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
@@ -1418,7 +1418,7 @@ export async function loadBrainSystemInputs(): Promise<BrainSystemInputs> {
 // キャッシュ2ブロック分割: staticBrainSystem（完全静的・1h）と dynamicBrainSystem（DB由来・5m）を分離。
 // 毎日の学習cronで promptRules / knowledgePrinciples / boundaryRules が更新されても
 // 静的ブロック（15K+トークン）のプレフィックスキャッシュは生き残る。
-export const STATIC_BRAIN_SYSTEM = `あなたはスモラAI。与えられた会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。
+export const STATIC_BRAIN_SYSTEM = applyReplyModeP0(`あなたはスモラAI。与えられた会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。
 漢字は必ず日本語の漢字（日本の字形・新字体）で書く。中国の字形（簡体字・繁体字）は使わない。
 
 ${AIX_CAPABILITY_MAP}
@@ -1488,7 +1488,7 @@ ${rule8HoldNote()}　【解除の一文（2026-09-23 竹内・あっぴ事例）
   ③ 弊社のサービス・仕組みに関する質問（「なぜ初期費用が安いのですか？」等）
   ④ 物件の具体的な情報確認（「この物件の空室状況は？」「退去日はいつですか？」等）
   ⑤ お客様が「〜ますか？」「〜でしょうか？」「〜かな」「〜教えてください」「〜知りたい」等で締める文
-  ① ③はAIが直接答えてよい一般知識質問（確認不要）、④は管理会社確認が必要な個別情報質問として分類`;
+  ① ③はAIが直接答えてよい一般知識質問（確認不要）、④は管理会社確認が必要な個別情報質問として分類`);
 
 export type BrainSystemBlock = { type: "text"; text: string; cache_control: { type: "ephemeral"; ttl: "1h" } };
 export type BrainSystemBlocks = {
