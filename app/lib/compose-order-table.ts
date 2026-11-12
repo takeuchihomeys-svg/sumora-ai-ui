@@ -166,3 +166,42 @@ export function elementTypesNote(picked: Record<ElementKind, string[]>, env?: En
   const L = [part("push_line", "押す線"), part("trust", "信頼の作り方"), part("latent_line", "潜在の不安への一文")].filter(Boolean);
   return L.length ? `- この番に合う言葉の型（ブレインの欄から・材料に無い事実は書かない）: ${L.join("｜")}` : "";
 }
+
+// ── 送った部分のどこが刺さったか → 文の組み立て（2026-11-12 竹内さん「こちらが送った部分のどこが刺さったのか、刺さったからどう構築して次に誘導できるのか」） ─────
+//   作業員16 の BRAIN_OUR_SEND_UPTAKE（送った部分ごとの刺さり＝物件の点ごと・強さ・手がかり）を受ける口。欄の名前は作業員16 の出力に揃える（今は仮: meta.our_send_uptake）。
+//   受ける形（寛く読む）: 配列 か {parts: 配列}・各要素 {property|ref, point|part|aspect, strength|level（strong|mid|weak）, clue|evidence}
+//   組み立て（竹内さんの2通目の型 aix-second-brain-plan と同じ考え方）: 刺さった点を主の文の推す軸に（広さ・帖・㎡は先に・階は推しの理由にしない）→
+//   刺さりの強さで押さえ方と誘導先: 強＝内覧／物件の残り・退去予定があれば先に抑える線／中＝内覧の誘い／弱＝扉だけ（お手隙の際にご査収）
+export type UptakePart = { property: string | null; point: string; strength: "strong" | "mid" | "weak"; clue: string | null };
+export function readOurSendUptake(meta: unknown): UptakePart[] {
+  const m = objOf(meta) ?? {};
+  const raw = m.our_send_uptake;
+  const arr = Array.isArray(raw) ? raw : Array.isArray(objOf(raw)?.parts) ? (objOf(raw)!.parts as unknown[]) : [];
+  const s = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
+  return arr.map((x) => objOf(x)).filter((x): x is Record<string, unknown> => !!x).map((x) => {
+    const st = String(x.strength ?? x.level ?? "").trim();
+    return { property: s(x.property ?? x.ref, 40), point: s(x.point ?? x.part ?? x.aspect, 40) ?? "", strength: (st === "strong" || st === "weak" ? st : "mid") as UptakePart["strength"], clue: s(x.clue ?? x.evidence, 40) };
+  }).filter((x) => x.point).slice(0, 4);
+}
+export type UptakePlan = { axis: string[]; strongest: UptakePart["strength"] | null; lead: "viewing" | "apply" | "door" | null; pushLine: string | null; why: string };
+/** 刺さった部分 → 推す軸・押さえ方・誘導先（ブレインの欄だけで決める・道は変えない） */
+export function uptakePlan(meta: unknown): UptakePlan | null {
+  const parts = readOurSendUptake(meta);
+  if (!parts.length) return null;
+  const rank = { strong: 3, mid: 2, weak: 1 } as const;
+  const sorted = [...parts].sort((a, b) => rank[b.strength] - rank[a.strength]);
+  const size = (p: string) => /広|帖|㎡|間取|LDK|1K|1DK|2DK/.test(p);
+  const axis = [...sorted.filter((p) => size(p.point)), ...sorted.filter((p) => !size(p.point) && !/階/.test(p.point))].map((p) => (p.property ? `${p.property}の${p.point}` : p.point)).slice(0, 2);
+  const c = elementCuesOf(meta);
+  const strongest = sorted[0].strength;
+  const remain = /1部屋/.test(c.facts) || c.notViewable;
+  const lead = strongest === "strong" ? (remain ? "apply" : "viewing") : strongest === "mid" ? "viewing" : "door";
+  const pushLine = strongest === "strong" && remain ? "P_hold_first" : null;
+  return { axis, strongest, lead, pushLine, why: `刺さり ${sorted.map((p) => `${p.point}:${p.strength}`).join("・")}${remain ? "・物件の残り/退去予定あり" : ""}` };
+}
+/** 設計図に添える1行（COMPOSE_ELEMENT_TYPES=on の時だけ） */
+export function uptakeNote(p: UptakePlan | null, env?: Env): string {
+  if (!p || !composeElementTypesOn(env)) return "";
+  const leadJa = { viewing: "内覧の誘い", apply: "先に抑える道（申込）", door: "扉だけ（お手隙の際にご査収）" } as const;
+  return `- 送った部分の刺さり（ブレイン）: 主の文の推す軸＝${p.axis.join("・") || "－"}（広さを先に・階は推しの理由にしない）→ 次へ: ${p.lead ? leadJa[p.lead] : "－"}（${p.why}）`;
+}

@@ -57,4 +57,19 @@ t("受け渡しの漏れ: 長い送ってきた動機・気にしている事も
   const note = spn(bsp(readTurnUnderstanding(meta), rsf(meta), { ctx: rcc(meta) }));
   assert.deepEqual(hl(meta, note), []);
 });
+import { uptakePlan, uptakeNote } from "../compose-order-table";
+t("送った部分の刺さり（作業員16 の受け口）→ 推す軸は広さを先に・強い刺さり×1部屋のみ＝先に抑える道・漏れ0", () => {
+  const meta = {
+    our_send_uptake: [{ property: "スプランディッド難波WESTⅡ", point: "家賃", strength: "mid", clue: "家賃が安い" }, { property: "スプランディッド難波WESTⅡ", point: "広さ（30㎡）", strength: "strong", clue: "広いですね" }, { property: null, point: "2階", strength: "weak", clue: "" }],
+    turn_contract: { asks: [{ quote: "広いですね", route: "reply", about: "reaction_to_sent", answer: "1部屋のみの募集" }] },
+  };
+  const p = uptakePlan(meta)!;
+  assert.deepEqual(p.axis, ["スプランディッド難波WESTⅡの広さ（30㎡）", "スプランディッド難波WESTⅡの家賃"]); // 階は推しの理由にしない
+  assert.equal(p.lead, "apply"); assert.equal(p.pushLine, "P_hold_first");
+  assert.equal(uptakeNote(p, {}), "");
+  assert.match(uptakeNote(p, { COMPOSE_ELEMENT_TYPES: "on" }), /推す軸＝スプランディッド難波WESTⅡの広さ（30㎡）・.*次へ: 先に抑える道（申込）/);
+  const note = spn(bsp(readTurnUnderstanding(meta), rsf(meta), { ctx: rcc(meta) }));
+  assert.deepEqual(hl(meta, note), []);
+  assert.equal(uptakePlan({}), null);
+});
 console.log(`compose-element-types: ${n} pass`);

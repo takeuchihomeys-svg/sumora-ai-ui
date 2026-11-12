@@ -369,7 +369,7 @@ import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
 import { exemplarNoteFor } from "@/app/lib/takeuchi-exemplar-server";
 import { composeVocabUnifiedOn, applySceneConstraints, stripWritingBlueprintOrder } from "@/app/lib/compose-vocab";
-import { applyOrderTable, orderBasisDigest, pickElementTypes, elementTypesNote } from "@/app/lib/compose-order-table";
+import { applyOrderTable, orderBasisDigest, pickElementTypes, elementTypesNote, uptakePlan, uptakeNote } from "@/app/lib/compose-order-table";
 const maybeStripWb = (note: string, on: boolean): string => (on ? stripWritingBlueprintOrder(note) : note);
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
@@ -4516,7 +4516,7 @@ async function handleGenerateReply(req: NextRequest) {
             // 要る役目の行は書き手に渡さない（竹内さんの24番で4/4が竹内さんの文に無い役目だった＝記録だけ）
             // 2026-11-12 作業員10（COMPOSE_ELEMENT_TYPES=on・既定 off）: 要素ごとの言葉の型（押す線・信頼の作り方・潜在の一文）をブレインの欄から選んで1行に。選んだ型は off でも digest に
             const elem = pickElementTypes(brainMeta);
-            const note0 = [sentencePlanNote(plan), ord.noteLine && sentencePlanNote(plan) ? ord.noteLine : "", sentencePlanNote(plan) ? elementTypesNote(elem) : ""].filter(Boolean).join("\n");
+            const note0 = [sentencePlanNote(plan), ord.noteLine && sentencePlanNote(plan) ? ord.noteLine : "", sentencePlanNote(plan) ? elementTypesNote(elem) : "", sentencePlanNote(plan) ? uptakeNote(uptakePlan(brainMeta)) : ""].filter(Boolean).join("\n");
             return { plan, note: note0 && ex ? `${note0}\n${ex.note}` : note0, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${planU.removed.length ? `｜外した=${planU.removed.join(",")}` : ""}${planU.requiredRoles.length ? `｜要る=${planU.requiredRoles.join(",")}` : ""}｜${orderBasisDigest(ord.basis)}｜言葉の型=${[...elem.push_line, ...elem.trust, ...elem.latent_line].join(",") || "-"}` };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()

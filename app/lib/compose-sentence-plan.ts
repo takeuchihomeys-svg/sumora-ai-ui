@@ -237,6 +237,8 @@ export type ComposeContext = {
   latentIntent: string | null; concern: string | null; appealTiming: string | null; hesitancy: string | null;
   emotion: string | null; mindset: string | null; stance: string | null; dirLead: string | null;
   later: string[]; topics: string[];
+  /** 作業員16 の送った部分の刺さり（BRAIN_OUR_SEND_UPTAKE・仮の鍵 our_send_uptake）＝「点:強さ」 */
+  uptake: string[];
   /** 2026-11-12 作業員16 の now_vs_later（今の番で言われた事・こちらの開いている事・今届けられる物・この番でする事）と作業員17 の judge_basis（判断の根拠のメモ） */
   nowLater: { asked: string[]; open: string | null; ready: string[]; thisTurn: string | null } | null;
   judgeBasis: { clues: string[]; reading: string | null; readingWhy: string | null; priority: string[]; focus: string | null; order: string | null } | null;
@@ -268,6 +270,7 @@ export function readComposeContext(meta: unknown, extra: { nextIntent?: string |
     appealTiming: (() => { const at = obj(m.appeal_timing); return at && typeof at.kind === "string" ? join([`${at.kind}/${String(at.level ?? "")}`, str(at.reason, 50)], "＝") : null; })(),
     hesitancy: str(m.hesitancy_pattern, 20),
     emotion: str(m.customer_emotion, 30),
+    uptake: (() => { const raw = m.our_send_uptake; const arr = Array.isArray(raw) ? raw : Array.isArray(obj(raw)?.parts) ? (obj(raw)!.parts as unknown[]) : []; return arr.map((x) => obj(x)).filter((x): x is Record<string, unknown> => !!x).map((x) => join([str(x.property ?? x.ref, 40), str(x.point ?? x.part ?? x.aspect, 40)], "の") ? `${join([str(x.property ?? x.ref, 40), str(x.point ?? x.part ?? x.aspect, 40)], "の")}:${str(x.strength ?? x.level, 8) ?? "mid"}` : null).filter((x): x is string => !!x).slice(0, 4); })(),
     nowLater: (() => { const n = obj(m.now_vs_later); if (!n) return null; const arr = (v: unknown) => (Array.isArray(v) ? v.map((x) => str(x, 30)).filter((x): x is string => !!x).slice(0, 3) : []); const o = { asked: arr(n.asked_now), open: str(n.our_open, 40), ready: arr(n.ready_now), thisTurn: str(n.this_turn, 10) }; return o.asked.length || o.open || o.ready.length || o.thisTurn ? o : null; })(),
     judgeBasis: (() => { const j = obj(m.judge_basis); if (!j) return null; const rs = Array.isArray(j.readings) ? j.readings.map((r) => obj(r)) : []; const ch = typeof j.chosen === "number" ? j.chosen : null; const arr = (v: unknown, n: number) => (Array.isArray(v) ? v.map((x) => str(x, n)).filter((x): x is string => !!x) : []);
       return { clues: arr(j.clues, 30).slice(0, 4), reading: ch != null ? str(rs[ch]?.reading, 40) : null, readingWhy: str(j.chosenWhy ?? j.chosen_why, 50), priority: arr(j.priority, 20).slice(0, 3), focus: str(j.focus, 20), order: join([arr(j.order, 20).join(">") || null, str(j.orderWhy ?? j.order_why, 50)], "＝") }; })(),
@@ -297,6 +300,7 @@ export function composeContextLines(c: ComposeContext): string[] {
   if (nx) L.push(`- ${nx}`);
   if (c.nowLater) L.push(`- 今の番と後の番（ブレイン）: ${join([c.nowLater.asked.length ? `言われた事 ${c.nowLater.asked.join("／")}` : null, c.nowLater.open ? `こちらの開いている事 ${c.nowLater.open}` : null, c.nowLater.ready.length ? `今届けられる物 ${c.nowLater.ready.join("／")}` : null, c.nowLater.thisTurn ? `この番でする事 ${c.nowLater.thisTurn}` : null], "・")}`);
   if (c.judgeBasis) L.push(`- 判断の根拠（ブレイン）: ${join([c.judgeBasis.clues.length ? `手がかり ${c.judgeBasis.clues.join("／")}` : null, c.judgeBasis.reading ? `読み ${c.judgeBasis.reading}${c.judgeBasis.readingWhy ? `（${c.judgeBasis.readingWhy}）` : ""}` : null, c.judgeBasis.priority.length ? `優先 ${c.judgeBasis.priority.join(">")}` : null, c.judgeBasis.focus ? `重点 ${c.judgeBasis.focus}` : null, c.judgeBasis.order ? `順 ${c.judgeBasis.order}` : null], "・")}`);
+  if (c.uptake.length) L.push(`- 送った部分の刺さり（ブレイン）: ${c.uptake.join("／")}（刺さった点を主の文の推す軸に）`);
   if (c.topics.length) L.push(`- 話題（出てきた順）: ${c.topics.join("／")}`);
   const om = [...c.omitted, ...c.later, ...(c.skipped ? [c.skipped] : [])];
   if (om.length) L.push(`- 今回は入れない・後に回す: ${om.join("／")}`);
@@ -661,6 +665,7 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
   { key: "turn_topics", label: "話題ごと（言葉・前の話）", carried: "plan", values: (m) => (Array.isArray(m.turn_topics) ? (m.turn_topics as unknown[]).map((x) => obj(x)).flatMap((x) => [...sv(x?.quote, 30), ...sv(x?.ref, 40)]) : []) },
   { key: "now_vs_later", label: "今の番と後の番（作業員16）", carried: "plan", values: (m) => { const n = obj(m.now_vs_later); if (!n) return []; const arr = (v: unknown) => (Array.isArray(v) ? v.map((x) => str(x, 30)).filter((x): x is string => !!x).slice(0, 3) : []); return [...arr(n.asked_now), ...sv(n.our_open, 40), ...arr(n.ready_now)]; } },
   { key: "judge_basis", label: "判断の根拠（作業員17）", carried: "plan", values: (m) => { const j = obj(m.judge_basis); if (!j) return []; const rs = Array.isArray(j.readings) ? j.readings.map((r) => obj(r)) : []; const ch = typeof j.chosen === "number" ? j.chosen : null; return [...(Array.isArray(j.clues) ? j.clues.map((x) => str(x, 30)).filter((x): x is string => !!x).slice(0, 4) : []), ...(ch != null ? sv(rs[ch]?.reading, 40) : [])]; } },
+  { key: "our_send_uptake", label: "送った部分の刺さり（作業員16・BRAIN_OUR_SEND_UPTAKE）", carried: "plan", values: (m) => { const raw = m.our_send_uptake; const arr = Array.isArray(raw) ? raw : Array.isArray(obj(raw)?.parts) ? (obj(raw)!.parts as unknown[]) : []; return arr.map((x) => obj(x)).flatMap((x) => sv(x?.point ?? x?.part ?? x?.aspect, 40)).slice(0, 4); } },
   { key: "main_point", label: "要点", carried: "plan", values: (m) => sv(m.main_point, 80) },
   { key: "three_layer", label: "表の問い・奥の心配・安心の条件", carried: "plan", values: (m) => { const t = obj(m.three_layer); return t ? [...sv(t.surface, 40), ...sv(t.worry, 50), ...sv(t.relief, 50)] : []; } },
   { key: "latent_intent", label: "送ってきた動機", carried: "plan", values: (m) => sv(m.latent_intent, 400) },
@@ -687,7 +692,7 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
  */
 export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none">> = {
   // 文の統括の設計図が運ぶ
-  turn_contract: "plan", turn_read: "plan", turn_focus: "plan", turn_topics: "plan", seven_read: "plan", latent_read: "plan", now_vs_later: "plan", judge_basis: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
+  turn_contract: "plan", turn_read: "plan", turn_focus: "plan", turn_topics: "plan", seven_read: "plan", latent_read: "plan", now_vs_later: "plan", judge_basis: "plan", our_send_uptake: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
   conductor_focus: "plan", plan_ahead: "plan", future_timeline: "plan", hesitancy_pattern: "plan", message_plan: "plan", current_property: "plan",
   customer_emotion: "plan", customer_mindset: "plan", engagement_stance: "plan", purchase_signal_level: "plan", reply_direction: "plan",
   // 2026-11-12 作業員7: この番の目的・中期の狙い・仕込み（BRAIN_TURN_AIMS・TURN_AIMS_AFTER）は受け渡し（conductor-handoff の decided）が運ぶ
