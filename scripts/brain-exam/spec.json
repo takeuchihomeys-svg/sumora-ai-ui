@@ -9091,5 +9091,49 @@
   "why": "電話の後のお礼の1通（物件ピックアップ出来ましたらお送り）への『よろしくお願いします』。竹内さんは2.7時間後に独立系の保証会社で選んだ物件を送った（弱い所 573）",
   "addedAt": "2026-11-12",
   "addedBy": "brain-exam-add"
+ },
+ {
+  "id": "q435",
+  "type": "約束の返信を先に",
+  "tags": [
+   "出し切り",
+   "守り"
+  ],
+  "source": "本番の見張り（brain-exam-add --add）",
+  "conv": "5dd2d456-82ec-4549-9234-0df26b95b8bb",
+  "at": "2026-09-12T03:38:42.232Z",
+  "accept": [
+   "2段:pickup"
+  ],
+  "mustNot": [
+   "AIX:zenryoku_support"
+  ],
+  "asks": [],
+  "ng": [],
+  "why": "最初の束を送った後、お客様が新しい条件（本町・堺筋本町らへん）を言った番。スタッフは新しい条件でピックアップの約束（出し切り寄りの材料で新着待ちに倒れないかの守り・EXHAUSTED_AREA_ALL_STRONG）",
+  "addedAt": "2026-11-12",
+  "addedBy": "brain-exam-add"
+ },
+ {
+  "id": "q436",
+  "type": "約束の返信を先に",
+  "tags": [
+   "出し切り",
+   "守り"
+  ],
+  "source": "本番の見張り（brain-exam-add --add）",
+  "conv": "f4ecb148-8645-49f3-b75d-58bd867454cf",
+  "at": "2026-11-01T14:18:56.108Z",
+  "accept": [
+   "2段:pickup"
+  ],
+  "mustNot": [
+   "AIX:zenryoku_support"
+  ],
+  "asks": [],
+  "ng": [],
+  "why": "束を送った後の「他にももう少し見てみたい・できれば35㎡以上」＝新しい条件（広さ）。スタッフは35㎡以上で新たにピックアップの約束（EXHAUSTED_AREA_ALL_STRONG の守り）",
+  "addedAt": "2026-11-12",
+  "addedBy": "brain-exam-add"
  }
 ]
