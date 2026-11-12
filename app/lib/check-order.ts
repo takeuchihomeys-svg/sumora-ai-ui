@@ -1,17 +1,17 @@
-// app/lib/think-order.ts — 竹内さんの「思考の順番・判断の順番・優先度」の型の表（純関数・DB/LLM なし・作業員16・2026-11-12）
+// app/lib/check-order.ts — 竹内さんの「確認の順番・判断の順番・優先度」の型の表（純関数・DB/LLM なし・作業員16・2026-11-12）
 //
-// 竹内さんの決定 11/12（KB P1 d030d496・親 P0 575a7cd5）「統括のブレインは判断の順番・思考の順番・優先度を細分化して細かくする。実際の竹内のように」
-//   ＋同日「こうだからこうじゃないかと仮定して想定する等で当てはめる」「状況によって思考の順番をブレインの統括が判断すれば強化される。なぜなのか理解できれば質が高くなる」。
+// 竹内さんの決定 11/12（KB P1 d030d496・親 P0 575a7cd5）「統括のブレインは判断の順番・確認の順番・優先度を細分化して細かくする。実際の竹内のように」
+//   ＋同日「こうだからこうじゃないかと仮定して想定する等で当てはめる」「状況によって確認の順番をブレインの統括が判断すれば強化される。なぜなのか理解できれば質が高くなる」。
 // 材料（費用0・Claude Code の読み）: exam-cache/anatomy-roles/roles-r1.json（竹内さんの返信 198通の文ごとの役目）・anatomy-seven/seven-all198.json（7つの欄）・
 //   conductor-focus/replay-scene-v3-1110.json（重点の当たり）・本番の物差し line_watch_turns 7番（作業員4）・compose-understanding/result-1112-handoff.json（作業員10）。
-// 形: 1行＝1つの型。状況の手がかり(cues) → 思考の順(think) → 判断の順(decide) → 優先(priority) → なぜ(why) → 竹内さんの実例(examples・名前は伏せた要約)。
+// 形: 1行＝1つの型。状況の手がかり(cues) → 確認の順(check) → 判断の順(decide) → 優先(priority) → なぜ(why) → 竹内さんの実例(examples・名前は伏せた要約)。
 //   統括が状況を読んで型を選ぶ時に「なぜ」ごと渡せる形。手がかりが重なった時の取り方は TIE_BREAKS（理由つき）。
 // 置き方の決まり（道を引っぱらない・q406・q057・q065・q022 の教訓）: この表は道（返信か AIX か）を決める欄を足さない。
-//   ①思考の順の「読みの候補→直前の送信で確定」と「今の番の出力と後で果たす AIX を分ける」だけを道の前に置く（事実の確かめ）
+//   ①確認の順の「読みの候補→直前の送信で確定」と「今の番の出力と後で果たす AIX を分ける」だけを道の前に置く（事実の確かめ）
 //   ②重点・優先・目的・押すかは道を書き終えた後の欄（BRAIN_*_AFTER と同じ置き方）で使う。
-// スイッチ: THINK_ORDER_TABLE（既定 off＝どこからも読まない・shadow＝記録だけ・on＝後の欄に注記）。配線は試験の後（今はこのファイルとテストだけ）。
+// スイッチ: CHECK_ORDER_TABLE（既定 off＝どこからも読まない・shadow＝記録だけ・on＝後の欄に注記）。配線は試験の後（今はこのファイルとテストだけ）。
 
-export type ThinkStep =
+export type CheckStep =
   | "read_ask"        // 何を言われたか（主の問い・依頼・反応）
   | "hypothesize"     // 読みの候補を立てる（この『はい』は何への了承か 等）
   | "our_last_send"   // こちらが前に約束・送った物（直前の送信）で読みを確定
@@ -25,12 +25,12 @@ export type ThinkStep =
 
 export type Need = "keep_result" | "answer" | "confirm_promise" | "send_promise" | "worry" | "next_move" | "relation";
 
-export type ThinkOrderType = {
+export type CheckOrderType = {
   id: string;
   name: string;
   /** 状況の手がかり（統括が状況を読んで型を選ぶ時の目印・決まった計算ではなくブレインが読む言葉） */
   cues: string[];
-  think: ThinkStep[];
+  check: CheckStep[];
   /** 判断の順（先に確定し、後の役は決め直さない） */
   decide: string[];
   /** 同じ番に要件が複数ある時の優先（先→後） */
@@ -50,12 +50,12 @@ export type ThinkOrderType = {
   brainMiss: string;
 };
 
-export const THINK_ORDER_TYPES: readonly ThinkOrderType[] = [
+export const CHECK_ORDER_TYPES: readonly CheckOrderType[] = [
   {
     id: "T1_conditions_first",
     name: "条件の提示・言い直し（初回〜2回目）",
     cues: ["お客様が条件（エリア・家賃・間取り・設備）を言った・言い直した", "まだその条件で物件を送っていない"],
-    think: ["read_ask", "our_last_send", "now_vs_later", "route", "focus", "roles"],
+    check: ["read_ask", "our_last_send", "now_vs_later", "route", "focus", "roles"],
     decide: ["条件の受け取り（変更か追加か・ずっとか今回だけか）", "今の番＝ピックアップの約束（返信）", "後で果たす＝物件の AIX", "締め（初回だけ全力サポート）"],
     priority: ["answer", "send_promise", "relation"],
     nowOutput: "返信（受け→条件を復唱して全域からピックアップしてお送りする約束）",
@@ -71,7 +71,7 @@ export const THINK_ORDER_TYPES: readonly ThinkOrderType[] = [
     id: "T2_question_fact",
     name: "質問（会社・手続き・物件の資料で答えられる）",
     cues: ["お客様の問い（いつ入居・費用・分割・保証会社・設備の有無）", "答えが会社の事実・物件の資料・会話にある"],
-    think: ["read_ask", "staff_only", "fact_answer", "route", "focus", "aim", "roles"],
+    check: ["read_ask", "staff_only", "fact_answer", "route", "focus", "aim", "roles"],
     decide: ["答えられるか（スタッフしか知らない事でないか）", "今の番＝答えの返信", "押すか（残り1部屋×決める合図の時だけ申込へ）"],
     priority: ["answer", "worry", "next_move"],
     nowOutput: "返信（結論から答える→理由の事実→次の一手）",
@@ -87,7 +87,7 @@ export const THINK_ORDER_TYPES: readonly ThinkOrderType[] = [
     id: "T3_question_staff_only",
     name: "質問（スタッフしか知らない＝管理会社に確認が要る）",
     cues: ["募集状況・畳の変更・駐車場の種類・交渉の可否", "資料にも会話にも答えが無い"],
-    think: ["read_ask", "staff_only", "now_vs_later", "route", "roles"],
+    check: ["read_ask", "staff_only", "now_vs_later", "route", "roles"],
     decide: ["スタッフしか知らない事か", "今の番＝確認の約束（返信）", "後で果たす＝AIX【物件確認した】"],
     priority: ["confirm_promise", "send_promise", "relation"],
     nowOutput: "返信（聞かれた事そのものを確認すると約束）",
@@ -103,7 +103,7 @@ export const THINK_ORDER_TYPES: readonly ThinkOrderType[] = [
     id: "T4_property_shared",
     name: "お客様が物件を送ってきた（空いてるか・費用を知りたい）",
     cues: ["お客様の物件の画像・URL・名前", "募集状況をまだ確かめていない"],
-    think: ["read_ask", "hypothesize", "our_last_send", "staff_only", "now_vs_later", "route", "roles"],
+    check: ["read_ask", "hypothesize", "our_last_send", "staff_only", "now_vs_later", "route", "roles"],
     decide: ["何のために送ったか（空き／費用／条件の参考）", "今の番＝募集確認の約束（＋見積はその後と約束）", "後で果たす＝確認の結果→見積書の AIX"],
     priority: ["confirm_promise", "send_promise", "relation"],
     nowOutput: "返信（募集状況を確認し、確認出来次第最大限割引の御見積書とあわせてご連絡）",
@@ -119,7 +119,7 @@ export const THINK_ORDER_TYPES: readonly ThinkOrderType[] = [
     id: "T5_ack_hypothesis",
     name: "お礼・了承だけ（はい・ありがとうございます・お願いします）",
     cues: ["お客様の今の文がお礼・了承だけ（60字未満・問いなし）"],
-    think: ["read_ask", "hypothesize", "our_last_send", "now_vs_later", "focus", "aim", "roles"],
+    check: ["read_ask", "hypothesize", "our_last_send", "now_vs_later", "focus", "aim", "roles"],
     decide: ["何への了承か（直前のこちらの送信で決める）", "今の番＝短い受け＋その送信に合う次の扉", "押すか（1部屋のみ・見積の後に了承→申込で抑える）"],
     priority: ["keep_result", "relation", "next_move"],
     nowOutput: "返信（物件を送った後＝気になる部屋の内覧の扉／見積の後＝ご確認を／内覧確定の後＝日時と場所の再提示／約束の後＝約束を守る姿勢）",
@@ -135,7 +135,7 @@ export const THINK_ORDER_TYPES: readonly ThinkOrderType[] = [
     id: "T6_considering",
     name: "検討します・また連絡します",
     cues: ["検討・相談・時期が決まったら連絡", "決める合図（今日中に決める）があるか"],
-    think: ["read_ask", "our_last_send", "focus", "aim", "roles"],
+    check: ["read_ask", "our_last_send", "focus", "aim", "roles"],
     decide: ["決める合図があるか", "今の番＝押さずに預かる返信（合図があれば内覧の扉）"],
     priority: ["relation", "next_move"],
     nowOutput: "返信（ごゆっくりご検討を／新着を送る・相談しやすさ／合図があれば内覧の扉）",
@@ -151,7 +151,7 @@ export const THINK_ORDER_TYPES: readonly ThinkOrderType[] = [
     id: "T7_viewing",
     name: "内覧の話（可否・日時・当日）",
     cues: ["内覧したい・何日いけるか・何時まで・内見できないのか"],
-    think: ["read_ask", "our_last_send", "fact_answer", "staff_only", "route", "focus", "roles"],
+    check: ["read_ask", "our_last_send", "fact_answer", "staff_only", "route", "focus", "roles"],
     decide: ["段階（候補日→日にち決定→待ち合わせ）のどこか", "可否を先に答える", "日時の確定はスタッフの番（AIX【内覧調整】）"],
     priority: ["answer", "next_move", "worry"],
     nowOutput: "返信（可否・最終時刻に答える→日程へ）／日にち決定・待ち合わせは AIX",
@@ -167,7 +167,7 @@ export const THINK_ORDER_TYPES: readonly ThinkOrderType[] = [
     id: "T8_cost",
     name: "費用（初期費用・分割・安くなるか）",
     cues: ["初期費用・総額・分割・割引の問い"],
-    think: ["read_ask", "our_last_send", "fact_answer", "staff_only", "now_vs_later", "route", "roles"],
+    check: ["read_ask", "our_last_send", "fact_answer", "staff_only", "now_vs_later", "route", "roles"],
     decide: ["物件が決まっているか（見積書は物件がある時だけ）", "答え（会社の事実）か見積書（AIX）か", "総額の不安を先回り"],
     priority: ["answer", "worry", "next_move"],
     nowOutput: "返信（会社の事実で答える）／物件があれば見積書の AIX",
@@ -183,7 +183,7 @@ export const THINK_ORDER_TYPES: readonly ThinkOrderType[] = [
     id: "T9_apply_signal",
     name: "申込の合図（抑えて・審査かけて・ここにします）",
     cues: ["申込・仮押さえの依頼・物件名指しで決める", "物件の残り（1部屋のみ）"],
-    think: ["read_ask", "our_last_send", "route", "focus", "aim", "roles"],
+    check: ["read_ask", "our_last_send", "route", "focus", "aim", "roles"],
     decide: ["申込の意思か（決める合図）", "即承認", "押す強さ（残り×決める合図）"],
     priority: ["answer", "next_move", "worry"],
     nowOutput: "返信（即承認→対象物件を特定して申込へ）",
@@ -199,7 +199,7 @@ export const THINK_ORDER_TYPES: readonly ThinkOrderType[] = [
     id: "T10_result_ready",
     name: "前の約束の結果が手元にある（確認の結果・物件・見積が揃った）",
     cues: ["前に確認・ピックアップ・見積を約束し、結果が揃った", "お客様が催促・別の事を聞いた"],
-    think: ["our_last_send", "read_ask", "staff_only", "route", "focus", "roles"],
+    check: ["our_last_send", "read_ask", "staff_only", "route", "focus", "roles"],
     decide: ["約束の果たし（結果の AIX）を先", "次に今の問いへの答え・代わりの物件"],
     priority: ["keep_result", "answer", "next_move"],
     nowOutput: "AIX（結果）→ 続けて代わり・答え",
@@ -215,7 +215,7 @@ export const THINK_ORDER_TYPES: readonly ThinkOrderType[] = [
     id: "T11_first_contact_hearing",
     name: "初回の挨拶・条件ヒアリング（フォームを送る番）",
     cues: ["初回の連絡・名乗り・事情（2人・審査の不安）", "条件がまだ揃っていない"],
-    think: ["read_ask", "hypothesize", "fact_answer", "now_vs_later", "route", "roles"],
+    check: ["read_ask", "hypothesize", "fact_answer", "now_vs_later", "route", "roles"],
     decide: ["先に受け・不安への答え（返信）", "その後にフォームの AIX（2通・この順）"],
     priority: ["answer", "worry", "send_promise", "relation"],
     nowOutput: "返信（はじめまして・担当・言われた事情への受けと答え・ピックアップの約束）→ AIX【条件ヒアリング】",
@@ -244,8 +244,8 @@ export const TIE_BREAKS: ReadonlyArray<{ when: string; take: string; why: string
 /** 読む深さ（竹内さん 11/12「状況によって必要な場合深く読むなど実際の人間のように」・P1 077d6e18 深く読むのは複雑な番だけ）。
  *  198通の目安（7つの欄の札から: 遡る＝前の約束・送った物に触れた／事実＝理由の事実・数字・正直な弱み）: 浅 86・遡る 40・事実 62・両方 10。
  *  場面ごと: considering 浅 17/22（一番浅い）・apply 事実 12/22・question 事実 10/22・ack は浅 7 だが両方 4（お礼の番が一番深い時がある）。 */
-export type ThinkDepth = { base: "shallow" | "back" | "fact" | "deep"; deepenWhen: string[]; why: string; count: string };
-export const THINK_DEPTH: Readonly<Record<string, ThinkDepth>> = {
+export type CheckDepth = { base: "shallow" | "back" | "fact" | "deep"; deepenWhen: string[]; why: string; count: string };
+export const CHECK_DEPTH: Readonly<Record<string, CheckDepth>> = {
   T1_conditions_first: { base: "back", deepenWhen: ["2回目以降の言い直し（前の条件との差）", "前に送った物件を外す言い方（肥後橋は上過ぎる）"], why: "前の条件・送った物との差を見ないと『変更か追加か・ずっとか今回か』が決まらない", count: "conditions 浅 9・遡る 7・事実 5・両方 1" },
   T2_question_fact: { base: "fact", deepenWhen: ["物件ごとに答えが違う（保証会社・入居日）", "答えが申込の判断に直結する"], why: "資料・会社の事実を見て結論で答える。遡りは要らない時が多い", count: "question 事実 10/22" },
   T3_question_staff_only: { base: "fact", deepenWhen: ["資料に答えが無いと確かめてから約束にする"], why: "資料を見ずに確認の約束にすると、答えられる事を保留する（q065）", count: "promise の札 47" },
@@ -259,19 +259,19 @@ export const THINK_DEPTH: Readonly<Record<string, ThinkDepth>> = {
   T11_first_contact_hearing: { base: "fact", deepenWhen: ["事情（2人・審査の不安・再来）を言った"], why: "言われた事情に会社の事実で答えてからフォーム", count: "本番 12240・12306" },
 };
 
-export type ThinkOrderMode = "off" | "shadow" | "on";
-export function thinkOrderMode(): ThinkOrderMode {
-  const v = String(process.env.THINK_ORDER_TABLE ?? "").trim().toLowerCase();
+export type CheckOrderMode = "off" | "shadow" | "on";
+export function checkOrderMode(): CheckOrderMode {
+  const v = String(process.env.CHECK_ORDER_TABLE ?? "").trim().toLowerCase();
   return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
 }
 
-export function thinkOrderById(id: string): ThinkOrderType | null {
-  return THINK_ORDER_TYPES.find((t) => t.id === id) ?? null;
+export function checkOrderById(id: string): CheckOrderType | null {
+  return CHECK_ORDER_TYPES.find((t) => t.id === id) ?? null;
 }
 
 /** ブレインが番の読みを書き終えた後に、型の id を読みの言葉から選ぶ目安（決まった計算は候補の網だけ・P0 9eb6aa9c）。
  *  入力はブレインが既に出した欄（決め直さない）: intent・質問の有無・お礼だけか・未果たしの約束・結果が揃ったか・お客様が物件を送ったか・初回か。 */
-export type ThinkOrderCues = {
+export type CheckOrderCues = {
   firstContact?: boolean;
   ackOnly?: boolean;
   hasQuestion?: boolean;
@@ -287,7 +287,7 @@ export type ThinkOrderCues = {
 };
 
 /** 候補を優先の順に並べて返す（先頭が採る型・理由つき）。TIE_BREAKS の順をそのまま使う */
-export function pickThinkOrder(c: ThinkOrderCues): Array<{ id: string; why: string }> {
+export function pickCheckOrder(c: CheckOrderCues): Array<{ id: string; why: string }> {
   const out: Array<{ id: string; why: string }> = [];
   const add = (id: string, why: string) => { if (!out.some((o) => o.id === id)) out.push({ id, why }); };
   if (c.resultReady) add("T10_result_ready", "前の約束の結果が手元にある＝果たしが先");
@@ -307,10 +307,10 @@ export function pickThinkOrder(c: ThinkOrderCues): Array<{ id: string; why: stri
 }
 
 /** 後の欄（道を書き終えた後）に渡す注記。道を決める語（AIX を選べ等）は書かない */
-export function thinkOrderNote(t: ThinkOrderType): string {
+export function checkOrderNote(t: CheckOrderType): string {
   return [
-    `【この番の考える順（竹内さんの型 ${t.id}・${t.name}）】`,
-    `考える順: ${t.think.join("→")}`,
+    `【この番の確認の順（竹内さんの型 ${t.id}・${t.name}）】`,
+    `確認の順: ${t.check.join("→")}`,
     `決める順: ${t.decide.join("→")}`,
     `優先: ${t.priority.join("→")}`,
     `なぜ: ${t.why}`,
