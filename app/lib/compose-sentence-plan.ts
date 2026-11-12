@@ -674,6 +674,10 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   turn_aims: "other",
   // 2026-11-12 統括役: 作業員17 の判断の根拠のメモ（BRAIN_JUDGE_BASIS・既定 off）は物差しと記録のための欄＝文の統括には渡さない（作業員10 の受け口は feat/compose-1105 で別に入る）
   judge_basis: "other",
+  // 2026-11-12 作業員22: 作業員16 の今と後・読みの候補・受け取られ方（どれも既定 off・道の前の事実の欄＝判断のブレインが読む）と、
+  //   判断の順番の型の記録（CHECK_ORDER_TABLE・配分が読む）は記録の欄＝文の統括には渡さない（作業員10 の文の型の表が型の id を読む時に plan にする）
+  now_vs_later: "other", read_candidates: "other", our_send_uptake: "other", aix_now: "other",
+  check_order_scene: "other", check_order_type: "other", check_order: "other",
   // 別の注記・役が運ぶ（本質の帯・方向・姿勢・締め・2通・AIX）
   key_topics: "other", avoid_topics: "other", customer_questions: "other", priorities: "other", reply_mode: "other", two_stage: "other", reply_opener: "other",
   recommended_tone: "other", urgency_appropriate: "other", closing_strategy: "other", payment_timing: "other", far_move_in: "other", property_state: "other",

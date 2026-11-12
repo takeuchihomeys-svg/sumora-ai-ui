@@ -84,4 +84,51 @@ t("spec の basis（人が付けた正解）: 重点は一覧の中・by あり"
   for (const x of withBasis) { assert.ok((FOCUS_KINDS as readonly string[]).includes(x.basis!.focus ?? ""), x.id); assert.ok(x.basis!.by, x.id); assert.equal(goldOf(x as never).source, "human"); }
   assert.ok(new Set(withBasis.map((x) => x.basis!.focus)).size >= 6);
 });
+// ── 2026-11-12 作業員22: 目的・足りない情報・押さえる要点 ──
+import { PURPOSE_KINDS, MISSING_KINDS, MISS_STAGES } from "../judge-basis-types";
+import { CHECK_ORDER_TYPES } from "../check-order";
+import { INFO_KEYS } from "../info-fill-map";
+import { BASIS_ROUTE_WORD_RE, judgeBasisDigest } from "../brain-judge-basis";
+import { keyPointOverlap } from "../../../scripts/lib/judge-basis-score";
+t("目的・足りない情報・要点: 名前は check-order の Need・info-fill-map の INFO_KEYS と同じ・指示は JSON の最後（order_why の後）", () => {
+  for (const ty of CHECK_ORDER_TYPES) for (const p of ty.priority) assert.ok((PURPOSE_KINDS as readonly string[]).includes(p), p);
+  assert.deepEqual([...MISSING_KINDS], [...INFO_KEYS]);
+  const s = brainJudgeBasisOutputItem({ BRAIN_JUDGE_BASIS: "on" });
+  for (const k of PURPOSE_KINDS) assert.ok(s.includes(k), k);
+  assert.ok(s.indexOf('"purpose"') > s.indexOf('"order_why"') && s.indexOf('"key_point"') > s.indexOf('"missing"'));
+  assert.match(s, /道や次の一手の言葉は書かない/);
+  assert.equal(brainJudgeBasisOutputItem({}), "");
+  // 新しい3つの欄の指示（目的・足りない情報・要点の書き方）に道の言葉を入れない
+  const tail = BRAIN_JUDGE_BASIS_FIELD.slice(BRAIN_JUDGE_BASIS_FIELD.indexOf('"purpose"'));
+  assert.ok(!BASIS_ROUTE_WORD_RE.test(tail), tail);
+  assert.deepEqual(MISS_STAGES.slice(2, 6), ["depth", "purpose", "missing", "priority"]);
+});
+t("読み取り: 目的は一覧の中・足りない情報は種類で重ねず最大3・[] は足りない物なし・書いていなければ null", () => {
+  const l = normalizeJudgeBasis({ ...raw, purpose: "worry", purpose_why: "予算の不安が先", missing: [{ kind: "estimate_sent", what: "総額" }, { kind: "estimate_sent", what: "x" }, { kind: "bogus" }, "screening_info", { kind: "vacancy_checked", what: "礼金の交渉" }, { kind: "move_in" }], key_point: "礼金が無ければの一言" })!;
+  assert.equal(l.purpose, "worry");
+  assert.deepEqual(l.missing!.map((m) => m.kind), ["estimate_sent", "screening_info", "vacancy_checked"]);
+  assert.equal(l.keyPoint, "礼金が無ければの一言");
+  assert.deepEqual(normalizeJudgeBasis({ ...raw, missing: [] })!.missing, []);
+  assert.equal(normalizeJudgeBasis(raw)!.missing, null);
+  assert.equal(normalizeJudgeBasis({ ...raw, purpose: "next_step" })!.purpose, null);
+  assert.equal(normalizeJudgeBasis({ purpose: "answer" })!.purpose, "answer");
+  assert.equal(judgeBasisDigest(l), "d|ease|ease_worry|worry|m3");
+});
+t("物差し: 目的・足りない情報・要点の当たり／外れた段は深さの後・優先の前／道の言葉を数える／型の表から目的", () => {
+  const sp = { id: "q1", type: "費用", basis: { focus: "ease" as const, depth: "deep" as const, priority: ["ease_worry" as const], purpose: "worry" as const, missing: ["estimate_sent" as const], keyPoint: "礼金が無ければという言葉" } };
+  const ok = { ...raw, order: FOCUS_ORDER.ease.map((s) => s.role), purpose: "worry", missing: [{ kind: "estimate_sent", what: "内覧の日時より先に総額" }], key_point: "礼金が無ければの言葉" };
+  const v = scoreTurn(sp, brainOf(ok));
+  assert.deepEqual([v.purposeHit, v.missingHit, v.keyPointHit, v.routeWord, v.missStage], [true, true, true, false, null]);
+  assert.equal(scoreTurn(sp, brainOf({ ...ok, purpose: "answer" })).missStage, "purpose");
+  assert.equal(scoreTurn(sp, brainOf({ ...ok, missing: [] })).missStage, "missing");
+  assert.equal(scoreTurn(sp, brainOf({ ...ok, depth: "shallow", purpose: "answer" })).missStage, "depth");
+  assert.equal(scoreTurn(sp, brainOf({ ...ok, key_point: "内覧に誘う" })).routeWord, true);
+  assert.equal(scoreTurn(sp, brainOf({ ...ok, key_point: "駐車場の空き" })).keyPointHit, false);
+  assert.ok(keyPointOverlap("礼金が無ければ", "礼金が無ければという言葉") >= 0.4);
+  assert.equal(goldOf({ id: "a", basis: { type: "T4_property_shared", focus: "promise_make" } }).purpose, "confirm_promise");
+  assert.equal(goldOf({ id: "a", accept: ["AIX:viewing_invite"] }).purpose, null);
+  const r = buildReport([sp], [brainOf(ok), brainOf({ ...ok, purpose: "answer" })]);
+  assert.equal(r.total.purN, 2); assert.equal(r.total.purHit, 1); assert.equal(r.total.miss.purpose, 1);
+  assert.match(formatReport(r), /目的 1\/2/);
+});
 console.log(`${n} tests passed`);

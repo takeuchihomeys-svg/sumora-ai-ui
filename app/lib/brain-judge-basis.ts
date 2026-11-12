@@ -5,7 +5,7 @@
 //   置き方: brain-seven-fields.ts（3e7b63be）と同じ＝aix・action・reply_mode・reply_direction・turn_contract を全部書き終えた後に JSON の一番最後に書き終えた後のメモとして。
 //     道の前や判断と並べると道が引っぱられる（試験で4回起きた）。この欄で判断を変えない。
 //   既定 off（BRAIN_JUDGE_BASIS=on）。off の時は出力の指定が空文字＝1文字も変わらない。型の名前は judge-basis-types.ts の1か所。
-import { DEPTH_KINDS, PRIORITY_KINDS, PRIORITY_LABEL, FOCUS_KINDS, FOCUS_LABEL, ORDER_ROLES, type BasisDepth, type Priority, type Focus } from "./judge-basis-types";
+import { DEPTH_KINDS, PRIORITY_KINDS, PRIORITY_LABEL, FOCUS_KINDS, FOCUS_LABEL, ORDER_ROLES, PURPOSE_KINDS, PURPOSE_LABEL, MISSING_KINDS, MISSING_LABEL, type BasisDepth, type Priority, type Focus, type Purpose, type MissingKind } from "./judge-basis-types";
 
 type Env = Record<string, string | undefined>;
 export const brainJudgeBasisOn = (env: Env = typeof process !== "undefined" ? process.env : {}): boolean => (env.BRAIN_JUDGE_BASIS ?? "").trim().toLowerCase() === "on";
@@ -17,10 +17,19 @@ export type JudgeBasis = {
   readings: BasisReading[]; chosen: number | null; chosenWhy: string;
   priority: Priority[]; focus: Focus | null;
   order: string[]; orderWhy: string;
+  /** 2026-11-12 作業員22: 目的（なぜこの番でこれをするか・check-order の Need の名前）となぜ */
+  purpose: Purpose | null; purposeWhy: string;
+  /** 足りない情報（何が無いからそうしているか）。[] は足りない物が無い・null は書いていない */
+  missing: BasisMissing[] | null;
+  /** 押さえる要点（どこを押さえにいっているか） */
+  keyPoint: string;
 };
+export type BasisMissing = { kind: MissingKind; what: string };
 
-export const BRAIN_JUDGE_BASIS_FIELD = `"judge_basis"（書き終えた後のメモ・判断の根拠のメモ。判断は変えない・材料に無い事実は書かない）: {"clues": ["読んだ状況の手がかり（お客様の言葉・直前の送信・段階・時期 等）25字×最大4"], "depth": "${DEPTH_KINDS.join("|")}（この番をどれだけ深く読んだか）", "depth_clue": "深さを決めた手がかり 25字", "depth_why": "なぜその深さか 30字", "readings": [{"reading": "立てた読み（お客様は今こう思っている・こうしたい）30字", "focus": "${FOCUS_KINDS.join("|")}"}（2〜3候補）], "chosen": 選んだ読みの番号（0 から）, "chosen_why": "選んだ理由 30字", "priority": ["優先した要件を大切な順に ${PRIORITY_KINDS.join("|")} から最大3つ"], "focus": "この番で一番大切にした事 ${FOCUS_KINDS.join("|")}", "order": ["使った確認の順番を ${ORDER_ROLES.join("|")} から順に"], "order_why": "その順番にした理由 30字"}`;
-export const BRAIN_JUDGE_BASIS_LEGEND = `重点＝${FOCUS_KINDS.map((k) => `${k}（${FOCUS_LABEL[k]}）`).join("・")}。優先＝${PRIORITY_KINDS.map((k) => `${k}（${PRIORITY_LABEL[k]}）`).join("・")}。`;
+export const BRAIN_JUDGE_BASIS_FIELD = `"judge_basis"（書き終えた後のメモ・判断の根拠のメモ。判断は変えない・材料に無い事実は書かない）: {"clues": ["読んだ状況の手がかり（お客様の言葉・直前の送信・段階・時期 等）25字×最大4"], "depth": "${DEPTH_KINDS.join("|")}（この番をどれだけ深く読んだか）", "depth_clue": "深さを決めた手がかり 25字", "depth_why": "なぜその深さか 30字", "readings": [{"reading": "立てた読み（お客様は今こう思っている・こうしたい）30字", "focus": "${FOCUS_KINDS.join("|")}"}（2〜3候補）], "chosen": 選んだ読みの番号（0 から）, "chosen_why": "選んだ理由 30字", "priority": ["優先した要件を大切な順に ${PRIORITY_KINDS.join("|")} から最大3つ"], "focus": "この番で一番大切にした事 ${FOCUS_KINDS.join("|")}", "order": ["使った確認の順番を ${ORDER_ROLES.join("|")} から順に"], "order_why": "その順番にした理由 30字", "purpose": "なぜこの番でこれをするか（目的）を ${PURPOSE_KINDS.join("|")} から1つ", "purpose_why": "その目的にした理由 30字", "missing": [{"kind": "${MISSING_KINDS.join("|")}", "what": "何が足りないか 25字"}]（足りない物が無ければ []・最大3）, "key_point": "この番で押さえる要点（お客様のどの言葉・どの事実か）30字"}`;
+/** 目的・足りない情報・要点に書かない言葉の目安（道・次の一手の言葉）。読み取りでは消さずに物差しで数える */
+export const BASIS_ROUTE_WORD_RE = /AIX|返信|申込|内覧|押す|抑え|次の一手|誘導|オススメ|お送りする/; // 「押さえる要点」は欄の名前なので含めない（部屋を抑えるは「抑え」）
+export const BRAIN_JUDGE_BASIS_LEGEND = `目的＝${PURPOSE_KINDS.map((k) => `${k}（${PURPOSE_LABEL[k]}）`).join("・")}。足りない情報＝${MISSING_KINDS.map((k) => `${k}（${MISSING_LABEL[k]}）`).join("・")}。目的・足りない情報・要点はお客様の言葉と事実だけで書く（道や次の一手の言葉は書かない）。重点＝${FOCUS_KINDS.map((k) => `${k}（${FOCUS_LABEL[k]}）`).join("・")}。優先＝${PRIORITY_KINDS.map((k) => `${k}（${PRIORITY_LABEL[k]}）`).join("・")}。`;
 
 /** ブレインの「今回の発言」の出力に足す項目（off なら空文字）。brainSevenOutputItem の後ろに続ける */
 export function brainJudgeBasisOutputItem(env?: Env): string {
@@ -47,9 +56,14 @@ export function normalizeJudgeBasis(raw: unknown): JudgeBasis | null {
     clues, depth: pickOf(o.depth, DEPTH_KINDS), depthClue: blank(o.depth_clue) ? "" : clip(o.depth_clue, 40), depthWhy: blank(o.depth_why) ? "" : clip(o.depth_why, 50),
     readings, chosen, chosenWhy: blank(o.chosen_why) ? "" : clip(o.chosen_why, 50),
     priority, focus: pickOf(o.focus, FOCUS_KINDS), order, orderWhy: blank(o.order_why) ? "" : clip(o.order_why, 50),
+    purpose: pickOf(o.purpose, PURPOSE_KINDS), purposeWhy: blank(o.purpose_why) ? "" : clip(o.purpose_why, 50),
+    missing: Array.isArray(o.missing)
+      ? o.missing.flatMap((m): BasisMissing[] => { const r = (m && typeof m === "object" ? m : { kind: m }) as { kind?: unknown; what?: unknown }; const k = pickOf(r.kind, MISSING_KINDS); return k ? [{ kind: k, what: blank(r.what) ? "" : clip(r.what, 40) }] : []; }).filter((x, i, a) => a.findIndex((y) => y.kind === x.kind) === i).slice(0, 3)
+      : null,
+    keyPoint: blank(o.key_point) ? "" : clip(o.key_point, 50),
   };
-  return out.depth || out.focus || out.readings.length || out.priority.length || out.order.length ? out : null;
+  return out.depth || out.focus || out.readings.length || out.priority.length || out.order.length || out.purpose || out.keyPoint ? out : null;
 }
 
 /** digest の短い1語（例: d|answer|answer_question） */
-export const judgeBasisDigest = (t: JudgeBasis | null | undefined) => (t ? `${t.depth ? t.depth[0] : "?"}|${t.focus ?? "?"}|${t.priority[0] ?? "?"}` : null);
+export const judgeBasisDigest = (t: JudgeBasis | null | undefined) => (t ? `${t.depth ? t.depth[0] : "?"}|${t.focus ?? "?"}|${t.priority[0] ?? "?"}|${t.purpose ?? "?"}|m${t.missing ? t.missing.length : "?"}` : null);

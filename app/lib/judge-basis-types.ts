@@ -5,6 +5,8 @@
 //   （ブレインへの指示文・読み取り・物差し・試験の正解の欄は全部ここから読む）。
 //   重点（FOCUS_KINDS）と順番の役（FOCUS_ORDER の role）は conductor-focus.ts の物をそのまま使う（二重に持たない）。
 import { FOCUS_KINDS, FOCUS_LABEL, FOCUS_ORDER, type Focus } from "./conductor-focus";
+import { INFO_KEYS, INFO_LABEL, type InfoKey } from "./info-fill-map";
+import type { Need } from "./check-order";
 
 export { FOCUS_KINDS, FOCUS_LABEL, type Focus };
 
@@ -32,11 +34,27 @@ export const ORDER_ROLES: readonly string[] = (() => {
   return seen;
 })();
 
-/** 外れた段（左から先に起きた段を数える） */
-export const MISS_STAGES = ["read", "pick", "depth", "priority", "focus", "order", "path"] as const;
+// ── 2026-11-12 作業員22（作業員17 から持ち主を引き継ぎ・竹内さん 11/12「なぜやっているか・何の情報が足りていないから行っているか・どこの要点を押さえにいっているか」）
+/** 目的（なぜこの番でこれをするか）。名前は作業員16 の check-order.ts の Need（型の priority の欄）と同じ。表の側で増減したら下の型の検査が tsc で落ちる */
+export const PURPOSE_KINDS = ["keep_result", "answer", "confirm_promise", "send_promise", "worry", "next_move", "relation"] as const;
+export type Purpose = typeof PURPOSE_KINDS[number];
+type Exact<A extends string, B extends string> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
+export const _PURPOSE_IS_NEED: Exact<Purpose, Need> = true;
+export const PURPOSE_LABEL: Record<Purpose, string> = {
+  keep_result: "前の約束の結果を果たす", answer: "聞かれた事に答える", confirm_promise: "確かめる約束をする", send_promise: "送る約束をする",
+  worry: "不安を消す", next_move: "次の段に進める", relation: "関係をつなぐ",
+};
+/** 足りない情報（何が分かっていないからこの番でそうしているか）。名前は作業員1 の info-fill-map.ts の INFO_KEYS（13項目）の1か所（11/12 統括役の決め）。
+ *  ここでは写さずに読む（項目が増減したらブレインへの指示・読み取り・物差しが一緒に変わる）。取りに行く材料の道具（brain-need の NEED_TOOLS）とは別物 */
+export const MISSING_KINDS = INFO_KEYS;
+export type MissingKind = InfoKey;
+export const MISSING_LABEL: Record<MissingKind, string> = INFO_LABEL;
+
+/** 外れた段（左から先に起きた段を数える）。目的（purpose）と足りない情報（missing）は深さの後・優先の前（何のために・何が無いかが先に決まり、その後で優先を並べる） */
+export const MISS_STAGES = ["read", "pick", "depth", "purpose", "missing", "priority", "focus", "order", "path"] as const;
 export type BasisMissStage = typeof MISS_STAGES[number];
 export const MISS_STAGE_LABEL: Record<BasisMissStage, string> = {
-  read: "読み（候補に正解の読みが無い）", pick: "読みの選び（候補にあったが選ばなかった）", depth: "深さ", priority: "優先", focus: "重点", order: "順番", path: "道",
+  read: "読み（候補に正解の読みが無い）", pick: "読みの選び（候補にあったが選ばなかった）", depth: "深さ", purpose: "目的", missing: "足りない情報", priority: "優先", focus: "重点", order: "順番", path: "道",
 };
 
 /** 試験の問題 spec に足す正解の欄（任意・全部省略できる） */
@@ -51,6 +69,12 @@ export type BasisGold = {
   order?: string[];
   /** 作業員16 の型の表（check-order.ts）の型の id（T1_conditions_first 等）。名前を合わせた後、優先・順番・深さをここから出す */
   type?: string;
+  /** 目的（PURPOSE_KINDS・check-order の Need と同じ名前）。無ければ type の表の priority の先頭 */
+  purpose?: Purpose;
+  /** 足りない情報（MISSING_KINDS）。[] は「足りない物は無い」 */
+  missing?: MissingKind[];
+  /** 押さえる要点（竹内さんがその番で押さえた所・30字） */
+  keyPoint?: string;
   /** 付けた人・日付・根拠の番（人が確かめた物だけ入れる） */
   by?: string;
 };
