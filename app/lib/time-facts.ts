@@ -76,7 +76,13 @@ function dayFact(ms: number): DayFact {
   const p = jstParts(ms); const ymd = ymdOf(ms);
   return { ymd, md: `${p.m}/${p.d}`, dow: WEEKDAYS_JA[p.dow], holiday: JP_HOLIDAYS[ymd] ?? null, weekend: p.dow === 0 || p.dow === 6 };
 }
-const mgmtClosedDay = (d: DayFact) => d.weekend || !!d.holiday;
+/**
+ * 管理会社の休みの扱い（今は final-check の旧の扱い＝土日祝。定休日（水曜など）は未確認）。
+ * audit-mgmt-hours.ts（実際の LINE の曜日×時刻の数え・22時以降）の結果で、ここだけを直す（曜日 0=日…6=土）。管理会社ごとに違えば MGMT_CLOSED_BY_TYPE に型を足す。
+ */
+export const MGMT_CLOSED_WEEKDAYS: readonly number[] = [0, 6];
+export const MGMT_CLOSED_ON_HOLIDAY = true;
+const mgmtClosedDay = (d: DayFact) => MGMT_CLOSED_WEEKDAYS.includes(WEEKDAYS_JA.indexOf(d.dow as (typeof WEEKDAYS_JA)[number])) || (MGMT_CLOSED_ON_HOLIDAY && !!d.holiday);
 
 export function elapsedLabel(minutes: number): string {
   if (!Number.isFinite(minutes) || minutes < 0) return "";
