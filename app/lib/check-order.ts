@@ -365,3 +365,38 @@ export const NEXT_MOVE_OF_TYPE: Readonly<Record<string, { usual: NextMove; alt: 
   T11_first_contact_hearing: { usual: { dest: "ask_condition", strength: "none", timing: "now" }, alt: [], why: "初回は条件を聞くのが一手（フォーム）。押さない", count: "本番 12240・12306" },
   T12_hooked_comparing_taken: { usual: { dest: "apply", strength: "strong", timing: "now" }, alt: [{ dest: "viewing", strength: "invite", timing: "now", when: "抑えた状態でご内覧（内覧で気に入れば決める）" }, { dest: "keep_send", strength: "none", timing: "plant", when: "抑えながら並行して新着も探す（合わなければその中から）" }], why: "抑える一手を主に、内覧と並行探しを従に置くと、比べたい・取られたくないの両方を満たす", count: "竹内さんの実例 11/12" },
 };
+
+/** 2026-11-12 竹内さん「なぜやっているか・何の情報が足りていないから行っているか・どこの要点を押さえにいっているか」:
+ *  型ごとの目的（purpose）・足りない情報（missing）・押さえる要点（keyPoint）。通数と例は CHECK_ORDER_TYPES の count・examples と同じ竹内さんの番（198通・本番の物差し・11/12 の実例）。
+ *  CHECK_ORDER_GUIDE は missing だけを「確かめる順の理由」に使う（purpose・keyPoint は道の後の文の統括・配分が読む）。 */
+export const TYPE_INTENT: Readonly<Record<string, { purpose: string; missing: string[]; keyPoint: string }>> = {
+  T1_conditions_first: { purpose: "分かってもらえたという信頼を作る", missing: ["その条件で送れる物件がまだ揃っていない", "前の条件から何が変わったか（変更か追加か・ずっとか今回か）"], keyPoint: "条件を復唱して、全域から探すと約束する" },
+  T2_question_fact: { purpose: "聞かれた事に即答して信頼を保つ", missing: ["答えの出所（会話・資料・会社の事実のどれにあるか）"], keyPoint: "結論から答える（保留しない）" },
+  T3_question_staff_only: { purpose: "作り話をせず確かめた答えを届ける", missing: ["管理会社でないと分からない答え（募集状況・設備の可否・交渉の結果）"], keyPoint: "聞かれた事そのものを確かめると約束する" },
+  T4_property_shared: { purpose: "空いている物件で話を進める（無駄な見積を作らない）", missing: ["その物件の募集状況", "何のために送ったか（空き・費用・条件の参考）"], keyPoint: "まず空きを確かめ、見積はその後" },
+  T5_ack_hypothesis: { purpose: "了承に合う次の扉を開けて関係を続ける", missing: ["何への了承か（こちらの直前の送信のどれか）"], keyPoint: "直前の送信に合う一言（物件の後＝気になる部屋・見積の後＝ご確認・約束の後＝約束を守る）" },
+  T6_considering: { purpose: "急かさず関係を続ける", missing: ["決める合図があるか（今日中に決める・埋まる不安）"], keyPoint: "扉だけ残す（ごゆっくり・いつでも）" },
+  T7_viewing: { purpose: "内覧の日を決める", missing: ["お客様の都合・いまの段階（候補日・日にち決定・待ち合わせ）", "その物件が内見できるか"], keyPoint: "可否に答えて日程を決める" },
+  T8_cost: { purpose: "総額を見せて決められる状態にする", missing: ["対象の物件が決まっているか", "総額のどの項目が気になっているか"], keyPoint: "総額を見せる（物件があれば御見積書）" },
+  T9_apply_signal: { purpose: "取られる前に抑える", missing: ["どの物件か・その物件の空きが確かめ済みか"], keyPoint: "即承認して物件を特定する" },
+  T10_result_ready: { purpose: "約束を果たして信頼を積む", missing: ["どの約束の結果が揃ったか"], keyPoint: "結果を先に届け、空いていなければ代わり" },
+  T11_first_contact_hearing: { purpose: "初回の信頼を作る", missing: ["条件（入居時期・家賃・エリア・間取り）", "言われた事情への答え"], keyPoint: "事情に答えてから条件を聞く" },
+  T12_hooked_comparing_taken: { purpose: "比べたい・取られたくないを両方満たす", missing: ["刺さった点・比べたい迷い・取られる不安のどれが強いか", "保証会社の審査通過までの扱い（会社の事実）"], keyPoint: "取られる前に抑え、並行して探す" },
+};
+
+/** 2026-11-12: 足りない情報の名前は作業員1 の app/lib/info-fill-map.ts の INFO_KEYS（13項目・1か所）を使う（keys）。
+ *  INFO_KEYS に無い物は extra に置き、作業員1 に足す案として出す（ここで別の語彙を作らない）。info-fill-map が main に入ったら型を InfoKey にする。 */
+export const MISSING_INFO: Readonly<Record<string, { keys: string[]; extra: string[] }>> = {
+  T1_conditions_first: { keys: ["area", "rent", "layout", "move_in", "size"], extra: ["sendable_ready（その条件で送れる物件が揃っているか）"] },
+  T2_question_fact: { keys: [], extra: ["answer_source（答えの出所: 会話・資料・会社の事実）"] },
+  T3_question_staff_only: { keys: ["vacancy_checked"], extra: ["mgmt_answer（管理会社でないと分からない答え）"] },
+  T4_property_shared: { keys: ["property_chosen", "vacancy_checked"], extra: ["sent_purpose（お客様が何のために送ったか）"] },
+  T5_ack_hypothesis: { keys: [], extra: ["ack_target（何への了承か）"] },
+  T6_considering: { keys: [], extra: ["decide_signal（決める合図・埋まる不安）"] },
+  T7_viewing: { keys: ["viewing_date"], extra: ["viewable（その物件が内見できるか）"] },
+  T8_cost: { keys: ["property_chosen", "estimate_sent"], extra: [] },
+  T9_apply_signal: { keys: ["property_chosen", "vacancy_checked", "apply_intent"], extra: [] },
+  T10_result_ready: { keys: [], extra: ["fulfilled_promise（どの約束の結果が揃ったか）"] },
+  T11_first_contact_hearing: { keys: ["area", "rent", "layout", "move_in", "screening_info"], extra: [] },
+  T12_hooked_comparing_taken: { keys: ["property_chosen", "vacancy_checked"], extra: ["company_fact_hold（抑えた時の扱いの会社の事実）"] },
+};
