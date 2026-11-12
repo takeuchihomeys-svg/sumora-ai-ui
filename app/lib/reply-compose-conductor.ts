@@ -19,7 +19,11 @@
 //
 // スイッチ: COMPOSE_CONDUCTOR=on（既定 off＝今と1文字も変わらない）。
 // テスト: npx tsx app/lib/__tests__/reply-compose-conductor.test.ts
-import { planFromMeta, type TwoMessagePlan, type PlannedMessage, type Duty } from "./two-message-plan";
+import { planFromMeta, planMessages, type TwoMessagePlan, type PlannedMessage, type Duty, type PlanAsk } from "./two-message-plan";
+/** 2026-11-12 作業員7: meta に組み立てが無い時に文の統括の側で作る（既定 off・COMPOSE_PLAN_FALLBACK=on） */
+export function composePlanFallbackOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.COMPOSE_PLAN_FALLBACK ?? "").trim().toLowerCase() === "on";
+}
 import { relationKeep } from "./conductor-focus";
 
 type Env = Record<string, string | undefined>;
@@ -45,6 +49,16 @@ export function readComposeInputs(meta: unknown): ComposeInputs {
   if (focus) read.push("重点");
   let plan: TwoMessagePlan | null = null;
   try { plan = planFromMeta(m); } catch { plan = null; }
+  // 2026-11-12 作業員7（統括役の決め・COMPOSE_PLAN_FALLBACK 既定 off）: CONDUCTOR_COMBINE が off の本番では meta.two_message_plan が無く
+  //   （brain_decision_logs の直近 digest.tm 0/7）、ここだけ代わりが無いので各通の受け持ちが空になっていた。aix-template-generate（route.ts:1278）と同じ planMessages で作る
+  if (!plan && composePlanFallbackOn()) {
+    try {
+      const asks = ((m.turn_contract as { asks?: PlanAsk[] } | undefined)?.asks ?? null);
+      const finalAix = String(m.reply_mode ?? "") === "aix" && typeof m.action === "string" && m.action.trim() ? m.action : null;
+      plan = planMessages({ asks, finalAix });
+      if (plan) read.push("組み合わせ（代わり）");
+    } catch { plan = null; }
+  }
   if (plan) read.push("組み合わせ");
   const replyMsg = plan?.messages.find((x) => x.slot === "reply") ?? null;
   return { focus, plan, replyMsg, read };
