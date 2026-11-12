@@ -245,7 +245,15 @@ function shiftProblem(p: ExamProblem, days: number): ExamProblem {
     customer: sh(p.customer), staffText: sh(p.staffText ?? ""),
     asks: (p.asks ?? []).map((a) => ({ ...a, q: sh(a.q), point: sh(a.point) })),
     ng: (p.ng ?? []).map((x) => sh(x)),
+    // 2026-11-12 作業員7（q116・far_move_in_contact が11回とも壊した原因）: 条件の行の入居時期（move_in_time「10月1日」）はずらしていなかった。
+    //   会話は 9/18→11月にずれるのに条件は「10月1日」のまま＝今から見て来年の10月＝入居時期が先（連絡の日の約束）と読まれた。試験の写しの食い違い。
+    //   既定 on（11/12 統括役・止める EXAM_SHIFT_PC_DATES=off）。入力が変わる問題は11（q003・q005・q025・q043・q078・q116・q160・q202・q211・q334・q371）＝夜の基準の作り直しに乗せる
+    ...(examShiftPcDatesOn() && p.pc && typeof (p.pc as Record<string, unknown>).move_in_time === "string"
+      ? { pc: { ...(p.pc as Record<string, unknown>), move_in_time: sh(String((p.pc as Record<string, unknown>).move_in_time)) } } : {}),
   };
+}
+export function examShiftPcDatesOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.EXAM_SHIFT_PC_DATES ?? "").trim().toLowerCase() !== "off"; // 11/12 統括役の決め: 試験の写しの誤りの直しなので既定 on（止める =off）
 }
 const OUT = `${RESULTS_DIR}/${LABEL}.jsonl`;
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", (process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) ?? "");
