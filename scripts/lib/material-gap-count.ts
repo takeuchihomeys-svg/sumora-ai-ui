@@ -4,6 +4,15 @@
 //   人の送信にだけある中身の種類から ①何が ③どこから ④なぜ無いか ⑤何が起きるか を推す。
 //   ⚠ ④は「その材料がその時点で DB にあったか」を見ていない推定（決まった線）。DB の確かめは JST 22時以降に軽く（別の台本）。
 import type { MaterialGap, GapWhy, GapEffect, GapFrom, GapWhatKind } from "../../app/lib/material-gap-ledger";
+import { conversationFactKind, CONVERSATION_FACT_SPEC, type ConversationFactKind } from "../../app/lib/conversation-fact-kinds";
+
+/** 会話の中の事実の種類 → ③どこから・④なぜ（11/12 46件を目で読んだ分け） */
+const CF_WHY: Record<ConversationFactKind, { from: GapFrom; why: GapWhy } | null> = {
+  viewing_logistics: { from: "company_facts", why: "c" }, viewing_schedule: { from: "db_table", why: "e" }, check_result: { from: "check_result", why: "e" },
+  vacancy_result: { from: "check_result", why: "e" }, search_scope: { from: "conversation", why: "c" }, company_knowledge: { from: "company_facts", why: "a" },
+  doc_fact: { from: "document", why: "b" }, cost_breakdown: { from: "db_table", why: "c" }, apply_procedure: { from: "company_facts", why: "c" },
+  customer_circumstance: { from: "conversation", why: "c" }, ack_only: null,
+};
 
 export type WeakSpot = { key: string; bucket: string; scene: string; type: string; n: number; typeJa?: string; examples?: Array<{ customer?: string | null; draft?: string | null; sent?: string | null }> };
 
@@ -15,7 +24,7 @@ export const SPOT_EFFECT: Record<string, GapEffect | null> = {
 };
 
 /** 人の送信にだけある中身 → ①何が・③どこから・④なぜ無いか（推定） */
-export function classifySentContent(sent: string, draft: string, type: string): { kind: GapWhatKind; name: string; from: GapFrom; why: GapWhy } {
+export function classifySentContent(sent: string, draft: string, type: string, customer?: string | null): { kind: GapWhatKind; name: string; from: GapFrom; why: GapWhy } | null {
   const s = String(sent ?? "").normalize("NFKC");
   const onlyInSent = (re: RegExp) => re.test(s) && !re.test(String(draft ?? "").normalize("NFKC"));
   if (type === "other" || type === "promise_added") return { kind: "check_result", name: "管理会社・スタッフの確認の結果", from: "check_result", why: "e" };
@@ -26,7 +35,11 @@ export function classifySentContent(sent: string, draft: string, type: string): 
   if (onlyInSent(/保証会社|独立系|信販系|信用系|審査/)) return { kind: "doc_field", name: "保証会社・審査の事実", from: "document", why: "b" };
   if (onlyInSent(/\d{1,2}\s*[\/月]\s*\d{1,2}|\d{1,2}:\d{2}|曜|退去予定|入居可能/)) return { kind: "doc_field", name: "日付（入居・退去・内覧）", from: "document", why: "c" };
   if (onlyInSent(/設備|洗面|キッチン|バス|トイレ|収納|駐車場|ペット/)) return { kind: "doc_field", name: "設備・条件（資料の欄）", from: "document", why: "b" };
-  return { kind: "exchange_left", name: "会話の中の事実（種類が決まらない）", from: "conversation", why: type === "promise_escape" ? "c" : "a" };
+  // 2026-11-12 会話の中の事実の種類（conversation-fact-kinds）で分ける。お礼・了承だけは材料の抜けではない（null）
+  const k = conversationFactKind(customer ?? "", sent);
+  const w = CF_WHY[k];
+  if (!w) return null;
+  return { kind: "exchange_left", name: `会話の事実: ${CONVERSATION_FACT_SPEC[k].label}`, from: w.from, why: w.why };
 }
 
 /** 1つの型の例を台帳の抜けに（例が無い時は型だけで1件） */
@@ -35,10 +48,11 @@ export function gapsFromSpot(sp: WeakSpot): Array<MaterialGap & { n: number; spo
   if (!effect) return [];
   const ex = sp.examples?.length ? sp.examples : [{ sent: "", draft: "" }];
   const per = sp.n / ex.length;
-  return ex.map((e) => {
-    const c = classifySentContent(String(e.sent ?? ""), String(e.draft ?? ""), sp.type);
+  return ex.flatMap((e) => {
+    const c = classifySentContent(String(e.sent ?? ""), String(e.draft ?? ""), sp.type, (e as { customer?: string | null }).customer ?? null);
+    if (!c) return [];
     const forRole = sp.bucket.startsWith("aix") ? "aix_first" as const : "writer" as const;
-    return { what: { kind: c.kind, name: c.name }, forRole, forWhat: `${sp.scene} の${sp.bucket.startsWith("aix") ? " AIX の文" : "返信の文"}`, from: c.from, why: c.why, effect, n: per, spotKey: sp.key };
+    return [{ what: { kind: c.kind, name: c.name }, forRole, forWhat: `${sp.scene} の${sp.bucket.startsWith("aix") ? " AIX の文" : "返信の文"}`, from: c.from, why: c.why, effect, n: per, spotKey: sp.key }];
   });
 }
 
