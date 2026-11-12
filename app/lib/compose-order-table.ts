@@ -188,8 +188,8 @@ export function readOurSendUptake(meta: unknown): UptakePart[] {
   const arr = Array.isArray(raw) ? raw : Array.isArray(objOf(raw)?.parts) ? (objOf(raw)!.parts as unknown[]) : [];
   const s = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
   return arr.map((x) => objOf(x)).filter((x): x is Record<string, unknown> => !!x).map((x) => {
-    const hook = x.hook === "hooked" || x.hook === "neutral" || x.hook === "not_hooked" ? x.hook : null;
-    const degree = x.degree === "curious" || x.degree === "strong" || x.degree === "decide" ? x.degree : null;
+    const hook: UptakePart["hook"] = x.hook === "hooked" || x.hook === "neutral" || x.hook === "not_hooked" ? x.hook : null;
+    const degree: UptakePart["degree"] = x.degree === "curious" || x.degree === "strong" || x.degree === "decide" ? x.degree : null;
     const st = String(x.strength ?? x.level ?? "").trim();
     const strength = (degree === "decide" || degree === "strong" ? "strong" : degree === "curious" ? "weak" : st === "strong" || st === "weak" ? st : "mid") as UptakePart["strength"];
     return { property: s(x.property ?? x.ref, 40), point: s(x.point ?? x.aspect, 40) ?? "", strength, clue: s(x.cue ?? x.clue ?? x.evidence, 40), hook, degree, uptake: s(x.uptake, 20), part: s(x.part, 40) };
