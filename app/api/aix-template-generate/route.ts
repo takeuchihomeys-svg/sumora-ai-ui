@@ -100,6 +100,8 @@ import { examTestSnapshot, snapshotRows } from "@/app/lib/exam-test-snapshot";
 import { aixSecondLeanOn } from "@/app/lib/aix-second-lean";
 // 2026-11-12 作業員25: 2通目にブレインの決め手の残り（customer_mindset.decideGap）を渡す（AIX_SECOND_LINK=on・既定 off）
 import { aixSecondLinkOn, decideGapOfMeta, secondDecideGapLine } from "@/app/lib/aix-second-link";
+// 2026-11-12 竹内さんの決定 A: ブレインと押された AIX が違う2通目の読み直し（AIX_SECOND_REREAD=on・既定 off）
+import { aixSecondRereadOn, brainPressedDiffer, stripBrainDirection, rereadNote } from "@/app/lib/aix-second-reread";
 import { applyWording1028On, applyPushWordingLine } from "@/app/lib/aix-brain-contract";
 // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 見積書の直後の2通目の形・締め・検査（スタッフが書いた2通目 132通から）
 import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
@@ -1280,9 +1282,32 @@ export async function POST(req: NextRequest) {
     ? (planFromMeta(brainMeta, lastCustomerMsg?.rawCreatedAt ?? null) ?? planMessages({ asks: ((brainMeta as { turn_contract?: { asks?: PlanAsk[] } } | null)?.turn_contract?.asks ?? null), finalAix: (brainMeta?.action as string | undefined) ?? null }))
     : null;
   const twoMsgNote = twoMsgPlan ? templateReplyPartNote(twoMsgPlan, actionType) : "";
-  const brainMetaSection = buildBrainStrategyNote(brainMeta, {
+  // 2026-11-12 竹内さんの決定「Aでおねがい」（AIX_SECOND_REREAD=on・既定 off・aix-second-reread.ts）: ブレインの勧めた AIX と押された AIX が違う2通目は、
+  //   押された AIX を正として、その意味で読み直した結果（なぜ今・何に応えるか・押さえる要点）を渡す。前の方向（返信方向・勝ちパターン・判断理由）は渡さない。
+  //   読み直せない時は案B（方向を渡さず、押された AIX と会話だけ）。道は変えない（押された AIX が道）
+  const rereadOn = aixSecondRereadOn() && !!actionType && !!String(sentMessage ?? "").trim() && !!brainMeta && brainPressedDiffer(brainMeta?.action as string | null | undefined, actionType);
+  let secondRereadNote = "";
+  if (rereadOn) {
+    let meaning = "";
+    try { meaning = (await import("@/app/lib/aix-catalog")).aixMeaningForGenerator(actionType as string, pickupType ?? null, { maxExemplars: 0 }); } catch { meaning = ""; }
+    const bmr = brainMeta as (SuggestedAixMeta & { customer_concern?: { topic?: string; object?: string } | null; customer_mindset?: { decideGap?: { quote?: string | null } | null } | null }) | null;
+    const readings = [
+      bmr?.latent_intent ? `潜在動機: ${bmr.latent_intent}` : "",
+      bmr?.customer_concern ? `不安・関心: ${bmr.customer_concern.topic ?? ""} ${bmr.customer_concern.object ?? ""}` : "",
+      bmr?.customer_emotion ? `気持ち: ${bmr.customer_emotion}` : "",
+      bmr?.customer_mindset?.decideGap?.quote ? `決め手の残り: 「${bmr.customer_mindset.decideGap.quote}」` : "",
+    ].filter(Boolean);
+    const rr = isStaleMeta ? { reread: null, ms: 0, skipped: "stale" } : await (await import("@/app/lib/aix-second-reread-server")).rereadForPressedAix({
+      conversationId: conversationId ?? null, pressedLabel: actionLabel, meaning, firstMessage: String(sentMessage ?? ""),
+      recent: Array.isArray(recentMessages) ? recentMessages : [], customerName: resolvedCustomerName ?? customerName ?? null, readings,
+    });
+    const brainAct = (brainMeta?.action as string | undefined) ?? "";
+    secondRereadNote = rereadNote({ pressedLabel: actionLabel, brainLabel: brainAct ? (AIX_BUTTON_LABELS[brainAct] ?? brainAct) : null, reread: rr.reread });
+    console.log(JSON.stringify({ tag: "aix-template-generate:second-reread", pressed: actionType, brain: brainAct || null, ok: !!rr.reread, skipped: rr.skipped ?? null, ms: rr.ms }));
+  }
+  const brainMetaSection = buildBrainStrategyNote(rereadOn ? stripBrainDirection(brainMeta as unknown as Record<string, unknown>) as unknown as typeof brainMeta : brainMeta, {
     fresh: !isStaleMeta,
-    otherActionLabel: actionType && brainMeta?.action && brainMeta.action !== actionType
+    otherActionLabel: !rereadOn && actionType && brainMeta?.action && brainMeta.action !== actionType
       ? (AIX_BUTTON_LABELS[brainMeta.action] ?? brainMeta.action)
       : null,
     actionLabel,
@@ -1938,6 +1963,8 @@ export async function POST(req: NextRequest) {
     //   設計知見「同じ事実について書くなと書けを別の場所から渡さない」→ 最後に1回だけ明示して上書きする。
     // 2026-10-20 2通目の材料（返信と同じ材料・SECOND_MSG_MATERIALS=off＝空＝並びは旧と同じ）
     secondMaterials?.note ?? "",
+    // 2026-11-12 竹内さんの決定 A（AIX_SECOND_REREAD）: 押された AIX の意味での読み直し（違う番だけ・off なら空）
+    secondRereadNote,
     // 2026-11-12 作業員25: 決め手の残り（訴求の判断・網が読んだ時はその注記に入っている＝ここでは重ねない）
     secondGapLine && !secondJudge && !secondAppealNote ? `【決め手の残り（ブレインの読み・材料だけ。分析の言葉は本文に書かない）】\n・${secondGapLine}` : "",
     aixFirstNote,

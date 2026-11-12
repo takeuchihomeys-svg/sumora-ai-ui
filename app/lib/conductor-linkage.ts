@@ -95,11 +95,13 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     //   順: 材料（second-message-materials・既定 on）→ 訴求の判断（second-appeal-judge・LLM・既定 on）→ 書き手 → 締めを揃える（recommend-cta.setRecommendClosing）。
     //   道（返信か AIX か）は決めない（aix-second-link も材料だけ）。
     id: "aix_second", name: "AIX の2通目の書き手（✨・材料→訴求の判断→書き手→締めを揃える）", owner: "作業員25（点検）・作業員5（訴求の判断）", stage: "compose",
-    files: ["app/api/aix-template-generate/route.ts", "app/lib/second-appeal-judge.ts", "app/lib/second-message-materials.ts", "app/lib/aix-second-link.ts", "app/lib/recommend-cta.ts"],
+    files: ["app/api/aix-template-generate/route.ts", "app/lib/second-appeal-judge.ts", "app/lib/second-message-materials.ts", "app/lib/aix-second-link.ts", "app/lib/aix-second-reread.ts", "app/lib/recommend-cta.ts"],
     reads: ["meta.action（AIX の種類）", "AIX の1通目（sentMessage・second-message-materials.sentThisTurn）", "meta.customer_mindset（決め手の残り decideGap・AIX_SECOND_LINK）", "meta.two_message_plan（この通で答える質問）", "meta.engagement_stance", "recommend-cta の刺さり具合の網（締め）"],
-    writes: ["aix_second_writer", "log:aix-template-generate:second-appeal-judge", "log:aix-template-generate:recommend-cta"],
-    switch: "SECOND_MSG_MATERIALS（既定 on）・AIX_SECOND_APPEAL_JUDGE（既定 on）・AIX_SECOND_LINK・PROMISE_READ_UNIFIED（既定 off）",
+    writes: ["aix_second_writer", "log:aix-template-generate:second-appeal-judge", "log:aix-template-generate:recommend-cta", "log:aix-template-generate:second-reread"],
+    switch: "SECOND_MSG_MATERIALS（既定 on）・AIX_SECOND_APPEAL_JUDGE（既定 on）・AIX_SECOND_LINK・PROMISE_READ_UNIFIED・AIX_SECOND_REREAD（既定 off）",
     redecides: [
+      // 2026-11-12 竹内さんの決定「Aでおねがい」（作業員25）: ブレインの勧めた AIX と押された AIX が違う番は、押された AIX を正としてブレインがその意味で読み直す（2通目の材料だけ・道は押された AIX）
+      { of: "brain", field: "ブレインの方向（返信方向・勝ちパターン・成約戦略・判断理由・続けて送る物）→ 押された AIX の意味での読み直し（なぜ今・何に応えるか・押さえる要点）", where: "aix-template-generate aix-second-reread（AIX_SECOND_REREAD・既定 off）", why: "押された AIX が正。古い方向（「出来次第お送りする」等）を2通目に渡さない。読み直せない時は方向を渡さず押された AIX と会話だけ（案B）", example: "実物 48組（押したのは全部 物件オススメ）のうちブレインの一手が違う番 36（返信 25・物件確認した 8・見積書 2・全力サポート 1）。#2 は返信方向「…出来次第お送りする旨を、待ちの形で」が注意書きも無く渡っていた" },
       { of: "aix_second", field: "2通目の締め（recommend-cta の刺さり具合の網が決めた 内覧へ／申込へ／ご査収）", where: "aix-template-generate second-appeal-judge の締め（recCta.kind の上書き）", why: "訴求の判断（LLM）が網と違う締めを選ぶと recCta.kind を closingWhy で書き換える。スタッフが画面で内覧／申込を選んだ時は書き換えない", example: "10/29 同じ30番2回: 締めが竹内さんと同じ 10→21・申込の締め 2/4→0/4（11/04 grp-aix の悪化 2a95c137 は網と違うご査収だけを選んだ）" },
     ],
   },
@@ -213,5 +215,7 @@ export const REDECIDE_RULES: readonly RedecideRule[] = [
   { where: "final-check.ts の書き直し", by: "final_check", of: "writer", winner: "final_check", count: "答案に印が無い（試験は最終チェックの前の下書きで採点）", allowWhen: "誤った事実・決まりの線だけ（判断を落とす書き直しは止める）", mark: "final_check", sendBackTo: "writer" },
   // 2026-11-12 作業員7（作業員25 の点検）: AIX の2通目の締め。勝つのは訴求の判断（網＝recommend-cta は材料・設計図の時は網の締めと理由を判断に渡す）。スタッフが画面で選んだ締めは書き換えない
   { where: "aix-template-generate second-appeal-judge の締め（recCta.kind の上書き）", by: "aix_second", of: "aix_second", winner: "aix_second", count: "答案に印が無い（試験は返信の段・AIX の2通目は採点外）。10/29 同じ30番2回で締めが竹内さんと同じ 10→21・申込の締め 2/4→0/4", allowWhen: "スタッフが画面で内覧／申込を選んでいない時だけ（ctaPreference が先）・engagement_stance=wait の時はご査収のまま", mark: "log:aix-template-generate:second-appeal-judge・recommend-cta-closing", sendBackTo: null },
+  // 2026-11-12 竹内さんの決定「Aでおねがい」（作業員25）: 押された AIX が勝つ（ブレインは押された AIX の意味で読み直すだけ・道は変えない）
+  { where: "aix-template-generate aix-second-reread（AIX_SECOND_REREAD・既定 off）", by: "aix_second", of: "brain", winner: "aix_second", count: "答案に印が無い（AIX の2通目は採点外）。実物 48組で違う番 36（物件ピックアップした→物件オススメの 12 は同じ一手）", allowWhen: "ブレインの一手（meta.action・空＝返信）と押された AIX が違う時だけ（物件ピックアップした⇔物件オススメは同じ）・古い判断は読み直さず案B", mark: "log:aix-template-generate:second-reread", sendBackTo: "brain" },
   { where: "final-check.ts rule_check", by: "final_check", of: "writer", winner: "writer", count: "答案に印が無い", allowWhen: "夜の約束（竹内さんの決まりどおり）は消さない", mark: "final_check:rule_check", sendBackTo: "writer" },
 ];
