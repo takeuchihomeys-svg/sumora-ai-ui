@@ -705,7 +705,7 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   first_reply: "other", rent_market: "other", pending_pickup: "other", pickup_ready: "other", material_missing: "other", customer_stage_now: "other",
   // 文に関係しない（判断・AIX・記録・内部の受け渡し）
   action: "none", input_key: "none", note: "none", source: "none", enforcement_level: "none", check_pattern: "none", next_steps: "none", two_choice_aix: "none",
-  two_choice_check_pattern: "none", aix_consult: "none", aix_desk: "none", aix_recheck: "none", material_read_misses: "none", material_gaps: "none", last_turn_review: "none", alt_actions: "none",
+  two_choice_check_pattern: "none", aix_consult: "none", aix_desk: "none", aix_recheck: "none", material_read_misses: "none", material_gaps: "none", check_order_guide: "none", last_turn_review: "none", alt_actions: "none",
   parallel_search: "none", property_search_params: "none", aix_llm: "none", deep_check: "none", fast_slow: "none", need: "none", plan_ahead_at: "none",
   material_conflicts: "none", flow_signals: "none", decisions_1103: "none", near_opinion: "none", conductor_roles: "none", conductor_meta: "none", conductor_intake: "none",
   brain_depth: "none", deep_recheck_digest: "none", conductor_todos: "none", priority_step: "none", llm_raw: "none", checkpoint_stage_llm: "none", analyzed_msg_ts: "none",
