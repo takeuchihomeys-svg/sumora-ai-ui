@@ -231,6 +231,16 @@ const quiet = () => {};
   }
 
   rmSync(dir, { recursive: true, force: true });
+  // 2026-11-13 作業員8b: 入口の統括の録音（q119・11/09 と 11/12）の違いは cache_control の ttl だけ。on の時だけ鍵から外す
+  {
+    const b1 = JSON.stringify({ model: "claude-sonnet-5", system: [{ type: "text", text: "P", cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: "U" }] });
+    const b2 = JSON.stringify({ model: "claude-sonnet-5", system: [{ type: "text", text: "P", cache_control: { type: "ephemeral", ttl: "1h" } }], messages: [{ role: "user", content: "U" }] });
+    const b3 = JSON.stringify({ model: "claude-sonnet-5", system: [{ type: "text", text: "P2", cache_control: { type: "ephemeral", ttl: "1h" } }], messages: [{ role: "user", content: "U" }] });
+    ok("既定（off）: ttl の違いで鍵が変わる（今までの鍵のまま）", normalizeBody(b1, {}) !== normalizeBody(b2, {}) && normalizeBody(b1, {}).includes("cache_control"));
+    const on = { EXAM_CASSETTE_NO_CACHE_CONTROL: "on" };
+    ok("on: cache_control だけの違いは同じ鍵", normalizeBody(b1, on) === normalizeBody(b2, on) && !normalizeBody(b1, on).includes("cache_control"));
+    ok("on: 本文が違えば別の鍵", normalizeBody(b2, on) !== normalizeBody(b3, on));
+  }
   console.log(`llm-cassette: ${pass} PASS / ${fail} FAIL`);
   if (fail) process.exitCode = 1;
 })();
