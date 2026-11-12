@@ -20,6 +20,20 @@ export function prodMissIntakeEnabled(env: Record<string, string | undefined> = 
 export function selfReportIntakeEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.BRAIN_UNKNOWNS_SELF_REPORT ?? "").trim().toLowerCase() !== "off";
 }
+/**
+ * 2026-11-13 作業員1（統括役の朝の穴の割り当て）: 申込以降の番の自己申告を分からない事に入れない（申込以降は対象外・竹内さんの決定）。
+ *   直近24時間の material_missing 92行の約半分が審査・契約・書類・保証会社等＝申込中（applying 2会話 19件）と、status が物件提案中のまま
+ *   申込の記録がある会話（4会話 34件）から来ていた。番の時の status と turn-application-gate（その番の時刻で申込の記録があるか）で外す。
+ *   既定 off（BRAIN_UNKNOWNS_POST_APPLY_GATE=on）
+ */
+export function unknownsPostApplyGateOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_UNKNOWNS_POST_APPLY_GATE ?? "").trim().toLowerCase() === "on";
+}
+/** 自己申告の1行を外すか（status は番の時の conversation_status・gateReason は turnApplicationReason の答え） */
+export function selfReportPostApply(status: string | null | undefined, gateReason: string | null, skipStatuses: ReadonlySet<string>): string | null {
+  if (status && skipStatuses.has(status.trim())) return `番の時の status ${status.trim()}`;
+  return gateReason;
+}
 
 /** AIX の種類 → 系統（audit-prod-as-exam.aixFamily と同じ線・空は返信） */
 export function moveFamily(aix: string | null | undefined): string {

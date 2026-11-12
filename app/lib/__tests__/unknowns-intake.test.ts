@@ -1,5 +1,6 @@
 // app/lib/__tests__/unknowns-intake.test.ts — 分からない事の表の抜けていた入口（npx tsx app/lib/__tests__/unknowns-intake.test.ts）
-import { prodMissHits, selfReportHits, examRegressionHits, moveFamily, type ProdTurn } from "../unknowns-intake";
+import { prodMissHits, selfReportHits, examRegressionHits, moveFamily, unknownsPostApplyGateOn, selfReportPostApply, type ProdTurn } from "../unknowns-intake";
+import { DRAFT_SKIP_STATUSES } from "../conversation-status";
 import { weaknessKeyForUnknown, isWeaknessKey } from "../brain-weaknesses";
 import { aggregateUnknowns } from "../brain-unknowns";
 
@@ -41,5 +42,10 @@ t("弱い所: 「今の版:」の印の付いた本番の外れも同じ系統�
 t("弱い所: 日本語だけの試験の名前も鍵の形に収まる", (() => { const w = weaknessKeyForUnknown("exam_regression", "ブレインの判断の組:q015"); return !!w && isWeaknessKey(w.key) && /^exam-regression:j[0-9a-z]+$/.test(w.key); })());
 t("まとめ: 型×鍵で数える", aggregateUnknowns(hits).length === 2);
 
+// 2026-11-13 申込以降の番の自己申告を入れない門（実物: 11/12 の applying 2会話 19件・proposing のまま申込の記録がある 84b560f4 の「審査の進捗」等）
+t("申込の門: 既定 off", !unknownsPostApplyGateOn({}) && unknownsPostApplyGateOn({ BRAIN_UNKNOWNS_POST_APPLY_GATE: "on" }));
+t("申込の門: 番の時の status が applying は外す", !!selfReportPostApply("applying", null, DRAFT_SKIP_STATUSES));
+t("申込の門: proposing でも申込の記録が番の前なら外す", selfReportPostApply("proposing", "申込以降（申込へ押下の後）", DRAFT_SKIP_STATUSES) === "申込以降（申込へ押下の後）");
+t("申込の門: proposing で記録が無ければ残す", selfReportPostApply("proposing", null, DRAFT_SKIP_STATUSES) === null);
 console.log(`unknowns-intake: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);
