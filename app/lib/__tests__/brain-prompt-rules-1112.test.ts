@@ -23,6 +23,7 @@ if (process.argv[2] === "dump") {
   t("on と off の違いは差し替えた所だけ（長さの差＝新旧の差の合計）", on.length - off.length === PROMPT_RULE_EDITS_1112.reduce((a, e) => a + e.to.length - e.from.length, 0));
   t("実物 off: acknowledge_check の説明が正反対に2つある（差し替え前の確認）", /acknowledge_check: 管理会社への確認依頼の文を作る（お客様宛てではない）/.test(off) && /acknowledge_check: 御見積書を送った後/.test(off));
   t("実物 on: 管理会社への確認依頼の説明が無く、代表確認だけ・確認の約束は返信（2段）", !/acknowledge_check: 管理会社への確認依頼の文を作る/.test(on) && /acknowledge_check: 御見積書を送った後/.test(on) && /募集状況の確認の約束は返信（2段）・確認の結果が出たら property_check_result/.test(on));
+  t("実物 on: 『いきなり物件確認したで大丈夫』の引用が無い（cf241dbd）・実送信の数は残る", !/いきなり物件確認したで大丈夫/.test(on) && /確認します 0）/.test(on) && /いきなり物件確認したで大丈夫/.test(off));
   t("実物 on: cost_explain の 2,980円は会社の事実＝返信", /2,980円の仕組み（スモラ＝一律2,980円／イエヤス・ギガ＝0円）は会社の事実＝返信で答える/.test(on));
   t("元の文が無い時は黙って飛ばす", applyPromptRules1112("無関係", { BRAIN_PROMPT_RULES_1112: "on" }) === "無関係");
   console.log(`off ${h(off)} (${off.length}字) / on ${h(on)} (${on.length}字)`);
