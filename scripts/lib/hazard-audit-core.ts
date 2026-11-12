@@ -160,8 +160,20 @@ export function deepseekFailLine(c: DsFailCounts): { ok: boolean; line: string }
  *   deepseekSafeCutoff・cutBeforeApplicationMaterial・LLM_TEST の写し）を通していないファイル。注記の行は見ない。
  */
 const DS_CALL_RE = /\b(?:sharedPropertyImageRead|readPropertyImage(?:Detail)?|callDeepSeekRead|readPropertyImageDetailByTranscript)\s*\(|api\.deepseek\.com/;
-const DS_GUARD_RE = /\b(?:loadDeepseekCutoff|isAfterCutoff|deepseekSafeCutoff|cutBeforeApplicationMaterial|findRereadTargets|runSentImageReread|setupLlmTest)\b/;
-export function deepseekWithoutCutoff(src: string): boolean {
+const DS_GUARD_RE = /\b(?:loadDeepseekCutoff|isAfterCutoff|deepseekSafeCutoff|cutBeforeApplicationMaterial|findRereadTargets|runSentImageReread|setupLlmTest)\b|script-deepseek-gate/;
+/**
+ * (o) の許可の一覧（2026-11-13 作業員8b・統括役）: 会話の材料を DeepSeek に送らない台本（見張りの誤検知）。足す時は理由を必ず書く。
+ *   会話の画像を読む台本は許可せず、scripts/lib/script-deepseek-gate を import する（fetch の出口の申込の門）
+ */
+export const DS_GATE_ALLOW: Readonly<Record<string, string>> = {
+  "scripts/audit-image-read-grounding.ts": "物件ピックアップ（property_pickups＝検索で取った物件の資料）だけ読む・会話の画像を送らない",
+  "scripts/debug-detail-read.ts": "物件ピックアップの資料だけ読む（readPropertyImageDetail が空になる理由の確かめ）",
+  "scripts/yuma-pickup-deepseek-test.ts": "テスト用の会話 YUMA の物件ピックアップの資料だけ",
+  "scripts/verify-sheet-vacancy-read.ts": "手元の物件の資料の画像 12枚だけ（DB を読まない・個人情報なし）",
+  "scripts/outcome-loss-reason.ts": "conversations.deepseek_cutoff_at の線より前のお客様の発言だけを maskPII して送る（台本の中で線を見ている）",
+};
+export function deepseekWithoutCutoff(src: string, file?: string): boolean {
+  if (file && DS_GATE_ALLOW[file.replace(/\\/g, "/")]) return false;
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "").split(/\r?\n/).map((l) => l.replace(/(^|[^:])\/\/.*$/, "$1")).join("\n");
   return DS_CALL_RE.test(code) && !DS_GUARD_RE.test(code);
 }
