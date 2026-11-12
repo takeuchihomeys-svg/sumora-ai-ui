@@ -16,6 +16,7 @@
 //       main_point・latent_intent・customer_concern・appeal_timing・current_property
 // スイッチ: COMPOSE_SENTENCE_PLAN（2026-11-12 統括役: 既定 on・6問の前後比べで pathWorse 0・essenceWorse 0・確かな悪化 0（w10-csp-maj6-p2・maj6c）。戻す =off）。
 // テスト: npx tsx app/lib/__tests__/compose-sentence-plan.test.ts
+import { toNextDest, type NextDest } from "./next-move-types";
 import type { SentenceRole } from "./takeuchi-anatomy-roles";
 import { ROLE_LABEL } from "./takeuchi-anatomy-roles";
 import { ABOUT_VALUES, ABOUT_JA, type RequestAbout } from "./request-ledger";
@@ -298,7 +299,7 @@ export function readComposeContext(meta: unknown, extra: { nextIntent?: string |
     judgeBasis: (() => { const j = obj(m.judge_basis); if (!j) return null; const rs = Array.isArray(j.readings) ? j.readings.map((r) => obj(r)) : []; const ch = typeof j.chosen === "number" ? j.chosen : null; const arr = (v: unknown, n: number) => (Array.isArray(v) ? v.map((x) => str(x, n)).filter((x): x is string => !!x) : []);
       return { clues: arr(j.clues, 30).slice(0, 4), reading: ch != null ? str(rs[ch]?.reading, 40) : null, readingWhy: str(j.chosenWhy ?? j.chosen_why, 50), priority: arr(j.priority, 20).slice(0, 3), focus: str(j.focus, 20), order: join([arr(j.order, 20).join(">") || null, str(j.orderWhy ?? j.order_why, 50)], "＝") }; })(),
     later: readTurnUnderstanding(m).later ?? [], topics: readTurnUnderstanding(m).topics ?? [],
-    dirLead: (() => { const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? LEAD_TO_JA[d] : null; })(),
+    dirLead: (() => { if (composeDestFromBrainOn()) return null; const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? LEAD_TO_JA[d] : null; })(),
     mindset: (() => { const cm = obj(m.customer_mindset); if (!cm || typeof cm.state !== "string") return null; const ax = obj(cm.anxiety); return join([cm.state, ax ? join([str(ax.target, 20), str(ax.direction, 6)], "・") : null, str(cm.hesitation, 20)], "／"); })(),
     stance: join([str(m.engagement_stance, 6), str(m.purchase_signal_level, 6) ? `買う合図 ${str(m.purchase_signal_level, 6)}` : null], "・"),
   };
@@ -350,6 +351,24 @@ const DIR_LEAD: Array<[RegExp, LeadToV]> = [
   [/内覧(?:に|へ|を)(?:誘|勧|ご案内)|ご案内(?:する|を)|内見(?:に|を)誘/, "viewing"],
   [/答え|伝え|説明|正直に/, "answer_only"],
 ];
+/**
+ * 2026-11-12 作業員10（統括役 作業員24 の洗い出し #2・COMPOSE_DEST_FROM_BRAIN=on・既定 off）:
+ *   誘導先を reply_direction の自由文から正規表現（DIR_LEAD）で読むのをやめ、ブレインの出力値だけから取る。
+ *   取る順: 7つの欄の lead（seven_read・takeuchi_fields）→ appeal_timing（must/suggest の内覧・申込）→ 構成の意図の next（compose-blueprint の COMPOSE_NEXT）。
+ *   どれも無ければ空のまま（書き手は誘導の行を作らない）。値の読み替えは next-move-types の toNextDest → NEXT_DEST → LeadToV の表だけ。
+ */
+export function composeDestFromBrainOn(env: Env = envOf()): boolean {
+  return (env.COMPOSE_DEST_FROM_BRAIN ?? "").trim().toLowerCase() === "on";
+}
+const DEST_TO_LEAD: Record<NextDest, LeadToV> = {
+  viewing: "viewing", apply: "apply", estimate: "estimate", ask_send: "ask_send", ask_condition: "ask_send",
+  keep_send: "keep", wait_check: "none", answer_only: "answer_only", door: "keep", none: "none",
+};
+/** 構成の意図の next（COMPOSE_NEXT）→ 誘導先。ブレインが出した値の読み替えだけ */
+export function leadFromBrainNext(next: string | null | undefined): LeadToV | null {
+  const d = toNextDest(next ?? null, "compose_next");
+  return d ? DEST_TO_LEAD[d] : null;
+}
 export function leadFromDirection(dir: unknown): LeadToV | null {
   const t = typeof dir === "string" ? dir.replace(/頼まれていない[^。]*?(?:足さない|書かない)/g, "") : "";
   if (!t.trim()) return null;
@@ -365,7 +384,7 @@ export const LATENT_FACT_TYPES: Partial<Record<LatentKind, string>> = {
 };
 
 /** 竹内さんの7つの欄（作業員5 の takeuchi_fields が来れば従う → 無い欄は今ある材料 → それも無ければ空） */
-export function readSevenFields(meta: unknown): SevenFields {
+export function readSevenFields(meta: unknown, opt: { nextIntent?: string | null; env?: Env } = {}): SevenFields {
   const m = obj(meta) ?? {};
   const out: SevenFields = { keyPoint: null, bridge: null, leadTo: null, appeal: null, latentCover: null, keyHow: [], trustHow: [], push: null, src: {} };
   // 作業員5 の SevenRead（takeuchi-seven-read.ts の形: point{what,how,skipped}・bridge{what,how}・lead・appeal{property,point,how}・
@@ -413,11 +432,11 @@ export function readSevenFields(meta: unknown): SevenFields {
     // 2026-11-12 受け渡しの漏れ: 訴求のタイミングの理由（appeal_timing.reason）も押す・待つの理由として運ぶ（強さは決めない）
     if (!out.push && at && typeof at.reason === "string" && (kind === "viewing" || kind === "apply" || level === "avoid")) { out.push = { push: level === "must" || level === "suggest", strength: null, reason: str(at.reason, 50) }; out.src.push = "material"; }
   }
-  if (!out.leadTo) { const d = leadFromDirection(m.reply_direction); if (d) { out.leadTo = d; out.src.leadTo = "material"; } }
+  if (!out.leadTo) { const d = composeDestFromBrainOn(opt.env) ? leadFromBrainNext(opt.nextIntent) : leadFromDirection(m.reply_direction); if (d) { out.leadTo = d; out.src.leadTo = "material"; } }
   if (composeLeadJudgeFirstOn() && out.src.leadTo === "seven_read") {
     const at = obj(m.appeal_timing);
     const atLead = at && (at.kind === "viewing" || at.kind === "apply") && (at.level === "must" || at.level === "suggest") ? (at.kind as LeadToV) : null;
-    const judged = atLead ?? leadFromDirection(m.reply_direction);
+    const judged = atLead ?? (composeDestFromBrainOn(opt.env) ? null : leadFromDirection(m.reply_direction));
     if (judged && judged !== "none" && judged !== out.leadTo) { out.leadAlt = out.leadTo; out.leadTo = judged; out.src.leadTo = "material"; }
   }
   if (!out.latentCover) {

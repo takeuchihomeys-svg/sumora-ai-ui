@@ -51,9 +51,10 @@ t("締めの決め表", () => {
   assert.deepEqual([decideClosing({ ...base, considering: true }).invite, decideClosing({ ...base, considering: true }).sign], ["none", "kigaru"]);
   assert.equal(decideClosing({ ...base, propertyState: "vacating" }).invite, "none");
   assert.equal(decideClosing({ ...base, propertyState: "vacating", urgent: true }).invite, "apply");
-  assert.equal(decideClosing({ ...base, dest: "keep_send", strength: "none", lastRole: "keep" }).sign, "nanitozo");
+  assert.equal(decideClosing({ ...base, dest: "keep_send", strength: "none", lastRole: "keep", firstContact: true }).sign, "nanitozo");
+  assert.equal(decideClosing({ ...base, dest: "keep_send", strength: "none", sentenceCount: 6, customerAsked: true }).sign, "none");
   assert.equal(decideClosing({ ...base, dest: "answer_only", strength: "none", lastRole: "answer", sentenceCount: 2 }).sign, "none");
-  assert.equal(decideClosing({ ...base, dest: "answer_only", strength: "none", sentThisTurn: true }).sign, "sashu");
+  assert.equal(decideClosing({ ...base, dest: "answer_only", strength: "none", sentThisTurn: true }).sign, "receipt");
 });
 
 t("既定 off は何も足さない・on で1行", () => {

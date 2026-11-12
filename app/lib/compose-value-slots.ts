@@ -20,7 +20,9 @@
 //     誘い無し＋結び無し 366・誘い無し＋何卒 134・内覧の誘い 152（うち結び無し＝誘いの文で終わる 78・お気軽に 41・何卒 19）・
 //     申込の誘い 39・お気軽に だけ 21・ご査収 は送った物がある時だけ（送った文 0 通の返信では 0）
 //     198番の文の数×結び: 1〜2文 何卒 6/34・3〜4文 33/119・5文以上 22/45 ＝ 長い返信ほど何卒
-//     直前の役目×結び: 障壁を下げる→お気軽に 5/16・受けだけ→何卒 5/9 お気軽に 4/9・申込の誘い→結び無し 9/13
+//     直前の役目×結び: 障壁を下げる→お気軽に 5/16・受けだけ→何卒 5/9 お気軽に 4/9・申込の誘い→結び無し 9/13（役目では決まらない＝表に使わない）
+//     何卒の手がかり: 初回（ご連絡頂き）11/18・全力サポート 13/22・お客様が問いを書いた番 16/80（＝答えの番は結び無し）
+//     表を 198番に当てた中の値（scripts/audit-closing-table.ts）: 誘い 75%（いつも無し 72%）・結び 61%（いつも無し 56%）＝結びは弱い。見ていない番で確かめる
 //   既にある決まり（変えない・この表はその上に数えを足しただけ）:
 //     feedback_recommend_cta_by_appeal（刺さる→内覧の誘い／退去予定→ご査収が基本・申込は入居が近い・急ぐ・かなり刺さる時だけ（10/29 No.34）／そこまで→ご査収）
 //     feedback_reply_wording_1008（何卒は締めの型・「検討します」は誘わず閉じる）・next-move-types の strengthCeiling（刺さっていない時は内覧に誘わない）
@@ -187,9 +189,9 @@ export function valueSlotsNote(p: { appeal?: ValueSlotPlan | null; source?: Answ
 // ─── ② 締めの決め表 ───────────────────────────────────────────────────────
 
 export type Invite = "viewing" | "apply" | "none";
-export type SignOff = "nanitozo" | "sashu" | "kigaru" | "none";
+export type SignOff = "nanitozo" | "receipt" | "kigaru" | "none";
 export const INVITE_JA: Record<Invite, string> = { viewing: "内覧の誘い（お気に召されましたらご都合よろしいお日にちにご案内させて頂きます）", apply: "申込の誘い（お気に召されましたらお申込しお部屋抑えさせて頂きます）", none: "誘い無し" };
-export const SIGN_JA: Record<SignOff, string> = { nanitozo: "何卒よろしくお願い致します", sashu: "お手隙の際にご査収ください", kigaru: "お気軽にお申し付けください", none: "結び無し（最後の文で終える）" };
+export const SIGN_JA: Record<SignOff, string> = { nanitozo: "何卒よろしくお願い致します", receipt: "お手隙の際にご査収ください", kigaru: "お気軽にお申し付けください", none: "結び無し（最後の文で終える）" };
 export type Hook = "hooked" | "neutral" | "not_hooked" | null;
 export type ClosingInput = {
   scene: string | null;
@@ -205,6 +207,10 @@ export type ClosingInput = {
   /** 入居が近い・急いでいる・申込の合図（退去予定でも申込に誘ってよい） */
   urgent: boolean;
   sentenceCount: number;
+  /** 初回の返信（ご連絡頂きありがとうございます の番） */
+  firstContact?: boolean;
+  /** お客様が問いを書いた番 */
+  customerAsked?: boolean;
   /** 締めの直前の役目 */
   lastRole?: string | null;
 };
@@ -222,10 +228,10 @@ export function decideClosing(c: ClosingInput): ClosingDecision {
     else why.push("退去予定はご査収が基本（竹内さん 30通: ご査収 70%・申込 17%）");
   } else if (c.dest === "viewing" && c.strength !== "none") { invite = "viewing"; why.push("行き先が内覧（返信の内覧の誘い 152通）"); }
   let sign: SignOff;
-  if (c.sentThisTurn && invite === "none") { sign = "sashu"; why.push("この番に送った物がある＝ご査収"); }
+  if (c.sentThisTurn && invite === "none") { sign = "receipt"; why.push("この番に送った物がある＝ご査収"); }
   else if (invite !== "none") { sign = "none"; why.push("誘いの文で終える（内覧の誘いの後 結び無し 78/152・申込の誘いの後 9/13）"); }
-  else if (c.considering || c.lastRole === "barrier") { sign = "kigaru"; why.push("検討・障壁を下げた後＝お気軽に（障壁の後 5/16）"); }
-  else if (c.sentenceCount >= 5 || c.lastRole === "keep" || c.lastRole === "trust" || c.lastRole === "promise") { sign = "nanitozo"; why.push("5文以上・約束・サポートの後＝何卒（5文以上 22/45）"); }
+  else if (c.considering) { sign = "kigaru"; why.push("検討します＝お気軽に"); }
+  else if (c.firstContact || (c.sentenceCount >= 5 && !c.customerAsked)) { sign = "nanitozo"; why.push("初回・長い返信＝何卒（初回 11/18・5文以上 22/45・問いへの答えの番は 16/80 なので外す）"); }
   else { sign = "none"; why.push("短い答えは結び無し（4文以下 何卒 39/153）"); }
   return { invite, sign, why };
 }
@@ -247,7 +253,7 @@ export function hookOf(meta: unknown): Hook {
   if (parts.every((p) => p.hook === "not_hooked")) return "not_hooked";
   return "neutral";
 }
-export function composeSlotsAndClosing(o: { plan: SentencePlan; s7: SevenFields; meta: unknown; scene: string | null; customerText: string; materialText: string; sentThisTurn?: boolean }, env?: Env): { note: string; digest: string } {
+export function composeSlotsAndClosing(o: { plan: SentencePlan; s7: SevenFields; meta: unknown; scene: string | null; customerText: string; materialText: string; sentThisTurn?: boolean; firstContact?: boolean }, env?: Env): { note: string; digest: string } {
   const roles = o.plan.rows.map((r) => r.role);
   const dest = toNextDest(o.s7.leadTo ?? null, "lead_to");
   const strength = strengthFromSeven(o.s7.push ? { push: o.s7.push.push, strength: o.s7.push.strength } : null);
@@ -262,9 +268,14 @@ export function composeSlotsAndClosing(o: { plan: SentencePlan; s7: SevenFields;
   const closing = decideClosing({
     scene: o.scene, dest, strength: apply ? apply.strength : strength, hook: hookOf(o.meta), propertyState, sentThisTurn: !!o.sentThisTurn,
     considering: /検討/.test(o.customerText), urgent: cues.kinds.includes("K15") || /急ぎ|すぐにでも|早め|今週中|来週中/.test(o.customerText),
-    sentenceCount: o.plan.rows.length, lastRole: [...roles].reverse().find((r) => r !== "close") ?? null,
+    sentenceCount: o.plan.rows.length, firstContact: !!o.firstContact, customerAsked: /[?？]|ですか|ますか/.test(o.customerText), lastRole: [...roles].reverse().find((r) => r !== "close") ?? null,
   });
   const note = [valueSlotsNote({ appeal, source, apply }, env), closingNote(closing, env)].filter(Boolean).join("\n");
   const digest = `値=${appeal?.values.map((v) => v.kind).join(">") || "-"}${source ? `｜出所=${source}` : ""}${apply ? `｜申込=${apply.strength}` : ""}｜${closingDigest(closing)}`;
   return { note, digest };
+}
+
+/** 締めの決め → compose-blueprint の COMPOSE_CLOSING の名前（誘いがあれば誘いの札・無ければ結びの札） */
+export function toComposeClosing(d: ClosingDecision): "nanitozo" | "receipt" | "kigaru" | "viewing_cta" | "apply_cta" | "none" {
+  return d.invite === "viewing" ? "viewing_cta" : d.invite === "apply" ? "apply_cta" : d.sign;
 }

@@ -4505,7 +4505,7 @@ async function handleGenerateReply(req: NextRequest) {
     const composeSentencePlan = composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation && brainMeta && brainLocalFresh
       ? (() => {
           try {
-            const u = readTurnUnderstanding(brainMeta), s7 = readSevenFields(brainMeta);
+            const u = readTurnUnderstanding(brainMeta), s7 = readSevenFields(brainMeta, { nextIntent: composeRun?.intent.next ?? null });
             const plan0 = buildSentencePlan(u, s7, { scene: composeConductorScene, ctx: readComposeContext(brainMeta, { nextIntent: composeRun?.intent.next && composeRun.intent.next !== "none" ? composeRun.intent.next : null }) });
             // 2026-11-12 作業員10（語彙を1つに・COMPOSE_VOCAB_UNIFIED=on・既定 off）: 場面の要る段・書かない段を設計図の行に効かせる（app/lib/compose-vocab.ts）
             const planU = applySceneConstraints(plan0, composeConductorScene);
@@ -4518,7 +4518,7 @@ async function handleGenerateReply(req: NextRequest) {
             // 2026-11-12 作業員10（COMPOSE_ELEMENT_TYPES=on・既定 off）: 要素ごとの言葉の型（押す線・信頼の作り方・潜在の一文）をブレインの欄から選んで1行に。選んだ型は off でも digest に
             const elem = pickElementTypes(brainMeta);
             // 2026-11-12 作業員10（COMPOSE_VALUE_SLOTS・COMPOSE_CLOSING_TABLE=on・既定 off）: 役目×場面→出す値の欄・順位・出さない値（値は材料から決まった計算で）と返信の締めの決め表。digest は off でも残す
-            const slots = (() => { try { return composeSlotsAndClosing({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), materialText: [...contractMaterialFacts, ownProperty?.note ?? ""].join("\n") }); } catch { return null; } })();
+            const slots = (() => { try { return composeSlotsAndClosing({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), materialText: [...contractMaterialFacts, ownProperty?.note ?? ""].join("\n"), firstContact: isFirstEverReplyFromMsgs === true }); } catch { return null; } })();
             const note0 = [sentencePlanNote(plan), ord.noteLine && sentencePlanNote(plan) ? ord.noteLine : "", sentencePlanNote(plan) ? elementTypesNote(elem) : "", sentencePlanNote(plan) ? uptakeNote(uptakePlan(brainMeta)) : "", sentencePlanNote(plan) ? trustTurnNote({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), firstContact: isFirstEverReplyFromMsgs === true, meta: brainMeta, recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-8).map((m) => m.text ?? "") }) : "", sentencePlanNote(plan) ? propertyNameNote({ property: u.main?.property ?? null, customerText: customerMsgUnits.join("\n") || (message ?? ""), recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-3).map((m) => m.text ?? "") }) : "", sentencePlanNote(plan) ? slots?.note ?? "" : ""].filter(Boolean).join("\n");
             return { plan, note: note0 && ex ? `${note0}\n${ex.note}` : note0, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${planU.removed.length ? `｜外した=${planU.removed.join(",")}` : ""}${planU.requiredRoles.length ? `｜要る=${planU.requiredRoles.join(",")}` : ""}｜${orderBasisDigest(ord.basis)}｜言葉の型=${[...elem.push_line, ...elem.trust, ...elem.latent_line].join(",") || "-"}${slots ? `｜${slots.digest}` : ""}` };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
