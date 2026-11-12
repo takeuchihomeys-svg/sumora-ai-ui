@@ -8,7 +8,7 @@
 //   ① STEP_TO_PART … 「判断の順番」（check-order.ts の CheckStep）と「部品を動かす順」（conductor-focus.ts の FOCUS_ORDER の役）は別物。名前を分けたまま、対応表で結ぶ
 //   ② ALLOCATION … 場面の型 T1〜T11 × 読む深さ（shallow／normal／deep）ごとに、動かす部品と順番・動かさない部品と理由・費用の目安・止め時
 //   ③ pickAllocation … 型と深さから配分を1つ選ぶ（深さが無ければ CHECK_DEPTH の既定の深さ）
-//   ④ allocationDigest … 選んだ配分の名前の1行（digest.al）。部品の名前と並べ方は orderDigest・judge_basis の order と同じ（"judge>fetch>…"）
+//   ④ allocationDigest … 選んだ配分の名前の1行（digest.al）。部品の名前と並べ方は orderDigest（digest.or）と同じ（judge_basis の order は判断の順番 CheckStep＝STEP_TO_PART で結ぶ・11/12 名前の合わせ直し）（"judge>fetch>…"）
 //   ⑤ stopCheck … 止め時（材料がそろった／費用の上限）を見て、残りの部品のうち任意の物を呼ぶかを返す
 // 置き方の決まり: 配分は「決定の材料を集める側」だけ。返信か AIX か（meta.action）は読まないし変えない。
 // スイッチ: CONDUCTOR_ALLOCATION（既定 off＝どこからも呼ばない＝今と同じ／shadow＝meta.conductor_allocation と digest.al に記録だけ／
@@ -249,7 +249,7 @@ export function normDepth(v: unknown): BasisDepth | null {
 }
 
 // ── ④ 記録の1行 ───────────────────────────────────────────
-/** digest.al の1行。"<配分の名前>:<部品の順>"（部品の順は orderDigest・judge_basis の order と同じ並べ方） 例 "T4_property_shared/d:judge>fetch>deep>combine>compose>writer" */
+/** digest.al の1行。"<配分の名前>:<部品の順>"（部品の順は orderDigest と同じ並べ方・judge_basis の order は CheckStep で別の名前） 例 "T4_property_shared/d:judge>fetch>deep>combine>compose>writer" */
 export const allocationDigest = (a: Allocation | null | undefined): string | null => (a ? `${a.name}:${a.parts.join(">")}` : null);
 /** digest の長さの都合で短くした名前（型の番号だけ） 例 "T4/d:judge>fetch>deep>combine>compose>writer" */
 export const allocationDigestShort = (a: Allocation | null | undefined): string | null => (a ? `${a.typeId.split("_")[0]}/${DEPTH_SHORT[a.depth]}:${a.parts.join(">")}` : null);

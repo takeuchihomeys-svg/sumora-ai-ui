@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { brainJudgeBasisOn, brainJudgeBasisOutputItem, normalizeJudgeBasis, BRAIN_JUDGE_BASIS_FIELD } from "../brain-judge-basis";
 import { ORDER_ROLES, FOCUS_KINDS, DEPTH_KINDS } from "../judge-basis-types";
 import { goldOf, scoreTurn, buildReport, inferFocusFromAccept, formatReport } from "../../../scripts/lib/judge-basis-score";
-import { FOCUS_ORDER } from "../conductor-focus";
+import { checkOrderById, CHECK_ORDER_TYPES as TYPES16, CHECK_DEPTH } from "../check-order";
+import { NEED_KINDS, CHECK_STEPS, DEPTH_VIA_KINDS } from "../judge-basis-types";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -25,7 +26,7 @@ t("on＝判断を書き終えた後の書き終えた後のメモと明記・型
 const raw = {
   clues: ["初期費用が高い", "見積後の返信", ""], depth: "deep", depth_clue: "不安の言葉", depth_why: "背景に予算",
   readings: [{ reading: "費用を知りたい", focus: "answer" }, { reading: "高くて不安", focus: "ease" }, { reading: "x", focus: "bogus" }], chosen: 1, chosen_why: "不安の言葉が強い",
-  priority: ["ease_worry", "answer_question", "ease_worry", "nope"], focus: "ease", order: ["judge", "deep", "zzz", "writer"], order_why: "不安から",
+  priority: ["worry", "answer", "worry", "nope"], focus: "ease", order: ["read_ask", "hypothesize", "zzz", "route"], order_why: "不安から", depth_via: "bogus",
 };
 t("読み取り: 一覧の外は捨てる・重複と空は除く・壊れた物は null", () => {
   const l = normalizeJudgeBasis(raw)!;
@@ -33,42 +34,49 @@ t("読み取り: 一覧の外は捨てる・重複と空は除く・壊れた物
   assert.equal(l.depth, "deep");
   assert.equal(l.readings[2].focus, null);
   assert.equal(l.chosen, 1);
-  assert.deepEqual(l.priority, ["ease_worry", "answer_question"]);
-  assert.deepEqual(l.order, ["judge", "deep", "writer"]);
+  assert.deepEqual(l.priority, ["worry", "answer"]);
+  assert.deepEqual(l.order, ["read_ask", "hypothesize", "route"]);
+  assert.equal(l.depthVia, null);
+  assert.equal(normalizeJudgeBasis({ ...raw, depth: "normal", depth_via: "back" })!.depthVia, "back");
   assert.equal(normalizeJudgeBasis({}), null);
   assert.equal(normalizeJudgeBasis("x"), null);
   assert.equal(normalizeJudgeBasis({ chosen: 5, focus: "answer", readings: [] })!.chosen, null);
 });
 t("正解: spec.basis は human・無ければ accept の AIX 型から重点だけ推定", () => {
   assert.equal(goldOf({ id: "a", basis: { focus: "ease" } }).source, "human");
-  assert.deepEqual(goldOf({ id: "a", basis: { focus: "ease" } }).order, FOCUS_ORDER.ease.map((s) => s.role).filter((r, i, a) => a[i - 1] !== r));
+  const t8 = goldOf({ id: "a", basis: { focus: "answer", type: "T8_cost" } });
+  assert.deepEqual(t8.order, checkOrderById("T8_cost")!.check); assert.deepEqual(t8.priority, checkOrderById("T8_cost")!.priority); assert.equal(t8.depth, CHECK_DEPTH.T8_cost.base); assert.equal(t8.typeId, "T8_cost");
+  assert.deepEqual(goldOf({ id: "a", basis: { focus: "ease" } }).order, []);
+  assert.deepEqual(goldOf({ id: "a", basis: { focus: "answer", type: "T8_cost", priority: ["worry"] } }).priority, ["worry"]);
+  assert.equal(goldOf({ id: "a", basis: { focus: "close", type: "T12_hooked_comparing_taken" } }).depth, "deep");
   assert.equal(inferFocusFromAccept(["AIX:viewing_invite"]), "close");
   assert.equal(inferFocusFromAccept(["AIX:左右"]), null);
   assert.equal(inferFocusFromAccept(["返信"]), null);
   assert.equal(goldOf({ id: "a", accept: ["AIX:cost_explain"] }).source, "inferred");
   assert.equal(goldOf({ id: "a", accept: ["返信"] }).source, "none");
 });
-const spec = { id: "q1", type: "費用", basis: { focus: "ease" as const, depth: "deep" as const, priority: ["ease_worry" as const] } };
+const T8 = checkOrderById("T8_cost")!.check;
+const spec = { id: "q1", type: "費用", basis: { focus: "ease" as const, depth: "deep" as const, priority: ["worry" as const], type: "T8_cost" } };
 const brainOf = (log: unknown, path = true) => ({ id: "q1", rep: 1, brain: { judge_basis: log }, score: { path } });
 t("外れた段: 読み→選び→深さ→優先→重点→順番→道の順に先の1つ", () => {
-  const ok = scoreTurn(spec, brainOf({ ...raw, order: FOCUS_ORDER.ease.map((s) => s.role) }));
+  const ok = scoreTurn(spec, brainOf({ ...raw, order: T8 }));
   assert.equal(ok.missStage, null); assert.equal(ok.orderExact, true); assert.equal(ok.focusHit, true);
   assert.equal(scoreTurn(spec, brainOf({ ...raw, readings: [{ reading: "a", focus: "answer" }], chosen: 0 })).missStage, "read");
   assert.equal(scoreTurn(spec, brainOf({ ...raw, chosen: 0 })).missStage, "pick");
   assert.equal(scoreTurn(spec, brainOf({ ...raw, depth: "shallow" })).missStage, "depth");
-  assert.equal(scoreTurn(spec, brainOf({ ...raw, priority: ["next_step"] })).missStage, "priority");
+  assert.equal(scoreTurn(spec, brainOf({ ...raw, priority: ["next_move"] })).missStage, "priority");
   assert.equal(scoreTurn(spec, brainOf({ ...raw, focus: "close" })).missStage, "focus");
-  assert.equal(scoreTurn(spec, brainOf({ ...raw, order: ["writer", "judge"] })).missStage, "order");
-  assert.equal(scoreTurn(spec, brainOf({ ...raw, order: FOCUS_ORDER.ease.map((s) => s.role) }, false)).missStage, "path");
+  assert.equal(scoreTurn(spec, brainOf({ ...raw, order: ["roles", "aim"] })).missStage, "order");
+  assert.equal(scoreTurn(spec, brainOf({ ...raw, order: T8 }, false)).missStage, "path");
 });
 t("judge_basis が無い答案でも conductor_focus の重点を数える・深さは none", () => {
   const v = scoreTurn(spec, { id: "q1", brain: { conductor_focus: { focus: "ease" } }, score: { path: true } });
   assert.equal(v.focusHit, true); assert.equal(v.depth, "none"); assert.equal(v.orderExact, null);
 });
 t("集計: 場面別・深さ別・外れた段・選んだ順番の当たり", () => {
-  const okOrder = FOCUS_ORDER.ease.map((s) => s.role);
+  const okOrder = T8;
   const r = buildReport([spec, { id: "q2", type: "内覧", accept: ["AIX:viewing_invite"] }, { id: "q3", accept: ["返信"] }], [
-    brainOf({ ...raw, order: okOrder }), brainOf({ ...raw, depth: "shallow", order: ["writer"] }),
+    brainOf({ ...raw, order: okOrder }), brainOf({ ...raw, depth: "shallow", order: ["roles"] }),
     { id: "q2", brain: { judge_basis: { focus: "close", depth: "normal" } }, score: { path: true } }, { id: "q3", brain: {} }, { id: "zz", brain: {} },
   ]);
   assert.equal(r.noSpec, 1); assert.equal(r.noGold, 1);
@@ -83,6 +91,18 @@ t("spec の basis（人が付けた正解）: 重点は一覧の中・by あり"
   assert.ok(withBasis.length >= 25);
   for (const x of withBasis) { assert.ok((FOCUS_KINDS as readonly string[]).includes(x.basis!.focus ?? ""), x.id); assert.ok(x.basis!.by, x.id); assert.equal(goldOf(x as never).source, "human"); }
   assert.ok(new Set(withBasis.map((x) => x.basis!.focus)).size >= 6);
+});
+t("16 の表と名前が1か所で合う（Need・CheckStep・CheckDepth の base と via・全型の check/priority が一覧の中・spec の type は表にある）", () => {
+  for (const ty of TYPES16) {
+    for (const c of ty.check) assert.ok((CHECK_STEPS as readonly string[]).includes(c), ty.id + c);
+    for (const nd of ty.priority) assert.ok((NEED_KINDS as readonly string[]).includes(nd), ty.id + nd);
+    assert.ok(CHECK_DEPTH[ty.id], ty.id);
+    assert.ok((DEPTH_KINDS as readonly string[]).includes(CHECK_DEPTH[ty.id].base), ty.id);
+    if (CHECK_DEPTH[ty.id].via) assert.ok((DEPTH_VIA_KINDS as readonly string[]).includes(CHECK_DEPTH[ty.id].via!), ty.id);
+  }
+  const spec2 = JSON.parse(readFileSync("scripts/brain-exam/spec.json", "utf8")) as Array<{ id: string; basis?: { type?: string } }>;
+  for (const x of spec2) if (x.basis?.type) assert.ok(checkOrderById(x.basis.type), x.id);
+  assert.ok(BRAIN_JUDGE_BASIS_FIELD.includes("depth_via") && CHECK_STEPS.every((k) => BRAIN_JUDGE_BASIS_FIELD.includes(k)));
 });
 // ── 2026-11-12 作業員22: 目的・足りない情報・押さえる要点 ──
 import { PURPOSE_KINDS, MISSING_KINDS, MISS_STAGES } from "../judge-basis-types";
@@ -112,11 +132,11 @@ t("読み取り: 目的は一覧の中・足りない情報は種類で重ねず
   assert.equal(normalizeJudgeBasis(raw)!.missing, null);
   assert.equal(normalizeJudgeBasis({ ...raw, purpose: "next_step" })!.purpose, null);
   assert.equal(normalizeJudgeBasis({ purpose: "answer" })!.purpose, "answer");
-  assert.equal(judgeBasisDigest(l), "d|ease|ease_worry|worry|m3");
+  assert.equal(judgeBasisDigest(l), "d|ease|worry|worry|m3");
 });
 t("物差し: 目的・足りない情報・要点の当たり／外れた段は深さの後・優先の前／道の言葉を数える／型の表から目的", () => {
-  const sp = { id: "q1", type: "費用", basis: { focus: "ease" as const, depth: "deep" as const, priority: ["ease_worry" as const], purpose: "worry" as const, missing: ["estimate_sent" as const], keyPoint: "礼金が無ければという言葉" } };
-  const ok = { ...raw, order: FOCUS_ORDER.ease.map((s) => s.role), purpose: "worry", missing: [{ kind: "estimate_sent", what: "内覧の日時より先に総額" }], key_point: "礼金が無ければの言葉" };
+  const sp = { id: "q1", type: "費用", basis: { focus: "ease" as const, depth: "deep" as const, priority: ["worry" as const], type: "T8_cost", purpose: "worry" as const, missing: ["estimate_sent" as const], keyPoint: "礼金が無ければという言葉" } };
+  const ok = { ...raw, order: T8, purpose: "worry", missing: [{ kind: "estimate_sent", what: "内覧の日時より先に総額" }], key_point: "礼金が無ければの言葉" };
   const v = scoreTurn(sp, brainOf(ok));
   assert.deepEqual([v.purposeHit, v.missingHit, v.keyPointHit, v.routeWord, v.missStage], [true, true, true, false, null]);
   assert.equal(scoreTurn(sp, brainOf({ ...ok, purpose: "answer" })).missStage, "purpose");

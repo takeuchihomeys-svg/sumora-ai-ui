@@ -5,16 +5,16 @@
 //   ブレインの側: 答案の行の brain.judge_basis（BRAIN_JUDGE_BASIS=on）の重点・深さ・優先・順番・読み。
 //     judge_basis が無い行（off で回した答案）でも、重点は brain.conductor_focus.focus（conductor-focus の shadow）があればそれで数える。
 //   出す物: 場面ごとの重点の当たり／深さ別の当たり／外れた段（読み・選び・深さ・優先・重点・順番・道）／選んだ順番が竹内さんと合ったか。
-import { FOCUS_ORDER, focusOfAix, orderDigest, type Focus } from "../../app/lib/conductor-focus";
+import { focusOfAix, type Focus } from "../../app/lib/conductor-focus";
 import { normalizeJudgeBasis, BASIS_ROUTE_WORD_RE, type JudgeBasis } from "../../app/lib/brain-judge-basis";
-import { checkOrderById } from "../../app/lib/check-order";
+import { checkOrderById, CHECK_DEPTH } from "../../app/lib/check-order";
 import { DEPTH_KINDS, FOCUS_KINDS, FOCUS_TOP_PRIORITY, MISS_STAGES, PURPOSE_KINDS, MISSING_KINDS, type Purpose, type MissingKind, type BasisGold, type BasisMissStage, type BasisDepth } from "../../app/lib/judge-basis-types";
 
 export type SpecLite = { id: string; type?: string; tags?: string[]; accept?: string[]; basis?: BasisGold | null; scene?: string | null };
 export type AnswerRow = { id: string; rep?: number; brain?: Record<string, unknown> | null; path?: { ok?: boolean | null } | null; score?: { path?: boolean | null; pass?: boolean | null } | null };
 
 /** 正解の重点・優先・順番・深さ（source: human＝spec の basis／inferred＝accept の AIX 型から推定・重点だけ） */
-export type GoldBasis = { focus: Focus | null; priority: string[]; order: string[]; depth: BasisDepth | null; source: "human" | "inferred" | "none";
+export type GoldBasis = { focus: Focus | null; priority: string[]; order: string[]; depth: BasisDepth | null; source: "human" | "inferred" | "none"; typeId: string | null;
   /** 2026-11-12 作業員22: 目的（人が付けた物か、型の表の priority の先頭）・足りない情報（人が付けた物だけ・[] は無い）・押さえる要点（人が付けた物だけ） */
   purpose: Purpose | null; missing: MissingKind[] | null; keyPoint: string | null };
 
@@ -29,18 +29,29 @@ export function inferFocusFromAccept(accept: ReadonlyArray<string> | undefined):
   return found.size === 1 ? [...found][0] : null;
 }
 
-const orderOfFocus = (f: Focus | null): string[] => (f ? FOCUS_ORDER[f].map((s) => s.role).filter((r, i, a) => a[i - 1] !== r) : []);
 const dedupeRuns = (xs: ReadonlyArray<string>): string[] => xs.filter((r, i, a) => a[i - 1] !== r);
 
+/**
+ * 正解を出す（作業員17 の 10377bb0 を作業員16 の今の形の上に載せ直し・作業員22）。spec.basis の優先・順番・深さが無ければ、type（16 の型の表の id）の表の値から出す（人が書いた物が先）。
+ * type も無く重点だけの問題は、優先の最初だけ重点から推す・順番と深さは持たない（表の型が無いと決まらない）。
+ */
 export function goldOf(spec: SpecLite): GoldBasis {
   const g = spec.basis;
   const why = whyGoldOf(g);
-  if (g && (g.focus || g.priority?.length || g.order?.length || g.depth || why.purpose || why.missing || why.keyPoint)) {
+  if (g && (g.focus || g.priority?.length || g.order?.length || g.depth || g.type || why.purpose || why.missing || why.keyPoint)) {
     const focus = g.focus && FOCUS_KINDS.includes(g.focus) ? g.focus : null;
-    return { focus, priority: g.priority?.length ? [...g.priority] : focus ? [FOCUS_TOP_PRIORITY[focus]] : [], order: g.order?.length ? dedupeRuns(g.order) : orderOfFocus(focus), depth: g.depth && DEPTH_KINDS.includes(g.depth) ? g.depth : null, source: "human", ...why };
+    const t = g.type ? checkOrderById(g.type) : null;
+    const depthT = t ? CHECK_DEPTH[t.id]?.base ?? null : null;
+    return {
+      focus,
+      priority: g.priority?.length ? [...g.priority] : t ? [...t.priority] : focus ? [FOCUS_TOP_PRIORITY[focus]] : [],
+      order: g.order?.length ? dedupeRuns(g.order) : t ? dedupeRuns(t.check) : [],
+      depth: g.depth && DEPTH_KINDS.includes(g.depth) ? g.depth : depthT,
+      source: "human", typeId: t?.id ?? null, ...why,
+    };
   }
   const f = inferFocusFromAccept(spec.accept);
-  return f ? { focus: f, priority: [FOCUS_TOP_PRIORITY[f]], order: orderOfFocus(f), depth: null, source: "inferred", ...why } : { focus: null, priority: [], order: [], depth: null, source: "none", ...why };
+  return f ? { focus: f, priority: [FOCUS_TOP_PRIORITY[f]], order: [], depth: null, source: "inferred", typeId: null, ...why } : { focus: null, priority: [], order: [], depth: null, source: "none", typeId: null, ...why };
 }
 /** 目的・足りない情報・要点の正解（人が付けた物だけ。目的は無ければ型の表の priority の先頭＝作業員16 の Need の名前のまま） */
 function whyGoldOf(g: BasisGold | null | undefined): { purpose: Purpose | null; missing: MissingKind[] | null; keyPoint: string | null } {

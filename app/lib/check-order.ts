@@ -343,10 +343,10 @@ export function checkOrderNote(t: CheckOrderType): string {
   ].join("\n");
 }
 
-/** Need（この表の優先の名前）→ judge-basis-types の Priority（重点の物差しと同じ名前で数える） */
+/** Need（この表の優先の名前）→ judge-basis-types の Priority。2026-11-12 作業員22: 判断の根拠の優先を Need の名前そのものにした（統括役の決め・作業員17 の名前の合わせ直しの載せ直し）＝同じ名前の対応 */
 export const PRIORITY_OF_NEED: Record<Need, Priority> = {
-  keep_result: "keep_promise", answer: "answer_question", confirm_promise: "keep_promise", send_promise: "keep_promise",
-  worry: "ease_worry", next_move: "next_step", relation: "keep_relation",
+  keep_result: "keep_result", answer: "answer", confirm_promise: "confirm_promise", send_promise: "send_promise",
+  worry: "worry", next_move: "next_move", relation: "relation",
 };
 
 /** 型ごとの次の一手（行き先×強さ×時機・next-move-types の1つの表の名前）。道が決まった後だけに使う（道の前に置かない）。

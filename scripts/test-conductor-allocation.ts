@@ -51,7 +51,8 @@ t("部品名は FOCUS_ORDER の役の中だけ（配分・動かさない部品�
   for (const p of PARTS) assert.ok(FOCUS_ORDER_ROLES.has(p), `PARTS の ${p} が FOCUS_ORDER に無い`);
   // FOCUS_ORDER の役は全部 PARTS にある（抜け無し）
   for (const r of FOCUS_ORDER_ROLES) assert.ok((PARTS as readonly string[]).includes(r), `FOCUS_ORDER の ${r} が PARTS に無い`);
-  assert.deepEqual([...ORDER_ROLES].sort(), [...PARTS].sort());
+  // judge_basis の order は判断の順番（CheckStep）＝部品とは別の名前。対応表 STEP_TO_PART が全部の CheckStep を持つ
+  assert.deepEqual([...ORDER_ROLES].sort(), Object.keys(STEP_TO_PART).sort());
   for (const ty of Object.values(ALLOCATION)) for (const a of Object.values(ty)) {
     for (const p of [...a.parts, ...a.optional, ...a.skip.map((s) => s.part)]) assert.ok(FOCUS_ORDER_ROLES.has(p), `${a.name}: ${p}`);
     // 動かす＋動かさない＝全部の部品（重なり無し）・動かさない部品には理由

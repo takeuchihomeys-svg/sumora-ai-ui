@@ -7,7 +7,7 @@
 //   ④ turn-read.ts LEAD_KINDS 8種（内覧/申込・抑える/見積/物件を送ってもらう/条件を聞く/新着の約束/確認の約束/関係をつなぐ）＝一通の読み
 //   同じ「send_property」が①では「物件を送ってもらう」、②③の「keep」は「こちらが新着を送る約束」で、④では「新着の約束」と「関係をつなぐ」に割れている。
 //   → 行き先は NEXT_DEST の1つの表にし、古い語彙は toNextDest で読み替える（古いファイルは今は触らない・移す時は各ファイルが NEXT_DEST から作る）。
-// 名前は judge-basis-types.ts（作業員17）と揃える: 優先の next_step / hold_property はこの表の行き先 viewing・apply・estimate の上の名前（PRIORITY_OF_DEST）。
+// 名前は judge-basis-types.ts と揃える: 優先は check-order の Need（next_move はこの表の行き先 viewing・apply・estimate の上の名前・PRIORITY_OF_DEST・11/12 作業員22）。
 // 置き場所の決まり: 次の一手は道（返信か AIX か）が決まった後だけに使う（道の前に置かない・q406・q057・q065 の教訓）。
 
 import type { Priority } from "./judge-basis-types";
@@ -73,9 +73,10 @@ export function toNextDest(v: string | null | undefined, source: "compose_next" 
 }
 
 /** 行き先 → judge-basis-types の優先の名前（重点の物差しと同じ数え方にする） */
+// 2026-11-12 作業員22: 優先の名前を check-order の Need にした（統括役の決め）。抑える（旧 hold_property）は Need に無い＝次の段（next_move）に入る
 export const PRIORITY_OF_DEST: Record<NextDest, Priority> = {
-  viewing: "next_step", apply: "hold_property", estimate: "next_step", ask_send: "next_step", ask_condition: "next_step",
-  keep_send: "keep_promise", wait_check: "keep_promise", answer_only: "answer_question", door: "keep_relation", none: "keep_relation",
+  viewing: "next_move", apply: "next_move", estimate: "next_move", ask_send: "next_move", ask_condition: "next_move",
+  keep_send: "send_promise", wait_check: "confirm_promise", answer_only: "answer", door: "relation", none: "relation",
 };
 
 /** 押す強さの手がかり（198通: 強く押した 17 のうち、決める合図 16・物件の残り 8。残りも合図も無い 174通で strong は 8＝内覧・申込の流れの中だけ） */
