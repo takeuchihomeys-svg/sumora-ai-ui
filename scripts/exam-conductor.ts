@@ -885,7 +885,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       try {
         // 回ごとの記録の印（係の出力の {"tag":"brain:answerable-direct"…}・[mgmt-*]）を、同じテスト用の会話の次の結果の行に付ける
         const names = new Map(NO_LINE_TEST_CONVERSATIONS.map((c) => [c.id, c.name]));
-        const tags = parseLogTags(existsSync(outFile) ? readFileSync(outFile, "utf8") : "", (id) => names.get(id) ?? null);
+        const tags = parseLogTags(existsSync(outFile) ? readFileSync(outFile, "utf8") : "", (id) => names.get(id) ?? null, { label: j.label }); // 11/13 作業員7b: EXAM_MISS_STAGE_V2=on の時だけ label の回に絞る
         const cur = (readRows(rowsFile) as unknown as MissRowLite[]).map((r) => ({ ...r, logTags: tags.get(`${r.id}#${r.rep}`) ?? null }));
         return ids.map((id) => summarizeMisses(cur.filter((r) => r.id === id))).filter((x): x is NonNullable<typeof x> => !!x).map((x) => ({ ...x, owner: ownerOf(x.markers)?.id ?? null }));
       } catch { return []; }

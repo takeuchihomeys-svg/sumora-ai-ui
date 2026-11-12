@@ -59,14 +59,35 @@ export function markersOf(r: MissRowLite): string[] {
  *   拾う tag は道や文を変えうる物だけ（rag・kn-used 等の記録だけの物は拾わない）
  */
 export const DECIDING_TAGS = /^(?:answerable-direct|two-stage|guard|screening|sent-reaction|resay|mgmt|night|turn-route|demote|override|rewrite|direct-aix|closing)/;
-export function parseLogTags(text: string, convName: (id: string) => string | null): Map<string, string[]> {
+type Env = Record<string, string | undefined>;
+/**
+ * 2026-11-13 作業員7b（統括役の頼み・朝の拾い上げ「2段・書き手の外れが増えた」）: 切り分けの数え直し。既定 off（EXAM_MISS_STAGE_V2=on）。試験の数えだけ（本番は変わらない）
+ *   (b) summarizeMisses の印を、選んだ並び（多数の並び）の回だけから取る（旧: 全部の回の和＝別の回の 2段の印が書き手の段の key の頭になった・q057 w16 の exam-stage:writer:decision:two_stage_promise）
+ *   (c) parseLogTags の印を、試験の名前（=== テスト「brain-exam-<label>」）の回だけに付ける（旧: 同じ out.log の「前（main）」の回の印が同じ qNNN#k に混ざった・q088 w16 の log:two-stage）
+ *   (d) ブレインの本質が既に外れていて、2段・決まった計算がその AIX を同じ系の約束（AIX:property_check_result → 2段:check 等）に言い換えただけ、
+ *       または記録の印があっても道が変わっていない回は、2段・決まった書き換えの段にしない（持ち主はブレイン）
+ */
+export function missStageV2On(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_MISS_STAGE_V2 ?? "").trim().toLowerCase() === "on";
+}
+/** AIX の鍵 → 2段の約束の種類（two-stage.ts が言い換える向き）。当たらなければ null */
+export function twoStageKindOfAix(code: string | null | undefined): "pickup" | "check" | "estimate" | null {
+  const k = String(code ?? "").replace(/^AIX:/, "").split(/[/（(]/)[0].trim();
+  if (/^(?:property_send|property_recommendation|property_search|property_pickup)$/.test(k)) return "pickup";
+  if (/^(?:property_check_result|viewing_invite|acknowledge_check)$/.test(k)) return "check";
+  if (k === "estimate_sheet") return "estimate";
+  return null;
+}
+export function parseLogTags(text: string, convName: (id: string) => string | null, opts: { label?: string | null; env?: Env } = {}): Map<string, string[]> {
   const pending = new Map<string, string[]>();
   const out = new Map<string, string[]>();
+  const v2 = missStageV2On(opts.env) && !!opts.label;
+  let inLabel = true;
   for (const line of text.split(/\r?\n/)) {
     // 実行の始まり（下見の回・前を作る子の回の印を次の本物の回に持ち越さない）
-    if (line.includes("=== テスト「")) { pending.clear(); continue; }
+    if (line.includes("=== テスト「")) { pending.clear(); if (v2) inLabel = line.includes(`テスト「brain-exam-${opts.label}」`); continue; }
     const res = line.match(/^\[(YUMA\d?)\]\s+[○✕]\s+(q\d+)#(\d+)/);
-    if (res) { const k = `${res[2]}#${res[3]}`; const got = pending.get(res[1]) ?? []; if (got.length) out.set(k, [...(out.get(k) ?? []), ...got]); pending.set(res[1], []); continue; }
+    if (res) { const k = `${res[2]}#${res[3]}`; const got = pending.get(res[1]) ?? []; if (got.length && inLabel) out.set(k, [...(out.get(k) ?? []), ...got]); pending.set(res[1], []); continue; }
     if (line.startsWith('{"tag":"brain:')) {
       try {
         const j = JSON.parse(line) as { tag: string; conversationId?: string; core?: string; to?: string };
@@ -90,7 +111,7 @@ export function parseLogTags(text: string, convName: (id: string) => string | nu
 }
 
 /** 1つの外れの回の切り分け: 段を順に全部並べる（ブレインの生の答え→2段→場面の網→決まった書き換え→書き手→文の中身→最終チェック） */
-export function classifyMiss(r: MissRowLite): MissVerdict {
+export function classifyMiss(r: MissRowLite, env?: Env): MissVerdict {
   // 2026-11-06 統括役: 本質の道は試験の採点と同じ数え方（物件の AIX＋該当の route が promise＋候補0件＝2段:pickup・scripts/lib/exam-essence.ts）
   const ess0 = r.essence?.code ?? null;
   const ess = (ess0 && ess0.startsWith("AIX:") ? essenceOverride(r.raw as Record<string, unknown> | null, (r.trace?.pickup_ready as boolean | null | undefined) ?? null) : null) ?? ess0, fin = r.path?.code ?? null, dr = r.draft?.code ?? null;
@@ -105,8 +126,12 @@ export function classifyMiss(r: MissRowLite): MissVerdict {
     const read = [flat(r.raw?.customer_questions), flat(r.raw?.proposals), TWO_STAGE_DIRECTION_TAIL.test(dirHead) ? "" : dirHead.slice(0, 40)].filter(Boolean).join(" / ").replace(/\s+/g, " ").slice(0, 100);
     st.push({ stage: "brain", marker: "brain:essence", note: `生の答え ${ess}${read ? `（読み: ${read}）` : ""}` });
   }
+  // (d) V2: 本質が外れで、最終の道が本質と同じ（記録の印だけ）か、本質の AIX を同じ系の2段の約束に言い換えただけ＝道を変えた段は無い（持ち主はブレイン）
+  const v2 = missStageV2On(env);
+  const essKind = twoStageKindOfAix(ess);
+  const sameAsEssence = v2 && r.essence?.ok === false && !!ess && !!fin && (ess === fin || (!!essKind && fin === `2段:${essKind}`));
   // 道を変えた段（印の順。decision:llm は2層目のブレイン）
-  for (const x of pathOk ? [] : m.filter((y) => y !== "decision:llm")) {
+  for (const x of pathOk || sameAsEssence ? [] : m.filter((y) => y !== "decision:llm")) {
     if (/^(?:decision:two_stage|two_stage:)/.test(x)) { if (!st.some((s) => s.stage === "two_stage")) st.push({ stage: "two_stage", marker: x, note: `2段の決まった書き換え ${x}` }); }
     else if (/^log:answerable-direct/.test(x) || /^decision:(?:guard|answerable|direct)/.test(x)) st.push({ stage: "rewrite", marker: x, note: `決まった書き換え ${x}` });
     else if (/^log:/.test(x)) st.push({ stage: "rewrite", marker: x, note: `記録の印 ${x}` });
@@ -114,7 +139,7 @@ export function classifyMiss(r: MissRowLite): MissVerdict {
   }
   if (ess && fin && ess !== fin && m.includes("decision:llm") && !st.some((s) => s.stage === "rewrite" || s.stage === "two_stage")) st.push({ stage: "brain", marker: "decision:llm", note: "2層目（今回の発言）のブレインが変えた" });
   const sc = m.find((x) => x.startsWith("scene_net:"));
-  if (sc && ess !== fin && !st.some((s) => s.marker !== "brain:essence")) st.push({ stage: "scene_net", marker: sc, note: `場面の網と信号 ${sc}` });
+  if (sc && ess !== fin && !sameAsEssence && !st.some((s) => s.marker !== "brain:essence")) st.push({ stage: "scene_net", marker: sc, note: `場面の網と信号 ${sc}` });
   // 書き手: 下書きの道が最終の道と違う
   if (dr && fin && dr !== fin) st.push({ stage: "writer", marker: "writer", note: `下書きの道 ${fin} → ${dr}` });
   // 2段の方向の文の決まった尾（two-stage が方向の文を決まった型に置き換えた・生の方向が無くても型で見分ける）
@@ -136,7 +161,8 @@ export function classifyMiss(r: MissRowLite): MissVerdict {
   if (!st.length) st.push({ stage: "none", marker: "none", note: "段が決められない" });
   const cause: MissCause = r.essence?.ok && !r.path?.ok ? (isAix(ess) && isReplyLike(fin) ? "AIX の番を返信にした" : "場面・決まりの読み違い") : "要確認";
   // 下書きの無い回のブレインの答えの外れ（brain:asks）は、他の段（方向の文の尾 等）があってもブレインを頭にする
-  const primary = st.find((s) => s.marker === "brain:asks") ?? st.find((s) => s.stage !== "brain") ?? st[0];
+  // (d) V2: 道を変えた段が無い回（本質の言い換えだけ）は、方向の文の尾（text）等の細目があってもブレインを頭にする
+  const primary = st.find((s) => s.marker === "brain:asks") ?? (sameAsEssence ? st.find((s) => s.marker === "brain:essence") : undefined) ?? st.find((s) => s.stage !== "brain") ?? st[0];
   const markers = [...new Set([...st.map((s) => s.marker).filter((x) => !/^(?:brain:essence|none|asks)$/.test(x)), ...m])];
   const line = `${r.id}${r.rep ? `#${r.rep}` : ""}: ${st.map((s) => `${STAGE_JA[s.stage]}（${s.note}）`).join(" → ")}・道 ${ess ?? "?"} → ${fin ?? "?"}${dr && dr !== fin ? ` → 下書き ${dr}` : ""}・原因の下書き: ${cause}`;
   return { id: r.id, stage: primary.stage, stages: st, markers, from: ess, to: fin, cause, line };
@@ -145,16 +171,18 @@ export function classifyMiss(r: MissRowLite): MissVerdict {
 export const STAGE_JA: Record<MissStage, string> = { brain: "ブレイン", two_stage: "2段", scene_net: "場面の網と信号", rewrite: "決まった書き換え", writer: "書き手", text: "文の中身", final_check: "最終チェック", asks: "依頼の答え方", none: "（不明）" };
 
 /** 同じ問題の外れの回をまとめる（回ごとの段の並びを数え、一番多い並び＋ほかの並び・回ごとの行も返す） */
-export function summarizeMisses(rows: MissRowLite[]): { id: string; n: number; stage: MissStage; markers: string[]; line: string; perRep: string[]; reps: number[]; essence: string | null } | null {
+export function summarizeMisses(rows: MissRowLite[], env?: Env): { id: string; n: number; stage: MissStage; markers: string[]; line: string; perRep: string[]; reps: number[]; essence: string | null } | null {
   const bad = rows.filter((r) => r.score && r.score.pass === false);
   if (!bad.length) return null;
-  const vs = bad.map(classifyMiss);
+  const vs = bad.map((r) => classifyMiss(r, env));
   const key = (v: MissVerdict) => v.stages.map((s) => s.stage).join(">");
   const cnt = new Map<string, number>(); for (const v of vs) cnt.set(key(v), (cnt.get(key(v)) ?? 0) + 1);
   const topKey = [...cnt].sort((a, b) => b[1] - a[1])[0][0];
   const pick = vs.find((v) => key(v) === topKey)!;
   const others = [...cnt].filter(([k]) => k !== topKey).map(([k, n]) => `${k.split(">").map((x) => STAGE_JA[x as MissStage]).join("→")} ${n}回`);
-  return { id: pick.id, n: bad.length, stage: pick.stage, markers: [...new Set(vs.flatMap((v) => v.markers))], perRep: vs.map((v) => v.line), reps: bad.map((r) => r.rep ?? 0), essence: pick.from,
+  // (b) V2: 印は選んだ並びの回だけから（key の頭が別の回の印にならない）
+  const markerSrc = missStageV2On(env) ? vs.filter((v) => key(v) === topKey) : vs;
+  return { id: pick.id, n: bad.length, stage: pick.stage, markers: [...new Set(markerSrc.flatMap((v) => v.markers))], perRep: vs.map((v) => v.line), reps: bad.map((r) => r.rep ?? 0), essence: pick.from,
     line: `${pick.line}・外れ ${cnt.get(topKey)}/${bad.length}回${others.length ? `（ほかの並び: ${others.join("・")}）` : ""}` };
 }
 
