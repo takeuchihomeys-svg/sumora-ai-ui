@@ -821,6 +821,11 @@ export class AltBusyError extends Error {
 }
 
 /** 投げられた物が混雑の失敗か（純関数） */
+/**
+ * 失敗の行の印（2026-11-13 作業員8b・統括役の了承）: 試験の下見（llm-cassette の plan）は録音と入力が違うと 400 cassette_miss を返して止める＝DeepSeek の失敗ではない（2ms・費用0）。
+ *   alt_failed に数えると試験の失敗率が 10% に見えた（11/12 401/3785 のほぼ全部が下見）。本文に cassette_miss がある時だけ plan_miss。本番は録音を通らない＝今まで通り alt_failed
+ */
+export function altFailureType(e: unknown): "alt_failed" | "plan_miss" { return /cassette_miss/.test(String(e)) ? "plan_miss" : "alt_failed"; }
 export function isBusyFailure(e: unknown): boolean {
   if (e instanceof AltBusyError) return true;
   if (e instanceof Error) {
@@ -1251,7 +1256,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       // 失敗も1行残す（フォールバックの回数が後から数えられる）
       recordAltUsage({
         model: target.model, action: routeName, conversationId, usage: {},
-        status: 0, errorType: "alt_failed", durationMs: Date.now() - started,
+        status: 0, errorType: altFailureType(e), durationMs: Date.now() - started,
         sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
       });
       if (!cfg.fallbackToAnthropic) throw e;

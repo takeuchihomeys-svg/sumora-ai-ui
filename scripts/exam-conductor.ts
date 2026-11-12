@@ -83,6 +83,15 @@ const DONE = join(ROOT, "done"), RES = join(ROOT, "results");
 // 2026-11-05 作業員8（21:49 に流す係が落ちた・点検表 18）: 係の印（夜の基準・見張りの「今日はもう回した」）は列のフォルダの外に置く。列の .json は依頼として読まれる
 const MARKS = join(examCacheRoot(), "conductor-marks");
 const CONFIG = join(ROOT, "config.json"), SCENE_MAP = join(ROOT, "scene-map.json");
+/**
+ * 2026-11-13 作業員8b（統括役: 録音の鍵が変わるスイッチを夜の基準と昼の依頼に同じに乗せる）: 係の設定（config.json）の examEnv を、全部の試験の依頼の env の下敷きにする
+ *   （依頼の env が上書きする）。examEnvFrom（ISO）があればその時刻から。夜の基準と昼の依頼で鍵がずれない＝下見が当たる
+ */
+function configExamEnv(nowMs = Date.now()): Record<string, string> {
+  const c = readJson<{ examEnv?: Record<string, string>; examEnvFrom?: string }>(CONFIG, {});
+  if (!c.examEnv || (c.examEnvFrom && !(nowMs >= Date.parse(c.examEnvFrom)))) return {};
+  return c.examEnv;
+}
 const LOG = join(ROOT, "conductor.log");
 const ensureDirs = () => { for (const d of [ROOT, DONE, RES]) mkdirSync(d, { recursive: true }); };
 const log = (s: string) => { ensureDirs(); const line = `${new Date().toISOString()} ${s}`; console.log(line); appendFileSync(LOG, line + "\n"); };
@@ -717,7 +726,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         appendFileSync(outFile, `\n=== ${at()} npx tsx --env-file=.env.local ${c} ===\n`);
         const before = statSync(outFile).size;
         // 2026-11-05 作業員4の頼み: --qfile="C:/Users/竹内 悠馬/…" が空白で切れていた（ci-v1L・ci-v3L）＝引用符を含む塊は1つの引数に（exam-plan.splitCmdArgs）
-        const r = runTsx(j.cwd, splitCmdArgs(c), { ...j.env, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(businessHoursLane() ? { EXAM_CONCURRENCY: String(businessHoursLane()) } : {}) }, outFile); cur = r.child;
+        const r = runTsx(j.cwd, splitCmdArgs(c), { ...configExamEnv(), ...j.env, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(businessHoursLane() ? { EXAM_CONCURRENCY: String(businessHoursLane()) } : {}) }, outFile); cur = r.child;
         codes.push(await r.done);
         const tail = readFileSync(outFile).subarray(before).toString("utf8");
         const m = tail.match(/空きメモリ\s*\d+MB\s*<\s*\d+MB（--force で流す）/);
@@ -771,7 +780,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       log(`  流す時の見込み: ${chk.line}`);
       if (!chk.go) { finishStop(j, `流す前に止めた: ${chk.line}。夜の基準ができた後に流すか、--cap-usd を上げて積み直す`); return; }
     }
-    const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile); cur = r.child;
+    const r = runTsx(j.cwd, argv, { ...configExamEnv(), ...j.env, EXAM_STOP_FILE: stopFile, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile); cur = r.child;
     // ① 早めの打ち切り（30秒ごと）
     let early: { stop: string; why: string; base: string } | null = null;
     const rowsFile = join(resultsDirOf(j.cwd), `${j.label}.jsonl`);
@@ -843,7 +852,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         log(`  確かめ直し: 外れた ${fails.length}問（${fails.join(",")}）だけ今の main で前を作る（${cfl}）`);
         appendFileSync(outFile, `\n=== ${at()} 確かめ直し: 外れた問題だけ今の main で前を作る（${fails.join(",")}）===\n`);
         await runTsx(j.cwd, ["scripts/brain-exam.ts", `--label=${cfl}`, "--conv=auto", "--baseline=main", "--baseline-only", `--repeat=${maxRep}`, `--stage=${j.stage}`, `--only=${fails.join(",")}`, `--reps-file=${cfReps}`],
-          { ...j.env, EXAM_BASELINE_NIGHTLY: "off", ...(pin.snapDay ? { EXAM_DB_SNAPSHOT_DAY: pin.snapDay } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile).done;
+          { ...configExamEnv(), ...j.env, EXAM_BASELINE_NIGHTLY: "off", ...(pin.snapDay ? { EXAM_DB_SNAPSHOT_DAY: pin.snapDay } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile).done;
         const blCf = baseLabelOf(j.cwd, cfl), blN = baseLabelOf(j.cwd, j.label);
         if (blCf && blN) {
           const merged = mergePinnedBase(readRows(join(resultsDirOf(j.cwd), `${blN}.jsonl`)) as unknown as Array<{ id: string }>, readRows(join(resultsDirOf(j.cwd), `${blCf}.jsonl`)) as unknown as Array<{ id: string }>, fails);

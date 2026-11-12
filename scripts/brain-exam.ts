@@ -52,7 +52,7 @@ import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { setupLlmTest, YUMA, type LlmTestHarness } from "./lib/llm-test-harness";
 import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lease";
-import { shiftExamText, examShiftDays } from "./lib/brain-exam-dates";
+import { shiftExamText, examShiftDays, shiftRowTexts, shiftLedgerTextOn } from "./lib/brain-exam-dates";
 import { planStopOnDiffOn, planRepDiffers } from "./lib/exam-night";
 import { brainPathCode, judgePath, problemScore, primaryAskIndex, rateByType, aixFamily, judgeCurrentProperty, normalizeDraftCode, type BrainExamOutput, type ProblemScore, type PathCode } from "./lib/brain-exam-score";
 import { similarity } from "../app/lib/property-name-match";
@@ -503,6 +503,8 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
         o[col] = col === c.time ? sceneTimeOf(lr.ago, ctxAgo, times, k) : sceneTimeOf(Math.round((atMs - Date.parse(v)) / 60_000), ctxAgo, times, k);
       }
       for (const col of c.dates ?? []) o[col] = shiftDate(o[col]);
+      // 2026-11-13 作業員8b（q406・台帳の文の「10/24(土)」がずれずに会話の 11/14(土) と食い違った）: 文の欄の日付も会話と同じだけずらす（既定 off・EXAM_SHIFT_LEDGER_TEXT=on）
+      if (shiftDays && shiftLedgerTextOn()) { const yr = new Date(atMs + 9 * 3600_000).getUTCFullYear(); const sk = new Set([...c.times, ...(c.dates ?? []), "conversation_id", "property_customer_id", "line_message_id"]); Object.assign(o, shiftRowTexts(o, sk, (x) => shiftExamText(x, shiftDays, yr, atMs))); }
       if (t === "viewings" || t === "viewing_history") { o.pre_announce_sent = true; o.post_announce_sent = true; o.cheer_sent = true; } // 本番の告知の cron に拾わせない
       if ("line_message_id" in o && o.line_message_id) o.line_message_id = `${PREFIX}l-${randomUUID()}`;
       if (t === "estimate_records") o.aix_usage_log_id = o.aix_usage_log_id ? aixIdMap.get(String(o.aix_usage_log_id)) ?? null : null;
