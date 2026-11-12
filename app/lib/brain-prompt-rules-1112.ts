@@ -56,9 +56,10 @@ export function applyPromptRules1112(text: string, env: Record<string, string | 
 //   P0 ca55d42b: スタッフだけが知る情報（管理会社に確認して分かった事・募集状況・交渉の結果・撮影した写真・見積の金額・内覧日の確定）は AIX。返信は AI が知り得る材料だけで書ける番で、スタッフの文と100%一致できる対象（目標100%）。
 //   「迷ったら aix」は、書ける番まで AIX に倒す向き（P0 と逆）。迷いの原因は材料が届いていない／場面の読み違い／返信か AIX かの判断の誤り（P0 の外れの見方）なので、問いに戻って決める。
 //   残す物: 線引きルール該当時は aix（コード側の reply_mode のフェイルクローズ・自動送信の関所は変えない）。
-// 入れる: BRAIN_REPLY_MODE_P0=on（既定 off＝今と1文字も変わらない）。コード側（brain-core の replyMode の強制）は変えていない＝この変更は LLM の出力の向きだけ
+// 2026-11-12 23:46 JST 統括役: 既定 on（w19-replymode-p0-on 確かな悪化0・比べた 6/6問・合格 2→4・良くなった 2）。戻す BRAIN_REPLY_MODE_P0=off（旧の文と1文字も変わらない）。
+// 入れる: 旧は BRAIN_REPLY_MODE_P0=on の時だけ。コード側（brain-core の replyMode の強制）は変えていない＝この変更は LLM の出力の向きだけ
 export function replyModeP0Enabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_REPLY_MODE_P0 ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_REPLY_MODE_P0 ?? "").trim().toLowerCase() !== "off";
 }
 
 export const REPLY_MODE_P0_EDITS: PromptRuleEdit[] = [

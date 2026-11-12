@@ -13,8 +13,8 @@ if (process.argv[2] === "dump") {
   const run = (v: string) => execFileSync("npx", ["tsx", `"${__filename}"`, "dump"], { env: { ...process.env, NEXT_PUBLIC_SUPABASE_URL: "http://localhost:1", NEXT_PUBLIC_SUPABASE_ANON_KEY: "dummy", ANTHROPIC_API_KEY: "dummy", BRAIN_REPLY_MODE_P0: v }, maxBuffer: 64 * 1024 * 1024, shell: true, stdio: ["ignore", "pipe", "ignore"] }).toString("utf8");
   const off = run("off"), on = run("on");
   const h = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 8);
-  t("既定は off", !replyModeP0Enabled({}) && replyModeP0Enabled({ BRAIN_REPLY_MODE_P0: "on" }));
-  t("off の時は何も変えない（文が同じ）", applyReplyModeP0("abc", {}) === "abc");
+  t("既定は on（off で戻す）", replyModeP0Enabled({}) && !replyModeP0Enabled({ BRAIN_REPLY_MODE_P0: "off" }));
+  t("off の時は何も変えない（文が同じ）", applyReplyModeP0("abc", { BRAIN_REPLY_MODE_P0: "off" }) === "abc");
   t("実物 off: 古い3つの文が残っている（差し替え前の確認）", REPLY_MODE_P0_EDITS.every((e) => off.includes(e.from)));
   t("実物 on: 古い3つの文が消えている", REPLY_MODE_P0_EDITS.every((e) => !on.includes(e.from)));
   t("実物 on: 新しい3つの文が入っている", REPLY_MODE_P0_EDITS.every((e) => on.includes(e.to)));
