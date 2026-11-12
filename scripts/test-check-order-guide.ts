@@ -95,3 +95,20 @@ console.log(`全部 ${n} 件 ok`);
   assert.doesNotMatch(g.text, GUIDE_FORBIDDEN_RE);
   console.log("ok 全部の型に目的・足りない情報・押さえる要点があり、渡す文は足りない情報だけ（道の言葉なし）");
 }
+
+// 2026-11-12: 足りない情報の名前は作業員1 の INFO_KEYS（info-fill-map.ts）と同じ
+{
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { MISSING_INFO, CHECK_ORDER_TYPES: TYPES } = require("../app/lib/check-order") as typeof import("../app/lib/check-order");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require("node:fs") as typeof import("node:fs");
+  const cands = [join(__dirname, "..", "app", "lib", "info-fill-map.ts"), join(__dirname, "..", "..", "w1-exh-1112", "app", "lib", "info-fill-map.ts")];
+  const f = cands.find((p) => fs.existsSync(p));
+  const keys = f ? [...(fs.readFileSync(f, "utf8").match(/export const INFO_KEYS = \[([\s\S]*?)\] as const/)?.[1] ?? "").matchAll(/"([a-z_]+)"/g)].map((m) => m[1]) : [];
+  for (const ty of TYPES) {
+    const m = MISSING_INFO[ty.id];
+    assert.ok(m && (m.keys.length || m.extra.length), `足りない情報が無い ${ty.id}`);
+    if (keys.length) for (const k of m.keys) assert.ok(keys.includes(k), `INFO_KEYS に無い名前 ${ty.id}: ${k}`);
+  }
+  console.log(`ok 足りない情報の名前は INFO_KEYS と同じ（${keys.length ? `${keys.length}項目で確かめた` : "info-fill-map が見つからない＝名前の確かめは飛ばした"}）`);
+}

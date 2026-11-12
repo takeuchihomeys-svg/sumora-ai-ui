@@ -383,3 +383,20 @@ export const TYPE_INTENT: Readonly<Record<string, { purpose: string; missing: st
   T11_first_contact_hearing: { purpose: "初回の信頼を作る", missing: ["条件（入居時期・家賃・エリア・間取り）", "言われた事情への答え"], keyPoint: "事情に答えてから条件を聞く" },
   T12_hooked_comparing_taken: { purpose: "比べたい・取られたくないを両方満たす", missing: ["刺さった点・比べたい迷い・取られる不安のどれが強いか", "保証会社の審査通過までの扱い（会社の事実）"], keyPoint: "取られる前に抑え、並行して探す" },
 };
+
+/** 2026-11-12: 足りない情報の名前は作業員1 の app/lib/info-fill-map.ts の INFO_KEYS（13項目・1か所）を使う（keys）。
+ *  INFO_KEYS に無い物は extra に置き、作業員1 に足す案として出す（ここで別の語彙を作らない）。info-fill-map が main に入ったら型を InfoKey にする。 */
+export const MISSING_INFO: Readonly<Record<string, { keys: string[]; extra: string[] }>> = {
+  T1_conditions_first: { keys: ["area", "rent", "layout", "move_in", "size"], extra: ["sendable_ready（その条件で送れる物件が揃っているか）"] },
+  T2_question_fact: { keys: [], extra: ["answer_source（答えの出所: 会話・資料・会社の事実）"] },
+  T3_question_staff_only: { keys: ["vacancy_checked"], extra: ["mgmt_answer（管理会社でないと分からない答え）"] },
+  T4_property_shared: { keys: ["property_chosen", "vacancy_checked"], extra: ["sent_purpose（お客様が何のために送ったか）"] },
+  T5_ack_hypothesis: { keys: [], extra: ["ack_target（何への了承か）"] },
+  T6_considering: { keys: [], extra: ["decide_signal（決める合図・埋まる不安）"] },
+  T7_viewing: { keys: ["viewing_date"], extra: ["viewable（その物件が内見できるか）"] },
+  T8_cost: { keys: ["property_chosen", "estimate_sent"], extra: [] },
+  T9_apply_signal: { keys: ["property_chosen", "vacancy_checked", "apply_intent"], extra: [] },
+  T10_result_ready: { keys: [], extra: ["fulfilled_promise（どの約束の結果が揃ったか）"] },
+  T11_first_contact_hearing: { keys: ["area", "rent", "layout", "move_in", "screening_info"], extra: [] },
+  T12_hooked_comparing_taken: { keys: ["property_chosen", "vacancy_checked"], extra: ["company_fact_hold（抑えた時の扱いの会社の事実）"] },
+};
