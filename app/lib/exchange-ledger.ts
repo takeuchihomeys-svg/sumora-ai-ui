@@ -10,6 +10,7 @@
 
 import { splitOurPartsFine, aixPart, splitTheirParts, OUR_PART_KIND_LABEL, EXPECT_LABEL, THEIR_PART_LABEL, type OurPart, type TheirPart } from "./our-part-types";
 import { AIX_JA, pickJa, type OurSideMsg, type OurSideAix } from "./conductor-our-side";
+import { promiseReadUnifiedOn, openPromises, PROMISE_READ_KIND_JA } from "./promise-read";
 
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
@@ -74,10 +75,16 @@ export function buildExchangeLedger(o: { msgs: ReadonlyArray<OurSideMsg>; aix: R
         : p.key === "aix.condition_hearing" ? later.some((t) => t.kind === "condition")
         : later.some((t) => t.kind !== "accept");
       if (!met) open.push({ kind: "our_question_unanswered", what: `${p.label}（${OUR_PART_KIND_LABEL[p.kind]}・期待した反応は${EXPECT_LABEL[p.expect]}）`, at: p.at, overdue: overdue(p), expect: p.expect });
-    } else if (p.kind === "promise") {
+    } else if (p.kind === "promise" && !promiseReadUnifiedOn()) {
       const f = FULFIL[p.key];
       const done = !!f && after(ours, p.at).some((q) => q.kind !== "promise" && (f.parts.test(q.key) || (q.kind === "aix" && f.aix.test(q.key.slice(4)))));
       if (!done) open.push({ kind: "our_promise_unkept", what: p.label, at: p.at, overdue: overdue(p) });
+    }
+  }
+  // 2026-11-12 作業員4: 約束の読みは promise-read を正にする（PROMISE_READ_UNIFIED=on）。窓の中の約束だけ・新着待ちは期限を過ぎたと言わない
+  if (promiseReadUnifiedOn()) {
+    for (const p of openPromises({ msgs: o.msgs, aix: o.aix, nowMs: o.nowMs, days: o.days ?? 7 }).filter((x) => x.at >= winStart)) {
+      open.push({ kind: "our_promise_unkept", what: `${PROMISE_READ_KIND_JA[p.kind]}「${p.sentence.slice(0, 30)}」`, at: p.at, overdue: !p.waiting && p.elapsedH > 24 });
     }
   }
   // 送った物件（文の物件・物件の AIX）の最後の1つに反応が無いか
