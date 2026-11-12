@@ -1,0 +1,1267 @@
+{
+ "note": "2026-11-11 作業員10（Claude Code が手で付けた・費用0）。竹内さんの番 24（scripts/brain-exam/problems.json の返信の番・申込の門 turn-application-gate で q054・q139 を外した）。文の役目は takeuchi-anatomy-roles の13種と境目 A〜I（1通目の ― より前だけ）。押さえ方・信頼の作り方は takeuchi-seven-read の札。訴求・潜在は compose-sentence-plan の型。 ／ 2026-11-12 +12番（T5 お礼・了承 6: q024 q051 q110 q112 q172 q213・T3 確かめる約束 3: q149 q150 q197・T9 申込の手前の合図 3: q106 q130 q175）。申込の門で q036・q100 を外した。q021 は竹内さんの文ではない（担当 鈴木）ので入れない。T3・T9 は problems.json に申込の手前で竹内さんの文が読める番がこれだけ ／ 2026-11-12 午後 +17番（T4 +4: q013 q120 q133 q151・T1 +3: q001 q004 q009・T6 +3: q029 q114 q144・T7 +3: q049 q068 q141・T8 +4: q014 q043 q047 q075）。申込の門で q154・q157 を外した。q070 は担当 鈴木の会話なので入れない",
+ "turns": [
+  {
+   "id": "q022",
+   "roles": [
+    "uke",
+    "uke",
+    "apply",
+    "keep"
+   ],
+   "mainRole": "uke",
+   "property": null,
+   "about": "reaction_to_sent",
+   "part": null,
+   "leadTo": "apply",
+   "bridgeRole": "apply",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "flexible"
+   ]
+  },
+  {
+   "id": "q023",
+   "roles": [
+    "uke",
+    "answer",
+    "keep",
+    "trust"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "viewing_day",
+   "part": "4日の内見予約のキャンセル",
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": "事情の変化",
+   "latentWhat": "勤務先が変わってもまた探してもらえるか",
+   "keyHow": [
+    "conclusion_first"
+   ],
+   "trustHow": [
+    "support",
+    "preempt"
+   ]
+  },
+  {
+   "id": "q025",
+   "roles": [
+    "uke",
+    "uke",
+    "viewing"
+   ],
+   "mainRole": "uke",
+   "property": null,
+   "about": "reaction_to_sent",
+   "part": null,
+   "leadTo": "viewing",
+   "bridgeRole": "viewing",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "flexible"
+   ]
+  },
+  {
+   "id": "q041",
+   "roles": [
+    "uke",
+    "answer",
+    "trust",
+    "keep"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "vacancy",
+   "part": "退去後の入居可能時期",
+   "leadTo": "apply",
+   "bridgeRole": "trust",
+   "appeal": [
+    "初期費用"
+   ],
+   "latent": "入居日・時期",
+   "latentWhat": "退去後いつ入れるか読めず決めきれない",
+   "keyHow": [
+    "assert"
+   ],
+   "trustHow": [
+    "honest_weak",
+    "fact"
+   ]
+  },
+  {
+   "id": "q055",
+   "roles": [
+    "uke",
+    "uke",
+    "viewing"
+   ],
+   "mainRole": "viewing",
+   "property": "アーバネックス",
+   "about": "reaction_to_sent",
+   "part": null,
+   "leadTo": "viewing",
+   "bridgeRole": "viewing",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "flexible"
+   ]
+  },
+  {
+   "id": "q057",
+   "roles": [
+    "uke",
+    "answer",
+    "apply"
+   ],
+   "mainRole": "answer",
+   "property": "BLANCOSTA SQUARE 204号室",
+   "about": "viewing_day",
+   "part": "退去前の室内の内覧",
+   "leadTo": "apply",
+   "bridgeRole": "apply",
+   "appeal": [],
+   "latent": "先に取られる",
+   "latentWhat": "退去を待つ間に埋まる",
+   "keyHow": [
+    "conclusion_first",
+    "reason_fact"
+   ],
+   "trustHow": [
+    "options",
+    "preempt"
+   ]
+  },
+  {
+   "id": "q063",
+   "roles": [
+    "greet",
+    "answer",
+    "answer"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "property_equipment",
+   "part": "2階の虫",
+   "leadTo": "answer_only",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": "住み心地・周り",
+   "latentWhat": "虫が苦手で2階だと住み心地が心配",
+   "keyHow": [
+    "assert",
+    "numbers"
+   ],
+   "trustHow": [
+    "fact",
+    "options"
+   ]
+  },
+  {
+   "id": "q064",
+   "roles": [
+    "answer",
+    "worry"
+   ],
+   "mainRole": "answer",
+   "property": "CRESTTAPP野田",
+   "about": "property_equipment",
+   "part": "窓を閉めた時の虫と換気",
+   "leadTo": "answer_only",
+   "bridgeRole": null,
+   "appeal": [
+    "設備"
+   ],
+   "latent": "住み心地・周り",
+   "latentWhat": "窓を閉め切ると換気できない",
+   "keyHow": [
+    "conclusion_first",
+    "assert"
+   ],
+   "trustHow": [
+    "preempt",
+    "fact"
+   ]
+  },
+  {
+   "id": "q065",
+   "roles": [
+    "answer",
+    "trust"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "procedure",
+   "part": "最短の入居日",
+   "leadTo": "answer_only",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": "入居日・時期",
+   "latentWhat": "なるべく早く引っ越したい",
+   "keyHow": [
+    "numbers"
+   ],
+   "trustHow": [
+    "support"
+   ]
+  },
+  {
+   "id": "q069",
+   "roles": [
+    "greet",
+    "uke",
+    "answer",
+    "answer",
+    "ask_send",
+    "ask_send"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "vacancy",
+   "part": "掲載中なのに募集の無い物件",
+   "leadTo": "ask_send",
+   "bridgeRole": "ask_send",
+   "appeal": [
+    "初期費用"
+   ],
+   "latent": "対応・信頼",
+   "latentWhat": "掲載があるのに無いと言われ不信",
+   "keyHow": [
+    "assert",
+    "numbers"
+   ],
+   "trustHow": [
+    "fact",
+    "effort"
+   ]
+  },
+  {
+   "id": "q072",
+   "roles": [
+    "greet",
+    "answer",
+    "apply",
+    "apply",
+    "viewing"
+   ],
+   "mainRole": "answer",
+   "property": "スプランディッド難波WESTⅡ",
+   "about": "vacancy",
+   "part": "9月13日まで空いているか",
+   "leadTo": "apply",
+   "bridgeRole": "apply",
+   "appeal": [
+    "条件の合い方"
+   ],
+   "latent": "先に取られる",
+   "latentWhat": "9/13まで待つ間に埋まって逃す",
+   "keyHow": [
+    "assert",
+    "name_property"
+   ],
+   "trustHow": [
+    "preempt",
+    "effort",
+    "options"
+   ]
+  },
+  {
+   "id": "q073",
+   "roles": [
+    "uke",
+    "viewing",
+    "barrier",
+    "keep"
+   ],
+   "mainRole": "viewing",
+   "property": null,
+   "about": "self",
+   "part": "初期費用の用意が10月末",
+   "leadTo": "viewing",
+   "bridgeRole": "viewing",
+   "appeal": [
+    "初期費用"
+   ],
+   "latent": "費用",
+   "latentWhat": "10月末まで初期費用が用意できない",
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "flexible",
+    "support"
+   ]
+  },
+  {
+   "id": "q078",
+   "roles": [
+    "uke",
+    "uke",
+    "ask_send",
+    "estimate",
+    "close"
+   ],
+   "mainRole": "ask_send",
+   "property": null,
+   "about": "property_cost",
+   "part": "他に気になる物件の初期費用",
+   "leadTo": "ask_send",
+   "bridgeRole": "ask_send",
+   "appeal": [
+    "初期費用"
+   ],
+   "latent": null,
+   "keyHow": [
+    "answer_by_thing"
+   ],
+   "trustHow": [
+    "effort"
+   ]
+  },
+  {
+   "id": "q109",
+   "roles": [
+    "uke",
+    "uke",
+    "viewing",
+    "keep"
+   ],
+   "mainRole": "uke",
+   "property": null,
+   "about": "reaction_to_sent",
+   "part": null,
+   "leadTo": "viewing",
+   "bridgeRole": "viewing",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "flexible"
+   ]
+  },
+  {
+   "id": "q145",
+   "roles": [
+    "uke",
+    "answer",
+    "apply",
+    "close"
+   ],
+   "mainRole": "answer",
+   "property": "エスリード中之島クロスゲート302号室",
+   "about": "vacancy",
+   "part": "最短の入居可能日",
+   "leadTo": "apply",
+   "bridgeRole": "apply",
+   "appeal": [],
+   "latent": "先に取られる",
+   "latentWhat": "退去予定を待つ間に埋まる",
+   "keyHow": [
+    "conclusion_first",
+    "numbers"
+   ],
+   "trustHow": []
+  },
+  {
+   "id": "q160",
+   "roles": [
+    "uke",
+    "answer",
+    "answer",
+    "answer"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "property_cost",
+   "part": "ペットの敷金・火災保険・日割",
+   "leadTo": "answer_only",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": "費用",
+   "latentWhat": "見積より後から高くならないか",
+   "keyHow": [
+    "numbers",
+    "assert"
+   ],
+   "trustHow": [
+    "fact"
+   ]
+  },
+  {
+   "id": "q166",
+   "roles": [
+    "uke",
+    "answer",
+    "apply",
+    "viewing",
+    "viewing"
+   ],
+   "mainRole": "answer",
+   "property": "アーバネックス難波WEST 903号室",
+   "about": "procedure",
+   "part": "他社の内覧の後に弊社で申込",
+   "leadTo": "apply",
+   "bridgeRole": "apply",
+   "appeal": [],
+   "latent": "対応・信頼",
+   "latentWhat": "他社で内覧して御社で頼めるか気まずい",
+   "keyHow": [
+    "conclusion_first",
+    "assert"
+   ],
+   "trustHow": [
+    "options",
+    "flexible"
+   ]
+  },
+  {
+   "id": "q173",
+   "roles": [
+    "greet",
+    "uke",
+    "trust",
+    "trust",
+    "ask_send"
+   ],
+   "mainRole": "trust",
+   "property": null,
+   "about": "self",
+   "part": "一人での入居に変わる",
+   "leadTo": "ask_send",
+   "bridgeRole": "ask_send",
+   "appeal": [],
+   "latent": "事情の変化",
+   "latentWhat": "一人になっても探してもらえるか",
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "their_side",
+    "support"
+   ]
+  },
+  {
+   "id": "q200",
+   "roles": [
+    "uke",
+    "uke",
+    "worry",
+    "keep",
+    "keep"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "self",
+   "part": "年末の引っ越しを避けたい",
+   "leadTo": "keep",
+   "bridgeRole": "worry",
+   "appeal": [
+    "空き・入居"
+   ],
+   "latent": "入居日・時期",
+   "latentWhat": "今から探すと年末の引越しになる",
+   "keyHow": [
+    "assert"
+   ],
+   "trustHow": [
+    "fact",
+    "preempt"
+   ]
+  },
+  {
+   "id": "q206",
+   "roles": [
+    "uke",
+    "keep",
+    "keep",
+    "keep",
+    "trust",
+    "close"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "search_condition",
+   "part": "より広い1LDK",
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [
+    "広さ・間取り"
+   ],
+   "latent": "物件が見つからない",
+   "latentWhat": "敷金礼金0のままだと広い部屋が無い",
+   "keyHow": [
+    "name_property",
+    "echo_words"
+   ],
+   "trustHow": [
+    "support",
+    "honest_weak"
+   ]
+  },
+  {
+   "id": "q207",
+   "roles": [
+    "uke",
+    "keep",
+    "trust"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "search_condition",
+   "part": "家賃管理費込み5〜6万",
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words",
+    "numbers"
+   ],
+   "trustHow": [
+    "support"
+   ]
+  },
+  {
+   "id": "q208",
+   "roles": [
+    "uke",
+    "promise",
+    "promise"
+   ],
+   "mainRole": "promise",
+   "property": null,
+   "about": "vacancy",
+   "part": "送って頂いた5件の募集状況",
+   "leadTo": "none",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "numbers"
+   ],
+   "trustHow": [
+    "effort",
+    "deadline"
+   ]
+  },
+  {
+   "id": "q214",
+   "roles": [
+    "uke",
+    "keep",
+    "trust"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "search_condition",
+   "part": "新金岡・なかもず周辺",
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "support"
+   ]
+  },
+  {
+   "id": "q326",
+   "roles": [
+    "answer",
+    "answer",
+    "answer"
+   ],
+   "mainRole": "answer",
+   "property": "フジパレス式内町I番館 103号室",
+   "about": "procedure",
+   "part": "初期費用の分割払い",
+   "leadTo": "answer_only",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": "費用",
+   "latentWhat": "初期費用が一度に払えない",
+   "keyHow": [
+    "conclusion_first",
+    "numbers"
+   ],
+   "trustHow": [
+    "fact"
+   ]
+  },
+  {
+   "id": "q024",
+   "roles": [
+    "uke",
+    "keep",
+    "close"
+   ],
+   "mainRole": "uke",
+   "property": null,
+   "about": "reaction_to_sent",
+   "part": null,
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "flexible"
+   ]
+  },
+  {
+   "id": "q051",
+   "roles": [
+    "uke",
+    "close"
+   ],
+   "mainRole": "uke",
+   "property": null,
+   "about": "viewing_day",
+   "part": "9/8 15:00の内覧",
+   "leadTo": "none",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": []
+  },
+  {
+   "id": "q110",
+   "roles": [
+    "uke",
+    "keep"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "search_condition",
+   "part": null,
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "kept_promise"
+   ]
+  },
+  {
+   "id": "q112",
+   "roles": [
+    "uke",
+    "keep",
+    "close"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "search_condition",
+   "part": null,
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "kept_promise"
+   ]
+  },
+  {
+   "id": "q172",
+   "roles": [
+    "uke",
+    "keep",
+    "keep"
+   ],
+   "mainRole": "uke",
+   "property": null,
+   "about": "reaction_to_sent",
+   "part": null,
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": "物件が見つからない",
+   "latentWhat": "この部屋は刺さらず他も見たい",
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": []
+  },
+  {
+   "id": "q213",
+   "roles": [
+    "uke",
+    "viewing"
+   ],
+   "mainRole": "uke",
+   "property": null,
+   "about": "reaction_to_sent",
+   "part": null,
+   "leadTo": "viewing",
+   "bridgeRole": "viewing",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "flexible"
+   ]
+  },
+  {
+   "id": "q149",
+   "roles": [
+    "greet",
+    "promise",
+    "promise"
+   ],
+   "mainRole": "promise",
+   "property": null,
+   "about": "property_equipment",
+   "part": "駐車場・駐輪場の有無",
+   "leadTo": "none",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "effort"
+   ]
+  },
+  {
+   "id": "q150",
+   "roles": [
+    "greet",
+    "promise",
+    "promise"
+   ],
+   "mainRole": "promise",
+   "property": "サンライト阿倍野8の202号室",
+   "about": "property_equipment",
+   "part": "お子様の入居可否",
+   "leadTo": "none",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "name_property",
+    "echo_words"
+   ],
+   "trustHow": [
+    "effort"
+   ]
+  },
+  {
+   "id": "q197",
+   "roles": [
+    "greet",
+    "uke",
+    "uke",
+    "keep",
+    "promise",
+    "close"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "search_condition",
+   "part": "ミナミ・島之内周辺",
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words",
+    "numbers"
+   ],
+   "trustHow": [
+    "effort"
+   ]
+  },
+  {
+   "id": "q106",
+   "roles": [
+    "uke",
+    "answer",
+    "answer",
+    "answer",
+    "answer"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "procedure",
+   "part": "申込から審査の流れ",
+   "leadTo": "apply",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": "審査",
+   "latentWhat": "契約したいが審査で何を見られるか",
+   "keyHow": [
+    "numbers"
+   ],
+   "trustHow": [
+    "fact"
+   ]
+  },
+  {
+   "id": "q130",
+   "roles": [
+    "uke",
+    "apply"
+   ],
+   "mainRole": "apply",
+   "property": "608号室",
+   "about": "procedure",
+   "part": "608号室の申込",
+   "leadTo": "apply",
+   "bridgeRole": "apply",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first",
+    "conclusion_first"
+   ],
+   "trustHow": []
+  },
+  {
+   "id": "q175",
+   "roles": [
+    "answer",
+    "viewing",
+    "trust"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "procedure",
+   "part": "他社で内見した後に弊社で契約",
+   "leadTo": "viewing",
+   "bridgeRole": "viewing",
+   "appeal": [],
+   "latent": "対応・信頼",
+   "latentWhat": "他社で内見して弊社で頼むのが気まずい",
+   "keyHow": [
+    "accept_first",
+    "conclusion_first"
+   ],
+   "trustHow": [
+    "meet",
+    "their_side"
+   ]
+  },
+  {
+   "id": "q013",
+   "roles": [
+    "greet",
+    "promise",
+    "promise"
+   ],
+   "mainRole": "promise",
+   "property": null,
+   "about": "vacancy",
+   "part": "送って頂いた物件の募集状況",
+   "leadTo": "none",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "effort"
+   ]
+  },
+  {
+   "id": "q120",
+   "roles": [
+    "uke",
+    "promise",
+    "promise",
+    "close"
+   ],
+   "mainRole": "promise",
+   "property": null,
+   "about": "property_cost",
+   "part": "同じマンションの別の建物の初期費用と募集状況",
+   "leadTo": "estimate",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "effort"
+   ]
+  },
+  {
+   "id": "q133",
+   "roles": [
+    "uke",
+    "promise",
+    "estimate"
+   ],
+   "mainRole": "promise",
+   "property": "ウェルスクエア池田井口堂308号室",
+   "about": "property_cost",
+   "part": "募集状況と敷金礼金無しの見積",
+   "leadTo": "estimate",
+   "bridgeRole": "estimate",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "name_property",
+    "echo_words"
+   ],
+   "trustHow": [
+    "effort"
+   ]
+  },
+  {
+   "id": "q151",
+   "roles": [
+    "greet",
+    "uke",
+    "promise",
+    "promise",
+    "estimate"
+   ],
+   "mainRole": "promise",
+   "property": null,
+   "about": "property_equipment",
+   "part": "ペット飼育の可否と初期費用",
+   "leadTo": "estimate",
+   "bridgeRole": "estimate",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "effort"
+   ]
+  },
+  {
+   "id": "q001",
+   "roles": [
+    "uke",
+    "keep",
+    "trust",
+    "close"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "search_condition",
+   "part": null,
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": "物件が見つからない",
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "support"
+   ],
+   "latentWhat": "今の物件では決まらず他も探してほしい"
+  },
+  {
+   "id": "q004",
+   "roles": [
+    "uke",
+    "keep",
+    "trust",
+    "close"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "search_condition",
+   "part": "敷金礼金0で初期費用を抑える",
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": "費用",
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "support",
+    "their_side"
+   ],
+   "latentWhat": "できるだけ安く済ませたい"
+  },
+  {
+   "id": "q009",
+   "roles": [
+    "uke",
+    "keep",
+    "trust"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "search_condition",
+   "part": "家賃を上げた条件",
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "support"
+   ]
+  },
+  {
+   "id": "q029",
+   "roles": [
+    "uke",
+    "viewing"
+   ],
+   "mainRole": "uke",
+   "property": null,
+   "about": "reaction_to_sent",
+   "part": null,
+   "leadTo": "viewing",
+   "bridgeRole": "viewing",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "flexible"
+   ]
+  },
+  {
+   "id": "q114",
+   "roles": [
+    "greet",
+    "uke",
+    "uke",
+    "ask_send",
+    "promise",
+    "close"
+   ],
+   "mainRole": "uke",
+   "property": null,
+   "about": "reaction_to_sent",
+   "part": null,
+   "leadTo": "ask_send",
+   "bridgeRole": "ask_send",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "flexible",
+    "effort"
+   ]
+  },
+  {
+   "id": "q144",
+   "roles": [
+    "uke",
+    "keep"
+   ],
+   "mainRole": "uke",
+   "property": null,
+   "about": "reaction_to_sent",
+   "part": null,
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "flexible"
+   ]
+  },
+  {
+   "id": "q049",
+   "roles": [
+    "uke",
+    "viewing",
+    "close"
+   ],
+   "mainRole": "viewing",
+   "property": null,
+   "about": "viewing_day",
+   "part": "18日の南船場の内覧の後",
+   "leadTo": "viewing",
+   "bridgeRole": "viewing",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "conclusion_first",
+    "numbers"
+   ],
+   "trustHow": [
+    "flexible"
+   ]
+  },
+  {
+   "id": "q068",
+   "roles": [
+    "uke",
+    "answer"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "viewing_day",
+   "part": "内覧の所要時間",
+   "leadTo": "answer_only",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "numbers"
+   ],
+   "trustHow": []
+  },
+  {
+   "id": "q141",
+   "roles": [
+    "uke",
+    "ask_send",
+    "close"
+   ],
+   "mainRole": "uke",
+   "property": null,
+   "about": "viewing_day",
+   "part": null,
+   "leadTo": "ask_send",
+   "bridgeRole": "ask_send",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": []
+  },
+  {
+   "id": "q014",
+   "roles": [
+    "uke",
+    "estimate"
+   ],
+   "mainRole": "estimate",
+   "property": null,
+   "about": "property_cost",
+   "part": "初期費用の見積",
+   "leadTo": "estimate",
+   "bridgeRole": "estimate",
+   "appeal": [
+    "初期費用"
+   ],
+   "latent": null,
+   "keyHow": [
+    "accept_first"
+   ],
+   "trustHow": [
+    "effort"
+   ]
+  },
+  {
+   "id": "q043",
+   "roles": [
+    "answer",
+    "answer",
+    "trust"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "company",
+   "part": "仲介手数料0円と安い理由",
+   "leadTo": "answer_only",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": "対応・信頼",
+   "keyHow": [
+    "conclusion_first",
+    "reason_fact"
+   ],
+   "trustHow": [
+    "fact",
+    "their_side"
+   ],
+   "latentWhat": "他社より安すぎて裏があるのでは"
+  },
+  {
+   "id": "q047",
+   "roles": [
+    "uke",
+    "answer",
+    "answer",
+    "answer"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "property_cost",
+   "part": "初期費用156,980円",
+   "leadTo": "answer_only",
+   "bridgeRole": null,
+   "appeal": [
+    "初期費用"
+   ],
+   "latent": null,
+   "keyHow": [
+    "conclusion_first",
+    "numbers"
+   ],
+   "trustHow": [
+    "fact"
+   ]
+  },
+  {
+   "id": "q075",
+   "roles": [
+    "uke",
+    "uke",
+    "estimate"
+   ],
+   "mainRole": "estimate",
+   "property": null,
+   "about": "property_cost",
+   "part": "理想の部屋の初期費用",
+   "leadTo": "estimate",
+   "bridgeRole": "estimate",
+   "appeal": [
+    "初期費用"
+   ],
+   "latent": null,
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "their_side"
+   ]
+  }
+ ]
+}
