@@ -7,6 +7,9 @@
 //   ③同じ物を2つの名前で持っている欄（同じ concept を2行が持つ時は bridge＝読み替えの関数が要る）④道の前に置いてはいけない欄（次の一手・優先・目的・押す強さ）が前にある。
 //   main に入っていない欄（where が main でない）は、表の形だけ確かめ、コードとの突き合わせ（BRAIN_FIELD_ROUTE 等）は main に入った順に強める。
 
+import type { ConductorLink } from "./conductor-linkage";
+import type { InfoKey } from "./info-fill-map";
+
 /** 受け取る所（統括の段の名前・conductor-linkage の id と揃える物は同じ名前） */
 export const RECEIVERS = [
   "intake",       // 入口の統括（表→背景→重点）
@@ -51,6 +54,8 @@ export type FieldLink = {
   bridge?: string;
   /** meta の鍵（SuggestedAixMeta にある欄）。あれば compose-sentence-plan の BRAIN_FIELD_ROUTE と突き合わせる（plan なら受け取る所に compose が要る） */
   metaKey?: string;
+  /** 作る所が conductor-linkage.ts の CONDUCTOR_LINKS のどの統括か（重なりの突き合わせ・無ければ統括の記録＝conductor） */
+  link?: ConductorLink["id"];
   note?: string;
 };
 
@@ -63,7 +68,7 @@ export const FIELD_LINKS: readonly FieldLink[] = [
   { field: "exchange_ledger", concept: "照らし合わせの残り（答えてもらっていない・果たしていない）", producer: "exchange-ledger.buildExchangeLedger", owner: "作業員4", receivers: ["intake", "brain", "conductor"], vocab: "app/lib/exchange-ledger.ts（OPEN_KINDS）", place: "material", steers: false, switch: "CONDUCTOR_EXCHANGE_LEDGER・_BRAIN（CONDUCTOR_BRIEF でも作る）", where: "main" },
   { field: "our_part", concept: "こちらの送信の部分（約束・問い・事実）", producer: "our-part-types.splitOurPartsFine", owner: "作業員4", receivers: ["conductor"], vocab: "app/lib/our-part-types.ts（OUR_PARTS）", place: "material", steers: false, switch: "（exchange_ledger と同じ）", where: "main", note: "conductor-doubt の約束の重ね" },
   { field: "customer_part", concept: "お客様の一通の部分（主の要件）", producer: "customer-part-types.splitCustomerParts", owner: "作業員21", receivers: ["conductor"], vocab: "app/lib/customer-part-types.ts（CUSTOMER_PART_KINDS）", place: "material", steers: false, switch: "CUSTOMER_PART_TYPES", where: "feat/info-kind-1112（未コミット）", note: "指示書の主の要件（今は turn_contract.asks で代わり・未）" },
-  { field: "customer_part.info", concept: "問いが求める情報の種類", producer: "customer-part-types QUESTION_POINTS.info", owner: "作業員21", receivers: ["conductor"], vocab: "app/lib/aix-catalog-map.ts（INFO_KINDS_16・K1〜K16）", place: "material", steers: false, switch: "CUSTOMER_PART_TYPES", where: "feat/info-kind-1112（未コミット）", bridge: "未（INFO_KEYS と K1〜K16 の読み替えの表が要る）", note: "③ 情報の名前が INFO_KEYS（13）と INFO_KINDS_16（16）の2つ" },
+  { field: "customer_part.info", concept: "問いが求める情報の種類", producer: "customer-part-types QUESTION_POINTS.info", owner: "作業員21", receivers: ["conductor"], vocab: "app/lib/aix-catalog-map.ts（INFO_KINDS_16・K1〜K16）", place: "material", steers: false, switch: "CUSTOMER_PART_TYPES", where: "feat/info-kind-1112（未コミット）", bridge: "K_TO_INFO_KEYS", note: "軸が違う（INFO_KEYS＝お客様について分かっている／いない事・K＝情報の種類と誰が知り得るか＝返信か AIX かの分け）。1つに寄せず読み替えの表で結ぶ（11/12 統括役の決め）" },
   { field: "check_order", concept: "判断の順番の型（型・確認の順番・なぜ）", producer: "check-order-wire.checkOrderRecord（pickCheckOrder）", owner: "作業員16（表）・作業員22（配線）", receivers: ["conductor", "send_combo"], vocab: "app/lib/check-order.ts（CHECK_ORDER_TYPES・CheckStep）", place: "post", steers: false, switch: "CHECK_ORDER_TABLE", where: "feat/judge-basis-purpose-1112", metaKey: "check_order", note: "作業員10 の文の型の表が読む時に compose を足し BRAIN_FIELD_ROUTE を plan に" },
   { field: "conductor_allocation", concept: "番ごとの部品の配分", producer: "conductor-allocation.allocationFromMeta", owner: "作業員22", receivers: ["conductor", "measure"], vocab: "app/lib/conductor-allocation.ts（PARTS＝FOCUS_ORDER の役）", place: "post", steers: false, switch: "CONDUCTOR_ALLOCATION", where: "feat/judge-basis-purpose-1112" },
   { field: "judge_basis", metaKey: "judge_basis", concept: "判断の根拠のメモ（深さ・優先・目的・足りない情報・要点・順番）", producer: "brain（JSON の最後）", owner: "作業員22（17 から）", receivers: ["measure", "conductor"], vocab: "app/lib/judge-basis-types.ts", place: "after_route", steers: true, switch: "BRAIN_JUDGE_BASIS", where: "main（名前の合わせ直しは feat/judge-basis-purpose-1112）" },
@@ -72,7 +77,11 @@ export const FIELD_LINKS: readonly FieldLink[] = [
   { field: "seven_read", metaKey: "seven_read", concept: "竹内さんの7つの欄（本番の番の読み）", producer: "brain（JSON の最後）", owner: "作業員10", receivers: ["compose"], vocab: "app/lib/takeuchi-seven-read.ts", place: "after_route", steers: true, switch: "BRAIN_SEVEN_FIELDS", where: "main" },
   { field: "latent_read", metaKey: "latent_read", concept: "潜在の4欄", producer: "brain（JSON の最後）", owner: "作業員10", receivers: ["compose"], vocab: "app/lib/takeuchi-seven-read.ts（LatentFour）", place: "after_route", steers: true, switch: "BRAIN_SEVEN_FIELDS", where: "main", note: "作業員24 の根A: Handoff にまだ入っていない" },
   { field: "next_move", concept: "次の一手（行き先×強さ×時機）", producer: "next-move-types（型の表 NEXT_MOVE_OF_TYPE・返信の文からの網）", owner: "作業員16（表）・作業員7（具体）", receivers: ["conductor", "send_combo", "measure"], vocab: "app/lib/next-move-types.ts（NEXT_DEST・NEXT_STRENGTH）", place: "post", steers: true, switch: "（表だけ・どこからも道の前に読まない）", where: "main" },
-  { field: "send_combo", concept: "返信と AIX の組と順番", producer: "send-combo-table.sendComboRecord", owner: "作業員7", receivers: ["conductor", "measure"], vocab: "app/lib/send-combo-table.ts（SendCombo）", place: "post", steers: false, switch: "SEND_COMBO_TABLE", where: "w7-seq（feat/send-seq 系・699f2986）", note: "指示書の組と順番は今は meta.two_message_plan_digest（作業員7 の two-message-plan）を読む" },
+  { field: "send_combo", concept: "返信と AIX の組と順番", producer: "send-combo-table.pickSendCombo（型×決まった道×手がかり）", owner: "作業員7", receivers: ["conductor", "measure"], vocab: "app/lib/send-combo-table.ts（SendCombo）", place: "post", steers: false, switch: "SEND_COMBO_TABLE", where: "main（8a0f03dd）", link: "two_msg", note: "統括の指示書の⑦組と順番がこれを読む（型が無い番は two_message_plan）" },
+  { field: "next_move_detail", concept: "次の一手の中身（何を差し出すか・仕込み・いつ・形）", producer: "next-move-detail.buildNextMoveDetail", owner: "作業員7", receivers: ["conductor", "compose"], vocab: "app/lib/next-move-detail.ts（Offer・PlantFact・When）", place: "post", steers: true, switch: "NEXT_MOVE_DETAIL（TURN_AIMS_AFTER の中身）", where: "main（8a0f03dd）", link: "compose_plan", note: "統括の指示書の⑧次の一手（行き先と強さは next_move）。道を書き終えた後だけ" },
+  { field: "aix_first_sent", concept: "AIX の1通目で送った物（見積書・物件の画像・確認の結果）", producer: "second-message-materials.sentThisTurn・splitTurn", owner: "作業員25（点検）", receivers: ["aix_text"], vocab: "app/lib/second-message-materials.ts（SentKind）", place: "post", steers: false, switch: "SECOND_MSG_MATERIALS（既定 on）", where: "main", link: "aix_desk", note: "AIX 1通目→2通目。作業員25 の地図（feat/aix2-link-1112・未コミット）とは second-message-materials の関数名で揃える" },
+  { field: "aix_second_materials", concept: "AIX の2通目に渡す材料（まだ答えていない依頼・開いている約束・確認の結果・見積の件数）", producer: "second-message-materials.outstandingAsks・openPromises・confirmAnswersOf", owner: "作業員25（点検）", receivers: ["aix_text", "final_check"], vocab: "app/lib/second-message-materials.ts", place: "material", steers: false, switch: "SECOND_MSG_MATERIALS（既定 on）", where: "main", link: "aix_desk", note: "開いている約束の読みは作業員4 の promise-read（PROMISE_READ_UNIFIED）と同じ答えに寄せる" },
+  { field: "aix_second_brain_bundle", concept: "AIX の2通目へのブレインの決めた事（BrainBundleMeta）", producer: "second-message-materials.buildBrainBundleNote", owner: "作業員25（点検）", receivers: ["aix_text"], vocab: "app/lib/second-message-materials.ts（BrainBundleMeta）", place: "post", steers: false, switch: "SECOND_MSG_MATERIALS（既定 on）", where: "main", link: "aix_desk", note: "統括の決めた事の台帳（conductor-decided）の second の必ず届ける欄（重点・潜在の4欄）と突き合わせる段は試験の後" },
   { field: "two_message_plan", concept: "何通・どの順・各通の受け持ち", producer: "conductor-combine.combineFromMeta", owner: "作業員7", receivers: ["compose", "writer", "conductor"], vocab: "app/lib/two-message-plan.ts", place: "post", steers: false, switch: "CONDUCTOR_COMBINE", where: "main" },
   { field: "time_facts", concept: "時間の事実（今・曜日・祝日・営業・経過・期限）", producer: "time-facts.ts", owner: "作業員19", receivers: ["brain", "conductor"], vocab: "app/lib/time-facts.ts", place: "material", steers: false, switch: "TIME_FACTS", where: "feat/time-facts-1112", note: "conductor-doubt の時間の線は今は analyzed_msg_ts の JST 時だけ（入ったら time-facts の営業の線に寄せる）" },
   { field: "company_fact_proactive", concept: "先回りの会社の事実", producer: "brain-core（COMPANY_FACT_PROACTIVE）", owner: "作業員21", receivers: ["brain"], vocab: "app/lib/company-facts.ts", place: "material", steers: false, switch: "COMPANY_FACT_PROACTIVE", where: "feat/info-kind-1112（4fbc114b）" },
@@ -106,3 +115,32 @@ export function duplicateConcepts(rows: ReadonlyArray<FieldLink> = FIELD_LINKS):
   for (const r of rows) if (r.bridge?.startsWith("未") && !out.some((o) => o.fields.includes(r.field))) out.push({ concept: r.concept, fields: [r.field], noBridge: [r.field] });
   return out;
 }
+
+/** 受け取る所 → conductor-linkage の統括の id（統括の単位の表との突き合わせ・null は統括の表の外＝記録・物差し・影の自動返信） */
+export const RECEIVER_TO_LINK: Readonly<Record<Receiver, ConductorLink["id"] | null>> = {
+  intake: "intake", brain: "brain", conductor: null, compose: "compose", writer: "writer", aix_desk: "aix_desk", aix_text: "aix_desk",
+  send_combo: "two_msg", final_check: "final_check", measure: "exam", shadow_auto: null,
+};
+
+/**
+ * 情報の種類（作業員21 の aix-catalog-map の INFO_KINDS_16＝K1〜K16・誰が知り得るか＝返信か AIX かの分け）→ 関係する INFO_KEYS（作業員1・お客様について分かっている／いない事）。
+ * 軸が違うので1つに寄せず、この表で結ぶ（11/12 統括役の決め）。関係する物が無い種類は []（なし）。
+ */
+export const K_TO_INFO_KEYS: Readonly<Record<string, readonly InfoKey[]>> = {
+  K1: ["vacancy_checked"],                       // 募集状況・空き
+  K2: ["move_in", "screening_info"],             // 管理会社に確認した結果（入居・審査の見込み 等）
+  K3: [],                                        // 交渉の結果
+  K4: [],                                        // 撮影した写真
+  K5: ["estimate_sent"],                         // 見積の金額
+  K6: ["viewing_date"],                          // 内覧日程の確定
+  K7: [],                                        // 電話で話した内容
+  K8: [],                                        // 会社の事実
+  K9: [],                                        // 資料に書いてある事（物件の事実・お客様の情報ではない）
+  K10: ["property_chosen", "vacancy_checked"],   // 物件の記録
+  K11: ["area", "rent", "layout", "move_in", "size", "screening_info"], // 会話の事実（条件・事情）
+  K12: ["area", "rent", "layout", "move_in", "size"], // 初回の挨拶・条件ヒアリング
+  K13: ["vacancy_checked", "estimate_sent"],     // 前の約束の結果
+  K14: [],                                       // 気持ち・不安
+  K15: ["apply_intent", "apply_form"],           // 申込の合図・手続き
+  K16: [],                                       // 1通に種類の違う依頼が複数
+};

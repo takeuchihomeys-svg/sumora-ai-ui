@@ -9,8 +9,8 @@
 //   ④ open     照らし合わせの残り（作業員4 の exchange-ledger）
 //   ⑤ type     型・確認の順番・なぜ（作業員16 の check-order）
 //   ⑥ alloc    配分（conductor-allocation）
-//   ⑦ combine  組と順番（作業員7 の組の表＝今は meta.two_message_plan_digest があればそれ）
-//   ⑧ next     次の一手の具体（何を・どの強さで・いつ）……作業員7 の具体が入るまでは型の表 NEXT_MOVE_OF_TYPE
+//   ⑦ combine  組と順番（作業員7 の send-combo-table.pickSendCombo・型×決まった道×手がかり。無ければ meta.two_message_plan_digest）
+//   ⑧ next     次の一手の具体（行き先と強さ・時機は作業員16 の NEXT_MOVE_OF_TYPE、何を差し出すか・仕込み・いつは作業員7 の next-move-detail.buildNextMoveDetail）
 //   ⑨ aim      目的・押さえる要点（判断の根拠のメモ judge_basis の purpose・key_point と同じ名前）
 //   ⑩ doubts   下の役の答えを事実と突き合わせた疑いの印（conductor-doubt の DOUBT_TABLE・種類ごとに何と何を突き合わせるか・なぜ・直しの多い順・決め直さない）
 //   ⑪ sure     番の確かさ（conductor-doubt の SURE_CUES の重み・高・中・低）と人に回す線の案（HANDOFF_RULE）
@@ -18,6 +18,8 @@
 // スイッチ: CONDUCTOR_BRIEF（既定 off＝何も足さない／shadow・on＝meta.conductor_brief と digest.cb に記録だけ）。
 import { CHECK_ORDER_TYPES, CHECK_DEPTH, NEXT_MOVE_OF_TYPE, checkOrderById } from "./check-order";
 import { buildDecidedLedger, type DecidedItem } from "./conductor-decided";
+import { pickSendCombo, routeOfMeta, type SendCombo } from "./send-combo-table";
+import { buildNextMoveDetail, type Offer, type PlantFact, type When } from "./next-move-detail";
 import { briefDoubts, briefSure, type BriefDoubt, type Sure, type SureCueKey } from "./conductor-doubt";
 import type { InfoCell } from "./info-fill-map";
 import type { OpenItem } from "./exchange-ledger";
@@ -47,8 +49,8 @@ export type ConductorBrief = {
   open: Missing<Array<{ kind: string; what: string; overdue: boolean }>>;
   type: Missing<{ id: string; check: string[]; why: string; depth: string }>;
   alloc: Missing<{ name: string; parts: string[] }>;
-  combine: Missing<string>;
-  next: Missing<{ dest: string; strength: string; timing: string; from: "type_table" }>;
+  combine: Missing<{ combo: string; order: string; gap: string; why: string; from: "send_combo_table" | "two_message_plan" }>;
+  next: Missing<{ dest: string; strength: string; timing: string; offer: Offer | null; plants: PlantFact[]; when: When | null; from: "next_move_detail" | "type_table" }>;
   aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string> };
   /** 統括が決めた事の1つの置き場（重点・約束・段階・誘導先・継続の約束・こちら側の状態・依頼ごとの道と答え／conductor-decided.ts） */
   decided: DecidedItem[];
@@ -107,13 +109,25 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   if (alloc === BRIEF_NONE) notYet.push("alloc");
 
   // ⑦ 組と順番
-  const combine: ConductorBrief["combine"] = str(m.two_message_plan_digest, 40) ?? BRIEF_NONE;
+  // 組と順番: 型×決まった道（routeOfMeta＝道は読むだけ）×手がかり（作業員7 の表・記録だけ）
+  const nl = obj(m.now_vs_later);
+  const unkept = (ledger?.open ?? []).filter((o) => o.kind === "our_promise_unkept").length;
+  // 型が決まらない番は組を選ばない（道だけでは選べない・未）
+  const combo = !typeId ? null : pickSendCombo({ type: typeId, route: routeOfMeta(m), cues: {
+    firstContact: typeId === "T11_first_contact_hearing", resultReady: typeId === "T10_result_ready" || arr(nl?.ready_now).length > 0,
+    openPromise: unkept > 0, multiTopics: asks.filter((a) => a.kind === "question").length >= 2,
+  } });
+  const plan2 = str(m.two_message_plan_digest, 40);
+  const combine: ConductorBrief["combine"] = combo ? { combo: combo.combo, order: combo.order, gap: combo.gap, why: combo.why.slice(0, 80), from: "send_combo_table" } : plan2 ? { combo: plan2, order: "", gap: "", why: "", from: "two_message_plan" } : BRIEF_NONE;
   if (combine === BRIEF_NONE) notYet.push("combine");
 
   // ⑧ 次の一手（型の表・作業員7 の具体は未）
   const nm = t ? NEXT_MOVE_OF_TYPE[t.id]?.usual : null;
-  const next: ConductorBrief["next"] = nm ? { dest: nm.dest, strength: nm.strength, timing: nm.timing, from: "type_table" } : BRIEF_NONE;
-  notYet.push("next_concrete");
+  const anxT = String(obj(obj(m.customer_mindset)?.anxiety)?.target ?? "");
+  const worry = anxT === "先に取られる" ? "taken" : anxT === "審査" ? "screening" : anxT === "費用" ? "cost" : null;
+  const detail = nm ? buildNextMoveDetail({ dest: nm.dest, situation: { checkType: typeId, worry, property: "unknown" }, combo: (combo?.combo ?? null) as SendCombo | null }) : null;
+  const next: ConductorBrief["next"] = nm ? { dest: nm.dest, strength: nm.strength, timing: nm.timing, offer: detail?.offer ?? null, plants: detail?.plants.map((p) => p.fact) ?? [], when: detail?.when ?? null, from: detail ? "next_move_detail" : "type_table" } : BRIEF_NONE;
+  if (next === BRIEF_NONE) notYet.push("next");
 
   // ⑨ 目的・要点（判断の根拠のメモと同じ名前）
   const jb = obj(m.judge_basis);

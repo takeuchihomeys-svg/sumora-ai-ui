@@ -30,7 +30,7 @@ t("off の時は digest に cb が無い・記録がある時だけ入る", () =
 t("部品が無い欄は「未」・何が未かを notYet に", () => {
   const b = buildConductorBrief({});
   for (const k of ["main", "facts", "missing", "open", "type", "alloc", "combine", "next"] as const) assert.equal(b[k], BRIEF_NONE, k);
-  for (const k of ["customer_part", "fact_id", "next_concrete", "missing", "open", "type", "alloc", "combine", "key_point"]) assert.ok(b.notYet.includes(k), k);
+  for (const k of ["customer_part", "fact_id", "next", "missing", "open", "type", "alloc", "combine", "key_point"]) assert.ok(b.notYet.includes(k), k);
 });
 
 const meta = {
@@ -50,17 +50,22 @@ t("具体の一覧: 主の要件・事実と出所・足りない情報・照ら
   assert.deepEqual(b.open, []);
   assert.ok(b.type !== BRIEF_NONE && b.type.id === "T2_question_fact" && b.type.check[0] === "read_ask" && b.type.depth === "normal+fact");
   assert.ok(b.alloc !== BRIEF_NONE && b.alloc.parts.includes("check_ground"));
-  assert.equal(b.combine, "1:answer");
-  assert.ok(b.next !== BRIEF_NONE && b.next.from === "type_table");
+  // 組と順番は作業員7 の表（型×道×手がかり）・次の一手は 16 の行き先と強さ＋7 の中身
+  assert.ok(b.combine !== BRIEF_NONE && b.combine.from === "send_combo_table" && b.combine.combo === "reply_only", JSON.stringify(b.combine));
+  assert.ok(b.next !== BRIEF_NONE && b.next.from === "next_move_detail" && b.next.dest === "keep_send" && b.next.when !== null, JSON.stringify(b.next));
+  // 型が無い番は表で選ばず、two_message_plan があればそれ
+  const b2 = buildConductorBrief({ two_message_plan_digest: "1:answer" });
+  assert.ok(b2.combine !== BRIEF_NONE && b2.combine.from === "two_message_plan" && b2.combine.combo === "1:answer");
   assert.deepEqual(b.aim, { purpose: "answer", purposeFrom: "judge_basis", keyPoint: "最短の入居の日" });
   assert.equal(b.doubts.length, 0);
   assert.equal(b.sure.level, "high");
-  assert.equal(conductorBriefDigest(b), "T2|p:answer|m:1|o:0|f:1|d:-|s:high|未:3");
+  assert.equal(conductorBriefDigest(b), "T2|p:answer|m:1|o:0|f:1|d:-|s:high|未:2");
 });
 
 t("返信か AIX かを決める言葉を入れない（指示書の欄の名前・型の表の文・事実の値以外）", () => {
   const b = buildConductorBrief(meta);
-  const own = JSON.stringify({ ...b, facts: [], decided: [], main: BRIEF_NONE, type: b.type === BRIEF_NONE ? b.type : { ...b.type, why: "" } });
+  // 組と順番（combine）は決まった道の後の記録で、表の文に「返信1通」等の名前が入る＝照らす対象から外す（道を決める言葉ではない）
+  const own = JSON.stringify({ ...b, facts: [], decided: [], combine: BRIEF_NONE, main: BRIEF_NONE, type: b.type === BRIEF_NONE ? b.type : { ...b.type, why: "" } });
   assert.ok(!BASIS_ROUTE_WORD_RE.test(own), own);
 });
 

@@ -2,17 +2,19 @@
 // 実行: npx tsx scripts/test-conductor-field-links.ts
 // 落とす物: ①作られたのに誰も受け取らない欄 ②受け取る所があるのに作る所が無い欄 ③同じ物を2つの名前で持っている欄（読み替えの無い物）④道の前に置いてはいけない欄が前にある
 //   ＋ meta の鍵がある欄は compose-sentence-plan の BRAIN_FIELD_ROUTE と食い違わない（plan なら受け取る所に compose・other なら compose を書かない）
-// 今わかっている③（直すまでの既知の穴・増えたら落ちる）: customer_part.info（INFO_KINDS_16 と INFO_KEYS の読み替えが無い）
+// ③の既知の穴は無し（customer_part.info は K_TO_INFO_KEYS で読み替える・11/12 統括役の決め）
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { FIELD_LINKS, RECEIVERS, orphanFields, producerlessFields, duplicateConcepts, placeViolations } from "../app/lib/conductor-field-links";
+import { FIELD_LINKS, RECEIVERS, RECEIVER_TO_LINK, K_TO_INFO_KEYS, orphanFields, producerlessFields, duplicateConcepts, placeViolations } from "../app/lib/conductor-field-links";
+import { CONDUCTOR_LINKS } from "../app/lib/conductor-linkage";
+import { INFO_KEYS } from "../app/lib/info-fill-map";
 import { BRAIN_FIELD_ROUTE } from "../app/lib/compose-sentence-plan";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
 const ROOT = resolve(__dirname, "..");
-const KNOWN_DUP = ["customer_part.info"];
+const KNOWN_DUP: string[] = [];
 const HERE = ["main", "feat/judge-basis-purpose-1112", "feat/our-send-uptake-1112", "w1-exh-1112"]; // このブランチに入っている物
 
 t("統括役の指示の欄が全部ある", () => {
@@ -43,5 +45,24 @@ t("meta の鍵がある欄は BRAIN_FIELD_ROUTE と食い違わない（plan ⇔
     assert.ok(route, `BRAIN_FIELD_ROUTE に ${r.metaKey} が無い`);
     assert.equal(route === "plan", r.receivers.includes("compose"), `${r.metaKey}: BRAIN_FIELD_ROUTE=${route}・受け取る所=${r.receivers.join(",")}`);
   }
+});
+t("K1〜K16 → INFO_KEYS の読み替えの表: 16種が全部あり、値は INFO_KEYS の中だけ（関係が無い種類は空）", () => {
+  assert.deepEqual(Object.keys(K_TO_INFO_KEYS), Array.from({ length: 16 }, (_, i) => `K${i + 1}`));
+  for (const [k, vs] of Object.entries(K_TO_INFO_KEYS)) for (const v of vs) assert.ok((INFO_KEYS as readonly string[]).includes(v), `${k} ${v}`);
+  // INFO_KEYS の13項目のうち、どの K にもつながらない物（今は viewing_done だけ＝内覧が済んだかは K に無い）
+  const used = new Set(Object.values(K_TO_INFO_KEYS).flat());
+  assert.deepEqual(INFO_KEYS.filter((k) => !used.has(k)), ["viewing_done"]);
+});
+t("統括の単位の表（conductor-linkage）と突き合う: 受け取る所と作る所の統括の id は CONDUCTOR_LINKS にある", () => {
+  const ids = new Set(CONDUCTOR_LINKS.map((l) => l.id));
+  for (const [r, id] of Object.entries(RECEIVER_TO_LINK)) if (id) assert.ok(ids.has(id), `${r}→${id}`);
+  for (const r of FIELD_LINKS) if (r.link) assert.ok(ids.has(r.link), `${r.field} ${r.link}`);
+  // meta の鍵がある欄のうち、CONDUCTOR_LINKS の writes にまだ無い物（統括の表の外の欄）を一覧に出す（表を広げる時の目安・落とさない）
+  const writes = CONDUCTOR_LINKS.flatMap((l) => l.writes);
+  const outside = FIELD_LINKS.filter((r) => r.metaKey && !writes.some((w) => w === `meta.${r.metaKey}`)).map((r) => r.field);
+  console.log("   統括の表（conductor-linkage）の writes にまだ無い欄:", outside.join(",") || "なし");
+});
+t("AIX 1通目→2通目の欄がある（作業員25 の点検と名前を揃える）", () => {
+  for (const f of ["aix_first_sent", "aix_second_materials", "aix_second_brain_bundle"]) { const r = FIELD_LINKS.find((x) => x.field === f); assert.ok(r && r.receivers.includes("aix_text"), f); }
 });
 console.log(`\n${n} 件 ok`);
