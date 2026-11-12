@@ -1,5 +1,5 @@
 // app/lib/__tests__/two-stage.test.ts — 2026-10-02 竹内さんの決定「2段の場面: 先に約束の返信・後で AIX」（実行: npx tsx app/lib/__tests__/two-stage.test.ts）
-import { resolveTwoStage, TWO_STAGE_WORDING, twoStageOtherQuestions, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, conditionChangedThisTurn, promiseKindsToday } from "../two-stage";
+import { resolveTwoStage, firstContactReadyPickupTwoStage, TWO_STAGE_WORDING, twoStageOtherQuestions, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, conditionChangedThisTurn, promiseKindsToday } from "../two-stage";
 import { resolveStaffPromiseAix } from "../aix-task-link";
 import { classifyStaffTextFacts } from "../action-ledger";
 let pass = 0, fail = 0;
@@ -192,4 +192,9 @@ t("軸: about=vacancy は「空いて」の語が無くても募集状況の約�
   t("on: 印が無い番は今まで通り", resolveTwoStage({ ...v, sentReactionBrainReply: false })?.source === "rule:two_stage_promise(check_question)");
   t("on: 空き・募集の問いは今まで通り（check）", resolveTwoStage({ ...v, askAbout: "vacancy", customerText: "ここまだ空いてますか？" })?.kind === "check");
   delete process.env.TWO_STAGE_SENT_REACTION_NO_REWRITE; }
+// 2026-11-10 q118: 初回の守りが条件ヒアリングをピックアップに変えた番（spec q118 の文）
+{ const q118 = "お久しぶりです。12月中旬までに引っ越したいのですが、期間短いですが可能でしょうか？難波周辺で家賃7万円まで、バストイレ別希望です";
+  t("初回の条件そろい: 既定 off は作らない", firstContactReadyPickupTwoStage(q118, {}) === null);
+  const v = firstContactReadyPickupTwoStage(q118, { FIRST_CONTACT_READY_TWO_STAGE: "on" });
+  t("初回の条件そろい: on はピックアップの約束の2段", v?.kind === "pickup", JSON.stringify(v)); }
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);
