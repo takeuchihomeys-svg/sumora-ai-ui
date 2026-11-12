@@ -2,7 +2,7 @@
 //   app/lib/viewing-flow.ts（内覧の流れの段階を1か所で決める純関数）
 // 本文は実物（みことさん 8a77820b・6fdadc8b・fbffca3d・cdf07418 ほか）。お客様の名前は YUMA に置き換えた
 // 実行: npx tsx app/lib/__tests__/viewing-flow.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { resolveViewingFlow, customerWishes, classifyCustomerDateReply, viewingFlowNextAix, buildViewingFlowBrainText, buildViewingFlowLedgerLine, viewingFlowStageDetail, type FlowMsg } from "../viewing-flow";
+import { offeredDaysOfWeekday, resolveViewingFlow, customerWishes, classifyCustomerDateReply, viewingFlowNextAix, buildViewingFlowBrainText, buildViewingFlowLedgerLine, viewingFlowStageDetail, type FlowMsg } from "../viewing-flow";
 import { buildActionLedger, checkDonePresupposition, type LedgerMessage, type LedgerAixRow } from "../action-ledger";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -300,6 +300,22 @@ it("6巡目: ふつうの希望はそのまま", () => {
   expect(_cw("こちら内覧希望です")).toBe(true);
   expect(_cw("こちらのお部屋内見させて頂きたいです🙇‍♂️")).toBe(true);
   expect(_cw("内見行きたいです！")).toBe(true);
+});
+
+it("q406: 曜日だけの返事を候補のその曜日の日に読む（VIEWING_WEEKDAY_TO_OFFERED=on・既定 off）", () => {
+  const txt = "土曜日 で\nお願い出来ればと思います☺️\n\n相談なのですが、今、水商売をしていて";
+  const at = Date.parse("2026-11-12T11:27:39Z"); // 試験の仮の時計（木曜）＝次の土曜は 11/14。候補は 10/23(金)・10/24(土)
+  const prev = process.env.VIEWING_WEEKDAY_TO_OFFERED;
+  try {
+    delete process.env.VIEWING_WEEKDAY_TO_OFFERED;
+    expect(classifyCustomerDateReply(txt, { atMs: at, offeredDays: ["10/23", "10/24"], inFlow: true }).kind).toBe("day_only");
+    process.env.VIEWING_WEEKDAY_TO_OFFERED = "on";
+    const v = classifyCustomerDateReply(txt, { atMs: at, offeredDays: ["10/23", "10/24"], inFlow: true });
+    expect(v.kind).toBe("day_pick"); expect(v.day).toBe("10/24");
+    expect(classifyCustomerDateReply(txt, { atMs: at, offeredDays: ["10/24", "10/31"], inFlow: true }).kind).toBe("day_only");
+    expect(classifyCustomerDateReply(txt, { atMs: Date.parse("2026-10-22T11:27:39Z"), offeredDays: ["10/23", "10/24"], inFlow: true }).day).toBe("10/24");
+  } finally { if (prev === undefined) delete process.env.VIEWING_WEEKDAY_TO_OFFERED; else process.env.VIEWING_WEEKDAY_TO_OFFERED = prev; }
+  expect(offeredDaysOfWeekday(["12/26", "1/2"], 6, Date.parse("2026-12-24T03:00:00Z")).join(",")).toBe("12/26,1/2");
 });
 
 console.log(`
