@@ -6,7 +6,23 @@ function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected
 const ids = (m: string) => ownersOfMarker(m).map((c) => c.id).join(",");
 
 // 2026-11-12 作業員10: 文の統括の設計図（compose_plan）の行を足して 12
-it("統括は10＋決まった計算の上書き＋設計図・id は重ならない", () => { ok(CONDUCTOR_LINKS.length === 12); ok(new Set(CONDUCTOR_LINKS.map((c) => c.id)).size === 12); ok(ids("compose_plan:promise") === "compose_plan"); });
+// 2026-11-12 作業員7: 統括の記録（conductor_record）と AIX の2通目の書き手（aix_second・作業員25 の点検）を足して 14
+it("統括は10＋決まった計算の上書き＋設計図＋統括の記録＋AIX の2通目・id は重ならない", () => { ok(CONDUCTOR_LINKS.length === 14); ok(new Set(CONDUCTOR_LINKS.map((c) => c.id)).size === 14); ok(ids("compose_plan:promise") === "compose_plan"); });
+// 2026-11-12 作業員7（作業員22 の field-links の突き合わせで出た10欄）: meta の欄は書く統括の writes にある（作り手は conductor-field-links の表のとおり）
+it("field-links の meta の欄は書く統括の writes にある", () => {
+  const want: Record<string, string> = {
+    now_vs_later: "brain", aix_now: "brain", read_candidates: "brain", our_send_uptake: "brain", customer_mindset: "brain",
+    judge_basis: "brain", seven_read: "brain", latent_read: "brain", check_order: "conductor_record", conductor_brief: "conductor_record",
+  };
+  for (const [k, id] of Object.entries(want)) ok(ids(`meta.${k}`) === id, `meta.${k} → ${ids(`meta.${k}`)}`);
+});
+it("AIX の2通目の書き手: 締めの決め直しは勝ち負けの表にあり、道（返信か AIX か）は書かない", () => {
+  const a = CONDUCTOR_LINKS.find((c) => c.id === "aix_second");
+  ok(a && a.redecides.length === 1 && a.files.includes("app/api/aix-template-generate/route.ts"), "row");
+  ok(a && !a.writes.some((w) => /^meta\.(action|turn_contract)|^decision:/.test(w)), "道を書かない");
+  ok(ids("aix_second_writer") === "aix_second" && ids("log:aix-template-generate:second-appeal-judge") === "aix_second" && ids("log:other-tag") === "brain", ids("log:aix-template-generate:second-appeal-judge"));
+  ok(REDECIDE_RULES.some((r) => r.by === "aix_second" && r.winner === "aix_second" && /スタッフ/.test(r.allowWhen)), "勝ち負け");
+});
 it("作業員8の印から持ち主を引く（前方一致・長い一致を先）", () => {
   ok(ids("decision:two_stage_promise(check)") === "two_stage", ids("decision:two_stage_promise(check)"));
   ok(ids("decision:answerable_direct") === "two_stage");
