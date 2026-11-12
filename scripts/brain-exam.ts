@@ -637,7 +637,9 @@ const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pattern", 
   // 2026-11-12 作業員7: この番の目的・中期の狙い・仕込み・先読みの深さ（BRAIN_TURN_AIMS）
   "turn_aims",
   // 2026-11-12 作業員10（案A・BRAIN_SEVEN_FIELDS）: 竹内さんの7つの欄・潜在の4欄（文の統括の物差し scripts/audit-compose-understanding.ts が答案から読む）
-  "seven_read", "latent_read"] as const;
+  "seven_read", "latent_read",
+  // 2026-11-12 作業員17（BRAIN_JUDGE_BASIS）: 判断の根拠のメモ（scripts/judge-basis-score.ts が読む）。conductor_focus は judge_basis が無い答案でも重点を数える元
+  "judge_basis", "conductor_focus"] as const;
 export function planOf(meta: Record<string, unknown> | null): Record<string, unknown> {
   if (!meta) return {};
   const out: Record<string, unknown> = {};
@@ -1683,7 +1685,7 @@ async function main() {
     if (prevFp && readResults(LABEL).length && (prevFp.hash ?? "") !== ENV_FP.hash) throw new Error(`label ${LABEL} は別のスイッチの指紋で回した結果がある（前 ${prevFp.hash || "既定"}${prevFp.text ? `＝${prevFp.text}` : ""} ／ 今 ${formatEnvFp(ENV_FP)}）。別の --label で回す`);
   }
   console.log(`スイッチの指紋: ${formatEnvFp(ENV_FP)}`);
-  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ envFp: { hash: ENV_FP.hash, text: ENV_FP.text, pairs: Object.fromEntries(ENV_FP.pairs) }, conv: LANES.length ? LANES.map((l) => l.name).join(",") : (L0.lease?.name ?? "YUMA"), ...(LANES.length ? { concurrency: LANES.length } : {}), layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, stage: STAGE, cassette: CASSETTE_MODE, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, think: THINK || null,
+  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ envFp: { hash: ENV_FP.hash, text: ENV_FP.text, pairs: Object.fromEntries(ENV_FP.pairs) }, conv: LANES.length ? LANES.map((l) => l.name).join(",") : (L0.lease?.name ?? "YUMA"), ...(LANES.length ? { concurrency: LANES.length } : {}), layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, stage: STAGE, cassette: CASSETTE_MODE, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, basis: THINK || null,
     // 10/14 構成のスイッチ（試験の頃の環境変数・BRAIN_*/TWO_STAGE_*/SEARCH_*/TURN_* 等）。答案の比べで「どの構成か」を残す
     switches: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:BRAIN_|TWO_STAGE_|SEARCH_|TURN_|NEXT_PUBLIC_SEARCH_|AIX_|CONFIRM_|REPEAT_|FINAL_CHECK_|PICKUP_|VIEWING_|EXHAUSTED_|ROOM_PHOTO_|CONTRACT_)/.test(k) && !/KEY|SECRET|TOKEN/.test(k)).sort()) }, null, 1));
   console.log(`問題 ${problems.length}・回 ${REPEAT}・${model}・層 ${LAYER}・台帳 ${USE_LEDGER ? "写す" : "写さない"}・下書き ${DRAFT ? `あり（--stage=${STAGE}・${problems.filter((p) => stageOf(p) === "draft").length}問）` : `なし（--stage=${STAGE}）`}・録音 ${CASSETTE_MODE}・判定 ${NO_JUDGE ? "なし" : "DeepSeek"}`);
