@@ -15,7 +15,12 @@
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 export function aixSecondRereadOn(env: Env = envOf()): boolean {
-  return (env.AIX_SECOND_REREAD ?? "").trim().toLowerCase() === "on";
+  return aixSecondRereadMode(env) !== "off";
+}
+/** on＝案A（読み直す・読めない時は案B）／b＝案B だけ（読み直さず方向を外す・試験の比べ用）／それ以外＝off */
+export function aixSecondRereadMode(env: Env = envOf()): "off" | "on" | "b" {
+  const v = (env.AIX_SECOND_REREAD ?? "").trim().toLowerCase();
+  return v === "on" ? "on" : v === "b" ? "b" : "off";
 }
 
 /** 同じ一手とみなす仲間（物件を送る AIX） */

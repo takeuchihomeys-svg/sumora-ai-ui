@@ -1,12 +1,13 @@
 // app/lib/__tests__/aix-second-reread.test.ts — ブレインと押された AIX が違う2通目の読み直し（npx tsx で回す）。
 //   番は竹内さんの実物（exam-cache/anatomy-seven/aix-second-pairs.json・押したのは全部 物件オススメ・名前は YUMA に伏せ済み）の直前のブレインの記録
-import { aixSecondRereadOn, brainPressedDiffer, stripBrainDirection, parseReread, rereadNote, buildRereadUser, BRAIN_DIRECTION_KEYS } from "../aix-second-reread";
+import { aixSecondRereadOn, aixSecondRereadMode, brainPressedDiffer, stripBrainDirection, parseReread, rereadNote, buildRereadUser, BRAIN_DIRECTION_KEYS } from "../aix-second-reread";
 import { buildBrainStrategyNote } from "../brain-strategy-note";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean, info?: unknown) => { if (ok) pass++; else { fail++; console.log(`  NG ${n} → ${JSON.stringify(info)}`); } };
 const P = "property_recommendation";
 
 t("既定 off", !aixSecondRereadOn({}) && aixSecondRereadOn({ AIX_SECOND_REREAD: "on" }));
+t("b＝案B だけ（入るが読み直さない）", aixSecondRereadOn({ AIX_SECOND_REREAD: "b" }) && aixSecondRereadMode({ AIX_SECOND_REREAD: "b" }) === "b" && aixSecondRereadMode({ AIX_SECOND_REREAD: "on" }) === "on" && aixSecondRereadMode({ AIX_SECOND_REREAD: "x" }) === "off");
 // 実物の直前のブレインの一手（48組の内訳: 返信 25・物件ピックアップした 12・物件確認した 8・見積書 2・全力サポート 1）
 const acts: Array<[string | null, number]> = [[null, 25], ["property_send", 12], ["property_check_result", 8], ["estimate_sheet", 2], ["zenryoku_support", 1]];
 const differ = acts.reduce((s, [a, n]) => s + (brainPressedDiffer(a, P) ? n : 0), 0);

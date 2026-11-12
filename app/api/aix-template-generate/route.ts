@@ -101,7 +101,7 @@ import { aixSecondLeanOn } from "@/app/lib/aix-second-lean";
 // 2026-11-12 作業員25: 2通目にブレインの決め手の残り（customer_mindset.decideGap）を渡す（AIX_SECOND_LINK=on・既定 off）
 import { aixSecondLinkOn, decideGapOfMeta, secondDecideGapLine } from "@/app/lib/aix-second-link";
 // 2026-11-12 竹内さんの決定 A: ブレインと押された AIX が違う2通目の読み直し（AIX_SECOND_REREAD=on・既定 off）
-import { aixSecondRereadOn, brainPressedDiffer, stripBrainDirection, rereadNote } from "@/app/lib/aix-second-reread";
+import { aixSecondRereadOn, aixSecondRereadMode, brainPressedDiffer, stripBrainDirection, rereadNote } from "@/app/lib/aix-second-reread";
 import { applyWording1028On, applyPushWordingLine } from "@/app/lib/aix-brain-contract";
 // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 見積書の直後の2通目の形・締め・検査（スタッフが書いた2通目 132通から）
 import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
@@ -1297,7 +1297,8 @@ export async function POST(req: NextRequest) {
       bmr?.customer_emotion ? `気持ち: ${bmr.customer_emotion}` : "",
       bmr?.customer_mindset?.decideGap?.quote ? `決め手の残り: 「${bmr.customer_mindset.decideGap.quote}」` : "",
     ].filter(Boolean);
-    const rr = isStaleMeta ? { reread: null, ms: 0, skipped: "stale" } : await (await import("@/app/lib/aix-second-reread-server")).rereadForPressedAix({
+    // AIX_SECOND_REREAD=b は案B だけ（読み直さない・試験の比べ用）
+    const rr = isStaleMeta ? { reread: null, ms: 0, skipped: "stale" } : aixSecondRereadMode() === "b" ? { reread: null, ms: 0, skipped: "mode_b" } : await (await import("@/app/lib/aix-second-reread-server")).rereadForPressedAix({
       conversationId: conversationId ?? null, pressedLabel: actionLabel, meaning, firstMessage: String(sentMessage ?? ""),
       recent: Array.isArray(recentMessages) ? recentMessages : [], customerName: resolvedCustomerName ?? customerName ?? null, readings,
     });
