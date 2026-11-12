@@ -78,6 +78,7 @@ import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from 
 import { catalogBlockForBrain, isSceneUncertain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { checkOrderMode } from "@/app/lib/check-order";
+import { conductorBriefMode } from "@/app/lib/conductor-brief";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
 import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
 import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
@@ -535,6 +536,9 @@ export type SuggestedAixMeta = {
   /** 2026-11-12 作業員22: 判断の順番の型の id（check-order.ts・先頭の候補）と候補・手がかり（check-order-wire.ts・記録だけ・道は変えない） */
   check_order_type?: string;
   check_order?: import("@/app/lib/check-order-wire").CheckOrderRecord;
+  /** 2026-11-12 作業員22: 統括の指示書の入力と指示書（CONDUCTOR_BRIEF=shadow の時だけ・記録だけ） */
+  conductor_brief_inputs?: import("@/app/lib/conductor-brief").BriefInputs;
+  conductor_brief?: import("@/app/lib/conductor-brief").ConductorBrief;
   /** 同: 今の番に押す AIX（this_turn=deliver の時だけ aix・他は null）。物差しが今と後を分けて数えるため */
   aix_now?: string | null;
   latent_read?: import("@/app/lib/takeuchi-seven-read").LatentFour;             // 2026-11-11 作業員14: 話題ごと（弱い所 578）・TURN_READ_TOPICS=on の時だけ
@@ -1667,6 +1671,17 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (a) (meta as unknown as Record<string, unknown>).conductor_allocation = a;
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:allocation-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-12 作業員22（竹内さん「ブレインの統括の部分も具体的に判断できるように」）: 統括の指示書（型・配分・事実・足りない情報・照らし合わせ・疑いの印・確かさ）を記録だけ。
+  //   CONDUCTOR_BRIEF=shadow の時だけ meta.conductor_brief を足す（既定 off＝何も足さない）。道は照らすために読むだけで変えない。疑いの印と確かさは判断の根拠のメモにも写す
+  try {
+    if (conductorBriefMode() !== "off") {
+      const { buildConductorBrief } = await import("@/app/lib/conductor-brief");
+      const mm = meta as unknown as Record<string, unknown>;
+      const brief = buildConductorBrief(mm);
+      mm.conductor_brief = brief;
+      if (mm.judge_basis && typeof mm.judge_basis === "object") Object.assign(mm.judge_basis as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "conductor:brief-failed", error: e instanceof Error ? e.message : String(e) })); }
   return meta;
 }
 async function analyzeConversationDeep(...args: Parameters<typeof analyzeConversationCore>): ReturnType<typeof analyzeConversationCore> {
@@ -2962,6 +2977,18 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       if (lineEL) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【${lineEL}】`; console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "brain", len: lineEL.length })); }
     }
   } catch (e) { console.warn("[brain-core] exchange-ledger skipped:", e instanceof Error ? e.message : String(e)); }
+  // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF=shadow・既定 off）の入力。照らし合わせの残りと果たし済みの約束を集める（プロンプトには入れない・記録だけ）
+  const briefOnNow = conductorBriefMode() !== "off";
+  const briefInputs: import("@/app/lib/conductor-brief").BriefInputs = {};
+  if (briefOnNow) {
+    try {
+      const el = await import("@/app/lib/exchange-ledger");
+      const turnAtBF = typedMessages[0]?.created_at ?? null;
+      const led = el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAtBF ? Date.parse(turnAtBF) + 1 : Date.now() });
+      const unkeptAt = new Set(led.open.filter((o) => o.kind === "our_promise_unkept").map((o) => o.at));
+      briefInputs.ledger = { open: led.open, keptPromises: [...new Set(led.ours.filter((p) => p.kind === "promise" && !unkeptAt.has(p.at)).map((p) => p.key))] };
+    } catch (e) { console.warn("[brain-core] brief ledger skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-09-27 竹内「審査中は審査中としておく」③: お送りしたピックアップのうち資料の現況が「審査中」のお部屋（該当が無ければ何も足さない）。
   //   毎回変わる並び（3）の中・今の状況の後ろに置く（system の前置き＝1時間キャッシュは変えない）
   try {
@@ -3707,7 +3734,8 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   if (!isPostApplyStatus(convStatus)) {
     try {
       const { infoFillMapOn, infoFillForNode, infoFillMaterialLine } = await import("@/app/lib/info-fill-map");
-      if (infoFillMapOn()) {
+      // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF）の時も埋まり具合を作る（プロンプトに足すのは INFO_FILL_MAP=on の時だけ）
+      if (infoFillMapOn() || briefOnNow) {
         const { resolveRouteNode, ROUTE_NODES, SCREENING_WORRY_RE } = await import("@/app/lib/apply-route-map");
         const { rowHitsKeys, turnMustKeys } = await import("@/app/lib/material-turn-must");
         const nodeIF = resolveRouteNode({ stage: customerState?.stage ?? null, searching: customerState?.searching ?? null, ledger: brainLedger.facts, routeType: routeTypeNow ?? null }).node;
@@ -3722,8 +3750,9 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
           screeningInfo: screeningIF ? screeningIF.slice(0, 30) : null,
         });
         const lineIF = infoFillMaterialLine(nodeIF, cellsIF, nodeIF ? ROUTE_NODES[nodeIF].name : null);
-        if (lineIF) customerStateBlockText += `\n\n${lineIF}`;
-        console.log(JSON.stringify({ tag: "brain:info-fill", conversationId, node: nodeIF, cells: cellsIF.map((c) => `${c.key}:${c.state}`) }));
+        if (lineIF && infoFillMapOn()) customerStateBlockText += `\n\n${lineIF}`;
+        if (briefOnNow) briefInputs.info = { node: nodeIF ?? null, cells: cellsIF };
+        if (infoFillMapOn()) console.log(JSON.stringify({ tag: "brain:info-fill", conversationId, node: nodeIF, cells: cellsIF.map((c) => `${c.key}:${c.state}`) }));
       }
     } catch (e) { console.warn("[brain-core] info-fill skipped:", e instanceof Error ? e.message : String(e)); }
   }
@@ -6466,6 +6495,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       read_candidates: readCandParsed ?? undefined,
       our_send_uptake: uptakeParsed ?? undefined,
       // 2026-11-12 作業員22: 判断の順番の型の手がかりの場面（CHECK_ORDER_TABLE=shadow|on の時だけ・既定 off は欄なし＝今と同じ）
+      // 2026-11-12 作業員22: 統括の指示書の入力（CONDUCTOR_BRIEF=shadow の時だけ・既定 off は欄なし）
+      conductor_brief_inputs: briefOnNow ? briefInputs : undefined,
       check_order_scene: checkOrderMode() !== "off" ? resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene : undefined,
       aix_now: BRAIN_NOW_LATER_ON ? aixNowOf(nowLaterParsed, finalAix) : undefined,
       customer_concern: customerConcern,
