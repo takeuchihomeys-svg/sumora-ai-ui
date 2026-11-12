@@ -300,7 +300,7 @@ import { brainFastSlowEnabled, brainSlowSecondEnabled, decideTurnDifficulty, fas
 // 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
 import { mindsetFreshOutputItem, emotionChoicesText, normalizeMindset, mindsetEmotionLabel, customerMindsetEnabled, type CustomerMindset } from "@/app/lib/customer-mindset";
 import { brainSevenOn, brainSevenOutputItem, normalizeBrainSeven, normalizeBrainLatent } from "@/app/lib/brain-seven-fields";
-import { brainJudgeBasisOn, brainJudgeBasisOutputItem, normalizeJudgeBasis } from "@/app/lib/brain-judge-basis"; // 2026-11-12 作業員17（BRAIN_JUDGE_BASIS・既定 off）
+import { judgeNextOf, brainJudgeBasisOn, brainJudgeBasisOutputItem, normalizeJudgeBasis } from "@/app/lib/brain-judge-basis"; // 2026-11-12 作業員17（BRAIN_JUDGE_BASIS・既定 off）
 import { turnReadMode, turnReadOutputItem, normalizeTurnRead, turnReadFocusOn, normalizeTurnFocus, turnReadTopicsOn, normalizeTurnTopics, type TurnRead, type TurnFocus, type TurnTopic } from "@/app/lib/turn-read";
 
 /** 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番の turn_contract の asks（promise→reply）をそろえる（PROCEDURE_GENERAL_ASK_REPLY・11/11 既定 on・止める =off） */
@@ -541,6 +541,8 @@ export type SuggestedAixMeta = {
   /** 2026-11-12 作業員22: 統括の指示書の入力と指示書（CONDUCTOR_BRIEF=shadow の時だけ・記録だけ） */
   conductor_brief_inputs?: import("@/app/lib/conductor-brief").BriefInputs;
   conductor_brief?: import("@/app/lib/conductor-brief").ConductorBrief;
+  /** 2026-11-12 作業員22: 判断の根拠のメモの次の行き先・答えられるのに約束にした印（BRAIN_JUDGE_BASIS_NEXT・文の統括へ plan） */
+  judge_next?: import("@/app/lib/brain-judge-basis").JudgeNext;
   /** 同: 今の番に押す AIX（this_turn=deliver の時だけ aix・他は null）。物差しが今と後を分けて数えるため */
   aix_now?: string | null;
   latent_read?: import("@/app/lib/takeuchi-seven-read").LatentFour;             // 2026-11-11 作業員14: 話題ごと（弱い所 578）・TURN_READ_TOPICS=on の時だけ
@@ -6495,6 +6497,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       seven_read: brainSevenOn() ? (normalizeBrainSeven((parsed as { seven_read?: unknown }).seven_read) ?? undefined) : undefined,
       latent_read: brainSevenOn() ? (normalizeBrainLatent((parsed as { latent_read?: unknown }).latent_read) ?? undefined) : undefined,
       judge_basis: brainJudgeBasisOn() ? (normalizeJudgeBasis((parsed as { judge_basis?: unknown }).judge_basis) ?? undefined) : undefined,
+      // 2026-11-12 作業員22: 判断の根拠のメモの次の行き先と答えられるのに約束にした印（BRAIN_JUDGE_BASIS_NEXT=on の時だけ・文の統括へ plan）
+      judge_next: judgeNextOf((parsed as { judge_basis?: unknown }).judge_basis),
       // 2026-11-12 作業員16（案1・BRAIN_NOW_LATER_FIRST=on の時だけ）: 今の番と後の番（記録だけ・決め直さない）
       now_vs_later: nowLaterParsed ?? undefined,
       read_candidates: readCandParsed ?? undefined,

@@ -5,9 +5,15 @@
 //   置き方: brain-seven-fields.ts（3e7b63be）と同じ＝aix・action・reply_mode・reply_direction・turn_contract を全部書き終えた後に JSON の一番最後に書き終えた後のメモとして。
 //     道の前や判断と並べると道が引っぱられる（試験で4回起きた）。この欄で判断を変えない。
 //   既定 off（BRAIN_JUDGE_BASIS=on）。off の時は出力の指定が空文字＝1文字も変わらない。型の名前は judge-basis-types.ts の1か所。
+import { NEXT_DEST, type NextDest } from "./next-move-types";
 import { DEPTH_KINDS, DEPTH_LABEL, DEPTH_VIA_KINDS, DEPTH_VIA_LABEL, CHECK_STEPS, STEP_LABEL, PRIORITY_KINDS, PRIORITY_LABEL, FOCUS_KINDS, FOCUS_LABEL, ORDER_ROLES, PURPOSE_KINDS, PURPOSE_LABEL, MISSING_KINDS, MISSING_LABEL, type BasisDepth, type BasisDepthVia, type Priority, type Focus, type Purpose, type MissingKind } from "./judge-basis-types";
 
 type Env = Record<string, string | undefined>;
+/** 2026-11-12 作業員22（作業員10 の測り: 文の誘導先をブレインから取ると 12/48→5/48＝答案にブレインの次の行き先の欄が無い）:
+ *  判断の根拠のメモに次の行き先（作業員16 の NEXT_DEST）と「答えられるのに約束にした問い」の印を足す。BRAIN_JUDGE_BASIS=on かつ BRAIN_JUDGE_BASIS_NEXT=on の時だけ（既定 off）。
+ *  置き方は judge_basis と同じ（道を書き終えた後・JSON の最後）。道の前には置かない */
+export const brainJudgeBasisNextOn = (env: Env = typeof process !== "undefined" ? process.env : {}): boolean => (env.BRAIN_JUDGE_BASIS_NEXT ?? "").trim().toLowerCase() === "on";
+export const BRAIN_JUDGE_BASIS_NEXT_FIELDS = `"next_dest": "書き終えた道の後で、この番のあとお客様を進める先を ${NEXT_DEST.join("|")} から1つ（道は変えない）", "held_answerable": {"held": 会話・資料・会社の事実で答えられる問いを確かめる約束にしたか true|false, "quote": "その問いのお客様の言葉 25字（無ければ空）"}`;
 export const brainJudgeBasisOn = (env: Env = typeof process !== "undefined" ? process.env : {}): boolean => (env.BRAIN_JUDGE_BASIS ?? "").trim().toLowerCase() === "on";
 
 export type BasisReading = { reading: string; focus: Focus | null };
@@ -25,6 +31,9 @@ export type JudgeBasis = {
   missing: BasisMissing[] | null;
   /** 押さえる要点（どこを押さえにいっているか） */
   keyPoint: string;
+  /** 2026-11-12 作業員22（BRAIN_JUDGE_BASIS_NEXT）: 次の行き先（NEXT_DEST）と、答えられるのに約束にした問いの印 */
+  nextDest: NextDest | null;
+  held: { held: boolean; quote: string } | null;
 };
 export type BasisMissing = { kind: MissingKind; what: string };
 
@@ -35,7 +44,8 @@ export const BRAIN_JUDGE_BASIS_LEGEND = `目的＝${PURPOSE_KINDS.map((k) => `${
 
 /** ブレインの「今回の発言」の出力に足す項目（off なら空文字）。brainSevenOutputItem の後ろに続ける */
 export function brainJudgeBasisOutputItem(env?: Env): string {
-  return brainJudgeBasisOn(env) ? `、（以下は書き終えた後のメモ＝aix・action・reply_mode・reply_direction・turn_contract・seven_read 等を全部書き終えた後で JSON の一番最後に書く。これを書くために道・AIX・返信の方向を変えない。${BRAIN_JUDGE_BASIS_LEGEND}）${BRAIN_JUDGE_BASIS_FIELD}` : "";
+  const field = brainJudgeBasisNextOn(env) ? `${BRAIN_JUDGE_BASIS_FIELD.slice(0, -1)}, ${BRAIN_JUDGE_BASIS_NEXT_FIELDS}}` : BRAIN_JUDGE_BASIS_FIELD;
+  return brainJudgeBasisOn(env) ? `、（以下は書き終えた後のメモ＝aix・action・reply_mode・reply_direction・turn_contract・seven_read 等を全部書き終えた後で JSON の一番最後に書く。これを書くために道・AIX・返信の方向を変えない。${BRAIN_JUDGE_BASIS_LEGEND}）${field}` : "";
 }
 
 const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -64,9 +74,21 @@ export function normalizeJudgeBasis(raw: unknown): JudgeBasis | null {
       ? o.missing.flatMap((m): BasisMissing[] => { const r = (m && typeof m === "object" ? m : { kind: m }) as { kind?: unknown; what?: unknown }; const k = pickOf(r.kind, MISSING_KINDS); return k ? [{ kind: k, what: blank(r.what) ? "" : clip(r.what, 40) }] : []; }).filter((x, i, a) => a.findIndex((y) => y.kind === x.kind) === i).slice(0, 3)
       : null,
     keyPoint: blank(o.key_point) ? "" : clip(o.key_point, 50),
+    nextDest: pickOf(o.next_dest, NEXT_DEST),
+    held: o.held_answerable && typeof o.held_answerable === "object" && typeof (o.held_answerable as { held?: unknown }).held === "boolean"
+      ? { held: (o.held_answerable as { held: boolean }).held, quote: blank((o.held_answerable as { quote?: unknown }).quote) ? "" : clip((o.held_answerable as { quote?: unknown }).quote, 30) } : null,
   };
   return out.depth || out.focus || out.readings.length || out.priority.length || out.order.length || out.purpose || out.keyPoint ? out : null;
 }
 
 /** digest の短い1語（例: d|ease|worry|worry|m1＝深さ|重点|優先の先頭|目的|足りない情報の数） */
 export const judgeBasisDigest = (t: JudgeBasis | null | undefined) => (t ? `${t.depth ? t.depth[0] : "?"}|${t.focus ?? "?"}|${t.priority[0] ?? "?"}|${t.purpose ?? "?"}|m${t.missing ? t.missing.length : "?"}` : null);
+
+/** meta.judge_next（文の統括へ plan で渡す・BRAIN_JUDGE_BASIS と BRAIN_JUDGE_BASIS_NEXT が両方 on の時だけ）。判断の根拠のメモから写すだけ */
+export type JudgeNext = { dest: NextDest | null; held: boolean; quote: string | null };
+export function judgeNextOf(raw: unknown, env?: Env): JudgeNext | undefined {
+  if (!brainJudgeBasisOn(env) || !brainJudgeBasisNextOn(env)) return undefined;
+  const jb = normalizeJudgeBasis(raw);
+  if (!jb || (!jb.nextDest && !jb.held)) return undefined;
+  return { dest: jb.nextDest, held: jb.held?.held === true, quote: jb.held?.held && jb.held.quote ? jb.held.quote : null };
+}
