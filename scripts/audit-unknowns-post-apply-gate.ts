@@ -2,6 +2,8 @@
 //   実行: npx tsx --env-file=<鍵のある .env.local> scripts/audit-unknowns-post-apply-gate.ts
 import { createClient } from "@supabase/supabase-js";
 import { loadSelfReportHits } from "../app/lib/unknowns-intake-server";
+// 2026-11-13: 作業ツリーに鍵が無い時は --env2=<鍵のある .env.local>（値は出さない）
+{ const e2 = process.argv.find((a) => a.startsWith("--env2="))?.slice(7); if (e2 && !process.env.SUPABASE_SERVICE_ROLE_KEY) process.loadEnvFile(e2); }
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 (async () => {
   const to = new Date().toISOString(), from = new Date(Date.now() - 86400e3).toISOString();
