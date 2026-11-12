@@ -73,3 +73,12 @@ t("名前は作業員10 の APPEAL_POINTS・next-move-types と同じ", () => {
 });
 
 console.log(`全部 ${n} 件 ok`);
+
+// 2026-11-12: 部分の細かい語彙（作業員4 の our-part-types と揃える前の案の名前）
+{
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const U = require("../app/lib/our-send-uptake") as typeof import("../app/lib/our-send-uptake");
+  const p = U.splitOurSend("🌟〈物件〉 502号室\nご入居の時期はいつ頃をお考えでしょうか？\n募集状況確認させて頂き確認出来次第ご連絡させて頂きます！！\n最大限割引した御見積書を作成しお送りさせて頂きます！！\nお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！");
+  assert.deepEqual(p.map((x) => `${x.kind}:${x.sub}`), ["property:one_pick", "question:cond_move_in", "promise:check", "promise:estimate", "invite:viewing"]);
+  console.log("ok 部分の細かい語彙（聞いた事＝条件のどれ・約束＝確認／見積・送った物件＝1件推し・誘い＝内覧）");
+}

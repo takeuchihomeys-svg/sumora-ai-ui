@@ -27,7 +27,28 @@ export const OUR_SEND_PART_LABEL: Record<OurSendPartKind, string> = {
 /** 物件の点（作業員10 の APPEAL_POINTS と同じ名前＋キャンペーン） */
 export const HOOK_POINTS = ["家賃", "広さ・間取り", "駅・場所", "新しさ", "設備", "初期費用", "空き・入居", "条件の合い方", "キャンペーン"] as const;
 export type HookPoint = typeof HOOK_POINTS[number];
-export type OurSendPart = { kind: OurSendPartKind; text: string; points: HookPoint[] };
+/** 部分の細かい語彙（2026-11-12 竹内さん「こちらからの部分も具体的に細かく細分化」）。
+ *  ⚠ 作業員4 が app/lib/our-part-types.ts（案）に1か所にまとめる。入ったらここはそちらを読む形に移し、名前を揃える（今は案の名前で置く）。 */
+export const OUR_PART_SUBS = {
+  question: ["cond_move_in", "cond_rent", "cond_area", "cond_layout", "cond_equipment", "schedule", "other"],
+  fact: ["cost", "screening", "move_in", "property_fact", "company", "other"],
+  promise: ["check", "send", "search", "estimate", "contact_day", "other"],
+  proposal: ["recommend_one", "compare", "other"],
+  invite: ["viewing", "apply", "other"],
+  property: ["one_pick", "bundle", "new_arrival", "alternative"],
+} as const;
+export type OurPartSub = (typeof OUR_PART_SUBS)[keyof typeof OUR_PART_SUBS][number];
+export function subOfPart(kind: OurSendPartKind, s: string): OurPartSub {
+  switch (kind) {
+    case "question": return /入居|時期/.test(s) ? "cond_move_in" : /家賃|予算/.test(s) ? "cond_rent" : /エリア|駅|場所/.test(s) ? "cond_area" : /間取り|広さ|帖|LDK/.test(s) ? "cond_layout" : /設備|オートロック|バス|洗面|ペット|駐車/.test(s) ? "cond_equipment" : /日|時|ご都合|曜/.test(s) ? "schedule" : "other";
+    case "fact": return /初期費用|敷金|礼金|見積|手数料|家賃/.test(s) ? "cost" : /審査|保証会社/.test(s) ? "screening" : /入居|退去|完成/.test(s) ? "move_in" : /弊社|仲介手数料0|スモラ|当社/.test(s) ? "company" : /帖|㎡|築|駅|設備|オートロック/.test(s) ? "property_fact" : "other";
+    case "promise": return /見積/.test(s) ? "estimate" : /ピックアップ|新着|探/.test(s) ? "search" : /確認/.test(s) ? "check" : /明日|本日|午前|午後|日中/.test(s) ? "contact_day" : /お送り/.test(s) ? "send" : "other";
+    case "proposal": return /中でも|特に/.test(s) ? "recommend_one" : /比べ|どちら/.test(s) ? "compare" : "other";
+    case "invite": return /申込|抑え|押さえ/.test(s) ? "apply" : /案内|内覧|内見/.test(s) ? "viewing" : "other";
+    case "property": return /新着|募集に出/.test(s) ? "new_arrival" : /代わり|こちらのお部屋如何|別のお部屋/.test(s) ? "alternative" : /🌟|特に/.test(s) ? "one_pick" : "bundle";
+  }
+}
+export type OurSendPart = { kind: OurSendPartKind; sub: OurPartSub; text: string; points: HookPoint[] };
 
 /** 受け取られ方 */
 export const UPTAKE_KINDS = ["answered", "passed", "asked_again", "misread", "accepted"] as const;
@@ -61,7 +82,7 @@ export function splitOurSend(text: string): OurSendPart[] {
   for (const s of sents) {
     if (/^(?:YUMAさん)?お世話になっております|^何卒よろしく|^お手隙の際に|^かしこまりました|^はい/.test(s) && s.length < 25) continue;
     const kind: OurSendPartKind = PROPERTY_RE.test(s) ? "property" : Q_RE.test(s) && !INVITE_RE.test(s) ? "question" : INVITE_RE.test(s) ? "invite" : PROMISE_RE.test(s) ? "promise" : PROPOSAL_RE.test(s) ? "proposal" : "fact";
-    out.push({ kind, text: s.slice(0, 120), points: pointsOf(s) });
+    out.push({ kind, sub: subOfPart(kind, s), text: s.slice(0, 120), points: pointsOf(s) });
   }
   return out;
 }
