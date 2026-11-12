@@ -3715,6 +3715,11 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
       if (farMoveInEarly) {
         customerStateBlockText += `\n\n${farMoveInBrainNote(farMoveInEarly)}`;
         console.log(JSON.stringify({ tag: "brain:far-move-in", conversationId, moveIn: farMoveInEarly.moveInLabel, contact: farMoveInEarly.contactLabel, days: farMoveInEarly.daysUntilContact, source: farMoveInEarly.source }));
+      } else {
+        // 2026-11-13 作業員1: 約束の番ではない番にも、入居が先なら会社の事実（hold_period）を事実の1行で渡す（FAR_MOVE_IN_FACT=on の時だけ）
+        const { farMoveInFactLine } = await import("@/app/lib/contact-promise");
+        const factLine = farMoveInFactLine(pc?.move_in_time ?? null, (await import("@/app/lib/business-clock")).monthClockNowIso());
+        if (factLine) { customerStateBlockText += `\n\n${factLine}`; console.log(JSON.stringify({ tag: "brain:far-move-in-fact", conversationId })); }
       }
     } catch (e) { console.warn("[brain-core] far-move-in skipped:", e instanceof Error ? e.message : String(e)); }
   }
