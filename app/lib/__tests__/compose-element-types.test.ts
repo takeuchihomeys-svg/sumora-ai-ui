@@ -72,4 +72,26 @@ t("送った部分の刺さり（作業員16 の受け口）→ 推す軸は広�
   assert.deepEqual(hl(meta, note), []);
   assert.equal(uptakePlan({}), null);
 });
+import { trustTurnOf, trustPhraseUsage, freshTrustPhrases, trustTurnNote, trustRepeatCount } from "../compose-order-table";
+t("信頼をつなぐ番の見分け（初回・条件の番・不安を口にした）と、無い番は null", () => {
+  assert.equal(trustTurnOf({ scene: "other", customerText: "", firstContact: true, meta: {} })?.id, "first_contact");
+  assert.equal(trustTurnOf({ scene: "conditions", customerText: "家賃6万で", firstContact: false, meta: {} })?.id, "conditions");
+  assert.equal(trustTurnOf({ scene: "question", customerText: "審査通るか心配です💦", firstContact: false, meta: {} })?.id, "anxious");
+  assert.equal(trustTurnOf({ scene: "ack", customerText: "ありがとうございます", firstContact: false, meta: {} }), null);
+});
+t("言い回しの重なり避け: 直近のこちらの送信で使った核は続けず、まだ使っていない形を選ぶ", () => {
+  const usage = trustPhraseUsage(["ご満足頂くお部屋が見つかるまで全力でサポートさせて頂きます！！", "全力でサポートさせて頂きます！！"]);
+  assert.equal(usage.get("全力で"), 2);
+  const f = freshTrustPhrases("R_support", usage);
+  assert.ok(!f.fresh.includes("全力で") && !f.fresh.includes("サポートさせて頂きます"));
+  assert.deepEqual(f.fresh, ["出来る限り", "ご安心ください"]);
+  const note = trustTurnNote({ scene: "conditions", customerText: "家賃6万で", firstContact: false, meta: {}, recentStaffTexts: ["全力でサポートさせて頂きます！！"] }, { COMPOSE_ELEMENT_TYPES: "on" });
+  assert.match(note, /信頼をつなぐ番（条件の番（探す約束）・竹内さん 16\/22通）.*既に使った言い回し: サポートさせて頂きます 1回・全力で 1回→続けない。まだ使っていない形: ご満足頂くお部屋が見つかるまで／出来る限り/);
+  assert.equal(trustTurnNote({ scene: "conditions", customerText: "", firstContact: false, meta: {}, recentStaffTexts: [] }, {}), "");
+});
+t("物差し: 下書きで同じ核が何回出たか", () => {
+  const r = trustRepeatCount(["全力でサポートさせて頂きます", "全力でサポートさせて頂きます", "確認出来次第ご連絡させて頂きます"]);
+  assert.equal(r[0].drafts, 2);
+  assert.ok(r.some((x) => x.key === "確認出来次第" && x.drafts === 1));
+});
 console.log(`compose-element-types: ${n} pass`);

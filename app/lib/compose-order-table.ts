@@ -205,3 +205,67 @@ export function uptakeNote(p: UptakePlan | null, env?: Env): string {
   const leadJa = { viewing: "内覧の誘い", apply: "先に抑える道（申込）", door: "扉だけ（お手隙の際にご査収）" } as const;
   return `- 送った部分の刺さり（ブレイン）: 主の文の推す軸＝${p.axis.join("・") || "－"}（広さを先に・階は推しの理由にしない）→ 次へ: ${p.lead ? leadJa[p.lead] : "－"}（${p.why}）`;
 }
+
+// ── 信頼をつなぐ番の見分けと、言い回しの重なり避け（2026-11-12 竹内さん「ここで信頼繋ぐって考えて、言い回しも同じのを何回も使わないように臨機応変に」） ─────
+//   ① 竹内さんの198通で、信頼の文（サポートの姿勢・会社の事実・すぐ動く約束・正直なずれ）を入れた番は 81/198（41%）。手がかりごとの割合:
+//      初回 16/16（100%）・条件の番 16/22（73%）・不安を口にした 13/27（48%）・他社と比べた 1/2・待たせた 2/5（40%）・申込の手前 8/22（36%）。悪い知らせの番は198通に組が無い（AIX の番）
+//      → 割合が半分以上の手がかり（初回・条件の番）と、不安を口にした番を「信頼をつなぐ番」にする（統括がブレインの欄＋お客様の言葉で選ぶ）
+//   ② 言い回しの幅（文は写さない＝言い回しの核の語だけ・竹内さんの198通の文に出た数）。会話の中で直近のこちらの送信に既に出た核は続けず、まだ使っていない核を選ぶ
+export type TrustTurnCue = { id: string; name: string; n: number; trustN: number; type: string; why: string };
+export const TRUST_TURN_CUES: readonly TrustTurnCue[] = [
+  { id: "first_contact", name: "初回", n: 16, trustN: 16, type: "R_support", why: "初めての番は『この人に任せてよいか』が芯。竹内さんは全部の初回で姿勢か事実を入れた" },
+  { id: "conditions", name: "条件の番（探す約束）", n: 22, trustN: 16, type: "R_support", why: "条件を受けて探す約束の後に、見つかるまで付き合う姿勢で関係をつなぐ" },
+  { id: "anxious", name: "不安を口にした", n: 27, trustN: 13, type: "R_company_fact", why: "不安の中身に会社・物件の事実で答え、事実で安心させる（姿勢だけで済ませない）" },
+];
+export type TrustPhrase = { type: string; key: string; re: RegExp; n: number };
+/** 信頼の言い回しの核（竹内さんの198通の文に出た数・多い順） */
+export const TRUST_PHRASES: readonly TrustPhrase[] = [
+  { type: "R_support", key: "サポートさせて頂きます", re: /サポートさせて/, n: 27 },
+  { type: "R_support", key: "全力で", re: /全力で/, n: 21 },
+  { type: "R_support", key: "ご満足頂くお部屋が見つかるまで", re: /ご満足頂(?:く|ける)お部屋が見つかるまで/, n: 20 },
+  { type: "R_support", key: "出来る限り", re: /出来る限り/, n: 17 },
+  { type: "R_support", key: "ご安心ください", re: /ご安心(?:ください|頂け)/, n: 4 },
+  { type: "R_quick", key: "〇〇出来次第お送り・ご連絡", re: /出来次第(?:お送り|ご連絡)/, n: 24 },
+  { type: "R_quick", key: "確認出来次第", re: /確認出来次第/, n: 19 },
+  { type: "R_quick", key: "ピックアップ出来次第", re: /ピックアップ出来次第/, n: 10 },
+  { type: "R_quick", key: "明日一番で", re: /明日一番/, n: 1 },
+  { type: "R_company_fact", key: "最大限割引", re: /最大限割引/, n: 23 },
+  { type: "R_company_fact", key: "還元", re: /還元/, n: 2 },
+  { type: "R_company_fact", key: "仲介手数料", re: /仲介手数料/, n: 1 },
+  { type: "R_honest", key: "〇〇となりますが", re: /となりますが|超えてしまいますが/, n: 2 },
+];
+/** この番は信頼をつなぐ番か（ブレインの欄＋お客様の言葉）。手がかりが無ければ null */
+export function trustTurnOf(o: { scene: string | null; customerText: string; firstContact: boolean; meta: unknown }): TrustTurnCue | null {
+  const c = elementCuesOf(o.meta);
+  if (o.firstContact) return TRUST_TURN_CUES[0];
+  if (o.scene === "conditions" || c.conditions) return TRUST_TURN_CUES[1];
+  if (/不安|心配|大丈夫(?:です)?か|💦|😭|🥺/.test(o.customerText) || /不安|心配|怖/.test(c.latent)) return TRUST_TURN_CUES[2];
+  return null;
+}
+/** 直近のこちらの送信に出た信頼の言い回しの核の回数 */
+export function trustPhraseUsage(staffTexts: ReadonlyArray<string>): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const t of staffTexts) for (const p of TRUST_PHRASES) if (p.re.test(t)) m.set(p.key, (m.get(p.key) ?? 0) + 1);
+  return m;
+}
+/** 型の中で、この会話でまだ使っていない（少ない）言い回しの核を多い順に（使い切ったら回数の少ない順） */
+export function freshTrustPhrases(type: string, usage: ReadonlyMap<string, number>, max = 2): { used: Array<[string, number]>; fresh: string[] } {
+  const own = TRUST_PHRASES.filter((p) => p.type === type);
+  const used = own.filter((p) => (usage.get(p.key) ?? 0) > 0).map((p) => [p.key, usage.get(p.key)!] as [string, number]);
+  const fresh = [...own].sort((a, b) => (usage.get(a.key) ?? 0) - (usage.get(b.key) ?? 0) || b.n - a.n).filter((p) => (usage.get(p.key) ?? 0) === 0).map((p) => p.key).slice(0, max);
+  return { used, fresh };
+}
+/** 設計図に添える1行（COMPOSE_ELEMENT_TYPES=on の時だけ）。信頼をつなぐ番でなければ空 */
+export function trustTurnNote(o: { scene: string | null; customerText: string; firstContact: boolean; meta: unknown; recentStaffTexts: ReadonlyArray<string> }, env?: Env): string {
+  if (!composeElementTypesOn(env)) return "";
+  const cue = trustTurnOf(o);
+  if (!cue) return "";
+  const { used, fresh } = freshTrustPhrases(cue.type, trustPhraseUsage(o.recentStaffTexts));
+  const name = ELEMENT_TYPES.find((t) => t.id === cue.type)?.name ?? cue.type;
+  return `- 信頼をつなぐ番（${cue.name}・竹内さん ${cue.trustN}/${cue.n}通）: ${name}。${used.length ? `この会話で既に使った言い回し: ${used.map(([k, v]) => `${k} ${v}回`).join("・")}→続けない。` : ""}${fresh.length ? `まだ使っていない形: ${fresh.join("／")}（言葉は会話に合わせて・材料に無い事実は書かない）` : ""}`;
+}
+/** 物差し: 下書きの並びで同じ信頼の言い回しの核が何回繰り返されたか（本番の下書き・夜に数える） */
+export function trustRepeatCount(drafts: ReadonlyArray<string>): Array<{ key: string; drafts: number; share: number }> {
+  const n = drafts.length || 1;
+  return TRUST_PHRASES.map((p) => ({ key: p.key, drafts: drafts.filter((d) => p.re.test(d)).length, share: 0 })).map((x) => ({ ...x, share: Math.round((x.drafts / n) * 100) / 100 })).filter((x) => x.drafts > 0).sort((a, b) => b.drafts - a.drafts);
+}
