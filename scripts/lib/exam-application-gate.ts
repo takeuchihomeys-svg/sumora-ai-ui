@@ -7,21 +7,30 @@
 //   ③brain-exam の問題選びで、この一覧の id を選ばない（DB を読まずに外せる）
 // テスト: npx tsx scripts/lib/__tests__/exam-application-gate.test.ts
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { turnApplicationReason, type TurnApplicationRecords } from "../../app/lib/turn-application-gate";
 
 export const GATE_EXCLUDED_FILE = "scripts/brain-exam/gate-excluded.json";
+/** 2026-11-12 夜 統括役: 作業ツリーをまたいで使う共有の置き場（試験の cwd がどの作業ツリーでも同じ一覧を読む）。作業ツリーの中なら <repo>/.claude/exam-cache、外なら cwd/.claude/exam-cache */
+export function sharedGateExcludedPath(cwd = process.cwd()): string {
+  const m = resolve(cwd).replace(/\\/g, "/").match(/^(.*?)\/\.claude\/worktrees\/[^/]+/);
+  return join(m ? m[1] : cwd, ".claude/exam-cache/gate-excluded.json");
+}
 export type GateExcluded = { checkedAt: string; excluded: Array<{ id: string; reason: string }> };
 
 /** 一覧を読む（無ければ空） */
 export function readGateExcluded(cwd = process.cwd()): Map<string, string> {
-  const f = join(cwd, GATE_EXCLUDED_FILE);
-  if (!existsSync(f)) return new Map();
-  try { return new Map((JSON.parse(readFileSync(f, "utf8")) as GateExcluded).excluded.map((x) => [x.id, x.reason])); } catch { return new Map(); }
+  const out = new Map<string, string>();
+  for (const f of [join(cwd, GATE_EXCLUDED_FILE), sharedGateExcludedPath(cwd)]) {
+    if (!existsSync(f)) continue;
+    try { for (const x of (JSON.parse(readFileSync(f, "utf8")) as GateExcluded).excluded) if (!out.has(x.id)) out.set(x.id, x.reason); } catch { /* 壊れた一覧は読まない */ }
+  }
+  return out;
 }
 export function writeGateExcluded(list: Array<{ id: string; reason: string }>, cwd = process.cwd()): void {
   const body: GateExcluded = { checkedAt: new Date().toISOString(), excluded: [...new Map(list.map((x) => [x.id, x])).values()].sort((a, b) => a.id.localeCompare(b.id)) };
   writeFileSync(join(cwd, GATE_EXCLUDED_FILE), JSON.stringify(body, null, 1));
+  try { writeFileSync(sharedGateExcludedPath(cwd), JSON.stringify(body, null, 1)); } catch { /* 共有の置き場が無い時は手元だけ */ }
 }
 /** 問題の並びから、門で外れた id を外す（外した id を返す） */
 export function filterGateExcluded<T extends { id: string }>(problems: ReadonlyArray<T>, excluded: ReadonlyMap<string, string>): { kept: T[]; dropped: Array<{ id: string; reason: string }> } {
