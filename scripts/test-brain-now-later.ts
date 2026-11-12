@@ -85,3 +85,15 @@ t("長さ・件数を切る", () => {
 });
 
 console.log(`全部 ${n} 件 ok`);
+
+// 2026-11-13: q065 の外れ（会社の事実で答えられる問いの番に aix=property_send）の直し
+{
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const M = require("../app/lib/brain-now-later") as typeof import("../app/lib/brain-now-later");
+  assert.match(M.NOW_VS_LATER_RULES, /answer・ack の時は、今の番は返信で、aix は null/);
+  assert.match(M.NOW_VS_LATER_RULES, /「物件により異なる」で約束にしない/);
+  assert.doesNotMatch(M.NOW_VS_LATER_RULES, /answer・promise・ack の時は[^。]*書いてよい/);
+  assert.match(M.NOW_LATER_AIX_PROVISO, /答えられる問いなら this_turn は answer で aix は null/);
+  for (const s of [M.NOW_VS_LATER_RULES, M.NOW_LATER_AIX_PROVISO]) assert.doesNotMatch(s, /次の一手|押す|申込へ|背中|気持ち|温度|中期/);
+  console.log("ok q065 の直し: 問いの番は aix を null・一般的な目安は会社の事実で答える");
+}
