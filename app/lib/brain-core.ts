@@ -95,7 +95,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { sendSequenceOn, sanitizeSendSequence, replyCountOf, SEND_SEQUENCE_FIELD } from "@/app/lib/send-sequence";
+import { sendSequenceOn, sanitizeSendSequence, replyCountOf, SEND_SEQUENCE_FIELD, hearingSendSequence, writerReplyCountOf } from "@/app/lib/send-sequence";
 import { checkQuestionBrainFirstOn, checkQuestionBrainRoute } from "@/app/lib/check-question-brain-first";
 import { resolveTwoStageOrDirect, firstContactReadyPickupTwoStage, screeningNoRewriteEnabled, sentReactionNoRewriteEnabled, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
@@ -6407,7 +6407,9 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         : templateHint,
       // 2026-10-13 竹内さん（ブレインの使い残し 1）: この AIX を送った直後の続きのテンプレ（/api/recommend-templates の Sonnet の代わり・post-aix-template-rec.ts）
       // 2026-11-07 送る物の並び（TWO_MESSAGE_SEQUENCE・既定 off）: ブレインの send_sequence を形だけ確かめて置く（1通だけ・形の崩れは置かない）
-      ...(sendSequenceOn() ? (() => { const seq = sanitizeSendSequence((parsed as { send_sequence?: unknown }).send_sequence, finalAix ?? null); return seq ? { send_sequence: seq, send_sequence_reply_count: replyCountOf(seq) } : {}; })() : {}),
+      // 2026-11-13 作業員7b（FIRST_HEARING_SEQUENCE・既定 off）: ブレインが AIX【条件ヒアリング】を選んだ番は 返信→AIX→フォームの案内（決まった文）の並び（send-sequence.ts hearingSendSequence）。書き手が書くのは1通目だけ
+      ...(() => { const hs = hearingSendSequence(finalAix ?? null); return hs ? { send_sequence: hs, send_sequence_reply_count: writerReplyCountOf(hs) } : {}; })(),
+      ...(sendSequenceOn() && !hearingSendSequence(finalAix ?? null) ? (() => { const seq = sanitizeSendSequence((parsed as { send_sequence?: unknown }).send_sequence, finalAix ?? null); return seq ? { send_sequence: seq, send_sequence_reply_count: replyCountOf(seq) } : {}; })() : {}),
       after_aix_template: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer || !finalAix ? undefined : sanitizeAfterAixTemplate(parsed.after_aix_template),
       next_steps: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer ? undefined
         : Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,

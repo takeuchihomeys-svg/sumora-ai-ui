@@ -19,7 +19,7 @@ export function sendSequenceUiOn(v: string | null | undefined, isTestConv: boole
   return (v ?? "").trim().toLowerCase() === "on" && isTestConv;
 }
 
-export type SendStep = { slot: "reply" | "aix"; aix?: string | null; role: string };
+export type SendStep = { slot: "reply" | "aix"; aix?: string | null; role: string; /** 決まった文の通（書き手は書かない・画面がそのまま出す） */ text?: string };
 
 /** 2026-11-11 作業員7（統括役の決め）: 分け方の言い方 v2（TWO_MESSAGE_SEQUENCE_SPLIT_V2=on・既定 off）。
  *  旧の「迷ったら1通」で w7-seq-dig3 の本質の並びは竹内さんの2通以上の番 0/6（全部 R・RA・A・AR）。
@@ -82,13 +82,36 @@ export function sanitizeSendSequence(raw: unknown, finalAix: string | null | und
 
 export const replyCountOf = (seq: ReadonlyArray<SendStep> | null | undefined): number => (seq ?? []).filter((s) => s.slot === "reply").length;
 
+/**
+ * 2026-11-13 作業員7b（統括役の頼み・竹内さん 11/13「返信と AIX の組み合わせも、ちゃんと行っていけるように」・弱い所 aix:skip-result-and-two-msg-order の 12240・12306）:
+ *   AIX【条件ヒアリング】の番は、返信（挨拶＋受け止め）→ AIX【条件ヒアリング】（フォーム）→ 返信（フォームの案内）の3通が竹内さんたちの型。
+ *   本番の見張り60日の AIX【条件ヒアリング】24番: フォームの前に返信 22・後に返信 20・返信→フォーム→返信 19・後の文が「こちらに…ご入力ください」の型 13。
+ *   本番の物差しでは今、AIX【条件ヒアリング】0/2（ブレインは AIX だけ・スタッフの最初の一手は返信）。並びはブレインが選んだ AIX で決まる＝決まった計算は形だけ（KB 9caa48ea・8a29dc07）。
+ *   3通目の文は実際の送信13通の多数の形（8/13「こちらに〇〇さんご希望のご条件お送り頂きますと…」）の名前の無い形（実際の送信にある形）。既定 off（FIRST_HEARING_SEQUENCE=on）
+ */
+export function firstHearingSequenceOn(env: Env = envOf()): boolean {
+  return (env.FIRST_HEARING_SEQUENCE ?? "").trim().toLowerCase() === "on";
+}
+export const HEARING_FORM_NOTE = "こちらにご希望のご条件お送り頂きますと、私の方でご条件に合ったお部屋ピックアップさせて頂きます！！\nお手隙の際にご入力ください😌！！\n\nご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます！！\n何卒よろしくお願い致します！！";
+/** ブレインが AIX【条件ヒアリング】を選んだ番の並び（返信→AIX→決まった文の返信）。当たらなければ null */
+export function hearingSendSequence(finalAix: string | null | undefined, env: Env = envOf()): SendStep[] | null {
+  if (!firstHearingSequenceOn(env) || String(finalAix ?? "").split("/")[0] !== "condition_hearing") return null;
+  return [
+    { slot: "reply", role: "挨拶＋受け止め" },
+    { slot: "aix", aix: "condition_hearing", role: "条件ヒアリングのフォーム" },
+    { slot: "reply", role: "フォームの案内", text: HEARING_FORM_NOTE },
+  ];
+}
+/** 書き手が書く返信の通数（決まった文の通は数えない） */
+export const writerReplyCountOf = (seq: ReadonlyArray<SendStep> | null | undefined): number => (seq ?? []).filter((s) => s.slot === "reply" && !s.text).length;
+
 const AIX_JA: Record<string, string> = {
   estimate_sheet: "見積書を送る", property_check_result: "物件確認した", property_send: "物件送付", property_recommendation: "物件オススメ",
   viewing_invite: "内覧調整", meeting_place: "待ち合わせ場所", application_push: "申込", phone_call: "電話", guarantor_info: "保証会社",
 };
 /** 画面のアナウンス（例「1通目: 受け止め＋答えの返信 → 2通目: AIX【内覧調整】 → 3通目: 答えの続き・誘いの返信」）。current は今送る通（0 始まり・太字にする所） */
 export function sequenceAnnounce(seq: ReadonlyArray<SendStep> | null | undefined): string[] {
-  return (seq ?? []).map((s, i) => `${i + 1}通目: ${s.slot === "aix" ? `AIX【${AIX_JA[String(s.aix ?? "").split("/")[0]] ?? s.aix}】` : `${s.role}の返信`}`);
+  return (seq ?? []).map((s, i) => `${i + 1}通目: ${s.slot === "aix" ? `AIX【${AIX_JA[String(s.aix ?? "").split("/")[0]] ?? s.aix}】` : `${s.role}${s.text ? "（決まった文）" : ""}の返信`}`);
 }
 /** 送った数から今送る通を決める（送った通＝この番の後にこちらが送った通の数・画像だけの通は数えない） */
 export function currentStepOf(seq: ReadonlyArray<SendStep> | null | undefined, sentCount: number): number | null {
