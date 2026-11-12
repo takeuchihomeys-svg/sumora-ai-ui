@@ -672,6 +672,8 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   customer_emotion: "plan", customer_mindset: "plan", our_side_note: "plan", engagement_stance: "plan", purchase_signal_level: "plan", reply_direction: "plan",
   // 2026-11-12 作業員7: この番の目的・中期の狙い・仕込み（BRAIN_TURN_AIMS・TURN_AIMS_AFTER）は受け渡し（conductor-handoff の decided）が運ぶ
   turn_aims: "other",
+  // 2026-11-12 統括役: 作業員17 の判断の根拠のメモ（BRAIN_JUDGE_BASIS・既定 off）は物差しと記録のための欄＝文の統括には渡さない（作業員10 の受け口は feat/compose-1105 で別に入る）
+  judge_basis: "other",
   // 別の注記・役が運ぶ（本質の帯・方向・姿勢・締め・2通・AIX）
   key_topics: "other", avoid_topics: "other", customer_questions: "other", priorities: "other", reply_mode: "other", two_stage: "other", reply_opener: "other",
   recommended_tone: "other", urgency_appropriate: "other", closing_strategy: "other", payment_timing: "other", far_move_in: "other", property_state: "other",
