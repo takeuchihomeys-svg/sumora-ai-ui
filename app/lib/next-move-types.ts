@@ -92,3 +92,26 @@ const RANK: Record<NextStrength, number> = { none: 0, door: 1, together: 2, invi
 export function strengthOverCeiling(s: NextStrength, c: PushCues): boolean {
   return RANK[s] > RANK[strengthCeiling(c).max];
 }
+
+/** 竹内さん・スタッフの返信の文から次の一手（行き先×強さ×時機）を読む網（台帳を作る時だけ・LLM なし）。
+ *  判断には使わない（P0 9eb6aa9c: 決まった計算は候補の網）。当たりは scripts/test-next-move-types.ts で 198通の7つの欄の lead と比べる */
+export function nextMoveFromText(reply: string): NextMove {
+  const t = String(reply ?? "");
+  const dest: NextDest =
+    /お申込(?:み)?(?:し|で)[^。！]{0,12}(?:抑|押さ)え|お部屋(?:を)?(?:抑|押さ)え|お申込(?:み)?(?:手続き|させて)/.test(t) ? "apply"
+    : /御?見積書?[^。！]{0,10}(?:作成|お送り)|最大限割引[^。！]{0,10}御?見積/.test(t) ? "estimate"
+    : /ご案内させて|ご内覧(?:頂|いただ|如何)|内見(?:頂|いただ|させて)|お日にちに[^。！]{0,10}ご案内/.test(t) ? "viewing"
+    : /(?:お送り|教えて)(?:ください|頂けますと|いただけますと)|ご入力(?:ください|頂けますと)/.test(t) ? "ask_send"
+    : /ピックアップ[^。！]{0,10}お送り|ピックアップ(?:させて|して|致し|いたし)|新着[^。！]{0,20}お送り|募集に出次第|探させて|お探し(?:させて|致し|いたし)/.test(t) ? "keep_send"
+    : /確認(?:させて|致し|いたし)[^。！]{0,6}(?:頂き|いただき)?ます[^。]{0,20}ご連絡|確認出来次第/.test(t) ? "wait_check"
+    : /ご内覧|内覧|ご案内|お待ち合わせ/.test(t) ? "viewing"
+    : /お申込|申込/.test(t) ? "apply"
+    : /お気軽に|いつでも|ごゆっくりご検討/.test(t) ? "door"
+    : t.trim() ? "answer_only" : "none";
+  const strength: NextStrength =
+    /併せて|あわせて[^。！]{0,10}ご案内|一緒にご案内/.test(t) ? "together"
+    : dest === "apply" && /キャンセル料|推奨|1部屋のみ|埋まる前|オススメです|抑えさせて頂きます/.test(t) ? "strong"
+    : /ご都合よろしいお日にち|如何でしょうか|いかがでしょうか|ご案内させて頂きます/.test(t) ? "invite"
+    : /お気に召されましたら|お気軽に|いつでも/.test(t) ? "door" : "none";
+  return { dest, strength, timing: timingOf(dest, t) };
+}

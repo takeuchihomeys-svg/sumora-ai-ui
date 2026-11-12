@@ -92,3 +92,19 @@ t("竹内さんの198通で、強さが上限を超えた番は 5% 未満（上�
 });
 
 console.log(`全部 ${n} 件 ok`);
+
+// 2026-11-12: 返信の文からの網（台帳用）の当たりを 198通の7つの欄の lead と比べる（線の確かめ・判断には使わない）
+{
+  const cache = join(__dirname, "..", "..", "..", "exam-cache");
+  const sf = join(cache, "anatomy-seven", "seven-all198.json"), rf = join(cache, "anatomy-roles", "roles-r1.json");
+  if (existsSync(sf) && existsSync(rf)) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { nextMoveFromText, toNextDest: tnd } = require("../app/lib/next-move-types") as typeof import("../app/lib/next-move-types");
+    const S = JSON.parse(readFileSync(sf, "utf8")) as Array<{ id: string; reads: Array<{ lead: string | null }> }>;
+    const R = new Map((JSON.parse(readFileSync(rf, "utf8")) as Array<{ id: string; sentences?: string[] }>).map((r) => [r.id, r]));
+    let hit = 0, all = 0; const miss = new Map<string, number>();
+    for (const s of S) { const r = R.get(s.id); if (!r) continue; all++; const g = tnd(s.reads[0]?.lead ?? null, "lead_to") ?? "none"; const m = nextMoveFromText((r.sentences ?? []).join("\n")).dest; const same = g === m || (g === "keep_send" && (m === "door" || m === "wait_check")) || (g === "answer_only" && m === "door"); if (same) hit++; else { const k = `${g}→${m}`; miss.set(k, (miss.get(k) ?? 0) + 1); } }
+    console.log(`   返信の文からの行き先の網: ${hit}/${all}（扉と約束・答えの境・確認の約束と送る約束＝7つの欄では同じ keep は同じに数えた）・外れ上位 ${[...miss.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `${k} ${v}`).join("・")}`);
+    assert.ok(hit / all >= 0.6, `網の当たりが低い ${hit}/${all}`);
+  }
+}
