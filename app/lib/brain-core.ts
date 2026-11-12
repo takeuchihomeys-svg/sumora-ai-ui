@@ -234,6 +234,8 @@ const BRAIN_MATERIAL_PROVENANCE_ON = materialProvenanceOn();
 // 2026-11-03 竹内さん（潜在意識と要点を6つで強化 ①②③）: 3段（表の質問→奥の心配→安心する物）・一番の要点・会話の流れの合図。どれも既定 off・記録だけ
 const BRAIN_THREE_LAYER_ON = threeLayerOn();
 const BRAIN_TURN_AIMS_ON = turnAimsOn(); // 2026-11-12 作業員7
+/** 2026-11-12 作業員7: LLM の AIX を名前なしで落とした番に名札（記録だけ・道は変えない・既定 off） */
+const decisionSourceUnlabeledOn = () => (process.env.DECISION_SOURCE_UNLABELED ?? "").trim().toLowerCase() === "on";
 const BRAIN_MAIN_POINT_ON = mainPointOn();
 const BRAIN_THREE_LAYER_AFTER = threeLayerMode() === "after";
 const BRAIN_MAIN_POINT_AFTER = mainPointMode() === "after";
@@ -6316,7 +6318,11 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-09-12 段2: 判断の出どころと今回の顧客発言の場面の証拠（JSONB・スキーマ変更不要）。brain_decision_logs にも同じ値を残す
       decision_source: finalAix ? decisionSource : (decisionSource === "guard:viewing" || decisionSource === "guard:first_contact" ? decisionSource : null),
       // 3巡目（10/07・AIX の判断のずれの調査 1468132d）: AIX を外した番（2段の約束・手続きの質問・資料で答える・連絡待ち 等）の出どころを捨てていた → 記録用に別の欄で残す（画面・関所は decision_source だけを見るので挙動は変わらない）
-      decision_source_no_aix: !finalAix && decisionSource && decisionSource !== "guard:viewing" && decisionSource !== "guard:first_contact" ? decisionSource : undefined,
+      // 2026-11-12 作業員7（KB 1a78e4e3 ④の名札・既定 off・DECISION_SOURCE_UNLABELED=on）: LLM が AIX を選んだ（reply_mode=aix・aix あり）のに最後が AIX なしで、
+      //   どの決まりも名前を残さなかった番に名札を付ける（試験の答案 11/08〜 で 24回: q202・q428・q372・q003・q038・q092 等）。約束の直後のお礼（ackAfterPromise）は名前を付ける
+      decision_source_no_aix: !finalAix && decisionSource && decisionSource !== "guard:viewing" && decisionSource !== "guard:first_contact" ? decisionSource
+        : !finalAix && !decisionSource && decisionSourceUnlabeledOn() && parsed.reply_mode === "aix" && !!normalizeAixActionKey(parsed.aix)
+          ? (ackAfterPromise ? "rule:ack_after_promise" : twoStage ? `rule:unlabeled_two_stage(${twoStage.kind})` : "rule:unlabeled_aix_drop") : undefined,
       // 2026-11-06（試験の本質の採点・統括役）: 送れる候補の材料の値（記録だけ・判断は変えない）
       pickup_ready: pickupReadyMaterial ?? undefined,
       // 2026-10-13（ブレインの使い残し 4）: 下げた上書き（規則の答え would とブレインの判断 brain の食い違い）
