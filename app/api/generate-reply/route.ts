@@ -369,6 +369,7 @@ import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
 import { exemplarNoteFor } from "@/app/lib/takeuchi-exemplar-server";
 import { composeVocabUnifiedOn, applySceneConstraints, stripWritingBlueprintOrder } from "@/app/lib/compose-vocab";
+import { applyOrderTable, orderBasisDigest } from "@/app/lib/compose-order-table";
 const maybeStripWb = (note: string, on: boolean): string => (on ? stripWritingBlueprintOrder(note) : note);
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
@@ -4507,12 +4508,14 @@ async function handleGenerateReply(req: NextRequest) {
             const plan0 = buildSentencePlan(u, s7, { scene: composeConductorScene, ctx: readComposeContext(brainMeta, { nextIntent: composeRun?.intent.next && composeRun.intent.next !== "none" ? composeRun.intent.next : null }) });
             // 2026-11-12 作業員10（語彙を1つに・COMPOSE_VOCAB_UNIFIED=on・既定 off）: 場面の要る段・書かない段を設計図の行に効かせる（app/lib/compose-vocab.ts）
             const planU = applySceneConstraints(plan0, composeConductorScene);
-            const plan = planU;
+            // 2026-11-12 作業員10（COMPOSE_ORDER_TABLE=on・既定 off）: 型（T1〜T9）ごとの竹内さんの組み立ての順に従の行を並べ替える。判断の根拠は off でも digest に残す
+            const ord = applyOrderTable(planU, u, composeConductorScene);
+            const plan = ord.plan;
             // 2026-11-12 作業員10: 作業員5 の竹内さんの手本（場面×潜在×誘導先・TAKEUCHI_EXEMPLAR=on の時だけ）を設計図の注記の後ろに（文は写させない）
             const ex = (() => { try { return exemplarNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta }); } catch { return null; } })();
             // 要る役目の行は書き手に渡さない（竹内さんの24番で4/4が竹内さんの文に無い役目だった＝記録だけ）
-            const note0 = sentencePlanNote(plan);
-            return { plan, note: note0 && ex ? `${note0}\n${ex.note}` : note0, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${planU.removed.length ? `｜外した=${planU.removed.join(",")}` : ""}${planU.requiredRoles.length ? `｜要る=${planU.requiredRoles.join(",")}` : ""}` };
+            const note0 = [sentencePlanNote(plan), ord.noteLine && sentencePlanNote(plan) ? ord.noteLine : ""].filter(Boolean).join("\n");
+            return { plan, note: note0 && ex ? `${note0}\n${ex.note}` : note0, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${planU.removed.length ? `｜外した=${planU.removed.join(",")}` : ""}${planU.requiredRoles.length ? `｜要る=${planU.requiredRoles.join(",")}` : ""}｜${orderBasisDigest(ord.basis)}` };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()
       : null;
