@@ -372,6 +372,8 @@ import { composeVocabUnifiedOn, applySceneConstraints, stripWritingBlueprintOrde
 import { applyOrderTable, orderBasisDigest, pickElementTypes, elementTypesNote, uptakePlan, uptakeNote, trustTurnNote, propertyNameNote } from "@/app/lib/compose-order-table";
 const maybeStripWb = (note: string, on: boolean): string => (on ? stripWritingBlueprintOrder(note) : note);
 import { composeSlotsAndClosing } from "@/app/lib/compose-value-slots";
+import { composeBriefMode, buildComposeBrief, draftDoubts as composeDraftDoubts, composeSure, linkReport as composeLinkReport, composeBriefDigest } from "@/app/lib/compose-brief";
+import { orderTypeOf } from "@/app/lib/compose-order-table";
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
@@ -4518,9 +4520,11 @@ async function handleGenerateReply(req: NextRequest) {
             // 2026-11-12 作業員10（COMPOSE_ELEMENT_TYPES=on・既定 off）: 要素ごとの言葉の型（押す線・信頼の作り方・潜在の一文）をブレインの欄から選んで1行に。選んだ型は off でも digest に
             const elem = pickElementTypes(brainMeta);
             // 2026-11-12 作業員10（COMPOSE_VALUE_SLOTS・COMPOSE_CLOSING_TABLE=on・既定 off）: 役目×場面→出す値の欄・順位・出さない値（値は材料から決まった計算で）と返信の締めの決め表。digest は off でも残す
-            const slots = (() => { try { return composeSlotsAndClosing({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), materialText: [...contractMaterialFacts, ownProperty?.note ?? ""].join("\n"), firstContact: isFirstEverReplyFromMsgs === true }); } catch { return null; } })();
+            const slots = (() => { try { return composeSlotsAndClosing({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), materialText: [contractMaterialFacts ?? "", ownProperty?.note ?? ""].join("\n"), firstContact: isFirstEverReplyFromMsgs === true }); } catch { return null; } })();
+            // 2026-11-12 作業員10（COMPOSE_BRIEF=shadow|on・既定 off）: 文の統括の指示書を1か所に（記録だけ・書き手への指示文にも本文にも足さない）。書いた後の疑いの印・自信の印・連携の表は下の tpo_debug.compose_brief
+            const brief = composeBriefMode() !== "off" ? (() => { try { return buildComposeBrief({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), materialText: [contractMaterialFacts ?? "", ownProperty?.note ?? ""].join("\n"), recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-5).map((m) => m.text ?? ""), firstContact: isFirstEverReplyFromMsgs === true }); } catch { return null; } })() : null;
             const note0 = [sentencePlanNote(plan), ord.noteLine && sentencePlanNote(plan) ? ord.noteLine : "", sentencePlanNote(plan) ? elementTypesNote(elem) : "", sentencePlanNote(plan) ? uptakeNote(uptakePlan(brainMeta)) : "", sentencePlanNote(plan) ? trustTurnNote({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), firstContact: isFirstEverReplyFromMsgs === true, meta: brainMeta, recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-8).map((m) => m.text ?? "") }) : "", sentencePlanNote(plan) ? propertyNameNote({ property: u.main?.property ?? null, customerText: customerMsgUnits.join("\n") || (message ?? ""), recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-3).map((m) => m.text ?? "") }) : "", sentencePlanNote(plan) ? slots?.note ?? "" : ""].filter(Boolean).join("\n");
-            return { plan, note: note0 && ex ? `${note0}\n${ex.note}` : note0, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${planU.removed.length ? `｜外した=${planU.removed.join(",")}` : ""}${planU.requiredRoles.length ? `｜要る=${planU.requiredRoles.join(",")}` : ""}｜${orderBasisDigest(ord.basis)}｜言葉の型=${[...elem.push_line, ...elem.trust, ...elem.latent_line].join(",") || "-"}${slots ? `｜${slots.digest}` : ""}` };
+            return { plan, brief, briefOrderType: orderTypeOf(composeConductorScene, plan.rows.find((r) => r.rank === "main")?.role ?? null), briefAppeal: !!s7.appeal, note: note0 && ex ? `${note0}\n${ex.note}` : note0, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${planU.removed.length ? `｜外した=${planU.removed.join(",")}` : ""}${planU.requiredRoles.length ? `｜要る=${planU.requiredRoles.join(",")}` : ""}｜${orderBasisDigest(ord.basis)}｜言葉の型=${[...elem.push_line, ...elem.trust, ...elem.latent_line].join(",") || "-"}${slots ? `｜${slots.digest}` : ""}` };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()
       : null;
@@ -7734,6 +7738,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   turnContract: turnContract ? { source: turnContract.source, routes: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, misses: tcMiss } : null,
                   ...(composeRun ? { compose: composeDigestLine({ intent: composeRun.intent, blueprint: composeRun.blueprint, writerGotNote: !!composeRun.note, draft: finalDraftText }) } : {}),
                   ...(composeSentencePlan ? { compose_plan: composeSentencePlan.digest } : {}),
+                  ...(composeSentencePlan?.brief ? (() => { try {
+                    const b = composeSentencePlan.brief; const doubts = composeDraftDoubts(b, finalDraftText ?? "");
+                    const cbSure = (brainMeta as Record<string, unknown> | null)?.conductor_brief as { sure?: { level?: string } } | undefined;
+                    const sure = composeSure(b, { orderType: composeSentencePlan.briefOrderType, appealAsked: composeSentencePlan.briefAppeal, conductorSure: cbSure?.sure?.level ?? null, doubts });
+                    const link = composeLinkReport(b, composeSentencePlan.note ?? "");
+                    return { compose_brief: composeBriefDigest(b, { doubts, sure, link }) };
+                  } catch { return {}; } })() : {}),
                   ...(composeConductor ? (() => {
                     const misses = verifyDraft(finalDraftText ?? "", composeConductor.mf);
                     const sb = sendBackDecision(misses, { alreadySentBack: false });
