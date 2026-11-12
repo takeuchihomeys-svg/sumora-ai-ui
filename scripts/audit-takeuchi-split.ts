@@ -52,7 +52,8 @@ async function main() {
     for (const r of data ?? []) convs.add(r.conversation_id as string);
     if (!data || data.length < 1000) break;
   }
-  type Turn = { scene: string; shape: string; nReply: number; len1: number; lenAll: number; asks: number; parts: string[][]; ex: string[] };
+  /** ra: 返信の後すぐ（2分以内）に AIX を続けた組（作業員4 の見極め・初回の挨拶＋AIX【条件ヒアリング】）。gapSec＝返信から AIX までの秒・aixHead＝AIX の最初の行（伏せた） */
+  type Turn = { scene: string; shape: string; nReply: number; len1: number; lenAll: number; asks: number; parts: string[][]; ex: string[]; ra: { gapSec: number; aixHead: string; reply: string[] } | null };
   const turns: Turn[] = [];
   for (const cid of convs) {
     const { data, error } = await sb.from("messages").select("id, conversation_id, sender, text, created_at, is_aix_generated, staff_writer").eq("conversation_id", cid).gte("created_at", since).order("created_at", { ascending: true }).limit(2000);
@@ -77,7 +78,11 @@ async function main() {
       const close = replies.filter((m) => Date.parse(m.created_at) - firstAt <= 10 * 60_000);
       let shape = ""; for (const m of after) { const k = m.is_aix_generated ? "A" : "R"; if (!(k === "A" && shape.endsWith("A"))) shape += k; }
       const texts = close.map((m) => String(m.text ?? ""));
-      turns.push({ scene: sceneOf(cust.join("\n"), !seenStaff), shape, nReply: close.length, len1: texts[0]?.length ?? 0, lenAll: texts.join("").length,
+      const firstAix = after.find((m) => m.is_aix_generated && Date.parse(m.created_at) > firstAt);
+      const gapSec = firstAix ? Math.round((Date.parse(firstAix.created_at) - firstAt) / 1000) : null;
+      const ra = after[0] && !after[0].is_aix_generated && firstAix && gapSec !== null && gapSec <= 120
+        ? { gapSec, aixHead: MASK(String(firstAix.text ?? "")).split(/\n/).find((l) => l.trim() && !IMG_RE.test(l))?.slice(0, 30) ?? "", reply: partsOf(texts[0] ?? "") } : null;
+      turns.push({ ra, scene: sceneOf(cust.join("\n"), !seenStaff), shape, nReply: close.length, len1: texts[0]?.length ?? 0, lenAll: texts.join("").length,
         asks: (cust.join("\n").match(/[?？]/g) ?? []).length, parts: texts.map(partsOf), ex: close.length >= 2 ? texts.slice(0, 2).map((x) => MASK(x).replace(/\s+/g, " ").slice(0, 70)) : [] });
       seenStaff = true;
     }
@@ -94,6 +99,20 @@ async function main() {
     } else { b.lenOne.push(t.lenAll); b.asksOne.push(t.asks); }
   }
   const med = (a: number[]) => (a.length ? [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)] : null);
+  // 返信＋すぐ（2分以内）の AIX の組（場面ごと・間隔・AIX の頭・返信の中身）
+  const raBy: Record<string, { n: number; all: number; gaps: number[]; heads: Record<string, number>; reply: Record<string, number> }> = {};
+  for (const t of turns) {
+    const b = (raBy[t.scene] ??= { n: 0, all: 0, gaps: [], heads: {}, reply: {} });
+    b.all++;
+    if (!t.ra) continue;
+    b.n++; b.gaps.push(t.ra.gapSec); b.heads[t.ra.aixHead] = (b.heads[t.ra.aixHead] ?? 0) + 1;
+    const rk = t.ra.reply.join("+"); b.reply[rk] = (b.reply[rk] ?? 0) + 1;
+  }
+  console.log("\n# 返信＋2分以内の AIX の組（作業員4 の見極めの型）");
+  for (const [k, b] of Object.entries(raBy).sort((a, c) => c[1].n - a[1].n)) {
+    if (!b.n) continue;
+    console.log(`## ${k}: 組 ${b.n}/${b.all}（${Math.round((100 * b.n) / b.all)}%）・間隔の中央 ${med(b.gaps)}秒｜AIX の頭 ${Object.entries(b.heads).sort((a, c) => c[1] - a[1]).slice(0, 3).map(([h, n]) => `「${h}」${n}`).join("・")}｜返信の中身 ${Object.entries(b.reply).sort((a, c) => c[1] - a[1]).slice(0, 3).map(([h, n]) => `${h} ${n}`).join("・")}`);
+  }
   const avg = (a: number[]) => (a.length ? Math.round((a.reduce((s, x) => s + x, 0) / a.length) * 10) / 10 : null);
   console.log(`竹内さんの番 ${turns.length}（${DAYS}日・従業員の混ざる番と申込以降は外した）・返信を10分以内に2通以上 ${turns.filter((t) => t.nReply >= 2).length}`);
   for (const [k, b] of Object.entries(by).sort((a, b2) => b2[1].n - a[1].n)) {
