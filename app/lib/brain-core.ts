@@ -469,6 +469,8 @@ export type SuggestedAixMeta = {
   decisions_1103?: string[];
   /** 2026-11-11 作業員4: 入口の意見の1語（digest.nop・CONDUCTOR_NEAR_OPINION の見張り） */
   near_opinion?: string;
+  /** 2026-11-12 作業員4（OUR_SIDE_TO_COMPOSE）: こちら側の状態の文の材料（ブレインの判断には渡さない・文の統括と AIX の文だけ） */
+  our_side_note?: string;
   /** 2026-11-03 この番に呼ぶ役の候補（網・記録だけ）→ digest.rl */
   conductor_roles?: string;
   /** 2026-11-04 統括メタ（記録だけ・last_brain_meta が正）→ digest.cm */
@@ -6252,6 +6254,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（"n21"＝お礼の番で申込への AIX を候補にした・作業員1の AIX の統括が読む）
       decisions_1103: decisions1103.length ? decisions1103 : undefined,
       near_opinion: nearOpinionNote ?? undefined,
+      // 2026-11-12 作業員4: OUR_SIDE_TO_COMPOSE=on（既定 off）の時だけ、こちら側の状態を文の材料として残す（判断の材料には足さない）
+      our_side_note: await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.ourSideToComposeOn() || !typedMessages[0]) return undefined; const n = os.ourSideComposeNote({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(typedMessages[0].created_at) }); return n ? maskBrain(n) : undefined; } catch { return undefined; } })(),
       conductor_meta: CONDUCTOR_META_MODE !== "off" ? ((nd) => withSearchPlan(withMaterials(buildConductorMeta({
         scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, stage: customerState?.stage ?? null,
         turnAt: typedMessages[0]?.sender === "customer" ? typedMessages[0].created_at : null,

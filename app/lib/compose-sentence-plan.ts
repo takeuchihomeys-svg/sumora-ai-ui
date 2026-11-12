@@ -227,6 +227,8 @@ export type ComposeContext = {
   latentIntent: string | null; concern: string | null; appealTiming: string | null; hesitancy: string | null;
   emotion: string | null; mindset: string | null; stance: string | null; dirLead: string | null;
   later: string[]; topics: string[];
+  /** 2026-11-12 作業員4（OUR_SIDE_TO_COMPOSE）: こちら側の状態（開いている約束・直前の AIX・送った物件・退去予定・確かめ済みの事実）の行。道は決まった後の文の材料だけ */
+  ourSide?: string[];
 };
 export function readComposeContext(meta: unknown, extra: { nextIntent?: string | null } = {}): ComposeContext {
   const m = obj(meta) ?? {};
@@ -256,6 +258,7 @@ export function readComposeContext(meta: unknown, extra: { nextIntent?: string |
     hesitancy: str(m.hesitancy_pattern, 20),
     emotion: str(m.customer_emotion, 30),
     later: readTurnUnderstanding(m).later ?? [], topics: readTurnUnderstanding(m).topics ?? [],
+    ourSide: typeof m.our_side_note === "string" ? m.our_side_note.split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 8) : [],
     dirLead: (() => { const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? LEAD_TO_JA[d] : null; })(),
     mindset: (() => { const cm = obj(m.customer_mindset); if (!cm || typeof cm.state !== "string") return null; const ax = obj(cm.anxiety); return join([cm.state, ax ? join([str(ax.target, 20), str(ax.direction, 6)], "・") : null, str(cm.hesitation, 20)], "／"); })(),
     stance: join([str(m.engagement_stance, 6), str(m.purchase_signal_level, 6) ? `買う合図 ${str(m.purchase_signal_level, 6)}` : null], "・"),
@@ -280,6 +283,7 @@ export function composeContextLines(c: ComposeContext): string[] {
   const nx = join([c.goal ? `目指す事 ${c.goal}` : null, c.nextIntent ? `次にしてほしい事 ${c.nextIntent}` : null], "・");
   if (nx) L.push(`- ${nx}`);
   if (c.topics.length) L.push(`- 話題（出てきた順）: ${c.topics.join("／")}`);
+  if (c.ourSide?.length) L.push("- こちら側の状態（もう送った・伝えた事。食い違わない・同じ事を繰り返さない・道は決まっている）:", ...c.ourSide.map((x) => `  ${x}`));
   const om = [...c.omitted, ...c.later, ...(c.skipped ? [c.skipped] : [])];
   if (om.length) L.push(`- 今回は入れない・後に回す: ${om.join("／")}`);
   return L;
@@ -647,6 +651,8 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
   { key: "seven_read", label: "竹内さんの7つの欄", carried: "plan", values: (m) => { const r = obj(m.seven_read) ?? obj(m.takeuchi_seven); if (!r) return []; return [...sv(obj(r.point)?.what, 80), ...sv(obj(r.bridge)?.what, 60), ...sv(obj(r.appeal)?.point, 60), ...sv(obj(r.latent)?.what, 60), ...sv(obj(r.latent)?.fact, 60), ...sv(obj(r.point)?.skipped, 50), ...sv(obj(r.push)?.reason, 50)]; } },
   { key: "current_property", label: "話題の中心の物件", carried: "plan", values: (m) => (asksOf(m).some((a) => a.route !== "aix" && str(a.property)) || str(obj(obj(m.turn_read)?.target)?.property) ? [] : asksOf(m).some((a) => a.route !== "aix") ? sv(m.current_property, 40) : []) },
   { key: "customer_emotion", label: "気持ち（ブレインの一言）", carried: "plan", values: (m) => sv(m.customer_emotion, 30) },
+  // 2026-11-12 作業員4: こちら側の状態（OUR_SIDE_TO_COMPOSE）
+  { key: "our_side_note", label: "こちら側の状態（約束・直前の AIX・退去予定・確かめ済みの事実）", carried: "plan", values: (m) => (typeof m.our_side_note === "string" ? m.our_side_note.split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 8) : []) },
   { key: "customer_mindset", label: "気持ちの状態・不安の対象", carried: "plan", values: (m) => { const cm = obj(m.customer_mindset); return cm ? sv(cm.state, 20) : []; } },
   { key: "engagement_stance・purchase_signal_level", label: "押す・待つ・買う合図", carried: "plan", values: (m) => [...sv(m.engagement_stance, 6), ...sv(m.purchase_signal_level, 6)] },
   { key: "reply_direction(誘導先)", label: "方向の文の誘導先", carried: "plan", values: (m) => { const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? [LEAD_TO_JA[d]] : []; } },
@@ -663,7 +669,7 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   // 文の統括の設計図が運ぶ
   turn_contract: "plan", turn_read: "plan", turn_focus: "plan", turn_topics: "plan", seven_read: "plan", latent_read: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
   conductor_focus: "plan", plan_ahead: "plan", future_timeline: "plan", hesitancy_pattern: "plan", message_plan: "plan", current_property: "plan",
-  customer_emotion: "plan", customer_mindset: "plan", engagement_stance: "plan", purchase_signal_level: "plan", reply_direction: "plan",
+  customer_emotion: "plan", customer_mindset: "plan", our_side_note: "plan", engagement_stance: "plan", purchase_signal_level: "plan", reply_direction: "plan",
   // 2026-11-12 作業員7: この番の目的・中期の狙い・仕込み（BRAIN_TURN_AIMS・TURN_AIMS_AFTER）は受け渡し（conductor-handoff の decided）が運ぶ
   turn_aims: "other",
   // 別の注記・役が運ぶ（本質の帯・方向・姿勢・締め・2通・AIX）

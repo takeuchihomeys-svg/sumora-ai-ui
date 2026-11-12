@@ -33,6 +33,8 @@ export type SecondPlanInput = {
   customerWish?: string | null;
   /** 前に刺さった物件の名前（似ている時だけ） */
   similarTo?: string | null;
+  /** 2026-11-12 作業員4（OUR_SIDE_TO_COMPOSE）: こちら側の状態の行（meta.our_side_note・文の材料だけ・道は変えない） */
+  ourSide?: string[] | null;
 };
 export type SecondPlan = {
   opening: "pick_from_sent" | "new_listing" | "not_viewable_yet" | "wish_gap" | "similar" | "customer_wish" | "plain";
@@ -43,6 +45,8 @@ export type SecondPlan = {
   closingNote: string;
   /** 竹内さんの型の決まり（文の指示に入れる時の短い言葉） */
   rules: string[];
+  /** こちら側の状態の行（入力のまま・最大6） */
+  ourSide?: string[];
 };
 
 export function aixSecondBrainPlanOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -84,7 +88,7 @@ export function planAixSecond(x: SecondPlanInput, env?: Record<string, string | 
     ...(opening !== "new_listing" ? ["新着ではないので「新着」と書かない"] : []),
     ...(opening !== "wish_gap" ? ["ずれでない時に「最寄り駅〇〇駅となりますが」を付けない"] : []),
   ];
-  return { opening, openingNote, axis, barrier, closing, closingNote, rules };
+  return { opening, openingNote, axis, barrier, closing, closingNote, rules, ...(x.ourSide?.length ? { ourSide: x.ourSide.slice(0, 6) } : {}) };
 }
 
 /** 文を作る所に渡す注記（計画が無ければ null） */
@@ -97,5 +101,6 @@ export function secondPlanNote(p: SecondPlan | null): string | null {
     p.barrier.length ? `障壁を下げる文: ${p.barrier.join(" ")}` : "",
     `締め: ${p.closingNote}`,
     ...p.rules.map((r) => `・${r}`),
+    ...(p.ourSide?.length ? ["こちら側の状態（もう送った・伝えた事と食い違わない）:", ...p.ourSide.map((x) => `  ${x}`)] : []),
   ].filter(Boolean).join("\n");
 }
