@@ -281,6 +281,7 @@ import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics,
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
 import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question";
+import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
 import { brainMsgWindow } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
 // 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
 import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL } from "@/app/lib/contact-promise";
@@ -2274,7 +2275,8 @@ async function analyzeConversationCore(
   // 【顧客の会話ストーリー】ai_summary全文（テキスト版）。プロファイル(JSON由来)とは別に、
   // 顧客の全文脈（経緯・今の状況・次の必須対応）を戦略決定の材料として注入する
   const aiSummaryFullRaw = (pc?.ai_summary ?? "").trim();
-  const aiSummaryFullText = aiSummaryFullRaw.length > 1500 ? aiSummaryFullRaw.slice(0, 1500) : aiSummaryFullRaw;
+  // 2026-11-12 作業員1: 切った時は MATERIAL_CUT_LOG=on でログ（切り方は同じ）
+  const aiSummaryFullText = clipMaterialLogged(aiSummaryFullRaw, 1500, "brain:ai_summary", conversationId);
   const aiSummaryNote = aiSummaryFullText
     ? `\n【顧客の会話ストーリー（ai_summary全文・必ず読むこと）】\n${aiSummaryFullText}\n→ この顧客の全文脈を踏まえてclosing_strategy・next_stepsを決定すること\n`
     : "";
