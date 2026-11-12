@@ -2034,13 +2034,29 @@ async function _takeShot(msg, done) {
          *   キュー（`_enqueueShotUpload`）を通していたが、キューは**この巨大な listener の中**に
          *   置いてあり、メッセージのたびに作り直される。積んだ物が消える事があった。
          *   → **その場で送る**（`_sendShotNow` を直接呼ぶ。共有の変数に頼らない）。
+         *
+         * 2026-11-12 竹内さん「ちゃんと撮影されてたかな？」（録画モードで「22枚」と出たのに
+         *   クラウドには**1枚も入っていなかった**）:
+         *   ⚠ 旧は待たずに投げっぱなしで、送れなかった理由も画面に出なかった。
+         *     → 録画モード（`msg.wait_upload`）の時は**送り終わるまで待ち、結果を返す**
+         *       （＝「撮れた枚数」が本当に保存できた枚数になる）。
          */
-        _sendShotNow({
+        const up = _sendShotNow({
           data_url: shotForUpload, site: msg.site || null, what: msg.what || null,
           shot_w: shotW, shot_h: shotH,
           kind: msg.kind || null, x: msg.x, y: msg.y,
           mode: null, run_id: _shotRun, seq: _shotSeq,
-        }).catch(function (e) {
+        });
+        if (msg.wait_upload) {
+          var ur = null;
+          try { ur = await up; } catch (e) { ur = { ok: false, error: String((e && e.message) || e) }; }
+          sendResponse({
+            ok: !!(ur && ur.ok), shot_key: key, run_id: _shotRun, seq: _shotSeq,
+            upload: ur || null, ms: Date.now() - t0,
+          });
+          return;
+        }
+        up.catch(function (e) {
           console.warn("[human-shot] 送信で例外:", (e && e.message) || e);
         });
       }
@@ -2082,6 +2098,9 @@ if (msg.type === "axlx-human-shot") {
  */
 var _recTimer = null;
 var _recCount = 0;
+var _recSaved = 0;
+var _recFailed = 0;
+var _recLastErr = null;
 var _recStartedAt = 0;
 var _REC_MAX_SHOTS = 400;
 /**
@@ -2110,9 +2129,28 @@ async function _recTick() {
     if (!(st && st.axlx_rec_mode && st.axlx_rec_mode.on)) { await _recStop("解除"); return; }
   } catch (_) {}
   _recCount++;
-  try { await _recordOneShot(); } catch (e) { console.warn("[rec] 撮れません:", (e && e.message) || e); }
+  /**
+   * 2026-11-12 竹内さん「ちゃんと撮影されてたかな？」:
+   *   ⚠ 旧は「撮った回数」を数えていたので、**クラウドに1枚も入っていなくても「22枚」と出た**。
+   *   → **本当に保存できた枚数**（`_recSaved`）と、失敗した回数・理由（`_recFailed` / `_recLastErr`）を別に持つ。
+   */
+  var r = null;
+  try { r = await _recordOneShot(); } catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+  if (r && r.ok) {
+    _recSaved++;
+  } else {
+    _recFailed++;
+    _recLastErr = String((r && (r.error || (r.upload && r.upload.error))) || "理由なし").slice(0, 120);
+    console.warn("[rec] 保存できませんでした:", _recLastErr);
+  }
   try {
-    await chrome.storage.local.set({ axlx_rec_stat: { on: true, count: _recCount, started_at: _recStartedAt, last_at: Date.now() } });
+    await chrome.storage.local.set({
+      axlx_rec_stat: {
+        on: true, tried: _recCount, saved: _recSaved, failed: _recFailed,
+        last_error: _recLastErr || null,
+        started_at: _recStartedAt, last_at: Date.now(),
+      },
+    });
   } catch (_) {}
   // 1.5〜3.5秒（毎回ちがう・機械的に見せない）。7分の残りが少なければそこで止める
   var gap = _REC_GAP_MIN + Math.floor(Math.random() * (_REC_GAP_MAX - _REC_GAP_MIN));
@@ -2124,29 +2162,41 @@ async function _recTick() {
 async function _recordOneShot() {
   return new Promise(function (resolve) {
     try {
-      _takeShot({ type: "axlx-human-shot", site: "record", kind: "rec" }, function (res) { resolve(res || null); });
+      // 2026-11-12: 録画は**送り終わるまで待つ**（「撮れた」と「保存できた」を同じにする）
+      _takeShot({ type: "axlx-human-shot", site: "record", kind: "rec", wait_upload: true }, function (res) { resolve(res || null); });
     } catch (_) { resolve(null); }
   });
 }
 async function _recStart() {
-  if (_recIsOn()) return { ok: true, already: true, count: _recCount };
-  _recCount = 0;
+  if (_recIsOn()) return { ok: true, already: true, count: _recCount, saved: _recSaved };
+  _recCount = 0; _recSaved = 0; _recFailed = 0; _recLastErr = null;
   _recStartedAt = Date.now();
-  try { await chrome.storage.local.set({ axlx_rec_mode: { on: true, started_at: _recStartedAt }, axlx_rec_stat: { on: true, count: 0, started_at: _recStartedAt, last_at: null } }); } catch (_) {}
-  console.log("[rec] 画面録画モード: 開始（2〜4秒ごとに撮ります）");
+  try {
+    await chrome.storage.local.set({
+      axlx_rec_mode: { on: true, started_at: _recStartedAt },
+      axlx_rec_stat: { on: true, tried: 0, saved: 0, failed: 0, last_error: null, started_at: _recStartedAt, last_at: null },
+    });
+  } catch (_) {}
+  console.log("[rec] 画面録画モード: 開始（1.5〜3.5秒ごとに撮ります・最長7分）");
   _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, 300);
-  return { ok: true, count: 0 };
+  return { ok: true, count: 0, saved: 0, max_ms: _REC_MAX_MS };
 }
 async function _recStop(why) {
   if (_recTimer) { clearTimeout(_recTimer); _recTimer = null; }
-  try { await chrome.storage.local.set({ axlx_rec_mode: { on: false, stopped_at: Date.now(), count: _recCount, why: why || null } }); } catch (_) {}
+  try { await chrome.storage.local.set({ axlx_rec_mode: { on: false, stopped_at: Date.now(), tried: _recCount, saved: _recSaved, failed: _recFailed, why: why || null } }); } catch (_) {}
   try {
     var st = await chrome.storage.local.get(["axlx_rec_stat"]);
     var s = (st && st.axlx_rec_stat) || {};
-    await chrome.storage.local.set({ axlx_rec_stat: { on: false, count: _recCount, started_at: s.started_at || _recStartedAt, last_at: Date.now(), why: why || null } });
+    await chrome.storage.local.set({
+      axlx_rec_stat: {
+        on: false, tried: _recCount, saved: _recSaved, failed: _recFailed,
+        last_error: _recLastErr || s.last_error || null,
+        started_at: s.started_at || _recStartedAt, last_at: Date.now(), why: why || null,
+      },
+    });
   } catch (_) {}
-  console.log("[rec] 画面録画モード: 停止（" + (why || "") + "・" + _recCount + "枚）");
-  return { ok: true, count: _recCount, why: why || null };
+  console.log("[rec] 画面録画モード: 停止（" + (why || "") + "・試した " + _recCount + "回・保存 " + _recSaved + "枚・失敗 " + _recFailed + "回" + (_recLastErr ? "・理由: " + _recLastErr : "") + "）");
+  return { ok: true, count: _recCount, saved: _recSaved, failed: _recFailed, last_error: _recLastErr || null, why: why || null };
 }
 try {
   chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
@@ -2159,7 +2209,11 @@ try {
       try {
         sendResponse({
           on: _recIsOn(),
-          count: _recCount,
+          count: _recSaved,
+          tried: _recCount,
+          saved: _recSaved,
+          failed: _recFailed,
+          last_error: _recLastErr || null,
           started_at: _recStartedAt,
           max_ms: _REC_MAX_MS,
           remain_ms: _recIsOn() ? _recRemainMs() : 0,

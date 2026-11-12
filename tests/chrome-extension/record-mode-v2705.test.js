@@ -35,7 +35,7 @@ console.log("\n■ ② 押している間は連続で撮る");
   ok("  間隔の値が 1500〜3500ms", /_REC_GAP_MIN = 1500/.test(bg) && /_REC_GAP_MAX = 3500/.test(bg));
   const gapAvg = (1500 + 3500) / 2;
   ok("  平均 " + gapAvg + "ms → 7分で 約" + Math.floor(7 * 60 * 1000 / gapAvg) + "枚", Math.floor(7 * 60 * 1000 / gapAvg) > 100);
-  ok("撮る中身は今までと同じ道（_takeShot を直接呼ぶ）", /_takeShot\(\{ type: "axlx-human-shot", site: "record", kind: "rec" \}/.test(bg));
+  ok("撮る中身は今までと同じ道（_takeShot を直接呼ぶ）", /_takeShot\(\{ type: "axlx-human-shot", site: "record", kind: "rec", wait_upload: true \}/.test(bg));
   ok("  ⚠ 自分宛の sendMessage をしない（届かないため）", !/_recordOneShot[\s\S]{0,200}chrome\.runtime\.sendMessage/.test(bg));
 }
 
@@ -56,7 +56,7 @@ console.log("\n■ ④ 小窓から操作できる");
   ok("始める・止めるを切り替える", /"axlx-rec-stop" : "axlx-rec-start"/.test(bg) || /on \? "axlx-rec-stop" : "axlx-rec-start"/.test(snap));
   ok("状態を聞く（axlx-rec-status）", /type: "axlx-rec-status"/.test(snap));
   ok("録画中はボタンが赤く脈打つ", /⏹ 録画中/.test(snap) && /axlxPermPulse/.test(snap));
-  ok("撮れた枚数を出す", /Number\(res\.count\) \|\| 0/.test(snap));
+  ok("撮れた枚数を出す", /Number\(res\.saved\) \|\| 0/.test(snap));
   ok("残り時間を出す（あと何分）", /あと/.test(snap) && /remain_ms/.test(snap));
   ok("録画中の見出しにも残り時間", /あと" \+ Math\.floor\(left2 \/ 60\)/.test(snap));
   ok("5秒ごとに状態を取り直す（別の窓で止めても追いつく）", /setInterval\(refreshRecMode, 5000\)/.test(snap));
@@ -68,6 +68,18 @@ console.log("\n■ ⑤ 写真の仕組み自体は壊していない");
   ok("メッセージの受け口は今まで通り", /if \(msg\.type === "axlx-human-shot"\) \{[\s\S]{0,120}_takeShot\(msg/.test(bg));
   ok("縮小（800px・32%）は今まで通り", /_shrinkShot\(dataUrl, 800, 0\.32\)/.test(bg));
   ok("撮る前に窓を前に出す（v2.7.4）", /chrome\.windows\.update\(tab\.windowId, \{ focused: true \}\)/.test(bg));
+}
+
+console.log("\n■ ⑥ 「撮れた枚数」は**本当に保存できた枚数**（2026-11-12 竹内さん「ちゃんと撮影されてたかな？」）");
+{
+  ok("保存できた枚数を別に数える（_recSaved / _recFailed）", /var _recSaved = 0;/.test(bg) && /var _recFailed = 0;/.test(bg));
+  ok("失敗の理由も残す（_recLastErr）", /var _recLastErr = null;/.test(bg) && /_recLastErr = String/.test(bg));
+  ok("録画は**送り終わるまで待つ**（wait_upload）", /wait_upload: true/.test(bg));
+  ok("  送れた時だけ saved を増やす", /if \(r && r\.ok\) \{\s*\n\s*_recSaved\+\+;/.test(bg));
+  ok("  送れなかったら failed と理由を残す", /_recFailed\+\+;/.test(bg) && /last_error: _recLastErr \|\| null/.test(bg));
+  ok("止めた時に「保存◯枚・失敗◯回・理由」を返す", /saved: _recSaved, failed: _recFailed, last_error: _recLastErr/.test(bg));
+  ok("小窓に保存枚数と失敗理由を出す", /保存 /.test(snap) && /失敗 /.test(snap));
+  ok("⚠ 待つ時は撮った直後に返す（二重に sendResponse しない）", /if \(msg\.wait_upload\) \{[\s\S]{0,400}return;/.test(bg));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

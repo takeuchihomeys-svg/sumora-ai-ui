@@ -296,13 +296,14 @@
      *   押すたびに「録画中 ⇄ 停止」。録画中はボタンが赤く脈打ち、撮れた枚数が帯に出る。
      */
     var recModeBtn = el("snap-rec-mode");
-    var paintRecMode = function (on, count, remainMs) {
+    var paintRecMode = function (on, count, remainMs, tried, failed) {
       if (!recModeBtn) return;
       if (on) {
         var left = Math.max(0, Math.ceil((Number(remainMs) || 0) / 1000));
         var mm = Math.floor(left / 60), ss = left % 60;
         var leftTxt = mm > 0 ? mm + ":" + String(ss).padStart(2, "0") : ss + "秒";
-        recModeBtn.textContent = "⏹ 録画中" + (count ? " " + count : "") + "（あと" + leftTxt + "）";
+        var bad = Number(failed) || 0;
+        recModeBtn.textContent = "⏹ 録画中 " + (Number(count) || 0) + "枚" + (bad ? "（失敗" + bad + "）" : "") + "（あと" + leftTxt + "）";
         recModeBtn.style.background = "#be123c";
         recModeBtn.style.color = "#fff";
         recModeBtn.style.animation = "axlxPermPulse 1.6s ease-in-out infinite";
@@ -320,14 +321,18 @@
         chrome.runtime.sendMessage({ type: "axlx-rec-status" }, function (res) {
           void chrome.runtime.lastError;
           if (!res) return;
-          paintRecMode(!!res.on, Number(res.count) || 0, Number(res.remain_ms) || 0);
+          paintRecMode(!!res.on, Number(res.saved) || 0, Number(res.remain_ms) || 0, Number(res.tried) || 0, Number(res.failed) || 0);
           if (res.on) {
             var hint2 = el("snap-perm-hint");
             if (hint2) {
               hint2.style.display = "block";
               hint2.style.color = "#be123c";
               var left2 = Math.max(0, Math.ceil((Number(res.remain_ms) || 0) / 1000));
-              hint2.textContent = "⏺ 画面録画モード: 録画中（" + (Number(res.count) || 0) + "枚・あと" + Math.floor(left2 / 60) + "分" + (left2 % 60) + "秒）。もう一度押すと止まります。";
+              var failed2 = Number(res.failed) || 0;
+              hint2.textContent = "⏺ 画面録画モード: 録画中（**保存 " + (Number(res.saved) || 0) + "枚**"
+                + (failed2 ? "・失敗 " + failed2 + "回" + (res.last_error ? "（" + res.last_error + "）" : "") : "")
+                + "・あと" + Math.floor(left2 / 60) + "分" + (left2 % 60) + "秒）。もう一度押すと止まります。";
+              hint2.textContent = hint2.textContent.replace(/\*\*/g, "");
             }
           }
         });
@@ -344,10 +349,11 @@
             void chrome.runtime.lastError;
             if (!res || res.ok === false) { show("✖ できませんでした: " + ((res && res.error) || "理由なし")); return; }
             if (on) {
-              paintRecMode(false, 0, 0);
-              show("⏹ 録画を止めました（" + (Number(res.count) || 0) + "枚）", "#047857");
+              paintRecMode(false, 0, 0, 0, 0);
+              var sv = Number(res.saved) || 0, fl = Number(res.failed) || 0;
+              show("⏹ 録画を止めました（保存 " + sv + "枚" + (fl ? "・失敗 " + fl + "回" + (res.last_error ? "（" + res.last_error + "）" : "") : "") + "）", fl ? "#b91c1c" : "#047857");
             } else {
-              paintRecMode(true, 0, Number(res.remain_ms) || 7 * 60 * 1000);
+              paintRecMode(true, 0, Number(res.max_ms) || 7 * 60 * 1000, 0, 0);
               show("⏺ 録画を始めました。1.5〜3.5秒ごとに画面を撮ります（最長7分・もう一度押すと止まります）。", "#be123c");
             }
           });
