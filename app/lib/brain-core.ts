@@ -281,7 +281,8 @@ import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question"
 import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
 import { brainMsgWindow } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
 // 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
-import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL } from "@/app/lib/contact-promise";
+import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL, resolveConditionMoveIn } from "@/app/lib/contact-promise";
+import { timeFactsEnabled, computeTimeFacts, timeFactsLine } from "@/app/lib/time-facts"; // 2026-11-12 作業員19（TIME_FACTS・既定 off）
 import { brainOpenerMetaEnabled, normalizeBrainOpener } from "@/app/lib/opener-rates";
 import { brainFastSlowEnabled, brainSlowSecondEnabled, decideTurnDifficulty, fastDrops, fastEscapeReason, routeFingerprint, pickMajority, BRAIN_FAST_SLOW_VERSION, type FastSlowRecord } from "@/app/lib/brain-fast-slow"; // 2026-10-22 慣れた事は速く・難しい事はじっくり
 // 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
@@ -2278,6 +2279,19 @@ async function analyzeConversationCore(
 
   const statusMeaning = convStatus && STATUS_MEANING[convStatus] ? STATUS_MEANING[convStatus] : (convStatus ?? "");
   const statusText = convStatus ? `\n現在のステータス: ${statusMeaning}` : "";
+  // 2026-11-12 作業員19（時間の土台・TIME_FACTS=on・既定 off＝空文字で今と1文字も変わらない）: 今・曜日・祝日・電話／弊社／管理会社の営業・お客様とこちらが最後に送ってからの経過・入居希望日までの日数を、
+  //   決まった計算（app/lib/time-facts.ts）の事実の1行で渡す（道の言葉は入れない・決めるのはブレイン）。約束の期限（calendar_events の【連絡日】）は後で足す
+  const timeFactsText = timeFactsEnabled() ? (() => {
+    try {
+      const mv = resolveConditionMoveIn(pc?.move_in_time ?? null, { nowIso: new Date().toISOString() });
+      return timeFactsLine(computeTimeFacts({
+        hour: jstParts().hour,
+        lastCustomerAtIso: typedMessages.find((m) => m.sender === "customer")?.created_at ?? null,
+        lastStaffAtIso: typedMessages.find((m) => m.sender !== "customer" && !m.is_aix_generated)?.created_at ?? typedMessages.find((m) => m.sender !== "customer")?.created_at ?? null,
+        moveInYmd: mv.kind === "future" ? ymdStrOf(mv.start.ymd) : null,
+      }));
+    } catch { return ""; }
+  })() : "";
 
   // Recent starred examples (good replies) for this customer
   // 2026-09-11 データ衛生: 生成失敗文（☆付きで混入していた）・テスト送信は優良返信例にしない（読む側で除外）
@@ -3701,11 +3715,11 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     return isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("templates", templatesText)}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${d("examples", examplesText)}${timingText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}
+    ? `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("templates", templatesText)}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${d("examples", examplesText)}${timingText}${timeFactsText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("contractExamples", contractExamplesPhaseText)}${d("winning", winningPatternsText)}${d("templates", templatesText)}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${d("examples", examplesText)}${prevMetaText}${timingText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}${latestSupersedesRule() ? `
+    : `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("contractExamples", contractExamplesPhaseText)}${d("winning", winningPatternsText)}${d("templates", templatesText)}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${d("examples", examplesText)}${prevMetaText}${timingText}${timeFactsText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}${latestSupersedesRule() ? `
 
 【今回の発言の読み方】${latestSupersedesRule()}` : ""}
 
