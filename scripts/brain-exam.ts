@@ -608,7 +608,7 @@ async function installLaneFetch(): Promise<void> {
 }
 
 // 10/09: ブレインの出力では AIX の種類は aix の欄（action は「スタッフが次にすべき事」の自由文・reply_mode=aix は「人の確認」の意味）。aix を控えないと本質の道が AIX にならなかった
-const RAW_KEYS = ["reply_mode", "aix", "action", "check_pattern", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "reason", "turn_contract", "asks", "zenryoku_candidate", "send_sequence"]; // 11/10 作業員7: send_sequence（LLM の最初の並び）も控える
+const RAW_KEYS = ["reply_mode", "aix", "action", "check_pattern", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "reason", "turn_contract", "asks", "zenryoku_candidate", "send_sequence", "turn_aims"]; // 11/10 作業員7: send_sequence（LLM の最初の並び）も控える・11/12 turn_aims（BRAIN_TURN_AIMS）
 function rawPlanOf(o: Record<string, unknown> | undefined): Record<string, unknown> | null {
   if (!o) return null;
   return Object.fromEntries(RAW_KEYS.filter((k) => o[k] !== undefined && o[k] !== null && o[k] !== "").map((k) => [k, o[k]]));
@@ -633,7 +633,11 @@ const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pattern", 
   // 2026-11-10 作業員7: 送る物の並び（TWO_MESSAGE_SEQUENCE）。旧は答案に残しておらず seq-dig の10本で並びを1つも数えられなかった（scripts/lib/send-seq-score.ts が読む）
   "send_sequence", "send_sequence_reply_count",
   // 2026-11-11 作業員14: 一通の読み（TURN_READ=on の turn_read）と気持ち（customer_mindset）。旧は答案に無く、読みが直ったかを試験で数えられなかった
-  "turn_read", "customer_mindset"] as const;
+  "turn_read", "customer_mindset", "turn_focus", "turn_topics",
+  // 2026-11-12 作業員7: この番の目的・中期の狙い・仕込み・先読みの深さ（BRAIN_TURN_AIMS）
+  "turn_aims",
+  // 2026-11-12 作業員10（案A・BRAIN_SEVEN_FIELDS）: 竹内さんの7つの欄・潜在の4欄（文の統括の物差し scripts/audit-compose-understanding.ts が答案から読む）
+  "seven_read", "latent_read"] as const;
 export function planOf(meta: Record<string, unknown> | null): Record<string, unknown> {
   if (!meta) return {};
   const out: Record<string, unknown> = {};

@@ -66,5 +66,9 @@ eq("raw に aix 無し", [rawSeqOf({ aix: null }), rawSeqOf({ aix: "none" }), ra
 const st2 = seqStats([{ id: "a", want: "RR", from: "札", got: "R", recorded: false, draft: null, raw: "RR" }, { id: "b", want: "RAR", from: "札", got: "R", recorded: false, draft: null, raw: "RA" }, { id: "c", want: "R", from: "実送信", got: "R", recorded: false, draft: null }]);
 eq("本質の一致", [st2.rawN, st2.rawMatch, st2.rawMultiN, st2.rawMultiHit], [2, 1, 2, 1]);
 eq("要約に本質の一致", sendSeqSummary([{ id: "a", want: "RR", from: "札", got: "R", recorded: false, draft: null, raw: "RR" }], pct).includes("本質（LLM の最初の並び）の一致 1/1"), true);
+const D2 = ["x", "---", "y"].join(String.fromCharCode(10));
+const st3 = seqStats([{ id: "a", want: "R", from: "実送信", got: "R", recorded: false, draft: D2 }, { id: "b", want: "R", from: "実送信", got: "R", recorded: false, draft: "x" }, { id: "c", want: "RR", from: "札", got: "R", recorded: false, draft: D2 }]);
+eq("1通の番の下書きの割り", [st3.singleDraftN, st3.draftOverSplit.map((x) => x.id), st3.draftSplit], [2, ["a"], 1]);
+eq("要約に下書きの割り", sendSeqSummary([{ id: "a", want: "R", from: "実送信", got: "R", recorded: false, draft: D2 }], pct).includes("返信1通の番の下書きを「---」で割った 1/1"), true);
 console.log(`send-seq-score: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

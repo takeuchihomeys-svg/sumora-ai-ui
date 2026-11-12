@@ -73,10 +73,13 @@ export function seqStats(rows: SeqRow[]) {
   const multiReplyWant = rows.filter((x) => replies(x.want) >= 2);
   const draftSplit = multiReplyWant.filter((x) => draftPartCount(x.draft) >= 2).length;
   const draftHave = multiReplyWant.filter((x) => !!x.draft).length;
+  /** 11/12: 返信1通以下が正解の番で下書きを「---」で割った（書き手が自分で分ける REPLY_SPLIT_WRITER_SELF の守り） */
+  const singleDraft = rows.filter((x) => replies(x.want) <= 1 && !!x.draft);
+  const draftOverSplit = singleDraft.filter((x) => draftPartCount(x.draft) >= 2);
   const rawRows = rows.filter((x) => !!x.raw);
   const rawMatch = rawRows.filter((x) => x.raw === x.want).length;
   const rawMultiWant = rawRows.filter((x) => x.want.length >= 2);
-  return { rawN: rawRows.length, rawMatch, rawMultiN: rawMultiWant.length, rawMultiHit: rawMultiWant.filter((x) => x.raw === x.want).length, n, match, countMatch, multiN: multiWant.length, multiHit, singleN: singleWant.length, overSplit, underSplit, multiReplyN: multiReplyWant.length, draftSplit, draftHave, recorded: rows.filter((x) => x.recorded).length };
+  return { rawN: rawRows.length, rawMatch, rawMultiN: rawMultiWant.length, rawMultiHit: rawMultiWant.filter((x) => x.raw === x.want).length, n, match, countMatch, multiN: multiWant.length, multiHit, singleN: singleWant.length, overSplit, underSplit, multiReplyN: multiReplyWant.length, draftSplit, draftHave, singleDraftN: singleDraft.length, draftOverSplit, recorded: rows.filter((x) => x.recorded).length };
 }
 
 /** 要約の1行（pct は brain-exam の書き方を受け取る） */
@@ -88,5 +91,6 @@ export function sendSeqSummary(rows: SeqRow[], pct: (a: number, b: number) => st
   return `送る物の並び（回 ${s.n}・正解は札 ${fromTag}／実送信 ${s.n - fromTag}・ブレインが send_sequence を出した ${s.recorded}）: 一致 ${pct(s.match, s.n)}｜返信の通数の一致 ${pct(s.countMatch, s.n)}｜2通以上の番の一致 ${pct(s.multiHit, s.multiN)}`
     + `｜1通の番を割った ${s.overSplit.length}/${s.singleN}${list(s.overSplit)}｜2通以上の番を1通に ${s.underSplit.length}/${s.multiN}`
     + (s.rawN ? `｜本質（LLM の最初の並び）の一致 ${pct(s.rawMatch, s.rawN)}・2通以上の番 ${pct(s.rawMultiHit, s.rawMultiN)}` : "")
-    + (s.multiReplyN ? `｜返信2通以上の番の下書き「---」で分かれた ${s.draftSplit}/${s.draftHave}（下書きあり）` : "");
+    + (s.multiReplyN ? `｜返信2通以上の番の下書き「---」で分かれた ${s.draftSplit}/${s.draftHave}（下書きあり）` : "")
+    + (s.singleDraftN ? `｜返信1通の番の下書きを「---」で割った ${s.draftOverSplit.length}/${s.singleDraftN}${list(s.draftOverSplit)}` : "");
 }

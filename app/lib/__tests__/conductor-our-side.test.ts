@@ -1,0 +1,61 @@
+// app/lib/__tests__/conductor-our-side.test.ts — 入口の統括に渡す「こちら側の状態」（純関数）
+// 実行: npx tsx app/lib/__tests__/conductor-our-side.test.ts
+import { ourSideBlock, promiseKindOf, conductorOurSideOn, ourSideBrainOn, checkedFacts, ourSideCheckedOn } from "../conductor-our-side";
+
+let pass = 0, fail = 0;
+const t = (name: string, ok: boolean, info?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name} → ${JSON.stringify(info)}`); } };
+const now = Date.parse("2026-11-03T10:36:00Z");
+
+t("既定 off・on で動く", !conductorOurSideOn({}) && conductorOurSideOn({ CONDUCTOR_OUR_SIDE: "on" }));
+t("ブレインの側は 11/12 朝から既定 off・=on で入る・入口のスイッチとは別", !ourSideBrainOn({}) && !ourSideBrainOn({ CONDUCTOR_OUR_SIDE: "on" }) && ourSideBrainOn({ CONDUCTOR_OUR_SIDE_BRAIN: "on" }));
+t("約束の種類", promiseKindOf("お送り頂きました新大阪グランドハイツの募集状況確認させて頂きます") === "確認" && promiseKindOf("最大限割引させて頂いた御見積書を作成しお送りさせて頂きます") === "見積"
+  && promiseKindOf("浪速区周辺全域からピックアップしてお送りさせて頂きます") === "探す" && promiseKindOf("内覧の候補日お送りさせて頂きます") === "内覧");
+
+// q371 の元の番（13分前の確認の約束・新しい1件）: 約束は開いている・結果はまだ
+{
+  const b = ourSideBlock({ nowMs: now, msgs: [
+    { sender: "staff", text: "お送り頂きました新大阪グランドハイツと新大阪ステーションビルの募集状況確認させて頂きます！！\n確認出来次第ご連絡させて頂きます😌！！", created_at: "2026-11-03T10:22:00Z" },
+    { sender: "customer", text: "ART TENDOU WEST 1階", created_at: "2026-11-03T10:35:50Z" },
+  ], aix: [
+    { aix_type: "property_check_result", check_pattern: "unavailable", created_at: "2026-11-02T09:00:00Z", property_names: ["A", "B", "C"] },
+    { aix_type: "property_send", created_at: "2026-11-03T09:06:00Z" },
+  ] });
+  t("q371: 確認の約束が開いている（14分前）", /開いている約束: 確認の約束「お送り頂きました新大阪グランドハイツと新大阪ステーションビルの募集状況確認させて頂きます！」（14分前/.test(b), b);
+  t("q371: 直前の AIX は物件送付（束）・送った物件の回数", /直前の AIX: 物件送付（束）/.test(b) && /束 1回・1件のオススメ 0回/.test(b), b);
+}
+// 9758 型: 物件確認した（募集中・見積書同封）の後の「初期費用は」→ 約束は果たし済み・直前の AIX が見積書同封
+{
+  const b = ourSideBlock({ nowMs: Date.parse("2026-11-01T07:03:00Z"), msgs: [
+    { sender: "staff", text: "お送り頂きました物件の募集状況確認させて頂きます！！", created_at: "2026-10-31T10:00:00Z" },
+    { sender: "staff", text: "こちら2件現在募集中となります！！", created_at: "2026-11-01T02:44:00Z", is_aix_generated: true },
+  ], aix: [{ aix_type: "property_check_result", check_pattern: "available", created_at: "2026-11-01T02:44:00Z", property_names: ["アーバネックス四ツ橋 1308", "アーバネックス四ツ橋 203", "X"], estimate_sent: true }] });
+  t("9758: 約束は AIX で果たした＝なし", /開いている約束: なし/.test(b), b);
+  t("9758: 直前の AIX の意味・ピッカー・物件名2件・見積書", b.includes("物件確認した（確かめた結果を送る＝空き・募集・入居日・室内写真／管理会社に確かめた条件・設備・交渉の結果は mgmt_* のピッカー）＝募集中（アーバネックス四ツ橋 1308・アーバネックス四ツ橋 203）・御見積書を同封（4時間前）"), b);
+}
+// 11932 型: 確認した（管理会社の設備）の意味・mgmt_ のピッカー
+{
+  const b = ourSideBlock({ nowMs: now, msgs: [], aix: [{ aix_type: "acknowledge_check", check_pattern: "mgmt_equipment", created_at: "2026-11-03T08:00:00Z" }] });
+  t("確認します＝約束・mgmt_ は管理会社に確かめた結果", /確認します（これから確かめる・交渉する約束を AIX で送る）＝管理会社に確かめた結果（設備）/.test(b), b);
+}
+// 今より後の通・AIX は見ない（答えの漏れ）
+{
+  const b = ourSideBlock({ nowMs: now, msgs: [{ sender: "staff", text: "確認させて頂きます", created_at: "2026-11-03T11:00:00Z" }], aix: [{ aix_type: "estimate_sheet", created_at: "2026-11-03T11:30:00Z" }] });
+  t("今より後は見ない", /開いている約束: なし/.test(b) && /直前の AIX: なし/.test(b) && /まだ無い/.test(b), b);
+}
+// 2026-11-11 弱い所 575: 確かめ済みの事実（竹内さんの実物の言い方）
+{
+  const msgs = [
+    { sender: "staff", text: "BLANCOSTA SQUARE管理会社に確認しましたところ、11月2日からご内覧が出来そこからクリーニング工事がはいりますので、最短で11月中旬でのご入居となります！！", created_at: "2026-11-01T06:40:00Z" },
+    { sender: "staff", text: "エスリード中之島クロスゲート募集状況確認させて頂きましたところ、現在お部屋お申込が入っており、2番手以降でのお申込となります！！", created_at: "2026-11-02T14:12:00Z", is_aix_generated: true },
+    { sender: "staff", text: "管理会社に交渉させて頂きましたがこちらクリーニング費用必須となります。", created_at: "2026-11-03T09:01:00Z" },
+    { sender: "staff", text: "お送り頂きました物件の募集状況確認させて頂きます！！", created_at: "2026-11-03T09:30:00Z" },
+    { sender: "customer", text: "確認しましたところ大丈夫でした", created_at: "2026-11-03T09:40:00Z" },
+  ];
+  const f = checkedFacts({ msgs, nowMs: now });
+  t("575: 結果の文だけ拾う（約束の文・お客様の文は拾わない）・新しい順", f.length === 3 && f[0].kind === "③交渉" && f[1].kind === "①募集状況" && f[2].kind === "②条件", f);
+  t("575: 結果の1文を要点に（ところ の後の文も）", /2番手以降でのお申込/.test(f[1].gist) && /11月中旬/.test(f[2].gist), f);
+  t("575: 既定 off（塊に出ない）・on で出る", !/確かめ済み/.test(ourSideBlock({ msgs, aix: [], nowMs: now })) && /確かめ済みの事実/.test(ourSideBlock({ msgs, aix: [], nowMs: now, withChecked: true })) && !ourSideCheckedOn({}) && ourSideCheckedOn({ OUR_SIDE_CHECKED: "on" }));
+  t("575: 30日より古い・今より後は拾わない", checkedFacts({ msgs, nowMs: Date.parse("2026-12-20T00:00:00Z") }).length === 0 && checkedFacts({ msgs, nowMs: Date.parse("2026-11-01T00:00:00Z") }).length === 0);
+}
+console.log(`\n${pass} passed, ${fail} failed`);
+if (fail) process.exit(1);

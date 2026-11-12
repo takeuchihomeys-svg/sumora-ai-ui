@@ -101,6 +101,7 @@ import { issueContradictsContract, renderTurnContractNote, isConfirmPromiseAsk, 
 // 2026-10-13 竹内さん「指摘のアナウンスでブレインが正しいが、実際の文が修正されていない」: 直すかどうかをブレインの判断にそろえる
 import { selectRevisionIssues, annotateUnfixed, finalCheckBrainAlignEnabled, contractConfirmMiss, type HoldReason } from "./final-check-brain-align";
 import { contractAlreadySaidRepeat } from "./repeat-brain-align";
+import { fcKeepsBrainSentence, revisionAddedFactContradiction, propertyNameVariantGrounded } from "./final-check-answer-keep";
 import { isAckOnlyTurn } from "./draft-repeat";
 // 2026-10-23 竹内さん 10/22（KB a6dff652）: 最終チェックも指揮官 Claude＋FLASH の下確かめ（FINAL_CHECK_FLASH=on の時だけ・既定 off）
 import {
@@ -849,6 +850,11 @@ ${draft}
 /** 捏造の判定に使うお客様の発言（その回の発言＋直近の会話のお客様の通） */
 function customerTextsForFabrication(ctx: FinalCheckContext): string[] {
   return [ctx.lastCustomerMessage ?? "", ...(ctx.recentMessages ?? []).filter((m) => m.sender === "customer").slice(-12).map((m) => m.text ?? "")];
+}
+
+/** 2026-11-12 作業員15: 物件名の表記ゆれの照合に使う会話（お客様・こちら・資料の値）。FC_PROPERTY_NAME_NORMALIZE=on の時だけ使われる */
+function groundTextsForPropertyName(ctx: FinalCheckContext): string[] {
+  return [ctx.lastCustomerMessage ?? "", ...(ctx.recentMessages ?? []).slice(-25).map((m) => m.text ?? ""), ctx.materialFacts ?? "", ctx.checkpointFacts ?? ""];
 }
 
 /** 会社の事実を当てる直近のお客様の発言（今回の番だけ・旧は直近のお客様3通）。export はテスト用 */
@@ -2970,7 +2976,7 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
       const code = (raw.code ?? "UNKNOWN").trim() || "UNKNOWN";
       // 2026-10-02 お客様自身の言葉（「家賃＋管理費で月7万円程度・西九条駅から徒歩3分以内」）の復唱に付いた FABRICATED_AMOUNT／PROPERTY は外す
       //   （引用の金額・駅・号室・物件名が全部お客様の発言にある時だけ・1つでも無ければ残す）
-      if (isCustomerEchoFabrication(code, evidence, customerTextsForFabrication(ctx))) {
+      if (isCustomerEchoFabrication(code, evidence, customerTextsForFabrication(ctx)) || propertyNameVariantGrounded(code, evidence, groundTextsForPropertyName(ctx))) {
         console.log(JSON.stringify({ tag: "final-check:customer-echo-dropped", pass, code, evidence: evidence.slice(0, 80) }));
         continue;
       }
@@ -3729,7 +3735,7 @@ async function runDiffRecheck(
       if (!evidence) continue; // 引用のない指摘は破棄（メタ認知ガード・runFinalCheckと同一）
       const code = (r.code ?? "UNKNOWN").trim() || "UNKNOWN";
       const pass = inferDiffIssuePass(code, targets);
-      if (isCustomerEchoFabrication(code, evidence, customerTextsForFabrication(ctx))) continue; // 2026-10-02 お客様の言葉の復唱は捏造でない（1回目と同じ）
+      if (isCustomerEchoFabrication(code, evidence, customerTextsForFabrication(ctx)) || propertyNameVariantGrounded(code, evidence, groundTextsForPropertyName(ctx))) continue; // 2026-10-02 お客様の言葉の復唱は捏造でない（1回目と同じ）
       if (isStaffSelfIntroNameFlag(code, evidence)) continue; // 2026-10-06 担当者の名乗りは名前の誤りでない（1回目と同じ）
       // 2026-10-07 「修正後ドラフト全文に〜の記述がない」も同じ（1回目と同じ・final-check-staff-standard.ts ②）
       if (staffStandardFilterEnabled() && isMissingElementRuleFlag(pass, code, evidence, draftNorm.includes(normalizeForMatch(evidence)))) continue;
@@ -3791,7 +3797,9 @@ function pickRevisionIssues(issues: CheckIssue[], draft: string, ctx: FinalCheck
     customerQuestions: ctx.customerQuestions ?? null,
     isRevisable,
     // 2026-10-08 竹内さん Q1「本質を勝たせる」: 本質に反する中身を足させる指摘（閉じる番に要素・本質に無い確認の約束・AIX／触れない項目への答え）は書き直しに渡さない
-    contradicts: (i) => issueContradictsContract(i, ctx.turnContract ?? null),
+    // 2026-11-12 作業員15: 段階の語の網（審査・契約・鍵）が今の質問・ブレインの答え／約束の文を書き直しに渡さない（既定 on・FC_ANSWER_KEEP=off で止める・承り FC_UKETAMAWARI_BRAIN は既定 off・final-check-answer-keep.ts）
+    contradicts: (i) => issueContradictsContract(i, ctx.turnContract ?? null)
+      || fcKeepsBrainSentence(i, { contract: ctx.turnContract ?? null, draft, customerText: ctx.lastCustomerMessage }),
     legacyAnchored,
   });
   log.held = held;
@@ -3914,6 +3922,10 @@ async function runFinalCheckWithRevisionCore(
     if (BANNED_WORDS_DETERMINISTIC.some((w) => revised.includes(w))) {
       return dropW("banned_word");
     }
+    // 2026-11-12 作業員15: 書き直しが自分で足した会社の事実に反する断定（例「お振込での一括のみ」）は採らない（既定 on・FC_REVISION_NO_NEW_FACT=off で止める）
+    if (revisionAddedFactContradiction(draft, revised)) {
+      return dropW("new_fact");
+    }
     // 10/13 レビュー: ブレインの裏付けだけで渡した指摘（引用が下書きに無い）を含む書き直しは、置き換え（applySurfaceFixes＝承知→かしこまりました）の前の文でも禁止語を見る
     //   （誤指摘で書き直した文が置き換えで禁止語の関門をすり抜けるのを止める・2fcd0fa3「承知しました」）
     if (alignLog.brainBacked.length && BANNED_WORDS_DETERMINISTIC.some((w) => revisedRaw.includes(w))) {
@@ -4005,6 +4017,8 @@ async function runFinalCheckWithRevisionCore(
     revised = sfB.text;
     // CONFIRM_PROMISE_RE ガード（blockパス・warningパスと対称）。確認約束が verdict で許可されている／直前スタッフが確認約束の時は外す（M14）
     if (!confirmPromiseOk(ctx) && CONFIRM_PROMISE_RE.test(revised) && !CONFIRM_PROMISE_RE.test(currentDraft)) { droppedB = "confirm_promise"; break; }
+    // 2026-11-12 作業員15: warning の道と同じ（書き直しが足した会社の事実に反する断定は採らない・既定 on・FC_REVISION_NO_NEW_FACT=off で止める）
+    if (revisionAddedFactContradiction(currentDraft, revised)) { droppedB = "new_fact"; break; }
 
     // 決定的プリフィルタ: block evidence が1つも消えていない修正は無効（再チェック2.5sを節約）
     // 2026-09-09 Fable5: 骨格系 block（evidence=本文冒頭）は追加型修正で evidence が残るのが正常 → プリフィルタ対象から除外

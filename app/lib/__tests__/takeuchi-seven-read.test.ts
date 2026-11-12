@@ -1,5 +1,5 @@
 // app/lib/__tests__/takeuchi-seven-read.test.ts — 7つの欄＋押す／待つ（npx tsx で回す）。例は Claude Code が読んだ竹内さんの実物（伏せ済み）
-import { parseSevenRead, sevenPrompt, SEVEN_SYSTEM, latentIsConcrete, brainSevenGaps, sevenBlueprintNote, sevenReadOn, POINT_METHODS, TRUST_METHODS } from "../takeuchi-seven-read";
+import { parseSevenRead, sevenPrompt, SEVEN_SYSTEM, latentIsConcrete, brainSevenGaps, sevenBlueprintNote, sevenReadOn, POINT_METHODS, TRUST_METHODS, parseLatentFour, LATENT_FOUR_SYSTEM } from "../takeuchi-seven-read";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean, info?: unknown) => { if (ok) pass++; else { fail++; console.log(`  NG ${n} → ${JSON.stringify(info)}`); } };
 
@@ -33,5 +33,10 @@ t("指示に欄と一覧", SEVEN_SYSTEM.includes("種類で止めず") && POINT_
 const p = sevenPrompt({ maskedCustomer: "山田花です！", maskedBody: "山田花さんお世話になっております！！", scene: "other" });
 t("材料: 名乗った本名を伏せる", !p.includes("山田花") && p.includes("YUMAさんお世話"), p);
 
+// 潜在の4つ（KB d72ad06b）: 5f3a4daf の形
+const lf = parseLatentFour(JSON.stringify({ trigger: { kind: "customer_words", text: "10／1希望です。" }, part: { property: "〈物件〉", point: "10/1の入居に間に合うか・空き" }, feeling: { what: "10/1まで待つ間に他の人に申し込まれて失う怖さ", strength: "weak" }, want: "10/1入居のまま、この部屋を確保したい", fact: "1部屋のみの募集・抑えられるのは1ヶ月間", phrase: "1部屋のみの募集となりますので、他の方からお申込がはいりますと、お部屋が埋まってしまいます！！", lead: "apply" }));
+t("潜在の4つの読み取り", !!lf && lf.trigger.kind === "customer_words" && lf.feeling.strength === "weak" && lf.want.startsWith("10/1") && lf.lead === "apply", lf);
+t("潜在の4つ: none・欠けは null・知らないきっかけは scene", parseLatentFour('{"none":true}') === null && parseLatentFour('{"feeling":{"what":"x"}}') === null && parseLatentFour('{"trigger":{"kind":"zzz"},"feeling":{"what":"不安"},"want":"確保したい"}')?.trigger.kind === "scene");
+t("潜在の4つの指示", LATENT_FOUR_SYSTEM.includes("何でそれが分かったか") && LATENT_FOUR_SYSTEM.includes("本当はどうしたいのか") && LATENT_FOUR_SYSTEM.includes("strength"));
 console.log(`takeuchi-seven-read: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);

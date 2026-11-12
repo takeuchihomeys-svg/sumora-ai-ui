@@ -31,7 +31,7 @@ import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { pendingCounts, decideNearResolve, LEAK_STOP_FILE, isExamJob, ownerBaseDue } from "./lib/exam-near-hook";
-import { pathCheck } from "./lib/exam-path-check";
+import { pathCheck, composePlanMarkers } from "./lib/exam-path-check";
 import { markersOf } from "./lib/exam-miss-stage";
 import { CONDUCTOR_LINKS } from "../app/lib/conductor-linkage";
 import { readObs } from "./lib/exam-flake";
@@ -681,7 +681,7 @@ function pathCheckHook(j: ExamJob): void {
         const f = join(B, n, `${id}.json`);
         if (!existsSync(f)) continue;
         const b = readJson<{ rows?: Array<Record<string, unknown>> } | null>(f, null);
-        if (b?.rows?.length) { markersById[id] = [...new Set(b.rows.flatMap((r) => markersOf({ id, ...(r as object) } as never)))]; break; }
+        if (b?.rows?.length) { markersById[id] = [...new Set(b.rows.flatMap((r) => [...markersOf({ id, ...(r as object) } as never), ...composePlanMarkers((r as { brain?: unknown }).brain)]))]; break; }
       }
     }
     const pc = pathCheck({ changed, links: CONDUCTOR_LINKS, markersById });

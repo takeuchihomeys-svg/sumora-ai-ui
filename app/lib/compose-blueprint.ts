@@ -268,6 +268,8 @@ export function blueprintNote(bp: ComposeBlueprint): string {
     `・趣旨: ${COMPOSE_PURPOSE_JA[it.purpose]}（理由: ${it.why || "―"}）${it.feel ? `／お客様に感じてほしい事: ${it.feel}` : ""}`,
     it.purpose !== "ack" ? `・主語: ${({ customer: "お客様のこと", property: "物件", us: "こちら（弊社）がする事", process: "手続き・流れ" } as const)[it.main.subject]}` : "",
     ...bp.parts.map((p, k) => `${k + 1}. ${roleJa[p.role]}: ${p.say}${p.nets?.length ? `（この部品の中の決まり: ${p.nets.join("／")}）` : ""}`),
+    // 2026-11-12 作業員10（受け渡しの漏れ）: 意図の next（次にしてほしい事）は決めていたのに設計図に出ていなかった（COMPOSE_SENTENCE_PLAN が off でない時に出す・11/12 既定 on）
+    (envOf().COMPOSE_SENTENCE_PLAN ?? "").trim().toLowerCase() !== "off" && it.next !== "none" ? `・次にしてほしい事: ${({ reply: "返信をもらう", viewing: "内覧", apply: "申込・抑える", send_property: "物件を送ってもらう", wait_check: "確認の結果を待ってもらう", answer_only: "答えて終わり", none: "" } as const)[it.next]}` : "",
     `・長さ: ${({ short: "短く（50字前後）", mid: "中くらい（100字前後）", long: "長め（140字前後）" } as const)[bp.lengthBand]}・竹内さんの型: ${TAKEUCHI_PURPOSE_FORMS[it.purpose].seq}`,
     "・メインの1文が一番に伝わるように。添えはメインより短く、メインの後ろに。",
   ].filter(Boolean).join("\n");

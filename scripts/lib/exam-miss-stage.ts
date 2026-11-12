@@ -128,10 +128,15 @@ export function classifyMiss(r: MissRowLite): MissVerdict {
     if (!st.some((s) => s.stage === "text")) st.push({ stage: "final_check", marker: "final_check", note: "道は同じで下書きの要点が抜けた（最終チェックの消しか書き手）" });
   }
   // 道が正解の回は、外れの段の頭を書き手（依頼／下書きの側）にする（文の中身・最終チェックの段は細目として後ろに残す）
-  if (pathOk && !st.some((x) => x.stage === "writer" || x.stage === "final_check")) st.unshift({ stage: "writer", marker: "writer:asks", note: (r.asks ?? []).some((a) => a.covered === false) ? "道は正解で依頼の答え方が抜けた（依頼／下書きの側）" : "道は正解で依頼／下書きの側で外れた" });
+  // 2026-11-12 作業員10（統括役の頼み・持ち主の付け違い）: 答案に下書きが無い回（--stage=brain）の依頼の外れは、ブレインの答え（turn_contract の答え・道）の外れ＝持ち主はブレイン。
+  //   今まで書き手（writer:asks）に数え、通算76のうち 23問・63回がブレインの段の答案だった（11/12 の読み）。試験の数えだけの変更（本番の動きは変わらない）
+  const noDraft = !r.draft || (r.draft.code == null && r.draft.pass == null && !(r.draft.asks ?? []).length);
+  if (pathOk && noDraft && !st.some((x) => x.stage === "writer" || x.stage === "final_check")) st.unshift({ stage: "brain", marker: "brain:asks", note: (r.asks ?? []).some((a) => a.covered === false) ? "道は正解でブレインの答えの依頼の答え方が外れた（下書きなし）" : "道は正解でブレインの答えの側で外れた（下書きなし）" });
+  else if (pathOk && !st.some((x) => x.stage === "writer" || x.stage === "final_check")) st.unshift({ stage: "writer", marker: "writer:asks", note: (r.asks ?? []).some((a) => a.covered === false) ? "道は正解で依頼の答え方が抜けた（依頼／下書きの側）" : "道は正解で依頼／下書きの側で外れた" });
   if (!st.length) st.push({ stage: "none", marker: "none", note: "段が決められない" });
   const cause: MissCause = r.essence?.ok && !r.path?.ok ? (isAix(ess) && isReplyLike(fin) ? "AIX の番を返信にした" : "場面・決まりの読み違い") : "要確認";
-  const primary = st.find((s) => s.stage !== "brain") ?? st[0];
+  // 下書きの無い回のブレインの答えの外れ（brain:asks）は、他の段（方向の文の尾 等）があってもブレインを頭にする
+  const primary = st.find((s) => s.marker === "brain:asks") ?? st.find((s) => s.stage !== "brain") ?? st[0];
   const markers = [...new Set([...st.map((s) => s.marker).filter((x) => !/^(?:brain:essence|none|asks)$/.test(x)), ...m])];
   const line = `${r.id}${r.rep ? `#${r.rep}` : ""}: ${st.map((s) => `${STAGE_JA[s.stage]}（${s.note}）`).join(" → ")}・道 ${ess ?? "?"} → ${fin ?? "?"}${dr && dr !== fin ? ` → 下書き ${dr}` : ""}・原因の下書き: ${cause}`;
   return { id: r.id, stage: primary.stage, stages: st, markers, from: ess, to: fin, cause, line };

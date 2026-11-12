@@ -37,6 +37,10 @@ export type HandoffDecided = {
   /** plan_ahead の先頭の手 */
   nextStep: string | null;
   openPromises: string[];
+  /** 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off の時は無い）: この番の目的・次の2〜3番の狙い・入れる仕込み（文の統括・AIX の文へ） */
+  turnAim?: string | null;
+  midAim?: string | null;
+  plant?: string | null;
 };
 export type Handoff = { from: ConductorRole; to: ConductorRole; decided: HandoffDecided; yours: string[]; lines: string[] };
 
@@ -62,11 +66,13 @@ export function buildHandoff(o: { to: ConductorRole; meta: Record<string, unknow
   const s = (v: unknown, n = 40) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
   const pa = m.plan_ahead as { steps?: unknown[] } | undefined;
   const tl = m.three_layer as { relief?: unknown } | undefined;
+  const ta = m.turn_aims as { turnAim?: unknown; midAim?: unknown; plant?: unknown } | undefined;
   return {
     from: "line", to: o.to,
     decided: {
       action: s(m.action, 40) ?? "reply", stage: s(m.checkpoint_stage, 20), mainPoint: s(m.main_point, 60), relief: s(tl?.relief, 50),
       nextStep: Array.isArray(pa?.steps) ? s(pa?.steps?.[0], 20) : null, openPromises: [...(o.openPromises ?? [])].slice(0, 5),
+      ...(ta ? { turnAim: s(ta.turnAim, 30), midAim: s(ta.midAim, 40), plant: s(ta.plant, 30) } : {}),
     },
     yours: YOURS[o.to], lines: LINES,
   };
@@ -78,6 +84,7 @@ export function handoffNote(h: Handoff): string {
     `AIX か返信か: ${d.action === "reply" ? "返信" : `AIX ${d.action}`}`,
     d.stage ? `段階: ${d.stage}` : "", d.mainPoint ? `一番の要点: ${d.mainPoint}` : "", d.relief ? `安心する物: ${d.relief}` : "",
     d.nextStep ? `次の手: ${d.nextStep}` : "", d.openPromises.length ? `開いている約束: ${d.openPromises.join("・")}` : "",
+    d.turnAim ? `この番の目的: ${d.turnAim}` : "", d.midAim ? `次の2〜3番の狙い: ${d.midAim}` : "", d.plant ? `入れる仕込み: ${d.plant}` : "",
   ].filter(Boolean).join("／");
   return [
     `【${ROLE_JA[h.from]}から${ROLE_JA[h.to]}へ】`, `決まった事（決め直さない）: ${dec}`,
