@@ -1,6 +1,6 @@
 // scripts/lib/__tests__/test-conv-lease-cross.test.ts — 別の作業ツリーの鍵を見る（2026-11-04・YUMA2 を2つの作業ツリーで同時に使って混ざった）
 //   実行: npx tsx scripts/lib/__tests__/test-conv-lease-cross.test.ts
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { liveLeaseElsewhere, lockFileOf, acquireTestConversation } from "../test-conv-lease";
@@ -14,8 +14,11 @@ writeFileSync(lockFileOf("YUMA2", b), JSON.stringify({ pid: 111, owner: "other",
 t("別の作業ツリーの生きている鍵は見える", liveLeaseElsewhere("YUMA2", a, (p) => p === 111, [a, b])?.owner === "other");
 t("自分の作業ツリーの鍵は見ない（tryLock が見る）", liveLeaseElsewhere("YUMA2", b, () => true, [b]) === null);
 t("死んだ実行の鍵は見ない", liveLeaseElsewhere("YUMA2", a, () => false, [a, b]) === null);
+// 2026-11-12 作業員10: 死んだ実行・古い鍵は見ないだけでなく消して記録する（lease-stale.ts）＝次の確かめのために鍵を置き直す
+t("死んだ実行の鍵は消える", !existsSync(lockFileOf("YUMA2", b)));
+writeFileSync(lockFileOf("YUMA2", b), JSON.stringify({ pid: 111, owner: "other", at: now }));
 writeFileSync(lockFileOf("YUMA3", b), JSON.stringify({ pid: 111, owner: "stale", at: old }));
-t("12時間より古い鍵は見ない（pid の使い回し）", liveLeaseElsewhere("YUMA3", a, () => true, [a, b]) === null);
+t("6時間より古い鍵は見ない（pid の使い回し）", liveLeaseElsewhere("YUMA3", a, () => true, [a, b]) === null);
 t("別の会話の鍵は関係ない", liveLeaseElsewhere("YUMA4", a, () => true, [a, b]) === null);
 // 11/04 2本目: 1本目は関数だけ入って acquireTestConversation に配線されていなかった（改行コードで置き換えが外れた）→ 取る所で効く事を確かめる
 const c = join(base, "wtC"); mkdirSync(c, { recursive: true });

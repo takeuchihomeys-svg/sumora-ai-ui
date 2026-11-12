@@ -15,6 +15,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { YUMA_CONVERSATION_ID, NO_LINE_TEST_CONVERSATIONS, resolveTestOnlyConversation } from "../../app/lib/test-conversations";
+// 2026-11-12 作業員10（統括役）: 古い鍵36個で YUMA2〜5 が全部「使用中」になり試験が流れなかった → 生き死には node の処理か（Windows は tasklist）まで見る・6時間より古い鍵は空き・消して記録する
+import { pidAliveAsNode, staleLeaseReason, sweepStaleLease, STALE_LEASE_MS } from "./lease-stale";
 
 export type TestConvLease = {
   id: string; name: string; tag: string; isYuma: boolean;
@@ -26,7 +28,7 @@ export const LEASE_DIR_DEFAULT = "scripts/.replay-out";
 export const lockFileOf = (name: string, dir = LEASE_DIR_DEFAULT) => `${dir}/.test-conv-${name.toUpperCase()}.lock`;
 
 type LockBody = { pid: number; owner: string; at: string };
-const defaultAlive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException)?.code === "EPERM"; } };
+const defaultAlive = (pid: number) => pidAliveAsNode(pid);
 
 /** 鍵の中身を読む（壊れた・空のファイルは null） */
 export function readLock(file: string): LockBody | null {
@@ -50,9 +52,11 @@ export function liveLeaseElsewhere(name: string, ownDir: string, alive: (pid: nu
   const own = resolve(ownDir).toLowerCase();
   for (const d of dirs) {
     if (resolve(d).toLowerCase() === own) continue;
-    const cur = readLock(lockFileOf(name, d));
-    // 12時間より古い鍵は見ない（落ちた実行の鍵の pid が別の処理に使い回されて生きて見える事がある）
-    if (cur && alive(cur.pid) && !(Date.now() - Date.parse(cur.at) > 12 * 3_600_000)) return cur;
+    const f = lockFileOf(name, d);
+    const cur = readLock(f);
+    // 古い鍵（pid が死んだ・node でない・6時間より古い）は空き＝消して記録する（落ちた実行の鍵の pid が別の処理に使い回されて生きて見える事がある）
+    if (cur && !staleLeaseReason(cur, { alive })) return cur;
+    if (existsSync(f)) sweepStaleLease(f, { alive });
   }
   return null;
 }
@@ -70,8 +74,9 @@ export function tryLock(file: string, owner: string, opts: { pid?: number; alive
       if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e;
       const cur = readLock(file);
       if (cur && cur.pid === pid) { writeFileSync(file, body); return true; }
-      if (cur && alive(cur.pid)) return false;
-      try { unlinkSync(file); } catch { /* 他が先に消した */ }
+      if (cur && alive(cur.pid) && !(Date.now() - Date.parse(cur.at) > STALE_LEASE_MS)) return false;
+      // 古い鍵は消して記録する（stale-leases.log）
+      if (!sweepStaleLease(file, { alive })) { try { unlinkSync(file); } catch { /* 他が先に消した */ } }
     }
   }
   return false;
