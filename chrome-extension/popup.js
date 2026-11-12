@@ -2405,9 +2405,18 @@ function showView(id) {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   document.getElementById(id).classList.add("active");
   if (isUnderbar) {
-    const mini = id === "view-list";
-    setMiniMode(mini);
-    notifyParent(mini ? "collapse" : "expand");
+    /**
+     * 2026-11-12 竹内さん「拡張ツールたまにちいさくなって中の画面がかなり小さくなり、
+     *   お客さんリスト確認できない時がある」:
+     *
+     * ⚠ 原因はここだった。旧は `mini = (id === "view-list")` ＝ **お客さん一覧を開くと
+     *   100px のボタンに縮める**指示を出していた。だから一覧が見えないまま小さくなる。
+     *   → **お客さん一覧こそ大きく開く**（mini にしない）。
+     *     縮めるのは「検索の画面（view-2 以降）」だけにする（検索中は小さい方が邪魔にならない）。
+     */
+    const wantMini = id !== "view-list";
+    setMiniMode(wantMini);
+    notifyParent(wantMini ? "collapse" : "expand");
   }
 }
 

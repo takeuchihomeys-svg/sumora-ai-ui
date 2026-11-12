@@ -10,8 +10,15 @@
 
   const MINI    = 100;
   const DRAG_H  = 28;
-  const MIN_W   = 300;
-  const MIN_H   = 340;
+  /**
+   * 2026-11-12 竹内さん「拡張ツールたまにちいさくなって中の画面がかなり小さくなり、お客さんリスト確認できない時がある」:
+   *   ⚠ 旧の最小は **300×340**。区切りのドラッグでここまで小さくでき、しかも**幅が保存されて**
+   *     次のページでも小さいまま開いていた（＝お客さんリストが読めない）。
+   *   → **お客さんリストが読める大きさ**を下限にする（幅 420・高さ 480）。
+   *     画面が小さい PC でも入るよう、下限は画面の高さからも計算する（下の clampHeight）。
+   */
+  const MIN_W   = 420;
+  const MIN_H   = 480;
   const INIT_W  = 660;
   const BOTTOM_GAP = 60; // 展開時に画面下端から確保する余白（リサイズハンドルが触れる）
   const SK      = "aixlinx_state";
@@ -32,7 +39,13 @@
   const DEFAULT_Y = 80;
   let posX   = saved.posX   ?? DEFAULT_X;
   let posY   = saved.posY   ?? DEFAULT_Y;
-  let panelW = saved.panelW ?? INIT_W;
+  /**
+   * 2026-11-12 竹内さん「たまにちいさくなって中の画面がかなり小さくなり、お客さんリスト確認できない時がある」:
+   *   ⚠ 旧は保存された幅を**そのまま**使っていた。前回ドラッグで小さくした幅（300px など）が
+   *     次のページ・次の日でも復元され、**お客さんリストが読めないまま**開いていた。
+   *   → 保存値が小さすぎる時は**読める幅（MIN_W）に戻す**。大きすぎる時も画面に収める。
+   */
+  let panelW = Math.max(MIN_W, Math.min(Number(saved.panelW) || INIT_W, Math.round(window.innerWidth * 0.9)));
   // 初期高さ：毎回ビューポートから算出（保存値は使わない）
   const INIT_H = Math.min(680, window.innerHeight - posY - BOTTOM_GAP - DRAG_H);
   let panelH = INIT_H;
@@ -50,7 +63,9 @@
         expanded,
         posX:   parseInt(wrap.style.left) || posX,
         posY:   parseInt(wrap.style.top)  || posY,
-        panelW,
+        // 2026-11-12 竹内さん「たまにちいさくなってお客さんリストが見えない」:
+        //   小さすぎる幅は**保存しない**（次のページで小さいまま開くのを防ぐ）
+        panelW: Math.max(MIN_W, panelW),
         // panelH は保存しない：小窓化で縮小した値が固定化されるのを防ぐ
         // 毎回 INIT_H（画面サイズ基準）で開く
       }));
@@ -262,7 +277,27 @@
     // 現在の top 位置から下端まで BOTTOM_GAP を確保できる最大高さに制限
     const curTop = parseInt(wrap.style.top) || posY;
     const maxH = window.innerHeight - curTop - BOTTOM_GAP - DRAG_H;
-    if (panelH > maxH) panelH = Math.max(MIN_H, maxH);
+    /**
+     * 2026-11-12 竹内さん「中の画面がかなり小さくなり、お客さんリスト確認できない時がある」:
+     *   ⚠ 旧は `Math.max(MIN_H, maxH)` だったので、**画面が小さいと maxH が小さくても MIN_H を強行**し、
+     *     逆に top が下にあると計算上とても小さくなって**中身が潰れて**いた。
+     *   → ① 画面に入る高さを優先しつつ、**読める高さ（MIN_H_READ）はできるだけ守る**
+     *     ② 守れない時は**上に寄せる**（top を上げて高さを確保する＝潰さない）
+     */
+    const MIN_H_READ = Math.min(MIN_H, Math.max(240, window.innerHeight - BOTTOM_GAP - DRAG_H - 10));
+    if (maxH < MIN_H_READ) {
+      // 高さを確保するため、上に寄せる（画面の外には出さない）
+      const wantTop = Math.max(0, window.innerHeight - BOTTOM_GAP - DRAG_H - MIN_H_READ);
+      const newTop = Math.min(curTop, wantTop);
+      try { wrap.style.setProperty("top", newTop + "px", "important"); posY = newTop; } catch (_) {}
+      panelH = Math.max(200, window.innerHeight - newTop - BOTTOM_GAP - DRAG_H);
+    } else if (panelH > maxH) {
+      panelH = Math.max(MIN_H_READ, maxH);
+    }
+    // 幅も画面に収める（横にはみ出して中身が見えないのを防ぐ）
+    const maxW = Math.max(MIN_W, window.innerWidth - 20);
+    if (panelW > maxW) panelW = maxW;
+    if (panelW < MIN_W) panelW = MIN_W;
   }
 
   function setSize(exp) {
@@ -350,8 +385,16 @@
     } else {
       const curTop = parseInt(wrap.style.top) || posY;
       const maxH = window.innerHeight - curTop - BOTTOM_GAP - DRAG_H;
-      panelW = Math.max(MIN_W, startPW + dx);
-      panelH = Math.min(Math.max(MIN_H, startPH + dy), maxH);
+      /**
+       * 2026-11-12 竹内さん「たまにちいさくなって中の画面がかなり小さくなる」:
+       *   ⚠ 旧は `Math.min(Math.max(MIN_H, ...), maxH)` で、**maxH が MIN_H より小さいと maxH が勝ち**、
+       *     中身が潰れる高さになっていた（お客さんリストが読めない）。
+       *   → 下限は「読める高さ」と「画面に入る高さ」の小さい方。両方を守る。
+       */
+      const minHRead = Math.min(MIN_H, Math.max(240, window.innerHeight - BOTTOM_GAP - DRAG_H - 10));
+      const maxW = Math.max(MIN_W, window.innerWidth - 20);
+      panelW = Math.min(Math.max(MIN_W, startPW + dx), maxW);
+      panelH = Math.min(Math.max(minHRead, startPH + dy), Math.max(minHRead, maxH));
       wrap.style.setProperty("width",  panelW + "px", "important");
       wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
     }
@@ -381,6 +424,27 @@
   });
 
   // ── popup.htmlからのメッセージ ────────────────────────────────────
+  /**
+   * 2026-11-12 竹内さん「たまにちいさくなって中の画面がかなり小さくなり、お客さんリスト確認できない時がある」:
+   *   画面（ブラウザの窓）を小さくしたり、ディスプレイを変えたりすると、
+   *   前の大きさのまま**画面の外・はみ出し**て中身が読めなくなっていた。
+   *   → 窓の大きさが変わったら**画面に収まるように置き直す**（＋読める幅・高さを確保）。
+   */
+  window.addEventListener("resize", function () {
+    if (!expanded) return;
+    try {
+      const curLeft = parseInt(wrap.style.left) || posX;
+      const curTop = parseInt(wrap.style.top) || posY;
+      const maxW = Math.max(MIN_W, window.innerWidth - 20);
+      if (panelW > maxW) panelW = maxW;
+      const left = Math.min(curLeft, Math.max(0, window.innerWidth - panelW - 10));
+      wrap.style.setProperty("width", panelW + "px", "important");
+      wrap.style.setProperty("left", Math.max(0, left) + "px", "important");
+      clampHeight();
+      wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
+      persist();
+    } catch (_) {}
+  });
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "aixlinx-underbar") return;
     const a = e.data.action;

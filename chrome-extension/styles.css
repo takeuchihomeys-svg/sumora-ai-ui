@@ -2,7 +2,8 @@
 
 body {
   width: 100%;
-  min-width: 300px;
+  /* 2026-11-12 竹内さん「たまに小さくなってお客さんリストが確認できない」: 読める下限を 420px に（旧 300px） */
+  min-width: 420px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Hiragino Sans, sans-serif;
   font-size: 14px;
   background: #f8f9fa;
@@ -17,6 +18,12 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  /* 2026-11-12 竹内さん「小さくなってお客さんリストが確認できない」:
+     中身が潰れても**リストが最低限読める高さ**を確保する（ヘッダー＋数行）。
+     小窓（iframe）が低い時はブラウザ側でスクロールする。 */
+  min-height: 200px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* ── Header ── */
@@ -228,7 +235,9 @@ body:not(.mode-aix):not(.mode-ai) .bulk-check-wrap { display: none !important; }
 #filter-station-btn         { color: #1565c0; border-color: #90caf9; background: #e3f2fd; }
 #filter-station-btn.active  { background: #1565c0; color: white; border-color: #1565c0; }
 
-#customer-list { overflow-y: auto; flex: 1; }
+/* 2026-11-12 竹内さん「小さくなってお客さんリストが確認できない」:
+   リストは必ず高さを持たせて**スクロールで全部見られる**ようにする（0 に潰れない）。 */
+#customer-list { overflow-y: auto; flex: 1 1 auto; min-height: 120px; -webkit-overflow-scrolling: touch; }
 
 .section-divider {
   padding: 6px 14px 4px;
