@@ -1,18 +1,349 @@
 {
- "note": "2026-11-12 夜 作業員10（Claude Code が手で付けた・費用0）。見ていない番 13（決まり・表を作った後に選んだ番＝COMPOSE_HOW_BY_TYPE・頭の木・締めの表をこの番では変えずに測る）。T10 結果がある 4（problems q177・q193／takeuchi_compose_examples 0d74a70b・1ce446bd）・T3 確かめる約束 3（tce 5cb455bf・d17a8d83・4e46e328）・T9 申込の手前 2（tce ae8548cc・4e813c92。4f647636 は代理契約の審査を進める番＝申込以降の疑いで外した）・T11 初回 4（tce a327c5eb・83dfad04・a1a0e787・problems q019）。⚠ T11 の4番は文の名乗りが『担当 鈴木』（gold-1111〜1113 では q021・q070 を『竹内さんの文ではない』として外した）＝竹内さんの名乗りの名前なのか別のスタッフなのかは統括役・竹内さんに確かめる。tce 41abeb97 はお客様の画像に記入済みの申込書が見える＝申込の門の疑いで外した。tce の番は problems.json に無い＝答案（ブレイン）が無いので、表だけで測る（場面は takeuchi_compose_examples の scene）",
+ "note": "2026-11-12 夜 作業員10（Claude Code が手で付けた・費用0）。見ていない番 13（決まり・表を作った後に選んだ番＝COMPOSE_HOW_BY_TYPE・頭の木・締めの表をこの番では変えずに測る）。T10 結果がある 4（problems q177・q193／takeuchi_compose_examples 0d74a70b・1ce446bd）・T3 確かめる約束 3（tce 5cb455bf・d17a8d83・4e46e328）・T9 申込の手前 2（tce ae8548cc・4e813c92。4f647636 は代理契約の審査を進める番＝申込以降の疑いで外した）・T11 初回 4（tce a327c5eb・83dfad04・a1a0e787・problems q019）。⚠ T11 の4番は文の名乗りが『担当 鈴木』（gold-1111〜1113 では q021・q070 を『竹内さんの文ではない』として外した）＝竹内さんの名乗りの名前なのか別のスタッフなのかは統括役・竹内さんに確かめる。tce 41abeb97 はお客様の画像に記入済みの申込書が見える＝申込の門の疑いで外した。tce の番は problems.json に無い＝答案（ブレイン）が無いので、表だけで測る（場面は takeuchi_compose_examples の scene）／2026-11-12 夜 統括役: 『担当 鈴木』を竹内さんに確かめるまで T11 の4番は正解に入れない＝held に移した（turns は9番）",
  "turns": [
-  { "id": "q177", "type": "T10", "scene": "question", "roles": ["answer", "barrier"], "mainRole": "answer", "property": null, "about": "property_equipment", "part": "駐車場の空きは軽自動車専用", "leadTo": "answer_only", "bridgeRole": "barrier", "appeal": [], "latent": null, "keyHow": ["conclusion_first"], "trustHow": ["effort", "options"] },
-  { "id": "q193", "type": "T10", "scene": "other", "roles": ["greet", "uke", "answer", "ask_send"], "mainRole": "answer", "property": null, "about": "other_party", "part": "子どもの入居は中学生以上なら可", "leadTo": "ask_send", "bridgeRole": "ask_send", "appeal": [], "latent": "審査", "keyHow": ["reason_fact"], "trustHow": ["effort", "fact"] },
-  { "id": "tce:0d74a70b", "type": "T10", "scene": "ack", "roles": ["greet", "answer", "answer", "answer", "viewing", "close"], "mainRole": "answer", "property": null, "about": "search_condition", "part": "条件に合う物件が無い・1件築年数オーバーの好条件", "leadTo": "viewing", "bridgeRole": "viewing", "appeal": ["家賃", "広さ・間取り", "設備"], "latent": "物件が見つからない", "keyHow": ["weak_first", "numbers"], "trustHow": ["effort", "honest_weak"] },
-  { "id": "tce:1ce446bd", "type": "T10", "scene": "ack", "roles": ["answer", "answer", "apply", "close"], "mainRole": "answer", "property": "藤の邸 江戸堀 502号室", "about": "property_cost", "part": "最大限割引の初期費用の御見積書・ペット申請は礼金1ヶ月", "leadTo": "apply", "bridgeRole": "apply", "appeal": ["初期費用"], "latent": null, "keyHow": ["name_property"], "trustHow": ["fact"] },
-  { "id": "tce:5cb455bf", "type": "T3", "scene": "question", "roles": ["greet", "promise"], "mainRole": "promise", "property": "フジパレス式内町", "about": "vacancy", "part": "フジパレス系列は取り扱い可能・募集状況を確認", "leadTo": "none", "bridgeRole": null, "appeal": [], "latent": "対応・信頼", "keyHow": ["conclusion_first"], "trustHow": ["fact", "effort"] },
-  { "id": "tce:d17a8d83", "type": "T3", "scene": "question", "roles": ["greet", "promise", "promise", "close"], "mainRole": "promise", "property": null, "about": "property_cost", "part": "駐車場の平置き・鍵交換代をなくせるか", "leadTo": "none", "bridgeRole": null, "appeal": [], "latent": "費用", "keyHow": ["echo_words"], "trustHow": ["effort", "deadline"] },
-  { "id": "tce:4e46e328", "type": "T3", "scene": "question", "roles": ["uke", "promise", "close"], "mainRole": "promise", "property": "エスリードレジデンス玉造ザ・イースト", "about": "vacancy", "part": "上階の退去予定と12階の募集状況", "leadTo": "none", "bridgeRole": null, "appeal": [], "latent": null, "keyHow": ["echo_words"], "trustHow": ["effort"] },
-  { "id": "tce:ae8548cc", "type": "T9", "scene": "apply", "roles": ["answer", "answer", "barrier", "apply"], "mainRole": "answer", "property": "1LDKの202号室", "about": "vacancy", "part": "抑えられるのは202号室・他は2番手", "leadTo": "apply", "bridgeRole": "apply", "appeal": ["空き・入居"], "latent": "先に取られる", "keyHow": ["conclusion_first", "name_property"], "trustHow": ["honest_weak", "fact"] },
-  { "id": "tce:4e813c92", "type": "T9", "scene": "apply", "roles": ["answer", "answer", "trust", "apply"], "mainRole": "answer", "property": "Leaf Maison大物", "about": "procedure", "part": "申込から最短1〜2週間で入居", "leadTo": "apply", "bridgeRole": "apply", "appeal": ["初期費用", "設備"], "latent": "入居日・時期", "keyHow": ["numbers", "assert"], "trustHow": ["fact"] },
-  { "id": "tce:a327c5eb", "type": "T11", "scene": "conditions", "roles": ["greet", "keep", "trust", "close"], "mainRole": "keep", "property": null, "about": "search_condition", "part": "四ツ橋・西長堀・西大橋・管理費込12〜15万・35㎡以上・築20年以内", "leadTo": "keep", "bridgeRole": "keep", "appeal": [], "latent": null, "keyHow": ["echo_words"], "trustHow": ["support"] },
-  { "id": "tce:83dfad04", "type": "T11", "scene": "conditions", "roles": ["greet", "promise"], "mainRole": "promise", "property": "プレサンス立売堀アーバンスタイル", "about": "vacancy", "part": "募集状況と法人契約の可否", "leadTo": "none", "bridgeRole": null, "appeal": [], "latent": null, "keyHow": ["echo_words", "name_property"], "trustHow": ["effort"] },
-  { "id": "tce:a1a0e787", "type": "T11", "scene": "property_share", "roles": ["greet", "promise", "estimate", "trust", "close"], "mainRole": "promise", "property": "シャーメゾンヒルズ", "about": "vacancy", "part": "募集状況と初期費用", "leadTo": "estimate", "bridgeRole": "estimate", "appeal": [], "latent": "費用", "keyHow": ["name_property"], "trustHow": ["effort", "support"] },
-  { "id": "q019", "type": "T11", "scene": "conditions", "roles": ["greet", "keep", "trust"], "mainRole": "keep", "property": null, "about": "search_condition", "part": "大阪市内・茨木市・高槻市・1LDK・家賃70000円台", "leadTo": "keep", "bridgeRole": "keep", "appeal": [], "latent": null, "keyHow": ["echo_words"], "trustHow": ["support"] }
+  {
+   "id": "q177",
+   "type": "T10",
+   "scene": "question",
+   "roles": [
+    "answer",
+    "barrier"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "property_equipment",
+   "part": "駐車場の空きは軽自動車専用",
+   "leadTo": "answer_only",
+   "bridgeRole": "barrier",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "conclusion_first"
+   ],
+   "trustHow": [
+    "effort",
+    "options"
+   ]
+  },
+  {
+   "id": "q193",
+   "type": "T10",
+   "scene": "other",
+   "roles": [
+    "greet",
+    "uke",
+    "answer",
+    "ask_send"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "other_party",
+   "part": "子どもの入居は中学生以上なら可",
+   "leadTo": "ask_send",
+   "bridgeRole": "ask_send",
+   "appeal": [],
+   "latent": "審査",
+   "keyHow": [
+    "reason_fact"
+   ],
+   "trustHow": [
+    "effort",
+    "fact"
+   ]
+  },
+  {
+   "id": "tce:0d74a70b",
+   "type": "T10",
+   "scene": "ack",
+   "roles": [
+    "greet",
+    "answer",
+    "answer",
+    "answer",
+    "viewing",
+    "close"
+   ],
+   "mainRole": "answer",
+   "property": null,
+   "about": "search_condition",
+   "part": "条件に合う物件が無い・1件築年数オーバーの好条件",
+   "leadTo": "viewing",
+   "bridgeRole": "viewing",
+   "appeal": [
+    "家賃",
+    "広さ・間取り",
+    "設備"
+   ],
+   "latent": "物件が見つからない",
+   "keyHow": [
+    "weak_first",
+    "numbers"
+   ],
+   "trustHow": [
+    "effort",
+    "honest_weak"
+   ]
+  },
+  {
+   "id": "tce:1ce446bd",
+   "type": "T10",
+   "scene": "ack",
+   "roles": [
+    "answer",
+    "answer",
+    "apply",
+    "close"
+   ],
+   "mainRole": "answer",
+   "property": "藤の邸 江戸堀 502号室",
+   "about": "property_cost",
+   "part": "最大限割引の初期費用の御見積書・ペット申請は礼金1ヶ月",
+   "leadTo": "apply",
+   "bridgeRole": "apply",
+   "appeal": [
+    "初期費用"
+   ],
+   "latent": null,
+   "keyHow": [
+    "name_property"
+   ],
+   "trustHow": [
+    "fact"
+   ]
+  },
+  {
+   "id": "tce:5cb455bf",
+   "type": "T3",
+   "scene": "question",
+   "roles": [
+    "greet",
+    "promise"
+   ],
+   "mainRole": "promise",
+   "property": "フジパレス式内町",
+   "about": "vacancy",
+   "part": "フジパレス系列は取り扱い可能・募集状況を確認",
+   "leadTo": "none",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": "対応・信頼",
+   "keyHow": [
+    "conclusion_first"
+   ],
+   "trustHow": [
+    "fact",
+    "effort"
+   ]
+  },
+  {
+   "id": "tce:d17a8d83",
+   "type": "T3",
+   "scene": "question",
+   "roles": [
+    "greet",
+    "promise",
+    "promise",
+    "close"
+   ],
+   "mainRole": "promise",
+   "property": null,
+   "about": "property_cost",
+   "part": "駐車場の平置き・鍵交換代をなくせるか",
+   "leadTo": "none",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": "費用",
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "effort",
+    "deadline"
+   ]
+  },
+  {
+   "id": "tce:4e46e328",
+   "type": "T3",
+   "scene": "question",
+   "roles": [
+    "uke",
+    "promise",
+    "close"
+   ],
+   "mainRole": "promise",
+   "property": "エスリードレジデンス玉造ザ・イースト",
+   "about": "vacancy",
+   "part": "上階の退去予定と12階の募集状況",
+   "leadTo": "none",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "effort"
+   ]
+  },
+  {
+   "id": "tce:ae8548cc",
+   "type": "T9",
+   "scene": "apply",
+   "roles": [
+    "answer",
+    "answer",
+    "barrier",
+    "apply"
+   ],
+   "mainRole": "answer",
+   "property": "1LDKの202号室",
+   "about": "vacancy",
+   "part": "抑えられるのは202号室・他は2番手",
+   "leadTo": "apply",
+   "bridgeRole": "apply",
+   "appeal": [
+    "空き・入居"
+   ],
+   "latent": "先に取られる",
+   "keyHow": [
+    "conclusion_first",
+    "name_property"
+   ],
+   "trustHow": [
+    "honest_weak",
+    "fact"
+   ]
+  },
+  {
+   "id": "tce:4e813c92",
+   "type": "T9",
+   "scene": "apply",
+   "roles": [
+    "answer",
+    "answer",
+    "trust",
+    "apply"
+   ],
+   "mainRole": "answer",
+   "property": "Leaf Maison大物",
+   "about": "procedure",
+   "part": "申込から最短1〜2週間で入居",
+   "leadTo": "apply",
+   "bridgeRole": "apply",
+   "appeal": [
+    "初期費用",
+    "設備"
+   ],
+   "latent": "入居日・時期",
+   "keyHow": [
+    "numbers",
+    "assert"
+   ],
+   "trustHow": [
+    "fact"
+   ]
+  }
+ ],
+ "held": [
+  {
+   "id": "tce:a327c5eb",
+   "type": "T11",
+   "scene": "conditions",
+   "roles": [
+    "greet",
+    "keep",
+    "trust",
+    "close"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "search_condition",
+   "part": "四ツ橋・西長堀・西大橋・管理費込12〜15万・35㎡以上・築20年以内",
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "support"
+   ]
+  },
+  {
+   "id": "tce:83dfad04",
+   "type": "T11",
+   "scene": "conditions",
+   "roles": [
+    "greet",
+    "promise"
+   ],
+   "mainRole": "promise",
+   "property": "プレサンス立売堀アーバンスタイル",
+   "about": "vacancy",
+   "part": "募集状況と法人契約の可否",
+   "leadTo": "none",
+   "bridgeRole": null,
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words",
+    "name_property"
+   ],
+   "trustHow": [
+    "effort"
+   ]
+  },
+  {
+   "id": "tce:a1a0e787",
+   "type": "T11",
+   "scene": "property_share",
+   "roles": [
+    "greet",
+    "promise",
+    "estimate",
+    "trust",
+    "close"
+   ],
+   "mainRole": "promise",
+   "property": "シャーメゾンヒルズ",
+   "about": "vacancy",
+   "part": "募集状況と初期費用",
+   "leadTo": "estimate",
+   "bridgeRole": "estimate",
+   "appeal": [],
+   "latent": "費用",
+   "keyHow": [
+    "name_property"
+   ],
+   "trustHow": [
+    "effort",
+    "support"
+   ]
+  },
+  {
+   "id": "q019",
+   "type": "T11",
+   "scene": "conditions",
+   "roles": [
+    "greet",
+    "keep",
+    "trust"
+   ],
+   "mainRole": "keep",
+   "property": null,
+   "about": "search_condition",
+   "part": "大阪市内・茨木市・高槻市・1LDK・家賃70000円台",
+   "leadTo": "keep",
+   "bridgeRole": "keep",
+   "appeal": [],
+   "latent": null,
+   "keyHow": [
+    "echo_words"
+   ],
+   "trustHow": [
+    "support"
+   ]
+  }
  ]
 }
