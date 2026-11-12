@@ -315,9 +315,24 @@ export function findCompanyFactContradiction(
     const v = findUnaskedVendorName(body, customerTexts);
     if (v) return v;
   }
+  // 2026-11-13 作業員9（統括役・最終チェックの直し 3・61845054／2f3256e2）: 支払い方法（credit_card）に反する断定は、お客様が今聞いていなくても止める。
+  //   11/10 の書き直しが、お客様の内覧の話の番に「初期費用のお支払い方法はお振込での一括のみでの対応となります！！」を足し、聞かれた窓の外なので V16 を素通りした
+  //   （スタッフはカード可・3.24% で送った）。支払い方法の文は書いた時点で会社の事実と照らせる＝聞かれたかを待たない。
+  //   向きは company-facts の paymentLumpTransferOnly（竹内さんへの問い 36ca2676 の答えが出るまでカードの事実が正）。既定 off（FC_PAYMENT_FACT_UNASKED=on）
+  if (paymentFactUnaskedOn()) {
+    // 監査（scripts/audit-final-check-company-facts.ts・365日）: 聞かれた窓の外で新しく当たる実送信は 9/30 の1通（AI の下書きをそのまま送った「私の方で手配」＝既知の誤り）だけ。
+    //   AI の下書きでは 9/15・9/27 の「家賃・管理費のお振込みのみでのご入居は出来ず」（入居に要る費用の話で支払い方法ではない）が当たる → 入居の話の文は外す
+    const pay = findCompanyFactContradictionsUngated(body).find((h) => h.factId === "credit_card" && !PAYMENT_UNASKED_EXCLUDE_RE.test(h.sentence));
+    if (pay) return pay;
+  }
   if (asked.size === 0) return null;
   for (const h of findCompanyFactContradictionsUngated(body)) if (asked.has(h.factId)) return h;
   return null;
+}
+
+const PAYMENT_UNASKED_EXCLUDE_RE = /ご入居|入居(?:は|が|でき|出来)/;
+export function paymentFactUnaskedOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.FC_PAYMENT_FACT_UNASKED ?? "").trim().toLowerCase() === "on";
 }
 
 // ─── 2026-10-08 竹内さん「管理会社などの業者の名前は、お客様から聞かれた時だけ返信に出す」 ───

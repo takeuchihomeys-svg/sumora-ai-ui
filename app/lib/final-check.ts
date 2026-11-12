@@ -114,6 +114,7 @@ import {
   CONDUCTOR_STATIC, buildConductorUser, FINAL_CHECK_FLASH_VERSION, type FlashGateInput, type FlashMaterials, type FlashCaller, type FinalCheckFlashLog,
 } from "./final-check-flash";
 import { claudeUsageUsd, usageFromAnthropic, isDeepseekPeakAt } from "./llm-price";
+import { confirmPriorPromiseOn, priorStaffConfirmObject } from "./confirm-prior-promise";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -2772,7 +2773,13 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
       // 2026-09-11 §5.2（E5-m）: 返信に書いた確認対象が会話に実在する（敷金礼金なしのお部屋・86、87…番・8月7日のご内覧・クレール元町203号室 等）なら
       //   創作約束ではない → block せず info（reply_anchored_object）。対象が会話に無い確認約束は従来どおり block
       const anchored = replyAnchoredConfirmObject(textForConfirm, ctx, confirmPair);
-      if (anchored) {
+      // 2026-11-13 作業員9（8f67f33b・FC_CONFIRM_PRIOR_PROMISE 既定 off）: 前の通で対象を書いて約束した確認を、お礼・了承の番で言い直すのは創作ではない
+      const prior = !anchored && confirmPriorPromiseOn() ? priorStaffConfirmObject(ctx.recentMessages, cust) : null;
+      if (prior) {
+        issues.push({ pass: "context_check", severity: "info", code: "CONFIRM_NO_OBJECT",
+          message: `確認対象「${prior.slice(0, 24)}」は前の通で約束済みのため許容（prior_staff_promise・${verdict.reason}）`,
+          evidence: confirmSentence, suggestion: "前の通で約束した確認の言い直しとして許容" });
+      } else if (anchored) {
         issues.push({ pass: "context_check", severity: "info", code: "CONFIRM_NO_OBJECT",
           message: `確認対象「${anchored.slice(0, 24)}」が会話に実在するため許容（reply_anchored_object・${verdict.reason}）`,
           evidence: confirmSentence, suggestion: "対象語が会話にある確認約束として許容" });
