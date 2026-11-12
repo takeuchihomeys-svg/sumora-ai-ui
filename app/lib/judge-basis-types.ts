@@ -49,6 +49,8 @@ export type BasisGold = {
   depth?: BasisDepth;
   /** 順番（役の並び）。無ければ FOCUS_ORDER[focus] の役から出す */
   order?: string[];
+  /** 作業員16 の型の表（check-order.ts）の型の id（T1_conditions_first 等）。名前を合わせた後、優先・順番・深さをここから出す */
+  type?: string;
   /** 付けた人・日付・根拠の番（人が確かめた物だけ入れる） */
   by?: string;
 };

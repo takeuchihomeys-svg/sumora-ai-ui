@@ -1637,6 +1637,15 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (p) Object.assign(meta as unknown as Record<string, unknown>, p);
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:combine-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-12 作業員22（KB fd1c7c62・ea2a9405①）: 番ごとの部品の配分（型×深さ）を記録だけ。CONDUCTOR_ALLOCATION=shadow|on の時だけ meta.conductor_allocation を足す
+  //   （既定 off＝何も足さない＝今と同じ）。返信か AIX か（action）は読まない・変えない。部品を実際に止めるのは試験で悪化0を確かめてから
+  try {
+    const { allocationMode, allocationFromMeta } = await import("@/app/lib/conductor-allocation");
+    if (allocationMode() !== "off") {
+      const a = allocationFromMeta(meta as unknown as Record<string, unknown>);
+      if (a) (meta as unknown as Record<string, unknown>).conductor_allocation = a;
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "conductor:allocation-failed", error: e instanceof Error ? e.message : String(e) })); }
   return meta;
 }
 async function analyzeConversationDeep(...args: Parameters<typeof analyzeConversationCore>): ReturnType<typeof analyzeConversationCore> {

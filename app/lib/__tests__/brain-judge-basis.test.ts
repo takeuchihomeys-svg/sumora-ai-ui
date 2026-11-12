@@ -1,4 +1,5 @@
 // npx tsx app/lib/__tests__/brain-judge-basis.test.ts
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { brainJudgeBasisOn, brainJudgeBasisOutputItem, normalizeJudgeBasis, BRAIN_JUDGE_BASIS_FIELD } from "../brain-judge-basis";
 import { ORDER_ROLES, FOCUS_KINDS, DEPTH_KINDS } from "../judge-basis-types";
@@ -75,5 +76,12 @@ t("集計: 場面別・深さ別・外れた段・選んだ順番の当たり", 
   assert.equal(r.byDepth["deep"].n, 1); assert.equal(r.byDepth["shallow"].miss.depth, 1);
   assert.equal(r.byScene["内覧"].focusHit, 1);
   assert.match(formatReport(r), /場面ごと/);
+});
+t("spec の basis（人が付けた正解）: 重点は一覧の中・by あり", () => {
+  const spec = JSON.parse(readFileSync("scripts/brain-exam/spec.json", "utf8")) as Array<{ id: string; type?: string; basis?: { focus?: string; by?: string } }>;
+  const withBasis = spec.filter((x) => x.basis);
+  assert.ok(withBasis.length >= 25);
+  for (const x of withBasis) { assert.ok((FOCUS_KINDS as readonly string[]).includes(x.basis!.focus ?? ""), x.id); assert.ok(x.basis!.by, x.id); assert.equal(goldOf(x as never).source, "human"); }
+  assert.ok(new Set(withBasis.map((x) => x.basis!.focus)).size >= 6);
 });
 console.log(`${n} tests passed`);
