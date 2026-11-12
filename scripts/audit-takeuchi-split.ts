@@ -52,6 +52,16 @@ async function main() {
     for (const r of data ?? []) convs.add(r.conversation_id as string);
     if (!data || data.length < 1000) break;
   }
+  // 2026-11-12 作業員7（統括役の頼み）: 従業員同士のグループ（line_source_type=group・【グループ】…）は竹内さんとお客様の番ではない＝外す
+  //   11/12 夜の監査で「ただ審査むずいな」「AD15000円やから…」等の内輪の文が混ざった（従業員の混ざる番の網は staff_writer=employee しか見ていなかった）
+  {
+    const ids = [...convs];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await sb.from("conversations").select("id, line_source_type, customer_name").in("id", ids.slice(i, i + 200));
+      if (error) throw error;
+      for (const c of data ?? []) if (c.line_source_type === "group" || /^【グループ】/.test(String(c.customer_name ?? ""))) convs.delete(c.id as string);
+    }
+  }
   /** ra: 返信の後すぐ（2分以内）に AIX を続けた組（作業員4 の見極め・初回の挨拶＋AIX【条件ヒアリング】）。gapSec＝返信から AIX までの秒・aixHead＝AIX の最初の行（伏せた） */
   type Turn = { scene: string; shape: string; nReply: number; len1: number; lenAll: number; asks: number; parts: string[][]; ex: string[]; ra: { gapSec: number; aixHead: string; reply: string[] } | null };
   const turns: Turn[] = [];
