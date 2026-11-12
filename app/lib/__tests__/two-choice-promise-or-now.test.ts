@@ -1,5 +1,6 @@
 // app/lib/__tests__/two-choice-promise-or-now.test.ts — 「約束の返信／その場の AIX」の2択（TWO_CHOICE_PROMISE_OR_NOW）
-import { resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn, promiseReplyHint } from "../two-choice";
+import { resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn, promiseReplyHint, narrowEstimateSoleOn, hasNonCostPromise } from "../two-choice";
+import { readFileSync } from "node:fs";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean, info?: unknown) => { if (ok) pass++; else { fail++; console.log(`  NG ${n} → ${JSON.stringify(info)}`); } };
 const base = { finalAix: null, decisionSource: null, firstContact: false, postApply: false, alreadyTwo: false };
@@ -35,5 +36,14 @@ t("指定の文: AIX で送らず約束・確認していない事は書かな�
   t("358 on: 持ち込み・空きの問いなし → 見積書の AIX と確認の約束の2択", on?.aix === "estimate_sheet" && on?.side === "promise" && on?.checkPattern === null);
   t("358 on: 空きの問いの番（q325 の形）は物件確認したのまま", resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "堺筋本町 2LDK 7階\nhttps://suumo.jp/chintai/bc_1/\nby SUUMO\n空きありますか？" })?.aix === "property_check_result");
   delete process.env.BROUGHT_TWO_CHOICE_ESTIMATE; }
+// 2026-11-12 作業員7（TWO_CHOICE_NARROW_ESTIMATE_SOLE）: 見積以外の約束がある番は見積書で決め切らない（答案の実物の依頼）
+{
+  t("見積だけで決め切る線: 既定 off", !narrowEstimateSoleOn({}) && narrowEstimateSoleOn({ TWO_CHOICE_NARROW_ESTIMATE_SOLE: "on" }));
+  t("q077（見積の約束＋空きの確認3つ）は止める", hasNonCostPromise([{ route: "promise", about: "property_cost" }, { route: "reply", about: "search_condition" }, { route: "promise", about: "vacancy" }]));
+  t("q183・q133（見積だけの約束）は止めない", !hasNonCostPromise([{ route: "reply", about: "search_condition" }, { route: "promise", about: "property_cost" }]) && !hasNonCostPromise([{ route: "promise", about: "property_cost" }, { route: "promise", about: "property_cost" }]));
+  t("q184（AIX の依頼）は止めない", !hasNonCostPromise([{ route: "aix", about: "property_cost" }, { route: "aix", about: "vacancy" }]));
+  t("依頼が空は止めない", !hasNonCostPromise([]) && !hasNonCostPromise(null));
+  t("brain-core に配線", readFileSync("app/lib/brain-core.ts", "utf8").includes('nv.decide === "aix_estimate" && narrowEstimateSoleOn() && hasNonCostPromise('));
+}
 console.log(`${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

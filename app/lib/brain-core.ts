@@ -197,7 +197,7 @@ import { promiseKindsToday, pickupDirectionWithBrainAsk } from "@/app/lib/two-st
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { turnElapsedOn, turnElapsed, turnElapsedLine, elapsedPreferredSide, type TurnElapsed } from "@/app/lib/turn-elapsed";
-import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn, twoChoiceNarrowOn, narrowKeepsTwoChoice, narrowPromiseOrNow, twoChoicePhotoAtHandDirectOn, resayPromiseFirstOn, isResayTurn } from "@/app/lib/two-choice";
+import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn, twoChoiceNarrowOn, narrowKeepsTwoChoice, narrowPromiseOrNow, narrowEstimateSoleOn, hasNonCostPromise, twoChoicePhotoAtHandDirectOn, resayPromiseFirstOn, isResayTurn } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
 import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine, exhaustedTodayNote } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
@@ -6094,7 +6094,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       console.log(JSON.stringify({ tag: "brain:two-choice-narrow", conversationId, promiseOrNow: promiseOrNow.reason, keep: nv.keep, ...(nv.keep ? { preferred: nv.preferred } : { decide: nv.decide }) }));
       if (nv.keep) twoChoicePreferred = twoChoicePreferred ?? nv.preferred;
       else {
-        if (nv.decide === "aix_estimate") { finalAix = "estimate_sheet"; replyMode = "aix"; twoStage = null; decisionSource = `${decisionSource ?? "llm"}+two_choice_narrow(estimate)`; }
+        // 2026-11-12 作業員7（TWO_CHOICE_NARROW_ESTIMATE_SOLE・既定 off）: 見積以外の約束（空き・探す・設備）もある番は見積書で決め切らない（約束のまま・q077）
+        const narrowEstimateBlocked = nv.decide === "aix_estimate" && narrowEstimateSoleOn() && hasNonCostPromise(((normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: unknown; about?: unknown }>));
+        if (narrowEstimateBlocked) console.log(JSON.stringify({ tag: "brain:two-choice-narrow-estimate-blocked", conversationId }));
+        if (nv.decide === "aix_estimate" && !narrowEstimateBlocked) { finalAix = "estimate_sheet"; replyMode = "aix"; twoStage = null; decisionSource = `${decisionSource ?? "llm"}+two_choice_narrow(estimate)`; }
         promiseOrNow = null;
       }
     }
