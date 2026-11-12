@@ -35,7 +35,7 @@ t("本番 12189 の形（家賃の上限を下げた・送れる物件まだ）:
   const nl = normalizeNowVsLater({ asked_now: ["家賃7万円以内に絞ってほしい"], our_open: "ピックアップしてお送りする約束", ready_now: [], this_turn: "promise" });
   assert.equal(aixNowOf(nl, "property_send"), null);
   assert.deepEqual(nowLaterConflicts(nl, { finalAix: "property_send", contractRoutes: ["promise"] }), []);
-  assert.equal(nowLaterDigest(nl), "t=promise r=- o=1");
+  assert.equal(nowLaterDigest(nl), "t=promise s=? r=- o=1");
 });
 
 t("本番 11408 の形（確認の結果が手元にある）: deliver → 今押す AIX は結果", () => {
@@ -93,7 +93,32 @@ console.log(`全部 ${n} 件 ok`);
   assert.match(M.NOW_VS_LATER_RULES, /answer・ack の時は、今の番は返信で、aix は null/);
   assert.match(M.NOW_VS_LATER_RULES, /「物件により異なる」で約束にしない/);
   assert.doesNotMatch(M.NOW_VS_LATER_RULES, /answer・promise・ack の時は[^。]*書いてよい/);
-  assert.match(M.NOW_LATER_AIX_PROVISO, /答えられる問いなら this_turn は answer で aix は null/);
+  assert.match(M.NOW_LATER_AIX_PROVISO, /material_value なら this_turn は answer で aix は null/);
   for (const s of [M.NOW_VS_LATER_RULES, M.NOW_LATER_AIX_PROVISO]) assert.doesNotMatch(s, /次の一手|押す|申込へ|背中|気持ち|温度|中期/);
   console.log("ok q065 の直し: 問いの番は aix を null・一般的な目安は会社の事実で答える");
+}
+
+// 2026-11-13: q088（設備の変更の可否＝管理会社に確かめる）と q065（一般の期間＝会社の事実）を「答えに使う事実の出所」で分ける
+{
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const M = require("../app/lib/brain-now-later") as typeof import("../app/lib/brain-now-later");
+  assert.match(M.NOW_VS_LATER_FIELD, /"answer_source"/);
+  assert.ok(M.NOW_VS_LATER_FIELD.indexOf('"answer_source"') < M.NOW_VS_LATER_FIELD.indexOf('"this_turn"'), "出所は今の番の前に書く");
+  assert.match(M.NOW_VS_LATER_RULES, /this_turn は answer_source で決める/);
+  assert.match(M.NOW_VS_LATER_RULES, /両にらみは書かない/);
+  assert.match(M.NOW_LATER_AIX_PROVISO, /staff_only なら確かめる約束/);
+  // q088 の形: この部屋の畳を変えられるか → staff_only・promise（2段:check）。answer にしたら印
+  const q088 = M.normalizeNowVsLater({ asked_now: ["畳は変えて頂けるのか"], our_open: null, ready_now: [], answer_source: "staff_only", this_turn: "promise" });
+  assert.equal(q088?.answer_source, "staff_only");
+  assert.deepEqual(M.nowLaterConflicts(q088, { finalAix: "property_check_result", contractRoutes: ["promise"] }), []);
+  const q088bad = M.normalizeNowVsLater({ asked_now: ["畳は変えて頂けるのか"], answer_source: "staff_only", this_turn: "answer" });
+  assert.deepEqual(M.nowLaterConflicts(q088bad, { finalAix: null, contractRoutes: ["reply"] }), ["staff_only_answered_now"]);
+  // q065 の形: 最速の入居時期 → company_fact・answer。promise にしたら印
+  const q065 = M.normalizeNowVsLater({ asked_now: ["最速で入居できるのはいつ"], answer_source: "company_fact", this_turn: "answer" });
+  assert.deepEqual(M.nowLaterConflicts(q065, { finalAix: null, contractRoutes: ["reply"] }), []);
+  const q065bad = M.normalizeNowVsLater({ asked_now: ["最速で入居できるのはいつ"], answer_source: "company_fact", this_turn: "promise" });
+  assert.ok(M.nowLaterConflicts(q065bad, { finalAix: "property_send", contractRoutes: ["promise"] }).includes("fact_source_promised"));
+  assert.equal(M.normalizeNowVsLater({ this_turn: "answer", answer_source: "maybe" })?.answer_source, null);
+  for (const s of [M.NOW_VS_LATER_FIELD, M.NOW_VS_LATER_RULES, M.NOW_LATER_AIX_PROVISO]) assert.doesNotMatch(s, /次の一手|押す|申込へ|背中|気持ち|温度|中期/);
+  console.log("ok q088 と q065 を答えの出所で分ける（staff_only＝確かめる約束・company_fact＝今答える・両にらみ無し）");
 }
