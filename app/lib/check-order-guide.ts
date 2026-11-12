@@ -10,7 +10,7 @@
 //   - 型の選びは決まった計算の網（P0 9eb6aa9c）。ブレインは材料として読み、合わなければ従わない（決め直しはしない）。
 // スイッチ: CHECK_ORDER_GUIDE（既定 off＝何も足さない）。
 
-import { CHECK_ORDER_TYPES, pickCheckOrder, type CheckOrderCues, type CheckStep } from "./check-order";
+import { CHECK_ORDER_TYPES, TYPE_INTENT, pickCheckOrder, type CheckOrderCues, type CheckStep } from "./check-order";
 
 type Env = Record<string, string | undefined>;
 export function checkOrderGuideOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -90,6 +90,6 @@ export function checkOrderGuideFor(cues: CheckOrderCues): CheckOrderGuide | null
   const before = (routeAt >= 0 ? t.check.slice(0, routeAt) : t.check).filter((s) => CHECK_STEP_GUIDE[s]);
   const steps: CheckStep[] = before.includes("now_vs_later") ? before : [...before, "now_vs_later"];
   const nums = "①②③④⑤⑥⑦";
-  const text = `【確かめる順番（材料・竹内さんの型「${g.label}」）】この一通は次の順で確かめる: ${steps.map((s, i) => `${nums[i]}${CHECK_STEP_GUIDE[s]}`).join(" ")}。なぜ: ${g.why}。（型は場面と記録からの目安。合わない時はこの順にこだわらない）`;
+  const text = `【確かめる順番（材料・竹内さんの型「${g.label}」）】この一通は次の順で確かめる: ${steps.map((s, i) => `${nums[i]}${CHECK_STEP_GUIDE[s]}`).join(" ")}。なぜ: ${g.why}${TYPE_INTENT[top.id]?.missing.length ? `。足りない情報（確かめる事）: ${TYPE_INTENT[top.id].missing.join("／")}` : ""}。（型は場面と記録からの目安。合わない時はこの順にこだわらない）`;
   return { type: top.id, label: g.label, steps, text };
 }

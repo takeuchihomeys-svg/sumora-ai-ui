@@ -79,3 +79,19 @@ t("brain-core の配線: off の時は何も足さない（材料の1行は on �
 });
 
 console.log(`全部 ${n} 件 ok`);
+
+// 2026-11-12: 目的・足りない情報・押さえる要点（TYPE_INTENT）
+{
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { TYPE_INTENT, NEXT_MOVE_OF_TYPE, CHECK_ORDER_TYPES: TYPES } = require("../app/lib/check-order") as typeof import("../app/lib/check-order");
+  for (const ty of TYPES) {
+    const r = TYPE_INTENT[ty.id];
+    assert.ok(r && r.purpose && r.keyPoint && r.missing.length, `目的・足りない情報・要点が無い ${ty.id}`);
+    assert.ok(NEXT_MOVE_OF_TYPE[ty.id], `次の一手が無い ${ty.id}`);
+    for (const m of r.missing) assert.doesNotMatch(m, GUIDE_FORBIDDEN_RE, `${ty.id} の足りない情報に道の言葉: ${m}`);
+  }
+  const g = checkOrderGuideFor({ ackOnly: true })!;
+  assert.match(g.text, /足りない情報（確かめる事）: 何への了承か/);
+  assert.doesNotMatch(g.text, GUIDE_FORBIDDEN_RE);
+  console.log("ok 全部の型に目的・足りない情報・押さえる要点があり、渡す文は足りない情報だけ（道の言葉なし）");
+}
