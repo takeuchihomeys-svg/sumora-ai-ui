@@ -1,5 +1,5 @@
 // 実行: npx tsx app/lib/__tests__/conductor-linkage.test.ts
-import { CONDUCTOR_LINKS, ownersOfMarker, linkageLines } from "../conductor-linkage";
+import { CONDUCTOR_LINKS, ownersOfMarker, linkageLines, REDECIDE_RULES } from "../conductor-linkage";
 let passed = 0, failed = 0;
 function it(name: string, fn: () => void) { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { failed++; console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); } }
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
@@ -30,5 +30,11 @@ it("持ち主は全部決まっている（11/06 統括役の決め）", () => {
   ok(ownersOfMarker("two_stage:check")[0]?.owner.startsWith("作業員7")); ok(ownersOfMarker("scene_net:S4")[0]?.owner.startsWith("作業員1"));
   ok(ownersOfMarker("decision:closed_ack_wait")[0]?.owner.startsWith("作業員1")); ok(ownersOfMarker("final_check")[0]?.owner.startsWith("作業員9")); ok(ownersOfMarker("writer").some((c) => c.owner.startsWith("作業員9")));
 });
+// 2026-11-12 作業員7: 決め直しの勝ち負けの表（REDECIDE_RULES）
+for (const c of CONDUCTOR_LINKS) for (const r of c.redecides) {
+  if (REDECIDE_RULES.some((x) => x.where === r.where)) passed++; else { failed++; console.log(`  ✗ 勝ち負けの表に無い決め直し: ${c.id} の ${r.where}`); }
+}
+if (REDECIDE_RULES.filter((x) => x.by === "writer").every((x) => x.mustNotRedecide === true && x.winner !== "writer")) passed++; else { failed++; console.log("  ✗ 書き手は決め直さない（差し戻すだけ）"); }
+if (REDECIDE_RULES.every((x) => x.count && x.allowWhen && x.mark)) passed++; else { failed++; console.log("  ✗ 数・条件・印の空欄"); }
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

@@ -159,3 +159,30 @@ export function linkageLines(): string[] {
   }
   return out;
 }
+
+// ── 2026-11-12 作業員7（統括役の決め・作業員24 の根B）: 決め直しの勝ち負けの表 ─────────────────────────────
+//   1行＝1つの決め直す所。勝つ側・答案の数（11/08〜・本質は正解なのに最後が外れ＝壊した／その逆＝直した）・決め直してよい条件・記録の印・差し戻し先。
+//   決まり: 書き手（writer）は判断の道を決め直さない＝違う道で書いたら差し戻すだけ（mustNotRedecide）。
+//   見張り: CONDUCTOR_LINKS の redecides の where が全部この表にあるか（app/lib/__tests__/conductor-linkage.test.ts）。
+export type RedecideRule = {
+  where: string; by: ConductorLink["id"]; of: ConductorLink["id"]; winner: ConductorLink["id"];
+  /** 答案の数（"壊した/直した" か、印が無く数えられない時はその説明） */
+  count: string;
+  allowWhen: string; mark: string; sendBackTo: ConductorLink["id"] | null;
+  /** 決め直してはいけない（差し戻すだけ） */
+  mustNotRedecide?: boolean;
+};
+export const REDECIDE_RULES: readonly RedecideRule[] = [
+  { where: "two-stage.resolveTwoStageOrDirect", by: "two_stage", of: "brain", winner: "two_stage", count: "37/139", allowWhen: "確かめる前の依頼で、送れる物・結果が手元に無い時だけ", mark: "decision:two_stage_promise", sendBackTo: "brain" },
+  { where: "brain-core.ts answerableDirect（2段の後）", by: "two_stage", of: "two_stage", winner: "two_stage", count: "3/5", allowWhen: "管理会社に確かめれば分かる問いで結果を出せる時（10/21 A1）", mark: "decision:answerable_direct", sendBackTo: "two_stage" },
+  { where: "brain-core.ts sceneEvidence のガード（5193行あたり）", by: "scene_net", of: "brain", winner: "scene_net", count: "3/18（viewing_flow_date_wish）", allowWhen: "場面の証拠が強く、ブレインが場面に触れていない時", mark: "scene_net:・signal:", sendBackTo: "brain" },
+  { where: "brain-core.ts の rule:*（30種）", by: "rules", of: "brain", winner: "rules", count: "手続きの問い 0/66・初回 0/31・確認の約束を果たす 0/39・出し切りの返信戻し 17/10・2択の見積の絞り 23/15", allowWhen: "P0 の安全の線と、竹内さんの決定のある線だけ（壊した数が直した数より多い線は絞る）", mark: "decision:rule:*", sendBackTo: "brain" },
+  { where: "turn-contract.ts sentReactionViewInvite（SENT_REACTION_VIEW_INVITE 既定 on）", by: "rules", of: "two_msg", winner: "rules", count: "外れの切り分け 2/134（log:sent-reaction-no-rewrite）", allowWhen: "送った物件への反応の番だけ", mark: "log:sent-reaction", sendBackTo: "two_msg" },
+  { where: "reply-compose-conductor.ts（read:[] の時）", by: "compose", of: "intake", winner: "compose", count: "答案に印が無い（compose の read を答案に残していない）", allowWhen: "meta.conductor_focus が無い時だけ", mark: "compose read:[]", sendBackTo: "intake" },
+  { where: "generate-reply の下書き", by: "writer", of: "brain", winner: "brain", count: "外れの切り分け writer:asks 49/134", allowWhen: "決め直してはいけない（差し戻すだけ・下書きの作り直し）", mark: "draft.code≠path・writer:", sendBackTo: "brain", mustNotRedecide: true },
+  { where: "generate-reply（本質の帯 turn_contract の proposals・customer_questions が上位）", by: "writer", of: "rules", winner: "rules", count: "答案に印が無い", allowWhen: "本質の帯が勝つ（方向の文に足した線は従）", mark: "text:direction_tail", sendBackTo: "rules", mustNotRedecide: true },
+  { where: "generate-reply の下書き（材料の注記 vs reply_direction）", by: "writer", of: "rules", winner: "rules", count: "答案に印が無い", allowWhen: "注記は従・方向の文が主", mark: "text:", sendBackTo: "rules", mustNotRedecide: true },
+  { where: "generate-reply conditionChangeShapeNote の④・newConditionRequestNote の⑤", by: "writer", of: "brain", winner: "brain", count: "答案に印が無い", allowWhen: "初回か出し切りの後だけ（10/13 竹内さん）", mark: "conditionChangeShapeNote", sendBackTo: "brain", mustNotRedecide: true },
+  { where: "final-check.ts の書き直し", by: "final_check", of: "writer", winner: "final_check", count: "答案に印が無い（試験は最終チェックの前の下書きで採点）", allowWhen: "誤った事実・決まりの線だけ（判断を落とす書き直しは止める）", mark: "final_check", sendBackTo: "writer" },
+  { where: "final-check.ts rule_check", by: "final_check", of: "writer", winner: "writer", count: "答案に印が無い", allowWhen: "夜の約束（竹内さんの決まりどおり）は消さない", mark: "final_check:rule_check", sendBackTo: "writer" },
+];
