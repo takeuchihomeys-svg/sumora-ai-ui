@@ -292,3 +292,32 @@ export function trustRepeatCount(drafts: ReadonlyArray<string>): Array<{ key: st
   const n = drafts.length || 1;
   return TRUST_PHRASES.map((p) => ({ key: p.key, drafts: drafts.filter((d) => p.re.test(d)).length, share: 0 })).map((x) => ({ ...x, share: Math.round((x.drafts / n) * 100) / 100 })).filter((x) => x.drafts > 0).sort((a, b) => b.drafts - a.drafts);
 }
+
+// ── 物件名を文に出すか（2026-11-12 竹内さんの53番の数え・COMPOSE_NAME_PROPERTY_RULE・既定 off） ─────
+//   ブレインが物件を持っていた36番のうち、竹内さんが物件名を文に出したのは4番だけ:
+//     お客様が自分で物件名を言った番 3/5（言っていない番は 1/31）／こちらの直前の送信に物件名があった番 0/7／直近の送信で物件が2件以上 0/9
+//   → 線: お客様が自分で物件名を出した時だけ文に入れる。こちらが前に出した物件の続き・束の中の話では出さない
+//   例外（q064 型）: 同じ物件の中の部屋（階・号室）を比べている番は物件名を出してよい（竹内さん「CRESTTAPP野田は24時間換気…」）
+export function composeNamePropertyRuleOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.COMPOSE_NAME_PROPERTY_RULE ?? "").trim().toLowerCase() === "on";
+}
+export function propertyNameRule(o: { property: string | null; customerText: string; recentStaffTexts: ReadonlyArray<string> }): { say: boolean; why: string } | null {
+  const p = (o.property ?? "").replace(/お客様NO\s*/, "").trim();
+  if (!p) return null;
+  const tok = (p.match(/[一-龯ァ-ヶーA-Za-zＡ-Ｚａ-ｚ]{2,}/) ?? [""])[0];
+  const cust = o.customerText ?? "";
+  if (tok && cust.includes(tok)) return { say: true, why: "お客様が自分で物件名を言った（竹内さん 3/5）" };
+  const rooms = (cust.match(/\d+\s*階|\d{2,4}\s*号室/g) ?? []).length;
+  if (rooms >= 1 && /階|号室|部屋/.test(cust) && /どちら|比べ|にしよう|か[？?]|迷/.test(cust)) return { say: true, why: "同じ物件の中の部屋を比べている（q064 型の例外）" };
+  const last = o.recentStaffTexts[o.recentStaffTexts.length - 1] ?? "";
+  if (tok && last.includes(tok)) return { say: false, why: "こちらが直前に出した物件の続き（竹内さん 0/7）" };
+  const lines = o.recentStaffTexts.slice(-3).join("\n");
+  if (new Set((lines.match(/[^\s　・\n]{2,20}\s?\d{2,4}号室/g) ?? []).map((x) => x.replace(/\s/g, ""))).size >= 2) return { say: false, why: "送った束の中の話（竹内さん 0/9）" };
+  return { say: false, why: "お客様が物件名を言っていない（竹内さん 1/31）" };
+}
+export function propertyNameNote(o: { property: string | null; customerText: string; recentStaffTexts: ReadonlyArray<string> }, env?: Env): string {
+  if (!composeNamePropertyRuleOn(env)) return "";
+  const r = propertyNameRule(o);
+  if (!r) return "";
+  return r.say ? `- 物件名: 文に書いてよい（${r.why}）` : `- 物件名: 文に書かない（${r.why}。「お送り頂きました物件」「こちらのお部屋」等で指す）`;
+}
