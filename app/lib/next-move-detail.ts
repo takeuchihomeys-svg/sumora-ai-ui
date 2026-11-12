@@ -23,8 +23,11 @@ export type Offer = {
   date: "three_nearest" | "ask_convenience" | "customer_proposed" | null;
   facts: PlantFact[];
 };
-/** いつ次を送るか（作業員19 の time-facts の約束の期限につなぐ・期限の文は渡された時だけ） */
-export type When = { at: "now" | "next_turn" | "hours" | "next_day"; dueLabel?: string | null };
+/** 作業員19 の promise-deadline-words.ts と同じ名前（main に入ったら import に替える） */
+export type PromiseWhenKind = "pickup" | "new_arrival" | "check_vacancy" | "check_mgmt" | "negotiate" | "estimate";
+export type DeadlineWord = "本日中に" | "明日一番に" | "〇時頃" | "確認出来次第" | "出来次第" | "新着で募集に出次第" | "営業開始次第";
+/** いつ次を送るか: 約束の種類と期日の言葉（期日の言葉は chooseDeadlineWord の答えを渡された時だけ・渡されなければ null＝作らない） */
+export type When = { at: "now" | "next_turn" | "hours" | "next_day"; kind: PromiseWhenKind | null; deadlineWord: DeadlineWord | null };
 export type NextMoveDetail = { dest: NextDest; offer: Offer; plants: Array<{ fact: PlantFact; why: string }>; when: When; form: "reply" | "aix" | "combo"; combo: SendCombo | null };
 
 /** 仕込みの表: 状況 → 置く仕込みと『なぜ』（竹内さんの数・198通と45日のその後） */
@@ -67,22 +70,31 @@ export function offerFor(dest: NextDest, s: PlantSituation): Offer {
     default: return { property: null, date: null, facts };
   }
 }
-export function whenFor(dest: NextDest, dueLabel?: string | null): When {
-  if (dest === "wait_check") return { at: "next_day", dueLabel: dueLabel ?? null };  // 管理会社の確認は営業時間・翌営業日（time-facts の期限）
-  if (dest === "keep_send") return { at: "hours", dueLabel: dueLabel ?? null };      // ピックアップ・新着は数時間〜当日
-  if (dest === "door" || dest === "answer_only" || dest === "none") return { at: "next_turn" };
-  return { at: "now" };
+/** 行き先→約束の種類（promise-deadline-words の PromiseWhenKind）。新着を差し出す番は new_arrival・管理会社に聞く確認は check_mgmt */
+export function whenKindOf(dest: NextDest, o: { newArrival?: boolean; mgmt?: boolean } = {}): PromiseWhenKind | null {
+  if (dest === "keep_send") return o.newArrival ? "new_arrival" : "pickup";
+  if (dest === "wait_check") return o.mgmt ? "check_mgmt" : "check_vacancy";
+  if (dest === "estimate") return "estimate";
+  return null;
 }
-export function buildNextMoveDetail(i: { dest: NextDest; situation: Omit<PlantSituation, "dest">; combo: SendCombo | null; dueLabel?: string | null }): NextMoveDetail {
+export function whenFor(dest: NextDest, deadlineWord?: DeadlineWord | null, o: { newArrival?: boolean; mgmt?: boolean } = {}): When {
+  const kind = whenKindOf(dest, o); const w = deadlineWord ?? null;
+  if (dest === "wait_check") return { at: "next_day", kind, deadlineWord: w };   // 管理会社の確認は営業時間・翌営業日
+  if (dest === "keep_send") return { at: "hours", kind, deadlineWord: w };       // ピックアップ・新着
+  if (dest === "estimate") return { at: "hours", kind, deadlineWord: w };
+  if (dest === "door" || dest === "answer_only" || dest === "none") return { at: "next_turn", kind: null, deadlineWord: null };
+  return { at: "now", kind: null, deadlineWord: null };
+}
+export function buildNextMoveDetail(i: { dest: NextDest; situation: Omit<PlantSituation, "dest">; combo: SendCombo | null; deadlineWord?: DeadlineWord | null; mgmt?: boolean }): NextMoveDetail {
   const s = { ...i.situation, dest: i.dest };
   const form: NextMoveDetail["form"] = i.combo && /then|reply_reply/.test(i.combo) ? "combo" : i.combo === "aix_only" ? "aix" : "reply";
-  return { dest: i.dest, offer: offerFor(i.dest, s), plants: plantsFor(s), when: whenFor(i.dest, i.dueLabel), form, combo: i.combo };
+  return { dest: i.dest, offer: offerFor(i.dest, s), plants: plantsFor(s), when: whenFor(i.dest, i.deadlineWord, { newArrival: offerFor(i.dest, s).property === "new_arrival", mgmt: i.mgmt }), form, combo: i.combo };
 }
 
 /** 文の統括への受け渡しの1行（短く） */
 export function nextMoveDetailLine(d: NextMoveDetail): string {
   const p = d.offer.property ? { hooked: "刺さった物件", one_of_sent: "送った中の1件", new_arrival: "新着", alternative: "代わりの物件" }[d.offer.property] : null;
   const dt = d.offer.date ? { three_nearest: "直近の空いている日を3つ", ask_convenience: "ご都合を伺う", customer_proposed: "お客様の候補日で" }[d.offer.date] : null;
-  const at = { now: "今", next_turn: "次の番", hours: "数時間後", next_day: "翌営業日" }[d.when.at] + (d.when.dueLabel ? `（${d.when.dueLabel}）` : "");
+  const at = { now: "今", next_turn: "次の番", hours: "数時間後", next_day: "翌営業日" }[d.when.at] + (d.when.deadlineWord ? `（${d.when.deadlineWord}）` : "");
   return `次の一手の中身: ${[p, dt].filter(Boolean).join("・") || "—"}／仕込み: ${d.plants.map((x) => PLANT_FACT_JA[x.fact]).join("・") || "なし"}／次を送るのは ${at}`;
 }

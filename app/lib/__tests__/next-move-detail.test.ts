@@ -13,7 +13,9 @@ t("q425: 刺さった物件・今・返信", q425.offer.property === "hooked" &&
 // 内覧へ: 直近の3日
 t("内覧へ: 直近の空いている日を3つ", buildNextMoveDetail({ dest: "viewing", situation: {}, combo: "reply_only" }).offer.date === "three_nearest");
 // 確認の結果待ち: 翌営業日（期限の文は渡された時だけ）
-t("確認の結果を待つ: 翌営業日＋期限", whenFor("wait_check", "明日11/13(木)").at === "next_day" && whenFor("wait_check", "明日11/13(木)").dueLabel === "明日11/13(木)");
+t("確認の結果を待つ: 翌営業日・check_vacancy・期日の言葉", whenFor("wait_check", "明日一番に").at === "next_day" && whenFor("wait_check", "明日一番に").kind === "check_vacancy" && whenFor("wait_check", "明日一番に").deadlineWord === "明日一番に");
+t("管理会社の確認は check_mgmt・新着は new_arrival・見積は estimate", whenFor("wait_check", null, { mgmt: true }).kind === "check_mgmt" && whenFor("keep_send", null, { newArrival: true }).kind === "new_arrival" && whenFor("estimate").kind === "estimate");
+t("期日の言葉が無ければ作らない", whenFor("keep_send").deadlineWord === null && whenFor("keep_send").kind === "pickup");
 // 審査の不安
 t("審査の不安: 独立系・審査の段階", plantsFor({ worry: "screening", dest: "apply" }).map((p) => p.fact).join(",") === "independent_guarantor,screening_stage");
 // 仕込みは最大3つ・重ならない
