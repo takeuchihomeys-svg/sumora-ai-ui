@@ -88,6 +88,7 @@ import { wantSeqOf, brainSeqOf, rawSeqOf, sendSeqSummary, type SeqRow, type SeqB
 const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
 
 const PROBLEMS_FILE = "scripts/brain-exam/problems.json";
+import { filterGateExcluded, readGateExcluded } from "./lib/exam-application-gate";
 const SPEC_FILE = "scripts/brain-exam/spec.json";
 const RESULTS_DIR = "scripts/brain-exam/results";
 const PREFIX = "bexam-";
@@ -1659,7 +1660,10 @@ async function main() {
   const { runInDeepseekScope, setDeepseekScope } = await import("../app/lib/deepseek-scope");
   const { MSG_SEP } = await import("../app/lib/reply-context");
   // 2026-11-05 作業員1（点検表 13）: 手元の problems.json に同じ id が2つあると同じ問題を2回ずつ回していた（add-batch を2回・費用が倍）＝id で1つにする
-  const problems0 = pick(loadProblems().map(effectiveProblem));
+  // 2026-11-12 作業員10（統括役）: 申込の門で外れた問題（scripts/brain-exam/gate-excluded.json・brain-exam-add --gate-check／--rebuild が書く）は選ばない
+  const gateF = filterGateExcluded(pick(loadProblems().map(effectiveProblem)), readGateExcluded());
+  if (gateF.dropped.length) console.warn(`⚠ 申込の門で外れた問題を外した: ${gateF.dropped.map((x) => `${x.id}（${x.reason}）`).join("・")}`);
+  const problems0 = gateF.kept;
   const dupIds = [...new Set(problems0.map((x) => x.id).filter((id, i, a) => a.indexOf(id) !== i))];
   if (dupIds.length) console.warn(`⚠ 同じ id の問題が2つ以上ある（${dupIds.join(",")}）→ 後の物を1つだけ回す。手元の problems.json を作り直す: scripts/brain-exam-add.ts --rebuild`);
   const problems = await orderProblems([...new Map(problems0.map((x) => [x.id, x])).values()]);
