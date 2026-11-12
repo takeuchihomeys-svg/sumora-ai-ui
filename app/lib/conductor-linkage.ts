@@ -94,6 +94,8 @@ export const CONDUCTOR_LINKS: readonly ConductorLink[] = [
     // 2026-11-12 作業員7（作業員25 の点検・b861eb78 aix-second-link）: AIX の2通目（✨）の書き手。1通目（AIX のテンプレート）の後に続く文を書く。
     //   順: 材料（second-message-materials・既定 on）→ 訴求の判断（second-appeal-judge・LLM・既定 on）→ 書き手 → 締めを揃える（recommend-cta.setRecommendClosing）。
     //   道（返信か AIX か）は決めない（aix-second-link も材料だけ）。
+    //   宿題（2026-11-12 統括役・作業員25）: 違う番の読み直し（AIX_SECOND_REREAD）でも twoMsgPlan の planFromMeta(brainMeta)（meta.two_message_plan）は外していない。
+    //     今は CONDUCTOR_COMBINE が既定 off で置かれないので効かない。CONDUCTOR_COMBINE を on にする時に、違う番では planFromMeta を読まない（turn_contract.asks から作り直す）ようにする。
     id: "aix_second", name: "AIX の2通目の書き手（✨・材料→訴求の判断→書き手→締めを揃える）", owner: "作業員25（点検）・作業員5（訴求の判断）", stage: "compose",
     files: ["app/api/aix-template-generate/route.ts", "app/lib/second-appeal-judge.ts", "app/lib/second-message-materials.ts", "app/lib/aix-second-link.ts", "app/lib/aix-second-reread.ts", "app/lib/recommend-cta.ts"],
     reads: ["meta.action（AIX の種類）", "AIX の1通目（sentMessage・second-message-materials.sentThisTurn）", "meta.customer_mindset（決め手の残り decideGap・AIX_SECOND_LINK）", "meta.two_message_plan（この通で答える質問）", "meta.engagement_stance", "recommend-cta の刺さり具合の網（締め）"],
