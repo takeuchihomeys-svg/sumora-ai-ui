@@ -201,7 +201,7 @@ import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoi
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
 import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine, exhaustedTodayNote } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
-import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
+import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled, areaAllExhaustUpgrade, exhaustedPickupReadyOn } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
 import { sentReactionInviteOn, BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract, turnContractAxisEnabled } from "@/app/lib/turn-contract";
 /** 2026-10-08 本質の仕様（turn-contract.ts）をブレインに出させるか。戻す TURN_CONTRACT_BRAIN=off（出力・指示を足さない＝静的 system も旧に戻る） */
@@ -3133,14 +3133,19 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   let splitExhaustLine = "";
   if ((weakExhaustDemoted() || searchSplitServerEnabled()) && searchExhaustedEnabled() && !isPostApplyStatus(convStatus)) {
     try {
-      const exNow = searchExhausted(
-        brainLedgerInput.messages.filter((m) => !!m.createdAt).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt as string, isAix: m.isAix ?? null })),
+      // 2026-11-12 作業員1（q001・q002）: 送れる候補があるか（pickupReadyMaterial）を判定に渡す（EXHAUSTED_PICKUP_READY=on）／「〇〇周辺全域から…ピックアップさせて頂きました」の後の
+      //   新しい条件の無い「もう少し」の番は材料の強さを strong に（EXHAUSTED_AREA_ALL_STRONG=on・後の規則には使わない）。どちらも既定 off
+      const exMsgs = brainLedgerInput.messages.filter((m) => !!m.createdAt).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt as string, isAix: m.isAix ?? null }));
+      const exNow0 = searchExhausted(
+        exMsgs,
         {
-          conditionChangedThisTurn: false, pickupReady: null,
+          conditionChangedThisTurn: false, pickupReady: exhaustedPickupReadyOn() ? pickupReadyMaterial : null,
           deliveredAixAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => (r.aix_type === "property_send" || r.aix_type === "property_recommendation") && r.sent_at).map((r) => r.sent_at as string),
           zenryokuSentAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => r.aix_type === "zenryoku_support" && r.sent_at).map((r) => r.sent_at as string),
         },
       );
+      const exNow = areaAllExhaustUpgrade(exNow0, unrepliedTurn.text ?? "", undefined, exMsgs);
+      if (exNow.upgraded) console.log(JSON.stringify({ tag: "brain:exhausted-area-all", conversationId, markerAt: exNow.markerAt }));
       const line = searchSplitServerEnabled() ? splitMaterialLine(exNow) : exhaustedMaterialLine(exNow);
       // 2026-10-28 #24: 出し切りの材料が届いたかをログで見られるように（静かに壊れる所）
       console.log(JSON.stringify({ tag: "brain:exhausted", conversationId, exhausted: exNow.exhausted, strength: exNow.strength ?? null, markerAt: exNow.markerAt, reason: exNow.reason }));
