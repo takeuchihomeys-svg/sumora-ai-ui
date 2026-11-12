@@ -1,7 +1,7 @@
 // 真の初回の「最初の一手」（first_contact_pickup）を決める純関数のテスト（自己完結ハーネス）
 // 実行: npx tsx app/lib/__tests__/first-contact-pickup.test.ts
 // 実物: scripts/audit-first-move.ts F（09-12 以降の初回ガード 44会話）で読んだお客様の本文と scene_evidence
-import { resolveFirstContactPickup, isFirstContactPropertyNomination, firstContactSuggestedAction } from "../first-contact-pickup";
+import { resolveFirstContactPickup, isFirstContactPropertyNomination, firstContactSuggestedAction, customerOffersToSendProperties, firstContactSelfSendReplyOn } from "../first-contact-pickup";
 import { isConditionFormMessage } from "../reply-context";
 import { detectAixSceneEvidence } from "../aix-scene-evidence";
 import { compactSceneEvidence } from "../brain-aix-feedback";
@@ -91,6 +91,19 @@ describe("suggested_action は action が無ければ first_contact_pickup", () 
   it("action なし・pickup あり → pickup", () => eq(firstContactSuggestedAction(null, "property_check_result"), "property_check_result"));
   it("両方なし → null", () => eq(firstContactSuggestedAction(null, null), null));
   it("空文字は無し扱い", () => eq(firstContactSuggestedAction("", ""), null));
+});
+
+// 2026-11-12 作業員4: 問いが先の初回（q432〜q434・守り q020・q101・q021）。実物の本文
+describe("自分で物件を送る申し出（FIRST_CONTACT_SELF_SEND_REPLY）", () => {
+  it("q432 スモ割＋随時お送りしてもよいか → 申し出", () => eq(customerOffersToSendProperties(["お世話になっております。\n引っ越しを検討しているのですが、スモ割適用になるか、随時お送りさせていただいてもよろしいでしょうか?"]), true));
+  it("気になる物件送ってもいいですか → 申し出", () => eq(customerOffersToSendProperties(["気になる物件送ってもいいですか"]), true));
+  it("q433 同棲・審査が危うい → 当てない", () => eq(customerOffersToSendProperties(["同棲の家を探しています", "2人とも審査が危ういです"]), false));
+  it("q434 仲介手数料0円や割引 → 当てない", () => eq(customerOffersToSendProperties(["こんにには！\n来年に引越し検討しております！前回こちらでお世話になりました。また今回もお願いできればと考えているんですが今でも仲介手数料0円や割引等されてますか？"]), false));
+  it("q020 友だち追加 → 当てない", () => eq(customerOffersToSendProperties(["追加させて頂きました。"]), false));
+  it("q101 お部屋探し希望 → 当てない", () => eq(customerOffersToSendProperties(["お部屋探し希望です"]), false));
+  it("q021 ブラックの審査 → 当てない", () => eq(customerOffersToSendProperties(["ブラックなど審査は通らないですか（ ;  ; ）"]), false));
+  it("こちらに送ってほしい（送ってくださると嬉しい・送ってもらえますか）→ 当てない", () => eq(customerOffersToSendProperties(["ピックアップして送ってくださると嬉しいです", "物件送ってもらえますか", "お送りいただけますか"]), false));
+  it("スイッチは既定 off・on で入る", () => { eq(firstContactSelfSendReplyOn({}), false); eq(firstContactSelfSendReplyOn({ FIRST_CONTACT_SELF_SEND_REPLY: "on" }), true); });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

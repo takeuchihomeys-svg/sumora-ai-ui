@@ -120,6 +120,18 @@ eq("正解が 返信 だけ（q007 の形）は替えない", normalizeDraftCode
   eq("2択（その場の側）: 右の約束が言ってはいけない道なら外す", judgePath(two3, ["AIX:property_send"], ["2段:pickup"]).ok, false);
 }
 
+// 2026-11-12 作業員7（q202）: 2択の先の側で採点（EXAM_TWO_CHOICE_PREFERRED・既定 off）
+{
+  const q202 = { two_choice_mode: true, two_choice_aix: "property_check_result", two_choice_check_pattern: "available", two_choice_reply_kind: "check", two_choice_preferred: "reply" as const };
+  const before = process.env.EXAM_TWO_CHOICE_PREFERRED;
+  delete process.env.EXAM_TWO_CHOICE_PREFERRED;
+  eq("先の側 off: q202 は言ってはいけない AIX:物件確認した で外れ（今まで通り）", judgePath(brainPathCode(q202), ["2段:check", "返信"], ["AIX:property_check_result"]).ok, false);
+  process.env.EXAM_TWO_CHOICE_PREFERRED = "on";
+  eq("先の側 on: 先の側（2段:check）で合格", judgePath(brainPathCode(q202), ["2段:check", "返信"], ["AIX:property_check_result"]).ok, true);
+  eq("先の側 on: 先の側が AIX の時は AIX で当てる", judgePath(brainPathCode({ ...q202, two_choice_preferred: "aix" }), ["2段:check", "返信"], ["AIX:property_check_result"]).ok, false);
+  eq("先の側 on: 先の側が無い2択は今まで通り（両側）", judgePath(brainPathCode({ ...q202, two_choice_preferred: null }), ["2段:check", "返信"], ["AIX:property_check_result"]).ok, false);
+  if (before === undefined) delete process.env.EXAM_TWO_CHOICE_PREFERRED; else process.env.EXAM_TWO_CHOICE_PREFERRED = before;
+}
 console.log(`${pass} PASS / ${fail} FAIL`);
 if (fail) process.exit(1);
 

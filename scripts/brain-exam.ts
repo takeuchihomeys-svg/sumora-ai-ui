@@ -88,6 +88,7 @@ import { wantSeqOf, brainSeqOf, rawSeqOf, sendSeqSummary, type SeqRow, type SeqB
 const examCopyCheckOn = () => (process.env.EXAM_COPY_CHECK ?? "").trim().toLowerCase() !== "off";
 
 const PROBLEMS_FILE = "scripts/brain-exam/problems.json";
+import { filterGateExcluded, readGateExcluded } from "./lib/exam-application-gate";
 const SPEC_FILE = "scripts/brain-exam/spec.json";
 const RESULTS_DIR = "scripts/brain-exam/results";
 const PREFIX = "bexam-";
@@ -627,7 +628,7 @@ function codeFromString(c: string): PathCode {
 // ─── 判定（DeepSeek を直に・記録の外なので費用はここで数える） ─────────────────
 const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pattern", "alt_actions", "two_stage", "first_contact_pickup", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "reply_opener", "far_move_in", "appeal_timing", "hesitancy_pattern", "customer_concern", "turn_contract", "asks", "request_ledger",
   // 2026-10-28 2択（採点の brainPathCode が読む・保存した行から採点し直す時に落ちていた）
-  "two_choice_mode", "two_choice_aix", "two_choice_check_pattern", "two_choice_reply_kind",
+  "two_choice_mode", "two_choice_aix", "two_choice_check_pattern", "two_choice_reply_kind", "two_choice_preferred", // 11/12 作業員7: 先の側（EXAM_TWO_CHOICE_PREFERRED の採点）
   // 2026-11-03 統括の土台（作業員2）: 通しの試験 scripts/exam-handoff.ts が読む欄（どれも既定 off の時は無い）
   "need", "plan_ahead", "three_layer", "main_point", "flow_signals", "material_conflicts", "conductor_roles", "recheck_digest", "aix_recheck", "aix_desk", "decisions_1103",
   // 2026-11-10 作業員7: 送る物の並び（TWO_MESSAGE_SEQUENCE）。旧は答案に残しておらず seq-dig の10本で並びを1つも数えられなかった（scripts/lib/send-seq-score.ts が読む）
@@ -637,7 +638,9 @@ const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pattern", 
   // 2026-11-12 作業員7: この番の目的・中期の狙い・仕込み・先読みの深さ（BRAIN_TURN_AIMS）
   "turn_aims",
   // 2026-11-12 作業員10（案A・BRAIN_SEVEN_FIELDS）: 竹内さんの7つの欄・潜在の4欄（文の統括の物差し scripts/audit-compose-understanding.ts が答案から読む）
-  "seven_read", "latent_read"] as const;
+  "seven_read", "latent_read",
+  // 2026-11-12 作業員17（BRAIN_JUDGE_BASIS）: 判断の根拠のメモ（scripts/judge-basis-score.ts が読む）。conductor_focus は judge_basis が無い答案でも重点を数える元
+  "judge_basis", "conductor_focus"] as const;
 export function planOf(meta: Record<string, unknown> | null): Record<string, unknown> {
   if (!meta) return {};
   const out: Record<string, unknown> = {};
@@ -1657,7 +1660,10 @@ async function main() {
   const { runInDeepseekScope, setDeepseekScope } = await import("../app/lib/deepseek-scope");
   const { MSG_SEP } = await import("../app/lib/reply-context");
   // 2026-11-05 作業員1（点検表 13）: 手元の problems.json に同じ id が2つあると同じ問題を2回ずつ回していた（add-batch を2回・費用が倍）＝id で1つにする
-  const problems0 = pick(loadProblems().map(effectiveProblem));
+  // 2026-11-12 作業員10（統括役）: 申込の門で外れた問題（scripts/brain-exam/gate-excluded.json・brain-exam-add --gate-check／--rebuild が書く）は選ばない
+  const gateF = filterGateExcluded(pick(loadProblems().map(effectiveProblem)), readGateExcluded());
+  if (gateF.dropped.length) console.warn(`⚠ 申込の門で外れた問題を外した: ${gateF.dropped.map((x) => `${x.id}（${x.reason}）`).join("・")}`);
+  const problems0 = gateF.kept;
   const dupIds = [...new Set(problems0.map((x) => x.id).filter((id, i, a) => a.indexOf(id) !== i))];
   if (dupIds.length) console.warn(`⚠ 同じ id の問題が2つ以上ある（${dupIds.join(",")}）→ 後の物を1つだけ回す。手元の problems.json を作り直す: scripts/brain-exam-add.ts --rebuild`);
   const problems = await orderProblems([...new Map(problems0.map((x) => [x.id, x])).values()]);
@@ -1683,7 +1689,7 @@ async function main() {
     if (prevFp && readResults(LABEL).length && (prevFp.hash ?? "") !== ENV_FP.hash) throw new Error(`label ${LABEL} は別のスイッチの指紋で回した結果がある（前 ${prevFp.hash || "既定"}${prevFp.text ? `＝${prevFp.text}` : ""} ／ 今 ${formatEnvFp(ENV_FP)}）。別の --label で回す`);
   }
   console.log(`スイッチの指紋: ${formatEnvFp(ENV_FP)}`);
-  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ envFp: { hash: ENV_FP.hash, text: ENV_FP.text, pairs: Object.fromEntries(ENV_FP.pairs) }, conv: LANES.length ? LANES.map((l) => l.name).join(",") : (L0.lease?.name ?? "YUMA"), ...(LANES.length ? { concurrency: LANES.length } : {}), layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, stage: STAGE, cassette: CASSETTE_MODE, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, think: THINK || null,
+  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ envFp: { hash: ENV_FP.hash, text: ENV_FP.text, pairs: Object.fromEntries(ENV_FP.pairs) }, conv: LANES.length ? LANES.map((l) => l.name).join(",") : (L0.lease?.name ?? "YUMA"), ...(LANES.length ? { concurrency: LANES.length } : {}), layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, stage: STAGE, cassette: CASSETTE_MODE, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, basis: THINK || null,
     // 10/14 構成のスイッチ（試験の頃の環境変数・BRAIN_*/TWO_STAGE_*/SEARCH_*/TURN_* 等）。答案の比べで「どの構成か」を残す
     switches: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:BRAIN_|TWO_STAGE_|SEARCH_|TURN_|NEXT_PUBLIC_SEARCH_|AIX_|CONFIRM_|REPEAT_|FINAL_CHECK_|PICKUP_|VIEWING_|EXHAUSTED_|ROOM_PHOTO_|CONTRACT_)/.test(k) && !/KEY|SECRET|TOKEN/.test(k)).sort()) }, null, 1));
   console.log(`問題 ${problems.length}・回 ${REPEAT}・${model}・層 ${LAYER}・台帳 ${USE_LEDGER ? "写す" : "写さない"}・下書き ${DRAFT ? `あり（--stage=${STAGE}・${problems.filter((p) => stageOf(p) === "draft").length}問）` : `なし（--stage=${STAGE}）`}・録音 ${CASSETTE_MODE}・判定 ${NO_JUDGE ? "なし" : "DeepSeek"}`);
