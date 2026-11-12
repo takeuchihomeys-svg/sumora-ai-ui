@@ -367,7 +367,8 @@ import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
-import { exemplarNoteFor } from "@/app/lib/takeuchi-exemplar-server";
+import { exemplarNoteFor, warmExemplarTable } from "@/app/lib/takeuchi-exemplar-server";
+import { exemplarOn } from "@/app/lib/takeuchi-exemplar";
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
@@ -4498,6 +4499,8 @@ async function handleGenerateReply(req: NextRequest) {
     if (composeConductor) console.info("[compose-conductor]", JSON.stringify({ conversationId, focus: composeConductor.mf.key, source: composeConductor.mf.source, keep: composeConductor.mf.keep, nearKeep: composeNearKeepShare, read: composeConductor.read }));
     // 2026-11-11 作業員10 文の統括の1文ずつの設計図（KB P1 c3673fba・COMPOSE_SENTENCE_PLAN=on・既定 off）: 一通の読み（主と従）と竹内さんの7つの欄を受け取り、
     //   役目・どの部分の何・どうやって・次へ・主か従かを1文ずつ書き手に渡す（app/lib/compose-sentence-plan.ts・決定論・材料の無い欄は空のまま）
+    // 2026-11-12 作業員23: 手本の表 takeuchi_exemplars を読んでおく（TAKEUCHI_EXEMPLAR=on・設計図 on の時だけ・10分の取り置き・1.5秒で諦める・表が無ければ注記なし＝今と同じ）
+    if (exemplarOn() && composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation) { try { await warmExemplarTable(supabase); } catch { /* 表が無くても今と同じ */ } }
     const composeSentencePlan = composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation && brainMeta && brainLocalFresh
       ? (() => {
           try {
