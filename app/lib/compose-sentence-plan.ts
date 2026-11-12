@@ -20,6 +20,26 @@ import type { SentenceRole } from "./takeuchi-anatomy-roles";
 import { ROLE_LABEL } from "./takeuchi-anatomy-roles";
 import { ABOUT_VALUES, ABOUT_JA, type RequestAbout } from "./request-ledger";
 import { takeuchiHowFor } from "./compose-how-table";
+import { orderTypeOf } from "./compose-order-table";
+
+/**
+ * 2026-11-12 作業員10（COMPOSE_HOW_BY_TYPE=on・既定 off）: 型ごとの「どうやって」の足し（53番の物差しで弱かった所）
+ *   T6 検討・T5 お礼・T7 内覧＝信頼の作り方「都合に合わせる」（竹内さん: ごゆっくり・いつでも・ご都合よろしいお日にち）が 0/6・0/5（表は「お客様の立場」「サポート」を出していた）
+ *   T2 質問・T7 内覧で答えのある番＝「事実の裏付け」／T4 物件が届いた＝押さえ方「お客様の言葉・条件を拾う」（＋物件名が分かる時は名指し）が 0/5
+ *   番の材料（7つの欄）に「どうやって」がある時は触らない（表で埋める時だけ足す）
+ */
+export function composeHowByTypeOn(env: Env = envOf()): boolean {
+  return (env.COMPOSE_HOW_BY_TYPE ?? "").trim().toLowerCase() === "on";
+}
+export function howByType(type: string | null, o: { hasAnswer: boolean; property: string | null }): { key: KeyHow[]; trust: TrustHow[] } {
+  switch (type) {
+    case "T6_considering": case "T5_ack_hypothesis": return { key: ["accept_first"], trust: ["flexible"] };
+    case "T7_viewing": return { key: o.hasAnswer ? ["conclusion_first"] : ["accept_first"], trust: o.hasAnswer ? ["flexible", "fact"] : ["flexible"] };
+    case "T2_question_fact": return { key: ["conclusion_first"], trust: o.hasAnswer ? ["fact"] : [] };
+    case "T4_property_shared": return { key: o.property ? ["echo_words", "name_property"] : ["echo_words"], trust: ["effort"] };
+    default: return { key: [], trust: [] };
+  }
+}
 import { POINT_METHODS, TRUST_METHODS, type PointMethod, type TrustMethod, type PushStrength } from "./takeuchi-seven-read";
 
 type Env = Record<string, string | undefined>;
@@ -475,8 +495,9 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { sce
   const leadKey = s.leadTo ?? (mainRole0 === "keep" ? "keep" : mainRole0 === "viewing" ? "viewing" : mainRole0 === "apply" ? "apply" : mainRole0 === "estimate" ? "estimate" : mainRole0 === "answer" ? "answer_only" : null);
   const tbl = !s.keyHow.length || !s.trustHow.length ? takeuchiHowFor(o.scene ?? null, leadKey) : null;
   // 先に受ける（accept_first）は受けの文の型＝受けが主の番だけ主の行に置く（受け・挨拶・締めは今まで通り）
-  const keyHowEff: KeyHow[] = s.keyHow.length ? s.keyHow : (tbl?.key ?? []).filter((k) => mainRole0 === "uke" || k !== "accept_first");
-  const trustTbl: TrustHow[] = s.trustHow.length ? [] : (tbl?.trust ?? []);
+  const byType = composeHowByTypeOn() ? howByType(orderTypeOf(o.scene ?? null, mainRole0), { hasAnswer: !!u.main?.answer || u.main?.route === "reply", property: u.main?.property ?? null }) : null;
+  const keyHowEff: KeyHow[] = s.keyHow.length ? s.keyHow : byType?.key.length ? byType.key : (tbl?.key ?? []).filter((k) => mainRole0 === "uke" || k !== "accept_first");
+  const trustTbl: TrustHow[] = s.trustHow.length ? [] : byType?.trust.length ? byType.trust : (tbl?.trust ?? []);
   // 主: 一通の読みの主（AIX の番の主は返信では受けるだけ＝行にしない）
   const mainRole = u.main?.role ?? null;
   if (u.main && mainRole && !aixMain) {

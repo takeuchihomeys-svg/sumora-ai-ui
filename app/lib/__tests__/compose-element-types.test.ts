@@ -123,4 +123,19 @@ t("潜在の受け渡し（gold の外れの束）: 条件の番の concern は�
   const note = spn(bsp(readTurnUnderstanding(anx), rsf(anx), { ctx: rcc(anx) }));
   assert.deepEqual(hl(anx, note), []);
 });
+import { howByType, composeHowByTypeOn } from "../compose-sentence-plan";
+t("型ごとの「どうやって」の足し（COMPOSE_HOW_BY_TYPE・既定 off）: 検討＝都合に合わせる・物件が届いた＝言葉を拾う＋名指し・番の材料があれば触らない", () => {
+  assert.equal(composeHowByTypeOn({}), false);
+  assert.deepEqual(howByType("T6_considering", { hasAnswer: false, property: null }).trust, ["flexible"]);
+  assert.deepEqual(howByType("T4_property_shared", { hasAnswer: false, property: "〇〇 101号室" }).key, ["echo_words", "name_property"]);
+  assert.deepEqual(howByType("T7_viewing", { hasAnswer: true, property: null }).trust, ["flexible", "fact"]);
+  const meta = { turn_contract: { asks: [], close_only: true } };
+  const prev = process.env.COMPOSE_HOW_BY_TYPE; process.env.COMPOSE_HOW_BY_TYPE = "on";
+  try {
+    const p = bsp(readTurnUnderstanding(meta), rsf(meta), { scene: "considering" });
+    assert.deepEqual(p.how?.trust, ["flexible"]);
+    const withSeven = { ...meta, seven_read: { point: { what: "検討", how: "受ける" }, bridge: null, lead: "keep", appeal: null, latent: null, point_how: ["echo_words"], trust_how: ["support"], push: null } };
+    assert.deepEqual(bsp(readTurnUnderstanding(withSeven), rsf(withSeven), { scene: "considering" }).how?.trust, ["support"]); // 番の材料が先
+  } finally { if (prev == null) delete process.env.COMPOSE_HOW_BY_TYPE; else process.env.COMPOSE_HOW_BY_TYPE = prev; }
+});
 console.log(`compose-element-types: ${n} pass`);
