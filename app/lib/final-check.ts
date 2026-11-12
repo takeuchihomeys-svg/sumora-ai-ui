@@ -16,6 +16,7 @@
 //                              （スタッフが編集した文はスタッフの判断が正解。チェックはAI生成時のみ＝ハルシネーション防止）
 
 import { buildContextCheckAnswerList, contextCheckAnalysisLimit } from "@/app/lib/context-check-answer-list";
+import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 切った字数のログ（MATERIAL_CUT_LOG=on・切り方は同じ）
 import { ungroundedFreeRentSentence, type StaffFreeRentFact } from "./staff-free-rent";
 import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, materialGroundsAssertion,PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 // 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」: 文に間違いの無い文体だけの warning では書き直さない
@@ -738,7 +739,7 @@ code は次から選ぶこと:
 FABRICATED_AMOUNT（金額の捏造）/ FABRICATED_AVAILABILITY（空室確認結果の捏造）/
 FABRICATED_PROPERTY（物件名・号室・駅名の捏造/写し間違い）/ FABRICATED_DATE（日付・曜日・時刻の捏造）/
 FABRICATED_NAME（名前の誤り）/ FABRICATED_POLICY（会社制度の誤説明）
-${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]\n` : ""}
+${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${clipMaterialLogged(ctx.finalCheckRules, 2000, "final_check:rules")}\n[/FINAL_CHECK_RULES]\n` : ""}
 【出力例1 - 問題なし】
 ご希望の1LDKで家賃7万円以内の物件をお探ししております。
 → issues: []
@@ -824,7 +825,7 @@ FABRICATED_POLICY: 仲介手数料・日割家賃・AD還元など会社固有�
   // 2026-09-23 竹内: 会社の事実（company-facts）を検査にも渡す。お客様が今それを聞いている時だけ載る（生成と同じ matchCompanyFacts）
   const companyFactsNote = companyFactsForCheck(ctx) + companyFactsInDraftForCheck(draft, ctx);
   const dynamic = `${brainBaselineNote}${clearedFactsNote}[CHECKPOINTS]
-${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+${clipMaterialLogged(ctx.checkpointFacts || "なし", 2000, "final_check:checkpoint_facts")}
 [/CHECKPOINTS]
 [CUSTOMER_CONDITIONS]
 ${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
@@ -973,7 +974,7 @@ STAGE_SKIP（段階の前倒し）/ STAFF_REQUEST_OMITTED（スタッフ依頼�
 WE_DO_MISSING（行動宣言なし）/ FILLER_GREETING（フィラー挨拶）/
 SUBJECT_CONFUSION（主語混乱・PatternF4）/ PASSIVE_ONLY（受け身文体のみ）/
 CONDITION_ADD_MISROUTED（条件追加なのに管理会社確認で返している）
-${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]\n` : ""}
+${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${clipMaterialLogged(ctx.finalCheckRules, 2000, "final_check:rules")}\n[/FINAL_CHECK_RULES]\n` : ""}
 【出力例1 - 問題なし（質問に適切に回答）】
 （顧客メッセージ:「ペット可の物件はありますか？」→ 返信:「ペット可の物件もございます。条件に合う物件をお探しします。」）
 → issues: []
@@ -3357,7 +3358,7 @@ ${issuesForPrompt.map((i) => `- [${i.code}] ${i.message}（該当箇所:「${i.e
 [/ISSUES]
 ${nameNote}${customerMsgNote}${pairNote}${ledgerNote}${historyNote}${brainNote}
 [CHECKPOINT]（確認済み事実・最高権威）
-${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+${clipMaterialLogged(ctx.checkpointFacts || "なし", 2000, "final_check:checkpoint_facts")}
 [/CHECKPOINT]
 
 [CONDITIONS]（DB保存の顧客条件）
@@ -3547,7 +3548,7 @@ async function verifyFabricatedIssues(
   // 2026-09-23 竹内: 会社の事実に反する記述は「一般知識」として has_basis=true にしない（[COMPANY_FACTS] を情報源に足す）
   const dynamicPrompt = `情報源:
 [CHECKPOINTS]
-${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+${clipMaterialLogged(ctx.checkpointFacts || "なし", 2000, "final_check:checkpoint_facts")}
 [/CHECKPOINTS]
 [CUSTOMER_CONDITIONS]
 ${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
