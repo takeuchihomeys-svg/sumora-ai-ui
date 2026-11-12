@@ -74,7 +74,7 @@ const HOOK_CURIOUS_RE = /気になり|気になる|いいかも|良さそう|見
 const NOT_HOOK_RE: Array<[HookPoint, RegExp]> = [["家賃", /高い|予算|上限超|高すぎ/], ["駅・場所", /遠い|上過ぎ|場所が|エリアが/], ["広さ・間取り", /狭い|狭く|広さが/], ["初期費用", /初期費用(?:が|こんなに)|ネック/], ["新しさ", /古い|古すぎ/], ["設備", /無いの|ないのが気|エアコンない/]];
 
 function overlap(a: string, b: string): boolean {
-  const keys = (a.match(/[一-龠ァ-ヶー]{2,}/g) ?? []).filter((k) => !/させて|頂き|致し|お送り|ご確認|お部屋|物件|こちら/.test(k));
+  const keys = (a.match(/[一-龠ァ-ヶー]{2,}/g) ?? []).filter((k) => !/させて|頂き|致し|お送り|ご確認|お部屋|部屋|物件|こちら|気に召|都合/.test(k));
   return keys.some((k) => b.includes(k));
 }
 
