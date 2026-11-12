@@ -37,6 +37,34 @@ it("時間: 実物の流れ（木曜18:30 JST の下書き）で TIME_INVALID_HO
   eq(has(SELF), true); eq(has(MGMT), true);
   withEnv(ON_T, () => { eq(has(SELF), false, "自社作業"); eq(has(MGMT), true, "管理会社"); });
 });
+const ON_V = { FC_TIME_INVALID_TARGET: "on", FC_TIME_VACANCY_21: "on" };
+it("時間（募集状況）: FC_TIME_VACANCY_21 off は今までどおり18時で止める", () => {
+  eq(sameDayPromiseBlocked({ sentence: MGMT, hour: 19, isWeekend: false, env: ON_T }), true);
+});
+it("時間（募集状況）on: 募集状況・空室の確認は21時より前は止めない・21時以降は止める（5fe999f8）", () => {
+  eq(sameDayPromiseBlocked({ sentence: MGMT, hour: 19, isWeekend: false, env: ON_V }), false);
+  eq(sameDayPromiseBlocked({ sentence: MGMT, hour: 20, isWeekend: false, env: ON_V }), false);
+  eq(sameDayPromiseBlocked({ sentence: MGMT, hour: 21, isWeekend: false, env: ON_V }), true);
+  eq(sameDayPromiseBlocked({ sentence: "空室かどうか本日中に確認してご連絡いたします！！", hour: 19, isWeekend: false, env: ON_V }), false);
+});
+it("時間（募集状況）on: 木18:30「募集状況を確認してご連絡します」は止めず、21:10 で止める。募集中も同じ・番手・管理会社の入居可能日は18時の線", () => {
+  const S = "募集状況を確認して本日中にご連絡します！！";
+  eq(sameDayPromiseBlocked({ sentence: S, hour: 18, isWeekend: false, env: ON_V }), false);
+  eq(sameDayPromiseBlocked({ sentence: S, hour: 21, isWeekend: false, env: ON_V }), true);
+  eq(sameDayPromiseBlocked({ sentence: "まだ募集中か本日中に確認してご連絡します！！", hour: 20, isWeekend: false, env: ON_V }), false);
+  eq(sameDayPromiseBlocked({ sentence: "番手の空きを管理会社に本日中に確認いたします！！", hour: 19, isWeekend: false, env: ON_V }), true);
+  eq(sameDayPromiseBlocked({ sentence: "入居可能日を管理会社に本日中に確認いたします！！", hour: 19, isWeekend: false, env: ON_V }), true);
+});
+it("時間（募集状況）on: 設備・交渉・割引の確認は今までどおり18時で止める・土日も今までどおり", () => {
+  eq(sameDayPromiseBlocked({ sentence: "ペット可かどうか管理会社に本日中に確認してご連絡いたします！！", hour: 19, isWeekend: false, env: ON_V }), true);
+  eq(sameDayPromiseBlocked({ sentence: "礼金の交渉を管理会社に本日中にさせて頂きます！！", hour: 18, isWeekend: false, env: ON_V }), true);
+  eq(sameDayPromiseBlocked({ sentence: "空室状況の確認を本日中にさせて頂きます！！", hour: 12, isWeekend: true, env: ON_V }), true);
+});
+it("時間（募集状況）on: 実物の流れ（木曜19:45 JST の下書き）で募集状況の約束は出ず、設備の約束は出る", () => {
+  const ctx = { now: Date.parse("2026-11-12T19:45:00+09:00"), isAutoSend: true };
+  const has = (t: string) => runDeterministicChecks(t, ctx).some((i) => i.code === "TIME_INVALID_HONIJITSU");
+  withEnv(ON_V, () => { eq(has("募集状況を本日中に確認してご連絡させて頂きます！！"), false); eq(has("設備について管理会社に本日中に確認いたします！！"), true); });
+});
 it("sentenceAtIndex: 約束の文だけを取る", () => {
   const t = "ありがとうございます！！\n募集状況を管理会社に本日中に確認いたします！！\nよろしくお願いします";
   eq(sentenceAtIndex(t, t.indexOf("本日中に")), "募集状況を管理会社に本日中に確認いたします！！");

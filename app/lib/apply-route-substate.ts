@@ -13,7 +13,10 @@
 import type { RouteNodeId, RouteBranchId, ApplyRouteLocation } from "./apply-route-map";
 
 type Env = Record<string, string | undefined>;
-export const applyRouteSubstateOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.APPLY_ROUTE_SUBSTATE ?? "").trim().toLowerCase() === "on";
+// ⛔ 2026-11-12 凍結（統括役の決め・既定 off のまま・消すのは後でまとめて）: ブレインの材料に渡すと効かなかった。
+//   理由: 状態の候補があるだけでブレインが次の一手を進める側へ寄った（q065 off 4/4→on 0/4・q425 返信→AIX:viewing_invite・q406 と同じ型）。
+//   代わり: 表（SUBSTATES）は残し、道が決まった後に turn-aims-after.ts（TURN_AIMS_AFTER）が文の統括へだけ渡す。
+export const applyRouteSubstateOn =(env: Env = typeof process !== "undefined" ? process.env : {}) => (env.APPLY_ROUTE_SUBSTATE ?? "").trim().toLowerCase() === "on";
 
 /** 仕込み（先の番のための一言）の型 */
 export type Plant = "scarcity" | "hold_before_viewing" | "support" | "cost" | "screening" | "timing" | "ask_send";

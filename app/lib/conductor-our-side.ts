@@ -9,6 +9,7 @@
 //   ＝同じお客様の一言でも、こちら側の状態で竹内さんの一手が変わる。状態をそのまま渡し、読むのは統括（決めるのはブレイン・P0 9eb6aa9c）。
 //   切替: CONDUCTOR_OUR_SIDE=on（既定 off）。テスト: app/lib/__tests__/conductor-our-side.test.ts
 
+import { promiseReadUnifiedOn, lastOpenPromise, PROMISE_READ_KIND_JA } from "./promise-read";
 type Env = Record<string, string | undefined>;
 export const conductorOurSideOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_OUR_SIDE ?? "").trim().toLowerCase() === "on";
 // 2026-11-11 統括役（入口では読みが変わらなかった・弱い19番 7→8）: 同じ塊をブレイン本体の材料と AIX の統括（種類を決める所）に渡す
@@ -19,7 +20,7 @@ export const ourSideBrainOn = (env: Env = typeof process !== "undefined" ? proce
 export type OurSideMsg = { sender: string; text: string | null; created_at: string; is_aix_generated?: boolean | null };
 export type OurSideAix = { aix_type: string; check_pattern?: string | null; created_at: string; sent_at?: string | null; property_names?: string[] | null; prop_statuses?: string[] | null; estimate_sent?: boolean | null };
 
-const AIX_JA: Record<string, string> = {
+export const AIX_JA: Record<string, string> = {
   property_send: "物件送付（束）", property_recommendation: "物件オススメ（1件）", property_check_result: "物件確認した（確かめた結果を送る＝空き・募集・入居日・室内写真／管理会社に確かめた条件・設備・交渉の結果は mgmt_* のピッカー）",
   acknowledge_check: "確認します（これから確かめる・交渉する約束を AIX で送る）", estimate_sheet: "見積書送る", viewing_invite: "内覧調整（候補日）", meeting_place: "待ち合わせ場所（内覧の確定）",
   application_push: "申込へ", phone_call: "電話", guarantor_info: "保証会社", condition_hearing: "条件ヒアリング", zenryoku_support: "全力サポート", cost_explain: "初期費用を説明",
@@ -28,7 +29,7 @@ const PICK_JA: Record<string, string> = {
   available: "募集中", unavailable: "募集終了", vacating: "退去予定", move_out_planned: "退去予定", alternative: "代わりの部屋が募集中", taken: "申込あり", second_position: "2番手", exclusive: "専任",
 };
 const MGMT_JA: Record<string, string> = { availability: "募集状況", initial_cost: "初期費用の交渉", proxy: "代理契約", guarantor: "保証会社", parking: "駐車場", pet: "ペット", equipment: "設備", move_in: "入居日" };
-const pickJa = (p: string | null | undefined) => (!p ? "" : PICK_JA[p] ?? (p.startsWith("mgmt_") ? `管理会社に確かめた結果（${MGMT_JA[p.slice(5)] ?? p.slice(5)}）` : p));
+export const pickJa = (p: string | null | undefined) => (!p ? "" : PICK_JA[p] ?? (p.startsWith("mgmt_") ? `管理会社に確かめた結果（${MGMT_JA[p.slice(5)] ?? p.slice(5)}）` : p));
 
 /** 約束の種類（決まった計算の網・こちらの文の言い方で分ける） */
 export function promiseKindOf(t: string): "見積" | "確認" | "探す" | "内覧" | "他" {
@@ -112,7 +113,10 @@ export function ourSideBlock(o: { msgs: ReadonlyArray<OurSideMsg>; aix: Readonly
     if (s) { promise = { text: s.replace(/\s+/g, " ").trim().slice(0, 50), at: m.created_at }; break; }
   }
   if (promise && aix.some((a) => FULFIL.has(a.aix_type) && (a.sent_at ?? a.created_at) > promise!.at)) promise = null; // 後で AIX で果たした
-  lines.push(promise ? `・開いている約束: ${promiseKindOf(promise.text)}の約束「${promise.text}」（${ago(o.nowMs, promise.at)}・結果はまだ送っていない）` : "・開いている約束: なし");
+  // 2026-11-12 作業員4: 約束の読みを promise-read に寄せる（PROMISE_READ_UNIFIED=on・既定 off は上の今の読み）
+  let unifiedKind: string | null = null;
+  if (promiseReadUnifiedOn()) { const p = lastOpenPromise({ msgs, aix, nowMs: o.nowMs, days: 3650 }); promise = p ? { text: p.sentence.slice(0, 50), at: p.at } : null; unifiedKind = p ? PROMISE_READ_KIND_JA[p.kind] : null; }
+  lines.push(promise ? `・開いている約束: ${unifiedKind ?? promiseKindOf(promise.text)}の約束「${promise.text}」（${ago(o.nowMs, promise.at)}・結果はまだ送っていない）` : "・開いている約束: なし");
   // ② 直前の AIX
   const last = aix[aix.length - 1];
   if (last) {

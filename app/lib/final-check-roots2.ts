@@ -6,6 +6,8 @@
 //   ・FC_BANNED_MATERIAL … BANNED_WORD の数値の言い回し（「家賃の2ヶ月分」「初期費用は家賃の」等）は、資料（materialFacts）に同じ項目と同じ数があれば block しない（礼金・敷金・保証料の説明）
 //   ・FC_RULES_SLICE_ALIGN … finalCheckRules の切り方が rule_check は3000字・anomaly_scan／context_check は2000字とずれていた（3000字を超える分は2つの段に届かず、切ったログも rule_check だけ）。3つの段で3000字に揃え、切った時はログを出す
 
+import { COMPANY_CLOSE_HOUR, isVacancyConfirmObject } from "./mgmt-hours-split";
+
 type Env = Record<string, string | undefined>;
 const envOf = (env?: Env): Env => env ?? (typeof process !== "undefined" ? process.env : {});
 const on = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "on";
@@ -13,15 +15,21 @@ const on = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "on";
 export function fcTimeInvalidTargetEnabled(env?: Env): boolean { return on(envOf(env).FC_TIME_INVALID_TARGET); }
 export function fcBannedMaterialEnabled(env?: Env): boolean { return on(envOf(env).FC_BANNED_MATERIAL); }
 export function fcRulesSliceAlignEnabled(env?: Env): boolean { return on(envOf(env).FC_RULES_SLICE_ALIGN); }
+export function fcTimeVacancy21Enabled(env?: Env): boolean { return on(envOf(env).FC_TIME_VACANCY_21); }
 
 // ─── 本日中の約束の相手 ───
 /** 管理会社側の返事・動きに掛かる文（18時で窓口が閉まる相手） */
 const MGMT_TARGET_RE = /管理会社|オーナー|貸主|大家|元付|募集状況|空室|空き状況|番手|入居可能|退去|審査結果|交渉/;
+/** 窓口が閉まる側の確認（番手・入居可能日・審査結果）。isVacancyConfirmObject（mgmt-hours-split・設備・交渉・鍵・駐車場 等を除く）に足す除外 */
+const STRICT_EXTRA_RE = /番手|入居可能|審査結果/;
+export function isVacancyOnlyPromise(sentence: string): boolean { return isVacancyConfirmObject(sentence) && !STRICT_EXTRA_RE.test(sentence); }
 /** その日のその時刻に、約束の文を「本日中」に実行できないとして止めるか（false＝止めない） */
 export function sameDayPromiseBlocked(o: { sentence: string; hour: number; isWeekend: boolean; env?: Env }): boolean {
   const legacy = o.hour >= 18 || o.isWeekend;
   if (!fcTimeInvalidTargetEnabled(o.env)) return legacy;
   if (o.isWeekend) return true;
+  // 2026-11-12 作業員20（FC_TIME_VACANCY_21・既定 off）: 竹内さんの決定 5fe999f8（11/04）「募集状況の確認（ポータル・業者サイトで確かめられる物）は21時より前は営業時間の終了を付けない・設備の確認と交渉は18時の線」
+  if (fcTimeVacancy21Enabled(o.env) && isVacancyOnlyPromise(o.sentence)) return o.hour >= COMPANY_CLOSE_HOUR;
   if (MGMT_TARGET_RE.test(o.sentence)) return o.hour >= 18;
   return o.hour >= 19;
 }

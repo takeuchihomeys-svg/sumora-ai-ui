@@ -122,5 +122,16 @@ t("口: 統括の重点を読んだ記録", bc3.read.includes("重点") && bc3.m
   t("統括の重点がある番は今まで通り（answer）", decideMessageFocus(base({ scene: "viewing", inputs: { ...empty, focus: { focus: "answer" } } })).key === "answer");
 }
 
+// 2026-11-12 作業員7（COMPOSE_PLAN_FALLBACK）: meta に組み立てが無い時（CONDUCTOR_COMBINE off の本番）に代わりを作る
+{
+  const meta = { reply_mode: "auto_reply", turn_contract: { asks: [{ quote: "空いてますか", route: "promise", about: "vacancy" }] } };
+  delete process.env.COMPOSE_PLAN_FALLBACK;
+  t("代わり: 既定 off は今まで通り空", readComposeInputs(meta).plan === null);
+  process.env.COMPOSE_PLAN_FALLBACK = "on";
+  const r = readComposeInputs(meta);
+  t("代わり: on で組み立てと返信の通がある", !!r.plan && !!r.replyMsg && r.read.includes("組み合わせ（代わり）"));
+  t("代わり: meta に組み立てがあればそれが先（代わりを作らない）", (() => { const own = readComposeInputs(meta).plan; const r2 = readComposeInputs({ ...meta, two_message_plan: own }); return r2.read.includes("組み合わせ") && !r2.read.includes("組み合わせ（代わり）"); })());
+  delete process.env.COMPOSE_PLAN_FALLBACK;
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

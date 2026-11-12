@@ -197,7 +197,7 @@ import { promiseKindsToday, pickupDirectionWithBrainAsk } from "@/app/lib/two-st
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { turnElapsedOn, turnElapsed, turnElapsedLine, elapsedPreferredSide, type TurnElapsed } from "@/app/lib/turn-elapsed";
-import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn, twoChoiceNarrowOn, narrowKeepsTwoChoice, narrowPromiseOrNow, twoChoicePhotoAtHandDirectOn, resayPromiseFirstOn, isResayTurn } from "@/app/lib/two-choice";
+import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn, twoChoiceNarrowOn, narrowKeepsTwoChoice, narrowPromiseOrNow, narrowEstimateSoleOn, hasNonCostPromise, twoChoicePhotoAtHandDirectOn, resayPromiseFirstOn, isResayTurn } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
 import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine, exhaustedTodayNote } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
@@ -234,6 +234,8 @@ const BRAIN_MATERIAL_PROVENANCE_ON = materialProvenanceOn();
 // 2026-11-03 竹内さん（潜在意識と要点を6つで強化 ①②③）: 3段（表の質問→奥の心配→安心する物）・一番の要点・会話の流れの合図。どれも既定 off・記録だけ
 const BRAIN_THREE_LAYER_ON = threeLayerOn();
 const BRAIN_TURN_AIMS_ON = turnAimsOn(); // 2026-11-12 作業員7
+/** 2026-11-12 作業員7: LLM の AIX を名前なしで落とした番に名札（記録だけ・道は変えない・既定 off） */
+const decisionSourceUnlabeledOn = () => (process.env.DECISION_SOURCE_UNLABELED ?? "").trim().toLowerCase() === "on";
 const BRAIN_MAIN_POINT_ON = mainPointOn();
 const BRAIN_THREE_LAYER_AFTER = threeLayerMode() === "after";
 const BRAIN_MAIN_POINT_AFTER = mainPointMode() === "after";
@@ -280,6 +282,7 @@ import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app
 import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question";
 import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
 import { materialTurnMustOn, WIDE_LIMIT, turnMustKeys, selectNewestWithMust, rowHitsKeys } from "@/app/lib/material-turn-must"; // 2026-11-12 作業員1: 材料の上限を今の番に要る物で（MATERIAL_TURN_MUST=on） // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
+import { materialGapLedgerMode, materialGapsDigest } from "@/app/lib/material-gap-ledger"; // 2026-11-12 作業員1: 材料の抜けの台帳
 import { brainMsgWindow } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
 // 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
 import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL } from "@/app/lib/contact-promise";
@@ -400,6 +403,7 @@ export type SuggestedAixMeta = {
   /** 2026-11-03 前回の提案の書き終えた後のメモ（digest.rv）と今の段階（digest.sg＝次の番の「お客様は進んだか」に使う） */
   last_turn_review?: Record<string, unknown>;
   customer_stage_now?: string;
+  material_gaps?: string[];            // 2026-11-12 作業員1: 材料の抜けの台帳（何が|何のために|どこから|なぜ a〜e|何が起きる・MATERIAL_GAP_LEDGER=shadow の時だけ・記録だけ）
   material_missing?: string[];         // 2026-10-29 ブレインの自己申告「判断に要ったのに材料に無かった物」（記録だけ・digest.mm）
   two_choice_reply_kind?: string;      // 2026-10-28 その場の側の2択: 右の返信の約束の種類（check/estimate/pickup）
   two_choice_reply_hint?: string;      // 同: 右の返信を押した時に generate-reply に渡す指定
@@ -2911,6 +2915,15 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   let customerStateBlockText = customerState ? buildCustomerStateBrainBlock(customerState) : "";
   const customerStateText = customerStateBlockText;
   if (materialMissOn && materialMisses.length) customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${materialMissNote(materialMisses)}`;
+  // 2026-11-12 作業員4: やり取りの照らし合わせの残り（事実の一覧・道の言葉なし）をブレインにも。道に触る所なので入口とは別スイッチ（既定 off CONDUCTOR_EXCHANGE_LEDGER_BRAIN=on）。毎回変わる並び（3）
+  try {
+    const el = await import("@/app/lib/exchange-ledger");
+    if (el.exchangeLedgerBrainOn()) {
+      const turnAtEL = typedMessages[0]?.created_at ?? null;
+      const lineEL = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAtEL ? Date.parse(turnAtEL) + 1 : Date.now() }));
+      if (lineEL) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【${lineEL}】`; console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "brain", len: lineEL.length })); }
+    }
+  } catch (e) { console.warn("[brain-core] exchange-ledger skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-09-27 竹内「審査中は審査中としておく」③: お送りしたピックアップのうち資料の現況が「審査中」のお部屋（該当が無ければ何も足さない）。
   //   毎回変わる並び（3）の中・今の状況の後ろに置く（system の前置き＝1時間キャッシュは変えない）
   try {
@@ -3408,7 +3421,9 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
           factsForConductor.length ? factLedgerBlock(factsForConductor as unknown as Parameters<typeof factLedgerBlock>[0], Date.now()) : "",
         ].filter(Boolean).join("\n\n"),
         // 2026-11-12 作業員4（CONDUCTOR_INTAKE_STAFF_REFRESH・既定 off・LLM なし）: 前のお客様の番の後にこちらがした事（AIX・約束・前の読みのやる事が果たされたか）を「前の番」の行に足す
-        carryLine: [carryQueryLine(pmForCarry?.conductor_meta ?? null), await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.intakeStaffRefreshOn() || !turnAt0) return ""; const prevTodos = ((opts?.prevMeta as { conductor_intake?: { answer?: { todos?: Array<{ kind?: string; what?: string }> } | null } } | null | undefined)?.conductor_intake?.answer?.todos) ?? null; return os.staffSinceLine({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(turnAt0) + 1, prevTodos }); } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
+        carryLine: [carryQueryLine(pmForCarry?.conductor_meta ?? null), await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.intakeStaffRefreshOn() || !turnAt0) return ""; const prevTodos = ((opts?.prevMeta as { conductor_intake?: { answer?: { todos?: Array<{ kind?: string; what?: string }> } | null } } | null | undefined)?.conductor_intake?.answer?.todos) ?? null; return os.staffSinceLine({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(turnAt0) + 1, prevTodos }); } catch { return ""; } })(),
+          // 2026-11-12 作業員4（竹内さん「こちらから送った部分と相手が送ってきた部分を照らし合わせられるように」）: ここ数番の照らし合わせの残り（事実だけ・既定 off CONDUCTOR_EXCHANGE_LEDGER=on）
+          await (async () => { try { const el = await import("@/app/lib/exchange-ledger"); if (!el.exchangeLedgerOn()) return ""; const line = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAt0 ? Date.parse(turnAt0) + 1 : Date.now() })); if (line) console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "intake", len: line.length })); return line; } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
       });
     }).catch(() => null);
   }
@@ -6185,7 +6200,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       console.log(JSON.stringify({ tag: "brain:two-choice-narrow", conversationId, promiseOrNow: promiseOrNow.reason, keep: nv.keep, ...(nv.keep ? { preferred: nv.preferred } : { decide: nv.decide }) }));
       if (nv.keep) twoChoicePreferred = twoChoicePreferred ?? nv.preferred;
       else {
-        if (nv.decide === "aix_estimate") { finalAix = "estimate_sheet"; replyMode = "aix"; twoStage = null; decisionSource = `${decisionSource ?? "llm"}+two_choice_narrow(estimate)`; }
+        // 2026-11-12 作業員7（TWO_CHOICE_NARROW_ESTIMATE_SOLE・既定 off）: 見積以外の約束（空き・探す・設備）もある番は見積書で決め切らない（約束のまま・q077）
+        const narrowEstimateBlocked = nv.decide === "aix_estimate" && narrowEstimateSoleOn() && hasNonCostPromise(((normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: unknown; about?: unknown }>));
+        if (narrowEstimateBlocked) console.log(JSON.stringify({ tag: "brain:two-choice-narrow-estimate-blocked", conversationId }));
+        if (nv.decide === "aix_estimate" && !narrowEstimateBlocked) { finalAix = "estimate_sheet"; replyMode = "aix"; twoStage = null; decisionSource = `${decisionSource ?? "llm"}+two_choice_narrow(estimate)`; }
         promiseOrNow = null;
       }
     }
@@ -6279,6 +6297,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-10-29 材料の自己申告（記録だけ）・読めなかった材料（ログだけだったのを digest にも残す＝毎週数える）
       material_read_misses: materialMisses.length ? [...new Set(materialMisses)] : undefined,
       material_missing: brainMaterialSelfReportOn() ? normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? undefined : undefined,
+      // 2026-11-12 作業員1（竹内さん「何が何で何なのか把握できるように」）: 材料の抜けの台帳（記録だけ・道は変えない・MATERIAL_GAP_LEDGER=shadow）
+      material_gaps: materialGapLedgerMode() === "shadow" ? materialGapsDigest(normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? [], [...new Set(materialMisses)]) : undefined,
       // 2026-10-28 その場の側の2択（TWO_CHOICE_NOW_SIDE）: 右の返信を押した時の約束の種類と指定（画面が replyHint に渡す・採点は 2段:<種類> も道に数える）
       two_choice_reply_kind: promiseOrNow?.side === "now" ? promiseOrNow.kind : undefined,
       two_choice_reply_hint: promiseOrNow?.side === "now" ? promiseOrNow.replyHint ?? undefined : undefined,
@@ -6407,7 +6427,11 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-09-12 段2: 判断の出どころと今回の顧客発言の場面の証拠（JSONB・スキーマ変更不要）。brain_decision_logs にも同じ値を残す
       decision_source: finalAix ? decisionSource : (decisionSource === "guard:viewing" || decisionSource === "guard:first_contact" ? decisionSource : null),
       // 3巡目（10/07・AIX の判断のずれの調査 1468132d）: AIX を外した番（2段の約束・手続きの質問・資料で答える・連絡待ち 等）の出どころを捨てていた → 記録用に別の欄で残す（画面・関所は decision_source だけを見るので挙動は変わらない）
-      decision_source_no_aix: !finalAix && decisionSource && decisionSource !== "guard:viewing" && decisionSource !== "guard:first_contact" ? decisionSource : undefined,
+      // 2026-11-12 作業員7（KB 1a78e4e3 ④の名札・既定 off・DECISION_SOURCE_UNLABELED=on）: LLM が AIX を選んだ（reply_mode=aix・aix あり）のに最後が AIX なしで、
+      //   どの決まりも名前を残さなかった番に名札を付ける（試験の答案 11/08〜 で 24回: q202・q428・q372・q003・q038・q092 等）。約束の直後のお礼（ackAfterPromise）は名前を付ける
+      decision_source_no_aix: !finalAix && decisionSource && decisionSource !== "guard:viewing" && decisionSource !== "guard:first_contact" ? decisionSource
+        : !finalAix && !decisionSource && decisionSourceUnlabeledOn() && parsed.reply_mode === "aix" && !!normalizeAixActionKey(parsed.aix)
+          ? (ackAfterPromise ? "rule:ack_after_promise" : twoStage ? `rule:unlabeled_two_stage(${twoStage.kind})` : "rule:unlabeled_aix_drop") : undefined,
       // 2026-11-06（試験の本質の採点・統括役）: 送れる候補の材料の値（記録だけ・判断は変えない）
       pickup_ready: pickupReadyMaterial ?? undefined,
       // 2026-10-13（ブレインの使い残し 4）: 下げた上書き（規則の答え would とブレインの判断 brain の食い違い）

@@ -8,6 +8,9 @@
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 
+// ⛔ 2026-11-12 凍結（統括役の決め・既定 off のまま・消すのは後でまとめて）: TWO_MESSAGE_SEQUENCE（と下の TWO_MESSAGE_SEQUENCE_SPLIT_V2）は効かなかった。
+//   理由: ブレインの並びの決まり・実物の手本では、竹内さんの2通以上の番 0/6（v2b-dig6・v2c-dig8）。分けさせるとブレインの道も引かれる（q141）。
+//   代わり: 返信と AIX の組と順番は道が決まった後に send-combo-table.ts（SEND_COMBO_TABLE）で選ぶ。
 export function sendSequenceOn(env: Env = envOf()): boolean {
   return (env.TWO_MESSAGE_SEQUENCE ?? "").trim().toLowerCase() === "on";
 }
