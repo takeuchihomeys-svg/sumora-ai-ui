@@ -15,7 +15,7 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPAB
 (async () => {
   const since = new Date(Date.now() - Number(arg("days", "14")) * 86_400_000).toISOString();
   const limit = Number(arg("limit", "2000"));
-  const rows: Array<{ conversation_id: string; customer_turn_at: string; draft_first: string | null; staff_texts: string[] | null }> = [];
+  const rows: Array<{ conversation_id: string; customer_turn_at: string; draft_first: string | null; staff_texts: Array<string | { text?: string | null }> | null }> = [];
   for (let from = 0; rows.length < limit; from += 500) {
     const { data, error } = await sb.from("line_watch_turns").select("conversation_id, customer_turn_at, draft_first, staff_texts").gte("created_at", since).not("draft_first", "is", null).order("id").range(from, from + 499);
     if (error) { console.error(error.message); break; }
@@ -24,7 +24,8 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPAB
     if (data.length < 500) break;
   }
   const drafts = rows.map((r) => r.draft_first ?? "");
-  const sent = rows.flatMap((r) => (r.staff_texts ?? []).slice(0, 1));
+  // staff_texts は {at, text, burst} の並び（文字列ではない・11/12 夜 送信 0% の誤りを直した）。画像だけの送信は数えない
+  const sent = rows.flatMap((r) => (r.staff_texts ?? []).map((x) => (typeof x === "string" ? x : x?.text ?? "")).filter((t) => t && !/^\[/.test(t)).slice(0, 1));
   const d = trustRepeatCount(drafts), s = new Map(trustRepeatCount(sent).map((x) => [x.key, x]));
   // 同じ会話で直前の下書きにも同じ核が出ていた（続けて使った）回数
   const byConv = new Map<string, typeof rows>();
