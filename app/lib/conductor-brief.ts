@@ -17,6 +17,7 @@
 // 決まり: どの欄も事実と名前だけ。返信か AIX かを決める言葉は入れない（疑いの印は道を読んで照らすが、道を変えない）。部品が無い欄は「未」。
 // スイッチ: CONDUCTOR_BRIEF（既定 off＝何も足さない／shadow・on＝meta.conductor_brief と digest.cb に記録だけ）。
 import { CHECK_ORDER_TYPES, CHECK_DEPTH, NEXT_MOVE_OF_TYPE, checkOrderById } from "./check-order";
+import { buildDecidedLedger, type DecidedItem } from "./conductor-decided";
 import { briefDoubts, briefSure, type BriefDoubt, type Sure, type SureCueKey } from "./conductor-doubt";
 import type { InfoCell } from "./info-fill-map";
 import type { OpenItem } from "./exchange-ledger";
@@ -49,6 +50,8 @@ export type ConductorBrief = {
   combine: Missing<string>;
   next: Missing<{ dest: string; strength: string; timing: string; from: "type_table" }>;
   aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string> };
+  /** 統括が決めた事の1つの置き場（重点・約束・段階・誘導先・継続の約束・こちら側の状態・依頼ごとの道と答え／conductor-decided.ts） */
+  decided: DecidedItem[];
   doubts: BriefDoubt[];
   /** 番の確かさ（conductor-doubt の SURE_CUES の重みの合計・人に回す線の案 handoff） */
   sure: { level: Sure; score: number; cues: SureCueKey[]; handoff: boolean };
@@ -123,7 +126,9 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const doubts = briefDoubts(m, { asks, ledger, info, typeId });
   // ⑪ 確かさ
   const sure = briefSure(m, { doubts, info, typeId });
-  return { main, facts, missing, open, type, alloc, combine, next, aim, doubts, sure, notYet };
+  // ⑫ 決めた事の台帳（作業員24 の根A）
+  const decided = buildDecidedLedger(m, { openPromises: (ledger?.open ?? []).filter((o) => o.kind === "our_promise_unkept").map((o) => o.what) });
+  return { main, facts, missing, open, type, alloc, combine, next, aim, decided, doubts, sure, notYet };
 }
 
 /** digest.cb の1行（判断の根拠と同じ名前: type・purpose・missing・open・doubt・sure） 例 "T4|p:confirm_promise|m:2|o:1|f:1|d:fact_missed|s:mid!|未:7"（! は人に回す線の案に当たった） */

@@ -60,7 +60,7 @@ t("具体の一覧: 主の要件・事実と出所・足りない情報・照ら
 
 t("返信か AIX かを決める言葉を入れない（指示書の欄の名前・型の表の文・事実の値以外）", () => {
   const b = buildConductorBrief(meta);
-  const own = JSON.stringify({ ...b, facts: [], main: BRIEF_NONE, type: b.type === BRIEF_NONE ? b.type : { ...b.type, why: "" } });
+  const own = JSON.stringify({ ...b, facts: [], decided: [], main: BRIEF_NONE, type: b.type === BRIEF_NONE ? b.type : { ...b.type, why: "" } });
   assert.ok(!BASIS_ROUTE_WORD_RE.test(own), own);
 });
 
