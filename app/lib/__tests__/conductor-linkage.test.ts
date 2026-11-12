@@ -18,7 +18,10 @@ it("field-links の meta の欄は書く統括の writes にある", () => {
 });
 it("AIX の2通目の書き手: 締めの決め直しは勝ち負けの表にあり、道（返信か AIX か）は書かない", () => {
   const a = CONDUCTOR_LINKS.find((c) => c.id === "aix_second");
-  ok(a && a.redecides.length === 1 && a.files.includes("app/api/aix-template-generate/route.ts"), "row");
+  ok(a && a.redecides.length === 2 && a.files.includes("app/api/aix-template-generate/route.ts"), "row");
+  // 2026-11-12 竹内さんの決定 A（作業員25）: 押された AIX が正の読み直しは、押された AIX が勝ち・ブレインへ差し戻す（道は変えない）
+  ok(a && a.files.includes("app/lib/aix-second-reread.ts") && ids("log:aix-template-generate:second-reread") === "aix_second", "読み直しの印");
+  ok(REDECIDE_RULES.some((r) => r.by === "aix_second" && r.of === "brain" && r.winner === "aix_second" && r.sendBackTo === "brain" && /押された AIX/.test(r.allowWhen)), "読み直しの勝ち負け");
   ok(a && !a.writes.some((w) => /^meta\.(action|turn_contract)|^decision:/.test(w)), "道を書かない");
   ok(ids("aix_second_writer") === "aix_second" && ids("log:aix-template-generate:second-appeal-judge") === "aix_second" && ids("log:other-tag") === "brain", ids("log:aix-template-generate:second-appeal-judge"));
   ok(REDECIDE_RULES.some((r) => r.by === "aix_second" && r.winner === "aix_second" && /スタッフ/.test(r.allowWhen)), "勝ち負け");
