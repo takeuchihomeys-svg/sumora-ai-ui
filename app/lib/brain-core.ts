@@ -278,7 +278,8 @@ import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics,
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
 import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question";
-import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
+import { clipMaterialLogged } from "@/app/lib/material-cut-log";
+import { materialTurnMustOn, WIDE_LIMIT, turnMustKeys, selectNewestWithMust, rowHitsKeys } from "@/app/lib/material-turn-must"; // 2026-11-12 作業員1: 材料の上限を今の番に要る物で（MATERIAL_TURN_MUST=on） // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
 import { brainMsgWindow } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
 // 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
 import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL } from "@/app/lib/contact-promise";
@@ -1749,7 +1750,7 @@ async function analyzeConversationCore(
           .or(linkOr)
           .or("source.is.null,source.neq.line_group")
           .order("sent_at", { ascending: false })
-          .limit(20),
+          .limit(materialTurnMustOn() ? WIDE_LIMIT.sentProps : 20),
         supabase
           .from("sent_properties")
           .select("property_name, room_no, sent_at, rent")
@@ -1770,7 +1771,7 @@ async function analyzeConversationCore(
       .select("property_name, room_no, created_at, source, channel")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(20),
+      .limit(materialTurnMustOn() ? WIDE_LIMIT.sentImages : 20),
     // templates: match_templates RAGに移行済み。バルクフェッチ廃止。
     // 旧: won_count 上位5件を全会話共通で注入 → キャッシュ破棄の原因かつ文脈無関係。
     // 新: 会話コンテキスト（フェーズ・戦略・人間性）に近いテンプレを match_templates RAGで取得。
@@ -1807,7 +1808,7 @@ async function analyzeConversationCore(
       .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern, property_names, prop_statuses, estimate_sent, prop_cost_notes, generated_text")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(30),
+      .limit(materialTurnMustOn() ? WIDE_LIMIT.aixLogs : 30),
     // H6(Fable5): 予約送信済みメッセージ（pending）— 追客提案が予約済み送信と重複するのを防ぐ
     supabase
       .from("scheduled_messages")
@@ -1839,7 +1840,7 @@ async function analyzeConversationCore(
       .select("scheduled_date, scheduled_time, status, property_name, property_address, actual_date, viewing_report, viewing_report_at")
       .eq("conversation_id", conversationId)
       .order("scheduled_date", { ascending: false })
-      .limit(3),
+      .limit(materialTurnMustOn() ? WIDE_LIMIT.viewingHistory : 3),
     // applying_pattern: RAG化により match_reply_knowledge に統合済み。
     // ai_reply_knowledge category='applying_pattern' は match_reply_knowledge RPC が
     // 全カテゴリ対象でベクトル検索するため、バルクフェッチは不要。プレースホルダーで置き換え。
@@ -1879,6 +1880,27 @@ async function analyzeConversationCore(
   if (error || !messages || messages.length === 0) {
     console.warn("[brain-core] analyzeConversation abort: msgs fetch failed or empty", conversationId, "error:", error?.message ?? "none");
     return null;
+  }
+  // 2026-11-12 作業員1（材料の受け取る側・MATERIAL_TURN_MUST=on）: 広げて読んだ送付・資料の画像・AIX の記録・内覧の記録を、
+  //   今の番にお客様が名前で呼んだ物件の行は件数の外で残し、残りは元の件数（20・20・30・3）に戻す。今の番の物件が無ければ今と同じ
+  if (materialTurnMustOn()) {
+    try {
+      const turnText = (() => { const out: string[] = []; for (const m of messages as Array<{ sender: string; text: string | null }>) { if (m.sender !== "customer") break; out.push(String(m.text ?? "")); } return out.join("\n"); })();
+      type NameRow = { property_name?: string | null; property_names?: string[] | null };
+      const allNames = [
+        ...((sentPropsResult.data ?? []) as NameRow[]).map((r) => r.property_name),
+        ...((sentImagePropsResult.data ?? []) as NameRow[]).map((r) => r.property_name),
+        ...((viewingHistoryResult.data ?? []) as NameRow[]).map((r) => r.property_name),
+        ...((aixLogsResult.data ?? []) as NameRow[]).flatMap((r) => r.property_names ?? []),
+      ];
+      const keys = turnMustKeys(turnText, allNames);
+      const cut = (res: { data?: unknown }, n: number, label: string) => {
+        const r = selectNewestWithMust((res.data ?? []) as NameRow[], n, (x) => rowHitsKeys(x.property_names ?? x.property_name ?? null, keys));
+        (res as { data: unknown }).data = r.rows;
+        if (r.beyondLimit) console.log(JSON.stringify({ tag: "brain:material-turn-must", conversationId, label, kept: r.beyondLimit }));
+      };
+      cut(sentPropsResult, 20, "sent_properties"); cut(sentImagePropsResult, 20, "sent_image_properties"); cut(aixLogsResult, 30, "aix_usage_logs"); cut(viewingHistoryResult, 3, "viewing_history");
+    } catch (e) { console.warn("[brain-core] material-turn-must skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // H5(Fable5): 全メッセージが画像/添付のみ（テキスト0件）の場合は分析しない。
   // 「（画像/添付）×N」だけを読んだHaikuの当てずっぽう提案がキャッシュされるのを防ぐ
