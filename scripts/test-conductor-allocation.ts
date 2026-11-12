@@ -35,8 +35,8 @@ t("off の時は digest に何も足さない（meta に conductor_allocation �
   for (const k of ["aix", "intent", "dir", "tc"]) assert.deepEqual(d2[k], d[k], k);
 });
 
-t("どの型×深さにも配分がある（型は check-order の T1〜T11 全部・深さは3段）", () => {
-  assert.equal(CHECK_ORDER_TYPES.length, 11);
+t("どの型×深さにも配分がある（型は check-order の全部＝T1〜T12・深さは3段）", () => {
+  assert.ok(CHECK_ORDER_TYPES.length >= 12, "T12 まで");
   for (const ty of CHECK_ORDER_TYPES) for (const d of DEPTHS) {
     const a = ALLOCATION[ty.id]?.[d];
     assert.ok(a, `${ty.id}/${d} が無い`);

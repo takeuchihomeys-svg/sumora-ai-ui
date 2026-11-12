@@ -182,6 +182,15 @@ const TABLE: Record<string, TypeAlloc> = {
     },
     skip: { property_search: "条件がまだ揃っていない", estimate: "物件が無い", viewing_calendar: "内覧の段階でない", check_ground: "物件・費用の事実を書かない" },
   },
+  // 2026-11-12 作業員16 の型 T12（竹内さんの実例 11/12）: 刺さっている×比べている×先に取られる不安。抑える線は会社の事実（キャンセル料）で答える返信
+  T12_hooked_comparing_taken: {
+    rows: {
+      shallow: { parts: ["judge", "fetch", "writer", "check_ground"], why: "抑える線（保証会社の審査通過までキャンセル料がかからない）を会社の事実で短く答える", materials: ["company_fact"] },
+      normal: { parts: ["judge", "fetch", "combine", "compose", "writer", "check_ground"], why: "刺さった点を送った物の記録で確かめ、不安を先に受けて抑える一手→内覧→並行して探す約束の順に組む", materials: ["sent_ledger", "company_fact"] },
+      deep: { parts: ["judge", "fetch", "deep", "combine", "compose", "writer", "check_ground", "check_worry"], optional: ["deep", "check_worry"], why: "刺さった点・比べたい迷い・取られる不安の3つを分けて読む（既定の深さ・扉だけか探す約束だけに倒れない）", materials: ["sent_ledger", "company_fact", "property_record"] },
+    },
+    skip: { aix_desk: "申込の書類の AIX はお客様が抑えると言ってから（判断のブレインが決める）", property_search: "並行して探すのは約束（後の番）", estimate: "見積の番でない", viewing_calendar: "抑えてから内覧（日時はその後）", second: "1通（抑える線の返信）" },
+  },
 };
 
 const sortParts = (ps: ReadonlyArray<Part>): Part[] =>
@@ -210,7 +219,8 @@ function build(typeId: string, depth: BasisDepth): Allocation {
 
 /** 型 × 深さ の全部の配分（決まった表・読み込み時に1回作る） */
 export const ALLOCATION: Readonly<Record<string, Readonly<Record<BasisDepth, Allocation>>>> = Object.fromEntries(
-  CHECK_ORDER_TYPES.map((t) => [t.id, { shallow: build(t.id, "shallow"), normal: build(t.id, "normal"), deep: build(t.id, "deep") }]),
+  // 型の表に新しい型が足されても、配分の表に行が無い型は飛ばす（読み込みで落とさない・テストが「全部の型に配分がある」を確かめる）
+  CHECK_ORDER_TYPES.filter((t) => TABLE[t.id]).map((t) => [t.id, { shallow: build(t.id, "shallow"), normal: build(t.id, "normal"), deep: build(t.id, "deep") }]),
 );
 
 // ── ③ 選び方 ─────────────────────────────────────────────

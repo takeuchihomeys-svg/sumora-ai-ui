@@ -77,6 +77,7 @@ import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from 
 // 10巡目（10/08 竹内「AIXのボタンの種類・ピッカーの種類を分かっていたら簡単に完全にすることできる」）: AIX の全ボタン×主のピッカーの一覧と判断の順番を場面で絞って渡す（BRAIN_AIX_CATALOG=off で外す）
 import { catalogBlockForBrain, isSceneUncertain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
+import { checkOrderMode } from "@/app/lib/check-order";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
 import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
 import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
@@ -525,6 +526,11 @@ export type SuggestedAixMeta = {
   read_candidates?: ReadCandidates;
   /** 同: こちらの直前の送信の部分ごとの受け取られ方と刺さり・BRAIN_OUR_SEND_UPTAKE=on の時だけ（記録だけ・文の統括が HOOK_TO_COMPOSE で読む） */
   our_send_uptake?: OurSendUptakeRow[];
+  /** 2026-11-12 作業員22: 判断の順番の型の手がかりに使う今の一通の場面（CHECK_ORDER_TABLE=shadow|on の時だけ・記録だけ） */
+  check_order_scene?: string;
+  /** 2026-11-12 作業員22: 判断の順番の型の id（check-order.ts・先頭の候補）と候補・手がかり（check-order-wire.ts・記録だけ・道は変えない） */
+  check_order_type?: string;
+  check_order?: import("@/app/lib/check-order-wire").CheckOrderRecord;
   /** 同: 今の番に押す AIX（this_turn=deliver の時だけ aix・他は null）。物差しが今と後を分けて数えるため */
   aix_now?: string | null;
   latent_read?: import("@/app/lib/takeuchi-seven-read").LatentFour;             // 2026-11-11 作業員14: 話題ごと（弱い所 578）・TURN_READ_TOPICS=on の時だけ
@@ -1637,6 +1643,17 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (p) Object.assign(meta as unknown as Record<string, unknown>, p);
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:combine-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-12 作業員22（KB d030d496・fd1c7c62）: 判断の順番の型（check-order.pickCheckOrder）を meta から選んで記録だけ。CHECK_ORDER_TABLE=shadow|on の時だけ
+  //   meta.check_order_type（型の id）・meta.check_order（候補・手がかり）を足す（既定 off＝何も足さない）。返信か AIX かは読まない・変えない。配分より先に置く（配分が型の id を読む）
+  try {
+    if (checkOrderMode() !== "off") {
+      const { checkOrderRecord } = await import("@/app/lib/check-order-wire");
+      const m = meta as unknown as Record<string, unknown>;
+      const rec = checkOrderRecord(m, typeof m.check_order_scene === "string" ? m.check_order_scene : null);
+      m.check_order = rec;
+      if (rec.type) m.check_order_type = rec.type;
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "brain:check-order-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（KB fd1c7c62・ea2a9405①）: 番ごとの部品の配分（型×深さ）を記録だけ。CONDUCTOR_ALLOCATION=shadow|on の時だけ meta.conductor_allocation を足す
   //   （既定 off＝何も足さない＝今と同じ）。返信か AIX か（action）は読まない・変えない。部品を実際に止めるのは試験で悪化0を確かめてから
   try {
@@ -6347,6 +6364,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       now_vs_later: nowLaterParsed ?? undefined,
       read_candidates: readCandParsed ?? undefined,
       our_send_uptake: uptakeParsed ?? undefined,
+      // 2026-11-12 作業員22: 判断の順番の型の手がかりの場面（CHECK_ORDER_TABLE=shadow|on の時だけ・既定 off は欄なし＝今と同じ）
+      check_order_scene: checkOrderMode() !== "off" ? resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene : undefined,
       aix_now: BRAIN_NOW_LATER_ON ? aixNowOf(nowLaterParsed, finalAix) : undefined,
       customer_concern: customerConcern,
       // 内部伝搬: SOURCE_ACCEPT_RATE ゲート抑制の事実と、1回目の signalAix 結果の持ち回り
