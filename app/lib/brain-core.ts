@@ -5,6 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase-server";
+import { sanitizeJsonForDb } from "@/app/lib/db-json-sanitize";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { brainCacheOrderOn, withSceneBlock } from "@/app/lib/brain-cache-order";
@@ -7613,10 +7614,14 @@ async function analyzeAndSaveBrainMetaInner(
     await supabase.from("conversations").update({ brain_analyzed_at: new Date().toISOString() }).eq("id", conversationId);
     return true; // より新しい発言を見た判断がすでに保存済み（呼び出し元はそれを読めばよい）
   }
+  // 2026-11-13 作業員8b: 欄の中の .slice で絵文字が片割れになると PostgREST が「Empty or invalid json」で断り、判断が保存されず回り直し続けた
+  //   （会話 c40e1625・11/12 だけで 138回）。書く直前に JSON として壊れる文字だけ取り除く（意味は変えない・直した欄はログに出す）
+  const dbSafe = sanitizeJsonForDb(metaToWrite);
+  if (dbSafe.fixed) console.warn(JSON.stringify({ tag: "brain:meta-json-fixed", conversationId, ...dbSafe.fix }));
   const { data: writtenRows, error } = await supabase
     .from("conversations")
     .update({
-      suggested_aix_meta: metaToWrite,
+      suggested_aix_meta: dbSafe.value,
       brain_analyzed_at: new Date().toISOString(),
       is_hot: true,
       ...(analysisMode === "full" ? {
@@ -7626,7 +7631,7 @@ async function analyzeAndSaveBrainMetaInner(
       // incrementalとfull両方でbrain_full_*を更新（次回のSkip/incremental判定に使う）
       brain_full_analyzed_at: new Date().toISOString(),
       brain_full_msg_count: totalMsgCount ?? 0,
-      last_brain_meta: metaToWrite,
+      last_brain_meta: dbSafe.value,
     })
     .eq("id", conversationId)
     .select("id"); // no-op（0行マッチ）を偽陽性なく検知するために追加
