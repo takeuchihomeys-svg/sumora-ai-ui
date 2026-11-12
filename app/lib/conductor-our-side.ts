@@ -9,6 +9,7 @@
 //   ＝同じお客様の一言でも、こちら側の状態で竹内さんの一手が変わる。状態をそのまま渡し、読むのは統括（決めるのはブレイン・P0 9eb6aa9c）。
 //   切替: CONDUCTOR_OUR_SIDE=on（既定 off）。テスト: app/lib/__tests__/conductor-our-side.test.ts
 
+import { promiseReadUnifiedOn, lastOpenPromise, PROMISE_READ_KIND_JA } from "./promise-read";
 type Env = Record<string, string | undefined>;
 export const conductorOurSideOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_OUR_SIDE ?? "").trim().toLowerCase() === "on";
 // 2026-11-11 統括役（入口では読みが変わらなかった・弱い19番 7→8）: 同じ塊をブレイン本体の材料と AIX の統括（種類を決める所）に渡す
@@ -112,7 +113,10 @@ export function ourSideBlock(o: { msgs: ReadonlyArray<OurSideMsg>; aix: Readonly
     if (s) { promise = { text: s.replace(/\s+/g, " ").trim().slice(0, 50), at: m.created_at }; break; }
   }
   if (promise && aix.some((a) => FULFIL.has(a.aix_type) && (a.sent_at ?? a.created_at) > promise!.at)) promise = null; // 後で AIX で果たした
-  lines.push(promise ? `・開いている約束: ${promiseKindOf(promise.text)}の約束「${promise.text}」（${ago(o.nowMs, promise.at)}・結果はまだ送っていない）` : "・開いている約束: なし");
+  // 2026-11-12 作業員4: 約束の読みを promise-read に寄せる（PROMISE_READ_UNIFIED=on・既定 off は上の今の読み）
+  let unifiedKind: string | null = null;
+  if (promiseReadUnifiedOn()) { const p = lastOpenPromise({ msgs, aix, nowMs: o.nowMs, days: 3650 }); promise = p ? { text: p.sentence.slice(0, 50), at: p.at } : null; unifiedKind = p ? PROMISE_READ_KIND_JA[p.kind] : null; }
+  lines.push(promise ? `・開いている約束: ${unifiedKind ?? promiseKindOf(promise.text)}の約束「${promise.text}」（${ago(o.nowMs, promise.at)}・結果はまだ送っていない）` : "・開いている約束: なし");
   // ② 直前の AIX
   const last = aix[aix.length - 1];
   if (last) {

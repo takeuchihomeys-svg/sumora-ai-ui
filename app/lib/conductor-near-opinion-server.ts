@@ -8,6 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { maskContactBits, APPLY_DOCS_RE } from "@/app/lib/conductor-turn-vectors";
 import { liveSituationV2 } from "@/app/lib/conductor-focus-server";
+import { nearAnatomyOn, nearAnatomyMajority, nearAnatomyLine, turnAnatomyOf } from "@/app/lib/turn-anatomy-fields";
 import { nearOpinion, nearOpinionLine, isPromiseText, NEAR_OPINION_BAND, NEAR_OPINION_MIN_SHARE, type NearOpinion, type NearTurnRow } from "@/app/lib/conductor-near-opinion";
 
 export type NearOpinionResult = { op: NearOpinion | null; line: string; inBand: number };
@@ -36,12 +37,19 @@ export async function nearOpinionForTurn(sb: SupabaseClient, o: {
     const rows: NearTurnRow[] = rows0.map((h) => ({ key: h.source_key, distance: h.distance, route: h.actual!.route as "aix" | "reply", aix: h.actual?.aix ?? null, picker: h.actual?.picker ?? null, situation: sitOf.get(h.source_key) ?? null, focus: h.focus ?? null }));
     // 2026-11-07 統括役の決め (a): 重点（focus）は「ピックアップしてお送り」の約束の文を propose に分けていた（nop4-on）。
     //   返信の番は、竹内さんの実際の最初の文が約束の形（探してお送り・確認させて頂きます・作成しお送り）なら約束（promise_make）として数える
+    // 2026-11-12 作業員23（根C・CONDUCTOR_NEAR_ANATOMY=on の時だけ・既定 off）: 同じ近い返信の番の文から、誘導先・継続の約束・期日・締め・推す点の多数派（文は渡さない・種類と割合だけ）
+    let anatomyLine = "";
     try {
-      const replyIds = rows.filter((r) => r.route === "reply" && r.distance <= NEAR_OPINION_BAND).map((r) => (r.key.startsWith("msg:") ? r.key.slice(4) : r.key)).slice(0, 30);
+      const replyIds =rows.filter((r) => r.route === "reply" && r.distance <= NEAR_OPINION_BAND).map((r) => (r.key.startsWith("msg:") ? r.key.slice(4) : r.key)).slice(0, 30);
       if (replyIds.length) {
         const { data: tx } = await sb.from("messages").select("id, text").in("id", replyIds);
         const promiseOf = new Map(((tx ?? []) as Array<{ id: string; text: string | null }>).map((m) => [m.id, isPromiseText(m.text ?? "")]));
         for (const r of rows) { const id = r.key.startsWith("msg:") ? r.key.slice(4) : r.key; if (r.route === "reply" && promiseOf.get(id)) r.focus = "promise_make"; }
+        if (nearAnatomyOn()) {
+          const textOf = new Map(((tx ?? []) as Array<{ id: string; text: string | null }>).map((m) => [m.id, m.text ?? ""]));
+          const list = replyIds.map((id) => textOf.get(id) ?? "").filter((t) => t.trim() && !APPLY_DOCS_RE.test(t)).map(turnAnatomyOf);
+          anatomyLine = nearAnatomyLine(nearAnatomyMajority(list));
+        }
       }
     } catch { /* 読めなければ重点のまま */ }
     const op = nearOpinion(rows, { minShare: o.minShare ?? NEAR_OPINION_MIN_SHARE });
@@ -65,7 +73,8 @@ export async function nearOpinionForTurn(sb: SupabaseClient, o: {
         if (/^\s*\[(?:画像|スタンプ)\]\s*$/.test(tText)) tText = null;
       }
     } catch { tText = null; }
-    return { op, line: nearOpinionLine(op, tText), inBand: rows.length };
+    const line0 = nearOpinionLine(op, tText);
+    return { op, line: anatomyLine && op.move === "返信" && line0 ? `${line0}\n${anatomyLine}` : line0, inBand: rows.length };
   } catch {
     return null;
   }

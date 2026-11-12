@@ -48,5 +48,7 @@ export function metaWithTurnAimsAfter(meta: Record<string, unknown>, customerTex
   if (meta.turn_aims) return meta;
   const route: "reply" | "aix" = String(meta.reply_mode ?? "") === "aix" && String(meta.action ?? "").trim() ? "aix" : "reply";
   const ta = deriveTurnAimsAfter({ customerText, route, env });
+  // 2026-11-12 統括役: 注記が文の統括に届いた事を示す1行（TURN_AIMS_AFTER=on で作った時だけ・既定 off では出ない）
+  if (ta) console.info("[turn-aims-after]", JSON.stringify({ state: ta.state, depth: ta.depth, plant: !!ta.plant, to: "compose" }));
   return ta ? { ...meta, turn_aims: ta } : meta;
 }

@@ -5,7 +5,9 @@
 //   状態の候補は apply-route-substate.ts（APPLY_ROUTE_SUBSTATE）。文の統括・AIX の文へは conductor-handoff の decided（turnAim・plant）で渡す。
 //   既定 off（BRAIN_TURN_AIMS=on）。off の時は出力の指定も決まりも1バイトも変えない。
 type Env = Record<string, string | undefined>;
-export const turnAimsOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_TURN_AIMS ?? "").trim().toLowerCase() === "on";
+// ⛔ 2026-11-12 凍結（統括役の決め・既定 off のまま・消すのは後でまとめて）: ブレインの出力の欄にすると効かなかった。
+//   理由: 判断の後の欄の形でも、欄があるだけで道が引かれた（q065・q425）。代わり: turn-aims-after.ts（TURN_AIMS_AFTER・道の後に決まった計算で作る）。
+export const turnAimsOn =(env: Env = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_TURN_AIMS ?? "").trim().toLowerCase() === "on";
 
 export type TurnAims = { state: string; depth: 1 | 2 | 3 | null; depthWhy: string; turnAim: string; midAim: string; plant: string };
 

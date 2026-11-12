@@ -368,6 +368,7 @@ import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
 import { exemplarNoteFor, warmExemplarTable } from "@/app/lib/takeuchi-exemplar-server";
+import { patternCatalogNoteFor } from "@/app/lib/sentence-pattern-catalog-server";
 import { exemplarOn } from "@/app/lib/takeuchi-exemplar";
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
@@ -4508,8 +4509,11 @@ async function handleGenerateReply(req: NextRequest) {
             const plan = buildSentencePlan(u, s7, { scene: composeConductorScene, ctx: readComposeContext(brainMeta, { nextIntent: composeRun?.intent.next && composeRun.intent.next !== "none" ? composeRun.intent.next : null }) });
             // 2026-11-12 作業員10: 作業員5 の竹内さんの手本（場面×潜在×誘導先・TAKEUCHI_EXEMPLAR=on の時だけ）を設計図の注記の後ろに（文は写させない）
             const ex = (() => { try { return exemplarNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta }); } catch { return null; } })();
+            // 2026-11-12 作業員23（根B）: 竹内さんの文型カタログ（受け・潜在の一文・押さえ方・締め・継続の約束の骨と割合・SENTENCE_PATTERN_CATALOG=on の時だけ・既定 off）
+            const pc = (() => { try { return patternCatalogNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta, keepKind: composeConductor?.mf.keep ? "new_listing" : null }); } catch { return null; } })();
             const note0 = sentencePlanNote(plan);
-            return { plan, note: note0 && ex ? `${note0}\n${ex.note}` : note0, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}` };
+            const note1 = note0 && ex ? `${note0}\n${ex.note}` : note0;
+            return { plan, note: note1 && pc ? `${note1}\n${pc.note}` : note1, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${pc ? `｜文型=${pc.key}` : ""}` };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()
       : null;
