@@ -84,7 +84,7 @@ import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from 
 import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
 import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
 import { sorryDeclineReadOn, readSorryDecline, pickSorryDeclineExamples, sorryDeclineBrainText } from "@/app/lib/sorry-decline-read";
-import { applyPromptRules1112, applyReplyModeP0 } from "@/app/lib/brain-prompt-rules-1112";
+import { applyPromptRules1112, applyPromptRules1113, promptRules1113Enabled, applyReplyModeP0 } from "@/app/lib/brain-prompt-rules-1112";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
@@ -714,7 +714,7 @@ const STATUS_TO_PHASE: Record<string, string> = {
 };
 
 // Concise AIX capability summary injected into Haiku prompts for action/template reasoning
-const AIX_CAPABILITY_MAP = applyPromptRules1112(`
+const AIX_CAPABILITY_MAP = applyPromptRules1113(applyPromptRules1112(`
 【AIXボタン能力マップ】
 - viewing_invite: 内覧日程の候補をLINEで提案するメッセージを生成（顧客メッセージに内覧・内見・見学・見に行く等の希望表現があれば選ぶ）
 - property_send: 物件ピックアップのカバーメッセージを生成（物件URL送信時）→ 複数件ピックアップ後は必ず1〜2分以内（実測38秒／58秒）に「物件ピックアップ紹介（後続）」を、駅指定・条件外れ告知ありなら「駅周辺物件ピックアップ（後続）」（実測1分33秒）をAI最適化して自発送信する
@@ -753,7 +753,7 @@ const AIX_CAPABILITY_MAP = applyPromptRules1112(`
 - viewing_invite（内覧日調整を送った後）: 顧客が「それ以外だと何日」「土日は可能ですか」「他の日程は」等、別の日程を尋ねたら viewing_invite（候補日時は AIX で送る。本文で日程を手打ちしない）。具体的な日時を指定して依頼したら meeting_place（2026-09-12 竹内）
 - viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 日と開始時刻が決まった（待ち合わせ場所は未送信）→meeting_place / 待ち合わせ場所を送信済み（＝内覧確定・未来）→もう一度は選ばない（日時・場所の変更を頼まれた時だけ）/ 当日・完了後→greeting_viewing。【内覧の流れ】の段がある時はその段階を正とする ※viewing_invite は顧客メッセージに内覧希望が示された場合に選ぶ。「内覧行きたいらしいですが」「内覧可能ですか」「見に行きたい」等の間接・伝聞・打診表現も内覧希望として viewing_invite を選ぶこと。スタッフが物件を送った後に顧客が内覧・内見・見学・見に行く等のキーワードで反応した場合も viewing_invite。ただしスタッフが送った物件情報内の「〇月〇日以降内覧可能」「内覧可」等の文言をトリガーにしない（顧客メッセージ内のキーワードのみ対象）。物件送付直後で顧客がまだ反応していない場合は aix:null（何も提案しない）が正解
 - 成約の典型順（黄金フロー）: condition_hearing → property_send → property_recommendation → estimate_sheet → viewing_invite → meeting_place → application_push（property_check_result は顧客が物件URLを送ってきた時の割り込みアクションであり順序フローに含めない）
-`.trim());
+`.trim()));
 
 // AIX遷移マップはaix_transition_statsテーブルから動的取得（brain関数内で構築）。
 // 旧ハードコード AIX_NEXT_ACTION_MAP は2026-08-27にDB化。
@@ -1262,7 +1262,8 @@ async function detectSignalBasedAixFallback(
       usedAixTypes.some((t) => t === "property_send" || t === "property_recommendation") ||
       newPhase === "proposing" ||
       newPhase === "applying";
-    if (lastCustomer && !hasPendingScheduled && propertyProposed) {
+    // 2026-11-13 作業員1（G4 691）: 追客は物件の AIX（竹内さんの決定 d76e886d）＝ BRAIN_PROMPT_RULES_1113=on の時は 3日沈黙で followup_revive を決め打ちしない
+    if (lastCustomer && !hasPendingScheduled && propertyProposed && !promptRules1113Enabled()) {
       const silentDays = Math.floor((Date.now() - new Date(lastCustomer.created_at).getTime()) / 86_400_000);
       if (silentDays >= 3) return "followup_revive";
     }
@@ -1510,7 +1511,7 @@ ${BRAIN_RAIHAN_SLOT_ON ? "ルール⑤（来阪表現禁止・常時）: avoid_t
 
 ${BRAIN_RULES_678_FACTS_ON ? RULE6_FACTS : "ルール⑥（感謝・了承への返し方）: 顧客の最新メッセージが感謝・了承のみ（「ありがとうございます」「よろしくお願いします」「わかりました」「了解」「承知」「かしこまりました」等、60字未満かつ質問・要望・懸念を含まない）の場合 → reply_direction を「感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。中身のない進捗テンプレ・条件の再ヒアリングで埋めない」にする。**aix フィールドは null にする（直前と同じAIXアクションを繰り返さない・感謝返し場面でスタッフがAIXボタンを押す必要はない）**。成約会話の実データでは感謝返しへの物件提案・見積提案は68%含まれており悪反応は1.6%のみ — 物件提案そのものは禁じない。禁じるべきは「予告だけで実体のない進捗テンプレ（急いで進めております等）」「条件の再ヒアリング（予算・間取りの再質問）」「検討依頼の繰り返し」。avoid_topics にこれらを追加する。直前スタッフ発言に既に「ご検討ください」がある場合は特に厳守（繰り返しはしつこさになる）。迷った時: メッセージに質問・要求が1つでもあればこのルールを適用しない。"}
 
-${BRAIN_RULES_678_FACTS_ON ? RULE7_FACTS : "ルール⑦（ネガ文脈の感謝には営業を一切乗せない）: 直前スタッフ発言または直近顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等が含まれる場合 → reply_direction を「受け止めのみ（50〜110字）」にする。avoid_topics に「物件提案」「見積提案」「申込誘導」を追加する。key_topics は空にする。成約会話分析でこの文脈での営業は最も高い離脱率につながっている。迷った時: ネガワードが直近3メッセージ以内にあれば適用する。"}
+${BRAIN_RULES_678_FACTS_ON ? RULE7_FACTS : applyPromptRules1113("ルール⑦（ネガ文脈の感謝には営業を一切乗せない）: 直前スタッフ発言または直近顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等が含まれる場合 → reply_direction を「受け止めのみ（50〜110字）」にする。avoid_topics に「物件提案」「見積提案」「申込誘導」を追加する。key_topics は空にする。成約会話分析でこの文脈での営業は最も高い離脱率につながっている。迷った時: ネガワードが直近3メッセージ以内にあれば適用する。")}
 
 ${BRAIN_RULES_678_FACTS_ON ? RULE8_FACTS : "ルール⑧（強推し直後の了承には再推奨しない）: 直前AIXアクションが property_recommendation または property_check_result（空き確認済み）であり、かつ顧客の最新メッセージが感謝・了承のみ（「かしこまりました」「ありがとうございます」等、60字未満・質問・要望なし）の場合 → reply_direction を「感謝を1行で受け取り、検討を見守る待ちの姿勢で締める（50〜110字）」にする" + rule8HoldDirectionSuffix() + "。aix は null にする（直前と同じAIXアクションを繰り返さない）。avoid_topics に「他物件の募集状況確認」「新規物件ピックアップ」「別物件の提案」「申込誘導」を追加する。key_topics は空にする。根拠: 強く1件を推した直後にさらに推す・別物件を探すと「しつこさ」になり離脱率が上がる。顧客が了承した時点でボールは顧客側にある。待つことが最善。迷った時: 直近AIX履歴に property_recommendation/property_check_result があり顧客が感謝・了承を返したら必ず適用する。"}
 ${rule8HoldNote()}　【解除の一文（2026-09-23 竹内・あっぴ事例）】直前のスタッフ送信に**物件ピックアップの宣言**（「新着で…出次第お送りさせて頂きます」「ピックアップしてお送りさせて頂きます」等）があり、**その後まだ物件を送っていない**場合はルール⑧を適用しない（engagement_stance を 'wait' にしない・aix を null にしない）。宣言した時点でボールはこちら側にあり、待つ相手がいない。${BRAIN_NOW_LATER_ON ? NOW_LATER_RULE8_TAIL : "この時の aix は property_send、reply_direction は「宣言したピックアップを実行して届ける」にする。"}${ackAfterPromiseReplyEnabled() ? "ただしお客様の今の発言がお礼・了承だけの番は、aix を null にしてお礼に短く返信する（受けだけか待ちの形の1文は ack_form・約束を果たす AIX はその後・竹内さんの決定 10/14）。" : ""}根拠: 「出次第お送りします」宣言104件の79.8%は14日以内に実際の物件送付で果たされている（＝待ちではなく未履行の仕事）。
