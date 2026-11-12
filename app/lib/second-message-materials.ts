@@ -17,6 +17,8 @@
 //   このボタン・ピッカーの意味（竹内基準・aix-catalog.aixMeaningForGenerator・お手本の文は渡さない）／物件の判断の中身（売上サポの理由・合う条件・決め手・お客様の反応）
 import { buildRequestLedger, applyBrainRequestStatus, uncoveredRequests, TOPIC_JA, type LedgerItem, type RequestItem } from "./request-ledger";
 import { trackPromises, type OpenPromise } from "./promise-tracker";
+import { promiseReadUnifiedOn } from "./promise-read";
+import { openPromisesAfterFirst } from "./aix-second-link";
 import { findConfirmReportSentence } from "./action-ledger";
 import { isEstimateCard, estimatePropertiesOf } from "./estimate-second-message";
 import { contractFreshForAix, askIsThisAix, promiseFulfilledBy } from "./aix-brain-contract";
@@ -105,7 +107,7 @@ const msOf = (iso: string | null | undefined, fallback: number) => {
 };
 
 /** 時刻を付けた古い順の発言（時刻の無い通は前の通の直後とみなす・1通目は今） */
-function timed(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyArray<string>, nowMs: number): Array<{ sender: string; text: string; createdAt: string; isAix: boolean }> {
+export function timed(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyArray<string>, nowMs: number): Array<{ sender: string; text: string; createdAt: string; isAix: boolean }> {
   const out: Array<{ sender: string; text: string; createdAt: string; isAix: boolean }> = [];
   let prev = nowMs - 86_400_000;
   for (const m of msgs) {
@@ -141,7 +143,10 @@ export function outstandingAsks(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyA
 }
 
 /** まだ果たしていない約束（この番の1通目までで果たしていない物） */
-export function openPromises(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyArray<string>, nowMs: number): OpenPromise[] {
+export function openPromises(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyArray<string>, nowMs: number, o?: { actionType?: string | null; sentMessage?: string | null; env?: Record<string, string | undefined> }): OpenPromise[] {
+  // 2026-11-12 作業員25（PROMISE_READ_UNIFIED=on の時だけ・既定 off＝下の旧のまま）: 約束の読みを promise-read に寄せ、1通目（AIX）のボタンの種類で果たした約束を閉じる。
+  //   旧は文しか見ないので、🌟の物件の札で果たしたピックアップ・新着の約束を「まだ果たしていない」と2通目に渡していた（aix-second-link.ts）
+  if (o && promiseReadUnifiedOn(o.env)) return openPromisesAfterFirst(timed(msgs, turnStaff, nowMs), { nowMs, actionType: o.actionType ?? null, sentMessage: o.sentMessage ?? null });
   return trackPromises(timed(msgs, turnStaff, nowMs), nowMs).open.filter((p) => !/記録なし/.test(p.status));
 }
 
