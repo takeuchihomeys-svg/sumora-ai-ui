@@ -123,3 +123,36 @@ export const DEADLINE_TABLE_SCENES: ReadonlyArray<{ label: string; iso: string }
   { label: "祝日 昼（11/23）", iso: "2026-11-23T12:00:00+09:00" },
   { label: "朝 7時（木）", iso: "2026-11-12T07:00:00+09:00" },
 ];
+
+/**
+ * 作業員7 の next-move-detail.ts の When（at: now／next_turn／hours／next_day・dueLabel）に名前を揃える入口（w7-seq b6107d2f の型）。
+ *   at: 本日中に・〇時頃・確認出来次第・出来次第＝hours（数時間のうち）／明日一番に・夜や休みの営業開始次第＝next_day（翌営業日）／朝9時前の営業開始次第＝hours／新着で募集に出次第＝next_turn（外の出来事待ち・時間でなく次の番）。
+ *   dueLabel＝期日の言葉そのもの（頭に付ける一言があれば前に付ける）。時間の線を作業員7 の側で持たず、ここの表を1か所の元にする。
+ */
+export function toNextMoveWhen(c: DeadlineChoice): { at: "now" | "next_turn" | "hours" | "next_day"; dueLabel: string } {
+  const label = `${c.prefix ?? ""}${c.word}`;
+  switch (c.word) {
+    case "明日一番に": return { at: "next_day", dueLabel: label };
+    case "営業開始次第": return { at: c.prefix ? "next_day" : "hours", dueLabel: label };
+    case "新着で募集に出次第": return { at: "next_turn", dueLabel: label };
+    default: return { at: "hours", dueLabel: label };
+  }
+}
+
+// ─── ブレインの約束の材料に事実として足す（PROMISE_DEADLINE_WORDS=on・既定 off）───
+export function promiseDeadlineWordsEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return String(env.PROMISE_DEADLINE_WORDS ?? "").trim().toLowerCase() === "on";
+}
+const KIND_JA: Record<PromiseWhenKind, string> = { pickup: "ピックアップ", new_arrival: "新着待ち", check_vacancy: "募集状況の確認", check_mgmt: "管理会社への確認", negotiate: "交渉", estimate: "御見積書" };
+/**
+ * 今の時刻での、約束の種類ごとの期日の言葉（事実の表の1行）。ブレインの約束の材料に足す。道の言葉は入れない（決めるのはブレイン）。
+ * 確かさが high でない行には（確かさ mid）を付ける。本日中にの線は見積書だけ・他は期日を言い切らない根拠を1語で添える。
+ */
+export function promiseDeadlineWordsLine(o: { nowMs?: number; hour?: number } = {}): string {
+  const kinds: PromiseWhenKind[] = ["pickup", "new_arrival", "check_vacancy", "check_mgmt", "negotiate", "estimate"];
+  const parts = kinds.map((k) => {
+    const c = chooseDeadlineWord({ kind: k, nowMs: o.nowMs, hour: o.hour });
+    return `${KIND_JA[k]}＝${c.prefix ?? ""}${c.word}${c.confidence === "high" ? "" : `（確かさ ${c.confidence}）`}`;
+  });
+  return `\n【約束の期日の言葉（今の時刻・実送信の数から作った表・日本時間）】${parts.join("／")}（『本日中に』は御見積書の平日16時前だけ・他は期日を言い切らない＝ピックアップは同じ日に果たしたのが16〜18%）\n`;
+}

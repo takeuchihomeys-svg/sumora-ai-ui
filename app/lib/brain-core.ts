@@ -282,7 +282,8 @@ import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 �
 import { brainMsgWindow } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
 // 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
 import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL, resolveConditionMoveIn } from "@/app/lib/contact-promise";
-import { timeFactsEnabled, computeTimeFacts, timeFactsLine } from "@/app/lib/time-facts"; // 2026-11-12 作業員19（TIME_FACTS・既定 off）
+import { timeFactsEnabled, computeTimeFacts, timeFactsLine } from "@/app/lib/time-facts";
+import { promiseDeadlineWordsEnabled, promiseDeadlineWordsLine } from "@/app/lib/promise-deadline-words"; // 2026-11-12 作業員19（PROMISE_DEADLINE_WORDS・既定 off） // 2026-11-12 作業員19（TIME_FACTS・既定 off）
 import { brainOpenerMetaEnabled, normalizeBrainOpener } from "@/app/lib/opener-rates";
 import { brainFastSlowEnabled, brainSlowSecondEnabled, decideTurnDifficulty, fastDrops, fastEscapeReason, routeFingerprint, pickMajority, BRAIN_FAST_SLOW_VERSION, type FastSlowRecord } from "@/app/lib/brain-fast-slow"; // 2026-10-22 慣れた事は速く・難しい事はじっくり
 // 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
@@ -2292,6 +2293,8 @@ async function analyzeConversationCore(
       }));
     } catch { return ""; }
   })() : "";
+  // 2026-11-12 作業員19（PROMISE_DEADLINE_WORDS=on・既定 off＝空文字）: 約束の種類ごとの期日の言葉（今の時刻・実送信の数から作った表・app/lib/promise-deadline-words.ts）を事実として。決めるのはブレイン
+  const deadlineWordsText = promiseDeadlineWordsEnabled() ? promiseDeadlineWordsLine({ hour: jstParts().hour }) : "";
 
   // Recent starred examples (good replies) for this customer
   // 2026-09-11 データ衛生: 生成失敗文（☆付きで混入していた）・テスト送信は優良返信例にしない（読む側で除外）
@@ -3715,11 +3718,11 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     return isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("templates", templatesText)}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${d("examples", examplesText)}${timingText}${timeFactsText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}
+    ? `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("templates", templatesText)}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${d("examples", examplesText)}${timingText}${timeFactsText}${deadlineWordsText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("contractExamples", contractExamplesPhaseText)}${d("winning", winningPatternsText)}${d("templates", templatesText)}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${d("examples", examplesText)}${prevMetaText}${timingText}${timeFactsText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}${latestSupersedesRule() ? `
+    : `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("contractExamples", contractExamplesPhaseText)}${d("winning", winningPatternsText)}${d("templates", templatesText)}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${d("examples", examplesText)}${prevMetaText}${timingText}${timeFactsText}${deadlineWordsText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}${latestSupersedesRule() ? `
 
 【今回の発言の読み方】${latestSupersedesRule()}` : ""}
 

@@ -70,7 +70,7 @@ t("行に道の言葉が入っていない", !TIME_FACTS_FORBIDDEN_RE.test(line)
 import { readFileSync } from "node:fs";
 const src = readFileSync(__dirname + "/../brain-core.ts", "utf8");
 t("brain-core: TIME_FACTS が off なら空文字の式", src.includes("const timeFactsText = timeFactsEnabled() ? ") && src.includes('})() : "";'));
-t("brain-core: 2か所の user プロンプトの【時間情報】の次に入る", src.split("${timingText}${timeFactsText}${mgmtNightText}").length - 1 === 2);
+t("brain-core: 2か所の user プロンプトの【時間情報】の次に入る", src.split("${timingText}${timeFactsText}").length - 1 === 2);
 
 console.log(`pass ${pass} / fail ${fail}`);
 process.exit(fail ? 1 : 0);

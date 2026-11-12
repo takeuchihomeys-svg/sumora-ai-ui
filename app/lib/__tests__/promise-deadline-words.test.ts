@@ -46,6 +46,17 @@ t("本日中にを出すのは見積書の平日16時前だけ", (["pickup", "ne
 // 種類の名前の入口
 t("promise-tracker の種類との対応", fromTrackerKind("物件探し") === "pickup" && fromTrackerKind("見積書") === "estimate" && fromTrackerKind("交渉") === "negotiate" && fromTrackerKind("確認") === "check_vacancy" && fromTrackerKind("確認", { mgmtOnly: true }) === "check_mgmt" && fromTrackerKind("ご連絡") === null && fromTrackerKind(null) === null);
 
+import { toNextMoveWhen } from "../promise-deadline-words";
+t("作業員7 の When との対応（at と dueLabel）", toNextMoveWhen(w("check_mgmt", THU1830)).at === "next_day" && toNextMoveWhen(w("check_mgmt", THU1830)).dueLabel === "本日管理会社営業時間外の為、明日一番に" && toNextMoveWhen(w("check_mgmt", THU07)).at === "hours" && toNextMoveWhen(w("check_vacancy", THU10)).at === "hours" && toNextMoveWhen(w("new_arrival", THU10)).at === "next_turn" && toNextMoveWhen(w("check_mgmt", SAT12)).at === "next_day");
+import { promiseDeadlineWordsEnabled, promiseDeadlineWordsLine } from "../promise-deadline-words";
+import { readFileSync as rf } from "node:fs";
+const lineThu = promiseDeadlineWordsLine({ nowMs: at(THU1830) });
+t("PROMISE_DEADLINE_WORDS は既定 off", !promiseDeadlineWordsEnabled({}) && promiseDeadlineWordsEnabled({ PROMISE_DEADLINE_WORDS: "on" }));
+t("材料の行: 木 18:30 の6種類の言葉", /ピックアップ＝出来次第/.test(lineThu) && /新着待ち＝新着で募集に出次第/.test(lineThu) && /募集状況の確認＝確認出来次第/.test(lineThu) && /管理会社への確認＝本日管理会社営業時間外の為、明日一番に/.test(lineThu) && /御見積書＝出来次第/.test(lineThu), lineThu);
+t("材料の行に道の言葉が無い", !TIME_FACTS_FORBIDDEN_RE.test(lineThu) && !/AIX/.test(lineThu), lineThu);
+t("材料の行: 土曜は mid が付く", /管理会社への確認＝本日管理会社がお休みのため、営業開始次第（確かさ mid）/.test(promiseDeadlineWordsLine({ nowMs: at(SAT12) })));
+const src2 = rf(__dirname + "/../brain-core.ts", "utf8");
+t("brain-core: 既定 off の式・2か所の user プロンプトに入る", src2.includes('const deadlineWordsText = promiseDeadlineWordsEnabled() ? ') && src2.split("${timingText}${timeFactsText}${deadlineWordsText}").length - 1 === 2);
 if (process.argv.includes("--table")) {
   for (const s of DEADLINE_TABLE_SCENES) {
     console.log(`■ ${s.label}`);
