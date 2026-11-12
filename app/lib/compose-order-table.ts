@@ -74,3 +74,86 @@ export function applyOrderTable(p: SentencePlan, u: TurnUnderstanding, scene: st
 export function orderBasisDigest(b: OrderBasis): string {
   return `型=${b.type ?? "-"}${b.applied ? "(on)" : ""}｜順=${b.order.join(">") || "-"}｜主=${b.main ?? "-"}（${b.mainWhy}）`;
 }
+
+// ── 文の要素ごとの型（2026-11-12 作業員10・竹内さん「細分化してあたるように強化していく・ブレインとも連動していく」） ─────────────
+//   要素: 押す線（押さえ方）・信頼の作り方・潜在の不安への一文・次へのつなぎ（next-move-types の行き先×強さ×時機）。
+//   数は竹内さんの198通（anatomy-roles/roles-r1 の文 × anatomy-seven/seven-all198 の押す・潜在）で、型の言葉が文に出た通の数（2026-11-12）。
+//   選ぶのはブレインの欄だけ（fields に書いた欄・BRAIN_FIELD_ROUTE で plan の欄）。決まった計算はブレインの欄を読むだけ＝判断はブレイン基準。
+//   スイッチ COMPOSE_ELEMENT_TYPES=on（既定 off）で、選んだ型を設計図の行の「どうやって」に添える（文は写さない＝言葉の型と役目だけ）。
+export type ElementKind = "push_line" | "trust" | "latent_line";
+export type ElementType = {
+  id: string; element: ElementKind; name: string;
+  /** どのブレインの欄で選ぶか（brain-core の欄の名前） */
+  fields: string[];
+  cue: string; why: string;
+  /** 竹内さんの198通で型の言葉が出た通の数と、その文の役目（多い順） */
+  count: number; roles: string;
+  /** その型の言葉（物差しで竹内さんの文から型を読む時にも使う） */
+  re: RegExp;
+};
+export const ELEMENT_TYPES: readonly ElementType[] = [
+  { id: "P_hold_first", element: "push_line", name: "先に申込で抑える（抑えた状態で内覧）", fields: ["latent_read", "customer_concern", "appeal_timing", "seven_read"], cue: "潜在＝先に取られる・待つ間に埋まる／訴求のタイミング＝申込", why: "決める前に取られる不安を、先に抑える道で消す（押す強さは物件の残り×決める合図）", count: 19, roles: "apply 11・answer 4・barrier 3", re: /抑え(?:た状態|てから|る事が)|先にお申込|お申込(?:み)?(?:し|で)お部屋(?:を)?抑え/ },
+  { id: "P_one_room", element: "push_line", name: "1部屋のみの募集", fields: ["turn_contract", "seven_read", "latent_read"], cue: "物件の事実に1部屋のみ（資料・答え・先回りの事実）", why: "物件の残りの事実で決める理由を作る（事実がある時だけ）", count: 5, roles: "apply 3・worry 1", re: /1部屋のみ|1部屋しか|残り1部屋|この1部屋/ },
+  { id: "P_fill_soon", element: "push_line", name: "すぐ埋まる可能性", fields: ["customer_concern", "latent_read", "turn_contract"], cue: "お客様が埋まるかを聞いた・潜在＝先に取られる", why: "埋まる可能性を正直に言い、待つ間の不安に答える", count: 4, roles: "worry 4", re: /埋ま(?:る|って)|お問い合わせが多|お申込が入る/ },
+  { id: "P_no_cancel_fee", element: "push_line", name: "審査通過までキャンセル料がかからない線", fields: ["appeal_timing", "seven_read"], cue: "申込へ押す番（訴求のタイミング＝申込・押す強さ 強）", why: "申込の壁（費用の不安）を下げる", count: 3, roles: "barrier 3", re: /キャンセル料(?:が)?(?:かか|発生)(?:り|し)?ません|キャンセル料かかりません|キャンセルも可能/ },
+  { id: "P_vacate_soon", element: "push_line", name: "退去予定・内覧できる時期", fields: ["property_state", "turn_contract"], cue: "物件が退去予定・まだ内覧できない", why: "内覧できない間の進め方（時期と抑える道）を先に言う", count: 4, roles: "promise 1", re: /退去予定|ご内覧可能(?:日|に)|内覧できない/ },
+  { id: "R_company_fact", element: "trust", name: "会社の事実（最大限割引・手数料・還元）", fields: ["customer_concern", "latent_read", "turn_contract"], cue: "潜在＝費用・総額／費用の問い", why: "安さの理由を会社の事実で示して信用を作る", count: 27, roles: "estimate 12・barrier 9・answer 3", re: /最大限割引|仲介手数料|手数料|弊社では|還元|前家賃/ },
+  { id: "R_numbers", element: "trust", name: "数字・日付・件数で示す", fields: ["turn_contract", "seven_read"], cue: "答えの中身に数字（日数・金額・件数）", why: "曖昧にせず数字で言い切る", count: 48, roles: "keep 16・answer 11・barrier 6・promise 6", re: /\d+[%％]|\d+日|\d+万|\d+円|\d+件/ },
+  { id: "R_quick", element: "trust", name: "すぐ動く約束（確認出来次第・明日一番）", fields: ["turn_contract", "now_vs_later"], cue: "主が確かめる約束・こちらの開いている事", why: "手間と早さを見せて待ってもらう", count: 30, roles: "keep 14・promise 11・estimate 4", re: /明日一番|本日中|すぐに|至急|確認出来次第|出来次第/ },
+  { id: "R_support", element: "trust", name: "サポートの姿勢（全力でサポート）", fields: ["turn_contract", "seven_read"], cue: "条件の番（探す約束）・初回", why: "条件の番の信頼の芯（了承・検討の番には足さない）", count: 24, roles: "trust 17・keep 6", re: /全力でサポート|最善のサポート|ご満足頂/ },
+  { id: "R_honest", element: "trust", name: "正直にずれ・弱点を先に言う", fields: ["seven_read"], cue: "7つの欄の信頼の作り方＝honest_weak", why: "合わない所を先に言って信用を守る（198通では少ない）", count: 1, roles: "barrier 1", re: /正直|ではない(?:のですが|ですが)|ないのですが/ },
+  { id: "L_guarantor", element: "latent_line", name: "審査→独立系・別の保証会社", fields: ["latent_read", "customer_concern", "customer_mindset"], cue: "潜在＝審査で落ちる・保証会社", why: "審査の不安に保証会社の事実で先回り", count: 9, roles: "answer 5・barrier 3・worry 2", re: /独立系|保証会社/ },
+  { id: "L_estimate", element: "latent_line", name: "総額→最大限割引の御見積書", fields: ["latent_read", "customer_concern"], cue: "潜在＝費用・総額が見えない", why: "総額の不安を見積書で見せる", count: 17, roles: "estimate 13・answer 4", re: /御見積|見積書|お見積/ },
+  { id: "L_freerent", element: "latent_line", name: "費用→敷金礼金なし・フリーレント", fields: ["latent_read", "customer_concern", "turn_contract"], cue: "潜在＝費用・物件の事実にフリーレント等", why: "費用の不安を物件の事実で下げる（事実がある時だけ）", count: 6, roles: "answer 3・barrier 3", re: /フリーレント|敷金礼金(?:0|なし|無し)/ },
+  { id: "L_card", element: "latent_line", name: "一度に払えない→カードの分割（3.24%）", fields: ["latent_read", "customer_concern", "turn_contract"], cue: "潜在＝初期費用を一度に払えない・分割の問い", why: "払い方の不安に会社の事実で答える", count: 4, roles: "answer 4", re: /クレジットカード|カード/ },
+  { id: "L_new_arrival", element: "latent_line", name: "見つからない→ピックアップ・新着で送る", fields: ["latent_read", "turn_contract", "seven_read"], cue: "潜在＝条件に合う部屋が見つかるか・探す条件の番", why: "見つからない不安に送り続ける約束で答える", count: 56, roles: "keep 50", re: /新着|ピックアップ/ },
+];
+export function composeElementTypesOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.COMPOSE_ELEMENT_TYPES ?? "").trim().toLowerCase() === "on";
+}
+const objOf = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+/** ブレインの欄から読む手がかり（決まった計算はここだけ・ブレインの欄の言葉を読む） */
+export function elementCuesOf(meta: unknown): { latent: string; facts: string; applyPush: boolean; promiseMain: boolean; conditions: boolean; notViewable: boolean; honest: boolean; asksNumbers: boolean } {
+  const m = objOf(meta) ?? {};
+  const lr = objOf(m.latent_read), sr = objOf(m.seven_read), cc = objOf(m.customer_concern), at = objOf(m.appeal_timing), tc = objOf(m.turn_contract), ps = objOf(m.property_state);
+  const asks = Array.isArray(tc?.asks) ? (tc!.asks as unknown[]).map((a) => objOf(a)).filter((a): a is Record<string, unknown> => !!a) : [];
+  const latent = [JSON.stringify(lr ?? ""), JSON.stringify(objOf(sr?.latent) ?? ""), cc ? `${cc.topic ?? ""} ${cc.object ?? ""}` : "", typeof m.latent_intent === "string" ? m.latent_intent : "", JSON.stringify(objOf(m.customer_mindset)?.anxiety ?? "")].join(" ");
+  const facts = [...asks.map((a) => `${a.answer ?? ""}`), JSON.stringify(objOf(sr?.latent)?.fact ?? ""), JSON.stringify(objOf(sr?.appeal) ?? ""), typeof lr?.fact === "string" ? lr.fact : ""].join(" ");
+  const push = objOf(sr?.push);
+  return {
+    latent, facts,
+    applyPush: (at?.kind === "apply" && (at.level === "must" || at.level === "suggest")) || (push?.push === true && (push.strength === "strong" || push.strength === "mid")),
+    promiseMain: asks[typeof tc?.lead_with === "number" ? (tc.lead_with as number) : 0]?.route === "promise",
+    conditions: asks.some((a) => a.about === "search_condition"),
+    notViewable: ps?.notViewable === true || !!ps?.vacancyDate,
+    honest: Array.isArray(sr?.trust_how) && (sr!.trust_how as unknown[]).includes("honest_weak"),
+    asksNumbers: asks.some((a) => /\d/.test(String(a.answer ?? ""))),
+  };
+}
+/** 型を選ぶ（要素ごとに当たる物を件数の多い順に最大2つ）。手がかりはブレインの欄だけ */
+export function pickElementTypes(meta: unknown): Record<ElementKind, string[]> {
+  const c = elementCuesOf(meta);
+  const taken = /埋ま|取られ|逃|先に取られる/.test(c.latent), cost = /費用|初期|総額|払|家賃/.test(c.latent), screen = /審査|保証|落ち/.test(c.latent), find = /見つから|合う部屋|他の物件|新着/.test(c.latent);
+  const hit: Record<string, boolean> = {
+    P_hold_first: taken || c.applyPush, P_one_room: /1部屋/.test(c.facts), P_fill_soon: taken && /埋ま/.test(c.latent), P_no_cancel_fee: c.applyPush && /キャンセル/.test(c.facts), P_vacate_soon: c.notViewable,
+    R_company_fact: cost, R_numbers: c.asksNumbers, R_quick: c.promiseMain, R_support: c.conditions, R_honest: c.honest,
+    L_guarantor: screen, L_estimate: cost && !/分割|カード/.test(c.latent), L_freerent: cost && /フリーレント|敷金礼金/.test(c.facts), L_card: /分割|カード|一度に/.test(c.latent), L_new_arrival: find || c.conditions,
+  };
+  const out: Record<ElementKind, string[]> = { push_line: [], trust: [], latent_line: [] };
+  for (const t of [...ELEMENT_TYPES].sort((a, b) => b.count - a.count)) if (hit[t.id] && out[t.element].length < 2) out[t.element].push(t.id);
+  return out;
+}
+/** 竹内さんの文から型を読む（物差しの正解の型の欄） */
+export function elementTypesOfText(text: string): Record<ElementKind, string[]> {
+  const out: Record<ElementKind, string[]> = { push_line: [], trust: [], latent_line: [] };
+  for (const t of ELEMENT_TYPES) if (t.re.test(text)) out[t.element].push(t.id);
+  return out;
+}
+/** 設計図に添える1行（on の時だけ・言葉の型と竹内さんの数だけ・文は写さない） */
+export function elementTypesNote(picked: Record<ElementKind, string[]>, env?: Env): string {
+  if (!composeElementTypesOn(env)) return "";
+  const byId = new Map(ELEMENT_TYPES.map((t) => [t.id, t]));
+  const part = (k: ElementKind, ja: string) => (picked[k].length ? `${ja}: ${picked[k].map((id) => `${byId.get(id)!.name}（竹内さん ${byId.get(id)!.count}通）`).join("／")}` : null);
+  const L = [part("push_line", "押す線"), part("trust", "信頼の作り方"), part("latent_line", "潜在の不安への一文")].filter(Boolean);
+  return L.length ? `- この番に合う言葉の型（ブレインの欄から・材料に無い事実は書かない）: ${L.join("｜")}` : "";
+}
