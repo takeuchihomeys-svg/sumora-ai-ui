@@ -11,6 +11,9 @@
 //   ②重点・優先・目的・押すかは道を書き終えた後の欄（BRAIN_*_AFTER と同じ置き方）で使う。
 // スイッチ: CHECK_ORDER_TABLE（既定 off＝どこからも読まない・shadow＝記録だけ・on＝後の欄に注記）。配線は試験の後（今はこのファイルとテストだけ）。
 
+import type { BasisDepth, Priority } from "./judge-basis-types";
+import type { NextMove } from "./next-move-types";
+
 export type CheckStep =
   | "read_ask"        // 何を言われたか（主の問い・依頼・反応）
   | "hypothesize"     // 読みの候補を立てる（この『はい』は何への了承か 等）
@@ -244,19 +247,19 @@ export const TIE_BREAKS: ReadonlyArray<{ when: string; take: string; why: string
 /** 読む深さ（竹内さん 11/12「状況によって必要な場合深く読むなど実際の人間のように」・P1 077d6e18 深く読むのは複雑な番だけ）。
  *  198通の目安（7つの欄の札から: 遡る＝前の約束・送った物に触れた／事実＝理由の事実・数字・正直な弱み）: 浅 86・遡る 40・事実 62・両方 10。
  *  場面ごと: considering 浅 17/22（一番浅い）・apply 事実 12/22・question 事実 10/22・ack は浅 7 だが両方 4（お礼の番が一番深い時がある）。 */
-export type CheckDepth = { base: "shallow" | "back" | "fact" | "deep"; deepenWhen: string[]; why: string; count: string };
+export type CheckDepth = { base: BasisDepth; /** normal の中身: back＝前の約束・送った物まで遡る／fact＝資料・会社の事実を見る */ via?: "back" | "fact"; deepenWhen: string[]; why: string; count: string };
 export const CHECK_DEPTH: Readonly<Record<string, CheckDepth>> = {
-  T1_conditions_first: { base: "back", deepenWhen: ["2回目以降の言い直し（前の条件との差）", "前に送った物件を外す言い方（肥後橋は上過ぎる）"], why: "前の条件・送った物との差を見ないと『変更か追加か・ずっとか今回か』が決まらない", count: "conditions 浅 9・遡る 7・事実 5・両方 1" },
-  T2_question_fact: { base: "fact", deepenWhen: ["物件ごとに答えが違う（保証会社・入居日）", "答えが申込の判断に直結する"], why: "資料・会社の事実を見て結論で答える。遡りは要らない時が多い", count: "question 事実 10/22" },
-  T3_question_staff_only: { base: "fact", deepenWhen: ["資料に答えが無いと確かめてから約束にする"], why: "資料を見ずに確認の約束にすると、答えられる事を保留する（q065）", count: "promise の札 47" },
+  T1_conditions_first: { base: "normal", via: "back", deepenWhen: ["2回目以降の言い直し（前の条件との差）", "前に送った物件を外す言い方（肥後橋は上過ぎる）"], why: "前の条件・送った物との差を見ないと『変更か追加か・ずっとか今回か』が決まらない", count: "conditions 浅 9・遡る 7・事実 5・両方 1" },
+  T2_question_fact: { base: "normal", via: "fact", deepenWhen: ["物件ごとに答えが違う（保証会社・入居日）", "答えが申込の判断に直結する"], why: "資料・会社の事実を見て結論で答える。遡りは要らない時が多い", count: "question 事実 10/22" },
+  T3_question_staff_only: { base: "normal", via: "fact", deepenWhen: ["資料に答えが無いと確かめてから約束にする"], why: "資料を見ずに確認の約束にすると、答えられる事を保留する（q065）", count: "promise の札 47" },
   T4_property_shared: { base: "deep", deepenWhen: ["条件と一緒に物件が来た（参考か依頼か）", "前にその物件を送っていたか", "初回か"], why: "何のために送ったかは言葉に無い。条件・前の送信・初回かを見て読みの候補から1つに決める（本番 11264 は浅く決め打ちして見積書にした）", count: "property_share 浅 10・遡る 6・事実 5・両方 1" },
-  T5_ack_hypothesis: { base: "back", deepenWhen: ["約束が複数開いている時の『はい』", "見積の後の了承（1部屋のみなら抑える）", "こちらの送信と食い違う反応"], why: "了承の中身はこちらの直前の送信で決まる。約束が複数ならどれへの了承かを候補で確かめる", count: "ack 浅 7・遡る 6・事実 5・両方 4（場面で一番深い番がある）" },
+  T5_ack_hypothesis: { base: "normal", via: "back", deepenWhen: ["約束が複数開いている時の『はい』", "見積の後の了承（1部屋のみなら抑える）", "こちらの送信と食い違う反応"], why: "了承の中身はこちらの直前の送信で決まる。約束が複数ならどれへの了承かを候補で確かめる", count: "ack 浅 7・遡る 6・事実 5・両方 4（場面で一番深い番がある）" },
   T6_considering: { base: "shallow", deepenWhen: ["今日中に決める等の決める合図", "取られる不安を口にした（埋まるかも）"], why: "急がず扉だけ。深く読むと押す材料を拾って道を引っぱる", count: "considering 浅 17/22" },
   T7_viewing: { base: "shallow", deepenWhen: ["内見できない物件（申込で先に抑える線）", "他社で内覧予定"], why: "可否・時刻への即答が中心。段階の外れの時だけ深く", count: "viewing 浅 11/22" },
-  T8_cost: { base: "fact", deepenWhen: ["物件がある（見積書の材料）", "安さを不審に思う"], why: "総額の不安に事実で先回り", count: "cost 浅 12・事実 8" },
-  T9_apply_signal: { base: "fact", deepenWhen: ["物件が複数で名指しが曖昧", "申込の門（書類の手前で止める）"], why: "対象物件と空きを事実で確かめて即承認", count: "apply 事実 12/22" },
-  T10_result_ready: { base: "back", deepenWhen: ["約束が複数（どれの結果か）"], why: "どの約束の結果かを遡って先に果たす", count: "本番 11408" },
-  T11_first_contact_hearing: { base: "fact", deepenWhen: ["事情（2人・審査の不安・再来）を言った"], why: "言われた事情に会社の事実で答えてからフォーム", count: "本番 12240・12306" },
+  T8_cost: { base: "normal", via: "fact", deepenWhen: ["物件がある（見積書の材料）", "安さを不審に思う"], why: "総額の不安に事実で先回り", count: "cost 浅 12・事実 8" },
+  T9_apply_signal: { base: "normal", via: "fact", deepenWhen: ["物件が複数で名指しが曖昧", "申込の門（書類の手前で止める）"], why: "対象物件と空きを事実で確かめて即承認", count: "apply 事実 12/22" },
+  T10_result_ready: { base: "normal", via: "back", deepenWhen: ["約束が複数（どれの結果か）"], why: "どの約束の結果かを遡って先に果たす", count: "本番 11408" },
+  T11_first_contact_hearing: { base: "normal", via: "fact", deepenWhen: ["事情（2人・審査の不安・再来）を言った"], why: "言われた事情に会社の事実で答えてからフォーム", count: "本番 12240・12306" },
 };
 
 export type CheckOrderMode = "off" | "shadow" | "on";
@@ -316,3 +319,25 @@ export function checkOrderNote(t: CheckOrderType): string {
     `なぜ: ${t.why}`,
   ].join("\n");
 }
+
+/** Need（この表の優先の名前）→ judge-basis-types の Priority（重点の物差しと同じ名前で数える） */
+export const PRIORITY_OF_NEED: Record<Need, Priority> = {
+  keep_result: "keep_promise", answer: "answer_question", confirm_promise: "keep_promise", send_promise: "keep_promise",
+  worry: "ease_worry", next_move: "next_step", relation: "keep_relation",
+};
+
+/** 型ごとの次の一手（行き先×強さ×時機・next-move-types の1つの表の名前）。道が決まった後だけに使う（道の前に置かない）。
+ *  数は scripts/next-move-score.ts の 198通（2026-11-12）。強さの上限は strengthCeiling（竹内さんの番で上限を超えたのは 8/198）。 */
+export const NEXT_MOVE_OF_TYPE: Readonly<Record<string, { usual: NextMove; alt: Array<NextMove & { when: string }>; why: string; count: string }>> = {
+  T1_conditions_first: { usual: { dest: "keep_send", strength: "none", timing: "now" }, alt: [], why: "条件の番は約束そのものが次の一手。押す物がまだ無い", count: "conditions 18/22 が keep_send×none" },
+  T2_question_fact: { usual: { dest: "keep_send", strength: "none", timing: "now" }, alt: [{ dest: "answer_only", strength: "none", timing: "now", when: "答えで足りる問い（分割・保証会社）" }, { dest: "apply", strength: "invite", timing: "now", when: "答えが申込の時期・順番に関わる（何人待ち・いつ申し込めば）" }, { dest: "keep_send", strength: "none", timing: "plant", when: "審査・広さの不安（独立系・審査通過を置いて探す約束）" }], why: "答えの後は探す約束か答えだけ。申込を出すのは問いが申込の判断そのものの時", count: "question keep_send 11・answer_only 4・apply 3・plant 2" },
+  T3_question_staff_only: { usual: { dest: "wait_check", strength: "none", timing: "now" }, alt: [], why: "確認の結果を待ってもらうのが次の一手。結果の前に押さない", count: "promise の札 47" },
+  T4_property_shared: { usual: { dest: "keep_send", strength: "none", timing: "now" }, alt: [{ dest: "estimate", strength: "invite", timing: "now", when: "費用を聞かれた・確認済み（最大限割引の御見積書を作る）" }], why: "空きの確認の約束が先。見積は確認の後", count: "property_share keep 10・estimate 8" },
+  T5_ack_hypothesis: { usual: { dest: "viewing", strength: "none", timing: "now" }, alt: [{ dest: "keep_send", strength: "none", timing: "now", when: "ピックアップの約束の後のお礼" }, { dest: "answer_only", strength: "none", timing: "now", when: "内覧確定・日時の了承" }, { dest: "apply", strength: "strong", timing: "now", when: "見積の後の了承で物件の残り（1部屋のみ）" }], why: "行き先は直前のこちらの送信で決まる（物件の後＝内覧の扉・約束の後＝約束を守る・見積の後で残り1＝抑える）", count: "ack viewing 6・answer_only 5・keep 5・apply strong 2" },
+  T6_considering: { usual: { dest: "viewing", strength: "door", timing: "now" }, alt: [{ dest: "answer_only", strength: "door", timing: "now", when: "見積の後の検討" }, { dest: "keep_send", strength: "door", timing: "now", when: "新着で待つと言われた" }, { dest: "apply", strength: "strong", timing: "now", when: "お客様が埋まる不安を口にした" }], why: "検討は扉だけ。埋まる不安を自分から言った時だけ抑える線まで", count: "considering door 15/22・strong 1" },
+  T7_viewing: { usual: { dest: "viewing", strength: "none", timing: "now" }, alt: [{ dest: "viewing", strength: "invite", timing: "now", when: "日時の相談" }, { dest: "apply", strength: "strong", timing: "now", when: "内見できない・入居が近い（申込で先に抑える）" }], why: "段階どおり日時を決めるのが一手。内見できない時は申込で抑える", count: "viewing viewing 10・apply strong 3" },
+  T8_cost: { usual: { dest: "keep_send", strength: "none", timing: "now" }, alt: [{ dest: "answer_only", strength: "none", timing: "now", when: "総額・分割の問い" }, { dest: "estimate", strength: "invite", timing: "now", when: "物件があり初期費用を全部知りたい" }], why: "総額が高いと言われたら別の物件を探す約束。物件があれば見積", count: "cost keep 7・answer_only 4・estimate 3" },
+  T9_apply_signal: { usual: { dest: "apply", strength: "strong", timing: "now" }, alt: [{ dest: "apply", strength: "invite", timing: "now", when: "審査・保証会社の問い（答えてから申込の線）" }, { dest: "viewing", strength: "invite", timing: "plant", when: "名義・審査の相談（内覧の後の判断に仕込み）" }, { dest: "keep_send", strength: "none", timing: "now", when: "焦って決めたくない" }], why: "合図に即答して抑える。審査の相談は答えて申込の線を置く", count: "apply strong 6・invite 5・plant 2" },
+  T10_result_ready: { usual: { dest: "keep_send", strength: "none", timing: "now" }, alt: [{ dest: "viewing", strength: "invite", timing: "now", when: "結果が空いていた" }], why: "空いていなければ代わりを送る約束（営業の考え方）", count: "本番 11408" },
+  T11_first_contact_hearing: { usual: { dest: "ask_condition", strength: "none", timing: "now" }, alt: [], why: "初回は条件を聞くのが一手（フォーム）。押さない", count: "本番 12240・12306" },
+};
