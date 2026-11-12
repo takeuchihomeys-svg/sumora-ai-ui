@@ -57,10 +57,12 @@ t("統括の単位の表（conductor-linkage）と突き合う: 受け取る所�
   const ids = new Set(CONDUCTOR_LINKS.map((l) => l.id));
   for (const [r, id] of Object.entries(RECEIVER_TO_LINK)) if (id) assert.ok(ids.has(id), `${r}→${id}`);
   for (const r of FIELD_LINKS) if (r.link) assert.ok(ids.has(r.link), `${r.field} ${r.link}`);
-  // meta の鍵がある欄のうち、CONDUCTOR_LINKS の writes にまだ無い物（統括の表の外の欄）を一覧に出す（表を広げる時の目安・落とさない）
+  // meta の鍵がある欄は全部、CONDUCTOR_LINKS のどれかの writes にある（統括の表の外の欄は無い・2026-11-12 作業員7 の a3dc2d2a で揃った後に落とす形に強めた）
   const writes = CONDUCTOR_LINKS.flatMap((l) => l.writes);
   const outside = FIELD_LINKS.filter((r) => r.metaKey && !writes.some((w) => w === `meta.${r.metaKey}`)).map((r) => r.field);
-  console.log("   統括の表（conductor-linkage）の writes にまだ無い欄:", outside.join(",") || "なし");
+  assert.deepEqual(outside, [], `統括の表（conductor-linkage）の writes に無い欄: ${outside.join(",")}`);
+  // AIX の2通目の欄は aix_second の統括に結ぶ
+  for (const f of ["aix_first_sent", "aix_second_materials", "aix_second_brain_bundle", "aix_second_writer"]) assert.equal(FIELD_LINKS.find((x) => x.field === f)!.link, "aix_second", f);
 });
 t("AIX 1通目→2通目の欄がある（作業員25 の点検と名前を揃える）", () => {
   for (const f of ["aix_first_sent", "aix_second_materials", "aix_second_brain_bundle"]) { const r = FIELD_LINKS.find((x) => x.field === f); assert.ok(r && r.receivers.includes("aix_text"), f); }

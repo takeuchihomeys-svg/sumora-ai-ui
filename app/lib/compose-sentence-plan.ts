@@ -696,6 +696,8 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   check_order_scene: "other", check_order_type: "other", check_order: "other",
   // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF・記録だけ）とその入力
   conductor_brief_inputs: "other", conductor_brief: "other",
+  // 2026-11-12 作業員22: 作業員1 の材料の抜けの台帳（MATERIAL_GAP_LEDGER=shadow・記録だけ）は文に関係しない（main で受け口が無くテストが落ちていた）
+  material_gaps: "none",
   // 別の注記・役が運ぶ（本質の帯・方向・姿勢・締め・2通・AIX）
   key_topics: "other", avoid_topics: "other", customer_questions: "other", priorities: "other", reply_mode: "other", two_stage: "other", reply_opener: "other",
   recommended_tone: "other", urgency_appropriate: "other", closing_strategy: "other", payment_timing: "other", far_move_in: "other", property_state: "other",
