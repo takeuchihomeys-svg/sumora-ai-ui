@@ -368,6 +368,8 @@ import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
 import { exemplarNoteFor } from "@/app/lib/takeuchi-exemplar-server";
+import { composeVocabUnifiedOn, applySceneConstraints, stripWritingBlueprintOrder } from "@/app/lib/compose-vocab";
+const maybeStripWb = (note: string, on: boolean): string => (on ? stripWritingBlueprintOrder(note) : note);
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
@@ -4502,11 +4504,15 @@ async function handleGenerateReply(req: NextRequest) {
       ? (() => {
           try {
             const u = readTurnUnderstanding(brainMeta), s7 = readSevenFields(brainMeta);
-            const plan = buildSentencePlan(u, s7, { scene: composeConductorScene, ctx: readComposeContext(brainMeta, { nextIntent: composeRun?.intent.next && composeRun.intent.next !== "none" ? composeRun.intent.next : null }) });
+            const plan0 = buildSentencePlan(u, s7, { scene: composeConductorScene, ctx: readComposeContext(brainMeta, { nextIntent: composeRun?.intent.next && composeRun.intent.next !== "none" ? composeRun.intent.next : null }) });
+            // 2026-11-12 作業員10（語彙を1つに・COMPOSE_VOCAB_UNIFIED=on・既定 off）: 場面の要る段・書かない段を設計図の行に効かせる（app/lib/compose-vocab.ts）
+            const planU = applySceneConstraints(plan0, composeConductorScene);
+            const plan = planU;
             // 2026-11-12 作業員10: 作業員5 の竹内さんの手本（場面×潜在×誘導先・TAKEUCHI_EXEMPLAR=on の時だけ）を設計図の注記の後ろに（文は写させない）
             const ex = (() => { try { return exemplarNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta }); } catch { return null; } })();
+            // 要る役目の行は書き手に渡さない（竹内さんの24番で4/4が竹内さんの文に無い役目だった＝記録だけ）
             const note0 = sentencePlanNote(plan);
-            return { plan, note: note0 && ex ? `${note0}\n${ex.note}` : note0, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}` };
+            return { plan, note: note0 && ex ? `${note0}\n${ex.note}` : note0, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${planU.removed.length ? `｜外した=${planU.removed.join(",")}` : ""}${planU.requiredRoles.length ? `｜要る=${planU.requiredRoles.join(",")}` : ""}` };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()
       : null;
@@ -6308,13 +6314,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       { scene: replyScene, on: sceneMaterialsOn, composeOn: !!composeRun?.note, brainContract: turnContract?.source === "brain", messagePlan: turnContract?.source === "brain" ? (turnContract.messagePlan ?? null) : null, ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off",
         // 2026-10-20 文の設計図（竹内さん f5a4b51a「文生成にも軸」）: 既定 off＝"" を渡す（指示は変わらない）。分かれ道は今は他社で内覧の1つだけ（申込までの地図が入ったら地図の分かれ道に替える）
         // on の時に万一投げても返信は止めない（"" に落とす）
-        blueprintNote: !isTemplateOptimize && writingBlueprintEnabled() ? (() => { try { return buildWritingBlueprintNote({
+        // 2026-11-12 作業員10（COMPOSE_VOCAB_UNIFIED=on・設計図の注記が出る番だけ）: 場面の設計図から設計図と二重の行（並び・要る段・書かない段）を外す
+        blueprintNote: !isTemplateOptimize && writingBlueprintEnabled() ? (() => { try { return maybeStripWb(buildWritingBlueprintNote({
           scene: replyScene,
           routeBranch: isOtherAgentViewingPlan(message ?? "") || isOtherAgentViewingApplyQuestion(message ?? "") ? "other_agent_viewing" : null,
           questions: replySceneResolved?.questions?.length ? replySceneResolved.questions : questionsOf(message ?? ""),
           sentThisTurn: replyAixPre?.timing === "now",
           promiseOutstanding: ledgerActive ? !!ledger.facts.pickupPromisedUnfulfilled : false,
-        }) + (() => {
+        }), composeVocabUnifiedOn() && !!composeSentencePlan?.note) + (() => {
           // 2026-10-23 計画7: 10/20 の会話の型（writing-blueprint-patterns.ts・e0e83baa/1bc5683e/c0b845e8/9b8dbfca/adc4d260/317c7a7c/d9fa213d/bf2c0517/d9533aad/5192922a）
           const pn = buildBlueprintPatternNote({
             scene: replyScene, customerText: message ?? "", messages: recentMessages, customerConditions,
