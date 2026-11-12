@@ -28,24 +28,25 @@ export const OUR_SEND_PART_LABEL: Record<OurSendPartKind, string> = {
 export const HOOK_POINTS = ["家賃", "広さ・間取り", "駅・場所", "新しさ", "設備", "初期費用", "空き・入居", "条件の合い方", "キャンペーン"] as const;
 export type HookPoint = typeof HOOK_POINTS[number];
 /** 部分の細かい語彙（2026-11-12 竹内さん「こちらからの部分も具体的に細かく細分化」）。
- *  ⚠ 作業員4 が app/lib/our-part-types.ts（案）に1か所にまとめる。入ったらここはそちらを読む形に移し、名前を揃える（今は案の名前で置く）。 */
+ *  名前は作業員4 の app/lib/our-part-types.ts（OUR_PARTS・feat/exchange-ledger-1112）と同じ（聞いた事の sub は作業員1 の INFO_KEYS と同じ鍵）。
+ *  ⚠ どちらかが main に入ったら、ここは OUR_PARTS の kind／sub を import する形に寄せる（網を2か所に持たない）。aix の部分は AIX の送信なのでここでは扱わない。 */
 export const OUR_PART_SUBS = {
-  question: ["cond_move_in", "cond_rent", "cond_area", "cond_layout", "cond_equipment", "schedule", "other"],
-  fact: ["cost", "screening", "move_in", "property_fact", "company", "other"],
-  promise: ["check", "send", "search", "estimate", "contact_day", "other"],
-  proposal: ["recommend_one", "compare", "other"],
-  invite: ["viewing", "apply", "other"],
-  property: ["one_pick", "bundle", "new_arrival", "alternative"],
+  question: ["area", "rent", "layout", "move_in", "size", "equipment", "schedule", "property_wish", "situation"],
+  fact: ["company", "material", "check_result", "estimate_amount", "answer"],
+  promise: ["check", "send_property", "search", "estimate", "contact_day"],
+  proposal: ["hold", "viewing", "other_property", "screening_first"],
+  invite: ["viewing_door", "apply_door"],
+  property: ["one_push", "bundle", "new_arrival", "alternative"],
 } as const;
 export type OurPartSub = (typeof OUR_PART_SUBS)[keyof typeof OUR_PART_SUBS][number];
 export function subOfPart(kind: OurSendPartKind, s: string): OurPartSub {
   switch (kind) {
-    case "question": return /入居|時期/.test(s) ? "cond_move_in" : /家賃|予算/.test(s) ? "cond_rent" : /エリア|駅|場所/.test(s) ? "cond_area" : /間取り|広さ|帖|LDK/.test(s) ? "cond_layout" : /設備|オートロック|バス|洗面|ペット|駐車/.test(s) ? "cond_equipment" : /日|時|ご都合|曜/.test(s) ? "schedule" : "other";
-    case "fact": return /初期費用|敷金|礼金|見積|手数料|家賃/.test(s) ? "cost" : /審査|保証会社/.test(s) ? "screening" : /入居|退去|完成/.test(s) ? "move_in" : /弊社|仲介手数料0|スモラ|当社/.test(s) ? "company" : /帖|㎡|築|駅|設備|オートロック/.test(s) ? "property_fact" : "other";
-    case "promise": return /見積/.test(s) ? "estimate" : /ピックアップ|新着|探/.test(s) ? "search" : /確認/.test(s) ? "check" : /明日|本日|午前|午後|日中/.test(s) ? "contact_day" : /お送り/.test(s) ? "send" : "other";
-    case "proposal": return /中でも|特に/.test(s) ? "recommend_one" : /比べ|どちら/.test(s) ? "compare" : "other";
-    case "invite": return /申込|抑え|押さえ/.test(s) ? "apply" : /案内|内覧|内見/.test(s) ? "viewing" : "other";
-    case "property": return /新着|募集に出/.test(s) ? "new_arrival" : /代わり|こちらのお部屋如何|別のお部屋/.test(s) ? "alternative" : /🌟|特に/.test(s) ? "one_pick" : "bundle";
+    case "question": return /入居|時期/.test(s) ? "move_in" : /家賃|予算/.test(s) ? "rent" : /エリア|駅|場所/.test(s) ? "area" : /間取り|LDK|1K|1DK/.test(s) ? "layout" : /広さ|帖|㎡/.test(s) ? "size" : /設備|オートロック|バス|洗面|ペット|駐車/.test(s) ? "equipment" : /お日にち|日程|ご都合|曜|何時/.test(s) ? "schedule" : /お部屋|物件/.test(s) ? "property_wish" : "situation";
+    case "fact": return /確認(?:させて|致し|いたし)?(?:頂き|いただき)?まし|確認した|募集(?:中|終了)|空いて/.test(s) ? "check_result" : /[0-9０-９,]+円|見積/.test(s) ? "estimate_amount" : /弊社|仲介手数料0|スモラ|当社|保証会社の審査/.test(s) ? "company" : /帖|㎡|築|駅|設備|オートロック|資料/.test(s) ? "material" : "answer";
+    case "promise": return /見積/.test(s) ? "estimate" : /ピックアップ|新着|探/.test(s) ? "search" : /確認/.test(s) ? "check" : /明日|本日|午前|午後|日中/.test(s) ? "contact_day" : "send_property";
+    case "proposal": return /抑え|押さえ|申込/.test(s) ? "hold" : /審査[^。！]{0,6}先/.test(s) ? "screening_first" : /案内|内覧|内見/.test(s) ? "viewing" : "other_property";
+    case "invite": return /申込|抑え|押さえ/.test(s) ? "apply_door" : "viewing_door";
+    case "property": return /新着|募集に出/.test(s) ? "new_arrival" : /代わり|こちらのお部屋如何|別のお部屋/.test(s) ? "alternative" : /🌟|特に/.test(s) ? "one_push" : "bundle";
   }
 }
 export type OurSendPart = { kind: OurSendPartKind; sub: OurPartSub; text: string; points: HookPoint[] };
