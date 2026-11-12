@@ -97,13 +97,13 @@ console.log("\n⑥ 拾いに行く前のリアプロのタブ（realproReady）"
 eq("main.php のタブがある → true", G.realproReady([{ url: "https://itandibb.com/rent_rooms/list" }, { url: "https://www.realnetpro.com/main.php?method=estate" }]), true);
 eq("ログインの画面だけ（本番の写真 #23: index.php）→ false", G.realproReady([{ url: "https://www.realnetpro.com/index.php" }, { url: LIST }]), false);
 eq("ログインの画面と main.php の両方 → true", G.realproReady([{ url: "https://www.realnetpro.com/index.php" }, { url: "https://www.realnetpro.com/main.php" }]), true);
-eq("リアプロのタブが無い → null（今まで通り拾う）", G.realproReady([{ url: LIST }]), null);
-eq("空・壊れた入力 → null", [G.realproReady([]), G.realproReady(null), G.realproReady([{}, null])], [null, null, null]);
+eq("リアプロのタブが無い → false（2026-11-12: リアプロスタンバイしていない PC が自動検索を拾って失敗し続けた）", G.realproReady([{ url: LIST }]), false);
+eq("空・壊れた入力 → false（タブが無い＝使えない）", [G.realproReady([]), G.realproReady(null), G.realproReady([{}, null])], [false, false, false]);
 
 console.log("\n配線（読み込み・呼び出し）");
 {
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.7.3");
+  eq("manifest の版", mf.version, "2.7.4");
   const itCs = mf.content_scripts.find((c) => (c.js || []).includes("itandi-bulk-dl.js"));
   ok("itandi-guard.js は itandi-bulk-dl.js より前", itCs.js.indexOf("itandi-guard.js") >= 0 && itCs.js.indexOf("itandi-guard.js") < itCs.js.indexOf("itandi-bulk-dl.js"));
   const html = read("popup.html");
@@ -129,7 +129,8 @@ console.log("\n配線（読み込み・呼び出し）");
   ok("リアプロを飛ばす時に待ち手を閉じる", /_endFillDoneWaiter\("realnetpro", String\(customerId\), "リアプロのタブが検索の画面でない"\)[\s\S]{0,120}throw new Error\("AXLX_TAB_DEAD: リアプロ/.test(bg));
   ok("最初の確かめにお客様を渡す", /_ensureRealproTab\(tab, auditRun, null, customer && customer\.id\)/.test(bg));
   ok("やり直しの確かめにもお客様を渡す", /"content_script_dead" : "page_script_dead", _cidStr\)/.test(bg));
-  ok("拾いに行く前に rp=0", /realproReady\(await chrome\.tabs\.query\(\{\}\)\) === false\) _qs\.push\("rp=0"\)/.test(bg));
+  ok("拾いに行く前に rp=0", /if \(_rpReady === false\) \{[\s\S]{0,80}_qs\.push\("rp=0"\)/.test(bg));
+  ok("2026-11-12: リアプロを使えない PC は自動の回を拾わない（pending のまま・別の PC が拾う）", /if \(_autoModeOn\) \{[\s\S]{0,600}no_realpro_tab/.test(bg));
 
   const pp = read("popup.js");
   // 受け口は underbar の中継の1本（動きは switch-once.test.js で確かめる）

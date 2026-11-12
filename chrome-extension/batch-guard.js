@@ -33,18 +33,28 @@
 
   /**
    * v2.5.48 命令を拾いに行く前に: リアプロのタブが検索の画面（main.php）か。
-   *   true＝main.php のタブがある／false＝リアプロのタブはあるが main.php が1つも無い（ログインの画面等）／null＝リアプロのタブが無い（分からない＝今まで通り）
-   *   false の時だけ /api/automation/pending に rp=0 を付ける（サーバーがリアプロを含む手の命令を少しの間ほかの PC に譲る）
+   *   true＝main.php のタブがある／false＝リアプロを使えない（タブが無い・ログインの画面等）／null＝分からない（今まで通り）
+   *
+   * 2026-11-12 竹内さん「今リアプロスタンバイしていない時も勝手に自動検索おこなわれていないか？」
+   *   調べたら**動いていた**（DB の automation_commands に 26時間で 121件、そのうち **120件が
+   *   `AXLX_NO_TAB: realnetpro のタブが開いていません`** で失敗・約60秒おきに拾い続けていた）。
+   *
+   *   原因: 旧は「リアプロのタブが1つも無い」時 **null** を返していた（＝分からない＝今まで通り）。
+   *     呼ぶ側は `=== false` の時だけ `rp=0` を付けるので、**開いていない PC は何も付けずに命令を拾い**、
+   *     拾った後で「タブが無い」と分かって失敗する。サーバーは pending を1件ずつ渡すので、
+   *     その PC が**自動便の行列を1件ずつ順番に潰していく**（他の PC に回らない）。
+   *   → **開いていない（タブが1つも無い）も false**（＝この PC はリアプロを使えない）にした。
+   *     サーバーは rp=0 の PC にリアプロを含む手の命令を渡さない（ほかの PC が拾う）。
+   *     ⚠ 分からない時（URL を読めない等）は今まで通り null（安全側に倒して渡す）。
    */
   function realproReady(tabs) {
     var list = Array.isArray(tabs) ? tabs : [];
-    var any = false;
     for (var i = 0; i < list.length; i++) {
       var u = list[i] && typeof list[i].url === "string" ? list[i].url : "";
-      if (REALPRO_MAIN_RE.test(u)) return true;
-      if (REALPRO_ANY_RE.test(u)) any = true;
+      if (REALPRO_MAIN_RE.test(u)) return true; // main.php がある＝使える
     }
-    return any ? false : null;
+    // main.php が1つも無い＝使えない（タブが無い場合も含む・2026-11-12）
+    return false;
   }
 
   /**

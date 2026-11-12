@@ -1956,6 +1956,13 @@ if (msg.type === "axlx-human-shot") {
          *   → 一度そのタブをアクティブにして撮り、**すぐ元に戻す**（人の操作を邪魔しない）。
          */
         try {
+          /**
+           * 2026-11-12 竹内さん「くれさん通常モードで検索したけどちゃんと画面録画はできるようになっているかな」:
+           *   `captureVisibleTab` は**その窓が前に出ている（focused）**事も要る。
+           *   拡張の小窓（ポップアップの別窓）を開いていると本体の窓が後ろに下がり、毎回失敗する。
+           *   → 撮る前に**窓を前に出す**（人が見ている前提の軽い操作・タブは元に戻す）。
+           */
+          try { await chrome.windows.update(tab.windowId, { focused: true }); } catch (_) {}
           const prev = await chrome.tabs.query({ active: true, windowId: tab.windowId }).catch(function () { return []; });
           const prevId = prev && prev[0] ? prev[0].id : null;
           await chrome.tabs.update(tab.id, { active: true });
@@ -4444,9 +4451,37 @@ async function _pollAndRunBatch() {
     if (_bh.claimBrainCommands) _qs.push("brain=1");
     // v2.5.48: リアプロのタブがログインの画面等（main.php が1つも無い）なら rp=0 → サーバーがリアプロを含む手の命令を少しの間ほかの PC に譲る
     //   （2026-09-30 YUMA の手の命令が2回ともログイン切れの PC に渡って AXLX_TAB_DEAD）。タブを読むだけ・サイトには触らない
+    /**
+     * 2026-11-12 竹内さん「今リアプロスタンバイしていない時も勝手に自動検索おこなわれていないか？」:
+     *   調べたら**動いていた**（26時間で121件・その120件が `AXLX_NO_TAB: realnetpro のタブが開いていません`
+     *   で約60秒おきに失敗し続けていた）。
+     *   原因は2つ: ① 拡張の `realproReady` が「タブが無い」時 **null** を返していて、呼ぶ側は
+     *   `=== false` の時だけ rp=0 を付けるので**何も付かなかった**（＝リアプロを使えない PC が拾っていた）。
+     *   ② サーバー側の `deferForRealproNotReady` は **web_brain だけ**を見ていて、
+     *   **自動便（auto_schedule）は rp=0 でも渡していた**。
+     *   → ①は batch-guard.js で false に（修正済み）。②はここで **リアプロを含む命令は rp=0 の PC に渡さない**
+     *     ようにサーバーを直した（app/lib/automation-sources.ts）。
+     *   この PC でリアプロを使えない時は、そもそも自動の回を**拾わない**ようにもする（二重の歯止め）。
+     */
+    var _tabsNow = [];
+    try { _tabsNow = await chrome.tabs.query({}); } catch (_) {}
+    var _rpReady = null;
     try {
-      if (self.AxlxBatchGuard && self.AxlxBatchGuard.realproReady && self.AxlxBatchGuard.realproReady(await chrome.tabs.query({})) === false) _qs.push("rp=0");
+      if (self.AxlxBatchGuard && self.AxlxBatchGuard.realproReady) _rpReady = self.AxlxBatchGuard.realproReady(_tabsNow);
     } catch (_) {}
+    if (_rpReady === false) {
+      _qs.push("rp=0");
+      /**
+       * 2026-11-12: リアプロを使えない PC は、**リアプロを含む自動便は拾わない**。
+       *   ⚠ 拾わないだけで命令は消さない（pending のまま＝リアプロを開いている別の PC が拾う）。
+       *   ITANDI だけの命令は今まで通り拾う。
+       */
+      if (_autoModeOn) {
+        console.log("[batch] 自動モードだがリアプロのタブが無い → リアプロを含む指示は拾わない（pending のまま・別の PC が拾う）");
+        try { await chrome.storage.local.set({ autoWorkGate: { open: false, reason: "no_realpro_tab", resumeAt: null, at: Date.now() } }); } catch (_) {}
+        return;
+      }
+    }
     // 2026-09-30 v2.5.42 竹内「お客さん毎に…次のお客さんに移る等の動きで。また動き方もロボットみたいじゃなくて人間のように」:
     //   1人1コマンド（AIXツールの一括検索・午前の便）は、前の人を終えてから人がお客様を開き直す間（auto-run.js nextCommandGapMs）を置いてから拾う。
     //   ⚠ /pending は取った時点で running にする（claim）ので、間は取りに行く**前**に見る（コマンドは pending のまま＝他の PC が拾ってもよい）。

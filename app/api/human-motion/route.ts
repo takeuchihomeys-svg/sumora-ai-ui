@@ -191,7 +191,20 @@ export async function POST(req: NextRequest) {
   delete row.shot_b64;
 
   const ins = await supabase.from("human_motion_learn").insert(row);
-  return NextResponse.json({ ok: !ins.error, error: ins.error?.message }, { status: ins.error ? 500 : 200, headers: CORS });
+  /**
+   * 2026-11-12 竹内さん「くれさん通常モードで検索したけどちゃんと画面録画はできるようになっているかな」:
+   *   写真は Storage に上がったのに**表に1行も入っていなかった**（今日 0件）。
+   *   手元で試すと `new row violates row-level security policy for table "human_motion_learn"`（42501）で拒否されていた。
+   *   → 写真が上がったのに表へ入れられない時は、**写真を消さずに理由を返す**（黙って成功にしない）。
+   *     呼ぶ側（拡張）は `axlx_human_shot_upload` に理由を残し、小窓の帯に出る。
+   */
+  if (ins.error) {
+    console.warn("[human-motion] 表に入れられません:", ins.error.message, "／ 写真:", row.shot_key || "(なし)");
+  }
+  return NextResponse.json(
+    { ok: !ins.error, error: ins.error?.message, code: ins.error?.code ?? null, shot_key: row.shot_taken ? row.shot_key : null },
+    { status: ins.error ? 500 : 200, headers: CORS },
+  );
 }
 
 export async function GET(req: NextRequest) {

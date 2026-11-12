@@ -75,6 +75,35 @@
         if (desc) desc.textContent = "操作のたびに画面の写真が残ります（PCごとに1回の設定は済んでいます）。";
         if (bBtn) { bBtn.textContent = "もう一度確認"; bBtn.style.background = "#16a34a"; bBtn.style.boxShadow = "0 2px 6px rgba(22,163,74,.4)"; }
         if (hint) { hint.style.display = "none"; hint.textContent = ""; }
+        /**
+         * 2026-11-12 竹内さん「くれさん通常モードで検索したけどちゃんと画面録画はできるようになっているかな」:
+         *   ⚠「許可済み」と「写真が撮れている」は**別**。許可済みでも撮れていない事がある（今日は0枚だった）。
+         *   → 許可済みの時は、**実際に撮れた枚数**を帯に出す（撮れていなければ黄色で理由も出す）。
+         */
+        try {
+          chrome.storage.local.get(["axlx_human_shot_diag", "axlx_human_shot_bg", "axlx_human_shot_upload"], function (rr) {
+            var d = (rr && rr.axlx_human_shot_diag) || null;
+            var bg = (rr && rr.axlx_human_shot_bg) || null;
+            var up = (rr && rr.axlx_human_shot_upload) || null;
+            var ok = d ? Number(d.ok) || 0 : 0;
+            var tried = d ? Number(d.tried) || 0 : 0;
+            if (!desc) return;
+            if (tried === 0 && !(bg && bg.called)) {
+              desc.textContent = "許可は済んでいます。まだ写真は撮れていません（操作すると撮ります・「写真テスト」で今すぐ試せます）。";
+              return;
+            }
+            var bad = [];
+            if (d && d.last_error) bad.push("撮影: " + d.last_error);
+            if (up && up.ok === false && up.error) bad.push("送信: " + up.error);
+            if (ok > 0 && !bad.length) {
+              desc.textContent = "許可済み・写真 " + ok + "枚（試した " + tried + "回）。操作のたびに残ります。";
+            } else if (ok > 0) {
+              desc.textContent = "写真 " + ok + "枚（試した " + tried + "回）。⚠ " + bad.join(" / ");
+            } else {
+              desc.textContent = "⚠ 許可は済んでいますが、写真が撮れていません（試した " + tried + "回）: " + (bad.join(" / ") || "理由不明") + "。「写真テスト」で確かめてください。";
+            }
+          });
+        } catch (_) {}
       } else {
         if (title) title.textContent = "🎬 画面の録画を許可してください";
         if (desc) desc.textContent = "許可すると、操作のたびに画面の写真が残り「検索を押せたか」を後から確かめられます。PCごとに1回だけです。";
