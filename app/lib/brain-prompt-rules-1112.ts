@@ -77,3 +77,34 @@ export function applyReplyModeP0(text: string, env: Record<string, string | unde
   for (const e of REPLY_MODE_P0_EDITS) if (out.includes(e.from)) out = out.replace(e.from, () => e.to);
   return out;
 }
+
+// ── 2026-11-13 作業員1（弱い所 G4 の 691・695・統括役の頼み）: 1112 と混ぜない別のスイッチ BRAIN_PROMPT_RULES_1113（既定 off）──
+//   ⑥ 追客（691）: 指示文の「followup_revive は最後のお客様の発言から3日以上・予約送信なし」と信号6（3日沈黙で followup_revive を決め打ち）は、
+//      竹内さんの決定 d76e886d（10/08「追客は AIX の物件ピックアップ または 物件オススメ」・同じ日は1回・3回無視で hot から外す）と食い違う。
+//      → 指示文は追客を物件の AIX に寄せる言い方に替え、信号6 は 1113 が on の時は立てない（brain-core）
+//   ⑦ ネガの文脈（695）: 古い決め打ちは「直前のスタッフ発言の『募集終了』『申し訳』」でも物件・見積・申込を止めていた。
+//      竹内さんの決定 5cb4bd2f（申込が入っていた・募集終了の報告の次は代わりの物件＝営業マンの思考）と逆。お客様自身のネガの気持ちの時だけにする。
+//      ⑥（お礼は aix:null）は竹内さんの数（約束が開いているお礼の番 857: 何も送らない 84%・約束を果たす AIX 2.7%・KB 120721d0）と合うので触らない。
+//      ⑧（強く1件を推した直後の了承は再推奨しない）は今の決定と食い違わないので触らない。
+//   差し替えは元の文が一字一句ある時だけ（無ければ何もしない）
+export function promptRules1113Enabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_PROMPT_RULES_1113 ?? "").trim().toLowerCase() === "on";
+}
+export const PROMPT_RULE_EDITS_1113: PromptRuleEdit[] = [
+  {
+    id: "followup_revive_owner",
+    from: "- followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時",
+    to: "- followup_revive: 選ばない。お客様の返事が止まった時の追客は、送れる物件があれば AIX【物件ピックアップした】／【物件オススメ】（新着1件を含む）で送る（竹内さんの決定 10/08・同じ日は1回・3回目の追客から3日返事が無ければ hot から外す）。送れる物件が無い時は aix:null",
+  },
+  {
+    id: "rule7_customer_own_negative",
+    from: "直前スタッフ発言または直近顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等が含まれる場合",
+    to: "直近3メッセージ以内のお客様自身の発言に、断り・キャンセル・否決の受け止め・残念・難しい等のネガの気持ちがある場合（こちらが送った「募集終了」「申込が入っていた」の報告やこちらの「申し訳」は含めない＝その報告の次は代わりの物件を案内する・竹内さんの決定）",
+  },
+];
+export function applyPromptRules1113(text: string, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  if (!promptRules1113Enabled(env)) return text;
+  let out = text;
+  for (const e of PROMPT_RULE_EDITS_1113) if (out.includes(e.from)) out = out.replace(e.from, () => e.to);
+  return out;
+}
