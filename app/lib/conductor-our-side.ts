@@ -19,7 +19,7 @@ export const ourSideBrainOn = (env: Env = typeof process !== "undefined" ? proce
 export type OurSideMsg = { sender: string; text: string | null; created_at: string; is_aix_generated?: boolean | null };
 export type OurSideAix = { aix_type: string; check_pattern?: string | null; created_at: string; sent_at?: string | null; property_names?: string[] | null; prop_statuses?: string[] | null; estimate_sent?: boolean | null };
 
-const AIX_JA: Record<string, string> = {
+export const AIX_JA: Record<string, string> = {
   property_send: "物件送付（束）", property_recommendation: "物件オススメ（1件）", property_check_result: "物件確認した（確かめた結果を送る＝空き・募集・入居日・室内写真／管理会社に確かめた条件・設備・交渉の結果は mgmt_* のピッカー）",
   acknowledge_check: "確認します（これから確かめる・交渉する約束を AIX で送る）", estimate_sheet: "見積書送る", viewing_invite: "内覧調整（候補日）", meeting_place: "待ち合わせ場所（内覧の確定）",
   application_push: "申込へ", phone_call: "電話", guarantor_info: "保証会社", condition_hearing: "条件ヒアリング", zenryoku_support: "全力サポート", cost_explain: "初期費用を説明",
@@ -28,7 +28,7 @@ const PICK_JA: Record<string, string> = {
   available: "募集中", unavailable: "募集終了", vacating: "退去予定", move_out_planned: "退去予定", alternative: "代わりの部屋が募集中", taken: "申込あり", second_position: "2番手", exclusive: "専任",
 };
 const MGMT_JA: Record<string, string> = { availability: "募集状況", initial_cost: "初期費用の交渉", proxy: "代理契約", guarantor: "保証会社", parking: "駐車場", pet: "ペット", equipment: "設備", move_in: "入居日" };
-const pickJa = (p: string | null | undefined) => (!p ? "" : PICK_JA[p] ?? (p.startsWith("mgmt_") ? `管理会社に確かめた結果（${MGMT_JA[p.slice(5)] ?? p.slice(5)}）` : p));
+export const pickJa = (p: string | null | undefined) => (!p ? "" : PICK_JA[p] ?? (p.startsWith("mgmt_") ? `管理会社に確かめた結果（${MGMT_JA[p.slice(5)] ?? p.slice(5)}）` : p));
 
 /** 約束の種類（決まった計算の網・こちらの文の言い方で分ける） */
 export function promiseKindOf(t: string): "見積" | "確認" | "探す" | "内覧" | "他" {
