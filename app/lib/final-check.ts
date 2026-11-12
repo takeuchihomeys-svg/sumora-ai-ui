@@ -104,6 +104,8 @@ import { contractAlreadySaidRepeat } from "./repeat-brain-align";
 import { fcKeepsBrainSentence, revisionAddedFactContradiction, propertyNameVariantGrounded } from "./final-check-answer-keep";
 // 2026-11-12 作業員20（根の直し・各スイッチ既定 off）: 穴1 FC_APPLICATION_ANSWER／穴2 FC_REVISION_PASSIVE_STAFF／穴4 FC_SUGGESTION_ALIGN（final-check-roots.ts）
 import { applicationBoundaryKept, revisionStaticFor, fcSuggestionAlignEnabled, guidePossibleIsAnswer } from "./final-check-roots";
+// 2026-11-12 作業員20（残りの穴・各スイッチ既定 off）: FC_TIME_INVALID_TARGET／FC_BANNED_MATERIAL／FC_RULES_SLICE_ALIGN（final-check-roots2.ts）
+import { sameDayPromiseBlocked, sentenceAtIndex, bannedWordMaterialGrounded, finalCheckRulesLimit } from "./final-check-roots2";
 import { isAckOnlyTurn } from "./draft-repeat";
 // 2026-10-23 竹内さん 10/22（KB a6dff652）: 最終チェックも指揮官 Claude＋FLASH の下確かめ（FINAL_CHECK_FLASH=on の時だけ・既定 off）
 import {
@@ -740,7 +742,7 @@ code は次から選ぶこと:
 FABRICATED_AMOUNT（金額の捏造）/ FABRICATED_AVAILABILITY（空室確認結果の捏造）/
 FABRICATED_PROPERTY（物件名・号室・駅名の捏造/写し間違い）/ FABRICATED_DATE（日付・曜日・時刻の捏造）/
 FABRICATED_NAME（名前の誤り）/ FABRICATED_POLICY（会社制度の誤説明）
-${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]\n` : ""}
+${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, finalCheckRulesLimit())}\n[/FINAL_CHECK_RULES]\n` : ""}
 【出力例1 - 問題なし】
 ご希望の1LDKで家賃7万円以内の物件をお探ししております。
 → issues: []
@@ -975,7 +977,7 @@ STAGE_SKIP（段階の前倒し）/ STAFF_REQUEST_OMITTED（スタッフ依頼�
 WE_DO_MISSING（行動宣言なし）/ FILLER_GREETING（フィラー挨拶）/
 SUBJECT_CONFUSION（主語混乱・PatternF4）/ PASSIVE_ONLY（受け身文体のみ）/
 CONDITION_ADD_MISROUTED（条件追加なのに管理会社確認で返している）
-${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]\n` : ""}
+${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, finalCheckRulesLimit())}\n[/FINAL_CHECK_RULES]\n` : ""}
 【出力例1 - 問題なし（質問に適切に回答）】
 （顧客メッセージ:「ペット可の物件はありますか？」→ 返信:「ペット可の物件もございます。条件に合う物件をお探しします。」）
 → issues: []
@@ -1721,6 +1723,7 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   const thanksAllowed = /ご査収(?:頂|いただ)きありがとう/.test(text) && !!ctx.lastCustomerMessage && resolveReplyContext(ctx).pair.materials.thanksAllowed;
   for (const word of BANNED_WORDS_DETERMINISTIC) {
     if (thanksAllowed && /ご査収(?:頂|いただ)きありがとう/.test(word)) continue;
+    if (bannedWordMaterialGrounded(word, text, ctx.materialFacts)) continue; // 2026-11-12 作業員20（FC_BANNED_MATERIAL・既定 off）: 資料に同じ項目・同じ数がある説明
     if (text.includes(word)) {
       issues.push({ pass: "rule_check", severity: "block", code: "BANNED_WORD", message: `禁止語彙「${word}」が含まれています`, evidence: word, suggestion: BANNED_WORD_SUGGESTION[word] ?? `「${word}」を削除してください` });
     }
@@ -1735,7 +1738,7 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
     if (/頂けます|いただけます|ください|お願い/.test(after)) continue;
     const { hour: jstHour, dow: jstDay } = jstParts(ctx.now ?? Date.now());
     const isWeekend = jstDay === 0 || jstDay === 6;
-    if (jstHour >= 18 || isWeekend) {
+    if (sameDayPromiseBlocked({ sentence: sentenceAtIndex(text, idx), hour: jstHour, isWeekend })) { // 2026-11-12 作業員20（FC_TIME_INVALID_TARGET・既定 off）: 約束の相手を見る
       issues.push({
         pass: "context_check",
         severity: ctx.isAutoSend ? "block" : "warning",
