@@ -133,6 +133,7 @@ import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_F
 // 2026-11-12 作業員16（案1・KB P1 d030d496）: 今の番と後の番を分ける欄を JSON の最初に（BRAIN_NOW_LATER_FIRST=on の時だけ・既定 off）
 import { readCandidatesOn, READ_CANDIDATES_FIELD, READ_CANDIDATES_RULES, normalizeReadCandidates, readCandidatesDigest, chosenReading, type ReadCandidates } from "@/app/lib/brain-read-candidates";
 import { ourSendUptakeOn, OUR_SEND_UPTAKE_FIELD, OUR_SEND_UPTAKE_RULES, normalizeOurSendUptake, ourSendUptakeDigest, type OurSendUptakeRow } from "@/app/lib/our-send-uptake";
+import { checkOrderGuideOn, checkOrderGuideFor, preBrainCues } from "@/app/lib/check-order-guide";
 import { nowLaterFirstOn, NOW_VS_LATER_FIELD, NOW_VS_LATER_RULES, NOW_LATER_AIX_PROVISO, NOW_LATER_RULE8_TAIL, normalizeNowVsLater, aixNowOf, nowLaterConflicts, nowLaterDigest, type NowVsLater } from "@/app/lib/brain-now-later";
 import { resolveParallelSearchScene, parallelSearchInputsFromMessages, buildParallelSearchBrainNote, resolveParallelSearchOutput, type ParallelSearchOutput } from "@/app/lib/parallel-search";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）は1つの型・1つの関数に集約（AIX / テンプレート / 返信生成が同じ物を読む）
@@ -522,6 +523,8 @@ export type SuggestedAixMeta = {
   /** 2026-11-12 作業員10（案A）: 潜在の4欄（takeuchi-seven-read の LatentFour）・BRAIN_SEVEN_FIELDS=on の時だけ */
   /** 2026-11-12 作業員16（案1）: 今の番と後の番を分ける欄・BRAIN_NOW_LATER_FIRST=on の時だけ（記録だけ・判断は aix/turn_contract のまま） */
   now_vs_later?: NowVsLater;
+  /** 2026-11-12 作業員16: ブレインに渡した確かめる順番の型（CHECK_ORDER_GUIDE=on の時だけ・記録だけ） */
+  check_order_guide?: { type: string; steps: string[] };
   /** 2026-11-12 作業員16（案2）: 一通の読みの候補・BRAIN_READ_CANDIDATES=on の時だけ（記録だけ・判断は aix/turn_contract のまま） */
   read_candidates?: ReadCandidates;
   /** 同: こちらの直前の送信の部分ごとの受け取られ方と刺さり・BRAIN_OUR_SEND_UPTAKE=on の時だけ（記録だけ・文の統括が HOOK_TO_COMPOSE で読む） */
@@ -3267,6 +3270,19 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     console.log(JSON.stringify({ tag: "brain:now-fulfillable", conversationId, chars: nf.length }));
   }
   // 2026-10-29 AIX の統括からの差し戻し（opts.sendBack がある時だけ・決めるのはブレイン）
+  // 2026-11-12 作業員16（CHECK_ORDER_GUIDE=on の時だけ・既定 off）: 場面と記録から選んだ竹内さんの型の「確かめる順番となぜ」を材料の1行で（道・次の一手の言葉は入れない・決め直さない）
+  let checkOrderGuideRec: { type: string; steps: string[] } | null = null;
+  if (checkOrderGuideOn() && !isPostApplyStatus(convStatus)) {
+    const f = brainLedger.facts;
+    const g = checkOrderGuideFor(preBrainCues({
+      scene: brainSceneRes?.scene ?? resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene,
+      customerText: unrepliedTurn.text ?? "", hasImageOrUrl: !!unrepliedTurn.hasImage || /https?:/.test(unrepliedTurn.text ?? ""),
+      pickupPromisedUnfulfilled: !!f.pickupPromisedUnfulfilled, confirmationPromisedUnfulfilled: !!f.confirmationPromisedUnfulfilled, estimatePromisedUnfulfilled: !!f.estimatePromisedUnfulfilled,
+      pickupReady: pickupReadyMaterial, firstContact: f.propertiesSentCount === 0 && f.lastStaffEntry == null,
+    }));
+    if (g) { customerStateBlockText += `\n${g.text}`; checkOrderGuideRec = { type: g.type, steps: g.steps }; }
+    console.log(JSON.stringify({ tag: "brain:check-order-guide", conversationId, type: g?.type ?? null, steps: g?.steps.length ?? 0 }));
+  }
   if (opts?.sendBack) {
     const { sendBackMaterialLine } = await import("@/app/lib/aix-sendback");
     const sbl = sendBackMaterialLine(opts.sendBack, opts.sendBackFirstAix ?? null);
@@ -6362,6 +6378,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       judge_basis: brainJudgeBasisOn() ? (normalizeJudgeBasis((parsed as { judge_basis?: unknown }).judge_basis) ?? undefined) : undefined,
       // 2026-11-12 作業員16（案1・BRAIN_NOW_LATER_FIRST=on の時だけ）: 今の番と後の番（記録だけ・決め直さない）
       now_vs_later: nowLaterParsed ?? undefined,
+      check_order_guide: checkOrderGuideRec ?? undefined,
       read_candidates: readCandParsed ?? undefined,
       our_send_uptake: uptakeParsed ?? undefined,
       // 2026-11-12 作業員22: 判断の順番の型の手がかりの場面（CHECK_ORDER_TABLE=shadow|on の時だけ・既定 off は欄なし＝今と同じ）
