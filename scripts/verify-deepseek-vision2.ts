@@ -9,6 +9,7 @@
 //     ・finish_reason と応答全体を出す（空応答の理由を見る）
 //   Azure AI Foundry 経由（AZURE_AI_ENDPOINT / AZURE_AI_MODEL）が設定されていればそちらも試す。
 export {};
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const KEY = (process.env.DEEPSEEK_API_KEY ?? "").trim();

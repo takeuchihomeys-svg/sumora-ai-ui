@@ -8,6 +8,7 @@
 //   ①カバー率（照合を通る割合）②誤照合（別の物件に寄ってしまう）を実画像で測る。
 // 読み取りのみ。
 export {};
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 import { readPropertyImage } from "../app/lib/property-image-read";
 import { matchKnownProperty, similarity } from "../app/lib/property-name-match";

@@ -1,6 +1,7 @@
 // extract-property-info を DeepSeek に置き換えた後に、何が記録されるかを確かめる（読み取りのみ・DB に書かない）
 // 2026-09-22 竹内「画像から物件名などを読み取る処理 deepseek に置き換える」
 // 実行: npx tsx --env-file=.env.local scripts/verify-extract-deepseek.ts
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 import { readPropertyImage } from "../app/lib/property-image-read";
 import { resolveReadProperty } from "../app/lib/property-name-match";

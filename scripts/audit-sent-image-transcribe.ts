@@ -15,6 +15,7 @@
 //     残る落ち: コンチネンタル東小橋の設備欄の末尾「ペット相談」（120字で切った後ろ・旧どうしの揺れでもペットは 2件落ちる）
 //
 // 実行: npx tsx --env-file=.env.local scripts/audit-sent-image-transcribe.ts [--n=30] [--days=14] [--baseline] [--show]
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 import { readPropertyImageDetail, readPropertyImageDetailByTranscript } from "../app/lib/property-image-read";
 
