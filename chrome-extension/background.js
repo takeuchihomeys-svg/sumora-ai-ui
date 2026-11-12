@@ -1884,7 +1884,13 @@ async function _shrinkShot(dataUrl, maxSide, quality) {
   } catch (_) { return null; }
 }
 
-if (msg.type === "axlx-human-shot") {
+/**
+ * 2026-11-12 竹内さん「画面録画モード押しているときは連続でさつえいされていればちゃんと記録される」:
+ *   ⚠ `chrome.runtime.sendMessage` は**自分（background）には届かない**ので、録画の連続撮影からは
+ *     メッセージを送らず、この関数を直接呼ぶ（撮影の中身は今までと同じ1本）。
+ */
+async function _takeShot(msg, done) {
+  const sendResponse = typeof done === "function" ? done : function () {};
   (async () => {
     const t0 = Date.now();
     /**
@@ -2052,8 +2058,114 @@ if (msg.type === "axlx-human-shot") {
       sendResponse({ ok: false, error: String((e && e.message) || e), ms: Date.now() - t0 });
     }
   })();
+}
+
+if (msg.type === "axlx-human-shot") {
+  _takeShot(msg, function (r) { try { sendResponse(r); } catch (_) {} });
   return true;
 }
+
+/**
+ * 2026-11-12 竹内さん「画面録画モード等のボタンをつけることができればさらに簡単にできるようになる。
+ *   画面録画モード押しているときは連続でさつえいされていればちゃんと記録されるので、
+ *   それで動かすことができればさらに質が高くなる」
+ *
+ *   押している間、**2〜4秒ごとに続けて撮る**（操作の時だけ撮るのでは、画面の移り変わりが残らない）。
+ *   ・撮る中身は今までと同じ道（`axlx-human-shot` を自分宛に送る）＝縮小・Storage 送信・上限の掃除も同じ
+ *   ・間隔は毎回ばらつかせる（等間隔で撮ると機械らしい・2〜4秒）
+ *   ・上限（1回の録画で 400枚）と期限（60分）で必ず止まる（暴走しない）
+ *   ・止める: もう一度ボタンを押す／タブを離れる／`axlx-rec-mode` の値が消える
+ *   ⚠ Service Worker は30秒で眠る事があるので、**chrome.alarms**（1分より短くは作れない）ではなく
+ *     storage の値を見張る＋短い setTimeout の連鎖で回す（動いている間は眠らない）。
+ */
+var _recTimer = null;
+var _recCount = 0;
+var _recStartedAt = 0;
+var _REC_MAX_SHOTS = 400;
+var _REC_MAX_MS = 60 * 60 * 1000;
+function _recIsOn() {
+  return !!_recTimer;
+}
+async function _recTick() {
+  if (!_recIsOn()) return;
+  if (_recCount >= _REC_MAX_SHOTS || Date.now() - _recStartedAt > _REC_MAX_MS) {
+    await _recStop(_recCount >= _REC_MAX_SHOTS ? "上限" : "60分");
+    return;
+  }
+  // 途中で止められたか（別の窓で止めた時も効く）
+  try {
+    var st = await chrome.storage.local.get(["axlx_rec_mode"]);
+    if (!(st && st.axlx_rec_mode && st.axlx_rec_mode.on)) { await _recStop("解除"); return; }
+  } catch (_) {}
+  _recCount++;
+  try { await _recordOneShot(); } catch (e) { console.warn("[rec] 撮れません:", (e && e.message) || e); }
+  try {
+    await chrome.storage.local.set({ axlx_rec_stat: { on: true, count: _recCount, started_at: _recStartedAt, last_at: Date.now() } });
+  } catch (_) {}
+  // 2〜4秒（毎回ちがう・機械的に見せない）
+  var gap = 2000 + Math.floor(Math.random() * 2000);
+  _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, gap);
+}
+/** 1枚撮る（今までの撮影の道をそのまま使う・自分宛のメッセージは送らない） */
+async function _recordOneShot() {
+  return new Promise(function (resolve) {
+    try {
+      _takeShot({ type: "axlx-human-shot", site: "record", kind: "rec" }, function (res) { resolve(res || null); });
+    } catch (_) { resolve(null); }
+  });
+}
+async function _recStart() {
+  if (_recIsOn()) return { ok: true, already: true, count: _recCount };
+  _recCount = 0;
+  _recStartedAt = Date.now();
+  try { await chrome.storage.local.set({ axlx_rec_mode: { on: true, started_at: _recStartedAt }, axlx_rec_stat: { on: true, count: 0, started_at: _recStartedAt, last_at: null } }); } catch (_) {}
+  console.log("[rec] 画面録画モード: 開始（2〜4秒ごとに撮ります）");
+  _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, 300);
+  return { ok: true, count: 0 };
+}
+async function _recStop(why) {
+  if (_recTimer) { clearTimeout(_recTimer); _recTimer = null; }
+  try { await chrome.storage.local.set({ axlx_rec_mode: { on: false, stopped_at: Date.now(), count: _recCount, why: why || null } }); } catch (_) {}
+  try {
+    var st = await chrome.storage.local.get(["axlx_rec_stat"]);
+    var s = (st && st.axlx_rec_stat) || {};
+    await chrome.storage.local.set({ axlx_rec_stat: { on: false, count: _recCount, started_at: s.started_at || _recStartedAt, last_at: Date.now(), why: why || null } });
+  } catch (_) {}
+  console.log("[rec] 画面録画モード: 停止（" + (why || "") + "・" + _recCount + "枚）");
+  return { ok: true, count: _recCount, why: why || null };
+}
+try {
+  chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
+    if (!msg) return;
+    if (msg.type === "axlx-rec-start") { _recStart().then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
+    if (msg.type === "axlx-rec-stop") { _recStop("手で止めた").then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
+    if (msg.type !== "axlx-rec-status") return;
+    (async function () {
+      var st = await chrome.storage.local.get(["axlx_rec_stat", "axlx_rec_mode"]);
+      try {
+        sendResponse({
+          on: _recIsOn(),
+          count: _recCount,
+          started_at: _recStartedAt,
+          stat: (st && st.axlx_rec_stat) || null,
+          mode: (st && st.axlx_rec_mode) || null,
+        });
+      } catch (_) {}
+    })();
+    return true;
+  });
+} catch (_) {}
+// SW が起き直した時: 録画中だったら続ける（止まったまま残らない）
+try {
+  chrome.storage.local.get(["axlx_rec_mode"]).then(function (st) {
+    var m = st && st.axlx_rec_mode;
+    if (!m || !m.on) return;
+    if (Date.now() - Number(m.started_at || 0) > _REC_MAX_MS) { _recStop("60分"); return; }
+    _recStartedAt = Number(m.started_at) || Date.now();
+    console.log("[rec] 画面録画モード: SW の起き直し → 続けます");
+    _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, 500);
+  }).catch(function () {});
+} catch (_) {}
 
 /**
  * 2026-11-11: 撮った写真の一覧（何枚・どのまとまり・どの操作の後か）。中身（画像）は含めない＝軽い。

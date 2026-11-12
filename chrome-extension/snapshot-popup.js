@@ -289,6 +289,69 @@
         });
       } catch (e) { show("✖ 撮れません: " + ((e && e.message) || e)); }
     });
+
+    /**
+     * 2026-11-12 竹内さん「画面録画モード等のボタンをつけることができればさらに簡単にできるようになる。
+     *   画面録画モード押しているときは連続でさつえいされていればちゃんと記録されるので」:
+     *   押すたびに「録画中 ⇄ 停止」。録画中はボタンが赤く脈打ち、撮れた枚数が帯に出る。
+     */
+    var recModeBtn = el("snap-rec-mode");
+    var paintRecMode = function (on, count) {
+      if (!recModeBtn) return;
+      if (on) {
+        recModeBtn.textContent = "⏹ 録画中" + (count ? " " + count : "");
+        recModeBtn.style.background = "#be123c";
+        recModeBtn.style.color = "#fff";
+        recModeBtn.style.animation = "axlxPermPulse 1.6s ease-in-out infinite";
+        recModeBtn.title = "押すと録画を止めます（2〜4秒ごとに画面を撮っています）";
+      } else {
+        recModeBtn.textContent = "⏺ 録画";
+        recModeBtn.style.background = "#fff";
+        recModeBtn.style.color = "#be123c";
+        recModeBtn.style.animation = "none";
+        recModeBtn.title = "押すと「画面録画モード」になります（このタブの画面を2〜4秒ごとに続けて撮ります）";
+      }
+    };
+    var refreshRecMode = function () {
+      try {
+        chrome.runtime.sendMessage({ type: "axlx-rec-status" }, function (res) {
+          void chrome.runtime.lastError;
+          if (!res) return;
+          paintRecMode(!!res.on, Number(res.count) || 0);
+          if (res.on) {
+            var hint2 = el("snap-perm-hint");
+            if (hint2) {
+              hint2.style.display = "block";
+              hint2.style.color = "#be123c";
+              hint2.textContent = "⏺ 画面録画モード: 録画中（" + (Number(res.count) || 0) + "枚）。もう一度押すと止まります。";
+            }
+          }
+        });
+      } catch (_) {}
+    };
+    if (recModeBtn) recModeBtn.addEventListener("click", function () {
+      var hint = el("snap-perm-hint");
+      var show = function (msg, color) { if (hint) { hint.style.display = "block"; hint.textContent = msg; hint.style.color = color || "#b91c1c"; } };
+      try {
+        chrome.runtime.sendMessage({ type: "axlx-rec-status" }, function (st) {
+          void chrome.runtime.lastError;
+          var on = !!(st && st.on);
+          chrome.runtime.sendMessage({ type: on ? "axlx-rec-stop" : "axlx-rec-start" }, function (res) {
+            void chrome.runtime.lastError;
+            if (!res || res.ok === false) { show("✖ できませんでした: " + ((res && res.error) || "理由なし")); return; }
+            if (on) {
+              paintRecMode(false, 0);
+              show("⏹ 録画を止めました（" + (Number(res.count) || 0) + "枚）", "#047857");
+            } else {
+              paintRecMode(true, 0);
+              show("⏺ 録画を始めました。2〜4秒ごとに画面を撮ります（もう一度押すと止まります）。", "#be123c");
+            }
+          });
+        });
+      } catch (e) { show("✖ できませんでした: " + ((e && e.message) || e)); }
+    });
+    refreshRecMode();
+    setInterval(refreshRecMode, 5000);
   }
 
   document.addEventListener("DOMContentLoaded", init);
