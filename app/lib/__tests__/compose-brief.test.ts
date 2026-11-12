@@ -49,4 +49,13 @@ t("自信の印と連携の表", () => {
   assert.match(composeBriefDigest(brief, { link }), /^cb2:役目=/);
 });
 
+t("材料に根拠があるのに約束: 疑いの印に記録だけ（決め直さない）", () => {
+  const m2 = { turn_contract: { asks: [{ quote: "手数料はかかりますか", route: "promise", answer: "手数料を確認する", basis: "company_fact" }], lead_with: 0 } };
+  const p2 = buildSentencePlan(readTurnUnderstanding(m2), readSevenFields(m2), { scene: "question" });
+  const b2 = buildComposeBrief({ plan: p2, s7: readSevenFields(m2), meta: m2, scene: "question", customerText: "手数料はかかりますか？", materialText: "", recentStaffTexts: [] });
+  assert.equal(b2.groundedPromises.length, 1);
+  assert.ok(draftDoubts(b2, "手数料について確認させて頂きます！！").some((d) => d.kind === "promise_grounded"));
+  assert.equal(brief.groundedPromises.length, 0);
+});
+
 console.log(`compose-brief: ${n} pass`);

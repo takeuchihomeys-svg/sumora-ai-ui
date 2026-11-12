@@ -209,6 +209,10 @@ export type ClosingInput = {
   sentenceCount: number;
   /** 初回の返信（ご連絡頂きありがとうございます の番） */
   firstContact?: boolean;
+  /** 今日（JST）のこちらの返信の何通目か（AIX・物件の送付は数えない）。分かる時だけ。11/12 夜の数え（problems の会話 485通）:
+   *  何卒は その日1通目 40%・2通目 24%・3通目 20%・4通目以降 18%／問いへの答えで2通目以降は 8/138＝何卒は「その日最初の長い返信」の印。
+   *  線「その日1通目かつ5文以上→何卒・他は結び無し」で 329/485（68%）・何卒にした 29 のうち 18（いつも無し 65%・前の線 67%） */
+  nthToday?: number | null;
   /** お客様が問いを書いた番 */
   customerAsked?: boolean;
   /** 締めの直前の役目 */
@@ -231,7 +235,7 @@ export function decideClosing(c: ClosingInput): ClosingDecision {
   if (c.sentThisTurn && invite === "none") { sign = "receipt"; why.push("この番に送った物がある＝ご査収"); }
   else if (invite !== "none") { sign = "none"; why.push("誘いの文で終える（内覧の誘いの後 結び無し 78/152・申込の誘いの後 9/13）"); }
   else if (c.considering) { sign = "kigaru"; why.push("検討します＝お気軽に"); }
-  else if (c.firstContact || (c.sentenceCount >= 5 && !c.customerAsked)) { sign = "nanitozo"; why.push("初回・長い返信＝何卒（初回 11/18・5文以上 22/45・問いへの答えの番は 16/80 なので外す）"); }
+  else if (c.nthToday != null ? c.firstContact || (c.nthToday === 1 && c.sentenceCount >= 5) : c.firstContact || (c.sentenceCount >= 5 && !c.customerAsked)) { sign = "nanitozo"; why.push(c.nthToday != null ? "初回・その日最初の長い返信＝何卒（その日1通目かつ5文以上 18/29）" : "初回・長い返信＝何卒（初回 11/18・5文以上 22/45・問いへの答えの番は 16/80 なので外す）"); }
   else { sign = "none"; why.push("短い答えは結び無し（4文以下 何卒 39/153）"); }
   return { invite, sign, why };
 }
@@ -253,7 +257,7 @@ export function hookOf(meta: unknown): Hook {
   if (parts.every((p) => p.hook === "not_hooked")) return "not_hooked";
   return "neutral";
 }
-export function composeSlotsAndClosing(o: { plan: SentencePlan; s7: SevenFields; meta: unknown; scene: string | null; customerText: string; materialText: string; sentThisTurn?: boolean; firstContact?: boolean }, env?: Env): { note: string; digest: string } {
+export function composeSlotsAndClosing(o: { plan: SentencePlan; s7: SevenFields; meta: unknown; scene: string | null; customerText: string; materialText: string; sentThisTurn?: boolean; firstContact?: boolean; nthToday?: number | null }, env?: Env): { note: string; digest: string } {
   const roles = o.plan.rows.map((r) => r.role);
   const dest = toNextDest(o.s7.leadTo ?? null, "lead_to");
   const strength = strengthFromSeven(o.s7.push ? { push: o.s7.push.push, strength: o.s7.push.strength } : null);
@@ -268,7 +272,7 @@ export function composeSlotsAndClosing(o: { plan: SentencePlan; s7: SevenFields;
   const closing = decideClosing({
     scene: o.scene, dest, strength: apply ? apply.strength : strength, hook: hookOf(o.meta), propertyState, sentThisTurn: !!o.sentThisTurn,
     considering: /検討/.test(o.customerText), urgent: cues.kinds.includes("K15") || /急ぎ|すぐにでも|早め|今週中|来週中/.test(o.customerText),
-    sentenceCount: o.plan.rows.length, firstContact: !!o.firstContact, customerAsked: /[?？]|ですか|ますか/.test(o.customerText), lastRole: [...roles].reverse().find((r) => r !== "close") ?? null,
+    sentenceCount: o.plan.rows.length, firstContact: !!o.firstContact, nthToday: o.nthToday ?? null, customerAsked: /[?？]|ですか|ますか/.test(o.customerText), lastRole: [...roles].reverse().find((r) => r !== "close") ?? null,
   });
   const note = [valueSlotsNote({ appeal, source, apply }, env), closingNote(closing, env)].filter(Boolean).join("\n");
   const digest = `値=${appeal?.values.map((v) => v.kind).join(">") || "-"}${source ? `｜出所=${source}` : ""}${apply ? `｜申込=${apply.strength}` : ""}｜${closingDigest(closing)}`;

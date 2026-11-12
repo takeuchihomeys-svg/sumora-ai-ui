@@ -7,7 +7,7 @@
 // 材料: ① 竹内さんの正解 53番（gold-1113）× 試験の答案の brain ② 本番の直し（exam-cache/edited-turns/2026-10-16/weak-spots.json の文の直し・返信 151＋AIX の文 148）
 // 分け方は決まった線（下の rootOfGold・rootOfEdit）。分からない物は「?」で残す。
 // 実行: npx tsx scripts/audit-compose-roots.ts [--gold=scripts/compose-understanding/gold-1113.json]
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { readTurnUnderstanding, readSevenFields, buildSentencePlan, readComposeContext, planFieldsOf, type TakeuchiGold, type PlanFields } from "../app/lib/compose-sentence-plan";
 import { resolveReplyScene } from "../app/lib/reply-scene";
@@ -41,7 +41,8 @@ type Root = "A" | "B" | "C" | "D";
 const ELEMENTS = ["主の役目", "頭", "つなぎ", "押さえ", "信頼", "潜在", "締め", "事実"] as const;
 type El = typeof ELEMENTS[number];
 const tally = new Map<string, { n: number; ex: string }>();
-const add = (el: El, root: Root, src: string, ex: string) => { const k = `${el}|${root}|${src}`; const v = tally.get(k); if (v) v.n++; else tally.set(k, { n: 1, ex }); };
+const all: Array<{ el: El; root: Root; src: string; ex: string; detail?: Record<string, string> }> = [];
+const add = (el: El, root: Root, src: string, ex: string, detail?: Record<string, string>) => { all.push({ el, root, src, ex, detail }); const k = `${el}|${root}|${src}`; const v = tally.get(k); if (v) v.n++; else tally.set(k, { n: 1, ex }); };
 const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 const has = (v: unknown) => v != null && v !== "" && !(Array.isArray(v) && !v.length);
 
@@ -85,7 +86,7 @@ for (const g of gold) {
   const r3 = rootOfGold("押さえ", gk.length > 0, gk.some((x) => (f.keyHow as string[]).includes(x)), f.keyHow.length > 0, b, fromTable); if (r3) add("押さえ", r3, "正解53", ex(`竹内=${gk.join("+")} 設計図=${f.keyHow.join("+") || "空"}${fromTable ? "（表）" : ""}`));
   const r4 = rootOfGold("信頼", gt.length > 0, gt.some((x) => (f.trustHow as string[]).includes(x)), f.trustHow.length > 0, b, fromTable); if (r4) add("信頼", r4, "正解53", ex(`竹内=${gt.join("+")} 設計図=${f.trustHow.join("+") || "空"}${fromTable ? "（表）" : ""}`));
   const r5 = rootOfGold("潜在", g.latent != null, f.latent === g.latent, f.latent != null, b); if (r5) add("潜在", r5, "正解53", ex(`竹内=${g.latent} 設計図=${f.latent ?? "空"}`));
-  const r6 = rootOfGold("事実", !!g.part, !!f.part && !!g.part && f.part.includes(g.part.slice(0, 4)), !!f.part, b); if (r6) add("事実", r6, "正解53", ex(`竹内=${g.part} 設計図=${f.part ?? "空"}`));
+  const r6 = rootOfGold("事実", !!g.part, !!f.part && !!g.part && f.part.includes(g.part.slice(0, 4)), !!f.part, b); if (r6) add("事実", r6, "正解53", ex(`竹内=${g.part} 設計図=${f.part ?? "空"}`), { id: g.id, customer: customerText.slice(0, 160), takeuchiPart: g.part ?? "", takeuchi: String(p.staffText).slice(0, 240), asks: JSON.stringify(obj(b.turn_contract)?.asks ?? []).slice(0, 500) });
   // 締め: 指示書の締め（決め表）× 竹内さんの文。誘導先が外れていれば C（誘導先が届いていない）、誘いは合って結びだけ違えば A（結びの土台が弱い）、誘いが違えば B
   const staff = (p.context ?? []).filter((m) => m.s === "staff").map((m) => m.t);
   const brief = buildComposeBrief({ plan, s7, meta: b, scene, customerText, materialText: staff.slice(-3).join("\n"), recentStaffTexts: staff, firstContact: staff.length === 0 });
@@ -121,7 +122,7 @@ function rootOfEdit(s: Spot, e: { customer: string; draft: string; sent: string 
 let eN = 0;
 for (const s of ws.spots) {
   if (s.bucket === "aix_turn") { add("主の役目", "D", "直し", `AIX の番を人が押した ${s.scene}（${s.n}番）`); continue; }
-  for (const e of s.examples) { eN++; for (const [el, r] of rootOfEdit(s, e)) add(el, r, s.bucket === "reply_edit" ? "直し・返信" : "直し・AIX の文", `${s.type}「${e.customer.replace(/\s+/g, " ").slice(0, 18)}」→ 人「${e.sent.replace(/\s+/g, " ").slice(0, 40)}」`); }
+  for (const e of s.examples) { eN++; for (const [el, r] of rootOfEdit(s, e)) add(el, r, s.bucket === "reply_edit" ? "直し・返信" : "直し・AIX の文", `${s.type}「${e.customer.replace(/\s+/g, " ").slice(0, 18)}」→ 人「${e.sent.replace(/\s+/g, " ").slice(0, 40)}」`, { scene: s.scene, type: s.type, customer: e.customer, draft: e.draft, sent: e.sent }); }
 }
 
 console.log(`正解 ${gN}番・本番の直しの例 ${eN}通（weak-spots の文の直しの例・aix_turn は種類ごとに1と数える）`);
@@ -132,3 +133,5 @@ for (const el of ELEMENTS) {
 }
 console.log("\n代表の実物（要素×根の最初の1通）");
 for (const el of ELEMENTS) for (const r of ["A", "B", "C", "D"] as Root[]) { const x = [...tally.entries()].find(([k]) => k.startsWith(`${el}|${r}|`)); if (x) console.log(`- ${el}×${r}: ${x[1].ex}`); }
+// --dump=<json> [--dump-el=事実|C]: 行ごとに書き出す（他の作業員に渡す時）
+if (arg("dump")) { writeFileSync(arg("dump"), JSON.stringify(all.filter((x) => !arg("dump-el") || `${x.el}|${x.root}` === arg("dump-el")), null, 1)); console.log(`書いた: ${arg("dump")}`); }

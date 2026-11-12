@@ -52,6 +52,8 @@ export type ComposeBrief = {
   propertyName: Missing<{ say: boolean; why: string }>;
   /** ブレインの統括の指示書（meta.conductor_brief）から受け取った欄 */
   fromConductor: string[];
+  /** 材料に根拠（資料・会社の事実・会話）があるのにブレインが約束（route=promise）にした依頼。文の側は決め直さず疑いの印に記録するだけ（統括役 11/12 の決め①・答える／約束の線はブレインと統括＝作業員22 の held_answerable） */
+  groundedPromises: string[];
   notYet: string[];
 };
 export const EMOJI_ALLOW = ["😊", "😌", "🌟", "✨"] as const;
@@ -89,6 +91,7 @@ export function buildComposeBrief(i: BriefInput): ComposeBrief {
   const tc = obj(m.turn_contract);
   const asks = Array.isArray(tc?.asks) ? (tc!.asks as unknown[]).map(obj).filter((a): a is Record<string, unknown> => !!a) : [];
   const facts: BriefFactRef[] = [];
+  const groundedPromises = asks.filter((a) => a.route === "promise" && ["material", "company_fact", "conversation"].includes(String(a.basis))).map((a) => `${str(a.quote, 24) ?? "?"}（${BASIS_FROM[String(a.basis)]}）`);
   asks.forEach((a, k) => { const v = str(a.answer, 50); if (v) facts.push({ id: `f${k + 1}`, value: v, from: a.route === "promise" ? "要確認" : BASIS_FROM[String(a.basis)] ?? "会話" }); });
   const vals = readValues(i.materialText);
   for (const [k, v] of Object.entries(vals)) facts.push({ id: `v:${k}`, value: v!, from: "資料" });
@@ -127,16 +130,16 @@ export function buildComposeBrief(i: BriefInput): ComposeBrief {
     roles, aim: aimRow ? { id: aimRow.id, dest } : BRIEF_NONE, values, facts, keyPoint: keyPoint ?? BRIEF_NONE,
     closing: { name: toComposeClosing(closing), why: closing.why }, dates,
     skeleton: { elements: [...elem.push_line, ...elem.trust, ...elem.latent_line], answerSource: answerSourceOf(leadAsk) },
-    shape: { sentences: roles.length, emoji: EMOJI_ALLOW }, propertyName, fromConductor, notYet,
+    shape: { sentences: roles.length, emoji: EMOJI_ALLOW }, propertyName, fromConductor, groundedPromises, notYet,
   };
 }
 
 // ─── ② 書いた後の確かめ（疑いの印・記録だけ） ─────────────────────────────
-export const DRAFT_DOUBT_KINDS = ["key_point_missing", "fact_added", "role_order", "closing_mismatch", "date_word", "value_missing", "emoji_out", "property_name"] as const;
+export const DRAFT_DOUBT_KINDS = ["key_point_missing", "fact_added", "role_order", "closing_mismatch", "date_word", "value_missing", "emoji_out", "property_name", "promise_grounded"] as const;
 export type DraftDoubtKind = typeof DRAFT_DOUBT_KINDS[number];
 export const DRAFT_DOUBT_LABEL: Record<DraftDoubtKind, string> = {
   key_point_missing: "要点が入っていない", fact_added: "指示書に無い事実（金額・数）を足した", role_order: "役目の順が違う", closing_mismatch: "締めが違う",
-  date_word: "材料に無い期日の言葉", value_missing: "推す値が入っていない", emoji_out: "使わない絵文字", property_name: "物件名の出し方が違う",
+  date_word: "材料に無い期日の言葉", value_missing: "推す値が入っていない", emoji_out: "使わない絵文字", property_name: "物件名の出し方が違う", promise_grounded: "材料に根拠があるのに確認の約束（決め直さない・記録だけ）",
 };
 export type DraftDoubt = { kind: DraftDoubtKind; why: string };
 const PART_OF_ROLE: Partial<Record<SentenceRole, string>> = { answer: "answer", worry: "answer", promise: "promise", keep: "promise", viewing: "invite", apply: "invite", estimate: "invite", ask_send: "invite", trust: "support", uke: "ack", close: "closing" };
@@ -172,6 +175,7 @@ export function draftDoubts(b: ComposeBrief, draft: string): DraftDoubt[] {
   const dw = dateWordsOf(d).filter((x) => !b.dates.includes(x));
   if (dw.length) out.push({ kind: "date_word", why: `材料に無い期日の言葉: ${dw.slice(0, 3).join("・")}` });
   if (b.values !== BRIEF_NONE) { const first = b.values[0] ?? []; if (first.length && !first.some((v) => d.includes(v.replace(/^家賃管理費込/, "").replace(/円$/, "")))) out.push({ kind: "value_missing", why: `1文目の値（${first.join("・")}）が1つも無い` }); }
+  if (b.groundedPromises.length && /確認させて(?:頂|いただ)き|お調べ|確認(?:次第|後)/.test(d)) out.push({ kind: "promise_grounded", why: `根拠のある依頼を約束にした: ${b.groundedPromises.slice(0, 2).join("・")}` });
   const emo = (d.match(/\p{Extended_Pictographic}/gu) ?? []).filter((e) => !(EMOJI_ALLOW as readonly string[]).includes(e));
   if (emo.length) out.push({ kind: "emoji_out", why: `使わない絵文字: ${[...new Set(emo)].join("")}` });
   return out;
