@@ -4,12 +4,12 @@
 //   受け取る側の点検で、ai_summary（1500字）・最終チェックのルール（3000／2000字）・チェックポイントの事実（2000字）は黙って切られ、
 //   切られた時のログがどこにも無かった（材料が「無い」のか「あるのに切られた」のかを後から分けられない＝静かに壊れる所）。
 //   ここは切る所を1つにして、切った時だけ { tag: "material:cut", label, kept, cut } を出す。切り方（先頭から max 字）は今と同じ＝答えは変えない。
-//   既定 off（入れる MATERIAL_CUT_LOG=on）。off でも切り方は同じで、ログを出さないだけ。
+//   11/12 統括役: 既定 on（ログだけで切り方は変えない・戻す MATERIAL_CUT_LOG=off）。off でも切り方は同じで、ログを出さないだけ。
 
 type Env = Record<string, string | undefined>;
 export function materialCutLogOn(env?: Env): boolean {
   const e = env ?? (typeof process !== "undefined" ? process.env : {});
-  return (e.MATERIAL_CUT_LOG ?? "").trim().toLowerCase() === "on";
+  return (e.MATERIAL_CUT_LOG ?? "").trim().toLowerCase() !== "off";
 }
 
 export type CutRecord = { tag: "material:cut"; label: string; kept: number; cut: number; ctx?: string | null };
