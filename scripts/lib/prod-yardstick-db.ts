@@ -3,7 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../../app/lib/test-conversations";
 import { staffFirstMove, aixLogsFromWatch, staffMoveExclusion, ackSceneOf } from "../../app/lib/staff-first-move";
-import { countByScene, sceneDrift, beyondCandidates, type YardTurn, type SceneDrift } from "./prod-yardstick";
+import { countByScene, sceneDrift, beyondCandidates, yardstickTwoFramesOn, brainFrames, staffFrames, judgeTwoFrames, countTwoFrames, type YardTurn, type SceneDrift, type TwoFrameCount } from "./prod-yardstick";
 
 /** AIX の系統（audit-prod-as-exam と同じ見方） */
 export function aixFamily(k: string | null | undefined): string {
@@ -56,7 +56,20 @@ export type YardstickOut = {
   excluded?: { late_aix: number; ack_fulfil_aix: number };
   down: Array<{ scene: string; before: SceneDrift["before"]; after: SceneDrift["after"]; pBefore: number; pAfter: number }>;
   few: number; beyond: number; drift: SceneDrift[];
+  /** 2026-11-12 作業員1（弱い所 268）: 今の窓の竹内さんの番を「今の通／後の通」の2枠で（YARDSTICK_TWO_FRAMES=on の時だけ） */
+  twoFrames?: Array<{ scene: string } & TwoFrameCount>;
 };
+
+/** 見張りの番の decision_id → brain_decision_logs.decision_source（2段の種類を読む） */
+export async function readDecisionSources(sb: SupabaseClient, ids: string[]): Promise<Map<string, string | null>> {
+  const m = new Map<string, string | null>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await sb.from("brain_decision_logs").select("id, decision_source").in("id", ids.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as Array<{ id: string; decision_source: string | null }>) m.set(String(r.id), r.decision_source);
+  }
+  return m;
+}
 
 /** 前の窓（days 日）と今の窓の竹内さんの番の当たりを場面ごとに比べる */
 export async function runYardstick(sb: SupabaseClient, opts: { days: number; nowMs?: number }): Promise<{ out: YardstickOut; turns: WatchRow[] }> {
@@ -75,12 +88,28 @@ export async function runYardstick(sb: SupabaseClient, opts: { days: number; now
   };
   const before = turns.filter((w) => w.customer_turn_at < cut).flatMap(toYard), after = turns.filter((w) => w.customer_turn_at >= cut).flatMap(toYard);
   const drift = sceneDrift(countByScene(before), countByScene(after));
+  let twoFrames: YardstickOut["twoFrames"];
+  if (yardstickTwoFramesOn()) {
+    const now = turns.filter((w) => w.customer_turn_at >= cut);
+    const src = await readDecisionSources(sb, [...new Set(now.map((w) => w.decision_id).filter((x): x is string => !!x))]);
+    const rows = now.flatMap((w) => {
+      const tAt = Date.parse(w.customer_turn_at);
+      const ms = msgs.get(w.conversation_id) ?? [];
+      const logs = aixLogsFromWatch(w.staff_aix);
+      const fm = staffFirstMove(tAt, ms, logs);
+      if ((fm?.writer ?? "unknown") !== "takeuchi") return [];
+      const moves = ms.filter((m) => m.at >= tAt).map((m) => ({ at: m.at, family: m.isAix ? aixFamily(logs.filter((a) => Math.abs(a.at - m.at) <= 10 * 60_000).sort((a, b) => Math.abs(a.at - m.at) - Math.abs(b.at - m.at))[0]?.aixType ?? "aix_unknown") : "返信" }));
+      return [{ scene: w.scene_key, judge: judgeTwoFrames(brainFrames(aixFamily(w.brain_action), w.decision_id ? src.get(String(w.decision_id)) ?? null : null), staffFrames(tAt, moves)) }];
+    });
+    twoFrames = [...countTwoFrames(rows)].map(([scene, c]) => ({ scene, ...c })).sort((a, b) => b.n - a.n);
+  }
   return {
     turns,
     out: {
       at: new Date(now).toISOString(), days: opts.days, turns: { before: before.length, after: after.length }, excluded,
       down: drift.filter((d) => d.verdict === "down").map((d) => ({ scene: d.scene, before: d.before, after: d.after, pBefore: +d.pBefore.toFixed(3), pAfter: +d.pAfter.toFixed(3) })),
       few: drift.filter((d) => d.verdict === "few").length, beyond: beyondCandidates(after).length, drift,
+      ...(twoFrames ? { twoFrames } : {}),
     },
   };
 }

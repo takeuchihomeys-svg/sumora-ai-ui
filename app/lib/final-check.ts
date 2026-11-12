@@ -16,6 +16,7 @@
 //                              （スタッフが編集した文はスタッフの判断が正解。チェックはAI生成時のみ＝ハルシネーション防止）
 
 import { buildContextCheckAnswerList, contextCheckAnalysisLimit } from "@/app/lib/context-check-answer-list";
+import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 切った字数のログ（MATERIAL_CUT_LOG=on・切り方は同じ）
 import { ungroundedFreeRentSentence, type StaffFreeRentFact } from "./staff-free-rent";
 import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, materialGroundsAssertion,PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 // 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」: 文に間違いの無い文体だけの warning では書き直さない
@@ -102,6 +103,8 @@ import { issueContradictsContract, renderTurnContractNote, isConfirmPromiseAsk, 
 import { selectRevisionIssues, annotateUnfixed, finalCheckBrainAlignEnabled, contractConfirmMiss, type HoldReason } from "./final-check-brain-align";
 import { contractAlreadySaidRepeat } from "./repeat-brain-align";
 import { fcKeepsBrainSentence, revisionAddedFactContradiction, propertyNameVariantGrounded } from "./final-check-answer-keep";
+// 2026-11-12 作業員20（根の直し・各スイッチ既定 off）: 穴1 FC_APPLICATION_ANSWER／穴2 FC_REVISION_PASSIVE_STAFF／穴4 FC_SUGGESTION_ALIGN（final-check-roots.ts）
+import { applicationBoundaryKept, revisionStaticFor, fcSuggestionAlignEnabled, guidePossibleIsAnswer } from "./final-check-roots";
 import { isAckOnlyTurn } from "./draft-repeat";
 // 2026-10-23 竹内さん 10/22（KB a6dff652）: 最終チェックも指揮官 Claude＋FLASH の下確かめ（FINAL_CHECK_FLASH=on の時だけ・既定 off）
 import {
@@ -738,7 +741,7 @@ code は次から選ぶこと:
 FABRICATED_AMOUNT（金額の捏造）/ FABRICATED_AVAILABILITY（空室確認結果の捏造）/
 FABRICATED_PROPERTY（物件名・号室・駅名の捏造/写し間違い）/ FABRICATED_DATE（日付・曜日・時刻の捏造）/
 FABRICATED_NAME（名前の誤り）/ FABRICATED_POLICY（会社制度の誤説明）
-${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]\n` : ""}
+${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${clipMaterialLogged(ctx.finalCheckRules, 2000, "final_check:rules")}\n[/FINAL_CHECK_RULES]\n` : ""}
 【出力例1 - 問題なし】
 ご希望の1LDKで家賃7万円以内の物件をお探ししております。
 → issues: []
@@ -824,7 +827,7 @@ FABRICATED_POLICY: 仲介手数料・日割家賃・AD還元など会社固有�
   // 2026-09-23 竹内: 会社の事実（company-facts）を検査にも渡す。お客様が今それを聞いている時だけ載る（生成と同じ matchCompanyFacts）
   const companyFactsNote = companyFactsForCheck(ctx) + companyFactsInDraftForCheck(draft, ctx);
   const dynamic = `${brainBaselineNote}${clearedFactsNote}[CHECKPOINTS]
-${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+${clipMaterialLogged(ctx.checkpointFacts || "なし", 2000, "final_check:checkpoint_facts")}
 [/CHECKPOINTS]
 [CUSTOMER_CONDITIONS]
 ${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
@@ -973,7 +976,7 @@ STAGE_SKIP（段階の前倒し）/ STAFF_REQUEST_OMITTED（スタッフ依頼�
 WE_DO_MISSING（行動宣言なし）/ FILLER_GREETING（フィラー挨拶）/
 SUBJECT_CONFUSION（主語混乱・PatternF4）/ PASSIVE_ONLY（受け身文体のみ）/
 CONDITION_ADD_MISROUTED（条件追加なのに管理会社確認で返している）
-${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2000)}\n[/FINAL_CHECK_RULES]\n` : ""}
+${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${clipMaterialLogged(ctx.finalCheckRules, 2000, "final_check:rules")}\n[/FINAL_CHECK_RULES]\n` : ""}
 【出力例1 - 問題なし（質問に適切に回答）】
 （顧客メッセージ:「ペット可の物件はありますか？」→ 返信:「ペット可の物件もございます。条件に合う物件をお探しします。」）
 → issues: []
@@ -2663,6 +2666,10 @@ function firstSentenceAround(text: string, re: RegExp): string {
   return text.slice(start, end).trim() || text.slice(0, 40);
 }
 
+/** 2026-11-12 作業員20 穴4: 内覧の聞き方の修正案は通常返信で許される形（viewingOffer・条件節つき・日時なし）。「ご都合よろしいお日にち御座いますでしょうか」は VIEWING_DATE_ASK_WITHOUT_AIX（block）の文型なので勧めない */
+function viewingAskFixSuggestion(ctx: FinalCheckContext): string {
+  return `「${fillPairPlaceholders("{viewingOffer}", resolveReplyContext(ctx).pair)}」の宣言形に変更（候補日時の確認は AIX【内覧日調整】専用・日時は書かない）`;
+}
 export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   const issues: CheckIssue[] = [];
   const cust = ctx.lastCustomerMessage ?? "";
@@ -2682,7 +2689,7 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
     issues.push({ pass: "rule_check", severity: "block", code: "GOCHOUGO_REVERSED",
       message: "お客様の都合をスタッフが「お伝え／お知らせ」する形になっています（主語逆転）",
       evidence: firstSentenceAround(text, GOCHOUGO_REVERSED_RE),
-      suggestion: "「ご都合よろしいお日にち御座いますでしょうか！！」に変更" });
+      suggestion: fcSuggestionAlignEnabled() ? viewingAskFixSuggestion(ctx) : "「ご都合よろしいお日にち御座いますでしょうか！！」に変更" });
   }
   // V3 条件節も疑問形も無い「ご都合よろしいお日にちにご案内」— 内覧の押し付け／未送付での内覧誘導
   if (GOCHOUGO_GUIDE_RE.test(text)) {
@@ -2699,7 +2706,7 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
       issues.push({ pass: "rule_check", severity: blockOrWarn(!!ctx.isAutoSend), code: "GOCHOUGO_NO_CONDITION",
         message: "「ご都合よろしいお日にちにご案内」がお客様の選択条件（お気に召されましたら）も日程質問も無く単独で置かれています（内覧の押し付け・会話が進まない）",
         evidence: sent,
-        suggestion: "「お気に召されましたらご都合よろしいお日にち御座いますでしょうか！！ご案内させて頂きます😊！！」に変更" });
+        suggestion: fcSuggestionAlignEnabled() ? viewingAskFixSuggestion(ctx) : "「お気に召されましたらご都合よろしいお日にち御座いますでしょうか！！ご案内させて頂きます😊！！」に変更" });
     }
   }
   // V4 お客様が候補日・確定日を伝えた後の「ご都合よろしいお日にち」再質問
@@ -2797,11 +2804,12 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
       evidence: firstSentenceAround(text, SELF_HONORIFIC_RE), suggestion: "「確認しましたところ」に変更" });
   }
   // V12 日時なしの「ご案内可能です」
-  if (GUIDE_POSSIBLE_RE.test(text) && !GUIDE_DATE_RE.test(firstSentenceAround(text, GUIDE_POSSIBLE_RE))) {
+  // 2026-11-12 作業員20 穴4（FC_SUGGESTION_ALIGN・既定 off）: 「はい！！ご案内可能です😊」とお客様の質問に答える形は SCHEDULE_ASSERT の修正案が勧める形＝V12 で指摘しない
+  if (GUIDE_POSSIBLE_RE.test(text) && !GUIDE_DATE_RE.test(firstSentenceAround(text, GUIDE_POSSIBLE_RE)) && !guidePossibleIsAnswer(firstSentenceAround(text, GUIDE_POSSIBLE_RE), cust)) {
     issues.push({ pass: "rule_check", severity: "warning", code: "GUIDE_POSSIBLE_NO_DATE",
       message: "日時を示さない「ご案内可能です」は上から目線・丸投げの締めです（日時列挙直後のみ可）",
       evidence: firstSentenceAround(text, GUIDE_POSSIBLE_RE),
-      suggestion: "「お気に召されましたらご都合よろしいお日にち御座いますでしょうか！！ご案内させて頂きます」に変更" });
+      suggestion: fcSuggestionAlignEnabled() ? viewingAskFixSuggestion(ctx) : "「お気に召されましたらご都合よろしいお日にち御座いますでしょうか！！ご案内させて頂きます」に変更" });
   }
   // V13 させて頂く過剰（4回以上）
   const saseteCount = (text.match(SASETE_RE) ?? []).length;
@@ -2999,6 +3007,11 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
       // 2026-10-08 竹内さん①: 来られない事情（出張・遠方・予定が詰まって）のお客様への「オンライン内見や、室内の撮影もご対応させて頂きます」は返信の番（final-check-viewing-offer.ts・FINAL_CHECK_VIEWING_OFFER=off）
       if (isViewingOfferFlag(code, evidence, draft, customerTextsForFabrication(ctx).join("\n"))) {
         console.log(JSON.stringify({ tag: "final-check:viewing-offer-dropped", pass, code, evidence: evidence.slice(0, 80) }));
+        continue;
+      }
+      // 2026-11-12 作業員20 穴1（FC_APPLICATION_ANSWER・既定 off）: ブレインが「返信で答える」と決めた手続き・書類・審査の答えの文は AIX_BOUNDARY_APPLICATION にしない（指摘を外すだけ・本文は触らない）
+      if (applicationBoundaryKept({ code, evidence }, { contract: ctx.turnContract, draft, customerText: ctx.lastCustomerMessage })) {
+        console.log(JSON.stringify({ tag: "final-check:application-answer-dropped", pass, code, evidence: evidence.slice(0, 80) }));
         continue;
       }
       let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
@@ -3357,7 +3370,7 @@ ${issuesForPrompt.map((i) => `- [${i.code}] ${i.message}（該当箇所:「${i.e
 [/ISSUES]
 ${nameNote}${customerMsgNote}${pairNote}${ledgerNote}${historyNote}${brainNote}
 [CHECKPOINT]（確認済み事実・最高権威）
-${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+${clipMaterialLogged(ctx.checkpointFacts || "なし", 2000, "final_check:checkpoint_facts")}
 [/CHECKPOINT]
 
 [CONDITIONS]（DB保存の顧客条件）
@@ -3370,7 +3383,7 @@ ${draft}
   // 2026-09-13 RAG 監査: 会社ルール（DB・最大2万字＝約1.8万トークン）は会話によらず同じなのに動的ブロックに入っていて、
   //   自動修正のたびに満額で払っていた（下書きの38%で自動修正が走る）。固定の指示の直後に独立ブロックで置き 1h キャッシュ
   return [
-    { type: "text" as const, text: SONNET_REVISION_STATIC, cache_control: { type: "ephemeral", ttl: "1h" } },
+    { type: "text" as const, text: revisionStaticFor(SONNET_REVISION_STATIC), cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: `[RULES]（会社ルール）\n${ctx.dbRules ? selectRulesForCheckCached(ctx.dbRules).text : "なし"}\n[/RULES]`, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamic },
   ];
@@ -3547,7 +3560,7 @@ async function verifyFabricatedIssues(
   // 2026-09-23 竹内: 会社の事実に反する記述は「一般知識」として has_basis=true にしない（[COMPANY_FACTS] を情報源に足す）
   const dynamicPrompt = `情報源:
 [CHECKPOINTS]
-${(ctx.checkpointFacts || "なし").slice(0, 2000)}
+${clipMaterialLogged(ctx.checkpointFacts || "なし", 2000, "final_check:checkpoint_facts")}
 [/CHECKPOINTS]
 [CUSTOMER_CONDITIONS]
 ${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
@@ -3742,6 +3755,7 @@ async function runDiffRecheck(
       if (staffStandardFilterEnabled() && (isPassiveMisfire(pass, code, r.message ?? "", evidence) || isAllowedDiscountMisfire(pass, code, evidence, customerTextsForFabrication(ctx).join("\n")))) continue;
       // 2026-10-13 ブレイン基準: 再検査がブレインの本質と逆の事を言う指摘（閉じる番に要素を足せ・AIX/触れない項目に答えろ 等）は数えない（1回目の書き直しの選び方と同じ関数）
       if (finalCheckBrainAlignEnabled() && issueContradictsContract({ code, message: r.message ?? "", evidence, suggestion: r.suggestion ?? "" }, ctx.turnContract ?? null)) continue;
+      if (applicationBoundaryKept({ code, evidence }, { contract: ctx.turnContract, draft: revised, customerText: ctx.lastCustomerMessage })) continue; // 2026-11-12 作業員20 穴1（1回目と同じ）
       let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
       // block は evidence が修正後本文に実在する場合のみ（誤ブロック防止・runFinalCheckと同一）
       if (severity === "block" && !draftNorm.includes(normalizeForMatch(evidence))) severity = "warning";

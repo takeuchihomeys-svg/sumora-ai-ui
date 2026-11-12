@@ -280,6 +280,7 @@ import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics,
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
 import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question";
+import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
 import { brainMsgWindow } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
 // 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
 import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL } from "@/app/lib/contact-promise";
@@ -288,6 +289,7 @@ import { brainFastSlowEnabled, brainSlowSecondEnabled, decideTurnDifficulty, fas
 // 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
 import { mindsetFreshOutputItem, emotionChoicesText, normalizeMindset, mindsetEmotionLabel, customerMindsetEnabled, type CustomerMindset } from "@/app/lib/customer-mindset";
 import { brainSevenOn, brainSevenOutputItem, normalizeBrainSeven, normalizeBrainLatent } from "@/app/lib/brain-seven-fields";
+import { brainJudgeBasisOn, brainJudgeBasisOutputItem, normalizeJudgeBasis } from "@/app/lib/brain-judge-basis"; // 2026-11-12 作業員17（BRAIN_JUDGE_BASIS・既定 off）
 import { turnReadMode, turnReadOutputItem, normalizeTurnRead, turnReadFocusOn, normalizeTurnFocus, turnReadTopicsOn, normalizeTurnTopics, type TurnRead, type TurnFocus, type TurnTopic } from "@/app/lib/turn-read";
 
 /** 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番の turn_contract の asks（promise→reply）をそろえる（PROCEDURE_GENERAL_ASK_REPLY・11/11 既定 on・止める =off） */
@@ -329,8 +331,8 @@ const FRESH_LAYER_OUTPUT_RULES = `【今回の発言の分析モード（2層ブ
 - 「今回の発言」は最後の1通ではなく、まだスタッフが応えていない連投の全体。連投の中に複数の依頼がある時は全体で判断し、同じ依頼を繰り返している（前にも聞いてまだ応えてもらっていない）時はその依頼を優先する。
 - 前回の全体分析の next_steps・closing_strategy は作成時点のもの。その後に会話履歴・直近AIXアクション・行動台帳で実行済みになった手順は完了扱いにする。スタッフがすでに送った AIX（例: 御見積書を送付済み）を、お客様の新しい依頼が無いのに再提案しない（送った直後でお客様の反応待ちなら aix は null）。
 - 出力しない項目: ai_summary / ai_summary_json / closing_strategy / next_steps（前回の全体分析の値をコード側で使う）。システムの「JSONは常に全フィールド完全出力」はこのモードでは適用しない。
-- 追加で出力する項目: ${mindsetFreshOutputItem()}${turnReadOutputItem()}${brainSevenOutputItem()}、"purchase_signal_event"（今回の発言だけで見た購買シグナル none/soft/strong/peak。基準は ai_summary_json.purchase_signal_level の説明と同じ。会話全体の蓄積はコード側で前回と合わせる）。
-- それ以外の項目（aix・${brainCheckPatternEnabled() ? "check_pattern・" : ""}action・reason・template_hint・${AFTER_AIX_TEMPLATE_SCHEMA ? "after_aix_template・" : ""}reply_mode・reply_direction・reply_opener・key_topics・avoid_topics・customer_questions・turn_contract・customer_concern・condition_change_type・condition_change_scope・hesitancy_pattern・customer_intent・latent_intent・current_property・repeated_concern・future_timeline・checkpoint_stage・engagement_stance・urgency_appropriate・recommended_tone・two_choice_mode・reply_direction_label）はいつも通り出力する。${turnAimsOn() ? "\n- 2026-11-12（BRAIN_TURN_AIMS）: このモードでも出力の最後に turn_aims を書く（判断を全部書いた後の振り返り・判断は変えない）。" : ""}`;
+- 追加で出力する項目: ${mindsetFreshOutputItem()}${turnReadOutputItem()}${brainSevenOutputItem()}${brainJudgeBasisOutputItem()}、"purchase_signal_event"（今回の発言だけで見た購買シグナル none/soft/strong/peak。基準は ai_summary_json.purchase_signal_level の説明と同じ。会話全体の蓄積はコード側で前回と合わせる）。
+- それ以外の項目（aix・${brainCheckPatternEnabled() ? "check_pattern・" : ""}action・reason・template_hint・${AFTER_AIX_TEMPLATE_SCHEMA ? "after_aix_template・" : ""}reply_mode・reply_direction・reply_opener・key_topics・avoid_topics・customer_questions・turn_contract・customer_concern・condition_change_type・condition_change_scope・hesitancy_pattern・customer_intent・latent_intent・current_property・repeated_concern・future_timeline・checkpoint_stage・engagement_stance・urgency_appropriate・recommended_tone・two_choice_mode・reply_direction_label）はいつも通り出力する。${turnAimsOn() ? "\n- 2026-11-12（BRAIN_TURN_AIMS）: このモードでも出力の最後に turn_aims を書く（判断を全部書いた後の書き終えた後のメモ・判断は変えない）。" : ""}`;
 /**
  * 2026-10-08 11巡目（竹内「場面の読み取りを、ブレインの判断に寄せる」）: 今回の発言がお礼・了承だけの時に、前の発言の質問・条件変更・迷いを書き写さない。
  *   40日（scripts/audit-r11-brain-q-drag.ts・audit-r11-scene-brain.ts）: 「承知致しました。宜しくお願い致します。」に q=前の募集確認／「お願いします」に cond=equip_add（11番）／
@@ -396,7 +398,7 @@ export type SuggestedAixMeta = {
   /** 2026-11-03 読み直しの口（作業員2 brain-recheck.ts）に渡す1つ（統括の差し戻し・事実の食い違い・相談の答え）。digest.rc に短い形 */
   aix_recheck?: import("@/app/lib/brain-recheck").BrainRecheck | null;
   material_read_misses?: string[];     // 2026-10-29 DB から読めなかった材料の鍵（brain:material-miss と同じ・digest.mx・数えるため）
-  /** 2026-11-03 前回の提案の振り返り（digest.rv）と今の段階（digest.sg＝次の番の「お客様は進んだか」に使う） */
+  /** 2026-11-03 前回の提案の書き終えた後のメモ（digest.rv）と今の段階（digest.sg＝次の番の「お客様は進んだか」に使う） */
   last_turn_review?: Record<string, unknown>;
   customer_stage_now?: string;
   material_missing?: string[];         // 2026-10-29 ブレインの自己申告「判断に要ったのに材料に無かった物」（記録だけ・digest.mm）
@@ -509,6 +511,8 @@ export type SuggestedAixMeta = {
   turn_topics?: TurnTopic[];
   /** 2026-11-12 作業員10（案A）: 竹内さんの7つの欄（takeuchi-seven-read の SevenRead）・BRAIN_SEVEN_FIELDS=on の時だけ */
   seven_read?: import("@/app/lib/takeuchi-seven-read").SevenRead;
+  /** 2026-11-12 作業員17: 判断の根拠のメモ（読んだ手がかり・深さ・読みの候補・優先・重点・順番）・BRAIN_JUDGE_BASIS=on の時だけ（判断は変えない・物差しは scripts/judge-basis-score.ts） */
+  judge_basis?: import("@/app/lib/brain-judge-basis").JudgeBasis;
   /** 2026-11-12 作業員10（案A）: 潜在の4欄（takeuchi-seven-read の LatentFour）・BRAIN_SEVEN_FIELDS=on の時だけ */
   latent_read?: import("@/app/lib/takeuchi-seven-read").LatentFour;             // 2026-11-11 作業員14: 話題ごと（弱い所 578）・TURN_READ_TOPICS=on の時だけ
   turn_focus?: TurnFocus;                // 2026-11-11 作業員14: 組み合わせた理解（主・従）・TURN_READ_FOCUS=on の時だけ
@@ -2266,7 +2270,8 @@ async function analyzeConversationCore(
   // 【顧客の会話ストーリー】ai_summary全文（テキスト版）。プロファイル(JSON由来)とは別に、
   // 顧客の全文脈（経緯・今の状況・次の必須対応）を戦略決定の材料として注入する
   const aiSummaryFullRaw = (pc?.ai_summary ?? "").trim();
-  const aiSummaryFullText = aiSummaryFullRaw.length > 1500 ? aiSummaryFullRaw.slice(0, 1500) : aiSummaryFullRaw;
+  // 2026-11-12 作業員1: 切った時は MATERIAL_CUT_LOG=on でログ（切り方は同じ）
+  const aiSummaryFullText = clipMaterialLogged(aiSummaryFullRaw, 1500, "brain:ai_summary", conversationId);
   const aiSummaryNote = aiSummaryFullText
     ? `\n【顧客の会話ストーリー（ai_summary全文・必ず読むこと）】\n${aiSummaryFullText}\n→ この顧客の全文脈を踏まえてclosing_strategy・next_stepsを決定すること\n`
     : "";
@@ -2870,7 +2875,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   //   毎回変わる値なので customerSpecificText（キャッシュしない所）にだけ入る（system の前置きは変えない）
   const customerStateRes = await customerStatePromise;
   const customerState = customerStateRes.state;
-  /** 2026-11-03 前回の提案の振り返り（BRAIN_LAST_TURN_REVIEW）。digest.rv に残す */
+  /** 2026-11-03 前回の提案の書き終えた後のメモ（BRAIN_LAST_TURN_REVIEW）。digest.rv に残す */
   let lastTurnReview: import("@/app/lib/brain-last-turn-review").LastTurnReview | null = null;
   // 2026-10-28 読めなかった材料（error のある読み・今の状況）。ログは off でも出す（数えるため）・ブレインへの1行は on の時だけ
   const materialMisses = [
@@ -6244,7 +6249,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       need: BRAIN_NEED_ON ? (normalizeNeed((parsed as { need?: unknown }).need) ?? undefined) : undefined,
       ...(BRAIN_PLAN_AHEAD_ON ? ((pa) => pa ? { plan_ahead: pa, plan_ahead_at: new Date().toISOString() } : prevPlanAhead ? { plan_ahead: prevPlanAhead, ...(prevPlanAheadAt ? { plan_ahead_at: prevPlanAheadAt } : {}) } : {})(normalizePlanAhead((parsed as { plan_ahead?: unknown }).plan_ahead)) : {}),
       material_conflicts: materialConflictsRec?.kinds.length ? [...materialConflictsRec.kinds] : undefined,
-      // 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off）: この番の目的・中期の狙い・仕込み・先読みの深さ（道を決めた後の振り返り・道は変えない）
+      // 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off）: この番の目的・中期の狙い・仕込み・先読みの深さ（道を決めた後の書き終えた後のメモ・道は変えない）
       turn_aims: BRAIN_TURN_AIMS_ON ? (normalizeTurnAims((parsed as { turn_aims?: unknown }).turn_aims) ?? undefined) : undefined,
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,
       main_point: BRAIN_MAIN_POINT_ON ? (normalizeMainPoint((parsed as { main_point?: unknown }).main_point, rentFirst.applied ? rentFirst.keyTopics : keyTopics) ?? undefined) : undefined,
@@ -6309,6 +6314,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-12 作業員10（案A・BRAIN_SEVEN_FIELDS=on の時だけ）: 竹内さんの7つの欄・潜在の4欄を本番の番で（文の統括の設計図が読む・判断は変えない）
       seven_read: brainSevenOn() ? (normalizeBrainSeven((parsed as { seven_read?: unknown }).seven_read) ?? undefined) : undefined,
       latent_read: brainSevenOn() ? (normalizeBrainLatent((parsed as { latent_read?: unknown }).latent_read) ?? undefined) : undefined,
+      judge_basis: brainJudgeBasisOn() ? (normalizeJudgeBasis((parsed as { judge_basis?: unknown }).judge_basis) ?? undefined) : undefined,
       customer_concern: customerConcern,
       // 内部伝搬: SOURCE_ACCEPT_RATE ゲート抑制の事実と、1回目の signalAix 結果の持ち回り
       // （analyzeAndSaveBrainMeta の direction 更新でのバイパス防止＋二重実行回避に使用）
