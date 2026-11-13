@@ -9547,3 +9547,10 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - **監査**: scripts/audit-pre-star-memo.ts（全期間 10,215行）: スタッフの送った文に当たる 0（誤削除0）／AI の下書き 18件が全部🌟から始まる形に。③を外すと見積書の「【物件名】\n初期費用さらに」・スタッフの「（室内イメージ）URL」に当たる（だから③は必須）。
 - **既定 off の理由**: 入口が効いていて直近30日は 0。on にするのは試験・YUMA で悪化0を見てから。テスト app/lib/__tests__/pre-star-memo.test.ts（14件・実物を名前を伏せて）。
 - **同じ日 頼み3**: line_tasks.result が直近30日 410件中 0件（API は受け取るのに画面2か所が渡していない）→ aix_feature_suggestions 907c74b4（pending）に「AIX【物件確認した】の型から result を付ける案A／済みボタンで4択の案B」。
+
+## 2026-11-14 作業員G: 材料が「無い」か「あるのに受け取っていない」か（brain_unknowns 11/13 の58件）
+- あるのに受け取っていない → 塞いだ（どれも既定 off）
+  - 見積の金額: AIX【物件確認した】＋同封の estimate_records（source=check_names）は30日93行すべて金額が空。同じ AIX で送った札の文（messages）に「初期費用：N円」が60ログ全部にある → `ESTIMATE_CARD_FILL=on`（app/lib/estimate-card-fill.ts・ログを書く時に埋める）＋過去分 `scripts/backfill-estimate-card-costs.ts`（下見 95行中91行が埋まる・`--apply` で書く）。REF_RESOLVE の estimatesFromRecords・COMPOSE_ASKS_FACTS・調べ役が読む
+  - 保証会社: 売上サポの資料の文字層の「保証会社：〜」がブレインに届いていなかった → `BRAIN_GUARANTOR_DOCS=on`（app/lib/guarantor-docs-line.ts・保証会社／審査の話の番だけ1会話30行を読む）
+  - 内覧の件数と時間: 会社の事実 viewing_duration はあるのに「30分でしたら1件ぐらいしか回れない」を網が拾わない → `COMPANY_FACT_VIEWING_COUNT=on`（company-facts.viewingCountInTimeAsked・180日の候補11通で当てるのは元の1通だけ）
+- テスト: app/lib/__tests__/recv-material-1114.test.ts

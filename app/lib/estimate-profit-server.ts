@@ -9,6 +9,20 @@ import { rentFromSummary } from "@/app/lib/estimate-handoff";
 import { linkAdForEstimate, computeProfitYen, summarizeEstimateProfit, type AdSource, type ProfitSummary } from "@/app/lib/estimate-profit";
 // 2026-10-08 8巡目（記録）: 物件確認した＋同封・【】の無い見積書も全件残す（決め方は estimate-record-items.ts・戻す ESTIMATE_RECORDS_ALL=off）
 import { estimateRecordItemsFromLog } from "@/app/lib/estimate-record-items";
+// 2026-11-14 作業員G: 物件確認した＋同封（check_names）の金額の欄を、一緒に送った見積の札の文で埋める（ESTIMATE_CARD_FILL=on・既定 off）
+import { estimateCardFillOn, cardCostsOf, fillItemsFromCards, ESTIMATE_CARD_RE } from "@/app/lib/estimate-card-fill";
+
+/** 見積の AIX と一緒に送った札の文（messages・is_aix_generated・ログの3分前〜1分後・1会話の軽い読み）。読めない時は [] */
+export async function loadEstimateCardTexts(conversationId: string, createdAt: string): Promise<string[]> {
+  try {
+    const t = Date.parse(createdAt);
+    if (!Number.isFinite(t)) return [];
+    const { data, error } = await supabase.from("messages").select("text").eq("conversation_id", conversationId).eq("is_aix_generated", true)
+      .gte("created_at", new Date(t - 3 * 60_000).toISOString()).lte("created_at", new Date(t + 60_000).toISOString()).limit(40);
+    if (error) return [];
+    return ((data ?? []) as Array<{ text: string | null }>).map((r) => r.text ?? "").filter((x) => ESTIMATE_CARD_RE.test(x.normalize("NFKC")));
+  } catch { return []; }
+}
 
 const POOL_DAYS = 60;
 const SENT_DAYS = 180;
@@ -76,7 +90,12 @@ export async function recordEstimateFromAix(input: {
 }): Promise<RecordEstimateResult> {
   const res: RecordEstimateResult = { items: 0, recorded: 0, linked: 0, skipped: null };
   try {
-    const items = estimateRecordItemsFromLog({ aixType: input.aixType, generatedText: input.generatedText, propertyNames: input.propertyNames, propStatuses: input.propStatuses, propCostNotes: input.propCostNotes });
+    let items = estimateRecordItemsFromLog({ aixType: input.aixType, generatedText: input.generatedText, propertyNames: input.propertyNames, propStatuses: input.propStatuses, propCostNotes: input.propCostNotes });
+    if (estimateCardFillOn() && items.some((it) => it.propertyName && it.initialCostYen == null)) {
+      const f = fillItemsFromCards(items, cardCostsOf(await loadEstimateCardTexts(input.conversationId, input.createdAt)));
+      items = f.items;
+      if (f.filled) console.log(JSON.stringify({ tag: "estimate-records:card-fill", log: input.aixUsageLogId.slice(0, 8), filled: f.filled }));
+    }
     res.items = items.length;
     if (items.length === 0) { res.skipped = "no_items"; return res; }
     const { data: conv } = await supabase.from("conversations").select("property_customer_id").eq("id", input.conversationId).maybeSingle();

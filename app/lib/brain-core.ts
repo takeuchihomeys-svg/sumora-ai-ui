@@ -100,6 +100,7 @@ import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
 import { staffHandMaterialOn, staffHandLine } from "@/app/lib/staff-hand-material";
+import { guarantorDocsOn, guarantorDocsAsked, guarantorDocsLine, type GuarantorDocRow } from "@/app/lib/guarantor-docs-line";
 import { brainAixFollowsContractOn, alignAixToContract, replyPlanAfterFollow, type ContractAskLite } from "@/app/lib/aix-follows-contract";
 import { askPartsSplitOn, partsAllNow, type AskPart } from "@/app/lib/ask-parts";
 import { sendSequenceOn, sanitizeSendSequence, replyCountOf, SEND_SEQUENCE_FIELD, hearingSendSequence, writerReplyCountOf } from "@/app/lib/send-sequence";
@@ -3491,6 +3492,20 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     if (sh) customerStateBlockText += `
 ${sh}`;
     console.log(JSON.stringify({ tag: "brain:staff-hand", conversationId, pickupReady: pickupReadyMaterial, tasks: openTasks.length, chars: sh.length }));
+  }
+  // 2026-11-14 作業員G（brain_unknowns 920・921「独立系保証会社の送れる物件」「送付済み物件の保証会社名」）: 資料（売上サポの行）にある保証会社を、
+  //   保証会社・審査の話の番だけ材料の1行に（guarantor-docs-line.ts・BRAIN_GUARANTOR_DOCS=on・既定 off＝読まない・今と1文字も変わらない）。1会話の軽い読み（30行）
+  if (guarantorDocsOn()) {
+    try {
+      const recentTexts = typedMessages.slice(0, 4).map((mm) => mm.text ?? "");
+      if (guarantorDocsAsked(recentTexts)) {
+        const { data: gRows } = await supabase.from("property_pickups").select("property_name, room_no, status, sent_at, expired_at, created_at, pdf_text, image_lines")
+          .eq("conversation_id", conversationId).in("status", ["sent", "pending"]).order("created_at", { ascending: false }).limit(30);
+        const g = guarantorDocsLine((gRows ?? []) as GuarantorDocRow[], { nowMs: Date.now() });
+        if (g.line) customerStateBlockText += `\n${g.line}`;
+        console.log(JSON.stringify({ tag: "brain:guarantor-docs", conversationId, sent: g.sent, sentNamed: g.sentNamed, ready: g.ready, readyNamed: g.readyNamed, readyIndependent: g.readyIndependent, chars: g.line.length }));
+      }
+    } catch (e) { console.warn(JSON.stringify({ tag: "brain:guarantor-docs", conversationId, error: String(e).slice(0, 160) })); }
   }
   if (nowFulfillableEnabled() && customerState && !isPostApplyStatus(convStatus)) {
     const nf = nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() });
