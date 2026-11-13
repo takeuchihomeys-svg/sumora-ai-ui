@@ -60,6 +60,8 @@ export type CheckOrderRecord = {
   scene: string | null;
   /** 立った手がかりの名前だけ（true の物） */
   cues: string[];
+  /** 2026-11-13 作業員16: 場面×状態の優先度の表の行（priority-table.priorityTableRecord・PRIORITY_TABLE=shadow|on の時だけ・記録だけ） */
+  priority?: import("./priority-table").PriorityRecord | null;
 };
 const KNOWN = new Set(CHECK_ORDER_TYPES.map((t) => t.id));
 export function checkOrderRecord(meta: Meta | null | undefined, scene: string | null | undefined): CheckOrderRecord {
