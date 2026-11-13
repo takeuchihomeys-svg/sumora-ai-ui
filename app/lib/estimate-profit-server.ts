@@ -9,7 +9,7 @@ import { rentFromSummary } from "@/app/lib/estimate-handoff";
 import { linkAdForEstimate, computeProfitYen, summarizeEstimateProfit, type AdSource, type ProfitSummary } from "@/app/lib/estimate-profit";
 // 2026-10-08 8巡目（記録）: 物件確認した＋同封・【】の無い見積書も全件残す（決め方は estimate-record-items.ts・戻す ESTIMATE_RECORDS_ALL=off）
 import { estimateRecordItemsFromLog } from "@/app/lib/estimate-record-items";
-// 2026-11-14 作業員G: 物件確認した＋同封（check_names）の金額の欄を、一緒に送った見積の札の文で埋める（ESTIMATE_CARD_FILL=on・既定 off）
+// 2026-11-14 作業員G: 物件確認した＋同封（check_names）の金額の欄を、一緒に送った見積の札の文で埋める（既定 on・戻す ESTIMATE_CARD_FILL=off）
 import { estimateCardFillOn, cardCostsOf, fillItemsFromCards, ESTIMATE_CARD_RE } from "@/app/lib/estimate-card-fill";
 
 /** 見積の AIX と一緒に送った札の文（messages・is_aix_generated・ログの3分前〜1分後・1会話の軽い読み）。読めない時は [] */

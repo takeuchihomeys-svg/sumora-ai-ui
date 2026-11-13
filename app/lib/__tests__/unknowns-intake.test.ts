@@ -43,7 +43,7 @@ t("弱い所: 日本語だけの試験の名前も鍵の形に収まる", (() =>
 t("まとめ: 型×鍵で数える", aggregateUnknowns(hits).length === 2);
 
 // 2026-11-13 申込以降の番の自己申告を入れない門（実物: 11/12 の applying 2会話 19件・proposing のまま申込の記録がある 84b560f4 の「審査の進捗」等）
-t("申込の門: 既定 off", !unknownsPostApplyGateOn({}) && unknownsPostApplyGateOn({ BRAIN_UNKNOWNS_POST_APPLY_GATE: "on" }));
+t("申込の門: 既定 on（11/14 統括役の決め・=off で戻る）", unknownsPostApplyGateOn({}) && !unknownsPostApplyGateOn({ BRAIN_UNKNOWNS_POST_APPLY_GATE: "off" }));
 t("申込の門: 番の時の status が applying は外す", !!selfReportPostApply("applying", null, DRAFT_SKIP_STATUSES));
 t("申込の門: proposing でも申込の記録が番の前なら外す", selfReportPostApply("proposing", "申込以降（申込へ押下の後）", DRAFT_SKIP_STATUSES) === "申込以降（申込へ押下の後）");
 t("申込の門: proposing で記録が無ければ残す", selfReportPostApply("proposing", null, DRAFT_SKIP_STATUSES) === null);

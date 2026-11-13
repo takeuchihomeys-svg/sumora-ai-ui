@@ -13,13 +13,13 @@
 //   ・札の文は parseEstimateItems（【】の見出しごと・「初期費用：N円」「N円割引」）で読む（見積書の本文と同じ読み）
 //   ・名前（全角半角・空白を揃えて、どちらかがもう一方を含む）と号室（両方ある時は一致）で当てる。当たらない行は空のまま（作らない）
 //   ・金額が既にある行は変えない
-// 既定 off（ESTIMATE_CARD_FILL=on の時だけログを書く時に埋める）。過去の行は scripts/backfill-estimate-card-costs.ts（既定は下見だけ）。
+// 既定 on（2026-11-14 統括役の決め: 下見 95行中91行・目で見た12件で誤り0・戻す ESTIMATE_CARD_FILL=off）。過去の行は scripts/backfill-estimate-card-costs.ts で 11/14 07:36 に 91行を書いた。
 import { parseEstimateItems } from "./estimate-profit";
 import { normalizeRoom } from "./own-property-match";
 
 type Env = Record<string, string | undefined>;
 export function estimateCardFillOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.ESTIMATE_CARD_FILL ?? "").trim().toLowerCase() === "on";
+  return (env.ESTIMATE_CARD_FILL ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 札の文か（読む価値がある通だけ・DB の読みの後の絞り） */

@@ -2,7 +2,7 @@
 //   2026-11-05 作業員1（KB 3892c30c・統括役の指示 ①②）。読みはどれも窓の分だけ・1000行ずつの頁（本番の DB は1回 1000行で切れる）。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UnknownHit } from "./brain-unknowns";
-import { prodMissHits, selfReportHits, unknownsPostApplyGateOn, selfReportPostApply, type ProdTurn, type DigestSelfReport } from "./unknowns-intake";
+import { prodMissHits, selfReportHits, unknownsPostApplyGateOn, selfReportPostApply, rejectionSwitchKeep, isRejectionMessage, type ProdTurn, type DigestSelfReport } from "./unknowns-intake";
 import { loadTurnApplicationRecords } from "./turn-application-gate-server";
 import { turnApplicationReason } from "./turn-application-gate";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
@@ -26,8 +26,21 @@ export async function loadSelfReportHits(sb: SupabaseClient, fromIso: string, to
   // 2026-11-13 申込以降の番は入れない（BRAIN_UNKNOWNS_POST_APPLY_GATE=on の時だけ・会話ごとに申込の記録を1回読む＝夜の窓で十数会話）
   if (!unknownsPostApplyGateOn()) return selfReportHits(rows);
   const recs = new Map<string, Awaited<ReturnType<typeof loadTurnApplicationRecords>>>();
+  // 2026-11-14 作業員G: 審査落ちの切り替えの番は数える（否決の通の時刻を会話ごとに1回・語で絞って最大30通）
+  const fails = new Map<string, string[]>();
+  const loadFails = async (cid: string): Promise<string[]> => {
+    if (fails.has(cid)) return fails.get(cid)!;
+    let ats: string[] = [];
+    try {
+      const { data } = await sb.from("messages").select("sender, text, created_at").eq("conversation_id", cid)
+        .or("text.ilike.%否決%,text.ilike.%落ち%,text.ilike.%通ら%,text.ilike.%通りませ%,text.ilike.%承認%,text.ilike.%期待に添え%").order("created_at", { ascending: false }).limit(30);
+      ats = ((data ?? []) as Array<{ sender: string | null; text: string | null; created_at: string }>).filter(isRejectionMessage).map((m) => m.created_at);
+    } catch { ats = []; }
+    fails.set(cid, ats);
+    return ats;
+  };
   const kept: DigestSelfReport[] = [];
-  let dropped = 0;
+  let dropped = 0, switchKept = 0;
   for (const r of rows) {
     if (!(Array.isArray(r.mm) && r.mm.length) && !(Array.isArray(r.mx) && r.mx.length)) continue;
     let gate: string | null = null;
@@ -35,10 +48,15 @@ export async function loadSelfReportHits(sb: SupabaseClient, fromIso: string, to
       if (!recs.has(r.conversationId)) recs.set(r.conversationId, await loadTurnApplicationRecords(sb, r.conversationId));
       gate = turnApplicationReason(recs.get(r.conversationId), r.at);
     }
-    if (selfReportPostApply(r.status, gate, DRAFT_SKIP_STATUSES)) { dropped++; continue; }
+    if (selfReportPostApply(r.status, gate, DRAFT_SKIP_STATUSES)) {
+      const rec = r.conversationId ? recs.get(r.conversationId) : undefined;
+      const times = (rec?.records ?? []).flatMap((x) => [x.first, x.last]);
+      if (r.conversationId && rec && !rec.unreadable && rejectionSwitchKeep(times, await loadFails(r.conversationId), r.at)) { switchKept++; kept.push(r); continue; }
+      dropped++; continue;
+    }
     kept.push(r);
   }
-  console.log(JSON.stringify({ tag: "unknowns:self-report-post-apply-gate", rows: rows.length, dropped, kept: kept.length }));
+  console.log(JSON.stringify({ tag: "unknowns:self-report-post-apply-gate", rows: rows.length, dropped, switchKept, kept: kept.length }));
   return selfReportHits(kept);
 }
 

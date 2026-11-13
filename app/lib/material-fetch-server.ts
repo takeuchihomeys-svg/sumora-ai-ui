@@ -1,7 +1,7 @@
 // app/lib/material-fetch-server.ts — 足りない事実を取りに行く（S4）の読み（サーバー・LLM なし・1番に読む表は最大3つ・各1回）
 //   2026-11-13 作業員1。表と判定は material-fetch.ts（純関数）。読めない時は取れなかった扱い（スタッフだけの印）で止めない
 import { matchCompanyFacts } from "./company-facts";
-import { materialFetchPlan, pickDocLines, type FetchResult } from "./material-fetch";
+import { materialFetchPlan, pickDocLines, materialFetchEstimateRecordsOn, estimateRecordFacts, type FetchResult, type EstimateRecordRow } from "./material-fetch";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Sb = { from: (table: string) => any };
@@ -19,6 +19,7 @@ export async function fetchMissingMaterial(sb: Sb, conversationId: string, label
   let docRows: Array<{ property_name: string | null; room_no: string | null; lines: string[] }> = [];
   let fresh: string[] = [];
   let estimateText: string | null = null;
+  let estimateRows: EstimateRecordRow[] = [];
   try {
     if (need.has("property_doc") || need.has("pickup_ready")) {
       const { data } = await sb.from("property_pickups").select("property_name, room_no, summary_text, image_lines, equipment, terms, sent_at, expired_at, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(40);
@@ -28,7 +29,12 @@ export async function fetchMissingMaterial(sb: Sb, conversationId: string, label
       fresh = rows.filter((r) => !r.sent_at && !r.expired_at && Date.parse(r.created_at) > since).slice(0, 3)
         .map((r) => `${r.property_name ?? "物件"}${r.room_no ? ` ${r.room_no}` : ""}${r.summary_text ? `（${r.summary_text.replace(/\s+/g, " ").slice(0, 60)}）` : ""}`);
     }
-    if (need.has("estimate_sheet")) {
+    if (need.has("estimate_sheet") && materialFetchEstimateRecordsOn()) {
+      // 2026-11-14 作業員G: 見積の記録（金額のある行・1会話の軽い読み）。MATERIAL_FETCH_ESTIMATE_RECORDS=on の時だけ
+      const { data } = await sb.from("estimate_records").select("property_name, room_no, initial_cost_yen, discount_yen, created_at").eq("conversation_id", conversationId).not("initial_cost_yen", "is", null).order("created_at", { ascending: false }).limit(20);
+      estimateRows = (data ?? []) as EstimateRecordRow[];
+    }
+    if (need.has("estimate_sheet") && !estimateRows.length) {
       const { data } = await sb.from("aix_usage_logs").select("generated_text, created_at").eq("conversation_id", conversationId).eq("aix_type", "estimate_sheet").not("sent_at", "is", null).order("created_at", { ascending: false }).limit(1);
       estimateText = (((data ?? [])[0] as { generated_text?: string | null } | undefined)?.generated_text ?? null);
     }
@@ -37,6 +43,7 @@ export async function fetchMissingMaterial(sb: Sb, conversationId: string, label
     if (!p.source) return { label: p.label, source: null, facts: [] };
     if (p.source === "property_doc") return { label: p.label, source: p.source, facts: pickDocLines(docRows, p) };
     if (p.source === "pickup_ready") return { label: p.label, source: p.source, facts: fresh };
+    if (p.source === "estimate_sheet" && estimateRows.length) return { label: p.label, source: p.source, facts: estimateRecordFacts(estimateRows, p.label) };
     if (p.source === "estimate_sheet") return { label: p.label, source: p.source, facts: estimateText ? [estimateText.replace(/\s+/g, " ").slice(0, 200)] : [] };
     return { label: p.label, source: p.source, facts: matchCompanyFacts(p.label).slice(0, 2).map((f) => f.fact.replace(/\*\*/g, "").slice(0, 200)) };
   });

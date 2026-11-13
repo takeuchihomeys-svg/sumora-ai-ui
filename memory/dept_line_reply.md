@@ -9554,3 +9554,4 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
   - 保証会社: 売上サポの資料の文字層の「保証会社：〜」がブレインに届いていなかった → `BRAIN_GUARANTOR_DOCS=on`（app/lib/guarantor-docs-line.ts・保証会社／審査の話の番だけ1会話30行を読む）
   - 内覧の件数と時間: 会社の事実 viewing_duration はあるのに「30分でしたら1件ぐらいしか回れない」を網が拾わない → `COMPANY_FACT_VIEWING_COUNT=on`（company-facts.viewingCountInTimeAsked・180日の候補11通で当てるのは元の1通だけ）
 - テスト: app/lib/__tests__/recv-material-1114.test.ts
+- 11/14 続き（統括役の決め）: `ESTIMATE_CARD_FILL`・`COMPANY_FACT_VIEWING_COUNT` を既定 on（=off で戻る）。過去分は 07:36 に 91行を書いた（check_names 89・aix_text_room 2）。`BRAIN_UNKNOWNS_POST_APPLY_GATE` を既定 on（申込以降の自己申告は数えない・審査落ちの切り替えは rejectionSwitchKeep で数える・11/13 は 81→74）。`MATERIAL_FETCH_ESTIMATE_RECORDS=on`（既定 off）で足りない事実の段の見積の取り先を estimate_records の金額のある行に

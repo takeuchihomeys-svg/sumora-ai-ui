@@ -64,3 +64,25 @@ export function materialFetchDigest(results: ReadonlyArray<FetchResult>): string
   const d = results.map((r) => `${r.label.slice(0, 24)}|${r.source ?? "-"}|${r.facts.length ? "got" : r.source ? "none" : "staff"}`);
   return d.length ? d : undefined;
 }
+
+// ─── 見積の取り先を estimate_records（金額のある行）に（2026-11-14 作業員G・統括役の頼み④）────────────
+//   今までの取り先は aix_usage_logs の estimate_sheet の本文の最後の1通だけ＝AIX【物件確認した】＋同封の見積（check_names）の金額には届かなかった。
+//   estimate_records は札の文で金額が埋まる（estimate-card-fill・11/14 から既定 on・過去 91行を書いた）ので、物件ごとの金額をそこから引く。
+//   名前の出た物件を先に・無ければ新しい順に3件。金額の無い行は使わない。行が無ければ従来の estimate_sheet の本文に戻る。
+//   既定 off（MATERIAL_FETCH_ESTIMATE_RECORDS=on の時だけ・BRAIN_MATERIAL_FETCH=on の中）
+export function materialFetchEstimateRecordsOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.MATERIAL_FETCH_ESTIMATE_RECORDS ?? "").trim().toLowerCase() === "on";
+}
+export type EstimateRecordRow = { property_name: string | null; room_no: string | null; initial_cost_yen: number | null; discount_yen: number | null; created_at: string };
+const nk = (s: string) => s.normalize("NFKC").replace(/[\s・\-－‐()（）【】]/g, "").toLowerCase();
+const jstMD = (iso: string) => { const d = new Date(Date.parse(iso) + 9 * 3600e3); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`; };
+/** 自己申告の名前（「サウスパーク3-Fの御見積書の金額」等）→ 見積の記録の事実（最大 max 件・無ければ []） */
+export function estimateRecordFacts(rows: ReadonlyArray<EstimateRecordRow>, label: string, max = 3): string[] {
+  const withCost = rows.filter((r) => r.property_name && typeof r.initial_cost_yen === "number").sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const seen = new Set<string>();
+  const uniq = withCost.filter((r) => { const k = `${nk(r.property_name!)}|${r.room_no ?? ""}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  const l = nk(label);
+  const named = uniq.filter((r) => { const n = nk(r.property_name!); return n.length >= 3 && (l.includes(n) || (n.length >= 5 && l.includes(n.slice(0, 5)))); });
+  const pick = (named.length ? named : uniq).slice(0, max);
+  return pick.map((r) => `${r.property_name}${r.room_no ? ` ${r.room_no}` : ""}: 初期費用 ${r.initial_cost_yen!.toLocaleString("ja-JP")}円${r.discount_yen ? `（割引 ${r.discount_yen.toLocaleString("ja-JP")}円）` : ""}・${jstMD(r.created_at)} 送付`);
+}

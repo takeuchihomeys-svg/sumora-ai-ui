@@ -12,6 +12,8 @@
 import type { UnknownHit } from "./brain-unknowns";
 import { normalizeGapName } from "./material-gap-weekly";
 import { BRAIN_MATERIAL_LABELS } from "./brain-material-miss";
+import { STAFF_FAIL_RE } from "./post-apply-brain-gate";
+import { isOwnScreeningFailureTurn } from "./screening-failed-switch";
 
 /** 記録の切替（既定 on・記録だけ）。止める BRAIN_UNKNOWNS_PROD_MISS=off／BRAIN_UNKNOWNS_SELF_REPORT=off */
 export function prodMissIntakeEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -24,10 +26,38 @@ export function selfReportIntakeEnabled(env: Record<string, string | undefined> 
  * 2026-11-13 作業員1（統括役の朝の穴の割り当て）: 申込以降の番の自己申告を分からない事に入れない（申込以降は対象外・竹内さんの決定）。
  *   直近24時間の material_missing 92行の約半分が審査・契約・書類・保証会社等＝申込中（applying 2会話 19件）と、status が物件提案中のまま
  *   申込の記録がある会話（4会話 34件）から来ていた。番の時の status と turn-application-gate（その番の時刻で申込の記録があるか）で外す。
- *   既定 off（BRAIN_UNKNOWNS_POST_APPLY_GATE=on）
+ *   2026-11-14 作業員G（統括役の決め・竹内さんの決定 project_post_apply_out_of_scope「申込以降は対象外・審査落ち→切り替えだけ対象」）:
+ *   既定 on にした（戻す BRAIN_UNKNOWNS_POST_APPLY_GATE=off）。11/13 の material_missing 58件のうち 7件（4会話）が申込以降。
+ *   ただし審査落ちの切り替えの番は数える（rejectionSwitchKeep）: 最後の申込の記録より後に否決（スタッフの否決の通・お客様の自分の審査落ちの報告）があり、
+ *   その否決が番より前＝否決の後、新しい申込をまだしていない期間（実物 b50fd451 11/13 14:11「審査が否決」→14:12 の番「独立系保証会社の送れる物件」）。
  */
 export function unknownsPostApplyGateOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_UNKNOWNS_POST_APPLY_GATE ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_UNKNOWNS_POST_APPLY_GATE ?? "").trim().toLowerCase() !== "off";
+}
+
+/** 否決の通か（スタッフ＝否決を伝えた通・お客様＝自分の審査落ちの報告。仮定・他人の審査は数えない） */
+export function isRejectionMessage(m: { sender: string | null | undefined; text: string | null | undefined }): boolean {
+  const t = String(m.text ?? "");
+  if (!t.trim()) return false;
+  if (m.sender === "customer") return isOwnScreeningFailureTurn(t);
+  // スタッフの通は文ごと。仮定・説明（「審査落ちした場合」「通らない可能性」実物 330ad233 10/21）は否決の報告ではない
+  return t.split(/[。！!？?\n]+/).some((s) => STAFF_FAIL_RE.test(s) && !STAFF_FAIL_HYPO_RE.test(s));
+}
+const STAFF_FAIL_HYPO_RE = /場合|たら|れば|なら|可能性|ない(?:よう|様)|かも|もし|際は|時は|ことも|事も/;
+
+/**
+ * 審査落ちの切り替えの番か（申込以降の門で外さずに数える）。
+ * @param recordTimes 申込の記録の時刻（turn-application-gate の records の first・last）
+ * @param rejectionAts 否決の通の時刻（isRejectionMessage に当たった物）
+ */
+export function rejectionSwitchKeep(recordTimes: ReadonlyArray<string | null | undefined>, rejectionAts: ReadonlyArray<string>, atIso: string): boolean {
+  const at = Date.parse(atIso);
+  if (!Number.isFinite(at)) return false;
+  const fails = rejectionAts.map((x) => Date.parse(x)).filter((t) => Number.isFinite(t) && t <= at);
+  if (!fails.length) return false;
+  const lastFail = Math.max(...fails);
+  const recs = recordTimes.map((x) => (x ? Date.parse(x) : NaN)).filter((t) => Number.isFinite(t) && t <= at);
+  return !recs.length || lastFail >= Math.max(...recs);
 }
 /** 自己申告の1行を外すか（status は番の時の conversation_status・gateReason は turnApplicationReason の答え） */
 export function selfReportPostApply(status: string | null | undefined, gateReason: string | null, skipStatuses: ReadonlySet<string>): string | null {

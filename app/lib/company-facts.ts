@@ -44,10 +44,10 @@ export type CompanyFact = {
  *   内覧の所要の事実（viewing_duration・1部屋15〜30分＋移動）は会社の事実の表に既にあるのに、問いの形が「時間の中で何件回れるか」だと
  *   網（内覧…時間…どのくらい）に当たらず、ブレインは「会社基準が無い」と書いていた＝材料はあるのに届いていない（照合の網の抜け）。
  *   「N分(で|なら|でしたら|だと) … N件/何件 … 回れ|見れ|見られ|内覧」の形だけ足す（日時の調整の文は件数の語が無いので当たらない）。
- *   既定 off（COMPANY_FACT_VIEWING_COUNT=on の時だけ）
+ *   既定 on（2026-11-14 統括役の決め: 180日の候補 11通で当たるのは元の1通だけ・戻す COMPANY_FACT_VIEWING_COUNT=off）
  */
 export function viewingCountInTimeAsked(t: string, env: Record<string, string | undefined> = process.env): boolean {
-  if ((env.COMPANY_FACT_VIEWING_COUNT ?? "").trim().toLowerCase() !== "on") return false;
+  if ((env.COMPANY_FACT_VIEWING_COUNT ?? "").trim().toLowerCase() === "off") return false;
   const s = String(t ?? "").normalize("NFKC");
   return /(?:\d{1,3}\s*分|\d(?:\.\d)?\s*時間|半日)\s*(?:で|なら|でしたら|だと|の間に?|以内に?)[^。\n]{0,16}?(?:\d|何|一|二|三|1)\s*件[^。\n]{0,12}(?:回れ|まわれ|見れ|見られ|見て回|内覧|内見|案内)/.test(s)
     || /(?:何|\d)\s*件[^。\n]{0,8}(?:回れ|まわれ|見れ|見られ)[^。\n]{0,12}(?:\d{1,3}\s*分|\d\s*時間)/.test(s);
