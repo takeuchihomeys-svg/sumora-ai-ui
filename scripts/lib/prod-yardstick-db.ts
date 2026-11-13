@@ -3,7 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../../app/lib/test-conversations";
 import { staffFirstMove, aixLogsFromWatch, staffMoveExclusion, ackSceneOf } from "../../app/lib/staff-first-move";
-import { yardstickAixLogFillOn, fillStaffAix, type AixLogLite } from "./prod-yardstick";
+import { yardstickAixLogFillOn, fillStaffAix, mergeFillFrames, applyStaffAixState, type AixLogLite } from "./prod-yardstick";
 import { countByScene, sceneDrift, beyondCandidates, yardstickTwoFramesOn, brainFrames, staffFrames, judgeTwoFrames, countTwoFrames, type YardTurn, type SceneDrift, type TwoFrameCount } from "./prod-yardstick";
 
 /** AIX の系統（audit-prod-as-exam と同じ見方） */
@@ -19,12 +19,12 @@ export function aixFamily(k: string | null | undefined): string {
   return s;
 }
 
-export type WatchRow = { id: number; conversation_id: string; customer_turn_at: string; scene_key: string | null; brain_action: string | null; decision_id: string | null; staff_aix: Array<{ aix_type?: string; at?: string; check_pattern?: string | null }> | null; verdict: string | null };
+export type WatchRow = { id: number; conversation_id: string; customer_turn_at: string; scene_key: string | null; brain_action: string | null; decision_id: string | null; staff_aix: Array<{ aix_type?: string; at?: string; check_pattern?: string | null }> | null; verdict: string | null; /** 作業員1: staff_aix_state（pressed／none／next_turn／unknown） */ verdict_detail?: Record<string, unknown> | null };
 
 export async function readWatchTurns(sb: SupabaseClient, sinceIso: string, max = 10000): Promise<WatchRow[]> {
   const out: WatchRow[] = [];
   for (let i = 0; ; i += 1000) {
-    const { data, error } = await sb.from("line_watch_turns").select("id, conversation_id, customer_turn_at, scene_key, brain_action, decision_id, staff_aix, verdict")
+    const { data, error } = await sb.from("line_watch_turns").select("id, conversation_id, customer_turn_at, scene_key, brain_action, decision_id, staff_aix, verdict, verdict_detail")
       .gte("customer_turn_at", sinceIso).order("customer_turn_at", { ascending: true }).range(i, i + 999);
     if (error) throw new Error(error.message);
     out.push(...((data ?? []) as WatchRow[]));
@@ -102,7 +102,8 @@ export async function runYardstick(sb: SupabaseClient, opts: { days: number; now
   // 2026-11-07 作業員1: 後で送った AIX（約束の果たし）・お礼の番の約束の果たしは当たり外れから外して別に数える（staffMoveExclusion・WATCH_COUNT_LATE_AIX=off で前の数え）
   const excluded = { late_aix: 0, ack_fulfil_aix: 0 };
   const toYard = (w: WatchRow): YardTurn[] => {
-    const fm = staffFirstMove(Date.parse(w.customer_turn_at), msgs.get(w.conversation_id) ?? [], staffAixOf(w));
+    // 2026-11-13 作業員8b: 今の通（最初の一手）は見張りの AIX だけ（補いは後の通だけ）
+    const fm = staffFirstMove(Date.parse(w.customer_turn_at), msgs.get(w.conversation_id) ?? [], aixLogsFromWatch(w.staff_aix));
     const ex = staffMoveExclusion(Date.parse(w.customer_turn_at), fm, { ackOnly: ackSceneOf(w.scene_key) });
     if (ex) { if (w.customer_turn_at >= cut) excluded[ex]++; return []; }
     return [{ scene: w.scene_key, brain: aixFamily(w.brain_action), staff: aixFamily(fm?.kind === "aix" ? fm.aix : null), writer: fm?.writer ?? "unknown", at: w.customer_turn_at, principleOk: null }];
@@ -116,11 +117,13 @@ export async function runYardstick(sb: SupabaseClient, opts: { days: number; now
     const rows = now.flatMap((w) => {
       const tAt = Date.parse(w.customer_turn_at);
       const ms = msgs.get(w.conversation_id) ?? [];
-      const logs = staffAixOf(w);
-      const fm = staffFirstMove(tAt, ms, logs);
+      const watchLogs = aixLogsFromWatch(w.staff_aix), logs = staffAixOf(w);
+      const fm = staffFirstMove(tAt, ms, watchLogs);
       if ((fm?.writer ?? "unknown") !== "takeuchi") return [];
-      const moves = ms.filter((m) => m.at >= tAt).map((m) => ({ at: m.at, family: m.isAix ? aixFamily(logs.filter((a) => Math.abs(a.at - m.at) <= 10 * 60_000).sort((a, b) => Math.abs(a.at - m.at) - Math.abs(b.at - m.at))[0]?.aixType ?? "aix_unknown") : "返信" }));
-      return [{ scene: w.scene_key, judge: judgeTwoFrames(brainFrames(aixFamily(w.brain_action), w.decision_id ? src.get(String(w.decision_id)) ?? null : null), staffFrames(tAt, moves)) }];
+      const movesOf = (lg: typeof logs) => ms.filter((m) => m.at >= tAt).map((m) => ({ at: m.at, family: m.isAix ? aixFamily(lg.filter((a) => Math.abs(a.at - m.at) <= 10 * 60_000).sort((a, b) => Math.abs(a.at - m.at) - Math.abs(b.at - m.at))[0]?.aixType ?? "aix_unknown") : "返信" }));
+      const sNow = staffFrames(tAt, movesOf(watchLogs));
+      const sStaff = applyStaffAixState(aixFill ? mergeFillFrames(sNow, staffFrames(tAt, movesOf(logs))) : sNow, (w.verdict_detail as { staff_aix_state?: string } | null)?.staff_aix_state);
+      return [{ scene: w.scene_key, judge: judgeTwoFrames(brainFrames(aixFamily(w.brain_action), w.decision_id ? src.get(String(w.decision_id)) ?? null : null), sStaff) }];
     });
     twoFrames = [...countTwoFrames(rows)].map(([scene, c]) => ({ scene, ...c })).sort((a, b) => b.n - a.n);
   }

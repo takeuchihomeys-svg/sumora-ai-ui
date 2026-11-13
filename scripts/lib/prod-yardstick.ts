@@ -177,3 +177,22 @@ export function fillStaffAix(watch: ReadonlyArray<AixLogLite>, convLogs: Readonl
   const lim = (opts.hours ?? 24) * 3_600_000;
   return convLogs.filter((a) => a.at >= turnAtMs && a.at - turnAtMs < lim).sort((a, b) => a.at - b.at);
 }
+
+/**
+ * 補い（fillStaffAix）は後の通だけに効かせる（2026-11-13 作業員8b・統括役: 作業員1 の調べで、staff_aix が空の番の多くは次のお客様の発言の後に押した AIX＝次の番の物）。
+ *   今の通（最初の一手・組の窓）は見張りの staff_aix だけで決め、補った AIX は後の通（24時間以内の果たし）にだけ入れる（純関数）。
+ *   sNow: 見張りの AIX だけで作った staffFrames／sFill: 補った AIX で作った staffFrames
+ */
+export function mergeFillFrames(sNow: { now: string | null; later: string | null; combo?: boolean }, sFill: { now: string | null; later: string | null; combo?: boolean }): { now: string | null; later: string | null; combo?: boolean } {
+  if (sNow.combo) return sNow;
+  const known = sNow.later && sNow.later !== "aix_unknown" ? sNow.later : null;
+  const fill = sFill.later ?? (sFill.combo ? sFill.now : null);
+  return { now: sNow.now, later: known ?? (fill && fill !== "aix_unknown" ? fill : sNow.later) };
+}
+/**
+ * 見張りの空の理由（作業員1 の verdict_detail.staff_aix_state: pressed／none／next_turn／unknown）。next_turn＝AIX は次のお客様の発言の後に押した＝この番は返信だけ（今の通は返信・後の通はそのまま）
+ */
+export function applyStaffAixState(s: { now: string | null; later: string | null; combo?: boolean }, state: string | null | undefined): { now: string | null; later: string | null; combo?: boolean } {
+  if (state !== "next_turn") return s;
+  return { now: "返信", later: s.later, combo: false };
+}
