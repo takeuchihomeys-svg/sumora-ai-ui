@@ -99,7 +99,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { brainAixFollowsContractOn, alignAixToContract, type ContractAskLite } from "@/app/lib/aix-follows-contract";
+import { brainAixFollowsContractOn, alignAixToContract, replyPlanAfterFollow, type ContractAskLite } from "@/app/lib/aix-follows-contract";
 import { askPartsSplitOn, partsAllNow, type AskPart } from "@/app/lib/ask-parts";
 import { sendSequenceOn, sanitizeSendSequence, replyCountOf, SEND_SEQUENCE_FIELD, hearingSendSequence, writerReplyCountOf } from "@/app/lib/send-sequence";
 import { checkQuestionBrainFirstOn, checkQuestionBrainRoute } from "@/app/lib/check-question-brain-first";
@@ -5525,7 +5525,16 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         const fv = alignAixToContract({ finalAix, rawAix: (parsed as { aix?: unknown }).aix, asks: (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as ContractAskLite[] });
         if (fv) {
           console.log(JSON.stringify({ tag: "brain:aix-follows-contract", conversationId, from: finalAix ?? null, to: fv.to === "aix" ? fv.aix : "reply", rule: fv.rule }));
-          if (fv.to === "reply") { finalAix = null; sceneSignalCheckPattern = null; decisionSource = "brain:aix_follows_contract(reply)"; }
+          if (fv.to === "reply") {
+            finalAix = null; sceneSignalCheckPattern = null; decisionSource = "brain:aix_follows_contract(reply)";
+            // 2026-11-13 作業員C（q431）: 道だけ返信にすると、方向は物件の AIX に添える「ピックアップを実行して届ける」のまま＝返信の方向も揃える
+            const rp = replyPlanAfterFollow({ direction: (parsed as { reply_direction?: unknown }).reply_direction, keyTopics: (parsed as { key_topics?: unknown }).key_topics, avoidTopics: (parsed as { avoid_topics?: unknown }).avoid_topics, openPickupPromise: promiseAix?.kind === "pickup" });
+            if (rp.changed) {
+              const pw = parsed as { reply_direction?: unknown; key_topics?: unknown; avoid_topics?: unknown };
+              pw.reply_direction = rp.direction; pw.key_topics = rp.keyTopics; pw.avoid_topics = rp.avoidTopics;
+              console.log(JSON.stringify({ tag: "brain:aix-follows-contract-reply-plan", conversationId, openPickupPromise: promiseAix?.kind === "pickup", direction: rp.direction }));
+            }
+          }
           else { finalAix = fv.aix; sceneSignalCheckPattern = null; decisionSource = decisionSource ?? "llm"; }
         }
       }
