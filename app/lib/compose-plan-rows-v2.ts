@@ -14,7 +14,7 @@
 
 import type { SentencePlan, SevenFields, PlanRow } from "./compose-sentence-plan";
 import type { SentenceRole } from "./takeuchi-anatomy-roles";
-import { PHRASE_ROWS_TABLE } from "./compose-phrase-catalog-data";
+import { PHRASE_ROWS_TABLE, PHRASE_TRUST_SUB_TABLE } from "./compose-phrase-catalog-data";
 import { endingOf, endingsFor, trustFor, TRUST_JA } from "./compose-phrase-catalog";
 import { headWordOf, HEAD_WORD_JA } from "./compose-head";
 import { strengthFromSeven } from "./next-move-types";
@@ -32,7 +32,7 @@ export const V2_ROLE_JA: Record<V2Role, string> = { head: "頭", press: "押さ�
 export const V2_OF: Partial<Record<SentenceRole, V2Role>> = { greet: "head", uke: "head", answer: "press", promise: "press", trust: "trust", barrier: "trust", worry: "latent", viewing: "bridge", apply: "bridge", estimate: "bridge", ask_send: "bridge", keep: "close", close: "close" };
 export type V2Sub =
   | "conclusion" | "numbers" | "name_property" | "split_known_check"
-  | "effort" | "fact" | "scarcity" | "company_detail"
+  | "effort" | "fact" | "scarcity" | "company_detail" | "support" | "options" | "honest_weak" | "deadline" | "flexible"
   | "viewing" | "estimate" | "apply" | "ask_send"
   | "their_timing" | "keep_promise" | "fixed"
   | "kashikomari" | "hai" | "arigato" | "daijobu" | "none"
@@ -70,6 +70,18 @@ export type RowsV2Input = {
   kinds?: ReadonlyArray<string>;
 };
 const STAND_MIN = 0.5, DROP_MAX = 0.2;
+/** 信頼の下の役目: 1文として立つ物（行を立てる）と、他の文の中で言う物（押さえ・つなぎの how に添える） */
+const STANDALONE_TRUST: ReadonlySet<string> = new Set(["support", "scarcity", "company_detail", "honest_weak", "options"]);
+const EMBED_TRUST: Readonly<Record<string, V2Role>> = { effort: "press", deadline: "press", flexible: "bridge" };
+const V2_SUB_OF_TRUST: Readonly<Record<string, V2Sub>> = { support: "support", scarcity: "scarcity", company_detail: "company_detail", honest_weak: "honest_weak", options: "options", effort: "effort", deadline: "deadline", flexible: "flexible" };
+const TRUST_EMBED_JA: Readonly<Record<string, string>> = { effort: "こちらの手間を見せる", deadline: "期日を示す", flexible: "都合に合わせる" };
+/** 場面×主の役目 → 信頼の下の役目の割合（3番未満は場面 * に落とす） */
+export function trustSubsFor(scene: string | null, mainRole: SentenceRole | null): Array<[string, number]> {
+  if (!mainRole) return [];
+  const a = scene ? PHRASE_TRUST_SUB_TABLE[`${scene}|${mainRole}`] : undefined;
+  const t = a && a.n >= 3 ? a : PHRASE_TRUST_SUB_TABLE[`*|${mainRole}`];
+  return t ? t.shares : [];
+}
 const TIME_RE = /来週|今週|週末|明日|明後日|月末|今月中|来月|\d{1,2}月(?:\d{1,2}日|上旬|中旬|下旬|頃)?|\d{1,2}日|[月火水木金土日]曜/;
 const SCARCITY_RE = /1部屋のみ|一部屋のみ|こちらの1部屋|1部屋となります|残り1|このお部屋のみ|のみとなります|2番手/;
 const COMPANY_RE = /独立系|保証会社|仲介手数料|弊社|審査(?:通過|基準)|クレジットカード/;
@@ -121,8 +133,13 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
     const scarce = SCARCITY_RE.exec(all)?.[0] ?? null, company = replyFacts.find((f) => f.from === "会社の事実" || COMPANY_RE.test(f.text)) ?? null;
     // 点検 12838・12240: 信頼の中身（今ある物の少なさ・会社の事実の具体）が材料にある時は、割合が低い場面でも立てる
     // 足しすぎを締める（11/13 正解53 で竹内さんに無いのに立てた 13→10・当たり 10→8）: 少なさの事実がある時（12362・12838）・会社の具体は割合 0.3 以上の場面・それ以外は割合 0.5 以上の場面だけ
-    if (scarce || (company && (share ?? 0) >= 0.3) || (share ?? 0) >= STAND_MIN) {
-      const sub: V2Sub = scarce ? "scarcity" : company ? "company_detail" : mainRole === "promise" ? "effort" : "fact";
+    // 2026-11-13 細分化: 信頼の下の役目ごとの竹内さんの割合（PHRASE_TRUST_SUB_TABLE・場面×主の役目）。
+    //   1文として立つ下の役目（サポートの姿勢・少なさ・会社の具体・正直な弱点・選択肢）は、割合 0.4 以上で立てる。
+    //   他の文の中で言う下の役目（こちらの手間・期日・都合に合わせる）は行を立てず、押さえ・つなぎの行の how に添える（下の embedTrust）
+    const subs = trustSubsFor(i.scene, mainRole);
+    const standSub = subs.find(([k, s]) => STANDALONE_TRUST.has(k) && s >= 0.4)?.[0] ?? null;
+    if (scarce || (company && (share ?? 0) >= 0.3) || standSub || (share ?? 0) >= STAND_MIN) {
+      const sub: V2Sub = scarce ? "scarcity" : company ? "company_detail" : standSub ? V2_SUB_OF_TRUST[standSub] ?? "fact" : mainRole === "promise" ? "effort" : "fact";
       const tr = trustFor(i.scene, mainRole);
       rows.push({ role: "trust", sub, uses: scarce ? [{ field: "fact.value", value: scarce }] : company ? [{ field: "fact.value", value: company.text }] : [], source: company ? "company_fact" : scarce ? "material" : "conversation", certainty: "assertable", how: tr?.shares[0] ? TRUST_JA[tr.shares[0][0]] ?? null : null, why_order: "after_answer", length: "normal", stand: [have.length ? "設計図にある" : `竹内さんが入れる割合 ${share}`], share, from: have[0]?.role ?? "trust" });
     } else dropped.push({ role: "trust", why: `竹内さんが入れる割合 ${share ?? "-"}（${STAND_MIN} 未満）` });
@@ -160,6 +177,12 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
       rows.push({ role: "close", sub, uses: time ? [{ field: "latent.expect", value: time }] : keep?.part ? [{ field: "aim.mid", value: keep.part }] : [], source: "conversation", certainty: "assertable", how: time ? "お客様の言った時期で結ぶ（例: 〇〇のご連絡お待ちしております）" : endingsFor(i.scene, keep ? "keep" : "close")?.top[0]?.[0] ?? null, why_order: "keep_last", length: "short", stand: [time ? `お客様の言った時期「${time}」` : keep ? "継続の約束は主の答えの後の最後" : `竹内さんが入れる割合 ${share}`], share, from: keep ? "keep" : "close" });
     } else dropped.push({ role: "close", why: `竹内さんが入れる割合 ${share ?? "-"}` });
   }
+  // 他の文の中で言う信頼（こちらの手間・期日・都合に合わせる）は、その行の how に添える（竹内さんの割合 0.4 以上の時だけ）
+  for (const [k, sh] of trustSubsFor(i.scene, mainRole)) {
+    const target = EMBED_TRUST[k]; if (!target || sh < 0.4) continue;
+    const row = rows.find((r) => r.role === target); if (!row) continue;
+    row.stand.push(`信頼の添え: ${TRUST_EMBED_JA[k]}（竹内さん ${Math.round(sh * 100)}%）`);
+  }
   // 足しすぎの印（探す条件の番で前に送った条件を全部繰り返さない）
   if (i.scene === "conditions" && lastStaff && /ピックアップ/.test(lastStaff.text)) for (const r of rows) if (r.role === "press" || (r.role === "close" && r.sub === "keep_promise")) r.stand.push("no_full_repeat（変わった条件だけ）");
   for (const r of rows) if (r.source === "material" && r.role !== "press" && !r.uses.length) r.stand.push("no_unasked_material");
@@ -171,7 +194,7 @@ export function planRowsV2Digest(rows: ReadonlyArray<PlanRowV2>): string {
   return rows.map((r) => `r2:${r.role}.${r.sub}|${r.uses.map((u) => u.field).join("+") || "-"}|${r.source}|${r.certainty}|${r.why_order}|${r.share ?? "-"}`).join(";");
 }
 const WHY_JA: Record<V2WhyOrder, string> = { greet_first: "最初", asked_order: "聞かれた順", ease_first: "不安を先に解く", after_answer: "答えの後", keep_last: "最後" };
-const SUB_JA: Partial<Record<V2Sub, string>> = { conclusion: "結論で答える", numbers: "事実を数字で", name_property: "物件名で名指し", split_known_check: "今言える部分と確認の部分を分ける", effort: "こちらの手間", fact: "事実の裏付け", scarcity: "少なさ", company_detail: "会社の具体", their_timing: "お客様の言った時期を使う", keep_promise: "継続の約束", fixed: "決まりの締め", worry: "奥の不安への一文", viewing: "内覧へ", estimate: "見積へ", apply: "申込へ", ask_send: "送ってもらう" };
+const SUB_JA: Partial<Record<V2Sub, string>> = { support: "サポートの姿勢", options: "選択肢", honest_weak: "正直な弱点", deadline: "期日", flexible: "都合に合わせる", conclusion: "結論で答える", numbers: "事実を数字で", name_property: "物件名で名指し", split_known_check: "今言える部分と確認の部分を分ける", effort: "こちらの手間", fact: "事実の裏付け", scarcity: "少なさ", company_detail: "会社の具体", their_timing: "お客様の言った時期を使う", keep_promise: "継続の約束", fixed: "決まりの締め", worry: "奥の不安への一文", viewing: "内覧へ", estimate: "見積へ", apply: "申込へ", ask_send: "送ってもらう" };
 /** 書き手への注記（on の時だけ・値は下の欄のまま・文は写さない） */
 export function planRowsV2Note(rows: ReadonlyArray<PlanRowV2>, env?: Env): string {
   if (!composePlanRowsV2On(env) || !rows.length) return "";
