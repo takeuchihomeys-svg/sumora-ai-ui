@@ -35,6 +35,12 @@ const SELECT = [
 ].join(", ");
 
 /**
+ * 学習の履歴を残す件数（2026-11-13 竹内さん「ちゃんと学習の部分連携して動けているか」）。
+ *   推移（弱い所が減っているか）を見るのに要る。多すぎても重くなるので 200 件まで。
+ */
+const HISTORY_KEEP = 200;
+
+/**
  * 2026-11-13: 記録から**その場で**学習の束を作る（cron を待たない）。
  *   直近3日・最大3000行（重くしない）。
  *   ⚠ DB に無い列があっても、**その列だけ**外して読み直す（`selectDroppingMissing`）。
@@ -99,9 +105,22 @@ async function buildNow(scope: string, note?: (why: string) => void) {
       console.warn("[human-learn-profile] 束を残せません:", ins.error.message);
     } else {
       saved = true;
-      // 入れた後に古い物を消す（今入れた1件は残す）
+      /**
+       * 2026-11-13 竹内さん「これでちゃんと学習の部分連携して動けているか」:
+       *   ⚠ 旧は「今入れた1件より古い物を全部消す」だったので、**履歴が1件しか残らなかった**
+       *     （`?history=1` がいつも1行＝推移が見られない＝学習が進んでいるか分からない）。
+       *   → **新しい方から HISTORY_KEEP 件だけ残し、それより古い物を消す**
+       *     （消す量を絞るので、失敗しても今までの履歴が残る）。
+       */
       try {
-        await supabase.from("human_learn_profile").delete().eq("scope", scope).lt("created_at", new Date(Date.now() - 1000).toISOString());
+        const keep = await supabase.from("human_learn_profile")
+          .select("id").eq("scope", scope)
+          .order("created_at", { ascending: false })
+          .range(HISTORY_KEEP, HISTORY_KEEP + 199);
+        const oldIds = ((keep.data ?? []) as Array<{ id: unknown }>).map((x) => x.id).filter((x) => x != null);
+        if (oldIds.length) {
+          await supabase.from("human_learn_profile").delete().in("id", oldIds);
+        }
       } catch { /* 消せなくても害はない（読む時は最新1件だけ見る） */ }
     }
   } catch (e) {

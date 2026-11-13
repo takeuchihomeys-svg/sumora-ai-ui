@@ -4,7 +4,7 @@
 //
 // 「試験の統括」（exam-conductor）の結果は**手元のファイルだけ**で、DBに残っていなかった（＝連携できていなかった）。
 // ここで、結果をDBに残す形（exam_runs）と、傾向を数える所を固定する。
-import { toExamRun, summarizeExamRuns, type ExamRunRow } from "../exam-runs";
+import { toExamRun, toExamRunFromConductor, summarizeExamRuns, type ExamRunRow } from "../exam-runs";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra?: unknown) {
@@ -70,6 +70,39 @@ console.log("\n■ ④ 中身（会話・名前）は入れない");
   const s = JSON.stringify(row);
   t("next_actions は id と理由だけ", s.includes('"id":"q-1"') && !s.includes("会話"));
   t("compare は点の形だけ", !!row?.compare);
+}
+
+console.log("\n■ ⑤ 統括（--run）の結果を DB の1行にする");
+{
+  // 統括の結果の**実際の形**（`pass: "12→14"`・`usd: "$0.123"`・`missStages`）
+  const raw = {
+    label: "conductor-1",
+    at: "2026-11-13T12:00:00.000Z",
+    pass: "12→14",
+    better: 3,
+    worse: 1,
+    usd: "$0.123",
+    code: 0,
+    verdict: "流し終えた",
+    missStages: [{ id: "q015", stage: "brain" }, { id: "q042", stage: "writer" }, { nonsense: 1 }],
+    // ⚠ 余計な物（会話・名前）を混ぜても入れない
+    conversation: "お客様の会話本文",
+  };
+  const row = toExamRunFromConductor(raw, { candidates: 20, material: { cls: "kb", files: 3, kbIds: ["kb1"] }, label: "plan-1" });
+  t("null にならない", !!row);
+  const cmp = (row?.compare ?? {}) as Record<string, unknown>;
+  const acts = (row?.next_actions ?? []) as Array<Record<string, unknown>>;
+  t("合格は『今』の14（前の12も残す）", cmp.pass === 14 && cmp.pass_before === 12, row?.compare);
+  t("良くなった3・悪くなった1", cmp.better === 3 && cmp.worse === 1, row?.compare);
+  t("費用 $0.123 を数として読む", row?.cost_usd === 0.123, row?.cost_usd);
+  t("落ちた問題は id と段だけ（2件・壊れた1件は捨てる）", acts.length === 2, row?.next_actions);
+  t("計画の候補20・材料3", row?.candidates === 20 && row?.material_files === 3, [row?.candidates, row?.material_files]);
+  t("計画の label を残す", row?.plan_label === "plan-1", row?.plan_label);
+  const s = JSON.stringify(row);
+  t("会話の中身は入れない", !s.includes("お客様の会話本文"));
+  t("人が読む1行に合格の前→今", String(row?.summary ?? "").includes("合格 12→14"), row?.summary);
+  t("label が無ければ null", toExamRunFromConductor({ pass: "1→1" }) === null);
+  t("壊れた入力でも落ちない", toExamRunFromConductor({ label: "x" } as never) !== null);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
