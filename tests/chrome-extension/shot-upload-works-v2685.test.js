@@ -49,7 +49,7 @@ console.log("\n■ 実際に動かす（送信まで行く）");
     chrome: { storage: { local: { get: async () => ({}), set: () => {} } } },
     _getAutomationKeyHeader: async () => ({}),
     _snapInstallId: async () => "t",
-    _extVersion: () => "2.7.21",
+    _extVersion: () => "2.7.22",
     fetch: async (url, opts) => { fetchCalls.push({ url, len: opts.body.length }); return { ok: true, status: 200, text: async () => '{"ok":true}' }; },
   };
   vm.createContext(sandbox);

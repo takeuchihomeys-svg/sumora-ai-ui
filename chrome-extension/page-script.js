@@ -386,7 +386,26 @@
     };
     if (P && P.moveToEl) {
       try { P.ensure(); } catch (_) {}
-      return P.moveToEl(el).then(function () {
+      /**
+       * 2026-11-13 竹内さん「自動検索の部分に反映できるようにする」:
+       *   学んだ**押した位置**（`o.aim`・人が欄のどこを押したか）があれば、**その割合の所へ**カーソルを動かす。
+       *   ⚠ 無ければ今まで通り真ん中（moveToEl）。
+       *   ⚠ 狙いは 0.2〜0.8 に丸める（端すぎる所は押さない＝押し間違いを防ぐ）。
+       */
+      var _move = function () {
+        try {
+          if (o.aim && P.moveTo && el.getBoundingClientRect) {
+            var _r = el.getBoundingClientRect();
+            if (_r.width > 0 && _r.height > 0) {
+              var _fx = Math.max(0.2, Math.min(0.8, o.aim.x));
+              var _fy = Math.max(0.2, Math.min(0.8, o.aim.y));
+              return P.moveTo(_r.left + _r.width * _fx, _r.top + _r.height * _fy);
+            }
+          }
+        } catch (_) {}
+        return P.moveToEl(el);
+      };
+      return _move().then(function () {
         if (P.tap) { try { P.tap(); } catch (_) {} }
         return openThenChoose().then(function () { return _verifySel(el, target); });
       }, function () {
@@ -707,6 +726,43 @@
       enqueueHumanAction(function () {}, _b2, _b2 + 200, "考え");
     }
   }
+  /**
+   * 2026-11-13 竹内さん「それで自動検索の部分に反映できるようにする。その点も併せて改善できるようにする」:
+   *   学んだ**欄の種類**（`axlx_learn_points` の w）を読み、押し方を切り替える。
+   *   ・select   … プルダウン（開いて選ぶ）  ← 今まで通り chooseSelectLikeHuman
+   *   ・checkbox … 押して選ぶ
+   *   ・text     … 直接入力
+   *   ⚠ 学習が無ければ今まで通り（select の欄は select として扱う＝画面の作りに従う）。
+   *   ⚠ **画面の作り（実際のタグ）を最優先**し、学習は「同じ名前で迷った時」に使う。
+   *     画面が select なのに学習が text なら、**画面を信じる**（誤学習で壊さない）。
+   */
+  var _learnKinds = null;
+  var _learnKindsAt = 0;
+  function _kindOf(name) {
+    try {
+      var now = Date.now();
+      if (!_learnKinds || now - _learnKindsAt > 30000) {
+        _learnKindsAt = now;
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.get(["axlx_learn_points"], function (r) {
+            try { _learnKinds = (r && r.axlx_learn_points) || {}; } catch (_) { _learnKinds = {}; }
+          });
+        }
+      }
+      var v = _learnKinds && _learnKinds[name];
+      return v && v.w ? String(v.w) : null;
+    } catch (_) { return null; }
+  }
+  /** 学んだ「押した位置」（要素の中の割合）を返す（無ければ null） */
+  function _aimOf(name) {
+    try {
+      var v = _learnKinds && _learnKinds[name];
+      if (!v || typeof v.x !== "number" || typeof v.y !== "number") return null;
+      if (Number(v.n) < 2) return null;
+      return { x: v.x, y: v.y };
+    } catch (_) { return null; }
+  }
+
   function queueSelVal(name, val) {
     var el = document.querySelector('select[name="' + name + '"]');
     if (!el) { enqueueHumanAction(function () { setSelVal(name, val); }, 80, 200, 'sel:' + name + '=' + val); return; }
@@ -719,7 +775,17 @@
      *   → 待ちを長くして（移動手段は特に）、**必ず「開く→選ぶ→決める→閉じる」を出す**。
      */
     var _isTransport = (name === "transportation_id");
-    _enqueueWithEl(el, function () { return chooseSelectLikeHuman(el, val, { forceOpen: true }); },
+    /**
+     * 2026-11-13 竹内さん「自動検索の部分に反映できるようにする」:
+     *   学んだ**押した位置**（人が欄の中のどこを押したか）を狙って開く。
+     *   ⚠ 画面の作り（select）を最優先し、学習は「どこを押すか」にだけ使う（誤学習で壊さない）。
+     */
+    var _aim = _aimOf(name);
+    var _learnedKind = _kindOf(name);
+    try {
+      if (_learnedKind) _auditStepP('learn_kind', name + '=' + _learnedKind + (_aim ? '（押す位置 横' + Math.round(_aim.x * 100) + '%）' : ''));
+    } catch (_) {}
+    _enqueueWithEl(el, function () { return chooseSelectLikeHuman(el, val, { forceOpen: true, aim: _aim }); },
       _isTransport ? 1400 : 900,
       _isTransport ? 2600 : 1600,
       'sel:' + name + '=' + val);
