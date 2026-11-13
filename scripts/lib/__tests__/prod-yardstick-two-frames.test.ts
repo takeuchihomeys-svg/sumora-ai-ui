@@ -1,7 +1,7 @@
 // 本番の物差しの「今の通／後の通」の2枠（scripts/lib/prod-yardstick.ts）のテスト（LLM も DB も使わない）
 // 2026-11-12 作業員1（弱い所 268）。見張りの番 11447・12189 は実物の値（作業員16 の指摘の番）
 // 実行: npx tsx scripts/lib/__tests__/prod-yardstick-two-frames.test.ts
-import { brainFrames, staffFrames, judgeTwoFrames, countTwoFrames, twoStageKindOf, yardstickTwoFramesOn, fillStaffAix, yardstickAixLogFillOn } from "../prod-yardstick";
+import { brainFrames, staffFrames, judgeTwoFrames, countTwoFrames, twoStageKindOf, yardstickTwoFramesOn, fillStaffAix, yardstickAixLogFillOn, mergeFillFrames, applyStaffAixState } from "../prod-yardstick";
 import { aixFamily } from "../prod-yardstick-db";
 
 let fail = 0, pass = 0;
@@ -72,6 +72,24 @@ ok("2段の種類", twoStageKindOf("rule:two_stage_promise(pickup_unless_ack)+se
   const s2 = staffFrames(T, moves, { comboMs: 120_000 });
   ok("補った後: 後の通は確認の系統（aix_unknown でない）・組の窓（2分）には入らない", s2.now === "返信" && s2.later !== "aix_unknown" && !!s2.later && !s2.combo, JSON.stringify(s2));
   ok("ブレインの見積は今の通の外れのまま（判断の外れ＝弱い所 836）", judgeTwoFrames(brainFrames(aixFamily("estimate_sheet"), "rule:answerable_direct(brought_estimate)"), s2).now === "miss");
+}
+// 2026-11-13 作業員8b: 補いは後の通だけ（今の通・組の窓に入らない）・next_turn は今の通を返信に
+{
+  const T = Date.parse("2026-11-05T09:56:29.927Z");
+  // 見張りに AIX が無い番で、補った AIX が最初の返信から1分後（組の窓の中）でも、今の通は返信のまま・補いは後の通へ
+  const movesWatch = [{ at: T + 14 * 60_000, family: "返信" }, { at: T + 15 * 60_000, family: "aix_unknown" }];
+  const movesFill = [{ at: T + 14 * 60_000, family: "返信" }, { at: T + 15 * 60_000, family: "確認" }];
+  const sNow = staffFrames(T, movesWatch, { comboMs: 120_000 }), sFill = staffFrames(T, movesFill, { comboMs: 120_000 });
+  ok("前提: 見張りだけでも aix_unknown は組の窓で今の通に入る形", sNow.combo === true && sNow.now === "aix_unknown");
+  const sNow2 = staffFrames(T, movesWatch, { comboMs: null });
+  const m = mergeFillFrames(sNow2, sFill);
+  ok("補いは今の通に入らない（見張りの今のまま）", m.now === "返信", JSON.stringify(m));
+  ok("補いは後の通に入る（組でも後へ）", m.later === "確認", JSON.stringify(m));
+  ok("見張りで後の通が分かっていれば見張りのまま", mergeFillFrames({ now: "返信", later: "見積" }, { now: "返信", later: "確認" }).later === "見積");
+  ok("見張りの組（今の通が AIX）は補いで変えない", JSON.stringify(mergeFillFrames({ now: "見積", later: null, combo: true }, { now: "返信", later: "確認" })) === JSON.stringify({ now: "見積", later: null, combo: true }));
+  ok("next_turn は今の通を返信に・後はそのまま", JSON.stringify(applyStaffAixState({ now: "aix_unknown", later: "確認" }, "next_turn")) === JSON.stringify({ now: "返信", later: "確認", combo: false }));
+  ok("他の理由は変えない", applyStaffAixState({ now: "見積", later: null }, "pressed").now === "見積" && applyStaffAixState({ now: "見積", later: null }, null).now === "見積");
+  ok("配線: 今の通（最初の一手）は見張りの AIX だけ", (() => { const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "prod-yardstick-db.ts"), "utf8") as string; return !/staffFirstMove([^)]*staffAixOf(w))/.test(src) && src.includes("mergeFillFrames(sNow, staffFrames(tAt, movesOf(logs)))"); })());
 }
 console.log(`prod-yardstick-two-frames: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
