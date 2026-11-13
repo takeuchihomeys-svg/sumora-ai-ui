@@ -40,7 +40,7 @@ export type StaffCheckInput = {
   /** 入口の統括の自信（conductor_intake.answer.confidence） */
   intakeConfidence: string | null | undefined;
   /** 作業員16 の ref_resolve（meta.ref_resolve・REF_RESOLVE=on|shadow の時だけ）。handoff に ref_needs_name／ref_needs_room があれば解けない（resolved=false・sure=low も同じ） */
-  ref?: { resolved?: boolean | null; sure?: string | null; handoff?: ReadonlyArray<unknown> | null } | null;
+  ref?: { resolved?: boolean | null; sure?: string | null; handoff?: ReadonlyArray<unknown> | null; items?: ReadonlyArray<{ certainty?: unknown; targets?: ReadonlyArray<unknown> | null }> | null } | null;
   /** 今の番にお客様の画像がある（持ち込み） */
   turnHasImage?: boolean;
   /** ブレインが決めた今の番の物件（current_property）。画像の番でこれが空なら物件名が読めていない（10911） */
@@ -70,7 +70,10 @@ export function decideStaffCheck(i: StaffCheckInput): StaffCheck | null {
   if (String(i.intakeConfidence ?? "").trim() !== "low" && !refDetail.length) return null;
   const reasons: StaffCheckReason[] = [];
   // ① 指す物が解けない
-  const refBad = !!i.ref && (refDetail.length > 0 || i.ref.resolved === false || String(i.ref.sure ?? "") === "low");
+  // resolved・sure が無い記録（main の ref_resolve は items だけ）は items から読む: 物件まで解けなかった言葉がある＝解けない・一番低い確かさが low＝解けない
+  const items = Array.isArray(i.ref?.items) ? i.ref!.items : [];
+  const itemsBad = items.some((it) => !Array.isArray(it?.targets) || it.targets.length === 0 || String(it?.certainty ?? "") === "low");
+  const refBad = !!i.ref && (refDetail.length > 0 || i.ref.resolved === false || String(i.ref.sure ?? "") === "low" || itemsBad);
   const imageNoName = !i.ref && !!i.turnHasImage && !String(i.currentProperty ?? "").trim();
   if (refBad || imageNoName) reasons.push("ref_unresolved");
   // ② 答えの出所が推測だけ: 返信で答える依頼が全部 general/judgement/無し、または潜在の読みの段が全部 guess

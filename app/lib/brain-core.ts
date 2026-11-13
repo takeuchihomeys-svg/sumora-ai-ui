@@ -3709,8 +3709,9 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         turnText: tTxt, stampOnly, ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(tTxt),
         closedBefore: /ご検討|何卒よろしく|出次第|お待ちしており|ご連絡お待ち/.test(lastStaff), pickupReady: pickupReadyMaterial,
         openPromises: brainLedger.entries.filter((e) => e.status === "promised" && e.fulfilledBy == null).length, gapHours,
-        // 2026-11-13 作業員5（BRAIN_DEPTH_V2・記録だけ）: 今の連投が名指す送った物件の数（作業員4 の ref_resolve が入ったら差し替え）・持ち込み
-        refCount: (() => { const nt = tTxt.normalize("NFKC").replace(/\s+/g, ""); return new Set(sentProps.map((p) => (p.property_name ?? "").normalize("NFKC").replace(/\s+/g, "")).filter((n) => n.length >= 3 && (nt.includes(n) || nt.includes(n.slice(0, 6))))).size; })(),
+        // 2026-11-13 作業員5（BRAIN_DEPTH_V2・記録だけ）: 今の連投が指す物の数。作業員16 の ref_resolve（REF_RESOLVE=on|shadow）がある時はその refCount（解けた物件＋解けなかった指す言葉）・
+        //   無い時は送った物件の名前の一致で数える（前の形）・持ち込み
+        refCount: refResolveRec ? refResolveRec.refCount : (() => { const nt = tTxt.normalize("NFKC").replace(/\s+/g, ""); return new Set(sentProps.map((p) => (p.property_name ?? "").normalize("NFKC").replace(/\s+/g, "")).filter((n) => n.length >= 3 && (nt.includes(n) || nt.includes(n.slice(0, 6))))).size; })(),
         brought: /https?:\/\/|suumo|homes\.co|athome|chintai\.net/i.test(tTxt) || /【物件の(?:画面|写真)/.test(tTxt),
       });
       // 2026-11-13 作業員5（BRAIN_DEPTH_V2=on・記録だけ）: 深い時だけ動かす物（今は深さに関係なく動く物のうち深くない番で止まる物＝skip）を残す
