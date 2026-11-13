@@ -84,7 +84,7 @@ t("束の何件目・↑・引用・複数の指す物（深さの札 refCount�
   const q = resolveRefs({ text: "これの初期費用は？", sent: sent12105, brought: [], quotedText: "Cレジデンス 303号室の資料です" });
   assert.deepEqual([q.items[0].targets, q.items[0].certainty], [[{ name: "Cレジデンス", room: "303" }], "high"]);
   // 指す言葉が無い文は空（数えない）
-  assert.deepEqual(resolveRefs({ text: "よろしくお願いします", sent: sent12105, brought: [] }), { items: [], refCount: 0 });
+  assert.deepEqual(resolveRefs({ text: "よろしくお願いします", sent: sent12105, brought: [] }), { items: [], refCount: 0, resolved: true, sure: "high" });
 });
 
 t("持ち込みの台帳: ポータルの共有文（名前・URL・id）と物件ごとの状況の台帳（origin=customer の部屋・customer_shared の URL）をポータルの id でまとめる", () => {
@@ -104,6 +104,7 @@ t("持ち込みの台帳: ポータルの共有文（名前・URL・id）と物�
 t("人に回す理由: needs_name・needs_room の番は ref_needs_name・ref_needs_room（作業員5 の人に回す段へ）", () => {
   const r = resolveRefs({ text: "https://www.homes.co.jp/chintai/room/abc123def456/ ここは？", sent: [], brought: [{ name: "Eビル", room: null, at: "x", portal_id: "abc123def456", from: "url" }] });
   assert.deepEqual(refHandoffReasons(r), ["ref_needs_room"]);
+  assert.deepEqual([r.resolved, r.sure], [false, "low"], "作業員5 の人に回す段は resolved=false・sure=low も解けないと読む");
   assert.deepEqual(refHandoffReasons(resolveRefs({ text: "https://suumo.jp/chintai/jnc_000000000009/", sent: [], brought: [] })), ["ref_needs_name"]);
   assert.deepEqual(refHandoffReasons(resolveRefs({ text: "2件目は？", sent: sent12105, brought: [] })), []);
 });

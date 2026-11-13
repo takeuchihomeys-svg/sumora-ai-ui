@@ -20,7 +20,8 @@ export type RefClue = "quote" | "url" | "image" | "bundle_order" | "last_send" |
 export type RefCertainty = "high" | "mid" | "low";
 export type RefTarget = { name: string; room: string | null };
 export type RefItem = { word: string; kind: RefKind | null; targets: RefTarget[]; clues: RefClue[]; certainty: RefCertainty; note?: string };
-export type RefResolve = { items: RefItem[]; refCount: number };
+/** resolved＝どの指す言葉も物件まで解けて引けない印が無い・sure＝一番低い確かさ（指す言葉が無ければ resolved=true・sure=high）。作業員5 の人に回す段が読む（resolved=false・sure=low も解けないと読む） */
+export type RefResolve = { items: RefItem[]; refCount: number; resolved?: boolean; sure?: RefCertainty };
 
 /** こちらが送った物件（sent-props-text の SentProp から・束の番号と見積の初期費用つき） */
 export type RefSent = { name: string; room: string | null; sent_at: string; bundle_no?: number | null; bundle_pos?: number | null; channel?: string | null; estimate_initial_cost?: number | null; new_arrival?: boolean };
@@ -144,7 +145,9 @@ export function resolveRefs(i: RefInput): RefResolve {
     const certainty: RefCertainty = !kind || !targets.length ? "low" : clues.some((c) => c === "quote" || c === "name" || c === "bundle_order" || c === "cost_filter") ? "high" : clues.includes("last_send") || targets.length === 1 ? "mid" : "low";
     items.push({ word: dm[0], kind, targets, clues, certainty, ...(cm && !clues.includes("cost_filter") && kind === "ours" ? { note: "needs_cost（送った物件の見積の初期費用が無い）" } : {}) });
   }
-  return { items, refCount: refCountOf({ items, refCount: 0 }) };
+  const resolved = items.every((it) => it.targets.length > 0 && !/^needs_/.test(it.note ?? ""));
+  const sure: RefCertainty = items.some((it) => it.certainty === "low") ? "low" : items.some((it) => it.certainty === "mid") ? "mid" : "high";
+  return { items, refCount: refCountOf({ items, refCount: 0 }), resolved, sure };
 }
 
 /** 指す物の数（作業員5 の深さの札 refCount へ）＝解けた物件の数（物件名＋号室で重ねない）＋解けなかった指す言葉の数 */
