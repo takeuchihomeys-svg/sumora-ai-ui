@@ -753,6 +753,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               .update({ is_starred: false })
               .eq("sent_reply", unsentText);
           }
+          // 2026-11-13 作業員5（統括役の案A・KB 6ad3a25f）: 消す前に取り消しの控えを残す（UNSEND_LOG=on・既定 off・伏せた頭40字・申込以降は残さない・30日より古い控えは消す）
+          try {
+            const UL = await import("@/app/lib/unsend-log");
+            if (UL.unsendLogOn()) {
+              const convU = (unsentMsg as { conversation_id?: string | null }).conversation_id ?? null;
+              const { data: cst } = convU ? await db.from("conversations").select("status").eq("id", convU).maybeSingle() : { data: null };
+              const { isPostApplyStatus } = await import("@/app/lib/llm-alt-provider");
+              const row = UL.unsendLogRow({ conversationId: convU, sender: (unsentMsg as { sender?: string | null }).sender ?? null, createdAt: (unsentMsg as { created_at?: string | null }).created_at ?? null, text: unsentText, postApply: isPostApplyStatus(((cst ?? {}) as { status?: string | null }).status ?? null) });
+              if (row) await db.from("message_unsends").insert(row);
+              await db.from("message_unsends").delete().lt("unsent_at", UL.unsendPurgeBefore());
+            }
+          } catch (e) { console.warn("[line-webhook] unsend log failed:", e instanceof Error ? e.message : e); }
           // messages から物理削除（取り消されたメッセージは会話履歴・AI文脈から除外）
           await db.from("messages").delete().eq("id", unsentMsg.id);
           // 2026-10-28 竹内さん「削除された部分に対しての返信が出ないように」（UNSEND_REFRESH=on・既定 off・unsend-refresh.ts）:
