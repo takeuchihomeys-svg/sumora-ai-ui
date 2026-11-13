@@ -17,6 +17,7 @@ let used = 0, skipped = 0;
 /** 文の役目13種 → 設計図の6役目（作業員22 の役目の名前）。promise は押さえ（確かめる約束で答える）・keep は締め（継続の約束）・barrier は信頼（少なさ・障壁を下げる） */
 const V2_OF: Record<string, string> = { greet: "head", uke: "head", answer: "press", promise: "press", trust: "trust", barrier: "trust", worry: "latent", viewing: "bridge", apply: "bridge", estimate: "bridge", ask_send: "bridge", keep: "close", close: "close" };
 const trustSub = new Map<string, { n: number; m: Map<string, number> }>();
+const subTab = new Map<string, { n: number; m: Map<string, number> }>();
 const rowsTab = new Map<string, { n: number; has: Map<string, number>; pos: Map<string, number[]> }>();
 // 形の欄（長さ・絵文字）: 場面×主の役目ごとの文の数・場面ごとの絵文字の数と種類
 const lens = new Map<string, number[]>();
@@ -32,6 +33,19 @@ for (const r of roles) {
   if (r.main_role) { const subs = trustSubsOfText(r.sentences.join("\n")); bump(trustSub, `${r.scene}|${r.main_role}`, subs); bump(trustSub, `*|${r.main_role}`, subs); }
   if (r.main_role) { const ks = trustOfText(r.sentences.join("\n")); bump(trust, `${r.scene}|${r.main_role}`, ks); bump(trust, `*|${r.main_role}`, ks); }
   for (const x of r.roles) { const s = r.sentences[x.i - 1]; if (!s) continue; const e = endingOf(s); const v = e ? [e] : []; bump(ends, `${r.scene}|${x.role}`, v); bump(ends, `*|${x.role}`, v); }
+  // 下の役目（つなぎ・押さえ・締め）: 竹内さんの文の役目と最後の文から決まった語で
+  if (r.main_role) {
+    const rs = new Set(r.roles.map((x) => x.role));
+    const last = r.sentences[r.sentences.length - 1] ?? "";
+    const subsOf: string[] = [];
+    for (const b of ["viewing", "apply", "estimate", "ask_send"]) if (rs.has(b)) subsOf.push(`bridge.${b}`);
+    if (rs.has("answer")) subsOf.push("press.answer");
+    if (rs.has("promise")) subsOf.push("press.promise");
+    if (rs.has("keep")) subsOf.push("close.keep_promise");
+    if (/何卒|よろしくお願い|お気軽に/.test(last)) subsOf.push("close.fixed");
+    if (/お待ちしております/.test(last) && /来週|今週|週末|明日|月末|\d{1,2}月|\d{1,2}日|曜/.test(last)) subsOf.push("close.their_timing");
+    bump(subTab, `${r.scene}|${r.main_role}`, subsOf); bump(subTab, `*|${r.main_role}`, subsOf);
+  }
   // 行の並び（COMPOSE_PLAN_ROWS_V2）: 設計図の6役目（head・press・trust・latent・bridge・close）がこの番にあるか・どの位置か（0＝先頭〜1＝最後）
   if (r.main_role) {
     const present = new Map<string, number>();
@@ -59,6 +73,8 @@ const trustOut: Record<string, { n: number; shares: Shares }> = {};
 for (const k of [...trust.keys()].sort()) { const t = trust.get(k)!; if (t.n >= 2) trustOut[k] = { n: t.n, shares: sharesOf(t.m, t.n, 4) }; }
 const trustSubOut: Record<string, { n: number; shares: Shares }> = {};
 for (const k of [...trustSub.keys()].sort()) { const t = trustSub.get(k)!; if (t.n >= 2) trustSubOut[k] = { n: t.n, shares: sharesOf(t.m, t.n, 8) }; }
+const subOut: Record<string, { n: number; shares: Shares }> = {};
+for (const k of [...subTab.keys()].sort()) { const t = subTab.get(k)!; if (t.n >= 2) subOut[k] = { n: t.n, shares: sharesOf(t.m, t.n, 12) }; }
 const endOut: Record<string, { n: number; top: Shares }> = {};
 for (const k of [...ends.keys()].sort()) { const t = ends.get(k)!; if (t.n < 4) continue; const top = sharesOf(t.m, t.n, 3, 2); if (top.length) endOut[k] = { n: t.n, top }; }
 const q = (a: number[], p: number) => { const b = [...a].sort((x, y) => x - y); return b[Math.min(b.length - 1, Math.floor(p * (b.length - 1) + 0.5))]; };
@@ -73,6 +89,7 @@ export const PHRASE_TRUST_TABLE: Record<string, { n: number; shares: Array<[stri
 export const PHRASE_ENDING_TABLE: Record<string, { n: number; top: Array<[string, number]> }> = ${JSON.stringify(endOut)};
 export const PHRASE_LENGTH_TABLE: Record<string, { n: number; median: number; p25: number; p75: number }> = ${JSON.stringify(lenOut)};
 export const PHRASE_TRUST_SUB_TABLE: Record<string, { n: number; shares: Array<[string, number]> }> = ${JSON.stringify(trustSubOut)};
+export const PHRASE_SUB_TABLE: Record<string, { n: number; shares: Array<[string, number]> }> = ${JSON.stringify(subOut)};
 export const PHRASE_ROWS_TABLE: Record<string, { n: number; roles: Array<[string, number, number]> }> = ${JSON.stringify(rowsOut)};
 export const PHRASE_EMOJI_TABLE: Record<string, { n: number; median: number; p75: number; kinds: Array<[string, number]> }> = ${JSON.stringify(emoOut)};
 `;

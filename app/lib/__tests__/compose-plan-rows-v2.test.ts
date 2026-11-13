@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readTurnUnderstanding, readSevenFields, buildSentencePlan } from "../compose-sentence-plan";
 import { asksFactsOf } from "../compose-asks-facts";
-import { buildPlanRowsV2, planRowsV2Note, planRowsV2Digest, composePlanRowsV2On, rowsPresence } from "../compose-plan-rows-v2";
+import { buildPlanRowsV2, planRowsV2Note, planRowsV2Digest, composePlanRowsV2On, rowsPresence, subShareFor, rowsV2SubOn, trustEmbedsShown, trustEmbedLogFields } from "../compose-plan-rows-v2";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -58,5 +58,32 @@ t("竹内さんの並びの表・digest・既定 off", () => {
   assert.equal(composePlanRowsV2On({}), false);
   assert.equal(planRowsV2Note(r.rows, {}), "");
   assert.match(planRowsV2Note(r.rows, { COMPOSE_PLAN_ROWS_V2: "on" }), /^- 1文ずつの設計図/);
+});
+t("check_estimate（確認と見積の両方の約束）: 押さえ（確認の約束）とつなぎ（見積へ）の2行で受ける", () => {
+  const meta = { turn_contract: { asks: [{ quote: "この物件まだ空いてますか？初期費用も知りたいです", kind: "question", route: "promise", answer: "募集状況を確認し、最大限割引の御見積書とあわせてお送りする", basis: "judgement" }], lead_with: 0 }, conductor_focus: { focus: "promise_make", focus_sub: "check_estimate" } };
+  const r = rows(meta, { scene: "property_sent", customerText: "この物件まだ空いてますか？初期費用も知りたいです", recentStaff: [] });
+  assert.ok(r.rows.some((x) => x.role === "press" && x.sub === "split_known_check" && x.certainty === "needs_check"), roleSeq(r).join(","));
+  assert.ok(r.rows.some((x) => x.role === "bridge" && x.sub === "estimate"), roleSeq(r).join(","));
+  // 下の役目の割合で立てるのを止めると（COMPOSE_ROWS_V2_SUB=off）focus_sub を読まない
+  process.env.COMPOSE_ROWS_V2_SUB = "off";
+  try { const r0 = rows(meta, { scene: "property_sent", customerText: "この物件まだ空いてますか？初期費用も知りたいです", recentStaff: [] }); assert.ok(!r0.rows.some((x) => x.stand.some((s) => s.startsWith("focus_sub")))); }
+  finally { delete process.env.COMPOSE_ROWS_V2_SUB; }
+});
+t("下の役目の割合: 表から引ける・場面が3番未満なら * に落とす", () => {
+  assert.equal(subShareFor("question", "answer", "press.answer"), 1);
+  assert.equal(subShareFor(null, null, "press.answer"), null);
+  assert.ok((subShareFor("no-such-scene", "answer", "close.fixed") ?? -1) >= 0);
+  assert.equal(rowsV2SubOn({}), true);
+  assert.equal(rowsV2SubOn({ COMPOSE_ROWS_V2_SUB: "off" }), false);
+});
+t("信頼の添えの印: 作業員9 の4つ目の段が数える名前・出たかは竹内さんの札付けと同じ物差し", () => {
+  const rs = [{ role: "press", embeds: [{ kind: "effort", share: 0.5 }, { kind: "deadline", share: 0.45 }] }, { role: "bridge", embeds: [{ kind: "flexible", share: 0.4 }] }];
+  const s = trustEmbedsShown("管理会社に確認させて頂きます。いつでもご都合の良い日をお知らせください", rs);
+  assert.deepEqual(s.map((x) => [x.mark, x.shown]), [["trust_embed_effort", true], ["trust_embed_deadline", false], ["trust_embed_flexible", true]]);
+  assert.deepEqual(trustEmbedLogFields(s), { embeds: 3, embeds_shown: 2, embeds_missing: ["trust_embed_deadline"] });
+  assert.deepEqual(trustEmbedsShown("x", null), []);
+  // 書き手への注記に添えが出る
+  const row = { role: "press" as const, sub: "conclusion" as const, uses: [], source: "conversation" as const, certainty: "assertable" as const, how: null, why_order: "asked_order" as const, length: "normal" as const, stand: [], share: null, embeds: [{ kind: "effort" as const, share: 0.5 }] };
+  assert.match(planRowsV2Note([row], { COMPOSE_PLAN_ROWS_V2: "on" }), /この文の中でこちらの手間を見せる/);
 });
 console.log(`compose-plan-rows-v2: ${n} pass`);
