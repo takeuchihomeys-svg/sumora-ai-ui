@@ -1,6 +1,6 @@
 // npx tsx app/lib/__tests__/compose-phrase-catalog.test.ts
 import assert from "node:assert/strict";
-import { trustOfText, endingOf, trustFor, trustHowFor, endingsFor, phraseCatalogNote, composePhraseCatalogOn } from "../compose-phrase-catalog";
+import { trustOfText, endingOf, trustFor, trustHowFor, endingsFor, phraseCatalogNote, composePhraseCatalogOn, formSlotsNote, lengthFor, emojiFor, composeFormSlotsOn } from "../compose-phrase-catalog";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -30,5 +30,13 @@ t("既定 off は何も足さない・on で札と割合だけ（文は写さな
   assert.match(s, /文の終わりの言い方/);
   assert.doesNotMatch(s, /{名前}|YUMA/);
   assert.match(s, /受け＝「かしこまりました」/);
+});
+t("形の欄（COMPOSE_FORM_SLOTS・既定 off）: 長さ・絵文字・期日の言葉", () => {
+  assert.equal(composeFormSlotsOn({}), false);
+  assert.ok((lengthFor("question", "promise")?.median ?? 0) >= 1);
+  assert.ok(emojiFor("considering")?.kinds.every((k) => ["😊", "😌", "🌟", "✨"].includes(k)));
+  assert.equal(formSlotsNote({ scene: "question", mainRole: "promise", dates: [] }, {}), "");
+  assert.match(formSlotsNote({ scene: "question", mainRole: "promise", dates: [] }, { COMPOSE_FORM_SLOTS: "on" }), /^- 形: 長さ .*期日の言葉（明日中・本日中 等）は書かない/);
+  assert.match(formSlotsNote({ scene: "question", mainRole: "promise", dates: ["11月中旬"] }, { COMPOSE_FORM_SLOTS: "on" }), /材料にある物だけ（11月中旬）/);
 });
 console.log(`compose-phrase-catalog: ${n} pass`);

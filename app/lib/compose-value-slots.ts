@@ -138,7 +138,7 @@ export function appealValuePlan(o: { materialText: string; topText?: string | nu
 }
 
 // 答えの出所（作業員21 の info-kind に揃える）
-export type AnswerSource = "material" | "company_fact" | "record" | "conversation" | "general" | "staff_only";
+export type AnswerSource = "material" | "company_fact" | "record" | "conversation" | "general" | "staff_only" | "checked_result";
 export const ANSWER_SOURCE_FORM: Record<AnswerSource, { kind: string; form: string }> = {
   material: { kind: "K9 資料", form: "資料の値をそのまま「〜となります！！」で言い切る（答え×となります 37）" },
   company_fact: { kind: "K8 会社の事実", form: "「弊社では〜」「〜させて頂いております」で会社の決まりとして言う（答え×弊社 5）" },
@@ -146,10 +146,13 @@ export const ANSWER_SOURCE_FORM: Record<AnswerSource, { kind: string; form: stri
   conversation: { kind: "K11 会話の事実", form: "お客様が言った事を受けて言う（言っていない事を足さない）" },
   general: { kind: "知識（一般）", form: "「基本的に〜」で一般の話として言い、この物件の事として言い切らない" },
   staff_only: { kind: "K1/K2 スタッフだけが知る", form: "結果を言い切らず「確認させて頂きます」で約束にする（約束×確認させて頂きます 25）" },
+  checked_result: { kind: "K13 確かめた結果が手元にある", form: "確かめた結果として「管理会社に確認させて頂き、〜とのことです」「〜とのご返答でした」で伝える（竹内さん q177・q193・見ていない番）。結果に無い事は足さない" },
 };
 /** ブレインの turn_contract.asks[].basis・route から出所を決める（決まった対応だけ） */
-export function answerSourceOf(ask: { basis?: unknown; route?: unknown } | null | undefined): AnswerSource | null {
+/** kinds: 作業員21 の情報の種類（info_kind）。K13（前の約束の結果が手元にある）で答える番は「確かめた結果」の書き方 */
+export function answerSourceOf(ask: { basis?: unknown; route?: unknown } | null | undefined, kinds: ReadonlyArray<string> = []): AnswerSource | null {
   if (!ask) return null;
+  if (ask.route === "reply" && kinds.includes("K13")) return "checked_result";
   if (ask.route === "promise") return "staff_only";
   switch (ask.basis) {
     case "material": return "material";
@@ -266,7 +269,7 @@ export function composeSlotsAndClosing(o: { plan: SentencePlan; s7: SevenFields;
   const asks = Array.isArray(tc?.asks) ? (tc!.asks as unknown[]).map(objOf) : [];
   const leadAsk = asks[typeof tc?.lead_with === "number" ? (tc.lead_with as number) : 0] ?? null;
   const appeal = o.s7.appeal ? appealValuePlan({ materialText: o.materialText, topText: [o.customerText, o.s7.appeal.what ?? ""].join("\n") }) : null;
-  const source = roles.includes("answer") || roles.includes("promise") ? answerSourceOf(leadAsk as { basis?: unknown; route?: unknown } | null) : null;
+  const source = roles.includes("answer") || roles.includes("promise") ? answerSourceOf(leadAsk as { basis?: unknown; route?: unknown } | null, cues.kinds) : null;
   const apply = dest === "apply" || roles.includes("apply") ? applyStrengthFromFacts(o.materialText, strength) : null;
   const propertyState: ClosingInput["propertyState"] = cues.notViewable || /退去予定/.test(o.materialText) ? "vacating" : o.s7.appeal?.property || appeal?.values.length ? "viewable" : "none";
   const closing = decideClosing({

@@ -35,6 +35,8 @@ t("答えの出所で書き方を決める（info-kind の名前）", () => {
   assert.equal(answerSourceOf({ basis: "company_fact", route: "reply" }), "company_fact");
   assert.equal(answerSourceOf({ basis: "material", route: "promise" }), "staff_only");
   assert.equal(answerSourceOf({ basis: "judgement", route: "reply" }), null);
+  assert.equal(answerSourceOf({ basis: "material", route: "reply" }, ["K13"]), "checked_result");
+  assert.equal(answerSourceOf({ basis: "material", route: "promise" }, ["K13"]), "staff_only");
 });
 
 t("申込の誘い: 抑える理由の事実が無ければ door に倒す", () => {

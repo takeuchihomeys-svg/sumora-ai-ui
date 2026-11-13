@@ -129,7 +129,7 @@ export function buildComposeBrief(i: BriefInput): ComposeBrief {
   return {
     roles, aim: aimRow ? { id: aimRow.id, dest } : BRIEF_NONE, values, facts, keyPoint: keyPoint ?? BRIEF_NONE,
     closing: { name: toComposeClosing(closing), why: closing.why }, dates,
-    skeleton: { elements: [...elem.push_line, ...elem.trust, ...elem.latent_line], answerSource: answerSourceOf(leadAsk) },
+    skeleton: { elements: [...elem.push_line, ...elem.trust, ...elem.latent_line], answerSource: answerSourceOf(leadAsk, cues.kinds) },
     shape: { sentences: roles.length, emoji: EMOJI_ALLOW }, propertyName, fromConductor, groundedPromises, notYet,
   };
 }

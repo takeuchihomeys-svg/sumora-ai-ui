@@ -80,3 +80,34 @@ export function phraseCatalogNote(o: { scene: string | null; mainRole: SentenceR
   return L.join("\n");
 }
 export const PHRASE_CATALOG_VERSION = `phrase-catalog@${PHRASE_CATALOG_BUILT}`;
+
+// ─── 形の欄（COMPOSE_FORM_SLOTS・既定 off・弱い所の台帳 writer:no-form-slots【細分化】） ─────────────
+//   長さ＝竹内さんの場面×主の役目ごとの文の数（中央値と真ん中の半分）・絵文字＝場面ごとの1通の数と種類（😊 😌 🌟 ✨ だけ・feedback_emoji_allowlist）・
+//   期日の言葉＝材料（事実・資料・お客様の今の文・こちらの直近の送信）にある物だけ（無ければ期日を書かない＝下書きから消した型 deadline_promise と同じ線）。
+//   締めの種類は COMPOSE_CLOSING_TABLE（compose-value-slots）の行が持つ（ここでは重ねない）
+import { PHRASE_LENGTH_TABLE, PHRASE_EMOJI_TABLE } from "./compose-phrase-catalog-data";
+export function composeFormSlotsOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.COMPOSE_FORM_SLOTS ?? "").trim().toLowerCase() === "on";
+}
+const EMOJI_OK = ["😊", "😌", "🌟", "✨"];
+export function lengthFor(scene: string | null, mainRole: SentenceRole | null): { n: number; median: number; p25: number; p75: number; at: string } | null {
+  if (!mainRole) return null;
+  const a = scene ? PHRASE_LENGTH_TABLE[`${scene}|${mainRole}`] : undefined;
+  if (a && a.n >= 3) return { ...a, at: `${scene}|${mainRole}` };
+  const b = PHRASE_LENGTH_TABLE[`*|${mainRole}`];
+  return b ? { ...b, at: `*|${mainRole}` } : null;
+}
+export function emojiFor(scene: string | null): { n: number; median: number; p75: number; kinds: string[] } | null {
+  const e = (scene && PHRASE_EMOJI_TABLE[scene]?.n >= 5 ? PHRASE_EMOJI_TABLE[scene] : PHRASE_EMOJI_TABLE["*"]) ?? null;
+  return e ? { n: e.n, median: e.median, p75: e.p75, kinds: e.kinds.map(([k]) => k).filter((k) => EMOJI_OK.includes(k)) } : null;
+}
+export function formSlotsNote(o: { scene: string | null; mainRole: SentenceRole | null; dates: ReadonlyArray<string> }, env?: Env): string {
+  if (!composeFormSlotsOn(env)) return "";
+  const L = lengthFor(o.scene, o.mainRole), E = emojiFor(o.scene);
+  const parts = [
+    L ? `長さ ${L.p25 === L.p75 ? `${L.median}文` : `${L.p25}〜${L.p75}文`}（竹内さんの同じ場面×主の役目 ${L.n}番の真ん中）` : null,
+    E ? `絵文字は ${E.p75 > 0 ? `${E.p75}つまで` : "無し"}（${E.kinds.join("・") || "😊・😌"} だけ）` : null,
+    o.dates.length ? `期日・日付の言葉は材料にある物だけ（${o.dates.slice(0, 4).join("・")}）` : "期日の言葉（明日中・本日中 等）は書かない（材料に無い）",
+  ].filter(Boolean);
+  return parts.length ? `- 形: ${parts.join("／")}` : "";
+}
