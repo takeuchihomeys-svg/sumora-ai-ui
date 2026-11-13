@@ -23,7 +23,7 @@ const TEST_CONV_IDS = [YUMA_CONVERSATION_ID, ...NO_LINE_TEST_CONVERSATION_IDS];
 const stalePendingAllowed = () => (process.env.EXAM_NEAR_STALE_PENDING ?? "").trim().toLowerCase() === "allow";
 import { createClient } from "@supabase/supabase-js";
 import { loadDeepseekCutoff } from "../app/lib/post-apply";
-import { nearOriginVectorOn, pickOriginRow, originBody, originEligible } from "./lib/exam-near-origin";
+import { pickOriginRow, originBody, originEligible, originScope, originInScope } from "./lib/exam-near-origin";
 import { readGateExcluded } from "./lib/exam-application-gate";
 
 const argv = process.argv.slice(2);
@@ -81,6 +81,7 @@ async function resolveOne(day: string, fileName: string, req: { name: string; ur
   const days = arg("day") ? [arg("day")] : (existsSync(root) ? readdirSync(root).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && existsSync(join(root, d, "pending"))) : []);
   let ok = 0, fail = 0, rows = 0, follow = 0, stale = 0, originUsed = 0, originMissing = 0;
   const gateExcluded = (() => { try { return readGateExcluded(); } catch { return new Map<string, string>(); } })();
+  const oScope = originScope(process.env, (() => { try { return (JSON.parse(readFileSync(join(examCacheRoot(), "exam-queue", "config.json"), "utf8")) as { nearOriginPids?: string[] }).nearOriginPids ?? []; } catch { return []; } })());
   for (const day of days) {
     const pdir = join(root, day, "pending");
     if (!existsSync(pdir)) continue;
@@ -95,7 +96,7 @@ async function resolveOne(day: string, fileName: string, req: { name: string; ur
       try {
         // 2026-11-13 作業員8b（弱い所 517・EXAM_NEAR_ORIGIN_VECTOR=on・既定 off）: 近い番の読みは元の番の状況の文の埋め込み（本番の conductor_turn_vectors.embedding_v2）で引き直す。
         //   控えのファイル名（試験の鍵）はそのまま＝次の試験はこの答えを返す。元の番の鍵は near-origin/<問題>.json に残す（本文・実名は残さない）
-        if (nearOriginVectorOn() && originEligible(req, gateExcluded)) {
+        if (originInScope(req.pid, oScope) && originEligible(req, gateExcluded)) {
           const sbo = createClient(url, key);
           const lo = new Date(Date.parse(req.oat!) - 15 * 60_000).toISOString(), hi = new Date(Date.parse(req.oat!) + 15 * 60_000).toISOString();
           const { data: vrows } = await sbo.from("conductor_turn_vectors").select("source_key, turn_at, embedding_v2").eq("conversation_id", req.oconv!).eq("writer", "takeuchi").gte("turn_at", lo).lte("turn_at", hi).limit(20);
@@ -145,5 +146,5 @@ async function resolveOne(day: string, fileName: string, req: { name: string; ur
       if (n) { mkdirSync(RAG_DIR, { recursive: true }); const tmp = `${CARDS_FILE}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify({ at: new Date().toISOString(), cards })); renameSync(tmp, CARDS_FILE); console.log(`問題の札を写した: ${n}問（${CARDS_FILE}）`); }
     } catch (e) { console.warn(`問題の札を写せない: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
   }
-  console.log(`${nearOriginVectorOn() ? `元の番の状況で引き直した ${originUsed}・元の番が無い ${originMissing}／` : ""}鍵が要る読みの控え: 書いた ${ok}・後ろの読みを先に ${follow}・行 ${rows}・読めない ${fail}・古い頼み ${stale}（日 ${days.join(",") || "なし"}）${DRY ? "（dry）" : ""}`);
+  console.log(`${oScope.all || oScope.pids.size ? `元の番の状況で引き直した ${originUsed}・元の番が無い ${originMissing}／` : ""}鍵が要る読みの控え: 書いた ${ok}・後ろの読みを先に ${follow}・行 ${rows}・読めない ${fail}・古い頼み ${stale}（日 ${days.join(",") || "なし"}）${DRY ? "（dry）" : ""}`);
 })().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(1); });

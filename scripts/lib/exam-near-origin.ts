@@ -34,3 +34,16 @@ export function originBody(body: string, embedding: string, origin: { conv: stri
 export function originEligible(req: { name: string; oconv?: string | null; oat?: string | null; pid?: string | null }, gateExcluded: ReadonlyMap<string, string>): boolean {
   return req.name === "match_conductor_focus" && !!req.oconv && !!req.oat && !!req.pid && !gateExcluded.has(req.pid);
 }
+
+/**
+ * 差し替える問題の一覧（2026-11-13 統括役: 全体に入れず、確かめる問題だけ）。EXAM_NEAR_ORIGIN_PIDS（,区切り）と係の設定 config.json の nearOriginPids の和。
+ *   一覧があれば EXAM_NEAR_ORIGIN_VECTOR が off でもその問題だけ差し替える（係の前後の自動の読み・手で回す読みのどちらでも同じ答えになる）。
+ *   一覧が空で EXAM_NEAR_ORIGIN_VECTOR=on なら全部（今まで通り）。どちらも無ければ差し替えない
+ */
+export function originScope(env: Record<string, string | undefined>, configPids: ReadonlyArray<string> | null | undefined): { all: boolean; pids: Set<string> } {
+  const pids = new Set([...String(env.EXAM_NEAR_ORIGIN_PIDS ?? "").split(","), ...(configPids ?? [])].map((x) => x.trim()).filter(Boolean));
+  return { all: nearOriginVectorOn(env) && pids.size === 0, pids };
+}
+export function originInScope(pid: string | null | undefined, scope: { all: boolean; pids: ReadonlySet<string> }): boolean {
+  return scope.all || (!!pid && scope.pids.has(pid));
+}

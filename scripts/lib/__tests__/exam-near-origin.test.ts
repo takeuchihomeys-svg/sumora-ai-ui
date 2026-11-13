@@ -1,7 +1,7 @@
 // 試験の近い番を元の番の状況の文で引く（scripts/lib/exam-near-origin.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-near-origin.test.ts（全 PASS で exit 0）
 // 実物の形: nop9-b の q399（元の番 2026-09-12T10:20:28.854Z・本番の行は 25秒前 10:20:04.081Z）・q402（一番近い行が 117分後＝別の番）
-import { pickOriginRow, originBody, originEligible, nearOriginVectorOn } from "../exam-near-origin";
+import { pickOriginRow, originBody, originEligible, nearOriginVectorOn, originScope, originInScope } from "../exam-near-origin";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -24,5 +24,13 @@ ok("申込以降で外した問題は差し替えない", !originEligible({ name
 ok("元の番の印の無い古い頼みは差し替えない", !originEligible({ name: "match_conductor_focus", oconv: null, oat: null, pid: "q399" }, gate));
 ok("他の読みは差し替えない", !originEligible({ name: "conductor_turn_vectors", oconv: "c", oat: "2026-09-12T10:20:28Z", pid: "q399" }, gate));
 
+// 確かめる問題だけ（統括役 11/13: 全体に入れない）
+{
+  const sc = originScope({}, ["q399", "q401"]);
+  ok("一覧の問題だけ差し替える（スイッチ off でも）", originInScope("q399", sc) && !originInScope("q100", sc) && !sc.all);
+  ok("env と config の和", originScope({ EXAM_NEAR_ORIGIN_PIDS: "q207, q398" }, ["q399"]).pids.size === 3);
+  ok("一覧が空でスイッチ on なら全部", originScope({ EXAM_NEAR_ORIGIN_VECTOR: "on" }, []).all && originInScope("q100", originScope({ EXAM_NEAR_ORIGIN_VECTOR: "on" }, [])));
+  ok("どちらも無ければ差し替えない", !originInScope("q399", originScope({}, [])));
+}
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
