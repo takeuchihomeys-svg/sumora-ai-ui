@@ -5000,6 +5000,42 @@ ALTER TABLE exam_savings ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON exam_savings FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE exam_savings_id_seq FROM anon, authenticated;
 
+-- ── 2026-11-13 竹内さん「試験の統括と拡張ツールとデータベースの連携の部分をちゃんとできるようにする。
+--      より強化できるようにする」──
+-- exam_runs: 試験の統括（exam-conductor）の**1回分の結果**を DB に残す。
+--   ⚠ これまでは `memory/exam-brain/conductor/*.json` という**手元のファイルだけ**で、
+--     竹内さん・他の PC・私からは見えなかった（＝連携できていなかった）。
+--   → 1回ごとに1行。計画（plan）・結果（result）・問題の数・LLM の費用を残す。
+--     `/api/exam-runs` で読める（画面・スクリプト・拡張の学習の材料に使う）。
+CREATE TABLE IF NOT EXISTS exam_runs (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- 手元のファイル名（label）。同じ label は1つ（再実行は上書き）
+  label TEXT NOT NULL,
+  ran_at TIMESTAMPTZ,
+  plan_label TEXT,
+  -- 何を試したか（問題の種類・件数・使った材料の数）
+  candidates INTEGER,
+  material_cls TEXT,
+  material_files INTEGER,
+  material_kb_ids TEXT[],
+  -- 結果（点・合格・不合格の内訳・次に直す物）
+  compare JSONB,
+  next_actions JSONB,
+  triage JSONB,
+  -- 費用と時間
+  llm JSONB,
+  llm_calls INTEGER,
+  cost_usd NUMERIC(10,4),
+  -- 人が読む1行
+  summary TEXT,
+  CONSTRAINT exam_runs_label_uniq UNIQUE (label)
+);
+CREATE INDEX IF NOT EXISTS idx_exam_runs_created ON exam_runs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_exam_runs_ran ON exam_runs(ran_at DESC);
+ALTER TABLE exam_runs ENABLE ROW LEVEL SECURITY;
+COMMENT ON TABLE exam_runs IS '試験の統括（exam-conductor）の1回分の結果。計画・点・不合格の内訳・費用。手元のファイルから同期する。2026-11-13 竹内さん承認';
+
 -- 2026-10-24 竹内さん「会話大切な部分データベースにいれているのか」→「それでおねがい」:
 --   work_log … 作業の途中経過（何の作業が・どこまで・どの枝とコミット・次にやる事・待っている事）。始めた時・区切り・止まる前に1行ずつ足す（上書きしない）。
 --   手元の記憶ファイルにしか無かったため、VS Code を別のフォルダで開いた・PC が落ちた時に続きが分からなくなった（10/24）。
