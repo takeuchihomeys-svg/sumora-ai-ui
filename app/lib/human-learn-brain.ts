@@ -38,6 +38,12 @@ export type MotionRow = {
   move_speed_px_s?: number | null;
   move_curve?: number | string | null;
   move_ms?: number | null;
+  /**
+   * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか」:
+   *   `gap_ms` は**操作と操作の間**（人が次を押すまで待つ時間）。
+   *   ⚠ 旧は `move_ms`（マウス移動の時間）を「操作の間」として使っていた（別物）。
+   */
+  gap_ms?: number | null;
   move_dist?: number | null;
   points_n?: number | null;
   point_x?: number | string | null;
@@ -242,8 +248,33 @@ export function learnMotion(rows: ReadonlyArray<MotionRow>): MotionStat {
 export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: number = Date.now()): HumanLearnBundle {
   const list = Array.isArray(rows) ? rows : [];
   // ① 押す順番（写真ごとの並びから）
+  /**
+   * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか。原因見つけて改善する」:
+   *   ⚠ 録画モードは1.5〜3.5秒ごとに写真を撮るので、**同じ操作の並びが何枚も送られる**。
+   *     そのまま数えると「確定してリストへ → required_time」が 77回のように**水増し**され、
+   *     確からしさ（n/total が 100%）が本当の意味を失う（実際に全部 100% になっていた）。
+   *   → **同じ検索（同じ日の同じ並び）は1回だけ数える**。
+   *     ⚠ 別の日・別の時刻に同じ順で押したのは**本物の繰り返し**なので残す
+   *       （同じ日の中の重複だけを畳む）。
+   *   ⚠ 並びが伸びていく途中（1個→2個→3個…）は、一番長い物だけを採る（短い重複は捨てる）。
+   */
+  const seqGroups = new Map<string, Array<{ f: string }>>();
+  for (const r of list) {
+    // 同じ日の中の重複を畳むための印（UTC の日付）
+    const day = String(r.created_at ?? "").slice(0, 10);
+    for (const s of sequencesOf(r)) {
+      const key = day + "|" + s.map((x) => String(x.f ?? "")).join(">");
+      const cur = seqGroups.get(key);
+      if (!cur || s.length > cur.length) seqGroups.set(key, s);
+    }
+  }
+  // 短い並びで、より長い並びの先頭と完全に一致する物は捨てる（同じ操作の途中経過）
+  const entries = Array.from(seqGroups.entries()).sort((a, b) => b[1].length - a[1].length);
   const seqs: Array<Array<{ f: string }>> = [];
-  for (const r of list) for (const s of sequencesOf(r)) seqs.push(s);
+  for (const [key, s] of entries) {
+    const isPrefix = entries.some(([k2]) => k2 !== key && k2.endsWith(key.slice(key.indexOf("|") + 1)) && k2.length > key.length);
+    if (!isPrefix) seqs.push(s);
+  }
   const next = learnNextPress(seqs, { min: 2 });
 
   // ② 押した位置
@@ -261,10 +292,20 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     .slice(0, 30);
 
   // ⑤ サイトごとの手順（同じ「直前→次」をサイト別にまとめる）
+  /**
+   * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか」:
+   *   ⚠ ここも**同じ日の同じ検索を何度も数えていた**（録画は数秒ごとに撮るため）。
+   *     `next` と同じく「同じ日の同じ並びは1回」に畳んでから数える。
+   */
   const siteFlow: Record<string, Record<string, Record<string, number>>> = {};
+  const flowSeen = new Set<string>();
   for (const r of list) {
     const site = String(r.site || "").trim() || "unknown";
+    const day = String(r.created_at ?? "").slice(0, 10);
     for (const s of sequencesOf(r)) {
+      const sig = day + "|" + s.map((x) => String(x.f ?? "")).join(">");
+      if (flowSeen.has(sig)) continue;   // 同じ日の同じ検索は1回だけ数える
+      flowSeen.add(sig);
       for (let j = 1; j < s.length; j++) {
         const a = s[j - 1]?.f, b = s[j]?.f;
         if (!a || !b || a === b) continue;
@@ -282,7 +323,31 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
   }
 
   // ⑥ 操作の間
-  const gapSamples = list.map((r) => num(r.move_ms)).filter((v): v is number => v != null && v > 0);
+  /**
+   * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか。原因見つけて改善する」:
+   *   ⚠ 旧は `move_ms`（**マウス移動にかかった時間**）を「操作と操作の間」として使っていた。
+   *     移動時間は数百ms の別物で、**人が「次を押すまで待つ時間」ではない**
+   *     （実測: 514ms と出ていたが、これは移動時間）。
+   *   → 記録が持っている `gap_ms`（操作と操作の間）を先に使い、無ければ `move_ms` で代用する。
+   *     `gap_ms` は拡張（human-learn-record）が「記録の束」で送っている。
+   */
+  const gapFromGap = list.map((r) => num(r.gap_ms)).filter((v): v is number => v != null && v > 0);
+  /**
+   * 2026-11-13: 上の2つが無い時は、`shot_ops` の `g`（操作と操作の間）から作る。
+   *   これが**一番本来の値**（人が次を押すまで実際に待った時間）。
+   */
+  const gapFromOps: number[] = [];
+  for (const r of list) {
+    if (!Array.isArray(r.shot_ops)) continue;
+    for (const o of r.shot_ops) {
+      if (!o || typeof o !== "object") continue;
+      const g = num((o as Record<string, unknown>).g);
+      if (g != null && g > 0 && g <= 60000) gapFromOps.push(g);
+    }
+  }
+  const gapSamples = gapFromGap.length
+    ? gapFromGap
+    : (gapFromOps.length ? gapFromOps : list.map((r) => num(r.move_ms)).filter((v): v is number => v != null && v > 0));
 
   /**
    * 2026-11-13 竹内さん「画面の写真から判断できる。そこの部分強化するようにする。

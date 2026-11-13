@@ -29,7 +29,7 @@ export async function OPTIONS() {
 
 const SELECT = [
   "created_at", "site", "mode", "ext_version",
-  "moves_n", "move_speed_px_s", "move_curve", "move_ms",
+  "moves_n", "move_speed_px_s", "move_curve", "move_ms", "gap_ms",
   "points_n", "point_x", "point_y", "point_fields",
   "scrolls_n", "scroll_dy", "shot_ops", "shot_learn",
 ].join(", ");
