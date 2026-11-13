@@ -80,6 +80,53 @@ export function cleanFields(raw: unknown): ShotField[] {
 }
 
 /** 画面の種類を整える */
+/**
+ * 画面の種類を決める（純関数）。
+ *
+ * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい」:
+ *   ⚠ 旧は呼ぶ側が `cleanScreen("other")` と**決め打ち**していたので、
+ *     写真が「地域の小窓」なのか「検索の入力欄」なのか「結果の一覧」なのかが
+ *     学習に残らず、**段（手順）と結びつかなかった**。
+ *   → **写真のURL・操作の並び・欄の名前**から画面を判定する（写真を見なくても分かる材料だけ）。
+ *     ・modal  … 小窓（所在地絞り込み／沿線・駅絞り込み）が開いている
+ *     ・result … 物件の一覧（display=building など）
+ *     ・form   … 検索条件の入力（method=estate）
+ *     ・other  … 分からない（推測で埋めない）
+ */
+export function screenOf(input: {
+  url?: unknown;
+  ops?: ReadonlyArray<{ f?: unknown }>;
+  fields?: ReadonlyArray<{ name?: unknown }>;
+} = {}): ShotLearn["screen"] {
+  const url = String(input.url ?? "");
+  const names = [
+    ...(Array.isArray(input.ops) ? input.ops.map((o) => String(o?.f ?? "")) : []),
+    ...(Array.isArray(input.fields) ? input.fields.map((f) => String(f?.name ?? "")) : []),
+  ];
+  const has = (re: RegExp) => names.some((n) => re.test(n));
+  /**
+   * 小窓の印: 地域／駅の段の名前（`page-script` が `_auditStepP` で残す日本語）と、
+   * 小窓の中だけにある部品（`one_city` / `one_town` / `one_line` / `確定してリストへ`）。
+   *
+   * ⚠ 2026-11-13 実測: `human_motion_learn.url` の列が**無い**ので、URL では判定できない。
+   *   → **操作の名前だけで判定できる形**を主にする（地域・駅の手順は名前で分かる）。
+   */
+  if (
+    has(/所在地絞り込み|沿線・駅絞り込み|区を選ぶ|町字を選ぶ|沿線を選ぶ|駅の設定へ進む|地域の設定へ進む|確定してリストへ/) ||
+    has(/one_city|one_town|one_line|city_code|town_code|station_id|route_id/)
+  ) return "modal";
+  if (/display=(building|rent_rooms)|list/i.test(url)) return "result";
+  if (/method=estate/i.test(url)) return "form";
+  // URL が分からない時は、欄の名前で推す（賃料・面積・間取りがあれば入力画面）
+  if (has(/rental_cost|square_meter|room_layout|structured_date|required_time|update_date/)) return "form";
+  /**
+   * どれでもない時、操作が**あれば**入力の途中とみなす（0件は「分からない」にする）。
+   *   ⚠ `other` のままにすると、学んだ欄が宙に浮く（どの画面の物か分からない）。
+   */
+  if (names.length) return "form";
+  return "other";
+}
+
 export function cleanScreen(v: unknown): ShotLearn["screen"] {
   const s = String(v ?? "").toLowerCase();
   if (s === "form" || s === "modal" || s === "result" || s === "other") return s;
@@ -115,6 +162,98 @@ export function reconcilePoints(
   }
   void minConf;
   return { points: out, fixed };
+}
+
+/**
+ * 写真の**画面の種類**と、記録の**操作の並び**を結びつけて「どの画面で何を押したか」を作る。
+ *
+ * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい。抜けている部分徹底的に学習できるように」:
+ *   これまでは写真（画像）と操作が**別々**に貯まるだけで、結びついていなかった。
+ *   → 写真1枚ごとに「どの画面か」「最後に押したのは何か」「次に押したのは何か」を1行にする。
+ *     これで「地域の小窓では、区を選んだ後に確定を押す」のような**仕組み**が学べる。
+ *
+ * ⚠ 入れるのは**画面の種類・欄の名前・順番だけ**（入力した中身・お客様の情報は入れない）。
+ *
+ * @param shots 写真の行（url・shot_ops・shot_learn を持つ）
+ * @returns 画面ごとの「よく押す順番」と、写真で見えた欄
+ */
+export function learnFromShots(
+  shots: ReadonlyArray<{
+    url?: unknown;
+    shot_ops?: unknown;
+    shot_learn?: unknown;
+    created_at?: unknown;
+  }>,
+): {
+  screens: Record<string, { n: number; lastPressed: Array<{ name: string; n: number }>; steps: Array<{ from: string; to: string; n: number }>; fields: Array<{ name: string; kind: string; n: number }> }>;
+  total: number;
+  withOps: number;
+} {
+  type Acc = { n: number; last: Record<string, number>; steps: Record<string, Record<string, number>>; fields: Record<string, Record<string, number>> };
+  const acc: Record<string, Acc> = {};
+  let withOps = 0;
+
+  for (const s0 of Array.isArray(shots) ? shots : []) {
+    /**
+     * 2026-11-13: 壊れた行（null・配列でない）が混ざっても落ちない。
+     *   ⚠ 旧は `s.shot_ops` をそのまま読んでいたので、null が混ざると例外で**学習が丸ごと止まった**。
+     */
+    if (!s0 || typeof s0 !== "object") continue;
+    const s = s0 as { url?: unknown; shot_ops?: unknown; shot_learn?: unknown; created_at?: unknown };
+    const ops = Array.isArray(s.shot_ops)
+      ? (s.shot_ops as unknown[])
+        .map((o) => (o && typeof o === "object" ? o as Record<string, unknown> : null))
+        .filter((o): o is Record<string, unknown> => !!o)
+        .map((o) => ({ f: typeof o.f === "string" ? String(o.f).slice(0, 30) : "" }))
+        .filter((o) => o.f)
+      : [];
+    // 写真から読んだ欄（あれば）
+    const learnedFields = (() => {
+      const sl = (s.shot_learn && typeof s.shot_learn === "object" ? s.shot_learn : null) as Record<string, unknown> | null;
+      const arr = sl && Array.isArray(sl.fields) ? sl.fields : [];
+      return arr
+        .map((f) => (f && typeof f === "object" ? f as Record<string, unknown> : null))
+        .filter((f): f is Record<string, unknown> => !!f)
+        .map((f) => ({ name: norm(f.name), kind: String(f.kind ?? "").toLowerCase() }))
+        .filter((f) => f.name && f.kind);
+    })();
+
+    const screen = screenOf({ url: s.url, ops, fields: learnedFields });
+    const a = (acc[screen] ||= { n: 0, last: {}, steps: {}, fields: {} });
+    a.n++;
+    if (ops.length) withOps++;
+    if (ops.length) {
+      const lastOne = ops[ops.length - 1].f;
+      a.last[lastOne] = (a.last[lastOne] ?? 0) + 1;
+      for (let i = 1; i < ops.length; i++) {
+        const x = ops[i - 1].f, y = ops[i].f;
+        if (x === y) continue;
+        ((a.steps[x] ||= {})[y] = (a.steps[x][y] ?? 0) + 1);
+      }
+    }
+    for (const f of learnedFields) {
+      ((a.fields[f.name] ||= {})[f.kind] = (a.fields[f.name][f.kind] ?? 0) + 1);
+    }
+  }
+
+  const out: ReturnType<typeof learnFromShots>["screens"] = {};
+  for (const [screen, a] of Object.entries(acc)) {
+    const lastPressed = Object.entries(a.last).map(([name, n]) => ({ name, n })).sort((x, y) => y.n - x.n).slice(0, 12);
+    const steps: Array<{ from: string; to: string; n: number }> = [];
+    for (const [from, dests] of Object.entries(a.steps)) {
+      for (const [to, n] of Object.entries(dests)) if (n >= 2) steps.push({ from, to, n });
+    }
+    steps.sort((x, y) => y.n - x.n);
+    const fields = Object.entries(a.fields)
+      .map(([name, kinds]) => {
+        const best = Object.entries(kinds).sort((x, y) => y[1] - x[1])[0];
+        return { name, kind: best ? best[0] : "?", n: best ? best[1] : 0 };
+      })
+      .sort((x, y) => y.n - x.n)
+      .slice(0, 40);
+    out[screen] = { n: a.n, lastPressed, steps: steps.slice(0, 40), fields };
+  }
+  return { screens: out, total: Array.isArray(shots) ? shots.length : 0, withOps };
 }
 
 /**

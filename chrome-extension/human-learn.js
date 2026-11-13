@@ -919,6 +919,31 @@
     }
 
     var sf = (s.site_flow && typeof s.site_flow === "object") ? s.site_flow : {};
+    var screens = (s.screen_flow && typeof s.screen_flow === "object") ? s.screen_flow : {};
+    var SJ = { modal: "小窓（地域・駅）", form: "条件の入力", result: "結果の一覧", other: "その他" };
+    if (Object.keys(screens).length) {
+      out.push("");
+      out.push("▼ 写真から学んだ画面ごとの仕組み" + (s.shots ? "（写真 " + s.shots.total + "枚）" : ""));
+      Object.keys(screens).slice(0, 4).forEach(function (sc) {
+        var v = screens[sc] || {};
+        if (!v.n) return;
+        out.push("  【" + (SJ[sc] || sc) + "】" + v.n + "枚");
+        // 回数の多い順に1本の流れにする（同じ元からは1本）
+        var usedFrom = {};
+        var flow = [];
+        (v.steps || []).slice().sort(function (a, b) { return (b.n || 0) - (a.n || 0); }).forEach(function (x) {
+          if (usedFrom[x.from]) return;
+          usedFrom[x.from] = true;
+          flow.push(x.from + " → " + x.to);
+        });
+        if (flow.length) out.push("    順番: " + flow.slice(0, 5).join(" / "));
+        if (v.lastPressed && v.lastPressed.length) {
+          out.push("    最後に押す物: " + v.lastPressed.slice(0, 3).map(function (x) { return x.name + "（" + x.n + "枚）"; }).join("・"));
+        }
+      });
+    }
+
+    void sf;
     var sites = Object.keys(sf);
     if (sites.length) {
       out.push("");

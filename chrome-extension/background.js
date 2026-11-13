@@ -2241,6 +2241,13 @@ async function _refreshLearnedBundle(force) {
     var gaps = (bundle.gaps && typeof bundle.gaps === "object") ? bundle.gaps : {};
     var weak = Array.isArray(bundle.weak) ? bundle.weak.slice(0, 80) : [];
     var siteFlow = (bundle.site_flow && typeof bundle.site_flow === "object") ? bundle.site_flow : {};
+    /**
+     * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい
+     *   抜けている部分徹底的に学習できるように」:
+     *   **写真から学んだ画面ごとの手順**（地域の小窓・駅の小窓・条件の入力）も置く。
+     *   ⚠ 旧は計算して返しているのに、拡張が受け取っていなかった（＝現場に届かない）。
+     */
+    var screenFlow = (bundle.screen_flow && typeof bundle.screen_flow === "object") ? bundle.screen_flow : {};
     await chrome.storage.local.set({
       axlx_learn_next: next,
       axlx_learn_points: points,
@@ -2248,11 +2255,13 @@ async function _refreshLearnedBundle(force) {
       axlx_learn_gaps: gaps,
       axlx_learn_weak: weak,
       axlx_learn_site_flow: siteFlow,
+      axlx_learn_screen_flow: screenFlow,
+      axlx_learn_shots: (bundle.shots && typeof bundle.shots === "object") ? bundle.shots : null,
       axlx_learn_at: Date.now(),
       axlx_learn_src: { rows: (bundle.source && bundle.source.rows) || 0, at: bundle.generated_at || null, dropped: bundle.dropped_cols || null },
     });
-    console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個・弱い所 " + weak.length + "件");
-    return { ok: true, next: Object.keys(next).length, points: Object.keys(points).length, weak: weak.length };
+    console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個・弱い所 " + weak.length + "件・画面 " + Object.keys(screenFlow).length + "種類");
+    return { ok: true, next: Object.keys(next).length, points: Object.keys(points).length, weak: weak.length, screens: Object.keys(screenFlow).length };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
   }

@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
           return Array.isArray(x.shot_ops) && !(x.shot_learn && typeof x.shot_learn === "object");
         })
         .slice(0, 50);
-      const { cleanFields, cleanScreen } = await import("@/app/lib/shot-learn");
+      const { cleanFields, screenOf } = await import("@/app/lib/shot-learn");
       for (const r of targets) {
         const x = r as unknown as Record<string, unknown>;
         const ops = Array.isArray(x.shot_ops) ? x.shot_ops : [];
@@ -102,7 +102,16 @@ export async function GET(req: NextRequest) {
           return { name: y.f, kind: y.w, x: null, y: null };
         }));
         if (!fields.length) continue;
-        const out = { screen: cleanScreen("other"), fields, by: "deterministic" as const, confidence: 0.9 };
+        /**
+         * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい」:
+         *   ⚠ 旧は `cleanScreen("other")` と**決め打ち**していたので、
+         *     写真が「地域の小窓」なのか「条件の入力」なのかが学習に残らなかった。
+         *   → 操作の名前から**画面の種類を判定**する（`screenOf`）。
+         */
+        const out = {
+          screen: screenOf({ url: x.url, ops: ops as Array<{ f?: unknown }> }),
+          fields, by: "deterministic" as const, confidence: 0.9,
+        };
         /**
          * 2026-11-13 竹内さん「weak を実際に使う」:
          *   ⚠ 旧は `shot_key` で当てていたので、**写真が無い行（Storage に上がらなかった行）は

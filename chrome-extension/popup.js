@@ -6417,7 +6417,7 @@ document.addEventListener("DOMContentLoaded", () => {
          */
         if (L && L.serverLearnLines) {
           try {
-            chrome.storage.local.get(["axlx_learn_next", "axlx_learn_weak", "axlx_learn_site_flow", "axlx_learn_gaps"],
+            chrome.storage.local.get(["axlx_learn_next", "axlx_learn_weak", "axlx_learn_site_flow", "axlx_learn_gaps", "axlx_learn_screen_flow", "axlx_learn_shots"],
               function (r) {
                 try {
                   var srv = {
@@ -6425,8 +6425,10 @@ document.addEventListener("DOMContentLoaded", () => {
                     weak: (r && r.axlx_learn_weak) || null,
                     site_flow: (r && r.axlx_learn_site_flow) || null,
                     gaps: (r && r.axlx_learn_gaps) || null,
+                    screen_flow: (r && r.axlx_learn_screen_flow) || null,
+                    shots: (r && r.axlx_learn_shots) || null,
                   };
-                  if (!srv.next && !srv.weak && !srv.site_flow) return; // まだ無ければ何もしない
+                  if (!srv.next && !srv.weak && !srv.site_flow && !srv.screen_flow) return; // まだ無ければ何もしない
                   var srvLines = L.serverLearnLines(srv);
                   if (!srvLines || !srvLines.length) return;
                   // 一度だけ足す（ボタンを何度押しても増えない）
