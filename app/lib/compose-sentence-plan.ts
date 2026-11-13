@@ -825,6 +825,8 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   //   判断の順番の型の記録（CHECK_ORDER_TABLE・配分が読む）は記録の欄＝文の統括には渡さない（作業員10 の文の型の表が型の id を読む時に plan にする）
   now_vs_later: "other", read_candidates: "other", read_handoff: "other", our_send_uptake: "other",
   check_order_scene: "other", check_order_type: "other", check_order: "other",
+  // 2026-11-13 作業員16: お客様の言葉が指す物（REF_RESOLVE・道の前の材料＝判断のブレインの欄・文の統括には渡さない）
+  ref_resolve: "other",
   // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF・記録だけ）とその入力
   conductor_brief_inputs: "other", conductor_brief: "other",
   // 2026-11-13 作業員22: 届いたかの確かめ（DELIVERY_CHECK・記録だけ）
