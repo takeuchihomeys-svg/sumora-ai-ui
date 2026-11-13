@@ -488,8 +488,7 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     const rec = reconcilePoints(points as never, photoFields as never);
     Object.keys(points).forEach((k) => { if (rec.points[k]) points[k] = rec.points[k] as never; });
     weak = findWeakPoints(points as never, photoFields as never, rec.fixed as never);
-  } else if (Object.keys(points).length) {
-    // 写真が1枚も無い時も、名前から推した分を除いた「まだ分からない物」を弱い所に残す
+  } else if (Object.keys(points).length) {    // 写真が1枚も無い時も、名前から推した分を除いた「まだ分からない物」を弱い所に残す
     weak = findWeakPoints(points as never, [], []);
   }
   /**
