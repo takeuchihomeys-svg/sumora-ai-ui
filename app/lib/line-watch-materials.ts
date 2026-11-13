@@ -78,6 +78,11 @@ export function summarizeMaterialLog(obj: unknown): { source: WatchSource; key: 
         // 2026-11-13 作業員10: 信頼の添えが下書きに出たか（ログに無い時は null）
         embeds: typeof o.embeds === "number" ? o.embeds : null, embeds_shown: typeof o.embeds_shown === "number" ? o.embeds_shown : null,
         embeds_missing: Array.isArray(o.embeds_missing) ? (o.embeds_missing as unknown[]).slice(0, 3).map((x) => short(x, 24)) : [] } };
+    // 2026-11-13 作業員5（やり直しの輪・FC_BLUEPRINT_REDO=shadow）: 印を統括に戻して1回だけ書き直した前と後（下書きは変えない）
+    case "fc:blueprint-redo":
+      return { source: "reply", key: "blueprintRedo", summary: { steps: Array.isArray(o.steps) ? (o.steps as unknown[]).slice(0, 4).map((x) => short(x, 20)) : [],
+        n_before: typeof o.n_before === "number" ? o.n_before : null, n_after: typeof o.n_after === "number" ? o.n_after : null, revised: o.revised === true,
+        len_before: typeof o.len_before === "number" ? o.len_before : null, len_after: typeof o.len_after === "number" ? o.len_after : null, head_after: short(o.head_after, 80) } };
     case "gen:scene":
       return { source: "reply", key: "scene", summary: { scene: short(o.scene, 40), materials: short(o.materials, 10) } };
     case "step2-spec": {

@@ -86,6 +86,7 @@ import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExclud
 import { sorryDeclineReadOn, readSorryDecline, pickSorryDeclineExamples, sorryDeclineBrainText } from "@/app/lib/sorry-decline-read";
 import { concernSubtopicOn, concernDetail } from "@/app/lib/concern-subtopic";
 import { materialFetchOn } from "@/app/lib/material-fetch";
+import { brainDeepCheckEnabled } from "@/app/lib/brain-deep-check";
 import { applyPromptRules1112, applyPromptRules1113, promptRules1113Enabled, applyReplyModeP0 } from "@/app/lib/brain-prompt-rules-1112";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
@@ -162,7 +163,7 @@ import { viewingConfirmedAckWaitEnabled, isViewingConfirmedAck, viewingConfirmed
 import { nowFulfillableEnabled, nowFulfillableLine, nowFulfillableOf } from "@/app/lib/situation-summary";
 import { LAST_TURN_REVIEW_DEFAULT_STAGE, reviewLastTurn, lastTurnReviewLine, lastTurnReviewDigest, type StaffActAfter } from "@/app/lib/brain-last-turn-review";
 import { aixDeskCommandMode, actionOfKey, broughtThisTurnNames, aixDeskConsultMode, consultTriggers, deskFactConflict, recheckFromDesk, recheckFromConsult } from "@/app/lib/aix-commander";
-import { decideBrainDepth } from "@/app/lib/brain-depth";
+import { decideBrainDepth, brainDepthV2On, depthGateRecord, depthCostRecord } from "@/app/lib/brain-depth";
 import { sentLedgerBindEnabled, explainedItemsOf, itemsFromLedger, bindReaction, bindMaterialLine } from "@/app/lib/sent-ledger-bind";
 import { vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled, vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
@@ -512,11 +513,11 @@ export type SuggestedAixMeta = {
   /** 2026-11-04 入口の最初の読み（Sonnet・5番に1番は DeepSeek との比べ）→ digest.ci */
   conductor_intake?: import("@/app/lib/conductor-intake-server").IntakeRun;
   /** 2026-11-05 深さ（brain-depth.decideBrainDepth・記録）。BRAIN_DEEP_RECHECK=on の時、深く読む理由の番だけ1回読み直す（analyzeConversation の包み） */
-  brain_depth?: { depth: import("@/app/lib/brain-depth").BrainDepth; reason: string };
+  brain_depth?: { depth: import("@/app/lib/brain-depth").BrainDepth; reason: string; v2?: true; gate?: import("@/app/lib/brain-depth").DepthGateRecord; cost?: import("@/app/lib/brain-depth").DepthCostRecord };
   /** 2026-11-05 深く読んだ番の「理由:最初→最後」→ digest.dr */
   deep_recheck_digest?: string;
   /** 2026-11-05 P0 575a7cd5 統括の前半「この番の重点」（作業員5 が入れる・無ければ undefined）。後半の読み直し（深く読む）がこれに沿って決め直す */
-  conductor_focus?: { focus: string; why?: string | null };
+  conductor_focus?: { focus: string; why?: string | null; no_touch?: string[]; repeat_scope?: "none" | "changed" | "all" };
   /** 2026-11-07 作業員5（弱い所 275）: やる事の一覧と考える力の配分（CONDUCTOR_TODOS=on の時だけ・記録だけ）→ digest.td・tb */
   conductor_todos?: { td: string | null; tb: string };
   /** 同じ段の記録（数・抜けを足した数・AIX とのそろえ・取り寄せた材料）→ digest.pr */
@@ -3641,7 +3642,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     } catch (e) { console.warn("[brain-core] material-provenance skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-29 統括の③深さ（brain-depth.ts）: 第1段は記録だけ（判断・費用は変えない）。数えてから軽い番の引き継ぎを入れる
-  let depthRec: { depth: import("@/app/lib/brain-depth").BrainDepth; reason: string } | null = null;
+  let depthRec: { depth: import("@/app/lib/brain-depth").BrainDepth; reason: string; v2?: true; gate?: import("@/app/lib/brain-depth").DepthGateRecord; cost?: import("@/app/lib/brain-depth").DepthCostRecord } | null = null;
   if (typedMessages[0]?.sender === "customer") {
     try {
       const tTxt = unrepliedTurn.text ?? "";
@@ -3654,9 +3655,14 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         turnText: tTxt, stampOnly, ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(tTxt),
         closedBefore: /ご検討|何卒よろしく|出次第|お待ちしており|ご連絡お待ち/.test(lastStaff), pickupReady: pickupReadyMaterial,
         openPromises: brainLedger.entries.filter((e) => e.status === "promised" && e.fulfilledBy == null).length, gapHours,
+        // 2026-11-13 作業員5（BRAIN_DEPTH_V2・記録だけ）: 今の連投が名指す送った物件の数（作業員4 の ref_resolve が入ったら差し替え）・持ち込み
+        refCount: (() => { const nt = tTxt.normalize("NFKC").replace(/\s+/g, ""); return new Set(sentProps.map((p) => (p.property_name ?? "").normalize("NFKC").replace(/\s+/g, "")).filter((n) => n.length >= 3 && (nt.includes(n) || nt.includes(n.slice(0, 6))))).size; })(),
+        brought: /https?:\/\/|suumo|homes\.co|athome|chintai\.net/i.test(tTxt) || /【物件の(?:画面|写真)/.test(tTxt),
       });
-      depthRec = dep;
-      console.log(JSON.stringify({ tag: "brain:depth", conversationId, depth: dep.depth, reason: dep.reason }));
+      // 2026-11-13 作業員5（BRAIN_DEPTH_V2=on・記録だけ）: 深い時だけ動かす物（今は深さに関係なく動く物のうち深くない番で止まる物＝skip）を残す
+      const gate = brainDepthV2On() ? depthGateRecord(dep.depth, { material_fetch: materialFetchOn(), reading_candidates: false, deep_check: brainDeepCheckEnabled() && !isPostApplyStatus(convStatus) }) : undefined;
+      depthRec = gate ? { ...dep, v2: true, gate } : dep;
+      console.log(JSON.stringify({ tag: "brain:depth", conversationId, depth: dep.depth, reason: dep.reason, ...(gate ? { v2: true, run: gate.run, skip: gate.skip } : {}) }));
     } catch (e) { console.warn("[brain-core] depth skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-28 竹内さんの決定（送った事を根本から理解する）・統括の設計図 ①拾う: お客様の今の発言が「どの送った事への反応か」を結び付け、
@@ -4194,6 +4200,13 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       max_tokens: 4000,
       messages: [{ role: "user", content: userContent }],
     }, { headers });
+    // 2026-11-13 作業員5（BRAIN_DEPTH_V2=on・浅い番だけ・記録）: 浅い番を軽くしたら呼び出しの字数がどれだけ減るか（前＝今・後＝今の番の塊だけ）
+    if (depthRec?.v2 && depthRec.depth === "light") {
+      const tx = (b: { text?: string }) => (typeof b.text === "string" ? b.text.length : 0);
+      const blocks = userContent as Array<{ text?: string }>;
+      const cost = depthCostRecord("light", { sysChars: sys.staticText.length + sys.dynamicText.length, convChars: blocks.slice(0, -1).reduce((a, b) => a + tx(b), 0), turnChars: blocks.length ? tx(blocks[blocks.length - 1]) : 0 });
+      if (cost) { depthRec = { ...depthRec, cost }; console.log(JSON.stringify({ tag: "brain:depth-cost", conversationId, reason: depthRec.reason, ...cost })); }
+    }
     let response = await callBrain();
 
     // キャッシュHIT/MISS ログ（Vercelログで確認可能・コスト診断用）
