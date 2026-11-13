@@ -25,10 +25,9 @@ const css = read("styles.css");
 console.log("■ ① お客さん一覧を開いても縮めない（一番の原因）");
 {
   ok("旧の `mini = (id === \"view-list\")` が無い", !/const mini = id === "view-list";/.test(pp));
-  ok("一覧も詳細も縮めない（縮めるのは手順の画面だけ）", /const MINI_VIEWS = \["view-instructions"\];/.test(pp) && /const wantMini = MINI_VIEWS\.indexOf\(id\) >= 0;/.test(pp));
-  ok("  詳細（view-site）は縮めない＝真っ白にならない", !/"view-site"\]\s*,?\s*\]/.test(pp) && /view-site/.test(pp));
-  ok("  縮めるのは検索の画面だけ", /notifyParent\(wantMini \? "collapse" : "expand\)/.test(pp) || /wantMini \? "collapse" : "expand"/.test(pp));
-  ok("  理由をコメントに残してある", /お客さん一覧を開くと/.test(pp));
+  ok("どの画面でも自動では縮めない（真っ白を起こさない）", /setMiniMode\(false\);\s*\n\s*notifyParent\("expand"\);/.test(pp));
+  ok("  縮むのは人が「たたむ」を押した時だけ", /MINI_VIEWS|wantMini/.test(pp) === false);
+  ok("  理由をコメントに残してある（詳細・リアプロのボタンが真っ白になった）", /真っ白/.test(pp) && /リアプロのボタン/.test(pp));
 }
 
 console.log("\n■ ② 小さすぎる幅を保存しない・復元しない");

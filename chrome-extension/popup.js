@@ -2407,19 +2407,18 @@ function showView(id) {
   if (isUnderbar) {
     /**
      * 2026-11-12 竹内さん「拡張ツールたまにちいさくなって中の画面がかなり小さくなり、
-     *   お客さんリスト確認できない時がある」:
-     *   ⚠ 旧は `mini = (id === "view-list")` ＝ **お客さん一覧を開くと 100px のボタンに縮める**指示を出していた。
+     *   お客さんリスト確認できない時がある」
+     * 2026-11-13 竹内さん「お客さんの詳細おしたらこのようになってしまう」「リアプロのボタンを押したらこうなる」
+     *   （どちらも**真っ白な画面**）
      *
-     * 2026-11-13 竹内さん「お客さんの詳細おしたらこのようになってしまう」（**真っ白な画面**）:
-     *   ⚠ 上の修正で `wantMini = id !== "view-list"` にしたら、**お客さん詳細（view-site）も縮める**事になり、
-     *     CSS の `body.mini-mode .view { display: none }` で**中身が全部消えて真っ白**になった。
-     *   → **縮めるのは「検索の手順（view-instructions）」だけ**にする。
-     *     お客さん一覧（view-list）も詳細（view-site）も、**開いたまま**（大きく）出す。
+     * ⚠ ここで画面を縮めると、CSS の `body.mini-mode .view` で**中身が消えて真っ白**になる。
+     *   ・v2.7.9 で `id !== "view-list"` にした → 詳細（view-site）が真っ白
+     *   ・v2.7.13 で `["view-instructions"]` にした → **リアプロのボタン（手順）が真っ白**
+     *   → **どの画面でも自動では縮めない**。縮むのは**人が「たたむ」を押した時だけ**。
+     *     画面を移る時は必ず「開いた状態」に戻す（＝真っ白を起こさない）。
      */
-    const MINI_VIEWS = ["view-instructions"];
-    const wantMini = MINI_VIEWS.indexOf(id) >= 0;
-    setMiniMode(wantMini);
-    notifyParent(wantMini ? "collapse" : "expand");
+    setMiniMode(false);
+    notifyParent("expand");
   }
 }
 

@@ -777,14 +777,17 @@ body.mini-mode .header-logo {
   font-weight: 900;
   letter-spacing: 0.5px;
 }
-/* 2026-11-13 竹内さん「お客さんの詳細おしたらこのようになってしまう」（真っ白）:
-   mini-mode の時でも、**今開いている画面（.view.active）は消さない**。
-   ⚠ 旧は全部の view を消していたので、詳細を開いたまま縮むと**中身が空**になっていた。 */
+/* 2026-11-13 竹内さん「お客さんの詳細おしたらこのようになってしまう」「リアプロのボタンを押したらこうなる」
+   （どちらも真っ白）:
+   mini-mode の時でも、**今開いている画面（.view.active）は絶対に消さない**。
+   ⚠ 旧は全部の view を消していたので、画面を移ったまま縮むと**中身が空**になっていた。 */
 body.mini-mode .view:not(.active) {
   display: none !important;
 }
-/* 縮んでいる時は中身を隠す（＝100px のボタンとして見せる）が、
-   開いている画面が「詳細」などで mini でなくなったら、この規則は当たらない（active を消さない） */
+/* さらに念のため: 開いている画面は、何があっても表示する（真っ白の再発防止） */
+body.mini-mode .view.active {
+  display: flex !important;
+}
 
 /* ── Feedback button & modal ── */
 #feedback-btn {
