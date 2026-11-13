@@ -431,7 +431,9 @@ export type SuggestedAixMeta = {
   material_fetch?: string[];           // 2026-11-13 作業員1（S4）: 取りに行った材料（名前|取り先|got/none/staff・BRAIN_MATERIAL_FETCH=on）
   material_books?: string[];           // 2026-11-13 作業員1: 帳面の6つ×印（帳面|fetch/staff|鍵・MATERIAL_GAP_BOOKS=shadow）
   material_gaps?: string[];            // 2026-11-12 作業員1: 材料の抜けの台帳（何が|何のために|どこから|なぜ a〜e|何が起きる・MATERIAL_GAP_LEDGER=shadow の時だけ・記録だけ）
-  material_missing?: string[];         // 2026-10-29 ブレインの自己申告「判断に要ったのに材料に無かった物」（記録だけ・digest.mm）
+  material_missing?: string[];
+  /** 2026-11-13 作業員22: mm が手元にあったか（material-on-hand・MATERIAL_ON_HAND=shadow の時だけ） */
+  material_on_hand?: import("@/app/lib/material-on-hand").OnHand[];         // 2026-10-29 ブレインの自己申告「判断に要ったのに材料に無かった物」（記録だけ・digest.mm）
   two_choice_reply_kind?: string;      // 2026-10-28 その場の側の2択: 右の返信の約束の種類（check/estimate/pickup）
   two_choice_reply_hint?: string;      // 同: 右の返信を押した時に generate-reply に渡す指定
   two_choice_preferred?: "reply" | "aix"; // 2026-11-05 2択の先に選んだ側（TWO_CHOICE_NARROW・竹内さんが多く選ぶ側・自動送信はこの側）
@@ -1715,6 +1717,12 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (mm.judge_basis && typeof mm.judge_basis === "object") Object.assign(mm.judge_basis as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:brief-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-13 作業員22（竹内さん「決めた事が書き手まで届いていない」・KB 2301dbf1・5cf2d736）: 欄ごと・下の欄ごとに書き手まで届いたかを記録だけ（DELIVERY_CHECK=shadow・既定 off）。
+  //   書き手の注記（本質の帯＋設計図の注記）を generate-reply と同じ関数で作って突き合わせる。道・下書きは変えない
+  try {
+    const dc = await import("@/app/lib/delivery-check");
+    if (dc.deliveryCheckMode() !== "off") (meta as unknown as Record<string, unknown>).delivery_check = dc.deliveryCheckOf(meta as unknown as Record<string, unknown>);
+  } catch (e) { console.warn(JSON.stringify({ tag: "conductor:delivery-check-failed", error: e instanceof Error ? e.message : String(e) })); }
   return meta;
 }
 async function analyzeConversationDeep(...args: Parameters<typeof analyzeConversationCore>): ReturnType<typeof analyzeConversationCore> {
@@ -6465,6 +6473,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-10-29 材料の自己申告（記録だけ）・読めなかった材料（ログだけだったのを digest にも残す＝毎週数える）
       material_read_misses: materialMisses.length ? [...new Set(materialMisses)] : undefined,
       material_missing: brainMaterialSelfReportOn() ? normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? undefined : undefined,
+      // 2026-11-13 作業員22（統括役 案3）: ブレインが材料に無かったと言った物が、渡した材料の文・送れる候補に実はあったか（MATERIAL_ON_HAND=shadow・既定 off・記録だけ）
+      material_on_hand: await (async () => { try { const oh = await import("@/app/lib/material-on-hand"); if (oh.materialOnHandMode() === "off") return undefined; const mm = normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? []; if (!mm.length) return undefined; const text = (userContent as Array<{ type: string; text?: string }>).filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n"); return oh.markOnHand(mm, text, pickupReadyMaterial); } catch { return undefined; } })(),
       // 2026-11-12 作業員1（竹内さん「何が何で何なのか把握できるように」）: 材料の抜けの台帳（記録だけ・道は変えない・MATERIAL_GAP_LEDGER=shadow）
       // 2026-11-13 作業員1（G1 親 680）: 分からない事を帳面の6つ（電話・内覧の場・管理会社の結果・会社の事実・物件の資料・こちら側）×入口で取りに行く／スタッフしか知らない（AIX）で記録（MATERIAL_GAP_BOOKS=shadow）
       material_books: materialGapBooksMode() === "shadow" ? materialBooksDigest(normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? []) : undefined,
