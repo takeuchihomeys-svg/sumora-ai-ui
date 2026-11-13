@@ -15,7 +15,7 @@ import { parseListingEquipment, downgradeNegatedItems, type EquipKey, type Equip
 import {
   detectEquipmentQuestion, pickEquipmentTargets, resolveEquipAnswer, equipAnswerPlan, buildEquipmentAnswerNote, textItemsFromSheetText,
   parseSheetEquipText, SHEET_EQTEXT_PROMPT, SHEET_EQTEXT_PROMPT_VERSION, SHEET_EQTEXT_MAX_TOKENS,
-  pickupMaterialUsable, PICKUP_MATERIAL_MAX_DAYS,
+  pickupMaterialUsable, PICKUP_MATERIAL_MAX_DAYS, equipSheetReadAllowed,
   type EquipmentQuestion, type EquipAnswerPlan, type EquipPropertyAnswer, type SheetEquipText, type PlanFactsLite, type SentPropertyLite,
 } from "@/app/lib/equipment-question";
 
@@ -35,6 +35,16 @@ export async function readSheetEquipText(imageUrl: string, o?: { conversationId?
   const hit = (saved?.[0]?.text_facts ?? null) as SheetEquipText | null;
   if (hit && typeof hit.equip_text === "string") return { facts: hit, source: "saved", ms: Date.now() - t0 };
 
+  // 2026-11-13 作業員8b: 申込の線（本番の他の読みと同じ・既定 on・EQUIP_SHEET_CUTOFF=off）。送った時刻はその会話のメッセージから・無ければ今
+  if (o?.conversationId) {
+    const { loadDeepseekCutoff } = await import("./post-apply");
+    const { data: sentRow } = await supabase.from("messages").select("created_at").eq("conversation_id", o.conversationId).eq("image_url", imageUrl).order("created_at", { ascending: false }).limit(1);
+    const sentAt = ((sentRow ?? []) as Array<{ created_at?: string | null }>)[0]?.created_at ?? null;
+    if (!equipSheetReadAllowed({ conversationId: o.conversationId, sentAt, cutoff: await loadDeepseekCutoff(supabase, o.conversationId) })) {
+      console.log(JSON.stringify({ tag: "deepseek-cutoff:skip-image-read", route: "equipment-sheet", conversationId: o.conversationId }));
+      return { facts: null, source: "none", ms: Date.now() - t0 };
+    }
+  }
   const content = [{ type: "text", text: SHEET_EQTEXT_PROMPT }, { type: "image_url", image_url: { url: imageUrl } }];
   const budget = o?.timeoutMs ?? READ_TIMEOUT_MS;
   const read = await callDeepSeekRead(null, content, { maxTokens: SHEET_EQTEXT_MAX_TOKENS, timeoutMs: budget }, parseSheetEquipText,
