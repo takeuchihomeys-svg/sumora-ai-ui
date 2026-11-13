@@ -96,6 +96,7 @@ import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
 import { brainAixFollowsContractOn, alignAixToContract, type ContractAskLite } from "@/app/lib/aix-follows-contract";
+import { askPartsSplitOn, partsAllNow, type AskPart } from "@/app/lib/ask-parts";
 import { sendSequenceOn, sanitizeSendSequence, replyCountOf, SEND_SEQUENCE_FIELD, hearingSendSequence, writerReplyCountOf } from "@/app/lib/send-sequence";
 import { checkQuestionBrainFirstOn, checkQuestionBrainRoute } from "@/app/lib/check-question-brain-first";
 import { resolveTwoStageOrDirect, firstContactReadyPickupTwoStage, screeningNoRewriteEnabled, sentReactionNoRewriteEnabled, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
@@ -5396,6 +5397,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       const twoStageArgs: Parameters<typeof resolveTwoStageOrDirect>[0] = {
         screeningBrainReply,
         sentReactionBrainReply,
+        // 2026-11-13 作業員7b（ASK_PARTS_SPLIT・既定 off）: ブレインの依頼の部分が全部 今言えるか（持ち込みの網を下げる）
+        askPartsAllNow: askPartsSplitOn() ? partsAllNow((normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ parts?: AskPart[] }>) : null,
         // 2026-11-05 作業員1（8959・q212）: 開いているピックアップの約束（台帳の最後の行は物件の送付と読む事がある＝ackRightAfterPromise が false になる）
         openPickupPromise: promiseAix?.kind === "pickup",
         finalAix: finalAix ?? tcPromiseAix, decisionSource: decisionSource ?? (tcPromiseAix ? "llm" : null), pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
