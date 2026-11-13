@@ -13,7 +13,7 @@
 // ⚠ 費用: LLM は 1回1枚のみ（既定は無効・`SHOT_LEARN_LLM=on` で使う）。決定論だけで動く。
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
-import { cleanFields, cleanScreen, parseShotLearn, describeShotLearn, SHOT_LEARN_PROMPT, type ShotLearn } from "@/app/lib/shot-learn";
+import { cleanFields, cleanScreen, screenOf, parseShotLearn, describeShotLearn, SHOT_LEARN_PROMPT, type ShotLearn } from "@/app/lib/shot-learn";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -27,19 +27,22 @@ export async function OPTIONS() { return new NextResponse(null, { status: 204, h
 
 /** 決定論で読んだ物（写真を見ずに、記録の数値から分かる事だけ） */
 function deterministicFrom(row: Record<string, unknown>): ShotLearn {
-  // 画面の種類は URL と件数から推す（写真は要らない）
-  const url = String(row.url ?? "");
-  const screen: ShotLearn["screen"] =
-    /display=building|rent_rooms|list/i.test(url) ? "result"
-      : /method=estate/i.test(url) ? "form"
-        : "other";
-  // shot_ops に「欄の名前と種類」が入っていれば、それをそのまま欄として使う（写真より確か）
+  /**
+   * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい」:
+   *   ⚠ 旧は URL だけで画面を推していた（`shot_ops` を見ていなかった）。
+   *   → 操作の名前（地域・駅の段）と欄の種類から**画面を判定**する。
+   */
   const fields = cleanFields(
     (Array.isArray(row.shot_ops) ? row.shot_ops : []).map((o) => {
       const x = (o && typeof o === "object" ? o : {}) as Record<string, unknown>;
       return { name: x.f, kind: x.w, x: null, y: null };
     }),
   );
+  const screen: ShotLearn["screen"] = screenOf({
+    url: row.url,
+    ops: (Array.isArray(row.shot_ops) ? row.shot_ops : []) as Array<{ f?: unknown }>,
+    fields,
+  });
   return { screen, fields, by: "deterministic", confidence: fields.length ? 0.9 : 0.3 };
 }
 

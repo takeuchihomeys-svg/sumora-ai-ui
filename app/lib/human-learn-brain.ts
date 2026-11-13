@@ -26,7 +26,7 @@
 //   npx tsx --env-file=.env.local scripts/human-learn-brain.ts --apply    # DB の human_learn_profile に書く
 //   /api/cron/human-learn-brain が毎晩まとめる（Vercel Cron）
 
-import { reconcilePoints, findWeakPoints } from "./shot-learn";
+import { reconcilePoints, findWeakPoints, learnFromShots } from "./shot-learn";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -55,6 +55,12 @@ export type MotionRow = {
   fields?: unknown;
   field_order?: unknown;
   shot_ops?: unknown;
+  /**
+   * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい」:
+   *   写真が撮れた画面の URL（`display=building` なら結果・`method=estate` なら入力）。
+   *   **画面の種類を判定する**のに使う（写真そのものは見ない）。
+   */
+  url?: string | null;
   /**
    * 2026-11-13 竹内さん「画面の写真から判断できる。そこの部分強化するようにする」:
    *   写真から読んだ**欄の種類**（プルダウン／直接入力／チェック）と**画面の種類**。
@@ -101,6 +107,21 @@ export type HumanLearnBundle = {
    *   統括がこれを読んで「次に何を学ぶか」を決める。
    */
   weak?: Array<{ kind: string; name: string; why: string; next: string }>;
+  /**
+   * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい」
+   *   「抜けている部分徹底的に学習できるように」:
+   *   **写真から学んだ画面ごとの仕組み**（どの画面で何を押し、次に何へ進むか）。
+   *   `modal`（地域・駅の小窓）・`form`（条件の入力）・`result`（結果の一覧）ごと。
+   *   ⚠ 入れるのは画面の種類・欄の名前・順番だけ（入力した中身は入れない）。
+   */
+  screen_flow?: Record<string, {
+    n: number;
+    lastPressed: Array<{ name: string; n: number }>;
+    steps: Array<{ from: string; to: string; n: number }>;
+    fields: Array<{ name: string; kind: string; n: number }>;
+  }>;
+  /** 写真を何枚見たか・そのうち操作が付いていた枚数 */
+  shots?: { total: number; with_ops: number };
   /** 何を学んだか（人が読む1行ずつ） */
   lines: string[];
 };
@@ -436,6 +457,24 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
   const times = list.map((r) => (r.created_at ? Date.parse(String(r.created_at)) : NaN)).filter((t) => Number.isFinite(t));
   const sites = Array.from(new Set(list.map((r) => String(r.site || "")).filter(Boolean)));
 
+  /**
+   * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい
+   *   抜けている部分徹底的に学習できるように」:
+   *   **写真（画面）ごとの仕組み**を学ぶ。画像そのものは見ずに、
+   *   写真の行が持つ「URL・直前の操作・写真から読んだ欄」から画面を判定してまとめる。
+   *   ⚠ 入れるのは画面の種類・欄の名前・順番だけ（中身は入れない）。
+   */
+  const shotRows = list.filter((r) => {
+    const x = r as unknown as Record<string, unknown>;
+    return Array.isArray(x.shot_ops) || (x.shot_learn && typeof x.shot_learn === "object") || typeof x.url === "string";
+  });
+  const shotLearn = shotRows.length
+    ? learnFromShots(shotRows.map((r) => {
+      const x = r as unknown as Record<string, unknown>;
+      return { url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn, created_at: x.created_at };
+    }))
+    : { screens: {}, total: 0, withOps: 0 };
+
   const bundle: HumanLearnBundle = {
     v: 1,
     generated_at: new Date(nowMs).toISOString(),
@@ -452,6 +491,7 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     site_flow,
     gaps: { median_ms: median(gapSamples), samples: gapSamples.length },
     ...(weak.length ? { weak } : {}),
+    ...(Object.keys(shotLearn.screens).length ? { screen_flow: shotLearn.screens, shots: { total: shotLearn.total, with_ops: shotLearn.withOps } } : {}),
     lines: [],
   };
   bundle.lines = describeBundle(bundle);
@@ -517,6 +557,37 @@ export function describeBundle(b: HumanLearnBundle): string[] {
     });
   } else {
     out.push("弱い所: なし（今の所そろっています）");
+  }
+  /**
+   * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい」:
+   *   **写真から学んだ画面ごとの仕組み**を出す（地域・駅の小窓では何をどの順で押すか）。
+   *   ⚠ 中身（入力した値・お客様の情報）は出さない。欄の名前と順番だけ。
+   */
+  if (b.screen_flow && Object.keys(b.screen_flow).length) {
+    const SJ: Record<string, string> = { modal: "小窓（地域・駅）", form: "条件の入力", result: "結果の一覧", other: "その他" };
+    out.push("");
+    out.push(`▼ 写真から学んだ画面ごとの仕組み${b.shots ? `（写真 ${b.shots.total}枚・操作つき ${b.shots.with_ops}枚）` : ""}`);
+    for (const [screen, s] of Object.entries(b.screen_flow)) {
+      if (!s || !s.n) continue;
+      out.push(`  【${SJ[screen] || screen}】${s.n}枚`);
+      if (s.steps.length) {
+        // 回数の多い順に矢印でつなぐ（同じ元からは1本）
+        const used = new Set<string>();
+        const flow: Array<{ from: string; to: string; n: number }> = [];
+        for (const x of s.steps) { if (used.has(x.from)) continue; used.add(x.from); flow.push(x); }
+        out.push("    順番: " + flow.slice(0, 5).map((x) => `${x.from} → ${x.to}`).join(" / "));
+      }
+      if (s.lastPressed.length) {
+        out.push("    最後に押す物: " + s.lastPressed.slice(0, 3).map((x) => `${x.name}（${x.n}枚）`).join("・"));
+      }
+      if (s.fields.length) {
+        const KJ: Record<string, string> = { select: "プルダウン", text: "直接入力", checkbox: "チェック", radio: "1つ選ぶ", button: "押す", link: "リンク" };
+        out.push("    見えた欄: " + s.fields.slice(0, 5).map((f) => `${f.name}=${KJ[f.kind] || f.kind}`).join("・"));
+      }
+    }
+  } else if (b.shots && b.shots.total) {
+    out.push("");
+    out.push(`▼ 写真から学んだ仕組み: まだ（写真 ${b.shots.total}枚・操作つき ${b.shots.with_ops}枚。操作が付くと学べます）`);
   }
   return out;
 }
