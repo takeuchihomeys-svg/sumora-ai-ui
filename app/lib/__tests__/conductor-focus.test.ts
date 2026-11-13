@@ -127,9 +127,10 @@ it("段2: CONDUCTOR_FOCUS_TO_BRAIN=on の時だけブレインに重点の1行�
   const l = focusBrainLine({ focus: "promise_keep", surface: "了承", background: "確認の結果待ち", why: "" }); ok(l.includes("promise_keep") && l.includes("背景: 確認の結果待ち") && l.includes("AIX の決まりが先"), l);
   eq(focusBrainLine(null), ""); eq(focusBrainLine({ focus: "x" as never, surface: "", background: "", why: "" }), "");
 });
-it("重点の下の種類（CONDUCTOR_FOCUS_SUB=on・既定 off）: 欄・読み・合わない種類は捨てる・竹内さんの文の札", () => {
-  ok(!focusSubOn({})); ok(focusSubOn({ CONDUCTOR_FOCUS_SUB: "on" }));
-  ok(!focusIntakeField({}).includes("focus_sub")); ok(focusIntakeField({ CONDUCTOR_FOCUS_SUB: "on" }).includes("focus_sub"));
+it("重点の下の種類（11/13 から既定 on・=off で止める）: 欄・読み・合わない種類は捨てる・竹内さんの文の札", () => {
+  ok(focusSubOn({})); ok(!focusSubOn({ CONDUCTOR_FOCUS_SUB: "off" }));
+  ok(focusIntakeField({}).includes("focus_sub")); ok(!focusIntakeField({ CONDUCTOR_FOCUS_SUB: "off" }).includes("focus_sub"));
+  eq(focusSubOfTakeuchiText("promise_make", "お送り頂きました物件の募集状況確認させて頂きます！！確認出来次第、最大限割引しました初期費用の御見積書とあわせてお送りさせて頂きます"), "check_estimate");
   for (const s of ["check", "search", "estimate", "fulfill_now", "fact", "screening"]) ok(FOCUS_SUB_RULES.includes(s), s);
   const r = parseFocusRead({ focus_read: { focus: "promise_make", focus_sub: "search", surface: "a", background: "b", why: "c" } });
   eq(r?.sub, "search"); eq((conductorFocusMeta(r) as { focus_sub?: string }).focus_sub, "search");
