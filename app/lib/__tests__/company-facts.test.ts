@@ -290,5 +290,26 @@ describe("10/08 本質の実装: 会社の名前・所在地／ブランド別�
   });
 });
 
+// 2026-11-13 作業員9（統括役・竹内さんの 9/26 の決定）: 審査期間を「3日〜10日」にそろえる（COMPANY_FACT_SCREENING_DAYS_UNIFY）・両方の向き
+describe("審査期間のそろえ（COMPANY_FACT_SCREENING_DAYS_UNIFY）", () => {
+  const factOf = (id: string) => COMPANY_FACTS.find((f) => f.id === id)?.fact ?? "";
+  const twoStage = () => COMPANY_FACTS.find((f) => /審査は2段/.test(f.fact))?.fact ?? "";
+  it("off（既定）: 今までの「早ければ2〜3営業日、長くて1週間程」のまま", () => {
+    delete process.env.COMPANY_FACT_SCREENING_DAYS_UNIFY;
+    truthy(/早ければ2〜3営業日、長くて1週間程/.test(twoStage()), "2段の審査");
+    falsy(/通常3日〜10日程/.test(twoStage()));
+  });
+  it("on: cancel・hold_room・2段の審査から「2〜3営業日」が消え、竹内さんの言い方「保証会社による入居審査（通常3日〜10日程）」になる", () => {
+    process.env.COMPANY_FACT_SCREENING_DAYS_UNIFY = "on";
+    for (const id of ["cancel", "hold_room"]) falsy(/2〜3営業日/.test(factOf(id)), id);
+    truthy(/保証会社による入居審査（通常3日〜10日程）/.test(twoStage()), "2段の審査の数字");
+    truthy(/オーナーの最終審査/.test(twoStage()), "2段の形はそのまま");
+    process.env.COMPANY_FACT_OWNER_CANCEL = "off";
+    truthy(/保証会社による入居審査は通常3日〜10日程/.test(factOf("cancel")), "旧のキャンセルの文");
+    delete process.env.COMPANY_FACT_OWNER_CANCEL;
+    delete process.env.COMPANY_FACT_SCREENING_DAYS_UNIFY;
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { console.log(failures.map((f) => `- ${f}`).join("\n")); process.exit(1); }
