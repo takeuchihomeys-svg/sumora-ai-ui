@@ -3289,3 +3289,49 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 ### 2026-10-06 採点（judgeProperty）に「刺さった新着から学んだ特徴」の口（拡張のコードは変えていない・未コミット）
 - 札 `HOOK_LEAN_<特徴>`（+5・2つまで・保留／外す候補には付けない）。週の学び（scoring_learning_runs.hook_learning の kept・proposeUse）を `app/lib/hook-lean-server.ts` hookLeanForJudge が読み、`/api/property-brain/judge` と売上サポ（property-pickups-server）の judgeProperty に `opts.hookLean` で渡す。止める: 環境変数 `HOOK_LEAN_MODE=off`
 - 今は学べる物 0 ＝何も付かない（刺さった新着 v2 の 94回・線 lift 1.25）。基準の作り直しと👑の「オススメの点」は `memory/dept_line_reply.md` の同日の節
+
+## 2026-11-10 DB の構造の地図
+- chrome-extension/DB_STRUCTURE.md に、拡張が使う DB の表（リアプロ／ITANDI／共有）・流れ・混ざっている所9つ・拡張の中だけにある物をまとめた（Cursor と一緒に直す時の地図）。直したらそのファイルも直す。
+- Cursor との分担の決まりは .cursor/rules/sumora-ai-ui.mdc（Cursor が自動で読む・中身は CLAUDE.md の絶対ルール＋DB の決まり＋拡張の分担）。Cursor＝画面での動き方・Claude Code＝裏のデータと API。
+
+## 2026-11-10 v2.5.92 自動モード（通常／スタッフ／自動の3つ）・案内モードの実値送信・ITANDI の更新日（**拡張の再読み込み必須**・DB の表・列の追加なし）
+
+竹内さんの指示（11/10）: 拡張に3つのモードを並べる（通常／スタッフ＝今の人が押す案内／自動＝もともとの自動検索）。今は `mode-core.js` の `GUIDE_ONLY=true` で自動が止まっているので、モードで切り替わる形にして自動モードを完成させる。
+
+### 1. 3つのモード（mode-core.js・popup.html・popup.js・background.js）
+- **自動モードを選んだ時だけ自動の道を開く**。`GUIDE_ONLY` は残し、意味を「自動モード以外は自動の道を開かない」に変えた（`effectiveBehavior` が `mode !== AUTO_MODE` の時だけ claim・自動送信・自動便・web_brain を false にする）。
+- **古い版が書き残した `aixMode=true` で勝手に自動にならない**ように、選んだ印 `autoModeAt`（ミリ秒）を一緒に書く。`effectiveState` は印が無い `aixMode=true` を「通常」で読む。`guideOnlyMigration` は印が無い時だけ `aixMode:false` を書き、選んだ自動モードは起動のたびに消さない。
+- `storageUpdateForMode` が `autoModeAt` も返す（スタッフ・通常は null）。`STORAGE_KEYS` に `autoModeAt` を追加。
+- popup.html の選択肢は 通常／スタッフ／自動（`<option value="aix">自動</option>`）。popup.js の `_applyMode` から「aix を normal に落とす」行を削除。
+- background.js: `_guideOnly()` は「`GUIDE_ONLY` かつ自動モードを選んでいない」時だけ true。選んだ値は `_autoModeChosen`（起動時と storage の変化で `_refreshAutoModeChosen` が更新）。バッジも `effectiveState` から決める（自動モードで「AIX」が出る）。
+
+### 2. 自動モードの勤務時間のゲート（auto-run.js の workGate・background.js の _autoWorkGate）
+- JST **9:00〜21:00** だけ動く。**12:00〜13:00 は昼の休憩**。**土日は動かない**（金曜の夜は月曜 9:00 まで）。**90分続けて動いたら小休憩**（10分）。
+- 開いていない時は pending を拾わない（`automation_commands` は pending のまま残る＝時間内に別の PC か次の見回りが拾う）。理由と次に動ける時刻は `chrome.storage.local` の `autoWorkGate` に残す。
+- **サーバーの一時停止（`automation_settings.paused`）はそのまま別の歯止め**として残る（二重）。
+
+### 3. 人の速さ（human-wait.js の createPacer）
+- 既存の `humanDelay`（一様 0.8〜1.5倍）はそのまま。自動モードの連続した操作には **対数正規**（`logNormalDelay`・中央値 900ms・σ0.35）を使う。
+- `createPacer({ baseMs: 900, breakEvery: 12, breakMs: 8000 })` で **12操作ごとに 8秒の休憩**。休憩も対数正規なので同じ長さにならない（固定周期にしない）。
+- background.js の自動モードの回は、お客様の間（`customerGapMs`）に対数正規を混ぜる（等間隔にしない）。
+
+### 4. 案内モードでも「画面に実際に入った値」を送る（10/05 から filled.form がほぼ0件だった原因）
+- **原因（実物で確認）**: `_readRealproForm`／`_itReadForm` を呼ぶのは拡張の入力（`page-script.js` の `fillRealpro`／`itandi-page-script.js` の `fill`）の中だけ。案内モードでは `page-script.js` が「入力しない」で早期 return するため `_auditReset` も走らず、fill-done に `audit` が載らない＝`filled` が null のまま（`filled.guide_stations` だけは別の口から入っていた）。
+- **直し**: スタッフが「検索」を押した時に、案内の側が欄を読んで送る。`realpro-guide.js`／`itandi-guide.js` の `reportFilledForm()` → background の `axlx-guide-filled` → `search_audits.filled.form`（＋ `intended`・`guide_stations` を同じ1回にまとめる）。**新しい表・列は要らない**（`filled` は今ある列）。
+- ITANDI 側の form のキーは点検（`app/lib/search-audit-check.ts`）が読む形に合わせた: `rent_max` / `rent_min` / `update_days` / `stations` / `lines` / `wards` / `layouts`。
+- ※ 仮説のうち「React の state が更新されていない」は**今回の原因ではなかった**（案内モードは拡張が値を入れないので、そもそも書く処理が走っていない）。自動モードで入力する時は `itandi-page-script.js` の `setReactVal`（native setter＋input/change）を今まで通り通る。
+
+### 5. ITANDI の更新日（itandi_update_days・作業員A／Claude Code 側が積む）
+- `auto-run.js`: `optsFromPayload`／`payloadForCustomer`／`record`／`forCustomer` が `itandi_update_days` と計画の `itandi_days` を読む。`optsForSite(payload, site)`／`optsForSiteRecord(opts, site)` が **ITANDI の回だけ** その値を `rp_update_days` の位置に写す（読む側＝`itandi-page-script.js`・`itandi-guide-plan.js`・`itandi-update-days.js` は今まで通り `cond.rp_update_days` を読むので変更なし）。
+- `background.js`: `_batchAutofill` の入口で `optsForSite` を通す。手の一括検索も `{ rp_update_days, itandi_update_days }` を渡す（旧は ITANDI の回にもリアプロの手の指定をそのまま渡していた＝DB_STRUCTURE.md「混ざっている所 2」）。
+- **キーが無い命令は今まで通りリアプロの値に落ちる**（後方互換）。
+
+### 6. テストと確認
+- `tests/chrome-extension/` 全 63本 通過。追加: `auto-run.test.js` に勤務時間ゲート 17件・ITANDI 更新日 9件、`human-wait.test.js` に対数正規と pacesr 14件。
+- 版の固定をしているテストは `2.5.92` に更新（`realpro-guide.test.js` は CRLF で正規表現が外れていたので読み込みで改行をそろえた）。
+- `npx tsc --noEmit` 型エラー0。
+- **まだ実機で試していない**（自動モードで1回まわす・案内モードで YUMA を1回検索して `search_audits.filled.form` に値が入るか）。試す時の目安は AUTO_MODE_HANDOFF.md の 7.（開始時刻が窓の中か・リアプロ→ITANDI の順か・ページ≤5・間がばらついているか・送付済みの選択0）。
+
+### 7. 出した後にやること（竹内さん・Claude Code 側）
+- 自動モードの版を配ったら `AUTOMATION_MIN_EXT_VERSION` を 2.5.92（または次の版）に上げる（上げないと古い PC が指示を拾える）。
+- 点検の `expectedUpdateDays` を ITANDI 対応にする（Claude Code 側・依頼済み）。

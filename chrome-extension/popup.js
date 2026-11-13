@@ -2941,6 +2941,33 @@ function daysAgoText(isoStr) {
   return diff + "日前";
 }
 
+// v2.5.89 2026-10-20 竹内さんの決定 B（設計知見 209b9a92）: 同じ名前のお客様カードが2枚ある時、選ぶ所にアカウント（スモラ・イエヤス・ギガ賃貸）を出して
+//   選び間違いに気づけるようにする。アカウントはカードの account 列ではなく結んだ会話のアカウント（サーバーの linked_accounts・
+//   カードの列は空や会話と違う物が多い）。同じ名前のカードがある時は札を橙にする（カードを1枚にまとめるのは後で）
+var ACCT_LABELS = { sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ賃貸", hasu: "蓮産業" };
+var _dupNameMemo = { src: null, names: null };
+function _dupCustomerNames() {
+  if (_dupNameMemo.src === allCustomers && _dupNameMemo.names) return _dupNameMemo.names;
+  const cnt = new Map();
+  for (const x of allCustomers || []) {
+    const n = String((x && x.customer_name) || "").trim();
+    if (n) cnt.set(n, (cnt.get(n) || 0) + 1);
+  }
+  const names = new Set();
+  cnt.forEach((v, k) => { if (v >= 2) names.add(k); });
+  _dupNameMemo = { src: allCustomers, names };
+  return names;
+}
+function customerAccountChipHtml(c) {
+  const accts = Array.isArray(c.linked_accounts) && c.linked_accounts.length
+    ? c.linked_accounts
+    : (c.linked_conversation && c.linked_conversation.account ? [c.linked_conversation.account] : []);
+  if (!accts.length) return "";
+  const dup = _dupCustomerNames().has(String(c.customer_name || "").trim());
+  const label = accts.map((a) => ACCT_LABELS[a] || a).join("・");
+  return '<span class="acct-chip' + (dup ? " acct-dup" : "") + '" title="' + esc(dup ? "同じ名前のお客様カードがあります（会話のアカウント: " + label + "）" : "会話のアカウント: " + label) + '">' + esc(label) + "</span>";
+}
+
 function renderCustomerRow(c, dimmed) {
   const d = buildCondData(c);
   const metaParts = [];
@@ -2958,7 +2985,7 @@ function renderCustomerRow(c, dimmed) {
       <label class="bulk-check-wrap"><input type="checkbox" class="bulk-check" data-id="${esc(String(c.id))}"></label>
       <div class="c-dot dot-${esc(c.status)}"></div>
       <div class="c-body">
-        <div class="c-name">${c.is_linked ? '<span class="link-chip">🔗</span>' : ""}${esc(c.customer_name)}${computeAreaModeBadgeHtml(d.area)}</div>
+        <div class="c-name">${c.is_linked ? '<span class="link-chip">🔗</span>' : ""}${esc(c.customer_name)}${customerAccountChipHtml(c)}${computeAreaModeBadgeHtml(d.area)}</div>
         ${meta ? `<div class="c-meta">${esc(meta)}</div>` : ""}
         ${(function() {
           const chips = [];
@@ -6078,9 +6105,10 @@ function _renderModeUI() {
 function _applyMode(mode) {
   var core = self.AxlxModeCore;
   if (!core || core.MODES.indexOf(mode) < 0) mode = "normal";
-  if (core && core.GUIDE_ONLY && mode === "aix") mode = "normal"; // v2.5.77 AIX連動（自動検索）は選べない
+  // 2026-11-10 竹内「3つのモードを並べる: 通常／スタッフ／自動」: 自動（aix）も選べる。
+  //   自動の道が開くのは「自動モードを選んだ時だけ」（mode-core.effectiveBehavior がモードで決める・GUIDE_ONLY は残す）
   var upd = core ? core.storageUpdateForMode(mode, Date.now())
-                 : { staffMode: false, staffModeAt: null, aixMode: false };
+                 : { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null };
   Object.assign(_modeRaw, upd);
   _renderModeUI(); // 即時反映（storage.onChanged でも同期される）
   try { chrome.storage.local.set(upd); } catch (_) { /* ignore */ }

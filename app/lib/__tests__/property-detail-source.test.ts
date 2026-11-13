@@ -6,7 +6,7 @@
 //   材料は売上サポの行（property_pickups.pdf_text）の実物の形（リアプロの元付資料の文字層）を短くした物。
 import {
   detailSourceFor, countDetailLabels, reusableLinesByPdfUrl, buildTextDetailUser, planDetailSource, detailModelLabel, pickupRowDetailPlan,
-  pickupRowForProperty, dropUngroundedLines,
+  pickupRowForProperty, dropUngroundedLines, normalizeVacancyLines, sheetReadR2Rules,
   PROPERTY_TEXT_DETAIL_SYSTEM, PROPERTY_TRANSCRIPT_DETAIL_SYSTEM, DETAIL_TEXT_MIN_CHARS, DETAIL_TEXT_MAX_CHARS, PROPERTY_TEXT_DETAIL_MAX_TOKENS,
 } from "../property-detail-source";
 import { parseDetailResult, PROPERTY_IMAGE_DETAIL_PROMPT } from "../property-image-read";
@@ -239,6 +239,38 @@ it("★ 書き写しに言葉の無い可否は落ちる（Goパレス福島の�
   const g = dropUngroundedLines(["現況: 203号室 10/末", "ペット: 不可", "洗濯機置場: 室内洗濯パン", "駐輪場: 各部屋1台無料"], transcript);
   expect(g.dropped.join("|")).toBe("ペット: 不可");
   expect(g.kept.length).toBe(3);
+});
+
+// ── 2026-10-13 現況・入居可能日・退去予定の取り違え（読み直した資料の画像の目読みの実物）──
+it("「現況: 退去予定 / 2026年10月20日」は現況と入居可能日に分ける（リアプロの現況/入居時期）", () => {
+  const r = normalizeVacancyLines(["間取り: 1K", "現況: 退去予定 / 2026年10月20日"]);
+  expect(r.includes("現況: 退去予定")).toBe(true); expect(r.includes("入居可能日: 2026年10月20日")).toBe(true);
+});
+it("「現況: 入居可能」＋「入居可能日: 空室 即入」は 現況: 空室 ＋ 入居可能日: 即入（S-FORT桜川南）", () => {
+  const r = normalizeVacancyLines(["現況: 入居可能", "入居可能日: 空室 即入"]);
+  expect(r.includes("現況: 空室")).toBe(true); expect(r.includes("入居可能日: 即入")).toBe(true);
+});
+it("「現況: 解約予定日 2026年6月30日」は 現況: 退去予定 ＋ 退去予定: 2026年6月30日（エステムプラザ本町クロス）", () => {
+  const r = normalizeVacancyLines(["現況: 解約予定日 2026年6月30日", "入居可能日: 相談"]);
+  expect(r.includes("現況: 退去予定")).toBe(true); expect(r.includes("退去予定: 2026年6月30日")).toBe(true); expect(r.includes("入居可能日: 相談")).toBe(true);
+});
+it("「入居可能日: 2026/9/中旬退去予定」は入居可能日にしない（ハーモニーテラス森ノ宮・入居予定日の欄に退去予定）", () => {
+  const r = normalizeVacancyLines(["入居可能日: 2026/9/中旬退去予定"]);
+  expect(r.some((l) => l.startsWith("入居可能日"))).toBe(false); expect(r.includes("現況: 退去予定")).toBe(true); expect(r.includes("退去予定: 2026/9/中旬")).toBe(true);
+});
+it("退去予定が入居可能日と同じ値（入居時期の日付を写した）なら退去予定の行を落とす（サンプラザ山坂の読み直し）", () => {
+  const r = normalizeVacancyLines(["現況: 退去予定", "入居可能日: 2026年8月下旬", "退去予定: 2026年8月下旬", "内覧可能日: 2026年8月1日～"]);
+  expect(r.some((l) => l.startsWith("退去予定"))).toBe(false); expect(r.includes("内覧可能日: 2026年8月1日～")).toBe(true);
+});
+it("正しい行は変えない（居住中・入居可能時期 2026年10月下旬／7月末空予定の一覧）", () => {
+  const a = ["現況: 居住中", "入居可能日: 2026年10月下旬"];
+  expect(JSON.stringify(normalizeVacancyLines(a))).toBe(JSON.stringify(a));
+  expect(normalizeVacancyLines(["現況: 202号室 7月末空予定"]).includes("現況: 202号室 7月末空予定")).toBe(true);
+});
+it("SHEET_READ_R2=off で変えない・書き写しの指示に退去予定の場所と内覧可能日・文字層の前置きは変えない", () => {
+  expect(normalizeVacancyLines(["現況: 入居可能", "入居可能日: 空室 即入"], { SHEET_READ_R2: "off" })[0]).toBe("現況: 入居可能");
+  expect(/備考・特記事項・案内方法/.test(PROPERTY_TRANSCRIPT_DETAIL_SYSTEM) && /内覧可能日/.test(sheetReadR2Rules())).toBe(true);
+  expect(PROPERTY_TEXT_DETAIL_SYSTEM.includes("内覧可能日")).toBe(false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

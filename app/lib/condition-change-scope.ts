@@ -138,6 +138,12 @@ export function hasRegisteredConditions(r: Record<string, unknown> | null | unde
 }
 
 /** ブレインの出力の欄を読む（形が違えば null） */
+/** 条件の範囲をブレインの欄だけで決める（既定 on・CONDITION_SCOPE_BRAIN_FIRST=off で旧の文の語が先） */
+export function conditionScopeBrainFirst(env?: Record<string, string | undefined>): boolean {
+  const e = env ?? (typeof process !== "undefined" ? process.env : {});
+  return (e.CONDITION_SCOPE_BRAIN_FIRST ?? "").trim().toLowerCase() !== "off";
+}
+
 export function normalizeBrainScope(v: unknown): ConditionChangeScope | null {
   if (typeof v !== "string") return null;
   const s = v.trim().toLowerCase();
@@ -149,7 +155,14 @@ export function normalizeBrainScope(v: unknown): ConditionChangeScope | null {
  *   registered: その発言の前の登録の条件（分かる時だけ）。渡して空なら弱い「今回だけ」の語は使わない（初めての条件の文）。
  *   渡さない時（ブレインの後）は使う＝condition-scope-server.ts が「戻す先の条件が空なら切り替えのまま」で守る
  */
-export function resolveConditionChangeScope(input: { text: string | null | undefined; brainScope?: unknown; registered?: Record<string, unknown> | null }): ScopeDecision {
+export function resolveConditionChangeScope(input: { text: string | null | undefined; brainScope?: unknown; registered?: Record<string, unknown> | null; env?: Record<string, string | undefined> }): ScopeDecision {
+  // 2026-10-13 竹内さん（ブレインの使い残し 6）: 条件の範囲（いつも／今回だけ／条件でない）はブレインの欄（condition_change_scope）だけで決める（設計知見 P0 9eb6aa9c）。
+  //   文の語（今回だけ・これからは・やっぱり・〇〇方面でも）はブレインのプロンプトの説明に材料として入れ、ここでは使わない。
+  //   ブレインの欄が無い時（ブレインが呼ばれない経路・古い判断）だけ旧の文の語の順。値の読み取り（P4・フォーム）は受信の直後のまま。戻す: CONDITION_SCOPE_BRAIN_FIRST=off
+  if (conditionScopeBrainFirst(input.env)) {
+    const b0 = normalizeBrainScope(input.brainScope);
+    if (b0) return { scope: b0, by: "brain", evidence: null };
+  }
   const tmp = temporaryScopeCue(input.text);
   if (tmp) return { scope: "temporary", by: "text_temporary", evidence: tmp };
   const future = futurePermanentScopeCue(input.text);
@@ -215,6 +228,8 @@ export function resolveScopeForBundle(input: { text: string | null | undefined; 
  *   （渡さない P4 は書く→ブレインが今回だけと決めたら condition-scope-server が戻す）。期間の「これから」の語があれば書く
  */
 export function preBrainMayWriteRegistered(text: string | null | undefined, registered?: Record<string, unknown> | null): { ok: boolean; evidence: string | null } {
+  // 2026-10-13（ブレインの使い残し 6）: ここは範囲を「決める」所ではなく安全の線（今回だけと書いた人の登録の条件を先に書き換えない＝戻す人がいない）として残す。
+  //   範囲の判断はブレインの後（resolveConditionChangeScope がブレインの欄だけで決める）。ブレインが permanent なら条件の橋が登録の条件を書く
   const tmp = temporaryScopeCue(text);
   if (tmp) return { ok: false, evidence: tmp };
   if (registered !== undefined && hasRegisteredConditions(registered) && !futurePermanentScopeCue(text)) {

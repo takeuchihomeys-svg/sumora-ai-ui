@@ -21,7 +21,7 @@ import { strategySummaryPatternsEnabled, formatSummaryPatternsForStrategy } from
 import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
-import { applyOverride, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "@/app/lib/override-demote";
+import { applyOverride, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, closedAckMaterialLine, viewingDayAckMaterialLine, zenryokuTimingMaterialLine, zenryokuMaterialEnabled, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -139,7 +139,7 @@ import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
-import { searchExhausted, applySearchExhausted } from "@/app/lib/search-exhausted";
+import { searchExhausted, applySearchExhausted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
 import { BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract } from "@/app/lib/turn-contract";
 /** 2026-10-08 本質の仕様（turn-contract.ts）をブレインに出させるか。戻す TURN_CONTRACT_BRAIN=off（出力・指示を足さない＝静的 system も旧に戻る） */
@@ -486,7 +486,7 @@ const AIX_CAPABILITY_MAP = `
 - property_recommendation: スタッフが選んだ1件の物件資料の画像から🌟の紹介文を作る（ピッカー＝初回・1件訴求／新着・1件訴求／送った中から・1件訴求／条件広げ・1件訴求／代替・1件訴求／現状伝えて・1件訴求）。物件ピックアップした の直後に1件を推す時・新着が1件出た時（追客）にスタッフが自分から押すのが中心で、お客様の発言への答えとして選ぶ事は少ない（10/08 点検: 旧の「押下後に感情的フォロー・実測1分22秒」の説明は古い）
 - meeting_place: 内覧の待ち合わせ場所案内を生成
 - greeting_viewing: 内覧前後の挨拶メッセージを生成。内覧前（当日）の挨拶はお客様が内覧を忘れない・確実に来てもらうための確認（10/08 竹内さん「忘れないため」）＝確定した内覧の当日でまだ当日の挨拶を送っていなければ候補。内覧の後のお礼も AIX（内覧後）
-- zenryoku_support: 条件で探したが今は条件に合うお部屋が見つからなかった時（スタッフが探した結果）に、全域から探した旨と新着が出次第お送りする約束を1通で作る（10/08 竹内さん「進めて良い」）。送れる物件がある時は property_send
+- zenryoku_support: 条件で探したが今は条件に合うお部屋が見つからなかった時（スタッフが探した結果）に、全域から探した旨と新着が出次第お送りする約束を1通で作る（10/08 竹内さん「進めて良い」）。送れる物件がある時は property_send。出し時（10/13 竹内さん）: お客様から返信が来て、送った物件が刺さらなかった（反応が薄い・見送り・断り）上で送れる物件が無い時に約束して固める。出し切った印だけでは選ばない。お礼・了承だけの番は選ばない（まず返信で完了→物件ピックアップ（複数）か物件オススメ（1件））
 - property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）※顧客が今まさに条件を尋ねてきた場合（「〜はありますか」「広めがいい」等）は property_search ではなく property_send を選ぶこと。※弊社TikTok/Instagram等のSNS動画で見た物件に問い合わせてきた場合、内覧希望があればviewing_invite、物件を探している段階ならproperty_searchを選ぶ（弊社TikTok掲載物件は40㎡以上・家賃15万円以上が中心のため、顧客の予算・条件に合わない場合は別エリア・条件での代替提案をnext_stepsに含める）
 
 【aixキー選択の使いどころ基準（迷ったらここを優先）】
@@ -2395,7 +2395,7 @@ ${catalogBlockForBrain(brainScene)}
     console.warn("[brain-core] brain_aix_feedback read failed (fail-open):", e instanceof Error ? e.message : e);
   }
   const sceneEvidenceText = buildSceneEvidencePromptText(sceneEvidence, brainAixFeedback);
-  // 2026-10-13 判断の手本（見張りで道が外れた番の竹内さんの一手・同じ場面で最大3件・毎回変わる並び＝キャッシュの印の外・app/lib/brain-judge-examples.ts）。既定 off・入れる: BRAIN_JUDGE_EXAMPLES=on
+  // 2026-10-13 判断の手本（見張りで道が外れた番の竹内さんの一手・同じ場面で最大3件・毎回変わる並び＝キャッシュの印の外・app/lib/brain-judge-examples.ts）。既定 on（v2 の絞り込み）・戻す: BRAIN_JUDGE_EXAMPLES=off
   const judgeExamplesText = judgeExamplesEnabled() && !isPostApplyStatus(convStatus)
     ? judgeExamplesBrainText(pickJudgeExamples(JUDGE_EXAMPLES, { customerText: unrepliedTurn.text ?? "", conversationId, historyCustomerTexts: typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "") }))
     : "";
@@ -2558,12 +2558,28 @@ ${catalogBlockForBrain(brainScene)}
     if (ptNote) { customerStateBlockText += `\n\n${ptNote}`; propertyThreadNoteText = ptNote; }
   } catch (e) { console.warn("[brain-core] property-thread skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-10-13（ブレインの使い残し 4-3）: 送れる物件が手元にあるか（2段の約束をブレインが決める材料・申込以降は出さない）
-  if (overrideDemoted("two_stage_promise") && !isPostApplyStatus(convStatus)) {
+  let pickupReadyPre: boolean | null = null;
+  if ((overrideDemoted("two_stage_promise") || zenryokuMaterialEnabled()) && !isPostApplyStatus(convStatus)) {
     try {
       const { data: pendNow } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
-      const readyNow = freshPickupReady((pendNow ?? []) as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
-      customerStateBlockText += `\n\n${pickupReadyMaterialLine(readyNow)}`;
+      pickupReadyPre = freshPickupReady((pendNow ?? []) as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
+      if (overrideDemoted("two_stage_promise")) customerStateBlockText += `\n\n${pickupReadyMaterialLine(pickupReadyPre)}`;
     } catch (e) { console.warn("[brain-core] pickup-ready material skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  // 2026-10-13 竹内さんの決定（feedback_zenryoku_support_timing）: 全力サポートの出し時を材料に（出し切りの印・送れる候補・お礼だけの番か）。
+  //   物件を1件以上送った会話だけ（まだ送っていない会話には出さない）・申込以降は出さない
+  if (zenryokuMaterialEnabled() && searchExhaustedEnabled() && !isPostApplyStatus(convStatus) && brainLedger.facts.propertiesSentCount > 0) {
+    const exPre = searchExhausted(
+      brainLedgerInput.messages.filter((m) => !!m.createdAt).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt as string, isAix: m.isAix ?? null })),
+      {
+        conditionChangedThisTurn: false,
+        pickupReady: pickupReadyPre,
+        deliveredAixAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => (r.aix_type === "property_send" || r.aix_type === "property_recommendation") && r.sent_at).map((r) => r.sent_at as string),
+        zenryokuSentAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => r.aix_type === "zenryoku_support" && r.sent_at).map((r) => r.sent_at as string),
+      },
+    );
+    const ackPre = !unrepliedTurn.hasImage && !!unrepliedTurn.text.trim() && isAckOnlyTurn(unrepliedTurn.text);
+    customerStateBlockText += `\n\n${zenryokuTimingMaterialLine({ exhausted: exPre.exhausted, markerAt: exPre.markerAt, ackOnly: ackPre, pickupReady: pickupReadyPre })}`;
   }
   // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
   if (overrideDemoted("closed_ack_wait") || overrideDemoted("viewing_day_ack")) {
@@ -3619,6 +3635,9 @@ ${history}`;
     //   ①物件の AIX（ピックアップ・オススメ・探す）なのに探す依頼でない番（検討します・キャンセル・会社の事実・探す依頼でない質問）→ 返信（後の2段のピックアップの約束にもしない）
     //   ②AIX【内覧調整】なのに内覧を頼んでいない・決まった内覧への追加・〇日以降の事情 → 返信
     const turnTextNoImg = textWithoutImages((() => { const out: string[] = []; for (const m of typedMessages) { if (m.sender !== "customer") break; out.unshift(m.text ?? ""); } return out; })());
+    // 2026-10-13（ブレインの使い残し 4-6）: この関所は「本質（ブレインの最初の答え）は正しいのに後の規則で AIX になった番」を返信に戻すための物。
+    //   ブレイン自身が選んだ AIX（decisionSource=llm）は書き換えず、食い違いのログに残す（規則で立った AIX だけ戻す）。戻す BRAIN_DEMOTE_TURN_GUARDS=off
+    const guardMay = (src: string) => decisionSource !== "llm" || applyOverride(demotedOverrides, "turn_route_guards", src, null, finalAix);
     if (!promiseAix && turnRouteGuardsEnabled() && !isPostApplyStatus(convStatus)) {
       if (finalAix && /^(?:property_send|property_recommendation|property_search)$/.test(finalAix)) {
         const np = notPickupTurn({
@@ -3628,7 +3647,7 @@ ${history}`;
           hesitancy: typeof parsed.hesitancy_pattern === "string" ? parsed.hesitancy_pattern : null,
           companyFactAsked: matchCompanyFacts(turnTextNoImg).length > 0,
         });
-        if (np.yes) {
+        if (np.yes && guardMay("guard:not_pickup_turn")) {
           console.log(JSON.stringify({ tag: "brain:not-pickup-turn", conversationId, from: finalAix, why: np.why }));
           finalAix = null; sceneSignalCheckPattern = null;
           decisionSource = `${decisionSource ?? "llm"}+not_pickup_turn`;
@@ -3636,20 +3655,20 @@ ${history}`;
       }
       if (finalAix === "estimate_sheet") {
         const er = estimateToReply({ text: turnTextNoImg, turnHasPropertyMedia: unrepliedTurn.hasImage || /https?:\/\//.test(unrepliedTurn.text ?? "") });
-        if (er.yes) {
+        if (er.yes && guardMay("guard:estimate_to_reply")) {
           console.log(JSON.stringify({ tag: "brain:estimate-to-reply", conversationId, why: er.why }));
           finalAix = null; sceneSignalCheckPattern = null;
           decisionSource = `${decisionSource ?? "llm"}+estimate_to_reply`;
         }
       }
-      if (finalAix === "guarantor_info" && guarantorAsCondition(turnTextNoImg)) {
+      if (finalAix === "guarantor_info" && guarantorAsCondition(turnTextNoImg) && guardMay("guard:guarantor_as_condition")) {
         console.log(JSON.stringify({ tag: "brain:guarantor-as-condition", conversationId }));
         finalAix = "property_send"; sceneSignalCheckPattern = null;   // 後の2段の判定で探す約束（pickup）になる
         decisionSource = `${decisionSource ?? "llm"}+guarantor_as_condition`;
       }
       if (finalAix === "viewing_invite") {
         const vr = viewingInviteToReply({ text: turnTextNoImg, viewingDecided: !!brainLedger.facts.viewingAppointment });
-        if (vr.yes) {
+        if (vr.yes && guardMay("guard:viewing_to_reply")) {
           console.log(JSON.stringify({ tag: "brain:viewing-invite-to-reply", conversationId, why: vr.why }));
           finalAix = null; sceneSignalCheckPattern = null;
           decisionSource = `${decisionSource ?? "llm"}+viewing_to_reply`;
@@ -4415,7 +4434,7 @@ ${history}`;
     // 10/09 試験 q049・q050: 内覧調整は早い所の歯止めの後の規則（内覧の流れ・信号）でも立つ＝最後にもう一度当てる
     if (finalAix === "viewing_invite" && !promiseAix && turnRouteGuardsEnabled() && !isPostApplyStatus(convStatus)) {
       const vr = viewingInviteToReply({ text: turnTextNoImg, viewingDecided: !!brainLedger.facts.viewingAppointment });
-      if (vr.yes) {
+      if (vr.yes && guardMay("guard:viewing_to_reply_late")) {
         console.log(JSON.stringify({ tag: "brain:viewing-invite-to-reply", conversationId, why: vr.why, late: true }));
         finalAix = null; replyMode = "auto_reply";
         decisionSource = `${decisionSource ?? "llm"}+viewing_to_reply`;
@@ -4425,7 +4444,7 @@ ${history}`;
       lastStaffTexts: messagesOldestFirst.filter((m) => m.sender !== "customer").map((m) => m.text ?? ""),
       customerText: turnTextNoImg,
       ackOnly: customerAckAfter || isAckOnlyTurn(unrepliedTurn.text ?? ""),
-    })) {
+    }) && guardMay("guard:online_viewing_ack")) {
       console.log(JSON.stringify({ tag: "brain:online-viewing-ack", conversationId, from: finalAix }));
       finalAix = null; replyMode = "auto_reply";
       decisionSource = `${decisionSource ?? "llm"}+online_viewing_ack`;
@@ -4450,7 +4469,9 @@ ${history}`;
         },
       );
       const ex = applySearchExhausted({ finalAix: twoStagePickupNow || replyCondTurn ? "property_send" : finalAix, altActions: altForChoice, exhausted: exh.exhausted, postApply: isPostApplyStatus(convStatus) });
-      if (ex.changed) {
+      // 2026-10-13 竹内さんの決定（feedback_zenryoku_support_timing）: 出し切りの印だけで全力サポートを主にしない＝書き換えは下げる（材料は LLM の前に渡した）。
+      //   ブレインが自分で全力サポートを選んだ時はそのまま。送れる候補が無い時の2つ目（全力サポート）は search-result-choice のまま。戻す BRAIN_DEMOTE_SEARCH_EXHAUSTED=off
+      if (ex.changed && applyOverride(demotedOverrides, "search_exhausted", "rule:search_exhausted", ex.finalAix ?? null, finalAix)) {
         // 2段の pickup の約束にしていた番は、約束の返信をやめて AIX【全力サポート】の番にする（返信の下書きは作らない＝reply_mode aix・two_stage を外す）
         if (twoStagePickupNow || replyCondTurn) { replyMode = "aix"; twoStage = null; }
         console.log(JSON.stringify({ tag: "brain:search-exhausted", conversationId, from: finalAix, markerAt: exh.markerAt }));
@@ -4460,7 +4481,7 @@ ${history}`;
         exhaustedNote = "（今の条件の物件は出し切った＝AIX【全力サポート】が主。新着が見つかっていれば2つ目の物件の AIX）";
       }
     }
-    const searchChoice = searchResultAltActions({ finalAix: finalAix ?? null, pickupReady: pickupReadyForChoice, postApply: isPostApplyStatus(convStatus), altActions: altForChoice });
+    const searchChoice = searchResultAltActions({ finalAix: finalAix ?? null, pickupReady: pickupReadyForChoice, postApply: isPostApplyStatus(convStatus), altActions: altForChoice, ackOnly: ackOnlyNow });
     if (searchChoice.added) console.log(JSON.stringify({ tag: "brain:search-result-choice", conversationId, aix: finalAix, alts: searchChoice.altActions }));
 
     if (demotedOverrides.length) console.log(JSON.stringify({ tag: "brain:override-demoted", conversationId, final: finalAix ?? null, demoted: compactDemoted(demotedOverrides) }));

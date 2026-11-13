@@ -3,6 +3,8 @@
 //   ② 未返信の発言が束で判断される: 先の「今回だけ1階も見たいです」が未返信のまま「これからは駅10分以内でお願いします」「やっぱり1Kに変えてください」が来ると、
 //      束の中の「今回だけ」に当たって後の発言まで今回だけになり、P4 が書いた登録の変更まで戻される
 //   ③ 今回だけの家賃が登録の追加条件に残る: 「一旦家賃12万で」→ 家賃は 9万に戻ったのに additional_conditions に「[9/30 17:23|auto] 家賃上限: 120000」
+// 2026-10-13: この試験は旧の順（文の語がブレインより先）を確かめる。既定のブレインの欄だけの形は condition-scope-brain-first.test.ts
+process.env.CONDITION_SCOPE_BRAIN_FIRST = "off";
 import { resolveScopeForBundle, resolveConditionChangeScope, stripRevertedAutoNotes, planScopeRevert, BUNDLE_SEP } from "../condition-change-scope";
 import { MSG_SEP } from "../reply-context";
 import { buildTemporaryOverride } from "../condition-scope-override";

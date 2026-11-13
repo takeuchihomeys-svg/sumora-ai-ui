@@ -60,6 +60,8 @@ export type CustomerSnapshot = RpUpdateDaysCustomer & {
   building_age?: number | null;
   commute_station?: string | null;
   commute_minutes?: number | null;
+  /** 2026-11-10 ITANDI の手で決めた値（1〜9・なし=null）。拡張の auto-run.js payloadForCustomer と同じ鍵 */
+  itandi_update_days?: number | null;
 };
 
 /** 2026-09-29 v2.5.39 通勤の到達時間で選んだ駅（拡張の commute-reach reachAudit の形・駅名は載せず数だけ） */
@@ -397,9 +399,27 @@ function maskedDate(v: unknown): boolean {
  *   ①命令の計画（payload.update_days_plan・前回の検索から空いた日数で広げた値）②午後の便＝1（PM_LATEST）
  *   ③サーバーが積んだ値（web_brain・午前の便の payload.rp_update_days）④お客様の写しから rp-update-days（手の一括・個別の検索）
  *   写しの日時が伏せ字の古い行は④が読めない → 分からない
+ * 2026-11-10 site=itandi の回は ITANDI の値を先に見る（itandi_days → itandi_update_days → 写しの itandi_update_days）。
+ *   どれも無ければ今まで通り rp 側に落とす（リアプロ・レインズは一切変えない）
  */
-export function expectedUpdateDays(a: Pick<AuditInput, "command_payload" | "customer_snapshot" | "created_at" | "customer_id">, nowMs: number = Date.now()): { known: boolean; days: number | null; from: string } {
+export function expectedUpdateDays(a: Pick<AuditInput, "command_payload" | "customer_snapshot" | "created_at" | "customer_id" | "site">, nowMs: number = Date.now()): { known: boolean; days: number | null; from: string } {
   const p = a.command_payload ?? null;
+  if (normalizeSite(a.site) === "itandi") {
+    const plan = planFor(p, a.customer_id ?? null) as (undefined | { itandi_days?: number | null });
+    if (plan && "itandi_days" in plan) {
+      const v = plan.itandi_days;
+      const days = typeof v === "number" && v > 0 ? Math.floor(v) : null;
+      return { known: true, days, from: "ITANDI の計画" };
+    }
+    if (p && "itandi_update_days" in p) {
+      const v = (p as { itandi_update_days?: unknown }).itandi_update_days;
+      return { known: true, days: typeof v === "number" && v > 0 ? v : null, from: "ITANDI の payload の値" };
+    }
+    const cs = a.customer_snapshot ?? null;
+    const iv = cs ? (cs as { itandi_update_days?: unknown }).itandi_update_days : undefined;
+    if (typeof iv === "number" && iv > 0) return { known: true, days: iv, from: "写しの ITANDI の手の値" };
+    // どれも無ければ下の rp 側に落ちる
+  }
   const plan = planFor(p, a.customer_id ?? null);
   if (plan) return { known: true, days: plan.days ?? null, from: plan.widened ? "前回の検索から空いた日数で広げた計画" : "計画" };
   const src = typeof p?.source === "string" ? p.source : null;

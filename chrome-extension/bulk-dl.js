@@ -1699,6 +1699,8 @@
   function clickNextPageBtn() {
     var el = _findNextPageEl();
     if (!el) return false;
+    // 2026-11-10 人間的な動き: 押す前に、ボタンが画面に入るまで少しずつ動かす（人が一覧の下まで目で追う形）
+    try { el.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) { try { el.scrollIntoView(); } catch (__) {} }
     el.click();
     console.log("[AXLX bulk-dl] clickNextPageBtn: クリック完了 tag=" + el.tagName);
     return true;

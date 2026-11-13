@@ -25,7 +25,7 @@
 
   var STAFF_MODE_TTL_MS = 2 * 60 * 60 * 1000; // 2時間で自動OFF（background.js・bulk-dl.js・itandi-bulk-dl.js と同じ）
   var MODES = ["normal", "staff", "aix"];
-  var STORAGE_KEYS = ["staffMode", "staffModeAt", "aixMode", "brainMode"];
+  var STORAGE_KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode"];
 
   // storage の生の値 → { mode, brain, staffExpired }
   //   スタッフとAIXが両方 true（旧版の書き込み途中など）はスタッフを優先（旧 _modeFromFlags と同じ・自動化を止める側に倒す）。
@@ -41,11 +41,13 @@
   }
 
   // ドロップダウンでモードを選んだ時に書く値（brainMode には触らない＝ブレインは独立）
+  //   2026-11-10: 自動モード（aix）を選んだ印（autoModeAt）も一緒に書く。ガイドだけの間はこの印が無いと自動の道を開かない
+  //     （古い版が書き残した aixMode=true で勝手に自動にならないため）。スタッフ・通常にしたら印は消す
   function storageUpdateForMode(mode, now) {
     var t = typeof now === "number" ? now : Date.now();
-    if (mode === "staff") return { staffMode: true, staffModeAt: t, aixMode: false };
-    if (mode === "aix") return { staffMode: false, staffModeAt: null, aixMode: true };
-    return { staffMode: false, staffModeAt: null, aixMode: false };
+    if (mode === "staff") return { staffMode: true, staffModeAt: t, aixMode: false, autoModeAt: null };
+    if (mode === "aix") return { staffMode: false, staffModeAt: null, aixMode: true, autoModeAt: t };
+    return { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null };
   }
 
   // ブレインの切り替えで書く値（モードには触らない）
@@ -215,30 +217,69 @@
   //   ブレインの判定・記録・まとめ（brainJudge・recordPickup・completeGroup・searchAudit）は、スタッフが押して送った物に今まで通り効く。
   //   behavior()／readState() は仕様の表のまま残し（テストで固定）、呼び出す側は effectiveBehavior／effectiveState を使う。
   //   サーバーの一時停止（automation_settings.paused・/api/automation/trigger の 409）は2つ目の歯止めとして残す
+  //
+  // 2026-11-10 竹内「拡張に3つのモードを並べる: 通常／スタッフ（今の人が押す案内）／自動（もともとの自動検索）。
+  //   今は GUIDE_ONLY=true で自動が止まっているので、モードで切り替わる形にし、自動モードを完成させる」
+  //   → 自動（mode "aix"）を**選んだ時だけ**自動の道を開く。通常・スタッフは今まで通り全部止めたまま。
+  //     つまり GUIDE_ONLY は「自動モード以外は自動の道を開かない」の意味に変わった（名前と値は残す＝古い版の分岐が壊れない）。
+  //     どのモードでも案内（光らせる）は今まで通り出す（AUTO_MODE_ONLY_GUIDE は false＝自動モードでも案内は使える）。
   var GUIDE_ONLY = true;
-  /** 自動の物（AIX連動）は今のモードにしない: AIX連動の値が残っていても「通常」で読む */
+  /** 自動の道を開くモード（このモードを選んだ時だけ claim・自動送信・自動便を許す） */
+  var AUTO_MODE = "aix";
+  /** モードの表示名（竹内さんの呼び方に合わせる） */
+  var MODE_LABELS = { normal: "通常", staff: "スタッフ", aix: "自動" };
+  /** 自動の物（AIX連動）は今のモードにしない: 自動以外の値が残っていても読む形はそのまま（aix だけ通す） */
   function effectiveState(raw, now) {
     var s = readState(raw, now);
-    if (GUIDE_ONLY && s.mode === "aix") s = { mode: "normal", brain: s.brain, staffExpired: s.staffExpired };
+    if (GUIDE_ONLY && s.mode === "aix") {
+      // GUIDE_ONLY の間でも自動モードを選んでいれば aix のまま（自動の道を開く）。
+      // ただし「古い版が書き残した aixMode=true」で勝手に自動にならないよう、明示の選択の印（autoModeAt）が要る
+      var st = raw || {};
+      var chosen = Number(st.autoModeAt) > 0;
+      if (!chosen) s = { mode: "normal", brain: s.brain, staffExpired: s.staffExpired };
+    }
     return s;
   }
-  /** 今の動き（GUIDE_ONLY の間は自動の物が全部 false） */
+  /** 今の動き（自動モード以外は自動の物が全部 false） */
   function effectiveBehavior(mode, brain) {
     var b = behavior(mode, brain);
     if (!GUIDE_ONLY) return b;
+    // 自動モード（aix）を選んでいる時だけ開く
+    if (mode === AUTO_MODE) return b;
     var o = {};
     for (var k in b) o[k] = b[k];
     o.claimCommands = false; o.claimAix = false; o.autoSend = false; o.runAutoSchedule = false; o.claimBrainCommands = false;
     o.guideOnly = true;
     return o;
   }
-  /** 拡張の更新・起動の時に書き直す値（古い版の「AIX連動」「案内モード OFF」を残さない） */
-  function guideOnlyMigration() {
-    return GUIDE_ONLY ? { aixMode: false, guideMode: true } : null;
+  /**
+   * 拡張の更新・起動の時に書き直す値。
+   *   2026-10-06: 古い版の「AIX連動」「案内モード OFF」を「光って選択するモード」に書き直す（aixMode=false・guideMode=true）。
+   *   2026-11-10: 自動モードを選べるようにしたので、**明示の選択の印（autoModeAt）が無い古い aixMode=true だけ**を落とす
+   *     （選んだ自動モードは起動のたびに消さない）。案内モード（guideMode）は今まで通り ON に直す。
+   */
+  function guideOnlyMigration(raw) {
+    if (!GUIDE_ONLY) return null;
+    var st = raw && typeof raw === "object" ? raw : null;
+    var chosen = !!(st && Number(st.autoModeAt) > 0);
+    return chosen ? { guideMode: true } : { aixMode: false, guideMode: true };
   }
+
+  /** 自動モードを選んだ時の印（aixMode と一緒に書く。スタッフ・通常にしたら消す） */
+  function autoModeStamp(mode, now) {
+    var t = typeof now === "number" ? now : Date.now();
+    return mode === AUTO_MODE ? { autoModeAt: t } : { autoModeAt: null };
+  }
+
+  /** モードの表示名（通常／スタッフ／自動） */
+  function modeLabel(mode) { return MODE_LABELS[mode] || MODE_LABELS.normal; }
 
   return {
     GUIDE_ONLY: GUIDE_ONLY,
+    AUTO_MODE: AUTO_MODE,
+    MODE_LABELS: MODE_LABELS,
+    modeLabel: modeLabel,
+    autoModeStamp: autoModeStamp,
     effectiveState: effectiveState,
     effectiveBehavior: effectiveBehavior,
     guideOnlyMigration: guideOnlyMigration,

@@ -214,6 +214,13 @@ body {
 .link-chip {
   font-size: 11px; margin-right: 3px; vertical-align: middle;
 }
+/* v2.5.89 結んだ会話のアカウント（同じ名前のカードがある時は橙） */
+.acct-chip {
+  display: inline-block; margin-left: 5px; padding: 0 5px;
+  font-size: 10px; font-weight: 600; line-height: 16px; vertical-align: middle;
+  color: #475569; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px;
+}
+.acct-chip.acct-dup { color: #c2410c; background: #fff7ed; border-color: #fdba74; }
 
 .customer-item {
   display: flex; align-items: center; gap: 10px;

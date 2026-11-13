@@ -25,9 +25,12 @@ export function searchResultAltActions(o: {
   postApply: boolean;
   altActions: string[] | undefined;
   env?: Record<string, string | undefined>;
+  /** 2026-10-13 竹内さん（feedback_zenryoku_support_timing）: お礼・了承だけの番は全力サポートを並べない（全力サポートはお客様の返信で刺さらなかった時）。戻す ZENRYOKU_ACK_NO_ALT=off */
+  ackOnly?: boolean;
 }): { altActions: string[] | undefined; added: boolean } {
   const keep = { altActions: o.altActions, added: false };
   if (!searchResultChoiceEnabled(o.env)) return keep;
+  if (o.ackOnly && ((o.env ?? (typeof process !== "undefined" ? process.env : {})).ZENRYOKU_ACK_NO_ALT ?? "").toLowerCase() !== "off") return keep;
   if (!o.finalAix || !PROPERTY_AIX.has(o.finalAix) || o.postApply) return keep;
   if (o.pickupReady !== false) return keep;
   const alts = [...(o.altActions ?? [])].filter((a) => a !== o.finalAix);

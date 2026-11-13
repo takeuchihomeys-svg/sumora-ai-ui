@@ -591,7 +591,8 @@
       // 物件資料ボタンをクリック（画面外の場合はスクロールして確実にクリックできる状態にする）
       console.log("[AXLX] 物件資料ボタンをクリック");
       setStatusBar("物件資料クリック...");
-      try { btn.scrollIntoView({ behavior: "instant", block: "center" }); } catch(e) {}
+      // 2026-11-10 人間的な動き: 一瞬で飛ばさず、少しずつ動かす（人が資料のボタンまで目で追う形）
+      try { btn.scrollIntoView({ behavior: "smooth", block: "center" }); } catch(e) { try { btn.scrollIntoView(); } catch (__) {} }
       btn.click();
 
       // MutationObserver でモーダルの出現を監視（3段階フォールバック）
@@ -907,7 +908,12 @@
         return label.includes("次") || label.toLowerCase().includes("next");
       });
     }
-    if (nextBtn && !nextBtn.disabled) { nextBtn.click(); return true; }
+    if (nextBtn && !nextBtn.disabled) {
+      // 2026-11-10 人間的な動き: 押す前に、ボタンが画面に入るまで少しずつ動かす（人が一覧の下まで目で追う形）
+      try { nextBtn.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) { try { nextBtn.scrollIntoView(); } catch (__) {} }
+      nextBtn.click();
+      return true;
+    }
     return false;
   }
 
@@ -1138,15 +1144,18 @@
     var SK = _SK();
     var idx = SK && !_staffModeOn ? SK.indexFor(_sentRoomsStored, customerId, Date.now()) : null;
     if (!idx) return 0;
-    var n = 0, names = [];
+    var n = 0, names = [], _toUncheck = [];
     tracked.forEach(function (t) {
       if (!t.cb.checked) return;
       var info = extractPropertyInfo(t.btn);
       if (info && info.room && SK.isSentRoom(idx, info.name, info.room)) {
-        t.cb.checked = false; checkedKeys.delete(t.rowKey); n++;
+        _toUncheck.push(t); n++;
         if (names.length < 5) names.push(info.name + " " + info.room);
       }
     });
+    // 2026-11-10: 「チェックを入れる」は1件ずつ（人の間）だが、ここは「送付済みを外す」選別。
+    //   外し漏れると送付済みの資料を取りに行ってしまうので、**待たずにその場で外す**（見た目の一斉チェックではない・押した後に外れる）
+    _toUncheck.forEach(function (t) { try { t.cb.checked = false; } catch (_) {} checkedKeys.delete(t.rowKey); });
     if (n) console.log("[AXLX itandi] 送付済みの部屋 " + n + "件は選ばない（資料を開かない）: " + names.join("・"));
     return n;
   }
@@ -1181,17 +1190,51 @@
     if (dec.stopIndex < 0) return null;
     _itUpdateStop = U.stopRecord(dec.carry, _itAuditRes ? (_itAuditRes.pages || 0) + 1 : null, lastIso, "itandi");
     var n = 0;
-    tracked.slice(dec.stopIndex).forEach(function (t) { if (t.cb.checked) { t.cb.checked = false; checkedKeys.delete(t.rowKey); n++; } });
+    // 2026-11-10: ここも「選別で外す」処理なので待たずに外す（送付済みの時と同じ理由＝取りこぼすと古い物件を選ぶ）
+    tracked.slice(dec.stopIndex).forEach(function (t) { if (t.cb.checked) { try { t.cb.checked = false; } catch (_) {} checkedKeys.delete(t.rowKey); n++; } });
     console.log("[AXLX itandi] " + (U.describeStop(_itUpdateStop) || "前回の検索より古い行で止めた") + " → この行から先の " + n + "件は選ばず、次のページも開かない");
     return _itUpdateStop;
+  }
+
+  // ── 2026-11-10 竹内「itandi も今一気に☑して送るになってるけど、リアプロのように1つずつにする。
+  //  まとめてチェックではなくて1つずつ行う」──
+  //   旧: tracked.forEach(function(t){ t.cb.checked = true; }) で全部を一瞬で選択（代入なので見た目が一斉に変わる＝機械らしい）。
+  //   新: 1件ずつ、人の間（120〜320ms・たまに一息）を空けて押していく。押すのは cb.click()（change が飛ぶ＝updateBar も動く）。
+  //   next(done) は全部押し終わってから1回呼ぶ（押し終わる前に資料を取りに行かない）。
+  function _humanCheckAll(cbs, next) {
+    var list = (cbs || []).filter(function (cb) { return cb && !cb.checked; });
+    if (!list.length) { if (next) next(0); return; }
+    var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    var i = 0;
+    function step() {
+      if (i >= list.length) { if (next) next(list.length); return; }
+      var cb = list[i++];
+      try {
+        if (!cb.isConnected || cb.checked) { step(); return; }
+        // 人が目で探して押す形: 画面に入れてから押す（一瞬で飛ばさない）
+        try { cb.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+        cb.click();
+      } catch (_) {}
+      // 押す間 120〜320ms（対数正規・右に裾）。8%ほどで「一覧を目で追う」500〜1100ms をはさむ
+      var wait = H && H.logNormalDelay ? H.logNormalDelay(200, 0.32) : (120 + Math.floor(Math.random() * 200));
+      if (Math.random() < 0.08) wait += 400 + Math.floor(Math.random() * 600);
+      setTimeout(step, wait);
+    }
+    step();
   }
 
   function _autoSendOnePage(customerName, customerId, customerConditions, onComplete) {
     if (_guideBlocksAuto("_autoSendOnePage")) return; // 終わりの知らせ（onComplete）は返さない＝次のページへ進まない
     // BUG-B修正: 顧客切り替え時に前顧客のrowKeyを必ずリセット（混入バグ対策）
     checkedKeys.clear();
-    // 全選択
-    tracked.forEach(function(t) { t.cb.checked = true; checkedKeys.add(t.rowKey); });
+    // 全選択（2026-11-10: 1件ずつ人の間を空けて押す。押し終わってから下の選別へ）
+    _humanCheckAll(tracked.map(function (t) { return t.cb; }), function () {
+      tracked.forEach(function (t) { if (t.cb.checked) checkedKeys.add(t.rowKey); else checkedKeys.delete(t.rowKey); });
+      _afterHumanCheck(customerName, customerId, customerConditions, onComplete);
+    });
+  }
+
+  function _afterHumanCheck(customerName, customerId, customerConditions, onComplete) {
     // 2026-09-29 v2.5.41 送付済みの部屋は選ばない
     var _pageSkipped = _applySentSkipIt(customerId);
     if (_itAuditRes) _itAuditRes.sent_skipped = (_itAuditRes.sent_skipped || 0) + _pageSkipped;

@@ -62,11 +62,11 @@ console.log("\n■ 更新日の計画（auto-run.js payloadForCustomer → optsF
   const pm = { source: "auto_schedule", mode: "pm", rp_update_days: 1, sort: "updated", max_pages: 1, update_days_plan: plan };
   const NOW = Date.parse("2026-09-29T02:12:00Z"); // 計画を作った時と同じ 49.2時間後（テストを今の時刻に依らせない）
   const p1 = R.payloadForCustomer(pm, "c1", NOW);
-  eq("午後の便でも計画の値（3）を入れる", R.optsFromPayload(p1), { mode: "pm", rp_update_days: 3, rp_update_days_none: false, sort: "updated", max_pages: 1 });
+  eq("午後の便でも計画の値（3）を入れる", R.optsFromPayload(p1), { mode: "pm", rp_update_days: 3, rp_update_days_none: false, itandi_update_days: null, sort: "updated", max_pages: 1 });
   eq("14日でも覆えない → 指定なし", R.optsFromPayload(R.payloadForCustomer(pm, "c2", NOW)).rp_update_days_none, true);
   eq("計画の無いお客様は元の payload のまま", R.payloadForCustomer(pm, "c9", NOW) === pm, true);
   const wb = { source: "web_brain", is_wide: false, rp_update_days: 3, update_days_plan: plan };
-  eq("web_brain も計画があれば popup に渡す（並び・ページは触らない）", R.optsFromPayload(R.payloadForCustomer(wb, "c1", NOW)), { mode: null, rp_update_days: 3, rp_update_days_none: false, sort: null, max_pages: null });
+  eq("web_brain も計画があれば popup に渡す（並び・ページは触らない）", R.optsFromPayload(R.payloadForCustomer(wb, "c1", NOW)), { mode: null, rp_update_days: 3, rp_update_days_none: false, itandi_update_days: null, sort: null, max_pages: null });
   eq("計画の無い web_brain は今までどおり null", R.optsFromPayload({ source: "web_brain", rp_update_days: 3 }), null);
   eq("_buildBatchConditions の経路も同じ値（rp_update_days を写す）", R.payloadForCustomer(pm, "c1", NOW).rp_update_days, 3);
   // 2026-09-30 点検の直し: 計画は積んだ時刻で数えている → 検索する時刻で数え直して広げる（狭めない）
@@ -113,7 +113,7 @@ console.log("\n■ 配線（拡張の再読み込み後に効く所）");
   const mf = JSON.parse(read("manifest.json"));
   const cs = mf.content_scripts.map((c) => c.js.join(","));
   ok("manifest: リアプロ・ITANDI の一括の前に sent-skip.js", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,sent-skip.js,update-order-stop.js,bulk-dl.js") && cs.includes("bar-dock.js,send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
-  eq("manifest の版", mf.version, "2.5.64");
+  eq("manifest の版", mf.version, "2.5.92");
   const sa = read("search-audit.js");
   ok("search-audit: 日時の欄は伏せない（v2.5.40 までは「＊＊＊T…」になっていた）", /DATE_FIELDS\[k\] && ISO_RE\.test\(v\.trim\(\)\)/.test(sa));
   const A = require("../../chrome-extension/search-audit.js");
