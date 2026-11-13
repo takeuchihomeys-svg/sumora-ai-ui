@@ -661,7 +661,8 @@ function nearResolveHook(j: ExamJob, stage: "before" | "after"): void {
   }
   const t0 = Date.now();
   // shell: true は引数を空白でつなぐ＝パスの空白（竹内 悠馬）を引用符で包む
-  const r = spawnSync("npx", ["tsx", `"--env-file=${d.envPath}"`, "scripts/exam-near-resolve.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000 });
+  // 2026-11-13 作業員8b: 係の設定の examEnv（EXAM_NEAR_ORIGIN_VECTOR 等）も近い番の読みに乗せる（試験の依頼と同じ下敷き）
+  const r = spawnSync("npx", ["tsx", `"--env-file=${d.envPath}"`, "scripts/exam-near-resolve.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000, env: { ...process.env, ...configExamEnv() } });
   const out = String(r.stdout ?? "");
   const last = out.trim().split(/\r?\n/).filter((l) => l.startsWith("鍵が要る読みの控え")).pop() ?? `終わりの番号 ${r.status}${r.error ? `・${r.error.message}` : ""}`;
   log(`  鍵が要る読みを解いた（${stage}・${j.label}・頼み ${d.total}・日 ${d.days.join(",")}・${Math.round((Date.now() - t0) / 1000)}秒）: ${last.slice(0, 200)}`);
