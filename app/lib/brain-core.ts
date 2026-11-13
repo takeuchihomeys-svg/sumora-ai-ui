@@ -6450,6 +6450,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         const narrowEstimateBlocked = nv.decide === "aix_estimate" && narrowEstimateSoleOn() && hasNonCostPromise(((normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: unknown; about?: unknown }>));
         if (narrowEstimateBlocked) console.log(JSON.stringify({ tag: "brain:two-choice-narrow-estimate-blocked", conversationId }));
         if (nv.decide === "aix_estimate" && !narrowEstimateBlocked) { finalAix = "estimate_sheet"; replyMode = "aix"; twoStage = null; decisionSource = `${decisionSource ?? "llm"}+two_choice_narrow(estimate)`; }
+        // 2026-11-13 作業員16（TWO_CHOICE_NARROW_CHECK_PROMISE・既定 off・KB 0f475703）: 持ち込みの未確認の確認の約束は2択にせず 2段:check のまま（道は変えない・印だけ）
+        if (nv.decide === "keep_final" && promiseOrNow.kind === "check" && promiseOrNow.side === "promise") decisionSource = `${decisionSource ?? "llm"}+two_choice_narrow(check_promise)`;
         promiseOrNow = null;
       }
     }
