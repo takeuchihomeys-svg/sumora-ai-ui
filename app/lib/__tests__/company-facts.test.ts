@@ -1,6 +1,7 @@
 // 会社として答えが決まっている事実を、聞かれた時だけ渡す関数のテスト（自己完結ハーネス）
 // 実行: npx tsx app/lib/__tests__/company-facts.test.ts
 import { buildCompanyFactsNote, matchCompanyFacts, COMPANY_FACTS, brandCostOverrideNote } from "../company-facts";
+import { PROCEDURE_FACTS } from "../procedure-question";
 // 2026-10-18 竹内さん 10/16「支払いは一括の振込だけ」で既定は一括のお振込のみ。このファイルは旧のカード払いの事実（COMPANY_FACT_PAYMENT_LUMP=off）の回帰を見る（新の既定は company-facts-1016.test.ts）
 process.env.COMPANY_FACT_PAYMENT_LUMP = "off";
 
@@ -307,6 +308,20 @@ describe("審査期間のそろえ（COMPANY_FACT_SCREENING_DAYS_UNIFY）", () =
     process.env.COMPANY_FACT_OWNER_CANCEL = "off";
     truthy(/保証会社による入居審査は通常3日〜10日程/.test(factOf("cancel")), "旧のキャンセルの文");
     delete process.env.COMPANY_FACT_OWNER_CANCEL;
+    delete process.env.COMPANY_FACT_SCREENING_DAYS_UNIFY;
+  });
+  // 11/13 統括役: 手続きの答え（PROCEDURE_FACTS.flow）と、それを読む screening_flow の事実も同じスイッチで
+  it("off: 手続きの流れ（PROCEDURE_FACTS.flow）と screening_flow は今まで通り", () => {
+    delete process.env.COMPANY_FACT_SCREENING_DAYS_UNIFY;
+    truthy(/早ければ2〜3営業日、長くて1週間程/.test(PROCEDURE_FACTS.flow), "flow");
+    truthy(/早ければ2〜3営業日、長くて1週間程/.test(factOf("screening_flow")), "screening_flow");
+  });
+  it("on: 手続きの流れと screening_flow も「保証会社による入居審査（通常3日〜10日程）」", () => {
+    process.env.COMPANY_FACT_SCREENING_DAYS_UNIFY = "on";
+    falsy(/2〜3営業日/.test(PROCEDURE_FACTS.flow), "flow");
+    truthy(/通常3日〜10日程/.test(PROCEDURE_FACTS.flow), "flow の数字");
+    falsy(/2〜3営業日/.test(factOf("screening_flow")), "screening_flow");
+    falsy(/2〜3営業日/.test(COMPANY_FACTS.map((f) => f.fact).join("\n")), "会社の事実の全部");
     delete process.env.COMPANY_FACT_SCREENING_DAYS_UNIFY;
   });
 });
