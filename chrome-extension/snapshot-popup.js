@@ -89,6 +89,16 @@
           note.id = "snap-rec-slim-note";
           note.style.cssText = "font-size:10px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
           line.appendChild(note);
+          /**
+           * 2026-11-14 竹内さん「ほかちゃんと録画したの学習できてるかな」:
+           *   操作を何件おぼえているか（写真と結びつくか）を出す。
+           */
+          if (!el("snap-ops-diag")) {
+            var dia = document.createElement("div");
+            dia.id = "snap-ops-diag";
+            dia.style.cssText = "display:none;font-size:10px;margin:0 8px 6px;color:#64748b";
+            line.appendChild(dia);
+          }
           var host = document.getElementById("snap-perm-banner");
           if (host && host.parentNode) host.parentNode.insertBefore(line, host);
         }
@@ -349,6 +359,27 @@
               : (nv ? "前回 " + nv + "枚" : "");
             note.style.color = nf ? "#b91c1c" : "#64748b";
           }
+          /**
+           * 2026-11-14 竹内さん「ほかちゃんと録画したの学習できてるかな」:
+           *   ⚠ 実測で版 2.7.22 の写真 **234枚すべて shot_ops が空**だった。
+           *     「なぜ空か」を画面で分かるようにする（`axlx_ops_diag`）。
+           *     輪（操作の記録）が 0 のまま録画していると、写真から何も学べない。
+           */
+          try {
+            chrome.storage.local.get(["axlx_ops_diag"], function (r2) {
+              try {
+                var d = (r2 && r2.axlx_ops_diag) || null;
+                var el2 = el("snap-ops-diag");
+                if (!el2) return;
+                if (!d) { el2.textContent = ""; el2.style.display = "none"; return; }
+                el2.style.display = "block";
+                el2.style.color = d.ring ? "#15803d" : "#b91c1c";
+                el2.textContent = d.ring
+                  ? "学習: 操作を" + d.ring + "件おぼえています（写真と結びつきます）"
+                  : "学習: まだ操作を1件もおぼえていません（この画面で押すとおぼえます）";
+              } catch (_) {}
+            });
+          } catch (_) {}
           /**
            * 2026-11-13: 許可済みの時は**帯を出さない**ので、ここで黄色の帯に何か書かない
            *   （帯の中の hint は未許可の時だけ使う）。

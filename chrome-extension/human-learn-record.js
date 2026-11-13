@@ -182,6 +182,9 @@
    *   ⚠ 上限 40件（古い物から捨てる）。ページを離れると消える（それでよい）。
    */
   var _opsRing = [];
+  /** 2026-11-14: click/change を拾った回数（診断用・なぜ ops が空かを知るため） */
+  var _opsSeen = 0;
+  var _opsAsk = 0;
   /**
    * 2026-11-13 竹内さん「所在地絞り込みや沿線絞り込みの部分はどうなっているか。抜けていないのか」:
    *   地域（6段）と駅（5段）も記録するようになったので、上限を 40 → **60** に上げる。
@@ -253,6 +256,7 @@
         if (d >= 0 && d <= 60000) gap = d;
       }
       _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null });
+      try { _opsSeen++; } catch (_) {}
       while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
     } catch (_) {}
   }
@@ -305,9 +309,36 @@
     document.addEventListener("click", _cap, true);
     document.addEventListener("change", _cap, true);
   } catch (_) {}
+  /**
+   * 2026-11-14 竹内さん「ほかちゃんと録画したの学習できてるかな」:
+   *   ⚠ 実測: 版 2.7.22 の写真 **234枚すべて `shot_ops` が空**だった（旧版 2.7.21 は 79枚ついていた）。
+   *     録画（1.5〜3.5秒ごと）の経路で `ops` が空＝**操作の輪（_opsRing）が空**で渡っている。
+   *   → **なぜ空なのかを記録に残す**（推測で直さない）。
+   *     `axlx_ops_diag` … 最後に聞かれた時の「輪の長さ・click を拾った回数・録画中か・時刻」
+   */
+  var _opsAsk = 0;           // 何回聞かれたか
+  function _opsDiag(asked) {
+    try {
+      var d = {
+        ring: _opsRing.length,
+        seen: _opsSeen,
+        asked: _opsAsk,
+        at: Date.now(),
+        site: (typeof site !== "undefined" ? site : null),
+        watching: (typeof watching !== "undefined" ? watching : null),
+        shooting: _shooting,
+        last: _opsRing.length ? _opsRing[_opsRing.length - 1].f : null,
+      };
+      var o = {}; o.axlx_ops_diag = d;
+      try { chrome.storage.local.set(o); } catch (_) {}
+      try { console.log("[ops] " + (asked ? "聞かれた" : "更新") + ": 輪" + d.ring + "件 / 拾った" + d.seen + "回 / 見張り" + d.watching + " / 撮影" + d.shooting); } catch (_) {}
+    } catch (_) {}
+  }
   /** 写真と一緒に送る「直前までの操作」（新しい順に最大40件） */
   function _recentOps() {
     try {
+      _opsAsk++;
+      _opsDiag(true);
       // ⚠ DOM 要素（el）は送らない（JSON にできない・個人情報ではないが重い）
       return _opsRing.slice(-OPS_RING_MAX).map(function (o) {
         return { t: o.t, k: o.k, f: o.f, w: o.w, g: o.g };
