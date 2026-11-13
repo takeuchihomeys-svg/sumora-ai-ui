@@ -110,17 +110,26 @@ const NO_TOUCH_BLOCKS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "内覧の日程（聞かれていない）": ["bridge.viewing"],
   "新しい物件の売り込み": ["bridge.viewing", "bridge.apply"],
 };
-export type RowsV2Priority = { why_tag: PriorityWhy; why_order: V2WhyOrder; row: PriorityRow | null; deferPromise: boolean; blocks: Set<string> };
-/** meta.check_order.priority（priorityTableRecord）→ 表の行・主の why_order・後の通へ回す約束・立てない行 */
+export type RowsV2Priority = { why_tag: PriorityWhy; why_order: V2WhyOrder; row: PriorityRow | null; deferPromise: boolean; blocks: Set<string>; via: "row_id" | "type_state" | null; missing: string | null };
+/**
+ * meta.check_order.priority（priorityTableRecord）→ 表の行・主の why_order・後の通へ回す約束・立てない行。
+ *   行は安定した id（row_id ↔ PriorityRow.id）で引く。row_id の無い古い記録だけ type＋state の文字に落とす。
+ *   どちらでも引けない時は missing に印を残し、書き手への注記に「表の行が引けない」と出す（静かに落とさない・やらない事は効かない）。
+ */
 export function priorityForRowsV2(meta: unknown): RowsV2Priority | null {
-  const rec = (meta as { check_order?: { priority?: { type?: unknown; state?: unknown; why_tag?: unknown; why_order?: unknown } | null } } | null)?.check_order?.priority;
+  const rec = (meta as { check_order?: { priority?: { type?: unknown; state?: unknown; why_tag?: unknown; why_order?: unknown; row_id?: unknown } | null } } | null)?.check_order?.priority;
   if (!rec || typeof rec.why_tag !== "string" || !(rec.why_tag in PRIORITY_WHY_TO_V2)) return null;
   const why_tag = rec.why_tag as PriorityWhy;
-  const row = PRIORITY_ROWS.find((r) => r.type === rec.type && r.state === rec.state) ?? null;
+  const rowId = typeof rec.row_id === "string" && rec.row_id ? rec.row_id : null;
+  const byId = rowId ? PRIORITY_ROWS.find((r) => (r as { id?: unknown }).id === rowId) ?? null : null;
+  const byText = !byId && !rowId ? PRIORITY_ROWS.find((r) => r.type === rec.type && r.state === rec.state) ?? null : null;
+  const row = byId ?? byText;
+  const via = byId ? "row_id" as const : byText ? "type_state" as const : null;
+  const missing = row ? null : rowId ? `row_id=${rowId}` : `type=${String(rec.type ?? "-")}`;
   // 後の通へ回す依頼のうち約束の部分（11865: 新着のピックアップの約束は答えの後の別の通）＝この返信に約束の行を立てない
   const deferPromise = !!row && row.order.deferred.some((d) => row.ask_parts.some((pt) => pt.route === "promise" && (d.what.includes(pt.part) || pt.part.includes(d.what))));
   const blocks = new Set<string>((row?.avoid.no_touch ?? []).flatMap((t) => NO_TOUCH_BLOCKS[t] ?? []));
-  return { why_tag, why_order: (typeof rec.why_order === "string" ? rec.why_order : PRIORITY_WHY_TO_V2[why_tag]) as V2WhyOrder, row, deferPromise, blocks };
+  return { why_tag, why_order: (typeof rec.why_order === "string" ? rec.why_order : PRIORITY_WHY_TO_V2[why_tag]) as V2WhyOrder, row, deferPromise, blocks, via, missing };
 }
 /** 物件を送る AIX の道（brain-attention の PROPERTY_AIX と同じ3つ） */
 const PROPERTY_AIX: ReadonlySet<string> = new Set(["property_send", "property_recommendation", "property_search"]);
@@ -284,6 +293,12 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
     for (const t of prio.row?.avoid.no_touch ?? []) mainRow.stand.push(`no_touch:${t}`);
     if (prio.row?.avoid.repeat_scope) mainRow.stand.push(`repeat_scope:${prio.row.avoid.repeat_scope}`);
   }
+  // 表の行が引けない（row_id が表に無い・古い記録で文字が変わった）: 静かに落とさず、行の札と書き手への注記に残す
+  if (prio?.missing) {
+    const at = mainRow ?? rows[0] ?? null;
+    if (at) at.stand.push(`priority_row_missing:${prio.missing}`);
+    dropped.push({ role: at?.role ?? "press", why: `優先度の表の行が引けない（${prio.missing}）・やらない事は効かない` });
+  }
   // 竹内さんの並びの順（頭→…→締め。同じ位置は元の順）。主の押さえは従の押さえより先。
   //   不安・受けが先（ease_first）の時は、信頼・潜在の行を主の押さえのすぐ後に（12362: 抑えられる部屋の答え→他の号室は2番手の事実）
   const easeFirst = prio?.why_order === "ease_first" && mainRow?.role === "press";
@@ -323,7 +338,7 @@ const SUB_JA: Partial<Record<V2Sub, string>> = { support: "サポートの姿勢
 /** 書き手への注記（on の時だけ・値は下の欄のまま・文は写さない） */
 export function planRowsV2Note(rows: ReadonlyArray<PlanRowV2>, env?: Env): string {
   if (!composePlanRowsV2On(env) || !rows.length) return "";
-  const L = rows.map((r, k) => `  ${k + 1}. ${V2_ROLE_JA[r.role]}（${SUB_JA[r.sub] ?? HEAD_WORD_JA[r.sub as keyof typeof HEAD_WORD_JA] ?? r.sub}）${r.uses.filter((u) => u.field !== "our.sent").length ? `: ${r.uses.filter((u) => u.field !== "our.sent").map((u) => u.value).join("・")}` : ""}${r.certainty === "needs_check" ? "（言い切らない・確認の約束）" : r.certainty === "basically" ? "（基本的に）" : ""}${r.how ? `／型「${r.how}」` : ""}／${WHY_JA[r.why_order]}${r.length === "short" ? "・短く" : ""}${r.stand.some((s) => s.startsWith("no_full_repeat")) ? "・前の条件を全部繰り返さず変わった点だけ" : ""}${r.embeds?.length ? `・この文の中で${r.embeds.map((e) => TRUST_EMBED_JA[e.kind]).join("・")}` : ""}${r.stand.filter((x) => x.startsWith("no_touch:")).map((x) => `・触れない: ${x.slice(9)}`).join("")}${r.stand.filter((x) => x.startsWith("repeat_scope:")).map((x) => `・繰り返さない: ${x.slice(13)}`).join("")}`);
+  const L = rows.map((r, k) => `  ${k + 1}. ${V2_ROLE_JA[r.role]}（${SUB_JA[r.sub] ?? HEAD_WORD_JA[r.sub as keyof typeof HEAD_WORD_JA] ?? r.sub}）${r.uses.filter((u) => u.field !== "our.sent").length ? `: ${r.uses.filter((u) => u.field !== "our.sent").map((u) => u.value).join("・")}` : ""}${r.certainty === "needs_check" ? "（言い切らない・確認の約束）" : r.certainty === "basically" ? "（基本的に）" : ""}${r.how ? `／型「${r.how}」` : ""}／${WHY_JA[r.why_order]}${r.length === "short" ? "・短く" : ""}${r.stand.some((s) => s.startsWith("no_full_repeat")) ? "・前の条件を全部繰り返さず変わった点だけ" : ""}${r.embeds?.length ? `・この文の中で${r.embeds.map((e) => TRUST_EMBED_JA[e.kind]).join("・")}` : ""}${r.stand.filter((x) => x.startsWith("no_touch:")).map((x) => `・触れない: ${x.slice(9)}`).join("")}${r.stand.filter((x) => x.startsWith("repeat_scope:")).map((x) => `・繰り返さない: ${x.slice(13)}`).join("")}${r.stand.filter((x) => x.startsWith("priority_row_missing:")).map((x) => `・優先度の表の行が引けない（${x.slice(21)}）`).join("")}`);
   return `- 1文ずつの設計図（竹内さんの同じ場面の並び・この行以外の文は足さない）:\n${L.join("\n")}`;
 }
 export { endingOf };

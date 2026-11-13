@@ -3,8 +3,8 @@
 import assert from "node:assert/strict";
 import { readTurnUnderstanding, readSevenFields, buildSentencePlan } from "../compose-sentence-plan";
 import { asksFactsOf } from "../compose-asks-facts";
-import { priorityTableRecord } from "../priority-table";
-import { buildPlanRowsV2, planRowsV2Note, planRowsV2Digest, composePlanRowsV2On, rowsPresence, subShareFor, rowsV2SubOn, rowsV2SubRoleOn, trustEmbedsShown, trustEmbedLogFields } from "../compose-plan-rows-v2";
+import { priorityTableRecord, PRIORITY_ROWS } from "../priority-table";
+import { buildPlanRowsV2, planRowsV2Note, planRowsV2Digest, composePlanRowsV2On, rowsPresence, subShareFor, rowsV2SubOn, rowsV2SubRoleOn, priorityForRowsV2, trustEmbedsShown, trustEmbedLogFields } from "../compose-plan-rows-v2";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -162,5 +162,22 @@ t("11865（疑問が先・新着の約束は後の通）: 答えが主で先・�
   assert.ok(p0!.stand.includes("priority:doubt_first"));
   // 表が無い番（同じ材料）は継続の約束が最後に立つ（前のテスト 11865 型と同じ）
   assert.ok(rows(base, { scene: "question", customerText: "他のサイトに載ってる物件は本当にあるんですか？" }).rows.some((x) => x.role === "close" && x.sub === "keep_promise"));
+});
+t("優先度の表の行は row_id で引く・引けない時は注記に残す（静かに落とさない）", () => {
+  const base = { check_order_type: "T12_hooked_comparing_taken", seven_read: { lead: "viewing" }, turn_contract: { asks: [{ quote: "抑えられるのは送ってもらった間取りですか", kind: "question", route: "reply", answer: "抑えられるのは1LDKの202号室・他は申込が入っており2番手", basis: "material" }], lead_with: 0 } };
+  const rec = priorityTableRecord(base)!;
+  // 表に無い row_id: 文字が合っていても引かない（id が正）・注記に「表の行が引けない」
+  const bad = { ...base, check_order: { priority: { ...rec, row_id: "no_such_row" } } };
+  assert.equal(priorityForRowsV2(bad)?.missing, "row_id=no_such_row");
+  const r = rows(bad, { scene: "apply", customerText: "抑えられるところは送ってもらった間取りですか？" });
+  assert.ok(r.dropped.some((d) => /表の行が引けない/.test(d.why)));
+  assert.match(planRowsV2Note(r.rows, { COMPOSE_PLAN_ROWS_V2: "on" }), /優先度の表の行が引けない（row_id=no_such_row）/);
+  // row_id の無い古い記録で state の文字が変わった: 引けない印
+  const old = { ...base, check_order: { priority: { ...rec, row_id: undefined, state: "（文を直した）" } } };
+  assert.equal(priorityForRowsV2(old)?.missing, "type=T12_hooked_comparing_taken");
+  // 表の行に id がある時は row_id で引く
+  const idOf = (PRIORITY_ROWS.find((x) => x.type === rec.type && x.state === rec.state) as { id?: string } | undefined)?.id;
+  if (idOf) assert.equal(priorityForRowsV2({ check_order: { priority: { ...rec, row_id: idOf, state: "（文を直した）" } } })?.via, "row_id");
+  else assert.equal(priorityForRowsV2({ check_order: { priority: rec } })?.via, "type_state");
 });
 console.log(`compose-plan-rows-v2: ${n} pass`);
