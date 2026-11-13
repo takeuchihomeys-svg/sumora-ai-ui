@@ -48,6 +48,8 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
    *   渡さない（埋め戻し・画面の仮の判定）・LINE_WATCH_POSTAPPLY_SCOPE=off は今まで通り conv_status だけ
    */
   postApplyTimeline?: PostApplyTimeline | null;
+  /** 2026-11-13 WATCH_AIX_RECORD_V2: 送った LINE のメッセージ id → 書き手（messages.staff_writer）。押した人の欄に使う */
+  writerOf?: (lineMessageId: string) => { writer: string | null; basis?: string | null } | null;
 }): WatchTurnEval {
   const { nowMs } = ctx;
   const w = staffWindowOf({ customerTurnAt: t.customer_turn_at, msgs: ctx.msgs, presses: ctx.presses, nowMs });
