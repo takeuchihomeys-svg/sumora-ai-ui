@@ -94,3 +94,32 @@ export function sendSeqSummary(rows: SeqRow[], pct: (a: number, b: number) => st
     + (s.multiReplyN ? `｜返信2通以上の番の下書き「---」で分かれた ${s.draftSplit}/${s.draftHave}（下書きあり）` : "")
     + (s.singleDraftN ? `｜返信1通の番の下書きを「---」で割った ${s.draftOverSplit.length}/${s.singleDraftN}${list(s.draftOverSplit)}` : "");
 }
+
+/**
+ * 2026-11-13 作業員7b（統括役の頼み・竹内さん 11/13「返信と AIX の組み合わせも、ちゃんと行っていけるように」）: 係の結果に並びの悪化を出す（pathRegressions と同じ線）。
+ *   問題ごとに前（基準）と今の並びの一致の率を比べ、前が過半数で一致・今が半分未満で、差が 0.5 以上の問題を返す。正解の並びが無い問題は数えない。
+ *   係は EXAM_SEQ_SCORE=on の時だけ使う（既定 off）。
+ */
+export function examSeqScoreOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_SEQ_SCORE ?? "").trim().toLowerCase() === "on";
+}
+export type SeqRowForWorse = { id: string; error?: unknown; brain?: SeqBrain };
+export function seqRegressions(cur: ReadonlyArray<SeqRowForWorse>, base: ReadonlyArray<SeqRowForWorse>, ids: ReadonlyArray<string>, wantOf: (id: string) => string | null): Array<{ id: string; want: string; from: string; to: string; why: string }> {
+  const out: Array<{ id: string; want: string; from: string; to: string; why: string }> = [];
+  const stat = (rows: ReadonlyArray<SeqRowForWorse>, id: string, want: string) => {
+    const xs = rows.filter((r) => r.id === id && !r.error && r.brain);
+    if (!xs.length) return null;
+    const got = xs.map((r) => brainSeqOf(r.brain).seq);
+    const ok = got.filter((g) => seqMatch(want, g)).length;
+    const cnt = new Map<string, number>(); for (const g of got) cnt.set(g, (cnt.get(g) ?? 0) + 1);
+    return { rate: ok / xs.length, ok, n: xs.length, top: [...cnt].sort((a, b) => b[1] - a[1])[0][0] };
+  };
+  for (const id of ids) {
+    const want = wantOf(id);
+    if (!want) continue;
+    const b = stat(base, id, want), c = stat(cur, id, want);
+    if (!b || !c) continue;
+    if (b.rate > 0.5 && c.rate < 0.5 && b.rate - c.rate >= 0.5) out.push({ id, want, from: b.top, to: c.top, why: `${b.ok}/${b.n}→${c.ok}/${c.n}` });
+  }
+  return out;
+}

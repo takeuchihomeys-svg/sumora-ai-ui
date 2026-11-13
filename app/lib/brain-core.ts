@@ -5,6 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase-server";
+import { sanitizeJsonForDb } from "@/app/lib/db-json-sanitize";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { brainCacheOrderOn, withSceneBlock } from "@/app/lib/brain-cache-order";
@@ -77,10 +78,13 @@ import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from 
 // 10巡目（10/08 竹内「AIXのボタンの種類・ピッカーの種類を分かっていたら簡単に完全にすることできる」）: AIX の全ボタン×主のピッカーの一覧と判断の順番を場面で絞って渡す（BRAIN_AIX_CATALOG=off で外す）
 import { catalogBlockForBrain, isSceneUncertain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
+import { checkOrderMode } from "@/app/lib/check-order";
+import { conductorBriefMode } from "@/app/lib/conductor-brief";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
 import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
 import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
 import { sorryDeclineReadOn, readSorryDecline, pickSorryDeclineExamples, sorryDeclineBrainText } from "@/app/lib/sorry-decline-read";
+import { applyPromptRules1112, applyPromptRules1113, promptRules1113Enabled, applyReplyModeP0 } from "@/app/lib/brain-prompt-rules-1112";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
@@ -91,9 +95,10 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { sendSequenceOn, sanitizeSendSequence, replyCountOf, SEND_SEQUENCE_FIELD } from "@/app/lib/send-sequence";
+import { brainAixFollowsContractOn, alignAixToContract, type ContractAskLite } from "@/app/lib/aix-follows-contract";
+import { sendSequenceOn, sanitizeSendSequence, replyCountOf, SEND_SEQUENCE_FIELD, hearingSendSequence, writerReplyCountOf } from "@/app/lib/send-sequence";
 import { checkQuestionBrainFirstOn, checkQuestionBrainRoute } from "@/app/lib/check-question-brain-first";
-import { resolveTwoStageOrDirect, screeningNoRewriteEnabled, sentReactionNoRewriteEnabled, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
+import { resolveTwoStageOrDirect, firstContactReadyPickupTwoStage, screeningNoRewriteEnabled, sentReactionNoRewriteEnabled, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { holdSoftNextMaterial, rule8HoldNote, rule8HoldDirectionSuffix } from "@/app/lib/hold-soft-next";
 import { lastPropertyMoveAllUnavailable } from "@/app/lib/unavailable-ack";
@@ -130,6 +135,9 @@ import { applyRouteMapEnabled, applyRouteBrainTextIfEnabled } from "@/app/lib/ap
 import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE } from "@/app/lib/apply-route-substate";
 import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD } from "@/app/lib/brain-turn-aims";
 // 2026-11-12 作業員16（案1・KB P1 d030d496）: 今の番と後の番を分ける欄を JSON の最初に（BRAIN_NOW_LATER_FIRST=on の時だけ・既定 off）
+import { readCandidatesOn, READ_CANDIDATES_FIELD, READ_CANDIDATES_RULES, normalizeReadCandidates, readCandidatesDigest, chosenReading, type ReadCandidates } from "@/app/lib/brain-read-candidates";
+import { ourSendUptakeOn, OUR_SEND_UPTAKE_FIELD, OUR_SEND_UPTAKE_RULES, normalizeOurSendUptake, ourSendUptakeDigest, type OurSendUptakeRow } from "@/app/lib/our-send-uptake";
+import { checkOrderGuideOn, checkOrderGuideFor, preBrainCues } from "@/app/lib/check-order-guide";
 import { nowLaterFirstOn, NOW_VS_LATER_FIELD, NOW_VS_LATER_RULES, NOW_LATER_AIX_PROVISO, NOW_LATER_RULE8_TAIL, normalizeNowVsLater, aixNowOf, nowLaterConflicts, nowLaterDigest, type NowVsLater } from "@/app/lib/brain-now-later";
 import { resolveParallelSearchScene, parallelSearchInputsFromMessages, buildParallelSearchBrainNote, resolveParallelSearchOutput, type ParallelSearchOutput } from "@/app/lib/parallel-search";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）は1つの型・1つの関数に集約（AIX / テンプレート / 返信生成が同じ物を読む）
@@ -199,11 +207,11 @@ import { promiseKindsToday, pickupDirectionWithBrainAsk } from "@/app/lib/two-st
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { turnElapsedOn, turnElapsed, turnElapsedLine, elapsedPreferredSide, type TurnElapsed } from "@/app/lib/turn-elapsed";
-import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn, twoChoiceNarrowOn, narrowKeepsTwoChoice, narrowPromiseOrNow, twoChoicePhotoAtHandDirectOn, resayPromiseFirstOn, isResayTurn } from "@/app/lib/two-choice";
+import { resolveTwoChoice, resolvePromiseOrNow, twoChoicePromiseOrNowOn, twoChoiceNowSideOn, twoChoiceNarrowOn, narrowKeepsTwoChoice, narrowPromiseOrNow, narrowEstimateSoleOn, hasNonCostPromise, twoChoicePhotoAtHandDirectOn, resayPromiseFirstOn, isResayTurn } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
 import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled, exhaustedWeakKeepBrainPromise, exhaustedConditionWeakTurnLine, exhaustedTodayNote } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
-import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
+import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled, areaAllExhaustUpgrade, exhaustedPickupReadyOn } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
 import { sentReactionInviteOn, BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract, turnContractAxisEnabled } from "@/app/lib/turn-contract";
 /** 2026-10-08 本質の仕様（turn-contract.ts）をブレインに出させるか。戻す TURN_CONTRACT_BRAIN=off（出力・指示を足さない＝静的 system も旧に戻る） */
@@ -237,6 +245,11 @@ const BRAIN_MATERIAL_PROVENANCE_ON = materialProvenanceOn();
 const BRAIN_THREE_LAYER_ON = threeLayerOn();
 const BRAIN_TURN_AIMS_ON = turnAimsOn(); // 2026-11-12 作業員7
 const BRAIN_NOW_LATER_ON = nowLaterFirstOn(); // 2026-11-12 作業員16（案1）
+// 2026-11-12 作業員16（案2）: 一通の読みの候補（BRAIN_READ_CANDIDATES）・こちらの直前の送信の受け取られ方と刺さり（BRAIN_OUR_SEND_UPTAKE）。どちらも既定 off・事実の欄だけ
+const BRAIN_READ_CANDIDATES_ON = readCandidatesOn();
+const BRAIN_OUR_SEND_UPTAKE_ON = ourSendUptakeOn();
+/** 2026-11-12 作業員7: LLM の AIX を名前なしで落とした番に名札（記録だけ・道は変えない・既定 off） */
+const decisionSourceUnlabeledOn = () => (process.env.DECISION_SOURCE_UNLABELED ?? "").trim().toLowerCase() === "on";
 const BRAIN_MAIN_POINT_ON = mainPointOn();
 const BRAIN_THREE_LAYER_AFTER = threeLayerMode() === "after";
 const BRAIN_MAIN_POINT_AFTER = mainPointMode() === "after";
@@ -254,7 +267,7 @@ import {
 import { resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 import { customerPointsAtProperty } from "@/app/lib/cost-question-scope";
 // 2026-09-23 課題③: 真の初回の「最初の一手」（first_contact_pickup）の許可リスト（純関数）
-import { resolveFirstContactPickup, firstContactSuggestedAction, type FirstContactPickup } from "@/app/lib/first-contact-pickup";
+import { resolveFirstContactPickup, firstContactSuggestedAction, customerOffersToSendProperties, firstContactSelfSendReplyOn, type FirstContactPickup } from "@/app/lib/first-contact-pickup";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-27 竹内: 主のお部屋（こちらが送ったお部屋）への見積もりの依頼は 見積書送る
@@ -282,15 +295,19 @@ import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics,
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
 import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question";
 import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
+import { materialTurnMustOn, WIDE_LIMIT, turnMustKeys, selectNewestWithMust, rowHitsKeys } from "@/app/lib/material-turn-must"; // 2026-11-12 作業員1: 材料の上限を今の番に要る物で（MATERIAL_TURN_MUST=on） // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
+import { materialGapLedgerMode, materialGapsDigest, materialGapBooksMode, materialBooksDigest } from "@/app/lib/material-gap-ledger"; // 2026-11-12 作業員1: 材料の抜けの台帳
 import { brainMsgWindow } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
 // 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
-import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL } from "@/app/lib/contact-promise";
+import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL, resolveConditionMoveIn } from "@/app/lib/contact-promise";
+import { timeFactsEnabled, computeTimeFacts, timeFactsLine } from "@/app/lib/time-facts";
+import { promiseDeadlineWordsEnabled, promiseDeadlineWordsLine } from "@/app/lib/promise-deadline-words"; // 2026-11-12 作業員19（PROMISE_DEADLINE_WORDS・既定 off） // 2026-11-12 作業員19（TIME_FACTS・既定 off）
 import { brainOpenerMetaEnabled, normalizeBrainOpener } from "@/app/lib/opener-rates";
 import { brainFastSlowEnabled, brainSlowSecondEnabled, decideTurnDifficulty, fastDrops, fastEscapeReason, routeFingerprint, pickMajority, BRAIN_FAST_SLOW_VERSION, type FastSlowRecord } from "@/app/lib/brain-fast-slow"; // 2026-10-22 慣れた事は速く・難しい事はじっくり
 // 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
 import { mindsetFreshOutputItem, emotionChoicesText, normalizeMindset, mindsetEmotionLabel, customerMindsetEnabled, type CustomerMindset } from "@/app/lib/customer-mindset";
 import { brainSevenOn, brainSevenOutputItem, normalizeBrainSeven, normalizeBrainLatent } from "@/app/lib/brain-seven-fields";
-import { brainJudgeBasisOn, brainJudgeBasisOutputItem, normalizeJudgeBasis } from "@/app/lib/brain-judge-basis"; // 2026-11-12 作業員17（BRAIN_JUDGE_BASIS・既定 off）
+import { judgeNextOf, brainJudgeBasisOn, brainJudgeBasisOutputItem, normalizeJudgeBasis } from "@/app/lib/brain-judge-basis"; // 2026-11-12 作業員17（BRAIN_JUDGE_BASIS・既定 off）
 import { turnReadMode, turnReadOutputItem, normalizeTurnRead, turnReadFocusOn, normalizeTurnFocus, turnReadTopicsOn, normalizeTurnTopics, type TurnRead, type TurnFocus, type TurnTopic } from "@/app/lib/turn-read";
 
 /** 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番の turn_contract の asks（promise→reply）をそろえる（PROCEDURE_GENERAL_ASK_REPLY・11/11 既定 on・止める =off） */
@@ -402,6 +419,8 @@ export type SuggestedAixMeta = {
   /** 2026-11-03 前回の提案の書き終えた後のメモ（digest.rv）と今の段階（digest.sg＝次の番の「お客様は進んだか」に使う） */
   last_turn_review?: Record<string, unknown>;
   customer_stage_now?: string;
+  material_books?: string[];           // 2026-11-13 作業員1: 帳面の6つ×印（帳面|fetch/staff|鍵・MATERIAL_GAP_BOOKS=shadow）
+  material_gaps?: string[];            // 2026-11-12 作業員1: 材料の抜けの台帳（何が|何のために|どこから|なぜ a〜e|何が起きる・MATERIAL_GAP_LEDGER=shadow の時だけ・記録だけ）
   material_missing?: string[];         // 2026-10-29 ブレインの自己申告「判断に要ったのに材料に無かった物」（記録だけ・digest.mm）
   two_choice_reply_kind?: string;      // 2026-10-28 その場の側の2択: 右の返信の約束の種類（check/estimate/pickup）
   two_choice_reply_hint?: string;      // 同: 右の返信を押した時に generate-reply に渡す指定
@@ -472,6 +491,8 @@ export type SuggestedAixMeta = {
   decisions_1103?: string[];
   /** 2026-11-11 作業員4: 入口の意見の1語（digest.nop・CONDUCTOR_NEAR_OPINION の見張り） */
   near_opinion?: string;
+  /** 2026-11-12 作業員4（OUR_SIDE_TO_COMPOSE）: こちら側の状態の文の材料（ブレインの判断には渡さない・文の統括と AIX の文だけ） */
+  our_side_note?: string;
   /** 2026-11-03 この番に呼ぶ役の候補（網・記録だけ）→ digest.rl */
   conductor_roles?: string;
   /** 2026-11-04 統括メタ（記録だけ・last_brain_meta が正）→ digest.cm */
@@ -517,6 +538,22 @@ export type SuggestedAixMeta = {
   /** 2026-11-12 作業員10（案A）: 潜在の4欄（takeuchi-seven-read の LatentFour）・BRAIN_SEVEN_FIELDS=on の時だけ */
   /** 2026-11-12 作業員16（案1）: 今の番と後の番を分ける欄・BRAIN_NOW_LATER_FIRST=on の時だけ（記録だけ・判断は aix/turn_contract のまま） */
   now_vs_later?: NowVsLater;
+  /** 2026-11-12 作業員16: ブレインに渡した確かめる順番の型（CHECK_ORDER_GUIDE=on の時だけ・記録だけ） */
+  check_order_guide?: { type: string; steps: string[] };
+  /** 2026-11-12 作業員16（案2）: 一通の読みの候補・BRAIN_READ_CANDIDATES=on の時だけ（記録だけ・判断は aix/turn_contract のまま） */
+  read_candidates?: ReadCandidates;
+  /** 同: こちらの直前の送信の部分ごとの受け取られ方と刺さり・BRAIN_OUR_SEND_UPTAKE=on の時だけ（記録だけ・文の統括が HOOK_TO_COMPOSE で読む） */
+  our_send_uptake?: OurSendUptakeRow[];
+  /** 2026-11-12 作業員22: 判断の順番の型の手がかりに使う今の一通の場面（CHECK_ORDER_TABLE=shadow|on の時だけ・記録だけ） */
+  check_order_scene?: string;
+  /** 2026-11-12 作業員22: 判断の順番の型の id（check-order.ts・先頭の候補）と候補・手がかり（check-order-wire.ts・記録だけ・道は変えない） */
+  check_order_type?: string;
+  check_order?: import("@/app/lib/check-order-wire").CheckOrderRecord;
+  /** 2026-11-12 作業員22: 統括の指示書の入力と指示書（CONDUCTOR_BRIEF=shadow の時だけ・記録だけ） */
+  conductor_brief_inputs?: import("@/app/lib/conductor-brief").BriefInputs;
+  conductor_brief?: import("@/app/lib/conductor-brief").ConductorBrief;
+  /** 2026-11-12 作業員22: 判断の根拠のメモの次の行き先・答えられるのに約束にした印（BRAIN_JUDGE_BASIS_NEXT・文の統括へ plan） */
+  judge_next?: import("@/app/lib/brain-judge-basis").JudgeNext;
   /** 同: 今の番に押す AIX（this_turn=deliver の時だけ aix・他は null）。物差しが今と後を分けて数えるため */
   aix_now?: string | null;
   latent_read?: import("@/app/lib/takeuchi-seven-read").LatentFour;             // 2026-11-11 作業員14: 話題ごと（弱い所 578）・TURN_READ_TOPICS=on の時だけ
@@ -678,7 +715,7 @@ const STATUS_TO_PHASE: Record<string, string> = {
 };
 
 // Concise AIX capability summary injected into Haiku prompts for action/template reasoning
-const AIX_CAPABILITY_MAP = `
+const AIX_CAPABILITY_MAP = applyPromptRules1113(applyPromptRules1112(`
 【AIXボタン能力マップ】
 - viewing_invite: 内覧日程の候補をLINEで提案するメッセージを生成（顧客メッセージに内覧・内見・見学・見に行く等の希望表現があれば選ぶ）
 - property_send: 物件ピックアップのカバーメッセージを生成（物件URL送信時）→ 複数件ピックアップ後は必ず1〜2分以内（実測38秒／58秒）に「物件ピックアップ紹介（後続）」を、駅指定・条件外れ告知ありなら「駅周辺物件ピックアップ（後続）」（実測1分33秒）をAI最適化して自発送信する
@@ -717,14 +754,14 @@ const AIX_CAPABILITY_MAP = `
 - viewing_invite（内覧日調整を送った後）: 顧客が「それ以外だと何日」「土日は可能ですか」「他の日程は」等、別の日程を尋ねたら viewing_invite（候補日時は AIX で送る。本文で日程を手打ちしない）。具体的な日時を指定して依頼したら meeting_place（2026-09-12 竹内）
 - viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 日と開始時刻が決まった（待ち合わせ場所は未送信）→meeting_place / 待ち合わせ場所を送信済み（＝内覧確定・未来）→もう一度は選ばない（日時・場所の変更を頼まれた時だけ）/ 当日・完了後→greeting_viewing。【内覧の流れ】の段がある時はその段階を正とする ※viewing_invite は顧客メッセージに内覧希望が示された場合に選ぶ。「内覧行きたいらしいですが」「内覧可能ですか」「見に行きたい」等の間接・伝聞・打診表現も内覧希望として viewing_invite を選ぶこと。スタッフが物件を送った後に顧客が内覧・内見・見学・見に行く等のキーワードで反応した場合も viewing_invite。ただしスタッフが送った物件情報内の「〇月〇日以降内覧可能」「内覧可」等の文言をトリガーにしない（顧客メッセージ内のキーワードのみ対象）。物件送付直後で顧客がまだ反応していない場合は aix:null（何も提案しない）が正解
 - 成約の典型順（黄金フロー）: condition_hearing → property_send → property_recommendation → estimate_sheet → viewing_invite → meeting_place → application_push（property_check_result は顧客が物件URLを送ってきた時の割り込みアクションであり順序フローに含めない）
-`.trim();
+`.trim()));
 
 // AIX遷移マップはaix_transition_statsテーブルから動的取得（brain関数内で構築）。
 // 旧ハードコード AIX_NEXT_ACTION_MAP は2026-08-27にDB化。
 
 // 返信文体・共感フレーズ・条件変更文脈の恒久ルール（generate-reply の同名ルールと同一の単一基準）
 // closing_strategy / next_steps / template_hint がこのルールに反する提案を出さないようにするための静的ブロック。
-const REPLY_STYLE_RULES = `
+const REPLY_STYLE_RULES = applyPromptRules1112(`
 【返信スタイルの恒久ルール（closing_strategy・next_steps の内容もこれに従うこと）】
 ${BRAIN_OPENER_FREE_ON ? `■ 冒頭（書き出し）
 - 書き出しは下の【reply_opener】で決める（竹内さんの実送信の形・場面ごとの率）。挨拶（〇〇さん、お世話になっております！！）はお客様1人につき1日1回（今日こちらが既に送っていれば挨拶なし）
@@ -813,7 +850,7 @@ ${BRAIN_OPENER_FREE_ON ? `■ 冒頭（書き出し）
 ② ベンチマーク物件と同じマンションの別号室が新規募集されたとき → 最優先で提案し即申込訴求（内覧スキップ可能・建物を把握済みのため）
 ③ ベンチマーク物件を超えない物件・顧客持ち込み物件 → estimate_sheet（最大割引見積）+ viewing_invite で内覧接点を再構築
 ④ 「また別の物件を探しています」という発言は、通常顧客ではhearingのシグナルだが、申込経験者では依然proposingのホット状態として扱う
-`.trim();
+`.trim());
 
 // 実態ベースのフェーズ別推奨テンプレートマップ
 // 母集団: closed_won 13会話 / うちAIX使用5会話 / 検出された自発送信14件（顧客返信ゼロでのstaff手動送信）の実測。
@@ -1226,7 +1263,8 @@ async function detectSignalBasedAixFallback(
       usedAixTypes.some((t) => t === "property_send" || t === "property_recommendation") ||
       newPhase === "proposing" ||
       newPhase === "applying";
-    if (lastCustomer && !hasPendingScheduled && propertyProposed) {
+    // 2026-11-13 作業員1（G4 691）: 追客は物件の AIX（竹内さんの決定 d76e886d）＝ BRAIN_PROMPT_RULES_1113=on の時は 3日沈黙で followup_revive を決め打ちしない
+    if (lastCustomer && !hasPendingScheduled && propertyProposed && !promptRules1113Enabled()) {
       const silentDays = Math.floor((Date.now() - new Date(lastCustomer.created_at).getTime()) / 86_400_000);
       if (silentDays >= 3) return "followup_revive";
     }
@@ -1425,7 +1463,7 @@ export async function loadBrainSystemInputs(): Promise<BrainSystemInputs> {
 // キャッシュ2ブロック分割: staticBrainSystem（完全静的・1h）と dynamicBrainSystem（DB由来・5m）を分離。
 // 毎日の学習cronで promptRules / knowledgePrinciples / boundaryRules が更新されても
 // 静的ブロック（15K+トークン）のプレフィックスキャッシュは生き残る。
-export const STATIC_BRAIN_SYSTEM = `あなたはスモラAI。与えられた会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。
+export const STATIC_BRAIN_SYSTEM = applyReplyModeP0(`あなたはスモラAI。与えられた会話履歴を読んで、スタッフが次にすべき1アクションを20字以内で答えてください。必ずJSON形式のみで返してください。
 漢字は必ず日本語の漢字（日本の字形・新字体）で書く。中国の字形（簡体字・繁体字）は使わない。
 
 ${AIX_CAPABILITY_MAP}
@@ -1439,9 +1477,9 @@ ${PHASE_TEMPLATE_HINTS}
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{${BRAIN_NOW_LATER_ON ? NOW_VS_LATER_FIELD + ", " : ""}"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）。※但し書き（2026-09-23 あっぴ事例）: 直前のスタッフ送信に物件ピックアップの宣言（『出次第お送りします』『ピックアップしてお送りします』等）があり、その後まだ物件を送っていない場合は『反応待ち』ではない（ボールはこちら側）。${BRAIN_NOW_LATER_ON ? NOW_LATER_AIX_PROVISO : "この時は null にせず property_send を選ぶ"}${ackAfterPromiseReplyEnabled() ? "。ただしお客様の今の発言がお礼・了承だけ（「お願いします」「ありがとうございます」）の番は null にして返信（お礼に短く返す・約束を果たす AIX はその後・竹内さんの決定 10/14）" : ""}", ${brainCheckPatternSchemaField()}"closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で。必ず「〜させて頂きます」「〜する」の行動宣言形で書く（例: 「今日中にご希望条件の物件をピックアップしてお送りします」）。情報提供・受け身文体は禁止。※条件変更（condition_change_type非null）時は変更後の具体条件名（エリア・駅・家賃・設備等）を必ず明記し「その条件で全力ピックアップします」の行動宣言形にすること（「ご希望の条件」「ご希望のご条件」等の抽象表現は禁止）", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ '申込誘導'（お客様が自分から申込の意思を示した時の申込促進テンプレート。見積書送付直後には選ばない）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない",${AFTER_AIX_TEMPLATE_SCHEMA} "next_steps": ["Step1（今すぐ）: 具体的アクション。※条件変更（condition_change_type非null）時のStep1は必ず「変更後の具体条件名（エリア・駅・家賃・設備等を明記）でChrome拡張を使って物件を再検索する」を含めること", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "two_choice_mode": "true または false（boolean）。以下の全条件が揃う場合 true: checkpoint_stage='proposing' かつ 送付済み物件が1件以上ある かつ 顧客の最新メッセージが条件に関するトレードオフ質問（例: '築年数は古くなりますか？' '家賃5万円台だとこの条件は難しいですか？' 'ユニットバスOKでもいいですが室内洗濯機は難しいですか？' '5.5万と6.2万の違いは何ですか？' 'この価格は妥当ですか？'等・現在提案中の物件の条件・価格・設備について納得・比較・トレードオフの判断を求める質問）かつ 顧客が明示的に拒否・離脱していない。→ true の場合、AIXで条件に合う物件を追加オススメするか、テキストで相場や理由を説明するかをスタッフが2択で判断する場面。trueにならないケース: 顧客が「この物件の空室はありますか？」等の募集状況確認をしている場合 / 顧客が新しい検索条件を追加している場合（condition_change_type非null）/ aix=viewing_invite・application_push等の確定アクションがある場合。不明な場合は false に倒す", "reply_direction_label": "two_choice_mode=true の場合のみ設定。返信する場合の方向性を10字以内の日本語で（例: '条件説明' '相場説明' '不安解消' '内覧誘導' '価格の根拠説明'）。two_choice_mode=false の場合は必ずnull", ${(process.env.BRAIN_OPENER_SCHEMA ?? "").toLowerCase() === "on" ? `"reply_opener": "下の【reply_opener】で決めた書き出し1つ（かしこまりました / はい / 開口語なし / 〇〇頂きありがとうございます / お世話になっております / はじめまして）。決められない時は null", ` : ""}"ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。必ず「〜する」「〜させて頂く」の行動宣言形で書く。受け身文体は禁止。※条件変更直後（condition_change_type非null時）は「変更後条件の具体名+全力ピックアップ宣言」の構成が成約につながる（成約データから検証済み）。「ご希望のご条件」等の抽象表現ではなく変更後の具体条件名（エリア・駅・間取り・こだわり等）を明記すること。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "${emotionChoicesText()} のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で", "purchase_signal_level": "none/soft/strong/peak のいずれか。none=購買シグナルなし（挨拶・一般質問・雑談のみ、customer_intent=chat/null含む）/ soft=設備・費用・間取り・審査等の具体的な物件確認質問が1件=本気検討始まりシグナル（customer_questions が1件以上かつ具体的内容）/ strong=異カテゴリ2件以上の質問が重なっている（設備→入居日・費用→審査等）または複数物件の同時比較=申込前の高熱シグナル（customer_questions が2件以上かつ異カテゴリ、またはhesitancy_pattern=undecided）/ peak=申込直前最強シグナル。以下のいずれか1つでも該当したら質問件数に関係なく必ず peak にすること（成約データ分析で判明した盲点シグナル。1件しか質問がなくても soft/strong に落とさない）: ①申込許可伺い=「申し込んでもいいですか？」「一度お申し込みして内覧行きたいです」「抑えるだけ抑えててもいいんですか？」「申し込みするだけして通れば進みたい」「見学して決める形になりますが、それでも申し込みできますか？」等、申込の可否・許可を顧客側から伺ってきた ②物件名指し確定=「待ってください！！ここがいいです！」「○○に決めます」「○○で申請したいと思います」「やはり○○の物件にしようかな」等、特定物件を名指しで選んだ ③金額そのものの復唱=「153,200円ですか😭」「18万ですか😭」「4万台で、お願いします」等、見積・費用の金額をそのまま復唱してきた（落胆の絵文字を伴っても離脱ではなく最終障壁が価格のみのサイン） ④手続き・審査プロセスの具体質問=「保証会社はどこになりますか？」「クレジット払いは可能ですか？どのような流れになりますか」「必要書類は何ですか」等、買う前提の手続き質問 ⑤入居日逆算質問=「いつ入居なりそうですか？」「ここの入居はいつからいけるんですか？」「最長はいつまで伸ばせますか？」 ⑥入居日が具体的な日付・曜日・月で確定している ⑦他の申込者の有無を顧客側から自発的に確認している ⑧customer_questions が3件以上の連続具体質問。判断できない場合は none"}, "reply_direction": "返信の方向性を120字以内の1文で（今回の返信で何にどう応えるかが分かる具体さで。短いラベルはコード側の reply_direction_label が担う）。必ず『〜する』の行動方針形で書く（例: '申込みを前に進める' '内覧日を確定する' '不安を解消して継続する' '物件提案を再開する'）。brainにしかわからないDB知識（内覧履歴・送付済み物件・成約パターン・未完了タスク）から導く。必須フィールド・nullは避ける", "key_topics": ["返信本文に必ず含める実質的内容（最大3件・各30字以内）。挨拶・定型文・トーン指示・抽象的方針は書かない（それらは reply_direction / recommended_tone の役割）。具体的な情報・アクションのみ（例: '本人確認書類送付の催促' '申込みで物件を抑える提案' '空室確認結果の報告'）。該当なければ空配列 []"], "avoid_topics": ["返信で絶対に言及しない語・話題（最大${BRAIN_AVOID_TOPICS_MAX}件・各20字以内）。${BRAIN_RAIHAN_SLOT_ON ? "'来阪' は常に含める。" : ""}${BRAIN_ENTRY_TRIM_ON ? "この番で言うと外れる話題・直前スタッフ送信で使用済みの緊急表現・文脈に合わない誘い等（来阪・見積書・初期費用はコード側が入れる）" : `顧客が質問していない費用の話題・直前スタッフ送信で使用済みの緊急表現・文脈に合わないCTA等（例: ${BRAIN_RAIHAN_SLOT_ON ? "['来阪', '見積書', '初期費用']" : "['見積書', '初期費用']"}）`}。理由説明・トーン説明は書かず、禁止する語そのものを書く"], "urgency_appropriate": "true または false（boolean値で出力）。直近のスタッフ送信メッセージ1〜2件（[スタッフ] / [AIX:xxx]）に顧客を急かす危機感・緊急表現（ルール③の表現リスト参照）が含まれていれば false、含まれていなければ true", "recommended_tone": "次の5つの文字列のうち1つだけを正確に出力（組み合わせ・修飾・他の表現は禁止）: '共感的'（顧客が不安・悩んでいる時）/ 'テキパキ'（忙しそうな顧客・手続き系の返信）/ '慎重'（費用・審査・契約等の重要事項を扱う時）/ '明るく前向き'（物件が見つかった・内覧確定等の好機）/ '普通'（どれにも当てはまらない場合）", "customer_concern": "顧客の最新メッセージで提案物件・見積・条件に対して述べた懸念があれば {\\"topic\\": \\"階数|築年数|費用|駅距離|広さ|日当たり|審査|騒音治安|家族構成|設備|ペット駐車場|時期 のいずれか\\", \\"object\\": \\"顧客が使った語をそのまま（例: '2階' 'お風呂が狭い' '審査'）\\"}。懸念（迷い・不安・〜どうかな・高い・狭い・古い等）が無ければ null。過去メッセージの懸念は含めない", "customer_questions": ["顧客の最新メッセージに含まれる質問・確認事項を全て列挙（最大5件・各40字以内・質問の意図が分かる形で）。過去メッセージの質問は含めない。質問がなければ空配列 []"]${TURN_CONTRACT_BRAIN_ON ? ", " + BRAIN_TURN_CONTRACT_FIELD : ""}${sendSequenceOn() ? ", " + SEND_SEQUENCE_FIELD : ""}${BRAIN_PRIORITY_STEP_ON ? ", " + BRAIN_PRIORITIES_FIELD : ""}${BRAIN_MESSAGE_PLAN_ON ? ", " + BRAIN_MESSAGE_PLAN_FIELD : ""}${BRAIN_NEED_ON && !BRAIN_NEED_AFTER ? ", " + BRAIN_NEED_FIELD : ""}${BRAIN_PLAN_AHEAD_ON ? ", " + BRAIN_PLAN_AHEAD_FIELD : ""}${BRAIN_THREE_LAYER_ON && !BRAIN_THREE_LAYER_AFTER ? ", " + BRAIN_THREE_LAYER_FIELD : ""}${BRAIN_MAIN_POINT_ON && !BRAIN_MAIN_POINT_AFTER ? ", " + BRAIN_MAIN_POINT_FIELD : ""}, "repeated_concern": "顧客が会話全体で繰り返し確認しているテーマを短句で（例: '費用' '審査' 'キャンセル'）。会話履歴・前回セーブデータで2回以上登場した話題のみ。なければnull", "current_property": "現在話題の中心になっている物件名・号室（例: 'ライオンズ渋谷401'）。会話履歴・【送付済み物件】・物件ごとの状況（▶ 今の番の物件・候補）に実際に登場した表記を一字一句そのまま使う（創作・言い換え・要約禁止）。主語の無い発言（引用・「ここ」「空いてますか」）でも ▶ が1件を指していればその名前、候補が複数でも引用・文脈で1件に決まればその候補の名前を書く。特定できなければnull", "condition_change_type": "顧客の最新メッセージで検索条件の変更・追加・緩和、または物件ピックアップ依頼があったか。次のいずれか1つの文字列のみ: 'area_change'（エリア変更）/ 'rent_change'（家賃変更）/ 'layout_change'（間取り変更）/ 'equip_add'（設備・収納・こだわり条件の追加。WIC広め・SIC・南向き・オートロック・駐車場付き・ガレージ・ペット可等。【重要】「駐車場付きのお部屋がないか」「駐車場付きで探して」等は equip_add。現在提案中の物件の設備確認ではなく、新しい設備条件での物件探しの依頼 → aix は property_send が正解。絶対に property_check_result・acknowledge_check を選ばないこと）/ 'condition_relax'（条件緩和・拡大）/ 'pickup_request'（物件を送って・ピックアップ依頼・おすすめ依頼）/ 'multi'（複数変更）。なければnull。※すでに検討中の物件があっても新しい条件を追加したら必ず種別を返す。※【お客様の希望条件】（DB登録済み条件）と同じ内容の再言及は変更ではない", "condition_change_scope": "condition_change_type が非null の時だけ: 'permanent'（今後ずっとこの条件で探す＝希望条件の言い直し・変更・追加）/ 'temporary'（今回だけ・ついでに・比較や参考に別の条件でも見たい＝登録の希望条件は変えない）/ 'none'（検索条件の話ではない＝お客様が送った物件・特定の物件の質問・見積依頼等）。迷ったら permanent。condition_change_type が null なら null", "hesitancy_pattern": "顧客が決断を保留するパターンを最新メッセージで示しているか。'thinking'（検討します）/ 'callback'（また連絡します）/ 'waiting'（少し待ってほしい）/ 'undecided'（複数物件で迷い）/ 'timeline'（○月に決めたい）のいずれか1つ。なければnull", "future_timeline": "顧客が示した具体的な決断・申込タイムライン（例: '9月上旬'）。会話に実際に出た表現のみ（推測日付の創作禁止）。urgencyフィールドと矛盾させない。なければnull", "checkpoint_stage": "会話の実態フェーズ。hearing(ヒアリング中)・proposing(物件提案中)・viewing(内覧の調整中〜内覧後の検討中)・applying(申込検討中〜申込書提出)・contract(契約済み)のいずれか。conversations.statusやconversation_checkpointsの内容、メッセージの文脈を総合して判断。判断できない場合はnull。", "customer_intent": "お客様の今回の問い合わせ意図。次のいずれか1つ: question(疑問・確認質問―答えるだけでOK) / consultation(相談・アドバイス求め―選択肢提示) / desire(希望・条件・要望の表明―受け止め→提案) / decision(申込・内見・決定の意思表示―次ステップ案内) / positive(物件や提案への前向き反応―背中を押す) / negative(懸念・不安・否定的反応―解消してから次へ) / chat(雑談・一言―軽い返し)。当てはまるものがなければnull。※条件変更ルール（最重要）:最新メッセージにエリア・家賃・間取り・こだわり等の変更・追加・緩和が明示されている場合は、他のintent種別との競合に関係なく必ずdesireに設定すること（condition_change_typeと同一判定基準。フェイルクローズはnullではなくdesireに倒すこと）", "latent_intent": "お客様の送信動機・潜在意識の推論（20〜50字の自由記述）。次の3視点を総合して1文で言語化する: ①なぜ今このタイミングでこのメッセージを送ってきたのか（背景・きっかけ）を推測する ②表面的な質問の裏にある本当の懸念・不安・期待を推測する（例: 築年数を聞く→きれいな部屋への期待 / 初期費用を聞く→予算ギリギリの不安 / 審査を遠回しに確認→審査に落ちる不安） ③会話パターンから心理状態を読む（沈黙後の突然の質問→他社比較・状況変化の可能性 / 返信が短くなった→温度低下や多忙 / 同じ質問の繰り返し→説明が腹落ちしていない不安）。会話履歴に根拠がなく推測できない場合はnull（創作禁止）。※条件変更時の補足（condition_change_type非null時）:latent_intentには「複数回条件を変更しているが物件探しへの意欲は本物。変更を歓迎し新条件で即動くスタンスを明示することで信頼が積み重なり成約につながる」という趣旨を含めること", "engagement_stance": "今この局面で「押す」べきか「待つ」べきかの姿勢。'push' / 'wait' / null のいずれか1つだけを出力する。'wait'（押してはいけない局面）= ①直前AIXアクションが property_recommendation または property_check_result であり、顧客の最新メッセージが感謝・了承のみ（60字未満・質問・要望・懸念なし）の場合（ルール⑧の局面＝強推し直後の待ちフェーズ。**但し直前スタッフ送信に物件ピックアップの宣言があり、その後まだ物件を送っていない時は 'wait' にしない**＝ボールはこちら側）／${BRAIN_RULES_678_FACTS_ON ? STANCE_WAIT2_FACTS : "②直前スタッフ発言または直近3メッセージ以内の顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等のネガワードがある直後（ルール⑦の局面）"}。'push'（背中を押すべき局面）= purchase_signal_level が 'strong' または 'peak' であり、かつ顧客がまだ迷っている・質問を重ねている（hesitancy_pattern が非null、または customer_questions が1件以上）場合。上記いずれにも当てはまらない場合は null（デフォルト）。判断に迷ったら null に倒す。※'wait' を出した場合、返信側では購買シグナル強度によるクロージング指示（希少性訴求・CTA・申込期限の明示）が全て無効化される。押しの強さより局面判定が優先される設計であり、'wait' と 'push' を同時に成立させてはならない（ルール⑦・⑧が成立するなら purchase_signal_level が peak でも必ず 'wait'）"${BRAIN_THREE_LAYER_AFTER ? ", " + BRAIN_THREE_LAYER_FIELD : ""}${BRAIN_MAIN_POINT_AFTER ? ", " + BRAIN_MAIN_POINT_FIELD : ""}${BRAIN_NEED_AFTER ? ", " + BRAIN_NEED_FIELD : ""}${BRAIN_TURN_AIMS_ON ? ", " + BRAIN_TURN_AIMS_FIELD : ""}}
+{${BRAIN_OUR_SEND_UPTAKE_ON ? OUR_SEND_UPTAKE_FIELD + ", " : ""}${BRAIN_READ_CANDIDATES_ON ? READ_CANDIDATES_FIELD + ", " : ""}${BRAIN_NOW_LATER_ON ? NOW_VS_LATER_FIELD + ", " : ""}"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）。※但し書き（2026-09-23 あっぴ事例）: 直前のスタッフ送信に物件ピックアップの宣言（『出次第お送りします』『ピックアップしてお送りします』等）があり、その後まだ物件を送っていない場合は『反応待ち』ではない（ボールはこちら側）。${BRAIN_NOW_LATER_ON ? NOW_LATER_AIX_PROVISO : "この時は null にせず property_send を選ぶ"}${ackAfterPromiseReplyEnabled() ? "。ただしお客様の今の発言がお礼・了承だけ（「お願いします」「ありがとうございます」）の番は null にして返信（お礼に短く返す・約束を果たす AIX はその後・竹内さんの決定 10/14）" : ""}", ${brainCheckPatternSchemaField()}"closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で。必ず「〜させて頂きます」「〜する」の行動宣言形で書く（例: 「今日中にご希望条件の物件をピックアップしてお送りします」）。情報提供・受け身文体は禁止。※条件変更（condition_change_type非null）時は変更後の具体条件名（エリア・駅・家賃・設備等）を必ず明記し「その条件で全力ピックアップします」の行動宣言形にすること（「ご希望の条件」「ご希望のご条件」等の抽象表現は禁止）", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ '申込誘導'（お客様が自分から申込の意思を示した時の申込促進テンプレート。見積書送付直後には選ばない）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない",${AFTER_AIX_TEMPLATE_SCHEMA} "next_steps": ["Step1（今すぐ）: 具体的アクション。※条件変更（condition_change_type非null）時のStep1は必ず「変更後の具体条件名（エリア・駅・家賃・設備等を明記）でChrome拡張を使って物件を再検索する」を含めること", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "two_choice_mode": "true または false（boolean）。以下の全条件が揃う場合 true: checkpoint_stage='proposing' かつ 送付済み物件が1件以上ある かつ 顧客の最新メッセージが条件に関するトレードオフ質問（例: '築年数は古くなりますか？' '家賃5万円台だとこの条件は難しいですか？' 'ユニットバスOKでもいいですが室内洗濯機は難しいですか？' '5.5万と6.2万の違いは何ですか？' 'この価格は妥当ですか？'等・現在提案中の物件の条件・価格・設備について納得・比較・トレードオフの判断を求める質問）かつ 顧客が明示的に拒否・離脱していない。→ true の場合、AIXで条件に合う物件を追加オススメするか、テキストで相場や理由を説明するかをスタッフが2択で判断する場面。trueにならないケース: 顧客が「この物件の空室はありますか？」等の募集状況確認をしている場合 / 顧客が新しい検索条件を追加している場合（condition_change_type非null）/ aix=viewing_invite・application_push等の確定アクションがある場合。不明な場合は false に倒す", "reply_direction_label": "two_choice_mode=true の場合のみ設定。返信する場合の方向性を10字以内の日本語で（例: '条件説明' '相場説明' '不安解消' '内覧誘導' '価格の根拠説明'）。two_choice_mode=false の場合は必ずnull", ${(process.env.BRAIN_OPENER_SCHEMA ?? "").toLowerCase() === "on" ? `"reply_opener": "下の【reply_opener】で決めた書き出し1つ（かしこまりました / はい / 開口語なし / 〇〇頂きありがとうございます / お世話になっております / はじめまして）。決められない時は null", ` : ""}"ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。必ず「〜する」「〜させて頂く」の行動宣言形で書く。受け身文体は禁止。※条件変更直後（condition_change_type非null時）は「変更後条件の具体名+全力ピックアップ宣言」の構成が成約につながる（成約データから検証済み）。「ご希望のご条件」等の抽象表現ではなく変更後の具体条件名（エリア・駅・間取り・こだわり等）を明記すること。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "${emotionChoicesText()} のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で", "purchase_signal_level": "none/soft/strong/peak のいずれか。none=購買シグナルなし（挨拶・一般質問・雑談のみ、customer_intent=chat/null含む）/ soft=設備・費用・間取り・審査等の具体的な物件確認質問が1件=本気検討始まりシグナル（customer_questions が1件以上かつ具体的内容）/ strong=異カテゴリ2件以上の質問が重なっている（設備→入居日・費用→審査等）または複数物件の同時比較=申込前の高熱シグナル（customer_questions が2件以上かつ異カテゴリ、またはhesitancy_pattern=undecided）/ peak=申込直前最強シグナル。以下のいずれか1つでも該当したら質問件数に関係なく必ず peak にすること（成約データ分析で判明した盲点シグナル。1件しか質問がなくても soft/strong に落とさない）: ①申込許可伺い=「申し込んでもいいですか？」「一度お申し込みして内覧行きたいです」「抑えるだけ抑えててもいいんですか？」「申し込みするだけして通れば進みたい」「見学して決める形になりますが、それでも申し込みできますか？」等、申込の可否・許可を顧客側から伺ってきた ②物件名指し確定=「待ってください！！ここがいいです！」「○○に決めます」「○○で申請したいと思います」「やはり○○の物件にしようかな」等、特定物件を名指しで選んだ ③金額そのものの復唱=「153,200円ですか😭」「18万ですか😭」「4万台で、お願いします」等、見積・費用の金額をそのまま復唱してきた（落胆の絵文字を伴っても離脱ではなく最終障壁が価格のみのサイン） ④手続き・審査プロセスの具体質問=「保証会社はどこになりますか？」「クレジット払いは可能ですか？どのような流れになりますか」「必要書類は何ですか」等、買う前提の手続き質問 ⑤入居日逆算質問=「いつ入居なりそうですか？」「ここの入居はいつからいけるんですか？」「最長はいつまで伸ばせますか？」 ⑥入居日が具体的な日付・曜日・月で確定している ⑦他の申込者の有無を顧客側から自発的に確認している ⑧customer_questions が3件以上の連続具体質問。判断できない場合は none"}, "reply_direction": "返信の方向性を120字以内の1文で（今回の返信で何にどう応えるかが分かる具体さで。短いラベルはコード側の reply_direction_label が担う）。必ず『〜する』の行動方針形で書く（例: '申込みを前に進める' '内覧日を確定する' '不安を解消して継続する' '物件提案を再開する'）。brainにしかわからないDB知識（内覧履歴・送付済み物件・成約パターン・未完了タスク）から導く。必須フィールド・nullは避ける", "key_topics": ["返信本文に必ず含める実質的内容（最大3件・各30字以内）。挨拶・定型文・トーン指示・抽象的方針は書かない（それらは reply_direction / recommended_tone の役割）。具体的な情報・アクションのみ（例: '本人確認書類送付の催促' '申込みで物件を抑える提案' '空室確認結果の報告'）。該当なければ空配列 []"], "avoid_topics": ["返信で絶対に言及しない語・話題（最大${BRAIN_AVOID_TOPICS_MAX}件・各20字以内）。${BRAIN_RAIHAN_SLOT_ON ? "'来阪' は常に含める。" : ""}${BRAIN_ENTRY_TRIM_ON ? "この番で言うと外れる話題・直前スタッフ送信で使用済みの緊急表現・文脈に合わない誘い等（来阪・見積書・初期費用はコード側が入れる）" : `顧客が質問していない費用の話題・直前スタッフ送信で使用済みの緊急表現・文脈に合わないCTA等（例: ${BRAIN_RAIHAN_SLOT_ON ? "['来阪', '見積書', '初期費用']" : "['見積書', '初期費用']"}）`}。理由説明・トーン説明は書かず、禁止する語そのものを書く"], "urgency_appropriate": "true または false（boolean値で出力）。直近のスタッフ送信メッセージ1〜2件（[スタッフ] / [AIX:xxx]）に顧客を急かす危機感・緊急表現（ルール③の表現リスト参照）が含まれていれば false、含まれていなければ true", "recommended_tone": "次の5つの文字列のうち1つだけを正確に出力（組み合わせ・修飾・他の表現は禁止）: '共感的'（顧客が不安・悩んでいる時）/ 'テキパキ'（忙しそうな顧客・手続き系の返信）/ '慎重'（費用・審査・契約等の重要事項を扱う時）/ '明るく前向き'（物件が見つかった・内覧確定等の好機）/ '普通'（どれにも当てはまらない場合）", "customer_concern": "顧客の最新メッセージで提案物件・見積・条件に対して述べた懸念があれば {\\"topic\\": \\"階数|築年数|費用|駅距離|広さ|日当たり|審査|騒音治安|家族構成|設備|ペット駐車場|時期 のいずれか\\", \\"object\\": \\"顧客が使った語をそのまま（例: '2階' 'お風呂が狭い' '審査'）\\"}。懸念（迷い・不安・〜どうかな・高い・狭い・古い等）が無ければ null。過去メッセージの懸念は含めない", "customer_questions": ["顧客の最新メッセージに含まれる質問・確認事項を全て列挙（最大5件・各40字以内・質問の意図が分かる形で）。過去メッセージの質問は含めない。質問がなければ空配列 []"]${TURN_CONTRACT_BRAIN_ON ? ", " + BRAIN_TURN_CONTRACT_FIELD : ""}${sendSequenceOn() ? ", " + SEND_SEQUENCE_FIELD : ""}${BRAIN_PRIORITY_STEP_ON ? ", " + BRAIN_PRIORITIES_FIELD : ""}${BRAIN_MESSAGE_PLAN_ON ? ", " + BRAIN_MESSAGE_PLAN_FIELD : ""}${BRAIN_NEED_ON && !BRAIN_NEED_AFTER ? ", " + BRAIN_NEED_FIELD : ""}${BRAIN_PLAN_AHEAD_ON ? ", " + BRAIN_PLAN_AHEAD_FIELD : ""}${BRAIN_THREE_LAYER_ON && !BRAIN_THREE_LAYER_AFTER ? ", " + BRAIN_THREE_LAYER_FIELD : ""}${BRAIN_MAIN_POINT_ON && !BRAIN_MAIN_POINT_AFTER ? ", " + BRAIN_MAIN_POINT_FIELD : ""}, "repeated_concern": "顧客が会話全体で繰り返し確認しているテーマを短句で（例: '費用' '審査' 'キャンセル'）。会話履歴・前回セーブデータで2回以上登場した話題のみ。なければnull", "current_property": "現在話題の中心になっている物件名・号室（例: 'ライオンズ渋谷401'）。会話履歴・【送付済み物件】・物件ごとの状況（▶ 今の番の物件・候補）に実際に登場した表記を一字一句そのまま使う（創作・言い換え・要約禁止）。主語の無い発言（引用・「ここ」「空いてますか」）でも ▶ が1件を指していればその名前、候補が複数でも引用・文脈で1件に決まればその候補の名前を書く。特定できなければnull", "condition_change_type": "顧客の最新メッセージで検索条件の変更・追加・緩和、または物件ピックアップ依頼があったか。次のいずれか1つの文字列のみ: 'area_change'（エリア変更）/ 'rent_change'（家賃変更）/ 'layout_change'（間取り変更）/ 'equip_add'（設備・収納・こだわり条件の追加。WIC広め・SIC・南向き・オートロック・駐車場付き・ガレージ・ペット可等。【重要】「駐車場付きのお部屋がないか」「駐車場付きで探して」等は equip_add。現在提案中の物件の設備確認ではなく、新しい設備条件での物件探しの依頼 → aix は property_send が正解。絶対に property_check_result・acknowledge_check を選ばないこと）/ 'condition_relax'（条件緩和・拡大）/ 'pickup_request'（物件を送って・ピックアップ依頼・おすすめ依頼）/ 'multi'（複数変更）。なければnull。※すでに検討中の物件があっても新しい条件を追加したら必ず種別を返す。※【お客様の希望条件】（DB登録済み条件）と同じ内容の再言及は変更ではない", "condition_change_scope": "condition_change_type が非null の時だけ: 'permanent'（今後ずっとこの条件で探す＝希望条件の言い直し・変更・追加）/ 'temporary'（今回だけ・ついでに・比較や参考に別の条件でも見たい＝登録の希望条件は変えない）/ 'none'（検索条件の話ではない＝お客様が送った物件・特定の物件の質問・見積依頼等）。迷ったら permanent。condition_change_type が null なら null", "hesitancy_pattern": "顧客が決断を保留するパターンを最新メッセージで示しているか。'thinking'（検討します）/ 'callback'（また連絡します）/ 'waiting'（少し待ってほしい）/ 'undecided'（複数物件で迷い）/ 'timeline'（○月に決めたい）のいずれか1つ。なければnull", "future_timeline": "顧客が示した具体的な決断・申込タイムライン（例: '9月上旬'）。会話に実際に出た表現のみ（推測日付の創作禁止）。urgencyフィールドと矛盾させない。なければnull", "checkpoint_stage": "会話の実態フェーズ。hearing(ヒアリング中)・proposing(物件提案中)・viewing(内覧の調整中〜内覧後の検討中)・applying(申込検討中〜申込書提出)・contract(契約済み)のいずれか。conversations.statusやconversation_checkpointsの内容、メッセージの文脈を総合して判断。判断できない場合はnull。", "customer_intent": "お客様の今回の問い合わせ意図。次のいずれか1つ: question(疑問・確認質問―答えるだけでOK) / consultation(相談・アドバイス求め―選択肢提示) / desire(希望・条件・要望の表明―受け止め→提案) / decision(申込・内見・決定の意思表示―次ステップ案内) / positive(物件や提案への前向き反応―背中を押す) / negative(懸念・不安・否定的反応―解消してから次へ) / chat(雑談・一言―軽い返し)。当てはまるものがなければnull。※条件変更ルール（最重要）:最新メッセージにエリア・家賃・間取り・こだわり等の変更・追加・緩和が明示されている場合は、他のintent種別との競合に関係なく必ずdesireに設定すること（condition_change_typeと同一判定基準。フェイルクローズはnullではなくdesireに倒すこと）", "latent_intent": "お客様の送信動機・潜在意識の推論（20〜50字の自由記述）。次の3視点を総合して1文で言語化する: ①なぜ今このタイミングでこのメッセージを送ってきたのか（背景・きっかけ）を推測する ②表面的な質問の裏にある本当の懸念・不安・期待を推測する（例: 築年数を聞く→きれいな部屋への期待 / 初期費用を聞く→予算ギリギリの不安 / 審査を遠回しに確認→審査に落ちる不安） ③会話パターンから心理状態を読む（沈黙後の突然の質問→他社比較・状況変化の可能性 / 返信が短くなった→温度低下や多忙 / 同じ質問の繰り返し→説明が腹落ちしていない不安）。会話履歴に根拠がなく推測できない場合はnull（創作禁止）。※条件変更時の補足（condition_change_type非null時）:latent_intentには「複数回条件を変更しているが物件探しへの意欲は本物。変更を歓迎し新条件で即動くスタンスを明示することで信頼が積み重なり成約につながる」という趣旨を含めること", "engagement_stance": "今この局面で「押す」べきか「待つ」べきかの姿勢。'push' / 'wait' / null のいずれか1つだけを出力する。'wait'（押してはいけない局面）= ①直前AIXアクションが property_recommendation または property_check_result であり、顧客の最新メッセージが感謝・了承のみ（60字未満・質問・要望・懸念なし）の場合（ルール⑧の局面＝強推し直後の待ちフェーズ。**但し直前スタッフ送信に物件ピックアップの宣言があり、その後まだ物件を送っていない時は 'wait' にしない**＝ボールはこちら側）／${BRAIN_RULES_678_FACTS_ON ? STANCE_WAIT2_FACTS : "②直前スタッフ発言または直近3メッセージ以内の顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等のネガワードがある直後（ルール⑦の局面）"}。'push'（背中を押すべき局面）= purchase_signal_level が 'strong' または 'peak' であり、かつ顧客がまだ迷っている・質問を重ねている（hesitancy_pattern が非null、または customer_questions が1件以上）場合。上記いずれにも当てはまらない場合は null（デフォルト）。判断に迷ったら null に倒す。※'wait' を出した場合、返信側では購買シグナル強度によるクロージング指示（希少性訴求・CTA・申込期限の明示）が全て無効化される。押しの強さより局面判定が優先される設計であり、'wait' と 'push' を同時に成立させてはならない（ルール⑦・⑧が成立するなら purchase_signal_level が peak でも必ず 'wait'）"${BRAIN_THREE_LAYER_AFTER ? ", " + BRAIN_THREE_LAYER_FIELD : ""}${BRAIN_MAIN_POINT_AFTER ? ", " + BRAIN_MAIN_POINT_FIELD : ""}${BRAIN_NEED_AFTER ? ", " + BRAIN_NEED_FIELD : ""}${BRAIN_TURN_AIMS_ON ? ", " + BRAIN_TURN_AIMS_FIELD : ""}}
 
-${BRAIN_NOW_LATER_ON ? NOW_VS_LATER_RULES + "\n" : ""}${BRAIN_COND_PICKUP_RULES ? BRAIN_COND_PICKUP_RULES + "\n" : ""}${TURN_CONTRACT_BRAIN_ON ? BRAIN_TURN_CONTRACT_RULES + "\n" : ""}${BRAIN_PRIORITY_STEP_ON ? BRAIN_PRIORITY_RULES + "\n" : ""}${BRAIN_MESSAGE_PLAN_ON ? BRAIN_MESSAGE_PLAN_RULES + "\n" : ""}${BRAIN_NEED_ON ? (BRAIN_NEED_AFTER ? BRAIN_NEED_RULES_AFTER : BRAIN_NEED_RULES) + "\n" : ""}${BRAIN_PLAN_AHEAD_ON ? BRAIN_PLAN_AHEAD_RULES + "\n" : ""}${BRAIN_MATERIAL_PROVENANCE_ON ? MATERIAL_PROVENANCE_RULE + "\n" : ""}${BRAIN_THREE_LAYER_ON ? (BRAIN_THREE_LAYER_AFTER ? BRAIN_THREE_LAYER_RULES_AFTER : BRAIN_THREE_LAYER_RULES) + "\n" : ""}${BRAIN_MAIN_POINT_ON ? (BRAIN_MAIN_POINT_AFTER ? BRAIN_MAIN_POINT_RULES_AFTER : BRAIN_MAIN_POINT_RULES) + "\n" : ""}${BRAIN_TURN_AIMS_ON ? BRAIN_TURN_AIMS_RULES + "\n" : ""}
+${BRAIN_OUR_SEND_UPTAKE_ON ? OUR_SEND_UPTAKE_RULES + "\n" : ""}${BRAIN_READ_CANDIDATES_ON ? READ_CANDIDATES_RULES + "\n" : ""}${BRAIN_NOW_LATER_ON ? NOW_VS_LATER_RULES + "\n" : ""}${BRAIN_COND_PICKUP_RULES ? BRAIN_COND_PICKUP_RULES + "\n" : ""}${TURN_CONTRACT_BRAIN_ON ? BRAIN_TURN_CONTRACT_RULES + "\n" : ""}${BRAIN_PRIORITY_STEP_ON ? BRAIN_PRIORITY_RULES + "\n" : ""}${BRAIN_MESSAGE_PLAN_ON ? BRAIN_MESSAGE_PLAN_RULES + "\n" : ""}${BRAIN_NEED_ON ? (BRAIN_NEED_AFTER ? BRAIN_NEED_RULES_AFTER : BRAIN_NEED_RULES) + "\n" : ""}${BRAIN_PLAN_AHEAD_ON ? BRAIN_PLAN_AHEAD_RULES + "\n" : ""}${BRAIN_MATERIAL_PROVENANCE_ON ? MATERIAL_PROVENANCE_RULE + "\n" : ""}${BRAIN_THREE_LAYER_ON ? (BRAIN_THREE_LAYER_AFTER ? BRAIN_THREE_LAYER_RULES_AFTER : BRAIN_THREE_LAYER_RULES) + "\n" : ""}${BRAIN_MAIN_POINT_ON ? (BRAIN_MAIN_POINT_AFTER ? BRAIN_MAIN_POINT_RULES_AFTER : BRAIN_MAIN_POINT_RULES) + "\n" : ""}${BRAIN_TURN_AIMS_ON ? BRAIN_TURN_AIMS_RULES + "\n" : ""}
 【差分分析モード】userプロンプトに【前回の分析結論】がある場合、それを仮説として参照してよい。新着メッセージが前回結論を変えない場合は前回結論をほぼ維持してJSON出力してよい。ただし申込・内見確定・キャンセル・条件変更・送付物件の一部の見送り（ルール⑩）・フェーズ遷移のシグナルがあれば前回結論を破棄して再判断すること。JSONは常に全フィールド完全出力（ai_summary/ai_summary_json含む）。ただし customer_questions・customer_concern・repeated_concern・current_property・condition_change_type・hesitancy_pattern・future_timeline・key_topics・customer_intent・latent_intent・engagement_stance の11フィールド（turn_contract も同じく毎回ゼロから）（＝毎メッセージ再判定＝**鮮度リセット**対象。※このリストは「いつ判定したか（鮮度）」のリストであって「何についての判定か（意味のスコープ）」のリストではない。repeated_concern / future_timeline / current_property は会話全体スコープの値なので、下流では『今回のメッセージが何であるか』の判定に使われない）は前回結論を引き継がず、必ず今回の新着メッセージから毎回ゼロから再判定すること（前回の質問リスト・保留パターン・前回の物件名や日付を含む必須内容の再掲は禁止）。purchase_signal_level は累積シグナル（message-localではない）。前回値を継承しつつ今回の新着メッセージのシグナルで更新すること（soft→strong への昇圧はするが、strong→none への突然の降格は禁止。会話全体でシグナルを積み上げる設計）。key_topicsは今回のメッセージ文脈から本当に必要な内容のみ。前回送った物件の空き日付・案内可能日など文脈が変わった情報は絶対に引き継がない。
 
 【reply_opener（文の構成: 返信の書き出し）】
@@ -1474,7 +1512,7 @@ ${BRAIN_RAIHAN_SLOT_ON ? "ルール⑤（来阪表現禁止・常時）: avoid_t
 
 ${BRAIN_RULES_678_FACTS_ON ? RULE6_FACTS : "ルール⑥（感謝・了承への返し方）: 顧客の最新メッセージが感謝・了承のみ（「ありがとうございます」「よろしくお願いします」「わかりました」「了解」「承知」「かしこまりました」等、60字未満かつ質問・要望・懸念を含まない）の場合 → reply_direction を「感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。中身のない進捗テンプレ・条件の再ヒアリングで埋めない」にする。**aix フィールドは null にする（直前と同じAIXアクションを繰り返さない・感謝返し場面でスタッフがAIXボタンを押す必要はない）**。成約会話の実データでは感謝返しへの物件提案・見積提案は68%含まれており悪反応は1.6%のみ — 物件提案そのものは禁じない。禁じるべきは「予告だけで実体のない進捗テンプレ（急いで進めております等）」「条件の再ヒアリング（予算・間取りの再質問）」「検討依頼の繰り返し」。avoid_topics にこれらを追加する。直前スタッフ発言に既に「ご検討ください」がある場合は特に厳守（繰り返しはしつこさになる）。迷った時: メッセージに質問・要求が1つでもあればこのルールを適用しない。"}
 
-${BRAIN_RULES_678_FACTS_ON ? RULE7_FACTS : "ルール⑦（ネガ文脈の感謝には営業を一切乗せない）: 直前スタッフ発言または直近顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等が含まれる場合 → reply_direction を「受け止めのみ（50〜110字）」にする。avoid_topics に「物件提案」「見積提案」「申込誘導」を追加する。key_topics は空にする。成約会話分析でこの文脈での営業は最も高い離脱率につながっている。迷った時: ネガワードが直近3メッセージ以内にあれば適用する。"}
+${BRAIN_RULES_678_FACTS_ON ? RULE7_FACTS : applyPromptRules1113("ルール⑦（ネガ文脈の感謝には営業を一切乗せない）: 直前スタッフ発言または直近顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等が含まれる場合 → reply_direction を「受け止めのみ（50〜110字）」にする。avoid_topics に「物件提案」「見積提案」「申込誘導」を追加する。key_topics は空にする。成約会話分析でこの文脈での営業は最も高い離脱率につながっている。迷った時: ネガワードが直近3メッセージ以内にあれば適用する。")}
 
 ${BRAIN_RULES_678_FACTS_ON ? RULE8_FACTS : "ルール⑧（強推し直後の了承には再推奨しない）: 直前AIXアクションが property_recommendation または property_check_result（空き確認済み）であり、かつ顧客の最新メッセージが感謝・了承のみ（「かしこまりました」「ありがとうございます」等、60字未満・質問・要望なし）の場合 → reply_direction を「感謝を1行で受け取り、検討を見守る待ちの姿勢で締める（50〜110字）」にする" + rule8HoldDirectionSuffix() + "。aix は null にする（直前と同じAIXアクションを繰り返さない）。avoid_topics に「他物件の募集状況確認」「新規物件ピックアップ」「別物件の提案」「申込誘導」を追加する。key_topics は空にする。根拠: 強く1件を推した直後にさらに推す・別物件を探すと「しつこさ」になり離脱率が上がる。顧客が了承した時点でボールは顧客側にある。待つことが最善。迷った時: 直近AIX履歴に property_recommendation/property_check_result があり顧客が感謝・了承を返したら必ず適用する。"}
 ${rule8HoldNote()}　【解除の一文（2026-09-23 竹内・あっぴ事例）】直前のスタッフ送信に**物件ピックアップの宣言**（「新着で…出次第お送りさせて頂きます」「ピックアップしてお送りさせて頂きます」等）があり、**その後まだ物件を送っていない**場合はルール⑧を適用しない（engagement_stance を 'wait' にしない・aix を null にしない）。宣言した時点でボールはこちら側にあり、待つ相手がいない。${BRAIN_NOW_LATER_ON ? NOW_LATER_RULE8_TAIL : "この時の aix は property_send、reply_direction は「宣言したピックアップを実行して届ける」にする。"}${ackAfterPromiseReplyEnabled() ? "ただしお客様の今の発言がお礼・了承だけの番は、aix を null にしてお礼に短く返信する（受けだけか待ちの形の1文は ack_form・約束を果たす AIX はその後・竹内さんの決定 10/14）。" : ""}根拠: 「出次第お送りします」宣言104件の79.8%は14日以内に実際の物件送付で果たされている（＝待ちではなく未履行の仕事）。
@@ -1495,7 +1533,7 @@ ${rule8HoldNote()}　【解除の一文（2026-09-23 竹内・あっぴ事例）
   ③ 弊社のサービス・仕組みに関する質問（「なぜ初期費用が安いのですか？」等）
   ④ 物件の具体的な情報確認（「この物件の空室状況は？」「退去日はいつですか？」等）
   ⑤ お客様が「〜ますか？」「〜でしょうか？」「〜かな」「〜教えてください」「〜知りたい」等で締める文
-  ① ③はAIが直接答えてよい一般知識質問（確認不要）、④は管理会社確認が必要な個別情報質問として分類`;
+  ① ③はAIが直接答えてよい一般知識質問（確認不要）、④は管理会社確認が必要な個別情報質問として分類`);
 
 export type BrainSystemBlock = { type: "text"; text: string; cache_control: { type: "ephemeral"; ttl: "1h" } };
 export type BrainSystemBlocks = {
@@ -1629,6 +1667,37 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (p) Object.assign(meta as unknown as Record<string, unknown>, p);
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:combine-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-12 作業員22（KB d030d496・fd1c7c62）: 判断の順番の型（check-order.pickCheckOrder）を meta から選んで記録だけ。CHECK_ORDER_TABLE=shadow|on の時だけ
+  //   meta.check_order_type（型の id）・meta.check_order（候補・手がかり）を足す（既定 off＝何も足さない）。返信か AIX かは読まない・変えない。配分より先に置く（配分が型の id を読む）
+  try {
+    if (checkOrderMode() !== "off") {
+      const { checkOrderRecord } = await import("@/app/lib/check-order-wire");
+      const m = meta as unknown as Record<string, unknown>;
+      const rec = checkOrderRecord(m, typeof m.check_order_scene === "string" ? m.check_order_scene : null);
+      m.check_order = rec;
+      if (rec.type) m.check_order_type = rec.type;
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "brain:check-order-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-12 作業員22（KB fd1c7c62・ea2a9405①）: 番ごとの部品の配分（型×深さ）を記録だけ。CONDUCTOR_ALLOCATION=shadow|on の時だけ meta.conductor_allocation を足す
+  //   （既定 off＝何も足さない＝今と同じ）。返信か AIX か（action）は読まない・変えない。部品を実際に止めるのは試験で悪化0を確かめてから
+  try {
+    const { allocationMode, allocationFromMeta } = await import("@/app/lib/conductor-allocation");
+    if (allocationMode() !== "off") {
+      const a = allocationFromMeta(meta as unknown as Record<string, unknown>);
+      if (a) (meta as unknown as Record<string, unknown>).conductor_allocation = a;
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "conductor:allocation-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-12 作業員22（竹内さん「ブレインの統括の部分も具体的に判断できるように」）: 統括の指示書（型・配分・事実・足りない情報・照らし合わせ・疑いの印・確かさ）を記録だけ。
+  //   CONDUCTOR_BRIEF=shadow の時だけ meta.conductor_brief を足す（既定 off＝何も足さない）。道は照らすために読むだけで変えない。疑いの印と確かさは判断の根拠のメモにも写す
+  try {
+    if (conductorBriefMode() !== "off") {
+      const { buildConductorBrief } = await import("@/app/lib/conductor-brief");
+      const mm = meta as unknown as Record<string, unknown>;
+      const brief = buildConductorBrief(mm);
+      mm.conductor_brief = brief;
+      if (mm.judge_basis && typeof mm.judge_basis === "object") Object.assign(mm.judge_basis as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "conductor:brief-failed", error: e instanceof Error ? e.message : String(e) })); }
   return meta;
 }
 async function analyzeConversationDeep(...args: Parameters<typeof analyzeConversationCore>): ReturnType<typeof analyzeConversationCore> {
@@ -1759,7 +1828,7 @@ async function analyzeConversationCore(
           .or(linkOr)
           .or("source.is.null,source.neq.line_group")
           .order("sent_at", { ascending: false })
-          .limit(20),
+          .limit(materialTurnMustOn() ? WIDE_LIMIT.sentProps : 20),
         supabase
           .from("sent_properties")
           .select("property_name, room_no, sent_at, rent")
@@ -1780,7 +1849,7 @@ async function analyzeConversationCore(
       .select("property_name, room_no, created_at, source, channel")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(20),
+      .limit(materialTurnMustOn() ? WIDE_LIMIT.sentImages : 20),
     // templates: match_templates RAGに移行済み。バルクフェッチ廃止。
     // 旧: won_count 上位5件を全会話共通で注入 → キャッシュ破棄の原因かつ文脈無関係。
     // 新: 会話コンテキスト（フェーズ・戦略・人間性）に近いテンプレを match_templates RAGで取得。
@@ -1817,7 +1886,7 @@ async function analyzeConversationCore(
       .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern, property_names, prop_statuses, estimate_sent, prop_cost_notes, generated_text")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(30),
+      .limit(materialTurnMustOn() ? WIDE_LIMIT.aixLogs : 30),
     // H6(Fable5): 予約送信済みメッセージ（pending）— 追客提案が予約済み送信と重複するのを防ぐ
     supabase
       .from("scheduled_messages")
@@ -1849,7 +1918,7 @@ async function analyzeConversationCore(
       .select("scheduled_date, scheduled_time, status, property_name, property_address, actual_date, viewing_report, viewing_report_at")
       .eq("conversation_id", conversationId)
       .order("scheduled_date", { ascending: false })
-      .limit(3),
+      .limit(materialTurnMustOn() ? WIDE_LIMIT.viewingHistory : 3),
     // applying_pattern: RAG化により match_reply_knowledge に統合済み。
     // ai_reply_knowledge category='applying_pattern' は match_reply_knowledge RPC が
     // 全カテゴリ対象でベクトル検索するため、バルクフェッチは不要。プレースホルダーで置き換え。
@@ -1889,6 +1958,27 @@ async function analyzeConversationCore(
   if (error || !messages || messages.length === 0) {
     console.warn("[brain-core] analyzeConversation abort: msgs fetch failed or empty", conversationId, "error:", error?.message ?? "none");
     return null;
+  }
+  // 2026-11-12 作業員1（材料の受け取る側・MATERIAL_TURN_MUST=on）: 広げて読んだ送付・資料の画像・AIX の記録・内覧の記録を、
+  //   今の番にお客様が名前で呼んだ物件の行は件数の外で残し、残りは元の件数（20・20・30・3）に戻す。今の番の物件が無ければ今と同じ
+  if (materialTurnMustOn()) {
+    try {
+      const turnText = (() => { const out: string[] = []; for (const m of messages as Array<{ sender: string; text: string | null }>) { if (m.sender !== "customer") break; out.push(String(m.text ?? "")); } return out.join("\n"); })();
+      type NameRow = { property_name?: string | null; property_names?: string[] | null };
+      const allNames = [
+        ...((sentPropsResult.data ?? []) as NameRow[]).map((r) => r.property_name),
+        ...((sentImagePropsResult.data ?? []) as NameRow[]).map((r) => r.property_name),
+        ...((viewingHistoryResult.data ?? []) as NameRow[]).map((r) => r.property_name),
+        ...((aixLogsResult.data ?? []) as NameRow[]).flatMap((r) => r.property_names ?? []),
+      ];
+      const keys = turnMustKeys(turnText, allNames);
+      const cut = (res: { data?: unknown }, n: number, label: string) => {
+        const r = selectNewestWithMust((res.data ?? []) as NameRow[], n, (x) => rowHitsKeys(x.property_names ?? x.property_name ?? null, keys));
+        (res as { data: unknown }).data = r.rows;
+        if (r.beyondLimit) console.log(JSON.stringify({ tag: "brain:material-turn-must", conversationId, label, kept: r.beyondLimit }));
+      };
+      cut(sentPropsResult, 20, "sent_properties"); cut(sentImagePropsResult, 20, "sent_image_properties"); cut(aixLogsResult, 30, "aix_usage_logs"); cut(viewingHistoryResult, 3, "viewing_history");
+    } catch (e) { console.warn("[brain-core] material-turn-must skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // H5(Fable5): 全メッセージが画像/添付のみ（テキスト0件）の場合は分析しない。
   // 「（画像/添付）×N」だけを読んだHaikuの当てずっぽう提案がキャッシュされるのを防ぐ
@@ -2283,6 +2373,21 @@ async function analyzeConversationCore(
 
   const statusMeaning = convStatus && STATUS_MEANING[convStatus] ? STATUS_MEANING[convStatus] : (convStatus ?? "");
   const statusText = convStatus ? `\n現在のステータス: ${statusMeaning}` : "";
+  // 2026-11-12 作業員19（時間の土台・TIME_FACTS=on・既定 off＝空文字で今と1文字も変わらない）: 今・曜日・祝日・電話／弊社／管理会社の営業・お客様とこちらが最後に送ってからの経過・入居希望日までの日数を、
+  //   決まった計算（app/lib/time-facts.ts）の事実の1行で渡す（道の言葉は入れない・決めるのはブレイン）。約束の期限（calendar_events の【連絡日】）は後で足す
+  const timeFactsText = timeFactsEnabled() ? (() => {
+    try {
+      const mv = resolveConditionMoveIn(pc?.move_in_time ?? null, { nowIso: new Date().toISOString() });
+      return timeFactsLine(computeTimeFacts({
+        hour: jstParts().hour,
+        lastCustomerAtIso: typedMessages.find((m) => m.sender === "customer")?.created_at ?? null,
+        lastStaffAtIso: typedMessages.find((m) => m.sender !== "customer" && !m.is_aix_generated)?.created_at ?? typedMessages.find((m) => m.sender !== "customer")?.created_at ?? null,
+        moveInYmd: mv.kind === "future" ? ymdStrOf(mv.start.ymd) : null,
+      }));
+    } catch { return ""; }
+  })() : "";
+  // 2026-11-12 作業員19（PROMISE_DEADLINE_WORDS=on・既定 off＝空文字）: 約束の種類ごとの期日の言葉（今の時刻・実送信の数から作った表・app/lib/promise-deadline-words.ts）を事実として。決めるのはブレイン
+  const deadlineWordsText = promiseDeadlineWordsEnabled() ? promiseDeadlineWordsLine({ hour: jstParts().hour }) : "";
 
   // Recent starred examples (good replies) for this customer
   // 2026-09-11 データ衛生: 生成失敗文（☆付きで混入していた）・テスト送信は優良返信例にしない（読む側で除外）
@@ -2894,6 +2999,27 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   let customerStateBlockText = customerState ? buildCustomerStateBrainBlock(customerState) : "";
   const customerStateText = customerStateBlockText;
   if (materialMissOn && materialMisses.length) customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${materialMissNote(materialMisses)}`;
+  // 2026-11-12 作業員4: やり取りの照らし合わせの残り（事実の一覧・道の言葉なし）をブレインにも。道に触る所なので入口とは別スイッチ（既定 off CONDUCTOR_EXCHANGE_LEDGER_BRAIN=on）。毎回変わる並び（3）
+  try {
+    const el = await import("@/app/lib/exchange-ledger");
+    if (el.exchangeLedgerBrainOn()) {
+      const turnAtEL = typedMessages[0]?.created_at ?? null;
+      const lineEL = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAtEL ? Date.parse(turnAtEL) + 1 : Date.now() }));
+      if (lineEL) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【${lineEL}】`; console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "brain", len: lineEL.length })); }
+    }
+  } catch (e) { console.warn("[brain-core] exchange-ledger skipped:", e instanceof Error ? e.message : String(e)); }
+  // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF=shadow・既定 off）の入力。照らし合わせの残りと果たし済みの約束を集める（プロンプトには入れない・記録だけ）
+  const briefOnNow = conductorBriefMode() !== "off";
+  const briefInputs: import("@/app/lib/conductor-brief").BriefInputs = {};
+  if (briefOnNow) {
+    try {
+      const el = await import("@/app/lib/exchange-ledger");
+      const turnAtBF = typedMessages[0]?.created_at ?? null;
+      const led = el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAtBF ? Date.parse(turnAtBF) + 1 : Date.now() });
+      const unkeptAt = new Set(led.open.filter((o) => o.kind === "our_promise_unkept").map((o) => o.at));
+      briefInputs.ledger = { open: led.open, keptPromises: [...new Set(led.ours.filter((p) => p.kind === "promise" && !unkeptAt.has(p.at)).map((p) => p.key))] };
+    } catch (e) { console.warn("[brain-core] brief ledger skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-09-27 竹内「審査中は審査中としておく」③: お送りしたピックアップのうち資料の現況が「審査中」のお部屋（該当が無ければ何も足さない）。
   //   毎回変わる並び（3）の中・今の状況の後ろに置く（system の前置き＝1時間キャッシュは変えない）
   try {
@@ -2985,6 +3111,27 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-11 作業員1（A1・弱い所 326 の system の側②）: 聞かれていなくても、主のお部屋の資料に書いてある入居時期・保証会社・礼金敷金 等を参考の材料に（BRAIN_FOCUS_DOC_DIGEST=on の時だけ・既定 off）
   // 11/11 a1-doc-dig2-1111: 主のお部屋が無い番（送った直後の「気になります」等）は物件ごとの台帳の今の番の物件（引用・名指し／主語の抜けた番の1件）を対象に（threadDocTarget）。
   //   「一番新しく送った物件」は q404 で取り違えた（お客様の言う長居東でなく直近のサンシエ南巽）ので使わない。複数・不明は出さない
+  // 2026-11-11 作業員1（弱い所 573・574）: 電話の後・内覧の後のスタッフの手打ちのお礼の1通から、決まった日程・新しい条件・確認の約束・申込する部屋を材料に
+  //   （保存の欄は使われていない: 電話終了後 AIX 0回・内覧の記録 3/135）。OFFLINE_RESULT_MATERIAL=on の時だけ（既定 off）
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const { loadOfflineResultLineWithin } = await import("@/app/lib/offline-result-server");
+      const offlineLine = await loadOfflineResultLineWithin(5_000, conversationId);
+      if (offlineLine) customerStateBlockText += `\n\n${offlineLine}`;
+    } catch (e) { console.warn("[brain-core] offline-result skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  // 2026-11-11 作業員1（KB 決定 親 P0 ecd7b961・対象の一致 12/30）: お客様が URL・物件の画像だけを送り本文に物件名が無い番は、今の番の物件が空だった。
+  //   既にある読み取り（画像の書き起こし・共有文・SUUMO のページ）と、こちらが送った部屋の指紋（㎡・間取り・家賃）から物件名・号室を決め、
+  //   材料の1行と資料の写しの対象（threadDocTarget の前段）に入れる。TURN_SHARED_PROPERTY_TARGET=on の時だけ（既定 off）
+  let sharedTurnTarget: import("@/app/lib/turn-shared-property").SharedTarget | null = null;
+  if (!isPostApplyStatus(convStatus) && (unrepliedTurn.hasImage || /https?:\/\//.test(unrepliedTurn.text ?? ""))) {
+    try {
+      const [{ loadTurnSharedPropertyWithin }, { sharedTargetMaterialLine }] = await Promise.all([import("@/app/lib/turn-shared-property-server"), import("@/app/lib/turn-shared-property")]);
+      sharedTurnTarget = await loadTurnSharedPropertyWithin(6_000, conversationId);
+      const line = sharedTargetMaterialLine(sharedTurnTarget);
+      if (line) customerStateBlockText += `\n\n${line}`;
+    } catch (e) { console.warn("[brain-core] turn-shared-property skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   let docDigestTarget: { name: string; roomNo: string | null } | null = null;
   if (focusDocDigestOn() && !contractTerms && !isPostApplyStatus(convStatus)) {
     if (focusRoomForMaterial) docDigestTarget = { name: focusRoomForMaterial.name, roomNo: focusRoomForMaterial.roomNo ?? null };
@@ -2992,7 +3139,10 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       try {
         const { loadPropertyThreads } = await import("@/app/lib/property-thread-server");
         const pt = await Promise.race([loadPropertyThreads(conversationId), new Promise<null>((r) => setTimeout(() => r(null), 6_000))]);
-        docDigestTarget = threadDocTarget(pt);
+        if (sharedTurnTarget) {
+          const { turnDocTargetWithShared } = await import("@/app/lib/turn-shared-property");
+          docDigestTarget = turnDocTargetWithShared(pt, sharedTurnTarget);
+        } else docDigestTarget = threadDocTarget(pt);
       } catch (e) { console.warn("[brain-core] focus-doc-digest target skipped:", e instanceof Error ? e.message : String(e)); }
     }
   }
@@ -3011,7 +3161,9 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   }
   const confirmTopicsAsked = procedureAnswer || isPostApplyStatus(convStatus) ? []
     : detectConfirmTopics(unrepliedTurn.text, { moveInAsked: sceneEvidence?.scene === "S2_move_in" })
-      .filter((t) => !(t === "parking" && contractTerms?.topics.includes("parking")) && !(t === "move_in" && contractTerms?.topics.includes("move_in")));
+      .filter((t) => !(t === "parking" && contractTerms?.topics.includes("parking")) && !(t === "move_in" && contractTerms?.topics.includes("move_in"))
+        // 2026-11-11 作業員1（弱い所 564）: ペットを契約条件の網が受け持った時（CONTRACT_TERMS_PET_CLEANING=on）は外す
+        && !(t === "pet" && contractTerms?.topics.includes("pet")));
   const confirmTopic: ConfirmTopicMaterial | null = await loadConfirmTopicRoutesWithin(8_000, { conversationId, topics: confirmTopicsAsked, target: focusRoomForMaterial });
   if (confirmTopic?.note) {
     customerStateBlockText += `\n\n${confirmTopic.note}`;
@@ -3119,14 +3271,19 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   let splitExhaustLine = "";
   if ((weakExhaustDemoted() || searchSplitServerEnabled()) && searchExhaustedEnabled() && !isPostApplyStatus(convStatus)) {
     try {
-      const exNow = searchExhausted(
-        brainLedgerInput.messages.filter((m) => !!m.createdAt).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt as string, isAix: m.isAix ?? null })),
+      // 2026-11-12 作業員1（q001・q002）: 送れる候補があるか（pickupReadyMaterial）を判定に渡す（EXHAUSTED_PICKUP_READY=on）／「〇〇周辺全域から…ピックアップさせて頂きました」の後の
+      //   新しい条件の無い「もう少し」の番は材料の強さを strong に（EXHAUSTED_AREA_ALL_STRONG=on・後の規則には使わない）。どちらも既定 off
+      const exMsgs = brainLedgerInput.messages.filter((m) => !!m.createdAt).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt as string, isAix: m.isAix ?? null }));
+      const exNow0 = searchExhausted(
+        exMsgs,
         {
-          conditionChangedThisTurn: false, pickupReady: null,
+          conditionChangedThisTurn: false, pickupReady: exhaustedPickupReadyOn() ? pickupReadyMaterial : null,
           deliveredAixAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => (r.aix_type === "property_send" || r.aix_type === "property_recommendation") && r.sent_at).map((r) => r.sent_at as string),
           zenryokuSentAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => r.aix_type === "zenryoku_support" && r.sent_at).map((r) => r.sent_at as string),
         },
       );
+      const exNow = areaAllExhaustUpgrade(exNow0, unrepliedTurn.text ?? "", undefined, exMsgs);
+      if (exNow.upgraded) console.log(JSON.stringify({ tag: "brain:exhausted-area-all", conversationId, markerAt: exNow.markerAt }));
       const line = searchSplitServerEnabled() ? splitMaterialLine(exNow) : exhaustedMaterialLine(exNow);
       // 2026-10-28 #24: 出し切りの材料が届いたかをログで見られるように（静かに壊れる所）
       console.log(JSON.stringify({ tag: "brain:exhausted", conversationId, exhausted: exNow.exhausted, strength: exNow.strength ?? null, markerAt: exNow.markerAt, reason: exNow.reason }));
@@ -3234,6 +3391,19 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     console.log(JSON.stringify({ tag: "brain:now-fulfillable", conversationId, chars: nf.length }));
   }
   // 2026-10-29 AIX の統括からの差し戻し（opts.sendBack がある時だけ・決めるのはブレイン）
+  // 2026-11-12 作業員16（CHECK_ORDER_GUIDE=on の時だけ・既定 off）: 場面と記録から選んだ竹内さんの型の「確かめる順番となぜ」を材料の1行で（道・次の一手の言葉は入れない・決め直さない）
+  let checkOrderGuideRec: { type: string; steps: string[] } | null = null;
+  if (checkOrderGuideOn() && !isPostApplyStatus(convStatus)) {
+    const f = brainLedger.facts;
+    const g = checkOrderGuideFor(preBrainCues({
+      scene: brainSceneRes?.scene ?? resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene,
+      customerText: unrepliedTurn.text ?? "", hasImageOrUrl: !!unrepliedTurn.hasImage || /https?:/.test(unrepliedTurn.text ?? ""),
+      pickupPromisedUnfulfilled: !!f.pickupPromisedUnfulfilled, confirmationPromisedUnfulfilled: !!f.confirmationPromisedUnfulfilled, estimatePromisedUnfulfilled: !!f.estimatePromisedUnfulfilled,
+      pickupReady: pickupReadyMaterial, firstContact: f.propertiesSentCount === 0 && f.lastStaffEntry == null,
+    }));
+    if (g) { customerStateBlockText += `\n${g.text}`; checkOrderGuideRec = { type: g.type, steps: g.steps }; }
+    console.log(JSON.stringify({ tag: "brain:check-order-guide", conversationId, type: g?.type ?? null, steps: g?.steps.length ?? 0 }));
+  }
   if (opts?.sendBack) {
     const { sendBackMaterialLine } = await import("@/app/lib/aix-sendback");
     const sbl = sendBackMaterialLine(opts.sendBack, opts.sendBackFirstAix ?? null);
@@ -3359,7 +3529,10 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
             : "",
           factsForConductor.length ? factLedgerBlock(factsForConductor as unknown as Parameters<typeof factLedgerBlock>[0], Date.now()) : "",
         ].filter(Boolean).join("\n\n"),
-        carryLine: carryQueryLine(pmForCarry?.conductor_meta ?? null), ruleMeta: "", nearFocus,
+        // 2026-11-12 作業員4（CONDUCTOR_INTAKE_STAFF_REFRESH・既定 off・LLM なし）: 前のお客様の番の後にこちらがした事（AIX・約束・前の読みのやる事が果たされたか）を「前の番」の行に足す
+        carryLine: [carryQueryLine(pmForCarry?.conductor_meta ?? null), await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.intakeStaffRefreshOn() || !turnAt0) return ""; const prevTodos = ((opts?.prevMeta as { conductor_intake?: { answer?: { todos?: Array<{ kind?: string; what?: string }> } | null } } | null | undefined)?.conductor_intake?.answer?.todos) ?? null; return os.staffSinceLine({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(turnAt0) + 1, prevTodos }); } catch { return ""; } })(),
+          // 2026-11-12 作業員4（竹内さん「こちらから送った部分と相手が送ってきた部分を照らし合わせられるように」）: ここ数番の照らし合わせの残り（事実だけ・既定 off CONDUCTOR_EXCHANGE_LEDGER=on）
+          await (async () => { try { const el = await import("@/app/lib/exchange-ledger"); if (!el.exchangeLedgerOn()) return ""; const line = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAt0 ? Date.parse(turnAt0) + 1 : Date.now() })); if (line) console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "intake", len: line.length })); return line; } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
       });
     }).catch(() => null);
   }
@@ -3545,6 +3718,11 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
       if (farMoveInEarly) {
         customerStateBlockText += `\n\n${farMoveInBrainNote(farMoveInEarly)}`;
         console.log(JSON.stringify({ tag: "brain:far-move-in", conversationId, moveIn: farMoveInEarly.moveInLabel, contact: farMoveInEarly.contactLabel, days: farMoveInEarly.daysUntilContact, source: farMoveInEarly.source }));
+      } else {
+        // 2026-11-13 作業員1: 約束の番ではない番にも、入居が先なら会社の事実（hold_period）を事実の1行で渡す（FAR_MOVE_IN_FACT=on の時だけ）
+        const { farMoveInFactLine } = await import("@/app/lib/contact-promise");
+        const factLine = farMoveInFactLine(pc?.move_in_time ?? null, (await import("@/app/lib/business-clock")).monthClockNowIso());
+        if (factLine) { customerStateBlockText += `\n\n${factLine}`; console.log(JSON.stringify({ tag: "brain:far-move-in-fact", conversationId })); }
       }
     } catch (e) { console.warn("[brain-core] far-move-in skipped:", e instanceof Error ? e.message : String(e)); }
   }
@@ -3600,6 +3778,33 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   // 2026-10-20 竹内さん（55bf37b6「申込までの地図」）: 本線＋分かれ道の上の今の位置・申込へ向けた次の一手・本線への戻り方（app/lib/apply-route-map.ts・決定論・LLM なし）。
   //   合図は作り直さない（customer-state・行動台帳・発言の型・場面の証拠・お客様の事情）。毎回変わる並び＝キャッシュの印の外。
   //   既定 off（APPLY_ROUTE_MAP=on で入れる）。off の時は空文字＝プロンプトは1バイトも変わらない
+  // 2026-11-12 作業員1（竹内さん「何の情報が足りていないから」の土台・INFO_FILL_MAP=on・既定 off）: 申込までの地図の今の駅から次へ進むのに要る情報を、
+  //   分かっている／分かっていない／古い／材料が届いていない で埋めた事実の一覧（道の言葉なし・判断はブレイン）
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const { infoFillMapOn, infoFillForNode, infoFillMaterialLine } = await import("@/app/lib/info-fill-map");
+      // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF）の時も埋まり具合を作る（プロンプトに足すのは INFO_FILL_MAP=on の時だけ）
+      if (infoFillMapOn() || briefOnNow) {
+        const { resolveRouteNode, ROUTE_NODES, SCREENING_WORRY_RE } = await import("@/app/lib/apply-route-map");
+        const { rowHitsKeys, turnMustKeys } = await import("@/app/lib/material-turn-must");
+        const nodeIF = resolveRouteNode({ stage: customerState?.stage ?? null, searching: customerState?.searching ?? null, ledger: brainLedger.facts, routeType: routeTypeNow ?? null }).node;
+        const focusIF = (() => { const r = customerState?.focusKey ? customerState.properties.find((x) => x.key === customerState.focusKey) ?? null : null; return r ? `${r.building}${r.room ? ` ${r.room}` : ""}` : null; })();
+        const keysIF = focusIF ? turnMustKeys(focusIF, [focusIF]) : new Set<string>();
+        const checkIF = (aixLogs as Array<{ aix_type: string | null; sent_at: string | null; property_names?: string[] | null }>).filter((l) => l.aix_type === "property_check_result" && l.sent_at && (!focusIF || rowHitsKeys(l.property_names ?? null, keysIF))).map((l) => l.sent_at as string).sort().pop() ?? null;
+        const screeningIF = typedMessages.filter((m) => m.sender === "customer").map((m) => String(m.text ?? "")).find((t) => SCREENING_WORRY_RE.test(t)) ?? null;
+        const cellsIF = infoFillForNode(nodeIF, {
+          nowMs: Date.now(), pc: (pc ?? null) as never, focusProperty: focusIF, vacancyCheckedAt: checkIF,
+          estimateSent: focusIF ? brainLedger.facts.estimateSentFor.some((n) => rowHitsKeys(n, keysIF)) : brainLedger.facts.estimateSent,
+          viewingDate: brainLedger.facts.viewingAppointment ? "決まっている" : null, viewingDone: !!brainLedger.facts.viewingDone,
+          screeningInfo: screeningIF ? screeningIF.slice(0, 30) : null,
+        });
+        const lineIF = infoFillMaterialLine(nodeIF, cellsIF, nodeIF ? ROUTE_NODES[nodeIF].name : null);
+        if (lineIF && infoFillMapOn()) customerStateBlockText += `\n\n${lineIF}`;
+        if (briefOnNow) briefInputs.info = { node: nodeIF ?? null, cells: cellsIF };
+        if (infoFillMapOn()) console.log(JSON.stringify({ tag: "brain:info-fill", conversationId, node: nodeIF, cells: cellsIF.map((c) => `${c.key}:${c.state}`) }));
+      }
+    } catch (e) { console.warn("[brain-core] info-fill skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   let applyRouteText = "";
   if (applyRouteMapEnabled()) {
     try {
@@ -3705,11 +3910,11 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     return isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("templates", templatesText)}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${d("examples", examplesText)}${timingText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}
+    ? `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("templates", templatesText)}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${d("examples", examplesText)}${timingText}${timeFactsText}${deadlineWordsText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("contractExamples", contractExamplesPhaseText)}${d("winning", winningPatternsText)}${d("templates", templatesText)}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${d("examples", examplesText)}${prevMetaText}${timingText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}${latestSupersedesRule() ? `
+    : `${cacheOrderOn ? "" : `${aixCatalogText}${actionRulesText}`}${d("contractExamples", contractExamplesPhaseText)}${d("winning", winningPatternsText)}${d("templates", templatesText)}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${d("examples", examplesText)}${prevMetaText}${timingText}${timeFactsText}${deadlineWordsText}${mgmtNightText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyRouteText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${d("judgeExamples", judgeExamplesText)}${d("routeType", routeTypeText)}${d("ragKnowledge", ragKnowledgeText)}${latestSupersedesRule() ? `
 
 【今回の発言の読み方】${latestSupersedesRule()}` : ""}
 
@@ -4759,7 +4964,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       && process.env.CONTRACT_TERMS_REPLY !== "off"
       && (!sceneEvidence || sceneEvidence.scene === "S2_move_in" || sceneEvidence.scene === "S3_screening"
         // 礼金・敷金・フリーレントだけを聞いた番（初期費用の中身・総額は聞いていない）は S9 でも資料で答える（YUMA「礼金はかかりますか？」が AIX【初期費用について】になった）
-        || (sceneEvidence.scene === "S9_cost_breakdown" && contractTerms.topics.every((t) => t === "key_money" || t === "deposit" || t === "free_rent")
+        // 2026-11-11 作業員1（弱い所 564・実物 10597「室内清掃費ってつけないんですかね？」）: 清掃費（CONTRACT_TERMS_PET_CLEANING=on の時だけ拾う）も同じ
+        || (sceneEvidence.scene === "S9_cost_breakdown" && contractTerms.topics.every((t) => t === "key_money" || t === "deposit" || t === "free_rent" || t === "cleaning_fee")
           && !/初期費用|内訳|総額|合計|全部で|トータル/.test(unrepliedTurn.text ?? "")))
       && (finalAix === "property_check_result" || finalAix === "acknowledge_check" || (finalAix === "cost_breakdown" && sceneEvidence?.scene === "S9_cost_breakdown")
         || (finalAix === "guarantor_info" && contractTerms.topics.every((t) => t === "guarantor_company") && contractTerms.routes.every((r) => !/複数/.test(r.why))))) {
@@ -5178,6 +5384,15 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       const sentReactionAsks = (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: string; about?: string | null }>;
       const sentReactionBrainReply = /^(?:|null|none)$/i.test(String((parsed as { aix?: unknown }).aix ?? "").trim())
         && sentReactionAsks.length > 0 && sentReactionAsks.every((a) => a.about === "reaction_to_sent" && (a.route === "reply" || a.route === "none"));
+      // 2026-11-13 作業員7b（BRAIN_AIX_FOLLOWS_CONTRACT・既定 off・app/lib/aix-follows-contract.ts）: 決まった道の物件の AIX がブレインの turn_contract と食い違う番は、2段・2択の前に本質の側に寄せる
+      if (brainAixFollowsContractOn() && !isPostApplyStatus(convStatus)) {
+        const fv = alignAixToContract({ finalAix, rawAix: (parsed as { aix?: unknown }).aix, asks: (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as ContractAskLite[] });
+        if (fv) {
+          console.log(JSON.stringify({ tag: "brain:aix-follows-contract", conversationId, from: finalAix ?? null, to: fv.to === "aix" ? fv.aix : "reply", rule: fv.rule }));
+          if (fv.to === "reply") { finalAix = null; sceneSignalCheckPattern = null; decisionSource = "brain:aix_follows_contract(reply)"; }
+          else { finalAix = fv.aix; sceneSignalCheckPattern = null; decisionSource = decisionSource ?? "llm"; }
+        }
+      }
       const twoStageArgs: Parameters<typeof resolveTwoStageOrDirect>[0] = {
         screeningBrainReply,
         sentReactionBrainReply,
@@ -5427,6 +5642,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         && pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready) {
         console.log(JSON.stringify({ tag: "brain:first-contact-ready-pickup", conversationId }));
         finalAix = "property_send";
+        // 2026-11-10 作業員1（q118）: 2段はこの前でヒアリングの番として決まり済み＝ここでピックアップの約束の2段を作る（FIRST_CONTACT_READY_TWO_STAGE=on の時だけ）
+        if (!twoStage) { twoStage = firstContactReadyPickupTwoStage(unrepliedTurn.text ?? ""); if (twoStage) console.log(JSON.stringify({ tag: "brain:first-contact-ready-two-stage", conversationId })); }
       }
       firstContactPickup = resolveFirstContactPickup({ finalAix, custSentConditionForm, sceneEvidence: compactSceneEvidence(sceneEvidence), imageType: firstContactImageType });
       // 2026-10-09 竹内さん「友だち追加だけで条件がまだ無い初回は AIX【条件ヒアリング】が正解・guard:first_contact で消さない（条件が既にある初回とは分ける）」
@@ -5434,14 +5651,18 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-10-09 同じ竹内さんの答え（試験 q021「ブラックなど審査は通らないですか」・友だち追加の直後の最初の発言）: 条件がまだ無い初回に LLM が返信（AIX なし）を
       //   選んだ番も AIX【条件ヒアリング】（審査の不安への答えはヒアリングの AIX の文に添える）。物件の画像・URL の初回（募集状況の確認）は触らない。戻す FIRST_CONTACT_HEARING_FROM_REPLY=off
       // 会社の事実の質問（「不動産屋の会社名教えてください」試験 q066＝竹内さんは会社名を答えた返信）は返信のまま
-      if (finalAix === null && !twoStage && !custSentConditionForm && (process.env.FIRST_CONTACT_HEARING_FROM_REPLY ?? "").toLowerCase() !== "off"
+      // 2026-11-12 作業員4（弱い所 brain:question-first-then-condition-hearing）: お客様が自分で物件を送る申し出（「随時お送りさせて頂いてもよろしいでしょうか」）の
+      //   初回は AIX【条件ヒアリング】を残さず返信（竹内さん q432・フォームはお客様の次の番）。既定 off FIRST_CONTACT_SELF_SEND_REPLY=on
+      const selfSendReply = firstContactSelfSendReplyOn() && customerOffersToSendProperties(typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? ""));
+      if (selfSendReply) console.log(JSON.stringify({ tag: "brain:first-contact-self-send-reply", conversationId, finalAix }));
+      if (finalAix === null && !selfSendReply && !twoStage && !custSentConditionForm && (process.env.FIRST_CONTACT_HEARING_FROM_REPLY ?? "").toLowerCase() !== "off"
         && matchCompanyFacts(typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "").join(" ")).length === 0
         && !typedMessages.some((m) => m.sender === "customer" && (!!m.image_type || /https?:\/\/|^\[画像\]|^\[動画\]/.test(m.text ?? "")))
         && !pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready) {
         console.log(JSON.stringify({ tag: "brain:first-contact-hearing-from-reply", conversationId }));
         finalAix = "condition_hearing"; replyMode = "aix";
       }
-      const keepHearing = finalAix === "condition_hearing" && !custSentConditionForm && (process.env.FIRST_CONTACT_KEEP_HEARING ?? "").toLowerCase() !== "off"
+      const keepHearing = finalAix === "condition_hearing" && !custSentConditionForm && !selfSendReply && (process.env.FIRST_CONTACT_KEEP_HEARING ?? "").toLowerCase() !== "off"
         && !pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready;
       if (keepHearing) {
         console.log(JSON.stringify({ tag: "brain:first-contact-keep-hearing", conversationId }));
@@ -6106,7 +6327,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       console.log(JSON.stringify({ tag: "brain:two-choice-narrow", conversationId, promiseOrNow: promiseOrNow.reason, keep: nv.keep, ...(nv.keep ? { preferred: nv.preferred } : { decide: nv.decide }) }));
       if (nv.keep) twoChoicePreferred = twoChoicePreferred ?? nv.preferred;
       else {
-        if (nv.decide === "aix_estimate") { finalAix = "estimate_sheet"; replyMode = "aix"; twoStage = null; decisionSource = `${decisionSource ?? "llm"}+two_choice_narrow(estimate)`; }
+        // 2026-11-12 作業員7（TWO_CHOICE_NARROW_ESTIMATE_SOLE・既定 off）: 見積以外の約束（空き・探す・設備）もある番は見積書で決め切らない（約束のまま・q077）
+        const narrowEstimateBlocked = nv.decide === "aix_estimate" && narrowEstimateSoleOn() && hasNonCostPromise(((normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: unknown; about?: unknown }>));
+        if (narrowEstimateBlocked) console.log(JSON.stringify({ tag: "brain:two-choice-narrow-estimate-blocked", conversationId }));
+        if (nv.decide === "aix_estimate" && !narrowEstimateBlocked) { finalAix = "estimate_sheet"; replyMode = "aix"; twoStage = null; decisionSource = `${decisionSource ?? "llm"}+two_choice_narrow(estimate)`; }
         promiseOrNow = null;
       }
     }
@@ -6170,6 +6394,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
     }
     // 2026-11-12 作業員16（案1・BRAIN_NOW_LATER_FIRST=on の時だけ）: 今の番と後の番を分ける欄を読む（記録だけ・aix/turn_contract は決め直さない＝P0 9eb6aa9c・0dbfbc97 ②）
     const nowLaterParsed: NowVsLater | null = BRAIN_NOW_LATER_ON ? normalizeNowVsLater((parsed as { now_vs_later?: unknown }).now_vs_later) : null;
+    // 2026-11-12 作業員16（案2）: 読みの候補・受け取られ方（記録だけ・決め直さない）
+    const readCandParsed: ReadCandidates | null = BRAIN_READ_CANDIDATES_ON ? normalizeReadCandidates((parsed as { read_candidates?: unknown }).read_candidates) : null;
+    const uptakeParsed: OurSendUptakeRow[] | null = BRAIN_OUR_SEND_UPTAKE_ON ? normalizeOurSendUptake((parsed as { our_send_uptake?: unknown }).our_send_uptake) : null;
+    if (BRAIN_READ_CANDIDATES_ON || BRAIN_OUR_SEND_UPTAKE_ON) console.log(JSON.stringify({ tag: "brain:read-uptake", conversationId, rc: readCandidatesDigest(readCandParsed), reading: chosenReading(readCandParsed), up: ourSendUptakeDigest(uptakeParsed), finalAix: finalAix ?? null }));
     if (BRAIN_NOW_LATER_ON) {
       const tcRoutes = (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []).map((a) => (a as { route?: string | null }).route ?? null);
       console.log(JSON.stringify({ tag: "brain:now-later", conversationId, nl: nowLaterDigest(nowLaterParsed), aixNow: aixNowOf(nowLaterParsed, finalAix) ?? null, finalAix: finalAix ?? null, conflicts: nowLaterConflicts(nowLaterParsed, { finalAix, contractRoutes: tcRoutes }) }));
@@ -6191,7 +6419,9 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         : templateHint,
       // 2026-10-13 竹内さん（ブレインの使い残し 1）: この AIX を送った直後の続きのテンプレ（/api/recommend-templates の Sonnet の代わり・post-aix-template-rec.ts）
       // 2026-11-07 送る物の並び（TWO_MESSAGE_SEQUENCE・既定 off）: ブレインの send_sequence を形だけ確かめて置く（1通だけ・形の崩れは置かない）
-      ...(sendSequenceOn() ? (() => { const seq = sanitizeSendSequence((parsed as { send_sequence?: unknown }).send_sequence, finalAix ?? null); return seq ? { send_sequence: seq, send_sequence_reply_count: replyCountOf(seq) } : {}; })() : {}),
+      // 2026-11-13 作業員7b（FIRST_HEARING_SEQUENCE・既定 off）: ブレインが AIX【条件ヒアリング】を選んだ番は 返信→AIX→フォームの案内（決まった文）の並び（send-sequence.ts hearingSendSequence）。書き手が書くのは1通目だけ
+      ...(() => { const hs = hearingSendSequence(finalAix ?? null); return hs ? { send_sequence: hs, send_sequence_reply_count: writerReplyCountOf(hs) } : {}; })(),
+      ...(sendSequenceOn() && !hearingSendSequence(finalAix ?? null) ? (() => { const seq = sanitizeSendSequence((parsed as { send_sequence?: unknown }).send_sequence, finalAix ?? null); return seq ? { send_sequence: seq, send_sequence_reply_count: replyCountOf(seq) } : {}; })() : {}),
       after_aix_template: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer || !finalAix ? undefined : sanitizeAfterAixTemplate(parsed.after_aix_template),
       next_steps: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer ? undefined
         : Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
@@ -6206,6 +6436,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-10-29 材料の自己申告（記録だけ）・読めなかった材料（ログだけだったのを digest にも残す＝毎週数える）
       material_read_misses: materialMisses.length ? [...new Set(materialMisses)] : undefined,
       material_missing: brainMaterialSelfReportOn() ? normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? undefined : undefined,
+      // 2026-11-12 作業員1（竹内さん「何が何で何なのか把握できるように」）: 材料の抜けの台帳（記録だけ・道は変えない・MATERIAL_GAP_LEDGER=shadow）
+      // 2026-11-13 作業員1（G1 親 680）: 分からない事を帳面の6つ（電話・内覧の場・管理会社の結果・会社の事実・物件の資料・こちら側）×入口で取りに行く／スタッフしか知らない（AIX）で記録（MATERIAL_GAP_BOOKS=shadow）
+      material_books: materialGapBooksMode() === "shadow" ? materialBooksDigest(normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? []) : undefined,
+      material_gaps: materialGapLedgerMode() === "shadow" ?materialGapsDigest(normalizeMaterialMissing((parsed as { material_missing?: unknown }).material_missing) ?? [], [...new Set(materialMisses)]) : undefined,
       // 2026-10-28 その場の側の2択（TWO_CHOICE_NOW_SIDE）: 右の返信を押した時の約束の種類と指定（画面が replyHint に渡す・採点は 2段:<種類> も道に数える）
       two_choice_reply_kind: promiseOrNow?.side === "now" ? promiseOrNow.kind : undefined,
       two_choice_reply_hint: promiseOrNow?.side === "now" ? promiseOrNow.replyHint ?? undefined : undefined,
@@ -6265,6 +6499,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（"n21"＝お礼の番で申込への AIX を候補にした・作業員1の AIX の統括が読む）
       decisions_1103: decisions1103.length ? decisions1103 : undefined,
       near_opinion: nearOpinionNote ?? undefined,
+      // 2026-11-12 作業員4: OUR_SIDE_TO_COMPOSE=on（既定 off）の時だけ、こちら側の状態を文の材料として残す（判断の材料には足さない）
+      our_side_note: await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.ourSideToComposeOn() || !typedMessages[0]) return undefined; const n = os.ourSideComposeNote({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(typedMessages[0].created_at) }); return n ? maskBrain(n) : undefined; } catch { return undefined; } })(),
       conductor_meta: CONDUCTOR_META_MODE !== "off" ? ((nd) => withSearchPlan(withMaterials(buildConductorMeta({
         scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, stage: customerState?.stage ?? null,
         turnAt: typedMessages[0]?.sender === "customer" ? typedMessages[0].created_at : null,
@@ -6323,8 +6559,17 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       seven_read: brainSevenOn() ? (normalizeBrainSeven((parsed as { seven_read?: unknown }).seven_read) ?? undefined) : undefined,
       latent_read: brainSevenOn() ? (normalizeBrainLatent((parsed as { latent_read?: unknown }).latent_read) ?? undefined) : undefined,
       judge_basis: brainJudgeBasisOn() ? (normalizeJudgeBasis((parsed as { judge_basis?: unknown }).judge_basis) ?? undefined) : undefined,
+      // 2026-11-12 作業員22: 判断の根拠のメモの次の行き先と答えられるのに約束にした印（BRAIN_JUDGE_BASIS_NEXT=on の時だけ・文の統括へ plan）
+      judge_next: judgeNextOf((parsed as { judge_basis?: unknown }).judge_basis),
       // 2026-11-12 作業員16（案1・BRAIN_NOW_LATER_FIRST=on の時だけ）: 今の番と後の番（記録だけ・決め直さない）
       now_vs_later: nowLaterParsed ?? undefined,
+      check_order_guide: checkOrderGuideRec ?? undefined,
+      read_candidates: readCandParsed ?? undefined,
+      our_send_uptake: uptakeParsed ?? undefined,
+      // 2026-11-12 作業員22: 判断の順番の型の手がかりの場面（CHECK_ORDER_TABLE=shadow|on の時だけ・既定 off は欄なし＝今と同じ）
+      // 2026-11-12 作業員22: 統括の指示書の入力（CONDUCTOR_BRIEF=shadow の時だけ・既定 off は欄なし）
+      conductor_brief_inputs: briefOnNow ? briefInputs : undefined,
+      check_order_scene: checkOrderMode() !== "off" ? resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene : undefined,
       aix_now: BRAIN_NOW_LATER_ON ? aixNowOf(nowLaterParsed, finalAix) : undefined,
       customer_concern: customerConcern,
       // 内部伝搬: SOURCE_ACCEPT_RATE ゲート抑制の事実と、1回目の signalAix 結果の持ち回り
@@ -6335,7 +6580,11 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-09-12 段2: 判断の出どころと今回の顧客発言の場面の証拠（JSONB・スキーマ変更不要）。brain_decision_logs にも同じ値を残す
       decision_source: finalAix ? decisionSource : (decisionSource === "guard:viewing" || decisionSource === "guard:first_contact" ? decisionSource : null),
       // 3巡目（10/07・AIX の判断のずれの調査 1468132d）: AIX を外した番（2段の約束・手続きの質問・資料で答える・連絡待ち 等）の出どころを捨てていた → 記録用に別の欄で残す（画面・関所は decision_source だけを見るので挙動は変わらない）
-      decision_source_no_aix: !finalAix && decisionSource && decisionSource !== "guard:viewing" && decisionSource !== "guard:first_contact" ? decisionSource : undefined,
+      // 2026-11-12 作業員7（KB 1a78e4e3 ④の名札・既定 off・DECISION_SOURCE_UNLABELED=on）: LLM が AIX を選んだ（reply_mode=aix・aix あり）のに最後が AIX なしで、
+      //   どの決まりも名前を残さなかった番に名札を付ける（試験の答案 11/08〜 で 24回: q202・q428・q372・q003・q038・q092 等）。約束の直後のお礼（ackAfterPromise）は名前を付ける
+      decision_source_no_aix: !finalAix && decisionSource && decisionSource !== "guard:viewing" && decisionSource !== "guard:first_contact" ? decisionSource
+        : !finalAix && !decisionSource && decisionSourceUnlabeledOn() && parsed.reply_mode === "aix" && !!normalizeAixActionKey(parsed.aix)
+          ? (ackAfterPromise ? "rule:ack_after_promise" : twoStage ? `rule:unlabeled_two_stage(${twoStage.kind})` : "rule:unlabeled_aix_drop") : undefined,
       // 2026-11-06（試験の本質の採点・統括役）: 送れる候補の材料の値（記録だけ・判断は変えない）
       pickup_ready: pickupReadyMaterial ?? undefined,
       // 2026-10-13（ブレインの使い残し 4）: 下げた上書き（規則の答え would とブレインの判断 brain の食い違い）
@@ -7388,10 +7637,14 @@ async function analyzeAndSaveBrainMetaInner(
     await supabase.from("conversations").update({ brain_analyzed_at: new Date().toISOString() }).eq("id", conversationId);
     return true; // より新しい発言を見た判断がすでに保存済み（呼び出し元はそれを読めばよい）
   }
+  // 2026-11-13 作業員8b: 欄の中の .slice で絵文字が片割れになると PostgREST が「Empty or invalid json」で断り、判断が保存されず回り直し続けた
+  //   （会話 c40e1625・11/12 だけで 138回）。書く直前に JSON として壊れる文字だけ取り除く（意味は変えない・直した欄はログに出す）
+  const dbSafe = sanitizeJsonForDb(metaToWrite);
+  if (dbSafe.fixed) console.warn(JSON.stringify({ tag: "brain:meta-json-fixed", conversationId, ...dbSafe.fix }));
   const { data: writtenRows, error } = await supabase
     .from("conversations")
     .update({
-      suggested_aix_meta: metaToWrite,
+      suggested_aix_meta: dbSafe.value,
       brain_analyzed_at: new Date().toISOString(),
       is_hot: true,
       ...(analysisMode === "full" ? {
@@ -7401,7 +7654,7 @@ async function analyzeAndSaveBrainMetaInner(
       // incrementalとfull両方でbrain_full_*を更新（次回のSkip/incremental判定に使う）
       brain_full_analyzed_at: new Date().toISOString(),
       brain_full_msg_count: totalMsgCount ?? 0,
-      last_brain_meta: metaToWrite,
+      last_brain_meta: dbSafe.value,
     })
     .eq("id", conversationId)
     .select("id"); // no-op（0行マッチ）を偽陽性なく検知するために追加

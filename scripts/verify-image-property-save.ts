@@ -9,6 +9,7 @@
 //
 // 書き込みはテスト会話「YUMA」だけ。書いた行は最後に消す。
 export {};
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 import { readPropertyImage } from "../app/lib/property-image-read";
 import { resolveReadProperty } from "../app/lib/property-name-match";

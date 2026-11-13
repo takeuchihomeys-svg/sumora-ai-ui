@@ -41,6 +41,8 @@ export function replySplitWriterNote(count: number, roles?: ReadonlyArray<string
  *   ブレインの send_sequence で分けさせる形（TWO_MESSAGE_SEQUENCE・v2）は試験で竹内さんの2通以上の番 0/6（ブレインは RR の番を2段・AIX・1通で出す）。
  *   竹内さん本人の200日（手打ち・従業員の混ざらない番 約970）: 返信1通 74%・返信2通 9%。2通目の役は「別の要件」か「次の一歩」。
  *   ブレインが通数を決めた番（count≥2）は上の replySplitWriterNote が先＝この1行は出さない。
+ * ⛔ 2026-11-12 凍結（統括役の決め・既定 off のまま・消すのは後でまとめて）: 効かなかった。理由: 1行は入ったが書き手は2つの要件を1通にまとめた（w7-self-dig1 q416）。
+ *   代わり: 2通に分けるかは、今夜の数え（scripts/audit-takeuchi-split.ts）の型から send-combo-table.ts の組の表で選ぶ（書き手に任せない）。
  */
 export function replySplitSelfOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.REPLY_SPLIT_WRITER_SELF ?? "").trim().toLowerCase() === "on";

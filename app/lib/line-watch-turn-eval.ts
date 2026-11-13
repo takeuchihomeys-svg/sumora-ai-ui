@@ -9,6 +9,7 @@ import { resolveAckTopicScope, outOfTopicActs } from "./ack-topic-scope";
 import { sceneKeyOf, type SceneKey } from "./line-watch-turn";
 import { watchAixMappingEnabled } from "./aix-should-be";
 import { postApplyAtTurn, watchPostApplyScopeEnabled, type PostApplyTimeline } from "./line-watch-scope";
+import { watchAixRecordV2On, toAixRecords, staffAixState, type AixLogRow } from "./aix-record";
 
 const P = (s: string) => Date.parse(s);
 /** 2026-10-13 v7「手打ちでも AIX の番」の判定を使うか（既定 on・戻す LINE_WATCH_STAFF_FACT=off） */
@@ -47,6 +48,8 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
    *   渡さない（埋め戻し・画面の仮の判定）・LINE_WATCH_POSTAPPLY_SCOPE=off は今まで通り conv_status だけ
    */
   postApplyTimeline?: PostApplyTimeline | null;
+  /** 2026-11-13 WATCH_AIX_RECORD_V2: 送った LINE のメッセージ id → 書き手（messages.staff_writer）。押した人の欄に使う */
+  writerOf?: (lineMessageId: string) => { writer: string | null; basis?: string | null } | null;
 }): WatchTurnEval {
   const { nowMs } = ctx;
   const w = staffWindowOf({ customerTurnAt: t.customer_turn_at, msgs: ctx.msgs, presses: ctx.presses, nowMs });
@@ -75,6 +78,8 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
   if (postApply && pa?.reason && pa.reason !== "status") j.detail.post_apply_reason = pa.reason;
   if (topicOut.length && !j.detail.out_of_topic_acts) j.detail.out_of_topic_acts = topicOut;
   j.detail.draft_src = pick.src;
+  // 2026-11-13 作業員1（WATCH_AIX_RECORD_V2=on）: staff_aix が空の理由（押した／AIX 無し／次の番の一手／まだ窓が開いている）
+  if (watchAixRecordV2On()) j.detail.staff_aix_state = staffAixState({ windowPresses: w.presses.length, closed: w.closed, customerLastAt: w.customerLastAt, endAt: w.endAt, allPresses: ctx.presses });
   const until = P(w.staffFirstAt ?? w.endAt);
   const dec = ctx.decisions.filter((d) => {
     const inTurn = d.analyzed_msg_ts ? P(d.analyzed_msg_ts) >= P(t.customer_turn_at) - 1000 && P(d.analyzed_msg_ts) <= P(w.customerLastAt) + 1000 : P(d.created_at) >= P(t.customer_turn_at);
@@ -86,7 +91,10 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
   const patch: Record<string, unknown> = {
     staff_first_at: w.staffFirstAt,
     staff_texts: w.texts.map((x) => ({ at: x.at, burst: x.burst, text: x.text.slice(0, 2000) })),
-    staff_aix: w.presses.map((p) => ({ aix_type: p.aix_type, check_pattern: p.check_pattern, at: p.at, burst: p.burst })),
+    // 2026-11-13 作業員1（WATCH_AIX_RECORD_V2=on）: 1件の AIX を細かい欄で残す（下の種類・物件の状態・何通目・ブレインの勧めと同じか・直したか・見積・押した人）
+    staff_aix: watchAixRecordV2On()
+      ? toAixRecords((ctx.presses as ReadonlyArray<AixLogRow>).filter((p) => w.presses.some((q) => q.at === p.created_at)), (at) => w.presses.find((q) => q.at === at)?.burst ?? false, ctx.writerOf)
+      : w.presses.map((p) => ({ aix_type: p.aix_type, check_pattern: p.check_pattern, at: p.at, burst: p.burst })),
     decision_id: dec?.id ?? null,
     verdict: j.verdict,
     verdict_detail: j.detail,

@@ -204,6 +204,19 @@ export function parseCustomerTime(text: string): string | null {
   return `${h}:${min}`;
 }
 
+export const viewingWeekdayToOfferedOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) =>
+  (env.VIEWING_WEEKDAY_TO_OFFERED ?? "").trim().toLowerCase() === "on";
+/** 候補の日（M/D）のうち、その曜日（0=日）の物。年はお客様の発言の時刻の年（12月の発言で1月の候補は翌年） */
+export function offeredDaysOfWeekday(offered: readonly string[], dow: number, atMs: number): string[] {
+  const p = jstParts(Number.isFinite(atMs) ? atMs : Date.now());
+  return offered.filter((md) => {
+    const m = Number(md.split("/")[0]), d = Number(md.split("/")[1]);
+    if (!m || !d) return false;
+    const y = m < p.m - 6 ? p.y + 1 : m > p.m + 6 ? p.y - 1 : p.y;
+    return new Date(Date.UTC(y, m - 1, d)).getUTCDay() === dow;
+  });
+}
+
 export type DateReplyCtx = {
   atMs: number;
   /** こちらが出している候補の日（M/D）。1つだけなら「大丈夫です」で決まる */
@@ -230,7 +243,13 @@ export function classifyCustomerDateReply(text: string | null | undefined, ctx: 
   const scope = dateLines.join("\n");
   // 「27日以降」「月曜日以降」は日を決めていない（範囲）→ 日・開始時刻の指定に読まない
   const rangeDay = RANGE_DAY_RE.test(scope);
-  const day = rangeDay ? null : parseCustomerDay(scope, ctx.atMs);
+  let day = rangeDay ? null : parseCustomerDay(scope, ctx.atMs);
+  // 2026-11-13 作業員5（統括役・q406）: 曜日だけ（「土曜日で」）の返事は、こちらの候補にその曜日の日が1つだけあればその日に読む
+  //   （次の土曜を今日から数えると候補の日とずれる時がある＝試験の仮の時計・候補が翌週の時）。VIEWING_WEEKDAY_TO_OFFERED=on の時だけ（既定 off）
+  if (day && !ctx.offeredDays.includes(day) && viewingWeekdayToOfferedOn() && !MD_RE.test(scope)) {
+    const wd = scope.match(WEEKDAY_RE)?.[1];
+    if (wd) { const hit = offeredDaysOfWeekday(ctx.offeredDays, "日月火水木金土".indexOf(wd), ctx.atMs); if (hit.length === 1) day = hit[0]; }
+  }
   const time = rangeDay ? null : parseCustomerTime(scope);
   const vague = VAGUE_DAY_RE.test(scope);
   const neg = NEG_RE.test(scope);

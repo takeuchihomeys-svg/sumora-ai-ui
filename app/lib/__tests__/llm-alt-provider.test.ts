@@ -7,6 +7,7 @@ import {
   isAutoSendCall, isPostApplyCall, isPostApplyStatus, willRouteAlt, createSseConverter,
   DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_FLASH_MODEL,
   readProviderTarget, readAltRoutes, targetConfigFor, isAltRouteDenied, QWEN_ENDPOINT, QWEN_DEFAULT_MODEL, wellFormedJson, NO_CLAUDE_FALLBACK_ACTIONS,
+  altFailureType,
 } from "../llm-alt-provider";
 import { LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "../llm-usage-recorder";
 import { AIX_SHARED_SYSTEM_PREFIX, buildSystemBlocks } from "../aix-system-blocks";
@@ -334,7 +335,10 @@ console.log("── ★ 別クラウドの呼び出しも llm_usage_logs に残�
   const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
   t("★ 成功した呼び出しを記録している", /recordAltUsage\(\{[\s\S]{0,300}?status: 200/.test(provider));
   t("★ 失敗した呼び出しも記録している（フォールバックの回数が数えられる）",
-    /errorType: "alt_failed"/.test(provider));
+    provider.includes("errorType: altFailureType(e)") && altFailureType(new Error("deepseek 500: busy")) === "alt_failed");
+  // 2026-11-13 作業員8b: 試験の下見の cassette_miss（実物の本文）は plan_miss・それ以外は alt_failed
+  t("下見の cassette_miss は plan_miss（失敗に数えない）", altFailureType(new Error('deepseek 400: {"type":"error","error":{"type":"cassette_miss","message":"llm-cassette plan: 入力が main と違う（conductor_intake）"}}')) === "plan_miss");
+  t("時間切れは alt_failed のまま", altFailureType(new Error("The operation was aborted due to timeout")) === "alt_failed");
   t("★ action と会話 ID を残している（どの AIX・どの会話かを後から追える）",
     /action: routeName, conversationId/.test(provider));
   t("★ 応答を clone してから読む（本来の応答を壊さない）", /res\.clone\(\)/.test(provider));

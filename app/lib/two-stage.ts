@@ -19,6 +19,11 @@ import { splitRequests } from "./request-ledger";
 import { jstParts } from "./jst-date";
 import { MGMT_TOPIC_RE, mgmtNightNoDirectOn } from "./mgmt-hours-split";
 import { routeFix1020 } from "./brain-route-fix-1020";
+import { brainAixFollowsContractOn } from "./aix-follows-contract"; // 11/13 作業員7b: T4 は BRAIN_AIX_FOLLOWS_CONTRACT の③（古いスイッチ TWO_STAGE_KIND_FROM_ABOUT も残す）
+/** 2026-11-13 作業員7b: ブレインの約束の about が search_condition の時は、AIX の欄が物件確認したでもピックアップの約束にする（既定 off） */
+export function twoStageKindFromAboutOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_STAGE_KIND_FROM_ABOUT ?? "").trim().toLowerCase() === "on";
+}
 export type TwoStageKind = "pickup" | "check" | "estimate";
 /** 2026-11-05 ピックアップの約束の直後のお礼・了承（スタンプも）を2段にしない（ack-topic-scope.twoStageStampAckEnabled と同じスイッチ・既定 off） */
 function twoStageStampAckOn(): boolean { return typeof process !== "undefined" && (process.env?.TWO_STAGE_STAMP_ACK ?? "").trim().toLowerCase() === "on"; }
@@ -519,6 +524,17 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
     if (twoStageAckNoCheckEnabled() && i.ackOnly === true && !/[?？]|ですか|ますか|でしょうか/.test(ct)) return null;
     // 2026-10-15 軸: ブレインが「何について」を決めていればそれで分ける（空き・募集状況＝募集状況の約束／費用＝見積と一緒／それ以外＝聞かれた事に答える）
     //   語の網（空い・募集…）は about が無い時の予備
+    // 2026-11-13 作業員7b（統括役の頼み・V2 で残った2段の外れ T4: q009・q367）: ブレインが自分の turn_contract の約束を「探す」（about=search_condition）と書いたのに、
+    //   AIX の欄が物件確認しただった番を、聞かれた事の確認の約束（check_question）にしていた＝ブレインの答えは探す約束（2段:pickup）。
+    //   ブレインの本質（約束の about）に揃えてピックアップの約束にする（決まった計算はブレインの答えの中の食い違いを本質の側に寄せるだけ）。既定 off（TWO_STAGE_KIND_FROM_ABOUT=on）
+    if ((twoStageKindFromAboutOn() || brainAixFollowsContractOn()) && i.askAbout === "search_condition" && !i.asksCost && !i.brought) {
+      return {
+        kind: "pickup",
+        direction: "ご希望のご条件（言い直し・追加があればその条件を具体的に）でお部屋をピックアップしてお送りすると約束する返信にする（物件名・家賃は書かない・送るのは後で AIX）。言い方は実際の送信の形「〇〇さんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！」",
+        keyTopic: "お部屋ピックアップしお送りする約束",
+        source: "rule:two_stage_promise(pickup)",
+      };
+    }
     const about = twoStageAxisEnabled() ? (i.askAbout ?? null) : null;
     const askedOtherByAxis = about ? !["vacancy", "property_cost"].includes(about) && !i.asksCost : null;
     const askedOther = (askedOtherByAxis ?? (!i.asksCost && !/空い|空き|募集|まだ(?:あり|残)|埋ま|https?:|\[画像\]/.test(ct) && /[?？]|ですか|ますか|でしょうか|かな/.test(ct)))
@@ -745,4 +761,17 @@ export function pickupDirectionWithBrainAsk(
   if (b.length < 6 || v.direction.includes(b)) return v.direction;
   const clip = b.length <= 140 ? b : `${b.slice(0, 140)}…`;
   return `${v.direction}【ブレインの読み（依頼の中身）: ${clip}】→ この読みにあるお客様のご条件・エリア・物件・ご質問は省かず具体的に入れる（ピックアップの約束の形・内覧や申込の一文を足さない事・物件を送るのは後で AIX の決まりは上のまま）`;
+}
+
+/**
+ * 2026-11-10 作業員1（統括役の頼み・q118）: 初回に条件がそろった番で、ブレインの条件ヒアリングを初回の守りがピックアップ（property_send）に変えた時、
+ *   2段（ピックアップの約束の返信）はこの前で決まり済み（ヒアリングの番として null）＝守りが AIX を消して「返信」だけになっていた（rfp-on-full q118#1）。
+ *   この時だけピックアップの約束の2段を作る（竹内さんは条件を復唱してピックアップの約束・spec q118）。既定 off（FIRST_CONTACT_READY_TWO_STAGE=on）
+ */
+export function firstContactReadyTwoStageOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.FIRST_CONTACT_READY_TWO_STAGE ?? "").trim().toLowerCase() === "on";
+}
+export function firstContactReadyPickupTwoStage(customerText: string, env?: Record<string, string | undefined>): TwoStageVerdict | null {
+  if (!firstContactReadyTwoStageOn(env)) return null;
+  return resolveTwoStage({ finalAix: "property_send", decisionSource: "guard:first_contact", pickupReady: false, postApply: false, customerText, ackOnly: false, firstContact: true });
 }

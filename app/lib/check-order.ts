@@ -230,6 +230,23 @@ export const CHECK_ORDER_TYPES: readonly CheckOrderType[] = [
     examples: ["2人で入居・審査の不安→『審査に通りやすい独立系の保証会社のお部屋を中心にピックアップ』→フォーム", "再来の連絡→『またお声掛け頂きありがとうございます／今回も仲介手数料0円…』→フォーム"],
     brainMiss: "AIX 1つにまとめ、先の返信（答え・約束）を落とす（12306 は約束が抜けた）",
   },
+  {
+    // 2026-11-12 竹内さんの実例（通しの手本 scripts/test-golden-hold-and-view.ts）で足した型
+    id: "T12_hooked_comparing_taken",
+    name: "刺さっている×他と比べている×先に取られる不安",
+    cues: ["送った物件に刺さっている（かなり気に入っている・希望通り）", "他にもっと合う部屋があるかも（比べている）", "取られるのが不安・埋まるかも"],
+    check: ["read_ask", "our_last_send", "fact_answer", "route", "focus", "aim", "roles"],
+    decide: ["どの部分に刺さったか（広さ・初期費用）", "迷いの中身（比べたい）と不安（取られる）を分ける", "今の番＝返信で、抑える線を会社の事実（キャンセル料）で答える"],
+    priority: ["worry", "next_move", "send_promise"],
+    nowOutput: "返信（先に申込でお部屋を抑えて内覧へ／保証会社の審査通過までキャンセル料がかからない／抑えながら並行して新着も探す／内覧で気に入れば決める・合わなければ並行して探した中から）",
+    later: "AIX【申込】の書類（お客様が抑えると言ってから）",
+    rolePattern: "uke>apply>barrier>keep>trust",
+    why: "比べたい気持ちと取られる不安は、抑えれば両方満たせる。キャンセル料がかからない線（会社の事実）が、抑える事の障壁を下げる。並行して探す約束で『比べたい』も残す。だから不安を先に受けて、抑える一手を強く出す。",
+    kb: ["company-facts の hold_room・cancel", "f64e0f5d（決める合図＋残り＝1〜2番先の申込）", "d72ad06b（潜在の4つ: 取られる・本当は比べたい）"],
+    count: "竹内さんの実例 1（11/12）＋198通の considering で埋まる不安を口にした番 1（強く押した）",
+    examples: ["かなり気に入っている・他にもあるかも・取られるのが不安 → 先に申込で抑えて内覧・キャンセル料・並行して探す"],
+    brainMiss: "検討（T6）と読んで扉だけにする／比べたいを優先して探す約束だけにする",
+  },
 ];
 
 /** 手がかりが重なった時の取り方（理由つき・竹内さんの実例の数） */
@@ -260,6 +277,7 @@ export const CHECK_DEPTH: Readonly<Record<string, CheckDepth>> = {
   T9_apply_signal: { base: "normal", via: "fact", deepenWhen: ["物件が複数で名指しが曖昧", "申込の門（書類の手前で止める）"], why: "対象物件と空きを事実で確かめて即承認", count: "apply 事実 12/22" },
   T10_result_ready: { base: "normal", via: "back", deepenWhen: ["約束が複数（どれの結果か）"], why: "どの約束の結果かを遡って先に果たす", count: "本番 11408" },
   T11_first_contact_hearing: { base: "normal", via: "fact", deepenWhen: ["事情（2人・審査の不安・再来）を言った"], why: "言われた事情に会社の事実で答えてからフォーム", count: "本番 12240・12306" },
+  T12_hooked_comparing_taken: { base: "deep", deepenWhen: ["刺さった部分（送った物件のどの点）を遡って確かめる", "取られる不安と比べたい迷いが混ざる"], why: "刺さった点・迷い・不安の3つを分けて読まないと、扉だけ（検討）か探す約束だけに倒れる", count: "竹内さんの実例 11/12" },
 };
 
 export type CheckOrderMode = "off" | "shadow" | "on";
@@ -287,6 +305,10 @@ export type CheckOrderCues = {
   applySignal?: boolean;
   considering?: boolean;
   topic?: "viewing" | "cost" | "other" | null;
+  /** 送った物件に刺さっている（our-send-uptake の hooked） */
+  hooked?: boolean;
+  /** お客様が先に取られる・埋まる不安を口にした */
+  takenWorry?: boolean;
 };
 
 /** 候補を優先の順に並べて返す（先頭が採る型・理由つき）。TIE_BREAKS の順をそのまま使う */
@@ -294,6 +316,7 @@ export function pickCheckOrder(c: CheckOrderCues): Array<{ id: string; why: stri
   const out: Array<{ id: string; why: string }> = [];
   const add = (id: string, why: string) => { if (!out.some((o) => o.id === id)) out.push({ id, why }); };
   if (c.resultReady) add("T10_result_ready", "前の約束の結果が手元にある＝果たしが先");
+  if (c.hooked && c.takenWorry) add("T12_hooked_comparing_taken", "刺さっていて取られる不安＝抑える線（キャンセル料）を先に・比べたいは並行して探す約束で残す");
   if (c.applySignal) add("T9_apply_signal", "決める合図＝即承認");
   if (c.firstContact && (c.conditionStated === false || !c.conditionStated) && !c.customerSentProperty) add("T11_first_contact_hearing", "初回＝先に受けと答え・フォームは後");
   if (c.customerSentProperty) add("T4_property_shared", "物件が届いた＝何のためかの読み→募集確認の約束が先");
@@ -320,10 +343,10 @@ export function checkOrderNote(t: CheckOrderType): string {
   ].join("\n");
 }
 
-/** Need（この表の優先の名前）→ judge-basis-types の Priority（重点の物差しと同じ名前で数える） */
+/** Need（この表の優先の名前）→ judge-basis-types の Priority。2026-11-12 作業員22: 判断の根拠の優先を Need の名前そのものにした（統括役の決め・作業員17 の名前の合わせ直しの載せ直し）＝同じ名前の対応 */
 export const PRIORITY_OF_NEED: Record<Need, Priority> = {
-  keep_result: "keep_promise", answer: "answer_question", confirm_promise: "keep_promise", send_promise: "keep_promise",
-  worry: "ease_worry", next_move: "next_step", relation: "keep_relation",
+  keep_result: "keep_result", answer: "answer", confirm_promise: "confirm_promise", send_promise: "send_promise",
+  worry: "worry", next_move: "next_move", relation: "relation",
 };
 
 /** 型ごとの次の一手（行き先×強さ×時機・next-move-types の1つの表の名前）。道が決まった後だけに使う（道の前に置かない）。
@@ -340,4 +363,40 @@ export const NEXT_MOVE_OF_TYPE: Readonly<Record<string, { usual: NextMove; alt: 
   T9_apply_signal: { usual: { dest: "apply", strength: "strong", timing: "now" }, alt: [{ dest: "apply", strength: "invite", timing: "now", when: "審査・保証会社の問い（答えてから申込の線）" }, { dest: "viewing", strength: "invite", timing: "plant", when: "名義・審査の相談（内覧の後の判断に仕込み）" }, { dest: "keep_send", strength: "none", timing: "now", when: "焦って決めたくない" }], why: "合図に即答して抑える。審査の相談は答えて申込の線を置く", count: "apply strong 6・invite 5・plant 2" },
   T10_result_ready: { usual: { dest: "keep_send", strength: "none", timing: "now" }, alt: [{ dest: "viewing", strength: "invite", timing: "now", when: "結果が空いていた" }], why: "空いていなければ代わりを送る約束（営業の考え方）", count: "本番 11408" },
   T11_first_contact_hearing: { usual: { dest: "ask_condition", strength: "none", timing: "now" }, alt: [], why: "初回は条件を聞くのが一手（フォーム）。押さない", count: "本番 12240・12306" },
+  T12_hooked_comparing_taken: { usual: { dest: "apply", strength: "strong", timing: "now" }, alt: [{ dest: "viewing", strength: "invite", timing: "now", when: "抑えた状態でご内覧（内覧で気に入れば決める）" }, { dest: "keep_send", strength: "none", timing: "plant", when: "抑えながら並行して新着も探す（合わなければその中から）" }], why: "抑える一手を主に、内覧と並行探しを従に置くと、比べたい・取られたくないの両方を満たす", count: "竹内さんの実例 11/12" },
+};
+
+/** 2026-11-12 竹内さん「なぜやっているか・何の情報が足りていないから行っているか・どこの要点を押さえにいっているか」:
+ *  型ごとの目的（purpose）・足りない情報（missing）・押さえる要点（keyPoint）。通数と例は CHECK_ORDER_TYPES の count・examples と同じ竹内さんの番（198通・本番の物差し・11/12 の実例）。
+ *  CHECK_ORDER_GUIDE は missing だけを「確かめる順の理由」に使う（purpose・keyPoint は道の後の文の統括・配分が読む）。 */
+export const TYPE_INTENT: Readonly<Record<string, { purpose: string; missing: string[]; keyPoint: string }>> = {
+  T1_conditions_first: { purpose: "分かってもらえたという信頼を作る", missing: ["その条件で送れる物件がまだ揃っていない", "前の条件から何が変わったか（変更か追加か・ずっとか今回か）"], keyPoint: "条件を復唱して、全域から探すと約束する" },
+  T2_question_fact: { purpose: "聞かれた事に即答して信頼を保つ", missing: ["答えの出所（会話・資料・会社の事実のどれにあるか）"], keyPoint: "結論から答える（保留しない）" },
+  T3_question_staff_only: { purpose: "作り話をせず確かめた答えを届ける", missing: ["管理会社でないと分からない答え（募集状況・設備の可否・交渉の結果）"], keyPoint: "聞かれた事そのものを確かめると約束する" },
+  T4_property_shared: { purpose: "空いている物件で話を進める（無駄な見積を作らない）", missing: ["その物件の募集状況", "何のために送ったか（空き・費用・条件の参考）"], keyPoint: "まず空きを確かめ、見積はその後" },
+  T5_ack_hypothesis: { purpose: "了承に合う次の扉を開けて関係を続ける", missing: ["何への了承か（こちらの直前の送信のどれか）"], keyPoint: "直前の送信に合う一言（物件の後＝気になる部屋・見積の後＝ご確認・約束の後＝約束を守る）" },
+  T6_considering: { purpose: "急かさず関係を続ける", missing: ["決める合図があるか（今日中に決める・埋まる不安）"], keyPoint: "扉だけ残す（ごゆっくり・いつでも）" },
+  T7_viewing: { purpose: "内覧の日を決める", missing: ["お客様の都合・いまの段階（候補日・日にち決定・待ち合わせ）", "その物件が内見できるか"], keyPoint: "可否に答えて日程を決める" },
+  T8_cost: { purpose: "総額を見せて決められる状態にする", missing: ["対象の物件が決まっているか", "総額のどの項目が気になっているか"], keyPoint: "総額を見せる（物件があれば御見積書）" },
+  T9_apply_signal: { purpose: "取られる前に抑える", missing: ["どの物件か・その物件の空きが確かめ済みか"], keyPoint: "即承認して物件を特定する" },
+  T10_result_ready: { purpose: "約束を果たして信頼を積む", missing: ["どの約束の結果が揃ったか"], keyPoint: "結果を先に届け、空いていなければ代わり" },
+  T11_first_contact_hearing: { purpose: "初回の信頼を作る", missing: ["条件（入居時期・家賃・エリア・間取り）", "言われた事情への答え"], keyPoint: "事情に答えてから条件を聞く" },
+  T12_hooked_comparing_taken: { purpose: "比べたい・取られたくないを両方満たす", missing: ["刺さった点・比べたい迷い・取られる不安のどれが強いか", "保証会社の審査通過までの扱い（会社の事実）"], keyPoint: "取られる前に抑え、並行して探す" },
+};
+
+/** 2026-11-12: 足りない情報の名前は作業員1 の app/lib/info-fill-map.ts の INFO_KEYS（13項目・1か所）を使う（keys）。
+ *  INFO_KEYS に無い物は extra に置き、作業員1 に足す案として出す（ここで別の語彙を作らない）。info-fill-map が main に入ったら型を InfoKey にする。 */
+export const MISSING_INFO: Readonly<Record<string, { keys: string[]; extra: string[] }>> = {
+  T1_conditions_first: { keys: ["area", "rent", "layout", "move_in", "size"], extra: ["sendable_ready（その条件で送れる物件が揃っているか）"] },
+  T2_question_fact: { keys: [], extra: ["answer_source（答えの出所: 会話・資料・会社の事実）"] },
+  T3_question_staff_only: { keys: ["vacancy_checked"], extra: ["mgmt_answer（管理会社でないと分からない答え）"] },
+  T4_property_shared: { keys: ["property_chosen", "vacancy_checked"], extra: ["sent_purpose（お客様が何のために送ったか）"] },
+  T5_ack_hypothesis: { keys: [], extra: ["ack_target（何への了承か）"] },
+  T6_considering: { keys: [], extra: ["decide_signal（決める合図・埋まる不安）"] },
+  T7_viewing: { keys: ["viewing_date"], extra: ["viewable（その物件が内見できるか）"] },
+  T8_cost: { keys: ["property_chosen", "estimate_sent"], extra: [] },
+  T9_apply_signal: { keys: ["property_chosen", "vacancy_checked", "apply_intent"], extra: [] },
+  T10_result_ready: { keys: [], extra: ["fulfilled_promise（どの約束の結果が揃ったか）"] },
+  T11_first_contact_hearing: { keys: ["area", "rent", "layout", "move_in", "screening_info"], extra: [] },
+  T12_hooked_comparing_taken: { keys: ["property_chosen", "vacancy_checked"], extra: ["company_fact_hold（抑えた時の扱いの会社の事実）"] },
 };

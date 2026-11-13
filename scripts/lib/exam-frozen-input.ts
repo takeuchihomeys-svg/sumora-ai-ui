@@ -187,7 +187,8 @@ export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[
         const pdir = join(opts.dir, kday, "pending"); mkdirSync(pdir, { recursive: true });
         const pf = join(pdir, `k-${kkey}.json`);
         // 2026-11-10 作業員8: 答えの番を外した頼みの印（ls: 1）。夜の台本は近い番の読みで印の無い頼み（8c1b057c より古い作業ツリー・元の番が分からない頼み）を解かない
-        if (!existsSync(pf)) writeFileSync(pf, JSON.stringify({ name: keyed, url, method, body: kbody, at: new Date().toISOString(), ls: pturn?.conv && pturn.at ? 1 : 0 }));
+        // 2026-11-13 作業員8b（弱い所 517）: 元の番（会話・時刻）と問題 id も残す＝夜の台本が元の番の状況の文の埋め込みで引き直せる（EXAM_NEAR_ORIGIN_VECTOR）。本文は残さない
+        if (!existsSync(pf)) writeFileSync(pf, JSON.stringify({ name: keyed, url, method, body: kbody, at: new Date().toISOString(), ls: pturn?.conv && pturn.at ? 1 : 0, pid: opts.keyHint?.() ?? null, oconv: pturn?.conv ?? null, oat: pturn?.at ?? null }));
       } catch { /* 頼みを残せなくても試験は続ける */ }
       stats.skip++;
       return inner(input, init);

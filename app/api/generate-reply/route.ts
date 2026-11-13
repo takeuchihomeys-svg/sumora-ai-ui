@@ -143,7 +143,7 @@ import { createExitRecorder } from "@/app/lib/exit-edits";
 import { isEvaluativePrinciple, principleEvalFilterEnabled } from "@/app/lib/principle-eval";
 import { estimateRedeclareArmed, vacancyRedeclareArmed, brainKeepsRedeclare, logMatchesCurrent, ESTIMATE_REDECLARE_WINDOW_MS } from "@/app/lib/redeclare-gate";
 import { fcKeepsBrainSentence } from "@/app/lib/final-check-answer-keep";
-import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
+import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, safetyLineIssues, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
 import { runFinalCheckGated, type FinalCheckGateLog } from "@/app/lib/final-check-gated";
 import { scoreDraftConfidence, draftConfidenceEnabled } from "@/app/lib/draft-confidence";
@@ -376,6 +376,10 @@ import { headNote } from "@/app/lib/compose-head";
 import { composeAsksFactsOn, asksFactsOf, recordFactsOf, composeFactsNote, type EstimateRec } from "@/app/lib/compose-asks-facts";
 import { composeBriefMode, buildComposeBrief, draftDoubts as composeDraftDoubts, composeSure, linkReport as composeLinkReport, composeBriefDigest } from "@/app/lib/compose-brief";
 import { orderTypeOf } from "@/app/lib/compose-order-table";
+import { exemplarNoteFor, warmExemplarTable } from "@/app/lib/takeuchi-exemplar-server";
+import { patternCatalogNoteFor } from "@/app/lib/sentence-pattern-catalog-server";
+import { composeElementsNoteFor } from "@/app/lib/compose-elements-server";
+import { exemplarOn } from "@/app/lib/takeuchi-exemplar";
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
@@ -4510,6 +4514,8 @@ async function handleGenerateReply(req: NextRequest) {
     const composeRecordEstimates: EstimateRec[] = composeAsksFactsOn() && composeSentencePlanOn() && conversationId && !isTemplateOptimize && !postApplyConversation
       ? await (async () => { try { const { data } = await supabase.from("estimate_records").select("property_name, room_no, initial_cost_yen, discount_yen, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(3); return (data ?? []) as EstimateRec[]; } catch { return []; } })()
       : [];
+    // 2026-11-12 作業員23: 手本の表 takeuchi_exemplars を読んでおく（TAKEUCHI_EXEMPLAR=on・設計図 on の時だけ・10分の取り置き・1.5秒で諦める・表が無ければ注記なし＝今と同じ）
+    if (exemplarOn() && composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation) { try { await warmExemplarTable(supabase); } catch { /* 表が無くても今と同じ */ } }
     const composeSentencePlan = composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation && brainMeta && brainLocalFresh
       ? (() => {
           try {
@@ -4530,7 +4536,11 @@ async function handleGenerateReply(req: NextRequest) {
             // 2026-11-12 作業員10（COMPOSE_BRIEF=shadow|on・既定 off）: 文の統括の指示書を1か所に（記録だけ・書き手への指示文にも本文にも足さない）。書いた後の疑いの印・自信の印・連携の表は下の tpo_debug.compose_brief
             const brief = composeBriefMode() !== "off" ? (() => { try { return buildComposeBrief({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), materialText: [contractMaterialFacts ?? "", ownProperty?.note ?? ""].join("\n"), recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-5).map((m) => m.text ?? ""), firstContact: isFirstEverReplyFromMsgs === true }); } catch { return null; } })() : null;
             const note0 = [sentencePlanNote(plan), ord.noteLine && sentencePlanNote(plan) ? ord.noteLine : "", sentencePlanNote(plan) ? elementTypesNote(elem) : "", sentencePlanNote(plan) ? uptakeNote(uptakePlan(brainMeta)) : "", sentencePlanNote(plan) ? trustTurnNote({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), firstContact: isFirstEverReplyFromMsgs === true, meta: brainMeta, recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-8).map((m) => m.text ?? "") }) : "", sentencePlanNote(plan) ? propertyNameNote({ property: u.main?.property ?? null, customerText: customerMsgUnits.join("\n") || (message ?? ""), recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-3).map((m) => m.text ?? "") }) : "", sentencePlanNote(plan) ? slots?.note ?? "" : "", sentencePlanNote(plan) ? composeFactsNote([...asksFactsOf(brainMeta), ...recordFactsOf({ estimates: composeRecordEstimates, viewing: ledger.facts.viewingAppointment ?? null })]) : "", sentencePlanNote(plan) ? headNote({ customerText: customerMsgUnits.join("\n") || (message ?? ""), prev: (() => { const st = [...recentMessages].reverse().find((m) => m.sender === "staff"); return st ? { text: st.text ?? null, aix: !!st.isAix } : null; })() }) : ""].filter(Boolean).join("\n");
-            return { plan, brief, briefOrderType: orderTypeOf(composeConductorScene, plan.rows.find((r) => r.rank === "main")?.role ?? null), briefAppeal: !!s7.appeal, note: note0 && ex ? `${note0}\n${ex.note}` : note0, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${planU.removed.length ? `｜外した=${planU.removed.join(",")}` : ""}${planU.requiredRoles.length ? `｜要る=${planU.requiredRoles.join(",")}` : ""}｜${orderBasisDigest(ord.basis)}｜言葉の型=${[...elem.push_line, ...elem.trust, ...elem.latent_line].join(",") || "-"}${slots ? `｜${slots.digest}` : ""}` };
+            // 2026-11-12 作業員23（根B）: 竹内さんの文型カタログ（受け・潜在の一文・押さえ方・締め・継続の約束の骨と割合・SENTENCE_PATTERN_CATALOG=on の時だけ・既定 off）
+            const pc = (() => { try { return patternCatalogNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta, keepKind: composeConductor?.mf.keep ? "new_listing" : null }); } catch { return null; } })();
+            // 2026-11-12 作業員23（KB 2301dbf1）: 文の要素の型（つなぎ・押さえ方・信頼・潜在の過半数の形だけ・COMPOSE_ELEMENTS=on の時だけ・既定 off・道は決め直さない）
+            const ce = (() => { try { return composeElementsNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta }); } catch { return null; } })();
+            return { plan, brief, briefOrderType: orderTypeOf(composeConductorScene, plan.rows.find((r) => r.rank === "main")?.role ?? null), briefAppeal: !!s7.appeal, note: (() => { const n1 = note0 && ex ? `${note0}\n${ex.note}` : note0; const n2 = n1 && pc ? `${n1}\n${pc.note}` : n1; return n2 && ce ? `${n2}\n${ce.note}` : n2; })(), digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${planU.removed.length ? `｜外した=${planU.removed.join(",")}` : ""}${planU.requiredRoles.length ? `｜要る=${planU.requiredRoles.join(",")}` : ""}｜${orderBasisDigest(ord.basis)}｜言葉の型=${[...elem.push_line, ...elem.trust, ...elem.latent_line].join(",") || "-"}${slots ? `｜${slots.digest}` : ""}${pc ? `｜文型=${pc.key}` : ""}${ce ? `｜要素=${ce.key}` : ""}` };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()
       : null;
@@ -6969,6 +6979,15 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             let finalCheckGateLog: FinalCheckGateLog | null = null; // 2026-10-02 要否の判定（作り直しで finalCheck が置き換わっても tpo_debug に残す）
             if (isTemplateOptimize && draftBody.trim()) {
               console.log(JSON.stringify({tag:"degradation:fail-open",path:"template-bypass",conversationId}));
+              // 2026-11-12 作業員20: テンプレ最適化でも BANNED_WORD の安全の線（ブランド名・プレースホルダ・システム語・作業メモ）だけは最終チェックと同じ語の一覧で見る
+              //   （本文は変えない・当たった時だけ block の結果を載せて画面の指摘と自動送信の関所に届ける・passes_completed が空なので関所は完走の証拠にしない・戻す TEMPLATE_SAFETY_LINE=off）
+              if ((process.env.TEMPLATE_SAFETY_LINE ?? "").trim().toLowerCase() !== "off") {
+                const safetyHits = safetyLineIssues(draftBody);
+                if (safetyHits.length) {
+                  console.warn(JSON.stringify({ tag: "template-optimize:safety-line", conversationId, codes: safetyHits.map((i) => `${i.code}:${i.evidence.slice(0, 20)}`) }));
+                  finalCheck = { ok: false, issues: safetyHits, passes_completed: [], elapsed_ms: 0, checked_text_hash: await sha1(draftBody.trim()), revision_count: 0 };
+                }
+              }
             }
             if (!isTemplateOptimize && draftBody.trim()) {
               try {

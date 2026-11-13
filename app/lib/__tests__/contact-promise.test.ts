@@ -2,7 +2,7 @@
 // 2026-10-08 竹内さん「連絡する期間を約束したらカレンダーに入れる…1ヶ月半前から探し出す形が理想の流れと伝えて、その日に連絡するように約束後カレンダーに組み込む」
 // 実行: npx tsx app/lib/__tests__/contact-promise.test.ts（文は実際の LINE のまま・名前は伏せ字）
 import {
-  parseContactPromise, resolveMoveInStart, moveInFromCustomerText, contactDateFor, farMoveInPlan, farMoveInTurn,
+  farMoveInFactLine, parseContactPromise, resolveMoveInStart, moveInFromCustomerText, contactDateFor, farMoveInPlan, farMoveInTurn,
   contactEventRow, planContactPromiseSync, isContactPromiseNotes, contactDue, ymdStr, farMoveInCoreText, twoMonthMinDays, conditionMonthsStale, resolveConditionMoveIn,
 } from "../contact-promise";
 import { isWaitPromiseNotes, waitPromiseBadge } from "../promise-timing";

@@ -89,8 +89,20 @@ export function stableStringify(v: unknown): string {
 /** 鍵に入れる本文（JSON なら並べ直して伏せる・読めなければそのまま伏せる） */
 export function normalizeBody(body: string, env: Record<string, string | undefined> = process.env): string {
   let s = body;
-  try { s = stableStringify(JSON.parse(body)); } catch { /* JSON でない */ }
+  try { const j = JSON.parse(body); s = stableStringify(cassetteNoCacheControl(env) ? dropCacheControl(j) : j); } catch { /* JSON でない */ }
   return maskVolatile(s, env);
+}
+/**
+ * 2026-11-13 作業員8b（統括役の了承・下見が一度も当たらない元）: 入口の統括の録音2つ（q119・11/09 と 11/12）の本文の違いは
+ *   system の cache_control に "ttl":"1h" が足された所だけだった（cbbe5a61・費用 C1 の温め）。cache_control は答えを変えない送り方の印なのに鍵に入り、
+ *   キャッシュの直しのたびに全問の下見が外れて前を作り直していた（11/10〜12 の夜の基準 planSame 0）。
+ *   EXAM_CASSETTE_NO_CACHE_CONTROL=on で鍵から外す（既定 off＝今までの鍵。on にした最初の夜は全部の鍵が変わる＝1回だけ作り直し）
+ */
+export const cassetteNoCacheControl = (env: Record<string, string | undefined> = process.env): boolean => String(env.EXAM_CASSETTE_NO_CACHE_CONTROL ?? "").trim().toLowerCase() === "on";
+export function dropCacheControl(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(dropCacheControl);
+  if (v && typeof v === "object") { const o: Record<string, unknown> = {}; for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (k !== "cache_control") o[k] = dropCacheControl(x); return o; }
+  return v;
 }
 export function cassetteKey(o: { host: string; path: string; action: string | null; normBody: string }): string {
   return createHash("sha256").update(`${o.host}${o.path}\n${o.action ?? ""}\n${o.normBody}`).digest("hex");

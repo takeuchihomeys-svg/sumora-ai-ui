@@ -1,9 +1,11 @@
 // 試験の外れの自動の切り分け（scripts/lib/exam-miss-stage.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-miss-stage.test.ts（全 PASS で exit 0）
 // 行は 11/05〜06 の実際の答案（brain-exam-main・compose-1105 の結果）を縮めた物。手で見つけた段と同じ段を指すか
-import { classifyMiss, markersOf, summarizeMisses, ownerOf, weaknessDraft, PROVISIONAL_LINKS, parseLogTags, weaknessHitsFromMisses, weaknessKeyOf, pathSlug, type MissRowLite } from "../exam-miss-stage";
+import { classifyMiss, markersOf, summarizeMisses, ownerOf, weaknessDraft, PROVISIONAL_LINKS, parseLogTags, weaknessHitsFromMisses, weaknessKeyOf, pathSlug, missStageV2On, twoStageKindOfAix, type MissRowLite } from "../exam-miss-stage";
 import { aggregateWeaknessHits, mergeWeaknessRow, isWeaknessKey } from "../../../app/lib/brain-weaknesses";
 
+// 2026-11-13: EXAM_MISS_STAGE_V2 は既定 on。下の旧の数えのテストは =off（env を渡さない呼び方は process.env を読む）。V2 のテストは V2 の env を明示で渡す
+process.env.EXAM_MISS_STAGE_V2 = "off";
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
 
@@ -122,6 +124,37 @@ ok("印: 場面", markersOf(q136).includes("scene_net:S4_viewing"));
   const q072d: MissRowLite = { id: "q072", essence: { code: "返信", ok: true }, path: { code: "返信", ok: true }, draft: { code: "返信", ok: true, pass: false, asks: [false, true] }, asks: [{ covered: true, route: true }, { covered: true, route: true }], brain: { reply_direction: "埋まる可能性を答える", turn_contract: {} }, score: { pass: false } };
   const vd = classifyMiss(q072d);
   ok("下書きあり → brain:asks にしない", !vd.markers.includes("brain:asks") && vd.stage !== "brain", vd.line);
+}
+
+// 2026-11-13 作業員7b: EXAM_MISS_STAGE_V2（既定 off）。実際の答案 w16-nl-on3b・w19-replymode-p0-on（11/13 朝）を縮めた物
+{
+  const V2 = { EXAM_MISS_STAGE_V2: "on" };
+  ok("V2 既定 on・off で止まる", missStageV2On({}) && missStageV2On(V2) && !missStageV2On({ EXAM_MISS_STAGE_V2: "off" }));
+  ok("AIX の系 → 2段の種類", twoStageKindOfAix("AIX:property_check_result/mgmt_move_in") === "check" && twoStageKindOfAix("AIX:viewing_invite") === "check" && twoStageKindOfAix("AIX:property_send（左だけ）") === "pickup" && twoStageKindOfAix("AIX:estimate_sheet") === "estimate" && twoStageKindOfAix("返信") === null);
+  // (d) q057 w19#1: ブレインが自分で AIX【物件確認した】→ 2段 check_question が確認の約束に言い換えただけ（正解は返信）
+  const q057: MissRowLite = { id: "q057", rep: 1, essence: { code: "AIX:property_check_result/mgmt_move_in", ok: false }, path: { code: "2段:check", ok: false }, trace: { decision_source_no_aix: "rule:two_stage_promise(check_question)", two_stage: "check" }, logTags: ["log:two-stage"], score: { pass: false } };
+  ok("(d) 旧は 2段", classifyMiss(q057).stage === "two_stage");
+  const v = classifyMiss(q057, V2);
+  ok("(d) V2 はブレイン（同じ系の言い換え）", v.stage === "brain", v.line);
+  // (d) q088 w16#1: 本質も最終も返信（2段は動いていない）・前の回の log:two-stage が付いていた
+  const q088: MissRowLite = { id: "q088", rep: 1, essence: { code: "返信", ok: false }, path: { code: "返信", ok: false }, trace: {}, logTags: ["log:two-stage"], score: { pass: false } };
+  ok("(d) 旧は決まった書き換え", classifyMiss(q088).stage === "rewrite");
+  ok("(d) V2 は道が変わっていない＝ブレイン", classifyMiss(q088, V2).stage === "brain");
+  // (d) 別の系への書き換え（AIX:property_send → 2段:check）は今まで通り 2段
+  const cross: MissRowLite = { ...q057, essence: { code: "AIX:property_send", ok: false } };
+  ok("(d) 別の系は V2 でも 2段", classifyMiss(cross, V2).stage === "two_stage");
+  // (b) q057 w16: 1回は 2段の外れ、3回は道が正解（下書きあり＝書き手）。V2 の印は多数の並びの回だけ
+  const wr = (rep: number): MissRowLite => ({ id: "q057", rep, essence: { code: "返信", ok: true }, path: { code: "返信", ok: true }, draft: { code: "返信", ok: true, pass: false, asks: [false] }, trace: {}, score: { pass: false } });
+  const rows = [{ ...q057, essence: { code: "AIX:viewing_invite", ok: false }, trace: { decision_source_no_aix: "rule:two_stage_promise(viewing_check)", two_stage: "check" } }, wr(2), wr(3), wr(4)];
+  const so = summarizeMisses(rows)!, sn = summarizeMisses(rows, V2)!;
+  ok("(b) 旧は下書きの段の key の頭が別の回の 2段の印", so.stage === "final_check" && weaknessKeyOf(so.stage, so.markers) === "exam-stage:final_check:decision:two_stage_promise", String(weaknessKeyOf(so.stage, so.markers)));
+  ok("(b) V2 は多数の回の印だけ", sn.stage === "final_check" && !sn.markers.some((m) => m.startsWith("decision:two_stage")), sn.markers.join(","));
+  // (c) 同じ out.log の「前（main）」の回の印を今の回に付けない
+  const log = ["=== テスト「brain-exam-w16」 試行錯誤", "[YUMA5] ✕ q088#1 x", "=== テスト「brain-exam-main-4419555-x」 試行錯誤", '{"tag":"brain:two-stage","conversationId":"c5"}', "[YUMA5] ✕ q088#1 y"].join("\n");
+  const nm = (id: string) => (id === "c5" ? "YUMA5" : null);
+  ok("(c) 旧は前の回の印が混ざる", (parseLogTags(log, nm).get("q088#1") ?? []).includes("log:two-stage"));
+  ok("(c) V2 は label の回だけ", !parseLogTags(log, nm, { label: "w16", env: V2 }).has("q088#1"));
+  ok("(c) V2 でも label が無ければ旧のまま", (parseLogTags(log, nm, { env: V2 }).get("q088#1") ?? []).includes("log:two-stage"));
 }
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

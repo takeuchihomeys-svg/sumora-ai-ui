@@ -232,6 +232,19 @@ export function narrowKeepsTwoChoice(reason: string | null | undefined, ackOnly:
   return true;
 }
 export type NarrowPromiseOrNow = { keep: true; preferred: "reply" | "aix" } | { keep: false; decide: "keep_final" | "aix_estimate" };
+/**
+ * 2026-11-12 作業員7（KB 1a78e4e3 ④「決めた判断を後の役が決め直さない」・既定 off・TWO_CHOICE_NARROW_ESTIMATE_SOLE=on）:
+ *   見積の約束の2択を AIX 見積書で決め切る（aix_estimate）のは、ブレインの依頼に見積以外の約束（空き・探す・設備の確認）が無い番だけ。
+ *   試験の答案（11/08〜）: two_choice_narrow(estimate) が道を変えた 54回のうち、本質を壊した 23・直した 15。
+ *   壊した q077（連投の2つの依頼＝見積の約束＋空きの確認3つ・正解 2段:check/2段:pickup）を AIX 見積書にしていた。直した q183・q184・q133・q134 は見積だけの約束か AIX の依頼で、この線では止まらない
+ */
+export function narrowEstimateSoleOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_CHOICE_NARROW_ESTIMATE_SOLE ?? "").trim().toLowerCase() === "on";
+}
+/** ブレインの依頼に見積以外の約束があるか（あれば見積書で決め切らない） */
+export function hasNonCostPromise(asks: ReadonlyArray<{ route?: unknown; about?: unknown }> | null | undefined): boolean {
+  return (asks ?? []).some((a) => a?.route === "promise" && !!a.about && a.about !== "property_cost");
+}
 /** 約束か、その場の AIX かの2択（resolvePromiseOrNow）を絞る。確認（持ち込み）だけ残し、先に選んだ側は約束の返信 */
 export function narrowPromiseOrNow(p: NonNullable<PromiseOrNow>, ackOnly = false): NarrowPromiseOrNow {
   if (p.kind === "check") return { keep: true, preferred: "reply" };

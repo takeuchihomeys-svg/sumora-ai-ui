@@ -19,6 +19,9 @@
 import { needDigest, planAheadDigest, threeLayerDigest, type BrainNeed, type PlanAhead, type ThreeLayer } from "./brain-need";
 import { conductorMetaDigest, type ConductorMeta } from "./conductor-meta";
 import { intakeDigestLine } from "./conductor-intake";
+import { allocationMetaDigest } from "./conductor-allocation";
+import { checkOrderDigest } from "./check-order-wire";
+import { conductorBriefDigest } from "./conductor-brief";
 import { stripRentNegotiation, stripRentNegotiationFromList } from "./rent-negotiation-guard";
 import { mindsetDigest, type CustomerMindset } from "./customer-mindset";
 
@@ -139,6 +142,12 @@ export type FreshDigest = {
   rl?: string;
   /** 2026-11-03 読み直しの回数/上限:最後の理由（brain-recheck.ts・shadow は s が前） */
   rk?: string;
+  /** 2026-11-12 番ごとの部品の配分（"T4/d:judge>fetch>…"・conductor-allocation.ts・CONDUCTOR_ALLOCATION=shadow|on の時だけ） */
+  al?: string;
+  /** 2026-11-12 判断の順番の型の候補（"T4>T2|property_share"・check-order-wire.ts・CHECK_ORDER_TABLE=shadow|on の時だけ） */
+  co?: string;
+  /** 2026-11-12 統括の指示書の1行（型|目的|足りない情報|照らし合わせ|事実|疑いの印|確かさ|未の数・conductor-brief.ts・CONDUCTOR_BRIEF=shadow の時だけ） */
+  cb?: string;
   /** 2026-11-04 統括メタの短い形（場面|担当|倉庫の数|自信） */
   cm?: string;
   /** 2026-11-04 受け渡しの落ちの確かめ（ax|it|bp|rc|ck・conductor-handoff.handoffChecks） */
@@ -201,6 +210,12 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...((() => { const c = meta.conductor_focus as { focus?: unknown; near?: unknown } | null | undefined; const f = str(c?.focus, 14); return f ? { fc: `${f}${str(c?.near, 24) ? `|${str(c?.near, 24)}` : ""}` } : {}; })()),
     ...(str(meta.two_message_plan_digest, 40) ? { tm: str(meta.two_message_plan_digest, 40)! } : {}),
     ...(str(meta.conductor_order, 60) ? { or: str(meta.conductor_order, 60)! } : {}),
+    // 2026-11-12 作業員22（KB fd1c7c62）: 番ごとの部品の配分の名前と部品の順（conductor-allocation.allocationMetaDigest・meta.conductor_allocation がある番だけ）
+    ...((() => { const al = allocationMetaDigest(meta.conductor_allocation); return al ? { al } : {}; })()),
+    // 2026-11-12 作業員22（KB d030d496）: 判断の順番の型の候補（check-order-wire.checkOrderDigest・meta.check_order がある番だけ）
+    ...((() => { const co = checkOrderDigest(meta.check_order); return co ? { co } : {}; })()),
+    // 2026-11-12 作業員22: 統括の指示書（conductor-brief.conductorBriefDigest・meta.conductor_brief がある番だけ）
+    ...((() => { const cb = conductorBriefDigest(meta.conductor_brief); return cb ? { cb } : {}; })()),
     // 2026-11-07 作業員5（弱い所 275）: やる事の一覧（済み/全部）と考える力の配分（CONDUCTOR_TODOS=on の時だけ入る）
     ...((() => { const t = meta.conductor_todos as { td?: unknown; tb?: unknown } | null | undefined; return { ...(str(t?.td, 40) ? { td: str(t?.td, 40)! } : {}), ...(str(t?.tb, 30) ? { tb: str(t?.tb, 30)! } : {}) }; })()),
     // 2026-11-05 作業員5（ea2a9405②）: 途中の新しい通で立て直したか（conductor-replan.replanDigest・CONDUCTOR_REPLAN の時だけ入る）

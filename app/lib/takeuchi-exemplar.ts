@@ -120,7 +120,8 @@ export function exemplarNote(hit: { ex: Exemplar; level: number } | null, env?: 
   const L = [`【竹内さんの近い番の組み立て（${["場面×潜在×誘導先", "場面×誘導先", "潜在×誘導先", "誘導先"][hit.level]}が同じ・文は写さない）】`];
   L.push(`並び: ${ex.sentences.map((s) => s.role ?? "?").join(" > ")}`);
   ex.sentences.forEach((s, i) => L.push(`${i + 1}. ${s.role ?? "?"}（${BRAIN_FIELD_LABEL[s.brainField]}）: ${s.why}`));
-  if (ex.latentFour) L.push(`潜在: ${ex.latentFour.trigger}で、${ex.latentFour.part}について「${ex.latentFour.feeling}」→ 本当は ${ex.latentFour.want}`);
+  // 表の行はきっかけが発言の写しなら空（app/lib/takeuchi-exemplar-row.ts）＝「〜で、」を付けない
+  if (ex.latentFour) L.push(`潜在: ${ex.latentFour.trigger ? `${ex.latentFour.trigger}で、` : ""}${ex.latentFour.part}について「${ex.latentFour.feeling}」→ 本当は ${ex.latentFour.want}`);
   if (ex.fact) L.push(`先回りに使った事実: ${ex.fact}`);
   return L.join("\n");
 }

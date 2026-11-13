@@ -67,6 +67,7 @@ import { reflectAndReplan } from "./lib/exam-reflection-io";
 import { focusOf, focusPool, pickByFocus, focusLine, parseFocusTypes, type Focus, type FocusSpec, type FocusSceneMap } from "./lib/exam-focus";
 import { diffMaterial, callConductorLlm, newTally, FLASH_MODEL } from "./lib/exam-conductor-io";
 import { bizLanes } from "./lib/exam-plan";
+import { seqRegressions, examSeqScoreOn, wantSeqOf as wantSeqOfProblem } from "./lib/send-seq-score"; // 11/13 作業員7b: 並びの悪化（EXAM_SEQ_SCORE・既定 off）
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -83,6 +84,15 @@ const DONE = join(ROOT, "done"), RES = join(ROOT, "results");
 // 2026-11-05 作業員8（21:49 に流す係が落ちた・点検表 18）: 係の印（夜の基準・見張りの「今日はもう回した」）は列のフォルダの外に置く。列の .json は依頼として読まれる
 const MARKS = join(examCacheRoot(), "conductor-marks");
 const CONFIG = join(ROOT, "config.json"), SCENE_MAP = join(ROOT, "scene-map.json");
+/**
+ * 2026-11-13 作業員8b（統括役: 録音の鍵が変わるスイッチを夜の基準と昼の依頼に同じに乗せる）: 係の設定（config.json）の examEnv を、全部の試験の依頼の env の下敷きにする
+ *   （依頼の env が上書きする）。examEnvFrom（ISO）があればその時刻から。夜の基準と昼の依頼で鍵がずれない＝下見が当たる
+ */
+function configExamEnv(nowMs = Date.now()): Record<string, string> {
+  const c = readJson<{ examEnv?: Record<string, string>; examEnvFrom?: string }>(CONFIG, {});
+  if (!c.examEnv || (c.examEnvFrom && !(nowMs >= Date.parse(c.examEnvFrom)))) return {};
+  return c.examEnv;
+}
 const LOG = join(ROOT, "conductor.log");
 const ensureDirs = () => { for (const d of [ROOT, DONE, RES]) mkdirSync(d, { recursive: true }); };
 const log = (s: string) => { ensureDirs(); const line = `${new Date().toISOString()} ${s}`; console.log(line); appendFileSync(LOG, line + "\n"); };
@@ -651,7 +661,8 @@ function nearResolveHook(j: ExamJob, stage: "before" | "after"): void {
   }
   const t0 = Date.now();
   // shell: true は引数を空白でつなぐ＝パスの空白（竹内 悠馬）を引用符で包む
-  const r = spawnSync("npx", ["tsx", `"--env-file=${d.envPath}"`, "scripts/exam-near-resolve.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000 });
+  // 2026-11-13 作業員8b: 係の設定の examEnv（EXAM_NEAR_ORIGIN_VECTOR 等）も近い番の読みに乗せる（試験の依頼と同じ下敷き）
+  const r = spawnSync("npx", ["tsx", `"--env-file=${d.envPath}"`, "scripts/exam-near-resolve.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000, env: { ...process.env, ...configExamEnv() } });
   const out = String(r.stdout ?? "");
   const last = out.trim().split(/\r?\n/).filter((l) => l.startsWith("鍵が要る読みの控え")).pop() ?? `終わりの番号 ${r.status}${r.error ? `・${r.error.message}` : ""}`;
   log(`  鍵が要る読みを解いた（${stage}・${j.label}・頼み ${d.total}・日 ${d.days.join(",")}・${Math.round((Date.now() - t0) / 1000)}秒）: ${last.slice(0, 200)}`);
@@ -717,7 +728,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         appendFileSync(outFile, `\n=== ${at()} npx tsx --env-file=.env.local ${c} ===\n`);
         const before = statSync(outFile).size;
         // 2026-11-05 作業員4の頼み: --qfile="C:/Users/竹内 悠馬/…" が空白で切れていた（ci-v1L・ci-v3L）＝引用符を含む塊は1つの引数に（exam-plan.splitCmdArgs）
-        const r = runTsx(j.cwd, splitCmdArgs(c), { ...j.env, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(businessHoursLane() ? { EXAM_CONCURRENCY: String(businessHoursLane()) } : {}) }, outFile); cur = r.child;
+        const r = runTsx(j.cwd, splitCmdArgs(c), { ...configExamEnv(), ...j.env, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(businessHoursLane() ? { EXAM_CONCURRENCY: String(businessHoursLane()) } : {}) }, outFile); cur = r.child;
         codes.push(await r.done);
         const tail = readFileSync(outFile).subarray(before).toString("utf8");
         const m = tail.match(/空きメモリ\s*\d+MB\s*<\s*\d+MB（--force で流す）/);
@@ -771,7 +782,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       log(`  流す時の見込み: ${chk.line}`);
       if (!chk.go) { finishStop(j, `流す前に止めた: ${chk.line}。夜の基準ができた後に流すか、--cap-usd を上げて積み直す`); return; }
     }
-    const r = runTsx(j.cwd, argv, { ...j.env, EXAM_STOP_FILE: stopFile, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile); cur = r.child;
+    const r = runTsx(j.cwd, argv, { ...configExamEnv(), ...j.env, EXAM_STOP_FILE: stopFile, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile); cur = r.child;
     // ① 早めの打ち切り（30秒ごと）
     let early: { stop: string; why: string; base: string } | null = null;
     const rowsFile = join(resultsDirOf(j.cwd), `${j.label}.jsonl`);
@@ -843,7 +854,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         log(`  確かめ直し: 外れた ${fails.length}問（${fails.join(",")}）だけ今の main で前を作る（${cfl}）`);
         appendFileSync(outFile, `\n=== ${at()} 確かめ直し: 外れた問題だけ今の main で前を作る（${fails.join(",")}）===\n`);
         await runTsx(j.cwd, ["scripts/brain-exam.ts", `--label=${cfl}`, "--conv=auto", "--baseline=main", "--baseline-only", `--repeat=${maxRep}`, `--stage=${j.stage}`, `--only=${fails.join(",")}`, `--reps-file=${cfReps}`],
-          { ...j.env, EXAM_BASELINE_NIGHTLY: "off", ...(pin.snapDay ? { EXAM_DB_SNAPSHOT_DAY: pin.snapDay } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile).done;
+          { ...configExamEnv(), ...j.env, EXAM_BASELINE_NIGHTLY: "off", ...(pin.snapDay ? { EXAM_DB_SNAPSHOT_DAY: pin.snapDay } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile).done;
         const blCf = baseLabelOf(j.cwd, cfl), blN = baseLabelOf(j.cwd, j.label);
         if (blCf && blN) {
           const merged = mergePinnedBase(readRows(join(resultsDirOf(j.cwd), `${blN}.jsonl`)) as unknown as Array<{ id: string }>, readRows(join(resultsDirOf(j.cwd), `${blCf}.jsonl`)) as unknown as Array<{ id: string }>, fails);
@@ -885,7 +896,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       try {
         // 回ごとの記録の印（係の出力の {"tag":"brain:answerable-direct"…}・[mgmt-*]）を、同じテスト用の会話の次の結果の行に付ける
         const names = new Map(NO_LINE_TEST_CONVERSATIONS.map((c) => [c.id, c.name]));
-        const tags = parseLogTags(existsSync(outFile) ? readFileSync(outFile, "utf8") : "", (id) => names.get(id) ?? null);
+        const tags = parseLogTags(existsSync(outFile) ? readFileSync(outFile, "utf8") : "", (id) => names.get(id) ?? null, { label: j.label }); // 11/13 作業員7b: EXAM_MISS_STAGE_V2=on の時だけ label の回に絞る
         const cur = (readRows(rowsFile) as unknown as MissRowLite[]).map((r) => ({ ...r, logTags: tags.get(`${r.id}#${r.rep}`) ?? null }));
         return ids.map((id) => summarizeMisses(cur.filter((r) => r.id === id))).filter((x): x is NonNullable<typeof x> => !!x).map((x) => ({ ...x, owner: ownerOf(x.markers)?.id ?? null }));
       } catch { return []; }
@@ -905,9 +916,20 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       } catch { return { path: [] as ReturnType<typeof pathRegressions>, ess: [] as ReturnType<typeof pathRegressions> }; }
     })();
     const pwLine = (xs: ReturnType<typeof pathRegressions>) => xs.map((x) => `${x.id} ${x.from}→${x.to}（${x.why}）`).join("／");
+    // 2026-11-13 作業員7b（竹内さん 11/13「返信と AIX の組み合わせも」）: 送る物の並び（札「並び:XX」か staffText の実送信）の悪化を問題ごとに出す（EXAM_SEQ_SCORE=on の時だけ・既定 off）
+    const seqWorse = (() => {
+      if (!examSeqScoreOn() || !blFinal) return [] as ReturnType<typeof seqRegressions>;
+      try {
+        const spec = readJson<Array<{ id: string; tags?: string[]; staffText?: string | null }>>(join(j.cwd, "scripts/brain-exam/spec.json"), []);
+        const byId = new Map(spec.map((x) => [x.id, x]));
+        const cur = readRows(rowsFile) as unknown as Parameters<typeof seqRegressions>[0], base = readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)) as unknown as Parameters<typeof seqRegressions>[1];
+        return seqRegressions(cur, base, ids, (id) => { const p = byId.get(id); return p ? wantSeqOfProblem(p)?.seq ?? null : null; });
+      } catch { return [] as ReturnType<typeof seqRegressions>; }
+    })();
+    const seqNote = seqWorse.length ? `・並びの悪化 ${seqWorse.length}（${seqWorse.map((x) => `${x.id} ${x.from}→${x.to}（正解 ${x.want}・${x.why}）`).join("／")}）` : "";
     const pathNote = (pw.path.length ? `・道の悪化 ${pw.path.length}（${pwLine(pw.path)}・既定 on の判断に使わない）` : "") + (pw.ess.length ? `・本質の悪化 ${pw.ess.length}（${pwLine(pw.ess)}）` : "");
     const verdictHead = pw.path.length ? verdictBase.replace(/^確かな悪化0（/, "合格の確かな悪化0・道の悪化あり（") : verdictBase;
-    const verdict0 = verdictHead + pathNote + essNote + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
+    const verdict0 = verdictHead + pathNote + seqNote + essNote + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
     // 2026-11-10 作業員8c（KB 7b5ef932 ⑥決め直す・⑦振り返る）: 選んだ問題が何を見つけたか（外れ・合格／道／本質の悪化・揺れ）を result.reflection に、
     //   狙いが効かず（狙いの合格・本質が前と同じ）悪化0の時は同じ重点（スイッチ・狙いの場面）で足すとよい問題 1〜3問を result.replan に（流さない・積むのは依頼者）。
     //   週の集計は scripts/exam-reflection-weekly.ts。止める: EXAM_REFLECTION=off
@@ -915,7 +937,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       try {
         return reflectAndReplan({ label: j.label, owner: j.owner, switchName: j.switch, cwd: j.cwd, stage: j.stage, ids, guards: j.guards ?? [],
           cur: readRows(rowsFile) as unknown as ReflRow[], base: blFinal && !noCompare ? readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)) as unknown as ReflRow[] : null,
-          result: { reps: rp.reps, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, pathWorse: pw.path, essenceWorse: pw.ess, missStages },
+          result: { reps: rp.reps, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, pathWorse: pw.path, essenceWorse: pw.ess, ...(seqWorse.length ? { seqWorse } : {}), missStages },
           worseN: sureN, resDir: RES, dig: !!j.dig, stableOf: (xs) => jobRepsPlan({ ...j, guards: [] }, xs).stable ?? [] });
       } catch (e) { log(`  振り返り: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); return null; }
     })();
@@ -934,7 +956,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         }
       } catch (e) { log(`  弱い所の台帳: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`); }
     }
-    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, essence, pathWorse: pw.path, essenceWorse: pw.ess, guards: j.guards ?? [], reflection: rf?.reflection ?? null, replan: rf?.replan ?? null, verdict, at: at() },
+    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, essence, pathWorse: pw.path, essenceWorse: pw.ess, ...(seqWorse.length ? { seqWorse } : {}), guards: j.guards ?? [], reflection: rf?.reflection ?? null, replan: rf?.replan ?? null, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
     log(`  済み: ${j.label} → ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・費用 ${s.usd ?? "?"}`);

@@ -13,6 +13,7 @@
 //   (c) 近い番の重点の多数決（狭い束だけ・束の外は場面の多い重点に寄せる）と digest の1語
 import { purposeOfText } from "./compose-blueprint";
 import { stripLoneSurrogates } from "./conductor-turn-vectors";
+import { promiseReadUnifiedOn, lastOpenPromise } from "./promise-read";
 
 type Env = Record<string, string | undefined>;
 /**
@@ -102,6 +103,8 @@ export function stageAt(hist: ReadonlyArray<HistMsg>): string {
 const PROMISE_RE = /(?:確認|お送り|ピックアップ|ご連絡|交渉|調整|作成|手配|お調べ|探させ).{0,20}(?:させて頂きます|致します|いたします)|次第/;
 /** 開いている約束: こちらの最後の約束の文の後に、果たす AIX（物件・確認の結果・見積書）がまだ無い（決まった計算・候補） */
 export function openPromiseAt(hist: ReadonlyArray<HistMsg>): string | null {
+  // 2026-11-12 作業員4: 約束の読みを promise-read に寄せる（PROMISE_READ_UNIFIED=on・既定 off は下の今の読み）
+  if (promiseReadUnifiedOn()) { const last = hist[hist.length - 1]; const p = lastOpenPromise({ msgs: hist, nowMs: last ? Date.parse(last.created_at) + 1 : Date.now(), days: 3650 }); return p ? p.sentence.slice(0, 60) : null; }
   for (let i = hist.length - 1; i >= 0; i--) {
     const m = hist[i];
     if (m.sender === "customer") continue;

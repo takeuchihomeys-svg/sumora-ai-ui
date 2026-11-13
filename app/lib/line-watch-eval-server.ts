@@ -9,6 +9,7 @@ import { screeningAdminSupabaseKey } from "@/app/lib/supabase-server-key";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@supabase/supabase-js";
 import { pickJudgeDraft, JUDGE_VERSION, type WindowMsg, type WindowPress, type Verdict, type VerdictDetail } from "./line-watch-judge";
+import { watchAixRecordV2On } from "./aix-record";
 import { evalWatchTurn } from "./line-watch-turn-eval";
 import { watchPostApplyScopeEnabled, findDuplicateTurns, mergeCapture, findCaptureStalls, captureStallLine, watchStallCheckEnabled, type PostApplyTimeline, type CaptureStall } from "./line-watch-scope";
 import {
@@ -149,7 +150,7 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
     const chunk = convIds.slice(i, i + 50);
     // 2026-10-07: お礼・了承の番の読むべき範囲（こちらの直前の返事・72時間以内）を決めるため、番の4日前から読む（窓の判定は番より後だけを見るので変わらない）
     msgs.push(...await readAll<Msg>((f, t) => sb.from("messages").select("conversation_id, sender, created_at, text, is_aix_generated").in("conversation_id", chunk).gte("created_at", iso(P(since) - 4 * DAY)).order("created_at").order("id").range(f, t)));
-    presses.push(...await readAll<Press>((f, t) => sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, created_at").in("conversation_id", chunk).gte("created_at", since).not("aix_type", "is", null).order("created_at").order("id").range(f, t)));
+    presses.push(...await readAll<Press>((f, t) => sb.from("aix_usage_logs").select(watchAixRecordV2On() ? "conversation_id, aix_type, check_pattern, created_at, sent_at, picker_choices, prop_statuses, suggested_action, was_edited, send_mode, estimate_sent, line_message_id" : "conversation_id, aix_type, check_pattern, created_at").in("conversation_id", chunk).gte("created_at", since).not("aix_type", "is", null).order("created_at").order("id").range(f, t)));
     decisions.push(...await readAll<Decision>((f, t) => sb.from("brain_decision_logs").select("id, conversation_id, created_at, analyzed_msg_ts, intent:digest->>intent").in("conversation_id", chunk).gte("created_at", since).order("created_at").order("id").range(f, t)));
     const cv = await sb.from("conversations").select("id, property_customer_id").in("id", chunk);
     if (cv.error) throw new Error(cv.error.message);
@@ -171,6 +172,16 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
   const timelines = watchPostApplyScopeEnabled() ? await loadPostApplyTimelines(sb, convIds).catch((e) => { res.errors.push(`post_apply_timeline: ${e instanceof Error ? e.message : String(e)}`); return null; }) : null;
   const group = <T extends { conversation_id: string }>(rows: T[]) => { const m = new Map<string, T[]>(); for (const r of rows) { if (!m.has(r.conversation_id)) m.set(r.conversation_id, []); m.get(r.conversation_id)!.push(r); } return m; };
   const mBy = group(msgs), pBy = group(presses), dBy = group(decisions);
+  // 2026-11-13 作業員1（WATCH_AIX_RECORD_V2=on）: 押した AIX の送信の書き手（messages.staff_writer・line_message_id で結ぶ＝押した人）
+  const writerByLmid = new Map<string, { writer: string | null; basis: string | null }>();
+  if (watchAixRecordV2On()) {
+    const lmids = [...new Set((presses as Array<{ line_message_id?: string | null }>).map((p) => p.line_message_id).filter((x): x is string => !!x))];
+    for (let i = 0; i < lmids.length; i += 100) {
+      const r = await sb.from("messages").select("line_message_id, staff_writer, staff_writer_confidence").in("line_message_id", lmids.slice(i, i + 100));
+      if (r.error) { res.errors.push(`aix_writer: ${r.error.message}`); break; }
+      for (const m of (r.data ?? []) as Array<{ line_message_id: string; staff_writer: string | null; staff_writer_confidence: string | null }>) writerByLmid.set(m.line_message_id, { writer: m.staff_writer, basis: m.staff_writer_confidence ?? null });
+    }
+  }
   // 2026-10-20 ④: 番の鍵（連投の最初のお客様の発言）が消えた・時刻が変わった重複行 → 本物の行に寄せる（重複行は数えない・本物の行は空の控えを重複行の値で埋めて判定）
   const custTimes = new Map<string, string[]>();
   for (const m of msgs) if (m.sender === "customer") { if (!custTimes.has(m.conversation_id)) custTimes.set(m.conversation_id, []); custTimes.get(m.conversation_id)!.push(m.created_at); }
@@ -187,7 +198,7 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
     const mg = dupRow ? mergeCapture(t0, dupRow as unknown as Record<string, unknown>) : null;
     const t = mg ? mg.merged : t0;
     // 2026-10-08: 番1行の判定は line-watch-turn-eval.evalWatchTurn（過去の番の埋め戻しと同じ関数・中身はここから移した物）
-    const ev = evalWatchTurn(t, { msgs: mBy.get(t.conversation_id) ?? [], presses: pBy.get(t.conversation_id) ?? [], decisions: dBy.get(t.conversation_id) ?? [], nowMs, hasVersionCol, postApplyTimeline: timelines?.get(t.conversation_id) ?? (timelines ? EMPTY_TIMELINE : null) });
+    const ev = evalWatchTurn(t, { msgs: mBy.get(t.conversation_id) ?? [], presses: pBy.get(t.conversation_id) ?? [], writerOf: (id) => writerByLmid.get(id) ?? null, decisions: dBy.get(t.conversation_id) ?? [], nowMs, hasVersionCol, postApplyTimeline: timelines?.get(t.conversation_id) ?? (timelines ? EMPTY_TIMELINE : null) });
     const { scene, window: w, patch } = ev;
     let j = ev.judgement;
     if (mg?.filled.length) { j = { ...j, detail: { ...j.detail, merged_from: { id: dupRow!.id, cols: mg.filled } } }; patch.verdict_detail = j.detail; }

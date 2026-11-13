@@ -21,21 +21,32 @@ export type NowVsLater = {
   our_open: string | null;
   ready_now: string[];
   this_turn: NowThisTurn | null;
+  /** 2026-11-13: 答えに使う事実の出所（company_fact／material_value／staff_only／none）。無ければ null */
+  answer_source: AnswerSource | null;
 };
+/** 答えに使う事実の出所（KB 00d0d8f4「この物件の〇〇は資料＋管理会社、一般論は会社の事実」・67f54c24 確認の相手を分ける） */
+export const ANSWER_SOURCES = ["company_fact", "material_value", "staff_only", "none"] as const;
+export type AnswerSource = typeof ANSWER_SOURCES[number];
 
 /** JSON の最初に置く欄（action より前） */
-export const NOW_VS_LATER_FIELD = `"now_vs_later": {"asked_now": ["お客様の今の番の発言で言われた事・聞かれた事（最大3件・各30字以内・お客様の言葉に近く）。お礼・了承だけなら ['お礼・了承']"], "our_open": "こちらが前に約束した・送った物で、まだ果たしていない物（例: 'ピックアップしてお送りする約束' '募集状況を確認する約束'）。無ければ null", "ready_now": ["今この場で届けられる物を材料の行（送れる物件の候補・今すぐ果たせる物・確認の結果・御見積書の有無）から。'送れる物件' / '確認の結果' / '御見積書' のどれか。無ければ []"], "this_turn": "今の番に出す物を1つ: 'deliver'（ready_now の物を今 AIX で届ける）/ 'answer'（会話・物件の資料・会社の事実で今答える）/ 'promise'（確かめる・探す・作ると約束する）/ 'ack'（お礼・了承に短く受ける）"}`;
+export const NOW_VS_LATER_FIELD = `"now_vs_later": {"asked_now": ["お客様の今の番の発言で言われた事・聞かれた事（最大3件・各30字以内・お客様の言葉に近く）。お礼・了承だけなら ['お礼・了承']"], "our_open": "こちらが前に約束した・送った物で、まだ果たしていない物（例: 'ピックアップしてお送りする約束' '募集状況を確認する約束'）。無ければ null", "ready_now": ["今この場で届けられる物を材料の行（送れる物件の候補・今すぐ果たせる物・確認の結果・御見積書の有無）から。'送れる物件' / '確認の結果' / '御見積書' のどれか。無ければ []"], "answer_source": "お客様の問いの答えに使う事実の出所を1つ: 'company_fact'（会社のルール・一般の期間・手続きの流れ・費用の仕組み＝どの物件でも同じ）/ 'material_value'（この物件の資料・会話にその値が書いてあり、その値を引用できる）/ 'staff_only'（この物件・この部屋の可否・交渉・空き・設備の変更など、資料に値が無く管理会社に確かめないと分からない）/ 'none'（問いが無い）", "this_turn": "今の番に出す物を1つ: 'deliver'（ready_now の物を今 AIX で届ける）/ 'answer'（会話・物件の資料・会社の事実で今答える）/ 'promise'（確かめる・探す・作ると約束する）/ 'ack'（お礼・了承に短く受ける）"}`;
 
 /** 決まりの段（JSON の欄の説明の後に1段） */
 export const NOW_VS_LATER_RULES = `【今の番と後の番を分ける（now_vs_later・JSON の一番最初に書く）】竹内さんは、①何を言われたか ②こちらが前に約束した・送った物 ③今この場で届けられる物があるか、を先に確かめてから返信か AIX かを決める。
 - this_turn が deliver の時だけ、aix は今届ける AIX（ready_now の物）。
-- this_turn が answer・promise・ack の時は、今の番は返信。aix に後で果たす AIX（property_send・estimate_sheet・condition_hearing 等）を書いてよいが、turn_contract の該当の route は this_turn と同じ（answer→answer・promise→promise）にし、reply_direction は今の番の返信の中身にする。
-- 会話・資料・会社の事実で答えられる問いが1つでもあれば、後で果たす AIX より先に答える（this_turn は answer）。
+- this_turn が answer・ack の時は、今の番は返信で、aix は null（後で果たす AIX は書かない。開いているピックアップの約束はこの番では果たさない）。
+- this_turn が promise の時だけ、aix に後で果たす AIX（property_send・estimate_sheet・condition_hearing 等）を書いてよい。turn_contract の該当の route は promise にし、reply_direction は今の番の約束の中身にする。
+- this_turn は answer_source で決める（語で決め打ちしない）: company_fact・material_value＝answer（後で果たす AIX より先に今答える）／staff_only＝promise（聞かれた事そのものを確かめる約束。結果が ready_now にあれば deliver）。
+- 一般論か「この物件の」可否かで分ける: 申込から入居までの期間・審査の期間・費用の仕組み＝company_fact（「物件により異なる」で約束にしない）／この部屋の畳を変えられるか・駐車場の空き・鍵交換の免除・ペットの可否で資料に書いていない物＝staff_only。
+- 「資料にあればその値、無ければ確認」のような両にらみは書かない: 資料の値を引用できない時は staff_only に決める。
 - 前の約束の結果が ready_now にある時は、その結果を届けるのが先（this_turn は deliver）。
 - お礼・了承だけの番は、何への了承かを②（こちらの直前の送信）で決める。`;
 
 /** aix の但し書き（ピックアップの宣言の後）の差し替え。off の時の文は brain-core に残す */
-export const NOW_LATER_AIX_PROVISO = "この時は null にしない。ただし先に now_vs_later を確かめ、ready_now に送れる物件がある時は property_send（今届ける）。まだ送れる物件が無い時は aix は property_send（物件が揃ってから果たす AIX）のままでよいが、this_turn と turn_contract の route は promise（今の番は約束の返信）";
+// 2026-11-13 作業員16（w16-nl-on2 の q065: 本質の道が 返信 3/4 → AIX:property_send 0/4）: 「aix は property_send のままでよい」が、
+//   お客様が会社の事実で答えられる事を聞いた番（最速の入居時期）でも aix に property_send を書かせ、問いを「物件により異なる」で約束に倒していた。
+//   → 今の番が問い（answer）なら aix は null。property_send を残すのは、今の番が約束（promise＝条件の言い直し・催促）の時だけ。
+export const NOW_LATER_AIX_PROVISO = "この時も先に now_vs_later を確かめる。ready_now に送れる物件がある時は property_send（今届ける＝deliver）。まだ送れる物件が無い時: お客様の今の発言が問いで answer_source が company_fact・material_value なら this_turn は answer で aix は null（staff_only なら確かめる約束）（ピックアップの約束はこの番では果たさない）。条件の言い直し・催促など約束の番の時だけ aix は property_send（物件が揃ってから果たす AIX）のまま、this_turn と turn_contract の route は promise";
 
 /** 決まり⑧の解除の一文の後半の差し替え（reply_direction を今の番の中身に） */
 export const NOW_LATER_RULE8_TAIL = "この時の aix は property_send。reply_direction は now_vs_later.this_turn に合わせる（deliver＝宣言したピックアップを届ける／promise・answer・ack＝今の番の返信の中身）。";
@@ -54,7 +65,8 @@ export function normalizeNowVsLater(raw: unknown): NowVsLater | null {
   const t = String(r.this_turn ?? "").trim().toLowerCase() as NowThisTurn;
   const open = typeof r.our_open === "string" && r.our_open.trim() && !/^(null|なし|無し)$/i.test(r.our_open.trim()) ? r.our_open.trim().slice(0, 60) : null;
   const ready = strList(r.ready_now, 3, 20).filter((x) => READY_RE.test(x) && !/^(なし|無し|null)$/.test(x));
-  const out: NowVsLater = { asked_now: strList(r.asked_now, 3, 40), our_open: open, ready_now: ready, this_turn: TURN_KINDS.includes(t) ? t : null };
+  const src = String(r.answer_source ?? "").trim().toLowerCase();
+  const out: NowVsLater = { asked_now: strList(r.asked_now, 3, 40), our_open: open, ready_now: ready, this_turn: TURN_KINDS.includes(t) ? t : null, answer_source: (ANSWER_SOURCES as readonly string[]).includes(src) ? (src as AnswerSource) : null };
   if (!out.asked_now.length && !out.our_open && !out.ready_now.length && !out.this_turn) return null;
   return out;
 }
@@ -74,11 +86,14 @@ export function nowLaterConflicts(n: NowVsLater | null | undefined, o: { finalAi
   if (n.this_turn === "deliver" && !n.ready_now.length) out.push("deliver_without_ready");
   if (n.this_turn !== "deliver" && routes.length && routes.every((r) => r === "aix")) out.push("reply_turn_but_contract_all_aix");
   if (n.this_turn === "promise" && routes.length && !routes.includes("promise")) out.push("promise_turn_without_promise_route");
+  // 出所と今の番の食い違い（ログだけ・決め直さない）
+  if (n.answer_source === "staff_only" && n.this_turn === "answer") out.push("staff_only_answered_now");
+  if ((n.answer_source === "company_fact" || n.answer_source === "material_value") && n.this_turn === "promise") out.push("fact_source_promised");
   return out;
 }
 
 /** 記録の短い印（digest・ログ用）: 例 "t=promise r=- o=1" */
 export function nowLaterDigest(n: NowVsLater | null | undefined): string | null {
   if (!n) return null;
-  return `t=${n.this_turn ?? "?"} r=${n.ready_now.length ? n.ready_now.join("+") : "-"} o=${n.our_open ? 1 : 0}`;
+  return `t=${n.this_turn ?? "?"} s=${n.answer_source ?? "?"} r=${n.ready_now.length ? n.ready_now.join("+") : "-"} o=${n.our_open ? 1 : 0}`;
 }

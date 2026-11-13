@@ -103,9 +103,9 @@ export function beyondCandidates(turns: YardTurn[], opts: { writers?: string[] }
 //   ブレインが2段（今は約束の返信・後で AIX）を選んだ番を、見張りの brain_action（後の AIX）とスタッフの最初の一手（今の返信）で比べると外れに数えていた。
 //   逆に、スタッフが今は約束の返信・後で AIX を送った番で、後の AIX を今の番の外れに数えていた（後で送った AIX は 11/07 から外すだけ＝数えから消えていた）。
 //   2枠: 今の通（ブレインの今の一手 ↔ スタッフの最初の一手）と後の通（ブレインが約束した後の AIX ↔ スタッフが24時間以内に送った最初の AIX）を別に数える。
-//   当たり外れ（場面ごとの率・下がった場面）は今の通で決め、後の通は別の欄（約束を果たしたか）に出す。既定 off（入れる YARDSTICK_TWO_FRAMES=on）。
+//   当たり外れ（場面ごとの率・下がった場面）は今の通で決め、後の通は別の欄（約束を果たしたか）に出す。11/13 から既定 on（止める YARDSTICK_TWO_FRAMES=off）。
 export function yardstickTwoFramesOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.YARDSTICK_TWO_FRAMES ?? "").trim().toLowerCase() === "on";
+  return (env.YARDSTICK_TWO_FRAMES ?? "").trim().toLowerCase() !== "off"; // 11/13 統括役の了承: 既定 on（数えだけ・止める =off）
 }
 /** decision_source の2段（rule:two_stage_promise(pickup) 等）の種類 → 後で送る AIX の系統 */
 const TWO_STAGE_LATER: Record<string, string> = { pickup: "物件", pickup_unless_ack: "物件", check: "確認", check_question: "確認", brought_both: "確認", brought_estimate: "見積", estimate: "見積", estimate_stale: "見積", photo: "確認", room_photo_shoot: "確認", viewing_check: "内覧", work_support: "サポート" };
@@ -122,12 +122,22 @@ export function brainFrames(brainFamily: string, decisionSource?: string | null)
 }
 export type StaffMoveLite = { at: number; family: string };
 /** スタッフの2枠: 今=最初の一手の系統／後=最初の一手が返信の時、その後 laterHours 以内に送った最初の AIX の系統 */
-export function staffFrames(turnAtMs: number, moves: ReadonlyArray<StaffMoveLite>, opts: { laterHours?: number } = {}): { now: string | null; later: string | null } {
+/**
+ * 2026-11-13 作業員7b（統括役の頼み・竹内さん 11/13「返信と AIX の組み合わせも」）: 最初の一手が返信で、その返信から comboMs（既定 2分）以内に AIX を送った番は、
+ *   約束→後で AIX（2段）ではなく、同じ番の組（返信→AIX）＝今の通は AIX の系統（後の通は無し）。条件ヒアリングの初回（挨拶の返信の数秒後にフォーム）が 0/2 の外れに数えられていた。
+ *   数えだけ（本番の動きは変わらない）。11/13 から既定 on（止める YARDSTICK_COMBO_WINDOW=off）
+ */
+export function yardstickComboWindowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.YARDSTICK_COMBO_WINDOW ?? "").trim().toLowerCase() !== "off"; // 11/13 統括役の了承: 既定 on（7日 40→42/53・悪化0・止める =off）
+}
+export function staffFrames(turnAtMs: number, moves: ReadonlyArray<StaffMoveLite>, opts: { laterHours?: number; comboMs?: number | null } = {}): { now: string | null; later: string | null; combo?: boolean } {
   const lim = (opts.laterHours ?? 24) * 3_600_000;
   const ms = moves.filter((m) => m.at >= turnAtMs && m.at - turnAtMs < lim).sort((a, b) => a.at - b.at);
   if (!ms.length) return { now: null, later: null };
   const now = ms[0].family;
   if (now !== "返信") return { now, later: null };
+  const comboMs = opts.comboMs !== undefined ? opts.comboMs : yardstickComboWindowOn() ? 120_000 : null;
+  if (comboMs != null) { const a = ms.find((m) => m.family !== "返信"); if (a && a.at - ms[0].at <= comboMs) return { now: a.family, later: null, combo: true }; }
   return { now, later: ms.find((m) => m.family !== "返信")?.family ?? null };
 }
 export type TwoFrameJudge = { now: "hit" | "miss"; later: "hit" | "miss" | "brain_only" | "staff_only" | "na" };
@@ -151,4 +161,38 @@ export function countTwoFrames(rows: ReadonlyArray<{ scene: string | null; judge
     m.set(k, v);
   }
   return m;
+}
+
+// ─── 見張りの staff_aix が空の番を aix_usage_logs で補う（2026-11-13 作業員8b・統括役・弱い所 836 の調べで見つけた）──────────────
+//   見張り 11447 は line_watch_turns.staff_aix が空で、竹内さんの25分後の AIX（property_check_result・condition_hearing）が「aix_unknown」に数えられていた。
+//   見張りの行に AIX が無い時だけ、その会話の aix_usage_logs の番の後 hours 時間以内の行で補う（見張りに有る時は見張りのまま）。
+//   staffFrames（作業員7b の組の窓）と staffFirstMove に同じ AIX の一覧が入る＝系統の決め方は変えない。既定 on（止める YARDSTICK_AIX_LOG_FILL=off）
+export function yardstickAixLogFillOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  // 2026-11-13 作業員8b・統括役の了承: 既定 on（直近7日の竹内さんの番 53 で今の通の悪化 0・後の通の当たり 3→7・種類不明 12→0）。止める =off
+  return (env.YARDSTICK_AIX_LOG_FILL ?? "").trim().toLowerCase() !== "off";
+}
+export type AixLogLite = { at: number; aixType: string; checkPattern: string | null };
+export function fillStaffAix(watch: ReadonlyArray<AixLogLite>, convLogs: ReadonlyArray<AixLogLite>, turnAtMs: number, opts: { hours?: number } = {}): AixLogLite[] {
+  if (watch.length) return [...watch];
+  const lim = (opts.hours ?? 24) * 3_600_000;
+  return convLogs.filter((a) => a.at >= turnAtMs && a.at - turnAtMs < lim).sort((a, b) => a.at - b.at);
+}
+
+/**
+ * 補い（fillStaffAix）は後の通だけに効かせる（2026-11-13 作業員8b・統括役: 作業員1 の調べで、staff_aix が空の番の多くは次のお客様の発言の後に押した AIX＝次の番の物）。
+ *   今の通（最初の一手・組の窓）は見張りの staff_aix だけで決め、補った AIX は後の通（24時間以内の果たし）にだけ入れる（純関数）。
+ *   sNow: 見張りの AIX だけで作った staffFrames／sFill: 補った AIX で作った staffFrames
+ */
+export function mergeFillFrames(sNow: { now: string | null; later: string | null; combo?: boolean }, sFill: { now: string | null; later: string | null; combo?: boolean }): { now: string | null; later: string | null; combo?: boolean } {
+  if (sNow.combo) return sNow;
+  const known = sNow.later && sNow.later !== "aix_unknown" ? sNow.later : null;
+  const fill = sFill.later ?? (sFill.combo ? sFill.now : null);
+  return { now: sNow.now, later: known ?? (fill && fill !== "aix_unknown" ? fill : sNow.later) };
+}
+/**
+ * 見張りの空の理由（作業員1 の verdict_detail.staff_aix_state: pressed／none／next_turn／unknown）。next_turn＝AIX は次のお客様の発言の後に押した＝この番は返信だけ（今の通は返信・後の通はそのまま）
+ */
+export function applyStaffAixState(s: { now: string | null; later: string | null; combo?: boolean }, state: string | null | undefined): { now: string | null; later: string | null; combo?: boolean } {
+  if (state !== "next_turn") return s;
+  return { now: "返信", later: s.later, combo: false };
 }

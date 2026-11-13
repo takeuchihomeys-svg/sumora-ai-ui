@@ -52,7 +52,7 @@ import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { setupLlmTest, YUMA, type LlmTestHarness } from "./lib/llm-test-harness";
 import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lease";
-import { shiftExamText, examShiftDays } from "./lib/brain-exam-dates";
+import { shiftExamText, examShiftDays, shiftRowTexts, shiftLedgerTextOn } from "./lib/brain-exam-dates";
 import { planStopOnDiffOn, planRepDiffers } from "./lib/exam-night";
 import { brainPathCode, judgePath, problemScore, primaryAskIndex, rateByType, aixFamily, judgeCurrentProperty, normalizeDraftCode, type BrainExamOutput, type ProblemScore, type PathCode } from "./lib/brain-exam-score";
 import { similarity } from "../app/lib/property-name-match";
@@ -245,7 +245,15 @@ function shiftProblem(p: ExamProblem, days: number): ExamProblem {
     customer: sh(p.customer), staffText: sh(p.staffText ?? ""),
     asks: (p.asks ?? []).map((a) => ({ ...a, q: sh(a.q), point: sh(a.point) })),
     ng: (p.ng ?? []).map((x) => sh(x)),
+    // 2026-11-12 作業員7（q116・far_move_in_contact が11回とも壊した原因）: 条件の行の入居時期（move_in_time「10月1日」）はずらしていなかった。
+    //   会話は 9/18→11月にずれるのに条件は「10月1日」のまま＝今から見て来年の10月＝入居時期が先（連絡の日の約束）と読まれた。試験の写しの食い違い。
+    //   既定 on（11/12 統括役・止める EXAM_SHIFT_PC_DATES=off）。入力が変わる問題は11（q003・q005・q025・q043・q078・q116・q160・q202・q211・q334・q371）＝夜の基準の作り直しに乗せる
+    ...(examShiftPcDatesOn() && p.pc && typeof (p.pc as Record<string, unknown>).move_in_time === "string"
+      ? { pc: { ...(p.pc as Record<string, unknown>), move_in_time: sh(String((p.pc as Record<string, unknown>).move_in_time)) } } : {}),
   };
+}
+export function examShiftPcDatesOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.EXAM_SHIFT_PC_DATES ?? "").trim().toLowerCase() !== "off"; // 11/12 統括役の決め: 試験の写しの誤りの直しなので既定 on（止める =off）
 }
 const OUT = `${RESULTS_DIR}/${LABEL}.jsonl`;
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", (process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) ?? "");
@@ -495,6 +503,8 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
         o[col] = col === c.time ? sceneTimeOf(lr.ago, ctxAgo, times, k) : sceneTimeOf(Math.round((atMs - Date.parse(v)) / 60_000), ctxAgo, times, k);
       }
       for (const col of c.dates ?? []) o[col] = shiftDate(o[col]);
+      // 2026-11-13 作業員8b（q406・台帳の文の「10/24(土)」がずれずに会話の 11/14(土) と食い違った）: 文の欄の日付も会話と同じだけずらす（既定 off・EXAM_SHIFT_LEDGER_TEXT=on）
+      if (shiftDays && shiftLedgerTextOn()) { const yr = new Date(atMs + 9 * 3600_000).getUTCFullYear(); const sk = new Set([...c.times, ...(c.dates ?? []), "conversation_id", "property_customer_id", "line_message_id"]); Object.assign(o, shiftRowTexts(o, sk, (x) => shiftExamText(x, shiftDays, yr, atMs))); }
       if (t === "viewings" || t === "viewing_history") { o.pre_announce_sent = true; o.post_announce_sent = true; o.cheer_sent = true; } // 本番の告知の cron に拾わせない
       if ("line_message_id" in o && o.line_message_id) o.line_message_id = `${PREFIX}l-${randomUUID()}`;
       if (t === "estimate_records") o.aix_usage_log_id = o.aix_usage_log_id ? aixIdMap.get(String(o.aix_usage_log_id)) ?? null : null;
@@ -626,29 +636,9 @@ function codeFromString(c: string): PathCode {
 }
 
 // ─── 判定（DeepSeek を直に・記録の外なので費用はここで数える） ─────────────────
-const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pattern", "alt_actions", "two_stage", "first_contact_pickup", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "reply_opener", "far_move_in", "appeal_timing", "hesitancy_pattern", "customer_concern", "turn_contract", "asks", "request_ledger",
-  // 2026-10-28 2択（採点の brainPathCode が読む・保存した行から採点し直す時に落ちていた）
-  "two_choice_mode", "two_choice_aix", "two_choice_check_pattern", "two_choice_reply_kind",
-  // 2026-11-03 統括の土台（作業員2）: 通しの試験 scripts/exam-handoff.ts が読む欄（どれも既定 off の時は無い）
-  "need", "plan_ahead", "three_layer", "main_point", "flow_signals", "material_conflicts", "conductor_roles", "recheck_digest", "aix_recheck", "aix_desk", "decisions_1103",
-  // 2026-11-10 作業員7: 送る物の並び（TWO_MESSAGE_SEQUENCE）。旧は答案に残しておらず seq-dig の10本で並びを1つも数えられなかった（scripts/lib/send-seq-score.ts が読む）
-  "send_sequence", "send_sequence_reply_count",
-  // 2026-11-11 作業員14: 一通の読み（TURN_READ=on の turn_read）と気持ち（customer_mindset）。旧は答案に無く、読みが直ったかを試験で数えられなかった
-  "turn_read", "customer_mindset", "turn_focus", "turn_topics",
-  // 2026-11-12 作業員7: この番の目的・中期の狙い・仕込み・先読みの深さ（BRAIN_TURN_AIMS）
-  "turn_aims",
-  // 2026-11-12 作業員10（案A・BRAIN_SEVEN_FIELDS）: 竹内さんの7つの欄・潜在の4欄（文の統括の物差し scripts/audit-compose-understanding.ts が答案から読む）
-  "seven_read", "latent_read",
-  // 2026-11-12 作業員17（BRAIN_JUDGE_BASIS）: 判断の根拠のメモ（scripts/judge-basis-score.ts が読む）。conductor_focus は judge_basis が無い答案でも重点を数える元
-  "judge_basis", "conductor_focus",
-  // 2026-11-12 作業員10: 潜在の外れの束で、答案に送ってきた動機・気持ち・今の番と後の番 等が無く、文の統括への受け渡しを測れなかった
-  "latent_intent", "customer_emotion", "now_vs_later", "info_kind", "our_send_uptake"] as const;
-export function planOf(meta: Record<string, unknown> | null): Record<string, unknown> {
-  if (!meta) return {};
-  const out: Record<string, unknown> = {};
-  for (const k of PLAN_KEYS) { const v = meta[k]; if (v !== undefined && v !== null && !(Array.isArray(v) && !v.length) && v !== "") out[k] = v; }
-  return out;
-}
+// 2026-11-13 作業員22: 答案に残す欄の一覧（PLAN_KEYS）と planOf は scripts/lib/exam-plan-keys.ts に移した（brain-exam.ts は読み込むと試験が走るのでテストから読めない）
+export { planOf } from "./lib/exam-plan-keys";
+import { planOf } from "./lib/exam-plan-keys";
 const TRACE_KEYS = ["pickup_ready", "decision_source", "decision_source_no_aix", "two_stage", "dropped_direction", "scene_evidence", "aix_suppressed_by_accept_rate", "signal_aix_result", "checkpoint_stage", "customer_intent"];
 const AIX_JA: Record<string, string> = { property_recommendation: "物件オススメ", property_send: "物件を送る（ピックアップした）", property_pickup: "物件ピックアップ", property_search: "物件検索", viewing_invite: "内覧調整", meeting_place: "待ち合わせ場所（内覧の確定）", application_push: "申込へ", property_check_result: "物件確認した（管理会社に確認した結果）", acknowledge_check: "確認した", estimate_sheet: "見積書送る", cost_explain: "初期費用を説明", cost_breakdown: "初期費用について", condition_hearing: "条件ヒアリング（フォーム）", guarantor_info: "保証会社について", phone_call: "電話をかける", zenryoku_support: "全力サポート", followup_revive: "追客フォロー" };
 const ROUTE_JA: Record<string, string> = { reply: "返信の本文で答える", promise: "後でやると約束する返信（確認・見積・ピックアップ・撮影・交渉）", aix: "AIX（スタッフが確かめた事・検索の結果・見積・内覧の段取りを送る）", none: "答えない" };

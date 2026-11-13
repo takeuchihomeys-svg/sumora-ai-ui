@@ -114,6 +114,8 @@ import {
   CONDUCTOR_STATIC, buildConductorUser, FINAL_CHECK_FLASH_VERSION, type FlashGateInput, type FlashMaterials, type FlashCaller, type FinalCheckFlashLog,
 } from "./final-check-flash";
 import { claudeUsageUsd, usageFromAnthropic, isDeepseekPeakAt } from "./llm-price";
+import { confirmPriorPromiseOn, priorStaffConfirmObject } from "./confirm-prior-promise";
+import { fcFactsFromCompanyOn, companyPolicyBlockForCheck, standardNoticeLinesForCheck, nightPromiseRuleForCheck } from "./final-check-facts-source";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -698,7 +700,7 @@ ${tc}
 
 // プロンプトキャッシュ: 安定部（検査指示・情報源優先順位・code一覧・finalCheckRules・出力例）を
 // 先頭ブロック + cache_control、動的部（brain判定・clearedFacts・情報源・draft）を後続に分離。
-function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
+export function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
   const brainBaselineNote = buildBrainBaselineNote(ctx);
 
   const clearedFactsNote = ctx.clearedFacts?.length
@@ -721,10 +723,10 @@ function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): PromptBl
    （オーナーから頂く広告料ADを初期費用に還元）なので捏造として指摘しないこと。
    日割家賃: 入居日〜月末の日数分が発生。1日入居は日割家賃なし＝最も安い。2日以降入居は
    日割家賃＋翌月分家賃で約2ヶ月分の支払い。「月末入居が安い」「1日入居は高い」は誤り）
-6. [COMPANY_FACTS] がある時: そこに書かれた会社の事実（オンライン専門で来社相談は受けていない・室内の写真や動画は
+${fcFactsFromCompanyOn() ? companyPolicyBlockForCheck(ctx.account ?? null) : `6. [COMPANY_FACTS] がある時: そこに書かれた会社の事実（オンライン専門で来社相談は受けていない・室内の写真や動画は
    スタッフが撮影して送れる・クレジットカード払いに対応・緊急連絡先は必須・キャンセル料は審査通過まで無し 等）に
    **反する断定**（例:「写真はご用意出来ていない」「店舗でのご相談も承っております」「クレジットカードは対応しておりません」
-   「緊急連絡先は不要」）は FABRICATED_POLICY。理由付きで物件固有の事情を説明している文（「建築中のため写真はまだ無い」）は指摘しない
+   「緊急連絡先は不要」）は FABRICATED_POLICY。理由付きで物件固有の事情を説明している文（「建築中のため写真はまだ無い」）は指摘しない`}
 
 情報源の優先順位（上ほど権威が高い。矛盾したら上を正とする）:
 1位 [CHECKPOINTS] — 過去の会話全体から抽出済みの確認済み事実（日付付き・最高権威）
@@ -822,7 +824,7 @@ FABRICATED_POLICY: 仲介手数料・日割家賃・AD還元など会社固有�
 - CHECKPOINTS に記載された確認済み事実と一致する場合→ HISTORY になくても捏造でない
 - 【会社標準案内・業界一般知識（情報源に無くても捏造でない）】以下は会社の標準案内文・業界共通知識のため、
   FABRICATED_DATE / FABRICATED_AMOUNT 等を発行しないこと:
-  ・「審査（保証会社審査）は早ければ2〜3営業日、長くて1週間程」/「お申込から最短1週間〜2週間程でご入居可能」
+${fcFactsFromCompanyOn() ? standardNoticeLinesForCheck().join("\n") : "  ・「審査（保証会社審査）は早ければ2〜3営業日、長くて1週間程」/「お申込から最短1週間〜2週間程でご入居可能」"}
   ・「保証会社の審査が通過するまでキャンセル料は一切かからない」/「審査に落ちても費用は発生しない」
   ・「保証会社の費用は一般的に総賃料の50%前後（一般論として・物件により異なる旨を添えた説明）」
   ※ただし特定物件の保証料実額・特定物件の入居可能日を断定している場合は従来どおり指摘対象`;
@@ -1084,7 +1086,7 @@ ${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${clipMaterialLogged(ctx.finalCh
 - 同日に2回以上「よろしくお願いいたします」等の定型挨拶を繰り返す場合
 
 【4. 時刻の妥当性（TIME_INVALID）】
-- 「本日中に管理会社へ確認」「今日中にご連絡」等は18時以降であれば実行不可能な約束
+${fcFactsFromCompanyOn() ? `- ${nightPromiseRuleForCheck()}` : "- 「本日中に管理会社へ確認」「今日中にご連絡」等は18時以降であれば実行不可能な約束"}
 - 「明日ご連絡いたします」「後日確認いたします」等は時刻に関わらず有効
 - 土日・祝日・深夜に「本日中に」等の同日約束は実行不可能な約束
 
@@ -1202,8 +1204,8 @@ CONDITION_ADD_MISROUTED の誤発行を避けるべきケース:
 
 【タイムゾーンについての注意】
 【現在時刻】は日本標準時（JST・UTC+9）で表示される。
-「18時以降」の判定は JST 18:00 以降を指す。日本の営業時間は一般的に9:00-18:00。
-深夜（22:00以降）や早朝（7:00以前）の「本日中に」等の約束も実行不可能とみなすこと。`;
+${fcFactsFromCompanyOn() ? "時刻の決まりは上の【4. 時刻の妥当性】の1つだけを使う（管理会社の営業時間はそこに書いた時刻）。" : `「18時以降」の判定は JST 18:00 以降を指す。日本の営業時間は一般的に9:00-18:00。
+深夜（22:00以降）や早朝（7:00以前）の「本日中に」等の約束も実行不可能とみなすこと。`}`;
   // 2026-10-13 竹内さん（ブレインの使い残し 5）: ブレインの本質（turn_contract）を「答えるべき項目の一覧」として渡し、質問の取りこぼしはこれで見る（会話から探し直さない）。
   //   一覧がある時は [ANALYSIS] を短く（context-check-answer-list.ts・戻す CONTEXT_CHECK_ANSWER_LIST=off）
   const answerList = buildContextCheckAnswerList(ctx.turnContract ?? null, ctx.customerQuestions ?? null);
@@ -1704,6 +1706,30 @@ export function runUnanchoredConditionChecks(text: string, ctx: FinalCheckContex
   return [{ pass: "rule_check", severity: "warning", code: "ECHO_FROM_BRAIN_NOT_CUSTOMER",
     message: `お客様も DB 条件も書いていない条件語「${hits.join("・")}」を復唱しています（brain の会話全体の論点から持ち込まれた可能性）`,
     evidence: hits[0], suggestion: `「${hits.join("・")}」を削除する（お客様が書いた語だけを復唱する）` }];
+}
+
+/**
+ * 2026-11-12 作業員20（全読みの穴・テンプレ最適化が最終チェックを完全に通らない）: 安全の線だけの決定論スキャン（LLM なし・本文は変えない）。
+ * テンプレ最適化の分岐（route・isTemplateOptimize）でも、BANNED_WORD の安全の線（ブランド名・プレースホルダ・システム語・AI の作業メモ）だけは
+ * runDeterministicChecks の ① と同じ語の一覧（BANNED_WORDS_DETERMINISTIC）・同じ正規表現で見る。文体の語（承知いたしました 等）は見ない。
+ */
+const SAFETY_BANNED_WORDS: ReadonlySet<string> = new Set([
+  "スモラ", "名称未設定", "**", "〇〇", "○○", "アカウント名", "<<<", ">>>", "[REPLY]", "【AIX-META", "名無し", "権兵衛", "未設定さん", "未設定様", "ゲストさん", "ゲスト様",
+]);
+export function safetyLineIssues(text: string): CheckIssue[] {
+  const issues: CheckIssue[] = [];
+  for (const word of BANNED_WORDS_DETERMINISTIC) {
+    if (SAFETY_BANNED_WORDS.has(word) && text.includes(word)) {
+      issues.push({ pass: "rule_check", severity: "block", code: "BANNED_WORD", message: `禁止語彙「${word}」が含まれています`, evidence: word, suggestion: `「${word}」を削除してください` });
+    }
+  }
+  const ph = text.match(PLACEHOLDER_ADDRESS_DET_RE);
+  if (ph) issues.push({ pass: "rule_check", severity: "block", code: "NAME_PLACEHOLDER", message: `プレースホルダ名の呼びかけ「${ph[0]}」が含まれています`, evidence: ph[0], suggestion: `「${ph[0]}」と直後の助詞を削除し、名前なしで書く` });
+  const marker = text.match(/<<<[^\n]{0,20}|>>>|\[AIX誘導中\]|__SHOWN__|\{\s*"[a-z_]+"\s*:/);
+  if (marker) issues.push({ pass: "rule_check", severity: "block", code: "SYSTEM_MARKER_LEAK", message: "システム用マーカー・JSONが本文に混入しています", evidence: marker[0], suggestion: "マーカー以降を削除" });
+  const meta = text.match(META_NARRATION_LINE_RE);
+  if (meta) issues.push({ pass: "rule_check", severity: "block", code: "SYSTEM_MARKER_LEAK", message: "AIへの内部指示（場面の説明）が本文に混入しています", evidence: meta[0].trim(), suggestion: "この行を削除" });
+  return issues;
 }
 
 export function runDeterministicChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
@@ -2748,7 +2774,13 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
       // 2026-09-11 §5.2（E5-m）: 返信に書いた確認対象が会話に実在する（敷金礼金なしのお部屋・86、87…番・8月7日のご内覧・クレール元町203号室 等）なら
       //   創作約束ではない → block せず info（reply_anchored_object）。対象が会話に無い確認約束は従来どおり block
       const anchored = replyAnchoredConfirmObject(textForConfirm, ctx, confirmPair);
-      if (anchored) {
+      // 2026-11-13 作業員9（8f67f33b・FC_CONFIRM_PRIOR_PROMISE 既定 off）: 前の通で対象を書いて約束した確認を、お礼・了承の番で言い直すのは創作ではない
+      const prior = !anchored && confirmPriorPromiseOn() ? priorStaffConfirmObject(ctx.recentMessages, cust) : null;
+      if (prior) {
+        issues.push({ pass: "context_check", severity: "info", code: "CONFIRM_NO_OBJECT",
+          message: `確認対象「${prior.slice(0, 24)}」は前の通で約束済みのため許容（prior_staff_promise・${verdict.reason}）`,
+          evidence: confirmSentence, suggestion: "前の通で約束した確認の言い直しとして許容" });
+      } else if (anchored) {
         issues.push({ pass: "context_check", severity: "info", code: "CONFIRM_NO_OBJECT",
           message: `確認対象「${anchored.slice(0, 24)}」が会話に実在するため許容（reply_anchored_object・${verdict.reason}）`,
           evidence: confirmSentence, suggestion: "対象語が会話にある確認約束として許容" });

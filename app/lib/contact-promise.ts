@@ -501,3 +501,21 @@ export function undatedPromiseToContact(p: UndatedPromise, ymd: string, nowIso: 
   if (diff < 0 || diff > 3 * 366) return null;
   return { contact: d, sentence: p.sentence, kind: /ピックアップ|お送り|探し|ご提案/.test(p.sentence) ? "pickup" : "contact", moveInLabel: null };
 }
+
+/**
+ * 2026-11-13 作業員1（統括役・owner_questions 6e0adebc を閉じた件）: 入居の時期が先の会話で、連絡の日の約束の番ではない番（お礼・了承 等）にも、
+ *   会社の事実（hold_period: 抑えられるのはお申込みから1ヶ月・入居の1ヶ月半前から本格的に探す）を事実の1行で渡す（指示は書かない・決めるのはブレイン）。
+ *   2c0222c2（11/12・入居 2027年3月・条件のフォームの後の「よろしくお願いいたします！」）でブレインが「探し始めの時期（会社の方針）」を分からない事に出した。
+ *   既定 off（FAR_MOVE_IN_FACT=on）。入居の始まりが今日から45日以上先の時だけ
+ */
+export function farMoveInFactOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.FAR_MOVE_IN_FACT ?? "").trim().toLowerCase() === "on";
+}
+export function farMoveInFactLine(conditionMoveIn: string | null | undefined, nowIso: string, env?: Record<string, string | undefined>): string | null {
+  if (!farMoveInFactOn(env) || !conditionMoveIn) return null;
+  const r = resolveConditionMoveIn(conditionMoveIn, { nowIso });
+  if (r.kind !== "future") return null;
+  const days = daysBetween(todayOf(nowIso), r.start.ymd);
+  if (!(days >= 45)) return null;
+  return `【会社の事実・探し始めの時期】入居の始まり ${r.start.label}（条件の入居時期「${r.start.evidence}」・約${days}日先）。お部屋を抑えられるのはお申込みから${HOLD_PERIOD_LABEL}なので、入居の1ヶ月半前から本格的にお部屋探しを始めるのが理想の流れ（会社の事実 hold_period）`;
+}

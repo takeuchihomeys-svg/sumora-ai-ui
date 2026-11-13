@@ -7,7 +7,7 @@
 //   ④ turn-read.ts LEAD_KINDS 8種（内覧/申込・抑える/見積/物件を送ってもらう/条件を聞く/新着の約束/確認の約束/関係をつなぐ）＝一通の読み
 //   同じ「send_property」が①では「物件を送ってもらう」、②③の「keep」は「こちらが新着を送る約束」で、④では「新着の約束」と「関係をつなぐ」に割れている。
 //   → 行き先は NEXT_DEST の1つの表にし、古い語彙は toNextDest で読み替える（古いファイルは今は触らない・移す時は各ファイルが NEXT_DEST から作る）。
-// 名前は judge-basis-types.ts（作業員17）と揃える: 優先の next_step / hold_property はこの表の行き先 viewing・apply・estimate の上の名前（PRIORITY_OF_DEST）。
+// 名前は judge-basis-types.ts と揃える: 優先は check-order の Need（next_move はこの表の行き先 viewing・apply・estimate の上の名前・PRIORITY_OF_DEST・11/12 作業員22）。
 // 置き場所の決まり: 次の一手は道（返信か AIX か）が決まった後だけに使う（道の前に置かない・q406・q057・q065 の教訓）。
 
 import type { Priority } from "./judge-basis-types";
@@ -73,9 +73,10 @@ export function toNextDest(v: string | null | undefined, source: "compose_next" 
 }
 
 /** 行き先 → judge-basis-types の優先の名前（重点の物差しと同じ数え方にする） */
+// 2026-11-12 作業員22: 優先の名前を check-order の Need にした（統括役の決め）。抑える（旧 hold_property）は Need に無い＝次の段（next_move）に入る
 export const PRIORITY_OF_DEST: Record<NextDest, Priority> = {
-  viewing: "next_step", apply: "hold_property", estimate: "next_step", ask_send: "next_step", ask_condition: "next_step",
-  keep_send: "keep_promise", wait_check: "keep_promise", answer_only: "answer_question", door: "keep_relation", none: "keep_relation",
+  viewing: "next_move", apply: "next_move", estimate: "next_move", ask_send: "next_move", ask_condition: "next_move",
+  keep_send: "send_promise", wait_check: "confirm_promise", answer_only: "answer", door: "relation", none: "relation",
 };
 
 /** 押す強さの手がかり（198通: 強く押した 17 のうち、決める合図 16・物件の残り 8。残りも合図も無い 174通で strong は 8＝内覧・申込の流れの中だけ） */
@@ -91,4 +92,27 @@ export function strengthCeiling(c: PushCues): { max: NextStrength; why: string }
 const RANK: Record<NextStrength, number> = { none: 0, door: 1, together: 2, invite: 2, strong: 3 };
 export function strengthOverCeiling(s: NextStrength, c: PushCues): boolean {
   return RANK[s] > RANK[strengthCeiling(c).max];
+}
+
+/** 竹内さん・スタッフの返信の文から次の一手（行き先×強さ×時機）を読む網（台帳を作る時だけ・LLM なし）。
+ *  判断には使わない（P0 9eb6aa9c: 決まった計算は候補の網）。当たりは scripts/test-next-move-types.ts で 198通の7つの欄の lead と比べる */
+export function nextMoveFromText(reply: string): NextMove {
+  const t = String(reply ?? "");
+  const dest: NextDest =
+    /お申込(?:み)?(?:し|で)[^。！]{0,12}(?:抑|押さ)え|お部屋(?:を)?(?:抑|押さ)え|お申込(?:み)?(?:手続き|させて)/.test(t) ? "apply"
+    : /御?見積書?[^。！]{0,10}(?:作成|お送り)|最大限割引[^。！]{0,10}御?見積/.test(t) ? "estimate"
+    : /ご案内させて|ご内覧(?:頂|いただ|如何)|内見(?:頂|いただ|させて)|お日にちに[^。！]{0,10}ご案内/.test(t) ? "viewing"
+    : /(?:お送り|教えて)(?:ください|頂けますと|いただけますと)|ご入力(?:ください|頂けますと)/.test(t) ? "ask_send"
+    : /ピックアップ[^。！]{0,10}お送り|ピックアップ(?:させて|して|致し|いたし)|新着[^。！]{0,20}お送り|募集に出次第|探させて|お探し(?:させて|致し|いたし)/.test(t) ? "keep_send"
+    : /確認(?:させて|致し|いたし)[^。！]{0,6}(?:頂き|いただき)?ます[^。]{0,20}ご連絡|確認出来次第/.test(t) ? "wait_check"
+    : /ご内覧|内覧|ご案内|お待ち合わせ/.test(t) ? "viewing"
+    : /お申込|申込/.test(t) ? "apply"
+    : /お気軽に|いつでも|ごゆっくりご検討/.test(t) ? "door"
+    : t.trim() ? "answer_only" : "none";
+  const strength: NextStrength =
+    /併せて|あわせて[^。！]{0,10}ご案内|一緒にご案内/.test(t) ? "together"
+    : dest === "apply" && /キャンセル料|推奨|1部屋のみ|埋まる前|オススメです|抑えさせて頂きます/.test(t) ? "strong"
+    : /ご都合よろしいお日にち|如何でしょうか|いかがでしょうか|ご案内させて頂きます/.test(t) ? "invite"
+    : /お気に召されましたら|お気軽に|いつでも/.test(t) ? "door" : "none";
+  return { dest, strength, timing: timingOf(dest, t) };
 }

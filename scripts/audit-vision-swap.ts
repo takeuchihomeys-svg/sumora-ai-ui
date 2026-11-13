@@ -9,6 +9,7 @@
 // 「だいたい合っている」では足りない（金額が1桁違えばお客様に誤った金額が届く）。
 // 読み取りのみ。
 export {};
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const N = Number((process.argv.find((a) => a.startsWith("--n=")) ?? "--n=8").split("=")[1]);

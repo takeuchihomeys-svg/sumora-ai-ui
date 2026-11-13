@@ -15,6 +15,7 @@
 //
 // 実行: npx tsx --env-file=.env.local scripts/backfill-sent-image-facts.ts [--days=90]
 //       npx tsx --env-file=.env.local scripts/backfill-sent-image-facts.ts --apply --limit=2   （YUMA の行だけ）
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 import { readPropertyImage } from "../app/lib/property-image-read";
 import { factsFromImageRead } from "../app/lib/candidate-facts";
