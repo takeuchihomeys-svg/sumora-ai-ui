@@ -71,6 +71,10 @@ export function summarizeMaterialLog(obj: unknown): { source: WatchSource; key: 
       return { source: "brain", key: "kb", summary: { ids: Array.isArray(o.kb) ? (o.kb as unknown[]).slice(0, 12).map((x) => String(x).slice(0, 8)) : [], scene: short(o.scene, 40), ...(o.err ? { err: short(o.err) } : {}) } };
     case "brain:parallel-search":
       return { source: "brain", key: "parallel", summary: { scene: short(o.scene, 40), on: o.on ?? null } };
+    // 2026-11-13 作業員9（統括役 S9・FC_BLUEPRINT_MARK）: 最終チェックの4つ目の段＝設計図の行に当たらない文の印（印だけ）
+    case "fc:blueprint-unmatched":
+      return { source: "reply", key: "blueprint", summary: { rows: typeof o.rows === "number" ? o.rows : null, n: typeof o.n === "number" ? o.n : null,
+        kinds: Array.isArray(o.kinds) ? (o.kinds as unknown[]).slice(0, 8).map((x) => short(x, 20)) : [], heads: Array.isArray(o.heads) ? (o.heads as unknown[]).slice(0, 4).map((x) => short(x, 30)) : [] } };
     case "gen:scene":
       return { source: "reply", key: "scene", summary: { scene: short(o.scene, 40), materials: short(o.materials, 10) } };
     case "step2-spec": {
