@@ -48,9 +48,11 @@ const DIR = join(process.cwd(), "..", "..", "exam-cache", "conductor-focus");
       "あなたは賃貸の仲介会社の LINE 返信の「入口の統括」です。お客様の今の番を最初に読み、この番の重点を決めます。返信の文は書きません。",
       "【絶対の決まり】スタッフだけが知る事（確認の結果・募集状況・見積の金額・内覧の日程の確定）は AIX で送る番。返信は AI が知り得る事だけ。",
       F.FOCUS_INTAKE_RULES,
+      // 11/13: CONDUCTOR_FOCUS_SUB=on なら下の種類の段と欄も（本番の入口と同じ）
+      ...(F.focusSubOn() ? [F.FOCUS_SUB_RULES] : []),
       // --extra=<ファイル>: 足す1段を試す時だけ（効いたか分かるまで本体の指示には入れない）
       ...(arg("extra") ? [readFileSync(arg("extra"), "utf8").trim()] : []),
-      `JSON だけを返す: {${F.FOCUS_INTAKE_FIELD}}`,
+      `JSON だけを返す: {${F.focusIntakeField()}}`,
     ].join("\n\n");
     const key = process.env.ANTHROPIC_API_KEY ?? "";
     const ask = async (user: string) => {
@@ -80,7 +82,7 @@ const DIR = join(process.cwd(), "..", "..", "exam-cache", "conductor-focus");
       const [ra, rb] = process.argv.includes("--b-only") ? await ask(bLine).then((x) => [x, x] as const) : await Promise.all([ask(base), ask(bLine)]);
       if (!ra || !rb) { fail++; continue; }
       n++; if (ra.focus === t.focus) a++; if (rb.focus === t.focus) b++; if (near?.focus === t.focus) nearHit++;
-      rows.push({ id: t.id, gold: t.focus, scene: t.scene, route: t.route, near: near?.focus ?? null, inBand: near?.inBand ?? false, A: ra.focus, B: rb.focus, bg: rb.background, why: rb.why });
+      rows.push({ id: t.id, gold: t.focus, scene: t.scene, route: t.route, near: near?.focus ?? null, inBand: near?.inBand ?? false, A: ra.focus, B: rb.focus, subA: ra.sub ?? null, subB: rb.sub ?? null, bg: rb.background, why: rb.why });
     }
     const pct = (x: number) => (n ? `${((x / n) * 100).toFixed(1)}%` : "-");
     const byGold: Record<string, { n: number; a: number; b: number }> = {};

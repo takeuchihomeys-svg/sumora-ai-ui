@@ -4926,6 +4926,24 @@ ALTER TABLE work_log ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON work_log FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE work_log_id_seq FROM anon, authenticated;
 
+-- 2026-11-13 message_unsends … LINE の送信取り消しの控え（作業員5・統括役の案A・KB 6ad3a25f・11963 で取り消しを持つ欄が無かった）。
+--   line-webhook は取り消した通を messages から物理削除するので、「取り消した通」を読みに渡すための控えだけを残す。
+--   本文は maskPII で伏せた頭40字だけ（お客様が消した本文のため）。申込以降の会話の取り消しは残さない。30日より古い行は書く時に消す。
+--   書くのは line-webhook（UNSEND_LOG=on の時だけ・既定 off）・読むのはサーバーの鍵だけ（RLS 有効・ポリシーなし）
+CREATE TABLE IF NOT EXISTS message_unsends (
+  id BIGSERIAL PRIMARY KEY,
+  conversation_id UUID NOT NULL,
+  unsent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  original_sent_at TIMESTAMPTZ,
+  sender TEXT,
+  text_head TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_message_unsends_conv_time ON message_unsends(conversation_id, unsent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_message_unsends_time ON message_unsends(unsent_at);
+ALTER TABLE message_unsends ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON message_unsends FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE message_unsends_id_seq FROM anon, authenticated;
+
 -- 2026-10-29 aix_desk_cards … AIX の担当の札（ボタン×ピッカーごと・竹内さん KB P1 03d2bdd2）。scripts/build-aix-desk-cards.ts が毎週作り直す（upsert）。
 --   中身: 送る中身・使う場面・似たボタンとの線・竹内さんの文に入る物・入力欄・一緒に使われた定型・竹内さんの決定（設計知見の題）・
 --   竹内さんの番（お客様の発言→竹内さんの文・名前・号室・URL・電話等は伏せ、example-pii-guard の sanitizeExampleText も通す）・押し間違いの例。
