@@ -38,6 +38,9 @@ console.log("\n■ ② 押している間は連続で撮る");
   ok("撮る中身は今までと同じ道（_takeShot を直接呼ぶ）", /_takeShot\(\{ type: "axlx-human-shot", site: siteName \|\| "record", kind: "rec", wait_upload: true, ops: ops \}/.test(bg));
   ok("録画にも押した操作を付ける（2026-11-13 竹内さん「録画から学習できるのか」）", /type: "axlx-recent-ops"/.test(bg) && /axlx-recent-ops/.test(read("human-learn-record.js")));
   ok("  どのサイトかも送る（サイト別の学習のため）", /siteName = \/realnetpro/.test(bg));
+  ok("拡張の操作も拾う（録画モードで押すのは拡張）", /__axlxRecNoteOp/.test(read("human-learn-record.js")) && /__axlxRecNoteOp/.test(read("pointer-ui.js")));
+  ok("  click/change を人も拡張も拾う（isTrustedで絞らない）", /document\.addEventListener\("click", _cap, true\)/.test(read("human-learn-record.js")));
+  ok("  同じ物を二重に積まない（120ms以内は捨てる）", /t - Number\(last\.t \|\| 0\) < 120/.test(read("human-learn-record.js")));
   ok("  ⚠ 自分宛の sendMessage をしない（届かないため）", !/_recordOneShot[\s\S]{0,200}chrome\.runtime\.sendMessage/.test(bg));
 }
 

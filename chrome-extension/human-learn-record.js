@@ -183,13 +183,49 @@
    */
   var _opsRing = [];
   var OPS_RING_MAX = 40;
+  /**
+   * 2026-11-13 竹内さん「ちゃんと読み取れるようになったかな」→ `site=realpro` は入るが
+   *   **`shot_ops` が 0件**だった。
+   *   ⚠ 原因: この輪には**人が押した操作（isTrusted）だけ**を入れていた。
+   *     録画モードで押しているのは**拡張**（isTrusted=false）なので、**1つも入らない**。
+   *   → **録画モードの時は、拡張の操作も拾う**（どのボタンを押したかの材料になる）。
+   *     `_recNoteOp` を pointer-ui（拡張の押下）から呼んでもらい、ここに積む。
+   *   ⚠ 入れるのは**欄の名前・種類・時刻だけ**（入力した中身は入れない）。
+   */
   function _pushOp(kind, el) {
     try {
       var nm = el && L && L.fieldName ? L.fieldName(el) : null;
-      _opsRing.push({ t: Date.now(), k: String(kind || "?").slice(0, 10), f: nm ? String(nm).slice(0, 30) : null });
+      // 同じ物を続けて積まない（拡張の tap と click が両方来る事がある）
+      var last = _opsRing[_opsRing.length - 1];
+      var t = Date.now();
+      if (last && last.f === (nm ? String(nm).slice(0, 30) : null) && t - Number(last.t || 0) < 120) return;
+      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nm ? String(nm).slice(0, 30) : null });
       while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
     } catch (_) {}
   }
+  /** 拡張が押した時にも積む（録画モードの時だけ使う・pointer-ui から呼ばれる） */
+  function _recNoteOp(kind, el) { try { _pushOp(kind || "tap", el); } catch (_) {} }
+  try {
+    if (typeof window !== "undefined") window.__axlxRecNoteOp = _recNoteOp;
+  } catch (_) {}
+  /**
+   * 2026-11-13 竹内さん「ちゃんと読み取れるようになったかな」→ `shot_ops` が 0件
+   *   ⚠ `pointer-ui` の `tap()` だけに頼ると、**拡張が `el.click()` で直接押した時**（ポインタを使わない所）は
+   *     何も残らない。録画モードで押しているのは拡張なので、それでは材料が入らない。
+   *   → **このページで起きた click / change を（人でも拡張でも）拾う**。
+   *     ⚠ `isTrusted` で人の操作だけに絞らない（録画は拡張の操作を覚えたい）。
+   *     ⚠ 入れるのは**欄の名前・種類・時刻だけ**（入力した中身は入れない）。
+   */
+  try {
+    var _cap = function (e) {
+      try {
+        if (!e || !e.target) return;
+        _pushOp(e.type || "click", e.target);
+      } catch (_) {}
+    };
+    document.addEventListener("click", _cap, true);
+    document.addEventListener("change", _cap, true);
+  } catch (_) {}
   /** 写真と一緒に送る「直前までの操作」（新しい順に最大40件） */
   function _recentOps() {
     try { return _opsRing.slice(-OPS_RING_MAX); } catch (_) { return null; }
@@ -456,7 +492,7 @@
       var h = function (e) {
         if (!e || !e.isTrusted) return;   // 人が押した時（拡張の dispatch は対象外）
         _noteShotDiag("trusted_" + (e.type || "?"));
-        _pushOp(e.type || "click", e.target);   // 2026-11-13: 写真と一緒に送る操作の並び
+        // 2026-11-13: 操作の記録は下の `_cap`（人も拡張も拾う）に1本化した（二重に積まない）
         shootAfter(e.type, e.target, null);
       };
       // 人が押した時・打った時・選んだ時（拡張の自動操作はここに入らない）
