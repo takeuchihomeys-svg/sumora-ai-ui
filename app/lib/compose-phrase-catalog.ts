@@ -111,3 +111,20 @@ export function formSlotsNote(o: { scene: string | null; mainRole: SentenceRole 
   ].filter(Boolean);
   return parts.length ? `- 形: ${parts.join("／")}` : "";
 }
+
+// ─── 信頼の下の役目（11/13 統括役・細分化）: 竹内さんの文から決まった語で読む。「となります」だけの事実の文は数えない ─────
+export const TRUST_SUBS = ["effort", "support", "deadline", "flexible", "options", "honest_weak", "scarcity", "company_detail"] as const;
+export type TrustSub = typeof TRUST_SUBS[number];
+export const TRUST_SUB_JA: Record<TrustSub, string> = {
+  effort: "こちらの手間", support: "サポートの姿勢", deadline: "期日", flexible: "都合に合わせる", options: "選択肢",
+  honest_weak: "正直な弱点", scarcity: "少なさ", company_detail: "会社の具体",
+};
+export const SCARCITY_TEXT_RE = /1部屋のみ|一部屋のみ|こちらの1部屋|1部屋となります|残り1|このお部屋のみ|のみとなります|2番手/;
+export const COMPANY_TEXT_RE = /独立系|保証会社|仲介手数料|弊社|審査(?:通過|基準)|クレジットカード/;
+export function trustSubsOfText(text: string): TrustSub[] {
+  const t = String(text ?? "");
+  const out: TrustSub[] = (trustOfText(t) as string[]).filter((k): k is TrustSub => k !== "fact" && (TRUST_SUBS as readonly string[]).includes(k));
+  if (SCARCITY_TEXT_RE.test(t)) out.push("scarcity");
+  if (COMPANY_TEXT_RE.test(t)) out.push("company_detail");
+  return [...new Set(out)];
+}

@@ -4,7 +4,7 @@
 // 実行: npx tsx scripts/build-phrase-catalog.ts [--src=<roles-r1.json>]
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { trustOfText, endingOf } from "../app/lib/compose-phrase-catalog";
+import { trustOfText, endingOf, trustSubsOfText } from "../app/lib/compose-phrase-catalog";
 
 const ROOT = resolve(__dirname, "..");
 const arg = (k: string, d = "") => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `=${d}`).split("=").slice(1).join("=");
@@ -16,6 +16,7 @@ const bump = (tab: Map<string, { n: number; m: Map<string, number> }>, k: string
 let used = 0, skipped = 0;
 /** 文の役目13種 → 設計図の6役目（作業員22 の役目の名前）。promise は押さえ（確かめる約束で答える）・keep は締め（継続の約束）・barrier は信頼（少なさ・障壁を下げる） */
 const V2_OF: Record<string, string> = { greet: "head", uke: "head", answer: "press", promise: "press", trust: "trust", barrier: "trust", worry: "latent", viewing: "bridge", apply: "bridge", estimate: "bridge", ask_send: "bridge", keep: "close", close: "close" };
+const trustSub = new Map<string, { n: number; m: Map<string, number> }>();
 const rowsTab = new Map<string, { n: number; has: Map<string, number>; pos: Map<string, number[]> }>();
 // 形の欄（長さ・絵文字）: 場面×主の役目ごとの文の数・場面ごとの絵文字の数と種類
 const lens = new Map<string, number[]>();
@@ -27,6 +28,8 @@ for (const r of roles) {
   used++;
   for (const k of [`${r.scene}|${r.main_role}`, `*|${r.main_role}`]) { const a = lens.get(k) ?? []; a.push(r.sentences.length); lens.set(k, a); }
   { const all = r.sentences.join("").match(EMO_ALL) ?? []; for (const k of [r.scene, "*"]) { const e = emos.get(k) ?? { counts: [] as number[], kinds: new Map<string, number>() }; e.counts.push(all.length); for (const x of all) e.kinds.set(x, (e.kinds.get(x) ?? 0) + 1); emos.set(k, e); } }
+  // 信頼の下の役目（場面×主の役目ごとの割合）
+  if (r.main_role) { const subs = trustSubsOfText(r.sentences.join("\n")); bump(trustSub, `${r.scene}|${r.main_role}`, subs); bump(trustSub, `*|${r.main_role}`, subs); }
   if (r.main_role) { const ks = trustOfText(r.sentences.join("\n")); bump(trust, `${r.scene}|${r.main_role}`, ks); bump(trust, `*|${r.main_role}`, ks); }
   for (const x of r.roles) { const s = r.sentences[x.i - 1]; if (!s) continue; const e = endingOf(s); const v = e ? [e] : []; bump(ends, `${r.scene}|${x.role}`, v); bump(ends, `*|${x.role}`, v); }
   // 行の並び（COMPOSE_PLAN_ROWS_V2）: 設計図の6役目（head・press・trust・latent・bridge・close）がこの番にあるか・どの位置か（0＝先頭〜1＝最後）
@@ -54,6 +57,8 @@ const sharesOf = (m: Map<string, number>, n: number, max: number, minC = 1): Sha
 };
 const trustOut: Record<string, { n: number; shares: Shares }> = {};
 for (const k of [...trust.keys()].sort()) { const t = trust.get(k)!; if (t.n >= 2) trustOut[k] = { n: t.n, shares: sharesOf(t.m, t.n, 4) }; }
+const trustSubOut: Record<string, { n: number; shares: Shares }> = {};
+for (const k of [...trustSub.keys()].sort()) { const t = trustSub.get(k)!; if (t.n >= 2) trustSubOut[k] = { n: t.n, shares: sharesOf(t.m, t.n, 8) }; }
 const endOut: Record<string, { n: number; top: Shares }> = {};
 for (const k of [...ends.keys()].sort()) { const t = ends.get(k)!; if (t.n < 4) continue; const top = sharesOf(t.m, t.n, 3, 2); if (top.length) endOut[k] = { n: t.n, top }; }
 const q = (a: number[], p: number) => { const b = [...a].sort((x, y) => x - y); return b[Math.min(b.length - 1, Math.floor(p * (b.length - 1) + 0.5))]; };
@@ -67,6 +72,7 @@ export const PHRASE_CATALOG_BUILT = ${JSON.stringify(built)};
 export const PHRASE_TRUST_TABLE: Record<string, { n: number; shares: Array<[string, number]> }> = ${JSON.stringify(trustOut)};
 export const PHRASE_ENDING_TABLE: Record<string, { n: number; top: Array<[string, number]> }> = ${JSON.stringify(endOut)};
 export const PHRASE_LENGTH_TABLE: Record<string, { n: number; median: number; p25: number; p75: number }> = ${JSON.stringify(lenOut)};
+export const PHRASE_TRUST_SUB_TABLE: Record<string, { n: number; shares: Array<[string, number]> }> = ${JSON.stringify(trustSubOut)};
 export const PHRASE_ROWS_TABLE: Record<string, { n: number; roles: Array<[string, number, number]> }> = ${JSON.stringify(rowsOut)};
 export const PHRASE_EMOJI_TABLE: Record<string, { n: number; median: number; p75: number; kinds: Array<[string, number]> }> = ${JSON.stringify(emoOut)};
 `;
