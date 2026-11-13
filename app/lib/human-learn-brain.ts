@@ -26,7 +26,7 @@
 //   npx tsx --env-file=.env.local scripts/human-learn-brain.ts --apply    # DB の human_learn_profile に書く
 //   /api/cron/human-learn-brain が毎晩まとめる（Vercel Cron）
 
-import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, planLearnFromWeak } from "./shot-learn";
+import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, planLearnFromWeak, learnSequenceFromShots } from "./shot-learn";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -128,6 +128,21 @@ export type HumanLearnBundle = {
   }>;
   /** どのモードの記録が何件あったか（順位づけの材料） */
   mode_counts?: Record<string, number>;
+  /**
+   * 2026-11-14 竹内さん「画面録画したのみたら一連の動き学習できるからいまみてみて」:
+   *   録画から作った**一連の動きの型**（押す順番を1本の鎖にした物・意味のあるまとまり）。
+   *   ⚠ 入れるのは欄の名前と順番だけ（入力した中身は入れない）。
+   */
+  sequence_flow?: {
+    /** 実際に押された順番（回数の多い組でつないだ鎖） */
+    sequence: string[];
+    /** 意味のあるまとまり（地域／駅／条件／検索） */
+    groups: Array<{ name: string; steps: string[]; n: number }>;
+    /** 組ごとの回数（上位） */
+    edges: Array<{ from: string; to: string; n: number }>;
+    /** 何本の並びから作ったか */
+    samples: number;
+  };
   /**
    * 2026-11-13 竹内さん「弱い部分等は学習の統括が判断して学習を繰り返していく」:
    *   **弱い所**（同じ欄で種類が割れている・種類が分からない・写真と数値が食い違う・押せない欄を押した）。
@@ -539,6 +554,26 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     : { screens: {}, total: 0, withOps: 0 };
 
   /**
+   * 2026-11-14 竹内さん「画面録画したのみたら一連の動き学習できるからいまみてみて」:
+   *   録画の**一連の動き**から「この手順で押す」の型を作る。
+   *   ⚠ 同じ日の同じ並びは1回だけ（録画は数秒ごとに撮るので水増しする）。
+   *   ⚠ 交互クリック（トグル跡）は除く。
+   */
+  const seqForFlow: Array<Array<{ f: string }>> = [];
+  const seenFlow = new Set<string>();
+  for (const r of list) {
+    const day = String(r.created_at ?? "").slice(0, 10);
+    for (const s of sequencesOf(r)) {
+      if (looksLikeToggleLoop(s)) continue;
+      const key = day + "|" + s.map((x) => String(x.f ?? "")).join(">");
+      if (seenFlow.has(key)) continue;
+      seenFlow.add(key);
+      seqForFlow.push(s);
+    }
+  }
+  const sequenceFlow = seqForFlow.length ? learnSequenceFromShots(seqForFlow, { min: 2 }) : null;
+
+  /**
    * 2026-11-14 竹内さん「自動で強化必要な部分を強化する。できていない部分もDBに理解させて強化する」:
    *   **モード別**に学ぶ（normal / staff / aix / brain …）。
    *   ⚠ 統括が「自動の時に足りない物」と「通常の時に足りない物」を**分けて**判断できるようにする。
@@ -635,6 +670,7 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
      *     **件数の内訳まで消えていた**（どのモードで何件動いたか分からない）。
      */
     ...(Object.keys(mode_counts).length ? { mode_counts } : {}),
+    ...(sequenceFlow && sequenceFlow.sequence.length ? { sequence_flow: sequenceFlow } : {}),
     lines: [],
   };
   bundle.lines = describeBundle(bundle);
@@ -725,6 +761,19 @@ export function describeBundle(b: HumanLearnBundle): string[] {
     for (const m of b.learn_plan.mode_plan) {
       out.push(`  ・${m.verdict}`);
       if (m.action && m.action !== "追加で強化する所は無し") out.push(`    → ${m.action}`);
+    }
+  }
+  /**
+   * 2026-11-14 竹内さん「画面録画したのみたら一連の動き学習できるから」:
+   *   **一連の動き**（押す順番を1本にした物）を出す。
+   */
+  if (b.sequence_flow && b.sequence_flow.sequence.length) {
+    const sf = b.sequence_flow;
+    out.push("");
+    out.push(`▼ 一連の動き（${sf.samples}本の並びから）`);
+    out.push("  " + sf.sequence.slice(0, 18).join(" → ") + (sf.sequence.length > 18 ? " → …" : ""));
+    for (const g of sf.groups) {
+      out.push(`  【${g.name}】${g.steps.slice(0, 8).join(" → ")}${g.steps.length > 8 ? " → …" : ""}（${g.n}本）`);
     }
   }
   /**
