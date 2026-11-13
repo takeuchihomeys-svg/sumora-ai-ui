@@ -1,7 +1,7 @@
 // 最終チェックの4つ目の段: 設計図の行に当たらない文に印（2026-11-13 作業員9・統括役 S9・FC_BLUEPRINT_MARK・実物の文）
 // 実行: npx tsx app/lib/__tests__/final-check-blueprint-match.test.ts
 import { summarizeMaterialLog } from "../line-watch-materials";
-import { markUnmatchedSentences, fcBlueprintMarkOn, blueprintMarkLog, conditionTokensForMark, type BlueprintRowLike } from "../final-check-blueprint-match";
+import { markUnmatchedSentences, fcBlueprintMarkOn, blueprintMarkLog, blueprintEmbedLog, conditionTokensForMark, type BlueprintRowLike } from "../final-check-blueprint-match";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 let pass = 0, fail = 0;
@@ -60,5 +60,16 @@ const route = readFileSync(join(__dirname, "..", "..", "api", "generate-reply", 
 t("配線: fcBlueprintMarkOn() と rowsV2 がある時だけ・logWatchMaterial で出す", /if \(fcBlueprintMarkOn\(\) && composeSentencePlan\?\.rowsV2\?\.length\)/.test(route) && /logWatchMaterial\(JSON\.stringify\(blueprintMarkLog\(/.test(route));
 const sm = summarizeMaterialLog(log);
 t("見張りの materials.reply.blueprint に入る", sm?.source === "reply" && sm?.key === "blueprint" && (sm?.summary as { n?: number }).n === 1, sm);
+// 2026-11-13 作業員10（統括役）: 信頼の添え（設計図の行の embeds）が下書きに出たかを同じ1行に足す
+const rowsEmb = [{ role: "head" }, { role: "press", embeds: [{ kind: "effort", share: 0.8 }, { kind: "deadline", share: 0.75 }] }, { role: "bridge", embeds: [{ kind: "flexible", share: 0.4 }] }];
+const dEmb = "かしこまりました！！\n管理会社に募集状況確認させて頂きます！！\nご都合よろしいお日にちにご案内させて頂きます😌！！";
+const emb = blueprintEmbedLog(dEmb, rowsEmb);
+t("添えの数え: 手間・都合は出た・期日は出ていない（印 trust_embed_deadline）", emb.embeds === 3 && emb.embeds_shown === 2 && emb.embeds_missing.join() === "trust_embed_deadline", emb);
+const logE = blueprintMarkLog("c1", [], rowsEmb.length, emb);
+t("ログの1行に添えの欄が入る", logE.embeds === 3 && logE.embeds_shown === 2 && Array.isArray(logE.embeds_missing));
+t("添えを渡さない時は今までの形のまま", !("embeds" in blueprintMarkLog("c1", [], 1)));
+const smE = summarizeMaterialLog(logE)?.summary as { embeds?: number | null; embeds_missing?: string[] } | undefined;
+t("見張りの materials にも添えが入る", smE?.embeds === 3 && smE?.embeds_missing?.[0] === "trust_embed_deadline", smE);
+t("配線: route が blueprintEmbedLog を blueprintMarkLog の4つ目に渡す", /blueprintMarkLog\(conversationId, marks, composeSentencePlan\.rowsV2\.length, blueprintEmbedLog\(finalDraftText/.test(route));
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

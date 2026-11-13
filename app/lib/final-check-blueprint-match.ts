@@ -12,6 +12,8 @@
 //   見張りの materials.reply.blueprint に入る（line-watch-materials.summarizeMaterialLog）。誤った印の数を実送信で数えてから次を決める。
 //   既定 off（FC_BLUEPRINT_MARK=on）。
 import { partsOf, type BlueprintPart } from "./writing-blueprint";
+import { trustEmbedsShown, trustEmbedLogFields } from "./compose-plan-rows-v2";
+type TrustEmbedLog = ReturnType<typeof trustEmbedLogFields>;
 
 export function fcBlueprintMarkOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.FC_BLUEPRINT_MARK ?? "").trim().toLowerCase() === "on";
@@ -95,10 +97,18 @@ export function markUnmatchedSentences(
   return out;
 }
 
-/** 見張りの materials に入れる1行のログ（generate-reply が console.info で出す） */
-export function blueprintMarkLog(conversationId: string | null | undefined, marks: ReadonlyArray<UnmatchedMark> | null, rows: number): Record<string, unknown> {
+/**
+ * 見張りの materials に入れる1行のログ（generate-reply が console.info で出す）。
+ *   2026-11-13 作業員10（統括役）: 信頼の添え（設計図の行の embeds＝他の文の中で言う手間・期日・都合）が下書きに出たかも同じ1行に足す
+ *   （embeds＝立てた添えの数・embeds_shown＝出た数・embeds_missing＝出なかった印 trust_embed_effort|deadline|flexible。compose-plan-rows-v2 の trustEmbedLogFields）
+ */
+export function blueprintMarkLog(conversationId: string | null | undefined, marks: ReadonlyArray<UnmatchedMark> | null, rows: number, embeds?: TrustEmbedLog | null): Record<string, unknown> {
   return { tag: "fc:blueprint-unmatched", conversationId: conversationId ?? null, rows, n: marks?.length ?? null,
-    kinds: (marks ?? []).map((m) => m.kind), heads: (marks ?? []).slice(0, 4).map((m) => m.sentence.slice(0, 30)) };
+    kinds: (marks ?? []).map((m) => m.kind), heads: (marks ?? []).slice(0, 4).map((m) => m.sentence.slice(0, 30)), ...(embeds ?? {}) };
+}
+/** 下書きと設計図の行から、信頼の添えの数え（blueprintMarkLog の4つ目の引数） */
+export function blueprintEmbedLog(draft: string, rows: Parameters<typeof trustEmbedsShown>[1]): TrustEmbedLog {
+  return trustEmbedLogFields(trustEmbedsShown(draft, rows));
 }
 
 /** お客様の条件の文（DB の登録）から、繰り返しを数える語を取る（エリア・家賃・間取り・広さ・築年・徒歩） */

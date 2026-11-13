@@ -1696,6 +1696,10 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       const rec = checkOrderRecord(m, typeof m.check_order_scene === "string" ? m.check_order_scene : null);
       m.check_order = rec;
       if (rec.type) m.check_order_type = rec.type;
+      // 2026-11-13 作業員16（竹内さん 11/13「優先度の部分等を具体的に」・KB d030d496・7d6fe3eb）: 場面×状態の優先度の表の行を check_order.priority に記録だけ。
+      //   PRIORITY_TABLE=shadow|on の時だけ（既定 off＝何も足さない）。道は読むだけで変えない（ずれは conflicts の印）
+      const { priorityTableOn, priorityTableRecord } = await import("@/app/lib/priority-table");
+      if (priorityTableOn()) rec.priority = priorityTableRecord(m);
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "brain:check-order-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（KB fd1c7c62・ea2a9405①）: 番ごとの部品の配分（型×深さ）を記録だけ。CONDUCTOR_ALLOCATION=shadow|on の時だけ meta.conductor_allocation を足す
