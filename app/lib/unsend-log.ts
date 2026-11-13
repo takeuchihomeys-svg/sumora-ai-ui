@@ -2,9 +2,14 @@
 //   統括役の案A（KB 6ad3a25f）: 取り消した通は messages から物理削除されるので、読みに「取り消した通」として渡す控えだけ残す。
 //   本文は maskPII で伏せた頭40字だけ・申込以降の会話は残さない（呼ぶ側で status を渡す）。切替: UNSEND_LOG=on（既定 off）
 import { maskPII } from "./pii-mask";
+import { YUMA_CONVERSATION_ID } from "./test-conversations";
 
 type Env = Record<string, string | undefined>;
-export const unsendLogOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.UNSEND_LOG ?? "").trim().toLowerCase() === "on";
+/** 11/13 統括役: =yuma は YUMA の会話だけで書く（本番での確かめ用）・=on は全部の会話 */
+export const unsendLogOn = (env: Env = typeof process !== "undefined" ? process.env : {}, conversationId?: string | null) => {
+  const v = (env.UNSEND_LOG ?? "").trim().toLowerCase();
+  return v === "on" || (v === "yuma" && !!conversationId && conversationId === YUMA_CONVERSATION_ID);
+};
 export const UNSEND_KEEP_DAYS = 30;
 export const UNSEND_HEAD_CHARS = 40;
 
