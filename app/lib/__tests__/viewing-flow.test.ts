@@ -318,6 +318,45 @@ it("q406: 曜日だけの返事を候補のその曜日の日に読む（VIEWING
   expect(offeredDaysOfWeekday(["12/26", "1/2"], 6, Date.parse("2026-12-24T03:00:00Z")).join(",")).toBe("12/26,1/2");
 });
 
+it("見張り 12265: 確定した内覧の当日に別の物件の追加の内見 → sameDayAddOn（VIEWING_SAME_DAY_ADD_ON=on・既定 off）", () => {
+  const msgs = [
+    { sender: "customer", text: "内見したいです", createdAt: at("11/7", "20:00") },
+    { sender: "staff", text: "【AIX】11/8(日) 12:00 新大阪中央ハイツ 現地エントランスお待ち合わせで何卒よろしくお願い致します！！", createdAt: at("11/7", "21:00") },
+    { sender: "customer", text: "明日12時に新大阪中央ハイツに集合で問題ございません。", createdAt: at("11/7", "22:26") },
+    { sender: "staff", text: "本日12:00より何卒よろしくお願い致します！！", createdAt: at("11/8", "09:04") },
+    { sender: "customer", text: "いやありやで 見た感じ悪いところ無さそうやし、もし時間あったら今日ここも内見させて", createdAt: at("11/8", "09:26") },
+  ];
+  const input = { messages: msgs, meetings: [{ at: at("11/7", "21:00"), dateMD: "11/8", time: "12:00" }], appointment: { dateMD: "11/8", time: "12:00" }, nowMs: Date.parse(at("11/8", "09:27")) };
+  const prev = process.env.VIEWING_SAME_DAY_ADD_ON;
+  try {
+    delete process.env.VIEWING_SAME_DAY_ADD_ON;
+    const off = resolveViewingFlow(input); expect(off.stage).toBe("confirmed"); expect(!!off.sameDayAddOn).toBe(false);
+    process.env.VIEWING_SAME_DAY_ADD_ON = "on";
+    const on = resolveViewingFlow(input); expect(on.stage).toBe("confirmed"); expect(!!on.sameDayAddOn).toBe(true); expect(viewingFlowNextAix(on)).toBe(null);
+    expect(buildViewingFlowBrainText(on)).toContain("viewing_invite（候補日）にしない");
+    // 候補日を頼んだ番（「内見行ける候補日教えてください」）は追加の扱いにしない
+    const ask = resolveViewingFlow({ ...input, messages: [...msgs.slice(0, 4), { sender: "customer", text: "ちょっとここも見に行ってみたいです。内見行ける候補日教えてください！", createdAt: at("11/8", "09:26") }] });
+    expect(!!ask.sameDayAddOn).toBe(false);
+    // 内覧の日ではない日の「ここも内見したい」は追加の扱いにしない
+    const other = resolveViewingFlow({ ...input, nowMs: Date.parse(at("11/7", "23:00")), messages: [...msgs.slice(0, 3), { sender: "customer", text: "ここも内見させてほしいです", createdAt: at("11/7", "22:50") }] });
+    expect(!!other.sameDayAddOn).toBe(false);
+  } finally { if (prev === undefined) delete process.env.VIEWING_SAME_DAY_ADD_ON; else process.env.VIEWING_SAME_DAY_ADD_ON = prev; }
+});
+
+it("当日の追加にしない: 到着の知らせ・同行者の相談", () => {
+  const base = [
+    { sender: "staff", text: "【AIX】11/8(日) 12:00 現地エントランスお待ち合わせで何卒よろしくお願い致します！！", createdAt: at("11/7", "21:00") },
+  ];
+  const input = (text: string) => ({ messages: [...base, { sender: "customer", text, createdAt: at("11/8", "09:26") }], meetings: [{ at: at("11/7", "21:00"), dateMD: "11/8", time: "12:00" }], appointment: { dateMD: "11/8", time: "12:00" }, nowMs: Date.parse(at("11/8", "09:27")) });
+  const prev = process.env.VIEWING_SAME_DAY_ADD_ON;
+  try {
+    process.env.VIEWING_SAME_DAY_ADD_ON = "on";
+    expect(!!resolveViewingFlow(input("本日の内見12時15着くらいになりますので宜しくお願い致します。")).sameDayAddOn).toBe(false);
+    expect(!!resolveViewingFlow(input("今日、彼氏も一緒に内覧連れて行ってもいいですか？？")).sameDayAddOn).toBe(false);
+    expect(!!resolveViewingFlow(input("ここも内覧したいそうです！")).sameDayAddOn).toBe(true);
+  } finally { if (prev === undefined) delete process.env.VIEWING_SAME_DAY_ADD_ON; else process.env.VIEWING_SAME_DAY_ADD_ON = prev; }
+});
+
 console.log(`
 ${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
