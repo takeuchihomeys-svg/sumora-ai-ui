@@ -215,8 +215,14 @@
     var steps = Math.min(28, Math.max(6, Math.round(dist / 26)));
     var pts = (H && H.pointerPath) ? H.pointerPath(from, t, steps) : [{ x: from.x, y: from.y }, t];
     // 2026-11-11: 覚えた**曲がり具合**に寄せる（1.0＝まっすぐ・大きいほど曲げる）
-    if (prof && prof.curve > 1 && pts.length > 3) {
-      try { pts = _bendLike(pts, from, t, prof.curve); } catch (_) {}
+    // 2026-11-13 竹内さん「連携できていない部分」: サーバーで学んだ曲がりも先に見る
+    var _curve = null;
+    try {
+      if (_LL && _LL.serverCurve) _curve = _LL.serverCurve();
+    } catch (_) { _curve = null; }
+    if (_curve == null && prof && prof.curve > 1) _curve = prof.curve;
+    if (_curve && _curve > 1 && pts.length > 3) {
+      try { pts = _bendLike(pts, from, t, _curve); } catch (_) {}
     }
     var waits = (H && H.pointerDelays) ? H.pointerDelays(pts.length, total) : null;
     var anim = { cancelled: false };

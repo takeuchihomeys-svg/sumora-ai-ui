@@ -2203,13 +2203,22 @@ if (msg.type === "axlx-human-shot") {
  *   ⚠ 取るのは**1日1回まで**（起動時と、前回から24時間たった時）。サーバーを叩きすぎない。
  *   ⚠ 失敗しても何もしない（今まで通りの動き・学習は「あれば使う」）。
  */
+/**
+ * 2026-11-13 竹内さん「ほかにちゃんと学習の面とかで連携できていない部分などあるか」:
+ *   ⚠ 旧は `next`（押す順番）と `points`（押す場所）**だけ**を storage に置いていた。
+ *     サーバーは `motion`（速さ・曲がり）・`gaps`（操作の間）・`weak`（次に学ぶ事）・
+ *     `site_flow`（サイトごとの手順）まで計算して返しているのに、**拡張が捨てていた**
+ *     （＝サーバーで学んだ事が現場に届いていない）。
+ *   → 使える物も一緒に置く。ページ側は「あれば使う」（無ければ今まで通り）。
+ */
 var _LEARN_KEYS = ["axlx_learn_next", "axlx_learn_points", "axlx_learn_at"];
 async function _refreshLearnedBundle(force) {
   try {
     var st = await chrome.storage.local.get(_LEARN_KEYS);
     var last = Number(st && st.axlx_learn_at) || 0;
     if (!force && last && Date.now() - last < 24 * 3600 * 1000) return { ok: true, skipped: "fresh" };
-    var res = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0", { cache: "no-store", signal: AbortSignal.timeout(15000) });
+    // touch=1（既定）で読む＝**読んだ印**をサーバーに残す（どの PC が読んでいるか分かる）
+    var res = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile", { cache: "no-store", signal: AbortSignal.timeout(15000) });
     if (!res.ok) return { ok: false, error: "http_" + res.status };
     var json = await res.json();
     var bundle = json && json.bundle;
@@ -2220,14 +2229,23 @@ async function _refreshLearnedBundle(force) {
     }
     var next = (bundle.next && typeof bundle.next === "object") ? bundle.next : {};
     var points = (bundle.points && typeof bundle.points === "object") ? bundle.points : {};
+    // 2026-11-13: サーバーが計算した**動き・間・弱い所・サイトの手順**も一緒に置く（捨てない）
+    var motion = (bundle.motion && typeof bundle.motion === "object") ? bundle.motion : {};
+    var gaps = (bundle.gaps && typeof bundle.gaps === "object") ? bundle.gaps : {};
+    var weak = Array.isArray(bundle.weak) ? bundle.weak.slice(0, 80) : [];
+    var siteFlow = (bundle.site_flow && typeof bundle.site_flow === "object") ? bundle.site_flow : {};
     await chrome.storage.local.set({
       axlx_learn_next: next,
       axlx_learn_points: points,
+      axlx_learn_motion: motion,
+      axlx_learn_gaps: gaps,
+      axlx_learn_weak: weak,
+      axlx_learn_site_flow: siteFlow,
       axlx_learn_at: Date.now(),
-      axlx_learn_src: { rows: (bundle.source && bundle.source.rows) || 0, at: bundle.generated_at || null },
+      axlx_learn_src: { rows: (bundle.source && bundle.source.rows) || 0, at: bundle.generated_at || null, dropped: bundle.dropped_cols || null },
     });
-    console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個");
-    return { ok: true, next: Object.keys(next).length, points: Object.keys(points).length };
+    console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個・弱い所 " + weak.length + "件");
+    return { ok: true, next: Object.keys(next).length, points: Object.keys(points).length, weak: weak.length };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
   }

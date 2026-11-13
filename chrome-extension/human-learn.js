@@ -753,13 +753,94 @@
     };
   }
 
+  /**
+   * 2026-11-13 竹内さん「ほかにちゃんと学習の面とかで連携できていない部分などあるか」:
+   *   ⚠ サーバー（学習担当のブレイン）は `motion`（速さ565px/秒・曲がり1.04・操作の間 中央値524ms）を
+   *     計算して返しているのに、拡張は**ローカルの癖（axlx_human_profile）だけ**を使っていた
+   *     ＝ 他の PC で貯まった分・写真から学んだ分が**現場に届いていなかった**。
+   *   → サーバーの motion を**先に**見る（無ければ今まで通りローカルの癖）。
+   *     ⚠ 丸めは同じ（120〜1600ms）。極端な値で飛ばない・止まらないようにする。
+   */
+  var _srvMotion = null;
+  var _srvMotionAt = 0;
+  function _serverMotion() {
+    var now = Date.now();
+    if (_srvMotion && now - _srvMotionAt < 60000) return _srvMotion;
+    _srvMotionAt = now;
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return _srvMotion;
+      chrome.storage.local.get(["axlx_learn_motion"], function (r) {
+        try {
+          var m = (r && r.axlx_learn_motion) || null;
+          _srvMotion = (m && typeof m === "object") ? m : {};
+        } catch (_) { _srvMotion = {}; }
+      });
+    } catch (_) {}
+    return _srvMotion;
+  }
+
   /** プロファイルから「この距離を動く時間」を出す（実測の速さ・無ければ null） */
   function moveMsFor(profile, dist) {
-    if (!profile || typeof profile.speed_px_s !== "number" || !(dist > 0)) return null;
+    if (!(dist > 0)) return null;
+    // ① サーバーで学んだ速さ（他の PC の分も入っている）を先に見る
+    var srv = _serverMotion();
+    var srvSpeed = srv && typeof srv.speed_px_s === "number" ? srv.speed_px_s : null;
+    if (srvSpeed && srvSpeed > 0) {
+      return Math.max(120, Math.min(1600, Math.round((dist / srvSpeed) * 1000)));
+    }
+    // ② 無ければ手元の実測
+    if (!profile || typeof profile.speed_px_s !== "number") return null;
+    /**
+     * 2026-11-13: ⚠ 速さが 0 以下だと `dist / 0` で **無限大**になり、
+     *   1600ms に丸められて「すごく遅い」動きになっていた（記録が壊れている時の保険）。
+     *   → 0 以下は「実測なし」として null（呼ぶ側が今まで通りの速さを使う）。
+     */
+    if (!(profile.speed_px_s > 0)) return null;
     var ms = (dist / profile.speed_px_s) * 1000;
     // 速さから出した時間を 120〜1600ms に丸める（0ms で飛ばない・長すぎて止まらない）
     return Math.max(120, Math.min(1600, Math.round(ms)));
   }
+
+  /**
+   * 2026-11-13: サーバーが学んだ「曲がり具合」を返す（無ければ null＝手元の癖を使う）。
+   *   1.0＝まっすぐ・大きいほど曲げる。0.5〜3.0 に丸める（極端に曲げない）。
+   */
+  function serverCurve() {
+    var srv = _serverMotion();
+    var c = srv && typeof srv.curve === "number" ? srv.curve : null;
+    if (c == null || !(c > 0)) return null;
+    return Math.max(0.5, Math.min(3.0, c));
+  }
+
+  /**
+   * 2026-11-13: サーバーが学んだ「操作と操作の間」（中央値・ms）を返す。
+   *   ⚠ 画面の待ちに使う時の**目安**。呼ぶ側で 200〜3000ms に丸める。
+   */
+  function serverGapMs() {
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return null;
+      // 同期では読めないので、キャッシュに入っている時だけ返す（無ければ null＝今まで通り）
+      return (_srvGap && typeof _srvGap.ms === "number" && _srvGap.ms > 0) ? _srvGap.ms : null;
+    } catch (_) { return null; }
+  }
+  var _srvGap = null;
+  var _srvGapAt = 0;
+  function _loadServerGap() {
+    var now = Date.now();
+    if (now - _srvGapAt < 60000) return;
+    _srvGapAt = now;
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+      chrome.storage.local.get(["axlx_learn_gaps"], function (r) {
+        try {
+          var g = (r && r.axlx_learn_gaps) || null;
+          var ms = g && typeof g.median_ms === "number" ? g.median_ms : null;
+          _srvGap = (ms && ms > 0) ? { ms: Math.max(200, Math.min(3000, ms)) } : null;
+        } catch (_) { _srvGap = null; }
+      });
+    } catch (_) {}
+  }
+  try { _loadServerGap(); } catch (_) {}
 
   /** 段階の日本語名（画面に出す用） */
   var STAGE_JA = { form: "条件の入力", modal: "小窓（選択）", result: "検索結果", other: "その他" };
@@ -855,6 +936,8 @@
     mergeMotion: mergeMotion,
     profileFrom: profileFrom,
     moveMsFor: moveMsFor,
+    serverCurve: serverCurve,
+    serverGapMs: serverGapMs,
     learnedLines: learnedLines,
     buttonReport: buttonReport,
     nextPressFrom: nextPressFrom,

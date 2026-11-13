@@ -35,7 +35,14 @@ console.log("\n■ ② 入れてから消す（失敗しても前の束が残る
   const delPos = seg.indexOf(".delete()");
   ok("insert が先（消すのが後）", insPos > 0 && delPos > insPos, { insPos, delPos });
   ok("  ⚠ 旧の「消してから入れる」になっていない", !/delete\(\)[\s\S]{0,200}insert\(/.test(seg));
-  ok("  消すのは「入れた1秒より前」だけ（今入れた物は残す）", /Date\.now\(\) - 1000/.test(prof));
+  /**
+   * 2026-11-13 竹内さん「ほかに連携できていない部分などあるか」:
+   *   ⚠ 旧は「入れた1秒より前を全部消す」だったので、**履歴が1件しか残らなかった**。
+   *   → **新しい方から HISTORY_KEEP 件を残し、それより古い物だけ消す**。
+   */
+  ok("  新しい方から200件残す（HISTORY_KEEP）", /HISTORY_KEEP = 200/.test(prof));
+  ok("  消すのは200件より古い物だけ", /range\(HISTORY_KEEP, HISTORY_KEEP \+ 199\)/.test(prof));
+  ok("  入れた物は消さない（id を指定して消す）", /delete\(\)\.in\("id", oldIds\)/.test(prof));
 }
 
 console.log("\n■ ③ 履歴を残す（学習の推移を見られる）");

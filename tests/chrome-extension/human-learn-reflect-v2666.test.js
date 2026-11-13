@@ -70,7 +70,7 @@ console.log("\n■ ② 癖が自動モードの動きに使われる");
   ok("癖が変わったら読み直す（storage の変化を見る）", /ch\[PROF_LIVE_KEY\] \|\| ch\[PROF_KEY\]/.test(pu));
   ok("動く時間に癖の速さを使う", /_LL\.moveMsFor\(prof, dist\)/.test(pu));
   ok("癖が無ければ今まで通りの式", /_learned != null \? _learned : Math\.min\(900, Math\.max\(220, Math\.round\(dist \* 1\.6\)\)\)/.test(pu));
-  ok("軌跡を癖の曲がり具合に寄せる（_bendLike）", /function _bendLike\(pts, from, to, curve\)/.test(pu) && /pts = _bendLike\(pts, from, t, prof\.curve\)/.test(pu));
+  ok("軌跡を癖の曲がり具合に寄せる（_bendLike）", /function _bendLike\(pts, from, to, curve\)/.test(pu) && /pts = _bendLike\(pts, from, t, _curve\)/.test(pu));
   ok("曲げる量は距離の12%まで（画面が暴れない）", /Math\.min\(len \* 0\.12/.test(pu));
   ok("押す位置は癖の割合で狙う", /prof\.aim\.x \+ \(Math\.random\(\) - 0\.5\) \* 0\.16/.test(pu));
   ok("癖が無ければ 40〜60%（ほぼ真ん中）", /var fx = 0\.4 \+ Math\.random\(\) \* 0\.2;/.test(pu));
