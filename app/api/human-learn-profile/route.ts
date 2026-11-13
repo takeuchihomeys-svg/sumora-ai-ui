@@ -36,10 +36,14 @@ export async function GET(req: NextRequest) {
     .limit(1);
 
   if (r.error) {
-    // 表がまだ無い時（列を足す前）も 200 で返す（拡張が止まらないように）
-    const missing = /does not exist|42P01/.test(r.error.message);
+    /**
+     * 2026-11-13: 表がまだ無い時（migrate の前）も **200 で返す**（拡張が止まらないように）。
+     *   旧は 42P01 だけを見ていたが、PostgREST は「スキーマキャッシュに無い」という別の文
+     *   （`Could not find the table ... in the schema cache`）を返すので 500 になっていた。
+     */
+    const missing = /does not exist|42P01|Could not find the table|schema cache/i.test(r.error.message);
     return NextResponse.json(
-      { ok: false, error: r.error.message, empty: true, bundle: null, lines: [] },
+      { ok: false, error: r.error.message, empty: true, bundle: null, lines: [], missing_table: missing },
       { status: missing ? 200 : 500, headers: CORS },
     );
   }
