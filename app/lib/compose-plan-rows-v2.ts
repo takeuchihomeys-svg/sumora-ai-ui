@@ -1,0 +1,178 @@
+// app/lib/compose-plan-rows-v2.ts — 設計図の1行（1文）を10個の欄に細分化する（COMPOSE_PLAN_ROWS_V2・既定 off・純関数）
+//   作業員10・2026-11-13（竹内さん「文の設計図の部分を細かく強化する。細分化して強化する」・統括役の10欄・点検役の実例 12362 12548 12838 12196 12164 12562 11865 12680）
+//
+// ■ 何を直すか（11/13 の数え）: 設計図の行は正解53番で1番あたり 1.8行・竹内さんの文は3〜5文。信頼・締めの行がほとんど立たず、誘導先の行の「何を」が25行とも空。
+//   → 行の数と役目を竹内さんの場面×主の役目ごとの並び（PHRASE_ROWS_TABLE・竹内さんの180番）に合わせる。竹内さんが入れる割合が 0.5 以上の役目は立て、0.2 未満は立てない
+//   → 1行に10個の欄: role・sub・uses（作業員22 の下の欄の名前と値）・source・certainty・how・why_order・length・stand・share
+// ■ 立てない条件（足しすぎを止める）
+//   - スタッフしか知らない番（主の依頼の道が AIX）に潜在の一文を立てない（点検 12348）
+//   - 潜在の材料（latentCover）が無い時は潜在の行を立てない（作らない）
+//   - 資料の事実はお客様が聞いた事（依頼ごとの答え）に結び付く物だけ使う。聞かれていない資料の事実は足さない（点検 12164「建設中のため内覧は…」を竹内さんは消した）
+//   - 探す条件の番で、こちらが前に送った条件と同じ物は全部繰り返さず、変わった点だけ（点検 12196）＝ stand に no_full_repeat を付ける
+// ■ 名前: 役目は作業員22 の decided-subfields の8役目（head・press・trust・latent・bridge・close）、下の欄は作業員22 の29個（fact.value・our.checked・aim.mid 等）、
+//   確かさは assertable / basically / needs_check、潜在の種類は作業員16 の LATENT_KINDS
+
+import type { SentencePlan, SevenFields, PlanRow } from "./compose-sentence-plan";
+import type { SentenceRole } from "./takeuchi-anatomy-roles";
+import { PHRASE_ROWS_TABLE } from "./compose-phrase-catalog-data";
+import { endingOf, endingsFor, trustFor, TRUST_JA } from "./compose-phrase-catalog";
+import { headWordOf, HEAD_WORD_JA } from "./compose-head";
+import { strengthFromSeven } from "./next-move-types";
+import type { ComposeFact } from "./compose-asks-facts";
+import type { ClosingDecision, AnswerSource } from "./compose-value-slots";
+
+type Env = Record<string, string | undefined>;
+export function composePlanRowsV2On(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.COMPOSE_PLAN_ROWS_V2 ?? "").trim().toLowerCase() === "on";
+}
+export const V2_ROLES = ["head", "press", "trust", "latent", "bridge", "close"] as const;
+export type V2Role = typeof V2_ROLES[number];
+export const V2_ROLE_JA: Record<V2Role, string> = { head: "頭", press: "押さえ", trust: "信頼", latent: "潜在の一文", bridge: "つなぎ", close: "締め" };
+/** 文の役目13種 → 6役目（build-phrase-catalog の V2_OF と同じ） */
+export const V2_OF: Partial<Record<SentenceRole, V2Role>> = { greet: "head", uke: "head", answer: "press", promise: "press", trust: "trust", barrier: "trust", worry: "latent", viewing: "bridge", apply: "bridge", estimate: "bridge", ask_send: "bridge", keep: "close", close: "close" };
+export type V2Sub =
+  | "conclusion" | "numbers" | "name_property" | "split_known_check"
+  | "effort" | "fact" | "scarcity" | "company_detail"
+  | "viewing" | "estimate" | "apply" | "ask_send"
+  | "their_timing" | "keep_promise" | "fixed"
+  | "kashikomari" | "hai" | "arigato" | "daijobu" | "none"
+  | "worry";
+/** 出所の名前は compose-value-slots の AnswerSource が正（作業員22・作業員7b も揃える） */
+export type V2Source = AnswerSource;
+export type V2Certainty = "assertable" | "basically" | "needs_check";
+export type V2WhyOrder = "greet_first" | "asked_order" | "ease_first" | "after_answer" | "keep_last";
+export type PlanRowV2 = {
+  role: V2Role;
+  sub: V2Sub;
+  /** 使う下の欄（作業員22 の名前）と値 */
+  uses: Array<{ field: string; value: string }>;
+  source: V2Source;
+  certainty: V2Certainty;
+  /** 竹内さんの言い回しの骨の札（終わりの言い方・信頼の札） */
+  how: string | null;
+  why_order: V2WhyOrder;
+  length: "short" | "normal";
+  /** 立てた理由／立てない理由の札 */
+  stand: string[];
+  /** この場面×主の役目で竹内さんがこの行を入れる割合（0〜1） */
+  share: number | null;
+  /** 元の設計図の行の役目（13種） */
+  from?: SentenceRole | null;
+  /** 文の強さ（つなぎだけ） */
+  strength?: string | null;
+};
+export type RowsV2Input = {
+  plan: SentencePlan; s7: SevenFields; meta: unknown; scene: string | null; customerText: string;
+  facts: ReadonlyArray<ComposeFact>; closing: ClosingDecision | null;
+  recentStaff: ReadonlyArray<{ text: string; aix?: boolean }>;
+  /** 主の依頼の道が AIX（スタッフしか知らない番） */
+  staffOnlyTurn?: boolean;
+  kinds?: ReadonlyArray<string>;
+};
+const STAND_MIN = 0.5, DROP_MAX = 0.2;
+const TIME_RE = /来週|今週|週末|明日|明後日|月末|今月中|来月|\d{1,2}月(?:\d{1,2}日|上旬|中旬|下旬|頃)?|\d{1,2}日|[月火水木金土日]曜/;
+const SCARCITY_RE = /1部屋のみ|一部屋のみ|こちらの1部屋|1部屋となります|残り1|このお部屋のみ|のみとなります|2番手/;
+const COMPANY_RE = /独立系|保証会社|仲介手数料|弊社|審査(?:通過|基準)|クレジットカード/;
+const FROM_SOURCE: Record<ComposeFact["from"], V2Source> = { 会話: "conversation", 資料: "material", 会社の事実: "company_fact", 一般: "general", 判断: "conversation", 約束の中身: "staff_only", 見積の記録: "record", 内覧の記録: "record" };
+const certaintyOf = (s: V2Source): V2Certainty => (s === "staff_only" ? "needs_check" : s === "general" ? "basically" : "assertable");
+export function rowsPresence(scene: string | null, mainRole: SentenceRole | null): { n: number; at: string; roles: Map<V2Role, { share: number; pos: number }> } | null {
+  if (!mainRole) return null;
+  const a = scene ? PHRASE_ROWS_TABLE[`${scene}|${mainRole}`] : undefined;
+  const t = a && a.n >= 3 ? { ...a, at: `${scene}|${mainRole}` } : PHRASE_ROWS_TABLE[`*|${mainRole}`] ? { ...PHRASE_ROWS_TABLE[`*|${mainRole}`], at: `*|${mainRole}` } : null;
+  if (!t) return null;
+  return { n: t.n, at: t.at, roles: new Map(t.roles.map(([r, s, p]) => [r as V2Role, { share: s, pos: p }])) };
+}
+/** 設計図の行（v1）と材料から10欄の行を作る。返す rows は竹内さんの並びの順・dropped は立てなかった行と理由 */
+export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: Array<{ role: V2Role; why: string }>; presenceAt: string | null } {
+  const mainV1 = i.plan.rows.find((r) => r.rank === "main") ?? null;
+  const mainRole = mainV1?.role ?? null;
+  const pres = rowsPresence(i.scene, mainRole);
+  const shareOf = (r: V2Role) => pres?.roles.get(r)?.share ?? null;
+  const posOf = (r: V2Role) => pres?.roles.get(r)?.pos ?? (r === "head" ? 0 : r === "close" ? 1 : 0.5);
+  const dropped: Array<{ role: V2Role; why: string }> = [];
+  const rows: PlanRowV2[] = [];
+  const replyFacts = i.facts.filter((f) => f.from !== "約束の中身");
+  const promiseFacts = i.facts.filter((f) => f.from === "約束の中身");
+  const lastStaff = i.recentStaff[i.recentStaff.length - 1] ?? null;
+  const ourText = i.recentStaff.map((m) => m.text).join("\n");
+  const prop = i.s7.appeal?.property ?? null;
+  // 頭
+  {
+    const h = headWordOf({ customerText: i.customerText, prev: lastStaff ? { text: lastStaff.text, aix: !!lastStaff.aix } : null });
+    const share = shareOf("head");
+    if (h.word === "none") dropped.push({ role: "head", why: `受けなしの番（${h.why}）` });
+    else rows.push({ role: "head", sub: h.word, uses: lastStaff ? [{ field: "our.sent", value: lastStaff.aix ? "AIX" : "返信" }] : [], source: "conversation", certainty: "assertable", how: HEAD_WORD_JA[h.word], why_order: "greet_first", length: "short", stand: [h.why], share, from: "uke" });
+  }
+  // 押さえ（主）＋ v1 のほかの行
+  const v1ByV2 = new Map<V2Role, PlanRow[]>();
+  for (const r of i.plan.rows) { const v2 = V2_OF[r.role]; if (!v2 || v2 === "head") continue; const a = v1ByV2.get(v2) ?? []; a.push(r); v1ByV2.set(v2, a); }
+  for (const r of v1ByV2.get("press") ?? []) {
+    const isPromise = r.role === "promise";
+    const f0 = isPromise ? promiseFacts : replyFacts;
+    const sub: V2Sub = isPromise ? "split_known_check" : f0.some((f) => /\d/.test(f.text)) ? "numbers" : prop ? "name_property" : "conclusion";
+    const src: V2Source = isPromise ? "staff_only" : (i.kinds ?? []).includes("K13") ? "checked_result" : f0[0] ? FROM_SOURCE[f0[0].from] : "conversation";
+    rows.push({ role: "press", sub, uses: [...f0.slice(0, 2).map((f) => ({ field: isPromise ? "our.open_promise" : "fact.value", value: f.text })), ...(isPromise && replyFacts.length ? replyFacts.slice(0, 1).map((f) => ({ field: "fact.value", value: f.text })) : [])], source: src, certainty: certaintyOf(src), how: endingsFor(i.scene, r.role)?.top[0]?.[0] ?? null, why_order: "asked_order", length: "normal", stand: [r.rank === "main" ? "主の文" : "従の文"], share: shareOf("press"), from: r.role });
+  }
+  // 信頼
+  {
+    const share = shareOf("trust");
+    const have = v1ByV2.get("trust") ?? [];
+    const all = [i.customerText, lastStaff?.text ?? "", ...replyFacts.map((f) => f.text)].join("\n");
+    const scarce = SCARCITY_RE.exec(all)?.[0] ?? null, company = replyFacts.find((f) => f.from === "会社の事実" || COMPANY_RE.test(f.text)) ?? null;
+    // 点検 12838・12240: 信頼の中身（今ある物の少なさ・会社の事実の具体）が材料にある時は、割合が低い場面でも立てる
+    if (have.length || (share ?? 0) >= STAND_MIN || scarce || company) {
+      const sub: V2Sub = scarce ? "scarcity" : company ? "company_detail" : mainRole === "promise" ? "effort" : "fact";
+      const tr = trustFor(i.scene, mainRole);
+      rows.push({ role: "trust", sub, uses: scarce ? [{ field: "fact.value", value: scarce }] : company ? [{ field: "fact.value", value: company.text }] : [], source: company ? "company_fact" : scarce ? "material" : "conversation", certainty: "assertable", how: tr?.shares[0] ? TRUST_JA[tr.shares[0][0]] ?? null : null, why_order: "after_answer", length: "normal", stand: [have.length ? "設計図にある" : `竹内さんが入れる割合 ${share}`], share, from: have[0]?.role ?? "trust" });
+    } else dropped.push({ role: "trust", why: `竹内さんが入れる割合 ${share ?? "-"}（${STAND_MIN} 未満）` });
+  }
+  // 潜在の一文
+  {
+    const share = shareOf("latent");
+    const lc = i.s7.latentCover;
+    if (i.staffOnlyTurn) dropped.push({ role: "latent", why: "staff_only_no_latent（スタッフしか知らない番）" });
+    else if (!lc?.kind && !lc?.what) dropped.push({ role: "latent", why: "潜在の材料が無い（作らない）" });
+    else if ((v1ByV2.get("latent") ?? []).length || (share ?? 0) >= STAND_MIN) {
+      rows.push({ role: "latent", sub: "worry", uses: [...(lc.what ? [{ field: "latent.concern", value: lc.what }] : []), ...(lc.fact ? [{ field: "fact.value", value: lc.fact }] : [])], source: lc.fact ? "material" : "conversation", certainty: lc.fact ? "assertable" : "basically", how: lc.how ?? null, why_order: (posOf("latent") < posOf("press")) ? "ease_first" : "after_answer", length: "normal", stand: [lc.kind ? `潜在の種類 ${lc.kind}` : "潜在の材料あり"], share, from: "worry" });
+    } else dropped.push({ role: "latent", why: `竹内さんが入れる割合 ${share ?? "-"}（${DROP_MAX} 未満）` });
+  }
+  // つなぎ
+  for (const r of v1ByV2.get("bridge") ?? []) {
+    const strength = strengthFromSeven(i.s7.push ? { push: i.s7.push.push, strength: i.s7.push.strength } : null);
+    const uses = [
+      ...(prop ? [{ field: "hook.property", value: prop }] : []),
+      ...(r.role === "viewing" && (r.part || i.s7.appeal?.what) ? [{ field: "hook.point", value: String(r.part ?? i.s7.appeal?.what) }] : []),
+      ...(r.role === "apply" ? replyFacts.filter((f) => SCARCITY_RE.test(f.text)).slice(0, 1).map((f) => ({ field: "fact.value", value: f.text })) : []),
+      ...(i.s7.bridge?.what ? [{ field: "aim.mid", value: i.s7.bridge.what }] : []),
+    ];
+    rows.push({ role: "bridge", sub: r.role as V2Sub, uses, source: "conversation", certainty: "assertable", how: endingsFor(i.scene, r.role)?.top[0]?.[0] ?? null, why_order: "after_answer", length: "normal", stand: [uses.length ? "何を: 下の欄から" : "何を: 材料が無い（物件名・日時を作らない）"], share: shareOf("bridge"), from: r.role, strength });
+  }
+  // 締め
+  {
+    const share = shareOf("close");
+    const keep = (v1ByV2.get("close") ?? []).find((r) => r.role === "keep") ?? null;
+    const time = TIME_RE.exec(i.customerText)?.[0] ?? null;
+    if (keep || time || (share ?? 0) >= STAND_MIN || (i.closing && i.closing.sign !== "none")) {
+      const sub: V2Sub = time ? "their_timing" : keep ? "keep_promise" : "fixed";
+      rows.push({ role: "close", sub, uses: time ? [{ field: "latent.expect", value: time }] : keep?.part ? [{ field: "aim.mid", value: keep.part }] : [], source: "conversation", certainty: "assertable", how: time ? "お客様の言った時期で結ぶ（例: 〇〇のご連絡お待ちしております）" : endingsFor(i.scene, keep ? "keep" : "close")?.top[0]?.[0] ?? null, why_order: "keep_last", length: "short", stand: [time ? `お客様の言った時期「${time}」` : keep ? "継続の約束は主の答えの後の最後" : `竹内さんが入れる割合 ${share}`], share, from: keep ? "keep" : "close" });
+    } else dropped.push({ role: "close", why: `竹内さんが入れる割合 ${share ?? "-"}` });
+  }
+  // 足しすぎの印（探す条件の番で前に送った条件を全部繰り返さない）
+  if (i.scene === "conditions" && lastStaff && /ピックアップ/.test(lastStaff.text)) for (const r of rows) if (r.role === "press" || (r.role === "close" && r.sub === "keep_promise")) r.stand.push("no_full_repeat（変わった条件だけ）");
+  for (const r of rows) if (r.source === "material" && r.role !== "press" && !r.uses.length) r.stand.push("no_unasked_material");
+  // 竹内さんの並びの順（頭→…→締め。同じ位置は元の順）
+  const order = rows.map((r, k) => ({ r, k })).sort((a, b) => (a.r.role === "head" ? -1 : b.r.role === "head" ? 1 : a.r.role === "close" ? 1 : b.r.role === "close" ? -1 : posOf(a.r.role) - posOf(b.r.role) || a.k - b.k)).map((x) => x.r);
+  return { rows: order, dropped, presenceAt: pres?.at ?? null };
+}
+export function planRowsV2Digest(rows: ReadonlyArray<PlanRowV2>): string {
+  return rows.map((r) => `r2:${r.role}.${r.sub}|${r.uses.map((u) => u.field).join("+") || "-"}|${r.source}|${r.certainty}|${r.why_order}|${r.share ?? "-"}`).join(";");
+}
+const WHY_JA: Record<V2WhyOrder, string> = { greet_first: "最初", asked_order: "聞かれた順", ease_first: "不安を先に解く", after_answer: "答えの後", keep_last: "最後" };
+const SUB_JA: Partial<Record<V2Sub, string>> = { conclusion: "結論で答える", numbers: "事実を数字で", name_property: "物件名で名指し", split_known_check: "今言える部分と確認の部分を分ける", effort: "こちらの手間", fact: "事実の裏付け", scarcity: "少なさ", company_detail: "会社の具体", their_timing: "お客様の言った時期を使う", keep_promise: "継続の約束", fixed: "決まりの締め", worry: "奥の不安への一文", viewing: "内覧へ", estimate: "見積へ", apply: "申込へ", ask_send: "送ってもらう" };
+/** 書き手への注記（on の時だけ・値は下の欄のまま・文は写さない） */
+export function planRowsV2Note(rows: ReadonlyArray<PlanRowV2>, env?: Env): string {
+  if (!composePlanRowsV2On(env) || !rows.length) return "";
+  const L = rows.map((r, k) => `  ${k + 1}. ${V2_ROLE_JA[r.role]}（${SUB_JA[r.sub] ?? HEAD_WORD_JA[r.sub as keyof typeof HEAD_WORD_JA] ?? r.sub}）${r.uses.filter((u) => u.field !== "our.sent").length ? `: ${r.uses.filter((u) => u.field !== "our.sent").map((u) => u.value).join("・")}` : ""}${r.certainty === "needs_check" ? "（言い切らない・確認の約束）" : r.certainty === "basically" ? "（基本的に）" : ""}${r.how ? `／型「${r.how}」` : ""}／${WHY_JA[r.why_order]}${r.length === "short" ? "・短く" : ""}${r.stand.some((s) => s.startsWith("no_full_repeat")) ? "・前の条件を全部繰り返さず変わった点だけ" : ""}`);
+  return `- 1文ずつの設計図（竹内さんの同じ場面の並び・この行以外の文は足さない）:\n${L.join("\n")}`;
+}
+export { endingOf };

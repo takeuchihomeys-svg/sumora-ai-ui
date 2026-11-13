@@ -14,6 +14,9 @@ const trust = new Map<string, { n: number; m: Map<string, number> }>();
 const ends = new Map<string, { n: number; m: Map<string, number> }>();
 const bump = (tab: Map<string, { n: number; m: Map<string, number> }>, k: string, vals: string[]) => { const t = tab.get(k) ?? { n: 0, m: new Map<string, number>() }; t.n++; for (const v of vals) t.m.set(v, (t.m.get(v) ?? 0) + 1); tab.set(k, t); };
 let used = 0, skipped = 0;
+/** 文の役目13種 → 設計図の6役目（作業員22 の役目の名前）。promise は押さえ（確かめる約束で答える）・keep は締め（継続の約束）・barrier は信頼（少なさ・障壁を下げる） */
+const V2_OF: Record<string, string> = { greet: "head", uke: "head", answer: "press", promise: "press", trust: "trust", barrier: "trust", worry: "latent", viewing: "bridge", apply: "bridge", estimate: "bridge", ask_send: "bridge", keep: "close", close: "close" };
+const rowsTab = new Map<string, { n: number; has: Map<string, number>; pos: Map<string, number[]> }>();
 // 形の欄（長さ・絵文字）: 場面×主の役目ごとの文の数・場面ごとの絵文字の数と種類
 const lens = new Map<string, number[]>();
 const emos = new Map<string, { counts: number[]; kinds: Map<string, number> }>();
@@ -26,6 +29,21 @@ for (const r of roles) {
   { const all = r.sentences.join("").match(EMO_ALL) ?? []; for (const k of [r.scene, "*"]) { const e = emos.get(k) ?? { counts: [] as number[], kinds: new Map<string, number>() }; e.counts.push(all.length); for (const x of all) e.kinds.set(x, (e.kinds.get(x) ?? 0) + 1); emos.set(k, e); } }
   if (r.main_role) { const ks = trustOfText(r.sentences.join("\n")); bump(trust, `${r.scene}|${r.main_role}`, ks); bump(trust, `*|${r.main_role}`, ks); }
   for (const x of r.roles) { const s = r.sentences[x.i - 1]; if (!s) continue; const e = endingOf(s); const v = e ? [e] : []; bump(ends, `${r.scene}|${x.role}`, v); bump(ends, `*|${x.role}`, v); }
+  // 行の並び（COMPOSE_PLAN_ROWS_V2）: 設計図の6役目（head・press・trust・latent・bridge・close）がこの番にあるか・どの位置か（0＝先頭〜1＝最後）
+  if (r.main_role) {
+    const present = new Map<string, number>();
+    r.roles.forEach((x, idx) => { const v2 = V2_OF[x.role]; if (!v2) return; const pos = r.roles.length > 1 ? idx / (r.roles.length - 1) : 0; if (!present.has(v2)) present.set(v2, pos); });
+    for (const k of [`${r.scene}|${r.main_role}`, `*|${r.main_role}`]) {
+      const t = rowsTab.get(k) ?? { n: 0, has: new Map<string, number>(), pos: new Map<string, number[]>() }; t.n++;
+      for (const [v2, pos] of present) { t.has.set(v2, (t.has.get(v2) ?? 0) + 1); const ps = t.pos.get(v2) ?? []; ps.push(pos); t.pos.set(v2, ps); }
+      rowsTab.set(k, t);
+    }
+  }
+}
+const rowsOut: Record<string, { n: number; roles: Array<[string, number, number]> }> = {};
+for (const k of [...rowsTab.keys()].sort()) {
+  const t = rowsTab.get(k)!; if (t.n < 2) continue;
+  rowsOut[k] = { n: t.n, roles: [...t.has.entries()].map(([v2, c]) => { const ps = t.pos.get(v2) ?? []; return [v2, Math.round((c / t.n) * 100) / 100, Math.round((ps.reduce((a, b) => a + b, 0) / Math.max(1, ps.length)) * 100) / 100] as [string, number, number]; }).sort((a, b) => a[2] - b[2]) };
 }
 const r2 = (x: number) => Math.round(x * 100) / 100;
 type Shares = Array<[string, number]>;
@@ -49,6 +67,7 @@ export const PHRASE_CATALOG_BUILT = ${JSON.stringify(built)};
 export const PHRASE_TRUST_TABLE: Record<string, { n: number; shares: Array<[string, number]> }> = ${JSON.stringify(trustOut)};
 export const PHRASE_ENDING_TABLE: Record<string, { n: number; top: Array<[string, number]> }> = ${JSON.stringify(endOut)};
 export const PHRASE_LENGTH_TABLE: Record<string, { n: number; median: number; p25: number; p75: number }> = ${JSON.stringify(lenOut)};
+export const PHRASE_ROWS_TABLE: Record<string, { n: number; roles: Array<[string, number, number]> }> = ${JSON.stringify(rowsOut)};
 export const PHRASE_EMOJI_TABLE: Record<string, { n: number; median: number; p75: number; kinds: Array<[string, number]> }> = ${JSON.stringify(emoOut)};
 `;
 writeFileSync(resolve(ROOT, "app/lib/compose-phrase-catalog-data.ts"), body);
