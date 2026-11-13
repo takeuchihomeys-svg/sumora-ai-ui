@@ -173,6 +173,27 @@
   var _shotPendingAt = 0;
   var _shotLast = 0;
   var _shotCount = 0;
+  /**
+   * 2026-11-13 竹内さん「写真から学習する。押す場所や押す順番などもりかいできるから」:
+   *   直近の操作を**小さな輪**に残しておき、写真を撮る時に一緒に送る。
+   *   → 写真1枚に「その直前までに何を押したか（順番・時刻）」が付く。
+   *     「この画面で次に何を押すか」を後から学べる材料になる。
+   *   ⚠ 入れるのは**欄の名前・操作の種類・時刻だけ**（入力した中身・文字は入れない）。
+   *   ⚠ 上限 40件（古い物から捨てる）。ページを離れると消える（それでよい）。
+   */
+  var _opsRing = [];
+  var OPS_RING_MAX = 40;
+  function _pushOp(kind, el) {
+    try {
+      var nm = el && L && L.fieldName ? L.fieldName(el) : null;
+      _opsRing.push({ t: Date.now(), k: String(kind || "?").slice(0, 10), f: nm ? String(nm).slice(0, 30) : null });
+      while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
+    } catch (_) {}
+  }
+  /** 写真と一緒に送る「直前までの操作」（新しい順に最大40件） */
+  function _recentOps() {
+    try { return _opsRing.slice(-OPS_RING_MAX); } catch (_) { return null; }
+  }
   var SHOT_MIN_GAP_MS = 400;   // これより短い間隔では撮らない
   var SHOT_MAX_PER_SESSION = 300; // 1ページで撮る上限（暴走しないように）
   function shootAfter(kind, el, pt) {
@@ -219,6 +240,15 @@
         what: el ? (L.fieldName ? L.fieldName(el) : null) : null,
         x: pt && typeof pt.x === "number" ? pt.x : null,
         y: pt && typeof pt.y === "number" ? pt.y : null,
+        /**
+         * 2026-11-13 竹内さん「写真から学習する。押す場所や押す順番などもりかいできるから」
+         *   「おしかたのボタンの仕様の理解の為にも」:
+         *   この写真の**直前までの操作の並び**を一緒に送る（時刻・種類・どの欄か）。
+         *   → 写真と「何を押した直後か」が結びつき、後から
+         *     「この画面では次にこれを押す」を学べる。
+         *   ⚠ 送るのは**欄の名前と操作の種類・時刻だけ**（入力した中身・文字は送らない）。
+         */
+        ops: _recentOps(),
       }, function (res) {
         void chrome.runtime.lastError;
         _shotPending = false;
@@ -411,6 +441,7 @@
       var h = function (e) {
         if (!e || !e.isTrusted) return;   // 人が押した時（拡張の dispatch は対象外）
         _noteShotDiag("trusted_" + (e.type || "?"));
+        _pushOp(e.type || "click", e.target);   // 2026-11-13: 写真と一緒に送る操作の並び
         shootAfter(e.type, e.target, null);
       };
       // 人が押した時・打った時・選んだ時（拡張の自動操作はここに入らない）

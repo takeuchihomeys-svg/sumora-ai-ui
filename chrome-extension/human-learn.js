@@ -754,6 +754,49 @@
     return out;
   }
 
+  /**
+   * 2026-11-13 竹内さん「写真から学習する。押す場所や押す順番などもりかいできるから」
+   *   「おしかたのボタンの仕様の理解の為にも」「自動モードでは実際に人間がおしたようにおすことができる」
+   *
+   *   写真と一緒に貯めた「操作の並び」（`shot_ops`）から、**次に押す物**を学ぶ（純関数）。
+   *   ・直前の操作（f）→ その次に押された物 の組を数える
+   *   ・同じ「直前」から複数の行き先がある時は、**回数の多い方**を返す
+   *   ・1回だけの組は返さない（偶然かもしれない・`min` 回以上）
+   *
+   * @param {Array<Array<{t:number,k:string,f:string}>>} sequences  写真ごとの操作の並び
+   * @param {{min?:number}} [opt]
+   * @returns {Object<string,{next:string,n:number,total:number}>} 直前の欄 → 次に押す物
+   */
+  function nextPressFrom(sequences, opt) {
+    var o = opt || {};
+    var min = o.min == null ? 2 : o.min;
+    var list = Array.isArray(sequences) ? sequences : [];
+    var tally = {};   // 直前 → { 次 → 回数 }
+    for (var i = 0; i < list.length; i++) {
+      var seq = Array.isArray(list[i]) ? list[i] : null;
+      if (!seq || seq.length < 2) continue;
+      for (var j = 1; j < seq.length; j++) {
+        var a = seq[j - 1] || {}, b = seq[j] || {};
+        if (!a.f || !b.f) continue;
+        if (a.f === b.f) continue;             // 同じ欄の続き（値の入力など）は数えない
+        if (!tally[a.f]) tally[a.f] = {};
+        tally[a.f][b.f] = (tally[a.f][b.f] || 0) + 1;
+      }
+    }
+    var out = {};
+    Object.keys(tally).forEach(function (from) {
+      var dest = tally[from];
+      var names = Object.keys(dest);
+      names.sort(function (x, y) { return dest[y] - dest[x]; });
+      var total = 0;
+      names.forEach(function (n) { total += dest[n]; });
+      var top = names[0];
+      if (!top || dest[top] < min) return;
+      out[from] = { next: top, n: dest[top], total: total };
+    });
+    return out;
+  }
+
   return {
     create: create,
     summarize: summarize,
@@ -764,6 +807,7 @@
     moveMsFor: moveMsFor,
     learnedLines: learnedLines,
     buttonReport: buttonReport,
+    nextPressFrom: nextPressFrom,
     stageJa: stageJa,
     reportLine: reportLine,
     describe: describe,

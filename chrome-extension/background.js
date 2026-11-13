@@ -2157,6 +2157,8 @@ async function _takeShot(msg, done) {
         shot_w: shotW, shot_h: shotH,
         kind: msg.kind || null, x: msg.x, y: msg.y,
         mode: null, run_id: _shotRun, seq: _shotSeq,
+        // 2026-11-13 竹内さん「写真から学習する」: この写真の直前までの操作の並び
+        ops: Array.isArray(msg.ops) ? msg.ops : null,
       }) : null;
 
       let ur = null;
@@ -2431,6 +2433,16 @@ async function _sendShotNow(job) {
       ext_version: _extVersion(),
       at: Date.now(),
       shot_meta: { what: job.what, kind: job.kind, x: job.x, y: job.y, run_id: job.run_id, seq: job.seq },
+      /**
+       * 2026-11-13 竹内さん「写真から学習する。押す場所や押す順番などもりかいできるから」
+       *   「おしかたのボタンの仕様の理解の為にも」「自動モードでは実際に人間がおしたようにおすことができる」:
+       *   ⚠ 旧は `shot_meta` を送っていたが**サーバーが捨てていた**ので、写真と「どの操作だったか」が
+       *     結びついていなかった（＝写真から学習できない）。
+       *   → `ops`（押した物の並び・時刻・どの欄か）も一緒に送る。
+       *     サーバーは表の `shot_ops` に残し、後で「この画面で次に何を押すか」を写真と突き合わせられる。
+       *   ⚠ 送るのは**欄の名前と操作の種類・時刻だけ**（入力した中身・文字は送らない）。
+       */
+      shot_ops: Array.isArray(job.ops) ? job.ops.slice(0, 80) : null,
     };
     const res = await fetch(SUMORA_BATCH_API + "/api/human-motion", {
       method: "POST",

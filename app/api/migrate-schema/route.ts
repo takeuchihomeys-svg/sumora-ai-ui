@@ -3788,8 +3788,46 @@ CREATE INDEX IF NOT EXISTS idx_human_motion_site ON human_motion_learn(site, mod
 --   ⚠ 通常は Storage（shot_key）を使う。ここは「消えないため」の最後の受け皿（1行が数百KBになる）。
 ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_b64 TEXT;
 ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_in_db BOOLEAN NOT NULL DEFAULT false;
+-- 2026-11-13 竹内さん「写真から学習する。押す場所や押す順番などもりかいできるから」:
+--   写真の**直前までの操作の並び**（時刻・種類・どの欄か）。写真と操作を結びつける。
+--   ⚠ 欄の名前と操作の種類・時刻だけ（入力した中身は入れない）。
+ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_ops JSONB;
+COMMENT ON COLUMN human_motion_learn.shot_ops IS '写真の直前までの操作の並び（時刻・種類・欄の名前）。入力した中身は入れない。2026-11-13 竹内さん承認';
 COMMENT ON COLUMN human_motion_learn.shot_b64 IS 'Storage に置けなかった時の写真そのもの（data:image/jpeg;base64,...）。通常は NULL で shot_key を使う。2026-11-12 竹内さん承認';
 COMMENT ON COLUMN human_motion_learn.shot_in_db IS '写真を表に入れたか（true＝Storage ではなくこの行に画像がある）';
+
+-- ── 2026-11-13 竹内さん「ちゃんと学習担当のブレインをつくってより効率的に学習できるようにする。
+--      データベースを有効活用する」──
+-- human_learn_profile: 溜まった記録（human_motion_learn）を**1回だけまとめた**学習の束。
+--   拡張はこれ1行を読むだけでよくなる（毎回バラバラの記録を読まなくて済む＝軽い・速い・学習が進むほど効く）。
+--   中身（app/lib/human-learn-brain.ts の buildHumanLearnBundle）:
+--     next       … 直前の操作 → 次に押す物（押す順番）
+--     points     … 要素ごとの押した位置（横・縦の割合・回数）
+--     motion     … マウスの速さ・曲がり・狙う位置・スクロール
+--     buttons    … 押された回数の多いボタン
+--     site_flow  … サイトごとの手順
+--   ⚠ 入力した中身・お客様の名前・電話・住所は入れない（欄の名前・位置・時刻だけ）。
+CREATE TABLE IF NOT EXISTS human_learn_profile (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- どのサイトの・どの期間の記録から作ったか（'all' は全サイトまとめ）
+  scope TEXT NOT NULL DEFAULT 'all',
+  source_rows INTEGER NOT NULL DEFAULT 0,
+  source_from TIMESTAMPTZ,
+  source_to TIMESTAMPTZ,
+  ext_version TEXT,
+  -- 学習の束（拡張が読む形）
+  bundle JSONB NOT NULL,
+  -- 人が読む1行ずつ（報告用）
+  lines TEXT[],
+  -- 使う側の印（拡張が最後に読んだ時刻・読み込んだ版）
+  read_at TIMESTAMPTZ,
+  read_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_human_learn_profile_scope ON human_learn_profile(scope, created_at DESC);
+-- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）
+ALTER TABLE human_learn_profile ENABLE ROW LEVEL SECURITY;
+COMMENT ON TABLE human_learn_profile IS '人の動きの記録をまとめた学習の束（押す順番・押す場所・動きの速さ）。拡張はこれを読む。入力した中身は入れない。2026-11-13 竹内さん承認';
 -- 画面の写真の置き場（2026-11-11 竹内さん「画面画像みればわかるのでは」）。
 --   写真の中身は表に入れない（1行が数百KBになり集計が重くなる）→ Storage に置き、表には名前だけ。
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)

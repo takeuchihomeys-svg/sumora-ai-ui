@@ -152,6 +152,26 @@ export async function POST(req: NextRequest) {
     shot_key: typeof body.shot_key === "string" ? body.shot_key.slice(0, 200) : null,
     shot_w: num(body.shot_w, 10000),
     shot_h: num(body.shot_h, 10000),
+    /**
+     * 2026-11-13 竹内さん「写真から学習する。押す場所や押す順番などもりかいできるから」
+     *   「おしかたのボタンの仕様の理解の為にも」:
+     *   写真の**直前までの操作の並び**（時刻・種類・どの欄か）を残す。
+     *   → 写真と操作が結びつき、「この画面では次にこれを押す」を学べる。
+     *   ⚠ 入れるのは欄の名前と操作の種類・時刻だけ（入力した中身は入れない）。
+     */
+    shot_ops: (() => {
+      const ops = (body as Record<string, unknown>).shot_ops;
+      if (!Array.isArray(ops)) return null;
+      const out = ops.slice(-80).map((o) => {
+        const r = (o && typeof o === "object" ? o : {}) as Record<string, unknown>;
+        return {
+          t: typeof r.t === "number" ? r.t : null,
+          k: typeof r.k === "string" ? r.k.slice(0, 10) : null,
+          f: typeof r.f === "string" ? r.f.slice(0, 30) : null,
+        };
+      }).filter((o) => o.k || o.f);
+      return out.length ? out : null;
+    })(),
   };
 
   // 写真の**中身**（base64 の画像）は**表には入れない**（1行が数百KBになり集計が重くなる）。
