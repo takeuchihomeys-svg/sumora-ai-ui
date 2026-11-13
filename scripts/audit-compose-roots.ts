@@ -7,95 +7,26 @@
 // 材料: ① 竹内さんの正解 53番（gold-1113）× 試験の答案の brain ② 本番の直し（exam-cache/edited-turns/2026-10-16/weak-spots.json の文の直し・返信 151＋AIX の文 148）
 // 分け方は決まった線（下の rootOfGold・rootOfEdit）。分からない物は「?」で残す。
 // 実行: npx tsx scripts/audit-compose-roots.ts [--gold=scripts/compose-understanding/gold-1113.json]
-import { readFileSync, readdirSync, existsSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { readTurnUnderstanding, readSevenFields, buildSentencePlan, readComposeContext, planFieldsOf, type TakeuchiGold, type PlanFields } from "../app/lib/compose-sentence-plan";
-import { resolveReplyScene } from "../app/lib/reply-scene";
-import { buildComposeBrief, closingOfText } from "../app/lib/compose-brief";
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { loadGold, loadProbs, loadBrains, evalGoldTurn, ELEMENTS, type El, type Root } from "./lib/compose-gold";
 
 const ROOT = resolve(__dirname, "..");
 const arg = (k: string, d = "") => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `=${d}`).split("=").slice(1).join("=");
-type Prob = { id: string; customer?: string; staffText?: string; context?: Array<{ s: string; t: string }> };
-const gold = (JSON.parse(readFileSync(resolve(ROOT, arg("gold", "scripts/compose-understanding/gold-1113.json")), "utf8")) as { turns: TakeuchiGold[] }).turns;
-const ids = new Set(gold.map((g) => g.id));
-const probs = new Map((JSON.parse(readFileSync(join(ROOT, "scripts/brain-exam/problems.json"), "utf8")) as Prob[]).map((p) => [p.id, p]));
-const brainOf = new Map<string, { at: string; brain: Record<string, unknown> }>();
-{
-  const wt = resolve(ROOT, "..");
-  const dirs = [join(ROOT, "scripts/brain-exam/results"), ...(() => { try { return readdirSync(wt).map((d) => join(wt, d, "scripts/brain-exam/results")); } catch { return []; } })()];
-  const since = Date.now() - 14 * 86_400_000;
-  for (const d of dirs) {
-    if (!existsSync(d)) continue;
-    for (const f of readdirSync(d)) {
-      if (!/^main-.*\.jsonl$/.test(f)) continue;
-      const p = join(d, f); if (statSync(p).mtimeMs < since) continue;
-      for (const line of readFileSync(p, "utf8").split("\n")) {
-        if (!line.includes('"brain"')) continue;
-        const m = line.match(/^\{"id":"(q\d+)"/); if (!m || !ids.has(m[1])) continue;
-        try { const r = JSON.parse(line) as { id: string; at?: string; brain?: Record<string, unknown> }; if (!r.brain?.turn_contract) continue; const prev = brainOf.get(r.id); if (!prev || (r.at ?? "") > prev.at) brainOf.set(r.id, { at: r.at ?? "", brain: r.brain }); } catch { /* 壊れた行 */ }
-      }
-    }
-  }
-}
-type Root = "A" | "B" | "C" | "D";
-const ELEMENTS = ["主の役目", "頭", "つなぎ", "押さえ", "信頼", "潜在", "締め", "事実"] as const;
-type El = typeof ELEMENTS[number];
+const gold = loadGold(ROOT, arg("gold", "scripts/compose-understanding/gold-1113.json"));
+const probs = loadProbs(ROOT);
+const brainOf = loadBrains(ROOT, new Set(gold.map((g) => g.id)));
 const tally = new Map<string, { n: number; ex: string }>();
 const all: Array<{ el: El; root: Root; src: string; ex: string; detail?: Record<string, string> }> = [];
 const add = (el: El, root: Root, src: string, ex: string, detail?: Record<string, string>) => { all.push({ el, root, src, ex, detail }); const k = `${el}|${root}|${src}`; const v = tally.get(k); if (v) v.n++; else tally.set(k, { n: 1, ex }); };
-const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
-const has = (v: unknown) => v != null && v !== "" && !(Array.isArray(v) && !v.length);
 
-// ── ① 正解 53番 ──
-/** 道の誤り: ブレインの主の依頼が AIX・出し方が AIX なのに竹内さんは返信だけ */
-function pathWrong(b: Record<string, unknown>): boolean {
-  const tc = obj(b.turn_contract); const asks = Array.isArray(tc?.asks) ? (tc!.asks as unknown[]).map(obj) : [];
-  const lead = asks[typeof tc?.lead_with === "number" ? (tc.lead_with as number) : 0];
-  return lead?.route === "aix" || b.reply_mode === "aix";
-}
-/** その要素の材料をブレインが持っているか（BRAIN_FIELD_ROUTE の「plan」に行く欄） */
-const SOURCE: Record<string, (b: Record<string, unknown>) => boolean> = {
-  主の役目: (b) => has(obj(b.turn_contract)?.asks) || has(b.turn_read),
-  つなぎ: (b) => has(obj(b.seven_read)?.lead) || has(obj(b.appeal_timing)?.kind) || has(b.reply_direction),
-  押さえ: (b) => has(obj(b.seven_read)?.point_how) || has(obj(b.judge_basis)?.key_point) || has(b.main_point),
-  信頼: (b) => has(obj(b.seven_read)?.trust_how),
-  潜在: (b) => has(b.latent_read) || has(b.three_layer) || has(b.customer_concern) || has(obj(b.customer_mindset)?.anxiety) || has(obj(b.seven_read)?.latent),
-  事実: (b) => (Array.isArray(obj(b.turn_contract)?.asks) ? (obj(b.turn_contract)!.asks as unknown[]).some((a) => has(obj(a)?.part) || has(obj(a)?.answer)) : false) || has(obj(obj(b.turn_read)?.target)?.detail),
-};
-function rootOfGold(el: El, goldHas: boolean, hit: boolean, planHas: boolean, b: Record<string, unknown>, fromTable = false): Root | null {
-  if (!goldHas || hit) return null;
-  if (pathWrong(b)) return "D";
-  if (planHas || fromTable) return "B";
-  return SOURCE[el]?.(b) ? "C" : "A";
-}
+// ── ① 正解 53番（scripts/lib/compose-gold.ts の evalGoldTurn・compose-element-daily と同じ物差し） ──
 let gN = 0;
 for (const g of gold) {
   const bb = brainOf.get(g.id); const p = probs.get(g.id);
   if (!bb || !p?.staffText) continue;
   gN++;
-  const b = bb.brain; const customerText = String(p.customer ?? ""); const scene = resolveReplyScene({ customerText }).scene;
-  const u = readTurnUnderstanding(b), s7 = readSevenFields(b);
-  const plan = buildSentencePlan(u, s7, { scene, ctx: readComposeContext(b) });
-  const f: PlanFields = planFieldsOf(u, s7, plan);
-  const ex = (what: string) => `${g.id}「${customerText.replace(/\s+/g, " ").slice(0, 24)}」${what}`;
-  const r1 = rootOfGold("主の役目", true, f.mainRole === g.mainRole, !!f.mainRole, b); if (r1) add("主の役目", r1, "正解53", ex(`竹内=${g.mainRole} 設計図=${f.mainRole ?? "空"}`));
-  const leadHit = f.leadTo === g.leadTo && (g.bridgeRole == null || f.bridgeRole === g.bridgeRole);
-  const r2 = rootOfGold("つなぎ", g.leadTo !== "none" || g.bridgeRole != null, leadHit, !!f.leadTo || !!f.bridgeRole, b); if (r2) add("つなぎ", r2, "正解53", ex(`竹内=${g.leadTo}/${g.bridgeRole ?? "-"} 設計図=${f.leadTo ?? "空"}/${f.bridgeRole ?? "-"}`));
-  const gk = (g as unknown as { keyHow?: string[] }).keyHow ?? [], gt = (g as unknown as { trustHow?: string[] }).trustHow ?? [];
-  const fromTable = plan.how?.src === "table";
-  const r3 = rootOfGold("押さえ", gk.length > 0, gk.some((x) => (f.keyHow as string[]).includes(x)), f.keyHow.length > 0, b, fromTable); if (r3) add("押さえ", r3, "正解53", ex(`竹内=${gk.join("+")} 設計図=${f.keyHow.join("+") || "空"}${fromTable ? "（表）" : ""}`));
-  const r4 = rootOfGold("信頼", gt.length > 0, gt.some((x) => (f.trustHow as string[]).includes(x)), f.trustHow.length > 0, b, fromTable); if (r4) add("信頼", r4, "正解53", ex(`竹内=${gt.join("+")} 設計図=${f.trustHow.join("+") || "空"}${fromTable ? "（表）" : ""}`));
-  const r5 = rootOfGold("潜在", g.latent != null, f.latent === g.latent, f.latent != null, b); if (r5) add("潜在", r5, "正解53", ex(`竹内=${g.latent} 設計図=${f.latent ?? "空"}`));
-  const r6 = rootOfGold("事実", !!g.part, !!f.part && !!g.part && f.part.includes(g.part.slice(0, 4)), !!f.part, b); if (r6) add("事実", r6, "正解53", ex(`竹内=${g.part} 設計図=${f.part ?? "空"}`), { id: g.id, customer: customerText.slice(0, 160), takeuchiPart: g.part ?? "", takeuchi: String(p.staffText).slice(0, 240), asks: JSON.stringify(obj(b.turn_contract)?.asks ?? []).slice(0, 500) });
-  // 締め: 指示書の締め（決め表）× 竹内さんの文。誘導先が外れていれば C（誘導先が届いていない）、誘いは合って結びだけ違えば A（結びの土台が弱い）、誘いが違えば B
-  const staff = (p.context ?? []).filter((m) => m.s === "staff").map((m) => m.t);
-  const brief = buildComposeBrief({ plan, s7, meta: b, scene, customerText, materialText: staff.slice(-3).join("\n"), recentStaffTexts: staff, firstContact: staff.length === 0 });
-  const tk = closingOfText(p.staffText), bc = brief.closing.name;
-  if (tk !== bc) {
-    const inviteT = /_cta$/.test(tk), inviteB = /_cta$/.test(bc);
-    const root: Root = pathWrong(b) ? "D" : inviteT !== inviteB || (inviteT && tk !== bc) ? (leadHit ? "B" : "C") : "A";
-    add("締め", root, "正解53", ex(`竹内=${tk} 決め表=${bc}`));
-  }
+  for (const r of evalGoldTurn(g, bb.brain, p)) if (r.root) add(r.el, r.root, "正解53", r.ex, r.detail);
 }
 
 // ── ② 本番の直し（weak-spots 2026-10-16・文の直しだけ・aix_turn は道なので D に数える） ──
