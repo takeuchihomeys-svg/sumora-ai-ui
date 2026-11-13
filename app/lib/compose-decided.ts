@@ -14,17 +14,6 @@ const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 export const composeDecidedOn = (env: Env = envOf()): boolean => (env.COMPOSE_DECIDED ?? "").trim().toLowerCase() === "on";
 export const decidedToAixOn = (env: Env = envOf()): boolean => (env.DECIDED_TO_AIX ?? "").trim().toLowerCase() === "on";
 
-/** 答えに使う事実の出所（turn_contract.asks[].basis）→ 本質の帯に書く名前（統括役 11/13: 会社の事実／資料の値／確かめた結果／スタッフしか知らない） */
-export const BASIS_LABEL: Readonly<Record<string, string>> = {
-  company_fact: "会社の事実", material: "資料の値", conversation: "会話で分かっている事", general: "一般の事", judgement: "判断（材料の事実ではない）",
-};
-/** 出所の名前。basis が無い問いで、道が約束（確かめる）なら「スタッフしか知らない」 */
-export function basisLabelOf(basis: unknown, route: unknown): string | null {
-  const b = typeof basis === "string" ? BASIS_LABEL[basis] ?? null : null;
-  if (b) return b;
-  return route === "promise" || route === "aix" ? "スタッフしか知らない" : null;
-}
-
 /** 潜在の下の種類（compose-sentence-plan の LATENT_KINDS）→ 作業員5 の重点の下の種類（meta.conductor_focus.focus_sub・ease の下）。無い物は null */
 export const LATENT_TO_FOCUS_SUB: Readonly<Record<string, string | null>> = {
   審査: "screening", 費用: "cost", "入居日・時期": "timing", 先に取られる: null, "住み心地・周り": null, 物件が見つからない: null, 内覧できない: null, "対応・信頼": null, 事情の変化: null,
@@ -62,26 +51,26 @@ export function factCertaintyOf(a: { basis?: unknown; route?: unknown; quote?: u
  *   1つの依頼の答えに、言い切る文と確かめる約束の文が混ざる時は文で分ける（実例 12643: 「鍵交換は必須か」→ 必須です（今言える）／「外せるか」→ 管理会社に交渉（確認が要る））。
  *   1通に聞かれた事が複数ある時は、依頼（turn_contract.asks）ごとに1行（実例 12548 は4つ）。
  */
-export type AskSource = "conversation" | "material" | "company" | "staff_only";
-export const ASK_SOURCE_JA: Record<AskSource, string> = { conversation: "会話", material: "資料", company: "会社の知識", staff_only: "スタッフだけ（管理会社・代表・電話）" };
-export function askSourceOf(a: { basis?: unknown; route?: unknown }): AskSource {
-  const b = String(a.basis ?? "");
-  if (b === "conversation") return "conversation";
-  if (b === "material") return "material";
-  if (b === "company_fact" || b === "general") return "company";
-  return "staff_only";
-}
+// 出所の名前は app/lib/answer-source.ts の7つ（統括役 11/13 の決め・読み替えはそこの1か所）
+import { fromContractBasis, fromBrainAnswerSource, type AnswerSource } from "./answer-source";
 /** 確かめる・交渉する・問い合わせる約束の文（今は言えない部分） */
 export const CHECK_PART_RE = /確認(?:させて|致し|いたし|して|し(?:ご連絡|次第)|出来次第)|交渉(?:させて|致し|いたし|して|し)|問い?合わせ|お調べ|管理会社(?:に|へ)/;
-export type AskPart = { quote: string; source: AskSource; now: string | null; check: string | null; certainty: Certainty };
+export type AskPart = { quote: string; source: AnswerSource; now: string | null; check: string | null; certainty: Certainty };
 /** 依頼ごとに、今言える部分と確認が要る部分を分ける（答えの文を句点で分け、確かめる約束の文を確認が要る側に） */
-export function askPartsOf(asks: ReadonlyArray<{ quote?: unknown; basis?: unknown; route?: unknown; answer?: unknown }>, o: { checkResultReady?: boolean } = {}): AskPart[] {
+export function askPartsOf(asks: ReadonlyArray<{ quote?: unknown; basis?: unknown; route?: unknown; answer?: unknown; parts?: unknown }>, o: { checkResultReady?: boolean } = {}): AskPart[] {
   return asks.filter((a) => typeof a.quote === "string" && a.quote.trim()).map((a) => {
     const ans = typeof a.answer === "string" ? a.answer.trim() : "";
     const sents = ans.split(/(?<=[。！!？?])\s*|、(?=(?:[^、]*?)(?:確認|交渉|問い?合わせ|お調べ|管理会社))/).map((x) => x.trim()).filter(Boolean);
     const checkS = sents.filter((x) => CHECK_PART_RE.test(x)), nowS = sents.filter((x) => !CHECK_PART_RE.test(x));
-    const source = askSourceOf(a);
+    // 作業員7b の parts[]（ブレインが依頼を部分に分けた物・source は作業員16 の4つ）があれば、その部分ごとの出所と確かさを先に使う
+    const parts = Array.isArray(a.parts) ? (a.parts as Array<{ part?: unknown; source?: unknown; certainty?: unknown; route?: unknown; who?: unknown }>) : [];
+    if (parts.length) {
+      const nowP = parts.filter((p) => p.certainty !== "needs_check" && p.source !== "staff_only"), chkP = parts.filter((p) => !nowP.includes(p));
+      const src = fromBrainAnswerSource((nowP[0] ?? parts[0]).source, { basis: a.basis, checkResultReady: o.checkResultReady, who: (chkP[0] ?? parts[0]).who });
+      return { quote: String(a.quote).trim().slice(0, 40), source: src, now: nowP.length ? nowP.map((p) => String(p.part ?? "")).join("・") : null, check: chkP.length ? chkP.map((p) => String(p.part ?? "")).join("・") : null, certainty: chkP.length && !nowP.length ? "needs_check" : (nowP[0]?.certainty === "basically" ? "basically" : "assertable") } as AskPart;
+    }
+    const source = fromContractBasis(a.basis, a.route, { checkResultReady: o.checkResultReady });
     const certainty = checkS.length && !nowS.length ? (o.checkResultReady ? "assertable" : "needs_check") : factCertaintyOf(a, o);
-    return { quote: String(a.quote).trim().slice(0, 40), source, now: nowS.length ? nowS.join("") : null, check: checkS.length ? checkS.join("") : (a.route === "promise" && !nowS.length ? (ans || "確かめる") : null), certainty: source === "staff_only" && !nowS.length && !o.checkResultReady ? "needs_check" : certainty };
+    return { quote: String(a.quote).trim().slice(0, 40), source, now: nowS.length ? nowS.join("") : null, check: checkS.length ? checkS.join("") : (a.route === "promise" && !nowS.length ? (ans || "確かめる") : null), certainty: source.kind === "staff_only" && !nowS.length && !o.checkResultReady ? "needs_check" : certainty };
   });
 }

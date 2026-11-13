@@ -28,6 +28,7 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const s = (v: unknown, n = 40): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
 const asks = (m: M) => arr(obj(m.turn_contract)?.asks).map(obj).filter((a): a is M => !!a && !!s(a.quote));
 import { factCertaintyOf, askPartsOf } from "./compose-decided";
+import { checkResultReadyOf } from "./answer-source";
 /** 近い番の意見の1行（conductor-near-opinion.nearOpinionLine）を型・一手・なぜに分ける */
 export function nearParts(line: unknown): { type: string | null; move: string | null; why: string | null } {
   const t = typeof line === "string" ? line : "";
@@ -54,9 +55,9 @@ export const SUB_FIELDS: readonly SubField[] = [
   { field: "focus", sub: "focus.first", label: "この番で一番先に応える事", roles: ["head"], now: "ok", from: "turn_contract.lead_with（★先に）", value: (m) => { const lw = obj(m.turn_contract)?.lead_with; return typeof lw === "number" || typeof lw === "string" ? "有" : null; } },
   // 答えに使う事実
   { field: "fact", sub: "fact.value", label: "値", roles: ["press", "aix2"], now: "ok", from: "turn_contract.asks[].answer", value: (m) => (factAsk(m) ? "有" : null) },
-  { field: "fact", sub: "fact.source", label: "出所（聞かれた事ごと: 会話／資料／会社の知識／スタッフだけ）", roles: ["press", "trust"], now: "ok", from: "compose-decided.askPartsOf（turn_contract.asks[].basis・route）", value: (m) => { const p = askPartsOf(asks(m)); return p.length ? p.map((x) => x.source).join(",") : null; } },
-  { field: "fact", sub: "fact.certainty", label: "確かさ（言い切れる／基本的に／確認が要る）", roles: ["press", "trust"], now: "ok", from: "compose-decided.certaintyOf（basis・route・確かめた結果・79cf95c8 の基本的に）", value: (m) => { const a = asks(m)[0]; return a ? factCertaintyOf(a, { checkResultReady: arr(obj(m.now_vs_later)?.ready_now).some((x) => /確認の結果/.test(String(x))) }) : null; } },
-  { field: "fact", sub: "fact.for_ask", label: "どの依頼への答えか（聞かれた事ごとに 今言える部分／確認が要る部分）", roles: ["press"], now: "ok", from: "compose-decided.askPartsOf（1通に複数の問い＝依頼ごと・答えの文を確かめる約束で分ける）", value: (m) => { const p = askPartsOf(asks(m)); return p.length ? `${p.length}件（今言える ${p.filter((x) => x.now).length}・確認が要る ${p.filter((x) => x.check).length}）` : null; } },
+  { field: "fact", sub: "fact.source", label: "出所（聞かれた事ごと: answer-source の7つ＝資料の値・物件の記録・会話・会社の事実・一般・スタッフだけ（管理会社／代表／電話）・確かめた結果）", roles: ["press", "trust"], now: "ok", from: "compose-decided.askPartsOf（turn_contract.asks[].basis・route）", value: (m) => { const p = askPartsOf(asks(m), { checkResultReady: checkResultReadyOf(m) }); return p.length ? p.map((x) => x.source.kind).join(",") : null; } },
+  { field: "fact", sub: "fact.certainty", label: "確かさ（言い切れる／基本的に／確認が要る）", roles: ["press", "trust"], now: "ok", from: "compose-decided.certaintyOf（basis・route・確かめた結果・79cf95c8 の基本的に）", value: (m) => { const a = asks(m)[0]; return a ? factCertaintyOf(a, { checkResultReady: checkResultReadyOf(m) }) : null; } },
+  { field: "fact", sub: "fact.for_ask", label: "どの依頼への答えか（聞かれた事ごとに 今言える部分／確認が要る部分）", roles: ["press"], now: "ok", from: "compose-decided.askPartsOf（1通に複数の問い＝依頼ごと・答えの文を確かめる約束で分ける）", value: (m) => { const p = askPartsOf(asks(m), { checkResultReady: checkResultReadyOf(m) }); return p.length ? `${p.length}件（今言える ${p.filter((x) => x.now).length}・確認が要る ${p.filter((x) => x.check).length}）` : null; } },
   // 潜在の気持ち（作業員16 の5段）
   { field: "latent", sub: "latent.object", label: "何について", roles: ["latent"], now: "none", from: "作業員16 latent_five.object（未 push）／今は latent_read.part（BRAIN_SEVEN_FIELDS 既定 off）", value: (m) => (obj(obj(m.latent_five)?.object) || obj(obj(m.latent_read)?.part) ? "有" : null) },
   { field: "latent", sub: "latent.concern", label: "何を気にしている（下の種類 LATENT_SUBKINDS）", roles: ["latent"], now: "text", from: "latent_five.concern／今は customer_mindset.anxiety.target（12種の向き）", value: (m) => s(obj(obj(m.customer_mindset)?.anxiety)?.target, 12) },

@@ -1,7 +1,7 @@
 // scripts/test-compose-decided.ts — 決めた事を書き手まで届ける配線（COMPOSE_DECIDED・既定 off）と届き方の表・下の欄の表のテスト（LLM/DB なし・費用0・作業員22）
 // 実行: npx tsx scripts/test-compose-decided.ts
 import assert from "node:assert/strict";
-import { composeDecidedOn, basisLabelOf, latentKindLine, LATENT_TO_FOCUS_SUB, FOCUS_SUB_VALUES, factCertaintyOf, askPartsOf } from "../app/lib/compose-decided";
+import { composeDecidedOn, latentKindLine, LATENT_TO_FOCUS_SUB, FOCUS_SUB_VALUES, factCertaintyOf, askPartsOf } from "../app/lib/compose-decided";
 import { LATENT_KINDS } from "../app/lib/compose-sentence-plan";
 import { writerNoteOf, deliveryOfTurn, DELIVERY_FIELDS } from "./lib/delivery-table";
 import { SUB_FIELDS, SENTENCE_ROLES_FOR_SUB, subsForRole, nearParts, subValuesOf, SUB_ROLE_TO_SENTENCE_ROLES } from "../app/lib/decided-subfields";
@@ -32,10 +32,8 @@ t("on ①: 主の行が無い番でも、重点・気持ち・近い番の意見
 }));
 
 t("on ②: 本質の帯の依頼ごとの行に出所（会社の事実／資料の値／スタッフしか知らない）", () => withEnv("on", () => {
-  assert.match(writerNoteOf(factMeta).writer, /仲介手数料0円です［出所: 会社の知識・言い切れる］/);
-  assert.equal(basisLabelOf("material", "reply"), "資料の値");
-  assert.equal(basisLabelOf(null, "promise"), "スタッフしか知らない");
-  assert.equal(basisLabelOf(null, "reply"), null);
+  assert.match(writerNoteOf(factMeta).writer, /仲介手数料0円です［出所: 会社の事実・言い切れる］/);
+
 }));
 
 t("on ③: 潜在の下の種類（作業員5 の ease の下の種類に読み替え）", () => withEnv("on", () => {
@@ -86,18 +84,18 @@ t("実例 12643 の形: 「鍵交換は必須か」は今言える・「外せ�
     { quote: "鍵交換は必須ですか", basis: "company_fact", route: "reply", answer: "鍵交換は必須となります。" },
     { quote: "外すことはできますか", basis: null, route: "promise", answer: "管理会社に交渉させて頂きます" },
   ]);
-  assert.deepEqual(two.map((p) => [p.source, p.certainty, !!p.now, !!p.check]), [["company", "assertable", true, false], ["staff_only", "needs_check", false, true]]);
+  assert.deepEqual(two.map((p) => [p.source.kind, p.certainty, !!p.now, !!p.check]), [["company_fact", "assertable", true, false], ["staff_only", "needs_check", false, true]]);
   const one = askPartsOf([{ quote: "鍵交換は必須ですか？外せますか？", basis: "company_fact", route: "reply", answer: "鍵交換は必須となります。外せるかは管理会社に交渉させて頂きます" }]);
   assert.equal(one.length, 1);
   assert.equal(one[0].now, "鍵交換は必須となります。");
   assert.match(one[0].check ?? "", /管理会社に交渉させて頂きます/);
   withEnv("on", () => {
     const w = writerNoteOf({ turn_contract: { asks: [{ quote: "鍵交換は必須ですか？外せますか？", kind: "question", route: "reply", basis: "company_fact", answer: "鍵交換は必須となります。外せるかは管理会社に交渉させて頂きます" }] } }).writer;
-    assert.match(w, /［出所: 会社の知識・言い切れる／今言える: 鍵交換は必須となります。／確認が要る: 外せるかは管理会社に交渉させて頂きます］/);
+    assert.match(w, /［出所: 会社の事実・言い切れる／今言える: 鍵交換は必須となります。／確認が要る: 外せるかは管理会社に交渉させて頂きます］/);
   });
   // 1通に聞かれた事が4つ（実例 12548 の形）＝依頼ごとに1つずつ
   const four = askPartsOf([1, 2, 3, 4].map((i) => ({ quote: `問い${i}`, basis: i % 2 ? "material" : "conversation", route: "reply", answer: "はい" })));
   assert.equal(four.length, 4);
-  assert.deepEqual(four.map((p) => p.source), ["material", "conversation", "material", "conversation"]);
+  assert.deepEqual(four.map((p) => p.source.kind), ["material", "conversation", "material", "conversation"]);
 });
 console.log(`\n${n} 件 ok`);
