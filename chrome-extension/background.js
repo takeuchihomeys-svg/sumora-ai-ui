@@ -2138,6 +2138,11 @@ async function _takeShot(msg, done) {
         x: typeof msg.x === "number" ? Math.round(msg.x) : null,           // 押した所（画面の座標）
         y: typeof msg.y === "number" ? Math.round(msg.y) : null,
         url: String(tab.url || "").slice(0, 300),
+        /**
+         * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか」:
+         *   どのタブを撮ったか。写真と一緒に**その場の動きの癖**を送るために使う。
+         */
+        tab_id: typeof tab.id === "number" ? tab.id : null,
       };
       /**
        * 2026-11-12 竹内さん「いまちゃんとろくがされてたかな？」→ **保存0枚・失敗6回・ResourceExceeded**。
@@ -2159,6 +2164,8 @@ async function _takeShot(msg, done) {
         mode: null, run_id: _shotRun, seq: _shotSeq,
         // 2026-11-13 竹内さん「写真から学習する」: この写真の直前までの操作の並び
         ops: Array.isArray(msg.ops) ? msg.ops : null,
+        // 2026-11-13: どのタブか（その場の動きの癖を一緒に送るため）
+        tab_id: typeof tab.id === "number" ? tab.id : null,
       }) : null;
 
       let ur = null;
@@ -2520,9 +2527,28 @@ async function _sendShotNow(job) {
     const hdr = await _getAutomationKeyHeader();
     let devLabel = null;
     try { const r0 = await chrome.storage.local.get("deviceLabel"); devLabel = (r0 && r0.deviceLabel) || null; } catch (_) {}
+    /**
+     * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか。原因見つけて改善する」:
+     *   ⚠ 旧は `motion` を**全部ゼロ**（n:0・kinds:{}・scrolls:{n:0}…）で送っていた。
+     *     写真は録画中に数秒ごとに撮る＝**記録の大半がこの形**なので、
+     *     写真つきの行には速さ・押す位置・スクロールが**1つも入っていなかった**
+     *     （実測: 2944行中 scrolls が 0・scroll_dy が null）。
+     *   → **同じタブでその直前に貯まった「動きの癖」を一緒に送る**（写真と動きが結びつく）。
+     *   ⚠ `executeScript` を数秒ごとに走らせると重い（録画の間隔を圧迫する）ので、
+     *     記録側（page）が持っている**まとめを `axlx-recent-motion` で1回だけ聞く**。
+     *     読めない時は今まで通りゼロ（写真だけ）。
+     */
+    let motion = null;
+    try {
+      if (typeof job.tab_id === "number") {
+        const got = await chrome.tabs.sendMessage(job.tab_id, { type: "axlx-recent-motion" })
+          .catch(function () { return null; });
+        if (got && got.ok && got.motion && typeof got.motion === "object") motion = got.motion;
+      }
+    } catch (_) { motion = null; }
     const body = {
       shot_b64: job.data_url,
-      motion: { n: 0, kinds: {}, gaps: [], gap_ms: null, fields: [], order: [],
+      motion: motion || { n: 0, kinds: {}, gaps: [], gap_ms: null, fields: [], order: [],
                 moves: { n: 0 }, points: { n: 0 }, scrolls: { n: 0 } },
       site: job.site || null,
       mode: job.mode || null,

@@ -206,7 +206,19 @@
        */
       var LL = (typeof self !== "undefined" ? self : window).AxlxHumanLearn || L;
       var kd = (LL && LL.kindOfEl) ? LL.kindOfEl(el) : null;
-      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nm ? String(nm).slice(0, 30) : null, w: kd });
+      /**
+       * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか。原因見つけて改善する」:
+       *   `g`（直前の操作からの間隔 ms）も残す。
+       *   ⚠ これが無いと「人が次を押すまでどれくらい待つか」を学べず、
+       *     サーバーは `move_ms`（マウス移動の時間）で代用していた（別物）。
+       *   ⚠ 間隔は 0〜60000ms に丸める（画面を離れていた長い空白は混ぜない）。
+       */
+      var gap = null;
+      if (last && typeof last.t === "number" && t > last.t) {
+        var d = t - last.t;
+        if (d >= 0 && d <= 60000) gap = d;
+      }
+      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nm ? String(nm).slice(0, 30) : null, w: kd, g: gap });
       while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
     } catch (_) {}
   }
@@ -248,6 +260,23 @@
       chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
         if (!msg || msg.type !== "axlx-recent-ops") return;
         try { sendResponse({ ok: true, ops: _recentOps() || [] }); } catch (_) {}
+        return true;
+      });
+      /**
+       * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか。原因見つけて改善する」:
+       *   写真と一緒に送る**動きの癖**（速さ・曲がり・押す位置・スクロール・操作の間）を返す。
+       *   ⚠ 旧は background が `motion` を全部ゼロで送っていたので、
+       *     写真つきの行（＝記録の大半）には何も入っていなかった。
+       */
+      chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
+        if (!msg || msg.type !== "axlx-recent-motion") return;
+        try {
+          var det = { moves: [], points: [], scrolls: [] };
+          try { det = rec.detail(); } catch (_) {}
+          var LL = (typeof self !== "undefined" ? self : window).AxlxHumanLearn || L;
+          var m = (LL && LL.summarizeMotion) ? LL.summarizeMotion(det) : null;
+          sendResponse({ ok: !!m, motion: m || null });
+        } catch (_) { try { sendResponse({ ok: false, motion: null }); } catch (__) {} }
         return true;
       });
     }

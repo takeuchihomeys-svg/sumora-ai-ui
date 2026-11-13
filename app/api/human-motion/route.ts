@@ -175,6 +175,12 @@ export async function POST(req: NextRequest) {
            *     （実際に 0件だった）。→ 通す。
            */
           ...(typeof r.w === "string" && r.w ? { w: r.w.slice(0, 10) } : {}),
+          /**
+           * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか」:
+           *   直前の操作からの**間隔**（人が次を押すまで待つ時間）。0〜60000ms に丸める。
+           *   ⚠ 旧は捨てていたので、サーバーは `move_ms`（移動時間）で代用していた（別物）。
+           */
+          ...(typeof r.g === "number" && r.g >= 0 && r.g <= 60000 ? { g: Math.round(r.g) } : {}),
         };
       }).filter((o) => o.k || o.f);
       return out.length ? out : null;
