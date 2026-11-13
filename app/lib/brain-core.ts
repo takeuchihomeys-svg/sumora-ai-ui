@@ -9,8 +9,8 @@ import { sanitizeJsonForDb } from "@/app/lib/db-json-sanitize";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { brainCacheOrderOn, withSceneBlock } from "@/app/lib/brain-cache-order";
-import { buildSentProps, buildSentPropsText, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, parseEstimateTexts } from "@/app/lib/sent-props-text";
-import { refResolveOn, resolveRefs, refResolveLine, refResolveDigest, portalIdOf, type RefResolve, type RefBrought } from "@/app/lib/ref-resolve";
+import { buildSentProps, buildSentPropsText, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, estimatesFromRecords } from "@/app/lib/sent-props-text";
+import { refResolveOn, resolveRefs, refResolveLine, refResolveDigest, refHandoffReasons, portalIdOf, type RefResolve, type RefBrought, type RefHandoffReason } from "@/app/lib/ref-resolve";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
 import { evaluateAixWithJev, evaluatePickerWithJev, hasPickerQuestion, recordJevShadow, toPickerShadowRow, toShadowRow } from "@/app/lib/aix-jev";
@@ -555,7 +555,7 @@ export type SuggestedAixMeta = {
   /** 2026-11-12 作業員16: ブレインに渡した確かめる順番の型（CHECK_ORDER_GUIDE=on の時だけ・記録だけ） */
   check_order_guide?: { type: string; steps: string[] };
   /** 2026-11-13 作業員16: お客様の言葉が指す物（ref-resolve・REF_RESOLVE=on|shadow の時だけ・道の前の材料） */
-  ref_resolve?: RefResolve & { digest: string | null };
+  ref_resolve?: RefResolve & { digest: string | null; handoff: RefHandoffReason[] };
   /** 2026-11-12 作業員16（案2）: 一通の読みの候補・BRAIN_READ_CANDIDATES=on の時だけ（記録だけ・判断は aix/turn_contract のまま） */
   read_candidates?: ReadCandidates;
   /** 2026-11-13 作業員16: 選んだ読みの受け渡し（BRAIN_READ_CANDIDATES=shadow の時だけ・記録だけ） */
@@ -2484,12 +2484,23 @@ async function analyzeConversationCore(
   // 2026-11-13 作業員16（統括役の頼み・作業員4 の持ち場の代わり・実例 12105・12555・10911）: 指す物を解く欄 ref_resolve（REF_RESOLVE=on|shadow の時だけ・既定 off＝今と1文字も変わらない）
   //   送った物件の行に束の番号・見積の初期費用（既に読んだ aix_usage_logs の estimate_sheet の本文から・DB を足さない）を付け、今の連投の「ここ・あれ・上記・↑・URL・画像」を解く。
   //   on＝送った物件の一覧の後に【お客様の言葉が指す物】の1行を足す（道の前の材料）／shadow＝meta.ref_resolve に記録だけ
-  let refResolveRec: (RefResolve & { digest: string | null }) | null = null;
+  let refResolveRec: (RefResolve & { digest: string | null; handoff: RefHandoffReason[] }) | null = null;
+  // 物件ごとの状況の台帳（property-thread）は1回だけ読む（ref_resolve と、後ろの文書の要点の対象選び＝focusDocDigest で同じ読みを使う・読む順を合わせる）
+  let ptOnce: Promise<import("@/app/lib/property-thread").PropertyThreadState | null> | null = null;
+  const loadPtOnce = () => (ptOnce = ptOnce ?? (async () => {
+    const { loadPropertyThreads } = await import("@/app/lib/property-thread-server");
+    return Promise.race([loadPropertyThreads(conversationId), new Promise<null>((r) => setTimeout(() => r(null), 6_000))]);
+  })());
   const refMode = (process.env.REF_RESOLVE ?? "").trim().toLowerCase();
   if (refResolveOn()) {
     try {
       attachBundles(sentProps);
-      attachEstimates(sentProps, parseEstimateTexts(aixLogs.filter((a) => a.aix_type === "estimate_sheet") as Array<{ generated_text?: string | null; sent_at?: string | null; created_at?: string | null }>));
+      // 見積の初期費用は estimate_records から（統括役の決め 11/13・作業員1 の estimate_room_no と同じ名前・1会話の軽い読み）
+      try {
+        const { data: er, error: erErr } = await supabase.from("estimate_records").select("property_name, room_no, initial_cost_yen, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(50);
+        if (erErr) throw new Error(erErr.message);
+        attachEstimates(sentProps, estimatesFromRecords((er ?? []) as Array<{ property_name: string | null; room_no: string | null; initial_cost_yen: number | null; created_at: string | null }>));
+      } catch (e) { console.warn(JSON.stringify({ tag: "brain:ref-resolve-estimates-failed", conversationId, error: String(e).slice(0, 160) })); }
       const turn: typeof typedMessages = [];
       for (const mm of typedMessages) { if (mm.sender !== "customer") break; turn.push(mm); }
       const turnText = [...turn].reverse().map((mm) => mm.text ?? "").join("\n");
@@ -2506,10 +2517,17 @@ async function analyzeConversationCore(
       const rr = resolveRefs({
         text: turnText,
         sent: sentProps.filter((sp) => !sp.shared_only).map((sp) => ({ name: sp.property_name, room: sp.room_no || null, sent_at: sp.sent_at, bundle_no: sp.bundle_no ?? null, bundle_pos: sp.bundle_pos ?? null, channel: sp.channel ?? null, estimate_initial_cost: sp.estimate_initial_cost ?? null })),
-        brought: turn.length ? brought.filter((b) => turn.some((mm) => mm.created_at === b.at)) : [],
+        // 持ち込みの台帳: 今の連投の URL・画像＋ポータルの共有文（customer-property-names・名前と URL・費用0）。画像は今の連投の物だけ（古い画像を今の指す物にしない）
+        brought: turn.length ? (await (async () => {
+          const { customerSharedPropertyNames } = await import("@/app/lib/customer-property-names");
+          const { broughtFromShares, broughtFromThreads, mergeBrought } = await import("@/app/lib/ref-brought");
+          const threads = broughtFromThreads(await loadPtOnce().catch(() => null));
+          const shares = broughtFromShares(customerSharedPropertyNames([...typedMessages].reverse().map((mm) => ({ sender: mm.sender, text: mm.text, created_at: mm.created_at })), { limit: 10 }));
+          return mergeBrought(brought, shares, threads).filter((b) => b.from !== "image" || turn.some((mm) => mm.created_at === b.at));
+        })()) : [],
         quotedText, lastStaffSentBundle,
       });
-      refResolveRec = { ...rr, digest: refResolveDigest(rr) };
+      refResolveRec = { ...rr, digest: refResolveDigest(rr), handoff: refHandoffReasons(rr) };
       console.log(JSON.stringify({ tag: "brain:ref-resolve", conversationId, mode: refMode, items: rr.items.length, refCount: rr.refCount, digest: refResolveRec.digest }));
     } catch (e) { console.warn(JSON.stringify({ tag: "brain:ref-resolve-failed", conversationId, error: String(e).slice(0, 160) })); }
   }
@@ -3205,8 +3223,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     if (focusRoomForMaterial) docDigestTarget = { name: focusRoomForMaterial.name, roomNo: focusRoomForMaterial.roomNo ?? null };
     else {
       try {
-        const { loadPropertyThreads } = await import("@/app/lib/property-thread-server");
-        const pt = await Promise.race([loadPropertyThreads(conversationId), new Promise<null>((r) => setTimeout(() => r(null), 6_000))]);
+        // 2026-11-13 作業員16: ref_resolve と同じ読み（loadPtOnce・同じ引数・同じ待ち 6秒）を使う＝REF_RESOLVE が off なら今と同じ1回の読み
+        const pt = await loadPtOnce();
         if (sharedTurnTarget) {
           const { turnDocTargetWithShared } = await import("@/app/lib/turn-shared-property");
           docDigestTarget = turnDocTargetWithShared(pt, sharedTurnTarget);
