@@ -43,6 +43,36 @@
   }
   /** 覚えた癖（無ければ null＝今まで通りの動き） */
   function _profile() { return _prof; }
+  /**
+   * 2026-11-13 竹内さん「撮影したところからぼたんの押す場所の確認や移動の部分で学習した部分あるか」:
+   *   **要素ごと**の押した位置（`point_fields`）を読む。
+   *   例: rental_cost2 → { x:0.10, y:0.14 }（賃料の欄は左寄り）
+   *   これは通常モードで人はこう押した、という実測（DB の human_motion_learn.point_fields と同じ形）。
+   *   貯まるたびに `axlx_human_points` に書かれている（human-learn-record.js）。
+   */
+  var POINTS_KEY = "axlx_human_points";
+  var _points = null;
+  var _pointsLoadedAt = 0;
+  function _pointsFor(name) {
+    if (!name) return null;
+    var now = Date.now();
+    // 30秒ごとに読み直す（貯まった分を次の動きから使う）
+    if (!_points || now - _pointsLoadedAt > 30000) {
+      _pointsLoadedAt = now;
+      try {
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.get([POINTS_KEY], function (r) {
+            try { _points = (r && r[POINTS_KEY]) || {}; } catch (_) { _points = {}; }
+          });
+        }
+      } catch (_) {}
+    }
+    var v = _points && _points[name];
+    if (!v || typeof v.x !== "number" || typeof v.y !== "number") return null;
+    // 何回も押した所だけ使う（1回だけは偶然かもしれない）
+    if (Number(v.n) < 2) return null;
+    return { x: v.x, y: v.y, n: Number(v.n) };
+  }
   /** storage から読み直す（モードや貯まり方が変わった時） */
   function reloadProfile() {
     try {
@@ -235,7 +265,23 @@
       var prof = _profile();
       var fx = 0.4 + Math.random() * 0.2;
       var fy = 0.4 + Math.random() * 0.2;
-      if (prof && prof.aim) {
+      /**
+       * 2026-11-13 竹内さん「撮影したところからぼたんの押す場所の確認や移動の部分で学習した部分あるか」:
+       *   これまでは**全体の平均**（1つの `aim`）だけだったので、たとえば
+       *   「賃料は左寄り・検索ボタンは真ん中」のような**要素ごとの違い**が学習に残っていなかった。
+       *   → 要素ごとの実測（`axlx_human_points`・`point_fields`）があれば**そちらを優先**する。
+       *     無ければ今まで通り全体の平均（`prof.aim`）→ それも無ければ真ん中。
+       */
+      var perEl = null;
+      try {
+        var LE = (typeof self !== "undefined" ? self : window).AxlxHumanLearn;
+        var nm = el && LE && LE.fieldName ? LE.fieldName(el) : null;
+        if (nm && _pointsFor) perEl = _pointsFor(nm);
+      } catch (_) {}
+      if (perEl) {
+        fx = Math.max(0.15, Math.min(0.85, perEl.x + (Math.random() - 0.5) * 0.12));
+        fy = Math.max(0.15, Math.min(0.85, perEl.y + (Math.random() - 0.5) * 0.12));
+      } else if (prof && prof.aim) {
         // 実測の割合のまわりに少しだけ揺らす（毎回同じ点だと機械的）
         fx = Math.max(0.15, Math.min(0.85, prof.aim.x + (Math.random() - 0.5) * 0.16));
         fy = Math.max(0.15, Math.min(0.85, prof.aim.y + (Math.random() - 0.5) * 0.16));

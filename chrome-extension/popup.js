@@ -6458,9 +6458,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // フローティングミニモードの初期化
   if (isUnderbar) {
-    // 起動時はミニ（52x52）で表示
-    setMiniMode(true);
-    notifyParent("collapse");
+    /**
+     * 2026-11-13 竹内さん「拡張ツールが都度閉じてしまうこともある。拡張ツールひらいたら開きっぱなしで大丈夫」:
+     *
+     * ⚠ 旧は起動のたびに `setMiniMode(true)` ＋ `notifyParent("collapse")` を送っていた。
+     *   リアプロは検索のたびにページが読み直されるので、**検索のたびに小窓が 100px に縮んで閉じて見えた**。
+     * さらに `view-list` を開いた時も縮める指示を出していた（v2.7.9 で修正済み）。
+     *
+     * → **こちらから縮めない**。開くか縮むかは underbar 側の「人が決めた状態」に任せる
+     *   （underbar は iframe を作る時に expand を送る）。
+     *   ⚠ setMiniMode(true) は**画面の中の見た目だけ**を変える（body に mini-mode を付ける）ので、
+     *     これをやると中身（お客さん一覧）が消える。起動時は必ず「開いた見た目」にしておく。
+     */
+    setMiniMode(false);
 
     // 親ページのドラッグオーバーレイがクリックを検出して展開指示を送ってくる
     window.addEventListener("message", (e) => {

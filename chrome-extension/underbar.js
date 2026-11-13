@@ -51,11 +51,13 @@
   let panelH = INIT_H;
   let expanded = false; // 視覚的サイズは後でiframe.loadで確定
 
-  // 常に展開状態で起動（localStorage の expanded:false を無視）
-  // 前回たたんで終了しても次回ロード時は必ず展開する（ユーザー要望 2026-06-07）
-  const wasExpanded = true;
-  // popup.jsの初期collapseを無視するフラグ（iframe作成・展開時に都度セット）
-  let ignoreNextCollapse = false;
+  /**
+   * 2026-11-13 竹内さん「拡張ツールひらいたら開きっぱなしで大丈夫」:
+   *   人が決めた状態（`saved.expanded`）を**そのまま復元**する。
+   *   記録が無い時だけ開く。⚠ 旧は「常に開く」だったので、縮めても次の読み直しで開いてしまっていた
+   *   （＝開いたり閉じたりして「勝手に閉じる」ように見えた原因の1つ）。
+   */
+  const wasExpanded = (typeof saved.expanded === "boolean") ? saved.expanded : true;
 
   function persist() {
     try {
@@ -255,21 +257,58 @@
   //   会話画面の「🔍 物件検索」（axlx-search-focus-open）は押した操作なので今まで通り広げる。記録が読めない時は今まで通り展開
   const GUIDE_KEYS = ["axlx_guide_session", "axlx_itandi_guide_session"];
   const GUIDE_TTL_MS = 2 * 3600 * 1000;
-  if (wasExpanded) {
-    let decided = false;
-    const decide = function (searching) {
-      if (decided) return;
-      decided = true;
-      if (searching) setSize(false); else startExpanded();
-    };
+  /**
+   * 2026-11-13 竹内さん「拡張ツールが都度閉じてしまうこともある。そのようなことの原因みつけて改善する。
+   *   拡張ツールひらいたら開きっぱなしで大丈夫」
+   *
+   * ⚠ 原因: 旧は**ページを開く（読み直す）たびに**「検索中なら縮める」を決め直していた。
+   *   リアプロは検索のたびにページが読み直されるので、**検索のたびに小窓が閉じて（100pxに縮んで）いた**。
+   *   さらに popup 側の初期化でも `setMiniMode(true)` を送っていた（こちらは別途直した）。
+   *
+   * → **人が開いたら開いたまま**にする。
+   *   ・保存されている「開いていたか」を優先（`aixlinx_state.expanded`）
+   *   ・初めて（記録が無い）時だけ、検索中なら縮めて起動（今までの配慮を残す）
+   *   ・一度でも人が開いたら、次からは**必ず開いたまま**
+   */
+  // popup.jsの初期collapseを無視するフラグ（iframe作成・展開時に都度セット）
+  let ignoreNextCollapse = false;
+  /**
+   * 2026-11-13: 起動時の処理（旧はここで「検索中なら縮める」を毎回決め直していた）。
+   *   今は**人の状態（wasExpanded）に従うだけ**。検索中かどうかで勝手に縮めない。
+   *   ⚠ 記録が一度も無い（初回）時だけ、検索中なら縮める（今までの配慮を残す）。
+   */
+  function _decideOnStart() {
     try {
+      if (typeof saved.expanded === "boolean") {
+        // 人が決めた状態をそのまま復元（開く／縮む のどちらも）
+        if (saved.expanded) startExpanded();
+        else setSize(false);
+        return;
+      }
+      // 初回だけ: 検索中なら縮めて起動（今まで通り）
       chrome.storage.session.get(GUIDE_KEYS, function (r) {
-        if (chrome.runtime.lastError) { decide(false); return; }
-        const now = Date.now();
-        decide(GUIDE_KEYS.some(function (k) { const s = r && r[k]; return !!(s && s.at && now - s.at <= GUIDE_TTL_MS); }));
+        var now = Date.now();
+        var searching = !chrome.runtime.lastError && GUIDE_KEYS.some(function (k) {
+          var s = r && r[k];
+          return !!(s && s.at && now - s.at <= GUIDE_TTL_MS);
+        });
+        if (searching) setSize(false); else startExpanded();
       });
-      setTimeout(function () { decide(false); }, 1500); // 返事が来ない時は今まで通り
-    } catch (_e) { decide(false); }
+    } catch (_e) { startExpanded(); }
+  }
+  function persist() {
+    try {
+      STORE.setItem(SK, JSON.stringify({
+        expanded,
+        posX:   parseInt(wrap.style.left) || posX,
+        posY:   parseInt(wrap.style.top)  || posY,
+        // 2026-11-12 竹内さん「たまにちいさくなってお客さんリストが見えない」:
+        //   小さすぎる幅は**保存しない**（次のページで小さいまま開くのを防ぐ）
+        panelW: Math.max(MIN_W, panelW),
+        // panelH は保存しない：小窓化で縮小した値が固定化されるのを防ぐ
+        // 毎回 INIT_H（画面サイズ基準）で開く
+      }));
+    } catch {}
   }
 
   // ── サイズ切り替え ────────────────────────────────────────────────
@@ -547,6 +586,14 @@
     }
   });
   _bodyObs.observe(document.body, { childList: true });
+
+  /**
+   * 2026-11-13 竹内さん「拡張ツールひらいたら開きっぱなしで大丈夫」:
+   *   起動時の状態を決める（人の状態を復元・初回だけ検索中なら縮める）。
+   *   ⚠ ここで呼ぶ（wrap・setSize・startExpanded がそろっている所）。
+   *     末尾に置くと「中継の部分だけを切り出して動かすテスト」が道連れになるので、ここに置く。
+   */
+  _decideOnStart();
 
   // ── page-script.js からの完了通知を popup.js に中継 ──────────────────
   window.addEventListener("message", function(e) {

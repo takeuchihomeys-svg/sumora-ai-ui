@@ -16,6 +16,12 @@
   var KEY = "axlx_human_learn";
   // 2026-11-11 竹内さん「データたまって理解するたび反映」: 貯まるたびに作り直す「動きの癖」（カーソルがこれを見て動く）
   var PROFILE_KEY = "axlx_human_profile";
+  /**
+   * 2026-11-13: 要素ごとの押した位置（人がどこを押したか）。
+   *   pointer-ui.js と同じ鍵（`axlx_human_points`）を読み書きする。
+   *   ここで貯めた物を、次に同じボタンを押す時に**狙う場所**として使う。
+   */
+  var POINTS_KEY2 = "axlx_human_points";
   var SAVE_EVERY_MS = 60000;   // 1分ごとに書き出す（操作のたびに書かない）
   var MIN_OPS_TO_SAVE = 5;     // 5回未満は書かない（誤操作・一瞬のクリックだけを貯めない）
   var LEARN_LOCK = "human-learn-record.js";
@@ -248,6 +254,39 @@
           try {
             var prof = L.profileFrom(next);
             if (prof) o[PROFILE_KEY] = prof;
+          } catch (_) {}
+          /**
+           * 2026-11-13 竹内さん「撮影したところからぼたんの押す場所の確認や移動の部分で学習した部分あるか」:
+           *   押した位置を**要素ごと**に残す（`axlx_human_points`）。
+           *   次に同じボタン・同じ欄を押す時、見えるカーソルが**その人の押した場所**を狙う。
+           *   例: rental_cost2 → { x:0.10, y:0.14, n:6 }
+           *   ⚠ 押した**回数（n）が2以上の物だけ**使う（1回だけは偶然かもしれない）。
+           */
+          try {
+            var pf = (next.points && next.points.fields) || null;
+            if (pf && typeof pf === "object") {
+              chrome.storage.local.get([POINTS_KEY2], function (rr) {
+                try {
+                  var cur = (rr && rr[POINTS_KEY2]) || {};
+                  var changed = false;
+                  Object.keys(pf).slice(0, 60).forEach(function (k) {
+                    var v = pf[k];
+                    if (!v || typeof v.x !== "number" || typeof v.y !== "number") return;
+                    var old = cur[k] || null;
+                    var nOld = old ? Number(old.n) || 0 : 0;
+                    var nNew = Number(v.n) || 0;
+                    if (nNew <= nOld) return;
+                    // 回数の多い方（新しい実測）に寄せる
+                    cur[k] = { x: v.x, y: v.y, n: nNew };
+                    changed = true;
+                  });
+                  if (changed) {
+                    var oo = {}; oo[POINTS_KEY2] = cur;
+                    try { chrome.storage.local.set(oo); } catch (_) {}
+                  }
+                } catch (_) {}
+              });
+            }
           } catch (_) {}
           chrome.storage.local.set(o, function () {
             _saving = false;

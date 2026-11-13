@@ -1931,6 +1931,45 @@ async function _trimShots() {
   } catch (_) { return 0; }
 }
 
+/**
+ * 2026-11-13 竹内さん「今ちゃんと録画保存されていたか」（画面に
+ *   `録画を停止しました: 保持 14件 - 失敗 11件 {capture_error: This request exceeds the
+ *    MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND quota ...}`）
+ *
+ * ⚠ Chrome は `captureVisibleTab` を **1秒あたり数回まで**に制限している
+ *   （`MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND`）。録画（1.5〜3.5秒ごと）と
+ *   「人の操作のたびに撮る」が重なると、**この上限に当たって失敗が続き、録画が止まる**。
+ * → 撮影を**1か所に直列化**し、前の撮影から**一定時間（既定 700ms）あける**。
+ *   さらに「制限に当たった」時は**少し待って1回だけやり直す**（すぐ諦めない）。
+ */
+var _capChain = Promise.resolve();
+var _capLastAt = 0;
+var CAP_MIN_GAP_MS = 700;
+function _capturePaced(windowId) {
+  var run = function () {
+    return (async function () {
+      var wait = CAP_MIN_GAP_MS - (Date.now() - _capLastAt);
+      if (wait > 0) await new Promise(function (r) { setTimeout(r, wait); });
+      try {
+        return await chrome.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 55 });
+      } catch (e) {
+        var msg = String((e && e.message) || e);
+        if (/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(msg)) {
+          // 制限に当たった → 少し待って1回だけやり直す
+          await new Promise(function (r) { setTimeout(r, 900) });
+          return await chrome.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 55 });
+        }
+        throw e;
+      } finally {
+        _capLastAt = Date.now();
+      }
+    })();
+  };
+  // 直列にする（同時に何枚も撮りに行かない）
+  var p = _capChain.then(run, run);
+  _capChain = p.then(function () {}, function () {});
+  return p;
+}
 async function _shrinkShot(dataUrl, maxSide, quality) {
   try {
     if (typeof OffscreenCanvas === "undefined" || typeof createImageBitmap === "undefined") return null;
@@ -2033,7 +2072,7 @@ async function _takeShot(msg, done) {
 
       let dataUrl = null;
       try {
-        dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 55 });
+        dataUrl = await _capturePaced(tab.windowId);
       } catch (e) {        /**
          * 2026-11-11 竹内さん「写真撮ってるかな？」→ 0枚のまま。
          *   `captureVisibleTab` は**その窓のアクティブなタブ**しか撮れない。小窓を開いていると失敗する。
@@ -2050,8 +2089,8 @@ async function _takeShot(msg, done) {
           const prev = await chrome.tabs.query({ active: true, windowId: tab.windowId }).catch(function () { return []; });
           const prevId = prev && prev[0] ? prev[0].id : null;
           await chrome.tabs.update(tab.id, { active: true });
-          await new Promise(function (r) { setTimeout(r, 220); });   // 描画が変わるのを待つ
-          dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 55 });
+          await new Promise(function (r) { setTimeout(r, 320); });   // 描画が変わるのを待つ（少し長め）
+          dataUrl = await _capturePaced(tab.windowId);
           if (prevId != null && prevId !== tab.id) {
             try { await chrome.tabs.update(prevId, { active: true }); } catch (_) {}
           }
@@ -2227,6 +2266,15 @@ async function _recTick() {
   } catch (_) {}
   // 1.5〜3.5秒（毎回ちがう・機械的に見せない）。7分の残りが少なければそこで止める
   var gap = _REC_GAP_MIN + Math.floor(Math.random() * (_REC_GAP_MAX - _REC_GAP_MIN));
+  /**
+   * 2026-11-13 竹内さん「今ちゃんと録画保存されていたか」（失敗が続いて録画が止まった）:
+   *   制限（MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND）に当たった時は、
+   *   **次の間隔を少し長めに**して無理に続けない（連続で失敗し続けるのを避ける）。
+   *   ⚠ 失敗が続いても**録画は止めない**（1回の失敗で7分の録画を捨てない）。
+   */
+  if (_recLastErr && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(_recLastErr)) {
+    gap += 800 + Math.floor(Math.random() * 900);
+  }
   var left = _recRemainMs();
   if (left > 0 && gap > left) gap = left;
   _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, Math.max(200, gap));

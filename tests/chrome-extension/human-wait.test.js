@@ -145,9 +145,9 @@ function rest() {
   // ここに無い固定の数字が増えたら落ちる（人の操作の間なら human-wait を通す／残すならここに理由を書いて足す）。
   const KEEP = {
     "background.js": {
-      "setTimeout 220": [1, "タブを前面にしてから撮る前の描画待ち（v2.6.79）"],
+      
       "setTimeout 35000": [2, "レインズの新タブの見張りの期限"], "setTimeout 500": [2, "タブが既に読み込み済みかの予備の確認・録画モードで SW が起き直した後の続き（v2.7.5）"],
-      "setTimeout 300": [1, "録画モードの最初の1枚を撮るまでの間（v2.7.5・読むだけ・サイトを触らない）"],
+      "setTimeout 300": [1, "録画モードの最初の1枚を撮るまでの間（v2.7.5・読むだけ・サイトを触らない）"], "setTimeout 320": [1, "撮影の前にタブを前に出して描画が変わるのを待つ（v2.7.10）"], "setTimeout 900": [1, "撮影の回数制限に当たった時のやり直しの待ち（v2.7.10・サイトを触らない）"],
       "setTimeout 1000": [1, "PDF のアップロードのやり直し（サーバー）"], "setInterval 25000": [1, "Supabase Realtime の心拍"],
       "setTimeout 8000": [1, "Realtime の再接続"], "setTimeout 15000": [2, "Realtime の再接続・タブ読み込みの期限"],
       "setTimeout 6000": [2, "取得の期限（abort）・送付済みの部屋の取得の期限（v2.5.41 _loadSentRooms・サイトを触らない）"], "setInterval 500": [2, "止める合図の見張り（ページを触らない）"],
@@ -208,7 +208,7 @@ function rest() {
     "snapshot-popup.js": { "setTimeout 2500": [1, "写真テストの結果（クラウドに上がったか）を待つ（v2.7.0）"], "setInterval 5000": [1, "録画モードの状態を取り直す（v2.7.5・画面の表示だけ・サイトを触らない）"] },
     "reins-page-script.js": { "setTimeout 90000": [1, "見張り（fill-done の保証）"] },
     "score-overlay.js": { "setTimeout 900": [1, "点数の表示の間引き"], "setTimeout 500": [1, "点数の表示"], "setTimeout 300": [1, "点数の表示"] },
-    "underbar.js": { "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限（v2.5.86・サイトを触らない）"], "setTimeout 80": [1, "パネルの表示"], "setTimeout 1500": [2, "拡張の再読み込み直後のやり直し・案内の記録の返事が来ない時の予備（v2.5.90・読むだけでサイトを触らない）"], "setTimeout 50": [1, "パネルの動き"] },
+    "underbar.js": { "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限（v2.5.86・サイトを触らない）"], "setTimeout 80": [1, "パネルの表示"], "setTimeout 1500": [1, "拡張の再読み込み直後のやり直し（v2.5.90・読むだけでサイトを触らない）"], "setTimeout 50": [1, "パネルの動き"] },
   };
   const found = scanFixed();
   const files = new Set([...Object.keys(found), ...Object.keys(KEEP)]);
