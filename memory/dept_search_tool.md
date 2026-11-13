@@ -4,6 +4,57 @@
 
 ---
 
+## 2026-11-13 連携できていない原因を特定して直した（**サーバーのみ・拡張の変更なし・DB の構造は変えていない**）
+
+竹内さん「なんで連携できていないのか」。実測して原因が**3層**と判明。
+
+### 1層目: 本番DBに列が届いていない（これが本体）
+`scripts/check-db-columns.ts`（新規）で本番DBを1列ずつ確かめた結果:
+
+| 列・表 | 状態 | 中身 |
+|---|---|---|
+| `shot_ops` | ✅ あり | `w`（欄の種類）が995操作入っている |
+| `shot_b64` | ❌ 無い | 写真の受け皿（Storage が落ちた時用） |
+| `shot_in_db` | ❌ 無い | 写真を表に入れたかの印 |
+| `shot_learn` | ❌ 無い | 写真から読んだ欄の種類 |
+| `exam_runs`（表ごと） | ❌ 無い | 試験の統括の結果 |
+
+**なぜ届かないか**: `migrate-schema` は毎晩 **JST 0:10**（UTC 15:10）に走る。DDL が `main` に入った時刻と実行時刻を突き合わせると:
+- `shot_b64` の DDL が main に入ったのは **11/12 19:49**。11/13 0:10 の実行ビルドはそれより**前**のビルドだった → 流れず
+- `exam_runs` の DDL は **11/13 16:51** に main へ → 今夜 0:10 が初回
+
+つまり「**コードを直した夜の次の 0:10 には間に合わない**」というズレ。急ぐ時は `?force=1` で手動実行する必要がある（`CRON_SECRET` が要る）。
+
+### 2層目: コードが「1列でも無いと全滅」に耐えていなかった（静かに壊れる型）
+Supabase の `select` は**1列でも無いと問い合わせ全体が落ちる**。旧コードは:
+```
+if (r.error && /shot_ops|does not exist/.test(...)) cols = SELECT.replace(", shot_ops","").replace(", shot_learn","")
+```
+＝「無いのは `shot_ops` だろう」と**決め打ち**していた。実際に無かったのは `shot_b64` と `shot_learn`。
+→ 読み取りが落ちる → `shot_ops` まで一緒に外して読み直す → **データには `w` が995操作あるのに「押す順番 0通り」**。
+写真一覧（`?shots=1`）も同じ理由で最小の列まで落ち、`shot_ops` が返っていなかった。
+
+### 3層目: 黙って壊れていた
+エラーを `try{}catch{}` で捨てて「空」を返していたので、**どこで壊れたか誰にも見えなかった**（何日も気づけなかった真因）。
+
+### 直し（`main` に反映済み `c2a50fd0`）
+- **`app/lib/supabase-safe-select.ts`（新規）** `selectDroppingMissing(cols, run)` … エラー文から**無い列の名前を拾い、その列だけ**外して読み直す。名前が拾えない時は1列ずつ試す。試行回数に上限（無限ループしない）。列が無い以外のエラー（RLS 42501 等）は**隠さずそのまま返す**
+- `app/api/human-motion/route.ts`（写真一覧）と `app/api/human-learn-profile/route.ts`（学習）の読み取りを置き換え
+- **外した列を返す**: `dropped_cols` / `why`（黙って落とさない）
+- 試験 `app/lib/__tests__/supabase-safe-select.test.ts` **14件**（本番で起きた形をそのまま再現・14/14 合格）
+- 点検 `scripts/check-db-columns.ts` … 本番DBの列・表の欠けを一覧する（今回これで発見）
+
+### 残り（今夜 0:10 に自動で揃う）
+最新ビルドが動いていて SQL の指紋も前回と違うのでスキップされず、`shot_b64` / `shot_in_db` / `shot_learn` / `exam_runs` が作られる。
+**翌朝の確かめ方**: `npx tsx --env-file=.env.local scripts/check-db-columns.ts` →「全部そろっています」／`/api/human-learn-profile?fresh=1` で `押す順番` が 0通り でなくなる／`/api/exam-runs` が `missing_table` を返さなくなる。
+
+### 教訓（次に同じ形を踏まないために）
+- **列を足す DDL を書いたら、その夜の 0:10 では間に合わないことがある**。「足した」で終わらせず `check-db-columns.ts` で**本番を確かめる**
+- **`select` の列を決め打ちで外す書き方は禁止**。無い列は名前で拾って外す（`selectDroppingMissing` を使う）
+- **読み取りの失敗を握りつぶさない**。理由を返す（`why` / `saved_to_db` / `drop_cols`）。静かに壊れるのが一番高くつく
+
+---
+
 ## 2026-11-10 一括検索・自動便の payload に ITANDI の更新日（itandi_update_days）を載せた（**サーバーのみ・拡張の変更なし・版は上げていない**・DB の変更なし）
 - DB_STRUCTURE.md の混ざっている所 2: 一括検索・自動便では ITANDI もリアプロの更新日（rp_update_days）を使っていた（v2.5.76 で列を分けたのは popup だけ）。確かめた所: background.js 4330 `_batchAutofill`→4367 `_buildBatchConditions`（4643 `opts.rp_update_days`）・4374 `optsFromPayload`・1712 手の一括の `effectiveRpUpdateDays`・auto-run.js 129 `payloadForCustomer`（site を見ない）→ itandi-page-script.js 165・itandi-guide-plan.js 277 が cond.rp_update_days を打つ。サーバーは cron・trigger とも rp_update_days だけ
 - 直し（サーバー）: payload に `itandi_update_days`（ITANDI の手の指定 → 無ければ自動・リアプロの手の指定は使わない）・計画に `update_days_plan.by_customer[id].itandi_days`（同じ空いた時間で広げる）。`app/lib/rp-update-days.ts` effectiveItandiUpdateDays・`search-update-days.ts` itandiPlanFrom／planPayload・`web-brain-search.ts`・`app/api/automation/trigger`・`app/api/cron/auto-property-search`。テスト `app/lib/__tests__/itandi-update-days-payload.test.ts`（21）
