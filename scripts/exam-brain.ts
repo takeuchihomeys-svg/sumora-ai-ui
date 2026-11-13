@@ -1428,6 +1428,19 @@ async function runPlan() {
   const js = labels.map(readCostTier).reduce((s, c) => ({ any: s.any || c.any, machine: s.machine + c.machine, flash: s.flash + c.flash, pro: s.pro + c.pro, proCalls: s.proCalls + c.proCalls, flashCalls: s.flashCalls + c.flashCalls }), { any: false, machine: 0, flash: 0, pro: 0, proCalls: 0, flashCalls: 0 });
   if (js.any) log(`判定の段: 機械で決めた ${js.machine}項目・flash で揃った ${js.flash}項目・割れて pro ${js.pro}項目（flash ${js.flashCalls}回・pro ${js.proCalls}回）`);
   log(`保存: ${saveResult({ label, at: new Date().toISOString(), planLabel: sp.label, compare: cmp, next, triage: tri, llm: tally })}`);
+  /**
+   * 2026-11-13 竹内さん「試験の統括と拡張ツールとデータベースの連携の部分をちゃんとできるようにする」:
+   *   手元のファイルだけでなく **DB にも残す**（竹内さんの画面・他の PC・学習の材料から見えるように）。
+   *   ⚠ DB が落ちていても止めない（今まで通りファイルで動く）。
+   */
+  try {
+    const { toExamRun, upsertExamRun } = await import("../app/lib/exam-runs");
+    const row = toExamRun({ label, at: new Date().toISOString(), planLabel: sp.label, compare: cmp, next, triage: tri, llm: tally }, sp as never);
+    if (row) {
+      const w = await upsertExamRun({ from: (t: string) => ({ upsert: (r: Record<string, unknown>, o?: Record<string, unknown>) => db().from(t).upsert(r, o) }) } as never, row);
+      log(w.ok ? `DBにも保存しました（exam_runs・${row.label}）` : `DBには保存できません（${w.error}）※ファイルには残っています`);
+    }
+  } catch (e) { log(`DBへの保存を飛ばしました（${e instanceof Error ? e.message : String(e)}）※ファイルには残っています`); }
 }
 function readCostTier(label: string): { any: boolean; machine: number; flash: number; pro: number; proCalls: number; flashCalls: number } {
   try {

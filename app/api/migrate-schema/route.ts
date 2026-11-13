@@ -5000,6 +5000,42 @@ ALTER TABLE exam_savings ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON exam_savings FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE exam_savings_id_seq FROM anon, authenticated;
 
+-- ── 2026-11-13 竹内さん「試験の統括と拡張ツールとデータベースの連携の部分をちゃんとできるようにする。
+--      より強化できるようにする」──
+-- exam_runs: 試験の統括（exam-conductor）の**1回分の結果**を DB に残す。
+--   ⚠ これまでは `memory/exam-brain/conductor/*.json` という**手元のファイルだけ**で、
+--     竹内さん・他の PC・私からは見えなかった（＝連携できていなかった）。
+--   → 1回ごとに1行。計画（plan）・結果（result）・問題の数・LLM の費用を残す。
+--     `/api/exam-runs` で読める（画面・スクリプト・拡張の学習の材料に使う）。
+CREATE TABLE IF NOT EXISTS exam_runs (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- 手元のファイル名（label）。同じ label は1つ（再実行は上書き）
+  label TEXT NOT NULL,
+  ran_at TIMESTAMPTZ,
+  plan_label TEXT,
+  -- 何を試したか（問題の種類・件数・使った材料の数）
+  candidates INTEGER,
+  material_cls TEXT,
+  material_files INTEGER,
+  material_kb_ids TEXT[],
+  -- 結果（点・合格・不合格の内訳・次に直す物）
+  compare JSONB,
+  next_actions JSONB,
+  triage JSONB,
+  -- 費用と時間
+  llm JSONB,
+  llm_calls INTEGER,
+  cost_usd NUMERIC(10,4),
+  -- 人が読む1行
+  summary TEXT,
+  CONSTRAINT exam_runs_label_uniq UNIQUE (label)
+);
+CREATE INDEX IF NOT EXISTS idx_exam_runs_created ON exam_runs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_exam_runs_ran ON exam_runs(ran_at DESC);
+ALTER TABLE exam_runs ENABLE ROW LEVEL SECURITY;
+COMMENT ON TABLE exam_runs IS '試験の統括（exam-conductor）の1回分の結果。計画・点・不合格の内訳・費用。手元のファイルから同期する。2026-11-13 竹内さん承認';
+
 -- 2026-10-24 竹内さん「会話大切な部分データベースにいれているのか」→「それでおねがい」:
 --   work_log … 作業の途中経過（何の作業が・どこまで・どの枝とコミット・次にやる事・待っている事）。始めた時・区切り・止まる前に1行ずつ足す（上書きしない）。
 --   手元の記憶ファイルにしか無かったため、VS Code を別のフォルダで開いた・PC が落ちた時に続きが分からなくなった（10/24）。
@@ -5024,24 +5060,6 @@ CREATE INDEX IF NOT EXISTS idx_work_log_time ON work_log(created_at DESC);
 ALTER TABLE work_log ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON work_log FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE work_log_id_seq FROM anon, authenticated;
-
--- 2026-11-13 message_unsends … LINE の送信取り消しの控え（作業員5・統括役の案A・KB 6ad3a25f・11963 で取り消しを持つ欄が無かった）。
---   line-webhook は取り消した通を messages から物理削除するので、「取り消した通」を読みに渡すための控えだけを残す。
---   本文は maskPII で伏せた頭40字だけ（お客様が消した本文のため）。申込以降の会話の取り消しは残さない。30日より古い行は書く時に消す。
---   書くのは line-webhook（UNSEND_LOG=on の時だけ・既定 off）・読むのはサーバーの鍵だけ（RLS 有効・ポリシーなし）
-CREATE TABLE IF NOT EXISTS message_unsends (
-  id BIGSERIAL PRIMARY KEY,
-  conversation_id UUID NOT NULL,
-  unsent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  original_sent_at TIMESTAMPTZ,
-  sender TEXT,
-  text_head TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_message_unsends_conv_time ON message_unsends(conversation_id, unsent_at DESC);
-CREATE INDEX IF NOT EXISTS idx_message_unsends_time ON message_unsends(unsent_at);
-ALTER TABLE message_unsends ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON message_unsends FROM anon, authenticated;
-REVOKE ALL ON SEQUENCE message_unsends_id_seq FROM anon, authenticated;
 
 -- 2026-10-29 aix_desk_cards … AIX の担当の札（ボタン×ピッカーごと・竹内さん KB P1 03d2bdd2）。scripts/build-aix-desk-cards.ts が毎週作り直す（upsert）。
 --   中身: 送る中身・使う場面・似たボタンとの線・竹内さんの文に入る物・入力欄・一緒に使われた定型・竹内さんの決定（設計知見の題）・
@@ -5612,32 +5630,6 @@ SELECT
   c                          AS raw
 FROM property_candidate_pools p
 CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.candidates) = 'array' THEN p.candidates ELSE '[]'::jsonb END) c;
-
--- 2026-11-12 作業員23（竹内さん 11/12「今の設計からブレインと文の生成で足りていない部分を強化していく」）:
---   takeuchi_exemplars … 竹内さんの手本（1通＝1文ずつの役目・なぜ・ブレインの欄）。文の統括が 場面×潜在の型×誘導先 で1つ引き、
---     設計図の注記に「役目の並び・なぜ・事実の種類」だけ渡す（app/lib/takeuchi-exemplar.ts・-server.ts・TAKEUCHI_EXEMPLAR=on の時だけ・既定 off）。
---   文の本文（text）とお客様の発言は入れない（sentences の中に text の鍵があれば DB が断る）。名前・住所などの値は入れる前に伏せる。
---   入れるのは夜の読み scripts/takeuchi-exemplars-load.ts（申込の門 turn-application-gate で外れる番は入れない・JST 9〜22時は止まる）。
---   読み書きはサーバーの鍵だけ（RLS 有効・ポリシーなし・anon／authenticated の権限なし）。同じ文を app/api/migrate-schema/route.ts にも入れてある。
-CREATE TABLE IF NOT EXISTS takeuchi_exemplars (
-  id TEXT PRIMARY KEY,                                  -- 手本の id（今は元の番の messages.id と同じ）
-  scene TEXT NOT NULL,                                  -- 場面（resolveReplyScene の scene）
-  latent TEXT NOT NULL,                                 -- 潜在の型（LATENT_KEYS）
-  lead TEXT NOT NULL,                                   -- 誘導先（LEAD_TO）
-  hand BOOLEAN NOT NULL DEFAULT false,                  -- 手で読んだ手本か
-  sentences JSONB NOT NULL DEFAULT '[]'::jsonb,         -- [{role, why, brainField}]（文の本文 text は入れない）
-  latent_four JSONB,                                    -- {trigger, part, feeling, want}（伏せ済み）
-  fact TEXT,                                            -- 先回りに使った事実の種類（伏せ済み）
-  source_turn TEXT NOT NULL,                            -- 元の番（こちらの送信の messages.id・外部キーは付けない＝片付けで消えない）
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT takeuchi_exemplars_sentences_array CHECK (jsonb_typeof(sentences) = 'array'),
-  CONSTRAINT takeuchi_exemplars_no_text CHECK (NOT jsonb_path_exists(sentences, '$[*].text'))
-);
-CREATE INDEX IF NOT EXISTS takeuchi_exemplars_key_idx ON takeuchi_exemplars (scene, latent, lead);
-CREATE INDEX IF NOT EXISTS takeuchi_exemplars_latent_idx ON takeuchi_exemplars (latent, lead);
-CREATE INDEX IF NOT EXISTS takeuchi_exemplars_lead_idx ON takeuchi_exemplars (lead);
-ALTER TABLE takeuchi_exemplars ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON takeuchi_exemplars FROM anon, authenticated;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
