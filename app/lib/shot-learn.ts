@@ -50,6 +50,64 @@ const KINDS = ["select", "text", "checkbox", "radio", "button", "link"];
 const norm = (s: unknown) => String(s == null ? "" : s).replace(/[\s\u3000]+/g, "").trim().slice(0, 30);
 
 /**
+ * 欄の**名前から種類を推す**（純関数）。
+ *
+ * 2026-11-13 竹内さん「今弱い部分学習する。今のデータから学習する」:
+ *   実測で弱い所 **40件がすべて `kind_unknown`**（押した記録に種類が無い・旧版の記録）だった。
+ *   だが名前を見ると**明らかに分かる物ばかり**:
+ *     `大阪市北区｜label.one_city` → チェック（区を選ぶ）
+ *     `city_code[]` / `room_layout_id[]` → チェック（`[]` は複数選ぶ欄）
+ *     `rental_cost1` / `square_meter_l` / `update_date` / `structured_date` → プルダウン
+ *     `required_time` / `keyword` → 直接入力
+ *     `確定してリストへ｜span` / `左の検索｜span` → 押すボタン
+ *   → **名前の形（class・name・文字）から推す**。写真が無くても埋められる。
+ *   ⚠ 推測なので**確かさ（conf）を返す**（低い物は弱い所として残す＝ごまかさない）。
+ *
+ * @returns kind と、その確かさ（0〜1）。分からなければ null
+ */
+export function guessKindFromName(name: unknown): { kind: string; conf: number } | null {
+  const n = String(name ?? "");
+  if (!n) return null;
+  const raw = n.toLowerCase();
+  /** サイトのクラス名（`｜` の後ろ）を優先して見る（一番確かな手がかり） */
+  const cls = raw.includes("｜") ? raw.slice(raw.indexOf("｜") + 1) : raw;
+
+  // ① クラス名がそのまま種類を言っている（一番確か）
+  if (/label\.one_(city|town)/.test(cls)) return { kind: "checkbox", conf: 0.9 };  // 区・町字
+  if (/label\.one_(line|station)/.test(cls)) return { kind: "checkbox", conf: 0.9 };
+  if (/label\.one_/.test(cls)) return { kind: "checkbox", conf: 0.8 };
+  /**
+   * 2026-11-13 実測: `左の3K｜label`・`左の4K｜label` のように**クラス名が `label` だけ**の物がある
+   *   （間取りのチェックは `input` ではなく `label` を押す作り）。
+   *   → `label` だけでも**チェック**とみなす（0.75）。`div`/`span` だけの物は下で判断する。
+   */
+  if (/^label$/.test(cls)) return { kind: "checkbox", conf: 0.75 };
+  if (/^input\.checkbox|type_checkbox/.test(cls)) return { kind: "checkbox", conf: 0.85 };
+  if (/^input\.radio/.test(cls)) return { kind: "radio", conf: 0.85 };
+  if (/^select/.test(cls)) return { kind: "select", conf: 0.85 };
+  if (/^input\.text|^textarea/.test(cls)) return { kind: "text", conf: 0.85 };
+  if (/go_search|btn|button/.test(cls)) return { kind: "button", conf: 0.75 };
+  if (/town_search|city_search|search_menu/.test(cls)) return { kind: "button", conf: 0.7 };
+
+  // ② name が `xxx[]` → 複数選ぶチェック
+  if (/\[\]$/.test(raw)) return { kind: "checkbox", conf: 0.8 };
+
+  // ③ 押す物（文字＋span/td/div）
+  if (/(確定してリストへ|検索|絞り込み|とじる|クリア|リセット|次へ|設定へ進む)/.test(n)) return { kind: "button", conf: 0.75 };
+  if (/｜(span|td|div|a|button|th|li)/.test(raw)) return { kind: "button", conf: 0.6 };
+
+  // ④ 名前で分かる欄
+  if (/(rental_cost|square_meter|update_date|structured_date|transportation_id|walk|age)/.test(raw)) return { kind: "select", conf: 0.7 };
+  if (/(required_time|keyword|free_word|freeword|building_name|search_word|room_no)/.test(raw)) return { kind: "text", conf: 0.7 };
+  if (/(include_common_fee|deposit_recommpence|shikirei|pet|fee_)/.test(raw)) return { kind: "checkbox", conf: 0.7 };
+
+  // ⑤ 画像・見出し・件数など、押す対象ではなさそう
+  if (/^(img|image)\b|^img\./.test(cls)) return { kind: "other", conf: 0.5 };
+
+  return null;
+}
+
+/**
  * 写真から読んだ欄の一覧を整える（純関数）。
  *   ⚠ 名前が無い・種類が変な物は捨てる。
  *   ⚠ 座標は 0〜1 に丸める。
@@ -263,6 +321,87 @@ export function learnFromShots(
  *   ③ 写真と数値が食い違った欄
  *   ④ 押せない（グレー）のに押している欄
  */
+/**
+ * 弱い所から**次の学習の計画**を立てる（統括の判断・純関数）。
+ *
+ * 2026-11-13 竹内さん「学習の統括が強化されるように、その点も徹底する」:
+ *   これまでは弱い所を**並べるだけ**で、「次に何をすれば埋まるか」を決める所が無かった
+ *   （＝統括が働いていなかった）。→ 弱い所を**やる事**に変える。
+ *
+ * 決め方（優先度の高い順）:
+ *   1. `photo_vs_record` … 写真と記録が食い違う（**誤学習の元**・最優先で確かめる）
+ *   2. `kind_conflict_in_photo` … 写真の中で種類が割れている（読み違え）
+ *   3. `pressed_disabled` … 押せない物を押している（＝**止まる原因**・自動検索に直結）
+ *   4. `kind_unknown` … 種類が分からない（**名前から推せる**ならその場で埋める）
+ * 同じ名前は1つにまとめ、**やる事の種類ごと**に数を出す。
+ *
+ * @param weak 弱い所の一覧
+ * @param guessed 名前から推して埋めた物（あれば「もう埋めた」と分かる）
+ * @returns 計画（優先度順・やる事・根拠）
+ */
+export function planLearnFromWeak(
+  weak: ReadonlyArray<{ kind: string; name: string; why?: string; next?: string }>,
+  guessed: ReadonlyArray<{ name: string; kind: string; conf: number }> = [],
+): {
+  items: Array<{ priority: number; kind: string; name: string; action: string; why: string }>;
+  counts: Record<string, number>;
+  filled: number;
+  summary: string;
+} {
+  const PRI: Record<string, number> = {
+    photo_vs_record: 1,
+    kind_conflict_in_photo: 2,
+    pressed_disabled: 3,
+    kind_unknown: 4,
+  };
+  const ACT: Record<string, string> = {
+    photo_vs_record: "次の録画の時に同じ欄を写真で読んで、記録と合うか確かめる（合わなければ写真を採る）",
+    kind_conflict_in_photo: "同じ欄を2枚以上の写真で読んで、多い方の種類を採る",
+    pressed_disabled: "押す前に「押せるか」を見る（グレーなら待つ・別の道を探す）",
+    kind_unknown: "名前から推して埋める（推せない時だけ写真を読む）",
+  };
+  const guessedNames = new Set(guessed.map((g) => g.name));
+  const seen = new Set<string>();
+  const items: Array<{ priority: number; kind: string; name: string; action: string; why: string }> = [];
+  const counts: Record<string, number> = {};
+
+  for (const w of Array.isArray(weak) ? weak : []) {
+    if (!w || !w.name) continue;
+    const key = w.kind + "|" + w.name;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    counts[w.kind] = (counts[w.kind] ?? 0) + 1;
+    // 名前から埋めた物は「もう埋めた」ので、やる事から外す（件数だけ残す）
+    if (w.kind === "kind_unknown" && guessedNames.has(w.name)) continue;
+    items.push({
+      priority: PRI[w.kind] ?? 9,
+      kind: w.kind,
+      name: w.name,
+      action: ACT[w.kind] ?? "記録を増やして、もう一度学ぶ",
+      why: String(w.why ?? ""),
+    });
+  }
+  items.sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name));
+
+  const parts: string[] = [];
+  if (guessed.length) parts.push(`名前から種類を埋めた: ${guessed.length}件`);
+  /**
+   * 2026-11-13: 「残り」は**やる事が残っているか**で決める（名前から埋めた分は残りに数えない）。
+   *   ⚠ 旧は `counts`（のべ件数）をそのまま出していたので、全部埋めても「残り」と出ていた。
+   */
+  const left: Record<string, number> = {};
+  for (const x of items) left[x.kind] = (left[x.kind] ?? 0) + 1;
+  const top = Object.entries(left).sort((a, b) => (PRI[a[0]] ?? 9) - (PRI[b[0]] ?? 9));
+  if (top.length) parts.push("残り: " + top.map(([k, n]) => `${k} ${n}件`).join("・"));
+  else parts.push("残り: なし（やる事はありません）");
+  return {
+    items: items.slice(0, 40),
+    counts,
+    filled: guessed.length,
+    summary: parts.join("／"),
+  };
+}
+
 export function findWeakPoints(
   points: Record<string, { n: number; w?: string }>,
   fields: ReadonlyArray<ShotField>,

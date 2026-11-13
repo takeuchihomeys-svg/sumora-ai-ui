@@ -26,7 +26,7 @@
 //   npx tsx --env-file=.env.local scripts/human-learn-brain.ts --apply    # DB の human_learn_profile に書く
 //   /api/cron/human-learn-brain が毎晩まとめる（Vercel Cron）
 
-import { reconcilePoints, findWeakPoints, learnFromShots } from "./shot-learn";
+import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, planLearnFromWeak } from "./shot-learn";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -70,7 +70,18 @@ export type MotionRow = {
 };
 
 /** 押した位置（要素ごと） */
-export type PointStat = { x: number; y: number; n: number; /** 要素の種類（select/checkbox/text/button/link/other） */ w?: string };
+export type PointStat = {
+  x: number; y: number; n: number;
+  /** 要素の種類（select/checkbox/text/button/link/other） */
+  w?: string;
+  /**
+   * 2026-11-13 竹内さん「今弱い部分学習する」:
+   *   種類を**どこから**得たか（`photo`＝写真から読んだ／`name`＝名前から推した）。
+   *   ⚠ 名前から推した物は**推測**なので、確かさ（w_conf）も残す（写真の物と区別する）。
+   */
+  w_src?: "photo" | "name";
+  w_conf?: number;
+};
 /** 次に押す物 */
 export type NextStat = { next: string; n: number; total: number };
 /** 動きの癖 */
@@ -122,6 +133,17 @@ export type HumanLearnBundle = {
   }>;
   /** 写真を何枚見たか・そのうち操作が付いていた枚数 */
   shots?: { total: number; with_ops: number };
+  /**
+   * 2026-11-13 竹内さん「学習の統括が強化されるように、その点も徹底する」:
+   *   **次に何を学ぶか**（統括の判断）。弱い所を優先度順の「やる事」に変えた物。
+   *   写真が1枚も無くても、名前から推して埋めた分と残りが分かる。
+   */
+  learn_plan?: {
+    items: Array<{ priority: number; kind: string; name: string; action: string; why: string }>;
+    counts: Record<string, number>;
+    filled: number;
+    summary: string;
+  };
   /** 何を学んだか（人が読む1行ずつ） */
   lines: string[];
 };
@@ -447,11 +469,35 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     }
   }
   let weak: Array<{ kind: string; name: string; why: string; next: string }> = [];
+  /**
+   * 2026-11-13 竹内さん「今弱い部分学習する。今のデータから学習する」:
+   *   ⚠ 実測で弱い所 **40件がすべて `kind_unknown`**（押した記録に種類が無い・旧版の記録）。
+   *     写真が無いので今まで埋められなかった。
+   *   → **名前から種類を推す**（`guessKindFromName`）。`label.one_city` → チェック、
+   *     `rental_cost1` → プルダウン、`required_time` → 直接入力、`確定してリストへ｜span` → 押す。
+   *   ⚠ 推測した物は `w_src: "name"` と**確かさ**を残す（写真で読んだ物と区別する＝ごまかさない）。
+   */
+  const guessed: Array<{ name: string; kind: string; conf: number }> = [];
+  for (const [name, v] of Object.entries(points)) {
+    if (v.w) continue;                       // もう種類がある
+    const g = guessKindFromName(name);
+    if (!g) continue;
+    (points as Record<string, PointStat>)[name] = { ...v, w: g.kind, w_src: "name", w_conf: g.conf } as never;
+    guessed.push({ name, kind: g.kind, conf: g.conf });
+  }
   if (photoFields.length) {
     const rec = reconcilePoints(points as never, photoFields as never);
     Object.keys(points).forEach((k) => { if (rec.points[k]) points[k] = rec.points[k] as never; });
     weak = findWeakPoints(points as never, photoFields as never, rec.fixed as never);
+  } else if (Object.keys(points).length) {
+    // 写真が1枚も無い時も、名前から推した分を除いた「まだ分からない物」を弱い所に残す
+    weak = findWeakPoints(points as never, [], []);
   }
+  /**
+   * 2026-11-13 竹内さん「学習の統括が強化されるように、その点も徹底する」:
+   *   弱い所を**次にやる事**に変える（統括の判断）。優先度順・根拠つき。
+   */
+  const learnPlan = planLearnFromWeak(weak, guessed);
 
   // 元にした期間
   const times = list.map((r) => (r.created_at ? Date.parse(String(r.created_at)) : NaN)).filter((t) => Number.isFinite(t));
@@ -492,6 +538,7 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     gaps: { median_ms: median(gapSamples), samples: gapSamples.length },
     ...(weak.length ? { weak } : {}),
     ...(Object.keys(shotLearn.screens).length ? { screen_flow: shotLearn.screens, shots: { total: shotLearn.total, with_ops: shotLearn.withOps } } : {}),
+    ...(learnPlan.items.length || learnPlan.filled ? { learn_plan: learnPlan } : {}),
     lines: [],
   };
   bundle.lines = describeBundle(bundle);
@@ -557,6 +604,20 @@ export function describeBundle(b: HumanLearnBundle): string[] {
     });
   } else {
     out.push("弱い所: なし（今の所そろっています）");
+  }
+  /**
+   * 2026-11-13 竹内さん「学習の統括が強化されるように、その点も徹底する」:
+   *   **次に何を学ぶか**（統括の判断）を出す。優先度順・やる事つき。
+   */
+  if (b.learn_plan) {
+    const lp = b.learn_plan;
+    out.push("");
+    out.push("▼ 学習の統括: 次にやる事");
+    out.push("  " + lp.summary);
+    lp.items.slice(0, 8).forEach((x, i) => {
+      out.push(`  ${i + 1}. ${x.name} … ${x.action}`);
+    });
+    if (!lp.items.length) out.push("  なし（今の所そろっています）");
   }
   /**
    * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい」:
