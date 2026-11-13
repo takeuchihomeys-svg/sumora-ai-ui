@@ -161,5 +161,32 @@ console.log("=== ④ 学習の束に入り、人が読める行になる");
   });
 }
 
+console.log("=== ⑤ 実測の残り11件への対処");
+{
+  // 区の名前そのもの（クラス名が付いていない）
+  it("堺市南区 → チェック（区の名前）", () => eq(guessKindFromName("堺市南区")!.kind, "checkbox"));
+  it("大阪市中央区 → チェック", () => eq(guessKindFromName("大阪市中央区")!.kind, "checkbox"));
+  it("東大阪市 → チェック", () => eq(guessKindFromName("東大阪市")!.kind, "checkbox"));
+  // 押す対象ではない物
+  it("div → other（学ぶ対象ではない）", () => eq(guessKindFromName("div")!.kind, "other"));
+  it("span → other", () => eq(guessKindFromName("span")!.kind, "other"));
+  it("svg → other", () => eq(guessKindFromName("svg")!.kind, "other"));
+  it("td → other", () => eq(guessKindFromName("td")!.kind, "other"));
+  it("td.st_td → other", () => eq(guessKindFromName("td.st_td")!.kind, "other"));
+  it("div.building_tr → other", () => eq(guessKindFromName("div.building_tr")!.kind, "other"));
+  it("div.rl_area → other", () => eq(guessKindFromName("div.rl_area")!.kind, "other"));
+  it("#axlx-bar → other（拡張の帯）", () => eq(guessKindFromName("#axlx-bar")!.kind, "other"));
+  // 弱い所から外れる
+  it("other は弱い所にならない", () => {
+    const w = findWeakPoints({ div: { n: 3, w: "other" }, rental_cost1: { n: 2, w: "select" } } as never, [], []);
+    eq(w.length, 0, "other が弱い所に残っている");
+  });
+  it("種類が無い物は弱い所に残る（学ぶ対象）", () => {
+    const w = findWeakPoints({ 謎の欄: { n: 3 } } as never, [], []);
+    eq(w.length, 1);
+    eq(w[0].kind, "kind_unknown");
+  });
+}
+
 console.log(`\n結果: 合格 ${passed} / 不合格 ${failed}`);
 if (failed) { for (const f of failures) console.log("  ✗ " + f); process.exit(1); }

@@ -484,8 +484,7 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     if (!g) continue;
     (points as Record<string, PointStat>)[name] = { ...v, w: g.kind, w_src: "name", w_conf: g.conf } as never;
     guessed.push({ name, kind: g.kind, conf: g.conf });
-  }
-  if (photoFields.length) {
+  }  if (photoFields.length) {
     const rec = reconcilePoints(points as never, photoFields as never);
     Object.keys(points).forEach((k) => { if (rec.points[k]) points[k] = rec.points[k] as never; });
     weak = findWeakPoints(points as never, photoFields as never, rec.fixed as never);
