@@ -2,6 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/conductor-staff-check.test.ts
 import { staffCheckMode, decideStaffCheck, staffCheckNote, staffCheckWriterLine, staffCheckOf, STAFF_CHECK_REASONS, DEPTH_REASON_TO_STAFF_CHECK, REF_HANDOFF_NAMES } from "../conductor-staff-check";
 import { shadowAutoGate } from "../shadow-auto-gate";
+import { resolveRefs, refHandoffReasons, REF_HANDOFF_REASONS } from "../ref-resolve";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 let pass = 0, fail = 0;
@@ -20,7 +21,22 @@ const rh = decideStaffCheck({ intakeConfidence: "high", ref: { handoff: ["ref_ne
 t("ref_resolve.handoff は自信が high でも ref_unresolved・中身は ref_detail・推測の理由は足さない", rh?.reasons.join() === "ref_unresolved" && rh.ref_detail?.join() === "ref_needs_room", rh);
 const rh2 = decideStaffCheck({ intakeConfidence: "low", ref: { handoff: ["ref_needs_name"] }, asks: [{ route: "reply", basis: "general" }] });
 t("low の時は他の理由も並ぶ", rh2?.reasons.join() === "ref_unresolved,answer_guess_only" && rh2.ref_detail?.join() === "ref_needs_name", rh2);
-t("REF_HANDOFF_NAMES は作業員16 の REF_HANDOFF_REASONS と同じ名前", REF_HANDOFF_NAMES.join() === "ref_needs_name,ref_needs_room");
+t("REF_HANDOFF_NAMES は作業員16 の REF_HANDOFF_REASONS と同じ名前", REF_HANDOFF_NAMES.join() === REF_HANDOFF_REASONS.join());
+// 12105 を作業員16 の resolveRefs（main 入り）で通す: 送った物件の見積の初期費用で1件に絞れた番は解けた／見積の初期費用が無く絞れない番（needs_cost・certainty low）は解けない
+const sent12105 = [
+  { name: "Aハイツ", room: "101", sent_at: "2026-11-01T03:00:00Z", bundle_no: 1, bundle_pos: 1, estimate_initial_cost: 48000 },
+  { name: "Bコート", room: "202", sent_at: "2026-11-01T03:00:30Z", bundle_no: 1, bundle_pos: 2, estimate_initial_cost: 120500 },
+];
+const q12105 = "送ってきてくれたやつで初期費用5万以内はあれだけ？";
+const ok12105 = resolveRefs({ text: q12105, sent: sent12105, brought: [{ name: "Dマンション", room: null, at: "2026-11-02T00:00:00Z", from: "url", url: "https://suumo.jp/chintai/jnc_000011112222/" }] });
+t("12105: 送った物件に絞れた（high）→ 自信 low でも指す物の理由は立たない", decideStaffCheck({ intakeConfidence: "low", ref: { ...ok12105, handoff: refHandoffReasons(ok12105) }, currentProperty: "Aハイツ" }) === null, ok12105);
+const ng12105 = resolveRefs({ text: q12105, sent: sent12105.map((x) => ({ ...x, estimate_initial_cost: null })), brought: [] });
+const s12105 = decideStaffCheck({ intakeConfidence: "low", ref: { ...ng12105, handoff: refHandoffReasons(ng12105) }, currentProperty: "Aハイツ" });
+t("12105: 見積の初期費用が無く絞れない（certainty low）→ 自信 low なら ref_unresolved", s12105?.reasons.join() === "ref_unresolved" && !s12105.ref_detail, { ng12105, s12105 });
+t("12105: 同じ番でも自信が mid なら回さない（handoff が無い）", decideStaffCheck({ intakeConfidence: "mid", ref: { ...ng12105, handoff: refHandoffReasons(ng12105) } }) === null);
+const room = resolveRefs({ text: "こちらの物件空いてますか https://www.homes.co.jp/chintai/room/abc/", sent: sent12105, brought: [{ name: "Eハイム", room: null, at: "2026-11-02T00:00:00Z", from: "url", url: "https://www.homes.co.jp/chintai/room/abc/" }] });
+const sRoom = decideStaffCheck({ intakeConfidence: "high", ref: { ...room, handoff: refHandoffReasons(room) } });
+t("URL の号室が引けない（ref_needs_room）→ 自信 high でも ref_unresolved・ref_detail", sRoom?.reasons.join() === "ref_unresolved" && sRoom.ref_detail?.join() === "ref_needs_room", sRoom);
 t("ref が解けている番は回さない", decideStaffCheck({ intakeConfidence: "low", ref: { resolved: true, sure: "high" }, turnHasImage: true, currentProperty: "" }) === null);
 
 t("自信が low でない番は理由があっても回さない（今まで通り）",
