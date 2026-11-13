@@ -199,7 +199,14 @@
       var last = _opsRing[_opsRing.length - 1];
       var t = Date.now();
       if (last && last.f === (nm ? String(nm).slice(0, 30) : null) && t - Number(last.t || 0) < 120) return;
-      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nm ? String(nm).slice(0, 30) : null, w: (L && L.kindOfEl) ? L.kindOfEl(el) : null });
+      /**
+       * 2026-11-13: 要素の種類は**その場で読む**（読み込み順に頼らない）。
+       *   ⚠ 旧は ファイル先頭の `L` を使っていたが、`human-learn.js` より先に読まれると
+       *     `L` が undefined のままになり、**種類が1つも入らなかった**（実際に0件だった）。
+       */
+      var LL = (typeof self !== "undefined" ? self : window).AxlxHumanLearn || L;
+      var kd = (LL && LL.kindOfEl) ? LL.kindOfEl(el) : null;
+      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nm ? String(nm).slice(0, 30) : null, w: kd });
       while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
     } catch (_) {}
   }

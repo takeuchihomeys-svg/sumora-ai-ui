@@ -168,6 +168,12 @@ export async function POST(req: NextRequest) {
           t: typeof r.t === "number" ? r.t : null,
           k: typeof r.k === "string" ? r.k.slice(0, 10) : null,
           f: typeof r.f === "string" ? r.f.slice(0, 30) : null,
+          /**
+           * 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分か」:
+           *   ⚠ 旧はここで `w`（要素の種類）を**捨てていた**ので、拡張が送っても DB に入らなかった
+           *     （実際に 0件だった）。→ 通す。
+           */
+          ...(typeof r.w === "string" && r.w ? { w: r.w.slice(0, 10) } : {}),
         };
       }).filter((o) => o.k || o.f);
       return out.length ? out : null;

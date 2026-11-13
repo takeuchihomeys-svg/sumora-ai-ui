@@ -45,7 +45,10 @@ console.log("\n■ ② 押した時に種類も残す（記録）");
   ok("集計で種類を数える", /byField\[f\]\.w\[w\] = \(byField\[f\]\.w\[w\] \|\| 0\) \+ 1/.test(learn));
   ok("  一番多い種類を採る", /fieldSpread\[f\]\.w = bw/.test(learn));
   ok("  前の集計と合わせる時も種類を保つ", /\.\.\.\(pre\.w \|\| af\[f\]\.w/.test(learn));
-  ok("録画の操作の輪にも種類を入れる", /w: \(L && L\.kindOfEl\) \? L\.kindOfEl\(el\) : null/.test(rec));
+  ok("録画の操作の輪にも種類を入れる", /var kd = \(LL && LL\.kindOfEl\) \? LL\.kindOfEl\(el\) : null;/.test(rec) && /w: kd \}/.test(rec));
+  ok("  ⚠ 種類は**その場で読む**（読み込み順に頼らない・実際に0件になった）", /AxlxHumanLearn \|\| L/.test(rec));
+  ok("サーバーも w を捨てない（旧は捨てていた）", /\.\.\.\(typeof r\.w === "string" && r\.w \? \{ w: r\.w\.slice\(0, 10\) \}/.test(fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "human-motion", "route.ts"), "utf8")));
+  ok("学習の束は shot_ops の w からも種類を学ぶ", /typeof x\.w === "string" \? x\.w\.toLowerCase\(\)/.test(brain));
 }
 
 console.log("\n■ ③ 学習の束に種類が入り、日本語で出る");

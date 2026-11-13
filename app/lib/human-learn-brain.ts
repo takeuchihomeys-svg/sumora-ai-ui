@@ -291,6 +291,20 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
    *   ⚠ 写真が無い（`shot_learn` が無い）行は今まで通り数値だけで学ぶ。
    */
   const photoFields: Array<{ name: string; kind: string }> = [];
+  /**
+   * 2026-11-13: **操作の並び（shot_ops）にも種類（w）が入っている**（2.7.20 から）。
+   *   写真の読み（shot_learn）が無くても、ここから欄の種類を学べる。
+   */
+  for (const r of list) {
+    if (!Array.isArray(r.shot_ops)) continue;
+    for (const o of r.shot_ops) {
+      if (!o || typeof o !== "object") continue;
+      const x = o as Record<string, unknown>;
+      const nm1 = typeof x.f === "string" ? x.f.trim().slice(0, 30) : "";
+      const kd1 = typeof x.w === "string" ? x.w.toLowerCase().slice(0, 10) : "";
+      if (nm1 && kd1) photoFields.push({ name: nm1, kind: kd1 });
+    }
+  }
   for (const r of list) {
     const sl = r.shot_learn;
     if (!sl || typeof sl !== "object") continue;
