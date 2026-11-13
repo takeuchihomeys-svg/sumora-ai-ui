@@ -367,7 +367,6 @@ import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
-import { exemplarNoteFor } from "@/app/lib/takeuchi-exemplar-server";
 import { composeVocabUnifiedOn, applySceneConstraints, stripWritingBlueprintOrder } from "@/app/lib/compose-vocab";
 import { applyOrderTable, orderBasisDigest, pickElementTypes, elementTypesNote, uptakePlan, uptakeNote, trustTurnNote, propertyNameNote } from "@/app/lib/compose-order-table";
 const maybeStripWb = (note: string, on: boolean): string => (on ? stripWritingBlueprintOrder(note) : note);
