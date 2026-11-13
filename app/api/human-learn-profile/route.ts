@@ -36,7 +36,7 @@ const SELECT = [
  *   直近3日・最大3000行（重くしない）。`shot_ops` が無いDBでは外して読み直す。
  *   作った束は DB にも残す（次からは速い・他の PC も読める）。
  */
-async function buildNow(scope: string) {
+async function buildNow(scope: string, note?: (why: string) => void) {
   const since = new Date(Date.now() - 3 * 86400_000).toISOString();
   const fetchPage = (cols: string, from: number, to: number) => {
     let q = supabase.from("human_motion_learn").select(cols).gte("created_at", since);
@@ -51,14 +51,14 @@ async function buildNow(scope: string) {
       cols = SELECT.replace(", shot_ops", "");
       r = await fetchPage(cols, i, i + 999);
     }
-    if (r.error) return null;
+    if (r.error) { try { note?.("select: " + r.error.message); } catch (_) {} return null; }
     rows.push(...((r.data ?? []) as unknown[]));
     if (!r.data || r.data.length < 1000) break;
   }
-  if (!rows.length) return null;
+  if (!rows.length) { try { note?.("no_rows"); } catch (_) {} return null; }
   const { buildHumanLearnBundle, compactBundle } = await import("@/app/lib/human-learn-brain");
   const bundle = compactBundle(buildHumanLearnBundle(rows as never));
-  if (!bundle.source.rows) return null;
+  if (!bundle.source.rows) { try { note?.("empty_bundle"); } catch (_) {} return null; }
   // DB にも残す（同じ scope の古い行は消す＝いつも1つだけ）
   try {
     await supabase.from("human_learn_profile").delete().eq("scope", scope);
@@ -106,9 +106,10 @@ export async function GET(req: NextRequest) {
    *   ⚠ 重くしない: 直近3日・最大3000行まで。作れなければ今まで通り（空を返す）。
    */
   const stale = !row || (Date.now() - Date.parse(String(row.created_at ?? 0)) > 30 * 60 * 1000);
+  let why: string | null = null;
   if (stale) {
     try {
-      const fresh = await buildNow(scope);
+      const fresh = await buildNow(scope, (m) => { why = m; });
       if (fresh) {
         return NextResponse.json({
           ok: true, empty: false, scope, generated_now: true,
@@ -126,7 +127,11 @@ export async function GET(req: NextRequest) {
     }
   }
   if (!row) {
-    return NextResponse.json({ ok: true, empty: true, scope, bundle: null, lines: [] }, { headers: CORS });
+    /**
+     * 2026-11-13: **なぜ作れなかったか**を返す（空だけ返すと原因が分からない）。
+     *   画面・スクリプトから `why` を見れば、次の手が打てる。
+     */
+    return NextResponse.json({ ok: true, empty: true, scope, bundle: null, lines: [], why: why || "no_rows_or_build_failed" }, { headers: CORS });
   }
 
   if (touch) {
