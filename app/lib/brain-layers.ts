@@ -207,7 +207,7 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...((() => { const d = meta.brain_depth as { depth?: string; reason?: string } | undefined; return d?.depth ? { dp: `${d.depth[0]}:${String(d.reason ?? "").slice(0, 12)}` } : {}; })()),
     ...(str(meta.conductor_roles, 30) ? { rl: str(meta.conductor_roles, 30)! } : {}),
     // 2026-11-05 作業員5: 統括の重点（fc・meta.conductor_focus）・組み立て（tm・CONDUCTOR_COMBINE）・使った順番（or）。どれも無い番は欄なし
-    ...((() => { const c = meta.conductor_focus as { focus?: unknown; near?: unknown } | null | undefined; const f = str(c?.focus, 14); return f ? { fc: `${f}${str(c?.near, 24) ? `|${str(c?.near, 24)}` : ""}` } : {}; })()),
+    ...((() => { const c = meta.conductor_focus as { focus?: unknown; near?: unknown; focus_sub?: unknown } | null | undefined; const f = str(c?.focus, 14); const sub = str(c?.focus_sub, 12); return f ? { fc: `${f}${sub ? `:${sub}` : ""}${str(c?.near, 24) ? `|${str(c?.near, 24)}` : ""}` } : {}; })()),
     ...(str(meta.two_message_plan_digest, 40) ? { tm: str(meta.two_message_plan_digest, 40)! } : {}),
     ...(str(meta.conductor_order, 60) ? { or: str(meta.conductor_order, 60)! } : {}),
     // 2026-11-12 作業員22（KB fd1c7c62）: 番ごとの部品の配分の名前と部品の順（conductor-allocation.allocationMetaDigest・meta.conductor_allocation がある番だけ）

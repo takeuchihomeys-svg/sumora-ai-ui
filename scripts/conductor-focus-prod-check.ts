@@ -46,12 +46,12 @@ async function main() {
       (anat.get(conv) ?? anat.set(conv, []).get(conv)!).push({ at: Date.parse(r.sent_at), focus: split ? null : (r.anatomy!.focus as Focus) });
     }
   }
-  type Row = { scene: string; fc: Focus; gold: Focus | null; goldBy: "anatomy" | "rule" | null; conflict: string | null; finalAix: string | null };
+  type Row = { scene: string; fc: Focus; gold: Focus | null; goldBy: "anatomy" | "rule" | null; conflict: string | null; finalAix: string | null; turnId?: string; conv?: string; at?: string; staffFirst?: string | null; why?: string | null; near?: string | null };
   const rows: Row[] = [];
   let noFc = 0;
   for (const t of turns) {
     const d = t.decision_id ? decs.get(t.decision_id) : undefined;
-    const fcRaw = String((d?.digest as { fc?: unknown } | null)?.fc ?? "").split("|")[0];
+    const fcRaw = String((d?.digest as { fc?: unknown } | null)?.fc ?? "").split("|")[0].split(":")[0];
     if (!isFocus(fcRaw)) { noFc++; continue; }
     const firstAt = Date.parse(t.staff_first_at as string);
     const aix0 = (t.staff_aix ?? []).slice().sort((a, b) => a.at.localeCompare(b.at))[0];
@@ -61,7 +61,7 @@ async function main() {
     const rule = focusOfTakeuchiTurn({ route, aixType: aix0?.aix_type ?? null, text: txt0?.text ?? "" });
     const gold = a ? a.focus : rule;
     const finalAix = (t.brain_reply_mode ?? d?.suggested_reply_mode) === "aix" ? (t.brain_action ?? d?.suggested_action ?? null) : null;
-    rows.push({ scene: t.scene_key ?? "(場面なし)", fc: fcRaw, gold, goldBy: a ? "anatomy" : gold ? "rule" : null, conflict: focusConflict(fcRaw, { aix: finalAix }), finalAix });
+    rows.push({ scene: t.scene_key ?? "(場面なし)", fc: fcRaw, gold, goldBy: a ? "anatomy" : gold ? "rule" : null, conflict: focusConflict(fcRaw, { aix: finalAix }), finalAix, turnId: t.id, conv: t.conversation_id, at: t.staff_first_at ?? undefined, near: String((d?.digest as { fc?: unknown } | null)?.fc ?? "").split("|")[1] ?? null });
   }
   const by = new Map<string, { n: number; hit: number; anat: number; anatHit: number; human: number }>();
   for (const r of rows) {
@@ -84,6 +84,9 @@ async function main() {
   const out = { days, turns: turns.length, withFc: rows.length, noFc, withGold: rows.filter((r) => r.gold).length, byAnatomy: rows.filter((r) => r.goldBy === "anatomy").length,
     scenes: [...by.entries()].sort((a, b) => b[1].n - a[1].n).map(([scene, s]) => ({ scene, ...s, pct: s.n ? Math.round((100 * s.hit) / s.n) : null })),
     conflicts: conflicts.length, confKinds, aixTurns: aixRows.length, aixDiff, fcDist, missPairs: Object.entries(pairs).sort((a, b) => b[1] - a[1]).slice(0, 8) };
+  // 11/13: --rows=<ファイル> で番ごとの行を書き出す（外れの読み分け用）
+  const rowsArg = process.argv.find((a) => a.startsWith("--rows="))?.slice(7);
+  if (rowsArg) (await import("node:fs")).writeFileSync(rowsArg, JSON.stringify(rows, null, 1));
   if (process.argv.includes("--json")) { console.log(JSON.stringify(out)); return; }
   console.log(`直近 ${days}日・スタッフが返した番 ${out.turns}・重点が付いた番 ${out.withFc}（無し ${noFc}）・正解の重点あり ${out.withGold}（うち解剖 ${out.byAnatomy}）`);
   console.log("| 場面 | 番（人だけの外れを除く） | 合った | 割合 | 人だけが知る事で分かれた | 解剖の番 | 解剖で合った |\n|---|---|---|---|---|---|---|");
