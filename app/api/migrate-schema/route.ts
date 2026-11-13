@@ -3738,6 +3738,105 @@ CREATE TABLE IF NOT EXISTS search_audit_causes (
 );
 CREATE INDEX IF NOT EXISTS idx_search_audit_causes_last_seen ON search_audit_causes(last_seen DESC);
 
+-- ── 人の動きの学習（2026-11-11 竹内さん「普通モードでのマウスの動かし方やボタンのどこ押すかもちゃんとたまるんかな。画面のうごかしかたも」
+--     「データベース等にはいっているのか」→ 承認「新しい表を作る」）──
+-- human_motion_learn: 通常モード・スタッフモードで**人が実際にどう動いたか**を1回分ずつ残す。
+--   マウスの速さ・曲がり具合・押した位置（要素の中の割合）・スクロール量と位置・操作の間。
+--   ⚠ 入力した中身（文字・数字）・お客様の名前・電話・住所は入れない（欄の名前・動き方・間だけ）。
+--   ⚠ 画面の写真の**中身は入れない**（1行が数百KBになり集計が重くなる）。写真は Storage に置き、置いた場所の名前だけ持つ。
+CREATE TABLE IF NOT EXISTS human_motion_learn (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  install_id TEXT,
+  device_label TEXT,
+  site TEXT,
+  mode TEXT,
+  ext_version TEXT,
+  session_at TIMESTAMPTZ,
+  ops INTEGER NOT NULL DEFAULT 0,
+  sessions INTEGER NOT NULL DEFAULT 1,
+  gap_ms INTEGER,
+  moves_n INTEGER NOT NULL DEFAULT 0,
+  move_speed_px_s INTEGER,
+  move_curve NUMERIC(4,2),
+  move_ms INTEGER,
+  move_dist INTEGER,
+  drag_n INTEGER NOT NULL DEFAULT 0,
+  move_shapes JSONB,
+  points_n INTEGER NOT NULL DEFAULT 0,
+  point_x NUMERIC(4,2),
+  point_y NUMERIC(4,2),
+  point_fields JSONB,
+  scrolls_n INTEGER NOT NULL DEFAULT 0,
+  scroll_dy INTEGER,
+  scroll_down INTEGER NOT NULL DEFAULT 0,
+  scroll_up INTEGER NOT NULL DEFAULT 0,
+  scroll_y NUMERIC(4,2),
+  scroll_ys JSONB,
+  kinds JSONB,
+  fields TEXT[],
+  field_order TEXT[],
+  shot_taken BOOLEAN NOT NULL DEFAULT false,
+  shot_key TEXT,
+  shot_w INTEGER,
+  shot_h INTEGER
+);CREATE INDEX IF NOT EXISTS idx_human_motion_created ON human_motion_learn(created_at DESC);CREATE INDEX IF NOT EXISTS idx_human_motion_install ON human_motion_learn(install_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_human_motion_site ON human_motion_learn(site, mode, created_at DESC);
+-- 2026-11-12 竹内さん「データベースに画像入るようにしたらよいのでは。データベースにテーブルをつくって
+--   そこにはいるようにする形にすればできるのではないかな」:
+--   Storage に置けなかった時の**受け皿**。写真そのもの（data:image/jpeg;base64,...）を1列に入れる。
+--   ⚠ 通常は Storage（shot_key）を使う。ここは「消えないため」の最後の受け皿（1行が数百KBになる）。
+ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_b64 TEXT;
+ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_in_db BOOLEAN NOT NULL DEFAULT false;
+-- 2026-11-13 竹内さん「写真から学習する。押す場所や押す順番などもりかいできるから」:
+--   写真の**直前までの操作の並び**（時刻・種類・どの欄か）。写真と操作を結びつける。
+--   ⚠ 欄の名前と操作の種類・時刻だけ（入力した中身は入れない）。
+ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_ops JSONB;
+COMMENT ON COLUMN human_motion_learn.shot_ops IS '写真の直前までの操作の並び（時刻・種類・欄の名前）。入力した中身は入れない。2026-11-13 竹内さん承認';
+COMMENT ON COLUMN human_motion_learn.shot_b64 IS 'Storage に置けなかった時の写真そのもの（data:image/jpeg;base64,...）。通常は NULL で shot_key を使う。2026-11-12 竹内さん承認';
+COMMENT ON COLUMN human_motion_learn.shot_in_db IS '写真を表に入れたか（true＝Storage ではなくこの行に画像がある）';
+
+-- ── 2026-11-13 竹内さん「ちゃんと学習担当のブレインをつくってより効率的に学習できるようにする。
+--      データベースを有効活用する」──
+-- human_learn_profile: 溜まった記録（human_motion_learn）を**1回だけまとめた**学習の束。
+--   拡張はこれ1行を読むだけでよくなる（毎回バラバラの記録を読まなくて済む＝軽い・速い・学習が進むほど効く）。
+--   中身（app/lib/human-learn-brain.ts の buildHumanLearnBundle）:
+--     next       … 直前の操作 → 次に押す物（押す順番）
+--     points     … 要素ごとの押した位置（横・縦の割合・回数）
+--     motion     … マウスの速さ・曲がり・狙う位置・スクロール
+--     buttons    … 押された回数の多いボタン
+--     site_flow  … サイトごとの手順
+--   ⚠ 入力した中身・お客様の名前・電話・住所は入れない（欄の名前・位置・時刻だけ）。
+CREATE TABLE IF NOT EXISTS human_learn_profile (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- どのサイトの・どの期間の記録から作ったか（'all' は全サイトまとめ）
+  scope TEXT NOT NULL DEFAULT 'all',
+  source_rows INTEGER NOT NULL DEFAULT 0,
+  source_from TIMESTAMPTZ,
+  source_to TIMESTAMPTZ,
+  ext_version TEXT,
+  -- 学習の束（拡張が読む形）
+  bundle JSONB NOT NULL,
+  -- 人が読む1行ずつ（報告用）
+  lines TEXT[],
+  -- 使う側の印（拡張が最後に読んだ時刻・読み込んだ版）
+  read_at TIMESTAMPTZ,
+  read_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_human_learn_profile_scope ON human_learn_profile(scope, created_at DESC);
+-- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）
+ALTER TABLE human_learn_profile ENABLE ROW LEVEL SECURITY;
+COMMENT ON TABLE human_learn_profile IS '人の動きの記録をまとめた学習の束（押す順番・押す場所・動きの速さ）。拡張はこれを読む。入力した中身は入れない。2026-11-13 竹内さん承認';
+-- 画面の写真の置き場（2026-11-11 竹内さん「画面画像みればわかるのでは」）。
+--   写真の中身は表に入れない（1行が数百KBになり集計が重くなる）→ Storage に置き、表には名前だけ。
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('human-motion-shots', 'human-motion-shots', true, 5242880, ARRAY['image/jpeg','image/png'])
+ON CONFLICT (id) DO NOTHING;
+-- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）
+ALTER TABLE human_motion_learn ENABLE ROW LEVEL SECURITY;
+COMMENT ON TABLE human_motion_learn IS '通常・スタッフモードで人がどう動いたか（速さ・曲がり・押した位置・スクロール）。入力した中身・名前・電話は入れない。2026-11-11 竹内さん承認';
+
 -- conversations.deepseek_cutoff_at: 申込以降→申込前に切り替えた時刻（2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、
 --   申込落ちてステータスを切り替えたら、切り替えたところ以降渡せば個人情報防げる」）。DeepSeek に渡すのはこの時刻より後だけ（app/lib/post-apply.ts deepseekSafeCutoff）。
 --   ⚠ 消えない列: 前に進めても消さない。次に申込以降から戻した時だけ新しくなる（旧の線 status_manual_back_at は前進で null に戻り、20会話で線が消えていた）。

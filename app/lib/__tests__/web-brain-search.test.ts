@@ -74,8 +74,9 @@ console.log("── v2.5.48 リアプロがログインの画面の PC（?rp=0�
   t("状態の良い PC には渡す", !deferForRealproNotReady(row, { rpReady: true }, n0 + 20_000));
   t("3分を過ぎたら rp=0 の PC にも渡す（ブレインの PC が1台だけでも止めない）", !deferForRealproNotReady(row, { rpReady: false }, n0 + RP_NOT_READY_DEFER_MS));
   t("ITANDI だけの命令は渡す", !deferForRealproNotReady({ ...row, sites: ["itandi"] }, { rpReady: false }, n0 + 20_000));
-  t("自動便は今まで通り", !deferForRealproNotReady({ ...row, payload: { source: "auto_schedule" } }, { rpReady: false }, n0 + 20_000));
-  t("AIX の検索は今まで通り", !deferForRealproNotReady({ ...row, payload: { source: "aix" } }, { rpReady: false }, n0 + 20_000));
+  t("自動便も rp=0 の PC には渡さない（2026-11-12: 121件が AXLX_NO_TAB で失敗していた）", deferForRealproNotReady({ ...row, payload: { source: "auto_schedule" }, sites: ["realnetpro"] }, { rpReady: false }, n0 + 20_000));
+  t("AIX の検索も rp=0 の PC には渡さない", deferForRealproNotReady({ ...row, payload: { source: "aix" }, sites: ["realnetpro"] }, { rpReady: false }, n0 + 20_000));
+  t("  ITANDI だけの自動便は渡す", !deferForRealproNotReady({ ...row, payload: { source: "auto_schedule" }, sites: ["itandi"] }, { rpReady: false }, n0 + 20_000));
   t("止める命令（stop_all）は必ず渡す", !deferForRealproNotReady({ ...row, command_type: "stop_all" }, { rpReady: false }, n0 + 20_000));
   t("sites が無い古い行は渡す", !deferForRealproNotReady({ ...row, sites: null }, { rpReady: false }, n0 + 20_000));
   t("not_before がある時はそこから数える", deferForRealproNotReady({ ...row, payload: { source: "web_brain", not_before: at("2026-09-30T16:30:00") } }, { rpReady: false }, Date.parse(at("2026-09-30T16:31:00"))));

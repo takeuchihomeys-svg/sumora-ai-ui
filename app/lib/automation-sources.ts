@@ -68,10 +68,19 @@ export function isClaimableNow(payload: unknown, nowMs: number): boolean {
  *   その間に積まれた手の検索（AIXツールの一括検索・AIX の指示・広げての続き）が何時間も自動便の後ろで待つ。
  *   今渡してよい物の中で、自動便（auto_schedule）でない物を先に渡す（同じ種類の中は古い順のまま）。
  *   自動便どうし（午前の残り → 午後）は古い順＝午前の続きが先。サイトへのアクセスは増えない（順番だけ）
+ * 2026-11-10 竹内さん「自動モード本来のように AIX 優先度順に動いていく形で」:
+ *   AIX 由来（source=aix）の指示は、AIX の優先度（今は積まれた順＝AIX を出した順）で先に拾う。
+ *   AIX の指示は「今お客様が待っている物件」なので、自動便や広げての続きより先に流す。
+ *   優先度の高い物どうしは今まで通り古い順（created_at 昇順）。
  */
+export const AIX_PRIORITY_SOURCE = "aix";
 export function pickClaimable<T extends { payload?: unknown }>(commands: ReadonlyArray<T>, nowMs: number): T | null {
   const ok = commands.filter((c) => isClaimableNow(c.payload, nowMs));
   const srcOf = (c: T) => (c.payload && typeof c.payload === "object" ? (c.payload as Record<string, unknown>).source : null);
+  // 1. AIX の指示を先に（AIX を出した順＝古い順）
+  const aix = ok.find((c) => srcOf(c) === AIX_PRIORITY_SOURCE);
+  if (aix) return aix;
+  // 2. 自動便でない物（手の検索・広げての続き）
   return ok.find((c) => srcOf(c) !== "auto_schedule") ?? ok[0] ?? null;
 }
 /**
@@ -83,6 +92,14 @@ export function pickClaimable<T extends { payload?: unknown }>(commands: Readonl
  *   自動便（auto_schedule）・AIX は今まで通り（対象は手の命令だけ）。サイトへのアクセスは増えない
  */
 export const RP_NOT_READY_DEFER_MS = 3 * 60 * 1000;
+/**
+ * 2026-11-12 竹内さん「今リアプロスタンバイしていない時も勝手に自動検索おこなわれていないか？」:
+ *   実測で **26時間に121件の自動便が `AXLX_NO_TAB` で失敗**していた（約60秒おきに拾い続けた）。
+ *   旧は rp=0 の PC に **web_brain だけ**を渡さなかったので、**自動便（auto_schedule）は渡っていた**。
+ *   → リアプロを含む命令は、rp=0 の PC には**どの出どころでも**渡さない（自動便・AIX も含む）。
+ *     ⚠ 過ぎたら渡す（ブレインの PC が1台だけの時に止めない）のは今まで通り。
+ *     ⚠ 止める命令（stop_all）と ITANDI だけの命令は今まで通り渡す。
+ */
 export function deferForRealproNotReady(
   row: { created_at?: string | null; payload?: unknown; sites?: ReadonlyArray<string> | null; command_type?: string | null },
   pc: { rpReady: boolean }, nowMs: number,
@@ -90,7 +107,9 @@ export function deferForRealproNotReady(
   if (pc.rpReady) return false;
   if (row.command_type === "stop_all") return false;
   const src = row.payload && typeof row.payload === "object" ? (row.payload as Record<string, unknown>).source : null;
-  if (src !== "web_brain") return false;
+  // 対象の出どころ: 手の一括検索（web_brain）・自動便（auto_schedule）・AIX（aix）＝リアプロを触る物すべて
+  const srcOk = src === "web_brain" || src === "auto_schedule" || src === "aix";
+  if (!srcOk) return false;
   const sites = Array.isArray(row.sites) ? row.sites : [];
   if (!sites.some((x) => x === "realnetpro" || x === "realpro")) return false;
   const s = waitStartMs(row);
