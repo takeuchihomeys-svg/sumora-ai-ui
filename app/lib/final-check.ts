@@ -2742,7 +2742,7 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
   }
   // V4 お客様が候補日・確定日を伝えた後の「ご都合よろしいお日にち」再質問
   //    A-11: 日付語＋意向語（希望・行けます・大丈夫・お願い 等）の共起を要求（「明日確認します」等の単なる日付言及で誤発火していた）
-  //    2026-11-14 作業員B（FC_GOCHOUGO_COND_TEMPLATE 既定 off）: お客様の条件の書式（①【ご入居の時期】⇒9月以降…）と注釈を外してから読む
+  //    2026-11-14 作業員B（FC_GOCHOUGO_COND_TEMPLATE・11/14 監査で誤り0→既定 on・=off で戻す）: お客様の条件の書式（①【ご入居の時期】⇒9月以降…）と注釈を外してから読む
   const custForDate = gochougoCondTemplateOn() ? stripConditionTemplate(cust) : cust;
   const custDateIntent = CUSTOMER_DATE_RE.test(custForDate) && /希望|行け|伺え|大丈夫|お願い|空い|都合|なら|でお願い|がいい|にし/.test(custForDate);
   // 2026-11-13 作業員9（弱い所 685・FC_GOCHOUGO_DATE_ALIGN・作業員B の実送信365日の監査で誤り0→既定 on・=off で戻す）: 竹内さんはお客様が日を言った番に

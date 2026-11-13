@@ -33,8 +33,8 @@ t("候補の日時: 日だけ・時刻だけでは無い", !hasConcreteSlot("18�
 const custTpl = "①【ご入居の時期】⇒9月以降\n②【ご希望の家賃（◯万円〜◯万円）】⇒17万以内\n③【希望の広さ・間取り】⇒2LDK\n⑤【ご希望のエリア・駅名】⇒阿波座 本町";
 const sentTpl = "2DKのお部屋ですが新着で1件〇〇さんにかなりオススメ出来るお部屋となります！！\n〇〇さんお気に召されたお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！";
 process.env.FC_GOCHOUGO_DATE_ALIGN = "on";
-delete process.env.FC_GOCHOUGO_COND_TEMPLATE;
-t("条件の書式: 既定 off（今までどおり止まる）", !gochougoCondTemplateOn({}) && !!fires(sentTpl, custTpl));
+process.env.FC_GOCHOUGO_COND_TEMPLATE = "off";
+t("条件の書式: 既定 on・off で戻る（off なら今までどおり止まる）", gochougoCondTemplateOn({}) && !gochougoCondTemplateOn({ FC_GOCHOUGO_COND_TEMPLATE: "off" }) && !!fires(sentTpl, custTpl));
 process.env.FC_GOCHOUGO_COND_TEMPLATE = "on";
 t("条件の書式: on で竹内さんの送信を止めない", !fires(sentTpl, custTpl));
 t("条件の書式: on でも、書式の外で日を言った番は止める", !!fires(bad, "条件は前のとおりです\n①【ご入居の時期】⇒9月以降\n18日に内覧希望です"));

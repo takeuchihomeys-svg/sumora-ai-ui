@@ -92,9 +92,10 @@ export function hasConcreteSlot(text: string): boolean {
  * 2026-11-14 作業員B（GOCHOUGO_AFTER_DATE の誤った止め・FC_GOCHOUGO_COND_TEMPLATE 既定 off）:
  *   お客様の条件の書式（「①【ご入居の時期】⇒9月以降 ②【ご希望の家賃】⇒…」）と、送った例に付いた注釈（〔AIX-META〕〔直前のAIX送信〕以降）を、
  *   「お客様が日にちを言った」の読みから外す。書式の「以降」「希望」で、日にちの指定と読んでいた（365日の実送信で on でも止まる30通の大半）
+ * 2026-11-14 統括役: 365日の監査で誤り0（止まらなくなる14通・新しく素通りの下書き6件を目で読んだ）→ 既定 on・=off で戻す
  */
 export function gochougoCondTemplateOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FC_GOCHOUGO_COND_TEMPLATE ?? "").trim().toLowerCase() === "on";
+  return (env.FC_GOCHOUGO_COND_TEMPLATE ?? "").trim().toLowerCase() !== "off";
 }
 const COND_TEMPLATE_LINE_RE = /⇒|=>|[①-⑳]\s*【|[①-⑳]\s*ご?(?:入居|希望|間取|築|エリア|駅|初期|その他)|【[^】]{0,20}(?:時期|家賃|間取り|広さ|築年数|エリア|駅|徒歩|初期費用|要望|こだわり|人数|条件)[^】]{0,20}】|^\s*[0-9０-９]{1,2}\s*[.．)）]\s*(?:ご?入居|ご?希望|間取|築|エリア|駅|初期)/;
 export function stripConditionTemplate(cust: string): string {
