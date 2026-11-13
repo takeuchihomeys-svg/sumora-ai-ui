@@ -10,6 +10,27 @@ export function cheapNow(d = new Date()): boolean { const { h, dow } = jstHM(d);
 /** 本数の上限（JST 9〜22 は1本・それ以外は2本） */
 export function maxExamsNow(d = new Date()): number { const { h } = jstHM(d); return h >= 9 && h < 22 ? 1 : 2; }
 
+// ─── 本番の調子（2026-11-14 作業員F: 数えを軽く） ────────────────────────────
+//   11/13 昼の DB 固まりの調べ: prodHealthy の count exact が cron_run_logs（21万行）を2分ごとに頭から読んでいた。
+//   数えずに「上限＋1行まで」だけ読む。判断は「LLM の失敗＋cron の失敗 > 上限」のまま＝各々を上限＋1で止めても答えは同じ。
+/** 本番の調子を見る間（既定 5分・EXAM_PROD_WATCH_MS で変える） */
+export function prodWatchMs(env: Record<string, string | undefined> = process.env): number { const n = Number(env.EXAM_PROD_WATCH_MS); return Number.isFinite(n) && n >= 60_000 ? n : 300_000; }
+/** 1つの数えで読む行の上限（上限＋1 読めば「上限を超えた」が分かる） */
+export function prodHealthCap(max: number): number { return Math.max(1, Math.floor(max) + 1); }
+/** 判断（純関数）。nl・nc は上限＋1で止めた数でも、止めない数でも同じ答え */
+export function prodHealthVerdict(nl: number, nc: number, max: number): { ok: boolean; why: string } {
+  return nl + nc > max ? { ok: false, why: `本番の失敗 直近10分 LLM ${nl}・cron ${nc}（上限 ${max}）` } : { ok: true, why: `本番の失敗 LLM ${nl}・cron ${nc}` };
+}
+/** service_role の鍵: 環境に無ければ .env.prod の行から（中身は表示しない）。無ければ "" */
+export function serviceKeyFrom(env: Record<string, string | undefined>, readProdEnv: () => string | null): string {
+  const e = String(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+  if (e && e !== "invalid") return e;
+  const txt = readProdEnv();
+  if (!txt) return "";
+  const line = txt.split(/\r?\n/).find((x) => x.startsWith("SUPABASE_SERVICE_ROLE_KEY=")) ?? "";
+  return line.slice("SUPABASE_SERVICE_ROLE_KEY=".length).trim().replace(/^"(.*)"$/, "$1");
+}
+
 // ─── ① 早めの打ち切り ─────────────────────────────────────────────────────
 //   brain-exam の合格は「その問題の回の過半数が合格」（passN*2 > n）。予定の回数 n のうち落ちた回 f が f*2 >= n になった時点で、その問題はもう合格できない。
 //   前（main）で合格していた問題がそうなったら「悪化が確定」＝残りを回しても判断（悪化0か）は変わらない → 止める。

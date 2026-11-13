@@ -57,6 +57,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
   return (id) => (mm.size ? mm.get(id) ?? [] : null);
 }
 import { pcState } from "./lib/exam-pc-state";
+import { prodWatchMs, prodHealthCap, prodHealthVerdict, serviceKeyFrom } from "./lib/exam-conductor-core";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
@@ -118,17 +119,26 @@ export type ExamJob = {
 };
 
 // ─── 関所 ───────────────────────────────────────────────────────────────
-/** 本番の調子: 直近10分の LLM の失敗（テストの行は除く）と cron の失敗。数えるだけ（行は読まない） */
+/** 本番の調子を読む鍵（2026-11-14 作業員F）: --env-file=.env.local には service_role が無く anon（3秒の上限・RLS）に落ちていた。
+ *  見張りだけ .env.prod の service_role を使う（中身は表示しない）。db()（台帳の書き込み）は今のまま＝鍵が無い時は weakness-pending.jsonl に残す動きを変えない */
+let _healthSb: ReturnType<typeof createClient> | null = null;
+const healthDb = () => (_healthSb ??= createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+  serviceKeyFrom(process.env, () => { try { return readFileSync(".env.prod", "utf8"); } catch { return null; } }) || (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ""),
+  { auth: { persistSession: false } }));
+/** 本番の調子: 直近10分の LLM の失敗（テストの行は除く）と cron の失敗。
+ *  2026-11-14 作業員F: count exact をやめ、各々「上限＋1行」までの id だけ読む（判断は同じ・prodHealthVerdict） */
 async function prodHealthy(): Promise<{ ok: boolean; why: string }> {
   const since = new Date(Date.now() - 10 * 60_000).toISOString();
   try {
-    const [llm, cron] = await Promise.all([
-      db().from("llm_usage_logs").select("id", { count: "exact", head: true }).gte("created_at", since).not("env", "like", "%test%").not("route", "like", "script:%").or("status.gte.500,status.eq.0"),
-      db().from("cron_run_logs").select("id", { count: "exact", head: true }).gte("started_at", since).eq("ok", false),
-    ]);
-    const nl = llm.count ?? 0, nc = cron.error ? 0 : cron.count ?? 0;
     const max = Number(process.env.EXAM_PROD_FAIL_MAX ?? "5");
-    return nl + nc > max ? { ok: false, why: `本番の失敗 直近10分 LLM ${nl}・cron ${nc}（上限 ${max}）` } : { ok: true, why: `本番の失敗 LLM ${nl}・cron ${nc}` };
+    const cap = prodHealthCap(max);
+    const [llm, cron] = await Promise.all([
+      healthDb().from("llm_usage_logs").select("id").gte("created_at", since).not("env", "like", "%test%").not("route", "like", "script:%").or("status.gte.500,status.eq.0").limit(cap),
+      healthDb().from("cron_run_logs").select("id").gte("started_at", since).eq("ok", false).limit(cap),
+    ]);
+    // 読めない時の扱いは前と同じ（どちらも 0 として数える）
+    const nl = llm.error ? 0 : (llm.data ?? []).length, nc = cron.error ? 0 : (cron.data ?? []).length;
+    return prodHealthVerdict(nl, nc, max);
   } catch (e) { return { ok: false, why: `本番の調子を読めない: ${String(e).slice(0, 80)}` }; }
 }
 /** tsc の依頼の関所: 試験と同時に流さない・tsc は1本ずつ・空きメモリが十分（既定 4500MB・EXAM_TSC_MIN_FREE_MB・11/03 指揮役: heap 8192 で流すため）。安い時間・本番の調子は見ない（LLM を呼ばない） */
@@ -734,10 +744,10 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
   if (j.runner === "tsc-remote") return runTscRemoteJob(j);
   const outFile = join(RES, `${j.label}.out.log`);
   const at = () => new Date().toISOString();
-  // 本番の見張り（2分ごと）: 悪ければ止めて片付け・順番待ちに戻す
+  // 本番の見張り（5分ごと・2026-11-14 作業員F が2分から延ばした・EXAM_PROD_WATCH_MS）: 悪ければ止めて片付け・順番待ちに戻す
   let stopped: string | null = null;
   let cur: ReturnType<typeof spawn> | null = null;
-  const watch = setInterval(async () => { const h = await prodHealthy(); if (!h.ok && !stopped) { stopped = h.why; log(`  ⏹ 本番の調子が悪い → 止める（${h.why}）`); killTree(cur?.pid); } }, 120_000);
+  const watch = setInterval(async () => { const h = await prodHealthy(); if (!h.ok && !stopped) { stopped = h.why; log(`  ⏹ 本番の調子が悪い → 止める（${h.why}）`); killTree(cur?.pid); } }, prodWatchMs());
   try {
     if (j.runner === "cmd") {
       log(`流す: ${j.label}（${j.owner}・${j.switch}・${j.cmds!.length}本・${j.cwd}）`);
