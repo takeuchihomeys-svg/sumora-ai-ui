@@ -3,7 +3,7 @@ import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { positiveNoNegativeEnabled, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { replySplitWriterNote, replyCountOf, replySplitSelfNote } from "@/app/lib/reply-split";
-import { fcBlueprintMarkOn, markUnmatchedSentences, blueprintMarkLog, conditionTokensForMark } from "@/app/lib/final-check-blueprint-match";
+import { fcBlueprintMarkOn, markUnmatchedSentences, blueprintMarkLog, blueprintEmbedLog, conditionTokensForMark } from "@/app/lib/final-check-blueprint-match";
 // 2026-11-12 作業員7（TURN_AIMS_AFTER・既定 off）: 道が決まった後に目的・中期・仕込みを作り、文の統括への受け渡しにだけ渡す
 import { metaWithTurnAimsAfter } from "@/app/lib/turn-aims-after";
 import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR, mgmtNightClosingOn, nightMgmtClosingLine } from "@/app/lib/mgmt-hours-split";
@@ -7787,7 +7787,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     conditionTokens: conditionTokensForMark(customerConditions ?? ""),
                     propertyNames: [...ledger.facts.propertiesSentNames, ...(brainMeta?.current_property ? [String(brainMeta.current_property)] : [])],
                   });
-                  logWatchMaterial(JSON.stringify(blueprintMarkLog(conversationId, marks, composeSentencePlan.rowsV2.length)));
+                  logWatchMaterial(JSON.stringify(blueprintMarkLog(conversationId, marks, composeSentencePlan.rowsV2.length, blueprintEmbedLog(finalDraftText ?? "", composeSentencePlan.rowsV2))));
                 }
                 Object.assign(finalCheck.tpo_debug, {
                   turnContract: turnContract ? { source: turnContract.source, routes: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, misses: tcMiss } : null,
