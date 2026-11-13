@@ -22,7 +22,7 @@ import { flowSignalsOn, detectFlowSignals, flowSignalsLine, type FlowSignals } f
 import { conductorHandoffOn, candidateRoles, rolesDigest } from "@/app/lib/conductor-handoff";
 import { conductorMetaMode, buildConductorMeta, withMaterials, withSearchPlan, carryQueryLine, materialFor } from "@/app/lib/conductor-meta";
 import { conductorIntakeMode } from "@/app/lib/conductor-intake";
-import { factLedgerMode, buildFactLedger, factLedgerBlock, ledgerFactsFrom } from "@/app/lib/customer-fact-ledger";
+import { factLedgerMode, buildFactLedger, factLedgerBlock, ledgerFactsFrom, factLedgerThreeOn, factsThree, turnFactMarks, turnFactMarksLine, type FactThreeInput } from "@/app/lib/customer-fact-ledger";
 import { closedThanksNoReplyOn, layoutAskTemporaryOn, farOtherFirstOn, ackPositiveApplyOn, closedThanksLine, layoutAskLine, farOtherFirstLine, ackPositiveApplyLine, guarantorWordingOn, guarantorWordingLine } from "@/app/lib/decisions-1103";
 import { recheckMaterialLine, recheckMode, recheckLimit, pickRecheck, recheckSig, recheckDigest, type BrainRecheck } from "@/app/lib/brain-recheck";
 import { priorityStepOn, priorityRetrievalOn, BRAIN_PRIORITY_RULES, BRAIN_PRIORITIES_FIELD, normalizePriorities, ensureAsksCovered, reconcilePrioritiesWithAix, priorityRecord, renderPulledBlock, type PriorityStepRecord } from "@/app/lib/brain-priority";
@@ -3464,6 +3464,23 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         meta: pm ? { plan_ahead: (pm.plan_ahead ?? null) as { goal?: string; steps?: string[] } | null, plan_ahead_at: (pm.plan_ahead_at ?? null) as string | null, three_layer: (pm.three_layer ?? null) as { worry?: string } | null, emotion: ((pm.ai_summary_json as { emotion?: string } | undefined)?.emotion ?? null), analyzed_msg_ts: (pm.analyzed_msg_ts ?? null) as string | null } : null,
         strategy: opts?.strategy ? { checkpoint_stage: opts.strategy.checkpoint_stage ?? null, strategy_analyzed_at: opts.strategy.strategy_analyzed_at ?? null } : null,
       });
+      // 2026-11-13 作業員1（FACT_LEDGER_THREE=on）: 言い直した条件（条件の履歴）・再来（前の回の結果）を帳面に足し、今の一通と照らす印を材料に
+      if (factLedgerThreeOn()) {
+        try {
+          const three: FactThreeInput = {};
+          if (propertyCustomerId) {
+            const { data: ch } = await supabase.from("property_condition_history").select("changed_field, old_value, new_value, created_at").eq("property_customer_id", propertyCustomerId).order("created_at", { ascending: false }).limit(8);
+            three.restated = ((ch ?? []) as Array<{ changed_field: string; old_value: string | null; new_value: string | null; created_at: string }>).map((r) => ({ field: r.changed_field, from: r.old_value, to: r.new_value, at: r.created_at }));
+          }
+          const { data: eps } = await supabase.from("deal_outcomes").select("episode_no, result, ended_at, property_name").eq("conversation_id", conversationId).order("episode_no", { ascending: false }).limit(3);
+          const epRows = (eps ?? []) as Array<{ episode_no: number; result: string | null; ended_at: string | null; property_name: string | null }>;
+          const prev = epRows.find((e, i) => i > 0 && e.result);
+          if (prev) three.revisit = { result: prev.result!, endedAt: prev.ended_at, propertyName: prev.property_name };
+          facts.push(...factsThree(three));
+          const marksLine = turnFactMarksLine(turnFactMarks(unrepliedTurn.text ?? "", three));
+          if (marksLine) { customerStateBlockText += `\n\n${marksLine}`; console.log(JSON.stringify({ tag: "brain:fact-three-marks", conversationId, line: marksLine.slice(0, 160) })); }
+        } catch (e) { console.warn("[brain-core] fact-three skipped:", e instanceof Error ? e.message : String(e)); }
+      }
       factsForConductor = facts;
       // 2026-11-04 ② 帳面を全部の担当に配る（統括役: 判断を上書きしない材料なので YUMA の後すぐ全部へ）。CUSTOMER_FACT_LEDGER_FEED の段（既定 yuma）で判断のブレインの材料の先頭に入れる
       const feedOn = factMode === "on" || await (await import("@/app/lib/rollout")).stageOnNow("CUSTOMER_FACT_LEDGER_FEED", conversationId, { kind: "all" }) /* 2026-11-04 統括役・竹内さん「できたら本番に入れて回していく」: YUMA 段（11/03〜）で落ち・混ざり・伏せ漏れ0 → 全員へ。戻す =off */;
