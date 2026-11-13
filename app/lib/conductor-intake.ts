@@ -10,7 +10,7 @@ import { REPLY_SCENE_JA, type ReplyScene } from "./reply-scene";
 import { NEED_TOOLS, type NeedTool } from "./brain-need";
 import { ROSTER } from "./conductor-roles";
 import { CONDUCTOR_PRIORITY_LINE, type ConductorRole } from "./conductor-handoff";
-import { conductorFocusMode, FOCUS_INTAKE_RULES, FOCUS_SUB_RULES, focusSubOn, focusIntakeField, TURN_TOPICS_RULES, TURN_TOPICS_FIELD, turnTopicsOn, parseFocusRead, type FocusRead } from "./conductor-focus";
+import { conductorFocusMode, FOCUS_INTAKE_RULES, FOCUS_SUB_RULES, focusSubOn, focusIntakeField, TURN_TOPICS_RULES, TURN_TOPICS_FIELD, turnTopicsOn, FOCUS_GUARD_RULES, FOCUS_GUARD_FIELD, focusGuardOn, parseFocusRead, type FocusRead } from "./conductor-focus";
 
 type Env = Record<string, string | undefined>;
 export type IntakeMode = "off" | "shadow";
@@ -34,7 +34,7 @@ export const INTAKE_AIX_CUES_V3 = [
 ] as const;
 export const intakeCuesV3On = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_INTAKE_CUES ?? "").trim().toLowerCase() === "v3";
 // 2026-11-05 作業員5（KB P0 575a7cd5）: CONDUCTOR_FOCUS=shadow の時だけ、先頭に「表→背景→重点」の段を足す（版に +f1・既定 off は ci-v1／ci-v3 のまま1字も変えない）
-export const intakePrefixVersion = (env: Env = typeof process !== "undefined" ? process.env : {}) => `${intakeCuesV3On(env) ? "ci-v3" : INTAKE_PREFIX_VERSION}${conductorFocusMode(env) !== "off" ? `+f1${focusSubOn(env) ? "s1" : ""}${turnTopicsOn(env) ? "t1" : ""}` : ""}`;
+export const intakePrefixVersion = (env: Env = typeof process !== "undefined" ? process.env : {}) => `${intakeCuesV3On(env) ? "ci-v3" : INTAKE_PREFIX_VERSION}${conductorFocusMode(env) !== "off" ? `+f1${focusSubOn(env) ? "s1" : ""}${turnTopicsOn(env) ? "t1" : ""}${focusGuardOn(env) ? "g1" : ""}` : ""}`;
 
 const SCENES = Object.keys(REPLY_SCENE_JA) as ReplyScene[];
 const ROLES = ["aix_desk", "compose", "writer", "check", "fetch", "deep", "second"] as const;
@@ -54,11 +54,13 @@ export function intakePrefix(manualShortForms: ReadonlyArray<{ brain: string; sh
     ...(focus && focusSubOn(env) ? [FOCUS_SUB_RULES] : []),
     // 2026-11-13 作業員5: 連投の話題ごとの主と従（CONDUCTOR_TOPIC_STATE=on の時だけ・版に t1）
     ...(focus && turnTopicsOn(env) ? [TURN_TOPICS_RULES] : []),
+    // 2026-11-13 作業員5（作業員10 の頼み）: 触れない話題と条件の繰り返しの範囲（CONDUCTOR_FOCUS_GUARD=on の時だけ・版に g1）
+    ...(focus && focusGuardOn(env) ? [FOCUS_GUARD_RULES] : []),
     `【場面（scene はこの中から1つ）】${SCENES.map((s) => `${s}=${REPLY_SCENE_JA[s]}`).join("／")}`,
     `【担当（roles はこの中から）】${ROSTER.filter((r) => (ROLES as readonly string[]).includes(r.id)).map((r) => `${r.id}=${r.does}`).join("／")}`,
     `【要る材料（need はこの中から）】${NEED_TOOLS.join("・")}`,
     `【担当の取扱説明書（短い形）】\n${manuals || "- （まだ無い）"}`,
-    `【書き方】JSON だけを返す: {"scene": "場面", "roles": ["担当"], "need": ["材料"], "todos": [{"kind": "answer|promise|aix|fetch|check", "what": "20字以内"}], "doubt": {"kind": "何の迷いか（20字以内）", "between": ["案A", "案B"]} または null, "confidence": "high|mid|low"${focus ? `, ${focusIntakeField(env)}${turnTopicsOn(env) ? `, ${TURN_TOPICS_FIELD}` : ""}` : ""}}。一覧に無い言葉を作らない。${v3 ? "軽い番（お礼・スタンプだけ）は、上の合図（帳面に果たしていない約束）に当たらない限り roles を [\"writer\"] だけにする。" : "軽い番（お礼・スタンプだけ）は roles を [\"writer\"] だけにする。"}`,
+    `【書き方】JSON だけを返す: {"scene": "場面", "roles": ["担当"], "need": ["材料"], "todos": [{"kind": "answer|promise|aix|fetch|check", "what": "20字以内"}], "doubt": {"kind": "何の迷いか（20字以内）", "between": ["案A", "案B"]} または null, "confidence": "high|mid|low"${focus ? `, ${focusIntakeField(env)}${turnTopicsOn(env) ? `, ${TURN_TOPICS_FIELD}` : ""}${focusGuardOn(env) ? `, ${FOCUS_GUARD_FIELD}` : ""}` : ""}}。一覧に無い言葉を作らない。${v3 ? "軽い番（お礼・スタンプだけ）は、上の合図（帳面に果たしていない約束）に当たらない限り roles を [\"writer\"] だけにする。" : "軽い番（お礼・スタンプだけ）は roles を [\"writer\"] だけにする。"}`,
   ].join("\n\n");
 }
 

@@ -517,7 +517,7 @@ export type SuggestedAixMeta = {
   /** 2026-11-05 深く読んだ番の「理由:最初→最後」→ digest.dr */
   deep_recheck_digest?: string;
   /** 2026-11-05 P0 575a7cd5 統括の前半「この番の重点」（作業員5 が入れる・無ければ undefined）。後半の読み直し（深く読む）がこれに沿って決め直す */
-  conductor_focus?: { focus: string; why?: string | null };
+  conductor_focus?: { focus: string; why?: string | null; no_touch?: string[]; repeat_scope?: "none" | "changed" | "all" };
   /** 2026-11-07 作業員5（弱い所 275）: やる事の一覧と考える力の配分（CONDUCTOR_TODOS=on の時だけ・記録だけ）→ digest.td・tb */
   conductor_todos?: { td: string | null; tb: string };
   /** 同じ段の記録（数・抜けを足した数・AIX とのそろえ・取り寄せた材料）→ digest.pr */

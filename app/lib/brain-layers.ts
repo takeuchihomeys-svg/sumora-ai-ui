@@ -214,6 +214,8 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...(str(meta.conductor_roles, 30) ? { rl: str(meta.conductor_roles, 30)! } : {}),
     // 2026-11-05 作業員5: 統括の重点（fc・meta.conductor_focus）・組み立て（tm・CONDUCTOR_COMBINE）・使った順番（or）。どれも無い番は欄なし
     ...((() => { const c = meta.conductor_focus as { focus?: unknown; near?: unknown; focus_sub?: unknown } | null | undefined; const f = str(c?.focus, 14); const sub = str(c?.focus_sub, 12); const tts = Array.isArray((c as { turn_topics?: unknown } | null | undefined)?.turn_topics) ? ((c as { turn_topics: Array<{ role?: string }> }).turn_topics) : null; return f ? { fc: `${f}${sub ? `:${sub}` : ""}${str(c?.near, 24) ? `|${str(c?.near, 24)}` : ""}`, ...(tts?.length ? { tt: `m${tts.filter((x) => x.role !== "sub").length}s${tts.filter((x) => x.role === "sub").length}` } : {}) } : {}; })()),
+    // 2026-11-13 作業員5（CONDUCTOR_FOCUS_GUARD）: 条件の繰り返しの範囲の頭文字＋触れない話題の数（例 "c2"＝changed・2つ）
+    ...((() => { const c = meta.conductor_focus as { repeat_scope?: unknown; no_touch?: unknown } | null | undefined; const rs = str(c?.repeat_scope, 8); const nt = Array.isArray(c?.no_touch) ? c!.no_touch.length : 0; return rs || nt ? { fg: `${rs ? rs[0] : "-"}${nt}` } : {}; })()),
     ...(str(meta.two_message_plan_digest, 40) ? { tm: str(meta.two_message_plan_digest, 40)! } : {}),
     ...(str(meta.conductor_order, 60) ? { or: str(meta.conductor_order, 60)! } : {}),
     // 2026-11-12 作業員22（KB fd1c7c62）: 番ごとの部品の配分の名前と部品の順（conductor-allocation.allocationMetaDigest・meta.conductor_allocation がある番だけ）

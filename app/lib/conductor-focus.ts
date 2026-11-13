@@ -193,7 +193,7 @@ export const FOCUS_INTAKE_RULES = [
 ].join("\n");
 export const FOCUS_INTAKE_FIELD = `"focus_read": {"surface": "表（30字以内）", "background": "背景（40字以内）", "focus": "${FOCUS_KINDS.join("|")}", "why": "理由（30字以内）"}`;
 
-export type FocusRead = { surface: string; background: string; focus: Focus; why: string; near: string | null; keepPromise?: boolean; sub?: string | null; topics?: TurnTopic[] };
+export type FocusRead = { surface: string; background: string; focus: Focus; why: string; near: string | null; keepPromise?: boolean; sub?: string | null; topics?: TurnTopic[]; noTouch?: string[]; repeatScope?: RepeatScope | null };
 /** 入口の統括の答えから focus_read を読む（一覧に無い重点は捨てる） */
 export function parseFocusRead(raw: unknown, near: NearFocus | null = null): FocusRead | null {
   const o = (raw && typeof raw === "object" ? (raw as Record<string, unknown>).focus_read ?? raw : null) as Record<string, unknown> | null;
@@ -203,7 +203,11 @@ export function parseFocusRead(raw: unknown, near: NearFocus | null = null): Foc
   const s = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
   const sub = o.focus_sub !== undefined ? normalizeFocusSub(focus, o.focus_sub) : undefined;
   const topics = parseTurnTopics(o.turn_topics ?? (raw && typeof raw === "object" ? (raw as Record<string, unknown>).turn_topics : undefined));
-  return { ...(sub !== undefined ? { sub } : {}), ...(topics ? { topics } : {}), surface: s(o.surface, 30), background: s(o.background, 40), focus, why: s(o.why, 30), near: near ? `${near.inBand ? "束" : "場面"}:${near.focus}${near.inBand ? `(${near.n}件・${Math.round(near.share * 100)}%)` : ""}` : null };
+  // 2026-11-13 作業員5（作業員10 の頼み・CONDUCTOR_FOCUS_GUARD）: 触れない話題と条件の繰り返しの範囲（欄が無い答えは何も足さない）
+  const top = (k: string) => (o[k] !== undefined ? o[k] : raw && typeof raw === "object" ? (raw as Record<string, unknown>)[k] : undefined);
+  const noTouch = top("no_touch") !== undefined ? parseNoTouch(top("no_touch")) : undefined;
+  const repeatScope = top("repeat_scope") !== undefined ? normalizeRepeatScope(top("repeat_scope")) : undefined;
+  return { ...(sub !== undefined ? { sub } : {}), ...(topics ? { topics } : {}), ...(noTouch !== undefined ? { noTouch } : {}), ...(repeatScope !== undefined ? { repeatScope } : {}), surface: s(o.surface, 30), background: s(o.background, 40), focus, why: s(o.why, 30), near: near ? `${near.inBand ? "束" : "場面"}:${near.focus}${near.inBand ? `(${near.n}件・${Math.round(near.share * 100)}%)` : ""}` : null };
 }
 /** 入口の統括の後ろ（毎回変わる部分）に入れる、近い番の重点の1行（束の時だけ・外は場面の多い重点だけ） */
 export function nearFocusLine(near: NearFocus | null): string {
@@ -272,7 +276,7 @@ export function laterOverrode(steps: ReadonlyArray<OrderStep>, decided: Readonly
   return null;
 }
 /** meta.conductor_focus（作業員4の受け口）に入れる形 */
-export const conductorFocusMeta = (r: FocusRead | null) => (r ? { focus: r.focus, why: r.why || null, surface: r.surface || null, background: r.background || null, near: r.near, ...(r.keepPromise !== undefined ? { keepPromise: r.keepPromise } : {}), ...(r.sub ? { focus_sub: r.sub } : {}), ...(r.topics?.length ? { turn_topics: r.topics } : {}) } : null);
+export const conductorFocusMeta = (r: FocusRead | null) => (r ? { focus: r.focus, why: r.why || null, surface: r.surface || null, background: r.background || null, near: r.near, ...(r.keepPromise !== undefined ? { keepPromise: r.keepPromise } : {}), ...(r.sub ? { focus_sub: r.sub } : {}), ...(r.topics?.length ? { turn_topics: r.topics } : {}), ...(r.noTouch?.length ? { no_touch: r.noTouch } : {}), ...(r.repeatScope ? { repeat_scope: r.repeatScope } : {}) } : null);
 /** digest.cf の1語（表・背景は入れない＝短く） */
 export const focusReadDigest = (r: FocusRead | null | undefined) => (r ? `${r.focus}${r.near ? `|${r.near}` : ""}` : null);
 
@@ -367,4 +371,31 @@ export function parseTurnTopics(raw: unknown): TurnTopic[] | undefined {
   const s = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
   return raw.slice(0, 6).map((x) => (x && typeof x === "object" ? x as Record<string, unknown> : {})).filter((x) => s(x.what, 20))
     .map((x) => ({ what: s(x.what, 20), role: x.role === "sub" ? "sub" as const : "main" as const, reply_to: s(x.reply_to, 20) && s(x.reply_to, 20) !== "null" ? s(x.reply_to, 20) : null }));
+}
+
+// ── 触れない話題と条件の繰り返しの範囲（2026-11-13 作業員5・作業員10 の頼み「meta.conductor_focus の別の欄に」）──────────
+//   書き手・文の統括（作業員10 の設計図の行）が読む欄。決めるのは入口の統括（ここは欄の形と読み取りだけ・判断は変えない）。
+//   no_touch: 今の番で触れない話題（お客様が断った・見送った物件や申込・前の番で答え済みの事・スタッフだけが知る事で返信に書かない事）。
+//   repeat_scope: お客様の条件をどこまで繰り返すか。12196（11/08）竹内さんは条件の言い直しの番で変わった点だけ「家賃管理費込み12万円以内」と書き、
+//     下書きは前の条件を全部（エリア・家賃・間取り・広さ・築年・徒歩）繰り返した＝最終チェックの4つ目の段の condition_repeat の印。
+//   CONDUCTOR_FOCUS_GUARD=on の時だけ（既定 off・入口の版に g1）
+export const focusGuardOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_FOCUS_GUARD ?? "").trim().toLowerCase() === "on";
+export const REPEAT_SCOPES = ["none", "changed", "all"] as const;
+export type RepeatScope = typeof REPEAT_SCOPES[number];
+export const REPEAT_SCOPE_LABEL: Record<RepeatScope, string> = {
+  none: "条件を繰り返さない", changed: "変わった・聞かれた条件だけ繰り返す", all: "条件を全部まとめて繰り返す（初回の条件の受け・まとめ直し）",
+};
+export const FOCUS_GUARD_RULES = `【触れない話題（no_touch）と条件の繰り返し（repeat_scope）】no_touch＝今の番の返信で触れない話題を最大3つ（各20字以内・無ければ []）: お客様が断った・見送った物件や申込／前の番で答え済みの事／スタッフだけが知る事（確認の結果・見積の金額・日程の確定）で返信に書かない事。repeat_scope＝お客様の条件をどこまで繰り返すか: ${REPEAT_SCOPES.map((k) => `${k}=${REPEAT_SCOPE_LABEL[k]}`).join("／")}。見分け（竹内さんの実際の送信から）: 条件を言い直された番は変わった点だけ（「家賃管理費込み12万円以内」）＝changed。初回の条件のフォームの受けは all。お礼・了承・物件の質問の番は none`;
+export const FOCUS_GUARD_FIELD = `"no_touch": ["触れない話題（20字以内）"], "repeat_scope": "${REPEAT_SCOPES.join("|")}"`;
+/** 触れない話題: 文字列の配列だけ・空と重複は捨てる・最大3つ */
+export function parseNoTouch(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const x of raw) { const v = String(x ?? "").replace(/\s+/g, " ").trim().slice(0, 20); if (v && v !== "null" && !out.includes(v)) out.push(v); if (out.length >= 3) break; }
+  return out;
+}
+/** 一覧に無い範囲は null */
+export function normalizeRepeatScope(raw: unknown): RepeatScope | null {
+  const v = String(raw ?? "").trim().toLowerCase();
+  return (REPEAT_SCOPES as readonly string[]).includes(v) ? (v as RepeatScope) : null;
 }
