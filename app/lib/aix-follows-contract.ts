@@ -9,11 +9,13 @@
 //     ② 物件の AIX なのに、ブレインの aix の欄は空で、turn_contract に確認の AIX（物件確認した）の依頼がある＝その確認の AIX（q092#1「ここは最短11月中旬でしょうか？」aix/procedure）
 //     ③ 探す約束（about=search_condition の promise）なのに AIX の欄が物件確認した＝ピックアップの約束（two-stage の TWO_STAGE_KIND_FROM_ABOUT の形・q009・q367）
 //   当てない: 探す約束と物件の AIX が揃っている番（q001・出し切りの左右は別の決まり）・申込以降。
-//   既定 off（BRAIN_AIX_FOLLOWS_CONTRACT=on）。③ は two-stage.ts の中で、このスイッチか TWO_STAGE_KIND_FROM_ABOUT のどちらかが on の時に当たる（古いスイッチは残す）。
+//   既定 on（11/14 試験で悪化0・既定 on。止める時は BRAIN_AIX_FOLLOWS_CONTRACT=off）。③ は two-stage.ts の中で、このスイッチか TWO_STAGE_KIND_FROM_ABOUT のどちらかが on の時に当たる（古いスイッチは残す）。
+//   11/14 作業員D: q431 の直し（39d465e4・replyPlanAfterFollow）を入れた試験 wc-q431-on1-p1・p2 で q431 合格 3/3・比べた 6問で確かな悪化0
 type Env = Record<string, string | undefined>;
 
 export function brainAixFollowsContractOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_AIX_FOLLOWS_CONTRACT ?? "").trim().toLowerCase() === "on";
+  // 2026-11-14 作業員D: 11/14 試験で悪化0・既定 on（止める BRAIN_AIX_FOLLOWS_CONTRACT=off）
+  return (env.BRAIN_AIX_FOLLOWS_CONTRACT ?? "on").trim().toLowerCase() !== "off";
 }
 
 const PROPERTY_AIX = /^(?:property_send|property_recommendation|property_search|property_pickup)$/;
