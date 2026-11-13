@@ -67,6 +67,7 @@ import { reflectAndReplan } from "./lib/exam-reflection-io";
 import { focusOf, focusPool, pickByFocus, focusLine, parseFocusTypes, type Focus, type FocusSpec, type FocusSceneMap } from "./lib/exam-focus";
 import { diffMaterial, callConductorLlm, newTally, FLASH_MODEL } from "./lib/exam-conductor-io";
 import { bizLanes } from "./lib/exam-plan";
+import { seqRegressions, examSeqScoreOn, wantSeqOf as wantSeqOfProblem } from "./lib/send-seq-score"; // 11/13 作業員7b: 並びの悪化（EXAM_SEQ_SCORE・既定 off）
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -914,9 +915,20 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       } catch { return { path: [] as ReturnType<typeof pathRegressions>, ess: [] as ReturnType<typeof pathRegressions> }; }
     })();
     const pwLine = (xs: ReturnType<typeof pathRegressions>) => xs.map((x) => `${x.id} ${x.from}→${x.to}（${x.why}）`).join("／");
+    // 2026-11-13 作業員7b（竹内さん 11/13「返信と AIX の組み合わせも」）: 送る物の並び（札「並び:XX」か staffText の実送信）の悪化を問題ごとに出す（EXAM_SEQ_SCORE=on の時だけ・既定 off）
+    const seqWorse = (() => {
+      if (!examSeqScoreOn() || !blFinal) return [] as ReturnType<typeof seqRegressions>;
+      try {
+        const spec = readJson<Array<{ id: string; tags?: string[]; staffText?: string | null }>>(join(j.cwd, "scripts/brain-exam/spec.json"), []);
+        const byId = new Map(spec.map((x) => [x.id, x]));
+        const cur = readRows(rowsFile) as unknown as Parameters<typeof seqRegressions>[0], base = readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)) as unknown as Parameters<typeof seqRegressions>[1];
+        return seqRegressions(cur, base, ids, (id) => { const p = byId.get(id); return p ? wantSeqOfProblem(p)?.seq ?? null : null; });
+      } catch { return [] as ReturnType<typeof seqRegressions>; }
+    })();
+    const seqNote = seqWorse.length ? `・並びの悪化 ${seqWorse.length}（${seqWorse.map((x) => `${x.id} ${x.from}→${x.to}（正解 ${x.want}・${x.why}）`).join("／")}）` : "";
     const pathNote = (pw.path.length ? `・道の悪化 ${pw.path.length}（${pwLine(pw.path)}・既定 on の判断に使わない）` : "") + (pw.ess.length ? `・本質の悪化 ${pw.ess.length}（${pwLine(pw.ess)}）` : "");
     const verdictHead = pw.path.length ? verdictBase.replace(/^確かな悪化0（/, "合格の確かな悪化0・道の悪化あり（") : verdictBase;
-    const verdict0 = verdictHead + pathNote + essNote + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
+    const verdict0 = verdictHead + pathNote + seqNote + essNote + digNote + (stageNote ? `・切り分け: ${stageNote}` : "");
     // 2026-11-10 作業員8c（KB 7b5ef932 ⑥決め直す・⑦振り返る）: 選んだ問題が何を見つけたか（外れ・合格／道／本質の悪化・揺れ）を result.reflection に、
     //   狙いが効かず（狙いの合格・本質が前と同じ）悪化0の時は同じ重点（スイッチ・狙いの場面）で足すとよい問題 1〜3問を result.replan に（流さない・積むのは依頼者）。
     //   週の集計は scripts/exam-reflection-weekly.ts。止める: EXAM_REFLECTION=off
@@ -924,7 +936,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       try {
         return reflectAndReplan({ label: j.label, owner: j.owner, switchName: j.switch, cwd: j.cwd, stage: j.stage, ids, guards: j.guards ?? [],
           cur: readRows(rowsFile) as unknown as ReflRow[], base: blFinal && !noCompare ? readRows(join(resultsDirOf(j.cwd), `${blFinal}.jsonl`)) as unknown as ReflRow[] : null,
-          result: { reps: rp.reps, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, pathWorse: pw.path, essenceWorse: pw.ess, missStages },
+          result: { reps: rp.reps, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, pathWorse: pw.path, essenceWorse: pw.ess, ...(seqWorse.length ? { seqWorse } : {}), missStages },
           worseN: sureN, resDir: RES, dig: !!j.dig, stableOf: (xs) => jobRepsPlan({ ...j, guards: [] }, xs).stable ?? [] });
       } catch (e) { log(`  振り返り: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); return null; }
     })();
@@ -943,7 +955,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         }
       } catch (e) { log(`  弱い所の台帳: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`); }
     }
-    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, essence, pathWorse: pw.path, essenceWorse: pw.ess, guards: j.guards ?? [], reflection: rf?.reflection ?? null, replan: rf?.replan ?? null, verdict, at: at() },
+    finish(j, { label: j.label, owner: j.owner, switch: j.switch, only: j.only, repeat: j.repeat, reps: rp.reps, code, early, ...s, worseSure: sw?.sure ?? null, worseFlake: sw?.flake ?? null, missStages, essence, pathWorse: pw.path, essenceWorse: pw.ess, ...(seqWorse.length ? { seqWorse } : {}), guards: j.guards ?? [], reflection: rf?.reflection ?? null, replan: rf?.replan ?? null, verdict, at: at() },
       `| ${at().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | 合格 ${s.pass ?? "?"} | 良くなった ${s.better ?? "?"} | ${s.usd ?? "?"} |`,
       `試験 ${j.label}: ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・${s.usd ?? "?"}（${at().slice(5, 16).replace("T", " ")}Z）`);
     log(`  済み: ${j.label} → ${verdict}・合格 ${s.pass ?? "?"}・良くなった ${s.better ?? "?"}・費用 ${s.usd ?? "?"}`);
