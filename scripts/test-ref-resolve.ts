@@ -2,16 +2,17 @@
 // 実行: npx tsx scripts/test-ref-resolve.ts
 // 実例3番（名前と物件名は伏せた）: 12105（送ってきてくれたやつで初期費用5万以内はあれだけ？）・12555（URL の号室が引けない）・10911（画像の物件名が空・読み取り「難皮」）
 import assert from "node:assert/strict";
+import { refHandoffReasons } from "../app/lib/ref-resolve";
 import { resolveRefs, refCountOf, refResolveLine, refResolveDigest, portalIdOf, nameSimilarity, refResolveOn, type RefSent } from "../app/lib/ref-resolve";
 import { broughtFromShares, broughtFromThreads, mergeBrought } from "../app/lib/ref-brought";
-import { attachBundles, parseEstimateTexts, attachEstimates, buildSentProps, buildSentPropsText } from "../app/lib/sent-props-text";
+import { attachBundles, estimatesFromRecords, attachEstimates, buildSentProps, buildSentPropsText } from "../app/lib/sent-props-text";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
 
 t("既定 off", () => { assert.equal(refResolveOn({}), false); assert.equal(refResolveOn({ REF_RESOLVE: "shadow" }), true); });
 
-t("送った物件の一覧: 束の番号（何回目・何件目）・送ったのはこちら・見積の初期費用と見積の号室（AIX【見積書】の本文から）", () => {
+t("送った物件の一覧: 束の番号（何回目・何件目）・送ったのはこちら・見積の初期費用と見積の号室（estimate_records から）", () => {
   const props = buildSentProps({ customerRows: [
     { property_name: "Aハイツ", room_no: "101", sent_at: "2026-11-01T03:00:00Z" },
     { property_name: "Bコート", room_no: "202", sent_at: "2026-11-01T03:00:30Z" },
@@ -19,7 +20,7 @@ t("送った物件の一覧: 束の番号（何回目・何件目）・送った
   ], imageRows: [], sharedRows: [] });
   assert.equal(attachBundles(props), 2);
   assert.deepEqual(props.map((p) => [p.bundle_no, p.bundle_pos, p.sent_by]), [[1, 1, "ours"], [1, 2, "ours"], [2, 1, "ours"]]);
-  const ests = parseEstimateTexts([{ generated_text: "①【Aハイツ 101号室】\n\n初期費用さらに\n🌟33,000円割引させて頂き\n初期費用：48,000円\n\n②【Bコート 205号室】\n初期費用：120,500円", sent_at: "2026-11-02T01:00:00Z" }]);
+  const ests = estimatesFromRecords([{ property_name: "Aハイツ", room_no: "101号室", initial_cost_yen: 48000, created_at: "2026-11-02T01:00:00Z" }, { property_name: "Bコート", room_no: "205", initial_cost_yen: 120500, created_at: "2026-11-02T01:00:00Z" }, { property_name: "Cレジデンス", room_no: "303", initial_cost_yen: null }]);
   assert.deepEqual(ests.map((e) => [e.property_name, e.room_no, e.initial_cost]), [["Aハイツ", "101", 48000], ["Bコート", "205", 120500]]);
   assert.equal(attachEstimates(props, ests), 1, "号室が違う見積は付けない（Bコート 202 と 205）");
   const text = buildSentPropsText(props);
@@ -98,6 +99,13 @@ t("持ち込みの台帳: ポータルの共有文（名前・URL・id）と物�
   // 12555 の本番の形（11/13 に1件だけ確かめた）: homes の room の URL だけで共有文も台帳の行も無い＝needs_name のまま（ページの読み取りは SUUMO だけ）
   const homes = resolveRefs({ text: "https://www.homes.co.jp/chintai/room/af1bfe2548e05ba5088f25346a2a7d34aa6f8886/", sent: [], brought: mergeBrought(broughtFromShares([]), broughtFromThreads(null)) });
   assert.match(homes.items[0].note ?? "", /needs_name（homes af1bfe/);
+});
+
+t("人に回す理由: needs_name・needs_room の番は ref_needs_name・ref_needs_room（作業員5 の人に回す段へ）", () => {
+  const r = resolveRefs({ text: "https://www.homes.co.jp/chintai/room/abc123def456/ ここは？", sent: [], brought: [{ name: "Eビル", room: null, at: "x", portal_id: "abc123def456", from: "url" }] });
+  assert.deepEqual(refHandoffReasons(r), ["ref_needs_room"]);
+  assert.deepEqual(refHandoffReasons(resolveRefs({ text: "https://suumo.jp/chintai/jnc_000000000009/", sent: [], brought: [] })), ["ref_needs_name"]);
+  assert.deepEqual(refHandoffReasons(resolveRefs({ text: "2件目は？", sent: sent12105, brought: [] })), []);
 });
 
 console.log(`全部 ${n} 件 ok`);

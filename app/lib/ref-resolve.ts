@@ -156,12 +156,22 @@ export function refCountOf(r: RefResolve | null | undefined): number {
   return keys.size + unresolved;
 }
 
+/** 人に回す理由（作業員5 の「自信が無い時に人に回す段」へ・統括役の決め 11/13＝needs_name・needs_room の番はブレインが言い切らず、スタッフが確かめる）。
+ *  名前は ref_needs_name・ref_needs_room（ref_resolve の印 needs_name・needs_room に ref_ を付けた物） */
+export const REF_HANDOFF_REASONS = ["ref_needs_name", "ref_needs_room"] as const;
+export type RefHandoffReason = typeof REF_HANDOFF_REASONS[number];
+export function refHandoffReasons(r: RefResolve | null | undefined): RefHandoffReason[] {
+  const out = new Set<RefHandoffReason>();
+  for (const it of r?.items ?? []) { if (it.note?.startsWith("needs_name")) out.add("ref_needs_name"); if (it.note?.startsWith("needs_room")) out.add("ref_needs_room"); }
+  return [...out];
+}
+
 /** ブレインの材料の1行（道の言葉は入れない・事実と印だけ） */
 export function refResolveLine(r: RefResolve | null | undefined): string | null {
   if (!r || !r.items.length) return null;
   const KJ: Record<RefKind, string> = { ours: "こちらが送った物件", brought: "お客様が送ってきた物件（持ち込み）", new_arrival: "新着", prev: "前の話の物件" };
   const CJ: Record<RefCertainty, string> = { high: "確か", mid: "たぶん", low: "不確か（確かめる）" };
-  return `【お客様の言葉が指す物】\n${r.items.map((it) => `- 「${it.word}」→ ${it.kind ? KJ[it.kind] : "どれか不明"}${it.targets.length ? `: ${it.targets.map((t) => `${t.name}${t.room ? ` ${t.room}` : ""}`).join("・")}` : ""}（手がかり ${it.clues.join("・") || "なし"}・${CJ[it.certainty]}${it.note ? `・${it.note}` : ""}）`).join("\n")}`;
+  return `【お客様の言葉が指す物】\n${r.items.map((it) => `- 「${it.word}」→ ${it.kind ? KJ[it.kind] : "どれか不明"}${it.targets.length ? `: ${it.targets.map((t) => `${t.name}${t.room ? ` ${t.room}` : ""}`).join("・")}` : ""}（手がかり ${it.clues.join("・") || "なし"}・${CJ[it.certainty]}${it.note ? `・${it.note}` : ""}${/^needs_(name|room)/.test(it.note ?? "") ? "・物件名や号室を言い切らず、スタッフが確かめる番" : ""}）`).join("\n")}`;
 }
 
 /** 記録の1行: "ours:2:high:cost_filter|brought:1:low:needs_room" */

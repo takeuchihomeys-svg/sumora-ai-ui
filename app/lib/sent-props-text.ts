@@ -47,23 +47,15 @@ export function attachBundles(props: SentProp[], gapMin = 10): number {
   return no;
 }
 export type EstimateRec = { property_name: string; room_no: string | null; initial_cost: number; at: string };
-/** AIX【見積書】の本文（「②【パンセ新町 701号室】…初期費用：358,250円」）から物件ごとの初期費用を拾う。字の無い物は拾わない */
-export function parseEstimateTexts(rows: ReadonlyArray<{ generated_text?: string | null; sent_at?: string | null; created_at?: string | null }>): EstimateRec[] {
-  const out: EstimateRec[] = [];
-  for (const r of rows) {
-    const t = String(r.generated_text ?? "");
-    const at = r.sent_at ?? r.created_at ?? "";
-    const re = /【([^】]+?)】([\s\S]*?)(?=【[^】]+】|$)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(t))) {
-      const cost = m[2].match(/初期費用\s*[:：]\s*([0-9,，]+)\s*円/);
-      if (!cost) continue;
-      const head = m[1].trim();
-      const rm = head.match(/^(.*?)[\s　]*([0-9０-９A-Za-z-]+)\s*号室?$/);
-      out.push({ property_name: (rm ? rm[1] : head).trim(), room_no: rm ? rm[2].normalize("NFKC") : null, initial_cost: Number(cost[1].replace(/[,，]/g, "")), at });
-    }
-  }
-  return out;
+/** 見積の記録（estimate_records の property_name・room_no・initial_cost_yen・created_at・統括役の決め 11/13: AIX の本文から拾うのはやめた）→ EstimateRec。初期費用の無い行は拾わない */
+export function estimatesFromRecords(rows: ReadonlyArray<{ property_name?: string | null; room_no?: string | null; initial_cost_yen?: number | string | null; created_at?: string | null }>): EstimateRec[] {
+  return rows.flatMap((r) => {
+    const name = String(r.property_name ?? "").trim();
+    const cost = typeof r.initial_cost_yen === "number" ? r.initial_cost_yen : Number(String(r.initial_cost_yen ?? "").replace(/[,，円]/g, ""));
+    if (!name || !Number.isFinite(cost) || cost <= 0) return [];
+    const room = String(r.room_no ?? "").normalize("NFKC").replace(/号室?$/, "").trim();
+    return [{ property_name: name, room_no: room || null, initial_cost: cost, at: r.created_at ?? "" }];
+  });
 }
 const roomKey = (r: string | null | undefined) => String(r ?? "").normalize("NFKC").replace(/号室?$/, "").trim();
 /** 送った物件の行に、同じ物件（名前が同じ・号室が同じか見積に号室が無い）の一番新しい見積の初期費用を付ける。付けた数を返す */
