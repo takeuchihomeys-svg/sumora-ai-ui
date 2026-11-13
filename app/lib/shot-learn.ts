@@ -228,9 +228,15 @@ export function reconcilePoints(
     const f = byName.get(name);
     if (!f) continue;
     const from = v.w ?? null;
-    if (from === f.kind) continue;
     // 数値に種類が無い → 埋める／食い違う → 写真を採る（写真の方が実際の見た目）
-    out[name] = { ...v, w: f.kind };
+    /**
+     * 2026-11-13 竹内さん「今弱い部分学習する」:
+     *   `w_src`（どこから得た種類か）も一緒に直す。
+     *   ⚠ 旧は `{ ...v, w: f.kind }` で `w_src: "name"` のまま残っていたので、
+     *     **写真が正しく読んでいるのに「名前から推した物」として扱われ続けた**
+     *     （実測: `左の検索｜span` が写真では押すボタンなのに other のまま残った）。
+     */
+    out[name] = { ...v, w: f.kind, w_src: "photo", w_conf: 1 } as typeof v;
     fixed.push({ name, from, to: f.kind });
   }
   void minConf;
