@@ -208,7 +208,7 @@ function rest() {
     "snapshot-popup.js": { "setTimeout 2500": [1, "写真テストの結果（クラウドに上がったか）を待つ（v2.7.0）"], "setInterval 5000": [1, "録画モードの状態を取り直す（v2.7.5・画面の表示だけ・サイトを触らない）"] },
     "reins-page-script.js": { "setTimeout 90000": [1, "見張り（fill-done の保証）"] },
     "score-overlay.js": { "setTimeout 900": [1, "点数の表示の間引き"], "setTimeout 500": [1, "点数の表示"], "setTimeout 300": [1, "点数の表示"] },
-    "underbar.js": { "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限（v2.5.86・サイトを触らない）"], "setTimeout 80": [1, "パネルの表示"], "setTimeout 1500": [1, "拡張の再読み込み直後のやり直し（v2.5.90・読むだけでサイトを触らない）"], "setTimeout 50": [1, "パネルの動き"] },
+    "underbar.js": { "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限（v2.5.86・サイトを触らない）"], "setTimeout 80": [1, "パネルの表示"], "setTimeout 1500": [1, "拡張の再読み込み直後のやり直し（v2.5.90・読むだけでサイトを触らない）"], "setTimeout 50": [1, "パネルの動き"], "setTimeout 1200": [1, "展開待ちの期限（v2.7.16・過ぎたらその場で開く＝白いままにしない・サイトを触らない）"] },
   };
   const found = scanFixed();
   const files = new Set([...Object.keys(found), ...Object.keys(KEEP)]);

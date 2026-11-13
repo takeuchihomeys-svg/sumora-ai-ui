@@ -121,6 +121,11 @@
   // 多数のタブが開かれてもメモリを圧迫しないよう、初めて展開するまでiframeを作らない
   let iframe = null;
   let pendingExpand = false;
+  /**
+   * 2026-11-13: 展開待ちの期限（タイマー）。**先に宣言**しておく
+   *   （末尾の `_decideOnStart()` が初期化より先に走ると「未初期化」で落ちるため）。
+   */
+  let _pendingTimer = null;
 
   function ensureIframe() {
     if (iframe) return iframe;
@@ -142,15 +147,14 @@
       visibility: "hidden", // setSize(true)で表示。ミニ時にcompositing layerが突き抜けるのを防止
     });
     iframe.addEventListener("load", () => {
+      /**
+       * 2026-11-13: 読み込みが終わったら、待っていたら必ず開く。
+       *   ⚠ 旧は `setSize(true)` と postMessage をここで直接していた。今は `_openNow` に1本化
+       *     （サイズ・見える状態・中身への合図を、どこから呼んでも同じにする）。
+       */
       if (pendingExpand) {
-        pendingExpand = false;
         setTimeout(() => {
-          // ignoreNextCollapse はensureIframe()で1回だけセット済み（ここでは再セットしない）
-          // ここで再セットするとユーザーの最初のminimize操作まで吸収されてしまう
-          setSize(true);
-          iframe.contentWindow.postMessage(
-            { from: "underbar-parent", action: "expand-from-parent" }, "*"
-          );
+          try { _openNow(iframe); } catch (_) {}
         }, 80);
       }
     });
@@ -159,22 +163,57 @@
     return iframe;
   }
 
+  /**
+   * 2026-11-13 竹内さん「ボタンを開いた状態から閉じた状態にするときに白くなるバグが起きるし、
+   *   展開することができなくなる」
+   *
+   * ⚠ 原因: 旧は「iframe がまだ loading なら `pendingExpand = true` にして return」していた。
+   *   → `load` イベントは**もう来ない**（とっくに読み込み済み）ので、**待ち続けて永久に白いまま**。
+   *     さらに `pendingExpand` が立ったままだと、次の展開も「load 待ち」で同じ所で止まる。
+   *   → ① `pendingExpand` に**期限**を付け、待ちすぎたら**その場で開く**（もう待たない）
+   *     ② 展開する時は必ず `setSize(true)` を呼ぶ（サイズが戻らない＝白い箱のままにしない）
+   *     ③ iframe を `visibility: hidden` のまま放置しない（visibility は setSize が必ず戻す）
+   */
   function doExpand() {
     const existed = !!iframe;
     const fr = ensureIframe();
     if (!fr) return; // コンテキスト無効（ページリロードで回復）
-    // v2.5.91 2026-10-27 竹内「展開したら白色になる」: v2.5.90 で検索中はミニで起動（iframe 未作成）にしたため、ミニボタンから開くと
-    //   ここで作ったばかりの iframe に load 前の expand を送り、popup が受け取れず白いままだった。作った時は load の後に開く（ensureIframe の load で setSize＋expand）
-    if (!existed) { pendingExpand = true; return; }
-    // cross-origin(chrome-extension://)ではcontentDocument=null→ロード済みとみなす
-    if (fr.contentDocument && fr.contentDocument.readyState !== "complete") {
-      pendingExpand = true;
-      return;
-    }
+    // 作ったばかりの iframe は load 後に開く（load ハンドラが setSize＋expand を送る）
+    if (!existed) { pendingExpand = true; _armPendingTimeout(); return; }
+    /**
+     * 読み込み中でも**待ち続けない**。少しだけ待ち、それでも終わらなければ開く
+     * （`contentDocument` はクロスオリジンだと null＝「分からない」なので、分からない時は開く）。
+     */
+    const loading = (function () {
+      try { return !!(fr.contentDocument && fr.contentDocument.readyState !== "complete"); } catch (_) { return false; }
+    })();
+    if (loading) { pendingExpand = true; _armPendingTimeout(); return; }
+    _openNow(fr);
+  }
+
+  /** 待ち続けて永久に白くならないよう、期限を付ける（過ぎたらその場で開く） */
+  function _armPendingTimeout() {
+    if (_pendingTimer) clearTimeout(_pendingTimer);
+    _pendingTimer = setTimeout(function () {
+      _pendingTimer = null;
+      if (!pendingExpand) return;
+      pendingExpand = false;
+      console.warn("[underbar] iframe の読み込みが終わらない → そのまま開きます（白いままにしない）");
+      try { _openNow(iframe); } catch (_) {}
+    }, 1200);
+  }
+
+  /** 実際に開く（サイズを戻す＋中身に合図を送る）。⚠ 何度呼んでも安全 */
+  function _openNow(fr) {
+    pendingExpand = false;
+    if (_pendingTimer) { clearTimeout(_pendingTimer); _pendingTimer = null; }
     setSize(true);
-    try {
-      fr.contentWindow.postMessage({ from: "underbar-parent", action: "expand-from-parent" }, "*");
-    } catch {}
+    if (fr) {
+      try { fr.style.visibility = "visible"; } catch (_) {}
+      try {
+        fr.contentWindow.postMessage({ from: "underbar-parent", action: "expand-from-parent" }, "*");
+      } catch (_) {}
+    }
   }
 
   // ── リサイズハンドル（右下）──────────────────────────────────────
@@ -351,8 +390,21 @@
       dragBar.style.display       = "flex";
       resizeHandle.style.display  = "block";
       miniOverlay.style.display   = "none";
-      // ミニ時に非表示にしたiframeを復元（visibility:hiddenで状態保持していたもの）
-      if (iframe) iframe.style.visibility = "visible";
+      /**
+       * 2026-11-13 竹内さん「閉じた状態から展開することができなくなる」:
+       *   ⚠ 旧は `visibility` を戻すだけで、**display を戻していなかった**。
+       *     さらに `pendingExpand` が立ったままだと doExpand が待ち続けて開かなかった。
+       *   → ここで**必ず**「見える・押せる」状態に戻す（何度呼ばれても同じ）。
+       */
+      if (iframe) {
+        try {
+          iframe.style.visibility = "visible";
+          iframe.style.display = "block";
+          iframe.style.pointerEvents = "";
+        } catch (_) {}
+      }
+      wrap.style.visibility = "visible";
+      wrap.style.pointerEvents = "";
     } else {
       // wrapをdisplay:none !importantで完全に隠す（itandi CSS上書き問題を完全回避）
       wrap.style.setProperty("display", "none", "important");
@@ -364,6 +416,12 @@
       miniBtnEl.style.display = "flex";
       // iframeをvisibility:hiddenに（display:noneだと状態が失われる）
       if (iframe) iframe.style.visibility = "hidden";
+      /**
+       * 2026-11-13: 閉じた時に**待ちを必ず捨てる**。
+       *   捨てないと、次に開く時に「前の待ち」が残って開けない事があった。
+       */
+      pendingExpand = false;
+      if (_pendingTimer) { clearTimeout(_pendingTimer); _pendingTimer = null; }
     }
     persist();
   }
