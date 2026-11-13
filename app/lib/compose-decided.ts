@@ -57,7 +57,14 @@ import { fromContractBasis, fromBrainAnswerSource, type AnswerSource } from "./a
 export const CHECK_PART_RE = /確認(?:させて|致し|いたし|して|し(?:ご連絡|次第)|出来次第)|交渉(?:させて|致し|いたし|して|し)|問い?合わせ|お調べ|管理会社(?:に|へ)/;
 export type AskPart = { quote: string; source: AnswerSource; now: string | null; check: string | null; certainty: Certainty };
 /** 依頼ごとに、今言える部分と確認が要る部分を分ける（答えの文を句点で分け、確かめる約束の文を確認が要る側に） */
-export function askPartsOf(asks: ReadonlyArray<{ quote?: unknown; basis?: unknown; route?: unknown; answer?: unknown; parts?: unknown }>, o: { checkResultReady?: boolean } = {}): AskPart[] {
+/** 2026-11-13 作業員16（統括役の決め・実例 12643）: 確認が要る部分がある依頼は、今言える部分があっても依頼の確かさを needs_check にする（確かめた結果が手元なら assertable）。
+ *  既定 off（ASK_PARTS_MIXED_NEEDS_CHECK=on の時、または呼ぶ側が o.mixedNeedsCheck=true を渡した時だけ）。off の時は今までと同じ（今言える部分の確かさ） */
+export function askPartsMixedNeedsCheckOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.ASK_PARTS_MIXED_NEEDS_CHECK ?? "").trim().toLowerCase() === "on";
+}
+export function askPartsOf(asks: ReadonlyArray<{ quote?: unknown; basis?: unknown; route?: unknown; answer?: unknown; parts?: unknown }>, o: { checkResultReady?: boolean; mixedNeedsCheck?: boolean } = {}): AskPart[] {
+  const mixed = o.mixedNeedsCheck ?? askPartsMixedNeedsCheckOn();
+  const mixedCert = (): Certainty => (o.checkResultReady ? "assertable" : "needs_check");
   return asks.filter((a) => typeof a.quote === "string" && a.quote.trim()).map((a) => {
     const ans = typeof a.answer === "string" ? a.answer.trim() : "";
     const sents = ans.split(/(?<=[。！!？?])\s*|、(?=(?:[^、]*?)(?:確認|交渉|問い?合わせ|お調べ|管理会社))/).map((x) => x.trim()).filter(Boolean);
@@ -67,10 +74,10 @@ export function askPartsOf(asks: ReadonlyArray<{ quote?: unknown; basis?: unknow
     if (parts.length) {
       const nowP = parts.filter((p) => p.certainty !== "needs_check" && p.source !== "staff_only"), chkP = parts.filter((p) => !nowP.includes(p));
       const src = fromBrainAnswerSource((nowP[0] ?? parts[0]).source, { basis: a.basis, checkResultReady: o.checkResultReady, who: (chkP[0] ?? parts[0]).who });
-      return { quote: String(a.quote).trim().slice(0, 40), source: src, now: nowP.length ? nowP.map((p) => String(p.part ?? "")).join("・") : null, check: chkP.length ? chkP.map((p) => String(p.part ?? "")).join("・") : null, certainty: chkP.length && !nowP.length ? "needs_check" : (nowP[0]?.certainty === "basically" ? "basically" : "assertable") } as AskPart;
+      return { quote: String(a.quote).trim().slice(0, 40), source: src, now: nowP.length ? nowP.map((p) => String(p.part ?? "")).join("・") : null, check: chkP.length ? chkP.map((p) => String(p.part ?? "")).join("・") : null, certainty: chkP.length && !nowP.length ? "needs_check" : mixed && chkP.length ? mixedCert() : (nowP[0]?.certainty === "basically" ? "basically" : "assertable") } as AskPart;
     }
     const source = fromContractBasis(a.basis, a.route, { checkResultReady: o.checkResultReady });
-    const certainty = checkS.length && !nowS.length ? (o.checkResultReady ? "assertable" : "needs_check") : factCertaintyOf(a, o);
+    const certainty = checkS.length && !nowS.length ? (o.checkResultReady ? "assertable" : "needs_check") : mixed && checkS.length ? mixedCert() : factCertaintyOf(a, o);
     return { quote: String(a.quote).trim().slice(0, 40), source, now: nowS.length ? nowS.join("") : null, check: checkS.length ? checkS.join("") : (a.route === "promise" && !nowS.length ? (ans || "確かめる") : null), certainty: source.kind === "staff_only" && !nowS.length && !o.checkResultReady ? "needs_check" : certainty };
   });
 }

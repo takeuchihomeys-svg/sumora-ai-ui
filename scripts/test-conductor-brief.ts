@@ -45,7 +45,7 @@ const meta = {
 t("具体の一覧: 主の要件・事実と出所・足りない情報・照らし合わせ・型と順番・配分・組・次の一手・目的と要点", () => {
   const b = buildConductorBrief(meta);
   assert.deepEqual(b.main !== BRIEF_NONE && b.main.items[0], { kind: "question", quote: "最短でいつ入居", topic: "move_in" });
-  assert.deepEqual(b.facts, [{ quote: "最短でいつ入居", value: "審査次第でお申込日から10日程", from: "会社の事実" }]);
+  assert.deepEqual(b.facts, [{ quote: "最短でいつ入居", value: "審査次第でお申込日から10日程", from: "会社の事実", source: "company_fact", certainty: "basically" }]);
   assert.deepEqual(b.missing !== BRIEF_NONE && b.missing.keys, [{ key: "area", state: "unknown" }]);
   assert.deepEqual(b.open, []);
   assert.ok(b.type !== BRIEF_NONE && b.type.id === "T2_question_fact" && b.type.check[0] === "read_ask" && b.type.depth === "normal+fact");
@@ -56,16 +56,16 @@ t("具体の一覧: 主の要件・事実と出所・足りない情報・照ら
   // 型が無い番は表で選ばず、two_message_plan があればそれ
   const b2 = buildConductorBrief({ two_message_plan_digest: "1:answer" });
   assert.ok(b2.combine !== BRIEF_NONE && b2.combine.from === "two_message_plan" && b2.combine.combo === "1:answer");
-  assert.deepEqual(b.aim, { purpose: "answer", purposeFrom: "judge_basis", keyPoint: "最短の入居の日" });
+  assert.deepEqual(b.aim, { purpose: "answer", purposeFrom: "judge_basis", keyPoint: "最短の入居の日", mid: BRIEF_NONE });
   assert.equal(b.doubts.length, 0);
   assert.equal(b.sure.level, "high");
-  assert.equal(conductorBriefDigest(b), "T2|p:answer|m:1|o:0|f:1|d:-|s:high|未:2");
+  assert.equal(conductorBriefDigest(b), "T2|p:answer|m:1|o:0|f:1|d:-|s:high|未:5");
 });
 
 t("返信か AIX かを決める言葉を入れない（指示書の欄の名前・型の表の文・事実の値以外）", () => {
   const b = buildConductorBrief(meta);
   // 組と順番（combine）は決まった道の後の記録で、表の文に「返信1通」等の名前が入る＝照らす対象から外す（道を決める言葉ではない）
-  const own = JSON.stringify({ ...b, facts: [], decided: [], combine: BRIEF_NONE, main: BRIEF_NONE, type: b.type === BRIEF_NONE ? b.type : { ...b.type, why: "" } });
+  const own = JSON.stringify({ ...b, facts: [], split: [], decided: [], combine: BRIEF_NONE, main: BRIEF_NONE, type: b.type === BRIEF_NONE ? b.type : { ...b.type, why: "" } });
   assert.ok(!BASIS_ROUTE_WORD_RE.test(own), own);
 });
 
