@@ -146,7 +146,7 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
 
   // ⑤' 確かめる順番と優先度（priority-table・場面×状態の行。手がかりの合わない状態は 未）
   const pr = typeId ? (() => { try { return priorityTableRecord(coRec ? { ...m, check_order: coRec, check_order_type: typeId } : { ...m, check_order_type: typeId }); } catch { return null; } })() : null;
-  const order: ConductorBrief["order"] = pr ? { hit: pr.hit, first: pr.first, why_tag: pr.why_tag, this_turn: pr.this_turn, answer_source: pr.answer_source, deferred: pr.deferred, depth: pr.depth, avoid: pr.avoid, why_order: pr.why_order, conflicts: pr.conflicts } : BRIEF_NONE;
+  const order: ConductorBrief["order"] = pr ? { row_id: pr.row_id, hit: pr.hit, first: pr.first, why_tag: pr.why_tag, this_turn: pr.this_turn, answer_source: pr.answer_source, deferred: pr.deferred, depth: pr.depth, avoid: pr.avoid, why_order: pr.why_order, conflicts: pr.conflicts } : BRIEF_NONE;
   if (order === BRIEF_NONE) notYet.push("order");
 
   // ⑥ 配分
