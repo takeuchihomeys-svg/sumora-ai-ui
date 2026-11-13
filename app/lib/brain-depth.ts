@@ -58,7 +58,7 @@ export function decideBrainDepth(i: DepthInput, env: Record<string, string | und
 }
 
 // ── v2 の記録（BRAIN_DEPTH_V2=on の時だけ・判断と費用は変えない）──────────────────────
-//   ①深い時だけ動かす物: 取りに行く段（BRAIN_MATERIAL_FETCH）・読みの候補（reading-tags・まだブレインに配線なし）・深い調べ（brain-deep-check・BRAIN_DEEP_CHECK）。
+//   ①深い時だけ動かす物: 取りに行く段（BRAIN_MATERIAL_FETCH）・読みの候補（brain-read-candidates・BRAIN_READ_CANDIDATES）・深い調べ（brain-deep-check・BRAIN_DEEP_CHECK）。
 //     今は深さに関係なく動く。「深い番だけにしたら止まる物」（skip）を数えて、深さで絞るかを決める材料にする。
 //   ②浅い時に軽くする所: 竹内さん 10/29「軽い番は前の判断の引き継ぎと安い AI・送れる物の確かめは残す」。
 //     軽い番は system と会話の前置きを読み直さず、今の番の塊だけを安い AI に渡す形を想定し、呼び出しの字数を前と後で出す（推定・実際の呼び出しは変えない）。

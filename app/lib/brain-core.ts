@@ -3714,7 +3714,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         brought: /https?:\/\/|suumo|homes\.co|athome|chintai\.net/i.test(tTxt) || /【物件の(?:画面|写真)/.test(tTxt),
       });
       // 2026-11-13 作業員5（BRAIN_DEPTH_V2=on・記録だけ）: 深い時だけ動かす物（今は深さに関係なく動く物のうち深くない番で止まる物＝skip）を残す
-      const gate = brainDepthV2On() ? depthGateRecord(dep.depth, { material_fetch: materialFetchOn(), reading_candidates: false, deep_check: brainDeepCheckEnabled() && !isPostApplyStatus(convStatus) }) : undefined;
+      const gate = brainDepthV2On() ? depthGateRecord(dep.depth, { material_fetch: materialFetchOn(), reading_candidates: BRAIN_READ_CANDIDATES_ON || BRAIN_READ_CANDIDATES_SHADOW, deep_check: brainDeepCheckEnabled() && !isPostApplyStatus(convStatus) }) : undefined;
       depthRec = gate ? { ...dep, v2: true, gate } : dep;
       console.log(JSON.stringify({ tag: "brain:depth", conversationId, depth: dep.depth, reason: dep.reason, ...(gate ? { v2: true, run: gate.run, skip: gate.skip } : {}) }));
     } catch (e) { console.warn("[brain-core] depth skipped:", e instanceof Error ? e.message : String(e)); }

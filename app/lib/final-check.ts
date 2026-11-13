@@ -135,6 +135,8 @@ export interface CheckResult {
   ok: boolean;                    // blockが0件
   issues: CheckIssue[];
   revised_text?: string;          // 自動修正後（generate-reply時のみ）
+  /** 2026-11-13 作業員5（conductor-staff-check・CONDUCTOR_STAFF_CHECK）: 統括が人に回した番の理由とスタッフ向けの注記（下書きには入れない） */
+  staff_check?: { reasons: string[]; note: string; gate?: string; ref_detail?: string[] };
   passes_completed: CheckPass[];  // fail-open監査: タイムアウトしたpassはここに無い
   elapsed_ms: number;
   checked_text_hash: string;      // sha1(text.trim()) — 送信時の再利用判定キー
