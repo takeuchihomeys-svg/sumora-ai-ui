@@ -28,6 +28,31 @@ export type FollowVerdict = { to: "reply"; rule: "all_reply" } | { to: "aix"; ai
  * 決まった道の AIX（finalAix）を、ブレインの turn_contract の依頼に揃える。揃える必要が無い・分からない時は null（今のまま）。
  *   rawAix はブレインが aix の欄に書いた値（空なら決まった道の AIX は合図・規則から来た）
  */
+// 2026-11-13 作業員C（q431 の悪化 w7b-t3-on3「前 2/2 → 今 0/1」の原因）: ① で道を返信に寄せても、返信の方向（reply_direction・key_topics）は
+//   ブレインが物件の AIX に添えるつもりで書いた「約束した2LDKの物件ピックアップを実行して届ける」のまま残っていた。
+//   採点は「依頼『引き続きよろしく』に返信で答える指示が無い」で✕（道は○）。書き手に渡ると「今送る」文になり、言ってはいけない事
+//   「新しい物件を今送ったかのように書く」に当たる。竹内さんの実送信は「はい！！オススメできるお部屋出次第随時お送りさせていただきます」
+//   （開いているピックアップの約束を、受けて続ける）。① で返信にした番だけ、今送る向きの方向を「受けて・約束を続けて締める」に揃える。
+const SEND_NOW_RE = /(?:物件|お部屋|ピックアップ)[^。]{0,24}(?:送る|送付|届ける|お送りする|お届け|実行)|(?:送る|届ける|お送りする)$/;
+const LATER_RE = /出次第|入り次第|見つかり次第|新着が出/; // 後で送る約束（今送る向きではない）
+export type FollowReplyPlan = { direction: string; keyTopics: string[]; avoidTopics: string[]; changed: boolean };
+/** ① で返信に寄せた番の返信の方向を揃える（純関数）。今送る向きの方向・話題が無ければ changed=false（今のまま） */
+export function replyPlanAfterFollow(i: { direction: unknown; keyTopics: unknown; avoidTopics: unknown; openPickupPromise: boolean }): FollowReplyPlan {
+  const dir = String(i.direction ?? "").trim();
+  const kt = Array.isArray(i.keyTopics) ? i.keyTopics.map(String) : [];
+  const av = Array.isArray(i.avoidTopics) ? i.avoidTopics.map(String) : [];
+  const sendNowDir = SEND_NOW_RE.test(dir) && !LATER_RE.test(dir);
+  const ktKeep = kt.filter((t) => !SEND_NOW_RE.test(t) || LATER_RE.test(t));
+  if (!sendNowDir && ktKeep.length === kt.length) return { direction: dir, keyTopics: kt, avoidTopics: av, changed: false };
+  const keep = "オススメできるお部屋が出次第随時お送りする";
+  const direction = i.openPickupPromise
+    ? `お客様の言葉を受け止め、${keep}と約束を続けて締める（今物件を送ったようには書かない）`
+    : "お客様の言葉を受け止めて締める（今物件を送ったようには書かない）";
+  const keyTopics = i.openPickupPromise && !ktKeep.some((t) => /出次第/.test(t)) ? [...ktKeep, keep] : ktKeep;
+  const ng = "新しい物件を今送ったかのように書く";
+  return { direction: sendNowDir ? direction : dir || direction, keyTopics, avoidTopics: av.includes(ng) ? av : [...av, ng], changed: true };
+}
+
 export function alignAixToContract(i: { finalAix: string | null | undefined; rawAix: unknown; asks: ReadonlyArray<ContractAskLite> | null | undefined }): FollowVerdict {
   const fa = keyOf(i.finalAix);
   if (!fa || !PROPERTY_AIX.test(fa)) return null;

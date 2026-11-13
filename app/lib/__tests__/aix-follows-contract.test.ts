@@ -2,7 +2,7 @@
 //   実物（試験の答案の生の出力）: q431 fc15-fc3a#1・q092 proc-on-dig-1110b#1・q001 w16-nl-on2-p2・q367 w7-ppw-on3#2・q009 focus-cond-q009-dig#2
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { alignAixToContract, brainAixFollowsContractOn } from "../aix-follows-contract";
+import { alignAixToContract, brainAixFollowsContractOn, replyPlanAfterFollow } from "../aix-follows-contract";
 import { resolveTwoStage } from "../two-stage";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${n}`); } else { fail++; console.log(`  NG  ${n}`); } };
@@ -32,5 +32,16 @@ delete process.env.TWO_STAGE_KIND_FROM_ABOUT;
 const bc = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");
 const i = bc.indexOf("alignAixToContract({ finalAix,"), j = bc.indexOf("const twoStageArgs: Parameters<typeof resolveTwoStageOrDirect>[0] = {");
 t("配線: brain-core は2段の前で揃える", i > 0 && j > i && bc.includes("brainAixFollowsContractOn() && !isPostApplyStatus(convStatus)"));
+// 2026-11-13 作業員C: q431 の悪化（w7b-t3-on3 の答案の生の出力そのまま）＝道は返信に寄ったが方向は「ピックアップを実行して届ける」のまま
+const q431 = replyPlanAfterFollow({ direction: "内覧のお礼を受け止め、約束した2LDKの物件ピックアップを実行して届ける", keyTopics: [], avoidTopics: [], openPickupPromise: true });
+t("q431 方向: 今送る向きを外す", q431.changed && !/実行して届ける/.test(q431.direction) && /出次第随時お送り/.test(q431.direction));
+t("q431 key_topics に約束を続ける事", q431.keyTopics.some((k) => /出次第随時お送り/.test(k)));
+t("q431 avoid_topics に今送ったように書かない", q431.avoidTopics.includes("新しい物件を今送ったかのように書く"));
+const noPromise = replyPlanAfterFollow({ direction: "お礼を受け、物件をお送りする", keyTopics: ["新しい物件を送る"], avoidTopics: ["値段の話"], openPickupPromise: false });
+t("約束が無い番は締めだけ（出次第の約束を足さない）", noPromise.changed && !/出次第/.test(noPromise.direction) && noPromise.keyTopics.length === 0 && noPromise.avoidTopics[0] === "値段の話");
+const already = replyPlanAfterFollow({ direction: "内覧後のお礼への感謝を受け止め、新着のオススメの2LDKを出次第お送りする約束で穏やかに締める", keyTopics: ["感謝"], avoidTopics: [], openPickupPromise: true });
+t("もう受けて締める方向（本番の prodBrain）は変えない", !already.changed && already.direction.startsWith("内覧後のお礼"));
+t("後で送る約束（お部屋が出次第お送りする）は今送る向きと読まない", !replyPlanAfterFollow({ direction: "お礼を受け、オススメできるお部屋が出次第随時お送りすると伝える", keyTopics: ["お部屋が出次第お送りする"], avoidTopics: [], openPickupPromise: true }).changed);
+t("配線: ① の返信で方向を揃える", bc.includes("replyPlanAfterFollow({ direction:") && bc.indexOf("replyPlanAfterFollow({ direction:") > i && bc.indexOf("replyPlanAfterFollow({ direction:") < j);
 console.log(`aix-follows-contract: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
