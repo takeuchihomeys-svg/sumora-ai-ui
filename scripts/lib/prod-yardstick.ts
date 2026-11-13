@@ -122,12 +122,22 @@ export function brainFrames(brainFamily: string, decisionSource?: string | null)
 }
 export type StaffMoveLite = { at: number; family: string };
 /** スタッフの2枠: 今=最初の一手の系統／後=最初の一手が返信の時、その後 laterHours 以内に送った最初の AIX の系統 */
-export function staffFrames(turnAtMs: number, moves: ReadonlyArray<StaffMoveLite>, opts: { laterHours?: number } = {}): { now: string | null; later: string | null } {
+/**
+ * 2026-11-13 作業員7b（統括役の頼み・竹内さん 11/13「返信と AIX の組み合わせも」）: 最初の一手が返信で、その返信から comboMs（既定 2分）以内に AIX を送った番は、
+ *   約束→後で AIX（2段）ではなく、同じ番の組（返信→AIX）＝今の通は AIX の系統（後の通は無し）。条件ヒアリングの初回（挨拶の返信の数秒後にフォーム）が 0/2 の外れに数えられていた。
+ *   数えだけ（本番の動きは変わらない）。既定 off（YARDSTICK_COMBO_WINDOW=on）
+ */
+export function yardstickComboWindowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.YARDSTICK_COMBO_WINDOW ?? "").trim().toLowerCase() === "on";
+}
+export function staffFrames(turnAtMs: number, moves: ReadonlyArray<StaffMoveLite>, opts: { laterHours?: number; comboMs?: number | null } = {}): { now: string | null; later: string | null; combo?: boolean } {
   const lim = (opts.laterHours ?? 24) * 3_600_000;
   const ms = moves.filter((m) => m.at >= turnAtMs && m.at - turnAtMs < lim).sort((a, b) => a.at - b.at);
   if (!ms.length) return { now: null, later: null };
   const now = ms[0].family;
   if (now !== "返信") return { now, later: null };
+  const comboMs = opts.comboMs !== undefined ? opts.comboMs : yardstickComboWindowOn() ? 120_000 : null;
+  if (comboMs != null) { const a = ms.find((m) => m.family !== "返信"); if (a && a.at - ms[0].at <= comboMs) return { now: a.family, later: null, combo: true }; }
   return { now, later: ms.find((m) => m.family !== "返信")?.family ?? null };
 }
 export type TwoFrameJudge = { now: "hit" | "miss"; later: "hit" | "miss" | "brain_only" | "staff_only" | "na" };
