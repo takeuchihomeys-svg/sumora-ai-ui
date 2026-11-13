@@ -26,7 +26,8 @@
 //   npx tsx --env-file=.env.local scripts/human-learn-brain.ts --apply    # DB の human_learn_profile に書く
 //   /api/cron/human-learn-brain が毎晩まとめる（Vercel Cron）
 
-/** 1行分（`human_motion_learn` の必要な列だけ） */
+import { reconcilePoints, findWeakPoints } from "./shot-learn";
+
 export type MotionRow = {
   created_at?: string | null;
   site?: string | null;
@@ -48,6 +49,12 @@ export type MotionRow = {
   fields?: unknown;
   field_order?: unknown;
   shot_ops?: unknown;
+  /**
+   * 2026-11-13 竹内さん「画面の写真から判断できる。そこの部分強化するようにする」:
+   *   写真から読んだ**欄の種類**（プルダウン／直接入力／チェック）と**画面の種類**。
+   *   `shot_learn` が入っている行だけ使う（無ければ今まで通り数値だけで学ぶ）。
+   */
+  shot_learn?: unknown;
 };
 
 /** 押した位置（要素ごと） */
@@ -82,6 +89,12 @@ export type HumanLearnBundle = {
   site_flow: Record<string, Array<{ from: string; to: string; n: number }>>;
   /** ⑥ 操作と操作の間（中央値 ms） */
   gaps: { median_ms: number | null; samples: number };
+  /**
+   * 2026-11-13 竹内さん「弱い部分等は学習の統括が判断して学習を繰り返していく」:
+   *   **弱い所**（同じ欄で種類が割れている・種類が分からない・写真と数値が食い違う・押せない欄を押した）。
+   *   統括がこれを読んで「次に何を学ぶか」を決める。
+   */
+  weak?: Array<{ kind: string; name: string; why: string; next: string }>;
   /** 何を学んだか（人が読む1行ずつ） */
   lines: string[];
 };
@@ -271,6 +284,33 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
   // ⑥ 操作の間
   const gapSamples = list.map((r) => num(r.move_ms)).filter((v): v is number => v != null && v > 0);
 
+  /**
+   * 2026-11-13 竹内さん「画面の写真から判断できる。そこの部分強化するようにする。
+   *   画像を見れば学習できるし弱い部分等は学習の統括が判断して学習を繰り返していく」:
+   *   写真から読んだ**欄の種類**を集めて、数値の記録に**埋める**（名前だけでは分からなかった種類）。
+   *   ⚠ 写真が無い（`shot_learn` が無い）行は今まで通り数値だけで学ぶ。
+   */
+  const photoFields: Array<{ name: string; kind: string }> = [];
+  for (const r of list) {
+    const sl = r.shot_learn;
+    if (!sl || typeof sl !== "object") continue;
+    const fs2 = (sl as Record<string, unknown>).fields;
+    if (!Array.isArray(fs2)) continue;
+    for (const f of fs2) {
+      if (!f || typeof f !== "object") continue;
+      const o = f as Record<string, unknown>;
+      const nm2 = typeof o.name === "string" ? o.name.trim().slice(0, 30) : "";
+      const kd = typeof o.kind === "string" ? o.kind.toLowerCase().slice(0, 10) : "";
+      if (nm2 && kd) photoFields.push({ name: nm2, kind: kd });
+    }
+  }
+  let weak: Array<{ kind: string; name: string; why: string; next: string }> = [];
+  if (photoFields.length) {
+    const rec = reconcilePoints(points as never, photoFields as never);
+    Object.keys(points).forEach((k) => { if (rec.points[k]) points[k] = rec.points[k] as never; });
+    weak = findWeakPoints(points as never, photoFields as never, rec.fixed as never);
+  }
+
   // 元にした期間
   const times = list.map((r) => (r.created_at ? Date.parse(String(r.created_at)) : NaN)).filter((t) => Number.isFinite(t));
   const sites = Array.from(new Set(list.map((r) => String(r.site || "")).filter(Boolean)));
@@ -290,6 +330,7 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     buttons,
     site_flow,
     gaps: { median_ms: median(gapSamples), samples: gapSamples.length },
+    ...(weak.length ? { weak } : {}),
     lines: [],
   };
   bundle.lines = describeBundle(bundle);
@@ -338,6 +379,24 @@ export function describeBundle(b: HumanLearnBundle): string[] {
     ? `動き: 速さ ${b.motion.speed_px_s}px/秒・曲がり ${b.motion.curve ?? "?"}（${b.motion.moves}回の動き）`
     : `動き: まだ材料が足りません（${b.motion.moves}回）`);
   if (b.gaps.median_ms != null) out.push(`操作の間: 中央値 ${Math.round(b.gaps.median_ms)}ms（${b.gaps.samples}件）`);
+  /**
+   * 2026-11-13 竹内さん「弱い部分等は学習の統括が判断して学習を繰り返していく」:
+   *   弱い所を**人が読める形**で出す（統括はこれを見て次の学習を決める）。
+   */
+  if (b.weak && b.weak.length) {
+    out.push(`弱い所: ${b.weak.length}件（次に学ぶ事）`);
+    const KN: Record<string, string> = {
+      kind_conflict_in_photo: "種類が割れている",
+      kind_unknown: "種類が分からない",
+      photo_vs_record: "写真と記録が違う",
+      pressed_disabled: "押せない欄を押した",
+    };
+    b.weak.slice(0, 6).forEach((w) => {
+      out.push(`  ・${KN[w.kind] || w.kind}: ${w.name} … ${w.why} → ${w.next}`);
+    });
+  } else {
+    out.push("弱い所: なし（今の所そろっています）");
+  }
   return out;
 }
 

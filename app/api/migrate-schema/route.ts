@@ -3792,6 +3792,11 @@ ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_in_db BOOLEAN NOT N
 --   写真の**直前までの操作の並び**（時刻・種類・どの欄か）。写真と操作を結びつける。
 --   ⚠ 欄の名前と操作の種類・時刻だけ（入力した中身は入れない）。
 ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_ops JSONB;
+-- 2026-11-13 竹内さん「画面の写真から判断できる。そこの部分強化するようにする」:
+--   写真から読んだ**欄の種類**（プルダウン／直接入力／チェック）と**画面の種類**。
+--   ⚠ 読むのは欄の種類・画面の種類・押せるかだけ（入力された中身・名前は読まない）。
+ALTER TABLE human_motion_learn ADD COLUMN IF NOT EXISTS shot_learn JSONB;
+COMMENT ON COLUMN human_motion_learn.shot_learn IS '写真から読んだ欄の種類（select/text/checkbox など）と画面の種類。入力した中身は入れない。2026-11-13 竹内さん承認';
 COMMENT ON COLUMN human_motion_learn.shot_ops IS '写真の直前までの操作の並び（時刻・種類・欄の名前）。入力した中身は入れない。2026-11-13 竹内さん承認';
 COMMENT ON COLUMN human_motion_learn.shot_b64 IS 'Storage に置けなかった時の写真そのもの（data:image/jpeg;base64,...）。通常は NULL で shot_key を使う。2026-11-12 竹内さん承認';
 COMMENT ON COLUMN human_motion_learn.shot_in_db IS '写真を表に入れたか（true＝Storage ではなくこの行に画像がある）';
