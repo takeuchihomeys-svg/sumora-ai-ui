@@ -19,6 +19,7 @@ import { endingOf, endingsFor, trustFor, TRUST_JA, trustSubsOfText } from "./com
 import { headWordOf, HEAD_WORD_JA } from "./compose-head";
 import { strengthFromSeven } from "./next-move-types";
 import { focusSubOfTakeuchiText } from "./conductor-focus";
+import { PRIORITY_ROWS, PRIORITY_WHY_TO_V2, type PriorityRow, type PriorityWhy } from "./priority-table";
 import type { ComposeFact } from "./compose-asks-facts";
 import type { ClosingDecision, AnswerSource } from "./compose-value-slots";
 
@@ -100,6 +101,27 @@ export function rowsV2SubRoleOn(role: "press" | "bridge" | "close", env: Env = t
   if (role === "bridge") return (env.COMPOSE_ROWS_V2_SUB_BRIDGE ?? "").trim().toLowerCase() === "on";
   return true;
 }
+/** 作業員16 の優先度の表（meta.check_order.priority）を主の行の why_order・並べ順・立てない条件に使う（COMPOSE_PLAN_ROWS_V2 の中・COMPOSE_ROWS_V2_PRIORITY=off で止める） */
+export function rowsV2PriorityOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.COMPOSE_ROWS_V2_PRIORITY ?? "").trim().toLowerCase() !== "off";
+}
+/** 表の「触れない話題」→ 立てない行（表の文字そのままで引く・無い物は書き手への注記だけ） */
+const NO_TOUCH_BLOCKS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  "内覧の日程（聞かれていない）": ["bridge.viewing"],
+  "新しい物件の売り込み": ["bridge.viewing", "bridge.apply"],
+};
+export type RowsV2Priority = { why_tag: PriorityWhy; why_order: V2WhyOrder; row: PriorityRow | null; deferPromise: boolean; blocks: Set<string> };
+/** meta.check_order.priority（priorityTableRecord）→ 表の行・主の why_order・後の通へ回す約束・立てない行 */
+export function priorityForRowsV2(meta: unknown): RowsV2Priority | null {
+  const rec = (meta as { check_order?: { priority?: { type?: unknown; state?: unknown; why_tag?: unknown; why_order?: unknown } | null } } | null)?.check_order?.priority;
+  if (!rec || typeof rec.why_tag !== "string" || !(rec.why_tag in PRIORITY_WHY_TO_V2)) return null;
+  const why_tag = rec.why_tag as PriorityWhy;
+  const row = PRIORITY_ROWS.find((r) => r.type === rec.type && r.state === rec.state) ?? null;
+  // 後の通へ回す依頼のうち約束の部分（11865: 新着のピックアップの約束は答えの後の別の通）＝この返信に約束の行を立てない
+  const deferPromise = !!row && row.order.deferred.some((d) => row.ask_parts.some((pt) => pt.route === "promise" && (d.what.includes(pt.part) || pt.part.includes(d.what))));
+  const blocks = new Set<string>((row?.avoid.no_touch ?? []).flatMap((t) => NO_TOUCH_BLOCKS[t] ?? []));
+  return { why_tag, why_order: (typeof rec.why_order === "string" ? rec.why_order : PRIORITY_WHY_TO_V2[why_tag]) as V2WhyOrder, row, deferPromise, blocks };
+}
 /** 物件を送る AIX の道（brain-attention の PROPERTY_AIX と同じ3つ） */
 const PROPERTY_AIX: ReadonlySet<string> = new Set(["property_send", "property_recommendation", "property_search"]);
 /** 場面×主の役目 → 信頼の下の役目の割合（3番未満は場面 * に落とす） */
@@ -152,6 +174,7 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
     : focusSubOfTakeuchiText("promise_make", String(leadAsk?.answer ?? "")) ?? (PROPERTY_AIX.has(metaAction) ? "search" : null);
   const searchAsKeep = mainPromiseKind === "search", estimateAsBridge = mainPromiseKind === "estimate";
   const replyAsks = (tc0?.asks ?? []).filter((a) => String(a.route ?? "") !== "none");
+  const prio = rowsV2PriorityOn() ? priorityForRowsV2(i.meta) : null;
   const receiveOnly = pressSubOn && mainRole === "answer" && replyAsks.length > 0 && replyAsks.every((a) => ["report", "feeling"].includes(String(a.kind ?? ""))) && replyFacts.every((f) => f.from === "会話");
   // 頭
   {
@@ -166,6 +189,7 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
   for (const r of v1ByV2.get("press") ?? []) {
     const isPromise = r.role === "promise";
     if (r.rank === "main" && isPromise && (searchAsKeep || estimateAsBridge)) { dropped.push({ role: "press", why: searchAsKeep ? "探して送る約束は締めの継続の約束で受ける" : "見積の約束はつなぎの見積へで受ける" }); continue; }
+    if (prio?.deferPromise && isPromise && r.rank !== "main") { dropped.push({ role: "press", why: "後の通へ回す約束（優先度の表）" }); continue; }
     if (!isPromise && receiveOnly) { dropped.push({ role: "press", why: `${String(leadAsk?.kind)} の依頼で会話の事実だけ（頭の受けで受ける）` }); continue; }
     // 従の押さえ（主でない答え・約束）は、竹内さんがこの場面×主の役目でその下の役目を入れる割合 SUB_STAND.press_sub 以上の時だけ
     if (rowsV2SubRoleOn("press") && r.rank !== "main" && !(checkEstimate && isPromise)) { const sh = subShareFor(i.scene, mainRole, `press.${isPromise ? "promise" : "answer"}`); if (sh != null && sh < SUB_STAND.press_sub) { dropped.push({ role: "press", why: `従の${isPromise ? "約束" : "答え"}は竹内さんの割合 ${sh}（${SUB_STAND.press_sub} 未満）` }); continue; } }
@@ -214,6 +238,7 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
   // check_estimate のつなぎ（見積へ）: 設計図に見積の行が無くても立てる（見積の半分）
   if ((checkEstimate || estimateAsBridge) && !bridgeV1.some((r) => r.role === "estimate")) bridgeV1.push({ rank: "sub", role: "estimate", part: null, how: null, next: null, from: "focus_sub" });
   for (const r of bridgeV1) {
+    if (prio?.blocks.has(`bridge.${r.role}`)) { dropped.push({ role: "bridge", why: `触れない話題（優先度の表: ${prio.row?.avoid.no_touch.join("・")}）` }); continue; }
     // つなぎは既定で割合の線を当てない（COMPOSE_ROWS_V2_SUB_BRIDGE=on の時だけ: 割合 SUB_STAND.bridge 以上・主の役目そのもの・check_estimate の見積は立てる）
     if (rowsV2SubRoleOn("bridge") && r.role !== mainRole && !((checkEstimate || estimateAsBridge) && r.role === "estimate")) { const sh = subShareFor(i.scene, mainRole, `bridge.${r.role}`); if (sh != null && sh < SUB_STAND.bridge) { dropped.push({ role: "bridge", why: `${r.role} へ誘うのは竹内さんの割合 ${sh}（${SUB_STAND.bridge} 未満）` }); continue; } }
     const strength = strengthFromSeven(i.s7.push ? { push: i.s7.push.push, strength: i.s7.push.strength } : null);
@@ -234,7 +259,7 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
     // 細分化（11/13）: お客様の言った時期 → 継続の約束（設計図にあって割合 0.3 以上）→ 決まりの締め（割合 0.5 以上）の順で1つ
     //   COMPOSE_ROWS_V2_SUB=off: 前の立て方（設計図に継続の約束がある・締めの割合 0.5 以上）
     const closingSign = !!(i.closing && i.closing.sign !== "none");
-    const keepOk = !!keep && (!closeSubOn || searchAsKeep || i.s7.leadTo === "keep" || keepSh == null || keepSh >= SUB_STAND.keep_promise || mainRole === "keep");
+    const keepOk = !!keep && !prio?.deferPromise && (!closeSubOn || searchAsKeep || i.s7.leadTo === "keep" || keepSh == null || keepSh >= SUB_STAND.keep_promise || mainRole === "keep");
     const fixedOk = closingSign || (closeSubOn ? (fixedSh ?? share ?? 0) >= SUB_STAND.fixed : (share ?? 0) >= STAND_MIN);
     if (time || keepOk || fixedOk) {
       const sub: V2Sub = time ? "their_timing" : keepOk ? "keep_promise" : "fixed";
@@ -251,8 +276,20 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
   // 足しすぎの印（探す条件の番で前に送った条件を全部繰り返さない）
   if (i.scene === "conditions" && lastStaff && /ピックアップ/.test(lastStaff.text)) for (const r of rows) if (r.role === "press" || (r.role === "close" && r.sub === "keep_promise")) r.stand.push("no_full_repeat（変わった条件だけ）");
   for (const r of rows) if (r.source === "material" && r.role !== "press" && !r.uses.length) r.stand.push("no_unasked_material");
-  // 竹内さんの並びの順（頭→…→締め。同じ位置は元の順）
-  const order = rows.map((r, k) => ({ r, k })).sort((a, b) => (a.r.role === "head" ? -1 : b.r.role === "head" ? 1 : a.r.role === "close" ? 1 : b.r.role === "close" ? -1 : posOf(a.r.role) - posOf(b.r.role) || a.k - b.k)).map((x) => x.r);
+  // 優先度の表（作業員16）: 主の行の why_order・やらない事（触れない話題・繰り返さない条件）を主の行の札に
+  const mainRow = rows.find((r) => r.stand.includes("主の文")) ?? rows.find((r) => r.role === "close" && r.sub === "keep_promise" && searchAsKeep) ?? null;
+  if (prio && mainRow) {
+    mainRow.why_order = prio.why_order;
+    mainRow.stand.push(`priority:${prio.why_tag}`);
+    for (const t of prio.row?.avoid.no_touch ?? []) mainRow.stand.push(`no_touch:${t}`);
+    if (prio.row?.avoid.repeat_scope) mainRow.stand.push(`repeat_scope:${prio.row.avoid.repeat_scope}`);
+  }
+  // 竹内さんの並びの順（頭→…→締め。同じ位置は元の順）。主の押さえは従の押さえより先。
+  //   不安・受けが先（ease_first）の時は、信頼・潜在の行を主の押さえのすぐ後に（12362: 抑えられる部屋の答え→他の号室は2番手の事実）
+  const easeFirst = prio?.why_order === "ease_first" && mainRow?.role === "press";
+  const posKey = (r: PlanRowV2) => r.role === "head" ? -1 : r.role === "close" ? 2
+    : (easeFirst && (r.role === "trust" || r.role === "latent") ? posOf("press") + 0.001 : posOf(r.role)) + (r.role === "press" && mainRow && r !== mainRow ? 0.002 : 0);
+  const order = rows.map((r, k) => ({ r, k })).sort((a, b) => posKey(a.r) - posKey(b.r) || a.k - b.k).map((x) => x.r);
   return { rows: order, dropped, presenceAt: pres?.at ?? null };
 }
 /**
@@ -286,7 +323,7 @@ const SUB_JA: Partial<Record<V2Sub, string>> = { support: "サポートの姿勢
 /** 書き手への注記（on の時だけ・値は下の欄のまま・文は写さない） */
 export function planRowsV2Note(rows: ReadonlyArray<PlanRowV2>, env?: Env): string {
   if (!composePlanRowsV2On(env) || !rows.length) return "";
-  const L = rows.map((r, k) => `  ${k + 1}. ${V2_ROLE_JA[r.role]}（${SUB_JA[r.sub] ?? HEAD_WORD_JA[r.sub as keyof typeof HEAD_WORD_JA] ?? r.sub}）${r.uses.filter((u) => u.field !== "our.sent").length ? `: ${r.uses.filter((u) => u.field !== "our.sent").map((u) => u.value).join("・")}` : ""}${r.certainty === "needs_check" ? "（言い切らない・確認の約束）" : r.certainty === "basically" ? "（基本的に）" : ""}${r.how ? `／型「${r.how}」` : ""}／${WHY_JA[r.why_order]}${r.length === "short" ? "・短く" : ""}${r.stand.some((s) => s.startsWith("no_full_repeat")) ? "・前の条件を全部繰り返さず変わった点だけ" : ""}${r.embeds?.length ? `・この文の中で${r.embeds.map((e) => TRUST_EMBED_JA[e.kind]).join("・")}` : ""}`);
+  const L = rows.map((r, k) => `  ${k + 1}. ${V2_ROLE_JA[r.role]}（${SUB_JA[r.sub] ?? HEAD_WORD_JA[r.sub as keyof typeof HEAD_WORD_JA] ?? r.sub}）${r.uses.filter((u) => u.field !== "our.sent").length ? `: ${r.uses.filter((u) => u.field !== "our.sent").map((u) => u.value).join("・")}` : ""}${r.certainty === "needs_check" ? "（言い切らない・確認の約束）" : r.certainty === "basically" ? "（基本的に）" : ""}${r.how ? `／型「${r.how}」` : ""}／${WHY_JA[r.why_order]}${r.length === "short" ? "・短く" : ""}${r.stand.some((s) => s.startsWith("no_full_repeat")) ? "・前の条件を全部繰り返さず変わった点だけ" : ""}${r.embeds?.length ? `・この文の中で${r.embeds.map((e) => TRUST_EMBED_JA[e.kind]).join("・")}` : ""}${r.stand.filter((x) => x.startsWith("no_touch:")).map((x) => `・触れない: ${x.slice(9)}`).join("")}${r.stand.filter((x) => x.startsWith("repeat_scope:")).map((x) => `・繰り返さない: ${x.slice(13)}`).join("")}`);
   return `- 1文ずつの設計図（竹内さんの同じ場面の並び・この行以外の文は足さない）:\n${L.join("\n")}`;
 }
 export { endingOf };

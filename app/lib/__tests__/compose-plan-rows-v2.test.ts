@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { readTurnUnderstanding, readSevenFields, buildSentencePlan } from "../compose-sentence-plan";
 import { asksFactsOf } from "../compose-asks-facts";
+import { priorityTableRecord } from "../priority-table";
 import { buildPlanRowsV2, planRowsV2Note, planRowsV2Digest, composePlanRowsV2On, rowsPresence, subShareFor, rowsV2SubOn, rowsV2SubRoleOn, trustEmbedsShown, trustEmbedLogFields } from "../compose-plan-rows-v2";
 
 let n = 0;
@@ -117,5 +118,49 @@ t("押さえの細分化 q141 型（報告だけの番）: 会話の事実しか
   // COMPOSE_ROWS_V2_SUB=off で前の立て方
   process.env.COMPOSE_ROWS_V2_SUB = "off";
   try { assert.ok(rows(meta, { scene: "viewing", customerText: "17時からお願いします！" }).rows.some((x) => x.role === "press")); } finally { delete process.env.COMPOSE_ROWS_V2_SUB; }
+});
+// ── 作業員16 の優先度の表（meta.check_order.priority）を主の行の why_order・並べ順・立てない条件に（11/13 統括役）──
+const withPriority = (meta: Record<string, unknown>) => ({ ...meta, check_order: { priority: priorityTableRecord(meta) } });
+t("12548（決め手が先）: 後に聞かれた物件の中身の問いが主の行で頭の次・触れない話題と繰り返さない条件は注記に", () => {
+  const meta = withPriority({ check_order_type: "T2_question_fact", turn_contract: { asks: [
+    { quote: "入居日はいつ頃になりますか", kind: "question", route: "reply", answer: "審査後2週間程度", basis: "company_fact" },
+    { quote: "白っぽいお部屋は空いてますか", kind: "question", route: "reply", answer: "空いているのは201号室で白基調", basis: "material" },
+  ], lead_with: 1 } });
+  assert.equal((meta.check_order as { priority: { why_tag: string } }).priority.why_tag, "decider_first");
+  const r = rows(meta, { scene: "question", customerText: "入居日はいつ頃になりますか？白っぽいお部屋は空いてますか？" });
+  const ps = r.rows.filter((x) => x.role === "press");
+  assert.ok(ps.length >= 1 && ps[0].uses.some((u) => /201/.test(u.value)), JSON.stringify(ps.map((x) => x.uses)));
+  assert.ok(ps[0].stand.includes("主の文") && ps[0].stand.includes("priority:decider_first"), JSON.stringify(ps.map((x) => x.stand)));
+  assert.equal(ps[0].why_order, "asked_order");
+  assert.equal(r.rows[0].role === "head" ? r.rows[1] : r.rows[0], ps[0]);
+  assert.match(planRowsV2Note(r.rows, { COMPOSE_PLAN_ROWS_V2: "on" }), /触れない: 聞かれていない募集状況以外の条件.*繰り返さない: 事情（異動）は受けを1回だけ/);
+});
+t("12362（不安が先）: 主の答えのすぐ後に少なさの信頼・聞かれていない内覧の日程は立てない", () => {
+  const meta = withPriority({ check_order_type: "T12_hooked_comparing_taken", seven_read: { lead: "viewing" }, turn_contract: { asks: [{ quote: "抑えられるのは送ってもらった間取りですか", kind: "question", route: "reply", answer: "抑えられるのは1LDKの202号室・他は申込が入っており2番手", basis: "material" }], lead_with: 0 } });
+  const r = rows(meta, { scene: "apply", customerText: "抑えられるところは送ってもらった間取りですか？", recentStaff: [{ text: "🌟（物件）202", aix: true }] });
+  const seq = roleSeq(r);
+  const pi = r.rows.findIndex((x) => x.role === "press" && x.stand.includes("主の文"));
+  assert.equal(r.rows[pi].why_order, "ease_first", seq.join(","));
+  assert.equal(r.rows[pi + 1]?.role, "trust", seq.join(","));
+  assert.equal(r.rows[pi + 1]?.sub, "scarcity");
+  assert.ok(!r.rows.some((x) => x.role === "bridge" && x.sub === "viewing"), seq.join(","));
+  assert.ok(r.dropped.some((d) => d.role === "bridge" && /触れない話題/.test(d.why)));
+  // 優先度の表を止めると内覧へのつなぎは今まで通り立つ
+  process.env.COMPOSE_ROWS_V2_PRIORITY = "off";
+  try { const r0 = rows(meta, { scene: "apply", customerText: "抑えられるところは送ってもらった間取りですか？", recentStaff: [{ text: "🌟（物件）202", aix: true }] }); assert.ok(!r0.dropped.some((d) => /触れない話題/.test(d.why))); }
+  finally { delete process.env.COMPOSE_ROWS_V2_PRIORITY; }
+});
+t("11865（疑問が先・新着の約束は後の通）: 答えが主で先・継続の約束の締めはこの返信に立てない", () => {
+  const base = { turn_contract: { asks: [{ quote: "他のサイトの物件は本当にあるのか", kind: "question", route: "reply", answer: "ポータルにはおとり物件がある場合がある", basis: "general" }], lead_with: 0 }, seven_read: { lead: "keep" } };
+  const meta = withPriority({ ...base, check_order_type: "T2_question_fact", our_send_uptake: [{ kind: "asked_again" }] });
+  assert.equal((meta.check_order as { priority: { why_tag: string } }).priority.why_tag, "doubt_first");
+  const r = rows(meta, { scene: "question", customerText: "他のサイトに載ってる物件は本当にあるんですか？" });
+  const seq = roleSeq(r);
+  assert.ok(!r.rows.some((x) => x.role === "close" && x.sub === "keep_promise"), seq.join(","));
+  const p0 = r.rows.find((x) => x.role !== "head");
+  assert.equal(p0?.role, "press", seq.join(","));
+  assert.ok(p0!.stand.includes("priority:doubt_first"));
+  // 表が無い番（同じ材料）は継続の約束が最後に立つ（前のテスト 11865 型と同じ）
+  assert.ok(rows(base, { scene: "question", customerText: "他のサイトに載ってる物件は本当にあるんですか？" }).rows.some((x) => x.role === "close" && x.sub === "keep_promise"));
 });
 console.log(`compose-plan-rows-v2: ${n} pass`);
