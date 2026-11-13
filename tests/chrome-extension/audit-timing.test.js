@@ -80,7 +80,14 @@ ok("見張りの長さは 895秒（v2.6.23: 人が操作する速さに合わせ
   ok("ops: {t, k, p, w} で残る", a.ops.length === 2 && a.ops[0].k === "city_code[]:27111" && a.ops[0].p === 120 && a.ops[0].w === 60120);
   ok("遅れの最大と1秒超の回数", a.late_max === 60000 && a.late_over_1s === 1);
   ok("stall: 最後の段・タブが隠れている・列の残り・次の操作", a.stall.stage === "cities" && a.stall.visibility === "hidden" && a.stall.queue_len === 1 && a.stall.queue_next === "city_code[]:27109" && a.stall.has_focus === false && a.stall.hidden_ms >= 0);
-  ok("ブレインでない（run_id なし）時は記録しない", vm.runInContext("_auditReset(null); _auditOp('x', 1, 2); _auditStepP('y'); _audit === null", pctx));
+  /**
+   * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない」:
+   *   ⚠ 旧は「run_id が無いと記録しない」だったが、それで点検が
+   *     **stalled:realpro:none（最後の段: none）259回**になり、どこで止まったか分からなかった。
+   *   → **run_id が無くても段は残す**（その場の番号 local_ を付ける）。
+   */
+  ok("ブレインでない（run_id なし）時も段だけは記録する", vm.runInContext("_auditReset(null); _auditOp('x', 1, 2); _auditStepP('y'); !!(_audit && _audit.steps.length === 1 && _audit.no_run_id === true)", pctx));
+  ok("run_id が無い事が分かる印を持つ（点検に送れる）", vm.runInContext("_auditReset(null); !!(_audit && _audit.local_run_id && String(_audit.local_run_id).indexOf('local_') === 0)", pctx));
 
   console.log("\n■ ③ bulk-dl: 結果を見た・資料の送信の束の時刻を audit.timings に");
   const bd = read("bulk-dl.js");

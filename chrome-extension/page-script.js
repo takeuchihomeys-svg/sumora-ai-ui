@@ -1580,7 +1580,29 @@
     _fillStartedAt = Date.now();
     _hiddenMs = 0;
     _hiddenSince = (document.visibilityState === 'hidden') ? Date.now() : null;
-    _audit = _fillRunId ? { v: 1, site: 'realpro', search_clicked: null, search_press: null, search_buttons: null, sel_mismatch: [], form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, area_path: null, fallback: null, steps: [], ops: [], late_max: 0, late_over_1s: 0, stall: null } : null;
+    /**
+     * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない、ここ録画しているので」:
+     *   ⚠ 旧は `runId ? {...} : null` だったので、**`cond._audit_run_id` が無いと点検を丸ごと作らなかった**。
+     *     自動モードの多くは run_id を付けずに動くので、`_audit` が null のまま
+     *     → 段（steps）が1つも記録されず、点検は **`stalled:realpro:none`（最後の段: none）** になっていた。
+     *     実測: 7日で **259回**。＝「どこで止まったか」が**一切分からない**状態だった。
+     *   → **run_id が無くても必ず作る**（その場の番号を振る）。
+     *     点検の行としては残せなくても（送る時に番号が要る）、
+     *     **段の記録・止まった時の理由**はコンソールと点検の材料に残せるようにする。
+     */
+    _audit = {
+      v: 1, site: 'realpro',
+      search_clicked: null, search_press: null, search_buttons: null,
+      sel_mismatch: [], form: null, stations_ok: [], stations_missing: [], lines_missing: [],
+      click_fails: [], reset_fail: null, area_path: null, fallback: null,
+      steps: [], ops: [], late_max: 0, late_over_1s: 0, stall: null,
+      // run_id が無い時は「その場の番号」（点検に送れないが、理由は残る）
+      local_run_id: _fillRunId || ('local_' + Date.now().toString(36)),
+      no_run_id: !_fillRunId,
+    };
+    if (!_fillRunId) {
+      console.warn('[AX] 点検の run_id がありません（cond._audit_run_id）→ 段の記録だけは残します');
+    }
   }
   function _auditStepP(k, d) {
     if (!_audit) return;
@@ -1782,10 +1804,21 @@
     if (_fillCustomerId) msg.customerId = _fillCustomerId;
     if (errMsg) msg.error = String(errMsg).slice(0, 300);
     // 検索の点検（ブレインの時だけ）: この入力の記録を載せて返す
-    if (_fillRunId) {
-      msg.runId = _fillRunId;
-      if (_audit && errMsg) _auditStepP('done_error', errMsg);
-      msg.audit = _auditPack();
+    /**
+     * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない、ここ録画しているので」:
+     *   ⚠ 旧は `if (_fillRunId)` で、**run_id が無いと点検を一切送らなかった**。
+     *     そのため自動モードの回は「途中で止まった（最後の段: none）」になり、
+     *     **どこで止まったか分からない**まま259回たまっていた。
+     *   → run_id が無くても**その場の番号で送る**（点検の材料になる方が大事）。
+     */
+    if (_audit) {
+      if (_fillRunId) msg.runId = _fillRunId;
+      if (errMsg) _auditStepP('done_error', errMsg);
+      try {
+        msg.audit = _auditPack();
+        if (!_fillRunId) msg.audit.run_id = _audit.local_run_id || null;
+        msg.audit.no_run_id = !_fillRunId;
+      } catch (_) {}
     }
     window.postMessage(msg, '*');
   }

@@ -16,7 +16,11 @@ const between = (a, b) => { const i = bg.indexOf(a); const j = bg.indexOf(b, i +
 console.log("\n■ C1・C2（ブレインモードの時だけ・待たない）");
 {
   const onFill = between("async function _auditOnFillDone(msg, sender)", "// bulk-dl.js / itandi-bulk-dl.js の結果を");
-  ok("fill-done の受け口が sender を渡す", /if \(msg\.runId\) _auditOnFillDone\(msg, _sender\);/.test(bg));
+  /**
+   * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない」:
+   *   run_id が無い回も記録するようにしたので、条件は「runId か audit があれば」。
+   */
+  ok("fill-done の受け口が sender を渡す", /if \(msg\.audit \|\| msg\.runId\) _auditOnFillDone\(msg, _sender\);/.test(bg));
   ok("見張りは点検の記録に足した後（ブレインでない個別の検索は st.enabled で先に戻る）", onFill.indexOf("if (!st.enabled) return;") > 0 && onFill.indexOf("_watchAfterFill(msg, run, sender);") > onFill.indexOf("_auditTracker.attachFill("));
   ok("_watchAfterFill は await しない", !/await _watchAfterFill/.test(bg));
   const af = between("function _watchAfterFill(msg, run, sender)", "// 1回の検索が失敗した時");

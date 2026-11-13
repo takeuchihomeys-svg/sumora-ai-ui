@@ -2356,18 +2356,52 @@ async function _recTick() {
   // 1.5〜3.5秒（毎回ちがう・機械的に見せない）。7分の残りが少なければそこで止める
   var gap = _REC_GAP_MIN + Math.floor(Math.random() * (_REC_GAP_MAX - _REC_GAP_MIN));
   /**
-   * 2026-11-13 竹内さん「今ちゃんと録画保存されていたか」（失敗が続いて録画が止まった）:
-   *   制限（MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND）に当たった時は、
-   *   **次の間隔を少し長めに**して無理に続けない（連続で失敗し続けるのを避ける）。
-   *   ⚠ 失敗が続いても**録画は止めない**（1回の失敗で7分の録画を捨てない）。
+   * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない、ここ録画しているので
+   *   その点も含めて学習して改善する」（画面に「失敗5」と出て写真が1枚も残らなかった）:
+   *   ⚠ 旧は `MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota` だけを見て間隔を延ばしていた。
+   *     実際の失敗はそれだけではない（権限・窓が前に出ていない・タブが見つからない 等）。
+   *   → **失敗の種類ごとに手を打つ**（次の1回で直るように）。
+   *     ⚠ 録画は止めない（7分を使い切る）。
    */
-  if (_recLastErr && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(_recLastErr)) {
+  var _kind = _recErrKind(_recLastErr);
+  if (_kind === "quota") {
+    // 撮りすぎの制限 → 間隔を延ばす（1秒あたり2回まで）
     gap += 800 + Math.floor(Math.random() * 900);
+  } else if (_kind === "permission") {
+    // 権限が無い → 帯で知らせる（押せば許可できる）。間隔はそのまま
+    try { await _recMarkNeedsPermission(); } catch (_) {}
+  } else if (_kind === "not_focus") {
+    // 窓が前に出ていない → 次は窓を前に出してから撮る（_takeShot 側で実施）
+    gap += 200;
+  } else if (_kind === "no_tab") {
+    // 対象のタブが無い → 少し待つ（人がリアプロを開くのを待つ）
+    gap += 1500;
   }
   var left = _recRemainMs();
   if (left > 0 && gap > left) gap = left;
   _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, Math.max(200, gap));
-}
+  }
+  /**
+   * 2026-11-13: 失敗の理由を**種類に分ける**（次の手を決めるため）。
+   *   quota … 撮りすぎの制限／permission … 許可が無い／not_focus … 窓が後ろ／no_tab … タブが無い
+   */
+  function _recErrKind(msg) {
+    var s = String(msg || "");
+    if (!s) return "unknown";
+    if (/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(s)) return "quota";
+    if (/no_permission|permission|許可/i.test(s)) return "permission";
+    if (/no_tab|no_tab_found|タブ/i.test(s)) return "no_tab";
+    if (/focused|active|activeTab|not.?focus|window/i.test(s)) return "not_focus";
+    return "unknown";
+  }
+  /** 許可が要る事を帯に出す（押せば許可できる・録画は止めない） */
+  async function _recMarkNeedsPermission() {
+    try {
+      await chrome.storage.local.set({
+        axlx_rec_need_perm: { at: Date.now(), why: "photo" },
+      });
+    } catch (_) {}
+  }
 /**
  * 2026-11-13 竹内さん「録画から学習できるのか」:
  *   録画モードで撮った写真にも**直前までの操作（押す順番の材料）**を付ける。
@@ -3805,8 +3839,16 @@ function _auditFinish(runId, extra) {
 // fill-done に載ってきた audit を足す。知らない run_id（popup の個別の検索が作った回）はここで記録を作る
 async function _auditOnFillDone(msg, sender) {
   try {
-    if (!_auditTracker || !msg || !msg.runId) return;
-    var run = _auditTracker.get(msg.runId);
+    if (!_auditTracker || !msg) return;
+    /**
+     * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない」:
+     *   ⚠ 旧は `if (!msg.runId) return;` で、**run_id が無い回は段を1つも記録しなかった**
+     *     （実測 7日で259回が「最後の段: none」）。
+     *   → page-script が `local_` の番号を付けてくるので、**その番号でも記録する**。
+     *     run_id は「点検の行を1つに束ねる」ための物なので、無ければ**その場の番号**で代用する。
+     */
+    var _rid = msg.runId || (msg.audit && msg.audit.run_id) || ("local_" + Date.now().toString(36));
+    var run = _auditTracker.get(_rid);
     if (!run) {
       var st = await _auditState();
       if (!st.enabled) return;
@@ -3815,16 +3857,20 @@ async function _auditOnFillDone(msg, sender) {
       //   is_wide=false で上書きし、広げての個別の検索が「ピンポイント」と記録されていた（自動で広げる連鎖が誤って動く）
       //   → 覚え書き（popup の _auditTag が残す）から読み、分からなければ null（finished で送らない＝started の値のまま）
       var _sm = await _searchModeFor(msg.customerId, msg.site);
-      run = _auditTracker.begin({ run_id: msg.runId, site: msg.site, customer_id: msg.customerId, trigger: "single", mode: st.mode, post_started: false, is_wide: _sm ? _sm === "widen" : null });
-      var timer = setTimeout(function () { _auditSingleTimers.delete(msg.runId); _auditFinish(msg.runId, { error: null }); }, AUDIT_SINGLE_CLOSE_MS);
-      _auditSingleTimers.set(msg.runId, timer);
+      run = _auditTracker.begin({
+        run_id: _rid, site: msg.site, customer_id: msg.customerId,
+        trigger: msg.runId ? "single" : "local", mode: st.mode, post_started: false,
+        is_wide: _sm ? _sm === "widen" : null,
+      });
+      var timer = setTimeout(function () { _auditSingleTimers.delete(_rid); _auditFinish(_rid, { error: null }); }, AUDIT_SINGLE_CLOSE_MS);
+      _auditSingleTimers.set(_rid, timer);
     }
     var _pageErr = msg.pageError || msg.error || null;
-    _auditTracker.attachFill(msg.runId, { audit: msg.audit || null, error: _pageErr });
+    _auditTracker.attachFill(_rid, { audit: msg.audit || null, error: _pageErr });
     // 2026-09-29 見張り（C1・C2）: ここまで来た回はブレインモード（点検の記録がある回）だけ。待たない
     _watchAfterFill(msg, run, sender);
     // レインズは結果の読み取り（一括送信）が無いので fill-done で閉じる。個別の検索で失敗した時もここで閉じる
-    if (run.site === "reins" || (run.trigger === "single" && _pageErr)) _auditFinish(msg.runId, {});
+    if (run.site === "reins" || ((run.trigger === "single" || run.trigger === "local") && _pageErr)) _auditFinish(_rid, {});
   } catch (e) { console.warn("[search-audit] fill-done の記録に失敗:", e && e.message); }
 }
 
@@ -4644,7 +4690,14 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     }
     _watchProgress("fill-done" + (msg.error ? "（エラー）" : ""), msg.site === "itandi" ? "itandi" : msg.site === "reins" ? "reins" : "realnetpro");
     // 検索の点検: page-script の audit（押せた・押せなかった駅・検索直前のフォームの読み戻し）をその回に足す（ブレインの時だけ）
-    if (msg.runId) _auditOnFillDone(msg, _sender);
+    /**
+     * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない、ここ録画しているので」:
+     *   ⚠ 旧は `if (msg.runId)` だったので、**run_id が無い回は段（steps）を1つも記録しなかった**。
+     *     実測: 7日で **259回が `stalled:realpro:none`（最後の段: none）**。
+     *     ＝「どこで止まったか」が一切分からず、地域が押せていない事も見えなかった。
+     *   → run_id が無くても**記録する**（page-script が `local_` の番号を付けてくる）。
+     */
+    if (msg.audit || msg.runId) _auditOnFillDone(msg, _sender);
     // レインズは待ち（_createFillDoneWaiter）を作らないので解決しない（点検の記録だけ）
     if (msg.site !== "reins") _notifyFillDone(msg.site || null, msg.customerId || null, msg.error || null);
     sendResponse({ ok: true });

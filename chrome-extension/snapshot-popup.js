@@ -337,8 +337,15 @@
           if (note) {
             var nv = Number(res.saved) || 0;
             var nf = Number(res.failed) || 0;
+            /**
+             * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない、ここ録画しているので」:
+             *   ⚠ 旧は**録画中に失敗の理由を出していなかった**（止めた時にしか出ない）。
+             *     そのため「失敗5」とだけ出て、**何が原因か分からない**まま何度も録画していた。
+             *   → 録画中も**理由を短く出す**（長すぎる時は先頭だけ）。
+             */
+            var why = res.last_error ? String(res.last_error).replace(/\s+/g, " ").slice(0, 40) : "";
             note.textContent = res.on
-              ? "録画中 " + nv + "枚" + (nf ? "（失敗" + nf + "）" : "")
+              ? "録画中 " + nv + "枚" + (nf ? "（失敗" + nf + (why ? "：" + why : "") + "）" : "")
               : (nv ? "前回 " + nv + "枚" : "");
             note.style.color = nf ? "#b91c1c" : "#64748b";
           }
