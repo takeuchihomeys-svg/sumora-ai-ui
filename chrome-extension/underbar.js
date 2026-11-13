@@ -210,9 +210,22 @@
     setSize(true);
     if (fr) {
       try { fr.style.visibility = "visible"; } catch (_) {}
-      try {
-        fr.contentWindow.postMessage({ from: "underbar-parent", action: "expand-from-parent" }, "*");
-      } catch (_) {}
+      /**
+       * 2026-11-13 竹内さん「閉じた状態から開くと白くなり、展開できない」:
+       *   ⚠ 閉じる時に wrap を `display:none` にすると、iframe の中の popup は
+       *     **サイズ0のまま描画を止める**事がある。開いても中身が描き直されず**白い箱**になる。
+       *   → 開く時に **2回**合図を送る:
+       *     ① `expand-from-parent`（今まで通り・popup の見た目を「開いた」にする）
+       *     ② `repaint`（新規・**中身を描き直させる**。高さが0だった時の保険）
+       *   少し遅らせてもう1回送る（描画の準備ができてから効くように）。
+       */
+      const send = function (action) {
+        try { fr.contentWindow.postMessage({ from: "underbar-parent", action: action }, "*"); } catch (_) {}
+      };
+      send("expand-from-parent");
+      send("repaint");
+      setTimeout(function () { send("repaint"); }, 250);
+      setTimeout(function () { send("expand-from-parent"); }, 600);
     }
   }
 

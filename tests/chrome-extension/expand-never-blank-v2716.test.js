@@ -35,7 +35,9 @@ console.log("\n■ ② 開く処理は1か所（_openNow）で、サイズも見
   ok("開く関数が1つ（_openNow）", /function _openNow\(fr\)/.test(ub));
   ok("  サイズを戻す（setSize(true)）", /function _openNow[\s\S]{0,300}setSize\(true\)/.test(ub));
   ok("  iframe を見える状態にする（visibility: visible）", /fr\.style\.visibility = "visible"/.test(ub));
-  ok("  中身に合図を送る（expand-from-parent）", /action: "expand-from-parent"/.test(ub));
+  ok("  中身に合図を送る（expand-from-parent）", /"expand-from-parent"/.test(ub) && /expanded/.test(ub));
+  ok("  合図を**2種類**送る（expand-from-parent＋repaint）", /send\("expand-from-parent"\)/.test(ub) && /send\("repaint"\)/.test(ub));
+  ok("  遅らせてもう1回送る（描画の準備ができてから効くように）", /setTimeout\(function \(\) \{ send\("repaint"\); \}, 250\)/.test(ub));
   ok("  待ちを捨てる（pendingExpand = false）", /function _openNow[\s\S]{0,200}pendingExpand = false;/.test(ub));
   ok("読み込みが終わったら _openNow を呼ぶ（旧の setSize 直書きが無い）", /_openNow\(iframe\)/.test(ub));
   ok("doExpand も _openNow を通る", /function doExpand[\s\S]{0,800}_openNow\(fr\)/.test(ub));
@@ -60,6 +62,17 @@ console.log("\n■ ⑤ 何度呼んでも同じ結果（開く・閉じるを繰
   const openCalls = (ub.match(/^\s*setSize\(true\);/gm) || []).length;
   ok("setSize(true) の**実行**は1か所に寄せた（コメントを除く）", openCalls === 1, openCalls);
   ok("_openNow は何度呼ばれても安全（同じ事をするだけ）", /⚠ 何度呼んでも安全/.test(ub));
+}
+
+console.log("\n■ ⑥ 中身（popup）が白いままにならない（描き直しの合図）");
+{
+  const pp = read("popup.js");
+  ok("repaint の合図を受ける", /e\.data\?\.action === "repaint"/.test(pp));
+  ok("  開いている画面を出し直す", /active\.classList\.remove\("active"\)/.test(pp) && /active\.classList\.add\("active"\)/.test(pp));
+  ok("  開いている画面が無ければ一覧を出す（真っ白を防ぐ）", /showView\("view-list"\)/.test(pp));
+  ok("  強制的にレイアウトを計算させる", /void document\.body\.offsetHeight/.test(pp));
+  ok("  mini-mode も外す", /setMiniMode\(false\)/.test(pp));
+  ok("  失敗しても止めない（try/catch）", /repaint に失敗/.test(pp));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

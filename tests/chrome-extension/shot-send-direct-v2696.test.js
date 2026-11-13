@@ -76,7 +76,7 @@ console.log("\n■ ④ 実際に動かす（縮小→送信）");
     chrome: { storage: { local: { get: async () => ({}), set: (o) => sets.push(o) } } },
     _getAutomationKeyHeader: async () => ({}),
     _snapInstallId: async () => "test",
-    _extVersion: () => "2.7.16",
+    _extVersion: () => "2.7.17",
     fetch: async (url, opts) => { fetchCalls.push({ url, len: opts.body.length }); return { ok: true, status: 200, text: async () => '{"ok":true}' }; },
   };
   vm.createContext(sandbox);

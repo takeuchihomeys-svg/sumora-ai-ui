@@ -6479,6 +6479,33 @@ document.addEventListener("DOMContentLoaded", () => {
       if (e.data?.from === "underbar-parent" && e.data?.action === "expand-from-parent") {
         setMiniMode(false);
       }
+      /**
+       * 2026-11-13 竹内さん「閉じた状態から開くと白くなり、展開できない」:
+       *   閉じる時に親が wrap を `display:none` にするので、この popup は
+       *   **サイズ0のまま描画を止める**事がある。開いても中身が白いまま残る。
+       *   → 「描き直せ」の合図を受けたら、**実際に描き直させる**
+       *     （mini-mode を外す → レイアウトを強制 → 開いている画面を出し直す）。
+       */
+      if (e.data?.from === "underbar-parent" && e.data?.action === "repaint") {
+        try {
+          setMiniMode(false);
+          // 強制的にレイアウトを計算させる（これで「描画を止めたまま」が解ける）
+          void document.body.offsetHeight;
+          const active = document.querySelector(".view.active");
+          if (!active) {
+            // 開いている画面が無い（何かの拍子に外れた）→ 一覧を出す
+            showView("view-list");
+          } else {
+            // 同じ画面を出し直す（白いままを解く）
+            const id = active.id;
+            active.classList.remove("active");
+            void active.offsetHeight;
+            active.classList.add("active");
+            if (id === "view-list") { try { updateTodayBanner && updateTodayBanner(); } catch (_) {} }
+          }
+          window.dispatchEvent(new Event("resize"));
+        } catch (err) { console.warn("[AX] repaint に失敗:", err); }
+      }
       if (e.data?.from === "aixlinx-fill-done") {
         clearTimeout(_fillDoneWatchdog); // 正常完了 → タイムアウト監視をキャンセル
         const btn = document.getElementById("autofill-btn");
