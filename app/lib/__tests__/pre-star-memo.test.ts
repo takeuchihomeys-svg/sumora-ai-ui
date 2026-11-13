@@ -41,9 +41,9 @@ t("🌟から始まる文 → 触らない", stripPreStarMemo(CARD).removed === 
 t("🌟が無い文 → 触らない", stripPreStarMemo("礼金があるため記載しません。").removed === null);
 t("メモだけで🌟の後ろが空 → 触らない", stripPreStarMemo("記載しません。\n🌟").removed === null || stripPreStarMemo("記載しません。\n🌟").text.trim() === "🌟");
 
-// ── 切替（既定 off）
-t("既定 off", preStarMemoStripOn({}) === false);
-t("=on で入る", preStarMemoStripOn({ AIX_PRE_STAR_MEMO_STRIP: "on" }) === true);
+// ── 切替（11/14 既定 on・off で戻る）
+t("既定 on", preStarMemoStripOn({}) === true);
+t("=off で止まる", preStarMemoStripOn({ AIX_PRE_STAR_MEMO_STRIP: "off" }) === false);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

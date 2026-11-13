@@ -20,7 +20,7 @@
 //   ※ ①だけだと、見積書の「【物件名】\n\n初期費用さらに\n🌟…」や、スタッフが足した「（室内イメージ）URL」に当たるので③を必須にした。
 //   ※ 現状の1文（situation_kind）の型は🌟の前に1文を書くのが正しいので、呼ぶ側で外す。
 //
-// 切替: AIX_PRE_STAR_MEMO_STRIP=on の時だけ（既定 off・入口が効いていて直近は 0 のため。悪化0を確かめてから on にする）
+// 切替: 既定 on（11/14 統括役: 全期間10,215行の監査で誤削除0・AI の下書き18件は全部🌟から始まる形に）。AIX_PRE_STAR_MEMO_STRIP=off で戻す
 
 /** お客様向けの言葉の特徴（これが🌟の前にあれば触らない） */
 const CUSTOMER_MARK_RE = /[！!？?😊😌✨🙇🙏😢😭💦🎉👍😆🥺]|ございま|御座いま|申し訳|させて頂|させていただ|お世話/;
@@ -28,7 +28,7 @@ const CUSTOMER_MARK_RE = /[！!？?😊😌✨🙇🙏😢😭💦🎉👍😆�
 const WORK_MARK_RE = /記載|出力|確認(?:します|事項|して|しました)|判断|合致|照合|→|OK|作成|整理|特定|処理|NG|✅|\*\*/;
 
 export function preStarMemoStripOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.AIX_PRE_STAR_MEMO_STRIP ?? "").trim().toLowerCase() === "on";
+  return (env.AIX_PRE_STAR_MEMO_STRIP ?? "").trim().toLowerCase() !== "off";
 }
 
 /**

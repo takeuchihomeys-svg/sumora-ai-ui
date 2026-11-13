@@ -2178,7 +2178,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
       }
       // 2026-11-14 作業員E（下書き ee4eef81・6/30）: 物件オススメ・見積書の🌟の前に書かれた資料の読み取りメモ（「礼金が1ヶ月あるため…記載しません」）を落とす。
       //   今の stripMetaNarration では18件中15件で🌟の前にメモが残った。線は app/lib/pre-star-memo.ts（スタッフの送った文 10,215行で誤削除0・scripts/audit-pre-star-memo.ts）。
-      //   「現状の1文」の型（situation_kind）は🌟の前に1文を書くのが正しいので掛けない。既定 off（AIX_PRE_STAR_MEMO_STRIP=on で入れる）
+      //   「現状の1文」の型（situation_kind）は🌟の前に1文を書くのが正しいので掛けない。既定 on（11/14 監査で誤削除0・AIX_PRE_STAR_MEMO_STRIP=off で戻す）
       const preStarOn = preStarMemoStripOn() && (currentAction === "property_recommendation" || currentAction === "estimate_sheet") && !isSituationKind(body.situation_kind);
       const preStar1 = preStarOn ? stripPreStarMemo(stripped) : { text: stripped, removed: null };
       const meta0 = stripMetaNarration(preStar1.text);
