@@ -4,6 +4,60 @@
 
 ---
 
+## 2026-11-13 学習と統括が本当に繋がっているかを実測して、残った穴2つを直した（**サーバーのみ・拡張の変更なし**）
+
+竹内さん「これでちゃんと学習の部分連携して動けているか。また統括の部分もちゃんと強化されているのか」→ 端から端まで実測した。
+
+### 学習: ✅ 繋がった（実測）
+本番 `/api/human-learn-profile?fresh=1` の結果:
+
+| 見た所 | 結果 |
+|---|---|
+| 元にした記録 | **2944件**（realpro・itandi） |
+| 押す順番 | **12通り**（旧: 0通り） |
+| 押す場所 | 68個・4374回分 |
+| 欄の種類 | 4種類（プルダウン6・チェック6・直接入力1・その他3） |
+| 動き | 速さ565px/秒・曲がり1.04（7428回）・操作の間 中央値524ms |
+| 弱い所 | 40件（すべて「旧版の記録で種類が無い」＝写真から読んで埋める対象） |
+| `saved_to_db` | **true** |
+| `dropped_cols` | `shot_learn`（＝この列だけがDBに無い。他は読めている） |
+
+配線も確認（背景→ページ）:
+- `background.js` `_refreshLearnedBundle` → `/api/human-learn-profile?touch=0` → `chrome.storage.local` に `axlx_learn_next` / `axlx_learn_points`（1日1回）
+- `page-script.js` `_orderByLearned`（条件の入力順）・`_kindOf` / `_aimOf`（押し方と押す位置）
+- **名前の一致**: 学んだキー（`rental_cost1` / `rental_cost2` / `square_meter_l` / `required_time` / `room_layout_id[]` …）は `_basicQueue` の名前と一致 → 実際に効く
+- ⚠ **効く範囲は基本条件（賃料・面積・共益費）の順番だけ**。所在地/沿線モーダルは人の手順どおり固定（`modal_confirm` = 確定してリストへ）。ここは今の所 学習で並べ替えない（崩すと検索が漏れるため）
+
+### 直した穴①: 学習の履歴が1件しか残らない
+`?history=1` が**いつも1行**だった（推移＝学習が進んでいるかが見られない）。
+原因: 保存の後に `created_at < 今-1秒` を**全部消して**いた。
+→ 新しい方から **200件**（`HISTORY_KEEP`）残し、それより古い物だけ消す形に変更。
+
+### 直した穴②: 統括がDBに書いていない
+- `scripts/exam-conductor.ts --run` は結果を**手元のファイルにしか書いていなかった**
+  （`exam-brain.ts --conduct` の方は DB に書いていたが、**統括を通る経路は書いていなかった**）
+- さらに `scripts/exam-conductor.ts` は `loadPlan` を import しておらず、追記した時点で型エラーになる状態だった
+- 統括の結果の形は試験ブレインと**違う**（`pass: "12→14"`・`usd: "$0.123"`・`missStages`）ため、
+  `toExamRun` にそのまま渡すと**点が読めず「合格 ?/?」**になる
+→ 直し:
+- `app/lib/exam-runs.ts` に **`toExamRunFromConductor`** を追加（合格は「今」を採り「前」も残す・落ちた問題は id と段だけ・費用は `$0.123` を数に）
+- `finish()` で **exam_runs にも1行**入れる（`loadPlan` の計画も一緒に。失敗しても統括は止めない）
+- 試験 **34件**（統括の実物の形で11件追加）・`npx tsc --noEmit` 0
+
+### 残り（今夜 0:10 の migrate-schema で揃う）
+`shot_b64` / `shot_in_db` / `shot_learn` / `exam_runs`（表ごと）。
+**明朝の確かめ方**:
+```
+npx tsx --env-file=.env.local scripts/check-db-columns.ts      → 「全部そろっています」
+/api/human-learn-profile?fresh=1                               → dropped_cols が空・弱い所が減る
+/api/human-learn-profile?history=1&limit=5                     → 2件以上（推移が見える）
+/api/exam-runs                                                 → missing_table が消える
+```
+⚠ 統括（`exam-conductor --run`）は**このPCでは一度も走っていない**（`.claude/exam-cache` が無い・順番待ち0件）。
+→ DB連携のコードは入れたが、**実際に1本流すまで exam_runs にデータは入らない**。次に統括を回した時に確かめる。
+
+---
+
 ## 2026-11-13 v2.7.14 リアプロのボタンで真っ白（**また私の変更が原因**）→ 自動では縮めない
 
 竹内さん「**リアプロのボタンを押したらこうなる**」（真っ白な画面・v2.7.13）
