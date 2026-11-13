@@ -10,7 +10,7 @@ if (process.argv[2] === "dump") {
 } else {
   const run = (v: string) => execFileSync("npx", ["tsx", `"${__filename}"`, "dump"], { env: { ...process.env, NEXT_PUBLIC_SUPABASE_URL: "http://localhost:1", NEXT_PUBLIC_SUPABASE_ANON_KEY: "dummy", ANTHROPIC_API_KEY: "dummy", BRAIN_PROMPT_RULES_1113: v }, maxBuffer: 64 * 1024 * 1024, shell: true, stdio: ["ignore", "pipe", "ignore"] }).toString("utf8");
   const off = run("off"), on = run("on");
-  t("既定は off", !promptRules1113Enabled({}) && promptRules1113Enabled({ BRAIN_PROMPT_RULES_1113: "on" }));
+  t("既定は on（11/13 束の試験で悪化0）・off で止まる", promptRules1113Enabled({}) && !promptRules1113Enabled({ BRAIN_PROMPT_RULES_1113: "off" }));
   t("off の時は何も変えない", applyPromptRules1113("abc", {}) === "abc");
   t("実物 off: 差し替え前の文が両方ある", PROMPT_RULE_EDITS_1113.every((e) => off.includes(e.from)));
   t("実物 on: 差し替え前の文が消え、差し替えの文が入る", PROMPT_RULE_EDITS_1113.every((e) => !on.includes(e.from) && on.includes(e.to)));

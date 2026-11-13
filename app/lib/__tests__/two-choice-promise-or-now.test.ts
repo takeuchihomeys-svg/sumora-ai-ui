@@ -38,7 +38,7 @@ t("指定の文: AIX で送らず約束・確認していない事は書かな�
   delete process.env.BROUGHT_TWO_CHOICE_ESTIMATE; }
 // 2026-11-12 作業員7（TWO_CHOICE_NARROW_ESTIMATE_SOLE）: 見積以外の約束がある番は見積書で決め切らない（答案の実物の依頼）
 {
-  t("見積だけで決め切る線: 既定 off", !narrowEstimateSoleOn({}) && narrowEstimateSoleOn({ TWO_CHOICE_NARROW_ESTIMATE_SOLE: "on" }));
+  t("見積だけで決め切る線: 既定 on（11/13 束の試験で悪化0）・off で止まる", narrowEstimateSoleOn({}) && !narrowEstimateSoleOn({ TWO_CHOICE_NARROW_ESTIMATE_SOLE: "off" }));
   t("q077（見積の約束＋空きの確認3つ）は止める", hasNonCostPromise([{ route: "promise", about: "property_cost" }, { route: "reply", about: "search_condition" }, { route: "promise", about: "vacancy" }]));
   t("q183・q133（見積だけの約束）は止めない", !hasNonCostPromise([{ route: "reply", about: "search_condition" }, { route: "promise", about: "property_cost" }]) && !hasNonCostPromise([{ route: "promise", about: "property_cost" }, { route: "promise", about: "property_cost" }]));
   t("q184（AIX の依頼）は止めない", !hasNonCostPromise([{ route: "aix", about: "property_cost" }, { route: "aix", about: "vacancy" }]));

@@ -13,8 +13,9 @@ import { ANSWER_SOURCES } from "./brain-now-later";
 import { fromBrainAnswerSource, type AnswerSourceKind, type SourceHint } from "./answer-source";
 
 type Env = Record<string, string | undefined>;
+// 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める ASK_PARTS_SPLIT=off）
 export function askPartsSplitOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.ASK_PARTS_SPLIT ?? "").trim().toLowerCase() === "on";
+  return (env.ASK_PARTS_SPLIT ?? "on").trim().toLowerCase() !== "off";
 }
 
 export const PART_SOURCES = ANSWER_SOURCES;

@@ -508,8 +508,9 @@ export function undatedPromiseToContact(p: UndatedPromise, ymd: string, nowIso: 
  *   2c0222c2（11/12・入居 2027年3月・条件のフォームの後の「よろしくお願いいたします！」）でブレインが「探し始めの時期（会社の方針）」を分からない事に出した。
  *   既定 off（FAR_MOVE_IN_FACT=on）。入居の始まりが今日から45日以上先の時だけ
  */
+// 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める FAR_MOVE_IN_FACT=off）
 export function farMoveInFactOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FAR_MOVE_IN_FACT ?? "").trim().toLowerCase() === "on";
+  return (env.FAR_MOVE_IN_FACT ?? "on").trim().toLowerCase() !== "off";
 }
 export function farMoveInFactLine(conditionMoveIn: string | null | undefined, nowIso: string, env?: Record<string, string | undefined>): string | null {
   if (!farMoveInFactOn(env) || !conditionMoveIn) return null;

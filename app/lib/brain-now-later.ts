@@ -11,8 +11,9 @@
 
 type Env = Record<string, string | undefined>;
 
+// 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める BRAIN_NOW_LATER_FIRST=off）
 export function nowLaterFirstOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return String(env.BRAIN_NOW_LATER_FIRST ?? "").trim().toLowerCase() === "on";
+  return String(env.BRAIN_NOW_LATER_FIRST ?? "on").trim().toLowerCase() !== "off";
 }
 
 export type NowThisTurn = "deliver" | "answer" | "promise" | "ack";
