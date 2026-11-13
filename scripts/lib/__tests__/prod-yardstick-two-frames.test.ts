@@ -1,7 +1,8 @@
 // 本番の物差しの「今の通／後の通」の2枠（scripts/lib/prod-yardstick.ts）のテスト（LLM も DB も使わない）
 // 2026-11-12 作業員1（弱い所 268）。見張りの番 11447・12189 は実物の値（作業員16 の指摘の番）
 // 実行: npx tsx scripts/lib/__tests__/prod-yardstick-two-frames.test.ts
-import { brainFrames, staffFrames, judgeTwoFrames, countTwoFrames, twoStageKindOf, yardstickTwoFramesOn } from "../prod-yardstick";
+import { brainFrames, staffFrames, judgeTwoFrames, countTwoFrames, twoStageKindOf, yardstickTwoFramesOn, fillStaffAix, yardstickAixLogFillOn } from "../prod-yardstick";
+import { aixFamily } from "../prod-yardstick-db";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -57,6 +58,20 @@ ok("2段の種類", twoStageKindOf("rule:two_stage_promise(pickup_unless_ack)+se
   ok("既定 on（11/13）", staffFrames(t0, mv).now === "条件ヒアリング");
   process.env.YARDSTICK_COMBO_WINDOW = "off";
   ok("off で止まる", staffFrames(t0, mv).now === "返信");
+}
+// 2026-11-13 作業員8b: 見張りの staff_aix が空の番を aix_usage_logs で補う（実物 11447・11/05 09:56:29Z・竹内さん 14分 返信 → 25分 property_check_result＋condition_hearing）
+{
+  const T = Date.parse("2026-11-05T09:56:29.927Z");
+  const logs = [{ at: Date.parse("2026-11-05T10:21:38.708Z"), aixType: "property_check_result", checkPattern: null }, { at: Date.parse("2026-11-05T10:21:44.832Z"), aixType: "condition_hearing", checkPattern: null }, { at: T - 3_600_000, aixType: "estimate_sheet", checkPattern: null }];
+  ok("補いは既定 off", !yardstickAixLogFillOn({}) && yardstickAixLogFillOn({ YARDSTICK_AIX_LOG_FILL: "on" }));
+  const filled = fillStaffAix([], logs, T);
+  ok("空の見張りは番の後の記録で補う（番の前は入れない）", filled.map((a) => a.aixType).join(",") === "property_check_result,condition_hearing", JSON.stringify(filled));
+  ok("見張りに有る時は見張りのまま", fillStaffAix([{ at: T + 60_000, aixType: "estimate_sheet", checkPattern: null }], logs, T).map((a) => a.aixType).join() === "estimate_sheet");
+  const fam = (at: number) => aixFamily(filled.filter((a) => Math.abs(a.at - at) <= 10 * 60_000).sort((a, b) => Math.abs(a.at - at) - Math.abs(b.at - at))[0]?.aixType ?? "aix_unknown");
+  const moves = [{ at: T + 14 * 60_000, family: "返信" }, { at: Date.parse("2026-11-05T10:21:39Z"), family: fam(Date.parse("2026-11-05T10:21:39Z")) }];
+  const s2 = staffFrames(T, moves, { comboMs: 120_000 });
+  ok("補った後: 後の通は確認の系統（aix_unknown でない）・組の窓（2分）には入らない", s2.now === "返信" && s2.later !== "aix_unknown" && !!s2.later && !s2.combo, JSON.stringify(s2));
+  ok("ブレインの見積は今の通の外れのまま（判断の外れ＝弱い所 836）", judgeTwoFrames(brainFrames(aixFamily("estimate_sheet"), "rule:answerable_direct(brought_estimate)"), s2).now === "miss");
 }
 console.log(`prod-yardstick-two-frames: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
