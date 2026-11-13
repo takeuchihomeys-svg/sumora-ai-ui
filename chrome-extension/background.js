@@ -2173,7 +2173,10 @@ async function _takeShot(msg, done) {
         data_url: shotForUpload, site: msg.site || null, what: msg.what || null,
         shot_w: shotW, shot_h: shotH,
         kind: msg.kind || null, x: msg.x, y: msg.y,
-        mode: null, run_id: _shotRun, seq: _shotSeq,
+        // 2026-11-14 竹内さん「通常と自動のところで自動で強化必要な部分強化する」:
+        //   ⚠ 旧は `mode: null` 固定だったので、どのモードの写真か分からなかった（DBのmodeが空）。
+        //   → 今のモードを入れる（normal / staff / aix / brain…）。
+        mode: await _modeLabelNow(), run_id: _shotRun, seq: _shotSeq,
         // 2026-11-13 竹内さん「写真から学習する」: この写真の直前までの操作の並び
         ops: Array.isArray(msg.ops) ? msg.ops : null,
         // 2026-11-13: どのタブか（その場の動きの癖を一緒に送るため）
@@ -2319,6 +2322,23 @@ try {
  *     storage の値を見張る＋短い setTimeout の連鎖で回す（動いている間は眠らない）。
  */
 var _recTimer = null;
+/**
+ * 2026-11-14 竹内さん「通常と自動のところで自動で強化必要な部分強化する」:
+ *   今のモードを1語で返す（写真と記録の `mode` 列に入れる）。
+ *   ⚠ これが無いと「自動の時に何が起きたか」「通常の時に何を学んだか」を分けられない。
+ *   ⚠ 読めない時は null（推測で埋めない）。
+ */
+async function _modeLabelNow() {
+  try {
+    var core = self.AxlxModeCore;
+    if (!core || !core.readState) return null;
+    var keys = core.STORAGE_KEYS || ["staffMode", "staffModeAt", "aixMode", "aiMode", "brainMode", "autoModeAt"];
+    var raw = await chrome.storage.local.get(keys);
+    var st = core.readState(raw || {}, Date.now());
+    var m = st && st.mode ? String(st.mode) : null;
+    return m ? m.slice(0, 20) : null;
+  } catch (_) { return null; }
+}
 /**
  * 2026-11-14 竹内さん「なんで自動モードまだかいぜんされていないのか」:
  *   ⚠ **録画ループが多重に走っていた**（実測: 2分間で392枚・間隔 2ms/17ms。

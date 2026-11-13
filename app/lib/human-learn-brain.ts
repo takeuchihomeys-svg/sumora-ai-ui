@@ -113,6 +113,22 @@ export type HumanLearnBundle = {
   /** ⑥ 操作と操作の間（中央値 ms） */
   gaps: { median_ms: number | null; samples: number };
   /**
+   * 2026-11-14 竹内さん「いま通常と自動のところで自動で強化必要な部分強化するのと、
+   *   できていない部分もちゃんとデータベースに理解させて強化していく形とする」:
+   *   **モード別**（normal／staff／aix／brain …）の学び。
+   *   ⚠ 統括が「**自動の時に足りない物**」と「**通常の時に足りない物**」を分けて判断できるようにする。
+   *   各モードに: 記録数・押す順番・画面ごとの手順・弱い所・動きの速さ。
+   */
+  by_mode?: Record<string, {
+    rows: number;
+    next: Record<string, NextStat>;
+    screen_flow: Record<string, { n: number; steps: Array<{ from: string; to: string; n: number }> }>;
+    gaps: { median_ms: number | null; samples: number };
+    points_n: number;
+  }>;
+  /** どのモードの記録が何件あったか（順位づけの材料） */
+  mode_counts?: Record<string, number>;
+  /**
    * 2026-11-13 竹内さん「弱い部分等は学習の統括が判断して学習を繰り返していく」:
    *   **弱い所**（同じ欄で種類が割れている・種類が分からない・写真と数値が食い違う・押せない欄を押した）。
    *   統括がこれを読んで「次に何を学ぶか」を決める。
@@ -143,6 +159,8 @@ export type HumanLearnBundle = {
     counts: Record<string, number>;
     filled: number;
     summary: string;
+    /** 2026-11-14: モードごとの判断（通常／スタッフ／AIX）。足りない物と次にやる事。 */
+    mode_plan?: Array<{ mode: string; rows: number; verdict: string; action: string }>;
   };
   /** 何を学んだか（人が読む1行ずつ） */
   lines: string[];
@@ -492,11 +510,12 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     weak = findWeakPoints(points as never, [], []);
   }
   /**
-   * 2026-11-13 竹内さん「学習の統括が強化されるように、その点も徹底する」:
+   * 2026-11-14 竹内さん「学習の統括が強化されるように、その点も徹底する」:
+  /**
    *   弱い所を**次にやる事**に変える（統括の判断）。優先度順・根拠つき。
+   *   さらに**モード別**（通常／自動／AIX）に「足りているか・何を足すか」も決める。
+   *   ⚠ モード別の計算（by_mode）が済んでから呼ぶ。
    */
-  const learnPlan = planLearnFromWeak(weak, guessed);
-
   // 元にした期間
   const times = list.map((r) => (r.created_at ? Date.parse(String(r.created_at)) : NaN)).filter((t) => Number.isFinite(t));
   const sites = Array.from(new Set(list.map((r) => String(r.site || "")).filter(Boolean)));
@@ -519,6 +538,78 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     }))
     : { screens: {}, total: 0, withOps: 0 };
 
+  /**
+   * 2026-11-14 竹内さん「自動で強化必要な部分を強化する。できていない部分もDBに理解させて強化する」:
+   *   **モード別**に学ぶ（normal / staff / aix / brain …）。
+   *   ⚠ 統括が「自動の時に足りない物」と「通常の時に足りない物」を**分けて**判断できるようにする。
+   *   ⚠ 記録が3件未満のモードは作らない（偶然を学ばない）。
+   */
+  const modeBuckets = new Map<string, MotionRow[]>();
+  for (const r of list) {
+    const m = String(r.mode ?? "").trim();
+    if (!m) continue;                       // モードが空の記録（旧版）は全体の学びにだけ使う
+    if (!modeBuckets.has(m)) modeBuckets.set(m, []);
+    modeBuckets.get(m)!.push(r);
+  }
+  const by_mode: NonNullable<HumanLearnBundle["by_mode"]> = {};
+  const mode_counts: Record<string, number> = {};
+  for (const [m, sub] of modeBuckets) {
+    mode_counts[m] = sub.length;
+    if (sub.length < 3) continue;
+    const subSeqs: Array<Array<{ f: string }>> = [];
+    const seen = new Set<string>();
+    for (const r of sub) {
+      const day = String(r.created_at ?? "").slice(0, 10);
+      for (const s of sequencesOf(r)) {
+        if (looksLikeToggleLoop(s)) continue;
+        const key = day + "|" + s.map((x) => String(x.f ?? "")).join(">");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        subSeqs.push(s);
+      }
+    }
+    const subNext = learnNextPress(subSeqs, { min: 2 });
+    const subFlow = (() => {
+      const shotRowsSub = sub.filter((r) => {
+        const x = r as unknown as Record<string, unknown>;
+        return Array.isArray(x.shot_ops) || (x.shot_learn && typeof x.shot_learn === "object");
+      });
+      if (!shotRowsSub.length) return {};
+      const lf = learnFromShots(shotRowsSub.map((r) => {
+        const x = r as unknown as Record<string, unknown>;
+        return { url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn };
+      }));
+      const out: Record<string, { n: number; steps: Array<{ from: string; to: string; n: number }> }> = {};
+      for (const [sc, v] of Object.entries(lf.screens)) out[sc] = { n: v.n, steps: v.steps.slice(0, 12) };
+      return out;
+    })();
+    const subGaps = sub.map((r) => num(r.gap_ms)).filter((v): v is number => v != null && v > 0);
+    by_mode[m] = {
+      rows: sub.length,
+      next: subNext,
+      screen_flow: subFlow,
+      gaps: { median_ms: median(subGaps), samples: subGaps.length },
+      points_n: sub.reduce((s, r) => s + (num(r.points_n) ?? 0), 0),
+    };
+  }
+
+  /**
+   * 2026-11-14 竹内さん「学習の統括が強化されるように、その点も徹底する」:
+   *   弱い所を**次にやる事**に変える（統括の判断）。優先度順・根拠つき。
+   *   さらに**モード別**（通常／自動／AIX）に「足りているか・何を足すか」も決める。
+   */
+  const learnPlan = planLearnFromWeak(weak, guessed, Object.fromEntries(
+    Object.entries(by_mode).map(([m, v]) => [
+      m,
+      {
+        rows: v.rows,
+        next: Object.keys(v.next).length,
+        steps: Object.values(v.screen_flow).reduce((s, x) => s + x.steps.length, 0),
+        gaps: v.gaps,
+      },
+    ]),
+  ));
+
   const bundle: HumanLearnBundle = {
     v: 1,
     generated_at: new Date(nowMs).toISOString(),
@@ -537,6 +628,13 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     ...(weak.length ? { weak } : {}),
     ...(Object.keys(shotLearn.screens).length ? { screen_flow: shotLearn.screens, shots: { total: shotLearn.total, with_ops: shotLearn.withOps } } : {}),
     ...(learnPlan.items.length || learnPlan.filled ? { learn_plan: learnPlan } : {}),
+    ...(Object.keys(by_mode).length ? { by_mode } : {}),
+    /**
+     * 2026-11-14: `mode_counts` は by_mode と**別**に出す。
+     *   ⚠ 旧は `{ by_mode, mode_counts }` とまとめていたので、by_mode が空（3件未満だけ）だと
+     *     **件数の内訳まで消えていた**（どのモードで何件動いたか分からない）。
+     */
+    ...(Object.keys(mode_counts).length ? { mode_counts } : {}),
     lines: [],
   };
   bundle.lines = describeBundle(bundle);
@@ -616,6 +714,18 @@ export function describeBundle(b: HumanLearnBundle): string[] {
       out.push(`  ${i + 1}. ${x.name} … ${x.action}`);
     });
     if (!lp.items.length) out.push("  なし（今の所そろっています）");
+  }
+  /**
+   * 2026-11-14 竹内さん「通常と自動のところで自動で強化必要な部分強化する」:
+   *   **モードごと**の判断を出す（通常／スタッフ／AIX）。
+   */
+  if (b.learn_plan && Array.isArray(b.learn_plan.mode_plan) && b.learn_plan.mode_plan.length) {
+    out.push("");
+    out.push("▼ モードごとの判断");
+    for (const m of b.learn_plan.mode_plan) {
+      out.push(`  ・${m.verdict}`);
+      if (m.action && m.action !== "追加で強化する所は無し") out.push(`    → ${m.action}`);
+    }
   }
   /**
    * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい」:

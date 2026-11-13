@@ -363,11 +363,19 @@ export function learnFromShots(
 export function planLearnFromWeak(
   weak: ReadonlyArray<{ kind: string; name: string; why?: string; next?: string }>,
   guessed: ReadonlyArray<{ name: string; kind: string; conf: number }> = [],
+  /**
+   * 2026-11-14 竹内さん「自動で強化必要な部分を強化する・できていない部分もDBに理解させて強化する」:
+   *   **モード別**の材料。`modes` に各モードの記録数と学べた量を渡すと、
+   *   「**自動（aix）は学びが少ない**」「**通常は学べている**」を統括が判断できる。
+   */
+  modes: Record<string, { rows: number; next: number; steps: number; gaps: { median_ms: number | null; samples: number } }> = {},
 ): {
   items: Array<{ priority: number; kind: string; name: string; action: string; why: string }>;
   counts: Record<string, number>;
   filled: number;
   summary: string;
+  /** モードごとの判断（足りない物・次にやる事） */
+  mode_plan: Array<{ mode: string; rows: number; verdict: string; action: string }>;
 } {
   const PRI: Record<string, number> = {
     photo_vs_record: 1,
@@ -415,11 +423,46 @@ export function planLearnFromWeak(
   const top = Object.entries(left).sort((a, b) => (PRI[a[0]] ?? 9) - (PRI[b[0]] ?? 9));
   if (top.length) parts.push("残り: " + top.map(([k, n]) => `${k} ${n}件`).join("・"));
   else parts.push("残り: なし（やる事はありません）");
+
+  /**
+   * 2026-11-14 竹内さん「自動で強化必要な部分を強化する」:
+   *   **モードごと**に「足りているか・何を足すか」を出す。
+   *   ・記録が0 … **そのモードで一度も動いていない**（＝学べていない）
+   *   ・記録はあるが押す順番が0 … 操作が記録されていない（写真と結びついていない）
+   *   ・操作の間が無い … 「待つ長さ」を学べていない
+   */
+  const MODE_JA: Record<string, string> = { normal: "通常", staff: "スタッフ", aix: "AIX（自動）", brain: "ブレイン", auto: "自動" };
+  const modePlan: Array<{ mode: string; rows: number; verdict: string; action: string }> = [];
+  for (const [m, v] of Object.entries(modes || {})) {
+    const ja = MODE_JA[m] || m;
+    const rows = Number(v?.rows) || 0;
+    const nx = Number(v?.next) || 0;
+    const steps = Number(v?.steps) || 0;
+    const gapN = Number(v?.gaps?.samples) || 0;
+    if (rows < 3) {
+      modePlan.push({ mode: m, rows, verdict: `${ja}: 記録が${rows}件だけ（学べていない）`, action: `「${ja}」で検索して録画する（操作が3件以上たまると学べます）` });
+    } else if (nx === 0) {
+      modePlan.push({ mode: m, rows, verdict: `${ja}: ${rows}件あるのに押す順番が0通り`, action: `「${ja}」の時に写真へ操作を付ける（ops が空。タブの取り違え／撮影の失敗を疑う）` });
+    } else if (steps === 0) {
+      modePlan.push({ mode: m, rows, verdict: `${ja}: 押す順番は${nx}通りだが画面の手順が0`, action: `「${ja}」でもう少し操作する（同じ日の同じ並びが2回以上そろうと学べます）` });
+    } else if (gapN === 0) {
+      modePlan.push({ mode: m, rows, verdict: `${ja}: 学べている（${nx}通り・手順${steps}）が待つ長さが0`, action: `操作の間（g）を記録する（押してから次まで待つ時間）` });
+    } else {
+      modePlan.push({ mode: m, rows, verdict: `${ja}: 学べています（押す順番${nx}通り・画面${steps}・間${Math.round(Number(v.gaps.median_ms) || 0)}ms）`, action: "追加で強化する所は無し" });
+    }
+  }
+  /** 記録が0件のモードも知りたい（mode_counts に無い＝そのモードで動いていない） */
+  for (const m of ["normal", "staff", "aix"]) {
+    if (!(m in (modes || {}))) {
+      modePlan.push({ mode: m, rows: 0, verdict: `${MODE_JA[m] || m}: 記録が0件`, action: `「${MODE_JA[m] || m}」で検索して録画する` });
+    }
+  }
   return {
     items: items.slice(0, 40),
     counts,
     filled: guessed.length,
     summary: parts.join("／"),
+    mode_plan: modePlan,
   };
 }
 

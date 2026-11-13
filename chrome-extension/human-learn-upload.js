@@ -50,12 +50,27 @@
 
   /**
    * 2026-11-11: 今のモード（通常／スタッフ）を読む。DB の `mode` が空だったのを直す。
-   *   自動・AIX では覚えないので、ここに来るのは通常かスタッフ。
+   * 2026-11-14 竹内さん「通常と自動のところで自動で強化必要な部分強化する」:
+   *   ⚠ 旧は `staffMode` しか見ておらず、**通常／自動／AIX／ブレインの区別が付かなかった**
+   *     （実測: DB の mode が全部空）。→ どのモードの動きかを学べず、
+   *     「自動の時に必要な強化」と「通常の時の学び」を分けられなかった。
+   *   → `AxlxModeCore`（モードの正本）から読む。読めなければ今まで通り staff／normal。
    */
   function _modeNow(cb) {
     try {
-      chrome.storage.local.get(["staffMode", "staffModeAt"], function (r) {
+      var core = self.AxlxModeCore || null;
+      var keys = (core && core.STORAGE_KEYS) || ["staffMode", "staffModeAt", "aixMode", "aiMode", "brainMode", "autoModeAt"];
+      chrome.storage.local.get(keys, function (r) {
         var s = r || {};
+        try {
+          if (core && core.readState) {
+            var st = core.readState(s, Date.now());
+            /** normal / staff / aix / brain×aix を1語に（DB の mode 列にそのまま入る） */
+            var m = String(st && st.mode ? st.mode : "normal");
+            cb(m);
+            return;
+          }
+        } catch (_) { /* 読めなければ下の従来の判定 */ }
         var at = s.staffModeAt || 0;
         var staffOn = !!s.staffMode && (!at || Date.now() - at <= 2 * 60 * 60 * 1000);
         cb(staffOn ? "staff" : "normal");
