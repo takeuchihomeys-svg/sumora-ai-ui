@@ -117,3 +117,49 @@ export function factLedgerBlock(facts: ReadonlyArray<Fact>, nowMs: number): stri
   const cf = factConflicts(facts).map((c) => `${c.key}: ${SOURCE_JA[c.first.source]}=${c.first.value}／${SOURCE_JA[c.other.source]}=${c.other.value}`);
   return `【このお客様の確かな事実の帳面（いつ・どこから）】まずこれを読む。一次（記録・送った事の台帳・メモ）とまとめ（前の判断・全体の分析）が食い違う時は、新しい・一次の方を正にする（決めるのはあなた）\n${lines.join("\n")}${cf.length ? `\n【帳面の食い違い】${cf.join("／")}` : ""}`;
 }
+
+// ── 2026-11-13 作業員1（点検役「会話の流れの読み」・12548・12370・12306）: 帳面に「事情」「外した物件」「言い直した条件（範囲付き）」「再来」を持たせ、
+//   今の一通と照らす印（前提にしている／言い直し／前の決定の取り消し／再来）を出す。決めるのはブレイン（印は材料だけ）。既定 off（FACT_LEDGER_THREE=on）
+export function factLedgerThreeOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.FACT_LEDGER_THREE ?? "").trim().toLowerCase() === "on";
+}
+export type FactThreeInput = {
+  /** お客様の事情（メモの事情・決める人・会社の上限 等） */
+  circumstances?: ReadonlyArray<{ text: string; at?: string | null }>;
+  /** 外した物件（お客様が「ここは無しで」と言った・こちらが対象から外した） */
+  excluded?: ReadonlyArray<{ name: string; why?: string | null; at?: string | null }>;
+  /** 言い直した条件（property_condition_history・scope＝その条件が効く範囲 例「このエリアだけ」） */
+  restated?: ReadonlyArray<{ field: string; from: string | null; to: string | null; scope?: string | null; at?: string | null }>;
+  /** 再来（前の回の結果・deal_outcomes の前の episode） */
+  revisit?: { result: string; endedAt: string | null; propertyName?: string | null } | null;
+};
+const FIELD_JA: Record<string, string> = { rent_max: "家賃の上限", rent_min: "家賃の下限", desired_area: "エリア", floor_plan: "間取り", move_in_time: "入居時期", walk_minutes: "駅徒歩", pet: "ペット", preferences: "こだわり", other_requests: "その他の要望", building_age: "築年数" };
+export function factsThree(x: FactThreeInput): Fact[] {
+  const out: Fact[] = [];
+  for (const c of (x.circumstances ?? []).slice(-6)) out.push({ key: `circ:${clip(c.text, 16)}`, kind: "memo", value: `事情: ${clip(c.text, 60)}`, at: c.at ?? null, source: "memo" });
+  for (const e of (x.excluded ?? []).slice(-6)) out.push({ key: `excluded:${clip(e.name, 20)}`, kind: "property", value: `外した物件: ${clip(e.name, 30)}${e.why ? `（${clip(e.why, 30)}）` : ""}`, at: e.at ?? null, source: "state" });
+  for (const r of (x.restated ?? []).slice(-6)) out.push({ key: `restated:${r.field}`, kind: "memo", value: `言い直した条件: ${FIELD_JA[r.field] ?? r.field} ${clip(r.from ?? "なし", 20)}→${clip(r.to ?? "なし", 20)}${r.scope ? `（範囲: ${clip(r.scope, 20)}）` : ""}`, at: r.at ?? null, source: "state" });
+  if (x.revisit) out.push({ key: "revisit", kind: "stage", value: `再来: 前の回は ${x.revisit.result}${x.revisit.propertyName ? `（${clip(x.revisit.propertyName, 30)}）` : ""}${x.revisit.endedAt ? `・${x.revisit.endedAt.slice(0, 10)} まで` : ""}`, at: x.revisit.endedAt, source: "state" });
+  return out;
+}
+export type TurnFactMark = { mark: "前提" | "言い直し" | "取り消し" | "再来"; fact: string };
+/** 今の一通と帳面を照らす（決まった語・印は材料。決めるのはブレイン） */
+export function turnFactMarks(turnText: string, x: FactThreeInput): TurnFactMark[] {
+  const t = String(turnText ?? "").normalize("NFKC");
+  const out: TurnFactMark[] = [];
+  for (const e of x.excluded ?? []) { const core = e.name.replace(/\s*[0-9]{2,4}号?室?$/, "").trim(); if (core.length >= 2 && t.includes(core)) out.push({ mark: "取り消し", fact: `外した物件「${clip(e.name, 30)}」をまた話している` }); }
+  for (const r of x.restated ?? []) {
+    const ja = FIELD_JA[r.field] ?? r.field;
+    const hit = r.field.startsWith("rent") ? /家賃|万円?|円|予算/.test(t) : r.field === "desired_area" ? /エリア|駅|区|周辺/.test(t) : r.field === "move_in_time" ? /入居|引っ?越|月/.test(t) : t.includes(ja);
+    if (hit) out.push({ mark: "言い直し", fact: `${ja}（前に ${clip(r.from ?? "なし", 16)}→${clip(r.to ?? "なし", 16)}${r.scope ? `・範囲 ${clip(r.scope, 16)}` : ""}）に触れている` });
+  }
+  for (const c of x.circumstances ?? []) {
+    const words = (c.text.match(/[一-龯ァ-ヶー]{2,}/g) ?? []).filter((w) => !/お客様|こちら|物件|お部屋/.test(w)).slice(0, 6);
+    if (words.some((w) => t.includes(w))) out.push({ mark: "前提", fact: `事情「${clip(c.text, 40)}」を前提にしている` });
+  }
+  if (x.revisit) out.push({ mark: "再来", fact: `前の回（${x.revisit.result}）がある会話` });
+  return out.slice(0, 8);
+}
+export function turnFactMarksLine(marks: ReadonlyArray<TurnFactMark>): string {
+  return marks.length ? `【今の一通と帳面の照らし（印・決めるのはあなた）】${marks.map((m) => `${m.mark}: ${m.fact}`).join("／")}` : "";
+}
