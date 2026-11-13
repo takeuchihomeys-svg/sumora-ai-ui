@@ -162,3 +162,17 @@ export function countTwoFrames(rows: ReadonlyArray<{ scene: string | null; judge
   }
   return m;
 }
+
+// ─── 見張りの staff_aix が空の番を aix_usage_logs で補う（2026-11-13 作業員8b・統括役・弱い所 836 の調べで見つけた）──────────────
+//   見張り 11447 は line_watch_turns.staff_aix が空で、竹内さんの25分後の AIX（property_check_result・condition_hearing）が「aix_unknown」に数えられていた。
+//   見張りの行に AIX が無い時だけ、その会話の aix_usage_logs の番の後 hours 時間以内の行で補う（見張りに有る時は見張りのまま）。
+//   staffFrames（作業員7b の組の窓）と staffFirstMove に同じ AIX の一覧が入る＝系統の決め方は変えない。既定 off（YARDSTICK_AIX_LOG_FILL=on）
+export function yardstickAixLogFillOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.YARDSTICK_AIX_LOG_FILL ?? "").trim().toLowerCase() === "on";
+}
+export type AixLogLite = { at: number; aixType: string; checkPattern: string | null };
+export function fillStaffAix(watch: ReadonlyArray<AixLogLite>, convLogs: ReadonlyArray<AixLogLite>, turnAtMs: number, opts: { hours?: number } = {}): AixLogLite[] {
+  if (watch.length) return [...watch];
+  const lim = (opts.hours ?? 24) * 3_600_000;
+  return convLogs.filter((a) => a.at >= turnAtMs && a.at - turnAtMs < lim).sort((a, b) => a.at - b.at);
+}
