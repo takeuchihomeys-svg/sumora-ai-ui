@@ -106,8 +106,13 @@ export async function GET(req: NextRequest) {
    *   ⚠ 重くしない: 直近3日・最大3000行まで。作れなければ今まで通り（空を返す）。
    */
   const stale = !row || (Date.now() - Date.parse(String(row.created_at ?? 0)) > 30 * 60 * 1000);
+  /**
+   * 2026-11-13: `?fresh=1` で**必ず作り直す**（30分待たずに確かめたい時）。
+   *   竹内さん「学習できていない部分も学習できるようになっているのか」→ 待たずに確かめたい。
+   */
+  const forceFresh = req.nextUrl.searchParams.get("fresh") === "1";
   let why: string | null = null;
-  if (stale) {
+  if (stale || forceFresh) {
     try {
       const fresh = await buildNow(scope, (m) => { why = m; });
       if (fresh) {
