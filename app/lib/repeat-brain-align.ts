@@ -196,6 +196,10 @@ export type AckFormFacts = {
   promise: string;
   customer: "了承だけ" | "質問あり" | "急ぎ・日付あり" | "その他の中身";
   minutes: number | null;
+  /** 前のこちらの通の約束の中身の全部（2026-11-14 作業員D: ACK_CONFIRM_AIX_PATH で道の行を足すか決める。最後の文は「確認出来次第ご連絡」＝contact だけのことが多いので通の全部を見る） */
+  topics?: PromiseTopic[];
+  /** 約束がお客様の動きを待つ条件つき（「お送り頂き次第〜お送りさせて頂きます」q390）＝まだ果たす番ではない */
+  conditional?: boolean;
 };
 /** 前のこちらの約束と今のお客様の発言から材料を読む（無い時 null）。messages は古い順 */
 export function ackFormFacts(messagesOldestFirst: ReadonlyArray<{ sender: string; text: string | null; created_at?: string | null }>): AckFormFacts | null {
@@ -216,7 +220,28 @@ export function ackFormFacts(messagesOldestFirst: ReadonlyArray<{ sender: string
   const customer = isAckOnlyTurn(cust) ? "了承だけ" : /[?？]|ですか|ますか|でしょうか/.test(joined) ? "質問あり" : /急|早め|今日中|明日|[0-9０-９]+[\/月日時]/.test(joined) ? "急ぎ・日付あり" : "その他の中身";
   const firstCust = arr[i + 1];
   const minutes = prev.created_at && firstCust?.created_at ? Math.max(0, Math.round((Date.parse(firstCust.created_at) - Date.parse(prev.created_at)) / 60000)) : null;
-  return { family, form, promise: promise.slice(0, 60), customer, minutes };
+  const topics = [...new Set(ss.flatMap((x) => promiseTopics(x)))];
+  const conditional = ss.some((x) => promiseTopics(x).length > 0 && ACK_COND_PROMISE_RE.test(x));
+  return { family, form, promise: promise.slice(0, 60), customer, minutes, topics, conditional };
+}
+// ── 2026-11-14 作業員D（q091・BRAIN_MSG_WINDOW_UNITS の悪化の掘り）: 確認・見積の約束の直後の了承だけの番で、材料どうしが食い違っていた ──
+//   ★の決まり・【まだ果たしていないこちらの約束】は「約束を果たす AIX の番」（竹内さんの決定 C 10/14・KB 2b1e0044「確認・見積の約束の後は AIX のまま」）、
+//   この材料は「竹内さんの実送信 受けだけ 5・待ちの形 3」と返信の形だけを並べ、道を言っていない。ルール⑥は「aix は null」。
+//   ブレイン（DeepSeek）は q091 で「結果はまだ無い→受けだけの返信で待つ」と「約束を果たす AIX」に割れた（窓 off 2/4・窓 on 0/4・夜の基準 3/3）。
+//   窓（BRAIN_MSG_WINDOW_UNITS）は最新の通も台帳も落としておらず、古い物件のカード1件と画像の束の1行が増えただけ＝割れている判断がどちらに倒れるかを揺らしただけ。
+//   直し: 確認（募集状況・管理会社）・見積の約束への了承だけの番は、この材料に「道は約束を果たす AIX のまま・ack_form は道を変えない」の1行を足す（決まりの食い違いを材料の側で解く）。
+//   既定 off（ACK_CONFIRM_AIX_PATH=on の時だけ）。探す（ピックアップ）・審査・連絡だけの約束には足さない
+const ACK_COND_PROMISE_RE = /(?:頂|いただ)き次第|(?:頂|いただ)けましたら|(?:頂|いただ)ければ|ございましたら/;
+export function ackConfirmAixPathOn(env: Env = process.env): boolean {
+  return (env.ACK_CONFIRM_AIX_PATH ?? "").trim().toLowerCase() === "on";
+}
+/** 確認・見積の約束への了承だけの番の道の1行（当たらない時は ""） */
+export function ackConfirmAixPathLine(f: AckFormFacts | null, env: Env = process.env): string {
+  if (!f || !ackConfirmAixPathOn(env) || f.customer !== "了承だけ" || f.family !== "確認・連絡・見積・審査" || f.conditional) return "";
+  const t = f.topics ?? [];
+  const aix = t.includes("vacancy") || t.includes("mgmt") ? "【物件確認した】（property_check_result）" : t.includes("estimate") ? "【見積書送る】（estimate_sheet）" : "";
+  if (!aix) return "";
+  return `→ 道（竹内さんの決定 C 10/14・★約束の直後のお礼・了承）: この番は返信で締めず、約束を果たす AIX${aix}のまま（aix の欄は空にしない）。「結果がまだ手元に無い」は返信にする理由にならない＝結果を確かめてから送るのは AIX を押すスタッフ（スタッフだけが知る情報は AIX）。上の受けだけ／待ちの形の数は手打ちの文の形で、道を変えない（ack_form は形として入れる）。`;
 }
 /** ブレインのプロンプトに入れる材料の1行（答えは書かない）。お客様の発言に中身が多い番は出さない */
 export function ackFormMaterialLine(f: AckFormFacts | null, env: Env = process.env): string {
@@ -224,7 +249,8 @@ export function ackFormMaterialLine(f: AckFormFacts | null, env: Env = process.e
   const ago = f.minutes == null ? "" : f.minutes < 60 ? `・${f.minutes}分前` : `・約${Math.round(f.minutes / 60)}時間前`;
   return `【前の約束への了承（材料・turn_contract の ack_form を決める）】前のこちらの約束「${f.promise}」（${f.family}・${f.form}${ago}）／お客様の今の発言: ${f.customer}。
 竹内さんの実送信（75日・了承だけの番）: 探すの約束が言い切り→待ちの形の1文 7・受けだけ 0／探すが待ちの形→待ちの形 2・受けだけ 2／確認・連絡・見積・審査→受けだけ 5・待ちの形 3（割れる）／前の約束に日付が入っている→受けだけ（日付を言い直さない）／お客様が急ぎ・日付・質問を足した→待ちの形が増える。
-→ ack_form に "receive_only"（受けだけ＝約束・日付を言い直さない）か "wait_line"（「〜出来次第ご連絡（お送り）させて頂きますので、何卒…」の短い1文だけ・何を・いつ・日付を並べ直さない・言い切りの約束を書かない）を入れる。`;
+→ ack_form に "receive_only"（受けだけ＝約束・日付を言い直さない）か "wait_line"（「〜出来次第ご連絡（お送り）させて頂きますので、何卒…」の短い1文だけ・何を・いつ・日付を並べ直さない・言い切りの約束を書かない）を入れる。${(() => { const x = ackConfirmAixPathLine(f, env); return x ? `
+${x}` : ""; })()}`;
 }
 /** 生成の本質の行（ブレインが ack_form を決めた番） */
 export function ackFormContractLine(f: AckForm | null | undefined, openSearch?: string | null): string {
