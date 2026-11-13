@@ -305,21 +305,22 @@ export function focusHumanOnlyMiss(pred: string | null | undefined, gold: string
 //   下の種類は文の統括・書き手が書き分ける単位（欄の名前は作業員10・作業員22 とそろえる: meta.conductor_focus.focus_sub）。CONDUCTOR_FOCUS_SUB=on の時だけ（既定 off）
 //   promise_keep の fulfill_now（スタッフがこの番ですぐ果たす＝AIX）は統括役 11/13 の決め: 見積・合う物件をその場で送る番は約束でなく果たし（直すのは AIX を選べているか）
 export const FOCUS_SUBS = {
-  promise_make: ["check", "search", "estimate"],
+  promise_make: ["check", "search", "estimate", "check_estimate"],
   promise_keep: ["fulfill_now", "report"],
   answer: ["fact", "compare", "ask_back"],
   ease: ["cost", "screening", "timing"],
 } as const satisfies Partial<Record<Focus, readonly string[]>>;
 export type FocusSub = (typeof FOCUS_SUBS)[keyof typeof FOCUS_SUBS][number];
-export const focusSubOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_FOCUS_SUB ?? "").trim().toLowerCase() === "on";
+// 2026-11-13 統括役: 既定 on（入口の記録の欄・ブレインの道は変えない・81番の解き直しで重点 54→57・下の種類が竹内さんの文と 33/40）。=off で止める
+export const focusSubOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_FOCUS_SUB ?? "").trim().toLowerCase() !== "off";
 export const FOCUS_SUB_LABEL: Record<FocusSub, string> = {
-  check: "確認の約束（管理会社に聞く・募集状況・設備・入居日）", search: "探して送る約束（ピックアップしてお送り）", estimate: "見積の約束（御見積書を作成しお送り）",
+  check: "確認の約束（管理会社に聞く・募集状況・設備・入居日）", search: "探して送る約束（ピックアップしてお送り）", estimate: "見積の約束（御見積書を作成しお送り）", check_estimate: "確認と見積の両方の約束（募集状況を確認し、最大限割引の御見積書もお送り）",
   fulfill_now: "スタッフがこの番で果たす（結果・見積・物件を AIX で送る）", report: "前に約束した結果を受けた後の続き",
   fact: "資料・記録の事実で言い切る", compare: "比べて勧める", ask_back: "条件を聞き返す",
   cost: "費用の不安", screening: "審査の不安", timing: "時期の不安",
 };
 export const FOCUS_SUB_RULES = `【重点の下の種類（focus_sub・重点が次の4つの時だけ1つ選ぶ。他の重点は null）】${(Object.keys(FOCUS_SUBS) as Array<keyof typeof FOCUS_SUBS>).map((k) => `${k}: ${FOCUS_SUBS[k].map((s) => `${s}=${FOCUS_SUB_LABEL[s as FocusSub]}`).join("／")}`).join("。")}。
-見分け（竹内さんの実際の送信から）: 断られた・条件を言い直された・初回の条件のフォーム → 竹内さんは「〜周辺全域から〜をピックアップしてお送り」＝promise_make の search。物件の募集状況・設備を聞かれた → 「確認させて頂きます」＝check。お客様の問いの答えが送った物件の記録・資料にある（番手・募集中の部屋・内装）→ 言い切る＝answer の fact（約束に下げない）。`;
+見分け（竹内さんの実際の送信から）: 断られた・条件を言い直された・初回の条件のフォーム → 竹内さんは「〜周辺全域から〜をピックアップしてお送り」＝promise_make の search。物件の募集状況・設備を聞かれた → 「確認させて頂きます」＝check。物件が届き、募集状況の確認と御見積書の両方を約束する（「確認出来次第、最大限割引の御見積書とあわせて」）＝check_estimate。お客様の問いの答えが送った物件の記録・資料にある（番手・募集中の部屋・内装）→ 言い切る＝answer の fact（約束に下げない）。`;
 export const focusIntakeField = (env: Env = typeof process !== "undefined" ? process.env : {}) =>
   focusSubOn(env) ? FOCUS_INTAKE_FIELD.replace(`"why": "理由（30字以内）"}`, `"why": "理由（30字以内）", "focus_sub": "下の種類 または null"}`) : FOCUS_INTAKE_FIELD;
 /** 重点に合う下の種類だけ残す（合わなければ null） */
@@ -332,7 +333,10 @@ export function normalizeFocusSub(focus: Focus, raw: unknown): FocusSub | null {
 export function focusSubOfTakeuchiText(focus: Focus, text: string, o: { aix?: string | null } = {}): FocusSub | null {
   const t = String(text ?? "");
   if (focus === "promise_make") {
-    if (/御?見積書?[^。！!]{0,12}(?:作成|お送り)/.test(t)) return "estimate";
+    // 11/13 統括役: 確認と見積の両方を約束した文は check_estimate（解き直しの外れ check→estimate 4番）
+    const est = /御?見積書?[^。！!]{0,12}(?:作成|お送り)/.test(t), chk = /確認(?:させて|出来次第|でき次第)/.test(t);
+    if (est && chk) return "check_estimate";
+    if (est) return "estimate";
     if (/ピックアップ[^。！!]{0,10}(?:し|させて)|新着で?募集に出次第|お部屋(?:全て)?(?:探|お探し)させて/.test(t)) return "search";
     if (/確認(?:させて|出来次第|でき次第)/.test(t)) return "check";
     return null;
