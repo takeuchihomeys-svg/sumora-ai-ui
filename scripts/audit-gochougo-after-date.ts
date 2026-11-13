@@ -20,7 +20,7 @@ const jstHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tokyo"
 if (jstHour >= 9 && jstHour < 22 && !process.argv.includes("--force")) { console.log(`営業時間（JST ${jstHour}時）は流さない（--force で外す）`); process.exit(0); }
 
 const fires = (text: string, cust: string, on: boolean): boolean => {
-  if (on) process.env.FC_GOCHOUGO_DATE_ALIGN = "on"; else delete process.env.FC_GOCHOUGO_DATE_ALIGN;
+  process.env.FC_GOCHOUGO_DATE_ALIGN = on ? "on" : "off"; // 2026-11-13 既定 on になったので off は明示する
   const ctx = { lastCustomerMessage: cust, recentMessages: [{ sender: "customer", text: cust }] } as unknown as FinalCheckContext;
   return runVocabSemanticChecks(text, ctx).some((i) => i.code === "GOCHOUGO_AFTER_DATE");
 };
