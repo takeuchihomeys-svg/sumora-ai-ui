@@ -45,6 +45,20 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
       fi.onload = function() { this.remove(); };
       (document.head || document.documentElement).appendChild(fi);
     } catch (_) { /* 旧の広げ方で動く */ }
+    /**
+     * 2026-11-13 竹内さん「site_flow を実際に使う」:
+     *   ⚠ **`learn-order.js` をページに入れていなかった**（v2.7.12 で作ったのに繋ぎ忘れ）。
+     *     そのため page-script の `window.AxlxLearnOrder` が**常に undefined** で、
+     *     `_orderByLearned` は毎回そのまま返していた＝**学んだ押す順番が一度も効いていなかった**。
+     *   → page-script.js より先に入れる（web_accessible_resources には入っていた）。
+     */
+    try {
+      const lo = document.createElement("script");
+      lo.src = chrome.runtime.getURL("learn-order.js");
+      lo.async = false;
+      lo.onload = function() { this.remove(); };
+      (document.head || document.documentElement).appendChild(lo);
+    } catch (_) { /* 学んだ順は使わず元の順で動く */ }
     const s = document.createElement("script");
     s.async = false;
     s.src = chrome.runtime.getURL("page-script.js");

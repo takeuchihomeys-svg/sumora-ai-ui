@@ -811,6 +811,33 @@
       var LO = window.AxlxLearnOrder;
       if (!LO || !LO.orderByLearned) return items;
       var next = window.__axlxLearnNext || null;   // background が storage から読んで入れる（下の受け口）
+      /**
+       * 2026-11-13 竹内さん「site_flow と weak を実際に使う」:
+       *   ⚠ `next`（A の次は B）だけだと、**並べ替えに使える組が3通りしかなかった**
+       *     （残りはモーダルの中などで、この集合に居ない）。
+       *   → `site_flow`（サイトの手順の鎖）も使い、**集合の中だけの前後関係**を作って足す。
+       *   ⚠ 足すのは「どちらが先か」だけ。**項目の増減は絶対にしない**（検索漏れを出さない）。
+       */
+      var flow = window.__axlxLearnSiteFlow || null;
+      if (!next && !flow) return items;
+      if (next && flow && LO.mergeLearnedOrder) {
+        try {
+          var names = items.map(function (it) { return it && it.name ? it.name : null; }).filter(Boolean);
+          next = LO.mergeLearnedOrder(next, flow, { names: names });
+          /**
+           * 2026-11-13 竹内さん「site_flow を実際に使う」:
+           *   人の手順（`site_flow`）と**自動の順が違う所**を点検に残す。
+           *   ⚠ 動きは変えない（順番を崩すと検索が漏れる）。記録して後で判断できるようにする。
+           */
+          if (LO.flowMismatches) {
+            var mis = LO.flowMismatches(names, flow, { min: 2 });
+            if (mis.length) {
+              _auditStepP('flow_order_gap',
+                mis.slice(0, 4).map(function (m) { return m.earlier + ' は ' + m.later + ' より先（' + m.n + '回）'; }).join(' / '));
+            }
+          }
+        } catch (_) { /* 失敗したら next だけ使う */ }
+      }
       if (!next) return items;
       var r = LO.orderByLearned(items, function (it) { return it && it.name ? it.name : null; }, next, { min: 2 });
       if (r && r.changed) {
@@ -836,10 +863,17 @@
       if (now - _learnNextAt < 30000) return;
       _learnNextAt = now;
       if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
-      chrome.storage.local.get(["axlx_learn_next"], function (r) {
+      /**
+       * 2026-11-13 竹内さん「site_flow を実際に使う」:
+       *   サイトごとの手順（`axlx_learn_site_flow`）も一緒に読む。
+       *   押す順番の材料が `next` だけだと3通りしか無いので、鎖から前後関係を補う。
+       */
+      chrome.storage.local.get(["axlx_learn_next", "axlx_learn_site_flow"], function (r) {
         try {
           var nx = (r && r.axlx_learn_next) || null;
           window.__axlxLearnNext = (nx && typeof nx === "object") ? nx : null;
+          var sf = (r && r.axlx_learn_site_flow) || null;
+          window.__axlxLearnSiteFlow = (sf && typeof sf === "object") ? sf : null;
           var n = nx ? Object.keys(nx).length : 0;
           if (n) console.log("[AX] 学んだ押す順番を読みました: " + n + "通り");
         } catch (_) {}

@@ -6409,6 +6409,44 @@ document.addEventListener("DOMContentLoaded", () => {
         if (prof && L.learnedLines) {
           lines = lines.concat([""], ["▼ この値が自動モードの動きに使われます"], L.learnedLines(prof));
         }
+        /**
+         * 2026-11-13 竹内さん「site_flow と weak を実際に使う」:
+         *   **サーバー（学習担当のブレイン）が学んだ事**も出す。
+         *   ⚠ 旧は storage に置くだけで、画面には一度も出していなかった。
+         *   storage は同期で読めないので、読めた時に**描き直す**。
+         */
+        if (L && L.serverLearnLines) {
+          try {
+            chrome.storage.local.get(["axlx_learn_next", "axlx_learn_weak", "axlx_learn_site_flow", "axlx_learn_gaps"],
+              function (r) {
+                try {
+                  var srv = {
+                    next: (r && r.axlx_learn_next) || null,
+                    weak: (r && r.axlx_learn_weak) || null,
+                    site_flow: (r && r.axlx_learn_site_flow) || null,
+                    gaps: (r && r.axlx_learn_gaps) || null,
+                  };
+                  if (!srv.next && !srv.weak && !srv.site_flow) return; // まだ無ければ何もしない
+                  var srvLines = L.serverLearnLines(srv);
+                  if (!srvLines || !srvLines.length) return;
+                  // 一度だけ足す（ボタンを何度押しても増えない）
+                  if (window.__axlxSrvLearnShown) return;
+                  window.__axlxSrvLearnShown = true;
+                  var host = document.getElementById("learn-report-lines");
+                  if (!host) return;
+                  var box = document.createElement("div");
+                  box.style.cssText = "margin-top:8px;padding-top:8px;border-top:1px dashed #86efac";
+                  srvLines.forEach(function (t) {
+                    var p = document.createElement("div");
+                    p.textContent = t;
+                    box.appendChild(p);
+                  });
+                  host.appendChild(box);
+                  try { host.scrollTop = host.scrollHeight; } catch (_) {}
+                } catch (_) {}
+              });
+          } catch (_) {}
+        }
         // 2026-11-11 竹内さん「ボタン物件検索でおすばしょ理解できたかな」: どのボタンをどこで押したかを出す
         if (L && L.buttonReport) lines = lines.concat([""], L.buttonReport(agg));
       } catch (_) {}
@@ -6424,16 +6462,24 @@ document.addEventListener("DOMContentLoaded", () => {
         title.style.cssText = "font-weight:800;font-size:12px;margin-bottom:4px";
         title.textContent = "👀 通常モードで覚えた人の動き";
         card.appendChild(title);
+        /**
+         * 2026-11-13 竹内さん「site_flow と weak を実際に使う」:
+         *   サーバーで学んだ事（押す順番・サイトの手順・次に学ぶ事）を**後から足せる**ように、
+         *   行の入れ物を分けておく（storage は非同期で返るため）。
+         */
+        var linesHost = document.createElement("div");
+        linesHost.id = "learn-report-lines";
+        card.appendChild(linesHost);
         lines.forEach(function (t) {
           var p = document.createElement("div");
           p.textContent = t;
-          card.appendChild(p);
+          linesHost.appendChild(p);
         });
         var note = document.createElement("div");
         note.style.cssText = "margin-top:6px;color:#64748b;font-size:10px";
         note.textContent = "※ 入力した中身（文字・数字）は覚えていません。欄の名前・動き方・間だけです。押すと閉じます。";
         card.appendChild(note);
-        card.addEventListener("click", function () { card.remove(); });
+        card.addEventListener("click", function () { card.remove(); try { window.__axlxSrvLearnShown = false; } catch (_) {} });
         document.body.appendChild(card);
       } catch (_) {}
     });

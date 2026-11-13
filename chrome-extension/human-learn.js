@@ -886,6 +886,91 @@
   }
 
   /**
+   * 2026-11-13 竹内さん「site_flow と weak を実際に使う」:
+   *   **サーバー（学習担当のブレイン）が学んだ事**を人が読める1行ずつにする。
+   *   ⚠ これまで `learnedLines` は**手元の癖だけ**を出していて、
+   *     サーバーが計算した `next`（押す順番）・`weak`（次に学ぶ事）・`site_flow`（サイトの手順）は
+   *     storage に置くだけで**画面に出していなかった**（＝学んだ事が現場に見えていない）。
+   *
+   * @param {{next?:Object, weak?:Array, site_flow?:Object, gaps?:Object, motion?:Object}} srv
+   * @returns {string[]}
+   */
+  function serverLearnLines(srv) {
+    var out = [];
+    var s = srv || {};
+    var nx = (s.next && typeof s.next === "object") ? s.next : {};
+    var names = Object.keys(nx);
+    if (names.length) {
+      // 確からしさの高い順
+      names.sort(function (a, b) {
+        var ra = nx[a] && nx[a].total ? nx[a].n / nx[a].total : 0;
+        var rb = nx[b] && nx[b].total ? nx[b].n / nx[b].total : 0;
+        return rb - ra;
+      });
+      out.push("▼ 写真から学んだ「次に押す物」（" + names.length + "通り）");
+      names.slice(0, 8).forEach(function (k) {
+        var v = nx[k] || {};
+        var pct = v.total ? Math.round((v.n / v.total) * 100) : null;
+        out.push("  ・「" + k + "」の次は「" + (v.next || "?") + "」"
+          + (pct != null ? "（" + v.n + "/" + v.total + "回・" + pct + "%）" : ""));
+      });
+    } else {
+      out.push("▼ 写真から学んだ「次に押す物」: まだ（写真つきの操作が2回以上たまると学びます）");
+    }
+
+    var sf = (s.site_flow && typeof s.site_flow === "object") ? s.site_flow : {};
+    var sites = Object.keys(sf);
+    if (sites.length) {
+      out.push("");
+      out.push("▼ サイトごとの手順");
+      sites.slice(0, 3).forEach(function (site) {
+        var arr = Array.isArray(sf[site]) ? sf[site] : [];
+        if (!arr.length) return;
+        // 回数の多い順に、矢印でつないだ「流れ」を作る（同じ元からは1本だけ）
+        var usedFrom = {};
+        var flow = [];
+        arr.slice().sort(function (a, b) { return (b.n || 0) - (a.n || 0); }).forEach(function (x) {
+          if (usedFrom[x.from]) return;
+          usedFrom[x.from] = true;
+          flow.push(x);
+        });
+        // 起点（誰からも指されていない物）から並べる
+        var pointed = {};
+        flow.forEach(function (x) { pointed[x.to] = true; });
+        var head = flow.filter(function (x) { return !pointed[x.from]; })[0] || flow[0];
+        var chain = [];
+        var cur = head;
+        var guard = 0;
+        while (cur && guard++ < 12) {
+          if (!chain.length) chain.push(cur.from);
+          chain.push(cur.to);
+          var nextX = flow.filter(function (y) { return y.from === cur.to; })[0];
+          if (!nextX || chain.indexOf(nextX.to) >= 0) break;
+          cur = nextX;
+        }
+        out.push("  " + site + ": " + chain.map(function (t) { return String(t).slice(0, 24); }).join(" → "));
+      });
+    }
+
+    var weak = Array.isArray(s.weak) ? s.weak : [];
+    out.push("");
+    if (weak.length) {
+      out.push("▼ 次に学ぶ事（" + weak.length + "件）");
+      weak.slice(0, 6).forEach(function (w) {
+        if (!w || typeof w !== "object") return;
+        out.push("  ・" + (w.name || "?") + " … " + (w.why || "") + (w.how ? "（" + String(w.how).slice(0, 40) + "）" : ""));
+      });
+      if (weak.length > 6) out.push("  ほか " + (weak.length - 6) + "件");
+    } else {
+      out.push("▼ 次に学ぶ事: なし（今の所そろっています）");
+    }
+
+    var g = (s.gaps && typeof s.gaps === "object") ? s.gaps : null;
+    if (g && g.median_ms) out.push("", "▼ 操作と操作の間: 中央値 約" + g.median_ms + "ms（" + (g.samples || 0) + "件）");
+    return out;
+  }
+
+  /**
    * 2026-11-13 竹内さん「写真から学習する。押す場所や押す順番などもりかいできるから」
    *   「おしかたのボタンの仕様の理解の為にも」「自動モードでは実際に人間がおしたようにおすことができる」
    *
@@ -938,6 +1023,7 @@
     moveMsFor: moveMsFor,
     serverCurve: serverCurve,
     serverGapMs: serverGapMs,
+    serverLearnLines: serverLearnLines,
     learnedLines: learnedLines,
     buttonReport: buttonReport,
     nextPressFrom: nextPressFrom,
