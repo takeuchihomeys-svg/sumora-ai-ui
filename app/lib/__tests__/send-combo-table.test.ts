@@ -28,5 +28,11 @@ const rec = sendComboRecord({ reply_mode: "aix", action: "condition_hearing", ch
 t("記録: digest", rec?.digest === "rq|T11");
 t("digest が無い時は null", sendComboDigest(null, "T1") === null);
 
+// 2026-11-13 作業員7b: 場面×状態の細分（条件ヒアリングは初回でなくても・約束2つの果たしの順・持ち込みの未確認は約束）
+t("条件ヒアリングは初回でなくても 返信→AIX（→案内）", pickSendCombo({ type: null, route: "aix", cues: { hearing: true } })?.combo === "reply_then_aix_quick" && /フォームの案内/.test(pickSendCombo({ type: null, route: "aix", cues: { hearing: true } })?.order ?? ""));
+t("約束2つ・結果が手元 → AIX→AIX（確認の結果が先）", pickSendCombo({ type: null, route: "aix", cues: { twoOpenPromises: true, resultReady: true } })?.combo === "aix_then_aix");
+t("約束が1つなら AIX→AIX にしない", pickSendCombo({ type: null, route: "aix", cues: { resultReady: true } })?.combo !== "aix_then_aix");
+t("持ち込みの未確認 → 約束→後で AIX（0f475703）", /0f475703/.test(pickSendCombo({ type: null, route: "two_stage", cues: { broughtUnchecked: true } })?.why ?? ""));
+t("手がかりが無ければ今まで通り", pickSendCombo({ type: null, route: "aix", cues: {} })?.combo === "aix_only" && pickSendCombo({ type: null, route: "two_stage", cues: {} })?.combo === "promise_then_aix_later");
 console.log(`send-combo-table: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
