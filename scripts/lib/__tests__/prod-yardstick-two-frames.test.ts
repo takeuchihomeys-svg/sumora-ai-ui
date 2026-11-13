@@ -41,5 +41,18 @@ ok("2段の種類", twoStageKindOf("rule:two_stage_promise(pickup_unless_ack)+se
   const a = m.get("a")!;
   ok("数え", a.n === 3 && a.nowHit === 2 && a.laterHit === 1 && a.brainOnly === 1 && a.staffOnly === 1, JSON.stringify(a));
 }
+// 2026-11-13 作業員7b: 組の窓（YARDSTICK_COMBO_WINDOW・既定 off）。実物 12240 の形: 挨拶の返信 04:25:12 → AIX【条件ヒアリング】04:25:22
+{
+  const t0 = Date.parse("2026-11-07T17:12:18Z");
+  const mv = [{ at: Date.parse("2026-11-08T04:25:12Z"), family: "返信" }, { at: Date.parse("2026-11-08T04:25:22Z"), family: "条件ヒアリング" }];
+  const off = staffFrames(t0, mv, { comboMs: null }), on = staffFrames(t0, mv, { comboMs: 120_000 });
+  ok("組の窓 off: 今=返信・後=AIX", off.now === "返信" && off.later === "条件ヒアリング" && !off.combo);
+  ok("組の窓 on: 今=AIX（返信→AIX の組）", on.now === "条件ヒアリング" && on.later === null && on.combo === true);
+  ok("組の窓 on: ブレインが AIX【条件ヒアリング】なら今の通は当たり", judgeTwoFrames({ now: "条件ヒアリング", later: null }, on).now === "hit" && judgeTwoFrames({ now: "条件ヒアリング", later: null }, off).now === "miss");
+  const late = staffFrames(t0, [mv[0], { at: mv[0].at + 5 * 60_000, family: "条件ヒアリング" }], { comboMs: 120_000 });
+  ok("2分を越えた AIX は組にしない（後の通）", late.now === "返信" && late.later === "条件ヒアリング");
+  delete process.env.YARDSTICK_COMBO_WINDOW;
+  ok("既定 off", staffFrames(t0, mv).now === "返信");
+}
 console.log(`prod-yardstick-two-frames: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
