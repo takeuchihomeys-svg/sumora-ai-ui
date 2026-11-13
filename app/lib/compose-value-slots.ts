@@ -30,6 +30,7 @@
 // ■ 名前: 行き先・強さは next-move-types（NEXT_DEST・NEXT_STRENGTH）、情報の出所は作業員21 の info-kind（K8 会社の事実・K9 資料・K10 物件の記録・K11 会話の事実・K1/K2 スタッフだけが知る）に揃える
 
 import type { NextDest, NextStrength } from "./next-move-types";
+import type { AnswerSourceKind } from "./answer-source";
 import { toNextDest, strengthFromSeven } from "./next-move-types";
 import { readOurSendUptake, elementCuesOf } from "./compose-order-table";
 import type { SentencePlan, SevenFields } from "./compose-sentence-plan";
@@ -138,7 +139,8 @@ export function appealValuePlan(o: { materialText: string; topText?: string | nu
 }
 
 // 答えの出所（作業員21 の info-kind に揃える）
-export type AnswerSource = "material" | "company_fact" | "record" | "conversation" | "general" | "staff_only" | "checked_result";
+/** 出所の名前の正は app/lib/answer-source.ts（作業員22・11/13 統括役の決め）の ANSWER_SOURCE_KINDS。ここでは種類の名前（kind）だけを使う */
+export type AnswerSource = AnswerSourceKind;
 export const ANSWER_SOURCE_FORM: Record<AnswerSource, { kind: string; form: string }> = {
   material: { kind: "K9 資料", form: "資料の値をそのまま「〜となります！！」で言い切る（答え×となります 37）" },
   company_fact: { kind: "K8 会社の事実", form: "「弊社では〜」「〜させて頂いております」で会社の決まりとして言う（答え×弊社 5）" },

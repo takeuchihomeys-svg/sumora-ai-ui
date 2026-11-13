@@ -756,8 +756,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           // 2026-11-13 作業員5（統括役の案A・KB 6ad3a25f）: 消す前に取り消しの控えを残す（UNSEND_LOG=on・既定 off・伏せた頭40字・申込以降は残さない・30日より古い控えは消す）
           try {
             const UL = await import("@/app/lib/unsend-log");
-            if (UL.unsendLogOn()) {
-              const convU = (unsentMsg as { conversation_id?: string | null }).conversation_id ?? null;
+            const convU = (unsentMsg as { conversation_id?: string | null }).conversation_id ?? null;
+            if (UL.unsendLogOn(process.env, convU)) {
               const { data: cst } = convU ? await db.from("conversations").select("status").eq("id", convU).maybeSingle() : { data: null };
               const { isPostApplyStatus } = await import("@/app/lib/llm-alt-provider");
               const row = UL.unsendLogRow({ conversationId: convU, sender: (unsentMsg as { sender?: string | null }).sender ?? null, createdAt: (unsentMsg as { created_at?: string | null }).created_at ?? null, text: unsentText, postApply: isPostApplyStatus(((cst ?? {}) as { status?: string | null }).status ?? null) });

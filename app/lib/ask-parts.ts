@@ -10,6 +10,7 @@
 //   2段の決まった計算（持ち込みの網 等）は、ブレインの parts が「全部 今言える」と言っている番では下げる（12348・12578 の当て違い・T2 と同じ線）。
 //   既定 off（ASK_PARTS_SPLIT=on）。
 import { ANSWER_SOURCES } from "./brain-now-later";
+import { fromBrainAnswerSource, type AnswerSourceKind, type SourceHint } from "./answer-source";
 
 type Env = Record<string, string | undefined>;
 export function askPartsSplitOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -69,7 +70,7 @@ export function partsAllNow(asks: ReadonlyArray<{ parts?: readonly AskPart[] | n
   return all.every((p) => NOW_SOURCES.has(p.source) && p.route !== "aix" && p.route !== "promise");
 }
 
-/** 作業員10・22 の文の側の出所の名前へ読み替える（material_value→material・none→general） */
-export function toComposeSource(s: PartSource): "material" | "company_fact" | "staff_only" | "general" {
-  return s === "material_value" ? "material" : s === "company_fact" ? "company_fact" : s === "staff_only" ? "staff_only" : "general";
+/** 作業員10・22 の文の側の出所の名前へ読み替える（material_value→material・none→general）。2026-11-13 統括役の決め: 読み替えは app/lib/answer-source.ts の1か所（ここはそれを呼ぶだけ） */
+export function toComposeSource(s: PartSource, hint?: SourceHint): AnswerSourceKind {
+  return fromBrainAnswerSource(s, hint).kind;
 }
