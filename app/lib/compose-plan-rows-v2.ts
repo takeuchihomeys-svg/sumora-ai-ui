@@ -120,7 +120,8 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
     const all = [i.customerText, lastStaff?.text ?? "", ...replyFacts.map((f) => f.text)].join("\n");
     const scarce = SCARCITY_RE.exec(all)?.[0] ?? null, company = replyFacts.find((f) => f.from === "会社の事実" || COMPANY_RE.test(f.text)) ?? null;
     // 点検 12838・12240: 信頼の中身（今ある物の少なさ・会社の事実の具体）が材料にある時は、割合が低い場面でも立てる
-    if (have.length || (share ?? 0) >= STAND_MIN || scarce || company) {
+    // 足しすぎを締める（11/13 正解53 で竹内さんに無いのに立てた 13→10・当たり 10→8）: 少なさの事実がある時（12362・12838）・会社の具体は割合 0.3 以上の場面・それ以外は割合 0.5 以上の場面だけ
+    if (scarce || (company && (share ?? 0) >= 0.3) || (share ?? 0) >= STAND_MIN) {
       const sub: V2Sub = scarce ? "scarcity" : company ? "company_detail" : mainRole === "promise" ? "effort" : "fact";
       const tr = trustFor(i.scene, mainRole);
       rows.push({ role: "trust", sub, uses: scarce ? [{ field: "fact.value", value: scarce }] : company ? [{ field: "fact.value", value: company.text }] : [], source: company ? "company_fact" : scarce ? "material" : "conversation", certainty: "assertable", how: tr?.shares[0] ? TRUST_JA[tr.shares[0][0]] ?? null : null, why_order: "after_answer", length: "normal", stand: [have.length ? "設計図にある" : `竹内さんが入れる割合 ${share}`], share, from: have[0]?.role ?? "trust" });
@@ -132,6 +133,8 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
     const lc = i.s7.latentCover;
     if (i.staffOnlyTurn) dropped.push({ role: "latent", why: "staff_only_no_latent（スタッフしか知らない番）" });
     else if (!lc?.kind && !lc?.what) dropped.push({ role: "latent", why: "潜在の材料が無い（作らない）" });
+    // 潜在の一文は「どの不安か」と「使う事実」の2つが揃う時だけ（不安だけでは文にしない・11/13 正解53 で竹内さんに無いのに立てた 8）
+    else if (!lc.fact) dropped.push({ role: "latent", why: "潜在の事実が無い（不安だけでは文にしない）" });
     else if ((v1ByV2.get("latent") ?? []).length || (share ?? 0) >= STAND_MIN) {
       rows.push({ role: "latent", sub: "worry", uses: [...(lc.what ? [{ field: "latent.concern", value: lc.what }] : []), ...(lc.fact ? [{ field: "fact.value", value: lc.fact }] : [])], source: lc.fact ? "material" : "conversation", certainty: lc.fact ? "assertable" : "basically", how: lc.how ?? null, why_order: (posOf("latent") < posOf("press")) ? "ease_first" : "after_answer", length: "normal", stand: [lc.kind ? `潜在の種類 ${lc.kind}` : "潜在の材料あり"], share, from: "worry" });
     } else dropped.push({ role: "latent", why: `竹内さんが入れる割合 ${share ?? "-"}（${DROP_MAX} 未満）` });
