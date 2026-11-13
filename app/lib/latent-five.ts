@@ -114,7 +114,7 @@ export function expectNextIfCue(text: string): string | null {
 /** 作業員10 の LatentFour（latent_read）から5段のどれが埋まるか（今の欄で読めている段の数え） */
 export type LatentFourLike = { trigger?: { kind?: string; text?: string } | null; part?: { property?: string | null; point?: string } | null; feeling?: { what?: string; strength?: string } | null; want?: string | null };
 const REASON_RE = /ため|ので|から|経験|前に|以前|事情|今の(?:家|部屋)|退去|転勤|就職|入学|別れ|家族|子|ペット|悩まされ/;
-const FEELING_KIND_RE: Array<[FeelingKind, RegExp]> = [["焦り", /急|早く|間に合|焦/], ["遠慮", /申し訳|すみません|気まず|遠慮|何度も/], ["迷い", /迷|悩|決め(?:られ|かね)|比べ/], ["期待", /期待|楽しみ|したい|進めたい|前向き/], ["不満", /不満|残念|高い|狭い|遠い/], ["不安", /不安|心配|気に(?:し|な)|落ち|払える|足り/]];
+const FEELING_KIND_RE: Array<[FeelingKind, RegExp]> = [["焦り", /急|早く|間に合|焦/], ["遠慮・申し訳なさ", /申し訳|すみません|気まず|遠慮|何度も/], ["不信・疑問", /おとり|本当に|信じ|怪し|嘘/], ["念押し", /念のため|念の為|改めて確認|間違いない/], ["迷い", /迷|悩|決め(?:られ|かね)|比べ/], ["期待", /期待|楽しみ|したい|進めたい|前向き/], ["不満", /不満|残念|高い|狭い|遠い/], ["不安", /不安|心配|気に(?:し|な)|落ち|払える|足り/]];
 export function stagesFromLatentFour(r: LatentFourLike): Record<LatentFiveStage, "typed" | "text_only" | "missing"> {
   const f = String(r.feeling?.what ?? "");
   const kind = FEELING_KIND_RE.find(([, re]) => re.test(f));
