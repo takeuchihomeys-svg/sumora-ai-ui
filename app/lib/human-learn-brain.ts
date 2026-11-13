@@ -51,7 +51,7 @@ export type MotionRow = {
 };
 
 /** 押した位置（要素ごと） */
-export type PointStat = { x: number; y: number; n: number };
+export type PointStat = { x: number; y: number; n: number; /** 要素の種類（select/checkbox/text/button/link/other） */ w?: string };
 /** 次に押す物 */
 export type NextStat = { next: string; n: number; total: number };
 /** 動きの癖 */
@@ -175,8 +175,10 @@ export function learnPoints(rows: ReadonlyArray<MotionRow>): Record<string, Poin
       if (x == null || y == null || n <= 0) continue;
       const key = String(name).slice(0, 30);
       const old = out[key];
+      // 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分か」: 要素の種類も残す
+      const w = typeof r.w === "string" ? r.w.slice(0, 10) : null;
       // 回数の多い方（新しい実測）を採る。同じ回数なら新しい行を採る（後の行）
-      if (!old || n >= old.n) out[key] = { x, y, n };
+      if (!old || n >= old.n) out[key] = { x, y, n, ...(w ? { w } : (old?.w ? { w: old.w } : {})) };
     }
   }
   return out;
@@ -311,6 +313,27 @@ export function describeBundle(b: HumanLearnBundle): string[] {
     const p = b.points[x.name];
     out.push(`  ・${x.name} … ${x.n}回・横${p ? pct(p.x) : "?"}・縦${p ? pct(p.y) : "?"}`);
   });
+  /**
+   * 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分かなども学習できているかな」:
+   *   要素の種類（プルダウン／チェック／直接入力／押すだけ）を**日本語で**まとめて出す。
+   */
+  const WJ: Record<string, string> = { select: "プルダウン（開いて選ぶ）", checkbox: "チェック", radio: "チェック（1つ）", text: "直接入力", button: "押すだけ", link: "押すだけ", file: "ファイル", other: "その他" };
+  const byKind: Record<string, string[]> = {};
+  for (const [name, v] of Object.entries(b.points)) {
+    if (!v.w) continue;
+    (byKind[v.w] ||= []).push(name);
+  }
+  const kindKeys = Object.keys(byKind);
+  if (kindKeys.length) {
+    out.push(`欄の種類: ${kindKeys.length}種類を学びました`);
+    for (const k of ["select", "checkbox", "radio", "text", "button", "link", "file", "other"]) {
+      const names = byKind[k];
+      if (!names || !names.length) continue;
+      out.push(`  ・${WJ[k] || k}: ${names.length}個（${names.slice(0, 4).join("・")}${names.length > 4 ? "…" : ""}）`);
+    }
+  } else {
+    out.push("欄の種類: まだ学んでいません（2.7.20 以降の操作で貯まります）");
+  }
   out.push(b.motion.speed_px_s != null
     ? `動き: 速さ ${b.motion.speed_px_s}px/秒・曲がり ${b.motion.curve ?? "?"}（${b.motion.moves}回の動き）`
     : `動き: まだ材料が足りません（${b.motion.moves}回）`);

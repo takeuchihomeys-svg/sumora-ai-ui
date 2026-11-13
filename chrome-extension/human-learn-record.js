@@ -199,7 +199,7 @@
       var last = _opsRing[_opsRing.length - 1];
       var t = Date.now();
       if (last && last.f === (nm ? String(nm).slice(0, 30) : null) && t - Number(last.t || 0) < 120) return;
-      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nm ? String(nm).slice(0, 30) : null });
+      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nm ? String(nm).slice(0, 30) : null, w: (L && L.kindOfEl) ? L.kindOfEl(el) : null });
       while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
     } catch (_) {}
   }

@@ -120,6 +120,43 @@
   }
 
   /** 操作の種類（click / key / change / scroll） */
+  /**
+   * 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分かなども学習できているかな」
+   *
+   *   要素が**どういう種類か**を覚える（純関数）。
+   *   ・select   … プルダウン（開いて選ぶ）
+   *   ・checkbox / radio … チェック（押して選ぶ）
+   *   ・text     … 直接入力（打ち込む）
+   *   ・button / link … 押すだけ
+   *   ・other
+   *   ⚠ これが分かると、自動モードで「プルダウンは開いて選ぶ」「入力欄は打つ」を
+   *     人がやった通りに選べる（今までは名前だけで、種類を学んでいなかった）。
+   */
+  function kindOfEl(el) {
+    if (!el) return "other";
+    try {
+      var tag = String(el.tagName || "").toUpperCase();
+      var type = String((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+      if (tag === "SELECT") return "select";
+      if (tag === "TEXTAREA") return "text";
+      if (tag === "INPUT") {
+        if (type === "checkbox") return "checkbox";
+        if (type === "radio") return "radio";
+        if (type === "submit" || type === "button" || type === "reset" || type === "image") return "button";
+        if (type === "file") return "file";
+        return "text";
+      }
+      if (tag === "BUTTON") return "button";
+      if (tag === "A") return "link";
+      if (tag === "LABEL") {
+        // ラベルの中にチェックがある＝チェックの代わり
+        try { if (el.querySelector && el.querySelector('input[type="checkbox"], input[type="radio"]')) return "checkbox"; } catch (_) {}
+        return "link";
+      }
+      return "other";
+    } catch (_) { return "other"; }
+  }
+
   function kindOf(type) {
     if (type === "click") return "click";
     if (type === "keydown" || type === "key") return "key";
@@ -204,6 +241,12 @@
           y: Math.round(Math.max(0, Math.min(1, fy)) * 100) / 100,
           w: Math.round(r.width), h: Math.round(r.height),
           s: stageOf(),   // 2026-11-11: どの段階で押したか（form/modal/result）
+          /**
+           * 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分か」:
+           *   要素の種類（select/checkbox/text/button/link）も残す。
+           *   ⚠ `w` は**幅**で使っているので、種類は `wk` にする（取り違えない）。
+           */
+          wk: kindOfEl(el),
         });
         if (points.length > MAX_POINTS) points.shift();
       } catch (_) {}
@@ -478,8 +521,11 @@
       if (!p || typeof p.x !== "number" || typeof p.y !== "number") return;
       xs.push(p.x); ys.push(p.y);
       var f = p.f || "?";
-      if (!byField[f]) byField[f] = { n: 0, xs: [], ys: [], stages: {} };
+      if (!byField[f]) byField[f] = { n: 0, xs: [], ys: [], stages: {}, w: {} };
       byField[f].n++;
+      // 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分か」: 要素の種類も数える
+      var w = p.wk || "other";
+      byField[f].w[w] = (byField[f].w[w] || 0) + 1;
       // 2026-11-11: どの段階で押したかも数える（form/modal/result）
       var sg = p.s || "other";
       byField[f].stages[sg] = (byField[f].stages[sg] || 0) + 1;
@@ -492,6 +538,10 @@
       var st = byField[f].stages, best = null, bestN = -1;
       Object.keys(st).forEach(function (k) { if (st[k] > bestN) { best = k; bestN = st[k]; } });
       if (best) fieldSpread[f].stage = best;
+      // 2026-11-13: 要素の種類（select/checkbox/text/button など）＝**どう扱う欄か**
+      var ww = byField[f].w, bw = null, bwn = -1;
+      Object.keys(ww).forEach(function (k) { if (ww[k] > bwn) { bw = k; bwn = ww[k]; } });
+      if (bw) fieldSpread[f].w = bw;
     });
     var points = {
       n: pt.length,
@@ -550,7 +600,7 @@
     var pf = pp.fields || {}, af = ap.fields || {};
     Object.keys(af).forEach(function (f) {
       var pre = pf[f] || null;
-      fieldSpread[f] = pre ? { n: (Number(pre.n) || 0) + (Number(af[f].n) || 0), x: blend(pre.x, af[f].x, pre.n, af[f].n), y: blend(pre.y, af[f].y, pre.n, af[f].n) } : af[f];
+      fieldSpread[f] = pre ? { n: (Number(pre.n) || 0) + (Number(af[f].n) || 0), x: blend(pre.x, af[f].x, pre.n, af[f].n), y: blend(pre.y, af[f].y, pre.n, af[f].n), ...(pre.w || af[f].w ? { w: af[f].w || pre.w } : {}), ...(pre.stage || af[f].stage ? { stage: af[f].stage || pre.stage } : {}) } : af[f];
     });
     Object.keys(pf).forEach(function (f) {
       if (!fieldSpread[f] && Object.keys(fieldSpread).length < 20) fieldSpread[f] = pf[f];
@@ -813,6 +863,7 @@
     describe: describe,
     fieldName: fieldName,
     kindOf: kindOf,
+    kindOfEl: kindOfEl,
     median: median,
     medianF: medianF,
     MAX_OPS: MAX_OPS,
