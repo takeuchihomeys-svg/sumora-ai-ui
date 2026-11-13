@@ -19,6 +19,7 @@ import { splitRequests } from "./request-ledger";
 import { jstParts } from "./jst-date";
 import { MGMT_TOPIC_RE, mgmtNightNoDirectOn } from "./mgmt-hours-split";
 import { routeFix1020 } from "./brain-route-fix-1020";
+import { brainAixFollowsContractOn } from "./aix-follows-contract"; // 11/13 作業員7b: T4 は BRAIN_AIX_FOLLOWS_CONTRACT の③（古いスイッチ TWO_STAGE_KIND_FROM_ABOUT も残す）
 /** 2026-11-13 作業員7b: ブレインの約束の about が search_condition の時は、AIX の欄が物件確認したでもピックアップの約束にする（既定 off） */
 export function twoStageKindFromAboutOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.TWO_STAGE_KIND_FROM_ABOUT ?? "").trim().toLowerCase() === "on";
@@ -526,7 +527,7 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
     // 2026-11-13 作業員7b（統括役の頼み・V2 で残った2段の外れ T4: q009・q367）: ブレインが自分の turn_contract の約束を「探す」（about=search_condition）と書いたのに、
     //   AIX の欄が物件確認しただった番を、聞かれた事の確認の約束（check_question）にしていた＝ブレインの答えは探す約束（2段:pickup）。
     //   ブレインの本質（約束の about）に揃えてピックアップの約束にする（決まった計算はブレインの答えの中の食い違いを本質の側に寄せるだけ）。既定 off（TWO_STAGE_KIND_FROM_ABOUT=on）
-    if (twoStageKindFromAboutOn() && i.askAbout === "search_condition" && !i.asksCost && !i.brought) {
+    if ((twoStageKindFromAboutOn() || brainAixFollowsContractOn()) && i.askAbout === "search_condition" && !i.asksCost && !i.brought) {
       return {
         kind: "pickup",
         direction: "ご希望のご条件（言い直し・追加があればその条件を具体的に）でお部屋をピックアップしてお送りすると約束する返信にする（物件名・家賃は書かない・送るのは後で AIX）。言い方は実際の送信の形「〇〇さんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！」",

@@ -95,6 +95,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
+import { brainAixFollowsContractOn, alignAixToContract, type ContractAskLite } from "@/app/lib/aix-follows-contract";
 import { sendSequenceOn, sanitizeSendSequence, replyCountOf, SEND_SEQUENCE_FIELD, hearingSendSequence, writerReplyCountOf } from "@/app/lib/send-sequence";
 import { checkQuestionBrainFirstOn, checkQuestionBrainRoute } from "@/app/lib/check-question-brain-first";
 import { resolveTwoStageOrDirect, firstContactReadyPickupTwoStage, screeningNoRewriteEnabled, sentReactionNoRewriteEnabled, answerableDirectEnabled, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
@@ -5383,6 +5384,15 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       const sentReactionAsks = (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ route?: string; about?: string | null }>;
       const sentReactionBrainReply = /^(?:|null|none)$/i.test(String((parsed as { aix?: unknown }).aix ?? "").trim())
         && sentReactionAsks.length > 0 && sentReactionAsks.every((a) => a.about === "reaction_to_sent" && (a.route === "reply" || a.route === "none"));
+      // 2026-11-13 作業員7b（BRAIN_AIX_FOLLOWS_CONTRACT・既定 off・app/lib/aix-follows-contract.ts）: 決まった道の物件の AIX がブレインの turn_contract と食い違う番は、2段・2択の前に本質の側に寄せる
+      if (brainAixFollowsContractOn() && !isPostApplyStatus(convStatus)) {
+        const fv = alignAixToContract({ finalAix, rawAix: (parsed as { aix?: unknown }).aix, asks: (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as ContractAskLite[] });
+        if (fv) {
+          console.log(JSON.stringify({ tag: "brain:aix-follows-contract", conversationId, from: finalAix ?? null, to: fv.to === "aix" ? fv.aix : "reply", rule: fv.rule }));
+          if (fv.to === "reply") { finalAix = null; sceneSignalCheckPattern = null; decisionSource = "brain:aix_follows_contract(reply)"; }
+          else { finalAix = fv.aix; sceneSignalCheckPattern = null; decisionSource = decisionSource ?? "llm"; }
+        }
+      }
       const twoStageArgs: Parameters<typeof resolveTwoStageOrDirect>[0] = {
         screeningBrainReply,
         sentReactionBrainReply,
