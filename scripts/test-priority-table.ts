@@ -131,4 +131,11 @@ t("記録の印・why_order・届き方の表の優先度の欄", () => {
   for (const k of ["first", "why", "why_order", "now", "defer", "combo", "avoid"]) assert.ok(SUB_FIELDS.some((x) => x.sub === `priority.${k}`), k);
 });
 
+t("行の id（row_id）: 全行で重ならない・空でない・型 id で始まる・記録に row_id が残る", () => {
+  const ids = PRIORITY_ROWS.map((r) => r.id);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const r of PRIORITY_ROWS) assert.ok(r.id && r.id.startsWith(`${r.type}.`) && /^[A-Za-z0-9_.]+$/.test(r.id), r.id);
+  assert.equal(priorityTableRecord({ check_order_type: "T8_cost", turn_contract: { asks: [{ kind: "question", parts: [{ source: "material_value" }, { source: "staff_only" }] }] } })!.row_id, "T8_cost.split_parts");
+});
+
 console.log(`全部 ${n} 件 ok`);

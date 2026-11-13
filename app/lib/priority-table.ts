@@ -66,6 +66,8 @@ export type PriorityCues = {
 };
 
 export type PriorityRow = {
+  /** 安定した行の id（型 id＋状態の短い英語）。一度付けたら変えない（state の説明は自由に直せる）。設計図（作業員10）はこの id で行を引く */
+  id: string;
   /** check-order の型 id */
   type: string;
   /** その型の中の状態（説明） */
@@ -87,8 +89,24 @@ export type PriorityRow = {
 };
 
 export const PRIORITY_ROWS: readonly PriorityRow[] = [
+  // 手がかりが重なる時（問い返しで問いも複数）は問い返しの行を先に取る（疑問に答えないと他の答えも信じてもらえない・11865）
   {
-    type: "T2_question_fact", state: "問いが複数（この物件で良いかの確かめ＋空き・色・入居日）", match: (c) => !!c.multiAsks,
+    id: "T2_question_fact.asked_again", type: "T2_question_fact", state: "こちらの送信への問い返し（掲載との食い違い）", match: (c) => !!c.askedAgain,
+    first: { need: "answer", what: "おとり物件という事か", why: "疑問に答えないまま約束を言うと、こちらへの不信が残る", why_tag: "doubt_first" },
+    order: { main: "ポータルの掲載の仕組み（答え）", subs: ["掲載の物件も送ってもらえれば確認する"], deferred: [{ what: "新着のピックアップの約束", why: "答えの後の別の通（竹内さんは約10分後に2通目）" }] },
+    checks: { steps: ["read_ask", "hypothesize", "our_last_send", "fact_answer", "now_vs_later"], depth: "normal", via: "back", why: "こちらの直前の送信（掲載終了の確認）を見て、疑問が掲載へかこちらへかを分ける" },
+    now_vs_later: { this_turn: "answer", answer_source: "company_fact" },
+    ask_parts: [
+      { part: "掲載の仕組み", source: "company_fact", certainty: "assertable", route: "reply" },
+      { part: "新着のピックアップ", source: "none", certainty: "assertable", route: "promise" },
+    ],
+    combo: "reply_reply",
+    avoid: { no_touch: [], repeat_scope: "ピックアップの約束は答えの後に1回" },
+    tags: ["疑問への答えが先", "約束は後の通"],
+    count: "点検役の 11865（ブレインの下書きは約束が先・答えが後）",
+  },
+  {
+    id: "T2_question_fact.multi_asks", type: "T2_question_fact", state: "問いが複数（この物件で良いかの確かめ＋空き・色・入居日）", match: (c) => !!c.multiAsks,
     first: { need: "answer", what: "この物件で良いかに当たる問い（空き・色など物件の中身）", why: "お客様は物件を決める手前。決め手の問いに先に答えないと、入居日の答えが空振りになる", why_tag: "decider_first" },
     order: { main: "物件の中身の問い（空いている部屋・色）", subs: ["入居日（会社の事実の期間）", "事情（異動で11/16以降）への受け"], deferred: [{ what: "白基調の別の物件", why: "物件の中身の答えが『合わない』の時だけ、AIX で別の物件を出す" }] },
     checks: { steps: ["read_ask", "our_last_send", "fact_answer", "staff_only", "now_vs_later"], depth: "deep", via: "fact", why: "4つの問いの答えの出所が別（資料の値・会社の事実・代わりの物件）。出所ごとに分けないと、答えられる物まで確認の約束に倒れる" },
@@ -104,22 +122,7 @@ export const PRIORITY_ROWS: readonly PriorityRow[] = [
     count: "点検役の 12548（1通に問い4つ・主は『この物件で良いか』）・竹内さんは返信→3分後に白基調の物件を AIX",
   },
   {
-    type: "T2_question_fact", state: "こちらの送信への問い返し（掲載との食い違い）", match: (c) => !!c.askedAgain,
-    first: { need: "answer", what: "おとり物件という事か", why: "疑問に答えないまま約束を言うと、こちらへの不信が残る", why_tag: "doubt_first" },
-    order: { main: "ポータルの掲載の仕組み（答え）", subs: ["掲載の物件も送ってもらえれば確認する"], deferred: [{ what: "新着のピックアップの約束", why: "答えの後の別の通（竹内さんは約10分後に2通目）" }] },
-    checks: { steps: ["read_ask", "hypothesize", "our_last_send", "fact_answer", "now_vs_later"], depth: "normal", via: "back", why: "こちらの直前の送信（掲載終了の確認）を見て、疑問が掲載へかこちらへかを分ける" },
-    now_vs_later: { this_turn: "answer", answer_source: "company_fact" },
-    ask_parts: [
-      { part: "掲載の仕組み", source: "company_fact", certainty: "assertable", route: "reply" },
-      { part: "新着のピックアップ", source: "none", certainty: "assertable", route: "promise" },
-    ],
-    combo: "reply_reply",
-    avoid: { no_touch: [], repeat_scope: "ピックアップの約束は答えの後に1回" },
-    tags: ["疑問への答えが先", "約束は後の通"],
-    count: "点検役の 11865（ブレインの下書きは約束が先・答えが後）",
-  },
-  {
-    type: "T12_hooked_comparing_taken", state: "抑えられる部屋の確かめ（申込の手前）",
+    id: "T12_hooked_comparing_taken.hold_which", type: "T12_hooked_comparing_taken", state: "抑えられる部屋の確かめ（申込の手前）",
     first: { need: "answer", what: "抑えられる部屋はどれか", why: "答えそのものが申込の手前の判断材料。取られる不安の事実（他の号室の申込）も同じ通で", why_tag: "worry_first" },
     order: { main: "抑えられるのは送った202号室", subs: ["他の号室は申込が入り2番手以降", "202も申込が入る可能性"], deferred: [] },
     checks: { steps: ["read_ask", "hypothesize", "our_last_send", "fact_answer", "now_vs_later"], depth: "deep", via: "back", why: "「間取りの確かめ」か「抑える手前」かを読みの候補で分けないと、取られる不安への先回りが落ちる" },
@@ -131,7 +134,7 @@ export const PRIORITY_ROWS: readonly PriorityRow[] = [
     count: "点検役の 12362＝q438（ブレインの下書きは202の答えだけで、他の号室と取られる線が抜けた）",
   },
   {
-    type: "T1_conditions_first", state: "送った物件を外す（場所の割に高い）", match: (c) => !!c.notHooked,
+    id: "T1_conditions_first.drop_sent", type: "T1_conditions_first", state: "送った物件を外す（場所の割に高い）", match: (c) => !!c.notHooked,
     first: { need: "send_promise", what: "その物件を外して、条件の線で探し直す約束", why: "外す事を受けないと、合わない物件を押されたと感じる", why_tag: "receive_first" },
     order: { main: "対象から外す", subs: ["エリアと家賃の上限を復唱して探す約束"], deferred: [{ what: "物件の束", why: "ピックアップが揃ってから AIX（竹内さんは11分後）" }] },
     checks: { steps: ["read_ask", "our_last_send", "now_vs_later"], depth: "normal", via: "back", why: "どの送った物件のどの点（家賃×場所）が合わないかを、こちらの送信で確かめる" },
@@ -146,7 +149,7 @@ export const PRIORITY_ROWS: readonly PriorityRow[] = [
     count: "点検役の 12196＝q407（ブレインの下書きは言っていない条件を足した）",
   },
   {
-    type: "T8_cost", state: "初期費用の項目を外せるか（必須か・外せるか）", match: (c) => !!c.splitParts,
+    id: "T8_cost.split_parts", type: "T8_cost", state: "初期費用の項目を外せるか（必須か・外せるか）", match: (c) => !!c.splitParts,
     first: { need: "answer", what: "鍵交換代は必須か（資料で言える部分）", why: "今言える部分を先に答え、確かめる部分は約束に分ける（両にらみにしない）", why_tag: "now_part_first" },
     order: { main: "必須かどうか（資料）", subs: ["外せるかは管理会社に確かめる約束"], deferred: [{ what: "外した額の御見積書", why: "管理会社の答えの後" }] },
     checks: { steps: ["read_ask", "fact_answer", "staff_only", "now_vs_later"], depth: "normal", via: "fact", why: "1つの依頼の中に資料で言える部分と管理会社の部分が混ざる（ask-parts）" },
@@ -162,7 +165,7 @@ export const PRIORITY_ROWS: readonly PriorityRow[] = [
   },
   // ─── 弱い所 brain:aix-before-asks-no-now-later の行（AIX を先に出しがちな状態・竹内さん本人の番の数） ───
   {
-    type: "T11_first_contact_hearing", state: "初回で問い・不安がある",
+    id: "T11_first_contact_hearing.ask_first", type: "T11_first_contact_hearing", state: "初回で問い・不安がある",
     first: { need: "answer", what: "初回の問い・不安への答え", why: "いきなりフォーム（AIX）だと機械的に見え、信頼が作れない。答えてから聞く", why_tag: "ask_first" },
     order: { main: "挨拶＋問いへの答え", subs: [], deferred: [{ what: "AIX【条件ヒアリング】", why: "答えの返信の数秒〜1分半後（フォームの案内の返信は決まった文）" }] },
     checks: { steps: ["read_ask", "fact_answer", "now_vs_later"], depth: "normal", via: "fact", why: "初回は送った物が無いので遡らない。問いが会社の事実で答えられるかだけ確かめる" },
@@ -177,7 +180,7 @@ export const PRIORITY_ROWS: readonly PriorityRow[] = [
     count: "竹内さんの番 11/12 監査 120日（グループを外した704番）: 初回83番で RA 3・RAR 9（返信＋2分以内の AIX 6組・間隔の中央30秒）",
   },
   {
-    type: "T10_result_ready", state: "前の約束の結果が手元（空いていた・見積ができた・募集終了）",
+    id: "T10_result_ready.result_ready", type: "T10_result_ready", state: "前の約束の結果が手元（空いていた・見積ができた・募集終了）",
     first: { need: "keep_result", what: "確かめた結果（事実・金額）", why: "約束を果たす事実を先に正確に渡す。誘い・次の手は後の返信で人の言葉で", why_tag: "result_first" },
     order: { main: "結果の AIX（物件確認した・見積書）", subs: [], deferred: [{ what: "内覧・申込への誘い（悪い知らせなら代わりの物件）", why: "結果の後の返信（関係を縮めない）" }] },
     checks: { steps: ["read_ask", "our_last_send", "staff_only", "now_vs_later"], depth: "normal", via: "back", why: "開いている約束と、その結果が揃っているかを遡って確かめる" },
@@ -189,7 +192,7 @@ export const PRIORITY_ROWS: readonly PriorityRow[] = [
     count: "竹内さんの番 200日 AR 79・11/12 監査 120日 AR 56",
   },
   {
-    type: "T4_property_shared", state: "持ち込みの物件・まだ募集状況を確かめていない", match: (c) => !!c.broughtUnchecked,
+    id: "T4_property_shared.brought_unchecked", type: "T4_property_shared", state: "持ち込みの物件・まだ募集状況を確かめていない", match: (c) => !!c.broughtUnchecked,
     first: { need: "confirm_promise", what: "募集状況を確かめる約束（＋確認出来次第の御見積書）", why: "確かめる前に空き・見積を出すと作り話・無駄な見積になる。今の番は約束まで", why_tag: "promise_first" },
     order: { main: "募集状況の確認の約束", subs: ["確認出来次第、最大限割引の御見積書とあわせて連絡"], deferred: [{ what: "AIX【物件確認した】→【見積書】", why: "確かめた後で順に（1通に詰めない）" }] },
     checks: { steps: ["read_ask", "hypothesize", "our_last_send", "staff_only", "now_vs_later"], depth: "deep", via: "back", why: "何のために送ったか（空き／費用／条件の参考）を読みの候補で分けてから約束の中身を決める" },
@@ -204,7 +207,7 @@ export const PRIORITY_ROWS: readonly PriorityRow[] = [
     count: "竹内さん本人の約100日（同じ日の2通目のこちらの最初の手）: 約束 18／直接の AIX 5（KB 0f475703）",
   },
   {
-    type: "T5_ack_hypothesis", state: "約束の後のお礼・了承だけ", match: (c) => !!c.ackOnly && !!c.pendingPromise,
+    id: "T5_ack_hypothesis.ack_after_promise", type: "T5_ack_hypothesis", state: "約束の後のお礼・了承だけ", match: (c) => !!c.ackOnly && !!c.pendingPromise,
     first: { need: "relation", what: "お礼への短い受け＋約束を守る姿勢", why: "お礼の番に約束を果たす AIX を出すと、聞かれていない物を先に押す。果たすのは揃ってから", why_tag: "receive_first" },
     order: { main: "短い受け", subs: ["約束を守る姿勢"], deferred: [{ what: "約束を果たす AIX", why: "物件・結果が揃ってから（お礼の番の後）" }] },
     checks: { steps: ["read_ask", "hypothesize", "our_last_send", "now_vs_later"], depth: "shallow", why: "直前のこちらの約束で何への了承かを決めるだけ（材料は取りに行かない）" },
@@ -264,6 +267,8 @@ function brainFirstSlot(m: M): "reply" | "aix" {
 
 export type PriorityRecord = {
   type: string; state: string; hit: "state" | "type";
+  /** 行の id（PriorityRow.id・meta.check_order.priority.row_id） */
+  row_id: string;
   first: Priority; why_tag: PriorityWhy;
   this_turn: NowThisTurn; answer_source: AnswerSource;
   combo: SendCombo; deferred: number; depth: BasisDepth;
@@ -293,7 +298,7 @@ export function priorityTableRecord(meta: M | null | undefined): PriorityRecord 
   if (typeof nl?.this_turn === "string" && nl.this_turn !== r.now_vs_later.this_turn) conflicts.push(`this_turn:${nl.this_turn}>${r.now_vs_later.this_turn}`);
   if (typeof nl?.answer_source === "string" && nl.answer_source !== r.now_vs_later.answer_source) conflicts.push(`answer_source:${nl.answer_source}>${r.now_vs_later.answer_source}`);
   return {
-    type: r.type, state: r.state, hit: pick.hit, first: r.first.need, why_tag: r.first.why_tag,
+    type: r.type, state: r.state, hit: pick.hit, row_id: r.id, first: r.first.need, why_tag: r.first.why_tag,
     this_turn: r.now_vs_later.this_turn, answer_source: r.now_vs_later.answer_source,
     combo: r.combo, deferred: r.order.deferred.length, depth: r.checks.depth,
     avoid: r.avoid.no_touch.length + (r.avoid.repeat_scope ? 1 : 0),
