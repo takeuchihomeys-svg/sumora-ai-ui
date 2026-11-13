@@ -23,7 +23,59 @@ export type SentProp = {
   image_urls?: string[];
   /** 2026-10-24: 送った資料の読み取りの現況・退去予定・入居可能日・内覧可能日（BRAIN_SENT_SHEET_VACANCY=on の時だけ brain-core が入れる） */
   sheet_vacancy?: string | null;
+  /** 2026-11-13 作業員16（ref_resolve の材料・REF_RESOLVE=on の時だけ brain-core が入れる）: 何回目の送信の束か（1始まり）と、その束の何件目か */
+  bundle_no?: number | null;
+  bundle_pos?: number | null;
+  /** 送ったのはどちらか（ours＝こちらが送った・この一覧は全部 ours。持ち込みは ref-resolve の RefBrought で別に持つ） */
+  sent_by?: "ours" | null;
+  /** その物件で送った御見積書の初期費用（aix_usage_logs の estimate_sheet の本文から）と、見積の号室（作業員1 と決めた形） */
+  estimate_initial_cost?: number | null;
+  estimate_room_no?: string | null;
 };
+
+// ── 2026-11-13 束の番号と見積の初期費用（ref_resolve の材料・既定 off） ─────────────────────────────
+/** 送った時刻の並びで束に分ける（前の行から gapMin 分以内は同じ束）。付けた束の数を返す。共有のみは付けない */
+export function attachBundles(props: SentProp[], gapMin = 10): number {
+  const own = props.filter((p) => !p.shared_only && Number.isFinite(Date.parse(p.sent_at))).sort((a, b) => Date.parse(a.sent_at) - Date.parse(b.sent_at));
+  let no = 0, pos = 0, prev = -Infinity;
+  for (const p of own) {
+    const t = Date.parse(p.sent_at);
+    if (t - prev > gapMin * 60_000) { no++; pos = 0; }
+    pos++; prev = t;
+    p.bundle_no = no; p.bundle_pos = pos; p.sent_by = "ours";
+  }
+  return no;
+}
+export type EstimateRec = { property_name: string; room_no: string | null; initial_cost: number; at: string };
+/** AIX【見積書】の本文（「②【パンセ新町 701号室】…初期費用：358,250円」）から物件ごとの初期費用を拾う。字の無い物は拾わない */
+export function parseEstimateTexts(rows: ReadonlyArray<{ generated_text?: string | null; sent_at?: string | null; created_at?: string | null }>): EstimateRec[] {
+  const out: EstimateRec[] = [];
+  for (const r of rows) {
+    const t = String(r.generated_text ?? "");
+    const at = r.sent_at ?? r.created_at ?? "";
+    const re = /【([^】]+?)】([\s\S]*?)(?=【[^】]+】|$)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t))) {
+      const cost = m[2].match(/初期費用\s*[:：]\s*([0-9,，]+)\s*円/);
+      if (!cost) continue;
+      const head = m[1].trim();
+      const rm = head.match(/^(.*?)[\s　]*([0-9０-９A-Za-z-]+)\s*号室?$/);
+      out.push({ property_name: (rm ? rm[1] : head).trim(), room_no: rm ? rm[2].normalize("NFKC") : null, initial_cost: Number(cost[1].replace(/[,，]/g, "")), at });
+    }
+  }
+  return out;
+}
+const roomKey = (r: string | null | undefined) => String(r ?? "").normalize("NFKC").replace(/号室?$/, "").trim();
+/** 送った物件の行に、同じ物件（名前が同じ・号室が同じか見積に号室が無い）の一番新しい見積の初期費用を付ける。付けた数を返す */
+export function attachEstimates(props: SentProp[], ests: ReadonlyArray<EstimateRec>): number {
+  let n = 0;
+  for (const p of props) {
+    if (p.shared_only) continue;
+    const hit = ests.filter((e) => e.property_name === p.property_name && (!e.room_no || !p.room_no || roomKey(e.room_no) === roomKey(p.room_no))).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+    if (hit) { p.estimate_initial_cost = hit.initial_cost; p.estimate_room_no = hit.room_no; n++; }
+  }
+  return n;
+}
 
 type CustomerRow = { property_name: string | null; room_no: string | null; sent_at: string | null; rent?: number | null; recruitment_status?: string | null; applicant_rank?: number | null; customer_reaction?: string | null; source?: string | null; channel?: string | null; image_url?: string | null };
 type ImageRow = { property_name: string | null; room_no: string | null; created_at: string | null; source: string | null; channel?: string | null };
@@ -130,6 +182,8 @@ export function buildSentPropsText(sentProps: SentProp[]): string {
       p.applicant_rank != null ? `${p.applicant_rank}番手` : "",
       p.customer_reaction ? `顧客反応:${REACTION_LABEL[p.customer_reaction] ?? p.customer_reaction}` : "",
       p.sheet_vacancy ? `送った資料（${jstMD(p.sent_at)}時点）の${p.sheet_vacancy}` : "",
+      p.bundle_no != null && p.bundle_pos != null ? `${p.bundle_no}回目の送信の${p.bundle_pos}件目` : "",
+      p.estimate_initial_cost != null ? `御見積書の初期費用${p.estimate_initial_cost.toLocaleString()}円${p.estimate_room_no && roomKey(p.estimate_room_no) !== roomKey(p.room_no) ? `（見積は${p.estimate_room_no}号室）` : ""}` : "",
     ].filter(Boolean).join("・");
     if (p.shared_only) return `- ${p.property_name} ${p.room_no}（${jstMD(p.sent_at)} グループに共有のみ・お客様には未送付${facts ? `・${facts}` : ""}）`;
     const via = p.channel === "recommendation" ? "・🌟オススメで送付" : p.channel === "pickup" ? "・📤ピックアップで送付" : "";
