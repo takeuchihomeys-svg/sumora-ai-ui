@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/auto-plan.test.js
 // 2026-09-30 v2.5.44（拡張）: サーバーの自動便の計画 payload.plan_by_customer[id]（app/lib/auto-search-plan.ts）をお客様ごとに読む。
 //   ・sort・stop_at_last・max_pages をお客様ごとに（無ければ今まで通り）
@@ -124,7 +135,7 @@ console.log("\n■ 心拍（running のまま30分で戻す見張りに掛けな
 {
   const bg = read("background.js");
   ok("_watchProgress が10分おきに heartbeat を送る", /if \(_batchWatch\.commandId && now - _heartbeatAt > 10 \* 60000\) \{\s*\n\s*_heartbeatAt = now;\s*\n\s*try \{ _updateBatchCommand\(_batchWatch\.commandId, \{ heartbeat: true \}\); \} catch \(_\) \{\}/.test(bg));
-  ok("版 2.5.64", JSON.parse(read("manifest.json")).version === "2.7.22");
+  ok("版 2.5.64 以上", _verGte(JSON.parse(read("manifest.json")).version, "2.5.64"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

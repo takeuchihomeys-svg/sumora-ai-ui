@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/snapshot-core.test.js
 // 2026-09-29 v2.5.40 竹内「ブレインのAIX検索モードが隼斗さんで止まってしまっている。なぜ固まっているのか」
 //   「拡張ツールでひらいているページの画面をみて判断できる事もできるのか？ …画面開いているのも目で見ることができるのが理想」
@@ -161,7 +172,7 @@ console.log("\n■ 配線（background・score-overlay・popup・manifest）");
   ok("popup.html: 許可ボタンと snapshot-popup.js（popup.js の後）", /id="snap-perm-btn"/.test(html) && html.indexOf('src="snapshot-popup.js"') > html.indexOf('src="popup.js"'));
   ok("snapshot-popup.js: <all_urls> を人のクリックで頼む", /chrome\.permissions\.request\(ORIGINS/.test(read("snapshot-popup.js")) && /"<all_urls>"/.test(read("snapshot-popup.js")));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.7.22");
+  ok("manifest の版 2.7.22 以上", _verGte(mf.version, "2.7.22"));
   eq("manifest: optional_host_permissions に <all_urls>（最初から持たせない）", [mf.optional_host_permissions, (mf.host_permissions || []).includes("<all_urls>")], [["<all_urls>"], false]);
   ok("manifest: 3サイトの content script（document_start）に snapshot-core.js", mf.content_scripts.some((c) => c.run_at === "document_start" && c.js.includes("snapshot-core.js") && c.matches.some((m) => /itandibb/.test(m)) && c.matches.some((m) => /reins/.test(m)) && c.matches.some((m) => /realnetpro/.test(m))));
   ok("manifest: tabs の権限（captureVisibleTab の窓・タブを読む）", mf.permissions.includes("tabs"));

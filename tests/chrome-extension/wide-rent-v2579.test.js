@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/wide-rent-v2579.test.js
 // 2026-10-06 v2.5.79（⑫ の決定）家賃の上限が「必ず」（requirement_strength.rent_max.strength=must・KAORI「管理費込みで12万上限」）の時は、
 //   広げて検索でも家賃の上限を上げない。エリア・駅・築年数などの広げ方は今まで通り
@@ -22,6 +33,6 @@ ok("popup: リアプロ・ITANDI・指示の表示の3か所で「必ず」な�
 ok("popup: 築年数の広げ方は今まで通り（+5年）", /searchMode === "wide" \? adjC\.building_age \+ 5 : adjC\.building_age/.test(pp));
 ok("resolution-core（一括・background）も同じ決まり・background は印を条件に載せる", /isWide && !_rentMust \? rentNum \+/.test(read("resolution-core.js")) && /requirement_strength: c\.requirement_strength \|\| null,/.test(read("background.js")) && /import "\.\/wide-rent\.js";/.test(read("background.js")));
 ok("popup.html: wide-rent.js は popup.js より前", (() => { const h = read("popup.html"); return h.indexOf('src="wide-rent.js"') > 0 && h.indexOf('src="wide-rent.js"') < h.indexOf('src="popup.js"'); })());
-ok("manifest の版 2.5.79", JSON.parse(read("manifest.json")).version === "2.7.22");
+ok("manifest の版 2.5.79 以上", _verGte(JSON.parse(read("manifest.json")).version, "2.5.79"));
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

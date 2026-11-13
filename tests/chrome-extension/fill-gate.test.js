@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/fill-gate.test.js
 // v2.5.50（2026-09-30 竹内「なんで 2LDK でピックアップするとお客さんに伝えているのに、1K でピックアップしているのか」）
 //   c さん（2LDK・14万・中央区／浪速区）: popup が「顧客が見つからない」→ 代わりの直接入力 → 間取りが1つも入らないまま検索 → 1K・1DK を50件。
@@ -46,7 +57,7 @@ console.log("\n■ popup: 一覧に居ないお客様は取り直してから探
   ok("見つからなければ loadCustomers(true) で取り直してもう1回探す", /if \(!c && d\.customerId\) \{[\s\S]{0,200}await loadCustomers\(true\)/.test(fn));
   ok("取り直しても居なければ customer-not-found", /reason: "customer-not-found"/.test(fn));
   const mf = JSON.parse(read("manifest.json"));
-  ok("manifest の版 2.5.64", mf.version === "2.7.22");
+  ok("manifest の版 2.5.64 以上", _verGte(mf.version, "2.5.64"));
 }
 
 console.log("\n■ v2.5.58 ITANDI の広げて検索は築年数も＋5年（リアプロと同じ）");

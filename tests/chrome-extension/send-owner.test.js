@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/send-owner.test.js
 // v2.5.49（2026-09-30 竹内「監視のところでちゃんと入り込まんように対策する／お客さんの名前ずれてないか監視する」）
 //   送信の出口（background の callMergeApi）で、送る相手が「今そのサイトで検索している回のお客様」か照らす（batch-guard.js sendOwner）。
@@ -73,7 +84,7 @@ console.log("\n■ 配線（background.js の callMergeApi）");
   ok("名前ずれは回のお客様の名前で送り、段 owner_name_drift に残す", /"owner_name_drift"/.test(fn) && /customer_name: _own\.ownerName/.test(fn));
   ok("サーバーに回のお客様（batch_owner）を渡す", /batch_owner: batchOwner/.test(fn));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.7.22");
+  ok("manifest の版 2.7.22 以上", _verGte(mf.version, "2.7.22"));
   ok("background が batch-guard.js を読み込んでいる", /batch-guard\.js/.test(bg));
 }
 

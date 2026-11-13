@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/child-profile-v2578.test.js
 // 2026-10-06 v2.5.78（⑯）1人のお客様の2つ目の探し物（子の行・ゆいと（物置）: profile_label=物置・parent_customer_id=親・会話と line_user_id なし）
 const fs = require("fs");
@@ -14,6 +25,6 @@ ok("送る時（callMergeApi）: 送る相手が今の子なら親の会話を�
 ok("拡張は line_user_id でお客様を引かない（子は line_user_id が空＝取り違えない）", !/line_user_id/.test(pp + bg + read("bulk-dl.js") + read("itandi-bulk-dl.js") + read("realpro-guide.js")));
 ok("案内の送付済み・建物の印は今のお客様（子）の id で聞く＝サーバーが子＋親で答える", /type: "axlx-guide-sent-rooms", customerId: session\.customerId/.test(read("realpro-guide.js")) && /type: "axlx-guide-sent-check", customerId: session\.customerId/.test(read("realpro-guide.js")));
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest の版 2.5.82", mf.version === "2.7.22");
+ok("manifest の版 2.5.82 以上", _verGte(mf.version, "2.5.82"));
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

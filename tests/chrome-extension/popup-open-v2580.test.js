@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/popup-open-v2580.test.js
 // 2026-10-06 v2.5.80
 //   ① 竹内「物件検索する際の拡張ツールを開く際も重すぎるので、このあたりも最善の案で改善する」
@@ -37,6 +48,6 @@ ok("案内: 小窓の種類は見出し・文の語で見分ける（regionName 
 ok("案内: 選ぶ路線が一覧の下の方でも、一覧の中だけ1回動かして見える所へ（押さない）", /if \(ln\.length\) \{ revealWardOnce\(ln\[0\], "line:"/.test(ig));
 ok("案内: 一覧を動かす部品の小窓の探し方の引用符の抜けを直した（旧は毎回例外で一度も動いていなかった）", /el\.closest\('\[role="dialog"\]'\)/.test(ig) && !/el\.closest\(\[role=dialog\]\)/.test(ig));
 ok("案内: 路線を選んだ後は駅、その後「確定」（今まで通り）", /return \{ done: false, target: st, note: "光っている駅にチェック/.test(ig) && /target: \[btnByText\(dlg, "確定"\)\], note: "選び終えたら「確定」"/.test(ig));
-ok("manifest の版 2.5.82", JSON.parse(read("manifest.json")).version === "2.7.22");
+ok("manifest の版 2.5.82 以上", _verGte(JSON.parse(read("manifest.json")).version, "2.5.82"));
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

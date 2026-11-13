@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/auto-run.test.js
 // 2026-09-27 v2.5.35 竹内「ITANDI もおねがい」「開始時間を…ランダムに不規則性をもって毎日変える」:
 //   自動便（auto_schedule）はリアプロと ITANDI の両方・ITANDI のタブが無い PC は ITANDI だけ飛ばす・
@@ -138,7 +149,7 @@ ok("bulk-dl: 並べ替えの後で押し始める（_autoPdfRunPending）", /_au
   ok("itandi-bulk-dl: 上限で止めた時も完了の合図（audit 付き・page_limit）", /_itAuditResult\(\{ page_limit: _itLimit \}\)/.test(ib));
   ok("itandi-bulk-dl: 指定は itandi の物だけ読む", /forCustomer\(_autoRunStored, customerId, "itandi", Date\.now\(\)\)/.test(ib));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.7.22");
+  ok("manifest の版 2.7.22 以上", _verGte(mf.version, "2.7.22"));
   const cs = mf.content_scripts.map((c) => c.js.join(","));
   ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,autorun-note.js,sent-skip.js,update-order-stop.js,bulk-dl.js"));
   ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,autorun-note.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));

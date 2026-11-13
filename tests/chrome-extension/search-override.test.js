@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/search-override.test.js
 // AIXツールのメモ欄の検索の指示（web_brain の payload.search_override）を「その回だけ」重ねる（chrome-extension/search-override.js）を固定する。
 // 2026-09-27 竹内「『大正駅で検索する』なら駅は大正駅だけで検索、『1LDKで検索する』なら1LDKで検索。これは拡張ツールの一時調整の部分で合わせる形」
@@ -170,7 +181,7 @@ console.log("\n■ v2.5.47 階（竹内 9/30「一時的に1階も含む場合�
   // サイトの検索は階で絞っていない（登録の「2階以上」も検索では絞らない＝判定で見る）→ 1階を含める回はサイトの欄を触らなくてよい
   const sites = ["page-script.js", "itandi-page-script.js", "reins-page-script.js"].map(read).join("\n");
   ok("サイトの自動入力に階の欄の操作が無い（登録の2階以上も検索では絞っていない＝1階は検索に入る）", !/floor_min|階以上/.test(sites));
-  ok("manifest 2.6.24", JSON.parse(read("manifest.json")).version === "2.7.22");
+  ok("manifest 2.6.24 以上", _verGte(JSON.parse(read("manifest.json")).version, "2.6.24"));
 }
 
 console.log("\n■ 今ある一時調整の項目がその回だけ効く（popup の欄 → 各サイトの組み立て）");

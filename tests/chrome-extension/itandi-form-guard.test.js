@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/itandi-form-guard.test.js
 // v2.5.45 ITANDI の検索が止まる件（2026-09-30 竹内「[batch] error: … itandi auto Error: itandi 検索完了シグナル（fill-done）が245秒以内に届きませんでした」）
 //
@@ -112,7 +123,7 @@ ok("watchdog は『途中で止まりました』", /条件の入力が途中で
 
 console.log("\n⑦ 配線");
 const mf = JSON.parse(read("manifest.json"));
-eq("manifest の版", mf.version, "2.7.22");
+ok("manifest の版 2.7.22 以上", _verGte(mf.version, "2.7.22"));
 const main = mf.content_scripts.find((c) => c.world === "MAIN" && c.js.indexOf("itandi-page-script.js") >= 0);
 eq("itandi のページの中の段に form-guard（page-script より前）", main && main.js, ["human-wait.js", "human-learn.js", "pointer-ui.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
 const ps = read("itandi-page-script.js");

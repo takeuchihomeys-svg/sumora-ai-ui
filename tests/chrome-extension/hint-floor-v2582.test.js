@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/hint-floor-v2582.test.js
 // 2026-10-06 v2.5.82（ゆなまるさん: 〜9.5万・徒歩15分・1LDK以上・築30年・40㎡〜・更新7日内）
 //   ① 竹内「光っているだけじゃわからない部分はアナウンスを入れる形」②「ここもちゃんと更新日アナウンスいれる」「更新日はお客さんによってちがうから」
@@ -43,6 +54,6 @@ for (const f of ["realpro-guide.js", "itandi-guide.js"]) {
   const s = read(f);
   ok(`${f}: 札は今の手順の値だけ・光の右に小さく1行（灰色）・画面の外の時は出さない`, /highlight\(cur\.ev\.target, cur\.step\.hint \|\| ""\)/.test(s) && /if \(_lastHint && first && !arrow\)/.test(s) && /\.axlx-hint\{position:fixed;pointer-events:none;[^}]*background:#eceff1;/.test(s));
 }
-ok("manifest の版 2.5.82", JSON.parse(read("manifest.json")).version === "2.7.22");
+ok("manifest の版 2.5.82 以上", _verGte(JSON.parse(read("manifest.json")).version, "2.5.82"));
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

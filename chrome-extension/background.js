@@ -2318,6 +2318,18 @@ try {
  *     storage の値を見張る＋短い setTimeout の連鎖で回す（動いている間は眠らない）。
  */
 var _recTimer = null;
+/**
+ * 2026-11-14 竹内さん「なんで自動モードまだかいぜんされていないのか」:
+ *   ⚠ **録画ループが多重に走っていた**（実測: 2分間で392枚・間隔 2ms/17ms。
+ *     1.5〜3.5秒間隔なら最大80枚のはず）。
+ *   ⚠ 原因: `_recIsOn()` が `!!_recTimer` だけを見ていた。Chrome は Service Worker を
+ *     数十秒で止めるので、**起き直すたびに `_recTimer` が null に戻る** →
+ *     復帰処理が「録画中」と知りながら**新しいループを追加**していた。
+ *     → ループが2本3本になり、`captureVisibleTab` の制限（2回/秒）に当たり続けて
+ *       **全部 `capture_error` で失敗**（写真0枚・ops も空）。
+ *   → **世代番号で1本だけにする**。古いループは自分の世代でなくなったら黙って止まる。
+ */
+var _recGen = 0;
 var _recCount = 0;
 var _recSaved = 0;
 var _recFailed = 0;
@@ -2336,9 +2348,18 @@ function _recRemainMs() {
   return Math.max(0, _REC_MAX_MS - (Date.now() - _recStartedAt));
 }
 function _recIsOn() {
-  return !!_recTimer;
+  /**
+   * 2026-11-14 修正: **世代番号**で判定する（`_recTimer` は Service Worker が止まると消えるので
+   *   それだけを見ると「録画していない」と誤判定し、復帰のたびにループが増えていた）。
+   */
+  return _recGen > 0;
 }
-async function _recTick() {
+async function _recTick(gen) {
+  /**
+   * 2026-11-14: **自分の世代でなければ黙って止まる**（古いループが生き残らないように）。
+   *   ⚠ これが無いと、復帰のたびに増えたループが全部撮りに行き、制限に当たり続ける。
+   */
+  if (gen != null && gen !== _recGen) return;
   if (!_recIsOn()) return;
   if (_recCount >= _REC_MAX_SHOTS || Date.now() - _recStartedAt > _REC_MAX_MS) {
     await _recStop(_recCount >= _REC_MAX_SHOTS ? "上限" : "7分");
@@ -2350,6 +2371,11 @@ async function _recTick() {
     if (!(st && st.axlx_rec_mode && st.axlx_rec_mode.on)) { await _recStop("解除"); return; }
   } catch (_) {}
   _recCount++;
+  /**
+   * ⚠ 2026-11-14: ここでもう一度世代を確かめる（`await` の間に止められたかもしれない）。
+   *   止められていたら**この1枚は数えない**（二重に数えない）。
+   */
+  if (gen != null && gen !== _recGen) { _recCount--; return; }
   /**
    * 2026-11-12 竹内さん「ちゃんと撮影されてたかな？」:
    *   ⚠ 旧は「撮った回数」を数えていたので、**クラウドに1枚も入っていなくても「22枚」と出た**。
@@ -2399,7 +2425,10 @@ async function _recTick() {
   }
   var left = _recRemainMs();
   if (left > 0 && gap > left) gap = left;
-  _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, Math.max(200, gap));
+  // 2026-11-14: **自分の世代でだけ**次の1枚を予約する（古いループは予約しない＝増殖しない）
+  if (gen == null || gen === _recGen) {
+    _recTimer = setTimeout(function () { _recTick(gen).catch(function () {}); }, Math.max(200, gap));
+  }
   }
   /**
    * 2026-11-13: 失敗の理由を**種類に分ける**（次の手を決めるため）。
@@ -2482,17 +2511,26 @@ async function _recStart() {
   if (_recIsOn()) return { ok: true, already: true, count: _recCount, saved: _recSaved };
   _recCount = 0; _recSaved = 0; _recFailed = 0; _recLastErr = null;
   _recStartedAt = Date.now();
+  /**
+   * 2026-11-14: **世代を新しくする**（古いループは自分の世代でなくなるので止まる）。
+   *   ⚠ 旧は `_recIsOn()` が `_recTimer` だけを見ていたので、Service Worker が起き直すと
+   *     「録画していない」と誤判定して**もう1本ループを増やしていた**。
+   */
+  _recGen = (_recGen || 0) + 1;
+  var gen = _recGen;
   try {
     await chrome.storage.local.set({
-      axlx_rec_mode: { on: true, started_at: _recStartedAt },
+      axlx_rec_mode: { on: true, started_at: _recStartedAt, gen: gen },
       axlx_rec_stat: { on: true, tried: 0, saved: 0, failed: 0, last_error: null, started_at: _recStartedAt, last_at: null },
     });
   } catch (_) {}
-  console.log("[rec] 画面録画モード: 開始（1.5〜3.5秒ごとに撮ります・最長7分）");
-  _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, 300);
+  console.log("[rec] 画面録画モード: 開始（1.5〜3.5秒ごとに撮ります・最長7分・世代" + gen + "）");
+  _recTimer = setTimeout(function () { _recTick(gen).catch(function () {}); }, 300);
   return { ok: true, count: 0, saved: 0, max_ms: _REC_MAX_MS };
 }
 async function _recStop(why) {
+  // 2026-11-14: 世代を0に戻す（走っているループは自分の世代でなくなるので止まる）
+  _recGen = 0;
   if (_recTimer) { clearTimeout(_recTimer); _recTimer = null; }
   try { await chrome.storage.local.set({ axlx_rec_mode: { on: false, stopped_at: Date.now(), tried: _recCount, saved: _recSaved, failed: _recFailed, why: why || null } }); } catch (_) {}
   try {
@@ -2553,9 +2591,20 @@ try {
     var m = st && st.axlx_rec_mode;
     if (!m || !m.on) return;
     if (Date.now() - Number(m.started_at || 0) > _REC_MAX_MS) { _recStop("7分"); return; }
+    /**
+     * 2026-11-14 修正（**これが多重化の原因だった**）:
+     *   ⚠ 旧は毎回 `_recTick` の新しいループを起こしていた。
+     *     Service Worker は数十秒で止まるので、**起き直すたびに1本増えていた**
+     *     （実測: 2分間で392枚・間隔 2ms/17ms・全部 capture_error）。
+     *   → **すでに走っている世代があれば何もしない**（`gen` を保存して見分ける）。
+     *     走っていなければ（＝本当に止まっていた）**同じ世代を引き継いで**1本だけ起こす。
+     */
+    var gen = Number(m.gen) || 0;
+    if (_recGen > 0) return;                 // すでにこの SW で走っている → 増やさない
+    _recGen = gen || ((_recGen || 0) + 1);
     _recStartedAt = Number(m.started_at) || Date.now();
-    console.log("[rec] 画面録画モード: SW の起き直し → 続けます");
-    _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, 500);
+    console.log("[rec] 画面録画モード: SW の起き直し → 続けます（世代" + _recGen + "）");
+    _recTimer = setTimeout(function () { _recTick(_recGen).catch(function () {}); }, 500);
   }).catch(function () {});
 } catch (_) {}
 

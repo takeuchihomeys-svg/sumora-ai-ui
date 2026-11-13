@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/guide-only-v2577.test.js
 // 2026-10-06 v2.5.77 竹内「拡張ツール 光らせてるだけで良い 上の文字いらない。今自動モードでてしまうこともあるから
 //   常に自動モードではなくて、光って選択するモードとする」
@@ -69,7 +80,7 @@ for (const f of ["realpro-guide.js", "itandi-guide.js"]) {
 ok("リアプロ: 光の要素は枠だけ（textContent を入れない）", (() => { const s = read("realpro-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 ok("ITANDI: 光の要素は枠だけ", (() => { const s = read("itandi-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest の版 2.5.92（自動モード）", mf.version === "2.7.22");
+ok("manifest の版 2.5.92（自動モード） 以上", _verGte(mf.version, "2.5.92"));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

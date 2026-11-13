@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/sent-skip.test.js
 // 2026-09-29 v2.5.41 竹内「一度送ったことがある物件はダウンロードもしないようにすれば更に問題なく物件検索できる。人間の動きのように」
 //   ＋「更新日もちゃんと確認する」: 送付済みの部屋を一覧で選ばない（sent-skip.js）・更新日の計画を popup の経路にも（auto-run.js）・
@@ -113,7 +124,7 @@ console.log("\n■ 配線（拡張の再読み込み後に効く所）");
   const mf = JSON.parse(read("manifest.json"));
   const cs = mf.content_scripts.map((c) => c.js.join(","));
   ok("manifest: リアプロ・ITANDI の一括の前に sent-skip.js", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,autorun-note.js,sent-skip.js,update-order-stop.js,bulk-dl.js") && cs.includes("bar-dock.js,send-pairing.js,auto-run.js,autorun-note.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
-  eq("manifest の版", mf.version, "2.7.22");
+  ok("manifest の版 2.7.22 以上", _verGte(mf.version, "2.7.22"));
   const sa = read("search-audit.js");
   ok("search-audit: 日時の欄は伏せない（v2.5.40 までは「＊＊＊T…」になっていた）", /DATE_FIELDS\[k\] && ISO_RE\.test\(v\.trim\(\)\)/.test(sa));
   const A = require("../../chrome-extension/search-audit.js");

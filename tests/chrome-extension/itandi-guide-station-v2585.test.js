@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/itandi-guide-station-v2585.test.js
 // 2026-10-06 v2.5.85 ITANDI の案内にもリアプロ v2.5.84 と同じ直し方（竹内「リアプロ同様に ITANDI も」）:
 //   ①光の枠を先頭 40 で切らない（画面に見えている物だけ・150 まで）②駅の名前の照らし合わせ（ITANDI の読み替えの表だけ・リアプロと混ぜない）
@@ -47,7 +58,7 @@ ok("見つからない駅は「確定」の所でだけ枠に出す（途中＝�
 ok("駅の手順が済んだ・検索を押した時に1回だけ記録（site=itandi）", (g.match(/reportStationMiss\(/g) || []).length >= 3 && /stationMissReported/.test(g) && /site: "itandi"/.test(g));
 ok("background は record.site で search_audits の site を決める", /msg\.record\.site === "itandi"/.test(bg));
 ok("集計のスクリプトに --site=itandi", /--site=itandi/.test(fs.readFileSync(path.join(__dirname, "..", "..", "scripts", "audit-guide-station-miss.ts"), "utf8")));
-ok("manifest の版 2.5.85", JSON.parse(read("manifest.json")).version === "2.7.22");
+ok("manifest の版 2.5.85 以上", _verGte(JSON.parse(read("manifest.json")).version, "2.5.85"));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

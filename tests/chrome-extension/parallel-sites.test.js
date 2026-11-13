@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/parallel-sites.test.js
 // 2026-09-30 v2.5.43 竹内「拡張ツールはリアプロと ITANDI を開いているので、同時に動かす形でも大丈夫ならそれで行う」:
 //   同時に動かせるかの判定（別々の窓・前面・見えている・1秒のタイマーが間引かれていない）／2本の待ち手・合流・片方の時間切れ／
@@ -136,7 +147,7 @@ console.log("\n■ 2本目のずらし・合流の上限");
   console.log("\n■ manifest・content script の受け口");
   {
     const mf = JSON.parse(read("manifest.json"));
-    eq("版 2.5.64", mf.version, "2.7.22");
+    ok("版 2.5.64 以上", _verGte(mf.version, "2.5.64"));
     ok("3サイトの先頭の段に parallel-sites.js（snapshot-core.js より前）", mf.content_scripts[0].js.join(",") === "human-wait.js,human-learn.js,pointer-ui.js,human-trace.js,own-mutation.js,search-audit.js,parallel-sites.js,snapshot-core.js");
     const sc = read("snapshot-core.js");
     ok("snapshot-core に axlx-lane-probe の受け口（サイトには触らない・非同期で答える）", /msg\.type !== "axlx-lane-probe"/.test(sc) && /return true;\s*\}\);\s*\}\s*\} catch/.test(sc));

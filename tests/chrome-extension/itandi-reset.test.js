@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/itandi-reset.test.js
 // v2.5.46 ITANDI の前のお客様の条件を1つずつ外してから入れる（ボタンに頼らない）
 //   2026-09-30 竹内「（ITANDI に）消去ボタンは無いので、リアプロのように、一度入っているのを全部抜いて、
@@ -131,7 +142,7 @@ ok("絞り込みの窓の中の欄は外さない", /_itInDialog\(inp\)/.test(re
 const bg = read("background.js");
 ok("background: 1回目の読み戻しにも reset（ITANDI の入れ直しの材料）", /reset: f\.reset \? \{ cleared:/.test(bg));
 const mf = JSON.parse(read("manifest.json"));
-eq("manifest の版", mf.version, "2.7.22");
+ok("manifest の版 2.7.22 以上", _verGte(mf.version, "2.7.22"));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

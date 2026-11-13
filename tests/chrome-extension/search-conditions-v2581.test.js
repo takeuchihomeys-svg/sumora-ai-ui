@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/search-conditions-v2581.test.js
 // 2026-10-06 v2.5.81（⑰ の測り直し: 送った60回のうち検索の記録が12時間以内にあったのは15回だけ）:
 //   この回の一覧を検索した時の条件を、送る時に回（property_pickups.search_conditions）へ運ぶ＝AIX の文が時刻の窓なしで読める
@@ -23,6 +34,6 @@ ok("送る時に印を運ぶ（リアプロ・ITANDI）→ background が merge-
 const root = path.join(__dirname, "..", "..");
 const mp = fs.readFileSync(path.join(root, "app", "api", "merge-pdfs", "route.ts"), "utf8"), ps = fs.readFileSync(path.join(root, "app", "lib", "property-pickups-server.ts"), "utf8"), ms = fs.readFileSync(path.join(root, "app", "api", "migrate-schema", "route.ts"), "utf8");
 ok("サーバー: 形が合う時だけ（v:1・8KB まで）回の行の search_conditions に残す・列が無い DB でも記録は残す", /\(body\.search_stamp as \{ v\?: unknown \}\)\.v === 1 && JSON\.stringify\(body\.search_stamp\)\.length <= 8000/.test(mp) && /search_conditions: input\.searchConditions/.test(ps) && /\/search_conditions\/\.test\(ins\.error\.message\)/.test(ps) && /ADD COLUMN IF NOT EXISTS search_conditions JSONB/.test(ms));
-ok("manifest の版 2.5.82", JSON.parse(read("manifest.json")).version === "2.7.22");
+ok("manifest の版 2.5.82 以上", _verGte(JSON.parse(read("manifest.json")).version, "2.5.82"));
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

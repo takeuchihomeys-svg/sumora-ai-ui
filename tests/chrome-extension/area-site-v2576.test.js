@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/area-site-v2576.test.js
 // 2026-10-06 v2.5.76
 //   ① 竹内「地域なのに駅としてなぜか扱っている」（けんじじさん: 希望エリア 東淀川区・旭区・吹田市・守口市・家賃〜6.5万・1LDK〜2LDK）
@@ -48,7 +59,7 @@ ok("popup.html: site-update-days.js は popup.js より前", (() => { const h = 
 const ms = fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "migrate-schema", "route.ts"), "utf8");
 ok("migrate-schema に itandi_update_days", /ADD COLUMN IF NOT EXISTS itandi_update_days INTEGER/.test(ms));
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest の版 2.5.82", mf.version === "2.7.22");
+ok("manifest の版 2.5.82 以上", _verGte(mf.version, "2.5.82"));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

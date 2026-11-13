@@ -1,3 +1,14 @@
+// 2026-11-14: 版は「その版以上」で見る（版を上げるたびに試験が落ちるのを防ぐ）
+function _verGte(v, want) {
+  const a = String(v).split('.').map((n) => Number(n) || 0);
+  const b = String(want).split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const p = a[i] || 0, q = b[i] || 0;
+    if (p > q) return true;
+    if (p < q) return false;
+  }
+  return true;
+}
 // 実行: node tests/chrome-extension/send-customer.test.js
 // v2.5.48（2026-09-30 検索と見張りのテストで見つかった物・重い順）
 //
@@ -103,7 +114,7 @@ eq("空・壊れた入力 → false（タブが無い＝使えない）", [G.rea
 console.log("\n配線（読み込み・呼び出し）");
 {
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.7.22");
+  ok("manifest の版 2.7.22 以上", _verGte(mf.version, "2.7.22"));
   const itCs = mf.content_scripts.find((c) => (c.js || []).includes("itandi-bulk-dl.js"));
   ok("itandi-guard.js は itandi-bulk-dl.js より前", itCs.js.indexOf("itandi-guard.js") >= 0 && itCs.js.indexOf("itandi-guard.js") < itCs.js.indexOf("itandi-bulk-dl.js"));
   const html = read("popup.html");
