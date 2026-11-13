@@ -3,6 +3,7 @@ import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { positiveNoNegativeEnabled, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { replySplitWriterNote, replyCountOf, replySplitSelfNote } from "@/app/lib/reply-split";
+import { fcBlueprintMarkOn, markUnmatchedSentences, blueprintMarkLog, conditionTokensForMark } from "@/app/lib/final-check-blueprint-match";
 // 2026-11-12 作業員7（TURN_AIMS_AFTER・既定 off）: 道が決まった後に目的・中期・仕込みを作り、文の統括への受け渡しにだけ渡す
 import { metaWithTurnAimsAfter } from "@/app/lib/turn-aims-after";
 import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR, mgmtNightClosingOn, nightMgmtClosingLine } from "@/app/lib/mgmt-hours-split";
@@ -7780,6 +7781,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const groundForFacts = [...recentMessages.map((m) => m.text ?? ""), message ?? "", customerConditions ?? ""].join("\n");
                 const tcMiss = turnContract ? auditDraftAgainstContract(finalDraftText, turnContract, lastTwoStaffForContract) : [];
                 const aixC = classifyAixContent(finalDraftText, groundForFacts).filter((h) => !h.grounded).map((h) => h.catalogKey);
+                // 2026-11-13 作業員9（統括役 S9・FC_BLUEPRINT_MARK 既定 off）: 最終チェックの4つ目の段＝設計図の行（作業員10 の rowsV2）に当たらない文の印（印だけ・本文は変えない）
+                if (fcBlueprintMarkOn() && composeSentencePlan?.rowsV2?.length) {
+                  const marks = markUnmatchedSentences(finalDraftText ?? "", composeSentencePlan.rowsV2, {
+                    conditionTokens: conditionTokensForMark(customerConditions ?? ""),
+                    propertyNames: [...ledger.facts.propertiesSentNames, ...(brainMeta?.current_property ? [String(brainMeta.current_property)] : [])],
+                  });
+                  logWatchMaterial(JSON.stringify(blueprintMarkLog(conversationId, marks, composeSentencePlan.rowsV2.length)));
+                }
                 Object.assign(finalCheck.tpo_debug, {
                   turnContract: turnContract ? { source: turnContract.source, routes: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, misses: tcMiss } : null,
                   ...(composeRun ? { compose: composeDigestLine({ intent: composeRun.intent, blueprint: composeRun.blueprint, writerGotNote: !!composeRun.note, draft: finalDraftText }) } : {}),

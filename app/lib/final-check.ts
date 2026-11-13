@@ -115,7 +115,7 @@ import {
 } from "./final-check-flash";
 import { claudeUsageUsd, usageFromAnthropic, isDeepseekPeakAt } from "./llm-price";
 import { confirmPriorPromiseOn, priorStaffConfirmObject } from "./confirm-prior-promise";
-import { fcFactsFromCompanyOn, companyPolicyBlockForCheck, standardNoticeLinesForCheck, nightPromiseRuleForCheck } from "./final-check-facts-source";
+import { fcFactsFromCompanyOn, companyPolicyBlockForCheck, standardNoticeLinesForCheck, nightPromiseRuleForCheck, gochougoDateAlignOn, hasConcreteSlot } from "./final-check-facts-source";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -2741,11 +2741,18 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
   // V4 お客様が候補日・確定日を伝えた後の「ご都合よろしいお日にち」再質問
   //    A-11: 日付語＋意向語（希望・行けます・大丈夫・お願い 等）の共起を要求（「明日確認します」等の単なる日付言及で誤発火していた）
   const custDateIntent = CUSTOMER_DATE_RE.test(cust) && /希望|行け|伺え|大丈夫|お願い|空い|都合|なら|でお願い|がいい|にし/.test(cust);
-  if (GOCHOUGO_RE.test(text) && custDateIntent && !/(?:以降|または|又は|か)[^。\n]{0,20}ご都合/.test(text)) {
+  // 2026-11-13 作業員9（弱い所 685・FC_GOCHOUGO_DATE_ALIGN 既定 off）: 竹内さんはお客様が日を言った番に
+  //   「10/24(土) 14:00〜16:00 ご案内可能です😊！！〇〇さんご都合よろしいお時間御座いますでしょうか」と候補の時間を書いてから聞く＝止めない。
+  //   旧の修正案「〇日でご都合よろしいお時間御座いますでしょうか」はこの検査にまた当たる（修正案が自分の検査の block の文型）
+  const dateAlign = gochougoDateAlignOn();
+  if (GOCHOUGO_RE.test(text) && custDateIntent && !/(?:以降|または|又は|か)[^。\n]{0,20}ご都合/.test(text)
+    && !(dateAlign && hasConcreteSlot(text))) {
     issues.push({ pass: "context_check", severity: blockOrWarn(!!ctx.isAutoSend), code: "GOCHOUGO_AFTER_DATE",
       message: "お客様が既に日程（候補日・確定日）を伝えているのに再度「ご都合よろしいお日にち」を尋ねています",
       evidence: firstSentenceAround(text, GOCHOUGO_RE),
-      suggestion: "お客様の伝えた日をそのまま復唱し「〇日でご都合よろしいお時間御座いますでしょうか」または確定日時の宣言に変更" });
+      suggestion: dateAlign
+        ? "お客様の伝えた日の候補の時間（例「10/24(土) 14:00〜16:00 ご案内可能です😊！！」）を先に書いてから「ご都合よろしいお時間御座いますでしょうか」と聞く。候補の時間が分からない時は聞き返さず、伝えた日を復唱して「〇日ですとご案内可能です😊！！」の形にする（候補の時間は AIX【内覧調整】で送る）"
+        : "お客様の伝えた日をそのまま復唱し「〇日でご都合よろしいお時間御座いますでしょうか」または確定日時の宣言に変更" });
   }
   // V5/V6 確認約束の主語・対象（G26 2026-09-08 Fable5: verdict は生成側 resolveConfirmationContext と同一オブジェクト。
   //    旧 V6 は「本文か顧客文に対象語があれば可」の語出現判定＋warning だったため、顧客「よろしくお願いします」への
