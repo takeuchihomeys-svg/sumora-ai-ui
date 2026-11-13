@@ -93,6 +93,78 @@ export function toExamRun(local: LocalResult, plan?: { candidates?: unknown; mat
   };
 }
 
+/**
+ * 統括（`scripts/exam-conductor.ts --run`）の結果 → DB の1行（純関数）。
+ *
+ * なぜ別に要るか（2026-11-13 竹内さん「統括の部分もちゃんと強化されているのか」）:
+ *   統括の結果の形は**試験ブレイン（--conduct）と違う**。
+ *     - 統括: `pass: "12→14"`（前→今の文字列）・`better`・`worse`・`usd: "$0.123"`・`missStages`
+ *     - 試験ブレイン: `compare:{pass,total}`・`next:[{id,why}]`・`llm:{calls,usd}`
+ *   `toExamRun` にそのまま渡すと**点が読めず「合格 ?/?」になる**（＝DBに入っても比べられない）。
+ *   → 統括用に読み替える。読めない所は null（嘘を入れない）。
+ *   ⚠ 入れるのは点・件数・問題の id・理由・費用だけ（会話の中身・お客様の名前は入れない）。
+ */
+export function toExamRunFromConductor(
+  result: Record<string, unknown>,
+  plan?: { candidates?: unknown; material?: unknown; label?: unknown } | null,
+): ExamRunRow | null {
+  const label = typeof result.label === "string" ? result.label.trim().slice(0, 80) : "";
+  if (!label) return null;
+
+  // pass は "12→14"（前→今）。今の方を合格数として数える
+  const passStr = typeof result.pass === "string" ? result.pass : "";
+  const m = /(\d+)\s*→\s*(\d+)/.exec(passStr);
+  const compare: Record<string, unknown> = {};
+  if (m) { compare.pass = Number(m[2]); compare.pass_before = Number(m[1]); }
+  const better = num(result.better);
+  const worse = num(result.worse);
+  if (better != null) compare.better = better;
+  if (worse != null) compare.worse = worse;
+  const code = num(result.code);
+  if (code != null) compare.exit_code = code;
+
+  // 落ちた問題（missStages）を「次に直す」の形に（id と理由だけ）
+  const miss = Array.isArray(result.missStages) ? result.missStages : [];
+  const next = miss
+    .map((x) => (x && typeof x === "object" ? x as Record<string, unknown> : null))
+    .filter((x): x is Record<string, unknown> => !!x && typeof x.id === "string")
+    .map((x) => ({
+      id: String(x.id).slice(0, 60),
+      why: typeof x.stage === "string" ? `段: ${x.stage}`.slice(0, 120) : "",
+    }));
+
+  // 費用は "$0.123" の形
+  const usdStr = typeof result.usd === "string" ? result.usd : "";
+  const um = /\$?\s*([0-9]*\.?[0-9]+)/.exec(usdStr);
+  const cost = um ? Number(um[1]) : null;
+
+  const mat = (plan && plan.material && typeof plan.material === "object" ? plan.material : {}) as Record<string, unknown>;
+  const parts: string[] = [];
+  if (m) parts.push(`合格 ${m[1]}→${m[2]}`);
+  if (better != null) parts.push(`良くなった ${better}`);
+  if (worse != null) parts.push(`悪くなった ${worse}`);
+  if (next.length) parts.push(`次に直す ${next.length}件`);
+  if (cost != null) parts.push(`$${cost}`);
+  if (typeof result.verdict === "string") parts.push(result.verdict.slice(0, 120));
+
+  return {
+    label,
+    ran_at: typeof result.at === "string" ? result.at : null,
+    plan_label: typeof plan?.label === "string" ? plan.label.slice(0, 80) : null,
+    candidates: num(plan && plan.candidates),
+    material_cls: typeof mat.cls === "string" ? mat.cls.slice(0, 40) : null,
+    material_files: num(mat.files),
+    material_kb_ids: Array.isArray(mat.kbIds) ? (mat.kbIds as unknown[]).map((x) => String(x).slice(0, 40)).slice(0, 40) : null,
+    compare,
+    next_actions: next.slice(0, 100),
+    triage: Array.isArray(result.triage) ? result.triage : null,
+    llm: null,
+    llm_calls: null,
+    cost_usd: Number.isFinite(cost as number) ? cost : null,
+    summary: parts.join("・").slice(0, 400) || null,
+  };
+}
+
 /** DB へ1行（同じ label は上書き）。DB が無ければ false（今まで通りファイルで動く） */
 export async function upsertExamRun(
   sb: { from: (t: string) => { upsert: (row: Record<string, unknown>, opts?: Record<string, unknown>) => Promise<{ error: { message: string } | null }> } } | null,

@@ -65,7 +65,7 @@ import { chooseGuards, fitGuardsToCap, guardLine } from "./lib/exam-guards";
 import { reflectionLine, replanLine, type ReflRow } from "./lib/exam-reflection";
 import { reflectAndReplan } from "./lib/exam-reflection-io";
 import { focusOf, focusPool, pickByFocus, focusLine, parseFocusTypes, type Focus, type FocusSpec, type FocusSceneMap } from "./lib/exam-focus";
-import { diffMaterial, callConductorLlm, newTally, FLASH_MODEL } from "./lib/exam-conductor-io";
+import { diffMaterial, callConductorLlm, newTally, FLASH_MODEL, loadPlan } from "./lib/exam-conductor-io";
 import { bizLanes } from "./lib/exam-plan";
 import { seqRegressions, examSeqScoreOn, wantSeqOf as wantSeqOfProblem } from "./lib/send-seq-score"; // 11/13 作業員7b: 並びの悪化（EXAM_SEQ_SCORE・既定 off）
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
@@ -517,6 +517,28 @@ function finish(j: ExamJob & { file: string }, result: Record<string, unknown>, 
   appendFileSync(join(RES, "results.md"), line + "\n");
   renameSync(j.file, join(DONE, j.file.split(/[\\/]/).pop()!.replace(/\.claimed$/, "")));
   writeBack(j, status);
+  /**
+   * 2026-11-13 竹内さん「統括の部分もちゃんと強化されているのか」:
+   *   ⚠ 統括（`scripts/exam-conductor.ts --run`）が結果を書くのは**手元のファイルだけ**だった
+   *     （`exam-brain.ts --conduct` の方は DB に書いていたが、統括を通る経路は書いていなかった）。
+   *   → 統括の1本が終わるたびに **exam_runs にも1行**入れる（同じ label は上書き）。
+   *   ⚠ 失敗しても統括は止めない（今まで通りファイルで動く）。
+   */
+  try {
+    void (async () => {
+      const { toExamRunFromConductor, upsertExamRun } = await import("../app/lib/exam-runs");
+      const plan = loadPlan(j.label);
+      const row = toExamRunFromConductor(
+        { ...result, label: j.label },
+        plan ? { candidates: plan.candidates, material: plan.material, label: plan.label } : null,
+      );
+      if (!row) return;
+      const w = await upsertExamRun(db() as never, row);
+      log(w.ok ? `  DBにも残しました（exam_runs・${row.label}）` : `  DBには残せません（${w.error}）※ファイルには残っています`);
+    })().catch((e) => log(`  DBへの保存を飛ばしました（${e instanceof Error ? e.message : String(e)}）`));
+  } catch (e) {
+    log(`  DBへの保存を飛ばしました（${e instanceof Error ? e.message : String(e)}）`);
+  }
   // 終わったら依頼した人に知らせる: 統括（--run）は SendMessage を持たない → 知らせの行を notify.jsonl と conductor.log に出し、--run を見張る作業員が SendMessage で届ける
   const to = j.notify ?? cfg().notify?.[j.owner] ?? "";
   const msg = `${j.label} 終わり・${status}・結果は exam-queue/results/${j.label}.out.log（${j.label}.json）`;
