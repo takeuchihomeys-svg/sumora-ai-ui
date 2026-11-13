@@ -71,3 +71,17 @@ export function nightPromiseRuleForCheck(): string {
   return `管理会社への確認は JST ${MGMT_AFTER_HOURS_FROM}時以降と${MGMT_OPEN_HOUR}時前は営業時間外。その時間に「本日中に管理会社へ確認」等は実行不可能な約束。` +
     `夜の管理会社への確認は「本日管理会社営業時間外の為、明日確認させて頂き、確認出来次第ご連絡させて頂きます」の形が正しい（竹内さんの実送信）。`;
 }
+
+/**
+ * 2026-11-13 作業員9（弱い所 685・FC_GOCHOUGO_DATE_ALIGN 既定 off）: 本文に具体的な候補の日時（月/日・時刻・曜日）があるか。
+ *   GOCHOUGO_AFTER_DATE を、竹内さんの「10/24(土) 14:00〜16:00 ご案内可能です…ご都合よろしいお時間御座いますでしょうか」の形で止めないため
+ */
+export function gochougoDateAlignOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.FC_GOCHOUGO_DATE_ALIGN ?? "").trim().toLowerCase() === "on";
+}
+export function hasConcreteSlot(text: string): boolean {
+  const t = String(text ?? "").normalize("NFKC");
+  const date = /[0-9]{1,2}[\/月][0-9]{1,2}|\([月火水木金土日]\)|[月火水木金土日]曜/.test(t);
+  const time = /[0-9]{1,2}[:時][0-9]{0,2}\s*[〜~～\-－]|[0-9]{1,2}:[0-9]{2}/.test(t);
+  return date && time;
+}

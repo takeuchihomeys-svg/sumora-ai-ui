@@ -65,3 +65,28 @@ import("../app/lib/compose-plan-rows-v2").then(async ({ buildPlanRowsV2, V2_OF, 
   console.log("6役目｜竹内さんにある番｜v1 で当たり｜v2 で当たり｜v2 で竹内さんに無いのに立てた");
   for (const [r, x] of T) console.log(`${r}｜${x.gold}｜${x.v1hit}｜${x.v2hit}｜${x.v2extra}`);
 });
+
+// ── 信頼の札付けを広げて数え直す（11/13 統括役・費用0）: 正解の「trust・barrier の役目」に加え、竹内さんの文そのものに
+//   こちらの手間・サポート・期日・選択肢・正直な弱点・少なさ・会社の具体の語がある番も「竹内さんに信頼の文がある」と数える（「となります」だけの事実は数えない）
+import("../app/lib/compose-plan-rows-v2").then(async ({ buildPlanRowsV2, V2_OF }) => {
+  const { asksFactsOf } = await import("../app/lib/compose-asks-facts");
+  const { pathWrong } = await import("./lib/compose-gold");
+  const { trustOfText } = await import("../app/lib/compose-phrase-catalog");
+  const WIDE = /1部屋のみ|のみとなります|2番手|独立系|保証会社|仲介手数料|弊社/;
+  let n = 0, narrowHas = 0, wideHas = 0, v2 = 0, hitN = 0, hitW = 0;
+  for (const g of gold) {
+    const b = brains.get(g.id)?.brain; const p = probs.get(g.id); if (!b || !p) continue;
+    n++;
+    const scene = resolveReplyScene({ customerText: String(p.customer ?? "") }).scene;
+    const u = readTurnUnderstanding(b), s7 = readSevenFields(b);
+    const plan = applyOrderTable(applySceneConstraints(buildSentencePlan(u, s7, { scene, ctx: readComposeContext(b) }), scene), u, scene).plan;
+    const staff = (p.context ?? []).filter((m) => m.s === "staff").map((m) => ({ text: m.t, aix: !!(m as { aix?: boolean }).aix }));
+    const rows = buildPlanRowsV2({ plan, s7, meta: b, scene, customerText: String(p.customer ?? ""), facts: asksFactsOf(b), closing: null, recentStaff: staff.slice(-3), staffOnlyTurn: pathWrong(b) }).rows;
+    const narrow = g.roles.some((r) => V2_OF[r] === "trust");
+    const tt = String((p as { staffText?: string }).staffText ?? "");
+    const wide = narrow || trustOfText(tt).some((k) => k !== "fact") || WIDE.test(tt);
+    const stood = rows.some((r) => r.role === "trust");
+    if (narrow) narrowHas++; if (wide) wideHas++; if (stood) { v2++; if (narrow) hitN++; if (wide) hitW++; }
+  }
+  console.log(`\n信頼の札付けを広げた数え直し（${n}番）: 竹内さんに信頼の文がある番 狭い ${narrowHas} → 広い ${wideHas}／v2 で立てた ${v2} のうち当たり 狭い ${hitN}（余分 ${v2 - hitN}）→ 広い ${hitW}（余分 ${v2 - hitW}）`);
+});

@@ -3469,6 +3469,12 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
       if (factLedgerThreeOn()) {
         try {
           const three: FactThreeInput = {};
+          // 2026-11-13 作業員1: お客様のメモの項目をそのまま帳面へ（事情・決める人＝事情、NG で物件を名指しした物＝外した物件）。文の形のメモ（customerMemoNoteFor）とは別の1段
+          try {
+            const { loadCustomerMemo } = await import("@/app/lib/customer-memo-server");
+            const { memoItemsToThree } = await import("@/app/lib/customer-fact-ledger");
+            Object.assign(three, memoItemsToThree((await loadCustomerMemo(conversationId)).items));
+          } catch { /* メモが読めない時は条件の履歴と前の回だけ */ }
           if (propertyCustomerId) {
             const { data: ch } = await supabase.from("property_condition_history").select("changed_field, old_value, new_value, created_at").eq("property_customer_id", propertyCustomerId).order("created_at", { ascending: false }).limit(8);
             three.restated = ((ch ?? []) as Array<{ changed_field: string; old_value: string | null; new_value: string | null; created_at: string }>).map((r) => ({ field: r.changed_field, from: r.old_value, to: r.new_value, at: r.created_at }));
