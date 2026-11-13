@@ -23,22 +23,48 @@ export const LATENT_FIVE_LABEL: Record<LatentFiveStage, string> = {
 /** 出所（会話の言葉・記録の事実・推測） */
 export const LATENT_SRCS = ["customer_words", "earlier_words", "our_send", "record", "guess"] as const;
 export type LatentSrc = typeof LATENT_SRCS[number];
-export const FEELING_KINDS = ["不安", "焦り", "期待", "遠慮", "迷い", "不満", "安心"] as const;
+/** 2026-11-13 点検役の19番（読めていない段: 気持ちの強さと種類 14）で足した種類: 遠慮・申し訳なさ／不信・疑問／信頼・再来／前向きな保留／念押し */
+export const FEELING_KINDS = ["不安", "焦り", "期待", "遠慮・申し訳なさ", "迷い", "不満", "安心", "不信・疑問", "信頼・再来", "前向きな保留", "念押し"] as const;
 export type FeelingKind = typeof FEELING_KINDS[number];
+/** 気持ちの向き: 物件への気持ちと、こちら（担当）への気持ちを分ける。掲載（ポータル）への疑問も別 */
+export const FEELING_TOWARDS = ["property", "us", "listing", "self"] as const;
+export type FeelingToward = typeof FEELING_TOWARDS[number];
+export type FeelingStrength = "strong" | "mid" | "weak";
+
+/** B. なぜ（why）: 今の li（1行・出所なし）の置き換え。材料は customer-fact-ledger・登録の条件・action-ledger */
+export const WHY_KINDS = ["earlier_circumstance", "our_last_send", "listing_gap", "past_experience", "condition_check"] as const;
+export type WhyKind = typeof WHY_KINDS[number];
+export const WHY_KIND_LABEL: Record<WhyKind, string> = {
+  earlier_circumstance: "前に言った事情（職業・同居・異動・予算の出所）", our_last_send: "こちらの直前の送信・確認の結果", listing_gap: "掲載との食い違い",
+  past_experience: "前の経験", condition_check: "登録の条件との照らし",
+};
+export const WHY_REFS = ["earlier_words", "our_send", "fact_ledger", "registered_conditions", "action_ledger"] as const;
+export type WhyRef = typeof WHY_REFS[number];
+export type LatentWhy = { kind: WhyKind; ref: WhyRef | null; quote: string | null; text: string; guess: boolean };
+
+/** A. 依頼の想定（turn_expect）: この依頼でお客様がどうなると想定しているか */
+export const EXPECT_OUTCOMES = ["answer_only", "send_now", "discount", "remove_and_resend", "decide_material", "consult", "relation_check"] as const;
+export type ExpectOutcome = typeof EXPECT_OUTCOMES[number];
+export const EXPECT_OUTCOME_LABEL: Record<ExpectOutcome, string> = {
+  answer_only: "答えだけ", send_now: "今すぐ送って", discount: "値下げ・割引", remove_and_resend: "外して出し直し", decide_material: "行くかの判断材料", consult: "相談したい", relation_check: "関係の確かめ",
+};
+export const EXPECT_DECIDERS = ["fact", "staff_check", "customer_side"] as const;
+export type ExpectDecider = typeof EXPECT_DECIDERS[number];
+export type TurnExpect = { outcome: ExpectOutcome; next_if: string | null; decided_by: ExpectDecider; text: string; src: LatentSrc };
 
 export type LatentFive = {
   object: { property: string | null; part: string; matter: string; src: LatentSrc } | null;
   concern: { text: string; src: LatentSrc } | null;
-  reason: { text: string; src: LatentSrc } | null;
-  expect: { text: string; src: LatentSrc } | null;
-  feeling: { kind: FeelingKind; strength: "strong" | "mid" | "weak"; src: LatentSrc } | null;
+  reason: LatentWhy | null;
+  expect: TurnExpect | null;
+  feeling: { kind: FeelingKind; strength: FeelingStrength; toward: FeelingToward; src: LatentSrc } | null;
 };
 
 export function latentFiveOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return String(env.LATENT_FIVE ?? "").trim().toLowerCase() === "on";
 }
 
-export const LATENT_FIVE_FIELD = `"latent_five": {"object": {"property": "物件名か null", "part": "物件のどの部分・どの事（例: 初期費用・審査・内覧の日）", "matter": "その中の具体（例: カード払いが使えるか）", "src": "customer_words|earlier_words|our_send|record|guess"}, "concern": {"text": "具体的に何を気にしているか（30字以内）", "src": "同上"}, "reason": {"text": "なぜそう気にしているか＝きっかけ・事情・前の経験（会話・記録に無ければ null か src を guess）", "src": "同上"}, "expect": {"text": "この依頼でどうなると想定・期待しているか（30字以内）", "src": "同上"}, "feeling": {"kind": "${FEELING_KINDS.join("|")}", "strength": "strong|mid|weak", "src": "同上"}}`;
+export const LATENT_FIVE_FIELD = `"latent_five": {"object": {"property": "物件名か null", "part": "物件のどの部分・どの事（例: 初期費用・審査・内覧の日）", "matter": "その中の具体（例: カード払いが使えるか）", "src": "customer_words|earlier_words|our_send|record|guess"}, "concern": {"text": "具体的に何を気にしているか（30字以内）", "src": "同上"}, "reason": {"kind": "${WHY_KINDS.join("|")}", "ref": "${WHY_REFS.join("|")}（どの発言・送信・帳面・登録の条件か・無ければ null）", "quote": "根拠の言葉そのまま（20字以内・無ければ null）", "text": "なぜそう気にしているか（40字以内）", "guess": "出所の無い推し量りなら true"}, "expect": {"outcome": "${EXPECT_OUTCOMES.join("|")}", "next_if": "お客様が条件の形で言った先の流れ（例: 無ければ内覧はやめる・5万に近づけば申込）。無ければ null", "decided_by": "${EXPECT_DECIDERS.join("|")}（事実で決まる／スタッフの確認で決まる／お客様の側で決まる）", "text": "この依頼でどうなると想定しているか（30字以内）", "src": "同上"}, "feeling": {"kind": "${FEELING_KINDS.join("|")}", "strength": "strong|mid|weak（めっちゃ・！！！＝強／💦・すいません・ちょっと＝弱めの手がかり）", "toward": "${FEELING_TOWARDS.join("|")}（物件へ／こちらへ／掲載へ／自分の事情へ）", "src": "同上"}}`;
 export const LATENT_FIVE_RULES = `【潜在の5段（latent_five・事実の欄）】お客様の今の一通を、何について→どんな事を気にしているか→なぜ→この依頼でどうなると想定しているか→具体的な気持ち（種類と強さ）の5段で読む。どの段も出所を付ける（customer_words＝今の一通／earlier_words＝前の発言／our_send＝こちらの送信／record＝記録の事実）。出所の無い推し量りは src を guess にする（文では言い切らない）。読めない段は null。ここには読みだけを書き、どう返すか・どこへつなぐかは書かない。`;
 
 const s = (v: unknown, n: number) => (typeof v === "string" && v.trim() && !/^(null|なし|無し)$/i.test(v.trim()) ? v.trim().slice(0, n) : null);
@@ -50,16 +76,39 @@ export function normalizeLatentFive(raw: unknown): LatentFive | null {
   const out: LatentFive = {
     object: ob && s(ob.part, 30) ? { property: s(ob.property, 40), part: s(ob.part, 30)!, matter: s(ob.matter, 40) ?? "", src: src(ob.src) } : null,
     concern: co && s(co.text, 40) ? { text: s(co.text, 40)!, src: src(co.src) } : null,
-    reason: re && s(re.text, 60) ? { text: s(re.text, 60)!, src: src(re.src) } : null,
-    expect: ex && s(ex.text, 40) ? { text: s(ex.text, 40)!, src: src(ex.src) } : null,
-    feeling: fe && (FEELING_KINDS as readonly string[]).includes(String(fe.kind)) ? { kind: fe.kind as FeelingKind, strength: fe.strength === "strong" || fe.strength === "weak" ? fe.strength : "mid", src: src(fe.src) } : null,
+    reason: re && (WHY_KINDS as readonly string[]).includes(String(re.kind)) && s(re.text, 60)
+      ? { kind: re.kind as WhyKind, ref: (WHY_REFS as readonly string[]).includes(String(re.ref)) ? (re.ref as WhyRef) : null, quote: s(re.quote, 30), text: s(re.text, 60)!, guess: re.guess === true || !(WHY_REFS as readonly string[]).includes(String(re.ref)) }
+      : null,
+    expect: ex && (EXPECT_OUTCOMES as readonly string[]).includes(String(ex.outcome))
+      ? { outcome: ex.outcome as ExpectOutcome, next_if: s(ex.next_if, 40), decided_by: (EXPECT_DECIDERS as readonly string[]).includes(String(ex.decided_by)) ? (ex.decided_by as ExpectDecider) : "customer_side", text: s(ex.text, 40) ?? "", src: src(ex.src) }
+      : null,
+    feeling: fe && (FEELING_KINDS as readonly string[]).includes(String(fe.kind))
+      ? { kind: fe.kind as FeelingKind, strength: fe.strength === "strong" || fe.strength === "weak" ? fe.strength : "mid", toward: (FEELING_TOWARDS as readonly string[]).includes(String(fe.toward)) ? (fe.toward as FeelingToward) : "property", src: src(fe.src) }
+      : null,
   };
   return LATENT_FIVE_STAGES.some((k) => out[k]) ? out : null;
 }
 /** 文の側で言い切ってよい段（出所が推測でない段）だけ */
 export function assertableStages(l: LatentFive | null | undefined): LatentFiveStage[] {
   if (!l) return [];
-  return LATENT_FIVE_STAGES.filter((k) => { const v = l[k] as { src?: LatentSrc } | null; return !!v && v.src !== "guess"; });
+  return LATENT_FIVE_STAGES.filter((k) => {
+    if (k === "reason") return !!l.reason && !l.reason.guess;
+    const v = l[k] as { src?: LatentSrc } | null; return !!v && v.src !== "guess";
+  });
+}
+
+// ─── 網（決まった計算は候補の網・P0 9eb6aa9c。ブレインが読む時の手がかりと、点検の数えに使う） ─────────
+/** 気持ちの強さの手がかり（めっちゃ・！！！＝強／💦・すいません・ちょっと＝弱）。手がかりが無ければ null */
+export function feelingStrengthCue(text: string): FeelingStrength | null {
+  const t = String(text ?? "");
+  if (/めっちゃ|めちゃくちゃ|すごく|かなり|絶対|！！！|!!!|😭|🥺{2,}/.test(t)) return "strong";
+  if (/💦|すいません|すみません|ちょっと|少し|かも|かな/.test(t)) return "weak";
+  return null;
+}
+/** 依頼の想定の手がかり: お客様の条件の形の言葉（なら・であれば・〜したいのですが・〜しなくてもいいので） */
+export function expectNextIfCue(text: string): string | null {
+  const m = String(text ?? "").match(/[^。！!？?\n]{0,30}(?:なら|であれば|でしたら|れば|たら|したいのですが|しなくてもいいので|なくてもいいので)[^。！!？?\n]{0,30}/);
+  return m ? m[0].trim().slice(0, 40) : null;
 }
 
 /** 作業員10 の LatentFour（latent_read）から5段のどれが埋まるか（今の欄で読めている段の数え） */
