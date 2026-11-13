@@ -5003,10 +5003,10 @@ REVOKE ALL ON SEQUENCE exam_savings_id_seq FROM anon, authenticated;
 -- ── 2026-11-13 竹内さん「試験の統括と拡張ツールとデータベースの連携の部分をちゃんとできるようにする。
 --      より強化できるようにする」──
 -- exam_runs: 試験の統括（exam-conductor）の**1回分の結果**を DB に残す。
---   ⚠ これまでは `memory/exam-brain/conductor/*.json` という**手元のファイルだけ**で、
+--   ⚠ これまでは memory/exam-brain/conductor/*.json という**手元のファイルだけ**で、
 --     竹内さん・他の PC・私からは見えなかった（＝連携できていなかった）。
 --   → 1回ごとに1行。計画（plan）・結果（result）・問題の数・LLM の費用を残す。
---     `/api/exam-runs` で読める（画面・スクリプト・拡張の学習の材料に使う）。
+--     /api/exam-runs で読める（画面・スクリプト・拡張の学習の材料に使う）。
 CREATE TABLE IF NOT EXISTS exam_runs (
   id BIGSERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

@@ -1437,7 +1437,7 @@ async function runPlan() {
     const { toExamRun, upsertExamRun } = await import("../app/lib/exam-runs");
     const row = toExamRun({ label, at: new Date().toISOString(), planLabel: sp.label, compare: cmp, next, triage: tri, llm: tally }, sp as never);
     if (row) {
-      const w = await upsertExamRun({ from: (t: string) => ({ upsert: (r: Record<string, unknown>, o?: Record<string, unknown>) => db().from(t).upsert(r, o) }) } as never, row);
+      const w = await upsertExamRun({ from: (t: string) => ({ upsert: (r: Record<string, unknown>, o?: Record<string, unknown>) => sb.from(t).upsert(r, o) }) } as never, row);
       log(w.ok ? `DBにも保存しました（exam_runs・${row.label}）` : `DBには保存できません（${w.error}）※ファイルには残っています`);
     }
   } catch (e) { log(`DBへの保存を飛ばしました（${e instanceof Error ? e.message : String(e)}）※ファイルには残っています`); }
