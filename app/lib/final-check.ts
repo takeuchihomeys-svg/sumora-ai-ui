@@ -115,6 +115,7 @@ import {
 } from "./final-check-flash";
 import { claudeUsageUsd, usageFromAnthropic, isDeepseekPeakAt } from "./llm-price";
 import { confirmPriorPromiseOn, priorStaffConfirmObject } from "./confirm-prior-promise";
+import { fcFactsFromCompanyOn, companyPolicyBlockForCheck, standardNoticeLinesForCheck, nightPromiseRuleForCheck } from "./final-check-facts-source";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -699,7 +700,7 @@ ${tc}
 
 // プロンプトキャッシュ: 安定部（検査指示・情報源優先順位・code一覧・finalCheckRules・出力例）を
 // 先頭ブロック + cache_control、動的部（brain判定・clearedFacts・情報源・draft）を後続に分離。
-function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
+export function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
   const brainBaselineNote = buildBrainBaselineNote(ctx);
 
   const clearedFactsNote = ctx.clearedFacts?.length
@@ -722,10 +723,10 @@ function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): PromptBl
    （オーナーから頂く広告料ADを初期費用に還元）なので捏造として指摘しないこと。
    日割家賃: 入居日〜月末の日数分が発生。1日入居は日割家賃なし＝最も安い。2日以降入居は
    日割家賃＋翌月分家賃で約2ヶ月分の支払い。「月末入居が安い」「1日入居は高い」は誤り）
-6. [COMPANY_FACTS] がある時: そこに書かれた会社の事実（オンライン専門で来社相談は受けていない・室内の写真や動画は
+${fcFactsFromCompanyOn() ? companyPolicyBlockForCheck(ctx.account ?? null) : `6. [COMPANY_FACTS] がある時: そこに書かれた会社の事実（オンライン専門で来社相談は受けていない・室内の写真や動画は
    スタッフが撮影して送れる・クレジットカード払いに対応・緊急連絡先は必須・キャンセル料は審査通過まで無し 等）に
    **反する断定**（例:「写真はご用意出来ていない」「店舗でのご相談も承っております」「クレジットカードは対応しておりません」
-   「緊急連絡先は不要」）は FABRICATED_POLICY。理由付きで物件固有の事情を説明している文（「建築中のため写真はまだ無い」）は指摘しない
+   「緊急連絡先は不要」）は FABRICATED_POLICY。理由付きで物件固有の事情を説明している文（「建築中のため写真はまだ無い」）は指摘しない`}
 
 情報源の優先順位（上ほど権威が高い。矛盾したら上を正とする）:
 1位 [CHECKPOINTS] — 過去の会話全体から抽出済みの確認済み事実（日付付き・最高権威）
@@ -823,7 +824,7 @@ FABRICATED_POLICY: 仲介手数料・日割家賃・AD還元など会社固有�
 - CHECKPOINTS に記載された確認済み事実と一致する場合→ HISTORY になくても捏造でない
 - 【会社標準案内・業界一般知識（情報源に無くても捏造でない）】以下は会社の標準案内文・業界共通知識のため、
   FABRICATED_DATE / FABRICATED_AMOUNT 等を発行しないこと:
-  ・「審査（保証会社審査）は早ければ2〜3営業日、長くて1週間程」/「お申込から最短1週間〜2週間程でご入居可能」
+${fcFactsFromCompanyOn() ? standardNoticeLinesForCheck().join("\n") : "  ・「審査（保証会社審査）は早ければ2〜3営業日、長くて1週間程」/「お申込から最短1週間〜2週間程でご入居可能」"}
   ・「保証会社の審査が通過するまでキャンセル料は一切かからない」/「審査に落ちても費用は発生しない」
   ・「保証会社の費用は一般的に総賃料の50%前後（一般論として・物件により異なる旨を添えた説明）」
   ※ただし特定物件の保証料実額・特定物件の入居可能日を断定している場合は従来どおり指摘対象`;
@@ -1085,7 +1086,7 @@ ${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${clipMaterialLogged(ctx.finalCh
 - 同日に2回以上「よろしくお願いいたします」等の定型挨拶を繰り返す場合
 
 【4. 時刻の妥当性（TIME_INVALID）】
-- 「本日中に管理会社へ確認」「今日中にご連絡」等は18時以降であれば実行不可能な約束
+${fcFactsFromCompanyOn() ? `- ${nightPromiseRuleForCheck()}` : "- 「本日中に管理会社へ確認」「今日中にご連絡」等は18時以降であれば実行不可能な約束"}
 - 「明日ご連絡いたします」「後日確認いたします」等は時刻に関わらず有効
 - 土日・祝日・深夜に「本日中に」等の同日約束は実行不可能な約束
 
@@ -1203,8 +1204,8 @@ CONDITION_ADD_MISROUTED の誤発行を避けるべきケース:
 
 【タイムゾーンについての注意】
 【現在時刻】は日本標準時（JST・UTC+9）で表示される。
-「18時以降」の判定は JST 18:00 以降を指す。日本の営業時間は一般的に9:00-18:00。
-深夜（22:00以降）や早朝（7:00以前）の「本日中に」等の約束も実行不可能とみなすこと。`;
+${fcFactsFromCompanyOn() ? "時刻の決まりは上の【4. 時刻の妥当性】の1つだけを使う（管理会社の営業時間はそこに書いた時刻）。" : `「18時以降」の判定は JST 18:00 以降を指す。日本の営業時間は一般的に9:00-18:00。
+深夜（22:00以降）や早朝（7:00以前）の「本日中に」等の約束も実行不可能とみなすこと。`}`;
   // 2026-10-13 竹内さん（ブレインの使い残し 5）: ブレインの本質（turn_contract）を「答えるべき項目の一覧」として渡し、質問の取りこぼしはこれで見る（会話から探し直さない）。
   //   一覧がある時は [ANALYSIS] を短く（context-check-answer-list.ts・戻す CONTEXT_CHECK_ANSWER_LIST=off）
   const answerList = buildContextCheckAnswerList(ctx.turnContract ?? null, ctx.customerQuestions ?? null);
