@@ -22,6 +22,7 @@ import { ROLE_LABEL } from "./takeuchi-anatomy-roles";
 import { ABOUT_VALUES, ABOUT_JA, type RequestAbout } from "./request-ledger";
 import { takeuchiHowFor } from "./compose-how-table";
 import { orderTypeOf } from "./compose-order-table";
+import { composePhraseCatalogOn, trustHowFor } from "./compose-phrase-catalog";
 
 /**
  * 2026-11-12 作業員10（COMPOSE_HOW_BY_TYPE=on・既定 off）: 型ごとの「どうやって」の足し（53番の物差しで弱かった所）
@@ -532,7 +533,9 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { sce
   // 先に受ける（accept_first）は受けの文の型＝受けが主の番だけ主の行に置く（受け・挨拶・締めは今まで通り）
   const byType = composeHowByTypeOn() ? howByType(orderTypeOf(o.scene ?? null, mainRole0), { hasAnswer: !!u.main?.answer || u.main?.route === "reply", property: u.main?.property ?? null }) : null;
   const keyHowEff: KeyHow[] = s.keyHow.length ? s.keyHow : byType?.key.length ? byType.key : (tbl?.key ?? []).filter((k) => mainRole0 === "uke" || k !== "accept_first");
-  const trustTbl: TrustHow[] = s.trustHow.length ? [] : byType?.trust.length ? byType.trust : (tbl?.trust ?? []);
+  // 2026-11-13 作業員10（COMPOSE_PHRASE_CATALOG=on・既定 off）: 信頼の作り方は竹内さんの文から読んだ場面×主の役目の表を先に（正解53 で 27/47・場面×誘導先の表 20/47）
+  const phraseTrust = composePhraseCatalogOn() ? (trustHowFor(o.scene ?? null, mainRole0) as TrustHow[]) : [];
+  const trustTbl: TrustHow[] = s.trustHow.length ? [] : phraseTrust.length ? phraseTrust : byType?.trust.length ? byType.trust : (tbl?.trust ?? []);
   // 主: 一通の読みの主（AIX の番の主は返信では受けるだけ＝行にしない）
   const mainRole = u.main?.role ?? null;
   if (u.main && mainRole && !aixMain) {
@@ -765,7 +768,7 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
  */
 export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none">> = {
   // 文の統括の設計図が運ぶ
-  turn_contract: "plan", turn_read: "plan", turn_focus: "plan", turn_topics: "plan", seven_read: "plan", latent_read: "plan", now_vs_later: "plan", judge_basis: "plan", our_send_uptake: "plan", info_kind: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
+  turn_contract: "plan", turn_read: "plan", turn_focus: "plan", turn_topics: "plan", seven_read: "plan", latent_read: "plan", info_kind: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
   conductor_focus: "plan", plan_ahead: "plan", future_timeline: "plan", hesitancy_pattern: "plan", message_plan: "plan", current_property: "plan",
   customer_emotion: "plan", customer_mindset: "plan", our_side_note: "plan", engagement_stance: "plan", purchase_signal_level: "plan", reply_direction: "plan",
   // 2026-11-12 作業員7: この番の目的・中期の狙い・仕込み（BRAIN_TURN_AIMS・TURN_AIMS_AFTER）は受け渡し（conductor-handoff の decided）が運ぶ
@@ -776,7 +779,7 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   judge_next: "plan",
   // 2026-11-12 作業員22: 作業員16 の今と後・読みの候補・受け取られ方（どれも既定 off・道の前の事実の欄＝判断のブレインが読む）と、
   //   判断の順番の型の記録（CHECK_ORDER_TABLE・配分が読む）は記録の欄＝文の統括には渡さない（作業員10 の文の型の表が型の id を読む時に plan にする）
-  now_vs_later: "other", read_candidates: "other", our_send_uptake: "other", aix_now: "other",
+  now_vs_later: "other", read_candidates: "other", our_send_uptake: "other",
   check_order_scene: "other", check_order_type: "other", check_order: "other",
   // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF・記録だけ）とその入力
   conductor_brief_inputs: "other", conductor_brief: "other",
