@@ -1,4 +1,4 @@
-// 2026-11-13 作業員7b: ブレインの出力の中の食い違いを本質（turn_contract）の側に寄せる（BRAIN_AIX_FOLLOWS_CONTRACT・既定 off）
+// 2026-11-13 作業員7b: ブレインの出力の中の食い違いを本質（turn_contract）の側に寄せる（BRAIN_AIX_FOLLOWS_CONTRACT・11/14 から既定 on・=off で止まる）
 //   実物（試験の答案の生の出力）: q431 fc15-fc3a#1・q092 proc-on-dig-1110b#1・q001 w16-nl-on2-p2・q367 w7-ppw-on3#2・q009 focus-cond-q009-dig#2
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -7,7 +7,7 @@ import { resolveTwoStage } from "../two-stage";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${n}`); } else { fail++; console.log(`  NG  ${n}`); } };
 
-t("既定 off", !brainAixFollowsContractOn({}) && brainAixFollowsContractOn({ BRAIN_AIX_FOLLOWS_CONTRACT: "on" }));
+t("既定 on（11/14 試験で悪化0）・off で止まる", brainAixFollowsContractOn({}) && !brainAixFollowsContractOn({ BRAIN_AIX_FOLLOWS_CONTRACT: "off" }) && brainAixFollowsContractOn({ BRAIN_AIX_FOLLOWS_CONTRACT: "on" }));
 // ① q431: 送った物件のお礼だけ（route none）なのに物件の AIX
 t("① q431 → 返信", alignAixToContract({ finalAix: "property_send", rawAix: "property_send", asks: [{ route: "none", about: "reaction_to_sent", aix: null }] })?.to === "reply");
 // ② q092#1: ブレインの aix の欄は空・依頼に確認の AIX（入居の最短の問い）・物件の AIX は合図から
@@ -20,12 +20,12 @@ t("物件の AIX でない番は触らない", alignAixToContract({ finalAix: "v
 t("依頼が無い番は触らない", alignAixToContract({ finalAix: "property_send", rawAix: null, asks: [] }) === null);
 // ③ q367・q009: 探す約束なのに AIX の欄が物件確認した → ピックアップの約束（新しいスイッチでも古いスイッチでも）
 const base = { decisionSource: "llm", pickupReady: false, postApply: false, finalAix: "property_check_result", askAbout: "search_condition", customerText: "以前ご依頼した条件でもう一度探していただけませんでしょうか" } as Parameters<typeof resolveTwoStage>[0];
-delete process.env.TWO_STAGE_KIND_FROM_ABOUT; delete process.env.BRAIN_AIX_FOLLOWS_CONTRACT;
+delete process.env.TWO_STAGE_KIND_FROM_ABOUT; process.env.BRAIN_AIX_FOLLOWS_CONTRACT = "off";
 t("③ 両方 off は確認の約束（今まで通り）", resolveTwoStage(base)?.kind === "check");
 process.env.BRAIN_AIX_FOLLOWS_CONTRACT = "on";
 t("③ q367 BRAIN_AIX_FOLLOWS_CONTRACT=on → ピックアップの約束", resolveTwoStage(base)?.kind === "pickup");
 t("③ q009（言い直し・探す約束）も同じ", resolveTwoStage({ ...base, customerText: "もう少し広めで探してもらえますか？" })?.kind === "pickup");
-delete process.env.BRAIN_AIX_FOLLOWS_CONTRACT; process.env.TWO_STAGE_KIND_FROM_ABOUT = "on";
+process.env.BRAIN_AIX_FOLLOWS_CONTRACT = "off"; process.env.TWO_STAGE_KIND_FROM_ABOUT = "on";
 t("③ 古いスイッチ TWO_STAGE_KIND_FROM_ABOUT=on でも同じ", resolveTwoStage(base)?.kind === "pickup");
 delete process.env.TWO_STAGE_KIND_FROM_ABOUT;
 // 配線
