@@ -10913,6 +10913,10 @@ export default function Home() {
                 )}
               </div>
             )}
+            {/* 2026-11-13 作業員5（conductor-staff-check）: 統括の自信が低く人に回した番の理由（スタッフ向けの注記・お客様には送らない・サーバーの CONDUCTOR_STAFF_CHECK の時だけ値が来る） */}
+            {checkResult?.staff_check?.note && replyDraft.trim() && (
+              <div className="mb-1 rounded-lg border border-orange-200 bg-orange-50 px-2 py-1 text-[10px] font-medium text-orange-800">{checkResult.staff_check.note}</div>
+            )}
 
             {/* 🧠 最終チェック指摘リスト（block=🔴 / warning=🟡・折りたたみ式） */}
             {/* 2026-09-09 Fable5: brain action の有無で指摘リストを隠さない（隠すと final-check の block が「✅そのまま送信OK」の裏で素通りする） */}

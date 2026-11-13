@@ -5,6 +5,7 @@ import { positiveNoNegativeEnabled, positiveNoNegativeLine } from "@/app/lib/wee
 import { replySplitWriterNote, replyCountOf, replySplitSelfNote } from "@/app/lib/reply-split";
 import { fcBlueprintMarkOn, markUnmatchedSentences, blueprintMarkLog, blueprintEmbedLog, conditionTokensForMark } from "@/app/lib/final-check-blueprint-match";
 import { blueprintRedoMode, conductorRedoPlan, blueprintRedoLog } from "@/app/lib/blueprint-redo";
+import { staffCheckMode, decideStaffCheck, staffCheckWriterLine, type StaffCheckInput } from "@/app/lib/conductor-staff-check";
 // 2026-11-12 作業員7（TURN_AIMS_AFTER・既定 off）: 道が決まった後に目的・中期・仕込みを作り、文の統括への受け渡しにだけ渡す
 import { metaWithTurnAimsAfter } from "@/app/lib/turn-aims-after";
 import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR, mgmtNightClosingOn, nightMgmtClosingLine } from "@/app/lib/mgmt-hours-split";
@@ -5618,6 +5619,24 @@ async function handleGenerateReply(req: NextRequest) {
       lines.push("※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。");
       return lines.join("\n") + "\n";
     })();
+    // 2026-11-13 作業員5（自信が無い時に統括が人に回す段・CONDUCTOR_STAFF_CHECK=shadow|on・既定 off）: 入口の統括の自信が low で、はっきりした理由
+    //   （指す物が解けない・答えの出所が推測だけ・読みの候補が割れた）がある番は、スタッフに確かめてもらう。注記は final_check.staff_check（画面）・
+    //   on の時だけ書き手に「言い切らない」の1行（brainGuidanceNote の後ろ・下書き欄には何も入れない）
+    const staffCheckRec = staffCheckMode() !== "off" && brainMeta ? (() => { try {
+      const bm = brainMeta as unknown as Record<string, unknown>;
+      return decideStaffCheck({
+        intakeConfidence: (bm.conductor_intake as { answer?: { confidence?: string } | null } | undefined)?.answer?.confidence ?? null,
+        ref: (bm.ref_resolve ?? null) as StaffCheckInput["ref"],
+        turnHasImage: unrepliedCustomerTexts.some(isImageTextUnit),
+        currentProperty: typeof bm.current_property === "string" ? bm.current_property : null,
+        asks: ((bm.turn_contract as { asks?: Array<{ route?: unknown; basis?: unknown }> } | undefined)?.asks) ?? null,
+        latentFive: (bm.latent_five ?? null) as StaffCheckInput["latentFive"],
+        readCandidates: (bm.read_candidates ?? null) as StaffCheckInput["readCandidates"],
+        depthReason: (bm.brain_depth as { reason?: string } | undefined)?.reason ?? null,
+      });
+    } catch { return null; } })() : null;
+    if (staffCheckRec) console.log(JSON.stringify({ tag: "conductor:staff-check", conversationId, mode: staffCheckMode(), reasons: staffCheckRec.reasons, ref_detail: staffCheckRec.ref_detail ?? null, depth: staffCheckRec.depth, depth_match: staffCheckRec.depth_match }));
+    const staffCheckWriterNote = staffCheckMode() === "on" && staffCheckRec && brainGuidanceNote ? `\n${staffCheckWriterLine(staffCheckRec)}\n` : "";
 
     // ── 場面と返信方針（TPO）独立ブロック（2026-09-08）──
     // brainMeta の有無（T1/T2/T3）に関係なく必ず生成プロンプトへ注入する。
@@ -6322,7 +6341,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         // 2026-11-03 作業員6 場面の技能（SCENE_SKILLS=on・既定 off）: 会社のルールを場面で絞り（rules_scene と同じ関数）、設計知見の木から組んだ決まりの本を後ろに足す
         ((testFlags.rules_scene === "on" || sceneSkillsOn()) && replyScene ? filterRulesTextForScene(dbRules, replyScene) : dbRules) + sceneRuleBookNote + ownerWriterBookNote),
       // 4巡目: 物件ごとの台帳は引用の材料の隣（会話履歴の直前）に置く（申込の材料の欄では YUMA 2回中1回で別の物件名を書いた）
-      resolvedSummaryJson, [quotedContextNote, propertyThreadReplyNote].filter(Boolean).join("\n\n"), propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
+      resolvedSummaryJson, [quotedContextNote, propertyThreadReplyNote].filter(Boolean).join("\n\n"), propertyStatus, templateSystemNote + templateNote, brainGuidanceNote + staffCheckWriterNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
       // 2026-09-17 YUYA 事例: ポータルの場面では LLM にポータルの説明を書かせない（決まった文を出口で足す）
       // 2026-09-17 あや事例: この会話で既に送った言い回しを渡して同じ文を繰り返させない（コピペに見える）
@@ -7895,6 +7914,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 console.warn("[generate-reply] draft confidence failed:", conversationId, e instanceof Error ? e.message : String(e));
               }
             }
+            // 2026-11-13 作業員5（CONDUCTOR_STAFF_CHECK）: 統括が人に回した番の理由を画面の注記と影の関所に（下書きは変えない）
+            if (staffCheckRec && finalCheck) finalCheck.staff_check = { reasons: staffCheckRec.reasons, note: staffCheckRec.note, gate: staffCheckRec.gate, ...(staffCheckRec.ref_detail ? { ref_detail: staffCheckRec.ref_detail } : {}) };
             if (finalDraftText) controller.enqueue(encoder.encode(finalDraftText));
             // FINAL_CHECK トレーラー（メタ行1行目は出力済みのためトレーラーが唯一の伝達手段。
             // クライアントは SUGGESTED_AIX と同様に内部タグとして除去・解析する。STOP_REASON は必ず最後）
