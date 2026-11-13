@@ -290,6 +290,19 @@
       window.__axlxRecNoteOp = _recNoteOp;
       window.__axlxRecNoteName = _recNoteName;
     }
+    /**
+     * 2026-11-14 竹内さん「画面録画したのみたら一連の動き学習できるからいまみてみて」:
+     *   `page-script.js` は**ページの世界**で動くので、ここの `window.__axlxRecNoteName` は**見えない**。
+     *   → **postMessage で受ける**（地域・駅の段が学習の記録に入るように）。
+     *   ⚠ 受けるのは**名前だけ**。区の名前・入力した中身は入っていない。
+     */
+    window.addEventListener("message", function (e) {
+      try {
+        if (!e || e.source !== window || !e.data || e.data.from !== "axlx-rec-note-name") return;
+        var n = typeof e.data.name === "string" ? e.data.name.slice(0, 30) : "";
+        if (n) _recNoteName(n);
+      } catch (_) {}
+    });
   } catch (_) {}
   /**
    * 2026-11-13 竹内さん「ちゃんと読み取れるようになったかな」→ `shot_ops` が 0件

@@ -1616,8 +1616,13 @@
     try {
       if (typeof window !== "undefined" && typeof window.__axlxRecNoteName === "function") {
         /**
-         * 2026-11-13: 学習で使える**意味のある名前**にする（`step:modal` ではなく `所在地絞り込み` など）。
-         *   ⚠ 区の名前そのもの（「大阪市北区」）は入れない（お客様の条件に近い情報なので段の名前だけ）。
+         * 2026-11-14 竹内さん「画面録画したのみたら一連の動き学習できるからいまみてみて」:
+         *   ⚠ **ここが動いていなかった本当の理由**: `page-script.js` は **ページの世界**で動き
+         *     （content.js が `<script src>` で注入）、`human-learn-record.js` は
+         *     **アイソレーテッドワールド**（manifest の content_scripts）。
+         *     世界が違うので `window.__axlxRecNoteName` は**見えない**（実測: 地域の段が0件）。
+         *   → **postMessage で橋渡し**する（content script 側が受けて記録する）。
+         *     ⚠ 残すのは**段の名前だけ**（区の名前・入力した中身は入れない）。
          */
         var _STEP_JA = {
           modal: "所在地絞り込み",
@@ -1634,7 +1639,24 @@
           station_confirm: "確定してリストへ",
         };
         var _nm = _STEP_JA[String(k)] || null;
-        if (_nm) window.__axlxRecNoteName(_nm);
+        if (_nm) {
+          // ① 同じ世界に入口があればそれ（将来 page-script 側に置いた時）
+          try { window.__axlxRecNoteName(_nm); } catch (_) {}
+          // ② 世界をまたぐ橋（content script の human-learn-record.js が受ける）
+          try { window.postMessage({ from: "axlx-rec-note-name", name: _nm }, "*"); } catch (_) {}
+        }
+      } else {
+        var _STEP_JA2 = {
+          modal: "所在地絞り込み", ward: "区を選ぶ", ward_by_code: "区を選ぶ",
+          ward_next_press: "地域の設定へ進む", next_step: "地域の設定へ進む",
+          town: "町字を選ぶ", modal_close: "確定してリストへ", modal_confirm: "確定してリストへ",
+          station: "沿線・駅絞り込み", station_line: "沿線を選ぶ",
+          station_next_press: "駅の設定へ進む", station_confirm: "確定してリストへ",
+        };
+        var _nm2 = _STEP_JA2[String(k)] || null;
+        if (_nm2) {
+          try { window.postMessage({ from: "axlx-rec-note-name", name: _nm2 }, "*"); } catch (_) {}
+        }
       }
     } catch (_) {}
     if (!_audit) return;

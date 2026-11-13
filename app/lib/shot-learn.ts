@@ -336,6 +336,85 @@ export function learnFromShots(
 }
 
 /**
+ * 2026-11-14 竹内さん「画面録画したのみたら一連の動き学習できるからいまみてみて」:
+ *   録画の**一連の動き**から「**この手順で押す**」という型を作る（統括が使う）。
+ *
+ *   なぜ要るか:
+ *     これまでは「A の次は B」を**1組ずつ**学んでいた（`next`）。
+ *     だが実際の検索は **10〜20手の一連の流れ**で、1組ずつでは
+ *     「地域 → 区 → 町字 → 確定 → 徒歩 → 賃料 → …」の**全体**が見えなかった。
+ *
+ *   何を作るか:
+ *     ・`sequence` … 実際に押された順番を**1本の鎖**にした物（回数の多い手順を優先）
+ *     ・`groups`   … 意味のあるまとまり（地域／駅／条件）に分けた物
+ *
+ *   ⚠ 入れるのは**欄の名前と順番だけ**（入力した中身・お客様の情報は入れない）。
+ *   ⚠ 1回しか出ていない手順は採らない（偶然を型にしない）。ただし鎖をつなぐ時は許す。
+ */
+export function learnSequenceFromShots(
+  sequences: ReadonlyArray<ReadonlyArray<{ f?: unknown }>>,
+  opt: { min?: number } = {},
+): {
+  sequence: string[];
+  groups: Array<{ name: string; steps: string[]; n: number }>;
+  edges: Array<{ from: string; to: string; n: number }>;
+  samples: number;
+} {
+  const min = opt.min ?? 2;
+  const seqs = (Array.isArray(sequences) ? sequences : [])
+    .map((s) => (Array.isArray(s) ? s.map((x) => String(x?.f ?? "").trim()).filter(Boolean) : []))
+    .filter((s) => s.length >= 2);
+  if (!seqs.length) return { sequence: [], groups: [], edges: [], samples: 0 };
+
+  // ① 組を数える
+  const tally: Record<string, Record<string, number>> = {};
+  for (const s of seqs) {
+    for (let i = 1; i < s.length; i++) {
+      const a = s[i - 1], b = s[i];
+      if (a === b) continue;
+      (tally[a] ||= {})[b] = (tally[a][b] ?? 0) + 1;
+    }
+  }
+  const edges: Array<{ from: string; to: string; n: number }> = [];
+  for (const [from, dests] of Object.entries(tally)) {
+    for (const [to, n] of Object.entries(dests)) edges.push({ from, to, n });
+  }
+  edges.sort((a, b) => b.n - a.n);
+
+  // ② 鎖を作る（一番長い実際の並びを土台にし、min 回以上そろった組でつなぐ）
+  const best = seqs.slice().sort((a, b) => b.length - a.length)[0] ?? [];
+  const nextOf: Record<string, { to: string; n: number }> = {};
+  for (const e of edges) {
+    if (e.n < min) continue;
+    if (!nextOf[e.from] || e.n > nextOf[e.from].n) nextOf[e.from] = { to: e.to, n: e.n };
+  }
+  const seq: string[] = [];
+  const used = new Set<string>();
+  let cur: string | undefined = best[0];
+  let guard = 0;
+  while (cur && guard++ < 60 && !used.has(cur)) {
+    seq.push(cur);
+    used.add(cur);
+    cur = nextOf[cur]?.to;
+  }
+
+  // ③ 意味のあるまとまりに分ける（地域／駅／条件）
+  const GROUP: Array<{ name: string; re: RegExp }> = [
+    { name: "地域（所在地）", re: /所在地|区を選ぶ|町字|地域の設定/ },
+    { name: "駅・沿線", re: /沿線|駅の設定|駅を選ぶ/ },
+    { name: "条件の入力", re: /required_time|rental_cost|square_meter|structured_date|room_layout|update_date|transportation|include_common_fee|deposit_recommpence|敷金/ },
+    { name: "検索", re: /検索|確定してリストへ/ },
+  ];
+  const groups: Array<{ name: string; steps: string[]; n: number }> = [];
+  for (const g of GROUP) {
+    const steps = seq.filter((s) => g.re.test(s));
+    if (steps.length) groups.push({ name: g.name, steps, n: seqs.filter((s) => s.some((x) => g.re.test(x))).length });
+  }
+
+  return { sequence: seq, groups, edges: edges.slice(0, 40), samples: seqs.length };
+}
+
+/**
  * 弱い所を見つける（純関数・統括が「次に何を学ぶか」を決める材料）。
  *   ① 種類が割れている欄（同じ名前で select と text が両方ある＝読み違え）
  *   ② 種類がまだ分からない欄（数値に w が無い）

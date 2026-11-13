@@ -33,7 +33,13 @@ console.log("■ ① 地域・駅の段が学習の並びに残る");
   const rec = read("human-learn-record.js");
 
   t("段を記録する時に学習の並びへも渡す", ps.includes("__axlxRecNoteName"));
-  t("_audit が無くても学習の並びには残す", /try \{[\s\S]{0,400}__axlxRecNoteName[\s\S]{0,800}if \(!_audit\) return;/.test(ps));
+  /**
+   * 2026-11-14: page-script は**ページの世界**で動くので、content script の
+   *   `window.__axlxRecNoteName` は見えない。**postMessage で橋渡し**する形に変えた。
+   *   → 「_audit が無くても学習の並びに残す」は、postMessage を送っている事で確かめる。
+   */
+  t("_audit が無くても学習の並びに残す（postMessage で橋渡し）", /from: "axlx-rec-note-name"/.test(ps));
+  t("受ける側（content script）がある", rec.includes("axlx-rec-note-name"));
   t("地域: 所在地絞り込みを開く段", /modal: "所在地絞り込み"/.test(ps));
   t("地域: 区を選ぶ段", /ward: "区を選ぶ"/.test(ps));
   t("地域: 町字を選ぶ段", /town: "町字を選ぶ"/.test(ps));
