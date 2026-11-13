@@ -1930,8 +1930,16 @@
         var inp = wardLabels[i].querySelector('input[name="city_code[]"]');
         if (inp && inp.checked && isWardButtonY()) { _noteWardPicked(inp.value, wardLabels[i].textContent); return true; } // 選択済みかつボタンY → 成功
         if (inp && inp.checked) {
-          // DOM上はcheckedだがボタンがN → サイト内部状態が未反映 → 再クリックで登録し直す
-          simulateClick(wardLabels[i]);
+          /**
+           * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない」:
+           *   ⚠ 旧はここで **`simulateClick(wardLabels[i])`＝チェックを外してしまう**（トグル）。
+           *     「DOM上はchecked だがボタンがN」を「未反映」と決めつけて押し直していたが、
+           *     実際は**押せている**事が多く、押し直すと**選択が外れる**。
+           *     実測: 「A B A B A B…」の交互クリックが **40件中24件**あった（人が10往復も押さない）。
+           *   → **外さずに**、サイトの内部状態を反映させる（Yにする）だけにする。
+           *     `ensureWardButtonY` が「外してから押し直す」を**必要な時だけ**行う（同じ所の二重押しを避ける）。
+           */
+          try { if (typeof ensureWardButtonY === 'function') ensureWardButtonY(function () {}); } catch (_) {}
           _noteWardPicked(inp.value, wardLabels[i].textContent);
           return true;
         }

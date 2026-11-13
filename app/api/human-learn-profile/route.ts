@@ -57,7 +57,16 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   };
   const rows: unknown[] = [];
   const droppedCols: string[] = [];
-  for (let i = 0; i < 3000; i += 1000) {
+  /**
+   * 2026-11-13 竹内さん「データベース改善されてるのかな」:
+   *   ⚠ 旧は **3000行で打ち切って**いた。実測では3日で3179行あり、
+   *     **古い記録が枠を食って、新しい記録が入らない**（＝直近の検索が学習に入らない）。
+   *   → 上限を 6000 に上げ、**新しい順**に読む（`order(desc)` は既にそう）ので
+   *     打ち切られても**古い方**が落ちる（新しい記録は必ず入る）。
+   *   ⚠ 重くしない上限は残す（6000行・2ページ×3回の範囲）。
+   */
+  const MAX_ROWS = 6000;
+  for (let i = 0; i < MAX_ROWS; i += 1000) {
     const sel = await selectDroppingMissing(
       SELECT.split(", "),
       (colsCsv) => fetchPage(colsCsv, i, i + 999),

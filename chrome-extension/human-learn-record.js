@@ -198,7 +198,36 @@
       // 同じ物を続けて積まない（拡張の tap と click が両方来る事がある）
       var last = _opsRing[_opsRing.length - 1];
       var t = Date.now();
-      if (last && last.f === (nm ? String(nm).slice(0, 30) : null) && t - Number(last.t || 0) < 120) return;
+      var nmStr = nm ? String(nm).slice(0, 30) : null;
+      if (last && last.f === nmStr && t - Number(last.t || 0) < 120) return;
+      /**
+       * 2026-11-13 竹内さん「自動検索のところちゃんと学習されるようになっているのか」:
+       *   ⚠ チェックボックスは **`label` を押すと `input` にも click が伝わる**ので、
+       *     同じ1回の操作が **2回**（`左の1K｜label` と `room_layout_id[]`）記録されていた。
+       *     実測: この形が **40件中24件**。学習すると「1K → 間取り → 1K → 間取り…」の
+       *     **交互（人がやらない押し方）**を学び、確からしさが 20/20回になってしまっていた。
+       *   → **同じチェックの label と input は1回に畳む**（120〜400ms 以内・同じ親の中）。
+       */
+      try {
+        var _LL0 = (typeof self !== "undefined" ? self : window).AxlxHumanLearn || L;
+        var _sameToggle = (function () {
+          if (!last || !el) return false;
+          var gap2 = t - Number(last.t || 0);
+          if (!(gap2 >= 0 && gap2 <= 400)) return false;      // 近い時だけ（人の2回押しは残す）
+          var cb = last.el;
+          if (!cb || !cb.nodeType) return false;
+          // 片方が label・片方が input（同じチェックを指している）
+          var a = String(cb.tagName || "").toUpperCase(), b = String(el.tagName || "").toUpperCase();
+          var isPair = (a === "LABEL" && b === "INPUT") || (a === "INPUT" && b === "LABEL");
+          if (!isPair) return false;
+          var inp = a === "INPUT" ? cb : el;
+          var lab = a === "LABEL" ? cb : el;
+          if (!inp || String(inp.name || "").indexOf("[]") < 0) return false;  // チェック系だけ
+          // 同じ親の中に居る（同じチェック）
+          return !!(lab.contains && lab.contains(inp)) || (inp.closest && inp.closest("label") === lab);
+        })();
+        if (_sameToggle) { void _LL0; return; }
+      } catch (_) {}
       /**
        * 2026-11-13: 要素の種類は**その場で読む**（読み込み順に頼らない）。
        *   ⚠ 旧は ファイル先頭の `L` を使っていたが、`human-learn.js` より先に読まれると
@@ -218,7 +247,7 @@
         var d = t - last.t;
         if (d >= 0 && d <= 60000) gap = d;
       }
-      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nm ? String(nm).slice(0, 30) : null, w: kd, g: gap });
+      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null });
       while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
     } catch (_) {}
   }
@@ -247,7 +276,12 @@
   } catch (_) {}
   /** 写真と一緒に送る「直前までの操作」（新しい順に最大40件） */
   function _recentOps() {
-    try { return _opsRing.slice(-OPS_RING_MAX); } catch (_) { return null; }
+    try {
+      // ⚠ DOM 要素（el）は送らない（JSON にできない・個人情報ではないが重い）
+      return _opsRing.slice(-OPS_RING_MAX).map(function (o) {
+        return { t: o.t, k: o.k, f: o.f, w: o.w, g: o.g };
+      });
+    } catch (_) { return null; }
   }
   /**
    * 2026-11-13 竹内さん「録画から学習できるのか」:

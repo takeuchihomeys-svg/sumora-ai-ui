@@ -141,6 +141,37 @@ export function sequencesOf(row: MotionRow): Array<Array<{ t: number | null; k: 
 }
 
 /**
+ * 「A B A B A B…」の交互クリック（＝人の順ではなく**拡張のトグル跡**）を見つける。
+ *
+ * 2026-11-13 竹内さん「自動検索のところちゃんと学習されるようになっているのか」:
+ *   実測で 40件中24件にこの形があった（`room_layout_id[]` ⇄ `左の1K｜label` が10回）。
+ *   人がある欄を10往復押す事はまず無い（同じ所を押すと**選択が外れる**ので、
+ *   人がやると「選べていない」事に気づいて止める）。
+ *   → **3往復以上**（同じ2つの間を行き来）を含む並びは学習に使わない。
+ *
+ * @param seq 操作の並び（f＝欄の名前）
+ * @returns 交互クリックと見なすなら true
+ */
+export function looksLikeToggleLoop(seq: ReadonlyArray<{ f?: string | null }>): boolean {
+  if (!Array.isArray(seq) || seq.length < 6) return false;
+  const f = seq.map((x) => String(x?.f ?? ""));
+  // 隣り合う2つの組み (a,b) が、a b a b a b と3往復以上続くか
+  let alt = 0;
+  for (let i = 2; i < f.length; i++) {
+    if (f[i] && f[i] === f[i - 2] && f[i] !== f[i - 1]) alt++;
+    else alt = 0;
+    if (alt >= 4) return true;   // 3往復＝6回の所で4回の一致（余裕を見て4）
+  }
+  // 同じ欄が3回以上連続（押し直し）も、人の順としては使わない
+  let run = 1;
+  for (let i = 1; i < f.length; i++) {
+    if (f[i] && f[i] === f[i - 1]) { run++; if (run >= 4) return true; }
+    else run = 1;
+  }
+  return false;
+}
+
+/**
  * 押す順番を学ぶ（純関数）。
  *   ・直前の操作（f）→ その次に押された物 を数える
  *   ・同じ欄の続き（値の入力中）は数えない
@@ -263,6 +294,15 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     // 同じ日の中の重複を畳むための印（UTC の日付）
     const day = String(r.created_at ?? "").slice(0, 10);
     for (const s of sequencesOf(r)) {
+      /**
+       * 2026-11-13 竹内さん「自動検索のところちゃんと学習されるようになっているのか」:
+       *   ⚠ 実測で **40件中24件が「A B A B A B…」の交互クリック**だった
+       *     （`room_layout_id[]` ⇄ `左の1K｜label` が10回）。
+       *     これは人が押した順ではなく、**拡張がチェックをトグルさせてしまった跡**。
+       *     これを学ぶと「次はこれを押す」が**でたらめ**になる（実際 next が20/20回になっていた）。
+       *   → **交互（A B A B…が3往復以上）を含む並びは学習に使わない**（記録は残す）。
+       */
+      if (looksLikeToggleLoop(s)) continue;
       const key = day + "|" + s.map((x) => String(x.f ?? "")).join(">");
       const cur = seqGroups.get(key);
       if (!cur || s.length > cur.length) seqGroups.set(key, s);
@@ -303,6 +343,8 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     const site = String(r.site || "").trim() || "unknown";
     const day = String(r.created_at ?? "").slice(0, 10);
     for (const s of sequencesOf(r)) {
+      // 2026-11-13: 交互クリック（拡張のトグル跡）は手順として学ばない
+      if (looksLikeToggleLoop(s)) continue;
       const sig = day + "|" + s.map((x) => String(x.f ?? "")).join(">");
       if (flowSeen.has(sig)) continue;   // 同じ日の同じ検索は1回だけ数える
       flowSeen.add(sig);
