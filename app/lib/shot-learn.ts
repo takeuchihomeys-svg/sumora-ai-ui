@@ -103,6 +103,21 @@ export function guessKindFromName(name: unknown): { kind: string; conf: number }
 
   // ⑤ 画像・見出し・件数など、押す対象ではなさそう
   if (/^(img|image)\b|^img\./.test(cls)) return { kind: "other", conf: 0.5 };
+  /**
+   * 2026-11-13 実測（残り11件）への対処:
+   *   ・`堺市南区`・`大阪市中央区` … **区の名前そのもの**（クラス名が付いていない）。
+   *     地域の小窓では「区を選ぶ」＝チェックなので **checkbox**。
+   *   ・`div` / `span` / `svg` / `td` / `#axlx-bar` / `div.building_tr` / `td.st_td` …
+   *     これらは**押す対象ではない**（見出し・行・拡張の帯）。押した記録に残っているのは
+   *     クリックが要素へ伝わっただけ。→ `other` にして「学ぶ対象」から外す（0.4）。
+   *   ⚠ `other` は学習の並べ替えには使わない（`_orderByLearned` は名前で照合するので実害なし）。
+   */
+  // 区・市の名前（「大阪市北区」「堺市南区」「東大阪市」など）
+  if (/^[^\s]{1,10}(市|区|郡|町|村)[^\s]{0,8}$/.test(n)) return { kind: "checkbox", conf: 0.65 };
+  // 押す対象ではない飾り・入れ物
+  if (/^(div|span|svg|td|th|tr|table|tbody|p|ul|li|i|b|strong|section|header|footer|main|nav|form|label_text)$/.test(cls)) return { kind: "other", conf: 0.4 };
+  if (/^(#axlx-|axlx)/.test(raw)) return { kind: "other", conf: 0.4 };
+  if (/(building_tr|rl_area|st_td|hover_comment)/.test(cls)) return { kind: "other", conf: 0.5 };
 
   return null;
 }
@@ -421,7 +436,13 @@ export function findWeakPoints(
   }
   // ② 種類が分からない欄
   for (const [name, v] of Object.entries(points || {})) {
+    /**
+     * 2026-11-13 竹内さん「今弱い部分学習する」:
+     *   `other`（押す対象ではない飾り・入れ物・拡張の帯）は**学ぶ対象ではない**ので弱い所から外す。
+     *   残すと「学んでも直らない物」が永久に居座る（実測で div/svg/span が10件残っていた）。
+     */
     if (!v.w) out.push({ kind: "kind_unknown", name, why: "押した記録に種類が無い（旧版の記録）", next: "写真から種類を読んで埋める" });
+    else if (v.w === "other") continue;
   }
   // ③ 写真と食い違った欄
   for (const f of fixed) {
