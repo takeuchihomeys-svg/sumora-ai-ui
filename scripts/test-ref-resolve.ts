@@ -3,6 +3,7 @@
 // 実例3番（名前と物件名は伏せた）: 12105（送ってきてくれたやつで初期費用5万以内はあれだけ？）・12555（URL の号室が引けない）・10911（画像の物件名が空・読み取り「難皮」）
 import assert from "node:assert/strict";
 import { resolveRefs, refCountOf, refResolveLine, refResolveDigest, portalIdOf, nameSimilarity, refResolveOn, type RefSent } from "../app/lib/ref-resolve";
+import { broughtFromShares, broughtFromThreads, mergeBrought } from "../app/lib/ref-brought";
 import { attachBundles, parseEstimateTexts, attachEstimates, buildSentProps, buildSentPropsText } from "../app/lib/sent-props-text";
 
 let n = 0;
@@ -83,6 +84,20 @@ t("束の何件目・↑・引用・複数の指す物（深さの札 refCount�
   assert.deepEqual([q.items[0].targets, q.items[0].certainty], [[{ name: "Cレジデンス", room: "303" }], "high"]);
   // 指す言葉が無い文は空（数えない）
   assert.deepEqual(resolveRefs({ text: "よろしくお願いします", sent: sent12105, brought: [] }), { items: [], refCount: 0 });
+});
+
+t("持ち込みの台帳: ポータルの共有文（名前・URL・id）と物件ごとの状況の台帳（origin=customer の部屋・customer_shared の URL）をポータルの id でまとめる", () => {
+  const url = "https://suumo.jp/chintai/jnc_000055556666/?bc=1";
+  const shares = broughtFromShares([{ name: "Fハイム", label: "Fハイム 3階", url, at: "2026-11-05T00:00:00Z" }]);
+  assert.deepEqual([shares[0].name, shares[0].room, shares[0].portal_id, shares[0].from], ["Fハイム", null, "000055556666", "url"], "SUUMO の共有文は階まで＝号室は null");
+  const threads = broughtFromThreads({ rooms: [{ key: "k", ref: { building: "Fハイム", buildingKey: "fハイム", room: "302", floor: null, display: "Fハイム 302" }, names: ["Fハイム"], events: [{ at: "2026-11-05T00:00:00Z", kind: "customer_shared", by: "named", text: url }], sentByUs: false, origin: "customer" }], turnTargets: [] } as never);
+  const merged = mergeBrought(shares, threads);
+  assert.deepEqual(merged.map((b) => [b.name, b.room, b.portal_id]), [["Fハイム", "302", "000055556666"]]);
+  const r = resolveRefs({ text: `${url} の初期費用は？`, sent: [], brought: merged });
+  assert.deepEqual([r.items[0].targets[0], r.items[0].certainty], [{ name: "Fハイム", room: "302" }, "high"]);
+  // 12555 の本番の形（11/13 に1件だけ確かめた）: homes の room の URL だけで共有文も台帳の行も無い＝needs_name のまま（ページの読み取りは SUUMO だけ）
+  const homes = resolveRefs({ text: "https://www.homes.co.jp/chintai/room/af1bfe2548e05ba5088f25346a2a7d34aa6f8886/", sent: [], brought: mergeBrought(broughtFromShares([]), broughtFromThreads(null)) });
+  assert.match(homes.items[0].note ?? "", /needs_name（homes af1bfe/);
 });
 
 console.log(`全部 ${n} 件 ok`);

@@ -2505,7 +2505,13 @@ async function analyzeConversationCore(
       const rr = resolveRefs({
         text: turnText,
         sent: sentProps.filter((sp) => !sp.shared_only).map((sp) => ({ name: sp.property_name, room: sp.room_no || null, sent_at: sp.sent_at, bundle_no: sp.bundle_no ?? null, bundle_pos: sp.bundle_pos ?? null, channel: sp.channel ?? null, estimate_initial_cost: sp.estimate_initial_cost ?? null })),
-        brought: turn.length ? brought.filter((b) => turn.some((mm) => mm.created_at === b.at)) : [],
+        // 持ち込みの台帳: 今の連投の URL・画像＋ポータルの共有文（customer-property-names・名前と URL・費用0）。画像は今の連投の物だけ（古い画像を今の指す物にしない）
+        brought: turn.length ? (await (async () => {
+          const { customerSharedPropertyNames } = await import("@/app/lib/customer-property-names");
+          const { broughtFromShares, mergeBrought } = await import("@/app/lib/ref-brought");
+          const shares = broughtFromShares(customerSharedPropertyNames([...typedMessages].reverse().map((mm) => ({ sender: mm.sender, text: mm.text, created_at: mm.created_at })), { limit: 10 }));
+          return mergeBrought(brought, shares).filter((b) => b.from !== "image" || turn.some((mm) => mm.created_at === b.at));
+        })()) : [],
         quotedText, lastStaffSentBundle,
       });
       refResolveRec = { ...rr, digest: refResolveDigest(rr) };
