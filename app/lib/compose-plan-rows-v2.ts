@@ -90,6 +90,15 @@ export const SUB_STAND = { bridge: 0.15, press_sub: 0.1, keep_promise: 0.3, fixe
 export function rowsV2SubOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.COMPOSE_ROWS_V2_SUB ?? "").trim().toLowerCase() !== "off";
 }
+/**
+ * 役目ごとに割合の線を当てるか（COMPOSE_ROWS_V2_SUB の中）。つなぎは当てない（11/13 統括役: 広い正解で当たり 17→13 に減る・余分は 8→5）＝
+ * COMPOSE_ROWS_V2_SUB_BRIDGE=on の時だけ当てる。押さえ・締めは当てる（締めは落とした5行が全部竹内さんに無い下の役目）。
+ */
+export function rowsV2SubRoleOn(role: "press" | "bridge" | "close", env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  if (!rowsV2SubOn(env)) return false;
+  if (role === "bridge") return (env.COMPOSE_ROWS_V2_SUB_BRIDGE ?? "").trim().toLowerCase() === "on";
+  return true;
+}
 /** 場面×主の役目 → 信頼の下の役目の割合（3番未満は場面 * に落とす） */
 export function trustSubsFor(scene: string | null, mainRole: SentenceRole | null): Array<[string, number]> {
   if (!mainRole) return [];
@@ -123,7 +132,7 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
   const lastStaff = i.recentStaff[i.recentStaff.length - 1] ?? null;
   const ourText = i.recentStaff.map((m) => m.text).join("\n");
   const prop = i.s7.appeal?.property ?? null;
-  const subOn = rowsV2SubOn();
+  const subOn = rowsV2SubOn(), closeSubOn = rowsV2SubRoleOn("close");
   // 作業員5 の重点の下の種類（meta.conductor_focus.focus_sub）。check_estimate＝確認と見積の両方の約束 → 押さえ（確認）とつなぎ（見積へ）の2行で受ける
   const focusSub = subOn ? String((i.meta as { conductor_focus?: { focus_sub?: unknown } } | null)?.conductor_focus?.focus_sub ?? "") : "";
   const checkEstimate = focusSub === "check_estimate";
@@ -140,7 +149,7 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
   for (const r of v1ByV2.get("press") ?? []) {
     const isPromise = r.role === "promise";
     // 従の押さえ（主でない答え・約束）は、竹内さんがこの場面×主の役目でその下の役目を入れる割合 SUB_STAND.press_sub 以上の時だけ
-    if (subOn && r.rank !== "main" && !(checkEstimate && isPromise)) { const sh = subShareFor(i.scene, mainRole, `press.${isPromise ? "promise" : "answer"}`); if (sh != null && sh < SUB_STAND.press_sub) { dropped.push({ role: "press", why: `従の${isPromise ? "約束" : "答え"}は竹内さんの割合 ${sh}（${SUB_STAND.press_sub} 未満）` }); continue; } }
+    if (rowsV2SubRoleOn("press") && r.rank !== "main" && !(checkEstimate && isPromise)) { const sh = subShareFor(i.scene, mainRole, `press.${isPromise ? "promise" : "answer"}`); if (sh != null && sh < SUB_STAND.press_sub) { dropped.push({ role: "press", why: `従の${isPromise ? "約束" : "答え"}は竹内さんの割合 ${sh}（${SUB_STAND.press_sub} 未満）` }); continue; } }
     const f0 = isPromise ? promiseFacts : replyFacts;
     const sub: V2Sub = isPromise ? "split_known_check" : f0.some((f) => /\d/.test(f.text)) ? "numbers" : prop ? "name_property" : "conclusion";
     const src: V2Source = isPromise ? "staff_only" : (i.kinds ?? []).includes("K13") ? "checked_result" : f0[0] ? FROM_SOURCE[f0[0].from] : "conversation";
@@ -186,8 +195,8 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
   // check_estimate のつなぎ（見積へ）: 設計図に見積の行が無くても立てる（見積の半分）
   if (checkEstimate && !bridgeV1.some((r) => r.role === "estimate")) bridgeV1.push({ rank: "sub", role: "estimate", part: null, how: null, next: null, from: "focus_sub" });
   for (const r of bridgeV1) {
-    // 竹内さんがこの場面×主の役目でその誘導先に誘う割合 SUB_STAND.bridge 以上の時だけ（主の役目そのもの・check_estimate の見積は立てる）
-    if (subOn && r.role !== mainRole && !(checkEstimate && r.role === "estimate")) { const sh = subShareFor(i.scene, mainRole, `bridge.${r.role}`); if (sh != null && sh < SUB_STAND.bridge) { dropped.push({ role: "bridge", why: `${r.role} へ誘うのは竹内さんの割合 ${sh}（${SUB_STAND.bridge} 未満）` }); continue; } }
+    // つなぎは既定で割合の線を当てない（COMPOSE_ROWS_V2_SUB_BRIDGE=on の時だけ: 割合 SUB_STAND.bridge 以上・主の役目そのもの・check_estimate の見積は立てる）
+    if (rowsV2SubRoleOn("bridge") && r.role !== mainRole && !(checkEstimate && r.role === "estimate")) { const sh = subShareFor(i.scene, mainRole, `bridge.${r.role}`); if (sh != null && sh < SUB_STAND.bridge) { dropped.push({ role: "bridge", why: `${r.role} へ誘うのは竹内さんの割合 ${sh}（${SUB_STAND.bridge} 未満）` }); continue; } }
     const strength = strengthFromSeven(i.s7.push ? { push: i.s7.push.push, strength: i.s7.push.strength } : null);
     const uses = [
       ...(prop ? [{ field: "hook.property", value: prop }] : []),
@@ -206,8 +215,8 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
     // 細分化（11/13）: お客様の言った時期 → 継続の約束（設計図にあって割合 0.3 以上）→ 決まりの締め（割合 0.5 以上）の順で1つ
     //   COMPOSE_ROWS_V2_SUB=off: 前の立て方（設計図に継続の約束がある・締めの割合 0.5 以上）
     const closingSign = !!(i.closing && i.closing.sign !== "none");
-    const keepOk = !!keep && (!subOn || i.s7.leadTo === "keep" || keepSh == null || keepSh >= SUB_STAND.keep_promise || mainRole === "keep");
-    const fixedOk = closingSign || (subOn ? (fixedSh ?? share ?? 0) >= SUB_STAND.fixed : (share ?? 0) >= STAND_MIN);
+    const keepOk = !!keep && (!closeSubOn || i.s7.leadTo === "keep" || keepSh == null || keepSh >= SUB_STAND.keep_promise || mainRole === "keep");
+    const fixedOk = closingSign || (closeSubOn ? (fixedSh ?? share ?? 0) >= SUB_STAND.fixed : (share ?? 0) >= STAND_MIN);
     if (time || keepOk || fixedOk) {
       const sub: V2Sub = time ? "their_timing" : keepOk ? "keep_promise" : "fixed";
       rows.push({ role: "close", sub, uses: time ? [{ field: "latent.expect", value: time }] : keep?.part ? [{ field: "aim.mid", value: keep.part }] : [], source: "conversation", certainty: "assertable", how: time ? "お客様の言った時期で結ぶ（例: 〇〇のご連絡お待ちしております）" : endingsFor(i.scene, keep ? "keep" : "close")?.top[0]?.[0] ?? null, why_order: "keep_last", length: "short", stand: [time ? `お客様の言った時期「${time}」` : keep ? "継続の約束は主の答えの後の最後" : `竹内さんが入れる割合 ${share}`], share, from: keep ? "keep" : "close" });

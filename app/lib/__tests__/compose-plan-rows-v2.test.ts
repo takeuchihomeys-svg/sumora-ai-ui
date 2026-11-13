@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readTurnUnderstanding, readSevenFields, buildSentencePlan } from "../compose-sentence-plan";
 import { asksFactsOf } from "../compose-asks-facts";
-import { buildPlanRowsV2, planRowsV2Note, planRowsV2Digest, composePlanRowsV2On, rowsPresence, subShareFor, rowsV2SubOn, trustEmbedsShown, trustEmbedLogFields } from "../compose-plan-rows-v2";
+import { buildPlanRowsV2, planRowsV2Note, planRowsV2Digest, composePlanRowsV2On, rowsPresence, subShareFor, rowsV2SubOn, rowsV2SubRoleOn, trustEmbedsShown, trustEmbedLogFields } from "../compose-plan-rows-v2";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -75,6 +75,11 @@ t("下の役目の割合: 表から引ける・場面が3番未満なら * に�
   assert.ok((subShareFor("no-such-scene", "answer", "close.fixed") ?? -1) >= 0);
   assert.equal(rowsV2SubOn({}), true);
   assert.equal(rowsV2SubOn({ COMPOSE_ROWS_V2_SUB: "off" }), false);
+  // つなぎは既定で割合の線を当てない（当たり 17→13 に減る）・押さえと締めは当てる
+  assert.equal(rowsV2SubRoleOn("bridge", {}), false);
+  assert.equal(rowsV2SubRoleOn("bridge", { COMPOSE_ROWS_V2_SUB_BRIDGE: "on" }), true);
+  assert.equal(rowsV2SubRoleOn("close", {}), true);
+  assert.equal(rowsV2SubRoleOn("press", { COMPOSE_ROWS_V2_SUB: "off" }), false);
 });
 t("信頼の添えの印: 作業員9 の4つ目の段が数える名前・出たかは竹内さんの札付けと同じ物差し", () => {
   const rs = [{ role: "press", embeds: [{ kind: "effort", share: 0.5 }, { kind: "deadline", share: 0.45 }] }, { role: "bridge", embeds: [{ kind: "flexible", share: 0.4 }] }];
