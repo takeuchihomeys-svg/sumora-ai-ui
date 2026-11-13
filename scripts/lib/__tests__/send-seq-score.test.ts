@@ -1,6 +1,6 @@
 // 送る物の並びの採点（scripts/lib/send-seq-score.ts）
 // 実行: npx tsx scripts/lib/__tests__/send-seq-score.test.ts（自己完結。全 PASS で exit 0）
-import { seqOfStaffText, wantSeqOf, brainSeqOf, seqMatch, replyCountMatch, draftPartCount, seqStats, sendSeqSummary, rawSeqOf, type SeqRow } from "../send-seq-score";
+import { seqOfStaffText, wantSeqOf, brainSeqOf, seqMatch, replyCountMatch, draftPartCount, seqStats, sendSeqSummary, rawSeqOf, seqRegressions, examSeqScoreOn, type SeqRow } from "../send-seq-score";
 
 let fail = 0, pass = 0;
 function eq(name: string, a: unknown, b: unknown) {
@@ -70,5 +70,16 @@ const D2 = ["x", "---", "y"].join(String.fromCharCode(10));
 const st3 = seqStats([{ id: "a", want: "R", from: "実送信", got: "R", recorded: false, draft: D2 }, { id: "b", want: "R", from: "実送信", got: "R", recorded: false, draft: "x" }, { id: "c", want: "RR", from: "札", got: "R", recorded: false, draft: D2 }]);
 eq("1通の番の下書きの割り", [st3.singleDraftN, st3.draftOverSplit.map((x) => x.id), st3.draftSplit], [2, ["a"], 1]);
 eq("要約に下書きの割り", sendSeqSummary([{ id: "a", want: "R", from: "実送信", got: "R", recorded: false, draft: D2 }], pct).includes("返信1通の番の下書きを「---」で割った 1/1"), true);
+// 2026-11-13 作業員7b: 係の並びの悪化（EXAM_SEQ_SCORE・既定 off）
+{
+  eq("EXAM_SEQ_SCORE 既定 off", [examSeqScoreOn({}), examSeqScoreOn({ EXAM_SEQ_SCORE: "on" })], [false, true]);
+  const rar = { send_sequence: [{ slot: "reply" }, { slot: "aix" }, { slot: "reply" }] };
+  const aOnly = { reply_mode: "aix", action: "condition_hearing" };
+  const base = [{ id: "q390", brain: rar }, { id: "q390", brain: rar }, { id: "q057", brain: { reply_mode: "auto_reply" } }];
+  const cur = [{ id: "q390", brain: aOnly }, { id: "q390", brain: aOnly }, { id: "q057", brain: { reply_mode: "auto_reply" } }];
+  const w = seqRegressions(cur, base, ["q390", "q057", "q999"], (id) => (id === "q390" ? "RAR" : id === "q057" ? "R" : null));
+  eq("並びの悪化: q390 RAR→A だけ", w.map((x) => [x.id, x.from, x.to, x.why]), [["q390", "RAR", "A", "2/2→0/2"]]);
+  eq("良くなった方向は悪化に数えない", seqRegressions(base, cur, ["q390"], () => "RAR").length, 0);
+}
 console.log(`send-seq-score: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);
