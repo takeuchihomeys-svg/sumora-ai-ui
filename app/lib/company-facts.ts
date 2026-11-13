@@ -131,16 +131,8 @@ const CREDIT_CARD_FACT_LUMP = "初期費用のお支払いは**一括のお振�
  *   「保証会社による入居審査（通常3日〜10日程）」にそろえる。2段の審査（保証会社→オーナー）の形はそのまま・数字だけ変える。
  *   既定 off（COMPANY_FACT_SCREENING_DAYS_UNIFY=on で入る）。
  */
-export function screeningDaysUnifyOn(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.COMPANY_FACT_SCREENING_DAYS_UNIFY ?? "").trim().toLowerCase() === "on";
-}
-export function unifyScreeningDays(fact: string, env: Record<string, string | undefined> = process.env): string {
-  if (!screeningDaysUnifyOn(env)) return fact;
-  return fact
-    .replace(/保証会社の審査期間は早ければ2〜3営業日、長くて1週間程/g, "保証会社による入居審査は通常3日〜10日程")
-    .replace(/保証会社の審査（早ければ2〜3営業日、長くて1週間程）/g, "保証会社による入居審査（通常3日〜10日程）")
-    .replace(/早ければ2〜3営業日、長くて1週間程/g, "通常3日〜10日程");
-}
+export { screeningDaysUnifyOn, unifyScreeningDays } from "./screening-days";
+import { unifyScreeningDays } from "./screening-days";
 
 export const COMPANY_FACTS: CompanyFact[] = [
   {
@@ -367,7 +359,7 @@ export const COMPANY_FACTS: CompanyFact[] = [
     n: 22,
     // 数字の根拠（実送信）: 07-07「保証会社審査（3日〜10日）…ご契約書類の記入と初期費用のご入金（1週間程）が完了次第ご入居…最短で2週間後がご入居の目安」・
     //   07-24・09-12「審査期間は早くて3日ながくて10日間…お申込みから14日間程」・09-26「②保証会社による入居審査（通常3日〜10日程）」。会社の決定（09-26）: 審査期間は 3日〜10日
-    fact: `${PROCEDURE_FACTS.flow}${PROCEDURE_FACTS.lead}${PROCEDURE_FACTS.call}${PROCEDURE_FACTS.idDoc}入居できる日は**お部屋によって変わる**（即入居できるお部屋か、退去予定のお部屋か）ので、資料の入居時期が材料に無い時は特定のお部屋の入居日を断言しない。審査の期間・流れは「管理会社に確認します」で返さず本文で答える。`,
+    get fact(): string { return unifyScreeningDays(`${PROCEDURE_FACTS.flow}${PROCEDURE_FACTS.lead}${PROCEDURE_FACTS.call}${PROCEDURE_FACTS.idDoc}入居できる日は**お部屋によって変わる**（即入居できるお部屋か、退去予定のお部屋か）ので、資料の入居時期が材料に無い時は特定のお部屋の入居日を断言しない。審査の期間・流れは「管理会社に確認します」で返さず本文で答える。`); },
   },
   {
     id: "prorated_rent",
