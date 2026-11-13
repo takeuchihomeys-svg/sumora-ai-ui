@@ -2743,7 +2743,7 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
   // V4 お客様が候補日・確定日を伝えた後の「ご都合よろしいお日にち」再質問
   //    A-11: 日付語＋意向語（希望・行けます・大丈夫・お願い 等）の共起を要求（「明日確認します」等の単なる日付言及で誤発火していた）
   const custDateIntent = CUSTOMER_DATE_RE.test(cust) && /希望|行け|伺え|大丈夫|お願い|空い|都合|なら|でお願い|がいい|にし/.test(cust);
-  // 2026-11-13 作業員9（弱い所 685・FC_GOCHOUGO_DATE_ALIGN 既定 off）: 竹内さんはお客様が日を言った番に
+  // 2026-11-13 作業員9（弱い所 685・FC_GOCHOUGO_DATE_ALIGN・作業員B の実送信365日の監査で誤り0→既定 on・=off で戻す）: 竹内さんはお客様が日を言った番に
   //   「10/24(土) 14:00〜16:00 ご案内可能です😊！！〇〇さんご都合よろしいお時間御座いますでしょうか」と候補の時間を書いてから聞く＝止めない。
   //   旧の修正案「〇日でご都合よろしいお時間御座いますでしょうか」はこの検査にまた当たる（修正案が自分の検査の block の文型）
   const dateAlign = gochougoDateAlignOn();

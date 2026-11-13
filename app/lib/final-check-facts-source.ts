@@ -73,11 +73,13 @@ export function nightPromiseRuleForCheck(): string {
 }
 
 /**
- * 2026-11-13 作業員9（弱い所 685・FC_GOCHOUGO_DATE_ALIGN 既定 off）: 本文に具体的な候補の日時（月/日・時刻・曜日）があるか。
+ * 2026-11-13 作業員9（弱い所 685・FC_GOCHOUGO_DATE_ALIGN）: 本文に具体的な候補の日時（月/日・時刻・曜日）があるか。
+ *   2026-11-13 作業員B: 既定 on（実送信365日の監査 scripts/audit-gochougo-after-date.ts: off で止まる実送信70通のうち on で40通が止まらなくなり、
+ *   40通とも候補の日時つきの実送信＝正しい送信。on で新しく素通りする下書き33件も目で読み、候補なしで日にちを聞き直す形は0件＝誤り0）。戻す時は FC_GOCHOUGO_DATE_ALIGN=off
  *   GOCHOUGO_AFTER_DATE を、竹内さんの「10/24(土) 14:00〜16:00 ご案内可能です…ご都合よろしいお時間御座いますでしょうか」の形で止めないため
  */
 export function gochougoDateAlignOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FC_GOCHOUGO_DATE_ALIGN ?? "").trim().toLowerCase() === "on";
+  return (env.FC_GOCHOUGO_DATE_ALIGN ?? "").trim().toLowerCase() !== "off";
 }
 export function hasConcreteSlot(text: string): boolean {
   const t = String(text ?? "").normalize("NFKC");

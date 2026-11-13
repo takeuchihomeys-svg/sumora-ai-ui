@@ -17,7 +17,8 @@ const oldFix = "かしこまりました！！\n18日でご都合よろしいお
 const bad = "かしこまりました！！\nご都合よろしいお日にち御座いますでしょうか😌！！";
 
 delete process.env.FC_GOCHOUGO_DATE_ALIGN;
-t("既定 off", !gochougoDateAlignOn({}));
+t("既定 on（2026-11-13 監査の後）・off で戻る", gochougoDateAlignOn({}) && !gochougoDateAlignOn({ FC_GOCHOUGO_DATE_ALIGN: "off" }));
+process.env.FC_GOCHOUGO_DATE_ALIGN = "off";
 t("off: 竹内さんの送信（候補の時間つき）も止まる＝誤った止め", !!fires(sent1, cust1) && !!fires(sent2, cust2));
 t("off: 旧の修正案のとおりに直した文が、また同じ検査に当たる", !!fires(oldFix, cust1));
 process.env.FC_GOCHOUGO_DATE_ALIGN = "on";
