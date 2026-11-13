@@ -47,3 +47,43 @@ t("none の番は候補を持たない・壊れた答えは捨てる", () => {
 });
 
 console.log(`全部 ${n} 件 ok`);
+
+// 2026-11-13: shadow（JSON の最後・記録だけ）と、選んだ読みの受け渡し（点検役 S3・実例 12362・12838・11865）
+{
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const M = require("../app/lib/brain-read-candidates") as typeof import("../app/lib/brain-read-candidates");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const S = require("../app/lib/latent-subkinds") as typeof import("../app/lib/latent-subkinds");
+  const src2 = readFileSync(join(__dirname, "..", "app", "lib", "brain-core.ts"), "utf8");
+  assert.equal(M.readCandidatesMode({}), "off");
+  assert.equal(M.readCandidatesMode({ BRAIN_READ_CANDIDATES: "shadow" }), "shadow");
+  // shadow の欄は JSON の一番最後（action より後・判断の後の振り返り）
+  assert.ok(src2.includes('${BRAIN_READ_CANDIDATES_SHADOW ? ", " + READ_CANDIDATES_FIELD_SHADOW : ""}'));
+  assert.ok(src2.indexOf("READ_CANDIDATES_FIELD_SHADOW : \"\"}") > src2.indexOf('"action": "スタッフが次にすべき'));
+  for (const s of [M.READ_CANDIDATES_FIELD_SHADOW, M.READ_CANDIDATES_RULES_SHADOW]) assert.doesNotMatch(s, /次の一手|押す|申込へ|内覧へ|誘導|背中/);
+
+  // 12362: 「抑えられるところは送ってもらった間取りですか？」→ 抑える部屋の確かめ＝申込の手前 → 潜在の行は「先に取られる」
+  const a = M.normalizeReadCandidatesFull({ turn: "short_unclear", options: ["間取りの確認だけ", "抑えられる部屋の確かめ＝申込の手前"], checks: [{ from: "our_last_send", fact: "送ったのは1LDKの202号室", supports: 1 }], chosen: 1, by: "抑えられるかを聞いている" });
+  const ha = M.readingHandoff(a)!;
+  assert.equal(ha.reading, "抑えられる部屋の確かめ＝申込の手前");
+  assert.equal(ha.whyKind, "our_last_send");
+  assert.equal(S.subkindOf({ trigger: { text: ha.latentText } })?.id, "taken_popular");
+
+  // 12838: 送った物件（カウンターキッチン無し）の後に「できればカウンターキッチン」→ 送った物件にあと1点足りない
+  const b = M.normalizeReadCandidatesFull({ turn: "short_unclear", options: ["新しい条件の追加", "送った物件にカウンターキッチンが無い＝あと1点"], checks: [{ from: "sent_property_point", fact: "送った物件の設備にカウンターキッチンが無い", supports: 1 }], chosen: 1, by: "送った直後の反応" });
+  const hb = M.readingHandoff(b)!;
+  assert.equal(hb.whyKind, "our_last_send");
+  assert.match(hb.latentText, /あと1点/);
+  assert.equal(S.subkindOf({ trigger: { text: hb.latentText } })?.id, "decide_gap_one_point");
+
+  // 11865: 「おとり物件てことですか」→ 掲載への疑問（こちらの直前の送信＝掲載終了の確認結果で確かめる）
+  const c = M.normalizeReadCandidatesFull({ turn: "short_unclear", options: ["こちらの対応への不満", "掲載の物件が本当に無いのかの疑問"], checks: [{ from: "our_last_send", fact: "ポータルの物件は掲載終了と伝えた", supports: 1 }], chosen: 1, by: "直前のこちらの送信への問い返し" });
+  assert.equal(M.readingHandoff(c)?.reading, "掲載の物件が本当に無いのかの疑問");
+
+  // 確かめる事実の取り先の外の値・番号の外は捨てる
+  const d = M.normalizeReadCandidatesFull({ options: ["x", "y"], checks: [{ from: "zzz", fact: "a" }, { from: "open_promise", fact: "ピックアップの約束", supports: 9 }], chosen: 0 })!;
+  assert.equal(d.checks.length, 1);
+  assert.equal(d.checks[0].supports, null);
+  assert.equal(M.readingHandoff(M.normalizeReadCandidatesFull({ options: ["x"], chosen: null })), null);
+  console.log("ok shadow（JSON の最後・記録だけ）と選んだ読みの受け渡し（12362・12838・11865）");
+}

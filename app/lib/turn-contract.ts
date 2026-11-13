@@ -17,6 +17,7 @@
 // テスト: app/lib/__tests__/turn-contract.test.ts
 
 import { sendSequenceRule } from "./send-sequence";
+import { askPartsSplitOn, askPartsRule, normalizeAskParts, ASK_PARTS_FIELD, type AskPart } from "./ask-parts"; // 11/13 作業員7b: 依頼を部分に分ける（ASK_PARTS_SPLIT・既定 off）
 import type { RequestItem, RequestTopic, RequestAbout } from "./request-ledger";
 import { ABOUT_VALUES, ABOUT_JA, topicOfAbout } from "./request-ledger";
 import { alreadySaidAllowance, ackFormBrainEnabled, normalizeAckForm, ackFormContractLine, isCompactWaitLine, ackFormFollowEnabled, ackFormDropTopic, type AckForm } from "./repeat-brain-align";
@@ -25,6 +26,8 @@ import { renderPrioritiesNote, type PriorityItem } from "./brain-priority";
 import { renderMessagePlanNote, type MessagePlan } from "./message-plan";
 import { guarantorWordingOn, guarantorWordingLine } from "./decisions-1103";
 import { truncateAtBoundary } from "./brain-strategy-note";
+import { composeDecidedOn, askPartsOf, CERTAINTY_JA } from "./compose-decided";
+import { answerSourceLabel } from "./answer-source";
 import { closeOnlyShape } from "./ack-form-takeuchi";
 import { brainDeepCheckGapEnabled, BRAIN_DEEP_CHECK_ASK_FIELD, BRAIN_DEEP_CHECK_RULE } from "./brain-deep-check";
 
@@ -47,6 +50,8 @@ export type ContractAsk = {
   aixKey: string | null;
   /** 2026-10-15 軸（axis-brain-1015）: 何について・どの物件の・いつの・誰の事か・条件の向き（ブレインが決める・TURN_CONTRACT_AXIS=off で出さない） */
   axis?: AskAxis | null;
+  /** 2026-11-13 作業員7b: 依頼の部分（今言える部分と確認が要る部分・ASK_PARTS_SPLIT=on の時だけ） */
+  parts?: AskPart[];
 };
 
 /** 何について（about）: 種類と道を決めるのは語の網ではなくこれ（定義は request-ledger＝画面からも読む・ここは型の別名） */
@@ -160,7 +165,7 @@ export function turnBackgroundEnabled(env: Record<string, string | undefined> = 
 export const BRAIN_BACKGROUND_FIELD = `"background": "答える前に書く。この発言の背景（なぜ今これを言ったか・これまでの流れ＝審査否決・内覧の予定・こちらが送った物件・お客様が送った物件・お客様の事情・気持ち）を1〜2文・80字以内。例「審査否決の後で代理契約を気にし、月末の退去に間に合うか焦って物件を何件も送っている」「数分前にこちらが送った2件のうち1件を引用して気に入った（初期費用は伝え済み）」。推測で事情を作らない"`;
 export const BRAIN_BACKGROUND_RULE = `- background（答える前の整理）: 先に background を書き、asks の property・route はその背景を踏まえて決める。同じ言葉でも背景で答えが変わる（こちらが今送った物件への「気になります」は内覧・費用の次の一手／お客様が持ち込んだ物件への「気になります」は募集状況の確認）。不安・焦りの背景（審査否決の後・退去日が迫る）の番は feeling を付ける。`;
 /** ブレインの JSON に足す欄の説明（brain-core の出力の指定・今回の発言の層の出力の指定の両方に入れる） */
-export const BRAIN_TURN_CONTRACT_FIELD = `"turn_contract": {${turnBackgroundEnabled() ? `${BRAIN_BACKGROUND_FIELD}, ` : ""}"asks": [{"quote": "お客様の今の連投の依頼・質問・懸念を1つずつ（お客様の言葉・40字以内）", "kind": "request|question|concern|report|feeling", "route": "reply|promise|aix|none", "answer": "reply なら答えの要点・promise なら約束の中身（40字以内）・aix/none は null", "basis": "conversation|material|company_fact|general|judgement", "aix": "route=aix の時だけ AIX のキー（上の能力マップ）。他は null"${turnContractAxisEnabled() ? `, ${BRAIN_AXIS_ASK_FIELD}` : ""}${brainDeepCheckGapEnabled() ? `, ${BRAIN_DEEP_CHECK_ASK_FIELD}` : ""}}], "lead_with": "先に答える asks の番号（0始まり）か null", "close_only": "true/false", "must_not": ["この返信で言ってはいけない事（最大4件・各20字）"], "proposals": ["こちらから添える提案（お申込みでお部屋を抑える・オンライン内見・室内の撮影 等。お客様の事情と刺さり具合で・最大2件・各30字。無ければ []）"], "feeling": {"kind": "anxious|apologetic|hurried|disappointed|positive|null", "acknowledge": "true/false"}${turnContractAxisEnabled() ? `, "situation": "今の状況を40字以内で（何がどこまで進み・お客様が何を承諾し・こちらが何を約束しているか。例「2番手で申込＋並行して探す・お客様承諾済み」「物件確認の結果は募集に出ていない」）"` : ""}${ackFormBrainEnabled() ? `, "ack_form": "receive_only|wait_line|null（【前の約束への了承】の材料がある番だけ。無ければ null）"` : ""}}`;
+export const BRAIN_TURN_CONTRACT_FIELD = `"turn_contract": {${turnBackgroundEnabled() ? `${BRAIN_BACKGROUND_FIELD}, ` : ""}"asks": [{"quote": "お客様の今の連投の依頼・質問・懸念を1つずつ（お客様の言葉・40字以内）", "kind": "request|question|concern|report|feeling", "route": "reply|promise|aix|none", "answer": "reply なら答えの要点・promise なら約束の中身（40字以内）・aix/none は null", "basis": "conversation|material|company_fact|general|judgement", "aix": "route=aix の時だけ AIX のキー（上の能力マップ）。他は null"${askPartsSplitOn() ? `, ${ASK_PARTS_FIELD}` : ""}${turnContractAxisEnabled() ? `, ${BRAIN_AXIS_ASK_FIELD}` : ""}${brainDeepCheckGapEnabled() ? `, ${BRAIN_DEEP_CHECK_ASK_FIELD}` : ""}}], "lead_with": "先に答える asks の番号（0始まり）か null", "close_only": "true/false", "must_not": ["この返信で言ってはいけない事（最大4件・各20字）"], "proposals": ["こちらから添える提案（お申込みでお部屋を抑える・オンライン内見・室内の撮影 等。お客様の事情と刺さり具合で・最大2件・各30字。無ければ []）"], "feeling": {"kind": "anxious|apologetic|hurried|disappointed|positive|null", "acknowledge": "true/false"}${turnContractAxisEnabled() ? `, "situation": "今の状況を40字以内で（何がどこまで進み・お客様が何を承諾し・こちらが何を約束しているか。例「2番手で申込＋並行して探す・お客様承諾済み」「物件確認の結果は募集に出ていない」）"` : ""}${ackFormBrainEnabled() ? `, "ack_form": "receive_only|wait_line|null（【前の約束への了承】の材料がある番だけ。無ければ null）"` : ""}}`;
 
 /**
  * 2026-10-18 弱い所B（q113「（待ち合わせの後の）承知しました」・q172 物件を1件送った後の「ありがとうございます💦」）: 閉じる番の answer の決まり。
@@ -310,7 +315,7 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - asks: 【お客様の依頼の一覧】があればその項目を1つも落とさない（足すのはよい）。無ければ今の連投から自分で数える。前の番の依頼を書き写さない（まだ答えていない前の依頼は【お客様の依頼の一覧】の「まだ答えていない確認事項」から入る）。
 - route の決め方: スタッフだけが知る事（管理会社に確認した結果・募集状況・見積の金額・割引額・入居日の確定・内覧の日時の確定・撮影した写真・交渉の結果・審査の結果・探した結果）が答えに要る → "aix"（AIX のキーを付ける）。
   まだ結果が無く、これから確認・作成・探す・交渉する → "promise"。会話・送った物件の資料・会社の事実・一般的な事（虫・換気・二人で住める広さ・内覧の所要時間・手続きの流れ）で答えられる → "reply"（確認の約束にしない）。もう答えた・お客様が自分でやる → "none"。
-${answerableDirectRule()}${twoMessageAskRule()}${textAixRouteRule()}${screeningConsultRule()}${sentReactionInviteRule()}${viewingTimeOnlyRule()}${sentCostEstimateRule()}${applyIntentReplyFirstRule()}${sendSequenceRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
+${answerableDirectRule()}${twoMessageAskRule()}${textAixRouteRule()}${screeningConsultRule()}${sentReactionInviteRule()}${viewingTimeOnlyRule()}${sentCostEstimateRule()}${applyIntentReplyFirstRule()}${askPartsRule()}${sendSequenceRule()}- 不安・不満は次の手に変える（例: エアコンが無い→管理会社にエアコン設置を交渉／カードの滞納歴・審査が不安→審査の通りやすい保証会社の物件も探す／審査否決の歴→保証会社の切り替えを交渉／お風呂が狭い→その点を条件にして探す）。交渉・探す約束にするかは route=promise で自分で決める（例は決まりではない）。
 ${closeOnlyAnswerRule()}
 - close_only=true:返事の要らない番（お礼・了承・あいさつだけ）／お客様が待ってと言った番（「決まったら連絡します」「また連絡します」「確認してから連絡します」）。待っての番は「お決まりになりましたらご連絡ください」の形で閉じ、物件を送り続ける約束・新しい提案をしない。
 - 今の条件の物件を出し切った後（前に「全てピックアップ」・新着待ちの約束・全力サポートを送った後で条件が変わっていない）の「もう少し探して」等は route="aix"・aix="zenryoku_support"。
@@ -388,6 +393,7 @@ export function normalizeBrainTurnContract(raw: unknown): BrainTurnContractRaw |
     basis: BASES.has(String(a?.basis)) ? String(a?.basis) : null,
     aix: typeof a?.aix === "string" && a.aix && a.aix !== "null" ? clip(a.aix, 60) : null,
     ...axisRawOf(a),
+    ...(askPartsSplitOn() ? (() => { const ps = normalizeAskParts((a as { parts?: unknown })?.parts); return ps ? { parts: ps } : {}; })() : {}),
   })).filter((a) => a.quote).slice(0, 6);
   const situation = turnContractAxisEnabled() && typeof r.situation === "string" && r.situation.trim() && r.situation.trim() !== "null" ? clip(r.situation, 60) : null;
   const background = turnBackgroundEnabled() && typeof r.background === "string" && r.background.trim() && r.background.trim() !== "null" ? clip(r.background, 90) : null;
@@ -551,7 +557,9 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   // 2026-10-23 優先順位の段: ブレインが原則と状況から決めた順（書く順・扱い）。無い番は今のまま
   const prNote = (c.messagePlan && c.priorities?.length ? renderMessagePlanNote(c.priorities, c.messagePlan) : "") || renderPrioritiesNote(c.priorities);
   if (prNote) L.push(prNote);
-  c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」${axisLabel(a.axis)}→ ${ROUTE_JA[a.route]}${a.answer && !dropAns(a.answer) ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
+  // 2026-11-13 作業員22（COMPOSE_DECIDED・既定 off）: 答えに使う事実の出所（basis）を依頼ごとの行の後ろに（会社の事実／資料の値／会話で分かっている事／スタッフしか知らない）
+  const srcOf = (a: ContractAsk) => { if (!composeDecidedOn()) return ""; const p = askPartsOf([a])[0]; if (!p) return ""; return `［出所: ${answerSourceLabel(p.source)}・${CERTAINTY_JA[p.certainty]}${p.now && p.check ? `／今言える: ${p.now.slice(0, 40)}／確認が要る: ${p.check.slice(0, 40)}` : ""}］`; };
+  c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」${axisLabel(a.axis)}→ ${ROUTE_JA[a.route]}${a.answer && !dropAns(a.answer) ? `：${a.answer}` : ""}${srcOf(a)}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
   if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance && !c.ackForm ? `\n${allowance}` : ""}`);
   if (c.settled.length) L.push(`- 決まった事（蒸し返さない・日付はこのまま）: ${c.settled.join(" ／ ")}`);
   if (c.mustNot.length) L.push(`- 言わない: ${c.mustNot.join(" ／ ")}`);

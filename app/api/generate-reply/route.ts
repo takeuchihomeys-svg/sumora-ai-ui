@@ -367,6 +367,17 @@ import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
+import { composeVocabUnifiedOn, applySceneConstraints, stripWritingBlueprintOrder } from "@/app/lib/compose-vocab";
+import { applyOrderTable, orderBasisDigest, pickElementTypes, elementTypesNote, uptakePlan, uptakeNote, trustTurnNote, propertyNameNote } from "@/app/lib/compose-order-table";
+const maybeStripWb = (note: string, on: boolean): string => (on ? stripWritingBlueprintOrder(note) : note);
+import { composeSlotsAndClosing } from "@/app/lib/compose-value-slots";
+import { headNote } from "@/app/lib/compose-head";
+import { phraseCatalogNote, formSlotsNote } from "@/app/lib/compose-phrase-catalog";
+import { composePlanRowsV2On, buildPlanRowsV2, planRowsV2Note, planRowsV2Digest } from "@/app/lib/compose-plan-rows-v2";
+import { dateWordsOf } from "@/app/lib/compose-brief";
+import { composeAsksFactsOn, asksFactsOf, recordFactsOf, composeFactsNote, type EstimateRec } from "@/app/lib/compose-asks-facts";
+import { composeBriefMode, buildComposeBrief, draftDoubts as composeDraftDoubts, composeSure, linkReport as composeLinkReport, composeBriefDigest } from "@/app/lib/compose-brief";
+import { orderTypeOf } from "@/app/lib/compose-order-table";
 import { exemplarNoteFor, warmExemplarTable } from "@/app/lib/takeuchi-exemplar-server";
 import { patternCatalogNoteFor } from "@/app/lib/sentence-pattern-catalog-server";
 import { composeElementsNoteFor } from "@/app/lib/compose-elements-server";
@@ -4355,6 +4366,8 @@ async function handleGenerateReply(req: NextRequest) {
           new Promise<string>((r) => setTimeout(() => r(""), 5_000)),
         ])
       : "";
+    // 2026-11-13 作業員1: 書き手に届いた印（欄の名前 customer_memo・conductor-field-links と同じ）。ブレインの側は brain:customer-memo
+    if (conversationId && !isTemplateOptimize) console.log(JSON.stringify({ tag: "writer:customer-memo", field: "customer_memo", conversationId, chars: customerMemoNote.length, postApply: postApplyConversation }));
     const contractTerms = !isTemplateOptimize && !postApplyConversation && !!conversationId
       ? await loadContractTermsAnswerWithin(8_000, { conversationId, customerText: message ?? "", excludeTopics: procedureAnswer?.plan.moveIn ? ["move_in"] : [] })
       : null;
@@ -4501,23 +4514,39 @@ async function handleGenerateReply(req: NextRequest) {
     if (composeConductor) console.info("[compose-conductor]", JSON.stringify({ conversationId, focus: composeConductor.mf.key, source: composeConductor.mf.source, keep: composeConductor.mf.keep, nearKeep: composeNearKeepShare, read: composeConductor.read }));
     // 2026-11-11 作業員10 文の統括の1文ずつの設計図（KB P1 c3673fba・COMPOSE_SENTENCE_PLAN=on・既定 off）: 一通の読み（主と従）と竹内さんの7つの欄を受け取り、
     //   役目・どの部分の何・どうやって・次へ・主か従かを1文ずつ書き手に渡す（app/lib/compose-sentence-plan.ts・決定論・材料の無い欄は空のまま）
+    // 2026-11-12 作業員10（COMPOSE_ASKS_FACTS=on・既定 off）: 見積の金額は estimate_records から値のまま（この会話の新しい3件だけ・軽い1回）
+    const composeRecordEstimates: EstimateRec[] = composeAsksFactsOn() && composeSentencePlanOn() && conversationId && !isTemplateOptimize && !postApplyConversation
+      ? await (async () => { try { const { data } = await supabase.from("estimate_records").select("property_name, room_no, initial_cost_yen, discount_yen, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(3); return (data ?? []) as EstimateRec[]; } catch { return []; } })()
+      : [];
     // 2026-11-12 作業員23: 手本の表 takeuchi_exemplars を読んでおく（TAKEUCHI_EXEMPLAR=on・設計図 on の時だけ・10分の取り置き・1.5秒で諦める・表が無ければ注記なし＝今と同じ）
     if (exemplarOn() && composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation) { try { await warmExemplarTable(supabase); } catch { /* 表が無くても今と同じ */ } }
     const composeSentencePlan = composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation && brainMeta && brainLocalFresh
       ? (() => {
           try {
-            const u = readTurnUnderstanding(brainMeta), s7 = readSevenFields(brainMeta);
-            const plan = buildSentencePlan(u, s7, { scene: composeConductorScene, ctx: readComposeContext(brainMeta, { nextIntent: composeRun?.intent.next && composeRun.intent.next !== "none" ? composeRun.intent.next : null }) });
+            const u = readTurnUnderstanding(brainMeta), s7 = readSevenFields(brainMeta, { nextIntent: composeRun?.intent.next ?? null });
+            const plan0 = buildSentencePlan(u, s7, { scene: composeConductorScene, ctx: readComposeContext(brainMeta, { nextIntent: composeRun?.intent.next && composeRun.intent.next !== "none" ? composeRun.intent.next : null }) });
+            // 2026-11-12 作業員10（語彙を1つに・COMPOSE_VOCAB_UNIFIED=on・既定 off）: 場面の要る段・書かない段を設計図の行に効かせる（app/lib/compose-vocab.ts）
+            const planU = applySceneConstraints(plan0, composeConductorScene);
+            // 2026-11-12 作業員10（COMPOSE_ORDER_TABLE=on・既定 off）: 型（T1〜T9）ごとの竹内さんの組み立ての順に従の行を並べ替える。判断の根拠は off でも digest に残す
+            const ord = applyOrderTable(planU, u, composeConductorScene);
+            const plan = ord.plan;
             // 2026-11-12 作業員10: 作業員5 の竹内さんの手本（場面×潜在×誘導先・TAKEUCHI_EXEMPLAR=on の時だけ）を設計図の注記の後ろに（文は写させない）
             const ex = (() => { try { return exemplarNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta }); } catch { return null; } })();
+            // 要る役目の行は書き手に渡さない（竹内さんの24番で4/4が竹内さんの文に無い役目だった＝記録だけ）
+            // 2026-11-12 作業員10（COMPOSE_ELEMENT_TYPES=on・既定 off）: 要素ごとの言葉の型（押す線・信頼の作り方・潜在の一文）をブレインの欄から選んで1行に。選んだ型は off でも digest に
+            const elem = pickElementTypes(brainMeta);
+            // 2026-11-12 作業員10（COMPOSE_VALUE_SLOTS・COMPOSE_CLOSING_TABLE=on・既定 off）: 役目×場面→出す値の欄・順位・出さない値（値は材料から決まった計算で）と返信の締めの決め表。digest は off でも残す
+            const slots = (() => { try { return composeSlotsAndClosing({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), materialText: [contractMaterialFacts ?? "", ownProperty?.note ?? ""].join("\n"), firstContact: isFirstEverReplyFromMsgs === true, nthToday: (() => { const day = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10); const today = day(Date.now()); return recentMessages.filter((m) => m.sender === "staff" && !m.isAix && m.createdAt && day(Date.parse(String(m.createdAt))) === today).length + 1; })() }); } catch { return null; } })();
+            // 2026-11-12 作業員10（COMPOSE_BRIEF=shadow|on・既定 off）: 文の統括の指示書を1か所に（記録だけ・書き手への指示文にも本文にも足さない）。書いた後の疑いの印・自信の印・連携の表は下の tpo_debug.compose_brief
+            const brief = composeBriefMode() !== "off" ? (() => { try { return buildComposeBrief({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), materialText: [contractMaterialFacts ?? "", ownProperty?.note ?? ""].join("\n"), recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-5).map((m) => m.text ?? ""), firstContact: isFirstEverReplyFromMsgs === true }); } catch { return null; } })() : null;
+            // 2026-11-13 作業員10（COMPOSE_PLAN_ROWS_V2=on・既定 off）: 設計図の1行を10欄に細分化（行の数と役目は竹内さんの場面×主の役目の並び・立てない条件つき）
+            const rowsV2 = composePlanRowsV2On() ? (() => { try { const tc = (brainMeta as Record<string, unknown> | null)?.turn_contract as { asks?: Array<{ route?: string }>; lead_with?: number } | undefined; const leadAsk = tc?.asks?.[typeof tc?.lead_with === "number" ? tc.lead_with : 0]; return buildPlanRowsV2({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), facts: [...asksFactsOf(brainMeta), ...recordFactsOf({ estimates: composeRecordEstimates, viewing: ledger.facts.viewingAppointment ?? null })], closing: null, recentStaff: recentMessages.filter((m) => m.sender === "staff").slice(-3).map((m) => ({ text: m.text ?? "", aix: !!m.isAix })), staffOnlyTurn: leadAsk?.route === "aix" }); } catch { return null; } })() : null;
+            const note0 = [sentencePlanNote(plan), ord.noteLine && sentencePlanNote(plan) ? ord.noteLine : "", sentencePlanNote(plan) ? elementTypesNote(elem) : "", sentencePlanNote(plan) ? uptakeNote(uptakePlan(brainMeta)) : "", sentencePlanNote(plan) ? trustTurnNote({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), firstContact: isFirstEverReplyFromMsgs === true, meta: brainMeta, recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-8).map((m) => m.text ?? "") }) : "", sentencePlanNote(plan) ? propertyNameNote({ property: u.main?.property ?? null, customerText: customerMsgUnits.join("\n") || (message ?? ""), recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-3).map((m) => m.text ?? "") }) : "", sentencePlanNote(plan) ? slots?.note ?? "" : "", sentencePlanNote(plan) ? composeFactsNote([...asksFactsOf(brainMeta), ...recordFactsOf({ estimates: composeRecordEstimates, viewing: ledger.facts.viewingAppointment ?? null })]) : "", sentencePlanNote(plan) && rowsV2 ? planRowsV2Note(rowsV2.rows) : "", sentencePlanNote(plan) ? phraseCatalogNote({ scene: composeConductorScene, mainRole: plan.rows.find((r) => r.rank === "main")?.role ?? null, roles: plan.rows.map((r) => r.role) }) : "", sentencePlanNote(plan) ? formSlotsNote({ scene: composeConductorScene, mainRole: plan.rows.find((r) => r.rank === "main")?.role ?? null, dates: dateWordsOf([contractMaterialFacts ?? "", customerMsgUnits.join("\n") || (message ?? ""), ...recentMessages.filter((m) => m.sender === "staff").slice(-5).map((m) => m.text ?? "")].join("\n")) }) : "", sentencePlanNote(plan) ? headNote({ customerText: customerMsgUnits.join("\n") || (message ?? ""), prev: (() => { const st = [...recentMessages].reverse().find((m) => m.sender === "staff"); return st ? { text: st.text ?? null, aix: !!st.isAix } : null; })() }) : ""].filter(Boolean).join("\n");
             // 2026-11-12 作業員23（根B）: 竹内さんの文型カタログ（受け・潜在の一文・押さえ方・締め・継続の約束の骨と割合・SENTENCE_PATTERN_CATALOG=on の時だけ・既定 off）
             const pc = (() => { try { return patternCatalogNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta, keepKind: composeConductor?.mf.keep ? "new_listing" : null }); } catch { return null; } })();
-            const note0 = sentencePlanNote(plan);
-            const note1 = note0 && ex ? `${note0}\n${ex.note}` : note0;
             // 2026-11-12 作業員23（KB 2301dbf1）: 文の要素の型（つなぎ・押さえ方・信頼・潜在の過半数の形だけ・COMPOSE_ELEMENTS=on の時だけ・既定 off・道は決め直さない）
             const ce = (() => { try { return composeElementsNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta }); } catch { return null; } })();
-            const note2 = note1 && pc ? `${note1}\n${pc.note}` : note1;
-            return { plan, note: note2 && ce ? `${note2}\n${ce.note}` : note2, digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${pc ? `｜文型=${pc.key}` : ""}${ce ? `｜要素=${ce.key}` : ""}` };
+            return { plan, brief, composeRows: rowsV2 ? planRowsV2Digest(rowsV2.rows) : null, rowsV2: rowsV2?.rows ?? null, briefOrderType: orderTypeOf(composeConductorScene, plan.rows.find((r) => r.rank === "main")?.role ?? null), briefAppeal: !!s7.appeal, note: (() => { const n1 = note0 && ex ? `${note0}\n${ex.note}` : note0; const n2 = n1 && pc ? `${n1}\n${pc.note}` : n1; return n2 && ce ? `${n2}\n${ce.note}` : n2; })(), digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${planU.removed.length ? `｜外した=${planU.removed.join(",")}` : ""}${planU.requiredRoles.length ? `｜要る=${planU.requiredRoles.join(",")}` : ""}｜${orderBasisDigest(ord.basis)}｜言葉の型=${[...elem.push_line, ...elem.trust, ...elem.latent_line].join(",") || "-"}${slots ? `｜${slots.digest}` : ""}${pc ? `｜文型=${pc.key}` : ""}${ce ? `｜要素=${ce.key}` : ""}` };
           } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
         })()
       : null;
@@ -5633,6 +5662,21 @@ async function handleGenerateReply(req: NextRequest) {
       if (composeConductor?.note) lines.push(composeConductor.note.trim());
       if (composeSentencePlan?.note) lines.push(composeSentencePlan.note.trim());
       if (composeRun?.note) lines.push(composeRun.note.trim());
+      // 2026-11-13 作業員22（統括役・測りの土台）: 設計図・書き手の注記の指紋と先頭・受け渡しの漏れ・届いた数を見張りの行（line_watch_turns.materials.reply.compose_plan）に（WATCH_COMPOSE_PLAN=on・既定 off）
+      void (async () => {
+        try {
+          const w = await import("@/app/lib/compose-plan-watch");
+          if (!w.watchComposePlanOn() || !conversationId || isFollowUp || isTemplateOptimize) return;
+          const meta0 = (brainMeta ?? {}) as unknown as Record<string, unknown>;
+          const [{ handoffLeaks }, dc, ds] = await Promise.all([import("@/app/lib/compose-sentence-plan"), import("@/app/lib/delivery-check"), import("@/app/lib/decided-subfields")]);
+          const d = dc.deliveryCheckOf(meta0);
+          const sv = ds.subValuesOf(meta0);
+          noteWatchMaterials(conversationId, "reply", "compose_plan", w.composePlanWatchOf({
+            digest: composeSentencePlan?.digest ?? null, rows: composeSentencePlan?.plan.rows ?? null, planNote: composeSentencePlan?.note ?? null, contractNote: tcNote || null,
+            leaks: composeSentencePlan?.note ? handoffLeaks(meta0, composeSentencePlan.note) : [], delivery: { rate: d.rate, subRate: d.subRate }, subs: Object.keys(sv).filter((k) => sv[k]),
+          }) as unknown as Record<string, unknown>);
+        } catch (e) { console.warn(JSON.stringify({ tag: "watch:compose-plan-failed", error: e instanceof Error ? e.message : String(e) })); }
+      })();
       const tcBrain = turnContract?.source === "brain";
       // 2026-10-09 調査の担当: effectiveReplyDirection はブレインの方向が14番目（早い者勝ちの型が先）。本質がある時はブレインの方向（中身）を型より上に置き、どちらが使われたかを記録する
       // 2026-11-06 作業員9（弱い所 322・REPLY_DIRECTION_KEEP=on・既定 off）: 条件の番は方向の文に竹内さんの形の継続の約束を1文（59%・app/lib/reply-direction-keep.ts）
@@ -6319,13 +6363,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       { scene: replyScene, on: sceneMaterialsOn, composeOn: !!composeRun?.note, brainContract: turnContract?.source === "brain", messagePlan: turnContract?.source === "brain" ? (turnContract.messagePlan ?? null) : null, ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off",
         // 2026-10-20 文の設計図（竹内さん f5a4b51a「文生成にも軸」）: 既定 off＝"" を渡す（指示は変わらない）。分かれ道は今は他社で内覧の1つだけ（申込までの地図が入ったら地図の分かれ道に替える）
         // on の時に万一投げても返信は止めない（"" に落とす）
-        blueprintNote: !isTemplateOptimize && writingBlueprintEnabled() ? (() => { try { return buildWritingBlueprintNote({
+        // 2026-11-12 作業員10（COMPOSE_VOCAB_UNIFIED=on・設計図の注記が出る番だけ）: 場面の設計図から設計図と二重の行（並び・要る段・書かない段）を外す
+        blueprintNote: !isTemplateOptimize && writingBlueprintEnabled() ? (() => { try { return maybeStripWb(buildWritingBlueprintNote({
           scene: replyScene,
           routeBranch: isOtherAgentViewingPlan(message ?? "") || isOtherAgentViewingApplyQuestion(message ?? "") ? "other_agent_viewing" : null,
           questions: replySceneResolved?.questions?.length ? replySceneResolved.questions : questionsOf(message ?? ""),
           sentThisTurn: replyAixPre?.timing === "now",
           promiseOutstanding: ledgerActive ? !!ledger.facts.pickupPromisedUnfulfilled : false,
-        }) + (() => {
+        }), composeVocabUnifiedOn() && !!composeSentencePlan?.note) + (() => {
           // 2026-10-23 計画7: 10/20 の会話の型（writing-blueprint-patterns.ts・e0e83baa/1bc5683e/c0b845e8/9b8dbfca/adc4d260/317c7a7c/d9fa213d/bf2c0517/d9533aad/5192922a）
           const pn = buildBlueprintPatternNote({
             scene: replyScene, customerText: message ?? "", messages: recentMessages, customerConditions,
@@ -7738,7 +7783,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 Object.assign(finalCheck.tpo_debug, {
                   turnContract: turnContract ? { source: turnContract.source, routes: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, misses: tcMiss } : null,
                   ...(composeRun ? { compose: composeDigestLine({ intent: composeRun.intent, blueprint: composeRun.blueprint, writerGotNote: !!composeRun.note, draft: finalDraftText }) } : {}),
-                  ...(composeSentencePlan ? { compose_plan: composeSentencePlan.digest } : {}),
+                  ...(composeSentencePlan ? { compose_plan: composeSentencePlan.digest, ...(composeSentencePlan.composeRows ? { compose_rows: composeSentencePlan.composeRows } : {}) } : {}),
+                  ...(composeSentencePlan?.brief ? (() => { try {
+                    const b = composeSentencePlan.brief; const doubts = composeDraftDoubts(b, finalDraftText ?? "");
+                    const cbSure = (brainMeta as Record<string, unknown> | null)?.conductor_brief as { sure?: { level?: string } } | undefined;
+                    const sure = composeSure(b, { orderType: composeSentencePlan.briefOrderType, appealAsked: composeSentencePlan.briefAppeal, conductorSure: cbSure?.sure?.level ?? null, doubts });
+                    const link = composeLinkReport(b, composeSentencePlan.note ?? "");
+                    return { compose_brief: composeBriefDigest(b, { doubts, sure, link }) };
+                  } catch { return {}; } })() : {}),
                   ...(composeConductor ? (() => {
                     const misses = verifyDraft(finalDraftText ?? "", composeConductor.mf);
                     const sb = sendBackDecision(misses, { alreadySentBack: false });

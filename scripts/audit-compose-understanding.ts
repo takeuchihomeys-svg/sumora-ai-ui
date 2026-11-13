@@ -17,6 +17,7 @@ import {
 } from "../app/lib/compose-sentence-plan";
 import { decideMessageFocus, readComposeInputs, prevStaffKindOf, customerAskedNewOf, type MessageFocusKey } from "../app/lib/reply-compose-conductor";
 import { resolveReplyScene } from "../app/lib/reply-scene";
+import { pickElementTypes, elementTypesOfText, orderTypeOf, type ElementKind } from "../app/lib/compose-order-table";
 import type { SentenceRole } from "../app/lib/takeuchi-anatomy-roles";
 
 const args = process.argv.slice(2);
@@ -24,10 +25,16 @@ const arg = (k: string, d = "") => args.find((a) => a.startsWith(`--${k}=`))?.sl
 const flag = (k: string) => args.includes(`--${k}`);
 const ROOT = resolve(__dirname, "..");
 
-type Prob = { id: string; customer?: string; context?: Array<{ s: string; t: string }> };
+type Prob = { id: string; customer?: string; staffText?: string; context?: Array<{ s: string; t: string }> };
+/** 要素の型の当たり（竹内さんの文から読んだ型 × ブレインの欄から選んだ型）: 竹内さんに型がある番のうち1つでも重なれば当たり */
+const ELEMENTS: Array<[ElementKind, string]> = [["push_line", "押す線の型"], ["trust", "信頼の作り方の型"], ["latent_line", "潜在の一文の型"]];
+const elemTally = new Map<string, { goldHas: number; hit: number; extra: number }>();
 type Row = { id: string; at?: string; brain?: Record<string, unknown> };
 
-const gold = (JSON.parse(readFileSync(resolve(ROOT, arg("gold", "scripts/compose-understanding/gold-1111.json")), "utf8")) as { turns: TakeuchiGold[] }).turns;
+// --ids=q022,q063: この番だけ測る（前後で同じ番を比べる）。--only-brain: 答案の brain がある番だけ数える（案A の試験の答案は一部の番だけ）
+const goldAll = (JSON.parse(readFileSync(resolve(ROOT, arg("gold", "scripts/compose-understanding/gold-1111.json")), "utf8")) as { turns: TakeuchiGold[] }).turns;
+const idsArg = new Set(arg("ids").split(",").map((x) => x.trim()).filter(Boolean));
+let gold = idsArg.size ? goldAll.filter((g) => idsArg.has(g.id)) : goldAll;
 const ids = new Set(gold.map((g) => g.id));
 const probs = new Map((JSON.parse(readFileSync(join(ROOT, "scripts/brain-exam/problems.json"), "utf8")) as Prob[]).map((p) => [p.id, p]));
 
@@ -59,6 +66,7 @@ for (const f of arg("brains") ? [] : resultFiles()) {
   }
 }
 
+if (flag("only-brain")) gold = gold.filter((g) => brainOf.has(g.id));
 /** 今の文の統括（この通の重点）→ 比べる欄。重点の役目1つ＋継続の約束だけ（他の欄は持っていない） */
 const FOCUS_ROLE: Record<MessageFocusKey, SentenceRole | null> = { answer: "answer", promise: "promise", ease: "worry", close: "viewing", propose: "keep", relation_ack: "uke", relation_keep: "uke" };
 function currentFields(brain: Record<string, unknown>, p: Prob | undefined): PlanFields {
@@ -84,15 +92,36 @@ for (const g of gold) {
   const sNew = scoreFields(g, nf), sNow = scoreFields(g, cf);
   newRows.push(sNew); nowRows.push(sNow);
   for (const [k, v] of Object.entries(understandingCoverage(u, s, plan))) { const c = cov.get(k) ?? { got: 0, inPlan: 0 }; c.got += v.got ? 1 : 0; c.inPlan += v.inPlan ? 1 : 0; cov.set(k, c); }
-  per.push({ id: g.id, brainFrom: b ? b.file.replace(/^.*worktrees[\\/]/, "") : null, gold: { main: g.mainRole, roles: g.roles, lead: g.leadTo, latent: g.latent }, now: { main: cf.mainRole, roles: cf.roles }, new: { main: nf.mainRole, roles: nf.roles, lead: nf.leadTo, property: nf.property, about: nf.about, latent: nf.latent }, hitNew: sNew, hitNow: sNow, note: flag("show") ? sentencePlanNote(plan) : undefined });
+  {
+    const goldT = elementTypesOfText(String(probs.get(g.id)?.staffText ?? "").split(/\n―\n/)[0]);
+    const pickT = pickElementTypes(brain);
+    for (const [k, ja] of ELEMENTS) {
+      const t = elemTally.get(ja) ?? { goldHas: 0, hit: 0, extra: 0 };
+      if (goldT[k].length) { t.goldHas++; if (pickT[k].some((x) => goldT[k].includes(x))) t.hit++; } else if (pickT[k].length) t.extra++;
+      elemTally.set(ja, t);
+    }
+  }
+  const sev = (brain as { seven_read?: unknown; latent_read?: unknown });
+  const typeKey = orderTypeOf(resolveReplyScene({ customerText: String(probs.get(g.id)?.customer ?? "") }).scene, g.mainRole) ?? "(型の外)";
+  per.push({ type: typeKey, seven: !!sev.seven_read, latent4: !!sev.latent_read, id: g.id, brainFrom: b ? b.file.replace(/^.*worktrees[\\/]/, "") : null, gold: { main: g.mainRole, roles: g.roles, lead: g.leadTo, latent: g.latent }, now: { main: cf.mainRole, roles: cf.roles }, new: { main: nf.mainRole, roles: nf.roles, lead: nf.leadTo, property: nf.property, about: nf.about, latent: nf.latent }, hitNew: sNew, hitNow: sNow, note: flag("show") ? sentencePlanNote(plan) : undefined });
 }
 const tNow = tallyFields(nowRows), tNew = tallyFields(newRows);
 const pct = (h: number, n: number) => (n ? `${h}/${n}（${Math.round((h / n) * 100)}%）` : "-");
-console.log(`竹内さんの番 ${gold.length}（答案の brain あり ${gold.length - noBrain}・無し ${noBrain}）`);
+console.log(`竹内さんの番 ${gold.length}（答案の brain あり ${gold.length - noBrain}・無し ${noBrain}・7つの欄あり ${per.filter((p) => p.seven).length}・潜在の4欄あり ${per.filter((p) => p.latent4).length}）`);
 console.log("\n欄ごとの当たり（竹内さんに値がある番のうち）｜今の文の統括｜新（1文ずつの設計図）｜新が値の無い番を埋めた数");
 for (const f of SCORE_FIELDS) console.log(`- ${f}｜${pct(tNow[f].hit, tNow[f].goldHas)}｜${pct(tNew[f].hit, tNew[f].goldHas)}｜${tNew[f].extra}`);
+console.log("\n要素の型の当たり（竹内さんの文に型がある番のうち・ブレインの欄から選んだ型）｜竹内さんに無いのに選んだ数");
+for (const [, ja] of ELEMENTS) { const t = elemTally.get(ja) ?? { goldHas: 0, hit: 0, extra: 0 }; console.log(`- ${ja}｜${pct(t.hit, t.goldHas)}｜${t.extra}`); }
 console.log("\n欄の受け取り（新・番の数）: 材料にある｜設計図に出た");
 for (const f of UNDERSTANDING_FIELDS) { const c = cov.get(f) ?? { got: 0, inPlan: 0 }; console.log(`- ${f}｜${c.got}｜${c.inPlan}`); }
+// 型ごとの当たり（主の役目・誘導先・次へのつなぎ・潜在・押さえ方・信頼の作り方）
+{
+  const F: ScoreField[] = ["主の役目", "誘導先", "次へのつなぎ", "潜在意識のカバー", "要点の押さえ方", "信頼の作り方"];
+  const byT = new Map<string, Array<Record<ScoreField, FieldHit>>>();
+  for (const p of per) { const l = byT.get(p.type as string) ?? []; l.push(p.hitNew as Record<ScoreField, FieldHit>); byT.set(p.type as string, l); }
+  console.log(`\n型ごとの当たり（新）: 型（番）｜${F.join("｜")}`);
+  for (const [t, rows] of [...byT].sort()) { const tl = tallyFields(rows); console.log(`- ${t}（${rows.length}）｜${F.map((x) => (tl[x].goldHas ? `${tl[x].hit}/${tl[x].goldHas}` : "-")).join("｜")}`); }
+}
 if (flag("show")) for (const p of per) console.log(`\n== ${p.id}\n${JSON.stringify({ gold: p.gold, now: p.now, new: p.new })}\n${(p.note as string) || "（注記なし）"}`);
 const out = arg("out");
 if (out) { writeFileSync(resolve(ROOT, out), JSON.stringify({ at: new Date().toISOString(), n: gold.length, noBrain, now: tNow, new: tNew, coverage: Object.fromEntries(cov), per }, null, 1)); console.log(`\n書いた: ${out}`); }

@@ -22,6 +22,8 @@ import { intakeDigestLine } from "./conductor-intake";
 import { allocationMetaDigest } from "./conductor-allocation";
 import { checkOrderDigest } from "./check-order-wire";
 import { conductorBriefDigest } from "./conductor-brief";
+import { deliveryDigest } from "./delivery-check";
+import { onHandDigest } from "./material-on-hand";
 import { stripRentNegotiation, stripRentNegotiationFromList } from "./rent-negotiation-guard";
 import { mindsetDigest, type CustomerMindset } from "./customer-mindset";
 
@@ -148,6 +150,10 @@ export type FreshDigest = {
   co?: string;
   /** 2026-11-12 統括の指示書の1行（型|目的|足りない情報|照らし合わせ|事実|疑いの印|確かさ|未の数・conductor-brief.ts・CONDUCTOR_BRIEF=shadow の時だけ） */
   cb?: string;
+  /** 2026-11-13 決めた事が書き手まで届いた数（欄の届き/値あり|下の欄の届き/値あり・delivery-check.ts・DELIVERY_CHECK=shadow の時だけ） */
+  dv?: string;
+  /** 2026-11-13 mm が手元にあった数/mm の数（material-on-hand・MATERIAL_ON_HAND=shadow の時だけ） */
+  mh?: string;
   /** 2026-11-04 統括メタの短い形（場面|担当|倉庫の数|自信） */
   cm?: string;
   /** 2026-11-04 受け渡しの落ちの確かめ（ax|it|bp|rc|ck・conductor-handoff.handoffChecks） */
@@ -207,7 +213,7 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...((() => { const d = meta.brain_depth as { depth?: string; reason?: string } | undefined; return d?.depth ? { dp: `${d.depth[0]}:${String(d.reason ?? "").slice(0, 12)}` } : {}; })()),
     ...(str(meta.conductor_roles, 30) ? { rl: str(meta.conductor_roles, 30)! } : {}),
     // 2026-11-05 作業員5: 統括の重点（fc・meta.conductor_focus）・組み立て（tm・CONDUCTOR_COMBINE）・使った順番（or）。どれも無い番は欄なし
-    ...((() => { const c = meta.conductor_focus as { focus?: unknown; near?: unknown } | null | undefined; const f = str(c?.focus, 14); return f ? { fc: `${f}${str(c?.near, 24) ? `|${str(c?.near, 24)}` : ""}` } : {}; })()),
+    ...((() => { const c = meta.conductor_focus as { focus?: unknown; near?: unknown; focus_sub?: unknown } | null | undefined; const f = str(c?.focus, 14); const sub = str(c?.focus_sub, 12); return f ? { fc: `${f}${sub ? `:${sub}` : ""}${str(c?.near, 24) ? `|${str(c?.near, 24)}` : ""}` } : {}; })()),
     ...(str(meta.two_message_plan_digest, 40) ? { tm: str(meta.two_message_plan_digest, 40)! } : {}),
     ...(str(meta.conductor_order, 60) ? { or: str(meta.conductor_order, 60)! } : {}),
     // 2026-11-12 作業員22（KB fd1c7c62）: 番ごとの部品の配分の名前と部品の順（conductor-allocation.allocationMetaDigest・meta.conductor_allocation がある番だけ）
@@ -216,6 +222,9 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...((() => { const co = checkOrderDigest(meta.check_order); return co ? { co } : {}; })()),
     // 2026-11-12 作業員22: 統括の指示書（conductor-brief.conductorBriefDigest・meta.conductor_brief がある番だけ）
     ...((() => { const cb = conductorBriefDigest(meta.conductor_brief); return cb ? { cb } : {}; })()),
+    // 2026-11-13 作業員22: 決めた事が書き手まで届いた数（delivery-check.deliveryDigest・meta.delivery_check がある番だけ）
+    ...((() => { const dv = deliveryDigest(meta.delivery_check); return dv ? { dv } : {}; })()),
+    ...((() => { const mh = onHandDigest(meta.material_on_hand); return mh ? { mh } : {}; })()),
     // 2026-11-07 作業員5（弱い所 275）: やる事の一覧（済み/全部）と考える力の配分（CONDUCTOR_TODOS=on の時だけ入る）
     ...((() => { const t = meta.conductor_todos as { td?: unknown; tb?: unknown } | null | undefined; return { ...(str(t?.td, 40) ? { td: str(t?.td, 40)! } : {}), ...(str(t?.tb, 30) ? { tb: str(t?.tb, 30)! } : {}) }; })()),
     // 2026-11-05 作業員5（ea2a9405②）: 途中の新しい通で立て直したか（conductor-replan.replanDigest・CONDUCTOR_REPLAN の時だけ入る）
