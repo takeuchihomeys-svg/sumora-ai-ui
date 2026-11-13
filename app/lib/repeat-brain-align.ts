@@ -241,7 +241,8 @@ export function ackConfirmAixPathLine(f: AckFormFacts | null, env: Env = process
   const t = f.topics ?? [];
   const aix = t.includes("vacancy") || t.includes("mgmt") ? "【物件確認した】（property_check_result）" : t.includes("estimate") ? "【見積書送る】（estimate_sheet）" : "";
   if (!aix) return "";
-  return `→ 道（竹内さんの決定 C 10/14・★約束の直後のお礼・了承）: この番は返信で締めず、約束を果たす AIX${aix}のまま（aix の欄は空にしない）。「結果がまだ手元に無い」は返信にする理由にならない＝結果を確かめてから送るのは AIX を押すスタッフ（スタッフだけが知る情報は AIX）。上の受けだけ／待ちの形の数は手打ちの文の形で、道を変えない（ack_form は形として入れる）。`;
+  // 11/14 試験 d-ackpath2: AIX を1つだけ名指すと、q094（持ち込みの確認→竹内さんは募集状況＋御見積書）で御見積書が抜けた＝入口の AIX を例として示し、何を添えるかは狭めない
+  return `→ 道（竹内さんの決定 C 10/14・★約束の直後のお礼・了承）: この番は返信で締めず、約束を果たす AIX（入口は${aix}）のまま（aix の欄は空にしない）。何を一緒に送るか（お送り頂いた物件の御見積書等）は今までどおり会話と決まりで決める＝この行で狭めない。「結果がまだ手元に無い」は返信にする理由にならない＝結果を確かめてから送るのは AIX を押すスタッフ（スタッフだけが知る情報は AIX）。上の受けだけ／待ちの形の数は手打ちの文の形で、道を変えない（ack_form は形として入れる）。`;
 }
 /** ブレインのプロンプトに入れる材料の1行（答えは書かない）。お客様の発言に中身が多い番は出さない */
 export function ackFormMaterialLine(f: AckFormFacts | null, env: Env = process.env): string {

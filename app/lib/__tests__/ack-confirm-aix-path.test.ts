@@ -20,6 +20,7 @@ t("q091: 最後の文は contact だけでも、通の全部から募集状況�
 t("既定 off", !ackConfirmAixPathOn({}) && ackConfirmAixPathOn(ON) && ackConfirmAixPathLine(f, OFF) === "");
 const line = ackConfirmAixPathLine(f, ON);
 t("on: q091 は道の行が付く（物件確認した）", /property_check_result/.test(line) && /返信で締めず/.test(line) && /ack_form は形/.test(line));
+t("on: 何を添えるか（御見積書等）は狭めない（11/14 試験 q094 で御見積書が抜けた）", /入口は/.test(line) && /狭めない/.test(line));
 // 既定 off の時の材料は今までと1文字も変わらない（ACK_FORM_BRAIN は既定 on）
 const base = ackFormMaterialLine(f, OFF), withOn = ackFormMaterialLine(f, ON);
 t("off: 材料は今までどおり（道の行なし）", !!base && !/返信で締めず/.test(base) && !/property_check_result/.test(base));
