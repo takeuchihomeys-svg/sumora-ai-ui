@@ -12,7 +12,7 @@ const src = arg("src", resolve(ROOT, "../../exam-cache/anatomy-roles/roles-r1.js
 const roles = JSON.parse(readFileSync(src, "utf8")) as Array<{ id: string; scene: string; route?: string; main_role: string | null; sentences: string[]; roles: Array<{ i: number; role: string }> }>;
 const trust = new Map<string, { n: number; m: Map<string, number> }>();
 const ends = new Map<string, { n: number; m: Map<string, number> }>();
-const bump = (tab: Map<string, { n: number; m: Map<string, number> }>, k: string, vals: string[]) => { const t = tab.get(k) ?? { n: 0, m: new Map() }; t.n++; for (const v of vals) t.m.set(v, (t.m.get(v) ?? 0) + 1); tab.set(k, t); };
+const bump = (tab: Map<string, { n: number; m: Map<string, number> }>, k: string, vals: string[]) => { const t = tab.get(k) ?? { n: 0, m: new Map<string, number>() }; t.n++; for (const v of vals) t.m.set(v, (t.m.get(v) ?? 0) + 1); tab.set(k, t); };
 let used = 0, skipped = 0;
 // 形の欄（長さ・絵文字）: 場面×主の役目ごとの文の数・場面ごとの絵文字の数と種類
 const lens = new Map<string, number[]>();
@@ -23,7 +23,7 @@ for (const r of roles) {
   if (r.sentences.some((s) => /鈴木/.test(s))) { skipped++; continue; }
   used++;
   for (const k of [`${r.scene}|${r.main_role}`, `*|${r.main_role}`]) { const a = lens.get(k) ?? []; a.push(r.sentences.length); lens.set(k, a); }
-  { const all = r.sentences.join("").match(EMO_ALL) ?? []; for (const k of [r.scene, "*"]) { const e = emos.get(k) ?? { counts: [], kinds: new Map() }; e.counts.push(all.length); for (const x of all) e.kinds.set(x, (e.kinds.get(x) ?? 0) + 1); emos.set(k, e); } }
+  { const all = r.sentences.join("").match(EMO_ALL) ?? []; for (const k of [r.scene, "*"]) { const e = emos.get(k) ?? { counts: [] as number[], kinds: new Map<string, number>() }; e.counts.push(all.length); for (const x of all) e.kinds.set(x, (e.kinds.get(x) ?? 0) + 1); emos.set(k, e); } }
   if (r.main_role) { const ks = trustOfText(r.sentences.join("\n")); bump(trust, `${r.scene}|${r.main_role}`, ks); bump(trust, `*|${r.main_role}`, ks); }
   for (const x of r.roles) { const s = r.sentences[x.i - 1]; if (!s) continue; const e = endingOf(s); const v = e ? [e] : []; bump(ends, `${r.scene}|${x.role}`, v); bump(ends, `*|${x.role}`, v); }
 }
