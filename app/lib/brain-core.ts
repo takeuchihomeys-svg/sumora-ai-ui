@@ -9,7 +9,8 @@ import { sanitizeJsonForDb } from "@/app/lib/db-json-sanitize";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { brainCacheOrderOn, withSceneBlock } from "@/app/lib/brain-cache-order";
-import { buildSentProps, buildSentPropsText, sentSheetVacancyOn, attachSheetVacancy } from "@/app/lib/sent-props-text";
+import { buildSentProps, buildSentPropsText, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, parseEstimateTexts } from "@/app/lib/sent-props-text";
+import { refResolveOn, resolveRefs, refResolveLine, refResolveDigest, portalIdOf, type RefResolve, type RefBrought } from "@/app/lib/ref-resolve";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
 import { evaluateAixWithJev, evaluatePickerWithJev, hasPickerQuestion, recordJevShadow, toPickerShadowRow, toShadowRow } from "@/app/lib/aix-jev";
@@ -553,6 +554,8 @@ export type SuggestedAixMeta = {
   now_vs_later?: NowVsLater;
   /** 2026-11-12 作業員16: ブレインに渡した確かめる順番の型（CHECK_ORDER_GUIDE=on の時だけ・記録だけ） */
   check_order_guide?: { type: string; steps: string[] };
+  /** 2026-11-13 作業員16: お客様の言葉が指す物（ref-resolve・REF_RESOLVE=on|shadow の時だけ・道の前の材料） */
+  ref_resolve?: RefResolve & { digest: string | null };
   /** 2026-11-12 作業員16（案2）: 一通の読みの候補・BRAIN_READ_CANDIDATES=on の時だけ（記録だけ・判断は aix/turn_contract のまま） */
   read_candidates?: ReadCandidates;
   /** 2026-11-13 作業員16: 選んだ読みの受け渡し（BRAIN_READ_CANDIDATES=shadow の時だけ・記録だけ） */
@@ -2478,7 +2481,40 @@ async function analyzeConversationCore(
       }
     }
   }
+  // 2026-11-13 作業員16（統括役の頼み・作業員4 の持ち場の代わり・実例 12105・12555・10911）: 指す物を解く欄 ref_resolve（REF_RESOLVE=on|shadow の時だけ・既定 off＝今と1文字も変わらない）
+  //   送った物件の行に束の番号・見積の初期費用（既に読んだ aix_usage_logs の estimate_sheet の本文から・DB を足さない）を付け、今の連投の「ここ・あれ・上記・↑・URL・画像」を解く。
+  //   on＝送った物件の一覧の後に【お客様の言葉が指す物】の1行を足す（道の前の材料）／shadow＝meta.ref_resolve に記録だけ
+  let refResolveRec: (RefResolve & { digest: string | null }) | null = null;
+  const refMode = (process.env.REF_RESOLVE ?? "").trim().toLowerCase();
+  if (refResolveOn()) {
+    try {
+      attachBundles(sentProps);
+      attachEstimates(sentProps, parseEstimateTexts(aixLogs.filter((a) => a.aix_type === "estimate_sheet") as Array<{ generated_text?: string | null; sent_at?: string | null; created_at?: string | null }>));
+      const turn: typeof typedMessages = [];
+      for (const mm of typedMessages) { if (mm.sender !== "customer") break; turn.push(mm); }
+      const turnText = [...turn].reverse().map((mm) => mm.text ?? "").join("\n");
+      const quoted = turn.find((mm) => mm.quoted_message_id)?.quoted_message_id ?? null;
+      const quotedText = quoted ? typedMessages.find((mm) => mm.line_message_id === quoted)?.text ?? null : null;
+      const brought: RefBrought[] = typedMessages.filter((mm) => mm.sender === "customer").slice(0, 30).flatMap((mm): RefBrought[] => {
+        const out: RefBrought[] = [];
+        for (const u of (mm.text ?? "").match(/https?:\/\/[^\s）)」』]+/g) ?? []) { const pid = portalIdOf(u); if (pid) out.push({ name: null, room: null, at: mm.created_at, url: u, portal_id: pid.id, from: "url" }); }
+        if (mm.image_type || /^\[画像\]/.test(mm.text ?? "")) out.push({ name: null, room: null, at: mm.created_at, from: "image", image_name: (mm.text ?? "").match(/【([^】]{2,30})】/)?.[1] ?? null });
+        return out;
+      });
+      const lastStaff = typedMessages.find((mm) => mm.sender !== "customer");
+      const lastStaffSentBundle = !!lastStaff?.is_aix_generated && sentProps.some((sp) => !sp.shared_only && Math.abs(Date.parse(sp.sent_at) - Date.parse(lastStaff.created_at)) < 10 * 60_000);
+      const rr = resolveRefs({
+        text: turnText,
+        sent: sentProps.filter((sp) => !sp.shared_only).map((sp) => ({ name: sp.property_name, room: sp.room_no || null, sent_at: sp.sent_at, bundle_no: sp.bundle_no ?? null, bundle_pos: sp.bundle_pos ?? null, channel: sp.channel ?? null, estimate_initial_cost: sp.estimate_initial_cost ?? null })),
+        brought: turn.length ? brought.filter((b) => turn.some((mm) => mm.created_at === b.at)) : [],
+        quotedText, lastStaffSentBundle,
+      });
+      refResolveRec = { ...rr, digest: refResolveDigest(rr) };
+      console.log(JSON.stringify({ tag: "brain:ref-resolve", conversationId, mode: refMode, items: rr.items.length, refCount: rr.refCount, digest: refResolveRec.digest }));
+    } catch (e) { console.warn(JSON.stringify({ tag: "brain:ref-resolve-failed", conversationId, error: String(e).slice(0, 160) })); }
+  }
   let sentPropsText = buildSentPropsText(sentProps);
+  if (refMode === "on" && refResolveRec) { const line = refResolveLine(refResolveRec); if (line) sentPropsText += `\n${line}`; }
 
   // 申込経験者: ベンチマーク物件の注入
   // applicant_rank が入っている物件 = 顧客が実際に申込んだ（番手がついた）物件。
@@ -6659,6 +6695,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-12 作業員16（案1・BRAIN_NOW_LATER_FIRST=on の時だけ）: 今の番と後の番（記録だけ・決め直さない）
       now_vs_later: nowLaterParsed ?? undefined,
       check_order_guide: checkOrderGuideRec ?? undefined,
+      ref_resolve: refResolveRec ?? undefined,
       read_candidates: readCandParsed ?? undefined,
       read_handoff: readHandoffRec ?? undefined,
       // 2026-11-13 作業員16: 潜在の5段と下の種類（LATENT_FIVE=on の時だけ・記録と文の統括の材料・判断は変えない）
