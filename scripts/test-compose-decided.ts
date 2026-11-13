@@ -98,4 +98,22 @@ t("実例 12643 の形: 「鍵交換は必須か」は今言える・「外せ�
   assert.equal(four.length, 4);
   assert.deepEqual(four.map((p) => p.source.kind), ["material", "conversation", "material", "conversation"]);
 });
+t("確認が要る部分がある依頼は needs_check（ASK_PARTS_MIXED_NEEDS_CHECK・既定 off・実例 12643）", () => {
+  const withParts = [{ quote: "鍵交換は必須ですか？外せますか？", basis: "material", route: "reply", answer: "x",
+    parts: [{ part: "必須か", source: "material_value", certainty: "assertable", route: "reply" }, { part: "外せるか", source: "staff_only", who: "mgmt", certainty: "needs_check", route: "promise" }] }];
+  const text = [{ quote: "鍵交換は必須ですか？外せますか？", basis: "company_fact", route: "reply", answer: "鍵交換は必須となります。外せるかは管理会社に交渉させて頂きます" }];
+  // 既定 off＝今までと同じ（今言える部分の確かさ）
+  assert.equal(askPartsOf(withParts)[0].certainty, "assertable");
+  assert.equal(askPartsOf(text)[0].certainty, "assertable");
+  // on＝依頼の確かさは needs_check（今言える部分・確認が要る部分の文はそのまま）
+  const p = askPartsOf(withParts, { mixedNeedsCheck: true })[0];
+  assert.deepEqual([p.now, p.check, p.certainty], ["必須か", "外せるか", "needs_check"]);
+  const q = askPartsOf(text, { mixedNeedsCheck: true })[0];
+  assert.deepEqual([q.now, q.certainty], ["鍵交換は必須となります。", "needs_check"]);
+  // 確かめた結果が手元なら言い切れる
+  assert.equal(askPartsOf(text, { mixedNeedsCheck: true, checkResultReady: true })[0].certainty, "assertable");
+  // 確認が要る部分が無い依頼は変わらない
+  assert.equal(askPartsOf([{ quote: "床は白ですか", basis: "material", route: "reply", answer: "ホワイト系です" }], { mixedNeedsCheck: true })[0].certainty, "assertable");
+});
+
 console.log(`\n${n} 件 ok`);

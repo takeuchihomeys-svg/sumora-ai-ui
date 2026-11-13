@@ -93,4 +93,11 @@ t("役目ごとに要る欄だけ（decided-subfields の下の欄×役目の表
   assert.ok(!("open" in briefForRole(b, "head")), "未の欄（open）は渡さない");
 });
 
+t("12643: 確認が要る部分がある依頼は指示書の事実と split の確かさが needs_check（統括役の決め）・組の主は send_combo_table で優先度の表の組は参考", () => {
+  const b = buildConductorBrief(m12643);
+  assert.ok(b.split && b.split !== BRIEF_NONE && b.split[0].certainty === "needs_check");
+  assert.ok(b.facts !== BRIEF_NONE && b.facts[0].certainty === "needs_check");
+  assert.ok(b.combine !== BRIEF_NONE && b.combine.from === "send_combo_table" && b.combine.combo !== b.combine.priority);
+});
+
 console.log(`全部 ${n} 件 ok`);

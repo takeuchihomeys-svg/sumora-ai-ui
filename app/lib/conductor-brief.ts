@@ -71,6 +71,7 @@ export type ConductorBrief = {
   /** 確かめる順番と優先度（priority-table の名前） */
   order?: Missing<Omit<PriorityRecord, "combo" | "type" | "state">>;
   alloc: Missing<{ name: string; parts: string[] }>;
+  /** 組の正は send_combo_table（統括役の決め 11/13）。priority は優先度の表の組で「参考」として並べるだけ（主には使わない・14日の数えで寄せるか決める） */
   combine: Missing<{ combo: string; order: string; gap: string; why: string; from: "send_combo_table" | "two_message_plan"; priority?: string | null }>;
   next: Missing<{ dest: string; strength: string; timing: string; offer: Offer | null; plants: PlantFact[]; when: When | null; form?: "reply" | "aix" | "combo" | null; from: "next_move_detail" | "type_table" }>;
   aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string>; mid?: Missing<string> };
@@ -106,14 +107,17 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   // ② 答えに使う事実（出所つき）
   const factAsks = asks.filter((a) => FACT_BASES.has(String(a.basis)) && str(a.answer));
   const ready = checkResultReadyOf(m);
+  // 依頼ごとの部分（統括役の決め 11/13: 確認が要る部分がある依頼は needs_check＝指示書の中は常にこの形・指示書そのものが既定 off）
+  const parts = askPartsOf(asks, { checkResultReady: ready, mixedNeedsCheck: true });
   const facts: ConductorBrief["facts"] = asks.length ? factAsks.slice(0, 4).map((a) => {
     const src = fromContractBasis(a.basis, a.route, { checkResultReady: ready });
-    return { quote: str(a.quote, 30) ?? "", value: str(a.answer, 60)!, from: BASIS_JA[String(a.basis)] ?? String(a.basis), source: src.kind, ...(src.who ? { who: src.who } : {}), certainty: factCertaintyOf(a, { checkResultReady: ready }) };
+    const q = typeof a.quote === "string" ? a.quote.trim().slice(0, 40) : "";
+    const certainty = parts.find((p) => p.quote === q)?.certainty ?? factCertaintyOf(a, { checkResultReady: ready });
+    return { quote: str(a.quote, 30) ?? "", value: str(a.answer, 60)!, from: BASIS_JA[String(a.basis)] ?? String(a.basis), source: src.kind, ...(src.who ? { who: src.who } : {}), certainty };
   }) : BRIEF_NONE;
   notYet.push("fact_id");
   if (facts === BRIEF_NONE) notYet.push("facts");
   // ②' 依頼ごとの 今言える部分／確認が要る部分
-  const parts = askPartsOf(asks, { checkResultReady: ready });
   const split: ConductorBrief["split"] = parts.length ? parts.slice(0, 4).map((p) => ({ quote: p.quote.slice(0, 30), source: p.source.kind, ...(p.source.who ? { who: p.source.who } : {}), now: p.now ? p.now.slice(0, 40) : null, check: p.check ? p.check.slice(0, 40) : null, certainty: p.certainty })) : BRIEF_NONE;
   if (split === BRIEF_NONE) notYet.push("split");
 
