@@ -27,7 +27,8 @@
 //   文の統括と書き手には briefForRole で役目ごとに要る欄だけ（decided-subfields の下の欄×役目の表から引く・BRIEF_SECTION_SUBS）
 import { CHECK_ORDER_TYPES, CHECK_DEPTH, NEXT_MOVE_OF_TYPE, checkOrderById } from "./check-order";
 import { checkOrderRecord } from "./check-order-wire";
-import { priorityTableRecord, type PriorityRecord } from "./priority-table";
+import { priorityTableRecord, PRIORITY_ROWS, type PriorityRecord } from "./priority-table";
+import { nextMoveConcreteOn, concreteNextMove, type ConcreteNext } from "./next-move-concrete";
 import { askPartsOf, factCertaintyOf, type Certainty } from "./compose-decided";
 import { fromContractBasis, checkResultReadyOf, type AnswerSourceKind, type StaffWho } from "./answer-source";
 import { materialFetchPlan, type FetchSource } from "./material-fetch";
@@ -73,6 +74,8 @@ export type ConductorBrief = {
   alloc: Missing<{ name: string; parts: string[] }>;
   /** 組の正は send_combo_table（統括役の決め 11/13）。priority は優先度の表の組で「参考」として並べるだけ（主には使わない・14日の数えで寄せるか決める） */
   combine: Missing<{ combo: string; order: string; gap: string; why: string; from: "send_combo_table" | "two_message_plan"; priority?: string | null }>;
+  /** 次の一手の番ごとの中身（何を・いつ・どの形で・next-move-concrete・NEXT_MOVE_CONCRETE=on の時だけ） */
+  next_concrete?: Missing<ConcreteNext>;
   next: Missing<{ dest: string; strength: string; timing: string; offer: Offer | null; plants: PlantFact[]; when: When | null; form?: "reply" | "aix" | "combo" | null; from: "next_move_detail" | "type_table" }>;
   aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string>; mid?: Missing<string> };
   /** 統括が決めた事の1つの置き場（重点・約束・段階・誘導先・継続の約束・こちら側の状態・依頼ごとの道と答え／conductor-decided.ts） */
@@ -174,6 +177,13 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const detail = nm ? buildNextMoveDetail({ dest: nm.dest, situation: { checkType: typeId, worry, property: "unknown" }, combo: (combo?.combo ?? null) as SendCombo | null }) : null;
   const next: ConductorBrief["next"] = nm ? { dest: nm.dest, strength: nm.strength, timing: nm.timing, offer: detail?.offer ?? null, plants: detail?.plants.map((p) => p.fact) ?? [], when: detail?.when ?? null, form: detail?.form ?? null, from: detail ? "next_move_detail" : "type_table" } : BRIEF_NONE;
   if (next === BRIEF_NONE) notYet.push("next");
+  // ⑧' 次の一手を番の材料から具体に（後に回した依頼・開いている約束・送れる候補・お客様の言った時期・管理会社の営業時間）
+  let next_concrete: ConductorBrief["next_concrete"];
+  if (nextMoveConcreteOn()) {
+    const row = pr ? PRIORITY_ROWS.find((r) => r.id === pr.row_id) ?? null : null;
+    try { next_concrete = concreteNextMove({ meta: m, row, combo: combine === BRIEF_NONE ? null : combine.combo, typeDest: next === BRIEF_NONE ? null : next.dest }); } catch { next_concrete = BRIEF_NONE; }
+    if (next_concrete === BRIEF_NONE || next_concrete.from === "type_table") notYet.push("next_concrete");
+  }
 
   // ⑨ 目的・要点（判断の根拠のメモと同じ名前）
   const jb = obj(m.judge_basis);
@@ -191,7 +201,7 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const sure = briefSure(m, { doubts, info, typeId });
   // ⑫ 決めた事の台帳（作業員24 の根A）
   const decided = buildDecidedLedger(m, { openPromises: (ledger?.open ?? []).filter((o) => o.kind === "our_promise_unkept").map((o) => o.what) });
-  return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, aim, decided, doubts, sure, notYet };
+  return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), aim, decided, doubts, sure, notYet };
 }
 
 /** 指示書の欄 → 届き方の表（decided-subfields）の下の欄。文の統括と書き手へは、この下の欄の役目に当たる欄だけ渡す（表は decided-subfields が正） */
@@ -206,6 +216,7 @@ export const BRIEF_SECTION_SUBS: Readonly<Record<string, readonly string[]>> = {
   order: ["priority.first", "priority.why", "priority.why_order", "priority.now", "priority.defer", "priority.avoid"],
   combine: ["priority.combo"],
   next: ["aim.mid", "aim.plant"],
+  next_concrete: ["aim.mid", "aim.plant", "priority.defer"],
   aim: ["aim.turn", "aim.mid"],
 };
 /** 役目 → 渡す指示書の欄の名前（下の欄の役目の和）。alloc・doubts・sure・decided は統括の中だけ（書き手へは渡さない） */
