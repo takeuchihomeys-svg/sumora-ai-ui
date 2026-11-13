@@ -24,6 +24,57 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS });
 }
 
+const SELECT = [
+  "created_at", "site", "mode", "ext_version",
+  "moves_n", "move_speed_px_s", "move_curve", "move_ms",
+  "points_n", "point_x", "point_y", "point_fields",
+  "scrolls_n", "scroll_dy", "shot_ops",
+].join(", ");
+
+/**
+ * 2026-11-13: 記録から**その場で**学習の束を作る（cron を待たない）。
+ *   直近3日・最大3000行（重くしない）。`shot_ops` が無いDBでは外して読み直す。
+ *   作った束は DB にも残す（次からは速い・他の PC も読める）。
+ */
+async function buildNow(scope: string) {
+  const since = new Date(Date.now() - 3 * 86400_000).toISOString();
+  const fetchPage = (cols: string, from: number, to: number) => {
+    let q = supabase.from("human_motion_learn").select(cols).gte("created_at", since);
+    if (scope && scope !== "all") q = q.eq("site", scope);
+    return q.order("created_at", { ascending: false }).range(from, to);
+  };
+  const rows: unknown[] = [];
+  let cols = SELECT;
+  for (let i = 0; i < 3000; i += 1000) {
+    let r = await fetchPage(cols, i, i + 999);
+    if (r.error && /shot_ops|does not exist|schema cache/i.test(r.error.message)) {
+      cols = SELECT.replace(", shot_ops", "");
+      r = await fetchPage(cols, i, i + 999);
+    }
+    if (r.error) return null;
+    rows.push(...((r.data ?? []) as unknown[]));
+    if (!r.data || r.data.length < 1000) break;
+  }
+  if (!rows.length) return null;
+  const { buildHumanLearnBundle, compactBundle } = await import("@/app/lib/human-learn-brain");
+  const bundle = compactBundle(buildHumanLearnBundle(rows as never));
+  if (!bundle.source.rows) return null;
+  // DB にも残す（同じ scope の古い行は消す＝いつも1つだけ）
+  try {
+    await supabase.from("human_learn_profile").delete().eq("scope", scope);
+    await supabase.from("human_learn_profile").insert({
+      scope,
+      source_rows: bundle.source.rows,
+      source_from: bundle.source.from,
+      source_to: bundle.source.to,
+      ext_version: null,
+      bundle,
+      lines: bundle.lines,
+    });
+  } catch { /* 残せなくても返す（今この瞬間に使えればよい） */ }
+  return bundle;
+}
+
 export async function GET(req: NextRequest) {
   const scope = (req.nextUrl.searchParams.get("scope") || "all").slice(0, 20);
   const touch = req.nextUrl.searchParams.get("touch") !== "0";
@@ -48,6 +99,32 @@ export async function GET(req: NextRequest) {
     );
   }
   const row = (r.data ?? [])[0] as Record<string, unknown> | undefined;
+  /**
+   * 2026-11-13 竹内さん「連携するようにする」（学習が22:20のcron待ちで、すぐ確かめられない）:
+   *   束が**無い**時と、**古い**時（前回から30分以上たっている）は、
+   *   **その場で記録から作る**（cron を待たない）。作った物は DB に残すので次からは速い。
+   *   ⚠ 重くしない: 直近3日・最大3000行まで。作れなければ今まで通り（空を返す）。
+   */
+  const stale = !row || (Date.now() - Date.parse(String(row.created_at ?? 0)) > 30 * 60 * 1000);
+  if (stale) {
+    try {
+      const fresh = await buildNow(scope);
+      if (fresh) {
+        return NextResponse.json({
+          ok: true, empty: false, scope, generated_now: true,
+          generated_at: fresh.generated_at,
+          source_rows: fresh.source.rows,
+          source_from: fresh.source.from,
+          source_to: fresh.source.to,
+          ext_version: null,
+          lines: fresh.lines,
+          bundle: fresh,
+        }, { headers: CORS });
+      }
+    } catch (e) {
+      console.warn("[human-learn-profile] その場で作れませんでした:", e instanceof Error ? e.message : String(e));
+    }
+  }
   if (!row) {
     return NextResponse.json({ ok: true, empty: true, scope, bundle: null, lines: [] }, { headers: CORS });
   }
