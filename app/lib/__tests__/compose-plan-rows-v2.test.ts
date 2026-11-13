@@ -91,4 +91,31 @@ t("信頼の添えの印: 作業員9 の4つ目の段が数える名前・出た
   const row = { role: "press" as const, sub: "conclusion" as const, uses: [], source: "conversation" as const, certainty: "assertable" as const, how: null, why_order: "asked_order" as const, length: "normal" as const, stand: [], share: null, embeds: [{ kind: "effort" as const, share: 0.5 }] };
   assert.match(planRowsV2Note([row], { COMPOSE_PLAN_ROWS_V2: "on" }), /この文の中でこちらの手間を見せる/);
 });
+t("押さえの細分化 q112 型（探して送る約束）: 押さえを立てず締めの継続の約束で受ける", () => {
+  const meta = { turn_contract: { asks: [{ quote: "お願いします！", kind: "feeling", route: "promise", answer: "条件でお部屋をピックアップしてお送りする", basis: "judgement" }], lead_with: 0 }, action: "property_send" };
+  const r = rows(meta, { scene: "ack", customerText: "お願いします！" });
+  assert.ok(!r.rows.some((x) => x.role === "press"), roleSeq(r).join(","));
+  assert.equal(r.rows.find((x) => x.role === "close")?.sub, "keep_promise");
+  assert.ok(r.dropped.some((d) => d.role === "press" && /探して送る/.test(d.why)));
+});
+t("押さえの細分化 q055 型（見積の約束）: 押さえを立てずつなぎの見積へで受ける", () => {
+  const meta = { turn_contract: { asks: [{ quote: "（物件）気になります！", kind: "feeling", route: "promise", answer: "最大限割引の御見積書を作成しお送り", basis: "conversation" }], lead_with: 0 } };
+  const r = rows(meta, { scene: "other", customerText: "ありがとうございます！（物件）気になります！" });
+  assert.ok(!r.rows.some((x) => x.role === "press"), roleSeq(r).join(","));
+  assert.ok(r.rows.some((x) => x.role === "bridge" && x.sub === "estimate"), roleSeq(r).join(","));
+});
+t("押さえの細分化 q141 型（報告だけの番）: 会話の事実しか無ければ答えの押さえを立てない・確認の約束はそのまま", () => {
+  const meta = { turn_contract: { asks: [{ quote: "17時からお願いします！", kind: "report", route: "reply", answer: "本日17時で承知した旨", basis: "conversation" }, { quote: "行きたい場所決まったらまた言います", kind: "report", route: "none", answer: null, basis: "conversation" }], lead_with: 0 } };
+  const r = rows(meta, { scene: "viewing", customerText: "17時からお願いします！\n行きたい場所決まったらまた言います！" });
+  assert.ok(!r.rows.some((x) => x.role === "press"), roleSeq(r).join(","));
+  // 質問の番は今まで通り押さえを立てる
+  const q = rows({ turn_contract: { asks: [{ quote: "q", kind: "question", route: "reply", answer: "a", basis: "material" }], lead_with: 0 } }, { scene: "question", customerText: "q？" });
+  assert.ok(q.rows.some((x) => x.role === "press"));
+  // 確認の約束（check）は押さえのまま
+  const c = rows({ turn_contract: { asks: [{ quote: "空いてますか", kind: "question", route: "promise", answer: "募集状況を確認させて頂きご連絡", basis: "judgement" }], lead_with: 0 } }, { scene: "question", customerText: "空いてますか？" });
+  assert.ok(c.rows.some((x) => x.role === "press" && x.sub === "split_known_check"), roleSeq(c).join(","));
+  // COMPOSE_ROWS_V2_SUB=off で前の立て方
+  process.env.COMPOSE_ROWS_V2_SUB = "off";
+  try { assert.ok(rows(meta, { scene: "viewing", customerText: "17時からお願いします！" }).rows.some((x) => x.role === "press")); } finally { delete process.env.COMPOSE_ROWS_V2_SUB; }
+});
 console.log(`compose-plan-rows-v2: ${n} pass`);
