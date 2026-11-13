@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { completeAuthOk } from "@/app/lib/pickup-complete";
 import { supabase } from "@/app/lib/supabase-server";
+import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 
 export const dynamic = "force-dynamic";
 
@@ -285,22 +286,23 @@ export async function GET(req: NextRequest) {
      *     （`shot_in_db` は便利な印でしかなく、無くても同じ事が分かる）。
      *   `shot_ops` も列が無いDBがあり得るので、同じく外して読み直せるようにする。
      */
-    const FULL = "id, created_at, install_id, device_label, site, mode, shot_key, shot_w, shot_h, ops, points_n, point_fields, shot_b64, shot_ops";
-    const NO_OPS = "id, created_at, install_id, device_label, site, mode, shot_key, shot_w, shot_h, ops, points_n, point_fields, shot_b64";
+    /**
+     * 2026-11-13 竹内さん「なんで連携できていないのか」:
+     *   ⚠ 旧は「`shot_ops` が無い時は shot_ops を外して読み直す」だけだった。
+     *     実際に無かったのは **`shot_b64`**（＋ `shot_learn`）で、`select` は1列でも無いと全部落ちる。
+     *     → 受け皿の「最小の列」まで落ちて、**`shot_ops` が返らず「押す順番 0通り」**になっていた。
+     *   → **無い列だけ**を外して読み直す（`selectDroppingMissing`）。外した列は `dropped_cols` で返す。
+     */
+    const BASE = ["id", "created_at", "install_id", "device_label", "site", "mode", "ext_version", "shot_key", "shot_w", "shot_h", "ops", "points_n", "point_fields", "shot_ops", "shot_b64"];
     const fetchShots = (cols: string) => supabase.from("human_motion_learn")
       .select(cols)
       .gte("created_at", from).eq("shot_taken", true)
       .order("created_at", { ascending: false }).limit(limit);
-    let r = await fetchShots(FULL);
-    if (r.error && /shot_ops|does not exist|schema cache/i.test(r.error.message)) {
-      r = await fetchShots(NO_OPS);
-    }
-    if (r.error) {
-      // 最後の受け皿: 写真の保存先だけでも返す（一覧を空に見せない）
-      const minimal = await fetchShots("id, created_at, install_id, site, mode, shot_key, shot_w, shot_h");
-      if (!minimal.error) r = minimal;
-    }
-    if (r.error) return NextResponse.json({ ok: false, error: r.error.message }, { status: 500, headers: CORS });
+    const sel = await selectDroppingMissing(BASE, fetchShots, {
+      onDrop: (c, e) => console.warn("[human-motion] 列が無いので外します:", c, e?.message ?? ""),
+    });
+    if (sel.error) return NextResponse.json({ ok: false, error: sel.error.message, dropped_cols: sel.dropped }, { status: 500, headers: CORS });
+    const r = { data: sel.data, error: null as typeof sel.error };
     // 写真を見る URL を付ける（Storage の公開 URL・無ければ署名付き・無ければ表の画像）
     const rows = await Promise.all(((r.data ?? []) as unknown as Record<string, unknown>[]).map(async (row) => {
       const key = typeof row.shot_key === "string" ? row.shot_key : "";
@@ -323,7 +325,7 @@ export async function GET(req: NextRequest) {
       delete out.shot_b64;
       return { ...out, shot_in_db: inDb, shot_url: url };
     }));
-    return NextResponse.json({ ok: true, days, rows }, { headers: CORS });
+    return NextResponse.json({ ok: true, days, rows, dropped_cols: sel.dropped, cols: sel.cols }, { headers: CORS });
   }
 
   if (sp.get("summary") === "1") {
