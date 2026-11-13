@@ -23,11 +23,11 @@ ok("今の番の物件の取りこぼし=b", gapsFromTurnMust([{ table: "sent_pr
   ok("digest の形", gapLedgerDigest(led)[0] === "property_record:t:x|brain|db_table|b|fact_missed");
   ok("数え", tallyGaps(led).why.b === 1);
 }
-ok("meta の形: 無ければ undefined", materialGapsDigest([], []) === undefined && materialGapsDigest(["管理会社の回答"], ["viewings"])!.length === 2);
+ok("meta の形: 無ければ undefined", materialGapsDigest([], []) === undefined && (materialGapsDigest(["管理会社の回答"], ["viewings"])?.length ?? 0) === 2);
 // 人が直した番（weak-spots の実物の例）
-ok("金額だけ人の送信にある → 金額・c", classifySentContent("初期費用：135,430円となります！！", "はい！！", "fact_fix").name === "金額（見積・初期費用・家賃）");
-ok("地域・相場だけ人の送信にある → a", classifySentContent("大阪市内の治安の良いエリアとなりますので2LDKの家賃相場が高いエリアとなります！！", "はい！！", "fact_fix").why === "a");
-ok("人しか知らない事 → e", classifySentContent("管理会社に確認したところ空室です", "", "other").why === "e");
+ok("金額だけ人の送信にある → 金額・c", classifySentContent("初期費用：135,430円となります！！", "はい！！", "fact_fix")?.name === "金額（見積・初期費用・家賃）");
+ok("地域・相場だけ人の送信にある → a", classifySentContent("大阪市内の治安の良いエリアとなりますので2LDKの家賃相場が高いエリアとなります！！", "はい！！", "fact_fix")?.why === "a");
+ok("人しか知らない事 → e", classifySentContent("管理会社に確認したところ空室です", "", "other")?.why === "e");
 ok("長さ・挨拶の型は材料の抜けではない", gapsFromSpot({ key: "k", bucket: "reply_edit", scene: "s", type: "longer", n: 5 }).length === 0 && SPOT_EFFECT.greeting_added === null);
 {
   const r = countSpots([

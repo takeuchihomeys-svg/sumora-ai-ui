@@ -9,7 +9,7 @@ const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); 
 t("既定 off＝ブレインの出力の指定は今と1文字も変わらない", () => {
   assert.equal(brainSevenOn({}), false);
   assert.equal(brainSevenOutputItem({}), "");
-  assert.match(brainSevenOutputItem({ BRAIN_SEVEN_FIELDS: "on" }), /"seven_read".*"latent_read"/s);
+  assert.match(brainSevenOutputItem({ BRAIN_SEVEN_FIELDS: "on" }), /"seven_read"[\s\S]*"latent_read"/);
 });
 
 const sevenRaw = {

@@ -13,7 +13,7 @@ t("道: 2段", routeOfMeta({ reply_mode: "auto_reply", two_stage: "check" }) ===
 t("道: 返信", routeOfMeta({ reply_mode: "auto_reply" }) === "reply" && routeOfMeta(null) === "reply");
 // 型ごと
 t("初回の AIX の番＝返信→数秒後の AIX（12306 の型）", pickSendCombo({ type: "T11_first_contact_hearing", route: "aix", cues: { firstContact: true } })?.combo === "reply_then_aix_quick");
-t("結果が手元・悪い知らせ＝AIX→返信（代わりの物件は後）", pickSendCombo({ type: "T10_result_ready", route: "aix", cues: { resultReady: true, badNews: true } })?.order.includes("代わりの物件"));
+t("結果が手元・悪い知らせ＝AIX→返信（代わりの物件は後）", pickSendCombo({ type: "T10_result_ready", route: "aix", cues: { resultReady: true, badNews: true } })?.order.includes("代わりの物件") === true);
 t("2段＝約束の返信→後で AIX", pickSendCombo({ type: "T3_question_staff_only", route: "two_stage", cues: {} })?.combo === "promise_then_aix_later");
 t("話題が2つの返信＝返信→返信", pickSendCombo({ type: "T2_question_fact", route: "reply", cues: { multiTopics: true } })?.combo === "reply_reply");
 t("ふだんの返信＝1通", pickSendCombo({ type: "T6_considering", route: "reply", cues: {} })?.combo === "reply_only");
