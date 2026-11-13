@@ -20,6 +20,7 @@ import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMe
 import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable, jstDayStartMs } from "@/app/lib/jst-date";
 import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "@/app/lib/meta-narration";
+import { stripPreStarMemo, preStarMemoStripOn } from "@/app/lib/pre-star-memo";
 // 2026-09-20 竹内（H さん事例）: 見積書の金額文は4経路で同じ純関数から作る（1か所だけ崩れていた）
 import { buildEstimateItem, calcSavings, DAY_RENT_NOTE, NO_AMOUNT_FALLBACK } from "@/app/lib/estimate-body";
 // 2026-10-01: 物件確認した（御見積書同封）の締め（scripts/audit-check-result-lines.ts）
@@ -2175,7 +2176,15 @@ async function handleAction(request: NextRequest): Promise<Response> {
         console.error(JSON.stringify({ tag: "aix:not-a-reply", action: currentAction, conversationId, head: stripped.slice(0, 80) }));
         return { message: "", notice: `⚠ お客様への返信になっていません（送信欄には入れていません）\n${stripped.trim()}` };
       }
-      const meta = stripMetaNarration(stripped);
+      // 2026-11-14 作業員E（下書き ee4eef81・6/30）: 物件オススメ・見積書の🌟の前に書かれた資料の読み取りメモ（「礼金が1ヶ月あるため…記載しません」）を落とす。
+      //   今の stripMetaNarration では18件中15件で🌟の前にメモが残った。線は app/lib/pre-star-memo.ts（スタッフの送った文 10,215行で誤削除0・scripts/audit-pre-star-memo.ts）。
+      //   「現状の1文」の型（situation_kind）は🌟の前に1文を書くのが正しいので掛けない。既定 off（AIX_PRE_STAR_MEMO_STRIP=on で入れる）
+      const preStarOn = preStarMemoStripOn() && (currentAction === "property_recommendation" || currentAction === "estimate_sheet") && !isSituationKind(body.situation_kind);
+      const preStar1 = preStarOn ? stripPreStarMemo(stripped) : { text: stripped, removed: null };
+      const meta0 = stripMetaNarration(preStar1.text);
+      const preStar2 = preStarOn ? stripPreStarMemo(meta0.text) : { text: meta0.text, removed: null };
+      const meta = { text: preStar2.text, removed: meta0.removed };
+      if (preStar1.removed || preStar2.removed) console.log(JSON.stringify({ tag: "aix:pre-star-memo-removed", action: currentAction, conversationId, removed: [preStar1.removed, preStar2.removed].filter(Boolean).map((r) => String(r).slice(0, 60)) }));
       if (meta.removed.length > 0) console.log(JSON.stringify({ tag: "aix:meta-narration-removed", action: currentAction, conversationId, removed: meta.removed.map((r) => r.slice(0, 60)) }));
       // 2026-09-15 竹内（YUYA 事例の本番確認で AIX 保証会社についてに「夜分遅くに失礼致します」が入った）: 返信生成・修正版・補助ボタンと同じ決定論置換を
       //   AIX の仕上げにも通す（夜間挨拶の除去・承知→かしこまりました・約束の「すぐに」除去・単独の承りました・挨拶の重複。方針4・5・Aoi 事例）
