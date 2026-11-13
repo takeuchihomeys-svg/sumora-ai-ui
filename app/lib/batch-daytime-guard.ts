@@ -26,12 +26,14 @@ export async function recentFailures(db: SupabaseClient, now = new Date()): Prom
     const since = new Date(now.getTime() - 10 * 60_000).toISOString();
     const [llm, cron] = await Promise.all([
       db.from("llm_usage_logs").select("error_type, env, route, status").gte("created_at", since).or("status.eq.0,status.gte.500").limit(200),
-      db.from("cron_run_logs").select("id", { count: "exact", head: true }).gte("started_at", since).eq("ok", false),
+      // 2026-11-14 作業員F: count exact をやめて行（id だけ・200行まで）を読む＝LLM 側と同じ形。判断は「> 0」なので同じ答え
+      //   （索引 idx_cron_run_logs_failed_started_at が効く・11/13 昼の DB 固まりの調べ）
+      db.from("cron_run_logs").select("id").gte("started_at", since).eq("ok", false).limit(200),
     ]);
     if (llm.error || cron.error) return null;
     const l = ((llm.data ?? []) as Array<{ error_type: string | null; env: string | null; route: string | null }>)
       .filter((r) => r.error_type !== "alt_skipped_pii" && !String(r.env ?? "").includes("test") && !String(r.route ?? "").startsWith("script:")).length;
-    return l + (cron.count ?? 0);
+    return l + (cron.data ?? []).length;
   } catch { return null; }
 }
 

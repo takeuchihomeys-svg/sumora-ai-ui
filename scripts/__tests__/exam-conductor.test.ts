@@ -1,5 +1,6 @@
 // scripts/__tests__/exam-conductor.test.ts — 試験の統括の純関数（関所の時間・早めの打ち切り・揺れの回数・問題の選び・表への書き戻し）
 //   実行: npx tsx scripts/__tests__/exam-conductor.test.ts
+import { prodHealthCap, prodHealthVerdict, prodWatchMs, serviceKeyFrom } from "../lib/exam-conductor-core";
 import { hazardAuditDue, splitWorse, isMixedRow, jobSize, compareJobs, splitIds, splitByTime, estimateJobMin, cleanupTargets, remoteDeployState, inspectOutputText, remainingIds, comparedIds, staleExamGuard, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, spreadPick } from "../lib/exam-conductor-core";
 import type { FlakeObs } from "../lib/exam-flake";
 let pass = 0, fail = 0;
@@ -121,5 +122,21 @@ t("組み立ての状態: inspect の表が stderr だけに出ても READY を�
 t("組み立ての状態: inspect の READY・Building・Error を読む（作業員3の気付き）", remoteDeployState("  General\n\n    id\t\tdpl_x\n    status\t● Ready\n") === "READY" && remoteDeployState("status\t● Building") === "BUILDING" && remoteDeployState("status ● Error") === "ERROR" && remoteDeployState("なし") === null);
 t("比べた問題: 基準の回が無い＝0（悪化0と言わない）", comparedIds([{ id: "q1", rep: 1, score: { pass: true } }], []).length === 0);
 t("比べた問題: 両方で失敗・混ざりの無い回がある問題だけ", JSON.stringify(comparedIds([{ id: "q1", rep: 1 }, { id: "q2", rep: 1, error: "x" }, { id: "q3", rep: 1, foreignMsgs: 2 }, { id: "q4", rep: 1 }], [{ id: "q1", rep: 1 }, { id: "q2", rep: 1 }, { id: "q3", rep: 1 }])) === JSON.stringify(["q1"]));
+
+// 2026-11-14 作業員F: 本番の調子の数えを軽く（上限＋1行まで読む）・見張りは5分・鍵は .env.prod から
+{
+  const old = (nl: number, nc: number, max: number) => nl + nc > max; // 前の判断（count exact の数）
+  let same = true;
+  for (const max of [0, 1, 5, 9]) for (let nl = 0; nl <= 15; nl++) for (let nc = 0; nc <= 15; nc++) {
+    const cap = prodHealthCap(max);
+    if (prodHealthVerdict(Math.min(nl, cap), Math.min(nc, cap), max).ok !== !old(nl, nc, max)) same = false;
+  }
+  t("本番の調子: 各々を上限＋1で止めても判断は前と同じ（max 0/1/5/9 × 0〜15件）", same);
+  t("本番の調子: 文は前と同じ形", prodHealthVerdict(2, 1, 5).why === "本番の失敗 LLM 2・cron 1" && prodHealthVerdict(4, 3, 5).why === "本番の失敗 直近10分 LLM 4・cron 3（上限 5）");
+  t("本番の見張り: 既定 5分・env で変える・1分未満は既定", prodWatchMs({}) === 300_000 && prodWatchMs({ EXAM_PROD_WATCH_MS: "120000" }) === 120_000 && prodWatchMs({ EXAM_PROD_WATCH_MS: "1000" }) === 300_000);
+  t("鍵: 環境にあればそれ", serviceKeyFrom({ SUPABASE_SERVICE_ROLE_KEY: "k-env" }, () => "SUPABASE_SERVICE_ROLE_KEY=k-file") === "k-env");
+  t("鍵: 無ければ .env.prod の行（引用符を外す）", serviceKeyFrom({}, () => "A=1\nSUPABASE_SERVICE_ROLE_KEY=\"k-file\"\n") === "k-file");
+  t("鍵: どちらにも無ければ空（anon に戻る）", serviceKeyFrom({}, () => null) === "" && serviceKeyFrom({ SUPABASE_SERVICE_ROLE_KEY: "invalid" }, () => "X=1") === "");
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

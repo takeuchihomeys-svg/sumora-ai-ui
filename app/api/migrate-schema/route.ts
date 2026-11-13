@@ -1069,6 +1069,10 @@ CREATE TABLE IF NOT EXISTS cron_run_logs (
   error_message TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cron_run_logs_name_at ON cron_run_logs(cron_name, started_at DESC);
+-- 2026-11-14 作業員F: 本番の調子の見張り（exam-conductor の prodHealthy・ops-anomaly・batch-daytime-guard）の
+--   「started_at >= 直近 AND ok = false」が 21万行を毎回頭から読んでいた（11/13 昼の DB 固まりの調べ）。失敗の行だけの小さい索引。
+--   本番には 11/14 朝 CREATE INDEX CONCURRENTLY で当て済み（exec_sql は transaction の中なので CONCURRENTLY は書けない＝既にあれば何もしない）
+CREATE INDEX IF NOT EXISTS idx_cron_run_logs_failed_started_at ON cron_run_logs(started_at DESC) WHERE ok = false;
 
 -- ④ AIX生成文案ログ（AIXが生成した文案を保存しAI改善ループを完成させる）
 -- generated_text: AIXが生成したが実際に送られたかどうかは line_message_id で照合
