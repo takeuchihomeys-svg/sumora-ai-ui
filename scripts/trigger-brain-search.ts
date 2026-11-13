@@ -41,19 +41,20 @@ async function main() {
   }
 
   // ① お客様を決める（id か名前）
+  type CustomerRow = { id: string; customer_name: string | null; desired_area: string | null; area_mode: string | null };
   const id = arg("customer");
   const name = arg("name");
-  let customer: { id: string; customer_name: string | null; desired_area: string | null; area_mode: string | null } | null = null;
+  let customer: CustomerRow | null = null;
   if (id) {
     const { data, error } = await sb.from("property_customers")
       .select("id, customer_name, desired_area, area_mode").eq("id", id).maybeSingle();
     if (error) throw new Error(error.message);
-    customer = data as typeof customer;
+    customer = data as CustomerRow | null;
   } else if (name) {
     const { data, error } = await sb.from("property_customers")
       .select("id, customer_name, desired_area, area_mode").ilike("customer_name", `%${name}%`).limit(5);
     if (error) throw new Error(error.message);
-    const rows = (data ?? []) as NonNullable<typeof customer>[];
+    const rows = (data ?? []) as CustomerRow[];
     if (!rows.length) { console.error(`「${name}」さんが見つかりません`); process.exit(1); }
     if (rows.length > 1) {
       console.error(`「${name}」さんが ${rows.length} 人います。--customer=<id> で指定してください:`);
