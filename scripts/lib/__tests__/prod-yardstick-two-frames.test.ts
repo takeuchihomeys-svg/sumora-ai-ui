@@ -63,7 +63,7 @@ ok("2段の種類", twoStageKindOf("rule:two_stage_promise(pickup_unless_ack)+se
 {
   const T = Date.parse("2026-11-05T09:56:29.927Z");
   const logs = [{ at: Date.parse("2026-11-05T10:21:38.708Z"), aixType: "property_check_result", checkPattern: null }, { at: Date.parse("2026-11-05T10:21:44.832Z"), aixType: "condition_hearing", checkPattern: null }, { at: T - 3_600_000, aixType: "estimate_sheet", checkPattern: null }];
-  ok("補いは既定 off", !yardstickAixLogFillOn({}) && yardstickAixLogFillOn({ YARDSTICK_AIX_LOG_FILL: "on" }));
+  ok("補いは既定 on・=off で止める", yardstickAixLogFillOn({}) && !yardstickAixLogFillOn({ YARDSTICK_AIX_LOG_FILL: "off" }));
   const filled = fillStaffAix([], logs, T);
   ok("空の見張りは番の後の記録で補う（番の前は入れない）", filled.map((a) => a.aixType).join(",") === "property_check_result,condition_hearing", JSON.stringify(filled));
   ok("見張りに有る時は見張りのまま", fillStaffAix([{ at: T + 60_000, aixType: "estimate_sheet", checkPattern: null }], logs, T).map((a) => a.aixType).join() === "estimate_sheet");
