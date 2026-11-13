@@ -6539,12 +6539,36 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  /**
+   * 2026-11-13 竹内さん「この赤枠のところ（∨）を押したら展開される部分。
+   *   ここのところちゃんと改善するようにする。ここが展開のところ」
+   *   竹内さん「開いた状態から閉じた状態にするときに白くなるバグが起きるし、展開することができなくなる」
+   *
+   * ⚠ 原因はこのボタンだった。旧は押すと
+   *     ① `setMiniMode(true)` … **この画面（popup）の中身を全部隠す**（CSS の body.mini-mode）
+   *     ② `notifyParent("collapse")` … 親（underbar）が wrap を 100px に縮める
+   *   の2つを同时にやっていた。→ 中身が消えて**白い箱**になり、開き直しても
+   *   中の描画が戻らず**二度と展開できない**ように見えていた。
+   *
+   * → **押したら「開いたまま一覧に戻る」**にする。
+   *   ⚠ 縮めない（setMiniMode も notifyParent("collapse") も呼ばない）。
+   *     縮めたい時は、親のバーのドラッグや別の手段で行う。
+   *   ＝ このボタンは「いまの画面から**お客さん一覧に戻る**」ボタンとして動く。
+   */
   document.getElementById("collapse-btn").addEventListener("click", () => {
-    if (isUnderbar) {
-      setMiniMode(true);
-      notifyParent("collapse");
-    } else {
-      showView("view-list");
+    try {
+      if (isUnderbar) {
+        // 中身を隠さない・縮めない（白い箱にしない）
+        setMiniMode(false);
+        showView("view-list");
+        // 親に「開いたまま」を伝える（縮めさせない）
+        notifyParent("expand");
+      } else {
+        showView("view-list");
+      }
+    } catch (e) {
+      console.warn("[AX] 一覧に戻れません:", e);
+      try { showView("view-list"); } catch (_) {}
     }
   });
 
