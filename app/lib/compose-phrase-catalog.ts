@@ -123,7 +123,7 @@ export const SCARCITY_TEXT_RE = /1部屋のみ|一部屋のみ|こちらの1部�
 export const COMPANY_TEXT_RE = /独立系|保証会社|仲介手数料|弊社|審査(?:通過|基準)|クレジットカード/;
 export function trustSubsOfText(text: string): TrustSub[] {
   const t = String(text ?? "");
-  const out = trustOfText(t).filter((k): k is TrustSub => k !== "fact" && (TRUST_SUBS as readonly string[]).includes(k));
+  const out: TrustSub[] = (trustOfText(t) as string[]).filter((k): k is TrustSub => k !== "fact" && (TRUST_SUBS as readonly string[]).includes(k));
   if (SCARCITY_TEXT_RE.test(t)) out.push("scarcity");
   if (COMPANY_TEXT_RE.test(t)) out.push("company_detail");
   return [...new Set(out)];
