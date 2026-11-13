@@ -19,8 +19,11 @@ const one = (s: unknown, n = 160) => String(s ?? "").replace(/\s+/g, " ").slice(
 const jstHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tokyo", hour: "numeric", hour12: false }).format(new Date())) % 24;
 if (jstHour >= 9 && jstHour < 22 && !process.argv.includes("--force")) { console.log(`営業時間（JST ${jstHour}時）は流さない（--force で外す）`); process.exit(0); }
 
+// --flag=cond（2026-11-14 作業員B）: FC_GOCHOUGO_DATE_ALIGN=on のまま FC_GOCHOUGO_COND_TEMPLATE の off／on を比べる（お客様の条件の書式を日にちと読まない）
+const FLAG = arg("flag", "align");
 const fires = (text: string, cust: string, on: boolean): boolean => {
-  process.env.FC_GOCHOUGO_DATE_ALIGN = on ? "on" : "off"; // 2026-11-13 既定 on になったので off は明示する
+  if (FLAG === "cond") { process.env.FC_GOCHOUGO_DATE_ALIGN = "on"; process.env.FC_GOCHOUGO_COND_TEMPLATE = on ? "on" : "off"; }
+  else process.env.FC_GOCHOUGO_DATE_ALIGN = on ? "on" : "off"; // 2026-11-13 既定 on になったので off は明示する
   const ctx = { lastCustomerMessage: cust, recentMessages: [{ sender: "customer", text: cust }] } as unknown as FinalCheckContext;
   return runVocabSemanticChecks(text, ctx).some((i) => i.code === "GOCHOUGO_AFTER_DATE");
 };
