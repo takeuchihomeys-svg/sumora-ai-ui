@@ -326,5 +326,18 @@ describe("審査期間のそろえ（COMPANY_FACT_SCREENING_DAYS_UNIFY）", () =
   });
 });
 
+// 2026-11-13 見張り 11865（11/06）: お客様「おとり物件てことですか🙇‍♀️／調べてくださりありがとうございます！」→ 竹内さんはポータルのオトリと SUUMO の掲載の決まりで答えた
+describe("portal_otori（11865）", () => {
+  const T = "おとり物件てことですか🙇‍♀️\n調べてくださりありがとうございます！";
+  const withOtori = <R,>(v: string | undefined, fn: () => R): R => { const o = process.env.COMPANY_FACT_OTORI; if (v === undefined) delete process.env.COMPANY_FACT_OTORI; else process.env.COMPANY_FACT_OTORI = v; try { return fn(); } finally { if (o === undefined) delete process.env.COMPANY_FACT_OTORI; else process.env.COMPANY_FACT_OTORI = o; } };
+  it("既定 off では届かない", () => eq(withOtori(undefined, () => matchCompanyFacts(T).some((f) => f.id === "portal_otori")), false));
+  it("on で 11865 の問いに届く", () => eq(withOtori("on", () => matchCompanyFacts(T).some((f) => f.id === "portal_otori")), true));
+  it("on: 事実は『おとりではない』と言い切らない・SUUMO の掲載の決まり・募集状況を確認", () => {
+    const f = withOtori("on", () => matchCompanyFacts(T).find((x) => x.id === "portal_otori"));
+    eq(!!f && /オトリ物件として掲載している場合がある/.test(f.fact) && /2週間毎の更新/.test(f.fact) && /募集状況を確認/.test(f.fact), true);
+  });
+  it("on: オトリの語が無い問いには届かない", () => eq(withOtori("on", () => matchCompanyFacts("SUUMOの物件も紹介してもらえますか？").some((f) => f.id === "portal_otori")), false));
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { console.log(failures.map((f) => `- ${f}`).join("\n")); process.exit(1); }
