@@ -97,6 +97,7 @@ export async function GET(req: NextRequest) {
 
   // ③ 書く（同じ scope の古い行は消してから入れる＝いつも1つだけ）
   let written = 0;
+  let tableMissing = false;
   if (!dry) {
     for (const p of payloads) {
       try {
@@ -110,7 +111,11 @@ export async function GET(req: NextRequest) {
           bundle: p.bundle,
           lines: p.bundle.lines,
         });
-        if (insErr) { error = insErr.message; break; }
+        if (insErr) {
+          // 2026-11-13: 表がまだ無い（migrate の前）は「失敗」ではなく「まだ作っていない」として返す
+          if (/does not exist|42P01|Could not find the table|schema cache/i.test(insErr.message)) { tableMissing = true; break; }
+          error = insErr.message; break;
+        }
         written++;
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);
@@ -125,6 +130,7 @@ export async function GET(req: NextRequest) {
     days,
     rows: rows.length,
     has_shot_ops: hasShotOps,
+    table_missing: tableMissing,
     scopes: payloads.map((p) => p.scope),
     written,
     learned: {
