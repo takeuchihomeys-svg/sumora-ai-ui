@@ -58,8 +58,8 @@ console.log(`全部 ${n} 件 ok`);
   assert.equal(M.readCandidatesMode({}), "off");
   assert.equal(M.readCandidatesMode({ BRAIN_READ_CANDIDATES: "shadow" }), "shadow");
   // shadow の欄は JSON の一番最後（action より後・判断の後の振り返り）
-  assert.ok(src2.includes('${BRAIN_READ_CANDIDATES_SHADOW ? ", " + READ_CANDIDATES_FIELD_SHADOW : ""}}'));
-  assert.ok(src2.indexOf("READ_CANDIDATES_FIELD_SHADOW : \"\"}}") > src2.indexOf('"action": "スタッフが次にすべき'));
+  assert.ok(src2.includes('${BRAIN_READ_CANDIDATES_SHADOW ? ", " + READ_CANDIDATES_FIELD_SHADOW : ""}'));
+  assert.ok(src2.indexOf("READ_CANDIDATES_FIELD_SHADOW : \"\"}") > src2.indexOf('"action": "スタッフが次にすべき'));
   for (const s of [M.READ_CANDIDATES_FIELD_SHADOW, M.READ_CANDIDATES_RULES_SHADOW]) assert.doesNotMatch(s, /次の一手|押す|申込へ|内覧へ|誘導|背中/);
 
   // 12362: 「抑えられるところは送ってもらった間取りですか？」→ 抑える部屋の確かめ＝申込の手前 → 潜在の行は「先に取られる」
