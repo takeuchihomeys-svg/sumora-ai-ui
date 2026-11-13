@@ -18,7 +18,11 @@ export const AREA_JA: Record<WeaknessArea, string> = { brain: "道を選ぶ力",
 /** 印だけ（文は入れない） */
 /** reopened＝再発の印（直した行に同じ key が当たって open に戻した時刻と、その時の直し・新しい順・11/06 統括役）
  * owners＝持ち主（連携の表の id・持ち主）・exam_reps＝「試験の名前 問題#回」（試験の外れの切り分けから・11/06） */
-export type WeaknessEvidence = { exam_qids?: string[]; exam_labels?: string[]; watch_turn_ids?: number[]; unknown_ids?: number[]; owners?: string[]; exam_reps?: string[]; reopened?: string[] };
+export type WeaknessEvidence = { exam_qids?: string[]; exam_labels?: string[]; watch_turn_ids?: number[]; unknown_ids?: number[]; owners?: string[]; exam_reps?: string[]; reopened?: string[];
+  /** 2026-11-13 作業員1（竹内さん「弱い部分を見つけたら具体的に細かく細分化」）: 印（土台／細分化／要確認）・具体の次の一手・持ち主・束と親・推定の印 */
+  tier?: WeaknessTier; next?: string; owner?: string; group?: string; group_parent?: number; tier_guess?: boolean;
+  [k: string]: unknown };
+export type WeaknessTier = "土台" | "細分化" | "要確認";
 export type WeaknessRow = {
   id?: number; key: string; title: string; area: WeaknessArea; symptom: string | null; root_cause: string | null;
   status: WeaknessStatus; fix_ref: string | null; evidence: WeaknessEvidence; occurrences: number;
@@ -139,7 +143,11 @@ function uniqCap<T>(xs: ReadonlyArray<T>, cap = MAX_EV): T[] { const out: T[] = 
 /** 新しい印を前に、種類ごと20まで */
 export function mergeEvidence(oldEv: WeaknessEvidence | null | undefined, add: WeaknessEvidence): WeaknessEvidence {
   const o = oldEv ?? {};
+  // 2026-11-13: 決まった配列の欄の外（印・次の一手・持ち主・作業員の書き込み）は残す（旧は足すたびに消えていた）。足す側の値が先
+  const KNOWN = new Set(["exam_qids", "exam_labels", "watch_turn_ids", "unknown_ids", "owners", "exam_reps", "reopened"]);
   const out: WeaknessEvidence = {};
+  for (const [k, v] of Object.entries(o)) if (!KNOWN.has(k) && v !== undefined) out[k] = v;
+  for (const [k, v] of Object.entries(add)) if (!KNOWN.has(k) && v !== undefined) out[k] = v;
   const qids = uniqCap([...(add.exam_qids ?? []), ...(o.exam_qids ?? [])]); if (qids.length) out.exam_qids = qids;
   const labels = uniqCap([...(add.exam_labels ?? []), ...(o.exam_labels ?? [])]); if (labels.length) out.exam_labels = labels;
   const turns = uniqCap([...(add.watch_turn_ids ?? []), ...(o.watch_turn_ids ?? [])]); if (turns.length) out.watch_turn_ids = turns;
@@ -169,11 +177,11 @@ export function mergeWeaknessRow(existing: WeaknessRow | null, h: WeaknessHit, n
   const at = h.at ?? nowIso;
   if (!existing) {
     return { key: h.key, title: h.title, area: h.area, symptom: h.symptom ?? null, root_cause: null, status: "open", fix_ref: null,
-      evidence: mergeEvidence(null, h.evidence), occurrences: h.n ?? 1, first_seen: at, last_seen: at };
+      evidence: withGuessedTier(mergeEvidence(null, h.evidence), h.key, h.area), occurrences: h.n ?? 1, first_seen: at, last_seen: at };
   }
   // 2026-11-06 統括役: 直した行に同じ key が当たったら同じ行に足し、status を open に戻して再発の印（evidence.reopened）を付ける。見送り（wont_fix）・作業中はそのまま
   const reopen = existing.status === "fixed";
-  const ev = mergeEvidence(existing.evidence, h.evidence);
+  const ev = withGuessedTier(mergeEvidence(existing.evidence, h.evidence), existing.key, existing.area);
   if (reopen) ev.reopened = [`${at} 直し:${existing.fix_ref ?? "なし"}`, ...(ev.reopened ?? [])].slice(0, 20);
   return { ...existing, ...(reopen ? { status: "open" as const } : {}), evidence: ev, occurrences: (existing.occurrences ?? 0) + (h.n ?? 1),
     first_seen: existing.first_seen ?? at, last_seen: existing.last_seen && existing.last_seen > at ? existing.last_seen : at };
@@ -189,4 +197,47 @@ export function renderTouchedWeaknesses(rows: ReadonlyArray<Pick<WeaknessRow, "k
   for (const r of open) lines.push(`  [${STATUS_JA[r.status]}] ${r.title}: この回 ${nThisRun[r.key]}・通算 ${r.occurrences}（${r.key}）${r.fix_ref ? ` → ${r.fix_ref}` : ""}`);
   for (const r of back) lines.push(`  ⚠ [${reopened.has(r.key) ? "再発・open に戻した" : "直した"}] ${r.title}: この回 ${nThisRun[r.key]}（${r.key}）${r.fix_ref ? ` 直し: ${r.fix_ref}` : ""}`);
   return lines.join("\n");
+}
+
+// ─── 入る時点の印（2026-11-13 作業員1・竹内さん「弱い部分を見つけたら具体的に細かく細分化するようになっているか」）──────
+//   新しい行・印の無い行に、決まった推定（LLM なし）で 印（土台／細分化）・具体の次の一手・持ち主・束を付け、tier_guess=true を残す。
+//   推定は key の頭と area から（11/13 朝に作業員1 が122行に付けた12の束の親と、conductor-linkage の持ち主の表に合わせた）。推定できない物は「要確認」
+type TierGuess = { tier: WeaknessTier; group: string | null; owner: string | null; next: string | null };
+const GROUP_NEXT: Record<string, { tier: WeaknessTier; owner: string; parent: number; next: string }> = {
+  G1: { tier: "土台", owner: "作業員1・作業員4", parent: 680, next: "材料の帳面（電話・内覧の場・管理会社の結果・会社の事実・物件の資料・こちら側）のどれが空かを決め、入口で取りに行く物とスタッフしか知らない＝AIX の物に分ける" },
+  G2: { tier: "細分化", owner: "統括役（brain）・作業員7", parent: 280, next: "返信か AIX かの決め方を「場面×依頼の種類」の表のどのセルの外れかに分け、竹内さんの番の数でそのセルの線を決める" },
+  G5: { tier: "細分化", owner: "作業員4・作業員5", parent: 593, next: "入口の統括のどの欄（誘導先・対象・したい事と強さ・こちら側の状態）が粗いかを決め、その欄を足して分ける" },
+  G6: { tier: "細分化", owner: "作業員10・作業員9", parent: 698, next: "文の統括の「役目×場面→出す値・順位・出さない値」と形の欄のどれが無いかを決めて足す" },
+  G7: { tier: "細分化", owner: "作業員9", parent: 684, next: "最終チェックのどの表・どの語（安全の線か文体の候補か）で外れたかを分けて、その表を直す" },
+  G8: { tier: "土台", owner: "作業員1・作業員25", parent: 101, next: "AIX の文の入力に要るスタッフの確かめた事実の欄が届いているかを確かめ、無い事は書かない形にする" },
+  G9: { tier: "細分化", owner: "統括役（自信の点）", parent: 23, next: "下書きの自信の理由を1つ決め、その理由ごとの扱い（指摘・日時・会話に無い事実・規則の上書き）に分ける" },
+  G10: { tier: "土台", owner: "作業員1", parent: 25, next: "つなぎに要る記録（約束の中身・押したピッカー・済みの印）のどれが無いかを決めて台帳に揃える" },
+  G11: { tier: "土台", owner: "作業員8", parent: 677, next: "試験・物差しのどの土台（今の一手と後の AIX の分け・記録・写し・守り）の外れかを決めて直す" },
+  G12: { tier: "土台", owner: "統括役（記録）", parent: 678, next: "判断の理由・型ごとの数のどの記録が無いかを決めて残す" },
+};
+const KEY_GROUP: Array<{ re: RegExp; group: string }> = [
+  { re: /^exam-stage:(?:writer|compose)/, group: "G6" }, { re: /^exam-stage:final/, group: "G7" }, { re: /^exam-stage:/, group: "G2" },
+  { re: /^unknown:low-confidence:/, group: "G9" },
+  { re: /^unknown:(?:material|company|staff-only|knowledge)|^memory:unknown|^data:|^rest20:|^miss\d+:material/, group: "G1" },
+  { re: /^watch-break:/, group: "G10" },
+  { re: /^aix-text:|^aix:/, group: "G8" },
+  { re: /^exam(?:-regression|-near|-guards|-q\d+)?[:-]|^exam:/, group: "G11" },
+  { re: /^(?:conductor:|meeting-gap:conductor|focus:)/, group: "G5" },
+  { re: /^fc:|^shadow-gate:|^auto-gate:/, group: "G7" },
+  { re: /^(?:writer:|compose:|owner-fb:)|^miss\d+:writer/, group: "G6" },
+  { re: /^(?:prod-miss:|reflect:|exam-miss:path|meeting-gap:brain|two-stage)/, group: "G2" },
+  { re: /^memory:/, group: "G12" },
+];
+export function guessWeaknessTier(key: string, area: WeaknessArea): TierGuess {
+  const hit = KEY_GROUP.find((g) => g.re.test(key));
+  const gid = hit?.group ?? (area === "exam" ? "G11" : area === "memory" ? "G12" : null);
+  if (!gid) return { tier: "要確認", group: null, owner: null, next: null };
+  const g = GROUP_NEXT[gid];
+  return { tier: g.tier, group: gid, owner: g.owner, next: g.next };
+}
+/** 印の無い行に推定の印を足す（印がある・作業員が書いた行は変えない） */
+export function withGuessedTier(ev: WeaknessEvidence, key: string, area: WeaknessArea): WeaknessEvidence {
+  if (ev.tier) return ev;
+  const g = guessWeaknessTier(key, area);
+  return { ...ev, tier: g.tier, tier_guess: true, ...(g.next ? { next: g.next } : {}), ...(g.owner ? { owner: g.owner } : {}), ...(g.group ? { group: g.group, group_parent: GROUP_NEXT[g.group].parent } : {}) };
 }
