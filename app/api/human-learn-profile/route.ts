@@ -28,7 +28,7 @@ const SELECT = [
   "created_at", "site", "mode", "ext_version",
   "moves_n", "move_speed_px_s", "move_curve", "move_ms",
   "points_n", "point_x", "point_y", "point_fields",
-  "scrolls_n", "scroll_dy", "shot_ops",
+  "scrolls_n", "scroll_dy", "shot_ops", "shot_learn",
 ].join(", ");
 
 /**
@@ -48,7 +48,7 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   for (let i = 0; i < 3000; i += 1000) {
     let r = await fetchPage(cols, i, i + 999);
     if (r.error && /shot_ops|does not exist|schema cache/i.test(r.error.message)) {
-      cols = SELECT.replace(", shot_ops", "");
+      cols = SELECT.replace(", shot_ops", "").replace(", shot_learn", "");
       r = await fetchPage(cols, i, i + 999);
     }
     if (r.error) { try { note?.("select: " + r.error.message); } catch (_) {} return null; }

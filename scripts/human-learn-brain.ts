@@ -24,7 +24,7 @@ const SELECT = [
   "created_at", "site", "mode", "ext_version", "ops",
   "moves_n", "move_speed_px_s", "move_curve", "move_ms", "move_dist",
   "points_n", "point_x", "point_y", "point_fields",
-  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops",
+  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops", "shot_learn",
 ].join(", ");
 
 (async () => {
@@ -42,7 +42,7 @@ const SELECT = [
   for (let i = 0; i < 20_000; i += 1000) {
     let r = await fetchPage(cols, i, i + 999);
     if (r.error && /shot_ops/i.test(r.error.message) && cols.includes("shot_ops")) {
-      cols = cols.replace(", shot_ops", "");
+      cols = cols.replace(", shot_ops", "").replace(", shot_learn", "");
       console.log("（shot_ops 列がまだ無いので、押す場所と動きだけ学びます）");
       r = await fetchPage(cols, i, i + 999);
     }

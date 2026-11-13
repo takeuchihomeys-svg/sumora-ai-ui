@@ -26,7 +26,7 @@ const SELECT = [
   "created_at", "site", "mode", "ext_version", "ops",
   "moves_n", "move_speed_px_s", "move_curve", "move_ms", "move_dist",
   "points_n", "point_x", "point_y", "point_fields",
-  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops",
+  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops", "shot_learn",
 ].join(", ");
 /**
  * 2026-11-13: `shot_ops` の列がまだ無い DB でも動くようにする。
@@ -38,7 +38,7 @@ async function selectRows(build: (cols: string) => PromiseLike<{ data: unknown[]
   const first = await build(SELECT);
   if (!first.error) return { rows: (first.data ?? []) as MotionRow[], error: null, hasShotOps: true };
   if (/shot_ops/i.test(first.error.message)) {
-    const fallback = SELECT.replace(", shot_ops", "");
+    const fallback = SELECT.replace(", shot_ops", "").replace(", shot_learn", "");
     const second = await build(fallback);
     if (second.error) return { rows: [], error: second.error.message, hasShotOps: false };
     return { rows: (second.data ?? []) as MotionRow[], error: null, hasShotOps: false };
