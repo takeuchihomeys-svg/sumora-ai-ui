@@ -777,9 +777,14 @@ body.mini-mode .header-logo {
   font-weight: 900;
   letter-spacing: 0.5px;
 }
-body.mini-mode .view {
+/* 2026-11-13 竹内さん「お客さんの詳細おしたらこのようになってしまう」（真っ白）:
+   mini-mode の時でも、**今開いている画面（.view.active）は消さない**。
+   ⚠ 旧は全部の view を消していたので、詳細を開いたまま縮むと**中身が空**になっていた。 */
+body.mini-mode .view:not(.active) {
   display: none !important;
 }
+/* 縮んでいる時は中身を隠す（＝100px のボタンとして見せる）が、
+   開いている画面が「詳細」などで mini でなくなったら、この規則は当たらない（active を消さない） */
 
 /* ── Feedback button & modal ── */
 #feedback-btn {

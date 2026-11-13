@@ -58,7 +58,7 @@ console.log("\n■ ④ 小窓から操作できる");
   ok("録画中はボタンが赤く脈打つ", /⏹ 録画中/.test(snap) && /axlxPermPulse/.test(snap));
   ok("撮れた枚数を出す", /Number\(res\.saved\) \|\| 0/.test(snap));
   ok("残り時間を出す（あと何分）", /あと/.test(snap) && /remain_ms/.test(snap));
-  ok("録画中の見出しにも残り時間", /あと" \+ Math\.floor\(left2 \/ 60\)/.test(snap));
+  ok("録画中の見出しにも残り時間", /あと" \+ leftTxt|leftTxt/.test(snap));
   ok("5秒ごとに状態を取り直す（別の窓で止めても追いつく）", /setInterval\(refreshRecMode, 5000\)/.test(snap));
 }
 
@@ -99,6 +99,16 @@ console.log("\n■ ⑦ 容量オーバー（ResourceExceeded）で保存0枚に�
   ok("DBに画像を入れる受け皿がある（2026-11-12 竹内さん「データベースに画像入るように」）", /shot_b64/.test(fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "human-motion", "route.ts"), "utf8")));
   ok("  migrate-schema にも同じ列を足してある", /ADD COLUMN IF NOT EXISTS shot_b64/.test(fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "migrate-schema", "route.ts"), "utf8")));
   ok("  列が無い環境でも壊れない（42703 で列を外して入れ直す）", /42703/.test(fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "human-motion", "route.ts"), "utf8")));
+}
+
+console.log("\n■ ⑧ 許可済みの時は録画ボタンだけ出す（2026-11-13 竹内さん）");
+{
+  ok("許可済みなら帯を出さない（banner.style.display = \"none\"）", /banner\.style\.display = "none";/.test(snap) && /許可済みは帯の組み立てをしない/.test(snap));
+  ok("  録画ボタンだけの細い行を出す（snap-rec-slim）", /snap-rec-slim/.test(snap));
+  ok("  録画の状態を小さく添える（枚数）", /snap-rec-slim-note/.test(snap));
+  ok("未許可の時は今まで通り全部出す", /banner\.style\.display = "flex";/.test(snap) && /画面の録画を許可してください/.test(snap));
+  ok("  許可が外れたら録画ボタンを帯へ戻す", /録画ボタンを帯の中へ戻す/.test(snap));
+  ok("許可済みは帯の組み立てをしない（return で抜ける）", /return;   \/\/ 許可済みは帯の組み立てをしない/.test(snap));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

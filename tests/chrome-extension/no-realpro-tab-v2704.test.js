@@ -61,8 +61,8 @@ console.log("\n■ ③ サーバーも rp=0 の PC にリアプロの命令を�
 console.log("\n■ ④ 写真（画面録画）が実際に撮れているか分かる");
 {
   const snap = read("snapshot-popup.js");
-  ok("許可済みでも**撮れた枚数**を出す（許可≠撮れている）", /写真 " \+ ok \+ "枚/.test(snap));
-  ok("0枚なら理由を出す", /写真が撮れていません/.test(snap));
+  ok("許可済みは録画ボタンの行に**枚数**を出す（許可≠撮れている・2026-11-13）", /snap-rec-slim-note/.test(snap) && /録画中 " \+ nv \+ "枚/.test(snap));
+  ok("失敗があれば理由を色で示す", /note\.style\.color = nf \? "#b91c1c"/.test(snap));
   ok("撮る前に窓を前に出す（小窓を開いていると失敗するため）", /chrome\.windows\.update\(tab\.windowId, \{ focused: true \}\)/.test(bg));
 }
 

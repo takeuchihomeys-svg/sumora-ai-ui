@@ -65,46 +65,57 @@
      *   帯は**許可済みでも出す**（出ていれば「許可済み」と分かる・押せば再確認できる）。
      *   許可済みの時は「✅ 許可済み」の1行にして、ボタンは「もう一度確認」にする。
      */
+    /**
+     * 2026-11-13 竹内さん「許可済みなのでここの上の部分は録画ボタンのところ以外は出ないようにする」:
+     *   ⚠ 旧は許可済みでも黄色の帯を大きく出していた（許可の説明・出ない時・もう一度確認・写真テスト・片付ける）。
+     *   → **許可済みの時は「⏺ 録画」だけ**を出す（許可は済んでいるので説明は要らない・画面を広く使う）。
+     *     未許可の時は今まで通り全部出す（許可のしかたが要る）。
+     */
     if (banner) {
+      if (granted) {
+        // 許可済み: 帯は出さない。録画ボタンだけを細い1行で出す
+        banner.style.display = "none";
+        var slim = el("snap-rec-slim");
+        if (slim) slim.style.display = "flex";
+        else {
+          // 初回だけ組み立てる（録画ボタンを持ち出して細い行に置く）
+          var line = document.createElement("div");
+          line.id = "snap-rec-slim";
+          line.style.cssText = "display:flex;align-items:center;gap:6px;margin:0 8px 6px;flex:0 0 auto";
+          var keep = el("snap-rec-mode");
+          if (keep) { keep.style.flex = "0 0 auto"; line.appendChild(keep); }
+          // 録画の状態（枚数・あと何秒）だけを小さく添える
+          var note = document.createElement("span");
+          note.id = "snap-rec-slim-note";
+          note.style.cssText = "font-size:10px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+          line.appendChild(note);
+          var host = document.getElementById("snap-perm-banner");
+          if (host && host.parentNode) host.parentNode.insertBefore(line, host);
+        }
+        if (hint) { hint.style.display = "none"; hint.textContent = ""; }
+        return;   // 許可済みは帯の組み立てをしない（説明も出さない）
+      }
       banner.style.display = "flex";
+      var slimNow = el("snap-rec-slim");
+      if (slimNow) {
+        /**
+         * 2026-11-13: 許可が外れた時は**録画ボタンを帯の中へ戻す**（細い行は隠す）。
+         *   許可済みの時に細い行へ移しているので、戻さないと帯からボタンが消える。
+         */
+        var recBack = el("snap-rec-mode");
+        var host2 = document.getElementById("snap-perm-banner");
+        var row2 = host2 && host2.querySelector("div[style*='display:flex']");
+        if (recBack && row2 && recBack.parentNode !== row2) {
+          var testBtn = el("snap-perm-test");
+          if (testBtn && testBtn.parentNode === row2) row2.insertBefore(recBack, testBtn.nextSibling);
+          else row2.appendChild(recBack);
+        }
+        slimNow.style.display = "none";
+      }
       var title = el("snap-perm-title");
       var desc = el("snap-perm-desc");
       var bBtn = el("snap-perm-banner-btn");
-      if (granted) {
-        if (title) title.textContent = "✅ 画面の録画は許可済みです";
-        if (desc) desc.textContent = "操作のたびに画面の写真が残ります（PCごとに1回の設定は済んでいます）。";
-        if (bBtn) { bBtn.textContent = "もう一度確認"; bBtn.style.background = "#16a34a"; bBtn.style.boxShadow = "0 2px 6px rgba(22,163,74,.4)"; }
-        if (hint) { hint.style.display = "none"; hint.textContent = ""; }
-        /**
-         * 2026-11-12 竹内さん「くれさん通常モードで検索したけどちゃんと画面録画はできるようになっているかな」:
-         *   ⚠「許可済み」と「写真が撮れている」は**別**。許可済みでも撮れていない事がある（今日は0枚だった）。
-         *   → 許可済みの時は、**実際に撮れた枚数**を帯に出す（撮れていなければ黄色で理由も出す）。
-         */
-        try {
-          chrome.storage.local.get(["axlx_human_shot_diag", "axlx_human_shot_bg", "axlx_human_shot_upload"], function (rr) {
-            var d = (rr && rr.axlx_human_shot_diag) || null;
-            var bg = (rr && rr.axlx_human_shot_bg) || null;
-            var up = (rr && rr.axlx_human_shot_upload) || null;
-            var ok = d ? Number(d.ok) || 0 : 0;
-            var tried = d ? Number(d.tried) || 0 : 0;
-            if (!desc) return;
-            if (tried === 0 && !(bg && bg.called)) {
-              desc.textContent = "許可は済んでいます。まだ写真は撮れていません（操作すると撮ります・「写真テスト」で今すぐ試せます）。";
-              return;
-            }
-            var bad = [];
-            if (d && d.last_error) bad.push("撮影: " + d.last_error);
-            if (up && up.ok === false && up.error) bad.push("送信: " + up.error);
-            if (ok > 0 && !bad.length) {
-              desc.textContent = "許可済み・写真 " + ok + "枚（試した " + tried + "回）。操作のたびに残ります。";
-            } else if (ok > 0) {
-              desc.textContent = "写真 " + ok + "枚（試した " + tried + "回）。⚠ " + bad.join(" / ");
-            } else {
-              desc.textContent = "⚠ 許可は済んでいますが、写真が撮れていません（試した " + tried + "回）: " + (bad.join(" / ") || "理由不明") + "。「写真テスト」で確かめてください。";
-            }
-          });
-        } catch (_) {}
-      } else {
+      {
         if (title) title.textContent = "🎬 画面の録画を許可してください";
         if (desc) desc.textContent = "許可すると、操作のたびに画面の写真が残り「検索を押せたか」を後から確かめられます。PCごとに1回だけです。";
         if (bBtn) { bBtn.textContent = "許可する"; bBtn.style.background = "#f59e0b"; bBtn.style.boxShadow = "0 2px 6px rgba(245,158,11,.4)"; }
@@ -322,17 +333,27 @@
           void chrome.runtime.lastError;
           if (!res) return;
           paintRecMode(!!res.on, Number(res.saved) || 0, Number(res.remain_ms) || 0, Number(res.tried) || 0, Number(res.failed) || 0);
+          var note = el("snap-rec-slim-note");
+          if (note) {
+            var nv = Number(res.saved) || 0;
+            var nf = Number(res.failed) || 0;
+            note.textContent = res.on
+              ? "録画中 " + nv + "枚" + (nf ? "（失敗" + nf + "）" : "")
+              : (nv ? "前回 " + nv + "枚" : "");
+            note.style.color = nf ? "#b91c1c" : "#64748b";
+          }
+          /**
+           * 2026-11-13: 許可済みの時は**帯を出さない**ので、ここで黄色の帯に何か書かない
+           *   （帯の中の hint は未許可の時だけ使う）。
+           */
           if (res.on) {
             var hint2 = el("snap-perm-hint");
-            if (hint2) {
+            var banner2 = el("snap-perm-banner");
+            if (hint2 && banner2 && banner2.style.display !== "none") {
               hint2.style.display = "block";
               hint2.style.color = "#be123c";
               var left2 = Math.max(0, Math.ceil((Number(res.remain_ms) || 0) / 1000));
-              var failed2 = Number(res.failed) || 0;
-              hint2.textContent = "⏺ 画面録画モード: 録画中（**保存 " + (Number(res.saved) || 0) + "枚**"
-                + (failed2 ? "・失敗 " + failed2 + "回" + (res.last_error ? "（" + res.last_error + "）" : "") : "")
-                + "・あと" + Math.floor(left2 / 60) + "分" + (left2 % 60) + "秒）。もう一度押すと止まります。";
-              hint2.textContent = hint2.textContent.replace(/\*\*/g, "");
+              hint2.textContent = "⏺ 画面録画モード: 録画中（保存 " + (Number(res.saved) || 0) + "枚）。もう一度押すと止まります。";
             }
           }
         });

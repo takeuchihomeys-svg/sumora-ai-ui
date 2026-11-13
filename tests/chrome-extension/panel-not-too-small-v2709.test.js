@@ -25,7 +25,8 @@ const css = read("styles.css");
 console.log("■ ① お客さん一覧を開いても縮めない（一番の原因）");
 {
   ok("旧の `mini = (id === \"view-list\")` が無い", !/const mini = id === "view-list";/.test(pp));
-  ok("一覧の時は**縮めない**（wantMini = id !== view-list）", /const wantMini = id !== "view-list";/.test(pp));
+  ok("一覧も詳細も縮めない（縮めるのは手順の画面だけ）", /const MINI_VIEWS = \["view-instructions"\];/.test(pp) && /const wantMini = MINI_VIEWS\.indexOf\(id\) >= 0;/.test(pp));
+  ok("  詳細（view-site）は縮めない＝真っ白にならない", !/"view-site"\]\s*,?\s*\]/.test(pp) && /view-site/.test(pp));
   ok("  縮めるのは検索の画面だけ", /notifyParent\(wantMini \? "collapse" : "expand\)/.test(pp) || /wantMini \? "collapse" : "expand"/.test(pp));
   ok("  理由をコメントに残してある", /お客さん一覧を開くと/.test(pp));
 }
@@ -53,6 +54,8 @@ console.log("\n■ ④ 一覧そのものが潰れない（CSS）");
   ok("一覧はスクロールで全部見られる（min-height 120）", /#customer-list \{[^}]*min-height: 120px/.test(css));
   ok("  横に潰れない（min-width: 0 で flex の縮小を抑える）", /min-height: 200px;/.test(css) && /min-width: 0;/.test(css));
   ok("お客さん一覧のミニモード（100x100）は残っている（検索中は使う）", /body\.mini-mode #app \{/.test(css));
+  ok("mini-mode でも**開いている画面は消さない**（真っ白防止）", /body\.mini-mode \.view:not\(\.active\)/.test(css));
+  ok("  旧の「全部の view を消す」が無い", !/body\.mini-mode \.view \{\s*\n\s*display: none/.test(css));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
