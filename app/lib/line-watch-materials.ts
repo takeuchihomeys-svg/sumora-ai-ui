@@ -74,7 +74,10 @@ export function summarizeMaterialLog(obj: unknown): { source: WatchSource; key: 
     // 2026-11-13 作業員9（統括役 S9・FC_BLUEPRINT_MARK）: 最終チェックの4つ目の段＝設計図の行に当たらない文の印（印だけ）
     case "fc:blueprint-unmatched":
       return { source: "reply", key: "blueprint", summary: { rows: typeof o.rows === "number" ? o.rows : null, n: typeof o.n === "number" ? o.n : null,
-        kinds: Array.isArray(o.kinds) ? (o.kinds as unknown[]).slice(0, 8).map((x) => short(x, 20)) : [], heads: Array.isArray(o.heads) ? (o.heads as unknown[]).slice(0, 4).map((x) => short(x, 30)) : [] } };
+        kinds: Array.isArray(o.kinds) ? (o.kinds as unknown[]).slice(0, 8).map((x) => short(x, 20)) : [], heads: Array.isArray(o.heads) ? (o.heads as unknown[]).slice(0, 4).map((x) => short(x, 30)) : [],
+        // 2026-11-13 作業員10: 信頼の添えが下書きに出たか（ログに無い時は null）
+        embeds: typeof o.embeds === "number" ? o.embeds : null, embeds_shown: typeof o.embeds_shown === "number" ? o.embeds_shown : null,
+        embeds_missing: Array.isArray(o.embeds_missing) ? (o.embeds_missing as unknown[]).slice(0, 3).map((x) => short(x, 24)) : [] } };
     case "gen:scene":
       return { source: "reply", key: "scene", summary: { scene: short(o.scene, 40), materials: short(o.materials, 10) } };
     case "step2-spec": {
