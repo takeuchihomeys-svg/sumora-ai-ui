@@ -6,7 +6,7 @@ import { askPartsSplitOn, askPartsRule, normalizeAskParts, askIsSplit, partsAllN
 import { resolveTwoStage } from "../two-stage";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${n}`); } else { fail++; console.log(`  NG  ${n}`); } };
-t("既定 off", !askPartsSplitOn({}) && askPartsRule({}) === "");
+t("既定 on（11/13 束の試験で悪化0）・off で止まる", askPartsSplitOn({}) && !askPartsSplitOn({ ASK_PARTS_SPLIT: "off" }) && askPartsRule({ ASK_PARTS_SPLIT: "off" }) === "");
 const rule = askPartsRule({ ASK_PARTS_SPLIT: "on" });
 t("on で決まりの1行（鍵交換の実例）", rule.startsWith("- ★") && rule.includes("鍵交換") && rule.endsWith("\n"));
 t("欄の名前は作業員16・22 と同じ", ASK_PARTS_FIELD.includes("material_value|company_fact|staff_only|none") && ASK_PARTS_FIELD.includes("assertable|basically|needs_check") && ASK_PARTS_FIELD.includes("mgmt|rep|phone"));
@@ -30,7 +30,7 @@ t("部分が無ければ分からない（null）", partsAllNow([{}]) === null &
 t("文の側の名前への読み替え", toComposeSource("material_value") === "material" && toComposeSource("none") === "general");
 // 2段: 部分が全部 今言える持ち込みは、持ち込みの網を当てない（on の時だけ）
 const base = { decisionSource: "llm", pickupReady: false, postApply: false, finalAix: "property_check_result", customerText: "こちら鍵交換は必須ですか？", brought: { ask: "other" as const, count: 1 }, askPartsAllNow: true } as unknown as Parameters<typeof resolveTwoStage>[0];
-delete process.env.ASK_PARTS_SPLIT;
+process.env.ASK_PARTS_SPLIT = "off";
 t("off は今まで通り持ち込みの約束", /brought/.test(resolveTwoStage(base)?.source ?? ""));
 process.env.ASK_PARTS_SPLIT = "on";
 t("on: 全部今言える持ち込みは約束にしない", resolveTwoStage(base) === null);

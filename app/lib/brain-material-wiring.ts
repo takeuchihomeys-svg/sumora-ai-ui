@@ -12,8 +12,9 @@ import { CONTRACT_TERM_LABEL, type ContractRoute, type ContractTarget, type Cont
 type Env = Record<string, string | undefined>;
 const envOf = (env?: Env): Env => env ?? (typeof process !== "undefined" ? process.env : {});
 
+// 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める BRAIN_PICKUP_CANDIDATES_LIST=off）
 export function pickupCandidatesListOn(env?: Env): boolean {
-  return (envOf(env).BRAIN_PICKUP_CANDIDATES_LIST ?? "").trim().toLowerCase() === "on";
+  return (envOf(env).BRAIN_PICKUP_CANDIDATES_LIST ?? "on").trim().toLowerCase() !== "off";
 }
 export function focusDocDigestOn(env?: Env): boolean {
   return (envOf(env).BRAIN_FOCUS_DOC_DIGEST ?? "").trim().toLowerCase() === "on";

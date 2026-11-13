@@ -302,12 +302,12 @@ it("6巡目: ふつうの希望はそのまま", () => {
   expect(_cw("内見行きたいです！")).toBe(true);
 });
 
-it("q406: 曜日だけの返事を候補のその曜日の日に読む（VIEWING_WEEKDAY_TO_OFFERED=on・既定 off）", () => {
+it("q406: 曜日だけの返事を候補のその曜日の日に読む（VIEWING_WEEKDAY_TO_OFFERED・11/13 束の試験で悪化0・既定 on・off で止まる）", () => {
   const txt = "土曜日 で\nお願い出来ればと思います☺️\n\n相談なのですが、今、水商売をしていて";
   const at = Date.parse("2026-11-12T11:27:39Z"); // 試験の仮の時計（木曜）＝次の土曜は 11/14。候補は 10/23(金)・10/24(土)
   const prev = process.env.VIEWING_WEEKDAY_TO_OFFERED;
   try {
-    delete process.env.VIEWING_WEEKDAY_TO_OFFERED;
+    process.env.VIEWING_WEEKDAY_TO_OFFERED = "off";
     expect(classifyCustomerDateReply(txt, { atMs: at, offeredDays: ["10/23", "10/24"], inFlow: true }).kind).toBe("day_only");
     process.env.VIEWING_WEEKDAY_TO_OFFERED = "on";
     const v = classifyCustomerDateReply(txt, { atMs: at, offeredDays: ["10/23", "10/24"], inFlow: true });

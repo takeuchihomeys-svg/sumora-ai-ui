@@ -40,7 +40,7 @@ const tally = tallyMaterialKeys([{ label: "送れる物件の候補", count: 45 
 t("数え: 鍵ごとに足して多い順", tally[0].key === "sendable_candidates" && tally[0].n === 55 && tally[0].labels === 2 && tally[1].key === "estimate_amount", tally);
 
 // 届いていない材料の行（既定 off）
-t("スイッチは既定 off", !pickupCandidatesListOn({}) && !focusDocDigestOn({}) && pickupCandidatesListOn({ BRAIN_PICKUP_CANDIDATES_LIST: "on" }) && focusDocDigestOn({ BRAIN_FOCUS_DOC_DIGEST: "on" }));
+t("スイッチ: 候補の中身は既定 on（11/13 束の試験で悪化0）・資料の要点は既定 off", pickupCandidatesListOn({}) && !pickupCandidatesListOn({ BRAIN_PICKUP_CANDIDATES_LIST: "off" }) && !focusDocDigestOn({}) && focusDocDigestOn({ BRAIN_FOCUS_DOC_DIGEST: "on" }));
 const now = Date.parse("2026-11-10T10:00:00Z");
 const rows = [
   { property_name: "グルーヴ日本橋", room_no: "502", summary_text: "家賃7.2万・1LDK・日本橋徒歩5分", score: 81, rank: 2, created_at: "2026-11-10T01:00:00Z" },

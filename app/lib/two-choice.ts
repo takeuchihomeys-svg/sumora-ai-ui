@@ -238,8 +238,9 @@ export type NarrowPromiseOrNow = { keep: true; preferred: "reply" | "aix" } | { 
  *   試験の答案（11/08〜）: two_choice_narrow(estimate) が道を変えた 54回のうち、本質を壊した 23・直した 15。
  *   壊した q077（連投の2つの依頼＝見積の約束＋空きの確認3つ・正解 2段:check/2段:pickup）を AIX 見積書にしていた。直した q183・q184・q133・q134 は見積だけの約束か AIX の依頼で、この線では止まらない
  */
+// 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める TWO_CHOICE_NARROW_ESTIMATE_SOLE=off）
 export function narrowEstimateSoleOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.TWO_CHOICE_NARROW_ESTIMATE_SOLE ?? "").trim().toLowerCase() === "on";
+  return (env.TWO_CHOICE_NARROW_ESTIMATE_SOLE ?? "on").trim().toLowerCase() !== "off";
 }
 /** ブレインの依頼に見積以外の約束があるか（あれば見積書で決め切らない） */
 export function hasNonCostPromise(asks: ReadonlyArray<{ route?: unknown; about?: unknown }> | null | undefined): boolean {

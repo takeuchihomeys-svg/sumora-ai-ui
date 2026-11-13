@@ -89,8 +89,9 @@ export const replyCountOf = (seq: ReadonlyArray<SendStep> | null | undefined): n
  *   本番の物差しでは今、AIX【条件ヒアリング】0/2（ブレインは AIX だけ・スタッフの最初の一手は返信）。並びはブレインが選んだ AIX で決まる＝決まった計算は形だけ（KB 9caa48ea・8a29dc07）。
  *   3通目の文は実際の送信13通の多数の形（8/13「こちらに〇〇さんご希望のご条件お送り頂きますと…」）の名前の無い形（実際の送信にある形）。既定 off（FIRST_HEARING_SEQUENCE=on）
  */
+// 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める FIRST_HEARING_SEQUENCE=off）
 export function firstHearingSequenceOn(env: Env = envOf()): boolean {
-  return (env.FIRST_HEARING_SEQUENCE ?? "").trim().toLowerCase() === "on";
+  return (env.FIRST_HEARING_SEQUENCE ?? "on").trim().toLowerCase() !== "off";
 }
 export const HEARING_FORM_NOTE = "こちらにご希望のご条件お送り頂きますと、私の方でご条件に合ったお部屋ピックアップさせて頂きます！！\nお手隙の際にご入力ください😌！！\n\nご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます！！\n何卒よろしくお願い致します！！";
 /** ブレインが AIX【条件ヒアリング】を選んだ番の並び（返信→AIX→決まった文の返信）。当たらなければ null */

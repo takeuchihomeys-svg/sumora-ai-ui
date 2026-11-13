@@ -7,7 +7,7 @@ import { replyCountOf as splitReplyCountOf } from "../reply-split";
 let fail = 0;
 const ok = (c: boolean, m: string) => { if (!c) { fail++; console.error("NG", m); } else console.log("ok", m); };
 const ON = { FIRST_HEARING_SEQUENCE: "on" };
-ok(!firstHearingSequenceOn({}) && hearingSendSequence("condition_hearing", {}) === null, "既定 off は並びを作らない");
+ok(firstHearingSequenceOn({}) && !firstHearingSequenceOn({ FIRST_HEARING_SEQUENCE: "off" }) && hearingSendSequence("condition_hearing", { FIRST_HEARING_SEQUENCE: "off" }) === null, "既定 on（11/13 束の試験で悪化0）・off は並びを作らない");
 const s = hearingSendSequence("condition_hearing", ON)!;
 ok(!!s && s.map((x) => (x.slot === "aix" ? "A" : "R")).join("") === "RAR", "on: 返信→AIX→返信");
 ok(s[1].aix === "condition_hearing" && s[2].text === HEARING_FORM_NOTE && !s[0].text, "AIX は条件ヒアリング・3通目は決まった文");

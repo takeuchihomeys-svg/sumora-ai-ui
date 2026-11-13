@@ -9,8 +9,9 @@
 //   ④ acknowledge_check の説明が同じ指示文で正反対に2つ（御見積書の後の代表確認／管理会社への確認依頼の文）→ 前者だけ。⑤ cost_explain の「仲介手数料は一律2,980円」は会社の事実＝返信（作業員21 の aix-catalog-map.ts・info-kind-1112 と同じ向き）
 // 入れる: BRAIN_PROMPT_RULES_1112=on。差し替えは「元の文が一字一句そのままある時だけ」（見つからなければ何もしない＝壊れない側）
 
+// 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める BRAIN_PROMPT_RULES_1112=off）
 export function promptRules1112Enabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_PROMPT_RULES_1112 ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_PROMPT_RULES_1112 ?? "on").trim().toLowerCase() !== "off";
 }
 
 export type PromptRuleEdit = { id: string; from: string; to: string };
@@ -87,8 +88,9 @@ export function applyReplyModeP0(text: string, env: Record<string, string | unde
 //      ⑥（お礼は aix:null）は竹内さんの数（約束が開いているお礼の番 857: 何も送らない 84%・約束を果たす AIX 2.7%・KB 120721d0）と合うので触らない。
 //      ⑧（強く1件を推した直後の了承は再推奨しない）は今の決定と食い違わないので触らない。
 //   差し替えは元の文が一字一句ある時だけ（無ければ何もしない）
+// 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める BRAIN_PROMPT_RULES_1113=off）
 export function promptRules1113Enabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_PROMPT_RULES_1113 ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_PROMPT_RULES_1113 ?? "on").trim().toLowerCase() !== "off";
 }
 export const PROMPT_RULE_EDITS_1113: PromptRuleEdit[] = [
   {

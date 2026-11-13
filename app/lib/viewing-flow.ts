@@ -213,8 +213,9 @@ export function parseCustomerTime(text: string): string | null {
   return `${h}:${min}`;
 }
 
+// 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める VIEWING_WEEKDAY_TO_OFFERED=off）
 export const viewingWeekdayToOfferedOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) =>
-  (env.VIEWING_WEEKDAY_TO_OFFERED ?? "").trim().toLowerCase() === "on";
+  (env.VIEWING_WEEKDAY_TO_OFFERED ?? "on").trim().toLowerCase() !== "off";
 /** 候補の日（M/D）のうち、その曜日（0=日）の物。年はお客様の発言の時刻の年（12月の発言で1月の候補は翌年） */
 export function offeredDaysOfWeekday(offered: readonly string[], dow: number, atMs: number): string[] {
   const p = jstParts(Number.isFinite(atMs) ? atMs : Date.now());
