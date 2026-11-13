@@ -91,5 +91,19 @@ ok("2段の種類", twoStageKindOf("rule:two_stage_promise(pickup_unless_ack)+se
   ok("他の理由は変えない", applyStaffAixState({ now: "見積", later: null }, "pressed").now === "見積" && applyStaffAixState({ now: "見積", later: null }, null).now === "見積");
   ok("配線: 今の通（最初の一手）は見張りの AIX だけ", (() => { const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "prod-yardstick-db.ts"), "utf8") as string; return !/staffFirstMove([^)]*staffAixOf(w))/.test(src) && src.includes("mergeFillFrames(sNow, staffFrames(tAt, movesOf(logs)))"); })());
 }
+// 2026-11-13 作業員7b: 2段を外して AIX に決め切った番（作業員4 の実物 12555 の decision_source）
+{
+  const ds = "rule:two_stage_promise(brought_estimate)+two_choice_narrow(estimate)";
+  delete process.env.YARDSTICK_TWO_STAGE_UNDONE;
+  const f = brainFrames("見積", ds);
+  ok("12555: 今=見積の AIX（2段ではない）", f.now === "見積" && f.later === null);
+  ok("12555: 竹内さんの AIX【見積書送る】の直接と今の通が当たり", judgeTwoFrames(f, { now: "見積", later: null }).now === "hit");
+  process.env.YARDSTICK_TWO_STAGE_UNDONE = "off";
+  ok("off で旧の数え（今=返信）", brainFrames("見積", ds).now === "返信");
+  delete process.env.YARDSTICK_TWO_STAGE_UNDONE;
+  ok("2段のまま（印なし）は今=返信", brainFrames("物件", "rule:two_stage_promise(pickup_unless_ack)").now === "返信");
+  ok("search_split は2段のまま（12189）", brainFrames("物件", "rule:two_stage_promise(pickup_unless_ack)+search_split").now === "返信");
+  ok("ブレインの系統が返信なら印があっても今=返信", brainFrames("返信", ds).now === "返信");
+}
 console.log(`prod-yardstick-two-frames: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

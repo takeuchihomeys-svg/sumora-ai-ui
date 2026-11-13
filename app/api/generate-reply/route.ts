@@ -4366,6 +4366,8 @@ async function handleGenerateReply(req: NextRequest) {
           new Promise<string>((r) => setTimeout(() => r(""), 5_000)),
         ])
       : "";
+    // 2026-11-13 作業員1: 書き手に届いた印（欄の名前 customer_memo・conductor-field-links と同じ）。ブレインの側は brain:customer-memo
+    if (conversationId && !isTemplateOptimize) console.log(JSON.stringify({ tag: "writer:customer-memo", field: "customer_memo", conversationId, chars: customerMemoNote.length, postApply: postApplyConversation }));
     const contractTerms = !isTemplateOptimize && !postApplyConversation && !!conversationId
       ? await loadContractTermsAnswerWithin(8_000, { conversationId, customerText: message ?? "", excludeTopics: procedureAnswer?.plan.moveIn ? ["move_in"] : [] })
       : null;

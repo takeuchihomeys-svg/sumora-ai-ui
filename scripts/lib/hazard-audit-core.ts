@@ -102,12 +102,12 @@ export function hollowNoWorse<T extends { verdict: string; planned: number; both
 
 /** (h) 2026-11-05 作業員1（KB 3892c30c・統括役）: 分からない事の3つの表の開いている数と24時間で新しく増えた数（夜の cron link-brain-watch の結果から）。
  *  表は RLS で手元の公開キーでは読めない＝cron がサーバーの鍵で数えて cron_run_logs に残した物を読む。古い（36時間超）・無い時は null */
-export type UnknownsOpen = { weak_open: number; weak_new24h: number; unknown_rows: number; unknown_new24h: number; owner_open: number };
+export type UnknownsOpen = { weak_open: number; weak_new24h: number; unknown_rows: number; unknown_new24h: number; owner_open: number; weak_tier_guess?: number; weak_no_next?: number; weak_tier_check?: number };
 export function unknownsOpenLine(o: UnknownsOpen | null | undefined, at: string | null, nowMs: number): { ok: boolean | null; line: string } {
   if (!o || !at) return { ok: null, line: "分からない事の3つの表: 不明（夜の link-brain-watch の数が無い）" };
   const ageH = (nowMs - Date.parse(at)) / 3_600_000;
   if (!(ageH <= 36)) return { ok: null, line: `分からない事の3つの表: 不明（数が ${Math.round(ageH)}時間前で古い）` };
-  return { ok: true, line: `分からない事の3つの表: 弱い所 開いている ${o.weak_open}（新+${o.weak_new24h}）・分からない事 ${o.unknown_rows}行（新+${o.unknown_new24h}）・竹内さんへの確認 開いている ${o.owner_open}` };
+  return { ok: true, line: `分からない事の3つの表: 弱い所 開いている ${o.weak_open}（新+${o.weak_new24h}）・分からない事 ${o.unknown_rows}行（新+${o.unknown_new24h}）・竹内さんへの確認 開いている ${o.owner_open}${o.weak_tier_guess != null ? `・弱い所の印 推定のまま ${o.weak_tier_guess}・次の一手が空 ${o.weak_no_next ?? 0}・要確認 ${o.weak_tier_check ?? 0}` : ""}` };
 }
 
 /** (i) 2026-11-05 作業員1（点検表 10〜12）: 試験の係の記録（conductor.log）から、24時間の

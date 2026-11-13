@@ -93,7 +93,7 @@ export async function loadProdMissHits(sb: SupabaseClient, fromIso: string, toIs
 }
 
 /** 毎朝の見張りの1行の数（開いている数と24時間で新しく増えた数）。cron の結果に残し、手元の hazard-audit が cron_run_logs から読む */
-export async function unknownsOpenCounts(sb: SupabaseClient, nowMs = Date.now()): Promise<{ weak_open: number; weak_new24h: number; unknown_rows: number; unknown_new24h: number; owner_open: number }> {
+export async function unknownsOpenCounts(sb: SupabaseClient, nowMs = Date.now()): Promise<{ weak_open: number; weak_new24h: number; unknown_rows: number; unknown_new24h: number; owner_open: number; weak_tier_guess?: number; weak_no_next?: number; weak_tier_check?: number }> {
   const since = new Date(nowMs - 86_400_000).toISOString();
   const cnt = async (q: PromiseLike<{ count: number | null; error: { message: string } | null }>) => { const r = await q; if (r.error) throw new Error(r.error.message); return r.count ?? 0; };
   return {
@@ -102,5 +102,9 @@ export async function unknownsOpenCounts(sb: SupabaseClient, nowMs = Date.now())
     unknown_rows: await cnt(sb.from("brain_unknowns").select("id", { count: "exact", head: true })),
     unknown_new24h: await cnt(sb.from("brain_unknowns").select("id", { count: "exact", head: true }).gte("first_at", since)),
     owner_open: await cnt(sb.from("owner_questions").select("id", { count: "exact", head: true }).eq("status", "open")),
+    // 2026-11-13 作業員1: 入る時点の印（推定の印のままの行・具体の次の一手が空の行・要確認）＝統括役が持ち主に次の一手を書かせる
+    weak_tier_guess: await cnt(sb.from("brain_weaknesses").select("id", { count: "exact", head: true }).in("status", ["open", "in_progress"]).eq("evidence->>tier_guess", "true")),
+    weak_no_next: await cnt(sb.from("brain_weaknesses").select("id", { count: "exact", head: true }).in("status", ["open", "in_progress"]).is("evidence->>next", null)),
+    weak_tier_check: await cnt(sb.from("brain_weaknesses").select("id", { count: "exact", head: true }).in("status", ["open", "in_progress"]).eq("evidence->>tier", "要確認")),
   };
 }

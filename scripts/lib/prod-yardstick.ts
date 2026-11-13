@@ -115,8 +115,18 @@ export function twoStageKindOf(decisionSource: string | null | undefined): strin
 }
 export type BrainFrames = { now: string; later: string | null };
 /** ブレインの2枠: 2段なら 今=返信・後=約束の AIX の系統／それ以外は 今=道の系統・後=なし */
+/**
+ * 2026-11-13 作業員7b（作業員4 の実物 12555・統括役の頼み）: decision_source に two_stage_promise(...) があっても、その後ろに「2段を外して AIX に決め切った」印
+ *   （+two_choice_narrow(estimate)＝見積書の AIX に決め切る）がある番は、今の通がその AIX（2段ではない）。
+ *   +search_split は印に入れない（12189 は search_split でも2段のまま＝竹内さんも約束の返信）。旧は2段の印だけで「今=返信・後=見積」と読み、竹内さんが AIX【見積書送る】を直接送った番を外れに数えていた。数えだけ。既定 on（止める YARDSTICK_TWO_STAGE_UNDONE=off）
+ */
+export function yardstickTwoStageUndoneOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.YARDSTICK_TWO_STAGE_UNDONE ?? "").trim().toLowerCase() !== "off";
+}
+const TWO_STAGE_UNDONE_RE = /two_stage_promise\([a-z_]+\)[^|]*\+two_choice_narrow\(estimate\)/;
 export function brainFrames(brainFamily: string, decisionSource?: string | null): BrainFrames {
   const k = twoStageKindOf(decisionSource);
+  if (k && brainFamily !== "返信" && yardstickTwoStageUndoneOn() && TWO_STAGE_UNDONE_RE.test(String(decisionSource ?? ""))) return { now: brainFamily, later: null };
   if (k) return { now: "返信", later: TWO_STAGE_LATER[k] ?? (brainFamily !== "返信" ? brainFamily : null) };
   return { now: brainFamily, later: null };
 }

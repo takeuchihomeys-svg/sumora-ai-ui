@@ -779,7 +779,7 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   judge_next: "plan",
   // 2026-11-12 作業員22: 作業員16 の今と後・読みの候補・受け取られ方（どれも既定 off・道の前の事実の欄＝判断のブレインが読む）と、
   //   判断の順番の型の記録（CHECK_ORDER_TABLE・配分が読む）は記録の欄＝文の統括には渡さない（作業員10 の文の型の表が型の id を読む時に plan にする）
-  now_vs_later: "other", read_candidates: "other", our_send_uptake: "other",
+  now_vs_later: "other", read_candidates: "other", read_handoff: "other", our_send_uptake: "other",
   check_order_scene: "other", check_order_type: "other", check_order: "other",
   // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF・記録だけ）とその入力
   conductor_brief_inputs: "other", conductor_brief: "other",
@@ -792,7 +792,7 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   first_reply: "other", rent_market: "other", pending_pickup: "other", pickup_ready: "other", material_missing: "other", customer_stage_now: "other",
   // 文に関係しない（判断・AIX・記録・内部の受け渡し）
   action: "none", input_key: "none", note: "none", source: "none", enforcement_level: "none", check_pattern: "none", next_steps: "none", two_choice_aix: "none",
-  two_choice_check_pattern: "none", aix_consult: "none", aix_desk: "none", aix_recheck: "none", material_read_misses: "none", material_gaps: "none", material_books: "none", check_order_guide: "none", last_turn_review: "none", alt_actions: "none",
+  two_choice_check_pattern: "none", aix_consult: "none", aix_desk: "none", aix_recheck: "none", material_read_misses: "none", material_gaps: "none", material_books: "none", customer_concern_detail: "none", material_fetch: "none", check_order_guide: "none", last_turn_review: "none", alt_actions: "none",
   parallel_search: "none", property_search_params: "none", aix_llm: "none", deep_check: "none", fast_slow: "none", need: "none", plan_ahead_at: "none",
   material_conflicts: "none", flow_signals: "none", decisions_1103: "none", near_opinion: "none", conductor_roles: "none", conductor_meta: "none", conductor_intake: "none",
   brain_depth: "none", deep_recheck_digest: "none", conductor_todos: "none", priority_step: "none", llm_raw: "none", checkpoint_stage_llm: "none", analyzed_msg_ts: "none",

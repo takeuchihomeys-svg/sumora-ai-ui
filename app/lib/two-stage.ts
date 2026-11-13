@@ -19,7 +19,8 @@ import { splitRequests } from "./request-ledger";
 import { jstParts } from "./jst-date";
 import { MGMT_TOPIC_RE, mgmtNightNoDirectOn } from "./mgmt-hours-split";
 import { routeFix1020 } from "./brain-route-fix-1020";
-import { brainAixFollowsContractOn } from "./aix-follows-contract"; // 11/13 作業員7b: T4 は BRAIN_AIX_FOLLOWS_CONTRACT の③（古いスイッチ TWO_STAGE_KIND_FROM_ABOUT も残す）
+import { brainAixFollowsContractOn } from "./aix-follows-contract";
+import { askPartsSplitOn } from "./ask-parts"; // 11/13 作業員7b: T4 は BRAIN_AIX_FOLLOWS_CONTRACT の③（古いスイッチ TWO_STAGE_KIND_FROM_ABOUT も残す）
 /** 2026-11-13 作業員7b: ブレインの約束の about が search_condition の時は、AIX の欄が物件確認したでもピックアップの約束にする（既定 off） */
 export function twoStageKindFromAboutOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.TWO_STAGE_KIND_FROM_ABOUT ?? "").trim().toLowerCase() === "on";
@@ -64,6 +65,8 @@ export type TwoStageInput = {
   estimateMaterialAgeDays?: number | null;
   /** 2026-10-21 見直し: 真の初回（スタッフがまだ何も送っていない・incremental でない）。A1 の AIX 直接の外（初回のガードは2段の後で決まるので decisionSource では見えない） */
   firstContact?: boolean;
+  /** 2026-11-13 作業員7b: ブレインの依頼の部分が全部 今言える（ask-parts.partsAllNow・null＝部分が無い） */
+  askPartsAllNow?: boolean | null;
   /** 2026-11-05 弱い所 349（作業員7・統括役の決め (b)）: 場面が S3_screening（審査の問い）で、ブレインが AIX を空にして返信の依頼を書いた番 */
   screeningBrainReply?: boolean;
   /** 2026-11-06 弱い所 351（作業員7・統括役の決め a）: こちらが送った物件への反応（about=reaction_to_sent）だけで、ブレインが AIX を空にして返信／なしと決めた番 */
@@ -73,6 +76,10 @@ export type TwoStageInput = {
  * 2026-11-05 弱い所 349: 審査の問い（S3）でブレインが返信と決めた番を、check_question が決まった計算で確認の約束の2段に書き換えない（ブレイン基準・4-4 と同じ型）。
  *   竹内さん本人の90日（お客様自身の事情＋借りられるか・審査が通るか 8番）で確認の約束 0。既定 off（TWO_STAGE_SCREENING_NO_REWRITE=on）
  */
+/** 2026-11-13 作業員7b: 審査の事情の番（S3・ブレインが返信）には持ち込みの約束を当てない（既定 off） */
+export function broughtScreeningNoPromiseOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BROUGHT_SCREENING_NO_PROMISE ?? "").trim().toLowerCase() === "on";
+}
 export function screeningNoRewriteEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.TWO_STAGE_SCREENING_NO_REWRITE ?? "").trim().toLowerCase() === "on";
 }
@@ -479,6 +486,12 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   const broughtBoth = !!i.brought && i.brought.count > 0 && (a === "property_check_result" || a === "acknowledge_check" || a === "estimate_sheet")
     && !WORK_SUPPORT_ASK_RE.test(i.customerText ?? "")
     && (typeof process === "undefined" || (process.env?.TWO_STAGE_BROUGHT_BOTH ?? "").toLowerCase() !== "off");
+  // 2026-11-13 作業員7b（作業員4 の実物 12348・統括役の頼み・T2 の型）: 持ち込みの物件の画像でも、お客様の問いが審査の事情（場面 S3_screening・「審査落ちててここって厳しいですよね？」）で、
+  //   ブレインが AIX を空にして返信の依頼を書いた番は、持ち込みの網（募集状況＋御見積書の約束）を当てない（ブレインの返信のまま・竹内さんは AIX【電話】で審査の打合せ）。
+  //   弱い所 349 の審査の番の守り（TWO_STAGE_SCREENING_NO_REWRITE）と同じ形を、持ち込みの網の前に置く。既定 off（BROUGHT_SCREENING_NO_PROMISE=on）
+  if (broughtBoth && broughtScreeningNoPromiseOn() && i.screeningBrainReply === true) return null;
+  // 2026-11-13 作業員7b（ASK_PARTS_SPLIT・S5）: ブレインの依頼の部分（parts）が全部「今言える」（資料・会社の事実・確認が要る部分なし）と言っている番は、持ち込みの網の約束を当てない
+  if (broughtBoth && askPartsSplitOn() && i.askPartsAllNow === true) return null;
   if (broughtBoth && i.brought) {
     const n = i.brought.count;
     // 2026-10-20 試験の道の外れ（q183・q184・BRAIN_ROUTE_FIX_1020 brought_estimate）: 持ち込みで費用・見積だけを頼んだ番は見積の2段
