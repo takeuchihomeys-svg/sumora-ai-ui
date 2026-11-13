@@ -1,11 +1,28 @@
 // 2026-10-23 ブレインの弱い所の台帳（brain_weaknesses）の純関数のテスト
 // 実行: npx tsx app/lib/__tests__/brain-weaknesses.test.ts（全 PASS で exit 0）
-import { SEED_WEAKNESSES, aggregateWeaknessHits, brainWeaknessLedgerEnabled, isWeaknessKey, mergeWeaknessRow, mergeEvidence, renderTouchedWeaknesses, weaknessHitsFromAixRows, weaknessHitsFromExamReasons, weaknessHitsFromUnknownAggs, weaknessKeyForUnknown } from "../brain-weaknesses";
+import { guessWeaknessTier, withGuessedTier, SEED_WEAKNESSES, aggregateWeaknessHits, brainWeaknessLedgerEnabled, isWeaknessKey, mergeWeaknessRow, mergeEvidence, renderTouchedWeaknesses, weaknessHitsFromAixRows, weaknessHitsFromExamReasons, weaknessHitsFromUnknownAggs, weaknessKeyForUnknown } from "../brain-weaknesses";
 import { upsertWeaknessHits } from "../brain-weaknesses-server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 let fail = 0;
 const ok = (c: boolean, m: string) => { if (c) console.log(`PASS ${m}`); else { fail++; console.log(`FAIL ${m}`); } };
+
+// 2026-11-13 入る時点の印（推定）と、足す時に印・次の一手を消さない
+{
+  ok(guessWeaknessTier("exam-stage:writer:q024", "writer").tier === "細分化" && guessWeaknessTier("exam-stage:writer:q024", "writer").group === "G6", "試験の外れの書き手＝細分化・文の束");
+  ok(guessWeaknessTier("watch-break:promise_picker", "conductor").tier === "土台", "つなぎの切れ＝土台");
+  ok(guessWeaknessTier("unknown:low-confidence:fc_warn", "brain").group === "G9", "自信の低さ＝自信の束");
+  ok(guessWeaknessTier("brain:something-new", "brain").tier === "要確認", "推定できない物は要確認");
+  ok(guessWeaknessTier("anything", "exam").group === "G11", "area が試験なら試験の土台");
+  const g = withGuessedTier({ exam_qids: ["q1"] }, "watch-break:x", "conductor");
+  ok(g.tier === "土台" && g.tier_guess === true && !!g.next && g.group_parent === 25, "推定の印・次の一手・親を足す");
+  const kept = withGuessedTier({ tier: "細分化", next: "手で書いた次の一手" }, "watch-break:x", "conductor");
+  ok(kept.tier === "細分化" && kept.next === "手で書いた次の一手" && kept.tier_guess === undefined, "印がある行は変えない");
+  const merged = mergeEvidence({ tier: "土台", next: "N", owner: "作業員1", w1_1107: "記録", exam_qids: ["q1"] }, { exam_qids: ["q2"] });
+  ok(merged.tier === "土台" && merged.next === "N" && merged.owner === "作業員1" && merged.w1_1107 === "記録" && (merged.exam_qids ?? []).length === 2, "足す時に印・次の一手・作業員の書き込みを消さない（旧は消えていた）");
+  const row = mergeWeaknessRow(null, { key: "exam-stage:brain:q9", title: "t", area: "brain", evidence: {} }, "2026-11-13T00:00:00Z");
+  ok(row.evidence.tier === "細分化" && row.evidence.tier_guess === true, "新しい行に推定の印が付く");
+}
 
 // 1. 種: 21個・鍵は一意で形が正しい・状態がそろっている
 ok(SEED_WEAKNESSES.length === 21, "種は21個");
