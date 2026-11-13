@@ -306,7 +306,7 @@ import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question"
 import { clipMaterialLogged } from "@/app/lib/material-cut-log"; // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
 import { materialTurnMustOn, WIDE_LIMIT, turnMustKeys, selectNewestWithMust, rowHitsKeys } from "@/app/lib/material-turn-must"; // 2026-11-12 作業員1: 材料の上限を今の番に要る物で（MATERIAL_TURN_MUST=on） // 2026-11-12 作業員1: 材料を切った字数のログ（MATERIAL_CUT_LOG=on）
 import { materialGapLedgerMode, materialGapsDigest, materialGapBooksMode, materialBooksDigest } from "@/app/lib/material-gap-ledger"; // 2026-11-12 作業員1: 材料の抜けの台帳
-import { brainMsgWindow } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
+import { brainMsgWindow, brainMsgWindowUnitsOn, trimByUnits, collapseAixImageBursts } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
 // 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
 import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL, resolveConditionMoveIn } from "@/app/lib/contact-promise";
 import { timeFactsEnabled, computeTimeFacts, timeFactsLine } from "@/app/lib/time-facts";
@@ -1803,7 +1803,7 @@ async function analyzeConversationCore(
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       // 2026-10-08 竹内さんの決定: 15→20通（セーブデータとの間でこぼれる発言を塞ぐ・差分の時も同じ）。戻す: BRAIN_MSG_WINDOW=15（brain-msg-window.ts）
-      .limit(brainMsgWindow()),
+      .limit(brainMsgWindowUnitsOn() ? Math.min(brainMsgWindow() * 3, 60) : brainMsgWindow()),
     propertyCustomerId
       ? supabase
           .from("property_customers")
@@ -1979,7 +1979,9 @@ async function analyzeConversationCore(
   loadBrainSystemInputs(),
   ]);
 
-  const { data: messages, error, count: totalMessageCount } = msgResult;
+  const { data: messagesRaw, error, count: totalMessageCount } = msgResult;
+  // 2026-11-13 作業員1（BRAIN_MSG_WINDOW_UNITS=on）: 窓を文の通の数で数える（AIX の画像の束は1つ）＝多めに読んで窓 n 単位に切る
+  const messages = messagesRaw && brainMsgWindowUnitsOn() ? (trimByUnits(messagesRaw as Array<{ sender: string; text: string | null; is_aix_generated?: boolean | null; created_at: string }>, brainMsgWindow()) as typeof messagesRaw) : messagesRaw;
   if (error || !messages || messages.length === 0) {
     console.warn("[brain-core] analyzeConversation abort: msgs fetch failed or empty", conversationId, "error:", error?.message ?? "none");
     return null;
@@ -2066,9 +2068,7 @@ async function analyzeConversationCore(
   } catch (e) {
     console.warn("[brain-core] quoted property resolve failed:", e instanceof Error ? e.message : e);
   }
-  const history = [...typedMessages]
-    .reverse()
-    .map((m) => {
+  const historyLineOf = (m: (typeof typedMessages)[number]): string => {
       let senderLabel = "顧客";
       if (m.sender === "staff") {
         const exact = m.line_message_id ? aixTypeByLmid.get(m.line_message_id) : undefined;
@@ -2094,8 +2094,10 @@ async function analyzeConversationCore(
         ? (m.sender === "staff" ? APPLICATION_FORMAT_SENT_PLACEHOLDER : APPLICATION_FORM_PLACEHOLDER)
         : (m.text ?? "（画像/添付）");
       return `[${senderLabel} ${dateLabel}] ${quoteTag}${bodyText}${imageTag}`;
-    })
-    .join("\n");
+    };
+  // 2026-11-13 作業員1（BRAIN_MSG_WINDOW_UNITS=on）: AIX の物件の画像の束は1行にまとめる（brain-msg-window.collapseAixImageBursts）
+  const historyRev = [...typedMessages].reverse();
+  const history = (brainMsgWindowUnitsOn() ? collapseAixImageBursts(historyRev, historyLineOf, (m) => `${historyLineOf(m).split("]")[0]}]`) : historyRev.map(historyLineOf)).join("\n");
 
   // セーブポイントRAG検索: 現在の会話コンテキストに関連する古いCPを類似検索
   // RAG化 Phase2: 同じ embedding を再利用して ai_reply_knowledge の類似ナレッジも検索する
