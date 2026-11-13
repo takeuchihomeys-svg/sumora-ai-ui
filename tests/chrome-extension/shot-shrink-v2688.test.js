@@ -39,7 +39,7 @@ console.log("\n■ ② サーバーは黙って捨てない（理由を返す）
   ok("空の画像は理由を返す", /error: "image_empty"/.test(api));
   ok("大きすぎる時は 413 と理由", /error: "image_too_large"/.test(api) && /413/.test(api));
   ok("大きさ（bytes）も返す", /bytes: buf\.length/.test(api));
-  ok("Storage に置けなかった時は**表に入れる**（2026-11-12 竹内さん「データベースに画像入るように」）", /row\.shot_b64 = "data:image\/jpeg;base64," \+ raw64/.test(api) && /shot_in_db = true/.test(api));
+  ok("Storage に置けなかった時は**表に入れる**（2026-11-12 竹内さん「データベースに画像入るように」）", /row\.shot_b64 = "data:image\/jpeg;base64," \+ raw64/.test(api));
   ok("3MB の上限は残す（Storage を守る）", /3_000_000/.test(api));
 }
 

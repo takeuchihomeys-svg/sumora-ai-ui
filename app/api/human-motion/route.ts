@@ -214,7 +214,6 @@ export async function POST(req: NextRequest) {
            */
           console.warn("[human-motion] 写真を置けません → 表に入れます:", up.error.message);
           row.shot_b64 = "data:image/jpeg;base64," + raw64.slice(0, 2_900_000);
-          row.shot_in_db = true;
         }
       }
     } catch (e) {
@@ -222,7 +221,7 @@ export async function POST(req: NextRequest) {
       // 例外でも捨てない（表に入れられるなら入れる）
       try {
         const raw64 = String(body.shot_b64).replace(/^data:image\/[a-z]+;base64,/, "").slice(0, 2_900_000);
-        if (raw64.length > 100) { row.shot_b64 = "data:image/jpeg;base64," + raw64; row.shot_in_db = true; row.shot_taken = true; }
+        if (raw64.length > 100) { row.shot_b64 = "data:image/jpeg;base64," + raw64; row.shot_taken = true; }
       } catch (_) {}
     }
   }
@@ -257,7 +256,8 @@ export async function POST(req: NextRequest) {
     {
       ok: !ins.error, error: ins.error?.message, code: ins.error?.code ?? null,
       shot_key: row.shot_taken ? (row.shot_key ?? "(表)") : null,
-      shot_in_db: !!row.shot_in_db,
+      /** 表に入れたかは `shot_b64` の中身から判断（列が無いDBでも正しく返す） */
+      shot_in_db: typeof row.shot_b64 === "string" && row.shot_b64.length > 100,
     },
     { status: ins.error ? 500 : 200, headers: CORS },
   );
@@ -272,16 +272,31 @@ export async function GET(req: NextRequest) {
   // 写真の一覧（どこに置いたか・見るための URL）
   if (sp.get("shots") === "1") {
     /**
-     * 2026-11-12 竹内さん「データベースに画像入るようにしたらよいのでは」:
-     *   Storage に置けなかった写真は**表に入っている**（`shot_b64`）。それも一覧に出す。
+     * 2026-11-13 竹内さん「データベースとの連携をちゃんとできているようにする」:
+     *   ⚠ `shot_in_db` は**列が無いDBがある**（足しても何度も「無い」と言われた）。
+     *     列に頼ると、**写真があるのに一覧が 500 で落ちる**（実際に起きた）。
+     *   → **その列は読まない**。表に入っているかは `shot_b64` の中身から**その場で判断**する
+     *     （`shot_in_db` は便利な印でしかなく、無くても同じ事が分かる）。
+     *   `shot_ops` も列が無いDBがあり得るので、同じく外して読み直せるようにする。
      */
-    const r = await supabase.from("human_motion_learn")
-      .select("id, created_at, install_id, device_label, site, mode, shot_key, shot_w, shot_h, ops, points_n, point_fields, shot_in_db, shot_b64")
+    const FULL = "id, created_at, install_id, device_label, site, mode, shot_key, shot_w, shot_h, ops, points_n, point_fields, shot_b64, shot_ops";
+    const NO_OPS = "id, created_at, install_id, device_label, site, mode, shot_key, shot_w, shot_h, ops, points_n, point_fields, shot_b64";
+    const fetchShots = (cols: string) => supabase.from("human_motion_learn")
+      .select(cols)
       .gte("created_at", from).eq("shot_taken", true)
       .order("created_at", { ascending: false }).limit(limit);
+    let r = await fetchShots(FULL);
+    if (r.error && /shot_ops|does not exist|schema cache/i.test(r.error.message)) {
+      r = await fetchShots(NO_OPS);
+    }
+    if (r.error) {
+      // 最後の受け皿: 写真の保存先だけでも返す（一覧を空に見せない）
+      const minimal = await fetchShots("id, created_at, install_id, site, mode, shot_key, shot_w, shot_h");
+      if (!minimal.error) r = minimal;
+    }
     if (r.error) return NextResponse.json({ ok: false, error: r.error.message }, { status: 500, headers: CORS });
     // 写真を見る URL を付ける（Storage の公開 URL・無ければ署名付き・無ければ表の画像）
-    const rows = await Promise.all(((r.data ?? []) as Record<string, unknown>[]).map(async (row) => {
+    const rows = await Promise.all(((r.data ?? []) as unknown as Record<string, unknown>[]).map(async (row) => {
       const key = typeof row.shot_key === "string" ? row.shot_key : "";
       const inDb = typeof row.shot_b64 === "string" && row.shot_b64.length > 100;
       let url: string | null = inDb ? (row.shot_b64 as string) : null;   // 表に入っていればそれをそのまま使う

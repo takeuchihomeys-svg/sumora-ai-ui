@@ -2343,12 +2343,34 @@ async function _recTick() {
   if (left > 0 && gap > left) gap = left;
   _recTimer = setTimeout(function () { _recTick().catch(function () {}); }, Math.max(200, gap));
 }
-/** 1枚撮る（今までの撮影の道をそのまま使う・自分宛のメッセージは送らない） */
+/**
+ * 2026-11-13 竹内さん「録画から学習できるのか」:
+ *   録画モードで撮った写真にも**直前までの操作（押す順番の材料）**を付ける。
+ *   ⚠ 旧は録画からは `ops` を送っていなかったので、**録画しても押す順番を学べなかった**
+ *     （記録の `ops` が 0・`shot_ops` が空）。
+ *   → 録画の時も page-script（人と同じ見張り）が持っている直近の操作を読んで送る。
+ *     読めない時は null（今まで通り・写真だけ）。
+ */
 async function _recordOneShot() {
+  var ops = null;
+  var siteName = null;
+  try {
+    // 録画しているタブに「直近の操作をください」と聞く（page-script が答える）
+    var tabs = await chrome.tabs.query({});
+    var rp = tabs.filter(function (t) { return t.url && /realnetpro\.com|itandibb\.com|reins\.jp/.test(t.url); });
+    if (rp.length) {
+      /**
+       * 2026-11-13: **どのサイトか**も送る（旧は空だったので、サイト別の学習・点検ができなかった）。
+       */
+      siteName = /realnetpro\.com/.test(rp[0].url) ? "realpro" : (/itandibb\.com/.test(rp[0].url) ? "itandi" : "reins");
+      var resp = await chrome.tabs.sendMessage(rp[0].id, { type: "axlx-recent-ops" }).catch(function () { return null; });
+      if (resp && Array.isArray(resp.ops)) ops = resp.ops;
+    }
+  } catch (_) {}
   return new Promise(function (resolve) {
     try {
       // 2026-11-12: 録画は**送り終わるまで待つ**（「撮れた」と「保存できた」を同じにする）
-      _takeShot({ type: "axlx-human-shot", site: "record", kind: "rec", wait_upload: true }, function (res) { resolve(res || null); });
+      _takeShot({ type: "axlx-human-shot", site: siteName || "record", kind: "rec", wait_upload: true, ops: ops }, function (res) { resolve(res || null); });
     } catch (_) { resolve(null); }
   });
 }

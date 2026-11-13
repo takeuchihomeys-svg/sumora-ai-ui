@@ -194,6 +194,21 @@
   function _recentOps() {
     try { return _opsRing.slice(-OPS_RING_MAX); } catch (_) { return null; }
   }
+  /**
+   * 2026-11-13 竹内さん「録画から学習できるのか」:
+   *   録画モードの写真にも**押した操作**を付ける（押す順番の材料）。
+   *   background が「直近の操作をください」と聞いてくるので答える。
+   *   ⚠ 送るのは**欄の名前・操作の種類・時刻だけ**（入力した中身は送らない）。
+   */
+  try {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
+        if (!msg || msg.type !== "axlx-recent-ops") return;
+        try { sendResponse({ ok: true, ops: _recentOps() || [] }); } catch (_) {}
+        return true;
+      });
+    }
+  } catch (_) {}
   var SHOT_MIN_GAP_MS = 400;   // これより短い間隔では撮らない
   var SHOT_MAX_PER_SESSION = 300; // 1ページで撮る上限（暴走しないように）
   function shootAfter(kind, el, pt) {
