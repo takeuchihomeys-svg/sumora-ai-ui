@@ -1944,7 +1944,18 @@ async function _trimShots() {
  */
 var _capChain = Promise.resolve();
 var _capLastAt = 0;
-var CAP_MIN_GAP_MS = 700;
+/**
+ * 2026-11-14 竹内さん「地域押さなかったのでこっちでおした画面確認して録画した画面」:
+ *   ⚠ 画面に `capture_error: This request exceeds the MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND quota`
+ *     が出て、**写真が0枚**になっていた（実測: 最新200枚すべて ops も空）。
+ *   ⚠ 原因: `CAP_MIN_GAP_MS = 700` は**1秒あたり約1.4回**。Chrome の上限は **2回/秒**だが、
+ *     録画（1.5〜3.5秒ごと）と**操作のたびの撮影**が重なると 700ms 間隔でも
+ *     短い窓では2回を超える（実測の間隔 83ms・170ms は別経路の取り合い）。
+ *   → **1秒あたり1回まで**に抑える（`CAP_MIN_GAP_MS = 1100`）。
+ *     ⚠ 撮る枚数は減るが、**失敗して0枚になるより良い**（写真が無いと学習できない）。
+ *   → 制限に当たった時は**長めに待って**やり直す（900ms → 2200ms）。
+ */
+var CAP_MIN_GAP_MS = 1100;
 function _capturePaced(windowId) {
   var run = function () {
     return (async function () {
@@ -1955,8 +1966,8 @@ function _capturePaced(windowId) {
       } catch (e) {
         var msg = String((e && e.message) || e);
         if (/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(msg)) {
-          // 制限に当たった → 少し待って1回だけやり直す
-          await new Promise(function (r) { setTimeout(r, 900) });
+          // 制限に当たった → **2.2秒待って**やり直す（1回だけ）
+          await new Promise(function (r) { setTimeout(r, 2200) });
           return await chrome.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 55 });
         }
         throw e;
@@ -2428,11 +2439,36 @@ async function _recordOneShot() {
     var rp = tabs.filter(function (t) { return t.url && /realnetpro\.com|itandibb\.com|reins\.jp/.test(t.url); });
     if (rp.length) {
       /**
-       * 2026-11-13: **どのサイトか**も送る（旧は空だったので、サイト別の学習・点検ができなかった）。
+       * 2026-11-14 竹内さん「地域押さなかったのでこっちでおした画面確認して録画した画面」:
+       *   ⚠ 実測で **写真200枚すべて ops が空**だった。`rp[0]` は**タブの並び順の先頭**で、
+       *     録画している画面（前に出ているタブ）とは限らない。
+       *     さらに `sendMessage` は**そのタブの中の content script** にしか届かない。
+       *   → **前に出ているタブを最優先**（`active`）→ 無ければリアプロのタブ。
+       *     それでも空なら、**リアプロの全タブに聞いて回る**（1つでも答えたら使う）。
        */
-      siteName = /realnetpro\.com/.test(rp[0].url) ? "realpro" : (/itandibb\.com/.test(rp[0].url) ? "itandi" : "reins");
-      var resp = await chrome.tabs.sendMessage(rp[0].id, { type: "axlx-recent-ops" }).catch(function () { return null; });
-      if (resp && Array.isArray(resp.ops)) ops = resp.ops;
+      var activeTab = null;
+      try {
+        var act = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        activeTab = act && act[0] ? act[0] : null;
+      } catch (_) { activeTab = null; }
+      var order = [];
+      if (activeTab && /realnetpro\.com|itandibb\.com|reins\.jp/.test(String(activeTab.url || ""))) order.push(activeTab);
+      rp.forEach(function (t) { if (!order.some(function (x) { return x.id === t.id; })) order.push(t); });
+
+      for (var ti = 0; ti < order.length && (!ops || !ops.length); ti++) {
+        var tab = order[ti];
+        siteName = siteName || (/realnetpro\.com/.test(tab.url) ? "realpro" : (/itandibb\.com/.test(tab.url) ? "itandi" : "reins"));
+        var resp = await chrome.tabs.sendMessage(tab.id, { type: "axlx-recent-ops" }).catch(function () { return null; });
+        if (resp && Array.isArray(resp.ops) && resp.ops.length) {
+          ops = resp.ops;
+          siteName = /realnetpro\.com/.test(tab.url) ? "realpro" : (/itandibb\.com/.test(tab.url) ? "itandi" : "reins");
+        }
+      }
+      /** どのタブから何件取れたかを残す（次に空だった時の手がかり） */
+      try {
+        var d = {}; d.axlx_rec_ops = { at: Date.now(), tabs: order.length, got: ops ? ops.length : 0, site: siteName };
+        chrome.storage.local.set(d);
+      } catch (_) {}
     }
   } catch (_) {}
   return new Promise(function (resolve) {

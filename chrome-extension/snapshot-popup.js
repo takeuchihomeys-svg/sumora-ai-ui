@@ -374,9 +374,23 @@
                 if (!d) { el2.textContent = ""; el2.style.display = "none"; return; }
                 el2.style.display = "block";
                 el2.style.color = d.ring ? "#15803d" : "#b91c1c";
-                el2.textContent = d.ring
-                  ? "学習: 操作を" + d.ring + "件おぼえています（写真と結びつきます）"
-                  : "学習: まだ操作を1件もおぼえていません（この画面で押すとおぼえます）";
+                /**
+                 * 2026-11-14 竹内さん「地域押さなかったのでこっちでおした画面確認して録画した画面」:
+                 *   写真に操作が付かない原因を**その場で**分かるようにする。
+                 *   ・輪が0 → この画面で押していない
+                 *   ・輪はあるのに写真に付かない → タブの取り違え（axlx_rec_ops で分かる）
+                 */
+                chrome.storage.local.get(["axlx_rec_ops"], function (r3) {
+                  try {
+                    var ro = (r3 && r3.axlx_rec_ops) || null;
+                    var got = ro ? Number(ro.got) || 0 : null;
+                    el2.textContent = d.ring
+                      ? "学習: 操作を" + d.ring + "件おぼえています"
+                        + (got != null ? (got ? "（写真に" + got + "件付いています）" : "（⚠ 写真に付いていません）") : "")
+                      : "学習: まだ操作を1件もおぼえていません（この画面で押すとおぼえます）";
+                    if (d.ring && got === 0) el2.style.color = "#b45309";
+                  } catch (_) {}
+                });
               } catch (_) {}
             });
           } catch (_) {}
