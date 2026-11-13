@@ -20,6 +20,10 @@ export type DepthInput = {
   openPromises: number;
   /** 前のお客様の通からの空き（時間） */
   gapHours: number | null;
+  /** 2026-11-13（v2）: 今の連投が名指す物の数（送った物件の名前・号室。作業員4 の ref_resolve が入ったら差し替え） */
+  refCount?: number | null;
+  /** 2026-11-13（v2）: 持ち込み（URL・ポータルの画像） */
+  brought?: boolean;
 };
 
 const DEEP_WORDS: ReadonlyArray<[string, RegExp]> = [
@@ -30,17 +34,49 @@ const DEEP_WORDS: ReadonlyArray<[string, RegExp]> = [
   ["キャンセル・断り", /キャンセル|やめ(?:ます|とき)|見送|他で決め|他社/],
 ];
 
-export function decideBrainDepth(i: DepthInput): { depth: BrainDepth; reason: string } {
+// 2026-11-13 作業員5（統括役・竹内さん「Claude Code にあって統括に無い部分」・KB ef6626d7「状況に応じて読む深さを変える」）: 札を足す第3段（BRAIN_DEPTH_V2=on・既定 off・記録だけ）。
+//   疑い（「おとり物件てことですか」11865 は今「一般」）・指す物が2つ以上・72時間ぶりの再開・持ち込みは普通以上・お礼と了承だけは40字まで浅い（12592「こちらこそありがとうございました！分かりました！」は今「一般」）
+export const brainDepthV2On = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_DEPTH_V2 ?? "").trim().toLowerCase() === "on";
+const DOUBT_RE = /おとり|囮|本当(?:に|ですか)|怪し|騙|詐欺|嘘|大丈夫なんですか|信用|不安/;
+export function decideBrainDepth(i: DepthInput, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): { depth: BrainDepth; reason: string } {
+  const v2 = brainDepthV2On(env);
   const t = String(i.turnText ?? "").normalize("NFKC");
   const deep = DEEP_WORDS.find(([, re]) => re.test(t));
   if (deep) return { depth: "deep", reason: deep[0] };
+  if (v2 && DOUBT_RE.test(t)) return { depth: "deep", reason: "疑い" };
   const asks = (t.match(/[?？]/g) ?? []).length + (t.match(/(?:ますか|ですか|でしょうか|ください|下さい|ほしい|欲しい)/g) ?? []).length;
   if (asks >= 2) return { depth: "deep", reason: "複数の依頼" };
+  if (v2 && (i.refCount ?? 0) >= 2) return { depth: "deep", reason: "指す物が複数" };
   if (i.gapHours !== null && i.gapHours >= 24 * 7) return { depth: "deep", reason: "久しぶりの連絡" };
+  if (v2 && i.gapHours !== null && i.gapHours >= 72) return { depth: "deep", reason: "数日ぶりの再開" };
   if (i.openPromises > 0 && !i.ackOnly && !i.stampOnly) return { depth: "deep", reason: "約束の結果待ちの番" };
   if ((i.stampOnly || i.ackOnly) && i.closedBefore && !i.pickupReady && i.openPromises === 0) return { depth: "light", reason: i.stampOnly ? "締めの後のスタンプ" : "締めの後の短いお礼" };
-  if (i.ackOnly && Array.from(t.trim()).length <= 20 && !i.pickupReady) return { depth: "light", reason: "短いお礼・了承" };
+  if (v2 && i.brought) return { depth: "normal", reason: "持ち込み" };
+  // v2 の40字は問いが無い時だけ（「ありがとうございます！駐車場ありますか？」を浅くしない）
+  if (i.ackOnly && Array.from(t.trim()).length <= (v2 && asks === 0 ? 40 : 20) && !i.pickupReady) return { depth: "light", reason: "短いお礼・了承" };
   return { depth: "normal", reason: "一般" };
+}
+
+// ── v2 の記録（BRAIN_DEPTH_V2=on の時だけ・判断と費用は変えない）──────────────────────
+//   ①深い時だけ動かす物: 取りに行く段（BRAIN_MATERIAL_FETCH）・読みの候補（reading-tags・まだブレインに配線なし）・深い調べ（brain-deep-check・BRAIN_DEEP_CHECK）。
+//     今は深さに関係なく動く。「深い番だけにしたら止まる物」（skip）を数えて、深さで絞るかを決める材料にする。
+//   ②浅い時に軽くする所: 竹内さん 10/29「軽い番は前の判断の引き継ぎと安い AI・送れる物の確かめは残す」。
+//     軽い番は system と会話の前置きを読み直さず、今の番の塊だけを安い AI に渡す形を想定し、呼び出しの字数を前と後で出す（推定・実際の呼び出しは変えない）。
+export const DEPTH_DEEP_ONLY = ["material_fetch", "reading_candidates", "deep_check"] as const;
+export type DeepOnlyStep = typeof DEPTH_DEEP_ONLY[number];
+export type DepthGateRecord = { run: DeepOnlyStep[]; skip: DeepOnlyStep[] };
+/** running: 今この番で動く設定の物。深い番は全部 run・深くない番で動く物は skip（深さで絞ったら止まる物） */
+export function depthGateRecord(depth: BrainDepth, running: Partial<Record<DeepOnlyStep, boolean>>): DepthGateRecord {
+  const on = DEPTH_DEEP_ONLY.filter((k) => running[k]);
+  return depth === "deep" ? { run: on, skip: [] } : { run: [], skip: on };
+}
+export type DepthCostRecord = { before: number; after: number; saved: number };
+/** 浅い番だけ: before＝今の呼び出しの字数（system＋会話の前置き＋今の番の塊）・after＝今の番の塊だけ（前の判断の引き継ぎ＋安い AI の想定） */
+export function depthCostRecord(depth: BrainDepth, c: { sysChars: number; convChars: number; turnChars: number }): DepthCostRecord | null {
+  if (depth !== "light") return null;
+  const n = (x: number) => (Number.isFinite(x) && x > 0 ? Math.round(x) : 0);
+  const before = n(c.sysChars) + n(c.convChars) + n(c.turnChars), after = n(c.turnChars);
+  return { before, after, saved: before - after };
 }
 
 // ── 第2段（2026-11-05 作業員4・竹内さんの決定 KB P1 077d6e18「深く読むのは複雑な番だけ」）──────────────────────
