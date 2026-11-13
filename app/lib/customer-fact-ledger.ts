@@ -163,3 +163,11 @@ export function turnFactMarks(turnText: string, x: FactThreeInput): TurnFactMark
 export function turnFactMarksLine(marks: ReadonlyArray<TurnFactMark>): string {
   return marks.length ? `【今の一通と帳面の照らし（印・決めるのはあなた）】${marks.map((m) => `${m.mark}: ${m.fact}`).join("／")}` : "";
 }
+/** お客様のメモの項目 → 帳面の事情・外した物件（2026-11-13 作業員1・竹内さん「メモの部分もうまく活用する」。名前はメモの kind のまま: circumstance・people・ng） */
+export function memoItemsToThree(items: ReadonlyArray<{ kind: string; text: string; property?: string | null; sourceAt?: string | null; retiredAt?: string | null }>): Pick<FactThreeInput, "circumstances" | "excluded"> {
+  const live = items.filter((m) => !m.retiredAt);
+  return {
+    circumstances: live.filter((m) => m.kind === "circumstance" || m.kind === "people").map((m) => ({ text: m.kind === "people" ? `決める人: ${m.text}` : m.text, at: m.sourceAt ?? null })),
+    excluded: live.filter((m) => m.kind === "ng" && !!m.property).map((m) => ({ name: String(m.property), why: m.text, at: m.sourceAt ?? null })),
+  };
+}
