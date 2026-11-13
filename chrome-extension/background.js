@@ -2196,6 +2196,68 @@ if (msg.type === "axlx-human-shot") {
 }
 
 /**
+ * 2026-11-13 竹内さん「つなぐ」（学んだ押す順番を自動モードに繋ぐ）:
+ *   学習担当のブレインが毎晩まとめた「束」を取りに行き、**押す順番（next）と押す場所（points）**だけを
+ *   chrome.storage.local に置く（ページ側 page-script が読む）。
+ *
+ *   ⚠ 取るのは**1日1回まで**（起動時と、前回から24時間たった時）。サーバーを叩きすぎない。
+ *   ⚠ 失敗しても何もしない（今まで通りの動き・学習は「あれば使う」）。
+ */
+var _LEARN_KEYS = ["axlx_learn_next", "axlx_learn_points", "axlx_learn_at"];
+async function _refreshLearnedBundle(force) {
+  try {
+    var st = await chrome.storage.local.get(_LEARN_KEYS);
+    var last = Number(st && st.axlx_learn_at) || 0;
+    if (!force && last && Date.now() - last < 24 * 3600 * 1000) return { ok: true, skipped: "fresh" };
+    var res = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0", { cache: "no-store", signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return { ok: false, error: "http_" + res.status };
+    var json = await res.json();
+    var bundle = json && json.bundle;
+    if (!bundle || typeof bundle !== "object") {
+      // まだ束が無い（学習の記録が少ない・cron の前）→ 何もしない
+      await chrome.storage.local.set({ axlx_learn_at: Date.now() });
+      return { ok: true, empty: true };
+    }
+    var next = (bundle.next && typeof bundle.next === "object") ? bundle.next : {};
+    var points = (bundle.points && typeof bundle.points === "object") ? bundle.points : {};
+    await chrome.storage.local.set({
+      axlx_learn_next: next,
+      axlx_learn_points: points,
+      axlx_learn_at: Date.now(),
+      axlx_learn_src: { rows: (bundle.source && bundle.source.rows) || 0, at: bundle.generated_at || null },
+    });
+    console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個");
+    return { ok: true, next: Object.keys(next).length, points: Object.keys(points).length };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+// 起動した時に1回（前回から24時間たっていれば取りに行く）
+try { _refreshLearnedBundle(false).catch(function () {}); } catch (_) {}
+try {
+  chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
+    if (!msg) return;
+    if (msg.type === "axlx-learn-refresh") { _refreshLearnedBundle(true).then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
+    if (msg.type !== "axlx-learn-status") return;
+    chrome.storage.local.get(_LEARN_KEYS.concat(["axlx_learn_src"])).then(function (r) {
+      var nx = (r && r.axlx_learn_next) || {};
+      var pt = (r && r.axlx_learn_points) || {};
+      try {
+        sendResponse({
+          ok: true,
+          at: (r && r.axlx_learn_at) || null,
+          src: (r && r.axlx_learn_src) || null,
+          next_count: Object.keys(nx).length,
+          points_count: Object.keys(pt).length,
+          sample: Object.keys(nx).slice(0, 5).map(function (k) { return k + " → " + nx[k].next + "（" + nx[k].n + "/" + nx[k].total + "）"; }),
+        });
+      } catch (_) {}
+    });
+    return true;
+  });
+} catch (_) {}
+
+/**
  * 2026-11-12 竹内さん「画面録画モード等のボタンをつけることができればさらに簡単にできるようになる。
  *   画面録画モード押しているときは連続でさつえいされていればちゃんと記録されるので、
  *   それで動かすことができればさらに質が高くなる」

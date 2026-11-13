@@ -730,8 +730,59 @@
     _enqueueWithEl(el, function () { return typeTextLikeHuman(el, val); }, 700, 1200, 'txt:' + name + '=' + val);
   }
 
-  function getDirectText(el) {
-    var t = '';
+  /**
+   * 2026-11-13 竹内さん「つなぐ」:
+   *   学んだ押す順番（`axlx_learn_next`）で、**同じ集合のまま順番だけ**を並べ替える。
+   *   ⚠ 項目は増減させない（入れる条件は絶対に変えない＝検索漏れを出さない）。
+   *   ⚠ 学んだ順が無ければ元の順（今まで通り）。
+   *   ⚠ 学習の束は background が取りに行って storage に置く（page-script は読むだけ）。
+   */
+  function _orderByLearned(list) {
+    try {
+      var items = Array.isArray(list) ? list : [];
+      if (items.length < 2) return items;
+      _loadLearnNext();
+      var LO = window.AxlxLearnOrder;
+      if (!LO || !LO.orderByLearned) return items;
+      var next = window.__axlxLearnNext || null;   // background が storage から読んで入れる（下の受け口）
+      if (!next) return items;
+      var r = LO.orderByLearned(items, function (it) { return it && it.name ? it.name : null; }, next, { min: 2 });
+      if (r && r.changed) {
+        try {
+          _auditStepP('learn_order',
+            '学んだ順に並べ替え' + (r.wobbled ? '（人が時々変える分の揺らぎ入り）' : '') + ': ' + (r.used || []).slice(0, 3).join(' / '));
+        } catch (_) {}
+        console.log('[AX] 条件の入力順を学んだ順にしました' + (r.wobbled ? '（揺らぎあり）' : '') + ':', (r.used || []).join(' / '));
+      }
+      return (r && Array.isArray(r.items) && r.items.length === items.length) ? r.items : items;
+    } catch (_) { return list; }
+  }
+
+  /**
+   * 2026-11-13 竹内さん「つなぐ」:
+   *   学んだ押す順番を storage から読む（background が1日1回取りに行って置いている）。
+   *   ⚠ 30秒ごとに読み直す（学習が進んだら次の検索から効く）。
+   */
+  var _learnNextAt = 0;
+  function _loadLearnNext() {
+    try {
+      var now = Date.now();
+      if (now - _learnNextAt < 30000) return;
+      _learnNextAt = now;
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+      chrome.storage.local.get(["axlx_learn_next"], function (r) {
+        try {
+          var nx = (r && r.axlx_learn_next) || null;
+          window.__axlxLearnNext = (nx && typeof nx === "object") ? nx : null;
+          var n = nx ? Object.keys(nx).length : 0;
+          if (n) console.log("[AX] 学んだ押す順番を読みました: " + n + "通り");
+        } catch (_) {}
+      });
+    } catch (_) {}
+  }
+  try { _loadLearnNext(); } catch (_) {}
+
+  function getDirectText(el) {    var t = '';
     for (var n = el.firstChild; n; n = n.nextSibling) {
       if (n.nodeType === 3) t += n.textContent;
     }
@@ -3051,12 +3102,21 @@
         cities: cond.city_codes, ward: cond.detail_ward });
 
     // ── 基本条件（1項目ずつ 80〜200ms 間隔で順次入力 — 人間らしさ）──────────
-    if (cond.rent_min) queueSelVal("rental_cost1", nearestDown(RENT_OPTS, cond.rent_min));
-    if (cond.rent_max) queueSelVal("rental_cost2", nearestUp(RENT_OPTS, cond.rent_max));
-    if (cond.area_min) queueSelVal("square_meter_l", nearestDown(AREA_OPTS, cond.area_min));
-    if (cond.area_max) queueSelVal("square_meter_h", nearestUp(AREA_OPTS, cond.area_max));
-    var feeCb = document.querySelector('input[name="include_common_fee"]');
-    if (feeCb && !feeCb.checked) enqueueHumanClick(feeCb, _clickEl, 450, 1000);
+    /**
+     * 2026-11-13 竹内さん「つなぐ」（学んだ押す順番を自動モードに繋ぐ）:
+     *   条件の入力順を、**人が押した順**に近づける。
+     *   ⚠ 順番だけを変える（入れる項目は絶対に増減しない＝検索漏れを出さない）。
+     *   ⚠ 学んだ順が無ければ今まで通り（下の並び）。
+     */
+    var _basicQueue = [];
+    if (cond.rent_min) _basicQueue.push({ name: "rental_cost1", run: function () { queueSelVal("rental_cost1", nearestDown(RENT_OPTS, cond.rent_min)); } });
+    if (cond.rent_max) _basicQueue.push({ name: "rental_cost2", run: function () { queueSelVal("rental_cost2", nearestUp(RENT_OPTS, cond.rent_max)); } });
+    if (cond.area_min) _basicQueue.push({ name: "square_meter_l", run: function () { queueSelVal("square_meter_l", nearestDown(AREA_OPTS, cond.area_min)); } });
+    if (cond.area_max) _basicQueue.push({ name: "square_meter_h", run: function () { queueSelVal("square_meter_h", nearestUp(AREA_OPTS, cond.area_max)); } });
+    var feeCb0 = document.querySelector('input[name="include_common_fee"]');
+    if (feeCb0 && !feeCb0.checked) _basicQueue.push({ name: "include_common_fee", run: function () { enqueueHumanClick(feeCb0, _clickEl, 450, 1000); } });
+    _basicQueue = _orderByLearned(_basicQueue);
+    for (var _bi = 0; _bi < _basicQueue.length; _bi++) { try { _basicQueue[_bi].run(); } catch (_) {} }
     if (cond.walk_minutes) {
       // 2026-11-10 v2.6.4 竹内さん「リアプロの徒歩軒数」:
       //   旧は移動手段（transportation_id）と分数（required_time）を続けて積むだけで、選び終わる前に打ち始めていた。
