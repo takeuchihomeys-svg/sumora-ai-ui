@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "2.5.93",
+  "version": "2.7.21",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -37,7 +37,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["popup.html", "human-wait.js", "human-trace.js", "popup-maps.js", "transit_graph.js", "osaka-transit.js", "commute-candidates.js", "commute-reach.js", "search-history.js", "fill-done-match.js", "mode-core.js", "search-audit.js", "search-override.js", "temp-adj-base.js", "popup.js", "snapshot-popup.js", "styles.css", "page-script.js", "score-overlay.js", "floor-ijou.js"],
+      "resources": ["popup.html", "human-wait.js", "pointer-ui.js", "human-trace.js", "human-learn.js", "learn-order.js", "popup-maps.js", "transit_graph.js", "osaka-transit.js", "commute-candidates.js", "commute-reach.js", "search-history.js", "fill-done-match.js", "mode-core.js", "search-audit.js", "search-override.js", "temp-adj-base.js", "popup.js", "snapshot-popup.js", "styles.css", "page-script.js", "score-overlay.js", "floor-ijou.js"],
       "matches": ["https://www.realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]
     },
     {
@@ -52,8 +52,13 @@
   "content_scripts": [
     {
       "matches": ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"],
-      "js": ["human-wait.js", "human-trace.js", "own-mutation.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"],
+      "js": ["human-wait.js", "human-learn.js", "pointer-ui.js", "human-trace.js", "own-mutation.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"],
+      "js": ["human-learn-upload.js", "human-learn-record.js"],
+      "run_at": "document_idle"
     },
     {
       "matches": ["https://www.realnetpro.com/main.php*"],
@@ -68,7 +73,7 @@
     },
     {
       "matches": ["https://www.realnetpro.com/main.php*", "https://realnetpro.com/main.php*"],
-      "js": ["bar-dock.js", "send-pairing.js", "auto-run.js", "sent-skip.js", "update-order-stop.js", "bulk-dl.js"],
+      "js": ["bar-dock.js", "send-pairing.js", "auto-run.js", "autorun-note.js", "sent-skip.js", "update-order-stop.js", "bulk-dl.js"],
       "run_at": "document_idle"
     },
     {
@@ -93,13 +98,13 @@
     },
     {
       "matches": ["https://itandibb.com/*"],
-      "js": ["human-wait.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"],
+      "js": ["human-wait.js", "human-learn.js", "pointer-ui.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"],
       "world": "MAIN",
       "run_at": "document_idle"
     },
     {
       "matches": ["https://itandibb.com/*"],
-      "js": ["bar-dock.js", "send-pairing.js", "auto-run.js", "sent-skip.js", "itandi-row-parse.js", "itandi-guard.js", "update-order-stop.js", "itandi-bulk-dl.js"],
+      "js": ["bar-dock.js", "send-pairing.js", "auto-run.js", "autorun-note.js", "sent-skip.js", "itandi-row-parse.js", "itandi-guard.js", "update-order-stop.js", "itandi-bulk-dl.js"],
       "run_at": "document_idle"
     },
     {
