@@ -193,7 +193,7 @@ export const FOCUS_INTAKE_RULES = [
 ].join("\n");
 export const FOCUS_INTAKE_FIELD = `"focus_read": {"surface": "表（30字以内）", "background": "背景（40字以内）", "focus": "${FOCUS_KINDS.join("|")}", "why": "理由（30字以内）"}`;
 
-export type FocusRead = { surface: string; background: string; focus: Focus; why: string; near: string | null; keepPromise?: boolean; sub?: string | null };
+export type FocusRead = { surface: string; background: string; focus: Focus; why: string; near: string | null; keepPromise?: boolean; sub?: string | null; topics?: TurnTopic[] };
 /** 入口の統括の答えから focus_read を読む（一覧に無い重点は捨てる） */
 export function parseFocusRead(raw: unknown, near: NearFocus | null = null): FocusRead | null {
   const o = (raw && typeof raw === "object" ? (raw as Record<string, unknown>).focus_read ?? raw : null) as Record<string, unknown> | null;
@@ -202,7 +202,8 @@ export function parseFocusRead(raw: unknown, near: NearFocus | null = null): Foc
   if (!(FOCUS_KINDS as readonly string[]).includes(focus)) return null;
   const s = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
   const sub = o.focus_sub !== undefined ? normalizeFocusSub(focus, o.focus_sub) : undefined;
-  return { ...(sub !== undefined ? { sub } : {}), surface: s(o.surface, 30), background: s(o.background, 40), focus, why: s(o.why, 30), near: near ? `${near.inBand ? "束" : "場面"}:${near.focus}${near.inBand ? `(${near.n}件・${Math.round(near.share * 100)}%)` : ""}` : null };
+  const topics = parseTurnTopics(o.turn_topics ?? (raw && typeof raw === "object" ? (raw as Record<string, unknown>).turn_topics : undefined));
+  return { ...(sub !== undefined ? { sub } : {}), ...(topics ? { topics } : {}), surface: s(o.surface, 30), background: s(o.background, 40), focus, why: s(o.why, 30), near: near ? `${near.inBand ? "束" : "場面"}:${near.focus}${near.inBand ? `(${near.n}件・${Math.round(near.share * 100)}%)` : ""}` : null };
 }
 /** 入口の統括の後ろ（毎回変わる部分）に入れる、近い番の重点の1行（束の時だけ・外は場面の多い重点だけ） */
 export function nearFocusLine(near: NearFocus | null): string {
@@ -271,7 +272,7 @@ export function laterOverrode(steps: ReadonlyArray<OrderStep>, decided: Readonly
   return null;
 }
 /** meta.conductor_focus（作業員4の受け口）に入れる形 */
-export const conductorFocusMeta = (r: FocusRead | null) => (r ? { focus: r.focus, why: r.why || null, surface: r.surface || null, background: r.background || null, near: r.near, ...(r.keepPromise !== undefined ? { keepPromise: r.keepPromise } : {}), ...(r.sub ? { focus_sub: r.sub } : {}) } : null);
+export const conductorFocusMeta = (r: FocusRead | null) => (r ? { focus: r.focus, why: r.why || null, surface: r.surface || null, background: r.background || null, near: r.near, ...(r.keepPromise !== undefined ? { keepPromise: r.keepPromise } : {}), ...(r.sub ? { focus_sub: r.sub } : {}), ...(r.topics?.length ? { turn_topics: r.topics } : {}) } : null);
 /** digest.cf の1語（表・背景は入れない＝短く） */
 export const focusReadDigest = (r: FocusRead | null | undefined) => (r ? `${r.focus}${r.near ? `|${r.near}` : ""}` : null);
 
@@ -349,4 +350,17 @@ export function focusSubOfTakeuchiText(focus: Focus, text: string, o: { aix?: st
     return "fact";
   }
   return null;
+}
+
+// ── 連投の話題ごとの主と従（2026-11-13 作業員5・統括役・点検役「会話の流れの読み」・12083: 3件の調べ依頼が主・「送って頂いた物件も検討します」が従でこちらのピックアップへの反応）──
+//   CONDUCTOR_TOPIC_STATE=on の時だけ（既定 off・strategy-freshness.ts と同じスイッチ）。入口の統括が話題ごとに主か従かと、どのこちらの送信への答えかを書く
+export const turnTopicsOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_TOPIC_STATE ?? "").trim().toLowerCase() === "on";
+export type TurnTopic = { what: string; role: "main" | "sub"; reply_to: string | null };
+export const TURN_TOPICS_RULES = `【今回の連投の話題（turn_topics）】お客様の今回の連投に話題が2つ以上ある時は、話題ごとに1行: what＝話題（20字以内）・role＝main（この番で一番応える話題）か sub（添える話題・こちらの前の送信への反応など）・reply_to＝こちらのどの送信への答えか（「物件ピックアップ」「見積書」「確認の結果」など20字以内・無ければ null）。話題が1つなら1行だけ。従の話題も落とさない`;
+export const TURN_TOPICS_FIELD = `"turn_topics": [{"what": "話題（20字以内）", "role": "main|sub", "reply_to": "こちらのどの送信への答えか または null"}]`;
+export function parseTurnTopics(raw: unknown): TurnTopic[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const s = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+  return raw.slice(0, 6).map((x) => (x && typeof x === "object" ? x as Record<string, unknown> : {})).filter((x) => s(x.what, 20))
+    .map((x) => ({ what: s(x.what, 20), role: x.role === "sub" ? "sub" as const : "main" as const, reply_to: s(x.reply_to, 20) && s(x.reply_to, 20) !== "null" ? s(x.reply_to, 20) : null }));
 }

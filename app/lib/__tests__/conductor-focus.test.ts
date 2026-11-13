@@ -141,5 +141,14 @@ it("重点の下の種類（CONDUCTOR_FOCUS_SUB=on・既定 off）: 欄・読み
   eq(focusSubOfTakeuchiText("answer", "お申込みでお部屋を抑えられるのは、お送りさせて頂いた1LDKの202号室となります！！"), "fact");
   eq(focusSubOfTakeuchiText("ease", "審査面に関しましては保証人を付けていただければ審査通過する可能性十分に御座います"), "screening");
 });
+it("連投の話題ごとの主と従（CONDUCTOR_TOPIC_STATE=on・既定 off）: 12083 の形（調べ依頼が主・ピックアップへの反応が従）", () => {
+  const r = parseFocusRead({ focus_read: { focus: "promise_make", surface: "a", background: "b", why: "c" }, turn_topics: [
+    { what: "3件の募集状況の調べ", role: "main", reply_to: null },
+    { what: "送って頂いた物件も検討", role: "sub", reply_to: "物件ピックアップ" },
+  ] });
+  eq(r?.topics?.length, 2); eq(r?.topics?.[1].role, "sub"); eq(r?.topics?.[1].reply_to, "物件ピックアップ");
+  eq((conductorFocusMeta(r) as { turn_topics?: unknown[] }).turn_topics?.length, 2);
+  eq(parseFocusRead({ focus_read: { focus: "relation", surface: "a", background: "b", why: "c" } })?.topics, undefined);
+});
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

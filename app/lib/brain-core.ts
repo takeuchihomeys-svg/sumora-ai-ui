@@ -3510,6 +3510,20 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
       console.log(JSON.stringify({ tag: "brain:near-opinion", conversationId, op: nearOpinionDigest(r?.op ?? null), inBand: r?.inBand ?? null, timeout: r === null }));
     } catch (e) { console.warn("[brain-core] near-opinion skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-11-13 作業員5（統括役・主と従と鮮度・S1・S10）: 前回の全体分析（closing_strategy）が、お客様が外した物件・結果を送って済んだ確認・別の物件へ移った前の物件を
+  //   指したままの時に「古い所」の1行（CONDUCTOR_TOPIC_STATE=on・既定 off・決まった計算は印だけ＝読みはブレイン）。実例 12196・11865・13898（strategy-freshness.ts）
+  if (opts?.strategy?.closing_strategy && typedMessages[0]?.sender === "customer") {
+    try {
+      const SF = await import("@/app/lib/strategy-freshness");
+      if (SF.topicStateOn()) {
+        const asc = [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", created_at: m.created_at }));
+        const marks = SF.staleStrategyMarks({ cs: opts.strategy.closing_strategy, csAt: opts.strategy.strategy_msg_ts ?? null, messages: asc, knownNames: sentProps.map((p) => p.property_name ?? "").filter(Boolean) });
+        const sl = SF.staleStrategyLine(marks);
+        if (sl) customerStateBlockText += `\n\n${sl}`;
+        console.log(JSON.stringify({ tag: "brain:strategy-stale", conversationId, marks: marks.map((m) => `${m.kind}:${m.name ?? "-"}`) }));
+      }
+    } catch (e) { console.warn("[brain-core] strategy-stale skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-11-04 入口の統括の最初の読み（Sonnet・作り置き・5番に1番は DeepSeek でも読んで比べる・CONDUCTOR_INTAKE: 既定は stage=yuma（YUMA・テスト用の会話だけ）・_STAGE=pct:N|all で広げる・=off で止める・読んだ結果は記録だけ）。
   //   ブレインの呼び出しと同時に流し（待たせない）、返す前に最大4秒だけ待つ。判断・文は変えない
   let intakeP: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
