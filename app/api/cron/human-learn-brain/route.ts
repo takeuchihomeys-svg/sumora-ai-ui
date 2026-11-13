@@ -21,29 +21,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { buildHumanLearnBundle, compactBundle, type MotionRow } from "@/app/lib/human-learn-brain";
+import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 
 const SELECT = [
   "created_at", "site", "mode", "ext_version", "ops",
   "moves_n", "move_speed_px_s", "move_curve", "move_ms", "move_dist",
   "points_n", "point_x", "point_y", "point_fields",
-  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops", "shot_learn",
+  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops", "shot_learn", "shot_key",
 ].join(", ");
 /**
- * 2026-11-13: `shot_ops` の列がまだ無い DB でも動くようにする。
- *   旧は列を要求していたので、**列を足す前は丸ごと読めなかった**（＝学習が動かない）。
- *   → 列が無いと言われたら、`shot_ops` を外して読み直す。
- *     （押す順番は写真の並びから学ぶので、列が無い間は「押す場所・動き」だけ学ぶ）
+ * 2026-11-13 竹内さん「ほかにちゃんと学習の面とかで連携できていない部分などあるか」:
+ *   ⚠ 旧は `shot_ops` が無い時だけ外す**決め打ち**だった（学習の入口と写真の一覧で起きたのと同じ型）。
+ *     実際に無いのは `shot_learn` の事もあり、その時は**丸ごと読めなくなっていた**。
+ *   → 共通の `selectDroppingMissing` で**無い列だけ**外す。
  */
-async function selectRows(build: (cols: string) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>): Promise<{ rows: MotionRow[]; error: string | null; hasShotOps: boolean }> {
-  const first = await build(SELECT);
-  if (!first.error) return { rows: (first.data ?? []) as MotionRow[], error: null, hasShotOps: true };
-  if (/shot_ops/i.test(first.error.message)) {
-    const fallback = SELECT.replace(", shot_ops", "").replace(", shot_learn", "");
-    const second = await build(fallback);
-    if (second.error) return { rows: [], error: second.error.message, hasShotOps: false };
-    return { rows: (second.data ?? []) as MotionRow[], error: null, hasShotOps: false };
-  }
-  return { rows: [], error: first.error.message, hasShotOps: false };
+async function selectRows(build: (cols: string) => PromiseLike<{ data: unknown[] | null; error: { message: string; code?: string | null } | null }>): Promise<{ rows: MotionRow[]; error: string | null; hasShotOps: boolean }> {
+  const sel = await selectDroppingMissing(SELECT.split(", "), build, {
+    onDrop: (c) => console.warn("[human-learn-brain] 列が無いので外します:", c),
+  });
+  if (sel.error) return { rows: [], error: String(sel.error.message ?? "select_failed"), hasShotOps: false };
+  return { rows: (sel.data ?? []) as MotionRow[], error: null, hasShotOps: sel.cols.includes("shot_ops") };
 }
 
 export async function GET(req: NextRequest) {
@@ -76,6 +73,46 @@ export async function GET(req: NextRequest) {
   if (error) {
     await finishCronLog(logId, false, { ok: false, error }, error);
     return NextResponse.json({ ok: false, error }, { status: 500 });
+  }
+
+  /**
+   * ①-2 写真から欄の種類を読む（2026-11-13 竹内さん「ほかに連携できていない部分などあるか」）。
+   *   ⚠ `/api/shot-learn` は作ってあったが、**誰も呼んでいなかった**
+   *     ＝「種類が分からない: 40件」が永久に埋まらない状態だった。
+   *   → 毎晩、`shot_learn` が空で `shot_ops` に種類がある行を拾って、
+   *     `shot_ops` から決定論で読む（写真を見ない・LLM を使わない＝費用0）。
+   *     ⚠ LLM は使わない（`SHOT_LEARN_LLM=on` でも cron からは呼ばない＝費用を勝手にかけない）。
+   *     ⚠ 列が無い DB（`shot_learn` 未作成）では何もしないで次へ。
+   */
+  let shotLearned = 0;
+  if (!dry && hasShotOps) {
+    try {
+      const targets = rows
+        .filter((r) => {
+          const x = r as unknown as Record<string, unknown>;
+          return Array.isArray(x.shot_ops) && !(x.shot_learn && typeof x.shot_learn === "object");
+        })
+        .slice(0, 50);
+      const { cleanFields, cleanScreen } = await import("@/app/lib/shot-learn");
+      for (const r of targets) {
+        const x = r as unknown as Record<string, unknown>;
+        const ops = Array.isArray(x.shot_ops) ? x.shot_ops : [];
+        const fields = cleanFields(ops.map((o) => {
+          const y = (o && typeof o === "object" ? o : {}) as Record<string, unknown>;
+          return { name: y.f, kind: y.w, x: null, y: null };
+        }));
+        if (!fields.length) continue;
+        const out = { screen: cleanScreen("other"), fields, by: "deterministic" as const, confidence: 0.9 };
+        // どの行かは id で指定できない（読む時に id を取っていない）→ shot_key で当てる
+        const key = typeof x.shot_key === "string" ? x.shot_key : "";
+        if (!key) continue;
+        const up = await supabase.from("human_motion_learn").update({ shot_learn: out }).eq("shot_key", key);
+        if (!up.error) shotLearned++;
+        else if (/shot_learn|does not exist|schema cache/i.test(up.error.message)) break;
+      }
+    } catch (e) {
+      console.warn("[human-learn-brain] 写真からの読み取りを飛ばしました:", e instanceof Error ? e.message : String(e));
+    }
   }
 
   // ② まとめる（全サイト＋サイトごと）
@@ -143,6 +180,7 @@ export async function GET(req: NextRequest) {
     days,
     rows: rows.length,
     has_shot_ops: hasShotOps,
+    shot_learned: shotLearned,
     table_missing: tableMissing,
     scopes: payloads.map((p) => p.scope),
     written,
