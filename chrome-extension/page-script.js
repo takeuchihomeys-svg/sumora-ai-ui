@@ -1605,6 +1605,38 @@
     }
   }
   function _auditStepP(k, d) {
+    /**
+     * 2026-11-13 竹内さん「所在地絞り込みや沿線絞り込みの部分はどうなっているか。抜けていないのか」:
+     *   ⚠ 旧は `if (!_audit) return;` だったので、**点検が無い回（自動モードの多く）は
+     *     地域・駅の段が学習の記録にも残らなかった**。
+     *   ⚠ 実測: 記録は15種類・`左の` と `(なし)` だけで、**地域と駅の操作が0件**。
+     *   → 学習への記録（`__axlxRecNoteName`）は **_audit の有無に関係なく**行う。
+     *     点検の配列への追加は今まで通り `_audit` がある時だけ。
+     */
+    try {
+      if (typeof window !== "undefined" && typeof window.__axlxRecNoteName === "function") {
+        /**
+         * 2026-11-13: 学習で使える**意味のある名前**にする（`step:modal` ではなく `所在地絞り込み` など）。
+         *   ⚠ 区の名前そのもの（「大阪市北区」）は入れない（お客様の条件に近い情報なので段の名前だけ）。
+         */
+        var _STEP_JA = {
+          modal: "所在地絞り込み",
+          ward: "区を選ぶ",
+          ward_by_code: "区を選ぶ",
+          ward_next_press: "地域の設定へ進む",
+          next_step: "地域の設定へ進む",
+          town: "町字を選ぶ",
+          modal_close: "確定してリストへ",
+          modal_confirm: "確定してリストへ",
+          station: "沿線・駅絞り込み",
+          station_line: "沿線を選ぶ",
+          station_next_press: "駅の設定へ進む",
+          station_confirm: "確定してリストへ",
+        };
+        var _nm = _STEP_JA[String(k)] || null;
+        if (_nm) window.__axlxRecNoteName(_nm);
+      }
+    } catch (_) {}
     if (!_audit) return;
     _audit.steps.push({ at: Date.now(), k: String(k).slice(0, 30), d: d == null ? null : String(d).slice(0, 120) });
     if (_audit.steps.length > 60) _audit.steps.shift();
@@ -3972,6 +4004,13 @@
         return clickByText(['沿線・駅絞り込み＋', '沿線・駅絞り込み+', '沿線・駅絞り込み']);
       },
       function() {
+        /**
+         * 2026-11-13 竹内さん「沿線絞り込みの部分はどうなっているか。抜けていないのか」:
+         *   駅の**最初の段（沿線・駅絞り込みを開く）**が段に残っていなかった
+         *   （`station_confirm` と `station_next_press` だけ）。
+         *   → 学習で「駅の手順」を学べるように、開いた事を残す。
+         */
+        try { _auditStepP('station', '沿線・駅絞り込みを開く'); } catch (_) {}
         // STEP B: 路線ボタン（label.one_line）が描画されたらクリック
         var stationPageDirect = false;
         // 2026-11-11: 「駅の設定へ進む」を押した印（押し直さない・押し終わるまで次へ進まない）
@@ -4020,6 +4059,12 @@
              *     ・まだなら false を返して、同じ段をもう一度見る（押し直しは clickLineButtons が checked を見て避ける）
              */
             if (hasRoutes) clickLineButtons(cond.route_ids);
+            /**
+             * 2026-11-13 竹内さん「沿線絞り込みの部分はどうなっているか」:
+             *   路線を押す段も残す（学習で「沿線 → 駅へ進む」の順を学べるように）。
+             *   ⚠ 路線の名前は入れない（段の名前だけ）。
+             */
+            try { _auditStepP('station_line', '沿線を選ぶ'); } catch (_) {}
             var _lineOk = !hasRoutes ? true : (function () {
               var want = (cond.route_ids || []).map(function (id) { return ROUTE_LINE_MAP[id]; }).filter(Boolean).map(norm);
               if (!want.length) return true;

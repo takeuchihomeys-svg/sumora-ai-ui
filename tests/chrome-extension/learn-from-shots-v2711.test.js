@@ -28,7 +28,8 @@ console.log("■ ① 写真と「押した操作」を結びつける（これ�
 {
   ok("操作を小さな輪に残す（_pushOp）", /function _pushOp\(kind, el\)/.test(rec));
   ok("  人が押した時に記録する", /_pushOp\(e\.type \|\| "click", e\.target\)/.test(rec));
-  ok("  上限40件（古い物から捨てる）", /OPS_RING_MAX = 40/.test(rec) && /_opsRing\.shift\(\)/.test(rec));
+  // 2026-11-13: 地域（6段）・駅（5段）も記録するようになったので 40 → 60 に上げた
+  ok("  上限60件（古い物から捨てる）", /OPS_RING_MAX = 60/.test(rec) && /_opsRing\.shift\(\)/.test(rec));
   ok("写真と一緒に送る（ops）", /ops: _recentOps\(\)/.test(rec));
   ok("  入れるのは 時刻・種類・欄の名前 だけ（中身は入れない）", /\{ t: t, k: String\(kind \|\| "\?"\)\.slice\(0, 10\), f: nmStr, w: kd, g: gap/.test(rec));
   // 2026-11-13: 交互クリックを畳むために DOM 要素を一時的に持つが、**送る時は外す**

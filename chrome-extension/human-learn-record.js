@@ -182,7 +182,12 @@
    *   ⚠ 上限 40件（古い物から捨てる）。ページを離れると消える（それでよい）。
    */
   var _opsRing = [];
-  var OPS_RING_MAX = 40;
+  /**
+   * 2026-11-13 竹内さん「所在地絞り込みや沿線絞り込みの部分はどうなっているか。抜けていないのか」:
+   *   地域（6段）と駅（5段）も記録するようになったので、上限を 40 → **60** に上げる。
+   *   ⚠ 地域は検索の**最初**に押すので、上限が小さいと後から消える（＝学べない）。
+   */
+  var OPS_RING_MAX = 60;
   /**
    * 2026-11-13 竹内さん「ちゃんと読み取れるようになったかな」→ `site=realpro` は入るが
    *   **`shot_ops` が 0件**だった。
@@ -253,8 +258,34 @@
   }
   /** 拡張が押した時にも積む（録画モードの時だけ使う・pointer-ui から呼ばれる） */
   function _recNoteOp(kind, el) { try { _pushOp(kind || "tap", el); } catch (_) {} }
+  /**
+   * 2026-11-13 竹内さん「所在地絞り込みや沿線絞り込みの部分はどうなっているか。抜けていないのか」:
+   *   **要素を渡さずに名前だけで積む**（地域・駅の段は `waitForClick` で押していて
+   *   `enqueueHumanClick` を通らない＝いままで記録に残らなかった）。
+   *   実測: 記録15種類に地域・駅が**1つも無かった**。
+   *   ⚠ 残すのは**段の名前と時刻だけ**（区の名前・入力した中身は入れない）。
+   */
+  function _recNoteName(name) {
+    try {
+      var nmStr = name ? String(name).slice(0, 30) : null;
+      if (!nmStr) return;
+      var last = _opsRing[_opsRing.length - 1];
+      var t = Date.now();
+      if (last && last.f === nmStr && t - Number(last.t || 0) < 120) return;
+      var gap = null;
+      if (last && typeof last.t === "number" && t > last.t) {
+        var d = t - last.t;
+        if (d >= 0 && d <= 60000) gap = d;
+      }
+      _opsRing.push({ t: t, k: "step", f: nmStr, w: "step", g: gap, el: null });
+      while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
+    } catch (_) {}
+  }
   try {
-    if (typeof window !== "undefined") window.__axlxRecNoteOp = _recNoteOp;
+    if (typeof window !== "undefined") {
+      window.__axlxRecNoteOp = _recNoteOp;
+      window.__axlxRecNoteName = _recNoteName;
+    }
   } catch (_) {}
   /**
    * 2026-11-13 竹内さん「ちゃんと読み取れるようになったかな」→ `shot_ops` が 0件
