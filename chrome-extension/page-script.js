@@ -3256,26 +3256,42 @@
     if (cond.area_max) _basicQueue.push({ name: "square_meter_h", run: function () { queueSelVal("square_meter_h", nearestUp(AREA_OPTS, cond.area_max)); } });
     var feeCb0 = document.querySelector('input[name="include_common_fee"]');
     if (feeCb0 && !feeCb0.checked) _basicQueue.push({ name: "include_common_fee", run: function () { enqueueHumanClick(feeCb0, _clickEl, 450, 1000); } });
-    _basicQueue = _orderByLearned(_basicQueue);
-    for (var _bi = 0; _bi < _basicQueue.length; _bi++) { try { _basicQueue[_bi].run(); } catch (_) {} }
+    /**
+     * 2026-11-13 竹内さん「自動検索にちゃんと反映されるようになっているのか学習の部分。抜けている部分ないのか」:
+     *   ⚠ 旧は**賃料・面積・共益費の5つだけ**をまとめて並べ替え、
+     *     徒歩（required_time）・築年（structured_date）・間取り（room_layout_id[]）は
+     *     **その下で個別に呼んでいた**（並べ替えの外）。
+     *   → 学んだ12通りのうち、実際に使えるのは **3通りだけ**だった（実測）。
+     *   直し: **徒歩・築年・間取りも同じ並びに積む**（`_clickQueue` は1本なので順番どおりに流れる）。
+     *     ⚠ 積む**中身は変えない**（今までと同じ条件・同じ押し方）。**順番だけ**が学んだ順になる。
+     */
+    // 徒歩（移動手段 → 分数）: 人が押す順（移動手段が先）は今まで通り守る
     if (cond.walk_minutes) {
-      // 2026-11-10 v2.6.4 竹内さん「リアプロの徒歩軒数」:
-      //   旧は移動手段（transportation_id）と分数（required_time）を続けて積むだけで、選び終わる前に打ち始めていた。
-      //   新は 移動手段を選ぶ（カーソル→開く→選ぶ→確認）→ **人が分数を打つ前に一呼吸（600〜1400ms）** → 1文字ずつ打つ。
-      //   同じ列に順番で積むので、前の欄が終わってから次へ進む（同時に触らない）
-      queueSelVal("transportation_id", "1");
-      (function () {
-        var inp = document.querySelector('input[name="required_time"]');
-        if (!inp) return;
-        _enqueueWithEl(inp, function () {
-          return new Promise(function (resolve) {
-            // 移動手段を選んでから「何分にしよう」と考える間
-            setTimeout(function () { resolve(typeTextLikeHuman(inp, cond.walk_minutes)); }, _ln(950, 0.4, 600, 1400));
-          });
-        }, 900, 1500, 'txt:required_time=' + cond.walk_minutes);
-      })();
+      _basicQueue.push({ name: "transportation_id", run: function () { queueSelVal("transportation_id", "1"); } });
+      _basicQueue.push({
+        name: "required_time",
+        run: function () {
+          // 2026-11-10 v2.6.4: 移動手段を選んでから「何分にしよう」と考える間 → 1文字ずつ打つ
+          var inp = document.querySelector('input[name="required_time"]');
+          if (!inp) return;
+          _enqueueWithEl(inp, function () {
+            return new Promise(function (resolve) {
+              setTimeout(function () { resolve(typeTextLikeHuman(inp, cond.walk_minutes)); }, _ln(950, 0.4, 600, 1400));
+            });
+          }, 900, 1500, 'txt:required_time=' + cond.walk_minutes);
+        },
+      });
     }
-    if (cond.building_age) queueSelVal("structured_date", nearestUp(AGE_OPTS, cond.building_age));
+    if (cond.building_age) {
+      _basicQueue.push({ name: "structured_date", run: function () { queueSelVal("structured_date", nearestUp(AGE_OPTS, cond.building_age)); } });
+    }
+    /**
+     * 間取り: 学んだ順に並べるため、**押す物の一覧を作ってから**積む。
+     *   ⚠ 名前は実際の間取りのラベル（「左の3K｜label」など）ではなく
+     *     **`room_layout_id[]` にそろえる**（学習は `_basicQueue` の名前で並ぶため）。
+     *     1つずつ（人がチェックする形）押す。中身・順番の集合は今までと同じ。
+     */
+    var _layoutsToPush = null;
     if (cond.floor_plan) {
       var FLOOR_RANK = [
         "1R","ワンルーム","スタジオタイプ","スタジオ",
@@ -3379,9 +3395,48 @@
         });
       }
       if (vals.length) {
-        setCheckboxes("room_layout_id[]", vals);
+        /**
+         * 2026-11-13: 学んだ順に並べるため、**ここでは押さずに並びに積む**（下で並べ替えてから流す）。
+         *   ⚠ 押す内容は今までと同じ（`setCheckboxes` と同じ対象・同じ1つずつの押し方）。
+         *     変えるのは**順番だけ**。
+         */
+        _layoutsToPush = vals;
       }
     }
+    /**
+     * 間取りを1つずつ積む（人がチェックする形・今までと同じ `enqueueHumanClick`）。
+     *   名前は `room_layout_id[]` にそろえる（学習の並びと合わせる）。
+     */
+    if (_layoutsToPush && _layoutsToPush.length) {
+      (function (vals2) {
+        var cbs = Array.prototype.slice.call(document.querySelectorAll('input[name="room_layout_id[]"]'));
+        // いまの画面で「入れるべき物」と違う物だけ押す（今までと同じ判定）
+        var targets = cbs.filter(function (cb) { return cb.checked !== (vals2.map(String).indexOf(String(cb.value)) >= 0); });
+        targets.forEach(function (cb) {
+          _basicQueue.push({
+            name: "room_layout_id[]",
+            run: function () {
+              enqueueHumanClick(cb, _clickEl, 420, 980);
+              /**
+               * 2026-11-11 竹内さん「この＋一息の考え方かなり重要。人間はその発想があるから」:
+               *   間取りのチェックにも一息を入れる（`setCheckboxes` と同じ 10%／3%）。
+               *   ⚠ 並び替えで `setCheckboxes` を通らなくなるので、**同じ一息をここに移す**（人間らしさを落とさない）。
+               */
+              if (Math.random() < 0.10) {
+                var _b1 = 900 + Math.floor(Math.random() * 1700);
+                enqueueHumanAction(function () {}, _b1, _b1 + 200, "息");
+              } else if (Math.random() < 0.03) {
+                var _b2 = 2600 + Math.floor(Math.random() * 2900);
+                enqueueHumanAction(function () {}, _b2, _b2 + 200, "考え");
+              }
+            },
+          });
+        });
+      })(_layoutsToPush);
+    }
+    // ここで**まとめて**並べ替える（賃料・面積・共益費・徒歩・築年・間取りが同じ並びに入る）
+    _basicQueue = _orderByLearned(_basicQueue);
+    for (var _bi = 0; _bi < _basicQueue.length; _bi++) { try { _basicQueue[_bi].run(); } catch (_) {} }
     // 2026-11-10 v2.6.18 竹内さん「ちゃんと画面見て判断できるようになってるのかな場所など」→「なおす」:
     //   入れるはずの値を1か所に置く（検索を押す直前に、画面の実際の値と1つずつ比べる）。
     //   間取りの有無に関わらず置く（家賃・更新日・徒歩・場所も比べるため）。

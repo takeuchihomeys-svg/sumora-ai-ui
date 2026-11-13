@@ -237,8 +237,17 @@
      */
     var out = list.slice();
     var used = [];
-    var nameAt = function (arr, k) { return names[list.indexOf(arr[k])] || null; };
-    for (var pass = 0; pass < 6; pass++) {
+    /**
+     * ⚠ 2026-11-13 竹内さん「抜けている部分ないのか」で発見した**バグ**:
+     *   旧は `names[list.indexOf(it)]` で名前を引いていた。
+     *   `list` は**元の並び**なので、`out` を並べ替えた後も**元の位置の名前**を返す。
+     *   → 動かした物の名前が別の物に化けて、**鎖が解けず / 誤った組で並ぶ**（実測で
+     *     `required_time → rental_cost2` があるのに賃料上限が後ろに残った）。
+     *   直し: 名前を**各要素に付けて**持ち回る（`out` の並びに追従する）。
+     */
+    var NAMED = out.map(function (it, i) { return { it: it, nm: names[i] || null }; });
+    var idxOf = function (nm) { for (var k = 0; k < NAMED.length; k++) if (NAMED[k].nm === nm) return k; return -1; };
+    for (var pass = 0; pass < 20; pass++) {
       var moved = false;
       for (var f in map) {
         if (!Object.prototype.hasOwnProperty.call(map, f)) continue;
@@ -246,21 +255,21 @@
         if (!e2 || !e2.next) continue;
         if (Number(e2.n) < min) continue;
         var to2 = String(e2.next);
-        var ia = out.findIndex(function (it) { return names[list.indexOf(it)] === f; });
-        var ib = out.findIndex(function (it) { return names[list.indexOf(it)] === to2; });
+        var ia = idxOf(f);
+        var ib = idxOf(to2);
         if (ia < 0 || ib < 0) continue;     // 片方がこの集合に無い＝使わない
         if (ia < ib) continue;              // もう正しい順
         // B を A の直後へ動かす（A は B より前、をかなえる）
-        var item = out.splice(ib, 1)[0];
-        var ia2 = out.findIndex(function (it) { return names[list.indexOf(it)] === f; });
-        out.splice(ia2 + 1, 0, item);
+        var movedItem = NAMED.splice(ib, 1)[0];
+        var ia2 = idxOf(f);
+        NAMED.splice(ia2 + 1, 0, movedItem);
         moved = true;
         var tag = f + " → " + to2;
         if (used.indexOf(tag) < 0) used.push(tag);
       }
       if (!moved) break;
     }
-    void nameAt;
+    out = NAMED.map(function (x) { return x.it; });
 
     /**
      * 人の揺らぎ（2026-11-13 竹内さん「人間の動きにするのが絶対やで」）:
@@ -280,8 +289,18 @@
         touching[String(map[f].next)] = true;
       });
       var cand = [];
+      /**
+       * ⚠ 2026-11-13 竹内さん「抜けている部分ないのか」で発見:
+       *   ここも `names[list.indexOf(out[w])]` で**元の位置の名前**を引いていた
+       *   （並べ替えた後の並びと名前がずれる → **学んだ組を壊す所を入れ替えてしまう**恐れ）。
+       *   → `out` の並びに追従する名前の一覧（`namesOf`）を作って引く。
+       */
+      var namesOf = out.map(function (it) {
+        var k0 = list.indexOf(it);
+        return k0 >= 0 ? names[k0] : null;
+      });
       for (var w = 0; w + 1 < out.length; w++) {
-        var na = names[list.indexOf(out[w])], nb = names[list.indexOf(out[w + 1])];
+        var na = namesOf[w], nb = namesOf[w + 1];
         if (na && nb && !touching[na] && !touching[nb]) cand.push(w);
       }
       if (cand.length) {
