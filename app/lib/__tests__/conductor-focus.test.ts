@@ -2,7 +2,7 @@
 import {
   conductorFocusMode, focusOfAix, focusOfReplyText, focusOfTakeuchiTurn, stageAt, openPromiseAt, sentAt, turnSituationTextV2,
   nearestFocus, sceneMajorityFocus, focusDigest, parseFocusRead, nearFocusLine, conductorFocusMeta, focusReadDigest, focusConflict,
-  FOCUS_INTAKE_RULES, FOCUS_INTAKE_FIELD, FOCUS_KINDS, FOCUS_ORDER, focusOrder, orderDigest, laterOverrode, relationKeep, relationKeepCandidate, keepShareOf, focusOnForScene, focusBrainLine, focusHumanOnlyMiss, type HistMsg,
+  FOCUS_INTAKE_RULES, FOCUS_INTAKE_FIELD, FOCUS_KINDS, FOCUS_ORDER, focusOrder, orderDigest, laterOverrode, relationKeep, relationKeepCandidate, keepShareOf, focusOnForScene, focusBrainLine, focusHumanOnlyMiss, focusSubOn, focusIntakeField, FOCUS_SUB_RULES, focusSubOfTakeuchiText, type HistMsg,
 } from "../conductor-focus";
 import { turnSendsForShape, isShapeAttachment } from "../conductor-turn-vectors";
 import { shapeOfSends } from "../two-message-plan";
@@ -126,6 +126,20 @@ it("段2: CONDUCTOR_FOCUS_TO_BRAIN=on の時だけブレインに重点の1行�
   ok(focusOnForScene("question", { CONDUCTOR_FOCUS_TO_BRAIN: "on", CONDUCTOR_FOCUS_ON_SCENES: "question, cost" })); ok(!focusOnForScene("ack", { CONDUCTOR_FOCUS_TO_BRAIN: "on", CONDUCTOR_FOCUS_ON_SCENES: "question" }));
   const l = focusBrainLine({ focus: "promise_keep", surface: "了承", background: "確認の結果待ち", why: "" }); ok(l.includes("promise_keep") && l.includes("背景: 確認の結果待ち") && l.includes("AIX の決まりが先"), l);
   eq(focusBrainLine(null), ""); eq(focusBrainLine({ focus: "x" as never, surface: "", background: "", why: "" }), "");
+});
+it("重点の下の種類（CONDUCTOR_FOCUS_SUB=on・既定 off）: 欄・読み・合わない種類は捨てる・竹内さんの文の札", () => {
+  ok(!focusSubOn({})); ok(focusSubOn({ CONDUCTOR_FOCUS_SUB: "on" }));
+  ok(!focusIntakeField({}).includes("focus_sub")); ok(focusIntakeField({ CONDUCTOR_FOCUS_SUB: "on" }).includes("focus_sub"));
+  for (const s of ["check", "search", "estimate", "fulfill_now", "fact", "screening"]) ok(FOCUS_SUB_RULES.includes(s), s);
+  const r = parseFocusRead({ focus_read: { focus: "promise_make", focus_sub: "search", surface: "a", background: "b", why: "c" } });
+  eq(r?.sub, "search"); eq((conductorFocusMeta(r) as { focus_sub?: string }).focus_sub, "search");
+  eq(parseFocusRead({ focus_read: { focus: "relation", focus_sub: "search", surface: "a", background: "b", why: "c" } })?.sub, null);
+  eq(parseFocusRead({ focus_read: { focus: "relation", surface: "a", background: "b", why: "c" } })?.sub, undefined);
+  eq(focusSubOfTakeuchiText("promise_make", "かしこまりました！！ 周辺全域からピックアップしてお送りさせて頂きます！！"), "search");
+  eq(focusSubOfTakeuchiText("promise_make", "お送り頂きました物件の募集状況確認させて頂きます！！"), "check");
+  eq(focusSubOfTakeuchiText("promise_make", "最大限割引させていただいたお見積書を作成しお送りさせて頂きます"), "estimate");
+  eq(focusSubOfTakeuchiText("answer", "お申込みでお部屋を抑えられるのは、お送りさせて頂いた1LDKの202号室となります！！"), "fact");
+  eq(focusSubOfTakeuchiText("ease", "審査面に関しましては保証人を付けていただければ審査通過する可能性十分に御座います"), "screening");
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;
