@@ -8,7 +8,9 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
 const t0 = Date.parse("2026-11-07T08:02:39.3Z");
 const min = (n: number) => t0 + n * 60_000;
 
-ok("既定 off", yardstickTwoFramesOn({}) === false && yardstickTwoFramesOn({ YARDSTICK_TWO_FRAMES: "on" }) === true);
+ok("既定 on（11/13）・off で止まる", yardstickTwoFramesOn({}) === true && yardstickTwoFramesOn({ YARDSTICK_TWO_FRAMES: "off" }) === false);
+// 11/13: 組の窓は既定 on。下の 11/07 の2枠のテストは組の窓 off の数え（comboMs を渡さない呼び方は process.env を読む）
+process.env.YARDSTICK_COMBO_WINDOW = "off";
 ok("2段の種類", twoStageKindOf("rule:two_stage_promise(pickup_unless_ack)+search_split") === "pickup_unless_ack" && twoStageKindOf("rule:answerable_direct(brought_estimate)") === null);
 
 { // 12189: ブレインは2段（約束の返信＋後で物件）・見張りの brain_action は property_send・竹内さんは約束の返信（約2時間後）
@@ -52,7 +54,9 @@ ok("2段の種類", twoStageKindOf("rule:two_stage_promise(pickup_unless_ack)+se
   const late = staffFrames(t0, [mv[0], { at: mv[0].at + 5 * 60_000, family: "条件ヒアリング" }], { comboMs: 120_000 });
   ok("2分を越えた AIX は組にしない（後の通）", late.now === "返信" && late.later === "条件ヒアリング");
   delete process.env.YARDSTICK_COMBO_WINDOW;
-  ok("既定 off", staffFrames(t0, mv).now === "返信");
+  ok("既定 on（11/13）", staffFrames(t0, mv).now === "条件ヒアリング");
+  process.env.YARDSTICK_COMBO_WINDOW = "off";
+  ok("off で止まる", staffFrames(t0, mv).now === "返信");
 }
 console.log(`prod-yardstick-two-frames: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
