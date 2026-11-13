@@ -87,6 +87,22 @@ export type PriorityRow = {
 };
 
 export const PRIORITY_ROWS: readonly PriorityRow[] = [
+  // 手がかりが重なる時（問い返しで問いも複数）は問い返しの行を先に取る（疑問に答えないと他の答えも信じてもらえない・11865）
+  {
+    type: "T2_question_fact", state: "こちらの送信への問い返し（掲載との食い違い）", match: (c) => !!c.askedAgain,
+    first: { need: "answer", what: "おとり物件という事か", why: "疑問に答えないまま約束を言うと、こちらへの不信が残る", why_tag: "doubt_first" },
+    order: { main: "ポータルの掲載の仕組み（答え）", subs: ["掲載の物件も送ってもらえれば確認する"], deferred: [{ what: "新着のピックアップの約束", why: "答えの後の別の通（竹内さんは約10分後に2通目）" }] },
+    checks: { steps: ["read_ask", "hypothesize", "our_last_send", "fact_answer", "now_vs_later"], depth: "normal", via: "back", why: "こちらの直前の送信（掲載終了の確認）を見て、疑問が掲載へかこちらへかを分ける" },
+    now_vs_later: { this_turn: "answer", answer_source: "company_fact" },
+    ask_parts: [
+      { part: "掲載の仕組み", source: "company_fact", certainty: "assertable", route: "reply" },
+      { part: "新着のピックアップ", source: "none", certainty: "assertable", route: "promise" },
+    ],
+    combo: "reply_reply",
+    avoid: { no_touch: [], repeat_scope: "ピックアップの約束は答えの後に1回" },
+    tags: ["疑問への答えが先", "約束は後の通"],
+    count: "点検役の 11865（ブレインの下書きは約束が先・答えが後）",
+  },
   {
     type: "T2_question_fact", state: "問いが複数（この物件で良いかの確かめ＋空き・色・入居日）", match: (c) => !!c.multiAsks,
     first: { need: "answer", what: "この物件で良いかに当たる問い（空き・色など物件の中身）", why: "お客様は物件を決める手前。決め手の問いに先に答えないと、入居日の答えが空振りになる", why_tag: "decider_first" },
@@ -102,21 +118,6 @@ export const PRIORITY_ROWS: readonly PriorityRow[] = [
     avoid: { no_touch: ["聞かれていない募集状況以外の条件"], repeat_scope: "事情（異動）は受けを1回だけ" },
     tags: ["決め手の問いが先", "答えの出所で分ける", "合わない時だけ代わり"],
     count: "点検役の 12548（1通に問い4つ・主は『この物件で良いか』）・竹内さんは返信→3分後に白基調の物件を AIX",
-  },
-  {
-    type: "T2_question_fact", state: "こちらの送信への問い返し（掲載との食い違い）", match: (c) => !!c.askedAgain,
-    first: { need: "answer", what: "おとり物件という事か", why: "疑問に答えないまま約束を言うと、こちらへの不信が残る", why_tag: "doubt_first" },
-    order: { main: "ポータルの掲載の仕組み（答え）", subs: ["掲載の物件も送ってもらえれば確認する"], deferred: [{ what: "新着のピックアップの約束", why: "答えの後の別の通（竹内さんは約10分後に2通目）" }] },
-    checks: { steps: ["read_ask", "hypothesize", "our_last_send", "fact_answer", "now_vs_later"], depth: "normal", via: "back", why: "こちらの直前の送信（掲載終了の確認）を見て、疑問が掲載へかこちらへかを分ける" },
-    now_vs_later: { this_turn: "answer", answer_source: "company_fact" },
-    ask_parts: [
-      { part: "掲載の仕組み", source: "company_fact", certainty: "assertable", route: "reply" },
-      { part: "新着のピックアップ", source: "none", certainty: "assertable", route: "promise" },
-    ],
-    combo: "reply_reply",
-    avoid: { no_touch: [], repeat_scope: "ピックアップの約束は答えの後に1回" },
-    tags: ["疑問への答えが先", "約束は後の通"],
-    count: "点検役の 11865（ブレインの下書きは約束が先・答えが後）",
   },
   {
     type: "T12_hooked_comparing_taken", state: "抑えられる部屋の確かめ（申込の手前）",
