@@ -100,3 +100,11 @@ export function blueprintMarkLog(conversationId: string | null | undefined, mark
   return { tag: "fc:blueprint-unmatched", conversationId: conversationId ?? null, rows, n: marks?.length ?? null,
     kinds: (marks ?? []).map((m) => m.kind), heads: (marks ?? []).slice(0, 4).map((m) => m.sentence.slice(0, 30)) };
 }
+
+/** お客様の条件の文（DB の登録）から、繰り返しを数える語を取る（エリア・家賃・間取り・広さ・築年・徒歩） */
+export function conditionTokensForMark(conditions: string | null | undefined): string[] {
+  const t = String(conditions ?? "").normalize("NFKC");
+  const out = new Set<string>();
+  for (const m of t.matchAll(/[0-9.]+万(?:円)?|[0-9]+[SLDK]{1,4}|[0-9]+(?:㎡|m2|平米)|築[0-9]+年|徒歩[0-9]+分|[一-龯ァ-ヶー]{2,8}(?:区|市|駅|町)/g)) out.add(m[0]);
+  return [...out].slice(0, 20);
+}

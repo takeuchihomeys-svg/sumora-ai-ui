@@ -1,7 +1,9 @@
 // 最終チェックの4つ目の段: 設計図の行に当たらない文に印（2026-11-13 作業員9・統括役 S9・FC_BLUEPRINT_MARK・実物の文）
 // 実行: npx tsx app/lib/__tests__/final-check-blueprint-match.test.ts
 import { summarizeMaterialLog } from "../line-watch-materials";
-import { markUnmatchedSentences, fcBlueprintMarkOn, blueprintMarkLog, type BlueprintRowLike } from "../final-check-blueprint-match";
+import { markUnmatchedSentences, fcBlueprintMarkOn, blueprintMarkLog, conditionTokensForMark, type BlueprintRowLike } from "../final-check-blueprint-match";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, JSON.stringify(extra)); } };
 t("既定 off", !fcBlueprintMarkOn({}));
@@ -50,6 +52,12 @@ const m4 = markUnmatchedSentences(dObj, rowsObj, { propertyNames: ["アーバネ
 t("対象の取り違え: 行に無い物件名の文に印（object_mismatch）", m4.length === 1 && m4[0].kind === "object_mismatch", m4);
 const log = blueprintMarkLog("c1", m1, rows12164.length);
 t("ログの形（見張りの materials に入る1行）", log.tag === "fc:blueprint-unmatched" && log.n === 1 && Array.isArray(log.kinds));
+// 条件の文から数える語（12196 の登録の形を伏せた物）
+const toks = conditionTokensForMark("エリア: 大阪市西区・南堀江近く／家賃: 8万〜12万円（管理費込み）／間取り: 1LDK／広さ: 36㎡以上／築15年以内／駅徒歩15分以内");
+t("条件の語を取る（家賃・間取り・広さ・築年・徒歩・区）", ["12万円", "1LDK", "36m2", "築15年", "徒歩15分"].every((x) => toks.includes(x)) && toks.some((x) => /西区/.test(x)), toks);
+// 配線: route が既定 off のスイッチの中で、行がある時だけ印のログを見張りに出す
+const route = readFileSync(join(__dirname, "..", "..", "api", "generate-reply", "route.ts"), "utf8");
+t("配線: fcBlueprintMarkOn() と rowsV2 がある時だけ・logWatchMaterial で出す", /if \(fcBlueprintMarkOn\(\) && composeSentencePlan\?\.rowsV2\?\.length\)/.test(route) && /logWatchMaterial\(JSON\.stringify\(blueprintMarkLog\(/.test(route));
 const sm = summarizeMaterialLog(log);
 t("見張りの materials.reply.blueprint に入る", sm?.source === "reply" && sm?.key === "blueprint" && (sm?.summary as { n?: number }).n === 1, sm);
 console.log(`\n${pass} passed, ${fail} failed`);
