@@ -85,6 +85,7 @@ import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples
 import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
 import { sorryDeclineReadOn, readSorryDecline, pickSorryDeclineExamples, sorryDeclineBrainText } from "@/app/lib/sorry-decline-read";
 import { concernSubtopicOn, concernDetail } from "@/app/lib/concern-subtopic";
+import { materialFetchOn } from "@/app/lib/material-fetch";
 import { applyPromptRules1112, applyPromptRules1113, promptRules1113Enabled, applyReplyModeP0 } from "@/app/lib/brain-prompt-rules-1112";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
@@ -420,6 +421,7 @@ export type SuggestedAixMeta = {
   /** 2026-11-03 前回の提案の書き終えた後のメモ（digest.rv）と今の段階（digest.sg＝次の番の「お客様は進んだか」に使う） */
   last_turn_review?: Record<string, unknown>;
   customer_stage_now?: string;
+  material_fetch?: string[];           // 2026-11-13 作業員1（S4）: 取りに行った材料（名前|取り先|got/none/staff・BRAIN_MATERIAL_FETCH=on）
   material_books?: string[];           // 2026-11-13 作業員1: 帳面の6つ×印（帳面|fetch/staff|鍵・MATERIAL_GAP_BOOKS=shadow）
   material_gaps?: string[];            // 2026-11-12 作業員1: 材料の抜けの台帳（何が|何のために|どこから|なぜ a〜e|何が起きる・MATERIAL_GAP_LEDGER=shadow の時だけ・記録だけ）
   material_missing?: string[];         // 2026-10-29 ブレインの自己申告「判断に要ったのに材料に無かった物」（記録だけ・digest.mm）
@@ -7573,6 +7575,23 @@ async function analyzeAndSaveBrainMetaInner(
   let meta = await analyzeConversation(conversationId, isUrgent, brainStatus, (conv.property_customer_id as string | null) ?? null, "brain", analyzeOptsMain);
   // 2026-11-03 読み直しの継ぎ目（brain-recheck.ts・BRAIN_RECHECK=off 既定／shadow＝記録だけ／on）: 下の役（AIX の統括・相談・確かめ）の食い違いを
   //   理由つきで opts.recheck に渡し、統括（ブレイン）が決め直す。普通の番は1回・難しい番だけ最大3回・同じ理由が続いたら止める
+  // 2026-11-13 作業員1（S4・BRAIN_MATERIAL_FETCH=on の時だけ）: ブレインが「無い」と書いた材料を決まった取り先から取りに行き、
+  //   取れた物は読み直しの口（from:"fetch"）に1回だけ渡す。取れなかった物はスタッフだけの印（meta.material_fetch に記録）
+  if (meta && materialFetchOn() && !(meta as unknown as { aix_recheck?: unknown }).aix_recheck) {
+    try {
+      const mm = ((meta as unknown as { material_missing?: unknown }).material_missing ?? []) as unknown;
+      const labels = Array.isArray(mm) ? (mm as unknown[]).filter((x): x is string => typeof x === "string") : [];
+      if (labels.length) {
+        const { fetchMissingMaterial } = await import("@/app/lib/material-fetch-server");
+        const { fetchedMaterialText, materialFetchDigest } = await import("@/app/lib/material-fetch");
+        const res = await fetchMissingMaterial(supabase, conversationId, labels);
+        const mat = fetchedMaterialText(res);
+        (meta as unknown as Record<string, unknown>).material_fetch = materialFetchDigest(res);
+        if (mat) (meta as unknown as Record<string, unknown>).aix_recheck = { from: "fetch", kind: "reread", why: "ブレインが無いと書いた材料を取りに行って取れた", firstAix: (meta as unknown as { action?: string | null }).action ?? null, material: mat };
+        console.log(JSON.stringify({ tag: "brain:material-fetch", conversationId, n: labels.length, got: res.filter((r) => r.facts.length).length, staff: res.filter((r) => !r.facts.length).length }));
+      }
+    } catch (e) { console.warn("[brain-core] material-fetch skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   const rcMode = recheckMode();
   if (rcMode !== "off" && meta) {
     const limit = recheckLimit(meta as unknown as Record<string, unknown>);
