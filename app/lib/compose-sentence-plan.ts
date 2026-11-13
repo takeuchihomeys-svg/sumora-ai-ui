@@ -18,6 +18,7 @@
 // テスト: npx tsx app/lib/__tests__/compose-sentence-plan.test.ts
 import type { SentenceRole } from "./takeuchi-anatomy-roles";
 import { ROLE_LABEL } from "./takeuchi-anatomy-roles";
+import { composeDecidedOn, latentKindLine } from "./compose-decided";
 import { ABOUT_VALUES, ABOUT_JA, type RequestAbout } from "./request-ledger";
 import { takeuchiHowFor } from "./compose-how-table";
 import { POINT_METHODS, TRUST_METHODS, type PointMethod, type TrustMethod, type PushStrength } from "./takeuchi-seven-read";
@@ -232,6 +233,10 @@ export type ComposeContext = {
   later: string[]; topics: string[];
   /** 2026-11-12 作業員4（OUR_SIDE_TO_COMPOSE）: こちら側の状態（開いている約束・直前の AIX・送った物件・退去予定・確かめ済みの事実）の行。道は決まった後の文の材料だけ */
   ourSide?: string[];
+  /** 2026-11-13 作業員22（COMPOSE_DECIDED・既定 off）: 近い番の意見（竹内さんの似た番）・潜在の下の種類・潜在の5段（作業員16 の latent_five の reason・expect） */
+  near?: string | null;
+  latentKind?: string | null;
+  latentFive?: string | null;
   /** 2026-11-12 作業員22（BRAIN_JUDGE_BASIS_NEXT）: ブレインの次の行き先（道の後）と、答えられるのに約束にしかけた問い */
   judgeNext?: string | null;
   held?: string | null;
@@ -267,6 +272,11 @@ export function readComposeContext(meta: unknown, extra: { nextIntent?: string |
     ourSide: typeof m.our_side_note === "string" ? m.our_side_note.split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 8) : [],
     dirLead: (() => { const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? LEAD_TO_JA[d] : null; })(),
     mindset: (() => { const cm = obj(m.customer_mindset); if (!cm || typeof cm.state !== "string") return null; const ax = obj(cm.anxiety); return join([cm.state, ax ? join([str(ax.target, 20), str(ax.direction, 6)], "・") : null, str(cm.hesitation, 20)], "／"); })(),
+    ...(composeDecidedOn() ? {
+      near: str(m.near_opinion, 120),
+      latentKind: latentKindLine(latent4?.feeling ? latentKindOf(latent4.feeling) : latentKindOf(str(obj(m.three_layer)?.worry, 60) ?? str(obj(obj(m.customer_mindset)?.anxiety)?.target, 20) ?? "")),
+      latentFive: (() => { const l = obj(m.latent_five); if (!l) return null; return join([str(obj(l.concern)?.text, 40) ? `気がかり ${str(obj(l.concern)?.text, 40)}` : null, str(obj(l.reason)?.text, 40) ? `なぜ ${str(obj(l.reason)?.text, 40)}` : null, str(obj(l.expect)?.text, 40) ? `この依頼での想定 ${str(obj(l.expect)?.text, 40)}` : null, str(obj(l.feeling)?.kind, 6) ? `気持ち ${str(obj(l.feeling)?.kind, 6)}${str(obj(l.feeling)?.strength, 6) ? `・${str(obj(l.feeling)?.strength, 6)}` : ""}` : null], "／"); })(),
+    } : {}),
     judgeNext: (() => { const j = obj(m.judge_next); const d = typeof j?.dest === "string" ? (JUDGE_DEST_JA[j.dest] ?? null) : null; return d; })(),
     held: (() => { const j = obj(m.judge_next); return j?.held === true ? (str(j.quote, 30) ?? "（問いの言葉なし）") : null; })(),
     stance: join([str(m.engagement_stance, 6), str(m.purchase_signal_level, 6) ? `買う合図 ${str(m.purchase_signal_level, 6)}` : null], "・"),
@@ -287,6 +297,10 @@ export function composeContextLines(c: ComposeContext): string[] {
   if (c.appealTiming) L.push(`- 訴求のタイミング（ブレイン）: ${c.appealTiming}`);
   if (c.dirLead) L.push(`- 方向の文の誘導先（ブレイン）: ${c.dirLead}`);
   if (c.stance) L.push(`- 押す・待つ（ブレイン）: ${c.stance}`);
+  // 2026-11-13 作業員22（COMPOSE_DECIDED）: 潜在の下の種類・5段・近い番の意見（値がある時だけ）
+  if (c.latentKind) L.push(`- 潜在の下の種類（ブレインの読み）: ${c.latentKind}`);
+  if (c.latentFive) L.push(`- 潜在の5段（作業員16）: ${c.latentFive}`);
+  if (c.near) L.push(`- 近い番の意見（竹内さんの似た番）: ${c.near}`);
   if (c.judgeNext) L.push(`- 次の行き先（ブレイン・道の後）: ${c.judgeNext}`);
   if (c.held) L.push(`- 答えられるのに確かめる約束にしかけた問い（材料で答える）: ${c.held}`);
   if (c.lead) L.push(`- 直前のこちらの誘導（${c.lead.kind}）への答え: ${c.lead.answer}${c.lead.answer === "応じた" ? "＝同じ誘導を繰り返さず一段進める" : ""}`);
@@ -463,7 +477,7 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { sce
   if (lc && (lc.kind || lc.what)) {
     const factType = !lc.fact && lc.kind ? LATENT_FACT_TYPES[lc.kind] ?? null : null;
     const how = join([lc.how ?? null, ...s.trustHow.filter((t) => worryHow.includes(t)).map((t) => TRUST_HOW_JA[t]), factType ? `先回りの事実の型（竹内さん）: ${factType}` : null]);
-    rows.push({ rank: "sub", role: "worry", part: join([lc.what ?? lc.kind, lc.fact ? `使う事実: ${lc.fact}` : null], "／"), how, next: null, from: s.src.latentCover ?? "?" });
+    rows.push({ rank: "sub", role: "worry", part: join([composeDecidedOn() && lc.kind && lc.what ? `[${latentKindLine(lc.kind)}] ${lc.what}` : lc.what ?? lc.kind, lc.fact ? `使う事実: ${lc.fact}` : null], "／"), how, next: null, from: s.src.latentCover ?? "?" });
   } else empty.push("潜在意識のカバー");
   // 従②: 同じ一通の別の依頼（主と同じ役目でも別の部分）
   for (const it of u.subs) {
@@ -500,7 +514,12 @@ export function buildSentencePlan(u: TurnUnderstanding, s: SevenFields, o: { sce
 
 /** 書き手への注記（1文ずつ）。主の行が無ければ空文字（今まで通り）。言い回しの例文は入れない（創作の文を誘わない） */
 export function sentencePlanNote(p: SentencePlan): string {
-  if (!p.rows.some((r) => r.rank === "main")) return "";
+  if (!p.rows.some((r) => r.rank === "main")) {
+    // 2026-11-13 作業員22（COMPOSE_DECIDED・既定 off）: 主の行が無い番（本番 10/30）も、重点・潜在などの受け取ったブレインの読みは書き手に出す（1文ずつの行は作らない）
+    if (!composeDecidedOn()) return "";
+    const cl0 = p.ctx ? composeContextLines(p.ctx) : [];
+    return cl0.length ? ["【✍️ 受け取ったブレインの読み（文の統括・この番は1文ずつの設計図が無い）】", ...cl0].join("\n") : "";
+  }
   const L = ["【✍️ 文の設計図（1文ずつ・文の統括）】主を先に、従はその後に。1行＝1〜2文。受け・挨拶・締めは今まで通り。"];
   // 2026-11-12 竹内さん「細分化された判断が文の構成に届くように」: 文の統括が受け取ったブレインの読みを設計図の上に（材料の無い行は出さない）
   const cl = p.ctx ? composeContextLines(p.ctx) : [];
@@ -669,6 +688,8 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
   { key: "engagement_stance・purchase_signal_level", label: "押す・待つ・買う合図", carried: "plan", values: (m) => [...sv(m.engagement_stance, 6), ...sv(m.purchase_signal_level, 6)] },
   { key: "reply_direction(誘導先)", label: "方向の文の誘導先", carried: "plan", values: (m) => { const d = leadFromDirection(m.reply_direction); return d && d !== "none" ? [LEAD_TO_JA[d]] : []; } },
   { key: "compose.intent.next", label: "次にしてほしい事（構成の意図）", carried: "plan", values: () => [] },
+  // 2026-11-13 作業員22（COMPOSE_DECIDED=on の時だけ注記に出る＝off の時は値を出さない）
+  { key: "near_opinion", label: "近い番の意見", carried: "plan", values: (m) => (composeDecidedOn() ? sv(m.near_opinion, 120) : []) },
   // 2026-11-12 作業員22（BRAIN_JUDGE_BASIS_NEXT・既定 off）: 判断の根拠のメモの次の行き先・答えられるのに約束にしかけた問い
   { key: "judge_next", label: "ブレインの次の行き先・答えられるのに約束にしかけた問い", carried: "plan", values: (m) => { const j = obj(m.judge_next); if (!j) return []; const d = typeof j.dest === "string" ? JUDGE_DEST_JA[j.dest] : null; return [...(d ? [d] : []), ...(j.held === true ? sv(j.quote, 30) : [])]; } },
   { key: "turn_aims", label: "この番の目的・次の2〜3番の狙い・入れる仕込み", carried: "other", by: "受け渡し（conductor-handoff の handoffNote・TURN_AIMS_AFTER）", values: () => [] },
@@ -690,12 +711,18 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   judge_basis: "other",
   // 2026-11-12 作業員22: judge_basis から写した次の行き先・答えられるのに約束にしかけた印（BRAIN_JUDGE_BASIS_NEXT=on の時だけ値がある）は設計図が運ぶ
   judge_next: "plan",
+  // 2026-11-13 作業員22: 近い番の意見（CONDUCTOR_NEAR_OPINION 既定 on）を設計図の読みの行へ（COMPOSE_DECIDED=on の時だけ出る）
+  near_opinion: "plan",
   // 2026-11-12 作業員22: 作業員16 の今と後・読みの候補・受け取られ方（どれも既定 off・道の前の事実の欄＝判断のブレインが読む）と、
   //   判断の順番の型の記録（CHECK_ORDER_TABLE・配分が読む）は記録の欄＝文の統括には渡さない（作業員10 の文の型の表が型の id を読む時に plan にする）
   now_vs_later: "other", read_candidates: "other", our_send_uptake: "other", aix_now: "other",
   check_order_scene: "other", check_order_type: "other", check_order: "other",
   // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF・記録だけ）とその入力
   conductor_brief_inputs: "other", conductor_brief: "other",
+  // 2026-11-13 作業員22: 届いたかの確かめ（DELIVERY_CHECK・記録だけ）
+  delivery_check: "none",
+  // 2026-11-13 作業員22: mm が手元にあった印（MATERIAL_ON_HAND・記録だけ）
+  material_on_hand: "none",
   // 別の注記・役が運ぶ（本質の帯・方向・姿勢・締め・2通・AIX）
   key_topics: "other", avoid_topics: "other", customer_questions: "other", priorities: "other", reply_mode: "other", two_stage: "other", reply_opener: "other",
   recommended_tone: "other", urgency_appropriate: "other", closing_strategy: "other", payment_timing: "other", far_move_in: "other", property_state: "other",
@@ -707,7 +734,7 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   action: "none", input_key: "none", note: "none", source: "none", enforcement_level: "none", check_pattern: "none", next_steps: "none", two_choice_aix: "none",
   two_choice_check_pattern: "none", aix_consult: "none", aix_desk: "none", aix_recheck: "none", material_read_misses: "none", material_gaps: "none", material_books: "none", check_order_guide: "none", last_turn_review: "none", alt_actions: "none",
   parallel_search: "none", property_search_params: "none", aix_llm: "none", deep_check: "none", fast_slow: "none", need: "none", plan_ahead_at: "none",
-  material_conflicts: "none", flow_signals: "none", decisions_1103: "none", near_opinion: "none", conductor_roles: "none", conductor_meta: "none", conductor_intake: "none",
+  material_conflicts: "none", flow_signals: "none", decisions_1103: "none", conductor_roles: "none", conductor_meta: "none", conductor_intake: "none",
   brain_depth: "none", deep_recheck_digest: "none", conductor_todos: "none", priority_step: "none", llm_raw: "none", checkpoint_stage_llm: "none", analyzed_msg_ts: "none",
   last_aix_history: "none", aix_suppressed_by_accept_rate: "none", signal_aix_ran: "none", signal_aix_result: "none", decision_source: "none", decision_source_no_aix: "none",
   demoted_overrides: "none", first_contact_pickup: "none", dropped_direction: "none", scene_evidence: "none", reason: "none", human_type_label: "none",

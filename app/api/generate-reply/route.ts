@@ -5633,6 +5633,21 @@ async function handleGenerateReply(req: NextRequest) {
       if (composeConductor?.note) lines.push(composeConductor.note.trim());
       if (composeSentencePlan?.note) lines.push(composeSentencePlan.note.trim());
       if (composeRun?.note) lines.push(composeRun.note.trim());
+      // 2026-11-13 作業員22（統括役・測りの土台）: 設計図・書き手の注記の指紋と先頭・受け渡しの漏れ・届いた数を見張りの行（line_watch_turns.materials.reply.compose_plan）に（WATCH_COMPOSE_PLAN=on・既定 off）
+      void (async () => {
+        try {
+          const w = await import("@/app/lib/compose-plan-watch");
+          if (!w.watchComposePlanOn() || !conversationId || isFollowUp || isTemplateOptimize) return;
+          const meta0 = (brainMeta ?? {}) as unknown as Record<string, unknown>;
+          const [{ handoffLeaks }, dc, ds] = await Promise.all([import("@/app/lib/compose-sentence-plan"), import("@/app/lib/delivery-check"), import("@/app/lib/decided-subfields")]);
+          const d = dc.deliveryCheckOf(meta0);
+          const sv = ds.subValuesOf(meta0);
+          noteWatchMaterials(conversationId, "reply", "compose_plan", w.composePlanWatchOf({
+            digest: composeSentencePlan?.digest ?? null, rows: composeSentencePlan?.plan.rows ?? null, planNote: composeSentencePlan?.note ?? null, contractNote: tcNote || null,
+            leaks: composeSentencePlan?.note ? handoffLeaks(meta0, composeSentencePlan.note) : [], delivery: { rate: d.rate, subRate: d.subRate }, subs: Object.keys(sv).filter((k) => sv[k]),
+          }) as unknown as Record<string, unknown>);
+        } catch (e) { console.warn(JSON.stringify({ tag: "watch:compose-plan-failed", error: e instanceof Error ? e.message : String(e) })); }
+      })();
       const tcBrain = turnContract?.source === "brain";
       // 2026-10-09 調査の担当: effectiveReplyDirection はブレインの方向が14番目（早い者勝ちの型が先）。本質がある時はブレインの方向（中身）を型より上に置き、どちらが使われたかを記録する
       // 2026-11-06 作業員9（弱い所 322・REPLY_DIRECTION_KEEP=on・既定 off）: 条件の番は方向の文に竹内さんの形の継続の約束を1文（59%・app/lib/reply-direction-keep.ts）

@@ -25,6 +25,7 @@ import { renderPrioritiesNote, type PriorityItem } from "./brain-priority";
 import { renderMessagePlanNote, type MessagePlan } from "./message-plan";
 import { guarantorWordingOn, guarantorWordingLine } from "./decisions-1103";
 import { truncateAtBoundary } from "./brain-strategy-note";
+import { composeDecidedOn, askPartsOf, ASK_SOURCE_JA, CERTAINTY_JA } from "./compose-decided";
 import { closeOnlyShape } from "./ack-form-takeuchi";
 import { brainDeepCheckGapEnabled, BRAIN_DEEP_CHECK_ASK_FIELD, BRAIN_DEEP_CHECK_RULE } from "./brain-deep-check";
 
@@ -551,7 +552,9 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   // 2026-10-23 優先順位の段: ブレインが原則と状況から決めた順（書く順・扱い）。無い番は今のまま
   const prNote = (c.messagePlan && c.priorities?.length ? renderMessagePlanNote(c.priorities, c.messagePlan) : "") || renderPrioritiesNote(c.priorities);
   if (prNote) L.push(prNote);
-  c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」${axisLabel(a.axis)}→ ${ROUTE_JA[a.route]}${a.answer && !dropAns(a.answer) ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
+  // 2026-11-13 作業員22（COMPOSE_DECIDED・既定 off）: 答えに使う事実の出所（basis）を依頼ごとの行の後ろに（会社の事実／資料の値／会話で分かっている事／スタッフしか知らない）
+  const srcOf = (a: ContractAsk) => { if (!composeDecidedOn()) return ""; const p = askPartsOf([a])[0]; if (!p) return ""; return `［出所: ${ASK_SOURCE_JA[p.source]}・${CERTAINTY_JA[p.certainty]}${p.now && p.check ? `／今言える: ${p.now.slice(0, 40)}／確認が要る: ${p.check.slice(0, 40)}` : ""}］`; };
+  c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」${axisLabel(a.axis)}→ ${ROUTE_JA[a.route]}${a.answer && !dropAns(a.answer) ? `：${a.answer}` : ""}${srcOf(a)}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
   if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance && !c.ackForm ? `\n${allowance}` : ""}`);
   if (c.settled.length) L.push(`- 決まった事（蒸し返さない・日付はこのまま）: ${c.settled.join(" ／ ")}`);
   if (c.mustNot.length) L.push(`- 言わない: ${c.mustNot.join(" ／ ")}`);
