@@ -24,13 +24,16 @@ const probs = loadProbs(ROOT);
 const withSw = arg("with").split(",").map((x) => x.trim()).filter(Boolean);
 
 type Row = { el: El; has: number; hit: number; roots: Record<Root, number> };
-type RowV2 = { role: V2Role; gold: number; hit: number; extra: number };
+type RowV2 = { role: V2Role; gold: number; hit: number; extra: number; subRows: number; subHit: number };
+/** 下の役目の当たり（押さえ・つなぎ・締め）: 立てた行の下の役目を竹内さんの文の13役目に戻し、竹内さんの文にその役目があるか */
+const SUB_TO_ROLE13 = (r: { role: V2Role; sub: string }): string | null =>
+  r.role === "press" ? (r.sub === "split_known_check" ? "promise" : "answer") : r.role === "bridge" ? r.sub : r.role === "close" ? (r.sub === "keep_promise" ? "keep" : "close") : null;
 function measure(gold: TakeuchiGold[], brainOf: ReturnType<typeof loadBrains>, on: string[]): { n: number; rows: Row[]; v2: RowV2[]; v2PerTurn: number; goldPerTurn: number } {
   const saved = new Map(on.map((k) => [k, process.env[k]]));
   for (const k of on) process.env[k] = "on";
   try {
     const rows = new Map<El, Row>(ELEMENTS.map((el) => [el, { el, has: 0, hit: 0, roots: { A: 0, B: 0, C: 0, D: 0 } }]));
-    const v2 = new Map<V2Role, RowV2>(V2_ROLES.map((r) => [r, { role: r, gold: 0, hit: 0, extra: 0 }]));
+    const v2 = new Map<V2Role, RowV2>(V2_ROLES.map((r) => [r, { role: r, gold: 0, hit: 0, extra: 0, subRows: 0, subHit: 0 }]));
     let n = 0, v2Rows = 0, goldRows = 0;
     for (const g of gold) {
       const b = brainOf.get(g.id); const p = probs.get(g.id);
@@ -46,6 +49,8 @@ function measure(gold: TakeuchiGold[], brainOf: ReturnType<typeof loadBrains>, o
       const gs = new Set(g.roles.map((r) => V2_OF[r]).filter(Boolean) as V2Role[]), s2 = new Set(rv2.map((r) => r.role));
       v2Rows += rv2.length; goldRows += g.roles.length;
       for (const r of V2_ROLES) { const x = v2.get(r)!; if (gs.has(r)) { x.gold++; if (s2.has(r)) x.hit++; } else if (s2.has(r)) x.extra++; }
+      const g13 = new Set<string>(g.roles);
+      for (const r of rv2) { const k = SUB_TO_ROLE13(r); if (!k) continue; const x = v2.get(r.role)!; x.subRows++; if (g13.has(k)) x.subHit++; }
     }
     return { n, rows: [...rows.values()], v2: [...v2.values()], v2PerTurn: n ? v2Rows / n : 0, goldPerTurn: n ? goldRows / n : 0 };
   } finally { for (const [k, v] of saved) { if (v == null) delete process.env[k]; else process.env[k] = v; } }
@@ -68,9 +73,10 @@ for (const gd of golds) {
   }
   const lv = rs[rs.length - 1];
   console.log(`設計図の行 v2（1番あたり ${lv.v2PerTurn.toFixed(1)} 行・竹内さんの文の役目 ${lv.goldPerTurn.toFixed(1)}）: ${lv.v2.map((x) => `${x.role} ${x.hit}/${x.gold}（余分 ${x.extra}）`).join("・")}`);
+  console.log(`  下の役目の当たり（立てた行の下の役目が竹内さんの文にある）: ${lv.v2.filter((x) => x.subRows).map((x) => `${x.role} ${x.subHit}/${x.subRows}`).join("・")}`);
 }
 if (!flag("no-write")) {
-  const line = { at: new Date().toISOString(), commit, golds: all.map((a) => ({ gold: a.gold, file: a.file, runs: a.runs.map((r) => ({ label: r.label, on: r.on, n: r.n, elements: Object.fromEntries(r.rows.map((x) => [x.el, { hit: x.hit, has: x.has, roots: x.roots }])), rowsV2: { perTurn: r.v2PerTurn, goldPerTurn: r.goldPerTurn, roles: Object.fromEntries(r.v2.map((x) => [x.role, { hit: x.hit, gold: x.gold, extra: x.extra }])) } })) })) };
+  const line = { at: new Date().toISOString(), commit, golds: all.map((a) => ({ gold: a.gold, file: a.file, runs: a.runs.map((r) => ({ label: r.label, on: r.on, n: r.n, elements: Object.fromEntries(r.rows.map((x) => [x.el, { hit: x.hit, has: x.has, roots: x.roots }])), rowsV2: { perTurn: r.v2PerTurn, goldPerTurn: r.goldPerTurn, roles: Object.fromEntries(r.v2.map((x) => [x.role, { hit: x.hit, gold: x.gold, extra: x.extra, subHit: x.subHit, subRows: x.subRows }])) } })) })) };
   appendFileSync(resolve(ROOT, "../../exam-cache/compose-element-daily.jsonl"), JSON.stringify(line) + "\n");
   console.log("\n台帳に足した: exam-cache/compose-element-daily.jsonl");
 }

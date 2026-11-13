@@ -84,8 +84,8 @@ export function subShareFor(scene: string | null, mainRole: SentenceRole | null,
   const t = a && a.n >= 3 ? a : PHRASE_SUB_TABLE[`*|${mainRole}`];
   return t ? t.shares.find(([k]) => k === key)?.[1] ?? 0 : null;
 }
-/** 下の役目で立てる線（11/13 細分化・竹内さんが入れる割合）: つなぎ 0.25・従の押さえ 0.3・継続の約束 0.3・決まりの締め 0.5 */
-export const SUB_STAND = { bridge: 0.15, press_sub: 0.3, keep_promise: 0.3, fixed: 0.5 } as const;
+/** 下の役目で立てる線（11/13 細分化・竹内さんが入れる割合・広い正解53番で決めた）: つなぎ 0.15（0.1 は余分 7・0.25 は当たり 12）・従の押さえ 0.1（0.3 は当たり 1 減で余分同じ）・継続の約束 0.3・決まりの締め 0.5 */
+export const SUB_STAND = { bridge: 0.15, press_sub: 0.1, keep_promise: 0.3, fixed: 0.5 } as const;
 /** 下の役目の割合で立てる（COMPOSE_PLAN_ROWS_V2 の中・COMPOSE_ROWS_V2_SUB=off で 11/13 の前の立て方に戻す） */
 export function rowsV2SubOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.COMPOSE_ROWS_V2_SUB ?? "").trim().toLowerCase() !== "off";
@@ -139,7 +139,7 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
   for (const r of i.plan.rows) { const v2 = V2_OF[r.role]; if (!v2 || v2 === "head") continue; const a = v1ByV2.get(v2) ?? []; a.push(r); v1ByV2.set(v2, a); }
   for (const r of v1ByV2.get("press") ?? []) {
     const isPromise = r.role === "promise";
-    // 従の押さえ（主でない答え・約束）は、竹内さんがこの場面×主の役目でその下の役目を入れる割合 0.3 以上の時だけ
+    // 従の押さえ（主でない答え・約束）は、竹内さんがこの場面×主の役目でその下の役目を入れる割合 SUB_STAND.press_sub 以上の時だけ
     if (subOn && r.rank !== "main" && !(checkEstimate && isPromise)) { const sh = subShareFor(i.scene, mainRole, `press.${isPromise ? "promise" : "answer"}`); if (sh != null && sh < SUB_STAND.press_sub) { dropped.push({ role: "press", why: `従の${isPromise ? "約束" : "答え"}は竹内さんの割合 ${sh}（${SUB_STAND.press_sub} 未満）` }); continue; } }
     const f0 = isPromise ? promiseFacts : replyFacts;
     const sub: V2Sub = isPromise ? "split_known_check" : f0.some((f) => /\d/.test(f.text)) ? "numbers" : prop ? "name_property" : "conclusion";
