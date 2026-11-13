@@ -19,6 +19,7 @@ import { endingOf, endingsFor, trustFor, TRUST_JA, trustSubsOfText } from "./com
 import { headWordOf, HEAD_WORD_JA } from "./compose-head";
 import { strengthFromSeven } from "./next-move-types";
 import { focusSubOfTakeuchiText } from "./conductor-focus";
+import { composeBriefRolesOn, applyNextConcreteToRows } from "./compose-brief-roles";
 import { PRIORITY_ROWS, PRIORITY_WHY_TO_V2, type PriorityRow, type PriorityWhy } from "./priority-table";
 import type { ComposeFact } from "./compose-asks-facts";
 import type { ClosingDecision, AnswerSource } from "./compose-value-slots";
@@ -285,6 +286,8 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
   // 足しすぎの印（探す条件の番で前に送った条件を全部繰り返さない）
   if (i.scene === "conditions" && lastStaff && /ピックアップ/.test(lastStaff.text)) for (const r of rows) if (r.role === "press" || (r.role === "close" && r.sub === "keep_promise")) r.stand.push("no_full_repeat（変わった条件だけ）");
   for (const r of rows) if (r.source === "material" && r.role !== "press" && !r.uses.length) r.stand.push("no_unasked_material");
+  // 統括の指示書の次の一手の具体（next_concrete）をつなぎ・締めの行の材料に（COMPOSE_BRIEF_ROLES・既定 off）
+  if (composeBriefRolesOn()) applyNextConcreteToRows(rows, i.meta);
   // 優先度の表（作業員16）: 主の行の why_order・やらない事（触れない話題・繰り返さない条件）を主の行の札に
   const mainRow = rows.find((r) => r.stand.includes("主の文")) ?? rows.find((r) => r.role === "close" && r.sub === "keep_promise" && searchAsKeep) ?? null;
   if (prio && mainRow) {
