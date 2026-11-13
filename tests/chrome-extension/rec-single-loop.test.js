@@ -66,8 +66,12 @@ console.log("■ ④ 起動箇所はすべて世代を渡す");
 console.log("■ ⑤ 撮影の制限（2回/秒）を守る");
 {
   const bg = read("background.js");
-  t("間隔は1100ms以上", /CAP_MIN_GAP_MS = 1100/.test(bg));
-  t("制限に当たったら2.2秒待つ", /await new Promise\(function \(r\) \{ setTimeout\(r, 2200\) \}\);/.test(bg));
+  /**
+   * 2026-11-14 竹内さん「データベースで連続で写真保存できてたんやから、間隔は前の細かいの方が良い」:
+   *   間隔は **700ms**（細かい方）。capture_error の原因は多重ループであって間隔ではなかった。
+   */
+  t("間隔は700ms（細かい方・DBに連続保存できていた実績）", /CAP_MIN_GAP_MS = 700/.test(bg));
+  t("制限に当たったら0.9秒待つ", /await new Promise\(function \(r\) \{ setTimeout\(r, 900\) \}\);/.test(bg));
 }
 
 console.log("■ ⑥ 録画が ops を聞くタブを間違えない");

@@ -1945,17 +1945,14 @@ async function _trimShots() {
 var _capChain = Promise.resolve();
 var _capLastAt = 0;
 /**
- * 2026-11-14 竹内さん「地域押さなかったのでこっちでおした画面確認して録画した画面」:
- *   ⚠ 画面に `capture_error: This request exceeds the MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND quota`
- *     が出て、**写真が0枚**になっていた（実測: 最新200枚すべて ops も空）。
- *   ⚠ 原因: `CAP_MIN_GAP_MS = 700` は**1秒あたり約1.4回**。Chrome の上限は **2回/秒**だが、
- *     録画（1.5〜3.5秒ごと）と**操作のたびの撮影**が重なると 700ms 間隔でも
- *     短い窓では2回を超える（実測の間隔 83ms・170ms は別経路の取り合い）。
- *   → **1秒あたり1回まで**に抑える（`CAP_MIN_GAP_MS = 1100`）。
- *     ⚠ 撮る枚数は減るが、**失敗して0枚になるより良い**（写真が無いと学習できない）。
- *   → 制限に当たった時は**長めに待って**やり直す（900ms → 2200ms）。
+ * 2026-11-14 竹内さん「データベースで連続で写真保存できてたんやから、間隔は前の細かいの方が良い」:
+ *   ⚠ 前回 700ms → 1100ms に広げたが、**それは誤りだった**。
+ *     実際に `capture_error` が出ていた原因は**録画ループの多重化**（SW 復帰のたびに増殖）であって、
+ *     間隔ではなかった。DB には 392枚が**連続して保存できていた**（間隔 700ms 時代の実績）。
+ *   → **700ms に戻す**（細かい間隔の方が写真が多く残る＝学習の材料が増える）。
+ *   ⚠ 多重化は `_recGen`（世代番号）で止めたので、700ms でも制限に当たり続けない。
  */
-var CAP_MIN_GAP_MS = 1100;
+var CAP_MIN_GAP_MS = 700;
 function _capturePaced(windowId) {
   var run = function () {
     return (async function () {
@@ -1966,8 +1963,12 @@ function _capturePaced(windowId) {
       } catch (e) {
         var msg = String((e && e.message) || e);
         if (/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(msg)) {
-          // 制限に当たった → **2.2秒待って**やり直す（1回だけ）
-          await new Promise(function (r) { setTimeout(r, 2200) });
+          /**
+           * 2026-11-14 竹内さん「間隔は前の細かいの方が良い」:
+           *   やり直しの待ちも 900ms に戻す（2.2秒は間隔を空けすぎ）。
+           *   ⚠ 本当の原因（多重ループ）は `_recGen` で止めたので、これで足りる。
+           */
+          await new Promise(function (r) { setTimeout(r, 900) });
           return await chrome.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 55 });
         }
         throw e;
