@@ -34,7 +34,7 @@ import { fromContractBasis, checkResultReadyOf, type AnswerSourceKind, type Staf
 import { materialFetchPlan, type FetchSource } from "./material-fetch";
 import { SUB_FIELDS, type SubRole } from "./decided-subfields";
 import { buildDecidedLedger, type DecidedItem } from "./conductor-decided";
-import { pickSendCombo, routeOfMeta, type SendCombo } from "./send-combo-table";
+import { pickSendCombo, routeOfMeta, comboCuesFromMeta, type SendCombo } from "./send-combo-table";
 import { buildNextMoveDetail, type Offer, type PlantFact, type When } from "./next-move-detail";
 import { briefDoubts, briefSure, type BriefDoubt, type Sure, type SureCueKey } from "./conductor-doubt";
 import type { InfoCell } from "./info-fill-map";
@@ -162,7 +162,8 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const nl = obj(m.now_vs_later);
   const unkept = (ledger?.open ?? []).filter((o) => o.kind === "our_promise_unkept").length;
   // 型が決まらない番は組を選ばない（道だけでは選べない・未）
-  const combo = !typeId ? null : pickSendCombo({ type: typeId, route: routeOfMeta(m), cues: {
+  // 2026-11-13 作業員C: 道の AIX の種類・約束が2つ開いている・条件ヒアリングの手がかりも渡す（comboCuesFromMeta・下の4つは今まで通りの読みで上書き）
+  const combo = !typeId ? null : pickSendCombo({ type: typeId, route: routeOfMeta(m), cues: { ...comboCuesFromMeta(m),
     firstContact: typeId === "T11_first_contact_hearing", resultReady: typeId === "T10_result_ready" || arr(nl?.ready_now).length > 0,
     openPromise: unkept > 0, multiTopics: asks.filter((a) => a.kind === "question").length >= 2,
   } });

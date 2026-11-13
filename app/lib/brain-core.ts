@@ -99,6 +99,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
+import { staffHandMaterialOn, staffHandLine } from "@/app/lib/staff-hand-material";
 import { brainAixFollowsContractOn, alignAixToContract, replyPlanAfterFollow, type ContractAskLite } from "@/app/lib/aix-follows-contract";
 import { askPartsSplitOn, partsAllNow, type AskPart } from "@/app/lib/ask-parts";
 import { sendSequenceOn, sanitizeSendSequence, replyCountOf, SEND_SEQUENCE_FIELD, hearingSendSequence, writerReplyCountOf } from "@/app/lib/send-sequence";
@@ -594,7 +595,8 @@ export type SuggestedAixMeta = {
   // 2026-09-09 Fable5 行動台帳（action-ledger.ts buildActionLedger の要約・facts。JSONB のため migrate-schema 不要）
   action_ledger?: {
     summary: string;
-    facts: { propertiesSentCount: number; estimateSent: boolean; pickupPromisedUnfulfilled: boolean; lastStaffEntry: { kind: string; status: string } | null };
+    facts: { propertiesSentCount: number; estimateSent: boolean; pickupPromisedUnfulfilled: boolean; lastStaffEntry: { kind: string; status: string } | null;
+      /** 2026-11-13 作業員C: 組の表の手がかり（約束が2つ開いている）用 */ estimatePromisedUnfulfilled?: boolean; confirmationPromisedUnfulfilled?: boolean };
   } | null;
   // 2026-09-18 竹内（𝒮 さん事例）「今の状況はブレインが分かっているんやから、それと AIX のところリンクさせて…」
   //   お送りした物件の退去予定・内覧可否をブレインの判断として持つ（JSONB のため migrate-schema 不要）。
@@ -1705,6 +1707,17 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (priorityTableOn()) rec.priority = priorityTableRecord(m);
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "brain:check-order-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-13 作業員C（組の違いの14日の監査）: 返信と AIX の組（send-combo-table）を meta から手がかりを読んで記録だけ。SEND_COMBO_TABLE=shadow|on の時だけ meta.send_combo を足す
+  //   （既定 off＝何も足さない）。今まで表はあっても呼ぶ所が無かった（配線が無い）。道は読むだけで変えない。型の id（check_order_type）があれば型の行が先
+  try {
+    const { sendComboMode, sendComboRecord, comboCuesFromMeta } = await import("@/app/lib/send-combo-table");
+    if (sendComboMode() !== "off") {
+      const mm = meta as unknown as Record<string, unknown>;
+      const cues = comboCuesFromMeta(mm);
+      const rec = sendComboRecord(mm, cues);
+      if (rec) mm.send_combo = { combo: rec.pick.combo, order: rec.pick.order, gap: rec.pick.gap, row: rec.pick.row, digest: rec.digest, cues };
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "brain:send-combo-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（KB fd1c7c62・ea2a9405①）: 番ごとの部品の配分（型×深さ）を記録だけ。CONDUCTOR_ALLOCATION=shadow|on の時だけ meta.conductor_allocation を足す
   //   （既定 off＝何も足さない＝今と同じ）。返信か AIX か（action）は読まない・変えない。部品を実際に止めるのは試験で悪化0を確かめてから
   try {
@@ -3471,6 +3484,14 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     } catch (e) { console.warn("[brain-core] last-turn-review skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-29 統括の②状況のまとめ「今すぐ果たせる物」（situation-summary.ts・SITUATION_NOW_FULFILLABLE=on・既定 off）: 記録から1行。どう返すかはブレイン
+  // 2026-11-13 作業員C（統括役の頼み①・app/lib/staff-hand-material.ts）: スタッフの手元にある物（送れる候補・作業中のタスク・開いている約束）を1行で（BRAIN_STAFF_HAND=on・既定 off）
+  if (staffHandMaterialOn() && !isPostApplyStatus(convStatus)) {
+    const f = brainLedger.facts;
+    const sh = staffHandLine({ pickupReady: pickupReadyMaterial, openTaskTypes: openTasks.map((t) => t.task_type), openPromises: { pickup: f.pickupPromisedUnfulfilled, estimate: f.estimatePromisedUnfulfilled, confirm: f.confirmationPromisedUnfulfilled } });
+    if (sh) customerStateBlockText += `
+${sh}`;
+    console.log(JSON.stringify({ tag: "brain:staff-hand", conversationId, pickupReady: pickupReadyMaterial, tasks: openTasks.length, chars: sh.length }));
+  }
   if (nowFulfillableEnabled() && customerState && !isPostApplyStatus(convStatus)) {
     const nf = nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() });
     if (nf) customerStateBlockText += `\n${nf}`;
@@ -6799,7 +6820,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-09-09 Fable5 行動台帳（JSONB・migrate-schema 不要）。generate-reply の一次証拠は route 側 buildActionLedger（同一関数）
       action_ledger: {
         summary: brainLedger.summary,
-        facts: { propertiesSentCount: brainLedger.facts.propertiesSentCount, estimateSent: brainLedger.facts.estimateSent, pickupPromisedUnfulfilled: brainLedger.facts.pickupPromisedUnfulfilled, lastStaffEntry: brainLedger.facts.lastStaffEntry ? { kind: brainLedger.facts.lastStaffEntry.kind, status: brainLedger.facts.lastStaffEntry.status } : null },
+        facts: { propertiesSentCount: brainLedger.facts.propertiesSentCount, estimateSent: brainLedger.facts.estimateSent, pickupPromisedUnfulfilled: brainLedger.facts.pickupPromisedUnfulfilled, estimatePromisedUnfulfilled: brainLedger.facts.estimatePromisedUnfulfilled, confirmationPromisedUnfulfilled: brainLedger.facts.confirmationPromisedUnfulfilled, lastStaffEntry: brainLedger.facts.lastStaffEntry ? { kind: brainLedger.facts.lastStaffEntry.kind, status: brainLedger.facts.lastStaffEntry.status } : null },
       },
       // 2026-09-18 お送りした物件が今ご内覧頂けるか（退去予定・解禁日）。AIX 物件オススメ／テンプレートの締めがこれを読む
       property_state: brainPropertyState,

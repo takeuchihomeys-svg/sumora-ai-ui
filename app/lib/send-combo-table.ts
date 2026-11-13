@@ -32,6 +32,8 @@ export type ComboCues = {
   broughtUnchecked?: boolean;
   /** 2026-11-13 作業員7b: ブレインが選んだ AIX が条件ヒアリング（初回でなくても・久しぶりの探し直しも） */
   hearing?: boolean;
+  /** 2026-11-13 作業員C: 決まった道の AIX の種類（property_send・estimate_sheet 等）。AIX の後に返信を足す竹内さんの形を選ぶ */
+  aixKind?: string | null;
 };
 
 export type ComboRow = {
@@ -66,6 +68,13 @@ export const SEND_COMBO_ROWS: readonly ComboRow[] = [
   // 2026-11-13 作業員7b（弱い所 aix:skip-result-and-two-msg-order の 11408）: 約束が2つ開いていて（募集状況の確認＋ピックアップ）、了承だけの番は、竹内さんは約束した順に AIX で果たす
   { type: "*", when: "約束が2つ開いている（確認＋ピックアップ）・結果が手元", match: (c) => !!c.twoOpenPromises && !!c.resultReady, route: "aix", combo: "aix_then_aix", order: "AIX【物件確認した】（確認の結果・募集終了など）→ 数分後に AIX【物件を送る】（約束したピックアップ）", gap: "分",
     why: "お客様が先に頼んだ確認の答えを先に（後回しにすると聞いた事への答えが抜ける）・代わりの物件はその後（feedback_promise_order_split の順: 物件の募集確認→結果 AIX→…）", purpose: "約束を1つも落とさずに順に果たす", missing: "確認の結果（スタッフだけが知る）", keyPoint: "1通に詰めない・先の約束から", count: "11408（1番）・竹内さんの同じ形の番は未数え（(a) で数える）" },
+  // 2026-11-13 作業員C（組の違いの14日の監査 scripts/audit-combo-mismatch.ts・竹内さん本人の番）: 物件を送る AIX（何件も）の後、竹内さんは返信で一押し1件を言う
+  //   実送信の形「お送りさせて頂きましたお部屋の中でも特に〇〇が特にオススメのお部屋となります！！」＋理由（敷金礼金なし・駐車場代込で月〇 等）。複数送った時だけ（1件のオススメには言わない）
+  { type: "*", when: "物件を送る AIX（何件も）", match: (c) => c.aixKind === "property_send", route: "aix", combo: "aix_then_reply", order: "AIX【物件を送る】（何件も）→ 返信で一押し1件（お送りさせて頂きましたお部屋の中でも特に〇〇がオススメ＋理由）", gap: "分",
+    why: "物件の事実は AIX で正確に・どれを選ぶかの決め手は返信で人の言葉で（並べただけだと選べない）", purpose: "送った中から1件に絞って次の段（内覧）へ", missing: "お客様がどれを気に入るか", keyPoint: "送った中の1件の一押しと理由（作らない・資料の事実で）", count: "11/13 作業員C 14日の竹内さんの番: 物件を送る AIX の後に一押しの返信 5（ブレインは AIX だけ）" },
+  // 同じ監査: 見積書の AIX の後、竹内さんは返信で「最大限割引しました初期費用の御見積書となります」＋保証会社など見積の中身の説明
+  { type: "*", when: "見積書の AIX", match: (c) => c.aixKind === "estimate_sheet", route: "aix", combo: "aix_then_reply", order: "AIX【見積書】→ 返信で「〇〇最大限割引しました初期費用の御見積書となります！！」＋保証会社など中身の説明", gap: "分",
+    why: "金額は AIX で正確に・割引した事と保証会社など読み方の説明は返信で（金額だけだと不安が残る）", purpose: "見積の中身を分かってもらい内覧・申込へ", missing: "お客様がその金額で進めるか", keyPoint: "最大限割引した事と、保証会社など見積の中身", count: "11/13 作業員C 14日の竹内さんの番: 見積書の AIX の後に説明の返信 2（ブレインは AIX だけ）" },
   // 2026-11-13 作業員7b（竹内さんの決定 0f475703・11/11）: 持ち込みの未確認の番は、同じ日の2通目でも約束の返信→後で AIX（2択にしない）
   { type: "*", when: "持ち込みの物件・まだ募集状況を確かめていない", match: (c) => !!c.broughtUnchecked, route: "two_stage", combo: "promise_then_aix_later", order: "募集状況の確認（＋最大限割引の御見積書）の約束の返信 → 確かめた後で AIX【物件確認した】", gap: "時間",
     why: "確かめる前に空きを言うと作り話になる＝今の番は約束まで（竹内さんの決定 0f475703「同じ日の2通目でも募集状況の確認は約束に寄せる」・KB 56b662a4 の2択より上）", purpose: "待ってもらう間の安心と、確かめた事実だけを渡す", missing: "管理会社にしか無い募集状況", keyPoint: "約束→結果の AIX の順を崩さない", count: "竹内さん本人の約100日（同じ日の2通目のこちらの最初の手）: 約束 18／直接の AIX 5（KB 0f475703）" },
@@ -105,6 +114,31 @@ export function pickSendCombo(i: { type: string | null | undefined; route: "repl
 const SHORT: Record<SendCombo, string> = { reply_only: "r", reply_reply: "rr", reply_then_aix_quick: "rq", promise_then_aix_later: "p2", aix_then_reply: "ar", aix_then_aix: "aa", aix_only: "a" };
 export function sendComboDigest(p: SendComboPick | null, type: string | null | undefined): string | null {
   return p ? `${SHORT[p.combo]}|${String(type ?? "-").split("_")[0]}` : null;
+}
+
+/**
+ * 2026-11-13 作業員C: meta（判断の後）から手がかりを読む（純関数・道は読むだけ）。今まで手がかりを渡す配線が無かった（sendComboRecord を呼ぶ所が無い）。
+ *   resultReady: 今すぐ果たせる（now_vs_later.ready_now）か型が T10 ／ twoOpenPromises: 行動台帳でまだ果たしていない約束が2つ以上（ピックアップ・見積・確認）／
+ *   multiTopics: turn_contract の問いが2つ以上 ／ hearing: 道の AIX が条件ヒアリング ／ aixKind: 道の AIX の種類
+ */
+export function comboCuesFromMeta(meta: Record<string, unknown> | null | undefined): ComboCues {
+  const m = meta ?? {};
+  const obj = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+  const route = routeOfMeta(m);
+  const aixKind = route === "aix" ? String(m.action ?? "").trim() || null : null;
+  const facts = obj(obj(m.action_ledger)?.facts) ?? {};
+  const open = [facts.pickupPromisedUnfulfilled, facts.estimatePromisedUnfulfilled, facts.confirmationPromisedUnfulfilled].filter((x) => x === true).length;
+  const ready = obj(m.now_vs_later)?.ready_now;
+  const asks = (obj(m.turn_contract)?.asks ?? []) as Array<{ kind?: unknown }>;
+  return {
+    firstContact: m.check_order_type === "T11_first_contact_hearing",
+    hearing: aixKind === "condition_hearing",
+    resultReady: m.check_order_type === "T10_result_ready" || (Array.isArray(ready) && ready.length > 0),
+    twoOpenPromises: open >= 2,
+    openPromise: open >= 1,
+    multiTopics: Array.isArray(asks) && asks.filter((a) => a?.kind === "question").length >= 2,
+    aixKind,
+  };
 }
 
 /** meta（判断の後）から記録を作る。off の時は null＝何も足さない */
