@@ -95,13 +95,18 @@ export async function GET(req: NextRequest) {
     ...perSite,
   ];
 
-  // ③ 書く（同じ scope の古い行は消してから入れる＝いつも1つだけ）
+  /**
+   * ③ 書く。
+   *   2026-11-13 竹内さん「データベースを学習面でも強化していくようにする形とする」:
+   *     ⚠ 旧は「消してから入れる」だったので、**入れるのに失敗すると前の束も消えた**。
+   *     → **先に入れてから**、古い物を消す（消す順を逆にした）。失敗しても前の束が残る。
+   *     ⚠ 消すのは**同じ scope の古い物**だけ（履歴は残す＝推移を見られる）。
+   */
   let written = 0;
   let tableMissing = false;
   if (!dry) {
     for (const p of payloads) {
       try {
-        await supabase.from("human_learn_profile").delete().eq("scope", p.scope);
         const { error: insErr } = await supabase.from("human_learn_profile").insert({
           scope: p.scope,
           source_rows: p.bundle.source.rows,
@@ -117,6 +122,14 @@ export async function GET(req: NextRequest) {
           error = insErr.message; break;
         }
         written++;
+        // 入れた後で、古い物を消す（直近100件だけ残す＝履歴は残す）
+        try {
+          const old = await supabase.from("human_learn_profile")
+            .select("id").eq("scope", p.scope)
+            .order("created_at", { ascending: false }).range(100, 200);
+          const ids = ((old.data ?? []) as Array<{ id: number }>).map((x) => x.id);
+          if (ids.length) await supabase.from("human_learn_profile").delete().in("id", ids);
+        } catch { /* 消せなくても害はない */ }
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);
         break;

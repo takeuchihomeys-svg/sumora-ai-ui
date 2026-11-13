@@ -1,4 +1,6 @@
-// GET /api/human-learn-profile
+// GET  /api/human-learn-profile … 拡張（自動モード）が読む「学習の束」
+// GET  /api/human-learn-profile?history=1 … **学習の履歴**（新しい順・何を学んだかの推移を見る）
+// POST /api/human-learn-profile … 今すぐ作り直す（`?fresh=1` と同じ）
 // 拡張（自動モード）が読む「学習の束」（2026-11-13 竹内さん
 //   「ちゃんと学習担当のブレインをつくってより効率的に学習できるようにする。データベースを有効活用する」)
 //
@@ -60,9 +62,18 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   const bundle = compactBundle(buildHumanLearnBundle(rows as never));
   if (!bundle.source.rows) { try { note?.("empty_bundle"); } catch (_) {} return null; }
   // DB にも残す（同じ scope の古い行は消す＝いつも1つだけ）
+  /**
+   * 2026-11-13 竹内さん「これ学習したところはデータベースに保管されるようになっているのか。
+   *   データベースを学習面でも強化していくようにする」:
+   *   ⚠ 旧は `try {} catch {}` で**失敗しても黙って捨てて**いたので、保管できていなくても気づけなかった。
+   *   → 失敗したら**理由を返す**（`save_error`）。呼ぶ側（私・点検）が分かるようにする。
+   *   ⚠ 消してから入れるので、**入れるのに失敗すると前の束も消える**。
+   *     → 先に**入れてから**、古い物を消す（消す順を逆にした）。失敗しても前の束が残る。
+   */
+  let saveError: string | null = null;
+  let saved = false;
   try {
-    await supabase.from("human_learn_profile").delete().eq("scope", scope);
-    await supabase.from("human_learn_profile").insert({
+    const ins = await supabase.from("human_learn_profile").insert({
       scope,
       source_rows: bundle.source.rows,
       source_from: bundle.source.from,
@@ -71,13 +82,54 @@ async function buildNow(scope: string, note?: (why: string) => void) {
       bundle,
       lines: bundle.lines,
     });
-  } catch { /* 残せなくても返す（今この瞬間に使えればよい） */ }
+    if (ins.error) {
+      saveError = ins.error.message;
+      console.warn("[human-learn-profile] 束を残せません:", ins.error.message);
+    } else {
+      saved = true;
+      // 入れた後に古い物を消す（今入れた1件は残す）
+      try {
+        await supabase.from("human_learn_profile").delete().eq("scope", scope).lt("created_at", new Date(Date.now() - 1000).toISOString());
+      } catch { /* 消せなくても害はない（読む時は最新1件だけ見る） */ }
+    }
+  } catch (e) {
+    saveError = e instanceof Error ? e.message : String(e);
+    console.warn("[human-learn-profile] 束を残す時に例外:", saveError);
+  }
+  (bundle as unknown as Record<string, unknown>).saved_to_db = saved;
+  if (saveError) (bundle as unknown as Record<string, unknown>).save_error = saveError;
   return bundle;
 }
 
 export async function GET(req: NextRequest) {
   const scope = (req.nextUrl.searchParams.get("scope") || "all").slice(0, 20);
   const touch = req.nextUrl.searchParams.get("touch") !== "0";
+
+  /**
+   * 2026-11-13 竹内さん「データベースを学習面でも強化していくようにする形とする」:
+   *   **学習の履歴**を見られるようにする（いつ・何件から・何を学んだか）。
+   *   → 「学習が進んでいるか」「弱い所が減っているか」を**推移で**確かめられる。
+   */
+  if (req.nextUrl.searchParams.get("history") === "1") {
+    const lim = Math.min(Math.max(Number(req.nextUrl.searchParams.get("limit") ?? 20) || 20, 1), 100);
+    const h = await supabase
+      .from("human_learn_profile")
+      .select("id, created_at, scope, source_rows, source_from, source_to, ext_version, lines, read_count")
+      .eq("scope", scope)
+      .order("created_at", { ascending: false })
+      .limit(lim);
+    if (h.error) {
+      const missing = /does not exist|42P01|Could not find the table|schema cache/i.test(h.error.message);
+      return NextResponse.json({ ok: false, error: h.error.message, empty: true, rows: [], missing_table: missing }, { status: missing ? 200 : 500, headers: CORS });
+    }
+    const rows = ((h.data ?? []) as Record<string, unknown>[]).map((x) => ({
+      id: x.id, created_at: x.created_at, source_rows: x.source_rows,
+      source_from: x.source_from, source_to: x.source_to,
+      read_count: x.read_count ?? 0,
+      lines: x.lines ?? [],
+    }));
+    return NextResponse.json({ ok: true, scope, count: rows.length, rows }, { headers: CORS });
+  }
 
   const r = await supabase
     .from("human_learn_profile")
@@ -125,6 +177,12 @@ export async function GET(req: NextRequest) {
           ext_version: null,
           lines: fresh.lines,
           bundle: fresh,
+          /**
+           * 2026-11-13 竹内さん「学習したところはデータベースに保管されるようになっているのか」:
+           *   **DBに残せたか**を返す（残せなかったら理由も）。
+           */
+          saved_to_db: (fresh as unknown as Record<string, unknown>).saved_to_db === true,
+          save_error: (fresh as unknown as Record<string, unknown>).save_error ?? null,
         }, { headers: CORS });
       }
     } catch (e) {
