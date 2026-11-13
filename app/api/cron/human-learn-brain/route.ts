@@ -25,9 +25,9 @@ import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 
 const SELECT = [
   "created_at", "site", "mode", "ext_version", "ops",
-  "moves_n", "move_speed_px_s", "move_curve", "move_ms", "move_dist",
+  "moves_n", "move_speed_px_s", "move_curve", "move_ms", "move_dist", "gap_ms",
   "points_n", "point_x", "point_y", "point_fields",
-  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops", "shot_learn", "shot_key",
+  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops", "shot_learn", "shot_key", "id",
 ].join(", ");
 /**
  * 2026-11-13 竹内さん「ほかにちゃんと学習の面とかで連携できていない部分などあるか」:
@@ -103,10 +103,20 @@ export async function GET(req: NextRequest) {
         }));
         if (!fields.length) continue;
         const out = { screen: cleanScreen("other"), fields, by: "deterministic" as const, confidence: 0.9 };
-        // どの行かは id で指定できない（読む時に id を取っていない）→ shot_key で当てる
-        const key = typeof x.shot_key === "string" ? x.shot_key : "";
-        if (!key) continue;
-        const up = await supabase.from("human_motion_learn").update({ shot_learn: out }).eq("shot_key", key);
+        /**
+         * 2026-11-13 竹内さん「weak を実際に使う」:
+         *   ⚠ 旧は `shot_key` で当てていたので、**写真が無い行（Storage に上がらなかった行）は
+         *     永久に埋まらなかった**（`shot_ops` があれば写真は要らないのに）。
+         *   → **`id` で当てる**（読む時に id も取っている）。無ければ `shot_key` に戻す。
+         */
+        const id = (x.id as number | string | undefined) ?? null;
+        const q = id != null
+          ? supabase.from("human_motion_learn").update({ shot_learn: out }).eq("id", id)
+          : (typeof x.shot_key === "string" && x.shot_key
+            ? supabase.from("human_motion_learn").update({ shot_learn: out }).eq("shot_key", x.shot_key)
+            : null);
+        if (!q) continue;
+        const up = await q;
         if (!up.error) shotLearned++;
         else if (/shot_learn|does not exist|schema cache/i.test(up.error.message)) break;
       }
