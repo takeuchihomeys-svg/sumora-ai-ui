@@ -14,8 +14,8 @@
 
 import type { SentencePlan, SevenFields, PlanRow } from "./compose-sentence-plan";
 import type { SentenceRole } from "./takeuchi-anatomy-roles";
-import { PHRASE_ROWS_TABLE, PHRASE_TRUST_SUB_TABLE } from "./compose-phrase-catalog-data";
-import { endingOf, endingsFor, trustFor, TRUST_JA } from "./compose-phrase-catalog";
+import { PHRASE_ROWS_TABLE, PHRASE_TRUST_SUB_TABLE, PHRASE_SUB_TABLE } from "./compose-phrase-catalog-data";
+import { endingOf, endingsFor, trustFor, TRUST_JA, trustSubsOfText } from "./compose-phrase-catalog";
 import { headWordOf, HEAD_WORD_JA } from "./compose-head";
 import { strengthFromSeven } from "./next-move-types";
 import type { ComposeFact } from "./compose-asks-facts";
@@ -58,6 +58,8 @@ export type PlanRowV2 = {
   share: number | null;
   /** 元の設計図の行の役目（13種） */
   from?: SentenceRole | null;
+  /** 他の文の中で言う信頼の添え（作業員9 の最終チェックの4つ目の段が下書きに出たかを数える・kind は effort | deadline | flexible） */
+  embeds?: Array<{ kind: "effort" | "deadline" | "flexible"; share: number }>;
   /** 文の強さ（つなぎだけ） */
   strength?: string | null;
 };
@@ -75,6 +77,19 @@ const STANDALONE_TRUST: ReadonlySet<string> = new Set(["support", "scarcity", "c
 const EMBED_TRUST: Readonly<Record<string, V2Role>> = { effort: "press", deadline: "press", flexible: "bridge" };
 const V2_SUB_OF_TRUST: Readonly<Record<string, V2Sub>> = { support: "support", scarcity: "scarcity", company_detail: "company_detail", honest_weak: "honest_weak", options: "options", effort: "effort", deadline: "deadline", flexible: "flexible" };
 const TRUST_EMBED_JA: Readonly<Record<string, string>> = { effort: "こちらの手間を見せる", deadline: "期日を示す", flexible: "都合に合わせる" };
+/** 場面×主の役目 → 下の役目（bridge.viewing・press.promise・close.fixed 等）の竹内さんの割合（3番未満は場面 * に落とす） */
+export function subShareFor(scene: string | null, mainRole: SentenceRole | null, key: string): number | null {
+  if (!mainRole) return null;
+  const a = scene ? PHRASE_SUB_TABLE[`${scene}|${mainRole}`] : undefined;
+  const t = a && a.n >= 3 ? a : PHRASE_SUB_TABLE[`*|${mainRole}`];
+  return t ? t.shares.find(([k]) => k === key)?.[1] ?? 0 : null;
+}
+/** 下の役目で立てる線（11/13 細分化・竹内さんが入れる割合・広い正解53番で決めた）: つなぎ 0.15（0.1 は余分 7・0.25 は当たり 12）・従の押さえ 0.1（0.3 は当たり 1 減で余分同じ）・継続の約束 0.3・決まりの締め 0.5 */
+export const SUB_STAND = { bridge: 0.15, press_sub: 0.1, keep_promise: 0.3, fixed: 0.5 } as const;
+/** 下の役目の割合で立てる（COMPOSE_PLAN_ROWS_V2 の中・COMPOSE_ROWS_V2_SUB=off で 11/13 の前の立て方に戻す） */
+export function rowsV2SubOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.COMPOSE_ROWS_V2_SUB ?? "").trim().toLowerCase() !== "off";
+}
 /** 場面×主の役目 → 信頼の下の役目の割合（3番未満は場面 * に落とす） */
 export function trustSubsFor(scene: string | null, mainRole: SentenceRole | null): Array<[string, number]> {
   if (!mainRole) return [];
@@ -108,6 +123,10 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
   const lastStaff = i.recentStaff[i.recentStaff.length - 1] ?? null;
   const ourText = i.recentStaff.map((m) => m.text).join("\n");
   const prop = i.s7.appeal?.property ?? null;
+  const subOn = rowsV2SubOn();
+  // 作業員5 の重点の下の種類（meta.conductor_focus.focus_sub）。check_estimate＝確認と見積の両方の約束 → 押さえ（確認）とつなぎ（見積へ）の2行で受ける
+  const focusSub = subOn ? String((i.meta as { conductor_focus?: { focus_sub?: unknown } } | null)?.conductor_focus?.focus_sub ?? "") : "";
+  const checkEstimate = focusSub === "check_estimate";
   // 頭
   {
     const h = headWordOf({ customerText: i.customerText, prev: lastStaff ? { text: lastStaff.text, aix: !!lastStaff.aix } : null });
@@ -120,10 +139,16 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
   for (const r of i.plan.rows) { const v2 = V2_OF[r.role]; if (!v2 || v2 === "head") continue; const a = v1ByV2.get(v2) ?? []; a.push(r); v1ByV2.set(v2, a); }
   for (const r of v1ByV2.get("press") ?? []) {
     const isPromise = r.role === "promise";
+    // 従の押さえ（主でない答え・約束）は、竹内さんがこの場面×主の役目でその下の役目を入れる割合 SUB_STAND.press_sub 以上の時だけ
+    if (subOn && r.rank !== "main" && !(checkEstimate && isPromise)) { const sh = subShareFor(i.scene, mainRole, `press.${isPromise ? "promise" : "answer"}`); if (sh != null && sh < SUB_STAND.press_sub) { dropped.push({ role: "press", why: `従の${isPromise ? "約束" : "答え"}は竹内さんの割合 ${sh}（${SUB_STAND.press_sub} 未満）` }); continue; } }
     const f0 = isPromise ? promiseFacts : replyFacts;
     const sub: V2Sub = isPromise ? "split_known_check" : f0.some((f) => /\d/.test(f.text)) ? "numbers" : prop ? "name_property" : "conclusion";
     const src: V2Source = isPromise ? "staff_only" : (i.kinds ?? []).includes("K13") ? "checked_result" : f0[0] ? FROM_SOURCE[f0[0].from] : "conversation";
     rows.push({ role: "press", sub, uses: [...f0.slice(0, 2).map((f) => ({ field: isPromise ? "our.open_promise" : "fact.value", value: f.text })), ...(isPromise && replyFacts.length ? replyFacts.slice(0, 1).map((f) => ({ field: "fact.value", value: f.text })) : [])], source: src, certainty: certaintyOf(src), how: endingsFor(i.scene, r.role)?.top[0]?.[0] ?? null, why_order: "asked_order", length: "normal", stand: [r.rank === "main" ? "主の文" : "従の文"], share: shareOf("press"), from: r.role });
+  }
+  // check_estimate の押さえ（確認の約束）: 設計図に約束の行が無くても立てる（「確認出来次第、最大限割引の御見積書とあわせて」の確認の半分）
+  if (checkEstimate && !rows.some((r) => r.role === "press" && r.sub === "split_known_check")) {
+    rows.push({ role: "press", sub: "split_known_check", uses: promiseFacts.slice(0, 2).map((f) => ({ field: "our.open_promise", value: f.text })), source: "staff_only", certainty: "needs_check", how: endingsFor(i.scene, "promise")?.top[0]?.[0] ?? null, why_order: "asked_order", length: "normal", stand: ["focus_sub check_estimate（確認の約束）"], share: shareOf("press"), from: "promise" });
   }
   // 信頼
   {
@@ -157,7 +182,12 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
     } else dropped.push({ role: "latent", why: `竹内さんが入れる割合 ${share ?? "-"}（${DROP_MAX} 未満）` });
   }
   // つなぎ
-  for (const r of v1ByV2.get("bridge") ?? []) {
+  const bridgeV1: PlanRow[] = [...(v1ByV2.get("bridge") ?? [])];
+  // check_estimate のつなぎ（見積へ）: 設計図に見積の行が無くても立てる（見積の半分）
+  if (checkEstimate && !bridgeV1.some((r) => r.role === "estimate")) bridgeV1.push({ rank: "sub", role: "estimate", part: null, how: null, next: null, from: "focus_sub" });
+  for (const r of bridgeV1) {
+    // 竹内さんがこの場面×主の役目でその誘導先に誘う割合 SUB_STAND.bridge 以上の時だけ（主の役目そのもの・check_estimate の見積は立てる）
+    if (subOn && r.role !== mainRole && !(checkEstimate && r.role === "estimate")) { const sh = subShareFor(i.scene, mainRole, `bridge.${r.role}`); if (sh != null && sh < SUB_STAND.bridge) { dropped.push({ role: "bridge", why: `${r.role} へ誘うのは竹内さんの割合 ${sh}（${SUB_STAND.bridge} 未満）` }); continue; } }
     const strength = strengthFromSeven(i.s7.push ? { push: i.s7.push.push, strength: i.s7.push.strength } : null);
     const uses = [
       ...(prop ? [{ field: "hook.property", value: prop }] : []),
@@ -172,16 +202,23 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
     const share = shareOf("close");
     const keep = (v1ByV2.get("close") ?? []).find((r) => r.role === "keep") ?? null;
     const time = TIME_RE.exec(i.customerText)?.[0] ?? null;
-    if (keep || time || (share ?? 0) >= STAND_MIN || (i.closing && i.closing.sign !== "none")) {
-      const sub: V2Sub = time ? "their_timing" : keep ? "keep_promise" : "fixed";
+    const keepSh = subShareFor(i.scene, mainRole, "close.keep_promise"), fixedSh = subShareFor(i.scene, mainRole, "close.fixed");
+    // 細分化（11/13）: お客様の言った時期 → 継続の約束（設計図にあって割合 0.3 以上）→ 決まりの締め（割合 0.5 以上）の順で1つ
+    //   COMPOSE_ROWS_V2_SUB=off: 前の立て方（設計図に継続の約束がある・締めの割合 0.5 以上）
+    const closingSign = !!(i.closing && i.closing.sign !== "none");
+    const keepOk = !!keep && (!subOn || i.s7.leadTo === "keep" || keepSh == null || keepSh >= SUB_STAND.keep_promise || mainRole === "keep");
+    const fixedOk = closingSign || (subOn ? (fixedSh ?? share ?? 0) >= SUB_STAND.fixed : (share ?? 0) >= STAND_MIN);
+    if (time || keepOk || fixedOk) {
+      const sub: V2Sub = time ? "their_timing" : keepOk ? "keep_promise" : "fixed";
       rows.push({ role: "close", sub, uses: time ? [{ field: "latent.expect", value: time }] : keep?.part ? [{ field: "aim.mid", value: keep.part }] : [], source: "conversation", certainty: "assertable", how: time ? "お客様の言った時期で結ぶ（例: 〇〇のご連絡お待ちしております）" : endingsFor(i.scene, keep ? "keep" : "close")?.top[0]?.[0] ?? null, why_order: "keep_last", length: "short", stand: [time ? `お客様の言った時期「${time}」` : keep ? "継続の約束は主の答えの後の最後" : `竹内さんが入れる割合 ${share}`], share, from: keep ? "keep" : "close" });
-    } else dropped.push({ role: "close", why: `竹内さんが入れる割合 ${share ?? "-"}` });
+    } else dropped.push({ role: "close", why: `継続の約束 ${keepSh ?? "-"}・決まりの締め ${fixedSh ?? "-"}（竹内さんの割合）` });
   }
   // 他の文の中で言う信頼（こちらの手間・期日・都合に合わせる）は、その行の how に添える（竹内さんの割合 0.4 以上の時だけ）
   for (const [k, sh] of trustSubsFor(i.scene, mainRole)) {
     const target = EMBED_TRUST[k]; if (!target || sh < 0.4) continue;
     const row = rows.find((r) => r.role === target); if (!row) continue;
     row.stand.push(`信頼の添え: ${TRUST_EMBED_JA[k]}（竹内さん ${Math.round(sh * 100)}%）`);
+    (row.embeds ??= []).push({ kind: k as "effort" | "deadline" | "flexible", share: sh });
   }
   // 足しすぎの印（探す条件の番で前に送った条件を全部繰り返さない）
   if (i.scene === "conditions" && lastStaff && /ピックアップ/.test(lastStaff.text)) for (const r of rows) if (r.role === "press" || (r.role === "close" && r.sub === "keep_promise")) r.stand.push("no_full_repeat（変わった条件だけ）");
@@ -189,6 +226,29 @@ export function buildPlanRowsV2(i: RowsV2Input): { rows: PlanRowV2[]; dropped: A
   // 竹内さんの並びの順（頭→…→締め。同じ位置は元の順）
   const order = rows.map((r, k) => ({ r, k })).sort((a, b) => (a.r.role === "head" ? -1 : b.r.role === "head" ? 1 : a.r.role === "close" ? 1 : b.r.role === "close" ? -1 : posOf(a.r.role) - posOf(b.r.role) || a.k - b.k)).map((x) => x.r);
   return { rows: order, dropped, presenceAt: pres?.at ?? null };
+}
+/**
+ * 信頼の添え（他の文の中で言う信頼）が下書きに出たかの印。作業員9 の最終チェックの4つ目の段（final-check-blueprint-match・FC_BLUEPRINT_MARK）が
+ * 同じ rowsV2 から数える時の名前（印の名前は向こうの UnmatchedKind と同じ snake_case）。出たかは竹内さんの文の札付けと同じ trustSubsOfText で見る
+ * （PHRASE_TRUST_SUB_TABLE を作った物差しと同じ＝竹内さんの割合と下書きを同じ線で比べられる）。印だけ・本文は変えない。
+ */
+export const TRUST_EMBED_MARK = { effort: "trust_embed_effort", deadline: "trust_embed_deadline", flexible: "trust_embed_flexible" } as const;
+export type TrustEmbedKind = keyof typeof TRUST_EMBED_MARK;
+export type TrustEmbedShown = { kind: TrustEmbedKind; mark: (typeof TRUST_EMBED_MARK)[TrustEmbedKind]; row: string; share: number; shown: boolean };
+export function trustEmbedsShown(draft: string, rows: ReadonlyArray<{ role: string; embeds?: ReadonlyArray<{ kind: string; share: number }> | null }> | null | undefined): TrustEmbedShown[] {
+  if (!rows?.length) return [];
+  const got = new Set<string>(trustSubsOfText(String(draft ?? "")));
+  const out: TrustEmbedShown[] = [];
+  for (const r of rows) for (const e of r.embeds ?? []) {
+    if (!(e.kind in TRUST_EMBED_MARK)) continue;
+    const kind = e.kind as TrustEmbedKind;
+    out.push({ kind, mark: TRUST_EMBED_MARK[kind], row: r.role, share: e.share, shown: got.has(kind) });
+  }
+  return out;
+}
+/** 最終チェックの1行のログ（fc:blueprint-unmatched）に足す欄: 立てた添えの数・出た数・出なかった印 */
+export function trustEmbedLogFields(shown: ReadonlyArray<TrustEmbedShown>): { embeds: number; embeds_shown: number; embeds_missing: string[] } {
+  return { embeds: shown.length, embeds_shown: shown.filter((x) => x.shown).length, embeds_missing: shown.filter((x) => !x.shown).map((x) => x.mark) };
 }
 export function planRowsV2Digest(rows: ReadonlyArray<PlanRowV2>): string {
   return rows.map((r) => `r2:${r.role}.${r.sub}|${r.uses.map((u) => u.field).join("+") || "-"}|${r.source}|${r.certainty}|${r.why_order}|${r.share ?? "-"}`).join(";");
@@ -198,7 +258,7 @@ const SUB_JA: Partial<Record<V2Sub, string>> = { support: "サポートの姿勢
 /** 書き手への注記（on の時だけ・値は下の欄のまま・文は写さない） */
 export function planRowsV2Note(rows: ReadonlyArray<PlanRowV2>, env?: Env): string {
   if (!composePlanRowsV2On(env) || !rows.length) return "";
-  const L = rows.map((r, k) => `  ${k + 1}. ${V2_ROLE_JA[r.role]}（${SUB_JA[r.sub] ?? HEAD_WORD_JA[r.sub as keyof typeof HEAD_WORD_JA] ?? r.sub}）${r.uses.filter((u) => u.field !== "our.sent").length ? `: ${r.uses.filter((u) => u.field !== "our.sent").map((u) => u.value).join("・")}` : ""}${r.certainty === "needs_check" ? "（言い切らない・確認の約束）" : r.certainty === "basically" ? "（基本的に）" : ""}${r.how ? `／型「${r.how}」` : ""}／${WHY_JA[r.why_order]}${r.length === "short" ? "・短く" : ""}${r.stand.some((s) => s.startsWith("no_full_repeat")) ? "・前の条件を全部繰り返さず変わった点だけ" : ""}`);
+  const L = rows.map((r, k) => `  ${k + 1}. ${V2_ROLE_JA[r.role]}（${SUB_JA[r.sub] ?? HEAD_WORD_JA[r.sub as keyof typeof HEAD_WORD_JA] ?? r.sub}）${r.uses.filter((u) => u.field !== "our.sent").length ? `: ${r.uses.filter((u) => u.field !== "our.sent").map((u) => u.value).join("・")}` : ""}${r.certainty === "needs_check" ? "（言い切らない・確認の約束）" : r.certainty === "basically" ? "（基本的に）" : ""}${r.how ? `／型「${r.how}」` : ""}／${WHY_JA[r.why_order]}${r.length === "short" ? "・短く" : ""}${r.stand.some((s) => s.startsWith("no_full_repeat")) ? "・前の条件を全部繰り返さず変わった点だけ" : ""}${r.embeds?.length ? `・この文の中で${r.embeds.map((e) => TRUST_EMBED_JA[e.kind]).join("・")}` : ""}`);
   return `- 1文ずつの設計図（竹内さんの同じ場面の並び・この行以外の文は足さない）:\n${L.join("\n")}`;
 }
 export { endingOf };
