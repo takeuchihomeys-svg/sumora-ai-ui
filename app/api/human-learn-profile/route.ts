@@ -13,6 +13,7 @@
 // 読んだ印（read_at・read_count）を残す（どの PC が読んでいるか分かる）
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
+import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,10 @@ const SELECT = [
 
 /**
  * 2026-11-13: 記録から**その場で**学習の束を作る（cron を待たない）。
- *   直近3日・最大3000行（重くしない）。`shot_ops` が無いDBでは外して読み直す。
+ *   直近3日・最大3000行（重くしない）。
+ *   ⚠ DB に無い列があっても、**その列だけ**外して読み直す（`selectDroppingMissing`）。
+ *     旧は「`shot_ops` が無い時だけ外す」だったので、実際に無かった `shot_learn` で
+ *     読み取りが落ち、`shot_ops` まで一緒に外れて **押す順番 0通り** になっていた。
  *   作った束は DB にも残す（次からは速い・他の PC も読める）。
  */
 async function buildNow(scope: string, note?: (why: string) => void) {
@@ -46,21 +50,29 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     return q.order("created_at", { ascending: false }).range(from, to);
   };
   const rows: unknown[] = [];
-  let cols = SELECT;
+  const droppedCols: string[] = [];
   for (let i = 0; i < 3000; i += 1000) {
-    let r = await fetchPage(cols, i, i + 999);
-    if (r.error && /shot_ops|does not exist|schema cache/i.test(r.error.message)) {
-      cols = SELECT.replace(", shot_ops", "").replace(", shot_learn", "");
-      r = await fetchPage(cols, i, i + 999);
-    }
-    if (r.error) { try { note?.("select: " + r.error.message); } catch (_) {} return null; }
-    rows.push(...((r.data ?? []) as unknown[]));
-    if (!r.data || r.data.length < 1000) break;
+    const sel = await selectDroppingMissing(
+      SELECT.split(", "),
+      (colsCsv) => fetchPage(colsCsv, i, i + 999),
+      { onDrop: (c, e) => { droppedCols.push(c); console.warn("[human-learn-profile] 列が無いので外します:", c, e?.message ?? ""); } },
+    );
+    if (sel.error) { try { note?.("select: " + sel.error.message); } catch (_) {} return null; }
+    rows.push(...((sel.data ?? []) as unknown[]));
+    if (!sel.data || sel.data.length < 1000) break;
   }
   if (!rows.length) { try { note?.("no_rows"); } catch (_) {} return null; }
+  if (droppedCols.length) { try { note?.("dropped_cols: " + Array.from(new Set(droppedCols)).join(",")); } catch (_) {} }
   const { buildHumanLearnBundle, compactBundle } = await import("@/app/lib/human-learn-brain");
   const bundle = compactBundle(buildHumanLearnBundle(rows as never));
   if (!bundle.source.rows) { try { note?.("empty_bundle"); } catch (_) {} return null; }
+  /**
+   * 2026-11-13 竹内さん「なんで連携できていないのか」:
+   *   DB に無い列があって外した時は、**外した列を返す**（黙って落とさない）。
+   *   呼ぶ側が「なぜ押す順番が 0 通りなのか」をその場で分かるようにする。
+   */
+  const dropped = Array.from(new Set(droppedCols));
+  if (dropped.length) (bundle as unknown as Record<string, unknown>).dropped_cols = dropped;
   // DB にも残す（同じ scope の古い行は消す＝いつも1つだけ）
   /**
    * 2026-11-13 竹内さん「これ学習したところはデータベースに保管されるようになっているのか。
@@ -183,6 +195,9 @@ export async function GET(req: NextRequest) {
            */
           saved_to_db: (fresh as unknown as Record<string, unknown>).saved_to_db === true,
           save_error: (fresh as unknown as Record<string, unknown>).save_error ?? null,
+          /** DB に無くて外した列（空なら全部読めた） */
+          why: why ?? null,
+          dropped_cols: (fresh as unknown as Record<string, unknown>).dropped_cols ?? null,
         }, { headers: CORS });
       }
     } catch (e) {
