@@ -134,3 +134,46 @@ t("concern が空でも行が立つ（点検役の 12362・12548・12265・使�
 });
 
 console.log(`全部 ${n} 件 ok`);
+
+// 2026-11-13: ブレインへの配線（LATENT_FIVE）と書き手（文の統括の潜在の行）への届き
+{
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const C = require("../app/lib/compose-sentence-plan") as typeof import("../app/lib/compose-sentence-plan");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require("node:fs") as typeof import("node:fs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const path = require("node:path") as typeof import("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "..", "app", "lib", "brain-core.ts"), "utf8");
+  // 欄は JSON の最後（判断の後の振り返り・q022 で道が動いた教訓）
+  assert.ok(src.includes('${BRAIN_LATENT_FIVE_ON ? ", " + LATENT_FIVE_FIELD : ""}}'));
+  assert.ok(src.indexOf('BRAIN_LATENT_FIVE_ON ? ", " + LATENT_FIVE_FIELD') > src.indexOf('"action": "スタッフが次にすべき'));
+  assert.equal(C.BRAIN_FIELD_ROUTE.latent_five, "plan");
+  assert.equal(C.BRAIN_FIELD_ROUTE.latent_five_sub, "plan");
+  // 12643 の形の meta → 潜在の行（なぜ・想定・気持ちを言い切れる段だけ）
+  const meta12643 = {
+    latent_five: {
+      object: { property: null, part: "初期費用", matter: "鍵交換代を外せるか", src: "customer_words" },
+      concern: { text: "初期費用が予算の5万を超える", src: "record" },
+      reason: { kind: "condition_check", ref: "registered_conditions", quote: "初期費用5万以内", text: "前に言った初期費用5万以内に照らすと鍵交換代が重い", guess: false },
+      expect: { outcome: "remove_and_resend", next_if: "鍵交換を外して5万に近づけば申込", decided_by: "staff_check", text: "鍵交換を外した額を出してほしい", src: "customer_words" },
+      feeling: { kind: "期待", strength: "mid", toward: "property", src: "customer_words" },
+    },
+    latent_five_sub: { id: "cost_initial_total", top: "費用", factSource: null, phraseKind: "最大限割引の御見積で総額を見せる", from: "concern" },
+  };
+  const s1 = C.readSevenFields(meta12643);
+  assert.equal(s1.src.latentCover, "latent_five");
+  assert.equal(s1.latentCover?.kind, "費用");
+  assert.match(s1.latentCover?.how ?? "", /なぜ: 前に言った初期費用5万以内/);
+  assert.match(s1.latentCover?.how ?? "", /想定: 鍵交換を外した額/);
+  // 12362 の形（concern が空・下の種類から）: 使う事実の口が届く
+  const meta12362 = { latent_five: { object: { property: "〈物件〉", part: "抑えられる部屋", matter: "送った間取りか", src: "customer_words" }, feeling: { kind: "念押し", strength: "mid", toward: "property", src: "customer_words" } }, latent_five_sub: { id: "taken_popular", top: "先に取られる", factSource: "other_rooms_status", phraseKind: "1部屋のみ・申込で抑えられる線を言う", from: "customer_words" } };
+  const s2 = C.readSevenFields(meta12362);
+  assert.equal(s2.latentCover?.kind, "先に取られる");
+  assert.equal(s2.latentCover?.fact, "他の号室の申込状況");
+  // 推測しか無い段は使わない（行を立てない）
+  assert.equal(C.latentFiveCover({ latent_five: { concern: { text: "x", src: "guess" } } }), null);
+  // 試験の正解の欄（takeuchi_fields）は上書きしない
+  const s3 = C.readSevenFields({ ...meta12643, takeuchi_fields: { latent_cover: { kind: "審査", what: "正解の欄" } } });
+  assert.equal(s3.latentCover?.kind, "審査");
+  console.log("ok ブレインへの配線（JSON の最後）と書き手への届き（12643・12362・推測は使わない・正解の欄は上書きしない）");
+}
