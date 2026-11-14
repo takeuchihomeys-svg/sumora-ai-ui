@@ -348,6 +348,7 @@ const stripWaitedForExample = (t: string) => (ragReplyCleanEnabled() ? stripWait
 import { hesitationKindOf } from "@/app/lib/customer-mindset";
 import { consideringCloseEnabled, CONSIDERING_CLOSE_DIRECTION, CONSIDERING_CLOSE_AVOID, consideringDirectionFor, normalizeItsudemo, fixSanTachi, ensureFamilyConsultSupport, isAckOnlyAgree, ACK_ONLY_NOTE, nanisotsuNote } from "@/app/lib/takeuchi-reply-form-r13";
 import { writerFromText } from "@/app/lib/staff-writer";
+import { exampleWriterRecordedOn, loadRecordedWriters, writerBoostOf } from "@/app/lib/example-writer-recorded";
 import { applyPromptR11, promptR11Enabled } from "@/app/lib/prompt-r11";
 import { fixTakeuchiWording, fixProxyNegotiate } from "@/app/lib/takeuchi-wording-r11";
 import { fixUnsentReviewAck } from "@/app/lib/unsent-review-ack";
@@ -2803,7 +2804,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         // 2026-09-11 データ衛生: 生成失敗文・テスト送信を後段で除外する分（+4）を多めに取る
         match_count: (spec?.examples.pgvectorMatchCount ?? 20) + 4,
         filter_states: stateAliases,
-      }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; reply_angle: string | null; customer_intent: string | null; similarity: number }> | null; error: unknown };
+      }) as { data: Array<{ id?: string; customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; reply_angle: string | null; customer_intent: string | null; similarity: number }> | null; error: unknown };
 
       if (!rpcError && similar && similar.length > 0) {
         // 類似度0.5未満は低品質として除外。生成失敗文・テスト送信は正解例にしない（isUsableExampleText）
@@ -2820,9 +2821,12 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         // 2026-09-13: +0.2 は類似度の幅（0.5〜0.8）に対して大きすぎ、似ていない実例を上げていた。
         //   本番の問い38件で 0.05 が最良（上位8件の平均 cos 0.5536 → 0.5575）→ fresh 0.05 / stale 0.02
         const intentBoost = brainFresh ? 0.05 : 0.02;
+        // 2026-11-15 作業員I（竹内さん「ちゃんと竹内の LINE から学習する」）: EXAMPLE_WRITER_RECORDED=on の時だけ、書き手を送信の記録（messages.staff_writer・sure）で決める。無ければ文の推定（今と同じ）。既定 off
+        const recW = exampleWriterRecordedOn() ? await loadRecordedWriters(supabase, aboveThreshold.map((ex) => ex.id ?? "")) : null;
+        const wBoost = (ex: { id?: string; sent_reply: string }) => (recW ? writerBoostOf(recW.get(ex.id ?? "") ?? null, ex.sent_reply) : exampleWriterBoost(ex.sent_reply));
         const ranked = [...aboveThreshold].sort((a, b) => {
-          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(a.customer_message) + exampleWriterBoost(a.sent_reply);
-          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(b.customer_message) + exampleWriterBoost(b.sent_reply);
+          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(a.customer_message) + wBoost(a);
+          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(b.customer_message) + wBoost(b);
           return scoreB - scoreA;
         });
         // T1: excludeReplyRe ポストフィルタ（floor付き: 残件が minKeep 未満ならフィルタ放棄＝フェイルオープン）

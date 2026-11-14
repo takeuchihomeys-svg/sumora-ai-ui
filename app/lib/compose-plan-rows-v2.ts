@@ -14,7 +14,8 @@
 
 import type { SentencePlan, SevenFields, PlanRow } from "./compose-sentence-plan";
 import type { SentenceRole } from "./takeuchi-anatomy-roles";
-import { PHRASE_ROWS_TABLE, PHRASE_TRUST_SUB_TABLE, PHRASE_SUB_TABLE } from "./compose-phrase-catalog-data";
+// 2026-11-15 作業員I: 表は版を選んで読む（COMPOSE_PHRASE_CATALOG_V2=on で竹内さんの LINE から作った2版・既定 off＝1版のまま）
+import { phraseTables } from "./compose-phrase-catalog-tables";
 import { endingOf, endingsFor, trustFor, TRUST_JA, trustSubsOfText } from "./compose-phrase-catalog";
 import { headWordOf, HEAD_WORD_JA } from "./compose-head";
 import { strengthFromSeven } from "./next-move-types";
@@ -83,6 +84,7 @@ const TRUST_EMBED_JA: Readonly<Record<string, string>> = { effort: "こちらの
 /** 場面×主の役目 → 下の役目（bridge.viewing・press.promise・close.fixed 等）の竹内さんの割合（3番未満は場面 * に落とす） */
 export function subShareFor(scene: string | null, mainRole: SentenceRole | null, key: string): number | null {
   if (!mainRole) return null;
+  const PHRASE_SUB_TABLE = phraseTables().PHRASE_SUB_TABLE;
   const a = scene ? PHRASE_SUB_TABLE[`${scene}|${mainRole}`] : undefined;
   const t = a && a.n >= 3 ? a : PHRASE_SUB_TABLE[`*|${mainRole}`];
   return t ? t.shares.find(([k]) => k === key)?.[1] ?? 0 : null;
@@ -137,6 +139,7 @@ const PROPERTY_AIX: ReadonlySet<string> = new Set(["property_send", "property_re
 /** 場面×主の役目 → 信頼の下の役目の割合（3番未満は場面 * に落とす） */
 export function trustSubsFor(scene: string | null, mainRole: SentenceRole | null): Array<[string, number]> {
   if (!mainRole) return [];
+  const PHRASE_TRUST_SUB_TABLE = phraseTables().PHRASE_TRUST_SUB_TABLE;
   const a = scene ? PHRASE_TRUST_SUB_TABLE[`${scene}|${mainRole}`] : undefined;
   const t = a && a.n >= 3 ? a : PHRASE_TRUST_SUB_TABLE[`*|${mainRole}`];
   return t ? t.shares : [];
@@ -148,6 +151,7 @@ const FROM_SOURCE: Record<ComposeFact["from"], V2Source> = { 会話: "conversati
 const certaintyOf = (s: V2Source): V2Certainty => (s === "staff_only" ? "needs_check" : s === "general" ? "basically" : "assertable");
 export function rowsPresence(scene: string | null, mainRole: SentenceRole | null): { n: number; at: string; roles: Map<V2Role, { share: number; pos: number }> } | null {
   if (!mainRole) return null;
+  const PHRASE_ROWS_TABLE = phraseTables().PHRASE_ROWS_TABLE;
   const a = scene ? PHRASE_ROWS_TABLE[`${scene}|${mainRole}`] : undefined;
   const t = a && a.n >= 3 ? { ...a, at: `${scene}|${mainRole}` } : PHRASE_ROWS_TABLE[`*|${mainRole}`] ? { ...PHRASE_ROWS_TABLE[`*|${mainRole}`], at: `*|${mainRole}` } : null;
   if (!t) return null;

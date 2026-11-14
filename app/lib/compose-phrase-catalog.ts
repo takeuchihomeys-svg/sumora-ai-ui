@@ -10,7 +10,9 @@
 //   押さえ方は同じやり方で 17/53（いつも「結論から＋言葉を拾う」26/53）＝文から決まった語で読むと弱い→表に入れない（押さえ方は作業員23 の型づくりと判断の側で）
 // ■ 表のデータは compose-phrase-catalog-data.ts（scripts/build-phrase-catalog.ts が作る・本文なし・割合と札だけ）
 
-import { PHRASE_TRUST_TABLE, PHRASE_ENDING_TABLE, PHRASE_CATALOG_BUILT } from "./compose-phrase-catalog-data";
+import { PHRASE_CATALOG_BUILT } from "./compose-phrase-catalog-data";
+// 2026-11-15 作業員I: 表は版を選んで読む（COMPOSE_PHRASE_CATALOG_V2=on で竹内さんの LINE から作った2版・既定 off＝1版のまま）
+import { phraseTables } from "./compose-phrase-catalog-tables";
 import { ROLE_LABEL, type SentenceRole } from "./takeuchi-anatomy-roles";
 import type { TrustMethod } from "./takeuchi-seven-read";
 
@@ -56,26 +58,26 @@ const pick = <T>(table: Readonly<Record<string, T & { n: number }>>, scene: stri
   return b ? { ...b, at: `*|${key}` } : null;
 };
 /** 場面×主の役目 → 竹内さんの信頼の作り方（多い順・割合） */
-export function trustFor(scene: string | null, mainRole: SentenceRole | null): (TrustRow & { at: string }) | null {
-  return mainRole ? pick<TrustRow>(PHRASE_TRUST_TABLE as unknown as Record<string, TrustRow>, scene, mainRole) : null;
+export function trustFor(scene: string | null, mainRole: SentenceRole | null, env?: Env): (TrustRow & { at: string }) | null {
+  return mainRole ? pick<TrustRow>(phraseTables(env).PHRASE_TRUST_TABLE as unknown as Record<string, TrustRow>, scene, mainRole) : null;
 }
 /** 設計図の信頼の作り方の足し（多い順の2つ・割合 30% 以上だけ） */
-export function trustHowFor(scene: string | null, mainRole: SentenceRole | null): TrustMethod[] {
-  const r = trustFor(scene, mainRole);
+export function trustHowFor(scene: string | null, mainRole: SentenceRole | null, env?: Env): TrustMethod[] {
+  const r = trustFor(scene, mainRole, env);
   return r ? r.shares.filter(([, s]) => s >= 0.3).slice(0, 2).map(([k]) => k) : [];
 }
 /** 場面×役目 → 文の終わりの言い方の上位（割合） */
-export function endingsFor(scene: string | null, role: SentenceRole): (EndingRow & { at: string }) | null {
-  return pick<EndingRow>(PHRASE_ENDING_TABLE as unknown as Record<string, EndingRow>, scene, role, 4);
+export function endingsFor(scene: string | null, role: SentenceRole, env?: Env): (EndingRow & { at: string }) | null {
+  return pick<EndingRow>(phraseTables(env).PHRASE_ENDING_TABLE as unknown as Record<string, EndingRow>, scene, role, 4);
 }
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 /** 書き手への注記（on の時だけ・文は写さない＝札と終わりの言い方と割合だけ） */
 export function phraseCatalogNote(o: { scene: string | null; mainRole: SentenceRole | null; roles: ReadonlyArray<SentenceRole> }, env?: Env): string {
   if (!composePhraseCatalogOn(env)) return "";
   const L: string[] = [];
-  const t = trustFor(o.scene, o.mainRole);
+  const t = trustFor(o.scene, o.mainRole, env);
   if (t && t.shares.length) L.push(`- 信頼の作り方（竹内さんの同じ場面×主の役目 ${t.n}番）: ${t.shares.slice(0, 3).map(([k, s]) => `${TRUST_JA[k] ?? k} ${pct(s)}`).join("・")}`);
-  const ends = [...new Set(o.roles)].filter((r) => r !== "greet").map((r) => { const e = endingsFor(o.scene, r); return e && e.top.length ? `${(ROLE_LABEL[r] ?? r).replace(/（.*$/, "")}＝${e.top.slice(0, 2).map(([f, s]) => `「${f}」${pct(s)}`).join("／")}` : null; }).filter(Boolean);
+  const ends = [...new Set(o.roles)].filter((r) => r !== "greet").map((r) => { const e = endingsFor(o.scene, r, env); return e && e.top.length ? `${(ROLE_LABEL[r] ?? r).replace(/（.*$/, "")}＝${e.top.slice(0, 2).map(([f, s]) => `「${f}」${pct(s)}`).join("／")}` : null; }).filter(Boolean);
   if (ends.length) L.push(`- 文の終わりの言い方（竹内さんの場面×役目の割合・言い回しは毎回同じにしない）: ${ends.join("・")}`);
   return L.join("\n");
 }
@@ -85,25 +87,26 @@ export const PHRASE_CATALOG_VERSION = `phrase-catalog@${PHRASE_CATALOG_BUILT}`;
 //   長さ＝竹内さんの場面×主の役目ごとの文の数（中央値と真ん中の半分）・絵文字＝場面ごとの1通の数と種類（😊 😌 🌟 ✨ だけ・feedback_emoji_allowlist）・
 //   期日の言葉＝材料（事実・資料・お客様の今の文・こちらの直近の送信）にある物だけ（無ければ期日を書かない＝下書きから消した型 deadline_promise と同じ線）。
 //   締めの種類は COMPOSE_CLOSING_TABLE（compose-value-slots）の行が持つ（ここでは重ねない）
-import { PHRASE_LENGTH_TABLE, PHRASE_EMOJI_TABLE } from "./compose-phrase-catalog-data";
 export function composeFormSlotsOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.COMPOSE_FORM_SLOTS ?? "").trim().toLowerCase() === "on";
 }
 const EMOJI_OK = ["😊", "😌", "🌟", "✨"];
-export function lengthFor(scene: string | null, mainRole: SentenceRole | null): { n: number; median: number; p25: number; p75: number; at: string } | null {
+export function lengthFor(scene: string | null, mainRole: SentenceRole | null, env?: Env): { n: number; median: number; p25: number; p75: number; at: string } | null {
   if (!mainRole) return null;
+  const PHRASE_LENGTH_TABLE = phraseTables(env).PHRASE_LENGTH_TABLE;
   const a = scene ? PHRASE_LENGTH_TABLE[`${scene}|${mainRole}`] : undefined;
   if (a && a.n >= 3) return { ...a, at: `${scene}|${mainRole}` };
   const b = PHRASE_LENGTH_TABLE[`*|${mainRole}`];
   return b ? { ...b, at: `*|${mainRole}` } : null;
 }
-export function emojiFor(scene: string | null): { n: number; median: number; p75: number; kinds: string[] } | null {
+export function emojiFor(scene: string | null, env?: Env): { n: number; median: number; p75: number; kinds: string[] } | null {
+  const PHRASE_EMOJI_TABLE = phraseTables(env).PHRASE_EMOJI_TABLE;
   const e = (scene && PHRASE_EMOJI_TABLE[scene]?.n >= 5 ? PHRASE_EMOJI_TABLE[scene] : PHRASE_EMOJI_TABLE["*"]) ?? null;
   return e ? { n: e.n, median: e.median, p75: e.p75, kinds: e.kinds.map(([k]) => k).filter((k) => EMOJI_OK.includes(k)) } : null;
 }
 export function formSlotsNote(o: { scene: string | null; mainRole: SentenceRole | null; dates: ReadonlyArray<string> }, env?: Env): string {
   if (!composeFormSlotsOn(env)) return "";
-  const L = lengthFor(o.scene, o.mainRole), E = emojiFor(o.scene);
+  const L = lengthFor(o.scene, o.mainRole, env), E = emojiFor(o.scene, env);
   const parts = [
     L ? `長さ ${L.p25 === L.p75 ? `${L.median}文` : `${L.p25}〜${L.p75}文`}（竹内さんの同じ場面×主の役目 ${L.n}番の真ん中）` : null,
     E ? `絵文字は ${E.p75 > 0 ? `${E.p75}つまで` : "無し"}（${E.kinds.join("・") || "😊・😌"} だけ）` : null,
