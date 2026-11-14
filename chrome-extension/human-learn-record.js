@@ -128,6 +128,18 @@
    *   → 本体を `start()` にまとめ、ライブラリが来た時に呼ぶ（待つ側も呼ぶ）。
    */
   function start() {
+  /**
+   * 2026-11-14 竹内さん「録画したのちゃんと反映されるようにする」
+   *
+   *   ⚠ 実測: 何度直しても `ops=0 / seen0` が続いた。`start()` は呼ばれるようになったが、
+   *     その**先頭**で `L.create()` を呼んでおり、**そこで例外が出ると以降が全部止まる**
+   *     （＝操作を拾う `_cap` まで到達しない）。
+   *   → **操作の記録（`_cap`）を最初に付ける**。写真や集計の準備は後ろに回す
+   *     （1つが失敗しても、記録だけは動く）。
+   *   ⚠ これは「静かに壊れる」を防ぐため（写真は撮れるのに操作が0、の原因になる）。
+   */
+  try { _attachOpCapture(); } catch (e) { try { console.warn("[AX] 操作の受け口を付けられません:", e && e.message); } catch (_) {} }
+  try { _bootShooting(); } catch (_) {}
   var rec = L.create({
     doc: document, win: window,
     // 2026-11-11 竹内さん「録画のような形で」: 操作のたびに画面の写真を1枚撮る
@@ -463,6 +475,25 @@
    *     ⚠ `isTrusted` で人の操作だけに絞らない（録画は拡張の操作を覚えたい）。
    *     ⚠ 入れるのは**欄の名前・種類・時刻だけ**（入力した中身は入れない）。
    */
+  /**
+   * 2026-11-14 竹内さん「録画したのちゃんと反映されるようにする」:
+   *   **操作の受け口を付ける**処理を関数に切り出した（`start()` の最初に呼ぶ）。
+   *   ⚠ 旧は `start()` の途中（`L.create()` の後ろ）にあり、そこで例外が出ると
+   *     **1つも操作を拾えなかった**（写真だけ撮れる・`ops=0`）。
+   *   → 記録は**最初に**付ける（写真や集計の準備が失敗しても、記録だけは動く）。
+   */
+  /**
+   * 2026-11-14 竹内さん「録画したのちゃんと反映されるようにする」:
+   *   写真の見張りを**先に**付ける（`start()` の最初に呼ぶ）。
+   *   ⚠ 旧は `apply()`（モードを読む）が来るまで写真が始まらなかった。
+   *     モードが読めない・storage が遅い時に**写真が0枚**になる。
+   *   → まず撮る（`shouldShoot` の設定だけ見る）。モードは後から反映される。
+   */
+  function _bootShooting() {
+    try { if (shouldShoot({})) startShooting(); } catch (_) {}
+  }
+
+  function _attachOpCapture() {
   try {
     var _cap = function (e) {
       try {
@@ -475,6 +506,17 @@
          *   ⚠ ここを捨てていたので、実測で 394件すべて `by` が無かった。
          */
         var _by = (e.isTrusted === true) ? "human" : "auto";
+        /**
+         * ⚠ **拡張自身の小窓（バー・ミニボタン・案内）は記録しない**。
+         *   実測: `左のAIXLINX｜div`・`#axlx-bar` などが混ざって順番が濁っていた。
+         *   → 拡張が作った要素（`#axlx-` / `[data-axlx]` / `#aixlinx-`）は飛ばす。
+         */
+        try {
+          var _t = e.target;
+          if (_t && (_t.closest
+            ? _t.closest('#axlx-bar, #axlx-learn-badge, #aixlinx-mini-btn, #axlx-guide, [data-axlx], [id^="axlx-"], [id^="aixlinx-"], [class^="axlx-"]')
+            : (String(_t.id || "").indexOf("axlx") === 0 || String(_t.id || "").indexOf("aixlinx") === 0))) return;
+        } catch (_) {}
         _pushOp(e.type || "click", e.target, _by);
         /**
          * 2026-11-14 竹内さん「プルダウンのところとか、さっき改善されたかな」
@@ -498,6 +540,7 @@
     document.addEventListener("click", _cap, true);
     document.addEventListener("change", _cap, true);
   } catch (_) {}
+  }
   /**
    * 押した欄を `axlx_human_points` に積む（2026-11-14・自動モードでも順番を学ぶため）。
    *
