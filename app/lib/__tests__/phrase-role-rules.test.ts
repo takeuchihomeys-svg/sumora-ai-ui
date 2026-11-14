@@ -52,6 +52,8 @@ t("表の版の切り替え（既定 off＝1版のまま・on で2版＋無い�
   assert.deepEqual(endingsFor("question", "promise", {}), endingsFor("question", "promise"));
   const v2close = endingsFor(null, "close", on); assert.ok(v2close && v2close.n === V2.PHRASE_ENDING_TABLE["*|close"].n);
   assert.ok(lengthFor(null, "keep", on));
+  // 主の役目に寄る行の表（行の並び・下の役目）は2版でも1版のまま（11/15 押さえ −1 の直し・q197）
+  assert.deepEqual(T.PHRASE_ROWS_TABLE, V1.PHRASE_ROWS_TABLE); assert.deepEqual(T.PHRASE_SUB_TABLE, V1.PHRASE_SUB_TABLE);
   // 2版の表に本文・名前は入れない（札と骨と数だけ）: 長い日本語の文の塊が無い
   const raw = JSON.stringify([V2.PHRASE_ENDING_TABLE, V2.PHRASE_OPENER_TABLE, V2.PHRASE_KEIGO_TABLE]);
   assert.ok(!/[ぁ-んァ-ン一-龥]{25,}/.test(raw), "長い文の塊が無い");
