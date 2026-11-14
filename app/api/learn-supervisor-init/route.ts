@@ -61,8 +61,24 @@ async function run() {
   // ① もう在るか（在れば何もしない）
   const probe = await supabase.from("learn_supervisor_log").select("id").limit(1);
   if (!probe.error) {
+    /**
+     * 2026-11-14: 既にある時は**中身の確認**も返す（保存が動いているか分かるように）。
+     *   ⚠ 数と結論だけ（中身の詳細は返さない）。
+     */
+    const cnt = await supabase.from("learn_supervisor_log").select("*", { count: "exact", head: true });
+    const recent = await supabase
+      .from("learn_supervisor_log")
+      .select("created_at, scope, verdict, coverage, weak_n")
+      .order("created_at", { ascending: false })
+      .limit(5);
     return NextResponse.json(
-      { ok: true, already: true, message: "learn_supervisor_log はもうあります（何もしませんでした）" },
+      {
+        ok: true,
+        already: true,
+        message: "learn_supervisor_log はもうあります（何もしませんでした）",
+        rows: cnt.error ? null : (cnt.count ?? 0),
+        recent: recent.error ? [] : (recent.data ?? []),
+      },
       { headers: CORS },
     );
   }
