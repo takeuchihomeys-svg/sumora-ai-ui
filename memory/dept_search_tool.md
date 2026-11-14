@@ -7877,3 +7877,39 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 
 ### 5. 版
 - **2.7.33**（repo・`Desktop\chrome-extension` 一致）。**Chrome の再読み込みが必要**。
+
+---
+
+## 2026-11-14 v2.7.34 「最新の学びが反映されるか」を実測して3つの断絶を直した（**拡張の再読み込み必須**）
+
+竹内さん「最新の学びが反映されるようになっているのか」
+
+### 1. 実測で分かった3つの断絶（**連携は通っていたが、最新が届いていなかった**）
+| 断絶 | 実測 | 直し |
+|---|---|---|
+| **① サーバーの変更が本番に無かった** | 本番 `source` に `versions`/`with_ops` が無い＝`cursor-ext` のサーバー変更を **`main` に載せていなかった**（`main` は452進み・`cursor-ext` は193進みで**枝分かれ**） | 5ファイルを `main` へ（**`main` 独自の索引 `idx_cron_run_logs_failed_started_at` は残す**）。`cursor-ext` は `main` の上位互換なので衝突なし |
+| **② 取り込みが1時間ごと** | `_LEARN_CHECK_MS = 1時間` で、しかも**前回取り込んでから1時間経つまで版の確認すらしない**＝学んだ直後は最大1時間反映されない | **5分ごと**に（`?touch=0` は軽い＝束を作り直さない）。→ 学んだ直後から**最大 約5分半**で自動検索に入る |
+| **③ `opens` が0個** | `opens` 列は v2.7.32 からの新しい記録にしか入らない（DBには今夜追加）。既存記録では永遠に空 | **名前から推測**する `guessOpensFromName`（小窓を開く→modal／確定→modal_close／検索→result／プルダウン→options）。⚠ 実測がある欄は実測を優先・推測は `guessed:true`・`n:0` |
+
+結果: 本番の束が **opens 13個**（すべて名前から推測）・`with_ops 244件`・版の内訳31種類を返すようになった。
+
+### 2. 反映の遅れ（今の決まり）
+```
+記録 → DB      : 操作の直後〜5分（その場で送る口あり）
+束の作り直し   : 30分たっていれば GET のたび / fresh=1 で即 / 毎晩 JST 0:10
+拡張が取り込む : 5分ごとに版を確認（変わった時だけ通信）
+storage → 使用 : 30秒（page-script が読み直す間隔）
+→ 学んだ直後から最大 約5分半 で自動検索に入る
+```
+
+### 3. ⚠ まだ残っている本当の原因
+**Chrome はまだ 2.7.29 で動いている**（記録の版が全部 2.7.29）。ファイルは 2.7.34 に更新済み。
+**再読み込みしないと 2.7.31〜34 の改善は1つも現場で動かない。**
+
+### 4. 道具と試験
+- `scripts/audit-freshness.ts`（新規）: 記録→束→fresh→遅れの決まりを1画面で実測
+- `tests/chrome-extension/learn-wiring-gaps.test.js` に追記・`app/lib/__tests__/guess-opens.test.ts`（**新規16件**）
+- 拡張 **116本**合格・`npx tsc --noEmit` 0・`node scripts/audit-reflect.js` **35/35**
+
+### 5. 版
+- **2.7.34**（repo・`Desktop\chrome-extension` 一致）。**Chrome の再読み込みが必要**。
