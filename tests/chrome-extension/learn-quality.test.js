@@ -32,7 +32,7 @@ console.log("■ ① 同じチェックを1回に畳む（交互クリックの�
   t("チェック系（name に []）だけ", /indexOf\("\[\]"\) < 0/.test(r));
   t("近い時（400ms以内）だけ畳む", /gap2 <= 400/.test(r));
   t("同じ親の中かを確かめる", /closest\("label"\) === lab/.test(r));
-  t("DOM 要素を送らない", /return \{ t: o\.t, k: o\.k, f: o\.f, w: o\.w, g: o\.g \}/.test(r));
+  t("DOM 要素を送らない（人か機械かの印だけ足す）", /return \{ t: o\.t, k: o\.k, f: o\.f, w: o\.w, g: o\.g, by: o\.by \|\| null \}/.test(r));
 }
 
 console.log("■ ② 区を押し直して外さない（トグル）");
