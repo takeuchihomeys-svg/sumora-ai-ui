@@ -109,6 +109,12 @@ export type SupervisorInput = {
   /** 止まった回が一番多い場面（`search_audits` の status が finished でない回の最後の場面） */
   stopped_scene?: string | null;
   /**
+   * 2026-11-14 竹内さん「また今日強化されたら『強化した』と統括に保存しておくようにする」:
+   *   **今日なにを強化したか**（`learn_improvements` の集計）。
+   *   ⚠ 判断の材料ではなく**実績**（点は上げない・効いたかは数字で確かめる）。
+   */
+  improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
+  /**
    * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
    *   **実際の検索の結果**（`search_audits` の集計）。これが無いと統括は現場の現実を知らない
    *   （実測: 60回中56回が途中で止まっていたのに「渡してよい」と言っていた）。
@@ -197,9 +203,16 @@ export type SupervisorAdvice = {
     agenda: Array<{ priority: number; topic: string; why: string; decide: string }>;
     /** 竹内さんに聞く事（判断を委ねる） */
     questions: Array<{ q: string; options?: string[]; why: string }>;
-  /** 根拠（数字。推測は guessed:true） */
-  evidence: Array<{ label: string; value: string; guessed?: boolean }>;
-  };
+      /** 根拠（数字。推測は guessed:true） */
+    evidence: Array<{ label: string; value: string; guessed?: boolean }>;
+    /**
+     * 2026-11-14 竹内さん「必要な部分を統括が判断して学習すれば強化される」:
+     *   **統括が決めた「次に学ぶ事」**（優先順・費用つき）。
+     *   `supervisor-do` がこれを読んで上から実行する（竹内さんが毎回指図しなくてよい形）。
+     *   ⚠ `photo_learn` は1枚ごとに費用がかかるので `limit` を必ず付ける。
+     */
+    learning_tasks?: Array<{ kind: string; what: string; why: string; cost: string; limit?: number }>;
+    };
   /**
    * 2026-11-14 竹内さん「矛盾の部分なんで統括が整理したらよい」:
    *   **統括が自分の判断を点検した結果**（矛盾が無いか）。
@@ -569,6 +582,10 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       scene_missing: num(inp.scene_missing),
       scene_missing_names: typeof inp.scene_missing_names === "string" ? inp.scene_missing_names : "",
       stopped_scene: typeof inp.stopped_scene === "string" ? inp.stopped_scene : null,
+      /** 2026-11-14 竹内さん「強化したら統括に保存しておく」: 今日の強化の実績（点は上げない） */
+      improvements: inp.improvements && typeof inp.improvements === "object"
+        ? { total: num(inp.improvements.total), by_area: Array.isArray(inp.improvements.by_area) ? inp.improvements.by_area : [] }
+        : null,
     }),
   };
 }
@@ -686,6 +703,8 @@ function buildMeeting(m: {
   scene_missing?: number;
   scene_missing_names?: string;
   stopped_scene?: string | null;
+  /** 2026-11-14: 今日の強化の実績（点は上げない・根拠に出すだけ） */
+  improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
 }): SupervisorAdvice["meeting"] {
   const num = (v: unknown): number => {
     const n = typeof v === "number" ? v : Number(v);
@@ -694,11 +713,23 @@ function buildMeeting(m: {
   const who = m.site === "all" ? "全体" : m.site;
   const today: string[] = [];
   const agenda: SupervisorAdvice["meeting"]["agenda"] = [];
+  /** 2026-11-14: 統括が決めた「次に学ぶ事」（`supervisor-do` が上から実行する） */
+  let learning_tasks: Array<{ kind: string; what: string; why: string; cost: string; limit?: number }> = [];
   const questions: SupervisorAdvice["meeting"]["questions"] = [];
   const evidence: SupervisorAdvice["meeting"]["evidence"] = [];
 
   // ── 根拠（数字）──
   evidence.push({ label: "結論", value: `${HEAD[m.verdict]}（材料 ${m.coverage}/100・弱い所 ${m.weakN}件）` });
+  /**
+   * 2026-11-14 竹内さん「また今日強化されたら『強化した』と統括に保存しておくようにする」:
+   *   **今日なにを強化したか**を統括が言えるようにする（根拠に出す）。
+   *   ⚠ これは判断の材料ではなく**実績の記録**。数が増えても材料の点は上げない
+   *     （「直したから賢くなった」と自動で決めない・効いたかは数字で確かめる）。
+   */
+  if (m.improvements && m.improvements.total > 0) {
+    const by = m.improvements.by_area.map((x) => `${x.area} ${x.n}`).join("・");
+    evidence.push({ label: "今日の強化", value: `${m.improvements.total}件（${by}）` });
+  }
   evidence.push({ label: "記録", value: `${m.rows}件（うち操作が付いている ${m.withOps}件）` });
   evidence.push({ label: "押す順番", value: `${m.next}通り` });
   evidence.push({ label: "押す場所", value: `${m.points}個` });
@@ -1009,6 +1040,83 @@ function buildMeeting(m: {
       decide: a.how,
     });
   }
+  /**
+   * 2026-11-14 竹内さん「必要な部分を統括が判断して学習すれば強化される」:
+   *   統括が**自分で「次に何を学ぶか」を決める**（竹内さんが毎回指図しなくてよい形）。
+   *
+   *   ⚠ 決める材料は**実データだけ**:
+   *     ・写真はあるのに `shot_learn` が0件 → **写真から読む**（弱い所の写真だけ・費用は1枚ごと）
+   *     ・手本が無い場面がある → **人が1回やる**（推測で動かさない）
+   *     ・止まる場面がある → **その場面の手本と違う所を探す**
+   *   ⚠ 費用がかかる物（Vision）は**枚数の上限**を必ず付ける。
+   *   → 判断を `learning_tasks` として残す（`supervisor-do` が上から実行できる）。
+   */
+  {
+    const tasks: Array<{ kind: string; what: string; why: string; cost: string; limit?: number }> = [];
+    const shotPct = m.shotRows != null && m.rows > 0 ? Math.round((m.shotRows / m.rows) * 100) : null;
+    const opsPct = m.rows > 0 ? Math.round((m.withOps / Math.max(1, m.rows)) * 100) : 0;
+    /**
+     * ① 写真から読む（一番効く・写真はもう撮れている）。
+     *   ⚠ 「写真がある割合」と「学べている割合」の**差が大きい時だけ**（差が小さい時に走らせても意味がない）。
+     */
+    if (shotPct != null && shotPct >= 50 && opsPct < 60) {
+      tasks.push({
+        kind: "photo_learn",
+        what: "弱い所の写真から、欄の種類（プルダウン／入力／チェック）を読む",
+        why: `写真は${shotPct}%あるのに、操作が付いているのは${opsPct}%（写真から読む処理が一度も走っていない・実測 shot_learn 0件）`,
+        cost: "1枚ごとに Vision の費用（上限あり）",
+        limit: 20,
+      });
+    }
+    /** ② 手本が無い場面（推測で動かさない） */
+    if (typeof m.scene_missing === "number" && m.scene_missing > 0) {
+      tasks.push({
+        kind: "need_human",
+        what: `${String(m.scene_missing_names || "").trim() || "手本が無い場面"}を人が1回やる`,
+        why: "手本が無い場面は自動にできない（推測で動かすと現場が壊れる）",
+        cost: "無料（人の手間だけ）",
+      });
+    }
+    /** ③ 止まる場面（一番現場に効く） */
+    if (typeof m.stopped_scene === "string" && m.stopped_scene) {
+      tasks.push({
+        kind: "fix_scene",
+        what: `「${m.stopped_scene}」で止まる原因を、手本と比べて探す`,
+        why: `途中で止まった回の最後の場面は「${m.stopped_scene}」が一番多い`,
+        cost: "無料",
+      });
+    }
+    /** ④ 録画の経路（操作が届いていない） */
+    if (m.rows > 0 && m.withOps / m.rows < 0.3 && (!shotPct || shotPct < 50)) {
+      tasks.push({
+        kind: "fix_record",
+        what: "録画の記録（押した操作）がDBに届くようにする",
+        why: `記録 ${m.rows}件のうち操作が付いているのは ${m.withOps}件（${opsPct}%）`,
+        cost: "無料",
+      });
+    }
+    /**
+     * ⚠ 優先順位: 無料で効く物を先に・お金がかかる物は後ろ。
+     *   （竹内さんが「費用をかけてよい」と言った時だけ写真を読む、という順番にする）
+     */
+    const rank: Record<string, number> = { fix_scene: 0, need_human: 1, fix_record: 2, photo_learn: 3 };
+    tasks.sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9));
+    if (tasks.length) {
+      agenda.push({
+        priority: 1,
+        topic: "次に学ぶ事（統括が決めた順）",
+        why: tasks.map((t, i) => `${i + 1}. ${t.what}（${t.cost}）`).join(" / "),
+        decide: tasks[0].kind === "photo_learn"
+          ? "写真から読む（費用がかかる）／無料の物を先にやるか"
+          : `${tasks[0].what} から進めるか`,
+      });
+    }
+    /**
+     * ⚠ 課題そのものは**会議の結果に載せる**（議題の文だけだと、実行する側が
+     *   「何を・どの順で・いくらで」を取り出せない）。`supervisor-do` がこれを読んで実行する。
+     */
+    learning_tasks = tasks;
+  }
 
   // ── 竹内さんに聞く事 ──
   if (m.rows > 0 && m.withOps / m.rows < 0.3) {
@@ -1018,12 +1126,21 @@ function buildMeeting(m: {
      *   写真がある記録の数が渡されていればそれを使い、無ければ「写真はほとんど撮れている」とだけ言う。
      */
     const shotPct = m.shotRows != null && m.rows > 0 ? Math.round((m.shotRows / m.rows) * 100) : null;
+    /**
+     * 2026-11-14 竹内さん「必要な部分を統括が判断して学習すれば強化される」:
+     *   ⚠ 旧の選択肢は「まず録画の経路を直す」「写真から読む仕組みを先に作る」だった。
+     *     だが**写真から読む仕組みはもう作った**（`shot_learn_server`。作ってあるのに
+     *     呼ぶ所が0箇所だったのを繋いだ）。だから選択肢が古い。
+     *   → 統括が**自分で判断して走らせられる**形にする:
+     *     「弱い所の写真だけ読む（費用は1枚ごと）」を第一の選択肢にする。
+     *     `photo_learn` を action に載せ、`supervisor-do` がそのまま実行できるようにする。
+     */
     questions.push({
       q: shotPct != null
-        ? `写真は${shotPct}%撮れているのに、そこから学べているのは${opsPct}%だけです。この差をどう扱いますか？`
-        : `写真から学べているのは${opsPct}%だけです。この差をどう扱いますか？`,
-      options: ["まず録画の経路を直す（推奨）", "写真から読む仕組みを先に作る", "今のままでよい"],
-      why: "材料が無いまま点数だけ上がると、『学べている』と誤解する",
+        ? `写真は${shotPct}%撮れているのに、そこから学べているのは${opsPct}%だけです。弱い所の写真だけ読みますか？`
+        : `写真から学べているのは${opsPct}%だけです。弱い所の写真だけ読みますか？`,
+      options: ["弱い所の写真だけ読む（推奨・1枚ごとに費用）", "まず録画の経路を直す", "今のままでよい"],
+      why: "写真は撮れているのに、写真から欄の種類を読む処理が一度も走っていない（実測0件）",
     });
   }
   if (m.opens > 0 && m.guessedOpens >= m.opens) {
@@ -1049,7 +1166,7 @@ function buildMeeting(m: {
   }
 
   agenda.sort((a, b) => a.priority - b.priority);
-  return { today, agenda: agenda.slice(0, 6), questions: questions.slice(0, 4), evidence };
+  return { today, agenda: agenda.slice(0, 6), questions: questions.slice(0, 4), evidence, learning_tasks };
 }
 
 function num(v: unknown): number {

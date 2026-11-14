@@ -1069,10 +1069,6 @@ CREATE TABLE IF NOT EXISTS cron_run_logs (
   error_message TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cron_run_logs_name_at ON cron_run_logs(cron_name, started_at DESC);
--- 2026-11-14 作業員F: 本番の調子の見張り（exam-conductor の prodHealthy・ops-anomaly・batch-daytime-guard）の
---   「started_at >= 直近 AND ok = false」が 21万行を毎回頭から読んでいた（11/13 昼の DB 固まりの調べ）。失敗の行だけの小さい索引。
---   本番には 11/14 朝 CREATE INDEX CONCURRENTLY で当て済み（exec_sql は transaction の中なので CONCURRENTLY は書けない＝既にあれば何もしない）
-CREATE INDEX IF NOT EXISTS idx_cron_run_logs_failed_started_at ON cron_run_logs(started_at DESC) WHERE ok = false;
 
 -- ④ AIX生成文案ログ（AIXが生成した文案を保存しAI改善ループを完成させる）
 -- generated_text: AIXが生成したが実際に送られたかどうかは line_message_id で照合
@@ -3846,34 +3842,49 @@ ALTER TABLE human_learn_profile ENABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE human_learn_profile IS '人の動きの記録をまとめた学習の束（押す順番・押す場所・動きの速さ）。拡張はこれを読む。入力した中身は入れない。2026-11-13 竹内さん承認';
 
 -- ── 2026-11-14 竹内さん「統括はデータベース必要なら強化や追加できるようにしていく」──
--- learn_supervisor_log: 統括の判断を1回ごとに1行残す。   なぜ要るか: 判断は今まで human_learn_profile.bundle（JSONB）の中にしかなく、
---     前回と比べる・推移を見る・打ち合わせで使う ができなかった。
+-- learn_supervisor_log: **統括の判断を1回ごとに1行**残す。
+--   なぜ要るか: 判断は今まで human_learn_profile.bundle（JSONB）の中にしかなく、
+--     **前回と比べる・推移を見る・打ち合わせで使う**ができなかった。
 --   入れる物: 結論・材料の揃い・弱い所の数・材料の数・推測の数・次にやる事・打ち合わせの内容。
---   数と判断だけ（入力した中身・お客様の名前・電話・住所は入れない）。
+--   ⚠ 数と判断だけ（入力した中身・お客様の名前・電話・住所は入れない）。
 CREATE TABLE IF NOT EXISTS learn_supervisor_log (
   id BIGSERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- どの範囲の判断か（all / realpro / itandi）
   scope TEXT NOT NULL DEFAULT 'all',
+  -- 結論（ready / almost / not_yet / unsafe）
   verdict TEXT NOT NULL,
+  -- 人が読む1行の結論
   headline TEXT,
+  -- 材料の揃い（0〜100）
   coverage INTEGER NOT NULL DEFAULT 0,
+  -- 弱い所の数
   weak_n INTEGER NOT NULL DEFAULT 0,
+  -- 材料の数（押す順番・押す場所・開き方・画面・一連・操作つき記録）
   next_n INTEGER NOT NULL DEFAULT 0,
   points_n INTEGER NOT NULL DEFAULT 0,
   opens_n INTEGER NOT NULL DEFAULT 0,
   screens_n INTEGER NOT NULL DEFAULT 0,
   sequence_n INTEGER NOT NULL DEFAULT 0,
   with_ops INTEGER NOT NULL DEFAULT 0,
+  -- 「押したら何が開くか」のうち推測で埋めた数（実測ではない）
   guessed_opens INTEGER NOT NULL DEFAULT 0,
+  -- 元にした記録の数
   rows INTEGER NOT NULL DEFAULT 0,
+  -- 前回からの増減（{rows,next,points,opens,weak}）
   delta JSONB,
+  -- 次にやる事（[{priority,what,why,how,name}]）
   actions JSONB,
+  -- 打ち合わせで話す内容（{today,agenda,questions,evidence}）
   meeting JSONB,
+  -- 止める理由（危ない時だけ）
   block TEXT,
+  -- 元にした束の版（同じ判断を二重に残さないための印）
   bundle_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_learn_supervisor_scope ON learn_supervisor_log(scope, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_learn_supervisor_created ON learn_supervisor_log(created_at DESC);
+-- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）
 ALTER TABLE learn_supervisor_log ENABLE ROW LEVEL SECURITY;
 -- 2026-11-14 竹内さん「PLS無効にしたらよいのでは」→ **その通りでした**。
 --   統括の判断が**ほとんど保存されていなかった**（実測: 105件・それも数件ずつだけ）。
@@ -3893,6 +3904,30 @@ ON CONFLICT (id) DO NOTHING;
 -- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）
 ALTER TABLE human_motion_learn ENABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE human_motion_learn IS '通常・スタッフモードで人がどう動いたか（速さ・曲がり・押した位置・スクロール）。入力した中身・名前・電話は入れない。2026-11-11 竹内さん承認';
+
+-- ── 2026-11-14 竹内さん「また今日強化されたら『強化した』と統括に保存しておくようにする」──
+-- learn_improvements: **何を強化したか**を1件ずつ残す（判断は learn_supervisor_log・強化はここ）。
+--   ⚠ 判断ログには「結論」は残るが「何を直した結果どう変わったか」が残らない。
+--   入れる物: 分野・何を・なぜ（実測の数字）・どう直したか・効くはずの所・確かめ方・版。
+--   仕組みの話だけ（お客様の名前・入力した中身・住所は入れない）。
+CREATE TABLE IF NOT EXISTS learn_improvements (
+  id BIGSERIAL PRIMARY KEY,
+  at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  area TEXT NOT NULL DEFAULT 'other',
+  title TEXT NOT NULL,
+  why TEXT,
+  how TEXT,
+  effect TEXT,
+  verify TEXT,
+  version TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_learn_improvements_at ON learn_improvements(at DESC);
+CREATE INDEX IF NOT EXISTS idx_learn_improvements_area ON learn_improvements(area, at DESC);
+-- 2026-11-14 竹内さん「PLS無効にしたらよいのでは」: 統括の記録は公開キーでも書けるようにする
+--   （RLS を有効にすると Service Role キーが無い所から書けず、黙って0件になった）。
+--   ⚠ 入れるのは仕組みの話だけなので個人情報は漏れない。
+ALTER TABLE learn_improvements DISABLE ROW LEVEL SECURITY;
+COMMENT ON TABLE learn_improvements IS '学習の強化の記録（何を・なぜ・どう直した・効くはずの所・確かめ方）。仕組みの話だけ。2026-11-14 竹内さん承認';
 
 -- conversations.deepseek_cutoff_at: 申込以降→申込前に切り替えた時刻（2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、
 --   申込落ちてステータスを切り替えたら、切り替えたところ以降渡せば個人情報防げる」）。DeepSeek に渡すのはこの時刻より後だけ（app/lib/post-apply.ts deepseekSafeCutoff）。
