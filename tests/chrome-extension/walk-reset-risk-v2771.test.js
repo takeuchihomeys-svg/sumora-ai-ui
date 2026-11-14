@@ -113,5 +113,33 @@ console.log("\n■ ⑥ 自動で押す側は順番を固定している（消え
   ok("  並べ替えの後にもそろえる", /_keepTransportBeforeWalk2/.test(ps));
 }
 
+console.log("\n■ ⑦ ⚠ 畳む前の並びで判定する（畳むと transportation_id が1回に潰れる）");
+{
+  /**
+   * ⚠ 実測（4つ目の罠）: `sequencesOf` はそのままの並びを返すが、他所では
+   *   `collapseSameField`（同じ欄の click→change を畳む）を通す。
+   *   畳んだ後だと `transportation_id → transportation_id`（＝選び直しの証拠）が
+   *   **1回**に潰れて `walk_reset` が出なくなる（実測で確認）。
+   */
+  ok("  ⚠ 畳む前の並びで判定すると書いてある", /畳む前の並び\*\*で行う|畳む前の並び/.test(brain));
+  ok("  `sequencesOf` をそのまま使っている", /const ops = sequencesOf\(r\);/.test(brain));
+  // 畳んだ後の並びでは指摘が出ない事を、写しで確かめる
+  const folded = [{ f: "transportation_id" }, { f: "required_time" }, { f: "update_date" }];
+  ok("  ⚠ 畳んだ後（徒歩1回）では指摘なし", findWalkResetRisk([folded]) === null);
+  const unfolded = [
+    { f: "transportation_id" }, { f: "transportation_id" },
+    { f: "required_time" }, { f: "required_time" },
+  ];
+  ok("  ⚠ 畳む前（徒歩2回）では指摘あり", findWalkResetRisk([unfolded]) !== null);
+}
+
+console.log("\n■ ⑧ ⚠ `分`（1文字）が学習から捨てられない");
+{
+  const sl = fs.readFileSync(path.join(dir, "app", "lib", "shot-learn.ts"), "utf8");
+  ok("  ⚠ 意味のある1文字は通す（ONE_CHAR_OK）", /ONE_CHAR_OK/.test(sl));
+  ok("  ⚠ `分` が入っている", /\[分円階歳畳帖件人駅室棟戸台個日月年\]/.test(sl));
+  ok("  数字・記号の1文字は今まで通り捨てる", /n\.length <= 1 && !ONE_CHAR_OK\.test\(n\)/.test(sl));
+}
+
 console.log(`\n${passed} 件合格 / ${failed} 件失敗`);
 if (failed > 0) process.exit(1);
