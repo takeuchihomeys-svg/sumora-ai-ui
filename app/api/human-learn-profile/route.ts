@@ -122,22 +122,22 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     console.warn("[human-learn-profile] 検索の結果を取れません:", e instanceof Error ? e.message : String(e));
   }
   /**
-   * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
-   *   **現場への指示（`automation_commands`）の詰まり**も取って統括に渡す。
-   *   ⚠ 検索が動いていても、この指示が拾われないまま／失敗したままなら現場は止まる。
-   *   ⚠ 取れなくても学習の束は作る（`commands=null`）。
+   * 2026-11-14 竹内さん「ここも調べる」:
+   *   ⚠ 24時間だと「モードが無かった」が1件しか見えない（実測）。7日だと **187件**。
+   *     指示の失敗は**たまに起きる**ので、短い窓では見落とす。
+   *   → **7日**で見る（指示は1日数十件なので重くならない）。
    */
+  const since7d = new Date(Date.now() - 7 * 86400_000).toISOString();
   let commandsSummary: import("@/app/lib/learn-command-summary").CommandSummary | null = null;
   try {
     const { summarizeCommands } = await import("@/app/lib/learn-command-summary");
-    const since24c = new Date(Date.now() - 24 * 3600_000).toISOString();
     const cr = await supabase
       .from("automation_commands")
       .select("created_at, picked_up_at, completed_at, status, sites, command_type, error_message")
-      .gte("created_at", since24c)
+      .gte("created_at", since7d)
       .order("created_at", { ascending: false })
-      .limit(300);
-    if (!cr.error) commandsSummary = summarizeCommands((cr.data ?? []) as never, { sinceMs: 24 * 3600_000 });
+      .limit(600);
+    if (!cr.error) commandsSummary = summarizeCommands((cr.data ?? []) as never, { sinceMs: 7 * 86400_000 });
     else console.warn("[human-learn-profile] automation_commands を読めません:", cr.error.message);
   } catch (e) {
     console.warn("[human-learn-profile] 指示の状態を取れません:", e instanceof Error ? e.message : String(e));

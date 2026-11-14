@@ -114,6 +114,12 @@ export type HumanLearnBundle = {
     versions?: Record<string, number>;
     /** 材料（操作の並び）が揃っている記録の数＝「順番」を学べる記録 */
     with_ops?: number;
+    /**
+     * 2026-11-14 竹内さん「通常モードでの学習で自動モード改善するように」:
+     *   **人が押した操作**と**拡張が押した操作**の数（手本にできるのは人の動き）。
+     */
+    human_ops?: number;
+    auto_ops?: number;
   };
   /** ① 直前の操作 → 次に押す物（押す順番） */
   next: Record<string, NextStat>;
@@ -248,9 +254,20 @@ export function sequencesOf(row: MotionRow): Array<Array<{ t: number | null; k: 
   const raw = row.shot_ops;
   if (Array.isArray(raw)) {
     const seq: Array<{ t: number | null; k: string | null; f: string }> = [];
+    /**
+     * 2026-11-14 竹内さん「通常モードで行っているのはスタッフ等人間が実際の動きをしているので
+     *   そこを理解して学習する」:
+     *
+     *   ⚠ `by`（人が押したか拡張が押したか）を**見ていなかった**ので、
+     *     「人の手本」と「機械の動き」が混ざった順番を学んでいた。
+     *   → **`by` がある時は「人」だけを手本にする**（`by` が無い旧記録は今まで通り使う）。
+     *     ⚠ 全部が auto の行は手本にしない（機械の癖を学ばない）。
+     */
+    const hasBy = (raw as unknown[]).some((o) => o && typeof o === "object" && ((o as Record<string, unknown>).by === "human" || (o as Record<string, unknown>).by === "auto"));
     for (const o of raw as unknown[]) {
       if (!o || typeof o !== "object") continue;
       const r = o as Record<string, unknown>;
+      if (hasBy && r.by !== "human") continue;      // 人が押した物だけを手本にする
       const f = typeof r.f === "string" ? r.f.trim().slice(0, 30) : "";
       if (!f) continue;
       /** 2026-11-14: 押す対象でない入れ物は**並びから除く**（ゴミを学ばない） */
@@ -905,6 +922,34 @@ export function buildHumanLearnBundle(
     garbage, mode_counts);
 
   /**
+   * 2026-11-14 竹内さん「通常モードで行っているのはスタッフ等人間が実際の動きをしているので
+   *   そこを理解して学習する」:
+   *   **人が押した操作**と**拡張が押した操作**を分けて数える（手本にできるのは人の動き）。
+   */
+  const humanOpsCount = (() => {
+    let n = 0;
+    for (const r of list) {
+      const x = r as unknown as Record<string, unknown>;
+      const ops = Array.isArray(x.shot_ops) ? (x.shot_ops as unknown[]) : [];
+      for (const o of ops) {
+        if (o && typeof o === "object" && (o as Record<string, unknown>).by === "human") n++;
+      }
+    }
+    return n;
+  })();
+  const autoOpsCount = (() => {
+    let n = 0;
+    for (const r of list) {
+      const x = r as unknown as Record<string, unknown>;
+      const ops = Array.isArray(x.shot_ops) ? (x.shot_ops as unknown[]) : [];
+      for (const o of ops) {
+        if (o && typeof o === "object" && (o as Record<string, unknown>).by === "auto") n++;
+      }
+    }
+    return n;
+  })();
+
+  /**
    * 2026-11-14 竹内さん「学習の統括の部分判断できるようにちゃんと強化していく」:
    *   `learn_plan` は「弱い所の一覧」で、**判断**をしていなかった（どれから直すか・今使えるか）。
    *   → 統括（`learn-supervisor.ts`）に**1つの結論**と**次にやる事**を決めさせる。
@@ -970,8 +1015,13 @@ export function buildHumanLearnBundle(
         running: commands.running,
         errors: commands.errors,
         top_problem: commands.top_problem,
+        mode_absent: commands.mode_absent,
       }
       : null,
+    /** 2026-11-14: 人が押した操作の数（手本にできる動き） */
+    human_ops: humanOpsCount,
+    /** 2026-11-14: 拡張が押した操作の数（機械の動き＝手本にしない） */
+    auto_ops: autoOpsCount,
   } as SupervisorInput);
 
   /**
@@ -1055,6 +1105,29 @@ export function buildHumanLearnBundle(
         const x = r as unknown as Record<string, unknown>;
         return (Array.isArray(x.shot_ops) && x.shot_ops.length > 0) || (Array.isArray(x.field_order) && x.field_order.length > 0);
       }).length,
+      /**
+       * 2026-11-14 竹内さん「ちゃんと読み取って統括が理解して最善の指示おこなえるように」:
+       *   **サイト別にも人の手本と機械の動き**を分けて渡す
+       *   （itandi は人の手本が無いのに realpro の数字で判断していた）。
+       */
+      human_ops: (() => {
+        let n = 0;
+        for (const r of sub) {
+          const x = r as unknown as Record<string, unknown>;
+          const ops = Array.isArray(x.shot_ops) ? (x.shot_ops as unknown[]) : [];
+          for (const o of ops) if (o && typeof o === "object" && (o as Record<string, unknown>).by === "human") n++;
+        }
+        return n;
+      })(),
+      auto_ops: (() => {
+        let n = 0;
+        for (const r of sub) {
+          const x = r as unknown as Record<string, unknown>;
+          const ops = Array.isArray(x.shot_ops) ? (x.shot_ops as unknown[]) : [];
+          for (const o of ops) if (o && typeof o === "object" && (o as Record<string, unknown>).by === "auto") n++;
+        }
+        return n;
+      })(),
       prev: null,
       site: siteName,
     });
@@ -1069,6 +1142,9 @@ export function buildHumanLearnBundle(
       sites,
       ...(Object.keys(versions).length ? { versions } : {}),
       with_ops: withOps,
+      /** 2026-11-14: 人の動きと機械の動きを分けて載せる */
+      human_ops: humanOpsCount,
+      auto_ops: autoOpsCount,
     },
     next,
     points,
@@ -1098,6 +1174,7 @@ export function buildHumanLearnBundle(
     ...(sequenceFlow && sequenceFlow.sequence.length ? { sequence_flow: sequenceFlow } : {}),
     lines: [],
   };
+
 
   bundle.lines = describeBundle(bundle);
   /**
@@ -1146,6 +1223,19 @@ export function describeBundle(b: HumanLearnBundle): string[] {
   if (typeof b.source.with_ops === "number") {
     const missing = b.source.rows - b.source.with_ops;
     out.push(`材料（操作の並び）がある記録: ${b.source.with_ops}件${missing > 0 ? `（${missing}件は材料が無く順番を学べない）` : ""}`);
+  }
+  /**
+   * 2026-11-14 竹内さん「ちゃんと読み取って統括が理解して最善の指示おこなえるように」:
+   *   **人の手本と機械の動き**を人が読める形でも出す。
+   *   ⚠ 自動検索を良くするのは**人の手本**。機械の動きを学ぶと自分の癖を強めるだけ。
+   */
+  if (typeof b.source.human_ops === "number" || typeof b.source.auto_ops === "number") {
+    const h = Number(b.source.human_ops) || 0;
+    const a = Number(b.source.auto_ops) || 0;
+    const t = h + a;
+    if (t > 0) {
+      out.push(`手本にできる動き: 人 ${h}回 / 機械 ${a}回（人の割合 ${Math.round((h / t) * 100)}%）`);
+    }
   }
   if (b.source.versions && Object.keys(b.source.versions).length) {
     const top = Object.entries(b.source.versions).sort((a, x) => x[1] - a[1]).slice(0, 4);

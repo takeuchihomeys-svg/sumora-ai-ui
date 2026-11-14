@@ -58,6 +58,14 @@ export type SupervisorInput = {
   /** 2026-11-14: 写真がある記録の数（写真の割合を実データから出す） */
   shot_rows?: number;
   /**
+   * 2026-11-14 竹内さん「通常モードでの学習で自動モード改善するように」
+   *   「統括がちゃんと学習にの指示だし把握できるように細かい部分まで徹底する」:
+   *   **人が押した操作**と**拡張が押した操作**の数。
+   *   ⚠ 自動検索の改善に使えるのは**人の手本**だけ（機械の動きを学ぶと自分の癖を強める）。
+   */
+  human_ops?: number;
+  auto_ops?: number;
+  /**
    * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
    *   **実際の検索の結果**（`search_audits` の集計）。これが無いと統括は現場の現実を知らない
    *   （実測: 60回中56回が途中で止まっていたのに「渡してよい」と言っていた）。
@@ -95,6 +103,8 @@ export type SupervisorInput = {
     errors?: Array<{ error: string; n: number }>;
     /** 一番の問題を1文で */
     top_problem?: string | null;
+    /** 「自動/AIXモードのPCが無かった」で終わった数（運用の問題・処理ではない） */
+    mode_absent?: { aix_absent: number; brain_absent: number } | null;
   } | null;
 };
 
@@ -324,6 +334,16 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
    */
   const opsRatio = rows > 0 ? withOps / rows : 0;
   /**
+   * 2026-11-14 竹内さん「通常モードでの学習で自動モード改善するように」:
+   *   **人の手本**がどれだけあるか。
+   *   ⚠ 自動検索を良くするには**人が実際にやった動き**が要る。
+   *     機械の動き（拡張が押した物）を学ぶと**自分の癖を強める**だけ。
+   */
+  const humanOps = num((input as unknown as Record<string, unknown>).human_ops);
+  const autoOps = num((input as unknown as Record<string, unknown>).auto_ops);
+  const byTotal = humanOps + autoOps;
+  const humanShare = byTotal > 0 ? humanOps / byTotal : null;
+  /**
    * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
    *   **指示が詰まっていないか**も判断材料にする（`automation_commands`）。
    *   ⚠ 検索は動いていても、**指示が拾われないまま／失敗したまま**なら現場は詰まっている。
@@ -351,6 +371,17 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
         : auditRate < 50 ? "not_yet"     // 半分も完走しない＝自動に渡せない
           : auditRate < 90 ? "almost"     // たまに止まる＝まだ「渡してよい」とは言えない
             : null;
+  /**
+   * 2026-11-14 竹内さん「通常モードでの学習で自動モード改善するように」:
+   *   **人の手本が少なすぎる**時は「渡してよい」にしない。
+   *   ⚠ 実測: `by`（人/機械）を記録していなかったので、機械の動きまで手本にしていた。
+   *   → 人の手本が 3割未満なら最大 almost（自動を良くする材料が足りない）。
+   */
+  const capByHuman: SupervisorVerdict | null =
+    byTotal === 0 ? null                    // まだ `by` が無い（旧記録）→ 制限しない
+      : humanShare == null ? null
+        : humanShare < 0.3 ? "almost"
+          : null;
 
   let verdict: SupervisorVerdict;
   if (withOps === 0 && rows > 0) verdict = "not_yet";   // 材料ゼロは「これから」段階（危ないの一歩手前）
@@ -367,6 +398,10 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     const rank: Record<SupervisorVerdict, number> = { unsafe: 3, ready: 2, almost: 1, not_yet: 0 };
     if (rank[verdict] > rank[capByAudit]) verdict = capByAudit;
   }
+  if (capByHuman && verdict !== "unsafe") {
+    const rank: Record<SupervisorVerdict, number> = { unsafe: 3, ready: 2, almost: 1, not_yet: 0 };
+    if (rank[verdict] > rank[capByHuman]) verdict = capByHuman;
+  }
   /** 上限が効いたか（点検・会話で「なぜ ready でないか」を言えるように） */
   const cappedParts: string[] = [];
   if (capByRatio && rank2(verdict) <= rank2(capByRatio)) {
@@ -374,6 +409,9 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
   }
   if (capByAudit && rank2(verdict) <= rank2(capByAudit)) {
     cappedParts.push(`実際の検索の完走率が ${auditRate}%（${num(au?.finished)}/${auditRuns}回）なので「渡してよい」にはしない`);
+  }
+  if (capByHuman && rank2(verdict) <= rank2(capByHuman)) {
+    cappedParts.push(`人の手本が ${Math.round((humanShare ?? 0) * 100)}%（人${humanOps}/機械${autoOps}回）なので「渡してよい」にはしない`);
   }
   const cappedBy: string | null = cappedParts.length ? cappedParts.join(" ／ ") : null;
 
@@ -436,6 +474,9 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       audits: au,
       /** 2026-11-14: 現場への指示の詰まりも議題に使う */
       commands: cm,
+      /** 2026-11-14: 人の手本と機械の動き */
+      humanOps,
+      autoOps,
     }),
   };
 }
@@ -536,6 +577,9 @@ function buildMeeting(m: {
   audits?: SupervisorInput["audits"];
   /** 2026-11-14: 現場への指示の詰まりも議題に使う */
   commands?: SupervisorInput["commands"];
+  /** 2026-11-14: 人の手本と機械の動きの数（人の割合で判断を制限する） */
+  humanOps?: number;
+  autoOps?: number;
   /** 写真がある記録の数（写真の割合を実データから出すため） */
   shotRows?: number;
 }): SupervisorAdvice["meeting"] {
@@ -586,6 +630,19 @@ function buildMeeting(m: {
       value: `${m.commands.total}件（完了${m.commands.done}・失敗${m.commands.failed}・待ち${m.commands.pending}・実行中${m.commands.running}）`,
     });
   }
+  /**
+   * 2026-11-14 竹内さん「通常モードでの学習で自動モード改善するように」:
+   *   **人の手本と機械の動き**を分けて根拠に出す（自動を良くする材料は人の動き）。
+   */
+  if (typeof m.humanOps === "number" || typeof m.autoOps === "number") {
+    const h = num(m.humanOps), a = num(m.autoOps), t = h + a;
+    if (t > 0) {
+      evidence.push({
+        label: "手本にできる動き",
+        value: `人の操作 ${h}回 / 機械の操作 ${a}回（人の割合 ${Math.round((h / t) * 100)}%）`,
+      });
+    }
+  }
   const sc = Object.entries(m.siteCounts).filter(([k]) => k && k !== "(空)");
   if (sc.length) evidence.push({ label: "サイト別の記録", value: sc.map(([k, v]) => `${k} ${v}件`).join("・") });
   const mc = Object.entries(m.modeCounts);
@@ -609,17 +666,31 @@ function buildMeeting(m: {
    * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
    *   **指示が詰まっている**のも議題（検索が動いていても現場は止まる）。
    */
-  if (m.commands && num(m.commands.total) > 0 && m.commands.top_problem) {
+  if (m.commands && num(m.commands.total) > 0 && m.commands.top_problem) {    const ma = m.commands.mode_absent;
+    const absent = ma ? num(ma.aix_absent) + num(ma.brain_absent) : 0;
     agenda.push({
       priority: 0,
-      topic: "現場への指示が詰まっている",
+      topic: absent > 0 ? "自動/AIXモードになっていない時間が長い（指示が届かない）" : "現場への指示が詰まっている",
       why: String(m.commands.top_problem),
-      decide: "指示が拾われるようにする／失敗の理由を直す",
+      /**
+       * 2026-11-14 竹内さん「ここも調べる」→ 実測:
+       *   ⚠ 失敗の **187件が「AIXモードのPCが3時間なかった」**。指示の処理は壊れていない。
+       *   → **直す所を間違えない**ように、運用（モードを保つ）と処理（コード）を分けて言う。
+       */
+      decide: absent > 0
+        ? "拡張を自動/AIXモードのままにしておく（PCを閉じない・モードを戻さない）／指示の期限を延ばすか"
+        : "指示が拾われるようにする／失敗の理由を直す",
     });
     questions.push({
-      q: `現場への指示: ${m.commands.top_problem} どれから直しますか？`,
-      options: ["拾われていない指示から（推奨）", "失敗の理由から", "今のままでよい"],
-      why: "検索が動いていても、指示が届かなければ物件が出ない",
+      q: absent > 0
+        ? `指示の失敗 ${absent}件は「自動/AIXモードのPCが3時間なかった」ためです。どちらを直しますか？`
+        : `現場への指示: ${m.commands.top_problem} どれから直しますか？`,
+      options: absent > 0
+        ? ["モードを保つ運用を直す（推奨）", "指示の期限を延ばす", "今のままでよい"]
+        : ["拾われていない指示から（推奨）", "失敗の理由から", "今のままでよい"],
+      why: absent > 0
+        ? "指示の処理は壊れていない。拡張がモードになっていない時間が長いのが原因"
+        : "検索が動いていても、指示が届かなければ物件が出ない",
     });
   }
   /**
@@ -642,6 +713,29 @@ function buildMeeting(m: {
     });
   }
 
+  /**
+   * ⚠ 一番大事な議題は「**材料が足りない**」事。数字が良くても中身が薄い事がある。
+   */
+  if (m.humanOps != null || m.autoOps != null) {
+    const h = num(m.humanOps), a = num(m.autoOps), t = h + a;
+    if (t > 0 && h / t < 0.3) {
+      agenda.push({
+        priority: 1,
+        topic: "人の手本が少ない（自動を良くする材料が足りない）",
+        why: `手本にできる人の操作が ${h}回、機械の操作が ${a}回（人の割合 ${Math.round((h / t) * 100)}%）`,
+        /**
+         * 2026-11-14 竹内さん「通常モードでの学習で自動モード改善するように」:
+         *   ⚠ 機械の動きを学んでも**自分の癖を強める**だけ。自動を良くするのは人の手本。
+         */
+        decide: "通常モードで人が実際に検索して録画する（自動モードの動きは手本にしない）",
+      });
+      questions.push({
+        q: `自動を良くする「人の手本」が ${Math.round((h / t) * 100)}% しかありません（人${h}回/機械${a}回）。どうしますか？`,
+        options: ["通常モードで人が検索して録画を増やす（推奨）", "機械の動きも半分の重さで学ぶ", "今のままでよい"],
+        why: "機械の動きを手本にすると、自動の癖を強めてしまう",
+      });
+    }
+  }
   /**
    * ⚠ 一番大事な議題は「**材料が足りない**」事。数字が良くても中身が薄い事がある。
    */

@@ -34,6 +34,18 @@ export type CommandSummary = {
   errors: Array<{ error: string; n: number }>;
   /** 一番の問題を人が読める1文に */
   top_problem: string | null;
+  /**
+   * 2026-11-14 竹内さん「ここも調べる」→ 実測で分かった事:
+   *   ⚠ **312件がエラー**で、そのうち **187件が「AIXモードのPCが3時間なかったため未実行で終了」**。
+   *     つまり「指示の処理が壊れた」のではなく **拡張が自動/AIXモードになっていない時間が長すぎる**。
+   *   → これを区別しないと「指示の処理を直す」と**誤った方向**に進む。
+   */
+  mode_absent?: {
+    /** 「AIXモードのPCが3時間なかった」で終わった数 */
+    aix_absent: number;
+    /** 「ブレインモードのPCが…」で終わった数 */
+    brain_absent: number;
+  } | null;
 };
 
 /**
@@ -89,14 +101,34 @@ export function summarizeCommands(
     .slice(0, 5);
 
   const total = inWindow.length;
+  /**
+   * 2026-11-14: 「拡張がモードになっていなかった」で終わった物を**別に数える**。
+   *   ⚠ これを「失敗」と同じに扱うと、**直す所が違う**（指示の処理ではなく運用＝PCのモード）。
+   */
+  let aixAbsent = 0, brainAbsent = 0;
+  for (const [k, v] of Object.entries(errN)) {
+    if (/AIXモードのPCが.*なかった|AIXモードのPCが3時間なかった/.test(k)) aixAbsent += v;
+    else if (/ブレインモードのPCが.*なかった/.test(k)) brainAbsent += v;
+  }
+  const modeAbsent = { aix_absent: aixAbsent, brain_absent: brainAbsent };
+
   let top_problem: string | null = null;
+  const absentTotal = aixAbsent + brainAbsent;
+  /**
+   * 2026-11-14 竹内さん「ここも調べる」:
+   *   ⚠ 優先順位を間違えない。**いま詰まっている（pending が古い）**方が、
+   *     過去の失敗（モードが無かった）より**現場に効く**。
+   *   → ① 拾われないまま → ② モードが無かった失敗 → ③ 失敗 → ④ 待ちが多い、の順。
+   */
   if (staleN > 0) {
-    top_problem = `拾われないまま ${staleN}件の指示が残っています（30分以上 pending/running のまま）`;
+    top_problem = `拾われないまま ${staleN}件の指示が残っています（30分以上 pending/running のまま）。拡張が指示を取りに来ていません`;
+  } else if (absentTotal > 0 && absentTotal >= Math.max(1, failed * 0.5)) {
+    top_problem = `指示の失敗のうち ${absentTotal}件は「自動/AIXモードのPCが3時間なかった」ためです（指示の処理ではなく、拡張が自動/AIXモードになっていない時間が長い）`;
   } else if (failed > 0) {
     top_problem = `${total}件の指示のうち ${failed}件が失敗しています${errors[0] ? `（一番多い理由: ${errors[0].error}）` : ""}`;
   } else if (pending > 2) {
     top_problem = `まだ拾われていない指示が ${pending}件たまっています`;
   }
 
-  return { total, done, failed, pending, running, errors, top_problem };
+  return { total, done, failed, pending, running, errors, top_problem, mode_absent: modeAbsent };
 }
