@@ -41,7 +41,15 @@ console.log("■ ① 写真は「学習」と切り離した（自動・AIX で�
 {
   ok("shouldShoot がある（モードに関係なく撮る）", /function shouldShoot\(st\)/.test(rec));
   ok("shouldLearn と shouldShoot を別々に使う", /if \(shouldLearn\(st\)\)/.test(rec) && /if \(shouldShoot\(st\)\) startShooting\(\)/.test(rec));
-  ok("shootAfter は「撮る見張り」でも動く（学習中でなくても）", /if \(!_shooting && !watching\) \{ diag\(false, "not_shooting"\); return; \}/.test(rec));
+  /**
+   * 2026-11-14 竹内さん「データベースを見る考えを統括重要にする」→ **DBで判明**:
+   *   ⚠ 旧は `if (!_shooting && !watching) return;` で、**見張りが止まると写真も止まった**。
+   *     実測: 2.7.50 は写真167/168（99%）、2.7.55 は **0枚**。
+   *   → 写真は「画面の記録」なので、人の動きを見張っているかとは**別**。
+   *     止めるのは `axlxShotOff`（人が明示的に切った時）だけ。
+   */
+  ok("⚠ 写真は watching に依存しない（人の見張りと別・竹内さん 2026-11-14）", !/if \(!_shooting && !watching\)/.test(rec));
+  ok("  止めるのは axlxShotOff だけ", /axlxShotOff/.test(rec));
   ok("自前の見張り（startShooting）がある", /function startShooting\(\)/.test(rec));
   ok("起動直後に1枚撮る（撮れるか確かめられる）", /setTimeout\(function \(\) \{ shootAfter\("startup"/.test(rec));
 }

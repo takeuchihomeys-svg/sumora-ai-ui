@@ -725,7 +725,16 @@
       };
       // 2026-11-11 竹内さん「写真ちゃんと送られたかな？」:
       //   旧は `if (!watching)` で弾いていた（＝自動・AIX では撮らない）。写真はモードに関係なく撮る。
-      if (!_shooting && !watching) { diag(false, "not_shooting"); return; }
+      /**
+       * 2026-11-14 竹内さん「さっきいれているデータベースをみる」→ **実データで判明**:
+       *   2.7.50 は写真 167/168件（99%）撮れていたのに、2.7.55 は **0枚**だった。
+       *   ⚠ 原因: `watching`（人の動きを見張っている印）が false だと撮らない作りだった。
+       *     `watching` は「人の動きを覚える」ための印で、**写真とは別の話**。
+       *     見張りが止まる（モード切替・ページの作り直し・ライブラリ待ち）と**写真も止まった**。
+       *   → **写真は `watching` に関係なく撮る**（モード・見張りの状態に依存しない）。
+       *     止める設定は `axlxShotOff` だけ（人が明示的に切った時）。
+       */
+      try { if (!shouldShoot({ axlxShotOff: (window.__axlxShotOff === true) })) { diag(false, "shot_off"); return; } } catch (_) {}
       var now = Date.now();
       /**
        * 2026-11-11 竹内さん「写真撮ってるかな？」→ 0枚のまま。
@@ -978,16 +987,24 @@
     _shooting = true;
     try {
       var h = function (e) {
-        if (!e || !e.isTrusted) return;   // 人が押した時（拡張の dispatch は対象外）
-        _noteShotDiag("trusted_" + (e.type || "?"));
+        /**
+         * 2026-11-14 竹内さん「さっきいれているデータベースをみる」→ **実データで判明**:
+         *   ⚠ 旧は `if (!e.isTrusted) return;` で**拡張の押下を撮らなかった**。
+         *     そのため**自動モード（拡張が押す）では写真が1枚も撮れず**、
+         *     画像から学ぶ材料が無かった（実測: 2.7.55 で写真0枚）。
+         *   → **人でも拡張でも撮る**（写真は「画面の記録」なので、誰が押したかは関係ない）。
+         *     ⚠ 人の手本と混ぜない区別は `shot_ops` の `by`（human / auto）で残す。
+         */
+        if (!e) return;
+        _noteShotDiag((e.isTrusted ? "trusted_" : "auto_") + (e.type || "?"));
         // 2026-11-13: 操作の記録は下の `_cap`（人も拡張も拾う）に1本化した（二重に積まない）
         shootAfter(e.type, e.target, null);
       };
-      // 人が押した時・打った時・選んだ時（拡張の自動操作はここに入らない）
+      // 人が押した時・打った時・選んだ時＋**拡張が押した時**（自動モードの画面も残す）
       document.addEventListener("click", h, true);
       document.addEventListener("change", h, true);
       window.addEventListener("wheel", function (e) {
-        if (e && e.isTrusted) { _noteShotDiag("trusted_wheel"); shootAfter("wheel", null, null); }
+        if (e) { _noteShotDiag(e.isTrusted ? "trusted_wheel" : "auto_wheel"); shootAfter("wheel", null, null); }
       }, { passive: true, capture: true });
       _shootDetach = function () {
         try { document.removeEventListener("click", h, true); document.removeEventListener("change", h, true); } catch (_) {}
