@@ -14,6 +14,14 @@
 //
 // ⚠ この関数は**判断だけ**をする（DBに書かない・サイトを触らない）。純関数。
 
+/**
+ * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
+ *   統括が弱い部分の学習を強化する」「これらの思考や考え方は統括の部分で重要な考え方にする」:
+ *   場面の名前（日本語）と、場面ごとの手順の読み上げを**統括の言葉**として使う。
+ */
+import { SCENE_JA, describeSceneFlow, findWeakScenes, type SceneFlow } from "./learn-flow-steps";
+export { SCENE_JA };
+
 /** 判断に使う材料（学習の束から作る） */
 export type SupervisorInput = {
   /** 元にした記録の数と期間 */
@@ -75,6 +83,31 @@ export type SupervisorInput = {
    *   **写真の容量と枚数**。1枚が大きすぎる・合計が重すぎる時に言えるようにする。
    */
   shot_bytes?: { n: number; total_bytes: number; max_bytes: number } | null;
+  /**
+   * 2026-11-14 竹内さん
+   *   「時間でみたらよい最大７分の録画なので順番に見れば理解できる」
+   *   「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で統括が弱い部分の学習を強化する」
+   *   「これらの思考や考え方は統括の部分で重要な考え方にする。そして強化する」
+   *
+   *   **場面ごとの手順**（`app/lib/learn-flow-steps.ts` の `learnSceneFlows` の結果）。
+   *   ⚠ 写真が1枚も取れていなくても学べる材料（`search_audits.filled.ops` に人の順番が残っている）。
+   *     実測: 7日で 56件中32件に押した順番があり、所在地17回・条件18回・駅14回・検索18回・物件16回。
+   */
+  scene_flows?: Array<{
+    scene: import("./learn-flow-steps").FlowScene;
+    runs: number;
+    ops: number;
+    raw_ops?: number;
+    steps: string[];
+    variants: number;
+    gap_ms: number | null;
+  }> | null;
+  /** 手本が1件も無い場面の数（「学べていない」と言うため） */
+  scene_missing?: number;
+  /** 手本が無い場面の名前（日本語・読点区切り） */
+  scene_missing_names?: string;
+  /** 止まった回が一番多い場面（`search_audits` の status が finished でない回の最後の場面） */
+  stopped_scene?: string | null;
   /**
    * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
    *   **実際の検索の結果**（`search_audits` の集計）。これが無いと統括は現場の現実を知らない
@@ -527,6 +560,15 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       /** 2026-11-14: 同じ画面の続き・写真の容量 */
       sameRuns: sr,
       shotBytes: sb,
+      /**
+       * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
+       *   統括が弱い部分の学習を強化する」「これらの思考や考え方は統括の部分で重要な考え方にする」:
+       *   **場面ごとの手順**を統括の議題・根拠に使う。
+       */
+      scene_flows: Array.isArray(inp.scene_flows) ? (inp.scene_flows as SceneFlow[]) : null,
+      scene_missing: num(inp.scene_missing),
+      scene_missing_names: typeof inp.scene_missing_names === "string" ? inp.scene_missing_names : "",
+      stopped_scene: typeof inp.stopped_scene === "string" ? inp.stopped_scene : null,
     }),
   };
 }
@@ -635,6 +677,15 @@ function buildMeeting(m: {
   shotBytes?: { n: number; total_bytes: number; max_bytes: number } | null;
   /** 写真がある記録の数（写真の割合を実データから出すため） */
   shotRows?: number;
+  /**
+   * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
+   *   統括が弱い部分の学習を強化する」「これらの思考や考え方は統括の部分で重要な考え方にする」:
+   *   **場面ごとの手順**（人が実際に押した順）と、手本が無い場面・止まった場面。
+   */
+  scene_flows?: SceneFlow[] | null;
+  scene_missing?: number;
+  scene_missing_names?: string;
+  stopped_scene?: string | null;
 }): SupervisorAdvice["meeting"] {
   const num = (v: unknown): number => {
     const n = typeof v === "number" ? v : Number(v);
@@ -672,6 +723,31 @@ function buildMeeting(m: {
     if (Array.isArray(m.audits.stalled_at) && m.audits.stalled_at.length) {
       evidence.push({ label: "止まりやすい場所", value: m.audits.stalled_at.slice(0, 3).map((x) => `${x.stage}（${x.n}回）`).join("・") });
     }
+  }
+  /**
+   * 2026-11-14 竹内さん
+   *   「時間でみたらよい最大７分の録画なので順番に見れば理解できる」
+   *   「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で統括が弱い部分の学習を強化する」
+   *   「これらの思考や考え方は統括の部分で重要な考え方にする。そして強化する」
+   *
+   *   → **場面ごとの手順**（`search_audits.filled.ops` の人の実測）を根拠に出す。
+   *     ⚠ これは統括の**中心の考え方**にする:
+   *       ① 手順は「場面」に分けて持つ（所在地・条件・検索・物件の取得・次のページ）
+   *       ② 人の実測を手本にする（機械の動きは混ぜない）
+   *       ③ **手本が無い場面**は「学べていない」と言う（できない事をできると言わない）
+   *       ④ 順番が毎回違う場面は「迷い」と見て、決まりにする提案をする
+   */
+  const flows = Array.isArray(m.scene_flows) ? m.scene_flows : null;
+  if (flows && flows.length) {
+    for (const f of flows.slice(0, 6)) {
+      evidence.push({ label: `場面: ${SCENE_JA[f.scene]}`, value: describeSceneFlow(f).replace(`${SCENE_JA[f.scene]}: `, "") });
+    }
+  }
+  if (typeof m.scene_missing === "number" && m.scene_missing > 0) {
+    evidence.push({ label: "手本が無い場面", value: `${m.scene_missing}場面（${String(m.scene_missing_names ?? "").trim() || "－"}）` });
+  }
+  if (typeof m.stopped_scene === "string" && m.stopped_scene) {
+    evidence.push({ label: "止まった回が多い場面", value: m.stopped_scene });
   }
   /**
    * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
@@ -758,6 +834,90 @@ function buildMeeting(m: {
         : "検索が動いていても、指示が届かなければ物件が出ない",
     });
   }
+  /**
+   * 2026-11-14 竹内さん
+   *   「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で統括が弱い部分の学習を強化する」
+   *   「これらの思考や考え方は統括の部分で重要な考え方にする。そして強化する」
+   *
+   *   → **場面ごと**に手本があるかを見る。手本が無い場面があれば、それが一番の弱い所
+   *     （できない事を「学べている」と言わない）。
+   *   ⚠ 優先度は高め（1）だが「止まっている」（0）より後ろ。止まるのを直さないと手本が増えない。
+   */
+  /**
+   * 2026-11-14 竹内さん
+   *   「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で統括が弱い部分の学習を強化する」
+   *   「これらの思考や考え方は統括の部分で重要な考え方にする。そして強化する」
+   *
+   *   → **場面ごと**に手本があるかを見る。手本が無い場面があれば、それが一番の弱い所。
+   *
+   *   ⚠ 2026-11-14 テストで発覚: 優先度2に置いたら、既存の議題（優先度0〜1が4件）に
+   *     押し出されて**画面から消えていた**（`agenda.slice(0, 6)`・`questions.slice(0, 4)`）。
+   *     「順番が毎回違う＝迷い」は**実際に人が迷っている**という一番確かな材料なので、
+   *     手本が無い場面と同じ優先度1にする。
+   */
+  {
+    const sf = Array.isArray(m.scene_flows) ? (m.scene_flows as SceneFlow[]) : [];
+    /**
+     * ⚠ 場面の材料が**1件も無い**時は「手本が無い」と言わない（分からないだけ）。
+     *   `search_audits` に押した順番が入っていないと全場面が no_example になり、
+     *   実際には人がやっているのに「学べていない」と言ってしまう（テストで発覚）。
+     *   → **1場面でも手本がある時だけ**、無い場面を名指しする。
+     */
+    const weakScenes = sf.length ? findWeakScenes(sf) : [];
+    const missing = weakScenes.filter((w) => w.kind === "no_example");
+    const unstable = weakScenes.filter((w) => w.kind === "unstable");
+    if (missing.length) {
+      const names = missing.map((w) => SCENE_JA[w.scene]);
+      agenda.push({
+        priority: 1,
+        topic: "手本が無い場面がある（そこは学べていない）",
+        why: `${names.join("・")}の手本がありません（人がまだ1回もやっていない／記録できていない）`,
+        decide: "その場面を人が1回やる（記録の経路も同時に確かめる）／今のままでよいか",
+      });
+      questions.push({
+        q: `${names.join("・")}の手本が1件もありません。どれから増やしますか？`,
+        options: [
+          // 無い場面を全部出す（多い時は3つまで）＝竹内さんが選べる
+          ...names.slice(0, 3).map((n, i) => `${n}を人が1回やる${i === 0 ? "（推奨）" : ""}`),
+          "記録の経路（操作がDBに届くか）を先に直す",
+          "今のままでよい",
+        ],
+        why: "手本が無い場面は自動にできません（推測で動かすと現場が壊れる）",
+      });
+    }
+    if (unstable.length) {
+      const u = unstable[0];
+      agenda.push({
+        priority: 1,
+        topic: `${SCENE_JA[u.scene]}の順番が毎回違う（迷いの疑い）`,
+        why: u.why,
+        decide: `${u.next}／今のままでよいか`,
+      });
+      questions.push({
+        q: `${SCENE_JA[u.scene]}の順番が毎回違います。決まりにしますか？`,
+        options: [
+          `一番多い順番を決まりにする（推奨）`,
+          "人がもう数回やってから決める",
+          "今のままでよい",
+        ],
+        why: "順番が毎回違う＝迷っている疑い。決まりにすると自動でも同じ順で動ける",
+      });
+    }
+  }
+  /**
+   * 2026-11-14 竹内さん「所在地での検索の動かし方…弱い部分の学習を強化する」:
+   *   **実際に止まった場面**（`abandoned` の最後の場面）が分かっていれば、それを名指しする。
+   *   ⚠ 「完走率が低い」だけより**どこで止まるか**が分かる方が直せる。
+   */
+  if (typeof m.stopped_scene === "string" && m.stopped_scene) {
+    agenda.push({
+      priority: 1,
+      topic: `止まる回が多いのは「${m.stopped_scene}」`,
+      why: `途中で止まった回の最後の場面は ${m.stopped_scene} が一番多い`,
+      decide: `${m.stopped_scene}の動かし方を直す（手本と違う所を探す）／今のままでよいか`,
+    });
+  }
+
   /**
    * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
    *   **一番大事な議題は「実際の検索が止まっている」**（人の動きを学べていても意味がない）。

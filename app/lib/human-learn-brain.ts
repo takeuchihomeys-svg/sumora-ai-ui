@@ -540,6 +540,18 @@ export function buildHumanLearnBundle(
   nowMs: number = Date.now(),
   audits: import("./learn-audit-summary").AuditSummary | null = null,
   commands: import("./learn-command-summary").CommandSummary | null = null,
+  /**
+   * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
+   *   統括が弱い部分の学習を強化する」「これらの思考や考え方は統括の部分で重要な考え方にする」:
+   *   **場面ごとの手順**（`search_audits.filled.ops` の人の実測・`app/lib/learn-flow-steps.ts`）。
+   *   ⚠ 人の動きの記録（`human_motion_learn`）とは**別の表**から作るので、引数で受け取る。
+   */
+  sceneMeta: {
+    scene_flows?: import("./learn-flow-steps").SceneFlow[] | null;
+    scene_missing?: number;
+    scene_missing_names?: string;
+    stopped_scene?: string | null;
+  } | null = null,
 ): HumanLearnBundle {
   const list = Array.isArray(rows) ? rows : [];
   // ① 押す順番（写真ごとの並びから）
@@ -1065,6 +1077,16 @@ export function buildHumanLearnBundle(
     same_runs: sameRuns,
     /** 2026-11-14: 写真の容量と枚数（メモリ・Storage が重くないか） */
     shot_bytes: shotBytes,
+    /**
+     * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
+     *   統括が弱い部分の学習を強化する」「これらの思考や考え方は統括の部分で重要な考え方にする」:
+     *   **場面ごとの手順**（`search_audits.filled.ops` の人の実測）を渡す。
+     *   ⚠ 写真が0枚でも、ここには人の順番が残っている＝一番強い材料。
+     */
+    scene_flows: Array.isArray(sceneMeta?.scene_flows) ? (sceneMeta!.scene_flows as never) : null,
+    scene_missing: num(sceneMeta?.scene_missing),
+    scene_missing_names: typeof sceneMeta?.scene_missing_names === "string" ? sceneMeta.scene_missing_names : "",
+    stopped_scene: typeof sceneMeta?.stopped_scene === "string" ? sceneMeta.stopped_scene : null,
   } as SupervisorInput);
 
   /**
