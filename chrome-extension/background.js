@@ -365,6 +365,21 @@ function _migrateGuideOnly() {
 }
 chrome.runtime.onInstalled.addListener(_migrateGuideOnly);
 chrome.runtime.onStartup.addListener(_migrateGuideOnly);
+/**
+ * 2026-11-11 竹内さん「デフォルトが普通モードにして。選択で自動モードやAIXにこちらでしてから自動検索されるように」:
+ *   ブラウザを起動した時は必ず通常モードから始める（前日の「自動」「AIX」「スタッフ」を引きずらない）。
+ *   拡張の更新（onInstalled）では消さない（作業の途中で勝手に戻ると困る）。
+ */
+function _resetModeOnStartup() {
+  try {
+    var core = self.AxlxModeCore;
+    if (!core || !core.startupReset) return;
+    chrome.storage.local.set(core.startupReset(), function () {
+      console.log("[mode] ブラウザの起動 → モードを通常に戻しました（自動で検索しません）");
+    });
+  } catch (_) {}
+}
+chrome.runtime.onStartup.addListener(_resetModeOnStartup);
 _migrateGuideOnly();
 /** 自動の物を始めてよいか。
  *  2026-10-06 v2.5.77: 「光って選択するモード」の間は常に false（自動の道を閉じる）。
@@ -376,15 +391,18 @@ async function _refreshAutoModeChosen() {
   try {
     var core = self.AxlxModeCore;
     if (!core || !core.GUIDE_ONLY) { _autoModeChosen = true; return; }
-    var st = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode"]);
-    _autoModeChosen = core.effectiveState(st || {}, Date.now()).mode === core.AUTO_MODE;
+    // 2026-11-11 竹内さん「もともとのAIXのようにチェックしたお客さんをリアプロとitandiで一括検索」:
+    //   AIX（ai）も自動の道を開くモードなので、ここで一緒に見る（画面の一括検索の帯も自動・AIXの時に出す）
+    var st = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode", "aiMode"]);
+    var _m = core.effectiveState(st || {}, Date.now()).mode;
+    _autoModeChosen = _m === core.AUTO_MODE || (!!core.AI_MODE && _m === core.AI_MODE);
   } catch (_) { _autoModeChosen = false; }
 }
 try {
   _refreshAutoModeChosen();
   chrome.storage.onChanged.addListener(function (ch, area) {
     if (area !== "local" || !ch) return;
-    if (ch.aixMode || ch.autoModeAt || ch.staffMode || ch.staffModeAt) _refreshAutoModeChosen();
+    if (ch.aixMode || ch.autoModeAt || ch.staffMode || ch.staffModeAt || ch.aiMode) _refreshAutoModeChosen();
   });
 } catch (_) {}
 function _guideOnly() {
@@ -399,16 +417,49 @@ if (chrome.storage && chrome.storage.session && chrome.storage.session.setAccess
 }
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
-  chrome.tabs.get(tabId, (tab) => {
+    chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab?.url) return;
     configureSidePanelForTab(tabId, tab.url);
+    _learnSwitchSite(tab.url);
   });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   const url = changeInfo.url || (changeInfo.status === "complete" ? tab.url : null);
-  if (url) configureSidePanelForTab(tabId, url);
+  if (url) {
+    configureSidePanelForTab(tabId, url);
+    if (changeInfo.url) _learnSwitchSite(url);
+  }
 });
+
+/**
+ * 2026-11-14 竹内さん「リアプロ itandi それぞれちゃんと区別して学習。それぞれの性質を理解するためにも
+ *   改善していくためにも必要」:
+ *
+ *   **タブを切り替えてサイトが変わったら、そのサイトの学びに入れ替える**。
+ *   ⚠ 旧は全体（全部混ぜた束）を1回読むだけだったので、リアプロで学んだ順番が itandi でも使われていた。
+ *   → サイトが変わった時だけ取り直す（同じサイトなら何もしない＝通信しない）。
+ */
+var _learnSiteNow = null;
+async function _learnSwitchSite(url) {
+  try {
+    var u = String(url || "");
+    var s = /itandibb\.com/.test(u) ? "itandi" : (/realnetpro\.com/.test(u) ? "realpro" : null);
+    if (!s) return { ok: true, skipped: "not-target" };
+    if (s === _learnSiteNow) return { ok: true, skipped: "same-site" };
+    _learnSiteNow = s;
+    /**
+     * `axlx_learn_at` を 0 にして「取り直す」状態にする（5分の待ちを飛ばす）。
+     * ⚠ 版が同じでも、**サイトが違えば入れ替える必要がある**（別の束だから）。
+     */
+    await chrome.storage.local.set({ axlx_learn_at: 0 });
+    var r = await _refreshLearnedBundle(true);
+    console.log("[learn] " + s + " の学びに入れ替えました:", JSON.stringify(r));
+    return r;
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
 
 // ── ヘルパー: リアプロの資料（印刷用PDF）を、そのリアプロのタブの中で取る ─────────────
 // 2026-10-01 竹内「なんで今両方からログインされている形になっているのか」「それで改善行う」:
@@ -678,6 +729,43 @@ async function _searchModeFor(customerId, site) {
     var st = await chrome.storage.local.get([key]);
     return core.pickSearchMode(st && st[key], String(customerId), site, Date.now());
   } catch (_) { return null; }
+}
+
+// ── 2026-11-10 送信の直列の待ち行列（竹内さん「複数の物件の場合つまったりしないか」）────────
+//   1件ずつ押して送る時、複数の送信が同時に来ても **1本ずつ順番に** 流す。
+//   中のリアプロのタブ・アップロード・merge-pdfs（サーバー）を取り合わない＝詰まらない。
+//   1件が失敗（throw・時間切れ）しても次は流れる（1件の失敗で後の物件が送れなくなるのを防ぐ）。
+//   ⚠ 応答（sendResponse）は必ず1回だけ。待ち行列の中で finally で呼ぶ。
+var _lineSendQueue = [];
+var _lineSendRunning = false;
+/** 順番に1件流す。job(done) の形で渡す（done は 1回だけ呼ぶ） */
+function _enqueueLineSend(job) {
+  _lineSendQueue.push(job);
+  if (_lineSendRunning) { console.log("[send-queue] 待ちに追加（いま" + _lineSendQueue.length + "件待ち）"); return; }
+  _drainLineSend();
+}
+function _drainLineSend() {
+  if (_lineSendRunning) return;
+  var job = _lineSendQueue.shift();
+  if (!job) return;
+  _lineSendRunning = true;
+  var finished = false;
+  var next = function () {
+    if (finished) return;
+    finished = true;
+    _lineSendRunning = false;
+    // 次の1件（少し置いてから＝サイト・サーバーに続けて当たらない）
+    if (_lineSendQueue.length) setTimeout(_drainLineSend, 600 + Math.floor(Math.random() * 700));
+    else console.log("[send-queue] 送信の待ちは空になりました");
+  };
+  var timer = setTimeout(function () {
+    console.warn("[send-queue] 1件の送信が 300秒 を超えた → 次へ進む（後の物件を止めない）");
+    next();
+  }, 300000);
+  Promise.resolve()
+    .then(function () { return job(); })
+    .catch(function (e) { console.warn("[send-queue] 1件の送信でエラー（次へ進む）:", e && e.message); })
+    .then(function () { clearTimeout(timer); next(); });
 }
 
 // ── ヘルパー: /api/merge-pdfs を background から呼ぶ（CSP/CORS 完全回避）──
@@ -1199,8 +1287,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // ── LINE送信: 全件を1つのPDFに結合してURLで送信 ──────────────────────────
+  // 2026-11-10 竹内さん「複数の物件の場合つまったりしないか」:
+  //   送信（資料の取得→アップロード→merge-pdfs→LINE）を **1本の直列の待ち行列** にした。
+  //   複数の 1件送信が同時に来ても、中のリアプロのタブ・アップロード・サーバーが取り合いにならない（順番に流す）。
+  //   前の1件が失敗しても次は流れる（1件の失敗で後の物件が送れなくなるのを防ぐ）。
   if (msg.type === "axlx-send-to-line") {
-    (async () => {
+    _enqueueLineSend(async () => {
       try {
         const { urls, customer_name, property_summaries, customer_conditions, site, property_pool, customer_id } = msg;
         const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
@@ -1252,7 +1344,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } catch (e) {
         sendResponse({ ok: false, error: e.message });
       }
-    })();
+    });
     return true;
   }
 
@@ -1417,6 +1509,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // 2026-11-10 竹内「人と自動の動きの差」: 人の操作の時刻（自動の ops と同じ形・人と自動を比べる材料）
         if (Array.isArray(msg.ops) && msg.ops.length) filled.ops = msg.ops.slice(-80);
         const body = { phase: "started", brain: true, run_id: runId, site: _site, filled: filled };
+        // 2026-11-10 v2.6.19 竹内さん「ここ1ヶ月は実際にスタッフが動かしている」:
+        //   人が動いた記録（filled.human / ops の by=human）は**ブレインでない回でも**残す。
+        //   ブレインの回（点検・判定の対象）は今まで通り brain: true。人だけの記録は brain: false で送り、
+        //   サーバーが「人の学習用の行」として受ける（点検の判定は走らせない）。
+        const _humanOnly = msg.brain === false || msg.humanOnly === true;
+        if (_humanOnly) body.brain = false;
+        if (msg.trigger) body.trigger = msg.trigger;
+        if (msg.customerId) body.property_customer_id = String(msg.customerId);
         if (msg.intended && typeof msg.intended === "object") body.intended = msg.intended;
         const posted = self.AxlxSearchAudit ? await self.AxlxSearchAudit.post(body) : null;
         sendResponse({ ok: !!(posted && posted.ok), posted: posted });
@@ -1514,6 +1614,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "axlx-webapp-search") {
     const { site, conditions } = msg;
     console.log("[webapp-search] ▶ 受信 site=" + site + " customerId=" + (conditions && conditions.customerId));
+    /**
+     * 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする。今勝手に自動検索が普通モードでもおきてしまったり」:
+     *   ここには**モードの関所が無かった**。ウェブアプリ・スマホからの検索の指示は、
+     *   モードが 通常／スタッフ でも届いて、勝手に検索が走っていた。
+     *   → 自動の道を開いているモード（自動・AIX）を選んでいる時だけ受ける。
+     *     それ以外は受け取らない（指示はサーバーに残る＝他の PC が拾える）。
+     */
+    if (_guideOnly()) {
+      console.warn("[webapp-search] 通常／スタッフモードのため検索しない（自動モード・AIXを選ぶと動きます）");
+      sendResponse({ ok: false, error: "guide_only" });
+      return true;
+    }
 
     // ─── リアプロ: popup.js直接メッセージ経由（Dijkstra展開含む完全な条件組み立てを使う）──
     if (site === "realnetpro" || site === "realpro") {
@@ -1560,8 +1672,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           console.log("[webapp-search] ✗ popup未応答 → フォールバック: ページ更新経由");
 
           // フォールバック: main.phpへナビゲート + pendingPopupCmd
-          // _realTab は上で取得済み（null の場合は新規タブ作成）
-          if (_realTab) {
+          //   _realTab は上で取得済み（null の場合は新規タブ作成）
+          /**
+           * 2026-11-11 竹内さん「画面検索中なぜかトップページに戻ったりして崩れてしまう」:
+           *   すでに検索の画面なら main.php へ移らない（トップへ戻ると崩れる）。URL だけで判定する。
+           */
+          var _wu = _realTab ? String(_realTab.url || "") : "";
+          var _wLooksSearch = /[?&]display=building/.test(_wu) || /[?&]method=estate/.test(_wu);
+          if (_realTab && _wLooksSearch) {
+            console.log("[webapp-search] すでに検索の画面 → main.php へ移らない");
+          } else if (_realTab) {
             await chrome.tabs.update(_realTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
             await _batchWaitForTabComplete(_realTab.id);
             await new Promise(function(r) { setTimeout(r, _settleMs(1500)); });
@@ -1701,8 +1821,1323 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // ── CSP回避: content.jsに代わってproperty-customersをfetch ─────────────────
-  if (msg.type === "axlx-fetch-customer") {
+  /**
+   * 2026-11-11 竹内さん「データベース等にはいっているのか」:
+   *   通常モードで覚えた人の動きを DB（human_motion_learn）に残す。
+   *   ・画面側（human-learn-upload.js）は**鍵を持たない**ので、ここで付けて送る（認証情報をページに出さない）
+   *   ・送るのは数と傾向だけ。入力した中身・名前・電話は送らない
+   *   ・送れなくても学習は止めない（失敗は console だけ）
+   */
+  if (msg.type === "axlx-human-motion") {
     (async () => {
+      try {
+        const hdr = await _getAutomationKeyHeader();
+        const body = {
+          motion: msg.motion || null,
+          site: msg.site || null,
+          mode: msg.mode || null,
+          shot_taken: !!msg.shot_taken,
+          shot_key: msg.shot_key || null,
+          shot_w: msg.shot_w || null,
+          shot_h: msg.shot_h || null,
+          install_id: await _snapInstallId(),
+          // 2026-11-11: `chrome.storage.local.get(...)` は Promise を返さない → `.catch` で落ちる。await で受ける
+          device_label: await (async function () {
+            try { const r = await chrome.storage.local.get("deviceLabel"); return (r && r.deviceLabel) || null; } catch (_) { return null; }
+          })(),
+          ext_version: _extVersion(),
+          at: Date.now(),
+        };
+        const res = await fetch(SUMORA_BATCH_API + "/api/human-motion", {
+          method: "POST",
+          headers: Object.assign({ "Content-Type": "application/json" }, hdr),
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) console.warn("[human-motion] 送れませんでした:", res.status);
+        sendResponse({ ok: res.ok, status: res.status });
+      } catch (e) {
+        console.warn("[human-motion] 送信エラー:", (e && e.message) || e);
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+    })();
+    return true;
+  }
+
+/**
+ * 2026-11-11 竹内さん「画面の動き方もちゃんと把握できているのかな録画のような形で」→「操作のたびに1枚」
+ *
+ *   **操作のたびに画面の写真を1枚**撮って Storage に置く（1検索で30〜80枚）。
+ *   ・撮るのは**見えているタブだけ**（裏のタブは撮れない・撮ると画面が切り替わって邪魔になる）
+ *   ・`<all_urls>` の許可が要る（無ければ撮らずに「撮れなかった」を返す＝止まらない）
+ *   ・**間引く**: 最短 MIN_GAP_MS（350ms）はあける（連打で何十枚も撮らない）
+ *   ・**まとまり（run）ごと**に番号を振る（`shot_run_id` + 連番）＝並べると操作の流れになる
+ *   ・保存は最大 SHOT_TOTAL 枚（古い物から消す＝Storage を溢れさせない）
+ *   ・写真の**中身は DB の表に入れない**（1行が数百KBになり集計が重くなる）。Storage に置き、名前だけ DB に送る
+ *
+ * 返す物: { ok, shot_key, run_id, seq, ms }（ms は撮るのにかかった時間）
+ */
+var _shotLastAt = 0;
+var _shotRun = null;
+/** 2026-11-14: 同じ画像が何枚続いたか（画面が変わっていない・別タブを撮っている疑い） */
+var _shotSameRun = 0;
+var _shotSeq = 0;
+/**
+ * 2026-11-11 竹内さん「まだ写真クラウドにおくれていないのか」:
+ *   写真を**送る前に縮める**（長辺 maxSide px・JPEG quality）。
+ *   service worker には DOM が無いので **OffscreenCanvas** を使う（Chrome の MV3 で使える）。
+ *   使えない環境では null を返す（呼ぶ側は元の大きさで送る）。
+ */
+/**
+ * 2026-11-12 竹内さん「もっと画像の容量おとしてもよい」→「容量かなり落とすようにする」:
+ *   送る写真を**長辺 480px・JPEG 20%**（**10〜25KB** 目安）まで落とす。
+ *   物件名・賃料・どのボタンを押したかは読める。1回の録画で170枚でも合計 **2〜4MB**（旧: 1枚40〜90KB＝7〜15MB）。
+ */
+var SHOT_SEND_SIDE = 480;
+var SHOT_SEND_Q = 0.20;
+var SHOT_LOCAL_SIDE = 320;   // Chrome の中に残す時の長辺（上げられなかった時だけ）
+var SHOT_LOCAL_Q = 0.15;
+/**
+ * Chrome に残す写真の上限（**枚数ではなく容量**で守る）。
+ *   ⚠ 2026-11-12 `ResourceExceeded`（保存0枚）の原因は、フルサイズ画像を Chrome に貯めて 10MB を超えた事。
+ *   → 画像を持つ物は**合計 1.5MB まで・15枚まで**に絞る（超えたら古い物から消す）。
+ */
+var SHOT_LOCAL_MAX_BYTES = 1.5 * 1000 * 1000;
+var SHOT_LOCAL_MAX_COUNT = 15;
+var SHOT_META_MAX_COUNT = 200;   // 目印だけの物（軽い）は多めに残す
+
+/** 写真の「目印だけ」を残す（画像は持たない・数十バイト） */
+async function _keepShotMeta(key, meta) {
+  try {
+    const o = {};
+    o[key] = Object.assign({}, meta, { cloud: true });
+    await chrome.storage.local.set(o);
+  } catch (e) {
+    console.warn("[human-shot] 目印を残せません:", (e && e.message) || e);
+  }
+}
+/** 上げられなかった時だけ、**小さくした画像**を Chrome に残す（無いよりまし・容量は _trimShots で守る） */
+async function _keepShotLocal(key, meta, shrunkDataUrl) {
+  try {
+    let small = shrunkDataUrl;
+    try {
+      const s2 = await _shrinkShot(shrunkDataUrl, SHOT_LOCAL_SIDE, SHOT_LOCAL_Q);
+      if (s2 && s2.dataUrl) small = s2.dataUrl;
+    } catch (_) {}
+    const o = {};
+    o[key] = Object.assign({}, meta, { cloud: false, data: small });
+    await chrome.storage.local.set(o);
+  } catch (e) {
+    // 容量が足りない時は目印だけにする（写真は Cloud に上がっている前提）
+    console.warn("[human-shot] 画像を残せません（目印だけにします）:", (e && e.message) || e);
+    try { const o = {}; o[key] = Object.assign({}, meta, { cloud: false }); await chrome.storage.local.set(o); } catch (_) {}
+  }
+}
+/**
+ * Chrome に残した写真を整理する（**容量**で守る）。
+ *   ① 画像を持つ物（`data` あり）は合計 3MB・24枚まで。超えたら古い順に消す
+ *   ② 目印だけの物は 200件まで
+ *   ⚠ 消すのは Chrome の中だけ。Cloud（Storage）の写真は消さない。
+ */
+async function _trimShots() {
+  try {
+    const all = await chrome.storage.local.get(null);
+    const withImg = [], metaOnly = [];
+    for (const k of Object.keys(all)) {
+      if (k.indexOf("shot_") !== 0) continue;
+      const v = all[k] || {};
+      if (typeof v.data === "string" && v.data.length > 100) withImg.push({ k, at: Number(v.at) || 0, bytes: v.data.length });
+      else metaOnly.push({ k, at: Number(v.at) || 0 });
+    }
+    const del = [];
+    withImg.sort(function (a, b) { return b.at - a.at; }); // 新しい順
+    let total = 0;
+    for (let i = 0; i < withImg.length; i++) {
+      total += withImg[i].bytes;
+      if (i >= SHOT_LOCAL_MAX_COUNT || total > SHOT_LOCAL_MAX_BYTES) del.push(withImg[i].k);
+    }
+    metaOnly.sort(function (a, b) { return b.at - a.at; });
+    for (let j = SHOT_META_MAX_COUNT; j < metaOnly.length; j++) del.push(metaOnly[j].k);
+    if (del.length) {
+      try { await chrome.storage.local.remove(del); } catch (_) {}
+      console.log("[human-shot] Chrome の中の写真を整理しました（消した " + del.length + "件・画像は合計 " + Math.round(total / 1024) + "KB）");
+    }
+    return del.length;
+  } catch (_) { return 0; }
+}
+
+/**
+ * 2026-11-13 竹内さん「今ちゃんと録画保存されていたか」（画面に
+ *   `録画を停止しました: 保持 14件 - 失敗 11件 {capture_error: This request exceeds the
+ *    MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND quota ...}`）
+ *
+ * ⚠ Chrome は `captureVisibleTab` を **1秒あたり数回まで**に制限している
+ *   （`MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND`）。録画（1.5〜3.5秒ごと）と
+ *   「人の操作のたびに撮る」が重なると、**この上限に当たって失敗が続き、録画が止まる**。
+ * → 撮影を**1か所に直列化**し、前の撮影から**一定時間（既定 700ms）あける**。
+ *   さらに「制限に当たった」時は**少し待って1回だけやり直す**（すぐ諦めない）。
+ */
+var _capChain = Promise.resolve();
+var _capLastAt = 0;
+/**
+ * 2026-11-14 竹内さん「データベースで連続で写真保存できてたんやから、間隔は前の細かいの方が良い」:
+ *   ⚠ 前回 700ms → 1100ms に広げたが、**それは誤りだった**。
+ *     実際に `capture_error` が出ていた原因は**録画ループの多重化**（SW 復帰のたびに増殖）であって、
+ *     間隔ではなかった。DB には 392枚が**連続して保存できていた**（間隔 700ms 時代の実績）。
+ *   → **700ms に戻す**（細かい間隔の方が写真が多く残る＝学習の材料が増える）。
+ *   ⚠ 多重化は `_recGen`（世代番号）で止めたので、700ms でも制限に当たり続けない。
+ */
+var CAP_MIN_GAP_MS = 700;
+function _capturePaced(windowId) {
+  var run = function () {
+    return (async function () {
+      var wait = CAP_MIN_GAP_MS - (Date.now() - _capLastAt);
+      if (wait > 0) await new Promise(function (r) { setTimeout(r, wait); });
+      try {
+        return await chrome.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 55 });
+      } catch (e) {
+        var msg = String((e && e.message) || e);
+        if (/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(msg)) {
+          /**
+           * 2026-11-14 竹内さん「間隔は前の細かいの方が良い」:
+           *   やり直しの待ちも 900ms に戻す（2.2秒は間隔を空けすぎ）。
+           *   ⚠ 本当の原因（多重ループ）は `_recGen` で止めたので、これで足りる。
+           */
+          await new Promise(function (r) { setTimeout(r, 900) });
+          return await chrome.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 55 });
+        }
+        throw e;
+      } finally {
+        _capLastAt = Date.now();
+      }
+    })();
+  };
+  // 直列にする（同時に何枚も撮りに行かない）
+  var p = _capChain.then(run, run);
+  _capChain = p.then(function () {}, function () {});
+  return p;
+}
+async function _shrinkShot(dataUrl, maxSide, quality) {
+  try {
+    if (typeof OffscreenCanvas === "undefined" || typeof createImageBitmap === "undefined") return null;
+    // data:image/jpeg;base64,... → Blob
+    const comma = String(dataUrl).indexOf(",");
+    if (comma < 0) return null;
+    const b64 = String(dataUrl).slice(comma + 1);
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const blob = new Blob([arr], { type: "image/jpeg" });
+    const bmp = await createImageBitmap(blob);
+    let w = bmp.width, h = bmp.height;
+    const long = Math.max(w, h);
+    if (long > maxSide) {
+      const k = maxSide / long;
+      w = Math.round(w * k); h = Math.round(h * k);
+    }
+    const cv = new OffscreenCanvas(w, h);
+    const ctx = cv.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const out = await cv.convertToBlob({ type: "image/jpeg", quality: quality || 0.45 });
+    const buf = new Uint8Array(await out.arrayBuffer());
+    let s = "";
+    const CH = 0x8000;
+    for (let i = 0; i < buf.length; i += CH) s += String.fromCharCode.apply(null, buf.subarray(i, i + CH));
+    return { dataUrl: "data:image/jpeg;base64," + btoa(s), w: w, h: h };
+  } catch (_) { return null; }
+}
+
+/**
+ * 2026-11-12 竹内さん「画面録画モード押しているときは連続でさつえいされていればちゃんと記録される」:
+ *   ⚠ `chrome.runtime.sendMessage` は**自分（background）には届かない**ので、録画の連続撮影からは
+ *     メッセージを送らず、この関数を直接呼ぶ（撮影の中身は今までと同じ1本）。
+ */
+async function _takeShot(msg, done) {
+  const sendResponse = typeof done === "function" ? done : function () {};
+  (async () => {
+    const t0 = Date.now();
+    /**
+     * 2026-11-11: 呼ばれた回数も残す（記録側の "tried" と一致するかで、どこで止まっているか分かる）
+     */
+    try {
+      chrome.storage.local.get(["axlx_human_shot_bg"], function (r) {
+        var b = (r && r.axlx_human_shot_bg) || { called: 0, ok: 0 };
+        b.called = (Number(b.called) || 0) + 1;
+        b.last_at = Date.now();
+        try { chrome.storage.local.set({ axlx_human_shot_bg: b }); } catch (_) {}
+      });
+    } catch (_) {}
+    /**
+     * 2026-11-11 竹内さん「許可済みになっているはず」→ 学習は入るが写真が0枚だった。
+     *   何で失敗したのか分からないと直せないので、**失敗の理由を残す**（コンソール＋最後の理由を storage に）。
+     */
+    const fail = function (error) {
+      try {
+        var o = { axlx_human_shot_error: { error: error, at: Date.now() } };
+        chrome.storage.local.set(o);
+      } catch (_) {}
+      console.warn("[human-shot] 撮れません:", error);
+      sendResponse({ ok: false, error: error, ms: Date.now() - t0 });
+    };
+    try {
+      const SHOT_TOTAL = 600;      // 全体で残す枚数（1検索 30〜80枚 × 数回分）
+      const MIN_GAP_MS = 350;      // これより短い間隔では撮らない（連打対策）
+      // 間引き（最後に撮ってから短すぎる時は理由を返す＝呼ぶ側は諦める）
+      if (_shotLastAt && t0 - _shotLastAt < MIN_GAP_MS) {
+        sendResponse({ ok: false, error: "too_soon", ms: Date.now() - t0 });
+        return;
+      }
+      const has = await chrome.permissions.contains({ origins: ["<all_urls>"] }).catch(function () { return false; });
+      if (!has) { fail("no_permission"); return; }
+      /**
+       * 2026-11-11 竹内さん「許可済みになっているはず」:
+       *   `active: true, currentWindow: true` は**サイドパネルが前面の時**に別の窓を指す事がある
+       *   → ① まず今の窓のアクティブなタブ ② 無ければ**リアプロのタブ** ③ それも無ければ今のタブ
+       */
+      let tab = null;
+      try {
+        const act = await chrome.tabs.query({ active: true, currentWindow: true });
+        tab = act && act[0] ? act[0] : null;
+      } catch (_) { tab = null; }
+      if (!tab) {
+        try {
+          const rp = (await chrome.tabs.query({})).filter(function (t) {
+            return t.url && /realnetpro\.com|itandibb\.com|reins\.jp/.test(t.url);
+          });
+          tab = rp.length ? rp[0] : null;
+        } catch (_) { tab = null; }
+      }
+      if (!tab || !tab.windowId) { fail("no_tab"); return; }
+      // まとまり（1つの検索の流れ）ごとに番号を振る。10分あいたら新しいまとまり
+      if (!_shotRun || t0 - _shotLastAt > 10 * 60 * 1000) {
+        _shotRun = t0.toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+        _shotSeq = 0;
+      }
+      _shotSeq++;
+      _shotLastAt = t0;
+
+      let dataUrl = null;
+      /**
+       * 2026-11-14 竹内さん「ここちゃんと学習できるように。弱い部分を統括判断して改善できるよう」
+       *
+       *   ⚠ 実測: **100枚の写真が全部同じ画像**だった（1分47秒の間、画面が一度も変わらない＝おかしい）。
+       *     写真を見ると**リアプロではなく別のタブ**が写っていた。
+       *     `captureVisibleTab(windowId)` は**その窓の「今アクティブなタブ」**を撮るので、
+       *     リアプロがアクティブでないと**別のタブが撮れる**（＝学習に使えない写真が貯まる）。
+       *
+       *   旧は「**失敗した時だけ**」タブをアクティブにして撮り直していた。
+       *   ⚠ 失敗しないので、**別のタブのまま撮れ続けていた**（誰も気づけない）。
+       *   → **最初から**「リアプロのタブをアクティブにして撮り、**すぐ元に戻す**」。
+       *     ⚠ 人が別のタブを見ている時間を奪わないよう、撮ったら必ず戻す。
+       */
+      try {
+        const prev = await chrome.tabs.query({ active: true, windowId: tab.windowId }).catch(function () { return []; });
+        const prevId = prev && prev[0] ? prev[0].id : null;
+        const wasActive = (prevId === tab.id);
+        if (!wasActive) {
+          try { await chrome.windows.update(tab.windowId, { focused: true }); } catch (_) {}
+          try { await chrome.tabs.update(tab.id, { active: true }); } catch (_) {}
+          await new Promise(function (r) { setTimeout(r, 320); });
+        }
+        try {
+          dataUrl = await _capturePaced(tab.windowId);
+        } finally {
+          if (!wasActive && prevId != null) {
+            try { await chrome.tabs.update(prevId, { active: true }); } catch (_) {}
+          }
+        }
+      } catch (e) {        /**
+         * 2026-11-11 竹内さん「写真撮ってるかな？」→ 0枚のまま。
+         *   `captureVisibleTab` は**その窓のアクティブなタブ**しか撮れない。小窓を開いていると失敗する。
+         *   → 一度そのタブをアクティブにして撮り、**すぐ元に戻す**（人の操作を邪魔しない）。
+         */
+        try {
+          /**
+           * 2026-11-12 竹内さん「くれさん通常モードで検索したけどちゃんと画面録画はできるようになっているかな」:
+           *   `captureVisibleTab` は**その窓が前に出ている（focused）**事も要る。
+           *   拡張の小窓（ポップアップの別窓）を開いていると本体の窓が後ろに下がり、毎回失敗する。
+           *   → 撮る前に**窓を前に出す**（人が見ている前提の軽い操作・タブは元に戻す）。
+           */
+          try { await chrome.windows.update(tab.windowId, { focused: true }); } catch (_) {}
+          const prev = await chrome.tabs.query({ active: true, windowId: tab.windowId }).catch(function () { return []; });
+          const prevId = prev && prev[0] ? prev[0].id : null;
+          await chrome.tabs.update(tab.id, { active: true });
+          await new Promise(function (r) { setTimeout(r, 320); });   // 描画が変わるのを待つ（少し長め）
+          dataUrl = await _capturePaced(tab.windowId);
+          if (prevId != null && prevId !== tab.id) {
+            try { await chrome.tabs.update(prevId, { active: true }); } catch (_) {}
+          }
+        } catch (e2) {
+          fail("capture_error: " + String((e && e.message) || e) + " / retry: " + String((e2 && e2.message) || e2));
+          return;
+        }
+      }
+      if (!dataUrl) { fail("no_image"); return; }
+
+      /**
+       * 2026-11-14 竹内さん「足りていない部分や弱い部分はきょうかするようにする」:
+       *   ⚠ **同じ画像が延々と撮れている**事に誰も気づけなかった（実測100枚が同一）。
+       *   → 撮った直後に**直前の写真と同じか**を見て、続いた枚数を数える。
+       *     ⚠ 比べるのは**長さと先頭200文字**だけ（軽い・中身を読まない）。
+       *     ⚠ `same_run` が大きい＝「画面が変わっていない」＝止まっている／別のタブを撮っている疑い。
+       */
+      try {
+        var _sigNow = String(dataUrl.length) + ":" + String(dataUrl.slice(0, 200));
+        if (window.__axLastShotSig && window.__axLastShotSig === _sigNow) {
+          _shotSameRun = (_shotSameRun || 0) + 1;
+        } else {
+          _shotSameRun = 0;
+          window.__axLastShotSig = _sigNow;
+        }
+      } catch (_) {}
+
+      /**
+       * 2026-11-11 竹内さん「まだ写真クラウドにおくれていないのか」:
+       *   ⚠ フルHD画面のJPEG（quality 55）は **3MB を超える**ことがある。
+       *     サーバーは 3MB 超の写真を**黙って捨てていた**（エラーも出さない）＝「送ったのに届かない」。
+       *   → 送る前に**縮める**（長辺 1280px・JPEG 45%）。1枚あたり 200〜400KB になり確実に通る。
+       */
+      /**
+       * 2026-11-11 竹内さん「画像もっと容量落としても大丈夫」:
+       *   長辺 **800px・JPEG 32%**（40〜90KB 目安）。物件名・賃料・ボタンの位置は読める。
+       *   1検索で 30〜80枚たまるので、1枚を小さくするのが効く。
+       */
+      let shotForUpload = dataUrl;
+      let shotW = 0, shotH = 0;
+      try {
+        /**
+         * 2026-11-12 竹内さん「もっと画像の容量おとしてもよい」:
+         *   800px・32%（40〜90KB）→ **640px・25%（25〜50KB）**。
+         *   物件名・賃料・押したボタンの位置は読める範囲で、枚数が多くても容量が増えにくい。
+         */
+        const shrunk = await _shrinkShot(dataUrl, SHOT_SEND_SIDE, SHOT_SEND_Q);
+        if (shrunk && shrunk.dataUrl) { shotForUpload = shrunk.dataUrl; shotW = shrunk.w; shotH = shrunk.h; }
+      } catch (e) {
+        console.warn("[human-shot] 縮められませんでした（元の大きさで送ります）:", (e && e.message) || e);
+      }
+      const shotBytes = Math.round(String(shotForUpload).length * 3 / 4);
+      console.log("[human-shot] 撮りました: 元 " + Math.round(dataUrl.length * 3 / 4 / 1024) + "KB → 送る物 " + Math.round(shotBytes / 1024) + "KB（" + shotW + "x" + shotH + "）");
+
+      // 名前を「まとまり＋連番」にする（並べ替えると操作の流れになる）
+      const key = "shot_" + _shotRun + "_" + String(_shotSeq).padStart(4, "0");
+      const meta = {
+        at: t0, seq: _shotSeq, run_id: _shotRun,
+        site: msg.site || null,
+        kind: typeof msg.kind === "string" ? msg.kind.slice(0, 20) : null, // 何の操作の直後か（click/change/key/scroll）
+        what: typeof msg.what === "string" ? msg.what.slice(0, 40) : null, // どの欄か
+        x: typeof msg.x === "number" ? Math.round(msg.x) : null,           // 押した所（画面の座標）
+        y: typeof msg.y === "number" ? Math.round(msg.y) : null,
+        url: String(tab.url || "").slice(0, 300),
+        /**
+         * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか」:
+         *   どのタブを撮ったか。写真と一緒に**その場の動きの癖**を送るために使う。
+         */
+        tab_id: typeof tab.id === "number" ? tab.id : null,
+      };
+      /**
+       * 2026-11-12 竹内さん「いまちゃんとろくがされてたかな？」→ **保存0枚・失敗6回・ResourceExceeded**。
+       *
+       * ⚠ 本当の原因: Chrome の `storage.local` は **10MB まで**（`unlimitedStorage` 無し）。
+       *   旧はここに **縮小前のフルサイズ画像（dataUrl・1枚 2〜3MB）** を入れていた。
+       *   → 3〜4枚で 10MB を超え、**それ以降の保存が全部 `ResourceExceeded` で失敗**（＝1枚も保存されない）。
+       *   ⚠ Cloud（Storage）には上げていたが、ここの `set` が先に例外になって
+       *     送信まで届かない事もあった（`await chrome.storage.local.set(o)` の後ろで送っている）。
+       *
+       * → **画像は Chrome の中に貯めない**。Cloud に上げて、Chrome には**小さな目印だけ**残す。
+       *   上げられなかった時だけ、**縮小した画像（40〜90KB）** を残す（無いよりまし・上限は下で掃除）。
+       */
+      const uploadOn = msg.upload !== false;
+      const up = uploadOn ? _sendShotNow({
+        data_url: shotForUpload, site: msg.site || null, what: msg.what || null,
+        shot_w: shotW, shot_h: shotH,
+        kind: msg.kind || null, x: msg.x, y: msg.y,
+        // 2026-11-14 竹内さん「通常と自動のところで自動で強化必要な部分強化する」:
+        //   ⚠ 旧は `mode: null` 固定だったので、どのモードの写真か分からなかった（DBのmodeが空）。
+        //   → 今のモードを入れる（normal / staff / aix / brain…）。
+        mode: await _modeLabelNow(), run_id: _shotRun, seq: _shotSeq,
+        /**
+         * 2026-11-14 竹内さん「ここちゃんと学習できるように」:
+         *   ⚠ **同じ画像が延々と撮れている**事に誰も気づけなかった（実測100枚が同一）。
+         *   → 直前の写真と同じなら `same_run` に**何枚続いたか**を入れて送る。
+         *     統括が「画面が変わっていない＝止まっている／別のタブを撮っている」を判断できる。
+         *   ⚠ 比べるのは**長さと先頭200文字**だけ（軽い・中身を読まない・個人情報を扱わない）。
+         */
+        same_run: (function () { try { return _shotSameRun || 0; } catch (_) { return 0; } })(),
+        // 2026-11-13 竹内さん「写真から学習する」: この写真の直前までの操作の並び
+        ops: Array.isArray(msg.ops) ? msg.ops : null,
+        // 2026-11-13: どのタブか（その場の動きの癖を一緒に送るため）
+        tab_id: typeof tab.id === "number" ? tab.id : null,
+      }) : null;
+
+      let ur = null;
+      if (up) {
+        if (msg.wait_upload) {
+          try { ur = await up; } catch (e) { ur = { ok: false, error: String((e && e.message) || e) }; }
+        } else {
+          // 待たない時も、失敗したら小さく残す（あとで見られるように）
+          up.then(function (r) { if (!r || !r.ok) _keepShotLocal(key, meta, shotForUpload); return r; })
+            .catch(function (e) { void e; _keepShotLocal(key, meta, shotForUpload); });
+        }
+      }
+      // Cloud に上がった（or 送らない設定）＝Chrome には**目印だけ**。上がらなかった時は縮小画像を残す
+      if (!msg.wait_upload) {
+        if (!uploadOn) await _keepShotLocal(key, meta, shotForUpload);
+        else { /* 送信の結果で決める（上の then の中） */ }
+      } else if (!(ur && ur.ok)) {
+        await _keepShotLocal(key, meta, shotForUpload);
+      } else {
+        await _keepShotMeta(key, meta);
+      }
+
+      // 古い物から消す（全体の上限）。画像を持つ物は少なめに残す（容量を守る）
+      await _trimShots();
+      sendResponse({ ok: true, shot_key: key, run_id: _shotRun, seq: _shotSeq, upload: ur || null, ms: Date.now() - t0 });
+    } catch (e) {
+      sendResponse({ ok: false, error: String((e && e.message) || e), ms: Date.now() - t0 });
+    }
+  })();
+}
+
+if (msg.type === "axlx-human-shot") {
+  _takeShot(msg, function (r) { try { sendResponse(r); } catch (_) {} });
+  return true;
+}
+
+/**
+ * 2026-11-13 竹内さん「つなぐ」（学んだ押す順番を自動モードに繋ぐ）:
+ *   学習担当のブレインが毎晩まとめた「束」を取りに行き、**押す順番（next）と押す場所（points）**だけを
+ *   chrome.storage.local に置く（ページ側 page-script が読む）。
+ *
+ *   ⚠ 取るのは**1日1回まで**（起動時と、前回から24時間たった時）。サーバーを叩きすぎない。
+ *   ⚠ 失敗しても何もしない（今まで通りの動き・学習は「あれば使う」）。
+ */
+/**
+ * 2026-11-13 竹内さん「ほかにちゃんと学習の面とかで連携できていない部分などあるか」:
+ *   ⚠ 旧は `next`（押す順番）と `points`（押す場所）**だけ**を storage に置いていた。
+ *     サーバーは `motion`（速さ・曲がり）・`gaps`（操作の間）・`weak`（次に学ぶ事）・
+ *     `site_flow`（サイトごとの手順）まで計算して返しているのに、**拡張が捨てていた**
+ *     （＝サーバーで学んだ事が現場に届いていない）。
+ *   → 使える物も一緒に置く。ページ側は「あれば使う」（無ければ今まで通り）。
+ */
+var _LEARN_KEYS = ["axlx_learn_next", "axlx_learn_points", "axlx_learn_at", "axlx_learn_ver"];
+/**
+ * 2026-11-14 竹内さん「学習して改善したら自動モード強化されるように」:
+ *   ⚠ 旧は**24時間に1回**しか取りに行かなかったので、学習しても**最大24時間反映されなかった**
+ *     （「改善したのに自動モードが変わらない」の一因）。
+ *   → ① **起動時と定期的**に軽く見に行く（`?touch=0` で「版」だけ確認・重くない）
+ *     ② **学習の版（generated_at）が変わっていたら**すぐ取り直す
+ *     ③ 版が同じなら何もしない（サーバーも拡張も無駄に動かない）
+ *
+ * 2026-11-14 竹内さん「最新の学びが反映されるようになっているのか」:
+ *   ⚠ 旧は `_LEARN_CHECK_MS = 1時間` で、しかも **「前回取り込んでから1時間」経つまで版の確認すらしない**
+ *     （`if (!force && last && Date.now() - last < _LEARN_CHECK_MS) return skipped`）。
+ *     つまり **学んだ直後は最大1時間、新しい学びが自動検索に入らない**。
+ *     実測でも「束は 6分前なのに、拡張はまだ前の版を持っている」状態だった。
+ *   → 版の確認は **5分ごと**にする（`?touch=0` は軽い＝束を作り直さないので安全）。
+ *     ⚠ 束の取り直し（重い方）は版が変わった時だけなので、5分ごとでも通信は増えない。
+ */
+var _LEARN_CHECK_MS = 5 * 60 * 1000;   // 版を見に行く間隔（5分。軽い確認だけ）
+async function _refreshLearnedBundle(force) {
+  try {
+    var st = await chrome.storage.local.get(_LEARN_KEYS);
+    var last = Number(st && st.axlx_learn_at) || 0;
+    var lastVer = String((st && st.axlx_learn_ver) || "");
+    /**
+     * 強制でない時: 1時間たっていなければ「版だけ」確かめる（軽い）。
+     *   ・版が変わっていなければ何もしない
+     *   ・版が変わっていたら取り直す（＝学習が進んだ瞬間に反映される）
+     */
+    if (!force && last && Date.now() - last < _LEARN_CHECK_MS) return { ok: true, skipped: "fresh" };
+    if (!force && last) {
+      try {
+        var head = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0", { cache: "no-store", signal: AbortSignal.timeout(8000) });
+        if (head.ok) {
+          var hj = await head.json();
+          var hv = String((hj && hj.generated_at) || "");
+          if (hv && hv === lastVer) return { ok: true, skipped: "same_version" };
+          console.log("[learn] 学習が新しくなりました（" + lastVer + " → " + hv + "）→ 取り込みます");
+        }
+      } catch (_) { /* 版が読めなければ取りに行く（安全側） */ }
+    }
+    // touch=1（既定）で読む＝**読んだ印**をサーバーに残す（どの PC が読んでいるか分かる）
+    /**
+     * 2026-11-14 竹内さん「リアプロ itandi それぞれちゃんと区別して学習。それぞれの性質を理解するためにも
+     *   改善していくためにも必要」:
+     *
+     *   ⚠ 旧は `?scope=` を付けずに読んでいたので、**リアプロと itandi の学びが1つに混ざった束**を
+     *     両方のサイトで使っていた。サイトごとに手順も欄の名前も違うので、
+     *     混ぜると「itandi で学んだ順番をリアプロで使う」ような**誤適用**が起きる。
+     *
+     *   → **サイトごとに別々に取る**（`?scope=realpro` / `?scope=itandi`）。
+     *     ・`axlx_learn_by_site` … `{ realpro: {next, points, ...}, itandi: {...} }`（サイト別の正本）
+     *     ・今までのキー（`axlx_learn_next` など）は**今いるサイトの物**を入れる
+     *       （page-script は今まで通り読める＝変更が要らない）
+     */
+    var SITES = ["realpro", "itandi"];
+    var perSite = {};
+    for (var si = 0; si < SITES.length; si++) {
+      var sc = SITES[si];
+      try {
+        var sres = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?scope=" + sc, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+        if (!sres.ok) continue;
+        var sjson = await sres.json();
+        if (sjson && sjson.bundle && typeof sjson.bundle === "object") perSite[sc] = sjson.bundle;
+      } catch (_) { /* 片方が取れなくても、もう片方は使う */ }
+    }
+    // 今いるタブのサイト（分からなければ realpro）
+    var curSite = "realpro";
+    try {
+      var tabsNow = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      var uNow = String((tabsNow && tabsNow[0] && tabsNow[0].url) || "");
+      if (/itandibb\.com/.test(uNow)) curSite = "itandi";
+      else if (/realnetpro\.com/.test(uNow)) curSite = "realpro";
+    } catch (_) {}
+    /**
+     * 今のサイトの束を選ぶ。無ければ realpro → 最後に全体（scope=all）へ落とす
+     *   （新しいサイトでまだ学びが無い時に「何も無い」で止まらないように）。
+     */
+    var res = null;
+    if (perSite[curSite]) { res = { ok: true, json: { bundle: perSite[curSite] } }; }
+    if (!res) {
+      var allRes = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile", { cache: "no-store", signal: AbortSignal.timeout(15000) });
+      if (!allRes.ok) return { ok: false, error: "http_" + allRes.status };
+      res = { ok: true, raw: await allRes.json() };
+    }
+    var json = res.json || res.raw || {};
+    var bundle = json && json.bundle;
+    if (!bundle || typeof bundle !== "object") {
+      // まだ束が無い（学習の記録が少ない・cron の前）→ 何もしない
+      await chrome.storage.local.set({ axlx_learn_at: Date.now() });
+      return { ok: true, empty: true };
+    }
+    var next = (bundle.next && typeof bundle.next === "object") ? bundle.next : {};
+    var points = (bundle.points && typeof bundle.points === "object") ? bundle.points : {};
+    // 2026-11-13: サーバーが計算した**動き・間・弱い所・サイトの手順**も一緒に置く（捨てない）
+    var motion = (bundle.motion && typeof bundle.motion === "object") ? bundle.motion : {};
+    var gaps = (bundle.gaps && typeof bundle.gaps === "object") ? bundle.gaps : {};
+    var weak = Array.isArray(bundle.weak) ? bundle.weak.slice(0, 80) : [];
+    var siteFlow = (bundle.site_flow && typeof bundle.site_flow === "object") ? bundle.site_flow : {};
+    /**
+     * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい
+     *   抜けている部分徹底的に学習できるように」:
+     *   **写真から学んだ画面ごとの手順**（地域の小窓・駅の小窓・条件の入力）も置く。
+     *   ⚠ 旧は計算して返しているのに、拡張が受け取っていなかった（＝現場に届かない）。
+     */
+    var screenFlow = (bundle.screen_flow && typeof bundle.screen_flow === "object") ? bundle.screen_flow : {};
+    /**
+     * 2026-11-14 竹内さん「一連の動きの学習や強化、反映の為に抜けている部分がある可能性もある」:
+     *   ⚠ **サーバーで計算したのに拡張が1つも読んでいなかった物**（実測 0箇所）:
+     *     `by_mode`（モード別の学び）・`mode_plan`（統括の判断）・
+     *     `sequence_flow`（一連の動きの型）・`learn_plan`（次にやる事）。
+     *   → 現場（自動モード）で使えるように storage へ置く。
+     *     ・`axlx_learn_seq` … 一連の動きの型（押す順番の鎖）
+     *     ・`axlx_learn_by_mode` … モード別の押す順番
+     *     ・`axlx_learn_plan` … 統括の判断（何が足りないか）
+     */
+    var seqFlow = (bundle.sequence_flow && typeof bundle.sequence_flow === "object") ? bundle.sequence_flow : {};
+    var byMode = (bundle.by_mode && typeof bundle.by_mode === "object") ? bundle.by_mode : {};
+    var plan = (bundle.learn_plan && typeof bundle.learn_plan === "object") ? bundle.learn_plan : {};
+    /**
+     * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
+     *   **押したら何が開くか**（modal / options / form / result）も置く。
+     *   ⚠ サーバーが計算して返しているのに拡張が読まなければ、現場では使われない（学習が届かない）。
+     */
+    var opens = (bundle.opens && typeof bundle.opens === "object") ? bundle.opens : {};
+    /** 今のモードの押す順番（あれば mode 別、無ければ全体） */
+    var myMode = await _modeLabelNow();
+    var modeNext = (myMode && byMode[myMode] && byMode[myMode].next) ? byMode[myMode].next : null;
+    await chrome.storage.local.set({
+      axlx_learn_next: next,
+      axlx_learn_points: points,
+      axlx_learn_motion: motion,
+      axlx_learn_gaps: gaps,
+      axlx_learn_weak: weak,
+      axlx_learn_site_flow: siteFlow,
+      axlx_learn_screen_flow: screenFlow,
+      /**
+       * 2026-11-14 竹内さん「リアプロ itandi それぞれちゃんと区別して学習」:
+       *   **サイト別の正本**（リアプロ用と itandi 用を別々に持つ）。
+       *   ⚠ 上のキー（`axlx_learn_next` など）は**今いるサイトの物**なので、
+       *     タブを切り替えた時に取り直せば、そのサイトの学びに切り替わる。
+       */
+      axlx_learn_by_site: perSite,
+      /**
+       * 2026-11-14 竹内さん「学習の統括の部分判断できるようにちゃんと強化していく」:
+       *   統括の**判断**（結論・次にやる事・数字）も置く。
+       *   ⚠ これが無いと「今の学びを自動検索に渡してよいか」が現場で分からない。
+       */
+      axlx_learn_supervisor: (bundle.supervisor && typeof bundle.supervisor === "object") ? bundle.supervisor : null,
+      axlx_learn_supervisor_by_site: (bundle.supervisor_by_site && typeof bundle.supervisor_by_site === "object") ? bundle.supervisor_by_site : null,
+      /**
+       * 2026-11-14 竹内さん「自動検索の部分これでちゃんと強化されたかな」→ **まだだった**。
+       *
+       *   ⚠ サーバーで**場面ごとの手順**（`scene_flows`・人が実際に押した順）を作ったのに、
+       *     拡張は**1箇所も読んでいなかった**（実測 0箇所）。
+       *     ＝「計算したが現場に届かない」を、前回（`screen_flow`）と**同じ穴でもう一度**作っていた。
+       *
+       *   → 自動検索が使える形で置く:
+       *     ・`axlx_learn_scene_flows` … 場面ごとの手順（area/station/cond/search/list/next）
+       *     ・`axlx_learn_stopped_scene` … 止まる回が多い場面（自動が「ここで慎重に」を選べる）
+       *     ・`axlx_learn_scene_missing` … 手本が無い場面（自動で**推測しない**ための印）
+       *   ⚠ これらは**並べ替えの材料**として使う（項目の増減は絶対にしない＝検索漏れを出さない）。
+       */
+      axlx_learn_scene_flows: Array.isArray(bundle.scene_flows) ? bundle.scene_flows.slice(0, 12) : null,
+      axlx_learn_stopped_scene: (typeof bundle.stopped_scene === "string" && bundle.stopped_scene) ? bundle.stopped_scene : null,
+      axlx_learn_scene_missing: (typeof bundle.scene_missing === "number" && bundle.scene_missing > 0)
+        ? { n: bundle.scene_missing, names: String(bundle.scene_missing_names || "") } : null,
+      /** 今どのサイトの学びを上のキーに入れたか（点検用） */
+      axlx_learn_for_site: curSite,
+      /** サイト別に何が学べているか（1行ずつ） */
+      axlx_learn_site_summary: (function () {
+        var o = {};
+        for (var k in perSite) {
+          if (!Object.prototype.hasOwnProperty.call(perSite, k)) continue;
+          var b = perSite[k] || {};
+          o[k] = {
+            rows: (b.source && b.source.rows) || 0,
+            next: Object.keys(b.next || {}).length,
+            points: Object.keys(b.points || {}).length,
+            opens: Object.keys(b.opens || {}).length,
+            screens: Object.keys(b.screen_flow || {}).length,
+            mode: (b.mode_counts || null),
+          };
+        }
+        return o;
+      })(),
+      axlx_learn_opens: opens,
+      axlx_learn_shots: (bundle.shots && typeof bundle.shots === "object") ? bundle.shots : null,
+      axlx_learn_seq: seqFlow,
+      axlx_learn_by_mode: byMode,
+      axlx_learn_plan: plan,
+      /** モード別の押す順番（そのモードで学べている時だけ） */
+      ...(modeNext ? { axlx_learn_next_mode: modeNext, axlx_learn_next_mode_name: myMode } : {}),
+      axlx_learn_at: Date.now(),
+      /** 2026-11-14: 学習の版（変わったら取り直す印） */
+      axlx_learn_ver: String(bundle.generated_at || ""),
+      axlx_learn_src: { rows: (bundle.source && bundle.source.rows) || 0, at: bundle.generated_at || null, dropped: bundle.dropped_cols || null },
+    });
+    console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個・弱い所 " + weak.length + "件・画面 " + Object.keys(screenFlow).length + "種類・一連 " + ((seqFlow.sequence || []).length) + "手・展開先 " + Object.keys(opens).length + "個"
+      + (modeNext ? "・モード別(" + myMode + ") " + Object.keys(modeNext).length + "通り" : "")
+      + "・サイト " + Object.keys(perSite).join("/"));
+    /**
+     * 2026-11-14 竹内さん「学習の統括の部分判断できるようにちゃんと強化していく」:
+     *   統括の判断を1行で出す（現場で「今の学びを使ってよいか」が分かる）。
+     */
+    try {
+      var sup = bundle.supervisor;
+      if (sup && sup.headline) {
+        console.log("[learn] 統括: " + sup.headline + (sup.score ? "（材料 " + sup.score.coverage + "/100・弱い所 " + sup.score.weak + "件）" : ""));
+        if (sup.block) console.warn("[learn] 統括の警告: " + sup.block);
+        if (Array.isArray(sup.actions) && sup.actions.length) {
+          console.log("[learn] 次にやる事: " + sup.actions.slice(0, 3).map(function (a) { return a.what; }).join(" / "));
+        }
+      }
+    } catch (_) {}
+    return {
+      ok: true, next: Object.keys(next).length, points: Object.keys(points).length, weak: weak.length,
+      opens: Object.keys(opens).length,
+      screens: Object.keys(screenFlow).length, seq: ((seqFlow.sequence || []).length),
+      mode: myMode, mode_next: modeNext ? Object.keys(modeNext).length : 0,
+    };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+// 起動した時に1回（前回から1時間たっていれば取りに行く）
+try { _refreshLearnedBundle(false).catch(function () {}); } catch (_) {}
+/**
+ * 2026-11-14 竹内さん「学習して改善したら自動モード強化されるように」:
+ *   **1時間ごと**に版を確かめ、新しければ取り込む（学んだら最大1時間で反映）。
+ *   ⚠ 版が同じなら通信は1回だけ（軽い）。
+ */
+try {
+  setInterval(function () {
+    _refreshLearnedBundle(false).catch(function () {});
+  }, _LEARN_CHECK_MS);
+} catch (_) {}
+try {
+  chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
+    if (!msg) return;
+    if (msg.type === "axlx-learn-refresh") { _refreshLearnedBundle(true).then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
+    if (msg.type !== "axlx-learn-status") return;
+    chrome.storage.local.get(_LEARN_KEYS.concat(["axlx_learn_src"])).then(function (r) {
+      var nx = (r && r.axlx_learn_next) || {};
+      var pt = (r && r.axlx_learn_points) || {};
+      try {
+        sendResponse({
+          ok: true,
+          at: (r && r.axlx_learn_at) || null,
+          src: (r && r.axlx_learn_src) || null,
+          next_count: Object.keys(nx).length,
+          points_count: Object.keys(pt).length,
+          sample: Object.keys(nx).slice(0, 5).map(function (k) { return k + " → " + nx[k].next + "（" + nx[k].n + "/" + nx[k].total + "）"; }),
+        });
+      } catch (_) {}
+    });
+    return true;
+  });
+} catch (_) {}
+
+/**
+ * 2026-11-12 竹内さん「画面録画モード等のボタンをつけることができればさらに簡単にできるようになる。
+ *   画面録画モード押しているときは連続でさつえいされていればちゃんと記録されるので、
+ *   それで動かすことができればさらに質が高くなる」
+ *
+ *   押している間、**1.5〜3.5秒ごと（平均2.5秒）に続けて撮る**（操作の時だけ撮るのでは、画面の移り変わりが残らない）。
+ *   ・撮る中身は今までと同じ道（`_takeShot`）＝縮小・Storage 送信・上限の掃除も同じ
+ *   ・間隔は毎回ばらつかせる（等間隔で撮ると機械らしい）
+ *   ・**最大 7分**（竹内さん「最大時間も7分とかでくひりいれといた方が良い」）。
+ *     7分 × 平均2.5秒 ＝ およそ **170枚**。1検索（30秒〜3分）は十分収まる。
+ *   ・枚数の上限（400枚）も残す（二重の歯止め）
+ *   ・止める: もう一度ボタンを押す／7分たつ／400枚たまる／`axlx_rec_mode` が消える
+ *   ⚠ Service Worker は30秒で眠る事があるので、**chrome.alarms**（1分より短くは作れない）ではなく
+ *     storage の値を見張る＋短い setTimeout の連鎖で回す（動いている間は眠らない）。
+ */
+var _recTimer = null;
+/**
+ * 2026-11-14 竹内さん「通常と自動のところで自動で強化必要な部分強化する」:
+ *   今のモードを1語で返す（写真と記録の `mode` 列に入れる）。
+ *   ⚠ これが無いと「自動の時に何が起きたか」「通常の時に何を学んだか」を分けられない。
+ *   ⚠ 読めない時は null（推測で埋めない）。
+ */
+async function _modeLabelNow() {
+  try {
+    var core = self.AxlxModeCore;
+    if (!core || !core.readState) return null;
+    var keys = core.STORAGE_KEYS || ["staffMode", "staffModeAt", "aixMode", "aiMode", "brainMode", "autoModeAt"];
+    var raw = await chrome.storage.local.get(keys);
+    var st = core.readState(raw || {}, Date.now());
+    var m = st && st.mode ? String(st.mode) : null;
+    return m ? m.slice(0, 20) : null;
+  } catch (_) { return null; }
+}
+/**
+ * 2026-11-14 竹内さん「なんで自動モードまだかいぜんされていないのか」:
+ *   ⚠ **録画ループが多重に走っていた**（実測: 2分間で392枚・間隔 2ms/17ms。
+ *     1.5〜3.5秒間隔なら最大80枚のはず）。
+ *   ⚠ 原因: `_recIsOn()` が `!!_recTimer` だけを見ていた。Chrome は Service Worker を
+ *     数十秒で止めるので、**起き直すたびに `_recTimer` が null に戻る** →
+ *     復帰処理が「録画中」と知りながら**新しいループを追加**していた。
+ *     → ループが2本3本になり、`captureVisibleTab` の制限（2回/秒）に当たり続けて
+ *       **全部 `capture_error` で失敗**（写真0枚・ops も空）。
+ *   → **世代番号で1本だけにする**。古いループは自分の世代でなくなったら黙って止まる。
+ */
+var _recGen = 0;
+var _recCount = 0;
+var _recSaved = 0;
+var _recFailed = 0;
+var _recLastErr = null;
+var _recStartedAt = 0;
+var _REC_MAX_SHOTS = 400;
+/**
+ * 2026-11-12 竹内さん「最大時間も7分とかでくひりいれといた方が良い」: 60分 → **7分**。
+ *   7分を過ぎたら自動で止める（撮りっぱなしで容量とStorageを圧迫しない）。
+ */
+var _REC_MAX_MS = 7 * 60 * 1000;
+/** 撮る間隔（ミリ秒）。1.5〜3.5秒＝平均2.5秒。7分で約170枚 */
+var _REC_GAP_MIN = 1500;
+var _REC_GAP_MAX = 3500;
+function _recRemainMs() {
+  return Math.max(0, _REC_MAX_MS - (Date.now() - _recStartedAt));
+}
+function _recIsOn() {
+  /**
+   * 2026-11-14 修正: **世代番号**で判定する（`_recTimer` は Service Worker が止まると消えるので
+   *   それだけを見ると「録画していない」と誤判定し、復帰のたびにループが増えていた）。
+   */
+  return _recGen > 0;
+}
+async function _recTick(gen) {
+  /**
+   * 2026-11-14: **自分の世代でなければ黙って止まる**（古いループが生き残らないように）。
+   *   ⚠ これが無いと、復帰のたびに増えたループが全部撮りに行き、制限に当たり続ける。
+   */
+  if (gen != null && gen !== _recGen) return;
+  if (!_recIsOn()) return;
+  if (_recCount >= _REC_MAX_SHOTS || Date.now() - _recStartedAt > _REC_MAX_MS) {
+    await _recStop(_recCount >= _REC_MAX_SHOTS ? "上限" : "7分");
+    return;
+  }
+  // 途中で止められたか（別の窓で止めた時も効く）
+  try {
+    var st = await chrome.storage.local.get(["axlx_rec_mode"]);
+    if (!(st && st.axlx_rec_mode && st.axlx_rec_mode.on)) { await _recStop("解除"); return; }
+  } catch (_) {}
+  _recCount++;
+  /**
+   * ⚠ 2026-11-14: ここでもう一度世代を確かめる（`await` の間に止められたかもしれない）。
+   *   止められていたら**この1枚は数えない**（二重に数えない）。
+   */
+  if (gen != null && gen !== _recGen) { _recCount--; return; }
+  /**
+   * 2026-11-12 竹内さん「ちゃんと撮影されてたかな？」:
+   *   ⚠ 旧は「撮った回数」を数えていたので、**クラウドに1枚も入っていなくても「22枚」と出た**。
+   *   → **本当に保存できた枚数**（`_recSaved`）と、失敗した回数・理由（`_recFailed` / `_recLastErr`）を別に持つ。
+   */
+  var r = null;
+  try { r = await _recordOneShot(); } catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+  if (r && r.ok) {
+    _recSaved++;
+  } else {
+    _recFailed++;
+    _recLastErr = String((r && (r.error || (r.upload && r.upload.error))) || "理由なし").slice(0, 120);
+    console.warn("[rec] 保存できませんでした:", _recLastErr);
+  }
+  try {
+    await chrome.storage.local.set({
+      axlx_rec_stat: {
+        on: true, tried: _recCount, saved: _recSaved, failed: _recFailed,
+        last_error: _recLastErr || null,
+        started_at: _recStartedAt, last_at: Date.now(),
+      },
+    });
+  } catch (_) {}
+  // 1.5〜3.5秒（毎回ちがう・機械的に見せない）。7分の残りが少なければそこで止める
+  var gap = _REC_GAP_MIN + Math.floor(Math.random() * (_REC_GAP_MAX - _REC_GAP_MIN));
+  /**
+   * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない、ここ録画しているので
+   *   その点も含めて学習して改善する」（画面に「失敗5」と出て写真が1枚も残らなかった）:
+   *   ⚠ 旧は `MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota` だけを見て間隔を延ばしていた。
+   *     実際の失敗はそれだけではない（権限・窓が前に出ていない・タブが見つからない 等）。
+   *   → **失敗の種類ごとに手を打つ**（次の1回で直るように）。
+   *     ⚠ 録画は止めない（7分を使い切る）。
+   */
+  var _kind = _recErrKind(_recLastErr);
+  if (_kind === "quota") {
+    // 撮りすぎの制限 → 間隔を延ばす（1秒あたり2回まで）
+    gap += 800 + Math.floor(Math.random() * 900);
+  } else if (_kind === "permission") {
+    // 権限が無い → 帯で知らせる（押せば許可できる）。間隔はそのまま
+    try { await _recMarkNeedsPermission(); } catch (_) {}
+  } else if (_kind === "not_focus") {
+    // 窓が前に出ていない → 次は窓を前に出してから撮る（_takeShot 側で実施）
+    gap += 200;
+  } else if (_kind === "no_tab") {
+    // 対象のタブが無い → 少し待つ（人がリアプロを開くのを待つ）
+    gap += 1500;
+  }
+  var left = _recRemainMs();
+  if (left > 0 && gap > left) gap = left;
+  // 2026-11-14: **自分の世代でだけ**次の1枚を予約する（古いループは予約しない＝増殖しない）
+  if (gen == null || gen === _recGen) {
+    _recTimer = setTimeout(function () { _recTick(gen).catch(function () {}); }, Math.max(200, gap));
+  }
+  }
+  /**
+   * 2026-11-13: 失敗の理由を**種類に分ける**（次の手を決めるため）。
+   *   quota … 撮りすぎの制限／permission … 許可が無い／not_focus … 窓が後ろ／no_tab … タブが無い
+   */
+  function _recErrKind(msg) {
+    var s = String(msg || "");
+    if (!s) return "unknown";
+    if (/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(s)) return "quota";
+    if (/no_permission|permission|許可/i.test(s)) return "permission";
+    if (/no_tab|no_tab_found|タブ/i.test(s)) return "no_tab";
+    if (/focused|active|activeTab|not.?focus|window/i.test(s)) return "not_focus";
+    return "unknown";
+  }
+  /** 許可が要る事を帯に出す（押せば許可できる・録画は止めない） */
+  async function _recMarkNeedsPermission() {
+    try {
+      await chrome.storage.local.set({
+        axlx_rec_need_perm: { at: Date.now(), why: "photo" },
+      });
+    } catch (_) {}
+  }
+/**
+ * 2026-11-13 竹内さん「録画から学習できるのか」:
+ *   録画モードで撮った写真にも**直前までの操作（押す順番の材料）**を付ける。
+ *   ⚠ 旧は録画からは `ops` を送っていなかったので、**録画しても押す順番を学べなかった**
+ *     （記録の `ops` が 0・`shot_ops` が空）。
+ *   → 録画の時も page-script（人と同じ見張り）が持っている直近の操作を読んで送る。
+ *     読めない時は null（今まで通り・写真だけ）。
+ */
+async function _recordOneShot() {
+    var ops = null;
+    /** 2026-11-14: なぜ操作が取れなかったかを残す印（診断用） */
+    var _lastOpsWhy = null;
+  var siteName = null;
+  try {
+    // 録画しているタブに「直近の操作をください」と聞く（page-script が答える）
+    var tabs = await chrome.tabs.query({});
+    var rp = tabs.filter(function (t) { return t.url && /realnetpro\.com|itandibb\.com|reins\.jp/.test(t.url); });
+    if (rp.length) {
+      /**
+       * 2026-11-14 竹内さん「地域押さなかったのでこっちでおした画面確認して録画した画面」:
+       *   ⚠ 実測で **写真200枚すべて ops が空**だった。`rp[0]` は**タブの並び順の先頭**で、
+       *     録画している画面（前に出ているタブ）とは限らない。
+       *     さらに `sendMessage` は**そのタブの中の content script** にしか届かない。
+       *   → **前に出ているタブを最優先**（`active`）→ 無ければリアプロのタブ。
+       *     それでも空なら、**リアプロの全タブに聞いて回る**（1つでも答えたら使う）。
+       */
+      var activeTab = null;
+      try {
+        var act = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        activeTab = act && act[0] ? act[0] : null;
+      } catch (_) { activeTab = null; }
+      var order = [];
+      if (activeTab && /realnetpro\.com|itandibb\.com|reins\.jp/.test(String(activeTab.url || ""))) order.push(activeTab);
+      rp.forEach(function (t) { if (!order.some(function (x) { return x.id === t.id; })) order.push(t); });
+
+      for (var ti = 0; ti < order.length && (!ops || !ops.length); ti++) {
+        var tab = order[ti];
+        siteName = siteName || (/realnetpro\.com/.test(tab.url) ? "realpro" : (/itandibb\.com/.test(tab.url) ? "itandi" : "reins"));
+        /**
+         * 2026-11-14 竹内さん「これ録画したの見たら学習できるのでは」→ **学習できていなかった**。
+         *
+         *   ⚠ 実測: 2.7.41 の 195枚すべて `shot_ops` が `k:"diag"` の1件だけ、理由は
+         *     **`no_answer:tab…`（49回）** ＝ **タブが答えていない**。
+         *     `human-learn-record.js` は manifest の `document_idle`（読み込み完了後）で入るのに、
+         *     録画は `content.js`（`document_start`）の時点で始まる。
+         *     → **ページが読み込み中の時は、記録側がまだ居ない**ので答えられない。
+         *
+         *   → ① 答えが無ければ**少し待ってからもう一度**聞く（ページが落ち着いてから）。
+         *     ② それでも駄目なら、**注入してから聞く**（`chrome.scripting.executeScript` が使える時）。
+         *     ③ 最後まで駄目なら理由を残す（今まで通り）。
+         */
+        var resp = await chrome.tabs.sendMessage(tab.id, { type: "axlx-recent-ops" }).catch(function () { return null; });
+        if (!resp) {
+          // ① ページが落ち着くのを待って、もう一度だけ聞く（人が開いてから操作するまでの間）
+          await new Promise(function (r) { setTimeout(r, 900); });
+          resp = await chrome.tabs.sendMessage(tab.id, { type: "axlx-recent-ops" }).catch(function () { return null; });
+        }
+        if (!resp) {
+          /**
+           * ② 記録側がまだ入っていない → **注入してから聞く**。
+           *   ⚠ 失敗しても止めない（権限や状態で入らない事がある）。
+           */
+          try {
+            if (chrome.scripting && chrome.scripting.executeScript) {
+              await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                files: ["human-learn.js", "human-learn-record.js"],
+              }).catch(function () { return null; });
+              await new Promise(function (r) { setTimeout(r, 400); });
+              resp = await chrome.tabs.sendMessage(tab.id, { type: "axlx-recent-ops" }).catch(function () { return null; });
+            }
+          } catch (_) {}
+        }
+        /**
+         * 2026-11-14 竹内さん「データベースの写真から学習する」:
+         *   どこで落ちているか（タブに届いていない／輪が空／拾えていない）を**DBに残す**。
+         */
+        if (!resp) {
+          _lastOpsWhy = "no_answer:tab" + tab.id;
+        } else if (!Array.isArray(resp.ops)) {
+          _lastOpsWhy = "ops_not_array:tab" + tab.id;
+        } else if (!resp.ops.length) {
+          _lastOpsWhy = "ring_empty:tab" + tab.id + (resp.diag ? ":ring" + resp.diag.ring + ":seen" + resp.diag.seen + ":watch" + resp.diag.watching : "");
+        }
+        if (resp && Array.isArray(resp.ops) && resp.ops.length) {
+          ops = resp.ops;
+          _lastOpsWhy = "ok:tab" + tab.id + ":" + resp.ops.length + "件";
+          siteName = /realnetpro\.com/.test(tab.url) ? "realpro" : (/itandibb\.com/.test(tab.url) ? "itandi" : "reins");
+        }
+      }
+      /** どのタブから何件取れたか・なぜ取れなかったかを残す（次に空だった時の手がかり） */
+      try {
+        var d = {}; d.axlx_rec_ops = { at: Date.now(), tabs: order.length, got: ops ? ops.length : 0, site: siteName, why: _lastOpsWhy || null };
+        chrome.storage.local.set(d);
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return new Promise(function (resolve) {
+    try {
+      // 2026-11-12: 録画は**送り終わるまで待つ**（「撮れた」と「保存できた」を同じにする）
+      /**
+       * 2026-11-14 竹内さん「取り組む」（材料つき記録が 7% しかない）:
+       *   ⚠ なぜ操作が取れないのか、Chrome の中（`axlx_rec_ops`）にしか無くて**私が見て直せない**。
+       *   → **理由を `ops` に混ぜてDBへ送る**（`k:"diag"` の1件として載せる）。
+       *     ⚠ 載せるのは**数と理由の言葉だけ**（操作した中身は入れない）。
+       *     ⚠ `ops` が空でも、この1件があるので「なぜ空か」がDBに残る。
+       *     学習側は `k:"diag"` を**欄の名前として扱わない**ようにする（`f` が無いので自動的に外れる）。
+       */
+      var _opsForSend = ops;
+      if ((!ops || !ops.length) && _lastOpsWhy) {
+        _opsForSend = [{ t: Date.now(), k: "diag", f: null, w: null, why: String(_lastOpsWhy).slice(0, 60) }];
+      }
+      /**
+       * 2026-11-14 竹内さん「足りていない部分や弱い部分はきょうかするようにする」:
+       *   ⚠ **同じ画像が延々と撮れている**事に誰も気づけなかった（実測100枚が同一）。
+       *   → 新しい列を作らず、**`shot_ops` に `k:"same"` の1件**として「何枚続いたか」を載せる
+       *     （DBの変更なし・統括が読める）。
+       *   ⚠ 2枚以上続いた時だけ入れる（1枚目は入れない）。
+       */
+      try {
+        if (Number(_shotSameRun) >= 2 && Array.isArray(_opsForSend)) {
+          _opsForSend = _opsForSend.concat([{ t: Date.now(), k: "same", f: null, w: null, same: Number(_shotSameRun) }]);
+        }
+      } catch (_) {}
+      _takeShot({ type: "axlx-human-shot", site: siteName || "record", kind: "rec", wait_upload: true, ops: _opsForSend }, function (res) { resolve(res || null); });
+    } catch (_) { resolve(null); }
+  });
+}
+async function _recStart() {
+  if (_recIsOn()) return { ok: true, already: true, count: _recCount, saved: _recSaved };
+  _recCount = 0; _recSaved = 0; _recFailed = 0; _recLastErr = null;
+  _recStartedAt = Date.now();
+  /**
+   * 2026-11-14: **世代を新しくする**（古いループは自分の世代でなくなるので止まる）。
+   *   ⚠ 旧は `_recIsOn()` が `_recTimer` だけを見ていたので、Service Worker が起き直すと
+   *     「録画していない」と誤判定して**もう1本ループを増やしていた**。
+   */
+  _recGen = (_recGen || 0) + 1;
+  var gen = _recGen;
+  try {
+    await chrome.storage.local.set({
+      axlx_rec_mode: { on: true, started_at: _recStartedAt, gen: gen },
+      axlx_rec_stat: { on: true, tried: 0, saved: 0, failed: 0, last_error: null, started_at: _recStartedAt, last_at: null },
+    });
+  } catch (_) {}
+  console.log("[rec] 画面録画モード: 開始（1.5〜3.5秒ごとに撮ります・最長7分・世代" + gen + "）");
+  _recTimer = setTimeout(function () { _recTick(gen).catch(function () {}); }, 300);
+  return { ok: true, count: 0, saved: 0, max_ms: _REC_MAX_MS };
+}
+async function _recStop(why) {
+  // 2026-11-14: 世代を0に戻す（走っているループは自分の世代でなくなるので止まる）
+  _recGen = 0;
+  if (_recTimer) { clearTimeout(_recTimer); _recTimer = null; }
+  try { await chrome.storage.local.set({ axlx_rec_mode: { on: false, stopped_at: Date.now(), tried: _recCount, saved: _recSaved, failed: _recFailed, why: why || null } }); } catch (_) {}
+  try {
+    var st = await chrome.storage.local.get(["axlx_rec_stat"]);
+    var s = (st && st.axlx_rec_stat) || {};
+    await chrome.storage.local.set({
+      axlx_rec_stat: {
+        on: false, tried: _recCount, saved: _recSaved, failed: _recFailed,
+        last_error: _recLastErr || s.last_error || null,
+        started_at: s.started_at || _recStartedAt, last_at: Date.now(), why: why || null,
+      },
+    });
+  } catch (_) {}
+  console.log("[rec] 画面録画モード: 停止（" + (why || "") + "・試した " + _recCount + "回・保存 " + _recSaved + "枚・失敗 " + _recFailed + "回" + (_recLastErr ? "・理由: " + _recLastErr : "") + "）");
+  return { ok: true, count: _recCount, saved: _recSaved, failed: _recFailed, last_error: _recLastErr || null, why: why || null };
+}
+try {
+  chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
+    if (!msg) return;
+    if (msg.type === "axlx-rec-start") { _recStart().then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
+    if (msg.type === "axlx-rec-stop") { _recStop("手で止めた").then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
+    /**
+     * 2026-11-12 竹内さん「いまちゃんとろくがされてたかな？」→ ResourceExceeded で保存0枚:
+     *   溜まった写真を今すぐ片付ける口（小窓の「写真を片付ける」から呼ぶ）。
+     *   ⚠ 消すのは **Chrome の中だけ**。Cloud（Storage）の写真は消さない。
+     */
+    if (msg.type === "axlx-shot-trim") {
+      _trimShots().then(function (n) { try { sendResponse({ ok: true, removed: n }); } catch (_) {} });
+      return true;
+    }
+    if (msg.type !== "axlx-rec-status") return;
+    (async function () {
+      var st = await chrome.storage.local.get(["axlx_rec_stat", "axlx_rec_mode"]);
+      try {
+        sendResponse({
+          on: _recIsOn(),
+          count: _recSaved,
+          tried: _recCount,
+          saved: _recSaved,
+          failed: _recFailed,
+          last_error: _recLastErr || null,
+          started_at: _recStartedAt,
+          max_ms: _REC_MAX_MS,
+          remain_ms: _recIsOn() ? _recRemainMs() : 0,
+          gap_ms: [_REC_GAP_MIN, _REC_GAP_MAX],
+          max_shots: _REC_MAX_SHOTS,
+          stat: (st && st.axlx_rec_stat) || null,
+          mode: (st && st.axlx_rec_mode) || null,
+        });
+      } catch (_) {}
+    })();
+    return true;
+  });
+} catch (_) {}
+// SW が起き直した時: 録画中だったら続ける（止まったまま残らない）
+try {
+  chrome.storage.local.get(["axlx_rec_mode"]).then(function (st) {
+    var m = st && st.axlx_rec_mode;
+    if (!m || !m.on) return;
+    if (Date.now() - Number(m.started_at || 0) > _REC_MAX_MS) { _recStop("7分"); return; }
+    /**
+     * 2026-11-14 修正（**これが多重化の原因だった**）:
+     *   ⚠ 旧は毎回 `_recTick` の新しいループを起こしていた。
+     *     Service Worker は数十秒で止まるので、**起き直すたびに1本増えていた**
+     *     （実測: 2分間で392枚・間隔 2ms/17ms・全部 capture_error）。
+     *   → **すでに走っている世代があれば何もしない**（`gen` を保存して見分ける）。
+     *     走っていなければ（＝本当に止まっていた）**同じ世代を引き継いで**1本だけ起こす。
+     */
+    var gen = Number(m.gen) || 0;
+    if (_recGen > 0) return;                 // すでにこの SW で走っている → 増やさない
+    _recGen = gen || ((_recGen || 0) + 1);
+    _recStartedAt = Number(m.started_at) || Date.now();
+    console.log("[rec] 画面録画モード: SW の起き直し → 続けます（世代" + _recGen + "）");
+    _recTimer = setTimeout(function () { _recTick(_recGen).catch(function () {}); }, 500);
+  }).catch(function () {});
+} catch (_) {}
+
+/**
+ * 2026-11-12 竹内さん「いまちゃんとろくがされてたかな？」→ ResourceExceeded（保存0枚）:
+ *   起動した時に**溜まりすぎた写真を掃除する**（旧版がフルサイズで貯めた物が 10MB を埋めている）。
+ *   これをしないと、直した版でも**空きが無いまま**で保存が失敗し続ける。
+ */
+try {
+  _trimShots().then(function (n) {
+    if (n) console.log("[human-shot] 起動時: 古い写真を " + n + "件 整理しました");
+  }).catch(function () {});
+} catch (_) {}
+/**
+ * 2026-11-11: 撮った写真の一覧（何枚・どのまとまり・どの操作の後か）。中身（画像）は含めない＝軽い。
+ *   ?run_id= で1つのまとまりだけ。?with_data=1 で画像も返す（確認用・重い）。
+ */
+/**
+ * 2026-11-11 竹内さん「画面画像みればわかるのでは」:
+ *   撮った写真を **Supabase Storage に上げる**（Chrome の中だけだと外から見られない）。
+ *   `/api/human-motion` に画像を付けて送る → サーバーが Storage に置き、表には名前だけ残す。
+ *   ・上げるのは1枚ずつ・直列（サーバーを叩きすぎない・順番が崩れない）
+ *   ・失敗しても止めない（写真は Chrome の中に残る）
+ */
+/**
+ * 2026-11-11 竹内さん「写真もまだとれていない真の原因をちゃんとみつける。写真の容量も小さく」
+ *
+ * ⚠ 0枚が続いた本当の理由:
+ *   ① 写真は「学習」の中から撮っていた → 自動・AIX では学習しないので**撮られもしない**
+ *   ② 送信は**キュー**（`_shotUploadQueue`）を通していた → 大きな `if (msg.type === ...)` の
+ *      中に置いてあり、**メッセージのたびに作り直される**。積んだ物が消える事があった
+ *   ③ 送る前に縮めていなかった → フルHD の JPEG は 3MB を超え、サーバーが**黙って捨てた**
+ *
+ * → **キューをやめて、撮ったらその場で縮めて送る**（1本の関数・共有の変数に頼らない）。
+ *   縮める: **長辺 1000px・JPEG 40%**（100〜250KB 目安）。
+ *   失敗したら**理由を必ず残す**（`axlx_human_shot_upload`）。
+ */
+var _shotSending = 0;
+async function _sendShotNow(job) {
+  if (!job || !job.data_url) return { ok: false, error: "no_data" };
+  if (_shotSending >= 3) {
+    try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: false, error: "busy", at: Date.now() } }); } catch (_) {}
+    return { ok: false, error: "busy" };
+  }
+  _shotSending++;
+  try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: null, phase: "sending", at: Date.now() } }); } catch (_) {}
+  try {
+    const hdr = await _getAutomationKeyHeader();
+    let devLabel = null;
+    try { const r0 = await chrome.storage.local.get("deviceLabel"); devLabel = (r0 && r0.deviceLabel) || null; } catch (_) {}
+    /**
+     * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか。原因見つけて改善する」:
+     *   ⚠ 旧は `motion` を**全部ゼロ**（n:0・kinds:{}・scrolls:{n:0}…）で送っていた。
+     *     写真は録画中に数秒ごとに撮る＝**記録の大半がこの形**なので、
+     *     写真つきの行には速さ・押す位置・スクロールが**1つも入っていなかった**
+     *     （実測: 2944行中 scrolls が 0・scroll_dy が null）。
+     *   → **同じタブでその直前に貯まった「動きの癖」を一緒に送る**（写真と動きが結びつく）。
+     *   ⚠ `executeScript` を数秒ごとに走らせると重い（録画の間隔を圧迫する）ので、
+     *     記録側（page）が持っている**まとめを `axlx-recent-motion` で1回だけ聞く**。
+     *     読めない時は今まで通りゼロ（写真だけ）。
+     */
+    let motion = null;
+    try {
+      if (typeof job.tab_id === "number") {
+        const got = await chrome.tabs.sendMessage(job.tab_id, { type: "axlx-recent-motion" })
+          .catch(function () { return null; });
+        if (got && got.ok && got.motion && typeof got.motion === "object") motion = got.motion;
+      }
+    } catch (_) { motion = null; }
+    const body = {
+      shot_b64: job.data_url,
+      motion: motion || { n: 0, kinds: {}, gaps: [], gap_ms: null, fields: [], order: [],
+                moves: { n: 0 }, points: { n: 0 }, scrolls: { n: 0 } },
+      site: job.site || null,
+      mode: job.mode || null,
+      shot_taken: true,
+      shot_key: null,
+      shot_w: job.shot_w || null,
+      shot_h: job.shot_h || null,
+      install_id: await _snapInstallId(),
+      device_label: devLabel,
+      ext_version: _extVersion(),
+      at: Date.now(),
+      shot_meta: { what: job.what, kind: job.kind, x: job.x, y: job.y, run_id: job.run_id, seq: job.seq },
+      /**
+       * 2026-11-13 竹内さん「写真から学習する。押す場所や押す順番などもりかいできるから」
+       *   「おしかたのボタンの仕様の理解の為にも」「自動モードでは実際に人間がおしたようにおすことができる」:
+       *   ⚠ 旧は `shot_meta` を送っていたが**サーバーが捨てていた**ので、写真と「どの操作だったか」が
+       *     結びついていなかった（＝写真から学習できない）。
+       *   → `ops`（押した物の並び・時刻・どの欄か）も一緒に送る。
+       *     サーバーは表の `shot_ops` に残し、後で「この画面で次に何を押すか」を写真と突き合わせられる。
+       *   ⚠ 送るのは**欄の名前と操作の種類・時刻だけ**（入力した中身・文字は送らない）。
+       */
+      shot_ops: Array.isArray(job.ops) ? job.ops.slice(0, 80) : null,
+    };
+    const res = await fetch(SUMORA_BATCH_API + "/api/human-motion", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, hdr),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(25000),
+    });
+    let txt = "";
+    try { txt = await res.text(); } catch (_) {}
+    if (!res.ok) {
+      console.warn("[human-shot] 上げられませんでした:", res.status, String(txt).slice(0, 200));
+      try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: false, status: res.status, error: String(txt).slice(0, 200), at: Date.now() } }); } catch (_) {}
+      return { ok: false, status: res.status, error: String(txt).slice(0, 200) };
+    }
+    console.log("[human-shot] クラウドに上がりました:", String(txt).slice(0, 120));
+    try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: true, status: 200, at: Date.now() } }); } catch (_) {}
+    return { ok: true, status: 200 };
+  } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 200);
+    console.warn("[human-shot] 上げる時のエラー:", msg);
+    try { chrome.storage.local.set({ axlx_human_shot_upload: { ok: false, error: msg, at: Date.now() } }); } catch (_) {}
+    return { ok: false, error: msg };
+  } finally {
+    _shotSending = Math.max(0, _shotSending - 1);
+  }
+}
+function _pumpShotUpload() {
+  /* 旧のキュー方式は廃止（_sendShotNow を直接呼ぶ）。互換のため空で残す */
+}
+if (msg.type === "axlx-human-shot-upload") {
+  // 2026-11-11: キューをやめて**その場で送る**（共有の変数に頼らない）
+  _sendShotNow({
+    data_url: msg.data_url, site: msg.site, what: msg.what, kind: msg.kind,
+    x: msg.x, y: msg.y, run_id: msg.run_id, seq: msg.seq,
+  }).then(function (r) {
+    try { sendResponse({ ok: !!(r && r.ok), error: r && r.error }); } catch (_) {}
+  });
+  return true;
+}
+
+if (msg.type === "axlx-human-shots-list") {  (async () => {
+    try {
+      const all = await chrome.storage.local.get(null);
+      const keys = Object.keys(all).filter(function (k) { return k.indexOf("shot_") === 0; }).sort();
+      const wantRun = typeof msg.run_id === "string" ? msg.run_id : null;
+      const list = [];
+      for (const k of keys) {
+        const v = all[k];
+        if (!v) continue;
+        if (wantRun && v.run_id !== wantRun) continue;
+        const item = { key: k, at: v.at, seq: v.seq, run_id: v.run_id, site: v.site, kind: v.kind, what: v.what, x: v.x, y: v.y, w: v.w, h: v.h };
+        if (msg.with_data) item.data = v.data;
+        list.push(item);
+      }
+      // まとまりごとの要約
+      const runs = {};
+      list.forEach(function (it) {
+        const r = it.run_id || "?";
+        runs[r] = runs[r] || { run_id: r, n: 0, from: it.at, to: it.at, kinds: {} };
+        runs[r].n++;
+        runs[r].from = Math.min(runs[r].from, it.at);
+        runs[r].to = Math.max(runs[r].to, it.at);
+        if (it.kind) runs[r].kinds[it.kind] = (runs[r].kinds[it.kind] || 0) + 1;
+      });
+      sendResponse({ ok: true, total: list.length, runs: Object.keys(runs).map(function (k) { return runs[k]; }), shots: msg.with_data ? list : list.slice(0, 200) });
+    } catch (e) {
+      sendResponse({ ok: false, error: String((e && e.message) || e) });
+    }
+  })();
+  return true;
+}
+
+  if (msg.type === "axlx-fetch-customer") {    (async () => {
       try {
         const res = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
         const list = await res.json();
@@ -1744,8 +3179,98 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           .map(function(id) { return _bulkAll.find(function(c) { return String(c.id) === String(id); }); })
           .filter(Boolean);
         console.log("[manual-bulk-search] ▶ site=" + _bulkSite + " mode=" + (_bulkIsWide ? "wide" : "pinpoint") + " 対象=" + _bulkTargets.length + "人");
+        /**
+         * 2026-11-11 竹内さん「また時間はランダム性をちゃんと徹底する人間のうごきを」:
+         *   一括検索でお客様から次のお客様へ移る間。**長さの決まりは auto-run.js の1か所**（bulkCustomerGapMs）に寄せた
+         *   （background 側で一様乱数を書かない＝そろわない・2か所で別々に持たない）。8〜25秒・6回に1回ほど40〜95秒の一息。
+         */
+        var _bulkGapMs = function () {
+          try {
+            if (self.AxlxAutoRun && self.AxlxAutoRun.bulkCustomerGapMs) return self.AxlxAutoRun.bulkCustomerGapMs();
+          } catch (_) {}
+          var H = self.AxlxHumanWait;
+          return H && H.logNormalDelay ? H.logNormalDelay(14000, 0.45) : 14000;
+        };
         for (var _bi = 0; _bi < _bulkTargets.length; _bi++) {
           var _bc = _bulkTargets[_bi];
+          /**
+           * 2026-11-11 竹内さん「休憩の間もちゃんといれる。90分働いたら休憩があるのが普通なので休憩の間もいれるように。人間がおこなっているから」:
+           *   一括検索でも、働き続けたら休む（自動モードと同じ決まり）。
+           *   ・短い休憩 12〜30秒（作業20分以上で 8%）
+           *   ・長い休憩 60〜180秒（作業120分以上で 18%）
+           *   ・**90分続けて動いたら必ず休む**（この時は 60〜180秒・人と同じ「一区切り」）
+           *   休憩の後は数え直す。
+           */
+          if (self.AxlxHumanWait) {
+            var _worked = _manualBulkWorkedSince || Date.now();
+            if (!_manualBulkWorkedSince) _manualBulkWorkedSince = _worked;
+            var _restMs = 0, _restKind = null;
+            try {
+              if (self.AxlxAutoRun && self.AxlxAutoRun.continuousRestDue && self.AxlxAutoRun.continuousRestDue(_worked, Date.now())) {
+                _restMs = 60000 + Math.floor(Math.random() * 120000); // 90分続いた → 1〜3分
+                _restKind = "90分の一区切り";
+              } else if (self.AxlxHumanWait.restDue) {
+                var _rd = self.AxlxHumanWait.restDue(_worked, Date.now());
+                if (_rd.rest) { _restMs = _rd.ms; _restKind = _rd.kind === "long" ? "長め" : "短め"; }
+              }
+            } catch (_) {}
+            if (_restMs > 0) {
+              console.log("[manual-bulk-search] 休憩（" + _restKind + " " + Math.round(_restMs / 1000) + "秒）をはさみます");
+              /**
+               * 2026-11-11 竹内さん「AIXの部分に休憩時間等もちゃんと書いといて。人間が動いているように見たらわかるように」:
+               *   休憩の間は、リアプロ／ITANDI の画面の枠に「☕ 休憩中（あとN秒）」と出す（黙って止まらない）。
+               */
+              try {
+                var _tabsForNote = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+                _tabsForNote.forEach(function (t) {
+                  try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "☕ 休憩中（" + _restKind + "）", untilMs: Date.now() + _restMs }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+                });
+              } catch (_) {}
+              await new Promise(function (r) { setTimeout(r, _restMs); });
+              _manualBulkWorkedSince = Date.now(); // 休んだら数え直す
+              try {
+                var _tabsEnd = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+                _tabsEnd.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note-clear" }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+              } catch (_) {}
+              if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（休憩の後） → 中断"); break; }
+            }
+          }
+          // 2人目からは「前のお客様の結果を見てから次を開く」間を置く
+          if (_bi > 0) {
+            var _gap = _bulkGapMs(_bi);
+            /**
+             * 2026-11-11 竹内さん「昼休みなら昼休みと人間のようにするかたちで」:
+             *   昼（JST 12:00〜13:00）に当たったら、その間は動かずに「🍱 昼休み（13:00まで）」と枠に出す。
+             *   昼休みの後は、次のお客様までの間も改めて取る。
+             */
+            var _lunchMs = 0;
+            try {
+              var _j = new Date(Date.now() + 9 * 3600 * 1000);
+              var _mins = _j.getUTCHours() * 60 + _j.getUTCMinutes();
+              if (_mins >= 12 * 60 && _mins < 13 * 60) _lunchMs = (13 * 60 - _mins) * 60 * 1000 - _j.getUTCSeconds() * 1000;
+            } catch (_) {}
+            if (_lunchMs > 0) {
+              console.log("[manual-bulk-search] 🍱 昼休み（13:00まで " + Math.round(_lunchMs / 60000) + "分）");
+              try {
+                var _tabsLunch = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+                _tabsLunch.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "🍱 昼休み（13:00まで）", untilMs: Date.now() + _lunchMs }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+              } catch (_) {}
+              await new Promise(function (r) { setTimeout(r, _lunchMs); });
+              _manualBulkWorkedSince = Date.now();
+              try {
+                var _tabsLunchEnd = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+                _tabsLunchEnd.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note-clear" }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+              } catch (_) {}
+              if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（昼休みの後） → 中断"); break; }
+            }
+            console.log("[manual-bulk-search] 次のお客様まで " + Math.round(_gap / 1000) + "秒（人の間）");
+            try {
+              var _tabsGap = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+              _tabsGap.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "⏳ 次のお客様まで", untilMs: Date.now() + _gap }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+            } catch (_) {}
+            await new Promise(function (r) { setTimeout(r, _gap); });
+            if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（間の間） → 中断"); break; }
+          }
           // 2026-09-29 見張り: ログイン切れ・サイトのエラーで見張りが止めたら、次のお客様から見送る（知らせはサーバーの1通だけ）
           if (_watchSkipSite(_bc, _bulkSite)) continue;
           console.log("[manual-bulk-search] (" + (_bi+1) + "/" + _bulkTargets.length + ") " + _bc.customer_name);
@@ -1785,6 +3310,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 _bulkConds || {},
                 _bulkSite === "itandi" ? "itandi" : "リアプロ"
               );
+              /**
+               * 2026-11-11 竹内さん「ちゃんと自動検索のときのように人間の動き徹底されるか確認おねがい」→「（資料を見る間も）いれる」:
+               *   自動モード（bulk-dl.js の _lookAtDocThenGo）は送った後に 👀 資料を見る間（中央値3.5秒・1.8〜13秒・たまに長く）を置く。
+               *   一括検索（この経路）は送ったらすぐ次のお客様へ移っていたので、同じ間をここにも入れる（送った資料を人が見る形）。
+               */
+              var _lookMs = 3500;
+              try {
+                if (self.AxlxAutoRun && self.AxlxAutoRun.lookAtDocMs) _lookMs = self.AxlxAutoRun.lookAtDocMs();
+                else {
+                  var _H = self.AxlxHumanWait;
+                  if (_H && _H.logNormalDelay) _lookMs = _H.logNormalDelay(3500, 0.4);
+                }
+              } catch (_) { _lookMs = 3500; }
+              if (_lookMs < 1800) _lookMs = 1800;
+              if (_lookMs > 13000) _lookMs = 13000;
+              console.log("[manual-bulk-search] 👀 資料を見る間 " + Math.round(_lookMs / 1000) + "秒（" + (_bc.customer_name || "") + "）");
+              await new Promise(function (r) { setTimeout(r, _lookMs); });
+              if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（資料を見る間） → 中断"); break; }
             }
             // 2026-09-27 v2.5.32: 記録は検索を押せた後（失敗して投げた回は記録しない）
             _recordBulkSearch(_bc, _bulkSite, _bulkIsWide);
@@ -2339,7 +3882,18 @@ async function _runScrapeAndCompare(customerId, conditions) {
   var _scAreaMode = (conditions && conditions.area_mode) || null;
   var _scCustName = (conditions && conditions.customerName) || null;
 
-  var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, 90000);
+  /**
+   * 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする。今勝手に自動検索が普通モードでもおきてしまったり」:
+   *   ここにもモードの関所が無く、通常モードでも main.php へ飛ばして検索を始めていた
+   *   （＝「なぜかトップページに戻る」の原因の1つ）。
+   *   自動の道を開いているモード（自動・AIX）の時だけ動く。
+   */
+  if (_guideOnly()) {
+    console.warn("[scrape-compare] 通常／スタッフモードのため検索しない（自動モードかAIXを選ぶと動きます）");
+    return { ok: false, error: "guide_only" };
+  }
+
+  var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, _fillDoneTimeoutMs("realnetpro"));
 
   var _scAllTabs = await chrome.tabs.query({});
   var _scRealTab = _scAllTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
@@ -2372,10 +3926,23 @@ async function _runScrapeAndCompare(customerId, conditions) {
 
   if (!_directOk) {
     if (_scRealTab) {
-      console.log("[scrape-compare] フォールバック → main.phpへ:", _scRealTab.id);
-      await chrome.tabs.update(_scRealTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
-      await _batchWaitForTabComplete(_scRealTab.id);
-      await new Promise(function(r) { setTimeout(r, _settleMs(1500)); });
+      /**
+       * 2026-11-11 竹内さん「画面検索中なぜかトップページに戻ったりして崩れてしまう」:
+       *   旧は **必ず main.php（ホーム）へ飛ばして**から pendingPopupCmd で検索し直していた。
+       *   検索の画面（method=estate）を開いている最中にこれが走ると、トップへ戻って崩れる。
+       *   → すでに検索の画面らしいタブなら **移らない**（そのタブのまま pendingPopupCmd に任せる）。
+       *   判定は URL だけで見る（サイトは触らない・読み込みもしない）。
+       */
+      var _u = String(_scRealTab.url || "");
+      var _looksSearch = /[?&]display=building/.test(_u) || /[?&]method=estate/.test(_u);
+      if (_looksSearch) {
+        console.log("[scrape-compare] すでに検索の画面 → main.php へ移らない（そのまま引き継ぐ）");
+      } else {
+        console.log("[scrape-compare] フォールバック → main.phpへ:", _scRealTab.id);
+        await chrome.tabs.update(_scRealTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
+        await _batchWaitForTabComplete(_scRealTab.id);
+        await new Promise(function(r) { setTimeout(r, _settleMs(1500)); });
+      }
     } else {
       console.log("[scrape-compare] リアプロタブなし → 新規作成");
       _scRealTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
@@ -2732,8 +4299,16 @@ function _auditFinish(runId, extra) {
 // fill-done に載ってきた audit を足す。知らない run_id（popup の個別の検索が作った回）はここで記録を作る
 async function _auditOnFillDone(msg, sender) {
   try {
-    if (!_auditTracker || !msg || !msg.runId) return;
-    var run = _auditTracker.get(msg.runId);
+    if (!_auditTracker || !msg) return;
+    /**
+     * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない」:
+     *   ⚠ 旧は `if (!msg.runId) return;` で、**run_id が無い回は段を1つも記録しなかった**
+     *     （実測 7日で259回が「最後の段: none」）。
+     *   → page-script が `local_` の番号を付けてくるので、**その番号でも記録する**。
+     *     run_id は「点検の行を1つに束ねる」ための物なので、無ければ**その場の番号**で代用する。
+     */
+    var _rid = msg.runId || (msg.audit && msg.audit.run_id) || ("local_" + Date.now().toString(36));
+    var run = _auditTracker.get(_rid);
     if (!run) {
       var st = await _auditState();
       if (!st.enabled) return;
@@ -2742,16 +4317,20 @@ async function _auditOnFillDone(msg, sender) {
       //   is_wide=false で上書きし、広げての個別の検索が「ピンポイント」と記録されていた（自動で広げる連鎖が誤って動く）
       //   → 覚え書き（popup の _auditTag が残す）から読み、分からなければ null（finished で送らない＝started の値のまま）
       var _sm = await _searchModeFor(msg.customerId, msg.site);
-      run = _auditTracker.begin({ run_id: msg.runId, site: msg.site, customer_id: msg.customerId, trigger: "single", mode: st.mode, post_started: false, is_wide: _sm ? _sm === "widen" : null });
-      var timer = setTimeout(function () { _auditSingleTimers.delete(msg.runId); _auditFinish(msg.runId, { error: null }); }, AUDIT_SINGLE_CLOSE_MS);
-      _auditSingleTimers.set(msg.runId, timer);
+      run = _auditTracker.begin({
+        run_id: _rid, site: msg.site, customer_id: msg.customerId,
+        trigger: msg.runId ? "single" : "local", mode: st.mode, post_started: false,
+        is_wide: _sm ? _sm === "widen" : null,
+      });
+      var timer = setTimeout(function () { _auditSingleTimers.delete(_rid); _auditFinish(_rid, { error: null }); }, AUDIT_SINGLE_CLOSE_MS);
+      _auditSingleTimers.set(_rid, timer);
     }
     var _pageErr = msg.pageError || msg.error || null;
-    _auditTracker.attachFill(msg.runId, { audit: msg.audit || null, error: _pageErr });
+    _auditTracker.attachFill(_rid, { audit: msg.audit || null, error: _pageErr });
     // 2026-09-29 見張り（C1・C2）: ここまで来た回はブレインモード（点検の記録がある回）だけ。待たない
     _watchAfterFill(msg, run, sender);
     // レインズは結果の読み取り（一括送信）が無いので fill-done で閉じる。個別の検索で失敗した時もここで閉じる
-    if (run.site === "reins" || (run.trigger === "single" && _pageErr)) _auditFinish(msg.runId, {});
+    if (run.site === "reins" || ((run.trigger === "single" || run.trigger === "local") && _pageErr)) _auditFinish(_rid, {});
   } catch (e) { console.warn("[search-audit] fill-done の記録に失敗:", e && e.message); }
 }
 
@@ -2858,7 +4437,12 @@ function _notifyFillDone(site, customerId, error) {
 // fill-done（自動入力完了の合図）を待つ上限。page-script 側のウォッチドッグより5秒長くする
 // itandi は路線ごとに駅リストが切り替わり、「電車1本」の沿線全駅選択（13路線）で時間がかかるため150秒＋5秒（2026-09-12 竹内）
 // 2026-09-14 竹内「時間かかっても大丈夫」: page-script のウォッチドッグ 240秒＋5秒
-var FILL_DONE_TIMEOUT_MS = { itandi: 245000, realnetpro: 90000 };
+// 2026-11-10 v2.5.96 竹内さん「駅も一気に選択してしまう・上下の時間もはやすぎる」: 駅は1つ 320〜900ms にしたので、
+//   沿線の全駅（40〜120駅）を選ぶと 40〜110秒かかる。リアプロも 90秒では足りないため 240秒にする（itandi と同値）
+// 2026-11-10 v2.6.14 竹内さん「人間のように」で全操作を人の速度にした結果、245秒でも足りなくなった
+//   （条件を1つずつ選ぶ・カーソルを動かす・迷う・たまに手が止まる）。**人が作業する時間**に合わせて 15分にする。
+//   ⚠ 止まったまま15分待つのは長いので、page-script 側の見張り（無進捗の検出）で先に止める（下の _stallWatch）
+var FILL_DONE_TIMEOUT_MS = { itandi: 905000, realnetpro: 905000 };
 function _fillDoneTimeoutMs(site) {
   return FILL_DONE_TIMEOUT_MS[site] || 90000;
 }
@@ -3202,7 +4786,7 @@ async function _snapCanCapture() {
 async function _snapModeKey() {
   try {
     var core = self.AxlxModeCore;
-    var raw = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "brainMode"]);
+    var raw = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode"]);
     var st = core ? (core.effectiveState || core.readState)(raw, Date.now()) : { mode: "normal", brain: !!raw.brainMode };
     return self.AxlxSnapshotCore ? self.AxlxSnapshotCore.modeKey(st) : st.mode;
   } catch (_) { return null; }
@@ -3566,7 +5150,14 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     }
     _watchProgress("fill-done" + (msg.error ? "（エラー）" : ""), msg.site === "itandi" ? "itandi" : msg.site === "reins" ? "reins" : "realnetpro");
     // 検索の点検: page-script の audit（押せた・押せなかった駅・検索直前のフォームの読み戻し）をその回に足す（ブレインの時だけ）
-    if (msg.runId) _auditOnFillDone(msg, _sender);
+    /**
+     * 2026-11-13 竹内さん「まだ自動モードで地域などの部分おせていない、ここ録画しているので」:
+     *   ⚠ 旧は `if (msg.runId)` だったので、**run_id が無い回は段（steps）を1つも記録しなかった**。
+     *     実測: 7日で **259回が `stalled:realpro:none`（最後の段: none）**。
+     *     ＝「どこで止まったか」が一切分からず、地域が押せていない事も見えなかった。
+     *   → run_id が無くても**記録する**（page-script が `local_` の番号を付けてくる）。
+     */
+    if (msg.audit || msg.runId) _auditOnFillDone(msg, _sender);
     // レインズは待ち（_createFillDoneWaiter）を作らないので解決しない（点検の記録だけ）
     if (msg.site !== "reins") _notifyFillDone(msg.site || null, msg.customerId || null, msg.error || null);
     sendResponse({ ok: true });
@@ -3768,6 +5359,8 @@ var _pollClaimInFlight = false;
 var _autoPacer = null;
 // 自動モードで回している時の「続けて動き始めた時刻」（90分で小休憩）。0＝回していない
 var _autoWorkedSince = 0;
+// 2026-11-11 竹内さん「90分働いたら休憩があるのが普通」: 手の一括検索（AIXモードの帯）で働き続けた時間（休憩で数え直す）
+var _manualBulkWorkedSince = 0;
 var _autoModeOn = false;
 
 /**
@@ -3809,7 +5402,10 @@ async function _pollAndRunBatch() {
     //   AIXモードのPCだけが AIX 由来（source=aix・auto_schedule）を受け取る（?aix=1）。
     //   竹内「チェックした物の一括検索。拡張ツールでブレインモードに選択していたら連動して検索。ブレインモードのみで連動」:
     //   ブレインが ON の PC（スタッフ以外）だけがウェブの AIXツールの一括検索（source=web_brain）を受け取る（?brain=1）
-    var _modeRaw = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "brainMode"]);
+    // 2026-11-10 v2.5.94: autoModeAt（自動モードを選んだ印）も読む。
+    //   旧はここで読んでおらず、effectiveState が「選んだ印が無い」と見て mode=normal に落とし、
+    //   自動モードを選んでいても claimCommands=false で指示を一切拾えなかった（＝自動が来ない原因）
+    var _modeRaw = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode"]);
     var _core = self.AxlxModeCore;
     // v2.5.77: 光って選択するモード（GUIDE_ONLY）の間は effectiveBehavior が受け取りを全部 false にする＝サーバーに取りに行かない
     var _modeSt = _core ? (_core.effectiveState || _core.readState)(_modeRaw, Date.now()) : { mode: "normal", brain: !!_modeRaw.brainMode };
@@ -3832,9 +5428,37 @@ async function _pollAndRunBatch() {
     if (_bh.claimBrainCommands) _qs.push("brain=1");
     // v2.5.48: リアプロのタブがログインの画面等（main.php が1つも無い）なら rp=0 → サーバーがリアプロを含む手の命令を少しの間ほかの PC に譲る
     //   （2026-09-30 YUMA の手の命令が2回ともログイン切れの PC に渡って AXLX_TAB_DEAD）。タブを読むだけ・サイトには触らない
+    /**
+     * 2026-11-12 竹内さん「今リアプロスタンバイしていない時も勝手に自動検索おこなわれていないか？」:
+     *   調べたら**動いていた**（26時間で121件・その120件が `AXLX_NO_TAB: realnetpro のタブが開いていません`
+     *   で約60秒おきに失敗し続けていた）。
+     *   原因は2つ: ① 拡張の `realproReady` が「タブが無い」時 **null** を返していて、呼ぶ側は
+     *   `=== false` の時だけ rp=0 を付けるので**何も付かなかった**（＝リアプロを使えない PC が拾っていた）。
+     *   ② サーバー側の `deferForRealproNotReady` は **web_brain だけ**を見ていて、
+     *   **自動便（auto_schedule）は rp=0 でも渡していた**。
+     *   → ①は batch-guard.js で false に（修正済み）。②はここで **リアプロを含む命令は rp=0 の PC に渡さない**
+     *     ようにサーバーを直した（app/lib/automation-sources.ts）。
+     *   この PC でリアプロを使えない時は、そもそも自動の回を**拾わない**ようにもする（二重の歯止め）。
+     */
+    var _tabsNow = [];
+    try { _tabsNow = await chrome.tabs.query({}); } catch (_) {}
+    var _rpReady = null;
     try {
-      if (self.AxlxBatchGuard && self.AxlxBatchGuard.realproReady && self.AxlxBatchGuard.realproReady(await chrome.tabs.query({})) === false) _qs.push("rp=0");
+      if (self.AxlxBatchGuard && self.AxlxBatchGuard.realproReady) _rpReady = self.AxlxBatchGuard.realproReady(_tabsNow);
     } catch (_) {}
+    if (_rpReady === false) {
+      _qs.push("rp=0");
+      /**
+       * 2026-11-12: リアプロを使えない PC は、**リアプロを含む自動便は拾わない**。
+       *   ⚠ 拾わないだけで命令は消さない（pending のまま＝リアプロを開いている別の PC が拾う）。
+       *   ITANDI だけの命令は今まで通り拾う。
+       */
+      if (_autoModeOn) {
+        console.log("[batch] 自動モードだがリアプロのタブが無い → リアプロを含む指示は拾わない（pending のまま・別の PC が拾う）");
+        try { await chrome.storage.local.set({ autoWorkGate: { open: false, reason: "no_realpro_tab", resumeAt: null, at: Date.now() } }); } catch (_) {}
+        return;
+      }
+    }
     // 2026-09-30 v2.5.42 竹内「お客さん毎に…次のお客さんに移る等の動きで。また動き方もロボットみたいじゃなくて人間のように」:
     //   1人1コマンド（AIXツールの一括検索・午前の便）は、前の人を終えてから人がお客様を開き直す間（auto-run.js nextCommandGapMs）を置いてから拾う。
     //   ⚠ /pending は取った時点で running にする（claim）ので、間は取りに行く**前**に見る（コマンドは pending のまま＝他の PC が拾ってもよい）。
@@ -4355,6 +5979,19 @@ async function _runBatchSearch(command) {
         _interCustomerDelay = Math.max(_interCustomerDelay, _pcr.ms) + (_pcr.isBreak ? _pcr.ms : 0);
         if (_pcr.isBreak) console.log("[batch] 自動モード: 12操作ごとの小休憩をはさむ");
       }
+      // 2026-11-10 v2.5.98 竹内さん「人間なので休憩するときもある」:
+      //   お客様の区切りで、作業の続き具合から**抽選**して休む（決まった回数ごとではない）。
+      //   短い休憩 12〜30秒（20分以上の作業で 8%）／長い休憩 60〜180秒（120分以上で 18%）。
+      //   休憩の後は数え直す（人と同じで、休んだらまた最初から）。
+      if (_autoModeOn && self.AxlxHumanWait && self.AxlxHumanWait.restDue) {
+        var _rest = self.AxlxHumanWait.restDue(_autoWorkedSince || 0, Date.now());
+        if (_rest.rest) {
+          _interCustomerDelay += _rest.ms;
+          _autoWorkedSince = Date.now() + _rest.ms; // 休憩が終わった時点から数え直す
+          console.log("[batch] 自動モード: 人の休憩（" + (_rest.kind === "long" ? "長め" : "短め") + " " + Math.round(_rest.ms / 1000) + "秒）をはさむ");
+          _watchSet({ waitingFor: "休憩中（" + Math.round(_rest.ms / 1000) + "秒）" });
+        }
+      }
       console.log("[batch] 次顧客まで待機 " + _interCustomerDelay + "ms");
       _watchSet({ waitingFor: "次のお客様までの間（" + Math.round(_interCustomerDelay / 1000) + "秒）" });
       await new Promise(function(r) { setTimeout(r, _interCustomerDelay); });
@@ -4469,9 +6106,12 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
       : allTabs.find(function(t) { return t.url && t.url.startsWith(prefix); });
   var tab = existing;
   if (!tab) {
-    tab = await chrome.tabs.create({ url: siteUrls[site], active: false });
-    await _batchWaitForTabComplete(tab.id);
-    await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
+    // 2026-11-10 v2.6.23 竹内さん「リアプロやITANDIを勝手に開くのではなくて、開いている状態のところを確認してそこから行う」:
+    //   旧はタブが無ければ **勝手に新しいタブを開いて検索**していた。
+    //   新は開かない＝このサイトは飛ばす（理由を点検に残す）。人が開いているタブの中でだけ動く。
+    console.warn("[batchAutofill] " + site + " のタブが開いていない → 勝手に開かない（このサイトは飛ばす）");
+    _auditStep(auditRun && auditRun.runId, "no_tab", site + " のタブが開いていないため開かずに飛ばした（人が開いてから再実行）");
+    throw new Error("AXLX_NO_TAB: " + site + " のタブが開いていません（勝手に開かない決まり・人が開いてから実行してください）");
   }
   // 2026-09-27 v2.5.32 竹内「重い順から治す」①: 拡張の読み直し・ログインのし直しの後の動かないタブをそのまま使わない（だめなら開き直す・それでもだめなら検索しない）
   if (site === "realnetpro") tab = await _ensureRealproTab(tab, auditRun, null, customer && customer.id);
@@ -4856,13 +6496,41 @@ async function _probeRealproTab(tabId) {
 
 // 背面（hidden）のリアプロのタブを、そのウィンドウの中で前に出す（ウィンドウの前後・最小化は触らない）。
 //   2026-09-27 点検 26: 背面のタブは入力に約10分かかり、fill-done の90秒を過ぎてから物件が届いた
+// 2026-11-10 v2.5.95 竹内さん「検索できなかったと出た」: ウィンドウが最小化・隠れていると、ページの側のタイマーが
+//   止められて入力が進まず、90秒で fill-done が来ない（search_audits cause=error:realpro:fill_timeout / steps=tab_hidden）。
+//   前に出しても見えていない時だけ、そのウィンドウを「元の大きさに戻して前に出す」（人が窓を開くのと同じ）。
+//   元に戻せなければ今まで通り理由を点検に残して先へ進む（検索はしない・止まらない）
+async function _restoreWindowForTab(tabId, runId, siteLabel) {
+  try {
+    var t = await chrome.tabs.get(tabId);
+    if (!t || t.windowId == null) return false;
+    var w = await chrome.windows.get(t.windowId);
+    if (w && w.state === "minimized") {
+      await chrome.windows.update(t.windowId, { state: "normal" });
+      _auditStep(runId, "window_restore", (siteLabel || "") + "最小化されていたウィンドウを元に戻した");
+    }
+    await chrome.windows.update(t.windowId, { focused: true });
+    await new Promise(function (r) { setTimeout(r, _settleMs(700)); });
+    return true;
+  } catch (e) {
+    console.warn("[batchAutofill] ウィンドウを戻せない:", e && e.message);
+    _auditStep(runId, "window_restore_fail", (siteLabel || "") + String((e && e.message) || e).slice(0, 120));
+    return false;
+  }
+}
+
 async function _bringRealproTabFront(tab, runId, vis) {
   try {
     await chrome.tabs.update(tab.id, { active: true });
     _auditStep(runId, "tab_front", "背面のタブ（" + vis + "）を前に出した");
     await new Promise(function (r) { setTimeout(r, _settleMs(600)); });
     var p = await _probeRealproTab(tab.id);
-    if (p.vis === "hidden") _auditStep(runId, "tab_hidden", "前に出しても見えていない（ウィンドウが最小化・隠れている可能性）");
+    if (p.vis === "hidden") {
+      _auditStep(runId, "tab_hidden", "前に出しても見えていない（ウィンドウが最小化・隠れている可能性）");
+      await _restoreWindowForTab(tab.id, runId, "リアプロ: ");
+      var p2 = await _probeRealproTab(tab.id);
+      if (p2.vis && p2.vis !== "hidden") _auditStep(runId, "tab_front", "ウィンドウを戻して見えるようになった（" + p2.vis + "）");
+    }
   } catch (e) { console.warn("[batchAutofill] タブを前に出せない:", e && e.message); }
 }
 
@@ -4929,7 +6597,13 @@ async function _bringItandiTabFront(tab, runId, vis) {
     _auditStep(runId, "tab_front", "ITANDI: 背面のタブ（" + vis + "）を前に出した");
     await new Promise(function (r) { setTimeout(r, _settleMs(600)); });
     var p = await _probeItandiTab(tab.id);
-    if (p.vis === "hidden") _auditStep(runId, "tab_hidden", "ITANDI: 前に出しても見えていない（ウィンドウが最小化・隠れている可能性）");
+    if (p.vis === "hidden") {
+      _auditStep(runId, "tab_hidden", "ITANDI: 前に出しても見えていない（ウィンドウが最小化・隠れている可能性）");
+      // 2026-11-10 v2.5.95: 最小化なら元に戻して前に出す（リアプロと同じ）
+      await _restoreWindowForTab(tab.id, runId, "ITANDI: ");
+      var p2 = await _probeItandiTab(tab.id);
+      if (p2.vis && p2.vis !== "hidden") _auditStep(runId, "tab_front", "ITANDI: ウィンドウを戻して見えるようになった（" + p2.vis + "）");
+    }
   } catch (e) { console.warn("[batchAutofill] ITANDI のタブを前に出せない:", e && e.message); }
 }
 
@@ -5262,7 +6936,7 @@ async function _scrapeAndCompareForCustomer(customer) {
     is_wide: isWide, area_mode: mergedConditions.area_mode || null,
   });
   if (_scAudit) { mergedConditions._audit_run_id = _scAudit.runId; _auditPostIntended(_scAudit, "realnetpro", mergedConditions); }
-  var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, 90000);
+  var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, _fillDoneTimeoutMs("realnetpro"));
   try {
     await _webappAutofill("realnetpro", mergedConditions);
     await _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, mergedConditions);
