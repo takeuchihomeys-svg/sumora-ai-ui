@@ -2469,6 +2469,23 @@ async function _refreshLearnedBundle(force) {
        */
       axlx_learn_supervisor: (bundle.supervisor && typeof bundle.supervisor === "object") ? bundle.supervisor : null,
       axlx_learn_supervisor_by_site: (bundle.supervisor_by_site && typeof bundle.supervisor_by_site === "object") ? bundle.supervisor_by_site : null,
+      /**
+       * 2026-11-14 竹内さん「自動検索の部分これでちゃんと強化されたかな」→ **まだだった**。
+       *
+       *   ⚠ サーバーで**場面ごとの手順**（`scene_flows`・人が実際に押した順）を作ったのに、
+       *     拡張は**1箇所も読んでいなかった**（実測 0箇所）。
+       *     ＝「計算したが現場に届かない」を、前回（`screen_flow`）と**同じ穴でもう一度**作っていた。
+       *
+       *   → 自動検索が使える形で置く:
+       *     ・`axlx_learn_scene_flows` … 場面ごとの手順（area/station/cond/search/list/next）
+       *     ・`axlx_learn_stopped_scene` … 止まる回が多い場面（自動が「ここで慎重に」を選べる）
+       *     ・`axlx_learn_scene_missing` … 手本が無い場面（自動で**推測しない**ための印）
+       *   ⚠ これらは**並べ替えの材料**として使う（項目の増減は絶対にしない＝検索漏れを出さない）。
+       */
+      axlx_learn_scene_flows: Array.isArray(bundle.scene_flows) ? bundle.scene_flows.slice(0, 12) : null,
+      axlx_learn_stopped_scene: (typeof bundle.stopped_scene === "string" && bundle.stopped_scene) ? bundle.stopped_scene : null,
+      axlx_learn_scene_missing: (typeof bundle.scene_missing === "number" && bundle.scene_missing > 0)
+        ? { n: bundle.scene_missing, names: String(bundle.scene_missing_names || "") } : null,
       /** 今どのサイトの学びを上のキーに入れたか（点検用） */
       axlx_learn_for_site: curSite,
       /** サイト別に何が学べているか（1行ずつ） */

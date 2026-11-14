@@ -1187,6 +1187,32 @@
             if (_chain.length >= 2) next = LO.mergeWithSequence(next, _chain, names);
           }
         }
+        /**
+         * 2026-11-14 竹内さん「自動検索の部分これでちゃんと強化されたかな」:
+         *   **場面ごとの手順**（`scene_flows`＝人が実際に押した順をサーバーが場面に分けた物）も重ねる。
+         *   ⚠ ここが 0箇所だったので「計算したが現場に届かない」状態だった（`screen_flow` と同じ穴）。
+         *   ⚠ `steps` は**欄の名前の並び**（例: 所在地絞り込み＋ → 大阪市西区 → city_code[] …）。
+         *     集合に居る名前だけが前後関係として効く（居ない名前は無視される＝項目は増減しない）。
+         *   ⚠ 2回以上見た手順だけ使う（1回だけの偶然を採らない）。
+         */
+        var sceneFlows = window.__axlxLearnSceneFlows || null;
+        if (Array.isArray(sceneFlows) && LO.mergeWithSequence) {
+          for (var _sf = 0; _sf < sceneFlows.length; _sf++) {
+            var _f = sceneFlows[_sf] || {};
+            var _st = Array.isArray(_f.steps) ? _f.steps : [];
+            if (_st.length < 2) continue;
+            if (Number(_f.runs) < 2) continue;
+            // 集合に居る名前だけで鎖を作る（居ない名前は前後関係を作れない）
+            var _chain2 = [];
+            for (var _si = 0; _si < _st.length; _si++) {
+              var _nm = String(_st[_si] || "");
+              if (!_nm) continue;
+              if (names.indexOf(_nm) < 0) continue;
+              if (_chain2.indexOf(_nm) < 0) _chain2.push(_nm);
+            }
+            if (_chain2.length >= 2) next = LO.mergeWithSequence(next, _chain2, names);
+          }
+        }
         // ③ サイトの手順（site_flow）も補う
         if (next && flow && LO.mergeLearnedOrder) {
           next = LO.mergeLearnedOrder(next, flow, { names: names });
@@ -1233,7 +1259,7 @@
        *   サイトごとの手順（`axlx_learn_site_flow`）も一緒に読む。
        *   押す順番の材料が `next` だけだと3通りしか無いので、鎖から前後関係を補う。
        */
-      chrome.storage.local.get(["axlx_learn_next", "axlx_learn_site_flow", "axlx_learn_seq", "axlx_learn_next_mode", "axlx_learn_screen_flow"], function (r) {
+      chrome.storage.local.get(["axlx_learn_next", "axlx_learn_site_flow", "axlx_learn_seq", "axlx_learn_next_mode", "axlx_learn_screen_flow", "axlx_learn_scene_flows"], function (r) {
         try {
           var nx = (r && r.axlx_learn_next) || null;
           window.__axlxLearnNext = (nx && typeof nx === "object") ? nx : null;
@@ -1255,10 +1281,21 @@
            */
           var scf = (r && r.axlx_learn_screen_flow) || null;
           window.__axlxLearnScreenFlow = (scf && typeof scf === "object") ? scf : null;
+          /**
+           * 2026-11-14 竹内さん「自動検索の部分これでちゃんと強化されたかな」:
+           *   サーバーが作った**場面ごとの手順**（`scene_flows`＝人が実際に押した順）を読む。
+           *   ⚠ 旧は 1箇所も読んでいなかった（`screen_flow` と同じ穴）。
+           *   ⚠ 使うのは**並べ替えの材料だけ**（項目は増減しない＝検索漏れを出さない）。
+           */
+          var sflows = (r && r.axlx_learn_scene_flows) || null;
+          window.__axlxLearnSceneFlows = Array.isArray(sflows) ? sflows : null;
+          window.__axlxLearnStoppedScene = (r && r.axlx_learn_stopped_scene) || null;
+          window.__axlxLearnSceneMissing = (r && r.axlx_learn_scene_missing) || null;
           var n = nx ? Object.keys(nx).length : 0;
           var sqn = (sq && Array.isArray(sq.sequence)) ? sq.sequence.length : 0;
           var scn = scf ? Object.keys(scf).length : 0;
-          if (n || sqn) console.log("[AX] 学んだ押す順番: " + n + "通り・一連の動き " + sqn + "手" + (mn ? "・モード別あり" : "") + (scn ? "・画面ごと " + scn + "種類" : ""));
+          var sfn = Array.isArray(sflows) ? sflows.length : 0;
+          if (n || sqn) console.log("[AX] 学んだ押す順番: " + n + "通り・一連の動き " + sqn + "手" + (mn ? "・モード別あり" : "") + (scn ? "・画面ごと " + scn + "種類" : "") + (sfn ? "・場面ごと " + sfn + "種類" : ""));
         } catch (_) {}
       });
     } catch (_) {}
