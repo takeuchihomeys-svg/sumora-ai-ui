@@ -167,7 +167,7 @@ ok("bulk-dl: 並べ替えの後で押し始める（_autoPdfRunPending）", /_au
   ok("auto-run.js は _ で始まらない", !fs.readdirSync(EXT).some((f) => f.startsWith("_")));
 }
 
-console.log("\n■ 勤務時間のゲート（2026-11-10 自動モード・JST 9〜21時・12〜13時は休憩・土日なし）");
+console.log("\n■ 勤務時間のゲート（2026-11-10 自動モード・JST 9〜23時・12〜13時は休憩）");
 {
   // JST の時刻を作る（UTC+9）。2026-11-10 は火曜
   const J = (y, m, d, hh, mm) => Date.UTC(y, m - 1, d, hh - 9, mm, 0);
@@ -182,8 +182,15 @@ console.log("\n■ 勤務時間のゲート（2026-11-10 自動モード・JST 9
 eq("平日 23:00 → 終わり（次の日の 9:00）", R.workGate(J(2026, 11, 10, 23, 0)), { open: false, reason: "after_close", resumeAt: J(2026, 11, 11, 9, 0) });
 eq("平日 21:30 → まだ動く（23時に延ばした）", R.workGate(J(2026, 11, 10, 21, 30)), { open: true, reason: null, resumeAt: null });
 eq("金曜 23:30 → 月曜の 9:00", R.workGate(J(2026, 11, 13, 23, 30)), { open: false, reason: "after_close", resumeAt: J(2026, 11, 16, 9, 0) });
-  eq("土曜 10:00 → 動かない", R.workGate(J(2026, 11, 14, 10, 0)), { open: false, reason: "weekend", resumeAt: null });
-  eq("日曜 15:00 → 動かない", R.workGate(J(2026, 11, 15, 15, 0)).reason, "weekend");
+  /**
+   * 2026-11-14 竹内さん「自動検索は自動モードでうごけばよいのでは」→「土日も動かす」:
+   *   ⚠ 旧は「土曜 10:00 → 動かない（weekend）」を正としていた。
+   *     土曜の今日、そのせいで自動便120件が誰にも拾われずに閉じた（実測）。
+   *   → 既定は**土日も動く**。止めたい時だけ `axlxWeekendOff=1`（その時は weekend で止まる）。
+   *     ⚠ 元の動き（土日を止める）は workgate-weekend-v2747.test.js の③で固定している。
+   */
+  eq("土曜 10:00 → 動く（土日も動かす）", R.workGate(J(2026, 11, 14, 10, 0)), { open: true, reason: null, resumeAt: null });
+  eq("日曜 15:00 → 動く（土日も動かす）", R.workGate(J(2026, 11, 15, 15, 0)).open, true);
   eq("月曜 9:01 → 開く", R.workGate(J(2026, 11, 16, 9, 1)).open, true);
   eq("JST の曜日（火曜=2）", R.jstParts(J(2026, 11, 10, 12, 0)).day, 2);
   eq("90分続いたら小休憩の合図", R.continuousRestDue(Date.now() - 91 * 60 * 1000, Date.now()), true);

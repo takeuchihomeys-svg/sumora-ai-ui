@@ -369,7 +369,14 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
     const note = N.noteLine(Date.parse("2026-11-11T12:30:00+09:00"));
     ok("表示に「次は」「午後の便」「昼休み」が入る", note.indexOf("次は") >= 0 && note.indexOf("午後の便") >= 0 && note.indexOf("昼休み") >= 0, { note });
     const fri = N.noteLine(Date.parse("2026-11-13T20:00:00+09:00"));
-    ok("金曜の夜は次の月曜を出す（土日は止まる）", fri.indexOf("11/16") >= 0, { fri });
+    /**
+     * 2026-11-14 竹内さん「自動検索は自動モードでうごけばよいのでは」→「土日も動かす」:
+     *   ⚠ 旧は「金曜の夜は次の月曜（土日は止まる）」を正としていた。
+     *   → 今は土日も動くので、**金曜 20:00 の次は土曜（明日）の午前の便**。
+     *     ⚠ 日付で決め打ちしない（「明日」と出るのが正しい・月曜に飛ばない事を確かめる）。
+     *     ⚠ 設定 `axlxWeekendOff=1` にすれば元の動き（次の月曜）に戻る（workgate-weekend-v2747 で固定）。
+     */
+    ok("金曜の夜の次は明日（土曜）の便・月曜まで飛ばない", fri.indexOf("明日") >= 0 && fri.indexOf("(月)") < 0, { fri });
     ok("1分ごとに描き直す（popup と枠）", /setInterval\(_paintAutoRunNotePopup, 60000\)/.test(pj7) && /setInterval\(_paintAutoRunNote, 60000\)/.test(bd7));
   }
   }

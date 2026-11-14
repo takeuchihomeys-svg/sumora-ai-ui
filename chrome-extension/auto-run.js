@@ -413,6 +413,38 @@
   var WORK_CONTINUOUS_MS = 90 * 60 * 1000; // 90分続いたら
   var WORK_REST_MS = 10 * 60 * 1000;       // 小休憩の長さ（10分）
 
+  /**
+   * 2026-11-14 竹内さん「自動検索は自動モードでうごけばよいのでは」→「土日も動かす」を選ばれた。
+   *
+   *   ⚠ 旧は `effDay === 0 || 6` で**土日は必ず止まって**いた。
+   *     そのため土曜の今日は、自動モードにしても120件の自動便が誰にも拾われずに閉じた。
+   *   → **土日を止めるのをやめる**（既定は「土日も動く」）。
+   *     ⚠ ただし**時間の決まり（9〜23時・12〜13時は休憩・90分で小休憩）はそのまま**残す
+   *       （夜中に走らない・サイトへの配慮）。
+   *     ⚠ 土日だけ止めたい時は storage.local `axlxWeekendOff` に 1 を入れる（元の動きに戻せる）。
+   *       既定を「止める」に戻したい時は、下の WEEKEND_OFF_DEFAULT を true に1行変えるだけ。
+   *
+   *   なぜ「設定で戻せる」形にするか:
+   *     竹内さんが以前「土日は止まります」と決めていた（ポップアップにもそう出していた）ので、
+   *     完全に消すと**戻せなくなる**。1つの値で戻せる形にしておく。
+   */
+  var WEEKEND_OFF_DEFAULT = false;   // false = 土日も動く（2026-11-14 竹内さんの決定）
+  function weekendOff() {
+    if (WEEKEND_OFF_DEFAULT) {
+      // 既定で止める時も、`axlxWeekendOff: 0` で動かせるようにする
+      try {
+        var v0 = localStorage.getItem("axlxWeekendOff");
+        if (v0 === "0") return false;
+      } catch (_) {}
+      return true;
+    }
+    try {
+      var v = localStorage.getItem("axlxWeekendOff");
+      if (v === "1") return true;
+    } catch (_) {}
+    return false;
+  }
+
   /** JST の曜日（0=日）・時・分 */
   function jstParts(nowMs) {
     var t = typeof nowMs === "number" ? nowMs : Date.now();
@@ -437,7 +469,10 @@
     var over = Math.max(0, WORK_END_H - 24);
     var isEarlyNextDay = p.hour < over;   // 翌日の 0:00〜3:00 など
     var effDay = isEarlyNextDay ? (p.day + 6) % 7 : p.day; // 前の日の曜日で見る（金曜の深夜は土曜の0〜3時も開く）
-    if (effDay === 0 || effDay === 6) return { open: false, reason: "weekend", resumeAt: null };
+    // 2026-11-14 竹内さん「自動検索は自動モードでうごけばよいのでは」→「土日も動かす」:
+    //   ⚠ 旧はここで必ず止めていた（土曜の今日、自動モードでも120件が拾われずに閉じた）。
+    //   → weekendOff() が true の時だけ止める（既定は false＝土日も動く）。
+    if (weekendOff() && (effDay === 0 || effDay === 6)) return { open: false, reason: "weekend", resumeAt: null };
     // 2026-11-10 v2.6.33: 翌 3時まで動く時は、3時〜9時は閉じる（before_open）
     if (!isEarlyNextDay && p.hour < WORK_START_H) return { open: false, reason: "before_open", resumeAt: day0 + WORK_START_H * 3600 * 1000 };
     if (!isEarlyNextDay && p.hour >= Math.min(WORK_END_H, 24)) {

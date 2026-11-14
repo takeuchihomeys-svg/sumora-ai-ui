@@ -9,14 +9,29 @@
 // 表示する事:
 //   ・今日の午前の便 / 午後の便の開始予定（もう過ぎていたら「終わった」）
 //   ・次に始まるのはどれか（「次は 16:23 ごろ」）
-//   ・土日は止まる・昼休み（12〜13時）は動かない・夜（23時〜9時）は止まる
-//
+//   ・昼休み（12〜13時）は動かない・夜（23時〜9時）は止まる
+//   ・2026-11-14 竹内さん「自動検索は自動モードでうごけばよいのでは」→「土日も動かす」で**土日も動く**。
+//     設定（`axlxWeekendOff`）で止めている時だけ「土日は止まります（設定）」と出す。
+//     計算は auto-run.js と同じ鍵・同じ意味（2か所に書くと片方だけ直して食い違うため、考え方をそろえる）。
 (function (root, factory) {
   var api = factory();
   if (typeof module === "object" && module.exports) module.exports = api;
   if (root) root.AxlxAutoRunNote = api;
 })(typeof self !== "undefined" ? self : (typeof globalThis !== "undefined" ? globalThis : this), function () {
   "use strict";
+
+  /**
+   * 土日を止める設定か（auto-run.js の weekendOff() と**同じ意味**）。
+   *   既定は false＝土日も動く（2026-11-14 竹内さんの決定）。
+   *   `axlxWeekendOff` が 1 の時だけ止める（元に戻せる）。
+   *   ⚠ 読む場所（localStorage）は違っても**意味を変えない**（片方だけ直すと表示と実際が食い違う）。
+   */
+  function weekendOff() {
+    try {
+      if (typeof localStorage === "undefined") return false;
+      return localStorage.getItem("axlxWeekendOff") === "1";
+    } catch (_) { return false; }
+  }
 
   var DAY_MS = 86400_000;
   var START_WINDOWS = {
@@ -84,18 +99,22 @@
   }
 
   /**
-   * 次の自動便（開始予定）。土日は飛ばす。今日の残り→明日→…と7日先まで見る。
+   * 次の自動便（開始予定）。今日の残り→明日→…と7日先まで見る。
+   * 2026-11-14 竹内さん「自動検索は自動モードでうごけばよいのでは」→「土日も動かす」:
+   *   ⚠ 旧は土日を飛ばしていた（`p.day === 0 || 6` で continue）。
+   *     → 土日も候補にする。ただし `axlxWeekendOff` が 1 の時は今まで通り飛ばす（戻せる）。
    * 返す: { mode, atMs, date, label } ／ 見つからなければ null
    */
   function nextAutoRun(nowMs) {
     var now = typeof nowMs === "number" ? nowMs : Date.now();
     var base = jstDateOf(now);
     var baseMs = Date.parse(base + "T00:00:00+09:00");
+    var skipWeekend = weekendOff();
     for (var d = 0; d < 8; d++) {
       var dateMs = baseMs + d * DAY_MS;
       var date = jstDateOf(dateMs);
       var p = jstParts(dateMs + 12 * 3600 * 1000);
-      if (p.day === 0 || p.day === 6) continue; // 土日は動かない
+      if (skipWeekend && (p.day === 0 || p.day === 6)) continue; // 設定で止めている時だけ土日を飛ばす
       for (var i = 0; i < 2; i++) {
         var mode = i === 0 ? "am" : "pm";
         var at = autoStartAtMs(mode, date);
@@ -136,7 +155,8 @@
     if (todayPm < now) doneToday.push("午後 " + hhmm(todayPm));
     if (doneToday.length) parts.push("今日の" + doneToday.join("・") + " は終わり");
     // いま止まっている理由（あれば）
-    if (p.day === 0 || p.day === 6) parts.push("土日は止まります");
+    //   2026-11-14 竹内さん「土日も動かす」→ 土日は理由にしない（設定で止めている時だけ出す）
+    if (weekendOff() && (p.day === 0 || p.day === 6)) parts.push("土日は止まります（設定）");
     else if (p.hour >= 12 && p.hour < 13) parts.push("いまは昼休み（13:00まで）");
     else if (p.hour >= 23 || p.hour < 9) parts.push("いまは夜（9:00から）");
     return "🕒 自動検索: " + parts.join("／");
