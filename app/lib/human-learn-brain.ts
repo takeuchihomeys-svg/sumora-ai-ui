@@ -717,7 +717,13 @@ export function buildHumanLearnBundle(
      *   ⚠ 決定論（`by: "deterministic"`）は**記録の名前から作っている**ので、そちらは正しい。
      */
     const by = String((sl as Record<string, unknown>).by ?? "");
-    if (by === "llm") continue;
+    /**
+     * ⚠ `llm`（1枚から読んだ）も `llm_run`（連続画像の多数決）も**名前は信用しない**。
+     *   多数決でも「磁性会社こらみ」のような誤読は残りうる（実測）。
+     *   種類と場所だけ使う（`kindFromPhoto`）。
+     *   ⚠ 決定論（`by: "deterministic"`）は**記録の名前から作っている**ので、そちらは正しい。
+     */
+    if (by === "llm" || by === "llm_run") continue;
     const fs2 = (sl as Record<string, unknown>).fields;
     if (!Array.isArray(fs2)) continue;
     for (const f of fs2) {

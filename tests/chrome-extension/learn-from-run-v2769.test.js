@@ -141,6 +141,26 @@ console.log("\n■ ⑥ 拡張側（小窓を隠す・押したら何が開いた
   ok("  ⚠ opened を shot_ops に載せている", /opened: o\.opened \|\| null/.test(rec));
 }
 
+console.log("\n■ ⑥b 同じ録画の**全枚に配る**（1行だけに書かない）");
+{
+  /**
+   * ⚠ 旧は代表の1行にしか書いていなかったので、同じ録画の他の写真は `shot_learn` が空のままだった
+   *   ＝「まだ読んでいない」と数えられ、次の実行でまた読んで**同じ費用を何度も払う**。
+   *   → 同じ録画（run）の写真は同じ画面なので、多数決の結果を**全枚に配る**。
+   */
+  ok("  ⚠ 全枚に配る処理がある（`.in(\"id\", chunk)`）", /\.in\("id", chunk\)/.test(src));
+  ok("  ⚠ 50件ずつに分けて配る（1回の上限）", /i \+= 50/.test(src));
+  ok("  ⚠ まだ空の物だけに配る（読んだ物を上書きしない）", /!r\.shot_learn && String\(r\.id\) !== String\(target\.id\)/.test(src));
+  ok("  ⚠ 配った物は `by: \"llm_run\"`（1枚から読んだ物と区別）", /by: "llm_run"/.test(src));
+  ok("  ⚠ 同じ録画の中だけに配る（別の画面には配らない）", /runOf\(r\.shot_key\) === run/.test(src));
+}
+
+console.log("\n■ ⑥c `llm_run` も名前を信用しない（種類と場所だけ使う）");
+{
+  const brain = fs.readFileSync(path.join(dir, "app", "lib", "human-learn-brain.ts"), "utf8");
+  ok("  ⚠ by===\"llm\" も by===\"llm_run\" も除外", /by === "llm" \|\| by === "llm_run"/.test(brain));
+}
+
 console.log("\n■ ⑦ 構文");
 {
   let okc = true;

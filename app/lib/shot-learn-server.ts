@@ -358,20 +358,41 @@ export async function learnFromLatestRun(
     for (const v of voted) byKind[v.kind] = (byKind[v.kind] || 0) + 1;
 
     // ⑤ 代表の1行（一番大きい写真）に書き戻す
+    /**
+     * ⚠ 2026-11-14 竹内さん「これで画像の部分から学習できるようにする」:
+     *   旧は**代表の1行にしか書いていなかった**ので、同じ録画の他の写真は
+     *   `shot_learn` が空のままだった（＝その写真は「まだ読んでいない」と数えられ、
+     *   次の実行でまた読んで**同じ費用を何度も払う**）。
+     *   → 同じ録画（run）の写真は**同じ画面**なので、多数決の結果を**全枚に配る**。
+     *     ⚠ 配るのは `run` を付けた結果だけ（別の録画には配らない＝画面が違う）。
+     *     ⚠ 写真ごとに読んだ結果ではないので `by` は `llm_run`（区別できるように）。
+     */
     let saved = 0;
+    const payload = {
+      screen: "form" as const,
+      by: "llm_run" as const,
+      confidence: Math.min(0.95, Math.round((voted.filter((v) => v.votes >= 3).length / Math.max(1, voted.length)) * 100) / 100),
+      fields: voted.map((v) => ({ name: v.name ?? "", kind: v.kind, x: v.x, y: v.y })),
+      run_id: run,
+      votes: voted.map((v) => ({ x: v.x, y: v.y, n: v.votes, name_n: v.nameVotes })),
+      learned_shots: read,
+      applied_to: "run",
+    };
     if (!opt.dryRun && voted.length) {
+      // ① 代表の1行（読んだ写真の中で一番大きい物）
       const target = pick[0];
-      const payload = {
-        screen: "form" as const,
-        by: "llm" as const,
-        confidence: Math.min(0.95, Math.round((voted.filter((v) => v.votes >= 3).length / Math.max(1, voted.length)) * 100) / 100),
-        fields: voted.map((v) => ({ name: v.name ?? "", kind: v.kind, x: v.x, y: v.y })),
-        run_id: run,
-        votes: voted.map((v) => ({ x: v.x, y: v.y, n: v.votes, name_n: v.nameVotes })),
-        learned_shots: read,
-      };
-      const { error } = await supabase.from("human_motion_learn").update({ shot_learn: payload }).eq("id", target.id);
-      if (!error) saved = 1;
+      const one = await supabase.from("human_motion_learn").update({ shot_learn: payload }).eq("id", target.id);
+      if (!one.error) saved = 1;
+      // ② 同じ録画の残り（まだ shot_learn が空の物だけ）
+      try {
+        const ids = inRun.filter((r) => !r.shot_learn && String(r.id) !== String(target.id)).map((r) => r.id);
+        for (let i = 0; i < ids.length; i += 50) {
+          const chunk = ids.slice(i, i + 50);
+          if (!chunk.length) continue;
+          const up = await supabase.from("human_motion_learn").update({ shot_learn: payload }).in("id", chunk);
+          if (!up.error) saved += chunk.length;
+        }
+      } catch { /* 配れなくても代表の1行は入っている */ }
     }
 
     return {
