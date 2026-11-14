@@ -122,6 +122,61 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     console.warn("[human-learn-profile] 検索の結果を取れません:", e instanceof Error ? e.message : String(e));
   }
   /**
+   * 2026-11-14 竹内さん
+   *   「時間でみたらよい最大７分の録画なので順番に見れば理解できる」
+   *   「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で統括が弱い部分の学習を強化する」
+   *   「これらの思考や考え方は統括の部分で重要な考え方にする。そして強化する」
+   *
+   *   → **場面ごとの手順**（人が実際に押した順）を作って統括に渡す。
+   *   ⚠ 材料は `search_audits.filled.ops`（実測: 7日で 56件中32件に入っていた）。
+   *     写真（`shot_ops`）が 12% しか無くても、**ここには人の順番が残っている**＝一番強い材料。
+   *   ⚠ 取れなくても学習の束は作る（`scene_flows=null`）。
+   */
+  let sceneFlows: import("@/app/lib/learn-flow-steps").SceneFlow[] | null = null;
+  let sceneMissing = 0;
+  let sceneMissingNames = "";
+  let stoppedScene: string | null = null;
+  try {
+    const { learnSceneFlows, findWeakScenes, SCENE_JA } = await import("@/app/lib/learn-flow-steps");
+    const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
+    let fq = supabase
+      .from("search_audits")
+      .select("status, site, filled")
+      .gte("created_at", since7)
+      .not("filled", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(400);
+    if (scope && scope !== "all") fq = fq.eq("site", scope);
+    const fr = await fq;
+    if (fr.error) {
+      console.warn("[human-learn-profile] filled.ops を読めません:", fr.error.message);
+    } else {
+      type Op = { k?: string | null; t?: number | null; by?: string | null };
+      const rowsF = (fr.data ?? []) as Array<{ status?: string | null; filled?: { ops?: Op[] } | null }>;
+      const runs: Op[][] = [];
+      const stopAt: Record<string, number> = {};
+      for (const r of rowsF) {
+        const ops = Array.isArray(r.filled?.ops) ? r.filled!.ops! : [];
+        if (ops.length >= 2) runs.push(ops);
+        // 止まった回は「最後の場面」を数える（どこで止まるか）
+        if (String(r.status ?? "") !== "finished" && ops.length >= 2) {
+          const last = learnSceneFlows([ops], { by: null })[0];
+          if (last) stopAt[SCENE_JA[last.scene]] = (stopAt[SCENE_JA[last.scene]] ?? 0) + 1;
+        }
+      }
+      if (runs.length) {
+        sceneFlows = learnSceneFlows(runs);
+        const weak = findWeakScenes(sceneFlows).filter((w) => w.kind === "no_example");
+        sceneMissing = weak.length;
+        sceneMissingNames = weak.map((w) => SCENE_JA[w.scene]).join("・");
+      }
+      const topStop = Object.entries(stopAt).sort((a, b) => b[1] - a[1])[0];
+      if (topStop) stoppedScene = topStop[0];
+    }
+  } catch (e) {
+    console.warn("[human-learn-profile] 場面ごとの手順を作れません:", e instanceof Error ? e.message : String(e));
+  }
+  /**
    * 2026-11-14 竹内さん「ここも調べる」:
    *   ⚠ 24時間だと「モードが無かった」が1件しか見えない（実測）。7日だと **187件**。
    *     指示の失敗は**たまに起きる**ので、短い窓では見落とす。
@@ -142,8 +197,26 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   } catch (e) {
     console.warn("[human-learn-profile] 指示の状態を取れません:", e instanceof Error ? e.message : String(e));
   }
-  const bundle = compactBundle(buildHumanLearnBundle(rows as never, Date.now(), auditsSummary, commandsSummary));
+  const bundle = compactBundle(buildHumanLearnBundle(rows as never, Date.now(), auditsSummary, commandsSummary, {
+    scene_flows: sceneFlows,
+    scene_missing: sceneMissing,
+    scene_missing_names: sceneMissingNames,
+    stopped_scene: stoppedScene,
+  }));
   if (!bundle.source.rows) { try { note?.("empty_bundle"); } catch (_) {} return null; }
+  /**
+   * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
+   *   統括が弱い部分の学習を強化する」「これらの思考や考え方は統括の部分で重要な考え方にする」:
+   *   場面ごとの手順を**束にも載せる**（呼ぶ側・統括の会話・アプリの画面がそのまま読める）。
+   *   ⚠ `compactBundle` が落とす事があるので、落ちていても必ず入れる。
+   */
+  {
+    const b = bundle as unknown as Record<string, unknown>;
+    if (sceneFlows && sceneFlows.length) b.scene_flows = sceneFlows;
+    if (sceneMissing > 0) b.scene_missing = sceneMissing;
+    if (sceneMissingNames) b.scene_missing_names = sceneMissingNames;
+    if (stoppedScene) b.stopped_scene = stoppedScene;
+  }
   /**
    * 2026-11-13 竹内さん「なんで連携できていないのか」:
    *   DB に無い列があって外した時は、**外した列を返す**（黙って落とさない）。

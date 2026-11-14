@@ -10,8 +10,46 @@
 // ⚠ 入力した中身（値）は残さない。欄の名前・操作の種類・間だけ。
 (function () {
   "use strict";
-  if (window.__axlxHumanLearnRecord) return;
-  window.__axlxHumanLearnRecord = true;
+  /**
+   * 2026-11-14 竹内さん「今実際おこなった 出来ていない部分学習おねがい」→ 2.7.44 でも
+   *   写真 60枚すべて `shot_ops` が `k:"diag"` の1件、理由は **`no_answer:tab1001211057`**（同じタブ）。
+   *
+   * ⚠ 本当の原因（旧の印の付け方）:
+   *   旧は **`L`（human-learn.js）が無い時も先に印を立ててから** `return` していた:
+   *     window.__axlxHumanLearnRecord = true;  // ← 先に立てる
+   *     var L = ...AxlxHumanLearn; if (!L) return;  // ← 無ければ抜ける（印は残る）
+   *   しかも**拡張を更新すると、開いたままのタブの古い記録係は無効になる**（拡張の入れ替えで
+   *   メッセージの口が死ぬ）。background は `chrome.scripting.executeScript` で**注入し直して**
+   *   助けようとするが、**この印が残っているので即 return** ＝ 何度注入しても復活しない。
+   *   → タブは `sendMessage` に**永久に答えない**（＝ `no_answer`）。
+   *
+   * → ① **印は初期化が終わってから**立てる（途中で抜けたら印を残さない＝注入し直せば直る）。
+   *   ② **メッセージの受け口は `L` が無くても先に付ける**（タブが必ず理由を答えられるように）。
+   *   ③ 答えに `why` を入れる（`no_learn_lib` / `dupe`）＝次に同じ事が起きたらDBで分かる。
+   */
+  var _recBoot = (typeof self !== "undefined" ? self : window);
+  // ② 受け口は最初に付ける（この下で何が起きても、タブは「なぜ空か」を答えられる）
+  try {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
+        if (!msg || msg.type !== "axlx-recent-ops") return;
+        try {
+          var g = _recBoot.__axlxHumanLearnRecState || null;
+          if (g && typeof g.answer === "function") { g.answer(sendResponse); return true; }
+          // まだ本体が立ち上がっていない（ライブラリ待ち・二重起動）→ 理由を返す
+          sendResponse({ ok: true, ops: [], diag: { why: (g && g.why) || "booting", ring: 0, seen: 0 } });
+        } catch (_) { try { sendResponse({ ok: true, ops: [] }); } catch (__) {} }
+        return true;
+      });
+    }
+  } catch (_) {}
+  // 既に本体が動いている（同じページに二重に入った）→ 受け口だけ足して終わる
+  if (_recBoot.__axlxHumanLearnRecord) {
+    try {
+      _recBoot.__axlxHumanLearnRecState = _recBoot.__axlxHumanLearnRecState || { why: "dupe" };
+    } catch (_) {}
+    return;
+  }
 
   var KEY = "axlx_human_learn";
   // 2026-11-11 竹内さん「データたまって理解するたび反映」: 貯まるたびに作り直す「動きの癖」（カーソルがこれを見て動く）
@@ -27,7 +65,18 @@
   var LEARN_LOCK = "human-learn-record.js";
 
   var L = (typeof self !== "undefined" ? self : window).AxlxHumanLearn;
-  if (!L) return;
+  /**
+   * ① ライブラリが無ければ**印を立てずに**抜ける（次に注入されたら動ける）。
+   *   理由は `_recBoot.__axlxHumanLearnRecState.why` に残す（タブが答える時に使う）。
+   */
+  if (!L) {
+    try { _recBoot.__axlxHumanLearnRecState = { why: "no_learn_lib" }; } catch (_) {}
+    return;
+  }
+  try {
+    _recBoot.__axlxHumanLearnRecord = true;
+    _recBoot.__axlxHumanLearnRecState = { why: null };
+  } catch (_) {}
 
   var rec = L.create({
     doc: document, win: window,
@@ -417,14 +466,21 @@
    */
   try {
     if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
-      chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
-        if (!msg || msg.type !== "axlx-recent-ops") return;
-        try {
-          var out = _recentOpsWithDiag();
-          sendResponse({ ok: true, ops: out.ops || [], diag: out.diag });
-        } catch (_) { try { sendResponse({ ok: true, ops: [] }); } catch (__) {} }
-        return true;
-      });
+      /**
+       * 2026-11-14: 受け口は先頭でも付けている（ライブラリ待ちの間に聞かれても理由を返せる）。
+       *   ここでは**実際の操作を返せる**ように状態へ関数を渡す（先頭の受け口がこれを使う）。
+       */
+      try {
+        _recBoot.__axlxHumanLearnRecState = {
+          why: null,
+          answer: function (sendResponse) {
+            try {
+              var out = _recentOpsWithDiag();
+              sendResponse({ ok: true, ops: out.ops || [], diag: out.diag });
+            } catch (_) { try { sendResponse({ ok: true, ops: [] }); } catch (__) {} }
+          },
+        };
+      } catch (_) {}
       /**
        * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか。原因見つけて改善する」:
        *   写真と一緒に送る**動きの癖**（速さ・曲がり・押す位置・スクロール・操作の間）を返す。
