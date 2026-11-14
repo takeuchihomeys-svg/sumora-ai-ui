@@ -93,6 +93,10 @@ console.log("\n=== ③ 直した印（目印）が Chrome 側に入っている�
       ["  自動（AIX）の記録もDBへ送る（v2.7.32）", read(path.join(CHROME, "human-learn-record.js")).includes('mode: "aix"')],
       ["  自分の小窓は学習しない（v2.7.32）", hl.includes("#axlx-bar, #axlx-learn-badge, #aixlinx-mini-btn")],
       ["  開き方を拡張へ渡す（v2.7.32）", bg.includes("axlx_learn_opens")],
+      // 2026-11-14 竹内さん「DBにあって反映できていないものはあるか」
+      ["画面ごとの手順を自動検索が使う（v2.7.33）", ps.includes("__axlxLearnScreenFlow")],
+      ["統括の判断（弱い所）を自動検索が読む（v2.7.33）", ps.includes("function _weakOf")],
+      ["束に版と材料の数を載せる（v2.7.33）", read(path.join(CHROME, "human-learn.js")).includes("押したら何が開くか")],
     ];
     for (const [name, ok] of marks) t(name, ok);
   }

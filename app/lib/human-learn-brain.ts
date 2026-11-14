@@ -102,7 +102,18 @@ export type HumanLearnBundle = {
   v: 1;
   generated_at: string;
   /** 元にした記録の数・期間 */
-  source: { rows: number; from: string | null; to: string | null; sites: string[] };
+  source: {
+    rows: number; from: string | null; to: string | null; sites: string[];
+    /**
+     * 2026-11-14 竹内さん「DBにあって反映できていないものはあるか」:
+     *   `ext_version` は**読むだけで束に入れていなかった**（版ごとの学びを分けられない）。
+     *   実測: 直近200件が**全部 2.7.29**（＝新しい版の学習が現場に入っていない事に気づけない）。
+     *   → 版の内訳を束に載せ、古い版が学びを薄めている時に**言えるようにする**。
+     */
+    versions?: Record<string, number>;
+    /** 材料（操作の並び）が揃っている記録の数＝「順番」を学べる記録 */
+    with_ops?: number;
+  };
   /** ① 直前の操作 → 次に押す物（押す順番） */
   next: Record<string, NextStat>;
   /** ② 要素ごとの押した位置 */
@@ -621,6 +632,22 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
   // 元にした期間
   const times = list.map((r) => (r.created_at ? Date.parse(String(r.created_at)) : NaN)).filter((t) => Number.isFinite(t));
   const sites = Array.from(new Set(list.map((r) => String(r.site || "")).filter(Boolean)));
+  /**
+   * 2026-11-14 竹内さん「DBにあって反映できていないものはあるか」:
+   *   **版の内訳**と、**材料（操作の並び）が揃っている記録の数**を出す。
+   *   ⚠ 実測で直近200件が全部 2.7.29 だった＝新しい版の学習が現場に入っていない。
+   *     数字で言えるようにしておく（人が「なぜ学びが増えないか」を追える）。
+   */
+  const versions: Record<string, number> = {};
+  for (const r of list) {
+    const v = String(r.ext_version ?? "").trim() || "(空)";
+    versions[v] = (versions[v] ?? 0) + 1;
+  }
+  const withOps = list.filter((r) => {
+    const x = r as unknown as Record<string, unknown>;
+    return (Array.isArray(x.shot_ops) && x.shot_ops.length > 0)
+      || (Array.isArray(x.field_order) && x.field_order.length > 0);
+  }).length;
 
   /**
    * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい
@@ -782,6 +809,8 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
       from: times.length ? new Date(Math.min(...times)).toISOString() : null,
       to: times.length ? new Date(Math.max(...times)).toISOString() : null,
       sites,
+      ...(Object.keys(versions).length ? { versions } : {}),
+      with_ops: withOps,
     },
     next,
     points,
@@ -816,6 +845,18 @@ export function describeBundle(b: HumanLearnBundle): string[] {
   const out: string[] = [];
   const pct = (x: number) => Math.round(x * 100) + "%";
   out.push(`元にした記録: ${b.source.rows}件${b.source.sites.length ? "（" + b.source.sites.join("・") + "）" : ""}`);
+  /**
+   * 2026-11-14 竹内さん「DBにあって反映できていないものはあるか」:
+   *   **材料が揃っているか**と**版の内訳**を出す（学びが増えない理由を数字で言えるように）。
+   */
+  if (typeof b.source.with_ops === "number") {
+    const missing = b.source.rows - b.source.with_ops;
+    out.push(`材料（操作の並び）がある記録: ${b.source.with_ops}件${missing > 0 ? `（${missing}件は材料が無く順番を学べない）` : ""}`);
+  }
+  if (b.source.versions && Object.keys(b.source.versions).length) {
+    const top = Object.entries(b.source.versions).sort((a, x) => x[1] - a[1]).slice(0, 4);
+    out.push(`記録した版: ${top.map(([v, n]) => `${v} ${n}件`).join("・")}`);
+  }
   const nx = Object.keys(b.next);
   out.push(`押す順番: ${nx.length}通りを学びました`);
   nx.slice(0, 5).forEach((from) => {

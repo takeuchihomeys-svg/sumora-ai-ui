@@ -885,6 +885,45 @@
     } catch (_) { return null; }
   }
 
+  /**
+   * 2026-11-14 竹内さん「DBにあって反映できていないものはあるか」:
+   *   ⚠ `learn_plan`（統括の判断＝弱い所・次にやる事）は **storage に置くだけで誰も読んでいなかった**。
+   *     「この欄は記録と写真で種類が違う」「名前から種類を推せない」と分かっているのに、
+   *     自動検索は毎回同じ思い込みで触っていた。
+   *   → 計画を読み、**該当する欄を触る時に「学びが弱い」と点検に残す**（動きは変えない＝安全）。
+   *     記録が溜まったら、その欄だけ慎重に扱えるようにするための第1歩。
+   */
+  var _learnPlan = null;
+  var _learnPlanAt = 0;
+  function _learnPlanWarm() {
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+      var now = Date.now();
+      if (_learnPlan && now - _learnPlanAt < 30000) return;
+      _learnPlanAt = now;
+      chrome.storage.local.get(["axlx_learn_plan"], function (r) {
+        try { _learnPlan = (r && r.axlx_learn_plan) || null; } catch (_) { _learnPlan = null; }
+      });
+    } catch (_) {}
+  }
+  /** その欄は「学びが弱い」と統括が言っているか（弱い所の名前を返す・無ければ null） */
+  function _weakOf(name) {
+    try {
+      _learnPlanWarm();
+      if (!_learnPlan || !Array.isArray(_learnPlan.items)) return null;
+      var n = String(name || "");
+      if (!n) return null;
+      for (var i = 0; i < _learnPlan.items.length; i++) {
+        var it = _learnPlan.items[i];
+        if (!it || !it.name) continue;
+        var raw = String(it.name);
+        // `左の大阪市西区｜label.one_city` と `city_code[]` のような形の違いを吸収して比べる
+        if (raw === n || raw.indexOf(n) >= 0 || n.indexOf(raw) >= 0) return { kind: it.kind, why: it.why, action: it.action };
+      }
+      return null;
+    } catch (_) { return null; }
+  }
+
   function _aimOf(name) {    try {
       var v = _learnKinds && _learnKinds[name];
       if (!v || typeof v.x !== "number" || typeof v.y !== "number") return null;
@@ -912,8 +951,15 @@
      */
     var _aim = _aimOf(name);
     var _learnedKind = _kindOf(name);
+    /**
+     * 2026-11-14 竹内さん「DBにあって反映できていないものはあるか」:
+     *   統括が「この欄は学びが弱い（記録と写真で種類が違う等）」と言っている欄は、
+     *   点検に残す（あとから「なぜここで止まったか」を追える）。
+     */
+    var _wk = _weakOf(name);
     try {
       if (_learnedKind) _auditStepP('learn_kind', name + '=' + _learnedKind + (_aim ? '（押す位置 横' + Math.round(_aim.x * 100) + '%）' : ''));
+      if (_wk) _auditStepP('learn_weak', name + '=' + _wk.kind + '（' + String(_wk.why || '').slice(0, 40) + '）');
     } catch (_) {}
     _enqueueWithEl(el, function () { return chooseSelectLikeHuman(el, val, { forceOpen: true, aim: _aim }); },
       _isTransport ? 1400 : 900,
@@ -958,7 +1004,14 @@
        */
       var seq = window.__axlxLearnSeq || null;
       var modeNext = window.__axlxLearnNextMode || null;
-      if (!next && !flow && !seq && !modeNext) return items;
+      /**
+       * 2026-11-14 竹内さん「DBにあって反映できていないものはあるか」:
+       *   `screen_flow`（画面ごとの手順）は **popup の表示にしか使われていなかった**（自動検索 0箇所）。
+       *   小窓の中の順番（区 → 町字 → 確定）を学んでいるのに使っていない＝**DBにあるのに反映できていない物**。
+       *   → 画面ごとの鎖を「前後関係」として重ねる（`next` が無い所だけ・項目は増減しない）。
+       */
+      var screenFlow = window.__axlxLearnScreenFlow || null;
+      if (!next && !flow && !seq && !modeNext && !screenFlow) return items;
       try {
         var names = items.map(function (it) { return it && it.name ? it.name : null; }).filter(Boolean);
         // ① モード別の押す順番を先に重ねる（その場に一番合う）
@@ -968,6 +1021,26 @@
         // ② 鎖から前後関係を作って補う（next が無い所だけ）
         if (seq && seq.sequence && LO.mergeWithSequence) {
           next = LO.mergeWithSequence(next, seq.sequence, names);
+        }
+        // ②' 画面ごとの鎖（小窓の中の順番など）も同じ形で重ねる
+        if (screenFlow && LO.mergeWithSequence) {
+          for (var _sc in screenFlow) {
+            if (!Object.prototype.hasOwnProperty.call(screenFlow, _sc)) continue;
+            var _steps = (screenFlow[_sc] && screenFlow[_sc].steps) || [];
+            if (!_steps.length) continue;
+            /**
+             * `steps` は `[{from,to,n}]`（回数の多い前後）。回数2以上の物だけ鎖にする
+             * （1回だけの偶然を採らない）。
+             */
+            var _chain = [];
+            _steps.slice(0, 12).forEach(function (st) {
+              if (!st || !st.from || !st.to) return;
+              if (Number(st.n) < 2) return;
+              if (_chain.indexOf(st.from) < 0) _chain.push(st.from);
+              if (_chain.indexOf(st.to) < 0) _chain.push(st.to);
+            });
+            if (_chain.length >= 2) next = LO.mergeWithSequence(next, _chain, names);
+          }
         }
         // ③ サイトの手順（site_flow）も補う
         if (next && flow && LO.mergeLearnedOrder) {
@@ -1015,7 +1088,7 @@
        *   サイトごとの手順（`axlx_learn_site_flow`）も一緒に読む。
        *   押す順番の材料が `next` だけだと3通りしか無いので、鎖から前後関係を補う。
        */
-      chrome.storage.local.get(["axlx_learn_next", "axlx_learn_site_flow", "axlx_learn_seq", "axlx_learn_next_mode"], function (r) {
+      chrome.storage.local.get(["axlx_learn_next", "axlx_learn_site_flow", "axlx_learn_seq", "axlx_learn_next_mode", "axlx_learn_screen_flow"], function (r) {
         try {
           var nx = (r && r.axlx_learn_next) || null;
           window.__axlxLearnNext = (nx && typeof nx === "object") ? nx : null;
@@ -1029,9 +1102,18 @@
           window.__axlxLearnSeq = (sq && typeof sq === "object") ? sq : null;
           var mn = (r && r.axlx_learn_next_mode) || null;
           window.__axlxLearnNextMode = (mn && typeof mn === "object") ? mn : null;
+          /**
+           * 2026-11-14 竹内さん「DBにあって反映できていないものはあるか」:
+           *   ⚠ `screen_flow`（画面ごとの手順＝小窓の中の順番）は **popup の表示にしか使われていなかった**
+           *     （自動検索では0箇所）。せっかく「小窓では 区→町字→確定 の順」と学んでいるのに使っていない。
+           *   → 読んで、条件の入力順に重ねる（`_orderByLearned` が使う）。
+           */
+          var scf = (r && r.axlx_learn_screen_flow) || null;
+          window.__axlxLearnScreenFlow = (scf && typeof scf === "object") ? scf : null;
           var n = nx ? Object.keys(nx).length : 0;
           var sqn = (sq && Array.isArray(sq.sequence)) ? sq.sequence.length : 0;
-          if (n || sqn) console.log("[AX] 学んだ押す順番: " + n + "通り・一連の動き " + sqn + "手" + (mn ? "・モード別あり" : ""));
+          var scn = scf ? Object.keys(scf).length : 0;
+          if (n || sqn) console.log("[AX] 学んだ押す順番: " + n + "通り・一連の動き " + sqn + "手" + (mn ? "・モード別あり" : "") + (scn ? "・画面ごと " + scn + "種類" : ""));
         } catch (_) {}
       });
     } catch (_) {}

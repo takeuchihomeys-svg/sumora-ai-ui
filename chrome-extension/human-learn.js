@@ -1085,6 +1085,21 @@
     }
 
     var sf = (s.site_flow && typeof s.site_flow === "object") ? s.site_flow : {};
+    /**
+     * 2026-11-14 竹内さん「DBにあって反映できていないものはあるか」:
+     *   `opens`（押したら何が開くか）を**画面に出していなかった**（学んでいるのに人が見えない）。
+     *   自動検索もこれを見て「開くはず」と確かめられる。ここでも1行で見せる。
+     */
+    var op = (s.opens && typeof s.opens === "object") ? s.opens : {};
+    var OJ = { modal: "小窓が開く", options: "プルダウンの一覧が開く", form: "入力欄が変わる", result: "結果の一覧に変わる", modal_close: "小窓が閉じる", none: "変化なし" };
+    if (Object.keys(op).length) {
+      out.push("");
+      out.push("▼ 押したら何が開くか（" + Object.keys(op).length + "個）");
+      Object.keys(op).slice(0, 6).forEach(function (k) {
+        var v = op[k] || {};
+        out.push("  ・「" + k + "」→ " + (OJ[v.opens] || v.opens || "?") + (v.n ? "（" + v.n + "回）" : ""));
+      });
+    }
     var screens = (s.screen_flow && typeof s.screen_flow === "object") ? s.screen_flow : {};
     var SJ = { modal: "小窓（地域・駅）", form: "条件の入力", result: "結果の一覧", other: "その他" };
     if (Object.keys(screens).length) {
