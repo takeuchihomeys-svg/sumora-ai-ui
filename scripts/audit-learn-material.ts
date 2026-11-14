@@ -1,11 +1,8 @@
-/**
- * 学習の「材料」がどれだけ揃っているか（API 経由・RLS を避ける）
- * 実行: npx tsx --env-file=.env.local scripts/audit-learn-material.ts
- */
-const BASE = process.env.AUDIT_BASE || "https://sumora-ai-ui.vercel.app";
-
+/** 学習の「材料」がどれだけ揃っているか（API 経由・RLS を避ける）
+ *  実行: npx tsx scripts/audit-learn-material.ts */
 void (async () => {
-  const r = await fetch(BASE + "/api/human-motion?shots=1");
+  const url = process.env.AUDIT_BASE || "https://sumora-ai-ui.vercel.app";
+  const r = await fetch(url + "/api/human-motion?shots=1");
   const j = (await r.json()) as { rows?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
   const rows = (Array.isArray(j) ? j : (j.rows ?? [])) as Array<Record<string, unknown>>;
   const N = rows.length;

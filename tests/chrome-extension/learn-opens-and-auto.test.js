@@ -86,7 +86,7 @@ console.log("\n■ ⑤ サーバー側が opens を受けて束に載せる");
   t("  開き方の種類を検査する（知らない値は捨てる）", /\^\(modal\|options\|form\|result\|modal_close\|none\)\$/.test(route));
   t("  中身は入れない（種類と数だけ）", /opens: kind,/.test(route));
   t("migrate-schema が列を足す", /ADD COLUMN IF NOT EXISTS opens JSONB/.test(mig) && /ADD COLUMN IF NOT EXISTS open_kinds JSONB/.test(mig));
-  t("学習の束が opens を返す", /\.\.\.\(Object\.keys\(opens\)\.length \? \{ opens \} : \{\}\)/.test(brain));
+  t("学習の束が opens を返す", /\bopens: withGuessedOpens\(/.test(brain) || /\.\.\.\(Object\.keys\(opens\)\.length \? \{ opens \} : \{\}\)/.test(brain));
   t("  learnOpens が欄ごとにまとめる", /export function learnOpens/.test(brain));
   t("  入れ物の名前は学ばない", /if \(!isLearnableName\(name\)\) continue;[\s\S]{0,200}opens/.test(brain) || /learnOpens[\s\S]{0,600}isLearnableName/.test(brain));
 }

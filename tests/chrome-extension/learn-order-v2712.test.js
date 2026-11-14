@@ -90,7 +90,17 @@ console.log("\n■ ⑤ 繋がっている（自動モードの入力順）");
   ok("基本条件の並びを学んだ順にする", /_basicQueue = _orderByLearned\(_basicQueue\);/.test(ps));
   ok("  学んだ順が無ければ今まで通り（元の並び）", /if \(!next\) return items;/.test(ps) || /return \(r && Array\.isArray\(r\.items\)/.test(ps));
   ok("  学んだ順を storage から読む", /axlx_learn_next/.test(ps));
-  ok("background が1時間ごとに版を確かめる（旧: 1日1回）", /_refreshLearnedBundle/.test(bg) && /_LEARN_CHECK_MS = 60 \* 60 \* 1000/.test(bg));
+  /**
+   * 2026-11-14 竹内さん「最新の学びが反映されるようになっているのか」:
+   *   1時間ごと → **5分ごと**に短くした（学んだ直後から最大1時間反映されなかった）。
+   *   ここは「短い間隔で版を確かめているか」を見る（固定値ではなく上限で判定）。
+   */
+  ok("background が短い間隔で版を確かめる（旧: 1日1回 → 1時間 → 5分）", /_refreshLearnedBundle/.test(bg) && (() => {
+    const m = /_LEARN_CHECK_MS = (\d+)(?: \* (\d+))?(?: \* (\d+))? \* 1000/.exec(bg);
+    if (!m) return false;
+    const ms = Number(m[1]) * (m[2] ? Number(m[2]) : 1) * (m[3] ? Number(m[3]) : 1) * 1000;
+    return ms <= 30 * 60 * 1000;   // 30分以内ならOK（今は5分）
+  })());
   ok("  取れなくても止まらない（あれば使う）", /return \{ ok: false, error: "http_" \+ res\.status \}/.test(bg));
   ok("learn-order.js を manifest に足した", mf.web_accessible_resources[0].resources.includes("learn-order.js"));
 }

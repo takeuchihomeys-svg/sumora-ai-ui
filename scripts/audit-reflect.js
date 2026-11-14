@@ -97,6 +97,8 @@ console.log("\n=== ③ 直した印（目印）が Chrome 側に入っている�
       ["画面ごとの手順を自動検索が使う（v2.7.33）", ps.includes("__axlxLearnScreenFlow")],
       ["統括の判断（弱い所）を自動検索が読む（v2.7.33）", ps.includes("function _weakOf")],
       ["束に版と材料の数を載せる（v2.7.33）", read(path.join(CHROME, "human-learn.js")).includes("押したら何が開くか")],
+      // 2026-11-14 竹内さん「最新の学びが反映されるようになっているのか」
+      ["学びの取り込みを5分ごとに（v2.7.34）", /_LEARN_CHECK_MS = 5 \* 60 \* 1000/.test(bg)],
     ];
     for (const [name, ok] of marks) t(name, ok);
   }

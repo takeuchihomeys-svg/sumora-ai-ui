@@ -130,7 +130,7 @@ export type HumanLearnBundle = {
    *   modal＝小窓が開く／options＝プルダウンの一覧が開く／form＝欄が変わる／
    *   result＝結果に変わる／modal_close＝小窓が閉じる／none＝変化なし。
    */
-  opens?: Record<string, { opens: string; n: number; stage?: string }>;
+  opens?: Record<string, { opens: string; n: number; stage?: string; guessed?: boolean }>;
   /** ⑥ 操作と操作の間（中央値 ms） */
   gaps: { median_ms: number | null; samples: number };
   /**
@@ -376,8 +376,62 @@ export function learnPoints(rows: ReadonlyArray<MotionRow>): Record<string, Poin
  *   ⚠ 学ぶのは**開き方の種類**だけ（中身・入力値は扱わない）。
  *   ⚠ `div`/`img` などの入れ物の名前は学ばない（`isLearnableName`）。
  */
-export function learnOpens(rows: ReadonlyArray<MotionRow>): Record<string, { opens: string; n: number; stage?: string }> {
-  const acc: Record<string, { opens: Record<string, number>; n: number; stage: string | null }> = {};
+/**
+ * 2026-11-14 竹内さん「最新の学びが反映されるようになっているのか」:
+ *   `opens`（押したら何が開くか）は **v2.7.32 の録画から**入る新しい記録なので、
+ *   それ以前の記録では空になる（実測 opens 0個）。
+ *   だが**名前を見れば開き方はほぼ分かる**:
+ *     ・`所在地絞り込み` / `沿線・駅絞り込み` → **modal**（小窓が開く）
+ *     ・`確定してリストへ` / `とじる` / `×` → **modal_close**（小窓が閉じる）
+ *     ・`検索` / `go_search` → **result**（結果の一覧に変わる）
+ *     ・`区` / `町字` / `沿線` / `駅` を選ぶ label → その場で選ぶだけ＝**none**
+ *   → 記録が無い欄だけ**名前から補う**（`w_src:"name"` と同じ考え方・確かさは低い）。
+ *   ⚠ 実際の記録（opens）が入っている欄は**そちらを優先**（推測で上書きしない）。
+ */
+export function guessOpensFromName(name: unknown): string | null {
+  const n = String(name ?? "").trim();
+  if (!n) return null;
+  if (!isLearnableName(n)) return null;
+  /**
+   * ⚠ 自分の UI（AIXLINX の小窓）は学ばない（学習の入口で弾いているが、古い記録に残っている）。
+   */
+  if (/AIXLINX|aixlinx|#axlx-|axlx-bar/i.test(n)) return null;
+  /**
+   * 実際の名前は `左の所在地絞り込み＋｜span` のように **場所と印が付く**。
+   *   ⚠ 完全一致で見ると1つも当たらない（実測 0個）。→ **含む**で見る。
+   */
+  // ① 小窓を開くボタン
+  if (/所在地絞り込み|沿線・駅絞り込み/.test(n)) return "modal";
+  // ② 小窓の中で次の段へ進む（中の画面が変わる）
+  if (/駅の設定へ進む|設定へ進む|地域の設定へ進む|区を選ぶ|町字を選ぶ|沿線を選ぶ/.test(n)) return "form";
+  // ③ 小窓を閉じる・確定する
+  if (/確定してリストへ|確定|とじる|閉じる/.test(n)) return "modal_close";
+  // ④ 検索（結果に変わる）
+  if (/go_search|住居検索|物件を検索|^左の検索|｜span$/.test(n) && /検索/.test(n)) return "result";
+  // ⑤ プルダウン（欄の名前がそのまま select の name）
+  if (/^(rental_cost\d?|square_meter_[lh]|structured_date|update_date|transportation_id)$/.test(n)) return "options";
+  return null;
+}
+
+/**
+ * 記録から学んだ開き方に、**名前からの推測**を足す（記録を優先）。
+ *   ⚠ 推測した物は `n: 0` と `stage` 無しで入れる（「実測ではない」と分かる形）。
+ */
+export function withGuessedOpens(
+  learned: Record<string, { opens: string; n: number; stage?: string }>,
+  names: Iterable<string>,
+): Record<string, { opens: string; n: number; stage?: string; guessed?: boolean }> {
+  const out: Record<string, { opens: string; n: number; stage?: string; guessed?: boolean }> = { ...learned };
+  for (const nm of names) {
+    if (out[nm]) continue;              // 実測がある欄は触らない
+    const g = guessOpensFromName(nm);
+    if (!g) continue;
+    out[nm] = { opens: g, n: 0, guessed: true };
+  }
+  return out;
+}
+
+export function learnOpens(rows: ReadonlyArray<MotionRow>): Record<string, { opens: string; n: number; stage?: string }> {  const acc: Record<string, { opens: Record<string, number>; n: number; stage: string | null }> = {};
   for (const row of rows) {
     const v = (row as unknown as Record<string, unknown>).opens;
     if (!v || typeof v !== "object" || Array.isArray(v)) continue;
@@ -820,8 +874,10 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     /**
      * 2026-11-14 竹内さん「どこで展開されるのかも意識して学習して改善する」:
      *   押したら何が開くか（modal / options / form / result）を欄ごとに渡す。
+     *   ⚠ `opens` は新しい記録（v2.7.32〜）なので、それ以前は空。
+     *     → **名前から分かる物だけ推測で補う**（実測がある欄は実測を優先）。
      */
-    ...(Object.keys(opens).length ? { opens } : {}),
+    opens: withGuessedOpens(opens, [...Object.keys(points), ...Object.keys(next)]),
     gaps: { median_ms: median(gapSamples), samples: gapSamples.length },
     ...(weak.length ? { weak } : {}),
     ...(Object.keys(shotLearn.screens).length ? { screen_flow: shotLearn.screens, shots: { total: shotLearn.total, with_ops: shotLearn.withOps } } : {}),
@@ -882,7 +938,7 @@ export function describeBundle(b: HumanLearnBundle): string[] {
     out.push(`開き方: ${op.length}個の要素で学びました`);
     op.slice(0, 5).forEach((k) => {
       const v = b.opens![k];
-      out.push(`  ・${k} … ${label[v.opens] || v.opens}（${v.n}回）`);
+      out.push(`  ・${k} … ${label[v.opens] || v.opens}（${v.guessed ? "名前から推測" : `${v.n}回`}）`);
     });
   }
   /**
