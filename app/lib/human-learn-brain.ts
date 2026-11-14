@@ -26,7 +26,7 @@
 //   npx tsx --env-file=.env.local scripts/human-learn-brain.ts --apply    # DB の human_learn_profile に書く
 //   /api/cron/human-learn-brain が毎晩まとめる（Vercel Cron）
 
-import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, planLearnFromWeak, learnSequenceFromShots } from "./shot-learn";
+import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, planLearnFromWeak, learnSequenceFromShots, isLearnableName } from "./shot-learn";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -176,6 +176,8 @@ export type HumanLearnBundle = {
     summary: string;
     /** 2026-11-14: モードごとの判断（通常／スタッフ／AIX）。足りない物と次にやる事。 */
     mode_plan?: Array<{ mode: string; rows: number; verdict: string; action: string }>;
+    /** 2026-11-14: 整理（ゴミの扱い）＝統括の判断。除く・畳む・直す。 */
+    cleanup?: Array<{ kind: string; n: number; verdict: string; action: string }>;
   };
   /** 何を学んだか（人が読む1行ずつ） */
   lines: string[];
@@ -221,6 +223,8 @@ export function sequencesOf(row: MotionRow): Array<Array<{ t: number | null; k: 
       const r = o as Record<string, unknown>;
       const f = typeof r.f === "string" ? r.f.trim().slice(0, 30) : "";
       if (!f) continue;
+      /** 2026-11-14: 押す対象でない入れ物は**並びから除く**（ゴミを学ばない） */
+      if (!isLearnableName(f)) continue;
       seq.push({ t: num(r.t), k: typeof r.k === "string" ? r.k.slice(0, 10) : null, f });
     }
     if (seq.length >= 2) return [seq];
@@ -233,7 +237,7 @@ export function sequencesOf(row: MotionRow): Array<Array<{ t: number | null; k: 
   if (Array.isArray(fo)) {
     const seq = (fo as unknown[])
       .map((x) => String(x ?? "").trim().slice(0, 30))
-      .filter(Boolean)
+      .filter((f) => !!f && isLearnableName(f))
       .map((f) => ({ t: null, k: null, f }));
     if (seq.length >= 2) return [seq];
   }
@@ -320,6 +324,11 @@ export function learnPoints(rows: ReadonlyArray<MotionRow>): Record<string, Poin
     if (!f || typeof f !== "object") continue;
     for (const [name, v] of Object.entries(f as Record<string, unknown>)) {
       if (!v || typeof v !== "object") continue;
+      /**
+       * 2026-11-14 竹内さん「ゴミデータが入らないようになっているか」:
+       *   押す対象でない入れ物（`div`・`img`・`td` など）は**学ばない**。
+       */
+      if (!isLearnableName(name)) continue;
       const r = v as Record<string, unknown>;
       const x = frac(r.x), y = frac(r.y), n = num(r.n) ?? 0;
       if (x == null || y == null || n <= 0) continue;
@@ -653,6 +662,48 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
   }
 
   /**
+   * 2026-11-14 竹内さん「ゴミデータが入らないようになっているか／学習は統括の部分が管轄して整理もできているのか」:
+   *   **入る前**にゴミを数え、統括に渡す（統括が「除く・畳む」を判断する）。
+   *   ⚠ 実際の除去は `sequencesOf`（isLearnableName）・`looksLikeToggleLoop`・同じ日の畳み込みが行う。
+   */
+  const garbage: Array<{ kind: string; n: number }> = [];
+  {
+    let toggle = 0, junk = 0, dup = 0, longRun = 0;
+    const seenDay = new Set<string>();
+    for (const r of list) {
+      const rawOps = Array.isArray(r.shot_ops) ? (r.shot_ops as unknown[]) : [];
+      const names = rawOps
+        .map((o) => (o && typeof o === "object" ? String((o as Record<string, unknown>).f ?? "").trim() : ""))
+        .filter(Boolean);
+      if (names.length) {
+        // 押す対象でない入れ物
+        junk += names.filter((n) => !isLearnableName(n)).length;
+        // 交互クリック
+        for (const s of sequencesOf({ ...r, shot_ops: names.map((f) => ({ f })) } as never)) {
+          if (looksLikeToggleLoop(s)) toggle++;
+        }
+        // 同じ欄の4連打
+        let run = 1;
+        for (let i = 1; i < names.length; i++) {
+          if (names[i] === names[i - 1]) { run++; if (run >= 4) { longRun++; break; } }
+          else run = 1;
+        }
+        // 同じ日の同じ並び
+        const day = String(r.created_at ?? "").slice(0, 10);
+        const sig = day + "|" + names.join(">");
+        if (seenDay.has(sig)) dup++;
+        else seenDay.add(sig);
+      }
+      const fo = (r as unknown as Record<string, unknown>).field_order;
+      if (Array.isArray(fo)) junk += fo.map((x) => String(x ?? "")).filter((n) => n && !isLearnableName(n)).length;
+    }
+    if (toggle) garbage.push({ kind: "交互クリック（トグル跡）", n: toggle });
+    if (junk) garbage.push({ kind: "押す対象でない入れ物", n: junk });
+    if (dup) garbage.push({ kind: "同じ日の同じ並び（水増し）", n: dup });
+    if (longRun) garbage.push({ kind: "同じ欄の4連打", n: longRun });
+  }
+
+  /**
    * 2026-11-14 竹内さん「学習の統括が強化されるように、その点も徹底する」:
    *   弱い所を**次にやる事**に変える（統括の判断）。優先度順・根拠つき。
    *   さらに**モード別**（通常／自動／AIX）に「足りているか・何を足すか」も決める。
@@ -667,7 +718,7 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
         gaps: v.gaps,
       },
     ]),
-  ));
+  ), garbage);
 
   const bundle: HumanLearnBundle = {
     v: 1,
@@ -686,7 +737,7 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     gaps: { median_ms: median(gapSamples), samples: gapSamples.length },
     ...(weak.length ? { weak } : {}),
     ...(Object.keys(shotLearn.screens).length ? { screen_flow: shotLearn.screens, shots: { total: shotLearn.total, with_ops: shotLearn.withOps } } : {}),
-    ...(learnPlan.items.length || learnPlan.filled ? { learn_plan: learnPlan } : {}),
+    ...(learnPlan.items.length || learnPlan.filled || (learnPlan.cleanup && learnPlan.cleanup.length) || (learnPlan.mode_plan && learnPlan.mode_plan.length) ? { learn_plan: learnPlan } : {}),
     ...(Object.keys(by_mode).length ? { by_mode } : {}),
     /**
      * 2026-11-14: `mode_counts` は by_mode と**別**に出す。
@@ -785,6 +836,18 @@ export function describeBundle(b: HumanLearnBundle): string[] {
     for (const m of b.learn_plan.mode_plan) {
       out.push(`  ・${m.verdict}`);
       if (m.action && m.action !== "追加で強化する所は無し") out.push(`    → ${m.action}`);
+    }
+  }
+  /**
+   * 2026-11-14 竹内さん「学習は統括の部分が管轄して整理もできているのか」:
+   *   **整理（ゴミの扱い）**を出す。何を除いたか・何が残っているか。
+   */
+  if (b.learn_plan && Array.isArray(b.learn_plan.cleanup) && b.learn_plan.cleanup.length) {
+    out.push("");
+    out.push("▼ ゴミの整理（統括の判断）");
+    for (const c of b.learn_plan.cleanup) {
+      out.push(`  ・${c.kind}: ${c.n}件 … ${c.verdict}`);
+      if (c.action && c.action !== "なし（除外の規則を入れた）" && c.action !== "なし（畳む規則は入っている）") out.push(`    → ${c.action}`);
     }
   }
   /**

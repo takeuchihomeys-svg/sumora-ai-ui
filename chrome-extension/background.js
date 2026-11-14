@@ -2233,12 +2233,38 @@ if (msg.type === "axlx-human-shot") {
  *     （＝サーバーで学んだ事が現場に届いていない）。
  *   → 使える物も一緒に置く。ページ側は「あれば使う」（無ければ今まで通り）。
  */
-var _LEARN_KEYS = ["axlx_learn_next", "axlx_learn_points", "axlx_learn_at"];
+var _LEARN_KEYS = ["axlx_learn_next", "axlx_learn_points", "axlx_learn_at", "axlx_learn_ver"];
+/**
+ * 2026-11-14 竹内さん「学習して改善したら自動モード強化されるように」:
+ *   ⚠ 旧は**24時間に1回**しか取りに行かなかったので、学習しても**最大24時間反映されなかった**
+ *     （「改善したのに自動モードが変わらない」の一因）。
+ *   → ① **起動時と1時間ごと**に軽く見に行く（`?touch=0` で「版」だけ確認・重くない）
+ *     ② **学習の版（generated_at）が変わっていたら**すぐ取り直す
+ *     ③ 版が同じなら何もしない（サーバーも拡張も無駄に動かない）
+ */
+var _LEARN_CHECK_MS = 60 * 60 * 1000;   // 版を見に行く間隔（1時間）
 async function _refreshLearnedBundle(force) {
   try {
     var st = await chrome.storage.local.get(_LEARN_KEYS);
     var last = Number(st && st.axlx_learn_at) || 0;
-    if (!force && last && Date.now() - last < 24 * 3600 * 1000) return { ok: true, skipped: "fresh" };
+    var lastVer = String((st && st.axlx_learn_ver) || "");
+    /**
+     * 強制でない時: 1時間たっていなければ「版だけ」確かめる（軽い）。
+     *   ・版が変わっていなければ何もしない
+     *   ・版が変わっていたら取り直す（＝学習が進んだ瞬間に反映される）
+     */
+    if (!force && last && Date.now() - last < _LEARN_CHECK_MS) return { ok: true, skipped: "fresh" };
+    if (!force && last) {
+      try {
+        var head = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0", { cache: "no-store", signal: AbortSignal.timeout(8000) });
+        if (head.ok) {
+          var hj = await head.json();
+          var hv = String((hj && hj.generated_at) || "");
+          if (hv && hv === lastVer) return { ok: true, skipped: "same_version" };
+          console.log("[learn] 学習が新しくなりました（" + lastVer + " → " + hv + "）→ 取り込みます");
+        }
+      } catch (_) { /* 版が読めなければ取りに行く（安全側） */ }
+    }
     // touch=1（既定）で読む＝**読んだ印**をサーバーに残す（どの PC が読んでいるか分かる）
     var res = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile", { cache: "no-store", signal: AbortSignal.timeout(15000) });
     if (!res.ok) return { ok: false, error: "http_" + res.status };
@@ -2294,6 +2320,8 @@ async function _refreshLearnedBundle(force) {
       /** モード別の押す順番（そのモードで学べている時だけ） */
       ...(modeNext ? { axlx_learn_next_mode: modeNext, axlx_learn_next_mode_name: myMode } : {}),
       axlx_learn_at: Date.now(),
+      /** 2026-11-14: 学習の版（変わったら取り直す印） */
+      axlx_learn_ver: String(bundle.generated_at || ""),
       axlx_learn_src: { rows: (bundle.source && bundle.source.rows) || 0, at: bundle.generated_at || null, dropped: bundle.dropped_cols || null },
     });
     console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個・弱い所 " + weak.length + "件・画面 " + Object.keys(screenFlow).length + "種類・一連 " + ((seqFlow.sequence || []).length) + "手"
@@ -2307,8 +2335,18 @@ async function _refreshLearnedBundle(force) {
     return { ok: false, error: String((e && e.message) || e) };
   }
 }
-// 起動した時に1回（前回から24時間たっていれば取りに行く）
+// 起動した時に1回（前回から1時間たっていれば取りに行く）
 try { _refreshLearnedBundle(false).catch(function () {}); } catch (_) {}
+/**
+ * 2026-11-14 竹内さん「学習して改善したら自動モード強化されるように」:
+ *   **1時間ごと**に版を確かめ、新しければ取り込む（学んだら最大1時間で反映）。
+ *   ⚠ 版が同じなら通信は1回だけ（軽い）。
+ */
+try {
+  setInterval(function () {
+    _refreshLearnedBundle(false).catch(function () {});
+  }, _LEARN_CHECK_MS);
+} catch (_) {}
 try {
   chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
     if (!msg) return;

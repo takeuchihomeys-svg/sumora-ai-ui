@@ -65,8 +65,14 @@ console.log("=== ③ 偶然を型にしない（min）");
     ok(!r.sequence.includes("C"), r.sequence.join(">"));
   });
   it("回数の多い組を優先する（揺れる時）", () => {
-    const r = learnSequenceFromShots([S(["A", "B", "C"]), S(["A", "B", "C"]), S(["A", "D", "C"])], { min: 2 });
-    eq(r.sequence, ["A", "B", "C"]);
+    // ⚠ 2026-11-14: 1文字の名前は「入れ物」として学習から除く（isLearnableName）。
+    //   試験のデータは実名にする（A/B/C では除外されて空になる）。
+    const r = learnSequenceFromShots([
+      S(["rental_cost1", "rental_cost2", "square_meter_l"]),
+      S(["rental_cost1", "rental_cost2", "square_meter_l"]),
+      S(["rental_cost1", "required_time", "square_meter_l"]),
+    ], { min: 2 });
+    eq(r.sequence, ["rental_cost1", "rental_cost2", "square_meter_l"]);
   });
 }
 

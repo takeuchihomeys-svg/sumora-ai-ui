@@ -90,7 +90,7 @@ console.log("\n■ ⑤ 繋がっている（自動モードの入力順）");
   ok("基本条件の並びを学んだ順にする", /_basicQueue = _orderByLearned\(_basicQueue\);/.test(ps));
   ok("  学んだ順が無ければ今まで通り（元の並び）", /if \(!next\) return items;/.test(ps) || /return \(r && Array\.isArray\(r\.items\)/.test(ps));
   ok("  学んだ順を storage から読む", /axlx_learn_next/.test(ps));
-  ok("background が1日1回 束を取りに行く", /_refreshLearnedBundle/.test(bg) && /24 \* 3600 \* 1000/.test(bg));
+  ok("background が1時間ごとに版を確かめる（旧: 1日1回）", /_refreshLearnedBundle/.test(bg) && /_LEARN_CHECK_MS = 60 \* 60 \* 1000/.test(bg));
   ok("  取れなくても止まらない（あれば使う）", /return \{ ok: false, error: "http_" \+ res\.status \}/.test(bg));
   ok("learn-order.js を manifest に足した", mf.web_accessible_resources[0].resources.includes("learn-order.js"));
 }

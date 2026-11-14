@@ -38,7 +38,13 @@ console.log("■ ② 読んだ印（read_count）が残る＝touch=1 で読む")
 {
   const s = read("background.js");
   const line = s.split("\n").find((l) => l.includes("/api/human-learn-profile")) || "";
-  t("touch=0 を付けていない", !/human-learn-profile\?touch=0/.test(s), line.trim());
+  /**
+   * 2026-11-14: 版を確かめる軽い呼び出し（`?touch=0`）は**正しい用途**（読んだ印を増やさない）。
+   *   本体の取り込みでは touch を付けない（＝読んだ印を残す）。
+   */
+  const touchZeroUses = (s.match(/human-learn-profile\?touch=0/g) || []).length;
+  ok("touch=0 は『版の確認』だけ（本体の取り込みでは付けない）", touchZeroUses <= 1, touchZeroUses);
+  ok("本体の取り込みは touch 無し", /fetch\(SUMORA_BATCH_API \+ "\/api\/human-learn-profile", \{/.test(s));
   t("読んだ印のため touch=1（既定）で読む", line.includes("/api/human-learn-profile"));
   // サーバー側: touch が true の時だけ read_count を増やす
   const route = fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "human-learn-profile", "route.ts"), "utf8");

@@ -101,7 +101,14 @@ console.log("\n■ ④ 通常モードで人の動きを覚える（人の間を
   ok("何も無い時は案内を出す", /まだ人の動きを覚えていません/.test(L.reportLine(null)));
 
   const rec2 = read("human-learn-record.js");
-  ok("通常・スタッフの時だけ覚える（自動・AIX では覚えない）", /function shouldLearn\(st\)/.test(rec2) && /return !autoOn;/.test(rec2));
+  /**
+   * 2026-11-14 竹内さん「学習して改善したら自動モード強化されるように」:
+   *   ⚠ 旧は自動モードで記録を止めていた（`return !autoOn`）ため、
+   *     `by_mode` に AIX（自動）が0件になっていた。
+   *   → **どのモードでも記録する**（モードは `mode` 列で分かれ、`by_mode` が別々に学ぶ）。
+   */
+  ok("どのモードでも覚える（自動・AIX でも記録する）", /function shouldLearn\(st\)/.test(rec2) && !/return !autoOn;/.test(rec2));
+  ok("写真はどのモードでも撮る（shouldShoot）", /function shouldShoot\(st\)/.test(rec2));
   ok("自動モードになったら見張りを外す", /stopWatching\(\)/.test(rec2) && /detach\(\)/.test(rec2));
   ok("人が起こした物だけ数える（isTrusted）", /isTrusted/.test(read("human-learn.js")));
   ok("保存のキーは axlx_human_learn", /var KEY = "axlx_human_learn"/.test(rec2));
