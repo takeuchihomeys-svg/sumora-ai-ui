@@ -1,6 +1,6 @@
 // 2026-10-23 ブレインの弱い所の台帳（brain_weaknesses）の純関数のテスト
 // 実行: npx tsx app/lib/__tests__/brain-weaknesses.test.ts（全 PASS で exit 0）
-import { guessWeaknessTier, withGuessedTier, SEED_WEAKNESSES, aggregateWeaknessHits, brainWeaknessLedgerEnabled, isWeaknessKey, mergeWeaknessRow, mergeEvidence, renderTouchedWeaknesses, weaknessHitsFromAixRows, weaknessHitsFromExamReasons, weaknessHitsFromUnknownAggs, weaknessKeyForUnknown } from "../brain-weaknesses";
+import { applyWeaknessMark, isUnmarkedWeakness, unmarkedWeaknessLine, guessWeaknessTier, withGuessedTier, SEED_WEAKNESSES, aggregateWeaknessHits, brainWeaknessLedgerEnabled, isWeaknessKey, mergeWeaknessRow, mergeEvidence, renderTouchedWeaknesses, weaknessHitsFromAixRows, weaknessHitsFromExamReasons, weaknessHitsFromUnknownAggs, weaknessKeyForUnknown } from "../brain-weaknesses";
 import { upsertWeaknessHits } from "../brain-weaknesses-server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -22,6 +22,34 @@ const ok = (c: boolean, m: string) => { if (c) console.log(`PASS ${m}`); else { 
   ok(merged.tier === "土台" && merged.next === "N" && merged.owner === "作業員1" && merged.w1_1107 === "記録" && (merged.exam_qids ?? []).length === 2, "足す時に印・次の一手・作業員の書き込みを消さない（旧は消えていた）");
   const row = mergeWeaknessRow(null, { key: "exam-stage:brain:q9", title: "t", area: "brain", evidence: {} }, "2026-11-13T00:00:00Z");
   ok(row.evidence.tier === "細分化" && row.evidence.tier_guess === true, "新しい行に推定の印が付く");
+}
+
+// 2026-11-15 作業員I: 印なしの見張りと人が決めた印
+{
+  const now = "2026-11-15T00:00:00Z";
+  const R = (key: string, status: "open" | "in_progress" | "fixed", ev: Record<string, unknown>, first: string) => ({ key, status, evidence: ev, first_seen: first });
+  const rows = [
+    R("brain:new-a", "open", {}, "2026-11-14T12:00:00Z"),                                              // 新しい・印なし
+    R("brain:new-b", "open", { tier: "要確認", tier_guess: true }, "2026-11-14T13:00:00Z"),              // 新しい・要確認＝印なし
+    R("watch-break:new-c", "open", { tier: "土台", tier_guess: true, next: "N" }, "2026-11-14T14:00:00Z"), // 新しい・推定の印だけ
+    R("brain:new-d", "in_progress", { tier: "細分化" }, "2026-11-14T15:00:00Z"),                         // 新しい・次の一手が空＝印なし
+    R("exam-stage:brain:q1", "open", {}, "2026-11-14T16:00:00Z"),                                      // 試験の外れは数えない
+    R("brain:old", "open", {}, "2026-11-01T00:00:00Z"),                                                // 古い・印なし（全体には数える）
+    R("brain:new-fixed", "fixed", {}, "2026-11-14T17:00:00Z"),                                         // 閉じた行は数えない
+  ];
+  const l = unmarkedWeaknessLine(rows, now);
+  ok(l.startsWith("印なし 3行"), `新しく入った印なしの数（${l}）`);
+  ok(l.includes("土台 1・連携 0・細分化 0") && l.includes("推定の印だけ 1行") && l.includes("全体で印なし 4行") && l.includes("brain:new-a") && !l.includes("exam-stage"), "推定だけ・全体の数・試験の外れを数えない");
+  ok(unmarkedWeaknessLine([R("brain:x", "open", { tier: "土台", next: "N" }, "2026-11-14T12:00:00Z"), R("brain:old", "open", {}, "2026-11-01T00:00:00Z")], now) === "", "新しい行が全部印つきなら何も出さない（今までの出力のまま）");
+  ok(unmarkedWeaknessLine(rows, now, 1) === "", "since の外は数えない");
+  ok(isUnmarkedWeakness(R("k", "open", { tier: "連携", next: "N" }, now)) === false, "連携も印");
+  const m = applyWeaknessMark({ tier: "要確認", tier_guess: true, exam_qids: ["q1"], w1: "記録" }, { tier: "土台", next: " 材料の帳面を作る ", cause: "材料", owner: "作業員1", by: "作業員I" }, now);
+  ok(m.tier === "土台" && m.next === "材料の帳面を作る" && m.cause === "材料" && m.owner === "作業員1" && m.marked_by === "作業員I" && m.marked_at === now, "人の印・原因・持ち主を足す");
+  ok(m.tier_guess === undefined && (m.exam_qids ?? []).length === 1 && m.w1 === "記録", "推定の印は外し・他の欄は残す");
+  let threw = 0;
+  try { applyWeaknessMark({}, { tier: "要確認", next: "N" }, now); } catch { threw++; }
+  try { applyWeaknessMark({}, { tier: "土台", next: " " }, now); } catch { threw++; }
+  ok(threw === 2, "要確認・空の次の一手は断る");
 }
 
 // 1. 種: 21個・鍵は一意で形が正しい・状態がそろっている

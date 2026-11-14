@@ -21,8 +21,15 @@ export const AREA_JA: Record<WeaknessArea, string> = { brain: "道を選ぶ力",
 export type WeaknessEvidence = { exam_qids?: string[]; exam_labels?: string[]; watch_turn_ids?: number[]; unknown_ids?: number[]; owners?: string[]; exam_reps?: string[]; reopened?: string[];
   /** 2026-11-13 作業員1（竹内さん「弱い部分を見つけたら具体的に細かく細分化」）: 印（土台／細分化／要確認）・具体の次の一手・持ち主・束と親・推定の印 */
   tier?: WeaknessTier; next?: string; owner?: string; group?: string; group_parent?: number; tier_guess?: boolean;
+  /** 2026-11-15 作業員I: 原因の3つ（材料が届いていない／場面や決まりの読み違い／返信と AIX の判断の誤り）・印を付けた日と人 */
+  cause?: WeaknessCause; marked_at?: string; marked_by?: string;
   [k: string]: unknown };
-export type WeaknessTier = "土台" | "細分化" | "要確認";
+export type WeaknessTier = "土台" | "連携" | "細分化" | "要確認";
+/** 欠けている物の印の3つ（2026-11-15 竹内さん・KB fb171011）: 土台不足／連携の弱さ（読んだ物が統括・書き手・最終チェックに届かない・作ってあるのに既定 off・材料どうしが食い違って決まりを打ち消す）／細かさ不足（状況ごとの重要もここ）。直す順は 土台→連携→細分化。要確認は推定できなかった物＝印なしに数える */
+export const WEAKNESS_TIERS: readonly WeaknessTier[] = ["土台", "連携", "細分化"];
+export type WeaknessCause = "材料" | "場面" | "判断";
+export const WEAKNESS_CAUSES: readonly WeaknessCause[] = ["材料", "場面", "判断"];
+export const CAUSE_JA: Record<WeaknessCause, string> = { 材料: "材料が届いていない", 場面: "場面や決まりの読み違い", 判断: "返信と AIX の判断の誤り" };
 export type WeaknessRow = {
   id?: number; key: string; title: string; area: WeaknessArea; symptom: string | null; root_cause: string | null;
   status: WeaknessStatus; fix_ref: string | null; evidence: WeaknessEvidence; occurrences: number;
@@ -240,4 +247,37 @@ export function withGuessedTier(ev: WeaknessEvidence, key: string, area: Weaknes
   if (ev.tier) return ev;
   const g = guessWeaknessTier(key, area);
   return { ...ev, tier: g.tier, tier_guess: true, ...(g.next ? { next: g.next } : {}), ...(g.owner ? { owner: g.owner } : {}), ...(g.group ? { group: g.group, group_parent: GROUP_NEXT[g.group].parent } : {}) };
+}
+
+// ─── 印なしの見張り（2026-11-15 作業員I・竹内さん 11/13「見つけた弱い所は、土台／細分化の印と次の一手まで決めて持ち主に直させる」）──
+//   印なし＝開いている行で、印（土台／連携／細分化）が無いか「要確認」、または次の一手が空。
+//   推定の印だけ（tier_guess）＝印はあるが人が決めていない。試験の外れの行（exam-stage:）は数が多く推定で足りるので数えない。
+type MarkRow = Pick<WeaknessRow, "key" | "status" | "evidence" | "first_seen">;
+const isOpenRow = (r: Pick<WeaknessRow, "status">) => r.status === "open" || r.status === "in_progress";
+export function isUnmarkedWeakness(r: MarkRow): boolean {
+  const ev = r.evidence ?? {};
+  return !ev.tier || ev.tier === "要確認" || !String(ev.next ?? "").trim();
+}
+/** 毎朝の拾い上げの1行。新しく入った行（first_seen が sinceHours 以内）に印なしがある時だけ文を返す（無ければ空文字＝今までの出力のまま） */
+export function unmarkedWeaknessLine(rows: ReadonlyArray<MarkRow>, nowIso: string, sinceHours = 24): string {
+  const open = rows.filter((r) => isOpenRow(r) && !r.key.startsWith("exam-stage:"));
+  const since = Date.parse(nowIso) - sinceHours * 3600_000;
+  const fresh = open.filter((r) => r.first_seen && Date.parse(r.first_seen) >= since);
+  const freshUnmarked = fresh.filter(isUnmarkedWeakness);
+  if (!freshUnmarked.length) return "";
+  const allUnmarked = open.filter(isUnmarkedWeakness).length;
+  const guessOnly = fresh.filter((r) => !isUnmarkedWeakness(r) && r.evidence?.tier_guess).length;
+  // 新しく入った行の印を3つで数える（直す順 土台→連携→細分化・KB fb171011）
+  const byTier = WEAKNESS_TIERS.map((t) => `${t} ${fresh.filter((r) => !isUnmarkedWeakness(r) && r.evidence?.tier === t).length}`).join("・");
+  return `印なし ${freshUnmarked.length}行（新しく入った ${sinceHours}時間 ${fresh.length}行: ${byTier}・印なし ${freshUnmarked.length}${guessOnly ? `・うち推定の印だけ ${guessOnly}行` : ""}・開いている行の全体で印なし ${allUnmarked}行）:${freshUnmarked.slice(0, 8).map((r) => r.key).join(", ")}${freshUnmarked.length > 8 ? " ほか" : ""}`;
+}
+/** 人が決めた印を evidence に足す（推定の印 tier_guess は外す・他の欄は消さない） */
+export type WeaknessMark = { tier: WeaknessTier; next: string; owner?: string; cause?: WeaknessCause; by?: string };
+export function applyWeaknessMark(ev: WeaknessEvidence | null | undefined, m: WeaknessMark, nowIso: string): WeaknessEvidence {
+  if (!WEAKNESS_TIERS.includes(m.tier)) throw new Error(`印は ${WEAKNESS_TIERS.join("/")}: ${m.tier}`);
+  if (!m.next.trim()) throw new Error("次の一手が空");
+  if (m.cause && !WEAKNESS_CAUSES.includes(m.cause)) throw new Error(`原因は ${WEAKNESS_CAUSES.join("/")}: ${m.cause}`);
+  const { tier_guess: _drop, ...rest } = ev ?? {};
+  void _drop;
+  return { ...rest, tier: m.tier, next: m.next.trim(), ...(m.owner ? { owner: m.owner } : {}), ...(m.cause ? { cause: m.cause } : {}), marked_at: nowIso, ...(m.by ? { marked_by: m.by } : {}) };
 }
