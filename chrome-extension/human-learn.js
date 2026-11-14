@@ -153,6 +153,29 @@
         try { if (el.querySelector && el.querySelector('input[type="checkbox"], input[type="radio"]')) return "checkbox"; } catch (_) {}
         return "link";
       }
+      /**
+       * 2026-11-14 竹内さん「途中で本来プルダウンなのにプルダウンと判断できていない部分や
+       *   押すことができていないボタンはあったりするか」:
+       *   ⚠ 実測で **`確定してリストへ｜span`（79回）と `左の検索｜span`（11回）が `other`** だった。
+       *     リアプロのボタンは `<span>` / `<div>` で作られていて、`onclick` や `role` が付いている。
+       *     `other` のままだと「押せる物」として扱えず、**押せたかの確認もできない**（＝止まる原因）。
+       *   → **押せる印がある物は `button`** と判定する:
+       *     ・`onclick` が付いている ・`role="button"` ・`cursor: pointer`
+       *     ・class に search / btn / button / submit / next / confirm を含む
+       */
+      var _clickable = (function () {
+        try {
+          if (el.onclick) return true;
+          if (String((el.getAttribute && el.getAttribute("role")) || "").toLowerCase() === "button") return true;
+          var cls = String((el.className && typeof el.className === "string") ? el.className : "").toLowerCase();
+          if (/(btn|button|submit|go_search|search|next|confirm|kakutei)/.test(cls)) return true;
+          var st = null;
+          try { st = (typeof getComputedStyle === "function") ? getComputedStyle(el) : null; } catch (_) { st = null; }
+          if (st && String(st.cursor || "") === "pointer") return true;
+        } catch (_) {}
+        return false;
+      })();
+      if (_clickable) return "button";
       return "other";
     } catch (_) { return "other"; }
   }

@@ -2159,7 +2159,24 @@
       console.log('[AX] 検索の判断:', why, o);
     } catch (_) {}
   }
+  /**
+   * 2026-11-14 竹内さん「検索まで押せるか」:
+   *   地域・駅のモーダル（小窓）が開いているか。開いている間は「保険の検索」を押さない
+   *   （モーダルの中で検索を押すと条件が中途半端になる）。
+   */
+  function _axModalOpen() {
+    try {
+      var d = document.querySelector('.this_window, [role="dialog"], .modal, #modal, .modal_wrap');
+      if (!d) return false;
+      return isVisible(d);
+    } catch (_) { return false; }
+  }
+
   function clickSearch() {
+    /**
+     * 2026-11-14: **検索を押した時刻**を残す（保険の判定に使う・二重押しを防ぐ）。
+     */
+    try { window._axSearchPressedAt = Date.now(); } catch (_) {}
     if (_guideOn()) {
       // 案内モード（data-axlx-guide が "0" 以外）＝拡張は押さない。
       //   ⚠ 自動モードなのにここに来るなら、realpro-guide.js が "0" を書けていない（＝原因が分かる）
@@ -4624,6 +4641,34 @@
     }
     try {
       fillRealpro(e.data.conditions);
+      /**
+       * 2026-11-14 竹内さん「検索まで押せるか」「検索ボタンを押さなかった原因も地域のところで
+       *   止まってしまっていた可能性ある」:
+       *   ⚠ `fillRealpro` は**条件を積むだけ**で、検索を押すのは
+       *     「モーダル（地域・駅）が完了した時」だけ。**モーダルが無い条件では検索が押されない**。
+       *     実測: 並びに「検索」があるのは 11/79（14%）だけだった。
+       *   → **保険**: 入力を始めてから N 秒たっても検索が押されていなければ、
+       *     条件が入っている事を確かめて**押す**（全件検索はしない）。
+       *     ⚠ 地域・駅のモーダルが動いている間は押さない（モーダルの完了を待つ）。
+       */
+      try {
+        if (window.__axSearchFallbackTimer) clearTimeout(window.__axSearchFallbackTimer);
+        window.__axSearchFallbackTimer = setTimeout(function () {
+          try {
+            // すでに検索を押した／モーダルが開いている／入力中 → 何もしない
+            if (window._axSearchPressedAt && Date.now() - window._axSearchPressedAt < 60000) return;
+            if (_axModalOpen()) return;
+            if (isClickQueueBusy()) { return; }
+            var any = document.querySelector('input[name="city_code[]"]:checked')
+              || document.querySelector('input[name="rental_cost2"]')
+              || document.querySelector('input[name="room_layout_id[]"]:checked');
+            if (!any) return;
+            console.log('[AX] 検索が押されていない → 条件は入っているので押します（保険）');
+            try { if (_audit) _auditStepP('search_fallback', '一定時間たっても押されていないため押す'); } catch (_) {}
+            clickSearch();
+          } catch (_) {}
+        }, 25000);
+      } catch (_) {}
     } catch (err) {
       // fill-done 保証: 同期例外でも必ず完了シグナルを送る
       console.error('[AX] fillRealpro 同期例外 → fill-done送信', err);

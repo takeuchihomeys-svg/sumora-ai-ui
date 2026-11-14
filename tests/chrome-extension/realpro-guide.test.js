@@ -76,7 +76,13 @@ ok("bulk-dl: 案内モードの間は自動の押下を始めない（旧の一�
 ok("bulk-dl: 読めない時も止める（明示の OFF＝false の時だけ動く・自動モードを選んだ時だけ開く）", /_guideOff = !_GUIDE_ONLY \|\| _autoModeOn/.test(bd) && /if \(_guideOff\) return false;/.test(bd) && /if \(_autoModeOn\) return false;/.test(bd));
 const pp = read("popup.js");
 ok("popup: 案内モードの間は再開の印（axlx_pending_auto_send）を置かない", /_gm\.guideMode !== false \|\| \(self\.AxlxModeCore && self\.AxlxModeCore\.GUIDE_ONLY\)\) \{ try \{ chrome\.storage\.session\.remove\("axlx_pending_auto_send"\)/.test(pp));
-ok("page-script: 検索を押す所（clickSearch・見積用）も案内モードの間は押さない", /function clickSearch\(\) \{\s*if \(_guideOn\(\)\)/.test(ps) && /if \(_guideOn\(\)\) \{ window\.__axlxEstimateSearchResult/.test(ps));
+  ok("page-script: 検索を押す所（clickSearch・見積用）も案内モードの間は押さない",
+    /**
+     * 2026-11-14: `clickSearch` の先頭に「検索を押した時刻」を残す処理を足したので、
+     *   `function clickSearch() { if (_guideOn())` の形ではなくなった。
+     *   → 案内モードの判定がある事で確かめる（_axSearchPressedAt の後でもよい）。
+     */
+    /function clickSearch\(\) \{[\s\S]{0,300}if \(_guideOn\(\)\)/.test(ps) && /if \(_guideOn\(\)\) \{ window\.__axlxEstimateSearchResult/.test(ps));
 
 // ── ⑤ 2026-10-01 竹内「ここの一覧にリアプロ・ITANDI のボタン作って押したら反映されるように／監視画面がリアプロと判断できたらリアプロ」──
 {
