@@ -21,8 +21,11 @@ export function phraseTables(env?: Env): PhraseTables {
     PHRASE_ENDING_TABLE: merge(V1.PHRASE_ENDING_TABLE, V2.PHRASE_ENDING_TABLE),
     PHRASE_LENGTH_TABLE: merge(V1.PHRASE_LENGTH_TABLE, V2.PHRASE_LENGTH_TABLE),
     PHRASE_TRUST_SUB_TABLE: merge(V1.PHRASE_TRUST_SUB_TABLE, V2.PHRASE_TRUST_SUB_TABLE),
-    PHRASE_SUB_TABLE: merge(V1.PHRASE_SUB_TABLE, V2.PHRASE_SUB_TABLE),
-    PHRASE_ROWS_TABLE: merge(V1.PHRASE_ROWS_TABLE, V2.PHRASE_ROWS_TABLE),
+    // 行の並び・下の役目の表は1版のまま（11/15 統括役「押さえ −1 は許さない」）: 2版の主の役目は決まった順（mainRoleOf: 答え→確かめる約束→…→新着の約束）で選ぶので、
+    //   主が新着の約束（keep）の返信には押さえ（答え・確かめる約束）が構造上入らない＝question|keep の押さえ 0.5→0 で q197 の押さえの行が落ちた（文の物差し 19→18）。
+    //   主の役目を選び直せるまで（LLM の3回読みの main_role と同じ選び方が決まった語で作れるまで）、主の役目に寄る行の表は2版にしない
+    PHRASE_SUB_TABLE: V1.PHRASE_SUB_TABLE,
+    PHRASE_ROWS_TABLE: V1.PHRASE_ROWS_TABLE,
     PHRASE_EMOJI_TABLE: merge(V1.PHRASE_EMOJI_TABLE, V2.PHRASE_EMOJI_TABLE),
   } as unknown as PhraseTables;
   return merged;
