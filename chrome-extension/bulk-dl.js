@@ -457,15 +457,41 @@
     var v = _supCache || {};
     var head = String(v.headline || "");
     var issues = (v.self_check && Array.isArray(v.self_check.issues)) ? v.self_check.issues : [];
-    return "統括が「自動に渡してよい」と言っていません（" + (head || "判断なし") + "）" + (issues.length ? "／" + issues[0] : "");
+    return "統括が「危ない」と言っています（" + (head || "判断なし") + "）" + (issues.length ? "／" + issues[0] : "");
   }
+  /**
+   * 2026-11-14 竹内さん「検索した後物件ダウンロードする動きにうつっていなかった」:
+   *
+   *   ⚠ **私が入れた関所が原因だった**。統括が `not_yet` を出していたので、
+   *     `bulk-dl` の送信・ダウンロードが**全部止まっていた**（現場が止まる）。
+   *   統括は「学びがまだ」と言っているだけで、**検索そのものを止めてよい理由ではない**
+   *   （学びが薄くても、検索して物件を出す業務は回さないといけない）。
+   *
+   *   → **止めない。警告だけ出す**（小窓に赤字で「統括: まだ学べていません」）。
+   *     ⚠ 本当に止めるべきは「**危ない**（unsafe）」時だけ。
+   *       unsafe は「押す場所が0＝区・駅を押せない恐れ」のような**誤検索に直結する**時。
+   *     ⚠ `not_yet` / `almost` は**止めない**（学びが薄いだけ）。
+   */
   function _supBlocksAuto(where) {
-    if (_supervisorAllowsAuto()) return false;
-    console.warn("[AXLX bulk-dl] 統括が止めているため自動の送信・ダウンロードをしない（" + where + "）: " + _supervisorBlockReason());
-    try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
-    try { clearAutoSendState(); } catch (_) {}
-    try { _nudge("⛔ " + _supervisorBlockReason().slice(0, 90)); } catch (_) {}
-    return true;
+    var v = _supCache || {};
+    var verdict = String(v.verdict || "");
+    // 判断が無い・ほぼ学べている・まだ学べていない → **止めない**（警告だけ）
+    if (!verdict || verdict === "ready" || verdict === "almost" || verdict === "not_yet") {
+      if (verdict && verdict !== "ready") {
+        console.warn("[AXLX bulk-dl] 統括: " + verdict + "（学びが薄いが、検索は続けます）: " + String(v.headline || ""));
+        try { _nudge("ℹ️ 統括: " + String(v.headline || "").slice(0, 60)); } catch (_) {}
+      }
+      return false;
+    }
+    // **unsafe の時だけ止める**（誤検索に直結する）
+    if (verdict === "unsafe") {
+      console.warn("[AXLX bulk-dl] 統括が「危ない」と言っているため自動の送信・ダウンロードをしない（" + where + "）: " + _supervisorBlockReason());
+      try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
+      try { clearAutoSendState(); } catch (_) {}
+      try { _nudge("⛔ " + _supervisorBlockReason().slice(0, 90)); } catch (_) {}
+      return true;
+    }
+    return false;
   }
   try {
     chrome.storage.local.get([_SUP_KEY], function (r) {

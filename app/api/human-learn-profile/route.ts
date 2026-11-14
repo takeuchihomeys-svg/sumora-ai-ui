@@ -121,7 +121,28 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   } catch (e) {
     console.warn("[human-learn-profile] 検索の結果を取れません:", e instanceof Error ? e.message : String(e));
   }
-  const bundle = compactBundle(buildHumanLearnBundle(rows as never, Date.now(), auditsSummary));
+  /**
+   * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
+   *   **現場への指示（`automation_commands`）の詰まり**も取って統括に渡す。
+   *   ⚠ 検索が動いていても、この指示が拾われないまま／失敗したままなら現場は止まる。
+   *   ⚠ 取れなくても学習の束は作る（`commands=null`）。
+   */
+  let commandsSummary: import("@/app/lib/learn-command-summary").CommandSummary | null = null;
+  try {
+    const { summarizeCommands } = await import("@/app/lib/learn-command-summary");
+    const since24c = new Date(Date.now() - 24 * 3600_000).toISOString();
+    const cr = await supabase
+      .from("automation_commands")
+      .select("created_at, picked_up_at, completed_at, status, sites, command_type, error_message")
+      .gte("created_at", since24c)
+      .order("created_at", { ascending: false })
+      .limit(300);
+    if (!cr.error) commandsSummary = summarizeCommands((cr.data ?? []) as never, { sinceMs: 24 * 3600_000 });
+    else console.warn("[human-learn-profile] automation_commands を読めません:", cr.error.message);
+  } catch (e) {
+    console.warn("[human-learn-profile] 指示の状態を取れません:", e instanceof Error ? e.message : String(e));
+  }
+  const bundle = compactBundle(buildHumanLearnBundle(rows as never, Date.now(), auditsSummary, commandsSummary));
   if (!bundle.source.rows) { try { note?.("empty_bundle"); } catch (_) {} return null; }
   /**
    * 2026-11-13 竹内さん「なんで連携できていないのか」:

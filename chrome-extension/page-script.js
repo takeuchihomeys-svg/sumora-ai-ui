@@ -784,6 +784,11 @@
     //   間取り・設備のチェックにも一息を入れる（駅と同じ2段）。
     //   ・10% で「項目を見比べる」一息 900〜2600ms ・さらに 3% で 2.6〜5.5秒（考え込む）
     targets.forEach(function (cb) {
+      /**
+       * 2026-11-14 竹内さん「地域の部分ちゃんと１つずつマウスを動かしてクリックしてせんたくする」:
+       *   `_clickEl` 自体を「カーソルを動かしてから押す」に直したので、ここは今まで通り。
+       *   ⚠ 2重に動かさない（`_humanPointerClick` を2回呼ばない）。
+       */
       enqueueHumanClick(cb, _clickEl, 420, 980);
       if (Math.random() < 0.10) {
         var _b1 = 900 + Math.floor(Math.random() * 1700);
@@ -849,6 +854,31 @@
       return v && v.w ? String(v.w) : null;
     } catch (_) { return null; }
   }
+  /**
+   * 2026-11-14 竹内さん「地域の部分ちゃんと１つずつマウスを動かしてクリックしてせんたくする」
+   *   「徒歩選択したあとに、選択までできたが自動で消してしまっている」:
+   *
+   *   ⚠ 自動で入れた地域を**覚えていない**ので、次にモーダルを開いた時に
+   *     「前の残り」と区別できず、**人が選んだ物まで消していた**。
+   *   → **自動で入れた物だけ**を覚える（`__axAutoPicked`）。
+   *     人が選んだ物は覚えない＝消さない。
+   */
+  function _noteAutoPicked(kind, value) {
+    try {
+      var cur = window.__axAutoPicked;
+      if (!cur || typeof cur !== "object") cur = { city: [], town: [], station: [] };
+      var k = String(kind || "city");
+      if (!Array.isArray(cur[k])) cur[k] = [];
+      var v = String(value == null ? "" : value);
+      if (v && cur[k].indexOf(v) < 0) cur[k].push(v);
+      window.__axAutoPicked = cur;
+    } catch (_) {}
+  }
+  /** 自動で入れた物の覚えを消す（新しいお客様の検索を始める時） */
+  function _resetAutoPicked() {
+    try { window.__axAutoPicked = { city: [], town: [], station: [] }; } catch (_) {}
+  }
+
   /** 学んだ「押した位置」（要素の中の割合）を返す（無ければ null） */
   /**
    * 2026-11-14 竹内さん「この地域押すところや、検索押すところちゃんと学習する」:
@@ -1283,7 +1313,28 @@
   //   _hd＝人の操作の間（0.8〜1.5倍）／_pd＝条件を見る間隔（±15%・平均は元と同じ＝回数で打ち切る長さは変えない）
   function _hd(ms) { var H = window.AxlxHumanWait; return H ? H.humanDelay(ms) : ms; }
   function _pd(ms) { var H = window.AxlxHumanWait; return H ? H.pollDelay(ms) : ms; }
-  function _clickEl(el) { el.click(); }
+  /**
+   * 2026-11-14 竹内さん「地域の部分ちゃんと１つずつマウスを動かしてクリックしてせんたくする」
+   *   「今自動的に反映されてしまっている場面がある」:
+   *
+   *   ⚠ 旧は `el.click()` だけだったので、**カーソルが動かず一瞬で入っていた**
+   *     （人が見ると「自動で反映された」ように見える）。
+   *     地域の区・町字・間取り・こだわり条件など、**13か所すべて**がこれを使っていた。
+   *
+   *   → **カーソルをその要素まで動かしてから押す**（`_humanPointerClick`）。
+   *     ⚠ `_humanPointerClick` は Promise を返すが、`enqueueHumanClick` は待たなくてよい
+   *       （押す順番はキューが守る・次の間隔も入っている）。
+   *     ⚠ 見えるカーソル（pointer-ui）が無い環境では、中の `fire(el)` がそのまま押す（今まで通り）。
+   */
+  function _clickEl(el) {
+    try {
+      if (!el) return;
+      // 見えるカーソルで動かしながら押す（失敗しても必ず押す＝止まらない）
+      void _humanPointerClick(el, function (x) { try { x.click(); } catch (_) {} });
+    } catch (_) {
+      try { el.click(); } catch (__) {}
+    }
+  }
   // 2026-11-10 人間的な動き: 押す前に、その要素が画面に入るまで少しずつ動かす（人が目で探して手を伸ばす形）。
   //   一瞬で飛ばさない（behavior: smooth）。画面に入っているなら何もしない。押す・選ぶの中身は変えない。
   // 2026-11-10 v2.5.96 竹内さん「画面無駄に上下しまくりすぎている。実際のスタッフはそこまで上下しまくらないし
@@ -2150,6 +2201,13 @@
       if (code == null || String(code) === "") return;
       _axWardPicked[String(code)] = { at: Date.now(), text: String(text || "").slice(0, 24) };
       _axPickedAt = Date.now();
+      /**
+       * 2026-11-14: **自動で入れた区を覚える**（人が選んだ物と区別するため）。
+       *   ⚠ モーダルを開いた直後に「前の選択を外す」処理があり、
+       *     覚えが無いと**人が選んだ区まで消していた**（竹内さん「自動で消してしまっている」）。
+       *   → ここで覚えておけば、外すのは**自動で入れた物だけ**になる。
+       */
+      if (window._axAutoPicking) _noteAutoPicked("city", code);
     } catch (_) {}
   }
   function _noteStationPicked(code, text) {
@@ -3412,6 +3470,12 @@
       return;
     }
     window._axFillRunning = true;
+    /**
+     * 2026-11-14: ここから**自動で入れる**ので、入れた物を覚える（人が選んだ物と区別する）。
+     *   ⚠ 覚えていないと、次にモーダルを開いた時に「前の残り」と区別できず、
+     *     **人が選んだ地域まで消してしまう**（竹内さん「自動で消してしまっている」）。
+     */
+    try { window._axAutoPicking = true; _resetAutoPicked(); } catch (_) {}
     window._axStDiagDone = false; // 診断ログフラグをリセット（次回fill時に再診断できるようにする）
     // 2026-11-10 v2.6.16 竹内さん（画像）「この住居の住居検索ボタンから2枚目の物件一覧にうつる」:
     //   ホームの画面（左メニューの「住居検索」を押す前）なら、まず検索の画面へ移る。
@@ -4486,8 +4550,37 @@
           try {
             var on = Array.prototype.slice.call(document.querySelectorAll('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked'));
             if (!on.length) return;
-            if (_audit) _auditStepP('area_preclear', on.length + '件を先に外す');
-            console.log('[AX] モーダルを開く前に前の地域の選択を外します:', on.length, '件');
+            /**
+             * 2026-11-14 竹内さん「地域の部分ちゃんと１つずつ…今自動的に反映されてしまっている場面がある」
+             *   「徒歩選択したあとに、選択までできたが自動で消してしまっている」:
+             *
+             *   ⚠ 旧は**全部外して**いたので、**人が選んだ地域まで消していた**。
+             *   → **自動で入れた物だけ**外す（`__axAutoPicked`）。人が選んだ物は残す。
+             *     覚えが無い（前のお客様の残り）時は今まで通り全部外す。
+             */
+            var _auto = window.__axAutoPicked;
+            var _keepHuman = false;
+            try {
+              if (_auto && typeof _auto === "object") {
+                var _set = {};
+                ["city", "town"].forEach(function (k) {
+                  (Array.isArray(_auto[k]) ? _auto[k] : []).forEach(function (v) { _set[k + ":" + String(v)] = true; });
+                });
+                var _targets = on.filter(function (cb) {
+                  var nm = String(cb.name || "");
+                  var kind = nm.indexOf("town_code") >= 0 ? "town" : "city";
+                  return !!_set[kind + ":" + String(cb.value)];
+                });
+                if (_targets.length < on.length) {
+                  _keepHuman = true;
+                  if (_audit) _auditStepP('area_preclear_keep', (on.length - _targets.length) + '件は人が選んだので残す');
+                }
+                on = _targets;
+              }
+            } catch (_) {}
+            if (!on.length) return;
+            if (_audit) _auditStepP('area_preclear', on.length + '件を先に外す' + (_keepHuman ? '（人が選んだ物は残す）' : ''));
+            console.log('[AX] モーダルを開く前に地域を外します:', on.length, '件' + (_keepHuman ? '（人が選んだ物は残す）' : ''));
             on.forEach(function (cb) {
               try { if (cb.checked) { cb.checked = false; cb.dispatchEvent(new Event("change", { bubbles: true })); } } catch (_) {}
             });
@@ -4610,6 +4703,19 @@
              *     「頼んでいない区も入る」「前の区が残る」＝条件が濁る。
              *   → モーダルを開いた直後に、**選択済みの区・町字を全部外す**（1つずつ・人と同じ速さ）。
              *     ⚠ 外すのは**このモーダルの中だけ**（左のサイドバーの検索条件は _doReset が担当）。
+             *
+             * 2026-11-14 竹内さん「地域の部分ちゃんと１つずつマウスを動かしてクリックしてせんたくする。
+             *   今自動的に反映されてしまっている場面がある」
+             *   「徒歩選択したあとに、選択までできたが自動で消してしまっている」:
+             *
+             *   ⚠ **ここが原因だった**。旧は「開いた直後に選択済みを全部外す」だったので、
+             *     **人が自分で選んだ区まで消していた**（＝自動で反映されてしまう／選んだのに消える）。
+             *     さらに `_clearBeforeOpen` も**モーダルを開く前**に全部外していたので、二重に消していた。
+             *
+             *   → **自動で入れる前に、こちらが入れた物だけ外す**（人が選んだ物は残す）。
+             *     ・`window.__axAutoPicked`（この回で自動が入れた値）を覚えておき、
+             *       **その値だけ**外す。人が選んだ物は触らない。
+             *     ・覚えが無い（＝前のお客様の残り）時は**全部外す**（今まで通り・条件の濁りを防ぐ）。
              */
             (function _clearPrevAreaSelection() {
               try {
@@ -4617,8 +4723,34 @@
                 var _townOn = Array.prototype.slice.call(document.querySelectorAll('input[name="town_code[]"]:checked'));
                 var _all = _cityOn.concat(_townOn);
                 if (!_all.length) return;
-                if (_audit) _auditStepP('area_prev_clear', _cityOn.length + '区・' + _townOn.length + '町字を外す');
-                console.log('[AX] 前の地域の選択を外します: 区' + _cityOn.length + '・町字' + _townOn.length);
+                /**
+                 * 人が選んだ物は残す。`__axAutoPicked` があればその値だけ外す。
+                 *   ⚠ 覚えが無い時は今まで通り全部外す（前のお客様の残りを消す）。
+                 */
+                var _auto = window.__axAutoPicked;
+                var _autoSet = null;
+                try {
+                  if (_auto && typeof _auto === "object") {
+                    _autoSet = {};
+                    ["city", "town"].forEach(function (k) {
+                      (Array.isArray(_auto[k]) ? _auto[k] : []).forEach(function (v) { _autoSet[k + ":" + String(v)] = true; });
+                    });
+                  }
+                } catch (_) { _autoSet = null; }
+                if (_autoSet) {
+                  var _before = _all.length;
+                  _all = _all.filter(function (cb) {
+                    var nm = String(cb.name || "");
+                    var kind = nm.indexOf("town_code") >= 0 ? "town" : "city";
+                    return !!_autoSet[kind + ":" + String(cb.value)];
+                  });
+                  if (_all.length < _before) {
+                    if (_audit) _auditStepP('area_keep_human', (_before - _all.length) + '件は人が選んだので残す');
+                  }
+                }
+                if (!_all.length) return;
+                if (_audit) _auditStepP('area_prev_clear', _all.length + '件を外す（自動で入れた物）');
+                console.log('[AX] 自動で入れた地域を外します:', _all.length, '件（人が選んだ物は残します）');
                 _all.forEach(function (cb) {
                   try {
                     /**
