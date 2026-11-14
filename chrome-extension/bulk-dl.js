@@ -418,6 +418,69 @@
     return true;
   }
 
+  /**
+   * 2026-11-14 竹内さん「統括できる部分とできない部分の連携はちゃんとできているのか」
+   *   → **できていなかった**。統括（learn-supervisor）の判断は storage に置かれているだけで、
+   *     **誰も読んで動いていなかった**。統括が「渡すと危ない」と言っても自動検索は止まらなかった。
+   *
+   *   → **統括が「渡してよい」と言っていない時は、自動の送信・ダウンロードをしない**。
+   *     ⚠ 止めるのは**自動モードの一括（`bulk-dl`）だけ**。人が1件ずつ押すのは止めない。
+   *     ⚠ 案内モードと同じ扱い（送った印・続きの印も消す）。
+   *     ⚠ 判断が無い（学習がまだ）時は**止めない**（今まで通り動く＝いきなり止めない）。
+   */
+  var _SUP_KEY = "axlx_learn_supervisor";
+  var _supCache = null, _supAt = 0;
+  function _readSupervisor(cb) {
+    try {
+      var now = Date.now();
+      if (_supCache !== null && now - _supAt < 30000) { cb(_supCache); return; }
+      _supAt = now;
+      chrome.storage.local.get([_SUP_KEY], function (r) {
+        _supCache = (r && r[_SUP_KEY]) || {};
+        cb(_supCache);
+      });
+    } catch (_) { cb({}); }
+  }
+  /** 統括が「渡してよい」と言っているか（判断が無ければ true＝今まで通り動く） */
+  function _supervisorAllowsAuto() {
+    /**
+     * ⚠ 同期的に読みたいので、**キャッシュだけ**を見る（無ければ「止めない」＝安全側で今まで通り）。
+     *   起動時と storage の変化で更新する。
+     */
+    var v = _supCache || {};
+    var verdict = String(v.verdict || "");
+    if (!verdict) return true;               // 判断がまだ無い → 止めない
+    return verdict === "ready";
+  }
+  /** 止める理由（人が読める形） */
+  function _supervisorBlockReason() {
+    var v = _supCache || {};
+    var head = String(v.headline || "");
+    var issues = (v.self_check && Array.isArray(v.self_check.issues)) ? v.self_check.issues : [];
+    return "統括が「自動に渡してよい」と言っていません（" + (head || "判断なし") + "）" + (issues.length ? "／" + issues[0] : "");
+  }
+  function _supBlocksAuto(where) {
+    if (_supervisorAllowsAuto()) return false;
+    console.warn("[AXLX bulk-dl] 統括が止めているため自動の送信・ダウンロードをしない（" + where + "）: " + _supervisorBlockReason());
+    try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
+    try { clearAutoSendState(); } catch (_) {}
+    try { _nudge("⛔ " + _supervisorBlockReason().slice(0, 90)); } catch (_) {}
+    return true;
+  }
+  try {
+    chrome.storage.local.get([_SUP_KEY], function (r) {
+      try { _supCache = (r && r[_SUP_KEY]) || {}; _supAt = Date.now(); } catch (_) { _supCache = {}; }
+      try {
+        var v = _supCache || {};
+        if (v.verdict && v.verdict !== "ready") console.warn("[AXLX bulk-dl] 統括の判断:", v.verdict, "-", v.headline || "");
+      } catch (_) {}
+    });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area !== "local" || !ch || !ch[_SUP_KEY]) return;
+      try { _supCache = ch[_SUP_KEY].newValue || {}; _supAt = Date.now(); } catch (_) {}
+    });
+  } catch (_) {}
+
   function getAutoSendState() {
     try {
       var raw = sessionStorage.getItem(AUTO_SEND_KEY);
@@ -657,6 +720,7 @@
   function _maybeAutoPressOnLoad() {
     if (_autoPdfRun || !_autoModeOn || _staffModeOn) return;
     if (_guideBlocksAuto("autoOnLoad")) return;
+  if (_supBlocksAuto("autoOnLoad")) return;
     /**
      * 2026-11-12 竹内さん「自動で検索したら検索も条件入れる前にいま出ている物件のダウンロードを始めてしまう」:
      *   自動入力の最中（条件を入れて検索を押す前）は**押さない**。
@@ -1176,6 +1240,7 @@
       return { ok: false, reason: "filling" };
     }
     if (_guideBlocksAuto("autoPressPdfs")) return { ok: false, reason: "guide" };
+    if (_supBlocksAuto("autoPressPdfs")) return { ok: false, reason: "supervisor" };
     /**
      * 2026-11-10 竹内さん「ADの並びはちゃんと使えるようにする」:
      *   旧の一括を消した時に AD 高→低の並べ替えも一緒に落ちていた。押す前に戻す。
@@ -3209,7 +3274,8 @@
   // ── 全ページ自動送信: 共通の次ページ遷移 or 完了処理 ─────────────────────
   // autoSendOnePage の onDone コールバックと start() 内の再開処理で共通利用する。
   function tryNext(state) {
-    if (_guideBlocksAuto("tryNext")) return; // 案内モードの間はページをめくらない（ページはスタッフがめくる）
+    if (_guideBlocksAuto("tryNext")) return;
+    if (_supBlocksAuto("tryNext")) return; // 統括が「渡してよい」と言っていない間はページをめくらない
     // ヒット多すぎ上限: 既定3ページまで送ったら4ページ目には進まず完了扱い（一括検索では次顧客へ）
     // 2026-09-19 竹内「17:00の便は項目は１ページだけで本来のように３ページ迄いかなくて大丈夫」:
     //   自動便は conditions.max_pages（サーバーの payload → background → conditions）で上限を変える
@@ -3297,7 +3363,8 @@
   // mergePdfs を再利用せず chrome.runtime.sendMessage を直接呼ぶ
   // （コールバック内で onDone を呼ぶため）。
   function autoSendOnePage(state, onDone) {
-    if (_guideBlocksAuto("autoSendOnePage")) return; // 終わりの知らせ（onDone）は返さない＝受け手が次のページへ進まない
+    if (_guideBlocksAuto("autoSendOnePage")) return;
+    if (_supBlocksAuto("autoSendOnePage")) return; // 統括が止めている間は1ページも送らない
     // 2026-11-10 v2.5.95 竹内さん「1件ずつのダウンロードとなりそして時間差も人間が確認するように」＋「まずリアプロから徹底的に」:
   //   旧は 10件ずつまとめて資料を取りに行っていた（人が1件ずつPDFを開いて見る速さではない）。
   //   既定を **1件ずつ** にする。人が1件のPDFを開いて中身を見て、次の行へ移る間（2〜6秒・対数正規）を置く。
