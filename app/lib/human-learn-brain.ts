@@ -28,6 +28,7 @@
 
 import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, planLearnFromWeak, learnSequenceFromShots, isLearnableName } from "./shot-learn";
 import { superviseLearn, type SupervisorAdvice, type SupervisorInput } from "./learn-supervisor";
+import { findWeakSteps } from "./learn-flow-steps";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -757,6 +758,32 @@ export function buildHumanLearnBundle(
   } else if (Object.keys(points).length) {    // 写真が1枚も無い時も、名前から推した分を除いた「まだ分からない物」を弱い所に残す
     weak = findWeakPoints(points as never, [], []);
   }
+  /**
+   * ★ 2026-11-14 竹内さん「直近の通常モードの録画から押し方プルダウンの場所、
+   *   徒歩が消えないようにする部分学習して改善する」
+   *
+   *   ⚠ リアプロは**移動手段（`transportation_id`）を選ぶと下の分数（`required_time`）をリセットする**。
+   *     人が「分数 → 移動手段」の順でやると分数が消える。
+   *   実測（録画 mwgf1gx3_n1k5 の操作）:
+   *     `transportation_id → 分 → transportation_id → …` ＝ **徒歩を2回選んでいる**（消えた疑い）。
+   *
+   *   → 手本（操作の並び）から**徒歩の順番の危険**を見つけて弱い所に足す
+   *     （統括が「移動手段を先に固定する」と判断できるように）。
+   *   ⚠ 順番が全部正しい時は何も足さない（無駄な指摘を出さない）。
+   */
+  try {
+    const flowsForWalk: Array<Array<{ f?: unknown }>> = [];
+    for (const r of list) {
+      const ops = sequencesOf(r);
+      for (const s of ops) flowsForWalk.push(s.map((x) => ({ f: x.f })));
+    }
+    const steps = findWeakSteps(flowsForWalk);
+    for (const s of steps) {
+      if (!weak.some((w) => w.kind === s.kind)) {
+        weak.push({ kind: s.kind, name: "transportation_id / required_time", why: s.why, next: s.next });
+      }
+    }
+  } catch { /* 徒歩の判定が失敗しても、他の弱い所は使う */ }
   /**
    * 2026-11-14 竹内さん「学習の統括が強化されるように、その点も徹底する」:
   /**

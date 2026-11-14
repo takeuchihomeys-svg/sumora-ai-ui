@@ -180,7 +180,65 @@ export function collapseSameField<T extends { t?: number; k?: string; f?: string
   return out;
 }
 
-/** 1回の検索の押した並びを、場面ごとに分ける（純関数） */
+/**
+ * ★ 2026-11-14 竹内さん「直近の通常モードの録画から押し方プルダウンの場所、
+ *   徒歩が消えないようにする部分学習して改善する」
+ *
+ *   ⚠ **リアプロの仕様**: 移動手段（`transportation_id`）を選ぶと、その下の分数（`required_time`）が
+ *     **リセットされる**（画面が作り直される）。人が「分数 → 移動手段」の順でやると分数が消える。
+ *
+ *   実測（直近の録画 mwgf1gx3_n1k5 の操作）:
+ *     click transportation_id → click 分 → click transportation_id → click 大阪43棟189戸並べ替
+ *     ⚠ **徒歩が2回**出ている＝もう一度選び直している（分数を入れた後に消された疑い）。
+ *
+ *   → **手本の中に「分数 → 移動手段」の順があれば弱い所として出す**（統括が直せるように）。
+ *     ⚠ 順番が正しい時は何も言わない（無駄な指摘を出さない）。
+ */
+export function findWalkResetRisk(
+  runs: ReadonlyArray<ReadonlyArray<{ f?: unknown }>>,
+): { kind: string; why: string; next: string } | null {
+  let bad = 0, good = 0, twice = 0;
+  for (const ops of Array.isArray(runs) ? runs : []) {
+    const names = (Array.isArray(ops) ? ops : [])
+      .map((o) => String(o?.f ?? ""))
+      .filter((n) => n && n !== "undefined");
+    /**
+     * ⚠ 2026-11-14 実測で判明: 画面の欄名は `required_time` ではなく **`分`** で記録される事がある
+     *   （実測の並び: `transportation_id → 分 → transportation_id`）。
+     *   旧の判定は `required_time` しか見ていなかったので、**実測の形で指摘が出なかった**。
+     *   → 「分」「徒歩分」「駅からの徒歩時間」も分数として扱う。
+     */
+    const isWalk = (n: string) => /transportation_id|移動手段|交通手段/.test(n);
+    const isMin = (n: string) => /required_time|^分$|徒歩分|徒歩時間|駅からの徒歩/.test(n);
+    const iT = names.findIndex(isWalk);
+    const iW = names.findIndex(isMin);
+    if (iT < 0 && iW < 0) continue;
+    // 同じ回で移動手段が2回以上＝選び直し
+    if (names.filter(isWalk).length >= 2) twice++;
+    if (iT >= 0 && iW >= 0) {
+      if (iW < iT) bad++;   // 分数が先 → 消える恐れ
+      else good++;          // 移動手段が先 → 正しい
+    }
+  }
+  const total = bad + good;
+  /**
+   * ⚠ 選び直し（`twice`）は**分数を入れた後に移動手段を選び直した**事の証拠なので、
+   *   `bad+good` が0でも指摘する（実測の並びがまさにこれ）。
+   */
+  if (!total && !twice) return null;
+  if (total && bad === 0 && twice === 0) return null;   // 全部正しい順・選び直しも無い＝指摘しない
+  const why = bad
+    ? `分数を入れてから移動手段を選んでいる手本が ${bad}/${total}件あります（移動手段を選ぶと分数がリセットされる）`
+    : `移動手段を2回以上選んでいる手本が ${twice}件あります（選び直し＝分数が消えた疑い）`;
+  return {
+    kind: "walk_reset",
+    why,
+    next: "手順を「移動手段 → 分数」の順に固定する（自動は既に固定済み。人の案内も同じ順にする）",
+  };
+}
+
+/**
+ * 1回の検索の押した並びを、場面ごとに分ける（純関数） */
 function splitByScene(ops: ReadonlyArray<FlowOp>): Map<FlowScene, string[]> {
   const out = new Map<FlowScene, string[]>();
   /**
@@ -376,6 +434,21 @@ export function findWeakScenes(
     }
   }
   return out.slice(0, 12);
+}
+
+/**
+ * ★ 2026-11-14 竹内さん「徒歩が消えないようにする部分学習して改善する」
+ *   **操作の並び（`runs`）から直接**、徒歩の順番の危険を見つける（`findWeakScenes` の仲間）。
+ *   ⚠ `findWeakScenes` は場面ごとの集計を見るので、「分数→移動手段」のような
+ *     **同じ場面の中の順番**は拾えない。ここで別に見る。
+ */
+export function findWeakSteps(
+  runs: ReadonlyArray<ReadonlyArray<{ f?: unknown }>>,
+): Array<{ scene: FlowScene; kind: string; why: string; next: string }> {
+  const out: Array<{ scene: FlowScene; kind: string; why: string; next: string }> = [];
+  const walk = findWalkResetRisk(runs);
+  if (walk) out.push({ scene: "station", ...walk });
+  return out;
 }
 
 /**
