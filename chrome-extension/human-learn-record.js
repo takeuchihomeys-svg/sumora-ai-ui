@@ -223,11 +223,11 @@
    *     `_recNoteOp` を pointer-ui（拡張の押下）から呼んでもらい、ここに積む。
    *   ⚠ 入れるのは**欄の名前・種類・時刻だけ**（入力した中身は入れない）。
    */
-  function _pushOp(kind, el) {
+  function _pushOp(kind, el, by) {
     try {
       var nm = el && L && L.fieldName ? L.fieldName(el) : null;
       // 同じ物を続けて積まない（拡張の tap と click が両方来る事がある）
-      var last = _opsRing[_opsRing.length - 1];
+    var last = _opsRing[_opsRing.length - 1];
       var t = Date.now();
       var nmStr = nm ? String(nm).slice(0, 30) : null;
       if (last && last.f === nmStr && t - Number(last.t || 0) < 120) return;
@@ -278,7 +278,7 @@
         var d = t - last.t;
         if (d >= 0 && d <= 60000) gap = d;
       }
-      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null });
+      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null, by: (by === "human" || by === "auto") ? by : null });
       try { _opsSeen++; } catch (_) {}
       while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
     } catch (_) {}
@@ -339,7 +339,15 @@
     var _cap = function (e) {
       try {
         if (!e || !e.target) return;
-        _pushOp(e.type || "click", e.target);
+        /**
+         * 2026-11-14 竹内さん「通常モードで行っているのはスタッフ等人間が実際の動きをしているので
+         *   そこを理解して学習する」:
+         *   `isTrusted === true` は**人が起こした操作**、`false` は**拡張が作った操作**。
+         *   → この区別を記録に残す（`by`）。学習は「人の手本」を優先できる。
+         *   ⚠ ここを捨てていたので、実測で 394件すべて `by` が無かった。
+         */
+        var _by = (e.isTrusted === true) ? "human" : "auto";
+        _pushOp(e.type || "click", e.target, _by);
       } catch (_) {}
     };
     document.addEventListener("click", _cap, true);
@@ -377,7 +385,16 @@
       _opsDiag(true);
       // ⚠ DOM 要素（el）は送らない（JSON にできない・個人情報ではないが重い）
       return _opsRing.slice(-OPS_RING_MAX).map(function (o) {
-        return { t: o.t, k: o.k, f: o.f, w: o.w, g: o.g };
+        /**
+         * 2026-11-14 竹内さん「データベースの録画している部分からの学習もちゃんと理解するように
+         *   通常モードで行っているのはスタッフ等人間が実際の動きをしているのでそこを理解して学習する」:
+         *
+         *   ⚠ `by`（**人が押したのか拡張が押したのか**）を**捨てていた**ので、
+         *     学習する時に「人の手本」と「機械の動き」を区別できなかった（実測: by が全部なし 394件）。
+         *   → `by` も送る（"human" / "auto"）。サーバーと学習が**人の動きだけ**を手本にできる。
+         *   ⚠ 拡張が押した物は `isTrusted=false` なので、記録する時に判定して入れる。
+         */
+        return { t: o.t, k: o.k, f: o.f, w: o.w, g: o.g, by: o.by || null };
       });
     } catch (_) { return null; }
   }
