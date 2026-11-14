@@ -423,8 +423,25 @@
         }
         move.lastAt = tt;
         if (buttons) move.drag = true;
-        // 点は最大 MOVE_SAMPLES 個（間引いて残す＝形が分かる程度）
-        if (move.pts.length < MAX_MOVE_PTS) move.pts.push({ x: Math.round(x), y: Math.round(y), t: tt, b: buttons ? 1 : 0 });
+        /**
+         * 2026-11-14 竹内さん「カーソルのうごきかた」→ **実測で判明（重大）**:
+         *   ⚠ 旧は `if (move.pts.length < MAX_MOVE_PTS)` で**24点を超えたら捨てて**いた。
+         *     そのため長い移動（例: 60点）では**最初の24点だけ**が残り、
+         *     締める時の `b = pts[pts.length - 1]` が**本当の終点ではなく24点目**になっていた。
+         *     → 距離・時間・速さ・曲がりが**全部ずれる**（実測 16px/69ms のような小さな値ばかり）。
+         *
+         *   → **必ず最新の点で上書きする**（上限まで来たら古い点を間引いて、最後の点は必ず残す）。
+         *     ⚠ 24点の上限は重さ対策なので残す（間引いて形を保つ）。
+         */
+        if (move.pts.length < MAX_MOVE_PTS) {
+          move.pts.push({ x: Math.round(x), y: Math.round(y), t: tt, b: buttons ? 1 : 0 });
+        } else {
+          // 上限に達したら**1つ飛ばしで間引いて**、新しい点を必ず入れる（終点を落とさない）
+          var keep = [];
+          for (var i = 0; i < move.pts.length; i += 2) keep.push(move.pts[i]);
+          keep.push({ x: Math.round(x), y: Math.round(y), t: tt, b: buttons ? 1 : 0 });
+          move.pts = keep;
+        }
       } catch (_) {}
     }
 

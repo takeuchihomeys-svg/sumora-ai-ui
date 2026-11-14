@@ -146,7 +146,23 @@
   var _opsRing = [];
   var _opsSeen = 0;
   var _opsAsk = 0;
-  var _livePoints = null;
+  /**
+   * ⚠ 2026-11-14 竹内さん「さっきの録画から読み取って改善するようにする」→ **実測で判明（重大）**:
+   *   DB の 49件のうち **24件が「操作は22件あるのに押した場所は1個だけ」**だった（`ops22/pf1` が15件）。
+   *   ＝ 押した場所（どの欄をどこで押したか）が**ほぼ残っていない**。
+   *
+   *   原因: `_livePoints` を **`null`** で始め、`chrome.storage.local.get`（**非同期**）で読み込んでいた。
+   *     ① クリックA → `_livePoints` が null なので `{}` を作る → `{A}` を保存
+   *     ② その後に読み込みが返る → `_livePoints = {}`（**A が入っていない古い値**）で上書き
+   *     ③ クリックB → `_livePoints`（空）に B を足して `{B}` を保存 → **A が消える**
+   *     ④ 以降も同じ → **最後の1個だけ**残る
+   *   ⚠ 操作の並び（`_opsRing`）は別なので**22件ある**のに、押した場所だけ1個、という形になっていた。
+   *
+   *   → ① 最初から `{}` にする（null にしない＝読み込み前でも積める）
+   *     ② 読み込みは**上書きしない**（`merge` で回数の多い方を残す）
+   *     ③ 保存は毎回**全部**書く（積んだ物が消えない）
+   */
+  var _livePoints = {};
   var _livePointsAt = 0;
   var _orderLive = [];
   var watching = false;
@@ -655,7 +671,8 @@
       var fx = syn ? 0.5 : ((Number(ev.clientX) - r.left) / r.width);
       var fy = syn ? 0.5 : ((Number(ev.clientY) - r.top) / r.height);
       if (!syn && !(fx >= -0.2 && fx <= 1.2 && fy >= -0.2 && fy <= 1.2)) return;
-      var cur = _livePoints || {};
+      // 2026-11-14: null を作らない（読み込み前のクリックも積めるように）
+      var cur = _livePoints || (_livePoints = {});
       var t = Date.now();
       /**
        * 同じ欄の click → change は1回に畳む（120〜400ms 以内）。
@@ -701,9 +718,26 @@
   }
   try {
     chrome.storage.local.get([POINTS_KEY2], function (r) {
-      try { _livePoints = (r && r[POINTS_KEY2]) || {}; } catch (_) { _livePoints = {}; }
+      try {
+        /**
+         * ⚠ 2026-11-14 実測: **上書きしてはいけない**（`_livePoints = r[KEY]` が原因で
+         *   読み込み前のクリックが消えていた・`ops22/pf1` が15件）。
+         *   → **統合する**（回数の多い方・新しい方を残す）。既に積んだ物を消さない。
+         */
+        var stored = (r && r[POINTS_KEY2]) || {};
+        var cur = _livePoints || {};
+        Object.keys(stored).forEach(function (k) {
+          if (k === "__last") return;
+          var a = cur[k], b = stored[k];
+          if (!b) return;
+          if (!a) { cur[k] = b; return; }
+          // 回数が多い方（＝実測が厚い方）を残す
+          if ((Number(b.n) || 0) > (Number(a.n) || 0)) cur[k] = b;
+        });
+        _livePoints = cur;
+      } catch (_) { _livePoints = _livePoints || {}; }
     });
-  } catch (_) { _livePoints = {}; }
+  } catch (_) { _livePoints = _livePoints || {}; }
   /**
    * 2026-11-14 竹内さん「ほかちゃんと録画したの学習できてるかな」:
    *   ⚠ 実測: 版 2.7.22 の写真 **234枚すべて `shot_ops` が空**だった（旧版 2.7.21 は 79枚ついていた）。
