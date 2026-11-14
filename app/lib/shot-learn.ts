@@ -66,6 +66,13 @@ export function isLearnableName(name: unknown): boolean {
   if (!n) return false;
   if (n.length <= 1) return false;
   if (NON_TARGET_NAMES.test(n)) return false;
+  /**
+   * 2026-11-14 竹内さん「データベースの写真から学習する」:
+   *   ⚠ 学びに **`#aixlinx-mini-btn`（拡張自身のボタン）** が混ざっていた（実測）。
+   *     自分の UI はサイトの操作ではないので、順番を濁らせる。
+   *   → **どこかに拡張の印が入っていたら学ばない**（`div.search_menu` のような本物は残す）。
+   */
+  if (/(^|[^a-z])(aixlinx|axlx)/i.test(n)) return false;
   // 「div.building_tr」「td.st_td」のような入れ物の class 付きも除く（行・セル・画像）
   if (/^(div|span|svg|td|tr|th|table|img|a|li|p)\./i.test(n) && !/btn|button|search|go_search|next|confirm/i.test(n)) return false;
   return true;
@@ -346,6 +353,15 @@ export function learnFromShots(
     })();
 
     const screen = screenOf({ url: s.url, ops, fields: learnedFields });
+    /**
+     * 2026-11-14 竹内さん「データベースの写真から学習する」:
+     *   ⚠ 実測で **`other` が3813枚**（学べているのは modal 226・form 75 だけ）。
+     *     中身を見ると **材料（操作も押した欄も順番も）が1つも無い行**だった
+     *     ＝写真だけあって「何を押したか」が付いていない。これは学べないので**数えない**
+     *     （数えると「学べている」ように見えて、本当の穴が見えなくなる）。
+     *   → 材料が無い行は `total` にも入れない（`withOps` だけが学びの材料）。
+     */
+    if (!ops.length && !learnedFields.length) continue;
     const a = (acc[screen] ||= { n: 0, last: {}, steps: {}, fields: {} });
     a.n++;
     if (ops.length) withOps++;
