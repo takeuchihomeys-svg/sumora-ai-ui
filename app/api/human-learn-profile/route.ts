@@ -467,6 +467,29 @@ export async function GET(req: NextRequest) {
    *   竹内さん「学習できていない部分も学習できるようになっているのか」→ 待たずに確かめたい。
    */
   const forceFresh = req.nextUrl.searchParams.get("fresh") === "1";
+  /**
+   * ★ 2026-11-14 竹内さん「1と2順に改善するようにする」→ **実測で判明（ここが根本）**:
+   *
+   *   ⚠ 拡張は **5分ごと**に `?touch=0` で「版だけ」確かめる（軽い確認のつもり）。
+   *     ところが `stale`（30分以上前）だと **`?touch=0` でも `buildNow` を走らせていた**。
+   *     `buildNow` は **14.6秒**かかる（実測・6000行を読んで集計）。
+   *   → 拡張のタイムアウト（8秒）で切れ、**版が読めない** → 取得（15秒）も足りず失敗
+   *     ＝ **新しい学びが永久に届かない**（実測: `realpro` の束が 13:54 のまま2時間動かなかった）。
+   *
+   *   → **`touch=0` は「作らない」**。DBにある束の版（`generated_at`）だけ返す（1行読むだけ＝速い）。
+   *     作るのは ① `fresh=1` ② touch あり（実際に読む時）③ 束が**1件も無い**時。
+   *     ⚠ 束が1件も無い時は作る（拡張が「何も無い」で止まらないように）。
+   */
+  if (!touch && !forceFresh && row) {
+    return NextResponse.json({
+      ok: true, empty: false, scope, light: true,
+      generated_at: (row.bundle && typeof row.bundle === "object")
+        ? ((row.bundle as Record<string, unknown>).generated_at ?? row.created_at)
+        : row.created_at,
+      source_rows: row.source_rows,
+      read_count: row.read_count ?? 0,
+    }, { headers: CORS });
+  }
   let why: string | null = null;
   if (stale || forceFresh) {
     try {
