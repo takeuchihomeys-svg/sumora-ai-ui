@@ -66,6 +66,16 @@ export type SupervisorInput = {
   human_ops?: number;
   auto_ops?: number;
   /**
+   * 2026-11-14 竹内さん「足りていない部分や弱い部分はきょうかするようにする」:
+   *   **同じ画面が続いている**記録（`same_runs`）。多ければ**撮影の仕組みが壊れている**疑い。
+   */
+  same_runs?: { n: number; max_same: number } | null;
+  /**
+   * 2026-11-14 竹内さん「画像のメモリも重ければ容量小さくする。統括がこのような部分もはんだんできるようにする」:
+   *   **写真の容量と枚数**。1枚が大きすぎる・合計が重すぎる時に言えるようにする。
+   */
+  shot_bytes?: { n: number; total_bytes: number; max_bytes: number } | null;
+  /**
    * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
    *   **実際の検索の結果**（`search_audits` の集計）。これが無いと統括は現場の現実を知らない
    *   （実測: 60回中56回が途中で止まっていたのに「渡してよい」と言っていた）。
@@ -260,8 +270,7 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       why: `${rows}件の記録があるのに、操作の並びが付いた記録が0件`,
       how: "録画の時に `shot_ops` が空。`axlx_rec_ops` を見て「届いていない／輪が空」を切り分ける",
     });
-  } else if (withOps > 0 && rows > 0 && withOps / rows < 0.1) {
-    actions.push({
+  } else if (withOps > 0 && rows > 0 && withOps / rows < 0.1) {    actions.push({
       priority: 1,
       what: "操作が付く記録が少なすぎる",
       why: `${rows}件中 ${withOps}件だけ（1割未満）`,
@@ -301,6 +310,44 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       why: `押す順番は ${next}通りあるのに、一連の型が0手`,
       how: "録画を続けて、同じ日の同じ並びを2回以上作る",
     });
+  }
+  /**
+   * 2026-11-14 竹内さん「足りていない部分や弱い部分はきょうかするようにする」:
+   *   **同じ画面が続いている**＝撮影の仕組みが壊れている疑い（学びが増えない一番の原因）。
+   */
+  const sr = inp.same_runs && typeof inp.same_runs === "object" ? inp.same_runs : null;
+  if (sr && num(sr.max_same) >= 5) {
+    actions.push({
+      priority: 0,
+      what: "同じ画面の写真が続いている（撮影がおかしい）",
+      why: `同じ画像が最大 ${num(sr.max_same)}枚続いた（${num(sr.n)}回）`,
+      how: "撮る前にリアプロのタブを前に出しているか確かめる（別のタブを撮っている疑い）／画面が本当に止まっていないか見る",
+    });
+  }
+  /**
+   * 2026-11-14 竹内さん「画像のメモリも重ければ容量小さくする」:
+   *   **1枚が大きすぎる**／**合計が重すぎる**時に、容量を落とすよう言う。
+   *   ⚠ 1枚 200KB 超は重い（今は 11KB なので問題ない＝基準を超えた時だけ言う）。
+   */
+  const sb = inp.shot_bytes && typeof inp.shot_bytes === "object" ? inp.shot_bytes : null;
+  if (sb && num(sb.n) > 0) {
+    const maxKb = Math.round(num(sb.max_bytes) / 1024);
+    const totalMb = Math.round((num(sb.total_bytes) / (1024 * 1024)) * 10) / 10;
+    if (maxKb > 200) {
+      actions.push({
+        priority: 1,
+        what: "写真1枚が重い",
+        why: `1枚 ${maxKb}KB（目安 200KB 以下）`,
+        how: "撮る時の長辺と品質を下げる（`SHOT_SEND_SIDE` / `SHOT_SEND_Q`）",
+      });
+    } else if (totalMb > 50) {
+      actions.push({
+        priority: 2,
+        what: "写真の合計が重い",
+        why: `合計 ${totalMb}MB（${num(sb.n)}枚）`,
+        how: "残す枚数を減らす／古い写真を消す",
+      });
+    }
   }
 
   actions.sort((a, b) => a.priority - b.priority);
@@ -477,6 +524,9 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       /** 2026-11-14: 人の手本と機械の動き */
       humanOps,
       autoOps,
+      /** 2026-11-14: 同じ画面の続き・写真の容量 */
+      sameRuns: sr,
+      shotBytes: sb,
     }),
   };
 }
@@ -580,6 +630,9 @@ function buildMeeting(m: {
   /** 2026-11-14: 人の手本と機械の動きの数（人の割合で判断を制限する） */
   humanOps?: number;
   autoOps?: number;
+  /** 2026-11-14: 同じ画面が続いた記録 / 写真の容量 */
+  sameRuns?: { n: number; max_same: number } | null;
+  shotBytes?: { n: number; total_bytes: number; max_bytes: number } | null;
   /** 写真がある記録の数（写真の割合を実データから出すため） */
   shotRows?: number;
 }): SupervisorAdvice["meeting"] {
@@ -642,6 +695,18 @@ function buildMeeting(m: {
         value: `人の操作 ${h}回 / 機械の操作 ${a}回（人の割合 ${Math.round((h / t) * 100)}%）`,
       });
     }
+  }
+  /**
+   * 2026-11-14 竹内さん「画像のメモリも重ければ容量小さくする。統括がこのような部分もはんだんできるようにする」:
+   *   写真の容量と、同じ画面が続いた回数を根拠に出す。
+   */
+  if (m.shotBytes && num(m.shotBytes.n) > 0) {
+    const maxKb = Math.round(num(m.shotBytes.max_bytes) / 1024);
+    const totalMb = Math.round((num(m.shotBytes.total_bytes) / (1024 * 1024)) * 10) / 10;
+    evidence.push({ label: "写真", value: `${num(m.shotBytes.n)}枚・1枚 最大${maxKb}KB・合計 ${totalMb}MB` });
+  }
+  if (m.sameRuns && num(m.sameRuns.max_same) > 0) {
+    evidence.push({ label: "同じ画面の続き", value: `最大 ${num(m.sameRuns.max_same)}枚（${num(m.sameRuns.n)}回）` });
   }
   const sc = Object.entries(m.siteCounts).filter(([k]) => k && k !== "(空)");
   if (sc.length) evidence.push({ label: "サイト別の記録", value: sc.map(([k, v]) => `${k} ${v}件`).join("・") });

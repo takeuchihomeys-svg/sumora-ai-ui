@@ -950,6 +950,45 @@ export function buildHumanLearnBundle(
   })();
 
   /**
+   * 2026-11-14 竹内さん「足りていない部分や弱い部分はきょうかするようにする」
+   *   「いままでの画像から統括がまなぶことできないのか」:
+   *   **同じ画像が続いている**記録を数える（`shot_ops` の `k:"same"`）。
+   *   ⚠ 実測: 100枚が全部同じ画像だった（＝止まっている／別のタブを撮っている）。
+   *     これは「学べていない」だけでなく、**撮影の仕組みが壊れている**疑い。
+   */
+  const sameRuns = (() => {
+    let maxSame = 0, n = 0;
+    for (const r of list) {
+      const x = r as unknown as Record<string, unknown>;
+      const ops = Array.isArray(x.shot_ops) ? (x.shot_ops as unknown[]) : [];
+      for (const o of ops) {
+        if (!o || typeof o !== "object") continue;
+        const y = o as Record<string, unknown>;
+        if (y.k !== "same") continue;
+        const v = Number(y.same) || 0;
+        if (v > 0) { n++; if (v > maxSame) maxSame = v; }
+      }
+    }
+    return { n, max_same: maxSame };
+  })();
+
+  /**
+   * 2026-11-14 竹内さん「画像のメモリも重ければ容量小さくする。統括がこのような部分もはんだんできるようにする」:
+   *   **写真の容量と枚数**を統括に渡す（メモリ・Storage が重くなっていないか判断できる）。
+   */
+  const shotBytes = (() => {
+    let total = 0, n = 0, max = 0;
+    for (const r of list) {
+      const x = r as unknown as Record<string, unknown>;
+      const b = typeof x.shot_b64 === "string" ? x.shot_b64.length : 0;
+      const w = num(x.shot_w), h = num(x.shot_h);
+      if (b > 100) { total += b; n++; if (b > max) max = b; }
+      else if (w != null && h != null && w > 0 && h > 0) { n++; }
+    }
+    return { n, total_bytes: total, max_bytes: max };
+  })();
+
+  /**
    * 2026-11-14 竹内さん「学習の統括の部分判断できるようにちゃんと強化していく」:
    *   `learn_plan` は「弱い所の一覧」で、**判断**をしていなかった（どれから直すか・今使えるか）。
    *   → 統括（`learn-supervisor.ts`）に**1つの結論**と**次にやる事**を決めさせる。
@@ -1002,8 +1041,8 @@ export function buildHumanLearnBundle(
         top_problem: audits.top_problem,
       }
       : null,
-    /**
-     * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
+  /**
+   * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
      *   **現場への指示の詰まり**も統括に渡す（検索が動いていても指示が届かなければ現場は止まる）。
      */
     commands: commands
@@ -1022,6 +1061,10 @@ export function buildHumanLearnBundle(
     human_ops: humanOpsCount,
     /** 2026-11-14: 拡張が押した操作の数（機械の動き＝手本にしない） */
     auto_ops: autoOpsCount,
+    /** 2026-11-14: 同じ画面が続いた記録（撮影の仕組みが壊れている疑い） */
+    same_runs: sameRuns,
+    /** 2026-11-14: 写真の容量と枚数（メモリ・Storage が重くないか） */
+    shot_bytes: shotBytes,
   } as SupervisorInput);
 
   /**

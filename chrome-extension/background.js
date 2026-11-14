@@ -1879,6 +1879,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
  */
 var _shotLastAt = 0;
 var _shotRun = null;
+/** 2026-11-14: 同じ画像が何枚続いたか（画面が変わっていない・別タブを撮っている疑い） */
+var _shotSameRun = 0;
 var _shotSeq = 0;
 /**
  * 2026-11-11 竹内さん「まだ写真クラウドにおくれていないのか」:
@@ -2116,8 +2118,35 @@ async function _takeShot(msg, done) {
       _shotLastAt = t0;
 
       let dataUrl = null;
+      /**
+       * 2026-11-14 竹内さん「ここちゃんと学習できるように。弱い部分を統括判断して改善できるよう」
+       *
+       *   ⚠ 実測: **100枚の写真が全部同じ画像**だった（1分47秒の間、画面が一度も変わらない＝おかしい）。
+       *     写真を見ると**リアプロではなく別のタブ**が写っていた。
+       *     `captureVisibleTab(windowId)` は**その窓の「今アクティブなタブ」**を撮るので、
+       *     リアプロがアクティブでないと**別のタブが撮れる**（＝学習に使えない写真が貯まる）。
+       *
+       *   旧は「**失敗した時だけ**」タブをアクティブにして撮り直していた。
+       *   ⚠ 失敗しないので、**別のタブのまま撮れ続けていた**（誰も気づけない）。
+       *   → **最初から**「リアプロのタブをアクティブにして撮り、**すぐ元に戻す**」。
+       *     ⚠ 人が別のタブを見ている時間を奪わないよう、撮ったら必ず戻す。
+       */
       try {
-        dataUrl = await _capturePaced(tab.windowId);
+        const prev = await chrome.tabs.query({ active: true, windowId: tab.windowId }).catch(function () { return []; });
+        const prevId = prev && prev[0] ? prev[0].id : null;
+        const wasActive = (prevId === tab.id);
+        if (!wasActive) {
+          try { await chrome.windows.update(tab.windowId, { focused: true }); } catch (_) {}
+          try { await chrome.tabs.update(tab.id, { active: true }); } catch (_) {}
+          await new Promise(function (r) { setTimeout(r, 320); });
+        }
+        try {
+          dataUrl = await _capturePaced(tab.windowId);
+        } finally {
+          if (!wasActive && prevId != null) {
+            try { await chrome.tabs.update(prevId, { active: true }); } catch (_) {}
+          }
+        }
       } catch (e) {        /**
          * 2026-11-11 竹内さん「写真撮ってるかな？」→ 0枚のまま。
          *   `captureVisibleTab` は**その窓のアクティブなタブ**しか撮れない。小窓を開いていると失敗する。
@@ -2145,6 +2174,23 @@ async function _takeShot(msg, done) {
         }
       }
       if (!dataUrl) { fail("no_image"); return; }
+
+      /**
+       * 2026-11-14 竹内さん「足りていない部分や弱い部分はきょうかするようにする」:
+       *   ⚠ **同じ画像が延々と撮れている**事に誰も気づけなかった（実測100枚が同一）。
+       *   → 撮った直後に**直前の写真と同じか**を見て、続いた枚数を数える。
+       *     ⚠ 比べるのは**長さと先頭200文字**だけ（軽い・中身を読まない）。
+       *     ⚠ `same_run` が大きい＝「画面が変わっていない」＝止まっている／別のタブを撮っている疑い。
+       */
+      try {
+        var _sigNow = String(dataUrl.length) + ":" + String(dataUrl.slice(0, 200));
+        if (window.__axLastShotSig && window.__axLastShotSig === _sigNow) {
+          _shotSameRun = (_shotSameRun || 0) + 1;
+        } else {
+          _shotSameRun = 0;
+          window.__axLastShotSig = _sigNow;
+        }
+      } catch (_) {}
 
       /**
        * 2026-11-11 竹内さん「まだ写真クラウドにおくれていないのか」:
@@ -2210,6 +2256,14 @@ async function _takeShot(msg, done) {
         //   ⚠ 旧は `mode: null` 固定だったので、どのモードの写真か分からなかった（DBのmodeが空）。
         //   → 今のモードを入れる（normal / staff / aix / brain…）。
         mode: await _modeLabelNow(), run_id: _shotRun, seq: _shotSeq,
+        /**
+         * 2026-11-14 竹内さん「ここちゃんと学習できるように」:
+         *   ⚠ **同じ画像が延々と撮れている**事に誰も気づけなかった（実測100枚が同一）。
+         *   → 直前の写真と同じなら `same_run` に**何枚続いたか**を入れて送る。
+         *     統括が「画面が変わっていない＝止まっている／別のタブを撮っている」を判断できる。
+         *   ⚠ 比べるのは**長さと先頭200文字**だけ（軽い・中身を読まない・個人情報を扱わない）。
+         */
+        same_run: (function () { try { return _shotSameRun || 0; } catch (_) { return 0; } })(),
         // 2026-11-13 竹内さん「写真から学習する」: この写真の直前までの操作の並び
         ops: Array.isArray(msg.ops) ? msg.ops : null,
         // 2026-11-13: どのタブか（その場の動きの癖を一緒に送るため）
@@ -2786,6 +2840,18 @@ async function _recordOneShot() {
       if ((!ops || !ops.length) && _lastOpsWhy) {
         _opsForSend = [{ t: Date.now(), k: "diag", f: null, w: null, why: String(_lastOpsWhy).slice(0, 60) }];
       }
+      /**
+       * 2026-11-14 竹内さん「足りていない部分や弱い部分はきょうかするようにする」:
+       *   ⚠ **同じ画像が延々と撮れている**事に誰も気づけなかった（実測100枚が同一）。
+       *   → 新しい列を作らず、**`shot_ops` に `k:"same"` の1件**として「何枚続いたか」を載せる
+       *     （DBの変更なし・統括が読める）。
+       *   ⚠ 2枚以上続いた時だけ入れる（1枚目は入れない）。
+       */
+      try {
+        if (Number(_shotSameRun) >= 2 && Array.isArray(_opsForSend)) {
+          _opsForSend = _opsForSend.concat([{ t: Date.now(), k: "same", f: null, w: null, same: Number(_shotSameRun) }]);
+        }
+      } catch (_) {}
       _takeShot({ type: "axlx-human-shot", site: siteName || "record", kind: "rec", wait_upload: true, ops: _opsForSend }, function (res) { resolve(res || null); });
     } catch (_) { resolve(null); }
   });

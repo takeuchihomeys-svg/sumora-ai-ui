@@ -235,6 +235,11 @@ export async function POST(req: NextRequest) {
            *     中身は「ring_empty:tab123」「no_answer:tab123」のような短い言葉だけ。
            */
           ...(typeof r.why === "string" && r.why ? { why: r.why.slice(0, 60) } : {}),
+          /**
+           * 2026-11-14 竹内さん「足りていない部分や弱い部分はきょうかするようにする」:
+           *   同じ画像が何枚続いたか（`k:"same"`）。統括が「画面が変わっていない」を判断できる。
+           */
+          ...(typeof (r as Record<string, unknown>).same === "number" ? { same: Math.max(0, Math.min(9999, Number((r as Record<string, unknown>).same))) } : {}),
         };
       }).filter((o) => o.k || o.f);
       return out.length ? out : null;
