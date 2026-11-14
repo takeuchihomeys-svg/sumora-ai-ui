@@ -2902,6 +2902,22 @@
   function _findNextPageEl() {
     var NEXT_TEXTS = ["次", "次へ", "次のページ", ">", ">>"];
 
+    /**
+     * 2026-11-14 竹内さん「実際のところから学習する」:
+     *   **前に押せた「次」の印**があれば、それを**最初に**探す（サイトの構造が変わっても当たる）。
+     *   ⚠ 見つからなければ今までの候補へ戻る（安全側）。
+     */
+    try {
+      if (Array.isArray(_pagerMarksCache) && _pagerMarksCache.length) {
+        var lh = null;
+        _findNextByLearned(_pagerMarksCache, function (h) { lh = h; });
+        if (lh && _isElVisible(lh) && !_isDisabledEl(lh)) {
+          console.log("[AXLX bulk-dl] _findNextPageEl: 前に押せた「次」の印で発見 tag=" + lh.tagName);
+          return lh;
+        }
+      }
+    } catch (_) {}
+
     // フェーズ0: リアプロ専用 td.pager（最も確実）
     // リアプロのページネーションは <TD class="pager" onclick="pager(...)">次</TD> の構造
     var pagerTds = document.querySelectorAll("td.pager");
@@ -2950,15 +2966,210 @@
     return _findNextPageEl() !== null;
   }
 
+  /**
+   * 2026-11-14 竹内さん「次のページにいく次のボタンも押していない。実際のところから学習する」:
+   *
+   *   ⚠ 旧の `_findNextPageEl` は **決め打ちの候補**（`td.pager` → 文字ウォーカー → CSSクラス）で
+   *     探していた。リアプロのページャーは `最初 前 1 2 3 4 次 最後` のように並ぶ**リンク/セル**で、
+   *     構造や class が変わると**見つからず、そのまま「次ページなし＝完了」と判断**していた
+   *     （実測: `search_audits.result` が空＝完了まで届いていない）。
+   *
+   *   → ① **実際のページャーの中身を記録する**（何が並んでいるか・どれが「次」か）
+   *     ② **押せたかどうかを確かめる**（URL か一覧が変わったか）
+   *     ③ 押せなければ**記録に残す**（次に直せるように）
+   */
+  function _pagerDiagnostics() {
+    var out = { at: Date.now(), found: null, candidates: [], pagerTexts: [] };
+    try {
+      // ページャーらしい入れ物を集める（td.pager・pagination・class に pager/page を含む物）
+      var boxes = [];
+      var sel = 'td.pager, .pager, .pagination, [class*="pager"], [class*="pagination"], [class*="pageNavi"], [class*="page_navi"]';
+      var found = document.querySelectorAll(sel);
+      for (var i = 0; i < found.length && i < 6; i++) boxes.push(found[i]);
+      // 画面の下の方にある「最初・前・次・最後」を含む入れ物も足す
+      var all = document.querySelectorAll('td, div, ul, table, nav, span');
+      for (var j = 0; j < all.length && boxes.length < 8; j++) {
+        var t = String(all[j].textContent || "").replace(/\s+/g, "");
+        if (t.length < 30 && /最初/.test(t) && /(次|最後)/.test(t)) boxes.push(all[j]);
+      }
+      for (var bi = 0; bi < boxes.length; bi++) {
+        var b = boxes[bi];
+        if (!_isElVisible(b)) continue;
+        var items = [];
+        var kids = b.querySelectorAll('a, button, td, li, span, input[type=button]');
+        for (var ki = 0; ki < kids.length && ki < 30; ki++) {
+          var k = kids[ki];
+          var kt = String(k.textContent || (k.value || "")).replace(/\s+/g, "").slice(0, 12);
+          if (!kt) continue;
+          items.push({
+            t: kt,
+            tag: k.tagName,
+            cls: String(k.className || "").slice(0, 30),
+            onclick: String(k.getAttribute && k.getAttribute("onclick") || "").slice(0, 40),
+            href: String(k.getAttribute && k.getAttribute("href") || "").slice(0, 60),
+            vis: _isElVisible(k),
+            dis: _isDisabledEl(k),
+          });
+        }
+        if (items.length) out.pagerTexts.push({ tag: b.tagName, cls: String(b.className || "").slice(0, 30), items: items.slice(0, 20) });
+      }
+      var el = _findNextPageEl();
+      if (el) out.found = { tag: el.tagName, cls: String(el.className || "").slice(0, 30), t: String(el.textContent || "").replace(/\s+/g, "").slice(0, 12) };
+      // 「次」らしき物を全部ひろう（押せなかった時に「なぜ」を見るため）
+      var nextLike = [];
+      var cands = document.querySelectorAll('a, button, td, li, span, input[type=button]');
+      for (var ci = 0; ci < cands.length && nextLike.length < 12; ci++) {
+        var c = cands[ci];
+        var ct = String(c.textContent || (c.value || "")).replace(/\s+/g, "");
+        if (!/^(次|次へ|次のページ|>|>>)$/.test(ct)) continue;
+        if (!_isElVisible(c)) continue;
+        nextLike.push({ t: ct, tag: c.tagName, cls: String(c.className || "").slice(0, 30), dis: _isDisabledEl(c), onclick: String(c.getAttribute("onclick") || "").slice(0, 40) });
+      }
+      out.candidates = nextLike;
+    } catch (e) {
+      out.error = String((e && e.message) || e);
+    }
+    return out;
+  }
+  try { self.__axPagerDiag = _pagerDiagnostics; } catch (_) {}
+
+  /**
+   * 2026-11-14 竹内さん「次のページにいく次のボタンも押していない。実際のところから学習する」:
+   *   **実際の画面で「次」がどこにあったか**を覚えて、次からそれを先に使う。
+   *
+   *   ⚠ 決め打ちの候補（`td.pager` 等）だけで探すと、構造が変わった時に見つからない。
+   *   → 押せた時の要素の**印**（タグ・class・文字・親の class）を storage に残し、
+   *     次回は**その印で先に探す**（見つからなければ今までの候補に戻る＝安全側）。
+   *   保存する物: `axlx_pager_learned` = { at, marks: [{tag,cls,txt,parentCls}], okCount }
+   */
+  var PAGER_KEY = "axlx_pager_learned";
+  /** 覚えた印の控え（storage を毎回読まない・起動時と保存時に更新） */
+  var _pagerMarksCache = null;
+  try {
+    chrome.storage.local.get([PAGER_KEY], function (r) {
+      try { _pagerMarksCache = (r && r[PAGER_KEY] && Array.isArray(r[PAGER_KEY].marks)) ? r[PAGER_KEY].marks : []; }
+      catch (_) { _pagerMarksCache = []; }
+      if (_pagerMarksCache.length) console.log("[AXLX bulk-dl] 覚えている「次」の印:", JSON.stringify(_pagerMarksCache).slice(0, 200));
+    });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area !== "local" || !ch || !ch[PAGER_KEY]) return;
+      try { _pagerMarksCache = (ch[PAGER_KEY].newValue && Array.isArray(ch[PAGER_KEY].newValue.marks)) ? ch[PAGER_KEY].newValue.marks : []; } catch (_) {}
+    });
+  } catch (_) { _pagerMarksCache = []; }
+  function _pagerMarkOf(el) {
+    try {
+      if (!el) return null;
+      var p = el.parentElement;
+      return {
+        tag: String(el.tagName || "").toUpperCase(),
+        cls: String(el.className || "").split(/\s+/).filter(Boolean).slice(0, 2).join(" ").slice(0, 40),
+        txt: String(el.textContent || "").replace(/\s+/g, "").slice(0, 10),
+        parentCls: String((p && p.className) || "").split(/\s+/).filter(Boolean).slice(0, 2).join(" ").slice(0, 40),
+      };
+    } catch (_) { return null; }
+  }
+  /** 押せた「次」を覚える（同じ印は1つに） */
+  function _rememberPager(el) {
+    try {
+      var m = _pagerMarkOf(el);
+      if (!m || !m.txt) return;
+      chrome.storage.local.get([PAGER_KEY], function (r) {
+        var cur = (r && r[PAGER_KEY]) || { marks: [], okCount: 0 };
+        var marks = Array.isArray(cur.marks) ? cur.marks.slice(0, 6) : [];
+        var key = m.tag + "|" + m.cls + "|" + m.txt + "|" + m.parentCls;
+        var exists = marks.some(function (x) { return (x.tag + "|" + x.cls + "|" + x.txt + "|" + x.parentCls) === key; });
+        if (!exists) marks.unshift(m);
+        var o = {}; o[PAGER_KEY] = { at: Date.now(), marks: marks.slice(0, 6), okCount: (Number(cur.okCount) || 0) + 1 };
+        try { chrome.storage.local.set(o); } catch (_) {}
+        console.log("[AXLX bulk-dl] 「次」の場所を覚えました:", JSON.stringify(m));
+      });
+    } catch (_) {}
+  }
+  /** 覚えた印で「次」を探す（見つからなければ null＝今までの候補へ） */
+  function _findNextByLearned(marks, cb) {
+    try {
+      if (!Array.isArray(marks) || !marks.length) { cb(null); return; }
+      var hit = null;
+      for (var i = 0; i < marks.length && !hit; i++) {
+        var m = marks[i];
+        if (!m || !m.txt) continue;
+        var sel = m.tag ? m.tag.toLowerCase() : "*";
+        var cands = document.querySelectorAll(sel);
+        for (var j = 0; j < cands.length; j++) {
+          var c = cands[j];
+          var txt = String(c.textContent || "").replace(/\s+/g, "");
+          if (txt !== m.txt) continue;
+          if (m.cls) {
+            var clsOk = false;
+            var parts = String(m.cls).split(/\s+/);
+            for (var k = 0; k < parts.length; k++) if (parts[k] && c.classList && c.classList.contains(parts[k])) { clsOk = true; break; }
+            if (!clsOk) continue;
+          }
+          if (!_isElVisible(c) || _isDisabledEl(c)) continue;
+          hit = c; break;
+        }
+      }
+      cb(hit);
+    } catch (_) { cb(null); }
+  }
+
   // ── ページネーション: 「次」ボタンをクリックして true を返す ───────────────
   function clickNextPageBtn() {
     var el = _findNextPageEl();
-    if (!el) return false;
+    if (!el) {      /**
+       * 2026-11-14 竹内さん「次のページにいく次のボタンも押していない。実際のところから学習する」:
+       *   見つからなかった時に**何が並んでいたか**を残す（推測で直さない）。
+       */
+      try {
+        var d = _pagerDiagnostics();
+        _tmark("next_not_found", JSON.stringify({ cand: d.candidates.length, pagers: d.pagerTexts.length, first: (d.pagerTexts[0] && d.pagerTexts[0].items || []).map(function (x) { return x.t; }).join("/").slice(0, 80) }));
+        console.warn("[AXLX bulk-dl] 次のページのボタンが見つかりません。ページャーの中身:", JSON.stringify(d.pagerTexts.slice(0, 2)).slice(0, 500));
+      } catch (_) {}
+      return false;
+    }
     // 2026-11-10 人間的な動き: 押す前に、ボタンが画面に入るまで少しずつ動かす（人が一覧の下まで目で追う形）
     _humanScrollToEl(el);
-    el.click();
+    /**
+     * ⚠ 旧は `el.click()` だけだった。リアプロのページャーは `td.pager` に `onclick="pager(..)"` が
+     *   付いている事があり、素の `click()` では**ハンドラが動かない**事がある。
+     *   → ① 素の click → ② 動かなければ onclick を直接呼ぶ → ③ それでもだめなら中の a を押す。
+     */
+    var urlBefore = String(location.href);
+    var rowBefore = document.querySelectorAll('.building_tr, .building_list, [class*="building_tr"]').length;
+    try { el.click(); } catch (_) {}
+    // onclick を直接呼ぶ（属性に書かれている式を実行）
+    try {
+      var oc = el.getAttribute && el.getAttribute("onclick");
+      if (oc) { try { (new Function(oc)).call(el); } catch (_) {} }
+    } catch (_) {}
+    // 中に <a> があればそれも押す
+    try {
+      var innerA = el.querySelector && el.querySelector("a[href]");
+      if (innerA) { try { innerA.click(); } catch (_) {} }
+    } catch (_) {}
     console.log("[AXLX bulk-dl] clickNextPageBtn: クリック完了 tag=" + el.tagName);
+    /** 2026-11-14 竹内さん「実際のところから学習する」: 押せた「次」の場所を覚える */
+    _rememberPager(el);
     return true;
+  }
+
+  /**
+   * 2026-11-14: 押した**後**に本当にページが変わったかを確かめる（変わっていなければ記録に残す）。
+   *   ⚠ 「押した」と「進んだ」は別。旧は押したら進んだ前提で state を進めていたので、
+   *     押せていない時は**同じページを何度も読んで終わる**（＝次のページが取れない）。
+   * @returns {Promise<boolean>} 進んだか
+   */
+  function _verifyNextPage(urlBefore, maxMs) {
+    return new Promise(function (resolve) {
+      var t0 = Date.now();
+      var limit = maxMs || 6000;
+      var tick = function () {
+        if (String(location.href) !== urlBefore) { resolve(true); return; }
+        if (Date.now() - t0 > limit) { resolve(false); return; }
+        setTimeout(tick, 350);
+      };
+      setTimeout(tick, 400);
+    });
   }
 
   // ── 検索の点検（2026-09-25 竹内「0件だった場合ちゃんと検索されていない可能性がある」）──
@@ -3025,6 +3236,7 @@
     }
     if (hasNextPageBtn()) {
       _tmark("next", "P" + (state.currentPage + 1));
+      var _urlBefore = String(location.href);
       var clicked = clickNextPageBtn();
       if (!clicked) {
         clearAutoSendState();
@@ -3034,14 +3246,42 @@
         var countEl2 = document.getElementById("axlx-count");
         if (countEl2) countEl2.textContent = "次ページ遷移エラー";
       } else {
-        // クリック成功後にstateを更新（失敗時にdirty stateが残らないようにする）
-        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0, readCount: state.readCount || 0, sendableCount: state.sendableCount || 0, sentSkipped: state.sentSkipped || 0, updateAges: state.updateAges || null, pickedRooms: state.pickedRooms || null, updateCarry: state.updateCarry || null });
-        // 進捗ハートビート: ページ遷移も「進行中」として background のタイムアウトをリセット
-        try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
-        // AJAX: 次のinject()でCase Bが拾えるようにリセット
-        // ページリロード: _pendingAutoSendDispatched は再初期化されるので問題なし
-        _pendingAutoSendDispatched = false;
-        console.log("[AXLX bulk-dl] 次ページへ遷移 P" + (state.currentPage + 1));
+        /**
+         * 2026-11-14 竹内さん「次のページにいく次のボタンも押していない。実際のところから学習する」:
+         *   ⚠ 旧は押したら**進んだ前提**で state を進めていた。押せていないと
+         *     同じページを何度も読んで終わる（＝次のページが取れない）。
+         *   → **本当に URL が変わったかを確かめる**。変わらなければ記録に残して止める
+         *     （同じページを繰り返さない＝サイトへのアクセスも増やさない）。
+         */
+        var countElW = document.getElementById("axlx-count");
+        if (countElW) countElW.textContent = "次ページを開いています…";
+        _verifyNextPage(_urlBefore, 7000).then(function (moved) {
+          if (!moved) {
+            clearAutoSendState();
+            var d = {};
+            try { d = _pagerDiagnostics(); } catch (_) {}
+            _tmark("next_not_moved", JSON.stringify({ at: state.currentPage, cand: (d.candidates || []).length, pagers: (d.pagerTexts || []).length }));
+            try {
+              chrome.runtime.sendMessage({
+                type: "axlx-batch-customer-done",
+                customerId: state.customerId || null,
+                audit: _auditResult(state, { next_page_not_moved: true, pager: { candidates: d.candidates || [], pagers: (d.pagerTexts || []).slice(0, 2) } }),
+              }, function () { void chrome.runtime.lastError; });
+            } catch (_) {}
+            console.warn("[AXLX bulk-dl] 次ページのボタンを押しましたが、ページが変わりませんでした（ここで止めます）");
+            var ce = document.getElementById("axlx-count");
+            if (ce) ce.textContent = "次ページが変わりません";
+            return;
+          }
+          // クリック成功後にstateを更新（失敗時にdirty stateが残らないようにする）
+          setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0, readCount: state.readCount || 0, sendableCount: state.sendableCount || 0, sentSkipped: state.sentSkipped || 0, updateAges: state.updateAges || null, pickedRooms: state.pickedRooms || null, updateCarry: state.updateCarry || null });
+          // 進捗ハートビート: ページ遷移も「進行中」として background のタイムアウトをリセット
+          try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+          // AJAX: 次のinject()でCase Bが拾えるようにリセット
+          // ページリロード: _pendingAutoSendDispatched は再初期化されるので問題なし
+          _pendingAutoSendDispatched = false;
+          console.log("[AXLX bulk-dl] 次ページへ遷移 P" + (state.currentPage + 1));
+        });
       }
     } else {
       clearAutoSendState();
