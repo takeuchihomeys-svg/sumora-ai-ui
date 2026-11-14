@@ -7792,3 +7792,51 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - 版: **2.7.31**（repo・`Desktop\chrome-extension` 一致）。**Chrome の再読み込みが必要**。
 - 次に確かめる事: 自動モードで1回検索し、点検（`search_audits.steps`）に
   `learn_aim` が「`左の所在地絞り込み＋｜span` 横66% 縦57%」のように残るか。
+
+---
+
+## 2026-11-14 v2.7.32 録画→学習→自動検索の3つの連携（**拡張の再読み込み必須**・DB に列2つ追加）
+
+竹内さん「新しい録画データでもちゃんと動き学習できるように」「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」「自動検索の部分学習反映されるようにちゃんと連携する。今自動検索がちゃんと学習連携されていない可能性たかい」
+
+### 1. 本番DBと実装で見つけた穴（3つ。③は竹内さんの推測が的中）
+1. **AIX（自動）の記録が DB に0件だった**（`learn_plan.mode_plan` が「AIX（自動）: 記録が0件」と言い続けていた）
+   → 原因: 自動の動きは `axlx_auto_motion`（**PCの中だけ**）に貯めるだけで、
+     `__axlxHumanMotionUploadNow` を**一度も呼んでいなかった**（実測 0箇所）。
+     だから `by_mode` の aix は永遠に0件＝自動は一生「学べていない」判定。
+2. **押したら何が開くかを学んでいなかった**（記録は名前・種類・段階 form/modal/result だけ）
+   → 自動は「このボタンは小窓を開く」「このプルダウンは一覧が開く」が分からず、開いた前提で次を探して空振り。
+3. **AIXLINX 自身の小窓を押した記録が学習に混ざっていた**
+   （実測: `左のAIXLINX｜div`・`#axlx-bar`・`#aixlinx-mini-btn`）。自分のUIはサイトの操作ではない＝順番と位置を濁らせる。
+
+### 2. 直した物
+- **自動の記録を DB へ**（`human-learn-record.js`）: `flushAuto` が人の記録と同じ送り口を **`mode:"aix"`** で呼ぶ。
+  ⚠ 人の5分間隔では止めない（`__axlxHumanMotionUploadNow(agg, {mode})` は別枠）。
+- **展開先の学習**（`human-learn.js`）: `uiCounts()`（小窓・選択肢・欄・結果の数）を押す直前に控え、
+  押した**520ms 後**に比べて `modal / options / form / result / modal_close / none` を判定 → `opens` に残す。
+  欄ごとに一番多い開き方を `_opensOf` がまとめる。**中身は見ない（数の変化だけ）**。
+- **自分の小窓を除外**（`guarded` の入口）: `#axlx-` / `[data-axlx]` / `#aixlinx-` は記録しない。
+- **自動検索が学びを使う**: `page-script.js` が `axlx_learn_opens` を読み、`_pressLearned` の点検に「開き方=modal」を残す。
+- **サーバー**: `human-motion` が `opens`/`open_kinds` を受け取り（**種類の検査・中身は入れない**）、
+  `human-learn-brain.ts` の `learnOpens` が束に載せ、`describeBundle` が「開き方: 小窓が開く（3回）」と言葉で出す。
+- **⚠ 一緒に直した実バグ**: `mode_plan` が `by_mode`（3件未満を作らない）だけを見ていたため、
+  **10件ある normal まで「3件に届いていない」と言っていた**。`mode_counts`（実数）を渡し、
+  0件／1〜2件／3件以上（学びを作る所で落ちている）を**別々**に案内するようにした。
+- **⚠ 静かに壊れる所**: insert で**無い列を1つずつ外して入れ直す**ようにした（旧は `shot_b64` 決め打ち）。
+  `opens` 列がまだ無いDBでも**動きの記録ごと消えない**（外した列は `dropped_cols` で返す）。
+
+### 3. 試験
+- `tests/chrome-extension/learn-opens-and-auto.test.js`（**新規 45件**）・`app/lib/__tests__/learn-opens.test.ts`（**新規 21件**）
+- 拡張 **115本**合格・`npx tsc --noEmit` 0・`node scripts/audit-reflect.js` **31/31**（目印4つ追加）
+- ついでに**元から落ちていた**テストを直した: `human-learn-brain.test.ts` の2件（材料が1文字の名前＝学習対象外／同じ日で畳まれる）。
+  いずれも**実装は正しく、テストの材料が実物と違っていた**。
+
+### 4. DB（竹内さん承認済み・2026-11-14）
+- `human_motion_learn` に **`opens` JSONB / `open_kinds` JSONB** を追加（`migrate-schema` と `scripts/apply-learn-opens.ts` に反映済み）。
+- ⚠ **まだ本番DBには当たっていない**（`.env.local` に `SUPABASE_SERVICE_ROLE_KEY` が無く `exec_sql` が拒否された）。
+  今夜 JST 0:10 の migrate-schema で当たる。**それまでは列を外して記録する**ので壊れない（開き方だけ入らない）。
+
+### 5. 版
+- **2.7.32**（repo・`Desktop\chrome-extension` 一致）。**Chrome の再読み込みが必要**。
+- 次に確かめる事: 自動モードで1回検索し、`/api/human-learn-profile?fresh=1` の
+  `mode_counts` に **`aix`** が出るか／`opens` に `左の所在地絞り込み＋｜span: modal` が入るか。

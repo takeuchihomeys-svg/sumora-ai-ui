@@ -2302,6 +2302,12 @@ async function _refreshLearnedBundle(force) {
     var seqFlow = (bundle.sequence_flow && typeof bundle.sequence_flow === "object") ? bundle.sequence_flow : {};
     var byMode = (bundle.by_mode && typeof bundle.by_mode === "object") ? bundle.by_mode : {};
     var plan = (bundle.learn_plan && typeof bundle.learn_plan === "object") ? bundle.learn_plan : {};
+    /**
+     * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
+     *   **押したら何が開くか**（modal / options / form / result）も置く。
+     *   ⚠ サーバーが計算して返しているのに拡張が読まなければ、現場では使われない（学習が届かない）。
+     */
+    var opens = (bundle.opens && typeof bundle.opens === "object") ? bundle.opens : {};
     /** 今のモードの押す順番（あれば mode 別、無ければ全体） */
     var myMode = await _modeLabelNow();
     var modeNext = (myMode && byMode[myMode] && byMode[myMode].next) ? byMode[myMode].next : null;
@@ -2313,6 +2319,7 @@ async function _refreshLearnedBundle(force) {
       axlx_learn_weak: weak,
       axlx_learn_site_flow: siteFlow,
       axlx_learn_screen_flow: screenFlow,
+      axlx_learn_opens: opens,
       axlx_learn_shots: (bundle.shots && typeof bundle.shots === "object") ? bundle.shots : null,
       axlx_learn_seq: seqFlow,
       axlx_learn_by_mode: byMode,
@@ -2324,10 +2331,11 @@ async function _refreshLearnedBundle(force) {
       axlx_learn_ver: String(bundle.generated_at || ""),
       axlx_learn_src: { rows: (bundle.source && bundle.source.rows) || 0, at: bundle.generated_at || null, dropped: bundle.dropped_cols || null },
     });
-    console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個・弱い所 " + weak.length + "件・画面 " + Object.keys(screenFlow).length + "種類・一連 " + ((seqFlow.sequence || []).length) + "手"
+    console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個・弱い所 " + weak.length + "件・画面 " + Object.keys(screenFlow).length + "種類・一連 " + ((seqFlow.sequence || []).length) + "手・展開先 " + Object.keys(opens).length + "個"
       + (modeNext ? "・モード別(" + myMode + ") " + Object.keys(modeNext).length + "通り" : ""));
     return {
       ok: true, next: Object.keys(next).length, points: Object.keys(points).length, weak: weak.length,
+      opens: Object.keys(opens).length,
       screens: Object.keys(screenFlow).length, seq: ((seqFlow.sequence || []).length),
       mode: myMode, mode_next: modeNext ? Object.keys(modeNext).length : 0,
     };

@@ -148,6 +148,45 @@ export async function POST(req: NextRequest) {
     kinds: (m.kinds && typeof m.kinds === "object" && !Array.isArray(m.kinds)) ? m.kinds : null,
     fields: strArr(m.fields, 40),
     field_order: strArr(m.order, 40),
+    /**
+     * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
+     *   押したら**何が開いたか**（小窓／選択肢／入力欄／結果）を欄ごとに残す。
+     *   `opens` … `{ "左の所在地絞り込み＋｜span": { opens: "modal", n: 3 } }`
+     *   `open_kinds` … `{ modal: 3, options: 5 }`（全体の内訳・すぐ集計できる形）
+     *   ⚠ 入れるのは**開いた物の種類と数**だけ（中身・文字は入れない）。
+     */
+    opens: (() => {
+      const v = m.opens;
+      if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+      const okKind = /^(modal|options|form|result|modal_close|none)$/;
+      const out: Record<string, { opens: string; n: number; stage: string | null }> = {};
+      let cnt = 0;
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        if (cnt++ >= 60) break;
+        const name = String(k ?? "").trim().slice(0, 30);
+        if (!name) continue;
+        const r = (x && typeof x === "object" ? x : {}) as Record<string, unknown>;
+        const kind = String(r.opens ?? "").trim();
+        if (!okKind.test(kind)) continue;
+        out[name] = {
+          opens: kind,
+          n: Math.max(0, Math.min(9999, Number(r.n) || 0)),
+          stage: r.stage ? String(r.stage).slice(0, 10) : null,
+        };
+      }
+      return Object.keys(out).length ? out : null;
+    })(),
+    open_kinds: (() => {
+      const v = m.open_kinds;
+      if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+      const okKind = /^(modal|options|form|result|modal_close|none)$/;
+      const out: Record<string, number> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        if (!okKind.test(k)) continue;
+        out[k] = Math.max(0, Math.min(99999, Number(x) || 0));
+      }
+      return Object.keys(out).length ? out : null;
+    })(),
 
     shot_taken: !!body.shot_taken,
     shot_key: typeof body.shot_key === "string" ? body.shot_key.slice(0, 200) : null,
@@ -247,13 +286,32 @@ export async function POST(req: NextRequest) {
    *   → 落ちたら列を外してもう一度入れる（画像は Storage の shot_key で残っている）。
    */
   let ins = await supabase.from("human_motion_learn").insert(row);
-  const _missingCol = ins.error && (ins.error.code === "42703" || ins.error.code === "PGRST204");
-  if (_missingCol) {
+  /** 無い列を外した記録（点検用に返す・静かに握りつぶさない） */
+  const droppedCols: string[] = [];
+  const _isMissing = (e: { code?: string | null; message?: string | null } | null | undefined) =>
+    !!e && (e.code === "42703" || e.code === "PGRST204" || /column .* does not exist|Could not find the .* column/i.test(String(e.message ?? "")));
+  if (_isMissing(ins.error)) {
     console.warn("[human-motion] shot_b64 列がありません → 列を外して入れ直します（写真は Storage に残っています）:", ins.error?.message);
     const r2 = { ...row } as Record<string, unknown>;
     delete r2.shot_b64;
     delete r2.shot_in_db;
     ins = await supabase.from("human_motion_learn").insert(r2);
+    /**
+     * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
+     *   `opens` / `open_kinds` は**新しい列**。migrate がまだ当たっていない環境では
+     *   42703 で insert が落ち、**動きの記録ごと消える**（今まで何度も踏んだ「静かに壊れる」）。
+     *   → 無い列を**1つずつ外して入れ直す**（最大6回・外した列は点検用に返す）。
+     *     ⚠ 記録そのものは捨てない（開き方が入らないだけ）。
+     */
+    for (let _i = 0; _i < 6 && _isMissing(ins.error); _i++) {
+      const m = /column "?([a-z_]+)"? of|'([a-z_]+)' column|column "?([a-z_]+)"? does not exist|Could not find the '([a-z_]+)' column/i.exec(String(ins.error?.message ?? ""));
+      const col = m ? (m[1] || m[2] || m[3] || m[4]) : null;
+      if (!col || !(col in (r2 as Record<string, unknown>))) break;
+      console.warn("[human-motion] 列がありません → 外して入れ直します:", col);
+      droppedCols.push(col);
+      delete (r2 as Record<string, unknown>)[col];
+      ins = await supabase.from("human_motion_learn").insert(r2);
+    }
   }
   /**
    * 2026-11-12 竹内さん「くれさん通常モードで検索したけどちゃんと画面録画はできるようになっているかな」:
@@ -268,6 +326,8 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(
     {
       ok: !ins.error, error: ins.error?.message, code: ins.error?.code ?? null,
+      /** 2026-11-14: DB に無くて外した列（あれば migrate を当てる合図） */
+      dropped_cols: droppedCols.length ? droppedCols : null,
       shot_key: row.shot_taken ? (row.shot_key ?? "(表)") : null,
       /** 表に入れたかは `shot_b64` の中身から判断（列が無いDBでも正しく返す） */
       shot_in_db: typeof row.shot_b64 === "string" && row.shot_b64.length > 100,

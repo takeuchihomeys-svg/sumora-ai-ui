@@ -55,6 +55,9 @@ export type MotionRow = {
   fields?: unknown;
   field_order?: unknown;
   shot_ops?: unknown;
+  /** 2026-11-14: 押したら何が開いたか（欄ごと）／その内訳 */
+  opens?: unknown;
+  open_kinds?: unknown;
   /**
    * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい」:
    *   写真が撮れた画面の URL（`display=building` なら結果・`method=estate` なら入力）。
@@ -110,6 +113,13 @@ export type HumanLearnBundle = {
   buttons: Array<{ name: string; n: number }>;
   /** ⑤ サイトごとの手順（上位の流れ） */
   site_flow: Record<string, Array<{ from: string; to: string; n: number }>>;
+  /**
+   * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
+   *   **押したら何が開くか**（欄ごと）。
+   *   modal＝小窓が開く／options＝プルダウンの一覧が開く／form＝欄が変わる／
+   *   result＝結果に変わる／modal_close＝小窓が閉じる／none＝変化なし。
+   */
+  opens?: Record<string, { opens: string; n: number; stage?: string }>;
   /** ⑥ 操作と操作の間（中央値 ms） */
   gaps: { median_ms: number | null; samples: number };
   /**
@@ -343,9 +353,50 @@ export function learnPoints(rows: ReadonlyArray<MotionRow>): Record<string, Poin
   return out;
 }
 
+/**
+ * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
+ *   **押したら何が開くか**を欄ごとにまとめる（純関数）。
+ *   ・`modal`        … 小窓（所在地絞り込み・沿線）が開く
+ *   ・`options`      … プルダウンの選択肢が開く
+ *   ・`form`         … 条件の欄が増える／変わる
+ *   ・`result`       … 結果の一覧に変わる
+ *   ・`modal_close`  … 開いていた小窓が閉じる（確定してリストへ等）
+ *   ・`none`         … 見た目に変化が無い
+ *   ⚠ 学ぶのは**開き方の種類**だけ（中身・入力値は扱わない）。
+ *   ⚠ `div`/`img` などの入れ物の名前は学ばない（`isLearnableName`）。
+ */
+export function learnOpens(rows: ReadonlyArray<MotionRow>): Record<string, { opens: string; n: number; stage?: string }> {
+  const acc: Record<string, { opens: Record<string, number>; n: number; stage: string | null }> = {};
+  for (const row of rows) {
+    const v = (row as unknown as Record<string, unknown>).opens;
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    for (const [name, raw] of Object.entries(v as Record<string, unknown>)) {
+      if (!isLearnableName(name)) continue;
+      const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+      const kind = String(r.opens ?? "").trim();
+      const n = num(r.n) ?? 0;
+      if (!kind || n <= 0) continue;
+      const key = String(name).slice(0, 30);
+      const cur = acc[key] || { opens: {}, n: 0, stage: null };
+      cur.opens[kind] = (cur.opens[kind] || 0) + n;
+      cur.n += n;
+      const st = typeof r.stage === "string" ? r.stage.slice(0, 10) : null;
+      if (st) cur.stage = st;
+      acc[key] = cur;
+    }
+  }
+  const out: Record<string, { opens: string; n: number; stage?: string }> = {};
+  for (const [k, v] of Object.entries(acc)) {
+    let best = "", bn = -1;
+    for (const [kind, cnt] of Object.entries(v.opens)) if (cnt > bn) { best = kind; bn = cnt; }
+    if (!best) continue;
+    out[k] = { opens: best, n: v.n, ...(v.stage ? { stage: v.stage } : {}) };
+  }
+  return out;
+}
+
 /** 動きの癖（速さ・曲がり・狙う位置・スクロール）をまとめる */
-export function learnMotion(rows: ReadonlyArray<MotionRow>): MotionStat {
-  const speeds: number[] = [], curves: number[] = [], dx: number[] = [], dy: number[] = [], dyScroll: number[] = [];
+export function learnMotion(rows: ReadonlyArray<MotionRow>): MotionStat {  const speeds: number[] = [], curves: number[] = [], dx: number[] = [], dy: number[] = [], dyScroll: number[] = [];
   let moves = 0, points = 0, scrolls = 0;
   for (const r of rows) {
     const mn = num(r.moves_n) ?? 0;
@@ -428,6 +479,9 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
 
   // ② 押した位置
   const points = learnPoints(list);
+
+  // ②' 押したら何が開くか（2026-11-14）
+  const opens = learnOpens(list);
 
   // ③ 動き
   const motion = learnMotion(list);
@@ -717,8 +771,8 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
         steps: Object.values(v.screen_flow).reduce((s, x) => s + x.steps.length, 0),
         gaps: v.gaps,
       },
-    ]),
-  ), garbage);
+    ])),
+    garbage, mode_counts);
 
   const bundle: HumanLearnBundle = {
     v: 1,
@@ -734,6 +788,11 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     motion,
     buttons,
     site_flow,
+    /**
+     * 2026-11-14 竹内さん「どこで展開されるのかも意識して学習して改善する」:
+     *   押したら何が開くか（modal / options / form / result）を欄ごとに渡す。
+     */
+    ...(Object.keys(opens).length ? { opens } : {}),
     gaps: { median_ms: median(gapSamples), samples: gapSamples.length },
     ...(weak.length ? { weak } : {}),
     ...(Object.keys(shotLearn.screens).length ? { screen_flow: shotLearn.screens, shots: { total: shotLearn.total, with_ops: shotLearn.withOps } } : {}),
@@ -769,6 +828,22 @@ export function describeBundle(b: HumanLearnBundle): string[] {
     const p = b.points[x.name];
     out.push(`  ・${x.name} … ${x.n}回・横${p ? pct(p.x) : "?"}・縦${p ? pct(p.y) : "?"}`);
   });
+  /**
+   * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
+   *   押したら**何が開くか**を1行で出す（人が読んで「学べている」と分かる形）。
+   */
+  const op = Object.keys(b.opens || {});
+  if (op.length) {
+    const label: Record<string, string> = {
+      modal: "小窓が開く", options: "プルダウンの一覧が開く", form: "入力欄が変わる",
+      result: "結果の一覧に変わる", modal_close: "小窓が閉じる", none: "変化なし",
+    };
+    out.push(`開き方: ${op.length}個の要素で学びました`);
+    op.slice(0, 5).forEach((k) => {
+      const v = b.opens![k];
+      out.push(`  ・${k} … ${label[v.opens] || v.opens}（${v.n}回）`);
+    });
+  }
   /**
    * 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分かなども学習できているかな」:
    *   要素の種類（プルダウン／チェック／直接入力／押すだけ）を**日本語で**まとめて出す。

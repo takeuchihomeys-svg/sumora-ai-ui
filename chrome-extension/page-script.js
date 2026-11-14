@@ -832,9 +832,17 @@
     if (!el) return false;
     var aim = null;
     try { aim = _aimByEl(el, keys); } catch (_) { aim = null; }
+    /**
+     * 2026-11-14 竹内さん「どこで展開されるのかも意識して学習して改善する」:
+     *   学んだ**開き方**（modal/options/form/result）も一緒に残す。
+     *   → 「このボタンは小窓を開くはず」と分かっていれば、開かなかった時に**すぐ押し直せる**。
+     */
+    var opensKind = null;
+    try { opensKind = _opensOfEl(el, keys); } catch (_) { opensKind = null; }
     try {
       if (_audit) {
-        _auditStepP('learn_aim', (tag || 'press') + ':' + (aim ? (aim.key + ' 横' + Math.round(aim.x * 100) + '% 縦' + Math.round(aim.y * 100) + '%（学び' + aim.n + '回）') : '学び無し→今まで通り'));
+        _auditStepP('learn_aim', (tag || 'press') + ':' + (aim ? (aim.key + ' 横' + Math.round(aim.x * 100) + '% 縦' + Math.round(aim.y * 100) + '%（学び' + aim.n + '回）') : '学び無し→今まで通り')
+          + (opensKind ? '／開き方=' + opensKind : ''));
       }
     } catch (_) {}
     if (aim) {
@@ -847,8 +855,37 @@
     return true;
   }
 
-  function _aimOf(name) {
+  /**
+   * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
+   *   学んだ**開き方**（`axlx_learn_opens`）を返す。
+   *     "modal"（小窓）／"options"（プルダウンの一覧）／"form"／"result"／"modal_close"／"none"
+   *   ⚠ 無ければ null（今まで通り＝分岐しない）。
+   */
+  var _learnOpens = null;
+  var _learnOpensAt = 0;
+  function _opensWarm() {
     try {
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+      var now = Date.now();
+      if (_learnOpens && now - _learnOpensAt < 30000) return;
+      _learnOpensAt = now;
+      chrome.storage.local.get(["axlx_learn_opens"], function (r) {
+        try { _learnOpens = (r && r.axlx_learn_opens) || {}; } catch (_) { _learnOpens = {}; }
+      });
+    } catch (_) {}
+  }
+  function _opensOfEl(el, keys) {
+    try {
+      _opensWarm();
+      if (!_learnOpens) return null;
+      var aim = _aimByEl(el, keys);   // 名前の引き方（文字・クラス・タグ）を再利用して同じ欄を探す
+      if (!aim || !aim.key) return null;
+      var v = _learnOpens[aim.key];
+      return (v && typeof v.opens === "string") ? v.opens : null;
+    } catch (_) { return null; }
+  }
+
+  function _aimOf(name) {    try {
       var v = _learnKinds && _learnKinds[name];
       if (!v || typeof v.x !== "number" || typeof v.y !== "number") return null;
       if (Number(v.n) < 2) return null;

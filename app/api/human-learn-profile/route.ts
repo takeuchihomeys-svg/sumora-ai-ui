@@ -39,6 +39,12 @@ const SELECT = [
    *   → 読む列に足す（無いDBでは selectDroppingMissing が外して読み直す）。
    */
   "field_order", "fields",
+  /**
+   * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
+   *   ⚠ `opens`（押したら何が開いたか）を読む列に足さないと、DBに入っていても**学びに使われない**
+   *     （`shot_ops` の時と同じ穴）。無いDBでは selectDroppingMissing が外して読み直す。
+   */
+  "opens", "open_kinds",
 ].join(", ");
 
 /**

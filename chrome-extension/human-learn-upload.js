@@ -118,9 +118,21 @@
    *   記録側から渡された集計をそのまま送る（storage の変化待ちに頼らない＝確実・速い）。
    *   ⚠ 送りすぎないよう、ここでも5分の間隔は守る。
    */
-  window.__axlxHumanMotionUploadNow = function (agg) {
+  window.__axlxHumanMotionUploadNow = function (agg, opts) {
     try {
       if (!agg || !agg.n) { maybeUpload(); return; }
+      var o2 = opts || {};
+      /**
+       * 2026-11-14 竹内さん「自動検索の部分学習反映されるようにちゃんと連携する」:
+       *   自動モード（拡張が押した動き）も送る。
+       *   ⚠ 人の記録と同じ5分の間隔で止めると、**自動が動いた直後の学びが落ちる**。
+       *     自動の記録は mode を付けて**別枠**で送る（人の記録の間隔には影響しない）。
+       */
+      var mode = o2.mode || null;
+      if (mode) {
+        upload(agg, { site: o2.site || agg.site, mode: mode });
+        return;
+      }
       chrome.storage.local.get([SENT_KEY], function (r) {
         var last = Number(r && r[SENT_KEY]) || 0;
         if (last && Date.now() - last < MIN_GAP_MS) { void chrome.runtime.lastError; return; }

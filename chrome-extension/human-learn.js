@@ -41,6 +41,7 @@
   var MOVE_GAP_MS = 350;      // 指が止まってこれだけ経ったら「1回の移動」を締める
   var MAX_POINTS = 40;        // 押した場所の上限
   var MAX_SCROLLS = 40;       // 画面の動かし方の上限
+  var MAX_OPENS = 40;         // 「押したら何が開いたか」の上限（2026-11-14）
 
   /**
    * 2026-11-11 竹内さん「これでボタン物件検索でおすばしょ理解できたかな？」→
@@ -204,7 +205,8 @@
     var moves = [];      // 1回の移動の記録（MAX_MOVES まで）
     var points = [];     // 押した場所（要素の中の割合・MAX_POINTS まで）
     var scrolls = [];    // 画面の動かし方（量と位置・MAX_SCROLLS まで）
-    var vw = function () { try { return (W && W.innerWidth) || 1200; } catch (_) { return 1200; } };
+    var opens = [];      // 押したら何が開いたか（2026-11-14・MAX_OPENS まで）
+    var opAt = 0, opEl = null;    var vw = function () { try { return (W && W.innerWidth) || 1200; } catch (_) { return 1200; } };
     var vh = function () { try { return (W && W.innerHeight) || 800; } catch (_) { return 800; } };
 
     /**
@@ -239,10 +241,72 @@
       var k = kindOf(type);
       var t = now();
       if (k === lastKind && t - lastAt < SAME_KIND_MIN_MS) { lastAt = t; return false; }
+      opAt = t; opEl = el || null;
       ops.push({ t: t, k: k, f: fieldName(el), s: stageOf() });
       if (ops.length > MAX_OPS) ops.shift();
       lastKind = k; lastAt = t;
       return true;
+    }
+
+    /**
+     * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
+     *   ⚠ 記録していたのは「押した要素の名前・種類・段階（form/modal/result）」だけ。
+     *     **押したら何が開いたか（展開先）は学んでいなかった**。
+     *     そのため自動モードでは「このボタンは小窓を開く」「このプルダウンは一覧が下に出る」
+     *     が分からず、**開いた前提で次の値を探して空振り**していた。
+     *   → 押した前後で画面がどう変わったかを**印だけ**で見て、展開先を残す:
+     *     ・modal    … 小窓（.this_window / role=dialog）が出た／消えた
+     *     ・options  … プルダウンの選択肢（option）が増えた
+     *     ・form     … 条件の欄が増えた・減った
+     *     ・result   … 結果の一覧に変わった
+     *     ・none     … 目に見える変化が無い
+     *   ⚠ 入力した中身（値）は見ない・残さない。数（option の数・欄の数）だけ。
+     */
+    function uiCounts() {
+      var d = D;
+      if (!d || !d.querySelectorAll) return { modal: 0, options: 0, form: 0, result: 0 };
+      var vis = function (e) {
+        try { return !!(e && (e.offsetParent !== null || (e.getClientRects && e.getClientRects().length))); } catch (_) { return false; }
+      };
+      var n = function (sel) { try { return d.querySelectorAll(sel).length; } catch (_) { return 0; } };
+      var modals = 0;
+      try {
+        var ms = d.querySelectorAll(".this_window, [role='dialog'], .modal, .modal_wrap");
+        for (var i = 0; i < ms.length; i++) if (vis(ms[i])) modals++;
+      } catch (_) {}
+      return {
+        modal: modals,
+        options: n("option"),
+        form: n("select[name], input[name='city_code[]'], div.go_search, div.go_search_submit"),
+        result: n(".building_tr, .building_list, .property_list, [class*='building_tr']"),
+      };
+    }
+    /** 押す直前の画面の数（展開先を知るための控え） */
+    var _beforeCounts = null;
+    function noteBeforeClick(el) {
+      try { _beforeCounts = uiCounts(); _beforeEl = el || null; } catch (_) { _beforeCounts = null; }
+    }
+    var _beforeEl = null;
+    /**
+     * 押した後に**何が開いたか**を1件残す。押してから 500ms 待ってから見る
+     * （サイトは非同期で描くので、すぐ見ると「変化なし」に見える）。
+     */
+    function noteOpened(el) {
+      try {
+        if (!_beforeCounts) return;
+        var b = _beforeCounts;
+        var target = el || _beforeEl;
+        _beforeCounts = null; _beforeEl = null;
+        var a = uiCounts();
+        var what = "none";
+        if (a.modal > b.modal) what = "modal";
+        else if (a.options > b.options + 2) what = "options";   // プルダウンの一覧が開いた
+        else if (a.result > b.result) what = "result";
+        else if (a.form !== b.form) what = "form";
+        else if (a.modal < b.modal) what = "modal_close";       // 閉じた（確定など）
+        opens.push({ f: fieldName(target), o: what, s: stageOf(), n: opens.length + 1 });
+        if (opens.length > MAX_OPENS) opens.shift();
+      } catch (_) {}
     }
 
     /**
@@ -385,9 +449,34 @@
         return function (e) {
           // 人が起こした物だけ（拡張が dispatch した物は数えない＝学習を汚さない）
           if (!e || !e.isTrusted) return;
+          /**
+           * 2026-11-14 竹内さん「ちゃんと学習できるように」:
+           *   ⚠ **AIXLINX 自身の小窓（バー・ミニボタン・案内）を押した記録も学習に混ざっていた**
+           *     （実測: `左のAIXLINX｜div`・`#axlx-bar`・`#aixlinx-mini-btn`・`div.search_menu` の誤爆）。
+           *     自分の UI は「サイトの操作」ではないので、順番・押す位置・展開先を濁らせる。
+           *   → 拡張が作った要素（`#axlx-` / `[data-axlx]` / `#aixlinx-`）は**記録しない**。
+           */
+          try {
+            var _t = e.target;
+            if (_t && (_t.closest
+              ? _t.closest('#axlx-bar, #axlx-learn-badge, #aixlinx-mini-btn, #axlx-guide, [data-axlx], [id^="axlx-"], [id^="aixlinx-"], [class^="axlx-"]')
+              : (String(_t.id || "").indexOf("axlx") === 0 || String(_t.id || "").indexOf("aixlinx") === 0))) return;
+          } catch (_) {}
+          /**
+           * 2026-11-14 竹内さん「どこで展開されるのかも意識して学習して改善する」:
+           *   押す**直前**の画面の数（小窓・選択肢・欄・結果）を控えておき、
+           *   押した**後**に何が増えたかで「展開先」を学ぶ。
+           *   ⚠ 見るのは数の変化だけ（入力した中身は見ない）。
+           */
+          if (type === "click") { try { noteBeforeClick(e.target); } catch (_) {} }
           var added = record(type, e.target);
           var pt = null;
-          if (type === "click") { recordPoint(e); pt = pointOf(e); } // ボタンのどこを押したか
+          if (type === "click") {
+            recordPoint(e); pt = pointOf(e); // ボタンのどこを押したか
+            // 押した後に何が開いたか（サイトが描くのを待ってから見る）
+            var _tgt = e.target;
+            setTimeout(function () { try { noteOpened(_tgt); } catch (_) {} }, 520 + Math.floor(Math.random() * 260));
+          }
           // 間引かれた操作では撮らない（同じ所を連打しても写真は増やさない）
           if (added && onOp) { try { onOp(type, e.target, pt); } catch (_) {} }
         };
@@ -453,14 +542,15 @@
     /** 貯めた動き・押した場所・スクロール（読み出し用。締め忘れを締めてから返す） */
     function detail() {
       closeMove();
-      return { moves: moves.slice(), points: points.slice(), scrolls: scrolls.slice() };
+      return { moves: moves.slice(), points: points.slice(), scrolls: scrolls.slice(), opens: opens.slice() };
     }
     function reset() {
       ops = []; lastKind = null; lastAt = 0; move = null;
-      moves = []; points = []; scrolls = [];
+      moves = []; points = []; scrolls = []; opens = [];
     }
 
     return { attach: attach, record: record, recordPoint: recordPoint, recordMove: recordMove, recordScroll: recordScroll,
+             noteBeforeClick: noteBeforeClick, noteOpened: noteOpened,
              closeMove: closeMove, list: list, count: count, detail: detail, reset: reset };
   }
 
@@ -518,12 +608,45 @@
    *   残すのは**傾向**（中央値など）と**見本**（形・押した割合）。
    * @returns {{moves:Object, points:Object, scrolls:Object}}
    */
+  /**
+   * 2026-11-14 竹内さん「どこで展開されるのかも意識して学習して改善する」:
+   *   **押したら何が開いたか**を、欄ごとにまとめる（純関数）。
+   *   @returns {{byField:Object, kinds:Object, n:number}}
+   *     byField … `{ "左の所在地絞り込み＋｜span": { opens: "modal", n: 3 } }`
+   *     kinds   … `{ modal: 3, options: 5, none: 2 }`（全体の内訳）
+   *   ⚠ 入れるのは「開いた物の種類」だけ（中身・文字は入れない）。
+   */
+  function _opensOf(list) {
+    var arr = Array.isArray(list) ? list : [];
+    var byField = {}, kinds = {}, n = 0;
+    arr.forEach(function (o) {
+      if (!o) return;
+      var f = String(o.f || "").slice(0, 30);
+      var k = String(o.o || "none");
+      if (!f) return;
+      n++;
+      kinds[k] = (kinds[k] || 0) + 1;
+      var cur = byField[f] || { n: 0, opens: {}, stage: null };
+      cur.n++;
+      cur.opens[k] = (cur.opens[k] || 0) + 1;
+      if (o.s) cur.stage = String(o.s);
+      byField[f] = cur;
+    });
+    // 欄ごとに「一番多かった開き方」を残す（迷わない形に）
+    var out = {};
+    Object.keys(byField).slice(0, 40).forEach(function (f) {
+      var v = byField[f], best = null, bn = -1;
+      Object.keys(v.opens).forEach(function (k) { if (v.opens[k] > bn) { best = k; bn = v.opens[k]; } });
+      out[f] = { opens: best, n: v.n, stage: v.stage, all: v.opens };
+    });
+    return { byField: out, kinds: kinds, n: n };
+  }
+
   function summarizeMotion(detail) {
     var d = detail && typeof detail === "object" ? detail : {};
     var mv = Array.isArray(d.moves) ? d.moves : [];
     var pt = Array.isArray(d.points) ? d.points : [];
     var sc = Array.isArray(d.scrolls) ? d.scrolls : [];
-
     // ── マウスの動かし方 ──
     var speeds = [], curves = [], durs = [], dists = [];
     var drags = 0, shapes = [];
@@ -608,7 +731,7 @@
       y_samples: ysPos.slice(-20),         // どこまで送ってから押すか の見本
     };
 
-    return { moves: moves, points: points, scrolls: scrolls };
+    return { moves: moves, points: points, scrolls: scrolls, opens: _opensOf(d.opens) };
   }
 
   /** 数の中央値を前の値と合わせる（見本の配列をまとめて中央値を出し直す） */
@@ -1085,6 +1208,7 @@
     create: create,
     summarize: summarize,
     summarizeMotion: summarizeMotion,
+    opensOf: _opensOf,
     mergeAggregate: mergeAggregate,
     mergeMotion: mergeMotion,
     profileFrom: profileFrom,

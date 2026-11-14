@@ -480,8 +480,15 @@ export function planLearnFromWeak(
    * 2026-11-14 竹内さん「学習は統括の部分が管轄して整理もできているのか」:
    *   **ゴミの点検結果**を渡すと、統括が「捨てる・直す」を判断する。
    *   ・`garbage` … 検出したゴミの種類と件数（交互クリック・入れ物・水増し など）
+   *   ⚠ 位置は**4番目**（既存の呼び出しを壊さない）。`modeCounts` は5番目。
    */
   garbage: Array<{ kind: string; n: number }> = [],
+  /**
+   * 2026-11-14 竹内さん「自動検索の部分学習反映されるようにちゃんと連携する。今自動検索がちゃんと学習連携されていない可能性たかい」:
+   *   **実際の記録数**（`mode_counts`）。`modes`（by_mode）は3件未満を作らないので、
+   *   1〜2件のモードを「**0件**」と誤って案内していた。ここで正しく区別する。
+   */
+  modeCounts: Record<string, number> = {},
 ): {
   items: Array<{ priority: number; kind: string; name: string; action: string; why: string }>;
   counts: Record<string, number>;
@@ -569,7 +576,31 @@ export function planLearnFromWeak(
   /** 記録が0件のモードも知りたい（mode_counts に無い＝そのモードで動いていない） */
   for (const m of ["normal", "staff", "aix"]) {
     if (!(m in (modes || {}))) {
-      modePlan.push({ mode: m, rows: 0, verdict: `${MODE_JA[m] || m}: 記録が0件`, action: `「${MODE_JA[m] || m}」で検索して録画する` });
+      /**
+       * 2026-11-14: `modes`（by_mode）は**3件未満を作らない**。だが `modeCounts` には実数が入る。
+       *   ⚠ 旧はこれを渡していなかったので、**2件動いていても「0件」**と案内していた（実測 aix）。
+       *   → 実数があれば「もう少し動かせば学べる」と正しく言う。
+       */
+      const real = Number((modeCounts || {})[m]) || 0;
+      if (real <= 0) {
+        modePlan.push({ mode: m, rows: 0, verdict: `${MODE_JA[m] || m}: 記録が0件`, action: `「${MODE_JA[m] || m}」で検索して録画する` });
+      } else if (real < 3) {
+        modePlan.push({
+          mode: m, rows: real,
+          verdict: `${MODE_JA[m] || m}: ${real}件あるが、まだ学びを作れる数（3件）に届いていない`,
+          action: `「${MODE_JA[m] || m}」であと${3 - real}回検索する（3件から学びます）`,
+        });
+      } else {
+        /**
+         * ⚠ 3件以上あるのに `modes`（by_mode）に無い＝**学びを作る所で落ちている**。
+         *   「3件に届いていない」と言うのは嘘になる（実測の normal 10件で起きていた）。
+         */
+        modePlan.push({
+          mode: m, rows: real,
+          verdict: `${MODE_JA[m] || m}: ${real}件あるのに学びを作れていない`,
+          action: `記録は届いている（連携oK）。学びの計算（順番・画面）を点検する`,
+        });
+      }
     }
   }
   /**

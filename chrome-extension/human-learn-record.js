@@ -175,6 +175,13 @@
        */
       try { add.order = (motion.points && motion.points.order) || []; } catch (_) { add.order = []; }
       try { add.fields = Object.keys((motion.points && motion.points.fields) || {}).slice(0, 40); } catch (_) { add.fields = []; }
+      /**
+       * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
+       *   押したら何が開いたか（modal / options / form / result / none）を送る。
+       *   ⚠ 中身は送らない（開いた物の種類と数だけ）。
+       */
+      try { add.opens = (motion.opens && motion.opens.byField) || {}; } catch (_) { add.opens = {}; }
+      try { add.open_kinds = (motion.opens && motion.opens.kinds) || {}; } catch (_) { add.open_kinds = {}; }
     } catch (_) {}
   /**
    * 2026-11-11 竹内さん「画面の動き方もちゃんと把握できているのかな録画のような形で」→「操作のたびに1枚」
@@ -611,6 +618,29 @@
       });
       var motion = L.summarizeMotion(det);
       adds.moves = motion.moves; adds.points = motion.points; adds.scrolls = motion.scrolls;
+      /**
+       * 2026-11-14 竹内さん「自動検索の部分学習反映されるようにちゃんと連携する
+       *   今自動検索がちゃんと学習連携されていない可能性たかい」:
+       *   ⚠ **その通りだった**。自動モードの動きは `axlx_auto_motion`（PC の中）に貯めるだけで、
+       *     **DB へは一度も送っていなかった**（実測: `by_mode` の aix が0件のまま）。
+       *     だから自動モードは「記録が0件＝学べていない」と毎回言われ、改善もされなかった。
+       *   → 人の動きと同じ送り口（`__axlxHumanMotionUploadNow`）で **mode を付けて**送る。
+       *     ⚠ 入れるのは欄の名前・種類・位置・間隔だけ（入力した中身は入れない）。
+       *     ⚠ 人の実測とは**別の行**で送る（mode="aix"）。混ぜない。
+       */
+      try {
+        var _U = (typeof self !== "undefined" ? self : window).__axlxHumanMotionUploadNow;
+        if (typeof _U === "function") {
+          _U({
+            v: 1, n: adds.n, kinds: adds.kinds || {}, gap_ms: adds.gap_ms || null,
+            gaps: adds.gaps || [], fields: adds.fields || [], order: adds.order || [],
+            moves: motion.moves, points: motion.points, scrolls: motion.scrolls,
+            opens: (motion.opens && motion.opens.byField) || {},
+            open_kinds: (motion.opens && motion.opens.kinds) || {},
+            site: site, at: Date.now(), source: "extension_auto",
+          }, { mode: "aix", site: site });
+        }
+      } catch (_) {}
       chrome.storage.local.get([AUTO_KEY], function (r) {
         try {
           var prev = r && r[AUTO_KEY];

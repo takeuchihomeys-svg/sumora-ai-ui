@@ -23,6 +23,8 @@ const NEED: Need[] = [
       "shot_taken", "shot_key", "shot_w", "shot_h",
       // ↓ ここが本番で欠けていた（2026-11-13 実測）
       "shot_b64", "shot_in_db", "shot_ops", "shot_learn",
+      // 2026-11-14: 押したら何が開いたか（小窓／選択肢／入力欄／結果）
+      "opens", "open_kinds",
     ],
   },
   {

@@ -55,7 +55,11 @@ console.log("\n■ ② 押す場所（要素ごと・回数の多い実測に寄
     row({ point_fields: { rental_cost2: { n: 2, x: 0.9, y: 0.9 } } }),
   ]);
   t("回数が多い実測を採る（9回の物）", pts.rental_cost2.x === 0.3 && pts.rental_cost2.y === 0.4 && pts.rental_cost2.n === 9, pts.rental_cost2);
-  t("おかしな値は 0〜1 に丸める", learnPoints([row({ point_fields: { x: { n: 2, x: 9, y: -3 } } })]).x.x === 1);
+  /**
+   * 2026-11-14: `x` は**1文字なので学習対象外**（`isLearnableName` が弾く・正しい動作）。
+   *   ここで試したいのは「0〜1に丸める」ことなので、実際にあり得る欄の名前で試す。
+   */
+  t("おかしな値は 0〜1 に丸める", learnPoints([row({ point_fields: { rental_cost2: { n: 2, x: 9, y: -3 } } })]).rental_cost2.x === 1);
   t("n が 0 以下は捨てる", Object.keys(learnPoints([row({ point_fields: { z: { n: 0, x: 0.5, y: 0.5 } } })])).length === 0);
   t("欄が無ければ空", Object.keys(learnPoints([row({ point_fields: null })])).length === 0);
 }
@@ -76,17 +80,26 @@ console.log("\n■ ③ 動きの速さ・曲がり・狙う位置");
 
 console.log("\n■ ④ 束にまとめる（拡張が読む形）");
 {
-  const seqA = [{ t: 1, k: "click", f: "A" }, { t: 2, k: "click", f: "B" }];
-  const seqB = [{ t: 1, k: "click", f: "A" }, { t: 2, k: "click", f: "B" }];
+  /**
+   * 2026-11-14: 欄の名前は**1文字だと学習対象外**（`isLearnableName` が弾く＝正しい動作）。
+   *   ここで試したいのは「束に順番・サイト手順が入るか」なので、実際にあり得る名前で試す。
+   */
+  const seqA = [{ t: 1, k: "click", f: "左の所在地絞り込み＋｜span" }, { t: 2, k: "click", f: "city_code[]" }];
+  const seqB = [{ t: 1, k: "click", f: "左の所在地絞り込み＋｜span" }, { t: 2, k: "click", f: "city_code[]" }];
   const b = buildHumanLearnBundle([
-    row({ site: "realpro", shot_ops: seqA, created_at: iso(3) }),
-    row({ site: "realpro", shot_ops: seqB, created_at: iso(2) }),
+    /**
+     * 2026-11-14: **同じ日の同じ並びは1回に畳む**（録画は数秒ごとに撮るので水増しを防ぐ・意図した動作）。
+     *   ⚠ 旧は3件とも同じ日だったので、畳まれて `next` が空になっていた（テストの材料の誤り）。
+     *   → 別の日に分ける（人が3日かけて同じ操作をした形）。
+     */
+    row({ site: "realpro", shot_ops: seqA, created_at: iso(72) }),
+    row({ site: "realpro", shot_ops: seqB, created_at: iso(48) }),
     row({ site: "itandi", shot_ops: seqB, created_at: iso(1) }),
   ], NOW);
   t("版を持つ（v:1）", b.v === 1);
   t("生成時刻を持つ", b.generated_at === new Date(NOW).toISOString());
   t("元にした記録の数", b.source.rows === 3);
-  t("元にした期間（いちばん古い〜新しい）", b.source.from === iso(3) && b.source.to === iso(1), b.source);
+  t("元にした期間（いちばん古い〜新しい）", b.source.from === iso(72) && b.source.to === iso(1), b.source);
   t("サイトの一覧", b.source.sites.includes("realpro") && b.source.sites.includes("itandi"), b.source.sites);
   t("押す順番が入っている", Object.keys(b.next).length > 0);
   t("押す場所が入っている", Object.keys(b.points).length > 0);

@@ -88,6 +88,11 @@ console.log("\n=== ③ 直した印（目印）が Chrome 側に入っている�
       ["地域・検索の押す位置を学びから使う（v2.7.31）", ps.includes("function _aimByEl") && ps.includes("function _pressLearned")],
       ["  ボタンに学んだ位置を渡せる（v2.7.31）", ps.includes("function _humanPointerClick(el, fallbackFn, aim)")],
       ["  検索ボタンで学びを使う（v2.7.31）", ps.includes("_aimByEl(btn, ['左の検索'")],
+      // 2026-11-14 竹内さん「どこで展開されるのかも意識して学習」「自動検索の学習連携」
+      ["押したら何が開くかを学ぶ（v2.7.32）", hl.includes("function noteOpened") && hl.includes("function uiCounts")],
+      ["  自動（AIX）の記録もDBへ送る（v2.7.32）", read(path.join(CHROME, "human-learn-record.js")).includes('mode: "aix"')],
+      ["  自分の小窓は学習しない（v2.7.32）", hl.includes("#axlx-bar, #axlx-learn-badge, #aixlinx-mini-btn")],
+      ["  開き方を拡張へ渡す（v2.7.32）", bg.includes("axlx_learn_opens")],
     ];
     for (const [name, ok] of marks) t(name, ok);
   }
