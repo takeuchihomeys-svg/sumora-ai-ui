@@ -91,6 +91,34 @@
         var txt = directText(el).slice(0, 20);
         if (txt) return (placePrefix + txt + "｜" + mark).slice(0, 30);
       }
+      /**
+       * 2026-11-14 竹内さん「弱い部分を俺が実際みつけたら通常モードの録画から実際の動きを学習して改善する」
+       *   → 実測: 学べた欄の **8割が `img` と `body`**（7日で img 26回・body 8回・本物は pager 4回だけ）。
+       *     ＝ **欄の名前が取れていない**ので「押す位置」を学べない。
+       *
+       *   ⚠ 原因: 名前も id も class も無い要素（画像・余白）は、最後に**タグ名をそのまま**返していた。
+       *     `img` / `body` は**欄ではない**ので、いくら貯めても学習の役に立たない。
+       *
+       *   → ① **親をたどって意味のある名前を探す**（画像を包むリンク・ボタン・行の見出し）。
+       *     ② それでも無い `img` / `body` / `html` は **`null` を返す**（記録しない＝ゴミを貯めない）。
+       */
+      var _NON_FIELD = /^(img|body|html|picture|svg|canvas|br|hr)$/i;
+      try {
+        if (_NON_FIELD.test(tag) && el.closest) {
+          // ① 押した画像/余白を包む「意味のある入れ物」を探す（リンク・ボタン・ラベル・行）
+          var _host = el.closest("a,button,label,tr,li,[role='button']");
+          if (_host && _host !== el) {
+            var _hostName = _host.getAttribute && _host.getAttribute("name");
+            if (_hostName) return String(_hostName).slice(0, 30);
+            var _hostTxt = directText(_host).slice(0, 20);
+            if (_hostTxt) return (placePrefix + _hostTxt + "｜" + tag.toLowerCase()).slice(0, 30);
+            var _hostCls = (_host.className && typeof _host.className === "string") ? _host.className.trim().split(/\s+/)[0] : "";
+            if (_hostCls) return (tag.toLowerCase() + "→" + _host.tagName.toLowerCase() + "." + _hostCls).slice(0, 30);
+          }
+          // ② 意味のある名前が無い → **記録しない**（`img` `body` を貯めても学べない）
+          return null;
+        }
+      } catch (_) {}
       // ③ id
       var id = el.id;
       if (id) return ("#" + id + (cls ? "｜" + mark : "")).slice(0, 30);

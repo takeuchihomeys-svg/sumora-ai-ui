@@ -37,7 +37,27 @@ console.log("■ ① 印は初期化が終わってから立てる（途中で�
   ok("ライブラリを取る行がある", iLib > 0);
   ok("ライブラリ取得より後に印を立てる", iEarlyFlag > iLib, { iLib, iEarlyFlag });
   ok("ライブラリが無い時は理由を残して抜ける", iNoLib > iLib);
-  ok("ライブラリが無い時に印を立てない", code.indexOf("if (!L) {") > 0 && iEarlyFlag > code.indexOf("if (!L) {"));
+  /**
+   * 2026-11-14 竹内さん「順になおしていく」→ 2.7.49 で**待つ**形に変えた。
+   *   ⚠ 旧（2.7.45）は「ライブラリが無ければ理由を残して抜ける」だったが、
+   *     それだと**後から来ても立ち上がらない**（実測 `ring_empty: seen0` が直らなかった）。
+   *   → いまは **最大3秒待って、来たら始める**（`_bootAfterLib` → `start()`）。
+   *     待っても来ない時だけ理由を残す（`no_learn_lib`）。印は立てない（次の注入で復活できる）。
+   *
+   *   ⚠ 印（`__axlxHumanLearnRecord = true`）は **`_bootAfterLib` の中だけ**にあること。
+   *     トップレベルで立てると「ライブラリが来なくても立ち上がった扱い」になり、
+   *     次の注入でも `dupe` として弾かれて**永久に復活しない**（これが 2.7.44 までの不具合）。
+   */
+  {
+    const iBootFn = code.indexOf("function _bootAfterLib()");
+    const iFlag = code.indexOf("__axlxHumanLearnRecord = true");
+    const iBootEnd = code.indexOf("if (!L) {");
+    ok("⚠ 印は _bootAfterLib の中だけで立てる（トップレベルで立てない）",
+      iBootFn > 0 && iFlag > iBootFn && (iBootEnd < 0 || iFlag < iBootEnd), { iBootFn, iFlag, iBootEnd });
+  }
+  ok("  ⚠ 待つ（すぐ諦めない・seen0 の原因）", /_waitTimer = setInterval\(/.test(code));
+  ok("  待っても来なければ理由を残す", /no_learn_lib/.test(code));
+  ok("  来たら始める", /_bootAfterLib\(\)/.test(code) && /function start\(\)/.test(code));
 }
 
 console.log("\n■ ② 受け口はライブラリより先に付ける");

@@ -66,18 +66,53 @@
 
   var L = (typeof self !== "undefined" ? self : window).AxlxHumanLearn;
   /**
-   * ① ライブラリが無ければ**印を立てずに**抜ける（次に注入されたら動ける）。
-   *   理由は `_recBoot.__axlxHumanLearnRecState.why` に残す（タブが答える時に使う）。
+   * 2026-11-14 竹内さん「順になおしていく」→ **`ring_empty: seen0: watchundefined` の正体**:
+   *
+   *   ⚠ `watchundefined` は、**先頭の受け口が「まだ立ち上がっていない」と答えた**印。
+   *     つまり本体が下の `if (!L)` で抜けていた（`human-learn.js` がまだ居ない）。
+   *   ⚠ 旧は**1回だけ見て諦めて**いた。`document_start` は実行順が保証されない事があり
+   *     （別 entry・注入し直し・ページの作り直し）、その場合 `human-learn-record.js` だけ先に走って
+   *     **永久に立ち上がらない**。その結果 `seen:0`（クリックを1回も拾えない）になっていた。
+   *
+   *   → **ライブラリが来るまで待つ**（最大3秒・50msおき）。来たら続きをやる。
+   *     待っても来なければ理由を残して諦める（次の注入で復活できる＝印は立てない）。
    */
+  function _bootAfterLib() {
+    try {
+      _recBoot.__axlxHumanLearnRecord = true;
+      _recBoot.__axlxHumanLearnRecState = { why: null };
+    } catch (_) {}
+    start();
+  }
   if (!L) {
-    try { _recBoot.__axlxHumanLearnRecState = { why: "no_learn_lib" }; } catch (_) {}
+    try { _recBoot.__axlxHumanLearnRecState = { why: "waiting_lib" }; } catch (_) {}
+    var _waitTries = 0;
+    var _waitTimer = setInterval(function () {
+      _waitTries++;
+      var got = (typeof self !== "undefined" ? self : window).AxlxHumanLearn;
+      if (got) {
+        clearInterval(_waitTimer);
+        L = got;
+        try { console.log("[AX] 記録係: " + (_waitTries * 50) + "ms 待って ライブラリが来ました"); } catch (_) {}
+        _bootAfterLib();
+        return;
+      }
+      if (_waitTries >= 60) {           // 3秒待っても来ない
+        clearInterval(_waitTimer);
+        try { _recBoot.__axlxHumanLearnRecState = { why: "no_learn_lib" }; } catch (_) {}
+        try { console.warn("[AX] 記録係: 3秒待っても human-learn.js が来ません（操作を記録できません）"); } catch (_) {}
+      }
+    }, 50);
     return;
   }
-  try {
-    _recBoot.__axlxHumanLearnRecord = true;
-    _recBoot.__axlxHumanLearnRecState = { why: null };
-  } catch (_) {}
 
+  /**
+   * 2026-11-14 竹内さん「順になおしていく」:
+   *   ⚠ 旧はこの先の本体が**トップレベルにべた書き**だったので、`L` が無い時に抜けると
+   *     **ライブラリが後から来ても何も始まらなかった**（＝`seen:0` のまま）。
+   *   → 本体を `start()` にまとめ、ライブラリが来た時に呼ぶ（待つ側も呼ぶ）。
+   */
+  function start() {
   var rec = L.create({
     doc: document, win: window,
     // 2026-11-11 竹内さん「録画のような形で」: 操作のたびに画面の写真を1枚撮る
@@ -869,4 +904,5 @@
       });
     } catch (_) {}
   };
+  } // start() ここまで（2026-11-14: ライブラリ待ちの後に始められるように関数にまとめた）
 })();
