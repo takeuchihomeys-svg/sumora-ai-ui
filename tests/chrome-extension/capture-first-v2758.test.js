@@ -32,7 +32,7 @@ console.log("■ ① 操作の記録を最初に付ける");
   ok("  click と change の両方", /document\.addEventListener\("change", _cap, true\)/.test(code));
   const iStart = code.indexOf("function start() {");
   const iAttach = code.indexOf("try { _attachOpCapture(); }");
-  const iCreate = code.indexOf("var rec = L.create(");
+  const iCreate = code.indexOf("rec = L.create(");
   ok("  ⚠ start() の**先頭**で呼ぶ", iAttach > iStart, { iStart, iAttach });
   ok("  ⚠ L.create より**前**（そこで落ちても記録は動く）", iAttach < iCreate, { iAttach, iCreate });
 }
@@ -42,7 +42,7 @@ console.log("\n■ ② 写真の見張りも最初に付ける（モード待ち
   ok("_bootShooting がある", /function _bootShooting\(\)/.test(code));
   ok("  start() の先頭で呼ぶ", /try \{ _bootShooting\(\); \} catch \(_\) \{\}/.test(code));
   const iBoot = code.indexOf("try { _bootShooting(); }");
-  const iCreate = code.indexOf("var rec = L.create(");
+  const iCreate = code.indexOf("rec = L.create(");
   ok("  ⚠ L.create より前", iBoot > 0 && iBoot < iCreate, { iBoot, iCreate });
   ok("  撮る設定だけ見る（モードを見ない）", /function _bootShooting\(\) \{[\s\S]{0,200}?shouldShoot/.test(code));
 }
@@ -53,6 +53,25 @@ console.log("\n■ ③ 失敗しても記録は止まらない（例外を握る
   ok("全体を try で囲む", /function _attachOpCapture\(\) \{\s*try \{/.test(seg));
   ok("  各操作の処理も try（1つ失敗しても次を拾う）", /catch \(_\) \{\}/.test(seg));
   ok("  拡張自身のUIは除外", /axlx-bar/.test(seg));
+}
+
+console.log("\n■ ③ 状態の変数が受け口より**先**に宣言されている（seen0 の真の原因）");
+{
+  /**
+   * ⚠ これが今回の真の原因だった:
+   *   `_attachOpCapture()` を先頭で呼んでも、その中で使う `_opsRing` などの `var` 宣言が
+   *   **下にあった**ため `undefined` になり、`_opsRing.push` で例外→握り潰し→`seen0`。
+   *   → 変数の宣言が `_attachOpCapture()` の**前**にあることを確かめる。
+   */
+  const iStart = code.indexOf("function start() {");
+  const iAttach = code.indexOf("try { _attachOpCapture(); }");
+  ok("start() と受け口の位置が分かる", iStart > 0 && iAttach > iStart);
+  for (const v of ["_opsRing", "_opsSeen", "_livePoints", "_orderLive", "watching", "_shooting"]) {
+    const iDecl = code.indexOf(`var ${v} = `, iStart);
+    ok(`  ⚠ ${v} を受け口より前に宣言`, iDecl > iStart && iDecl < iAttach, { v, iDecl, iAttach });
+  }
+  ok("  ⚠ _attachOpCapture の後ろに var の再宣言が無い（上書きしない）",
+    (code.match(/^\s*var _opsRing = \[\]/gm) || []).length <= 1);
 }
 
 console.log("\n■ ④ 押した欄と順番も同じ受け口で積む");

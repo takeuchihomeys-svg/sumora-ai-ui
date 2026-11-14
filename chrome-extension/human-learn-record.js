@@ -129,25 +129,35 @@
    */
   function start() {
   /**
-   * 2026-11-14 竹内さん「録画したのちゃんと反映されるようにする」
+   * 2026-11-14 竹内さん「これで録画できてるかな？最新画像録画しているかな」
    *
-   *   ⚠ 実測: 何度直しても `ops=0 / seen0` が続いた。`start()` は呼ばれるようになったが、
-   *     その**先頭**で `L.create()` を呼んでおり、**そこで例外が出ると以降が全部止まる**
-   *     （＝操作を拾う `_cap` まで到達しない）。
-   *   → **操作の記録（`_cap`）を最初に付ける**。写真や集計の準備は後ろに回す
-   *     （1つが失敗しても、記録だけは動く）。
-   *   ⚠ これは「静かに壊れる」を防ぐため（写真は撮れるのに操作が0、の原因になる）。
+   *   ★ DBを見て**真の原因が判明**（3回目の同じ罠）:
+   *     `shot_ops` が `ring_empty: ring0: seen0: watchundefined` のまま。
+   *     ⚠ `_attachOpCapture()` を先頭で呼んだのに、その中で使う
+   *       `_opsRing` / `_opsSeen` / `_livePoints` / `_orderLive` / `watching` の `var` 宣言が
+   *       **全部その下にあった**。
+   *       `var` は巻き上げられるので**`undefined`**になり、
+   *       `_pushOp` が `_opsRing.push` で**例外**→ `try{}catch{}` に飲まれて**黙って何も積まれない**。
+   *       ＝ クリックは来ているのに `seen0`（拾った回数0）。
+   *
+   *   → **状態の変数を全部 `start()` の先頭に移す**（関数宣言より前・他の処理より前）。
+   *     ⚠ 変数の初期化 → 受け口を付ける → 写真 → 準備、の順にする。
    */
-  try { _attachOpCapture(); } catch (e) { try { console.warn("[AX] 操作の受け口を付けられません:", e && e.message); } catch (_) {} }
-  try { _bootShooting(); } catch (_) {}
-  var rec = L.create({
-    doc: document, win: window,
-    // 2026-11-11 竹内さん「録画のような形で」: 操作のたびに画面の写真を1枚撮る
-    onOp: function (kind, el, pt) { shootAfter(kind, el, pt); },
-  });
-  var detach = null;
+  var _opsRing = [];
+  var _opsSeen = 0;
+  var _opsAsk = 0;
+  var _livePoints = null;
+  var _livePointsAt = 0;
+  var _orderLive = [];
   var watching = false;
+  var _shooting = false;
+  var detach = null;
   var timer = null;
+  var _shotPending = false;
+  var _shotPendingAt = 0;
+  var _shotLast = 0;
+  var _shotCount = 0;
+  var rec = null;
   var site = (function () {
     try {
       var h = String(location.hostname || "");
@@ -157,6 +167,18 @@
     } catch (_) {}
     return "unknown";
   })();
+  try { _attachOpCapture(); } catch (e) { try { console.warn("[AX] 操作の受け口を付けられません:", e && e.message); } catch (_) {} }
+  try { _bootShooting(); } catch (_) {}
+  try {
+    rec = L.create({
+      doc: document, win: window,
+      // 2026-11-11 竹内さん「録画のような形で」: 操作のたびに画面の写真を1枚撮る
+      onOp: function (kind, el, pt) { shootAfter(kind, el, pt); },
+    });
+  } catch (e) {
+    /** ⚠ ここで落ちても**記録と写真は動く**（受け口は既に付いている） */
+    try { console.warn("[AX] 記録の準備に失敗（操作の記録は続けます）:", e && e.message); } catch (_) {}
+  }
 
   /**
    * 2026-11-11 竹内さん「写真ちゃんと送られたかな？」→ 0枚のまま。
@@ -332,10 +354,10 @@
    *   ・撮りすぎない（最短 350ms はあける・background 側でも間引く）
    *   ・写真の中身は DB に送らない（Storage 内・名前だけ DB へ）
    */
-  var _shotPending = false;
-  var _shotPendingAt = 0;
-  var _shotLast = 0;
-  var _shotCount = 0;
+  // var _shotPending = false;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
+  // var _shotPendingAt = 0;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
+  // var _shotLast = 0;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
+  // var _shotCount = 0;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
   /**
    * 2026-11-13 竹内さん「写真から学習する。押す場所や押す順番などもりかいできるから」:
    *   直近の操作を**小さな輪**に残しておき、写真を撮る時に一緒に送る。
@@ -344,10 +366,10 @@
    *   ⚠ 入れるのは**欄の名前・操作の種類・時刻だけ**（入力した中身・文字は入れない）。
    *   ⚠ 上限 40件（古い物から捨てる）。ページを離れると消える（それでよい）。
    */
-  var _opsRing = [];
+  // var _opsRing = [];  ← start() の先頭へ移動（2026-11-14: 重複を消した）
   /** 2026-11-14: click/change を拾った回数（診断用・なぜ ops が空かを知るため） */
-  var _opsSeen = 0;
-  var _opsAsk = 0;
+  // var _opsSeen = 0;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
+  // var _opsAsk = 0;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
   /**
    * 2026-11-13 竹内さん「所在地絞り込みや沿線絞り込みの部分はどうなっているか。抜けていないのか」:
    *   地域（6段）と駅（5段）も記録するようになったので、上限を 40 → **60** に上げる。
@@ -587,14 +609,14 @@
       _savePoints(cur);
     } catch (_) {}
   }
-  var _livePoints = null;
-  var _livePointsAt = 0;
+  // var _livePoints = null;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
+  // var _livePointsAt = 0;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
   /**
    * 2026-11-14: **押された順**（人も拡張も・重複は畳む）。
    *   ⚠ `_livePoints` は「欄ごとの回数」しか持たないので、**順番**はここで別に持つ。
    *     これが `field_order` になり、「賃料 → 徒歩 → 更新日」の流れを学べる。
    */
-  var _orderLive = [];
+  // var _orderLive = [];  ← start() の先頭へ移動（2026-11-14: 重複を消した）
   function _savePoints(cur) {
     try {
       if (!cur) return;
@@ -615,7 +637,7 @@
    *   → **なぜ空なのかを記録に残す**（推測で直さない）。
    *     `axlx_ops_diag` … 最後に聞かれた時の「輪の長さ・click を拾った回数・録画中か・時刻」
    */
-  var _opsAsk = 0;           // 何回聞かれたか
+  // var _opsAsk = 0;           // 何回聞かれたか  ← start() の先頭へ移動（2026-11-14: 重複を消した）
   function _opsDiag(asked) {
     try {
       var d = {
@@ -1026,7 +1048,7 @@
 
   // ── モードを見る（学習は通常・スタッフの時だけ／写真はどのモードでも）──
   var KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode", "axlxShotOff"];
-  var _shooting = false;
+  // var _shooting = false;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
   function apply(st) {
     if (shouldLearn(st)) { startWatching(); ensureBadge(); }
     else { stopWatching(); removeBadge(); }

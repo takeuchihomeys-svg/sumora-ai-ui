@@ -54,7 +54,8 @@ console.log("■ ③ 記録の入口（_recNoteName）が正しい");
   t("上限60", /OPS_RING_MAX = 60/.test(rec));
   t("拾った回数を数える（診断用）", rec.includes("_opsSeen++"));
   t("なぜ空かを残す（axlx_ops_diag）", rec.includes("axlx_ops_diag"));
-  t("_opsSeen の宣言が1か所だけ", (rec.match(/var _opsSeen = 0;/g) || []).length === 1, (rec.match(/var _opsSeen = 0;/g) || []).length);
+  // ⚠ コメント行（`// var _opsSeen`）は数えない（2026-11-14: 移動した跡をコメントで残したため）
+  t("_opsSeen の宣言が1か所だけ", (rec.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n").match(/var _opsSeen = 0;/g) || []).length === 1, (rec.match(/var _opsSeen = 0;/g) || []).length);
 }
 
 console.log("■ ④ 録画の経路でも ops を送る");
