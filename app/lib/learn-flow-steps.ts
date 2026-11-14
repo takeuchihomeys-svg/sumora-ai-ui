@@ -134,10 +134,62 @@ export type SceneFlow = {
   gap_ms: number | null;
 };
 
+/**
+ * 2026-11-14 竹内さん「徒歩の部分選択したら、そこは押して消えてしまうのは改善されるようになっているのか」
+ *   → **実データで確認（7日6,027件）**。まず「消えている」と見えたが、**記録の数え方**だった:
+ *
+ *     徒歩（transportation_id）の記録の中身（実測）:
+ *       +0ms    click  transportation_id  (w=select)   ← 人が「徒歩」を選ぶ
+ *       +1018ms change transportation_id  (w=select)   ← ブラウザが「値が変わった」を出す
+ *       +2080ms click  required_time      (w=text)     ← 分数を入れる
+ *       +7021ms change required_time      (w=text)     ← 入力を確定
+ *
+ *   ⚠ **1回の操作が `click` と `change` の2件**として記録されていた（差は **1,018ms で一定**）。
+ *     そのため「徒歩を2回選んだ」ように見え、手順として学ぶと
+ *     「徒歩 → 徒歩 → 分数」という**人がやらない手順**になる。
+ *   ⚠ 既存の `splitByScene` は「**直前と同じ名前なら畳む**」だが、
+ *     `change` が 1,018ms 後に来るので**別の場面として残っていた**（時刻を見ていなかった）。
+ *
+ *   → **同じ欄の click→change は1回に畳む**（既定 1,200ms 以内・`collapseSameField`）。
+ *     ⚠ 1,200ms より離れた同じ欄は**押し直しとして残す**（迷いの証拠・実測では0件だった）。
+ */
+export function collapseSameField<T extends { t?: number; k?: string; f?: string | null }>(
+  ops: ReadonlyArray<T>,
+  opt: { gapMs?: number } = {},
+): T[] {
+  const gap = opt.gapMs ?? 1200;
+  const out: T[] = [];
+  let prevF = "";
+  /**
+   * ⚠ 2026-11-14: `prevT = 0` を「まだ無い」の代わりに使うと、
+   *   **最初の要素の時刻が 0** の時に畳めない（テストで発覚）。
+   *   → `has` で「前の欄があるか」を別に持つ。
+   */
+  let prevT = 0;
+  let has = false;
+  for (const o of ops) {
+    const f = typeof o?.f === "string" ? o.f : "";
+    const t = Number(o?.t) || 0;
+    if (f && has && f === prevF && Math.abs(t - prevT) <= gap) {
+      prevT = t;   // 畳んだ後の時刻を次の基準にする
+      continue;
+    }
+    out.push(o);
+    if (f) { prevF = f; prevT = t; has = true; }
+  }
+  return out;
+}
+
 /** 1回の検索の押した並びを、場面ごとに分ける（純関数） */
 function splitByScene(ops: ReadonlyArray<FlowOp>): Map<FlowScene, string[]> {
   const out = new Map<FlowScene, string[]>();
-  for (const o of ops) {
+  /**
+   * ⚠ 2026-11-14: **同じ欄の click→change を1回に畳んでから**分ける。
+   *   実測で `transportation_id` が 0ms と 1018ms の2件あり、
+   *   「徒歩 → 徒歩 → 分数」という**人がやらない手順**を学んでいた。
+   */
+  const list0 = collapseSameField(ops as ReadonlyArray<{ t?: number; k?: string; f?: string | null }>);
+  for (const o of list0) {
     const k = String(o?.k ?? "");
     if (!k) continue;
     // `k` は `"click:名前"` の形。名前だけにする（種類は残す）
