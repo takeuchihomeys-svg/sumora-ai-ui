@@ -1,125 +1,106 @@
-// POST /api/shot-learn
-// 画面の写真から学ぶ（2026-11-13 竹内さん
-//   「画面の写真から判断できる。そこの部分強化するようにする。
-//     画像を見れば学習できるし弱い部分等は学習の統括が判断して学習を繰り返していく」)
+// app/api/shot-learn/route.ts
 //
-// 何をするか:
-//   ① 写真（Storage の shot_key）を取る
-//   ② **決定論で読める物は決定論で**（画面に select があるか・欄の数・小窓か）＝お金をかけない
-//   ③ 決定論で足りない時だけ LLM（Vision）に「欄の種類」を読ませる
-//   ④ 読んだ物を `human_motion_learn.shot_learn` に残す（学習の束がそれを数値と突き合わせて使う）
+// 2026-11-14 竹内さん「今日のさっきの分読み取る。通常モードでやった分」
 //
-// ⚠ 読むのは**欄の種類・画面の種類・押せるか**だけ。入力された中身・名前・住所は読まない。
-// ⚠ 費用: LLM は 1回1枚のみ（既定は無効・`SHOT_LEARN_LLM=on` で使う）。決定論だけで動く。
+// なぜ要るか:
+//   ⚠ `human_motion_learn` は **RLS 有効**なので、公開キーでは読めない（実測: 0件）。
+//     手元のスクリプト（`serverSupabaseKey()` が公開キーに落ちる環境）では
+//     **写真を1枚も見つけられなかった**（＝「読む物がありません」）。
+//   → **サーバー（Service Role キーがある所）で**写真を探す・読む・書き戻す。
+//
+// 使い方（ブラウザでも curl でも）:
+//   GET  /api/shot-learn?mode=normal&days=1&limit=5&dry=1   … 何枚あるか・読むだけ（書かない）
+//   GET  /api/shot-learn?mode=normal&days=1&limit=50        … 実際に読んで書き戻す
+//   GET  /api/shot-learn?count=1                           … 数えるだけ（費用0）
+//
+// ⚠ 費用がかかる（1枚 約0.03円）。**必ず limit で上限**を切る（既定5・最大60）。
+// ⚠ 読むのは欄の種類・名前・画面の種類だけ（入力した中身は読ませない）。
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
-import { cleanFields, cleanScreen, screenOf, parseShotLearn, describeShotLearn, SHOT_LEARN_PROMPT, type ShotLearn } from "@/app/lib/shot-learn";
+import { readShotFields } from "@/app/lib/shot-learn-server";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-automation-key",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
 };
-export async function OPTIONS() { return new NextResponse(null, { status: 204, headers: CORS }); }
 
-/** 決定論で読んだ物（写真を見ずに、記録の数値から分かる事だけ） */
-function deterministicFrom(row: Record<string, unknown>): ShotLearn {
-  /**
-   * 2026-11-13 竹内さん「録画した画像もみて押し方や仕組みなども学習おねがい」:
-   *   ⚠ 旧は URL だけで画面を推していた（`shot_ops` を見ていなかった）。
-   *   → 操作の名前（地域・駅の段）と欄の種類から**画面を判定**する。
-   */
-  const fields = cleanFields(
-    (Array.isArray(row.shot_ops) ? row.shot_ops : []).map((o) => {
-      const x = (o && typeof o === "object" ? o : {}) as Record<string, unknown>;
-      return { name: x.f, kind: x.w, x: null, y: null };
-    }),
-  );
-  const screen: ShotLearn["screen"] = screenOf({
-    url: row.url,
-    ops: (Array.isArray(row.shot_ops) ? row.shot_ops : []) as Array<{ f?: unknown }>,
-    fields,
-  });
-  return { screen, fields, by: "deterministic", confidence: fields.length ? 0.9 : 0.3 };
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS });
 }
 
-export async function POST(req: NextRequest) {
-  let body: { shot_key?: unknown; llm?: unknown };
-  try { body = (await req.json()) as typeof body; } catch { return NextResponse.json({ ok: false, error: "bad_json" }, { status: 400, headers: CORS }); }
-  const key = typeof body.shot_key === "string" ? body.shot_key.slice(0, 200) : "";
-  if (!key) return NextResponse.json({ ok: false, error: "shot_key_required" }, { status: 400, headers: CORS });
+export async function GET(req: NextRequest) {
+  const sp = req.nextUrl.searchParams;
+  const mode = (sp.get("mode") || "").trim();          // normal / aix / （空＝全部）
+  const days = Math.max(1, Math.min(30, Number(sp.get("days") || "1")));
+  const limit = Math.max(1, Math.min(60, Number(sp.get("limit") || "5")));
+  const dry = sp.get("dry") === "1";
+  const countOnly = sp.get("count") === "1";
 
-  // ① その写真の行を取る
-  const r = await supabase.from("human_motion_learn")
-    .select("id, url, site, shot_ops, created_at")
-    .eq("shot_key", key).limit(1);
-  if (r.error) return NextResponse.json({ ok: false, error: r.error.message }, { status: 500, headers: CORS });
-  const row = (r.data ?? [])[0] as Record<string, unknown> | undefined;
-  if (!row) return NextResponse.json({ ok: false, error: "row_not_found" }, { status: 404, headers: CORS });
-
-  // ② 決定論で読む
-  let learn = deterministicFrom(row);
-  let usedLlm = false;
-
-  // ③ 足りない時だけ LLM（既定 off・費用を勝手にかけない）
-  const wantLlm = String(process.env.SHOT_LEARN_LLM ?? "").toLowerCase() === "on" && (body.llm === true || learn.fields.length === 0);
-  if (wantLlm) {
-    try {
-      const pub = supabase.storage.from("human-motion-shots").getPublicUrl(key);
-      const url = pub?.data?.publicUrl;
-      const key2 = process.env.ANTHROPIC_API_KEY;
-      if (url && key2) {
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-api-key": key2, "anthropic-version": "2023-06-01" },
-          body: JSON.stringify({
-            model: "claude-sonnet-5",
-            max_tokens: 2000,
-            system: SHOT_LEARN_PROMPT,
-            messages: [{
-              role: "user",
-              content: [
-                { type: "image", source: { type: "url", url } },
-                { type: "text", text: "この画面のフォームの作りだけを JSON で返してください。" },
-              ],
-            }],
-          }),
-          signal: AbortSignal.timeout(40000),
-        });
-        if (res.ok) {
-          const j = await res.json() as { content?: Array<{ type?: string; text?: string }> };
-          const txt = (j.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
-          const llm = parseShotLearn(txt);
-          if (llm.fields.length) { learn = llm; usedLlm = true; }
-        }
-      }
-    } catch { /* LLM が落ちても決定論で返す */ }
+  const since = new Date(Date.now() - days * 86400_000).toISOString();
+  let q = supabase
+    .from("human_motion_learn")
+    .select("id, shot_key, mode, ext_version, shot_taken, shot_learn, created_at")
+    .gte("created_at", since)
+    .eq("shot_taken", true)
+    .order("created_at", { ascending: false })
+    .limit(1000);
+  if (mode) q = q.eq("mode", mode);
+  const { data, error } = await q;
+  if (error) {
+    return NextResponse.json({ ok: false, error: String(error.message).slice(0, 200) }, { status: 500, headers: CORS });
   }
+  /**
+   * ⚠ `shot_learn` は JSONB。**null の物だけ**を対象にする（もう読んだ物を二度読まない＝費用を無駄にしない）。
+   */
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  const pending = rows.filter((r) => !!r.shot_key && !r.shot_learn);
+  const base = {
+    ok: true,
+    mode: mode || "(全部)",
+    days,
+    shots_total: rows.length,
+    pending: pending.length,
+    already_learned: rows.length - pending.length,
+  };
+  if (countOnly) return NextResponse.json({ ...base, count_only: true }, { headers: CORS });
 
-  const screen = cleanScreen(learn.screen);
-  const out: ShotLearn = { ...learn, screen, fields: cleanFields(learn.fields) };
-
-  // ④ 残す（列が無いDBでも止めない）
-  let saved = false;
-  try {
-    const { error } = await supabase.from("human_motion_learn")
-      .update({ shot_learn: out })
-      .eq("id", row.id as number);
-    saved = !error;
-    if (error && !/shot_learn|does not exist|schema cache/i.test(error.message)) {
-      return NextResponse.json({ ok: false, error: error.message, learn: out }, { status: 500, headers: CORS });
+  const targets = pending.slice(0, limit);
+  const out = {
+    ...base,
+    limit,
+    dry_run: dry,
+    tried: 0,
+    learned: 0,
+    saved: 0,
+    skipped: 0,
+    fields: 0,
+    samples: [] as Array<Record<string, unknown>>,
+    errors: [] as string[],
+  };
+  for (const t of targets) {
+    out.tried++;
+    const key = String(t.shot_key);
+    const sl = await readShotFields(key);
+    if (!sl) { out.skipped++; continue; }
+    out.learned++;
+    out.fields += sl.fields.length;
+    if (out.samples.length < 3) {
+      out.samples.push({
+        at: String(t.created_at).slice(11, 19),
+        screen: sl.screen,
+        by: sl.by,
+        confidence: sl.confidence,
+        fields: sl.fields.slice(0, 6).map((f) => `${f.name}:${f.kind}`),
+      });
     }
-  } catch { /* 残せなくても読んだ結果は返す */ }
-
-  return NextResponse.json({
-    ok: true, saved, used_llm: usedLlm,
-    key,
-    screen: out.screen,
-    fields: out.fields,
-    confidence: out.confidence,
-    note: describeShotLearn(out),
-  }, { headers: CORS });
+    if (dry) continue;
+    const up = await supabase.from("human_motion_learn").update({ shot_learn: sl }).eq("id", t.id);
+    if (up.error) out.errors.push(String(up.error.message).slice(0, 120));
+    else out.saved++;
+  }
+  return NextResponse.json(out, { headers: CORS });
 }
