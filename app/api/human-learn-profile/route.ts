@@ -136,9 +136,10 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   let sceneMissing = 0;
   let sceneMissingNames = "";
   let stoppedScene: string | null = null;
+  /** 2026-11-14: 録画の記録（`human_motion_learn`）も同じ7日で見る（try の外でも使う） */
+  const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
   try {
     const { learnSceneFlows, findWeakScenes, lastSceneOf, SCENE_JA } = await import("@/app/lib/learn-flow-steps");
-    const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
     let fq = supabase
       .from("search_audits")
       .select("status, site, filled")
@@ -173,6 +174,76 @@ async function buildNow(scope: string, note?: (why: string) => void) {
       }
       const topStop = Object.entries(stopAt).sort((a, b) => b[1] - a[1])[0];
       if (topStop) stoppedScene = topStop[0];
+    }
+    /**
+     * 2026-11-14 竹内さん「逆に何の部分がたりていないのか」
+     *   「弱い部分は通常モードで録画したものから学習できるか」:
+     *
+     *   ⚠ 統括は `search_audits.filled.ops` **だけ**を見ていた。
+     *     そのため通常モードの録画（`human_motion_learn`）に残っている
+     *     `field_order`（押した欄の順）・`point_fields`（欄ごとの押した位置）を**数えていなかった**。
+     *   実測: 通常モード282件のうち「次のページ」が **4回** `point_fields` に残っていたのに、
+     *     統括は「次のページの手本が0件」と言っていた（＝**誤り**）。
+     *
+     *   → **録画の記録も材料にする**（`filled.ops` に無い場面を補う）。
+     *     ⚠ `field_order` は「欄の名前の並び」だけなので、時刻が無い＝間（gap）は学べない。
+     *       順番と「その場面が出てきた回数」だけを足す（推測で時刻を作らない）。
+     */
+    try {
+      let mq = supabase
+        .from("human_motion_learn")
+        .select("site, mode, field_order, point_fields")
+        .gte("created_at", since7)
+        .order("created_at", { ascending: false })
+        .limit(600);
+      if (scope && scope !== "all") mq = mq.eq("site", scope);
+      const mr = await mq;
+      if (mr.error) {
+        console.warn("[human-learn-profile] field_order を読めません:", mr.error.message);
+      } else {
+        const rowsM = (mr.data ?? []) as Array<{
+          field_order?: unknown;
+          point_fields?: unknown;
+        }>;
+        const runs2: Array<Array<{ k: string; t: null; by: string }>> = [];
+        for (const r of rowsM) {
+          const order = Array.isArray(r.field_order) ? (r.field_order as unknown[]).map((x) => String(x ?? "")).filter(Boolean) : [];
+          const pf = (r.point_fields && typeof r.point_fields === "object" && !Array.isArray(r.point_fields))
+            ? Object.keys(r.point_fields as Record<string, unknown>).filter(Boolean) : [];
+          const names = order.length ? order : pf;
+          if (names.length < 2) continue;
+          /**
+           * ⚠ 名前に `click:` 等の動詞が無いので、`click:` を付けて**同じ形**にする
+           *   （`learnSceneFlows` が `"click:名前"` を前提にしているため）。
+           *   `img` / `body` は欄ではないので**場面に入れない**（sceneOfOp が other を返す）。
+           */
+          runs2.push(names.slice(0, 40).map((n) => ({ k: "click:" + n, t: null, by: "human" })));
+        }
+        if (runs2.length) {
+          const flows2 = learnSceneFlows(runs2 as never);
+          /**
+           * `filled.ops` から作った場面と**合わせる**（同じ場面は回数と手数を足す）。
+           * ⚠ 順番は `filled.ops`（時刻つき＝正確）を優先する。
+           */
+          const byScene = new Map<string, import("@/app/lib/learn-flow-steps").SceneFlow>();
+          for (const f of (sceneFlows ?? [])) byScene.set(f.scene, { ...f });
+          for (const f of flows2) {
+            const cur = byScene.get(f.scene);
+            if (!cur) { byScene.set(f.scene, f); continue; }
+            cur.runs += f.runs;
+            cur.ops += f.ops;
+            cur.raw_ops = (cur.raw_ops ?? 0) + (f.raw_ops ?? 0);
+            // 順番は filled.ops の物を残す（時刻で学んだ方が正確）。無い時だけ録画の物。
+            if (!cur.steps.length) cur.steps = f.steps;
+          }
+          sceneFlows = [...byScene.values()].sort((a, b) => b.ops - a.ops);
+          const weak2 = findWeakScenes(sceneFlows).filter((w) => w.kind === "no_example");
+          sceneMissing = weak2.length;
+          sceneMissingNames = weak2.map((w) => SCENE_JA[w.scene]).join("・");
+        }
+      }
+    } catch (e) {
+      console.warn("[human-learn-profile] 録画の記録を足せません:", e instanceof Error ? e.message : String(e));
     }
   } catch (e) {
     console.warn("[human-learn-profile] 場面ごとの手順を作れません:", e instanceof Error ? e.message : String(e));
@@ -275,6 +346,21 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   }
   (bundle as unknown as Record<string, unknown>).saved_to_db = saved;
   if (saveError) (bundle as unknown as Record<string, unknown>).save_error = saveError;
+  /**
+   * 2026-11-14 竹内さん「なんでここ統括がちゃんと学習する絶対ルールなのに連携できていないのか」:
+   *   ⚠ 旧は統括の判断を**投げっぱなし**で保存していて、失敗を握り潰していた
+   *     （Vercel は応答を返した時点で打ち切る＝書き込みが消える・RLS で弾かれても気づけない）。
+   *   → ここで **await して**、結果を束に載せる（`supervisor_saved`）。
+   *     失敗しても束は返す（現場を止めない）。
+   */
+  try {
+    const { saveSupervisorForBundle } = await import("@/app/lib/human-learn-brain");
+    const supSave = await saveSupervisorForBundle(bundle);
+    (bundle as unknown as Record<string, unknown>).supervisor_saved = supSave;
+    if (!supSave.all.ok) console.warn("[human-learn-profile] 統括の判断を残せません:", supSave.all.error || supSave.all.skipped);
+  } catch (e) {
+    (bundle as unknown as Record<string, unknown>).supervisor_saved = { all: { ok: false, error: e instanceof Error ? e.message : String(e) } };
+  }
   return bundle;
 }
 

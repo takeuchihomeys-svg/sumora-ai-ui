@@ -53,14 +53,30 @@ const DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_learn_supervisor_scope ON learn_supervisor_log(scope, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_learn_supervisor_created ON learn_supervisor_log(created_at DESC)`,
   `ALTER TABLE learn_supervisor_log ENABLE ROW LEVEL SECURITY`,
+  /**
+   * 2026-11-14 竹内さん「PLS無効にしたらよいのでは」→ **その通りでした**。
+   *   ⚠ RLS を有効にしていたため、Service Role キーが無いと**書き込めなかった**
+   *     （実測: 統括の判断がほとんど残っていなかった・ローカルでは 0件）。
+   *   → 他の表（`automation_commands` 等）と同じく **DISABLE にそろえる**。
+   *   ⚠ 入れるのは**数と判断だけ**（入力した中身・名前・電話・住所は入れない）。
+   */
+  `ALTER TABLE learn_supervisor_log DISABLE ROW LEVEL SECURITY`,
   `COMMENT ON TABLE learn_supervisor_log IS '学習の統括の判断（結論・材料の揃い・弱い所・次にやる事・打ち合わせの内容）を1回ごとに1行。数と判断だけ。2026-11-14 竹内さん承認'`,
   `SELECT pg_notify('pgrst', 'reload schema')`,
 ];
 
 async function run() {
-  // ① もう在るか（在れば何もしない）
+  // ① もう在るか（在れば RLS だけ直して終わる）
   const probe = await supabase.from("learn_supervisor_log").select("id").limit(1);
   if (!probe.error) {
+    /**
+     * 2026-11-14 竹内さん「PLS無効にしたらよいのでは」:
+     *   ⚠ 表は在るが **RLS が有効**なため書き込めていなかった（実測）。
+     *     旧は「在れば何もしない」で終わっていたので**永久に直らなかった**。
+     *   → 在る時も **RLS を無効にする1行** を流す（何度呼んでも安全）。
+     */
+    const fix = await supabase.rpc("exec_sql", { sql: "ALTER TABLE learn_supervisor_log DISABLE ROW LEVEL SECURITY;" });
+    const rlsError = fix.error ? String(fix.error.message).slice(0, 200) : null;
     /**
      * 2026-11-14: 既にある時は**中身の確認**も返す（保存が動いているか分かるように）。
      *   ⚠ 数と結論だけ（中身の詳細は返さない）。
@@ -75,7 +91,10 @@ async function run() {
       {
         ok: true,
         already: true,
-        message: "learn_supervisor_log はもうあります（何もしませんでした）",
+        message: rlsError
+          ? "learn_supervisor_log はあります（RLS の解除に失敗: " + rlsError + "）"
+          : "learn_supervisor_log はあります（RLS を無効にしました＝書けるようになりました）",
+        rls_disabled: !rlsError,
         rows: cnt.error ? null : (cnt.count ?? 0),
         recent: recent.error ? [] : (recent.data ?? []),
       },
