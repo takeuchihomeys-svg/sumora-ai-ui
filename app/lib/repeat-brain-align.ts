@@ -241,7 +241,7 @@ export function ackFormFacts(messagesOldestFirst: ReadonlyArray<{ sender: string
 //   ブレイン（DeepSeek）は q091 で「結果はまだ無い→受けだけの返信で待つ」と「約束を果たす AIX」に割れた（窓 off 2/4・窓 on 0/4・夜の基準 3/3）。
 //   窓（BRAIN_MSG_WINDOW_UNITS）は最新の通も台帳も落としておらず、古い物件のカード1件と画像の束の1行が増えただけ＝割れている判断がどちらに倒れるかを揺らしただけ。
 //   直し: 確認（募集状況・管理会社）・見積の約束への了承だけの番は、この材料に「道は約束を果たす AIX のまま・ack_form は道を変えない」の1行を足す（決まりの食い違いを材料の側で解く）。
-//   既定 off（ACK_CONFIRM_AIX_PATH=on の時だけ）。探す（ピックアップ）・審査・連絡だけの約束には足さない
+//   11/15 試験 d-ackpath-def2-1115-g1〜g4（狙い5問＋了承だけで返信が正解の守り・q111 を含む）で確かな悪化0・既定 on（止める ACK_CONFIRM_AIX_PATH=off）。探す（ピックアップ）・審査・連絡だけの約束には足さない
 // 11/15 q152: 「お気に召されましたらお申込みし…」も条件つき（確認の結果はもう同じ通で伝えている・竹内さんは AIX【申込へ】）
 const ACK_COND_PROMISE_RE = /(?:頂|いただ)き次第|(?:頂|いただ)けましたら|(?:頂|いただ)ければ|ございましたら|召されましたら|よろしければ|ご希望でしたら|ご希望であれば/;
 // 2026-11-15 作業員D（11/14 夜の試験 d-ackpath-def-1114-g3・q111 の悪化 3/3→0/2）: 付ける番を細かく分けた。
@@ -253,7 +253,8 @@ const ACK_COND_PROMISE_RE = /(?:頂|いただ)き次第|(?:頂|いただ)けま�
 const ACK_CAL_DATE_RE = /[0-9０-９]{1,2}月[0-9０-９]{1,2}日|[0-9０-９]{1,2}日(?:に|頃|ごろ|時点|以降|まで|の)|[0-9０-９]{1,2}[／/][0-9０-９]{1,2}|時点|月末|月初|週明け|来週|来月|中旬|下旬|上旬/;
 const ACK_CLOSE_RE = /お気軽に(?:ご連絡|お申し付け|お知らせ|ご相談)|引き続き(?:何卒)?(?:どうぞ)?よろしく|ゆっくりご(?:確認|検討)/;
 export function ackConfirmAixPathOn(env: Env = process.env): boolean {
-  return (env.ACK_CONFIRM_AIX_PATH ?? "").trim().toLowerCase() === "on";
+  // 2026-11-15 作業員D: 11/15 試験で悪化0・既定 on（止める ACK_CONFIRM_AIX_PATH=off）
+  return (env.ACK_CONFIRM_AIX_PATH ?? "on").trim().toLowerCase() !== "off";
 }
 /** 確認・見積の約束への了承だけの番の道の1行（当たらない時は ""） */
 export function ackConfirmAixPathLine(f: AckFormFacts | null, env: Env = process.env): string {

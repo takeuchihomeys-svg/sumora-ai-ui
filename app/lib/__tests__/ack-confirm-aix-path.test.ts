@@ -1,4 +1,4 @@
-// app/lib/__tests__/ack-confirm-aix-path.test.ts — 確認・見積の約束への了承だけの番で、了承の材料に「道は約束を果たす AIX のまま」の1行を足す（ACK_CONFIRM_AIX_PATH・既定 off）
+// app/lib/__tests__/ack-confirm-aix-path.test.ts — 確認・見積の約束への了承だけの番で、了承の材料に「道は約束を果たす AIX のまま」の1行を足す（ACK_CONFIRM_AIX_PATH・11/15 から既定 on・=off で止まる）
 //   2026-11-14 作業員D（q091・BRAIN_MSG_WINDOW_UNITS の悪化の掘り）。実物: 試験 q091 の最後の2通（こちらの約束・お客様の了承）をそのまま使う
 //   実行: npx tsx app/lib/__tests__/ack-confirm-aix-path.test.ts
 import { readFileSync } from "node:fs";
@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { ackFormFacts, ackFormMaterialLine, ackConfirmAixPathLine, ackConfirmAixPathOn } from "../repeat-brain-align";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
-const ON = { ACK_CONFIRM_AIX_PATH: "on" }, OFF = {};
+const ON = { ACK_CONFIRM_AIX_PATH: "on" }, OFF = { ACK_CONFIRM_AIX_PATH: "off" };
 
 // q091 の実物（スタッフの約束 → お客様の了承だけ）
 const q091 = [
@@ -17,7 +17,7 @@ const q091 = [
 const f = ackFormFacts(q091);
 t("q091: 確認の約束への了承だけと読む", f?.family === "確認・連絡・見積・審査" && f.customer === "了承だけ");
 t("q091: 最後の文は contact だけでも、通の全部から募集状況（vacancy）を拾う", !!f?.topics?.includes("vacancy") && f.topics.includes("contact"));
-t("既定 off", !ackConfirmAixPathOn({}) && ackConfirmAixPathOn(ON) && ackConfirmAixPathLine(f, OFF) === "");
+t("既定 on（11/15 試験で悪化0）・off で止まる", ackConfirmAixPathOn({}) && ackConfirmAixPathOn(ON) && !ackConfirmAixPathOn(OFF) && ackConfirmAixPathLine(f, OFF) === "" && ackConfirmAixPathLine(f, {}) !== "");
 const line = ackConfirmAixPathLine(f, ON);
 t("on: q091 は道の行が付く（物件確認した）", /property_check_result/.test(line) && /返信で締めず/.test(line) && /ack_form は形/.test(line));
 t("on: 何を添えるか（御見積書等）は狭めない（11/14 試験 q094 で御見積書が抜けた）", /入口は/.test(line) && /狭めない/.test(line));
