@@ -46,7 +46,9 @@ console.log("\n■ ③ 判定の決まり（誤って ok にしない）");
 {
   ok("⚠ 本物の操作が0件なら ng", /withRealOps\.length === 0\) add\(1, "記録（録画）", "ng"/.test(src.replace(/\n\s+/g, " ")));
   ok("⚠ seen0 が残っていたら ok にしない（warn）", /diagSeen0 > 0\) add\(1, "記録（録画）", "warn"/.test(src.replace(/\n\s+/g, " ")));
-  ok("⚠ img/body が5割以上なら warn（ok にしない）", /junkPct >= 50 \? "warn"/.test(src));
+  ok("⚠ img/body は**のべ**で数える（種類数で割らない）", /junk\.total \? Math\.round\(\(junk\.junkN \/ junk\.total\)/.test(src));
+  ok("⚠ point_fields と field_order の**両方**を数える", /Object\.keys\(x\.point_fields/.test(src) && /Array\.isArray\(x\.field_order\)/.test(src));
+  ok("  取れている名前の一覧も出す（何が取れているか分かる）", /取れている名前/.test(src));
   ok("⚠ 判断が保存されていなければ warn（ok にしない）", /if \(!savedOk\) add\(6, "確認（数字で見る）", "warn"/.test(src.replace(/\n\s+/g, " ")));
   ok("⚠ 実行の種類が4未満なら ng", /handles\.length < 4\) add\(5, "実行（決定→実行）", "ng"/.test(src.replace(/\n\s+/g, " ")));
 }

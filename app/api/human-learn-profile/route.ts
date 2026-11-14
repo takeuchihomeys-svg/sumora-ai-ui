@@ -281,13 +281,41 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   } catch (e) {
     console.warn("[human-learn-profile] 指示の状態を取れません:", e instanceof Error ? e.message : String(e));
   }
+  /**
+   * 2026-11-14 竹内さん「統括の部分ちゃんと改善されるようになっているのか」:
+   *   ⚠ **統括は「前回と比べる」仕組みを持っているのに、常に prev: null で渡していた**。
+   *     だから「良くなったか」を一度も言えていなかった（`learn_supervisor_log` に128件あるのに未使用）。
+   *   → **前回の判断**を読んで渡す。比べるのは数だけ（記録・順番・場所・開き方・弱い所）。
+   */
+  let prevAdvice: { at: string | null; rows: number; next: number; points: number; opens: number; weak: number } | null = null;
+  try {
+    const { data: prevRows } = await supabase
+      .from("learn_supervisor_log")
+      .select("created_at, next_n, points_n, opens_n, weak_n, rows")
+      .eq("scope", scope && scope !== "all" ? scope : "all")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const p = (prevRows ?? [])[0] as Record<string, unknown> | undefined;
+    if (p) {
+      prevAdvice = {
+        at: typeof p.created_at === "string" ? p.created_at : null,
+        rows: Number(p.rows) || 0,
+        next: Number(p.next_n) || 0,
+        points: Number(p.points_n) || 0,
+        opens: Number(p.opens_n) || 0,
+        weak: Number(p.weak_n) || 0,
+      };
+    }
+  } catch (e) {
+    console.warn("[human-learn-profile] 前回の判断を読めません:", e instanceof Error ? e.message : String(e));
+  }
   const bundle = compactBundle(buildHumanLearnBundle(rows as never, Date.now(), auditsSummary, commandsSummary, {
     scene_flows: sceneFlows,
     scene_missing: sceneMissing,
     scene_missing_names: sceneMissingNames,
     stopped_scene: stoppedScene,
     improvements,
-  }));
+  }, prevAdvice));
   if (!bundle.source.rows) { try { note?.("empty_bundle"); } catch (_) {} return null; }
   /**
    * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
