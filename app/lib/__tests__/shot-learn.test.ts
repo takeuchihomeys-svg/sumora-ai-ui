@@ -52,7 +52,16 @@ console.log("\n■ ③ 写真と数値を突き合わせる（名前だけでは
   t("種類が無い欄を写真で埋める（select）", r.points.rental_cost2.w === "select", r.points.rental_cost2);
   t("食い違ったら**写真を採る**（text→select）", r.points.structured_date.w === "select", r.points.structured_date);
   t("写真に無い欄はそのまま（勝手に変えない）", r.points.unknown_field.w === "select");
-  t("直した所を残す（点検用）", r.fixed.length === 2 && r.fixed.some((f) => f.name === "structured_date" && f.from === "text" && f.to === "select"));
+  /**
+   * 2026-11-14 竹内さん「確かめて治す」:
+   *   ⚠ 旧は**埋めただけの欄も `fixed` に入れて**いたので「食い違い」が実在しなくても並んでいた
+   *     （実測 `shot_learn` は0件＝比較する相手が無いのに6件出ていた）。
+   *   → **本当に違う時だけ** `fixed` に入れるように直した。
+   *     `rental_cost2`（種類が無い→埋めた）は `fixed` に入らない。`structured_date`（text→select）だけ入る。
+   */
+  t("直した所を残す（食い違いだけ・埋めただけは残さない）",
+    r.fixed.length === 1 && r.fixed.some((f) => f.name === "structured_date" && f.from === "text" && f.to === "select"), r.fixed);
+  t("  ⚠ 埋めただけの欄は「食い違い」にしない", !r.fixed.some((f) => f.name === "rental_cost2"), r.fixed);
   t("数を変えない（増減しない）", Object.keys(r.points).length === 3);
   t("元の points を書き換えない", points.rental_cost2.w === undefined);
 }
@@ -71,7 +80,15 @@ console.log("\n■ ④ 弱い所を見つける（統括が「次に何を学ぶ
   const kinds = weak.map((w) => w.kind);
   t("種類が分からない欄を指摘", kinds.includes("kind_unknown"));
   t("写真の中で種類が割れている欄を指摘", kinds.includes("kind_conflict_in_photo"));
-  t("写真と記録が違った欄を指摘", kinds.includes("photo_vs_record"));
+  /**
+   * 2026-11-14: `fixed` は「**本当に違った**物だけ」（`from` と `to` が違う）。
+   *   `{ name: "c" }` だけ（from/to 無し）は「埋めただけ」なので、もう食い違いにしない。
+   */
+  const weak2 = findWeakPoints(points as never, fields as never, [{ name: "c", from: "text", to: "select" }] as never);
+  const kinds2 = weak2.map((w) => w.kind);
+  t("写真と記録が違った欄を指摘", kinds2.includes("photo_vs_record"), kinds2);
+  const weak3 = findWeakPoints(points as never, fields as never, [{ name: "c" }] as never);
+  t("  ⚠ from/to の無い物は「食い違い」にしない（埋めただけ）", !weak3.map((w) => w.kind).includes("photo_vs_record"), weak3.map((w) => w.kind));
   t("押せない欄を押しているのを指摘", kinds.includes("pressed_disabled"));
   t("それぞれに「次にどうするか」がある", weak.every((w) => !!w.next));
   t("同じ物を重ねない", new Set(weak.map((w) => w.kind + "|" + w.name)).size === weak.length);
