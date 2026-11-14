@@ -1338,9 +1338,17 @@
           var go = _autoPdfRunPending;
           _autoPdfRunPending = null;
           if (!okSort) {
-            console.warn("[AXLX bulk-dl][auto] メニューで並べ替えられない → **押さずに待つ**（全物件を送らないため）");
-            _nudge("⚠ 並べ替えができませんでした。自動では押しません");
-            _tmark("ad_sort", "failed");
+            /**
+             * 2026-11-14 竹内さん「並び替えしっぱいしたとでてから印刷用PDF押す前に止まってしまった」:
+             *   ⚠ 旧は `_tmark / _nudge` を出して**return（押さない）**していた。
+             *     それだと**物件が1件も出ない**（＝現場が止まる）。
+             *   → **この並びのまま続行**する（検索条件は入っている・物件を落とさない方を優先）。
+             *     並べ替えできなかった事は点検と画面に残す（黙って続けない）。
+             */
+            console.warn("[AXLX bulk-dl][auto] 並べ替えできず → **この並びのまま押します**（物件を落とさない）");
+            _nudge("⚠ 並べ替えできませんでした（この並びのまま続けます）");
+            _tmark("ad_sort", "failed_continue");
+            if (typeof go === "function") go();
             return;
           }
           _tmark("ad_sort", "done");
@@ -1374,12 +1382,81 @@
    *   ⚠ 最後まで行けなければ false（呼ぶ側は押さない＝全物件を送らない）。
    */
   function _sortByAdLikeHuman(done) {
+    /**
+     * 2026-11-14 竹内さん「検索した後並び替えしっぱいしたとでてから印刷用PDF押す前に止まってしまった
+     *   原因見つけて改善する」:
+     *
+     *   ⚠ 旧は**1回試して失敗したら即やめて**、呼ぶ側も「押さない」で止まっていた。
+     *     だが**検索条件はもう入っている**（並び順が変わるだけ）ので、止める理由が無い。
+     *     現場では「並び替え失敗 → 印刷用PDF を押す前に停止」＝**物件が1件も出ない**になっていた。
+     *
+     *   → ① **3回まで試す**（メニューが開くまでの時間が足りないだけの事が多い）
+     *     ② それでも駄目なら**並びはそのままに続行**する（物件を落とさない方を優先）
+     *        ⚠ ただし点検に「並べ替えできなかった」を必ず残す（黙って続けない）。
+     */
+    var _try = 0;
+    var _maxTry = 3;
+    var attempt = function () { _try++; _sortOnce(function (ok) {
+      if (ok) { done(true); return; }
+      if (_try < _maxTry) {
+        console.warn("[AXLX bulk-dl][sort] 失敗（" + _try + "/" + _maxTry + "）→ 少し待ってやり直します");
+        setTimeout(function () { attempt(); }, 1500 + Math.floor(Math.random() * 1200));
+        return;
+      }
+      console.warn("[AXLX bulk-dl][sort] " + _maxTry + "回試して並べ替えできません → **この並びのまま続行**（物件を落とさない）");
+      done(false);
+    }); };
+    attempt();
+  }
+
+  /**
+   * 並べ替えを**1回**試す（2026-11-14: リトライするために中身を分けた）。
+   *   ⚠ 見つからない段は点検に残す（`sort_no_head` / `sort_no_ad` / `sort_no_hilo`）。
+   */
+  function _sortOnce(done) {
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
     var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
     var wait = function (ms) { return H && H.logNormalDelay ? H.logNormalDelay(ms, 0.35) : ms; };
     var step = function (ms, fn) { setTimeout(fn, Math.max(60, Math.round(wait(ms)))); };
     var visible = function (el) { try { return !!el && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; } };
     var norm = function (t) { return String(t == null ? "" : t).replace(/[\s\u3000]+/g, ""); };
+    /**
+     * 2026-11-14 竹内さん「検索した後並び替えしっぱいしたとでてから印刷用PDF押す前に止まってしまった
+     *   原因見つけて改善する」:
+     *
+     *   ⚠ 旧は `_tmark("ad_sort", "failed")` を **sessionStorage** に書くだけで、
+     *     私（サーバー側）からは**何が起きたか一切見えなかった**。
+     *     ＝「失敗した」しか分からず、**どの段で・何が見つからなかったか**が追えない。
+     *   → **失敗した段と、画面にあった候補**を点検（`search_audits.steps`）に送る。
+     *     ・sort_no_head   … 「並べ替え」が見つからない
+     *     ・sort_no_ad     … 「AD」の項目が見つからない
+     *     ・sort_no_hilo   … 「高→低」が見つからない（小メニューが開いていない）
+     *   ⚠ 送るのは**段の名前と、見えていた短い文字（上位6件・各20字）だけ**。
+     *     ⚠ 物件名・家賃・お客様の情報は入れない（メニューの文字だけ）。
+     */
+    var _auditSort = function (k, detail) {
+      try {
+        if (window._axlxAuditStep) window._axlxAuditStep(k, detail == null ? null : String(detail).slice(0, 80));
+      } catch (_) {}
+    };
+    /** その時画面に見えていた「短い文字」を集める（失敗の手がかり・最大6件） */
+    var _visibleWords = function () {
+      try {
+        var out = [];
+        var els = Array.prototype.slice.call(document.querySelectorAll("a,button,div,span,td,th,li,p,label"));
+        for (var i = 0; i < els.length && out.length < 6; i++) {
+          var e = els[i];
+          if (!visible(e)) continue;
+          var t = String(e.textContent || "").replace(/[\s\u3000]+/g, "");
+          if (!t || t.length < 2 || t.length > 12) continue;
+          if (out.indexOf(t) >= 0) continue;
+          // 数字・家賃・㎡ は入れない（個人情報・物件情報を送らない）
+          if (/^[0-9.,]+$/.test(t) || /万円|円|㎡|m2/.test(t)) continue;
+          out.push(t);
+        }
+        return out.join("/");
+      } catch (_) { return ""; }
+    };
     /** 文字で探す（見えている物だけ・小さい物から） */
     var byText = function (list, root) {
       var r = root || document;
@@ -1421,14 +1498,24 @@
 
     // ① 「並べ替え」を押す
     var sortHead = byText(["並び替え", "並べ替え", "並び順", "ソート"]);
-    if (!sortHead) { console.warn("[AXLX bulk-dl][sort] 「並べ替え」が見つかりません"); done(false); return; }
+    if (!sortHead) {
+      console.warn("[AXLX bulk-dl][sort] 「並べ替え」が見つかりません");
+      _auditSort("sort_no_head", "見えていた: " + _visibleWords());
+      done(false); return;
+    }
+    _auditSort("sort_head", norm(sortHead.textContent).slice(0, 20));
     console.log("[AXLX bulk-dl][sort] ① 並べ替えを押します");
     press(sortHead, function () {
       // ①の後は**少し待つだけ**（他の項目は押さない＝展開されるのを待つ）
       step(700, function () {
         // ② 「AD」の上へ移す（押さない・右の小メニューが開くのを待つ）
         var adItem = byText(["AD", "AD順", "AD（広告費）", "広告費"], null);
-        if (!adItem) { console.warn("[AXLX bulk-dl][sort] AD の項目が見つかりません"); done(false); return; }
+        if (!adItem) {
+          console.warn("[AXLX bulk-dl][sort] AD の項目が見つかりません（メニューが開いていない）");
+          _auditSort("sort_no_ad", "見えていた: " + _visibleWords());
+          done(false); return;
+        }
+        _auditSort("sort_ad", norm(adItem.textContent).slice(0, 20));
         console.log("[AXLX bulk-dl][sort] ② AD の上へ移します（押さない・待つ）");
         hover(adItem);
         step(650, function () {
@@ -1443,7 +1530,11 @@
               }
             } catch (_) {}
           }
-          if (!hiToLo) { console.warn("[AXLX bulk-dl][sort] 「高→低」が見つかりません（小メニューが開いていない）"); done(false); return; }
+          if (!hiToLo) {
+            console.warn("[AXLX bulk-dl][sort] 「高→低」が見つかりません（小メニューが開いていない）");
+            _auditSort("sort_no_hilo", "見えていた: " + _visibleWords());
+            done(false); return;
+          }
           // 右へ移す（人が小メニューへ手を動かす）
           hover(adItem);
           step(320, function () {
