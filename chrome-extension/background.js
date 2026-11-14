@@ -2712,13 +2712,44 @@ async function _recordOneShot() {
       for (var ti = 0; ti < order.length && (!ops || !ops.length); ti++) {
         var tab = order[ti];
         siteName = siteName || (/realnetpro\.com/.test(tab.url) ? "realpro" : (/itandibb\.com/.test(tab.url) ? "itandi" : "reins"));
+        /**
+         * 2026-11-14 竹内さん「これ録画したの見たら学習できるのでは」→ **学習できていなかった**。
+         *
+         *   ⚠ 実測: 2.7.41 の 195枚すべて `shot_ops` が `k:"diag"` の1件だけ、理由は
+         *     **`no_answer:tab…`（49回）** ＝ **タブが答えていない**。
+         *     `human-learn-record.js` は manifest の `document_idle`（読み込み完了後）で入るのに、
+         *     録画は `content.js`（`document_start`）の時点で始まる。
+         *     → **ページが読み込み中の時は、記録側がまだ居ない**ので答えられない。
+         *
+         *   → ① 答えが無ければ**少し待ってからもう一度**聞く（ページが落ち着いてから）。
+         *     ② それでも駄目なら、**注入してから聞く**（`chrome.scripting.executeScript` が使える時）。
+         *     ③ 最後まで駄目なら理由を残す（今まで通り）。
+         */
         var resp = await chrome.tabs.sendMessage(tab.id, { type: "axlx-recent-ops" }).catch(function () { return null; });
+        if (!resp) {
+          // ① ページが落ち着くのを待って、もう一度だけ聞く（人が開いてから操作するまでの間）
+          await new Promise(function (r) { setTimeout(r, 900); });
+          resp = await chrome.tabs.sendMessage(tab.id, { type: "axlx-recent-ops" }).catch(function () { return null; });
+        }
+        if (!resp) {
+          /**
+           * ② 記録側がまだ入っていない → **注入してから聞く**。
+           *   ⚠ 失敗しても止めない（権限や状態で入らない事がある）。
+           */
+          try {
+            if (chrome.scripting && chrome.scripting.executeScript) {
+              await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                files: ["human-learn.js", "human-learn-record.js"],
+              }).catch(function () { return null; });
+              await new Promise(function (r) { setTimeout(r, 400); });
+              resp = await chrome.tabs.sendMessage(tab.id, { type: "axlx-recent-ops" }).catch(function () { return null; });
+            }
+          } catch (_) {}
+        }
         /**
          * 2026-11-14 竹内さん「データベースの写真から学習する」:
-         *   ⚠ 実測で **写真200枚すべて `shot_ops` が空**（写真は200枚とも撮れている）。
-         *     どこで落ちているか（タブに届いていない／輪が空／拾えていない）を**DBに残す**。
-         *     → 1枚ごとに `axlx_rec_ops` に理由を残し、**最後の理由を写真の行にも入れる**
-         *       （`shot_ops_diag` の代わりに `shot_w`/`shot_h` は使わず、点検用の小さな印を送る）。
+         *   どこで落ちているか（タブに届いていない／輪が空／拾えていない）を**DBに残す**。
          */
         if (!resp) {
           _lastOpsWhy = "no_answer:tab" + tab.id;
