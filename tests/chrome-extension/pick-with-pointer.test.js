@@ -36,9 +36,20 @@ console.log("■ ① 地域を1つずつマウスで動かして押す");
 console.log("\n■ ② 統括の関所が現場を止めない（not_yet では止めない）");
 {
   const seg = bd.slice(bd.indexOf("function _supBlocksAuto"), bd.indexOf("function _supBlocksAuto") + 1800);
-  t("not_yet では止めない", /verdict === "not_yet"/.test(seg) && /return false;/.test(seg), seg.slice(0, 400));
-  t("almost でも止めない", /verdict === "almost"/.test(seg));
-  t("  ⚠ unsafe の時だけ止める", /if \(verdict === "unsafe"\)/.test(seg));
+  /**
+   * 2026-11-14 竹内さん「自動はとめないようにする」→ `not_yet` / `almost` / `unsafe` の**全部で止めない**。
+   *   止めるのは人（スタッフモード・停止ボタン）と自動入力の最中だけ。
+   */
+  t("not_yet でも止めない（return false に落ちる）", /if \(!verdict \|\| verdict === "ready"\) return false;/.test(seg));
+  t("almost でも止めない（最後まで return false）", !/return true;/.test(seg), seg.slice(-200));
+  /**
+   * 2026-11-14 竹内さん「自動はとめないようにする」:
+   *   ⚠ 旧は `unsafe` の時だけ止めていた。だが止まると**物件が1件も出ない**（現場が止まる）。
+   *   → **unsafe でも止めない**（警告だけ）。止めるのは人（スタッフモード・停止ボタン）と
+   *     自動入力の最中だけ。
+   */
+  t("  ⚠ unsafe でも止めない（警告だけ・竹内さん 2026-11-14）", /if \(verdict === "unsafe"\)[\s\S]{0,400}?return false;/.test(seg));
+  t("    止める理由を画面に出す（黙って続けない）", /_nudge\(/.test(seg));
   t("  止めない時も警告は出す（黙らない）", /_nudge\("ℹ️ 統括:/.test(seg));
 }
 

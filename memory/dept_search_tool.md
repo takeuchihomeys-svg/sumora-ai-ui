@@ -8291,3 +8291,20 @@ abandoned 254件 すべて result（何件読んだか）が空
 - → `lastSceneOf(ops)`（時系列で後ろから探す）を新設
 
 ⚠ **教訓**: 「上限の時間」を2か所に置く時は、**必ずサーバー側を長く**する。同じ長さにすると競争して先に閉じた方が勝つ（実測で254件が誤って「止まった」になっていた）。
+
+---
+
+## 2026-11-14（夜）型チェックがメモリ不足で落ちる件
+
+```
+FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory
+tsc-exit=134
+```
+
+⚠ **コードのエラーではない**。大きいリポジトリ（Chrome拡張＋app 全体）で `npx tsc --noEmit` が既定のメモリを超える。
+
+→ **必ずメモリを上げて実行する**:
+```powershell
+$env:NODE_OPTIONS="--max-old-space-size=8192"; npx tsc --noEmit
+```
+これで `tsc-exit=0` になる（実測）。CI・コミット前も同じ形で。

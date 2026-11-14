@@ -489,22 +489,30 @@
   function _supBlocksAuto(where) {
     var v = _supCache || {};
     var verdict = String(v.verdict || "");
-    // 判断が無い・ほぼ学べている・まだ学べていない → **止めない**（警告だけ）
-    if (!verdict || verdict === "ready" || verdict === "almost" || verdict === "not_yet") {
-      if (verdict && verdict !== "ready") {
-        console.warn("[AXLX bulk-dl] 統括: " + verdict + "（学びが薄いが、検索は続けます）: " + String(v.headline || ""));
-        try { _nudge("ℹ️ 統括: " + String(v.headline || "").slice(0, 60)); } catch (_) {}
-      }
+    /**
+     * 2026-11-14 竹内さん「自動はとめないようにする」→ **統括で止めるのをやめた**。
+     *
+     *   ⚠ 旧は `unsafe`（押す場所が0＝区・駅を押せない恐れ）の時に**自動を止めていた**。
+     *     だが止まると**物件が1件も出ない**（現場が止まる）＝一番困る結果になる。
+     *   → **unsafe でも止めない**。警告だけ出す（小窓に赤字で理由を出す）。
+     *
+     *   ⚠ 本当に止めるのは**人の意思だけ**にする:
+     *     ・スタッフモード（人が選んだ物を触らない）
+     *     ・自動入力の最中（別のお客様の一覧を送ってしまう）
+     *     ・停止ボタン（人が止めた）
+     *   統括は**判断を出すだけ**（止める/止めないは人が決める）。
+     *
+     *   ⚠ 黙って続けない: `unsafe` の時は**必ず警告**を出す（画面＋ログ）。
+     */
+    if (!verdict || verdict === "ready") return false;
+    if (verdict === "unsafe") {
+      console.warn("[AXLX bulk-dl] 統括が「危ない」と言っています（" + where + "）が、**自動は止めません**（現場を止めないため）: " + _supervisorBlockReason());
+      try { _nudge("⚠ 統括: " + _supervisorBlockReason().slice(0, 70) + "（続けます）"); } catch (_) {}
       return false;
     }
-    // **unsafe の時だけ止める**（誤検索に直結する）
-    if (verdict === "unsafe") {
-      console.warn("[AXLX bulk-dl] 統括が「危ない」と言っているため自動の送信・ダウンロードをしない（" + where + "）: " + _supervisorBlockReason());
-      try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
-      try { clearAutoSendState(); } catch (_) {}
-      try { _nudge("⛔ " + _supervisorBlockReason().slice(0, 90)); } catch (_) {}
-      return true;
-    }
+    // not_yet / almost … 学びが薄いだけ → 警告だけ（今まで通り）
+    console.warn("[AXLX bulk-dl] 統括: " + verdict + "（学びが薄いが、検索は続けます）: " + String(v.headline || ""));
+    try { _nudge("ℹ️ 統括: " + String(v.headline || "").slice(0, 60)); } catch (_) {}
     return false;
   }
   try {

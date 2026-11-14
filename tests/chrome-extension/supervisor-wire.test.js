@@ -51,7 +51,11 @@ console.log("\n■ ③ 自動の送信・ダウンロードの入口で止める
   t("tryNext（次のページへ進む時）", /_supBlocksAuto\("tryNext"\)/.test(bd));
   t("autoSendOnePage（1ページ送る時）", /_supBlocksAuto\("autoSendOnePage"\)/.test(bd));
   t("  止める時は続きの印も消す（中途半端に残さない）", /remove\("axlx_pending_auto_send"\)/.test(bd));
-  t("  止めた事を画面に出す（黙って止めない）", /_nudge\("⛔ "/.test(bd));
+  /**
+   * 2026-11-14 竹内さん「自動はとめないようにする」:
+   *   ⚠ 旧は `⛔` で止めていた。いまは**止めない**ので、代わりに**警告**を出す（黙って続けない）。
+   */
+  t("  危ない時も止めずに警告を出す（黙って続けない）", /_nudge\("⚠ 統括: /.test(bd));
 }
 
 console.log("\n■ ④ 案内モードと同じ形になっている（2つの決まりを作らない）");
