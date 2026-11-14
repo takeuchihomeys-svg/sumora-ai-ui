@@ -105,8 +105,20 @@ export type SupervisorAdvice = {
     agenda: Array<{ priority: number; topic: string; why: string; decide: string }>;
     /** 竹内さんに聞く事（判断を委ねる） */
     questions: Array<{ q: string; options?: string[]; why: string }>;
-    /** 根拠（数字。推測は guessed:true） */
-    evidence: Array<{ label: string; value: string; guessed?: boolean }>;
+  /** 根拠（数字。推測は guessed:true） */
+  evidence: Array<{ label: string; value: string; guessed?: boolean }>;
+  };
+  /**
+   * 2026-11-14 竹内さん「矛盾の部分なんで統括が整理したらよい」:
+   *   **統括が自分の判断を点検した結果**（矛盾が無いか）。
+   *   ⚠ 矛盾があれば `ok:false` と `issues` に理由を出す。会話では先にこれを言う。
+   */
+  self_check: {
+    ok: boolean;
+    /** 見つけた矛盾（人が読める形） */
+    issues: string[];
+    /** 上限をかけた理由（あれば） */
+    capped_by: string | null;
   };
 };
 
@@ -251,12 +263,41 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       : null;
 
   // ── ① 結論 ──
+  /**
+   * 2026-11-14 竹内さん「矛盾の部分なんで統括が整理したらよい。統括がちゃんと整理して会話できるようにする」:
+   *
+   *   ⚠ **統括自身が矛盾していた**（本番の実測）:
+   *     結論=「学べています（自動検索に渡してよい）」材料85点
+   *     同時に 議題=「写真は撮れているのに、操作が付いていない（7%）」
+   *   → 配点は「材料つき記録が50件以上で満点20点」なので **4121件中303件（7%）でも満点**になり、
+   *     85点に届いて `ready` を出していた。**中身が薄いのに「渡してよい」と言っていた**。
+   *
+   *   → 結論を出す前に**材料の割合で上限をかける**（統括が自分で整理する）:
+   *     ・材料ゼロ … not_yet（今まで通り）
+   *     ・材料つき記録が 30% 未満 … **ready にしない**（最大 almost）
+   *   ⚠ `unsafe` は上限で緩めない（危ない物は危ないまま）。
+   */
+  const opsRatio = rows > 0 ? withOps / rows : 0;
+  const capByRatio: SupervisorVerdict | null =
+    rows > 0 && withOps === 0 ? "not_yet"
+      : rows > 0 && opsRatio < 0.3 ? "almost"
+        : null;
+
   let verdict: SupervisorVerdict;
   if (withOps === 0 && rows > 0) verdict = "not_yet";   // 材料ゼロは「これから」段階（危ないの一歩手前）
   else if (block) verdict = "unsafe";
   else if (coverage >= 65 && weakN <= 5) verdict = "ready";
   else if (coverage >= 40) verdict = "almost";
   else verdict = "not_yet";
+
+  if (capByRatio && verdict !== "unsafe") {
+    const rank: Record<SupervisorVerdict, number> = { unsafe: 3, ready: 2, almost: 1, not_yet: 0 };
+    if (rank[verdict] > rank[capByRatio]) verdict = capByRatio;
+  }
+  /** 上限が効いたか（点検・会話で「なぜ ready でないか」を言えるように） */
+  const cappedBy: string | null = capByRatio && verdict === capByRatio
+    ? `材料つき記録が ${Math.round(opsRatio * 100)}%（${withOps}/${rows}）なので「渡してよい」にはしない`
+    : null;
 
   // ── ③ 前回との比較 ──
   const prev = inp.prev && typeof inp.prev === "object" ? inp.prev : null;
@@ -300,6 +341,10 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     score: { coverage, weak: weakN, delta },
     block,
     lines,
+    self_check: selfCheck({
+      verdict, coverage, weakN, rows, withOps, opsRatio, cappedBy, block,
+      guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens), opens,
+    }),
     meeting: buildMeeting({
       site, verdict, coverage, rows, next, points, opens, screens, sequence,
       withOps, weakN, block, actions, delta,
@@ -309,6 +354,62 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       modeCounts: inp.mode_counts || {},
       shotRows: num((input as unknown as Record<string, unknown>).shot_rows),
     }),
+  };
+}
+
+/**
+ * 2026-11-14 竹内さん「矛盾の部分なんで統括が整理したらよい。統括がちゃんと整理して会話できるようにする」:
+ *   **統括が自分の判断を点検する**（純関数）。
+ *
+ *   ⚠ 実際に起きた矛盾:
+ *     結論=「学べています（自動検索に渡してよい）」＋材料85点
+ *     同時に 議題=「操作が付いているのは303/4121件（7%）」
+ *   → 「渡してよい」と言いながら「材料が7%」は**矛盾**。人が読むと信用を失う。
+ *
+ *   点検する事:
+ *     ① `ready` なのに材料の割合が低い（30%未満）
+ *     ② `ready` なのに弱い所が5件より多い
+ *     ③ 点数が高い（65以上）のに材料の割合が低い（**点数の意味が薄い**）
+ *     ④ 開き方が全部推測なのに点数に入っている
+ *     ⑤ `unsafe` なのに「次にやる事」が無い（何をすればよいか分からない）
+ */
+function selfCheck(m: {
+  verdict: SupervisorVerdict;
+  coverage: number;
+  weakN: number;
+  rows: number;
+  withOps: number;
+  opsRatio: number;
+  cappedBy: string | null;
+  block: string | null;
+  guessedOpens: number;
+  opens: number;
+}): { ok: boolean; issues: string[]; capped_by: string | null } {
+  const issues: string[] = [];
+  const pct = Math.round((m.opsRatio || 0) * 100);
+
+  if (m.rows > 0 && m.opsRatio < 0.3) {
+    if (m.verdict === "ready") {
+      issues.push(`「渡してよい」と言っていますが、材料つき記録は ${m.withOps}/${m.rows}（${pct}%）だけです`);
+    }
+    if (m.coverage >= 65) {
+      issues.push(`材料 ${m.coverage}点は高すぎます（材料つき記録が${pct}%しかないので、点数の意味が薄い）`);
+    }
+  }
+  if (m.verdict === "ready" && m.weakN > 5) {
+    issues.push(`「渡してよい」と言っていますが、弱い所が ${m.weakN}件あります`);
+  }
+  if (m.opens > 0 && m.guessedOpens >= m.opens && m.coverage >= 65) {
+    issues.push(`「押したら何が開くか」${m.opens}個が全部推測なのに、材料 ${m.coverage}点に数えています`);
+  }
+  if (m.verdict === "unsafe" && !m.block) {
+    issues.push("「危ない」と言っていますが、理由（block）がありません");
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues,
+    capped_by: m.cappedBy,
   };
 }
 
