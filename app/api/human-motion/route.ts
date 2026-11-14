@@ -220,6 +220,13 @@ export async function POST(req: NextRequest) {
            *   ⚠ 旧は捨てていたので、サーバーは `move_ms`（移動時間）で代用していた（別物）。
            */
           ...(typeof r.g === "number" && r.g >= 0 && r.g <= 60000 ? { g: Math.round(r.g) } : {}),
+          /**
+           * 2026-11-14 竹内さん「取り組む」（材料つき記録が 7% しかない）:
+           *   操作が取れなかった**理由**（`k:"diag"` の1件）を残す。
+           *   ⚠ これは**診断**なので、欄の名前（`f`）は null のまま＝学習には使われない。
+           *     中身は「ring_empty:tab123」「no_answer:tab123」のような短い言葉だけ。
+           */
+          ...(typeof r.why === "string" && r.why ? { why: r.why.slice(0, 60) } : {}),
         };
       }).filter((o) => o.k || o.f);
       return out.length ? out : null;
