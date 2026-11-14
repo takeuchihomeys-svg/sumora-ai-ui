@@ -57,22 +57,41 @@ void (async () => {
   // ── ② 材料（押した欄・順番） ──
   const withOrder = motion.filter((x) => Array.isArray(x.field_order) && (x.field_order as unknown[]).length > 0).length;
   const withPf = motion.filter((x) => x.point_fields && typeof x.point_fields === "object" && Object.keys(x.point_fields as object).length > 0).length;
+  /**
+   * 2026-11-14 竹内さん「統括の部分ちゃんと改善されているのかな」→ **私の道具が誤報していた**:
+   *   ⚠ 旧は「img/body が 43%」と出したが、それは**名前の種類数**で割っていたため。
+   *     実際は 20種類中 img が1つ（**5%**）で、竹内さんが指摘した5つ（賃料・徒歩・更新日・次へ・送付済み）は
+   *     **すべて取れていた**。
+   *   → **回数（のべ）で割る**（種類数で割らない）。種類の一覧も出す（何が取れているか分かる）。
+   */
   const junk = (() => {
     const names: Record<string, number> = {};
+    /**
+     * ⚠ **`point_fields` と `field_order` の両方**を数える。
+     *   旧は「`field_order` があればそれだけ」にしていたので、順番が7件しか無い時に
+     *   **名前が2種類しか見えず**「img/body が43%」と誤報した（実際は20種類ある）。
+     *   `point_fields` は欄ごとの記録なので、**そちらが本体**（順番は `field_order`）。
+     */
     for (const x of motion) {
-      const list = Array.isArray(x.field_order) && (x.field_order as unknown[]).length
-        ? (x.field_order as unknown[]).map(String)
-        : Object.keys((x.point_fields as Record<string, unknown> | null) ?? {});
-      for (const n of list) names[n] = (names[n] ?? 0) + 1;
+      const pf = (x.point_fields && typeof x.point_fields === "object") ? Object.keys(x.point_fields as Record<string, unknown>) : [];
+      for (const n of pf) names[n] = (names[n] ?? 0) + 1;
+      const fo = Array.isArray(x.field_order) ? (x.field_order as unknown[]).map(String).filter(Boolean) : [];
+      for (const n of fo) names[n] = (names[n] ?? 0) + 1;
     }
-    return { img: names.img ?? 0, body: names.body ?? 0, total: Object.values(names).reduce((a, b) => a + b, 0) };
+    const total = Object.values(names).reduce((a, b) => a + b, 0);
+    const junkN = (names.img ?? 0) + (names.body ?? 0);
+    const top = Object.entries(names).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, v]) => `${k}(${v})`);
+    return { img: names.img ?? 0, body: names.body ?? 0, total, junkN, top, kinds: Object.keys(names).length };
   })();
   if (withOrder + withPf === 0) add(2, "材料（欄・順番）", "ng", "順番も押した欄も0件", "①が直ってから増える（拡張の更新待ち）");
   else {
-    const junkPct = junk.total ? Math.round(((junk.img + junk.body) / junk.total) * 100) : 0;
+    /** ⚠ 回数（のべ）で割る。種類数で割ると少ない種類のゴミが大きく見える（それが誤報の原因） */
+    const junkPct = junk.total ? Math.round((junk.junkN / junk.total) * 100) : 0;
     const mark: Mark = junkPct >= 50 ? "warn" : "ok";
-    add(2, "材料（欄・順番）", mark, `順番 ${withOrder}件・押した欄 ${withPf}件／${motion.length}件（img/body が ${junkPct}%）`,
-      junkPct >= 50 ? "欄の名前がまだ img/body（2.7.49 で直した・拡張の更新待ち）" : undefined);
+    add(2, "材料（欄・順番）", mark,
+      `順番 ${withOrder}件・押した欄 ${withPf}件／${motion.length}件（欄の名前 ${junk.kinds}種類・img/body は のべ${junk.junkN}/${junk.total}＝${junkPct}%）`
+      + (junk.top.length ? `\n     取れている名前: ${junk.top.join(" ")}` : ""),
+      junkPct >= 50 ? "欄の名前がまだ img/body だらけ（2.7.49 で直した・拡張の更新待ち）" : undefined);
   }
 
   // ── ③ 判断（統括が場面ごとの手順を作れているか） ──
