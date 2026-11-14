@@ -1286,6 +1286,11 @@
       _nudge("自動モードの時だけ自動で押せます（ヘッダーを「自動」に）");
       return { ok: false, reason: "not-auto" };
     }
+    /**
+     * ★ 2026-11-14 竹内さん「送付済みで物件なければ次へ移動する部分」
+     *   新しい検索が始まったら「次ページへ進んだ回数」を0に戻す（別の検索で3回の枠を使い切らない）。
+     */
+    try { _autoNextPageTries = 0; } catch (_) {}
     if (_staffModeOn) { _nudge("スタッフモードでは自動で押しません"); return { ok: false, reason: "staff" }; }
     if (_autoPdfRun) { _nudge("いま自動で送っています（⏹ で止められます）"); return { ok: false, reason: "running" }; }
     /**
@@ -1669,6 +1674,12 @@
     var url = item.btn.href;
     // 送った行は押さない（送付済み・前回の検索より古い行の判定は、通常の一括の選別 _selectAllowed が state を持つ時に見る）
     if (_onePdfSent[url]) {
+      /**
+       * ★ 2026-11-14 竹内さん「送付済みで物件なければ次へ移動する部分」
+       *   ⚠ 旧は**飛ばすだけで数えていなかった**ので、「全部送付済み」を判定できず、次ページへ進めなかった。
+       *   → 飛ばした数を数える（`_autoFinish` が「0件送信＋1件以上飛ばした」で次ページへ進む）。
+       */
+      _autoPdfRun.skipped = (Number(_autoPdfRun.skipped) || 0) + 1;
       console.log("[AXLX bulk-dl][auto] 送った行は押さない:", String(url).slice(0, 70));
       _autoPressNext(list);
       return;
@@ -1778,13 +1789,35 @@
   }
   function _autoFinish(why) {
     var n = _autoPdfRun ? _autoPdfRun.done : 0;
+    var skipped = _autoPdfRun ? (Number(_autoPdfRun.skipped) || 0) : 0;
     _autoPdfRun = null;
-    _tmark("auto_pdf_end", why + " " + n + "件");
-    console.log("[AXLX bulk-dl][auto] 自動の印刷用PDF: " + why + "（" + n + "件送信）");
-    _nudge("🤖 自動 " + why + "（" + n + "件）");
+    /**
+     * ★ 2026-11-14 竹内さん「物件画面ないで検索したり送付済みで物件なければ次へ移動する部分もちゃんと学習を自動モードに反映する」
+     *
+     *   ⚠ 旧は**このページの行が全部送付済み（＝1件も送っていない）でも、そのまま終わって次ページへ行かなかった**。
+     *     実測（`_autoPressNext`）でも「送った行は押さない」で飛ばすだけで、飛ばした数も数えていなかった。
+     *   → ① 飛ばした数（`skipped`）を数える
+     *     ② **送ったのが0件で、飛ばしたのが1件以上**なら「このページは全部送付済み」と判断し、
+     *        **次のページへ進む**（`_autoNextPageThenRestart`）。
+     *        ⚠ 進むのは「全部送付済みの時だけ」。1件でも送ったら次ページへは進まない（今まで通り終わる）。
+     *        ⚠ 次ページが無ければ（最終ページ）今まで通り終わる。
+     */
+    var allSkipped = (n === 0 && skipped > 0);
+    _tmark("auto_pdf_end", why + " " + n + "件" + (skipped ? "（送付済みで飛ばした " + skipped + "件）" : ""));
+    console.log("[AXLX bulk-dl][auto] 自動の印刷用PDF: " + why + "（" + n + "件送信・" + skipped + "件は送付済みで飛ばした）");
     var stopBtn = document.getElementById("axlx-autopdf-stop-btn");
     if (stopBtn) stopBtn.style.display = "none";
     _paintPdfProgress();
+    if (allSkipped) {
+      _nudge("👀 このページは全部送付済みでした（" + skipped + "件）→ 次のページを確かめます");
+      try {
+        _autoNextPageThenRestart(why);
+      } catch (_) {
+        _nudge("🤖 自動 " + why + "（" + n + "件）");
+      }
+      return;
+    }
+    _nudge("🤖 自動 " + why + "（" + n + "件）");
     /**
      * 2026-11-10 竹内さん「古い一括のなくした方がよいかも。紛らわしくなる可能性あれば」:
      *   古い一括（autoSendAllPages）を消すので、**その代わりに完了の合図をここから送る**。
@@ -1799,7 +1832,69 @@
           customerId: cid,
           propertyCount: n,
           audit: null,
-          auto_pdf: { why: why, sent: n },
+          auto_pdf: { why: why, sent: n, skipped: skipped },
+        }, function () { void chrome.runtime.lastError; });
+      });
+    } catch (_) {}
+  }
+  /**
+   * ★ 2026-11-14 竹内さん「送付済みで物件なければ次へ移動する部分」
+   *   **このページが全部送付済みだった時**に、次のページへ進んで押し直す。
+   *   ⚠ 次ページが無ければ今まで通り終わる（完了の合図を送る）。
+   *   ⚠ 進むのは**1回だけ**（無限にページをめくらない）。`_autoNextPageTries` で数える。
+   *   ⚠ 進んだ後は**検索結果を見る間**（`_startAutoPressAfterLook`）を入れてから押し始める。
+   */
+  var _autoNextPageTries = 0;
+  function _autoNextPageThenRestart(why) {
+    if (_autoNextPageTries >= 3) {
+      console.log("[AXLX bulk-dl][auto] 次のページへ進むのが3回を超えた → ここで終わります");
+      _nudge("🤖 自動 " + why + "（次のページへ3回進みました）");
+      _sendBatchDone(0, why, 0);
+      return;
+    }
+    _autoNextPageTries++;
+    var btn = null;
+    try { btn = (typeof _findNextPageEl === "function") ? _findNextPageEl() : null; } catch (_) { btn = null; }
+    if (!btn) {
+      console.log("[AXLX bulk-dl][auto] このページは全部送付済み・次のページも無い → 終わります");
+      _nudge("🤖 自動 " + why + "（次のページはありませんでした）");
+      _sendBatchDone(0, why + "・次ページ無し", 0);
+      return;
+    }
+    _tmark("auto_next_page", _autoNextPageTries + "回目");
+    console.log("[AXLX bulk-dl][auto] このページは全部送付済み → 次のページへ進みます（" + _autoNextPageTries + "回目）");
+    _nudge("👉 全部送付済みなので次のページへ進みます");
+    // 人が「次へ」を押すのと同じ間（少し待ってから押す）
+    // ⚠ `enqueueHumanClick` は bulk-dl.js には無い（page-script.js 側）。
+    //   ⚠ `AxlxPointerUi` の関数名も環境で違うので、**確実に在る物だけ**使う（`_humanScrollToEl` と `click()`）。
+    //   見えるカーソルは `page-script.js` の `_clickEl` が受け持つ（この押下は一覧の移動なので必須ではない）。
+    try {
+      if (typeof _humanScrollToEl === "function") _humanScrollToEl(btn);
+    } catch (_) {}
+    setTimeout(function () {
+      try { if (btn && btn.isConnected) btn.click(); } catch (_) {}
+    }, 700 + Math.floor(Math.random() * 1200));
+    // ページが読み直されるのを待って、もう一度押し始める
+    setTimeout(function () {
+      try {
+        if (typeof _rescanRows === "function") _rescanRows();
+        var n = 0;
+        try { n = (typeof _rowCount === "function") ? _rowCount() : 0; } catch (_) { n = 0; }
+        _startAutoPressAfterLook(n || 10);
+      } catch (_) {}
+    }, 2600 + Math.floor(Math.random() * 1400));
+  }
+  /** 完了の合図だけ送る（`_autoFinish` と共通） */
+  function _sendBatchDone(n, why, skipped) {
+    try {
+      chrome.storage.local.get(["current_customer_id", "current_customer_name"], function (r) {
+        var cid = (r && r.current_customer_id) || null;
+        chrome.runtime.sendMessage({
+          type: "axlx-batch-customer-done",
+          customerId: cid,
+          propertyCount: Number(n) || 0,
+          audit: null,
+          auto_pdf: { why: why, sent: Number(n) || 0, skipped: Number(skipped) || 0, next_page: true },
         }, function () { void chrome.runtime.lastError; });
       });
     } catch (_) {}

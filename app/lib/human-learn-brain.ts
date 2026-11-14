@@ -782,7 +782,7 @@ export function buildHumanLearnBundle(
        *   → 徒歩の判定は**畳む前の並び**で行う（click→change の2件を2回と数えるのが正しい）。
        */
       const ops = sequencesOf(r);
-      for (const s of ops) flowsForWalk.push(s.map((x) => ({ f: x.f })));
+      for (const s of ops) flowsForWalk.push(s.map((x) => ({ f: x.f, t: x.t })));
     }
     const steps = findWeakSteps(flowsForWalk);
     for (const s of steps) {

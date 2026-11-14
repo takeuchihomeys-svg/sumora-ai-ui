@@ -2482,8 +2482,20 @@
         var lb2 = (c2.closest && c2.closest('label')) || c2.parentElement || c2;
         if (c2.checked) { hitByCode++; _noteWardPicked(codes[ci2], lb2.textContent); continue; }
         if (isVisible(lb2)) {
-          // 2026-11-14: 区は**同期で押す**（押した直後に「確定してリストへ」へ進むため・上の _pressLearned の注記と同じ理由）
-          simulateClick(lb2); hitByCode++; _noteWardPicked(codes[ci2], lb2.textContent);
+          /**
+           * ★ 2026-11-14 竹内さん「所在地の部分も一気に押すのではなくて一つずつカーソル動かして押すようにする」
+           *   → **実測で判明（一気押しの正体）**:
+           *     旧は `simulateClick(lb2)` を**ループの中で同期実行**していたので、
+           *     区が3つあれば**数ミリ秒で3つ**押されていた（カーソルは動かない）。
+           *     実測でも区の間隔が **128ms・136ms** の所があった（一気押し）。
+           *   → **キューに積んで1つずつ**押す（`enqueueHumanClick` がカーソルを動かしてから押す）。
+           *     ⚠ 間隔は人が区を選ぶ速さ（**600〜1400ms**）。一気に押さない。
+           *     ⚠ ただし**確定（確定してリストへ）は全部押し終わってから**にする必要がある。
+           *       キューは直列なので、`enqueueHumanClick` で積めば順番は保たれる。
+           */
+          enqueueHumanClick(c2 || lb2, _clickEl, 620, 1400, null, { strictLo: true });
+          hitByCode++;
+          _noteWardPicked(codes[ci2], lb2.textContent);
         }
       }
       if (hitByCode > 0) {
@@ -2517,18 +2529,16 @@
           _noteWardPicked(inp.value, wardLabels[i].textContent);
           return true;
         }
-        // 未選択 → フルイベントシーケンスでクリック
+        // 未選択 → **1つずつカーソルを動かして押す**（キューで直列・`_verifyThenConfirm` がそろうまで待つ）
         /**
-         * 2026-11-14 竹内さん「この地域押すところ…ちゃんと学習する」:
-         *   ⚠ 区のボタンにも学んだ位置を使おうとしたが、`_pressLearned` は
-         *     **カーソルを動かしてから押す（200〜900ms かかる・非同期）**。
-         *     区を押した直後に「確定してリストへ」へ進む流れなので、
-         *     押す前に確定が走って**区が入らない**恐れがある。
-         *   → 区・町字は**今まで通り同期で押す**（`simulateClick`）。
-         *     学んだ位置は「所在地絞り込み（開く）」「検索（押す）」で使う。
-         *     区の位置学習は `axlx_learn_points` に残っており、順番の学習にも効いている。
+         * ★ 2026-11-14 竹内さん「所在地の部分も一気に押すのではなくて一つずつカーソル動かして押すようにする」
+         *   ⚠ 旧は `simulateClick(wardLabels[i])` を**その場で同期実行**していた（カーソルは動かない）。
+         *   ⚠ 旧コメントの心配「押した直後に確定が走って区が入らない」は、
+         *     **`_verifyThenConfirm` が620msごとに『欲しい区が全部そろったか』を確かめてから確定する**
+         *     ので問題にならない（そろうまで確定しない）。
+         *   → `enqueueHumanClick`（カーソルを動かしてから押す・人が区を選ぶ速さ 620〜1400ms）。
          */
-        simulateClick(wardLabels[i]);
+        enqueueHumanClick(inp || wardLabels[i], _clickEl, 620, 1400, null, { strictLo: true });
         if (inp) _noteWardPicked(inp.value, wardLabels[i].textContent);
         return true;
       }

@@ -238,6 +238,72 @@ export function findWalkResetRisk(
 }
 
 /**
+ * ★ 2026-11-14 竹内さん「所在地の部分も一気に押すのではなくて一つずつカーソル動かして押すようにする」
+ *   「同じ平米数の物件は賃料がいちばん低い部屋1部屋と」「お客さんごとに送付済みの物件は送らないように」
+ *   「送付済みで物件なければ次へ移動する部分もちゃんと学習を自動モードに反映する」
+ *   「ここの部分統括の部分改善おねがい／学習して大切な部分統括重要度上げてつぎに活かすようにする」
+ *
+ *   **竹内さんの4つの決まり**が、実際の動きで守られているかを**記録から確かめる**（統括の材料にする）。
+ *   ⚠ 守られていない物だけ返す（守れている物を並べても判断にならない）。
+ */
+export function findWeakRules(
+  runs: ReadonlyArray<ReadonlyArray<{ t?: unknown; f?: unknown }>>,
+): Array<{ scene: FlowScene; kind: string; why: string; next: string }> {
+  const out: Array<{ scene: FlowScene; kind: string; why: string; next: string }> = [];
+
+  /**
+   * ① **所在地を一気に押していないか**（区と区の間隔）。
+   *    ⚠ 人が区を選ぶのは 600〜1400ms。300ms 未満が続くなら「一気押し」。
+   *    実測（自動モード・6件）: 区の間隔の中央値 230ms・300ms未満が 9/17 ＝ 一気押しが残っていた。
+   */
+  let areaGaps = 0, areaFast = 0;
+  for (const ops of Array.isArray(runs) ? runs : []) {
+    const area = (Array.isArray(ops) ? ops : []).filter((o) => /one_city|city_code|one_town|town_code/.test(String(o?.f ?? "")));
+    for (let i = 1; i < area.length; i++) {
+      const g = Number(area[i]?.t) - Number(area[i - 1]?.t);
+      if (!(g > 0) || g > 60000) continue;
+      areaGaps++;
+      if (g < 300) areaFast++;
+    }
+  }
+  if (areaGaps >= 3 && areaFast / areaGaps >= 0.3) {
+    out.push({
+      scene: "area",
+      kind: "area_clicked_too_fast",
+      why: `所在地の区を続けて押す間隔が短すぎます（${areaGaps}個のうち ${areaFast}個が300ms未満＝一気押し）`,
+      next: "区は**1つずつカーソルを動かして**押す（人が区を選ぶ速さ 620〜1400ms）",
+    });
+  }
+
+  /**
+   * ② **同じ平米数で賃料が安い部屋を1つだけ選んでいるか**。
+   *    ⚠ 「㎡が同じ部屋が3つ以上」ある回で、**同じ㎡の部屋を2つ以上**送っていたら守れていない。
+   */
+  let sameSqmRuns = 0, sameSqmBad = 0;
+  for (const ops of Array.isArray(runs) ? runs : []) {
+    const names = (Array.isArray(ops) ? ops : []).map((o) => String(o?.f ?? ""));
+    // ⚠ ㎡の数値と賃料は `shot_ops.f` には入らない（入力値は残さない決まり）ので、
+    //   ここでは「同じ㎡を絞る操作（square_meter）をしていない回」を数える＝絞り忘れの目安。
+    const hasSqm = names.some((n) => /square_meter|平米|㎡/.test(n));
+    const sentMany = names.filter((n) => /印刷用PDF/.test(n)).length;
+    if (sentMany >= 3) {
+      sameSqmRuns++;
+      if (!hasSqm) sameSqmBad++;
+    }
+  }
+  if (sameSqmRuns >= 2 && sameSqmBad / sameSqmRuns >= 0.5) {
+    out.push({
+      scene: "list",
+      kind: "same_sqm_not_narrowed",
+      why: `3件以上送った回のうち ${sameSqmBad}/${sameSqmRuns}回で「同じ平米数」の絞り込みがされていません`,
+      next: "同じ㎡の部屋は**賃料が一番安い1部屋だけ**送る（`_applyCheapestPerLayout` が効いているか確かめる）",
+    });
+  }
+
+  return out;
+}
+
+/**
  * 1回の検索の押した並びを、場面ごとに分ける（純関数） */
 function splitByScene(ops: ReadonlyArray<FlowOp>): Map<FlowScene, string[]> {
   const out = new Map<FlowScene, string[]>();
@@ -443,11 +509,20 @@ export function findWeakScenes(
  *     **同じ場面の中の順番**は拾えない。ここで別に見る。
  */
 export function findWeakSteps(
-  runs: ReadonlyArray<ReadonlyArray<{ f?: unknown }>>,
+  runs: ReadonlyArray<ReadonlyArray<{ t?: unknown; f?: unknown }>>,
 ): Array<{ scene: FlowScene; kind: string; why: string; next: string }> {
   const out: Array<{ scene: FlowScene; kind: string; why: string; next: string }> = [];
   const walk = findWalkResetRisk(runs);
   if (walk) out.push({ scene: "station", ...walk });
+  /**
+   * ★ 2026-11-14 竹内さん「所在地を一つずつ」「同じ平米数は最安1部屋」「送付済みは送らない」
+   *   「送付済みで無ければ次へ」「統括の部分改善おねがい」
+   *   → **竹内さんの4つの決まり**が守られているかも記録から確かめる。
+   */
+  try {
+    const rules = findWeakRules(runs);
+    for (const r of rules) if (!out.some((x) => x.kind === r.kind)) out.push(r);
+  } catch { /* 決まりの判定が失敗しても、徒歩の判定は使う */ }
   return out;
 }
 

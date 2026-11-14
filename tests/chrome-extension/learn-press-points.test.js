@@ -67,10 +67,21 @@ console.log("\n■ ④ 地域ボタン（所在地絞り込み）で学んだ位
   t("  ⚠ 押し直しの保険は残っている", /_ensureAreaOpened/.test(ps));
 }
 
-console.log("\n■ ⑤ 区・町字は同期で押す（押した直後に確定へ進むため）");
+console.log("\n■ ⑤ 区・町字は**1つずつカーソルを動かして**押す（2026-11-14 竹内さん指示で変更）");
 {
-  t("  ⚠ 区（コードで選択）は simulateClick（非同期の _pressLearned にしない）", /simulateClick\(lb2\); hitByCode\+\+/.test(ps));
-  t("  ⚠ 区（文字で照合）も simulateClick", /simulateClick\(wardLabels\[i\]\);/.test(ps));
+  /**
+   * ★ 2026-11-14 竹内さん「所在地の部分も一気に押すのではなくて一つずつカーソル動かして押すようにする」
+   *
+   *   ⚠ 旧は `simulateClick` を**ループ内で同期実行**していた（＝数ミリ秒で3区押される・カーソルは動かない）。
+   *     実測（自動モード）: 区の間隔が 128ms・136ms の所があった（一気押し）。
+   *   → **`enqueueHumanClick`（カーソルを動かしてから押す・620〜1400ms）**に変更。
+   *     ⚠ 旧コメントの心配「押した直後に確定が走って区が入らない」は、
+   *       `_verifyThenConfirm` が620msごとに『欲しい区が全部そろったか』を確かめてから確定するので問題ない。
+   */
+  t("  ⚠ 区（コードで選択）は enqueueHumanClick（カーソルを動かして1つずつ）", /enqueueHumanClick\(c2 \|\| lb2, _clickEl, 620, 1400/.test(ps));
+  t("  ⚠ 区（文字で照合）も enqueueHumanClick", /enqueueHumanClick\(inp \|\| wardLabels\[i\], _clickEl, 620, 1400/.test(ps));
+  t("  ⚠ 一気押しの同期クリックが残っていない", !/simulateClick\(lb2\); hitByCode\+\+/.test(ps) && !/simulateClick\(wardLabels\[i\]\);/.test(ps));
+  t("  ⚠ そろうまで待ってから確定する（_verifyThenConfirm）", /_verifyThenConfirm/.test(ps));
   t("  駅の絞り込み（開くだけ）は _pressLearned でよい", /_pressLearned\(divs\[i\], \['左の沿線・駅絞り込み/.test(ps));
   t("  ⚠ 区の「外さない」規則は残っている（トグルで外さない）", /ensureWardButtonY/.test(ps));
 }
