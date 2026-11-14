@@ -825,6 +825,22 @@
       if (_shotPending) { _shotPending = false; diag(false, "timeout_stuck"); }  // 張り付きを解く
       if (now - _shotLast < SHOT_MIN_GAP_MS) return;   // 間引きは「失敗」ではない（数えない）
       if (_shotCount >= SHOT_MAX_PER_SESSION) { diag(false, "max_reached"); return; }
+      /**
+       * 2026-11-14 竹内さん「今録画しているのから自動モードで地域。ちゃんと動きとカーソルの動きは
+       *   理解しているか。ボタン押されているのか」→ **DBで判明**:
+       *     操作 450件・欄20種類・順番6件・マウス490回と**全部取れた**（var 宣言の順を直した効果）。
+       *     だが **写真が0枚**（v2.7.58 では撮れていた）。＝ 私が `start()` の構造を変えて壊した。
+       *   → **撮らなかった理由を残す**（`axlx_human_shot_diag.skip`）。推測で直さず理由を見る。
+       */
+      try {
+        chrome.storage.local.get(["axlx_human_shot_diag"], function (r) {
+          var d = (r && r.axlx_human_shot_diag) || { tried: 0, ok: 0 };
+          d.try_at = Date.now();
+          d.state = { pending: _shotPending, last: _shotLast, count: _shotCount, shooting: _shooting, watching: watching, site: site };
+          var o = {}; o.axlx_human_shot_diag = d;
+          try { chrome.storage.local.set(o); } catch (_) {}
+        });
+      } catch (_) {}
       _shotLast = now;
       _shotCount++;
       _shotPending = true;
