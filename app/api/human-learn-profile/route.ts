@@ -204,7 +204,7 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     try {
       let mq = supabase
         .from("human_motion_learn")
-        .select("site, mode, field_order, point_fields")
+        .select("site, mode, field_order, point_fields, shot_ops")
         .gte("created_at", since7)
         .order("created_at", { ascending: false })
         .limit(600);
@@ -222,14 +222,27 @@ async function buildNow(scope: string, note?: (why: string) => void) {
           const order = Array.isArray(r.field_order) ? (r.field_order as unknown[]).map((x) => String(x ?? "")).filter(Boolean) : [];
           const pf = (r.point_fields && typeof r.point_fields === "object" && !Array.isArray(r.point_fields))
             ? Object.keys(r.point_fields as Record<string, unknown>).filter(Boolean) : [];
-          const names = order.length ? order : pf;
-          if (names.length < 2) continue;
           /**
-           * ⚠ 名前に `click:` 等の動詞が無いので、`click:` を付けて**同じ形**にする
-           *   （`learnSceneFlows` が `"click:名前"` を前提にしているため）。
-           *   `img` / `body` は欄ではないので**場面に入れない**（sceneOfOp が other を返す）。
+           * ★ 2026-11-14 竹内さん「直近の録画した通常モードから学習必要な部分学習するなど（押し方）」
+           *   → **実測で判明（押し方が学べない原因）**:
+           *     `field_order` がある記録は **600件中11件だけ**（録画は `shot_ops` に順番が入る）。
+           *     `point_fields` は181件あるが、これは**欄ごとの集計**（オブジェクト）なので
+           *     **キーの並びは押した順ではない**（上書きで順が変わる）。
+           *   → **`shot_ops` から順番を作る**（時刻つき・押した順そのもの）。
+           *     ⚠ `shot_ops` は写真1枚ごとの「直前までの操作」なので、**一番長い物だけ**使う
+           *       （短い途中経過を何度も数えると回数が水増しされる）。
+           *     ⚠ 名前に `click:` を付けて `learnSceneFlows` と同じ形にする。
            */
-          runs2.push(names.slice(0, 40).map((n) => ({ k: "click:" + n, t: null, by: "human" })));
+          const ops = Array.isArray((r as { shot_ops?: unknown }).shot_ops)
+            ? ((r as { shot_ops: Array<{ f?: unknown; k?: unknown; by?: unknown }> }).shot_ops)
+            : [];
+          const fromOps = ops
+            .filter((o) => o && typeof o.f === "string" && String(o.f) && (o.k !== "diag"))
+            .filter((o) => o.by === undefined || o.by === null || o.by === "human")   // 人の手本だけ
+            .map((o) => ({ k: "click:" + String(o.f), t: null as null, by: "human" }));
+          const names = fromOps.length >= 2 ? fromOps.map((x) => x.k) : (order.length ? order : pf).map((n) => "click:" + n);
+          if (names.length < 2) continue;
+          runs2.push(names.slice(0, 40).map((k) => ({ k, t: null, by: "human" })));
         }
         if (runs2.length) {
           const flows2 = learnSceneFlows(runs2 as never);
