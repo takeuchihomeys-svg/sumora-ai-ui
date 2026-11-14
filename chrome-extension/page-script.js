@@ -391,14 +391,19 @@
               if (P && P.moveToEl) {
                 P.moveToEl(row).then(function () {
                   _markFakeRow(_dd, want);   // カーソルが乗った行を光らせる（人が選んだ形）
-                  setTimeout(function () { if (P.tap) { try { P.tap(); } catch (_) {} } _pick(); }, _ln(220, 0.4, 120, 480));
+                  /**
+                   * 2026-11-14 竹内さん「家賃の選択の部分プルダウンなのでマウス移動して選択するようにする」
+                   *   → 選んだ行が**光ったまま**少し見えるようにする（旧は押した直後に消えて
+                   *     「値を直接入れた」ように見えていた）。
+                   */
+                  setTimeout(function () { if (P.tap) { try { P.tap(); } catch (_) {} } _pick(); }, _ln(420, 0.4, 260, 820));
                 }, function () { _markFakeRow(_dd, want); _pick(); });
                 return;
               }
               _markFakeRow(_dd, want);
             }
             _pick();
-          }, _ln(1100, 0.4, 700, 1600));
+          }, _ln(1400, 0.4, 950, 2100));
           return;
         }
         // ② 欄を押して開く（人がクリックして一覧を出す）※ サイト独自の一覧の時だけ
@@ -4239,8 +4244,60 @@
         });
       })(_layoutsToPush);
     }
+    /**
+     * 2026-11-14 竹内さん「まだ徒歩の部分一度選択した後に消えるようになってしまっている」
+     *   → **原因を発見**: 上の並べ替えが**移動手段と分数の順番を入れ替えて**いた。
+     *
+     *   ⚠ リアプロは「移動手段（transportation_id）」を選ぶと、**その下の分数（required_time）が
+     *     リセットされる**（画面が作り直される）。人がやっても同じ。
+     *   旧は `_orderByLearned` に**そのまま**渡していたので、学んだ順が
+     *   「required_time → transportation_id」だと:
+     *     ① 分数を打つ（10）→ ② 移動手段を選ぶ → **分数が消える**（＝「一度選んだ後に消える」）
+     *   実測では「入る時と入らない時がある」＝学んだ順によって変わっていた。
+     *
+     *   → **移動手段は必ず分数より先**に固定する（学んだ順でも入れ替えない）。
+     *     これは「見た目の好み」ではなく**画面の仕組み（親が子をリセットする）**なので、学習より優先する。
+     *     ⚠ 他の欄（賃料・面積・築年・間取り）は今まで通り学んだ順で並べ替える。
+     */
+    (function _keepTransportBeforeWalk() {
+      try {
+        var _ti = -1, _wi = -1;
+        for (var _i = 0; _i < _basicQueue.length; _i++) {
+          if (_basicQueue[_i].name === "transportation_id") _ti = _i;
+          else if (_basicQueue[_i].name === "required_time") _wi = _i;
+        }
+        if (_ti < 0 || _wi < 0 || _ti < _wi) return;   // 既に正しい順（or 片方だけ）
+        var _tr = _basicQueue.splice(_ti, 1)[0];
+        // 分数の**前**に入れ直す（分数の位置が1つ前にずれるので注意）
+        _wi = 0;
+        for (var _j = 0; _j < _basicQueue.length; _j++) {
+          if (_basicQueue[_j].name === "required_time") { _wi = _j; break; }
+        }
+        _basicQueue.splice(_wi, 0, _tr);
+      } catch (_) {}
+    })();
     // ここで**まとめて**並べ替える（賃料・面積・共益費・徒歩・築年・間取りが同じ並びに入る）
     _basicQueue = _orderByLearned(_basicQueue);
+    /**
+     * ⚠ 並べ替えた**後**にもう一度そろえる（`_orderByLearned` が鎖で入れ替えるため）。
+     *   ここを忘れると、学習の鎖が「分数 → 移動手段」を作った時にまた消える。
+     */
+    (function _keepTransportBeforeWalk2() {
+      try {
+        var _ti = -1, _wi = -1;
+        for (var _i = 0; _i < _basicQueue.length; _i++) {
+          if (_basicQueue[_i].name === "transportation_id") _ti = _i;
+          else if (_basicQueue[_i].name === "required_time") _wi = _i;
+        }
+        if (_ti < 0 || _wi < 0 || _ti < _wi) return;
+        var _tr = _basicQueue.splice(_ti, 1)[0];
+        _wi = 0;
+        for (var _j = 0; _j < _basicQueue.length; _j++) {
+          if (_basicQueue[_j].name === "required_time") { _wi = _j; break; }
+        }
+        _basicQueue.splice(_wi, 0, _tr);
+      } catch (_) {}
+    })();
     for (var _bi = 0; _bi < _basicQueue.length; _bi++) { try { _basicQueue[_bi].run(); } catch (_) {} }
     // 2026-11-10 v2.6.18 竹内さん「ちゃんと画面見て判断できるようになってるのかな場所など」→「なおす」:
     //   入れるはずの値を1か所に置く（検索を押す直前に、画面の実際の値と1つずつ比べる）。

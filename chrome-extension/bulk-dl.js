@@ -135,17 +135,30 @@
    *     ・スタッフモードでは**絞らない**（人が選んだ物を勝手に外さない）
    *   判定は `chrome-extension/room-dedupe.js`（純関数・試験あり）。
    */
-  function _applyCheapestPerLayout(state) {
+  function _applyCheapestPerLayout(state, cand) {
     if (!state) return { dropped: 0 };
     if (_staffModeOn) return { dropped: 0 };
     var RD = (typeof self !== "undefined" ? self : window).AxlxRoomDedupe;
     if (!RD || !RD.cheapestPerBuildingLayoutSize) return { dropped: 0 };
     /**
-     * チェックされている行だけを対象にする（送付済みで外した物は既に checked=false）。
+     * 2026-11-14 竹内さん「物件同じ平米数のもダウンロードまだしてしまっている
+     *   平米数がおなじなら家賃は一番おさえれるのにする」→ **絞れていなかった**。
+     *
+     *   ⚠ 真の原因: 旧は `tracked` を **`t.cb.checked` で絞って**いた。
+     *     だが `_selectAllowed` の時点では**1件もチェックされていない**
+     *     （この後の `_doSend` が1件ずつチェックする形＝先に全行チェックしない）。
+     *     → `items` が常に空 → `items.length < 2` で**必ず何も絞らずに抜けていた**。
+     *       実測: 「同じ建物・同じ間取り・同じ平米」が全部ダウンロードされていた。
+     *
+     *   → 渡された**候補（cand＝これから送る行）**を対象にする（チェックの状態を見ない）。
+     *     ⚠ 送付済み・古い行は呼ぶ側（`_selectAllowed`）で既に外れている。
      */
+    var list = Array.isArray(cand) ? cand : tracked;
     var items = [], refs = [];
-    tracked.forEach(function (t) {
-      if (!t.cb.checked) return;
+    list.forEach(function (t) {
+      if (!t || !t.btn) return;
+      // 送付済み・古い行として外された物は対象にしない（呼ぶ側の判断を尊重）
+      if (t.__axSkip) return;
       var card;
       try { card = extractCard(t.btn); } catch (_) { return; }
       items.push({ name: card.name, cells: card.cells || [], texts: card.texts || [] });
@@ -156,8 +169,9 @@
     var dropped = 0, names = [];
     for (var i = 0; i < res.drop.length; i++) {
       var t = refs[res.drop[i]];
-      if (!t || !t.cb || !t.cb.checked) continue;
-      t.cb.checked = false;
+      if (!t) continue;
+      /** チェックが付いていれば外す（付いていなくても、送らない印を立てる＝_doSend が選ばない） */
+      try { if (t.cb) t.cb.checked = false; } catch (_) {}
       t.__axSkip = true;
       t.__axCheapestSkip = true;
       dropped++;
@@ -3461,8 +3475,10 @@
        *     ⚠ スタッフモード・読めない項目は絞らない（`_applyCheapestPerLayout` の中で判断）。
        */
       try {
-        var _cheap = _applyCheapestPerLayout(state);
+        var _cheap = _applyCheapestPerLayout(state, cand);
         if (_cheap && _cheap.dropped) {
+          // ⚠ ここも「チェックされている物で絞る」のではなく、**送らない印**で外す
+          //    （この時点ではまだ誰もチェックされていない＝`cb.checked` で絞ると全部消える）
           allowed = allowed.filter(function (t) { return !(t && t.__axCheapestSkip); });
           _tmark("cheapest_skip", _cheap.dropped + "件を最安1件に絞った");
         }
