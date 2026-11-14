@@ -3839,6 +3839,17 @@ CREATE TABLE IF NOT EXISTS human_learn_profile (
 CREATE INDEX IF NOT EXISTS idx_human_learn_profile_scope ON human_learn_profile(scope, created_at DESC);
 -- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）
 ALTER TABLE human_learn_profile ENABLE ROW LEVEL SECURITY;
+-- 2026-11-14 竹内さん「RLS無効にする」→ その通りにしました。
+--   実測: 公開キーで読むと human_learn_profile と human_motion_learn だけ 0件（他は読める）。
+--   RLS を有効にしているため、Service Role キーが無い所からは書けない・読めない。
+--   そのせいで:
+--     ・手元のスクリプトが写真を1枚も見つけられない（「読む物がありません」）
+--     ・統括の判断が保存されない（learn_supervisor_log で同じ失敗をした）
+--   → 他の表（automation_commands / property_customers / search_audits）と同じ扱いにそろえる（DISABLE）。
+--   入れるのは数・傾向・欄の名前だけ（入力した中身・お客様の名前・電話・住所は入れない）ので、
+--   公開キーで読み書きできても個人情報は漏れない。
+--   直前の ENABLE は古い版を当てた DB のために残す（この次の1行で必ず DISABLE にする）。
+ALTER TABLE human_learn_profile DISABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE human_learn_profile IS '人の動きの記録をまとめた学習の束（押す順番・押す場所・動きの速さ）。拡張はこれを読む。入力した中身は入れない。2026-11-13 竹内さん承認';
 
 -- ── 2026-11-14 竹内さん「統括はデータベース必要なら強化や追加できるようにしていく」──
@@ -3903,6 +3914,10 @@ VALUES ('human-motion-shots', 'human-motion-shots', true, 5242880, ARRAY['image/
 ON CONFLICT (id) DO NOTHING;
 -- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）
 ALTER TABLE human_motion_learn ENABLE ROW LEVEL SECURITY;
+-- 2026-11-14 竹内さん「RLS無効にする」: human_learn_profile と同じ理由で DISABLE にそろえる
+--   （有効だと Service Role キーが無い所から読めず・書けず、写真学習が1枚も動かなかった）。
+--   入れるのは数・傾向・欄の名前だけなので個人情報は漏れない。
+ALTER TABLE human_motion_learn DISABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE human_motion_learn IS '通常・スタッフモードで人がどう動いたか（速さ・曲がり・押した位置・スクロール）。入力した中身・名前・電話は入れない。2026-11-11 竹内さん承認';
 
 -- ── 2026-11-14 竹内さん「また今日強化されたら『強化した』と統括に保存しておくようにする」──
