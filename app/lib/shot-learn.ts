@@ -64,7 +64,20 @@ const NON_TARGET_NAMES = /^(div|span|svg|td|tr|th|table|tbody|img|image|a|li|p|u
 export function isLearnableName(name: unknown): boolean {
   const n = String(name ?? "").trim();
   if (!n) return false;
-  if (n.length <= 1) return false;
+  /**
+   * ★ 2026-11-14 竹内さん「徒歩が消えないようにする部分学習して改善する」→ **実測で判明（3つ目の罠）**:
+   *
+   *   ⚠ 1文字は捨てていたが、**リアプロの分数の欄は名前が `分`（1文字）**だった。
+   *     そのため `分` が並びから消え、
+   *     `transportation_id → 分 → transportation_id`（徒歩を選び直した証拠）が
+   *     **`transportation_id → transportation_id`** に見えず、
+   *     統括が「徒歩が消えている」と判断できなかった（実測: walk_reset が出なかった）。
+   *
+   *   → **意味のある1文字は通す**（`分` `円` `階` `歳` `畳` `帖` `件` `人` `駅` など）。
+   *     数字・記号だけの1文字は今まで通り捨てる。
+   */
+  const ONE_CHAR_OK = /^[分円階歳畳帖件人駅室棟戸台個日月年]$/;
+  if (n.length <= 1 && !ONE_CHAR_OK.test(n)) return false;
   if (NON_TARGET_NAMES.test(n)) return false;
   /**
    * 2026-11-14 竹内さん「データベースの写真から学習する」:

@@ -774,6 +774,13 @@ export function buildHumanLearnBundle(
   try {
     const flowsForWalk: Array<Array<{ f?: unknown }>> = [];
     for (const r of list) {
+      /**
+       * ⚠ 2026-11-14 **実測で判明（4つ目の罠）**: `sequencesOf` は**そのままの並び**を返すが、
+       *   学習の他所では `collapseSameField`（同じ欄の click→change を畳む）を通す。
+       *   ⚠ 畳んだ後だと `transportation_id → transportation_id`（＝徒歩を選び直した証拠）が
+       *     **`transportation_id` 1回**に潰れて、`walk_reset` が出なくなる（実測で確認）。
+       *   → 徒歩の判定は**畳む前の並び**で行う（click→change の2件を2回と数えるのが正しい）。
+       */
       const ops = sequencesOf(r);
       for (const s of ops) flowsForWalk.push(s.map((x) => ({ f: x.f })));
     }
