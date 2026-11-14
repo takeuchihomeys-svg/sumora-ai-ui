@@ -5670,6 +5670,16 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           }
         }
       }
+      // 2026-11-15 作業員H（TWO_STAGE_CHECK_QUESTION_KEEP_AIX・既定 off・check-question-brain-first.ts）: ブレイン自身が依頼で route="aix" と決めた番は、
+      //   聞かれた事の確認の約束（check_question）に書き換えない（ブレインの AIX のまま・q411）。依頼に確認の約束がある番は今まで通り
+      if (twoStage && /check_question/.test(twoStage.source) && !twoStageRes.direct && !isPostApplyStatus(convStatus)) {
+        const { checkQuestionKeepAixOn, brainChoseAixForQuestion } = await import("@/app/lib/check-question-brain-first");
+        if (checkQuestionKeepAixOn() && brainChoseAixForQuestion({ finalAix, contract: normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract) })) {
+          addDemoted(demotedOverrides, { family: "two_stage_promise", src: "rule:two_stage_promise(check_question)/keep_aix", would: "check", brain: `aix:${finalAix}` });
+          console.log(JSON.stringify({ tag: "brain:check-question-keep-aix", conversationId, aix: finalAix }));
+          twoStage = null; decisionSource = decisionSource ?? "llm";
+        }
+      }
       // 弱い所 349: 書き換えをやめた番は材料（demoted_overrides）とログに残す（4-4 と同じ形）
       if (screeningBrainReply && screeningNoRewriteEnabled() && !twoStage && !twoStageRes.direct) {
         addDemoted(demotedOverrides, { family: "two_stage_promise", src: "rule:two_stage_promise(check_question)/screening", would: "check", brain: "reply" });

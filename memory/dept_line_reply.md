@@ -9578,3 +9578,9 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - brain-core: 送った物件の一覧の後に【お客様が送った画像の結び付け】を足す・お客様の一言に名前が出た送った物件（⑤）・物件が引けない画像は ref_resolve の handoff に ref_needs_name
 - 45日の実送信（scripts/audit-customer-images.ts --link・275枚）: 持ち込み（新しい物件）は竹内さんほぼ全部「約束の返信」（acda2b5c）／送った物件の資料の送り返しは約束なしで AIX 直接（内覧→内覧調整・費用→見積書送る）／他社の見積書は約束の返信（87ff68e1）／送った物件の他社の画面・好みの手本・弊社の見積書の送り返しは数が少なく決まっていない
 - テスト app/lib/__tests__/customer-image-link.test.ts（25 pass）・試験 h1115-imglink-on（画像の番 15問）
+
+## 2026-11-15 作業員H: 試験の外れ「2段で道が変わる」（通算 363）の中身
+- 数え（scripts/audit-exam-two-stage-essence.ts・答案の本質の道と書き換え後の道を比べる・14日 82答案）: 書き換えが壊した 8・書き換えが直した 12・両方外れ 21・両方当たり 41。台帳の「2段で道が変わる」の大半は、ブレインの本質（依頼の route）がもう約束で、書き換えはそれに沿っただけ＝書き換えより土台（手元の結果・送れる候補がブレインに届かない）が主
+- 壊した 8 の内訳: 持ち込みの確認の約束を2択（AIX 物件確認した｜2段）にした q202×2（既存の TWO_CHOICE_NARROW_CHECK_PROMISE・既定 off で直る形）／持ち込み＋探すの番を見積の2段にした q077×2／ピックアップの約束を返信に q372・q090／check_question が route=aix のブレインを約束に q411（→ TWO_STAGE_CHECK_QUESTION_KEEP_AIX）・探す約束を確認の約束に q032（既存の TWO_STAGE_KIND_FROM_ABOUT）
+- TWO_STAGE_CHECK_QUESTION_KEEP_AIX（既定 off・app/lib/check-question-brain-first.ts・brain-core）: ブレインの依頼が route="aix" で同じボタンなら check_question に書き換えない。依頼に約束（route=promise・管理会社の確認）がある番は今まで通り
+- テスト app/lib/__tests__/check-question-keep-aix.test.ts。監査 scripts/audit-exam-two-stage-miss.ts（台帳）・audit-exam-two-stage-essence.ts（答案）
