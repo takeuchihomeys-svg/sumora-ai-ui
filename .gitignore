@@ -81,3 +81,5 @@ scripts/.exam-cache/
 # 2026-10-08 設計知見の場面の札の控え・計画（一時ファイル）
 scripts/backup-kb-scene-tags-*.json
 scripts/kb-scene-tag-plan-*.json
+
+shots_view/
