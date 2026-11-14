@@ -8025,3 +8025,69 @@ gate_retry: 場所（3区）が画面に入っていない（区 0・駅 0）
 ### 6. 版
 - **2.7.37**（repo・`Desktop\chrome-extension` 一致）。**Chrome の再読み込みが必要**。
 - ⚠ Vercel のビルドが古く `supervisor` が出なかったため、main に空コミットを1つ入れて再デプロイした。
+
+---
+
+## 2026-11-14 v2.7.38 統括が打ち合わせで話す・判断をDBに残す（竹内さん承認済み・テーブル1つ追加）
+
+竹内さん「打ち合わせは絶対にここの統括が話をしてくるようにする」
+「ここでの俺との会話は統括とはなせるように」
+「統括はデータベース必要なら強化や追加できるようにしていく」
+
+### 1. 統括が打ち合わせで話す（`meeting` を追加）
+`learn-supervisor.ts` に**打ち合わせ用の内容**を作らせた。数字を並べるのではなく「**何を決めたいか**」を出す。
+- `today` … 今日の結論（そのまま読み上げられる形）
+- `agenda` … **議題**（優先順位つき・なぜ・決める事）
+- `questions` … **竹内さんに聞く事**（選択肢つき。統括だけでは決められない）
+- `evidence` … 根拠（数字。推測は `guessed:true` と明記）
+
+**統括が自分から出す議題の例（実データ）**:
+```
+・写真は撮れているのに、操作が付いていない
+    なぜ: 記録 4121件のうち、操作の並びが付いているのは 303件（7%）
+    決める事: 操作を付ける仕組みを直す（録画の経路）／このままでよいか
+・「押したら何が開くか」が全部推測（実測0・推測13個）→ 点数に入れてよいか
+・片方のサイト（realpro）しか記録が無い → もう片方も運用するか
+・点数は高いのに弱い所が多い（材料85点で弱い所19件）→ 配点を見直すか
+```
+
+### 2. 判断をDBに毎回残す（`learn_supervisor_log` 新規・竹内さんOK済み）
+⚠ 今までは `human_learn_profile.bundle`（JSONB）の中にしかなく、**前回と比べる・推移を見る・打ち合わせで使う**ができなかった。
+- 列: `scope` / `verdict` / `coverage` / `weak_n` / `next_n` / `points_n` / `opens_n` / `screens_n` / `sequence_n` / `with_ops` / `guessed_opens` / `rows` / `delta` / `actions` / `meeting` / `block` / `bundle_at`
+- **同じ束（`bundle_at`）の同じ scope は二重に足さない**
+- 表が無いDBでは**静かに諦める**（学習を止めない・投げっぱなしで保存）
+- `migrate-schema` と `scripts/apply-supervisor-log.ts` の両方に反映
+
+### 3. 統括と会話する（`scripts/supervisor-talk.ts` 新規）
+```
+npx tsx --env-file=.env.local scripts/supervisor-talk.ts
+  → 統括が今日の判断・議題・根拠・質問・次にやる事を話す
+
+npx tsx --env-file=.env.local scripts/supervisor-talk.ts "ちゃんと学習できてる？"
+  → DBの実データを見て答える
+
+--scope=realpro / --scope=itandi  … サイト別
+--history=10                       … これまでの判断の推移
+```
+**実際の会話（本番データ）**:
+```
+【統括】全体
+■ 今日の結論  もう少しで使えます（一部は自動に渡しています）
+■ 根拠        記録 4121件（操作の並びが付いている 303件）／写真 4120枚（操作つき 307枚）
+■ 議題        写真は撮れているのに、操作が付いていない（7%）
+
+【統括】itandi
+  まだ学べていません（自動に渡すと危ない）／材料 28/100・記録 1件
+```
+⚠ meeting が無い古い束でも「根拠がありません」で終わらせず、**束の数字から議題を作る**ようにした。
+
+### 4. ⚠ main の取り込みで危なかった所
+`migrate-schema` を cursor-ext 版で上書きしたら、**main 独自の索引（`idx_cron_run_logs_failed_started_at`）が消えた**。
+→ main 版に戻してから `learn_supervisor_log` を**足す**形に直した（両方入っている事を確認済み）。
+**教訓: `migrate-schema` は絶対に `checkout <枝> -- file` で上書きしない**（main 独自の変更が消える）。
+
+### 5. 試験・反映
+- `learn-supervisor.test.ts` **31件**合格・`npx tsc --noEmit` 0・拡張 **118本**合格・見張り **38/38**
+- 版 **2.7.38**
+- ⚠ **`learn_supervisor_log` はまだ本番に無い**（Service Role キーが必要）。今夜 JST 0:10 の migrate-schema で作られる。
+  それまでは保存が `no_table` で静かに諦める（学習は止まらない）。
