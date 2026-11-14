@@ -107,5 +107,31 @@ console.log("\n■ ⑨ 壊れない");
   })());
 }
 
+console.log("\n■ ⑩ 統括が自分の矛盾を見つけて整理する（2026-11-14）");
+{
+  /**
+   * 実際に起きた矛盾: 結論「渡してよい」＋材料85点なのに、材料つき記録は 303/4121（7%）。
+   */
+  const r = superviseLearn(base({ rows: 4121, with_ops: 303, guessed_opens: 13, opens: 13, weak: [] }));
+  ok("材料が7%なら ready にしない（almost まで下げる）", r.verdict === "almost", r.verdict);
+  ok("  上限をかけた理由を言える", !!r.self_check.capped_by && r.self_check.capped_by.includes("7%"), r.self_check.capped_by);
+  ok("  自分の矛盾を見つけている（ok:false）", r.self_check.ok === false);
+  ok("  「材料が7%なのに高得点」を指摘", r.self_check.issues.some((s) => s.includes("高すぎます")), r.self_check.issues);
+  ok("  「開き方が全部推測」を指摘", r.self_check.issues.some((s) => s.includes("推測")), r.self_check.issues);
+
+  /** 材料が十分なら ready のまま */
+  const ok1 = superviseLearn(base({ rows: 100, with_ops: 60, weak: [] }));
+  ok("材料が60%なら ready のまま", ok1.verdict === "ready", ok1.verdict);
+  ok("  矛盾は無い", ok1.self_check.ok === true, ok1.self_check.issues);
+
+  /** 材料ゼロは not_yet（unsafe ではない） */
+  const z = superviseLearn(base({ rows: 1000, with_ops: 0, next: 0, points: 0, opens: 0, screens: 0, sequence: 0 }));
+  ok("材料ゼロは not_yet", z.verdict === "not_yet", z.verdict);
+
+  /** unsafe は上限で緩めない */
+  const u = superviseLearn(base({ rows: 100, with_ops: 20, points: 0 }));
+  ok("⚠ unsafe は材料の上限で緩めない", u.verdict === "unsafe", u.verdict);
+}
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 if (fail) process.exit(1);

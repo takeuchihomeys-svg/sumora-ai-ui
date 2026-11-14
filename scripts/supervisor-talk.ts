@@ -23,6 +23,8 @@ type Adv = {
   score?: { coverage?: number; weak?: number; delta?: { rows: number; next: number; points: number; opens: number; weak: number } | null };
   actions?: Array<{ priority: number; what: string; why?: string; how?: string; name?: string }>;
   block?: string | null;
+  /** 統括が自分の判断を点検した結果 */
+  self_check?: { ok?: boolean; issues?: string[]; capped_by?: string | null };
   meeting?: {
     today?: string[];
     agenda?: Array<{ priority: number; topic: string; why: string; decide: string }>;
@@ -58,9 +60,23 @@ async function fetchAdv(scope: string): Promise<{ adv: Adv | null; bundle: Recor
 function speak(scope: string, adv: Adv, bundle: Record<string, unknown>) {
   const who = scope === "all" ? "全体" : scope;
   const m = adv.meeting || {};
+  const sc = (adv as Record<string, unknown>).self_check as { ok?: boolean; issues?: string[]; capped_by?: string | null } | undefined;
   hr();
   line(`【統括】${who}`);
   hr();
+
+  /**
+   * 2026-11-14 竹内さん「矛盾の部分なんで統括が整理したらよい」:
+   *   **矛盾があれば最初に言う**（結論より先に）。都合よく隠さない。
+   */
+  if (sc && Array.isArray(sc.issues) && sc.issues.length) {
+    line();
+    line("■ ⚠ 自分の判断の矛盾（先に言います）");
+    for (const s of sc.issues) line("  ・" + s);
+    if (sc.capped_by) line("  → 整理: " + sc.capped_by);
+    line();
+  }
+
   line();
   line("■ 今日の結論");
   for (const t of (m.today && m.today.length ? m.today : [String(adv.headline || "")])) line("  " + t);
