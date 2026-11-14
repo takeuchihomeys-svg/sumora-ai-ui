@@ -20,8 +20,13 @@ const ps = read("page-script.js");
 
 console.log("■ ① 区のコードだけでも「モーダルを使う」経路に入る");
 {
-  ok("hasModalWard は detail_ward が無くても city_codes があれば true", /var hasModalWard = !!\(cond\.detail_ward\) \|\| \(hasCities && locationMode === "area"\)/.test(ps));
-  ok("直接チェックボックス方式は「モーダルを使わない時だけ」", /if \(locationMode === "area" && !hasModalWard\)/.test(ps));
+  /**
+   * 2026-11-14: `hasModalWard` は**暫定**を先に決め、`locationMode` の確定後に**再計算**する形に変えた。
+   *   理由: `locationMode` は後で定義されるので、先に計算すると undefined になる（地域が動かないバグ）。
+   */
+  ok("hasModalWard は detail_ward が無くても city_codes があれば true（確定後に再計算）",
+    /hasModalWard = !!\(cond\.detail_ward\) \|\| \(hasCities && locationMode === "area"\);/.test(ps));
+  ok("直接チェックボックス方式は「モーダルを使わない時だけ」", /_useDirectCities = \(locationMode === "area" && !hasModalWard\)/.test(ps));
 }
 
 console.log("\n■ ② 人の順番: 所在地絞り込み → 該当の地域 → 確定してリストへ");

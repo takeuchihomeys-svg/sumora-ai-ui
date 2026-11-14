@@ -2224,14 +2224,44 @@
     // 2026-11-10 v2.5.98 竹内さん「細かい部分も実際の人間がするように」:
     //   条件を入れ終わってから検索を押すまでに「上がって全体を見直す」間を置く（1〜3秒・対数正規）。
     //   押した瞬間に検索されると人が確認していないように見える。1回だけ待つ（待った後の再入場は待たない）
+    /**
+     * 2026-11-14 竹内さん「なぜか今勝手に入力だけされていてボタンは押していない。検索も押してない」:
+     *   ⚠ DB の点検で **`page:search_look` が19回続いた**（＝見直す間に入るたびに先頭へ戻っていた）。
+     *     原因: `_axSearchLookedOver` は `setTimeout` の中で false に戻す作りだが、
+     *     **タイマーが発火する前に別の経路から `clickSearch` が呼ばれる**と、
+     *     フラグが true のままで「見直す」に入り直し、**検索に到達しない**（180秒後に
+     *     `stall_recover_search` でやっと押す＝遅すぎる）。
+     *   → **予約済みなら二重に予約しない**（`_axSearchLookTimer` を持つ）。
+     *     さらに「見直す」で待つのは**1回だけ**（`_axSearchLookCount` で数え、2回目以降は待たずに押す）。
+     */
+    var _nowMs = Date.now();
+    var _lookAt = Number(window._axSearchLookAt) || 0;
+    if (_nowMs - _lookAt < 6000) {
+      // 直前に「見直す」を予約した → **二重に予約しない**（タイマーが押す）
+      if (_audit) _auditStepP('search_look_skip', '予約済み');
+      return;
+    }
     if (!window._axSearchLookedOver) {
       window._axSearchLookedOver = true;
+      window._axSearchLookAt = _nowMs;
       var _lookMs = humanRand(1000, 2200);
       // 2026-11-11 竹内さん「一息もランダムにはいる」: 見直す間に、10%で一息 900〜2600ms・3%で2.6〜5.5秒を足す
       if (Math.random() < 0.10) _lookMs += 900 + Math.floor(Math.random() * 1700);
       else if (Math.random() < 0.03) _lookMs += 2600 + Math.floor(Math.random() * 2900);
       _auditStepP('search_look', Math.round(_lookMs) + 'ms');
-      setTimeout(function () { try { window._axSearchLookedOver = false; clickSearch(); } catch (_) {} }, _lookMs);
+      /**
+       * ⚠ タイマーは**1本だけ**。発火したら必ずフラグを戻し、**そのまま検索へ進む**
+       *   （`clickSearch` を呼び直すと、また「見直す」判定に入る余地がある）。
+       *   → 発火時は `_axSearchLookAt` を**未来にして**再入場を防ぎ、`clickSearch` で本体へ入る。
+       */
+      try { if (window._axSearchLookTimer) clearTimeout(window._axSearchLookTimer); } catch (_) {}
+      window._axSearchLookTimer = setTimeout(function () {
+        try {
+          window._axSearchLookedOver = false;
+          window._axSearchLookAt = 0;
+          clickSearch();
+        } catch (_) {}
+      }, _lookMs);
       return;
     }
     window._axSearchLookedOver = false;
@@ -3061,10 +3091,18 @@
           _unchk(0);
         }
 
-        // 敷金・礼金なし チェックボックスをリセット（ラベルテキストで特定するため name リストに含められない）
-        // 前顧客が敷礼なし希望 → 次顧客が希望なし のとき残留するバグの修正
-        // 2026-11-11: チェックボックスを人と同じ速さで外すので、残り（敷礼・select・text）はその後に回す
-        var _resetRest = function () {
+      // 敷金・礼金なし チェックボックスをリセット（ラベルテキストで特定するため name リストに含められない）
+      // 前顧客が敷礼なし希望 → 次顧客が希望なし のとき残留するバグの修正
+      // 2026-11-11: チェックボックスを人と同じ速さで外すので、残り（敷礼・select・text）はその後に回す
+      /**
+       * 2026-11-14 竹内さん「なにか足りていない部分がある可能性はちゃんと全部必要な機能はいるように」:
+       *   ⚠ DB の点検に **`RESET_FAILED: _resetRest is not a function`** が残っていた（実際に起きていた）。
+       *     原因: `_resetRest` は `var`（関数式）で定義されていたため、
+       *     先に作られる `_afterUncheck` から呼ばれた時に**まだ代入されていない**事があった
+       *     （`var` は巻き上げられるが、代入はその行に来るまで行われない）。
+       *   → **関数宣言に変える**（巻き上げで、どこから呼んでも使える）。
+       */
+      function _resetRest() {
         ;(function() {
           var sLabels = document.querySelectorAll('label');
           for (var si = 0; si < sLabels.length; si++) {
@@ -3125,7 +3163,7 @@
           setTimeout(callback, _look);
         };
         _clearNext();
-        }; // _resetRest end
+      } // _resetRest end（関数宣言に変えた・2026-11-14）
         } catch (err) {
           // クリア失敗でも条件入力は続行する（静かに停止すると fill-done が来なくなる）
           console.error("[AX] _doReset クリア中の例外（続行）", err);
@@ -3246,7 +3284,16 @@
     var hasStation   = cond.station_names && cond.station_names.length > 0;
     var hasRoutes    = cond.route_ids && cond.route_ids.length > 0;
     var hasCities    = cond.city_codes && cond.city_codes.length > 0;
-    var hasModalWard = !!(cond.detail_ward) || (hasCities && locationMode === "area");
+    /**
+     * 2026-11-14 竹内さん「今回も地域の部分押さなかった」「入力だけされてボタンは押していない」:
+     *   ⚠ **バグを発見**: `hasModalWard` が `locationMode` を使っていたが、
+     *     `locationMode` は**この行より後**で定義される（`var locationMode = decideLocationMode(cond)`）。
+     *     `var` は巻き上げられるので、ここでは **undefined** →
+     *     `hasCities && undefined === "area"` は **false** →
+     *     **地域モーダルが一度も動かない**（実測: 点検の段に modal/ward/town が0件）。
+     *   → ここでは `locationMode` を見ず、`area_mode` と区の有無で決める（後で locationMode を確定して直す）。
+     */
+    var hasModalWard = !!(cond.detail_ward) || (hasCities && (cond.area_mode !== "station"));
     var hasDetailArea = !!(cond.detail_area) || !!(cond.town_names && cond.town_names.length > 0);  // 町字まで選択
     // town_names: 複数町字配列（Supabase property_customers.town_names から）。detail_area と共存可。
     var townNamesList = (cond.town_names && cond.town_names.length > 0)
@@ -3290,8 +3337,14 @@
       return "none";
     }
     var locationMode = decideLocationMode(cond);
+    /**
+     * 2026-11-14: `locationMode` が確定したので、**ここで `hasModalWard` を正しく直す**。
+     *   ⚠ 上で暫定で決めた値（`area_mode` ベース）を、確定した `locationMode` で上書きする。
+     *     駅・沿線で入れる場合は地域モーダルを使わない（リアプロはAND条件になり結果が出なくなる）。
+     */
+    hasModalWard = !!(cond.detail_ward) || (hasCities && locationMode === "area");
     if (_audit) { _audit.area_path = locationMode; _auditStepP('location', locationMode); }
-    console.log("[AX] 場所モード判定: " + locationMode,
+    console.log("[AX] 場所モード判定: " + locationMode + " / 地域モーダル: " + (hasModalWard ? "使う" : "使わない"),
       { area_mode: cond.area_mode, station_names: cond.station_names, route_ids: cond.route_ids,
         hasStation: hasStation, hasRoutes: hasRoutes,
         cities: cond.city_codes, ward: cond.detail_ward });
@@ -3604,7 +3657,22 @@
     // 駅・沿線指定がある場合は所在地をセットしない（リアプロはAND条件になり検索結果が出なくなる）
     // locationMode === "area" は「駅・沿線なし かつ (city_codes or detail_ward)あり」なので
     // !hasModalWard との組み合わせで従来の hasCities && !hasModalWard && !hasStation && !hasRoutes と等価
-    if (locationMode === "area" && !hasModalWard) {
+    /**
+     * 2026-11-14 竹内さん「いきなり地域だけ選択せずに選択して入れてしまっている可能性ある。
+     *   そこも原因で止まってしまうバグが起きているのでは」:
+     *   ⚠ **その通りだった**。ここで `setCheckboxes("city_code[]", ...)` を直接呼ぶと、
+     *     モーダルを開く**前に**区がチェックされた状態になる（リアプロは前の選択を保持するので、
+     *     前のお客様の区が残っている事もある）。
+     *     ・モーダル経由の時（hasModalWard）は**この分岐を絶対に通さない**
+     *     ・通すのは「モーダルを使わない（区を直接チェックする）」時だけ
+     *   ⚠ さらに **モーダルを使う時は、開く前に区・町字を全部外す**（下の _clearPrevAreaSelection が担当）。
+     */
+    var _useDirectCities = (locationMode === "area" && !hasModalWard);
+    if (locationMode === "area" && hasModalWard) {
+      // モーダルで選ぶので、直接チェックの経路が混ざらないように**ここで記録**する
+      if (_audit) _auditStepP('area_skip_direct', 'モーダルで選ぶため直接チェックはしない');
+    }
+    if (_useDirectCities) {
       var prefCb = document.querySelector('input[name="pref_code"][value="27"]');
       if (prefCb && !prefCb.checked) {
         prefCb.checked = true;
@@ -3700,10 +3768,38 @@
             }, 240 + Math.floor(Math.random() * 160));
             return;
           }
-          // city_codes もない → 全件検索になるため中止
-          var errMsg = '所在地モーダル操作失敗（全件検索防止のため中止）: ' + msg;
-          showWarnToast(errMsg);
-          notifyDone(errMsg);
+          // city_codes もない → 全件検索は絶対にしないが、**区が1つでも入れば検索へ進む**
+          _areaAtLeastOneThenSearch(msg);
+        }
+
+        /**
+         * 2026-11-14 竹内さん「順に実際の動きのように押していけばできるようになる」:
+         *   **段ごとに順に押し、どこで止まっても次へ進む**ための「関所」。
+         *   ・地域モーダルが失敗しても、**区が1つでも入っていれば検索まで進む**
+         *   ・区も入らない時だけ中止（全件検索は絶対にしない）
+         *   ⚠ これを入れないと「地域で止まる → 検索しない → 物件が出ない」になる（実測で起きていた）。
+         */
+        function _areaAtLeastOneThenSearch(why) {
+          try {
+            var codes = (cond.city_codes || []).map(String);
+            if (codes.length) {
+              try { setCheckboxes('city_code[]', codes); } catch (_) {}
+            }
+            setTimeout(function () {
+              whenClickQueueIdle(function () {
+                var applied = document.querySelectorAll('input[name="city_code[]"]:checked').length;
+                if (_audit) _auditStepP('area_force_search', applied + '区で検索へ（' + String(why).slice(0, 60) + '）');
+                if (applied > 0) {
+                  console.warn('[AX] 地域は完全でないが ' + applied + '区入っている → 検索へ進む');
+                  clickSearch();
+                } else {
+                  var em = '地域が1区も入らず中止（全件検索防止）: ' + String(why).slice(0, 120);
+                  showWarnToast(em);
+                  notifyDone(em);
+                }
+              });
+            }, 700 + Math.floor(Math.random() * 300));
+          } catch (_) {}
         }
 
         // 「詳細な地域の設定へ進む」ボタン
@@ -3782,11 +3878,60 @@
         }
 
         // STEP1: 「所在地絞り込み＋」が出るまで待ってクリック
+        /**
+         * 2026-11-14 竹内さん「いきなり地域だけ選択せずに選択して入れてしまっている可能性ある」:
+         *   ⚠ **モーダルを開く前に、区・町字を全部外す**。
+         *     リアプロは前のお客様の選択を保持するので、開いた時に**すでに区が入っている**事がある。
+         *     その状態で「区を押す」とトグルで**外れて**しまい、確定しても地域が入らない
+         *     （＝止まる原因）。先にきれいにする。
+         */
+        (function _clearBeforeOpen() {
+          try {
+            var on = Array.prototype.slice.call(document.querySelectorAll('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked'));
+            if (!on.length) return;
+            if (_audit) _auditStepP('area_preclear', on.length + '件を先に外す');
+            console.log('[AX] モーダルを開く前に前の地域の選択を外します:', on.length, '件');
+            on.forEach(function (cb) {
+              try { if (cb.checked) { cb.checked = false; cb.dispatchEvent(new Event("change", { bubbles: true })); } } catch (_) {}
+            });
+          } catch (_) {}
+        })();
         waitForClick(
           function() { return clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']); },
           function() {
             console.log('[AX] STEP1完了: 所在地絞り込みクリック済');
             _auditStepP('modal', 'area');
+            /**
+             * 2026-11-14 竹内さん「地域の部分はいる前から地域だけ選択されていた」:
+             *   ⚠ 前の検索で選んだ区・町字が**モーダルに残ったまま**開く事がある
+             *     （リアプロは前の選択を保持する）。そのまま押すと
+             *     「頼んでいない区も入る」「前の区が残る」＝条件が濁る。
+             *   → モーダルを開いた直後に、**選択済みの区・町字を全部外す**（1つずつ・人と同じ速さ）。
+             *     ⚠ 外すのは**このモーダルの中だけ**（左のサイドバーの検索条件は _doReset が担当）。
+             */
+            (function _clearPrevAreaSelection() {
+              try {
+                var _cityOn = Array.prototype.slice.call(document.querySelectorAll('input[name="city_code[]"]:checked'));
+                var _townOn = Array.prototype.slice.call(document.querySelectorAll('input[name="town_code[]"]:checked'));
+                var _all = _cityOn.concat(_townOn);
+                if (!_all.length) return;
+                if (_audit) _auditStepP('area_prev_clear', _cityOn.length + '区・' + _townOn.length + '町字を外す');
+                console.log('[AX] 前の地域の選択を外します: 区' + _cityOn.length + '・町字' + _townOn.length);
+                _all.forEach(function (cb) {
+                  try {
+                    /**
+                     * ⚠ 2026-11-14: `simulateClick` は**トグル**なので、既にcheckedの物を押すと
+                     *   外れるが、タイミング次第で二重押しになる。**checked を直接 false にして
+                     *   change を送る**方が確実（画面も同じ状態になる）。
+                     */
+                    if (cb.checked) {
+                      cb.checked = false;
+                      cb.dispatchEvent(new Event("change", { bubbles: true }));
+                    }
+                  } catch (_) {}
+                });
+              } catch (_) {}
+            })();
             // STEP2+3を統合: 市区郡直接クリックと大阪府クリックを同時にポーリング
             // ケースA: モーダルが市区郡ページ表示中 → 大阪府をスキップして市区郡を直接クリック
             // ケースB: モーダルが都道府県ページ表示中 → 大阪府をクリック
