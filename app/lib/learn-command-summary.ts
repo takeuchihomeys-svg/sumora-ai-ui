@@ -57,6 +57,13 @@ export type CommandSummary = {
     /** 「ブレインモードのPCが…」で終わった数 */
     brain_absent: number;
   } | null;
+  /**
+   * 2026-11-14 竹内さん「自動の部分は日を超えたら前日のはしなくて大丈夫になっているかな。
+   *   日ごとにやるから前日にできていなくても持ち越さない」:
+   *   前の日の自動便を**今日に持ち越さずに閉じた数**。
+   *   ⚠ これを数えないと「拾われないまま60件」が毎日積み上がり、**今の詰まり**が見えなくなる。
+   */
+  previous_day_closed?: number;
 };
 
 /**
@@ -121,6 +128,8 @@ export function summarizeCommands(
   }
 
   const errors = Object.entries(errN)
+    // 2026-11-14: 前の日の自動便を閉じたのは「失敗」ではなく**日ごとの決まり通り**（失敗の一覧に出さない）
+    .filter(([error]) => !/前の日の自動便/.test(error))
     .map(([error, n]) => ({ error, n }))
     .sort((a, b) => b.n - a.n)
     .slice(0, 5);
@@ -130,10 +139,11 @@ export function summarizeCommands(
    * 2026-11-14: 「拡張がモードになっていなかった」で終わった物を**別に数える**。
    *   ⚠ これを「失敗」と同じに扱うと、**直す所が違う**（指示の処理ではなく運用＝PCのモード）。
    */
-  let aixAbsent = 0, brainAbsent = 0;
+  let aixAbsent = 0, brainAbsent = 0, prevDayClosed = 0;
   for (const [k, v] of Object.entries(errN)) {
     if (/AIXモードのPCが.*なかった|AIXモードのPCが3時間なかった/.test(k)) aixAbsent += v;
     else if (/ブレインモードのPCが.*なかった/.test(k)) brainAbsent += v;
+    else if (/前の日の自動便/.test(k)) prevDayClosed += v;
   }
   const modeAbsent = { aix_absent: aixAbsent, brain_absent: brainAbsent };
 
@@ -147,15 +157,22 @@ export function summarizeCommands(
    *   ⚠ 期間を**言葉に書く**（「24時間」「7日」）。混ざると矛盾に見える。
    */
   const days = Math.max(1, Math.round((typeof opt.sinceMs === "number" ? opt.sinceMs : 24 * 3600_000) / 86400_000));
+  /**
+   * 2026-11-14 竹内さん「日ごとにやるから前日にできていなくても持ち越さない」:
+   *   前の日の自動便を閉じた数を**言葉に出す**（出さないと「なぜ減ったのか」が分からない＝統括が矛盾に見える）。
+   */
+  const prevNote = prevDayClosed > 0 ? `（前の日の自動便 ${prevDayClosed}件は今日に持ち越さず閉じました）` : "";
   if (staleN > 0) {
-    top_problem = `この24時間で、拾われないまま ${staleN}件の指示が残っています（30分以上 pending/running のまま）。拡張が指示を取りに来ていません`;
+    top_problem = `この24時間で、拾われないまま ${staleN}件の指示が残っています（30分以上 pending/running のまま）。拡張が指示を取りに来ていません${prevNote}`;
   } else if (absentTotal > 0 && absentTotal >= Math.max(1, failed * 0.5)) {
-    top_problem = `この${days}日の指示の失敗のうち ${absentTotal}件は「自動/AIXモードのPCが3時間なかった」ためです（指示の処理ではなく、拡張が自動/AIXモードになっていない時間が長い）`;
+    top_problem = `この${days}日の指示の失敗のうち ${absentTotal}件は「自動/AIXモードのPCが3時間なかった」ためです（指示の処理ではなく、拡張が自動/AIXモードになっていない時間が長い）${prevNote}`;
   } else if (failed > 0) {
-    top_problem = `この${days}日の指示 ${total}件のうち ${failed}件が失敗しています${errors[0] ? `（一番多い理由: ${errors[0].error}）` : ""}`;
+    top_problem = `この${days}日の指示 ${total}件のうち ${failed}件が失敗しています${errors[0] ? `（一番多い理由: ${errors[0].error}）` : ""}${prevNote}`;
   } else if (pending > 2) {
-    top_problem = `まだ拾われていない指示が ${pending}件たまっています`;
+    top_problem = `まだ拾われていない指示が ${pending}件たまっています${prevNote}`;
+  } else if (prevDayClosed > 0) {
+    top_problem = `前の日の自動便 ${prevDayClosed}件は今日に持ち越さず閉じました（今日の便は今日ふたたび積まれます）`;
   }
 
-  return { total, done, failed, pending, running, errors, top_problem, mode_absent: modeAbsent, now_window_hours: 24, fail_window_days: days };
+  return { total, done, failed, pending, running, errors, top_problem, mode_absent: modeAbsent, previous_day_closed: prevDayClosed, now_window_hours: 24, fail_window_days: days };
 }

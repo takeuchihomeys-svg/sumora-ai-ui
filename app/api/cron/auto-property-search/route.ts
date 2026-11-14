@@ -112,13 +112,24 @@ export async function GET(req: NextRequest) {
   }
 
   // 実行中・未実行のコマンドがある顧客には積まない（同じ人を二重に検索しない）
+  /**
+   * 2026-11-14 竹内さん「日ごとにやるから前日にできていなくても持ち越さない」:
+   *   ⚠ 前の日の自動便が pending のまま残っていると、**今日の便がその人を積まない**（openIds に入る）＝
+   *     前日に届かなかった人が今日も回らない＝持ち越しが「穴」として残る。
+   *   → openIds に入れるのは**今日の自動便**と、自動便でない命令（AIX・手の検索）だけ。
+   */
   const { data: openCmds } = await supabase
     .from("automation_commands")
-    .select("customer_ids")
+    .select("customer_ids, payload")
     .in("status", ["pending", "running"])
     .limit(500);
   const openIds = new Set<string>();
   for (const r of openCmds ?? []) {
+    const p = ((r as { payload?: Record<string, unknown> | null }).payload ?? {}) as Record<string, unknown>;
+    const isAuto = p.source === "auto_schedule";
+    const autoDay = typeof p.jst_date === "string" ? p.jst_date : "";
+    // 前の日の自動便は今日の人を縛らない（今日また積む）
+    if (isAuto && autoDay && autoDay !== jstDate) continue;
     for (const id of ((r.customer_ids as string[] | null) ?? [])) openIds.add(String(id));
   }
 
