@@ -61,13 +61,42 @@ export function sceneOfOp(kind: string | null | undefined): FlowScene {
   const raw = String(kind ?? "");
   const m = raw.match(/^([a-z]+):(.*)$/i);
   const name = (m ? m[2] : raw).trim();
-  const n = name.toLowerCase();
+  /**
+   * ⚠ 2026-11-14 竹内さん「1から順に進めていく」→ **実測で判明（統括の指摘が誤っていた原因）**:
+   *   実際の欄の名前は **`左の検索｜span`** のように
+   *   **「左の」の接頭辞と「｜span」（タグ名）が付く**。
+   *   旧の判定は `検索$`（検索で終わる）だったので、**1つも当たらなかった**（実測）:
+   *     左の検索｜span            → その他（本当は「検索を押す」）
+   *     左の検索｜div.go_search   → その他（本当は「検索を押す」）
+   *     左の住居検索｜a.text      → その他（本当は「検索を押す」）
+   *     左のnext｜span            → その他（本当は「次のページへ」）
+   *   → そのため統括が「**『検索を押す』の手本が無い**」と**誤って**言っていた
+   *     （実データでは人の押下が **25件**ある）。
+   *   → **接頭辞と「｜タグ名」を落としてから判定する**。
+   */
+  const cleaned = name
+    .replace(/^(左の|右の|上の|下の|中央の)/, "")     // 画面のどこか（拡張が付けている）
+    .replace(/｜[^｜]*$/, "")                        // 「｜span」「｜div.go_search」「｜a.text」
+    .trim();
+  const n = (cleaned || name).toLowerCase();
   // 次のページ（一覧のページ送り）
-  if (/next_page|pager|page_next|次のページ|次へ|ページ送り/.test(n)) return "next";
-  // 検索を押す
-  if (/^(go_search|go_search_submit)$/.test(n) || /検索$|^search$/.test(n)) return "search";
+  if (/next_page|pager|page_next|次のページ|次へ|ページ送り|^next$/.test(n)) return "next";
+  /**
+   * 検索を押す。
+   *   ⚠ 実測の名前は `検索`（そのまま）・`住居検索`・`go_search` など**色々**。
+   *     `検索$`（検索で終わる）だけでは `住居検索` は拾えるが、
+   *     名前が `検索|span` の形だと拾えない → **含むかどうか**で見る。
+   *   ⚠ ただし「検索条件」「検索結果」は押すボタンではないので除く。
+   */
+  if (/^(go_search|go_search_submit)$/.test(n) || /^search$/.test(n)) return "search";
+  if (/検索/.test(n) && !/検索条件|検索結果|再検索の設定/.test(n)) return "search";
   // 所在地（区・町字・小窓）
   if (/city_code|town_code|one_city|one_town|住所|所在地|都道府県|市区郡|町字/.test(n)) return "area";
+  /**
+   * 実測の名前 `確定してリストへ｜span` は**所在地の小窓を閉じるボタン**。
+   *   ⚠ 「その他」にすると、所在地の手順から**最後の1手が抜ける**（＝手順が途中で切れる）。
+   */
+  if (/確定してリストへ|リストへ確定/.test(n)) return "area";
   /**
    * 2026-11-14 実測: `click:大阪市西区` `click:大阪市中央区` `click:大阪市北区` は
    *   **区の見出しを押した記録**で、名前に `city_code` が入らない。
@@ -75,7 +104,7 @@ export function sceneOfOp(kind: string | null | undefined): FlowScene {
    *   → **区・市・郡・町・村で終わる短い名前**は所在地として扱う。
    *     （「確定してリストへ」「次のページ」などは終わりが違うので当たらない）
    */
-  if (name.length <= 14 && /[区市郡町村]$/.test(name)) return "area";
+  if ((cleaned || name).length <= 14 && /[区市郡町村]$/.test(cleaned || name)) return "area";
   // 沿線・駅
   if (/transportation_id|station|沿線|駅|required_time/.test(n)) return "station";
   // 検索結果の一覧（物件の取得・並べ替え）
