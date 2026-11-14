@@ -202,18 +202,42 @@ const median = (xs: number[]): number | null => {
 };
 
 /** 操作の並び（写真ごと）を取り出す。壊れた形は捨てる */
+/**
+ * 操作の並び（写真ごと）を取り出す。壊れた形は捨てる
+ *
+ * 2026-11-14 竹内さん「実際の通常モードでの検索のデータと比べてのギャップを強化」:
+ *   ⚠ 旧は `shot_ops`（写真に付く操作）だけを使っていた。
+ *     だが通常モードは**写真が少ない**ので、`shot_ops` が空の記録が大半。
+ *     そのため `by_mode.normal` が **34件あるのに「押す順番0」** になっていた。
+ *   → **`field_order`（押した順番・写真が無くても残る）も並びとして使う**。
+ *     ⚠ どちらもある時は `shot_ops` を優先（時刻・種類が付いているので正確）。
+ */
 export function sequencesOf(row: MotionRow): Array<Array<{ t: number | null; k: string | null; f: string }>> {
   const raw = row.shot_ops;
-  if (!Array.isArray(raw)) return [];
-  const seq: Array<{ t: number | null; k: string | null; f: string }> = [];
-  for (const o of raw as unknown[]) {
-    if (!o || typeof o !== "object") continue;
-    const r = o as Record<string, unknown>;
-    const f = typeof r.f === "string" ? r.f.trim().slice(0, 30) : "";
-    if (!f) continue;
-    seq.push({ t: num(r.t), k: typeof r.k === "string" ? r.k.slice(0, 10) : null, f });
+  if (Array.isArray(raw)) {
+    const seq: Array<{ t: number | null; k: string | null; f: string }> = [];
+    for (const o of raw as unknown[]) {
+      if (!o || typeof o !== "object") continue;
+      const r = o as Record<string, unknown>;
+      const f = typeof r.f === "string" ? r.f.trim().slice(0, 30) : "";
+      if (!f) continue;
+      seq.push({ t: num(r.t), k: typeof r.k === "string" ? r.k.slice(0, 10) : null, f });
+    }
+    if (seq.length >= 2) return [seq];
   }
-  return seq.length >= 2 ? [seq] : [];
+  /**
+   * 写真が無い記録: `field_order`（押した順番の名前の配列）から作る。
+   *   ⚠ 時刻と種類は無い（null）＝順番だけ分かる。
+   */
+  const fo = row.field_order;
+  if (Array.isArray(fo)) {
+    const seq = (fo as unknown[])
+      .map((x) => String(x ?? "").trim().slice(0, 30))
+      .filter(Boolean)
+      .map((f) => ({ t: null, k: null, f }));
+    if (seq.length >= 2) return [seq];
+  }
+  return [];
 }
 
 /**
