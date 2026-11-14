@@ -55,6 +55,8 @@ export type SupervisorInput = {
    *   ⚠ 推測を実測と同じ重さで点数に入れると、学べていないのに高得点になる。
    */
   guessed_opens?: number;
+  /** 写真がある記録の数（写真の割合を実データから出す） */
+  shot_rows?: number;
 };
 
 export type SupervisorVerdict = "ready" | "almost" | "not_yet" | "unsafe";
@@ -305,6 +307,7 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens),
       siteCounts: inp.site_counts || {},
       modeCounts: inp.mode_counts || {},
+      shotRows: num((input as unknown as Record<string, unknown>).shot_rows),
     }),
   };
 }
@@ -323,6 +326,8 @@ function buildMeeting(m: {
   guessedOpens: number;
   siteCounts: Record<string, number>;
   modeCounts: Record<string, number>;
+  /** 写真がある記録の数（写真の割合を実データから出すため） */
+  shotRows?: number;
 }): SupervisorAdvice["meeting"] {
   const who = m.site === "all" ? "全体" : m.site;
   const today: string[] = [];
@@ -414,8 +419,16 @@ function buildMeeting(m: {
 
   // ── 竹内さんに聞く事 ──
   if (m.rows > 0 && m.withOps / m.rows < 0.3) {
+    const opsPct = Math.round((m.withOps / Math.max(1, m.rows)) * 100);
+    /**
+     * ⚠ 写真の割合は**実データ**から出す（旧は「99%」を決め打ちしていた）。
+     *   写真がある記録の数が渡されていればそれを使い、無ければ「写真はほとんど撮れている」とだけ言う。
+     */
+    const shotPct = m.shotRows != null && m.rows > 0 ? Math.round((m.shotRows / m.rows) * 100) : null;
     questions.push({
-      q: "写真は99%撮れているのに、そこから学べているのは12%だけです。この差をどう扱いますか？",
+      q: shotPct != null
+        ? `写真は${shotPct}%撮れているのに、そこから学べているのは${opsPct}%だけです。この差をどう扱いますか？`
+        : `写真から学べているのは${opsPct}%だけです。この差をどう扱いますか？`,
       options: ["まず録画の経路を直す（推奨）", "写真から読む仕組みを先に作る", "今のままでよい"],
       why: "材料が無いまま点数だけ上がると、『学べている』と誤解する",
     });

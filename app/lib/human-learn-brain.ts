@@ -923,6 +923,11 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     site: "all",
     /** 2026-11-14: 「押したら何が開くか」のうち**推測**で埋めた数（実測ではない） */
     guessed_opens: Object.values(opens).filter((v) => v && (v as { guessed?: boolean }).guessed).length,
+    /** 写真がある記録の数（写真の割合を実データから出す） */
+    shot_rows: list.filter((r) => {
+      const x = r as unknown as Record<string, unknown>;
+      return x.shot_taken === true || (typeof x.shot_key === "string" && x.shot_key.length > 0);
+    }).length,
   } as SupervisorInput);
 
   /**
