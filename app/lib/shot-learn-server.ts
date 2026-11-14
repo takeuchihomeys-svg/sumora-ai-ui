@@ -78,12 +78,15 @@ export async function readShotFieldsDetailed(
     const url = signed?.data?.signedUrl ?? null;
     if (!url) return { learn: null, why: "signed_url_failed:" + String(signed?.error?.message ?? "no_url").slice(0, 80) };
     /**
-     * OpenAI 形式の content（image_url で URL を渡す）。
-     *   ⚠ `callVisionAlt` は `toOpenAiContent` でこの形をそのまま通す。
+     * ⚠ **`toOpenAiContent` は Anthropic の形しか通さない**（実測で判明）:
+     *     `{ type: "image", source: { type: "url", url } }` の形だけを受け付け、
+     *     `{ type: "image_url", image_url: { url } }` を渡すと **`null`** を返して回さない。
+     *   旧は後者で渡していたので、**毎回 `vision_null` になっていた**（＝1枚も読めない）。
+     *   → Anthropic の形で渡す（`callVisionAlt` が中で OpenAI 形式に変換する）。
      */
     const content = [
       { type: "text", text: "この画面写真から、フォームの作りだけを読み取って JSON で返してください。" },
-      { type: "image_url", image_url: { url } },
+      { type: "image", source: { type: "url", url } },
     ];
     const res = await callVisionAlt(SHOT_LEARN_PROMPT, content, { maxTokens: 700, timeoutMs: 60_000 });
     if (!res) return { learn: null, why: "vision_null:キーが無い／画像が渡せない／応答が空" };
