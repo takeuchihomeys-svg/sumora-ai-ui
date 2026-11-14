@@ -17,7 +17,7 @@
 // ⚠ 読むのは欄の種類・名前・画面の種類だけ（入力した中身は読ませない）。
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
-import { readShotFields } from "@/app/lib/shot-learn-server";
+import { readShotFieldsDetailed } from "@/app/lib/shot-learn-server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -84,8 +84,14 @@ export async function GET(req: NextRequest) {
   for (const t of targets) {
     out.tried++;
     const key = String(t.shot_key);
-    const sl = await readShotFields(key);
-    if (!sl) { out.skipped++; continue; }
+    const r = await readShotFieldsDetailed(key);
+    if (!r.learn) {
+      out.skipped++;
+      /** ⚠ 読めなかった理由を残す（旧は理由が1つも出なかった） */
+      if (r.why && out.errors.length < 5) out.errors.push(r.why);
+      continue;
+    }
+    const sl = r.learn;
     out.learned++;
     out.fields += sl.fields.length;
     if (out.samples.length < 3) {

@@ -55,6 +55,19 @@ export async function findShotsToLearn(opt: { site?: string | null; days?: numbe
 
 /** 写真1枚を Vision で読む（読めなければ null・投げない） */
 export async function readShotFields(shotKey: string): Promise<ShotLearn | null> {
+  const r = await readShotFieldsDetailed(shotKey);
+  return r.learn;
+}
+
+/**
+ * 2026-11-14 竹内さん「今日のさっきの分読み取る」→ **読めなかった理由が分からなかった**。
+ *   ⚠ 旧は `null` だけ返していて、`skipped` が増えるのに理由が1つも出なかった
+ *     （署名URL・画像取得・APIキー・モデル・JSON解析のどれで落ちたか分からない）。
+ *   → **理由を付けて返す**（点検でそのまま出せる・推測で直さない）。
+ */
+export async function readShotFieldsDetailed(
+  shotKey: string,
+): Promise<{ learn: ShotLearn | null; why: string | null }> {
   try {
     const { callVisionAlt } = await import("./vision-alt-provider");
     /**
@@ -63,7 +76,7 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
      */
     const signed = await supabase.storage.from(BUCKET).createSignedUrl(shotKey, 60 * 10);
     const url = signed?.data?.signedUrl ?? null;
-    if (!url) return null;
+    if (!url) return { learn: null, why: "signed_url_failed:" + String(signed?.error?.message ?? "no_url").slice(0, 80) };
     /**
      * OpenAI 形式の content（image_url で URL を渡す）。
      *   ⚠ `callVisionAlt` は `toOpenAiContent` でこの形をそのまま通す。
@@ -73,13 +86,16 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
       { type: "image_url", image_url: { url } },
     ];
     const res = await callVisionAlt(SHOT_LEARN_PROMPT, content, { maxTokens: 700, timeoutMs: 60_000 });
-    if (!res || !res.text) return null;
+    if (!res) return { learn: null, why: "vision_null:キーが無い／画像が渡せない／応答が空" };
+    if (!res.text) return { learn: null, why: "vision_empty_text" };
     const parsed = parseShotLearn(res.text);
     // 何も読めなかった時は保存しない（推測で埋めない）
-    if (!parsed.fields.length && parsed.screen === "other") return null;
-    return parsed;
-  } catch {
-    return null;
+    if (!parsed.fields.length && parsed.screen === "other") {
+      return { learn: null, why: "no_fields:" + String(res.text).slice(0, 100) };
+    }
+    return { learn: parsed, why: null };
+  } catch (e) {
+    return { learn: null, why: "exception:" + String((e && (e as Error).message) || e).slice(0, 120) };
   }
 }
 
