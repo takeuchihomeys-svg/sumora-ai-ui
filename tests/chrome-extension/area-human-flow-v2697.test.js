@@ -53,7 +53,13 @@ console.log("\n■ ② 人の順番: 所在地絞り込み → 該当の地域 �
 console.log("\n■ ③ 既にチェック済みでも「確定してリストへ」まで進む");
 {
   ok("チェック済みでもスキップして閉じる（確定を押す）", /選択済み → 選び直さず「確定してリストへ」まで進みます/.test(ps));
-  ok("チェック済みの区も覚える（モーダルが閉じても場所ありと分かる）", /checkedInputs\.forEach\(function \(inp\) \{ _noteWardPicked\(inp\.value, ""\); \}\)/.test(ps));
+  /**
+   * 2026-11-14 竹内さん「なぜか地域を都島区を押してしまっている」:
+   *   「選ばれている」の判定を **欲しい区が全部そろっているか**（`isAllWantedWardsChosen`）に変えた。
+   *   ⚠ 旧の「1区でも checked なら選び直さない」が原因で、前のお客様の**都島区だけ**が入った。
+   */
+  ok("チェック済みの区も覚える（モーダルが閉じても場所ありと分かる）",
+    /_noteWardPicked\(inp\.value, ""\)/.test(ps) && /function isAllWantedWardsChosen/.test(ps));
 }
 
 console.log("\n■ ④ 駅も同じ5段階（沿線・駅絞り込み → 沿線 → 駅の設定へ進む → 駅 → 確定してリストへ）");

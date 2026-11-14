@@ -2561,7 +2561,9 @@ async function _recTick(gen) {
  *     読めない時は null（今まで通り・写真だけ）。
  */
 async function _recordOneShot() {
-  var ops = null;
+    var ops = null;
+    /** 2026-11-14: なぜ操作が取れなかったかを残す印（診断用） */
+    var _lastOpsWhy = null;
   var siteName = null;
   try {
     // 録画しているタブに「直近の操作をください」と聞く（page-script が答える）
@@ -2589,14 +2591,29 @@ async function _recordOneShot() {
         var tab = order[ti];
         siteName = siteName || (/realnetpro\.com/.test(tab.url) ? "realpro" : (/itandibb\.com/.test(tab.url) ? "itandi" : "reins"));
         var resp = await chrome.tabs.sendMessage(tab.id, { type: "axlx-recent-ops" }).catch(function () { return null; });
+        /**
+         * 2026-11-14 竹内さん「データベースの写真から学習する」:
+         *   ⚠ 実測で **写真200枚すべて `shot_ops` が空**（写真は200枚とも撮れている）。
+         *     どこで落ちているか（タブに届いていない／輪が空／拾えていない）を**DBに残す**。
+         *     → 1枚ごとに `axlx_rec_ops` に理由を残し、**最後の理由を写真の行にも入れる**
+         *       （`shot_ops_diag` の代わりに `shot_w`/`shot_h` は使わず、点検用の小さな印を送る）。
+         */
+        if (!resp) {
+          _lastOpsWhy = "no_answer:tab" + tab.id;
+        } else if (!Array.isArray(resp.ops)) {
+          _lastOpsWhy = "ops_not_array:tab" + tab.id;
+        } else if (!resp.ops.length) {
+          _lastOpsWhy = "ring_empty:tab" + tab.id + (resp.diag ? ":ring" + resp.diag.ring + ":seen" + resp.diag.seen + ":watch" + resp.diag.watching : "");
+        }
         if (resp && Array.isArray(resp.ops) && resp.ops.length) {
           ops = resp.ops;
+          _lastOpsWhy = "ok:tab" + tab.id + ":" + resp.ops.length + "件";
           siteName = /realnetpro\.com/.test(tab.url) ? "realpro" : (/itandibb\.com/.test(tab.url) ? "itandi" : "reins");
         }
       }
-      /** どのタブから何件取れたかを残す（次に空だった時の手がかり） */
+      /** どのタブから何件取れたか・なぜ取れなかったかを残す（次に空だった時の手がかり） */
       try {
-        var d = {}; d.axlx_rec_ops = { at: Date.now(), tabs: order.length, got: ops ? ops.length : 0, site: siteName };
+        var d = {}; d.axlx_rec_ops = { at: Date.now(), tabs: order.length, got: ops ? ops.length : 0, site: siteName, why: _lastOpsWhy || null };
         chrome.storage.local.set(d);
       } catch (_) {}
     }

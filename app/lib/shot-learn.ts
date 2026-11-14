@@ -284,6 +284,9 @@ export function learnFromShots(
     shot_ops?: unknown;
     shot_learn?: unknown;
     created_at?: unknown;
+    /** 2026-11-14: 操作の並びが無い回でも、押した欄（順番つき）から学べるようにする */
+    point_fields?: unknown;
+    field_order?: unknown;
   }>,
 ): {
   screens: Record<string, { n: number; lastPressed: Array<{ name: string; n: number }>; steps: Array<{ from: string; to: string; n: number }>; fields: Array<{ name: string; kind: string; n: number }> }>;
@@ -300,14 +303,37 @@ export function learnFromShots(
      *   ⚠ 旧は `s.shot_ops` をそのまま読んでいたので、null が混ざると例外で**学習が丸ごと止まった**。
      */
     if (!s0 || typeof s0 !== "object") continue;
-    const s = s0 as { url?: unknown; shot_ops?: unknown; shot_learn?: unknown; created_at?: unknown };
-    const ops = Array.isArray(s.shot_ops)
+    const s = s0 as { url?: unknown; shot_ops?: unknown; shot_learn?: unknown; created_at?: unknown; point_fields?: unknown; field_order?: unknown };
+    let ops = Array.isArray(s.shot_ops)
       ? (s.shot_ops as unknown[])
         .map((o) => (o && typeof o === "object" ? o as Record<string, unknown> : null))
         .filter((o): o is Record<string, unknown> => !!o)
         .map((o) => ({ f: typeof o.f === "string" ? String(o.f).slice(0, 30) : "" }))
         .filter((o) => o.f)
       : [];
+    /**
+     * 2026-11-14 竹内さん「データベースの写真から学習する」:
+     *   ⚠ 実測で写真 **200枚すべて `shot_ops` が空**だった（写真は撮れている）。
+     *     そのため `shot_learn` も `screen_flow` も永久に空のまま＝**写真から何も学べていない**。
+     *   → `shot_ops` が空でも、**`field_order`（押した順番）** があればそれで学ぶ。
+     *     `field_order` は人の操作から作られる（`point_fields` の順）ので、順番として使える。
+     *     ⚠ `field_order` も無ければ `point_fields` のキー順で代用する（順番の精度は落ちるが、
+     *       「どの画面でどの欄を触るか」は学べる）。
+     */
+    if (!ops.length) {
+      const fo = Array.isArray(s.field_order) ? (s.field_order as unknown[]) : [];
+      const names = fo.map((x) => norm(x)).filter((x) => x && isLearnableName(x));
+      if (names.length) {
+        ops = names.slice(0, 60).map((f) => ({ f }));
+      } else {
+        const pf = (s.point_fields && typeof s.point_fields === "object" && !Array.isArray(s.point_fields))
+          ? (s.point_fields as Record<string, unknown>) : null;
+        if (pf) {
+          const keys = Object.keys(pf).filter((k) => isLearnableName(k)).slice(0, 60);
+          if (keys.length) ops = keys.map((f) => ({ f }));
+        }
+      }
+    }
     // 写真から読んだ欄（あれば）
     const learnedFields = (() => {
       const sl = (s.shot_learn && typeof s.shot_learn === "object" ? s.shot_learn : null) as Record<string, unknown> | null;

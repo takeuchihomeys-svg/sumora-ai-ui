@@ -382,6 +382,17 @@
     } catch (_) { return null; }
   }
   /**
+   * 2026-11-14: `_recentOps` の**中身と診断**を一緒に返す（なぜ空かを background が残せるように）。
+   */
+  function _recentOpsWithDiag() {
+    try {
+      return {
+        ops: _recentOps() || [],
+        diag: { ring: _opsRing.length, seen: _opsSeen, asked: _opsAsk, watching: watching, shooting: _shooting },
+      };
+    } catch (_) { return { ops: [], diag: null }; }
+  }
+  /**
    * 2026-11-13 竹内さん「録画から学習できるのか」:
    *   録画モードの写真にも**押した操作**を付ける（押す順番の材料）。
    *   background が「直近の操作をください」と聞いてくるので答える。
@@ -391,7 +402,10 @@
     if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
       chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
         if (!msg || msg.type !== "axlx-recent-ops") return;
-        try { sendResponse({ ok: true, ops: _recentOps() || [] }); } catch (_) {}
+        try {
+          var out = _recentOpsWithDiag();
+          sendResponse({ ok: true, ops: out.ops || [], diag: out.diag });
+        } catch (_) { try { sendResponse({ ok: true, ops: [] }); } catch (__) {} }
         return true;
       });
       /**

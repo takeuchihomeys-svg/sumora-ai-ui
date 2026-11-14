@@ -2178,10 +2178,34 @@
     return btn ? btn.classList.contains('town_search_Y') : false;
   }
 
-  // 市区郡チェックボックス（city_code[]）が1つ以上 checked か確認（DOMフォールバック）
+  /**
+   * 市区郡チェックボックス（city_code[]）が**1つ以上** checked か（DOMフォールバック）。
+   *
+   * ⚠ 2026-11-14 竹内さん「なぜか地域を都島区を押してしまっている」:
+   *   **この関数を「もう選ばれている」の判定に使ってはいけない**。
+   *   リアプロは前のお客様の区を残すので、**都島区が1つ残っているだけ**でも true になる。
+   *   → その結果「選び直さずに確定」して、**頼んだ3区が入らず都島区だけ**になった（本番の点検記録で確認）。
+   *   「選ばれている」の判定は **`isAllWantedWardsChosen(wantCodes)`** を使う。
+   */
   function isWardChecked() {
     if (isWardButtonY()) return true; // ボタンY状態が最も確実
     return document.querySelectorAll('label input[name="city_code[]"]:checked').length > 0;
+  }
+
+  /**
+   * 2026-11-14: **欲しい区が全部そろっているか**（1つでも欠けたら false）。
+   *   ⚠ 1区でも入っていれば true にする `isWardChecked` とは**別物**（取り違えると都島区だけ入る）。
+   * @param {string[]} wantCodes 入れたい区のコード（cond.city_codes）
+   * @returns {{all:boolean, missing:string[], stale:string[], checked:string[]}}
+   */
+  function isAllWantedWardsChosen(wantCodes) {
+    var want = (Array.isArray(wantCodes) ? wantCodes : []).map(String).filter(Boolean);
+    var checked = Array.prototype.slice
+      .call(document.querySelectorAll('label input[name="city_code[]"]:checked'))
+      .map(function (inp) { return String(inp.value); });
+    var missing = want.filter(function (c) { return checked.indexOf(c) < 0; });
+    var stale = checked.filter(function (c) { return want.indexOf(c) < 0; });
+    return { all: want.length > 0 && missing.length === 0 && stale.length === 0, missing: missing, stale: stale, checked: checked };
   }
 
   // 完全マウスイベントシーケンスでクリック（mousedown→mouseup→click）
@@ -2541,6 +2565,14 @@
      *     `stall_recover_search` でやっと押す＝遅すぎる）。
      *   → **予約済みなら二重に予約しない**（`_axSearchLookTimer` を持つ）。
      *     さらに「見直す」で待つのは**1回だけ**（`_axSearchLookCount` で数え、2回目以降は待たずに押す）。
+     *
+     * 2026-11-14 竹内さん「検索ボタンもおしていなかった」→ 実測で **14回**続いていた:
+     *   ⚠ 上の直しだけでは足りなかった。タイマー発火時に `_axSearchLookAt = 0` に戻していたので、
+     *     **次の `clickSearch` でまた「見直す」に入り直す**（`_axSearchLookedOver=false` も戻すため）。
+     *     ＝**待つ → 押す**の筈が **待つ → 待つ → 待つ…** の無限ループになり、検索に一度も到達しない。
+     *   → **見直すのは「この回で1回だけ」**にする:
+     *     ・`_axSearchLookDone` を立てたら、もう「見直す」には入らない（タイマー発火後も戻さない）
+     *     ・リセットは**検索を押した後**か**次の検索の開始時**（`fillRealpro` の頭）だけ
      */
     var _nowMs = Date.now();
     var _lookAt = Number(window._axSearchLookAt) || 0;
@@ -2549,7 +2581,14 @@
       if (_audit) _auditStepP('search_look_skip', '予約済み');
       return;
     }
-    if (!window._axSearchLookedOver) {
+    /**
+     * ⚠ この回で既に「見直す」を済ませている → **待たずに押す**（無限ループ防止）。
+     *   旧は毎回 false に戻していたので 14回続いた（本番の点検記録で確認）。
+     */
+    if (window._axSearchLookDone) {
+      if (_audit) _auditStepP('search_look_done', '見直し済み→押す');
+      window._axSearchLookedOver = false;
+    } else if (!window._axSearchLookedOver) {
       window._axSearchLookedOver = true;
       window._axSearchLookAt = _nowMs;
       var _lookMs = humanRand(1000, 2200);
@@ -2558,13 +2597,13 @@
       else if (Math.random() < 0.03) _lookMs += 2600 + Math.floor(Math.random() * 2900);
       _auditStepP('search_look', Math.round(_lookMs) + 'ms');
       /**
-       * ⚠ タイマーは**1本だけ**。発火したら必ずフラグを戻し、**そのまま検索へ進む**
-       *   （`clickSearch` を呼び直すと、また「見直す」判定に入る余地がある）。
-       *   → 発火時は `_axSearchLookAt` を**未来にして**再入場を防ぎ、`clickSearch` で本体へ入る。
+       * ⚠ タイマーは**1本だけ**。発火したら**この回の見直しは済み**にして、そのまま検索へ進む。
+       *   `_axSearchLookDone` を立てるので、次に `clickSearch` が来ても**待たずに押す**。
        */
       try { if (window._axSearchLookTimer) clearTimeout(window._axSearchLookTimer); } catch (_) {}
       window._axSearchLookTimer = setTimeout(function () {
         try {
+          window._axSearchLookDone = true;      // ← この回はもう待たない（無限ループ防止）
           window._axSearchLookedOver = false;
           window._axSearchLookAt = 0;
           clickSearch();
@@ -3161,6 +3200,18 @@
   function fillRealpro(cond) {
     _stGapFast = !!(cond && cond.commute && cond.station_names && cond.station_names.length > 60);
     /**
+     * 2026-11-14 竹内さん「検索ボタンもおしていなかった」:
+     *   「見直す間」の印（`_axSearchLookDone`）は**検索1回につき1回**だけにする。
+     *   → 新しい検索の開始（ここ）で必ず戻す。戻さないと2回目以降は見直しをせず、
+     *     戻し忘れると逆に**永久に検索しない**（本番で14回ループした）。
+     */
+    try {
+      window._axSearchLookedOver = false;
+      window._axSearchLookDone = false;
+      window._axSearchLookAt = 0;
+      if (window._axSearchLookTimer) { clearTimeout(window._axSearchLookTimer); window._axSearchLookTimer = null; }
+    } catch (_) {}
+    /**
      * 2026-11-11 竹内さん「まだ自動モード検索されない。なんで改善したはずが改善されていないのか」:
      *   推測で直すのをやめ、**入口で何が来たか**を残す（`axlx_fill_entry`）。
      */
@@ -3255,6 +3306,7 @@
         window.addEventListener('pagehide', function () {
           if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
           if (window.__axStallWatch) { clearInterval(window.__axStallWatch); window.__axStallWatch = null; }
+          if (window.__axFastSearchWatch) { clearInterval(window.__axFastSearchWatch); window.__axFastSearchWatch = null; }
           window._axFillRunning = false;
         });
       }
@@ -3265,6 +3317,45 @@
     //   点検に「どこで止まったか」を残す。
     (function () {
       var _lastCount = -1, _sameSince = Date.now();
+      /**
+       * 2026-11-14 竹内さん「検索ボタンも押していなかった」:
+       *   ⚠ 旧は止まってから **180秒**待ってやっと検索を押していた（実測：`search_look` が14回続いた後
+       *     `duplicate-call-ignored` で終わり、検索は押されていない）。
+       *   → **もっと早い保険**を入れる: 条件が入っていて・小窓が閉じていて・
+       *     まだ検索を押していない状態が **25秒**続いたら、**検索を押す**（人がやったのと同じ）。
+       *     ⚠ 場所が入っていなければ押さない（全件検索の防止）。
+       */
+      var _searchPushed = false;
+      var _idleSince = Date.now();
+      var _fastWatch = setInterval(function () {
+        try {
+          if (_doneNotified || _searchPushed) { clearInterval(_fastWatch); return; }
+          if (window._axSearchPressedAt) { _searchPushed = true; clearInterval(_fastWatch); return; }
+          var opsN = _audit && _audit.ops ? _audit.ops.length : 0;
+          if (opsN !== window.__axFastCount) { window.__axFastCount = opsN; _idleSince = Date.now(); return; }
+          var modalOpen = (function () {
+            try {
+              var w = document.querySelector('.this_window, [role="dialog"], .modal, .modal_wrap');
+              return !!(w && (w.offsetParent !== null || (w.getClientRects && w.getClientRects().length)));
+            } catch (_) { return false; }
+          })();
+          if (modalOpen) { _idleSince = Date.now(); return; }   // 小窓が開いている間は押さない（確定が先）
+          if (Date.now() - _idleSince < 25000) return;
+          var g = _axGateCheck();
+          var areaMissing = g.errors.some(function (m) { return String(m).indexOf('場所') === 0; });
+          if (areaMissing) {
+            _auditStepP('search_guard_area_missing', '場所が入っていないので押さない: ' + g.errors.join(' / ').slice(0, 100));
+            clearInterval(_fastWatch);
+            return;
+          }
+          console.warn('[AX] 25秒 検索が押されていない → 検索を押します');
+          _auditStepP('search_guard_press', '25秒押されていない → 検索を押す');
+          _searchPushed = true;
+          clearInterval(_fastWatch);
+          try { clickSearch(); } catch (_) {}
+        } catch (_) {}
+      }, 2500);
+      window.__axFastSearchWatch = _fastWatch;
       window.__axStallWatch = setInterval(function () {
         try {
           if (_doneNotified) { clearInterval(window.__axStallWatch); return; }
@@ -4365,7 +4456,55 @@
 
             function doAfterWard() {
               console.log('[AX] STEP3完了: 市区郡クリック済 → next_step_button2 確認');
-              _auditStepP('ward', null);
+              /**
+               * 2026-11-14 竹内さん「なぜか地域を都島区を押してしまっている」「検索ボタンも押していなかった」:
+               *   ⚠ 旧は `clickWardPrecise()` が true を返した**直後**に `doAfterWard()` を呼んでいた。
+               *     `clickWardPrecise` は**カーソルを動かしてから押す（非同期・200〜900ms）**ので、
+               *     true は「押し始めた」だけ。**欲しい区が本当に入ったか確かめずに確定**していた。
+               *     そのため直前に残っていた**都島区だけ**が入り、頼んだ3区が入らなかった
+               *     （点検記録: `page:ward` の直後に `確定してリストへ`・
+               *      `gate_retry: 場所（3区）が画面に入っていない（区 0・駅 0）`）。
+               *   → **確定する前に、欲しい区が全部そろったかを確かめる**（最大8回・600ms間隔）。
+               *     そろっていなければ足す。それでもだめなら**確定せずに中止**
+               *     （誤った地域で検索するより、止まって理由を残す方がよい）。
+               */
+              (function _verifyThenConfirm(tries) {
+                var n = tries || 0;
+                var chk = isAllWantedWardsChosen(cond.city_codes);
+                var want = (cond.city_codes || []).map(String).filter(Boolean);
+                if (want.length === 0) { _auditStepP('ward', null); _afterWardConfirmed(); return; }
+                if (chk.all) {
+                  if (n) _auditStepP('ward_verified', n + '回目でそろった（' + want.length + '区）');
+                  _auditStepP('ward', null);
+                  _afterWardConfirmed();
+                  return;
+                }
+                if (n >= 8) {
+                  var msg = '地域がそろいません（欲しい' + want.length + '区・入った' + chk.checked.length + '区・足りない' + chk.missing.length + '）';
+                  _auditStepP('ward_verify_fail', msg + ' 入った:[' + chk.checked.join(',') + '] 足りない:[' + chk.missing.join(',') + ']');
+                  console.warn('[AX] ' + msg + ' → 誤った地域で検索しないため中止します');
+                  showWarnToast(msg);
+                  notifyDone('AXLX_AREA_MISMATCH: ' + msg);
+                  return;
+                }
+                // まだそろっていない → 足す（余計は外す）
+                if (n === 0) {
+                  console.log('[AX] 確定前に確認: そろっていません（入った' + chk.checked.length + '・足りない' + chk.missing.length + '）→ 足します');
+                }
+                try {
+                  chk.stale.forEach(function (code) {
+                    var inp = document.querySelector('label input[name="city_code[]"][value="' + String(code) + '"]');
+                    var lbl = inp && inp.closest ? inp.closest('label') : null;
+                    if (lbl) simulateClick(lbl);
+                  });
+                } catch (_) {}
+                try { if (chk.missing.length) clickWardPrecise([wardFull, wardShort]); } catch (_) {}
+                setTimeout(function () { _verifyThenConfirm(n + 1); }, 620 + Math.floor(Math.random() * 260));
+              })(0);
+            }
+
+            /** 地域がそろった後の流れ（今までの doAfterWard の中身） */
+            function _afterWardConfirmed() {
               if (hasDetailArea) {
                 // STEP3後確認: div.next_step_button2 が見えることを確認
                 // 見えない場合 = 市区郡がトグルで解除された → 再クリックして再選択
@@ -4446,32 +4585,66 @@
                   console.log('[AX] STEP2: 既に町字ページ → STEP4へ直行');
                   return true;
                 }
-                if (isWardChecked()) {
-                  // 連続検索対策: checked済みが「今回の顧客の区」か検証する。
-                  // 前顧客の選択が残っているとそのまま検索されてしまうため、
-                  // checked値が今回の city_codes に含まれない場合は解除して選び直す
-                  var checkedInputs = Array.prototype.slice.call(document.querySelectorAll('label input[name="city_code[]"]:checked'));
-                  var wantCodes = (cond.city_codes || []).map(String);
-                  var staleInputs = checkedInputs.filter(function(inp) { return wantCodes.indexOf(String(inp.value)) === -1; });
-                  if (wantCodes.length === 0 || checkedInputs.length === 0 || staleInputs.length === 0) {
-                    // 検証不能（期待コードなし/チェックボックス未描画）または一致 → 従来通りスキップ
-                    // ⚠ 2026-11-11 竹内さん「1 所在地絞り込み 2 該当する地域 3 確定してリストへ の順番におす」:
-                    //   既にチェック済みでも**確定してリストへ は押す**（押さないとサイトに反映されない事がある）。
-                    checkedInputs.forEach(function (inp) { _noteWardPicked(inp.value, ""); });
-                    prefClicked = false;
-                    console.log('[AX] STEP2: city_code[]選択済み → 選び直さず「確定してリストへ」まで進みます');
-                    return true;
-                  }
-                  console.log('[AX] STEP2: 前顧客のcity_code残留を検出（' + staleInputs.length + '件）→ 解除して選び直し');
-                  staleInputs.forEach(function(inp) {
-                    var lbl = inp.closest ? inp.closest('label') : null;
-                    if (lbl) enqueueHumanClick(lbl, function(el) { simulateClick(el); }, 420, 1000); // トグルで解除（順次）
-                  });
-                  if (clickWardPrecise([wardFull, wardShort])) { prefClicked = false; return true; }
-                  return false; // 市区郡ラベル未描画 → 次ポーリングで再試行
+                /**
+                 * 2026-11-14 竹内さん「なぜか地域を都島区を押してしまっている。通常モードではちゃんと光るのに
+                 *   ちゃんと選択できていなかった。検索ボタンも押していなかった」:
+                 *
+                 * ⚠ **原因はここだった**（本番の点検記録で確認）:
+                 *   `isWardChecked()` は「**1区でも checked なら true**」だった。
+                 *   リアプロは**前のお客様の区を残す**ので、たまたま都島区が残っていると
+                 *   「もう選ばれている」と判断して **西区・北区・中央区を1つも押さずに**「確定してリストへ」へ進み、
+                 *   **都島区だけ**が入った（点検記録: `page:ward` の直後に `確定してリストへ`・
+                 *   `gate_retry: 場所（3区）が画面に入っていない（区 0・駅 0）`）。
+                 *
+                 * → 「選ばれている」の判定を **欲しい区が全部そろっているか** に変える。
+                 *   `wantCodes` があればその全部が checked、無ければ今まで通り。
+                 *   ⚠ 足りない区は `clickWardPrecise` が**足す**（チェック済みは押さない＝外さない）。
+                 */
+                var _chk = isAllWantedWardsChosen(cond.city_codes);
+                var _want = (cond.city_codes || []).map(String).filter(Boolean);
+                var _missing = _chk.missing;
+                var _stale = _chk.stale;
+                if (_chk.all) {
+                  // 欲しい区が全部そろっている → 押し直さずに「確定してリストへ」へ進む
+                  try {
+                    if (_audit) _auditStepP('ward_already_ok', _want.length + '区すべて選択済み（押し直さない）');
+                  } catch (_) {}
+                  Array.prototype.slice.call(document.querySelectorAll('label input[name="city_code[]"]:checked')).forEach(function (inp) { _noteWardPicked(inp.value, ""); });
+                  prefClicked = false;
+                  console.log('[AX] STEP2: 欲しい ' + _want.length + '区がすべて選択済み → 選び直さず「確定してリストへ」まで進みます');
+                  return true;
                 }
-                if (clickWardPrecise([wardFull, wardShort])) { prefClicked = false; return true; }
+                if (_want.length === 0 && _chk.checked.length > 0) {
+                  // 期待コードが無い（検証不能）→ 従来通りスキップ
+                  Array.prototype.slice.call(document.querySelectorAll('label input[name="city_code[]"]:checked')).forEach(function (inp) { _noteWardPicked(inp.value, ""); });
+                  prefClicked = false;
+                  return true;
+                }
+                /**
+                 * 足りない区がある／余計な区が残っている → **足して直す**。
+                 *   ・余計（前のお客様の区）は外す
+                 *   ・足りない区を押す（`clickWardPrecise` はチェック済みを押さない）
+                 */
+                try {
+                  if (_audit) {
+                    _auditStepP('ward_fix', '足りない区 ' + _missing.length + '件（' + _missing.join(',') + '）・余計 ' + _stale.length + '件（' + _stale.join(',') + '）');
+                  }
+                } catch (_) {}
+                console.log('[AX] STEP2: 地域を選び直します（足りない ' + _missing.length + '件・余計 ' + _stale.length + '件）');
+                _stale.forEach(function (code) {
+                  try {
+                    var inp = document.querySelector('label input[name="city_code[]"][value="' + String(code) + '"]');
+                    var lbl = inp && inp.closest ? inp.closest('label') : null;
+                    if (lbl) enqueueHumanClick(lbl, function (el) { simulateClick(el); }, 420, 1000); // トグルで解除（順次）
+                  } catch (_) {}
+                });
+                /**
+                 * ⚠ 市区郡のラベルがまだ描画されていない（都道府県ページに居る）時は
+                 *   **大阪府を押して**市区郡ページへ進む（ここを飛ばすと永久に待つ）。
+                 */
+                if (_missing.length && clickWardPrecise([wardFull, wardShort])) { prefClicked = false; return true; }
                 if (clickByText(['大阪府'])) { prefClicked = true; return true; }
+                return false; // 市区郡ラベル未描画 → 次ポーリングで再試行
                 return false;
               },
               function() {
