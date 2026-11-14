@@ -113,7 +113,15 @@ export type SupervisorInput = {
    *   **今日なにを強化したか**（`learn_improvements` の集計）。
    *   ⚠ 判断の材料ではなく**実績**（点は上げない・効いたかは数字で確かめる）。
    */
-  improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
+  improvements?: {
+    total: number;
+    by_area: Array<{ area: string; n: number }>;
+    /**
+     * ★ 2026-11-15 竹内さん「このように進化した部分ちゃんと統括にはいるようにする」:
+     *   直した**中身**（題・なぜ・どう・効果）。統括が言葉にする（点は上げない）。
+     */
+    recent?: Array<{ at: string; area: string; title: string; why: string; how: string; effect: string }>;
+  } | null;
   /**
    * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
    *   **実際の検索の結果**（`search_audits` の集計）。これが無いと統括は現場の現実を知らない
@@ -526,6 +534,28 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
   lines.push(`  材料の揃い: ${coverage}/100（順番${next}通り・場所${points}個・開き方${opens}個・画面${screens}種類・一連${sequence}手）`);
   lines.push(`  弱い所: ${weakN}件`);
   if (block) lines.push(`  ⚠ ${block}`);
+  /**
+   * ★ 2026-11-15 竹内さん「このように進化した部分ちゃんと統括にはいるようにする」
+   *   「そうすればより強化されていくから強化していくようにする」
+   *
+   *   ⚠ 旧は `improvements` を**点数にも言葉にも使っていなかった**（材料として渡すだけ）。
+   *     統括は「5件強化した」とは言えても、**何を直したか**を言葉にしていなかった。
+   *   → **直した中身を統括の言葉に出す**（題だけ・最大5件）。
+   *     ⚠ 点は上げない（強化した事で点数を甘くしない＝弱い所は弱い所のまま）。
+   *     ⚠ 「次にやる事」の**前**に出す（何を直したかを先に言い、その上で次を決める）。
+   */
+  const impRows = inp.improvements && Array.isArray(inp.improvements.recent) ? inp.improvements.recent : [];
+  if (impRows.length) {
+    lines.push(`  今日 強化した事（${num(inp.improvements?.total)}件のうち ${Math.min(5, impRows.length)}件）:`);
+    for (const r of impRows.slice(0, 5)) {
+      const area = String((r as { area?: unknown }).area ?? "");
+      const title = String((r as { title?: unknown }).title ?? "").slice(0, 70);
+      const effect = String((r as { effect?: unknown }).effect ?? "").slice(0, 60);
+      lines.push(`    ・[${area}] ${title}${effect ? ` … ${effect}` : ""}`);
+    }
+  } else if (inp.improvements && num(inp.improvements.total) > 0) {
+    lines.push(`  今日 強化した事: ${num(inp.improvements.total)}件（中身はまだ記録されていません）`);
+  }
   if (delta) {
     const up = (v: number, label: string) => {
       if (v > 0) return `${label}+${v}`;
@@ -704,7 +734,11 @@ function buildMeeting(m: {
   scene_missing_names?: string;
   stopped_scene?: string | null;
   /** 2026-11-14: 今日の強化の実績（点は上げない・根拠に出すだけ） */
-  improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
+  improvements?: {
+    total: number;
+    by_area: Array<{ area: string; n: number }>;
+    recent?: Array<{ at: string; area: string; title: string; why: string; how: string; effect: string }>;
+  } | null;
 }): SupervisorAdvice["meeting"] {
   const num = (v: unknown): number => {
     const n = typeof v === "number" ? v : Number(v);
@@ -829,13 +863,6 @@ function buildMeeting(m: {
     if (d.rows) parts.push(`記録${d.rows > 0 ? "+" : ""}${d.rows}`);
     if (d.next) parts.push(`順番${d.next > 0 ? "+" : ""}${d.next}`);
     if (d.points) parts.push(`場所${d.points > 0 ? "+" : ""}${d.points}`);
-    /**
-     * 2026-11-14 竹内さん「ちゃんと判断できるようになっているか」:
-     *   ⚠ `opens`（押したら何が開くか）が `parts` に入っていなかったので、
-     *     `delta` が `opens` だけ動いた時に**「前回から」が出なかった**（実測: opens -13 なのに黙っていた）。
-     *   → 5つ全部を出す（記録・順番・場所・開き方・弱い所）。
-     */
-    if (d.opens) parts.push(`開き方${d.opens > 0 ? "+" : ""}${d.opens}`);
     if (d.weak) parts.push(`弱い所${d.weak > 0 ? "+" : ""}${d.weak}`);
     if (parts.length) today.push(`前回から: ${parts.join("・")}`);
   }
