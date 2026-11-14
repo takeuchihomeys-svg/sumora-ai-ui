@@ -128,6 +128,24 @@ const TODAY: Improvement[] = [
     verify: "npx tsx --env-file=.env.local scripts/shot-learn.ts --dry-run --limit=2",
     version: null,
   },
+  {
+    area: "統括",
+    title: "統括の決定を実行する側が繋がっていなかった（actions しか読んでいなかった）",
+    why: "実測: supervisor-do が meeting.learning_tasks を1箇所も読んでいなかった。統括が『次に学ぶ事』を決めても誰も実行しない（判断と実行が切れていた）。",
+    how: "fetchAdv が learning_tasks を読み、種類ごとに実行できるようにした（fix_scene / fix_record は無料・photo_learn は --yes-cost の時だけ・need_human は竹内さん）。--run=task:N で実行。",
+    effect: "統括が決めた順番どおりに学びが進む（無料→有料・人が要る物は止まる）",
+    verify: "npx tsx --env-file=.env.local scripts/supervisor-do.ts",
+    version: null,
+  },
+  {
+    area: "統括",
+    title: "強化の輪（6つ）を1コマンドで点検できるようにした",
+    why: "実測: 今日だけで『輪が切れている』を3回踏んだ（RLS で保存できていない・learning_tasks を実行する側が読んでいない・field_order を見落としていた）。目で追うと見落とす。",
+    how: "audit-loop.ts を作り、① 記録（seen0 が消えたか）→ ② 材料（img/body の割合）→ ③ 判断（場面の手順）→ ④ 決定（次に学ぶ事）→ ⑤ 実行（種類が揃っているか）→ ⑥ 確認（判断が保存されているか）を1回で見る。切れている所に『次にやる事』を出す。",
+    effect: "輪のどこが切れているかが1コマンドで分かる（強化されているつもりを防ぐ）",
+    verify: "npx tsx --env-file=.env.local scripts/audit-loop.ts",
+    version: null,
+  },
 ];
 
 void (async () => {
