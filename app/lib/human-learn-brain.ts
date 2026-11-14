@@ -28,6 +28,7 @@
 
 import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, planLearnFromWeak, learnSequenceFromShots, isLearnableName } from "./shot-learn";
 import { superviseLearn, type SupervisorAdvice, type SupervisorInput } from "./learn-supervisor";
+import { findWeakSteps } from "./learn-flow-steps";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -702,6 +703,28 @@ export function buildHumanLearnBundle(
   for (const r of list) {
     const sl = r.shot_learn;
     if (!sl || typeof sl !== "object") continue;
+    /**
+     * ⚠ 2026-11-14 竹内さん「1から順に進めていく」→ **実測で判明（写真の名前は信用できない）**:
+     *   1280px・画質45% の写真は**文字が潰れている**。AI に読ませると
+     *   **作り話の名前**が返ってきた（実測9枚すべて）:
+     *     ビジオポイント / iandji初月で0円 / 全套舎キヨピー / リアプログで自動検索 /
+     *     ilandRで作り直す / まりめの検索条件 / 重ん購購入 / 記掲物件から
+     *   → 本物は「ピンポイント」「近い駅で検索」「リアプロで賃貸検索」「全条件キープ」。
+     *   ⚠ これを `photoFields` に入れると、**記録の正しい名前と突き合わせて
+     *     「記録と写真で種類が違う」の嘘**を作る（統括が永久に直せない指摘を出す）。
+     *
+     *   → **写真の名前は使わない**（`by: "llm"` の物は名前を信用しない）。
+     *     種類と場所だけを使う（`kindFromPhoto`）。
+     *   ⚠ 決定論（`by: "deterministic"`）は**記録の名前から作っている**ので、そちらは正しい。
+     */
+    const by = String((sl as Record<string, unknown>).by ?? "");
+    /**
+     * ⚠ `llm`（1枚から読んだ）も `llm_run`（連続画像の多数決）も**名前は信用しない**。
+     *   多数決でも「磁性会社こらみ」のような誤読は残りうる（実測）。
+     *   種類と場所だけ使う（`kindFromPhoto`）。
+     *   ⚠ 決定論（`by: "deterministic"`）は**記録の名前から作っている**ので、そちらは正しい。
+     */
+    if (by === "llm" || by === "llm_run") continue;
     const fs2 = (sl as Record<string, unknown>).fields;
     if (!Array.isArray(fs2)) continue;
     for (const f of fs2) {
@@ -735,6 +758,32 @@ export function buildHumanLearnBundle(
   } else if (Object.keys(points).length) {    // 写真が1枚も無い時も、名前から推した分を除いた「まだ分からない物」を弱い所に残す
     weak = findWeakPoints(points as never, [], []);
   }
+  /**
+   * ★ 2026-11-14 竹内さん「直近の通常モードの録画から押し方プルダウンの場所、
+   *   徒歩が消えないようにする部分学習して改善する」
+   *
+   *   ⚠ リアプロは**移動手段（`transportation_id`）を選ぶと下の分数（`required_time`）をリセットする**。
+   *     人が「分数 → 移動手段」の順でやると分数が消える。
+   *   実測（録画 mwgf1gx3_n1k5 の操作）:
+   *     `transportation_id → 分 → transportation_id → …` ＝ **徒歩を2回選んでいる**（消えた疑い）。
+   *
+   *   → 手本（操作の並び）から**徒歩の順番の危険**を見つけて弱い所に足す
+   *     （統括が「移動手段を先に固定する」と判断できるように）。
+   *   ⚠ 順番が全部正しい時は何も足さない（無駄な指摘を出さない）。
+   */
+  try {
+    const flowsForWalk: Array<Array<{ f?: unknown }>> = [];
+    for (const r of list) {
+      const ops = sequencesOf(r);
+      for (const s of ops) flowsForWalk.push(s.map((x) => ({ f: x.f })));
+    }
+    const steps = findWeakSteps(flowsForWalk);
+    for (const s of steps) {
+      if (!weak.some((w) => w.kind === s.kind)) {
+        weak.push({ kind: s.kind, name: "transportation_id / required_time", why: s.why, next: s.next });
+      }
+    }
+  } catch { /* 徒歩の判定が失敗しても、他の弱い所は使う */ }
   /**
    * 2026-11-14 竹内さん「学習の統括が強化されるように、その点も徹底する」:
   /**

@@ -61,13 +61,42 @@ export function sceneOfOp(kind: string | null | undefined): FlowScene {
   const raw = String(kind ?? "");
   const m = raw.match(/^([a-z]+):(.*)$/i);
   const name = (m ? m[2] : raw).trim();
-  const n = name.toLowerCase();
+  /**
+   * ⚠ 2026-11-14 竹内さん「1から順に進めていく」→ **実測で判明（統括の指摘が誤っていた原因）**:
+   *   実際の欄の名前は **`左の検索｜span`** のように
+   *   **「左の」の接頭辞と「｜span」（タグ名）が付く**。
+   *   旧の判定は `検索$`（検索で終わる）だったので、**1つも当たらなかった**（実測）:
+   *     左の検索｜span            → その他（本当は「検索を押す」）
+   *     左の検索｜div.go_search   → その他（本当は「検索を押す」）
+   *     左の住居検索｜a.text      → その他（本当は「検索を押す」）
+   *     左のnext｜span            → その他（本当は「次のページへ」）
+   *   → そのため統括が「**『検索を押す』の手本が無い**」と**誤って**言っていた
+   *     （実データでは人の押下が **25件**ある）。
+   *   → **接頭辞と「｜タグ名」を落としてから判定する**。
+   */
+  const cleaned = name
+    .replace(/^(左の|右の|上の|下の|中央の)/, "")     // 画面のどこか（拡張が付けている）
+    .replace(/｜[^｜]*$/, "")                        // 「｜span」「｜div.go_search」「｜a.text」
+    .trim();
+  const n = (cleaned || name).toLowerCase();
   // 次のページ（一覧のページ送り）
-  if (/next_page|pager|page_next|次のページ|次へ|ページ送り/.test(n)) return "next";
-  // 検索を押す
-  if (/^(go_search|go_search_submit)$/.test(n) || /検索$|^search$/.test(n)) return "search";
+  if (/next_page|pager|page_next|次のページ|次へ|ページ送り|^next$/.test(n)) return "next";
+  /**
+   * 検索を押す。
+   *   ⚠ 実測の名前は `検索`（そのまま）・`住居検索`・`go_search` など**色々**。
+   *     `検索$`（検索で終わる）だけでは `住居検索` は拾えるが、
+   *     名前が `検索|span` の形だと拾えない → **含むかどうか**で見る。
+   *   ⚠ ただし「検索条件」「検索結果」は押すボタンではないので除く。
+   */
+  if (/^(go_search|go_search_submit)$/.test(n) || /^search$/.test(n)) return "search";
+  if (/検索/.test(n) && !/検索条件|検索結果|再検索の設定/.test(n)) return "search";
   // 所在地（区・町字・小窓）
   if (/city_code|town_code|one_city|one_town|住所|所在地|都道府県|市区郡|町字/.test(n)) return "area";
+  /**
+   * 実測の名前 `確定してリストへ｜span` は**所在地の小窓を閉じるボタン**。
+   *   ⚠ 「その他」にすると、所在地の手順から**最後の1手が抜ける**（＝手順が途中で切れる）。
+   */
+  if (/確定してリストへ|リストへ確定/.test(n)) return "area";
   /**
    * 2026-11-14 実測: `click:大阪市西区` `click:大阪市中央区` `click:大阪市北区` は
    *   **区の見出しを押した記録**で、名前に `city_code` が入らない。
@@ -75,7 +104,7 @@ export function sceneOfOp(kind: string | null | undefined): FlowScene {
    *   → **区・市・郡・町・村で終わる短い名前**は所在地として扱う。
    *     （「確定してリストへ」「次のページ」などは終わりが違うので当たらない）
    */
-  if (name.length <= 14 && /[区市郡町村]$/.test(name)) return "area";
+  if ((cleaned || name).length <= 14 && /[区市郡町村]$/.test(cleaned || name)) return "area";
   // 沿線・駅
   if (/transportation_id|station|沿線|駅|required_time/.test(n)) return "station";
   // 検索結果の一覧（物件の取得・並べ替え）
@@ -105,10 +134,120 @@ export type SceneFlow = {
   gap_ms: number | null;
 };
 
-/** 1回の検索の押した並びを、場面ごとに分ける（純関数） */
+/**
+ * 2026-11-14 竹内さん「徒歩の部分選択したら、そこは押して消えてしまうのは改善されるようになっているのか」
+ *   → **実データで確認（7日6,027件）**。まず「消えている」と見えたが、**記録の数え方**だった:
+ *
+ *     徒歩（transportation_id）の記録の中身（実測）:
+ *       +0ms    click  transportation_id  (w=select)   ← 人が「徒歩」を選ぶ
+ *       +1018ms change transportation_id  (w=select)   ← ブラウザが「値が変わった」を出す
+ *       +2080ms click  required_time      (w=text)     ← 分数を入れる
+ *       +7021ms change required_time      (w=text)     ← 入力を確定
+ *
+ *   ⚠ **1回の操作が `click` と `change` の2件**として記録されていた（差は **1,018ms で一定**）。
+ *     そのため「徒歩を2回選んだ」ように見え、手順として学ぶと
+ *     「徒歩 → 徒歩 → 分数」という**人がやらない手順**になる。
+ *   ⚠ 既存の `splitByScene` は「**直前と同じ名前なら畳む**」だが、
+ *     `change` が 1,018ms 後に来るので**別の場面として残っていた**（時刻を見ていなかった）。
+ *
+ *   → **同じ欄の click→change は1回に畳む**（既定 1,200ms 以内・`collapseSameField`）。
+ *     ⚠ 1,200ms より離れた同じ欄は**押し直しとして残す**（迷いの証拠・実測では0件だった）。
+ */
+export function collapseSameField<T extends { t?: number; k?: string; f?: string | null }>(
+  ops: ReadonlyArray<T>,
+  opt: { gapMs?: number } = {},
+): T[] {
+  const gap = opt.gapMs ?? 1200;
+  const out: T[] = [];
+  let prevF = "";
+  /**
+   * ⚠ 2026-11-14: `prevT = 0` を「まだ無い」の代わりに使うと、
+   *   **最初の要素の時刻が 0** の時に畳めない（テストで発覚）。
+   *   → `has` で「前の欄があるか」を別に持つ。
+   */
+  let prevT = 0;
+  let has = false;
+  for (const o of ops) {
+    const f = typeof o?.f === "string" ? o.f : "";
+    const t = Number(o?.t) || 0;
+    if (f && has && f === prevF && Math.abs(t - prevT) <= gap) {
+      prevT = t;   // 畳んだ後の時刻を次の基準にする
+      continue;
+    }
+    out.push(o);
+    if (f) { prevF = f; prevT = t; has = true; }
+  }
+  return out;
+}
+
+/**
+ * ★ 2026-11-14 竹内さん「直近の通常モードの録画から押し方プルダウンの場所、
+ *   徒歩が消えないようにする部分学習して改善する」
+ *
+ *   ⚠ **リアプロの仕様**: 移動手段（`transportation_id`）を選ぶと、その下の分数（`required_time`）が
+ *     **リセットされる**（画面が作り直される）。人が「分数 → 移動手段」の順でやると分数が消える。
+ *
+ *   実測（直近の録画 mwgf1gx3_n1k5 の操作）:
+ *     click transportation_id → click 分 → click transportation_id → click 大阪43棟189戸並べ替
+ *     ⚠ **徒歩が2回**出ている＝もう一度選び直している（分数を入れた後に消された疑い）。
+ *
+ *   → **手本の中に「分数 → 移動手段」の順があれば弱い所として出す**（統括が直せるように）。
+ *     ⚠ 順番が正しい時は何も言わない（無駄な指摘を出さない）。
+ */
+export function findWalkResetRisk(
+  runs: ReadonlyArray<ReadonlyArray<{ f?: unknown }>>,
+): { kind: string; why: string; next: string } | null {
+  let bad = 0, good = 0, twice = 0;
+  for (const ops of Array.isArray(runs) ? runs : []) {
+    const names = (Array.isArray(ops) ? ops : [])
+      .map((o) => String(o?.f ?? ""))
+      .filter((n) => n && n !== "undefined");
+    /**
+     * ⚠ 2026-11-14 実測で判明: 画面の欄名は `required_time` ではなく **`分`** で記録される事がある
+     *   （実測の並び: `transportation_id → 分 → transportation_id`）。
+     *   旧の判定は `required_time` しか見ていなかったので、**実測の形で指摘が出なかった**。
+     *   → 「分」「徒歩分」「駅からの徒歩時間」も分数として扱う。
+     */
+    const isWalk = (n: string) => /transportation_id|移動手段|交通手段/.test(n);
+    const isMin = (n: string) => /required_time|^分$|徒歩分|徒歩時間|駅からの徒歩/.test(n);
+    const iT = names.findIndex(isWalk);
+    const iW = names.findIndex(isMin);
+    if (iT < 0 && iW < 0) continue;
+    // 同じ回で移動手段が2回以上＝選び直し
+    if (names.filter(isWalk).length >= 2) twice++;
+    if (iT >= 0 && iW >= 0) {
+      if (iW < iT) bad++;   // 分数が先 → 消える恐れ
+      else good++;          // 移動手段が先 → 正しい
+    }
+  }
+  const total = bad + good;
+  /**
+   * ⚠ 選び直し（`twice`）は**分数を入れた後に移動手段を選び直した**事の証拠なので、
+   *   `bad+good` が0でも指摘する（実測の並びがまさにこれ）。
+   */
+  if (!total && !twice) return null;
+  if (total && bad === 0 && twice === 0) return null;   // 全部正しい順・選び直しも無い＝指摘しない
+  const why = bad
+    ? `分数を入れてから移動手段を選んでいる手本が ${bad}/${total}件あります（移動手段を選ぶと分数がリセットされる）`
+    : `移動手段を2回以上選んでいる手本が ${twice}件あります（選び直し＝分数が消えた疑い）`;
+  return {
+    kind: "walk_reset",
+    why,
+    next: "手順を「移動手段 → 分数」の順に固定する（自動は既に固定済み。人の案内も同じ順にする）",
+  };
+}
+
+/**
+ * 1回の検索の押した並びを、場面ごとに分ける（純関数） */
 function splitByScene(ops: ReadonlyArray<FlowOp>): Map<FlowScene, string[]> {
   const out = new Map<FlowScene, string[]>();
-  for (const o of ops) {
+  /**
+   * ⚠ 2026-11-14: **同じ欄の click→change を1回に畳んでから**分ける。
+   *   実測で `transportation_id` が 0ms と 1018ms の2件あり、
+   *   「徒歩 → 徒歩 → 分数」という**人がやらない手順**を学んでいた。
+   */
+  const list0 = collapseSameField(ops as ReadonlyArray<{ t?: number; k?: string; f?: string | null }>);
+  for (const o of list0) {
     const k = String(o?.k ?? "");
     if (!k) continue;
     // `k` は `"click:名前"` の形。名前だけにする（種類は残す）
@@ -295,6 +434,21 @@ export function findWeakScenes(
     }
   }
   return out.slice(0, 12);
+}
+
+/**
+ * ★ 2026-11-14 竹内さん「徒歩が消えないようにする部分学習して改善する」
+ *   **操作の並び（`runs`）から直接**、徒歩の順番の危険を見つける（`findWeakScenes` の仲間）。
+ *   ⚠ `findWeakScenes` は場面ごとの集計を見るので、「分数→移動手段」のような
+ *     **同じ場面の中の順番**は拾えない。ここで別に見る。
+ */
+export function findWeakSteps(
+  runs: ReadonlyArray<ReadonlyArray<{ f?: unknown }>>,
+): Array<{ scene: FlowScene; kind: string; why: string; next: string }> {
+  const out: Array<{ scene: FlowScene; kind: string; why: string; next: string }> = [];
+  const walk = findWalkResetRisk(runs);
+  if (walk) out.push({ scene: "station", ...walk });
+  return out;
 }
 
 /**
