@@ -61,7 +61,14 @@ console.log("■ ④ 録画の経路でも ops を送る");
 {
   const bg = read("background.js");
   t("録画が aaxlx-recent-ops を聞く", /axlx-recent-ops/.test(bg));
-  t("録画の撮影に ops を渡す", /_takeShot\(\{ type: "axlx-human-shot", site: siteName \|\| "record", kind: "rec", wait_upload: true, ops: ops \}/.test(bg));
+  /**
+   * 2026-11-14 竹内さん「取り組む」:
+   *   操作が取れなかった**理由**も DB に残すようにした（`k:"diag"` の1件を混ぜる）。
+   *   → 「ops: _opsForSend」と「空なら理由を入れる」の両方を見る。
+   */
+  t("録画の撮影に ops を渡す",
+    /ops: _opsForSend/.test(bg) && /if \(\(!ops \|\| !ops\.length\) && _lastOpsWhy\)/.test(bg));
+  t("  ⚠ 操作が空でも「なぜ空か」を DB に残す（k:diag）", /k: "diag"/.test(bg));
   t("_takeShot が ops を job に渡す", /ops: Array\.isArray\(msg\.ops\) \? msg\.ops : null/.test(bg));
   t("送信の中身に shot_ops を入れる", /shot_ops: Array\.isArray\(job\.ops\)/.test(bg));
 }

@@ -2743,7 +2743,19 @@ async function _recordOneShot() {
   return new Promise(function (resolve) {
     try {
       // 2026-11-12: 録画は**送り終わるまで待つ**（「撮れた」と「保存できた」を同じにする）
-      _takeShot({ type: "axlx-human-shot", site: siteName || "record", kind: "rec", wait_upload: true, ops: ops }, function (res) { resolve(res || null); });
+      /**
+       * 2026-11-14 竹内さん「取り組む」（材料つき記録が 7% しかない）:
+       *   ⚠ なぜ操作が取れないのか、Chrome の中（`axlx_rec_ops`）にしか無くて**私が見て直せない**。
+       *   → **理由を `ops` に混ぜてDBへ送る**（`k:"diag"` の1件として載せる）。
+       *     ⚠ 載せるのは**数と理由の言葉だけ**（操作した中身は入れない）。
+       *     ⚠ `ops` が空でも、この1件があるので「なぜ空か」がDBに残る。
+       *     学習側は `k:"diag"` を**欄の名前として扱わない**ようにする（`f` が無いので自動的に外れる）。
+       */
+      var _opsForSend = ops;
+      if ((!ops || !ops.length) && _lastOpsWhy) {
+        _opsForSend = [{ t: Date.now(), k: "diag", f: null, w: null, why: String(_lastOpsWhy).slice(0, 60) }];
+      }
+      _takeShot({ type: "axlx-human-shot", site: siteName || "record", kind: "rec", wait_upload: true, ops: _opsForSend }, function (res) { resolve(res || null); });
     } catch (_) { resolve(null); }
   });
 }

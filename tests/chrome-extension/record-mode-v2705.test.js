@@ -35,7 +35,8 @@ console.log("\n■ ② 押している間は連続で撮る");
   ok("  間隔の値が 1500〜3500ms", /_REC_GAP_MIN = 1500/.test(bg) && /_REC_GAP_MAX = 3500/.test(bg));
   const gapAvg = (1500 + 3500) / 2;
   ok("  平均 " + gapAvg + "ms → 7分で 約" + Math.floor(7 * 60 * 1000 / gapAvg) + "枚", Math.floor(7 * 60 * 1000 / gapAvg) > 100);
-  ok("撮る中身は今までと同じ道（_takeShot を直接呼ぶ）", /_takeShot\(\{ type: "axlx-human-shot", site: siteName \|\| "record", kind: "rec", wait_upload: true, ops: ops \}/.test(bg));
+  ok("撮る中身は今までと同じ道（_takeShot を直接呼ぶ）",
+    /_takeShot\(\{ type: "axlx-human-shot", site: siteName \|\| "record", kind: "rec", wait_upload: true, ops: _opsForSend \}/.test(bg));
   ok("録画にも押した操作を付ける（2026-11-13 竹内さん「録画から学習できるのか」）", /type: "axlx-recent-ops"/.test(bg) && /axlx-recent-ops/.test(read("human-learn-record.js")));
   ok("  どのサイトかも送る（サイト別の学習のため）", /siteName = \/realnetpro/.test(bg));
   ok("拡張の操作も拾う（録画モードで押すのは拡張）", /__axlxRecNoteOp/.test(read("human-learn-record.js")) && /__axlxRecNoteOp/.test(read("pointer-ui.js")));
