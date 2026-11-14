@@ -357,6 +357,32 @@
     return customerGapMs(rng);
   }
 
+  /**
+   * 2026-11-11 竹内さん「また時間はランダム性をちゃんと徹底する人間のうごきを」:
+   *   手で選んだ一括検索（AIXモードの帯）で、お客様から次のお客様へ移る間。
+   *   自動便（customerGapMs＝15〜60秒）は「1コマンドで何人も回す」用に長いので、手で選んだ回は少し短くする。
+   *   ・多くは 8〜25秒（対数正規・中央値14秒）
+   *   ・6回に1回ほど 40〜95秒の一息（一様乱数にしない＝そろわない）
+   *   ⚠ ここ1か所で持つ（background・popup で別々に乱数を作らない＝「人によって違う」を作らない）
+   */
+  function bulkCustomerGapMs(rng) {
+    if (humanChance(rng, 0.16)) return logBetween(40000, 95000, rng);
+    return logBetween(8000, 25000, rng);
+  }
+
+  /**
+   * 2026-11-11: 送った資料を人が見る間（ミリ秒）。自動モードの1件ずつ（bulk-dl）と一括検索（background）で同じ長さにする。
+   *   中央値3.5秒・1.8〜13秒に丸める・5%は＋3〜6秒（たまに長く見る）
+   */
+  function lookAtDocMs(rng) {
+    var v = logBetween(1800, 13000, rng);
+    // たまに長く見る（5%）
+    if (humanChance(rng, 0.05)) v = Math.min(13000, v + 3000 + Math.floor(_rand(rng) * 3000));
+    if (v < 1800) v = 1800;
+    if (v > 13000) v = 13000;
+    return Math.round(v);
+  }
+
   /** 1コマンドの中でサイトを並べる（同じお客様はリアプロ → ITANDI の順・無いサイトは足さない・重複は1つ・レインズは最後） */
   function orderSites(sites) {
     var list = Array.isArray(sites) ? sites : [];
@@ -372,11 +398,52 @@
   //   ここは純関数だけで持つ（chrome.* を使わない＝テストで固定できる）。呼ぶ側（background）が今の時刻と
   //   「この回を始めた時刻」を渡す。**サーバーの一時停止（automation_settings.paused）は別の歯止めとして残す**。
   var WORK_START_H = 9;        // 始まり（JST）
-  var WORK_END_H = 21;         // 終わり（JST・21:00 ちょうどで閉じる）
+  // 2026-11-10 v2.6.21 竹内さん「なんで届かなくなったのかな？」:
+  //   21時に閉じていたため、21時を過ぎると `after_close` で指示を拾わなくなり「届かない」状態になった（実際のログで確認）。
+  //   実際の業務は21時を過ぎても続くので **23時**までに延ばす（21〜23時は動いてよい・0時からは止める）。
+  // 2026-11-10 v2.6.33 竹内さん「作業23時でよい」: 終わりは **23時**（翌3時まで延ばす案は採らない）。
+  //   23時以降に作業したい時は storage.local `axlxWorkEndH` に 27 などを入れる（既定は 23）。
+  var WORK_END_H = 23;         // 終わり（JST・23:00 ちょうどで閉じる）
+  try {
+    var _we = Number(localStorage.getItem("axlxWorkEndH"));
+    if (isFinite(_we) && _we >= 9 && _we <= 27 && (localStorage.getItem("axlxWorkEndH") || "") !== "") WORK_END_H = _we;
+  } catch (_) {}
   var WORK_REST_FROM_H = 12;   // 昼の休憩の始まり（12:00〜13:00）
   var WORK_REST_TO_H = 13;
   var WORK_CONTINUOUS_MS = 90 * 60 * 1000; // 90分続いたら
   var WORK_REST_MS = 10 * 60 * 1000;       // 小休憩の長さ（10分）
+
+  /**
+   * 2026-11-14 竹内さん「自動検索は自動モードでうごけばよいのでは」→「土日も動かす」を選ばれた。
+   *
+   *   ⚠ 旧は `effDay === 0 || 6` で**土日は必ず止まって**いた。
+   *     そのため土曜の今日は、自動モードにしても120件の自動便が誰にも拾われずに閉じた。
+   *   → **土日を止めるのをやめる**（既定は「土日も動く」）。
+   *     ⚠ ただし**時間の決まり（9〜23時・12〜13時は休憩・90分で小休憩）はそのまま**残す
+   *       （夜中に走らない・サイトへの配慮）。
+   *     ⚠ 土日だけ止めたい時は storage.local `axlxWeekendOff` に 1 を入れる（元の動きに戻せる）。
+   *       既定を「止める」に戻したい時は、下の WEEKEND_OFF_DEFAULT を true に1行変えるだけ。
+   *
+   *   なぜ「設定で戻せる」形にするか:
+   *     竹内さんが以前「土日は止まります」と決めていた（ポップアップにもそう出していた）ので、
+   *     完全に消すと**戻せなくなる**。1つの値で戻せる形にしておく。
+   */
+  var WEEKEND_OFF_DEFAULT = false;   // false = 土日も動く（2026-11-14 竹内さんの決定）
+  function weekendOff() {
+    if (WEEKEND_OFF_DEFAULT) {
+      // 既定で止める時も、`axlxWeekendOff: 0` で動かせるようにする
+      try {
+        var v0 = localStorage.getItem("axlxWeekendOff");
+        if (v0 === "0") return false;
+      } catch (_) {}
+      return true;
+    }
+    try {
+      var v = localStorage.getItem("axlxWeekendOff");
+      if (v === "1") return true;
+    } catch (_) {}
+    return false;
+  }
 
   /** JST の曜日（0=日）・時・分 */
   function jstParts(nowMs) {
@@ -398,9 +465,17 @@
     var j = new Date(t + 9 * 3600 * 1000);
     var secOfDay = j.getUTCHours() * 3600 + j.getUTCMinutes() * 60 + j.getUTCSeconds();
     var day0 = t - secOfDay * 1000;
-    if (p.day === 0 || p.day === 6) return { open: false, reason: "weekend", resumeAt: null };
-    if (p.hour < WORK_START_H) return { open: false, reason: "before_open", resumeAt: day0 + WORK_START_H * 3600 * 1000 };
-    if (p.hour >= WORK_END_H) {
+    // 2026-11-10 v2.6.33: 終わりが 24 を超える（翌 3時まで）時は「0〜3時」も開いている日として扱う（前日の営業日の続き）
+    var over = Math.max(0, WORK_END_H - 24);
+    var isEarlyNextDay = p.hour < over;   // 翌日の 0:00〜3:00 など
+    var effDay = isEarlyNextDay ? (p.day + 6) % 7 : p.day; // 前の日の曜日で見る（金曜の深夜は土曜の0〜3時も開く）
+    // 2026-11-14 竹内さん「自動検索は自動モードでうごけばよいのでは」→「土日も動かす」:
+    //   ⚠ 旧はここで必ず止めていた（土曜の今日、自動モードでも120件が拾われずに閉じた）。
+    //   → weekendOff() が true の時だけ止める（既定は false＝土日も動く）。
+    if (weekendOff() && (effDay === 0 || effDay === 6)) return { open: false, reason: "weekend", resumeAt: null };
+    // 2026-11-10 v2.6.33: 翌 3時まで動く時は、3時〜9時は閉じる（before_open）
+    if (!isEarlyNextDay && p.hour < WORK_START_H) return { open: false, reason: "before_open", resumeAt: day0 + WORK_START_H * 3600 * 1000 };
+    if (!isEarlyNextDay && p.hour >= Math.min(WORK_END_H, 24)) {
       // 次の営業日（月〜金）の 9:00。金曜の夜なら月曜
       var addDays = 1;
       for (var k = 0; k < 8; k++) {
@@ -410,7 +485,7 @@
       }
       return { open: false, reason: "after_close", resumeAt: day0 + addDays * 86400 * 1000 + WORK_START_H * 3600 * 1000 };
     }
-    if (p.hour >= WORK_REST_FROM_H && p.hour < WORK_REST_TO_H) {
+    if (!isEarlyNextDay && p.hour >= WORK_REST_FROM_H && p.hour < WORK_REST_TO_H) {
       return { open: false, reason: "lunch", resumeAt: day0 + WORK_REST_TO_H * 3600 * 1000 };
     }
     return { open: true, reason: null, resumeAt: null };
@@ -438,6 +513,7 @@
     pageLimit: pageLimit, allowAdSort: allowAdSort, DEFAULT_MAX_PAGES: DEFAULT_MAX_PAGES,
     planSites: planSites, hasItandiTab: hasItandiTab, orderSites: orderSites,
     siteGapMs: siteGapMs, customerGapMs: customerGapMs, nextCommandGapMs: nextCommandGapMs, skippedNote: skippedNote,
+    bulkCustomerGapMs: bulkCustomerGapMs, lookAtDocMs: lookAtDocMs,
     logBetween: logBetween, humanChance: humanChance,
     // 2026-11-10 自動モードの勤務時間のゲート（JST 9〜21時・12〜13時は休憩・土日なし・90分で小休憩）
     jstParts: jstParts, workGate: workGate, continuousRestDue: continuousRestDue,
