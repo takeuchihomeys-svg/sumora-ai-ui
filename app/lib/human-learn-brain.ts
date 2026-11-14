@@ -27,7 +27,7 @@
 //   /api/cron/human-learn-brain が毎晩まとめる（Vercel Cron）
 
 import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, planLearnFromWeak, learnSequenceFromShots, isLearnableName } from "./shot-learn";
-import { superviseLearn, type SupervisorAdvice } from "./learn-supervisor";
+import { superviseLearn, type SupervisorAdvice, type SupervisorInput } from "./learn-supervisor";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -921,7 +921,9 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     }).length,
     prev: null,
     site: "all",
-  });
+    /** 2026-11-14: 「押したら何が開くか」のうち**推測**で埋めた数（実測ではない） */
+    guessed_opens: Object.values(opens).filter((v) => v && (v as { guessed?: boolean }).guessed).length,
+  } as SupervisorInput);
 
   /**
    * サイト別の統括の判断（リアプロ／itandi）。
@@ -1049,6 +1051,37 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
   };
 
   bundle.lines = describeBundle(bundle);
+  /**
+   * 2026-11-14 竹内さん「統括はデータベース必要なら強化や追加できるようにしていく」:
+   *   判断を**1回ごとに1行**残す（推移を見る・打ち合わせで使う）。
+   *   ⚠ ここでは**投げっぱなし**にする（保存に失敗しても学習の束は返す＝現場を止めない）。
+   *   ⚠ 表がまだ無いDBでは `no_table` で静かに諦める。
+   */
+  try {
+    void (async () => {
+      try {
+        const { saveSupervisorLog } = await import("./learn-supervisor-db");
+        const base = {
+          next_n: Object.keys(next).length,
+          points_n: Object.keys(points).length,
+          opens_n: Object.keys(opens).length,
+          screens_n: Object.keys(shotLearn.screens).length,
+          sequence_n: (sequenceFlow && sequenceFlow.sequence ? sequenceFlow.sequence.length : 0),
+          with_ops: list.filter((r) => {
+            const x = r as unknown as Record<string, unknown>;
+            return (Array.isArray(x.shot_ops) && x.shot_ops.length > 0) || (Array.isArray(x.field_order) && x.field_order.length > 0);
+          }).length,
+          guessed_opens: Object.values(opens).filter((v) => v && (v as { guessed?: boolean }).guessed).length,
+          rows: list.length,
+          bundle_at: bundle.generated_at,
+        };
+        await saveSupervisorLog("all", supervisor, base);
+        for (const [sn, sv] of Object.entries(supervisor_by_site)) {
+          await saveSupervisorLog(sn, sv, { ...base, bundle_at: bundle.generated_at });
+        }
+      } catch (_) { /* 保存できなくても学習は続く */ }
+    })();
+  } catch (_) {}
   return bundle;
 }
 
