@@ -11,7 +11,7 @@
 //
 // 実行: npx tsx --env-file=.env.local app/lib/__tests__/learn-flow-steps.test.ts
 import {
-  learnSceneFlows, findWeakScenes, sceneOfOp, describeSceneFlow, scenePlaybook, SCENE_JA,
+  learnSceneFlows, findWeakScenes, sceneOfOp, describeSceneFlow, scenePlaybook, lastSceneOf, SCENE_JA,
   type FlowOp,
 } from "../learn-flow-steps";
 
@@ -149,7 +149,35 @@ console.log("\n■ ⑦ 人が読める形（統括がそのまま話せる）");
   ok("教える形（playbook）に場面と順番が入る", scenePlaybook(flows).some((p) => p.includes("所在地絞り込み") && p.includes("city_code[]")));
 }
 
-console.log("\n■ ⑧ 壊れない");
+console.log("\n■ ⑨ 止まった場面は「時系列で最後」（手数が多い場面ではない）");
+{
+  /**
+   * ⚠ 実測で起きた誤り: 所在地 → 駅 → 条件 → 検索 と全部押して**検索の後で止まった**のに、
+   *   統括は「所在地で止まる」と言っていた（手数が多い場面を最後と取り違えていた）。
+   */
+  const run: FlowOp[] = [
+    H("click:所在地絞り込み＋", 1000),
+    H("click:大阪市西区", 2000),
+    H("click:city_code[]", 2100),
+    H("click:大阪市中央区", 3000),
+    H("click:city_code[]", 3100),
+    H("click:大阪市北区", 4000),
+    H("click:city_code[]", 4100),
+    H("click:transportation_id", 5000),
+    H("click:required_time", 6000),
+    H("click:update_date", 7000),
+    H("click:rental_cost2", 8000),
+    H("click:検索", 9000),
+  ];
+  ok("最後の場面は search（検索を押した後）", lastSceneOf(run) === "search", lastSceneOf(run));
+  // 手数が多い順の先頭は area（＝ここを取り違えていた）
+  ok("  ⚠ 手数が多い順の先頭は area（これを最後と誤解していた）", learnSceneFlows([run])[0].scene === "area");
+  ok("文字入力（key）だけなら1つ前の場面", lastSceneOf([H("click:rental_cost2", 1), H("key", 2), H("key", 3)]) === "cond");
+  ok("場面が無ければ null", lastSceneOf([H("確定してリストへ", 1)]) === null);
+  ok("空でも落ちない", lastSceneOf([]) === null);
+}
+
+console.log("\n■ ⑩ 壊れない");
 {
   ok("空", learnSceneFlows([]).length === 0);
   ok("null", learnSceneFlows(null as never).length === 0);

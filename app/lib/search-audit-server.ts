@@ -15,7 +15,23 @@ import {
 import { diagnoseSearchAudit, SEARCH_AUDIT_ACTION, type SearchAuditDiagnosis } from "@/app/lib/search-audit-diagnose";
 import { auditUpdateContext } from "@/app/lib/search-update-days-server";
 
-export const STALL_MINUTES = 20;
+/**
+ * 2026-11-14 竹内さん「いま一番効く3つ（実測）ここの部分もデータ見たら改善できる」→ **見つけた原因**:
+ *
+ *   ⚠ 実測: 7日で abandoned 254件（完走 60件）。中身を読むと:
+ *     ・最後に押した操作は **`click:検索`**（17回とも）。所在地で止まってはいなかった。
+ *     ・押した時刻 07:55:05 → **20分後**の 08:15:07 に捨てられていた（`result` は空）。
+ *   原因は**2つの上限が同じ長さで競争**していた事:
+ *     - 拡張の1回の上限 `PASS_DEADLINE_MS.realnetpro = 20分`（snapshot-core.js）
+ *     - サーバーの見回り `STALL_MINUTES = 20分`（ここ）
+ *     どちらも20分なので、**結果を読み終える前にサーバーが先に「止まった」**にしていた。
+ *     拡張は15分待って読み、その後 bulk-dl が全ページを回る（5ページ×送信）ので20分を超える。
+ *
+ *   → 拡張が「まだ動いている」と言える**余裕**をサーバー側に持たせる（25 → 35分）。
+ *     ⚠ 拡張の上限（20分）より**必ず長く**する。同じにするとまた競争する。
+ *     ⚠ ただし**無限に待たない**（PCを閉じた回は35分で閉じる）。
+ */
+export const STALL_MINUTES = 35;
 export const REUSE_DIAGNOSIS_DAYS = 7;
 const MAX_JSON_CHARS = 24_000;
 
@@ -225,7 +241,27 @@ export async function recordFinished(body: Record<string, unknown>): Promise<{ o
   const cols = rowFromBody(body);
   const { row, error } = await loadRow(runId);
   if (error) return { ok: false, error, needsAi: false };
-  if (row && row.status !== "started") return { ok: true, needsAi: false, severity: row.severity ?? undefined, cause_key: row.cause_key }; // 2通目は数えない
+  /**
+   * 2026-11-14 竹内さん「いま一番効く3つ（実測）ここの部分もデータ見たら改善できる」→ **見つけた原因**:
+   *
+   *   ⚠ 旧は `row.status !== "started"` なら**何もせず捨てて**いた。
+   *     そのため、見回り（35分）が先に `abandoned` にした回に**本物の「終わりました」が後から届いても
+   *     捨てられ**、`result`（何件読んだか）が空のままになった（実測: abandoned 254件すべて result が空）。
+   *     ＝**できていた検索が「止まった」として数えられていた**。
+   *
+   *   → 遅れて届いた `finished` は**本当の事**なので、`abandoned` を `finished` に**上げ直す**。
+   *     ⚠ ただし**同じ回の2通目**（既に finished）は今まで通り数えない。
+   *     ⚠ あまりに古い回（作成から3時間以上）は上げ直さない（夜通しの記録が後から混ざらないように）。
+   */
+  const LATE_FINISH_MAX_MS = 3 * 3600_000;
+  let reviveFromAbandoned = false;
+  if (row && row.status === "abandoned") {
+    const created = row.created_at ? Date.parse(String(row.created_at)) : NaN;
+    if (Number.isFinite(created) && Date.now() - created <= LATE_FINISH_MAX_MS) reviveFromAbandoned = true;
+    else return { ok: true, needsAi: false, severity: row.severity ?? undefined, cause_key: row.cause_key };
+  } else if (row && row.status !== "started") {
+    return { ok: true, needsAi: false, severity: row.severity ?? undefined, cause_key: row.cause_key }; // 2通目は数えない
+  }
   const nowIso = new Date().toISOString();
   const merged: Partial<SearchAuditRow> = { ...(row ?? {}), ...cols, status: "finished", finished_at: nowIso, created_at: row?.created_at ?? nowIso };
   // 2026-09-29 v2.5.41 更新日の決まり（命令の payload・計画）と前回の検索（空いた日数を覆えたか）を点検に渡す。読めなければ今まで通り
@@ -240,8 +276,14 @@ export async function recordFinished(body: Record<string, unknown>): Promise<{ o
   const sel = sentSelectedOf(auditIn);
   const resultPatch = sel && sel.count > 0 ? { result: { ...((merged.result ?? {}) as Record<string, unknown>), sent_selected: sel.count } } : {};
   const patch = { ...cols, ...resultPatch, status: "finished" as const, finished_at: nowIso, checks: v.checks, severity: v.severity, cause_key: v.cause_key, ai_status: ai ? "pending" : "skipped" };
+  /**
+   * 2026-11-14: 遅れて届いた `finished` で `abandoned` を上げ直す時は、**abandoned の時だけ**当てる
+   *   （条件付き UPDATE で、もう片方が先に閉じていたら負ける＝二重に数えない）。
+   */
   const w = row
-    ? await supabase.from("search_audits").update(patch).eq("run_id", runId).eq("status", "started").select("run_id")
+    ? reviveFromAbandoned
+      ? await supabase.from("search_audits").update(patch).eq("run_id", runId).eq("status", "abandoned").select("run_id")
+      : await supabase.from("search_audits").update(patch).eq("run_id", runId).eq("status", "started").select("run_id")
     : await supabase.from("search_audits").insert({ run_id: runId, ...patch }).select("run_id");
   if (w.error) return { ok: false, error: w.error.message, needsAi: false };
   // 2026-09-25 反証: 同じ回の finished が2通同時に来た時・見回りが先に abandoned にした時は、条件付き UPDATE が0行＝もう片方が数えた（原因を二重に足さない・見立ても頼まない）
