@@ -1243,37 +1243,63 @@ export function buildHumanLearnBundle(
 
   bundle.lines = describeBundle(bundle);
   /**
-   * 2026-11-14 竹内さん「統括はデータベース必要なら強化や追加できるようにしていく」:
-   *   判断を**1回ごとに1行**残す（推移を見る・打ち合わせで使う）。
-   *   ⚠ ここでは**投げっぱなし**にする（保存に失敗しても学習の束は返す＝現場を止めない）。
-   *   ⚠ 表がまだ無いDBでは `no_table` で静かに諦める。
+   * 2026-11-14 竹内さん「なんでここ統括がちゃんと学習する絶対ルールなのに連携できていないのか」:
+   *   → **投げっぱなしが原因の1つだった**（Vercel は応答を返した時点で打ち切るので、
+   *     書き込みが完了する前に終わることがある）。しかも失敗しても誰も気づけなかった。
+   *   → この関数は**同期**（純関数に近い）なので、ここでは await できない。
+   *     保存は**呼ぶ側（API）が待つ**形にする（`saveSupervisorForBundle` を export し、
+   *     `/api/human-learn-profile` が `await` する）。
+   *     ⚠ 保存に失敗しても**学習の束は返す**（現場を止めない）。失敗は理由つきで残す。
    */
   try {
-    void (async () => {
-      try {
-        const { saveSupervisorLog } = await import("./learn-supervisor-db");
-        const base = {
-          next_n: Object.keys(next).length,
-          points_n: Object.keys(points).length,
-          opens_n: Object.keys(opens).length,
-          screens_n: Object.keys(shotLearn.screens).length,
-          sequence_n: (sequenceFlow && sequenceFlow.sequence ? sequenceFlow.sequence.length : 0),
-          with_ops: list.filter((r) => {
-            const x = r as unknown as Record<string, unknown>;
-            return (Array.isArray(x.shot_ops) && x.shot_ops.length > 0) || (Array.isArray(x.field_order) && x.field_order.length > 0);
-          }).length,
-          guessed_opens: Object.values(opens).filter((v) => v && (v as { guessed?: boolean }).guessed).length,
-          rows: list.length,
-          bundle_at: bundle.generated_at,
-        };
-        await saveSupervisorLog("all", supervisor, base);
-        for (const [sn, sv] of Object.entries(supervisor_by_site)) {
-          await saveSupervisorLog(sn, sv, { ...base, bundle_at: bundle.generated_at });
-        }
-      } catch (_) { /* 保存できなくても学習は続く */ }
-    })();
+    const b = bundle as unknown as Record<string, unknown>;
+    b.__supervisor_to_save = true;
   } catch (_) {}
   return bundle;
+}
+
+/**
+ * 統括の判断を**待って**保存する（2026-11-14 竹内さん「なんで…連携できていないのか」）。
+ *
+ *   ⚠ `buildHumanLearnBundle` は**同期**（純関数に近い）なので、中で await できない。
+ *     旧は `void (async () => {...})()` の**投げっぱなし**で、しかも失敗を握り潰していた
+ *     （＝Vercel が先に応答して書き込みが消える・RLS で弾かれても気づけない）。
+ *   → 保存だけを**別の非同期関数**にして、呼ぶ側（API）が `await` する。
+ *
+ * @returns 保存の結果（`{ all, by_site }`）。失敗しても投げない（束は返している）。
+ */
+export async function saveSupervisorForBundle(
+  bundle: HumanLearnBundle,
+): Promise<{ all: { ok: boolean; skipped?: string; error?: string }; by_site: Record<string, { ok: boolean; skipped?: string; error?: string }> }> {
+  const out: { all: { ok: boolean; skipped?: string; error?: string }; by_site: Record<string, { ok: boolean; skipped?: string; error?: string }> } = {
+    all: { ok: false, skipped: "not_attempted" },
+    by_site: {},
+  };
+  try {
+    const { saveSupervisorLog } = await import("./learn-supervisor-db");
+    const sv = bundle.supervisor;
+    if (!sv) { out.all = { ok: false, skipped: "no_supervisor" }; return out; }
+    const base = {
+      next_n: Object.keys(bundle.next || {}).length,
+      points_n: Object.keys(bundle.points || {}).length,
+      opens_n: Object.keys(bundle.opens || {}).length,
+      screens_n: Object.keys(bundle.screen_flow || {}).length,
+      sequence_n: (bundle.sequence_flow && Array.isArray(bundle.sequence_flow.sequence)) ? bundle.sequence_flow.sequence.length : 0,
+      with_ops: Number((bundle.source as unknown as Record<string, unknown>)?.with_ops) || 0,
+      guessed_opens: 0,
+      rows: Number(bundle.source?.rows) || 0,
+      bundle_at: bundle.generated_at,
+    };
+    out.all = await saveSupervisorLog("all", sv, base);
+    const per = (bundle.supervisor_by_site || {}) as Record<string, typeof sv>;
+    for (const [sn, one] of Object.entries(per)) {
+      if (!one) continue;
+      out.by_site[sn] = await saveSupervisorLog(sn, one, { ...base, bundle_at: bundle.generated_at });
+    }
+  } catch (e) {
+    out.all = { ok: false, error: String((e && (e as Error).message) || e).slice(0, 200) };
+  }
+  return out;
 }
 
 /** 何を学んだかを人が読める1行ずつに（画面・報告用） */

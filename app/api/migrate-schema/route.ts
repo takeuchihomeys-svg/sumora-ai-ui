@@ -3846,8 +3846,7 @@ ALTER TABLE human_learn_profile ENABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE human_learn_profile IS '人の動きの記録をまとめた学習の束（押す順番・押す場所・動きの速さ）。拡張はこれを読む。入力した中身は入れない。2026-11-13 竹内さん承認';
 
 -- ── 2026-11-14 竹内さん「統括はデータベース必要なら強化や追加できるようにしていく」──
--- learn_supervisor_log: 統括の判断を1回ごとに1行残す。
---   なぜ要るか: 判断は今まで human_learn_profile.bundle（JSONB）の中にしかなく、
+-- learn_supervisor_log: 統括の判断を1回ごとに1行残す。   なぜ要るか: 判断は今まで human_learn_profile.bundle（JSONB）の中にしかなく、
 --     前回と比べる・推移を見る・打ち合わせで使う ができなかった。
 --   入れる物: 結論・材料の揃い・弱い所の数・材料の数・推測の数・次にやる事・打ち合わせの内容。
 --   数と判断だけ（入力した中身・お客様の名前・電話・住所は入れない）。
@@ -3876,6 +3875,15 @@ CREATE TABLE IF NOT EXISTS learn_supervisor_log (
 CREATE INDEX IF NOT EXISTS idx_learn_supervisor_scope ON learn_supervisor_log(scope, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_learn_supervisor_created ON learn_supervisor_log(created_at DESC);
 ALTER TABLE learn_supervisor_log ENABLE ROW LEVEL SECURITY;
+-- 2026-11-14 竹内さん「PLS無効にしたらよいのでは」→ **その通りでした**。
+--   統括の判断が**ほとんど保存されていなかった**（実測: 105件・それも数件ずつだけ）。
+--   原因は RLS を有効にしていたため、**Service Role キーが無いと書き込めない**こと。
+--   ローカルには Service Role キーが無いので、点検・保存の確認がすべて失敗していた。
+--   既存の表（automation_commands / property_customers など）は DISABLE で動いている。
+--   この表だけ ENABLE にしていたのが食い違いの元。
+-- → DISABLE にそろえる（他の表と同じ扱い）。入れるのは数と判断だけなので個人情報は漏れない。
+--   直前の ENABLE は古い版を当てた DB のために残す（この次の1行で必ず DISABLE にする）。
+ALTER TABLE learn_supervisor_log DISABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE learn_supervisor_log IS '学習の統括の判断（結論・材料の揃い・弱い所・次にやる事・打ち合わせの内容）を1回ごとに1行。数と判断だけ。2026-11-14 竹内さん承認';
 -- 画面の写真の置き場（2026-11-11 竹内さん「画面画像みればわかるのでは」）。
 --   写真の中身は表に入れない（1行が数百KBになり集計が重くなる）→ Storage に置き、表には名前だけ。

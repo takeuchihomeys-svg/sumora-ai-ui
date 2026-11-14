@@ -275,6 +275,21 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   }
   (bundle as unknown as Record<string, unknown>).saved_to_db = saved;
   if (saveError) (bundle as unknown as Record<string, unknown>).save_error = saveError;
+  /**
+   * 2026-11-14 竹内さん「なんでここ統括がちゃんと学習する絶対ルールなのに連携できていないのか」:
+   *   ⚠ 旧は統括の判断を**投げっぱなし**で保存していて、失敗を握り潰していた
+   *     （Vercel は応答を返した時点で打ち切る＝書き込みが消える・RLS で弾かれても気づけない）。
+   *   → ここで **await して**、結果を束に載せる（`supervisor_saved`）。
+   *     失敗しても束は返す（現場を止めない）。
+   */
+  try {
+    const { saveSupervisorForBundle } = await import("@/app/lib/human-learn-brain");
+    const supSave = await saveSupervisorForBundle(bundle);
+    (bundle as unknown as Record<string, unknown>).supervisor_saved = supSave;
+    if (!supSave.all.ok) console.warn("[human-learn-profile] 統括の判断を残せません:", supSave.all.error || supSave.all.skipped);
+  } catch (e) {
+    (bundle as unknown as Record<string, unknown>).supervisor_saved = { all: { ok: false, error: e instanceof Error ? e.message : String(e) } };
+  }
   return bundle;
 }
 
