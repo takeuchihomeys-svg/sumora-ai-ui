@@ -4,6 +4,39 @@
 
 ---
 
+## 2026-11-14（続き15）録画の**一連の動き**から型を作る ＋ 地域・駅の段が記録されない**本当の原因**
+
+竹内さん「画面録画したのみたら一連の動き学習できるからいまみてみて。設計知見と統括の部分」
+
+### 実測（本番の録画18本から作れた型）
+```
+確定してリストへ → required_time → rental_cost2 → 左の敷金・礼金なし → deposit_recommpence
+→ square_meter_l → rental_cost1 → structured_date → 左の1K｜label → room_layout_id[]
+```
+条件入力の流れは**1本の鎖**になった。ただし**【地域（所在地）】のまとまりが空**だった。
+
+### 🔴 本当の原因（重要な発見）
+`page-script.js` は `content.js` が `<script src>` で注入する＝**ページの世界**。
+`human-learn-record.js` は `manifest` の `content_scripts` ＝**アイソレーテッドワールド**。
+**世界が違うので `window.__axlxRecNoteName` は見えない**（実測: 地域の段が0件）。
+
+→ **`postMessage` で橋渡し**する形に変更（`from: "axlx-rec-note-name"`）。受ける側を
+`human-learn-record.js` に追加。
+
+### 追加した物
+**`learnSequenceFromShots`**（`app/lib/shot-learn.ts`）
+- `sequence` … 実際に押された順を**1本の鎖**に（回数の多い組でつなぐ・min回以上）
+- `groups` … 意味のあるまとまり（**地域／駅／条件／検索**）
+- `edges` … 組ごとの回数（上位40）
+- ⚠ 同じ日の同じ並びは1回（録画の水増し対策）・交互クリックは除く・**中身は入れない**
+- 学習の束に `sequence_flow` として入り、人が読める行に「**▼ 一連の動き**」で出る
+
+### 試験
+`learn-sequence.test.ts` **12件**（新規）・`learn-area-station` を新構造に更新
+サーバー側 14+45+19+14 合格・拡張 **108本すべて合格**・`tsc` 0
+
+---
+
 ## 2026-11-14（続き14）**モード別**（通常／自動／AIX）に学び、統括が「足りない物」を判断する
 
 竹内さん「データベースにたまっている画像のデータと統括連携してできていない部分、弱い部分強化するようにする。
