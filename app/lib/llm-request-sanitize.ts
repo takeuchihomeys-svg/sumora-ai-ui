@@ -10,6 +10,7 @@
 //   instrumentation.ts の register() で installLlmFetchSanitizer() を1回呼ぶ。
 
 import { mightHaveExamplePii, redactExampleSpansInPrompt } from "./example-pii-guard";
+import { redactImageDocsInJsonBody } from "./image-doc-redact";
 
 const LLM_API_HOSTS = new Set(["api.anthropic.com", "api.openai.com"]);
 /** 手本の個人情報の歯止めを当てる宛先（Anthropic・OpenAI に加え、別クラウドの chat/completions＝DeepSeek・Azure・Qwen） */
@@ -115,6 +116,13 @@ export function wrapFetchWithLlmSanitizer(original: FetchLike): FetchLike {
         if (p.redacted > 0) {
           console.log(JSON.stringify({ tag: "llm:example-pii-redacted", host: url.hostname, redacted: p.redacted }));
           body = p.body; changed = true;
+        }
+        // 2026-11-15 作業員H（個人情報）: 保存済みのお客様の画像の書き起こしに残った書類の中身（契約書・マイページの氏名）を種類だけに・見積書の宛名を伏せる
+        //   （image-doc-redact・既定 on・IMAGE_DOC_READ_REDACT=off で止める）。Anthropic・DeepSeek とも
+        const d = redactImageDocsInJsonBody(body);
+        if (d.hits > 0) {
+          console.log(JSON.stringify({ tag: "llm:image-doc-redacted", host: url.hostname, hits: d.hits }));
+          body = d.body; changed = true;
         }
         if (changed) return original(input, { ...init, body });
       }

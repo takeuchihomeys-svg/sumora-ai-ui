@@ -9564,3 +9564,11 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
   - 13916（fecda03f「交渉できるのであれば不動産変えようかな」）: 条件付きの申込の意思＝交渉の結果（スタッフだけが知る）がまだ無い → 竹内さんは交渉の約束の返信。120日で同じ型は1通だけ＝網は作らず、場面の下の種類として記録
 - 審査の相談→AIX【電話】: 竹内さんの電話の番（12348・732692f2 09/28）は「この物件で自分の審査の傷を言って通るか聞く」型で、10/28 の網（審査＋相談）に掛かっていなかった → `SCREENING_RISK_HERE_PHONE=on`（既定 off・材料の行・app/lib/screening-phone-material.ts）。120日の「審査」の通 251 で掛かるのは2通＝どちらも竹内さんが AIX【電話】（誤り0）。持ち込みの網を外す `BROUGHT_SCREENING_NO_PROMISE`（作業員7b）と組で効く
 - テスト: app/lib/__tests__/scene-push-hearing-phone-1115.test.ts
+
+## 2026-11-15 作業員H: お客様の画像の書類の中身（個人情報）— 受け取り・読む時・出口の3段
+- 見つけた物: 保証会社の「アシストレント契約書」（借主の氏名・住所）を Vision が見積書と分け、【見積書・初期費用の明細】で中身まで保存（c024b7b9 11/12 2枚・申込前の会話＝DeepSeek に回る経路あり）。全期間で同じ網に当たる保存の行 10＋種類不明の個人の値 2（マイページの姓名・振込出金の画面）
+- 受け取り: `IMAGE_LABEL_1115`（既定 on・=off で戻す・app/lib/image-label.ts）契約書・保証委託の条文・重要事項説明書の頁・申込書／同意書（氏名の欄つき）→【書類：契約書・保証会社の書類】（種類だけ）。振込出金→支払いの控え・入居者ログイン／回収用紙→手続き・地図→【物件以外：地図の画面】・口コミ→【口コミの画面】・マイページの姓名→個人情報の画像。見積書の宛名「〇〇 様」は保存前に「（お名前）様」。400日の見出しのある画像に当て直して物件・見積への誤り0
+- 読む時: `IMAGE_DOC_READ_REDACT`（既定 on・app/lib/image-doc-redact.ts・llm-request-sanitize の fetch の包み＝Anthropic・DeepSeek の全呼び出し）昔の行に残った書類の中身を種類だけに・見積書の宛名を伏せる
+- 出口: `ALT_IMAGE_DOC_GATE`（既定 on・alt-pii-gate）画像の書き起こしに契約書の中身・マイページの氏名があれば DeepSeek に出さない（宛名は止めず伏せる側＝全期間の宛名の形 14行のうち4行は人の名前でなかった）
+- DB: 竹内さんの OK（11/15「おすすめで」）で 12行を種類だけの見出しに書き換え（記録 scripts/data/image-doc-rewrite-20261115.json・id と前の見出しだけ）。写しは要約・台帳に金額・会社名だけ（人の名前なし）。別の出所の写し: reply_engagement_signals 2726856e（記入済み申込フォームの写し）は触っていない
+- 監査: scripts/audit-contract-doc-images.ts・scripts/audit-image-doc-redact.ts・scripts/audit-customer-images.ts --label。テスト app/lib/__tests__/image-doc-guard-1115.test.ts
