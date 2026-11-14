@@ -1879,6 +1879,54 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
  */
 var _shotLastAt = 0;
 var _shotRun = null;
+/**
+ * 2026-11-14 竹内さん「連続して画像をみたらアニメーションのように動き理解できる」
+ *   → **撮影のまとまり（run_id）を1つに保つ**。
+ *
+ *   ⚠ 旧は変数だけで持っていたので:
+ *     ・Service Worker が休むと消える（→ 再開時に新しいまとまり）
+ *     ・押すたびに来る撮影要求が**同時に走ると、それぞれが新しいまとまり**を作った
+ *       （実測: 1秒ごとに run_id が変わり、25まとまり全部1枚だった＝連続画像にならない）
+ *   → `chrome.storage.local` に保存し、**最後に撮った時刻**で判定する（SWが休んでも続く）。
+ *     ⚠ 10分あいたら新しいまとまり（1回の検索の流れ＝連続再生の単位）。
+ */
+var SHOT_RUN_GAP_MS = 10 * 60 * 1000;
+var _shotRunLock = null;   // 同時に走っても1つにする（Promise を共有）
+
+async function _shotRunFor(nowMs) {
+  const t = typeof nowMs === "number" ? nowMs : Date.now();
+  if (_shotRunLock) { await _shotRunLock.catch(function () {}); }
+  // 既にメモリにあって、10分以内ならそのまま使う（一番多い道）
+  if (_shotRun && _shotLastAt && t - _shotLastAt <= SHOT_RUN_GAP_MS) return _shotRun;
+  // 保存されている物を見る（SW が休んでいた場合）
+  let saved = null;
+  try {
+    const st = await chrome.storage.local.get(["axlx_shot_run", "axlx_shot_last_at"]);
+    saved = { run: st && st.axlx_shot_run ? String(st.axlx_shot_run) : null, at: Number(st && st.axlx_shot_last_at) || 0 };
+  } catch (_) { saved = null; }
+  if (saved && saved.run && saved.at && t - saved.at <= SHOT_RUN_GAP_MS) {
+    _shotRun = saved.run;
+    _shotLastAt = saved.at;
+    return _shotRun;
+  }
+  // 新しいまとまり（10分あいた・初回）
+  _shotRun = t.toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+  _shotSeq = 0;
+  _shotLastAt = t;
+  try { await chrome.storage.local.set({ axlx_shot_run: _shotRun, axlx_shot_last_at: t }); } catch (_) {}
+  return _shotRun;
+}
+
+/** いまのまとまりを**明示的に閉じる**（検索を始めた時・人が「新しい録画」を押した時） */
+async function _shotRunNew() {
+  const t = Date.now();
+  _shotRun = t.toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+  _shotSeq = 0;
+  _shotLastAt = t;
+  try { await chrome.storage.local.set({ axlx_shot_run: _shotRun, axlx_shot_last_at: t }); } catch (_) {}
+  return _shotRun;
+}
+
 /** 2026-11-14: 同じ画像が何枚続いたか（画面が変わっていない・別タブを撮っている疑い） */
 var _shotSameRun = 0;
 var _shotSeq = 0;
@@ -2148,13 +2196,28 @@ async function _takeShot(msg, done) {
         } catch (_) { tab = null; }
       }
       if (!tab || !tab.windowId) { fail("no_tab"); return; }
-      // まとまり（1つの検索の流れ）ごとに番号を振る。10分あいたら新しいまとまり
-      if (!_shotRun || t0 - _shotLastAt > 10 * 60 * 1000) {
-        _shotRun = t0.toString(36) + "_" + Math.random().toString(36).slice(2, 6);
-        _shotSeq = 0;
-      }
+      /**
+       * 2026-11-14 竹内さん「一番直近で録画したのから動き方学ぶ。連続して画像をみたら
+       *   アニメーションのように動き理解できるので、それで押したところ学ぶ」
+       *
+       *   ⚠ **run_id が毎回変わっていて、連続画像になっていなかった**（実測・決定的）:
+       *     20:06:06 run=mwgaus2e / 20:06:06 run=mwgau995 / 20:06:07 run=mwgau1of …
+       *     → 1秒ごとに別のまとまり。1まとまり＝1枚だけ。**25個あって全部1枚**だった。
+       *     だから「連続して見る」ができず、押した所も学べない。
+       *
+       *   原因: `_shotLastAt`（最後に撮った時刻）を**撮影が始まる前**に更新していたため、
+       *     押すたびに来る撮影要求（同時に複数走る）が**それぞれ「10分あいた」と判断**していた。
+       *     ⚠ さらに `_shotRun` は Service Worker が休むと消える（変数なので）。
+       *
+       *   → ① まとまりの印を **chrome.storage.local に保存**する（SWが休んでも続く）
+       *     ② 「10分あいたら新しいまとまり」の判定は**保存した最後の撮影時刻**で行う
+       *     ③ 同時に走っても**同じまとまり**になる（判定と保存を1か所で行う）
+       *     ④ 検索を始めたら（axlx-rec-start 等）**明示的に新しいまとまり**にする
+       */
+      _shotRun = await _shotRunFor(t0);
       _shotSeq++;
       _shotLastAt = t0;
+      try { await chrome.storage.local.set({ axlx_shot_last_at: t0, axlx_shot_run: _shotRun }); } catch (_) {}
 
       let dataUrl = null;
       /**

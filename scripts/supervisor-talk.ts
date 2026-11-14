@@ -212,8 +212,26 @@ function answer(q: string, scope: string, adv: Adv, bundle: Record<string, unkno
   }
   // ⑤ 危ないか
   if (/危|止め|だめ|大丈夫|安全/.test(q)) {
-    say(adv.block ? `⚠ ${adv.block}` : "いまのところ、自動に渡して危ない状態ではありません。");
-    say(`結論: ${String(adv.headline || "")}`);
+    /**
+     * 2026-11-14 竹内さん「並び替えが失敗して印刷用PDFを押す前に止まっていた。押さない設計が現場を止めていた」
+     *   → ⚠ **統括の答えが矛盾して見えた**（実測）:
+     *       「いまのところ、自動に渡して危ない状態ではありません。」
+     *       「結論: まだ学べていません（自動に渡すと危ない）」
+     *     原因: **2つは別の軸**なのに続けて出していた。
+     *       ・`block`    … 危険だから**止める**理由（本当に危ない時だけ入る）
+     *       ・`verdict`  … 学びが足りるか（ready / almost / not_yet / unsafe）
+     *     「止めてはいない」と「まだ学べていない」は両立する（止めないが渡すのは早い）。
+     *   → **軸を分けて言う**（混ぜない・矛盾に見せない）。
+     */
+    const blocked = !!adv.block;
+    const verdict = String(adv.verdict || "");
+    say(blocked
+      ? `⚠ 自動を止めています: ${adv.block}`
+      : "自動は止めていません（危ない状態ではない）。");
+    say(`ただし、学びの結論は「${String(adv.headline || verdict)}」です。`);
+    if (!blocked && (verdict === "not_yet" || verdict === "almost")) {
+      say("※「止めていない」と「渡してよい」は別です。止めないのは現場を止めないためで、自動に渡すのはまだ早い、という意味です。");
+    }
     return;
   }
   // ⑥ 前回から

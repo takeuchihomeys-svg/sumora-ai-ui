@@ -341,16 +341,34 @@
      * 押した場所（要素の中のどこか）を0〜1の割合で覚える。
      *   人が「真ん中ではなく左寄り・上の方」を押す癖を測るため。要素が取れない時は覚えない。
      */
-    function recordPoint(e) {
-      try {
-        var el = e && e.target;
-        if (!el || !el.getBoundingClientRect) return;
-        var r = el.getBoundingClientRect();
-        if (!(r.width > 0 && r.height > 0)) return;
-        var fx = (e.clientX - r.left) / r.width;
-        var fy = (e.clientY - r.top) / r.height;
-        if (!(fx >= -0.2 && fx <= 1.2 && fy >= -0.2 && fy <= 1.2)) return; // 枠の外（別の要素の上）は捨てる
-  points.push({
+  function recordPoint(e) {
+    try {
+      var el = e && e.target;
+      if (!el || !el.getBoundingClientRect) return;
+      var r = el.getBoundingClientRect();
+      if (!(r.width > 0 && r.height > 0)) return;
+      /**
+       * 2026-11-14 竹内さん「家賃のプルダウンの部分のマウスのうごきとクリックして選択する動き
+       *   徒歩の部分プルダウンで選択してそのままにしているうごき
+       *   更新日のプルダウンをマウスで動かしてクリックするうごき
+       *   次へを押す場所もちゃんと把握するようにする」
+       *
+       *   ⚠ **押した順番が1件も取れていなかった**（実測: `field_order` が2手以上の物が0件）。
+       *     名前（`point_fields`）は21種類あるのに順番は0件。原因は**ここ**:
+       *       拡張が `el.click()` で押すと `clientX`/`clientY` が **0** になる。
+       *       → `fx = (0 - r.left) / r.width` が大きくマイナス → 「枠の外」で**捨てていた**。
+       *     そのため自動モード・AIXの押下は**1つも記録されず**、順番が学べなかった。
+       *
+       *   → ① 座標が**要素の中**なら今まで通りその位置（人が押した時）
+       *     ② 座標が **0,0**（＝`el.click()` の合成クリック）なら**要素の真ん中**として記録する
+       *        ⚠ 「どこを押したか」は人の時だけ正確。合成の時は真ん中（推測）と分かるように `syn:true` を付ける。
+       *     ③ それ以外（明らかに枠の外）は今まで通り捨てる
+       */
+      var _syn = (Number(e.clientX) === 0 && Number(e.clientY) === 0);
+      var fx = _syn ? 0.5 : (e.clientX - r.left) / r.width;
+      var fy = _syn ? 0.5 : (e.clientY - r.top) / r.height;
+      if (!_syn && !(fx >= -0.2 && fx <= 1.2 && fy >= -0.2 && fy <= 1.2)) return; // 枠の外（別の要素の上）は捨てる
+      points.push({
         f: fieldName(el),
         x: Math.round(Math.max(0, Math.min(1, fx)) * 100) / 100,
         y: Math.round(Math.max(0, Math.min(1, fy)) * 100) / 100,
@@ -370,6 +388,8 @@
          *   ⚠ `w` は**幅**で使っているので、種類は `wk` にする（取り違えない）。
          */
         wk: kindOfEl(el),
+        /** 2026-11-14: `el.click()` の合成クリック（座標0,0）で記録した＝位置は真ん中（推測） */
+        syn: _syn || undefined,
       });
         if (points.length > MAX_POINTS) points.shift();
       } catch (_) {}

@@ -72,7 +72,14 @@ console.log("\n■ ③ まとまり（run_id）＋連番で並べる");
 {
   ok("run_id と連番を持つ", /_shotRun/.test(bg) && /_shotSeq/.test(bg));
   ok("名前が「まとまり＋連番」（並べ替えると流れになる）", /"shot_" \+ _shotRun \+ "_" \+ String\(_shotSeq\)\.padStart\(4, "0"\)/.test(bg));
-  ok("10分あいたら新しいまとまり", /t0 - _shotLastAt > 10 \* 60 \* 1000/.test(bg));
+  /**
+   * 2026-11-14 竹内さん「連続して画像をみたらアニメーションのように動き理解できる」:
+   *   ⚠ 旧は `t0 - _shotLastAt > 10分` を**撮影のたびに**見ていたので、
+   *     同時に走る撮影要求がそれぞれ新しいまとまりを作っていた（実測: 1秒ごとに run_id が変わる）。
+   *   → 判定を `_shotRunFor`（保存した時刻を見る・同時実行を1つにする）に移した。
+   */
+  ok("10分あいたら新しいまとまり（_shotRunFor で判定・保存した時刻を見る）",
+    /SHOT_RUN_GAP_MS = 10 \* 60 \* 1000/.test(bg) && /t - saved\.at <= SHOT_RUN_GAP_MS/.test(bg));
   ok("写真に seq・run_id・kind・what・x・y を持たせる", /seq: _shotSeq, run_id: _shotRun/.test(bg) && /kind: typeof msg\.kind/.test(bg) && /what: typeof msg\.what/.test(bg));
   ok("撮った物を Storage に置く（DB ではない）", /await chrome\.storage\.local\.set\(o\)/.test(bg));
   ok("全体の上限で古い物から消す（2026-11-12: 枚数ではなく**容量**で守る）", /SHOT_LOCAL_MAX_BYTES/.test(bg) && /SHOT_LOCAL_MAX_COUNT/.test(bg) && /b\.at - a\.at/.test(bg));
