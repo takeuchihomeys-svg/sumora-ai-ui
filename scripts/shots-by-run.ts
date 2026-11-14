@@ -32,14 +32,32 @@ void (async () => {
 
   const groups: Group[] = [];
   for (const day of dayList) {
-    // 日付の下（モードのフォルダ）を読む
-    const top = await supabase.storage.from(BUCKET).list(day, { limit: 1000 });
-    if (top.error) continue;
-    const entries = top.data ?? [];
+    /**
+     * ⚠ 2026-11-14 竹内さん「最新の録画できているのかな／直近の撮影できているのか」:
+     *   新しい録画（`日付/normal/run_xxx/`）が**一覧に出てこなかった**。
+     *   原因は**1回の list が 1000件まで**で、`日付/` の直下に旧形式の写真が1000枚以上あると
+     *   **フォルダ（normal など）が窓の外に押し出される**事。
+     *   → ① 旧形式の写真は「名前が `.jpg` で終わる物だけ」数える（フォルダは名前で判定）
+     *     ② 1000件で切れたら**続きを頁で読む**（PostgREST と同じ1000件の壁）
+     */
+    const entries: Array<{ name?: string | null; metadata?: { size?: number } | null }> = [];
+    for (let offset = 0; offset < 20000; offset += 1000) {
+      const page = await supabase.storage.from(BUCKET).list(day, { limit: 1000, offset, sortBy: { column: "name", order: "asc" } });
+      if (page.error) break;
+      const got = page.data ?? [];
+      entries.push(...got);
+      if (got.length < 1000) break;
+    }
+    if (!entries.length) continue;
     for (const e of entries) {
       const name = String(e.name || "");
-      // フォルダかどうか（Supabase はフォルダを metadata=null で返す）
-      const isFolder = !e.metadata && !/\.(jpg|jpeg|png)$/i.test(name);
+      /**
+       * フォルダかどうかの判定（2026-11-14 修正）:
+       *   ⚠ 旧は `!e.metadata` で判定していたが、**フォルダも metadata を持って返る**事があり、
+       *     `normal` を「ファイル」と誤判定して**中を読まなかった**（＝新しい録画が見えない）。
+       *   → **名前で判定する**（`.jpg` 等で終わらなければフォルダ）。
+       */
+      const isFolder = !/\.(jpg|jpeg|png)$/i.test(name);
       if (isFolder) {
         /**
          * `日付/mode/` の形（新しい保管）。
@@ -51,7 +69,7 @@ void (async () => {
         if (sub.error) continue;
         for (const s of sub.data ?? []) {
           const sname = String(s.name || "");
-          const isRunFolder = !s.metadata && !/\.(jpg|jpeg|png)$/i.test(sname);
+          const isRunFolder = !/\.(jpg|jpeg|png)$/i.test(sname);
           if (isRunFolder) {
             // 録画ごと（run_xxx）の中の写真
             const files = await supabase.storage.from(BUCKET).list(`${day}/${mode}/${sname}`, { limit: 1000 });

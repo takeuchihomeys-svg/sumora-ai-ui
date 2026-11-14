@@ -804,6 +804,60 @@
   } catch (_) {}
   var SHOT_MIN_GAP_MS = 400;   // これより短い間隔では撮らない
   var SHOT_MAX_PER_SESSION = 300; // 1ページで撮る上限（暴走しないように）
+  /**
+   * 2026-11-14 竹内さん「1から順に進めていく」→ **実測で判明（写真から学習できない一番の原因）**:
+   *
+   *   ⚠ 写真の**中央に拡張自身の小窓**（「AIXLINX 物件検索サポート」「案内」「学習中」）が写っている。
+   *     そのため写真から欄を読ませると、**サイトの欄ではなく拡張のボタン**を読んでいた（実測で確定）:
+   *       実物のボタン : ピンポイント / 広げて検索 / リアプロで自動検索 / レインズでも探す / 全条件をコピー
+   *       AI の読み取り : ビジポイント / 近い順で検索 / リアプロで看護師募集 / Banch何度も利用 / 全自動キーコピー
+   *     ＝ 同じ位置・同じ形の**別物**（だから種類は当たるのに名前だけ滅茶苦茶だった）。
+   *   ⚠ プロンプトで「小窓は読まない」と指示しても直らない（小窓が画面を覆っているので、
+   *     後ろのサイトの欄が**見えない**）。指示では解決できない。
+   *   → **撮る瞬間だけ小窓を隠す**（`visibility:hidden`）。撮ったら**すぐ戻す**。
+   *     ⚠ 隠すのは**拡張が作った要素だけ**（サイトの要素には触らない）。
+   *     ⚠ `display:none` ではなく `visibility:hidden` にする（レイアウトが動くと撮る絵がずれる）。
+   */
+  var _shotHidden = [];
+  function _hideForShot() {
+    try {
+      if (_shotHidden.length) return;
+      var sel = "#axlx-bar, #axlx-learn-badge, #aixlinx-mini-btn, #axlx-guide, "
+        + "[data-axlx], [id^='axlx-'], [id^='aixlinx-'], [class^='axlx-']";
+      var els = document.querySelectorAll(sel);
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (!el || !el.style) continue;
+        // 既に隠している物は触らない（元の値を覚えておく）
+        _shotHidden.push({ el: el, v: el.style.visibility });
+        el.style.visibility = "hidden";
+      }
+    } catch (_) {}
+  }
+  function _showAfterShot() {
+    try {
+      for (var i = 0; i < _shotHidden.length; i++) {
+        var h = _shotHidden[i];
+        try { if (h && h.el && h.el.style) h.el.style.visibility = h.v || ""; } catch (_) {}
+      }
+    } catch (_) {}
+    _shotHidden = [];
+  }
+  try {
+    chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
+      /**
+       * background から「今から撮る」と呼ばれる。
+       *   ⚠ 隠したまま返すと、撮り終わった後に**小窓が消えたまま**になる。
+       *     必ず `hide:false` で戻す（background が finally で必ず呼ぶ）。
+       */
+      if (!msg || msg.type !== "axlx-shot-hide") return;
+      try {
+        if (msg.hide === false) { _showAfterShot(); sendResponse({ ok: true, hidden: 0 }); }
+        else { _hideForShot(); sendResponse({ ok: true, hidden: _shotHidden.length }); }
+      } catch (_) { try { sendResponse({ ok: false }); } catch (__) {} }
+      return true;
+    });
+  } catch (_) {}
   function shootAfter(kind, el, pt) {
     try {
       /**

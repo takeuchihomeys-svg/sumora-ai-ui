@@ -2075,6 +2075,26 @@ var _capLastAt = 0;
  *   ⚠ 多重化は `_recGen`（世代番号）で止めたので、700ms でも制限に当たり続けない。
  */
 var CAP_MIN_GAP_MS = 700;
+/**
+ * 2026-11-14 竹内さん「1から順に進めていく」:
+ *   写真を撮る**瞬間だけ**、拡張自身の小窓を隠す（`visibility:hidden`）。
+ *   ⚠ 小窓が写っていると、写真から読む AI が**サイトの欄ではなく拡張のボタン**を読む（実測で確定）。
+ *   ⚠ 失敗しても撮影は続ける（隠せないだけで、写真は撮れる）。
+ *   @returns 隠せたか（true の時だけ戻す）
+ */
+async function _setShotHidden(tabId, hide) {
+  if (typeof tabId !== "number") return false;
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "axlx-shot-hide", hide: hide !== false });
+    return true;
+  } catch (_) {
+    /**
+     * ⚠ content script が居ないタブ（更新前から開いているタブ）は答えない。
+     *   その場合は**何もしない**（注入まではしない・写真は撮る）。
+     */
+    return false;
+  }
+}
 function _capturePaced(windowId) {
   var run = function () {
     return (async function () {
@@ -2242,9 +2262,20 @@ async function _takeShot(msg, done) {
           try { await chrome.tabs.update(tab.id, { active: true }); } catch (_) {}
           await new Promise(function (r) { setTimeout(r, 320); });
         }
+        /**
+         * 2026-11-14 竹内さん「1から順に進めていく」→ **実測で判明（写真から学べない一番の原因）**:
+         *   ⚠ 写真の**中央に拡張自身の小窓**が写っていて、AI はそれを読んでいた（実測で確定）:
+         *     実物: ピンポイント / 広げて検索 / リアプロで自動検索 / レインズでも探す / 全条件をコピー
+         *     誤読: ビジポイント / 近い順で検索 / リアプロで看護師募集 / Banch何度も利用 / 全自動キーコピー
+         *   ⚠ プロンプトで「小窓は読まない」と指示しても直らない（小窓が後ろの欄を**覆っている**）。
+         *   → **撮る瞬間だけ小窓を隠す**。撮ったら必ず戻す（`finally`）。
+         *     ⚠ 隠すのは拡張が作った要素だけ（サイトには触らない）。
+         */
+        const _hideWin = await _setShotHidden(tab.id, true);
         try {
           dataUrl = await _capturePaced(tab.windowId);
         } finally {
+          if (_hideWin) { try { await _setShotHidden(tab.id, false); } catch (_) {} }
           if (!wasActive && prevId != null) {
             try { await chrome.tabs.update(prevId, { active: true }); } catch (_) {}
           }
@@ -2266,7 +2297,13 @@ async function _takeShot(msg, done) {
           const prevId = prev && prev[0] ? prev[0].id : null;
           await chrome.tabs.update(tab.id, { active: true });
           await new Promise(function (r) { setTimeout(r, 320); });   // 描画が変わるのを待つ（少し長め）
-          dataUrl = await _capturePaced(tab.windowId);
+          // 2026-11-14: 撮る瞬間だけ拡張の小窓を隠す（1つ目の経路と同じ）
+          const _hideWin2 = await _setShotHidden(tab.id, true);
+          try {
+            dataUrl = await _capturePaced(tab.windowId);
+          } finally {
+            if (_hideWin2) { try { await _setShotHidden(tab.id, false); } catch (_) {} }
+          }
           if (prevId != null && prevId !== tab.id) {
             try { await chrome.tabs.update(prevId, { active: true }); } catch (_) {}
           }

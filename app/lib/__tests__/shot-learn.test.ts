@@ -115,5 +115,23 @@ console.log("\n■ ⑥ 中身（入力した文字）は読ませない・残さ
   t("  欄が読めない時も文章になる", describeShotLearn({ screen: "other", fields: [], by: "deterministic", confidence: 0.3 }).includes("欄は読めず"));
 }
 
+console.log("\n■ ⑦ 読めない文字を書かせない（2026-11-14 実測で作り話が出た）");
+{
+  /**
+   * ⚠ 実測: 1280px・画質45% の写真から、AI が**作り話の名前**を返した。
+   *     ビジオポイント / iandji初月で0円 / 全套舎キヨピー / リアプログで自動検索
+   *   → 本物は「ピンポイント」「近い駅で検索」「リアプロで賃貸検索」。
+   *   ＝ 種類（radio/button）は当たるが、**名前は使い物にならない**。
+   *   名前が嘘だと学習全体が嘘になるので、**読めない時は null を書かせる**。
+   */
+  t("指示文に「読めない時は name を null」とある", /name を null にする/.test(SHOT_LEARN_PROMPT));
+  t("  「推測で文字を作らない」とある", /推測で文字を作らない/.test(SHOT_LEARN_PROMPT));
+  t("  カタカナ・英字は読み違えやすいと書いてある", /カタカナ|英字/.test(SHOT_LEARN_PROMPT));
+  t("  name が null でも kind と位置は書かせる", /name. が null でも/.test(SHOT_LEARN_PROMPT));
+  // name が null の欄は cleanFields で落ちる（名前が無い欄は学習に使えない）
+  t("  名前が null の欄は残さない", cleanFields([{ name: null, kind: "button", x: 0.5, y: 0.5 }]).length === 0);
+  t("  名前がある欄は残す", cleanFields([{ name: "ピンポイント", kind: "radio", x: 0.35, y: 0.48 }]).length === 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

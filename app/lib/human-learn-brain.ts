@@ -702,6 +702,22 @@ export function buildHumanLearnBundle(
   for (const r of list) {
     const sl = r.shot_learn;
     if (!sl || typeof sl !== "object") continue;
+    /**
+     * ⚠ 2026-11-14 竹内さん「1から順に進めていく」→ **実測で判明（写真の名前は信用できない）**:
+     *   1280px・画質45% の写真は**文字が潰れている**。AI に読ませると
+     *   **作り話の名前**が返ってきた（実測9枚すべて）:
+     *     ビジオポイント / iandji初月で0円 / 全套舎キヨピー / リアプログで自動検索 /
+     *     ilandRで作り直す / まりめの検索条件 / 重ん購購入 / 記掲物件から
+     *   → 本物は「ピンポイント」「近い駅で検索」「リアプロで賃貸検索」「全条件キープ」。
+     *   ⚠ これを `photoFields` に入れると、**記録の正しい名前と突き合わせて
+     *     「記録と写真で種類が違う」の嘘**を作る（統括が永久に直せない指摘を出す）。
+     *
+     *   → **写真の名前は使わない**（`by: "llm"` の物は名前を信用しない）。
+     *     種類と場所だけを使う（`kindFromPhoto`）。
+     *   ⚠ 決定論（`by: "deterministic"`）は**記録の名前から作っている**ので、そちらは正しい。
+     */
+    const by = String((sl as Record<string, unknown>).by ?? "");
+    if (by === "llm") continue;
     const fs2 = (sl as Record<string, unknown>).fields;
     if (!Array.isArray(fs2)) continue;
     for (const f of fs2) {
