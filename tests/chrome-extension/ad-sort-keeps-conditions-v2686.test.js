@@ -46,8 +46,17 @@ console.log("\n■ ③ 条件が効いていない一覧では押さない（全
   ok("検索の条件が効いているかを見る（_looksLikeSearchResult）", /function _looksLikeSearchResult\(\)/.test(bd));
   ok("  URL の条件（city_code・station_id・賃料など）を見る", /"city_code", "station_id", "route_id", "rental_cost1"/.test(bd));
   ok("  フォームの条件も見る（区・駅のチェック・賃料）", /checkedWard \|\| checkedSt/.test(bd) && /rental_cost2/.test(bd));
-  ok("確かめられなければ**押さない**", /確かめられない → \*\*押さない\*\*/.test(bd));
-  ok("押さない時は理由を出す（blocked_after_sort）", /blocked_after_sort/.test(bd));
+  ok("確かめられなくても**止まらない**（このまま押す）", /確かめられない → \*\*このまま押します\*\*/.test(bd));
+  /**
+   * 2026-11-14 竹内さん「出来なくても止まらずにそのまま動かすようにする」:
+   *   ⚠ 旧は「確かめられなければ**押さない**」だった（全物件を送らないための安全弁）。
+   *     だが現場では **止まる＝物件が1件も出ない** の方が困る（竹内さんの判断）。
+   *   → **警告を出して続行**に変えた。ただし黙って続けない（点検に `proceed_unverified`）。
+   *     ⚠ 本当に危ない時（スタッフモード・自動入力中・統括 unsafe・停止ボタン）は今まで通り止める。
+   */
+  ok("⚠ 確かめられなくても押す（止まらない・竹内さん 2026-11-14）", /proceed_unverified/.test(bd));
+  ok("  押す時も理由を出す（proceed_unverified）", /proceed_unverified/.test(bd));
+  ok("  ⚠ 警告は出す（黙って続けない）", /_blockedAfterSortNote\(\)/.test(bd));
   ok("押さない時は枠に警告を出す", /並べ替えの後に条件が消えている可能性/.test(bd));
   ok("条件が効いていれば押す（正常な流れは止めない）", /条件が効いている一覧 → 押します/.test(bd));
   ok("この判定は1回で終わる（毎回ブロックしない）", /if \(_adSortDone \|\| _adSortBlocked\) return false;/.test(bd) && /_adSortDone = true;/.test(bd));

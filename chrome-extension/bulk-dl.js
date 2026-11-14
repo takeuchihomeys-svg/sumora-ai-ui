@@ -814,11 +814,19 @@
           return;
         }
         if (_elapsed < _AD_SORT_GRACE_MS) return; // 見直しの待ちが既に入っている（二重に積まない）
-        _adSortBlocked = true;
-        console.warn("[AXLX bulk-dl][auto] AD順に移った直後だが、検索の条件が効いているか確かめられない → **押さない**（全物件を送らないため）");
-        _tmark("auto_pdf_load", "blocked_after_sort");
-        _blockedAfterSortNote();
-        return;
+        /**
+         * 2026-11-14 竹内さん「出来なくても止まらずにそのまま動かすようにする」:
+         *   ⚠ 旧は `_adSortBlocked = true` にして **押さない**で止めていた。
+         *     ＝「条件が読めない」だけで**物件が1件も出ない**（現場が止まる）。
+         *   → **警告を出して続行**する（竹内さんの判断: 止まる方が困る）。
+         *     ⚠ 黙って続けない: 点検に `proceed_unverified` を残し、画面にも警告を出す。
+         *     ⚠ 止めるのは「統括が unsafe」「スタッフモード」「停止ボタン」だけ（本当に危ない時）。
+         */
+        console.warn("[AXLX bulk-dl][auto] 条件が効いているか確かめられない → **このまま押します**（止まらない）");
+        _tmark("auto_pdf_load", "proceed_unverified");
+        _blockedAfterSortNote();   // 警告は出す（止めない）
+        _adSortDone = true;
+        // ← ここで return しない（下の押す処理へ進む）
       }
       console.log("[AXLX bulk-dl][auto] AD順に移った直後・条件が効いている一覧 → 押します");
       _adSortDone = true; // 判定おわり（この一覧ではもう聞かない）
@@ -919,13 +927,17 @@
     } catch (_) { return false; }
   }
   /**
-   * 2026-11-11 v2.7.2 竹内さん「並べ替えした後物件選択するところでとまってしまった」:
-   *   条件が確かめられなくて止まる時、**黙って止まらない**。
-   *   枠に理由を出し、**人が押せる「もう一度ためす」**を出す（拡張を読み直さなくても進められる）。
+   * 2026-11-11 v2.7.2 竹内さん「並べ替えした後物件選択するところでとまってしまった」
+   *
+   * 2026-11-14 竹内さん「出来なくても止まらずにそのまま動かすようにする」→ **方針を変えた**。
+   *   ⚠ 旧は「条件が読めない → 自動では押しません」で**止めていた**（全物件を送らないための安全弁）。
+   *     だが現場では **止まる＝物件が1件も出ない** の方が困る（竹内さんの判断）。
+   *   → **警告を出して続行**する。止めるのは「本当に危ない時」（統括が unsafe・スタッフモード・停止ボタン）だけ。
+   *     ⚠ 黙って続けない: 点検に残し、画面にも警告を出す（後から「なぜ並びが違うか」を追える）。
    */
   function _blockedAfterSortNote() {
     var el = document.getElementById("axlx-count");
-    if (el) el.textContent = "⚠ 並べ替えの後に条件が読めない → 自動では押しません";
+    if (el) el.textContent = "⚠ 並べ替えの後に条件が読めない（このまま続けます）";
     var box = document.getElementById("axlx-blocked-note");
     if (box) { box.style.display = "block"; return; }
     var bar = document.getElementById("axlx-bar");
@@ -934,8 +946,8 @@
     box.id = "axlx-blocked-note";
     box.style.cssText = "margin-top:6px;font-size:10px;line-height:1.5;background:rgba(0,0,0,0.25);border:1px dashed rgba(255,255,255,0.5);border-radius:8px;padding:6px 8px;color:#fff;";
     box.innerHTML = [
-      '<div>並べ替えの後、検索の条件が画面から読めませんでした（全物件を送らないため止めました）。</div>',
-      '<div style="margin-top:4px;opacity:.9">左の条件（家賃・間取り・徒歩など）が入っているのを確かめてから押してください。</div>',
+      '<div>並べ替えの後、検索の条件が画面から読めませんでした（<b>止めずに続けます</b>）。</div>',
+      '<div style="margin-top:4px;opacity:.9">左の条件（家賃・間取り・徒歩など）が入っているか、念のため見てください。</div>',
       '<div style="display:flex;gap:6px;margin-top:6px">',
       '  <button id="axlx-blocked-retry" style="flex:1;padding:5px 6px;background:#1976d2;border:none;border-radius:6px;color:#fff;font-size:11px;font-weight:700;cursor:pointer;">もう一度ためす</button>',
       "</div>",
