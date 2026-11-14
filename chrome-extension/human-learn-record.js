@@ -345,6 +345,80 @@
       try { add.opens = (motion.opens && motion.opens.byField) || {}; } catch (_) { add.opens = {}; }
       try { add.open_kinds = (motion.opens && motion.opens.kinds) || {}; } catch (_) { add.open_kinds = {}; }
     } catch (_) {}
+    try {
+      chrome.storage.local.get([KEY], function (r) {
+        try {
+          var next = L.mergeAggregate(r && r[KEY], add);
+          next.at = Date.now();
+          next.site = site;
+          var o = {}; o[KEY] = next;
+          /**
+           * 2026-11-11 竹内さん「データたまって理解するたび反映」:
+           *   貯まった**その場で**「動きの癖」を作り直して別のキー（axlx_human_profile）に置く。
+           *   → 見えるカーソル（pointer-ui.js）がこのキーの変化を見て、**次の動きから**新しい癖で動く。
+           *     ページを開き直さなくても、操作するほど動きが人の実測に寄っていく。
+           */
+          try {
+            var prof = L.profileFrom(next);
+            if (prof) o[PROFILE_KEY] = prof;
+          } catch (_) {}
+          /**
+           * 2026-11-13 竹内さん「撮影したところからぼたんの押す場所の確認や移動の部分で学習した部分あるか」:
+           *   押した位置を**要素ごと**に残す（`axlx_human_points`）。
+           *   次に同じボタン・同じ欄を押す時、見えるカーソルが**その人の押した場所**を狙う。
+           *   例: rental_cost2 → { x:0.10, y:0.14, n:6 }
+           *   ⚠ 押した**回数（n）が2以上の物だけ**使う（1回だけは偶然かもしれない）。
+           */
+          try {
+            var pf = (next.points && next.points.fields) || null;
+            if (pf && typeof pf === "object") {
+              chrome.storage.local.get([POINTS_KEY2], function (rr) {
+                try {
+                  var cur = (rr && rr[POINTS_KEY2]) || {};
+                  var changed = false;
+                  Object.keys(pf).slice(0, 60).forEach(function (k) {
+                    var v = pf[k];
+                    if (!v || typeof v.x !== "number" || typeof v.y !== "number") return;
+                    var old = cur[k] || null;
+                    var nOld = old ? Number(old.n) || 0 : 0;
+                    var nNew = Number(v.n) || 0;
+                    if (nNew <= nOld) return;
+                    // 回数の多い方（新しい実測）に寄せる
+                    cur[k] = { x: v.x, y: v.y, n: nNew };
+                    changed = true;
+                  });
+                  if (changed) {
+                    var oo = {}; oo[POINTS_KEY2] = cur;
+                    try { chrome.storage.local.set(oo); } catch (_) {}
+                  }
+                } catch (_) {}
+              });
+            }
+          } catch (_) {}
+          chrome.storage.local.set(o, function () {
+            _saving = false;
+            rec.reset(); // 操作・動き・押した場所・スクロールをまとめて空にする
+            try { void chrome.runtime.lastError; } catch (_) {}
+            // 2026-11-11: 理解した内容をその場で見せる（反映されていることが分かる）
+            try { if (o[PROFILE_KEY]) paintLearned(o[PROFILE_KEY]); else paintBadge(); } catch (_) {}
+            /**
+             * 2026-11-11 竹内さん「今このお客さんを普通モードでやったんやけど動き理解できているかな」:
+             *   貯めた直後に**その場で**DB へ送る（別のスクリプトの変化待ちに頼らない＝確実に届く）。
+             *   送る係（human-learn-upload.js）が居れば、それに頼む。居なければ何もしない（貯まるだけ）。
+             */
+            try {
+              var U = (typeof self !== "undefined" ? self : window).__axlxHumanMotionUploadNow;
+              if (typeof U === "function") U(next);
+            } catch (_) {}
+            console.log("[AX] 人の動きを貯めました:", "操作" + next.n + "・マウス" + (next.moves ? next.moves.n : 0)
+              + "・押した所" + (next.points ? next.points.n : 0) + "・スクロール" + (next.scrolls ? next.scrolls.n : 0)
+              + (o[PROFILE_KEY] ? "／理解した動き: 速さ" + o[PROFILE_KEY].speed_px_s : "（まだ材料不足）"));
+          });
+        } catch (_) { _saving = false; }
+      });
+    } catch (_) { _saving = false; }
+  }
+
   /**
    * 2026-11-11 竹内さん「画面の動き方もちゃんと把握できているのかな録画のような形で」→「操作のたびに1枚」
    *
@@ -888,79 +962,6 @@
       _shotPending = false;
       diag(false, "send_error: " + String((e && e.message) || e));
     }
-  }
-    try {
-      chrome.storage.local.get([KEY], function (r) {
-        try {
-          var next = L.mergeAggregate(r && r[KEY], add);
-          next.at = Date.now();
-          next.site = site;
-          var o = {}; o[KEY] = next;
-          /**
-           * 2026-11-11 竹内さん「データたまって理解するたび反映」:
-           *   貯まった**その場で**「動きの癖」を作り直して別のキー（axlx_human_profile）に置く。
-           *   → 見えるカーソル（pointer-ui.js）がこのキーの変化を見て、**次の動きから**新しい癖で動く。
-           *     ページを開き直さなくても、操作するほど動きが人の実測に寄っていく。
-           */
-          try {
-            var prof = L.profileFrom(next);
-            if (prof) o[PROFILE_KEY] = prof;
-          } catch (_) {}
-          /**
-           * 2026-11-13 竹内さん「撮影したところからぼたんの押す場所の確認や移動の部分で学習した部分あるか」:
-           *   押した位置を**要素ごと**に残す（`axlx_human_points`）。
-           *   次に同じボタン・同じ欄を押す時、見えるカーソルが**その人の押した場所**を狙う。
-           *   例: rental_cost2 → { x:0.10, y:0.14, n:6 }
-           *   ⚠ 押した**回数（n）が2以上の物だけ**使う（1回だけは偶然かもしれない）。
-           */
-          try {
-            var pf = (next.points && next.points.fields) || null;
-            if (pf && typeof pf === "object") {
-              chrome.storage.local.get([POINTS_KEY2], function (rr) {
-                try {
-                  var cur = (rr && rr[POINTS_KEY2]) || {};
-                  var changed = false;
-                  Object.keys(pf).slice(0, 60).forEach(function (k) {
-                    var v = pf[k];
-                    if (!v || typeof v.x !== "number" || typeof v.y !== "number") return;
-                    var old = cur[k] || null;
-                    var nOld = old ? Number(old.n) || 0 : 0;
-                    var nNew = Number(v.n) || 0;
-                    if (nNew <= nOld) return;
-                    // 回数の多い方（新しい実測）に寄せる
-                    cur[k] = { x: v.x, y: v.y, n: nNew };
-                    changed = true;
-                  });
-                  if (changed) {
-                    var oo = {}; oo[POINTS_KEY2] = cur;
-                    try { chrome.storage.local.set(oo); } catch (_) {}
-                  }
-                } catch (_) {}
-              });
-            }
-          } catch (_) {}
-          chrome.storage.local.set(o, function () {
-            _saving = false;
-            rec.reset(); // 操作・動き・押した場所・スクロールをまとめて空にする
-            try { void chrome.runtime.lastError; } catch (_) {}
-            // 2026-11-11: 理解した内容をその場で見せる（反映されていることが分かる）
-            try { if (o[PROFILE_KEY]) paintLearned(o[PROFILE_KEY]); else paintBadge(); } catch (_) {}
-            /**
-             * 2026-11-11 竹内さん「今このお客さんを普通モードでやったんやけど動き理解できているかな」:
-             *   貯めた直後に**その場で**DB へ送る（別のスクリプトの変化待ちに頼らない＝確実に届く）。
-             *   送る係（human-learn-upload.js）が居れば、それに頼む。居なければ何もしない（貯まるだけ）。
-             */
-            try {
-              var U = (typeof self !== "undefined" ? self : window).__axlxHumanMotionUploadNow;
-              if (typeof U === "function") U(next);
-            } catch (_) {}
-            console.log("[AX] 人の動きを貯めました:", "操作" + next.n + "・マウス" + (next.moves ? next.moves.n : 0)
-              + "・押した所" + (next.points ? next.points.n : 0) + "・スクロール" + (next.scrolls ? next.scrolls.n : 0)
-              + (o[PROFILE_KEY] ? "／理解した動き: 速さ" + o[PROFILE_KEY].speed_px_s : "（まだ材料不足）"));
-          });
-        } catch (_) { _saving = false; }
-      });
-    } catch (_) { _saving = false; }
   }
 
   /**
