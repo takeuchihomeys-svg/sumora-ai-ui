@@ -136,6 +136,18 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   let sceneMissing = 0;
   let sceneMissingNames = "";
   let stoppedScene: string | null = null;
+  /**
+   * 2026-11-14 竹内さん「また今日強化されたら『強化した』と統括に保存しておくようにする」:
+   *   **今日なにを強化したか**を統括に渡す（根拠に出す・点は上げない）。
+   */
+  let improvements: { total: number; by_area: Array<{ area: string; n: number }> } | null = null;
+  try {
+    const { improvementSummary } = await import("@/app/lib/learn-improvements");
+    const imp = await improvementSummary(1);
+    if (!imp.error) improvements = { total: imp.total, by_area: imp.byArea };
+  } catch (e) {
+    console.warn("[human-learn-profile] 今日の強化を読めません:", e instanceof Error ? e.message : String(e));
+  }
   /** 2026-11-14: 録画の記録（`human_motion_learn`）も同じ7日で見る（try の外でも使う） */
   const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
   try {
@@ -274,6 +286,7 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     scene_missing: sceneMissing,
     scene_missing_names: sceneMissingNames,
     stopped_scene: stoppedScene,
+    improvements,
   }));
   if (!bundle.source.rows) { try { note?.("empty_bundle"); } catch (_) {} return null; }
   /**

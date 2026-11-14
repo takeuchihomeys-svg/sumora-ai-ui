@@ -551,6 +551,8 @@ export function buildHumanLearnBundle(
     scene_missing?: number;
     scene_missing_names?: string;
     stopped_scene?: string | null;
+    /** 2026-11-14 竹内さん「強化したら統括に保存しておく」: 今日の強化の実績 */
+    improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
   } | null = null,
 ): HumanLearnBundle {
   const list = Array.isArray(rows) ? rows : [];
@@ -1087,6 +1089,8 @@ export function buildHumanLearnBundle(
     scene_missing: num(sceneMeta?.scene_missing),
     scene_missing_names: typeof sceneMeta?.scene_missing_names === "string" ? sceneMeta.scene_missing_names : "",
     stopped_scene: typeof sceneMeta?.stopped_scene === "string" ? sceneMeta.stopped_scene : null,
+    /** 2026-11-14 竹内さん「強化したら統括に保存しておく」: 今日の強化の実績（点は上げない） */
+    improvements: sceneMeta?.improvements ?? null,
   } as SupervisorInput);
 
   /**

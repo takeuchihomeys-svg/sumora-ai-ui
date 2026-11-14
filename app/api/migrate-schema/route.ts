@@ -3905,6 +3905,30 @@ ON CONFLICT (id) DO NOTHING;
 ALTER TABLE human_motion_learn ENABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE human_motion_learn IS '通常・スタッフモードで人がどう動いたか（速さ・曲がり・押した位置・スクロール）。入力した中身・名前・電話は入れない。2026-11-11 竹内さん承認';
 
+-- ── 2026-11-14 竹内さん「また今日強化されたら『強化した』と統括に保存しておくようにする」──
+-- learn_improvements: **何を強化したか**を1件ずつ残す（判断は learn_supervisor_log・強化はここ）。
+--   ⚠ 判断ログには「結論」は残るが「何を直した結果どう変わったか」が残らない。
+--   入れる物: 分野・何を・なぜ（実測の数字）・どう直したか・効くはずの所・確かめ方・版。
+--   仕組みの話だけ（お客様の名前・入力した中身・住所は入れない）。
+CREATE TABLE IF NOT EXISTS learn_improvements (
+  id BIGSERIAL PRIMARY KEY,
+  at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  area TEXT NOT NULL DEFAULT 'other',
+  title TEXT NOT NULL,
+  why TEXT,
+  how TEXT,
+  effect TEXT,
+  verify TEXT,
+  version TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_learn_improvements_at ON learn_improvements(at DESC);
+CREATE INDEX IF NOT EXISTS idx_learn_improvements_area ON learn_improvements(area, at DESC);
+-- 2026-11-14 竹内さん「PLS無効にしたらよいのでは」: 統括の記録は公開キーでも書けるようにする
+--   （RLS を有効にすると Service Role キーが無い所から書けず、黙って0件になった）。
+--   ⚠ 入れるのは仕組みの話だけなので個人情報は漏れない。
+ALTER TABLE learn_improvements DISABLE ROW LEVEL SECURITY;
+COMMENT ON TABLE learn_improvements IS '学習の強化の記録（何を・なぜ・どう直した・効くはずの所・確かめ方）。仕組みの話だけ。2026-11-14 竹内さん承認';
+
 -- conversations.deepseek_cutoff_at: 申込以降→申込前に切り替えた時刻（2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、
 --   申込落ちてステータスを切り替えたら、切り替えたところ以降渡せば個人情報防げる」）。DeepSeek に渡すのはこの時刻より後だけ（app/lib/post-apply.ts deepseekSafeCutoff）。
 --   ⚠ 消えない列: 前に進めても消さない。次に申込以降から戻した時だけ新しくなる（旧の線 status_manual_back_at は前進で null に戻り、20会話で線が消えていた）。

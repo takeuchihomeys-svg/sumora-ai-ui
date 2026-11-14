@@ -109,6 +109,12 @@ export type SupervisorInput = {
   /** 止まった回が一番多い場面（`search_audits` の status が finished でない回の最後の場面） */
   stopped_scene?: string | null;
   /**
+   * 2026-11-14 竹内さん「また今日強化されたら『強化した』と統括に保存しておくようにする」:
+   *   **今日なにを強化したか**（`learn_improvements` の集計）。
+   *   ⚠ 判断の材料ではなく**実績**（点は上げない・効いたかは数字で確かめる）。
+   */
+  improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
+  /**
    * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
    *   **実際の検索の結果**（`search_audits` の集計）。これが無いと統括は現場の現実を知らない
    *   （実測: 60回中56回が途中で止まっていたのに「渡してよい」と言っていた）。
@@ -576,6 +582,10 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       scene_missing: num(inp.scene_missing),
       scene_missing_names: typeof inp.scene_missing_names === "string" ? inp.scene_missing_names : "",
       stopped_scene: typeof inp.stopped_scene === "string" ? inp.stopped_scene : null,
+      /** 2026-11-14 竹内さん「強化したら統括に保存しておく」: 今日の強化の実績（点は上げない） */
+      improvements: inp.improvements && typeof inp.improvements === "object"
+        ? { total: num(inp.improvements.total), by_area: Array.isArray(inp.improvements.by_area) ? inp.improvements.by_area : [] }
+        : null,
     }),
   };
 }
@@ -693,6 +703,8 @@ function buildMeeting(m: {
   scene_missing?: number;
   scene_missing_names?: string;
   stopped_scene?: string | null;
+  /** 2026-11-14: 今日の強化の実績（点は上げない・根拠に出すだけ） */
+  improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
 }): SupervisorAdvice["meeting"] {
   const num = (v: unknown): number => {
     const n = typeof v === "number" ? v : Number(v);
@@ -708,6 +720,16 @@ function buildMeeting(m: {
 
   // ── 根拠（数字）──
   evidence.push({ label: "結論", value: `${HEAD[m.verdict]}（材料 ${m.coverage}/100・弱い所 ${m.weakN}件）` });
+  /**
+   * 2026-11-14 竹内さん「また今日強化されたら『強化した』と統括に保存しておくようにする」:
+   *   **今日なにを強化したか**を統括が言えるようにする（根拠に出す）。
+   *   ⚠ これは判断の材料ではなく**実績の記録**。数が増えても材料の点は上げない
+   *     （「直したから賢くなった」と自動で決めない・効いたかは数字で確かめる）。
+   */
+  if (m.improvements && m.improvements.total > 0) {
+    const by = m.improvements.by_area.map((x) => `${x.area} ${x.n}`).join("・");
+    evidence.push({ label: "今日の強化", value: `${m.improvements.total}件（${by}）` });
+  }
   evidence.push({ label: "記録", value: `${m.rows}件（うち操作が付いている ${m.withOps}件）` });
   evidence.push({ label: "押す順番", value: `${m.next}通り` });
   evidence.push({ label: "押す場所", value: `${m.points}個` });
