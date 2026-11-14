@@ -257,16 +257,21 @@ export function reconcilePoints(
     const f = byName.get(name);
     if (!f) continue;
     const from = v.w ?? null;
-    // 数値に種類が無い → 埋める／食い違う → 写真を採る（写真の方が実際の見た目）
     /**
-     * 2026-11-13 竹内さん「今弱い部分学習する」:
-     *   `w_src`（どこから得た種類か）も一緒に直す。
-     *   ⚠ 旧は `{ ...v, w: f.kind }` で `w_src: "name"` のまま残っていたので、
-     *     **写真が正しく読んでいるのに「名前から推した物」として扱われ続けた**
-     *     （実測: `左の検索｜span` が写真では押すボタンなのに other のまま残った）。
+     * 2026-11-14 竹内さん「確かめて治す」:
+     *
+     *   ⚠ **バグだった**。旧は**写真の種類で上書きした物を全部 `fixed`（食い違い）に入れて**いた。
+     *     そのため統括に「記録と写真で種類が違う」が永久に並んでいた
+     *     （実測: 直近1000行で `shot_learn` は **0件**。比較する相手すら無いのに6件出ていた）。
+     *
+     *   → **本当に違う時だけ** `fixed` に入れる（`from` があり、かつ写真と違う時）。
+     *     ・`from` が null（記録に種類が無い）＝**埋めただけ**（食い違いではない）
+     *     ・`from` === 写真の種類 ＝**一致**（何もしない・記録もしない）
+     *     ・`from` !== 写真の種類 ＝**本当の食い違い**（ここだけ `fixed`）
      */
+    const differs = from != null && String(from) !== String(f.kind);
     out[name] = { ...v, w: f.kind, w_src: "photo", w_conf: 1 } as typeof v;
-    fixed.push({ name, from, to: f.kind });
+    if (differs) fixed.push({ name, from, to: f.kind });
   }
   void minConf;
   return { points: out, fixed };
@@ -681,7 +686,7 @@ export function planLearnFromWeak(
 export function findWeakPoints(
   points: Record<string, { n: number; w?: string }>,
   fields: ReadonlyArray<ShotField>,
-  fixed: ReadonlyArray<{ name: string }>,
+  fixed: ReadonlyArray<{ name: string; from?: string | null; to?: string }>,
 ): Array<{ kind: string; name: string; why: string; next: string }> {
   const out: Array<{ kind: string; name: string; why: string; next: string }> = [];
   // ① 写真の中で同じ名前が違う種類
@@ -705,9 +710,19 @@ export function findWeakPoints(
     if (!v.w) out.push({ kind: "kind_unknown", name, why: "押した記録に種類が無い（旧版の記録）", next: "写真から種類を読んで埋める" });
     else if (v.w === "other") continue;
   }
-  // ③ 写真と食い違った欄
+  /**
+   * ③ 記録と「写真から読んだ種類」が**本当に食い違った**欄。
+   *
+   * ⚠ 2026-11-14 竹内さん「確かめて治す」: 以前は `fixed` に**埋めただけの物も全部**入っていたので、
+   *   食い違いが無いのに「記録と写真で種類が違う」が並んでいた（実測 `shot_learn` は0件）。
+   *   → `reconcilePoints` が**本当に違う時だけ** `fixed` に入れるように直した。
+   *     ここでは「記録に種類があり、写真と違った」物だけを受け取る。
+   */
   for (const f of fixed) {
-    out.push({ kind: "photo_vs_record", name: f.name, why: "数値の記録と写真で種類が違った", next: "写真を採る（実際の見た目）・次の回でも同じか確かめる" });
+    if (!f || !f.name) continue;
+    if (f.from == null) continue;              // 埋めただけ（食い違いではない）
+    if (String(f.from) === String(f.to)) continue;
+    out.push({ kind: "photo_vs_record", name: f.name, why: `記録は「${f.from}」だが写真は「${f.to}」`, next: "写真を採る（実際の見た目）・次の回でも同じか確かめる" });
   }
   // ④ 押せない欄を押している
   for (const f of fields) {
