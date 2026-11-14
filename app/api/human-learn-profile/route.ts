@@ -137,7 +137,7 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   let sceneMissingNames = "";
   let stoppedScene: string | null = null;
   try {
-    const { learnSceneFlows, findWeakScenes, SCENE_JA } = await import("@/app/lib/learn-flow-steps");
+    const { learnSceneFlows, findWeakScenes, lastSceneOf, SCENE_JA } = await import("@/app/lib/learn-flow-steps");
     const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
     let fq = supabase
       .from("search_audits")
@@ -158,10 +158,11 @@ async function buildNow(scope: string, note?: (why: string) => void) {
       for (const r of rowsF) {
         const ops = Array.isArray(r.filled?.ops) ? r.filled!.ops! : [];
         if (ops.length >= 2) runs.push(ops);
-        // 止まった回は「最後の場面」を数える（どこで止まるか）
+        // 止まった回は「**時系列で最後に触った場面**」を数える（どこで止まるか）
+        //   ⚠ `learnSceneFlows(...)[0]` は「手数が多い順」なので最後の場面にならない（実測で誤った）
         if (String(r.status ?? "") !== "finished" && ops.length >= 2) {
-          const last = learnSceneFlows([ops], { by: null })[0];
-          if (last) stopAt[SCENE_JA[last.scene]] = (stopAt[SCENE_JA[last.scene]] ?? 0) + 1;
+          const lastSc = lastSceneOf(ops);
+          if (lastSc) stopAt[SCENE_JA[lastSc]] = (stopAt[SCENE_JA[lastSc]] ?? 0) + 1;
         }
       }
       if (runs.length) {

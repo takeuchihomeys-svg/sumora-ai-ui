@@ -298,6 +298,32 @@ export function findWeakScenes(
 }
 
 /**
+ * **時系列で最後に触った場面**を返す（純関数）。
+ *
+ * 2026-11-14 竹内さん「いま一番効く3つ（実測）ここの部分もデータ見たら改善できる」:
+ *   ⚠ 実測で**誤った事を統括が言っていた**:
+ *     「止まる回が多いのは『所在地絞り込み』」→ 実際は **17回とも最後は `click:検索`**
+ *     （所在地 → 駅 → 条件 → 検索 まで全部押して、**検索の後で止まっていた**）。
+ *   原因: `learnSceneFlows(...)[0]` を使っていた。あれは**手数が多い順**に並ぶので
+ *     「最後に触った場面」ではなく「一番手数が多い場面」（＝所在地）を返していた。
+ *   → 止まった場所を見る時は**必ずこの関数**を使う（並び順に依存しない）。
+ */
+export function lastSceneOf(ops: ReadonlyArray<FlowOp>): FlowScene | null {
+  const list = Array.isArray(ops) ? ops : [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const k = String(list[i]?.k ?? "");
+    if (!k) continue;
+    // `key`（文字入力）は欄の名前が無いので場面を決めない → 1つ前を見る
+    const m = k.match(/^([a-z]+):(.*)$/i);
+    if (!m && /^key$/i.test(k)) continue;
+    const sc = sceneOfOp(k);
+    if (sc === "other") continue;
+    return sc;
+  }
+  return null;
+}
+
+/**
  * 統括に渡す1行（人が読める形）。
  *   例: 「所在地絞り込み: 6回・手本38手・順番2通り（最も多い: 所在地絞り込み＋ → 大阪市西区 → …）」
  */

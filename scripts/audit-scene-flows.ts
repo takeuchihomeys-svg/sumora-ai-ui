@@ -10,7 +10,7 @@
  * ⚠ 読むだけ（DBに書かない）。入れるのは欄の名前と操作の種類だけ（入力した中身は扱わない）。
  */
 import { createClient } from "@supabase/supabase-js";
-import { learnSceneFlows, findWeakScenes, describeSceneFlow, scenePlaybook, SCENE_JA, type FlowOp } from "../app/lib/learn-flow-steps";
+import { learnSceneFlows, findWeakScenes, describeSceneFlow, scenePlaybook, lastSceneOf, SCENE_JA, type FlowOp } from "../app/lib/learn-flow-steps";
 
 const args = process.argv.slice(2);
 const argOf = (k: string, d: string) => (args.find((a) => a.startsWith(`--${k}=`)) || "").replace(`--${k}=`, "") || d;
@@ -72,8 +72,9 @@ void (async () => {
     const f = r.filled as { ops?: FlowOp[] } | null;
     const ops = Array.isArray(f?.ops) ? f!.ops! : [];
     if (!ops.length) { stopAt["(押した記録なし)"] = (stopAt["(押した記録なし)"] ?? 0) + 1; continue; }
-    const last = learnSceneFlows([ops], { by: null })[0];
-    const k = last ? SCENE_JA[last.scene] : "(不明)";
+    // ⚠ 「手数が多い場面」ではなく「**時系列で最後に触った場面**」で数える（実測で誤っていた）
+    const lastSc = lastSceneOf(ops);
+    const k = lastSc ? SCENE_JA[lastSc] : "(不明)";
     stopAt[k] = (stopAt[k] ?? 0) + 1;
   }
   const finished = rows.filter((r) => String(r.status ?? "") === "finished").length;
