@@ -20,6 +20,10 @@ const t = (name, cond, extra) => {
   if (cond) { pass++; console.log("  ✓ " + name); }
   else { fail++; console.log("  ✗ " + name + (extra !== undefined ? "  → " + JSON.stringify(extra) : "")); }
 };
+/** 2026-11-14: この試験は途中から `ok` で書いていたが定義が無く、**最後まで走っていなかった**
+ *  （`ReferenceError: ok is not defined` で落ちる＝試験が通っていないのに気づけない）。
+ *  → `t` と同じ物を `ok` としても置く。 */
+const ok = t;
 
 console.log("■ ① background が next/points 以外も置く（捨てない）");
 {

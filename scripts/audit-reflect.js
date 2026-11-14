@@ -84,6 +84,10 @@ console.log("\n=== ③ 直した印（目印）が Chrome 側に入っている�
       ["一連の動きを置く（v2.7.26）", bg.includes("axlx_learn_seq")],
       ["モード別を置く（v2.7.26）", bg.includes("axlx_learn_next_mode")],
       ["1時間ごとに版を確かめる（v2.7.28）", bg.includes("_LEARN_CHECK_MS")],
+      // 2026-11-14 竹内さん「この地域押すところや、検索押すところちゃんと学習する」
+      ["地域・検索の押す位置を学びから使う（v2.7.31）", ps.includes("function _aimByEl") && ps.includes("function _pressLearned")],
+      ["  ボタンに学んだ位置を渡せる（v2.7.31）", ps.includes("function _humanPointerClick(el, fallbackFn, aim)")],
+      ["  検索ボタンで学びを使う（v2.7.31）", ps.includes("_aimByEl(btn, ['左の検索'")],
     ];
     for (const [name, ok] of marks) t(name, ok);
   }

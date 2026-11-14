@@ -738,22 +738,115 @@
    */
   var _learnKinds = null;
   var _learnKindsAt = 0;
+  /**
+   * 2026-11-14: 学んだ押す位置を**先に読み込んでおく**ための関数（地域・検索ボタンは名前が無く、
+   *   `_kindOf(name)` を通らない＝読み込みの機会が無いまま押していた）。
+   */
+  function _learnWarm() {
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+      var now = Date.now();
+      if (_learnKinds && !(now - _learnKindsAt > 30000)) return;  // 30秒は読み直さない（軽い）
+      _learnKindsAt = now;
+      chrome.storage.local.get(["axlx_learn_points"], function (r) {
+        try { _learnKinds = (r && r.axlx_learn_points) || {}; } catch (_) { _learnKinds = {}; }
+      });
+    } catch (_) {}
+  }
   function _kindOf(name) {
     try {
-      var now = Date.now();
-      if (!_learnKinds || now - _learnKindsAt > 30000) {
-        _learnKindsAt = now;
-        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-          chrome.storage.local.get(["axlx_learn_points"], function (r) {
-            try { _learnKinds = (r && r.axlx_learn_points) || {}; } catch (_) { _learnKinds = {}; }
-          });
-        }
-      }
+      _learnWarm();
       var v = _learnKinds && _learnKinds[name];
       return v && v.w ? String(v.w) : null;
     } catch (_) { return null; }
   }
   /** 学んだ「押した位置」（要素の中の割合）を返す（無ければ null） */
+  /**
+   * 2026-11-14 竹内さん「この地域押すところや、検索押すところちゃんと学習する」:
+   *   学んだ押す位置（`axlx_learn_points`）は、**欄の名前**（`name`）で引いていた。
+   *   だが **「所在地絞り込み」「検索」には `name` 属性が無い**（div/span のボタン）ので、
+   *   名前で引けず＝**学んだ位置が一切使われていなかった**（実測）。
+   *   本番DBの学習データには、押した要素を**その場で作った名前**で残している:
+   *     ・`左の所在地絞り込み＋｜span`（x 0.66 / y 0.57）
+   *     ・`左の検索｜span`（x 0.74 / y 0.68）
+   *     ・`左の大阪市西区｜label.one_city`（x 0.52 / y 0.46）…
+   *   → **要素の「印（文字・クラス・タグ）」から学んだ名前を探して**、その位置を使う。
+   *     ⚠ 名前が**一致しすぎる物**（例: `左の検索` が2か所）は、要素の位置（左右）で選ぶ。
+   */
+  function _aimByEl(el, fallbackKeys) {
+    if (!el) return null;
+    var all = _learnKinds;
+    if (!all) { try { _learnWarm(); } catch (_) {} }
+    all = _learnKinds;
+    if (!all) return null;
+    var want = [];
+    try {
+      // ① 呼ぶ側が渡した名前（例: ['左の検索', '検索']）
+      if (fallbackKeys) want = want.concat(fallbackKeys);
+      // ② 要素の文字（空白を除く・先頭20字）
+      var t = String(el.textContent || "").replace(/\s+/g, "");
+      if (t) want.push(t.slice(0, 20));
+      // ③ クラス名（例: search_menu / go_search）
+      var cn = String(el.className || "").split(/\s+/).filter(Boolean);
+      for (var i = 0; i < cn.length && i < 4; i++) want.push(cn[i]);
+      // ④ タグ＋クラス（例: div.search_menu）
+      if (cn.length) want.push(String(el.tagName || "").toLowerCase() + "." + cn[0]);
+    } catch (_) {}
+    var best = null;
+    for (var k in all) {
+      if (!Object.prototype.hasOwnProperty.call(all, k)) continue;
+      var v = all[k];
+      if (!v || typeof v.x !== "number" || typeof v.y !== "number") continue;
+      // 学んだ名前 `左の所在地絞り込み＋｜span` を「場所 / 文字 / 印」に分ける
+      var seg = String(k).split("｜");
+      var label = seg[0] || "";
+      var sig = seg[1] || "";
+      var labelBody = label.replace(/^左の|^右の/, "");
+      var score = 0;
+      for (var w = 0; w < want.length; w++) {
+        var q = String(want[w] || "");
+        if (!q) continue;
+        if (labelBody === q) score = Math.max(score, 40);
+        else if (label.indexOf(q) >= 0) score = Math.max(score, 26);
+        else if (q.indexOf(labelBody) >= 0 && labelBody.length >= 2) score = Math.max(score, 18);
+        if (sig && q && sig.toLowerCase().indexOf(String(q).toLowerCase()) >= 0) score = Math.max(score, 12);
+      }
+      if (score <= 0) continue;
+      // 何回も押されている物ほど信頼する（n を少しだけ足す・最大6）
+      score += Math.min(6, Number(v.n) || 0);
+      if (!best || score > best.score) best = { score: score, x: v.x, y: v.y, key: k, n: Number(v.n) || 0 };
+    }
+    if (!best || best.score < 18) return null;
+    return { x: best.x, y: best.y, key: best.key, n: best.n, score: best.score };
+  }
+
+  /**
+   * 2026-11-14 竹内さん「この地域押すところや、検索押すところちゃんと学習する」:
+   *   **ボタン（名前の無い div/span）を、学んだ押す位置で押す**。
+   *   ・学んだ位置がある → その割合へカーソルを動かして押す（人が押した所と同じ）
+   *   ・無い → 今まで通り `simulateClick`（リアプロの jQuery に効く）
+   *   ⚠ 学んだ位置が**要素の外**を指していたら使わない（誤学習で押し間違えない）。
+   *     0.2〜0.8 に丸めるのは `_humanPointerClick` 側でやる。
+   */
+  function _pressLearned(el, keys, tag) {
+    if (!el) return false;
+    var aim = null;
+    try { aim = _aimByEl(el, keys); } catch (_) { aim = null; }
+    try {
+      if (_audit) {
+        _auditStepP('learn_aim', (tag || 'press') + ':' + (aim ? (aim.key + ' 横' + Math.round(aim.x * 100) + '% 縦' + Math.round(aim.y * 100) + '%（学び' + aim.n + '回）') : '学び無し→今まで通り'));
+      }
+    } catch (_) {}
+    if (aim) {
+      try {
+        _humanPointerClick(el, function () { simulateClick(el); }, aim);
+        return true;
+      } catch (_) {}
+    }
+    try { simulateClick(el); } catch (_) { try { el.click(); } catch (_) {} }
+    return true;
+  }
+
   function _aimOf(name) {
     try {
       var v = _learnKinds && _learnKinds[name];
@@ -1014,26 +1107,49 @@
   //   mousemove / mouseover / mousedown / mouseup / click を順に出す（押すのは最後の1回だけ＝二重に効かせない）。
   //   軌跡は human-wait.js の pointerPath（純関数・依存ゼロ）。読めない時は今まで通り click だけ。
   var _pointer = { x: 120 + Math.random() * 200, y: 120 + Math.random() * 200 };
-  function _humanPointerClick(el, fallbackFn) {
+  function _humanPointerClick(el, fallbackFn, aim) {
     var H = window.AxlxHumanWait;
     var fire = fallbackFn || _clickEl;
     if (!el || !el.getBoundingClientRect || !H || !H.pointerPath) { fire(el); return Promise.resolve(false); }
     var r;
     try { r = el.getBoundingClientRect(); } catch (_) { fire(el); return Promise.resolve(false); }
     if (!r || (r.width <= 0 && r.height <= 0)) { fire(el); return Promise.resolve(false); }
+    /**
+     * 2026-11-14 竹内さん「この地域押すところや、検索押すところちゃんと学習する」:
+     *   ⚠ 学んだ**押した位置**（`aim`＝人がその要素のどこを押したか）は
+     *     **プルダウン（chooseSelectLikeHuman）だけ**で使っていて、
+     *     **地域ボタン・検索ボタンでは使っていなかった**（実測）。
+     *   → ボタンでも、学んだ位置があれば**その割合へカーソルを動かして**押す。
+     *     ⚠ 0.2〜0.8 に丸める（端すぎる所は押さない＝押し間違い防止）。
+     *     ⚠ `pointer-ui`（見えるカーソル）がある時は `moveTo` で狙う。
+     */
+    var _aimPt = null;
+    try {
+      if (aim && typeof aim.x === "number" && typeof aim.y === "number") {
+        var _fx = Math.max(0.2, Math.min(0.8, aim.x));
+        var _fy = Math.max(0.2, Math.min(0.8, aim.y));
+        _aimPt = { x: r.left + r.width * _fx, y: r.top + r.height * _fy, fx: _fx, fy: _fy };
+      }
+    } catch (_) { _aimPt = null; }
     // 2026-11-10 v2.6.0 竹内さん「リアプロとITANDI人間のようにマウス動くようにする」:
     //   画面の上に「見えるカーソル」を出して、押す位置まで人の軌跡で動かす（pointer-ui.js・見た目だけ・pointer-events:none）。
     //   動きながら押すと不自然なので、**着いてから**押す（本物のクリックは今まで通り1回だけ）。
     var _P = window.AxlxPointerUi;
     if (_P && _P.ensure) {
       try { _P.ensure(); } catch (_) {}
-      return _P.moveToEl(el).then(function () {
+      var _move = function () {
+        try {
+          if (_aimPt && _P.moveTo) return _P.moveTo(_aimPt.x, _aimPt.y);
+        } catch (_) {}
+        return _P.moveToEl(el);
+      };
+      return _move().then(function () {
         try { _P.tap(); } catch (_) {}
         _fireAt(el, fire, r);
         return true;
       }, function () { _fireAt(el, fire, r); return true; });
     }
-    var to = { x: r.left + r.width * (0.35 + Math.random() * 0.3), y: r.top + r.height * (0.35 + Math.random() * 0.3) };
+    var to = _aimPt ? { x: _aimPt.x, y: _aimPt.y } : { x: r.left + r.width * (0.35 + Math.random() * 0.3), y: r.top + r.height * (0.35 + Math.random() * 0.3) };
     var pts = H.pointerPath(_pointer, to, 10 + Math.floor(Math.random() * 8));
     var waits = H.pointerDelays ? H.pointerDelays(pts.length, 260 + Math.random() * 340) : pts.map(function () { return 30; });
     var i = 0;
@@ -2007,7 +2123,10 @@
         if (!c2) continue;
         var lb2 = (c2.closest && c2.closest('label')) || c2.parentElement || c2;
         if (c2.checked) { hitByCode++; _noteWardPicked(codes[ci2], lb2.textContent); continue; }
-        if (isVisible(lb2)) { simulateClick(lb2); hitByCode++; _noteWardPicked(codes[ci2], lb2.textContent); }
+        if (isVisible(lb2)) {
+          // 2026-11-14: 区は**同期で押す**（押した直後に「確定してリストへ」へ進むため・上の _pressLearned の注記と同じ理由）
+          simulateClick(lb2); hitByCode++; _noteWardPicked(codes[ci2], lb2.textContent);
+        }
       }
       if (hitByCode > 0) {
         _auditStepP('ward_by_code', hitByCode + '区（コードで選択）');
@@ -2041,6 +2160,16 @@
           return true;
         }
         // 未選択 → フルイベントシーケンスでクリック
+        /**
+         * 2026-11-14 竹内さん「この地域押すところ…ちゃんと学習する」:
+         *   ⚠ 区のボタンにも学んだ位置を使おうとしたが、`_pressLearned` は
+         *     **カーソルを動かしてから押す（200〜900ms かかる・非同期）**。
+         *     区を押した直後に「確定してリストへ」へ進む流れなので、
+         *     押す前に確定が走って**区が入らない**恐れがある。
+         *   → 区・町字は**今まで通り同期で押す**（`simulateClick`）。
+         *     学んだ位置は「所在地絞り込み（開く）」「検索（押す）」で使う。
+         *     区の位置学習は `axlx_learn_points` に残っており、順番の学習にも効いている。
+         */
         simulateClick(wardLabels[i]);
         if (inp) _noteWardPicked(inp.value, wardLabels[i].textContent);
         return true;
@@ -2416,7 +2545,20 @@
           };
         } catch (_) {}
       }
-      _humanPointerClick(btn, function () { try { btn.click(); } catch (_) {} });
+      /**
+       * 2026-11-14 竹内さん「この地域押すところや、検索押すところちゃんと学習する」:
+       *   検索ボタンも**学んだ押す位置**（`左の検索｜span` など）へカーソルを動かして押す。
+       *   ⚠ 2か所ある検索ボタン（左のサイドバー／小窓の中）を取り違えないよう、
+       *     小窓の中のボタンには**学んだ位置を使わない**（位置が違うため）。
+       */
+      var _sAim = null;
+      try {
+        if (!_inModal(btn)) _sAim = _aimByEl(btn, ['左の検索', '検索', '住居検索', 'go_search']);
+      } catch (_) { _sAim = null; }
+      if (_audit) {
+        try { _auditStepP('learn_aim', 'search:' + (_sAim ? (_sAim.key + ' 横' + Math.round(_sAim.x * 100) + '% 縦' + Math.round(_sAim.y * 100) + '%') : '学び無し→今まで通り')); } catch (_) {}
+      }
+      _humanPointerClick(btn, function () { try { btn.click(); } catch (_) {} }, _sAim);
       // 押し終わってから（カーソルが着いて押した後）カーソルの居た所を残す
       setTimeout(function () {
         try {
@@ -3983,7 +4125,8 @@
                   var t = divs[i].textContent.replace(/\s+/g, '');
                   if (t.includes('所在地絞り込み')) {
                     if (_audit && !window._axAreaOpenMarked) { window._axAreaOpenMarked = true; _auditStepP('area_open_by_class', clsTargets[ci]); }
-                    divs[i].click();
+                    // 2026-11-14 竹内さん「この地域押すところ…ちゃんと学習する」: 学んだ押す位置で押す
+                    _pressLearned(divs[i], ['左の所在地絞り込み', '所在地絞り込み＋', '所在地絞り込み'], 'area_open');
                     return true;
                   }
                 }
@@ -3999,7 +4142,7 @@
                   // 「所在地絞り込み＋」を含み、**他の絞り込みを含まない**（一番内側を採る）
                   if (tt.includes('所在地絞り込み') && !/沿線・駅絞り込み|管理会社絞り込み/.test(tt)) {
                     if (_audit && !window._axAreaOpenMarked) { window._axAreaOpenMarked = true; _auditStepP('area_open_by_area', tt.slice(0, 20)); }
-                    simulateClick(cands[k]);
+                    _pressLearned(cands[k], ['左の所在地絞り込み', '所在地絞り込み＋', '所在地絞り込み'], 'area_open');
                     return true;
                   }
                 }
@@ -4030,28 +4173,40 @@
                 if (_audit && n) _auditStepP('area_open_retry', n + '回で開いた');
                 return;
               }
+              /**
+               * 2026-11-14 竹内さん「この地域押すところ…ちゃんと学習する」:
+               *   ⚠ 押し方を「学んだ位置へカーソルを動かしてから押す」（`_pressLearned`）に変えたので、
+               *     **押し終わるまで 200〜900ms かかる**。旧のまま「すぐ確かめる」だと
+               *     まだ動いている途中で「開いていない」と判断し→**もう一度押す**→
+               *     モーダルが開いてすぐ閉じる（トグル）＝**地域が入らない**。
+               *   → 最初は**押し終わるのを待つ**（grace）。それでも開かなければ押し直す。
+               */
+              var grace = n === 0 ? 1400 : 900 + Math.floor(Math.random() * 400);
               if (n >= 3) {
                 console.warn('[AX] 所在地絞り込みが開きません（3回試しました）');
                 if (_audit) _auditStepP('area_open_fail', '3回試しても開かない');
                 return;
               }
               // 押し直す: ① 場所の帯の中で「所在地絞り込み」を含む一番内側
-              try {
-                var all = Array.prototype.slice.call(document.querySelectorAll('div,span,a,button,td,p'));
-                var cand = all.filter(function (e) {
-                  if (!isVisible(e)) return false;
-                  var t = e.textContent.replace(/\s+/g, '');
-                  if (!t.includes('所在地絞り込み')) return false;
-                  if (/沿線・駅絞り込み|管理会社絞り込み/.test(t)) return false;
-                  // 子に同じ物があれば親（内側だけ残す）
-                  return !all.some(function (o) { return o !== e && e.contains(o) && o.textContent.replace(/\s+/g, '').includes('所在地絞り込み'); });
-                });
-                if (cand.length) {
-                  console.log('[AX] 所在地絞り込みを押し直します（' + (n + 1) + '回目）');
-                  simulateClick(cand[0]);
-                }
-              } catch (_) {}
-              setTimeout(function () { _ensureAreaOpened(n + 1); }, 900 + Math.floor(Math.random() * 400));
+              setTimeout(function () {
+                if (opened()) { if (_audit) _auditStepP('area_open_retry', '待って開いた'); return; }
+                try {
+                  var all = Array.prototype.slice.call(document.querySelectorAll('div,span,a,button,td,p'));
+                  var cand = all.filter(function (e) {
+                    if (!isVisible(e)) return false;
+                    var t = e.textContent.replace(/\s+/g, '');
+                    if (!t.includes('所在地絞り込み')) return false;
+                    if (/沿線・駅絞り込み|管理会社絞り込み/.test(t)) return false;
+                    // 子に同じ物があれば親（内側だけ残す）
+                    return !all.some(function (o) { return o !== e && e.contains(o) && o.textContent.replace(/\s+/g, '').includes('所在地絞り込み'); });
+                  });
+                  if (cand.length) {
+                    console.log('[AX] 所在地絞り込みを押し直します（' + (n + 1) + '回目）');
+                    _pressLearned(cand[0], ['左の所在地絞り込み', '所在地絞り込み＋', '所在地絞り込み'], 'area_open_retry');
+                  }
+                } catch (_) {}
+                setTimeout(function () { _ensureAreaOpened(n + 1); }, 900 + Math.floor(Math.random() * 400));
+              }, grace);
             })(0);
             /**
              * 2026-11-14 竹内さん「地域の部分はいる前から地域だけ選択されていた」:
@@ -4316,7 +4471,9 @@
             if (!isVisible(divs[i])) continue;
             var t = divs[i].textContent.replace(/\s+/g, '');
             if (t.includes('沿線・駅絞り込み')) {
-              divs[i].click(); return true;
+              // 2026-11-14 竹内さん「この地域押すところ…ちゃんと学習する」: 駅の絞り込みも学んだ位置で押す
+              _pressLearned(divs[i], ['左の沿線・駅絞り込み', '沿線・駅絞り込み＋', '沿線・駅絞り込み'], 'station_open');
+              return true;
             }
           }
         }
